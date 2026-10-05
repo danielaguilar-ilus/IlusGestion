@@ -6290,6 +6290,7 @@ _CSRF_EXEMPT_PREFIXES: tuple = (
     "/transporte/webhook/",     # webhooks de couriers (auth por secreto propio)
     "/chofer",                  # app del chofer (sesión driver_id propia)
     "/soporte",                 # formulario publico de Tickets (sin sesion)
+    "/propuesta/",              # propuesta pública del plan de mantención (token URL)
 )
 
 
@@ -53585,6 +53586,7 @@ _COMM_MODULOS_VALIDOS = (
     "general",
     "tickets",
     "catalogo",
+    "prospectos",          # Gestión de prospectos de mantención (2026-10-04)
 )
 
 
@@ -69868,6 +69870,15 @@ def _mant_ficha_impl(cid):
             _prospecto["plan_descuento_pct"] = _cfg_plan.get("descuento_pct") or "0"
             _prospecto["plan_visitas"] = _cfg_plan.get("visitas_anio") or "4"
             _prospecto["tickets"] = _tickets_de_cliente(cliente.get("rut"))
+            _prospecto["cotizacion"] = _cotizacion_vigente_de(cid)
+            try:
+                _fila_p = mysql_fetchone("SELECT token, ticket_id FROM mant_prospecto_seguimiento WHERE cliente_id=%s", (cid,)) or {}
+            except Exception:
+                _fila_p = {}
+            _prospecto["ticket_oferta_id"] = _fila_p.get("ticket_id")
+            _prospecto["link_propuesta"] = (url_for("prospecto_propuesta_publica", token=_fila_p["token"], _external=True)
+                                            if _fila_p.get("token") else "")
+            _prospecto["email_sugerido"] = (_mant_get_cliente_emails(cid) or [""])[0]
     except Exception as _e_pr:
         print(f"[ficha-cli] prospecto cid={cid}: {_e_pr}", flush=True)
 
@@ -70109,6 +70120,19 @@ def _ensure_mant_prospecto_seguimiento():
         """)
     except Exception as e:
         print(f"[ensure_mant_prospecto_seguimiento] {e}", flush=True)
+    for _ddl in ("ALTER TABLE mant_prospecto_seguimiento ADD COLUMN token VARCHAR(48) NULL",
+                 "ALTER TABLE mant_prospecto_seguimiento ADD COLUMN ticket_id INT NULL",
+                 "ALTER TABLE mant_prospecto_seguimiento ADD COLUMN respuesta VARCHAR(20) NULL",
+                 "ALTER TABLE mant_prospecto_seguimiento ADD COLUMN respuesta_at DATETIME NULL",
+                 "ALTER TABLE mant_prospecto_seguimiento ADD COLUMN acepta_nombre VARCHAR(150) NULL",
+                 "ALTER TABLE mant_prospecto_seguimiento ADD COLUMN acepta_rut VARCHAR(20) NULL",
+                 "ALTER TABLE mant_prospecto_seguimiento ADD COLUMN acepta_ip VARCHAR(64) NULL",
+                 "ALTER TABLE mant_prospecto_seguimiento ADD COLUMN acepta_cotizacion_id INT NULL",
+                 "ALTER TABLE mant_prospecto_seguimiento ADD UNIQUE INDEX uq_prosp_token (token)"):
+        try:
+            mysql_execute(_ddl)
+        except Exception:
+            pass
 
 
 # Tracking del cliente de instalación (Daniel 2026-10-04: «que se vea como un proceso de verdad tipo tracking»).
@@ -70493,7 +70517,7 @@ def _ensure_comm_template_prospecto_oferta():
             asunto, cuerpo = _prospecto_oferta_seed(t)
             mysql_execute(
                 "INSERT IGNORE INTO comm_templates (modulo, estado, canal, asunto, cuerpo) "
-                "VALUES ('mantenciones',%s,'email',%s,%s)",
+                "VALUES ('prospectos',%s,'email',%s,%s)",
                 (f"prospecto_oferta_{t}", asunto, cuerpo))
     except Exception as e:
         print(f"[ensure_comm_tpl] prospecto_oferta: {e}", flush=True)
@@ -70637,7 +70661,7 @@ def _prospectos_oferta_barrido(max_n=15, dry=False):
                         "cliente_nombre": c["razon_social"] or "",
                         "contacto_nombre": (c.get("contacto_nombre") or "").strip() or "equipo",
                         "fecha_instalacion": ref.strftime("%d/%m/%Y"),
-                    }, modulo="mantenciones")
+                    }, modulo="prospectos")
                     if tpl is None:
                         a0, b0 = _prospecto_oferta_seed(toque)
                         tpl = (a0, b0.replace("{{contacto_nombre}}", (c.get("contacto_nombre") or "equipo"))
@@ -70795,7 +70819,7 @@ def _ensure_comm_template_plan_oferta():
         asunto, cuerpo = _plan_oferta_seed()
         mysql_execute(
             "INSERT IGNORE INTO comm_templates (modulo, estado, canal, asunto, cuerpo) "
-            "VALUES ('mantenciones','plan_mantencion_oferta','email',%s,%s)", (asunto, cuerpo))
+            "VALUES ('prospectos','plan_mantencion_oferta','email',%s,%s)", (asunto, cuerpo))
     except Exception as e:
         print(f"[ensure_comm_tpl] plan_mantencion_oferta: {e}", flush=True)
 
@@ -70928,7 +70952,7 @@ def mant_plan_enviar(cid):
                  "visitas_anio": c["visitas_anio"], "vigencia_meses": int(float(cfg["vigencia_meses"])),
                  "precio_html": precio_html, "incluye_html": incluye_html,
                  "n_equipos": n, "descuento_pct": f'{c["descuento_pct"]:g}'}
-    tpl = _render_comm_template("plan_mantencion_oferta", "email", variables, modulo="mantenciones")
+    tpl = _render_comm_template("plan_mantencion_oferta", "email", variables, modulo="prospectos")
     if tpl is None:
         a0, b0 = _plan_oferta_seed()
         for k, v in variables.items():
@@ -70959,6 +70983,425 @@ def mant_plan_enviar(cid):
     except Exception:
         pass
     return jsonify({"ok": True, "mensaje": f"Propuesta enviada a {email}."})
+
+
+# ══════════════════════════════════════════════════════════════════
+# OFERTA DE MANTENCIÓN POR TICKET (Daniel 2026-10-04, decisiones aprobadas): el TICKET es la bandeja. El correo
+# sale desde el ticket (número en el asunto → la respuesta del cliente vuelve sola al hilo por IMAP), con una
+# pregunta fácil y botones de un clic que llevan a la PÁGINA DE LA PROPUESTA (/propuesta/<token>). Esa página
+# cambia con la etapa: primero «¿avanzamos con la cotización?», y cuando la cotización ya se envió, la muestra con
+# «Acepto la cotización» (nombre + RUT). Cada respuesta entra al ticket como mensaje del cliente (no leído para el
+# equipo). La cotización se pre-arma sola en el cotizador pero la valida y envía una PERSONA.
+# ══════════════════════════════════════════════════════════════════
+_PROSP_PLANTILLAS = {
+    "p1_oferta": ("Paso 1 · {{cliente_nombre}}: tu plan de mantención ILUS Fitness",
+                  "<p>Hola {{contacto_nombre}},</p>"
+                  "<p>Instalamos el equipamiento de <b>{{cliente_nombre}}</b> y queremos que siga rindiendo al 100%. "
+                  "Te ofrecemos nuestro <b>Plan de Mantención</b> para tus equipos:</p>{{equipos_html}}"
+                  "<p><b>{{visitas_anio}} mantenciones al año</b>{{descuento_txt}}.</p>{{escalera_html}}"
+                  "<p>El plan incluye:</p>{{incluye_html}}"
+                  "<p style=\"margin:18px 0 8px\"><b>¿Quieres que avancemos con tu cotización?</b> Responde con un clic:</p>"
+                  "{{botones_html}}"
+                  "<p style=\"font-size:12px;color:#6b7280\">También puedes responder este correo; tu respuesta llega directo a tu ejecutivo.</p>"),
+    "p2_cotizacion": ("Paso 2 · Tu cotización del plan de mantención ({{numero_cotizacion}})",
+                      "<p>Hola {{contacto_nombre}},</p>"
+                      "<p>Tu cotización <b>{{numero_cotizacion}}</b> para el plan de mantención de <b>{{cliente_nombre}}</b> está lista "
+                      "(total {{total_cotizacion}}).</p>{{escalera_html}}"
+                      "<p>Revísala y acéptala en línea, en menos de un minuto:</p>{{boton_propuesta_html}}"
+                      "<p style=\"font-size:12px;color:#6b7280\">¿Dudas? Responde este correo y te contactamos.</p>"),
+    "p4_bienvenida": ("Paso 4 · ¡Bienvenido al plan de mantención ILUS Fitness!",
+                      "<p>Hola {{contacto_nombre}},</p>"
+                      "<p>Gracias por confiar en nosotros: <b>{{cliente_nombre}}</b> ya es parte del plan de mantención. "
+                      "Te contactaremos para coordinar la primera visita y firmar el contrato.</p>"),
+}
+
+
+def _ensure_comm_templates_prospectos():
+    """Siembra (INSERT IGNORE: no pisa ediciones) los pasos del módulo «Gestión de prospectos de mantención» y mueve
+    a este módulo las plantillas de prospectos que nacieron en 'mantenciones' (sin perder lo editado)."""
+    try:
+        for est, (asunto, cuerpo) in _PROSP_PLANTILLAS.items():
+            mysql_execute("INSERT IGNORE INTO comm_templates (modulo, estado, canal, asunto, cuerpo) "
+                          "VALUES ('prospectos',%s,'email',%s,%s)", (est, asunto, cuerpo))
+        for est in ("prospecto_oferta_1", "prospecto_oferta_2", "plan_mantencion_oferta"):
+            ya = mysql_fetchone("SELECT id FROM comm_templates WHERE modulo='prospectos' AND estado=%s AND canal='email'", (est,))
+            if not ya:
+                mysql_execute("UPDATE comm_templates SET modulo='prospectos' WHERE modulo='mantenciones' AND estado=%s "
+                              " AND canal='email'", (est,))
+    except Exception as e:
+        print(f"[ensure_comm_tpl] prospectos: {e}", flush=True)
+
+
+def _prospecto_fila(cid):
+    _ensure_mant_prospecto_seguimiento()
+    r = mysql_fetchone("SELECT * FROM mant_prospecto_seguimiento WHERE cliente_id=%s", (cid,))
+    if not r:
+        mysql_execute("INSERT IGNORE INTO mant_prospecto_seguimiento (cliente_id, etapa) VALUES (%s,'por_ofrecer')", (cid,))
+        r = mysql_fetchone("SELECT * FROM mant_prospecto_seguimiento WHERE cliente_id=%s", (cid,))
+    return dict(r or {})
+
+
+def _prospecto_token(cid):
+    """Token del link de la propuesta (uno por cliente, imposible de adivinar)."""
+    fila = _prospecto_fila(cid)
+    if fila.get("token"):
+        return fila["token"]
+    tok = secrets.token_urlsafe(24)
+    mysql_execute("UPDATE mant_prospecto_seguimiento SET token=%s WHERE cliente_id=%s AND token IS NULL", (tok, cid))
+    return (_prospecto_fila(cid).get("token")) or tok
+
+
+def _prospecto_ticket_oferta(cid, quien):
+    """El ticket «Oferta de plan de mantención» del cliente: el mismo mientras siga abierto; si no, uno nuevo."""
+    fila = _prospecto_fila(cid)
+    if fila.get("ticket_id"):
+        t = mysql_fetchone("SELECT id, numero_ticket, estado FROM tk_tickets WHERE id=%s", (fila["ticket_id"],))
+        if t and t.get("estado") not in ("closed", "cancelado"):
+            return dict(t)
+    cli = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
+    if not cli:
+        return None
+    cli = dict(cli)
+    puntos = "\n".join(f"  • {p_}" for p_ in _PROSP_PLAN_PUNTOS)
+    desc = (f"Oferta del plan de mantención a {cli.get('razon_social')}.\n\nEste ticket es la bandeja de la oferta: los "
+            f"correos salen desde aquí y las respuestas del cliente (correo o botones de la propuesta) llegan aquí.\n\n"
+            f"Qué ofrecemos:\n{puntos}")
+    hoy = datetime.now()
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO tk_tickets (origen, estado, tipo, prioridad, titulo, descripcion, rut, empresa, nombre_contacto, "
+                "  email, phone, direccion, comuna_nombre, asignado_a, fecha_limite, created_by) "
+                "VALUES ('backoffice','open','maintenance','media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (f"Oferta de plan de mantención — {cli.get('razon_social')}"[:300], desc,
+                 (cli.get("rut") or "")[:12] or None, (cli.get("razon_social") or "")[:150],
+                 (cli.get("contacto_nombre") or "")[:150] or None,
+                 (cli.get("contacto_email") or cli.get("email_empresa") or "")[:150] or None,
+                 (cli.get("contacto_tel") or cli.get("tel_empresa") or "")[:20] or None,
+                 (cli.get("direccion") or "")[:255] or None, (cli.get("comuna") or "")[:120] or None,
+                 (quien or "")[:190] if quien and quien != "sistema" else None,
+                 (hoy.date() + timedelta(days=5)), quien or "sistema"))
+            tid = cur.lastrowid
+            cur.execute("UPDATE tk_tickets SET numero_ticket = CONCAT('TK-', %s, '-', LPAD(id,5,'0')) WHERE id=%s",
+                        (hoy.year, tid))
+            cur.execute("INSERT INTO tk_mensajes (ticket_id, tipo, contenido, usuario, es_interno) VALUES (%s,'creacion',%s,%s,1)",
+                        (tid, f"Ticket creado para ofrecer el plan de mantención (cliente #{cid}).", quien or "sistema"))
+        conn.commit()
+    finally:
+        conn.close()
+    mysql_execute("UPDATE mant_prospecto_seguimiento SET ticket_id=%s WHERE cliente_id=%s", (tid, cid))
+    try:
+        _mant_log("cliente", cid, "prospecto_ticket", f"Ticket de la oferta creado (#{tid}) · por {quien}")
+    except Exception:
+        pass
+    t = mysql_fetchone("SELECT id, numero_ticket, estado FROM tk_tickets WHERE id=%s", (tid,))
+    return dict(t) if t else None
+
+
+def _prospecto_mensaje_ticket(tid, contenido, tipo="client_message", usuario="cliente", interno=False, to_email=None,
+                              estado_envio=None, asunto=None):
+    """Deja un mensaje en el hilo del ticket. tipo='client_message' cuenta como NO LEÍDO para el equipo."""
+    try:
+        mysql_execute(
+            "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno, to_email, estado_envio) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (tid, tipo, contenido[:20000], json.dumps({"subject": asunto}, ensure_ascii=False) if asunto else None,
+             usuario, 1 if interno else 0, to_email, estado_envio))
+    except Exception:
+        mysql_execute("INSERT INTO tk_mensajes (ticket_id, tipo, contenido, usuario, es_interno) VALUES (%s,%s,%s,%s,%s)",
+                      (tid, tipo, contenido[:20000], usuario, 1 if interno else 0))
+    try:
+        mysql_execute("UPDATE tk_tickets SET updated_at=NOW() WHERE id=%s", (tid,))
+    except Exception:
+        pass
+
+
+def _prospecto_correo_por_ticket(tid, numero, to_email, tema, cuerpo_html, quien):
+    """Envía al cliente DESDE el ticket: número en el asunto (threading por IMAP), Reply-To de Tickets, modo prueba
+    de Tickets, llave de paso de Tickets. Deja el mensaje en el hilo. Devuelve True si salió."""
+    if numero not in tema:
+        tema = f"{numero} — {tema}"
+    subject = _brand_subject(tema)
+    _redir = globals().get("_tk_test_redirect")
+    to_envio, subject_envio = _redir(to_email, subject) if _redir else (to_email, subject)
+    html_final = _comm_render_email_document(subject_envio, cuerpo_html, subtitle="Plan de Mantención · ILUS Fitness")
+    kwargs = {"evento": "prospecto_oferta", "modulo": "tickets"}
+    _rt = globals().get("_tk_reply_to")
+    if _rt:
+        try:
+            kwargs["reply_to"] = _rt()
+        except Exception:
+            pass
+    try:
+        ok = bool(_send_ilus_email(to_envio, subject_envio, html_final, **kwargs))
+    except Exception as e:
+        print(f"[prospecto_correo] tid={tid}: {e}", flush=True)
+        ok = False
+    _prospecto_mensaje_ticket(tid, cuerpo_html, tipo="mensaje", usuario=quien, interno=False, to_email=(to_email or "")[:150],
+                              estado_envio="enviado" if ok else "fallido", asunto=subject)
+    if ok:
+        try:
+            mysql_execute("UPDATE tk_tickets SET estado='in_progress' WHERE id=%s AND estado='open'", (tid,))
+        except Exception:
+            pass
+    return ok
+
+
+def _boton_html(url, texto, color="#dc2626"):
+    return (f'<a href="{url}" style="display:inline-block;margin:4px 6px 4px 0;padding:11px 18px;border-radius:8px;'
+            f'background:{color};color:#fff;font-weight:bold;text-decoration:none;font-size:14px">{texto}</a>')
+
+
+def _prospecto_vars(cid, desc_override=None, visitas_override=None):
+    """Variables comunes de las plantillas de la oferta (equipos del plan, descuento, escalera, incluye)."""
+    import html as _html
+    esc = _html.escape
+    cli = dict(mysql_fetchone("SELECT id, razon_social, contacto_nombre FROM mant_clientes WHERE id=%s", (cid,)) or {})
+    cfg = _plan_config()
+    eq = _plan_equipos(cid)
+    n = sum(int(e["cantidad"] or 1) for e in eq)
+    c = _plan_calc(cfg, n, desc_override, visitas_override)
+    equipos_html = ('<ul style="margin:8px 0 12px;padding-left:20px">' + "".join(
+        f'<li style="margin:3px 0">{esc(e["nombre"] or "Equipo")}' + (f' × {int(e["cantidad"])}' if int(e["cantidad"] or 1) > 1 else "")
+        + "</li>" for e in eq) + "</ul>") if eq else ""
+    esc_l = _escalera_parse(cfg.get("escalera")) if str(cfg.get("escalera_activa") or "0") == "1" else []
+    ordn = ["1ª", "2ª", "3ª", "4ª", "5ª", "6ª"]
+    escalera_html = ""
+    if esc_l:
+        escalera_html = ('<p style="margin:10px 0"><b>Tu plan de bienvenida:</b> '
+                         + ", ".join(f"{ordn[i]} mantención " + ("sin costo" if v >= 100 else f"con {v:g}% de descuento")
+                                     for i, v in enumerate(esc_l))
+                         + f"; luego el precio del plan" + (f" con {c['descuento_pct']:g}% de descuento" if c["descuento_pct"] else "") + ".</p>")
+    incluye_html = ('<ul style="margin:8px 0 12px;padding-left:20px">' + "".join(
+        f'<li style="margin:3px 0">{esc(l_.strip())}</li>' for l_ in (cfg.get("incluye") or "").splitlines() if l_.strip()) + "</ul>")
+    return cli, {
+        "cliente_nombre": cli.get("razon_social") or "", "contacto_nombre": (cli.get("contacto_nombre") or "").strip() or "equipo",
+        "equipos_html": equipos_html, "visitas_anio": c["visitas_anio"],
+        "descuento_txt": (f" con <b>{c['descuento_pct']:g}% de descuento</b>" if c["descuento_pct"] else ""),
+        "descuento_pct": f"{c['descuento_pct']:g}", "escalera_html": escalera_html, "incluye_html": incluye_html,
+        "vigencia_meses": int(float(cfg.get("vigencia_meses") or 12)), "n_equipos": n,
+    }, c
+
+
+def _prospecto_render(estado, variables):
+    tpl = _render_comm_template(estado, "email", variables, modulo="prospectos")
+    if tpl is None:
+        asunto, cuerpo = _PROSP_PLANTILLAS[estado]
+        for k, v in variables.items():
+            asunto = asunto.replace("{{" + k + "}}", str(v))
+            cuerpo = cuerpo.replace("{{" + k + "}}", str(v))
+        tpl = (asunto, re.sub(r"\{\{\s*\w+\s*\}\}", "", cuerpo))
+    return tpl
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/prospecto/ofrecer", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_prospecto_ofrecer(cid):
+    """Paso 1: crea (o reutiliza) el ticket de la oferta y envía DESDE el ticket el correo con la pregunta fácil y
+    los botones de un clic. Solo lo dispara una persona (nada automático)."""
+    d = request.get_json(silent=True) or {}
+    email = (d.get("email") or "").strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email) or len(email) > 180:
+        return jsonify({"ok": False, "error": "Escribe un correo válido para enviar la oferta."}), 400
+    if not mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (cid,)):
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+    if not comm_is_enabled("email"):
+        return jsonify({"ok": False, "error": "El correo está apagado en Comunicaciones."}), 409
+    quien = current_username() or "sistema"
+    t = _prospecto_ticket_oferta(cid, quien)
+    if not t:
+        return jsonify({"ok": False, "error": "No se pudo abrir el ticket de la oferta."}), 500
+    tok = _prospecto_token(cid)
+    link = url_for("prospecto_propuesta_publica", token=tok, _external=True)
+    cli, variables, c = _prospecto_vars(cid, d.get("descuento_pct"), d.get("visitas_anio"))
+    variables["link_propuesta"] = link
+    variables["botones_html"] = (_boton_html(link + "?r=si", "Sí, quiero la cotización", "#16a34a")
+                                 + _boton_html(link + "?r=llamar", "Prefiero que me llamen", "#0a0a0a")
+                                 + _boton_html(link + "?r=no", "No por ahora", "#6b7280"))
+    asunto, cuerpo = _prospecto_render("p1_oferta", variables)
+    numero = t.get("numero_ticket") or f"#{t['id']}"
+    ok = _prospecto_correo_por_ticket(t["id"], numero, email, asunto, cuerpo, quien)
+    if not ok:
+        return jsonify({"ok": False, "error": "El correo no se pudo enviar. Quedó guardado en el ticket para reintentar.",
+                        "ticket": {"id": t["id"], "numero": numero, "url": f"/tickets/{t['id']}"}}), 502
+    mysql_execute(
+        "UPDATE mant_prospecto_seguimiento SET etapa=IF(etapa IN ('aceptada','rechazada'),etapa,'ofrecida'), "
+        "  ofrecida_at=COALESCE(ofrecida_at, UTC_TIMESTAMP()), ofrecida_por=COALESCE(ofrecida_por,%s), "
+        "  proxima_gestion=%s, updated_by=%s WHERE cliente_id=%s",
+        (quien, datetime.today().date() + timedelta(days=3), quien, cid))
+    try:
+        _mant_log("cliente", cid, "prospecto_ofrecido",
+                  f"Oferta del plan enviada a {email} desde el ticket {numero} · {c['n_equipos']} equipo(s) · "
+                  f"descuento {c['descuento_pct']:g}% · por {quien}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "mensaje": f"Oferta enviada a {email} desde el ticket {numero}.", "link": link,
+                    "ticket": {"id": t["id"], "numero": numero, "url": f"/tickets/{t['id']}"}})
+
+
+def _cotizacion_vigente_de(cid):
+    try:
+        r = mysql_fetchone(
+            "SELECT id, numero_cotizacion, estado, total, subtotal, descuento_monto, iva_monto, valida_hasta, created_at "
+            "  FROM tk_cotizaciones WHERE cliente_id=%s AND COALESCE(eliminada,0)=0 AND estado IN ('draft','sent','approved') "
+            " ORDER BY id DESC LIMIT 1", (cid,))
+        return dict(r) if r else None
+    except Exception as e:
+        print(f"[cotizacion_vigente] {e}", flush=True)
+        return None
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/prospecto/enviar-cotizacion", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_prospecto_enviar_cotizacion(cid):
+    """Paso 2: con la cotización ya revisada por una persona, envía desde el ticket el link para aceptarla en línea."""
+    d = request.get_json(silent=True) or {}
+    email = (d.get("email") or "").strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email) or len(email) > 180:
+        return jsonify({"ok": False, "error": "Escribe un correo válido."}), 400
+    cot = _cotizacion_vigente_de(cid)
+    if not cot:
+        return jsonify({"ok": False, "error": "Este cliente todavía no tiene una cotización. Ármala primero con «Cotizar»."}), 409
+    if not comm_is_enabled("email"):
+        return jsonify({"ok": False, "error": "El correo está apagado en Comunicaciones."}), 409
+    quien = current_username() or "sistema"
+    t = _prospecto_ticket_oferta(cid, quien)
+    if not t:
+        return jsonify({"ok": False, "error": "No se pudo abrir el ticket de la oferta."}), 500
+    link = url_for("prospecto_propuesta_publica", token=_prospecto_token(cid), _external=True)
+    cli, variables, c = _prospecto_vars(cid)
+    variables.update({"link_propuesta": link, "numero_cotizacion": cot.get("numero_cotizacion") or f"#{cot['id']}",
+                      "total_cotizacion": _clp_fmt(cot.get("total") or 0),
+                      "boton_propuesta_html": _boton_html(link, "Ver y aceptar mi cotización", "#dc2626")})
+    asunto, cuerpo = _prospecto_render("p2_cotizacion", variables)
+    numero = t.get("numero_ticket") or f"#{t['id']}"
+    ok = _prospecto_correo_por_ticket(t["id"], numero, email, asunto, cuerpo, quien)
+    if not ok:
+        return jsonify({"ok": False, "error": "El correo no se pudo enviar. Quedó guardado en el ticket."}), 502
+    if cot.get("estado") == "draft":
+        try:
+            if mysql_execute_returning_rowcount(
+                    "UPDATE tk_cotizaciones SET estado='sent' WHERE id=%s AND estado='draft'", (cot["id"],)):
+                mysql_execute("INSERT INTO tk_cotizacion_log (cotizacion_id, accion, usuario, detalle) VALUES (%s,%s,%s,%s)",
+                              (cot["id"], "enviar_correo", quien[:190],
+                               json.dumps({"via": "propuesta del plan de mantención", "to": email, "ticket": numero},
+                                          ensure_ascii=False)))
+        except Exception as e:
+            print(f"[prospecto_enviar_cotizacion] estado sent cot={cot['id']}: {e}", flush=True)
+    try:
+        _mant_log("cliente", cid, "prospecto_cotizacion_enviada",
+                  f"Cotización {variables['numero_cotizacion']} enviada para aceptar en línea a {email} · ticket {numero} · por {quien}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "mensaje": f"Cotización enviada a {email} desde el ticket {numero}.", "link": link})
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/prospecto/link", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_prospecto_link(cid):
+    """Link de la página de la propuesta, SIN enviar nada (para WhatsApp o para revisarla antes)."""
+    if not mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (cid,)):
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+    return jsonify({"ok": True, "link": url_for("prospecto_propuesta_publica", token=_prospecto_token(cid), _external=True)})
+
+
+@app.route("/propuesta/<token>", methods=["GET"])
+def prospecto_propuesta_publica(token):
+    """Página PÚBLICA de la propuesta (sin sesión; el token largo es la llave). No muestra costos internos."""
+    tok = (token or "").strip()[:60]
+    fila = mysql_fetchone("SELECT * FROM mant_prospecto_seguimiento WHERE token=%s", (tok,)) if tok else None
+    if not fila:
+        return render_template("mantenciones/propuesta_publica.html", invalido=True), 404
+    fila = dict(fila)
+    cid = fila["cliente_id"]
+    cli, variables, c = _prospecto_vars(cid)
+    cfg = _plan_config()
+    cot = _cotizacion_vigente_de(cid)
+    cot_visible = cot if (cot and cot.get("estado") in ("sent", "approved")) else None
+    items = []
+    if cot_visible:
+        items = [dict(r) for r in (mysql_fetchall(
+            "SELECT descripcion, cantidad, total FROM tk_cotizacion_items WHERE cotizacion_id=%s ORDER BY id",
+            (cot_visible["id"],)) or [])]
+    info = (_prospecto_info([cid]) or {}).get(cid) or {}
+    return render_template("mantenciones/propuesta_publica.html", invalido=False, token=tok, cliente=cli, v=variables,
+                           calc=c, plan=info.get("plan"), equipos=_plan_equipos(cid), fila=fila, cot=cot_visible,
+                           items=items, incluye=[l_.strip() for l_ in (cfg.get("incluye") or "").splitlines() if l_.strip()],
+                           pedida=(request.args.get("r") or "").strip().lower())
+
+
+@app.route("/propuesta/<token>/responder", methods=["POST"])
+def prospecto_propuesta_responder(token):
+    """Respuesta de un clic del cliente. Queda en el ticket como mensaje del cliente (no leído para el equipo) y
+    mueve el seguimiento. Nunca envía correos por su cuenta."""
+    tok = (token or "").strip()[:60]
+    fila = mysql_fetchone("SELECT * FROM mant_prospecto_seguimiento WHERE token=%s", (tok,)) if tok else None
+    if not fila:
+        return jsonify({"ok": False, "error": "El enlace no es válido."}), 404
+    fila = dict(fila)
+    cid = fila["cliente_id"]
+    d = request.get_json(silent=True) or request.form.to_dict() or {}
+    accion = (d.get("accion") or "").strip().lower()
+    if accion not in ("si", "llamar", "no", "acepta"):
+        return jsonify({"ok": False, "error": "Respuesta no válida."}), 400
+    ip = (request.headers.get("X-Forwarded-For") or request.remote_addr or "").split(",")[0].strip()[:64]
+    try:
+        if fila.get("respuesta") == accion and fila.get("respuesta_at") and \
+                (datetime.utcnow() - fila["respuesta_at"]).total_seconds() < 600:
+            return jsonify({"ok": True, "accion": accion, "repetida": True})
+    except Exception:
+        pass
+    cli = dict(mysql_fetchone("SELECT id, razon_social, contacto_tel, tel_empresa FROM mant_clientes WHERE id=%s", (cid,)) or {})
+    tid = fila.get("ticket_id")
+    if not tid:
+        t = _prospecto_ticket_oferta(cid, "sistema")
+        tid = t["id"] if t else None
+    texto = ""
+    if accion == "si":
+        texto = "El cliente respondió desde la propuesta: «Sí, quiero la cotización»."
+        mysql_execute("UPDATE mant_prospecto_seguimiento SET respuesta='si', respuesta_at=UTC_TIMESTAMP(), "
+                      "  etapa=IF(etapa IN ('aceptada','rechazada'),etapa,'ofrecida'), proxima_gestion=%s WHERE cliente_id=%s",
+                      (datetime.today().date(), cid))
+    elif accion == "llamar":
+        tel = cli.get("contacto_tel") or cli.get("tel_empresa") or "(sin teléfono en la ficha)"
+        texto = f"El cliente pidió desde la propuesta: «Prefiero que me llamen». Teléfono: {tel}."
+        mysql_execute("UPDATE mant_prospecto_seguimiento SET respuesta='llamar', respuesta_at=UTC_TIMESTAMP(), "
+                      "  proxima_gestion=%s WHERE cliente_id=%s", (datetime.today().date(), cid))
+    elif accion == "no":
+        texto = "El cliente respondió desde la propuesta: «No por ahora». No se le vuelve a escribir."
+        mysql_execute("UPDATE mant_prospecto_seguimiento SET respuesta='no', respuesta_at=UTC_TIMESTAMP(), "
+                      "  etapa=IF(etapa='aceptada',etapa,'rechazada') WHERE cliente_id=%s", (cid,))
+    else:
+        nombre = (d.get("nombre") or "").strip()[:150]
+        ok_rut, rut_v = validar_rut((d.get("rut") or "").strip())
+        cot = _cotizacion_vigente_de(cid)
+        if len(nombre) < 3 or not ok_rut:
+            return jsonify({"ok": False, "error": "Escribe tu nombre y un RUT válido para aceptar."}), 400
+        if not cot or cot.get("estado") not in ("sent", "approved"):
+            return jsonify({"ok": False, "error": "Todavía no hay una cotización para aceptar."}), 409
+        texto = (f"El cliente ACEPTÓ la cotización {cot.get('numero_cotizacion') or cot['id']} desde la propuesta. "
+                 f"Aceptó: {nombre} (RUT {_rut_canon(rut_v) or rut_v}). Siguiente paso: preparar y firmar el contrato.")
+        mysql_execute("UPDATE mant_prospecto_seguimiento SET respuesta='acepta', respuesta_at=UTC_TIMESTAMP(), etapa='aceptada', "
+                      "  acepta_nombre=%s, acepta_rut=%s, acepta_ip=%s, acepta_cotizacion_id=%s WHERE cliente_id=%s",
+                      (nombre, _rut_canon(rut_v) or rut_v, ip, cot["id"], cid))
+    if tid:
+        _prospecto_mensaje_ticket(tid, texto + f" (IP {ip})", tipo="client_message", usuario="cliente (propuesta web)")
+        if accion == "si":
+            _cfg = _plan_config()
+            _url = (f"/tickets/cotizaciones?desde_cliente={cid}&plan=1&tipo=mantencion&descuento={_cfg.get('descuento_pct') or 0}"
+                    f"&frecuencia={_cfg.get('visitas_anio') or 4}&ticket={tid}")
+            _prospecto_mensaje_ticket(tid, f"Siguiente paso: armar la cotización del plan (se carga sola con sus equipos; "
+                                           f"revísala antes de enviarla): {_url}", tipo="comentario", usuario="sistema",
+                                      interno=True)
+    try:
+        _mant_log("cliente", cid, f"propuesta_{accion}", texto)
+    except Exception:
+        pass
+    return jsonify({"ok": True, "accion": accion})
 
 
 @app.route("/mantenciones/api/clientes/<int:cid>/prospecto/contacto", methods=["POST"])
@@ -147583,6 +148026,7 @@ try:
         _ensure_comm_template_prospecto_oferta()
         _ensure_mant_plan_config()
         _ensure_comm_template_plan_oferta()
+        _ensure_comm_templates_prospectos()
 except Exception as _ensure_prosp_err:
     print(f"[ILUS][WARN] _ensure_mant_prospecto_seguimiento: {_ensure_prosp_err}", flush=True)
 

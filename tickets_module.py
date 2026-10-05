@@ -866,6 +866,8 @@ def register_tickets_routes(app, ctx):
             print(f"[_tk_reply_to] fallback a env/default: {_e}", flush=True)
         return (os.environ.get("TK_SUPPORT_REPLY_TO") or "daniel.aguilar@sphs.cl").strip()
 
+    ctx["_tk_reply_to"] = _tk_reply_to  # lo usa la oferta de mantención (app.py): mismo Reply-To que el ticket
+
     # Token del cron de correo entrante (Daniel 2026-07-18): "la llave debe
     # vivir EN EL SISTEMA" -- Daniel no tiene acceso a DNS/infra para setear
     # TK_MAIL_CRON_TOKEN en Cloud Run sin riesgo de pisar otro secret de
@@ -11519,6 +11521,8 @@ def register_tickets_routes(app, ctx):
             print(f"[TK_TEST_MODE] correo de ticket redirigido: real={real_to} -> {test_to}", flush=True)
             return test_to, f"[PRUEBA→{real_to}] {subject}"
         return to_email, subject
+
+    ctx["_tk_test_redirect"] = _tk_test_redirect  # idem: el MODO PRUEBA de Tickets también cubre la oferta
 
     @app.route("/portal/ticket/<int:tid>")
     def tk_portal_ver(tid):

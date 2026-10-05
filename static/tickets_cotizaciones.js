@@ -2756,6 +2756,9 @@ async function _cotWizAplicarDeepLinkCliente(cid, opts){
 async function _cotWizPlanDesdeFicha(cid, params){
   await _cotWizAplicarDeepLinkCliente(cid, { autoAgregarEquipos: true, forzarPlan: true });
   if (!_WIZ) return;
+  // La cotización queda asociada al ticket de la oferta (la bandeja de esa conversación).
+  const _tk = parseInt(params.get('ticket'), 10);
+  if (_tk > 0) _WIZ.ticketId = _tk;
   const tipo = (params.get('tipo') || 'mantencion');
   const pill = document.querySelector('.cot-wiz-ts-pill[data-v="' + tipo + '"]');
   if (pill && !pill.classList.contains('disabled') && _WIZ.tipo !== tipo) cotWizTipoServ(pill);

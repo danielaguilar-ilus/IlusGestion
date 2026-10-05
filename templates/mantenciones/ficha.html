@@ -443,8 +443,17 @@
                     title="Igual, pero como visita técnica">
               <i class="bi bi-geo-alt me-1"></i>Cotizar visita
             </button>
-            <button type="button" class="btn btn-sm btn-outline-dark fw-bold" onclick="abrirPlanMantencion()">
-              <i class="bi bi-envelope-paper me-1"></i>Enviar propuesta del plan
+            <button type="button" class="btn btn-sm btn-dark fw-bold" onclick="abrirPlanMantencion()">
+              <i class="bi bi-envelope-paper-heart me-1"></i>Ofrecer el plan por correo
+            </button>
+            {% if prospecto.cotizacion %}
+            <button type="button" class="btn btn-sm btn-success fw-bold" onclick="enviarCotizacionAceptar(this)"
+                    title="Envía desde el ticket el link para que el cliente acepte la cotización {{ prospecto.cotizacion.numero_cotizacion }} en línea">
+              <i class="bi bi-pen me-1"></i>Enviar {{ prospecto.cotizacion.numero_cotizacion }} para aceptar
+            </button>
+            {% endif %}
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="copiarLinkPropuesta()" title="Copia el link de la página de la propuesta (para WhatsApp). No envía nada.">
+              <i class="bi bi-link-45deg me-1"></i>Copiar link de la propuesta
             </button>
           </div>
           <div class="small text-muted mt-1">El precio lo calcula el cotizador (tarifas por categoría de producto); ahí mismo cambias entre mantención, visita u otro tipo.</div>
@@ -454,7 +463,7 @@
         <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
           <div class="modal-content">
             <div class="modal-header" style="background:#0a0a0a;color:#fff">
-              <h5 class="modal-title fw-bold"><i class="bi bi-clipboard2-check me-2"></i>Plan de mantención — {{ cliente.razon_social }}</h5>
+              <h5 class="modal-title fw-bold"><i class="bi bi-envelope-paper-heart me-2"></i>Ofrecer el plan — {{ cliente.razon_social }}</h5>
               <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
@@ -473,8 +482,10 @@
                     <datalist id="pmEmails"></datalist></div>
                 </div>
                 <div class="p-3 rounded small" style="background:#f0fdfa;border:1px solid #99f6e4" id="pmTotales">
-                  El <b>precio</b> sale del cotizador. Primero usa <b>«Cotizar mantención del plan»</b>, envía la cotización con su PDF
-                  y luego esta propuesta lleva el descuento, las visitas y lo que incluye el plan.</div>
+                  El correo sale <b>desde el ticket de la oferta</b> (todo queda en esa bandeja) con una pregunta fácil y tres botones:
+                  <b>Sí, quiero la cotización</b> · <b>Llámenme</b> · <b>No por ahora</b>. Si dice que sí, el ticket te deja el link al
+                  cotizador con sus equipos cargados; tú la revisas y la envías.</div>
+                <div class="p-3 rounded small mt-2" style="background:#f0fdf4;border:1px solid #86efac" id="pmResultado" hidden></div>
               </div>
             </div>
             <div class="modal-footer">
@@ -489,7 +500,35 @@
       function cotizarPlan(tipo){
         const q = new URLSearchParams({ desde_cliente: '{{ cliente.id }}', plan: '1', tipo: tipo,
           descuento: '{{ prospecto.plan_descuento_pct }}', frecuencia: '{{ prospecto.plan_visitas }}' });
+        {% if prospecto.ticket_oferta_id %}q.set('ticket', '{{ prospecto.ticket_oferta_id }}');{% endif %}
         window.open('/tickets/cotizaciones?' + q.toString(), '_blank');
+      }
+      async function enviarCotizacionAceptar(btn){
+        const email = await ilusPrompt({ title: 'Enviar la cotización para aceptar', message: 'Correo del cliente:',
+          placeholder: 'correo@cliente.cl', required: true, value: {{ (prospecto.email_sugerido or '')|tojson }} });
+        if (!email) return;
+        btn.disabled = true;
+        try {
+          const r = await fetch('/mantenciones/api/clientes/{{ cliente.id }}/prospecto/enviar-cotizacion', {method:'POST',
+            headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email })});
+          const d = await r.json();
+          if (!d.ok) { ilusToast(d.error || 'No se pudo enviar', {type:'error'}); return; }
+          ilusToast('✓ ' + d.mensaje, {type:'success'});
+        } catch(e){ ilusToast('Error de red', {type:'error'}); }
+        finally { btn.disabled = false; }
+      }
+      let _linkProp = {{ (prospecto.link_propuesta or '')|tojson }};
+      async function copiarLinkPropuesta(){
+        if (!_linkProp){
+          try {
+            const r = await fetch('/mantenciones/api/clientes/{{ cliente.id }}/prospecto/link', {method:'POST'});
+            const d = await r.json();
+            if (!d.ok) { ilusToast(d.error || 'No se pudo generar el link', {type:'error'}); return; }
+            _linkProp = d.link;
+          } catch(e){ ilusToast('Error de red', {type:'error'}); return; }
+        }
+        try { await navigator.clipboard.writeText(_linkProp); ilusToast('✓ Link de la propuesta copiado', {type:'success'}); }
+        catch(e){ ilusPrompt({ title: 'Link de la propuesta', message: 'Cópialo:', value: _linkProp }); }
       }
       const _pmClp = n => '$' + Math.round(n || 0).toLocaleString('es-CL');
       async function abrirPlanMantencion(){
@@ -526,15 +565,18 @@
         if (!ok) return;
         btn.disabled = true;
         try {
-          const r = await fetch('/mantenciones/api/clientes/{{ cliente.id }}/plan-enviar', {method:'POST', headers:{'Content-Type':'application/json'},
+          const r = await fetch('/mantenciones/api/clientes/{{ cliente.id }}/prospecto/ofrecer', {method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({ email, descuento_pct: document.getElementById('pmDesc').value, visitas_anio: document.getElementById('pmVisitas').value })});
           const d = await r.json();
           if (!d.ok) { ilusToast(d.error || 'No se pudo enviar', {type:'error'}); return; }
           ilusToast('✓ ' + d.mensaje, {type:'success'});
-          document.getElementById('prospEtapa').value = 'ofrecida';
-          document.getElementById('prospEtapaBadge').textContent = 'Ofrecida';
-          _pmModal.hide();
-          setTimeout(function(){ location.reload(); }, 900);
+          const res = document.getElementById('pmResultado');
+          res.hidden = false;
+          res.innerHTML = '<b><i class="bi bi-check-circle-fill text-success me-1"></i>Oferta enviada.</b> Las respuestas llegan al ticket ' +
+            '<a href="' + d.ticket.url + '" target="_blank" class="fw-bold">' + pmEsc(d.ticket.numero) + '</a>.<br>' +
+            'Link de la propuesta (para WhatsApp): <a href="' + pmEsc(d.link) + '" target="_blank">' + pmEsc(d.link) + '</a>';
+          btn.style.display = 'none';
+          document.getElementById('modalPlanMant').addEventListener('hidden.bs.modal', function(){ location.reload(); }, {once:true});
         } catch(e){ ilusToast('Error de red al enviar', {type:'error'}); }
         finally { btn.disabled = false; }
       }

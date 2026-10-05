@@ -372,6 +372,7 @@ function poblarPlantillasManual() {
     { label:'Cotizaciones Transporte', lista:TPL_ESTADOS_COTIZACIONES_TRANSPORTE },
     { label:'Retiros',              lista:TPL_ESTADOS_RETIROS },
     { label:'Servicio Técnico',     lista:TPL_ESTADOS_MANTENCIONES },
+    { label:'Gestión de prospectos de mantención', lista:TPL_ESTADOS_PROSPECTOS },
     { label:'Comunicación interna', lista:TPL_ESTADOS_COMUNICACION_INTERNA },
     { label:'Tickets',              lista:TPL_ESTADOS_TICKETS },
     { label:'Catálogo',             lista:TPL_ESTADOS_CATALOGO },
@@ -621,13 +622,23 @@ const TPL_ESTADOS_MANTENCIONES = [
   // acompaña un documento contractual.
   { key:'anexo_nueva_ot',      label:'Anexo de servicios al proveedor', icon:'bi-file-earmark-check', grupo:'anexo',
     color:'#dc2626', desc:'Aviso de OT nueva + link para que el proveedor firme el Anexo de Servicios' },
-  // 2026-10-04 (Daniel): campaña para ofrecer mantención a clientes de instalación.
-  { key:'prospecto_oferta_1',  label:'Oferta de mantención · 15 días', icon:'bi-megaphone-fill', grupo:'prospecto',
-    color:'#f59e0b', desc:'Primer correo al cliente de instalación, 15 días después de terminada la instalación (abre un ticket sin asignar)' },
-  { key:'prospecto_oferta_2',  label:'Oferta de mantención · 3 meses', icon:'bi-megaphone', grupo:'prospecto',
-    color:'#d97706', desc:'Segundo correo, 3 meses después de la instalación, si el cliente no aceptó ni rechazó' },
-  { key:'plan_mantencion_oferta', label:'Propuesta de plan de mantención', icon:'bi-clipboard2-check-fill', grupo:'prospecto',
-    color:'#0d9488', desc:'Propuesta con equipos, visitas, descuento y precio, enviada desde la ficha del cliente' },
+];
+
+// 2026-10-04 (Daniel: «crear las plantillas separadas del resto, llámala gestión de prospectos de mantención,
+// enumera los pasos»). Una sección propia, en el orden del proceso.
+const TPL_ESTADOS_PROSPECTOS = [
+  { key:'p1_oferta',        label:'1 · Oferta del plan', icon:'bi-megaphone-fill', grupo:'prospecto',
+    color:'#dc2626', desc:'Sale desde el ticket de la oferta: el plan, sus equipos y los botones «Sí, quiero la cotización» / «Llámenme» / «No por ahora»' },
+  { key:'p2_cotizacion',    label:'2 · Tu cotización (aceptar en línea)', icon:'bi-file-earmark-check-fill', grupo:'prospecto',
+    color:'#f59e0b', desc:'Con la cotización ya revisada por una persona: link a la propuesta para aceptarla con nombre y RUT' },
+  { key:'prospecto_oferta_2', label:'3 · Recordatorio (3 meses)', icon:'bi-bell-fill', grupo:'prospecto',
+    color:'#0ea5e9', desc:'Si no aceptó ni rechazó: recordatorio a los 3 meses de la instalación (campaña automática, hoy apagada)' },
+  { key:'p4_bienvenida',    label:'4 · Bienvenida al plan', icon:'bi-patch-check-fill', grupo:'prospecto',
+    color:'#16a34a', desc:'Cuando acepta: bienvenida y aviso de que se coordina la primera visita y el contrato' },
+  { key:'prospecto_oferta_1', label:'Automático · Primer contacto (15 días)', icon:'bi-robot', grupo:'prospecto',
+    color:'#6b7280', desc:'Correo de la campaña automática a los 15 días de la instalación (hoy apagada)' },
+  { key:'plan_mantencion_oferta', label:'Propuesta del plan (versión anterior)', icon:'bi-clipboard2-check', grupo:'prospecto',
+    color:'#9ca3af', desc:'Correo de propuesta sin botones; reemplazado por el paso 1' },
 ];
 
 const TPL_ESTADOS_COMUNICACION_INTERNA = [
@@ -700,6 +711,7 @@ function getEstadosForModulo(){
   if (m === 'transporte_cotizaciones') return TPL_ESTADOS_COTIZACIONES_TRANSPORTE;
   if (m === 'retiros')              return TPL_ESTADOS_RETIROS;
   if (m === 'mantenciones')         return TPL_ESTADOS_MANTENCIONES;
+  if (m === 'prospectos')           return TPL_ESTADOS_PROSPECTOS;
   if (m === 'comunicacion_interna') return TPL_ESTADOS_COMUNICACION_INTERNA;
   if (m === 'tickets')              return TPL_ESTADOS_TICKETS;
   if (m === 'catalogo')             return TPL_ESTADOS_CATALOGO;
@@ -786,6 +798,13 @@ const TPL_VARS = {
     { v:'{{descuento_pct}}',      label:'% de descuento (propuesta)' },
     { v:'{{precio_html}}',        label:'Bloque de precio (propuesta)' },
     { v:'{{incluye_html}}',       label:'Qué incluye el plan (propuesta)' },
+    { v:'{{botones_html}}',       label:'Botones Sí / Llámenme / No (paso 1)' },
+    { v:'{{link_propuesta}}',     label:'Link de la página de la propuesta' },
+    { v:'{{escalera_html}}',      label:'Escalera de regalías (si está activa)' },
+    { v:'{{descuento_txt}}',      label:'Frase del descuento base' },
+    { v:'{{numero_cotizacion}}',  label:'N° de cotización (paso 2)' },
+    { v:'{{total_cotizacion}}',   label:'Total de la cotización (paso 2)' },
+    { v:'{{boton_propuesta_html}}', label:'Botón «Ver y aceptar mi cotización» (paso 2)' },
   ],
   interna: [
     { v:'{{nombre_usuario}}',   label:'Nombre del usuario' },
@@ -1374,6 +1393,7 @@ const MODULO_LABELS = {
   comunicacion_interna: { name:'Comunicación interna', help:'Plantillas del ciclo de vida del usuario: bienvenida, claves y accesos' },
   general:              { name:'General',              help:'Plantillas que no caen en ningún módulo específico' },
   tickets:              { name:'Tickets',              help:'Plantillas del ciclo de vida del ticket: creación, respuesta, resolución y cierre' },
+  prospectos:           { name:'Gestión de prospectos de mantención', help:'Los pasos para ofrecer el plan de mantención a clientes de instalación, en orden' },
 };
 
 async function cargarPlantillas(force=false) {

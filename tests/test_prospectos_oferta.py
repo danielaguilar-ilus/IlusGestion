@@ -486,6 +486,42 @@ def test_zona_por_comuna(comuna, zona):
     assert _zonas()(comuna)[0] == zona
 
 
+def _oferta_ns(plantilla_editada=None):
+    src = open(_APP, encoding="utf-8").read()
+    ns = {"re": __import__("re"),
+          "_render_comm_template": lambda est, canal, variables, modulo=None: plantilla_editada}
+    a = src.index("_PROSP_PLANTILLAS = {")
+    exec(src[a:src.index("def _ensure_comm_templates_prospectos")], ns)
+    for n in ("_boton_html", "_prospecto_render"):
+        i = src.index("\ndef " + n + "(")
+        exec(src[i:src.index("\n\n\n", i)], ns)
+    return ns
+
+
+def test_oferta_plantilla_de_respaldo_sin_tokens_sueltos():
+    ns = _oferta_ns()
+    asunto, cuerpo = ns["_prospecto_render"]("p1_oferta", {"cliente_nombre": "Gym Sur", "contacto_nombre": "Ana",
+                                                           "botones_html": "<a>Sí</a>"})
+    assert "Gym Sur" in asunto and "Ana" in cuerpo and "<a>Sí</a>" in cuerpo
+    assert "{{" not in cuerpo and "{{" not in asunto
+
+
+def test_oferta_usa_la_plantilla_editada_en_comunicaciones():
+    ns = _oferta_ns(plantilla_editada=("Asunto editado", "<p>Cuerpo editado</p>"))
+    assert ns["_prospecto_render"]("p2_cotizacion", {}) == ("Asunto editado", "<p>Cuerpo editado</p>")
+
+
+def test_boton_de_un_clic_lleva_al_link():
+    html_ = _oferta_ns()["_boton_html"]("https://x/propuesta/abc?r=si", "Sí, quiero la cotización", "#16a34a")
+    assert 'href="https://x/propuesta/abc?r=si"' in html_ and "Sí, quiero la cotización" in html_
+
+
+def test_propuesta_publica_exenta_de_csrf():
+    src = open(_APP, encoding="utf-8").read()
+    i = src.index("_CSRF_EXEMPT_PREFIXES: tuple = (")
+    assert '"/propuesta/"' in src[i:src.index("\n)\n", i)]
+
+
 def test_calendario_proxima_y_sin_fecha():
     cal = _cal()["_plan_calendario"]
     assert cal(dt.date(2026, 4, 20), dt.date(2026, 10, 5), 6, 4)["estado_primera"] == "proxima"
