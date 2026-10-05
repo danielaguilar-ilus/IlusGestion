@@ -51,6 +51,28 @@
   .empty-state{background:#fff;border:1px solid #eaecf0;border-radius:14px;
     padding:50px 30px;text-align:center}
   .empty-state i{font-size:3rem;opacity:.25;color:#9ca3af;display:block;margin-bottom:8px}
+
+  /* Garantía por marca y familia (Ola 1) */
+  .ga-res{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:12px}
+  .ga-res div{background:#f9fafb;border:1px solid #eef0f2;border-radius:10px;padding:8px 10px}
+  .ga-res b{display:block;font-size:1.15rem;font-weight:900;color:#0f172a;font-variant-numeric:tabular-nums}
+  .ga-res span{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#6b7280}
+  .ga-res .ok b{color:#16a34a} .ga-res .warn b{color:#b45309}
+  .ga-form{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1.4fr) minmax(0,.8fr) auto;gap:8px;align-items:end;margin-bottom:10px}
+  .ga-form label{font-size:.75rem;font-weight:700;color:#374151;margin-bottom:3px;display:block}
+  .ga-form .btn{min-height:44px}
+  .ga-tabla{width:100%;border-collapse:separate;border-spacing:0;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden}
+  .ga-tabla th{background:#0a0a0a;color:#fff;font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;padding:9px 12px;text-align:left}
+  .ga-tabla td{padding:9px 12px;border-bottom:1px solid #f1f2f4;font-size:.9rem;vertical-align:middle}
+  .ga-tabla tr:last-child td{border-bottom:0}
+  .ga-pie{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;background:#161616;color:#e5e7eb;
+    border-radius:0 0 12px 12px;padding:8px 12px;font-size:.84rem;margin-top:-1px}
+  .ga-pie select,.ga-pie button{min-height:38px;border-radius:9px;border:1.5px solid #4b5563;background:#1a1a1a;color:#fff;font-size:.84rem;padding:0 10px}
+  .ga-pie button:disabled{opacity:.4}
+  .ga-aviso{background:#fff8e1;border:1px solid #fde68a;color:#92400e;border-radius:10px;padding:9px 12px;font-size:.86rem;margin-bottom:10px}
+  #ag_garantia_root .ag-cat-head h6{text-transform:none}
+  .ga-scroll{overflow-x:auto;border-radius:12px}
+  @media (max-width:768px){ .ga-form{grid-template-columns:1fr 1fr} .ga-form .full{grid-column:1/-1} .ga-tabla .ga-ed{display:none} .ga-tabla td,.ga-tabla th{padding:8px} }
 </style>
 
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -83,6 +105,15 @@
 </div>
 
 <div id="ag_contrato_root" style="margin-top:22px"></div>
+
+{# 🏋️ Ola 1 (2026-10-05): garantía por marca y familia. Con estas reglas el
+   sistema calcula la fecha de fin de garantía de cada equipo desde su fecha de
+   instalación (o de la factura). Las fechas puestas a mano no se tocan. #}
+<div class="ag-cat cat-politica" id="ag_garantia_root" style="margin-top:22px">
+  <div class="ag-cat-head"><span class="chip"><i class="bi bi-shield-check"></i></span><h6>Garantía de los equipos</h6>
+    <span class="cnt" id="gaCnt"></span></div>
+  <div class="text-muted small">Cargando…</div>
+</div>
 
 <!-- Modal CREAR / EDITAR regla de contrato -->
 <div class="modal fade" id="modalReglaContrato" tabindex="-1" data-bs-backdrop="static" aria-hidden="true">
@@ -656,6 +687,100 @@ async function borrarReglaContrato(id){
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => { cargar(); cargarContrato(); });
+/* ══ Garantía por marca y familia (Ola 1, 2026-10-05) ══ */
+const _GA_FAM = {cardio:'Cardio', selectorizado:'Selectorizado', carga_libre:'Carga libre', racks_estructuras:'Racks y estructuras',
+  bancos:'Bancos', accesorios:'Accesorios', bicicletas:'Bicicletas', trotadoras:'Trotadoras', otros:'Otros'};
+let _ga = { reglas: [], marcas: [], resumen: {}, puede: false, page: 1, per: 20 };
+async function cargarGarantia(){
+  try {
+    const r = await fetch('/mantenciones/api/garantia/reglas', {credentials:'same-origin'});
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'error');
+    _ga.reglas = d.reglas || []; _ga.marcas = d.marcas || []; _ga.resumen = d.resumen || {}; _ga.puede = !!d.puede_editar;
+    pintarGarantia();
+  } catch(e){
+    document.getElementById('ag_garantia_root').querySelector('.text-muted').textContent = 'No se pudieron cargar las reglas de garantía.';
+  }
+}
+function pintarGarantia(){
+  const root = document.getElementById('ag_garantia_root');
+  const R = _ga.resumen || {};
+  document.getElementById('gaCnt').textContent = _ga.reglas.length + (_ga.reglas.length === 1 ? ' regla' : ' reglas');
+  const per = _ga.per, tot = _ga.reglas.length, pgs = Math.max(1, Math.ceil(tot / per));
+  if (_ga.page > pgs) _ga.page = pgs;
+  const a = (_ga.page - 1) * per, b = Math.min(tot, a + per);
+  const filas = _ga.reglas.slice(a, b).map(function(r){
+    return '<tr><td><b>' + esc(r.marca || 'Cualquier marca') + '</b></td><td>' + esc(r.familia ? (_GA_FAM[r.familia] || r.familia) : 'Cualquier familia') + '</td>' +
+      '<td><b>' + esc(r.meses) + '</b> meses</td><td class="text-muted small ga-ed">' + esc(r.updated_by || '') + (r.updated_at ? ' · ' + esc(r.updated_at) : '') + '</td>' +
+      '<td class="text-end">' + (_ga.puede ? '<button type="button" class="btn btn-sm btn-outline-secondary" onclick="gaEditar(' + r.id + ')"><i class="bi bi-pencil"></i></button> ' +
+        '<button type="button" class="btn btn-sm btn-outline-danger" onclick="gaQuitar(' + r.id + ')"><i class="bi bi-x-lg"></i></button>' : '') + '</td></tr>';
+  }).join('');
+  const opts = [10, 20, 50].map(function(n){ return '<option value="' + n + '"' + (per === n ? ' selected' : '') + '>' + n + ' por página</option>'; }).join('');
+  root.innerHTML =
+    '<div class="ag-cat-head"><span class="chip"><i class="bi bi-shield-check"></i></span><h6>Garantía de los equipos</h6><span class="cnt" id="gaCnt">' + tot + (tot === 1 ? ' regla' : ' reglas') + '</span></div>' +
+    '<p class="small text-muted" style="max-width:80ch">Con estas reglas el sistema calcula hasta cuándo está en garantía cada equipo: <b>fecha de instalación (o de la factura) + los meses de la regla</b>. ' +
+      'Gana la regla más específica: marca y familia, después marca, después familia, después la general. Las fechas que alguien puso a mano en la ficha del equipo no se tocan.</p>' +
+    '<div class="ga-res">' +
+      '<div><b>' + (R.total || 0) + '</b><span>Equipos activos</span></div>' +
+      '<div><b>' + (R.con_fecha_base || 0) + '</b><span>Con fecha de instalación o factura</span></div>' +
+      '<div class="ok"><b>' + (R.calculadas || 0) + '</b><span>Garantía calculada</span></div>' +
+      '<div><b>' + (R.manuales || 0) + '</b><span>Puesta a mano</span></div>' +
+      '<div class="ok"><b>' + (R.vigentes || 0) + '</b><span>Hoy en garantía</span></div>' +
+      '<div class="warn"><b>' + (R.sin_fecha || 0) + '</b><span>Sin fecha de garantía</span></div>' +
+    '</div>' +
+    (!tot ? '<div class="ga-aviso"><i class="bi bi-exclamation-triangle-fill me-1"></i><b>Todavía no hay reglas</b>, así que el sistema no calcula ninguna garantía. Agrega al menos una general (cualquier marca, cualquier familia).</div>' : '') +
+    (_ga.puede ? '<div class="ga-form">' +
+      '<div class="full"><label for="gaMarca">Marca</label><input id="gaMarca" class="form-control" list="gaMarcas" placeholder="Vacío = cualquier marca" style="font-size:16px">' +
+        '<datalist id="gaMarcas">' + _ga.marcas.map(function(m){ return '<option value="' + esc(m.marca) + '">' + esc(m.n) + ' equipos</option>'; }).join('') + '</datalist></div>' +
+      '<div><label for="gaFamilia">Familia</label><select id="gaFamilia" class="form-select" style="font-size:16px"><option value="">Cualquier familia</option>' +
+        Object.keys(_GA_FAM).map(function(k){ return '<option value="' + k + '">' + _GA_FAM[k] + '</option>'; }).join('') + '</select></div>' +
+      '<div><label for="gaMeses">Meses</label><input id="gaMeses" type="number" min="1" max="240" step="1" class="form-control" placeholder="12" style="font-size:16px"></div>' +
+      '<div><button type="button" class="btn btn-danger fw-bold" id="gaBtn" onclick="gaGuardar()"><i class="bi bi-check-lg me-1"></i>Guardar regla</button></div>' +
+    '</div>' : '') +
+    '<div class="ga-scroll"><table class="ga-tabla"><thead><tr><th>Marca</th><th>Familia</th><th>Garantía</th><th class="ga-ed">Última edición</th><th></th></tr></thead><tbody>' +
+      (filas || '<tr><td colspan="5" class="text-center text-muted py-3">Sin reglas todavía.</td></tr>') + '</tbody></table></div>' +
+    '<div class="ga-pie"><span>' + (tot ? 'Mostrando <b>' + (a + 1) + '–' + b + '</b> de <b>' + tot + '</b>' : 'Sin resultados') + '</span>' +
+      '<span class="d-flex gap-2 align-items-center flex-wrap"><select aria-label="Reglas por página" onchange="_ga.per=parseInt(this.value,10)||20;_ga.page=1;pintarGarantia()">' + opts + '</select>' +
+      '<button type="button" onclick="_ga.page--;pintarGarantia()"' + (_ga.page <= 1 ? ' disabled' : '') + '>Anterior</button>' +
+      '<span>Página ' + _ga.page + ' de ' + pgs + '</span>' +
+      '<button type="button" onclick="_ga.page++;pintarGarantia()"' + (_ga.page >= pgs ? ' disabled' : '') + '>Siguiente</button></span></div>';
+}
+function gaEditar(id){
+  const r = _ga.reglas.find(function(x){ return x.id === id; });
+  if (!r) return;
+  document.getElementById('gaMarca').value = r.marca || '';
+  document.getElementById('gaFamilia').value = r.familia || '';
+  document.getElementById('gaMeses').value = r.meses;
+  document.getElementById('gaMeses').focus();
+}
+async function gaGuardar(){
+  const meses = parseInt(document.getElementById('gaMeses').value, 10);
+  if (!meses || meses < 1 || meses > 240){ ilusToast('Indica los meses de garantía (entre 1 y 240).', {type:'warning'}); return; }
+  const btn = document.getElementById('gaBtn'); btn.disabled = true;
+  try {
+    const r = await fetch('/mantenciones/api/garantia/reglas', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ marca: document.getElementById('gaMarca').value.trim(), familia: document.getElementById('gaFamilia').value, meses: meses }) });
+    const d = await r.json();
+    if (!d.ok){ ilusToast(d.error || 'No se pudo guardar la regla.', {type:'error'}); return; }
+    ilusToast('✓ Regla guardada · ' + (d.recalculadas || 0) + ' garantías recalculadas', {type:'success'});
+    await cargarGarantia();
+  } catch(e){ ilusToast('Error de red al guardar la regla.', {type:'error'}); }
+  finally { const b2 = document.getElementById('gaBtn'); if (b2) b2.disabled = false; }
+}
+async function gaQuitar(id){
+  const r = _ga.reglas.find(function(x){ return x.id === id; });
+  const ok = await ilusConfirm({ title: 'Quitar regla de garantía', message: '¿Quitar la regla ' + ((r && r.marca) || 'cualquier marca') + ' / ' + ((r && r.familia && _GA_FAM[r.familia]) || 'cualquier familia') + '?',
+    sub: 'Las garantías que calculó con esta regla se recalculan con las que queden. Las puestas a mano no cambian.', okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true });
+  if (!ok) return;
+  try {
+    const res = await fetch('/mantenciones/api/garantia/reglas/' + id + '/quitar', { method:'POST', credentials:'same-origin' });
+    const d = await res.json();
+    if (!d.ok){ ilusToast(d.error || 'No se pudo quitar.', {type:'error'}); return; }
+    ilusToast('✓ Regla quitada · ' + (d.recalculadas || 0) + ' garantías recalculadas', {type:'success'});
+    await cargarGarantia();
+  } catch(e){ ilusToast('Error de red.', {type:'error'}); }
+}
+
+document.addEventListener('DOMContentLoaded', () => { cargar(); cargarContrato(); cargarGarantia(); });
 </script>
 {% endblock %}

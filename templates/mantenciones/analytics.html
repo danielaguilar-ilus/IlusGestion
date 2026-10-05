@@ -200,7 +200,7 @@
 <div class="mod-hero">
   <div>
     <h4><i class="bi bi-bar-chart-fill"></i>Analytics Servicio Técnico</h4>
-    <div class="mod-sub">Indicadores operacionales · TMR, SLA, overrun, eficiencia, proyección</div>
+    <div class="mod-sub">Indicadores operacionales · reparación, puntualidad, overrun, eficiencia, proyección</div>
   </div>
   <div class="d-flex gap-2 align-items-center">
     <span class="pill"><i class="bi bi-clock-history me-1"></i>Últimos 30 días</span>
@@ -217,13 +217,13 @@
 <div class="kpi-grid">
   <div class="kpi-card tmr">
     <div class="kpi-icon"><i class="bi bi-stopwatch"></i></div>
-    <div class="kpi-label">TMR — Tiempo Medio Reparación</div>
+    <div class="kpi-label">Tiempo medio de reparación</div>
     <div class="kpi-value" id="kpiTmr">—</div>
     <div class="kpi-sub" id="kpiTmrSub">Cargando…</div>
   </div>
   <div class="kpi-card sla">
     <div class="kpi-icon"><i class="bi bi-shield-check"></i></div>
-    <div class="kpi-label">SLA cumplido</div>
+    <div class="kpi-label">OT a tiempo</div>
     <div class="kpi-value" id="kpiSla">—<small>%</small></div>
     <div class="kpi-sub" id="kpiSlaSub">Cargando…</div>
   </div>
@@ -437,17 +437,21 @@ async function cargarAnalytics(){
 }
 
 function renderKpis(k){
-  // TMR
-  document.getElementById('kpiTmr').innerHTML = k.tmr_label || '—';
-  document.getElementById('kpiTmrSub').textContent =
-    k.tmr_min ? `Promedio sobre ${k.completadas_30d} OTs completadas` : 'Sin datos suficientes';
+  // Tiempo medio de reparación (2026-10-05, Ola 1): desde que el equipo queda
+  // detenido hasta que vuelve a operar (paradas). Antes esta tarjeta se llamaba
+  // "TMR" y mostraba la duración de la OT; esa duración sigue abajo con su nombre.
+  document.getElementById('kpiTmr').innerHTML = k.mttr_min ? k.mttr_label : '—';
+  const durOt = k.tmr_min ? ` · Duración promedio de la OT: ${k.tmr_label}` : '';
+  document.getElementById('kpiTmrSub').textContent = k.mttr_min
+    ? `Desde que el equipo queda detenido hasta que vuelve a operar · ${k.mttr_n} parada${k.mttr_n === 1 ? '' : 's'} (90 días)${durOt}`
+    : `Se mide desde el 05/10/2026: aún no hay paradas cerradas${durOt}`;
 
   // SLA
   if (k.sla_pct != null){
     document.getElementById('kpiSla').innerHTML = k.sla_pct + '<small>%</small>';
     const cls = k.sla_pct >= 90 ? 'down' : (k.sla_pct >= 75 ? '' : 'up');
     const el = document.getElementById('kpiSlaSub');
-    el.textContent = `${k.sla_ok}/${k.sla_total} OTs dentro de SLA (+1 día)`;
+    el.textContent = `${k.sla_ok}/${k.sla_total} OT hechas hasta 1 día después de lo programado`;
     el.className = 'kpi-sub ' + cls;
   } else {
     document.getElementById('kpiSla').textContent = '—';
@@ -491,7 +495,7 @@ function renderTopMaquinas(rows){
     <th>#</th>
     <th>Máquina</th>
     <th>Cliente</th>
-    <th class="text-end">Tareas</th>
+    <th class="text-end">Fallas</th>
   </tr></thead><tbody>`;
   rows.forEach((m, i) => {
     const rankCls = i === 0 ? 'top1' : (i === 1 ? 'top2' : (i === 2 ? 'top3' : ''));
@@ -501,7 +505,7 @@ function renderTopMaquinas(rows){
       <td><span class="a-rank ${rankCls}">${i+1}</span></td>
       <td><strong>${nombre}</strong>${serie}</td>
       <td>${escHtml(m.cliente_nombre || '—')}</td>
-      <td class="text-end"><strong>${m.n_tareas}</strong></td>
+      <td class="text-end"><strong>${m.n_fallas != null ? m.n_fallas : m.n_tareas}</strong></td>
     </tr>`;
   });
   html += `</tbody></table>`;

@@ -622,6 +622,11 @@
     <button class="eq-tab" data-tab="eventos" onclick="cambiarTabEq('eventos')">
       <i class="bi bi-journal-text"></i> Eventos ({{ eventos|length }})
     </button>
+    {% if disponibilidad %}
+    <button class="eq-tab" data-tab="disponibilidad" onclick="cambiarTabEq('disponibilidad')">
+      <i class="bi bi-activity"></i> Disponibilidad ({{ disponibilidad.pct|round(1) }} %)
+    </button>
+    {% endif %}
   </div>
 
   {# ═════════ Tab Historial intervenciones (completo) ═════════ #}
@@ -867,13 +872,63 @@
     {% endif %}
   </div>
 
+  {# ═════════ Tab Disponibilidad (Ola 1, 2026-10-05) ═════════
+     Cuánto tiempo estuvo operativo el equipo y cada vez que se detuvo: desde
+     que quedó fuera de servicio hasta que volvió a operar, con hora Chile.
+     Se mide desde el 05/10/2026 (o desde su instalación, si es posterior). #}
+  {% if disponibilidad %}
+  <div id="tab-eq-disponibilidad" style="display:none">
+    {% set _dp = disponibilidad.pct %}
+    <div class="hist-stats">
+      <div class="hist-stat {{ 'success' if _dp >= 97 else ('warn' if _dp >= 90 else 'danger') }}">
+        <div class="n">{{ _dp|round(1) }} %</div>
+        <div class="l"><i class="bi bi-activity me-1"></i>Disponibilidad</div>
+      </div>
+      <div class="hist-stat {{ 'danger' if disponibilidad.detenida else 'success' }}">
+        <div class="n">{{ 'Detenido' if disponibilidad.detenida else 'Operando' }}</div>
+        <div class="l"><i class="bi bi-power me-1"></i>Ahora</div>
+      </div>
+      <div class="hist-stat">
+        <div class="n">{{ disponibilidad.n_paradas }}</div>
+        <div class="l"><i class="bi bi-exclamation-octagon me-1"></i>Paradas</div>
+      </div>
+      <div class="hist-stat">
+        <div class="n">{{ disponibilidad.horas_paradas }} h</div>
+        <div class="l"><i class="bi bi-hourglass-split me-1"></i>Detenido</div>
+      </div>
+    </div>
+    <div class="small text-muted mb-2"><i class="bi bi-info-circle me-1"></i>Medida desde el {{ disponibilidad.desde_txt }}. Cada vez que el equipo queda fuera de servicio se anota la hora, y se cierra sola cuando vuelve a operar (repuesto instalado, reactivado en una OT o cambio en la ficha).</div>
+    {% if disponibilidad.paradas %}
+    {% for p in disponibilidad.paradas %}
+    <div class="evento-row">
+      <div class="ev-icon" style="{{ 'background:#fee2e2;color:#dc2626' if p.abierta else 'background:#dcfce7;color:#16a34a' }}">
+        <i class="bi bi-{{ 'exclamation-octagon-fill' if p.abierta else 'check-circle-fill' }}"></i>
+      </div>
+      <div class="ev-info">
+        <div class="ev-tipo">{{ 'Detenido ahora' if p.abierta else ('Dado de baja' if p.estado_fin == 'dado_baja' else 'Parada cerrada') }} · {{ p.duracion or '—' }}</div>
+        <div class="ev-desc">Desde {{ p.inicio_txt or '—' }}{% if p.inicio_aprox %} (ya estaba detenido al empezar a medir){% endif %}{% if p.fin_txt %} hasta {{ p.fin_txt }}{% endif %}</div>
+        {% if p.motivo %}<div class="ev-desc">Motivo: {{ p.motivo }}</div>{% endif %}
+        {% if p.abierta_por or p.cerrada_por %}<div class="ev-desc">{% if p.abierta_por %}Lo marcó: {{ p.abierta_por }}{% endif %}{% if p.cerrada_por %} · Lo cerró: {{ p.cerrada_por }}{% endif %}</div>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="empty-section">
+      <i class="bi bi-activity"></i>
+      <div class="fw-bold" style="color:#0f172a">Sin paradas registradas</div>
+      <div class="small mt-1">Cuando el equipo quede fuera de servicio, aquí se verá cuánto tiempo estuvo detenido.</div>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
   {# ═════════ Tab Eventos / Audit log ═════════ #}
   <div id="tab-eq-eventos" style="display:none">
     {% if eventos %}
     {% for e in eventos %}
     <div class="evento-row">
       <div class="ev-icon">
-        <i class="bi bi-{% if e.tipo == 'serie_cambiada' %}123{% elif e.tipo == 'foto_agregada' or e.tipo == 'foto_subida' %}camera{% elif e.tipo == 'creado' %}plus-circle{% elif e.tipo == 'levantamiento' %}clipboard-check{% else %}circle{% endif %}"></i>
+        <i class="bi bi-{% if e.tipo == 'serie_cambiada' %}123{% elif e.tipo == 'foto_agregada' or e.tipo == 'foto_subida' %}camera{% elif e.tipo == 'creado' %}plus-circle{% elif e.tipo == 'levantamiento' %}clipboard-check{% elif e.tipo == 'visita' %}clipboard2-pulse{% elif e.tipo == 'reparacion' %}wrench-adjustable{% elif e.tipo == 'cambio_repuesto' %}gear-wide-connected{% elif e.tipo == 'cambio_estado' %}activity{% elif e.tipo == 'instalacion' %}box-seam{% elif e.tipo == 'dado_baja' %}archive{% elif e.tipo == 'reubicacion' %}arrows-move{% else %}circle{% endif %}"></i>
       </div>
       <div class="ev-info">
         <div class="ev-tipo">{{ (e.tipo or '—')|replace('_',' ')|title }}</div>
@@ -897,7 +952,7 @@
 <script>
 function cambiarTabEq(tab){
   document.querySelectorAll('.eq-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-  ['historial','levantamientos','fotos','eventos'].forEach(name => {
+  ['historial','levantamientos','fotos','eventos','disponibilidad'].forEach(name => {
     const el = document.getElementById('tab-eq-' + name);
     if (el) el.style.display = (name === tab) ? '' : 'none';
   });

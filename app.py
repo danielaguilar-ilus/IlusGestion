@@ -38965,6 +38965,12 @@ def tr_cron_simpliroute_poll():
             res["instalaciones_fichas"] = _instalaciones_asegurar_fichas(desde=datetime(2026, 10, 5))
         except Exception as _e_if:
             print(f"[cron-simpliroute] instalaciones fichas: {_e_if}", flush=True)
+    # 🏋️ Ola 1 (2026-10-05): hoja de vida de cada máquina (paradas, eventos, garantías). Si falla no afecta al polling.
+    if not dry:
+        try:
+            res["hoja_vida"] = _hoja_vida_barrido()
+        except Exception as _e_hv:
+            print(f"[cron-simpliroute] hoja de vida: {_e_hv}", flush=True)
     # Campaña de mantención a clientes de instalación (Daniel 2026-10-04). Mismo criterio: si falla no afecta al polling.
     if not dry:
         try:
@@ -72503,6 +72509,8 @@ def mant_maquina_restaurar(mid):
         (user, mid)
     )
     _mant_log("maquina", mid, "restaurada", f"Restaurada por {user}")
+    _hv_evento(mid, m_info.get("cliente_id"), "cambio_estado", f"Restaurado (vuelve a activo) por {user}", None, None,
+               {"fuente": "restaurar"}, user)   # 🏋️ Ola 1
     _mant_log("cliente", m_info.get("cliente_id"), "equipo_restaurado",
               f"{m_info.get('nombre') or ''} restaurado por {user}")
     return jsonify({"ok": True})
@@ -91822,6 +91830,7 @@ def ot2_api_equipo_fuera_servicio(vid, mid):
             _mant_log("maquina", mid, "reactivado",
                       f"Vuelve a operativo desde {v.get('numero_ot') or vid}"
                       + (f" · {motivo}" if motivo else ""))
+            _maquina_parada_sync(mid, "ot", "mant_visitas", vid, motivo or None)   # 🏋️ Ola 1: cierra la parada
         except Exception as e:
             print(f"[fuera_servicio] reactivar mid={mid}: {e}", flush=True)
             return _ot2_err("No pudimos reactivar el equipo.", "ERROR_INTERNO", http=500)
@@ -91874,6 +91883,7 @@ def _ot_equipo_fuera_servicio_marcar(vid, mid, motivo, v, m, crear_urgencia=True
     except Exception as e:
         print(f"[fuera_servicio] marcar mid={mid}: {e}", flush=True)
         return False, None, "No pudimos marcar el equipo."
+    _maquina_parada_sync(mid, "ot", "mant_visitas", vid, motivo or None)   # 🏋️ Ola 1: abre la parada con la hora real
 
     # 🔴 FIX 2026-09-08 (Bug 2, Daniel en vivo): marcar un equipo "fuera de
     # servicio" es, en los hechos, un veredicto de que la máquina tiene una
@@ -94103,6 +94113,7 @@ def _otrep_cerrar_alerta_maquina(mid, volver_operativo=False, user=None, motivo=
             if reactivada:
                 _mant_log("maquina", mid, "reactivado",
                           "Vuelve a operativo: repuesto instalado" + (f" · {motivo}" if motivo else ""))
+                _maquina_parada_sync(mid, "repuesto_instalado", None, None, motivo or "repuesto instalado", user)   # 🏋️ Ola 1
         return reactivada
     except Exception as e:
         print(f"[otrep] cerrar alerta mid={mid}: {e}", flush=True)
@@ -95340,6 +95351,10 @@ def ot2_api_equipo_dar_baja(vid, mid):
     except Exception as e:
         print(f"[otrep] dar-baja mid={mid}: {e}", flush=True)
         return _ot2_err("No pudimos dar de baja el equipo.", "ERROR_INTERNO", http=500)
+    # 🏋️ Ola 1: la baja queda en la hoja de vida (y cierra la parada si estaba detenido)
+    if _maquina_parada_sync(mid, "baja", "mant_visitas", vid, motivo, user) != "cerrada":
+        _hv_evento(mid, None, "dado_baja", f"Dado de baja desde {numero_ot}: {motivo}"[:400], "mant_visitas", vid,
+                   {"fuente": "baja"}, user)
 
     # 3) Sale del checklist de ESTA OT, queda visible con su sello. El
     #    motivo se SUMA a la observación previa del técnico, no la pisa.
@@ -119179,10 +119194,14 @@ def mant_analytics_data():
     """Devuelve todos los KPIs y series para el dashboard analytics."""
     try:
         # ── 1. KPIs grandes (30 días)
+        # 🏋️ Ola 1 (2026-10-05): "TMR" era la duración promedio de la OT (tiempo
+        # del técnico), no el tiempo de reparación. Se sigue mostrando con su
+        # nombre real, y el tiempo medio de reparación sale de las PARADAS
+        # (caída → vuelta). Las OT de OT 2.0 terminan 'cerrada': se cuentan.
         row = mysql_fetchone(
             "SELECT AVG(duracion_real_min) AS tmr "
             "  FROM mant_visitas "
-            " WHERE estado='completada' "
+            " WHERE estado IN ('completada','cerrada') "
             "   AND duracion_real_min IS NOT NULL "
             "   AND COALESCE(fecha_realizada, fecha_programada) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)",
             ()
@@ -119196,7 +119215,7 @@ def mant_analytics_data():
             "           AND fecha_realizada <= DATE_ADD(fecha_programada, INTERVAL 1 DAY) "
             "           THEN 1 ELSE 0 END) AS dentro_sla "
             "  FROM mant_visitas "
-            " WHERE estado='completada' "
+            " WHERE estado IN ('completada','cerrada') "
             "   AND fecha_programada >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)",
             ()
         ) or {}
@@ -119208,7 +119227,7 @@ def mant_analytics_data():
             "SELECT AVG( (duracion_real_min - duracion_planificada_min) * 100.0 "
             "           / NULLIF(duracion_planificada_min,0) ) AS overrun "
             "  FROM mant_visitas "
-            " WHERE estado='completada' "
+            " WHERE estado IN ('completada','cerrada') "
             "   AND duracion_real_min IS NOT NULL "
             "   AND duracion_planificada_min IS NOT NULL "
             "   AND COALESCE(fecha_realizada, fecha_programada) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)",
@@ -119228,22 +119247,52 @@ def mant_analytics_data():
         gar_n     = int(gar_row.get("garantias") or 0)
         gar_pct   = round(gar_n * 100.0 / gar_total, 1) if gar_total > 0 else None
 
-        # ── 2. Top 10 máquinas con más fallas (90 días)
-        top_maquinas = mysql_fetchall(
-            "SELECT m.id, m.nombre, m.serie, m.sku, "
-            "       c.razon_social AS cliente_nombre, "
-            "       COUNT(t.id) AS n_tareas "
-            "  FROM mant_visita_tareas t "
-            "  JOIN mant_maquinas m ON m.id = t.maquina_id "
-            "  LEFT JOIN mant_clientes c ON c.id = m.cliente_id "
-            " WHERE t.created_at >= DATE_SUB(NOW(), INTERVAL 90 DAY) "
-            "   AND t.maquina_id IS NOT NULL "
-            " GROUP BY m.id "
-            " ORDER BY n_tareas DESC, m.nombre "
-            " LIMIT 10",
-            ()
-        ) or []
+        # Tiempo medio de reparación REAL: paradas cerradas de los últimos 90
+        # días con inicio conocido (las que ya estaban detenidas antes de medir
+        # no cuentan: no se sabe cuándo empezaron).
+        mttr_min, mttr_n = None, 0
+        try:
+            _hv_asegurar()
+            _mt = mysql_fetchone(
+                "SELECT AVG(TIMESTAMPDIFF(MINUTE, inicio_at, fin_at)) AS m, COUNT(*) AS n "
+                "  FROM mant_maquina_paradas "
+                " WHERE fin_at IS NOT NULL AND inicio_aprox=0 AND COALESCE(estado_fin,'')<>'dado_baja' "
+                "   AND fin_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)", ()) or {}
+            mttr_n = int(_mt.get("n") or 0)
+            mttr_min = float(_mt["m"]) if _mt.get("m") is not None else None
+        except Exception as _e_mt:
+            print(f"[analytics] mttr: {_e_mt}", flush=True)
+
+        # ── 2. Top 10 máquinas con más FALLAS (90 días). Antes contaba tareas
+        # del checklist (una máquina con checklist largo salía "con fallas").
+        # Ahora: OT donde el equipo quedó con falla detectada + paradas; una
+        # parada nacida de esa misma OT cuenta una sola vez.
+        try:
+            top_maquinas = mysql_fetchall(
+                "SELECT m.id, m.nombre, m.serie, m.sku, c.razon_social AS cliente_nombre, f.n_fallas "
+                "  FROM (SELECT x.maquina_id, COUNT(*) AS n_fallas FROM ("
+                "          SELECT ve.maquina_id, CONCAT('v', ve.visita_id) AS k "
+                "            FROM mant_visita_equipos ve JOIN mant_visitas v ON v.id=ve.visita_id "
+                "           WHERE ve.estado_revision='falla_detectada' "
+                "             AND COALESCE(v.fecha_realizada, v.fecha_programada) >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) "
+                "          UNION "
+                "          SELECT p.maquina_id, CASE WHEN p.ref_tabla='mant_visitas' AND p.ref_id IS NOT NULL "
+                "                                    THEN CONCAT('v', p.ref_id) ELSE CONCAT('p', p.id) END "
+                "            FROM mant_maquina_paradas p "
+                "           WHERE p.inicio_at >= DATE_SUB(NOW(), INTERVAL 90 DAY) AND p.inicio_aprox=0"
+                "        ) x GROUP BY x.maquina_id) f "
+                "  JOIN mant_maquinas m ON m.id = f.maquina_id "
+                "  LEFT JOIN mant_clientes c ON c.id = m.cliente_id "
+                " ORDER BY f.n_fallas DESC, m.nombre "
+                " LIMIT 10",
+                ()
+            ) or []
+        except Exception as _e_top:
+            print(f"[analytics] top fallas: {_e_top}", flush=True)
+            top_maquinas = []
         top_maquinas = [dict(r) for r in top_maquinas]
+        for _tm in top_maquinas:
+            _tm["n_tareas"] = _tm.get("n_fallas")   # compatibilidad con pantallas viejas
 
         # ── 3. Top técnicos por eficiencia (más alto = mejor; plan/real)
         tec_rows = mysql_fetchall(
@@ -119324,6 +119373,9 @@ def mant_analytics_data():
             "ok": True,
             "kpis": {
                 "tmr_min":      round(tmr_min, 1) if tmr_min else None,
+                "mttr_min":     round(mttr_min, 1) if mttr_min is not None else None,
+                "mttr_label":   _hv_fmt_dur(mttr_min / 60) if mttr_min else "—",
+                "mttr_n":       mttr_n,
                 "tmr_label":    f"{int(tmr_min//60)}h {int(tmr_min%60)}min" if tmr_min >= 60 else (f"{int(tmr_min)} min" if tmr_min else "—"),
                 "sla_pct":      sla_pct,
                 "sla_total":    sla_total,
@@ -137875,6 +137927,13 @@ def mant_maquina_ficha(mid):
         })
 
     # Audit log: eventos del equipo
+    # 🏋️ Ola 1 (2026-10-05): la hoja de vida se completa al abrir la ficha.
+    _hoja_vida_sync_maquina(mid)
+    try:
+        disponibilidad = _maquina_disponibilidad(mid)
+    except Exception as _e_disp:
+        print(f"[hoja-vida] disponibilidad mid={mid}: {_e_disp}", flush=True)
+        disponibilidad = None
     eventos_rows = mysql_fetchall(
         "SELECT id, tipo, descripcion, fecha_evento, created_by "
         "  FROM mant_maquina_eventos WHERE maquina_id=%s "
@@ -137885,7 +137944,8 @@ def mant_maquina_ficha(mid):
     for e in eventos_rows:
         d = dict(e)
         if d.get("fecha_evento"):
-            d["fecha_evento"] = str(d["fecha_evento"])[:16]
+            # REGLA #6: hora Chile (antes salía UTC cortado a 16 caracteres)
+            d["fecha_evento"] = chile_fmt_filter(d["fecha_evento"])
         eventos.append(d)
 
     # Stats compactas (incluye breakdown para card de historial)
@@ -137991,6 +138051,7 @@ def mant_maquina_ficha(mid):
         ots=ots,
         fotos=fotos,
         eventos=eventos,
+        disponibilidad=disponibilidad,
         stats=stats,
         levantamientos=levantamientos,
         ultimo_levantamiento=ultimo_levantamiento,
@@ -137999,10 +138060,517 @@ def mant_maquina_ficha(mid):
     )
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# 🏋️ OLA 1 · HOJA DE VIDA CONFIABLE DE CADA MÁQUINA (2026-10-05)
+# Daniel aprobó la propuesta "Gimnasio por dentro" y pidió partir por la
+# Ola 1: que la historia de cada equipo se arme sola con lo que YA pasa en
+# el sistema, sin que nadie tenga que acordarse de anotarlo:
+#   · PARADAS: cuándo quedó fuera de servicio y cuándo volvió a operar (hora
+#     real). Es la base de la disponibilidad, el MTBF y el MTTR (Ola 3).
+#   · EVENTOS de la hoja de vida por cada OT cerrada/firmada y cada repuesto
+#     instalado (antes solo se escribían en 4 lugares).
+#   · GARANTÍA calculada desde la fecha de instalación (o de la factura) con
+#     las reglas que defina gestión por marca/familia. Sin reglas no se
+#     calcula nada: es plata (cobrar o no una OT), lo decide Daniel.
+# Todo es aditivo e idempotente. Los ganchos directos (fuera de servicio,
+# reactivar, repuesto instalado, baja) dan la hora exacta; el barrido de cada
+# 10 min (colgado del cron de SimpliRoute) completa lo que entra por otras
+# vías (edición de la ficha, levantamientos).
+# ══════════════════════════════════════════════════════════════════════════
+_MAQ_ESTADOS_PARADA = ("fuera_servicio", "en_reparacion")
+_HV_MEDICION_DESDE = datetime(2026, 10, 5)   # desde aquí se miden las paradas
+_HV_TABLAS = {"ok": False}
+_HV_FAMILIAS = ("cardio", "selectorizado", "carga_libre", "racks_estructuras",
+                "bancos", "accesorios", "bicicletas", "trotadoras", "otros")
+_HV_TIPO_OT_EVENTO = {
+    "instalacion": "instalacion", "levantamiento": "levantamiento",
+    "correctiva": "reparacion", "visita_correctiva": "reparacion", "garantia": "reparacion",
+    "repuesto": "reparacion", "desinstalacion": "reubicacion", "movimiento_equipos": "reubicacion",
+    "cambio_equipo": "reubicacion",
+}
+_HV_TIPO_OT_LABEL = {
+    "preventiva": "Mantención preventiva", "correctiva": "Correctiva", "garantia": "Garantía",
+    "inspeccion": "Inspección", "levantamiento": "Levantamiento", "instalacion": "Instalación",
+    "visita_tecnica": "Visita técnica", "visita_correctiva": "Visita correctiva",
+    "cambio_equipo": "Cambio de equipo", "desinstalacion": "Desinstalación",
+    "capacitacion": "Capacitación", "repuesto": "Instalación de repuesto",
+    "revision_interna": "Revisión interna", "control_calidad": "Control de calidad",
+    "movimiento_equipos": "Movimiento de equipos",
+}
+_HV_REVISION_LABEL = {
+    "verificado": "revisado sin novedad", "con_cambios": "revisado con cambios",
+    "saltado": "no se revisó", "falla_detectada": "con falla detectada",
+}
+
+
+def _hv_asegurar():
+    """Tablas y columna de la Ola 1 (lazy; cada DDL es una sola cláusula y
+    mysql_execute lo salta sin lock si ya está aplicado -- REGLA #18)."""
+    if _HV_TABLAS["ok"]:
+        return
+    for ddl in (
+        "CREATE TABLE IF NOT EXISTS mant_maquina_paradas ("
+        " id INT AUTO_INCREMENT PRIMARY KEY,"
+        " maquina_id INT NOT NULL,"
+        " cliente_id INT NULL,"
+        " inicio_at DATETIME NOT NULL COMMENT 'UTC: cuando quedó fuera de servicio',"
+        " fin_at DATETIME NULL COMMENT 'UTC: cuando volvió a operar (NULL = sigue detenida)',"
+        " inicio_aprox TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1 = ya estaba detenida antes de medir: inicio estimado',"
+        " estado_inicio VARCHAR(40) NULL,"
+        " estado_fin VARCHAR(40) NULL,"
+        " origen_inicio VARCHAR(40) NULL,"
+        " origen_fin VARCHAR(40) NULL,"
+        " ref_tabla VARCHAR(60) NULL,"
+        " ref_id INT NULL,"
+        " ref_fin_tabla VARCHAR(60) NULL,"
+        " ref_fin_id INT NULL,"
+        " motivo VARCHAR(400) NULL,"
+        " abierta_por VARCHAR(190) NULL,"
+        " cerrada_por VARCHAR(190) NULL,"
+        " created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        " INDEX idx_paradas_maq_fin (maquina_id, fin_at),"
+        " INDEX idx_paradas_cli_ini (cliente_id, inicio_at)"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS mant_garantia_reglas ("
+        " id INT AUTO_INCREMENT PRIMARY KEY,"
+        " marca VARCHAR(120) NULL COMMENT 'NULL = cualquier marca',"
+        " familia VARCHAR(40) NULL COMMENT 'familia_equipo; NULL = cualquier familia',"
+        " meses INT NOT NULL,"
+        " activo TINYINT(1) NOT NULL DEFAULT 1,"
+        " updated_by VARCHAR(190) NULL,"
+        " updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,"
+        " INDEX idx_garantia_activo (activo)"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "ALTER TABLE mant_maquinas ADD COLUMN garantia_origen VARCHAR(20) NULL COMMENT 'manual|calculada'",
+    ):
+        try:
+            mysql_execute(ddl)
+        except Exception as e:
+            if "1060" not in str(e) and "Duplicate column" not in str(e):
+                print(f"[hoja-vida] ddl: {e}", flush=True)
+                return
+    _HV_TABLAS["ok"] = True
+
+
+def _hv_user(user=None):
+    if user:
+        return str(user)[:190]
+    try:
+        return (current_username() or "sistema")[:190]
+    except Exception:
+        return "sistema"
+
+
+def _hv_fmt_dur(horas):
+    """1 h 20 min · 3 días 4 h -- para leerlo de un vistazo."""
+    try:
+        h = float(horas or 0)
+    except (TypeError, ValueError):
+        return "—"
+    if h < 1:
+        return f"{max(1, int(round(h * 60)))} min"
+    if h < 48:
+        hh, mm = int(h), int(round((h - int(h)) * 60))
+        return f"{hh} h" + (f" {mm} min" if mm else "")
+    d = int(h // 24)
+    return f"{d} días" + (f" {int(h - d * 24)} h" if int(h - d * 24) else "")
+
+
+def _hv_evento(mid, cid, tipo, descripcion, ref_tabla=None, ref_id=None, meta=None,
+               user=None, fecha=None):
+    """Una línea en la hoja de vida del equipo (mant_maquina_eventos)."""
+    try:
+        cols = "maquina_id, cliente_id, tipo, descripcion, referencia_tabla, referencia_id, metadata_json, created_by"
+        vals = [mid, cid, tipo, (descripcion or "")[:400], ref_tabla, ref_id,
+                json.dumps(meta, ensure_ascii=False, default=str)[:5000] if meta else None, _hv_user(user)]
+        if fecha:
+            cols += ", fecha_evento"
+            vals.append(fecha)
+        mysql_execute(f"INSERT INTO mant_maquina_eventos ({cols}) VALUES ({','.join(['%s'] * len(vals))})", tuple(vals))
+        return True
+    except Exception as e:
+        print(f"[hoja-vida] evento mid={mid}: {e}", flush=True)
+        return False
+
+
+def _maquina_parada_sync(mid, origen="sistema", ref_tabla=None, ref_id=None, motivo=None,
+                         user=None, inicio=None, inicio_aprox=False):
+    """Abre o cierra la parada del equipo según su estado ACTUAL. Idempotente y
+    nunca rompe a quien la llama. Devuelve 'abierta' | 'cerrada' | None."""
+    try:
+        _hv_asegurar()
+        m = mysql_fetchone("SELECT id, cliente_id, estado_capturado FROM mant_maquinas WHERE id=%s", (mid,))
+        if not m:
+            return None
+        est = (m.get("estado_capturado") or "").strip().lower()
+        abierta = mysql_fetchone(
+            "SELECT id, inicio_at, inicio_aprox FROM mant_maquina_paradas WHERE maquina_id=%s AND fin_at IS NULL "
+            " ORDER BY id DESC LIMIT 1", (mid,))
+        quien = _hv_user(user)
+        if est in _MAQ_ESTADOS_PARADA and not abierta:
+            mysql_execute(
+                "INSERT INTO mant_maquina_paradas (maquina_id, cliente_id, inicio_at, inicio_aprox, estado_inicio, "
+                " origen_inicio, ref_tabla, ref_id, motivo, abierta_por) "
+                "VALUES (%s,%s,COALESCE(%s,NOW()),%s,%s,%s,%s,%s,%s,%s)",
+                (mid, m.get("cliente_id"), inicio, 1 if inicio_aprox else 0, est, origen, ref_tabla, ref_id,
+                 (motivo or "")[:400] or None, quien))
+            _hv_evento(mid, m.get("cliente_id"), "cambio_estado",
+                       "Quedó fuera de servicio" + (f": {motivo}" if motivo else "") + (" (inicio estimado)" if inicio_aprox else ""),
+                       ref_tabla, ref_id, {"parada": "inicio", "origen": origen}, quien, fecha=inicio)
+            return "abierta"
+        if est not in _MAQ_ESTADOS_PARADA and abierta:
+            n = mysql_execute_returning_rowcount(
+                "UPDATE mant_maquina_paradas SET fin_at=NOW(), estado_fin=%s, origen_fin=%s, ref_fin_tabla=%s, "
+                "       ref_fin_id=%s, cerrada_por=%s WHERE id=%s AND fin_at IS NULL",
+                (est or None, origen, ref_tabla, ref_id, quien, abierta["id"]))
+            if not n:
+                return None
+            ini = abierta.get("inicio_at")
+            horas = (datetime.utcnow() - ini).total_seconds() / 3600 if hasattr(ini, "year") else None
+            dur = (("≈ " if abierta.get("inicio_aprox") else "") + _hv_fmt_dur(horas)) if horas is not None else ""
+            if est == "dado_baja":
+                txt = "Dado de baja" + (f" después de {dur} fuera de servicio" if dur else "")
+            else:
+                txt = "Volvió a operar" + (f" tras {dur} detenido" if dur else "") + (f": {motivo}" if motivo else "")
+            _hv_evento(mid, m.get("cliente_id"), "dado_baja" if est == "dado_baja" else "cambio_estado", txt,
+                       ref_tabla, ref_id, {"parada": "fin", "origen": origen, "horas": round(horas, 2) if horas else None}, quien)
+            return "cerrada"
+    except Exception as e:
+        print(f"[hoja-vida] parada mid={mid}: {e}", flush=True)
+    return None
+
+
+def _hv_eventos_desde_ots(limite=300, solo_mid=None):
+    """Una línea en la hoja de vida por cada equipo de cada OT ya ejecutada
+    (firmada, por aprobar, completada o cerrada). No duplica: si el equipo ya
+    tiene un evento de esa OT (p. ej. el del levantamiento), la salta."""
+    filtro, params = "", []
+    if solo_mid:
+        filtro = " AND ve.maquina_id=%s"
+        params.append(solo_mid)
+    params.append(limite)
+    rows = mysql_fetchall(
+        "SELECT ve.maquina_id, m.cliente_id, v.id AS vid, v.numero_ot, v.tipo, ve.estado_revision, ve.razon_saltado, "
+        "       COALESCE(v.cerrada_at, v.hora_real_fin, TIMESTAMP(COALESCE(v.fecha_realizada, v.fecha_programada), '15:00:00')) AS cuando "
+        "  FROM mant_visita_equipos ve "
+        "  JOIN mant_visitas v ON v.id=ve.visita_id "
+        "  JOIN mant_maquinas m ON m.id=ve.maquina_id "
+        " WHERE v.estado IN ('firmada_tecnico','pendiente_aprobacion','completada','cerrada')" + filtro +
+        "   AND NOT EXISTS (SELECT 1 FROM mant_maquina_eventos e WHERE e.maquina_id=ve.maquina_id "
+        "                     AND e.referencia_tabla='mant_visitas' AND e.referencia_id=v.id) "
+        " ORDER BY v.id DESC LIMIT %s", tuple(params)) or []
+    n = 0
+    for r in rows:
+        tipo = (r.get("tipo") or "").lower()
+        rev = (r.get("estado_revision") or "").lower()
+        txt = f"{r.get('numero_ot') or ('OT #' + str(r['vid']))} · {_HV_TIPO_OT_LABEL.get(tipo, tipo.replace('_', ' ').capitalize() or 'OT')}"
+        if rev in _HV_REVISION_LABEL:
+            txt += " · " + _HV_REVISION_LABEL[rev]
+        if rev == "saltado" and r.get("razon_saltado"):
+            txt += f" ({str(r['razon_saltado']).replace('_', ' ')})"
+        if _hv_evento(r["maquina_id"], r.get("cliente_id"), _HV_TIPO_OT_EVENTO.get(tipo, "visita"), txt,
+                      "mant_visitas", r["vid"], {"tipo_ot": tipo, "revision": rev, "fuente": "ot"}, "sistema",
+                      fecha=r.get("cuando")):
+            n += 1
+    return n
+
+
+def _hv_eventos_desde_repuestos(limite=300, solo_mid=None):
+    """Una línea por cada repuesto instalado en el equipo."""
+    filtro, params = "", []
+    if solo_mid:
+        filtro = " AND s.maquina_id=%s"
+        params.append(solo_mid)
+    params.append(limite)
+    rows = mysql_fetchall(
+        "SELECT s.id, s.maquina_id, s.cliente_id, s.repuesto_nombre, s.cantidad, s.instalado_at, "
+        "       rs.sku AS stock_sku, v.numero_ot "
+        "  FROM mant_ot_repuesto_solicitudes s "
+        "  JOIN mant_maquinas m ON m.id=s.maquina_id "
+        "  LEFT JOIN mant_repuestos_stock rs ON rs.id=s.repuesto_stock_id "
+        "  LEFT JOIN mant_visitas v ON v.id=COALESCE(s.ot_generada_id, s.visita_id) "
+        " WHERE s.estado='instalado' AND s.maquina_id IS NOT NULL" + filtro +
+        "   AND NOT EXISTS (SELECT 1 FROM mant_maquina_eventos e WHERE e.maquina_id=s.maquina_id "
+        "                     AND e.referencia_tabla='mant_ot_repuesto_solicitudes' AND e.referencia_id=s.id) "
+        " ORDER BY s.id DESC LIMIT %s", tuple(params)) or []
+    n = 0
+    for r in rows:
+        try:
+            cant = float(r.get("cantidad") or 1)
+        except (TypeError, ValueError):
+            cant = 1
+        txt = (f"Repuesto instalado: {r.get('repuesto_nombre') or 'repuesto'}"
+               + (f" × {cant:g}" if cant != 1 else "")
+               + (f" ({r['stock_sku']})" if r.get("stock_sku") else "")
+               + (f" · {r['numero_ot']}" if r.get("numero_ot") else ""))
+        if _hv_evento(r["maquina_id"], r.get("cliente_id"), "cambio_repuesto", txt,
+                      "mant_ot_repuesto_solicitudes", r["id"], {"fuente": "repuesto"}, "sistema",
+                      fecha=r.get("instalado_at")):
+            n += 1
+    return n
+
+
+def _hv_paradas_barrido(limite=200):
+    """Abre la parada de los equipos detenidos que no la tienen y cierra la de
+    los que ya volvieron (cambios que entraron por la ficha o un levantamiento)."""
+    _hv_asegurar()
+    abiertas = cerradas = 0
+    for r in (mysql_fetchall(
+            "SELECT m.id FROM mant_maquinas m "
+            " WHERE m.estado_capturado IN ('fuera_servicio','en_reparacion') "
+            "   AND NOT EXISTS (SELECT 1 FROM mant_maquina_paradas p WHERE p.maquina_id=m.id AND p.fin_at IS NULL) "
+            " LIMIT %s", (limite,)) or []):
+        # ¿Desde cuándo? Si un técnico pidió un repuesto dejándolo fuera de
+        # servicio, esa es la hora real; si no, ya estaba detenido antes de
+        # medir y el inicio queda marcado como estimado.
+        sol = mysql_fetchone(
+            "SELECT MIN(created_at) AS desde FROM mant_ot_repuesto_solicitudes "
+            " WHERE maquina_id=%s AND COALESCE(dejo_fuera_servicio,0)=1 AND estado NOT IN ('instalado','rechazado')",
+            (r["id"],)) or {}
+        desde = sol.get("desde")
+        if _maquina_parada_sync(r["id"], "barrido", "mant_ot_repuesto_solicitudes" if desde else None, None,
+                                None, "sistema", inicio=desde, inicio_aprox=not desde) == "abierta":
+            abiertas += 1
+    for r in (mysql_fetchall(
+            "SELECT p.maquina_id FROM mant_maquina_paradas p JOIN mant_maquinas m ON m.id=p.maquina_id "
+            " WHERE p.fin_at IS NULL AND COALESCE(m.estado_capturado,'') NOT IN ('fuera_servicio','en_reparacion') "
+            " LIMIT %s", (limite,)) or []):
+        if _maquina_parada_sync(r["maquina_id"], "barrido", user="sistema") == "cerrada":
+            cerradas += 1
+    return {"abiertas": abiertas, "cerradas": cerradas}
+
+
+def _hv_sumar_meses(d, meses):
+    import calendar as _calendar
+    y = d.year + (d.month - 1 + int(meses)) // 12
+    mth = (d.month - 1 + int(meses)) % 12 + 1
+    return d.replace(year=y, month=mth, day=min(d.day, _calendar.monthrange(y, mth)[1]))
+
+
+def _garantia_reglas():
+    _hv_asegurar()
+    return [dict(r) for r in (mysql_fetchall(
+        "SELECT id, marca, familia, meses, updated_by, updated_at FROM mant_garantia_reglas WHERE activo=1 "
+        " ORDER BY (marca IS NULL), marca, (familia IS NULL), familia", ()) or [])]
+
+
+def _garantia_regla_para(m, reglas):
+    """La regla más específica que aplica: marca + familia > marca > familia > general."""
+    marca = (m.get("marca") or "").strip().lower()
+    fam = (m.get("familia_equipo") or "").strip().lower()
+    mejor, puntos = None, -1
+    for r in reglas:
+        rm = (r.get("marca") or "").strip().lower()
+        rf = (r.get("familia") or "").strip().lower()
+        if rm and rm != marca:
+            continue
+        if rf and rf != fam:
+            continue
+        pts = (2 if rm else 0) + (1 if rf else 0)
+        if pts > puntos:
+            mejor, puntos = r, pts
+    return mejor
+
+
+def _garantia_aplicar(solo_nuevas=False, limite=None, solo_mid=None):
+    """Calcula fecha_fin_garantia = fecha de instalación (o de la factura) +
+    meses de la regla. NUNCA pisa una fecha puesta a mano: solo toca equipos
+    sin fecha o con fecha que calculó este mismo motor ('calculada')."""
+    reglas = _garantia_reglas()
+    where = ["COALESCE(estado,'activo')<>'baja'", "COALESCE(fecha_instalacion, doc_fecha) IS NOT NULL"]
+    where.append("fecha_fin_garantia IS NULL" if solo_nuevas else "(fecha_fin_garantia IS NULL OR garantia_origen='calculada')")
+    params = []
+    if solo_mid:
+        where.append("id=%s")
+        params.append(solo_mid)
+    if solo_nuevas and not reglas:
+        return 0
+    sql = ("SELECT id, marca, familia_equipo, fecha_instalacion, doc_fecha, fecha_fin_garantia, garantia_origen "
+           "  FROM mant_maquinas WHERE " + " AND ".join(where) + " ORDER BY id DESC")
+    if limite:
+        sql += " LIMIT %s"
+        params.append(int(limite))
+    n = 0
+    for m in (mysql_fetchall(sql, tuple(params)) or []):
+        base = m.get("fecha_instalacion") or m.get("doc_fecha")
+        if not hasattr(base, "year"):
+            continue
+        r = _garantia_regla_para(m, reglas)
+        nueva = _hv_sumar_meses(base, r["meses"]) if r else None
+        actual = m.get("fecha_fin_garantia")
+        if nueva == actual:
+            continue
+        if nueva is None and (m.get("garantia_origen") or "") != "calculada":
+            continue
+        try:
+            mysql_execute(
+                "UPDATE mant_maquinas SET fecha_fin_garantia=%s, garantia_origen=%s "
+                " WHERE id=%s AND (fecha_fin_garantia IS NULL OR garantia_origen='calculada')",
+                (nueva, "calculada" if nueva else None, m["id"]))
+            n += 1
+        except Exception as e:
+            print(f"[garantia] mid={m['id']}: {e}", flush=True)
+    return n
+
+
+def _garantia_resumen():
+    _hv_asegurar()
+    r = mysql_fetchone(
+        "SELECT COUNT(*) AS total, "
+        "       SUM(CASE WHEN COALESCE(fecha_instalacion, doc_fecha) IS NOT NULL THEN 1 ELSE 0 END) AS con_fecha_base, "
+        "       SUM(CASE WHEN garantia_origen='calculada' THEN 1 ELSE 0 END) AS calculadas, "
+        "       SUM(CASE WHEN fecha_fin_garantia IS NOT NULL AND COALESCE(garantia_origen,'manual')<>'calculada' THEN 1 ELSE 0 END) AS manuales, "
+        "       SUM(CASE WHEN fecha_fin_garantia >= CURDATE() THEN 1 ELSE 0 END) AS vigentes, "
+        "       SUM(CASE WHEN fecha_fin_garantia IS NULL THEN 1 ELSE 0 END) AS sin_fecha "
+        "  FROM mant_maquinas WHERE COALESCE(estado,'activo')<>'baja'", ()) or {}
+    return {k: int(r.get(k) or 0) for k in ("total", "con_fecha_base", "calculadas", "manuales", "vigentes", "sin_fecha")}
+
+
+def _hoja_vida_barrido(limite=300):
+    """El barrido de la Ola 1 (cada 10 min). Cada parte falla sola."""
+    out = {}
+    for nombre, fn in (("paradas", lambda: _hv_paradas_barrido()),
+                       ("eventos_ot", lambda: _hv_eventos_desde_ots(limite)),
+                       ("eventos_repuestos", lambda: _hv_eventos_desde_repuestos(limite)),
+                       ("garantias", lambda: _garantia_aplicar(solo_nuevas=True, limite=500))):
+        try:
+            out[nombre] = fn()
+        except Exception as e:
+            print(f"[hoja-vida] barrido {nombre}: {e}", flush=True)
+            out[nombre] = "error"
+    return out
+
+
+def _hoja_vida_sync_maquina(mid):
+    """Al abrir la ficha de un equipo: su hoja de vida al día en ese momento."""
+    try:
+        _hv_asegurar()
+        _maquina_parada_sync(mid, "consulta")
+        _hv_eventos_desde_ots(50, solo_mid=mid)
+        _hv_eventos_desde_repuestos(50, solo_mid=mid)
+        _garantia_aplicar(solo_nuevas=True, solo_mid=mid)
+    except Exception as e:
+        print(f"[hoja-vida] sync mid={mid}: {e}", flush=True)
+
+
+def _maquina_disponibilidad(mid, dias=365):
+    """Disponibilidad del equipo desde que se mide (Ola 1): % del tiempo que
+    estuvo operativo + sus paradas. Honesto: la ventana empieza en la fecha de
+    medición, la de instalación o hace `dias`, la más reciente."""
+    _hv_asegurar()
+    m = mysql_fetchone("SELECT fecha_instalacion, created_at FROM mant_maquinas WHERE id=%s", (mid,)) or {}
+    ahora = datetime.utcnow()
+    desde = max(ahora - timedelta(days=dias), _HV_MEDICION_DESDE)
+    fi = m.get("fecha_instalacion")
+    if hasattr(fi, "year"):
+        desde = max(desde, datetime(fi.year, fi.month, fi.day))
+    rows = [dict(r) for r in (mysql_fetchall(
+        "SELECT id, inicio_at, fin_at, inicio_aprox, estado_inicio, estado_fin, origen_inicio, origen_fin, motivo, "
+        "       abierta_por, cerrada_por, ref_tabla, ref_id "
+        "  FROM mant_maquina_paradas WHERE maquina_id=%s ORDER BY inicio_at DESC LIMIT 100", (mid,)) or [])]
+    total = max(1.0, (ahora - desde).total_seconds())
+    parado = 0.0
+    for p in rows:
+        ini, fin = p.get("inicio_at"), (p.get("fin_at") or ahora)
+        if hasattr(ini, "year"):
+            a, b = max(ini, desde), min(fin, ahora)
+            if b > a:
+                parado += (b - a).total_seconds()
+            p["horas"] = round((fin - ini).total_seconds() / 3600, 2)
+            p["duracion"] = ("≈ " if p.get("inicio_aprox") else "") + _hv_fmt_dur(p["horas"])
+        p["abierta"] = not p.get("fin_at")
+        p["inicio_txt"] = chile_fmt_filter(ini) if ini else None
+        p["fin_txt"] = chile_fmt_filter(p["fin_at"]) if p.get("fin_at") else None
+    return {"pct": round(100.0 * (1 - parado / total), 1), "desde_txt": chile_fmt_filter(desde, "%d/%m/%Y"),
+            "horas_paradas": round(parado / 3600, 1), "n_paradas": len(rows), "paradas": rows,
+            "detenida": any(p["abierta"] for p in rows)}
+
+
+@app.route("/mantenciones/api/garantia/reglas", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_garantia_reglas_get():
+    """Reglas de garantía por marca/familia (Ola 1) + qué marcas hay en las fichas."""
+    _hv_asegurar()
+    reglas = _garantia_reglas()
+    for r in reglas:
+        r["updated_at"] = chile_fmt_filter(r["updated_at"]) if r.get("updated_at") else None
+    marcas = [dict(r) for r in (mysql_fetchall(
+        "SELECT TRIM(marca) AS marca, COUNT(*) AS n FROM mant_maquinas "
+        " WHERE COALESCE(estado,'activo')<>'baja' AND marca IS NOT NULL AND TRIM(marca)<>'' "
+        " GROUP BY TRIM(marca) ORDER BY n DESC LIMIT 300", ()) or [])]
+    return jsonify({"ok": True, "reglas": reglas, "marcas": marcas, "familias": list(_HV_FAMILIAS),
+                    "resumen": _garantia_resumen(), "puede_editar": bool(_intel_es_admin())})
+
+
+@app.route("/mantenciones/api/garantia/reglas", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_garantia_reglas_guardar():
+    """Crea o cambia una regla (marca y/o familia → meses) y recalcula las
+    garantías que calculó el sistema. Las puestas a mano no se tocan."""
+    if not _intel_es_admin():
+        return jsonify({"ok": False, "error": "Solo administración define las garantías."}), 403
+    _hv_asegurar()
+    d = request.get_json(silent=True) or {}
+    marca = (str(d.get("marca") or "").strip())[:120] or None
+    familia = (str(d.get("familia") or "").strip().lower()) or None
+    if familia and familia not in _HV_FAMILIAS:
+        return jsonify({"ok": False, "error": "Esa familia no existe."}), 400
+    try:
+        meses = int(d.get("meses"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Indica los meses de garantía (un número entero)."}), 400
+    if meses < 1 or meses > 240:
+        return jsonify({"ok": False, "error": "Los meses deben estar entre 1 y 240."}), 400
+    user = _hv_user()
+    ya = mysql_fetchone(
+        "SELECT id, meses FROM mant_garantia_reglas WHERE activo=1 AND marca<=>%s AND familia<=>%s LIMIT 1",
+        (marca, familia))
+    if ya:
+        mysql_execute("UPDATE mant_garantia_reglas SET meses=%s, updated_by=%s WHERE id=%s", (meses, user, ya["id"]))
+        rid = ya["id"]
+        _mant_log("garantia_regla", rid, "editar", f"{marca or 'Toda marca'} / {familia or 'toda familia'}: {ya.get('meses')} → {meses} meses")
+    else:
+        mysql_execute("INSERT INTO mant_garantia_reglas (marca, familia, meses, updated_by) VALUES (%s,%s,%s,%s)",
+                      (marca, familia, meses, user))
+        rid = (mysql_fetchone("SELECT MAX(id) AS id FROM mant_garantia_reglas WHERE marca<=>%s AND familia<=>%s",
+                              (marca, familia)) or {}).get("id")
+        _mant_log("garantia_regla", rid, "crear", f"{marca or 'Toda marca'} / {familia or 'toda familia'}: {meses} meses")
+    n = _garantia_aplicar()
+    return jsonify({"ok": True, "id": rid, "recalculadas": n, "resumen": _garantia_resumen()})
+
+
+@app.route("/mantenciones/api/garantia/reglas/<int:rid>/quitar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_garantia_regla_quitar(rid):
+    """Quita una regla (queda inactiva, no se borra) y recalcula."""
+    if not _intel_es_admin():
+        return jsonify({"ok": False, "error": "Solo administración define las garantías."}), 403
+    _hv_asegurar()
+    r = mysql_fetchone("SELECT id, marca, familia, meses FROM mant_garantia_reglas WHERE id=%s AND activo=1", (rid,))
+    if not r:
+        return jsonify({"ok": False, "error": "Esa regla ya no existe."}), 404
+    _mant_log("garantia_regla", rid, "quitar", f"{r.get('marca') or 'Toda marca'} / {r.get('familia') or 'toda familia'}: {r.get('meses')} meses")
+    mysql_execute("UPDATE mant_garantia_reglas SET activo=0, updated_by=%s WHERE id=%s", (_hv_user(), rid))
+    n = _garantia_aplicar()
+    return jsonify({"ok": True, "recalculadas": n, "resumen": _garantia_resumen()})
+
+
+@app.route("/mantenciones/api/maquinas/<int:mid>/paradas")
+@_mant_required
+def mant_maquina_paradas_api(mid):
+    """Disponibilidad y paradas del equipo (hoja de vida, Ola 1)."""
+    _hoja_vida_sync_maquina(mid)
+    return jsonify({"ok": True, **_maquina_disponibilidad(mid)})
+
+
 @app.route("/mantenciones/api/maquinas/<int:mid>/timeline")
 @_mant_required
 def mant_maquina_timeline(mid):
     """Timeline de la 'ficha potente' del equipo: eventos + fotos + visitas."""
+    _hoja_vida_sync_maquina(mid)
     eventos = mysql_fetchall(
         "SELECT id, tipo, descripcion, fecha_evento, referencia_tabla, referencia_id, "
         "       metadata_json, created_by "
@@ -138012,7 +138580,7 @@ def mant_maquina_timeline(mid):
     ) or []
     for e in eventos:
         if e.get("fecha_evento"):
-            e["fecha_evento"] = str(e["fecha_evento"])[:16]
+            e["fecha_evento"] = chile_fmt_filter(e["fecha_evento"])
         if e.get("metadata_json"):
             try: e["metadata"] = json.loads(e["metadata_json"])
             except Exception: e["metadata"] = None
@@ -139128,6 +139696,14 @@ def mant_maquina_patch(mid):
                 except ValueError:
                     return jsonify({"ok": False, "error": f"Formato inválido en {f} (usa YYYY-MM-DD)"}), 400
             sets.append(f"{f}=%s"); vals.append(raw)
+            # 🏋️ Ola 1: si una persona CAMBIA la fecha de garantía, queda como
+            # manual y el cálculo automático no la vuelve a tocar. Si la deja
+            # igual (el formulario la manda siempre), no cambia su origen.
+            if f == "fecha_fin_garantia":
+                _antes_fg = str(eq.get("fecha_fin_garantia"))[:10] if eq.get("fecha_fin_garantia") else None
+                if raw != _antes_fg:
+                    _hv_asegurar()
+                    sets.append("garantia_origen=%s"); vals.append("manual" if raw else None)
 
     # aplica_mantencion (0/1): "En plan" vs "Sin mantención". El front lo
     # manda junto al resto de la edición. NO requiere motivo (no es crítico),
