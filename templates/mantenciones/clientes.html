@@ -599,6 +599,13 @@ async function reclasificarInst(btn){
           <div class="col-12 col-md-6 d-flex align-items-end"><div class="small text-muted">
             El <b>precio</b> no se define acá: lo calcula el cotizador con las tarifas por categoría de producto
             (Mantención, Visita técnica…). Este descuento se carga solo al abrir la cotización del plan.</div></div>
+          <div class="col-6 col-md-3"><label class="form-label small fw-semibold">Meses hasta la 1ª mantención</label>
+            <input type="number" id="pcMesesPrimera" class="form-control" min="0" max="36">
+            <div class="form-text">Contados desde la emisión de la factura.</div></div>
+          <div class="col-12 col-md-9"><label class="form-label small fw-semibold d-flex align-items-center gap-2">
+              <input type="checkbox" class="form-check-input m-0" id="pcEscActiva"> Escalera de regalías (descuento de cada mantención)</label>
+            <input type="text" id="pcEscalera" class="form-control" placeholder="100,50,25">
+            <div class="form-text">% de descuento de la 1ª, 2ª, 3ª… mantención (100 = sin costo). Después se cobra el precio del plan con el descuento base. Solo se muestra a clientes cuando está activada.</div></div>
           <div class="col-12"><label class="form-label small fw-semibold">Qué incluye el plan (una línea por ítem)</label>
             <textarea id="pcIncluye" class="form-control" rows="5" maxlength="1500"></textarea></div>
           <div class="col-12"><label class="form-label small fw-semibold">Mensaje de WhatsApp para contactar clientes</label>
@@ -658,7 +665,10 @@ async function abrirPlanConfig(){
     document.getElementById('pcVigencia').value = c.vigencia_meses;
     document.getElementById('pcIncluye').value = c.incluye;
     document.getElementById('pcMsgWa').value = c.mensaje_wa || '';
-    ['pcDesc','pcDescMax','pcVisitas','pcVigencia','pcIncluye','pcMsgWa'].forEach(i => document.getElementById(i).disabled = !d.puede_editar);
+    document.getElementById('pcMesesPrimera').value = c.meses_primera || 6;
+    document.getElementById('pcEscalera').value = c.escalera || '';
+    document.getElementById('pcEscActiva').checked = String(c.escalera_activa) === '1';
+    ['pcDesc','pcDescMax','pcVisitas','pcVigencia','pcIncluye','pcMsgWa','pcMesesPrimera','pcEscalera','pcEscActiva'].forEach(i => document.getElementById(i).disabled = !d.puede_editar);
     document.getElementById('pcGuardar').style.display = d.puede_editar ? '' : 'none';
     if (!d.puede_editar) document.getElementById('planCfgAviso').insertAdjacentHTML('beforeend', '<br><b>Solo un administrador puede cambiarlos.</b>');
   } catch(e){ ilusToast('No se pudo cargar el plan: ' + e.message, {type:'error'}); }
@@ -673,7 +683,10 @@ async function guardarPlanConfig(btn){
         visitas_anio: document.getElementById('pcVisitas').value,
         vigencia_meses: document.getElementById('pcVigencia').value,
         incluye: document.getElementById('pcIncluye').value,
-        mensaje_wa: document.getElementById('pcMsgWa').value })});
+        mensaje_wa: document.getElementById('pcMsgWa').value,
+        meses_primera: document.getElementById('pcMesesPrimera').value,
+        escalera: document.getElementById('pcEscalera').value,
+        escalera_activa: document.getElementById('pcEscActiva').checked ? '1' : '0' })});
     const d = await r.json();
     if (!d.ok) { ilusToast(d.error || 'No se pudo guardar', {type:'error'}); return; }
     ilusToast('✓ Plan de mantención guardado', {type:'success'});
@@ -1224,7 +1237,7 @@ async function limpiarHuerfanos(){
   <i class="bi bi-megaphone-fill"></i>
   <div>
     <b>{{ global_stats.inst_pendientes }} cliente{{ '' if global_stats.inst_pendientes == 1 else 's' }} de instalación esperan que les ofrezcamos mantención</b>
-    <span>{{ global_stats.inst_sin_contactar }} sin contactar aún{% if global_stats.inst_vencidos %} · {{ global_stats.inst_vencidos }} con seguimiento vencido{% endif %}.
+    <span>{{ global_stats.inst_sin_contactar }} sin contactar aún{% if global_stats.inst_vencida_1a %} · <b style="display:inline">{{ global_stats.inst_vencida_1a }} con la 1ª mantención ya vencida según su factura</b>{% endif %}{% if global_stats.inst_vencidos %} · {{ global_stats.inst_vencidos }} con seguimiento vencido{% endif %}.
       Contáctalos, ofrece el plan de mantención con descuento y gestiona su contrato.</span>
   </div>
   <button type="button" class="btn btn-sm" onclick="aplicarKpiFiltro('instalacion')">
@@ -1585,6 +1598,7 @@ function aplicarKpiFiltro(tipo) {
           <i class="bi bi-megaphone-fill me-1"></i>Mantención: {{ c.pr.etapa_label }}
         </span>
         {% if c.pr.marcas %}<span class="cc2-prosp-txt"><i class="bi bi-tags-fill me-1"></i>Marcas: {{ c.pr.marcas }}</span>{% endif %}
+        {% if c.pr.plan %}{% set pl = c.pr.plan %}<span class="cc2-prosp-txt pmant {{ pl.estado_primera }}"><i class="bi bi-calendar2-check-fill me-1"></i>{% if pl.estado_primera == 'vencida' %}1ª mantención vencida hace {{ -pl.dias_primera }} días{% elif pl.estado_primera == 'proxima' %}1ª mantención en {{ pl.dias_primera }} días{% else %}1ª mantención el {{ pl.primera }}{% endif %} · {{ c.pr.equipos_plan }} equipo{{ 's' if c.pr.equipos_plan != 1 }}</span>{% endif %}
         {% if c.pr.origen_ot %}
         <span class="cc2-prosp-txt">Nació de {{ c.pr.origen_ot }} · {{ c.pr.origen_tipo }}{% if c.pr.origen_fecha %} · {{ c.pr.origen_fecha }}{% endif %}</span>
         {% endif %}
@@ -1770,6 +1784,7 @@ function aplicarKpiFiltro(tipo) {
 .cc2-prosp-ofrecida{color:#1d4ed8}.cc2-prosp-aceptada{color:#15803d}.cc2-prosp-rechazada{color:#6b7280}
 .cc2-prosp-txt{color:#6b7280}
 .cc2-prosp-vencida{color:#dc2626;font-weight:700}
+.pmant{font-weight:700}.pmant.vencida{color:#b91c1c}.pmant.proxima{color:#b45309}.pmant.futura{color:#15803d}
 .ptmini{display:flex;align-items:center;flex-wrap:wrap;gap:0;margin-bottom:4px}
 .ptmini .pm{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:.68rem;font-weight:800;background:#e5e7eb;color:#6b7280;flex:0 0 auto}
 .ptmini .pm.hecho{background:#16a34a;color:#fff}

@@ -405,3 +405,43 @@ def test_equipos_respaldo_del_ticket_si_la_factura_no_esta_en_el_erp():
     ns, calls, tk = _equipos_ns(header=False, equipos_ticket=eq)
     ok, d = ns["_ficha_equipos_desde_instalacion"](5, confirmar=True, tickets_cache=tk)
     assert d["respaldo_ticket"] and d["creados"] == 1 and calls["insert"][0][1] == "BICI9"
+
+
+# ───────── Calendario de mantenciones desde la factura ─────────
+def _cal():
+    src = open(_APP, encoding="utf-8").read()
+    a = src.index("def _sumar_meses")
+    b = src.index("def _prospecto_info")
+    ns = {"datetime": dt.datetime}
+    exec(src[a:b], ns)
+    return ns
+
+
+def test_sumar_meses_respeta_fin_de_mes():
+    f = _cal()["_sumar_meses"]
+    assert f(dt.date(2026, 1, 31), 1) == dt.date(2026, 2, 28)
+    assert f(dt.date(2026, 11, 15), 3) == dt.date(2027, 2, 15)
+
+
+def test_escalera_parse_ignora_basura():
+    assert _cal()["_escalera_parse"]("100, 50;25%, abc, 150") == [100.0, 50.0, 25.0]
+
+
+def test_calendario_desde_la_factura_con_escalera_activa():
+    c = _cal()["_plan_calendario"](dt.date(2026, 2, 20), dt.date(2026, 10, 5), 6, 4, [100, 50, 25], True, 10)
+    assert c["primera"] == "20/08/2026" and c["estado_primera"] == "vencida" and c["dias_primera"] < 0
+    assert [v["fecha"] for v in c["visitas"]][:3] == ["20/08/2026", "20/11/2026", "20/02/2027"]
+    assert [v["descuento"] for v in c["visitas"]] == [100, 50, 25, 10]   # después de la escalera, el descuento del plan
+    assert c["visitas"][0]["gratis"] and c["cada_meses"] == 3
+
+
+def test_calendario_con_escalera_apagada_usa_solo_el_descuento_base():
+    c = _cal()["_plan_calendario"](dt.date(2026, 9, 1), dt.date(2026, 10, 5), 6, 2, [100, 50], False, 15)
+    assert c["estado_primera"] == "futura" and {v["descuento"] for v in c["visitas"]} == {15.0}
+    assert not c["escalera_activa"] and c["cada_meses"] == 6
+
+
+def test_calendario_proxima_y_sin_fecha():
+    cal = _cal()["_plan_calendario"]
+    assert cal(dt.date(2026, 4, 20), dt.date(2026, 10, 5), 6, 4)["estado_primera"] == "proxima"
+    assert cal(None, dt.date(2026, 10, 5), 6, 4) is None

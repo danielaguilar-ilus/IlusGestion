@@ -63320,13 +63320,14 @@ def mant_clientes():
                  and c.get("contrato_estado") == "sin_contrato"
                  and c["pr"]["etapa"] in ("por_ofrecer", "ofrecida")]
         _inst_stats = {
+            "inst_vencida_1a": sum(1 for c in _pend if (c["pr"].get("plan") or {}).get("estado_primera") == "vencida"),
             "inst_pendientes": len(_pend),
             "inst_sin_contactar": sum(1 for c in _pend if c["pr"]["etapa"] == "por_ofrecer"),
             "inst_vencidos": sum(1 for c in _pend if c["pr"].get("vencida")),
         }
     except Exception as _e_pr:
         print(f"[clientes] prospectos: {_e_pr}", flush=True)
-        _inst_stats = {"inst_pendientes": 0, "inst_sin_contactar": 0, "inst_vencidos": 0}
+        _inst_stats = {"inst_pendientes": 0, "inst_sin_contactar": 0, "inst_vencidos": 0, "inst_vencida_1a": 0}
 
     # Stats globales (sin filtros)
     gs = mysql_fetchone("""
@@ -69928,6 +69929,64 @@ def _prospecto_pasos(o, cot=None, contrato_fecha=None):
     return pasos, n, siguiente
 
 
+def _sumar_meses(d, meses):
+    """Suma meses a una fecha sin pasarse del último día del mes (31-ene + 1 mes = 28/29-feb)."""
+    import calendar as _cal
+    y, m = divmod(d.month - 1 + int(meses), 12)
+    y, m = d.year + y, m + 1
+    return d.replace(year=y, month=m, day=min(d.day, _cal.monthrange(y, m)[1]))
+
+
+def _escalera_parse(txt):
+    """'100, 50,25' -> [100.0, 50.0, 25.0] (0..100, máx. 6 escalones). Lo inválido se ignora."""
+    out = []
+    for parte in str(txt or "").replace(";", ",").split(","):
+        try:
+            v = float(parte.strip().replace("%", ""))
+        except ValueError:
+            continue
+        if 0 <= v <= 100:
+            out.append(v)
+    return out[:6]
+
+
+def _plan_calendario(ref, hoy, meses_primera, visitas_anio, escalera=None, escalera_activa=False, desc_base=0.0):
+    """Calendario sugerido de mantenciones desde la FECHA DE LA FACTURA (o de la instalación).
+    1ª = ref + meses_primera; las siguientes cada 12/visitas meses. Descuento por mantención: la escalera de
+    regalías (si está activa: 100 = gratis) y después el descuento base del plan («hasta llegar al 100%»)."""
+    if not ref:
+        return None
+    if isinstance(ref, datetime):
+        ref = ref.date()
+    if isinstance(hoy, datetime):
+        hoy = hoy.date()
+    try:
+        vis = max(1, min(int(visitas_anio or 4), 12))
+    except (TypeError, ValueError):
+        vis = 4
+    paso = max(1, round(12 / vis))
+    try:
+        mp = max(0, min(int(meses_primera or 6), 36))
+    except (TypeError, ValueError):
+        mp = 6
+    esc = list(escalera or []) if escalera_activa else []
+    try:
+        base = float(desc_base or 0)
+    except (TypeError, ValueError):
+        base = 0.0
+    primera = _sumar_meses(ref, mp)
+    n = min(max(vis, len(esc) + 1), 8)
+    visitas = []
+    for i in range(n):
+        f = _sumar_meses(primera, paso * i)
+        d = esc[i] if i < len(esc) else base
+        visitas.append({"n": i + 1, "fecha": f.strftime("%d/%m/%Y"), "descuento": d, "gratis": d >= 100})
+    dias = (primera - hoy).days
+    estado = "vencida" if dias < 0 else ("proxima" if dias <= 30 else "futura")
+    return {"ref": ref.strftime("%d/%m/%Y"), "primera": primera.strftime("%d/%m/%Y"), "dias_primera": dias,
+            "estado_primera": estado, "cada_meses": paso, "visitas": visitas, "escalera_activa": bool(esc)}
+
+
 def _prospecto_info(ids):
     """{cliente_id: {etapa, etapa_label, nota, proxima_gestion, vencida,
     ofrecida_at, ofrecida_por, origen_ot, origen_tipo, origen_fecha}}.
@@ -69937,7 +69996,8 @@ def _prospecto_info(ids):
                "nota": "", "proxima_gestion": None, "proxima_gestion_iso": "",
                "vencida": False, "ofrecida_at": None, "ofrecida_por": None,
                "origen_ot": None, "origen_tipo": None, "origen_fecha": None, "marcas": "",
-               "pasos": [], "pasos_hechos": 0, "pasos_total": len(_PROSP_PASOS), "paso_actual": ""}
+               "pasos": [], "pasos_hechos": 0, "pasos_total": len(_PROSP_PASOS), "paso_actual": "",
+               "equipos_plan": 0, "factura": "", "plan": None}
            for i in ids}
     if not ids:
         return out
@@ -70012,6 +70072,29 @@ def _prospecto_info(ids):
             o["pasos"], o["pasos_hechos"], o["paso_actual"] = _prospecto_pasos(o, cots.get(i), contratos.get(i))
         except Exception as e:
             print(f"[prospecto_info] pasos {i}: {e}", flush=True)
+    # Calendario sugerido desde la factura de sus equipos (Daniel: «pon la factura para hacerle seguimiento según
+    # la emisión, para realizar mantenciones y ofrecer un porcentaje de descuento de cada mantención»).
+    try:
+        cfg = _plan_config()
+        esc = _escalera_parse(cfg.get("escalera"))
+        esc_on = str(cfg.get("escalera_activa") or "0") == "1"
+        for r in (mysql_fetchall(
+                f"SELECT cliente_id, MIN(doc_fecha) AS f_doc, MIN(fecha_instalacion) AS f_inst, COUNT(*) AS n, "
+                f"       SUBSTRING_INDEX(GROUP_CONCAT(doc_origen ORDER BY doc_fecha SEPARATOR '|'), '|', 1) AS doc "
+                f"  FROM mant_maquinas WHERE cliente_id IN ({ph}) AND estado='activo' "
+                f"   AND COALESCE(aplica_mantencion,1)=1 GROUP BY cliente_id", tuple(ids)) or []):
+            o = out.get(r["cliente_id"])
+            if not o:
+                continue
+            o["equipos_plan"] = int(r.get("n") or 0)
+            o["factura"] = r.get("doc") or ""
+            ref = r.get("f_doc") or r.get("f_inst")
+            o["plan"] = _plan_calendario(ref, hoy, cfg.get("meses_primera"), cfg.get("visitas_anio"),
+                                         esc, esc_on, cfg.get("descuento_pct"))
+            if o["plan"]:
+                o["plan"]["ref_tipo"] = "factura" if r.get("f_doc") else "instalación"
+    except Exception as e:
+        print(f"[prospecto_info] calendario: {e}", flush=True)
     return out
 
 
@@ -70325,6 +70408,9 @@ def mant_cron_prospectos_oferta():
 _PLAN_DEFAULTS = {
     "descuento_pct": "0", "descuento_max_pct": "0", "visitas_anio": "4",
     "vigencia_meses": "12",
+    "meses_primera": "6",
+    "escalera_activa": "0",
+    "escalera": "100,50,25",
     "mensaje_wa": ("Hola {{contacto}}, te escribimos de ILUS Fitness. Instalamos los equipos de {{cliente}} y "
                    "queremos ofrecerte nuestro Plan de Mantención: descuento, repuestos originales certificados y "
                    "menos tiempo con máquinas detenidas. ¿Te gustaría que te preparemos una cotización?"),
@@ -70442,6 +70528,9 @@ def mant_plan_config_api():
             "vigencia_meses": _num("vigencia_meses", 1, 60, True),
             "incluye": (d.get("incluye") or "").strip()[:1500],
             "mensaje_wa": (d.get("mensaje_wa") or "").strip()[:800],
+            "meses_primera": _num("meses_primera", 0, 36, True),
+            "escalera_activa": "1" if str(d.get("escalera_activa")) in ("1", "true", "True") else "0",
+            "escalera": ",".join(f"{v:g}" for v in _escalera_parse(d.get("escalera"))),
         }
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -70521,6 +70610,14 @@ def mant_plan_enviar(cid):
     precio_html = ('<p style="margin:10px 0">El valor de tu plan va en la <b>cotización</b> que te enviamos '
                    'con las tarifas de cada equipo'
                    + (f', con <b>{c["descuento_pct"]:g}% de descuento</b>' if c["descuento_pct"] else "") + ".</p>")
+    _esc = _escalera_parse(cfg.get("escalera")) if str(cfg.get("escalera_activa") or "0") == "1" else []
+    if _esc:
+        _ord = ["1ª", "2ª", "3ª", "4ª", "5ª", "6ª"]
+        precio_html += ('<p style="margin:10px 0"><b>Tu plan de bienvenida:</b> '
+                        + ", ".join(f"{_ord[i]} mantención " + ("sin costo" if v >= 100 else f"con {v:g}% de descuento")
+                                    for i, v in enumerate(_esc))
+                        + (f"; desde la {_ord[len(_esc)] if len(_esc) < 6 else 'siguiente'} el precio del plan"
+                           + (f" con {c['descuento_pct']:g}% de descuento" if c["descuento_pct"] else "") + ".</p>"))
     incluye_html = ('<ul style="margin:8px 0 12px;padding-left:20px">' + "".join(
         f'<li style="margin:3px 0">{esc(l.strip())}</li>'
         for l in (cfg["incluye"] or "").splitlines() if l.strip()) + "</ul>")
