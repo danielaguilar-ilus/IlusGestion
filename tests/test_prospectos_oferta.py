@@ -292,6 +292,16 @@ def test_rut_canonico(entrada, esperado):
     assert _rut_real()(entrada) == esperado
 
 
+def test_variantes_del_rut_para_buscar_sus_tickets():
+    src = open(_APP, encoding="utf-8").read()
+    ns = {"re": __import__("re")}
+    for n in ("normalizar_rut", "_calcular_dv_rut", "validar_rut", "_rut_canon", "_rut_variantes_ticket"):
+        i = src.index("\ndef " + n + "(")
+        exec(src[i:src.index("\ndef ", i + 5)], ns)
+    assert ns["_rut_variantes_ticket"]("09.918.126-5") == sorted({"99181265", "099181265", "9918126", "09918126"})
+    assert ns["_rut_variantes_ticket"]("") == []
+
+
 def test_ficha_se_crea_como_prospecto_de_instalacion():
     ns, calls = _ficha_ns()
     cid, est = ns["_ficha_instalacion_desde_grupo"]({"rut": "1234567", "empresa": "Gimnasio X", "tickets": [{"numero": "TAA-1"}]}, "daniel")

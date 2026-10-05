@@ -372,6 +372,45 @@
           @keyframes pplanIn{to{opacity:1;transform:none}}
           </style>
           {% endif %}
+          {# Conversaciones: el ticket es la bandeja (Daniel 2026-10-04). Un clic abre el ticket con su chat y adjuntos. #}
+          <div class="pconv">
+            <div class="pconv-head"><i class="bi bi-chat-dots-fill"></i><b>Conversaciones</b>
+              {% set _nl = (prospecto.tickets or [])|sum(attribute='no_leidos') %}
+              {% if _nl %}<span class="pconv-nl">{{ _nl }} sin leer</span>{% endif %}
+              <span class="small text-muted ms-auto">tickets de este RUT</span></div>
+            {% if prospecto.tickets %}
+            <div class="pconv-lista">
+              {% for tk in prospecto.tickets %}
+              <a class="pconv-item{% if tk.no_leidos %} nl{% endif %}" href="{{ tk.url }}" target="_blank">
+                <span class="pconv-num">{{ tk.numero }}</span>
+                <span class="pconv-tit">{{ tk.titulo or 'Ticket' }}</span>
+                <span class="pconv-est {{ 'ab' if tk.abierto else 'ce' }}">{{ tk.estado }}</span>
+                <span class="pconv-fec">{{ tk.fecha }}</span>
+                {% if tk.no_leidos %}<span class="pconv-badge">{{ tk.no_leidos }}</span>{% endif %}
+                <i class="bi bi-box-arrow-up-right"></i>
+              </a>
+              {% endfor %}
+            </div>
+            {% else %}
+            <div class="small text-muted">Todavía no hay conversaciones con este cliente.</div>
+            {% endif %}
+          </div>
+          <style>
+          .pconv{margin:0 0 14px;padding:10px 12px;border:1px solid #e5e7eb;border-radius:12px;background:#fff}
+          .pconv-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}.pconv-head i{color:#2563eb}
+          .pconv-nl{background:#dc2626;color:#fff;border-radius:99px;padding:2px 8px;font-size:.72rem;font-weight:800;animation:ptpulse 1.6s infinite}
+          .pconv-lista{display:flex;flex-direction:column;gap:6px}
+          .pconv-item{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:10px;border:1px solid #f3f4f6;
+            color:#111827;text-decoration:none;transition:background .15s,transform .15s;flex-wrap:wrap}
+          .pconv-item:hover{background:#f8fafc;transform:translateX(2px)}
+          .pconv-item.nl{border-color:#fecaca;background:#fef2f2}
+          .pconv-num{font-weight:800;font-family:ui-monospace,monospace;font-size:.8rem}
+          .pconv-tit{flex:1;min-width:140px;font-size:.82rem}
+          .pconv-est{font-size:.7rem;font-weight:800;border-radius:99px;padding:2px 8px}
+          .pconv-est.ab{background:#dbeafe;color:#1d4ed8}.pconv-est.ce{background:#f3f4f6;color:#6b7280}
+          .pconv-fec{font-size:.74rem;color:#6b7280}
+          .pconv-badge{background:#dc2626;color:#fff;border-radius:99px;min-width:20px;text-align:center;font-size:.7rem;font-weight:800;padding:1px 6px}
+          </style>
           <div class="row g-2 align-items-end">
             <div class="col-12 col-sm-3">
               <label class="form-label small fw-semibold mb-1">Etapa</label>

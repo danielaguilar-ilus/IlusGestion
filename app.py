@@ -69867,6 +69867,7 @@ def _mant_ficha_impl(cid):
             _cfg_plan = _plan_config()
             _prospecto["plan_descuento_pct"] = _cfg_plan.get("descuento_pct") or "0"
             _prospecto["plan_visitas"] = _cfg_plan.get("visitas_anio") or "4"
+            _prospecto["tickets"] = _tickets_de_cliente(cliente.get("rut"))
     except Exception as _e_pr:
         print(f"[ficha-cli] prospecto cid={cid}: {_e_pr}", flush=True)
 
@@ -70224,6 +70225,48 @@ def _plan_calendario(ref, hoy, meses_primera, visitas_anio, escalera=None, escal
             "estado_primera": estado, "cada_meses": paso, "visitas": visitas, "escalera_activa": bool(esc)}
 
 
+def _rut_variantes_ticket(rut):
+    """Formas en que el MISMO RUT puede estar guardado en tk_tickets.rut_norm (sin puntos/guion): con y sin
+    cero adelante, con y sin dígito verificador. Así una conversación no se pierde por cómo se tipeó el RUT."""
+    canon = _rut_canon(rut)
+    if not canon:
+        plano = re.sub(r"[^0-9K]", "", str(rut or "").upper())
+        return [plano] if plano else []
+    cuerpo, dv = canon.split("-")
+    vs = {cuerpo + dv, "0" + cuerpo + dv, cuerpo, "0" + cuerpo}
+    return sorted(v for v in vs if v)
+
+
+_TK_ESTADO_LABEL_CORTO = {"open": "Abierto", "in_progress": "En curso", "pending": "Pendiente", "resolved": "Resuelto",
+                          "closed": "Cerrado", "cancelado": "Cancelado", "ot_pending_approval": "OT por aprobar",
+                          "ot_generated": "OT generada", "ot_in_progress": "OT en curso"}
+
+
+def _tickets_de_cliente(rut, limit=8):
+    """Conversaciones (tickets) del cliente por RUT, con los mensajes del cliente sin leer (mismo criterio que la
+    bandeja de Tickets). Daniel 2026-10-04: «una bandeja asociada al ticket… le doy clic y me lleva a ese ticket»."""
+    vs = _rut_variantes_ticket(rut)
+    if not vs:
+        return []
+    ph = ",".join(["%s"] * len(vs))
+    try:
+        rows = mysql_fetchall(
+            f"SELECT t.id, t.numero_ticket, t.titulo, t.tipo, t.estado, t.created_at, t.asignado_a, "
+            f"       (SELECT COUNT(*) FROM tk_mensajes m WHERE m.ticket_id=t.id AND m.tipo='client_message' "
+            f"           AND m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')) AS no_leidos "
+            f"  FROM tk_tickets t WHERE t.rut_norm IN ({ph}) ORDER BY t.id DESC LIMIT %s",
+            tuple(vs) + (int(limit),)) or []
+    except Exception as e:
+        print(f"[tickets_de_cliente] {e}", flush=True)
+        return []
+    return [{"id": r["id"], "numero": r.get("numero_ticket") or f"#{r['id']}", "titulo": r.get("titulo") or "",
+             "estado": _TK_ESTADO_LABEL_CORTO.get(r.get("estado"), r.get("estado") or ""),
+             "abierto": r.get("estado") not in ("resolved", "closed", "cancelado"),
+             "fecha": chile_fmt_filter(r["created_at"], "%d/%m/%Y") if r.get("created_at") else "",
+             "asignado": r.get("asignado_a") or "", "no_leidos": int(r.get("no_leidos") or 0),
+             "url": f"/tickets/{r['id']}"} for r in rows]
+
+
 def _prospecto_info(ids):
     """{cliente_id: {etapa, etapa_label, nota, proxima_gestion, vencida,
     ofrecida_at, ofrecida_por, origen_ot, origen_tipo, origen_fecha}}.
@@ -70234,7 +70277,8 @@ def _prospecto_info(ids):
                "vencida": False, "ofrecida_at": None, "ofrecida_por": None,
                "origen_ot": None, "origen_tipo": None, "origen_fecha": None, "marcas": "",
                "pasos": [], "pasos_hechos": 0, "pasos_total": len(_PROSP_PASOS), "paso_actual": "",
-               "equipos_plan": 0, "factura": "", "plan": None}
+               "equipos_plan": 0, "factura": "", "plan": None,
+               "tickets_n": 0, "tickets_no_leidos": 0, "ticket_ultimo": None}
            for i in ids}
     if not ids:
         return out
@@ -70309,6 +70353,27 @@ def _prospecto_info(ids):
             o["pasos"], o["pasos_hechos"], o["paso_actual"] = _prospecto_pasos(o, cots.get(i), contratos.get(i))
         except Exception as e:
             print(f"[prospecto_info] pasos {i}: {e}", flush=True)
+    try:
+        var_a_cli = {}
+        for r in (mysql_fetchall(f"SELECT id, rut FROM mant_clientes WHERE id IN ({ph}) AND rut IS NOT NULL AND rut<>''",
+                                 tuple(ids)) or []):
+            for v in _rut_variantes_ticket(r["rut"]):
+                var_a_cli[v] = r["id"]
+        if var_a_cli:
+            ph_v = ",".join(["%s"] * len(var_a_cli))
+            for r in (mysql_fetchall(
+                    f"SELECT t.id, t.numero_ticket, t.rut_norm, "
+                    f"       (SELECT COUNT(*) FROM tk_mensajes m WHERE m.ticket_id=t.id AND m.tipo='client_message' "
+                    f"           AND m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')) AS no_leidos "
+                    f"  FROM tk_tickets t WHERE t.rut_norm IN ({ph_v}) ORDER BY t.id", tuple(var_a_cli)) or []):
+                o = out.get(var_a_cli.get(r.get("rut_norm")))
+                if not o:
+                    continue
+                o["tickets_n"] += 1
+                o["tickets_no_leidos"] += int(r.get("no_leidos") or 0)
+                o["ticket_ultimo"] = {"id": r["id"], "numero": r.get("numero_ticket") or f"#{r['id']}"}
+    except Exception as e:
+        print(f"[prospecto_info] tickets: {e}", flush=True)
     # Calendario sugerido desde la factura de sus equipos (Daniel: «pon la factura para hacerle seguimiento según
     # la emisión, para realizar mantenciones y ofrecer un porcentaje de descuento de cada mantención»).
     try:
@@ -82802,7 +82867,7 @@ def mant_vida_cliente_api(cid):
                     "titulo": f"Ticket {r.get('numero_ticket') or ('#' + str(r['id']))}"
                               + (f" · {r['titulo']}" if r.get("titulo") else ""),
                     "detalle": (r.get("estado") or "").replace("_", " ").title(),
-                    "url": None,
+                    "url": f"/tickets/{r['id']}",
                 })
     except Exception as e:
         print(f"[vida-cliente] linea-vida ticket cid={cid}: {e}", flush=True)

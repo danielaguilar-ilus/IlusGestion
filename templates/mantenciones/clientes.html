@@ -1612,6 +1612,10 @@ function aplicarKpiFiltro(tipo) {
           <i class="bi bi-calendar-event me-1"></i>Próxima gestión: {{ c.pr.proxima_gestion }}{% if c.pr.vencida %} · vencida{% endif %}
         </span>
         {% endif %}
+        {% if c.pr.ticket_ultimo %}
+        <a class="cc2-prosp-txt pconv-chip{% if c.pr.tickets_no_leidos %} nl{% endif %}" href="/tickets/{{ c.pr.ticket_ultimo.id }}" target="_blank" onclick="event.stopPropagation()">
+          <i class="bi bi-chat-dots-fill me-1"></i>{{ c.pr.tickets_n }} conversación{{ 'es' if c.pr.tickets_n != 1 }}{% if c.pr.tickets_no_leidos %} · <b style="display:inline">{{ c.pr.tickets_no_leidos }} sin leer</b>{% endif %} · abrir {{ c.pr.ticket_ultimo.numero }}</a>
+        {% endif %}
         {# Contactar sin abrir la ficha: un clic y queda registrado (Daniel 2026-10-04: «muy fácil de utilizar») #}
         {% set _tel = (c.contacto_tel or c.tel_empresa or '') %}
         <div class="cc2-prosp-acts" onclick="event.stopPropagation()">
@@ -1789,6 +1793,7 @@ function aplicarKpiFiltro(tipo) {
 .cc2-prosp-ofrecida{color:#1d4ed8}.cc2-prosp-aceptada{color:#15803d}.cc2-prosp-rechazada{color:#6b7280}
 .cc2-prosp-txt{color:#6b7280}
 .cc2-prosp-vencida{color:#dc2626;font-weight:700}
+.pconv-chip{color:#1d4ed8;text-decoration:none;font-weight:700}.pconv-chip:hover{text-decoration:underline}.pconv-chip.nl{color:#b91c1c}
 .pmant{font-weight:700}.pmant.vencida{color:#b91c1c}.pmant.proxima{color:#b45309}.pmant.futura{color:#15803d}
 .ptmini{display:flex;align-items:center;flex-wrap:wrap;gap:0;margin-bottom:4px}
 .ptmini .pm{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:.68rem;font-weight:800;background:#e5e7eb;color:#6b7280;flex:0 0 auto}
