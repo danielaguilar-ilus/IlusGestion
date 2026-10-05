@@ -183,5 +183,33 @@ class TestContactos(unittest.TestCase):
         self.assertEqual(c["proceso_compra"], '["Cotizar", "Pagar"]')
 
 
+class TestRepuestoDentroDeLaFicha(unittest.TestCase):
+    """2026-10-04 (Daniel: "me podría abrir desde el modal nada más... quisiera
+    ver las fotos del repuesto"): el detalle del repuesto se ve en la ficha."""
+
+    def _fuente_endpoint(self):
+        with open(APP_PY, encoding="utf-8") as fh:
+            arbol = ast.parse(fh.read())
+        fn = next(n for n in arbol.body if isinstance(n, ast.FunctionDef) and n.name == "repstock_detalle")
+        return fn
+
+    def test_detalle_cerrado_a_tecnicos(self):
+        # REGLA #19: trae el nombre del proveedor y el costo -> nunca para técnicos.
+        decs = [getattr(d, "id", "") for d in self._fuente_endpoint().decorator_list]
+        self.assertIn("_no_tecnico", decs)
+        self.assertIn("_mant_required", decs)
+
+    def test_la_ficha_abre_el_repuesto_adentro(self):
+        ruta = os.path.join(os.path.dirname(APP_PY), "templates", "mantenciones", "proveedores.html")
+        with open(ruta, encoding="utf-8") as fh:
+            html = fh.read()
+        cuerpo = html[html.index("function pvfAbrirRepuesto("):html.index("function pvfAbrirEnBodega(")]
+        self.assertIn("pvfRepDetalle(", cuerpo)
+        self.assertNotIn("window.open", cuerpo)
+        # Tracking del proceso de compra en el paso 4 y en la cabecera.
+        self.assertIn('id="pvfTrack"', html)
+        self.assertIn("pvfTrackHtml(true)", html)
+
+
 if __name__ == "__main__":
     unittest.main()

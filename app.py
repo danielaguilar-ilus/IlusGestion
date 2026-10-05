@@ -130381,6 +130381,48 @@ def repstock_crear():
         conn.close()
 
 
+@app.route("/mantenciones/api/repuestos-stock/<int:rid>/detalle", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def repstock_detalle(rid):
+    """Detalle de UN repuesto para verlo y editar lo básico sin salir de la ficha
+    del proveedor (2026-10-04, Daniel: "me podría abrir desde el modal nada más...
+    igual quisiera ver las fotos del repuesto"): todas sus fotos, equipos
+    compatibles, stock, costo y la calidad de su ficha (7 datos)."""
+    r = mysql_fetchone(
+        "SELECT rs.id, rs.sku, rs.descripcion, rs.cantidad, rs.stock_minimo, rs.costo_unitario, rs.codigo_fabricante, "
+        "       rs.largo, rs.ancho, rs.alto, rs.peso_kg, rs.bultos, rs.notas, rs.ubicacion_id, rs.marca_id, "
+        "       COALESCE(rs.modelo_pendiente,0) AS modelo_pendiente, u.codigo AS ubicacion_codigo, mk.nombre AS marca_nombre, "
+        "       pv.nombre AS proveedor_nombre "
+        "  FROM mant_repuestos_stock rs "
+        "  LEFT JOIN mant_repuestos_ubicaciones u ON u.id=rs.ubicacion_id "
+        "  LEFT JOIN mant_repuestos_marcas mk ON mk.id=rs.marca_id "
+        "  LEFT JOIN mant_proveedores_repuesto pv ON pv.id=rs.proveedor_id "
+        " WHERE rs.id=%s AND COALESCE(rs.activo,1)=1", (rid,))
+    if not r:
+        return jsonify({"ok": False, "error": "Repuesto no encontrado."}), 404
+    r = dict(r)
+    for k in ("cantidad", "stock_minimo", "costo_unitario", "largo", "ancho", "alto", "peso_kg"):
+        r[k] = float(r[k]) if r.get(k) is not None else None
+    fotos, modelos = [], []
+    try:
+        fotos = [{"id": f["id"], "url": "/f/" + f["gcs_key"]} for f in (mysql_fetchall(
+            "SELECT id, gcs_key FROM mant_repuestos_stock_fotos WHERE repuesto_id=%s ORDER BY orden", (rid,)) or [])]
+        modelos = [dict(m) for m in (mysql_fetchall(
+            "SELECT p.id, p.sku, p.nombre FROM mant_repuestos_stock_modelos rm JOIN cat_productos p ON p.id=rm.producto_id "
+            " WHERE rm.repuesto_id=%s ORDER BY p.nombre", (rid,)) or [])]
+    except Exception as e:
+        print(f"[repstock detalle] rid={rid}: {e}", flush=True)
+    items = [
+        ("Foto", bool(fotos)), ("Costo", float(r.get("costo_unitario") or 0) > 0), ("Marca", bool(r.get("marca_id"))),
+        ("Equipo compatible", bool(modelos)), ("Ubicación en bodega", bool(r.get("ubicacion_id"))),
+        ("Código de fabricante", bool((r.get("codigo_fabricante") or "").strip())),
+        ("Medidas y peso", all(r.get(k) for k in ("largo", "ancho", "alto", "peso_kg"))),
+    ]
+    return jsonify({"ok": True, "repuesto": r, "fotos": fotos, "modelos": modelos,
+                    "calidad": [{"texto": t, "ok": ok} for t, ok in items]})
+
+
 @app.route("/mantenciones/api/repuestos-stock/<int:rid>", methods=["PUT"])
 @_mant_required
 def repstock_editar(rid):

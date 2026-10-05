@@ -446,13 +446,34 @@ a.pv-it:hover{transform:translateX(3px);border-color:#dc2626;box-shadow:0 4px 12
 .pvt-btn{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:0 12px;background:transparent;border:1.5px solid #6b7280;border-radius:10px;color:#fff;font-size:.86rem;font-weight:700}
 .pvt-btn:hover:not(:disabled){background:#fff;color:#0a0a0a}
 .pvt-btn:disabled{opacity:.4;cursor:not-allowed}
+/* Color de la fila según su semáforo (borde izquierdo) */
+.pvt tbody tr.pvt-s-rojo{--pvt-c:#dc2626}.pvt tbody tr.pvt-s-ambar{--pvt-c:#f59e0b}.pvt tbody tr.pvt-s-verde{--pvt-c:#16a34a}.pvt tbody tr.pvt-s-gris{--pvt-c:#9ca3af}.pvt tbody tr.pvt-s-azul{--pvt-c:#3b82f6}
+.pvt tbody tr[class*="pvt-s-"] td:first-child{box-shadow:inset 4px 0 0 var(--pvt-c)}
+/* Celular (2026-10-04, Daniel: "mejor filas, filas interactivas, potentes, con
+   colores"): cada fila es una línea compacta -- foto, nombre completo y chips
+   con el dato clave --, con el color del semáforo a la izquierda. */
 @media (max-width:768px){
   .pvt thead{display:none}
-  .pvt,.pvt tbody,.pvt tr,.pvt td{display:block;width:100%}
-  .pvt tbody tr{border-bottom:1px solid #e5e7eb;padding:8px 4px}
-  .pvt tbody td{border:0;padding:4px 10px;text-align:left!important;display:flex;gap:10px;align-items:flex-start}
-  .pvt tbody td::before{content:attr(data-th);flex:0 0 42%;font-size:.72rem;font-weight:800;text-transform:uppercase;color:#6b7280}
+  .pvt,.pvt tbody{display:block;width:100%}
+  .pvt tbody tr{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:5px 6px;padding:10px 12px 10px 14px;border-bottom:1px solid #eef0f3;
+    border-left:5px solid var(--pvt-c,#e5e7eb)}
+  .pvt tbody tr.pvt-clic{padding-right:34px}
+  .pvt tbody tr.pvt-clic::after{content:"\F285";font-family:bootstrap-icons;position:absolute;right:12px;top:50%;transform:translateY(-50%);color:#9ca3af;font-size:1rem}
+  .pvt tbody tr.pvt-clic:active{background:#fef2f2}
+  .pvt tbody tr[class*="pvt-s-"] td:first-child{box-shadow:none}
+  .pvt tbody tr.pvt-s-rojo{background:#fffafa}
+  .pvt tbody td{order:2;display:inline-flex;align-items:center;gap:4px;width:auto;border:0!important;padding:2px 9px;border-radius:50px;background:#f3f4f6;
+    font-size:.78rem;text-align:left!important;line-height:1.3;max-width:100%;min-width:0}
+  .pvt tbody td::before{content:attr(data-th);font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;color:#6b7280}
+  .pvt tbody td.m-main{order:1;flex:1 1 calc(100% - 64px);background:none;padding:0;font-size:.92rem;border-radius:0}
+  .pvt tbody td.m-foto{order:0;flex:0 0 auto;background:none;padding:0}
+  .pvt tbody td.m-main::before,.pvt tbody td.m-foto::before,.pvt tbody td.m-solo::before{content:none}
+  .pvt tbody td.m-solo{background:none;padding:0}
+  .pvt tbody td.m-hide,.pvt tbody td:empty{display:none}
+  .pvt tbody td.pvt-vacio{flex:1 1 100%;background:none;justify-content:center}
   .pvt tbody td.pvt-vacio::before{content:none}
+  .pvt tbody td small.d-block{display:inline!important;margin-left:4px}
+  .pvt-foto{width:42px;height:42px}
   .pvt-foot{flex-direction:column;align-items:stretch}
   .pvt-ctrl{justify-content:space-between}
 }
@@ -481,6 +502,121 @@ a.pv-it:hover{transform:translateX(3px);border-color:#dc2626;box-shadow:0 4px 12
 .pvt tbody tr.pvt-clic{cursor:pointer}
 .pvt tbody tr.pvt-clic:hover td{background:#fef2f2}
 @media (max-width:768px){ .pvf-cab-der{flex-direction:row} }
+
+/* ── Cabecera fija: el contenido ya no asoma cortado bajo las pestañas ── */
+.pvf-top{padding-bottom:12px;border-bottom:1px solid transparent}
+.pvf-top.is-compacto{border-bottom-color:#e5e7eb}
+/* ── Tracking del proceso de compra (íconos + transición) ── */
+.pvf-track:not(:empty){background:linear-gradient(180deg,#fff 0%,#fef2f2 100%);border:1px solid #fee2e2;border-radius:14px;padding:8px 10px 2px;margin:8px 0 12px}
+.pvf-tk{position:relative;margin:6px 0 4px;padding:6px 4px 2px}
+.pvf-tk-linea{position:absolute;left:calc(50% / var(--n));right:calc(50% / var(--n));top:28px;height:4px;border-radius:4px;background:#e5e7eb;overflow:hidden}
+.pvf-tk-linea span{position:absolute;inset:0;width:var(--pct);border-radius:4px;background:linear-gradient(90deg,#16a34a,#22c55e);transition:width .8s cubic-bezier(.4,0,.2,1)}
+.pvf-tk:not(.con-compra) .pvf-tk-linea span{width:100%;background:linear-gradient(90deg,#fca5a5,#dc2626,#fca5a5);background-size:200% 100%;animation:pvfFluye 3s linear infinite}
+@keyframes pvfFluye{0%{background-position:200% 0}100%{background-position:0 0}}
+.pvf-tk-pasos{position:relative;display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:4px}
+.pvf-tk-p{display:flex;flex-direction:column;align-items:center;text-align:center;gap:4px;min-width:0}
+.pvf-tk.anim .pvf-tk-p{animation:pvfTkEntra .45s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i) * 70ms)}
+@keyframes pvfTkEntra{from{opacity:0;transform:translateY(8px) scale(.9)}to{opacity:1;transform:none}}
+.pvf-tk-c{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.25rem;background:#fff;color:#dc2626;
+  border:3px solid #dc2626;box-shadow:0 6px 14px -8px rgba(220,38,38,.6);transition:transform .2s,background .3s,color .3s,border-color .3s}
+.pvf-tk-p:hover .pvf-tk-c{transform:translateY(-3px) scale(1.06)}
+.pvf-tk-p.hecho .pvf-tk-c{background:#16a34a;border-color:#16a34a;color:#fff;box-shadow:0 6px 14px -8px rgba(22,163,74,.7)}
+.pvf-tk-p.ahora .pvf-tk-c{background:#dc2626;color:#fff;animation:pvfTkPulso 1.6s ease-in-out infinite}
+@keyframes pvfTkPulso{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.45)}50%{box-shadow:0 0 0 10px rgba(220,38,38,0)}}
+.pvf-tk-p.pend .pvf-tk-c{color:#9ca3af;border-color:#d1d5db;box-shadow:none}
+.pvf-tk-n{font-size:.62rem;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:#dc2626}
+.pvf-tk-p.hecho .pvf-tk-n{color:#16a34a}.pvf-tk-p.pend .pvf-tk-n{color:#9ca3af}
+.pvf-tk-l{font-size:.8rem;font-weight:800;color:#111827;line-height:1.2;word-break:break-word;overflow-wrap:break-word;padding:0 2px}
+.pvf-tk-p.pend .pvf-tk-l{color:#6b7280}
+.pvf-tk-pie{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 10px;padding:8px 12px;border-radius:10px;background:#f0fdf4;border:1px solid #bbf7d0;font-size:.86rem;color:#14532d}
+.pvf-tk-pie.neutro{background:#f9fafb;border-color:#e5e7eb;color:#4b5563}
+.pvf-tk-dot{width:10px;height:10px;border-radius:50%;background:#dc2626;animation:pvfTkPulso 1.6s ease-in-out infinite}
+/* Versión mini (cabecera) */
+.pvf-cab-proc{display:inline-flex;align-items:center;gap:8px}
+.pvf-tk.mini{display:inline-block;margin:0;padding:0;min-width:calc(var(--n) * 26px)}
+.pvf-tk.mini .pvf-tk-linea{top:9px;height:3px}
+.pvf-tk.mini .pvf-tk-c{width:22px;height:22px;font-size:.62rem;border-width:2px;box-shadow:none}
+.pvf-tk.mini .pvf-tk-pasos{gap:4px}
+.pvf-tk.mini .pvf-tk-p{animation:none}
+@media (max-width:768px){
+  .pvf-tk-pasos{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:96px;overflow-x:auto;padding-bottom:6px}
+  .pvf-tk-linea{display:none}
+}
+@media (prefers-reduced-motion:reduce){ .pvf-tk-p,.pvf-tk-c,.pvf-tk-linea span,.pvf-tk-dot{animation:none!important} }
+/* ── Repuesto dentro de la ficha: fotos + edición básica ── */
+.pvr-det{background:#fff;border:1.5px solid #e5e7eb;border-radius:14px;padding:14px 16px}
+.pvr-det-h{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.pvr-det-t{flex:1;min-width:200px;display:flex;flex-direction:column}
+.pvr-det-t b{font-size:1.1rem;color:#0a0a0a;word-break:break-word}
+.pvr-det-t small{color:#4b5563;font-size:.84rem}
+.pvr-det-g{display:grid;grid-template-columns:minmax(0,320px) minmax(0,1fr);gap:16px}
+.pvr-gal-main{width:100%;aspect-ratio:1/1;object-fit:contain;background:#f3f4f6;border-radius:14px;border:1px solid #e5e7eb}
+.pvr-gal-main.sin{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:#9ca3af;font-weight:700}
+.pvr-gal-main.sin i{font-size:2rem}
+.pvr-gal-th{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.pvr-gal-th button{width:64px;height:64px;border-radius:10px;border:2px solid #e5e7eb;padding:0;overflow:hidden;background:#fff}
+.pvr-gal-th button.on{border-color:#dc2626}
+.pvr-gal-th img{width:100%;height:100%;object-fit:cover}
+.pvr-gal-add{width:64px;height:64px;border-radius:10px;border:2px dashed #9ca3af;display:flex;align-items:center;justify-content:center;font-size:1.3rem;color:#6b7280;cursor:pointer;margin:0}
+.pvr-gal-add:hover{border-color:#dc2626;color:#dc2626}
+.pvr-mini{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:10px}
+.pvr-mini div{background:#f9fafb;border:1px solid #eef0f3;border-radius:12px;padding:8px 10px}
+.pvr-mini .k,.pvr-mod .k{display:block;font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#6b7280}
+.pvr-mini .v{font-weight:900;font-size:1rem;color:#0a0a0a;display:flex;align-items:center;gap:6px}
+.pvr-mod{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px}
+.pvr-mod .k{width:100%}
+.pvr-cal{margin-top:6px}
+.pvr-edit{margin-top:14px;border-top:1px dashed #e5e7eb;padding-top:12px}
+.pvr-edit-h{font-weight:900;color:#0a0a0a;display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.pvr-edit-h i{color:#dc2626}
+@media (max-width:768px){
+  .pvr-det{padding:12px}
+  .pvr-det-g{grid-template-columns:1fr} .pvr-mini{grid-template-columns:1fr 1fr}
+  .pvr-det-h > .pvf-aviso-btn{flex:1 1 100%}
+  .pvr-det-t{flex:1 1 auto;min-width:0}
+  .pvr-gal-main{max-height:240px}
+}
+.pvf-tk.fantasma{opacity:.75}
+.pvf-tk.fantasma .pvf-tk-c{border-style:dashed}
+.pvf-tk.fantasma .pvf-tk-linea span{animation:none;background:#e5e7eb}
+.pvf-tk-mini-l{font-size:.8rem;color:#991b1b}
+.pvr-cal{list-style:none;padding:0;margin:6px 0 0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 12px}
+.pvr-cal li{display:flex;gap:6px;align-items:center;font-size:.84rem;font-weight:700;min-width:0}
+.pvr-cal li.ok{color:#166534}.pvr-cal li.ok i{color:#16a34a}
+.pvr-cal li.no{color:#92400e}.pvr-cal li.no i{color:#f59e0b}
+@media (max-width:576px){ .pvr-cal{grid-template-columns:1fr} }
+
+
+/* ── Celular (el gerente lo ve en el teléfono): cabecera y pie más bajos ── */
+@media (max-width:768px){
+  .pvf-cab{padding:10px 12px;gap:8px 10px}
+  .pvf-cab-ini{width:46px;height:46px;font-size:.95rem;align-self:start}
+  .pvf-cab-nom{font-size:1.1rem}
+  .pvf-cab-chips{gap:4px}
+  .pvf-cab-der{grid-column:1/-1;justify-content:stretch}
+  .pvf-cab-sol{flex:1;justify-content:center}
+  .pvf-cab-com{font-size:.82rem;padding:7px 10px}
+  .pvf-top.is-compacto .pvf-cab{padding:6px 10px;margin-bottom:6px}
+  .pvf-top.is-compacto .pvf-cab-chips,.pvf-top.is-compacto .pvf-cab-der{display:none}
+  .pvf-top.is-compacto .pvf-cab-ini{width:34px;height:34px;font-size:.78rem}
+  .pvf-top{padding-bottom:8px}
+  .pvf-tab{padding:10px 12px;min-height:48px;font-size:.88rem}
+  .pvf-footer{padding:8px 12px;gap:6px 10px}
+  .pvf-foot-msg{width:auto;flex:1 1 55%;font-size:.8rem;order:1}
+  #pvfBajaBtn{order:2;margin:0!important;font-size:.8rem!important}
+  .pvf-footer .btn-outline-secondary,.pvf-footer #btnProvGuardar{order:3;flex:1 1 40%;white-space:nowrap;font-size:.9rem!important}
+  .pvf-cab-com{flex-wrap:wrap}
+  .pvf-cab-com > div{flex:1 1 200px;min-width:0}
+  .pvf-cab-com a{order:3;margin-left:auto}
+  /* La versión mini del tracking (cabecera) conserva su línea y no se desborda */
+  .pvf-tk.mini .pvf-tk-pasos{grid-template-columns:repeat(var(--n),22px);grid-auto-flow:row;overflow:visible;padding-bottom:0}
+  .pvf-tk.mini .pvf-tk-linea{display:block}
+  .pvf-cab-proc{flex-wrap:wrap}
+  /* Filas del proceso: el texto del paso se lee entero */
+  .pvf-pp{gap:4px}
+  .pvf-pp-n{width:26px;height:26px;font-size:.78rem}
+  .pvf-pp button{width:32px;height:38px}
+}
 </style>
 
 <div class="container-fluid py-3 px-3 px-md-4">
@@ -881,6 +1017,7 @@ a.pv-it:hover{transform:translateX(3px);border-color:#dc2626;box-shadow:0 4px 12
               <div class="pvf-proc">
                 <div class="pvf-proc-h"><i class="bi bi-signpost-split-fill"></i>Proceso de compra con este proveedor
                   <span class="pvf-opc">— los pasos en orden; edítalos, cada proveedor es distinto</span></div>
+                <div class="pvf-track" id="pvfTrack"></div>
                 <div class="pvf-proc-lista" id="pvfProc"></div>
                 <div class="d-flex gap-2 flex-wrap mt-2">
                   <button type="button" class="pvf-q" onclick="pvfProcAgregar('')"><i class="bi bi-plus-lg me-1"></i>Agregar paso</button>
@@ -1318,8 +1455,77 @@ function pvfFamsSugeridas(){
   }).slice(0, 6);
 }
 
+
+/* ══ Tracking del proceso de compra (2026-10-04, Daniel: "el tracking que siempre
+   hacemos, con logotipos, transición"). Ícono según lo que dice cada paso; si
+   hay una compra en curso con este proveedor, se ilumina el paso en que va. ══ */
+const _PVF_ICONOS = [[/cotiz|proforma|presupuesto/, 'bi-chat-square-quote-fill'], [/orden|o\.?c\b|pedido/, 'bi-file-earmark-text-fill'],
+  [/anticipo|pag|saldo|transfer|credito|crédito|factur/, 'bi-cash-coin'], [/produc|fabric/, 'bi-gear-wide-connected'],
+  [/embarque|barco|naviera|maritim|marítim|contenedor/, 'bi-box-seam-fill'], [/aereo|aéreo|avion|avión/, 'bi-airplane-fill'],
+  [/aduana|internac|agente/, 'bi-shield-fill-check'], [/despacho|transporte|envio|envío|courier|camion|camión/, 'bi-truck'],
+  [/recep|bodega|llega|ingreso/, 'bi-house-door-fill'], [/revis|control|calidad|inspec/, 'bi-clipboard2-check-fill']];
+function pvfIconoPaso(t){
+  const n = String(t || '').toLowerCase();
+  const f = _PVF_ICONOS.find(function(x){ return x[0].test(n); });
+  return f ? f[1] : 'bi-circle-fill';
+}
+/* Paso en que va la compra más reciente en curso (estado de la compra -> paso del proceso). */
+function pvfPasoActual(){
+  const comps = ((_pvf.rel || {}).compras || []).filter(function(c){ return ['pedido', 'cotizado', 'confirmado', 'en_transito', 'recibido_parcial'].indexOf(c.estado) >= 0; });
+  if (!comps.length || !_pvf.proc.length) return null;
+  const c = comps[0];
+  const busca = {pedido: /cotiz|proforma|orden|pedido/, cotizado: /orden|o\.?c\b|confirm/, confirmado: /anticipo|pag|produc/,
+                 en_transito: /embarque|despacho|transporte|aereo|aéreo|envio|envío/, recibido_parcial: /recep|bodega/}[c.estado];
+  let idx = busca ? _pvf.proc.findIndex(function(p){ return busca.test(String(p).toLowerCase()); }) : -1;
+  if (idx < 0){
+    // El proceso no nombra esa etapa: se ubica por orden (en tránsito = justo
+    // antes de la recepción o, si no hay recepción, el último paso).
+    const n = _pvf.proc.length, rec = _pvf.proc.findIndex(function(p){ return /recep|bodega/.test(String(p).toLowerCase()); });
+    idx = {pedido: 0, cotizado: Math.min(1, n - 1), confirmado: Math.min(2, n - 1),
+           en_transito: rec > 0 ? rec - 1 : n - 1, recibido_parcial: rec >= 0 ? rec : n - 1}[c.estado] || 0;
+  }
+  return { idx: Math.min(idx, _pvf.proc.length - 1), compra: c };
+}
+function pvfTrackHtml(compacto){
+  const pasos = _pvf.proc.map(function(x){ return String(x).trim(); }).filter(Boolean);
+  if (!pasos.length){
+    if (compacto) return '';
+    const sug = pvfProcPasosSugeridos();
+    return '<div class="pvf-tk fantasma" style="--n:' + sug.length + ';--pct:0%"><div class="pvf-tk-linea"><span></span></div><div class="pvf-tk-pasos">' +
+      sug.map(function(t, i){ return '<div class="pvf-tk-p pend" style="--i:' + i + '"><span class="pvf-tk-c"><i class="bi ' + pvfIconoPaso(t) + '"></i></span><span class="pvf-tk-n">Paso ' + (i + 1) + '</span><span class="pvf-tk-l">' + pvEsc(t) + '</span></div>'; }).join('') +
+      '</div></div><div class="pvf-tk-pie neutro"><i class="bi bi-lightbulb"></i>Este proveedor aún no tiene su proceso. Así se vería el sugerido para un proveedor ' +
+      (pvRadioVal('provOrigen') === 'extranjero' ? 'extranjero' : 'nacional') + '.<button type="button" class="pvf-aviso-btn is-primary ms-auto" onclick="pvfProcSugerido()"><i class="bi bi-magic"></i>Usar este proceso</button></div>';
+  }
+  const act = pvfPasoActual();
+  const items = pasos.map(function(t, i){
+    const est = act ? (i < act.idx ? 'hecho' : (i === act.idx ? 'ahora' : 'pend')) : 'def';
+    return '<div class="pvf-tk-p ' + est + '" style="--i:' + i + '">' +
+      '<span class="pvf-tk-c"><i class="bi ' + (est === 'hecho' ? 'bi-check-lg' : pvfIconoPaso(t)) + '"></i></span>' +
+      (compacto ? '' : '<span class="pvf-tk-n">Paso ' + (i + 1) + '</span><span class="pvf-tk-l">' + pvEsc(t) + '</span>') + '</div>';
+  }).join('');
+  const pct = act ? Math.round(act.idx / Math.max(1, pasos.length - 1) * 100) : 100;
+  const pie = (act && compacto)
+    ? '<b class="pvf-tk-mini-l">' + pvEsc(pasos[act.idx]) + '</b>'
+    : act
+    ? '<div class="pvf-tk-pie"><span class="pvf-tk-dot"></span>Compra <b>' + pvEsc(act.compra.numero_ticket || ('#' + act.compra.id)) + '</b> va en <b>' + pvEsc(pasos[act.idx]) + '</b>' + (act.compra.eta ? ' · llega ' + pvEsc(act.compra.eta) : '') + '</div>'
+    : (compacto ? '' : '<div class="pvf-tk-pie neutro"><i class="bi bi-info-circle"></i>Así se compra a este proveedor. Cuando haya una compra en curso, aquí se ilumina el paso en que va.</div>');
+  return '<div class="pvf-tk' + (compacto ? ' mini' : '') + (act ? ' con-compra' : '') + '" style="--n:' + pasos.length + ';--pct:' + pct + '%">' +
+    '<div class="pvf-tk-linea"><span></span></div><div class="pvf-tk-pasos">' + items + '</div></div>' + pie;
+}
+function pvfTrackRender(){
+  const t = document.getElementById('pvfTrack');
+  if (!t) return;
+  // La entrada animada solo cuando cambia la cantidad de pasos (no en cada tecla).
+  const llave = _pvf.proc.filter(function(x){ return String(x).trim(); }).length + '|' + pvRadioVal('provOrigen');
+  const animar = t.dataset.llave !== llave;
+  t.dataset.llave = llave;
+  t.innerHTML = pvfTrackHtml(false);
+  if (animar){ const r = t.querySelector('.pvf-tk'); if (r) r.classList.add('anim'); }
+}
+
 /* ══ Proceso de compra (editable: cada proveedor es distinto) ══ */
 function pvfProcRender(){
+  setTimeout(pvfTrackRender, 0);
   document.getElementById('pvfProc').innerHTML = _pvf.proc.map(function(p, i){
     return '<div class="pvf-pp"><span class="pvf-pp-n">' + (i + 1) + '</span>' +
       '<input type="text" class="form-control" maxlength="80" value="' + pvEsc(p) + '" placeholder="Ej: Enviar orden de compra" oninput="pvfProcSet(' + i + ',this.value)" aria-label="Paso ' + (i + 1) + ' del proceso">' +
@@ -1328,7 +1534,7 @@ function pvfProcRender(){
       '<button type="button" class="x" onclick="pvfProcQuitar(' + i + ')" title="Quitar" aria-label="Quitar"><i class="bi bi-x-lg"></i></button></div>';
   }).join('');
 }
-function pvfProcSet(i, v){ _pvf.proc[i] = v; pvfEvaluar(); }
+function pvfProcSet(i, v){ _pvf.proc[i] = v; pvfTrackRender(); pvfEvaluar(); }
 function pvfProcMover(i, d){ const j = i + d; if (j < 0 || j >= _pvf.proc.length) return; const t = _pvf.proc[i]; _pvf.proc[i] = _pvf.proc[j]; _pvf.proc[j] = t; pvfProcRender(); pvfEvaluar(); }
 function pvfProcQuitar(i){ _pvf.proc.splice(i, 1); pvfProcRender(); pvfEvaluar(); }
 function pvfProcAgregar(v){
@@ -1336,11 +1542,14 @@ function pvfProcAgregar(v){
   _pvf.proc.push(v || ''); pvfProcRender(); pvfEvaluar();
   const ins = document.querySelectorAll('#pvfProc input'); if (ins.length && !v) ins[ins.length - 1].focus();
 }
-async function pvfProcSugerido(){
-  const ext = pvRadioVal('provOrigen') === 'extranjero';
-  const pasos = ext
+function pvfProcPasosSugeridos(){
+  return pvRadioVal('provOrigen') === 'extranjero'
     ? ['Pedir cotización (proforma)', 'Enviar orden de compra', 'Pagar anticipo', 'Producción', 'Embarque', 'Pagar saldo', 'Aduana e internación', 'Recepción en bodega']
     : ['Pedir cotización', 'Enviar orden de compra', 'Pagar o aprobar crédito', 'Despacho del proveedor', 'Recepción en bodega'];
+}
+async function pvfProcSugerido(){
+  const ext = pvRadioVal('provOrigen') === 'extranjero';
+  const pasos = pvfProcPasosSugeridos();
   if (_pvf.proc.some(function(x){ return String(x).trim(); })){
     const ok = await ilusConfirm({ title: 'Proceso sugerido', message: '¿Reemplazar los pasos actuales por el proceso sugerido para un proveedor ' + (ext ? 'extranjero' : 'nacional') + '?', okLabel: 'Reemplazar', cancelLabel: 'Cancelar' });
     if (!ok) return;
@@ -1412,6 +1621,8 @@ function pvfCabRender(){
   } else datos.push('<span><i class="bi bi-person-x"></i>Sin contacto principal</span>');
   if (pvVal('provDireccion')) datos.push('<span><i class="bi bi-geo"></i>' + pvEsc(pvVal('provDireccion')) + (pvVal('provCiudad') ? ', ' + pvEsc(pvVal('provCiudad')) : '') + '</span>');
   if (pvVal('provSitio')) datos.push('<span><i class="bi bi-globe2"></i>' + pvEsc(pvVal('provSitio').replace(/^https?:\/\//, '')) + '</span>');
+  const _mini = pvfTrackHtml(true);
+  if (_mini) datos.push('<span class="pvf-cab-proc" title="Proceso de compra"><i class="bi bi-signpost-split"></i>' + _mini + '</span>');
   const ult = _pvf.pend[0] ? { texto: _pvf.pend[0], cuando: 'por guardar' } : _pvf.hitos[0];
   const com = ult
     ? '<div class="pvf-cab-com"><i class="bi bi-chat-square-quote-fill"></i><div><b>Último comentario</b> · ' + pvEsc(ult.cuando || '') + (ult.usuario ? ' · ' + pvEsc(ult.usuario) : '') +
@@ -1433,7 +1644,100 @@ function pvfSolicitar(){
 }
 /* Clic en un repuesto: se abre en Bodega con su ventana de edición. */
 function pvfAbrirRepuesto(id, sku){
+  // 2026-10-04 (Daniel: "me podría abrir desde el modal nada más"): se ve y se
+  // edita aquí mismo; "Editar todo en Bodega" queda como opción.
+  pvfRepDetalle(id, sku);
+}
+function pvfAbrirEnBodega(id, sku){
   window.open('/repuestos?bq=' + encodeURIComponent(sku || '') + '&rb_editar=' + encodeURIComponent(id) + '#bodega', '_blank', 'noopener');
+}
+async function pvfRepDetalle(id, sku){
+  const box = document.getElementById('pvfPaneRep');
+  _pvf.repDet = id;
+  box.innerHTML = '<div class="pv-vacio"><span class="spinner-border spinner-border-sm me-2"></span>Cargando el repuesto…</div>';
+  let j = {};
+  try {
+    const r = await fetch('/mantenciones/api/repuestos-stock/' + id + '/detalle', {credentials:'same-origin'});
+    j = await r.json();
+  } catch(e){ j = { ok: false, error: 'Sin conexión.' }; }
+  if (_pvf.repDet !== id) return;
+  if (!j.ok){ box.innerHTML = '<div class="pv-vacio">' + pvEsc(j.error || 'No se pudo cargar el repuesto.') + '</div>'; return; }
+  const r = j.repuesto || {}, fotos = j.fotos || [], cal = j.calidad || [];
+  const fila = ((_pvf.rel || {}).repuestos || []).find(function(x){ return x.id === id; }) || {};
+  const okN = cal.filter(function(c){ return c.ok; }).length;
+  const sem = (r.cantidad || 0) <= 0 ? 'rojo' : ((r.stock_minimo != null && r.cantidad <= r.stock_minimo) ? 'ambar' : 'verde');
+  const inp = function(idc, lbl, val, extra){ return '<div class="col-6 col-md-4"><label class="form-label" for="' + idc + '">' + lbl + '</label><input class="form-control" id="' + idc + '" value="' + pvEsc(val == null ? '' : val) + '" ' + (extra || '') + '></div>'; };
+  box.innerHTML =
+    '<div class="pvr-det">' +
+      '<div class="pvr-det-h"><button type="button" class="pvf-aviso-btn" onclick="_pvf.repDet=null;pvfRepRender()"><i class="bi bi-arrow-left"></i>Volver a la lista</button>' +
+        '<div class="pvr-det-t"><b>' + pvEsc(r.descripcion) + '</b><small>' + pvEsc(r.sku) + (r.marca_nombre ? ' · ' + pvEsc(r.marca_nombre) : '') + (r.ubicacion_codigo ? ' · ' + pvEsc(r.ubicacion_codigo) : ' · por llegar') + '</small></div>' +
+        '<span class="pvt-cal ' + (okN >= 7 ? 'vd' : (okN >= 5 ? 'am' : 'rj')) + '">Ficha ' + okN + '/7</span></div>' +
+      '<div class="pvr-det-g">' +
+        '<div class="pvr-gal">' +
+          (fotos.length ? '<img class="pvr-gal-main" id="pvrGalMain" src="' + pvEsc(fotos[0].url) + '" alt="Foto del repuesto">' : '<div class="pvr-gal-main sin"><i class="bi bi-camera"></i>Sin fotos</div>') +
+          '<div class="pvr-gal-th">' + fotos.map(function(f, i){ return '<button type="button" class="' + (i === 0 ? 'on' : '') + '" onclick="pvfGalVer(this,\'' + pvEsc(f.url) + '\')"><img src="' + pvEsc(f.url) + '" alt=""></button>'; }).join('') +
+            (fotos.length < 3 ? '<label class="pvr-gal-add" title="Agregar foto"><i class="bi bi-plus-lg"></i><input type="file" accept="image/*" hidden onchange="pvfRepFoto(' + id + ', this)"></label>' : '') + '</div>' +
+        '</div>' +
+        '<div class="pvr-det-datos">' +
+          '<div class="pvr-mini">' +
+            '<div><span class="k">Stock</span><span class="v"><span class="pv-semaf s-' + sem + '"></span> ' + pvFmtN(r.cantidad) + ' un.</span></div>' +
+            '<div><span class="k">Valor en bodega</span><span class="v">' + ((r.cantidad || 0) * (r.costo_unitario || 0) ? pvFmtCLP((r.cantidad || 0) * (r.costo_unitario || 0)) : '—') + '</span></div>' +
+            '<div><span class="k">Pedidos 12 meses</span><span class="v">' + (fila.pedidos_12m || 0) + ' · ' + pvFmtN(fila.unidades_12m || 0) + ' un.</span></div>' +
+          '</div>' +
+          '<div class="pvr-mod"><span class="k">Sirve para</span>' + ((j.modelos || []).length ? (j.modelos || []).map(function(m){ return '<span class="pvf-chip">' + pvEsc(m.nombre) + '</span>'; }).join('') : '<span class="pvf-chip am">' + (r.modelo_pendiente ? 'Aún no se sabe' : 'Sin equipo compatible') + '</span>') + '</div>' +
+          '<ul class="pv-check pvr-cal">' + cal.map(function(c){ return '<li class="' + (c.ok ? 'ok' : 'no') + '"><i class="bi ' + (c.ok ? 'bi-check-circle-fill' : 'bi-exclamation-circle-fill') + '"></i>' + pvEsc(c.texto) + '</li>'; }).join('') + '</ul>' +
+        '</div>' +
+      '</div>' +
+      '<div class="pvr-edit"><div class="pvr-edit-h"><i class="bi bi-pencil-square"></i>Completar lo básico aquí mismo</div>' +
+        '<div class="row g-2">' + inp('pvrCosto', 'Costo unitario ($)', r.costo_unitario || '', 'type="number" min="0" step="1"') + inp('pvrMin', 'Stock mínimo', r.stock_minimo, 'type="number" min="0" step="1"') +
+          inp('pvrFab', 'Código de fabricante', r.codigo_fabricante || '', 'maxlength="120"') + inp('pvrLargo', 'Largo (cm)', r.largo, 'type="number" min="0" step="0.1"') +
+          inp('pvrAncho', 'Ancho (cm)', r.ancho, 'type="number" min="0" step="0.1"') + inp('pvrAlto', 'Alto (cm)', r.alto, 'type="number" min="0" step="0.1"') +
+          inp('pvrPeso', 'Peso (kg)', r.peso_kg, 'type="number" min="0" step="0.01"') + '</div>' +
+        '<div class="d-flex gap-2 flex-wrap mt-3"><button type="button" class="btn btn-danger fw-bold" style="min-height:46px" id="pvrGuardar" onclick="pvfRepGuardar(' + id + ')"><i class="bi bi-check-lg me-1"></i>Guardar cambios del repuesto</button>' +
+          '<button type="button" class="btn btn-outline-dark" style="min-height:46px" onclick="pvfAbrirEnBodega(' + id + ',\'' + pvEsc(String(r.sku || '').replace(/[^A-Za-z0-9._\-\/]/g, '')) + '\')"><i class="bi bi-box-arrow-up-right me-1"></i>Editar todo en Bodega (marca, ubicación, equipos)</button></div>' +
+      '</div>' +
+    '</div>';
+}
+function pvfGalVer(btn, url){
+  const m = document.getElementById('pvrGalMain'); if (m) m.src = url;
+  btn.parentElement.querySelectorAll('button').forEach(function(b){ b.classList.toggle('on', b === btn); });
+}
+async function pvfRepFoto(id, input){
+  const f = input.files && input.files[0]; if (!f) return;
+  const fd = new FormData(); fd.append('file', f);
+  try {
+    const r = await fetch('/mantenciones/api/repuestos-stock/' + id + '/fotos', { method:'POST', body: fd, credentials:'same-origin' });
+    const j = await r.json();
+    if (!j.ok){ ilusToast(j.error || 'No se pudo subir la foto.', {type:'error'}); return; }
+    ilusToast('✓ Foto agregada', {type:'success'});
+    const fila = ((_pvf.rel || {}).repuestos || []).find(function(x){ return x.id === id; });
+    if (fila && !fila.foto_url) fila.foto_url = j.url;
+    pvfRepDetalle(id);
+  } catch(e){ ilusToast('Sin conexión.', {type:'error'}); }
+}
+async function pvfRepGuardar(id){
+  const v = function(k){ const el = document.getElementById(k); return el ? el.value.trim() : ''; };
+  const body = { costo_unitario: v('pvrCosto'), stock_minimo: v('pvrMin'), codigo_fabricante: v('pvrFab'),
+                 largo: v('pvrLargo'), ancho: v('pvrAncho'), alto: v('pvrAlto'), peso_kg: v('pvrPeso') };
+  if (body.stock_minimo === ''){ ilusToast('El stock mínimo no puede quedar vacío (puede ser 0).', {type:'warning'}); return; }
+  const btn = document.getElementById('pvrGuardar'); if (btn) btn.disabled = true;
+  let j = {};
+  try {
+    const r = await fetch('/mantenciones/api/repuestos-stock/' + id, { method:'PUT', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    j = await r.json();
+  } catch(e){ j = { ok: false, error: 'Sin conexión.' }; }
+  if (btn) btn.disabled = false;
+  if (!j.ok){ ilusToast(j.error || 'No se pudo guardar.', {type:'error'}); return; }
+  ilusToast('✓ Repuesto actualizado', {type:'success'});
+  // Refresca la ficha (tabla, calidad y valores) y vuelve a mostrar este repuesto.
+  const pid = pvVal('provId');
+  try {
+    const r2 = await fetch('/mantenciones/api/proveedores-repuesto/' + pid + '/ficha', {credentials:'same-origin'});
+    const d2 = await r2.json();
+    if (d2.ok){ _pvf.rel = d2; pvfTabsRender(); }
+  } catch(e){}
+  pvfRepDetalle(id);
 }
 async function pvfDarDeBaja(){
   const id = pvVal('provId');
@@ -1487,6 +1791,7 @@ function pvfPintarPaso(n, faltan, raros, okTxt){
   return 'rojo';
 }
 function pvfEvaluar(){
+  if (!_pvf.proc.some(function(x){ return String(x).trim(); })) pvfTrackRender();
   const orig = pvRadioVal('provOrigen'), id = pvVal('provId');
   document.querySelectorAll('#modalProveedorFicha .pvf-opt').forEach(function(l){ const i = l.querySelector('input'); l.classList.toggle('is-on', !!(i && i.checked)); });
   document.querySelectorAll('#pvfMonedas .pvf-q').forEach(function(b){ b.classList.toggle('is-on', b.dataset.m === pvVal('provMoneda')); });
@@ -1636,7 +1941,7 @@ function pvfAbrir(d, rel, seccion){
   d = d || {};
   _pvfIgnorar = {};
   _pvf.rel = rel || null;
-  _pvf.repQ = ''; _pvf.repFil = 'todos'; _pvf.repOrd = 'demanda';
+  _pvf.repQ = ''; _pvf.repFil = 'todos'; _pvf.repOrd = 'demanda'; _pvf.repDet = null;
   provLlenar(d);
   const nuevo = !d.id;
   document.getElementById('pvfTituloTxt').textContent = nuevo ? 'Nuevo proveedor' : (d.nombre || 'Proveedor');
@@ -1723,8 +2028,9 @@ function pvfTabla(key, cols, filas, vacio){
   const head = '<thead><tr>' + cols.map(function(c){ return '<th' + (c.num ? ' class="num"' : '') + '>' + c.t + '</th>'; }).join('') + '</tr></thead>';
   const body = tot ? filas.slice(a, b).map(function(f){
     return '<tr' + (f._cls || f._click ? ' class="' + (f._cls || '') + (f._click ? ' pvt-clic' : '') + '"' : '') +
-      (f._click ? ' onclick="' + f._click + '" title="Abrir en Bodega para editar"' : '') + '>' + cols.map(function(c){
-      return '<td' + (c.num ? ' class="num"' : '') + ' data-th="' + pvEsc(c.t) + '">' + (f[c.k] == null ? '' : f[c.k]) + '</td>';
+      (f._click ? ' onclick="' + f._click + '" title="Ver el repuesto"' : '') + '>' + cols.map(function(c){
+      const cl = (c.num ? 'num' : '') + (c.m ? ' m-' + c.m : '');
+      return '<td' + (cl ? ' class="' + cl.trim() + '"' : '') + ' data-th="' + pvEsc(c.t) + '">' + (f[c.k] == null ? '' : f[c.k]) + '</td>';
     }).join('') + '</tr>';
   }).join('') : '<tr><td colspan="' + cols.length + '" class="pvt-vacio">' + vacio + '</td></tr>';
   const opts = [10, 20, 50, 100].map(function(n){ return '<option value="' + n + '"' + (st.per === n ? ' selected' : '') + '>' + n + ' por página</option>'; }).join('');
@@ -1759,7 +2065,7 @@ function pvfRelRender(){
   // Solicitudes (equipo fuera de servicio primero)
   const filasSol = sols.map(function(s){
     return {
-      _cls: s.fs ? 'pvt-fs' : '',
+      _cls: s.fs ? 'pvt-fs pvt-s-rojo' : ({solicitado: 'pvt-s-ambar', validado: 'pvt-s-azul', pedido: 'pvt-s-azul', recibido: 'pvt-s-verde'}[s.estado] || 'pvt-s-gris'),
       n: '<a href="/repuestos?rs_proveedor=' + p.id + '#solicitudes" class="pvt-link">#' + s.id + '</a>',
       rep: '<b>' + pvEsc(s.repuesto_nombre) + '</b>' + (s.cantidad ? ' × ' + pvFmtN(s.cantidad) : ''),
       est: '<span class="pv-est e-' + pvEsc(s.estado) + '">' + pvEsc(_PV_EST_CORTO[s.estado] || s.estado_label) + '</span>',
@@ -1772,23 +2078,24 @@ function pvfRelRender(){
   document.getElementById('pvfPaneSol').innerHTML =
     '<div class="d-flex justify-content-end gap-2 mb-2 flex-wrap"><button type="button" class="pvf-aviso-btn is-primary" onclick="pvfSolicitar()"><i class="bi bi-send-plus-fill"></i>Solicitar repuesto</button>' +
     '<a class="pvf-aviso-btn" href="/repuestos?rs_proveedor=' + p.id + '#solicitudes"><i class="bi bi-inbox"></i>Abrir en el centro de solicitudes</a></div>' +
-    pvfTabla('sol', [{k:'n', t:'#'}, {k:'rep', t:'Repuesto'}, {k:'est', t:'Estado'}, {k:'cli', t:'Cliente / OT'}, {k:'desde', t:'Desde'}, {k:'stk', t:'Stock / prioridad'}],
+    pvfTabla('sol', [{k:'n', t:'#', m:'solo'}, {k:'rep', t:'Repuesto', m:'main'}, {k:'est', t:'Estado', m:'solo'}, {k:'cli', t:'Cliente / OT'}, {k:'desde', t:'Desde'}, {k:'stk', t:'Stock / prioridad', m:'solo'}],
       filasSol, '<i class="bi bi-check2-circle me-1"></i>Sin solicitudes abiertas con este proveedor.');
 
   // Compras
   const filasCom = comps.map(function(c){
     const sem = c.estado === 'recibido' ? 'verde' : (c.estado === 'cancelada' ? 'rojo' : (c.estado === 'en_transito' || c.estado === 'recibido_parcial' ? 'ambar' : 'gris'));
-    return { tk: '<b>' + pvEsc(c.numero_ticket || ('#' + c.id)) + '</b>', est: '<span class="pv-sem ' + sem + '">' + pvEsc(_PV_COMPRA_LBL[c.estado] || c.estado) + '</span>',
+    return { _cls: 'pvt-s-' + sem, tk: '<b>' + pvEsc(c.numero_ticket || ('#' + c.id)) + '</b>', est: '<span class="pv-sem ' + sem + '">' + pvEsc(_PV_COMPRA_LBL[c.estado] || c.estado) + '</span>',
       oc: pvEsc(c.oc_numero || '—'), lin: String(c.n_lineas || 0), monto: c.monto_total ? '$' + pvFmtN(c.monto_total) : '—', eta: pvEsc(c.eta || '—'), cre: pvEsc(c.created_at || '') };
   });
   document.getElementById('pvfPaneCom').innerHTML = pvfTabla('com',
-    [{k:'tk', t:'Ticket'}, {k:'est', t:'Estado'}, {k:'oc', t:'OC'}, {k:'lin', t:'Líneas', num:true}, {k:'monto', t:'Monto', num:true}, {k:'eta', t:'Llega'}, {k:'cre', t:'Creada'}],
+    [{k:'tk', t:'Ticket', m:'main'}, {k:'est', t:'Estado', m:'solo'}, {k:'oc', t:'OC'}, {k:'lin', t:'Líneas', num:true}, {k:'monto', t:'Monto', num:true}, {k:'eta', t:'Llega'}, {k:'cre', t:'Creada', m:'hide'}],
     filasCom, '<i class="bi bi-cart me-1"></i>Todavía no hay compras registradas con este proveedor.');
   pvfRepRender();
 }
 /* Repuestos del proveedor: dinámico (buscar, filtrar, ordenar) con costo, valor
    en bodega y demanda de 12 meses -> qué conviene comprar por volumen. */
 function pvfRepRender(){
+  if (_pvf.repDet) return pvfRepDetalle(_pvf.repDet);
   const d = _pvf.rel || {}, reps = d.repuestos || [], leg = d.legacy || [];
   const box = document.getElementById('pvfPaneRep');
   if (!reps.length){
@@ -1818,6 +2125,7 @@ function pvfRepRender(){
     const cal = r.calidad_ok || 0, tot = r.calidad_total || 7;
     const ccls = cal >= tot ? 'vd' : (cal >= tot - 2 ? 'am' : 'rj');
     return {
+      _cls: 'pvt-s-' + (r.semaforo || 'gris'),
       _click: 'pvfAbrirRepuesto(' + r.id + ',\'' + String(r.sku || '').replace(/[^A-Za-z0-9._\-\/]/g, '') + '\')',
       foto: r.foto_url ? '<img class="pvt-foto" src="' + pvEsc(r.foto_url) + '" alt="" loading="lazy">' : '<span class="pvt-foto sin" title="Sin foto"><i class="bi bi-camera"></i></span>',
       ficha: '<span class="pvt-cal ' + ccls + '" title="' + (r.calidad_falta && r.calidad_falta.length ? 'Falta: ' + pvEsc(r.calidad_falta.join(', ')) : 'Ficha completa') + '">' + cal + '/' + tot + '</span>',
@@ -1839,15 +2147,15 @@ function pvfRepRender(){
       '<div class="pvr-kpi ' + (nBajo ? 'am' : '') + '"><div class="k">Bajo el mínimo</div><div class="v">' + nBajo + '</div></div>' +
       '<div class="pvr-kpi"><div class="k">Más pedido (12 meses)</div><div class="v" style="font-size:.92rem">' + (top && top.unidades_12m ? pvEsc(top.descripcion) + ' · ' + pvFmtN(top.unidades_12m) + ' un.' : '—') + '</div></div>' +
     '</div>' +
-    (sinCosto ? '<div class="pvf-aviso mb-2"><i class="bi bi-cash-coin" style="color:#b45309"></i><span class="txt"><strong>' + sinCosto + (sinCosto === 1 ? ' repuesto sin costo' : ' repuestos sin costo') + ' cargado.</strong> Sin costo no se puede calcular el margen: complétalo en Bodega.</span></div>' : '') +
+    (sinCosto ? '<div class="pvf-aviso mb-2"><i class="bi bi-cash-coin" style="color:#b45309"></i><span class="txt"><strong>' + sinCosto + (sinCosto === 1 ? ' repuesto sin costo' : ' repuestos sin costo') + ' cargado.</strong> Sin costo no se puede calcular el margen: tócalo y complétalo aquí mismo.</span></div>' : '') +
     '<div class="pvr-bar"><input type="search" class="form-control" placeholder="Buscar por nombre, SKU o ubicación" value="' + pvEsc(_pvf.repQ) + '" oninput="_pvf.repQ=this.value;(_pvfPag.rep||{}).page=1;pvfRepLista()">' +
       '<select class="form-select" onchange="_pvf.repOrd=this.value;pvfRepRender()" aria-label="Ordenar repuestos">' +
         [['demanda','Más pedidos primero'], ['stock','Sin stock primero'], ['valor','Mayor valor en bodega'], ['az','A a Z']].map(function(o){ return '<option value="' + o[0] + '"' + (_pvf.repOrd === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') +
       '</select></div>' +
     '<div class="pvr-fil">' + chip('todos', 'Todos') + chip('sin', 'Sin stock') + chip('bajo', 'Bajo el mínimo') + chip('con', 'Con stock') + chip('llegar', 'Por llegar') + chip('dem', 'Con demanda') + chip('costo', 'Sin costo') + chip('ficha', 'Ficha incompleta') + '</div>' +
-    '<div class="pvf-opc mb-2"><i class="bi bi-hand-index me-1"></i>Toca un repuesto para abrirlo en Bodega y editarlo (se abre en otra pestaña).</div>' +
-    pvfTabla('rep', [{k:'foto', t:'Foto'}, {k:'rep', t:'Repuesto'}, {k:'ficha', t:'Ficha'}, {k:'stk', t:'Stock', num:true}, {k:'min', t:'Mínimo', num:true}, {k:'costo', t:'Costo', num:true},
-      {k:'valor', t:'Valor en bodega', num:true}, {k:'ped', t:'Pedidos 12 m', num:true}, {k:'uni', t:'Unidades 12 m', num:true}],
+    '<div class="pvf-opc mb-2"><i class="bi bi-hand-index me-1"></i>Toca un repuesto para ver sus fotos y completar sus datos aquí mismo.</div>' +
+    pvfTabla('rep', [{k:'foto', t:'Foto', m:'foto'}, {k:'rep', t:'Repuesto', m:'main'}, {k:'ficha', t:'Ficha'}, {k:'stk', t:'Stock', num:true}, {k:'min', t:'Mínimo', num:true, m:'hide'}, {k:'costo', t:'Costo', num:true},
+      {k:'valor', t:'Valor en bodega', num:true, m:'hide'}, {k:'ped', t:'Pedidos 12 m', num:true}, {k:'uni', t:'Unidades 12 m', num:true, m:'hide'}],
       filas, 'Ningún repuesto con ese filtro.') +
     (leg.length ? '<div class="mt-2 small text-muted">Además hay ' + leg.length + ' repuesto(s) del sistema anterior ligados a este proveedor.</div>' : '');
 }
