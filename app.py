@@ -138079,7 +138079,7 @@ def mant_maquina_ficha(mid):
 # vías (edición de la ficha, levantamientos).
 # ══════════════════════════════════════════════════════════════════════════
 _MAQ_ESTADOS_PARADA = ("fuera_servicio", "en_reparacion")
-_HV_MEDICION_DESDE = datetime(2026, 10, 5)   # desde aquí se miden las paradas
+_HV_MEDICION_DESDE = datetime(2026, 10, 5, 3, 0)   # 05/10/2026 00:00 hora Chile (UTC): desde aquí se miden las paradas
 _HV_TABLAS = {"ok": False}
 _HV_FAMILIAS = ("cardio", "selectorizado", "carga_libre", "racks_estructuras",
                 "bancos", "accesorios", "bicicletas", "trotadoras", "otros")
