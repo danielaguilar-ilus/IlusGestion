@@ -62300,7 +62300,7 @@ def mant_huerfanos_detalle():
         return jsonify({"ok": False, "error": "Solo un administrador puede ver esto."}), 403
     rows = [dict(r) for r in (mysql_fetchall(
         "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, v.fecha_programada, v.created_by, v.created_at, v.cliente_id "
-        "  FROM mant_visitas v WHERE v.cliente_id IS NULL OR v.cliente_id NOT IN (SELECT id FROM mant_clientes) "
+        "  FROM mant_visitas v WHERE v.cliente_id IS NOT NULL AND v.cliente_id NOT IN (SELECT id FROM mant_clientes) "
         " ORDER BY v.id DESC LIMIT 300") or [])]
     vids = [r["id"] for r in rows]
     cids = sorted({r["cliente_id"] for r in rows if r.get("cliente_id")})
@@ -62396,11 +62396,12 @@ def admin_mantenciones_clean_orphans():
                 # 1) Limpiar huérfanos directos de cliente (las 7 tablas hijas)
                 for t in targets:
                     try:
-                        cur.execute(f"""
-                            DELETE FROM {t}
-                            WHERE cliente_id IS NULL
-                               OR cliente_id NOT IN (SELECT id FROM mant_clientes)
-                        """)
+                        # Una OT SIN cliente (cliente_id NULL) es una OT interna legítima (trabajo de bodega,
+                        # capacitación, armado): NUNCA se borra. Solo la que apunta a un cliente que ya no existe.
+                        _cond = ("cliente_id IS NOT NULL AND cliente_id NOT IN (SELECT id FROM mant_clientes)"
+                                 if t == "mant_visitas" else
+                                 "cliente_id IS NULL OR cliente_id NOT IN (SELECT id FROM mant_clientes)")
+                        cur.execute(f"DELETE FROM {t} WHERE {_cond}")
                         deleted[t] = cur.rowcount
                     except Exception as e:
                         deleted[t] = f"error: {e}"
@@ -62856,7 +62857,7 @@ def mant_clientes():
                    WHERE m.cliente_id IS NULL OR m.cliente_id NOT IN
                      (SELECT id FROM mant_clientes))                              AS n_maquinas,
                   (SELECT COUNT(*) FROM mant_visitas v
-                   WHERE v.cliente_id IS NULL OR v.cliente_id NOT IN
+                   WHERE v.cliente_id IS NOT NULL AND v.cliente_id NOT IN
                      (SELECT id FROM mant_clientes))                              AS n_visitas,
                   (SELECT COUNT(*) FROM mant_sucursales s
                    WHERE s.cliente_id IS NULL OR s.cliente_id NOT IN
@@ -70405,11 +70406,11 @@ def mant_cliente_delete(cid):
                                   "mant_sucursales", "mant_reportes", "mant_repuestos",
                                   "mant_notificaciones"):
                     try:
-                        cur.execute(f"""
-                            DELETE FROM {child_tbl}
-                            WHERE cliente_id IS NULL
-                               OR cliente_id NOT IN (SELECT id FROM mant_clientes)
-                        """)
+                        # Las OT internas sin cliente (cliente_id NULL) no se tocan (ver clean-orphans).
+                        _cond_c = ("cliente_id IS NOT NULL AND cliente_id NOT IN (SELECT id FROM mant_clientes)"
+                                   if child_tbl == "mant_visitas" else
+                                   "cliente_id IS NULL OR cliente_id NOT IN (SELECT id FROM mant_clientes)")
+                        cur.execute(f"DELETE FROM {child_tbl} WHERE {_cond_c}")
                     except Exception: pass
             finally:
                 try: cur.execute("SET FOREIGN_KEY_CHECKS = 1")
