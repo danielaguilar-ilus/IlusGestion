@@ -38958,6 +38958,12 @@ def tr_cron_simpliroute_poll():
                 res["retiros_prep_auto"] = _fn_rp(max_s=70)
         except Exception as _e_rp:
             print(f"[cron-simpliroute] retiros prep auto: {_e_rp}", flush=True)
+    # Vigilancia: toda instalación NUEVA deja su ficha de cliente (Daniel 2026-10-04). No envía nada. Si falla no afecta al polling.
+    if not dry:
+        try:
+            res["instalaciones_fichas"] = _instalaciones_asegurar_fichas(desde=datetime(2026, 10, 5))
+        except Exception as _e_if:
+            print(f"[cron-simpliroute] instalaciones fichas: {_e_if}", flush=True)
     # Campaña de mantención a clientes de instalación (Daniel 2026-10-04). Mismo criterio: si falla no afecta al polling.
     if not dry:
         try:
@@ -62288,13 +62294,14 @@ def admin_mantenciones_reset():
 # POST /admin/mantenciones/clean-orphans  (solo superadmin)
 # ══════════════════════════════════════════════════════════════════════
 
-def _instalaciones_auditar():
+def _instalaciones_auditar(desde=None):
     """SOLO LECTURA. Dónde se puede estar perdiendo un cliente que entra por instalación:
-      a) tickets de instalación cuyo RUT no tiene ficha de cliente,
+      a) tickets de instalación cuyo RUT no tiene ficha de cliente (agrupados por RUT),
       b) tickets de instalación sin RUT (no se puede crear ficha),
       c) OT de instalación sin cliente,
-      d) clientes con OT de instalación que NO están clasificados como «Instalación».
-    Daniel 2026-10-04: «los clientes que se agregan por instalación son la pepita de oro»."""
+      d) clientes con OT de instalación que NO están clasificados como «Instalación» y no tienen contrato.
+    `desde` (date) limita (a) y (b) a tickets creados desde esa fecha. Daniel 2026-10-04: «los clientes que
+    se agregan por instalación son la pepita de oro, tener en orden todos esos clientes»."""
     out = {"tickets_sin_ficha": [], "tickets_sin_rut": [], "ot_instalacion_sin_cliente": [], "mal_clasificados": []}
     fichas = {}
     for r in (mysql_fetchall("SELECT id, rut FROM mant_clientes WHERE rut IS NOT NULL AND rut<>''") or []):
@@ -62303,18 +62310,33 @@ def _instalaciones_auditar():
             fichas[k] = r["id"]
     try:
         grupos = {}
-        for t in (mysql_fetchall(
-                "SELECT id, numero_ticket, rut, empresa, email, phone, direccion, comuna_nombre, nombre_contacto, estado, created_at "
-                "  FROM tk_tickets WHERE tipo='install' AND estado<>'cancelado' ORDER BY id") or []):
+        sql = ("SELECT id, numero_ticket, rut, empresa, email, phone, direccion, comuna_nombre, nombre_contacto, estado, created_at "
+               "  FROM tk_tickets WHERE tipo='install' AND estado<>'cancelado' ")
+        params = ()
+        if desde:
+            sql += " AND created_at >= %s "
+            params = (desde,)
+        for t in (mysql_fetchall(sql + " ORDER BY id", params) or []):
             if not (t.get("rut") or "").strip():
                 out["tickets_sin_rut"].append({"ticket": t["numero_ticket"], "empresa": t.get("empresa"), "estado": t["estado"]})
                 continue
             k = _rut_cuerpo(t["rut"])
-            if k and k not in fichas:
-                g_ = grupos.setdefault(k, {"rut": t["rut"], "empresa": t.get("empresa"), "email": t.get("email"),
-                                           "telefono": t.get("phone"), "tickets": []})
-                g_["tickets"].append(t["numero_ticket"])
-        out["tickets_sin_ficha"] = list(grupos.values())
+            if not k or k in fichas:
+                continue
+            g_ = grupos.setdefault(k, {"key": k, "rut": t["rut"], "empresa": "", "email": "", "telefono": "", "direccion": "",
+                                       "comuna": "", "contacto": "", "tickets": []})
+            # El dato más reciente (último ticket) manda sobre los anteriores, si no viene vacío.
+            for campo, col in (("empresa", "empresa"), ("email", "email"), ("telefono", "phone"), ("direccion", "direccion"),
+                               ("comuna", "comuna_nombre"), ("contacto", "nombre_contacto")):
+                if (t.get(col) or "").strip():
+                    g_[campo] = (t[col] or "").strip()
+            g_["tickets"].append({"numero": t["numero_ticket"], "estado": t["estado"],
+                                  "fecha": chile_fmt_filter(t["created_at"], "%d/%m/%Y") if t.get("created_at") else ""})
+        for g_ in grupos.values():
+            ok, res = validar_rut(g_["rut"])
+            g_["rut_normalizado"] = res if ok else ""
+            g_["rut_error"] = "" if ok else str(res)
+        out["tickets_sin_ficha"] = sorted(grupos.values(), key=lambda x: (x["empresa"] or "").lower())
     except Exception as e:
         print(f"[auditoria instalaciones] tickets: {e}", flush=True)
     try:
@@ -62328,19 +62350,71 @@ def _instalaciones_auditar():
     try:
         for c in (mysql_fetchall(
                 "SELECT c.id, c.razon_social, c.estado, c.tipo_cliente, "
-                "       (SELECT COUNT(*) FROM mant_contratos ct WHERE ct.cliente_id=c.id AND ct.nombre<>'Contenedor de documentos' "
-                "           AND ct.estado IN ('vigente','por_vencer','indefinido')) AS contratos_vigentes, "
                 "       (SELECT MIN(v.numero_ot) FROM mant_visitas v WHERE v.cliente_id=c.id AND v.tipo='instalacion') AS ot "
                 "  FROM mant_clientes c "
-                " WHERE c.tipo_cliente<>'instalacion' "
+                " WHERE c.tipo_cliente IN ('mantencion','prospecto') "
                 "   AND EXISTS (SELECT 1 FROM mant_visitas v2 WHERE v2.cliente_id=c.id AND v2.tipo='instalacion') "
+                "   AND NOT EXISTS (SELECT 1 FROM mant_contratos ct WHERE ct.cliente_id=c.id AND ct.nombre<>'Contenedor de documentos' "
+                "                    AND ct.estado IN ('vigente','por_vencer','indefinido')) "
                 " ORDER BY c.razon_social LIMIT 300") or []):
             out["mal_clasificados"].append({"id": c["id"], "razon_social": c["razon_social"], "estado": c["estado"],
-                                            "tipo_cliente": c["tipo_cliente"], "contratos_vigentes": int(c["contratos_vigentes"] or 0),
-                                            "ot": c.get("ot")})
+                                            "tipo_cliente": c["tipo_cliente"], "ot": c.get("ot")})
     except Exception as e:
         print(f"[auditoria instalaciones] mal clasificados: {e}", flush=True)
     return out
+
+
+def _ficha_instalacion_desde_grupo(g_, quien):
+    """Crea (o encuentra) la ficha de un cliente que entró por instalación. (id, 'creada'|'ya_existia'|motivo_de_fallo)."""
+    ok, rut_norm = validar_rut(g_.get("rut") or "")
+    if not ok:
+        return None, f"RUT inválido: {rut_norm}"
+    cuerpo = _rut_cuerpo(rut_norm)
+    ya = mysql_fetchone(
+        "SELECT id FROM mant_clientes WHERE REPLACE(REPLACE(REPLACE(UPPER(rut),'.',''),'-',''),' ','') = %s "
+        "    OR REPLACE(REPLACE(REPLACE(UPPER(rut),'.',''),'-',''),' ','') LIKE CONCAT(%s,'_') LIMIT 1", (cuerpo, cuerpo))
+    if ya:
+        return ya["id"], "ya_existia"
+    razon = (g_.get("empresa") or g_.get("contacto") or "").strip()[:200]
+    if not razon:
+        return None, "sin nombre ni razón social"
+    mysql_execute(
+        "INSERT INTO mant_clientes (razon_social, rut, contacto_nombre, contacto_tel, contacto_email, direccion, comuna, "
+        "                           estado, tipo_cliente, created_by) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,'prospecto','instalacion',%s)",
+        (razon, rut_norm[:20], (g_.get("contacto") or "").strip()[:200] or None, (g_.get("telefono") or "").strip()[:50] or None,
+         (g_.get("email") or "").strip()[:200] or None, (g_.get("direccion") or "").strip()[:400] or None,
+         (g_.get("comuna") or "").strip()[:100] or None, quien))
+    cid = (mysql_fetchone("SELECT LAST_INSERT_ID() AS id") or {}).get("id")
+    if not cid:
+        return None, "no se pudo crear"
+    try:
+        nums = ", ".join(t["numero"] for t in g_.get("tickets", [])[:6])
+        _mant_log("cliente", cid, "creado", f"Ficha creada desde tickets de instalación ({nums}) · queda como prospecto de instalación · por {quien}")
+    except Exception:
+        pass
+    return cid, "creada"
+
+
+def _instalaciones_asegurar_fichas(desde=None, max_n=30):
+    """Vigilancia: toda instalación nueva (ticket) deja su ficha de cliente. Corre colgada del cron de cada 10 min.
+    Solo mira tickets desde `desde` (lo anterior se repara a mano con vista previa). No envía nada a nadie."""
+    res = {"creadas": 0, "ya_existian": 0, "fallidas": []}
+    if (os.environ.get("INSTALACIONES_FICHA_AUTO", "1") or "1").strip().lower() in ("0", "false", "no"):
+        res["apagado"] = True
+        return res
+    for g_ in _instalaciones_auditar(desde=desde)["tickets_sin_ficha"][:max_n]:
+        try:
+            cid, estado = _ficha_instalacion_desde_grupo(g_, "sistema")
+            if estado == "creada":
+                res["creadas"] += 1
+            elif estado == "ya_existia":
+                res["ya_existian"] += 1
+            else:
+                res["fallidas"].append(f"{g_.get('empresa')}: {estado}")
+        except Exception as e:
+            res["fallidas"].append(f"{g_.get('empresa')}: {str(e)[:80]}")
+    return res
 
 
 @app.route("/mantenciones/api/instalaciones/auditoria", methods=["GET"])
@@ -62351,6 +62425,60 @@ def mant_instalaciones_auditoria():
         return jsonify({"ok": False, "error": "Solo un administrador puede ver esto."}), 403
     a = _instalaciones_auditar()
     return jsonify({"ok": True, **a, "resumen": {k: len(v) for k, v in a.items()}})
+
+
+@app.route("/mantenciones/api/instalaciones/crear-fichas", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_instalaciones_crear_fichas():
+    """Crea las fichas (prospecto de instalación) de los RUT elegidos en la vista previa."""
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo un administrador puede hacer esto."}), 403
+    d = request.get_json(silent=True) or {}
+    elegidos = {str(k) for k in (d.get("keys") or [])[:200]}
+    if not elegidos:
+        return jsonify({"ok": False, "error": "No elegiste ningún cliente."}), 400
+    quien = current_username() or "sistema"
+    res = {"creadas": 0, "ya_existian": 0, "fallidas": []}
+    for g_ in _instalaciones_auditar()["tickets_sin_ficha"]:
+        if g_["key"] not in elegidos:
+            continue
+        try:
+            cid, estado = _ficha_instalacion_desde_grupo(g_, quien)
+        except Exception as e:
+            print(f"[crear-fichas] {g_.get('empresa')}: {e}", flush=True)
+            cid, estado = None, "error interno"
+        if estado == "creada":
+            res["creadas"] += 1
+        elif estado == "ya_existia":
+            res["ya_existian"] += 1
+        else:
+            res["fallidas"].append(f"{g_.get('empresa') or g_.get('rut')}: {estado}")
+    return jsonify({"ok": True, **res})
+
+
+@app.route("/mantenciones/api/instalaciones/reclasificar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_instalaciones_reclasificar():
+    """Marca como «Instalación» a los clientes que ya tuvieron una OT de instalación y no tienen contrato vigente.
+    No toca el estado (activo/inactivo) ni a quien ya tiene contrato."""
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo un administrador puede hacer esto."}), 403
+    quien = current_username() or "sistema"
+    n = 0
+    for c in _instalaciones_auditar()["mal_clasificados"]:
+        antes = c["tipo_cliente"]
+        if mysql_execute_returning_rowcount(
+                "UPDATE mant_clientes SET tipo_cliente='instalacion', updated_by=%s WHERE id=%s AND tipo_cliente IN ('mantencion','prospecto')",
+                (quien, c["id"])):
+            n += 1
+            try:
+                _mant_log("cliente", c["id"], "tipo_actualizado",
+                          f"{_TIPO_CLIENTE_LABEL.get(antes, antes)} → Instalación · tuvo la {c.get('ot') or 'OT'} de instalación (reparación) · por {quien}")
+            except Exception:
+                pass
+    return jsonify({"ok": True, "reclasificados": n})
 
 
 @app.route("/mantenciones/api/huerfanos", methods=["GET"])

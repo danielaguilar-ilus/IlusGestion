@@ -236,3 +236,54 @@ def test_tracking_rechazo_corta_el_proceso():
 def test_tracking_con_contrato_queda_completo():
     pasos, n, sig = _pasos()({"etapa": "ofrecida"}, None, "10/10/2026")
     assert set(_estados(pasos)) == {"hecho"} and n == 5 and sig == "Cliente de mantención"
+
+
+# ───────── Fichas de clientes que entran por instalación ─────────
+def _ficha_ns(existente=None):
+    src = open(_APP, encoding="utf-8").read()
+    a = src.index("def _ficha_instalacion_desde_grupo")
+    b = src.index('@app.route("/mantenciones/api/instalaciones/auditoria"')
+    calls = {"insert": [], "log": []}
+
+    def fetchone(q, p=()):
+        if "LAST_INSERT_ID" in q:
+            return {"id": 777}
+        return {"id": existente} if existente else None
+
+    ns = {"os": os,
+          "validar_rut": lambda r: (True, "12345678-5") if (r or "").replace(".", "").startswith("1234567") else (False, "RUT muy corto"),
+          "_rut_cuerpo": lambda r: "12345678",
+          "mysql_fetchone": fetchone,
+          "mysql_execute": lambda q, p=(): calls["insert"].append((q, p)),
+          "_mant_log": lambda *a, **k: calls["log"].append(a),
+          "_instalaciones_auditar": lambda desde=None: {"tickets_sin_ficha": []}}
+    exec(src[a:b], ns)
+    return ns, calls
+
+
+def test_ficha_se_crea_como_prospecto_de_instalacion():
+    ns, calls = _ficha_ns()
+    cid, est = ns["_ficha_instalacion_desde_grupo"]({"rut": "1234567", "empresa": "Gimnasio X", "tickets": [{"numero": "TAA-1"}]}, "daniel")
+    assert (cid, est) == (777, "creada")
+    q, p = calls["insert"][0]
+    assert "'prospecto','instalacion'" in q and p[0] == "Gimnasio X" and p[1] == "12345678-5"
+    assert calls["log"]
+
+
+def test_ficha_no_duplica_si_el_rut_ya_existe():
+    ns, calls = _ficha_ns(existente=55)
+    assert ns["_ficha_instalacion_desde_grupo"]({"rut": "1234567", "empresa": "X", "tickets": []}, "d") == (55, "ya_existia")
+    assert calls["insert"] == []
+
+
+def test_ficha_rut_invalido_o_sin_nombre_no_crea_nada():
+    ns, calls = _ficha_ns()
+    assert ns["_ficha_instalacion_desde_grupo"]({"rut": "99", "empresa": "X"}, "d")[0] is None
+    assert ns["_ficha_instalacion_desde_grupo"]({"rut": "1234567", "empresa": "", "contacto": ""}, "d")[0] is None
+    assert calls["insert"] == []
+
+
+def test_vigilancia_se_puede_apagar(monkeypatch):
+    ns, _ = _ficha_ns()
+    monkeypatch.setenv("INSTALACIONES_FICHA_AUTO", "0")
+    assert ns["_instalaciones_asegurar_fichas"]().get("apagado")
