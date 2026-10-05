@@ -70419,6 +70419,17 @@ def _prospecto_info(ids):
                                          esc, esc_on, cfg.get("descuento_pct"))
             if o["plan"]:
                 o["plan"]["ref_tipo"] = "factura" if r.get("f_doc") else "instalación"
+        # Equipos sin fecha (alta manual o desde la OT sin documento): la referencia es la OT de instalación.
+        for o in out.values():
+            if not o.get("plan") and o.get("origen_fecha"):
+                try:
+                    _ref = datetime.strptime(o["origen_fecha"], "%d/%m/%Y").date()
+                    o["plan"] = _plan_calendario(_ref, hoy, cfg.get("meses_primera"), cfg.get("visitas_anio"),
+                                                 esc, esc_on, cfg.get("descuento_pct"))
+                    if o["plan"]:
+                        o["plan"]["ref_tipo"] = "instalación"
+                except (TypeError, ValueError):
+                    pass
     except Exception as e:
         print(f"[prospecto_info] calendario: {e}", flush=True)
     return out
