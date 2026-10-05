@@ -62288,6 +62288,74 @@ def admin_mantenciones_reset():
 # POST /admin/mantenciones/clean-orphans  (solo superadmin)
 # ══════════════════════════════════════════════════════════════════════
 
+@app.route("/mantenciones/api/huerfanos", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_huerfanos_detalle():
+    """SOLO LECTURA. Lista las visitas/OT cuyo cliente ya no existe y de dónde vienen: ticket asociado
+    (empresa/RUT), historial del cliente perdido en la bitácora y, si el ticket trae un RUT que SÍ existe,
+    el cliente al que probablemente pertenecen. Daniel 2026-10-04: «no quiero que esté huérfano ni que me
+    ofrezca limpiarlo, necesito rescatarlo y ver de dónde son»."""
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo un administrador puede ver esto."}), 403
+    rows = [dict(r) for r in (mysql_fetchall(
+        "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, v.fecha_programada, v.created_by, v.created_at, v.cliente_id "
+        "  FROM mant_visitas v WHERE v.cliente_id IS NULL OR v.cliente_id NOT IN (SELECT id FROM mant_clientes) "
+        " ORDER BY v.id DESC LIMIT 300") or [])]
+    vids = [r["id"] for r in rows]
+    cids = sorted({r["cliente_id"] for r in rows if r.get("cliente_id")})
+    tickets, logs = {}, {}
+    try:
+        if vids:
+            ph = ",".join(["%s"] * len(vids))
+            for t in mysql_fetchall(
+                    f"SELECT visita_id, numero_ticket, empresa, rut, email, phone, created_at FROM tk_tickets "
+                    f" WHERE visita_id IN ({ph})", tuple(vids)) or []:
+                tickets.setdefault(t["visita_id"], dict(t))
+    except Exception as e:
+        print(f"[huerfanos] tickets: {e}", flush=True)
+    try:
+        if cids:
+            ph = ",".join(["%s"] * len(cids))
+            for l in mysql_fetchall(
+                    f"SELECT entidad_id, accion, detalle, usuario, created_at FROM mant_logs "
+                    f" WHERE entidad='cliente' AND entidad_id IN ({ph}) ORDER BY id", tuple(cids)) or []:
+                logs.setdefault(l["entidad_id"], []).append(dict(l))
+    except Exception as e:
+        print(f"[huerfanos] logs: {e}", flush=True)
+    out = []
+    for r in rows:
+        t = tickets.get(r["id"]) or {}
+        lg = logs.get(r.get("cliente_id")) or []
+        cand = None
+        try:
+            cuerpo = _rut_cuerpo(t.get("rut") or "") if t.get("rut") else ""
+            if cuerpo:
+                cand = mysql_fetchone(
+                    "SELECT id, razon_social, estado FROM mant_clientes "
+                    " WHERE REPLACE(REPLACE(REPLACE(UPPER(rut),'.',''),'-',''),' ','') = %s "
+                    "    OR REPLACE(REPLACE(REPLACE(UPPER(rut),'.',''),'-',''),' ','') LIKE CONCAT(%s,'_') LIMIT 1",
+                    (cuerpo, cuerpo))
+        except Exception:
+            cand = None
+        out.append({
+            "visita_id": r["id"], "numero_ot": r.get("numero_ot") or f"#{r['id']}", "titulo": r.get("titulo") or "",
+            "tipo": _TIPO_OT_LABEL.get(r.get("tipo"), r.get("tipo") or ""), "estado": r.get("estado") or "",
+            "fecha_programada": r["fecha_programada"].strftime("%d/%m/%Y") if r.get("fecha_programada") else "",
+            "creada_por": r.get("created_by") or "",
+            "creada": chile_fmt_filter(r["created_at"], "%d/%m/%Y") if r.get("created_at") else "",
+            "cliente_id_perdido": r.get("cliente_id"),
+            "ticket": ({"numero": t.get("numero_ticket"), "empresa": t.get("empresa"), "rut": t.get("rut"),
+                        "email": t.get("email"), "telefono": t.get("phone")} if t else None),
+            "bitacora_cliente": [{"accion": x["accion"], "detalle": (x.get("detalle") or "")[:200], "usuario": x.get("usuario"),
+                                  "fecha": chile_fmt_filter(x["created_at"], "%d/%m/%Y") if x.get("created_at") else ""}
+                                 for x in (lg[:1] + lg[-1:] if len(lg) > 1 else lg)],
+            "candidato": ({"id": cand["id"], "razon_social": cand["razon_social"], "estado": cand["estado"]} if cand else None),
+            "url_ot": url_for("ot2_detalle", vid=r["id"]),
+        })
+    return jsonify({"ok": True, "total": len(out), "visitas": out})
+
+
 @app.route("/admin/mantenciones/clean-orphans", methods=["POST"])
 @login_required
 def admin_mantenciones_clean_orphans():
@@ -69306,7 +69374,7 @@ def _prospecto_info(ids):
     out = {i: {"etapa": "por_ofrecer", "etapa_label": _PROSP_ETAPAS["por_ofrecer"],
                "nota": "", "proxima_gestion": None, "proxima_gestion_iso": "",
                "vencida": False, "ofrecida_at": None, "ofrecida_por": None,
-               "origen_ot": None, "origen_tipo": None, "origen_fecha": None}
+               "origen_ot": None, "origen_tipo": None, "origen_fecha": None, "marcas": ""}
            for i in ids}
     if not ids:
         return out
@@ -69333,6 +69401,16 @@ def _prospecto_info(ids):
             o["ofrecida_por"] = r.get("ofrecida_por")
     except Exception as e:
         print(f"[prospecto_info] seguimiento: {e}", flush=True)
+    try:
+        for r in mysql_fetchall(
+                f"SELECT cliente_id, GROUP_CONCAT(DISTINCT TRIM(marca) ORDER BY TRIM(marca) SEPARATOR ', ') AS marcas "
+                f"  FROM mant_maquinas WHERE cliente_id IN ({ph}) AND estado='activo' "
+                f"   AND marca IS NOT NULL AND TRIM(marca)<>'' GROUP BY cliente_id", tuple(ids)) or []:
+            o = out.get(r["cliente_id"])
+            if o:
+                o["marcas"] = r.get("marcas") or ""
+    except Exception as e:
+        print(f"[prospecto_info] marcas: {e}", flush=True)
     try:
         for r in mysql_fetchall(
                 f"SELECT v.cliente_id, v.numero_ot, v.tipo, v.created_at "

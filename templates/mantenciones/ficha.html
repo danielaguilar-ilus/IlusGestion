@@ -290,6 +290,7 @@
           <div class="small text-muted mb-2">
             {% if prospecto.origen_ot %}Nació de la {{ prospecto.origen_ot }} ({{ prospecto.origen_tipo }}{% if prospecto.origen_fecha %}, {{ prospecto.origen_fecha }}{% endif %}).{% endif %}
             {% if prospecto.ofrecida_at %}Se ofreció el {{ prospecto.ofrecida_at }}{% if prospecto.ofrecida_por %} por {{ prospecto.ofrecida_por }}{% endif %}.{% endif %}
+            {% if prospecto.marcas %}Marcas de sus equipos: <b>{{ prospecto.marcas }}</b>. {% endif %}
             Al subir su contrato pasa solo a cliente activo.
           </div>
           <div class="row g-2 align-items-end">

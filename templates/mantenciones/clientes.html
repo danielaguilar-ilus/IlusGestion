@@ -367,7 +367,7 @@
        así que el título decía algo que no era cierto y hacía pensar que
        faltaban clientes. #}
     <h4><i class="bi bi-building-check me-2"></i>Clientes</h4>
-    <div class="mod-sub">Contratos, equipos, instalaciones y visitas programadas</div>
+    <div class="mod-sub">Todos tus clientes: nacen solos desde cada instalación o visita, con sus equipos, contratos y seguimiento comercial</div>
   </div>
   <div class="d-flex gap-2 align-items-center flex-wrap">
     <button type="button" class="btn btn-outline-light fw-semibold px-3"
@@ -401,6 +401,18 @@
 </div>
 
 {% include "mantenciones/_reporte_excel_modal.html" %}
+
+<div class="modal fade" id="modalHuerfanos" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff">
+        <h5 class="modal-title fw-bold"><i class="bi bi-life-preserver me-2"></i>Rescatar registros sin cliente</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="huerfanosCont"></div>
+    </div>
+  </div>
+</div>
 {# ══ CUADRO DE MANDO DEL PLAN DE MANTENCIÓN (Daniel 2026-10-04) ══
    El descuento y las condiciones se manejan desde acá; la propuesta de cada cliente los usa. #}
 <div class="modal fade" id="modalPlanConfig" tabindex="-1">
@@ -968,12 +980,34 @@ async function fusionarClientes(idKeep, idDrop, btn){
       </ul>
     </div>
   </div>
-  <button type="button" id="btnCleanOrphans" class="btn btn-warning fw-bold"
-          onclick="limpiarHuerfanos()" style="white-space:nowrap">
-    <i class="bi bi-eraser me-1"></i>Limpiar huérfanos
+  <button type="button" class="btn btn-warning fw-bold" onclick="verHuerfanos()" style="white-space:nowrap">
+    <i class="bi bi-life-preserver me-1"></i>Ver y rescatar
   </button>
 </div>
 <script>
+let _modalHuerf = null;
+async function verHuerfanos(){
+  if (!_modalHuerf) _modalHuerf = new bootstrap.Modal(document.getElementById('modalHuerfanos'));
+  _modalHuerf.show();
+  const cont = document.getElementById('huerfanosCont');
+  cont.innerHTML = '<div class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Buscando de dónde vienen…</div>';
+  try {
+    const r = await fetch('/mantenciones/api/huerfanos'); const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'No se pudo cargar');
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    cont.innerHTML = '<div class="small text-muted mb-2">' + d.total + ' visita(s)/OT sin cliente. Nada se borra desde acá.</div>' +
+      '<div class="table-responsive"><table class="table table-sm align-middle" style="font-size:.82rem"><thead><tr>' +
+      '<th>OT</th><th>Tipo · estado</th><th>Fechas</th><th>Creada por</th><th>Cliente perdido (ID)</th><th>Ticket / datos</th><th>Posible cliente</th></tr></thead><tbody>' +
+      d.visitas.map(v => '<tr><td><a href="' + esc(v.url_ot) + '" target="_blank" class="fw-bold">' + esc(v.numero_ot) + '</a><div class="text-muted">' + esc(v.titulo) + '</div></td>' +
+        '<td>' + esc(v.tipo) + '<div class="text-muted">' + esc(v.estado) + '</div></td>' +
+        '<td>' + esc(v.fecha_programada) + '<div class="text-muted">creada ' + esc(v.creada) + '</div></td>' +
+        '<td>' + esc(v.creada_por) + '</td>' +
+        '<td>#' + esc(v.cliente_id_perdido) + (v.bitacora_cliente.length ? '<div class="text-muted">' + v.bitacora_cliente.map(b => esc(b.fecha + ' · ' + b.accion + (b.detalle ? ': ' + b.detalle : ''))).join('<br>') + '</div>' : '<div class="text-muted">sin historial</div>') + '</td>' +
+        '<td>' + (v.ticket ? esc(v.ticket.numero) + '<div>' + esc(v.ticket.empresa || '') + '</div><div class="text-muted">' + esc(v.ticket.rut || '') + ' ' + esc(v.ticket.email || '') + '</div>' : '<span class="text-muted">sin ticket</span>') + '</td>' +
+        '<td>' + (v.candidato ? '<a href="/servicio-tecnico/clientes/' + v.candidato.id + '" target="_blank" class="fw-bold">' + esc(v.candidato.razon_social) + '</a><div class="text-muted">' + esc(v.candidato.estado) + '</div>' : '<span class="text-muted">no se encontró</span>') + '</td></tr>').join('') +
+      '</tbody></table></div>';
+  } catch(e){ cont.innerHTML = '<div class="alert alert-danger small">' + e.message + '</div>'; }
+}
 async function limpiarHuerfanos(){
   const ok = await ilusConfirm({
     title: 'Limpiar registros huérfanos',
@@ -1169,7 +1203,7 @@ function aplicarKpiFiltro(tipo) {
 {% set FILTER_GROUPS = [
      {'key':'tipo',     'label':'Tipo',     'icon':'tag-fill',
       'opts':[('mantencion','Mantención'),('arriendo','Arriendo'),('leasing','Leasing'),
-              ('instalacion','Instalación'),('prospecto','Prospecto')]},
+              ('instalacion','Instalación'),('prospecto','Tipo por definir')]},
      {'key':'estado',   'label':'Estado',   'icon':'circle-fill',
       'opts':[('activo','Activo'),('inactivo','Inactivo'),('prospecto','Prospecto'),('suspendido','Suspendido')]},
      {'key':'contrato', 'label':'Contrato', 'icon':'file-earmark-text-fill',
@@ -1386,6 +1420,7 @@ function aplicarKpiFiltro(tipo) {
         <span class="cc2-prosp-etapa cc2-prosp-{{ c.pr.etapa }}">
           <i class="bi bi-megaphone-fill me-1"></i>Mantención: {{ c.pr.etapa_label }}
         </span>
+        {% if c.pr.marcas %}<span class="cc2-prosp-txt"><i class="bi bi-tags-fill me-1"></i>Marcas: {{ c.pr.marcas }}</span>{% endif %}
         {% if c.pr.origen_ot %}
         <span class="cc2-prosp-txt">Nació de {{ c.pr.origen_ot }} · {{ c.pr.origen_tipo }}{% if c.pr.origen_fecha %} · {{ c.pr.origen_fecha }}{% endif %}</span>
         {% endif %}
@@ -1591,10 +1626,10 @@ function aplicarKpiFiltro(tipo) {
   <div class="cli-footer-perpage">
     <span class="text-muted small">Mostrar</span>
     <select id="perPage" class="form-select form-select-sm" onchange="filterAndPage(1)">
-      <option value="6" selected>6</option>
+      <option value="6">6</option>
       <option value="9">9</option>
       <option value="12">12</option>
-      <option value="24">24</option>
+      <option value="24" selected>24</option>
       <option value="999">Todo</option>
     </select>
     <span class="text-muted small">por página</span>
@@ -1633,7 +1668,7 @@ function aplicarKpiFiltro(tipo) {
   const GLBL = { tipo: 'Tipo', estado: 'Estado', contrato: 'Contrato', equipos: 'Equipos' };
   const LBL = {
     tipo:     { mantencion: 'Mantención', instalacion: 'Instalación',
-                arriendo: 'Arriendo', leasing: 'Leasing', prospecto: 'Prospecto' },
+                arriendo: 'Arriendo', leasing: 'Leasing', prospecto: 'Tipo por definir' },
     estado:   { activo: 'Activo', inactivo: 'Inactivo', prospecto: 'Prospecto', suspendido: 'Suspendido' },
     contrato: { vigente: 'Vigente', por_vencer: 'Por vencer', vencido: 'Vencido', sin_vigente: 'Sin contrato' },
     equipos:  { con: 'Con equipos', sin: 'Sin equipos' },
@@ -1697,7 +1732,7 @@ function aplicarKpiFiltro(tipo) {
   }
 
   function paginate(vis) {
-    const pp  = parseInt($('#perPage') ? $('#perPage').value : 6) || 6;
+    const pp  = parseInt($('#perPage') ? $('#perPage').value : 24) || 24;
     const tot = vis.length;
     const universo = cards().length;
     const pgs = pp >= 999 ? 1 : Math.max(1, Math.ceil(tot / pp));
