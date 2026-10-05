@@ -73629,7 +73629,13 @@ def mant_tecnicos_list_api():
            # externos de empresas distintas en la misma OT. Los internos
            # quedan con empresa_id NULL: se pueden mezclar con cualquiera.
            "       teu.tecnico_externo_id AS empresa_id, "
-           "       tee.razon_social AS empresa_nombre "
+           "       tee.razon_social AS empresa_nombre, "
+           # 2026-10-05 (Anexo N°202: Jean Carlos Araujo es de DAP y el anexo
+           # salió a su nombre). El PROVEEDOR del anexo es la EMPRESA: el
+           # wizard prellena con estos datos, no con los de la persona.
+           "       tee.rut_empresa AS empresa_rut, "
+           "       tee.contacto_email AS empresa_email, "
+           "       tee.contacto_tel AS empresa_tel "
            "  FROM app_users au "
            "  LEFT JOIN mant_tecnicos_externos te  ON te.user_id = au.id "
            "  LEFT JOIN mant_tecnicos_externos ten "
@@ -101310,6 +101316,12 @@ def ot2_api_crear():
                   f"(anexo_delegado) — no se crea el automático", flush=True)
         if not _anexo_delegado and _anexo_bloquea_ot(vid) == "SIN_ANEXO":
             _te = mysql_fetchone(
+                "SELECT te.id, te.razon_social, te.rut_empresa, te.direccion_empresa, "
+                "       te.contacto_nombre, te.contacto_tel, te.contacto_email "
+                "  FROM mant_tecnico_externo_usuarios teu "
+                "  JOIN mant_tecnicos_externos te ON te.id = teu.tecnico_externo_id "
+                " WHERE teu.user_id=%s "
+                " UNION "
                 "SELECT id, razon_social, rut_empresa, direccion_empresa, "
                 "       contacto_nombre, contacto_tel, contacto_email "
                 "  FROM mant_tecnicos_externos "
@@ -101321,7 +101333,7 @@ def ot2_api_crear():
                 " WHERE user_id IS NULL "
                 "   AND LOWER(TRIM(COALESCE(razon_social,''))) = LOWER(TRIM(%s)) "
                 " LIMIT 1",
-                (lider_id, tecnico_nombre or ""))
+                (lider_id, lider_id, tecnico_nombre or ""))
             _prov_nombre = ((_te or {}).get("razon_social") or "").strip()[:200]
             _prov_rut = ((_te or {}).get("rut_empresa") or "").strip()[:20]
             _prov_dir = ((_te or {}).get("direccion_empresa") or "").strip()[:400]

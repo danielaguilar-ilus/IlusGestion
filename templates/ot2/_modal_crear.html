@@ -7004,7 +7004,10 @@ window.OT2C = (function(){
     // _primerTecnicoExterno() (arriba, junto a _hayTecnicoExterno()).
     if (!a.proveedor_nombre.trim()){
       var t = _primerTecnicoExterno();
-      if (t) a.proveedor_nombre = t.nombre || '';
+      // 2026-10-05 (Anexo N°202): el proveedor es la EMPRESA (DAP), no la
+      // persona (Jean Carlos Araujo). Solo si el técnico no tiene empresa
+      // ligada se usa su propio nombre.
+      if (t) a.proveedor_nombre = t.empresa_nombre || t.nombre || '';
     }
     // 2026-08-30 (Daniel, viendo el anexo en vivo, textual: "el correo de
     // firma lo tendremos que extraer en la ficha junto con el RUT y el
@@ -7016,9 +7019,13 @@ window.OT2C = (function(){
     // sigue vacío, nunca pisa algo que el usuario ya escribió a mano.
     var _tExt = _primerTecnicoExterno();
     if (_tExt){
-      if (!a.proveedor_rut.trim() && _tExt.rut) a.proveedor_rut = _tExt.rut;
-      if (!a.email_destino.trim() && _tExt.email) a.email_destino = _tExt.email;
-      if (!a.telefono.trim() && _tExt.telefono) a.telefono = _tExt.telefono;
+      // Con empresa ligada, RUT/correo/teléfono son los de la EMPRESA.
+      var _eRut = _tExt.empresa_nombre ? (_tExt.empresa_rut || '') : (_tExt.rut || '');
+      var _eMail = (_tExt.empresa_nombre && _tExt.empresa_email) || _tExt.email;
+      var _eTel = (_tExt.empresa_nombre && _tExt.empresa_tel) || _tExt.telefono;
+      if (!a.proveedor_rut.trim() && _eRut) a.proveedor_rut = _eRut;
+      if (!a.email_destino.trim() && _eMail) a.email_destino = _eMail;
+      if (!a.telefono.trim() && _eTel) a.telefono = _eTel;
     }
     if (!a.objetivo_servicio.trim() && S.tipo){
       var tInfo = TIPOS.find(function(x){ return x.v === S.tipo; });
@@ -9218,7 +9225,7 @@ window.OT2C = (function(){
         var _liderTec = cacheTec.find(function(t){ return t.id === S.lider; });
         if (_liderTec){
           body.finanzas.proveedor_tipo = _liderTec.es_externo ? 'externo' : 'interno';
-          body.finanzas.proveedor_nombre = _liderTec.es_externo ? _liderTec.nombre : '';
+          body.finanzas.proveedor_nombre = _liderTec.es_externo ? (_liderTec.empresa_nombre || _liderTec.nombre) : '';
         }
       }
       // 2026-08-29: documentos extra asociados a mano (ver doc_extra en
