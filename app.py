@@ -62294,6 +62294,22 @@ def admin_mantenciones_reset():
 # POST /admin/mantenciones/clean-orphans  (solo superadmin)
 # ══════════════════════════════════════════════════════════════════════
 
+_NOMBRES_RELLENO = ("cliente no informado por erp", "cliente no informado", "sin nombre", "s/n", "n/a", "na", "-")
+
+
+def _rut_canon(raw):
+    """RUT canónico «cuerpo-DV», sin puntos ni ceros adelante: '09.918.126-5', '099181265', '99181265' y
+    '9918126' (sin DV) → '9918126-5'. None si no es un RUT válido. Resuelve lo que _rut_cuerpo no puede: un
+    RUT de cuerpo de 7 dígitos guardado sin guion ('99181265') se confunde con un cuerpo de 8."""
+    ok, res = validar_rut(raw or "")
+    if not ok or not res or len(res) < 2:
+        return None
+    cuerpo, dv = res[:-1].lstrip("0"), res[-1].upper()
+    if not cuerpo.isdigit():
+        return None
+    return f"{cuerpo}-{dv}"
+
+
 def _instalaciones_auditar(desde=None):
     """SOLO LECTURA. Dónde se puede estar perdiendo un cliente que entra por instalación:
       a) tickets de instalación cuyo RUT no tiene ficha de cliente (agrupados por RUT),
@@ -62305,9 +62321,9 @@ def _instalaciones_auditar(desde=None):
     out = {"tickets_sin_ficha": [], "tickets_sin_rut": [], "ot_instalacion_sin_cliente": [], "mal_clasificados": []}
     fichas = {}
     for r in (mysql_fetchall("SELECT id, rut FROM mant_clientes WHERE rut IS NOT NULL AND rut<>''") or []):
-        k = _rut_cuerpo(r["rut"]) if r.get("rut") else ""
-        if k:
-            fichas[k] = r["id"]
+        for k in {_rut_canon(r["rut"]), _rut_cuerpo(r["rut"])}:
+            if k:
+                fichas[k] = r["id"]
     try:
         grupos = {}
         sql = ("SELECT id, numero_ticket, rut, empresa, email, phone, direccion, comuna_nombre, nombre_contacto, estado, created_at "
@@ -62320,7 +62336,7 @@ def _instalaciones_auditar(desde=None):
             if not (t.get("rut") or "").strip():
                 out["tickets_sin_rut"].append({"ticket": t["numero_ticket"], "empresa": t.get("empresa"), "estado": t["estado"]})
                 continue
-            k = _rut_cuerpo(t["rut"])
+            k = _rut_canon(t["rut"]) or _rut_cuerpo(t["rut"])
             if not k or k in fichas:
                 continue
             g_ = grupos.setdefault(k, {"key": k, "rut": t["rut"], "empresa": "", "email": "", "telefono": "", "direccion": "",
@@ -62328,8 +62344,9 @@ def _instalaciones_auditar(desde=None):
             # El dato más reciente (último ticket) manda sobre los anteriores, si no viene vacío.
             for campo, col in (("empresa", "empresa"), ("email", "email"), ("telefono", "phone"), ("direccion", "direccion"),
                                ("comuna", "comuna_nombre"), ("contacto", "nombre_contacto")):
-                if (t.get(col) or "").strip():
-                    g_[campo] = (t[col] or "").strip()
+                v_ = (t.get(col) or "").strip()
+                if v_ and v_.lower() not in _NOMBRES_RELLENO:
+                    g_[campo] = v_
             g_["tickets"].append({"numero": t["numero_ticket"], "estado": t["estado"],
                                   "fecha": chile_fmt_filter(t["created_at"], "%d/%m/%Y") if t.get("created_at") else ""})
         for g_ in grupos.values():
@@ -62373,18 +62390,23 @@ def _instalaciones_auditar(desde=None):
 
 def _ficha_instalacion_desde_grupo(g_, quien):
     """Crea (o encuentra) la ficha de un cliente que entró por instalación. (id, 'creada'|'ya_existia'|motivo_de_fallo)."""
-    ok, rut_norm = validar_rut(g_.get("rut") or "")
-    if not ok:
-        return None, f"RUT inválido: {rut_norm}"
-    cuerpo = _rut_cuerpo(rut_norm)
+    canon = _rut_canon(g_.get("rut") or "")
+    if not canon:
+        return None, "RUT inválido"
+    plano = canon.replace("-", "")
     ya = mysql_fetchone(
-        "SELECT id FROM mant_clientes WHERE REPLACE(REPLACE(REPLACE(UPPER(rut),'.',''),'-',''),' ','') = %s "
-        "    OR REPLACE(REPLACE(REPLACE(UPPER(rut),'.',''),'-',''),' ','') LIKE CONCAT(%s,'_') LIMIT 1", (cuerpo, cuerpo))
+        "SELECT id FROM mant_clientes "
+        " WHERE TRIM(LEADING '0' FROM REPLACE(REPLACE(REPLACE(UPPER(rut),'.',''),'-',''),' ','')) IN (%s,%s) LIMIT 1",
+        (plano, canon.split("-")[0]))
     if ya:
         return ya["id"], "ya_existia"
-    razon = (g_.get("empresa") or g_.get("contacto") or "").strip()[:200]
+    def _ok(v):
+        v = (v or "").strip()
+        return v if v and v.lower() not in _NOMBRES_RELLENO else ""
+    razon = (_ok(g_.get("empresa")) or _ok(g_.get("contacto")))[:200]
     if not razon:
         return None, "sin nombre ni razón social"
+    rut_norm = canon
     mysql_execute(
         "INSERT INTO mant_clientes (razon_social, rut, contacto_nombre, contacto_tel, contacto_email, direccion, comuna, "
         "                           estado, tipo_cliente, created_by) "
@@ -62393,6 +62415,9 @@ def _ficha_instalacion_desde_grupo(g_, quien):
          (g_.get("email") or "").strip()[:200] or None, (g_.get("direccion") or "").strip()[:400] or None,
          (g_.get("comuna") or "").strip()[:100] or None, quien))
     cid = (mysql_fetchone("SELECT LAST_INSERT_ID() AS id") or {}).get("id")
+    if not cid:
+        # LAST_INSERT_ID puede venir vacío si la conexión cambió: la fila sí quedó, se busca por su RUT.
+        cid = (mysql_fetchone("SELECT id FROM mant_clientes WHERE rut=%s ORDER BY id DESC LIMIT 1", (rut_norm,)) or {}).get("id")
     if not cid:
         return None, "no se pudo crear"
     try:
@@ -62462,6 +62487,55 @@ def mant_instalaciones_crear_fichas():
         else:
             res["fallidas"].append(f"{g_.get('empresa') or g_.get('rut')}: {estado}")
     return jsonify({"ok": True, **res})
+
+
+@app.route("/mantenciones/api/instalaciones/sanear", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_instalaciones_sanear():
+    """Sanea las fichas creadas por la reparación en una ventana de tiempo (UTC): RUT al formato canónico
+    «cuerpo-DV» y nombres de relleno («Cliente no informado por ERP») reemplazados por el contacto. Devuelve
+    los grupos de fichas con el MISMO RUT canónico (duplicados) para fusionarlos con la fusión existente."""
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo un administrador puede hacer esto."}), 403
+    d = request.get_json(silent=True) or {}
+    try:
+        desde = datetime.strptime(d.get("desde") or "", "%Y-%m-%d %H:%M")
+        hasta = datetime.strptime(d.get("hasta") or "", "%Y-%m-%d %H:%M")
+    except ValueError:
+        return jsonify({"ok": False, "error": "Indica desde/hasta como AAAA-MM-DD HH:MM (UTC)."}), 400
+    if (hasta - desde).total_seconds() > 6 * 3600 or hasta <= desde:
+        return jsonify({"ok": False, "error": "La ventana debe ser de menos de 6 horas."}), 400
+    quien = current_username() or "sistema"
+    lote = [dict(r) for r in (mysql_fetchall(
+        "SELECT id, rut, razon_social, contacto_nombre FROM mant_clientes "
+        " WHERE created_at BETWEEN %s AND %s AND tipo_cliente='instalacion'", (desde, hasta)) or [])]
+    cambios = []
+    for c in lote:
+        nuevo_rut = _rut_canon(c.get("rut")) or c.get("rut")
+        nuevo_nom = c.get("razon_social") or ""
+        if nuevo_nom.strip().lower() in _NOMBRES_RELLENO and (c.get("contacto_nombre") or "").strip():
+            nuevo_nom = c["contacto_nombre"].strip()[:200]
+        if nuevo_rut != c.get("rut") or nuevo_nom != c.get("razon_social"):
+            mysql_execute("UPDATE mant_clientes SET rut=%s, razon_social=%s, updated_by=%s WHERE id=%s",
+                          (nuevo_rut, nuevo_nom, quien, c["id"]))
+            cambios.append(c["id"])
+            try:
+                _mant_log("cliente", c["id"], "saneado",
+                          f"RUT {c.get('rut')} → {nuevo_rut}" + (f" · nombre «{c.get('razon_social')}» → «{nuevo_nom}»"
+                          if nuevo_nom != c.get("razon_social") else "") + f" · por {quien}")
+            except Exception:
+                pass
+    ids_lote = {c["id"] for c in lote}
+    grupos = {}
+    for r in (mysql_fetchall("SELECT id, rut, razon_social, estado, created_at FROM mant_clientes "
+                             " WHERE rut IS NOT NULL AND rut<>''") or []):
+        k = _rut_canon(r["rut"])
+        if k:
+            grupos.setdefault(k, []).append({"id": r["id"], "razon_social": r["razon_social"], "rut": r["rut"],
+                                             "estado": r["estado"], "del_lote": r["id"] in ids_lote})
+    dup = [{"rut": k, "fichas": v} for k, v in grupos.items() if len(v) > 1 and any(x["del_lote"] for x in v)]
+    return jsonify({"ok": True, "lote": len(lote), "saneadas": len(cambios), "duplicados": dup})
 
 
 @app.route("/mantenciones/api/instalaciones/reclasificar", methods=["POST"])
@@ -88345,7 +88419,8 @@ def mant_clientes_fusionar_v2():
     b = mysql_fetchone(_sel, (origen,))
     if not a or not b:
         return jsonify({"ok": False, "error": "Alguna de las fichas no existe."}), 404
-    ca, cb = _rut_cuerpo(a.get("rut") or ""), _rut_cuerpo(b.get("rut") or "")
+    ca = _rut_canon(a.get("rut") or "") or _rut_cuerpo(a.get("rut") or "")
+    cb = _rut_canon(b.get("rut") or "") or _rut_cuerpo(b.get("rut") or "")
     if ca and cb and ca != cb:
         return jsonify({
             "ok": False,

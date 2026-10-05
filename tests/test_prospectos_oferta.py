@@ -241,6 +241,8 @@ def test_tracking_con_contrato_queda_completo():
 # ───────── Fichas de clientes que entran por instalación ─────────
 def _ficha_ns(existente=None):
     src = open(_APP, encoding="utf-8").read()
+    a0 = src.index("_NOMBRES_RELLENO = (")
+    b0 = src.index("def _instalaciones_auditar")
     a = src.index("def _ficha_instalacion_desde_grupo")
     b = src.index('@app.route("/mantenciones/api/instalaciones/auditoria"')
     calls = {"insert": [], "log": []}
@@ -251,14 +253,43 @@ def _ficha_ns(existente=None):
         return {"id": existente} if existente else None
 
     ns = {"os": os,
-          "validar_rut": lambda r: (True, "12345678-5") if (r or "").replace(".", "").startswith("1234567") else (False, "RUT muy corto"),
+          "validar_rut": lambda r: (True, "123456785") if (r or "").replace(".", "").startswith("1234567") else (False, "RUT muy corto"),
           "_rut_cuerpo": lambda r: "12345678",
           "mysql_fetchone": fetchone,
           "mysql_execute": lambda q, p=(): calls["insert"].append((q, p)),
           "_mant_log": lambda *a, **k: calls["log"].append(a),
           "_instalaciones_auditar": lambda desde=None: {"tickets_sin_ficha": []}}
+    exec(src[a0:b0], ns)
     exec(src[a:b], ns)
     return ns, calls
+
+
+def _rut_real():
+    """validar_rut + _rut_canon REALES de app.py (sin dobles), para probar los formatos que llegan de los tickets."""
+    src = open(_APP, encoding="utf-8").read()
+
+    def bloque(nombre):
+        i = src.index("\ndef " + nombre + "(")
+        j = src.index("\ndef ", i + 5)
+        return src[i:j]
+
+    ns = {"re": __import__("re")}
+    for n in ("normalizar_rut", "_calcular_dv_rut", "validar_rut", "_rut_canon"):
+        exec(bloque(n), ns)
+    return ns["_rut_canon"]
+
+
+@pytest.mark.parametrize("entrada,esperado", [
+    ("09.918.126-5", "9918126-5"),   # con cero adelante
+    ("099181265", "9918126-5"),      # cero adelante, sin guion
+    ("99181265", "9918126-5"),       # cuerpo de 7 sin guion (el que _rut_cuerpo confundía)
+    ("9918126", "9918126-5"),        # sin dígito verificador
+    ("09908128", "9908128-7"),       # sin DV y con cero adelante
+    ("76.996.964-0", "76996964-0"),  # RUT de ILUS
+    ("abc", None),
+])
+def test_rut_canonico(entrada, esperado):
+    assert _rut_real()(entrada) == esperado
 
 
 def test_ficha_se_crea_como_prospecto_de_instalacion():
@@ -268,6 +299,13 @@ def test_ficha_se_crea_como_prospecto_de_instalacion():
     q, p = calls["insert"][0]
     assert "'prospecto','instalacion'" in q and p[0] == "Gimnasio X" and p[1] == "12345678-5"
     assert calls["log"]
+
+
+def test_ficha_no_usa_nombres_de_relleno():
+    ns, calls = _ficha_ns()
+    cid, est = ns["_ficha_instalacion_desde_grupo"]({"rut": "1234567", "empresa": "Cliente no informado por ERP",
+                                                      "contacto": "Francisco Posada", "tickets": []}, "d")
+    assert est == "creada" and calls["insert"][0][1][0] == "Francisco Posada"
 
 
 def test_ficha_no_duplica_si_el_rut_ya_existe():
