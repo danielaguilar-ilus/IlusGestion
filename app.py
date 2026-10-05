@@ -131331,6 +131331,15 @@ def repstock_crear():
     descripcion = (d.get("descripcion") or "").strip()[:400]
     if not descripcion:
         return jsonify({"ok": False, "error": "La descripción es obligatoria"}), 400
+    # 📌 2026-10-05 (Daniel: "es necesario declarar el proveedor para saber a qué proveedor asociar
+    # el repuesto... debe ser obligatoria la familia o el proveedor"): TODO repuesto nuevo nace con
+    # marca (familia) o proveedor. Un técnico (Lenin, Dave, Jaizer) declara la MARCA -- no ve ni elige
+    # proveedores (REGLA #19) -- y el proveedor de referencia de esa marca se asocia solo (más abajo).
+    if not (d.get("proveedor_id") or d.get("marca_id")):
+        return jsonify({"ok": False, "error": (
+            "Elige la marca (familia) del repuesto: con ella queda asociado a su proveedor."
+            if _tecnico_sin_prov else
+            "Elige la marca o el proveedor del repuesto: sin uno de los dos no queda asociado a un proveedor.")}), 400
     if d.get("cantidad") in (None, "", "null"):
         return jsonify({"ok": False, "error": "La cantidad es obligatoria"}), 400
     if d.get("stock_minimo") in (None, "", "null"):

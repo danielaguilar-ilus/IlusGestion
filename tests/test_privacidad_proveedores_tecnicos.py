@@ -454,6 +454,34 @@ class TestBodegaEscrituraTecnico(unittest.TestCase):
         res = amb["repstock_editar"](5)
         return res, conn.log
 
+    # ---- crear: marca (familia) o proveedor obligatorios (Daniel, 2026-10-05) ----
+    def _crear_sin_marca_ni_proveedor(self):
+        amb = self._ambito()
+        amb["request"] = _Req({"descripcion": "Perno M8", "cantidad": 1, "stock_minimo": 1})
+        amb["get_db"] = lambda: _Conn()
+        return amb["repstock_crear"]()
+
+    def test_crear_sin_marca_ni_proveedor_se_rechaza_para_el_tecnico(self):
+        self.estado["oculta"] = True
+        cuerpo, http = self._crear_sin_marca_ni_proveedor()
+        self.assertEqual(http, 400)
+        self.assertIn("marca (familia)", cuerpo["error"])
+        self.assertNotIn("proveedor del repuesto", cuerpo["error"], "al tecnico no se le habla de elegir proveedor")
+
+    def test_crear_sin_marca_ni_proveedor_se_rechaza_para_gestion(self):
+        cuerpo, http = self._crear_sin_marca_ni_proveedor()
+        self.assertEqual(http, 400)
+        self.assertIn("marca o el proveedor", cuerpo["error"])
+
+    def test_el_tecnico_que_manda_proveedor_a_mano_no_salta_la_exigencia(self):
+        # el proveedor que mande un tecnico se ignora (REGLA #19): sin marca sigue siendo 400
+        self.estado["oculta"] = True
+        amb = self._ambito()
+        amb["request"] = _Req({"descripcion": "Perno M8", "cantidad": 1, "stock_minimo": 1, "proveedor_id": 7})
+        amb["get_db"] = lambda: _Conn()
+        cuerpo, http = amb["repstock_crear"]()
+        self.assertEqual(http, 400)
+
     CUERPO_EDICION = {"descripcion": "Perno M8", "stock_minimo": 2, "marca_id": 4, "ubicacion_id": 8,
                       "proveedor_id": None, "costo_unitario": "0", "notas": "x"}
 

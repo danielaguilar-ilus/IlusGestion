@@ -731,8 +731,10 @@
         <section class="rb-step" id="rbStep3">
           <div class="rb-step-header">
             <div class="rb-step-circle"><span class="rb-step-num">3</span><span class="rb-step-check"><i class="bi bi-check-lg"></i></span></div>
-            <div class="rb-step-title">{% if oculta_proveedores %}Marca{% else %}Marca y proveedor{% endif %} <span class="badge bg-secondary" style="font-size:.58rem;vertical-align:middle">Opcional</span></div>
-            <div class="rb-step-sub">{% if oculta_proveedores %}Quién lo fabrica{% else %}Quién lo fabrica y a quién se le compra{% endif %}</div>
+            {#- 📌 2026-10-05 (Daniel: "debe ser obligatoria la familia o el proveedor"): ya no es opcional. Gestión
+                elige marca o proveedor; un técnico elige la marca y el proveedor se asocia solo (REGLA #19). -#}
+            <div class="rb-step-title">{% if oculta_proveedores %}Marca (familia){% else %}Marca y proveedor{% endif %} <span class="badge bg-danger" style="font-size:.58rem;vertical-align:middle">Obligatorio</span></div>
+            <div class="rb-step-sub">{% if oculta_proveedores %}Elige la marca: así queda asociado al proveedor correcto{% else %}Quién lo fabrica y a quién se le compra · elige al menos uno{% endif %}</div>
           </div>
           <div class="rb-step-body">
             {% if not oculta_proveedores %}<p class="rb-input-help mt-0 mb-2">Si eliges una marca con proveedor de referencia, te lo sugerimos solo.</p>{% endif %}
@@ -2139,6 +2141,16 @@ async function rbGuardar(crearOtro){
     ilusToast('Asocia un modelo compatible, o marca "Pendiente de identificar" para seguir', {type:'warning'});
     document.getElementById('rbModelosBuscar').focus();
     document.getElementById('rbModelosBuscar').scrollIntoView({behavior:'smooth', block:'center'});
+    return;
+  }
+  // 📌 2026-10-05 (Daniel: "debe ser obligatoria la familia o el proveedor"): un repuesto NUEVO no se guarda
+  // sin marca (familia) o proveedor -- sin eso no se sabe a qué proveedor asociarlo. Un técnico solo ve la marca
+  // (el proveedor se asocia solo en el servidor, REGLA #19); el servidor exige lo mismo.
+  if (!id && !document.getElementById('rbMarca').value && !document.getElementById('rbProveedor').value){
+    ilusToast(RB_OCULTA_PROV ? 'Elige la marca (familia) del repuesto para poder guardar'
+                             : 'Elige la marca o el proveedor del repuesto para poder guardar', {type:'warning'});
+    const _mb = document.getElementById('rbMarcaBuscar') || document.getElementById('rbMarca');
+    if (_mb && _mb.scrollIntoView) _mb.scrollIntoView({behavior:'smooth', block:'center'});
     return;
   }
   // 🔒 2026-09-26 (revisión Fase 3, hallazgo MEDIA #4): al EDITAR, `cantidad`
