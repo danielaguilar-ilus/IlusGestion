@@ -8170,6 +8170,9 @@ def inject_globals():
         # elevado o externo). Es cortesía de UI -- el candado real vive en cada
         # endpoint, que quita el dato en el servidor (ver _oculta_proveedores).
         "oculta_proveedores": _oculta_proveedores(),
+        # 2026-10-05 (Daniel, excepción ACOTADA a la REGLA #19): el técnico de bodega (rol elevado:
+        # Lenin, Dave, Jaizer) elige el proveedor del repuesto nuevo viendo SOLO su nombre.
+        "prov_nombre_tecnico": _es_tecnico_elevado(),
         # 2026-06-09 (Daniel): roles de gestión (admin/supervisor/ejecutivo/
         # superadmin) pueden editar y REAGENDAR visitas. Usado por el modal
         # del calendario para habilitar campos + botón Guardar. Espejo exacto
@@ -129906,6 +129909,26 @@ def mant_proveedores_repuesto_list():
     return jsonify({"ok": True, "proveedores": [dict(r) for r in rows]})
 
 
+@app.route("/mantenciones/api/proveedores-repuesto/nombres", methods=["GET"])
+@_mant_required
+def mant_proveedores_repuesto_nombres():
+    """Solo id + NOMBRE de los proveedores, para el selector del modal "Nuevo repuesto".
+    2026-10-05 (Daniel: "el que falta es el proveedor", Lenin/Dave/Jaizer): excepción acotada a la
+    REGLA #19 -- el técnico de bodega (rol elevado) elige el proveedor, pero NUNCA ve contacto,
+    teléfono, correo ni costos. El técnico base y el externo siguen sin acceso (403)."""
+    if _oculta_proveedores() and not _es_tecnico_elevado():
+        return jsonify({"ok": False, "error": "Acceso restringido."}), 403
+    q = (request.args.get("q") or "").strip()
+    sql = "SELECT id, nombre FROM mant_proveedores_repuesto WHERE COALESCE(activo,1)=1"
+    params = []
+    if q:
+        sql += " AND nombre LIKE %s"
+        params.append(f"%{q}%")
+    sql += " ORDER BY nombre LIMIT 100"
+    rows = mysql_fetchall(sql, tuple(params)) or []
+    return jsonify({"ok": True, "proveedores": [{"id": r["id"], "nombre": r["nombre"]} for r in rows]})
+
+
 @app.route("/mantenciones/api/proveedores-repuesto/<int:pid>", methods=["PUT"])
 @_mant_required
 @_no_tecnico
@@ -131312,8 +131335,17 @@ def repstock_crear():
     # sin proveedor elegido, solo hereda el proveedor de REFERENCIA de la
     # marca (comportamiento de siempre, ver más abajo): el técnico nunca lo ve.
     _tecnico_sin_prov = _oculta_proveedores()
+    # 2026-10-05: el técnico de bodega (rol elevado) SÍ elige el proveedor (solo el nombre, nunca costo);
+    # el id debe existir. Los demás técnicos lo siguen ignorando.
+    _tec_elige_prov = _tecnico_sin_prov and _es_tecnico_elevado()
     if _tecnico_sin_prov:
+        _pid_ok = None
+        if _tec_elige_prov and str(d.get("proveedor_id") or "").isdigit() and mysql_fetchone(
+                "SELECT id FROM mant_proveedores_repuesto WHERE id=%s", (int(d.get("proveedor_id")),)):
+            _pid_ok = int(d.get("proveedor_id"))
         d.pop("proveedor_id", None)
+        if _pid_ok:
+            d["proveedor_id"] = _pid_ok
         d.pop("costo_unitario", None)
     # 📥 2026-10-04 (Daniel, "gestionar solicitudes de repuesto": si el repuesto no
     # existe, "crear 'por llegar' sin ubicación"): excepción ACOTADA a la regla del
@@ -131338,7 +131370,7 @@ def repstock_crear():
     if not (d.get("proveedor_id") or d.get("marca_id")):
         return jsonify({"ok": False, "error": (
             "Elige la marca (familia) del repuesto: con ella queda asociado a su proveedor."
-            if _tecnico_sin_prov else
+            if (_tecnico_sin_prov and not _tec_elige_prov) else
             "Elige la marca o el proveedor del repuesto: sin uno de los dos no queda asociado a un proveedor.")}), 400
     if d.get("cantidad") in (None, "", "null"):
         return jsonify({"ok": False, "error": "La cantidad es obligatoria"}), 400
@@ -131579,7 +131611,15 @@ def repstock_editar(rid):
     # evita que una edición del técnico los borre con NULL.
     _tecnico_sin_prov = _oculta_proveedores()
     if _tecnico_sin_prov:
+        # 2026-10-05: el técnico de bodega (rol elevado) puede ASIGNAR un proveedor existente (nunca
+        # borrarlo con vacío, porque la fila le llega sin proveedor y el formulario lo manda vacío).
+        _pid_ok = None
+        if _es_tecnico_elevado() and str(d.get("proveedor_id") or "").isdigit() and mysql_fetchone(
+                "SELECT id FROM mant_proveedores_repuesto WHERE id=%s", (int(d.get("proveedor_id")),)):
+            _pid_ok = int(d.get("proveedor_id"))
         d.pop("proveedor_id", None)
+        if _pid_ok:
+            d["proveedor_id"] = _pid_ok
         d.pop("costo_unitario", None)
     if "descripcion" in d:
         d["descripcion"] = (d.get("descripcion") or "").strip()[:400]

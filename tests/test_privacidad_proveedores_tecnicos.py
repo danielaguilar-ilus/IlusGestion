@@ -440,10 +440,13 @@ class TestBodegaEscrituraTecnico(unittest.TestCase):
             ["repstock_editar", "repstock_crear", "_repstock_dim_float", "_repstock_bultos_int"],
             extra={"re": re, "print": lambda *a, **k: None, "jsonify": lambda d: d,
                    "current_username": lambda: "lenin", "_mant_log": lambda *a, **k: None,
-                   "_oculta_proveedores": lambda user=None: self.estado["oculta"]})
+                   "_oculta_proveedores": lambda user=None: self.estado["oculta"],
+                   "_es_tecnico_elevado": lambda user=None: self.estado.get("elevado", False),
+                   "mysql_fetchone": lambda *a, **k: {"id": 7}})
 
     def setUp(self):
         self.estado["oculta"] = False
+        self.estado["elevado"] = False
 
     # ---- editar ----
     def _editar(self, cuerpo):
@@ -481,6 +484,38 @@ class TestBodegaEscrituraTecnico(unittest.TestCase):
         amb["get_db"] = lambda: _Conn()
         cuerpo, http = amb["repstock_crear"]()
         self.assertEqual(http, 400)
+
+    # ---- el técnico de BODEGA (rol elevado) elige proveedor viendo solo el nombre (Daniel, 2026-10-05) ----
+    def test_el_tecnico_de_bodega_si_puede_asignar_proveedor_al_editar(self):
+        self.estado["oculta"] = True
+        self.estado["elevado"] = True
+        res, log = self._editar(dict(self.CUERPO_EDICION, proveedor_id=7))
+        updates = [sql for sql, _ in log if sql.startswith("UPDATE mant_repuestos_stock")]
+        self.assertIn("proveedor_id", updates[0])
+        self.assertNotIn("costo_unitario", updates[0], "el costo sigue vedado")
+
+    def test_el_tecnico_de_bodega_no_borra_el_proveedor_al_editar_con_vacio(self):
+        self.estado["oculta"] = True
+        self.estado["elevado"] = True
+        res, log = self._editar(dict(self.CUERPO_EDICION, proveedor_id=None))
+        updates = [sql for sql, _ in log if sql.startswith("UPDATE mant_repuestos_stock")]
+        self.assertNotIn("proveedor_id", updates[0])
+
+    def test_el_tecnico_base_no_asigna_proveedor_aunque_lo_mande(self):
+        self.estado["oculta"] = True
+        res, log = self._editar(dict(self.CUERPO_EDICION, proveedor_id=7))
+        updates = [sql for sql, _ in log if sql.startswith("UPDATE mant_repuestos_stock")]
+        self.assertNotIn("proveedor_id", updates[0])
+
+    def test_el_endpoint_de_nombres_solo_devuelve_id_y_nombre_y_cierra_al_tecnico_base(self):
+        app_src = open(os.path.join(RAIZ, "app.py"), encoding="utf-8").read().replace(chr(13) + chr(10), chr(10))
+        i = app_src.index("def mant_proveedores_repuesto_nombres():")
+        cuerpo = app_src[i:i + 1500]
+        self.assertIn("_oculta_proveedores() and not _es_tecnico_elevado()", cuerpo)
+        self.assertIn('SELECT id, nombre FROM mant_proveedores_repuesto', cuerpo)
+        consulta = cuerpo.split('sql = "', 1)[1].split(chr(10), 1)[0]
+        for prohibido in ("telefono", "email", "contacto", "costo"):
+            self.assertNotIn(prohibido, consulta)
 
     CUERPO_EDICION = {"descripcion": "Perno M8", "stock_minimo": 2, "marca_id": 4, "ubicacion_id": 8,
                       "proveedor_id": None, "costo_unitario": "0", "notas": "x"}
@@ -1054,7 +1089,7 @@ class TestFrontSinProveedores(unittest.TestCase):
     def test_bodega_no_manda_proveedor_ni_costo_si_es_tecnico(self):
         self.assertIn("const RB_OCULTA_PROV = {{ 'true' if oculta_proveedores else 'false' }};", self.pane)
         self.assertIn("costo_unitario: RB_OCULTA_PROV ? undefined : rbCostoRaw(),", self.pane)
-        self.assertIn("proveedor_id: RB_OCULTA_PROV ? undefined : (document.getElementById('rbProveedor').value || null),", self.pane)
+        self.assertIn("proveedor_id: (RB_OCULTA_PROV && !RB_PROV_SOLO_NOMBRE) ? undefined : (document.getElementById('rbProveedor').value || null),", self.pane)
 
     def test_bodega_no_dibuja_costo_proveedor_ni_el_modal_de_alta(self):
         self.assertIn("{% if not oculta_proveedores %}<th>Costo</th>{% endif %}", self.pane)
