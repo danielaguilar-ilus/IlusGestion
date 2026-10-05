@@ -4359,6 +4359,14 @@ document.addEventListener('DOMContentLoaded', rsCargarProveedoresFiltro);
     if (v && /^\d+$/.test(v)) _rs.proveedor_id = v;
   } catch(e){}
 })();
+// 2026-10-04: "Solicitar repuesto" desde la ficha del proveedor llega con
+// ?rs_solicitar=1 y abre directo la ventana de solicitud.
+document.addEventListener('DOMContentLoaded', function(){
+  try {
+    if (new URLSearchParams(location.search).get('rs_solicitar') === '1' && typeof rsmAbrir === 'function')
+      setTimeout(function(){ rsmAbrir(); }, 400);
+  } catch(e){}
+});
 
 // ═══════════════════════════════════════════════════════════════════════
 //  🧾 Fase 5 (2026-09-26) — Compra a proveedor con ticket y seguimiento.

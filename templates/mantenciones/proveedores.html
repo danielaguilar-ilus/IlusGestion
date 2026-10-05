@@ -456,6 +456,31 @@ a.pv-it:hover{transform:translateX(3px);border-color:#dc2626;box-shadow:0 4px 12
   .pvt-foot{flex-direction:column;align-items:stretch}
   .pvt-ctrl{justify-content:space-between}
 }
+
+/* ── Ventana más grande + cabecera y pestañas fijas ── */
+#modalProveedorFicha .modal-dialog{max-width:min(1440px,96vw)}
+#modalProveedorFicha .modal-content{min-height:min(92vh,980px)}
+.pvf-top{position:sticky;top:-16px;z-index:6;background:#f9fafb;margin:-16px -16px 14px;padding:16px 16px 0}
+.pvf-top .pvf-tabs{position:static;margin-bottom:0}
+.pvf-top .pvf-cab{margin-bottom:10px;transition:padding .2s}
+.pvf-top.is-compacto{box-shadow:0 10px 18px -12px rgba(0,0,0,.35)}
+.pvf-top.is-compacto .pvf-cab{padding:8px 14px}
+.pvf-top.is-compacto .pvf-cab-datos,.pvf-top.is-compacto .pvf-cab-com{display:none}
+.pvf-top.is-compacto .pvf-cab-ini{width:42px;height:42px;font-size:.95rem}
+.pvf-top.is-compacto .pvf-cab-ring{width:52px;height:52px}
+.pvf-top.is-compacto .pvf-cab-nom{font-size:1.08rem}
+.pvf-cab-der{display:flex;flex-direction:column;align-items:center;gap:8px}
+.pvf-cab-sol{min-height:40px;border:0;border-radius:10px;background:#dc2626;color:#fff;font-weight:800;font-size:.84rem;padding:6px 12px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.pvf-cab-sol:hover{background:#b91c1c}
+.pvf-top.is-compacto .pvf-cab-der{flex-direction:row}
+/* ── Tabla de repuestos: foto, calidad de la ficha y fila clicable ── */
+.pvt-foto{width:46px;height:46px;border-radius:10px;object-fit:cover;border:1px solid #e5e7eb;display:block;background:#f3f4f6}
+.pvt-foto.sin{display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:1.1rem}
+.pvt-cal{display:inline-block;min-width:44px;text-align:center;border-radius:50px;padding:3px 9px;font-weight:900;font-size:.8rem}
+.pvt-cal.vd{background:#dcfce7;color:#166534}.pvt-cal.am{background:#fff8e1;color:#92400e}.pvt-cal.rj{background:#fee2e2;color:#991b1b}
+.pvt tbody tr.pvt-clic{cursor:pointer}
+.pvt tbody tr.pvt-clic:hover td{background:#fef2f2}
+@media (max-width:768px){ .pvf-cab-der{flex-direction:row} }
 </style>
 
 <div class="container-fluid py-3 px-3 px-md-4">
@@ -735,10 +760,13 @@ a.pv-it:hover{transform:translateX(3px);border-color:#dc2626;box-shadow:0 4px 12
         <input type="hidden" id="provId">
 
         {# ── Cabecera: los datos clave del proveedor de un vistazo ── #}
-        <div class="pvf-cab" id="pvfCab"></div>
-
-        {# ── Pestañas (solo con un proveedor que ya existe) ── #}
-        <div class="pvf-tabs" id="pvfTabs" role="tablist" hidden></div>
+        {# Cabecera + pestañas quedan FIJAS arriba al desplazarse (Daniel 2026-10-04:
+           "me gustaría que también el header se quedara"); al bajar se compacta. #}
+        <div class="pvf-top" id="pvfTop">
+          <div class="pvf-cab" id="pvfCab"></div>
+          {# ── Pestañas (solo con un proveedor que ya existe) ── #}
+          <div class="pvf-tabs" id="pvfTabs" role="tablist" hidden></div>
+        </div>
 
         {# ════════ Pestaña INFORMACIÓN ════════ #}
         <div class="pvf-pane" data-pane="info">
@@ -884,6 +912,8 @@ a.pv-it:hover{transform:translateX(3px);border-color:#dc2626;box-shadow:0 4px 12
         <div class="pvf-pane" data-pane="com" hidden><div id="pvfPaneCom"></div></div>
       </div>
       <div class="modal-footer pvf-footer">
+        <button type="button" class="btn btn-link text-danger px-0 me-2" id="pvfBajaBtn" hidden onclick="pvfDarDeBaja()" style="font-size:.88rem">
+          <i class="bi bi-archive me-1"></i>Dar de baja</button>
         <span class="pvf-foot-msg" id="pvfFootMsg"></span>
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-danger fw-bold px-4" id="btnProvGuardar" onclick="provGuardar()">
@@ -1392,8 +1422,44 @@ function pvfCabRender(){
   cab.innerHTML = '<div class="pvf-cab-ini">' + pvEsc((nom || 'Nuevo').slice(0, 3).toUpperCase()) + '</div>' +
     '<div style="min-width:0"><div class="pvf-cab-nom">' + pvEsc(nom || 'Proveedor nuevo') + '</div><div class="pvf-cab-chips">' + chips.join('') + '</div>' +
     '<div class="pvf-cab-datos">' + datos.join('') + '</div></div>' +
-    '<div class="pvf-cab-ring" style="--pvf-rc:' + rc + ';--pvf-rp:' + pct + '" title="Ficha ' + cal + ' de 14"><b>' + cal + '/14</b><small>Ficha</small></div>' + com;
+    '<div class="pvf-cab-der"><div class="pvf-cab-ring" style="--pvf-rc:' + rc + ';--pvf-rp:' + pct + '" title="Ficha ' + cal + ' de 14"><b>' + cal + '/14</b><small>Ficha</small></div>' +
+      (id ? '<button type="button" class="pvf-cab-sol" onclick="pvfSolicitar()"><i class="bi bi-send-plus-fill"></i>Solicitar repuesto</button>' : '') + '</div>' + com;
 }
+/* Solicitar un repuesto: abre la ventana de solicitud del centro de Repuestos
+   (pestaña nueva, para no perder la ficha). */
+function pvfSolicitar(){
+  const id = pvVal('provId');
+  window.open('/repuestos?rs_solicitar=1' + (id ? '&rs_proveedor=' + encodeURIComponent(id) : '') + '#solicitudes', '_blank', 'noopener');
+}
+/* Clic en un repuesto: se abre en Bodega con su ventana de edición. */
+function pvfAbrirRepuesto(id, sku){
+  window.open('/repuestos?bq=' + encodeURIComponent(sku || '') + '&rb_editar=' + encodeURIComponent(id) + '#bodega', '_blank', 'noopener');
+}
+async function pvfDarDeBaja(){
+  const id = pvVal('provId');
+  if (!id) return;
+  const motivo = await ilusPrompt({ title: 'Dar de baja a ' + (pvVal('provNombre') || 'este proveedor'),
+    message: '¿Por qué se da de baja?', sub: 'No se borra: deja de aparecer en la lista y en los selectores, y sus repuestos, solicitudes y compras quedan intactos.',
+    placeholder: 'Ej: proveedor de prueba / ya no trabajamos con él', required: true });
+  if (!motivo) return;
+  let j = {};
+  try {
+    const r = await fetch('/mantenciones/api/proveedores-repuesto/' + id + '/baja', { method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type':'application/json'}, body: JSON.stringify({ motivo: motivo }) });
+    j = await r.json();
+  } catch(e){ j = { ok: false, error: 'Sin conexión.' }; }
+  if (!j.ok){ ilusToast(j.error || 'No se pudo dar de baja', {type:'error'}); return; }
+  ilusToast('✓ Proveedor dado de baja', {type:'success'});
+  _pvfCerrarOk = true; pvfModal().hide();
+  setTimeout(function(){ location.reload(); }, 450);
+}
+document.addEventListener('DOMContentLoaded', function(){
+  const body = document.querySelector('#modalProveedorFicha .modal-body');
+  if (!body) return;
+  body.addEventListener('scroll', function(){
+    document.getElementById('pvfTop').classList.toggle('is-compacto', body.scrollTop > 60);
+  }, { passive: true });
+});
 function pvfIrANota(){
   pvfTab('info');
   const ta = document.getElementById('pvfNotaTxt');
@@ -1580,6 +1646,8 @@ function pvfAbrir(d, rel, seccion){
   document.getElementById('pvfNotaTxt').value = '';
   document.getElementById('pvfFamQ').value = ''; document.getElementById('pvfFamLista').innerHTML = '';
   pvfContactosRender(); pvfProcRender(); pvfHitosRender();
+  document.getElementById('pvfBajaBtn').hidden = nuevo;
+  document.getElementById('pvfTop').classList.remove('is-compacto');
   pvfRelRender();
   pvfTab({solicitudes: 'sol', repuestos: 'rep', compras: 'com'}[seccion] || 'info');
   pvfEvaluar();
@@ -1654,7 +1722,8 @@ function pvfTabla(key, cols, filas, vacio){
   const a = (st.page - 1) * st.per, b = Math.min(tot, a + st.per);
   const head = '<thead><tr>' + cols.map(function(c){ return '<th' + (c.num ? ' class="num"' : '') + '>' + c.t + '</th>'; }).join('') + '</tr></thead>';
   const body = tot ? filas.slice(a, b).map(function(f){
-    return '<tr' + (f._cls ? ' class="' + f._cls + '"' : '') + '>' + cols.map(function(c){
+    return '<tr' + (f._cls || f._click ? ' class="' + (f._cls || '') + (f._click ? ' pvt-clic' : '') + '"' : '') +
+      (f._click ? ' onclick="' + f._click + '" title="Abrir en Bodega para editar"' : '') + '>' + cols.map(function(c){
       return '<td' + (c.num ? ' class="num"' : '') + ' data-th="' + pvEsc(c.t) + '">' + (f[c.k] == null ? '' : f[c.k]) + '</td>';
     }).join('') + '</tr>';
   }).join('') : '<tr><td colspan="' + cols.length + '" class="pvt-vacio">' + vacio + '</td></tr>';
@@ -1701,7 +1770,8 @@ function pvfRelRender(){
     };
   });
   document.getElementById('pvfPaneSol').innerHTML =
-    '<div class="d-flex justify-content-end mb-2"><a class="pvf-aviso-btn" href="/repuestos?rs_proveedor=' + p.id + '#solicitudes"><i class="bi bi-inbox"></i>Abrir en el centro de solicitudes</a></div>' +
+    '<div class="d-flex justify-content-end gap-2 mb-2 flex-wrap"><button type="button" class="pvf-aviso-btn is-primary" onclick="pvfSolicitar()"><i class="bi bi-send-plus-fill"></i>Solicitar repuesto</button>' +
+    '<a class="pvf-aviso-btn" href="/repuestos?rs_proveedor=' + p.id + '#solicitudes"><i class="bi bi-inbox"></i>Abrir en el centro de solicitudes</a></div>' +
     pvfTabla('sol', [{k:'n', t:'#'}, {k:'rep', t:'Repuesto'}, {k:'est', t:'Estado'}, {k:'cli', t:'Cliente / OT'}, {k:'desde', t:'Desde'}, {k:'stk', t:'Stock / prioridad'}],
       filasSol, '<i class="bi bi-check2-circle me-1"></i>Sin solicitudes abiertas con este proveedor.');
 
@@ -1733,7 +1803,7 @@ function pvfRepRender(){
   const sinCosto = reps.filter(function(r){ return !r.costo_unitario; }).length;
   const fil = {todos: function(){ return true; }, sin: function(r){ return r.semaforo === 'rojo'; }, bajo: function(r){ return r.semaforo === 'ambar'; },
     con: function(r){ return r.semaforo === 'verde'; }, llegar: function(r){ return r.por_llegar; }, dem: function(r){ return (r.pedidos_12m || 0) > 0; },
-    costo: function(r){ return !r.costo_unitario; }};
+    costo: function(r){ return !r.costo_unitario; }, ficha: function(r){ return (r.calidad_ok || 0) < (r.calidad_total || 7); }};
   const n = function(k){ return reps.filter(fil[k]).length; };
   const q = pvfNorm(_pvf.repQ);
   let lista = reps.filter(fil[_pvf.repFil] || fil.todos).filter(function(r){ return !q || pvfNorm(r.descripcion + ' ' + r.sku + ' ' + (r.ubicacion_codigo || '')).indexOf(q) >= 0; });
@@ -1745,7 +1815,12 @@ function pvfRepRender(){
   const chip = function(k, lbl){ return '<button type="button" class="pvf-q' + (_pvf.repFil === k ? ' is-on' : '') + '" onclick="_pvf.repFil=\'' + k + '\';(_pvfPag.rep||{}).page=1;pvfRepRender()">' + lbl + ' (' + n(k) + ')</button>'; };
   const filas = lista.map(function(r){
     const v = (r.cantidad || 0) * (r.costo_unitario || 0);
+    const cal = r.calidad_ok || 0, tot = r.calidad_total || 7;
+    const ccls = cal >= tot ? 'vd' : (cal >= tot - 2 ? 'am' : 'rj');
     return {
+      _click: 'pvfAbrirRepuesto(' + r.id + ',\'' + String(r.sku || '').replace(/[^A-Za-z0-9._\-\/]/g, '') + '\')',
+      foto: r.foto_url ? '<img class="pvt-foto" src="' + pvEsc(r.foto_url) + '" alt="" loading="lazy">' : '<span class="pvt-foto sin" title="Sin foto"><i class="bi bi-camera"></i></span>',
+      ficha: '<span class="pvt-cal ' + ccls + '" title="' + (r.calidad_falta && r.calidad_falta.length ? 'Falta: ' + pvEsc(r.calidad_falta.join(', ')) : 'Ficha completa') + '">' + cal + '/' + tot + '</span>',
       rep: '<span class="pvt-rep"><span class="pv-semaf s-' + pvEsc(r.semaforo) + '"></span><span><b>' + pvEsc(r.descripcion) + '</b><small class="d-block text-muted">' + pvEsc(r.sku) +
         (r.ubicacion_codigo ? ' · ' + pvEsc(r.ubicacion_codigo) : '') + (r.por_llegar ? ' · <span style="color:#b45309;font-weight:800">por llegar</span>' : '') + '</small></span></span>',
       stk: '<span class="pv-stk ' + (r.semaforo === 'rojo' ? 'no' : (r.semaforo === 'ambar' ? 'am' : 'ok')) + '">' + pvFmtN(r.cantidad) + '</span>',
@@ -1769,8 +1844,9 @@ function pvfRepRender(){
       '<select class="form-select" onchange="_pvf.repOrd=this.value;pvfRepRender()" aria-label="Ordenar repuestos">' +
         [['demanda','Más pedidos primero'], ['stock','Sin stock primero'], ['valor','Mayor valor en bodega'], ['az','A a Z']].map(function(o){ return '<option value="' + o[0] + '"' + (_pvf.repOrd === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') +
       '</select></div>' +
-    '<div class="pvr-fil">' + chip('todos', 'Todos') + chip('sin', 'Sin stock') + chip('bajo', 'Bajo el mínimo') + chip('con', 'Con stock') + chip('llegar', 'Por llegar') + chip('dem', 'Con demanda') + chip('costo', 'Sin costo') + '</div>' +
-    pvfTabla('rep', [{k:'rep', t:'Repuesto'}, {k:'stk', t:'Stock', num:true}, {k:'min', t:'Mínimo', num:true}, {k:'costo', t:'Costo', num:true},
+    '<div class="pvr-fil">' + chip('todos', 'Todos') + chip('sin', 'Sin stock') + chip('bajo', 'Bajo el mínimo') + chip('con', 'Con stock') + chip('llegar', 'Por llegar') + chip('dem', 'Con demanda') + chip('costo', 'Sin costo') + chip('ficha', 'Ficha incompleta') + '</div>' +
+    '<div class="pvf-opc mb-2"><i class="bi bi-hand-index me-1"></i>Toca un repuesto para abrirlo en Bodega y editarlo (se abre en otra pestaña).</div>' +
+    pvfTabla('rep', [{k:'foto', t:'Foto'}, {k:'rep', t:'Repuesto'}, {k:'ficha', t:'Ficha'}, {k:'stk', t:'Stock', num:true}, {k:'min', t:'Mínimo', num:true}, {k:'costo', t:'Costo', num:true},
       {k:'valor', t:'Valor en bodega', num:true}, {k:'ped', t:'Pedidos 12 m', num:true}, {k:'uni', t:'Unidades 12 m', num:true}],
       filas, 'Ningún repuesto con ese filtro.') +
     (leg.length ? '<div class="mt-2 small text-muted">Además hay ' + leg.length + ' repuesto(s) del sistema anterior ligados a este proveedor.</div>' : '');

@@ -1776,6 +1776,19 @@ async function rbAbrirNuevo(mantenerContexto){
   setTimeout(() => document.getElementById('rbDescripcion').focus(), mantenerContexto ? 50 : 400);
 }
 
+/* 2026-10-04: desde la ficha del proveedor, "tocar un repuesto" llega con
+   ?bq=<SKU>&rb_editar=<id>#bodega y abre su ventana de edición directo. */
+document.addEventListener('DOMContentLoaded', function(){
+  try {
+    const id = new URLSearchParams(location.search).get('rb_editar');
+    if (!id || !/^\d+$/.test(id)) return;
+    setTimeout(function(){
+      const fila = document.querySelector('tr[data-id="' + id + '"]');
+      if (fila) fila.click();
+      else if (typeof ilusToast === 'function') ilusToast('No encontré ese repuesto en la Bodega con este filtro.', {type:'warning'});
+    }, 600);
+  } catch(e){}
+});
 function rbAbrirEditar(r, modelos, fotos){
   document.getElementById('rbId').value = r.id;
   document.getElementById('rbModalTitulo').innerHTML = '<i class="bi bi-pencil me-2"></i>Editar ' + r.sku;

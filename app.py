@@ -127664,6 +127664,11 @@ _PROV_COLS_NUEVAS = (
     # 2026-10-04: en Random "DRAX" o "BOOYBUILDER" no son familias, son MARCAS
     # (MAEPR.MRPR). Se asocian marcas del ERP (lista JSON [{codigo, nombre}]).
     ("marcas_erp", "TEXT NULL"),
+    # Baja con motivo (REGLA #5: soft-delete, nunca se borra; queda quién y cuándo).
+    ("activo", "TINYINT(1) NOT NULL DEFAULT 1"),
+    ("baja_motivo", "VARCHAR(300) NULL"),
+    ("baja_por", "VARCHAR(190) NULL"),
+    ("baja_at", "DATETIME NULL"),
 )
 _PROV_INCOTERMS = ("EXW", "FCA", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP")
 _PROV_COLS_OK = {"listo": False}
@@ -128031,10 +128036,11 @@ def mant_proveedores_repuesto_list():
     """Catálogo de proveedores de repuestos (para el selector del modal
     de ficha de proveedor). Filtro opcional ?q="""
     q = (request.args.get("q") or "").strip()
-    sql = "SELECT * FROM mant_proveedores_repuesto"
+    _prov_cols_asegurar()
+    sql = "SELECT * FROM mant_proveedores_repuesto WHERE COALESCE(activo,1)=1"
     params = []
     if q:
-        sql += " WHERE nombre LIKE %s"
+        sql += " AND nombre LIKE %s"
         params.append(f"%{q}%")
     sql += " ORDER BY nombre LIMIT 100"
     rows = mysql_fetchall(sql, tuple(params)) or []
@@ -128288,6 +128294,41 @@ def mant_proveedores_familias_erp():
     return jsonify({"ok": True, "familias": fams})
 
 
+@app.route("/mantenciones/api/proveedores-repuesto/<int:pid>/baja", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_proveedor_repuesto_baja(pid):
+    """Da de baja un proveedor (2026-10-04, Daniel: "dalo de baja el TEST
+    Proveedor Drax"). REGLA #5: no se borra -- queda activo=0 con motivo, quién
+    y cuándo, y deja de aparecer en la lista y en los selectores. Sus repuestos,
+    solicitudes y compras quedan intactos (siguen apuntando a él)."""
+    d = request.get_json(silent=True) or {}
+    motivo = (d.get("motivo") or "").strip()[:300]
+    if len(motivo) < 5:
+        return jsonify({"ok": False, "error": "Indica el motivo de la baja (al menos 5 letras)."}), 400
+    _prov_cols_asegurar()
+    p = mysql_fetchone("SELECT id, nombre, COALESCE(activo,1) AS activo FROM mant_proveedores_repuesto WHERE id=%s", (pid,))
+    if not p:
+        return jsonify({"ok": False, "error": "Proveedor no encontrado."}), 404
+    if not p.get("activo"):
+        return jsonify({"ok": True, "ya_estaba": True})
+    user = current_username()
+    _mant_log("proveedor_repuesto", pid, "baja", f"{p.get('nombre')}: {motivo}")
+    try:
+        mysql_execute("UPDATE mant_proveedores_repuesto SET activo=0, baja_motivo=%s, baja_por=%s, baja_at=NOW() WHERE id=%s",
+                      (motivo, user, pid))
+    except Exception as e:
+        print(f"[proveedores] baja pid={pid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo dar de baja."}), 500
+    try:
+        _prov_tablas_asegurar()
+        mysql_execute("INSERT INTO mant_proveedor_notas (proveedor_id, texto, usuario) VALUES (%s,%s,%s)",
+                      (pid, "Proveedor dado de baja. Motivo: " + motivo, user))
+    except Exception:
+        pass
+    return jsonify({"ok": True})
+
+
 def _prov_hitos_de(p):
     """Bitácora del proveedor, lo más nuevo primero. La nota suelta de antes
     (columna notas) queda como el primer hito para no perderla."""
@@ -128360,7 +128401,11 @@ def mant_proveedor_repuesto_ficha(pid):
     try:
         for r in (mysql_fetchall(
                 "SELECT rs.id, rs.sku, rs.descripcion, rs.cantidad, rs.stock_minimo, rs.costo_unitario, "
-                "       u.codigo AS ubicacion_codigo, "
+                "       u.codigo AS ubicacion_codigo, rs.ubicacion_id, rs.marca_id, rs.codigo_fabricante, "
+                "       rs.largo, rs.ancho, rs.alto, rs.peso_kg, COALESCE(rs.modelo_pendiente,0) AS modelo_pendiente, "
+                "       (SELECT f.gcs_key FROM mant_repuestos_stock_fotos f WHERE f.repuesto_id=rs.id ORDER BY f.orden LIMIT 1) AS foto_key, "
+                "       (SELECT COUNT(*) FROM mant_repuestos_stock_fotos f WHERE f.repuesto_id=rs.id) AS n_fotos, "
+                "       (SELECT COUNT(*) FROM mant_repuestos_stock_modelos m WHERE m.repuesto_id=rs.id) AS n_modelos, "
                 # Demanda de los últimos 12 meses (Daniel 2026-10-04: "que sea bien
                 # dinámico el detalle de los repuestos... para hacer margen"): cuántas
                 # veces se pidió y cuántas unidades -> qué conviene comprar por volumen.
@@ -128382,6 +128427,24 @@ def mant_proveedor_repuesto_ficha(pid):
             r["semaforo"] = ("rojo" if _cant <= 0 else
                              ("ambar" if (r["stock_minimo"] is not None and _cant <= r["stock_minimo"]) else "verde"))
             r["por_llegar"] = not r.get("ubicacion_codigo")
+            # Foto y calidad de la ficha del repuesto (Daniel 2026-10-04: "agrégale
+            # calidad de información al producto"): 7 datos que hacen falta para
+            # comprarlo, encontrarlo y despacharlo bien.
+            r["foto_url"] = ("/f/" + r["foto_key"]) if r.get("foto_key") else None
+            _items = [
+                ("Foto", int(r.get("n_fotos") or 0) > 0),
+                ("Costo", float(r.get("costo_unitario") or 0) > 0),
+                ("Marca", bool(r.get("marca_id"))),
+                ("Equipo compatible", int(r.get("n_modelos") or 0) > 0),
+                ("Ubicación en bodega", bool(r.get("ubicacion_id"))),
+                ("Código de fabricante", bool((r.get("codigo_fabricante") or "").strip())),
+                ("Medidas y peso", all(r.get(k) for k in ("largo", "ancho", "alto", "peso_kg"))),
+            ]
+            r["calidad_ok"] = sum(1 for _t, ok in _items if ok)
+            r["calidad_total"] = len(_items)
+            r["calidad_falta"] = [t for t, ok in _items if not ok]
+            for k in ("foto_key", "largo", "ancho", "alto", "peso_kg"):
+                r.pop(k, None)
             out["repuestos"].append(r)
     except Exception as e:
         print(f"[proveedor ficha] repuestos pid={pid}: {e}", flush=True)
@@ -128491,7 +128554,7 @@ def mant_proveedores_repuesto_page():
     Ahora cada tarjeta trae indicadores reales (_prov_indicadores) y la calidad
     de su ficha (_prov_calidad). `n_repuestos` se conserva (= sistema anterior)."""
     _prov_cols_asegurar()
-    rows = mysql_fetchall("SELECT p.* FROM mant_proveedores_repuesto p ORDER BY p.nombre") or []
+    rows = mysql_fetchall("SELECT p.* FROM mant_proveedores_repuesto p WHERE COALESCE(p.activo,1)=1 ORDER BY p.nombre") or []
     ind = _prov_indicadores()
     # 🔗 2026-10-04 (Daniel: "necesito que se relacionen las solicitudes de
     # repuestos... solicitudes y repuestos asociados con su stock"): cada tarjeta
