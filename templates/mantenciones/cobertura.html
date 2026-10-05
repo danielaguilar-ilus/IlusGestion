@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+{% block title %}Cobertura de mantención — ILUS Fitness{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<style>
+/* Cobertura en la Gran Santiago — mismo lenguaje que Retiros: tarjetas, semáforo, transiciones. */
+.cob-hero{background:linear-gradient(135deg,#0a0a0a 0%,#1f2937 100%);color:#fff;border-radius:16px;padding:18px 22px;margin-bottom:16px;
+  display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;border-bottom:3px solid #dc2626}
+.cob-hero h4{margin:0;font-weight:800}.cob-hero .sub{opacity:.75;font-size:.86rem}
+.cob-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:16px}
+.cob-kpi{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:12px 14px;position:relative;overflow:hidden;
+  opacity:0;transform:translateY(8px);animation:cobIn .45s ease forwards;transition:transform .15s,box-shadow .15s}
+.cob-kpi:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(0,0,0,.06)}
+.cob-kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--c,#dc2626)}
+.cob-kpi small{display:block;font-size:.7rem;font-weight:800;color:#6b7280;text-transform:uppercase;letter-spacing:.03em}
+.cob-kpi b{display:block;font-size:1.45rem;font-weight:800;color:#111827;line-height:1.2}
+.cob-kpi span{font-size:.76rem;color:#6b7280}
+@keyframes cobIn{to{opacity:1;transform:none}}
+.cob-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:14px;margin-bottom:16px}
+@media (max-width:991px){.cob-grid{grid-template-columns:1fr}}
+.cob-card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px}
+.cob-card h6{font-weight:800;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+#cobMapa{height:430px;border-radius:12px;z-index:0}
+.cob-zonas{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.cob-zona{border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px;cursor:pointer;border-top:4px solid var(--zc);
+  transition:transform .15s,box-shadow .15s,background .15s;opacity:0;animation:cobIn .45s ease forwards}
+.cob-zona:hover{transform:translateY(-2px);box-shadow:0 8px 18px rgba(0,0,0,.07)}
+.cob-zona.on{background:#fef2f2;box-shadow:0 0 0 2px var(--zc)}
+.cob-zona .zt{display:flex;justify-content:space-between;align-items:center;font-weight:800}
+.cob-zona .zt i{color:var(--zc)}
+.cob-zona .zr{display:flex;justify-content:space-between;font-size:.78rem;color:#4b5563;margin-top:3px}
+.cob-zona .zr b{color:#111827}
+.cob-zona .zcap{margin-top:6px;font-size:.76rem;font-weight:800;color:var(--zc)}
+.cob-sim{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.cob-sim label{font-size:.78rem;font-weight:800;color:#374151}
+.cob-sim .val{font-size:1.3rem;font-weight:800;color:#0f766e}
+.cob-sim input[type=range]{width:100%;accent-color:#dc2626}
+.cob-tabla td,.cob-tabla th{font-size:.82rem;vertical-align:middle}
+.cob-tabla .zdot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+.cob-pie{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-size:.8rem;color:#6b7280}
+.cob-nota{font-size:.74rem;color:#6b7280;margin-top:6px}
+</style>
+
+<div class="cob-hero">
+  <div>
+    <h4><i class="bi bi-geo-alt-fill me-2" style="color:#ef4444"></i>Cobertura de mantención · Gran Santiago</h4>
+    <div class="sub">Clientes con contrato y prospectos de instalación por zona: ingreso actual, potencial y carga de trabajo</div>
+  </div>
+  <a href="{{ url_for('mant_clientes') }}" class="btn btn-outline-light btn-sm fw-bold"><i class="bi bi-arrow-left me-1"></i>Clientes</a>
+</div>
+
+{% if datos.error %}
+<div class="alert alert-warning">No se pudo calcular la cobertura en este momento. Intenta de nuevo en un minuto.</div>
+{% endif %}
+
+<div class="cob-kpis" id="cobKpis"></div>
+
+<div class="cob-grid">
+  <div class="cob-card">
+    <h6><i class="bi bi-map-fill" style="color:#dc2626"></i>Mapa por comuna <span class="small text-muted fw-normal">(tamaño = clientes; color = zona)</span></h6>
+    <div id="cobMapa"></div>
+  </div>
+  <div class="cob-card">
+    <h6><i class="bi bi-sliders" style="color:#0d9488"></i>Simulador</h6>
+    <div class="cob-sim">
+      <div>
+        <label>Prospectos que aceptan el plan: <span id="simConvTxt">30%</span></label>
+        <input type="range" id="simConv" min="5" max="100" step="5" value="30">
+        <div class="small text-muted">Ingreso anual nuevo</div>
+        <div class="val" id="simIngreso">$0</div>
+        <div class="small text-muted" id="simDetalle"></div>
+      </div>
+      <div>
+        <label>Mantenciones por técnico al día: <span id="simCapTxt">4</span></label>
+        <input type="range" id="simCap" min="1" max="10" step="1" value="4">
+        <div class="small text-muted">Días-técnico al mes que pide la cartera</div>
+        <div class="val" id="simDias">0</div>
+        <div class="small text-muted" id="simDiasDet"></div>
+      </div>
+    </div>
+    <div class="cob-nota">Precios con las tarifas del cotizador (mano de obra por categoría de equipo, tipo Mantención),
+      sin costo de ruta ni repuestos, con el descuento base del plan. Las regalías de la escalera no se descuentan aquí.</div>
+    <div class="cob-nota" id="simSinTarifa"></div>
+  </div>
+</div>
+
+<div class="cob-card mb-3">
+  <h6><i class="bi bi-diagram-3-fill" style="color:#7c3aed"></i>Zonas <span class="small text-muted fw-normal">(toca una para filtrar el mapa y la tabla)</span></h6>
+  <div class="cob-zonas" id="cobZonas"></div>
+</div>
+
+<div class="cob-card mb-3">
+  <h6><i class="bi bi-table" style="color:#111827"></i>Comunas <span class="small text-muted fw-normal" id="cobFiltroTxt"></span></h6>
+  <div class="table-responsive">
+    <table class="table table-sm cob-tabla mb-2">
+      <thead><tr><th>Comuna</th><th>Zona</th><th class="text-end">Con contrato</th><th class="text-end">Prospectos</th>
+        <th class="text-end">Equipos en plan</th><th class="text-end">1ª mant. vencida</th><th class="text-end">Ingreso anual actual</th>
+        <th class="text-end">Potencial anual</th><th class="text-end">Visitas/mes</th></tr></thead>
+      <tbody id="cobTabla"></tbody>
+    </table>
+  </div>
+  <div class="cob-pie">
+    <span id="cobPieInfo"></span>
+    <div class="d-flex align-items-center gap-2">
+      <select id="cobPorPag" class="form-select form-select-sm" style="width:auto">
+        <option value="10">10</option><option value="25" selected>25</option><option value="50">50</option>
+      </select><span>por página</span>
+      <div class="btn-group btn-group-sm">
+        <button class="btn btn-outline-secondary" id="cobAnt">Anterior</button>
+        <button class="btn btn-outline-secondary" disabled id="cobPag">Página 1 de 1</button>
+        <button class="btn btn-outline-secondary" id="cobSig">Siguiente</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function(){
+  const D = {{ datos|tojson }};
+  const clp = n => '$' + Math.round(n || 0).toLocaleString('es-CL');
+  const num = n => Math.round(n || 0).toLocaleString('es-CL');
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const K = D.kpi || {};
+  let zonaSel = '', pag = 1;
+
+  // ── KPIs ──
+  const kpis = [
+    {c:'#16a34a', t:'Clientes con contrato', v:num(K.clientes_contrato), s:'Ingreso anual ' + clp(K.ingreso_anual)},
+    {c:'#0d9488', t:'Prospectos de instalación', v:num(K.prospectos), s:'Potencial anual ' + clp(K.potencial_anual)},
+    {c:'#7c3aed', t:'Equipos en plan', v:num(K.equipos), s:'Contrato + prospectos'},
+    {c:'#dc2626', t:'1ª mantención vencida', v:num(K.vencidas_1a), s:'Según la fecha de su factura'},
+    {c:'#f59e0b', t:'Visitas programadas', v:num(K.programadas_90d), s:'Próximos 90 días'},
+  ];
+  document.getElementById('cobKpis').innerHTML = kpis.map((k, i) =>
+    '<div class="cob-kpi" style="--c:' + k.c + ';animation-delay:' + (i * 70) + 'ms"><small>' + k.t + '</small><b>' + k.v + '</b><span>' + k.s + '</span></div>').join('');
+
+  // ── Simulador ──
+  function simular(){
+    const conv = +document.getElementById('simConv').value, cap = +document.getElementById('simCap').value;
+    document.getElementById('simConvTxt').textContent = conv + '%';
+    document.getElementById('simCapTxt').textContent = cap;
+    const nuevo = (K.potencial_anual || 0) * conv / 100;
+    document.getElementById('simIngreso').textContent = clp(nuevo);
+    document.getElementById('simDetalle').textContent = Math.round((K.prospectos || 0) * conv / 100) + ' clientes nuevos · ' +
+      clp(nuevo / 12) + ' al mes · ' + (K.visitas_anio_plan || 4) + ' mantenciones al año' + (K.descuento_base ? ' con ' + K.descuento_base + '% de descuento' : '');
+    const zonas = D.zonas || [];
+    let totalVis = 0;
+    const porZona = zonas.map(z => {
+      // carga: contratos completos + la fracción de prospectos que acepta
+      const vis = z.visitas_mes * ((z.clientes_contrato + z.prospectos * conv / 100) / Math.max(1, z.clientes_contrato + z.prospectos));
+      totalVis += vis;
+      return {zona: z.zona, dias: vis / cap};
+    });
+    document.getElementById('simDias').textContent = (totalVis / cap).toLocaleString('es-CL', {maximumFractionDigits: 1});
+    document.getElementById('simDiasDet').textContent = porZona.filter(z => z.dias >= 0.05).map(z => z.zona + ' ' + z.dias.toLocaleString('es-CL', {maximumFractionDigits: 1})).join(' · ');
+    pintarZonas(conv, cap);
+  }
+  document.getElementById('simConv').addEventListener('input', simular);
+  document.getElementById('simCap').addEventListener('input', simular);
+  if (K.sin_tarifa) document.getElementById('simSinTarifa').innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>' +
+    num(K.sin_tarifa) + ' equipo(s) de prospectos sin tarifa en el Catálogo (cotizan $0): el potencial real es mayor.';
+
+  // ── Zonas ──
+  function pintarZonas(conv, cap){
+    document.getElementById('cobZonas').innerHTML = (D.zonas || []).map((z, i) => {
+      const vis = z.visitas_mes * ((z.clientes_contrato + z.prospectos * conv / 100) / Math.max(1, z.clientes_contrato + z.prospectos));
+      return '<div class="cob-zona' + (zonaSel === z.zona ? ' on' : '') + '" style="--zc:' + z.color + ';animation-delay:' + (i * 60) + 'ms" data-z="' + esc(z.zona) + '">' +
+        '<div class="zt"><span>' + esc(z.zona) + '</span><i class="bi bi-geo-alt-fill"></i></div>' +
+        '<div class="zr"><span>Con contrato</span><b>' + num(z.clientes_contrato) + '</b></div>' +
+        '<div class="zr"><span>Prospectos</span><b>' + num(z.prospectos) + '</b></div>' +
+        '<div class="zr"><span>Equipos en plan</span><b>' + num(z.equipos) + '</b></div>' +
+        '<div class="zr"><span>1ª mant. vencida</span><b>' + num(z.vencidas_1a) + '</b></div>' +
+        '<div class="zr"><span>Ingreso actual</span><b>' + clp(z.ingreso_anual) + '</b></div>' +
+        '<div class="zr"><span>Potencial</span><b>' + clp(z.potencial_anual) + '</b></div>' +
+        '<div class="zcap"><i class="bi bi-person-gear me-1"></i>' + (vis / cap).toLocaleString('es-CL', {maximumFractionDigits: 1}) + ' días-técnico al mes</div></div>';
+    }).join('') || '<div class="text-muted small">Sin datos.</div>';
+    document.querySelectorAll('.cob-zona').forEach(el => el.onclick = () => {
+      zonaSel = (zonaSel === el.dataset.z) ? '' : el.dataset.z; pag = 1;
+      pintarZonas(conv, cap); pintarTabla(); pintarMapa();
+    });
+  }
+
+  // ── Tabla de comunas (paginada, REGLA #4.3) ──
+  function pintarTabla(){
+    const filas = (D.comunas || []).filter(c => !zonaSel || c.zona === zonaSel);
+    const pp = +document.getElementById('cobPorPag').value, tot = filas.length, pags = Math.max(1, Math.ceil(tot / pp));
+    if (pag > pags) pag = pags;
+    const zc = {}; (D.zonas || []).forEach(z => zc[z.zona] = z.color);
+    document.getElementById('cobTabla').innerHTML = filas.slice((pag - 1) * pp, pag * pp).map(c =>
+      '<tr><td class="fw-bold">' + esc(c.nombre) + '</td><td><span class="zdot" style="background:' + (zc[c.zona] || '#999') + '"></span>' + esc(c.zona) + '</td>' +
+      '<td class="text-end">' + num(c.clientes_contrato) + '</td><td class="text-end">' + num(c.prospectos) + '</td>' +
+      '<td class="text-end">' + num(c.equipos) + '</td><td class="text-end' + (c.vencidas_1a ? ' text-danger fw-bold' : '') + '">' + num(c.vencidas_1a) + '</td>' +
+      '<td class="text-end">' + clp(c.ingreso_anual) + '</td><td class="text-end">' + clp(c.potencial_anual) + '</td>' +
+      '<td class="text-end">' + (c.visitas_mes || 0).toLocaleString('es-CL', {maximumFractionDigits: 1}) + '</td></tr>').join('') ||
+      '<tr><td colspan="9" class="text-center text-muted">Sin comunas</td></tr>';
+    document.getElementById('cobPieInfo').textContent = tot ? ('Mostrando ' + ((pag - 1) * pp + 1) + '–' + Math.min(pag * pp, tot) + ' de ' + tot) : 'Sin resultados';
+    document.getElementById('cobPag').textContent = 'Página ' + pag + ' de ' + pags;
+    document.getElementById('cobAnt').disabled = pag <= 1;
+    document.getElementById('cobSig').disabled = pag >= pags;
+    document.getElementById('cobFiltroTxt').textContent = zonaSel ? '· zona ' + zonaSel : '';
+  }
+  document.getElementById('cobPorPag').onchange = () => { pag = 1; pintarTabla(); };
+  document.getElementById('cobAnt').onclick = () => { pag--; pintarTabla(); };
+  document.getElementById('cobSig').onclick = () => { pag++; pintarTabla(); };
+
+  // ── Mapa ──
+  let mapa = null, capa = null;
+  function pintarMapa(){
+    if (typeof L === 'undefined') { document.getElementById('cobMapa').innerHTML = '<div class="text-muted small p-3">No se pudo cargar el mapa.</div>'; return; }
+    if (!mapa){
+      mapa = L.map('cobMapa', {scrollWheelZoom: false}).setView([-33.47, -70.65], 10);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 17, attribution: '&copy; OpenStreetMap'}).addTo(mapa);
+    }
+    if (capa) capa.remove();
+    capa = L.layerGroup().addTo(mapa);
+    const zc = {}; (D.zonas || []).forEach(z => zc[z.zona] = z.color);
+    (D.comunas || []).filter(c => c.lat && c.lng && (!zonaSel || c.zona === zonaSel)).forEach(c => {
+      const n = c.clientes_contrato + c.prospectos;
+      L.circleMarker([c.lat, c.lng], {radius: 6 + Math.sqrt(n) * 4, color: zc[c.zona] || '#666', weight: 2,
+        fillColor: zc[c.zona] || '#666', fillOpacity: c.vencidas_1a ? .55 : .3})
+        .bindPopup('<b>' + esc(c.nombre) + '</b> · ' + esc(c.zona) + '<br>' + c.clientes_contrato + ' con contrato · ' + c.prospectos +
+          ' prospectos<br>' + c.equipos + ' equipos en plan' + (c.vencidas_1a ? '<br><b style="color:#dc2626">' + c.vencidas_1a + ' con la 1ª mantención vencida</b>' : '') +
+          '<br>Potencial ' + clp(c.potencial_anual))
+        .addTo(capa);
+    });
+  }
+
+  simular(); pintarTabla();
+  if (document.readyState === 'complete') pintarMapa(); else window.addEventListener('load', pintarMapa);
+})();
+</script>
+{% endblock %}

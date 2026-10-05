@@ -62445,6 +62445,7 @@ def _ficha_instalacion_desde_grupo(g_, quien):
 # ── Productos de la instalación → equipos de la ficha (Daniel 2026-10-04: «considerando el ingreso de los
 # productos. Pon la factura para poder hacerle seguimiento según la emisión, para realizar mantenciones») ──
 _TIDOS_VENTA = ("FCV", "BLV", "FCE", "BLE", "NVV", "NVI", "FCO", "WEB", "VD", "GDV")
+_RANGO_DOC = {"FCV": 0, "FCE": 0, "BLV": 1, "BLE": 1}   # documento preferido como referencia de la venta
 _DOC_EN_TEXTO_RE = re.compile(r"\b(FCV|BLV|FCE|BLE|NVV|NVI|FCO|WEB|VD|GDV)\s*[-_ ]?\s*0*(\d{1,10})\b", re.I)
 
 
@@ -62517,6 +62518,7 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
                     f"SELECT sku FROM cat_productos WHERE UPPER(TRIM(sku)) IN ({_ph})", tuple(_skus_doc)) or [])}
             except Exception as e:
                 print(f"[equipos_instalacion] catálogo: {e}", flush=True)
+        por_ticket = {}
         for tido, nudo, fecha_reg, t, header, lineas in leidos:
             if not header:
                 docs_info.append({"doc": f"{tido} {nudo}", "estado": "no está en el ERP"})
@@ -62547,10 +62549,29 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
                 if saldo <= 0:
                     omitidos.append({"sku": sku, "nombre": nombre, "motivo": f"ya está en una ficha con {doc_key}"})
                     continue
-                candidatos.append({"sku": sku, "nombre": nombre, "cantidad": saldo, "doc_key": doc_key,
-                                   "doc_fecha": doc_fecha, "fecha_inst": fecha_inst, "ticket": t.get("numero_ticket")})
+                # Una misma venta trae varios documentos (NVV → FCV → VD) con los MISMOS productos: dentro de un
+                # ticket cada SKU cuenta UNA vez (la cantidad mayor), con la factura/boleta como referencia.
+                rango = _RANGO_DOC.get(tido, 2)
+                previo = por_ticket.setdefault(t.get("id"), {}).get(sku.upper())
+                if previo is None or saldo > previo["cantidad"] or (saldo == previo["cantidad"] and rango < previo["rango"]):
+                    por_ticket[t.get("id")][sku.upper()] = {
+                        "sku": sku, "nombre": nombre, "cantidad": saldo, "rango": rango, "doc_key": doc_key,
+                        "doc_fecha": doc_fecha, "fecha_inst": fecha_inst, "ticket": t.get("numero_ticket")}
                 n_doc += saldo
             docs_info.append({"doc": doc_key, "fecha": str(doc_fecha)[:10] if doc_fecha else "", "equipos": n_doc})
+        # Entre tickets distintos (instalaciones distintas) sí se suma; al final se descuenta lo que la ficha
+        # YA tiene de ese SKU, así una segunda corrida no duplica nada.
+        if por_ticket:
+            existentes = {(r["sku"] or ""): int(r["n"] or 0) for r in (mysql_fetchall(
+                "SELECT UPPER(TRIM(sku)) AS sku, COALESCE(SUM(cantidad),0) AS n FROM mant_maquinas "
+                " WHERE cliente_id=%s AND estado='activo' GROUP BY UPPER(TRIM(sku))", (cid,)) or [])}
+            for _tid, skus_t in por_ticket.items():
+                for sku_u, c in skus_t.items():
+                    tiene = existentes.get(sku_u, 0)
+                    falta = c["cantidad"] - tiene
+                    existentes[sku_u] = max(0, tiene - c["cantidad"])
+                    if falta > 0:
+                        candidatos.append({k: v for k, v in c.items() if k != "rango"} | {"cantidad": falta})
         respaldo = False
         if not candidatos and tickets and not any(d.get("equipos") for d in docs_info if "equipos" in d) \
                 and not any("ya está" in (o.get("motivo") or "") for o in omitidos):
@@ -62813,6 +62834,200 @@ def mant_instalaciones_reclasificar():
             except Exception:
                 pass
     return jsonify({"ok": True, "reclasificados": n})
+
+
+# ══════════════════════════════════════════════════════════════════
+# COBERTURA EN LA GRAN SANTIAGO (Daniel 2026-10-04: «una propuesta que agregue valor económico y mejore
+# nuestra capacidad de cobertura en la Gran Santiago»). Zonas por comuna, clientes con contrato y prospectos,
+# equipos en plan, ingreso actual vs. potencial (tarifas REALES del cotizador) y carga de trabajo por zona.
+# ══════════════════════════════════════════════════════════════════
+# comuna normalizada → (zona, lat, lng). Coordenadas aproximadas del centro de cada comuna (para el mapa).
+_COMUNAS_RM = {
+    "las condes": ("Oriente", -33.4110, -70.5600), "vitacura": ("Oriente", -33.3880, -70.5780),
+    "lo barnechea": ("Oriente", -33.3520, -70.5170), "providencia": ("Oriente", -33.4310, -70.6100),
+    "la reina": ("Oriente", -33.4500, -70.5420), "nunoa": ("Oriente", -33.4570, -70.5980),
+    "penalolen": ("Oriente", -33.4870, -70.5460), "macul": ("Oriente", -33.4920, -70.5990),
+    "santiago": ("Centro", -33.4490, -70.6690), "estacion central": ("Centro", -33.4560, -70.6990),
+    "independencia": ("Centro", -33.4160, -70.6650), "recoleta": ("Centro", -33.4060, -70.6400),
+    "quinta normal": ("Centro", -33.4280, -70.6980),
+    "huechuraba": ("Norte", -33.3700, -70.6350), "conchali": ("Norte", -33.3850, -70.6750),
+    "quilicura": ("Norte", -33.3600, -70.7280), "renca": ("Norte", -33.4050, -70.7280),
+    "colina": ("Norte", -33.2830, -70.6500), "chicureo": ("Norte", -33.2830, -70.6500),
+    "lampa": ("Norte", -33.2860, -70.8760), "tiltil": ("Norte", -33.0830, -70.9270),
+    "pudahuel": ("Poniente", -33.4400, -70.7550), "cerro navia": ("Poniente", -33.4250, -70.7400),
+    "lo prado": ("Poniente", -33.4440, -70.7250), "maipu": ("Poniente", -33.5110, -70.7580),
+    "cerrillos": ("Poniente", -33.4980, -70.7150), "padre hurtado": ("Poniente", -33.5670, -70.8150),
+    "penaflor": ("Poniente", -33.6060, -70.8760), "talagante": ("Poniente", -33.6650, -70.9300),
+    "calera de tango": ("Poniente", -33.6290, -70.7700), "isla de maipo": ("Poniente", -33.7510, -70.8990),
+    "el monte": ("Poniente", -33.6800, -71.0180), "curacavi": ("Poniente", -33.4060, -71.1350),
+    "la florida": ("Sur", -33.5230, -70.5980), "puente alto": ("Sur", -33.6120, -70.5760),
+    "san joaquin": ("Sur", -33.4960, -70.6290), "san miguel": ("Sur", -33.4970, -70.6520),
+    "la cisterna": ("Sur", -33.5300, -70.6640), "la granja": ("Sur", -33.5390, -70.6250),
+    "san ramon": ("Sur", -33.5420, -70.6430), "el bosque": ("Sur", -33.5630, -70.6740),
+    "la pintana": ("Sur", -33.5830, -70.6340), "san bernardo": ("Sur", -33.5930, -70.7000),
+    "lo espejo": ("Sur", -33.5200, -70.6900), "pedro aguirre cerda": ("Sur", -33.4920, -70.6780),
+    "pirque": ("Sur", -33.6370, -70.5500), "san jose de maipo": ("Sur", -33.6420, -70.3530),
+    "buin": ("Sur", -33.7320, -70.7420), "paine": ("Sur", -33.8070, -70.7410),
+}
+_ZONAS_ORDEN = ["Oriente", "Centro", "Norte", "Poniente", "Sur", "Regiones", "Sin comuna"]
+_ZONAS_COLOR = {"Oriente": "#dc2626", "Centro": "#7c3aed", "Norte": "#0ea5e9", "Poniente": "#f59e0b",
+                "Sur": "#16a34a", "Regiones": "#6b7280", "Sin comuna": "#9ca3af"}
+
+
+def _norm_comuna(txt):
+    import unicodedata as _ud
+    s_ = _ud.normalize("NFKD", str(txt or "")).encode("ascii", "ignore").decode().lower().strip()
+    s_ = re.sub(r"^comuna (de )?", "", s_)
+    s_ = re.sub(r"[,/].*$", "", s_).strip()          # 'Las Condes, Santiago' → 'las condes'
+    return re.sub(r"\s+", " ", s_)
+
+
+def _zona_de(comuna):
+    """(zona, comuna_normalizada, lat, lng)."""
+    n = _norm_comuna(comuna)
+    if not n:
+        return "Sin comuna", "", None, None
+    if n in _COMUNAS_RM:
+        z, la, lo = _COMUNAS_RM[n]
+        return z, n, la, lo
+    return "Regiones", n, None, None
+
+
+def _cobertura_datos():
+    """Todo lo que muestra la pantalla de Cobertura. SOLO LECTURA."""
+    clientes = [dict(r) for r in (mysql_fetchall(
+        "SELECT id, razon_social, comuna, tipo_cliente, estado FROM mant_clientes WHERE estado<>'inactivo'") or [])]
+    ids = [c["id"] for c in clientes]
+    if not ids:
+        return {"zonas": [], "comunas": [], "kpi": {}, "clientes": []}
+    ph = ",".join(["%s"] * len(ids))
+    contratos, freq = {}, {}
+    for r in (mysql_fetchall(
+            f"SELECT cliente_id, SUM(COALESCE(monto_mensual,0)) AS mensual, MIN(NULLIF(frecuencia_meses,0)) AS f "
+            f"  FROM mant_contratos WHERE cliente_id IN ({ph}) AND nombre<>'Contenedor de documentos' "
+            f"   AND estado IN ('vigente','por_vencer','indefinido') GROUP BY cliente_id", tuple(ids)) or []):
+        contratos[r["cliente_id"]] = float(r.get("mensual") or 0)
+        freq[r["cliente_id"]] = int(r["f"]) if r.get("f") else None
+    prog = {r["cliente_id"]: int(r["n"] or 0) for r in (mysql_fetchall(
+        f"SELECT cliente_id, COUNT(*) AS n FROM mant_visitas WHERE cliente_id IN ({ph}) AND estado='programada' "
+        f"   AND fecha_programada BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 90 DAY) GROUP BY cliente_id",
+        tuple(ids)) or [])}
+    equipos = {}
+    for r in (mysql_fetchall(
+            f"SELECT cliente_id, UPPER(TRIM(sku)) AS sku, COUNT(*) AS n FROM mant_maquinas "
+            f" WHERE cliente_id IN ({ph}) AND estado='activo' AND COALESCE(aplica_mantencion,1)=1 "
+            f" GROUP BY cliente_id, UPPER(TRIM(sku))", tuple(ids)) or []):
+        equipos.setdefault(r["cliente_id"], []).append((r["sku"] or "", int(r["n"] or 0)))
+    # Precio de UNA mantención por cliente con las tarifas del cotizador (mano de obra; sin ruta ni repuestos).
+    skus = sorted({sku for lst in equipos.values() for sku, _n in lst if sku})
+    clase_de = {}
+    if skus:
+        ph2 = ",".join(["%s"] * len(skus))
+        for r in (mysql_fetchall(f"SELECT UPPER(TRIM(sku)) AS sku, clase_producto FROM cat_productos "
+                                 f" WHERE UPPER(TRIM(sku)) IN ({ph2})", tuple(skus)) or []):
+            if r.get("clase_producto"):
+                clase_de[r["sku"]] = r["clase_producto"]
+    _calc = globals().get("_tk_cotiz_calcular_item")
+    _cfgf = globals().get("_tk_cotiz_pricing_config")
+    _tarb = globals().get("_cat_tarifas_clases_batch")
+    cfg_p, tarifas = None, {}
+    try:
+        cfg_p = _cfgf() if _cfgf else None
+        tarifas = (_tarb(sorted(set(clase_de.values())), "mantencion") or {}) if _tarb else {}
+    except Exception as e:
+        print(f"[cobertura] tarifas: {e}", flush=True)
+    precio_cli, sin_tarifa_cli = {}, {}
+    for cid_, lst in equipos.items():
+        tot, sin = 0.0, 0
+        for sku, n in lst:
+            clase = clase_de.get(sku)
+            r = None
+            if _calc and cfg_p is not None and clase:
+                try:
+                    r = _calc(clase, "mantencion", n, None, cfg_p, tarifa=tarifas.get(clase))
+                except Exception:
+                    r = None
+            if r and r.get("total") is not None:
+                tot += float(r["total"] or 0)
+            else:
+                sin += n
+        precio_cli[cid_] = tot
+        sin_tarifa_cli[cid_] = sin
+    plan_cfg = _plan_config()
+    try:
+        vis_plan = max(1, int(float(plan_cfg.get("visitas_anio") or 4)))
+    except (TypeError, ValueError):
+        vis_plan = 4
+    try:
+        desc_base = float(plan_cfg.get("descuento_pct") or 0)
+    except (TypeError, ValueError):
+        desc_base = 0.0
+    prospectos = [c["id"] for c in clientes if c["id"] not in contratos
+                  and (c.get("tipo_cliente") == "instalacion" or c.get("estado") == "prospecto")]
+    pinfo = _prospecto_info(prospectos) if prospectos else {}
+    zonas, comunas, filas = {}, {}, []
+    for c in clientes:
+        z, n, la, lo = _zona_de(c.get("comuna"))
+        con = c["id"] in contratos
+        es_pros = c["id"] in pinfo
+        if not (con or es_pros):
+            continue                     # solo clientes con contrato o prospectos de mantención
+        neq = sum(n_ for _s, n_ in equipos.get(c["id"], []))
+        precio = precio_cli.get(c["id"], 0.0)
+        pl = (pinfo.get(c["id"]) or {}).get("plan") or {}
+        vis_mes = (12 / freq[c["id"]] / 12) if (con and freq.get(c["id"])) else vis_plan / 12
+        fila = {"id": c["id"], "razon_social": c["razon_social"], "zona": z, "comuna": (c.get("comuna") or "").strip(),
+                "contrato": con, "prospecto": es_pros, "equipos": neq, "precio_visita": round(precio),
+                "sin_tarifa": sin_tarifa_cli.get(c["id"], 0),
+                "ingreso_anual": round(contratos.get(c["id"], 0) * 12) if con else 0,
+                "potencial_anual": round(precio * vis_plan * (1 - desc_base / 100)) if es_pros else 0,
+                "visitas_mes": round(vis_mes, 2), "programadas_90d": prog.get(c["id"], 0),
+                "vencida_1a": pl.get("estado_primera") == "vencida",
+                "etapa": (pinfo.get(c["id"]) or {}).get("etapa_label") if es_pros else ""}
+        filas.append(fila)
+        for clave, dic, extra in ((z, zonas, {"color": _ZONAS_COLOR.get(z, "#6b7280")}),
+                                  (n or "(sin comuna)", comunas, {"zona": z, "lat": la, "lng": lo,
+                                                                  "nombre": fila["comuna"] or "(sin comuna)"})):
+            a = dic.setdefault(clave, {"clientes_contrato": 0, "prospectos": 0, "equipos": 0, "ingreso_anual": 0,
+                                       "potencial_anual": 0, "visitas_mes": 0.0, "programadas_90d": 0,
+                                       "vencidas_1a": 0, **extra})
+            a["clientes_contrato"] += 1 if con else 0
+            a["prospectos"] += 1 if es_pros else 0
+            a["equipos"] += neq
+            a["ingreso_anual"] += fila["ingreso_anual"]
+            a["potencial_anual"] += fila["potencial_anual"]
+            a["visitas_mes"] += fila["visitas_mes"]
+            a["programadas_90d"] += fila["programadas_90d"]
+            a["vencidas_1a"] += 1 if fila["vencida_1a"] else 0
+    lista_z = [{"zona": k, **v} for k, v in sorted(zonas.items(), key=lambda kv: _ZONAS_ORDEN.index(kv[0])
+                                                    if kv[0] in _ZONAS_ORDEN else 99)]
+    lista_c = sorted(({"clave": k, **v} for k, v in comunas.items()),
+                     key=lambda x: -(x["clientes_contrato"] + x["prospectos"]))
+    kpi = {
+        "clientes_contrato": sum(1 for f_ in filas if f_["contrato"]),
+        "prospectos": sum(1 for f_ in filas if f_["prospecto"]),
+        "equipos": sum(f_["equipos"] for f_ in filas),
+        "ingreso_anual": sum(f_["ingreso_anual"] for f_ in filas),
+        "potencial_anual": sum(f_["potencial_anual"] for f_ in filas),
+        "vencidas_1a": sum(1 for f_ in filas if f_["vencida_1a"]),
+        "programadas_90d": sum(f_["programadas_90d"] for f_ in filas),
+        "sin_tarifa": sum(f_["sin_tarifa"] for f_ in filas if f_["prospecto"]),
+        "visitas_anio_plan": vis_plan, "descuento_base": desc_base,
+    }
+    return {"zonas": lista_z, "comunas": lista_c, "kpi": kpi, "clientes": filas}
+
+
+@app.route("/mantenciones/cobertura")
+@app.route("/servicio-tecnico/cobertura")
+@_mant_required
+@_no_tecnico
+def mant_cobertura_page():
+    try:
+        datos = _cobertura_datos()
+    except Exception as e:
+        print(f"[cobertura] {e}", flush=True)
+        datos = {"zonas": [], "comunas": [], "kpi": {}, "clientes": [], "error": True}
+    return render_template("mantenciones/cobertura.html", datos=datos)
 
 
 @app.route("/mantenciones/api/huerfanos", methods=["GET"])

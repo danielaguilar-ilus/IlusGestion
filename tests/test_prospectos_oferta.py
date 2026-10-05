@@ -328,7 +328,7 @@ def test_vigilancia_se_puede_apagar(monkeypatch):
 
 
 # ───────── Productos de la instalación → equipos de la ficha ─────────
-def _equipos_ns(header=True, asignados=None, equipos_ticket=None, numero_documento="FCV-0001234"):
+def _equipos_ns(header=True, asignados=None, equipos_ticket=None, numero_documento="FCV-0001234", en_ficha=None):
     src = open(_APP, encoding="utf-8").read()
     a = src.index("_TIDOS_VENTA = (")
     b = src.index("def _instalaciones_asegurar_fichas")
@@ -343,7 +343,7 @@ def _equipos_ns(header=True, asignados=None, equipos_ticket=None, numero_documen
         if "FROM tk_ticket_equipos" in q:
             return equipos_ticket or []
         if "FROM mant_maquinas" in q:
-            return []
+            return [{"sku": k, "n": v} for k, v in (en_ficha or {}).items()]
         return []
 
     def fetchone(q, p=()):
@@ -397,6 +397,20 @@ def test_equipos_se_cargan_uno_por_unidad_y_accesorios_fuera_del_plan():
     assert trot[0][8] == 1 and kb[0][8] == 0                              # el accesorio no entra al plan
 
 
+def test_misma_venta_en_varios_documentos_cuenta_una_vez():
+    # FCV 11150 y VD 10212 traían los mismos productos (caso real): no se crean dos veces.
+    ns, calls, tk = _equipos_ns(numero_documento="VD 10212, FCV-11150")
+    ok, d = ns["_ficha_equipos_desde_instalacion"](5, confirmar=False, tickets_cache=tk)
+    assert d["total_a_crear"] == 6
+    assert {c["doc_key"] for c in d["candidatos"]} == {"FCV 11150"}       # la factura manda como referencia
+
+
+def test_descuenta_lo_que_la_ficha_ya_tiene():
+    ns, calls, tk = _equipos_ns(en_ficha={"TROT1": 2})
+    ok, d = ns["_ficha_equipos_desde_instalacion"](5, confirmar=False, tickets_cache=tk)
+    assert {c["sku"]: c["cantidad"] for c in d["candidatos"]} == {"KB20": 4}
+
+
 def test_equipos_no_se_duplican():
     ns, calls, tk = _equipos_ns(asignados={"TROT1": 2, "KB20": 4})
     ok, d = ns["_ficha_equipos_desde_instalacion"](5, confirmar=True, tickets_cache=tk)
@@ -442,6 +456,24 @@ def test_calendario_con_escalera_apagada_usa_solo_el_descuento_base():
     c = _cal()["_plan_calendario"](dt.date(2026, 9, 1), dt.date(2026, 10, 5), 6, 2, [100, 50], False, 15)
     assert c["estado_primera"] == "futura" and {v["descuento"] for v in c["visitas"]} == {15.0}
     assert not c["escalera_activa"] and c["cada_meses"] == 6
+
+
+def _zonas():
+    src = open(_APP, encoding="utf-8").read()
+    a = src.index("_COMUNAS_RM = {")
+    b = src.index("def _cobertura_datos")
+    ns = {"re": __import__("re")}
+    exec(src[a:b], ns)
+    return ns["_zona_de"]
+
+
+@pytest.mark.parametrize("comuna,zona", [
+    ("LAS CONDES", "Oriente"), ("Ñuñoa", "Oriente"), ("Comuna de Maipú", "Poniente"),
+    ("Lo Barnechea, Santiago", "Oriente"), ("Puente Alto", "Sur"), ("Viña del Mar", "Regiones"),
+    ("", "Sin comuna"), ("  huechuraba ", "Norte"), ("Estación Central", "Centro"),
+])
+def test_zona_por_comuna(comuna, zona):
+    assert _zonas()(comuna)[0] == zona
 
 
 def test_calendario_proxima_y_sin_fecha():
