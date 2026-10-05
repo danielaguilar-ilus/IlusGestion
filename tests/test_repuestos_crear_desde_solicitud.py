@@ -232,5 +232,33 @@ class CrearRepuestoDesdeSolicitud(unittest.TestCase):
         self.assertTrue(any("n_fotos=n_fotos+1" in s for s, _ in est["sql"]))
 
 
+class VentanaOficialDeBodega(unittest.TestCase):
+    """2026-10-04 (Daniel: "si hay que crearla, se crea con el mismo modal y las
+    mismas restricciones de los repuestos... ese modal se tiene que reciclar"):
+    «Crear uno nuevo» en Gestionar abre la ventana de Bodega en modo solicitud."""
+
+    def _leer(self, rel):
+        with open(os.path.join(RAIZ, "templates", *rel.split("/")), encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_gestionar_abre_la_ventana_de_bodega(self):
+        html = self._leer("clientes_hub/repuestos.html")
+        self.assertIn('id="rsNuToggle" onclick="gsCrearConFichaBodega()"', html)
+        self.assertIn("rbAbrirDesdeSolicitud(", html)
+
+    def test_modo_solicitud_usa_el_endpoint_de_la_solicitud(self):
+        pane = self._leer("mantenciones/_repuestos_bodega_pane.html")
+        cuerpo = pane[pane.index("async function rbGuardarDesdeSolicitud("):pane.index("function rbCantidadCambio(")]
+        self.assertIn("/crear-repuesto", cuerpo)
+        for exigido in ("el proveedor", "a qué equipo sirve", "la foto"):
+            self.assertIn(exigido, pane)
+
+    def test_alta_normal_sigue_exigiendo_ubicacion(self):
+        # Solo el modo solicitud ("por llegar") se libera de escanear la ubicación.
+        pane = self._leer("mantenciones/_repuestos_bodega_pane.html")
+        self.assertIn("(RB_SOL ? true : !!document.getElementById('rbUbicacion').value)", pane)
+        self.assertIn("Escanea la ubicación del repuesto para poder guardar", pane)
+
+
 if __name__ == "__main__":
     unittest.main()

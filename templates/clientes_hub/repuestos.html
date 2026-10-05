@@ -929,7 +929,7 @@
                  autocomplete="off" oninput="rsValBuscar(this.value)">
           <div class="gs-hint" id="rsGestHint"></div>
           <div class="otrep-opc mt-2" id="rsValLista"></div>
-          <button type="button" class="gs-add" id="rsNuToggle" onclick="rsNuMostrar()">
+          <button type="button" class="gs-add" id="rsNuToggle" onclick="gsCrearConFichaBodega()">
             <span class="gs-add-ico"><i class="bi bi-plus-lg"></i></span>
             <span class="gs-add-txt"><strong>No está en la bodega: crear el repuesto</strong>
               <small>Con todo lo que exige el alta de bodega: foto, equipo compatible, proveedor y stock mínimo</small></span>
@@ -3563,6 +3563,37 @@ async function rsNuCrear(){
   }
   // No hay stock de un repuesto recién creado: el camino es pedirlo por ticket.
   gsAbrirCompra(s.id, provId);
+}
+/* 2026-10-04 (Daniel: "si hay que crearla, se crea con el mismo modal y las mismas
+   restricciones de los repuestos... ese modal se tiene que reciclar y utilizar cada
+   vez que se llame"): crear el repuesto abre la ventana OFICIAL de Bodega en modo
+   «desde la solicitud» (rbAbrirDesdeSolicitud, en _repuestos_bodega_pane.html).
+   Si esa ventana no está en la página, queda el formulario corto de siempre. */
+function gsCrearConFichaBodega(){
+  const s = rsBuscarSolicitud(_rs.valSid);
+  if (!s || typeof rbAbrirDesdeSolicitud !== 'function'){ rsNuMostrar(); return; }
+  const mGest = bootstrap.Modal.getOrCreateInstance(gsEl('rsModalValidar'));
+  const sCopia = Object.assign({}, s, { proveedor_id: gsEl('rsGestProv').value || s.proveedor_id,
+    proveedor_nombre: gsEl('rsGestProv').value ? ((gsEl('rsGestProv').selectedOptions[0] || {}).text || s.proveedor_nombre) : s.proveedor_nombre });
+  gsEl('rsModalValidar').addEventListener('hidden.bs.modal', function abrir(){
+    gsEl('rsModalValidar').removeEventListener('hidden.bs.modal', abrir);
+    rbAbrirDesdeSolicitud(sCopia, {
+      onCreado: async function(j){
+        ilusToast('✓ Repuesto ' + (j.sku || '') + ' creado «por llegar»' + (j.validado ? ' y solicitud validada' : ''), { type: 'success' });
+        await rsCargar();
+        if (!j.validado){
+          await ilusAlert({ title: 'Repuesto creado', message: 'El repuesto ' + (j.sku || '') + ' quedó creado, pero la solicitud no se pudo validar.', sub: j.aviso || '', type: 'warning' });
+          return;
+        }
+        // No hay stock de un repuesto recién creado: el camino es pedirlo por ticket.
+        const prov = parseInt(sCopia.proveedor_id, 10);
+        if (prov) gsAbrirCompra(s.id, prov);
+      },
+      onCancelar: function(){ mGest.show(); },
+      onDuplicado: function(id, sku){ mGest.show(); setTimeout(function(){ gsUsarExistente(id, sku); }, 300); },
+    });
+  });
+  mGest.hide();
 }
 function gsUsarExistente(id, sku){
   rsNuMostrar(false);

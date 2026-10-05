@@ -266,6 +266,31 @@
   .rb-filtros input,.rb-filtros select{min-height:44px;padding:10px 12px}
   #rbSelAll{width:22px;height:22px}
 }
+
+/* ── Modo "desde la solicitud" (2026-10-04) ── */
+.rb-sol{border:2px solid #fecaca;border-left:6px solid #dc2626;border-radius:14px;background:linear-gradient(180deg,#fff 0%,#fef2f2 100%);padding:12px 14px;margin-bottom:12px}
+.rb-sol-h{display:flex;align-items:center;gap:10px}
+.rb-sol-ico{width:40px;height:40px;border-radius:12px;background:#dc2626;color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex:none}
+.rb-sol-t{flex:1;min-width:0;display:flex;flex-direction:column}
+.rb-sol-t b{color:#0a0a0a;font-size:1rem}
+.rb-sol-t small{color:#4b5563;font-size:.82rem;overflow-wrap:anywhere}
+.rb-sol-pill{border-radius:50px;padding:4px 12px;font-weight:900;font-size:.8rem;background:#fee2e2;color:#991b1b;white-space:nowrap}
+.rb-sol-pill.ok{background:#dcfce7;color:#166534}
+.rb-sol-req{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 6px}
+.rb-sol-req span{display:inline-flex;align-items:center;gap:5px;border-radius:50px;padding:3px 10px;font-size:.78rem;font-weight:800}
+.rb-sol-req span.ok{background:#dcfce7;color:#166534}
+.rb-sol-req span.no{background:#fff;color:#991b1b;border:1px dashed #fca5a5}
+.rb-sol-info{font-size:.84rem;color:#92400e;background:#fff8e1;border-radius:10px;padding:7px 10px;display:flex;gap:8px;align-items:flex-start;margin-bottom:8px}
+.rb-sol-fila{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:6px}
+.rb-sol-fila .k{font-size:.7rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;min-width:52px}
+.rb-sol-fila small{color:#6b7280;font-size:.78rem}
+.rb-sol-opt{border:2px solid #e5e7eb;background:#fff;border-radius:10px;padding:7px 12px;min-height:44px;font-size:.86rem;text-align:left;display:inline-flex;align-items:center;gap:8px}
+.rb-sol-opt.on{border-color:#16a34a;background:#f0fdf4}
+.rb-sol-opt.on i{color:#16a34a}
+.rb-sol-foto{width:56px;height:56px;border-radius:10px;border:3px solid #e5e7eb;padding:0;overflow:hidden;background:#fff}
+.rb-sol-foto.on{border-color:#16a34a;box-shadow:0 0 0 3px #dcfce7}
+.rb-sol-foto img{width:100%;height:100%;object-fit:cover}
+.rb-sol-falta{margin-top:8px;font-size:.84rem;color:#991b1b;font-weight:700;display:flex;gap:6px;align-items:center}
 </style>
 
 <form method="get" class="rb-filtros">
@@ -541,6 +566,11 @@
       </div>
       <div class="modal-body">
         <input type="hidden" id="rbId">
+        {# 2026-10-04 (Daniel: "si hay que crearla, se crea con el mismo modal y las mismas
+           restricciones de los repuestos... ese modal se tiene que reciclar"): al crear el
+           repuesto desde «Gestionar solicitud» se usa ESTA ventana; el banner dice de qué
+           solicitud viene y qué falta. Ver rbAbrirDesdeSolicitud(). #}
+        <div id="rbSolBanner" class="rb-sol" hidden></div>
 
         <section class="rb-step" id="rbStep1">
           <div class="rb-step-header">
@@ -1396,6 +1426,9 @@ const RB_MAX_FOTOS = 3;
 // Sirve para saber si el usuario de verdad cambió el número y, si cambió,
 // exigir el motivo (rbMotivoAjuste) antes de dejar guardar.
 let RB_CANTIDAD_ORIGINAL = null;
+// Modo "desde la solicitud" (2026-10-04): null = alta/edición normal de Bodega.
+// {sid, s, evId, usarEquipo, creado, onCreado, onCancelar, onDuplicado}
+let RB_SOL = null;
 
 document.addEventListener('DOMContentLoaded', function(){
   const modalEl = document.getElementById('modalRepStock');
@@ -1405,6 +1438,12 @@ document.addEventListener('DOMContentLoaded', function(){
   // La tabla se refresca UNA vez al cerrar (no en cada guardado) — así
   // "Guardar y crear otro" encadena repuestos sin perder el modal.
   modalEl.addEventListener('hidden.bs.modal', function(){
+    if (RB_SOL){
+      const sol = RB_SOL;
+      rbSolSalir();
+      if (!sol.creado && typeof sol.onCancelar === 'function') sol.onCancelar();
+      return;
+    }
     if (RB_DIRTY) location.reload();
   });
   document.getElementById('rbModelosBuscar').addEventListener('input', rbBuscarModelosDebounced());
@@ -1714,7 +1753,9 @@ document.addEventListener('DOMContentLoaded', function(){
   });
 });
 
-async function rbAbrirNuevo(mantenerContexto){
+async function rbAbrirNuevo(mantenerContexto, opts){
+  opts = opts || {};
+  if (!opts.sol && RB_SOL) rbSolSalir();
   // mantenerContexto=true (viene de "Guardar y crear otro"): conserva
   // marca, ubicación y stock mínimo — cargar 20 piezas del mismo estante
   // no debería obligar a reelegirlas 20 veces.
@@ -1757,7 +1798,7 @@ async function rbAbrirNuevo(mantenerContexto){
   // RB_DRAFT_KEY): solo se ofrece recuperar en una apertura FRESCA del
   // modal (mantenerContexto=false) -- el flujo interno "Guardar y crear
   // otro" ya guardó todo en el servidor, ahí nunca hay nada que recuperar.
-  if (!mantenerContexto){
+  if (!mantenerContexto && !opts.sinBorrador){
     const draft = rbDraftCargar();
     if (draft){
       const minutos = Math.max(1, Math.round((Date.now() - draft.ts) / 60000));
@@ -1863,6 +1904,160 @@ function rbAbrirEditar(r, modelos, fotos){
 // EXISTENTE (RB_CANTIDAD_ORIGINAL no-null) deja de coincidir con la
 // original -- se oculta de nuevo si el usuario la vuelve a dejar igual
 // (ej. se arrepintió), para no pedir un motivo de "nada que ajustar".
+/* ══ Crear el repuesto DESDE UNA SOLICITUD con esta misma ventana (2026-10-04) ══
+   Daniel: "si hay que crearla, se crea con el mismo modal y las mismas
+   restricciones de los repuestos... ese modal se tiene que reciclar y utilizar
+   cada vez que se llame". Diferencias con el alta normal, todas del negocio:
+   · nace «por llegar»: cantidad 0 y sin ubicación (se escanea al recibirlo);
+   · proveedor, equipo compatible y foto son obligatorios (sin ellos no entra
+     al lote de compra ni se reconoce al llegar) -- el endpoint los vuelve a exigir;
+   · la foto puede ser una de la propia solicitud (se COPIA) y el equipo, el de
+     la solicitud;
+   · queda ligado a la solicitud (validada) en la misma operación, todo o nada.
+   s = la solicitud tal como la trae /repuestos/api/solicitudes-ot. */
+async function rbAbrirDesdeSolicitud(s, cb){
+  cb = cb || {};
+  await rbAbrirNuevo(false, { sol: true, sinBorrador: true });
+  RB_SOL = { sid: s.id, s: s, evId: null, usarEquipo: !!s.maquina_id, creado: false,
+             onCreado: cb.onCreado, onCancelar: cb.onCancelar, onDuplicado: cb.onDuplicado };
+  const fotos = (s.evidencias || []).filter(function(e){ return e.tipo === 'foto'; });
+  if (fotos.length) RB_SOL.evId = fotos[0].id;
+  document.getElementById('rbModalTitulo').innerHTML = '<i class="bi bi-box-seam me-2"></i>Crear repuesto · solicitud #' + s.id;
+  document.getElementById('rbDescripcion').value = s.repuesto_nombre || '';
+  const cant = document.getElementById('rbCantidad');
+  cant.value = 0; cant.disabled = true;
+  if (s.proveedor_id) rbSetProveedor(s.proveedor_id, s.proveedor_nombre || ('Proveedor #' + s.proveedor_id));
+  if (s.cliente_id) rbSetCliente(s.cliente_id, s.cliente_nombre || ('Cliente #' + s.cliente_id));
+  if (s.ticket_id) rbSetTicket(s.ticket_id, s.numero_ticket || ('#' + s.ticket_id));
+  // Ubicación: no se escanea ahora (todavía no llega)
+  document.getElementById('rbUbicacionVacia').style.display = 'none';
+  document.getElementById('rbUbicacionSeleccionada').innerHTML =
+    '<span class="rb-modelo-chip" style="background:#fff8e1;color:#92400e"><i class="bi bi-hourglass-split me-1"></i>Por llegar · se escanea al recibirlo</span>';
+  const otro = document.getElementById('rbBtnGuardarOtro'); if (otro) otro.hidden = true;
+  document.getElementById('rbSolBanner').hidden = false;
+  rbRefreshStepStates();
+  RB_MODAL.show();
+  // Si no está en la bodega 18 del ERP no pasa nada: el SKU REP- se genera solo.
+  setTimeout(function(){ if (document.getElementById('rbDescripcion').value.trim().length >= 3) rbSondearErp(); }, 450);
+}
+function rbSolFaltan(){
+  if (!RB_SOL) return [];
+  const f = [];
+  if (document.getElementById('rbDescripcion').value.trim().length < 3) f.push('la descripción');
+  const min = document.getElementById('rbStockMinimo').value;
+  if (min === '' || Number(min) < 0) f.push('el stock mínimo');
+  if (!document.getElementById('rbProveedor').value) f.push('el proveedor');
+  if (!((RB_MODELOS_ACTUALES.length + RB_MODELOS_PENDIENTES.length) > 0 || RB_MODELO_PENDIENTE || RB_SOL.usarEquipo)) f.push('a qué equipo sirve');
+  if (!(RB_FOTOS_PENDIENTES.length || RB_SOL.evId)) f.push('la foto');
+  return f;
+}
+function rbSolPintar(){
+  const b = document.getElementById('rbSolBanner');
+  if (!b || !RB_SOL) return;
+  const s = RB_SOL.s, faltan = rbSolFaltan();
+  const fotos = (s.evidencias || []).filter(function(e){ return e.tipo === 'foto'; });
+  const nuevaFoto = RB_FOTOS_PENDIENTES.length > 0;
+  const items = [
+    ['Qué es', document.getElementById('rbDescripcion').value.trim().length >= 3],
+    ['Stock mínimo', document.getElementById('rbStockMinimo').value !== '' && Number(document.getElementById('rbStockMinimo').value) >= 0],
+    ['Proveedor', !!document.getElementById('rbProveedor').value],
+    ['Equipo', (RB_MODELOS_ACTUALES.length + RB_MODELOS_PENDIENTES.length) > 0 || RB_MODELO_PENDIENTE || RB_SOL.usarEquipo],
+    ['Foto', nuevaFoto || !!RB_SOL.evId],
+  ];
+  b.innerHTML =
+    '<div class="rb-sol-h"><span class="rb-sol-ico"><i class="bi bi-inbox-fill"></i></span><div class="rb-sol-t">' +
+      '<b>Desde la solicitud #' + s.id + '</b><small>' + escHtmlRb(s.repuesto_nombre || '') + (s.cantidad ? ' × ' + escHtmlRb(String(s.cantidad)) : '') +
+      (s.cliente_nombre ? ' · ' + escHtmlRb(s.cliente_nombre) : '') + (s.numero_ot ? ' · ' + escHtmlRb(s.numero_ot) : '') + '</small></div>' +
+      '<span class="rb-sol-pill' + (faltan.length ? '' : ' ok') + '">' + (5 - faltan.length) + ' de 5</span></div>' +
+    '<div class="rb-sol-req">' + items.map(function(it){ return '<span class="' + (it[1] ? 'ok' : 'no') + '"><i class="bi ' + (it[1] ? 'bi-check-circle-fill' : 'bi-circle') + '"></i>' + it[0] + '</span>'; }).join('') + '</div>' +
+    '<div class="rb-sol-info"><i class="bi bi-hourglass-split"></i>Nace <b>«por llegar»</b>: cantidad 0 y sin ubicación (se escanea al recibirlo). Queda ligado a la solicitud y validado.</div>' +
+    (s.maquina_id ? '<div class="rb-sol-fila"><span class="k">Equipo</span><button type="button" class="rb-sol-opt' + (RB_SOL.usarEquipo ? ' on' : '') + '" onclick="rbSolUsarEquipo(!RB_SOL.usarEquipo)">' +
+      '<i class="bi ' + (RB_SOL.usarEquipo ? 'bi-check-square-fill' : 'bi-square') + '"></i>Sirve para el equipo de la solicitud: <b>' + escHtmlRb(s.maquina_nombre || ('#' + s.maquina_id)) + '</b></button>' +
+      '<small>o agrega otros modelos en el paso 4</small></div>' : '') +
+    '<div class="rb-sol-fila"><span class="k">Foto</span>' +
+      (fotos.length ? fotos.map(function(e){ const on = !nuevaFoto && String(RB_SOL.evId) === String(e.id);
+        return '<button type="button" class="rb-sol-foto' + (on ? ' on' : '') + '" onclick="rbSolFoto(' + e.id + ')" title="Usar esta foto de la solicitud"><img src="' + escHtmlRb(e.url) + '" alt="Foto de la solicitud" loading="lazy"></button>'; }).join('') : '') +
+      '<small>' + (nuevaFoto ? 'Se usa la foto que subiste en el paso 5.' : (fotos.length ? 'Toca una foto de la solicitud, o sube otra en el paso 5.' : 'La solicitud no trae fotos: súbela en el paso 5.')) + '</small></div>' +
+    (faltan.length ? '<div class="rb-sol-falta"><i class="bi bi-exclamation-circle-fill"></i>Para crearlo falta: <b>' + faltan.join(', ') + '</b>.</div>' : '');
+}
+function rbSolFoto(evId){ if (!RB_SOL) return; RB_SOL.evId = evId; rbSolPintar(); }
+function rbSolUsarEquipo(on){ if (!RB_SOL) return; RB_SOL.usarEquipo = !!on; rbRefreshStepStates(); }
+function rbSolSalir(){
+  RB_SOL = null;
+  const b = document.getElementById('rbSolBanner'); if (b){ b.hidden = true; b.innerHTML = ''; }
+  const cant = document.getElementById('rbCantidad'); if (cant) cant.disabled = false;
+  const uv = document.getElementById('rbUbicacionVacia'); if (uv) uv.style.display = '';
+  const otro = document.getElementById('rbBtnGuardarOtro'); if (otro) otro.hidden = false;
+}
+async function rbGuardarDesdeSolicitud(){
+  const sol = RB_SOL;
+  const faltan = rbSolFaltan();
+  if (faltan.length){
+    ilusToast('Para crearlo falta: ' + faltan.join(', '), {type:'warning'});
+    document.getElementById('rbSolBanner').scrollIntoView({behavior:'smooth', block:'start'});
+    return;
+  }
+  const v = function(id){ const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+  const fd = new FormData();
+  fd.append('descripcion', v('rbDescripcion'));
+  fd.append('stock_minimo', v('rbStockMinimo'));
+  fd.append('proveedor_id', v('rbProveedor'));
+  fd.append('marca_id', v('rbMarca'));
+  fd.append('codigo_fabricante', v('rbCodigoFabricante'));
+  fd.append('costo_unitario', rbCostoRaw() || '');
+  if (RB_SKU_ERP_ELEGIDO) fd.append('sku_erp', RB_SKU_ERP_ELEGIDO);
+  // Equipo: el de la solicitud; o los modelos elegidos (se asocian justo después
+  // y eso apaga "pendiente"); o la declaración honesta "aún no sé".
+  fd.append('modelo_modo', sol.usarEquipo ? 'equipo' : 'pendiente');
+  // Foto: la primera nueva viaja con el alta; si no, una de la solicitud (se copia).
+  let fotoUsada = null;
+  if (RB_FOTOS_PENDIENTES.length){ fotoUsada = RB_FOTOS_PENDIENTES[0]; fd.append('foto', fotoUsada.blob, fotoUsada.nombre || 'foto.jpg'); }
+  else fd.append('foto_evidencia_id', sol.evId);
+  const btns = document.querySelectorAll('#modalRepStock .modal-footer .btn-danger');
+  btns.forEach(function(b){ b.disabled = true; });
+  let j = {};
+  try {
+    const r = await fetch('/repuestos/api/solicitudes-ot/' + sol.sid + '/crear-repuesto', { method:'POST', body: fd, credentials:'same-origin' });
+    j = await r.json().catch(function(){ return {}; });
+  } catch(e){ j = { ok: false, error: 'Sin conexión.' }; }
+  btns.forEach(function(b){ b.disabled = false; });
+  if (!j.ok){
+    if (j.duplicado){
+      const usar = await ilusConfirm({ title: 'Ese repuesto ya existe', message: j.error || 'Ya existe un repuesto igual.',
+        sub: 'Para no duplicarlo, úsalo en la solicitud.', okLabel: 'Usar el existente', cancelLabel: 'Seguir editando' });
+      if (usar){
+        RB_SOL.creado = true;   // no reabrir "Gestionar" como cancelación: lo hace onDuplicado
+        RB_MODAL.hide();
+        if (typeof sol.onDuplicado === 'function') sol.onDuplicado(j.duplicado.id, j.duplicado.sku);
+      }
+      return;
+    }
+    ilusToast(j.error || 'No se pudo crear el repuesto.', {type:'error'});
+    return;
+  }
+  const rid = j.id;
+  // Lo demás que se cargó en la ventana: fotos extra, otros modelos y datos opcionales.
+  if (fotoUsada){ URL.revokeObjectURL(fotoUsada.url); RB_FOTOS_PENDIENTES = RB_FOTOS_PENDIENTES.slice(1); }
+  if (RB_FOTOS_PENDIENTES.length) await rbSubirFotosPendientes(rid);
+  if (RB_MODELOS_PENDIENTES.length) await rbSubirModelosPendientes(rid);
+  const extra = {};
+  ['rbLargo:largo', 'rbAncho:ancho', 'rbAlto:alto', 'rbBultos:bultos'].forEach(function(par){
+    const k = par.split(':'); if (v(k[0])) extra[k[1]] = v(k[0]);
+  });
+  if (v('rbPesoKg')) extra.peso_kg = parseFloat(v('rbPesoKg')) / 1000;   // el campo está en gramos
+  if (v('rbTicketId')) extra.ticket_id = v('rbTicketId');
+  if (v('rbNotas')) extra.notas = v('rbNotas') + ' · Creado «por llegar» desde la solicitud #' + sol.sid + ': falta escanear su ubicación al recibirlo.';
+  if (Object.keys(extra).length){
+    try {
+      await fetch('/mantenciones/api/repuestos-stock/' + rid, { method:'PUT', credentials:'same-origin',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify(extra) });
+    } catch(e){}
+  }
+  RB_SOL.creado = true;
+  RB_MODAL.hide();
+  if (typeof sol.onCreado === 'function') sol.onCreado(j);
+}
+
 function rbCantidadCambio(){
   const wrap = document.getElementById('rbMotivoAjusteWrap');
   if (RB_CANTIDAD_ORIGINAL === null){ wrap.style.display = 'none'; return; }
@@ -1892,6 +2087,7 @@ function rbSetAvatarPrincipal(url){
 }
 
 async function rbGuardar(crearOtro){
+  if (RB_SOL && !document.getElementById('rbId').value) return rbGuardarDesdeSolicitud();
   const id = document.getElementById('rbId').value;
   const descripcion = document.getElementById('rbDescripcion').value.trim();
   const cantidad = document.getElementById('rbCantidad').value;
@@ -2743,19 +2939,20 @@ const RB_STEP_RULES = {
   1: () => document.getElementById('rbDescripcion').value.trim().length > 0,
   2: () => document.getElementById('rbCantidad').value !== '' && Number(document.getElementById('rbCantidad').value) >= 0 &&
            document.getElementById('rbStockMinimo').value !== '' && Number(document.getElementById('rbStockMinimo').value) >= 0 &&
-           !!document.getElementById('rbUbicacion').value,
+           (RB_SOL ? true : !!document.getElementById('rbUbicacion').value),
   3: () => !!document.getElementById('rbMarca').value || !!document.getElementById('rbProveedor').value,
   // 🔧 FIX 2026-09-16: "Pendiente de identificar" ya dejaba GUARDAR (gate
   // de rbGuardar) pero el paso seguia pintado en rojo -- el tecnico veia
   // un paso incompleto que en realidad estaba resuelto. Mismo criterio
   // que el gate: la declaracion honesta cuenta como paso cumplido.
-  4: () => (RB_MODELOS_ACTUALES.length + RB_MODELOS_PENDIENTES.length) > 0 || RB_MODELO_PENDIENTE,
+  4: () => (RB_MODELOS_ACTUALES.length + RB_MODELOS_PENDIENTES.length) > 0 || RB_MODELO_PENDIENTE || !!(RB_SOL && RB_SOL.usarEquipo),
 };
 function rbRefreshStepStates(){
   Object.keys(RB_STEP_RULES).forEach(function(n){
     const sec = document.getElementById('rbStep' + n);
     if (sec) sec.classList.toggle('is-complete', !!RB_STEP_RULES[n]());
   });
+  if (RB_SOL) rbSolPintar();
 }
 
 // ── Fotos del repuesto (máx 3, comprimidas en el navegador) ──
