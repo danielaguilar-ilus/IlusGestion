@@ -62528,7 +62528,7 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
                 continue
             doc_key = _doc_origen_key(tido, nudo)
             ya = _asignados_por_sku(tido, nudo)
-            doc_fecha = header.get("fecha") or fecha_reg
+            doc_fecha = _fecha_doc_a_date(header.get("fecha")) or _fecha_doc_a_date(fecha_reg)
             fecha_inst = t.get("cerrado_at") if t.get("estado") in ("resolved", "closed") else None
             n_doc = 0
             for ln in (lineas or []):
@@ -62563,7 +62563,7 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
                     "doc_fecha": doc_fecha, "fecha_inst": fecha_inst, "ticket": t.get("numero_ticket")})
                 g_["cantidad"] += saldo
                 n_doc += saldo
-            docs_info.append({"doc": doc_key, "fecha": str(doc_fecha)[:10] if doc_fecha else "", "equipos": n_doc})
+            docs_info.append({"doc": doc_key, "fecha": doc_fecha.strftime("%d/%m/%Y") if doc_fecha else "", "equipos": n_doc})
         # Al final se descuenta lo que la ficha YA tiene de ese SKU: una segunda corrida no duplica nada.
         if por_sku:
             existentes = {(r["sku"] or ""): int(r["n"] or 0) for r in (mysql_fetchall(
@@ -62607,7 +62607,8 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
                    "omitidos": len(omitidos), "omitidos_detalle": omitidos[:20]}
         if not confirmar:
             return True, {"preview": True, **resumen,
-                          "candidatos": [{k: (str(v)[:10] if k in ("doc_fecha", "fecha_inst") and v else v)
+                          "candidatos": [{k: ((v.strftime("%d/%m/%Y") if hasattr(v, "strftime") else str(v)[:10])
+                                              if k in ("doc_fecha", "fecha_inst") and v else v)
                                           for k, v in c.items()} for c in candidatos]}
         clasif = _inc_clasificacion_skus_batch([c["sku"] for c in candidatos]) if candidatos else {}
         creados, errores = [], []
@@ -90749,6 +90750,26 @@ def _ot2_zz_ya_declarado(tido, nudo, excluir_vid):
     return por_codigo, envio
 
 
+def _fecha_doc_a_date(v):
+    """La fecha del documento del ERP llega como texto 'dd/mm/aaaa' (header['fecha'] de _cubicador_fetch). La columna
+    mant_maquinas.doc_fecha es DATE: insertar el texto falla con MySQL 1292 «Incorrect date value». Bug real en
+    producción (logs 29-sep y 01-oct, OT 303 y 337): el alta automática de equipos al cerrar la OT fallaba siempre y
+    las máquinas nunca llegaban a la ficha. Acepta date/datetime, 'dd/mm/aaaa', 'aaaa-mm-dd'; si no, None."""
+    if not v:
+        return None
+    if isinstance(v, datetime):
+        return v.date()
+    if hasattr(v, "year") and hasattr(v, "month"):
+        return v
+    txt = str(v).strip()[:10]
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(txt, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 def _ot_equipos_desde_doc_core(vid, confirmar=False, usuario=None):
     """Núcleo del alta de equipos desde el documento de la OT.
 
@@ -90797,7 +90818,7 @@ def _ot_equipos_desde_doc_core(vid, confirmar=False, usuario=None):
 
     _doc_key = _doc_origen_key(tido, nudo)
     _ya = _asignados_por_sku(tido, nudo)
-    _doc_fecha = header.get("fecha") or None
+    _doc_fecha = _fecha_doc_a_date(header.get("fecha"))
     # La fecha de INSTALACIÓN es la de la visita, no la del documento: el
     # documento se emite cuando se vende, la máquina se instala cuando el
     # técnico va. Daniel: "indicar que fue una instalación con esa fecha".
@@ -90837,7 +90858,7 @@ def _ot_equipos_desde_doc_core(vid, confirmar=False, usuario=None):
     if not confirmar:
         return True, {
             "preview": True, "documento": _doc_key,
-            "doc_fecha": str(_doc_fecha)[:10] if _doc_fecha else "",
+            "doc_fecha": _doc_fecha.strftime("%d/%m/%Y") if _doc_fecha else "",
             "fecha_instalacion": str(_fecha_inst)[:10] if _fecha_inst else "",
             "candidatos": candidatos, "omitidos": omitidos,
             "total_a_crear": sum(c["cantidad"] for c in candidatos),

@@ -338,6 +338,25 @@ def test_vigilancia_se_puede_apagar(monkeypatch):
 
 
 # ───────── Productos de la instalación → equipos de la ficha ─────────
+def _fecha_doc():
+    src = open(_APP, encoding="utf-8").read()
+    i = src.index("\ndef _fecha_doc_a_date(")
+    ns = {"datetime": dt.datetime}
+    exec(src[i:src.index("\ndef ", i + 5)], ns)
+    return ns["_fecha_doc_a_date"]
+
+
+@pytest.mark.parametrize("entrada,esperado", [
+    ("29/07/2026", dt.date(2026, 7, 29)),      # así llega del ERP (bug real: MySQL 1292 en el alta desde la OT)
+    ("2026-07-29", dt.date(2026, 7, 29)),
+    (dt.datetime(2026, 7, 29, 10, 0), dt.date(2026, 7, 29)),
+    (dt.date(2026, 7, 29), dt.date(2026, 7, 29)),
+    ("", None), (None, None), ("basura", None),
+])
+def test_fecha_del_documento_a_date(entrada, esperado):
+    assert _fecha_doc()(entrada) == esperado
+
+
 def _equipos_ns(header=True, asignados=None, equipos_ticket=None, numero_documento="FCV-0001234", en_ficha=None):
     src = open(_APP, encoding="utf-8").read()
     a = src.index("_TIDOS_VENTA = (")
@@ -366,7 +385,7 @@ def _equipos_ns(header=True, asignados=None, equipos_ticket=None, numero_documen
               {"sku": "KB20", "cantidad": 4, "nombre_app": "Kettlebell 20", "tiene_ficha": True},
               {"sku": "DE", "cantidad": 828000, "descripcion_erp": "glosa de la factura"},      # basura real (FCV 11150)
               {"sku": "HTE", "cantidad": 1, "descripcion_erp": "no es un producto"}]
-    ns = {"re": _re, "print": print,
+    ns = {"re": _re, "print": print, "_fecha_doc_a_date": _fecha_doc(),
           "_rut_canon": lambda r: "1-9", "_rut_cuerpo": lambda r: "1",
           "mysql_fetchall": fetchall, "mysql_fetchone": fetchone,
           "mysql_execute": lambda q, p=(): calls["insert"].append(p),
@@ -404,7 +423,7 @@ def test_maquinas_una_por_unidad_y_accesorios_en_un_lote_fuera_del_plan():
     kb = [p for p in calls["insert"] if p[1] == "KB20"]
     assert len(trot) == 2 and all(p[4] == 1 for p in trot)               # cada trotadora con su fila (y su serie)
     assert len(kb) == 1 and kb[0][4] == 4 and kb[0][3] is None           # 4 kettlebells = un lote, sin serie
-    assert trot[0][5] == "FCV 1234" and trot[0][6] == "2026-02-20"       # documento y fecha de emisión
+    assert trot[0][5] == "FCV 1234" and trot[0][6] == dt.date(2026, 2, 20)  # documento y fecha de emisión (DATE, no texto)
     assert trot[0][9] == 1 and kb[0][9] == 0                              # el accesorio no entra al plan
 
 
