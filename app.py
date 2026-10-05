@@ -119211,8 +119211,9 @@ def mant_analytics_data():
         sla_row = mysql_fetchone(
             "SELECT "
             "  COUNT(*) AS total, "
-            "  SUM(CASE WHEN fecha_realizada IS NOT NULL "
-            "           AND fecha_realizada <= DATE_ADD(fecha_programada, INTERVAL 1 DAY) "
+            # OT 2.0 no llena fecha_realizada: se usa la hora real de término o de cierre.
+            "  SUM(CASE WHEN COALESCE(fecha_realizada, DATE(hora_real_fin), DATE(cerrada_at)) IS NOT NULL "
+            "           AND COALESCE(fecha_realizada, DATE(hora_real_fin), DATE(cerrada_at)) <= DATE_ADD(fecha_programada, INTERVAL 1 DAY) "
             "           THEN 1 ELSE 0 END) AS dentro_sla "
             "  FROM mant_visitas "
             " WHERE estado IN ('completada','cerrada') "
