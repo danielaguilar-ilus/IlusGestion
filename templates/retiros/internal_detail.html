@@ -2280,8 +2280,10 @@ window.RETIROS_DETAIL_DATA = {
   </div>
 </div>
 
-{# ════════ MARCAR RETIRADO con EVIDENCIA + CHECK WMS (Daniel 2026-06-20) ════════ #}
-{% if req.status == 'en_preparacion' %}
+{# ════════ MARCAR RETIRADO con EVIDENCIA + CHECK WMS (Daniel 2026-06-20) ════════
+   2026-10-05: también con la cita confirmada. Si bodega termina y despacha en Check antes de que alguien envíe el retiro a preparación,
+   no había cómo marcarlo entregado sin mandarle al cliente el aviso «estamos preparando» con el pedido ya entregado. #}
+{% if req.status in ['en_preparacion', 'agenda_confirmada'] %}
 <div class="modal fade" id="modalRetirar" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content border-0 shadow">
@@ -2312,6 +2314,9 @@ window.RETIROS_DETAIL_DATA = {
             <input name="evidencia_foto" type="file" class="form-control" accept="image/*" capture="environment">
             <div class="form-text">Ej: el pedido cargado en el vehículo o la persona retirando. Queda en los adjuntos del retiro.</div>
           </div>
+          {% if req.status == 'agenda_confirmada' %}
+          <div class="alert alert-info py-2 px-3 small mb-2"><i class="bi bi-info-circle me-1"></i>Este retiro no pasó por «En preparación»: al cliente <strong>no</strong> le llega el aviso «estamos preparando», solo el de retiro completado.</div>
+          {% endif %}
           <div class="text-muted small mt-2"><i class="bi bi-info-circle me-1"></i>Esto CIERRA el proceso: el cliente recibe el correo de "retiro completado".</div>
         </div>
         <div class="modal-footer">

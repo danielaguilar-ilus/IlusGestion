@@ -6245,11 +6245,31 @@ def register_pickup_routes(app, ctx):
     def _tiene_responsable(req):
         return bool(req.get("responsable_user_id") or (req.get("responsable_nombre") or "").strip())
 
+    # Los retiros creados ANTES de la regla (03-oct-2026, 00:00 hora Chile ≈ 03:00 UTC) no se frenan por no tener responsable: avanzaron cuando
+    # no era una restricción (Daniel 2026-10-05, retiro real RET-VQJ58N: «esto avanzó antes de que fuera una restricción, por eso no avanzó»).
+    # Para ellos sigue el aviso «falta responsable», pero pueden seguir hasta el final. RETIROS_EXIGE_RESPONSABLE_DESDE (AAAA-MM-DD, UTC) lo mueve.
+    def _regla_responsable_desde():
+        try:
+            return datetime.strptime((os.environ.get("RETIROS_EXIGE_RESPONSABLE_DESDE") or "2026-10-03")[:10], "%Y-%m-%d") + timedelta(hours=3)
+        except ValueError:
+            return datetime(2026, 10, 3, 3, 0)
+
+    def _anterior_a_la_regla_responsable(req):
+        creado = req.get("created_at")
+        try:
+            if isinstance(creado, str):
+                creado = datetime.strptime(creado[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
+            return bool(creado) and creado.replace(tzinfo=None) < _regla_responsable_desde()
+        except (ValueError, TypeError, AttributeError):
+            return False
+
     def _sin_responsable(req):
-        """¿Hay que pedir que alguien se haga cargo antes de dejar avanzar este retiro? (sin responsable y todavía no terminado)"""
+        """¿Hay que pedir que alguien se haga cargo antes de dejar avanzar este retiro? (sin responsable, todavía no terminado y creado después de la regla)"""
         if not _exige_responsable_activo():
             return False
         if (req.get("status") or "") in ("rechazada", "cerrada", "retirada", "fallida"):
+            return False
+        if _anterior_a_la_regla_responsable(req):
             return False
         return not _tiene_responsable(req)
 
@@ -11581,7 +11601,7 @@ def register_pickup_routes(app, ctx):
             "prod_conf_quien": (marcas.get("productos_confirmados") or {}).get("quien"),
             "adelantado": bool(propuesta or cita or st in _GUIA_ADELANTADOS),
             "responsable": (req.get("responsable_nombre") or "").strip() or ("Responsable asignado" if req.get("responsable_user_id") else ""),
-            "exige_responsable": _exige_responsable_activo(),
+            "exige_responsable": _exige_responsable_activo() and not _anterior_a_la_regla_responsable(req),
             "correo_ok": _guia_correo_ok(req),
             "evidencia_retiro": _guia_evidencia_retiro(rid, req),
             "propuesta": propuesta, "cita": cita, "cambio_pedido": cambio,
@@ -12063,7 +12083,9 @@ def register_pickup_routes(app, ctx):
     #   · UNA sola vez por retiro: si una persona lo devuelve a «Cita confirmada», el automático no lo vuelve a mover ni a escribirle al cliente;
     #   · nunca si el cliente pidió cambiar la fecha y nadie le respondió (la guarda va también DENTRO del UPDATE: a prueba de lecturas viejas);
     #   · nunca si una factura o boleta del retiro está también en OTRO retiro activo (Check informa por documento, no por retiro);
-    #   · nunca si el retiro no tiene responsable declarado (para avanzar hay que declararlo: ver _sin_responsable);
+    #   · el automático NO exige responsable (no es una persona: 2026-10-05 el retiro real no tenía y bodega terminó sola, sin que ILUS lo notara);
+    #     el aviso interno dice «sin responsable» para que alguien toque «Me hago cargo»;
+    #   · Check ya preparó Y despachó pero el retiro sigue en «Cita confirmada»: no se mueve solo, se avisa al equipo (_prep_auto_desfase);
     #   · la señal debe verse en dos lecturas separadas por RETIROS_CHECK_CONFIRMACION_S segundos y la segunda se pide DE VERDAD a Check;
     #   · el cambio de estado es atómico (UPDATE … WHERE status='agenda_confirmada'): si el botón gana, no se repite nada.
     #  Check solo se consulta (REGLA #4.4).
@@ -12193,14 +12215,42 @@ def register_pickup_routes(app, ctx):
             print(f"[retiros-prep-auto] detalle Check rid={rid}: {e}", flush=True)
             return ""
 
+    def _prep_auto_desfase(rid, req, ev):
+        """Check ya preparó Y despachó el pedido pero el retiro sigue en «Cita confirmada»: el envío automático NO lo mueve (con unidades despachadas el
+        pedido pudo entregarse antes, y «Estamos preparando» llegaría con el pedido ya entregado), así que se AVISA al equipo, una vez al día, para que
+        lo marquen como RETIRADO (Daniel 2026-10-05: «si Check se completó, ¿por qué no avisó que está preparado?»). Solo dentro de la ventana y del
+        horario de la bodega; nunca le escribe al cliente. Devuelve True si avisó ahora."""
+        try:
+            if (req.get("status") or "") != "agenda_confirmada" or not ev.get("listo") or not (ev.get("despachadas") or 0) > 0:
+                return False
+            if not _prep_auto_activo() or not _prep_auto_en_ventana(req) or not _prep_auto_en_horario():
+                return False
+            if _aviso_equipo_ya_enviado(rid, "check_desfase", horas=24):
+                return False
+            code = req.get("code") or "?"
+            log_event(rid, "check_desfase", "agenda_confirmada", "agenda_confirmada",
+                      f"Check ya preparó y despachó el pedido ({ev.get('despachadas')} de {ev.get('pedidas')} unidades despachadas), pero el retiro sigue en "
+                      f"«Cita confirmada». Si el cliente ya se lo llevó, hay que marcarlo como RETIRADO. Aviso al equipo el "
+                      f"{_ahora_chile().strftime('%d/%m/%Y %H:%M')} (hora Chile).", "sistema", "Check WMS")
+            _notificar_equipo_retiros(
+                f"📦 {code}: Check ya preparó y despachó el pedido",
+                f"{req.get('customer_name') or 'Cliente'} — en ILUS sigue en «Cita confirmada». Si el cliente ya se lo llevó, márcalo como RETIRADO "
+                f"(quién retiró). No lo envíes a preparación: le llegaría el aviso «estamos preparando» con el pedido ya entregado.",
+                rid, code, prioridad="alta", tipo="retiro_desfase", send_email=False)
+            return True
+        except Exception as e:
+            print(f"[retiros-prep-auto] aviso de desfase rid={rid}: {e}", flush=True)
+            return False
+
     def _prep_auto_aplicar(rid, req, ev, confirmado=None, sincrono=False):
         """Pasa el retiro de «cita confirmada» a «En preparación» si Check ya muestra que bodega empezó. Devuelve True si ESTA llamada
         hizo el cambio. `confirmado=True` = el que llama ya vio la señal en dos lecturas separadas (barrido del cron); None = se exigen dos
         lecturas separadas por RETIROS_CHECK_CONFIRMACION_S segundos: la primera solo toma nota y la segunda se pide DE VERDAD a Check, sin
         su memoria de 45 s (la ficha abierta y el barrido en hilo). `sincrono=True` manda el correo al cliente dentro de la misma petición
         (el cron: Cloud Run casi no da CPU a un hilo que sigue corriendo cuando la petición ya respondió)."""
+        _prep_auto_desfase(rid, req, ev)        # Check ya despachó y el retiro sigue en «Cita confirmada»: no se mueve solo, pero se AVISA
         if (req.get("status") or "") != "agenda_confirmada" or not _prep_auto_activo() or not ev.get("iniciada_auto") \
-                or _sin_responsable(req) or not _prep_auto_en_ventana(req) or not _prep_auto_en_horario():
+                or not _prep_auto_en_ventana(req) or not _prep_auto_en_horario():
             _CHECK_INICIO_VISTO.pop(rid, None)
             return False
         espera = _check_confirmacion_s()
@@ -12224,7 +12274,7 @@ def register_pickup_routes(app, ctx):
             except Exception:
                 pass
             fresco = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or {}
-            if (fresco.get("status") or "") != "agenda_confirmada" or not _prep_auto_en_ventana(fresco) or _sin_responsable(fresco) \
+            if (fresco.get("status") or "") != "agenda_confirmada" or not _prep_auto_en_ventana(fresco) \
                     or _prep_auto_cambio_pendiente(rid) or _prep_auto_ya_paso(rid):
                 _CHECK_INICIO_VISTO.pop(rid, None)
                 return False
@@ -12281,7 +12331,8 @@ def register_pickup_routes(app, ctx):
         try:
             _notificar_equipo_retiros(
                 f"📦 Retiro {req.get('code') or '?'} en preparación (automático)",
-                f"{req.get('customer_name') or 'Cliente'} — Check detectó que bodega ya empezó a juntar el pedido.",
+                f"{req.get('customer_name') or 'Cliente'} — Check detectó que bodega ya empezó a juntar el pedido."
+                + ("" if _tiene_responsable(req) else " ⚠️ Este retiro NO tiene responsable: alguien debe tocar «Me hago cargo»."),
                 rid, req.get("code") or "?", prioridad="media", tipo="retiro_preparacion", send_email=False)
         except Exception as e:
             print(f"[retiros-prep-auto] aviso equipo rid={rid}: {e}", flush=True)
@@ -12319,7 +12370,7 @@ def register_pickup_routes(app, ctx):
         a Check tras RETIROS_CHECK_CONFIRMACION_S segundos (una sola espera para todos los candidatos). Fuera del horario de la bodega no
         lee ni escribe nada (salvo con dry=True, que solo mira)."""
         t0 = time.time()
-        res = {"activo": _prep_auto_activo(), "en_horario": True, "revisados": 0, "con_senal": [], "pasaron": [], "errores": 0}
+        res = {"activo": _prep_auto_activo(), "en_horario": True, "revisados": 0, "con_senal": [], "pasaron": [], "desfase": [], "errores": 0}
         if not res["activo"]:
             return res
         res["en_horario"] = _prep_auto_en_horario()
@@ -12337,6 +12388,8 @@ def register_pickup_routes(app, ctx):
                 rid = int(f["id"])
                 req, ev = _lee(rid)
                 res["revisados"] += 1
+                if req and ev and not dry and _prep_auto_desfase(rid, req, ev):
+                    res["desfase"].append(req.get("code") or rid)
                 if req and ev and ev.get("iniciada_auto") and _prep_auto_en_ventana(req) and not _prep_auto_cambio_pendiente(rid):
                     senal.append(rid)
                     res["con_senal"].append(req.get("code") or rid)

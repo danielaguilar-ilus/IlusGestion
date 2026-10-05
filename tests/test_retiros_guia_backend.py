@@ -776,6 +776,31 @@ class TestResponsableObligatorio:
         r = env.cli.post(f"/retiros/{RID}/status", data={"status": "en_revision"})
         assert r.status_code == 302 and env.db.solicitudes[RID]["status"] == "en_revision"
 
+    def test_un_retiro_anterior_a_la_regla_no_se_frena_por_no_tener_responsable(self, env):
+        """Retiro real RET-VQJ58N (2026-10-05): «esto avanzó antes de que fuera una restricción, por eso no avanzó». Los creados antes del 03-oct
+        pueden seguir hasta el final; la guía solo les avisa que falta el responsable."""
+        import datetime as dt
+        self._sin_resp(env, status="agenda_confirmada", confirmed_date="2026-10-05", created_at=dt.datetime(2026, 9, 30, 15, 0))
+        g = guia(env)
+        assert g["sin_responsable"] is False and g["siguiente"] == 5
+        assert paso(g, 2)["estado"] == "pendiente" and paso(g, 2)["secundario"] is True       # aviso, no bloqueo
+        assert not paso(g, 5)["accion"].get("deshabilitada")
+        r = env.cli.post(f"/retiros/{RID}/status", data={"status": "retirada", "retirado_por": "Gerd Müller"})
+        assert r.status_code == 302 and env.db.solicitudes[RID]["status"] == "retirada"
+
+    def test_un_retiro_creado_despues_de_la_regla_si_se_frena(self, env):
+        import datetime as dt
+        self._sin_resp(env, status="agenda_confirmada", confirmed_date="2026-10-05", created_at=dt.datetime(2026, 10, 4, 15, 0))
+        assert guia(env)["sin_responsable"] is True
+        r = env.cli.post(f"/retiros/{RID}/status", data={"status": "retirada"})
+        assert r.status_code == 302 and env.db.solicitudes[RID]["status"] == "agenda_confirmada"
+
+    def test_la_fecha_de_corte_se_puede_mover_por_entorno(self, env, monkeypatch):
+        import datetime as dt
+        monkeypatch.setenv("RETIROS_EXIGE_RESPONSABLE_DESDE", "2026-10-10")
+        self._sin_resp(env, status="agenda_confirmada", confirmed_date="2026-10-05", created_at=dt.datetime(2026, 10, 4, 15, 0))
+        assert guia(env)["sin_responsable"] is False
+
     def test_la_regla_se_puede_apagar_por_entorno(self, env, monkeypatch):
         monkeypatch.setenv("RETIROS_EXIGE_RESPONSABLE", "0")
         self._sin_resp(env)

@@ -66,6 +66,7 @@ class BDFalsa:
         self._id_log = 0
         self.falla_si = []       # [(regex, Excepcion)]: hace fallar consultas que coincidan
         self.falla_si_params = []   # [(regex, predicado(params)->bool, Excepcion)]: falla solo si el predicado da True
+        self.admins = []            # [{'id': 11}, …]: quienes reciben la campana de avisos al equipo
         self.snapshot_viejo = False  # True: la lectura «¿hay un cambio pedido por el cliente?» sigue viendo el mundo de hace un minuto
         self.al_leer = []           # [(regex, funcion)]: tras la PRIMERA lectura que coincide, corre la función (alguien cambia algo justo después)
 
@@ -163,6 +164,8 @@ class BDFalsa:
         if low.startswith("select id, sku, descripcion, cantidad, picked, picked_by, picked_at from pickup_picking_items"):
             rid = int(params[0])
             return [dict(x) for x in self.picking if x["request_id"] == rid]
+        if low.startswith("select id from `app_users` where active=1"):
+            return [dict(a) for a in self.admins]
         if low.startswith("select id, confirmed_date from `pickup_requests` where status='agenda_confirmada' and confirmed_date between"):
             import datetime as _dt
             desde, hasta = params[0], params[1]
@@ -219,6 +222,13 @@ class BDFalsa:
             rid = int(params[0])
             for x in self.logs:
                 if x["request_id"] == rid and x["action"] == "estado_actualizado" and x["new_status"] == m_est.group(1):
+                    return {"id": x["id"]}
+            return None
+        if low.startswith("select id from `pickup_logs` where request_id=%s and action=%s and created_at >="):
+            # «¿ya se avisó al equipo por esto?» (el tiempo no se simula: basta que exista el evento)
+            self.consultas.append((s, params))
+            for x in self.logs:
+                if x["request_id"] == int(params[0]) and x["action"] == params[1]:
                     return {"id": x["id"]}
             return None
         if low.startswith("select otro_r.code as code from pickup_request_docs mia"):

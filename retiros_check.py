@@ -122,6 +122,7 @@ def evaluar(resumenes):
       iniciada  bodega YA EMPEZÓ a juntar (alguna unidad pickeada o más allá) y los datos se entienden
       iniciada_auto  iniciada Y sin unidades despachadas: es la señal con la que ILUS pasa solo el retiro a «En preparación»
       pickeadas  unidades pickeadas (o más allá)
+      despachadas  unidades que Check ya da por despachadas (entregadas)
       pedidas  unidades pedidas (menos canceladas)
       etapas   por etapa: clave, n, titulo, texto, hechas, de, completa
       faltan   unidades que aún no están pickeadas
@@ -198,7 +199,7 @@ def evaluar(resumenes):
     else:
         estado, frase = "en_proceso", "Check ya tiene el pedido, pero bodega todavía no empieza a juntarlo."
     return {"estado": estado, "listo": listo, "listo_auto": listo_auto, "pedidas": _ent(pedidas), "faltan": _ent(faltan),
-            "pickeadas": _ent(adelantadas), "iniciada": iniciada, "iniciada_auto": iniciada_auto,
+            "pickeadas": _ent(adelantadas), "despachadas": _ent(despachadas), "iniciada": iniciada, "iniciada_auto": iniciada_auto,
             "etapas": etapas, "frase": frase, "alerta": alerta,
             "documentos_con_datos": len(con_datos), "documentos": len(resumenes)}
 
@@ -210,5 +211,5 @@ def _ent(x):
 
 def _vacio(estado, frase, n_docs):
     return {"estado": estado, "listo": False, "listo_auto": False, "pedidas": 0, "faltan": 0, "etapas": [],
-            "pickeadas": 0, "iniciada": False, "iniciada_auto": False,
+            "pickeadas": 0, "despachadas": 0, "iniciada": False, "iniciada_auto": False,
             "frase": frase, "alerta": "", "documentos_con_datos": 0, "documentos": n_docs}

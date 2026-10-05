@@ -4031,8 +4031,12 @@ async function _confirmarEnviarPreparacion(btn){
   const email = D.contactEmail || '';
   const quien = D.contactName || 'el cliente';
   const unidades = document.querySelector('.pd-totales b');
+  const cl = window.RETIROS_CHECK_LISTO;          // lo fija la guía cuando Check ya preparó (y quizá despachó) el pedido
   const sub =
     '<div style="text-align:left;line-height:1.6">' +
+    (cl ? (cl.despachado
+      ? '🚫 <strong>Check ya DESPACHÓ este pedido.</strong> Si lo envías a preparación, al cliente le llega «estamos preparando» cuando el pedido ya salió de bodega. Lo normal es marcarlo como RETIRADO.<br>'
+      : '⚠️ <strong>Check ya muestra el pedido preparado.</strong> El aviso «estamos preparando» llegaría tarde. Lo normal es marcarlo como RETIRADO cuando el cliente se lo lleve.<br>') : '') +
     '📋 Bodega recibe la lista de productos para juntar' +
       (unidades ? ` (<strong>${_esc(unidades.textContent)}</strong>)` : '') + '.<br>' +
     (email
@@ -4044,8 +4048,8 @@ async function _confirmarEnviarPreparacion(btn){
     title: '¿Enviar el pedido a preparación?',
     message: `Bodega empezará a preparar el pedido de ${quien}.`,
     sub, subHtml: true,
-    okLabel: 'Sí, enviar a preparación', cancelLabel: 'Todavía no',
-    type: 'warning',
+    okLabel: cl ? 'Enviar igual' : 'Sí, enviar a preparación', cancelLabel: cl ? 'No, mejor lo marco retirado' : 'Todavía no',
+    type: cl ? 'danger' : 'warning',
   });
   if (!ok) return;
   btn.disabled = true;

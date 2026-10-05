@@ -840,9 +840,12 @@ Internamente… al cliente le va a dar fecha nada más".**
   cita pasada la decide una persona) · solo en **horario de bodega** (07:30–20:00, día abierto, hora Chile: ningún correo de madrugada ni en fin de semana o feriado) ·
   **una sola vez por retiro** (si una persona lo devuelve a «Cita confirmada», el automático no lo repite ni le vuelve a escribir al cliente) · nunca con un cambio de
   fecha del cliente pendiente (la guarda va también dentro del UPDATE) · nunca si la factura o boleta está en **otro retiro activo** (Check informa por documento) ·
-  nunca sin **responsable declarado** (REGLA #21) · la señal se ve en **dos lecturas** y la segunda se pide **de verdad** a Check (sin su memoria de 45 s).
+  **no exige responsable** (no es una persona: el 2026-10-05 el retiro real no tenía y bodega terminó sola sin que ILUS lo notara; el aviso interno dice «sin responsable») · la señal se ve en **dos lecturas** y la segunda se pide **de verdad** a Check (sin su memoria de 45 s).
 - **La bitácora siempre distingue** «Manual: <usuario> pasó el retiro a «En preparación»» de «Automático · Check WMS …» (con hora Chile, N de M unidades y, si Check ya
   los informa, la OT y el usuario). Quitar o mezclar esa distinción rompe lo que Daniel pidió.
+- **Check ya preparó Y despachó pero el retiro sigue en «Cita confirmada»:** no se mueve solo (pudo entregarse antes; «estamos preparando» llegaría con el pedido ya entregado). Se avisa al
+  equipo UNA vez al día (`check_desfase`, campana + bitácora), la guía dice «preparado según Check» y ofrece «Marcar como RETIRADO» (el modal de retirado existe también con la cita
+  confirmada), y «Enviar a preparación» advierte que no corresponde. Nunca se envía a preparación un pedido ya despachado sin ese aviso.
 - **Al cliente solo se le comunica la fecha agendada** (el mismo correo «Estamos preparando tu retiro»). Jamás datos internos: OT, usuarios de Check, horas de picking.
 - Check sigue **SOLO LECTURA** (REGLA #4.4): el envío automático solo usa `GetSeguimientoDespacho`. El cambio de estado es atómico (`UPDATE … WHERE
   status='agenda_confirmada'`): si el botón gana, no se repite nada, y el botón ya no escribe «en preparación → en preparación» si el automático llegó antes.
@@ -865,10 +868,12 @@ de la sesión, nunca del navegador):
   `/marcar-aceptada-manual` y **cualquier cambio de estado** de `/status` (Kanban, Cambiar estado, botones de la ficha: confirmar, reagendar, rechazar, cerrar → ocupan o
   liberan el calendario). Responde 409 con «Primero declara quién se hace cargo… Sin responsable no se avanza ni se agenda o libera el calendario».
 - **Excepción:** un retiro **terminado** (retirada, cerrada, rechazada, fallida) no lo necesita (así se puede reabrir: «Me hago cargo» rechaza los terminados).
-- El envío automático de la REGLA #20 tampoco mueve un retiro sin responsable. Interruptor (solo con permiso de Daniel): `RETIROS_EXIGE_RESPONSABLE=0`.
+- **No es retroactiva:** los retiros creados antes del 03-oct-2026 (`RETIROS_EXIGE_RESPONSABLE_DESDE`) siguen hasta el final sin responsable (la guía solo avisa). Daniel, 2026-10-05, con el retiro
+  real: «esto avanzó antes de que fuera una restricción, por eso no avanzó».
+- El envío automático de la REGLA #20 NO exige responsable (no es una persona). Interruptor (solo con permiso de Daniel): `RETIROS_EXIGE_RESPONSABLE=0`.
 - Los bloqueos de la agenda (`/retiros/bloqueos/*`, permiso `ret_horarios`) son de la bodega, no de un retiro: esta regla no los toca.
 
 ---
 
-_Última actualización: 2026-10-02_
+_Última actualización: 2026-10-05_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

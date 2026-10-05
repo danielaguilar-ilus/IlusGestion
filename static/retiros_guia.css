@@ -487,3 +487,16 @@
   .gp-strip-acc,.gp-strip-acc .gp-btn{width:100%}
   .gp-strip .gp-tecla{display:none}
 }
+
+/* ══ Check ya terminó y el retiro sigue en «Cita confirmada» (2026-10-05): lo que toca es «Marcar como RETIRADO», no «Enviar a preparación» ══ */
+.ck-fin{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin:0;padding:12px 14px;border:3px solid #16a34a;border-radius:14px;background:linear-gradient(135deg,#f0fdf4,#dcfce7)}
+.ck-fin-t{display:flex;flex:1 1 340px;align-items:flex-start;gap:12px;min-width:0}
+.ck-fin-t>.bi{flex:0 0 auto;font-size:1.8rem;color:#15803d}
+.ck-fin-t b{display:block;font-size:1.12rem;font-weight:900;color:#14532d}
+.ck-fin-t span{display:block;font-size:1rem;font-weight:600;line-height:1.4;color:#166534;overflow-wrap:anywhere}
+.ck-fin .gp-btn{flex:0 0 auto}
+@media (max-width:767px){.ck-fin .gp-btn{width:100%}}
+/* La tarjeta naranja «Enviar a PREPARACIÓN» sigue ahí (no se quita), pero apagada y con la advertencia a la vista */
+.gp-check-listo #formEnviarPreparacion{opacity:.6}
+.gp-check-listo #paso5Content .cierre-next:not(.is-green)::before{content:"Check ya lo preparó: lo normal es marcarlo como RETIRADO (arriba). Enviarlo a preparación le manda al cliente el aviso «estamos preparando».";
+  display:block;margin:0 0 10px;padding:8px 12px;border-radius:10px;background:#fef2f2;border:2px solid #fca5a5;color:#991b1b;font-size:.95rem;font-weight:700}

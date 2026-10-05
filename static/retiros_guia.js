@@ -36,6 +36,8 @@
     bloqueado: ['b-bloqueado', 'bi-slash-circle-fill', 'No se puede todavía']
   };
 
+  var MSG_RESP = 'Primero declara quién se hace cargo de este retiro (paso 2). Sin responsable no se avanza ni se agenda o libera el calendario.';
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -386,6 +388,13 @@
     var icono = { ok: 'bi-check-circle-fill', en: 'bi-hourglass-split', mal: 'bi-wifi-off', neutro: 'bi-info-circle-fill' }[tono];
     h += '<p class="ck-banner is-' + tono + '"><i class="bi ' + icono + '"></i><b>' + esc(ev.frase || '') + '</b></p>';
     if (ev.alerta) h += '<p class="ck-alerta"><i class="bi bi-exclamation-triangle-fill"></i>' + esc(ev.alerta) + '</p>';
+    if (window.RETIROS_CHECK_LISTO) {          // Check ya terminó y el retiro sigue en «Cita confirmada»: se dice y se ofrece lo que toca
+      var dsp = window.RETIROS_CHECK_LISTO.despachado;
+      h += '<div class="ck-fin"><div class="ck-fin-t"><i class="bi bi-patch-check-fill"></i><div><b>' + (dsp ? 'Check ya preparó y despachó este pedido' : 'Check ya preparó este pedido') + '</b><span>' +
+        (dsp ? 'En ILUS sigue en «Cita confirmada». Si el cliente ya se lo llevó, márcalo como RETIRADO y anota quién lo retiró. No lo envíes a preparación: le llegaría el aviso «estamos preparando» con el pedido ya entregado.'
+             : 'Cuando el cliente venga y se lo lleve, márcalo como RETIRADO y anota quién lo retiró. Enviarlo a preparación ya no hace falta.') +
+        '</span></div></div><button type="button" class="gp-btn verde" data-gp-retirar="1"><i class="bi bi-check-circle-fill"></i>Marcar como RETIRADO</button></div>';
+    }
     if (ev.etapas && ev.etapas.length) {
       h += '<ul class="ck-et">' + ev.etapas.map(function (e) {
         var pct = e.de ? Math.min(100, Math.round(100 * e.hechas / e.de)) : 0;
@@ -407,7 +416,7 @@
     var nota;
     if (STATUS !== 'en_preparacion') nota = (CHECK.prep_auto_activo === false)
       ? 'Cuando envíes el pedido a preparación, ILUS empezará a marcar solo el «listo» según Check. El envío automático está apagado: por ahora solo se consulta.'
-      : 'Cuando Check vea que bodega empezó a juntar el pedido, la cita sea de hoy o del próximo día hábil y el retiro tenga responsable, ILUS lo pasa solo a «En preparación» en horario de bodega (queda en la bitácora como automático, con la hora, la OT y el usuario que informe Check). Si quieres adelantarte, usa el botón.';
+      : 'Cuando Check vea que bodega empezó a juntar el pedido, y la cita sea de hoy o del próximo día hábil, ILUS lo pasa solo a «En preparación» en horario de bodega (queda en la bitácora como automático, con la hora, la OT y el usuario que informe Check). Si quieres adelantarte, usa el botón.';
     else if (CHECK.auto_activo === false) nota = 'El marcado automático está apagado: Check solo informa. Marca la lista de abajo a mano.';
     else nota = 'Cuando Check tenga todo pickeado (confirmado en dos revisiones seguidas), ILUS marca solo «Pedido listo para entregar». No se le envía ningún correo al cliente. Check solo se consulta, nunca se modifica.';
     return h + '<p class="ck-nota"><i class="bi bi-shield-lock-fill"></i><span>' + nota + (CHECK_TS ? ' Actualizado a las ' + CHECK_TS + '.' : '') + '</span></p></div></div>';
@@ -431,7 +440,36 @@
       abiertos.forEach(function (k) { var d = slot.querySelector('details[data-k="' + k + '"]'); if (d) d.open = true; });
     }
   }
+  // ── Check ya lo terminó pero el retiro sigue en «Cita confirmada» ───────────────────────────────────────────
+  // Daniel 2026-10-05 (retiro real): «si Check se completó, ¿por qué no avisó que está preparado? Además falta marcar como entregado el pedido».
+  // El servidor no le habla a Check al armar la guía, así que aquí se corrige lo que se ve: el paso 5 queda «preparado según Check» y lo que
+  // toca es el 6, «Marcar como RETIRADO». Nunca se empuja «Enviar a preparación»: al cliente le llegaría «estamos preparando» con el pedido
+  // ya preparado o entregado. Se reaplica en cada render (la guía del servidor se vuelve a leer cada minuto).
+  function ajustarPorCheck() {
+    var ev = CHECK && CHECK.evaluacion;
+    var activo = !!(STATUS === 'agenda_confirmada' && !G.terminal && ev && ev.listo);
+    var desp = !!(activo && (ev.despachadas || 0) > 0);
+    window.RETIROS_CHECK_LISTO = activo ? { despachado: desp } : null;      // lo lee _confirmarEnviarPreparacion (retiros_internal_detail.js)
+    document.body.classList.toggle('gp-check-listo', activo);
+    if (!activo || G.pasos[4].estado === 'hecho') return;
+    var p5 = G.pasos[4], p6 = G.pasos[5];
+    p5.estado = 'hecho'; p5.resumen = desp ? 'Check: preparado y despachado' : 'Check: pedido preparado';
+    p5.faltan = []; p5.avisos = []; p5.accion = null; p5.correo = false; p5.bloquea = false;
+    p6.estado = 'actual'; p6.bloquea = false; p6.correo = true; p6.avisos = [];
+    p6.faltan = [desp
+      ? 'Check ya preparó y despachó el pedido. Si el cliente ya se lo llevó: «Marcar como RETIRADO» y anota quién lo retiró. No lo envíes a preparación.'
+      : 'Check ya preparó el pedido. Cuando el cliente venga y se lo lleve: «Marcar como RETIRADO» y anota quién lo retiró.'];
+    p6.accion = G.sin_responsable ? { tipo: 'retirar', texto: 'Marcar como RETIRADO', deshabilitada: true, motivo: MSG_RESP } : { tipo: 'retirar', texto: 'Marcar como RETIRADO' };
+    if (!G.sin_responsable) G.siguiente = 6;
+  }
+  // «Marcar como RETIRADO» desde el panel de Check (el mismo modal de siempre: quién retiró + RUT + foto)
+  function retirarDesdeCheck() {
+    if (G.sin_responsable) { avisoResponsable(6); return; }
+    if (typeof window.abrirModalRetirar === 'function' && document.getElementById('modalRetirar')) window.abrirModalRetirar();
+    else toast('No pude abrir la ventana de «Marcar como retirado». Actualiza la página (F5) e inténtalo de nuevo.', 'warning');
+  }
   function render() {
+    ajustarPorCheck();
     var total = G.pasos.length;
     var hechos = G.pasos.filter(function (p) { return p.estado === 'hecho'; }).length;
     var pct = Math.round(100 * hechos / total);
@@ -559,6 +597,7 @@
     var b = t.closest('.gp-tag [data-gp-acc]');
     if (b) { accionar(parseInt(b.dataset.gpAcc, 10), b); return; }
     if (t.closest('#gpCheckSlot [data-gp-check-refresh]')) { cargarCheck(true); ACT_REINTENTOS = 0; cargarActividad(); }
+    if (t.closest('[data-gp-retirar]')) { ev.preventDefault(); retirarDesdeCheck(); }
   });
 
   // ── Enter = ir al siguiente pendiente, por prioridad de tarjeta ─────────────────────────────────────────

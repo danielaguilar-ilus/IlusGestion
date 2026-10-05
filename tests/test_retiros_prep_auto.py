@@ -188,11 +188,14 @@ class TestNoSeMueve:
         assert revisar(env)["prep_auto_ahora"] is False
         assert_quieto(env)
 
-    def test_si_check_ya_da_algo_por_despachado(self, env):
+    def test_si_check_ya_da_algo_por_despachado_no_se_mueve_solo(self, env):
+        """Con unidades despachadas el pedido pudo entregarse antes: no se mueve ni se le escribe al cliente (sí se avisa al equipo: ver
+        TestDesfaseCheckDespachado)."""
         retiro(env)
         env.esp.check.respuestas["*"] = YA_DESPACHADO
         assert revisar(env)["prep_auto_ahora"] is False
-        assert_quieto(env)
+        assert env.db.solicitudes[RID]["status"] == "agenda_confirmada"
+        assert cambios_de_estado(env) == [] and correos_al_cliente(env) == []
 
     def test_si_check_no_responde(self, env):
         retiro(env)
@@ -535,18 +538,25 @@ class TestFrenos:
         env.esp.check.respuestas["*"] = EMPEZO
         assert revisar(env)["prep_auto_ahora"] is False
 
-    def test_sin_responsable_declarado_no_se_mueve_solo(self, env):
-        """Daniel 2026-10-02: «para avanzar debe declarar el responsable»."""
-        retiro(env, responsable_user_id=None, responsable_nombre=None)
-        env.esp.check.respuestas["*"] = EMPEZO
-        assert revisar(env)["prep_auto_ahora"] is False
-        assert_quieto(env)
-
-    def test_con_la_regla_del_responsable_apagada_si_se_mueve(self, env, monkeypatch):
-        monkeypatch.setenv("RETIROS_EXIGE_RESPONSABLE", "0")
+    def test_sin_responsable_declarado_el_automatico_igual_avanza_y_el_aviso_lo_dice(self, env):
+        """2026-10-05: el retiro real no tenía responsable y bodega terminó sola; el automático NO es una persona, así que no se frena por eso
+        (la regla «para avanzar debe declarar el responsable» es de las personas). El aviso al equipo pide que alguien toque «Me hago cargo»."""
+        env.db.admins = [{"id": 11}]
         retiro(env, responsable_user_id=None, responsable_nombre=None)
         env.esp.check.respuestas["*"] = EMPEZO
         assert revisar(env)["prep_auto_ahora"] is True
+        assert env.db.solicitudes[RID]["status"] == "en_preparacion"
+        esperar_avisos()
+        cuerpos = " ".join(c.kwargs.get("cuerpo", "") for c in env.esp.mant_notif.call_args_list)
+        assert "NO tiene responsable" in cuerpos and "Me hago cargo" in cuerpos
+
+    def test_con_responsable_el_aviso_no_menciona_la_falta(self, env):
+        env.db.admins = [{"id": 11}]
+        retiro(env)
+        env.esp.check.respuestas["*"] = EMPEZO
+        assert revisar(env)["prep_auto_ahora"] is True
+        esperar_avisos()
+        assert "NO tiene responsable" not in " ".join(c.kwargs.get("cuerpo", "") for c in env.esp.mant_notif.call_args_list)
 
     @pytest.mark.parametrize("valor", ["0", "false", "no", "off"])
     def test_check_solo_informa_tambien_apaga_el_envio_automatico(self, env, monkeypatch, valor):
@@ -739,3 +749,100 @@ class TestCronSincrono:
                 fila_check(numeroDocumento=str(int(numero)), solicitado=3, asignado=2, pickeado=1))
         d = env.cli.get("/retiros/cron/check-barrido", headers={"X-Cron-Token": "secreto-cron"}).get_json()
         assert len(d["pasaron"]) == 3 and d["errores"] == 0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Check ya preparó Y despachó pero el retiro sigue en «Cita confirmada» (2026-10-05, retiro real RET-VQJ58N)
+# ══════════════════════════════════════════════════════════════════════════════
+TODO_DESPACHADO = respuesta_check(fila_check(solicitado=1, pickeado=0, despachado=1))      # bodega terminó y despachó antes de que nadie lo pasara a preparación
+
+
+def logs_desfase(env):
+    return [x for x in env.db.logs if x["request_id"] == RID and x["action"] == "check_desfase"]
+
+
+class TestDesfaseCheckDespachado:
+    def test_no_se_mueve_ni_se_le_escribe_al_cliente_pero_se_avisa_al_equipo(self, env):
+        env.db.admins = [{"id": 11}, {"id": 12}]
+        retiro(env, responsable_user_id=None, responsable_nombre=None)           # tal cual el retiro real: sin responsable
+        env.esp.check.respuestas["*"] = TODO_DESPACHADO
+        d = revisar(env)
+        assert d["prep_auto_ahora"] is False and d["evaluacion"]["listo"] is True and d["evaluacion"]["despachadas"] == 1
+        assert env.db.solicitudes[RID]["status"] == "agenda_confirmada" and cambios_de_estado(env) == []
+        assert correos_al_cliente(env) == []
+        (e,) = logs_desfase(env)
+        assert e["actor_name"] == "Check WMS" and "RETIRADO" in e["notes"] and "07/10/2026 11:00" in e["notes"]
+        esperar_avisos()
+        titulos = {c.kwargs.get("titulo") for c in env.esp.mant_notif.call_args_list}
+        assert any("Check ya preparó y despachó el pedido" in (t or "") for t in titulos)
+        assert {c.kwargs["destino_user_id"] for c in env.esp.mant_notif.call_args_list} == {11, 12}
+        cuerpos = " ".join(c.kwargs.get("cuerpo", "") for c in env.esp.mant_notif.call_args_list)
+        assert "RETIRADO" in cuerpos and "No lo envíes a preparación" in cuerpos
+
+    def test_se_avisa_una_sola_vez_aunque_se_revise_muchas_veces(self, env):
+        retiro(env)
+        env.esp.check.respuestas["*"] = TODO_DESPACHADO
+        for _ in range(4):
+            revisar(env)
+        assert len(logs_desfase(env)) == 1
+
+    @pytest.mark.parametrize("ahora", [dt.datetime(2026, 10, 7, 3, 0), dt.datetime(2026, 10, 10, 11, 0)])      # de madrugada / sábado
+    def test_fuera_del_horario_de_la_bodega_no_se_avisa(self, env, ahora):
+        env.reloj["ahora"] = ahora
+        retiro(env, confirmed_date=ahora.date().isoformat())
+        env.esp.check.respuestas["*"] = TODO_DESPACHADO
+        revisar(env)
+        assert logs_desfase(env) == []
+
+    def test_con_la_cita_lejana_no_se_avisa(self, env):
+        retiro(env, dias=10)
+        env.esp.check.respuestas["*"] = TODO_DESPACHADO
+        revisar(env)
+        assert logs_desfase(env) == []
+
+    def test_si_check_no_lo_da_por_despachado_no_hay_aviso_de_desfase(self, env):
+        retiro(env)
+        env.esp.check.respuestas["*"] = EMPEZO
+        revisar(env)
+        assert logs_desfase(env) == []
+
+    def test_en_modo_solo_lectura_no_escribe_nada(self, env):
+        retiro(env)
+        env.esp.check.respuestas["*"] = TODO_DESPACHADO
+        revisar(env, "?solo_lectura=1")
+        assert env.db.escrituras == []
+
+    def test_el_cron_tambien_avisa_y_lo_cuenta(self, env, monkeypatch):
+        monkeypatch.setenv("ILUS_CRON_TOKEN", "secreto-cron")
+        retiro(env)
+        env.esp.check.respuestas["*"] = TODO_DESPACHADO
+        d = env.cli.get("/retiros/cron/check-barrido", headers={"X-Cron-Token": "secreto-cron"}).get_json()
+        assert d["desfase"] == [env.db.solicitudes[RID]["code"]] and d["pasaron"] == []
+        assert len(logs_desfase(env)) == 1 and correos_al_cliente(env) == []
+
+    def test_el_cron_en_dry_solo_mira(self, env, monkeypatch):
+        monkeypatch.setenv("ILUS_CRON_TOKEN", "secreto-cron")
+        retiro(env)
+        env.esp.check.respuestas["*"] = TODO_DESPACHADO
+        d = env.cli.get("/retiros/cron/check-barrido?dry=1", headers={"X-Cron-Token": "secreto-cron"}).get_json()
+        assert d["desfase"] == [] and env.db.escrituras == []
+
+    def test_el_estado_retirada_desde_cita_confirmada_funciona_sin_pasar_por_preparacion(self, env):
+        """Lo que hay que hacer con ese retiro: marcarlo RETIRADO. El cliente recibe SOLO el correo de «retiro completado»."""
+        retiro(env)
+        r = env.cli.post(f"/retiros/{RID}/status", data={"status": "retirada", "retirado_por": "Gerd Müller", "retirado_por_rut": "18.433.872-6"})
+        assert r.status_code == 302 and env.db.solicitudes[RID]["status"] == "retirada"
+        (e,) = cambios_de_estado(env)
+        assert (e["old_status"], e["new_status"]) == ("agenda_confirmada", "retirada")
+        asuntos = " ".join((c.args[1] or "").lower() for c in correos_al_cliente(env))
+        assert "preparando" not in asuntos
+
+
+def test_el_modal_de_marcar_retirado_existe_tambien_con_la_cita_confirmada():
+    """2026-10-05: antes solo se dibujaba en «En preparación» y desde «Cita confirmada» no había cómo marcar el retiro entregado."""
+    ruta = os.path.join(os.path.dirname(_TESTS), "templates", "retiros", "internal_detail.html")
+    with open(ruta, encoding="utf-8") as f:
+        html = f.read()
+    i = html.index('id="modalRetirar"')
+    antes = html[max(0, i - 700):i]
+    assert "req.status in ['en_preparacion', 'agenda_confirmada']" in antes
