@@ -415,6 +415,20 @@ def test_misma_venta_en_varios_documentos_cuenta_una_vez():
     assert {c["doc_key"] for c in d["candidatos"]} == {"FCV 11150"}       # la factura manda como referencia
 
 
+def test_misma_venta_en_tickets_distintos_cuenta_una_vez():
+    # Caso real (cliente 278): el escáner abrió un ticket por la VD y otro por la FCV de la MISMA venta.
+    ns, calls, tk = _equipos_ns(numero_documento="FCV 11150")
+    tk.append(dict(tk[0], id=2, numero_ticket="TK-2", numero_documento="VD 10212"))
+    ok, d = ns["_ficha_equipos_desde_instalacion"](5, confirmar=False, tickets_cache=tk)
+    assert d["total_a_crear"] == 6 and {c["doc_key"] for c in d["candidatos"]} == {"FCV 11150"}
+
+
+def test_dos_facturas_distintas_se_suman():
+    ns, calls, tk = _equipos_ns(numero_documento="FCV 100, FCV 200")
+    ok, d = ns["_ficha_equipos_desde_instalacion"](5, confirmar=False, tickets_cache=tk)
+    assert {c["sku"]: c["cantidad"] for c in d["candidatos"]} == {"TROT1": 4, "KB20": 8}
+
+
 def test_descuenta_lo_que_la_ficha_ya_tiene():
     ns, calls, tk = _equipos_ns(en_ficha={"TROT1": 2})
     ok, d = ns["_ficha_equipos_desde_instalacion"](5, confirmar=False, tickets_cache=tk)

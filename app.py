@@ -62448,6 +62448,7 @@ def _ficha_instalacion_desde_grupo(g_, quien):
 # productos. Pon la factura para poder hacerle seguimiento según la emisión, para realizar mantenciones») ──
 _TIDOS_VENTA = ("FCV", "BLV", "FCE", "BLE", "NVV", "NVI", "FCO", "WEB", "VD", "GDV")
 _RANGO_DOC = {"FCV": 0, "FCE": 0, "BLV": 1, "BLE": 1}   # documento preferido como referencia de la venta
+_GRUPO_DOC = {"FCV": "FAC", "FCE": "FAC", "BLV": "BOL", "BLE": "BOL"}   # facturas con facturas, boletas con boletas
 _DOC_EN_TEXTO_RE = re.compile(r"\b(FCV|BLV|FCE|BLE|NVV|NVI|FCO|WEB|VD|GDV)\s*[-_ ]?\s*0*(\d{1,10})\b", re.I)
 
 
@@ -62520,7 +62521,7 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
                     f"SELECT sku FROM cat_productos WHERE UPPER(TRIM(sku)) IN ({_ph})", tuple(_skus_doc)) or [])}
             except Exception as e:
                 print(f"[equipos_instalacion] catálogo: {e}", flush=True)
-        por_ticket = {}
+        por_sku = {}
         for tido, nudo, fecha_reg, t, header, lineas in leidos:
             if not header:
                 docs_info.append({"doc": f"{tido} {nudo}", "estado": "no está en el ERP"})
@@ -62551,29 +62552,28 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
                 if saldo <= 0:
                     omitidos.append({"sku": sku, "nombre": nombre, "motivo": f"ya está en una ficha con {doc_key}"})
                     continue
-                # Una misma venta trae varios documentos (NVV → FCV → VD) con los MISMOS productos: dentro de un
-                # ticket cada SKU cuenta UNA vez (la cantidad mayor), con la factura/boleta como referencia.
+                # Una misma venta queda en VARIOS documentos (NVV → VD → FCV), a veces en tickets distintos
+                # (caso real: FCV 11150 y VD 10212 del mismo cliente). Regla: documentos del MISMO tipo se suman
+                # (dos facturas = dos ventas); entre tipos distintos se toma el MAYOR (son la misma venta).
+                # Mejor quedarse corto (se agrega a mano) que duplicar equipos e inflar el plan y el precio.
+                grupo = _GRUPO_DOC.get(tido, tido)
                 rango = _RANGO_DOC.get(tido, 2)
-                previo = por_ticket.setdefault(t.get("id"), {}).get(sku.upper())
-                if previo is None or saldo > previo["cantidad"] or (saldo == previo["cantidad"] and rango < previo["rango"]):
-                    por_ticket[t.get("id")][sku.upper()] = {
-                        "sku": sku, "nombre": nombre, "cantidad": saldo, "rango": rango, "doc_key": doc_key,
-                        "doc_fecha": doc_fecha, "fecha_inst": fecha_inst, "ticket": t.get("numero_ticket")}
+                g_ = por_sku.setdefault(sku.upper(), {}).setdefault(grupo, {
+                    "sku": sku, "nombre": nombre, "cantidad": 0, "rango": rango, "doc_key": doc_key,
+                    "doc_fecha": doc_fecha, "fecha_inst": fecha_inst, "ticket": t.get("numero_ticket")})
+                g_["cantidad"] += saldo
                 n_doc += saldo
             docs_info.append({"doc": doc_key, "fecha": str(doc_fecha)[:10] if doc_fecha else "", "equipos": n_doc})
-        # Entre tickets distintos (instalaciones distintas) sí se suma; al final se descuenta lo que la ficha
-        # YA tiene de ese SKU, así una segunda corrida no duplica nada.
-        if por_ticket:
+        # Al final se descuenta lo que la ficha YA tiene de ese SKU: una segunda corrida no duplica nada.
+        if por_sku:
             existentes = {(r["sku"] or ""): int(r["n"] or 0) for r in (mysql_fetchall(
                 "SELECT UPPER(TRIM(sku)) AS sku, COALESCE(SUM(cantidad),0) AS n FROM mant_maquinas "
                 " WHERE cliente_id=%s AND estado='activo' GROUP BY UPPER(TRIM(sku))", (cid,)) or [])}
-            for _tid, skus_t in por_ticket.items():
-                for sku_u, c in skus_t.items():
-                    tiene = existentes.get(sku_u, 0)
-                    falta = c["cantidad"] - tiene
-                    existentes[sku_u] = max(0, tiene - c["cantidad"])
-                    if falta > 0:
-                        candidatos.append({k: v for k, v in c.items() if k != "rango"} | {"cantidad": falta})
+            for sku_u, grupos_ in por_sku.items():
+                c = sorted(grupos_.values(), key=lambda x: (-x["cantidad"], x["rango"]))[0]
+                falta = c["cantidad"] - existentes.get(sku_u, 0)
+                if falta > 0:
+                    candidatos.append({k: v for k, v in c.items() if k != "rango"} | {"cantidad": falta})
         respaldo = False
         if not candidatos and tickets and not any(d.get("equipos") for d in docs_info if "equipos" in d) \
                 and not any("ya está" in (o.get("motivo") or "") for o in omitidos):
