@@ -62862,6 +62862,9 @@ _COMUNAS_RM = {
     "huechuraba": ("Norte", -33.3700, -70.6350), "conchali": ("Norte", -33.3850, -70.6750),
     "quilicura": ("Norte", -33.3600, -70.7280), "renca": ("Norte", -33.4050, -70.7280),
     "colina": ("Norte", -33.2830, -70.6500), "chicureo": ("Norte", -33.2830, -70.6500),
+    # alias reales vistos en las fichas (05-oct): «Florida» = La Florida, sectores conocidos de Santiago
+    "florida": ("Sur", -33.5230, -70.5980), "la dehesa": ("Oriente", -33.3600, -70.5200),
+    "santiago centro": ("Centro", -33.4490, -70.6690),
     "lampa": ("Norte", -33.2860, -70.8760), "tiltil": ("Norte", -33.0830, -70.9270),
     "pudahuel": ("Poniente", -33.4400, -70.7550), "cerro navia": ("Poniente", -33.4250, -70.7400),
     "lo prado": ("Poniente", -33.4440, -70.7250), "maipu": ("Poniente", -33.5110, -70.7580),

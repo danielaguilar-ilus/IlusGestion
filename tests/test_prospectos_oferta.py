@@ -515,6 +515,7 @@ def _zonas():
     ("LAS CONDES", "Oriente"), ("Ñuñoa", "Oriente"), ("Comuna de Maipú", "Poniente"),
     ("Lo Barnechea, Santiago", "Oriente"), ("Puente Alto", "Sur"), ("Viña del Mar", "Regiones"),
     ("", "Sin comuna"), ("  huechuraba ", "Norte"), ("Estación Central", "Centro"),
+    ("Florida", "Sur"), ("La Dehesa", "Oriente"), ("Santiago Centro", "Centro"),
 ])
 def test_zona_por_comuna(comuna, zona):
     assert _zonas()(comuna)[0] == zona
