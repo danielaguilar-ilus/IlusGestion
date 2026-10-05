@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Clientes de Servicio Técnico — ILUS{% endblock %}
 {% block content %}
+{% from "mantenciones/_prosp_strip.html" import prosp_strip %}
+<link rel="stylesheet" href="{{ url_for('static', filename='prosp_strip.css') }}">
+<script src="{{ url_for('static', filename='prosp_strip.js') }}" defer></script>
 <style>
 /* ──────────────────────────────────────────────────────────────
    CLIENTES — vista COMPACTA sin scroll, tipografía más grande,
@@ -615,7 +618,7 @@ async function reclasificarInst(btn){
             <textarea id="pcIncluye" class="form-control" rows="5" maxlength="1500"></textarea></div>
           <div class="col-12"><label class="form-label small fw-semibold">Mensaje de WhatsApp para contactar clientes</label>
             <textarea id="pcMsgWa" class="form-control" rows="4" maxlength="800"></textarea>
-            <div class="form-text">Usa <code>{{ '{{contacto}}' }}</code> y <code>{{ '{{cliente}}' }}</code>. Se abre en WhatsApp para que tú lo revises y lo envíes.</div></div>
+            <div class="form-text">Usa <code>{{ '{{contacto}}' }}</code>, <code>{{ '{{cliente}}' }}</code> y <code>{{ '{{link}}' }}</code> (la página de la propuesta, donde el cliente responde con un clic; si no lo pones, se agrega al final). Se abre en WhatsApp para que tú lo revises y lo envíes, y queda anotado en el ticket de la oferta.</div></div>
         </div>
       </div>
       <div class="modal-footer">
@@ -626,36 +629,6 @@ async function reclasificarInst(btn){
   </div>
 </div>
 <script>
-const PLAN_MSG_WA = {{ (plan_cfg.mensaje_wa or '')|tojson }};
-function _prospTelWa(tel){
-  const d = String(tel || '').replace(/\D/g, '');
-  if (d.startsWith('56') && d.length >= 11) return d;
-  if (d.length === 9) return '56' + d;
-  if (d.length === 8) return '569' + d;
-  return '';
-}
-async function prospContactar(ev, btn, canal){
-  ev.stopPropagation();
-  const cid = btn.dataset.cid;
-  if (canal === 'whatsapp'){
-    const num = _prospTelWa(btn.dataset.tel);
-    if (!num){ ilusToast('El teléfono de este cliente no es válido para WhatsApp. Revísalo en su ficha.', {type:'warning'}); return; }
-    const msg = PLAN_MSG_WA.split('{' + '{contacto}}').join((btn.dataset.nom || '').trim() || 'equipo').split('{' + '{cliente}}').join(btn.dataset.cli || '');
-    window.open('https://wa.me/' + num + '?text=' + encodeURIComponent(msg), '_blank');
-  } else if (canal === 'llamada'){
-    window.location.href = 'tel:' + String(btn.dataset.tel || '').replace(/[^\d+]/g, '');
-  }
-  try {
-    const r = await fetch('/mantenciones/api/clientes/' + cid + '/prospecto/contacto', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({canal})});
-    const d = await r.json();
-    if (d.ok){
-      ilusToast('✓ Contacto registrado · próxima gestión ' + d.proxima_gestion, {type:'success'});
-      const card = btn.closest('.cc2-prosp');
-      const et = card && card.querySelector('.cc2-prosp-etapa');
-      if (et) et.innerHTML = '<i class="bi bi-megaphone-fill me-1"></i>Mantención: ' + d.etapa_label;
-    }
-  } catch(e){}
-}
 let _modalPlanCfg = null;
 async function abrirPlanConfig(){
   if (!_modalPlanCfg) _modalPlanCfg = new bootstrap.Modal(document.getElementById('modalPlanConfig'));
@@ -1592,45 +1565,8 @@ function aplicarKpiFiltro(tipo) {
         {% endif %}
       </div>
 
-      {# ── Prospecto: de qué OT nació + etapa de la oferta de mantención ── #}
-      {% if c.pr %}
-      <div class="cc2-prosp">
-        <div class="ptmini" title="{% for p in c.pr.pasos %}{{ loop.index }}. {{ p.label }}{% if p.estado == 'hecho' %} ✓{% endif %}  {% endfor %}">
-          {% for p in c.pr.pasos %}<span class="pm {{ p.estado }}">{% if p.estado == 'hecho' %}<i class="bi bi-check-lg"></i>{% elif p.estado == 'fallido' %}<i class="bi bi-x-lg"></i>{% else %}{{ loop.index }}{% endif %}</span>{% if not loop.last %}<i class="pl {{ 'on' if p.estado == 'hecho' }}"></i>{% endif %}{% endfor %}
-          <span class="pt">{{ c.pr.pasos_hechos }} de {{ c.pr.pasos_total }} · {{ c.pr.paso_actual }}</span>
-        </div>
-        <span class="cc2-prosp-etapa cc2-prosp-{{ c.pr.etapa }}">
-          <i class="bi bi-megaphone-fill me-1"></i>Mantención: {{ c.pr.etapa_label }}
-        </span>
-        {% if c.pr.marcas %}<span class="cc2-prosp-txt"><i class="bi bi-tags-fill me-1"></i>Marcas: {{ c.pr.marcas }}</span>{% endif %}
-        {% if c.pr.plan %}{% set pl = c.pr.plan %}<span class="cc2-prosp-txt pmant {{ pl.estado_primera }}"><i class="bi bi-calendar2-check-fill me-1"></i>{% if pl.estado_primera == 'vencida' %}1ª mantención vencida hace {{ -pl.dias_primera }} días{% elif pl.estado_primera == 'proxima' %}1ª mantención en {{ pl.dias_primera }} días{% else %}1ª mantención el {{ pl.primera }}{% endif %} · {{ c.pr.equipos_plan }} equipo{{ 's' if c.pr.equipos_plan != 1 }}</span>{% endif %}
-        {% if c.pr.origen_ot %}
-        <span class="cc2-prosp-txt">Nació de {{ c.pr.origen_ot }} · {{ c.pr.origen_tipo }}{% if c.pr.origen_fecha %} · {{ c.pr.origen_fecha }}{% endif %}</span>
-        {% endif %}
-        {% if c.pr.proxima_gestion %}
-        <span class="cc2-prosp-txt{% if c.pr.vencida %} cc2-prosp-vencida{% endif %}" data-prosp-prox="{{ c.id }}">
-          <i class="bi bi-calendar-event me-1"></i>Próxima gestión: {{ c.pr.proxima_gestion }}{% if c.pr.vencida %} · vencida{% endif %}
-        </span>
-        {% endif %}
-        {% if c.pr.ticket_ultimo %}
-        <a class="cc2-prosp-txt pconv-chip{% if c.pr.tickets_no_leidos %} nl{% endif %}" href="/tickets/{{ c.pr.ticket_ultimo.id }}" target="_blank" onclick="event.stopPropagation()">
-          <i class="bi bi-chat-dots-fill me-1"></i>{{ c.pr.tickets_n }} conversación{{ 'es' if c.pr.tickets_n != 1 }}{% if c.pr.tickets_no_leidos %} · <b style="display:inline">{{ c.pr.tickets_no_leidos }} sin leer</b>{% endif %} · abrir {{ c.pr.ticket_ultimo.numero }}</a>
-        {% endif %}
-        {# Contactar sin abrir la ficha: un clic y queda registrado (Daniel 2026-10-04: «muy fácil de utilizar») #}
-        {% set _tel = (c.contacto_tel or c.tel_empresa or '') %}
-        <div class="cc2-prosp-acts" onclick="event.stopPropagation()">
-          {% if _tel %}
-          <button type="button" class="pa pa-wa" data-cid="{{ c.id }}" data-tel="{{ _tel }}" data-nom="{{ c.contacto_nombre or '' }}" data-cli="{{ c.razon_social }}"
-                  onclick="prospContactar(event, this, 'whatsapp')" title="Abre WhatsApp con el mensaje listo; tú lo envías"><i class="bi bi-whatsapp"></i> WhatsApp</button>
-          <button type="button" class="pa" data-cid="{{ c.id }}" data-tel="{{ _tel }}"
-                  onclick="prospContactar(event, this, 'llamada')" title="Llamar por teléfono"><i class="bi bi-telephone-fill"></i> Llamar</button>
-          {% endif %}
-          <a class="pa" href="{{ url_for('mant_ficha', cid=c.id) }}?accion=propuesta" title="Enviar la propuesta del plan por correo"><i class="bi bi-envelope-fill"></i> Correo</a>
-          <a class="pa pa-cot" target="_blank" title="Abre el cotizador con los equipos del plan"
-             href="/tickets/cotizaciones?desde_cliente={{ c.id }}&plan=1&tipo=mantencion&descuento={{ plan_cfg.descuento }}&frecuencia={{ plan_cfg.visitas }}"><i class="bi bi-calculator-fill"></i> Cotizar</a>
-        </div>
-      </div>
-      {% endif %}
+      {# ── Prospecto: de qué OT nació, su oferta en un ticket propio y SOLO el paso que toca (Daniel 2026-10-05) ── #}
+      {% if c.pr %}{{ prosp_strip(c, plan_cfg) }}{% endif %}
 
       {# ── Fila 1 de KPIs: Contrato · Equipos · Próx visita · Completaje ── #}
       <div class="cc2-kpi-row">
@@ -1787,29 +1723,7 @@ function aplicarKpiFiltro(tipo) {
 .flt-ocultos .btn:hover{background:#d97706;border-color:#d97706;color:#fff}
 .flt-ocultos[hidden]{display:none}
 @media (max-width:640px){ .flt-ocultos{flex-wrap:wrap} .flt-ocultos .btn{width:100%} }
-.cc2-prosp{display:flex;flex-direction:column;gap:4px;margin:8px 14px 0;padding:8px 10px;
-  background:#fffbeb;border:1px solid #fde68a;border-radius:10px;font-size:.78rem;line-height:1.35}
-.cc2-prosp-etapa{font-weight:800;color:#92400e}
-.cc2-prosp-ofrecida{color:#1d4ed8}.cc2-prosp-aceptada{color:#15803d}.cc2-prosp-rechazada{color:#6b7280}
-.cc2-prosp-txt{color:#6b7280}
-.cc2-prosp-vencida{color:#dc2626;font-weight:700}
-.pconv-chip{color:#1d4ed8;text-decoration:none;font-weight:700}.pconv-chip:hover{text-decoration:underline}.pconv-chip.nl{color:#b91c1c}
-.pmant{font-weight:700}.pmant.vencida{color:#b91c1c}.pmant.proxima{color:#b45309}.pmant.futura{color:#15803d}
-.ptmini{display:flex;align-items:center;flex-wrap:wrap;gap:0;margin-bottom:4px}
-.ptmini .pm{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:.68rem;font-weight:800;background:#e5e7eb;color:#6b7280;flex:0 0 auto}
-.ptmini .pm.hecho{background:#16a34a;color:#fff}
-.ptmini .pm.actual{background:#dc2626;color:#fff;animation:ptpulse 1.6s infinite}
-.ptmini .pm.fallido{background:#374151;color:#fff}
-.ptmini .pl{width:14px;height:3px;background:#e5e7eb;flex:0 0 auto}.ptmini .pl.on{background:#16a34a}
-.ptmini .pt{margin-left:10px;font-size:.76rem;font-weight:700;color:#0f766e}
-@keyframes ptpulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,.5)}70%{box-shadow:0 0 0 7px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
-.cc2-prosp-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
-.cc2-prosp-acts .pa{display:inline-flex;align-items:center;gap:5px;padding:6px 10px;min-height:34px;border:1px solid #d1d5db;
-  background:#fff;border-radius:8px;font-size:.76rem;font-weight:700;color:#374151;text-decoration:none;cursor:pointer}
-.cc2-prosp-acts .pa:hover{border-color:#0d9488;color:#0f766e}
-.cc2-prosp-acts .pa-wa{background:#dcfce7;border-color:#86efac;color:#166534}
-.cc2-prosp-acts .pa-cot{background:#0d9488;border-color:#0d9488;color:#fff}
-.cc2-prosp-acts .pa-cot:hover{background:#0f766e;color:#fff}
+/* Franja del prospecto (.cc2-prosp, .ptmini, .pnext…): static/prosp_strip.css, compartida con la ficha. */
 .flt-empty{text-align:center;padding:48px 20px;background:#fff;border:1px dashed #e5e7eb;border-radius:14px}
 .flt-empty-icon{font-size:2.4rem;margin-bottom:6px;opacity:.7}
 .flt-empty-title{font-weight:800;color:#374151;margin:0 0 2px}

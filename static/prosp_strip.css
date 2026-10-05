@@ -1,0 +1,70 @@
+/* ══════════════════════════════════════════════════════════════════
+   Franja del prospecto (tarjeta de Clientes y ficha). Movido desde
+   templates/mantenciones/clientes.html (2026-10-05) para compartirlo con
+   la ficha. Semáforo del paso que toca: rojo = te toca a ti, ámbar =
+   esperando al cliente, azul = pidió que lo llamen, verde = cerrar con
+   el contrato (REGLA #15, lenguaje de Retiros).
+   ══════════════════════════════════════════════════════════════════ */
+.cc2-prosp{display:flex;flex-direction:column;gap:4px;margin:8px 14px 0;padding:8px 10px;
+  background:#fffbeb;border:1px solid #fde68a;border-radius:10px;font-size:.78rem;line-height:1.35}
+.cc2-prosp.en-ficha{margin:0 0 14px;background:#fff}
+.cc2-prosp-etapa{font-weight:800;color:#92400e}
+.cc2-prosp-ofrecida{color:#1d4ed8}.cc2-prosp-aceptada{color:#15803d}.cc2-prosp-rechazada{color:#6b7280}
+.cc2-prosp-txt{color:#6b7280}
+.cc2-prosp-vencida{color:#dc2626;font-weight:700}
+.pconv-chip{color:#1d4ed8;text-decoration:none;font-weight:700}.pconv-chip:hover{text-decoration:underline}
+.pconv-chip.nl{color:#b91c1c}.pconv-chip.cerrada{color:#6b7280}
+.phist{color:#6b7280;text-decoration:none;font-weight:600}.phist:hover{text-decoration:underline;color:#374151}
+.pmant{font-weight:700}.pmant.vencida{color:#b91c1c}.pmant.proxima{color:#b45309}.pmant.futura{color:#15803d}
+.ptmini{display:flex;align-items:center;flex-wrap:wrap;gap:0;margin-bottom:4px}
+.ptmini .pm{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:.68rem;font-weight:800;background:#e5e7eb;color:#6b7280;flex:0 0 auto}
+.ptmini .pm.hecho{background:#16a34a;color:#fff}
+.ptmini .pm.actual{background:#dc2626;color:#fff;animation:ptpulse 1.6s infinite}
+.ptmini .pm.fallido{background:#374151;color:#fff}
+.ptmini .pl{width:14px;height:3px;background:#e5e7eb;flex:0 0 auto}.ptmini .pl.on{background:#16a34a}
+.ptmini .pt{margin-left:10px;font-size:.76rem;font-weight:700;color:#0f766e}
+@keyframes ptpulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,.5)}70%{box-shadow:0 0 0 7px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
+
+/* El paso que toca */
+.pnext{margin-top:6px;padding:9px 10px;border-radius:10px;background:#fff;border:1px solid #e5e7eb;border-left:4px solid #dc2626;
+  display:flex;flex-direction:column;gap:7px;animation:pnextIn .35s ease}
+.pnext-tit{display:flex;gap:8px;align-items:flex-start}
+.pnext-ico{color:#dc2626;font-size:1rem;line-height:1.15;flex:0 0 auto}
+.pnext-tit b{display:block;font-size:.83rem;color:#111827}
+.pnext-tit span{display:block;font-size:.74rem;color:#6b7280}
+.pnext-respuesta,.pnext-aceptacion{border-left-color:#f59e0b}
+.pnext-respuesta .pnext-ico,.pnext-aceptacion .pnext-ico{color:#f59e0b}
+.pnext-llamar{border-left-color:#3b82f6}.pnext-llamar .pnext-ico{color:#3b82f6}
+.pnext-contrato{border-left-color:#16a34a}.pnext-contrato .pnext-ico{color:#16a34a}
+
+.cc2-prosp-acts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.cc2-prosp-acts .pa{display:inline-flex;align-items:center;gap:5px;padding:6px 10px;min-height:36px;border:1px solid #d1d5db;
+  background:#fff;border-radius:8px;font-size:.76rem;font-weight:700;color:#374151;text-decoration:none;cursor:pointer;
+  transition:background .15s,border-color .15s,color .15s,transform .15s}
+.cc2-prosp-acts .pa:hover{border-color:#0d9488;color:#0f766e;transform:translateY(-1px)}
+.cc2-prosp-acts .pa:disabled{opacity:.6;cursor:wait;transform:none}
+.cc2-prosp-acts .pa-wa{background:#dcfce7;border-color:#86efac;color:#166534}
+.cc2-prosp-acts .pa-cot{background:#0d9488;border-color:#0d9488;color:#fff}
+.cc2-prosp-acts .pa-cot:hover{background:#0f766e;color:#fff}
+.cc2-prosp-acts .pa-main{background:#dc2626;border-color:#dc2626;color:#fff}
+.cc2-prosp-acts .pa-main:hover{background:#b91c1c;border-color:#b91c1c;color:#fff}
+.pnext-contrato .cc2-prosp-acts .pa-main{background:#16a34a;border-color:#16a34a}
+.pnext-contrato .cc2-prosp-acts .pa-main:hover{background:#15803d;border-color:#15803d}
+.cc2-prosp-acts .pa-si{background:#dcfce7;border-color:#86efac;color:#166534}
+.cc2-prosp-acts .pa-si:hover{background:#bbf7d0;border-color:#16a34a;color:#14532d}
+.cc2-prosp-acts .pa-no{color:#6b7280}
+.cc2-prosp-acts .pa-no:hover{border-color:#dc2626;color:#b91c1c}
+.cc2-prosp-acts .pa-mini{min-width:36px;justify-content:center;padding:6px 8px}
+.pinsist{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:.72rem;color:#6b7280;font-weight:700}
+
+.pflash{animation:pflash 1.2s ease}
+@keyframes pflash{0%{box-shadow:0 0 0 0 rgba(22,163,74,.55)}100%{box-shadow:0 0 0 12px rgba(22,163,74,0)}}
+@keyframes pnextIn{from{transform:translateY(4px)}to{transform:none}}
+@media (max-width:640px){
+  .cc2-prosp-acts .pa{min-height:44px}
+  .cc2-prosp-acts .pa-mini{min-width:44px}
+}
+@media (prefers-reduced-motion: reduce){
+  .pnext,.pflash,.ptmini .pm.actual{animation:none}
+  .cc2-prosp-acts .pa:hover{transform:none}
+}

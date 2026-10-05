@@ -561,3 +561,216 @@ def test_calendario_proxima_y_sin_fecha():
     cal = _cal()["_plan_calendario"]
     assert cal(dt.date(2026, 4, 20), dt.date(2026, 10, 5), 6, 4)["estado_primera"] == "proxima"
     assert cal(None, dt.date(2026, 10, 5), 6, 4) is None
+
+
+# ───────── Oferta en un ticket NUEVO y solo el paso que toca (Daniel 2026-10-05) ─────────
+def _accion():
+    src = open(_APP, encoding="utf-8").read()
+    ns = {}
+    exec(src[src.index("_PROSP_PASOS = ["):src.index("def _prospecto_info")], ns)
+    return ns["_prospecto_accion"]
+
+
+_ABIERTA = {"id": 5, "numero": "TK-2026-00005", "abierto": True}
+
+
+@pytest.mark.parametrize("o, cot, contrato, key", [
+    ({"etapa": "por_ofrecer"}, None, None, "ofrecer"),
+    ({"etapa": "por_ofrecer", "oferta": _ABIERTA}, None, None, "contactar"),
+    ({"etapa": "ofrecida", "ofrecida_at": "05/10/2026", "oferta": _ABIERTA}, None, None, "respuesta"),
+    ({"etapa": "ofrecida", "ofrecida_at": "x", "respuesta": "si", "oferta": _ABIERTA}, None, None, "cotizar"),
+    ({"etapa": "ofrecida", "ofrecida_at": "x", "respuesta": "llamar", "oferta": _ABIERTA}, None, None, "llamar"),
+    ({"etapa": "ofrecida", "ofrecida_at": "x", "respuesta": "si", "oferta": _ABIERTA},
+     {"numero": "COT-1", "estado": "draft"}, None, "enviar"),
+    ({"etapa": "ofrecida", "ofrecida_at": "x", "oferta": _ABIERTA},
+     {"numero": "COT-1", "estado": "sent", "fecha": "06/10/2026"}, None, "aceptacion"),
+    ({"etapa": "aceptada", "oferta": _ABIERTA}, None, None, "contrato"),
+    ({"etapa": "ofrecida", "oferta": _ABIERTA}, {"numero": "COT-1", "estado": "approved"}, None, "contrato"),
+    ({"etapa": "ofrecida", "oferta": _ABIERTA}, None, "10/10/2026", "listo"),
+    # una cotización rechazada o vencida no cuenta: si el cliente quiere, se cotiza de nuevo
+    ({"etapa": "ofrecida", "ofrecida_at": "x", "respuesta": "si", "oferta": _ABIERTA},
+     {"numero": "COT-1", "estado": "rejected"}, None, "cotizar"),
+])
+def test_solo_el_paso_que_toca(o, cot, contrato, key):
+    assert _accion()(o, cot, contrato)["key"] == key
+
+
+def test_respuesta_muestra_cuando_y_quien_contacto():
+    a = _accion()({"etapa": "ofrecida", "ofrecida_at": "05/10/2026", "ofrecida_por": "Aaron", "oferta": _ABIERTA})
+    assert a["titulo"] == "Esperando su respuesta" and "05/10/2026" in a["detalle"] and "Aaron" in a["detalle"]
+
+
+def test_oferta_cerrada_por_un_no_se_vuelve_a_ofrecer_en_ticket_nuevo():
+    a = _accion()({"etapa": "rechazada", "respuesta_at": "05/10/2026",
+                   "oferta": {"id": 5, "numero": "TK-5", "abierto": False}})
+    assert a["key"] == "ofrecer" and a["titulo"] == "Volver a ofrecer" and "No por ahora" in a["detalle"]
+
+
+def test_oferta_cerrada_sin_rechazo_tambien_abre_otra():
+    a = _accion()({"etapa": "ofrecida", "ofrecida_at": "x", "oferta": {"id": 5, "numero": "TK-5", "abierto": False}})
+    assert a["key"] == "ofrecer" and a["titulo"] == "Volver a ofrecer" and "TK-5" in a["detalle"]
+
+
+def test_cliente_que_escribe_despues_del_no_queda_esperando_respuesta():
+    # Si responde al ticket después del «No», el ticket se reabre: alguien lo lee y registra la respuesta.
+    assert _accion()({"etapa": "rechazada", "respuesta": "no", "oferta": _ABIERTA})["key"] == "respuesta"
+
+
+class _BD:
+    """Doble de MySQL para el ticket de la oferta."""
+    def __init__(self, fila, tickets):
+        self.fila, self.tickets, self.sql, self.mensajes = dict(fila), dict(tickets), [], []
+
+    def fetchone(self, q, p=()):
+        if "FROM tk_tickets" in q:
+            t = self.tickets.get(p[0])
+            return dict(t) if t else None
+        if "FROM mant_prospecto_seguimiento" in q:
+            return dict(self.fila)
+        if "FROM mant_clientes" in q:
+            return {"id": 7, "razon_social": "Gym Sur", "rut": "76123456-7", "contacto_email": "a@b.cl"}
+        return None
+
+    def execute(self, q, p=()):
+        self.sql.append((q, p))
+        if q.startswith("UPDATE mant_prospecto_seguimiento SET ticket_id"):
+            self.fila.update({"ticket_id": p[0], "ofrecida_at": None, "respuesta": None,
+                              "etapa": "aceptada" if self.fila.get("etapa") == "aceptada" else "por_ofrecer"})
+        if "INSERT INTO tk_mensajes" in q:
+            self.mensajes.append(p)
+
+    def rowcount(self, q, p=()):
+        self.sql.append((q, p))
+        t = self.tickets.get(p[1])
+        if t and t["estado"] not in ("closed", "resolved", "cancelado"):
+            t["estado"] = "resolved"
+            return 1
+        return 0
+
+    def conn(self):
+        bd = self
+
+        class _Cur:
+            lastrowid = 99
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def execute(self, q, p=()):
+                bd.sql.append((q, p))
+                if q.startswith("INSERT INTO tk_tickets"):
+                    bd.tickets[99] = {"id": 99, "numero_ticket": "TK-2026-00099", "estado": "open", "descripcion": p[1]}
+
+        class _Conn:
+            def cursor(self):
+                return _Cur()
+
+            def commit(self):
+                pass
+
+            def close(self):
+                pass
+        return _Conn()
+
+
+def _ticket_ns(bd):
+    src = open(_APP, encoding="utf-8").read()
+    i = src.index("\ndef _prospecto_ticket_oferta(")
+    ns = {"datetime": dt.datetime, "timedelta": dt.timedelta, "_PROSP_TK_TERMINALES": ("resolved", "closed", "cancelado"),
+          "_PROSP_PLAN_PUNTOS": ("Plan",), "_prospecto_fila": lambda cid: dict(bd.fila), "mysql_fetchone": bd.fetchone,
+          "mysql_execute": bd.execute, "mysql_execute_returning_rowcount": bd.rowcount, "get_mysql": bd.conn,
+          "_prospecto_token": lambda cid: "tok", "_mant_log": lambda *a, **k: None, "print": lambda *a, **k: None}
+    exec(src[i:src.index("\ndef _prospecto_mensaje_ticket(")], ns)
+    return ns
+
+
+def test_oferta_abierta_se_reusa_sin_crear_otro_ticket():
+    bd = _BD({"cliente_id": 7, "ticket_id": 5, "etapa": "ofrecida"},
+             {5: {"id": 5, "numero_ticket": "TK-5", "estado": "in_progress"}})
+    t = _ticket_ns(bd)["_prospecto_ticket_oferta"](7, "aaron")
+    assert t["id"] == 5 and not t.get("nuevo")
+    assert not any(q.startswith("INSERT INTO tk_tickets") for q, _ in bd.sql)
+
+
+def test_oferta_cerrada_abre_ticket_nuevo_y_empieza_de_cero():
+    bd = _BD({"cliente_id": 7, "ticket_id": 5, "etapa": "rechazada", "respuesta": "no", "ofrecida_at": "x"},
+             {5: {"id": 5, "numero_ticket": "TK-2026-00005", "estado": "resolved"}})
+    t = _ticket_ns(bd)["_prospecto_ticket_oferta"](7, "aaron")
+    assert t["id"] == 99 and t["nuevo"] is True
+    assert bd.fila["ticket_id"] == 99 and bd.fila["etapa"] == "por_ofrecer" and bd.fila["respuesta"] is None
+    assert "Oferta anterior: TK-2026-00005 (cerrada)" in bd.tickets[99]["descripcion"]
+
+
+def test_oferta_nueva_no_borra_una_aceptacion():
+    bd = _BD({"cliente_id": 7, "ticket_id": None, "etapa": "aceptada"}, {})
+    _ticket_ns(bd)["_prospecto_ticket_oferta"](7, "aaron")
+    assert bd.fila["etapa"] == "aceptada"
+
+
+def test_terminar_la_oferta_cierra_su_ticket():
+    bd = _BD({"cliente_id": 7, "ticket_id": 5}, {5: {"id": 5, "numero_ticket": "TK-5", "estado": "open"}})
+    assert _ticket_ns(bd)["_prospecto_cerrar_ticket"](7, "contrato firmado.", "daniel") is True
+    assert bd.tickets[5]["estado"] == "resolved" and "contrato firmado." in bd.mensajes[0][1]
+
+
+def test_cerrar_sin_ticket_abierto_no_hace_nada():
+    bd = _BD({"cliente_id": 7, "ticket_id": 5}, {5: {"id": 5, "numero_ticket": "TK-5", "estado": "resolved"}})
+    assert _ticket_ns(bd)["_prospecto_cerrar_ticket"](7, "x", "daniel") is False
+    assert not bd.mensajes
+
+
+# ───────── La franja muestra SOLO el paso que toca ─────────
+def _franja(accion, en_ficha=False, **pr):
+    import jinja2
+    env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(os.path.dirname(_APP), "templates")),
+                             autoescape=True)
+    env.globals["url_for"] = lambda ep, **k: f"/ficha/{k.get('cid')}"
+    base = {"pasos": [], "pasos_hechos": 1, "pasos_total": 5, "paso_actual": "", "etapa": "por_ofrecer",
+            "etapa_label": "Por ofrecer", "link": "https://x/propuesta/tok", "accion": accion}
+    base.update(pr)
+    c = {"id": 7, "razon_social": "Gym Sur", "contacto_nombre": "Ana", "contacto_tel": "+56 9 1234 5678", "pr": base}
+    tpl = env.from_string('{% from "mantenciones/_prosp_strip.html" import prosp_strip %}'
+                          '{{ prosp_strip(c, cfg, en_ficha=ficha) }}')
+    return tpl.render(c=c, cfg={"descuento": "0", "visitas": "4", "mensaje_wa": "Hola {{contacto}}"}, ficha=en_ficha)
+
+
+def _ac(key, titulo="T"):
+    return {"key": key, "titulo": titulo, "detalle": ""}
+
+
+def test_franja_ofrecer_solo_tiene_el_boton_de_ofrecer():
+    h = _franja(_ac("ofrecer", "Ofrecer mantención"))
+    assert "prospOfrecer" in h and "prospContactar" not in h and "Cotizar" not in h
+
+
+def test_franja_contactar_tiene_los_tres_canales_y_el_link():
+    h = _franja(_ac("contactar"), oferta=_ABIERTA)
+    assert "WhatsApp" in h and "Llamar" in h and "Correo" in h and 'data-link="https://x/propuesta/tok"' in h
+    assert "prospOfrecer" not in h and "Oferta en TK-2026-00005" in h
+
+
+def test_franja_respuesta_registra_si_o_no_e_insistir():
+    h = _franja(_ac("respuesta"), oferta=_ABIERTA)
+    assert "Dijo que sí" in h and "No por ahora" in h and "Insistir" in h and "Cotizar" not in h
+
+
+def test_franja_cotizar_liga_la_cotizacion_al_ticket_de_la_oferta():
+    assert "&ticket=5" in _franja(_ac("cotizar"), oferta=_ABIERTA)
+
+
+def test_franja_historial_aparte_de_la_oferta():
+    h = _franja(_ac("contactar"), oferta=_ABIERTA, tickets_n=2)
+    assert "Historial: 2 conversaciones anteriores" in h and "Oferta en TK-2026-00005" in h
+
+
+def test_franja_en_ficha_usa_las_funciones_de_la_ficha():
+    assert "abrirContratoModal()" in _franja(_ac("contrato"), en_ficha=True)
+    assert "?accion=contrato" in _franja(_ac("contrato"))
+    assert "enviarCotizacionAceptar(this)" in _franja(_ac("enviar"), en_ficha=True, cotizacion={"id": 3, "numero": "COT-3"})
+
+
+def test_franja_cliente_con_contrato_no_muestra_acciones():
+    assert "pnext" not in _franja(_ac("listo"))

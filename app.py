@@ -63643,14 +63643,8 @@ def mant_clientes():
     )
     global_stats['notificaciones'] = (notif_r['n'] if notif_r else 0)
 
-    try:
-        _pc = _plan_config()
-        _plan_cfg_ui = {"descuento": _pc.get("descuento_pct") or "0", "visitas": _pc.get("visitas_anio") or "4",
-                        "mensaje_wa": _pc.get("mensaje_wa") or ""}
-    except Exception:
-        _plan_cfg_ui = {"descuento": "0", "visitas": "4", "mensaje_wa": ""}
     return render_template("mantenciones/clientes.html",
-        plan_cfg         = _plan_cfg_ui,
+        plan_cfg         = _plan_cfg_ui(),
         clientes         = clientes,
         filtros          = {"q": q, "estado": estado, "contrato": contrato_fil,
                             "equipos": equipos_fil, "vista": vista, "tipo": tipo_fil},
@@ -69885,13 +69879,16 @@ def _mant_ficha_impl(cid):
             _cfg_plan = _plan_config()
             _prospecto["plan_descuento_pct"] = _cfg_plan.get("descuento_pct") or "0"
             _prospecto["plan_visitas"] = _cfg_plan.get("visitas_anio") or "4"
+            _prospecto["plan_mensaje_wa"] = _cfg_plan.get("mensaje_wa") or ""
             _prospecto["tickets"] = _tickets_de_cliente(cliente.get("rut"))
             _prospecto["cotizacion"] = _cotizacion_vigente_de(cid)
             try:
                 _fila_p = mysql_fetchone("SELECT token, ticket_id FROM mant_prospecto_seguimiento WHERE cliente_id=%s", (cid,)) or {}
             except Exception:
                 _fila_p = {}
-            _prospecto["ticket_oferta_id"] = _fila_p.get("ticket_id")
+            # La cotización se liga al ticket de la oferta solo si esa oferta sigue abierta (una cerrada ya terminó).
+            _of = _prospecto.get("oferta") or {}
+            _prospecto["ticket_oferta_id"] = _of.get("id") if _of.get("abierto") else None
             _prospecto["link_propuesta"] = (url_for("prospecto_propuesta_publica", token=_fila_p["token"], _external=True)
                                             if _fila_p.get("token") else "")
             _prospecto["email_sugerido"] = (_mant_get_cliente_emails(cid) or [""])[0]
@@ -70207,6 +70204,62 @@ def _prospecto_pasos(o, cot=None, contrato_fecha=None):
     return pasos, n, siguiente
 
 
+# Estados de ticket que dan por terminada una oferta (los mismos que TK_ESTADOS_CERRADOS de Tickets).
+_PROSP_TK_TERMINALES = ("resolved", "closed", "cancelado")
+# El paso que toca AHORA con el prospecto (Daniel 2026-10-05): la oferta vive en un ticket NUEVO («para que la
+# conversación sea fresca») y la tarjeta muestra solo ese paso, como la guía de Retiros.
+_PROSP_ACCIONES = {
+    "ofrecer": "Ofrecer mantención",
+    "contactar": "Contactar al cliente",
+    "respuesta": "Esperando su respuesta",
+    "llamar": "Pidió que lo llamen",
+    "cotizar": "Armar la cotización",
+    "enviar": "Enviar la cotización para aceptar",
+    "aceptacion": "Esperando que acepte",
+    "contrato": "Subir el contrato firmado",
+    "listo": "Cliente de mantención",
+}
+
+
+def _prospecto_accion(o, cot=None, contrato_fecha=None):
+    """Devuelve {key, titulo, detalle} del ÚNICO paso que toca, deducido de lo que pasó de verdad: el ticket de la
+    oferta (abierto o cerrado), el contacto, la respuesta del cliente y la última cotización {numero, estado, fecha}."""
+    etapa = o.get("etapa") or "por_ofrecer"
+    oferta = o.get("oferta") or {}
+    cot = cot or {}
+    cot_estado = cot.get("estado")
+    cot_num = cot.get("numero") or "La cotización"
+
+    def _r(key, detalle="", titulo=None):
+        return {"key": key, "titulo": titulo or _PROSP_ACCIONES[key], "detalle": detalle}
+
+    if contrato_fecha:
+        return _r("listo")
+    if etapa == "aceptada" or cot_estado == "approved":
+        return _r("contrato", "Aceptó el plan: falta subir el contrato firmado.")
+    if not oferta.get("abierto"):
+        if etapa == "rechazada":
+            return _r("ofrecer", "Respondió «No por ahora»" + (f" el {o['respuesta_at']}" if o.get("respuesta_at") else "")
+                      + ". Una oferta nueva abre otro ticket.", "Volver a ofrecer")
+        if oferta.get("id"):
+            return _r("ofrecer", f"La oferta anterior ({oferta.get('numero')}) está cerrada. Una nueva abre otro ticket.",
+                      "Volver a ofrecer")
+        return _r("ofrecer", "Se abre un ticket nuevo para la oferta. No se envía nada al cliente.")
+    if cot_estado == "draft":
+        return _r("enviar", f"{cot_num} está en borrador: revísala y envíala.")
+    if cot_estado == "sent":
+        return _r("aceptacion", f"{cot_num} enviada" + (f" el {cot['fecha']}" if cot.get("fecha") else "") + ".")
+    if not (o.get("ofrecida_at") or etapa in ("ofrecida", "rechazada")):
+        return _r("contactar", "Elige cómo: queda anotado en el ticket de la oferta.")
+    resp = o.get("respuesta")
+    if resp == "si":
+        return _r("cotizar", "Dijo que sí: arma la cotización con sus equipos y revísala antes de enviarla.")
+    if resp == "llamar":
+        return _r("llamar", "Lo pidió desde la propuesta.")
+    return _r("respuesta", "Contactado" + (f" el {o['ofrecida_at']}" if o.get("ofrecida_at") else "")
+              + (f" por {o['ofrecida_por']}" if o.get("ofrecida_por") else "") + ".")
+
+
 def _sumar_meses(d, meses):
     """Suma meses a una fecha sin pasarse del último día del mes (31-ene + 1 mes = 28/29-feb)."""
     import calendar as _cal
@@ -70318,7 +70371,9 @@ def _prospecto_info(ids):
                "origen_ot": None, "origen_tipo": None, "origen_fecha": None, "marcas": "",
                "pasos": [], "pasos_hechos": 0, "pasos_total": len(_PROSP_PASOS), "paso_actual": "",
                "equipos_plan": 0, "factura": "", "plan": None,
-               "tickets_n": 0, "tickets_no_leidos": 0, "ticket_ultimo": None}
+               "tickets_n": 0, "tickets_no_leidos": 0, "ticket_ultimo": None,
+               "respuesta": None, "respuesta_at": None, "oferta": None, "link": "", "cotizacion": None,
+               "accion": None}
            for i in ids}
     if not ids:
         return out
@@ -70345,6 +70400,41 @@ def _prospecto_info(ids):
             o["ofrecida_por"] = r.get("ofrecida_por")
     except Exception as e:
         print(f"[prospecto_info] seguimiento: {e}", flush=True)
+    # Ticket de la oferta (la conversación fresca, Daniel 2026-10-05), respuesta del cliente y link de la propuesta.
+    oferta_de = {}
+    try:
+        for r in mysql_fetchall(
+                f"SELECT cliente_id, ticket_id, respuesta, respuesta_at, token FROM mant_prospecto_seguimiento "
+                f" WHERE cliente_id IN ({ph})", tuple(ids)) or []:
+            o = out.get(r["cliente_id"])
+            if not o:
+                continue
+            o["respuesta"] = r.get("respuesta")
+            if r.get("respuesta_at"):
+                o["respuesta_at"] = chile_fmt_filter(r["respuesta_at"], "%d/%m/%Y")
+            if r.get("token"):
+                try:
+                    o["link"] = url_for("prospecto_propuesta_publica", token=r["token"], _external=True)
+                except Exception:
+                    pass
+            if r.get("ticket_id"):
+                oferta_de[int(r["ticket_id"])] = r["cliente_id"]
+        if oferta_de:
+            ph_o = ",".join(["%s"] * len(oferta_de))
+            for r in mysql_fetchall(
+                    f"SELECT t.id, t.numero_ticket, t.estado, t.created_at, "
+                    f"       (SELECT COUNT(*) FROM tk_mensajes m WHERE m.ticket_id=t.id AND m.tipo='client_message' "
+                    f"           AND m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')) AS no_leidos "
+                    f"  FROM tk_tickets t WHERE t.id IN ({ph_o})", tuple(oferta_de)) or []:
+                o = out.get(oferta_de.get(r["id"]))
+                if o:
+                    o["oferta"] = {"id": r["id"], "numero": r.get("numero_ticket") or f"#{r['id']}",
+                                   "abierto": r.get("estado") not in _PROSP_TK_TERMINALES,
+                                   "no_leidos": int(r.get("no_leidos") or 0),
+                                   "fecha": chile_fmt_filter(r["created_at"], "%d/%m/%Y") if r.get("created_at") else "",
+                                   "url": f"/tickets/{r['id']}"}
+    except Exception as e:
+        print(f"[prospecto_info] oferta: {e}", flush=True)
     try:
         for r in mysql_fetchall(
                 f"SELECT cliente_id, GROUP_CONCAT(DISTINCT TRIM(marca) ORDER BY TRIM(marca) SEPARATOR ', ') AS marcas "
@@ -70374,9 +70464,9 @@ def _prospecto_info(ids):
     cots, contratos = {}, {}
     try:
         for r in mysql_fetchall(
-                f"SELECT cliente_id, numero_cotizacion, estado, created_at FROM tk_cotizaciones "
+                f"SELECT id, cliente_id, numero_cotizacion, estado, created_at FROM tk_cotizaciones "
                 f" WHERE cliente_id IN ({ph}) AND COALESCE(eliminada,0)=0 ORDER BY id", tuple(ids)) or []:
-            cots[r["cliente_id"]] = {"numero": r.get("numero_cotizacion") or "", "estado": r.get("estado"),
+            cots[r["cliente_id"]] = {"id": r["id"], "numero": r.get("numero_cotizacion") or "", "estado": r.get("estado"),
                                      "fecha": chile_fmt_filter(r["created_at"], "%d/%m/%Y") if r.get("created_at") else None}
     except Exception as e:
         print(f"[prospecto_info] cotizaciones: {e}", flush=True)
@@ -70407,8 +70497,8 @@ def _prospecto_info(ids):
                     f"           AND m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')) AS no_leidos "
                     f"  FROM tk_tickets t WHERE t.rut_norm IN ({ph_v}) ORDER BY t.id", tuple(var_a_cli)) or []):
                 o = out.get(var_a_cli.get(r.get("rut_norm")))
-                if not o:
-                    continue
+                if not o or r["id"] in oferta_de:
+                    continue  # el ticket de la oferta va aparte: esto es el historial de conversaciones anteriores
                 o["tickets_n"] += 1
                 o["tickets_no_leidos"] += int(r.get("no_leidos") or 0)
                 o["ticket_ultimo"] = {"id": r["id"], "numero": r.get("numero_ticket") or f"#{r['id']}"}
@@ -70448,6 +70538,12 @@ def _prospecto_info(ids):
                     pass
     except Exception as e:
         print(f"[prospecto_info] calendario: {e}", flush=True)
+    for i, o in out.items():
+        try:
+            o["cotizacion"] = cots.get(i)
+            o["accion"] = _prospecto_accion(o, cots.get(i), contratos.get(i))
+        except Exception as e:
+            print(f"[prospecto_info] accion {i}: {e}", flush=True)
     return out
 
 
@@ -71079,12 +71175,17 @@ def _prospecto_token(cid):
 
 
 def _prospecto_ticket_oferta(cid, quien):
-    """El ticket «Oferta de plan de mantención» del cliente: el mismo mientras siga abierto; si no, uno nuevo."""
+    """El ticket «Oferta de plan de mantención» del cliente: el mismo mientras siga abierto; si está cerrado o no
+    existe, uno NUEVO (Daniel 2026-10-05: «ofrecer en ticket nuevo… para que la conversación sea fresca»). Un ticket
+    nuevo es una oferta nueva: el contacto y la respuesta vuelven a empezar, y la oferta anterior queda entera en su
+    propio ticket. Devuelve el ticket con nuevo=True cuando lo crea."""
     fila = _prospecto_fila(cid)
+    anterior = None
     if fila.get("ticket_id"):
         t = mysql_fetchone("SELECT id, numero_ticket, estado FROM tk_tickets WHERE id=%s", (fila["ticket_id"],))
-        if t and t.get("estado") not in ("closed", "cancelado"):
+        if t and t.get("estado") not in _PROSP_TK_TERMINALES:
             return dict(t)
+        anterior = dict(t) if t else None
     cli = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
     if not cli:
         return None
@@ -71093,6 +71194,8 @@ def _prospecto_ticket_oferta(cid, quien):
     desc = (f"Oferta del plan de mantención a {cli.get('razon_social')}.\n\nEste ticket es la bandeja de la oferta: los "
             f"correos salen desde aquí y las respuestas del cliente (correo o botones de la propuesta) llegan aquí.\n\n"
             f"Qué ofrecemos:\n{puntos}")
+    if anterior:
+        desc += f"\n\nOferta anterior: {anterior.get('numero_ticket') or '#' + str(anterior['id'])} (cerrada)."
     hoy = datetime.now()
     conn = get_mysql()
     try:
@@ -71117,13 +71220,58 @@ def _prospecto_ticket_oferta(cid, quien):
         conn.commit()
     finally:
         conn.close()
-    mysql_execute("UPDATE mant_prospecto_seguimiento SET ticket_id=%s WHERE cliente_id=%s", (tid, cid))
+    # Oferta nueva = ciclo nuevo: se limpian contacto y respuesta de la oferta anterior (quedan en su ticket y en
+    # la bitácora). Una aceptación no se borra: ese cliente va camino al contrato.
+    mysql_execute("UPDATE mant_prospecto_seguimiento SET ticket_id=%s, ofrecida_at=NULL, ofrecida_por=NULL, "
+                  "  respuesta=NULL, respuesta_at=NULL, proxima_gestion=NULL, "
+                  "  etapa=IF(etapa='aceptada', etapa, 'por_ofrecer') WHERE cliente_id=%s", (tid, cid))
     try:
-        _mant_log("cliente", cid, "prospecto_ticket", f"Ticket de la oferta creado (#{tid}) · por {quien}")
+        _prospecto_token(cid)
+    except Exception as e:
+        print(f"[prospecto_ticket_oferta] token cid={cid}: {e}", flush=True)
+    t = mysql_fetchone("SELECT id, numero_ticket, estado FROM tk_tickets WHERE id=%s", (tid,))
+    try:
+        _mant_log("cliente", cid, "prospecto_ticket",
+                  f"Oferta de mantención abierta en el ticket {(t or {}).get('numero_ticket') or '#' + str(tid)} · por {quien}")
     except Exception:
         pass
-    t = mysql_fetchone("SELECT id, numero_ticket, estado FROM tk_tickets WHERE id=%s", (tid,))
-    return dict(t) if t else None
+    if not t:
+        return None
+    t = dict(t)
+    t["nuevo"] = True
+    return t
+
+
+def _prospecto_ticket_abierto(cid):
+    """El ticket de la oferta si sigue abierto; None si no hay o ya se cerró (no crea nada)."""
+    fila = mysql_fetchone("SELECT ticket_id FROM mant_prospecto_seguimiento WHERE cliente_id=%s", (cid,)) or {}
+    if not fila.get("ticket_id"):
+        return None
+    t = mysql_fetchone("SELECT id, numero_ticket, estado FROM tk_tickets WHERE id=%s", (fila["ticket_id"],))
+    return dict(t) if t and t.get("estado") not in _PROSP_TK_TERMINALES else None
+
+
+def _prospecto_cerrar_ticket(cid, motivo, quien):
+    """Resuelve el ticket de la oferta cuando la oferta TERMINA: contrato subido o «No por ahora» (Daniel
+    2026-10-05). Si después se le vuelve a ofrecer, se abre otro ticket. No pisa los estados automáticos de una OT."""
+    try:
+        t = _prospecto_ticket_abierto(cid)
+        if not t:
+            return False
+        quien = (quien or "sistema")[:190]
+        n = mysql_execute_returning_rowcount(
+            "UPDATE tk_tickets SET estado='resolved', cerrado_at=NOW(), cerrado_por=%s "
+            " WHERE id=%s AND estado NOT IN ('closed','resolved','cancelado',"
+            "                                'ot_generated','ot_in_progress','ot_pending_approval')", (quien, t["id"]))
+        if n:
+            mysql_execute("INSERT INTO tk_mensajes (ticket_id, tipo, contenido, usuario, es_interno) "
+                          "VALUES (%s,'cambio_estado',%s,%s,1)",
+                          (t["id"], f"Oferta terminada: {motivo} Ticket resuelto automáticamente; si se le vuelve a "
+                                    f"ofrecer, se abre otro ticket.", quien))
+        return bool(n)
+    except Exception as e:
+        print(f"[prospecto_cerrar_ticket] cid={cid}: {e}", flush=True)
+        return False
 
 
 def _prospecto_mensaje_ticket(tid, contenido, tipo="client_message", usuario="cliente", interno=False, to_email=None,
@@ -71383,15 +71531,25 @@ def prospecto_propuesta_responder(token):
     except Exception:
         pass
     cli = dict(mysql_fetchone("SELECT id, razon_social, contacto_tel, tel_empresa FROM mant_clientes WHERE id=%s", (cid,)) or {})
-    tid = fila.get("ticket_id")
-    if not tid:
-        t = _prospecto_ticket_oferta(cid, "sistema")
-        tid = t["id"] if t else None
+    if accion == "no" and fila.get("respuesta") == "no" and fila.get("etapa") == "rechazada":
+        return jsonify({"ok": True, "accion": accion, "repetida": True})
+    if accion == "acepta":
+        nombre = (d.get("nombre") or "").strip()[:150]
+        ok_rut, rut_v = validar_rut((d.get("rut") or "").strip())
+        cot = _cotizacion_vigente_de(cid)
+        if len(nombre) < 3 or not ok_rut:
+            return jsonify({"ok": False, "error": "Escribe tu nombre y un RUT válido para aceptar."}), 400
+        if not cot or cot.get("estado") not in ("sent", "approved"):
+            return jsonify({"ok": False, "error": "Todavía no hay una cotización para aceptar."}), 409
+    # La respuesta llega al ticket abierto de la oferta; si esa oferta ya se cerró, abre una nueva (Daniel 2026-10-05).
+    t = _prospecto_ticket_oferta(cid, "sistema")
+    tid = t["id"] if t else None
     texto = ""
     if accion == "si":
         texto = "El cliente respondió desde la propuesta: «Sí, quiero la cotización»."
+        # Un «sí» después de un «no» es que cambió de opinión: vuelve a «Ofrecida» (solo una aceptación se respeta).
         mysql_execute("UPDATE mant_prospecto_seguimiento SET respuesta='si', respuesta_at=UTC_TIMESTAMP(), "
-                      "  etapa=IF(etapa IN ('aceptada','rechazada'),etapa,'ofrecida'), proxima_gestion=%s WHERE cliente_id=%s",
+                      "  etapa=IF(etapa='aceptada',etapa,'ofrecida'), proxima_gestion=%s WHERE cliente_id=%s",
                       (datetime.today().date(), cid))
     elif accion == "llamar":
         tel = cli.get("contacto_tel") or cli.get("tel_empresa") or "(sin teléfono en la ficha)"
@@ -71403,13 +71561,6 @@ def prospecto_propuesta_responder(token):
         mysql_execute("UPDATE mant_prospecto_seguimiento SET respuesta='no', respuesta_at=UTC_TIMESTAMP(), "
                       "  etapa=IF(etapa='aceptada',etapa,'rechazada') WHERE cliente_id=%s", (cid,))
     else:
-        nombre = (d.get("nombre") or "").strip()[:150]
-        ok_rut, rut_v = validar_rut((d.get("rut") or "").strip())
-        cot = _cotizacion_vigente_de(cid)
-        if len(nombre) < 3 or not ok_rut:
-            return jsonify({"ok": False, "error": "Escribe tu nombre y un RUT válido para aceptar."}), 400
-        if not cot or cot.get("estado") not in ("sent", "approved"):
-            return jsonify({"ok": False, "error": "Todavía no hay una cotización para aceptar."}), 409
         texto = (f"El cliente ACEPTÓ la cotización {cot.get('numero_cotizacion') or cot['id']} desde la propuesta. "
                  f"Aceptó: {nombre} (RUT {_rut_canon(rut_v) or rut_v}). Siguiente paso: preparar y firmar el contrato.")
         mysql_execute("UPDATE mant_prospecto_seguimiento SET respuesta='acepta', respuesta_at=UTC_TIMESTAMP(), etapa='aceptada', "
@@ -71424,6 +71575,9 @@ def prospecto_propuesta_responder(token):
             _prospecto_mensaje_ticket(tid, f"Siguiente paso: armar la cotización del plan (se carga sola con sus equipos; "
                                            f"revísala antes de enviarla): {_url}", tipo="comentario", usuario="sistema",
                                       interno=True)
+    if accion == "no":
+        # «No por ahora» termina la oferta: su ticket se cierra (Daniel 2026-10-05).
+        _prospecto_cerrar_ticket(cid, "el cliente respondió «No por ahora» desde la propuesta.", "cliente (propuesta web)")
     try:
         _mant_log("cliente", cid, f"propuesta_{accion}", texto)
     except Exception:
@@ -71436,7 +71590,9 @@ def prospecto_propuesta_responder(token):
 @_no_tecnico
 def mant_prospecto_contacto(cid):
     """Deja registrado, con un clic, que alguien contactó al cliente (WhatsApp / llamada / correo):
-    pasa «Por ofrecer» a «Ofrecida», anota quién y cuándo, y agenda la próxima gestión en 3 días."""
+    pasa «Por ofrecer» a «Ofrecida», anota quién y cuándo, y agenda la próxima gestión en 3 días.
+    Daniel 2026-10-05: todo pasa por el ticket de la oferta, así que el contacto queda anotado en ese ticket
+    (si no hay uno abierto, se abre uno nuevo). No envía nada: el WhatsApp lo manda la persona desde su teléfono."""
     d = request.get_json(silent=True) or {}
     canal = (d.get("canal") or "").strip().lower()
     nombres = {"whatsapp": "WhatsApp", "llamada": "llamada", "correo": "correo"}
@@ -71446,6 +71602,19 @@ def mant_prospecto_contacto(cid):
     if not cli:
         return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
     quien = current_username() or "sistema"
+    t = _prospecto_ticket_oferta(cid, quien)
+    if t:
+        tel = re.sub(r"[^\d+ ]", "", str(d.get("tel") or ""))[:30].strip()
+        msg = str(d.get("mensaje") or "").strip()[:1500]
+        if canal == "whatsapp":
+            texto = (f"WhatsApp: {quien} abrió el chat" + (f" con {tel}" if tel else "") + " con el mensaje de la oferta"
+                     + (f":\n\n{msg}" if msg else "."))
+        elif canal == "llamada":
+            texto = (f"Llamada: {quien} llamó al cliente" + (f" ({tel})" if tel else "")
+                     + ". Si contestó, registra su respuesta con «Dijo que sí» o «No por ahora».")
+        else:
+            texto = f"Correo: {quien} registró un contacto por correo."
+        _prospecto_mensaje_ticket(t["id"], texto, tipo="comentario", usuario=quien, interno=True)
     prox = datetime.today().date() + timedelta(days=3)
     _ensure_mant_prospecto_seguimiento()
     mysql_execute(
@@ -71457,10 +71626,119 @@ def mant_prospecto_contacto(cid):
         (cid, prox, quien, quien))
     try:
         _mant_log("cliente", cid, "prospecto_contacto",
-                  f"Contacto por {nombres[canal]} para ofrecer el plan de mantención · próxima gestión {prox.strftime('%d/%m/%Y')} · por {quien}")
+                  f"Contacto por {nombres[canal]} para ofrecer el plan de mantención · próxima gestión {prox.strftime('%d/%m/%Y')} · por {quien}"
+                  + (f" · ticket {t.get('numero_ticket')}" if t else ""))
     except Exception:
         pass
-    return jsonify({"ok": True, "etapa_label": _PROSP_ETAPAS["ofrecida"], "proxima_gestion": prox.strftime("%d/%m/%Y")})
+    return jsonify({"ok": True, "etapa_label": _PROSP_ETAPAS["ofrecida"], "proxima_gestion": prox.strftime("%d/%m/%Y"),
+                    "ticket": ({"id": t["id"], "numero": t.get("numero_ticket") or f"#{t['id']}", "url": f"/tickets/{t['id']}"}
+                               if t else None)})
+
+
+def _plan_cfg_ui():
+    """Lo que la franja del prospecto necesita del cuadro de mando del plan (descuento, visitas, mensaje WhatsApp)."""
+    try:
+        pc = _plan_config()
+        return {"descuento": pc.get("descuento_pct") or "0", "visitas": pc.get("visitas_anio") or "4",
+                "mensaje_wa": pc.get("mensaje_wa") or ""}
+    except Exception:
+        return {"descuento": "0", "visitas": "4", "mensaje_wa": ""}
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/prospecto/iniciar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_prospecto_iniciar(cid):
+    """«Ofrecer mantención» (Daniel 2026-10-05): abre el ticket NUEVO de la oferta, o devuelve el que ya está abierto,
+    para que toda la conversación quede ahí. No envía nada al cliente: después la persona elige cómo contactarlo."""
+    if not mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (cid,)):
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+    t = _prospecto_ticket_oferta(cid, current_username() or "sistema")
+    if not t:
+        return jsonify({"ok": False, "error": "No se pudo abrir el ticket de la oferta. Intenta de nuevo."}), 500
+    numero = t.get("numero_ticket") or f"#{t['id']}"
+    return jsonify({"ok": True, "nuevo": bool(t.get("nuevo")),
+                    "ticket": {"id": t["id"], "numero": numero, "url": f"/tickets/{t['id']}"},
+                    "mensaje": (f"Ticket {numero} abierto para la oferta. Ahora elige cómo contactar al cliente."
+                                if t.get("nuevo") else f"La oferta sigue en el ticket {numero}.")})
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/prospecto/respuesta", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_prospecto_respuesta(cid):
+    """La respuesta del cliente cuando llega por teléfono, WhatsApp o correo: una persona la registra con un clic.
+    Body {respuesta: si|no|acepta}. Queda en el ticket de la oferta; «No por ahora» cierra ese ticket (Daniel
+    2026-10-05) y la aceptación deja al cliente listo para el contrato. Nunca envía nada al cliente."""
+    d = request.get_json(silent=True) or {}
+    resp = (d.get("respuesta") or "").strip().lower()
+    if resp not in ("si", "no", "acepta"):
+        return jsonify({"ok": False, "error": "Respuesta no válida."}), 400
+    if not mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (cid,)):
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+    quien = current_username() or "sistema"
+    hoy = datetime.today().date()
+    if resp == "acepta":
+        cot = _cotizacion_vigente_de(cid)
+        if not cot or cot.get("estado") not in ("sent", "approved"):
+            return jsonify({"ok": False, "error": "Primero envía la cotización: la aceptación es sobre una cotización enviada."}), 409
+        t = _prospecto_ticket_oferta(cid, quien)
+        num = cot.get("numero_cotizacion") or f"#{cot['id']}"
+        mysql_execute("UPDATE mant_prospecto_seguimiento SET respuesta='acepta', respuesta_at=UTC_TIMESTAMP(), etapa='aceptada', "
+                      "  acepta_nombre=%s, acepta_cotizacion_id=%s, proxima_gestion=%s, updated_by=%s WHERE cliente_id=%s",
+                      (f"Registrado por {quien}"[:150], cot["id"], hoy, quien, cid))
+        texto = (f"Aceptación registrada por {quien}: el cliente aceptó la cotización {num} (por teléfono, WhatsApp o correo). "
+                 f"Siguiente paso: preparar y firmar el contrato.")
+        mensaje = f"Aceptación de {num} registrada. Siguiente paso: el contrato."
+    elif resp == "si":
+        t = _prospecto_ticket_oferta(cid, quien)
+        mysql_execute("UPDATE mant_prospecto_seguimiento SET respuesta='si', respuesta_at=UTC_TIMESTAMP(), "
+                      "  etapa=IF(etapa='aceptada',etapa,'ofrecida'), ofrecida_at=COALESCE(ofrecida_at, UTC_TIMESTAMP()), "
+                      "  ofrecida_por=COALESCE(ofrecida_por,%s), proxima_gestion=%s, updated_by=%s WHERE cliente_id=%s",
+                      (quien, hoy, quien, cid))
+        texto = f"Respuesta registrada por {quien}: el cliente quiere la cotización."
+        mensaje = "Respuesta registrada. Siguiente paso: armar la cotización."
+    else:
+        t = _prospecto_ticket_abierto(cid)
+        mysql_execute("UPDATE mant_prospecto_seguimiento SET respuesta='no', respuesta_at=UTC_TIMESTAMP(), "
+                      "  etapa=IF(etapa='aceptada',etapa,'rechazada'), proxima_gestion=NULL, updated_by=%s WHERE cliente_id=%s",
+                      (quien, cid))
+        texto = f"Respuesta registrada por {quien}: el cliente respondió «No por ahora»."
+        mensaje = "Respuesta registrada. La oferta quedó cerrada."
+    if t:
+        _prospecto_mensaje_ticket(t["id"], texto, tipo="comentario", usuario=quien, interno=True)
+        if resp == "si":
+            _cfg = _plan_config()
+            _url = (f"/tickets/cotizaciones?desde_cliente={cid}&plan=1&tipo=mantencion&descuento={_cfg.get('descuento_pct') or 0}"
+                    f"&frecuencia={_cfg.get('visitas_anio') or 4}&ticket={t['id']}")
+            _prospecto_mensaje_ticket(t["id"], f"Siguiente paso: armar la cotización del plan (se carga sola con sus equipos; "
+                                               f"revísala antes de enviarla): {_url}", tipo="comentario", usuario="sistema",
+                                      interno=True)
+    if resp == "no":
+        _prospecto_cerrar_ticket(cid, f"el cliente respondió «No por ahora» (registrado por {quien}).", quien)
+    try:
+        _mant_log("cliente", cid, f"prospecto_respuesta_{resp}", texto)
+    except Exception:
+        pass
+    return jsonify({"ok": True, "mensaje": mensaje})
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/prospecto/tarjeta", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def mant_prospecto_tarjeta(cid):
+    """La franja del prospecto de la tarjeta de Clientes, recién calculada: se refresca sola después de cada acción
+    sin recargar la lista (mismo macro que pinta la lista)."""
+    cli = mysql_fetchone("SELECT id, razon_social, contacto_nombre, contacto_tel, tel_empresa FROM mant_clientes WHERE id=%s",
+                         (cid,))
+    if not cli:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+    c = dict(cli)
+    c["pr"] = (_prospecto_info([cid]) or {}).get(cid)
+    html_ = render_template_string(
+        '{% from "mantenciones/_prosp_strip.html" import prosp_strip %}{{ prosp_strip(c, plan_cfg) }}',
+        c=c, plan_cfg=_plan_cfg_ui())
+    return jsonify({"ok": True, "html": html_})
 
 
 @app.route("/mantenciones/api/clientes/<int:cid>/prospecto/seguimiento", methods=["POST"])
@@ -75690,6 +75968,9 @@ def mant_contrato_subir(cid):
         _mant_log("contrato", ctid, "subido", _detalle_log)
         # Un prospecto que firma contrato deja de ser prospecto (no queda huérfano).
         _prospecto_convertir_a_mantencion(cid, f"contrato subido ({f.filename})")
+        # …y su oferta termina: el ticket de la oferta se cierra solo (Daniel 2026-10-05).
+        _prospecto_cerrar_ticket(cid, f"contrato firmado y subido ({f.filename}); el cliente pasó a Mantención.",
+                                 current_username() or "sistema")
         return jsonify({
             "ok": True, "id": ctid,
             "persistente": True,

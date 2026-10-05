@@ -1,0 +1,122 @@
+{# ══════════════════════════════════════════════════════════════════
+   Franja del prospecto (cliente de instalación sin contrato).
+   Daniel 2026-10-05: la oferta vive en un ticket NUEVO («para que la
+   conversación sea fresca») y se muestra SOLO el paso que toca, como la
+   guía de Retiros. El paso lo calcula _prospecto_accion() en app.py; las
+   acciones viven en static/prosp_strip.js. Nada sale al cliente solo.
+   La usan la tarjeta de Clientes y la ficha (en_ficha=True), y el
+   endpoint /prospecto/tarjeta para refrescarla tras cada acción.
+══════════════════════════════════════════════════════════════════ #}
+
+{% macro _contacto(c, pr, plan_cfg, tel, en_ficha, grande) %}
+{% if tel %}
+<button type="button" class="pa {{ 'pa-wa' if grande else 'pa-mini pa-wa' }}" data-cid="{{ c.id }}" data-tel="{{ tel }}"
+        data-nom="{{ c.contacto_nombre or '' }}" data-cli="{{ c.razon_social }}" data-link="{{ pr.link or '' }}"
+        data-msg="{{ plan_cfg.mensaje_wa or '' }}" onclick="prospContactar(event, this, 'whatsapp')"
+        title="Abre WhatsApp con el mensaje y el link de la propuesta; tú lo revisas y lo envías"><i class="bi bi-whatsapp"></i>{% if grande %} WhatsApp{% endif %}</button>
+<button type="button" class="pa{{ '' if grande else ' pa-mini' }}" data-cid="{{ c.id }}" data-tel="{{ tel }}"
+        onclick="prospContactar(event, this, 'llamada')" title="Llamar al {{ tel }}"><i class="bi bi-telephone-fill"></i>{% if grande %} Llamar{% endif %}</button>
+{% endif %}
+{% if en_ficha %}
+<button type="button" class="pa{{ '' if grande else ' pa-mini' }}" onclick="abrirPlanMantencion()"
+        title="Enviar la oferta por correo desde el ticket"><i class="bi bi-envelope-fill"></i>{% if grande %} Correo{% endif %}</button>
+{% else %}
+<a class="pa{{ '' if grande else ' pa-mini' }}" href="{{ url_for('mant_ficha', cid=c.id) }}?accion=propuesta"
+   title="Enviar la oferta por correo desde el ticket"><i class="bi bi-envelope-fill"></i>{% if grande %} Correo{% endif %}</a>
+{% endif %}
+{% endmacro %}
+
+{% macro _si_no(c, si_resp='si', si_txt='Dijo que sí', no_txt='No por ahora') %}
+<button type="button" class="pa pa-si" data-cid="{{ c.id }}" data-cli="{{ c.razon_social }}"
+        onclick="prospRespuesta(event, this, '{{ si_resp }}')"><i class="bi bi-check-lg"></i> {{ si_txt }}</button>
+<button type="button" class="pa pa-no" data-cid="{{ c.id }}" data-cli="{{ c.razon_social }}"
+        onclick="prospRespuesta(event, this, 'no')"><i class="bi bi-x-lg"></i> {{ no_txt }}</button>
+{% endmacro %}
+
+{% macro prosp_strip(c, plan_cfg, en_ficha=False) %}
+{% set pr = c.pr %}
+{% set ac = pr.accion or {'key': '', 'titulo': pr.paso_actual, 'detalle': ''} %}
+{% set of = pr.oferta or {} %}
+{% set cot = pr.cotizacion or {} %}
+{% set tel = (c.contacto_tel or c.tel_empresa or '') %}
+<div class="cc2-prosp{{ ' en-ficha' if en_ficha }}" data-prosp-cid="{{ c.id }}">
+  {% if not en_ficha %}
+  <div class="ptmini" title="{% for p in pr.pasos %}{{ loop.index }}. {{ p.label }}{% if p.estado == 'hecho' %} ✓{% endif %}  {% endfor %}">
+    {% for p in pr.pasos %}<span class="pm {{ p.estado }}">{% if p.estado == 'hecho' %}<i class="bi bi-check-lg"></i>{% elif p.estado == 'fallido' %}<i class="bi bi-x-lg"></i>{% else %}{{ loop.index }}{% endif %}</span>{% if not loop.last %}<i class="pl {{ 'on' if p.estado == 'hecho' }}"></i>{% endif %}{% endfor %}
+    <span class="pt">{{ pr.pasos_hechos }} de {{ pr.pasos_total }} · {{ ac.titulo }}</span>
+  </div>
+  <span class="cc2-prosp-etapa cc2-prosp-{{ pr.etapa }}">
+    <i class="bi bi-megaphone-fill me-1"></i>Mantención: {{ pr.etapa_label }}
+  </span>
+  {% if pr.marcas %}<span class="cc2-prosp-txt"><i class="bi bi-tags-fill me-1"></i>Marcas: {{ pr.marcas }}</span>{% endif %}
+  {% if pr.plan %}{% set pl = pr.plan %}<span class="cc2-prosp-txt pmant {{ pl.estado_primera }}"><i class="bi bi-calendar2-check-fill me-1"></i>{% if pl.estado_primera == 'vencida' %}1ª mantención vencida hace {{ -pl.dias_primera }} días{% elif pl.estado_primera == 'proxima' %}1ª mantención en {{ pl.dias_primera }} días{% else %}1ª mantención el {{ pl.primera }}{% endif %} · {{ pr.equipos_plan }} equipo{{ 's' if pr.equipos_plan != 1 }}</span>{% endif %}
+  {% if pr.origen_ot %}
+  <span class="cc2-prosp-txt">Nació de {{ pr.origen_ot }} · {{ pr.origen_tipo }}{% if pr.origen_fecha %} · {{ pr.origen_fecha }}{% endif %}</span>
+  {% endif %}
+  {% if pr.proxima_gestion %}
+  <span class="cc2-prosp-txt{% if pr.vencida %} cc2-prosp-vencida{% endif %}" data-prosp-prox="{{ c.id }}">
+    <i class="bi bi-calendar-event me-1"></i>Próxima gestión: {{ pr.proxima_gestion }}{% if pr.vencida %} · vencida{% endif %}
+  </span>
+  {% endif %}
+  {% endif %}
+  {# La conversación de ESTA oferta (ticket propio) y, aparte, el historial de conversaciones anteriores #}
+  {% if of.id %}
+  <a class="cc2-prosp-txt pconv-chip{% if of.no_leidos %} nl{% endif %}{% if not of.abierto %} cerrada{% endif %}" href="{{ of.url }}" target="_blank" onclick="event.stopPropagation()">
+    <i class="bi bi-chat-dots-fill me-1"></i>{% if of.abierto %}Oferta en {{ of.numero }}{% else %}Última oferta: {{ of.numero }} (cerrada){% endif %}{% if of.no_leidos %} · <b style="display:inline">{{ of.no_leidos }} sin leer</b>{% endif %} · abrir</a>
+  {% endif %}
+  {% if pr.tickets_n and not en_ficha %}
+  <a class="cc2-prosp-txt phist" href="{{ url_for('mant_ficha', cid=c.id) }}#prospConv" onclick="event.stopPropagation()"
+     title="Tickets anteriores de este RUT (instalación, reparación…): no se mezclan con la oferta">
+    <i class="bi bi-clock-history me-1"></i>Historial: {{ pr.tickets_n }} {{ 'conversación anterior' if pr.tickets_n == 1 else 'conversaciones anteriores' }}{% if pr.tickets_no_leidos %} · {{ pr.tickets_no_leidos }} sin leer{% endif %}</a>
+  {% endif %}
+  {% if ac.key and ac.key != 'listo' %}
+  <div class="pnext pnext-{{ ac.key }}" onclick="event.stopPropagation()">
+    <div class="pnext-tit">
+      <span class="pnext-ico">{% if ac.key in ('respuesta', 'aceptacion') %}<i class="bi bi-hourglass-split"></i>{% else %}<i class="bi bi-arrow-right-circle-fill"></i>{% endif %}</span>
+      <div><b>{{ ac.titulo }}</b>{% if ac.detalle %}<span>{{ ac.detalle }}</span>{% endif %}</div>
+    </div>
+    <div class="cc2-prosp-acts">
+    {% if ac.key == 'ofrecer' %}
+      <button type="button" class="pa pa-main" data-cid="{{ c.id }}" data-cli="{{ c.razon_social }}"
+              data-re="{{ '1' if ac.titulo != 'Ofrecer mantención' else '0' }}" onclick="prospOfrecer(event, this)">
+        <i class="bi bi-megaphone-fill"></i> {{ ac.titulo }}</button>
+    {% elif ac.key == 'contactar' %}
+      {{ _contacto(c, pr, plan_cfg, tel, en_ficha, True) }}
+    {% elif ac.key in ('respuesta', 'llamar') %}
+      {% if ac.key == 'llamar' and tel %}
+      <button type="button" class="pa pa-main" data-cid="{{ c.id }}" data-tel="{{ tel }}" onclick="prospContactar(event, this, 'llamada')">
+        <i class="bi bi-telephone-fill"></i> Llamar al {{ tel }}</button>
+      {% endif %}
+      {{ _si_no(c) }}
+      <span class="pinsist">Insistir: {{ _contacto(c, pr, plan_cfg, tel, en_ficha, False) }}</span>
+    {% elif ac.key == 'cotizar' %}
+      {% if en_ficha %}
+      <button type="button" class="pa pa-main" onclick="cotizarPlan('mantencion')"><i class="bi bi-calculator-fill"></i> Cotizar</button>
+      {% else %}
+      <a class="pa pa-main" target="_blank" title="Abre el cotizador con los equipos del plan, ligado al ticket de la oferta"
+         href="/tickets/cotizaciones?desde_cliente={{ c.id }}&plan=1&tipo=mantencion&descuento={{ plan_cfg.descuento }}&frecuencia={{ plan_cfg.visitas }}{% if of.id and of.abierto %}&ticket={{ of.id }}{% endif %}"><i class="bi bi-calculator-fill"></i> Cotizar</a>
+      {% endif %}
+      <button type="button" class="pa pa-no" data-cid="{{ c.id }}" data-cli="{{ c.razon_social }}"
+              onclick="prospRespuesta(event, this, 'no')"><i class="bi bi-x-lg"></i> No por ahora</button>
+    {% elif ac.key == 'enviar' %}
+      {% if en_ficha %}
+      <button type="button" class="pa pa-main" onclick="enviarCotizacionAceptar(this)"><i class="bi bi-send-fill"></i> Enviar para aceptar</button>
+      {% else %}
+      <a class="pa pa-main" href="{{ url_for('mant_ficha', cid=c.id) }}?accion=enviar_cotizacion"><i class="bi bi-send-fill"></i> Enviar para aceptar</a>
+      {% endif %}
+      {% if cot.id %}<a class="pa" target="_blank" href="/tickets/cotizaciones/{{ cot.id }}/ver"><i class="bi bi-eye"></i> Revisar {{ cot.numero }}</a>{% endif %}
+    {% elif ac.key == 'aceptacion' %}
+      {{ _si_no(c, 'acepta', 'Aceptó', 'No acepta') }}
+      {% if cot.id %}<a class="pa" target="_blank" href="/tickets/cotizaciones/{{ cot.id }}/ver"><i class="bi bi-eye"></i> Ver {{ cot.numero }}</a>{% endif %}
+    {% elif ac.key == 'contrato' %}
+      {% if en_ficha %}
+      <button type="button" class="pa pa-main" onclick="abrirContratoModal()"><i class="bi bi-file-earmark-arrow-up-fill"></i> Subir contrato</button>
+      {% else %}
+      <a class="pa pa-main" href="{{ url_for('mant_ficha', cid=c.id) }}?accion=contrato"><i class="bi bi-file-earmark-arrow-up-fill"></i> Subir contrato</a>
+      {% endif %}
+    {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endmacro %}

@@ -333,6 +333,15 @@
             .ptrack-txt{margin-top:2px}
           }
           </style>
+          {# El paso que toca, igual que en la tarjeta de Clientes: la oferta vive en su propio ticket (Daniel 2026-10-05) #}
+          {% from "mantenciones/_prosp_strip.html" import prosp_strip %}
+          <link rel="stylesheet" href="{{ url_for('static', filename='prosp_strip.css') }}">
+          <script>window.PROSP_EN_FICHA = true;</script>
+          <script src="{{ url_for('static', filename='prosp_strip.js') }}" defer></script>
+          {{ prosp_strip({'id': cliente.id, 'razon_social': cliente.razon_social, 'contacto_nombre': cliente.contacto_nombre,
+                          'contacto_tel': cliente.contacto_tel, 'tel_empresa': cliente.tel_empresa, 'pr': prospecto},
+                         {'descuento': prospecto.plan_descuento_pct, 'visitas': prospecto.plan_visitas,
+                          'mensaje_wa': prospecto.plan_mensaje_wa}, en_ficha=True) }}
           {# Calendario sugerido desde la factura de sus equipos (Daniel 2026-10-04) #}
           {% if prospecto.plan %}{% set pl = prospecto.plan %}
           <div class="pplan">
@@ -373,7 +382,7 @@
           </style>
           {% endif %}
           {# Conversaciones: el ticket es la bandeja (Daniel 2026-10-04). Un clic abre el ticket con su chat y adjuntos. #}
-          <div class="pconv">
+          <div class="pconv" id="prospConv">
             <div class="pconv-head"><i class="bi bi-chat-dots-fill"></i><b>Conversaciones</b>
               {% set _nl = (prospecto.tickets or [])|sum(attribute='no_leidos') %}
               {% if _nl %}<span class="pconv-nl">{{ _nl }} sin leer</span>{% endif %}
@@ -383,6 +392,7 @@
               {% for tk in prospecto.tickets %}
               <a class="pconv-item{% if tk.no_leidos %} nl{% endif %}" href="{{ tk.url }}" target="_blank">
                 <span class="pconv-num">{{ tk.numero }}</span>
+                {% if prospecto.oferta and tk.id == prospecto.oferta.id %}<span class="pconv-of">Oferta</span>{% endif %}
                 <span class="pconv-tit">{{ tk.titulo or 'Ticket' }}</span>
                 <span class="pconv-est {{ 'ab' if tk.abierto else 'ce' }}">{{ tk.estado }}</span>
                 <span class="pconv-fec">{{ tk.fecha }}</span>
@@ -410,7 +420,10 @@
           .pconv-est.ab{background:#dbeafe;color:#1d4ed8}.pconv-est.ce{background:#f3f4f6;color:#6b7280}
           .pconv-fec{font-size:.74rem;color:#6b7280}
           .pconv-badge{background:#dc2626;color:#fff;border-radius:99px;min-width:20px;text-align:center;font-size:.7rem;font-weight:800;padding:1px 6px}
+          .pconv-of{background:#fee2e2;color:#b91c1c;border-radius:99px;padding:2px 8px;font-size:.7rem;font-weight:800}
+          .pmas{font-size:.72rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#6b7280;margin:2px 0 6px}
           </style>
+          <div class="pmas">Más acciones y registro manual</div>
           <div class="row g-2 align-items-end">
             <div class="col-12 col-sm-3">
               <label class="form-label small fw-semibold mb-1">Etapa</label>
@@ -600,10 +613,13 @@
         } finally { btn.disabled = false; }
       }
       window.addEventListener('load', function(){
-        if (new URLSearchParams(location.search).get('accion') === 'propuesta'){
-          try { switchTab('resumen'); } catch(e){}
-          setTimeout(abrirPlanMantencion, 400);
-        }
+        // Los botones de la tarjeta de Clientes llegan acá con ?accion= (Daniel 2026-10-05: un paso a la vez).
+        const _acc = new URLSearchParams(location.search).get('accion');
+        if (!_acc) return;
+        try { switchTab('resumen'); } catch(e){}
+        if (_acc === 'propuesta') setTimeout(abrirPlanMantencion, 400);
+        else if (_acc === 'enviar_cotizacion') setTimeout(function(){ enviarCotizacionAceptar(document.createElement('button')); }, 400);
+        else if (_acc === 'contrato') setTimeout(function(){ try { abrirContratoModal(); } catch(e){} }, 400);
       });
       </script>
       {% endif %}
