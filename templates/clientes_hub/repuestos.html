@@ -865,6 +865,20 @@
 {# Modal "Pedir al proveedor" (2026-09-20, revisión): el proveedor es
    OBLIGATORIO -- Daniel: "identificando OT, proveedor, repuesto, cantidades";
    la OC es opcional y se puede anotar después. #}
+{# 2026-10-05: ficha de la solicitud (se abre al tocar la fila; ya no se despliega debajo) #}
+<div class="modal fade" id="rsModalFicha" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable modal-fullscreen-sm-down">
+    <div class="modal-content" style="border-radius:14px">
+      <div class="modal-header py-2" style="background:#0a0a0a;color:#fff">
+        <h6 class="modal-title fw-bold" style="min-width:0"><i class="bi bi-inbox-fill me-2" style="color:#dc2626"></i><span id="rsFichaTitulo"></span>
+          <small class="d-block fw-normal" id="rsFichaSub" style="font-size:.72rem;opacity:.8"></small></h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body" id="rsFichaBody" style="background:#f9fafb"></div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="rsModalPedir" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content" style="border-radius:14px">
@@ -2212,7 +2226,6 @@ function rsSemaforoConteo(){
 const _RST_ETAPA_CLS = {gestionar: 'rojo', lote: 'ambar', ot: 'azul', compra: 'violeta', cerrada: 'gris'};
 function rsFilaHtml(s){
   const sel = _rs.puedeGenerarOT ? '<input type="checkbox" class="rst-chk" ' + (_rs.selLista[s.id] ? 'checked' : '') + ' onclick="event.stopPropagation()" onchange="rsListaToggle(' + s.id + ', this.checked)" aria-label="Seleccionar la solicitud #' + s.id + '">' : '';
-  const abierta = !!_rs.abiertas[s.id];
   const origen = s.solicitud_padre_id ? '<span class="rst-org">Parte de #' + s.solicitud_padre_id + '</span>'
     : (s.contexto === 'ot' ? '<a class="rst-org ot" href="/ot/' + s.visita_id + '" target="_blank" rel="noopener" onclick="event.stopPropagation()"><i class="bi bi-clipboard2-check"></i>' + rsEsc(s.numero_ot || ('OT #' + s.visita_id)) + '</a>'
     : (s.contexto === 'incidencia' ? '<span class="rst-org inc"><i class="bi bi-exclamation-triangle-fill"></i>Incidencia</span>'
@@ -2251,8 +2264,10 @@ function rsFilaHtml(s){
   else if (et === 'lote' && _rs.puedePedir && typeof gsAbrirCompra === 'function') acc = '<button type="button" class="rst-btn ambar" onclick="event.stopPropagation();gsAbrirCompra(' + s.id + ',' + (s.proveedor_id || 'null') + ')"><i class="bi bi-cart-plus"></i>Armar compra</button>';
   else if (et === 'compra' && (s.siguientes || []).indexOf('recibido') >= 0) acc = '<button type="button" class="rst-btn violeta" onclick="event.stopPropagation();rsAccion(' + s.id + ',\'recibido\')"><i class="bi bi-box-arrow-in-down"></i>Recibido</button>';
   const semCls = s.prioridad_fs ? 'rojo' : (p ? p.color : 'gris');
-  return '<tr class="rst-row' + (abierta ? ' is-abierta' : '') + '" style="--rst-sem:var(--rst-' + semCls + ')" onclick="rsFilaToggle(' + s.id + ')">' +
-    '<td class="rst-c0">' + sel + '<i class="bi bi-chevron-' + (abierta ? 'down' : 'right') + ' rst-chev"></i></td>' +
+  // 2026-10-05 (Daniel: "no quiero que se despliegue nada, sino que toda la fila
+  // entera sea gestionada"): tocar la fila abre su gestión (rsFilaGestionar).
+  return '<tr class="rst-row" style="--rst-sem:var(--rst-' + semCls + ')" onclick="rsFilaGestionar(' + s.id + ')" title="Gestionar la solicitud #' + s.id + '">' +
+    '<td class="rst-c0">' + sel + '<i class="bi bi-chevron-right rst-chev"></i></td>' +
     '<td><b class="rst-num">#' + s.id + '</b>' + origen + '<small class="rst-hace">' + rsEsc(s.created_at ? String(s.created_at).slice(0, 10) : '') + (s.dias_transcurridos != null ? ' · ' + rsFmt(s.dias_transcurridos) + ' d' : '') + '</small></td>' +
     '<td>' + cliente + (equipo ? '<small>' + rsEsc(equipo) + '</small>' : '') + (s.prioridad_fs ? '<span class="rst-pill rojo fuerte"><i class="bi bi-exclamation-octagon-fill"></i>Fuera de servicio</span>' : '') + '</td>' +
     '<td><b>' + rsEsc(s.repuesto_nombre || '') + ' × ' + rsFmt(s.cantidad) + '</b>' + (s.stock_sku ? '<small>' + rsEsc(s.stock_sku) + '</small>' : '') + stock + (!(s.n_fotos > 0) && s.abierta ? '<span class="rst-pill ambar"><i class="bi bi-camera"></i>Sin foto</span>' : '') + '</td>' +
@@ -2260,8 +2275,7 @@ function rsFilaHtml(s){
     '<td>' + plazo + '</td>' +
     '<td>' + resp + '</td>' +
     '<td>' + ticket + '</td>' +
-    '<td class="rst-acc">' + acc + '</td></tr>' +
-    (abierta ? '<tr class="rst-det"><td colspan="9"><div class="rs-card ' + (_RS_EST_CLS[s.estado] || 'sol') + (s.prioridad_fs ? ' prio-fs' : '') + '">' + rsCardInner(s) + '</div></td></tr>' : '');
+    '<td class="rst-acc">' + acc + '</td></tr>';
 }
 
 /* ══ Inteligencia de la tabla (2026-10-04, Daniel: "ponle inteligencia") ══
@@ -2366,10 +2380,50 @@ function rsLoteArmar(pid){
   rcmAbrir({ proveedor_id: parseInt(pid, 10), proveedor_nombre: p.nombre || sols[0].proveedor_nombre || '' }, sols);
 }
 
-function rsFilaToggle(sid){ _rs.abiertas[sid] = !_rs.abiertas[sid]; rsPintar(); }
+function rsFilaGestionar(sid){
+  const s = rsBuscarSolicitud(sid);
+  if (!s) return;
+  if ((s.etapa || 'gestionar') === 'gestionar' && (s.siguientes || []).indexOf('validado') >= 0){ rsAccion(sid, 'validado'); return; }
+  rsFichaAbrir(sid);
+}
+// Compatibilidad: quien llamaba al despliegue ahora abre la gestión.
+function rsFilaToggle(sid){ rsFilaGestionar(sid); }
+/* Ventana con la ficha completa de la solicitud (datos, evidencia, recorrido y
+   todas sus acciones). Las acciones que abren otra ventana cierran esta primero,
+   para no apilar ventanas; las que solo preguntan (ilusConfirm) la dejan abierta
+   y se refresca sola al recargar la lista. */
+const _RS_FICHA_ABRE_OTRA = /^\s*(rsAccion\(\s*\d+\s*,\s*'(validado|pedido)'\s*\)|rsCrearTicket\(|rsGenerarOT\(|rsRepartirDesdeCard\(|gsAbrirCompra\(|rcmAbrir\()/;
+function rsFichaPintar(sid){
+  const s = rsBuscarSolicitud(sid);
+  const body = document.getElementById('rsFichaBody');
+  if (!s || !body) return false;
+  document.getElementById('rsFichaTitulo').textContent = '#' + s.id + ' · ' + (s.repuesto_nombre || '') + ' × ' + rsFmt(s.cantidad);
+  document.getElementById('rsFichaSub').textContent = [s.etapa_label, s.cliente_nombre, s.numero_ot].filter(Boolean).join(' · ');
+  const p = s.plazo;
+  body.innerHTML = (p ? '<div class="rst-plazo ' + p.color + ' mb-2"><span class="rst-dot ' + p.color + '"></span><b>' + rsEsc(p.texto) + '</b>' +
+      '<div class="rst-bar"><span style="width:' + Math.min(100, Math.round((p.pct || 0) * 100)) + '%"></span></div><small>' + (p.dias ? 'Llega ' : 'Vence ') + rsEsc(p.vence || '') + '</small></div>' : '') +
+    '<div class="rs-card ' + (_RS_EST_CLS[s.estado] || 'sol') + (s.prioridad_fs ? ' prio-fs' : '') + '">' + rsCardInner(s) + '</div>';
+  body.querySelectorAll('[onclick]').forEach(function(el){
+    const code = el.getAttribute('onclick') || '';
+    if (_RS_FICHA_ABRE_OTRA.test(code)) el.setAttribute('onclick', 'rsFichaYLuego(function(){ ' + code + ' })');
+  });
+  return true;
+}
+function rsFichaAbrir(sid){
+  _rs.fichaSid = sid;
+  if (!rsFichaPintar(sid)) return;
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('rsModalFicha')).show();
+}
+function rsFichaYLuego(fn){
+  const el = document.getElementById('rsModalFicha');
+  if (!el.classList.contains('show')){ fn(); return; }
+  el.addEventListener('hidden.bs.modal', function(){ fn(); }, { once: true });
+  bootstrap.Modal.getOrCreateInstance(el).hide();
+}
 function rsPintar(){
   const lista = document.getElementById('rsLista');
-  _rs.abiertas = _rs.abiertas || {};
+  const _fichaEl = document.getElementById('rsModalFicha');
+  if (_rs.fichaSid && _fichaEl && _fichaEl.classList.contains('show')) rsFichaPintar(_rs.fichaSid);
   const vis = rsVisibles();
   _rs.visibles = vis;
   rsSemaforoConteo();
