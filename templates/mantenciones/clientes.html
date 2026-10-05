@@ -429,6 +429,9 @@
             (Mantención, Visita técnica…). Este descuento se carga solo al abrir la cotización del plan.</div></div>
           <div class="col-12"><label class="form-label small fw-semibold">Qué incluye el plan (una línea por ítem)</label>
             <textarea id="pcIncluye" class="form-control" rows="5" maxlength="1500"></textarea></div>
+          <div class="col-12"><label class="form-label small fw-semibold">Mensaje de WhatsApp para contactar clientes</label>
+            <textarea id="pcMsgWa" class="form-control" rows="4" maxlength="800"></textarea>
+            <div class="form-text">Usa <code>{{ '{{contacto}}' }}</code> y <code>{{ '{{cliente}}' }}</code>. Se abre en WhatsApp para que tú lo revises y lo envíes.</div></div>
         </div>
       </div>
       <div class="modal-footer">
@@ -439,6 +442,36 @@
   </div>
 </div>
 <script>
+const PLAN_MSG_WA = {{ (plan_cfg.mensaje_wa or '')|tojson }};
+function _prospTelWa(tel){
+  const d = String(tel || '').replace(/\D/g, '');
+  if (d.startsWith('56') && d.length >= 11) return d;
+  if (d.length === 9) return '56' + d;
+  if (d.length === 8) return '569' + d;
+  return '';
+}
+async function prospContactar(ev, btn, canal){
+  ev.stopPropagation();
+  const cid = btn.dataset.cid;
+  if (canal === 'whatsapp'){
+    const num = _prospTelWa(btn.dataset.tel);
+    if (!num){ ilusToast('El teléfono de este cliente no es válido para WhatsApp. Revísalo en su ficha.', {type:'warning'}); return; }
+    const msg = PLAN_MSG_WA.split('{' + '{contacto}}').join((btn.dataset.nom || '').trim() || 'equipo').split('{' + '{cliente}}').join(btn.dataset.cli || '');
+    window.open('https://wa.me/' + num + '?text=' + encodeURIComponent(msg), '_blank');
+  } else if (canal === 'llamada'){
+    window.location.href = 'tel:' + String(btn.dataset.tel || '').replace(/[^\d+]/g, '');
+  }
+  try {
+    const r = await fetch('/mantenciones/api/clientes/' + cid + '/prospecto/contacto', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({canal})});
+    const d = await r.json();
+    if (d.ok){
+      ilusToast('✓ Contacto registrado · próxima gestión ' + d.proxima_gestion, {type:'success'});
+      const card = btn.closest('.cc2-prosp');
+      const et = card && card.querySelector('.cc2-prosp-etapa');
+      if (et) et.innerHTML = '<i class="bi bi-megaphone-fill me-1"></i>Mantención: ' + d.etapa_label;
+    }
+  } catch(e){}
+}
 let _modalPlanCfg = null;
 async function abrirPlanConfig(){
   if (!_modalPlanCfg) _modalPlanCfg = new bootstrap.Modal(document.getElementById('modalPlanConfig'));
@@ -452,7 +485,8 @@ async function abrirPlanConfig(){
     document.getElementById('pcVisitas').value = c.visitas_anio;
     document.getElementById('pcVigencia').value = c.vigencia_meses;
     document.getElementById('pcIncluye').value = c.incluye;
-    ['pcDesc','pcDescMax','pcVisitas','pcVigencia','pcIncluye'].forEach(i => document.getElementById(i).disabled = !d.puede_editar);
+    document.getElementById('pcMsgWa').value = c.mensaje_wa || '';
+    ['pcDesc','pcDescMax','pcVisitas','pcVigencia','pcIncluye','pcMsgWa'].forEach(i => document.getElementById(i).disabled = !d.puede_editar);
     document.getElementById('pcGuardar').style.display = d.puede_editar ? '' : 'none';
     if (!d.puede_editar) document.getElementById('planCfgAviso').insertAdjacentHTML('beforeend', '<br><b>Solo un administrador puede cambiarlos.</b>');
   } catch(e){ ilusToast('No se pudo cargar el plan: ' + e.message, {type:'error'}); }
@@ -466,7 +500,8 @@ async function guardarPlanConfig(btn){
         descuento_max_pct: document.getElementById('pcDescMax').value,
         visitas_anio: document.getElementById('pcVisitas').value,
         vigencia_meses: document.getElementById('pcVigencia').value,
-        incluye: document.getElementById('pcIncluye').value })});
+        incluye: document.getElementById('pcIncluye').value,
+        mensaje_wa: document.getElementById('pcMsgWa').value })});
     const d = await r.json();
     if (!d.ok) { ilusToast(d.error || 'No se pudo guardar', {type:'error'}); return; }
     ilusToast('✓ Plan de mantención guardado', {type:'success'});
@@ -1355,10 +1390,23 @@ function aplicarKpiFiltro(tipo) {
         <span class="cc2-prosp-txt">Nació de {{ c.pr.origen_ot }} · {{ c.pr.origen_tipo }}{% if c.pr.origen_fecha %} · {{ c.pr.origen_fecha }}{% endif %}</span>
         {% endif %}
         {% if c.pr.proxima_gestion %}
-        <span class="cc2-prosp-txt{% if c.pr.vencida %} cc2-prosp-vencida{% endif %}">
+        <span class="cc2-prosp-txt{% if c.pr.vencida %} cc2-prosp-vencida{% endif %}" data-prosp-prox="{{ c.id }}">
           <i class="bi bi-calendar-event me-1"></i>Próxima gestión: {{ c.pr.proxima_gestion }}{% if c.pr.vencida %} · vencida{% endif %}
         </span>
         {% endif %}
+        {# Contactar sin abrir la ficha: un clic y queda registrado (Daniel 2026-10-04: «muy fácil de utilizar») #}
+        {% set _tel = (c.contacto_tel or c.tel_empresa or '') %}
+        <div class="cc2-prosp-acts" onclick="event.stopPropagation()">
+          {% if _tel %}
+          <button type="button" class="pa pa-wa" data-cid="{{ c.id }}" data-tel="{{ _tel }}" data-nom="{{ c.contacto_nombre or '' }}" data-cli="{{ c.razon_social }}"
+                  onclick="prospContactar(event, this, 'whatsapp')" title="Abre WhatsApp con el mensaje listo; tú lo envías"><i class="bi bi-whatsapp"></i> WhatsApp</button>
+          <button type="button" class="pa" data-cid="{{ c.id }}" data-tel="{{ _tel }}"
+                  onclick="prospContactar(event, this, 'llamada')" title="Llamar por teléfono"><i class="bi bi-telephone-fill"></i> Llamar</button>
+          {% endif %}
+          <a class="pa" href="{{ url_for('mant_ficha', cid=c.id) }}?accion=propuesta" title="Enviar la propuesta del plan por correo"><i class="bi bi-envelope-fill"></i> Correo</a>
+          <a class="pa pa-cot" target="_blank" title="Abre el cotizador con los equipos del plan"
+             href="/tickets/cotizaciones?desde_cliente={{ c.id }}&plan=1&tipo=mantencion&descuento={{ plan_cfg.descuento }}&frecuencia={{ plan_cfg.visitas }}"><i class="bi bi-calculator-fill"></i> Cotizar</a>
+        </div>
       </div>
       {% endif %}
 
@@ -1523,6 +1571,13 @@ function aplicarKpiFiltro(tipo) {
 .cc2-prosp-ofrecida{color:#1d4ed8}.cc2-prosp-aceptada{color:#15803d}.cc2-prosp-rechazada{color:#6b7280}
 .cc2-prosp-txt{color:#6b7280}
 .cc2-prosp-vencida{color:#dc2626;font-weight:700}
+.cc2-prosp-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.cc2-prosp-acts .pa{display:inline-flex;align-items:center;gap:5px;padding:6px 10px;min-height:34px;border:1px solid #d1d5db;
+  background:#fff;border-radius:8px;font-size:.76rem;font-weight:700;color:#374151;text-decoration:none;cursor:pointer}
+.cc2-prosp-acts .pa:hover{border-color:#0d9488;color:#0f766e}
+.cc2-prosp-acts .pa-wa{background:#dcfce7;border-color:#86efac;color:#166534}
+.cc2-prosp-acts .pa-cot{background:#0d9488;border-color:#0d9488;color:#fff}
+.cc2-prosp-acts .pa-cot:hover{background:#0f766e;color:#fff}
 .flt-empty{text-align:center;padding:48px 20px;background:#fff;border:1px dashed #e5e7eb;border-radius:14px}
 .flt-empty-icon{font-size:2.4rem;margin-bottom:6px;opacity:.7}
 .flt-empty-title{font-weight:800;color:#374151;margin:0 0 2px}

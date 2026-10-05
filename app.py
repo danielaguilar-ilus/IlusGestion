@@ -62813,7 +62813,14 @@ def mant_clientes():
     )
     global_stats['notificaciones'] = (notif_r['n'] if notif_r else 0)
 
+    try:
+        _pc = _plan_config()
+        _plan_cfg_ui = {"descuento": _pc.get("descuento_pct") or "0", "visitas": _pc.get("visitas_anio") or "4",
+                        "mensaje_wa": _pc.get("mensaje_wa") or ""}
+    except Exception:
+        _plan_cfg_ui = {"descuento": "0", "visitas": "4", "mensaje_wa": ""}
     return render_template("mantenciones/clientes.html",
+        plan_cfg         = _plan_cfg_ui,
         clientes         = clientes,
         filtros          = {"q": q, "estado": estado, "contrato": contrato_fil,
                             "equipos": equipos_fil, "vista": vista, "tipo": tipo_fil},
@@ -69375,7 +69382,8 @@ def _prospecto_convertir_a_mantencion(cid, motivo):
 # se abre un ticket SIN asignar (bandeja del equipo comercial) y sale un correo
 # con la plantilla editable de Comunicaciones. Si no responde, una persona lo
 # llama desde el ticket. Quien rechaza (etapa «Rechazada») o ya aceptó no recibe
-# nada más. Apagar: PROSPECTOS_OFERTA_AUTO=0 (solo con permiso de Daniel).
+# nada más. VIENE APAGADA (2026-10-04, Daniel: «no hay que enviar mensajes aún», gestión manual primero):
+# se enciende con PROSPECTOS_OFERTA_AUTO=1, solo con permiso de Daniel.
 _PROSP_TOQUES = {1: 15, 2: 90}          # toque -> días tras terminar la instalación
 _PROSP_CORREO_VENTANA_DIAS = 14         # un toque más vencido NO sale por correo solo
 _PROSP_PLAN_PUNTOS = (
@@ -69502,7 +69510,7 @@ def _prospectos_oferta_barrido(max_n=15, dry=False):
     actuar. Corre colgado del trabajo de Cloud Scheduler (cada 10 min).
     Solo manda correo de lunes a viernes, 08:00-19:00 hora Chile."""
     res = {"ok": True, "tickets": [], "correos": 0, "omitidos": 0, "errores": []}
-    if (os.environ.get("PROSPECTOS_OFERTA_AUTO", "1") or "1").strip().lower() in ("0", "false", "no"):
+    if (os.environ.get("PROSPECTOS_OFERTA_AUTO", "0") or "0").strip().lower() not in ("1", "true", "si", "yes"):
         res["apagado"] = True
         return res
     now = datetime.now()
@@ -69654,6 +69662,9 @@ def mant_cron_prospectos_oferta():
 _PLAN_DEFAULTS = {
     "descuento_pct": "0", "descuento_max_pct": "0", "visitas_anio": "4",
     "vigencia_meses": "12",
+    "mensaje_wa": ("Hola {{contacto}}, te escribimos de ILUS Fitness. Instalamos los equipos de {{cliente}} y "
+                   "queremos ofrecerte nuestro Plan de Mantención: descuento, repuestos originales certificados y "
+                   "menos tiempo con máquinas detenidas. ¿Te gustaría que te preparemos una cotización?"),
     "incluye": ("Plan de mantención con gestión de descuento\n"
                 "Certificación de repuestos originales\n"
                 "Menos tiempo con máquinas detenidas\n"
@@ -69767,6 +69778,7 @@ def mant_plan_config_api():
             "visitas_anio": _num("visitas_anio", 1, 52, True),
             "vigencia_meses": _num("vigencia_meses", 1, 60, True),
             "incluye": (d.get("incluye") or "").strip()[:1500],
+            "mensaje_wa": (d.get("mensaje_wa") or "").strip()[:800],
         }
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -69774,6 +69786,8 @@ def mant_plan_config_api():
         nuevo["descuento_max_pct"] = nuevo["descuento_pct"]
     if not nuevo["incluye"]:
         nuevo["incluye"] = _PLAN_DEFAULTS["incluye"]
+    if not nuevo["mensaje_wa"]:
+        nuevo["mensaje_wa"] = _PLAN_DEFAULTS["mensaje_wa"]
     quien = current_username() or "sistema"
     _ensure_mant_plan_config()
     for k, v in nuevo.items():
@@ -69883,6 +69897,38 @@ def mant_plan_enviar(cid):
     except Exception:
         pass
     return jsonify({"ok": True, "mensaje": f"Propuesta enviada a {email}."})
+
+
+@app.route("/mantenciones/api/clientes/<int:cid>/prospecto/contacto", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_prospecto_contacto(cid):
+    """Deja registrado, con un clic, que alguien contactó al cliente (WhatsApp / llamada / correo):
+    pasa «Por ofrecer» a «Ofrecida», anota quién y cuándo, y agenda la próxima gestión en 3 días."""
+    d = request.get_json(silent=True) or {}
+    canal = (d.get("canal") or "").strip().lower()
+    nombres = {"whatsapp": "WhatsApp", "llamada": "llamada", "correo": "correo"}
+    if canal not in nombres:
+        return jsonify({"ok": False, "error": "Canal inválido."}), 400
+    cli = mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (cid,))
+    if not cli:
+        return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+    quien = current_username() or "sistema"
+    prox = datetime.today().date() + timedelta(days=3)
+    _ensure_mant_prospecto_seguimiento()
+    mysql_execute(
+        "INSERT INTO mant_prospecto_seguimiento (cliente_id, etapa, proxima_gestion, ofrecida_at, ofrecida_por, updated_by) "
+        "VALUES (%s,'ofrecida',%s,UTC_TIMESTAMP(),%s,%s) "
+        "ON DUPLICATE KEY UPDATE etapa=IF(etapa IN ('aceptada','rechazada'),etapa,'ofrecida'), "
+        "  proxima_gestion=VALUES(proxima_gestion), updated_by=VALUES(updated_by), "
+        "  ofrecida_at=COALESCE(ofrecida_at, VALUES(ofrecida_at)), ofrecida_por=COALESCE(ofrecida_por, VALUES(ofrecida_por))",
+        (cid, prox, quien, quien))
+    try:
+        _mant_log("cliente", cid, "prospecto_contacto",
+                  f"Contacto por {nombres[canal]} para ofrecer el plan de mantención · próxima gestión {prox.strftime('%d/%m/%Y')} · por {quien}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "etapa_label": _PROSP_ETAPAS["ofrecida"], "proxima_gestion": prox.strftime("%d/%m/%Y")})
 
 
 @app.route("/mantenciones/api/clientes/<int:cid>/prospecto/seguimiento", methods=["POST"])

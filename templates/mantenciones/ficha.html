@@ -436,6 +436,12 @@
           ilusToast('Error de red al guardar', {type:'error'});
         } finally { btn.disabled = false; }
       }
+      window.addEventListener('load', function(){
+        if (new URLSearchParams(location.search).get('accion') === 'propuesta'){
+          try { switchTab('resumen'); } catch(e){}
+          setTimeout(abrirPlanMantencion, 400);
+        }
+      });
       </script>
       {% endif %}
 

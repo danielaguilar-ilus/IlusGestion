@@ -67,6 +67,20 @@ class _Mundo:
         return 1
 
 
+@pytest.fixture(autouse=True)
+def _auto_encendida(monkeypatch):
+    """La campaña viene APAGADA por defecto; las pruebas la encienden explícitamente."""
+    monkeypatch.setenv("PROSPECTOS_OFERTA_AUTO", "1")
+
+
+def test_viene_apagada_por_defecto(monkeypatch):
+    monkeypatch.delenv("PROSPECTOS_OFERTA_AUTO", raising=False)
+    ns = _cargar()
+    m = _Mundo([_cli(1, 16, LUNES_10H)])
+    m.conectar(ns, LUNES_10H)
+    assert ns["_prospectos_oferta_barrido"]().get("apagado") and m.tickets == [] and m.enviados == []
+
+
 def _cli(cid, dias_atras, ahora):
     return {"id": cid, "razon_social": f"Cliente {cid}", "rut": "1-9", "contacto_nombre": "Ana",
             "contacto_email": "c@x.cl", "email_empresa": None, "contacto_tel": None,
