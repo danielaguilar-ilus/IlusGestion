@@ -234,6 +234,14 @@
          · UN solo reintento, por flujo de control (va por _origFetch, no
            por window.fetch): es estructuralmente imposible el bucle. */
       return _origFetch(input, init).then(function(r){
+        /* 2026-10-06: una API que contesta 401 por inactividad avisa de inmediato (antes cada pantalla lo
+           resolvía a su manera y el técnico solo veía "no se pudo guardar"). */
+        if (r && r.status === 401) {
+          r.clone().json().then(function(d){
+            if (d && d.error_codigo === 'SESSION_IDLE_EXPIRED') _avisarSesionExpirada();
+          }).catch(function(){});
+          return r;
+        }
         if (!r || r.status !== 403) return r;
         /* Si el caller ya abortó (AbortController), no reintentamos: su
            propio manejo de red debe seguir viendo el abort. */
@@ -302,16 +310,19 @@
       if (_avisoSesionMostrado) return;
       _avisoSesionMostrado = true;
       var msg = 'Tu sesion expiro por inactividad. Vuelve a iniciar sesion para continuar; '
-              + 'lo que tengas en pantalla no se guardo.';
+              + 'lo que tengas en pantalla no se guardo. Si estabas cargando un repuesto, '
+              + 'al volver te ofreceremos retomarlo.';
+      /* 2026-10-06: se vuelve a la MISMA pantalla despues de iniciar sesion (antes caia en el inicio). */
+      var _volver = '/login?next=' + encodeURIComponent((location.pathname || '/') + (location.search || ''));
       try {
         if (typeof ilusAlert === 'function') {
           ilusAlert({ title: 'Sesion expirada', message: msg, type: 'warning' })
-            .then(function(){ location.assign('/login'); });
+            .then(function(){ location.assign(_volver); });
           return;
         }
       } catch(e) {}
       if (typeof ilusToast === 'function') ilusToast(msg, { type: 'warning' });
-      setTimeout(function(){ location.assign('/login'); }, 2500);
+      setTimeout(function(){ location.assign(_volver); }, 2500);
     }
 
     var _avisoUsuarioMostrado = false;

@@ -8495,6 +8495,11 @@ def login():
     if g.user:
         return redirect(url_for("index"))
     next_url = request.args.get("next") or request.form.get("next") or url_for("index")
+    # 🔒 2026-10-06: `next` solo puede ser una ruta de ESTA app (empieza con una sola "/"); una URL externa
+    # (//sitio.com, https://..., /\sitio.com) dejaba al usuario recién autenticado en un sitio ajeno.
+    if (not isinstance(next_url, str) or not next_url.startswith("/")
+            or next_url.startswith("//") or next_url.startswith("/\\")):
+        next_url = url_for("index")
     # solo_activas=True → filtra WHERE activa=1 LIMIT 5 para el login público
     imgs = _login_images_active(solo_activas=True)
     if request.method == "POST":

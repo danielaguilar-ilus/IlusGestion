@@ -1806,7 +1806,11 @@ async function rbAbrirNuevo(mantenerContexto, opts){
   // otro" ya guardó todo en el servidor, ahí nunca hay nada que recuperar.
   if (!mantenerContexto && !opts.sinBorrador){
     const draft = rbDraftCargar();
-    if (draft){
+    if (draft && opts.recuperarYa){
+      // ya se le preguntó al cargar la página (rbDraftOfrecerAlCargar): se aplica directo
+      rbDraftAplicar(draft);
+      rbDraftLimpiar();
+    } else if (draft){
       const minutos = Math.max(1, Math.round((Date.now() - draft.ts) / 60000));
       const ok = await ilusConfirm({
         title: 'Encontramos un borrador sin guardar',
@@ -1822,6 +1826,31 @@ async function rbAbrirNuevo(mantenerContexto, opts){
   if (!mantenerContexto) RB_MODAL.show();
   setTimeout(() => document.getElementById('rbDescripcion').focus(), mantenerContexto ? 50 : 400);
 }
+
+/* 📌 2026-10-06 (Daniel: "cuando Lenin volvía a entrar los datos estaban en el formulario"): al entrar a esta pantalla
+   con un borrador reciente sin guardar (porque la sesión expiró, el celular mató la pestaña o se cambió de app), se
+   ofrece retomarlo SIN tener que tocar "Nuevo repuesto". Las fotos no se recuperan (viven en memoria). */
+document.addEventListener('DOMContentLoaded', function(){
+  setTimeout(async function(){
+    try {
+      if (new URLSearchParams(location.search).get('rb_editar')) return;
+      if (typeof RB_MODAL === 'undefined' || !RB_MODAL || !document.getElementById('modalRepStock')) return;
+      if (document.getElementById('modalRepStock').classList.contains('show')) return;
+      const d = rbDraftCargar();
+      if (!d) return;
+      const minutos = Math.max(1, Math.round((Date.now() - d.ts) / 60000));
+      const hace = minutos < 90 ? (minutos + ' min') : (Math.round(minutos / 60) + ' h');
+      const ok = await ilusConfirm({
+        title: 'Tienes un repuesto sin guardar',
+        message: 'Hace ' + hace + ' estabas cargando' + (d.descripcion ? ' «' + d.descripcion + '»' : ' un repuesto nuevo') + '.',
+        sub: 'Se guardó en este teléfono. Las fotos hay que volver a tomarlas.',
+        okLabel: 'Retomarlo', cancelLabel: 'Empezar de cero',
+      });
+      if (ok) rbAbrirNuevo(false, {recuperarYa: true});
+      else rbDraftLimpiar();
+    } catch(e){}
+  }, 900);
+});
 
 /* 2026-10-04: desde la ficha del proveedor, "tocar un repuesto" llega con
    ?bq=<SKU>&rb_editar=<id>#bodega y abre su ventana de edición directo. */
@@ -2187,6 +2216,7 @@ async function rbGuardar(crearOtro){
     motivo_ajuste: motivoAjuste || undefined,   // solo va si de verdad cambió la cantidad (ver arriba)
   };
   try{
+    rbDraftGuardar();   // 2026-10-06: respaldo local JUSTO antes de enviar: si la sesión murió, no se pierde nada
     const url = id ? ('/mantenciones/api/repuestos-stock/' + id) : '/mantenciones/api/repuestos-stock';
     const method = id ? 'PUT' : 'POST';
     const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
@@ -2969,6 +2999,15 @@ function rbRefreshStepStates(){
     if (sec) sec.classList.toggle('is-complete', !!RB_STEP_RULES[n]());
   });
   if (RB_SOL) rbSolPintar();
+  // 📌 2026-10-06 (Lenin: "me echa de la app y pierdo lo que hacía"): marca, ubicación escaneada, proveedor y
+  // modelos se eligen con un toque o un escaneo, que NO disparan el evento `input` del autoguardado. Todo
+  // cambio de estado de un paso también respalda el borrador (debounced).
+  try {
+    if (!RB_SOL && document.getElementById('modalRepStock').classList.contains('show')){
+      clearTimeout(_rbDraftDebounce);
+      _rbDraftDebounce = setTimeout(rbDraftGuardar, 500);
+    }
+  } catch(e){}
 }
 
 // ── Fotos del repuesto (máx 3, comprimidas en el navegador) ──
