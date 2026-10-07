@@ -315,45 +315,251 @@
     var m = /^(\d{2}\/\d{2}\/\d{4})(?:\s+(\d{2}:\d{2}))?$/.exec(String(v || '').trim());
     return m ? { f: m[1], h: m[2] || '' } : { f: String(v || ''), h: '' };
   }
-  // Una OT de Check en una tarjeta COMPACTA (Daniel 2026-10-06: «tarjetas más chicas, con menos scroll, mejor distribuidas… resaltar el número de OT
-  // para que se entienda qué interesa a la hora de buscar información en Check»): N° de OT grande y copiable, estado, tipo, quién y cuándo en una línea.
-  function cuandoTxt(momentos) {
-    var ms = (momentos || []).map(function (m) { var pm = partesMomento(m.valor); return { e: m.etiqueta, f: pm.f, h: pm.h }; });
-    if (!ms.length) return '';
-    var unaFecha = ms.every(function (m) { return m.f === ms[0].f && m.h; });
-    if (unaFecha) {
-      return '<span class="ck-otc-f">' + esc(ms[0].f) + '</span>' +
-        ms.map(function (m) { return '<span>' + esc(m.e) + ' <b>' + esc(m.h) + '</b></span>'; }).join('<i class="bi bi-arrow-right"></i>');
-    }
-    return ms.map(function (m) { return '<span>' + esc(m.e) + ' <b>' + esc(m.f + (m.h ? ' ' + m.h : '')) + '</b></span>'; }).join('<i class="bi bi-arrow-right"></i>');
+  // ── OT de Check en UNA línea + tiempos de preparación (Daniel 2026-10-06: «insisto, eso debe ser realmente pequeño» y «calcular los tiempos
+  //    de preparación… no sabes cuánto valor le da eso en tiempo real»). Las horas son las que entrega Check; si una OT sigue en curso, corre en vivo.
+  function aFecha(v) {                     // 'dd/mm/aaaa hh:mm' → Date (hora local, la que entrega Check)
+    var m = /^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?/.exec(String(v || '').trim());
+    return m ? new Date(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0)) : null;
   }
+  function horaDe(d) { return d ? ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) : ''; }
+  function durTxt(min) {
+    min = Math.max(0, Math.round(min));
+    if (min < 1) return 'menos de 1 min';
+    if (min < 60) return min + ' min';
+    return Math.floor(min / 60) + ' h' + (min % 60 ? ' ' + (min % 60) + ' min' : '');
+  }
+  function otFinal(o) { return /termin|final|cerr|complet|ejecut|ok/.test(String(o.estado || '').toLowerCase()); }
+  function otInicio(o) { return aFecha(o.inicio) || aFecha(((o.momentos || [])[0] || {}).valor); }
+  function otFin(o) {
+    var f = aFecha(o.fin);
+    if (f) return f;
+    var ms = o.momentos || [];
+    return (ms.length > 1 && otFinal(o)) ? aFecha(ms[ms.length - 1].valor) : null;
+  }
+  function otAsignada(o) {
+    var m = (o.momentos || []).filter(function (x) { return /asign/i.test(String(x.campo || x.etiqueta || '')); })[0];
+    return m ? aFecha(m.valor) : null;
+  }
+  function otClase(o) {
+    var t = String(o.tipo || '').toLowerCase();
+    if (/salida|despach|expedi|entrega/.test(t)) return 'salida';
+    if (/pick/.test(t)) return 'picking';
+    if (/revis|chequeo|control/.test(t)) return 'revision';
+    return 'otra';
+  }
+  // Separación inteligente (Daniel 2026-10-06: «la puedo asignar en la tarde y el operario la termina mañana»): si una OT o un tramo pasa de un
+  // día a otro, la noche y el fin de semana NO se cuentan; solo la jornada de bodega (07:30–20:00, lunes a viernes). Dentro del mismo día se cuenta
+  // el reloj tal cual (aunque bodega trabaje un poco antes o después de la jornada).
+  var JORNADA = (function () {
+    var m = /^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/.exec((panel.dataset.jornada || '').trim());
+    return m ? [+m[1] * 60 + +m[2], +m[3] * 60 + +m[4]] : [7 * 60 + 30, 20 * 60];
+  })();
+  function mismoDia(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
+  function minJornada(a, b) {
+    var tot = 0, d = new Date(a.getFullYear(), a.getMonth(), a.getDate());
+    for (var n = 0; d < b && n < 400; n++) {
+      if (d.getDay() !== 0 && d.getDay() !== 6) {
+        var j0 = new Date(d.getTime() + JORNADA[0] * 60000), j1 = new Date(d.getTime() + JORNADA[1] * 60000);
+        var x = a > j0 ? a : j0, y = b < j1 ? b : j1;
+        if (y > x) tot += y - x;
+      }
+      d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+    }
+    return tot / 60000;
+  }
+  // {min: minutos que cuentan, reloj: minutos de reloj, pausa: true si se descontó la noche / fin de semana}
+  function durReal(a, b) {
+    if (!a || !b || b <= a) return { min: 0, reloj: 0, pausa: false };
+    var reloj = (b - a) / 60000;
+    if (mismoDia(a, b)) return { min: reloj, reloj: reloj, pausa: false };
+    var min = minJornada(a, b);
+    return { min: min, reloj: reloj, pausa: reloj - min >= 30 };
+  }
+  function pausaTxt(d) { return 'sin contar noche ni fin de semana · reloj ' + durTxt(d.reloj); }
+  var HAY_EN_CURSO = false;               // si una OT sigue abierta, el panel se vuelve a dibujar cada 30 s
+  var DATOS_OT = {};                      // clave → OT, para abrir sus datos completos en el modal
+  function fechaCorta(d) { return ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2); }
+  function pieza(cls, k, v, em, title) {
+    return '<span class="ck-t' + (cls ? ' ' + cls : '') + '"' + (title ? ' title="' + esc(title) + '"' : '') + '><small>' + k + '</small><b>' + v + '</b>' +
+      (em ? '<em>' + em + '</em>' : '') + '</span>';
+  }
+  function tiemposHtml(ots) {
+    var ahora = new Date(), lista = [];
+    (ots || []).forEach(function (o) {
+      var ini = otInicio(o);
+      if (!ini) return;
+      var fin = otFin(o), curso = !fin && !otFinal(o);
+      if (curso) HAY_EN_CURSO = true;
+      lista.push({ c: otClase(o), ini: ini, fin: fin || (curso ? ahora : ini), curso: curso, asig: otAsignada(o) });
+    });
+    if (!lista.length) return '';
+    lista.sort(function (a, b) { return a.ini - b.ini; });
+    var enCurso = lista.some(function (x) { return x.curso; });
+    var piezas = [];
+    // Misma lógica que retiros_tiempos.py (lo que queda guardado como evidencia): trabajo = suma de cada OT; preparación efectiva = tiempo con al
+    // menos una OT abierta (las que se pisan se juntan); pausas = principio a fin − efectiva (la intermitencia: nadie tenía una OT abierta).
+    var suma = 0, sumaPausa = false;
+    lista.forEach(function (x) { var d = durReal(x.ini, x.fin); suma += d.min; sumaPausa = sumaPausa || d.pausa; });
+    var juntos = [];
+    lista.forEach(function (x) {
+      var u = juntos[juntos.length - 1];
+      if (u && x.ini <= u[1]) { if (x.fin > u[1]) u[1] = x.fin; } else juntos.push([x.ini, x.fin]);
+    });
+    var efectivo = juntos.reduce(function (m, j) { return m + durReal(j[0], j[1]).min; }, 0);
+    var ultFin = lista.reduce(function (m, x) { return x.fin > m ? x.fin : m; }, lista[0].fin);
+    var pfr = durReal(lista[0].ini, ultFin);
+    var pausasMin = Math.max(0, Math.round(pfr.min - efectivo));
+    piezas.push(pieza(enCurso ? 'is-curso' : 'is-trabajo', 'Trabajo (' + lista.length + ' OT)', durTxt(suma),
+      enCurso ? 'en curso' : (Math.round(suma) - Math.round(efectivo) >= 2 ? 'en paralelo · efectivo ' + durTxt(efectivo) : (sumaPausa ? 'sin noches' : '')),
+      'Suma de lo que duró cada OT en Check' + (sumaPausa ? ' (sin contar noche ni fin de semana)' : '') +
+      (Math.round(suma) - Math.round(efectivo) >= 2 ? '. Hubo OT al mismo tiempo: la preparación efectiva fue ' + durTxt(efectivo) : '')));
+    // Pausas (intermitencia) y, si se sabe, cuánto quedó listo esperando la salida
+    var pk = lista.filter(function (x) { return x.c === 'picking'; });
+    var sal = lista.filter(function (x) { return x.c === 'salida'; });
+    var listoTxt = '';
+    if (pk.length && sal.length && !pk.some(function (x) { return x.curso; })) {
+      var pFin = pk.reduce(function (m, x) { return x.fin > m ? x.fin : m; }, pk[0].fin);
+      if (sal[0].ini >= pFin) listoTxt = 'listo esperando ' + durTxt(durReal(pFin, sal[0].ini).min);
+    }
+    if (pausasMin >= 1 || listoTxt) {
+      var detalle = [];
+      for (var q = 1; q < juntos.length; q++) {
+        var dq = durReal(juntos[q - 1][1], juntos[q][0]);
+        if (dq.min >= 1) detalle.push(horaDe(juntos[q - 1][1]) + '–' + horaDe(juntos[q][0]) + ': ' + durTxt(dq.min) + (dq.pausa ? ' (sin la noche)' : ''));
+      }
+      piezas.push(pieza('', 'Pausas', durTxt(pausasMin), listoTxt,
+        'Tiempo entre OT en que nadie tenía una OT abierta' + (detalle.length ? ' · ' + detalle.join(' · ') : '')));
+    }
+    // Espera de asignación: desde que se asignó la primera OT hasta que se empezó
+    var asig = lista[0].asig;
+    if (asig && asig <= lista[0].ini) {
+      var da = durReal(asig, lista[0].ini);
+      if (da.min >= 1) piezas.push(pieza('', 'Asignada → inicio', durTxt(da.min), horaDe(asig) + (mismoDia(asig, lista[0].ini) ? '' : ' ' + fechaCorta(asig)),
+        'Desde que se asignó la OT hasta que el operario la empezó' + (da.pausa ? ' (sin contar noche ni fin de semana)' : '')));
+    }
+    // 3) De principio a fin (primera OT → última), con la misma separación inteligente
+    var ult = ultFin, pf = pfr;
+    piezas.push(pieza(enCurso ? 'is-curso' : 'is-total', 'Principio a fin', durTxt(pf.min),
+      (pf.pausa ? 'sin noches · ' : '') + horaDe(lista[0].ini) + (mismoDia(lista[0].ini, ult) ? '' : ' ' + fechaCorta(lista[0].ini)) + '–' + (enCurso ? 'ahora' : horaDe(ult)),
+      pf.pausa ? pausaTxt(pf) : 'Desde que empezó la primera OT hasta que terminó la última'));
+    // 4) Salida (expedición) y cómo quedó contra la cita
+    if (sal.length) {
+      piezas.push(pieza('is-salida', 'Salida', horaDe(sal[0].ini), fechaCorta(sal[0].ini), 'Hora en que Check registró la salida (expedición)'));
+      var mc = /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/.exec((panel.dataset.cita || '').trim());
+      if (mc) {
+        var dc = new Date(+mc[1], +mc[2] - 1, +mc[3], +mc[4], +mc[5]);
+        var dif = (dc - sal[0].ini) / 60000;
+        piezas.push(pieza(dif > 15 ? 'is-antes' : (dif < -15 ? 'is-despues' : 'is-justo'), 'Vs cita ' + horaDe(dc),
+          Math.abs(dif) <= 15 ? 'a la hora' : durTxt(Math.abs(dif)) + (dif > 0 ? ' antes' : ' después'), '', 'Salida comparada con la hora de la cita del cliente'));
+      }
+    }
+    return '<div class="ck-tiempos" aria-label="Tiempos de preparación"><span class="ck-tiempos-k"><i class="bi bi-stopwatch"></i>Tiempos</span>' + piezas.join('') + '</div>';
+  }
+  // Una OT en UNA línea; sus datos completos se ven en un modal (botón «Datos»)
+  // Inicio → fin con color (Daniel 2026-10-06: «el inicio y el fin ponlo más animadito, con colores»): verde el inicio, rojo el fin, la barra
+  // entre ambos y la duración REAL de la OT (08:11 → 08:26 = 15 min: el número de arriba sale de aquí, no es inventado).
+  function tlHtml(ini, fin, curso, d) {
+    if (!ini) return '<span class="ck-tl is-nada"><i class="bi bi-clock"></i>Check no informa la hora</span>';
+    var otroDia = fin && !mismoDia(ini, fin);
+    return '<span class="ck-tl' + (curso ? ' is-curso' : '') + '">' +
+      '<span class="ck-tl-p is-ini"><small>Inicio ' + fechaCorta(ini) + '</small><b>' + horaDe(ini) + '</b></span>' +
+      '<span class="ck-tl-bar" aria-hidden="true"></span>' +
+      (curso ? '<span class="ck-tl-p is-ahora"><small>En curso</small><b>ahora</b></span>'
+             : '<span class="ck-tl-p is-fin"><small>Fin' + (otroDia ? ' ' + fechaCorta(fin) : '') + '</small><b>' + horaDe(fin || ini) + '</b></span>') +
+      '<span class="ck-tl-d"' + (d && d.pausa ? ' title="' + esc(pausaTxt(d)) + '"' : '') + '>' + (d ? (d.min < 1 ? '<1 min' : durTxt(d.min)) : '') +
+        (d && d.pausa ? ' <i class="bi bi-moon-stars" aria-label="' + esc(pausaTxt(d)) + '"></i>' : '') + '</span></span>';
+  }
+  function cantTxt(o) {
+    var n = o.n_lineas || 0, u = o.unidades || 0;
+    return n + (n === 1 ? ' línea' : ' líneas') + (u ? ' · ' + (Math.round(u * 100) / 100) + (u === 1 ? ' unidad' : ' unidades') : '');
+  }
+  // Una OT en UNA fila con TODA la información de la tarjeta (tipo, líneas y unidades, quién y en qué rol, inicio → fin y duración, estado);
+  // el resto de los campos de Check en el modal (botón «Datos»).
   function otHtml(o, clave) {
     var est = String(o.estado || '').toLowerCase();
     var cls = /termin|final|cerr|complet|ejecut|ok/.test(est) ? 'ok' : (/anul|cancel|error|rechaz/.test(est) ? 'mal' : 'en');
-    var h = '<article class="ck-otc is-' + cls + '"><div class="ck-otc-top">' +
-      '<span class="ck-otn" title="Número de la OT: con él se busca en Check"><small>N° OT</small><b>' + esc(o.ot || 's/n') + '</b>' +
-      (o.ot ? '<button type="button" class="ck-copiar" data-copiar="' + esc(o.ot) + '" title="Copiar el N° de OT para buscarlo en Check" aria-label="Copiar N° de OT ' + esc(o.ot) + '"><i class="bi bi-copy"></i></button>' : '') +
-      '</span>' + (o.estado ? '<span class="ck-est is-' + cls + '">' + esc(o.estado) + '</span>' : '') + '</div>' +
-      '<div class="ck-otc-meta">' + (o.tipo ? '<b>' + esc(o.tipo) + '</b> · ' : '') + o.n_lineas + (o.n_lineas === 1 ? ' línea' : ' líneas') +
-      (o.unidades ? ' · ' + o.unidades + (o.unidades === 1 ? ' unidad' : ' unidades') : '') + '</div>';
-    if ((o.personas || []).length) {
-      h += '<div class="ck-otc-q">' + o.personas.map(function (p) {
-        return '<span class="ck-otc-per"><span class="ck-av" style="background:' + colorAv(p.valor) + '" aria-hidden="true">' + esc(iniciales(p.valor)) + '</span>' +
-          '<b>' + esc(p.valor) + '</b><small>' + esc(p.etiqueta) + '</small></span>';
-      }).join('') + '</div>';
-    } else {
-      h += '<div class="ck-otc-q ck-otc-nada"><i class="bi bi-info-circle"></i>Check no informa quién</div>';
+    var ini = otInicio(o), fin = otFin(o), curso = !fin && !otFinal(o) && !!ini;
+    var d = ini ? durReal(ini, fin || new Date()) : null;
+    DATOS_OT[clave] = o;
+    var quien = (o.personas || []).length ? o.personas.map(function (p) {
+      return '<span class="ck-otl-per"><span class="ck-av" style="background:' + colorAv(p.valor) + '" aria-hidden="true">' + esc(iniciales(p.valor)) + '</span>' +
+        '<b>' + esc(p.valor) + '</b><small>' + esc(p.etiqueta) + '</small></span>';
+    }).join('') : '<span class="ck-otl-nada"><i class="bi bi-person"></i> Check no informa quién</span>';
+    return '<div class="ck-otl is-' + cls + '">' +
+      '<span class="ck-otn"><b>' + esc(o.ot || 's/n') + '</b>' +
+      (o.ot ? '<button type="button" class="ck-copiar" data-copiar="' + esc(o.ot) + '" title="Copiar el N° de OT para buscarlo en Check" aria-label="Copiar N° de OT ' + esc(o.ot) + '"><i class="bi bi-copy"></i></button>' : '') + '</span>' +
+      '<span class="ck-otl-tipo"><b>' + esc(o.tipo || 'OT') + '</b><small>' + cantTxt(o) + ' <span class="ck-est is-' + cls + '">' + esc(o.estado || '—') + '</span></small></span>' +
+      '<span class="ck-otl-q">' + quien + '</span>' +
+      tlHtml(ini, fin, curso, d) +
+      ((o.datos || []).length ? '<button type="button" class="ck-otl-mas" data-ck-datos="' + clave + '" title="Ver y copiar todos los datos que Check entrega de esta OT">' +
+        '<i class="bi bi-list-ul"></i>Datos <span>' + o.datos.length + '</span></button>' : '<span></span>') +
+      '</div>';
+  }
+  // Todo lo de una OT como texto, para copiar y pegar (correo, WhatsApp, planilla)
+  function textoOT(o) {
+    var ini = otInicio(o), fin = otFin(o), d = ini ? durReal(ini, fin || new Date()) : null;
+    var t = ['OT ' + (o.ot || 's/n') + ' · ' + (o.tipo || 'OT') + ' · ' + (o.estado || ''),
+      'Quién: ' + ((o.personas || []).map(function (p) { return p.valor + ' (' + p.etiqueta + ')'; }).join(', ') || 'sin dato'),
+      'Inicio: ' + (ini ? fechaCorta(ini) + ' ' + horaDe(ini) : '—') + ' · Fin: ' + (fin ? fechaCorta(fin) + ' ' + horaDe(fin) : (ini && !otFinal(o) ? 'en curso' : '—')) +
+        (d ? ' · Duración: ' + durTxt(d.min) + (d.pausa ? ' (' + pausaTxt(d) + ')' : '') : ''),
+      cantTxt(o), ''];
+    (o.lineas || []).forEach(function (l) {
+      t.push('· ' + [l.sku, l.descripcion, l.ua ? 'UA ' + l.ua : '', (l.ejecutado != null ? l.ejecutado : '?') + ' de ' + (l.solicitado != null ? l.solicitado : '?'),
+        (l.origen || l.destino) ? (l.origen || '?') + ' → ' + (l.destino || '?') : ''].filter(Boolean).join(' · '));
+    });
+    if ((o.lineas || []).length) t.push('');
+    (o.datos || []).forEach(function (x) { t.push(x.etiqueta + ': ' + x.valor); });
+    return t.join('\n');
+  }
+  // Modal con TODOS los datos de una OT (Daniel 2026-10-06: «los datos de Check en un modal, sin scroll, y poder copiar y pegar todo»).
+  function abrirDatosOT(clave) {
+    var o = DATOS_OT[clave];
+    if (!o) return;
+    var ini = otInicio(o), fin = otFin(o), curso = !fin && !otFinal(o) && !!ini, d = ini ? durReal(ini, fin || new Date()) : null;
+    var cab = '<div class="ck-dm-cab"><span class="ck-otn"><small>N° OT</small><b>' + esc(o.ot || 's/n') + '</b>' +
+      (o.ot ? '<button type="button" class="ck-copiar" data-copiar="' + esc(o.ot) + '" aria-label="Copiar N° de OT ' + esc(o.ot) + '"><i class="bi bi-copy"></i></button>' : '') + '</span>' +
+      '<span class="ck-dm-res"><b>' + esc(o.tipo || 'OT') + '</b> · ' + esc(o.estado || '') + ' · ' + cantTxt(o) +
+      ((o.personas || []).length ? ' · ' + o.personas.map(function (p) { return '<b>' + esc(p.valor) + '</b> <small>(' + esc(p.etiqueta) + ')</small>'; }).join(', ') : '') + '</span>' +
+      tlHtml(ini, fin, curso, d) + '</div>';
+    if ((o.lineas || []).length) {
+      cab += '<div class="ck-dm-lin"><table><thead><tr><th>SKU</th><th>Descripción</th><th>UA</th><th>Ejecutado / solicitado</th><th>Origen → destino</th></tr></thead><tbody>' +
+        o.lineas.map(function (l) {
+          return '<tr><td>' + esc(l.sku || '—') + '</td><td>' + esc(l.descripcion || '—') + '</td><td>' + esc(l.ua || '—') + '</td><td>' +
+            esc(l.ejecutado != null ? l.ejecutado : '?') + ' / ' + esc(l.solicitado != null ? l.solicitado : '?') + '</td><td>' +
+            esc((l.origen || l.destino) ? (l.origen || '?') + ' → ' + (l.destino || '?') : '—') + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
     }
-    var c = cuandoTxt(o.momentos);
-    h += '<div class="ck-otc-c"><i class="bi bi-clock-history"></i>' + (c || 'Check no informa fecha ni hora') + '</div>';
-    if (o.datos && o.datos.length) {
-      h += '<details class="ck-raw" data-k="' + clave + '"><summary><i class="bi bi-braces"></i>Todos los datos de Check (' + o.n_datos + ')</summary><dl>' +
-        o.datos.map(function (d) { return '<dt>' + esc(d.etiqueta) + '</dt><dd>' + esc(d.valor) + '</dd>'; }).join('') + '</dl></details>';
+    var cuerpo = cab + '<dl class="ck-dm-datos">' + (o.datos || []).map(function (x) { return '<dt>' + esc(x.etiqueta) + '</dt><dd>' + esc(x.valor) + '</dd>'; }).join('') + '</dl>';
+    var titulo = 'Datos de Check · OT ' + (o.ot || 's/n');
+    if (!(window.bootstrap && window.bootstrap.Modal)) {
+      if (typeof window.ilusAlert === 'function') window.ilusAlert({ title: titulo, message: '', sub: cuerpo, subHtml: true });
+      return;
     }
-    return h + '</article>';
+    var m = document.getElementById('ckDatosModal');
+    if (!m) {
+      m = document.createElement('div');
+      m.className = 'modal fade';
+      m.id = 'ckDatosModal';
+      m.tabIndex = -1;
+      m.setAttribute('aria-labelledby', 'ckDatosTit');
+      m.setAttribute('aria-hidden', 'true');
+      m.innerHTML = '<div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable"><div class="modal-content">' +
+        '<div class="modal-header py-2"><h5 class="modal-title" id="ckDatosTit"></h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button></div>' +
+        '<div class="modal-body" id="ckDatosBody"></div>' +
+        '<div class="modal-footer py-2"><span class="me-auto small text-muted"><i class="bi bi-lock-fill me-1"></i>Tal como lo entrega Check (solo lectura). Esc o clic afuera para cerrar.</span>' +
+        '<button type="button" class="btn btn-outline-dark" id="ckDatosCopiar"><i class="bi bi-clipboard-check me-1"></i>Copiar todo</button>' +
+        '<button type="button" class="btn btn-dark" data-bs-dismiss="modal">Cerrar</button></div></div></div>';
+      document.body.appendChild(m);
+    }
+    m.querySelector('#ckDatosTit').textContent = titulo;
+    m.querySelector('#ckDatosBody').innerHTML = cuerpo;
+    m.querySelector('#ckDatosCopiar').setAttribute('data-copiar-todo', clave);
+    window.bootstrap.Modal.getOrCreateInstance(m).show();
   }
   // Quién pickeó / responsable / cuándo / a quién se asignó, según los movimientos (OT) de Check
   function actHtml() {
+    HAY_EN_CURSO = false;
+    DATOS_OT = {};
     var h = '<section class="ck-act"><div class="ck-act-h"><i class="bi bi-person-badge-fill"></i><div><b>Quién y cuándo</b><small>Movimientos (OT) que Check registra de este pedido</small></div></div>';
     var msg = function (icono, txt, spin) {
       return h + '<p class="ck-vacio">' + (spin ? '<span class="spinner-border spinner-border-sm"></span>' : '<i class="bi ' + icono + '"></i>') + txt + '</p></section>';
@@ -368,7 +574,10 @@
       h += '<div class="ck-doc"><div class="ck-doc-h"><span class="ck-doc-t">' + esc(d.rotulo) + '</span><span class="ck-doc-n">' +
         (d.ots.length ? d.n_ot + (d.n_ot === 1 ? ' OT' : ' OT') : 'sin OT todavía') + '</span></div>';
       if (!d.ots.length) h += '<p class="ck-vacio"><i class="bi bi-hourglass-split"></i>Check todavía no muestra una OT (movimiento de bodega) para este documento.</p>';
-      if (d.ots.length) h += '<div class="ck-otgrid">' + d.ots.map(function (o, j) { return otHtml(o, 'd' + i + 'o' + j); }).join('') + '</div>';
+      if (d.ots.length) {
+        var crono = d.ots.slice().sort(function (a, b) { return (otInicio(a) || 0) - (otInicio(b) || 0); });      // en el orden en que pasaron
+        h += tiemposHtml(crono) + '<div class="ck-otlista">' + crono.map(function (o, j) { return otHtml(o, 'd' + i + 'o' + j); }).join('') + '</div>';
+      }
       if (d.mas) h += '<p class="ck-vacio">…y ' + d.mas + ' OT más.</p>';
       h += '</div>';
     });
@@ -613,6 +822,18 @@
     if (b) { accionar(parseInt(b.dataset.gpAcc, 10), b); return; }
     if (t.closest('#gpCheckSlot [data-gp-check-refresh]')) { cargarCheck(true); ACT_REINTENTOS = 0; cargarActividad(); }
     if (t.closest('[data-gp-retirar]')) { ev.preventDefault(); retirarDesdeCheck(); }
+    var ct = t.closest('[data-copiar-todo]');
+    if (ct) {
+      ev.preventDefault();
+      var oc = DATOS_OT[ct.getAttribute('data-copiar-todo')];
+      if (!oc) return;
+      var falla = function () { toast('No se pudo copiar solo: selecciona el texto del modal y cópialo a mano.', 'warning'); };
+      try { navigator.clipboard.writeText(textoOT(oc)).then(function () { toast('✓ Datos de la OT ' + (oc.ot || '') + ' copiados: pégalos donde los necesites.', 'success'); }, falla); }
+      catch (e2) { falla(); }
+      return;
+    }
+    var dm = t.closest('[data-ck-datos]');
+    if (dm) { ev.preventDefault(); abrirDatosOT(dm.getAttribute('data-ck-datos')); return; }
     var cp = t.closest('[data-copiar]');
     if (cp) {
       ev.preventDefault();
@@ -852,6 +1073,9 @@
       new MutationObserver(function () { clearTimeout(esperaDocs); esperaDocs = setTimeout(render, 250); }).observe(contProductos, { childList: true, subtree: true });
     }
   } catch (e) { /* sin seguimiento en vivo: se actualiza con cada refresco */ }
+
+  // OT en curso: el tiempo corre solo (sin volver a preguntarle a Check)
+  setInterval(function () { if (HAY_EN_CURSO && document.visibilityState === 'visible') renderCheck(); }, 30000);
 
   render();
   decorar();

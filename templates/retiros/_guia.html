@@ -9,7 +9,7 @@
    ══════════════════════════════════════════════════════════════════════ #}
 {% if guia and permissions.retiros %}
 <link rel="stylesheet" href="{{ url_for('static', filename='retiros_guia.css') }}">
-<section class="gp" id="gpPanel" data-rid="{{ req.id }}" data-status="{{ req.status }}" aria-label="Guía del retiro: pasos y qué falta">
+<section class="gp" id="gpPanel" data-rid="{{ req.id }}" data-status="{{ req.status }}" data-cita="{% if req.confirmed_date %}{{ (req.confirmed_date|string)[:10] }} {{ req.confirmed_time_from|hm }}{% endif %}" aria-label="Guía del retiro: pasos y qué falta">
   <div class="gp-cargando"><span class="spinner-border spinner-border-sm me-2"></span>Preparando la guía de pasos…</div>
 </section>
 <script type="application/json" id="gpData">{{ guia | tojson }}</script>
