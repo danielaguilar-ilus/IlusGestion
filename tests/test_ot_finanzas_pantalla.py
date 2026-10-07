@@ -376,7 +376,8 @@ def _llamar_vivo(cuerpo, fila=None):
 
 class TestPrecioAlClienteComoHistoria(unittest.TestCase):
     """`costo` lo sigue leyendo lo que ve el cliente (correo "visita agendada"): si ya existía, acompaña a lo
-    cobrado cuando la tarjeta lo cambia. Nunca se crea, nunca en una OT que no se cobra, nunca en una cerrada."""
+    cobrado cuando la tarjeta lo cambia (y desde la integración del 2026-10-07 también se llena si estaba vacío).
+    Nunca en una OT que no se cobra, nunca en una cerrada."""
 
     def test_acompana_a_lo_cobrado_si_ya_existia(self):
         r, up, fila, _ = _llamar_vivo({"zz_monto": 280000, "valor_origen": "zz"})
@@ -389,9 +390,17 @@ class TestPrecioAlClienteComoHistoria(unittest.TestCase):
         self.assertEqual(r["fin"]["cobre"]["total"], 280000)
         self.assertFalse([a for a in r["fin"]["avisos"] if "Precio al cliente" in a])
 
-    def test_no_se_crea_si_no_habia(self):
+    def test_se_llena_si_estaba_vacio(self):
+        """2026-10-07 (integración fin-paso3): antes la tarjeta escribía `costo` siempre; si queda vacío, la OT
+        que declara su cobro saldría en el correo "visita técnica programada" sin «Costo estimado»."""
         r, up, fila, _ = _llamar_vivo({"zz_monto": 280000, "valor_origen": "zz"}, fila={"costo": None})
-        self.assertEqual(len(up), 1)
+        self.assertEqual(len(up), 2, up)
+        self.assertEqual(fila["costo"], 280000)
+        self.assertFalse([a for a in r["fin"]["avisos"] if "Precio al cliente" in a])
+
+    def test_solo_despacho_sin_servicio_no_crea_costo(self):
+        r, up, fila, _ = _llamar_vivo({"zz_envio_monto": 30000}, fila={"costo": None, "zz_monto": None})
+        self.assertEqual(len(up), 1, up)
         self.assertIsNone(fila["costo"])
 
     def test_no_se_toca_si_el_cobro_no_cambia(self):

@@ -24,7 +24,9 @@ from tests.test_incidencias_bajas import _codigo_y_arbol
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FUNCS = ("_ot_es_interna", "_ot_cobertura", "_ot_fin_num", "_ot_fin_clp", "_ot_finanzas",
          "_ot_fin_valorizado_fuente", "_ot_fin_reparto_creacion", "_ot_validar_normalizar_finanzas",
-         "_ot2_finanzas_estado", "_anexo_ot_en_garantia", "_pl_cobertura_contrato", "_ot_fin_sql_contrato_real")
+         "_ot2_finanzas_estado", "_anexo_ot_en_garantia", "_pl_cobertura_contrato", "_ot_fin_sql_contrato_real",
+         # 2026-10-07 (integración fin-paso3): `costo` como espejo de lo cobrado.
+         "_ot_fin_costo_espejo", "_ot_fin_costo_espejo_toca", "_pl_costo_espejo")
 CONSTS = ("_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_FUENTE_COBRO", "_OT_FIN_ZZ_NO_SERVICIO", "_OT_FIN_COBERTURA_TXT",
           "_OT_FIN_UMBRAL_BAJO", "_OT_FIN_VALORIZADO_FUENTE_POR_ORIGEN", "_OT_FIN_VALORIZADO_FUENTES",
           "_OT2_CENTROS_COSTO", "_OT2_VALOR_ORIGENES", "_OT2_VALOR_ORIGENES_CON_MOTIVO", "_OT2_LINEA_ZZ",
@@ -117,12 +119,14 @@ class TestCrearOT(unittest.TestCase):
 
     DOC = {"centro_costo": "sstt", "factura_tido": "FCV", "factura_nudo": "11439"}
 
-    def test_cobra_con_documento_zz_queda_y_costo_ya_no_se_escribe(self):
+    def test_cobra_con_documento_zz_queda_y_costo_es_espejo_de_lo_cobrado(self):
+        """2026-10-07 (integración fin-paso3): `costo` vuelve a nacer en una OT que se cobra, pero como ESPEJO de
+        "Cobré" (servicio + despacho): lo lee el correo "visita técnica programada" que recibe el cliente."""
         err, c = N(dict(self.DOC, zz_monto=150000, zz_envio_monto=30000, zz_envio_codigo="ZZENVIO",
                         valor_origen="zz", costo_proveedor=0))
         self.assertIsNone(err)
         self.assertEqual((c["zz_monto"], c["zz_envio_monto"]), (150000, 30000))
-        self.assertIsNone(c["costo_cliente"], "`costo` ya no nace con la copia de zz+envío")
+        self.assertEqual(c["costo_cliente"], 180000, "`costo` = lo cobrado (servicio + despacho), como antes")
         self.assertEqual(c["costo_proveedor"], 0.0, "un 0 declarado es un dato")
         self.assertEqual(c["cobertura"], "cobra")
         self.assertIsNone(c["valorizado_clp"])
@@ -273,6 +277,94 @@ class TestAnexoEnGarantia(unittest.TestCase):
         amb["mysql_fetchone"] = lambda sql, params: {"modalidad_cobro": "pagado", "cubierto_por": "cliente",
                                                      "tipo": "correctiva"}
         self.assertFalse(amb["_anexo_ot_en_garantia"](10))
+
+
+class TestCostoEspejo(unittest.TestCase):
+    """2026-10-07 (integración fin-paso3) -- `costo` ("Precio al cliente") acompaña a lo cobrado para que el correo
+    "visita técnica programada" que recibe el cliente («Costo estimado») no cambie (REGLAS #22/#23)."""
+
+    BASE = {"modalidad_cobro": "pagado", "cubierto_por": "cliente", "tipo": "instalacion", "cliente_id": 3}
+
+    def E(self, **v):
+        return _amb()["_ot_fin_costo_espejo"](dict(self.BASE, **v))
+
+    def test_espejo_de_lo_cobrado(self):
+        self.assertEqual(self.E(zz_monto=150000, zz_envio_monto=30000, valor_origen="zz"), 180000)
+        self.assertEqual(self.E(zz_monto=90000, valor_origen="manual"), 90000)
+        self.assertEqual(self.E(zz_monto=90000, valor_origen="zz", costo=5), 90000, "el `costo` viejo no cuenta")
+
+    def test_sin_espejo(self):
+        self.assertIsNone(self.E(zz_monto=80000, valor_origen="estimado"), "un estimado no es cobro")
+        self.assertIsNone(self.E(zz_monto=1, zz_codigo="ZZRETIRO", valor_origen="zz"), "ZZRETIRO no es servicio")
+        self.assertIsNone(self.E(zz_monto=None, zz_envio_monto=15000), "sin línea de servicio no hay espejo")
+        self.assertIsNone(self.E(zz_monto=0, valor_origen="manual"), "nunca con $0")
+        self.assertIsNone(self.E(zz_monto=None, costo=120000), "OT antigua: no se copia a sí mismo")
+        self.assertIsNone(self.E(zz_monto=200000, valor_origen="zz", modalidad_cobro="garantia"), "garantía")
+        self.assertIsNone(self.E(zz_monto=60000, valor_origen="contrato", tipo="preventiva", contrato_real=1))
+
+    def test_cuando_se_escribe(self):
+        t = _amb()["_ot_fin_costo_espejo_toca"]
+        self.assertTrue(t(None, None, 180000), "vacío -> se llena")
+        self.assertTrue(t(0, None, 180000), "0 (default de columna) -> se llena")
+        self.assertTrue(t(150000, 150000, 180000), "era la copia del cobro anterior -> la sigue")
+        self.assertFalse(t(170000, 150000, 180000), "un «Precio al cliente» distinto, de una persona, no se pisa")
+        self.assertFalse(t(180000, 180000, 180000), "mismo número: nada que escribir")
+        self.assertFalse(t(None, None, None), "sin espejo no se escribe")
+        self.assertFalse(t(150000, None, 180000), "sin saber el cobro anterior, un `costo` puesto no se toca")
+
+    def test_creacion_garantia_sin_costo(self):
+        err, c = N({"centro_costo": "sstt", "garantia_aplica": True, "garantia_motivo": "falla de fábrica del motor",
+                    "zz_monto": 200000, "valor_origen": "estimado"})
+        self.assertIsNone(err)
+        self.assertIsNone(c["costo_cliente"], "en garantía el valor vive en valorizado_clp")
+
+    def test_plan_anual(self):
+        pe = _amb()["_pl_costo_espejo"]
+        self.assertEqual(pe({"cubierto_por": "cliente", "contrato_real": False, "zz_monto": 60000,
+                             "valor_origen": "contrato"}), 60000)
+        self.assertIsNone(pe({"cubierto_por": "contrato", "contrato_real": True, "zz_monto": None,
+                              "valor_origen": None}))
+        for nombre in ("mant_planificador_generar_ots", "mant_intel_accion"):
+            self.assertIn("_pl_costo_espejo(", _fuente(nombre), nombre)
+
+    def test_escritores_llaman_al_espejo(self):
+        self.assertIn("_ot_fin_costo_espejo_sync(vid, _espejo_prev", _fuente("mant_visita_update"))
+        self.assertIn("_ot_fin_costo_espejo_sync(vid, None, None", _fuente("ot2_api_documentos_agregar"))
+        self.assertIn("_ot_fin_costo_espejo_sync(vid, None, None", _fuente("mant_ot_declarar_cobertura"))
+        self.assertNotIn("_ot_fin_costo_espejo_sync", _fuente("ot2_api_documentos_quitar"),
+                         "quitar un documento nunca crea `costo` (antes tampoco)")
+        sync = _fuente("_ot_fin_costo_espejo_sync")
+        self.assertIn("estado NOT IN ('completada','cerrada','cancelada','anulada')", sync, "OT terminada = evidencia")
+        self.assertIn("_mant_log(", sync)
+
+    def test_sync_con_bd_falsa(self):
+        """_ot_fin_costo_espejo_sync relee la OT, escribe el espejo una vez y deja constancia (BD simulada)."""
+        import types
+        amb = _amb()
+        fila = dict(self.BASE, id=7, zz_monto=150000, zz_envio_monto=30000, valor_origen="zz", costo=None,
+                    estado="programada")
+        escritos, logs = [], []
+        amb2 = dict(amb)
+        amb2.update({"mysql_fetchone": lambda sql, p=None: dict(fila),
+                     "_ot_fin_cols_sql": lambda alias="v": "x",
+                     "mysql_execute_returning_rowcount": lambda sql, p: (escritos.append((sql, p)) or 1),
+                     "_mant_log": lambda *a, **k: logs.append(a)})
+        f = amb["_ot_fin_costo_espejo_sync"] if "_ot_fin_costo_espejo_sync" in amb else None
+        if f is None:
+            _, arbol = _codigo_y_arbol()
+            nodo = next(n for n in arbol.body if isinstance(n, ast.FunctionDef) and n.name == "_ot_fin_costo_espejo_sync")
+            exec(compile(ast.Module(body=[nodo], type_ignores=[]), "<app>", "exec"), amb2)
+            f = amb2["_ot_fin_costo_espejo_sync"]
+        else:
+            f = types.FunctionType(f.__code__, amb2)
+        self.assertEqual(f(7, None, None, donde="prueba"), 180000)
+        self.assertEqual(len(escritos), 1)
+        self.assertIn("estado NOT IN", escritos[0][0])
+        self.assertEqual(escritos[0][1], (180000, 7))
+        self.assertEqual(len(logs), 1)
+        fila["costo"] = 170000   # un «Precio al cliente» de una persona, distinto del cobro anterior
+        self.assertIsNone(f(7, 150000, 170000))
+        self.assertEqual(len(escritos), 1, "no se pisa")
 
 
 class TestPlanAnual(unittest.TestCase):

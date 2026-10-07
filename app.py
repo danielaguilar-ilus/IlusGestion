@@ -83674,6 +83674,84 @@ def _ot_fin_rep_liviano(rep):
             "por_origen": rep.get("por_origen") or {"bodega": 0.0, "compra": 0.0, "manual": 0.0},
             "n_sin_costo": int(rep.get("n_sin_costo") or 0)}
 
+# 💰 2026-10-07 (integración fin-paso3) — `costo` ("Precio al cliente") como ESPEJO de lo cobrado.
+# Daniel aprobó que lo cobrado viva en zz_monto/zz_envio_monto y que `costo` deje de escribirse a mano. Pero esa
+# columna todavía la lee lo que ve el CLIENTE: el correo "visita técnica programada" (mant_visita_enviar_email,
+# «Costo estimado»), el PDF y el informe post-servicio. Hasta hoy toda OT que se cobra nacía con `costo` = servicio
+# + despacho (FIX 2026-09-02, OT-149) y la tarjeta lo mantenía igual al cobro; si los escritores simplemente
+# dejaran de escribirlo, el cliente dejaría de ver ese número (REGLAS #22/#23: nada visible cambia sin el sí de
+# Daniel). Por eso `costo` sigue acompañando a "Cobré" de la cuenta única, SOLO:
+#   · si la OT se cobra (garantía, cortesía, interno y contrato tienen su valor en valorizado_clp);
+#   · si lo cobrado sale de una línea de servicio o de un cobro declarado -- nunca del mismo «Precio al cliente»
+#     (OT antigua sin servicio separado) ni de un estimado, y nunca con $0;
+#   · si `costo` estaba vacío o era igual al cobro anterior (era la copia): un «Precio al cliente» distinto,
+#     escrito por una persona, no se pisa (la tarjeta lo muestra como dato anterior).
+# El número es el mismo "Cobré" de _ot_finanzas, así que la cuenta no cambia (con `costo` = lo cobrado no aparece
+# el aviso "no coincide").
+def _ot_fin_costo_espejo(v):
+    """El «Precio al cliente» que corresponde a la fila `v` de mant_visitas (cobro ya escrito): "Cobré" de la
+    cuenta única si la OT se cobra y lo cobrado sale de una línea/cobro declarado; None si no corresponde.
+    FUNCIÓN PURA: no lee ni escribe la base."""
+    if not v:
+        return None
+    try:
+        f = _ot_finanzas(dict(v, costo=None))   # sin el `costo` viejo: "Cobré" sale solo de lo declarado
+    except Exception:
+        return None
+    c = f.get("cobre") or {}
+    fuente = c.get("fuente") or ""
+    if not (f.get("cobra") and c.get("hay") and (c.get("total") or 0) > 0):
+        return None
+    if not fuente or fuente.startswith("precio al cliente"):
+        return None
+    return int(round(c["total"]))
+
+
+def _ot_fin_costo_espejo_toca(costo_antes, cobre_antes, nuevo):
+    """¿Se escribe `nuevo` en `costo`? Sí si había vacío/0 o el `costo` era la copia del cobro anterior
+    (diferencia < $1), y el número cambia. Pura."""
+    if nuevo is None:
+        return False
+    ant = _ot_fin_num(costo_antes)
+    if ant is not None and ant > 0:
+        cob_ant = _ot_fin_num(cobre_antes)
+        if cob_ant is None or abs(ant - cob_ant) >= 1:
+            return False
+        if abs(ant - nuevo) < 1:
+            return False
+    return True
+
+
+def _ot_fin_costo_espejo_sync(vid, cobre_antes, costo_antes, quien="sistema", donde=""):
+    """Después de un escritor que cambió lo cobrado: relee la OT, calcula el espejo y lo guarda si corresponde
+    (_ot_fin_costo_espejo_toca). Nunca en una OT terminada (evidencia: estado completada/cerrada/cancelada/anulada
+    queda fuera en el mismo UPDATE). Deja constancia en mant_logs. Protegido: si falla, lo ya guardado sigue
+    guardado. Devuelve el monto escrito o None."""
+    try:
+        r = mysql_fetchone(
+            "SELECT v.id, " + _ot_fin_cols_sql("v") + ", v.estado FROM mant_visitas v WHERE v.id=%s", (vid,))
+        if not r:
+            return None
+        nuevo = _ot_fin_costo_espejo(r)
+        if not _ot_fin_costo_espejo_toca(costo_antes if costo_antes is not None else r.get("costo"),
+                                          cobre_antes, nuevo):
+            return None
+        if not mysql_execute_returning_rowcount(
+                "UPDATE mant_visitas SET costo=%s WHERE id=%s"
+                " AND estado NOT IN ('completada','cerrada','cancelada','anulada')", (nuevo, vid)):
+            return None
+        try:
+            _mant_log("visita", vid, "costo_espejo_cobro",
+                      f"«Precio al cliente» = lo cobrado {_ot_fin_clp(nuevo)}"
+                      + (f" (antes {_ot_fin_clp(_ot_fin_num(costo_antes))})" if _ot_fin_num(costo_antes) else "")
+                      + (f" · {donde}" if donde else "") + f" · {quien}")
+        except Exception:
+            pass
+        return nuevo
+    except Exception as e:
+        print(f"[ot-fin] costo espejo vid={vid}: {type(e).__name__}", flush=True)
+        return None
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  💰 2026-10-07 — LOS QUE LEEN LA PLATA DE UNA OT FUERA DE SU PANTALLA
@@ -85347,9 +85425,9 @@ def _mant_visita_crear_core(d):
                      tecnico_txt, tecnico_user_id,
                      tipo_ot,
                      d.get("estado","programada"), d.get("descripcion",""),
-                     # 💰 2026-10-07: costo_cliente viene siempre None (0 =
-                     # default de la columna): `costo` ya no se escribe al
-                     # crear -- ver _ot_validar_normalizar_finanzas.
+                     # 💰 2026-10-07: costo_cliente viene None (0 = default de
+                     # la columna) salvo en una OT que se cobra, donde es el
+                     # ESPEJO de lo cobrado -- ver _ot_fin_costo_espejo.
                      # 💰 2026-09-17: `costo` (precio al cliente / valor del
                      # trabajo interno) ya NO se lee suelto de d.get("costo")
                      # -- sale de finanzas.costo_cliente, la MISMA derivación
@@ -86018,12 +86096,28 @@ def mant_visita_update(vid):
             _estado_prev_audit = _prev_aud.get("estado")
         except Exception:
             pass
+    # 💰 2026-10-07 (integración fin-paso3) — si este PUT toca lo cobrado o la cobertura, se guarda cómo estaba
+    # para mantener `costo` ("Precio al cliente") como espejo de lo cobrado después del UPDATE (lo lee el correo
+    # "visita técnica programada" que recibe el cliente; ver _ot_fin_costo_espejo). Protegido: si falla, nada.
+    _espejo_prev = None
+    if any(k in d for k in ("zz_monto", "zz_envio_monto", "zz_codigo", "modalidad_cobro", "cubierto_por", "tipo")):
+        try:
+            _r_esp = mysql_fetchone("SELECT v.id, " + _ot_fin_cols_sql("v") + " FROM mant_visitas v WHERE v.id=%s",
+                                    (vid,))
+            if _r_esp:
+                _espejo_prev = {"costo": _r_esp.get("costo"),
+                                "cobre": _ot_finanzas(_r_esp)["cobre"]["total"]}
+        except Exception as _e_esp:
+            print(f"[visita-upd] espejo costo vid={vid}: {type(_e_esp).__name__}", flush=True)
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute(f"UPDATE mant_visitas SET {','.join(sets)} WHERE id=%s",
                         vals + [vid])
         conn.commit()
+        if _espejo_prev is not None:   # 2026-10-07: ver _espejo_prev arriba
+            _ot_fin_costo_espejo_sync(vid, _espejo_prev["cobre"], _espejo_prev["costo"],
+                                      donde="editar OT (PUT visita)")
         # FIX 2026-08-12: antes esta bitácora anotaba "actualizada" con el
         # detalle VACÍO, así que un cambio de cobertura (ej. pasar a
         # "sin costo") quedaba registrado sin decir QUÉ cambió. Ahora se
@@ -91365,16 +91459,21 @@ def ot2_api_finanzas(vid):
     que no queden OT con las dos cosas puestas.
     """
     v = mysql_fetchone(
-        "SELECT id, numero_ot, tipo, costo, costo_proveedor, costo_despacho, "
-        "       centro_costo, zz_codigo, zz_monto, zz_envio_monto, "
-        "       modalidad_cobro, cubierto_por, garantia_motivo, "
-        "       factura_tido, factura_nudo, "
+        "SELECT v.id, v.numero_ot, v.tipo, v.costo, v.costo_proveedor, v.costo_despacho, "
+        "       v.centro_costo, v.zz_codigo, v.zz_monto, v.zz_envio_monto, "
+        "       v.modalidad_cobro, v.cubierto_por, v.garantia_motivo, "
+        "       v.factura_tido, v.factura_nudo, "
         # valor_origen 2026-09-15 (columna de _ensure_ot_valor_origen_col).
-        "       valor_origen, cliente_id, "
+        "       v.valor_origen, v.cliente_id, "
         # 2026-10-07 (modelo único): para comparar lo que llega con lo guardado y no reescribir lo mismo.
-        "       zz_motivo_manual, proveedor_tipo, valorizado_clp, valorizado_fuente, "
-        "       estado_facturacion, finanzas_at, finanzas_por "
-        "  FROM mant_visitas WHERE id=%s", (vid,))
+        "       v.zz_motivo_manual, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, "
+        "       v.estado_facturacion, v.finanzas_at, v.finanzas_por, "
+        # 💰 2026-10-07 (integración fin-paso3) — la bandera de contrato REAL, la misma que usa el candado de
+        # cierre (_OT_FIN_SQL_CONTRATO_REAL). Sin ella, _ot2_finanzas_estado cae a su criterio de respaldo
+        # (cubierto_por='contrato') y el "completa" del GET podía decir otra cosa que el candado y la tarjeta.
+        # Con valor_origen, zz_codigo y cliente_id (ya estaban) la cobertura sale igual en los tres lugares.
+        "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
+        "  FROM mant_visitas v WHERE v.id=%s", (vid,))
     if not v:
         return jsonify({"ok": False, "error": "No encontramos esa orden."}), 404
 
@@ -91798,7 +91897,10 @@ def ot2_api_finanzas(vid):
     # (REGLAS #22 y #23). La tarjeta, antes, la mantenía igual a servicio + despacho; si dejara de escribirla,
     # tras corregir el cobro el cliente vería el número viejo. Por eso, SOLO cuando esta petición cambia lo
     # cobrado, la OT se cobra y ya TENÍA un «Precio al cliente», ese número se iguala a "Cobré" de la cuenta
-    # única (nunca un número a mano). No se crea uno donde no había (las OT nuevas ya no lo llevan), no se toca
+    # única (nunca un número a mano). 2026-10-07 (integración fin-paso3): si estaba VACÍO también se llena --
+    # antes la tarjeta lo escribía siempre y desde hoy las OT que se cobran vuelven a nacer con él (espejo, ver
+    # _ot_fin_costo_espejo); sin esto, la OT que declara su cobro en la tarjeta saldría en el correo al cliente sin
+    # «Costo estimado». No se toca
     # en una OT que no se cobra (su valor vive en valorizado_clp), ni cuando lo cobrado sale del mismo
     # «Precio al cliente» (OT antigua sin servicio separado), ni con $0, ni en una OT ya cerrada (evidencia:
     # ni siquiera el superadmin la cambia por este camino).
@@ -91811,8 +91913,10 @@ def ot2_api_finanzas(vid):
             _c_sync = _f_sync["cobre"]
             _tot_ant = _ot_fin_num(_vf.get("costo"))
             if (_f_sync["cobra"] and _c_sync["hay"] and _c_sync["total"] > 0
+                    and _c_sync["fuente"]   # 2026-10-07: sin línea de servicio (solo despacho) no hay espejo
                     and not (_c_sync["fuente"] or "").startswith("precio al cliente")
-                    and _tot_ant is not None and _tot_ant > 0 and abs(_tot_ant - _c_sync["total"]) >= 1):
+                    # 2026-10-07 (integración fin-paso3): también si estaba VACÍO -- ver el comentario de arriba.
+                    and (_tot_ant is None or _tot_ant <= 0 or abs(_tot_ant - _c_sync["total"]) >= 1)):
                 _cs_val = int(round(_c_sync["total"]))
                 if mysql_execute_returning_rowcount(
                         "UPDATE mant_visitas SET costo=%s WHERE id=%s"
@@ -91884,10 +91988,13 @@ def ot2_api_finanzas(vid):
     # cliente_id y la bandera de contrato real, así una OT interna valorizada en valorizado_clp ya no dice
     # "falta cuánto vale"). La consulta corta de siempre queda de respaldo.
     v2 = _vf or mysql_fetchone(
-        "SELECT centro_costo, modalidad_cobro, garantia_motivo, "
-        "       factura_tido, factura_nudo, zz_monto, zz_envio_monto, "
-        "       cubierto_por, tipo, costo, cliente_id, valorizado_clp "
-        "  FROM mant_visitas WHERE id=%s", (vid,)) or {}
+        "SELECT v.centro_costo, v.modalidad_cobro, v.garantia_motivo, "
+        "       v.factura_tido, v.factura_nudo, v.zz_monto, v.zz_envio_monto, "
+        "       v.cubierto_por, v.tipo, v.costo, v.cliente_id, v.valorizado_clp, "
+        # 2026-10-07 (integración): mismas columnas de cobertura que la relectura, para que el respaldo
+        # tampoco diga otra cosa que el candado.
+        "       v.zz_codigo, v.valor_origen, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
+        "  FROM mant_visitas v WHERE v.id=%s", (vid,)) or {}
     ok, faltan = _ot2_finanzas_estado(v2)
     # 💰 2026-10-07 — la cuenta única recién guardada, para que la tarjeta repinte con lo que de verdad quedó
     # en la base (y no con lo que creía mandar). Va aparte y protegida: si falla, lo guardado sigue guardado.
@@ -93105,6 +93212,12 @@ def ot2_api_documentos_agregar(vid):
                        "codigos": _zz_cods, "reemplazo": _es_primero}
         except Exception as e:
             print(f"[ot_docs] valor OT vid={vid}: {e}", flush=True)
+        # 💰 2026-10-07 (integración fin-paso3) — con `costo` VACÍO, el documento le deja el «Precio al cliente» =
+        # lo cobrado (espejo de "Cobré" de la cuenta única, nunca el bruto del documento ni solo lo del segundo
+        # documento). Hasta hoy el primer documento lo llenaba siempre, y lo lee el correo "visita técnica
+        # programada" que recibe el cliente (REGLAS #22/#23). Con `costo` ya puesto manda el UPDATE de arriba.
+        if _sumado:
+            _ot_fin_costo_espejo_sync(vid, None, None, donde=f"documento {_nom_doc}")
 
     try:
         _mant_log("visita", vid, "documento_asociado",
@@ -101638,7 +101751,8 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
     # y cada pantalla lo sumaba a su manera. Lo cobrado ya vive en zz_monto/zz_envio_monto (y desde hoy el
     # margen lo calcula _ot_finanzas con esas columnas, no con `costo`); el valor de lo que no se cobra -- el
     # trabajo interno incluido -- va a valorizado_clp (ver _ot_fin_reparto_creacion más abajo). La clave se
-    # conserva en None para no romper a los llamadores.
+    # conserva en None para no romper a los llamadores (2026-10-07, integración: salvo el ESPEJO de lo cobrado
+    # en una OT que se cobra, ver más abajo junto a _ot_fin_reparto_creacion).
     _fin_costo_cliente = None
 
     # Modalidad de cobro: una OT interna NO nace cobrable al cliente
@@ -101687,6 +101801,16 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
         "costo_interno": _fin_costo_int, "valorizado_clp": _fin_valorizado,
         "valorizado_fuente": _fin_valorizado_fuente}, _fin_cobertura)
     _fin_zzc, _fin_zzm = _fin_reparto["zz_codigo"], _fin_reparto["zz_monto"]
+    # 💰 2026-10-07 (integración fin-paso3) — `costo` vuelve a nacer en una OT que SE COBRA, pero como ESPEJO de
+    # "Cobré" (servicio + despacho de la cuenta única), nunca como casillero propio: lo lee el correo "visita
+    # técnica programada" que recibe el cliente («Costo estimado»), y hasta hoy toda OT que se cobra nacía con
+    # ese número (FIX 2026-09-02 de arriba). Sin esto el cliente dejaría de verlo (REGLAS #22/#23). En una OT que
+    # no se cobra sigue en None: su valor vive en valorizado_clp. Ver _ot_fin_costo_espejo.
+    if not es_interna and _fin_cobertura == "cobra":
+        _fin_costo_cliente = _ot_fin_costo_espejo({
+            "modalidad_cobro": modalidad_forzada or _fin_modalidad, "cubierto_por": _fin_cubierto,
+            "tipo": tipo_ot, "zz_codigo": _fin_zzc, "zz_monto": _fin_zzm,
+            "zz_envio_monto": _fin_zz_envio_m, "valor_origen": _fin_valor_origen})
 
     campos = {
         "centro_costo": _fin_centro,
@@ -102337,7 +102461,7 @@ def ot2_api_crear():
              acc_asc, acc_est, acc_piso, acc_notas,
              _fin_centro, _fin_zzc, _fin_zzm, _fin_zz_envio_c, _fin_zz_envio_m,
              _fin_zz_motivo_manual, _fin_zz_envio_motivo_manual,
-             _fin_costo_cliente,   # 2026-10-07: siempre None (ver _ot_validar_normalizar_finanzas)
+             _fin_costo_cliente,   # 2026-10-07: None, salvo el espejo de lo cobrado (ver _ot_fin_costo_espejo)
              _fin_modalidad, _fin_cubierto,
              _fin_motivo, _fin_tido, _fin_nudo, _fin_estado_fact,
              _fin_costo_prov, _fin_prov_tipo, _fin_prov_nombre, _fin_costo_desp,
@@ -114095,6 +114219,12 @@ def mant_ot_declarar_cobertura(vid):
         return jsonify({"ok": False,
                         "error": "No se pudo guardar la cobertura."}), 500
 
+    # 💰 2026-10-07 (integración fin-paso3) — si la OT queda COBRÁNDOSE y no tenía «Precio al cliente», ese
+    # casillero pasa a ser el espejo de lo cobrado (lo lee el correo "visita técnica programada" que recibe el
+    # cliente; ver _ot_fin_costo_espejo). En garantía no se toca: su valor vive en valorizado_clp.
+    if not _gar_efectiva:
+        _ot_fin_costo_espejo_sync(vid, None, None, donde="cobertura")
+
     # Con la OT en garantía ya no hay factura pendiente que reclamar.
     try:
         if _gar_efectiva:
@@ -123793,6 +123923,18 @@ def _intel_contrato_id(cid):
     return ct["id"] if ct else None
 
 
+def _pl_costo_espejo(pl_cob):
+    """💰 2026-10-07 (integración fin-paso3) — `costo` ("Precio al cliente") de una OT del Plan Anual: el ESPEJO
+    de lo cobrado (_ot_fin_costo_espejo). Hasta hoy el Plan Anual escribía el valor por visita en `costo`, y esa
+    columna la lee el correo "visita técnica programada" que recibe el cliente («Costo estimado»): sin contrato
+    real ese valor ES el precio acordado que se cobra (zz_monto, origen 'contrato') y el cliente lo sigue viendo
+    igual (REGLAS #22/#23). Con contrato real en vigor la OT no se cobra: None (su valor va en valorizado_clp)."""
+    pl_cob = pl_cob or {}
+    return _ot_fin_costo_espejo({
+        "tipo": "preventiva", "cubierto_por": pl_cob.get("cubierto_por"), "contrato_real": pl_cob.get("contrato_real"),
+        "zz_monto": pl_cob.get("zz_monto"), "valor_origen": pl_cob.get("valor_origen")})
+
+
 def _pl_cobertura_contrato(cid):
     """Resuelve cubierto_por/centro_costo/motivo/costo para una OT de
     mantención generada automáticamente (Plan Anual, registro retroactivo).
@@ -123924,12 +124066,14 @@ def mant_intel_accion(cid):
                 "INSERT INTO mant_visitas (cliente_id, contrato_id, titulo, tipo, estado, "
                 " fecha_programada, fecha_realizada, es_retroactiva, cubierto_por, "
                 " centro_costo, garantia_motivo, zz_monto, valor_origen, valorizado_clp, valorizado_fuente, "
-                " created_by, created_by_user_id) "
-                "VALUES (%s,%s,%s,'preventiva','completada',%s,%s,1,%s,'sstt',%s,%s,%s,%s,%s,%s,%s)",
+                " costo, created_by, created_by_user_id) "
+                "VALUES (%s,%s,%s,'preventiva','completada',%s,%s,1,%s,'sstt',%s,%s,%s,%s,%s,%s,%s,%s)",
                 (cid, _rv_cob["contrato_id"], "Mantención preventiva (registro retroactivo)",
                  fecha, fecha, _rv_cob["cubierto_por"], _rv_cob["motivo"],
                  _rv_cob["zz_monto"], _rv_cob["valor_origen"],
                  _rv_cob["valorizado_clp"], _rv_cob["valorizado_fuente"],
+                 # 2026-10-07 (integración fin-paso3): `costo` = espejo de lo cobrado (solo sin contrato real).
+                 _pl_costo_espejo(_rv_cob),
                  current_username(), uid))
         elif accion == "set_campo_cliente":
             campo = (d.get("campo") or "").strip()
@@ -124468,12 +124612,14 @@ def mant_planificador_generar_ots():
                         "INSERT INTO mant_visitas (numero_ot, cliente_id, contrato_id, titulo, tipo, estado, "
                         " fecha_programada, cubierto_por, centro_costo, garantia_motivo, "
                         " zz_monto, valor_origen, valorizado_clp, valorizado_fuente, "
-                        " created_by, created_by_user_id) "
-                        "VALUES (%s,%s,%s,%s,'preventiva','programada',%s,%s,'sstt',%s,%s,%s,%s,%s,%s,%s)",
+                        " costo, created_by, created_by_user_id) "
+                        "VALUES (%s,%s,%s,%s,'preventiva','programada',%s,%s,'sstt',%s,%s,%s,%s,%s,%s,%s,%s)",
                         (numero_ot, cid, _pl_cob["contrato_id"], "Mantención preventiva (Plan anual)",
                          fecha_ot, _pl_cob["cubierto_por"], _pl_cob["motivo"],
                          _pl_cob["zz_monto"], _pl_cob["valor_origen"],
                          _pl_cob["valorizado_clp"], _pl_cob["valorizado_fuente"],
+                         # 2026-10-07 (integración fin-paso3): `costo` = espejo de lo cobrado (solo sin contrato real).
+                         _pl_costo_espejo(_pl_cob),
                          current_username(), uid))
                     creadas += 1
             conn.commit()
