@@ -267,7 +267,7 @@
     {% if pf_fin.n_garantia or pf_fin.n_sin_cobro %}
     <div class="fp-fin-k fuera"><span>Fuera de la ganancia</span>
       <b>{{ clp(pf_fin.pagado_garantia + pf_fin.pagado_sin_cobro) }}</b>
-      <small>{% if pf_fin.n_garantia %}{{ pf_fin.n_garantia }} en garantía {{ clp(pf_fin.pagado_garantia) }}{% endif %}{% if pf_fin.n_garantia and pf_fin.n_sin_cobro %} · {% endif %}{% if pf_fin.n_sin_cobro %}{{ pf_fin.n_sin_cobro }} sin cobro declarado {{ clp(pf_fin.pagado_sin_cobro) }}{% endif %}</small></div>
+      <small>{% if pf_fin.n_garantia %}{{ pf_fin.n_garantia }} que no se cobran (garantía, cortesía o contrato) {{ clp(pf_fin.pagado_garantia) }}{% endif %}{% if pf_fin.n_garantia and pf_fin.n_sin_cobro %} · {% endif %}{% if pf_fin.n_sin_cobro %}{{ pf_fin.n_sin_cobro }} sin cobro declarado {{ clp(pf_fin.pagado_sin_cobro) }}{% endif %}</small></div>
     {% endif %}
   </div>
 </div>
@@ -321,7 +321,8 @@
         <td data-label=""><span class="fp-chk-wrap"><input type="checkbox" class="fpv-ot-chk" value="{{ d.id }}"
             data-monto="{{ d.sugerido }}" data-numero="{{ d.numero_ot }}" data-prov="{{ d.prov_key }}"
             data-provnombre="{{ d.proveedor }}" data-anexo="{{ 1 if d.anexo_firmado else 0 }}" data-nocerrada="{{ 1 if d.no_cerrada else 0 }}"
-            data-cobrado="{{ d.cobrado_cliente }}" data-garantia="{{ 1 if d.es_garantia else 0 }}" onchange="fpvOtRefreshBar()"></span></td>
+            data-cobrado="{{ d.cobrado_cliente }}" data-garantia="{{ 1 if d.es_garantia else 0 }}"
+            data-sincobro="{{ 1 if d.sin_cobro_declarado else 0 }}" onchange="fpvOtRefreshBar()"></span></td>
         {% endif %}
         {# 📋 2026-09-21 (Daniel: "calidad de información"): N° OT + ticket de
            origen + fechas reales (programada → cierre), sin abrir la OT. #}
@@ -336,7 +337,7 @@
         <td data-label="Cliente"><div class="fp-nom-cli">{{ d.cliente or '—' }}</div>
           {% if d.comuna %}<div class="fp-sub"><i class="bi bi-geo-alt"></i> {{ d.comuna }}</div>{% endif %}</td>
         <td class="fp-td-serv" data-label="Servicio y estado"><span class="fp-tipo">{{ d.tipo_label }}</span>
-          {% if d.es_garantia %}<span class="fp-gar" title="Cobertura de garantía: no se le cobra al cliente">Garantía</span>{% endif %}
+          {% if d.es_garantia %}<span class="fp-gar" title="{{ d.cobertura_txt or 'Cobertura de garantía: no se le cobra al cliente' }}">{{ d.cobertura_corta or 'Garantía' }}</span>{% endif %}
           <div class="fp-est-fila"><span class="fp-est est-{{ d.estado }}">{{ d.estado | replace('_',' ') }}</span></div>
           {# 2026-09-21: la OT no cerrada se ve y se puede pagar; se avisa, no se esconde. #}
           {% if d.no_cerrada %}<div class="fp-sub" style="color:#b45309;font-weight:800"><i class="bi bi-exclamation-triangle-fill"></i> No cerrada aún</div>{% endif %}</td>
@@ -361,11 +362,11 @@
         <td class="m" data-label="Pagado" style="text-align:left">
           <a class="fp-sindoc fp-sindoc-wrap" style="text-decoration:none" href="{{ url_for('ot2_detalle', vid=d.id) }}#otdCardFinanzas"
              title="Abrir la OT y cargar el costo del proveedor en la tarjeta Finanzas">
-            <i class="bi bi-exclamation-triangle-fill"></i> Sin costo declarado — cargarlo en Finanzas de la OT{% if d.es_garantia %} (garantía: puede ser $0){% endif %}</a></td>
+            <i class="bi bi-exclamation-triangle-fill"></i> Sin costo declarado — cargarlo en Finanzas de la OT{% if d.es_garantia %} ({{ (d.cobertura_corta or 'garantía') | lower }}: puede ser $0){% endif %}</a></td>
         {% else %}
         <td class="m" data-label="Pagado"><div class="fp-mstack">
           <div class="fp-mt">{{ clp(d.sugerido) }}</div>
-          {% if d.es_garantia and not d.sugerido %}<div class="fp-sub">garantía · $0</div>{% endif %}
+          {% if d.es_garantia and not d.sugerido %}<div class="fp-sub">{{ (d.cobertura_corta or 'garantía') | lower }} · $0</div>{% endif %}
           <div class="fp-ml"><em title="Instalación">Inst.</em><span>{{ clp(d.servicio) if d.servicio else '—' }}</span></div>
           <div class="fp-ml"><em title="Despacho">Desp.</em><span>{{ clp(d.despacho) if d.despacho else '—' }}</span></div>
         </div></td>
@@ -381,8 +382,8 @@
         <td class="m" data-label="Margen">
           {# Misma regla que la franja "Lo filtrado" y que Facturación: una OT
              en garantía o sin cobro declarado no tiene margen, se dice. #}
-          {% if d.es_garantia %}<span class="fp-sindoc gar" title="Se paga al proveedor y no se cobra al cliente, a propósito">Garantía</span>
-          {% elif not d.cobrado_cliente %}<span class="fp-sindoc fp-sindoc-wrap" title="Sin línea ZZ ni valor de cotización/contrato: el cobro no se sabe">Sin cobro declarado</span>
+          {% if d.es_garantia %}<span class="fp-sindoc gar" title="Se paga al proveedor y no se cobra al cliente, a propósito">{{ d.cobertura_corta or 'Garantía' }}</span>
+          {% elif d.sin_cobro_declarado %}<span class="fp-sindoc fp-sindoc-wrap" title="Falta lo que cobraste: no hay línea de servicio en el documento ni un cobro escrito a mano">Sin cobro declarado</span>
           {% else %}
           <span class="{{ 'fp-margen-pos' if d.margen > 0 else ('fp-margen-neg' if d.margen < 0 else '') }}">
             {{ '+' if d.margen > 0 else '' }}{{ clp(d.margen) }}</span>
@@ -875,7 +876,8 @@ function fpvOtRefreshBar(){
     chks.forEach(cb => {
       const pag = Number(cb.dataset.monto) || 0, c = Number(cb.dataset.cobrado) || 0;
       if (cb.dataset.garantia === '1'){ gar += pag; nGar++; }
-      else if (c <= 0){ sinCob += pag; nSin++; }
+      // 2026-10-07: "sin cobro" = falta lo que cobraste (cuenta única); un $0 declarado sí entra a la ganancia.
+      else if (cb.dataset.sincobro !== undefined ? cb.dataset.sincobro === '1' : c <= 0){ sinCob += pag; nSin++; }
       else { cob += c; pagComp += pag; nComp++; }
     });
     const gan = cob - pagComp;

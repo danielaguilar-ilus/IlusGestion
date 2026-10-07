@@ -1268,18 +1268,26 @@ function _tipoBadge(t){
 
 function _estadoBadge(e, dias, s){
   // Garantía que aplica → no se cobra: no hay nada que facturar.
-  if (e === 'no_aplica' || (s && s.cubierto_por === 'garantia'))
-    return `<span class="fin-est fin-est-fact" style="background:#dcfce7;color:#166534">🛡 Cubierto</span>`;
+  // 2026-10-07: "no se cobra" con la regla única de la OT (s.cobra: garantía, cortesía, contrato, interno).
+  if (e === 'no_aplica' || (s && (s.cobra === false || (s.cobra === undefined && s.cubierto_por === 'garantia'))))
+    return `<span class="fin-est fin-est-fact" style="background:#dcfce7;color:#166534" title="${_escH((s && s.cobertura_txt) || '')}">🛡 Cubierto</span>`;
   if (e === 'facturado') return `<span class="fin-est fin-est-fact">✓ Facturado</span>`;
   if (e === 'con_oc')    return `<span class="fin-est fin-est-oc">🟠 Con OC${dias>7 ? ' · '+dias+'d' : ''}</span>`;
   if (e === 'cotizado')  return `<span class="fin-est fin-est-cot">🟡 Cotizado${dias>7 ? ' · '+dias+'d' : ''}</span>`;
   // Servicio PAGO (cliente/mixto) sin factura → PENDIENTE DE FACTURAR (rojo).
-  const esPago = s && (s.cubierto_por === 'cliente' || s.cubierto_por === 'mixto');
+  const esPago = s && (s.cobra === true || (s.cobra === undefined && (s.cubierto_por === 'cliente' || s.cubierto_por === 'mixto')));
   if (esPago && !(s && s.factura))
     return `<span class="fin-est fin-est-sin">🚨 Pendiente de facturar${dias>0 ? ' · '+dias+'d' : ''}</span>`;
   return `<span class="fin-est fin-est-sin">🚨 Sin cotizar${dias>0 ? ' · '+dias+'d' : ''}</span>`;
 }
 
+// 2026-10-07: cobertura de la cuenta única de la OT (¿se le cobra?) → mismo chip de siempre.
+const _FIN_COB_A_CHIP = {cobra:'cliente', garantia:'garantia', sin_costo:'mixto', interno:'mixto', contrato:'contrato'};
+const _FIN_COB_TXT = {cobra:'Cliente', garantia:'🛡 Garantía', sin_costo:'Cortesía', interno:'Interno', contrato:'Contrato'};
+function _coverBadgeFin(s){
+  if (!s || !s.cobertura) return _coverBadge(s ? s.cubierto_por : '', s && s.cubierto_por === 'garantia');
+  return `<span class="fin-cover fin-cover-${_FIN_COB_A_CHIP[s.cobertura] || 'cliente'}" title="${_escH(s.cobertura_txt || '')}">${_FIN_COB_TXT[s.cobertura] || _escH(s.cobertura)}</span>`;
+}
 function _coverBadge(c, garantiaFlag){
   const labels = {contrato:'Contrato', cliente:'Cliente', garantia:'🛡 Garantía', mixto:'Mixto'};
   const cls = `fin-cover fin-cover-${c}`;
@@ -1334,8 +1342,9 @@ function finRender(d){
         <td>${fac}</td>
         <td class="text-end font-monospace">${s.monto_base ? _fmtMoney(s.monto_base) : '<span class="text-muted">—</span>'}</td>
         <td class="text-end font-monospace">${s.monto_repuestos ? _fmtMoney(s.monto_repuestos) : '<span class="text-muted">—</span>'}</td>
-        <td>${_coverBadge(s.cubierto_por, garFlag)}</td>
-        <td class="text-end font-monospace fw-bold">${s.monto_total ? _fmtMoney(s.monto_total) : '<span class="text-muted">—</span>'}</td>
+        <td>${s.cobertura ? _coverBadgeFin(s) : _coverBadge(s.cubierto_por, garFlag)}</td>
+        <td class="text-end font-monospace fw-bold">${s.monto_total ? _fmtMoney(s.monto_total) : '<span class="text-muted">—</span>'}
+          ${s.cobre != null ? `<div style="font-size:.66rem;font-weight:600;color:#6b7280" title="Lo cobrado en la OT: servicio + despacho (cuenta única)">OT: cobré ${_fmtMoney(s.cobre)}</div>` : ''}</td>
         <td>${_estadoBadge(s.estado_facturacion, s.dias_sin_facturar, s)}</td>
       </tr>`;
     }).join('');
@@ -1432,7 +1441,8 @@ async function finLigar(vid, tipo){
 function finExportCSV(){
   const rows = window._finServicios || [];
   if (!rows.length){ ilusToast('Sin servicios para exportar', {type:'warning'}); return; }
-  const headers = ['Fecha','Tipo','Descripción','Cotización','OC','Factura','Monto base','Repuestos','Cubierto por','Total','Estado facturación','Días sin facturar'];
+  // 2026-10-07: + "Cobré (OT)", lo cobrado según la cuenta única de la OT (al final, no corre columnas).
+  const headers = ['Fecha','Tipo','Descripción','Cotización','OC','Factura','Monto base','Repuestos','Cubierto por','Total','Estado facturación','Días sin facturar','Cobré (OT)'];
   const esc = s => '"' + String(s||'').replace(/"/g,'""') + '"';
   const lines = [headers.map(esc).join(',')];
   rows.forEach(s => {
@@ -1440,8 +1450,9 @@ function finExportCSV(){
       s.fecha || '', s.tipo_visita || '', s.titulo || '',
       s.cotizacion || '', s.oc_numero || '', s.factura || '',
       s.monto_base || 0, s.monto_repuestos || 0,
-      s.cubierto_por || '', s.monto_total || 0,
-      s.estado_facturacion || '', s.dias_sin_facturar || 0
+      (s.cobertura_txt || s.cubierto_por || ''), s.monto_total || 0,
+      s.estado_facturacion || '', s.dias_sin_facturar || 0,
+      (s.cobre != null ? s.cobre : '')
     ].map(esc).join(','));
   });
   const t = window._finTotales || {};
@@ -3082,8 +3093,10 @@ const _VIDA_TIPO_COLOR = {
 // Semáforo por CLASE ya decidida en el backend (_vida_margen_clase /
 // _ot_resultado_financiero -- D2: "una sola fórmula compartida", el
 // frontend NUNCA recalcula el color, solo lo pinta.
-const _VIDA_CLASE_COLOR = { ok: '#166534', bajo: '#b45309', rojo: '#dc2626', sin_dato: '#6b7280', gris: '#6b7280', ambar: '#b45309' };
-const _VIDA_CLASE_BG    = { ok: '#dcfce7', bajo: '#fff8e1', rojo: '#fee2e2', sin_dato: '#f3f4f6', gris: '#f3f4f6', ambar: '#fff8e1' };
+// 2026-10-07 (modelo único de finanzas): 'info' = OT que no se cobra (garantía, cortesía, contrato,
+// interno): se muestra "nos costó $X" en azul informativo, no como pérdida roja.
+const _VIDA_CLASE_COLOR = { ok: '#166534', bajo: '#b45309', rojo: '#dc2626', sin_dato: '#6b7280', gris: '#6b7280', ambar: '#b45309', info: '#1d4ed8' };
+const _VIDA_CLASE_BG    = { ok: '#dcfce7', bajo: '#fff8e1', rojo: '#fee2e2', sin_dato: '#f3f4f6', gris: '#f3f4f6', ambar: '#fff8e1', info: '#dbeafe' };
 function _vidaClaseColor(clase) { return _VIDA_CLASE_COLOR[clase] || '#6b7280'; }
 function _vidaClaseBg(clase) { return _VIDA_CLASE_BG[clase] || '#f3f4f6'; }
 
@@ -3255,11 +3268,14 @@ function _vidaRender(d) {
           <span style="color:#6b7280">Técnicos (internos y externos)</span><b>${_fmtMoney(dsg.tecnicos)}</b>
           <span style="color:#6b7280">Repuestos instalados (costo de bodega)</span><b>${_fmtMoney(dsg.repuestos_bodega)}</b>
           <span style="color:#6b7280">Compras a proveedor para este cliente</span><b>${_fmtMoney(dsg.compras_proveedor)}</b>
-          <span style="color:#6b7280">Garantías que cubrimos (costo sin cobro)</span><b style="color:#b45309">${_fmtMoney(dsg.garantias_cubiertas)}</b>
+          <span style="color:#6b7280">OT que no se cobran: garantía y cortesía (lo que nos costaron)</span><b style="color:#1d4ed8">${_fmtMoney(dsg.garantias_cubiertas)}</b>
         </div>
         ${f.ot_sin_costo ? `<div style="margin-top:10px;font-size:.72rem;background:#fff8e1;color:#92400e;
             border-radius:8px;padding:6px 9px">⚠ ${_fmtMoney(f.cobrado_sin_costo_completo)} cobrados en ${f.ot_sin_costo}
-            OT fuera de este cálculo -- falta un costo o falta lo que se cobra (revisar en "Margen por OT").</div>` : ''}
+            OT fuera de este cálculo -- falta lo que cobraste o lo que te cobró el técnico (revisar en "Margen por OT").</div>` : ''}
+        ${f.contrato_ot ? `<div style="margin-top:6px;font-size:.72rem;background:#dbeafe;color:#1e3a8a;border-radius:8px;padding:6px 9px">
+            ${f.contrato_ot} mantención(es) de contrato fuera de este cálculo: nos costaron ${_fmtMoney(f.contrato_costo)}
+            y se pagan con el contrato, no OT por OT${f.contrato_falta ? ` (${f.contrato_falta} sin lo que cobró el técnico)` : ''}.</div>` : ''}
         ${f.ot_interna_excluida ? `<div style="margin-top:6px;font-size:.68rem;color:#9ca3af">
             ${f.ot_interna_excluida} OT de trabajo interno excluida(s) del cálculo.</div>` : ''}
       </div>
@@ -3326,7 +3342,8 @@ function _vidaMargenOtTabla(mg) {
     if (it.label) tag = `<span style="background:${bg};color:${color};font-size:.6rem;font-weight:800;border-radius:6px;padding:2px 7px">${_escH(it.label)}</span>`;
     else if (it.margen_pct != null) tag = `<span style="background:${bg};color:${color};font-size:.62rem;font-weight:800;border-radius:6px;padding:2px 7px">${it.margen_pct}%</span>`;
     else tag = `<span style="background:${bg};color:${color};font-size:.62rem;font-weight:800;border-radius:6px;padding:2px 7px">${_fmtMoney(it.margen_clp)}</span>`;
-    h += `<tr style="border-bottom:1px solid #e5e7eb">
+    // 2026-10-07: la frase de la cuenta única ("Cobré $X − me cobraron $Y = quedan $Z") al pasar el mouse.
+    h += `<tr style="border-bottom:1px solid #e5e7eb" title="${_escH(it.frase || '')}">
       <td style="padding:6px 8px"><a href="/ot/${it.id}">${_escH(it.numero_ot || ('#' + it.id))}</a></td>
       <td style="padding:6px 8px">${_escH(it.tipo_label || '')}</td>
       <td style="padding:6px 8px;text-align:right">${it.cobrado != null ? _fmtMoney(it.cobrado) : '—'}</td>

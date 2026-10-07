@@ -3797,7 +3797,7 @@
   </div>
   <script>
   window.VIS_TL = [
-  {% for v in visitas %}{"fp":"{{ v.fecha_programada.strftime('%Y-%m-%d') if v.fecha_programada else '' }}","fr":"{{ v.fecha_realizada.strftime('%Y-%m-%d') if v.fecha_realizada else '' }}","e":"{{ v.estado }}","t":"{{ v.tipo }}","ti":{{ (v.titulo or '')|tojson }},"tc":{{ (v.tecnico or '')|tojson }},"ot":{{ (v.numero_ot or '')|tojson }},"co":{{ (v.costo or 0)|float }},"fc":{{ 1 if v.firma_cliente_url else 0 }},"ft":{{ 1 if v.firma_tecnico_url else 0 }},"ef":"{{ v.estado_facturacion or '' }}","mc":"{{ v.modalidad_cobro or '' }}","cb":"{{ v.cubierto_por or '' }}"}{{ "," if not loop.last }}
+  {% for v in visitas %}{"fp":"{{ v.fecha_programada.strftime('%Y-%m-%d') if v.fecha_programada else '' }}","fr":"{{ v.fecha_realizada.strftime('%Y-%m-%d') if v.fecha_realizada else '' }}","e":"{{ v.estado }}","t":"{{ v.tipo }}","ti":{{ (v.titulo or '')|tojson }},"tc":{{ (v.tecnico or '')|tojson }},"ot":{{ (v.numero_ot or '')|tojson }},"co":{{ ((v.fin_cobre or 0) if v.fin_cobra is defined else (v.costo or 0))|float }},"cob":"{{ v.fin_cob or '' }}","fc":{{ 1 if v.firma_cliente_url else 0 }},"ft":{{ 1 if v.firma_tecnico_url else 0 }},"ef":"{{ v.estado_facturacion or '' }}","mc":"{{ v.modalidad_cobro or '' }}","cb":"{{ v.cubierto_por or '' }}"}{{ "," if not loop.last }}
   {% endfor %}];
   </script>
 
@@ -3876,7 +3876,7 @@
             <th class="py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Título</th>
             <th class="py-2 d-none d-sm-table-cell" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Tipo</th>
             <th class="py-2 d-none d-md-table-cell" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Técnico</th>
-            <th class="py-2 d-none d-lg-table-cell text-end" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Costo</th>
+            <th class="py-2 d-none d-lg-table-cell text-end" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280" title="Lo cobrado en la OT (servicio + despacho)">Cobré</th>
             <th class="py-2" style="font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Estado</th>
             <th class="py-2"></th>
           </tr>
@@ -3954,7 +3954,13 @@
             {% endif %}
           </td>
           <td class="py-2 d-none d-lg-table-cell text-end font-monospace" style="color:#374151">
-            {% if v.costo %}${{ '{:,.0f}'.format(v.costo).replace(',', '.') }}{% else %}<span class="text-muted">—</span>{% endif %}
+            {# 💰 2026-10-07: lo cobrado según la cuenta única de la OT (fin_*, calculado en el servidor);
+               si la OT no se cobra se dice por qué. Respaldo: el «Precio al cliente» anotado, como antes. #}
+            {% if v.fin_cobra is defined %}
+              {% if not v.fin_cobra %}<span title="{{ v.fin_cobertura_txt }}" style="font-size:.66rem;font-weight:700;color:#1d4ed8;background:#dbeafe;border-radius:50px;padding:2px 7px">{{ v.fin_cobertura }}</span>
+              {% elif v.fin_cobre is not none %}${{ '{:,.0f}'.format(v.fin_cobre).replace(',', '.') }}
+              {% else %}<span class="text-muted">—</span>{% endif %}
+            {% elif v.costo %}${{ '{:,.0f}'.format(v.costo).replace(',', '.') }}{% else %}<span class="text-muted">—</span>{% endif %}
           </td>
           <td class="py-2">
             <span class="badge-{{ v.estado }}">{{ v.estado.replace('_',' ').title() if v.estado else '—' }}</span>

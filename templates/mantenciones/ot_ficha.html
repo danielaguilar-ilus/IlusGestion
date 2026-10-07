@@ -957,7 +957,14 @@
                (mant_ot_ficha redirige a mant_ot_ejecutar salvo ese query
                param) veía el precio cobrado al cliente. `es_tecnico` ya
                vive en el contexto global (inject_globals). #}
-            {% if visita.costo and not es_tecnico %}<span class="pill"><strong>Costo:</strong> ${{ visita.costo|round|int }}</span>{% endif %}
+            {# 💰 2026-10-07 (modelo único "Cobré − Me cobraron = Queda"): lo cobrado según
+               la cuenta única de la OT (fin_ot, calculada en el servidor); si la OT no se
+               cobra, se dice. Respaldo: el «Precio al cliente» anotado, como antes. #}
+            {% if fin_ot and not es_tecnico %}
+              {% if fin_ot.cobra %}
+                {% if fin_ot.cobre.hay %}<span class="pill"><strong>Cobré:</strong> ${{ '{:,.0f}'.format(fin_ot.cobre.total).replace(',', '.') }}</span>{% endif %}
+              {% else %}<span class="pill"><strong>Cobertura:</strong> {{ fin_ot.cobertura_txt }}</span>{% endif %}
+            {% elif visita.costo and not es_tecnico %}<span class="pill"><strong>Costo:</strong> ${{ visita.costo|round|int }}</span>{% endif %}
           </div>
           {% if visita.descripcion %}<div class="mt-2"><strong>Descripción:</strong><br>{{ visita.descripcion }}</div>{% endif %}
           {% if visita.observaciones %}<div class="mt-2"><strong>Observaciones:</strong><br>{{ visita.observaciones }}</div>{% endif %}

@@ -96,13 +96,15 @@ function fprUltimos(n){
 {% if tot.pagado_garantia or tot.pagado_sin_declarar %}
 <div class="fp-fuera">
   <span class="t">Fuera del margen</span>
+  {#- 2026-10-07 (cuenta única de la OT): "no se cobra" incluye garantía,
+      cortesía, mantención de contrato y trabajo interno. -#}
   {% if tot.pagado_garantia %}
   <span class="b gar"><b>{{ clp(tot.pagado_garantia) }}</b>
-    {{ tot.n_garantia }} OT en garantía — se pagó al proveedor y no se cobra, a propósito</span>
+    {{ tot.n_garantia }} OT que no se cobran (garantía, cortesía o contrato) — se pagó al proveedor y no se cobra, a propósito</span>
   {% endif %}
   {% if tot.pagado_sin_declarar %}
   <span class="b fal"><b>{{ clp(tot.pagado_sin_declarar) }}</b>
-    {{ tot.n_sin_cobro }} OT sin el cobro declarado — falta el dato, no es pérdida</span>
+    {{ tot.n_sin_cobro }} OT sin lo que cobraste — falta el dato, no es pérdida</span>
   {% endif %}
 </div>
 {% endif %}
@@ -245,8 +247,8 @@ function fprUltimos(n){
         <td class="m">{{ clp(d.despacho) if d.despacho else '—' }}</td>
         <td class="m tot">{{ clp(d.total) }}</td>
         <td class="m">
-          {%- if d.sin_cobro %}<span class="fp-sindoc">Sin línea ZZ</span>
-          {%- elif d.garantia and not d.cobrado %}<span class="fp-gar">Garantía</span>
+          {%- if d.sin_cobro %}<span class="fp-sindoc" title="No hay línea de servicio en el documento ni un cobro escrito a mano">Falta lo que cobraste</span>
+          {%- elif d.garantia and not d.cobrado %}<span class="fp-gar" title="{{ d.cobertura_txt }}">{{ d.cobertura_corta or 'Garantía' }}</span>
           {%- else %}{{ clp(d.cobrado) }}
             {# Se muestra de dónde salió: la línea ZZ del documento es el dato
                bueno; el monto genérico de la OT es un respaldo y conviene
@@ -254,6 +256,7 @@ function fprUltimos(n){
             {% if d.cobrado_envio %}
               <div class="fp-sub">servicio {{ clp(d.cobrado_servicio) }} · envío {{ clp(d.cobrado_envio) }}</div>
             {% endif %}
+            {% if d.fuente_cobro == 'valor_ot' %}<div class="fp-sub" title="OT antigua: el «Precio al cliente» anotado no separa servicio y despacho">precio al cliente anotado</div>{% endif %}
           {%- endif %}
         </td>
         <td class="m">

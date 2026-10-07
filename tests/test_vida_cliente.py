@@ -148,7 +148,13 @@ def _rep(costo=0.0, bodega=0.0, compra=0.0, manual=0.0, n_sin_costo=0):
 
 
 class TestOtResultadoFinanciero(unittest.TestCase):
-    """★ D2 (2ª revisión Opus 2026-09-26 -- Daniel: "la tarjeta de la OT y
+    """⚠️ 2026-10-07: esta es la cuenta de ANTES. Vida del cliente ya no la
+    usa (pasó a la cuenta única _ot_finanzas, ver TestVidaClienteModeloUnico
+    más abajo); se conserva porque la página "Antes y después"
+    (/ot/finanzas-modelo) la necesita para mostrarle a Daniel qué cambia.
+    Estas pruebas fijan ese "antes" tal cual, para que la comparación sea fiel.
+
+    ★ D2 (2ª revisión Opus 2026-09-26 -- Daniel: "la tarjeta de la OT y
     la fila de esa OT en Vida deben dar EXACTAMENTE el mismo Cobramos/Nos
     cuesta/Queda/semáforo"): _ot_resultado_financiero es ahora un PUERTO
     1:1 de `otdFinCuenta` (templates/ot2/detalle.html) -- la regla que
@@ -288,6 +294,77 @@ class TestOtResultadoFinanciero(unittest.TestCase):
         self.assertLess(r["margen_clp"], 0)
 
 
+class TestVidaClienteModeloUnico(unittest.TestCase):
+    """2026-10-07 — Vida del cliente con la cuenta única de la OT (_ot_finanzas)
+    y la suma del cliente (_ot_fin_agregado). Los mismos casos de
+    TestOtResultadoFinanciero, con lo que Daniel decidió cambiar ese día
+    (cada prueba dice qué cambió y por qué)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from tests.test_ot_finanzas_lectores import FIN, _amb
+        cls.fin = staticmethod(FIN)
+        cls.agregado = staticmethod(_amb()["_ot_fin_agregado"])
+
+    def _base(self, **kw):
+        base = {"tipo": "correctiva", "cubierto_por": "cliente", "zz_monto": 100000, "valor_origen": "zz",
+                "costo_proveedor": 30000, "costo_despacho": 10000, "modalidad_cobro": "pagado"}
+        base.update(kw)
+        return self.fin(**base)
+
+    def test_garantia_es_azul_informativo_no_ambar(self):
+        # CAMBIO (Daniel): antes "Valorizada sin cobro (garantía)" en ámbar y su
+        # valor contaba como cobrado. Ahora Cobré $0 y se ve lo que nos costó.
+        r = self._base(cubierto_por="garantia", costo=150000)
+        self.assertEqual(r["clase"], "info")
+        self.assertEqual(r["cobre"]["total"], 0)
+        self.assertEqual(r["queda"]["total"], -40000)
+        t = self.agregado([r])
+        self.assertEqual((t["cobre"], t["costo_no_cobra"]), (0, 40000), "entra como 'garantías que cubrimos'")
+
+    def test_despacho_vacio_cuenta_cero_no_falta(self):
+        # CAMBIO (Daniel 27-09: "el despacho es opcional"): antes "Falta un
+        # costo" y la OT quedaba fuera del margen del cliente.
+        r = self._base(costo_despacho=None)
+        self.assertTrue(r["queda"]["mostrar"])
+        self.assertEqual(r["queda"]["total"], 70000)
+        self.assertEqual(self.agregado([r])["n_fuera"], 0)
+
+    def test_manda_lo_cobrado_sobre_el_precio_al_cliente(self):
+        # CAMBIO: antes, si había `costo` (Precio al cliente) mandaba ese
+        # (100.000 aunque el documento dijera 45.000). Ahora manda lo cobrado
+        # y queda un aviso.
+        r = self._base(costo=100000, zz_monto=40000, zz_envio_monto=5000, costo_despacho=2000)
+        self.assertEqual(r["cobre"]["total"], 45000)
+        self.assertTrue(any("no coincide" in a for a in r["avisos"]))
+
+    def test_contrato_real_va_aparte_no_rojo(self):
+        # CAMBIO (Daniel): la mantención de contrato se paga con el contrato;
+        # no es una pérdida OT por OT. Va aparte en el resultado del cliente.
+        r = self._base(tipo="preventiva", contrato_real=1, zz_monto=None, valor_origen=None, costo=20000)
+        self.assertEqual(r["cobertura"], "contrato")
+        t = self.agregado([r])
+        self.assertEqual((t["n"], t["aparte"]["contrato"]["n"], t["aparte"]["contrato"]["costo"]), (0, 1, 40000))
+
+    def test_interna_sigue_fuera_del_resultado(self):
+        # Igual que antes (M6): el trabajo interno no es negocio con el cliente.
+        r = self.fin(cliente_id=None, costo=40000)
+        t = self.agregado([r])
+        self.assertEqual((t["n"], t["aparte"]["interno"]["n"]), (0, 1))
+
+    def test_sin_cobro_y_sin_garantia_sigue_siendo_falta_lo_que_cobraste(self):
+        # Igual que antes ("Falta lo que se cobra", gris, fuera del margen).
+        r = self._base(zz_monto=None, valor_origen=None, costo=None)
+        self.assertEqual((r["clase"], r["label"]), ("gris", "Falta lo que cobraste"))
+        self.assertEqual(self.agregado([r])["n_fuera"], 1)
+
+    def test_repuestos_suman_igual_que_antes(self):
+        rep = {"costo": 15000, "por_origen": {"bodega": 15000, "compra": 0, "manual": 0}, "n_sin_costo": 0}
+        r = self.fin(rep=rep, zz_monto=100000, valor_origen="zz", costo_proveedor=30000, costo_despacho=10000)
+        self.assertEqual((r["me_cobraron"]["total"], r["queda"]["total"]), (55000, 45000))
+        self.assertEqual(self.agregado([r])["rep_bodega"], 15000)
+
+
 class TestParseMontoClp(unittest.TestCase):
     """M2 (revisión Opus 2026-09-26 -- "parseo de montos CLP robusto:
     '15.000' = 15000, sin decimales raros"). Un float() a secas
@@ -375,11 +452,15 @@ class TestVidaClienteEndpointGuards(unittest.TestCase):
         self.assertIn("LIMIT %s OFFSET %s", self.fuente)
 
     def test_usa_la_funcion_compartida_de_resultado_financiero(self):
-        # D2: Vida del cliente NO debe recalcular el margen por su cuenta
-        # -- tiene que pasar por _ot_resultado_financiero, la MISMA que
-        # usa la tarjeta de la OT.
-        self.assertIn("_ot_resultado_financiero(", self.fuente)
-        self.assertIn("_ot_repuestos_desglose(", self.fuente)
+        # D2: Vida del cliente NO debe recalcular el margen por su cuenta.
+        # 2026-10-07 (modelo único "Cobré − Me cobraron = Queda", Daniel): la
+        # función compartida pasó a ser _ot_finanzas, vía _ot_fin_lote (que
+        # trae los repuestos instalados en UNA consulta con
+        # _ot_repuestos_desglose) y _ot_fin_agregado (la suma del cliente).
+        # Antes esta prueba exigía _ot_resultado_financiero, la cuenta vieja.
+        self.assertIn("_ot_fin_lote(", self.fuente)
+        self.assertIn("_ot_fin_agregado(", self.fuente)
+        self.assertNotIn("_ot_resultado_financiero(", self.fuente)
 
     def test_m8_solo_evita_recalcular_todo(self):
         self.assertIn("_calc_linea", self.fuente)

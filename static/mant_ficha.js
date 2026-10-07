@@ -7420,12 +7420,17 @@ function _vtlNodos(data, hoyStr) {
     else if (v.fp) { clase = (v.fp < hoyStr ? 'overdue' : 'pending'); fecha = v.fp; }
     if (!clase || !fecha) return;
     // Pendientes por cerrar (solo aplican a una visita ya ejecutada).
-    const esGarantia = (v.mc === 'garantia' || v.cb === 'garantia');
-    const faltaFact = !esGarantia && ['sin_cotizar', 'cotizado', 'con_oc'].indexOf((v.ef || '').toLowerCase()) !== -1;
+    // 💰 2026-10-07 (modelo único): si el servidor mandó la cobertura de la cuenta única (v.cob), manda
+    // ella: garantía, contrato REAL o "se cobra"; una OT que no se cobra no queda "por facturar". `co` ya
+    // viene como lo COBRADO (no el «Precio al cliente» anotado). Sin v.cob, la regla de antes.
+    const esGarantia = v.cob ? (v.cob === 'garantia') : (v.mc === 'garantia' || v.cb === 'garantia');
+    const noCobra = v.cob ? (v.cob !== 'cobra') : esGarantia;
+    const faltaFact = !noCobra && ['sin_cotizar', 'cotizado', 'con_oc'].indexOf((v.ef || '').toLowerCase()) !== -1;
     out.push({
       clase, fecha, tipo: v.t, titulo: v.ti, tecnico: v.tc,
       ot: v.ot || '', costo: (typeof v.co === 'number' ? v.co : parseFloat(v.co) || 0),
-      cobertura: (v.cb || ''), faltaFC: !v.fc, faltaFT: !v.ft, faltaFact: faltaFact, garantia: esGarantia,
+      cobertura: (v.cob ? ({cobra: 'cliente', contrato: 'contrato'}[v.cob] || v.cob) : (v.cb || '')),
+      faltaFC: !v.fc, faltaFT: !v.ft, faltaFact: faltaFact, garantia: esGarantia,
     });
   });
   out.sort((a, b) => a.fecha < b.fecha ? -1 : (a.fecha > b.fecha ? 1 : 0));
@@ -7601,7 +7606,7 @@ function _vtlRender(bodyId, opts) {
       <span class="vti">${_gar} por <b style="color:#93c5fd">garantía</b></span>
       <span class="vti">${_ctr} por <b style="color:#86efac">contrato</b></span>
       <span class="vti">${_cli} con <b style="color:#fcd34d">cobro</b></span>
-      ${_costoT > 0 ? `<span class="vti">costo: <b>$${Math.round(_costoT).toLocaleString('es-CL')}</b></span>` : ''}
+      ${_costoT > 0 ? `<span class="vti" title="Lo cobrado en estas OT (servicio + despacho)">cobrado: <b>$${Math.round(_costoT).toLocaleString('es-CL')}</b></span>` : ''}
       <span class="vti vti-link" onclick="switchTab('finanzas');if(window.cargarFinanzas)cargarFinanzas()">ver finanzas <i class="bi bi-arrow-right"></i></span>
     </div>`;
   body.innerHTML = `${stats}
@@ -8154,7 +8159,12 @@ function _intelFinanzas(d){
   const fz = (d && d.finanzas) || {};
   const n = parseInt(fz.n_servicios, 10) || 0;
   const mPct = (fz.margen_pct == null) ? null : parseFloat(fz.margen_pct);
-  const mColor = mPct == null ? '#6b7280' : (mPct >= 30 ? '#16a34a' : (mPct >= 10 ? '#f59e0b' : '#dc2626'));
+  // 💰 2026-10-07 (modelo único "Cobré − Me cobraron = Queda"): el semáforo es el de la OT (verde desde
+  // 10 %, ámbar bajo 10 %, rojo en pérdida) y viene clasificado del servidor (margen_clase / clase).
+  // Si un informe viejo en caché no lo trae, se cae al cálculo de antes.
+  const _CLASE_COLOR = { ok: '#16a34a', bajo: '#f59e0b', rojo: '#dc2626', info: '#1d4ed8', ambar: '#b45309', gris: '#6b7280', sin_dato: '#6b7280' };
+  const mColor = fz.margen_clase ? (_CLASE_COLOR[fz.margen_clase] || '#6b7280')
+    : (mPct == null ? '#6b7280' : (mPct >= 30 ? '#16a34a' : (mPct >= 10 ? '#f59e0b' : '#dc2626')));
   const vDef = fz.valor_definido;
   let h = '<div class="intel-card">';
 
@@ -8162,7 +8172,7 @@ function _intelFinanzas(d){
   h += `
   <div class="intel-fin-kpis">
     <div class="intel-fin-kpi"><div class="lbl">Cobrado</div><div class="val">${_intelCLP(fz.total_cobrado)}</div></div>
-    <div class="intel-fin-kpi"><div class="lbl">Costo proveedor</div><div class="val">${_intelCLP(fz.total_costo_proveedor)}</div></div>
+    <div class="intel-fin-kpi"><div class="lbl">Me cobraron</div><div class="val">${_intelCLP(fz.total_costo_proveedor)}</div></div>
     <div class="intel-fin-kpi"><div class="lbl">Diferencia</div><div class="val" style="color:${mColor}">${_intelCLP(fz.margen_clp)}</div></div>
     <div class="intel-fin-kpi"><div class="lbl">% Margen</div><div class="val" style="color:${mColor}">${mPct == null ? '—' : mPct + '%'}</div></div>
   </div>`;
@@ -8189,12 +8199,15 @@ function _intelFinanzas(d){
       <table class="table table-sm align-middle mb-1" style="font-size:.8rem">
         <thead><tr style="font-size:.64rem;text-transform:uppercase;color:#6b7280">
           <th>Fecha</th><th>Tipo</th><th>Ejecutó</th>
-          <th class="text-end">Cobrado</th><th class="text-end">Costo prov.</th>
+          <th class="text-end">Cobrado</th><th class="text-end">Me cobraron</th>
           <th class="text-end">Margen</th><th class="text-end">%</th>
         </tr></thead><tbody>
         ${items.map(i => {
           const ip = (i.margen_pct == null) ? null : parseFloat(i.margen_pct);
-          const ic = ip == null ? '#6b7280' : (ip >= 30 ? '#16a34a' : (ip >= 10 ? '#b45309' : '#dc2626'));
+          const ic = i.clase ? (_CLASE_COLOR[i.clase] || '#6b7280')
+            : (ip == null ? '#6b7280' : (ip >= 30 ? '#16a34a' : (ip >= 10 ? '#b45309' : '#dc2626')));
+          // 2026-10-07: sin margen medible (falta un dato, o la OT no se cobra) se dice en palabras.
+          const sinMargen = i.sin_costo_prov || i.margen == null;
           const prov = i.proveedor_tipo === 'externo'
             ? `<span class="intel-pill" style="background:#fef3c7;color:#92400e"><i class="bi bi-truck"></i>${_intelEsc(i.proveedor_nombre || 'Externo')}</span>`
             : (i.proveedor_tipo === 'interno' ? '<span class="intel-pill" style="background:#dcfce7;color:#166534"><i class="bi bi-person-badge"></i>Interno</span>'
@@ -8205,12 +8218,20 @@ function _intelFinanzas(d){
             <td>${prov}</td>
             <td class="text-end fw-bold">${_intelCLP(i.cobrado)}</td>
             <td class="text-end">${i.sin_costo_prov ? '<span style="color:#dc2626;font-size:.7rem">falta</span>' : _intelCLP(i.costo_proveedor)}</td>
-            <td class="text-end fw-bold" style="color:${ic}">${i.sin_costo_prov ? '—' : _intelCLP(i.margen)}</td>
-            <td class="text-end fw-bold" style="color:${ic}">${(ip == null || i.sin_costo_prov) ? '—' : ip + '%'}</td>
+            <td class="text-end fw-bold" style="color:${ic}" title="${_intelEsc(i.label || '')}">${sinMargen ? (i.label ? `<span style="font-size:.68rem">${_intelEsc(i.label)}</span>` : '—') : _intelCLP(i.margen)}</td>
+            <td class="text-end fw-bold" style="color:${ic}">${(ip == null || sinMargen) ? '—' : ip + '%'}</td>
           </tr>`;
         }).join('')}
         </tbody></table>
     </div>`;
+    // 2026-10-07: lo que quedó fuera del total y por qué (misma regla que Vida del cliente).
+    const _notaFz = [];
+    if (parseInt(fz.n_fuera, 10)) _notaFz.push(`${parseInt(fz.n_fuera, 10)} servicio(s) fuera del total: falta lo que cobraste o lo que te cobró el técnico`);
+    if (parseInt(fz.n_no_cobra, 10)) _notaFz.push(`${parseInt(fz.n_no_cobra, 10)} en garantía o cortesía: nos costaron ${_intelCLP(fz.costo_no_cobra)}`);
+    (Array.isArray(fz.aparte) ? fz.aparte : []).forEach(a => _notaFz.push(`${parseInt(a.n, 10) || 0} de ${_intelEsc(String(a.txt || '').toLowerCase())} aparte: nos costaron ${_intelCLP(a.costo)}`));
+    if (_notaFz.length) {
+      h += `<div style="font-size:.74rem;color:#475569;margin:4px 0 6px">${_notaFz.join(' · ')}.</div>`;
+    }
     const sin = parseInt(fz.sin_costo_proveedor, 10) || 0;
     if (sin) {
       h += `<div style="font-size:.74rem;color:#92400e;background:#fff8e1;border-radius:8px;padding:8px 10px"><i class="bi bi-exclamation-triangle-fill me-1"></i>${sin} servicio(s) sin costo de proveedor — edita la visita (campo "Costo proveedor") para tener tu margen real.</div>`;
@@ -8428,7 +8449,8 @@ function _intelHistoriaAgenda(d){
 
     // Gasto total (solo si > 0).
     const gastoLine = gasto > 0
-      ? `<div style="font-size:.74rem;color:#374151;margin:8px 0 2px"><i class="bi bi-cash-stack me-1" style="color:#6b7280"></i>Gasto histórico: <b style="color:#0f172a">${_intelCLP(gasto)}</b></div>`
+      // 2026-10-07: es lo COBRADO al cliente según la cuenta única de cada OT (garantía y contrato en $0).
+      ? `<div style="font-size:.74rem;color:#374151;margin:8px 0 2px" title="Lo cobrado al cliente en estas OT (garantías y mantenciones de contrato no suman)"><i class="bi bi-cash-stack me-1" style="color:#6b7280"></i>Cobrado histórico: <b style="color:#0f172a">${_intelCLP(gasto)}</b></div>`
       : '';
 
     // Lista de items (orden ya viene desc). Ícono verde bi-calendar-check.
