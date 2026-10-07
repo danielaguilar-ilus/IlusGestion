@@ -1669,7 +1669,9 @@ window.OT2C = (function(){
         // riguroso y detallista con esto"): esto SÍ bloquea -- a diferencia
         // del monto en sí (que sigue sin ser obligatorio), el motivo de un
         // monto declarado/editado a mano no es opcional.
-        if (_o2mFinEsManual() && !(S.fin_zz_motivo_manual||'').trim()) return false;
+        // 💰 2026-10-07 (revisión): el «Estimado por clasificación» usado como cobro en una OT que se cobra
+        // también es un cobro escrito a mano y pide su motivo (ver _o2mFinEstimadoComoCobro).
+        if (_o2mFinPideMotivo() && !(S.fin_zz_motivo_manual||'').trim()) return false;
         if (_o2mFinEnvioEsManual() && !(S.fin_zz_envio_motivo_manual||'').trim()) return false;
         // 🔒 FIX 2026-09-21 (Daniel, confirmado explícito "obligatorio
         // siempre"): costo_proveedor/costo_despacho pasan de opcionales a
@@ -6028,7 +6030,13 @@ window.OT2C = (function(){
           case 'doc_total': txt = 'Tomado de: Total del documento '+(_o2mFinDocTxt() || ''); cls = 'erp'; break;
           case 'cotizacion': txt = 'Tomado de: Cotización '+((S.fin_cotizacion && (S.fin_cotizacion.numero || ('#'+S.fin_cotizacion.id))) || ''); cls = 'ref'; break;
           case 'contrato': txt = 'Tomado de: Contrato del cliente ('+(({definido:'definido por gerencia', contrato:'contrato vigente'})[(S.fin_contrato||{}).origen_precio] || 'referencia')+')'; cls = 'ref'; break;
-          case 'estimado': txt = 'Tomado de: Estimado por clasificación de los equipos'; cls = 'ref'; break;
+          case 'estimado':
+            // 💰 2026-10-07: en una OT que se cobra el estimado es solo referencia; usarlo como cobro pide motivo.
+            if (_o2mFinEstimadoComoCobro()){
+              txt = 'Tomado de: Estimado por clasificación — es solo una referencia: si se lo cobras, explica por qué abajo';
+              cls = 'manual';
+            } else { txt = 'Tomado de: Estimado por clasificación de los equipos'; cls = 'ref'; }
+            break;
           default: txt = 'Valor declarado'; cls = 'ref';
         }
       }
@@ -6036,14 +6044,18 @@ window.OT2C = (function(){
       cO.textContent = txt;
     }
     if (cM){
-      var modo = !manualAhora ? '' : (origen === 'supuesto' ? 'supuesto' : 'manual');
+      // 💰 2026-10-07: el estimado usado como cobro (OT que se cobra) también pide su motivo.
+      var modo = manualAhora ? (origen === 'supuesto' ? 'supuesto' : 'manual')
+        : (_o2mFinEstimadoComoCobro() ? 'estimado' : '');
       if (cM.getAttribute('data-modo') !== modo){
         cM.setAttribute('data-modo', modo);
         cM.innerHTML = !modo ? '' :
-          '<label class="fl mt-1">'+(modo === 'supuesto' ? '¿En qué te basas? *' : '¿Por qué se declara a mano? *')+'</label>'+
+          '<label class="fl mt-1">'+(modo === 'supuesto' ? '¿En qué te basas? *'
+            : (modo === 'estimado' ? '¿Por qué le cobras el estimado? *' : '¿Por qué se declara a mano? *'))+'</label>'+
           '<textarea class="form-control" rows="2" maxlength="500" placeholder="'+
           (modo === 'supuesto' ? 'Ej: tarifa habitual de visita técnica, valor promedio de OT similares…'
-                               : 'Ej: se absorbió el costo, concesión comercial, el documento aún no llega…')+'" '+
+            : (modo === 'estimado' ? 'Ej: el documento no trae línea de servicio y se acordó esta tarifa con el cliente…'
+                                   : 'Ej: se absorbió el costo, concesión comercial, el documento aún no llega…'))+'" '+
           'oninput="OT2C.setFinMotivoManual(this.value)">'+esc(S.fin_zz_motivo_manual)+'</textarea>';
       }
     }
@@ -6176,7 +6188,8 @@ window.OT2C = (function(){
           return {cls:'opcional', txt:'Opcional'};
         }
         if (!(S.fin_zz_monto > 0)) return {cls:'falta', txt:'Pendiente'};
-        if (_o2mFinEsManual() && !(S.fin_zz_motivo_manual||'').trim()) return {cls:'falta', txt:'Falta el motivo'};
+        // 2026-10-07: _o2mFinPideMotivo = editado a mano O estimado usado como cobro.
+        if (_o2mFinPideMotivo() && !(S.fin_zz_motivo_manual||'').trim()) return {cls:'falta', txt:'Falta el motivo'};
         // 2026-09-15 (revisión): el motivo del ZZENVIO editado a mano se
         // exige ACÁ, no en 'cobro' -- el input de transporte y su textarea
         // se pintan en #o2mFinZZ, dentro de este sub-paso. Antes el
@@ -7784,6 +7797,18 @@ window.OT2C = (function(){
     var n = parseInt(s, 10);
     return isFinite(n) ? n : null;
   }
+  /* 💰 2026-10-07 (revisión adversarial, modelo único): en una OT que SE COBRA, el chip «Estimado por
+     clasificación» es una tarifa de referencia, no un cobro respaldado: la regla única (_ot_finanzas /
+     window.ilusOtFinanzas) lo cuenta como valorización -> Cobré $0. Antes la OT se creaba igual y el cierre
+     (SIN_VALORIZAR) la trababa después sin salida clara. Si la persona lo usa como «Le cobras», es un cobro
+     declarado a mano (Daniel: "sin línea de servicio útil, el cobro se escribe a mano con motivo"): viaja como
+     'manual' y pide el motivo, igual que un número editado. En garantía (ahí es el valorizado) y en trabajo
+     interno no aplica. El chip, el monto y la auto-selección no cambian. */
+  function _o2mFinEstimadoComoCobro(){
+    return !esInterno() && !S.fin_garantia && S.fin_zz_monto != null && !_o2mFinEsManual()
+      && S.fin_valor_origen === 'estimado';
+  }
+  function _o2mFinPideMotivo(){ return _o2mFinEsManual() || _o2mFinEstimadoComoCobro(); }
   /* El monto del sub-paso 2 tal como lo manda crear(): el campo declarado, o (respaldo) la cotización o el
      estimado. ÚNICA fuente para crear() y para la vista previa -- si cambia una regla acá, cambian las dos. */
   function _o2mFinMontoServicio(){
@@ -7791,13 +7816,15 @@ window.OT2C = (function(){
     // depende de que exista un documento -- puede venir de una línea ZZ real O ser 100% manual (ver
     // _pintarFinZZDom), con el motivo cuando corresponde declarar por qué es manual.
     if (S.fin_zz_monto != null){
+      // 2026-10-07: el estimado usado como cobro viaja como cobro escrito a mano, con su motivo.
+      var _aMano = _o2mFinEsManual(), _estCobro = _o2mFinEstimadoComoCobro();
       return {zz_codigo: S.fin_zz_codigo || null, zz_monto: S.fin_zz_monto,
-              zz_motivo_manual: _o2mFinEsManual() ? (S.fin_zz_motivo_manual || '') : null,
+              zz_motivo_manual: (_aMano || _estCobro) ? (S.fin_zz_motivo_manual || '') : null,
               // 💰 2026-09-15: de dónde salió el valor (mant_visitas.valor_origen): zz | doc_total |
               // cotizacion | contrato | estimado | supuesto | manual. El motivo manual viaja SIN prefijos.
-              valor_origen: _o2mFinEsManual()
+              valor_origen: _aMano
                 ? (S.fin_valor_origen === 'supuesto' ? 'supuesto' : 'manual')
-                : (S.fin_valor_origen || (S.fin_zz_codigo ? 'zz' : 'manual'))};
+                : (_estCobro ? 'manual' : (S.fin_valor_origen || (S.fin_zz_codigo ? 'zz' : 'manual')))};
     }
     // 🔒 2026-09-09 / 2026-09-15: ramas de RESPALDO (el chip ya escribe en fin_zz_monto, así que normalmente
     // entra la de arriba) -- una OT valorizada con "Buscar cotización" o solo con el estimado no puede crearse

@@ -3,7 +3,8 @@ Daniel, 2026-10-07.
 
 Cada número nace en su casillero: lo cobrado en zz_monto/zz_envio_monto, lo que nos cobra el técnico en
 costo_proveedor/costo_despacho y cuánto VALE un trabajo que no se cobra en valorizado_clp. `costo` ("Precio al
-cliente") ya no se escribe desde ningún flujo de finanzas.
+cliente") ya no se escribe al crear ni desde estos flujos; asociar/quitar documentos solo lo mantiene al día en
+OT antiguas que ya lo tenían (revisión adversarial del mismo día).
 
 Sin BD ni Flask: las funciones se extraen de app.py con ast (mismo patrón que tests/test_ot_finanzas_modelo.py)
 y la vista previa del asistente se corre en node contra static/ot_finanzas.js (se salta si no hay node).
@@ -13,6 +14,7 @@ import ast
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import unittest
@@ -26,7 +28,7 @@ FUNCS = ("_ot_es_interna", "_ot_cobertura", "_ot_fin_num", "_ot_fin_clp", "_ot_f
 CONSTS = ("_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_FUENTE_COBRO", "_OT_FIN_ZZ_NO_SERVICIO", "_OT_FIN_COBERTURA_TXT",
           "_OT_FIN_UMBRAL_BAJO", "_OT_FIN_VALORIZADO_FUENTE_POR_ORIGEN", "_OT_FIN_VALORIZADO_FUENTES",
           "_OT2_CENTROS_COSTO", "_OT2_VALOR_ORIGENES", "_OT2_VALOR_ORIGENES_CON_MOTIVO", "_OT2_LINEA_ZZ",
-          "_OT_FIN_SQL_CONTRATO_REAL")
+          "_OT_FIN_SQL_CONTRATO_REAL", "_OT_FIN_SQL_COBRE_POSITIVO")
 
 _AMB = None
 
@@ -179,6 +181,36 @@ class TestCrearOT(unittest.TestCase):
         self.assertIsNone(c["zz_monto"])
         self.assertEqual(c["valorizado_fuente"], "cotizador")
 
+    # Revisión adversarial 2026-10-07.
+    def test_un_estimado_no_puede_ser_lo_cobrado(self):
+        """Antes nacía con Cobré $0 y el cierre (SIN_VALORIZAR) la trababa sin salida clara."""
+        err, _ = N(dict(self.DOC, zz_monto=80000, valor_origen="estimado"))
+        self.assertEqual(err["error_codigo"], "FINANZAS_ESTIMADO_NO_ES_COBRO")
+        self.assertIn("Editado a mano", err["error"])
+        err, c = N(dict(self.DOC, zz_monto=80000, valor_origen="manual",
+                        zz_motivo_manual="el documento no trae línea de servicio"))
+        self.assertIsNone(err, "escrito a mano con su motivo sí es un cobro")
+        self.assertEqual((c["zz_monto"], c["valor_origen"]), (80000, "manual"))
+
+    def test_el_estimado_sigue_valiendo_donde_no_se_cobra(self):
+        err, c = N({"centro_costo": "sstt", "garantia_aplica": True, "garantia_motivo": "falla de fábrica del motor",
+                    "zz_monto": 80000, "valor_origen": "estimado"})
+        self.assertIsNone(err)
+        self.assertEqual(c["valorizado_clp"], 80000.0)
+        err, _ = N(dict(self.DOC, zz_monto=60000, valor_origen="estimado"), tipo="levantamiento",
+                   modalidad_forzada="sin_costo")
+        self.assertIsNone(err, "el levantamiento nace sin costo: el estimado es su valorizado")
+
+    def test_tipo_garantia_marcado_con_documento_no_nace_a_medias(self):
+        err, _ = N(dict(self.DOC, zz_monto=80000, valor_origen="zz"), tipo="garantia")
+        self.assertEqual(err["error_codigo"], "FINANZAS_TIPO_GARANTIA_CON_COBRO")
+        err, c = N({"centro_costo": "sstt", "garantia_aplica": True, "garantia_motivo": "falla de fábrica del motor"},
+                   tipo="garantia")
+        self.assertIsNone(err)
+        self.assertEqual(c["cobertura"], "garantia")
+        err, _ = N(dict(self.DOC, zz_monto=80000, valor_origen="zz"), tipo="garantia", modalidad_forzada="garantia")
+        self.assertIsNone(err, "Ticket con «aplica garantía»: la OT se guarda como garantía")
+
 
 class TestEstadoFinanzas(unittest.TestCase):
     """_ot2_finanzas_estado (lo que la ficha y el monitor muestran como "faltan")."""
@@ -244,37 +276,55 @@ class TestAnexoEnGarantia(unittest.TestCase):
 
 
 class TestPlanAnual(unittest.TestCase):
-    def P(self, contrato_id, nombre, es_real, valor):
+    def P(self, contrato_id, nombre, estado, valor, real_en_vigor=None):
+        """contrato_id/nombre/estado: el que devuelve _intel_contrato_id. real_en_vigor: (id, nombre) de OTRO
+        contrato real en vigor del cliente, o None."""
         amb = _amb()
         amb["_intel_contrato_id"] = lambda cid: contrato_id
 
         def fetch(sql, params=()):
             if "valor_mantencion_clp" in sql:
                 return {"valor_mantencion_clp": valor}
-            if "AS es_real" in sql:
-                return {"es_real": 1 if es_real else 0}
-            if "SELECT nombre FROM mant_contratos" in sql:
-                return {"nombre": nombre}
+            if "SELECT nombre, estado FROM mant_contratos WHERE id=" in sql:
+                return {"nombre": nombre, "estado": estado}
+            if "SELECT id, nombre FROM mant_contratos WHERE cliente_id=" in sql:
+                return ({"id": real_en_vigor[0], "nombre": real_en_vigor[1]} if real_en_vigor else None)
             return None
         amb["mysql_fetchone"] = fetch
         return amb["_pl_cobertura_contrato"](5)
 
     def test_contrato_real_no_se_cobra_y_valoriza(self):
-        r = self.P(7, "Contrato anual 2026", True, 60000)
-        self.assertEqual(r["cubierto_por"], "contrato")
+        r = self.P(7, "Contrato anual 2026", "vigente", 60000)
+        self.assertEqual((r["cubierto_por"], r["contrato_id"]), ("contrato", 7))
         self.assertEqual((r["valorizado_clp"], r["valorizado_fuente"]), (60000.0, "contrato"))
         self.assertIsNone(r["zz_monto"])
+        self.assertEqual(self.P(7, "Contrato anual 2026", "por_vencer", 60000)["cubierto_por"], "contrato")
 
     def test_sin_contrato_el_precio_se_cobra(self):
-        r = self.P(None, "", False, 60000)
+        r = self.P(None, "", None, 60000)
         self.assertEqual(r["cubierto_por"], "cliente")
         self.assertEqual((r["zz_monto"], r["valor_origen"]), (60000, "contrato"))
         self.assertIsNone(r["valorizado_clp"])
 
     def test_el_contenedor_de_documentos_no_es_contrato(self):
-        r = self.P(9, "Contenedor de documentos", False, 60000)
+        r = self.P(9, "Contenedor de documentos", "vigente", 60000)
         self.assertEqual(r["cubierto_por"], "cliente")
         self.assertEqual(r["zz_monto"], 60000)
+        self.assertEqual(r["contrato_id"], 9, "amarrarla al ficticio no la vuelve contrato (la regla lo excluye)")
+        r = self.P(9, "Contenedor de documentos", "vigente", 60000, real_en_vigor=(4, "Contrato 2026"))
+        self.assertEqual((r["cubierto_por"], r["contrato_id"]), ("contrato", 4))
+
+    def test_contrato_vencido_se_cobra_y_no_se_amarra(self):
+        """Revisión adversarial 2026-10-07: _intel_contrato_id cae al contrato más reciente aunque esté vencido,
+        y la regla de lectura cuenta un contrato real vencido si la OT apunta a él."""
+        r = self.P(7, "Contrato 2024", "vencido", 60000)
+        self.assertEqual(r["cubierto_por"], "cliente")
+        self.assertIsNone(r["contrato_id"], "si apuntara al vencido, la OT se leería 'contrato: no se cobra'")
+        self.assertEqual((r["zz_monto"], r["valor_origen"]), (60000, "contrato"))
+        self.assertIsNone(r["valorizado_clp"])
+        r = self.P(7, "Contrato 2024", "vencido", 60000, real_en_vigor=(8, "Contrato 2026"))
+        self.assertEqual((r["cubierto_por"], r["contrato_id"]), ("contrato", 8))
+        self.assertIn("Contrato 2026", r["motivo"])
 
     def test_los_insert_ya_no_escriben_costo(self):
         for nombre in ("mant_planificador_generar_ots", "mant_intel_accion"):
@@ -306,6 +356,16 @@ class TestQuienYaNoEscribeCosto(unittest.TestCase):
         self.assertNotIn('float(d.get("costo_proveedor") or 0)) or None', c)
         self.assertIn('for _campo_k in ("costo_proveedor", "costo_despacho"):', c)
 
+    def test_put_un_cobro_escrito_sobre_un_estimado_queda_manual(self):
+        """Revisión adversarial 2026-10-07: el rótulo 'estimado' se quedaba pegado al número nuevo."""
+        c = _fuente("mant_visita_update")
+        bloque = c[c.index("_origen_relabel = None"):c.index("tecnico_prev = None")]
+        self.assertIn("in _OT_FIN_ORIGENES_NO_COBRO", bloque)
+        self.assertIn('sets.append("valor_origen=%s")', bloque)
+        self.assertIn('vals.append("manual")', bloque)
+        allowed = c[c.index("allowed = ["):c.index("_ESTADOS_PROTEGIDOS_PUT")]
+        self.assertNotIn('"valor_origen"', allowed, "el origen no se escribe libre por el PUT")
+
     def test_visita_multiequipo_estima_en_el_valorizado(self):
         c = _fuente("mant_visita_multi")
         self.assertIn("valorizado_clp,valorizado_fuente,modalidad_cobro", c)
@@ -319,6 +379,130 @@ class TestQuienYaNoEscribeCosto(unittest.TestCase):
         self.assertNotIn('or float(v.get("costo") or 0) > 0)):', c, "`costo` > 0 ya no basta para cerrar")
         # ANEXO_DESACTUALIZADO sigue con su criterio (es la plata del PROVEEDOR, no del cliente).
         self.assertIn('_mod_cobro not in ("garantia", "sin_costo"):', c)
+
+
+class TestSqlCobrePositivo(unittest.TestCase):
+    """_OT_FIN_SQL_COBRE_POSITIVO (el booleano `_fin_valorizada` del Monitor) da lo mismo que
+    _ot_finanzas(v)["cobre"]["total"] > 0 en una OT que se cobra. Se corre en sqlite (mismas funciones SQL)."""
+
+    CASOS = [
+        dict(zz_monto=150000, zz_envio_monto=30000, valor_origen="zz", zz_codigo="ZZINSTALACION"),
+        dict(zz_monto=80000, valor_origen="estimado", costo=80000),                 # estimado: no es cobro
+        dict(zz_monto=80000, valor_origen=" Estimado ", zz_envio_monto=20000),      # solo cuenta el despacho
+        dict(zz_monto=1, zz_codigo="ZZRETIRO", valor_origen="zz"),                  # OT-201: no es servicio
+        dict(zz_monto=1, zz_codigo="zzretiro ", valor_origen="zz", costo=200000),   # ZZRETIRO + precio antiguo
+        dict(zz_monto=None, costo=120000),                                          # OT antigua
+        dict(zz_monto=0, costo=90000, valor_origen="zz"),                           # zz en 0 manda sobre costo
+        dict(zz_monto=0, zz_envio_monto=0, valor_origen="manual"),                  # cobro declarado en $0
+        dict(zz_monto=None, zz_envio_monto=15000),
+        dict(zz_monto=None, costo=None),
+        dict(zz_monto=50000, valor_origen="manual"),
+        dict(zz_monto=50000, valor_origen=None, zz_codigo=None),
+        dict(zz_monto=70000, valor_origen="interno"),
+        dict(zz_monto=40000, valor_origen="supuesto", costo=0),
+    ]
+
+    def test_misma_respuesta_que_la_regla(self):
+        amb = _amb()
+        expr = amb["_OT_FIN_SQL_COBRE_POSITIVO"]
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE mant_visitas (id INTEGER PRIMARY KEY, zz_monto INTEGER, zz_envio_monto INTEGER, "
+                   "costo REAL, valor_origen TEXT, zz_codigo TEXT)")
+        for i, caso in enumerate(self.CASOS, 1):
+            fila = dict(zz_monto=None, zz_envio_monto=None, costo=None, valor_origen=None, zz_codigo=None)
+            fila.update(caso)
+            db.execute("INSERT INTO mant_visitas VALUES (?,?,?,?,?,?)",
+                       (i, fila["zz_monto"], fila["zz_envio_monto"], fila["costo"], fila["valor_origen"],
+                        fila["zz_codigo"]))
+            sql_dice = bool(db.execute("SELECT " + expr + " FROM mant_visitas v WHERE v.id=?", (i,)).fetchone()[0])
+            v = dict(fila, modalidad_cobro="pagado", cubierto_por="cliente", tipo="instalacion", cliente_id=3)
+            fin = amb["_ot_finanzas"](v)
+            self.assertEqual(fin["cobertura"], "cobra")
+            self.assertEqual(sql_dice, fin["cobre"]["total"] > 0, caso)
+
+    def test_el_monitor_la_usa(self):
+        with open(os.path.join(RAIZ, "app.py"), encoding="utf-8") as fh:
+            app = fh.read()
+        self.assertIn('"       " + _OT_FIN_SQL_COBRE_POSITIVO + " AS _fin_valorizada, "', app)
+        self.assertNotIn("OR COALESCE(v.costo,0) > 0) AS _fin_valorizada", app)
+
+
+class TestDocumentosSinCosto(unittest.TestCase):
+    """Asociar/quitar un documento (multidocumento) ya no le crea `costo` a una OT nueva. Se corren los UPDATE
+    reales de app.py en sqlite."""
+
+    @staticmethod
+    def _updates(nombre):
+        _, arbol = _codigo_y_arbol()
+        fn = next(n for n in arbol.body if isinstance(n, ast.FunctionDef) and n.name == nombre)
+        out = []
+        for n in ast.walk(fn):
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "mysql_execute"
+                    and n.args and isinstance(n.args[0], ast.Constant) and isinstance(n.args[0].value, str)
+                    and n.args[0].value.startswith("UPDATE mant_visitas SET") and "zz_monto" in n.args[0].value):
+                out.append(n.args[0].value.replace("%s", "?"))
+        return out
+
+    def _db(self, **fila):
+        db = sqlite3.connect(":memory:")
+        db.create_function("GREATEST", 2, max)
+        db.execute("CREATE TABLE mant_visitas (id INTEGER PRIMARY KEY, zz_monto INTEGER, zz_envio_monto INTEGER, "
+                   "costo REAL, zz_codigo TEXT, valor_origen TEXT)")
+        base = dict(zz_monto=None, zz_envio_monto=None, costo=None, zz_codigo=None, valor_origen=None)
+        base.update(fila)
+        db.execute("INSERT INTO mant_visitas VALUES (1,?,?,?,?,?)",
+                   (base["zz_monto"], base["zz_envio_monto"], base["costo"], base["zz_codigo"], base["valor_origen"]))
+        return db
+
+    @staticmethod
+    def _fila(db):
+        r = db.execute("SELECT zz_monto, zz_envio_monto, costo, zz_codigo, valor_origen FROM mant_visitas").fetchone()
+        return dict(zip(("zz_monto", "zz_envio_monto", "costo", "zz_codigo", "valor_origen"), r))
+
+    def test_segundo_documento_en_ot_nueva(self):
+        """Escenario del revisor: servicio 150k + 50k, despacho 30k. Antes `costo` quedaba en 50k y salía el
+        aviso falso «el Precio al cliente ($50.000) no coincide con lo cobrado ($230.000)»."""
+        sql = [s for s in self._updates("ot2_api_documentos_agregar") if "COALESCE(zz_monto,0)+" in s]
+        self.assertEqual(len(sql), 1)
+        db = self._db(zz_monto=150000, zz_envio_monto=30000, zz_codigo="ZZINSTALACION", valor_origen="zz")
+        db.execute(sql[0], (50000, 0, 50000, "ZZINSTALACION", 1))
+        f = self._fila(db)
+        self.assertEqual((f["zz_monto"], f["zz_envio_monto"], f["costo"]), (200000, 30000, None))
+        fin = _amb()["_ot_finanzas"](dict(f, modalidad_cobro="pagado", cubierto_por="cliente", tipo="instalacion",
+                                          cliente_id=3))
+        self.assertEqual(fin["cobre"]["total"], 230000)
+        self.assertFalse([a for a in fin["avisos"] if "no coincide" in a], fin["avisos"])
+
+    def test_ot_antigua_sigue_cuadrando(self):
+        sql = [s for s in self._updates("ot2_api_documentos_agregar") if "COALESCE(zz_monto,0)+" in s][0]
+        db = self._db(zz_monto=150000, zz_envio_monto=30000, costo=180000, valor_origen="zz")
+        db.execute(sql, (50000, 0, 50000, "ZZINSTALACION", 1))
+        self.assertEqual(self._fila(db)["costo"], 230000)
+
+    def test_primer_documento(self):
+        sql = [s for s in self._updates("ot2_api_documentos_agregar") if "valor_origen='zz'" in s]
+        self.assertEqual(len(sql), 1)
+        db = self._db(costo=None)
+        db.execute(sql[0], (100000, 20000, 120000, "ZZMANTENCION", 1))
+        f = self._fila(db)
+        self.assertEqual((f["zz_monto"], f["zz_envio_monto"], f["costo"], f["valor_origen"]),
+                         (100000, 20000, None, "zz"))
+        db = self._db(costo=0)
+        db.execute(sql[0], (100000, 20000, 120000, "ZZMANTENCION", 1))
+        self.assertEqual(self._fila(db)["costo"], 0, "el 0 que deja _mant_visita_crear_core no se toca")
+        db = self._db(costo=90000, valor_origen="estimado")
+        db.execute(sql[0], (100000, 20000, 120000, "ZZMANTENCION", 1))
+        self.assertEqual(self._fila(db)["costo"], 120000, "OT antigua: como siempre, el documento fija el total")
+
+    def test_quitar_documento(self):
+        sql = self._updates("ot2_api_documentos_quitar")
+        self.assertEqual(len(sql), 1)
+        db = self._db(zz_monto=200000, zz_envio_monto=30000, costo=None)
+        db.execute(sql[0], (50000, 0, 50000, 1))
+        self.assertEqual(self._fila(db)["costo"], None, "antes un `costo` vacío quedaba en 0")
+        db = self._db(zz_monto=200000, zz_envio_monto=30000, costo=230000)
+        db.execute(sql[0], (50000, 0, 50000, 1))
+        self.assertEqual(self._fila(db)["costo"], 180000)
 
 
 @unittest.skipUnless(shutil.which("node"), "node no está instalado")
@@ -336,8 +520,11 @@ class TestVistaPreviaAsistente(unittest.TestCase):
             ({"fin_zz_monto": 150000, "fin_zz_monto_original": 150000, "fin_valor_origen": "zz",
               "fin_zz_codigo": "ZZINSTALACION", "fin_zz_envio": {"sku": "ZZENVIO", "monto": 30000},
               "fin_costo_proveedor": "100000", "fin_costo_despacho": "20000"}, True, ["ok", 180000, 60000, None]),
+            # 2026-10-07 (revisión): en una OT que se cobra, el chip «Estimado» usado como «Le cobras» es un cobro
+            # escrito a mano (pide motivo y viaja 'manual'). Antes la vista previa decía "Falta lo que cobraste"
+            # pero la OT se creaba igual y quedaba trabada al cerrar.
             ({"fin_zz_monto": 80000, "fin_zz_monto_original": 80000, "fin_valor_origen": "estimado",
-              "fin_costo_proveedor": "50000"}, False, ["gris", 0, -50000, 80000]),
+              "fin_costo_proveedor": "50000"}, False, ["ok", 80000, 30000, None]),
             ({"fin_garantia": True, "fin_zz_monto": 200000, "fin_zz_monto_original": 200000,
               "fin_valor_origen": "estimado", "fin_costo_proveedor": "130000", "fin_costo_despacho": "70000"},
              True, ["info", 0, -200000, 200000]),
@@ -361,9 +548,11 @@ class TestVistaPreviaAsistente(unittest.TestCase):
                      'function _o2mFinEsManual(){ if (S.fin_zz_monto == null) return false;' +
                      '  return S.fin_zz_monto_original == null || S.fin_zz_monto !== S.fin_zz_monto_original; }' +
                      'function _liderEsExterno(){ return ' + (c[1] ? 'true' : 'false') + '; }' +
+                     'function esInterno(){ return false; }' +
                      'function _o2mFinEstadosDom(){}' + BLOQUE +
                      '_pintarFinMargenDom(); var r = _o2mFinVistaPrevia();' +
-                     'return [r.clase, r.cobre.total, r.queda.total, r.valorizado.monto, nodos.o2mFinMargen.innerHTML];');
+                     'return [r.clase, r.cobre.total, r.queda.total, r.valorizado.monto, nodos.o2mFinMargen.innerHTML,' +
+                     ' _o2mFinMontoServicio(), _o2mFinPideMotivo()];');
                    return f(nodos);
                  });
                  process.stdout.write(JSON.stringify(out));"""]
@@ -381,6 +570,19 @@ class TestVistaPreviaAsistente(unittest.TestCase):
         self.assertIn("Me cobraron", res[0][4], "externo: 'Me cobraron' (Daniel 2026-09-27)")
         self.assertIn("Nos costó", res[3][4], "técnico propio: 'Nos costó'")
         self.assertIn("Resultado en caja", res[2][4])
+        # Lo que manda crear(): el estimado usado como cobro viaja 'manual' y pide motivo; en garantía no.
+        self.assertEqual(res[1][5]["valor_origen"], "manual")
+        self.assertTrue(res[1][6], "el estimado usado como cobro pide su motivo")
+        self.assertEqual(res[2][5]["valor_origen"], "estimado", "en garantía el estimado es el valorizado")
+        self.assertFalse(res[2][6])
+        self.assertEqual(res[0][5]["valor_origen"], "zz")
+        self.assertFalse(res[0][6])
+
+    def test_el_motivo_se_exige_al_crear(self):
+        with open(os.path.join(RAIZ, "templates", "ot2", "_modal_crear.html"), encoding="utf-8") as fh:
+            html = fh.read()
+        self.assertIn("if (_o2mFinPideMotivo() && !(S.fin_zz_motivo_manual||'').trim()) return false;", html)
+        self.assertIn("if (_o2mFinPideMotivo() && !(S.fin_zz_motivo_manual||'').trim()) return {cls:'falta'", html)
 
 
 if __name__ == "__main__":

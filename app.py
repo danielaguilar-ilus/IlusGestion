@@ -85645,10 +85645,11 @@ def mant_visita_update(vid):
                "direccion_place_id","direccion_comuna","direccion_region",
                "acceso_piso","acceso_notas",
                # 💰 2026-10-07 (Daniel, modelo único de finanzas): "costo" ("Precio al cliente") SALE de esta
-               # lista: ningún flujo de finanzas lo vuelve a escribir. Lo cobrado se declara en zz_monto/
-               # zz_envio_monto (tarjeta Finanzas o Corregir finanzas) y el "Total al cliente" pasa a ser la
-               # suma de los dos (Daniel lo aprobó). Si un formulario viejo lo manda, se ignora en silencio
-               # -- la columna se conserva como historia de las OT antiguas.
+               # lista: este PUT ya no lo escribe. Lo cobrado se declara en zz_monto/zz_envio_monto y el "Total
+               # al cliente" pasa a ser la suma de los dos (Daniel lo aprobó). OJO (revisión 2026-10-07): el
+               # otro escritor, /ot/api/finanzas (tarjeta Finanzas y modal de cierre), deja de escribirlo en el
+               # cambio de la tarjeta del mismo día -- los dos cambios se publican juntos. Si un formulario viejo
+               # lo manda, se ignora en silencio -- la columna se conserva como historia de las OT antiguas.
                "contrato_id",
                # FASE 1 — modelo Fracttal
                "modalidad_cobro","prioridad","diagnostico",
@@ -85734,6 +85735,22 @@ def mant_visita_update(vid):
     vals = [d[f] for f in allowed if f in d]
     if not sets:
         return jsonify({"error": "Sin campos"}), 400
+    # 💰 2026-10-07 (revisión adversarial, modelo único): si una persona escribe por acá el cobro del servicio
+    # (zz_monto) y el monto guardado estaba rotulado estimado/interno -- una valorización, que la regla única no
+    # cuenta como cobro --, el rótulo pasa a 'manual': ahora es lo que se declara cobrado. Sin esto el número
+    # nuevo se seguía leyendo como "estimado" (Cobré $0) y el cierre (SIN_VALORIZAR) trababa la OT aunque
+    # gestión ya lo hubiera declarado. `valor_origen` NO está en `allowed` a propósito: solo se toca acá.
+    _origen_relabel = None
+    if "zz_monto" in d and d.get("zz_monto") is not None:
+        try:
+            _vo_prev = ((mysql_fetchone("SELECT valor_origen FROM mant_visitas WHERE id=%s", (vid,)) or {})
+                        .get("valor_origen") or "")
+        except Exception:
+            _vo_prev = ""
+        if str(_vo_prev).strip().lower() in _OT_FIN_ORIGENES_NO_COBRO:
+            _origen_relabel = str(_vo_prev).strip().lower()
+            sets.append("valor_origen=%s")
+            vals.append("manual")
     # 2026-05-22 (Daniel) — capturamos el técnico ANTES del UPDATE para
     # saber si cambió y notificar al nuevo técnico vía campana interna.
     tecnico_prev = None
@@ -85816,6 +85833,8 @@ def mant_visita_update(vid):
                     f"estado: {_estado_prev_audit or '—'} → {d.get('estado')}")
         if warn_mod_upd:
             _detalle_upd.append(f"⚠ {warn_mod_upd}")
+        if _origen_relabel:   # 2026-10-07: queda escrito que el estimado pasó a ser un cobro declarado
+            _detalle_upd.append(f"cobro del servicio declarado a mano (antes rotulado «{_origen_relabel}»)")
         _mant_log("visita", vid, "actualizada", " · ".join(_detalle_upd))
         # Si el técnico cambió (o se asignó por primera vez), notificar.
         tecnico_nuevo = d.get("tecnico_user_id")
@@ -88224,6 +88243,7 @@ def _ot2_finanzas_estado(v):
         # sin `zz_monto` haría fallar el gate SIEMPRE y trabaría todas las
         # firmas en producción. Quien no puede ver montos manda el
         # booleano `_fin_valorizada` ya calculado en SQL.
+        # 💰 2026-10-07: ese booleano es _OT_FIN_SQL_COBRE_POSITIVO (Cobré > 0, la MISMA regla de _ot_finanzas).
         # 🔴 FIX 2026-09-09 (hallazgo al investigar el reporte financiero:
         # "cuánto se va a los centros de costo... por períodos"). Esta OT es
         # de cliente (no interna) y llega hasta acá -- existen DOS caminos
@@ -88257,6 +88277,29 @@ def _ot2_finanzas_estado(v):
                           "(la línea del documento, o declarado a mano con su motivo)")
 
     return (not faltan), faltan
+
+
+# 💰 2026-10-07 (revisión adversarial, modelo único) -- "¿Cobré > 0?" en SQL, para la pantalla que NO puede traer
+# montos (el Monitor que se proyecta, ver _OT_TV_SELECT: manda solo el booleano `_fin_valorizada`). Es la MISMA
+# cuenta de _ot_finanzas para una OT que se cobra (cobertura 'cobra', la única en que _ot2_finanzas_estado lo
+# mira), con la visita como alias `v`:
+#   · zz_monto es lo cobrado si es un cobro (origen que no sea estimado/interno y línea que no sea ZZRETIRO):
+#     Cobré = zz_monto + despacho cobrado;
+#   · si no hay zz (o es ZZRETIRO) y hay "Precio al cliente" (`costo`, OT antigua): Cobré = ese precio, > 0;
+#   · si no, solo cuenta el despacho cobrado.
+# Antes el Monitor usaba zz+envío > 0 O costo > 0: un estimado, el $1 de ZZRETIRO o un `costo` con zz en 0 salían
+# "valorizada" y el cierre igual los bloqueaba. tests/test_ot_finanzas_creacion.py corre esta expresión en sqlite
+# contra _ot_finanzas en casos fijos: si la regla cambia, esto cambia con ella (se arma con sus constantes).
+_OT_FIN_SQL_COBRE_POSITIVO = (
+    "(CASE"
+    " WHEN v.zz_monto IS NOT NULL"
+    "  AND LOWER(TRIM(COALESCE(v.valor_origen,''))) NOT IN ('" + "','".join(_OT_FIN_ORIGENES_NO_COBRO) + "')"
+    "  AND UPPER(TRIM(COALESCE(v.zz_codigo,''))) NOT IN ('" + "','".join(_OT_FIN_ZZ_NO_SERVICIO) + "')"
+    "  THEN (v.zz_monto + COALESCE(v.zz_envio_monto,0)) > 0"
+    " WHEN (v.zz_monto IS NULL"
+    "       OR UPPER(TRIM(COALESCE(v.zz_codigo,''))) IN ('" + "','".join(_OT_FIN_ZZ_NO_SERVICIO) + "'))"
+    "  AND COALESCE(v.costo,0) > 0 THEN 1"
+    " ELSE COALESCE(v.zz_envio_monto,0) > 0 END)")
 
 
 def _ensure_ot_acceso_cols():
@@ -92565,10 +92608,17 @@ def ot2_api_documentos_agregar(vid):
                       f"total {_clp(v.get('costo'))}")
         except Exception:
             pass
+        # 💰 2026-10-07 (revisión adversarial, modelo único): lo cobrado vive en zz_monto/zz_envio_monto y una OT
+        # nueva ya no nace con `costo` ("Precio al cliente"). Antes el documento ADICIONAL hacía
+        # costo=COALESCE(costo,0)+total: con `costo` vacío quedaba SOLO con lo del segundo documento (servicio
+        # 150k + 50k y despacho 30k daban Cobré $230.000 y un falso "el Precio al cliente ($50.000) no coincide").
+        # Ahora `costo` se toca solo si la OT ya lo tenía (OT antigua): ahí sigue cuadrando como siempre. Una OT
+        # nueva nunca recibe el casillero viejo.
         try:
             if _es_primero:
                 mysql_execute(
-                    "UPDATE mant_visitas SET zz_monto=%s, zz_envio_monto=%s, costo=%s, "
+                    "UPDATE mant_visitas SET zz_monto=%s, zz_envio_monto=%s, "
+                    "  costo=CASE WHEN costo IS NULL OR costo=0 THEN costo ELSE %s END, "
                     "  zz_codigo=COALESCE(NULLIF(zz_codigo,''), %s), valor_origen='zz' "
                     " WHERE id=%s",
                     (_zz_serv, _zz_envio, _zz_total, _cod_serv, vid))
@@ -92577,7 +92627,7 @@ def ot2_api_documentos_agregar(vid):
                     "UPDATE mant_visitas SET "
                     "  zz_monto=COALESCE(zz_monto,0)+%s, "
                     "  zz_envio_monto=COALESCE(zz_envio_monto,0)+%s, "
-                    "  costo=COALESCE(costo,0)+%s, "
+                    "  costo=CASE WHEN costo IS NULL OR costo=0 THEN costo ELSE costo+%s END, "
                     "  zz_codigo=COALESCE(NULLIF(zz_codigo,''), %s), "
                     "  valor_origen=COALESCE(NULLIF(valor_origen,''), 'zz') "
                     " WHERE id=%s",
@@ -92650,7 +92700,8 @@ def ot2_api_documentos_quitar(vid, did):
                 "UPDATE mant_visitas SET "
                 "  zz_monto=GREATEST(COALESCE(zz_monto,0)-%s, 0), "
                 "  zz_envio_monto=GREATEST(COALESCE(zz_envio_monto,0)-%s, 0), "
-                "  costo=GREATEST(COALESCE(costo,0)-%s, 0) "
+                # 2026-10-07: `costo` solo en OT antiguas que ya lo tenían (mismo criterio que al asociar).
+                "  costo=CASE WHEN costo IS NULL OR costo=0 THEN costo ELSE GREATEST(costo-%s, 0) END "
                 " WHERE id=%s",
                 (_r_serv, _r_envio, _r_serv + _r_envio, vid))
         except Exception as e:
@@ -101139,6 +101190,27 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
     _fin_cobertura = _ot_cobertura({
         "modalidad_cobro": modalidad_forzada or _fin_modalidad, "cubierto_por": _fin_cubierto,
         "tipo": tipo_ot, "zz_monto": _fin_zzm, "valor_origen": _fin_valor_origen})
+    # 🔴 2026-10-07 (revisión adversarial) -- dos combinaciones que el formulario dejaba pasar y que la regla única
+    # lee DISTINTO de lo que la persona declaró. Se rechazan diciendo qué hacer; nada se corrige en silencio.
+    #  1) Tipo «Garantía» marcado «Sí, con documento»: _ot_cobertura trata el tipo Garantía como garantía, así que
+    #     el "Le cobras" terminaba como valorizado (Cobré $0) mientras el cierre seguía pidiendo la factura. Qué
+    #     significa una OT de tipo Garantía que se factura lo decide Daniel; mientras tanto no nace a medias.
+    if (not es_interna and _fin_cobertura == "garantia" and not _fin_gar
+            and (modalidad_forzada or _fin_modalidad) != "garantia"):
+        return _ferr(
+            "Elegiste el tipo «Garantía», que no se le cobra al cliente, pero marcaste que se cobra con "
+            "documento. Si va por garantía, márcala «No, va por garantía» con su motivo; si se cobra, elige "
+            "otro tipo (por ejemplo, Correctiva).", "FINANZAS_TIPO_GARANTIA_CON_COBRO"), None
+    #  2) OT que SE COBRA con el monto rotulado «Estimado por clasificación» (o 'interno'): para la regla única es
+    #     una valorización, no un cobro (Cobré $0), y el candado de cierre SIN_VALORIZAR la trababa después sin
+    #     salida clara. Daniel: "sin línea de servicio útil, el cobro se escribe a mano con motivo". El asistente
+    #     OT 2.0 ya lo hace solo (el chip Estimado pasa a cobro escrito a mano y pide el motivo).
+    if (not es_interna and _fin_cobertura == "cobra" and _fin_zzm is not None and _fin_zzm > 0
+            and (_fin_valor_origen or "") in _OT_FIN_ORIGENES_NO_COBRO):
+        return _ferr(
+            "El estimado por clasificación es solo una referencia, no lo que le cobras al cliente. Indica de "
+            "dónde sale lo cobrado (línea del documento, cotización o contrato) o elige «Editado a mano» y "
+            "explica por qué.", "FINANZAS_ESTIMADO_NO_ES_COBRO"), None
     _fin_reparto = _ot_fin_reparto_creacion({
         "zz_codigo": _fin_zzc, "zz_monto": _fin_zzm, "valor_origen": _fin_valor_origen,
         "costo_interno": _fin_costo_int, "valorizado_clp": _fin_valorizado,
@@ -102984,8 +103056,11 @@ _OT_TV_SELECT = (
     # `costo` (camino PUT /mantenciones/api/visitas/<vid>, pestaña
     # Información) salía "falta cuánto se cobra" en el Monitor pero pasaba
     # el cierre. Ahora las tres definiciones son la misma.
-    "       (COALESCE(v.zz_monto,0) + COALESCE(v.zz_envio_monto,0) > 0 "
-    "        OR COALESCE(v.costo,0) > 0) AS _fin_valorizada, "
+    # 💰 2026-10-07 (revisión adversarial, modelo único): vuelven a ser la misma -- "valorizada" = Cobré > 0
+    # según _ot_finanzas (el candado SIN_VALORIZAR y _ot2_finanzas_estado ya la usan). La fórmula de antes
+    # (zz+envío > 0 O costo > 0) contaba un estimado, el $1 de ZZRETIRO o un `costo` con zz en 0 como cobro:
+    # el Monitor decía "listo" y el cierre la bloqueaba. Sigue siendo un booleano: ningún monto viaja.
+    "       " + _OT_FIN_SQL_COBRE_POSITIVO + " AS _fin_valorizada, "
     "       au.id AS tec_id, COALESCE(au.nombre, au.username) AS tecnico_nombre, "
     "       au.role AS tecnico_role, "
     # 🔴 FIX 2026-08-27 (hallazgo de la verificación): antes esto era solo
@@ -112924,8 +112999,11 @@ def mant_ot_aprobar_cierre(vid):
     # 💰 2026-10-07 (Daniel, modelo único): en una OT que SE COBRA se exige Cobré > 0 según _ot_finanzas -- la
     # línea de servicio del documento o un cobro escrito a mano. Ya no basta `costo` > 0: ahí vivía cualquier
     # cosa (un estimado, el valor de una garantía, el bruto de la factura). Una OT antigua sin líneas ZZ y con
-    # `costo` sigue pasando (_ot_finanzas lo toma como cobro "sin separar servicio y despacho"), así que
-    # ninguna OT que ya estaba bien declarada queda trabada. Una OT que NO se cobra (garantía -- también la
+    # `costo` sigue pasando (_ot_finanzas lo toma como cobro "sin separar servicio y despacho"). OJO (revisión
+    # adversarial): una OT abierta que nació con el monto rotulado «Estimado por clasificación» ayer cerraba y
+    # hoy pide declarar lo cobrado -- a propósito (un estimado no es un cobro). La salida es declararlo en la
+    # tarjeta Finanzas (un cobro escrito ahí queda 'manual'), y desde hoy ninguna OT que se cobra puede NACER
+    # así (_ot_validar_normalizar_finanzas y el asistente lo impiden). Una OT que NO se cobra (garantía -- también la
     # marcada por cubierto_por --, cortesía, interno, contrato real) no tiene nada que declarar acá, y el
     # valorizado NUNCA se exige (decisión de Daniel: es sugerido).
     if (_gate_on and not _ot_es_interna(v)
@@ -112935,8 +113013,9 @@ def mant_ot_aprobar_cierre(vid):
             "ok": False,
             "error_codigo": "SIN_VALORIZAR",
             "error": "Falta declarar cuánto se le cobró al cliente (la línea de servicio del documento, "
-                     "o escrito a mano con su motivo) antes de firmar el cierre. Un estimado o un "
-                     "valorizado no cuentan como cobro. Si no se le cobra, declárala como garantía o cortesía.",
+                     "o escrito a mano con su motivo) antes de firmar el cierre: decláralo en la tarjeta "
+                     "Finanzas de la OT. Un estimado o un valorizado no cuentan como cobro. Si no se le "
+                     "cobra, declárala como garantía o cortesía.",
         }), 400
     # 🔒 FIX 2026-08-27 (Daniel, autorizado explícitamente esta noche —
     # "endurece el candado de cierre"): el centro de costo se exige SIEMPRE
@@ -123085,7 +123164,8 @@ def _pl_cobertura_contrato(cid):
     💰 2026-10-07 (Daniel, modelo único "Cobré − Me cobraron = Queda": "mantención de contrato no se cobra";
     contrato REAL, no el 'Contenedor de documentos'). Ese valor por visita ya NO se escribe en `costo` (la
     barra de la OT lo leía como "Cobramos"). Ahora el dict trae además dónde va:
-      - contrato REAL (misma regla que lee la OT, _OT_FIN_SQL_CONTRATO_REAL): la OT no se cobra; el valor
+      - contrato REAL y EN VIGOR (vigente, por vencer o indefinido; misma regla que lee la OT,
+        _OT_FIN_SQL_CONTRATO_REAL): la OT no se cobra; el valor
         por visita es cuánto VALE -> valorizado_clp (fuente 'contrato'). La plata del contrato se mide en
         Vida del cliente, no OT por OT.
       - sin contrato real (o solo el "Contenedor de documentos", que es un contrato ficticio): ese valor ES
@@ -123096,19 +123176,19 @@ def _pl_cobertura_contrato(cid):
     contrato_real = False
     nombre_ct = ""
     if contrato_id:
-        ct = mysql_fetchone("SELECT nombre FROM mant_contratos WHERE id=%s", (contrato_id,)) or {}
+        ct = mysql_fetchone("SELECT nombre, estado FROM mant_contratos WHERE id=%s", (contrato_id,)) or {}
         nombre_ct = (ct.get("nombre") or "").strip()
-        try:
-            _r_real = mysql_fetchone(
-                "SELECT " + _ot_fin_sql_contrato_real("v") + " AS es_real "
-                "  FROM (SELECT %s AS cliente_id, %s AS contrato_id) v", (cid, contrato_id)) or {}
-            contrato_real = bool(int(_r_real.get("es_real") or 0))
-        except Exception as _e_real:
-            print(f"[plan_anual] contrato real cid={cid}: {_e_real}", flush=True)
-            contrato_real = nombre_ct != "Contenedor de documentos"
-        if contrato_real and nombre_ct == "Contenedor de documentos":
-            # El contrato más reciente es el ficticio pero el cliente SÍ tiene uno real vigente: la OT queda
-            # amarrada al real (es el que la cubre y el que se nombra en el motivo).
+        _es_contenedor = nombre_ct == "Contenedor de documentos"
+        # 🔴 FIX 2026-10-07 (revisión adversarial): _intel_contrato_id, si el cliente no tiene contrato vigente,
+        # devuelve el MÁS RECIENTE aunque esté VENCIDO -- y la regla de lectura cuenta un contrato real "aunque
+        # haya vencido" cuando la OT apunta a él. Así el Plan Anual creaba OT de un cliente con contrato vencido
+        # como "contrato: no se cobra", eximidas de factura y de cobro (antes de hoy pedían factura al cerrar).
+        # Una OT NUEVA solo queda cubierta por un contrato real EN VIGOR (vigente, por vencer o indefinido).
+        if not _es_contenedor and (ct.get("estado") or "").strip().lower() in ("vigente", "por_vencer", "indefinido"):
+            contrato_real = True
+        else:
+            # El elegido es el ficticio ("Contenedor de documentos") o no está en vigor: si el cliente tiene OTRO
+            # contrato real en vigor, ese es el que cubre la OT y el que se nombra en el motivo.
             _ct_real = mysql_fetchone(
                 "SELECT id, nombre FROM mant_contratos WHERE cliente_id=%s "
                 "   AND COALESCE(nombre,'')<>'Contenedor de documentos' "
@@ -123116,6 +123196,12 @@ def _pl_cobertura_contrato(cid):
                 " ORDER BY created_at DESC LIMIT 1", (cid,))
             if _ct_real:
                 contrato_id, nombre_ct = _ct_real["id"], (_ct_real.get("nombre") or "").strip()
+                contrato_real = True
+            elif not _es_contenedor:
+                # Contrato real VENCIDO (u otro estado fuera de vigor) y ninguno en vigor: la OT se cobra (precio
+                # acordado) y NO se amarra a ese contrato -- si apuntara a él, la cuenta de la OT
+                # (_OT_FIN_SQL_CONTRATO_REAL) la leería como "contrato: no se cobra" sin que nadie lo decida.
+                contrato_id = None
     if contrato_real:
         cubierto_por = "contrato"
         motivo = (f"Mantención preventiva del Plan Anual, cubierta por {nombre_ct or f'contrato N°{contrato_id}'}; "

@@ -839,6 +839,20 @@ function viFinCobroToggle() {
     ? 'Cuánto vale $ <span class="text-muted fw-normal">(opcional, no se cobra)</span>'
     : 'Le cobras $ <span class="text-danger">*</span>';
 }
+// 💰 2026-10-07 (revisión, modelo único): la regla única lee el tipo «Garantía» como garantía (no se le cobra).
+// Al CREAR, elegirlo marca «No, va por garantía» para que el formulario no quede pidiendo «Le cobras» (antes ese
+// monto terminaba como valorizado sin que nadie lo viera). Al editar no se toca: cambiar la cobertura de una OT
+// ya creada sigue su propio camino (corrección retroactiva con motivo).
+function viTipoCambio() {
+  if (document.getElementById('vi_id').value) return;
+  if (document.getElementById('vi_tipo').value !== 'garantia') return;
+  const si = document.getElementById('vi_gar_si');
+  if (si && !si.checked) {
+    si.checked = true;
+    if (typeof viGarToggleNota === 'function') viGarToggleNota();
+    viFinCobroToggle();
+  }
+}
 
 // ── ¿Aplica mantención? (2026-06-10, Daniel) ─────────────────────────
 // Chip por equipo en la pestaña Equipos: separa collarines/accesorios que NO
@@ -5149,6 +5163,14 @@ async function guardarVisita() {
     }
     if (costoVal > 0 && !finOrigen) {
       ilusToast('Indica de dónde sale ese valor (sección Costos)', { type:'warning' }); return;
+    }
+    // 💰 2026-10-07 (revisión, modelo único): dos combinaciones que la regla única leería distinto de lo que se
+    // declara. El backend también las rechaza (_ot_validar_normalizar_finanzas); acá se avisa antes de enviar.
+    if (document.getElementById('vi_tipo').value === 'garantia' && !garNueva) {
+      ilusToast('El tipo Garantía no se le cobra al cliente: marca «No, va por garantía» o elige otro tipo', { type:'warning' }); return;
+    }
+    if (!garNueva && finOrigen === 'estimado') {
+      ilusToast('El estimado es solo una referencia: si le cobras ese monto, elige «Editado a mano» y explica por qué', { type:'warning' }); return;
     }
     if ((finOrigen === 'supuesto' || finOrigen === 'manual') && !finOrigenMotivo) {
       ilusToast('Explica en qué te basas para ese valor (sección Costos)', { type:'warning' }); return;
