@@ -63429,15 +63429,20 @@ def mant_dashboard_costos_tecnico():
     if not tec:
         return jsonify({"ok": False, "error": "Técnico no encontrado."}), 404
 
-    row = mysql_fetchone(
-        "SELECT "
-        "  SUM(CASE WHEN estado NOT IN ('cerrada','cancelada','anulada') THEN 1 ELSE 0 END) AS n_abiertas, "
-        "  SUM(CASE WHEN COALESCE(zz_monto,0) > 0 THEN zz_monto ELSE COALESCE(costo,0) END) AS venta_serv, "
-        "  SUM(COALESCE(zz_envio_monto,0)) AS venta_envio, "
-        "  SUM(COALESCE(costo_proveedor,0)) AS costo_prov, "
-        "  SUM(COALESCE(costo_despacho,0)) AS costo_desp, "
-        "  COUNT(*) AS n_total "
-        "  FROM mant_visitas WHERE tecnico_user_id=%s", (tecnico_id,)) or {}
+    # 💰 2026-10-07 — MODELO ÚNICO (Daniel: "Cobré − Me cobraron = Queda"). Antes esto sumaba en SQL con su
+    # propia fórmula ("zz o costo" + envío − proveedor − despacho), contaba OT canceladas/anuladas y sumaba
+    # como vendido el valor de las garantías. Ahora cada OT se lee con _ot_finanzas (la cuenta de la OT) y el
+    # resultado es la SUMA de esas cuentas (_ot_fin_agregado): canceladas/anuladas fuera (no hubo trabajo),
+    # garantía/cortesía con Cobré $0 (su costo sí cuenta), contrato e interno aparte, y las OT a las que les
+    # falta un dato contadas aparte en vez de sumarse con un 0.
+    filas_tec = mysql_fetchall(
+        "SELECT v.id, v.estado, " + _ot_fin_cols_sql("v") + " "
+        "  FROM mant_visitas v WHERE v.tecnico_user_id=%s", (tecnico_id,)) or []
+    validas = [f for f in filas_tec if (f.get("estado") or "").lower() not in ("cancelada", "anulada")]
+    _agg = _ot_fin_agregado(list(_ot_fin_lote(validas).values()))
+    row = {"n_abiertas": sum(1 for f in filas_tec
+                             if f.get("estado") and f["estado"] not in ("cerrada", "cancelada", "anulada")),
+           "n_total": len(validas)}
     pendientes = mysql_fetchall(
         "SELECT id, numero_ot, tipo, estado, fecha_programada, cliente_id, "
         "       (SELECT razon_social FROM mant_clientes WHERE id=mant_visitas.cliente_id) AS cliente "
@@ -63445,8 +63450,15 @@ def mant_dashboard_costos_tecnico():
         " WHERE tecnico_user_id=%s AND estado NOT IN ('cerrada','cancelada','anulada') "
         " ORDER BY fecha_programada ASC LIMIT 30", (tecnico_id,)) or []
 
-    venta_total = float(row.get("venta_serv") or 0) + float(row.get("venta_envio") or 0)
-    costo_total = float(row.get("costo_prov") or 0) + float(row.get("costo_desp") or 0)
+    venta_total = _agg["cobre"]
+    costo_total = _agg["me_cobraron"]
+    _nota = []
+    if _agg["n_fuera"]:
+        _nota.append(f"{_agg['n_fuera']} OT fuera de la cuenta: falta lo que cobraste o lo que te cobró el técnico")
+    if _agg["n_no_cobra"]:
+        _nota.append(f"{_agg['n_no_cobra']} en garantía o cortesía: nos costaron {_ot_fin_clp(_agg['costo_no_cobra'])}")
+    for _cob_ap, _ap in _agg["aparte"].items():
+        _nota.append(f"{_ap['n']} de {_ap['txt'].lower()} aparte: nos costaron {_ot_fin_clp(_ap['costo'])}")
     return jsonify({
         "ok": True,
         "tecnico": {"id": tec["id"], "nombre": tec["nombre"]},
@@ -63462,8 +63474,10 @@ def mant_dashboard_costos_tecnico():
         },
         "resultado": {
             "venta_total": venta_total, "costo_total": costo_total,
-            "margen": venta_total - costo_total,
-            "margen_pct": round((venta_total - costo_total) / venta_total * 100) if venta_total > 0 else None,
+            "margen": _agg["queda"],
+            "margen_pct": round(_agg["pct"]) if _agg["pct"] is not None else None,
+            "clase": _agg["clase"],
+            "nota": " · ".join(_nota),
         },
     })
 
@@ -69392,6 +69406,22 @@ def _mant_ficha_impl(cid):
     maquinas     = [_norm_maquina(r)  for r in maquinas_raw]
     contratos    = [_norm_contrato(r) for r in contratos_raw]
     visitas_full = [_norm_visita(r)   for r in visitas_raw]
+    # 💰 2026-10-07 (modelo único "Cobré − Me cobraron = Queda", Daniel): la columna de plata de la tabla de
+    # OT de la ficha muestra lo COBRADO según la cuenta única (_ot_finanzas), no el «Precio al cliente»
+    # anotado (que en una garantía era su valor y en el Plan Anual el valor por visita). Solo las 50 que se
+    # muestran; sin repuestos (no se pintan acá).
+    try:
+        _fins_ficha = _ot_fin_lote(visitas_full[:50], repuestos=False)
+        for _vf in visitas_full[:50]:
+            _ff = _fins_ficha.get(int(_vf["id"]))
+            if _ff:
+                _vf["fin_cobra"] = _ff["cobra"]
+                _vf["fin_cobre"] = _ff["cobre"]["total"] if (_ff["cobra"] and _ff["cobre"]["hay"]) else None
+                _vf["fin_cobertura"] = _OT_FIN_COBERTURA_CORTA.get(_ff["cobertura"], "")
+                _vf["fin_cobertura_txt"] = _ff["cobertura_txt"]
+                _vf["fin_cob"] = _ff["cobertura"]   # para la línea de tiempo (window.VIS_TL)
+    except Exception as _e_fin:
+        print(f"[ficha-cli] finanzas cid={cid}: {type(_e_fin).__name__}", flush=True)
 
     # 2026-08-30 (Daniel): "el número de serie deberá ser impreso y generar
     # etiquetas, siempre excluyendo los pisos y los accesorios" — se calcula
@@ -77662,8 +77692,25 @@ def mant_cliente_ai_analisis(cid):
     n_visitas_prog = sum(1 for v in visitas if (v.get("estado") or "") == "programada")
     mrr_total = sum(float(c.get("monto_mensual") or 0)
                     for c in contratos if (c.get("estado") or "") in ("vigente","indefinido"))
+    # 💰 2026-10-07 (modelo único "Cobré − Me cobraron = Queda", Daniel): al analista le llega lo COBRADO en
+    # cada visita según la cuenta única (_ot_finanzas), no el «Precio al cliente» anotado (`costo`), que en
+    # una garantía era su valor y en una mantención de contrato el valor por visita (ya está en el MRR).
+    try:
+        _fins_ia = _ot_fin_lote(mysql_fetchall(
+            "SELECT v.id, " + _ot_fin_cols_sql("v") + " FROM mant_visitas v WHERE v.cliente_id=%s "
+            " ORDER BY v.fecha_programada DESC LIMIT 30", (cid,)) or [], repuestos=False)
+    except Exception as _e_fin:
+        print(f"[analista-ia] finanzas cid={cid}: {type(_e_fin).__name__}", flush=True)
+        _fins_ia = {}
+    for v in visitas:
+        _fv = _fins_ia.get(int(v["id"])) if v.get("id") is not None else None
+        if _fv is not None:
+            v.pop("costo", None)
+            v["cobrado"] = _fv["cobre"]["total"]
+            if not _fv["cobra"]:
+                v["cobertura"] = _fv["cobertura_txt"]
     costo_promedio_visita = (
-        sum(float(v.get("costo") or 0) for v in visitas if v.get("estado")=="completada")
+        sum(float(v.get("cobrado", v.get("costo")) or 0) for v in visitas if v.get("estado")=="completada")
         / max(n_visitas_done, 1)
     )
 
@@ -77723,7 +77770,7 @@ EQUIPOS ({len(maquinas)}):
 NÚMEROS CALCULADOS:
   MRR vigente: ${int(mrr_total):,}
   Visitas completadas: {n_visitas_done}
-  Costo promedio por visita: ${int(costo_promedio_visita):,}
+  Cobro promedio por visita (lo cobrado; garantías y contrato en $0): ${int(costo_promedio_visita):,}
 
 Devuelve SOLO el JSON solicitado."""
 
@@ -81635,6 +81682,17 @@ def mant_visitas_api():
     sql += " ORDER BY v.fecha_programada, v.hora_inicio LIMIT 500"
     rows = mysql_fetchall(sql, tuple(params)) or []
     rows = [dict(r) for r in rows]
+    # 💰 2026-10-07 (modelo único "Cobré − Me cobraron = Queda", Daniel): para MOSTRAR la plata de cada OT el
+    # calendario usa lo COBRADO según la cuenta única (_ot_finanzas), no el «Precio al cliente» anotado
+    # (`costo`, que en una garantía era su valor). Solo gestión: a un técnico no se le agrega nada. `costo`
+    # sigue viajando igual porque el formulario de edición del calendario lo usa (eso es de otro frente).
+    _fins_cal = {}
+    if rows and not _es_rol_tecnico():
+        try:
+            _fins_cal = _ot_fin_lote(rows, repuestos=False)
+        except Exception as _e_fin:
+            print(f"[calendario] finanzas: {type(_e_fin).__name__}", flush=True)
+            _fins_cal = {}
 
     # Cargar técnicos N:N de todas las visitas en una sola query
     tecs_por_visita = {}
@@ -81758,6 +81816,12 @@ def mant_visitas_api():
             "estado":      r.get("estado"),
             "descripcion": (r.get("descripcion") or "")[:300],
             "costo":       float(r.get("costo") or 0),
+            # 2026-10-07: la cuenta única de la OT (solo gestión; ver _fins_cal arriba).
+            **({"cobra": _fins_cal[r["id"]]["cobra"],
+                "cobre": (_fins_cal[r["id"]]["cobre"]["total"]
+                          if _fins_cal[r["id"]]["cobre"]["hay"] else None),
+                "cobertura_txt": _fins_cal[r["id"]]["cobertura_txt"]}
+               if r["id"] in _fins_cal else {}),
             "cliente": {
                 "id":           r["cliente_id"],
                 "razon_social": r["razon_social"],
@@ -83611,6 +83675,132 @@ def _ot_fin_rep_liviano(rep):
             "n_sin_costo": int(rep.get("n_sin_costo") or 0)}
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  💰 2026-10-07 — LOS QUE LEEN LA PLATA DE UNA OT FUERA DE SU PANTALLA
+#  Daniel: una sola cuenta en todas partes ("Cobré − Me cobraron = Queda", + Valorizado aparte). Vida del
+#  cliente, Facturación de proveedores, Facturas de proveedor, los Excel, el panel de costos por técnico, el
+#  Monitor, el Agente/Radar, Analytics y la ficha del cliente sacaban la plata cada uno con su propia fórmula
+#  (`costo` a secas, "zz o costo", sin despacho, sin repuestos, garantía como venta...). Ahora todos pasan por
+#  _ot_finanzas con estos ayudantes: las columnas que necesita, la bandera de contrato real y los repuestos
+#  instalados en UNA consulta por lote (nunca una por OT).
+# ═══════════════════════════════════════════════════════════════════════════
+_OT_FIN_COLS = ("modalidad_cobro", "cubierto_por", "tipo", "cliente_id", "contrato_id", "costo", "zz_monto",
+                "zz_codigo", "zz_envio_monto", "valor_origen", "costo_proveedor", "costo_despacho",
+                "proveedor_tipo", "valorizado_clp", "valorizado_fuente")
+# Rótulo corto de la cobertura para chips y columnas (el largo es _OT_FIN_COBERTURA_TXT).
+_OT_FIN_COBERTURA_CORTA = {"cobra": "Se cobra", "garantia": "Garantía", "sin_costo": "Cortesía",
+                           "interno": "Trabajo interno", "contrato": "Contrato"}
+# En el resultado de VARIAS OT (un cliente, un técnico) el trabajo interno y la mantención de contrato van
+# aparte: el interno no es negocio con nadie y el contrato se paga con el contrato, no OT por OT (Daniel
+# 2026-10-07). Contarlos adentro mostraría una "pérdida" que no existe.
+_OT_FIN_AGG_APARTE = ("interno", "contrato")
+
+
+def _ot_fin_cols_sql(alias="v"):
+    """Columnas que necesita _ot_finanzas en un SELECT con mant_visitas como `alias` (+ la bandera contrato_real).
+    Alias fijo de código, nunca input del usuario."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", alias or ""):
+        raise ValueError("alias inválido")
+    return (", ".join(f"{alias}.{c}" for c in _OT_FIN_COLS) + ", "
+            + _ot_fin_sql_contrato_real(alias) + " AS contrato_real")
+
+
+def _ot_fin_contrato_real_de(vids):
+    """{vid: bool} con la bandera de contrato real, para filas que se leyeron con SELECT * (una sola consulta)."""
+    try:
+        ids = sorted({int(x) for x in vids if x})
+    except (TypeError, ValueError):
+        ids = []
+    if not ids:
+        return {}
+    try:
+        rows = mysql_fetchall(
+            "SELECT v.id, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real FROM mant_visitas v "
+            " WHERE v.id IN (" + ",".join(["%s"] * len(ids)) + ")", tuple(ids)) or []
+    except Exception as e:
+        print(f"[ot-fin] contrato_real n={len(ids)}: {type(e).__name__}", flush=True)
+        return {}
+    return {int(r["id"]): bool(r.get("contrato_real")) for r in rows}
+
+
+def _ot_fin_lote(rows, repuestos=True):
+    """{id: _ot_finanzas(fila, repuestos instalados)} para un lote de filas de mant_visitas: UNA consulta de
+    repuestos para todo el lote y, si las filas no traen `contrato_real` (SELECT *), una más para esa bandera."""
+    filas = []
+    for r in rows or []:
+        try:
+            filas.append((int(r["id"]), r))
+        except (TypeError, ValueError, KeyError):
+            continue
+    if not filas:
+        return {}
+    ids = [i for i, _ in filas]
+    reps = _ot_repuestos_desglose(ids) if repuestos else {}
+    cr = _ot_fin_contrato_real_de(ids) if any("contrato_real" not in r for _, r in filas) else {}
+    out = {}
+    for vid, r in filas:
+        v = r
+        if "contrato_real" not in r:
+            v = dict(r)
+            v["contrato_real"] = cr.get(vid, False)
+        out[vid] = _ot_finanzas(v, reps.get(vid))
+    return out
+
+
+def _ot_fin_agregado(fins):
+    """Resultado de VARIAS OT (un cliente, un técnico) con la regla única. Recibe resultados de _ot_finanzas.
+    FUNCIÓN PURA (ver tests/test_ot_finanzas_lectores.py).
+
+      · Trabajo interno y mantención de contrato: aparte (`aparte[cobertura]` con cuántas y lo que costaron),
+        fuera de Cobré / Me cobraron / Queda.
+      · OT que no se pueden medir (falta lo que cobraste, lo que te cobró el técnico o el costo del despacho):
+        fuera del resultado y contadas aparte (n_fuera, cobre_fuera) -- sumarlas con un 0 inventaría una pérdida
+        o una ganancia.
+      · Garantía y cortesía: entran (es plata real que se puso sin cobrar) y además se informan aparte
+        (n_no_cobra, costo_no_cobra).
+    Cobré, Me cobraron y Queda son la SUMA de lo que dice cada OT: ninguna fórmula propia."""
+    t = {"cobre": 0.0, "me_cobraron": 0.0, "n": 0, "tecnico": 0.0, "rep_bodega": 0.0, "rep_compra": 0.0,
+         "n_no_cobra": 0, "costo_no_cobra": 0.0, "n_fuera": 0, "cobre_fuera": 0.0, "aparte": {}}
+    for f in fins or []:
+        if not f:
+            continue
+        me = f["me_cobraron"]
+        cob = f.get("cobertura")
+        if cob in _OT_FIN_AGG_APARTE:
+            a = t["aparte"].setdefault(cob, {"n": 0, "costo": 0.0, "n_falta": 0,
+                                             "txt": _OT_FIN_COBERTURA_CORTA.get(cob, cob)})
+            a["n"] += 1
+            a["costo"] = round(a["costo"] + me["total"], 2)
+            if me.get("falta_tecnico"):
+                a["n_falta"] += 1
+            continue
+        if not f["queda"]["mostrar"]:
+            t["n_fuera"] += 1
+            t["cobre_fuera"] += f["cobre"]["total"]
+            continue
+        t["n"] += 1
+        t["cobre"] += f["cobre"]["total"]
+        t["me_cobraron"] += me["total"]
+        if f["cobra"]:
+            t["tecnico"] += (me.get("tecnico") or 0) + (me.get("despacho") or 0)
+            d = me.get("repuestos_desglose") or {}
+            # 'manual' va junto a bodega (Daniel no pidió una categoría aparte para el ajuste a mano).
+            t["rep_bodega"] += float(d.get("bodega") or 0) + float(d.get("manual") or 0)
+            t["rep_compra"] += float(d.get("compra") or 0)
+        else:
+            t["n_no_cobra"] += 1
+            t["costo_no_cobra"] += me["total"]
+    for k in ("cobre", "me_cobraron", "tecnico", "rep_bodega", "rep_compra", "costo_no_cobra", "cobre_fuera"):
+        t[k] = round(t[k], 2)
+    t["queda"] = round(t["cobre"] - t["me_cobraron"], 2)
+    t["pct"] = round(t["queda"] / t["cobre"] * 100, 1) if t["cobre"] > 0 else None
+    t["clase"] = _vida_margen_clase(t["pct"], t["queda"] if t["n"] else None)
+    if t["n_fuera"] and t["clase"] == "ok":
+        # Con OT sin medir, el verde no puede ser limpio (mismo criterio que ya tenía Vida del cliente).
+        t["clase"] = "bajo"
+    return t
+
+
 @app.route("/mantenciones/api/clientes/<int:cid>/vida-cliente", methods=["GET"])
 @_mant_required
 @_no_tecnico
@@ -83688,12 +83878,11 @@ def mant_vida_cliente_api(cid):
 
     # ── KPIs + FINANCIERO (misma pasada: comparten las visitas cerradas) ──
     try:
+        # 💰 2026-10-07: además de lo de siempre, las columnas que necesita la cuenta única (_ot_fin_cols_sql).
         visitas = mysql_fetchall(
-            "SELECT v.id, v.tipo, v.estado, v.cubierto_por, v.numero_ot, "
-            "       v.modalidad_cobro, v.cliente_id, "
+            "SELECT v.id, v.estado, v.numero_ot, "
             "       COALESCE(v.fecha_realizada, v.fecha_programada) AS fecha, "
-            "       v.costo, v.costo_proveedor, v.costo_despacho, "
-            "       v.zz_monto, v.zz_envio_monto, "
+            "       " + _ot_fin_cols_sql("v") + ", "
             "       EXISTS(SELECT 1 FROM mant_ot_repuesto_solicitudes s "
             "               WHERE s.ot_generada_id=v.id) AS tiene_rep "
             "  FROM mant_visitas v WHERE v.cliente_id=%s "
@@ -83704,14 +83893,22 @@ def mant_vida_cliente_api(cid):
     cerradas = [v for v in visitas if (v.get("estado") or "") in ("cerrada", "completada")]
     veces_fuimos = len(cerradas)
     ultima_fecha = cerradas[0]["fecha"] if cerradas else None
-    n_cobradas = sum(1 for v in cerradas if (v.get("cubierto_por") or "") in ("cliente", "mixto"))
-    n_garantia = sum(1 for v in cerradas if (v.get("cubierto_por") or "") == "garantia")
+    # 💰 2026-10-07 (modelo único "Cobré − Me cobraron = Queda", Daniel): la plata de cada OT cerrada sale de
+    # _ot_finanzas, la MISMA cuenta de la OT. Repuestos instalados en UNA consulta para todo el lote (M4).
+    _fins = _ot_fin_lote(cerradas)
+    # "¿Cobradas o gratis?" con la cobertura de la cuenta única (_ot_cobertura). Antes se leía solo
+    # cubierto_por, cuyo valor por defecto es 'contrato': OT que se cobraban salían como "contrato" y una
+    # garantía marcada solo en modalidad_cobro salía como cobrada.
+    _cob = [(_fins.get(v["id"]) or {}).get("cobertura") for v in cerradas]
+    n_cobradas = sum(1 for c in _cob if c == "cobra")
+    n_garantia = sum(1 for c in _cob if c in ("garantia", "sin_costo"))
     # 🔧 BAJA (revisión Opus): antes n_contrato era un RESIDUAL
     # (veces_fuimos - cobradas - garantia), así que cualquier cubierto_por
     # raro/nulo se contaba como "contrato" sin serlo. Ahora es un conteo
-    # DIRECTO de cubierto_por='contrato' -- lo que no calza en ninguna de
-    # las 3 categorías se reporta aparte (n_otros_cobro), nunca se fuerza.
-    n_contrato = sum(1 for v in cerradas if (v.get("cubierto_por") or "") == "contrato")
+    # DIRECTO de la cobertura 'contrato' (contrato REAL del cliente) -- lo que
+    # no calza en ninguna de las 3 categorías (trabajo interno) se reporta
+    # aparte (n_otros_cobro), nunca se fuerza.
+    n_contrato = sum(1 for c in _cob if c == "contrato")
     n_otros_cobro = max(veces_fuimos - n_cobradas - n_garantia - n_contrato, 0)
     por_que = {"instalacion": 0, "mantencion": 0, "inst_repuestos": 0, "correctiva": 0, "otros": 0}
     for v in cerradas:
@@ -83744,84 +83941,42 @@ def mant_vida_cliente_api(cid):
         "abierto_ot": n_ot_abiertas, "abierto_repuestos": n_rep_gestion,
     }
 
-    # 💰 D2/A2/A3/M4/M5/M6 (revisión Opus 2026-09-26): TODO el resultado
-    # financiero pasa por _ot_resultado_financiero -- la MISMA función que
-    # usa la tarjeta Finanzas de la OT (GET /ot/api/<vid>/resultado-
-    # financiero) -- para que ambas SIEMPRE den el mismo número. Los
-    # repuestos se resuelven en UN solo lote (M4: única regla de
-    # atribución) para las visitas de este cliente, no N+1 por OT.
-    _rep_por_ot = _ot_repuestos_desglose([v["id"] for v in visitas])
-    _resultados = {v["id"]: _ot_resultado_financiero(v, _rep_por_ot.get(v["id"])) for v in cerradas}
-
-    tot_cobramos = tot_nos_costo = 0.0
-    tot_tecnicos = tot_bodega = tot_compra = tot_garantia_costo = 0.0
-    n_interna = n_fuera_margen = 0
-    cobrado_fuera_margen = 0.0
-    for v in cerradas:
-        r = _resultados[v["id"]]
-        if _ot_es_interna(v):
-            # M6: una OT interna no es negocio con el cliente -- fuera de
-            # Cobramos Y de Nos costó, no solo del cobro. La CLASIFICACIÓN
-            # (clase/label) de _ot_resultado_financiero no distingue
-            # interna (igual que la tarjeta de la OT, revisión Opus #2) --
-            # esta exclusión es SOLO del agregado, no cambia lo que se ve
-            # en la fila de "Margen por OT".
-            n_interna += 1
-            continue
-        if not r["mostrar_queda"]:
-            # A3/revisión #2: sin costo completo ("Falta un costo"/"Falta
-            # el costo") o sin cobro declarado y sin garantía ("Falta lo
-            # que se cobra") no hay margen que sumar -- se cuenta aparte,
-            # nunca se mete a la suma con un 0 que ensuciaría el promedio.
-            n_fuera_margen += 1
-            cobrado_fuera_margen += float(r["cobrado"] or 0)
-            continue
-        # Con costo completo Y (cobro>0 o garantía valorizada): entra al
-        # agregado -- el rótulo gris/ámbar de garantía es solo visual
-        # (A2), no lo saca de la plata real.
-        tot_cobramos += r["cobrado"] or 0
-        tot_nos_costo += r["costo_total"] or 0
-        if r["garantia"]:
-            # BAJA: "Garantías que cubrimos" incluye repuestos de OT en
-            # garantía -- técnico + repuestos juntos en esta única línea.
-            tot_garantia_costo += r["costo_total"] or 0
-        else:
-            tot_tecnicos += r["costo_tecnico"] or 0
-            desg = r["repuestos_desglose"] or {}
-            # 'manual' se muestra junto a bodega (Daniel no pidió una 5ª
-            # categoría para el ajuste a mano -- ver Etapa A original).
-            tot_bodega += float(desg.get("bodega") or 0) + float(desg.get("manual") or 0)
-            tot_compra += float(desg.get("compra") or 0)
-
-    _fin_queda = round(tot_cobramos - tot_nos_costo, 2)
-    _fin_margen_pct = round((tot_cobramos - tot_nos_costo) / tot_cobramos * 100, 1) if tot_cobramos > 0 else None
-    _fin_clase = _vida_margen_clase(_fin_margen_pct, _fin_queda)
-    if n_fuera_margen > 0 and _fin_clase == "ok":
-        # A3: "si hay alguna, el semáforo agregado no puede ser verde
-        # limpio" -- se degrada a ámbar con nota. Si ya era rojo/ámbar por
-        # los números reales, se queda igual (nunca mejora el color).
-        _fin_clase = "bajo"
+    # 💰 2026-10-07 — MODELO ÚNICO (Daniel: "Cobré − Me cobraron = Queda", + Valorizado aparte). TODO el
+    # resultado financiero sale de _ot_finanzas (la cuenta de la OT, ver _fins arriba) y el agregado del
+    # cliente de _ot_fin_agregado, que solo SUMA lo que dice cada OT. _ot_resultado_financiero (la cuenta de
+    # antes) NO se borra: la usa la página "Antes y después" (/ot/finanzas-modelo) para que Daniel compare.
+    # Lo que cambia respecto de la cuenta anterior, todo por decisión de Daniel del 2026-10-07:
+    #   · Una garantía/cortesía ya no "cobra" su valor: Cobré $0 y entra lo que nos costó.
+    #   · El despacho sin declarar cuenta $0 (es opcional), salvo que se haya cobrado un despacho.
+    #   · Manda lo cobrado (línea del documento / a mano) sobre el "Precio al cliente" anotado.
+    #   · La mantención de contrato (contrato REAL) se paga con el contrato: va aparte, igual que el trabajo
+    #     interno (M6), con lo que nos costó a la vista.
+    _agg = _ot_fin_agregado([_fins.get(v["id"]) for v in cerradas])
+    _ap_int = _agg["aparte"].get("interno") or {}
+    _ap_ctr = _agg["aparte"].get("contrato") or {}
     out["financiero"] = {
-        "cobramos": round(tot_cobramos, 2),
-        "nos_costo": round(tot_nos_costo, 2),
-        "queda": _fin_queda,
-        "margen_pct": _fin_margen_pct,
-        "margen_clase": _fin_clase,
+        "cobramos": _agg["cobre"],
+        "nos_costo": _agg["me_cobraron"],
+        "queda": _agg["queda"],
+        "margen_pct": _agg["pct"],
+        "margen_clase": _agg["clase"],
         "desglose": {
-            "tecnicos": round(tot_tecnicos, 2),
-            "repuestos_bodega": round(tot_bodega, 2),
-            "compras_proveedor": round(tot_compra, 2),
-            "garantias_cubiertas": round(tot_garantia_costo, 2),
+            "tecnicos": _agg["tecnico"],
+            "repuestos_bodega": _agg["rep_bodega"],
+            "compras_proveedor": _agg["rep_compra"],
+            # Mismo nombre de siempre (el frontend lo lee así); ahora es garantía + cortesía: lo que nos
+            # costaron las OT que no se cobran (técnico + despacho + repuestos).
+            "garantias_cubiertas": _agg["costo_no_cobra"],
         },
-        # 🔧 revisión Opus #2: el bucket "fuera del margen" ahora agrupa DOS
-        # cosas distintas por diseño de la tarjeta de la OT -- "falta un
-        # costo/el costo" (costo incompleto) Y "falta lo que se cobra"
-        # (cobro $0 sin garantía). ot_sin_costo/cobrado_sin_costo_completo
-        # se mantienen con estos nombres por compatibilidad del frontend,
-        # pero ahora cubren ambos casos (ver n_fuera_margen arriba).
-        "ot_sin_costo": n_fuera_margen,
-        "cobrado_sin_costo_completo": round(cobrado_fuera_margen, 2),
-        "ot_interna_excluida": n_interna,
+        # Mismos nombres por compatibilidad del frontend: OT fuera del cálculo porque falta lo que cobraste,
+        # lo que te cobró el técnico o el costo de un despacho cobrado (y lo cobrado en ellas).
+        "ot_sin_costo": _agg["n_fuera"],
+        "cobrado_sin_costo_completo": _agg["cobre_fuera"],
+        "ot_interna_excluida": int(_ap_int.get("n") or 0),
+        "ot_no_cobra": _agg["n_no_cobra"],
+        "contrato_ot": int(_ap_ctr.get("n") or 0),
+        "contrato_costo": float(_ap_ctr.get("costo") or 0),
+        "contrato_falta": int(_ap_ctr.get("n_falta") or 0),
     }
 
     # ── MARGEN POR OT (paginado) -- misma fuente que el agregado de arriba,
@@ -83835,15 +83990,23 @@ def mant_vida_cliente_api(cid):
     _mg_slice = cerradas[(mg_page - 1) * mg_per: mg_page * mg_per]
     mg_items = []
     for v in _mg_slice:
-        r = _resultados[v["id"]]
+        r = _fins.get(v["id"])
+        if not r:
+            continue
+        # La fila muestra el % cuando la OT se cobra y se puede medir; si no, su rótulo en palabras de Daniel
+        # ("Falta lo que cobraste", "Garantía · nos costó $X"...), igual que la OT.
+        _con_pct = r["cobra"] and r["queda"]["mostrar"] and r["queda"]["pct"] is not None
         mg_items.append({
             "id": v["id"], "numero_ot": v.get("numero_ot"),
             "tipo_label": _ot_tipo_label_efectivo(v.get("tipo"), bool(v.get("tiene_rep"))),
-            "label": r["label"],
-            "cobrado": r["cobrado"], "costo_total": r["costo_total"],
-            "margen_clp": r["margen_clp"], "margen_pct": r["margen_pct"],
+            "label": None if _con_pct else r["label"],
+            "cobrado": r["cobre"]["total"] if r["cobre"]["hay"] else None,
+            "costo_total": r["me_cobraron"]["total"],
+            "margen_clp": r["queda"]["total"] if r["queda"]["mostrar"] else None,
+            "margen_pct": r["queda"]["pct"],
             "margen_clase": r["clase"],
-            "sin_costo": not r["mostrar_queda"],
+            "sin_costo": not r["queda"]["mostrar"],
+            "cobertura": r["cobertura"], "cobertura_txt": r["cobertura_txt"], "frase": r["frase"],
         })
     out["margen_ot"] = {"items": mg_items, "page": mg_page, "per_page": mg_per,
                         "total": mg_total, "total_pages": mg_pages}
@@ -84059,6 +84222,7 @@ def _date_today():
 @app.route("/mantenciones/api/clientes/<int:cid>/finanzas-servicios",
            methods=["GET"])
 @_mant_required
+@_no_tecnico   # 2026-10-07: devuelve montos de facturas/cotizaciones; sus vecinas (vida-cliente, finanzas) ya bloquean al técnico (REGLA #19)
 def mant_finanzas_servicios(cid):
     """Lista cronológica de visitas con flujo comercial cruzado con ERP Random.
 
@@ -84090,13 +84254,15 @@ def mant_finanzas_servicios(cid):
     estadof  = (request.args.get("estado") or "").strip() or None
 
     sql = (
-        "SELECT v.id, v.fecha_programada, v.fecha_realizada, v.tipo, "
+        "SELECT v.id, v.fecha_programada, v.fecha_realizada, "
         "       v.titulo, v.estado, v.es_retroactiva, "
         "       v.cotizacion_tido, v.cotizacion_nudo, "
         "       v.oc_numero, v.oc_fecha, "
         "       v.factura_tido, v.factura_nudo, v.factura_emitida_at, "
-        "       v.estado_facturacion, v.cubierto_por, "
-        "       v.costo, v.nota_libre, v.observaciones "
+        "       v.estado_facturacion, "
+        # 💰 2026-10-07: columnas de la cuenta única (_ot_finanzas), tipo/cubierto_por/costo incluidos.
+        "       " + _ot_fin_cols_sql("v") + ", "
+        "       v.nota_libre, v.observaciones "
         "FROM mant_visitas v "
         "WHERE v.cliente_id=%s "
         "  AND v.estado NOT IN ('anulada','cancelada') "
@@ -84118,6 +84284,9 @@ def mant_finanzas_servicios(cid):
     sql += " ORDER BY COALESCE(v.fecha_realizada, v.fecha_programada) DESC, v.id DESC"
 
     visitas = mysql_fetchall(sql, tuple(params)) or []
+    # 💰 2026-10-07 (modelo único, Daniel): la cobertura (¿se le cobra?) y lo cobrado de cada OT salen de la
+    # cuenta única (_ot_finanzas), no de cubierto_por suelto (su valor por defecto es 'contrato').
+    _fins_s = _ot_fin_lote(visitas, repuestos=False)
 
     # ── Cruce con ERP — cache 5 min ─────────────────────────────────
     from datetime import date as _date
@@ -84169,17 +84338,21 @@ def mant_finanzas_servicios(cid):
 
         cubierto_por = v.get("cubierto_por") or "contrato"
         ef = v.get("estado_facturacion") or "sin_cotizar"
+        _fs = _fins_s.get(int(v["id"])) or {}
+        _cob_s = _fs.get("cobertura") or "cobra"
 
         # Sumar a totales
         if f_ref and f_ref.year == hoy.year:
             tot_anio += monto_total
             if f_ref.month == hoy.month:
                 tot_mes += monto_total
-        if cubierto_por == "garantia":
+        # 2026-10-07: garantía y contrato según la cobertura de la cuenta única.
+        if _cob_s == "garantia":
             tot_garantia += monto_total
-        if cubierto_por == "contrato":
+        if _cob_s == "contrato":
             tot_contrato += monto_total
-        if ef in ("sin_cotizar", "cotizado", "con_oc") and v.get("estado") == "completada":
+        # Una OT que no se cobra (garantía, cortesía, contrato, interno) no queda "pendiente de facturar".
+        if ef in ("sin_cotizar", "cotizado", "con_oc") and v.get("estado") == "completada" and _cob_s == "cobra":
             tot_pendiente += monto_total if monto_total > 0 else (cot_total or 0)
 
         servicios.append({
@@ -84201,6 +84374,12 @@ def mant_finanzas_servicios(cid):
             "monto_total":      monto_total,
             "cot_total":        cot_total,
             "cubierto_por":     cubierto_por,
+            # 2026-10-07: la cuenta única de la OT (lo que dice su pantalla): ¿se le cobra? y cuánto se cobró.
+            "cobertura":        _cob_s,
+            "cobertura_txt":    _fs.get("cobertura_txt") or "",
+            "cobra":            _cob_s == "cobra",
+            "cobre":            ((_fs.get("cobre") or {}).get("total")
+                                 if _cob_s == "cobra" and (_fs.get("cobre") or {}).get("hay") else None),
             "estado_facturacion": ef,
             "dias_sin_facturar": dias_sin_facturar,
         })
@@ -100991,8 +101170,10 @@ _OT_FIN_VALORIZADO_FUENTE_POR_ORIGEN = {
 }
 # Vocabulario de mant_visitas.valorizado_fuente (ver _ensure_ot_finanzas_cols). 'interno' = valor del trabajo
 # interno (mismo rótulo que ya usa _ot_finanzas); 'dato_antiguo' = la copia aprobada desde `costo`.
-_OT_FIN_VALORIZADO_FUENTES = ("cotizador", "contrato", "documento", "a_mano", "estimado", "supuesto",
-                              "interno", "dato_antiguo")
+# 💰 2026-10-07 (integración fin-paso3): la tupla _OT_FIN_VALORIZADO_FUENTES vive UNA sola vez, junto a
+# _ot_fin_base (frente "pantalla de la OT"). Los dos frentes la habían definido por separado; la de la pantalla
+# es la unión de ambas (agrega 'cotizacion', 'zz' y 'doc_total', que la tarjeta ya sabe rotular), así sirve a
+# /ot/api/finanzas y a _ot_fin_valorizado_fuente sin que una definición tape a la otra al importar.
 
 
 def _ot_fin_valorizado_fuente(valor_origen=None, fuente=None):
@@ -103565,6 +103746,19 @@ def _ot_tv_empresas_externas(personas):
     return out
 
 
+def _ot_tv_fin_resumen(fin):
+    """Lo mínimo de la cuenta única (_ot_finanzas) que necesita el modal del Monitor de control."""
+    if not fin:
+        return None
+    return {
+        "cobra": fin["cobra"], "cobertura_corta": _OT_FIN_COBERTURA_CORTA.get(fin["cobertura"], ""),
+        "cobre": fin["cobre"]["total"], "cobre_hay": bool(fin["cobre"]["hay"]),
+        "me_cobraron": fin["me_cobraron"]["total"], "queda": fin["queda"]["total"],
+        "mostrar": bool(fin["queda"]["mostrar"]), "pct": fin["queda"]["pct"],
+        "clase": fin["clase"], "label": fin["label"], "frase": fin["frase"],
+    }
+
+
 def _ot_tv_datos(fecha=None, incluir_finanzas=False):
     """Payload del monitor: un día agrupado por persona + próximos días.
 
@@ -103674,6 +103868,22 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
         except Exception as e:
             print(f"[ot_tv] anexo: {e}", flush=True)
             _anexo_por_visita = {}
+
+    # 💰 2026-10-07 (modelo único "Cobré − Me cobraron = Queda", Daniel): la plata de cada OT con la cuenta
+    # de la OT (_ot_finanzas), SOLO para la pantalla de CONTROL (incluir_finanzas). Antes el modal mostraba
+    # `costo` rotulado "Valorizado" y calculaba el margen con él (una garantía con valor salía en verde).
+    # Consulta aparte y en bloque (no se agrega nada a _OT_TV_SELECT, que comparten otras vistas y el
+    # televisor público, que nunca ve montos).
+    _fin_por_visita = {}
+    if incluir_finanzas and _vids:
+        try:
+            _ph_fin = ",".join(["%s"] * len(_vids))
+            _fin_por_visita = _ot_fin_lote(mysql_fetchall(
+                "SELECT v.id, " + _ot_fin_cols_sql("v") + " FROM mant_visitas v "
+                f" WHERE v.id IN ({_ph_fin})", tuple(_vids)) or [])
+        except Exception as e:
+            print(f"[ot_tv] finanzas: {type(e).__name__}", flush=True)
+            _fin_por_visita = {}
 
     if _vids:
         try:
@@ -103958,6 +104168,8 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
             "precio": (float(f.get("costo")) if incluir_finanzas and f.get("costo") is not None else None),
             "costo_proveedor": (float(f.get("costo_proveedor")) if incluir_finanzas and f.get("costo_proveedor") is not None else None),
             "costo_despacho": (float(f.get("costo_despacho")) if incluir_finanzas and f.get("costo_despacho") is not None else None),
+            # 💰 2026-10-07: la cuenta única de la OT (lo que pinta el modal). None en el televisor público.
+            "fin": (_ot_tv_fin_resumen(_fin_por_visita.get(f.get("id"))) if incluir_finanzas else None),
             # 🆕 2026-08-28 (Daniel: "que en esa burbuja me diga... la
             # comuna, al menos la comuna") -- el dato YA se traía en
             # _OT_TV_SELECT (c.comuna AS cliente_comuna) para armar
@@ -106962,12 +107174,12 @@ def ot2_reporte_xlsx():
     where_sql, params, filtros_desc, origen = _ot2_filtros_export(request.args)
 
     _sql_reporte = (
-        "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, v.prioridad, "
+        "SELECT v.id, v.numero_ot, v.titulo, v.estado, v.prioridad, "
         "       v.fecha_programada, v.fecha_realizada, v.hora_inicio, "
-        "       v.direccion_visita, v.costo, v.centro_costo, v.zz_codigo, "
-        "       v.zz_monto, v.modalidad_cobro, v.cubierto_por, "
+        "       v.direccion_visita, v.centro_costo, "
         "       v.estado_facturacion, v.factura_tido, v.factura_nudo, "
-        "       v.costo_proveedor, v.costo_despacho, "
+        # 💰 2026-10-07: todas las columnas de la cuenta única (_ot_finanzas), tipo incluido.
+        "       " + _ot_fin_cols_sql("v") + ", "
         "       v.created_by, v.created_at, v.cerrada_at, "
         "       c.razon_social, c.rut AS cliente_rut, "
         "       c.direccion AS cliente_direccion, c.comuna AS cliente_comuna, "
@@ -107033,18 +107245,27 @@ def ot2_reporte_xlsx():
                "Título", "Tipo", "Prioridad", "Estado", "Fase", "Técnico",
                "Int/Ext", "Fecha programada", "Hora", "Fecha realizada",
                "Tareas", "% avance", "Centro de costo", "Línea ZZ",
-               "Monto ZZ", "Costo",
+               # 💰 2026-10-07 (modelo único "Cobré − Me cobraron = Queda", Daniel):
+               # "Costo" era el «Precio al cliente» anotado y la columna "Margen"
+               # se calculaba con él. Se conserva (renombrado, es historia) y se
+               # agregan las columnas de la cuenta única de la OT (_ot_finanzas):
+               # Cobré, Repuestos instalados, Me cobraron, Queda y Valorizado.
+               "Monto ZZ", "Precio al cliente (anotado)", "Cobré",
                # 2026-08-27 (Daniel): "que sepa dónde van las cosas... qué OT
                # están comprometidas con centros de costo diferentes a
-               # Servicio Técnico" -- costo proveedor + costo despacho
-               # (campo nuevo de esta noche) + margen, misma fórmula que
-               # `recalcular()` en ot_ejecutar.html: margen = costo -
-               # (costo_proveedor + costo_despacho).
-               "Costo proveedor", "Costo despacho", "Margen", "% margen",
+               # Servicio Técnico" -- costo proveedor + costo despacho.
+               "Costo proveedor", "Costo despacho", "Repuestos instalados",
+               "Me cobraron", "Queda (margen)", "% margen", "Valorizado (referencia)",
                "Cobertura", "Estado facturación",
                "Documento", "Creada por", "Creada", "Cerrada",
                "Observaciones (revisar)"]
     NCOLS = len(headers)
+    # Columnas por NOMBRE (no por número fijo): agregar una columna no corre los formatos.
+    _COLS_CLP = {headers.index(h) + 1 for h in (
+        "Monto ZZ", "Precio al cliente (anotado)", "Cobré", "Costo proveedor", "Costo despacho",
+        "Repuestos instalados", "Me cobraron", "Queda (margen)", "Valorizado (referencia)")}
+    _COL_MARGEN = headers.index("Queda (margen)") + 1
+    _COL_PCT = headers.index("% margen") + 1
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=NCOLS)
     tcell = ws.cell(row=1, column=1,
                     value=f"ILUS Fitness · Órdenes de Trabajo  —  {alcance}"
@@ -107073,8 +107294,15 @@ def ot2_reporte_xlsx():
     # dinero total está fuera de Servicio Técnico". "sstt" es el único
     # centro que Daniel SÍ considera propio de Servicio Técnico -- vacío/
     # NULL cuenta como "fuera" porque tampoco es atribuible por defecto.
-    fin_tot = {"cobrado": 0.0, "proveedor": 0.0, "despacho": 0.0, "margen": 0.0,
-               "no_sstt_ot": 0, "no_sstt_cobrado": 0.0, "no_sstt_margen": 0.0}
+    # 💰 2026-10-07 (revisión adversarial): el bloque de finanzas del Resumen ya no suma por su cuenta: es
+    # _ot_fin_agregado (la MISMA suma de Vida del cliente, el panel de costos por técnico y el Agente) sobre las
+    # OT con algún dato de plata. Mantención de contrato y trabajo interno van aparte (se pagan con el contrato
+    # / no son negocio con nadie) y las OT sin medir también: así Cobrado − Proveedor − Despacho − Repuestos
+    # vuelve a dar el Margen. Acá solo se suman los tres costos de las OT que entran al margen.
+    fin_tot = {"proveedor": 0.0, "despacho": 0.0, "repuestos": 0.0, "no_sstt_ot": 0}
+    _fins_res, _fins_res_no_sstt = [], []
+    # 💰 2026-10-07: la cuenta de cada OT con la regla única (repuestos instalados en UNA consulta).
+    _fins = _ot_fin_lote(rows)
     r = 3
     for f in rows:
         estado = (f.get("estado") or "").lower()
@@ -107112,38 +107340,51 @@ def ot2_reporte_xlsx():
         if not f.get("numero_ticket"):
             obs.append("Sin ticket de origen")
 
-        # Margen = costo (precio cliente) - (costo_proveedor + costo_despacho).
-        # Misma fórmula que `recalcular()` en ot_ejecutar.html (2026-08-27).
-        # "—" solo cuando NO hay ningún dato financiero declarado; si hay
-        # costo proveedor/despacho pero no precio, el margen igual se
-        # calcula (da negativo) porque eso también es información real: un
-        # trabajo con costo pero sin cobro declarado.
-        _tiene_finanzas = (f.get("costo") is not None
-                            or f.get("costo_proveedor") is not None
-                            or f.get("costo_despacho") is not None)
-        _precio = float(f.get("costo") or 0)
+        # 💰 2026-10-07 — MODELO ÚNICO (Daniel): la plata de la fila es la
+        # cuenta de la OT (_ot_finanzas), la misma de su pantalla. Antes el
+        # margen era `costo` (el «Precio al cliente» anotado) − proveedor −
+        # despacho: una garantía con valor salía como venta y los repuestos
+        # instalados no contaban. Ahora: Queda = Cobré − Me cobraron (técnico
+        # + despacho + repuestos instalados), y "—" cuando a la OT le falta un
+        # dato (lo cobrado o lo que cobró el técnico): se dice en
+        # Observaciones en vez de inventar una pérdida.
+        _fin = _fins.get(int(f["id"])) or _ot_finanzas(f)
+        _cobre = _fin["cobre"]["total"]
         _cprov = float(f.get("costo_proveedor") or 0)
         _cdesp = float(f.get("costo_despacho") or 0)
-        margen = margen_pct = None
+        _crep = float(_fin["me_cobraron"]["repuestos"] or 0)
+        _tiene_finanzas = ((_fin["cobra"] and _fin["cobre"]["hay"])
+                           or f.get("costo_proveedor") is not None
+                           or f.get("costo_despacho") is not None or _crep > 0)
+        # `_precio` (lo cobrado) lo siguen usando las hojas Por técnico / Por
+        # centro de costo / Por tipo: ahora es el "Cobré" de la cuenta única.
+        _precio = _cobre
+        margen = _fin["queda"]["total"] if _fin["queda"]["mostrar"] else None
+        margen_pct = _fin["queda"]["pct"]
+        # Revisión 2026-10-07: en los totales (Resumen y hojas por técnico / centro / tipo) la mantención de
+        # contrato y el trabajo interno NO restan al margen: van aparte con lo que nos costaron
+        # (_OT_FIN_AGG_APARTE, mismo criterio que _ot_fin_agregado). En la fila de la OT sí se ven.
+        _es_aparte = _fin["cobertura"] in _OT_FIN_AGG_APARTE
+        _margen_grupo = None if _es_aparte else margen
+        _aparte_costo = float(_fin["me_cobraron"]["total"] or 0) if _es_aparte else 0.0
         if _tiene_finanzas:
-            margen = _precio - (_cprov + _cdesp)
-            margen_pct = (margen / _precio * 100.0) if _precio > 0 else None
-            fin_tot["cobrado"] += _precio
-            fin_tot["proveedor"] += _cprov
-            fin_tot["despacho"] += _cdesp
-            fin_tot["margen"] += margen
+            _fins_res.append(_fin)
+            if not _es_aparte and _fin["queda"]["mostrar"]:
+                fin_tot["proveedor"] += _cprov
+                fin_tot["despacho"] += _cdesp
+                fin_tot["repuestos"] += _crep
             if (f.get("centro_costo") or "") != "sstt":
                 fin_tot["no_sstt_ot"] += 1
-                fin_tot["no_sstt_cobrado"] += _precio
-                fin_tot["no_sstt_margen"] += margen
+                _fins_res_no_sstt.append(_fin)
             # 🐛 2026-09-02: distinguir "esta OT perdió plata" de "nadie
-            # declaró cuánto se cobró". Antes las dos salían como "Margen
-            # negativo", y como el bug de `costo` dejaba en NULL el precio
-            # de TODA OT de cliente, el reporte marcaba pérdida en bloque.
-            if f.get("costo") is None and (_cprov or _cdesp):
-                obs.append("Falta el precio al cliente (margen no confiable)")
-            elif margen < 0:
+            # declaró cuánto se cobró" -- ahora con el rótulo de la cuenta
+            # única ("Falta lo que cobraste", "Falta lo que te cobró el
+            # técnico"...).
+            if not _fin["queda"]["mostrar"]:
+                obs.append(_fin["label"])
+            elif _fin["cobra"] and margen is not None and margen < 0:
                 obs.append("Margen negativo")
+        obs.extend(_fin["avisos"])
 
         vals = [
             f.get("numero_ot") or "", f.get("numero_ticket") or "",
@@ -107161,11 +107402,15 @@ def ot2_reporte_xlsx():
             f.get("zz_codigo") or "",
             float(f.get("zz_monto")) if f.get("zz_monto") is not None else None,
             float(f.get("costo")) if f.get("costo") is not None else None,
+            (_cobre if (_fin["cobre"]["hay"] or not _fin["cobra"]) else None),
             (float(f.get("costo_proveedor")) if f.get("costo_proveedor") is not None else None),
             (float(f.get("costo_despacho")) if f.get("costo_despacho") is not None else None),
+            (_crep if _crep else None),
+            (_fin["me_cobraron"]["total"] if _tiene_finanzas else None),
             margen,
             (round(margen_pct, 1) if margen_pct is not None else None),
-            f.get("cubierto_por") or "", f.get("estado_facturacion") or "",
+            _fin["valorizado"]["monto"],
+            _fin["cobertura_txt"], f.get("estado_facturacion") or "",
             ((f.get("factura_tido") or "") + " " + (f.get("factura_nudo") or "")).strip(),
             f.get("created_by") or "", _dt_cl(f.get("created_at")),
             _dt_cl(f.get("cerrada_at")), " · ".join(obs),
@@ -107186,12 +107431,17 @@ def ot2_reporte_xlsx():
             elif ci == NCOLS and obs:
                 fill = AMBER
             cell.fill = PatternFill("solid", fgColor=fill)
-            if ci in (21, 22, 23, 24, 25) and val is not None:
+            if ci in _COLS_CLP and val is not None:
                 cell.number_format = '"$"#,##0'
-                if ci == 25 and val < 0:   # Margen negativo — salta a la vista
+                if ci == _COL_MARGEN and not _fin["cobra"]:
+                    # Revisión 2026-10-07: en una OT que no se cobra (garantía, cortesía, contrato, interno) la
+                    # Queda es "lo que nos costó", no una pérdida: azul, como en la pantalla de la OT.
+                    cell.fill = PatternFill("solid", fgColor=BLUEL)
+                    cell.font = Font(size=9, bold=True, color="3B82F6")
+                elif ci == _COL_MARGEN and val < 0:   # Margen negativo — salta a la vista
                     cell.fill = PatternFill("solid", fgColor=REDL)
                     cell.font = Font(size=9, bold=True, color="DC2626")
-            elif ci == 26 and val is not None:
+            elif ci == _COL_PCT and val is not None:
                 cell.number_format = '0.0"%"'
         r += 1
 
@@ -107212,13 +107462,14 @@ def ot2_reporte_xlsx():
         k = (tec, "Externo" if externo else "Interno")
         a = por_tecnico.setdefault(k, {"total": 0, "cerradas": 0, "abiertas": 0,
                                        "tareas_ok": 0, "tareas_tot": 0, "monto": 0.0,
-                                       "margen": 0.0})
+                                       "margen": 0.0, "aparte": 0.0})
         a["total"] += 1
         a["tareas_ok"] += n_c
         a["tareas_tot"] += n_t
         a["monto"] += _precio
-        if margen is not None:
-            a["margen"] += margen
+        if _margen_grupo is not None:
+            a["margen"] += _margen_grupo
+        a["aparte"] += _aparte_costo
         if estado in ("cerrada", "completada"):
             a["cerradas"] += 1
         else:
@@ -107227,15 +107478,16 @@ def ot2_reporte_xlsx():
         cc = f.get("centro_costo") or "(sin centro)"
         b = por_centro.setdefault(cc, {"total": 0, "monto": 0.0, "garantia": 0,
                                        "costo_proveedor": 0.0, "costo_despacho": 0.0,
-                                       "margen": 0.0, "con_margen": 0})
+                                       "margen": 0.0, "con_margen": 0, "aparte": 0.0})
         b["total"] += 1
         b["monto"] += _precio
         b["costo_proveedor"] += _cprov
         b["costo_despacho"] += _cdesp
-        if margen is not None:
-            b["margen"] += margen
+        if _margen_grupo is not None:
+            b["margen"] += _margen_grupo
             b["con_margen"] += 1
-        if (f.get("cubierto_por") or "").lower() == "garantia":
+        b["aparte"] += _aparte_costo
+        if _fin["cobertura"] == "garantia":   # 2026-10-07: garantía con la regla única (_ot_cobertura)
             b["garantia"] += 1
 
         # 🆕 2026-09-08 — hoja "Por tipo" (Daniel: "cuánto es la mantención
@@ -107244,19 +107496,20 @@ def ot2_reporte_xlsx():
         tp = f.get("tipo") or "(sin tipo)"
         t = por_tipo.setdefault(tp, {"total": 0, "monto": 0.0, "garantia": 0,
                                      "costo_proveedor": 0.0, "costo_despacho": 0.0,
-                                     "margen": 0.0, "con_margen": 0})
+                                     "margen": 0.0, "con_margen": 0, "aparte": 0.0})
         t["total"] += 1
         t["monto"] += _precio
         t["costo_proveedor"] += _cprov
         t["costo_despacho"] += _cdesp
-        if margen is not None:
-            t["margen"] += margen
+        if _margen_grupo is not None:
+            t["margen"] += _margen_grupo
             t["con_margen"] += 1
-        if (f.get("cubierto_por") or "").lower() == "garantia":
+        t["aparte"] += _aparte_costo
+        if _fin["cobertura"] == "garantia":   # 2026-10-07: garantía con la regla única (_ot_cobertura)
             t["garantia"] += 1
 
     widths = [15, 12, 30, 13, 15, 34, 30, 18, 11, 16, 14, 22, 10, 15, 8, 15,
-              9, 9, 16, 16, 13, 13, 14, 14, 14, 11, 12, 17, 16, 16, 16, 16, 40]
+              9, 9, 16, 16, 13, 14, 13, 14, 14, 14, 14, 14, 11, 14, 26, 17, 16, 16, 16, 16, 40]
     for ci, w in enumerate(widths[:NCOLS], 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
     ws.freeze_panes = "C3"
@@ -107264,9 +107517,10 @@ def ot2_reporte_xlsx():
 
     # ── Hoja 2: Por técnico ───────────────────────────────────────────
     ws2 = wb.create_sheet("Por técnico")
+    # 2026-10-07: "Margen" sin contrato ni interno; lo que costaron va en su propia columna (al final).
     h2 = ["Técnico", "Tipo", "OT totales", "Cerradas", "Abiertas",
           "Tareas hechas", "Tareas totales", "% avance", "Monto asociado",
-          "Margen"]
+          "Margen", "Contrato e interno (aparte, nos costó)"]
     for ci, h in enumerate(h2, 1):
         _hdr(ws2.cell(row=1, column=ci), h)
     r2 = 2
@@ -107274,15 +107528,15 @@ def ot2_reporte_xlsx():
         pct = int(round(a["tareas_ok"] * 100.0 / a["tareas_tot"])) if a["tareas_tot"] else 0
         for ci, val in enumerate([tec, tipo, a["total"], a["cerradas"], a["abiertas"],
                                   a["tareas_ok"], a["tareas_tot"], pct, a["monto"],
-                                  a["margen"]], 1):
+                                  a["margen"], a["aparte"]], 1):
             c = ws2.cell(row=r2, column=ci, value=val)
             c.font = Font(size=9)
             c.border = border
             c.fill = PatternFill("solid", fgColor=LGRAY if r2 % 2 == 0 else "FFFFFF")
-            if ci in (9, 10):
+            if ci in (9, 10, 11):
                 c.number_format = '"$"#,##0'
         r2 += 1
-    for ci, w in enumerate([26, 10, 12, 11, 11, 14, 14, 11, 16, 16], 1):
+    for ci, w in enumerate([26, 10, 12, 11, 11, 14, 14, 11, 16, 16, 20], 1):
         ws2.column_dimensions[get_column_letter(ci)].width = w
     ws2.freeze_panes = "A2"
 
@@ -107293,24 +107547,26 @@ def ot2_reporte_xlsx():
     # campos nuevos de esta noche) y una fila de totales "fuera de SSTT"
     # -- la pregunta exacta de Daniel: "cuánto dinero hay en juego".
     ws3 = wb.create_sheet("Por centro de costo")
+    # 2026-10-07: "Margen total" sin contrato ni interno; lo que costaron va en su propia columna (al final).
     h3 = ["Centro de costo", "OT", "Monto asociado (cobrado)",
-          "Costo proveedor", "Costo despacho", "Margen total", "En garantía"]
+          "Costo proveedor", "Costo despacho", "Margen total", "En garantía",
+          "Contrato e interno (aparte, nos costó)"]
     for ci, h in enumerate(h3, 1):
         _hdr(ws3.cell(row=1, column=ci), h)
     r3 = 2
     _fuera_sstt = {"total": 0, "monto": 0.0, "costo_proveedor": 0.0,
-                   "costo_despacho": 0.0, "margen": 0.0, "garantia": 0}
+                   "costo_despacho": 0.0, "margen": 0.0, "garantia": 0, "aparte": 0.0}
     for cc, b in sorted(por_centro.items(), key=lambda x: -x[1]["monto"]):
         for ci, val in enumerate([_LBL_CC.get(cc, cc), b["total"], b["monto"],
                                   b["costo_proveedor"], b["costo_despacho"],
-                                  b["margen"], b["garantia"]], 1):
+                                  b["margen"], b["garantia"], b["aparte"]], 1):
             c = ws3.cell(row=r3, column=ci, value=val)
             c.font = Font(size=9, bold=(ci == 1))
             c.border = border
             c.fill = PatternFill("solid", fgColor=(
                 REDL if cc == "(sin centro)" else
                 LGRAY if r3 % 2 == 0 else "FFFFFF"))
-            if ci in (3, 4, 5, 6):
+            if ci in (3, 4, 5, 6, 8):
                 c.number_format = '"$"#,##0'
         r3 += 1
         # "sstt" (o vacío ya normalizado a "(sin centro)") queda excluido:
@@ -107322,19 +107578,20 @@ def ot2_reporte_xlsx():
             _fuera_sstt["costo_despacho"] += b["costo_despacho"]
             _fuera_sstt["margen"] += b["margen"]
             _fuera_sstt["garantia"] += b["garantia"]
+            _fuera_sstt["aparte"] += b["aparte"]
     r3 += 1
     for ci, val in enumerate(
         ["TOTAL fuera de Servicio Técnico", _fuera_sstt["total"],
          _fuera_sstt["monto"], _fuera_sstt["costo_proveedor"],
          _fuera_sstt["costo_despacho"], _fuera_sstt["margen"],
-         _fuera_sstt["garantia"]], 1):
+         _fuera_sstt["garantia"], _fuera_sstt["aparte"]], 1):
         c = ws3.cell(row=r3, column=ci, value=val)
         c.font = Font(size=10, bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="DC2626")
         c.border = border
-        if ci in (3, 4, 5, 6):
+        if ci in (3, 4, 5, 6, 8):
             c.number_format = '"$"#,##0'
-    for ci, w in enumerate([30, 10, 18, 16, 16, 14, 13], 1):
+    for ci, w in enumerate([30, 10, 18, 16, 16, 14, 13, 20], 1):
         ws3.column_dimensions[get_column_letter(ci)].width = w
     ws3.freeze_panes = "A2"
 
@@ -107345,8 +107602,10 @@ def ot2_reporte_xlsx():
     # (mantención preventiva/correctiva, instalación, inspección, garantía,
     # trabajo de bodega, etc. -- ver _TIPO_OT_LABEL).
     ws3b = wb.create_sheet("Por tipo")
+    # 2026-10-07: "Margen total" sin contrato ni interno; lo que costaron va en su propia columna (al final).
     h3b = ["Tipo de OT", "OT", "Monto cobrado", "Costo proveedor",
-           "Costo despacho", "Margen total", "En garantía"]
+           "Costo despacho", "Margen total", "En garantía",
+           "Contrato e interno (aparte, nos costó)"]
     for ci, h in enumerate(h3b, 1):
         _hdr(ws3b.cell(row=1, column=ci), h)
     r3b = 2
@@ -107354,14 +107613,14 @@ def ot2_reporte_xlsx():
         _lbl_tp = _TIPO_OT_LABEL.get(tp, tp) if tp != "(sin tipo)" else tp
         for ci, val in enumerate([_lbl_tp, t["total"], t["monto"],
                                   t["costo_proveedor"], t["costo_despacho"],
-                                  t["margen"], t["garantia"]], 1):
+                                  t["margen"], t["garantia"], t["aparte"]], 1):
             c = ws3b.cell(row=r3b, column=ci, value=val)
             c.font = Font(size=9, bold=(ci == 1))
             c.border = border
             c.fill = PatternFill("solid", fgColor=(
                 REDL if tp == "(sin tipo)" else
                 LGRAY if r3b % 2 == 0 else "FFFFFF"))
-            if ci in (3, 4, 5, 6):
+            if ci in (3, 4, 5, 6, 8):
                 c.number_format = '"$"#,##0'
         r3b += 1
     r3b += 1
@@ -107370,18 +107629,19 @@ def ot2_reporte_xlsx():
                  "costo_proveedor": sum(t["costo_proveedor"] for t in por_tipo.values()),
                  "costo_despacho": sum(t["costo_despacho"] for t in por_tipo.values()),
                  "margen": sum(t["margen"] for t in por_tipo.values()),
-                 "garantia": sum(t["garantia"] for t in por_tipo.values())}
+                 "garantia": sum(t["garantia"] for t in por_tipo.values()),
+                 "aparte": sum(t["aparte"] for t in por_tipo.values())}
     for ci, val in enumerate(
         ["TOTAL", _tot_tipo["total"], _tot_tipo["monto"],
          _tot_tipo["costo_proveedor"], _tot_tipo["costo_despacho"],
-         _tot_tipo["margen"], _tot_tipo["garantia"]], 1):
+         _tot_tipo["margen"], _tot_tipo["garantia"], _tot_tipo["aparte"]], 1):
         c = ws3b.cell(row=r3b, column=ci, value=val)
         c.font = Font(size=10, bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="0A0A0A")
         c.border = border
-        if ci in (3, 4, 5, 6):
+        if ci in (3, 4, 5, 6, 8):
             c.number_format = '"$"#,##0'
-    for ci, w in enumerate([26, 10, 16, 16, 16, 14, 13], 1):
+    for ci, w in enumerate([26, 10, 16, 16, 16, 14, 13, 20], 1):
         ws3b.column_dimensions[get_column_letter(ci)].width = w
     ws3b.freeze_panes = "A2"
 
@@ -107413,18 +107673,39 @@ def ot2_reporte_xlsx():
     # saber qué OT están comprometidas con centros de costo diferentes a
     # servicio técnico... yo me estaría armando un buen reporte" -- este es
     # el bloque que responde exactamente esa pregunta en una sola mirada.
-    _pct_no_sstt = (fin_tot["no_sstt_cobrado"] / fin_tot["cobrado"] * 100.0
-                    ) if fin_tot["cobrado"] else 0.0
-    filas_res += [("", ""), ("— Finanzas —", "")]
-    filas_res.append(("Monto cobrado total", fin_tot["cobrado"], True))
+    # 💰 2026-10-07 (revisión adversarial): misma suma que Vida del cliente / costos por técnico / Agente
+    # (_ot_fin_agregado). "Monto cobrado" es el de las OT que se pueden medir, así que Cobrado − Proveedor −
+    # Despacho − Repuestos = Margen (antes de esta revisión sumaba también lo cobrado en OT sin medir y restaba
+    # la "Queda" de contrato e interno). Lo que queda fuera se muestra aparte, con su monto: no se esconde.
+    _agg = _ot_fin_agregado(_fins_res)
+    _agg_ns = _ot_fin_agregado(_fins_res_no_sstt)
+    _ap_ctr = _agg["aparte"].get("contrato") or {}
+    _ap_int = _agg["aparte"].get("interno") or {}
+    _ap_ns = sum(float(x.get("costo") or 0) for x in _agg_ns["aparte"].values())
+    _pct_no_sstt = (_agg_ns["cobre"] / _agg["cobre"] * 100.0) if _agg["cobre"] else 0.0
+    filas_res += [("", ""), ("— Finanzas (la cuenta de cada OT: Cobré − Me cobraron = Queda) —", "")]
+    filas_res.append(("OT que se pueden medir", _agg["n"]))
+    filas_res.append(("Monto cobrado (OT que se pueden medir)", _agg["cobre"], True))
     filas_res.append(("Costo proveedor total", fin_tot["proveedor"], True))
     filas_res.append(("Costo despacho total", fin_tot["despacho"], True))
-    filas_res.append(("Margen total", fin_tot["margen"], True))
+    filas_res.append(("Repuestos instalados total", fin_tot["repuestos"], True))
+    filas_res.append(("Margen total (Queda)", _agg["queda"], True))
+    filas_res.append((f"  incluye garantía y cortesía ({_agg['n_no_cobra']} OT, no se cobran): nos costó",
+                      _agg["costo_no_cobra"], True))
+    filas_res += [("", ""), ("— Aparte (no entran al margen) —", "")]
+    filas_res.append((f"Cobrado en OT sin medir ({_agg['n_fuera']} OT: falta lo cobrado, lo que cobró "
+                      f"el técnico o el despacho)", _agg["cobre_fuera"], True))
+    filas_res.append((f"Mantención de contrato ({int(_ap_ctr.get('n') or 0)} OT, se paga con el contrato): "
+                      f"nos costó", float(_ap_ctr.get("costo") or 0), True))
+    filas_res.append((f"Trabajo interno ({int(_ap_int.get('n') or 0)} OT): nos costó",
+                      float(_ap_int.get("costo") or 0), True))
     filas_res += [("", ""), ("— Fuera de Servicio Técnico —", "")]
     filas_res.append(("OT con centro Logística/Comercial/sin definir",
                       fin_tot["no_sstt_ot"]))
-    filas_res.append(("Monto cobrado fuera de SSTT", fin_tot["no_sstt_cobrado"], True))
-    filas_res.append(("Margen fuera de SSTT", fin_tot["no_sstt_margen"], True))
+    filas_res.append(("Monto cobrado fuera de SSTT", _agg_ns["cobre"], True))
+    filas_res.append(("Margen fuera de SSTT", _agg_ns["queda"], True))
+    filas_res.append(("Contrato e interno fuera de SSTT (aparte): nos costó", _ap_ns, True))
+    filas_res.append(("Cobrado en OT sin medir fuera de SSTT", _agg_ns["cobre_fuera"], True))
     filas_res.append(("% del monto cobrado que es fuera de SSTT",
                       f"{_pct_no_sstt:.1f}%"))
     if len(rows) >= _OT2_EXPORT_LIMIT:
@@ -110359,10 +110640,19 @@ def mant_ot_ficha(vid):
         _creator_username == (_u_ficha.get("username") or "").strip().lower()
     )
     es_superadmin_flag = (_rol_familia(_role_ficha) == "superadmin")
+    # 💰 2026-10-07 (modelo único, Daniel): la pastilla de plata de esta pantalla vieja muestra lo COBRADO
+    # según la cuenta única de la OT (_ot_finanzas), no el «Precio al cliente» anotado. Nunca a un técnico.
+    fin_ot = None
+    if not _es_rol_tecnico():
+        try:
+            fin_ot = _ot_fin_lote([visita], repuestos=False).get(int(visita["id"]))
+        except Exception as _e_fin:
+            print(f"[ot-ficha] finanzas vid={vid}: {type(_e_fin).__name__}", flush=True)
 
     return render_template(
         "mantenciones/ot_ficha.html",
         visita=visita,
+        fin_ot=fin_ot,
         tecnicos=tecnicos,
         maquinas=maquinas,
         stats={
@@ -120597,36 +120887,50 @@ def mant_analytics_modalidad():
     if _es_rol_tecnico():
         return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
     try:
+        # 💰 2026-10-07 (modelo único "Cobré − Me cobraron = Queda", Daniel): se agrupa por la cobertura de la
+        # cuenta única (_ot_cobertura: ¿se le cobra?) y la plata sale de _ot_finanzas. Antes era
+        # modalidad_cobro + SUM(costo): el valor de una garantía o un estimado salían como plata de la
+        # modalidad, y la mantención de contrato quedaba como "Pagado". Canceladas/anuladas fuera (no hubo
+        # trabajo). Para lo que se cobra se muestra lo cobrado; para lo que no, lo que nos costó.
         rows = mysql_fetchall(
-            "SELECT COALESCE(modalidad_cobro,'pagado') AS modalidad, "
-            "       COUNT(*) AS n, "
-            "       COALESCE(SUM(costo),0) AS costo_visitas, "
-            "       COALESCE(AVG(duracion_real_min),0) AS dur_prom "
-            "  FROM mant_visitas "
-            " WHERE fecha_programada >= DATE_SUB(CURDATE(), INTERVAL 180 DAY) "
-            " GROUP BY modalidad "
-            " ORDER BY n DESC"
+            "SELECT v.id, v.duracion_real_min, " + _ot_fin_cols_sql("v") + " "
+            "  FROM mant_visitas v "
+            " WHERE v.fecha_programada >= DATE_SUB(CURDATE(), INTERVAL 180 DAY) "
+            "   AND LOWER(COALESCE(v.estado,'')) NOT IN ('cancelada','anulada')"
         ) or []
-        total_n = sum(r["n"] or 0 for r in rows) or 1
-        MOD_LBL = {
-            "pagado":"Pagado","garantia":"Garantía",
-            "sin_costo":"Sin costo","interno":"Interno",
-        }
+        fins = _ot_fin_lote(rows)
         MOD_COLOR = {
-            "pagado":"#16a34a","garantia":"#dc2626",
-            "sin_costo":"#9ca3af","interno":"#7c3aed",
+            "cobra": "#16a34a", "garantia": "#dc2626", "sin_costo": "#9ca3af",
+            "interno": "#7c3aed", "contrato": "#3b82f6",
         }
+        grupos = {}
+        for r in rows:
+            f = fins.get(int(r["id"]))
+            if not f:
+                continue
+            g = grupos.setdefault(f["cobertura"], {"n": 0, "cobrado": 0.0, "nos_costo": 0.0, "dur": 0.0, "n_dur": 0})
+            g["n"] += 1
+            g["cobrado"] += f["cobre"]["total"]
+            g["nos_costo"] += f["me_cobraron"]["total"]
+            if r.get("duracion_real_min") is not None:     # mismo criterio que AVG() de SQL: ignora vacíos
+                g["dur"] += float(r["duracion_real_min"] or 0)
+                g["n_dur"] += 1
+        total_n = sum(g["n"] for g in grupos.values()) or 1
         return jsonify({
             "ok": True,
             "modalidades": [{
-                "modalidad": r["modalidad"],
-                "label": MOD_LBL.get(r["modalidad"], r["modalidad"]),
-                "color": MOD_COLOR.get(r["modalidad"], "#6b7280"),
-                "n": int(r["n"] or 0),
-                "pct": round((int(r["n"] or 0) * 100.0) / total_n, 1),
-                "costo_visitas": float(r["costo_visitas"] or 0),
-                "duracion_promedio_min": round(float(r["dur_prom"] or 0), 1),
-            } for r in rows],
+                "modalidad": cob,
+                "label": _OT_FIN_COBERTURA_CORTA.get(cob, cob),
+                "color": MOD_COLOR.get(cob, "#6b7280"),
+                "cobra": cob == "cobra",
+                "n": g["n"],
+                "pct": round(g["n"] * 100.0 / total_n, 1),
+                # Mismo nombre de siempre: lo cobrado si se cobra, lo que nos costó si no.
+                "costo_visitas": round(g["cobrado"] if cob == "cobra" else g["nos_costo"], 2),
+                "cobrado": round(g["cobrado"], 2),
+                "nos_costo": round(g["nos_costo"], 2),
+                "duracion_promedio_min": round(g["dur"] / g["n_dur"], 1) if g["n_dur"] else 0.0,
+            } for cob, g in sorted(grupos.items(), key=lambda kv: -kv[1]["n"])],
             "total_ot": total_n,
         })
     except Exception as e:
@@ -120992,13 +121296,33 @@ def mant_analisis():
     visitas_mes = mysql_fetchall(
         """SELECT YEAR(fecha_programada) AS anio, MONTH(fecha_programada) AS mes,
                   COUNT(*) AS total,
-                  SUM(estado='completada') AS completadas,
-                  COALESCE(SUM(costo),0) AS ingresos_visitas
+                  SUM(estado='completada') AS completadas
            FROM mant_visitas
            WHERE fecha_programada >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
            GROUP BY anio, mes ORDER BY anio, mes""",
         ()
     )
+    # 💰 2026-10-07 (modelo único, Daniel): "ingresos de visitas" = lo COBRADO en cada OT según la cuenta
+    # única (_ot_finanzas). Antes era SUM(costo): sumaba el valor de las garantías y el de las mantenciones de
+    # contrato, que además ya están en el MRR (se contaban dos veces). Canceladas/anuladas fuera.
+    try:
+        _filas_mes = mysql_fetchall(
+            "SELECT v.id, YEAR(v.fecha_programada) AS anio, MONTH(v.fecha_programada) AS mes, "
+            "       " + _ot_fin_cols_sql("v") + " FROM mant_visitas v "
+            " WHERE v.fecha_programada >= DATE_SUB(NOW(), INTERVAL 6 MONTH) "
+            "   AND LOWER(COALESCE(v.estado,'')) NOT IN ('cancelada','anulada')") or []
+        _fins_mes = _ot_fin_lote(_filas_mes, repuestos=False)
+        _ing = {}
+        for _r in _filas_mes:
+            _f = _fins_mes.get(int(_r["id"]))
+            if _f:
+                _k = (_r.get("anio"), _r.get("mes"))
+                _ing[_k] = _ing.get(_k, 0.0) + _f["cobre"]["total"]
+    except Exception as _e_ing:
+        print(f"[analisis] ingresos visitas: {type(_e_ing).__name__}", flush=True)
+        _ing = {}
+    visitas_mes = [dict(r, ingresos_visitas=round(_ing.get((r.get("anio"), r.get("mes")), 0.0), 2))
+                   for r in (visitas_mes or [])]
     # Top clientes por valor
     top_clientes = mysql_fetchall(
         """SELECT c.razon_social,
@@ -122576,11 +122900,13 @@ def _cliente_inteligencia(cid, reglas=None):
     ct = dict(ct) if ct else None
 
     try:
+        # 💰 2026-10-07: + las columnas de la cuenta única (_ot_fin_cols_sql), para que la plata del Agente y
+        # del Radar sea la misma de la OT.
         visitas = mysql_fetchall(
-            "SELECT id, titulo, tipo, estado, fecha_programada, fecha_realizada, costo, costo_real, "
-            "       cubierto_por, es_retroactiva, estado_facturacion, contrato_id, levantamiento_id, "
-            "       costo_proveedor, proveedor_tipo, proveedor_nombre "
-            "  FROM mant_visitas WHERE cliente_id=%s", (cid,)) or []
+            "SELECT v.id, v.titulo, v.estado, v.fecha_programada, v.fecha_realizada, v.costo_real, "
+            "       v.es_retroactiva, v.estado_facturacion, v.levantamiento_id, v.proveedor_nombre, "
+            "       " + _ot_fin_cols_sql("v") + " "
+            "  FROM mant_visitas v WHERE v.cliente_id=%s", (cid,)) or []
     except Exception:
         # Fallback pre-migración (columnas de finanzas aún no creadas)
         visitas = mysql_fetchall(
@@ -122588,6 +122914,13 @@ def _cliente_inteligencia(cid, reglas=None):
             "       cubierto_por, es_retroactiva, estado_facturacion, contrato_id, levantamiento_id "
             "  FROM mant_visitas WHERE cliente_id=%s", (cid,)) or []
     visitas = [dict(v) for v in visitas]
+    # 💰 2026-10-07 (modelo único "Cobré − Me cobraron = Queda", Daniel): la plata de cada OT del cliente sale
+    # de _ot_finanzas (la cuenta de la OT), con los repuestos instalados en UNA consulta.
+    try:
+        _fins_cli = _ot_fin_lote(visitas)
+    except Exception as _e_fin:
+        print(f"[intel] finanzas cid={cid}: {type(_e_fin).__name__}", flush=True)
+        _fins_cli = {}
 
     faltantes = []
 
@@ -122630,7 +122963,9 @@ def _cliente_inteligencia(cid, reglas=None):
                 "titulo": v.get("titulo") or "",
                 "estado": est, "cubierto_por": (v.get("cubierto_por") or "contrato"),
                 "cobertura_label": _cob_label.get((v.get("cubierto_por") or "contrato"), "Contrato"),
-                "costo": float(v.get("costo_real") or v.get("costo") or 0),
+                # 2026-10-07: lo COBRADO según la cuenta única (antes `costo_real or costo`: una garantía con
+                # valor o un estimado se sumaban al "gasto histórico" del cliente como si los hubiera pagado).
+                "costo": float(((_fins_cli.get(v.get("id")) or {}).get("cobre") or {}).get("total") or 0),
                 "es_retroactiva": bool(v.get("es_retroactiva")),
             })
         elif est in ("programada", "reagendada", "en_curso") and fp:
@@ -122872,37 +123207,52 @@ def _cliente_inteligencia(cid, reglas=None):
 
     # ── FINANZAS (Daniel 2026-06-10): margen = lo que cobro - lo que me cobra el
     # proveedor (interno/externo), visita por visita. "Algo bien profesional". ──
-    fin_items = []
+    # 💰 2026-10-07 (modelo único "Cobré − Me cobraron = Queda", Daniel): cada servicio es la cuenta de la OT
+    # (_ot_finanzas) y el total es su suma (_ot_fin_agregado), igual que Vida del cliente. Antes se usaba
+    # `costo_real or costo` como cobrado y solo costo_proveedor como costo (se ignoraba el despacho y los
+    # repuestos), y solo se miraban las OT 'completada' (las de OT 2.0 terminan en 'cerrada'). El Radar lee
+    # `margen_pct` de aquí, así que también queda con la misma cuenta.
+    fin_items, _fins_items = [], []
     for v in visitas:
-        if (v.get("estado") or "").lower() != "completada":
+        if (v.get("estado") or "").lower() not in ("completada", "cerrada"):
             continue
-        _cobr = float(v.get("costo_real") or v.get("costo") or 0)
-        _cprov = float(v.get("costo_proveedor") or 0)
-        if _cobr <= 0 and _cprov <= 0:
+        _f = _fins_cli.get(v.get("id"))
+        if not _f:
+            continue
+        _cobr = float(_f["cobre"]["total"] or 0)
+        _me = float(_f["me_cobraron"]["total"] or 0)
+        if _cobr <= 0 and _me <= 0 and not _f["me_cobraron"]["falta_tecnico"]:
             continue
         _fv = _intel_as_date(v.get("fecha_realizada")) or _intel_as_date(v.get("fecha_programada"))
-        _mg = _cobr - _cprov
+        _con_queda = bool(_f["queda"]["mostrar"])
+        _fins_items.append(_f)
         fin_items.append({
             "id": v.get("id"), "fecha": str(_fv) if _fv else None,
             "tipo_label": _tipo_label.get(v.get("tipo") or "otro", (v.get("tipo") or "otro").capitalize()),
-            "cobrado": _cobr, "costo_proveedor": _cprov,
+            # `costo_proveedor` conserva su nombre (lo lee el panel) pero ahora es "Me cobraron":
+            # técnico + despacho + repuestos instalados.
+            "cobrado": _cobr, "costo_proveedor": _me,
             "proveedor_tipo": (v.get("proveedor_tipo") or None),
             "proveedor_nombre": (v.get("proveedor_nombre") or None),
-            "margen": _mg,
-            "margen_pct": (round(_mg * 100.0 / _cobr, 1) if _cobr > 0 else None),
-            "sin_costo_prov": _cprov <= 0,
+            "margen": (_f["queda"]["total"] if _con_queda else None),
+            "margen_pct": (_f["queda"]["pct"] if _con_queda else None),
+            "sin_costo_prov": bool(_f["me_cobraron"]["falta_tecnico"]),
+            "clase": _f["clase"], "label": _f["label"], "cobertura": _f["cobertura_txt"],
         })
     fin_items.sort(key=lambda x: (x["fecha"] or ""), reverse=True)
-    _f_cobr = sum(i["cobrado"] for i in fin_items)
-    _f_prov = sum(i["costo_proveedor"] for i in fin_items)
+    _agg_cli = _ot_fin_agregado(_fins_items)
     finanzas = {
         "items": fin_items[:25],
         "n_servicios": len(fin_items),
-        "total_cobrado": _f_cobr,
-        "total_costo_proveedor": _f_prov,
-        "margen_clp": _f_cobr - _f_prov,
-        "margen_pct": (round((_f_cobr - _f_prov) * 100.0 / _f_cobr, 1) if _f_cobr > 0 else None),
+        "total_cobrado": _agg_cli["cobre"],
+        "total_costo_proveedor": _agg_cli["me_cobraron"],
+        "margen_clp": _agg_cli["queda"],
+        "margen_pct": _agg_cli["pct"],
+        "margen_clase": _agg_cli["clase"],
         "sin_costo_proveedor": sum(1 for i in fin_items if i["sin_costo_prov"]),
+        "n_fuera": _agg_cli["n_fuera"],
+        "n_no_cobra": _agg_cli["n_no_cobra"], "costo_no_cobra": _agg_cli["costo_no_cobra"],
+        "aparte": [{"txt": a["txt"], "n": a["n"], "costo": a["costo"]} for a in _agg_cli["aparte"].values()],
         "valor_definido": (valor_definido if valor_definido > 0 else None),
     }
 
@@ -124306,10 +124656,10 @@ def _facprov_datos(desde, hasta):
     except Exception as _e_tz:
         print(f"[facprov] tz corte: {_e_tz}", flush=True)
     filas = mysql_fetchall(
-        "SELECT v.id, v.numero_ot, v.tipo, v.cerrada_at, "
-        "       v.costo_proveedor, v.costo_despacho, v.costo, "
-        "       v.zz_monto, v.zz_envio_monto, "
-        "       v.factura_tido, v.factura_nudo, v.modalidad_cobro, v.valor_origen, "
+        # 💰 2026-10-07: las columnas de la cuenta única (_ot_fin_cols_sql) reemplazan la lista suelta de montos.
+        "SELECT v.id, v.numero_ot, v.cerrada_at, "
+        "       " + _ot_fin_cols_sql("v") + ", "
+        "       v.factura_tido, v.factura_nudo, "
         "       v.proveedor_nombre, v.tecnico_user_id, "
         "       c.razon_social AS cliente, "
         "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
@@ -124358,22 +124708,35 @@ def _facprov_datos(desde, hasta):
         # compararlo contra lo que ILUS le paga al proveedor daria un margen
         # enorme y falso.
         #
-        # Por eso tampoco se cae a `costo`: esa columna es generica (el codigo
-        # la reusa hasta para valorizar trabajo interno que no se cobra) y en
-        # algunas OT puede traer justamente el total del documento. Si no hay
-        # linea ZZ declarada, el cobro del servicio NO se sabe -- y eso se
-        # dice, no se rellena con el numero que haya a mano.
+        # Por eso `costo` (el «Precio al cliente» anotado) solo cuenta si viene
+        # de una cotizacion, un contrato o lo escribio una persona: esa columna
+        # es generica (el codigo la reusa hasta para valorizar trabajo interno
+        # que no se cobra) y «Asociar factura» copia ahi el total del documento
+        # cuando esta vacia. Si no hay linea ZZ declarada ni un cobro de verdad,
+        # el cobro del servicio NO se sabe -- y eso se dice, no se rellena con
+        # el numero que haya a mano.
         # 2026-09-20: UNA regla compartida con Facturas de proveedor
-        # (_ot_cobro_cliente): ZZ manda; sin ZZ, el valor de la OT solo si
-        # viene de cotización/contrato/manual; nunca doc_total ni estimados.
-        zz_serv, zz_env, fuente_cobro = _ot_cobro_cliente(f)
+        # (_ot_cobro_cliente).
+        # 💰 2026-10-07 (modelo único, Daniel): lo cobrado es el "Cobré" de la
+        # cuenta de la OT (_ot_finanzas): servicio + despacho, $0 si la OT no se
+        # cobra (garantía, cortesía, contrato o interno), con el resguardo de
+        # arriba sobre `costo` (_ot_cobro_facprov; revisión del mismo día: sin
+        # él, una FCV de $1.500.000 que incluye un equipo salía "Margen sano").
+        # Lo pagado al proveedor sigue siendo técnico + despacho, SIN repuestos
+        # (a_pagar_proveedor): es lo que se concilia con sus facturas.
+        _cobro = _ot_cobro_facprov(f)
+        _fin = _cobro["fin"]
+        zz_serv, zz_env, fuente_cobro = _cobro["servicio"], _cobro["envio"], _cobro["fuente"]
         cobrado = zz_serv + zz_env
-        es_garantia = (f.get("modalidad_cobro") or "").lower() == "garantia"
+        # `es_garantia` conserva su nombre (lo leen la plantilla y la serie
+        # mensual) pero ahora significa "no se cobra", con la regla única.
+        es_garantia = not _fin["cobra"]
         pagado = serv + desp
         margen = cobrado - pagado
         # Una OT sin cobro declarado NO es margen negativo: es un dato que
-        # falta. Se cuentan aparte para que el total no mienta.
-        sin_cobro = (cobrado <= 0 and not es_garantia)
+        # falta. Se cuentan aparte para que el total no mienta. Un cobro
+        # declarado en $0 sí es un dato (entra al margen).
+        sin_cobro = _cobro["sin_cobro"]
 
         # El costo del servicio se imputa al tipo de la OT; el despacho va
         # siempre a su propia bolsa aunque la OT sea de instalacion: son
@@ -124423,8 +124786,8 @@ def _facprov_datos(desde, hasta):
         _doc = ""
         if (f.get("factura_nudo") or "").strip():
             _doc = "{} {}".format(f.get("factura_tido") or "FCV", f["factura_nudo"])
-        elif (f.get("modalidad_cobro") or "").lower() == "garantia":
-            _doc = "Garantia"
+        elif es_garantia:
+            _doc = _OT_FIN_COBERTURA_CORTA.get(_fin["cobertura"], "Garantía")
 
         # Mes de cierre en hora Chile (REGLA #6): cerrada_at se guarda en UTC.
         try:
@@ -124444,6 +124807,9 @@ def _facprov_datos(desde, hasta):
             "cobrado": cobrado, "cobrado_servicio": zz_serv, "cobrado_envio": zz_env,
             "fuente_cobro": fuente_cobro, "margen": margen,
             "garantia": es_garantia, "sin_cobro": sin_cobro,
+            "cobertura": _fin["cobertura"], "cobertura_txt": _fin["cobertura_txt"],
+            "cobertura_corta": _OT_FIN_COBERTURA_CORTA.get(_fin["cobertura"], ""),
+            "avisos": _cobro["avisos"],
             "cerrada": chile_fmt_filter(f.get("cerrada_at"), "%d/%m/%Y") if f.get("cerrada_at") else "",
         })
 
@@ -124719,6 +125085,9 @@ _MFP_SELECT_OT = (
     "       v.titulo, v.prioridad, v.hora_inicio, v.fecha_realizada, v.direccion_visita, "
     "       c.rut AS cliente_rut, c.direccion AS cliente_direccion, "
     "       v.centro_costo, v.zz_codigo, v.cubierto_por, v.estado_facturacion, "
+    # 💰 2026-10-07: lo que falta para leer la plata con la cuenta única (_ot_finanzas).
+    "       v.cliente_id, v.contrato_id, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, "
+    "       " + _ot_fin_sql_contrato_real("v") + " AS contrato_real, "
     "       v.factura_tido, v.factura_nudo, v.created_by, v.created_at, "
     "       (SELECT tk1.numero_ticket FROM tk_tickets tk1 WHERE tk1.visita_id = v.id ORDER BY tk1.id LIMIT 1) AS ticket_numero, "
     "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
@@ -124728,37 +125097,84 @@ _MFP_SELECT_OT = (
 )
 
 
-_COBRO_ORIGENES_REALES = ("cotizacion", "contrato", "manual")
+# Orígenes del «Precio al cliente» anotado (`costo`) que SÍ son un cobro en las pantallas que concilian con
+# facturas de proveedor (regla del 2026-09-20, ver _ot_cobro_de_fin). 'supuesto' se suma el 2026-10-07: la cuenta
+# única lo trata como un cobro que escribió una persona (ver la nota de _OT_FIN_ORIGENES_NO_COBRO).
+_COBRO_ORIGENES_REALES = ("cotizacion", "contrato", "manual", "supuesto")
+
+
+def _ot_fin_de_fila(f):
+    """_ot_finanzas de una fila de Facturas de proveedor / Facturación de proveedores (su SELECT renombra algunos
+    montos como cliente_*). Sin repuestos: acá importa el cobro y lo que se le paga al proveedor."""
+    v = dict(f)
+    for k, alias in (("costo", "cliente_costo"), ("zz_monto", "cliente_zz_monto"),
+                     ("zz_envio_monto", "cliente_zz_envio_monto")):
+        if v.get(k) is None and v.get(alias) is not None:
+            v[k] = v.get(alias)
+    return _ot_finanzas(v, None)
+
+
+def _ot_cobro_de_fin(fin, valor_origen=None):
+    """(servicio, envío, fuente) de lo COBRADO según la cuenta única, para las pantallas que concilian con
+    facturas de proveedor. fuente: "zz" (cobro declarado: línea del documento, a mano, cotización...),
+    "valor_ot" (el «Precio al cliente» anotado, sin separar servicio y despacho) o "" (no se cobra, o falta lo
+    que cobraste).
+
+    💰 2026-10-07 (revisión adversarial): acá el «Precio al cliente» anotado (`costo`) cuenta como cobro SOLO
+    si viene de una cotización, un contrato o lo escribió una persona (valor_origen en _COBRO_ORIGENES_REALES):
+    es la regla de estas pantallas desde el 2026-09-20. Sin ese origen puede ser el total de la factura
+    («Asociar factura» lo copia en `costo` cuando está vacío) y ese total incluye los equipos vendidos -- Daniel
+    2026-09-06: «el cobro de instalación o despacho, no el neto de la factura»; daba un margen enorme y falso
+    (una FCV de $1.500.000 con un equipo salía "Margen sano"). Entonces el cobro no se sabe: fuente "".
+    La cuenta de la OT (_ot_finanzas) NO se toca: es decisión de Daniel (queda anotado para él)."""
+    c = fin["cobre"]
+    if not fin["cobra"] or not c["hay"]:
+        return 0.0, 0.0, ""
+    if (c.get("fuente") or "").startswith("precio al cliente"):
+        if (valor_origen or "").strip().lower() not in _COBRO_ORIGENES_REALES:
+            return 0.0, 0.0, ""
+        return float(c["servicio"] or 0), float(c["despacho"] or 0), "valor_ot"
+    return float(c["servicio"] or 0), float(c["despacho"] or 0), "zz"
+
+
+def _ot_cobro_facprov(f):
+    """💰 2026-10-07: la plata de UNA fila de Facturas de proveedor / Facturación de proveedores / sus Excel:
+    la cuenta única de la OT + el resguardo de estas pantallas sobre el «Precio al cliente» (_ot_cobro_de_fin).
+    Devuelve dict con fin (_ot_finanzas), servicio, envio, fuente ("zz" | "valor_ot" | ""), sin_cobro (se le
+    cobra al cliente pero no se sabe cuánto; un $0 declarado sí es un dato) y avisos."""
+    fin = _ot_fin_de_fila(f)
+    serv, env, fuente = _ot_cobro_de_fin(fin, f.get("valor_origen"))
+    sin_cobro = bool(fin["cobra"] and not fuente)
+    avisos = list(fin["avisos"])
+    if sin_cobro and fin["cobre"]["hay"]:
+        # La cuenta de la OT tomó el «Precio al cliente» como cobro y acá no se acepta: su aviso se cambia por
+        # el motivo, para que la fila no diga dos cosas distintas.
+        _tot = _ot_fin_num(f.get("costo") if f.get("costo") is not None else f.get("cliente_costo"))
+        avisos = [a for a in avisos if "«Precio al cliente» anotado: no separa" not in a]
+        avisos.append("El «Precio al cliente» anotado" + (f" ({_ot_fin_clp(_tot)})" if _tot else "")
+                      + " no cuenta como cobro: no viene de una cotización, un contrato ni lo escribió una persona"
+                        " (puede ser el total de la factura, que incluye equipos). Falta lo que cobraste.")
+    return {"fin": fin, "servicio": serv, "envio": env, "fuente": fuente, "sin_cobro": sin_cobro,
+            "avisos": avisos}
 
 
 def _ot_cobro_cliente(f):
-    """💰 Lo que ILUS le COBRA al cliente por el servicio de una OT, con UNA
-    sola regla para Facturas de proveedor y Facturación de proveedores
-    (2026-09-20, hallazgo de la revisión: las dos pantallas calculaban
-    "cobrado" distinto y el margen no cuadraba entre ellas).
+    """💰 Lo que ILUS le COBRA al cliente por una OT, con UNA sola regla para
+    Facturas de proveedor y Facturación de proveedores (2026-09-20, hallazgo
+    de la revisión: las dos pantallas calculaban "cobrado" distinto).
 
-    Regla:
-      1. Si hay línea ZZ (zz_monto), manda la ZZ: es el cobro real del
-         servicio en el documento (decisión de Daniel 2026-09-06: "el cobro
-         de instalación o despacho, no el neto de la factura").
-      2. Si no hay ZZ, el valor de la OT (`costo`) cuenta SOLO cuando su
-         origen es un cobro de verdad -- cotización, contrato o valor
-         escrito a mano (valorización obligatoria del 2026-09-15). Nunca
-         `doc_total` (incluye equipos vendidos -> margen enorme y falso),
-         ni estimado/supuesto/interno (no se cobran).
-      3. Si no hay nada de eso, el cobro NO se sabe: (0, 0, "") y las
-         pantallas lo dicen ("sin cobro declarado") en vez de rellenar.
+    💰 2026-10-07 (modelo único "Cobré − Me cobraron = Queda", Daniel): ya no
+    tiene fórmula propia -- es el "Cobré" de _ot_finanzas, la misma cuenta de
+    la OT: servicio (línea del documento o escrito a mano; nunca un estimado
+    ni ZZRETIRO) + despacho cobrado, y $0 si la OT no se cobra (garantía,
+    cortesía, contrato o trabajo interno). Sin línea declarada, el «Precio al
+    cliente» anotado cuenta SOLO si viene de una cotización, un contrato o lo
+    escribió una persona (fuente "valor_ot"; ver _ot_cobro_de_fin): si no,
+    falta lo que cobraste.
     Devuelve (servicio, envio, fuente) con fuente en {"zz", "valor_ot", ""}.
     """
-    zz = float(f.get("zz_monto") if f.get("zz_monto") is not None else (f.get("cliente_zz_monto") or 0) or 0)
-    env = float(f.get("zz_envio_monto") if f.get("zz_envio_monto") is not None else (f.get("cliente_zz_envio_monto") or 0) or 0)
-    if zz > 0:
-        return zz, env, "zz"
-    origen = (f.get("valor_origen") or "").strip().lower()
-    costo = float(f.get("costo") if f.get("costo") is not None else (f.get("cliente_costo") or 0) or 0)
-    if origen in _COBRO_ORIGENES_REALES and costo > 0:
-        return costo, env, "valor_ot"
-    return 0.0, env, ""
+    c = _ot_cobro_facprov(f)
+    return c["servicio"], c["envio"], c["fuente"]
 
 
 def _mfp_nombre_proveedor_ot(f):
@@ -124786,7 +125202,12 @@ def _mfp_fila_ot(f):
     # costo_proveedor/costo_despacho (lo que ILUS le paga AL proveedor,
     # signo contrario en el margen).
     # 2026-09-20: UNA regla compartida con Facturación (ver _ot_cobro_cliente).
-    _venta_serv, _venta_envio, _fuente_cobro = _ot_cobro_cliente(f)
+    # 💰 2026-10-07: el cobro es el "Cobré" de la cuenta única (_ot_finanzas),
+    # con el resguardo sobre el «Precio al cliente» (_ot_cobro_facprov); lo
+    # pagado al proveedor sigue siendo técnico + despacho, sin repuestos.
+    _cobro = _ot_cobro_facprov(f)
+    _fin = _cobro["fin"]
+    _venta_serv, _venta_envio, _fuente_cobro = _cobro["servicio"], _cobro["envio"], _cobro["fuente"]
     cobrado_cliente = _venta_serv + _venta_envio
     pagado_proveedor = serv + desp
     margen = cobrado_cliente - pagado_proveedor
@@ -124830,7 +125251,15 @@ def _mfp_fila_ot(f):
         # instalación puede ir por garantía igual que una mantención.
         # Sin esto un margen negativo se lee como error cuando en
         # realidad es una cobertura ya autorizada.
-        "es_garantia": (f.get("modalidad_cobro") or "").lower() == "garantia",
+        # 💰 2026-10-07: mismo nombre (lo leen plantillas, JS y el Excel), pero
+        # ahora es "no se cobra" con la regla única (_ot_cobertura): garantía,
+        # cortesía, mantención de contrato o trabajo interno. El chip dice cuál.
+        "es_garantia": not _fin["cobra"],
+        "cobertura": _fin["cobertura"], "cobertura_txt": _fin["cobertura_txt"],
+        "cobertura_corta": _OT_FIN_COBERTURA_CORTA.get(_fin["cobertura"], ""),
+        # Se cobra pero no está declarado cuánto ("Falta lo que cobraste"). Un $0 declarado sí es un dato.
+        "sin_cobro_declarado": _cobro["sin_cobro"],
+        "fin_avisos": _cobro["avisos"],
         # 🔴 2026-09-21: NULL en los dos costos = nadie decidió todavía cuánto
         # se le paga al proveedor (OT nacida por Levantamiento/Ticket, que no
         # pide esos campos). Distinto de un $0 declarado (garantía, o
@@ -125030,7 +125459,8 @@ def _mfp_resumen_filas(filas):
             t["n_sin_anexo"] += 1
         if d.get("es_garantia"):
             t["n_garantia"] += 1; t["pagado_garantia"] += pag
-        elif cob <= 0:
+        elif (d.get("sin_cobro_declarado") if "sin_cobro_declarado" in d else cob <= 0):
+            # 2026-10-07: "sin cobro" = falta lo que cobraste (cuenta única); un $0 declarado entra al margen.
             t["n_sin_cobro"] += 1; t["pagado_sin_cobro"] += pag
         else:
             t["n_comparable"] += 1
@@ -126771,10 +127201,12 @@ def mant_facturas_proveedor_por_facturar_xlsx():
             o.append("Sin anexo firmado")
         if not d.get("centro_costo"):
             o.append("Sin centro de costo")
-        if not d.get("es_garantia") and not d.get("cobrado_cliente"):
+        if d.get("sin_cobro_declarado"):
             o.append("Sin cobro declarado al cliente")
-        if (not d.get("es_garantia")) and d.get("cobrado_cliente") and (d.get("margen") or 0) < 0:
+        if (not d.get("es_garantia")) and not d.get("sin_cobro_declarado") and (d.get("margen") or 0) < 0:
             o.append("Margen negativo")
+        # 2026-10-07: los avisos de la cuenta única (ej. "ZZRETIRO no es de servicio").
+        o.extend(d.get("fin_avisos") or [])
         return " · ".join(o)
 
     cols_op = ["N° OT", "Fecha programada", "Hora", "Fecha realizada", "Fecha cierre", "Estado OT",
@@ -126814,12 +127246,14 @@ def mant_facturas_proveedor_por_facturar_xlsx():
             else:
                 obs = ""
             return base + pago + [obs]
-        _cond = ("Garantía" if d["es_garantia"] else ("Sin cobro declarado" if not d["cobrado_cliente"] else
-                 ("Cobrado (valor OT)" if d.get("fuente_cobro") == "valor_ot" else "Cobrado")))
-        _comparable = (not d["es_garantia"]) and d["cobrado_cliente"] > 0
+        # 2026-10-07: condición y cobertura con la regla única (cuenta de la OT), no con cubierto_por suelto.
+        _cond = ((d.get("cobertura_corta") or "Garantía") if d["es_garantia"] else
+                 ("Sin cobro declarado" if d.get("sin_cobro_declarado") else
+                  ("Cobrado (valor OT)" if d.get("fuente_cobro") == "valor_ot" else "Cobrado")))
+        _comparable = (not d["es_garantia"]) and not d.get("sin_cobro_declarado")
         return (base
                 + [d.get("ticket_numero") or "", _t(d.get("prioridad")), _t(d.get("centro_costo")), _cond,
-                   _t(d.get("cubierto_por")), _t(d.get("zz_codigo")), _t(d.get("documento_cliente")),
+                   _t(d.get("cobertura_txt") or d.get("cubierto_por")), _t(d.get("zz_codigo")), _t(d.get("documento_cliente")),
                    _t(d.get("estado_facturacion"))]
                 + pago
                 + [d["cobrado_cliente_serv"], d["cobrado_cliente_envio"], d["cobrado_cliente"],
@@ -126966,6 +127400,9 @@ def mant_facturas_proveedor_xlsx():
         "       v.factura_tido, v.factura_nudo, v.documentos_extra, "
         "       v.zz_monto, v.zz_envio_monto, v.costo_proveedor, v.costo_despacho, v.costo, "
         "       v.modalidad_cobro, v.cubierto_por, v.garantia_motivo, v.zz_motivo_manual, "
+        # 💰 2026-10-07: lo que falta para leer la plata con la cuenta única (_ot_finanzas).
+        "       v.zz_codigo, v.valor_origen, v.contrato_id, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, "
+        "       " + _ot_fin_sql_contrato_real("v") + " AS contrato_real, "
         "       v.diagnostico, v.proveedor_nombre, "
         "       v.firma_tecnico_at, v.firma_cliente_at, v.firma_supervisor_at, "
         "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
@@ -127086,12 +127523,15 @@ def mant_facturas_proveedor_xlsx():
         estado_ot = (r.get("estado") or "").lower()
         logrado = "Logrado" if estado_ot in ("cerrada", "completada") else "Pendiente"
         tipo = (r.get("tipo") or "").lower()
-        es_gar = ((r.get("modalidad_cobro") or "").lower() == "garantia"
-                  or (r.get("cubierto_por") or "").lower() == "garantia")
-        zz_inst = float(r.get("zz_monto") or 0)
-        zz_flete = float(r.get("zz_envio_monto") or 0)
-        cobro_inst = 0.0 if es_gar else zz_inst
-        cobro_flete = 0.0 if es_gar else zz_flete
+        # 💰 2026-10-07 (modelo único, Daniel): el cobro al cliente es el "Cobré" de la cuenta de la OT
+        # (_ot_finanzas): servicio + despacho, $0 si no se cobra (garantía, cortesía, contrato o interno).
+        # Antes sumaba zz_monto a secas: un estimado, una cotización o el $1 de ZZRETIRO salían como cobro.
+        # Lo que se le paga al técnico sigue siendo técnico + despacho, sin repuestos (se concilia con su factura).
+        # Revisión 2026-10-07: el «Precio al cliente» sin origen real no es cobro (_ot_cobro_facprov).
+        _cobro = _ot_cobro_facprov(r)
+        _fin = _cobro["fin"]
+        es_gar = not _fin["cobra"]
+        cobro_inst, cobro_flete, _fuente_cobro = _cobro["servicio"], _cobro["envio"], _cobro["fuente"]
         pago_inst = float(r.get("costo_proveedor") or 0)
         pago_flete = float(r.get("costo_despacho") or 0)
         pago_total = pago_inst + pago_flete
@@ -127124,8 +127564,11 @@ def mant_facturas_proveedor_xlsx():
             except Exception:
                 agendada = datetime.combine(fecha, datetime.min.time())
         obs_cobro = " · ".join(x for x in [
-            (f"Garantía: {r['garantia_motivo']}" if es_gar and r.get("garantia_motivo") else ("Garantía" if es_gar else "")),
-            (r.get("zz_motivo_manual") or ""), (r.get("fac_obs") or "")] if x)
+            ((f"Garantía: {r['garantia_motivo']}" if _fin["cobertura"] == "garantia" and r.get("garantia_motivo")
+              else _fin["cobertura_txt"]) if es_gar else ""),
+            ("Falta lo que cobraste" if _cobro["sin_cobro"] else ""),
+            ("Precio al cliente anotado (cotización, contrato o escrito a mano)" if _fuente_cobro == "valor_ot" else ""),
+            (r.get("zz_motivo_manual") or ""), (r.get("fac_obs") or "")] + list(_cobro["avisos"]) if x)
 
         fac_txt = ""
         if r.get("fac_id"):
@@ -127177,7 +127620,8 @@ def mant_facturas_proveedor_xlsx():
 
     # ═══ Hoja 2 · Por proveedor ═══
     ws2 = wb.create_sheet("Por proveedor")
-    cols2 = ["Proveedor", "RUT", "N° OT", "En garantía", "Pago instalación", "Pago flete", "Total pago al técnico",
+    # 2026-10-07: "En garantía" pasa a contar todas las que no se cobran (garantía, cortesía, contrato, interno).
+    cols2 = ["Proveedor", "RUT", "N° OT", "No se cobran", "Pago instalación", "Pago flete", "Total pago al técnico",
              "Cobro total al cliente", "Ganancia",
              "OT sin factura", "$ sin factura", "OT facturadas sin pagar", "$ facturado sin pagar",
              "OT pagadas", "$ pagado"]
@@ -127367,9 +127811,11 @@ def mant_facturacion_proveedores_xlsx():
                      "Cobrado envio (ZZENVIO)", "Cobrado total", "Margen",
                      "Origen del cobro"])
     for d in detalle:
-        _origen = ("Lineas ZZ del documento" if d["fuente_cobro"] == "zz"
-                   else "Garantia (no se cobra)" if d["garantia"]
-                   else "SIN LINEA ZZ DECLARADA")
+        # 2026-10-07: origen del cobro según la cuenta única de la OT.
+        _origen = ((d.get("cobertura_txt") or "No se le cobra") if d["garantia"]
+                   else "Cobro declarado (documento o a mano)" if d["fuente_cobro"] == "zz"
+                   else "Precio al cliente anotado (OT antigua)" if d["fuente_cobro"] == "valor_ot"
+                   else "SIN COBRO DECLARADO")
         ws2.append([d["numero_ot"], d["cerrada"], d["proveedor"], d["cliente"],
                     d["tipo_label"], d["documento"], d["servicio"], d["despacho"],
                     d["total"], d["cobrado_servicio"], d["cobrado_envio"],
@@ -134810,31 +135256,79 @@ def mant_cliente_finanzas(cid):
             rep_costo_total += cu * c
 
     # Visitas con costo
+    # 💰 2026-10-07 (modelo único "Cobré − Me cobraron = Queda", Daniel): lo que entra por las visitas es lo
+    # COBRADO en cada OT según la cuenta única (_ot_finanzas). Antes era SUM(costo): sumaba el valor de las
+    # garantías como ingreso y, en las mantenciones de contrato, el valor por visita -- que ya estaba en
+    # "contrato estimado" (se contaba DOS veces). La mantención de contrato tiene Cobré $0: su plata es el
+    # contrato. Lo que se le pagó a técnicos/proveedores (técnico + despacho) pasa a los costos. Los repuestos
+    # siguen saliendo de mant_repuestos, como antes (no se suman los instalados de OT 2.0 para no contar dos
+    # veces el mismo repuesto). Canceladas/anuladas fuera.
     visitas = mysql_fetchall(
-        "SELECT tipo, estado, costo, fecha_programada FROM mant_visitas "
-        "WHERE cliente_id=%s AND fecha_programada >= %s",
+        "SELECT v.id, v.estado, v.fecha_programada, " + _ot_fin_cols_sql("v") + " FROM mant_visitas v "
+        "WHERE v.cliente_id=%s AND v.fecha_programada >= %s "
+        "  AND LOWER(COALESCE(v.estado,'')) NOT IN ('cancelada','anulada')",
         (cid, fecha_corte)
-    )
-    visitas_costo = sum(float(v["costo"] or 0) for v in visitas if v.get("costo"))
-    visitas_count = len([v for v in visitas if v.get("estado")=="completada"])
+    ) or []
+    _fins_v = _ot_fin_lote(visitas, repuestos=False)
+    visitas_costo = sum(_fins_v[int(v["id"])]["cobre"]["total"] for v in visitas if int(v["id"]) in _fins_v)
+    visitas_costo_tecnicos = sum(_fins_v[int(v["id"])]["a_pagar_proveedor"] for v in visitas if int(v["id"]) in _fins_v)
+    visitas_count = len([v for v in visitas if v.get("estado") in ("completada", "cerrada")])
 
     # Contrato — estimación lineal (monto_mensual × meses_vigentes)
+    # 💰 2026-10-07 (revisión adversarial): MISMO criterio que la bandera de contrato real de la cuenta única
+    # (_OT_FIN_SQL_CONTRATO_REAL), que es la que deja en Cobré $0 a la mantención de contrato. Antes solo
+    # contaba estado='vigente': con un contrato 'indefinido' o 'por_vencer' sus preventivas quedaban en $0 y el
+    # contrato no entraba -- ingresos de menos y un margen negativo que no existe. Ahora entra el contrato real
+    # vigente, por vencer o indefinido y, si una mantención de contrato del periodo apunta a un contrato ya
+    # vencido, ese también (solo sus meses dentro del periodo, hasta el vencimiento). El "Contenedor de
+    # documentos" no es un contrato. Para un contrato activo la cuenta de meses es la misma de antes.
+    _CTR_ACTIVOS = ("vigente", "por_vencer", "indefinido")
+    _ots_ctr = [v for v in visitas
+                if ((_fins_v.get(int(v["id"])) or {}).get("cobertura")) == "contrato"]
+    _ids_ctr_ot = sorted({int(v["contrato_id"]) for v in _ots_ctr if v.get("contrato_id")})
+    _sql_ctr = ("SELECT id, estado, monto_mensual, fecha_inicio, fecha_vencimiento, es_indefinido "
+                "FROM mant_contratos WHERE cliente_id=%s "
+                "  AND COALESCE(nombre,'')<>'Contenedor de documentos' "
+                "  AND (estado IN ('vigente','por_vencer','indefinido')")
+    _p_ctr = [cid]
+    if _ids_ctr_ot:
+        _sql_ctr += " OR id IN (" + ",".join(["%s"] * len(_ids_ctr_ot)) + ")"
+        _p_ctr += _ids_ctr_ot
+    contratos = mysql_fetchall(_sql_ctr + ")", tuple(_p_ctr)) or []
     contrato_estimado = 0
-    contratos = mysql_fetchall(
-        "SELECT monto_mensual, fecha_inicio, fecha_vencimiento, es_indefinido "
-        "FROM mant_contratos WHERE cliente_id=%s AND estado='vigente'", (cid,)
-    )
     hoy = datetime.now().date()
+    _idx_hoy = hoy.year * 12 + hoy.month
+    _ctr_con_monto, _hay_activo_con_monto = set(), False
     for ct in contratos:
         m = float(ct["monto_mensual"] or 0)
         if m <= 0: continue
         fi = ct.get("fecha_inicio") or hoy
         if isinstance(fi, datetime): fi = fi.date()
-        meses_vigentes = max(0, min(meses or 12, ((hoy.year - fi.year)*12 + hoy.month - fi.month)))
+        _activo = (ct.get("estado") or "") in _CTR_ACTIVOS
+        _idx_fin = _idx_hoy
+        if not _activo:
+            fv = ct.get("fecha_vencimiento")
+            if isinstance(fv, datetime): fv = fv.date()
+            if fv and fv < hoy:
+                _idx_fin = fv.year * 12 + fv.month
+        # = min(meses, meses desde el inicio) para un contrato activo (la cuenta de siempre).
+        _idx_ini = max(fi.year * 12 + fi.month, _idx_hoy - (meses or 12))
+        meses_vigentes = max(0, _idx_fin - _idx_ini)
         contrato_estimado += m * meses_vigentes
+        _ctr_con_monto.add(int(ct["id"]))
+        _hay_activo_con_monto = _hay_activo_con_monto or _activo
+    # Mantenciones de contrato del periodo (Cobré $0) cuyo contrato no aporta nada a "contrato estimado"
+    # (sin monto mensual, o nada que contar): se avisa, no se esconde.
+    _n_ctr_sin_monto = sum(1 for v in _ots_ctr
+                           if not ((v.get("contrato_id") and int(v["contrato_id"]) in _ctr_con_monto)
+                                   or _hay_activo_con_monto))
+    _avisos_fin = []
+    if _n_ctr_sin_monto:
+        _avisos_fin.append(f"{_n_ctr_sin_monto} mantención(es) de contrato del periodo se pagan con un contrato "
+                           "sin monto mensual: no suman ingresos.")
 
     ingresos_total = rep_venta_total + visitas_costo + contrato_estimado
-    costos_total   = rep_costo_total + garantia_costo
+    costos_total   = rep_costo_total + garantia_costo + visitas_costo_tecnicos
     margen         = ingresos_total - costos_total
     ticket_prom    = (ingresos_total / visitas_count) if visitas_count else 0
 
@@ -134852,11 +135346,11 @@ def mant_cliente_finanzas(cid):
                 if fr.year == ref_year and fr.month == ref_month:
                     ingreso_mes += float(r["precio_venta"] or 0) * float(r["cantidad"] or 0)
         for v in visitas:
-            if v.get("fecha_programada") and v.get("estado")=="completada":
+            if v.get("fecha_programada") and v.get("estado") in ("completada", "cerrada"):
                 fv = v["fecha_programada"]
                 if isinstance(fv, datetime): fv = fv.date()
                 if fv.year == ref_year and fv.month == ref_month:
-                    ingreso_mes += float(v["costo"] or 0)
+                    ingreso_mes += float(((_fins_v.get(int(v["id"])) or {}).get("cobre") or {}).get("total") or 0)
         por_mes.append({"label": months_es[ref_month-1], "year": ref_year, "ingreso": round(ingreso_mes,2)})
 
     return jsonify({
@@ -134868,7 +135362,12 @@ def mant_cliente_finanzas(cid):
         "ticket_promedio": round(ticket_prom, 2),
         "repuestos_venta": round(rep_venta_total, 2),
         "visitas_costo":   round(visitas_costo, 2),
+        "visitas_costo_tecnicos": round(visitas_costo_tecnicos, 2),
         "contrato_estimado": round(contrato_estimado, 2),
+        # 2026-10-07: cuántas OT del periodo son mantención de contrato (Cobré $0, su plata es el contrato).
+        "contrato_mantenciones": len(_ots_ctr),
+        "contrato_mantenciones_sin_monto": _n_ctr_sin_monto,
+        "avisos":          _avisos_fin,
         "por_mes":         por_mes,
     })
 
@@ -151001,14 +151500,29 @@ def mant_plan_mejora(cid):
     contratos = mysql_fetchall(
         "SELECT * FROM mant_contratos WHERE cliente_id=%s ORDER BY id DESC", (cid,)
     ) or []
+    # 💰 2026-10-07: + las columnas de la cuenta única (_ot_finanzas), para hablar de lo COBRADO.
     visitas_all = mysql_fetchall(
-        "SELECT id, fecha_programada, fecha_realizada, tipo, estado, "
-        "       titulo, tecnico, costo, descripcion, observaciones, "
-        "       estado_facturacion, cubierto_por "
-        "  FROM mant_visitas "
-        " WHERE cliente_id=%s "
-        " ORDER BY COALESCE(fecha_realizada, fecha_programada) DESC", (cid,)
+        "SELECT v.id, v.fecha_programada, v.fecha_realizada, v.estado, "
+        "       v.titulo, v.tecnico, v.descripcion, v.observaciones, "
+        "       v.estado_facturacion, " + _ot_fin_cols_sql("v") + " "
+        "  FROM mant_visitas v "
+        " WHERE v.cliente_id=%s "
+        " ORDER BY COALESCE(v.fecha_realizada, v.fecha_programada) DESC", (cid,)
     ) or []
+    try:
+        _fins_plan = _ot_fin_lote(visitas_all, repuestos=False)
+    except Exception as _e_fin:
+        print(f"[plan-mejora] finanzas cid={cid}: {type(_e_fin).__name__}", flush=True)
+        _fins_plan = {}
+
+    def _cobrado_plan(v):
+        """Lo cobrado en la visita según la cuenta única ($0 si no se cobra)."""
+        _f = _fins_plan.get(int(v["id"])) if v.get("id") is not None else None
+        return float(_f["cobre"]["total"]) if _f else float(v.get("costo") or 0)
+
+    def _cobra_plan(v):
+        _f = _fins_plan.get(int(v["id"])) if v.get("id") is not None else None
+        return _f["cobra"] if _f else ((v.get("cubierto_por") or "contrato") != "garantia")
 
     from datetime import date, timedelta as _td
     hoy = date.today()
@@ -151028,18 +151542,21 @@ def mant_plan_mejora(cid):
     tipo_cliente = (cliente.get("tipo_cliente") or "mantencion").lower()
 
     # ── 4. Estado financiero ──────────────────────────────────────────────
+    # 2026-10-07: lo cobrado y "¿se le cobra?" con la cuenta única de la OT (ver _cobrado_plan / _cobra_plan).
     total_facturado_anio = sum(
-        float(v.get("costo") or 0) for v in completadas
+        _cobrado_plan(v) for v in completadas
         if _ref_date(v) and _ref_date(v) >= (hoy - _td(days=365))
         and (v.get("estado_facturacion") or "") == "facturado"
     )
     visitas_pendientes_factura = [
         v for v in completadas
         if (v.get("estado_facturacion") or "sin_cotizar") in ("sin_cotizar", "cotizado", "con_oc")
-        and (v.get("cubierto_por") or "contrato") != "garantia"
+        and _cobra_plan(v)
     ]
-    total_pendiente_factura = sum(float(v.get("costo") or 0) for v in visitas_pendientes_factura)
-    n_garantia = sum(1 for v in completadas if (v.get("cubierto_por") or "") == "garantia")
+    total_pendiente_factura = sum(_cobrado_plan(v) for v in visitas_pendientes_factura)
+    n_garantia = sum(1 for v in completadas
+                     if ((_fins_plan.get(int(v["id"])) or {}).get("cobertura")
+                         or ("garantia" if (v.get("cubierto_por") or "") == "garantia" else "")) == "garantia")
 
     # ── 5. Garantías por vencer (próximos 60 días) ────────────────────────
     gar_pronto = []
@@ -151471,10 +151988,13 @@ def mant_plan_mejora(cid):
         obs = (v.get("observaciones") or v.get("descripcion") or "").strip()
         if len(obs) > 120:
             obs = obs[:117] + "..."
-        cost = v.get("costo")
-        cost_s = f"${cost:,.0f}" if cost else "s/costo"
+        # 2026-10-07: lo cobrado y la cobertura de la cuenta única (antes `costo` y cubierto_por suelto).
+        _fh = _fins_plan.get(int(v["id"])) if v.get("id") is not None else None
+        cost = _cobrado_plan(v)
+        cost_s = (f"cobrado ${cost:,.0f}" if cost else "s/cobro") if (not _fh or _fh["cobra"]) else "no se cobra"
         fact = v.get("estado_facturacion") or "sin_cotizar"
-        cub = v.get("cubierto_por") or "contrato"
+        cub = (_OT_FIN_COBERTURA_CORTA.get(_fh["cobertura"], _fh["cobertura"]) if _fh
+               else (v.get("cubierto_por") or "contrato"))
         visitas_hist_txt += (
             f"\n  · {fr_s} — {v.get('tipo','?')} {v.get('estado','?')} "
             f"| téc: {v.get('tecnico','?')} | {cost_s} ({fact}/{cub})"

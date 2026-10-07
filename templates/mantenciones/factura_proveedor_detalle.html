@@ -354,7 +354,7 @@
           <div class="fp-sub"><i class="bi bi-person"></i> {{ it.tecnico_nombre }}</div>{% endif %}</td>
         <td data-label="Cliente"><div class="fp-nom">{{ it.cliente }}</div></td>
         <td class="fp-td-serv" data-label="Servicio y estado"><span class="fp-tipo">{{ it.tipo_label }}</span>
-          {% if it.es_garantia %}<span class="fp-gar" title="Cobertura de garantía: no se le cobra al cliente">Garantía</span>{% endif %}
+          {% if it.es_garantia %}<span class="fp-gar" title="{{ it.cobertura_txt or 'Cobertura de garantía: no se le cobra al cliente' }}">{{ it.cobertura_corta or 'Garantía' }}</span>{% endif %}
           <div class="fp-est-fila"><span class="fp-est est-{{ it.estado }}">{{ it.estado | replace('_',' ') }}</span></div>
           {# 2026-09-21: la OT no cerrada se ve y se puede pagar; se avisa, no se esconde. #}
           {% if it.no_cerrada %}<div class="fp-sub" style="color:#b45309;font-weight:800"><i class="bi bi-exclamation-triangle-fill"></i> No cerrada aún</div>{% endif %}</td>
@@ -376,11 +376,11 @@
           <div class="fp-mt">{{ clp(cobra) }}</div>
           {% if it.fac_monto is not none and (it.fac_monto - it.sugerido)|round(0) != 0 %}
           <div class="fp-sub" style="color:#b45309;font-weight:800">≠ declarado {{ clp(it.sugerido) }}</div>
-          {% elif it.es_garantia and not cobra %}<div class="fp-sub">garantía · $0</div>{% endif %}
+          {% elif it.es_garantia and not cobra %}<div class="fp-sub">{{ (it.cobertura_corta or 'garantía') | lower }} · $0</div>{% endif %}
           {% if it.sin_costo %}
           <a class="fp-sindoc fp-sindoc-wrap" style="text-decoration:none" href="{{ url_for('ot2_detalle', vid=it.id) }}#otdCardFinanzas"
              title="Abrir la OT y cargar el costo del proveedor en la tarjeta Finanzas">
-            <i class="bi bi-exclamation-triangle-fill"></i> Sin costo declarado — cargarlo en Finanzas de la OT{% if it.es_garantia %} (garantía: puede ser $0){% endif %}</a>
+            <i class="bi bi-exclamation-triangle-fill"></i> Sin costo declarado — cargarlo en Finanzas de la OT{% if it.es_garantia %} ({{ (it.cobertura_corta or 'garantía') | lower }}: puede ser $0){% endif %}</a>
           {% else %}
           <div class="fp-ml"><em title="Pagado por la instalación">Inst.</em><span>{{ clp(it.servicio) if it.servicio else '—' }}</span></div>
           <div class="fp-ml"><em title="Pagado por el despacho">Desp.</em><span>{{ clp(it.despacho) if it.despacho else '—' }}</span></div>
@@ -394,8 +394,8 @@
         <td class="m" data-label="Margen">
           {# Contra lo que cobra ESTA factura (margen_fila), para que la suma
              cuadre con el KPI de arriba; garantía y sin cobro se dicen. #}
-          {% if it.es_garantia %}<span class="fp-sindoc gar" title="Se paga al proveedor y no se cobra al cliente, a propósito">Garantía</span>
-          {% elif not it.cobrado_cliente %}<span class="fp-sindoc" title="Sin línea ZZ ni valor de cotización/contrato: el cobro no se sabe">Sin cobro declarado</span>
+          {% if it.es_garantia %}<span class="fp-sindoc gar" title="Se paga al proveedor y no se cobra al cliente, a propósito">{{ it.cobertura_corta or 'Garantía' }}</span>
+          {% elif it.sin_cobro_declarado %}<span class="fp-sindoc" title="Falta lo que cobraste: no hay línea de servicio en el documento ni un cobro de una cotización, un contrato o escrito a mano (el «Precio al cliente» sin ese origen puede ser el total de la factura, con equipos)">Sin cobro declarado</span>
           {% else %}
           <span class="{{ 'fp-margen-pos' if it.margen_fila > 0 else ('fp-margen-neg' if it.margen_fila < 0 else '') }}">
             {{ '+' if it.margen_fila > 0 else '' }}{{ clp(it.margen_fila) }}</span>
@@ -435,7 +435,7 @@
       <tr class="fpd-tfoot">
         <td data-label="Totales" colspan="4"><b>Totales del lote</b>
           <div class="fp-sub">{{ items|length }} OT
-            {%- if tot.garantias %} · {{ tot.garantias }} en garantía{% endif %}
+            {%- if tot.garantias %} · {{ tot.garantias }} que no se cobran{% endif %}
             {%- if tot.no_cerradas %} · <span style="color:#b45309;font-weight:800">{{ tot.no_cerradas }} sin cerrar</span>{% endif %}
             {%- if tot.sin_costo %} · <span style="color:#b91c1c;font-weight:800">{{ tot.sin_costo }} sin costo declarado</span>{% endif %}</div></td>
         <td class="m" data-label="Cobra esta factura"><div class="fp-mstack">

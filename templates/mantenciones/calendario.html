@@ -963,6 +963,14 @@ function colorDeTec(id){
   return TEC_COLORS[Math.abs(id) % TEC_COLORS.length];
 }
 function fmtCLP(n){ return '$' + Math.round(n).toLocaleString('es-CL'); }
+// 💰 2026-10-07 (modelo único "Cobré − Me cobraron = Queda"): la plata que se MUESTRA de una OT es lo
+// cobrado según la cuenta única (ev.cobre / ev.cobra, calculados en el servidor). Si el servidor no los
+// mandó (técnico), se cae a lo de antes.
+function calPlataTxt(ev, vacio){
+  if (ev.cobra === false) return 'No se cobra';
+  if (ev.cobra === true) return ev.cobre != null ? fmtCLP(ev.cobre) : vacio;
+  return ev.costo ? fmtCLP(ev.costo) : vacio;
+}
 function escHtml(s){
   return String(s||'').replace(/[&<>"']/g, c =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1465,7 +1473,7 @@ function renderLista(){
       <div class="list-tec-stack">${tecHtml}</div>
       <div><span class="tipo-pill" style="background:${ev.color_tipo}22;color:${ev.color_tipo}">${ev.tipo || '—'}</span></div>
       <div><span class="estado-pill ${ev.estado || ''}">${ev.estado || '—'}</span></div>
-      <div class="text-end font-monospace">${ev.costo ? fmtCLP(ev.costo) : '—'}</div>
+      <div class="text-end font-monospace" title="${escHtml(ev.cobertura_txt || '')}">${calPlataTxt(ev, '—')}</div>
       <div class="text-end">
         <button class="btn btn-xs btn-outline-secondary" onclick="event.stopPropagation();abrirVisitaModal(${ev.id})">
           <i class="bi bi-eye"></i>
@@ -1515,7 +1523,7 @@ function renderAgenda(){
           : (ev.hora_inicio || 'Todo el día');
         return `<div class="agenda-event" onclick="abrirVisitaModal(${ev.id})">
           <div class="agenda-event-bar" style="background:${ev.color_tipo}"></div>
-          <div class="agenda-event-time">${dur}<small>${ev.costo ? fmtCLP(ev.costo) : ''}</small></div>
+          <div class="agenda-event-time">${dur}<small>${calPlataTxt(ev, '')}</small></div>
           <div class="agenda-event-body">
             <div class="agenda-event-title">${escHtml(ev.cliente.razon_social)}</div>
             <div class="agenda-event-meta">
@@ -1644,7 +1652,9 @@ function abrirVisitaModal(vid){
   document.getElementById('vi_info_tecnicos').textContent = ev.tecnicos.length
     ? ev.tecnicos.map(t => t.nombre + (t.especialidad ? ' (' + t.especialidad + ')' : '')).join(', ')
     : 'Sin asignar';
-  document.getElementById('vi_info_costo').textContent = ev.costo ? fmtCLP(ev.costo) : 'Sin costo asociado';
+  document.getElementById('vi_info_costo').textContent = (ev.cobra === false) ? (ev.cobertura_txt || 'No se cobra')
+    : (ev.cobra === true ? (ev.cobre != null ? 'Cobré ' + fmtCLP(ev.cobre) : 'Falta lo que cobraste')
+       : (ev.costo ? fmtCLP(ev.costo) : 'Sin costo asociado'));
   document.getElementById('vi_info_direccion').textContent = ev.cliente.direccion
     ? (ev.cliente.direccion + (ev.cliente.comuna ? ', ' + ev.cliente.comuna : ''))
     : 'Sin dirección registrada';

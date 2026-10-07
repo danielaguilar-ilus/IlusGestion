@@ -509,6 +509,10 @@ async function cptCargar(){
       '<div class="cpt-cell"><div class="l">Costo histórico</div><div class="v">' + cptClp(res.costo_total) + '</div></div>' +
       '<div class="cpt-cell"><div class="l">Total OT (siempre)</div><div class="v">' + d.n_total_ot + '</div></div>' +
     '</div>';
+    // 2026-10-07 (cuenta única de la OT): qué quedó fuera de la cuenta y por qué, en palabras simples.
+    if (res.nota){
+      html += '<div class="mfp-sub" style="margin-top:6px">' + escCpt(res.nota) + '.</div>';
+    }
     if (p.n){
       html += '<div class="cpt-subtit">Trabajo pendiente de ' + escCpt(d.tecnico.nombre) + '</div>';
       html += '<div class="mfp-tabla-wrap"><table class="mfp-tabla cpt-pend"><thead><tr><th>OT</th><th>Cliente</th><th>Estado</th><th>Fecha</th></tr></thead><tbody>' +

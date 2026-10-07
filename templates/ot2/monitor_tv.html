@@ -2932,7 +2932,33 @@
       // exclusivo de sesión gestión) -- en el televisor público quedan
       // `null` y este bloque no dibuja nada. Margen = precio - (proveedor +
       // despacho), mismo criterio ya usado en la card "Finanzas de la OT".
-      if (b.precio != null || b.costo_proveedor != null){
+      /* 💰 2026-10-07 (modelo único, Daniel: "Cobré − Me cobraron = Queda"):
+         `b.fin` es la cuenta de la OT hecha en el servidor (_ot_finanzas), la
+         misma de su pantalla. Una OT que no se cobra (garantía, cortesía,
+         contrato, interno) muestra lo que nos costó en azul, nunca como venta;
+         si falta un dato se dice cuál. El bloque de abajo (precio/costo) queda
+         solo de respaldo si el servidor no mandó la cuenta. */
+      if (b.fin){
+        const F = b.fin;
+        const finEl = el('div', 'tvm-ot-fin');
+        const fmtF = (n) => '$' + Math.round(Math.abs(Number(n) || 0)).toLocaleString('es-CL');
+        finEl.title = F.frase || '';
+        if (!F.cobra){
+          finEl.innerHTML = '<span style="opacity:.75">' + esc(F.cobertura_corta || 'No se cobra') + '</span>' +
+            '<span>no se cobra</span>' +
+            '<b style="color:#1d4ed8">nos costó ' + fmtF(F.me_cobraron) + '</b>';
+        } else if (!F.mostrar){
+          finEl.innerHTML = '<span style="opacity:.75">Cobré</span>' +
+            '<span>' + (F.cobre_hay ? fmtF(F.cobre) : '—') + '</span>' +
+            '<b style="color:#b45309">' + esc(F.label || '') + '</b>';
+        } else {
+          finEl.innerHTML = '<span style="opacity:.75">Cobré</span>' +
+            '<span>' + fmtF(F.cobre) + '</span>' +
+            '<b style="color:' + (F.queda < 0 ? '#dc2626' : '#16a34a') + '">queda ' +
+            (F.queda < 0 ? '−' : '+') + fmtF(F.queda) + '</b>';
+        }
+        ot.appendChild(finEl);
+      } else if (b.precio != null || b.costo_proveedor != null){
         const precio = Number(b.precio || 0);
         const fin = el('div', 'tvm-ot-fin');
         const fmt = (n) => '$' + Math.round(n).toLocaleString('es-CL');
