@@ -85629,7 +85629,7 @@ def _mant_visita_factura_proveedor(vid):
         return _FACTURA_CHECK_ERROR
 
 
-def _mant_visita_eliminar_core(vid, actor_desc="", conn=None):
+def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=False):
     """Núcleo del hard-delete de una OT (fila de mant_visitas).
 
     SIN permisos, SIN confirm_text, SIN HTTP: eso lo resuelve cada puerta
@@ -85689,7 +85689,7 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None):
                      "Inténtalo de nuevo; no se eliminó.",
             "numero_ot": numero_ot,
         }
-    if _fac:
+    if _fac and not quitar_de_factura:
         return {
             "ok": False, "error_codigo": "OT_EN_FACTURA_PROVEEDOR",
             "error": (f"La {numero_ot} está en la factura de proveedor #{_fac['id']} "
@@ -85738,11 +85738,26 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None):
                 cur.execute("UPDATE mant_repuestos SET visita_id=NULL WHERE visita_id=%s", (vid,))
             except Exception as _e_rep:
                 print(f"[visita_del] desvincular repuestos falló: {_e_rep}", flush=True)
+            if _fac and quitar_de_factura:
+                # 🧹 2026-10-07 (Daniel: "quiero que Aaron pueda borrar sin problemas" -- OT de prueba que quedaron en una
+                # factura de proveedor, incluso pagada): quien tiene permiso de eliminar OT puede borrarla; la línea sale de la
+                # factura y queda UN RASTRO VISIBLE en sus notas (mismo patrón que "quitar OT de factura pagada"). El
+                # monto_total de la factura es el del documento del proveedor y NO se recalcula: la "Diferencia" de la
+                # factura simplemente deja de cuadrar, que es la alerta correcta.
+                cur.execute("DELETE FROM mant_factura_proveedor_items WHERE visita_id=%s", (vid,))
+                cur.execute(
+                    "UPDATE mant_facturas_proveedor SET notas=CONCAT(COALESCE(notas,''), %s) WHERE id=%s",
+                    (f"{chr(10)}[{numero_ot} eliminada y quitada de esta factura por {current_username() or '?'} "
+                     f"(la factura estaba {_fac.get('estado_pago')})]", _fac["id"]))
             cur.execute("DELETE FROM mant_visitas WHERE id=%s", (vid,))
         conn.commit()
         _detalle = f"{numero_ot} — {v_info.get('titulo') or ''}"
         if actor_desc:
             _detalle += f" · {actor_desc}"
+        if _fac and quitar_de_factura:
+            _detalle += f" · estaba en la factura de proveedor #{_fac['id']} ({_fac.get('estado_pago')}) y salió de ella"
+            _mant_log("factura_proveedor", _fac["id"], "ot_quitada_por_eliminacion",
+                      f"{numero_ot} eliminada por {current_username() or '?'}")
         _mant_log("visita", vid, "eliminada", _detalle)
         _mant_log("cliente", v_info.get("cliente_id"), "visita_eliminada", f"{numero_ot}")
         return {
@@ -85750,6 +85765,8 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None):
             "numero_ot": numero_ot,
             "titulo": v_info.get("titulo") or "",
             "cliente_id": v_info.get("cliente_id"),
+            "factura_quitada": ({"id": _fac["id"], "estado_pago": _fac.get("estado_pago")}
+                                if (_fac and quitar_de_factura) else None),
         }
     finally:
         if _conn_propia:
@@ -85803,14 +85820,9 @@ def mant_visita_del(vid):
             "error": f"No se pudo verificar si la {numero_ot} está en una factura de proveedor. "
                      "Inténtalo de nuevo.",
         }), 409
-    if _fac:
-        return jsonify({
-            "ok": False, "error_codigo": "OT_EN_FACTURA_PROVEEDOR",
-            "error": (f"La {numero_ot} está en la factura de proveedor #{_fac['id']} "
-                      f"({_fac.get('proveedor_nombre')} {_fac.get('numero_documento') or 'sin N° todavía'}, "
-                      f"{_fac.get('estado_pago')}). Quítala de esa factura antes de eliminarla."),
-            "factura_id": _fac["id"],
-        }), 409
+    # 🧹 2026-10-07 (Daniel, mirando lo que le salió a Aaron: "quiero que pueda borrar sin problemas"): una OT en una factura de
+    # proveedor YA NO frena el borrado de quien llegó hasta acá (el decorador exige superadmin o el permiso "Eliminar OT"). Se
+    # borra igual, tras el confirm_text de abajo, y el núcleo la saca de la factura dejando rastro visible en sus notas.
     d = request.get_json(silent=True) or {}
     confirm = (d.get("confirm_text") or "").strip().lower()
     # 🔒 REGLA #5 -- hard-delete exige confirm_text. Cuando la OT SÍ tiene
@@ -85845,7 +85857,7 @@ def mant_visita_del(vid):
             "error_codigo": "CONFIRM_TEXT_NO_COINCIDE",
         }), 400
 
-    res = _mant_visita_eliminar_core(vid)
+    res = _mant_visita_eliminar_core(vid, quitar_de_factura=True)
     if not res.get("ok"):
         # Carrera improbable: la OT desapareció o entró a una factura entre
         # los chequeos de arriba y el DELETE. Se responde con los MISMOS
@@ -85853,7 +85865,7 @@ def mant_visita_del(vid):
         # salvo numero_ot, que acá no viajaba).
         _http = 404 if res.get("error_codigo") == "OT_NO_ENCONTRADA" else 409
         return jsonify({k: v for k, v in res.items() if k != "numero_ot"}), _http
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "factura_quitada": res.get("factura_quitada")})
 
 
 # Sistema viejo de tickets (mant_tickets / mant_ticket_equipos /
@@ -87204,9 +87216,9 @@ def ot2_api_eliminar_lote_preview():
         # de OT que en realidad quedaban intactas. Buckets EXCLUYENTES:
         # cerrada manda, después cualquier firma (evidencia), después la
         # fase.
-        if en_factura:
-            pass
-        elif cerrada:
+        # 2026-10-07: una OT en factura de proveedor ya se borra igual (sale de la factura), así que cuenta
+        # en su bucket normal -- antes se salteaba porque se omitía.
+        if cerrada:
             resumen["cerradas"] += 1
         elif tiene_alguna_firma:
             resumen["firmadas"] += 1
@@ -87293,7 +87305,7 @@ def ot2_api_eliminar_lote():
             # lo registra el log individual de siempre -- acá manda la pantalla.
             etiqueta = etiquetas.get(vid) or f"VS-{vid:05d}"
             try:
-                res = _mant_visita_eliminar_core(vid, actor_desc=actor_desc, conn=_conn_lote)
+                res = _mant_visita_eliminar_core(vid, actor_desc=actor_desc, conn=_conn_lote, quitar_de_factura=True)
             except Exception as e:
                 # Nunca se filtra el detalle técnico al cliente (REGLA #4):
                 # al log completo, a la pantalla un motivo amable.

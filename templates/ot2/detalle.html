@@ -7966,7 +7966,8 @@ async function otdEliminarOT(){
     if (r.ok && d.ok){
       await ilusAlert({
         title: 'OT eliminada',
-        message: 'La OT ' + numeroOt + ' fue eliminada definitivamente.',
+        message: 'La OT ' + numeroOt + ' fue eliminada definitivamente.' + (d.factura_quitada
+          ? ' Estaba en la factura de proveedor #' + d.factura_quitada.id + ' (' + d.factura_quitada.estado_pago + '): salió de ella y quedó anotado en sus notas.' : ''),
         type: 'success',
       });
       window.location.href = '{{ url_for("ot2_panel") }}';

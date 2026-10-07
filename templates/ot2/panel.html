@@ -1774,8 +1774,9 @@ window.OT2D = (function(){
     // el resultado final SÍ informa de las que quedaron fuera). n / el
     // título del modal solo cuentan las que de verdad se van a borrar.
     idsMarcados = items.map(function(it){ return it.id; });
-    idsAEliminar = items.filter(function(it){ return !it.en_factura_proveedor; })
-                        .map(function(it){ return it.id; });
+    // 2026-10-07 (Daniel: "quiero que pueda borrar sin problemas"): una OT en factura de proveedor ya NO se omite: se borra y
+    // sale de su factura, que queda con una nota visible. Se cuentan todas.
+    idsAEliminar = items.map(function(it){ return it.id; });
     var n = idsAEliminar.length;
     loteTit.textContent = 'Eliminar ' + n + ' OT definitivamente';
     loteTxt.textContent = 'Eliminar ' + n + ' OT';
@@ -1787,7 +1788,7 @@ window.OT2D = (function(){
     if (r.firmadas)   chips += chip('c-firma', 'bi-pen-fill', r.firmadas, 'con firma de cliente');
     if (r.cerradas)   chips += chip('c-cerr',  'bi-lock-fill', r.cerradas, plural(r.cerradas, 'cerrada', 'cerradas'));
     if (r.canceladas) chips += chip('c-cancel','bi-x-circle', r.canceladas, plural(r.canceladas, 'cancelada / anulada', 'canceladas / anuladas'));
-    if (r.en_factura) chips += chip('c-fact',  'bi-receipt', r.en_factura, 'en factura de proveedor (se omiten)');
+    if (r.en_factura) chips += chip('c-fact',  'bi-receipt', r.en_factura, 'en factura de proveedor (saldrán de ella)');
     chipsEl.innerHTML = chips || chip('c-cancel', 'bi-question-circle', 0, 'sin detalle');
 
     var avisos = '';
@@ -1804,8 +1805,9 @@ window.OT2D = (function(){
     }
     if (r.en_factura) {
       avisos += '<div class="ot2-lote-aviso gris"><i class="bi bi-receipt"></i><div><b>'
-        + r.en_factura + ' ' + plural(r.en_factura, 'OT está', 'OT están') + ' en una factura de proveedor</b> y no se '
-        + plural(r.en_factura, 'borrará', 'borrarán') + ' (aparecen tachadas). Para eliminarlas hay que quitarlas primero de esa factura.</div></div>';
+        + r.en_factura + ' ' + plural(r.en_factura, 'OT está', 'OT están') + ' en una factura de proveedor</b>: se '
+        + plural(r.en_factura, 'borrará', 'borrarán') + ' igual y ' + plural(r.en_factura, 'saldrá', 'saldrán') + ' de esa factura, que queda con una nota '
+        + 'que lo dice. El monto total de la factura no cambia, así que su «Diferencia» dejará de cuadrar (si estaba pagada, también).</div></div>';
     }
     if (r.no_encontradas) {
       avisos += '<div class="ot2-lote-aviso gris"><i class="bi bi-info-circle"></i><div>'
@@ -1816,8 +1818,8 @@ window.OT2D = (function(){
     listaEl.innerHTML = items.map(function(it){
       var tags = '';
       if (it.tiene_firma_cliente) tags += '<span class="tag firma"><i class="bi bi-pen-fill"></i>Firma cliente</span>';
-      if (it.en_factura_proveedor) tags += '<span class="tag fact"><i class="bi bi-receipt"></i>En factura · se omite</span>';
-      return '<div class="ot2-lote-it f-' + esc(it.fase || 'cancel') + (it.en_factura_proveedor ? ' omitida' : '') + '">'
+      if (it.en_factura_proveedor) tags += '<span class="tag fact"><i class="bi bi-receipt"></i>En factura · saldrá de ella</span>';
+      return '<div class="ot2-lote-it f-' + esc(it.fase || 'cancel') + '">'
         + '<span class="nu">' + esc(it.numero_ot) + '</span>'
         + '<span class="cl">' + esc(it.cliente) + '</span>'
         + '<span class="es">' + esc(it.estado_label) + '</span>'
