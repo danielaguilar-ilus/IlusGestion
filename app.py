@@ -83372,6 +83372,14 @@ _OT_FIN_SQL_CONTRATO_REAL = (
     "  AND (ctr.id=v.contrato_id OR ctr.estado IN ('vigente','por_vencer','indefinido')))")
 
 
+def _ot_fin_sql_contrato_real(alias="v"):
+    """_OT_FIN_SQL_CONTRATO_REAL para un SELECT donde mant_visitas tiene otro alias (alias fijo de código,
+    nunca input del usuario)."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", alias or ""):
+        raise ValueError("alias inválido")
+    return _OT_FIN_SQL_CONTRATO_REAL.replace("v.cliente_id", f"{alias}.cliente_id").replace("v.contrato_id", f"{alias}.contrato_id")
+
+
 def _ot_cobertura(v):
     """¿Se le cobra al cliente ESTA OT? Devuelve 'cobra' | 'garantia' | 'sin_costo' | 'interno' | 'contrato'.
     ÚNICA regla (antes había tres criterios distintos de garantía en el sistema).
