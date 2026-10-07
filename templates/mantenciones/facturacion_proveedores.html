@@ -247,7 +247,7 @@ function fprUltimos(n){
         <td class="m">{{ clp(d.despacho) if d.despacho else '—' }}</td>
         <td class="m tot">{{ clp(d.total) }}</td>
         <td class="m">
-          {%- if d.sin_cobro %}<span class="fp-sindoc" title="No hay línea de servicio en el documento ni un cobro escrito a mano">Falta lo que cobraste</span>
+          {%- if d.sin_cobro %}<span class="fp-sindoc" title="Falta lo que cobraste: no hay línea de servicio en el documento ni un cobro de una cotización, un contrato o escrito a mano (el «Precio al cliente» sin ese origen puede ser el total de la factura, con equipos)">Falta lo que cobraste</span>
           {%- elif d.garantia and not d.cobrado %}<span class="fp-gar" title="{{ d.cobertura_txt }}">{{ d.cobertura_corta or 'Garantía' }}</span>
           {%- else %}{{ clp(d.cobrado) }}
             {# Se muestra de dónde salió: la línea ZZ del documento es el dato
@@ -256,7 +256,7 @@ function fprUltimos(n){
             {% if d.cobrado_envio %}
               <div class="fp-sub">servicio {{ clp(d.cobrado_servicio) }} · envío {{ clp(d.cobrado_envio) }}</div>
             {% endif %}
-            {% if d.fuente_cobro == 'valor_ot' %}<div class="fp-sub" title="OT antigua: el «Precio al cliente» anotado no separa servicio y despacho">precio al cliente anotado</div>{% endif %}
+            {% if d.fuente_cobro == 'valor_ot' %}<div class="fp-sub" title="«Precio al cliente» anotado (de una cotización, un contrato o escrito a mano): no separa servicio y despacho">precio al cliente anotado</div>{% endif %}
           {%- endif %}
         </td>
         <td class="m">

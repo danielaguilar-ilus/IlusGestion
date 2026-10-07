@@ -17,12 +17,12 @@ from tests.test_incidencias_bajas import _codigo_y_arbol
 from tests.test_incidencias_repuesto_tercera_fuente import _fuente_de
 
 FUNCS = ("_ot_es_interna", "_ot_cobertura", "_ot_fin_num", "_ot_fin_clp", "_ot_finanzas", "_vida_margen_clase",
-         "_ot_fin_agregado", "_ot_fin_de_fila", "_ot_cobro_de_fin", "_ot_cobro_cliente", "_ot_tv_fin_resumen",
-         "_ot_fin_sql_contrato_real", "_ot_fin_cols_sql", "_ot_fin_contrato_real_de", "_ot_fin_lote",
-         "_mfp_fila_ot", "_mfp_nombre_proveedor_ot", "_mfp_resumen_filas")
+         "_ot_fin_agregado", "_ot_fin_de_fila", "_ot_cobro_de_fin", "_ot_cobro_facprov", "_ot_cobro_cliente",
+         "_ot_tv_fin_resumen", "_ot_fin_sql_contrato_real", "_ot_fin_cols_sql", "_ot_fin_contrato_real_de",
+         "_ot_fin_lote", "_mfp_fila_ot", "_mfp_nombre_proveedor_ot", "_mfp_resumen_filas", "mant_cliente_finanzas")
 CONSTS = ("_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_FUENTE_COBRO", "_OT_FIN_ZZ_NO_SERVICIO", "_OT_FIN_COBERTURA_TXT",
           "_OT_FIN_UMBRAL_BAJO", "_OT_FIN_COBERTURA_CORTA", "_OT_FIN_AGG_APARTE", "_OT_FIN_COLS",
-          "_OT_FIN_SQL_CONTRATO_REAL", "_MFP_ESTADOS_FACTURABLES")
+          "_OT_FIN_SQL_CONTRATO_REAL", "_MFP_ESTADOS_FACTURABLES", "_COBRO_ORIGENES_REALES")
 
 AMB = None
 
@@ -93,10 +93,48 @@ class TestCobroDeFacturacion(unittest.TestCase):
         self.assertIsNone(d["margen_pct"])
         self.assertFalse(d["sin_cobro_declarado"])
 
-    def test_ot201_si_no_fuera_garantia_lee_el_precio_al_cliente_marcado(self):
-        # ZZRETIRO no es cobro del servicio; sin otra línea manda el «Precio al cliente» anotado (OT antigua).
+    def test_ot201_si_no_fuera_garantia_el_precio_al_cliente_sin_origen_no_es_cobro(self):
+        # Revisión 2026-10-07: ZZRETIRO no es cobro del servicio, y en estas pantallas el «Precio al cliente»
+        # (`costo`) solo cuenta si viene de una cotización, un contrato o lo escribió una persona (regla del
+        # 2026-09-20). Acá su origen es 'zz' (el de la línea ZZRETIRO): falta lo que cobraste.
+        a = _amb()
         v = dict(OT201, modalidad_cobro="pagado")
-        self.assertEqual(_amb()["_ot_cobro_cliente"](V(**v)), (200000.0, 0.0, "valor_ot"))
+        self.assertEqual(a["_ot_cobro_cliente"](V(**v)), (0.0, 0.0, ""))
+        d = a["_mfp_fila_ot"](V(**v))
+        self.assertTrue(d["sin_cobro_declarado"])
+        self.assertEqual(d["cobrado_cliente"], 0)
+
+    def test_precio_al_cliente_de_cotizacion_contrato_o_a_mano_si_es_cobro(self):
+        a = _amb()
+        for origen in ("cotizacion", "contrato", "manual", "supuesto"):
+            v = V(costo=200000, valor_origen=origen, costo_proveedor=130000)
+            self.assertEqual(a["_ot_cobro_cliente"](v), (200000.0, 0.0, "valor_ot"), origen)
+            self.assertFalse(a["_mfp_fila_ot"](v)["sin_cobro_declarado"], origen)
+
+    def test_factura_copiada_en_precio_al_cliente_no_da_un_margen_falso(self):
+        # Caso del revisor: OT de ticket sin línea ZZ; «Asociar factura» copió en `costo` el bruto de una FCV de
+        # $1.500.000 que incluye un equipo. Antes de esta revisión daba cobrado 1.500.000 y "Margen sano".
+        a = _amb()
+        v = V(tipo="correctiva", costo=1500000, valor_origen=None, costo_proveedor=80000, costo_despacho=20000)
+        self.assertEqual(a["_ot_cobro_cliente"](v), (0.0, 0.0, ""))
+        d = a["_mfp_fila_ot"](v)
+        self.assertEqual((d["cobrado_cliente"], d["sugerido"]), (0, 100000))
+        self.assertTrue(d["sin_cobro_declarado"])
+        self.assertIsNone(d["margen_pct"])
+        self.assertFalse(d["es_garantia"])
+        self.assertTrue(any("no cuenta como cobro" in x and "$1.500.000" in x for x in d["fin_avisos"]))
+        self.assertFalse(any("no separa servicio y despacho" in x for x in d["fin_avisos"]),
+                         "el aviso de la cuenta («sale del Precio al cliente») se reemplaza, no se suma")
+        t = a["_mfp_resumen_filas"]([d])
+        self.assertEqual((t["n_comparable"], t["n_sin_cobro"], t["pagado_sin_cobro"], t["cobrado"]),
+                         (0, 1, 100000.0, 0.0))
+
+    def test_facturacion_usa_el_resguardo(self):
+        for nombre in ("_facprov_datos", "_mfp_fila_ot", "mant_facturas_proveedor_xlsx"):
+            src = _fuente_de(nombre)
+            self.assertIn("_ot_cobro_facprov(", src, nombre)
+        self.assertNotIn("tampoco se cae a `costo`", _fuente_de("_facprov_datos"),
+                         "el comentario viejo decía lo contrario de lo que hace el código")
 
     def test_normal_con_documento(self):
         a = _amb()
@@ -190,6 +228,124 @@ class TestAgregado(unittest.TestCase):
         t = _amb()["_ot_fin_agregado"]([FIN(**NORMAL), FIN(zz_monto=100000, valor_origen="zz")])
         self.assertEqual(t["clase"], "bajo")
 
+    def test_resumen_del_excel_cuadra(self):
+        # Revisión 2026-10-07 (Excel del panel, ot2_reporte_xlsx): los costos del Resumen se suman solo de las
+        # OT que entran al margen (no contrato/interno, y que se pueden medir). Con ese criterio
+        # Cobrado − Proveedor − Despacho − Repuestos = Margen (Queda).
+        a = _amb()
+        filas = [dict(NORMAL), dict(OT201), dict(cliente_id=None, costo=40000),
+                 dict(tipo="preventiva", contrato_real=1, costo=60000, costo_proveedor=30000),
+                 dict(zz_monto=100000, valor_origen="zz"),
+                 dict(zz_monto=100000, valor_origen="zz", costo_proveedor=50000)]
+        rep = {"costo": 15000, "por_origen": {"bodega": 15000, "compra": 0, "manual": 0}, "n_sin_costo": 0}
+        prov = desp = reps = 0.0
+        fins = []
+        for i, kw in enumerate(filas):
+            v = V(**kw)
+            fin = a["_ot_finanzas"](v, rep if i == 0 else None)
+            fins.append(fin)
+            if fin["cobertura"] not in a["_OT_FIN_AGG_APARTE"] and fin["queda"]["mostrar"]:
+                prov += float(v.get("costo_proveedor") or 0)
+                desp += float(v.get("costo_despacho") or 0)
+                reps += float(fin["me_cobraron"]["repuestos"] or 0)
+        t = a["_ot_fin_agregado"](fins)
+        self.assertEqual(round(t["cobre"] - prov - desp - reps, 2), t["queda"])
+        self.assertEqual(t["queda"], -105000)   # contrato (-30.000) e interno NO restan
+
+    def test_excel_del_panel_suma_como_el_agregado(self):
+        src = _fuente_de("ot2_reporte_xlsx")
+        self.assertIn("_ot_fin_agregado(_fins_res)", src)
+        self.assertIn("_OT_FIN_AGG_APARTE", src)
+        self.assertIn("Cobrado en OT sin medir", src)
+        # La Queda de una OT que no se cobra se pinta azul ("nos costó"), no roja.
+        self.assertRegex(src, r'_COL_MARGEN and not _fin\["cobra"\]:\s*\n(.*\n){0,3}.*BLUEL')
+        for viejo in ('fin_tot["margen"] += margen', 'fin_tot["no_sstt_margen"] += margen',
+                      'a["margen"] += margen', 'b["margen"] += margen', 't["margen"] += margen'):
+            self.assertNotIn(viejo, src)
+
+
+class TestFinanzasDelCliente(unittest.TestCase):
+    """mant_cliente_finanzas (revisión 2026-10-07): el contrato se cuenta con el MISMO criterio que la bandera de
+    contrato real que deja la mantención de contrato en Cobré $0."""
+
+    def _correr(self, visitas, contratos, meses="12"):
+        import datetime as _dt
+        from types import SimpleNamespace
+        a = _amb()
+        llamadas = []
+
+        def _fake(sql, params=None):
+            llamadas.append((sql, params))
+            if "FROM mant_repuestos" in sql:
+                return []
+            if "FROM mant_visitas" in sql:
+                return [dict(x) for x in visitas]
+            if "FROM mant_contratos" in sql and "monto_mensual" in sql:
+                return [dict(x) for x in contratos]
+            return []
+
+        viejo = {k: a.get(k) for k in ("mysql_fetchall", "request", "jsonify", "_es_rol_tecnico", "datetime",
+                                       "timedelta")}
+        a.update({"mysql_fetchall": _fake, "request": SimpleNamespace(args={"meses": meses}),
+                  "jsonify": lambda d: d, "_es_rol_tecnico": lambda: False, "datetime": _dt.datetime,
+                  "timedelta": _dt.timedelta})
+        try:
+            out = a["mant_cliente_finanzas"](5)
+        finally:
+            for k, val in viejo.items():
+                if val is None:
+                    a.pop(k, None)
+                else:
+                    a[k] = val
+        # Ojo: la consulta de visitas también nombra mant_contratos (la bandera contrato_real va en un EXISTS);
+        # la de contratos es la que trae monto_mensual.
+        sql_ctr = [x for x in llamadas if "FROM mant_contratos" in x[0] and "monto_mensual" in x[0]]
+        self.assertEqual(len(sql_ctr), 1)
+        return out, sql_ctr[0]
+
+    @staticmethod
+    def _hace_meses(n):
+        import datetime as _dt
+        hoy = _dt.date.today()
+        idx = hoy.year * 12 + hoy.month - 1 - n
+        return _dt.date(idx // 12, idx % 12 + 1, 1)
+
+    def _prev(self, vid, **kw):
+        import datetime as _dt
+        base = V(id=vid, tipo="preventiva", contrato_real=1, costo=50000, costo_proveedor=30000)
+        base["fecha_programada"] = _dt.date.today()
+        base.update(kw)
+        return base
+
+    def test_contrato_indefinido_entra_y_la_preventiva_no_se_cuenta_dos_veces(self):
+        ctr = [{"id": 3, "estado": "indefinido", "monto_mensual": 100000, "fecha_inicio": self._hace_meses(6),
+                "fecha_vencimiento": None, "es_indefinido": 1}]
+        out, (sql, params) = self._correr([self._prev(1), self._prev(2)], ctr)
+        self.assertIn("estado IN ('vigente','por_vencer','indefinido')", sql)
+        self.assertNotIn("estado='vigente'", sql)
+        self.assertIn("Contenedor de documentos", sql)
+        self.assertEqual(params, (5,), "sin mantenciones que apunten a un contrato, no se pide ninguno extra")
+        self.assertEqual(out["contrato_estimado"], 600000)
+        self.assertEqual(out["visitas_costo"], 0, "la preventiva de contrato tiene Cobré $0")
+        self.assertEqual(out["visitas_costo_tecnicos"], 60000)
+        self.assertEqual(out["ingresos_total"], 600000)
+        self.assertEqual((out["contrato_mantenciones"], out["contrato_mantenciones_sin_monto"]), (2, 0))
+        self.assertEqual(out["avisos"], [])
+
+    def test_contrato_vencido_al_que_apunta_la_ot_cuenta_hasta_su_vencimiento(self):
+        ctr = [{"id": 9, "estado": "vencido", "monto_mensual": 100000, "fecha_inicio": self._hace_meses(10),
+                "fecha_vencimiento": self._hace_meses(2), "es_indefinido": 0}]
+        out, (sql, params) = self._correr([self._prev(1, contrato_id=9)], ctr)
+        self.assertIn(9, params, "el contrato vencido al que apunta la OT se pide")
+        self.assertEqual(out["contrato_estimado"], 800000)   # 8 meses: del inicio al vencimiento
+
+    def test_contrato_sin_monto_se_avisa(self):
+        ctr = [{"id": 3, "estado": "vigente", "monto_mensual": 0, "fecha_inicio": self._hace_meses(6),
+                "fecha_vencimiento": None, "es_indefinido": 0}]
+        out, _ = self._correr([self._prev(1), self._prev(2)], ctr)
+        self.assertEqual(out["contrato_mantenciones_sin_monto"], 2)
+        self.assertTrue(out["avisos"])
+
 
 class TestLote(unittest.TestCase):
     def test_completa_contrato_real_y_repuestos_en_una_pasada(self):
@@ -231,7 +387,8 @@ class TestLectoresUsanLaCuentaUnica(unittest.TestCase):
     def test_todos_pasan_por_la_cuenta_unica(self):
         for nombre in self.LECTORES:
             src = _fuente_de(nombre)
-            self.assertTrue(re.search(r"_ot_fin(_lote|_de_fila|anzas|_agregado)\(", src), nombre)
+            # _ot_cobro_facprov = _ot_fin_de_fila + el resguardo de Facturación sobre el «Precio al cliente».
+            self.assertTrue(re.search(r"_ot_fin(_lote|_de_fila|anzas|_agregado)\(|_ot_cobro_facprov\(", src), nombre)
 
     def test_ninguno_suma_costo_ni_zz_en_sql(self):
         for nombre in self.LECTORES:

@@ -395,7 +395,7 @@
           {# Contra lo que cobra ESTA factura (margen_fila), para que la suma
              cuadre con el KPI de arriba; garantía y sin cobro se dicen. #}
           {% if it.es_garantia %}<span class="fp-sindoc gar" title="Se paga al proveedor y no se cobra al cliente, a propósito">{{ it.cobertura_corta or 'Garantía' }}</span>
-          {% elif it.sin_cobro_declarado %}<span class="fp-sindoc" title="Falta lo que cobraste: no hay línea de servicio en el documento ni un cobro escrito a mano">Sin cobro declarado</span>
+          {% elif it.sin_cobro_declarado %}<span class="fp-sindoc" title="Falta lo que cobraste: no hay línea de servicio en el documento ni un cobro de una cotización, un contrato o escrito a mano (el «Precio al cliente» sin ese origen puede ser el total de la factura, con equipos)">Sin cobro declarado</span>
           {% else %}
           <span class="{{ 'fp-margen-pos' if it.margen_fila > 0 else ('fp-margen-neg' if it.margen_fila < 0 else '') }}">
             {{ '+' if it.margen_fila > 0 else '' }}{{ clp(it.margen_fila) }}</span>

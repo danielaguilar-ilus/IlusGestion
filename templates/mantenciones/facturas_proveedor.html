@@ -383,7 +383,7 @@
           {# Misma regla que la franja "Lo filtrado" y que Facturación: una OT
              en garantía o sin cobro declarado no tiene margen, se dice. #}
           {% if d.es_garantia %}<span class="fp-sindoc gar" title="Se paga al proveedor y no se cobra al cliente, a propósito">{{ d.cobertura_corta or 'Garantía' }}</span>
-          {% elif d.sin_cobro_declarado %}<span class="fp-sindoc fp-sindoc-wrap" title="Falta lo que cobraste: no hay línea de servicio en el documento ni un cobro escrito a mano">Sin cobro declarado</span>
+          {% elif d.sin_cobro_declarado %}<span class="fp-sindoc fp-sindoc-wrap" title="Falta lo que cobraste: no hay línea de servicio en el documento ni un cobro de una cotización, un contrato o escrito a mano (el «Precio al cliente» sin ese origen puede ser el total de la factura, con equipos)">Sin cobro declarado</span>
           {% else %}
           <span class="{{ 'fp-margen-pos' if d.margen > 0 else ('fp-margen-neg' if d.margen < 0 else '') }}">
             {{ '+' if d.margen > 0 else '' }}{{ clp(d.margen) }}</span>

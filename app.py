@@ -106768,8 +106768,13 @@ def ot2_reporte_xlsx():
     # dinero total está fuera de Servicio Técnico". "sstt" es el único
     # centro que Daniel SÍ considera propio de Servicio Técnico -- vacío/
     # NULL cuenta como "fuera" porque tampoco es atribuible por defecto.
-    fin_tot = {"cobrado": 0.0, "proveedor": 0.0, "despacho": 0.0, "repuestos": 0.0, "margen": 0.0,
-               "no_sstt_ot": 0, "no_sstt_cobrado": 0.0, "no_sstt_margen": 0.0}
+    # 💰 2026-10-07 (revisión adversarial): el bloque de finanzas del Resumen ya no suma por su cuenta: es
+    # _ot_fin_agregado (la MISMA suma de Vida del cliente, el panel de costos por técnico y el Agente) sobre las
+    # OT con algún dato de plata. Mantención de contrato y trabajo interno van aparte (se pagan con el contrato
+    # / no son negocio con nadie) y las OT sin medir también: así Cobrado − Proveedor − Despacho − Repuestos
+    # vuelve a dar el Margen. Acá solo se suman los tres costos de las OT que entran al margen.
+    fin_tot = {"proveedor": 0.0, "despacho": 0.0, "repuestos": 0.0, "no_sstt_ot": 0}
+    _fins_res, _fins_res_no_sstt = [], []
     # 💰 2026-10-07: la cuenta de cada OT con la regla única (repuestos instalados en UNA consulta).
     _fins = _ot_fin_lote(rows)
     r = 3
@@ -106830,18 +106835,21 @@ def ot2_reporte_xlsx():
         _precio = _cobre
         margen = _fin["queda"]["total"] if _fin["queda"]["mostrar"] else None
         margen_pct = _fin["queda"]["pct"]
+        # Revisión 2026-10-07: en los totales (Resumen y hojas por técnico / centro / tipo) la mantención de
+        # contrato y el trabajo interno NO restan al margen: van aparte con lo que nos costaron
+        # (_OT_FIN_AGG_APARTE, mismo criterio que _ot_fin_agregado). En la fila de la OT sí se ven.
+        _es_aparte = _fin["cobertura"] in _OT_FIN_AGG_APARTE
+        _margen_grupo = None if _es_aparte else margen
+        _aparte_costo = float(_fin["me_cobraron"]["total"] or 0) if _es_aparte else 0.0
         if _tiene_finanzas:
-            fin_tot["cobrado"] += _cobre
-            fin_tot["proveedor"] += _cprov
-            fin_tot["despacho"] += _cdesp
-            fin_tot["repuestos"] += _crep
-            if margen is not None:
-                fin_tot["margen"] += margen
+            _fins_res.append(_fin)
+            if not _es_aparte and _fin["queda"]["mostrar"]:
+                fin_tot["proveedor"] += _cprov
+                fin_tot["despacho"] += _cdesp
+                fin_tot["repuestos"] += _crep
             if (f.get("centro_costo") or "") != "sstt":
                 fin_tot["no_sstt_ot"] += 1
-                fin_tot["no_sstt_cobrado"] += _cobre
-                if margen is not None:
-                    fin_tot["no_sstt_margen"] += margen
+                _fins_res_no_sstt.append(_fin)
             # 🐛 2026-09-02: distinguir "esta OT perdió plata" de "nadie
             # declaró cuánto se cobró" -- ahora con el rótulo de la cuenta
             # única ("Falta lo que cobraste", "Falta lo que te cobró el
@@ -106899,7 +106907,12 @@ def ot2_reporte_xlsx():
             cell.fill = PatternFill("solid", fgColor=fill)
             if ci in _COLS_CLP and val is not None:
                 cell.number_format = '"$"#,##0'
-                if ci == _COL_MARGEN and val < 0:   # Margen negativo — salta a la vista
+                if ci == _COL_MARGEN and not _fin["cobra"]:
+                    # Revisión 2026-10-07: en una OT que no se cobra (garantía, cortesía, contrato, interno) la
+                    # Queda es "lo que nos costó", no una pérdida: azul, como en la pantalla de la OT.
+                    cell.fill = PatternFill("solid", fgColor=BLUEL)
+                    cell.font = Font(size=9, bold=True, color="3B82F6")
+                elif ci == _COL_MARGEN and val < 0:   # Margen negativo — salta a la vista
                     cell.fill = PatternFill("solid", fgColor=REDL)
                     cell.font = Font(size=9, bold=True, color="DC2626")
             elif ci == _COL_PCT and val is not None:
@@ -106923,13 +106936,14 @@ def ot2_reporte_xlsx():
         k = (tec, "Externo" if externo else "Interno")
         a = por_tecnico.setdefault(k, {"total": 0, "cerradas": 0, "abiertas": 0,
                                        "tareas_ok": 0, "tareas_tot": 0, "monto": 0.0,
-                                       "margen": 0.0})
+                                       "margen": 0.0, "aparte": 0.0})
         a["total"] += 1
         a["tareas_ok"] += n_c
         a["tareas_tot"] += n_t
         a["monto"] += _precio
-        if margen is not None:
-            a["margen"] += margen
+        if _margen_grupo is not None:
+            a["margen"] += _margen_grupo
+        a["aparte"] += _aparte_costo
         if estado in ("cerrada", "completada"):
             a["cerradas"] += 1
         else:
@@ -106938,14 +106952,15 @@ def ot2_reporte_xlsx():
         cc = f.get("centro_costo") or "(sin centro)"
         b = por_centro.setdefault(cc, {"total": 0, "monto": 0.0, "garantia": 0,
                                        "costo_proveedor": 0.0, "costo_despacho": 0.0,
-                                       "margen": 0.0, "con_margen": 0})
+                                       "margen": 0.0, "con_margen": 0, "aparte": 0.0})
         b["total"] += 1
         b["monto"] += _precio
         b["costo_proveedor"] += _cprov
         b["costo_despacho"] += _cdesp
-        if margen is not None:
-            b["margen"] += margen
+        if _margen_grupo is not None:
+            b["margen"] += _margen_grupo
             b["con_margen"] += 1
+        b["aparte"] += _aparte_costo
         if _fin["cobertura"] == "garantia":   # 2026-10-07: garantía con la regla única (_ot_cobertura)
             b["garantia"] += 1
 
@@ -106955,14 +106970,15 @@ def ot2_reporte_xlsx():
         tp = f.get("tipo") or "(sin tipo)"
         t = por_tipo.setdefault(tp, {"total": 0, "monto": 0.0, "garantia": 0,
                                      "costo_proveedor": 0.0, "costo_despacho": 0.0,
-                                     "margen": 0.0, "con_margen": 0})
+                                     "margen": 0.0, "con_margen": 0, "aparte": 0.0})
         t["total"] += 1
         t["monto"] += _precio
         t["costo_proveedor"] += _cprov
         t["costo_despacho"] += _cdesp
-        if margen is not None:
-            t["margen"] += margen
+        if _margen_grupo is not None:
+            t["margen"] += _margen_grupo
             t["con_margen"] += 1
+        t["aparte"] += _aparte_costo
         if _fin["cobertura"] == "garantia":   # 2026-10-07: garantía con la regla única (_ot_cobertura)
             t["garantia"] += 1
 
@@ -106975,9 +106991,10 @@ def ot2_reporte_xlsx():
 
     # ── Hoja 2: Por técnico ───────────────────────────────────────────
     ws2 = wb.create_sheet("Por técnico")
+    # 2026-10-07: "Margen" sin contrato ni interno; lo que costaron va en su propia columna (al final).
     h2 = ["Técnico", "Tipo", "OT totales", "Cerradas", "Abiertas",
           "Tareas hechas", "Tareas totales", "% avance", "Monto asociado",
-          "Margen"]
+          "Margen", "Contrato e interno (aparte, nos costó)"]
     for ci, h in enumerate(h2, 1):
         _hdr(ws2.cell(row=1, column=ci), h)
     r2 = 2
@@ -106985,15 +107002,15 @@ def ot2_reporte_xlsx():
         pct = int(round(a["tareas_ok"] * 100.0 / a["tareas_tot"])) if a["tareas_tot"] else 0
         for ci, val in enumerate([tec, tipo, a["total"], a["cerradas"], a["abiertas"],
                                   a["tareas_ok"], a["tareas_tot"], pct, a["monto"],
-                                  a["margen"]], 1):
+                                  a["margen"], a["aparte"]], 1):
             c = ws2.cell(row=r2, column=ci, value=val)
             c.font = Font(size=9)
             c.border = border
             c.fill = PatternFill("solid", fgColor=LGRAY if r2 % 2 == 0 else "FFFFFF")
-            if ci in (9, 10):
+            if ci in (9, 10, 11):
                 c.number_format = '"$"#,##0'
         r2 += 1
-    for ci, w in enumerate([26, 10, 12, 11, 11, 14, 14, 11, 16, 16], 1):
+    for ci, w in enumerate([26, 10, 12, 11, 11, 14, 14, 11, 16, 16, 20], 1):
         ws2.column_dimensions[get_column_letter(ci)].width = w
     ws2.freeze_panes = "A2"
 
@@ -107004,24 +107021,26 @@ def ot2_reporte_xlsx():
     # campos nuevos de esta noche) y una fila de totales "fuera de SSTT"
     # -- la pregunta exacta de Daniel: "cuánto dinero hay en juego".
     ws3 = wb.create_sheet("Por centro de costo")
+    # 2026-10-07: "Margen total" sin contrato ni interno; lo que costaron va en su propia columna (al final).
     h3 = ["Centro de costo", "OT", "Monto asociado (cobrado)",
-          "Costo proveedor", "Costo despacho", "Margen total", "En garantía"]
+          "Costo proveedor", "Costo despacho", "Margen total", "En garantía",
+          "Contrato e interno (aparte, nos costó)"]
     for ci, h in enumerate(h3, 1):
         _hdr(ws3.cell(row=1, column=ci), h)
     r3 = 2
     _fuera_sstt = {"total": 0, "monto": 0.0, "costo_proveedor": 0.0,
-                   "costo_despacho": 0.0, "margen": 0.0, "garantia": 0}
+                   "costo_despacho": 0.0, "margen": 0.0, "garantia": 0, "aparte": 0.0}
     for cc, b in sorted(por_centro.items(), key=lambda x: -x[1]["monto"]):
         for ci, val in enumerate([_LBL_CC.get(cc, cc), b["total"], b["monto"],
                                   b["costo_proveedor"], b["costo_despacho"],
-                                  b["margen"], b["garantia"]], 1):
+                                  b["margen"], b["garantia"], b["aparte"]], 1):
             c = ws3.cell(row=r3, column=ci, value=val)
             c.font = Font(size=9, bold=(ci == 1))
             c.border = border
             c.fill = PatternFill("solid", fgColor=(
                 REDL if cc == "(sin centro)" else
                 LGRAY if r3 % 2 == 0 else "FFFFFF"))
-            if ci in (3, 4, 5, 6):
+            if ci in (3, 4, 5, 6, 8):
                 c.number_format = '"$"#,##0'
         r3 += 1
         # "sstt" (o vacío ya normalizado a "(sin centro)") queda excluido:
@@ -107033,19 +107052,20 @@ def ot2_reporte_xlsx():
             _fuera_sstt["costo_despacho"] += b["costo_despacho"]
             _fuera_sstt["margen"] += b["margen"]
             _fuera_sstt["garantia"] += b["garantia"]
+            _fuera_sstt["aparte"] += b["aparte"]
     r3 += 1
     for ci, val in enumerate(
         ["TOTAL fuera de Servicio Técnico", _fuera_sstt["total"],
          _fuera_sstt["monto"], _fuera_sstt["costo_proveedor"],
          _fuera_sstt["costo_despacho"], _fuera_sstt["margen"],
-         _fuera_sstt["garantia"]], 1):
+         _fuera_sstt["garantia"], _fuera_sstt["aparte"]], 1):
         c = ws3.cell(row=r3, column=ci, value=val)
         c.font = Font(size=10, bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="DC2626")
         c.border = border
-        if ci in (3, 4, 5, 6):
+        if ci in (3, 4, 5, 6, 8):
             c.number_format = '"$"#,##0'
-    for ci, w in enumerate([30, 10, 18, 16, 16, 14, 13], 1):
+    for ci, w in enumerate([30, 10, 18, 16, 16, 14, 13, 20], 1):
         ws3.column_dimensions[get_column_letter(ci)].width = w
     ws3.freeze_panes = "A2"
 
@@ -107056,8 +107076,10 @@ def ot2_reporte_xlsx():
     # (mantención preventiva/correctiva, instalación, inspección, garantía,
     # trabajo de bodega, etc. -- ver _TIPO_OT_LABEL).
     ws3b = wb.create_sheet("Por tipo")
+    # 2026-10-07: "Margen total" sin contrato ni interno; lo que costaron va en su propia columna (al final).
     h3b = ["Tipo de OT", "OT", "Monto cobrado", "Costo proveedor",
-           "Costo despacho", "Margen total", "En garantía"]
+           "Costo despacho", "Margen total", "En garantía",
+           "Contrato e interno (aparte, nos costó)"]
     for ci, h in enumerate(h3b, 1):
         _hdr(ws3b.cell(row=1, column=ci), h)
     r3b = 2
@@ -107065,14 +107087,14 @@ def ot2_reporte_xlsx():
         _lbl_tp = _TIPO_OT_LABEL.get(tp, tp) if tp != "(sin tipo)" else tp
         for ci, val in enumerate([_lbl_tp, t["total"], t["monto"],
                                   t["costo_proveedor"], t["costo_despacho"],
-                                  t["margen"], t["garantia"]], 1):
+                                  t["margen"], t["garantia"], t["aparte"]], 1):
             c = ws3b.cell(row=r3b, column=ci, value=val)
             c.font = Font(size=9, bold=(ci == 1))
             c.border = border
             c.fill = PatternFill("solid", fgColor=(
                 REDL if tp == "(sin tipo)" else
                 LGRAY if r3b % 2 == 0 else "FFFFFF"))
-            if ci in (3, 4, 5, 6):
+            if ci in (3, 4, 5, 6, 8):
                 c.number_format = '"$"#,##0'
         r3b += 1
     r3b += 1
@@ -107081,18 +107103,19 @@ def ot2_reporte_xlsx():
                  "costo_proveedor": sum(t["costo_proveedor"] for t in por_tipo.values()),
                  "costo_despacho": sum(t["costo_despacho"] for t in por_tipo.values()),
                  "margen": sum(t["margen"] for t in por_tipo.values()),
-                 "garantia": sum(t["garantia"] for t in por_tipo.values())}
+                 "garantia": sum(t["garantia"] for t in por_tipo.values()),
+                 "aparte": sum(t["aparte"] for t in por_tipo.values())}
     for ci, val in enumerate(
         ["TOTAL", _tot_tipo["total"], _tot_tipo["monto"],
          _tot_tipo["costo_proveedor"], _tot_tipo["costo_despacho"],
-         _tot_tipo["margen"], _tot_tipo["garantia"]], 1):
+         _tot_tipo["margen"], _tot_tipo["garantia"], _tot_tipo["aparte"]], 1):
         c = ws3b.cell(row=r3b, column=ci, value=val)
         c.font = Font(size=10, bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="0A0A0A")
         c.border = border
-        if ci in (3, 4, 5, 6):
+        if ci in (3, 4, 5, 6, 8):
             c.number_format = '"$"#,##0'
-    for ci, w in enumerate([26, 10, 16, 16, 16, 14, 13], 1):
+    for ci, w in enumerate([26, 10, 16, 16, 16, 14, 13, 20], 1):
         ws3b.column_dimensions[get_column_letter(ci)].width = w
     ws3b.freeze_panes = "A2"
 
@@ -107124,19 +107147,39 @@ def ot2_reporte_xlsx():
     # saber qué OT están comprometidas con centros de costo diferentes a
     # servicio técnico... yo me estaría armando un buen reporte" -- este es
     # el bloque que responde exactamente esa pregunta en una sola mirada.
-    _pct_no_sstt = (fin_tot["no_sstt_cobrado"] / fin_tot["cobrado"] * 100.0
-                    ) if fin_tot["cobrado"] else 0.0
-    filas_res += [("", ""), ("— Finanzas —", "")]
-    filas_res.append(("Monto cobrado total", fin_tot["cobrado"], True))
+    # 💰 2026-10-07 (revisión adversarial): misma suma que Vida del cliente / costos por técnico / Agente
+    # (_ot_fin_agregado). "Monto cobrado" es el de las OT que se pueden medir, así que Cobrado − Proveedor −
+    # Despacho − Repuestos = Margen (antes de esta revisión sumaba también lo cobrado en OT sin medir y restaba
+    # la "Queda" de contrato e interno). Lo que queda fuera se muestra aparte, con su monto: no se esconde.
+    _agg = _ot_fin_agregado(_fins_res)
+    _agg_ns = _ot_fin_agregado(_fins_res_no_sstt)
+    _ap_ctr = _agg["aparte"].get("contrato") or {}
+    _ap_int = _agg["aparte"].get("interno") or {}
+    _ap_ns = sum(float(x.get("costo") or 0) for x in _agg_ns["aparte"].values())
+    _pct_no_sstt = (_agg_ns["cobre"] / _agg["cobre"] * 100.0) if _agg["cobre"] else 0.0
+    filas_res += [("", ""), ("— Finanzas (la cuenta de cada OT: Cobré − Me cobraron = Queda) —", "")]
+    filas_res.append(("OT que se pueden medir", _agg["n"]))
+    filas_res.append(("Monto cobrado (OT que se pueden medir)", _agg["cobre"], True))
     filas_res.append(("Costo proveedor total", fin_tot["proveedor"], True))
     filas_res.append(("Costo despacho total", fin_tot["despacho"], True))
     filas_res.append(("Repuestos instalados total", fin_tot["repuestos"], True))
-    filas_res.append(("Margen total (Queda)", fin_tot["margen"], True))
+    filas_res.append(("Margen total (Queda)", _agg["queda"], True))
+    filas_res.append((f"  incluye garantía y cortesía ({_agg['n_no_cobra']} OT, no se cobran): nos costó",
+                      _agg["costo_no_cobra"], True))
+    filas_res += [("", ""), ("— Aparte (no entran al margen) —", "")]
+    filas_res.append((f"Cobrado en OT sin medir ({_agg['n_fuera']} OT: falta lo cobrado, lo que cobró "
+                      f"el técnico o el despacho)", _agg["cobre_fuera"], True))
+    filas_res.append((f"Mantención de contrato ({int(_ap_ctr.get('n') or 0)} OT, se paga con el contrato): "
+                      f"nos costó", float(_ap_ctr.get("costo") or 0), True))
+    filas_res.append((f"Trabajo interno ({int(_ap_int.get('n') or 0)} OT): nos costó",
+                      float(_ap_int.get("costo") or 0), True))
     filas_res += [("", ""), ("— Fuera de Servicio Técnico —", "")]
     filas_res.append(("OT con centro Logística/Comercial/sin definir",
                       fin_tot["no_sstt_ot"]))
-    filas_res.append(("Monto cobrado fuera de SSTT", fin_tot["no_sstt_cobrado"], True))
-    filas_res.append(("Margen fuera de SSTT", fin_tot["no_sstt_margen"], True))
+    filas_res.append(("Monto cobrado fuera de SSTT", _agg_ns["cobre"], True))
+    filas_res.append(("Margen fuera de SSTT", _agg_ns["queda"], True))
+    filas_res.append(("Contrato e interno fuera de SSTT (aparte): nos costó", _ap_ns, True))
+    filas_res.append(("Cobrado en OT sin medir fuera de SSTT", _agg_ns["cobre_fuera"], True))
     filas_res.append(("% del monto cobrado que es fuera de SSTT",
                       f"{_pct_no_sstt:.1f}%"))
     if len(rows) >= _OT2_EXPORT_LIMIT:
@@ -124042,20 +124085,25 @@ def _facprov_datos(desde, hasta):
         # compararlo contra lo que ILUS le paga al proveedor daria un margen
         # enorme y falso.
         #
-        # Por eso tampoco se cae a `costo`: esa columna es generica (el codigo
-        # la reusa hasta para valorizar trabajo interno que no se cobra) y en
-        # algunas OT puede traer justamente el total del documento. Si no hay
-        # linea ZZ declarada, el cobro del servicio NO se sabe -- y eso se
-        # dice, no se rellena con el numero que haya a mano.
+        # Por eso `costo` (el «Precio al cliente» anotado) solo cuenta si viene
+        # de una cotizacion, un contrato o lo escribio una persona: esa columna
+        # es generica (el codigo la reusa hasta para valorizar trabajo interno
+        # que no se cobra) y «Asociar factura» copia ahi el total del documento
+        # cuando esta vacia. Si no hay linea ZZ declarada ni un cobro de verdad,
+        # el cobro del servicio NO se sabe -- y eso se dice, no se rellena con
+        # el numero que haya a mano.
         # 2026-09-20: UNA regla compartida con Facturas de proveedor
         # (_ot_cobro_cliente).
         # 💰 2026-10-07 (modelo único, Daniel): lo cobrado es el "Cobré" de la
         # cuenta de la OT (_ot_finanzas): servicio + despacho, $0 si la OT no se
-        # cobra (garantía, cortesía, contrato o interno). Lo pagado al proveedor
-        # sigue siendo técnico + despacho, SIN repuestos (a_pagar_proveedor): es
-        # lo que se concilia con sus facturas.
-        _fin = _ot_fin_de_fila(f)
-        zz_serv, zz_env, fuente_cobro = _ot_cobro_de_fin(_fin)
+        # cobra (garantía, cortesía, contrato o interno), con el resguardo de
+        # arriba sobre `costo` (_ot_cobro_facprov; revisión del mismo día: sin
+        # él, una FCV de $1.500.000 que incluye un equipo salía "Margen sano").
+        # Lo pagado al proveedor sigue siendo técnico + despacho, SIN repuestos
+        # (a_pagar_proveedor): es lo que se concilia con sus facturas.
+        _cobro = _ot_cobro_facprov(f)
+        _fin = _cobro["fin"]
+        zz_serv, zz_env, fuente_cobro = _cobro["servicio"], _cobro["envio"], _cobro["fuente"]
         cobrado = zz_serv + zz_env
         # `es_garantia` conserva su nombre (lo leen la plantilla y la serie
         # mensual) pero ahora significa "no se cobra", con la regla única.
@@ -124065,7 +124113,7 @@ def _facprov_datos(desde, hasta):
         # Una OT sin cobro declarado NO es margen negativo: es un dato que
         # falta. Se cuentan aparte para que el total no mienta. Un cobro
         # declarado en $0 sí es un dato (entra al margen).
-        sin_cobro = (_fin["cobra"] and not _fin["cobre"]["hay"])
+        sin_cobro = _cobro["sin_cobro"]
 
         # El costo del servicio se imputa al tipo de la OT; el despacho va
         # siempre a su propia bolsa aunque la OT sea de instalacion: son
@@ -124138,7 +124186,7 @@ def _facprov_datos(desde, hasta):
             "garantia": es_garantia, "sin_cobro": sin_cobro,
             "cobertura": _fin["cobertura"], "cobertura_txt": _fin["cobertura_txt"],
             "cobertura_corta": _OT_FIN_COBERTURA_CORTA.get(_fin["cobertura"], ""),
-            "avisos": _fin["avisos"],
+            "avisos": _cobro["avisos"],
             "cerrada": chile_fmt_filter(f.get("cerrada_at"), "%d/%m/%Y") if f.get("cerrada_at") else "",
         })
 
@@ -124426,7 +124474,10 @@ _MFP_SELECT_OT = (
 )
 
 
-_COBRO_ORIGENES_REALES = ("cotizacion", "contrato", "manual")
+# Orígenes del «Precio al cliente» anotado (`costo`) que SÍ son un cobro en las pantallas que concilian con
+# facturas de proveedor (regla del 2026-09-20, ver _ot_cobro_de_fin). 'supuesto' se suma el 2026-10-07: la cuenta
+# única lo trata como un cobro que escribió una persona (ver la nota de _OT_FIN_ORIGENES_NO_COBRO).
+_COBRO_ORIGENES_REALES = ("cotizacion", "contrato", "manual", "supuesto")
 
 
 def _ot_fin_de_fila(f):
@@ -124440,15 +124491,48 @@ def _ot_fin_de_fila(f):
     return _ot_finanzas(v, None)
 
 
-def _ot_cobro_de_fin(fin):
-    """(servicio, envío, fuente) de lo COBRADO según la cuenta única. fuente: "zz" (cobro declarado: línea del
-    documento, a mano, cotización...), "valor_ot" (el «Precio al cliente» anotado en una OT antigua, sin separar
-    servicio y despacho) o "" (no se cobra, o falta lo que cobraste)."""
+def _ot_cobro_de_fin(fin, valor_origen=None):
+    """(servicio, envío, fuente) de lo COBRADO según la cuenta única, para las pantallas que concilian con
+    facturas de proveedor. fuente: "zz" (cobro declarado: línea del documento, a mano, cotización...),
+    "valor_ot" (el «Precio al cliente» anotado, sin separar servicio y despacho) o "" (no se cobra, o falta lo
+    que cobraste).
+
+    💰 2026-10-07 (revisión adversarial): acá el «Precio al cliente» anotado (`costo`) cuenta como cobro SOLO
+    si viene de una cotización, un contrato o lo escribió una persona (valor_origen en _COBRO_ORIGENES_REALES):
+    es la regla de estas pantallas desde el 2026-09-20. Sin ese origen puede ser el total de la factura
+    («Asociar factura» lo copia en `costo` cuando está vacío) y ese total incluye los equipos vendidos -- Daniel
+    2026-09-06: «el cobro de instalación o despacho, no el neto de la factura»; daba un margen enorme y falso
+    (una FCV de $1.500.000 con un equipo salía "Margen sano"). Entonces el cobro no se sabe: fuente "".
+    La cuenta de la OT (_ot_finanzas) NO se toca: es decisión de Daniel (queda anotado para él)."""
     c = fin["cobre"]
     if not fin["cobra"] or not c["hay"]:
         return 0.0, 0.0, ""
-    fuente = "valor_ot" if (c.get("fuente") or "").startswith("precio al cliente") else "zz"
-    return float(c["servicio"] or 0), float(c["despacho"] or 0), fuente
+    if (c.get("fuente") or "").startswith("precio al cliente"):
+        if (valor_origen or "").strip().lower() not in _COBRO_ORIGENES_REALES:
+            return 0.0, 0.0, ""
+        return float(c["servicio"] or 0), float(c["despacho"] or 0), "valor_ot"
+    return float(c["servicio"] or 0), float(c["despacho"] or 0), "zz"
+
+
+def _ot_cobro_facprov(f):
+    """💰 2026-10-07: la plata de UNA fila de Facturas de proveedor / Facturación de proveedores / sus Excel:
+    la cuenta única de la OT + el resguardo de estas pantallas sobre el «Precio al cliente» (_ot_cobro_de_fin).
+    Devuelve dict con fin (_ot_finanzas), servicio, envio, fuente ("zz" | "valor_ot" | ""), sin_cobro (se le
+    cobra al cliente pero no se sabe cuánto; un $0 declarado sí es un dato) y avisos."""
+    fin = _ot_fin_de_fila(f)
+    serv, env, fuente = _ot_cobro_de_fin(fin, f.get("valor_origen"))
+    sin_cobro = bool(fin["cobra"] and not fuente)
+    avisos = list(fin["avisos"])
+    if sin_cobro and fin["cobre"]["hay"]:
+        # La cuenta de la OT tomó el «Precio al cliente» como cobro y acá no se acepta: su aviso se cambia por
+        # el motivo, para que la fila no diga dos cosas distintas.
+        _tot = _ot_fin_num(f.get("costo") if f.get("costo") is not None else f.get("cliente_costo"))
+        avisos = [a for a in avisos if "«Precio al cliente» anotado: no separa" not in a]
+        avisos.append("El «Precio al cliente» anotado" + (f" ({_ot_fin_clp(_tot)})" if _tot else "")
+                      + " no cuenta como cobro: no viene de una cotización, un contrato ni lo escribió una persona"
+                        " (puede ser el total de la factura, que incluye equipos). Falta lo que cobraste.")
+    return {"fin": fin, "servicio": serv, "envio": env, "fuente": fuente, "sin_cobro": sin_cobro,
+            "avisos": avisos}
 
 
 def _ot_cobro_cliente(f):
@@ -124460,11 +124544,14 @@ def _ot_cobro_cliente(f):
     tiene fórmula propia -- es el "Cobré" de _ot_finanzas, la misma cuenta de
     la OT: servicio (línea del documento o escrito a mano; nunca un estimado
     ni ZZRETIRO) + despacho cobrado, y $0 si la OT no se cobra (garantía,
-    cortesía, contrato o trabajo interno). En una OT antigua sin línea
-    declarada cuenta el «Precio al cliente» anotado (fuente "valor_ot").
+    cortesía, contrato o trabajo interno). Sin línea declarada, el «Precio al
+    cliente» anotado cuenta SOLO si viene de una cotización, un contrato o lo
+    escribió una persona (fuente "valor_ot"; ver _ot_cobro_de_fin): si no,
+    falta lo que cobraste.
     Devuelve (servicio, envio, fuente) con fuente en {"zz", "valor_ot", ""}.
     """
-    return _ot_cobro_de_fin(_ot_fin_de_fila(f))
+    c = _ot_cobro_facprov(f)
+    return c["servicio"], c["envio"], c["fuente"]
 
 
 def _mfp_nombre_proveedor_ot(f):
@@ -124492,10 +124579,12 @@ def _mfp_fila_ot(f):
     # costo_proveedor/costo_despacho (lo que ILUS le paga AL proveedor,
     # signo contrario en el margen).
     # 2026-09-20: UNA regla compartida con Facturación (ver _ot_cobro_cliente).
-    # 💰 2026-10-07: el cobro es el "Cobré" de la cuenta única (_ot_finanzas);
-    # lo pagado al proveedor sigue siendo técnico + despacho, sin repuestos.
-    _fin = _ot_fin_de_fila(f)
-    _venta_serv, _venta_envio, _fuente_cobro = _ot_cobro_de_fin(_fin)
+    # 💰 2026-10-07: el cobro es el "Cobré" de la cuenta única (_ot_finanzas),
+    # con el resguardo sobre el «Precio al cliente» (_ot_cobro_facprov); lo
+    # pagado al proveedor sigue siendo técnico + despacho, sin repuestos.
+    _cobro = _ot_cobro_facprov(f)
+    _fin = _cobro["fin"]
+    _venta_serv, _venta_envio, _fuente_cobro = _cobro["servicio"], _cobro["envio"], _cobro["fuente"]
     cobrado_cliente = _venta_serv + _venta_envio
     pagado_proveedor = serv + desp
     margen = cobrado_cliente - pagado_proveedor
@@ -124546,8 +124635,8 @@ def _mfp_fila_ot(f):
         "cobertura": _fin["cobertura"], "cobertura_txt": _fin["cobertura_txt"],
         "cobertura_corta": _OT_FIN_COBERTURA_CORTA.get(_fin["cobertura"], ""),
         # Se cobra pero no está declarado cuánto ("Falta lo que cobraste"). Un $0 declarado sí es un dato.
-        "sin_cobro_declarado": bool(_fin["cobra"] and not _fin["cobre"]["hay"]),
-        "fin_avisos": _fin["avisos"],
+        "sin_cobro_declarado": _cobro["sin_cobro"],
+        "fin_avisos": _cobro["avisos"],
         # 🔴 2026-09-21: NULL en los dos costos = nadie decidió todavía cuánto
         # se le paga al proveedor (OT nacida por Levantamiento/Ticket, que no
         # pide esos campos). Distinto de un $0 declarado (garantía, o
@@ -126815,9 +126904,11 @@ def mant_facturas_proveedor_xlsx():
         # (_ot_finanzas): servicio + despacho, $0 si no se cobra (garantía, cortesía, contrato o interno).
         # Antes sumaba zz_monto a secas: un estimado, una cotización o el $1 de ZZRETIRO salían como cobro.
         # Lo que se le paga al técnico sigue siendo técnico + despacho, sin repuestos (se concilia con su factura).
-        _fin = _ot_fin_de_fila(r)
+        # Revisión 2026-10-07: el «Precio al cliente» sin origen real no es cobro (_ot_cobro_facprov).
+        _cobro = _ot_cobro_facprov(r)
+        _fin = _cobro["fin"]
         es_gar = not _fin["cobra"]
-        cobro_inst, cobro_flete, _fuente_cobro = _ot_cobro_de_fin(_fin)
+        cobro_inst, cobro_flete, _fuente_cobro = _cobro["servicio"], _cobro["envio"], _cobro["fuente"]
         pago_inst = float(r.get("costo_proveedor") or 0)
         pago_flete = float(r.get("costo_despacho") or 0)
         pago_total = pago_inst + pago_flete
@@ -126852,9 +126943,9 @@ def mant_facturas_proveedor_xlsx():
         obs_cobro = " · ".join(x for x in [
             ((f"Garantía: {r['garantia_motivo']}" if _fin["cobertura"] == "garantia" and r.get("garantia_motivo")
               else _fin["cobertura_txt"]) if es_gar else ""),
-            ("Falta lo que cobraste" if (not es_gar and not _fin["cobre"]["hay"]) else ""),
-            ("Precio al cliente anotado (OT antigua)" if _fuente_cobro == "valor_ot" else ""),
-            (r.get("zz_motivo_manual") or ""), (r.get("fac_obs") or "")] + list(_fin["avisos"]) if x)
+            ("Falta lo que cobraste" if _cobro["sin_cobro"] else ""),
+            ("Precio al cliente anotado (cotización, contrato o escrito a mano)" if _fuente_cobro == "valor_ot" else ""),
+            (r.get("zz_motivo_manual") or ""), (r.get("fac_obs") or "")] + list(_cobro["avisos"]) if x)
 
         fac_txt = ""
         if r.get("fac_id"):
@@ -134561,19 +134652,57 @@ def mant_cliente_finanzas(cid):
     visitas_count = len([v for v in visitas if v.get("estado") in ("completada", "cerrada")])
 
     # Contrato — estimación lineal (monto_mensual × meses_vigentes)
+    # 💰 2026-10-07 (revisión adversarial): MISMO criterio que la bandera de contrato real de la cuenta única
+    # (_OT_FIN_SQL_CONTRATO_REAL), que es la que deja en Cobré $0 a la mantención de contrato. Antes solo
+    # contaba estado='vigente': con un contrato 'indefinido' o 'por_vencer' sus preventivas quedaban en $0 y el
+    # contrato no entraba -- ingresos de menos y un margen negativo que no existe. Ahora entra el contrato real
+    # vigente, por vencer o indefinido y, si una mantención de contrato del periodo apunta a un contrato ya
+    # vencido, ese también (solo sus meses dentro del periodo, hasta el vencimiento). El "Contenedor de
+    # documentos" no es un contrato. Para un contrato activo la cuenta de meses es la misma de antes.
+    _CTR_ACTIVOS = ("vigente", "por_vencer", "indefinido")
+    _ots_ctr = [v for v in visitas
+                if ((_fins_v.get(int(v["id"])) or {}).get("cobertura")) == "contrato"]
+    _ids_ctr_ot = sorted({int(v["contrato_id"]) for v in _ots_ctr if v.get("contrato_id")})
+    _sql_ctr = ("SELECT id, estado, monto_mensual, fecha_inicio, fecha_vencimiento, es_indefinido "
+                "FROM mant_contratos WHERE cliente_id=%s "
+                "  AND COALESCE(nombre,'')<>'Contenedor de documentos' "
+                "  AND (estado IN ('vigente','por_vencer','indefinido')")
+    _p_ctr = [cid]
+    if _ids_ctr_ot:
+        _sql_ctr += " OR id IN (" + ",".join(["%s"] * len(_ids_ctr_ot)) + ")"
+        _p_ctr += _ids_ctr_ot
+    contratos = mysql_fetchall(_sql_ctr + ")", tuple(_p_ctr)) or []
     contrato_estimado = 0
-    contratos = mysql_fetchall(
-        "SELECT monto_mensual, fecha_inicio, fecha_vencimiento, es_indefinido "
-        "FROM mant_contratos WHERE cliente_id=%s AND estado='vigente'", (cid,)
-    )
     hoy = datetime.now().date()
+    _idx_hoy = hoy.year * 12 + hoy.month
+    _ctr_con_monto, _hay_activo_con_monto = set(), False
     for ct in contratos:
         m = float(ct["monto_mensual"] or 0)
         if m <= 0: continue
         fi = ct.get("fecha_inicio") or hoy
         if isinstance(fi, datetime): fi = fi.date()
-        meses_vigentes = max(0, min(meses or 12, ((hoy.year - fi.year)*12 + hoy.month - fi.month)))
+        _activo = (ct.get("estado") or "") in _CTR_ACTIVOS
+        _idx_fin = _idx_hoy
+        if not _activo:
+            fv = ct.get("fecha_vencimiento")
+            if isinstance(fv, datetime): fv = fv.date()
+            if fv and fv < hoy:
+                _idx_fin = fv.year * 12 + fv.month
+        # = min(meses, meses desde el inicio) para un contrato activo (la cuenta de siempre).
+        _idx_ini = max(fi.year * 12 + fi.month, _idx_hoy - (meses or 12))
+        meses_vigentes = max(0, _idx_fin - _idx_ini)
         contrato_estimado += m * meses_vigentes
+        _ctr_con_monto.add(int(ct["id"]))
+        _hay_activo_con_monto = _hay_activo_con_monto or _activo
+    # Mantenciones de contrato del periodo (Cobré $0) cuyo contrato no aporta nada a "contrato estimado"
+    # (sin monto mensual, o nada que contar): se avisa, no se esconde.
+    _n_ctr_sin_monto = sum(1 for v in _ots_ctr
+                           if not ((v.get("contrato_id") and int(v["contrato_id"]) in _ctr_con_monto)
+                                   or _hay_activo_con_monto))
+    _avisos_fin = []
+    if _n_ctr_sin_monto:
+        _avisos_fin.append(f"{_n_ctr_sin_monto} mantención(es) de contrato del periodo se pagan con un contrato "
+                           "sin monto mensual: no suman ingresos.")
 
     ingresos_total = rep_venta_total + visitas_costo + contrato_estimado
     costos_total   = rep_costo_total + garantia_costo + visitas_costo_tecnicos
@@ -134612,6 +134741,10 @@ def mant_cliente_finanzas(cid):
         "visitas_costo":   round(visitas_costo, 2),
         "visitas_costo_tecnicos": round(visitas_costo_tecnicos, 2),
         "contrato_estimado": round(contrato_estimado, 2),
+        # 2026-10-07: cuántas OT del periodo son mantención de contrato (Cobré $0, su plata es el contrato).
+        "contrato_mantenciones": len(_ots_ctr),
+        "contrato_mantenciones_sin_monto": _n_ctr_sin_monto,
+        "avisos":          _avisos_fin,
         "por_mes":         por_mes,
     })
 
