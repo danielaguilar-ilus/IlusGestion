@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+{# ILUS Fitness · Comprobante de recepción de un retiro — página PÚBLICA (sin login ni base.html), imprimible.
+   Todo viene ya formateado desde Python (hora Chile, RUT con puntos): no depende de filtros de la app. Jinja escapa todo por defecto. #}
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>{% if no_disponible %}Comprobante no disponible{% else %}Comprobante de retiro {{ code }}{% endif %} — ILUS Fitness</title>
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='favicon.png') }}">
+  <style>
+    :root{--red:#dc2626;--black:#0a0a0a;--ok:#16a34a;--okbg:#dcfce7;--warn:#f59e0b;--warnbg:#fff8e1;--gris:#6b7280;--bg:#f3f4f6;--line:#e5e7eb}
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:#111827;font-family:Inter,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.5;-webkit-text-size-adjust:100%}
+    .bar{background:var(--black);color:#fff;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .bar img{height:28px;display:block}
+    .bar span{font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;color:#fca5a5}
+    .hoja{max-width:820px;margin:18px auto;padding:0 16px 40px}
+    .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
+    .hero{display:flex;gap:14px;align-items:center}
+    .circ{flex:none;width:48px;height:48px;border-radius:50%;background:var(--ok);color:#fff;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800}
+    .circ.warn{background:var(--warn)}
+    h1{font-size:1.3rem;margin:0 0 2px}
+    .sub{color:var(--gris);font-size:.9rem;margin:0}
+    .emisor{font-size:.82rem;color:var(--gris);margin-top:10px;border-top:1px dashed var(--line);padding-top:10px}
+    .lbl{font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;font-weight:800;color:var(--gris);margin:0 0 8px}
+    dl{display:grid;grid-template-columns:150px 1fr;gap:6px 12px;margin:0}
+    dt{color:var(--gris);font-size:.88rem}
+    dd{margin:0;font-weight:600;overflow-wrap:anywhere}
+    .tabla{width:100%;border-collapse:collapse;font-size:.92rem}
+    .tabla th{text-align:left;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--gris);border-bottom:2px solid var(--line);padding:6px 8px}
+    .tabla td{padding:8px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
+    .tabla td.n,.tabla th.n{text-align:right;white-space:nowrap}
+    .doc{margin:14px 0 6px;font-weight:800;font-size:.9rem}
+    .doc:first-of-type{margin-top:0}
+    .firma{border:1px dashed #9ca3af;border-radius:10px;background:#fff;padding:8px;text-align:center}
+    .firma img{max-width:100%;max-height:200px}
+    .chip{display:inline-block;border-radius:999px;padding:3px 12px;font-weight:700;font-size:.85rem}
+    .chip.ok{background:var(--okbg);color:#166534}
+    .chip.warn{background:var(--warnbg);color:#92400e}
+    .hash{font-family:ui-monospace,Consolas,monospace;font-size:.74rem;word-break:break-all;color:#374151}
+    .verde{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;border-radius:10px;padding:10px 14px;font-size:.88rem}
+    .acciones{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+    .btn{min-height:44px;padding:0 20px;border:0;border-radius:10px;background:var(--black);color:#fff;font-weight:700;font-size:.95rem;cursor:pointer}
+    .pie{text-align:center;color:var(--gris);font-size:.78rem;margin-top:18px}
+    @media (max-width:560px){dl{grid-template-columns:1fr;gap:0}dt{margin-top:8px}.tabla th.sku,.tabla td.sku{display:none}}
+    @media print{body{background:#fff}.bar,.acciones{display:none}.hoja{margin:0;padding:0;max-width:none}.card{border:1px solid #d1d5db;break-inside:avoid}}
+  </style>
+</head>
+<body>
+  <div class="bar"><img src="{{ url_for('static', filename='logo_ilus_fitness_blanco.png') }}" alt="ILUS Fitness"><span>Comprobante de recepción</span></div>
+  <main class="hoja">
+  {% if no_disponible %}
+    <section class="card">
+      <h1>Este comprobante no está disponible</h1>
+      <p class="sub">El enlace no es válido o el retiro todavía no tiene su recepción firmada. Si recibiste este enlace por correo, escríbenos a <a href="mailto:soportetec@sphs.cl">soportetec@sphs.cl</a>.</p>
+    </section>
+  {% else %}
+    <div class="acciones"><button class="btn" type="button" onclick="window.print()">Descargar / Imprimir</button></div>
+
+    <section class="card">
+      <div class="hero">
+        <div class="circ{% if not f.conformidad %} warn{% endif %}" aria-hidden="true">&#10003;</div>
+        <div>
+          <h1>Recepción de retiro {{ code }}</h1>
+          <p class="sub">{{ f.cuando }} (hora de Chile){% if cliente %} · {{ cliente }}{% endif %}</p>
+        </div>
+      </div>
+      <div class="emisor"><strong>{{ marca }}</strong> · {{ razon }} · RUT {{ rut_empresa }}</div>
+    </section>
+
+    <section class="card">
+      <p class="lbl">Quién retiró</p>
+      <dl>
+        <dt>Nombre</dt><dd>{{ f.nombre }}</dd>
+        <dt>RUT</dt><dd>{{ f.rut_fmt }}</dd>
+        <dt>Relación</dt><dd>{{ f.relacion_txt }}</dd>
+        <dt>Recepción</dt><dd>{% if f.conformidad %}<span class="chip ok">Recibió conforme</span>{% else %}<span class="chip warn">Recibió con observaciones</span>{% endif %}</dd>
+        {% if f.observaciones %}<dt>Observaciones</dt><dd style="font-weight:500;white-space:pre-line">{{ f.observaciones }}</dd>{% endif %}
+      </dl>
+    </section>
+
+    <section class="card">
+      <p class="lbl">Productos entregados · {{ f.unidades }} unidades</p>
+      {% if f.productos %}
+        {% for g in f.productos %}
+          <div class="doc">{{ g.doc }}</div>
+          <table class="tabla">
+            <thead><tr><th class="sku">SKU</th><th>Descripción</th><th class="n">Cant.</th></tr></thead>
+            <tbody>
+            {% for l in g.lineas %}
+              <tr><td class="sku">{{ l.sku }}</td><td>{{ l.descripcion }}</td><td class="n">{{ l.cantidad }}</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        {% endfor %}
+      {% else %}
+        <p class="sub">El detalle de productos no quedó registrado en esta firma.</p>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <p class="lbl">Firma de recepción</p>
+      <div class="firma"><img src="{{ f.firma_png }}" alt="Firma de {{ f.nombre }}"></div>
+    </section>
+
+    <section class="card">
+      <p class="lbl">Integridad del documento</p>
+      <p class="hash">SHA-256 · {{ f.hash }}</p>
+      {% if f.integra %}<p class="sub">El contenido de este comprobante coincide con el código registrado al momento de la firma.</p>
+      {% elif f.integra is none %}<p class="sub">No se pudo verificar el código en este momento.</p>
+      {% else %}<p class="sub" style="color:#b91c1c">El contenido no coincide con el código registrado. Escríbenos a soportetec@sphs.cl.</p>{% endif %}
+    </section>
+
+    <div class="verde"><strong>Logística verde.</strong> Esta recepción queda certificada de forma digital: no se imprimen guías de despacho.</div>
+    <p class="pie">{{ marca }} · {{ razon }} · RUT {{ rut_empresa }} · Consultas: <a href="mailto:soportetec@sphs.cl">soportetec@sphs.cl</a></p>
+  {% endif %}
+  </main>
+</body>
+</html>

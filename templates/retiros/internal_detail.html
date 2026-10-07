@@ -1665,6 +1665,7 @@
         {% endif %}
       </p>
       <div class="step-content" id="paso5Content">
+        {% include 'retiros/_firma_ficha.html' %}
         {% if req.status in ['retirada','cerrada'] %}
         <div class="d-flex gap-2 flex-wrap align-items-center">
             <span class="step-badge-ok"><i class="bi bi-check2-circle me-1"></i>Retiro completado</span>
@@ -2207,6 +2208,8 @@ window.RETIROS_DETAIL_DATA = {
 <script defer src="{{ url_for('static', filename='retiros_internal_detail.js') }}"></script>
 <script defer src="{{ url_for('static', filename='retiros_ficha_v7.js') }}"></script>
 <script defer src="{{ url_for('static', filename='retiros_cobertura.js') }}"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='retiros_firma.css') }}">
+<script defer src="{{ url_for('static', filename='retiros_firma.js') }}"></script>
 
 <script defer src="{{ url_for('static', filename='retiros_calendar.js') }}"></script>
 
@@ -2348,6 +2351,11 @@ window.RETIROS_DETAIL_DATA = {
             <input name="retirado_por_rut" class="form-control" maxlength="30"
                    value="{{ req.pickup_person_rut or '' }}" placeholder="12.345.678-9">
           </div>
+          {% if firma %}
+          <div class="alert alert-success py-2 px-3 small"><i class="bi bi-patch-check-fill me-1"></i>La recepción ya está <strong>firmada</strong> por {{ firma.nombre }} ({{ firma.rut_fmt }}).</div>
+          {% else %}
+          {% include 'retiros/_firma_bloque.html' %}
+          {% endif %}
           <div class="mb-1">
             <label class="form-label small fw-bold">📸 Foto de evidencia (opcional)</label>
             <input name="evidencia_foto" type="file" class="form-control" accept="image/*" capture="environment">
@@ -2363,6 +2371,28 @@ window.RETIROS_DETAIL_DATA = {
           <button type="submit" class="btn btn-success fw-bold"><i class="bi bi-check-circle me-1"></i>Confirmar retiro</button>
         </div>
       </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ════════ REGISTRAR FIRMA DE RECEPCIÓN con el retiro ya cerrado y sin firma (excepción deliberada al solo-lectura) ════════ #}
+{% if req.status in ['retirada', 'cerrada'] and not firma %}
+<div class="modal fade" id="modalFirma" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:#16a34a;color:#fff">
+        <h5 class="modal-title"><i class="bi bi-pen me-2"></i>Registrar firma de recepción</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        {% include 'retiros/_firma_bloque.html' %}
+        <div class="alert alert-info py-2 px-3 small mt-3 mb-0"><i class="bi bi-info-circle me-1"></i>El retiro ya está cerrado: la firma queda como respaldo de la entrega y <strong>no se puede reemplazar</strong>.</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-success fw-bold" id="frmGuardar"><i class="bi bi-check-circle me-1"></i>Guardar firma</button>
+      </div>
     </div>
   </div>
 </div>

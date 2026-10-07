@@ -1,0 +1,49 @@
+{# ILUS Fitness · Retiros · bloque «Firma de recepción del cliente» (se incluye en el modal «Marcar como retirado» y en el modal «Registrar firma de recepción»).
+   Los campos NO llevan `name`: no viajan con el formulario de /status; los lee static/retiros_firma.js y los manda a POST /retiros/<id>/firma. #}
+<div class="frm-bloque" id="frmBloque" data-rid="{{ req.id|int }}">
+  <div class="frm-cab">
+    <span class="frm-circ" id="frmCirc" aria-hidden="true"><i class="bi bi-pen"></i></span>
+    <div class="frm-cab-t">
+      <strong>Firma de recepción del cliente</strong>
+      <small>Recomendada: certifica la entrega, sin guías impresas. Si no puede firmar, igual se marca retirado.</small>
+    </div>
+    <span class="frm-chip is-pend" id="frmChip">Falta la firma</span>
+  </div>
+
+  <div class="frm-grid">
+    <div class="frm-campo">
+      <label for="frmNombre">Nombre de quien recibe *</label>
+      <input id="frmNombre" type="text" maxlength="190" autocomplete="off" value="{{ req.pickup_person_name or '' }}" placeholder="Nombre y apellido">
+    </div>
+    <div class="frm-campo">
+      <label for="frmRut">RUT *</label>
+      <input id="frmRut" type="text" maxlength="14" inputmode="text" autocomplete="off" value="{{ req.pickup_person_rut or '' }}" placeholder="12.345.678-9">
+    </div>
+    <div class="frm-campo">
+      <label for="frmRelacion">Relación con el cliente *</label>
+      <select id="frmRelacion">
+        <option value="cliente">El cliente</option>
+        <option value="chofer">Chofer o transportista</option>
+        <option value="tercero">Tercero autorizado</option>
+        <option value="otro">Otra persona</option>
+      </select>
+    </div>
+  </div>
+
+  <label class="frm-conf"><input type="checkbox" id="frmConforme" checked> <span>Recibió conforme</span></label>
+  <div class="frm-campo">
+    <label for="frmObs">Observaciones (opcional)</label>
+    <textarea id="frmObs" rows="2" maxlength="500" placeholder="Ej: una caja llegó con el empaque dañado"></textarea>
+  </div>
+
+  <div class="frm-campo">
+    <label id="frmCanvasLbl">Firma *</label>
+    <div class="frm-lienzo">
+      <canvas id="frmCanvas" width="640" height="220" aria-labelledby="frmCanvasLbl" role="img"></canvas>
+      <span class="frm-guia" id="frmGuia">Firma aquí con el dedo o el lápiz</span>
+    </div>
+    <button type="button" class="frm-limpiar" id="frmLimpiar"><i class="bi bi-eraser"></i> Limpiar</button>
+  </div>
+
+  <p class="frm-priv"><i class="bi bi-shield-check"></i> Usamos tu nombre, RUT y firma solo para dejar constancia de que recibiste el pedido; el comprobante queda en el retiro como respaldo de la entrega (Ley 21.719). Para consultas o ejercer tus derechos: soportetec@sphs.cl.</p>
+</div>

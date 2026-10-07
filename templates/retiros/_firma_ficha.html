@@ -1,0 +1,27 @@
+{# ILUS Fitness · Retiros · tarjeta «Recepción firmada» (con firma) o botón «Registrar firma de recepción» (retiro cerrado sin firma). #}
+{% if firma %}
+<div class="frm-card" id="frmCard">
+  <div class="frm-card-cab"><span class="frm-circ is-ok"><i class="bi bi-patch-check-fill"></i></span>
+    <div><strong>Recepción firmada</strong><small>{{ firma.cuando }} · registrada por {{ firma.por or 'ILUS' }}</small></div>
+    <span class="frm-chip {{ 'is-ok' if firma.conformidad else 'is-warn' }}">{{ 'Recibió conforme' if firma.conformidad else 'Con observaciones' }}</span>
+  </div>
+  <div class="frm-card-cuerpo">
+    <dl>
+      <dt>Recibió</dt><dd>{{ firma.nombre }}</dd>
+      <dt>RUT</dt><dd>{{ firma.rut_fmt }}</dd>
+      <dt>Relación</dt><dd>{{ firma.relacion_txt }}</dd>
+      {% if firma.observaciones %}<dt>Observaciones</dt><dd>{{ firma.observaciones }}</dd>{% endif %}
+      <dt>Código</dt><dd class="frm-hash">{{ firma.hash_corto }}</dd>
+    </dl>
+    <div class="frm-firma-img"><img src="{{ firma.firma_png }}" alt="Firma de {{ firma.nombre }}"></div>
+  </div>
+  <a class="frm-link" href="{{ firma.url }}" target="_blank" rel="noopener"><i class="bi bi-file-earmark-check"></i> Ver comprobante</a>
+</div>
+{% elif req.status in ['retirada', 'cerrada'] %}
+<div class="frm-card is-vacia" id="frmCard">
+  <div class="frm-card-cab"><span class="frm-circ"><i class="bi bi-pen"></i></span>
+    <div><strong>Sin firma de recepción</strong><small>El retiro se cerró sin que quedara la firma de quien recibió.</small></div>
+  </div>
+  <button type="button" class="frm-btn" id="frmAbrir"><i class="bi bi-pen-fill"></i> Registrar firma de recepción</button>
+</div>
+{% endif %}

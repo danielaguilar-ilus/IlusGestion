@@ -73,6 +73,7 @@ class BDFalsa:
         self.prep_productos = []    # filas de pickup_prep_productos (minutos de picking por producto)
         self.snapshot_viejo = False  # True: la lectura «¿hay un cambio pedido por el cliente?» sigue viendo el mundo de hace un minuto
         self.plantillas = {}        # (estado, canal) -> {'asunto','cuerpo'}: plantillas de Retiros de comm_templates (la BD de plantillas)
+        self.firmas = {}            # request_id -> fila de pickup_firmas (una por retiro: UNIQUE)
         self.al_leer = []           # [(regex, funcion)]: tras la PRIMERA lectura que coincide, corre la función (alguien cambia algo justo después)
 
     # ── construcción de datos ─────────────────────────────────────────────
@@ -264,6 +265,18 @@ class BDFalsa:
                 if r.get("public_token") == params[0]:
                     return dict(r)
             return None
+        if low.startswith("select * from pickup_firmas where request_id=%s"):
+            self.consultas.append((s, params))
+            f = self.firmas.get(int(params[0]))
+            return dict(f) if f else None
+        m_lg = re.match(r"^select id from `pickup_logs` where request_id=%s and action='(\w+)' limit 1$", low)
+        if m_lg:
+            # «¿ya hay una entrada de bitácora de esta acción?» (comprobante enviado / no enviado)
+            self.consultas.append((s, params))
+            for x in self.logs:
+                if x["request_id"] == int(params[0]) and x["action"] == m_lg.group(1):
+                    return {"id": x["id"]}
+            return None
         if low.startswith("select") and "from comm_templates where modulo='retiros'" in low:
             self.consultas.append((s, params))
             fila = self.plantillas.get((params[0], params[1]))
@@ -290,6 +303,22 @@ class BDFalsa:
             if re.search(patron, low):
                 raise exc
         self.escrituras.append((s, params))
+        if low.startswith("insert into pickup_firmas"):
+            cols = [c.strip() for c in s[s.index("(") + 1:s.index(")")].split(",")]
+            fila = dict(zip(cols, params))
+            if int(fila["request_id"]) in self.firmas:
+                raise RuntimeError("1062 Duplicate entry for key 'uq_pickup_firmas_req'")
+            self.firmas[int(fila["request_id"])] = fila
+            return 1
+        if low.startswith("update `pickup_requests` set retirado_por_nombre=%s") and "where id=%s and (retirado_por_nombre is null" in low:
+            nombre, rut, rid = params
+            fila = self.solicitudes.get(int(rid))
+            if fila and not fila.get("retirado_por_nombre"):
+                fila["retirado_por_nombre"] = nombre
+                if not fila.get("retirado_por_rut"):
+                    fila["retirado_por_rut"] = rut
+                return 1
+            return 0
         if low.startswith("insert into pickup_check_snapshots"):
             rid, payload, huella = params
             self.snapshots[int(rid)] = {"payload": payload, "huella": huella}

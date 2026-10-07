@@ -15,6 +15,7 @@ import retiros_guia as _rg         # guía de 6 pasos de la ficha (funciones pur
 import retiros_check as _rck       # preparación según CheckWMS (funciones puras; Check es SOLO LECTURA, REGLA #4.4)
 import retiros_check_ot as _rco    # movimientos (OT) de CheckWMS por documento: quién, cuándo, estado (puras; SOLO LECTURA)
 import retiros_tiempos as _rti     # tiempos de preparación según las OT de Check: trabajo, pausas, por producto (puras)
+import retiros_firma as _rfi       # firma digital de recepción + comprobante: RUT, PNG, hash, token, bloque de correo (puras)
 
 
 def _public_base_url():
@@ -2427,6 +2428,30 @@ def register_pickup_routes(app, ctx):
             + _html_nt.escape(_nota_cierre, quote=True)
             + '</td></tr></table>'
         ) if _nota_cierre else ""
+        # Encuesta de satisfacción (enganche listo 2026-10-07; APAGADA hasta que Daniel autorice: «no generes ninguna notificación a ningún cliente»). Solo en el correo «retiro completado»: un botón a la
+        # encuesta del retiro (enlace propio con token, no el del seguimiento). Si la encuesta está apagada o el retiro aún no está
+        # retirado, `invitar` devuelve None y no se agrega nada. Una plantilla de la BD puede ubicarla con {{encuesta}}.
+        _enc_inv = None
+        variables["encuesta"] = ""
+        variables_html["encuesta"] = ""
+        if kind == "done":
+            try:
+                _enc = (getattr(app, "extensions", {}) or {}).get("retiros_encuesta")
+                _enc_inv = _enc["invitar"](req.get("id")) if _enc and req.get("id") else None
+            except Exception as _e_enc:
+                print(f"[retiros-encuesta] invitar rid={req.get('id')}: {type(_e_enc).__name__}", flush=True)
+                _enc_inv = None
+            if _enc_inv and _enc_inv.get("ruta"):
+                _enc_url = _public_base_url() + _enc_inv["ruta"]
+                variables["encuesta"] = _enc_url
+                variables_html["encuesta"] = (
+                    '<table cellpadding="0" cellspacing="0" width="100%" style="background:#fff8e1;border:1px solid #fcd34d;'
+                    'border-radius:12px;margin:0 0 18px"><tr><td style="padding:16px 18px;text-align:center;font-size:14px;color:#1f2937;line-height:1.55">'
+                    '<div style="font-size:16px;font-weight:800;margin-bottom:4px">¿Cómo te fue con tu retiro?</div>'
+                    '<div style="color:#4b5563;margin-bottom:12px">Son 3 preguntas y toma menos de 1 minuto. Nos ayuda a tener tu pedido listo a tiempo la próxima vez.</div>'
+                    '<a href="' + _html_nt.escape(_enc_url, quote=True) + '" style="display:inline-block;background:#dc2626;color:#ffffff;'
+                    'text-decoration:none;font-weight:800;padding:12px 22px;border-radius:10px">Responder la encuesta</a>'
+                    '</td></tr></table>')
         estado = _KIND_TO_ESTADO.get(kind)
         # "Retirado el" de la plantilla sembrada usa {{fecha_confirmada}}: en el correo
         # "completado" ese dato es el día real de la entrega ({{fecha_retiro}}).
@@ -2466,6 +2491,11 @@ def register_pickup_routes(app, ctx):
                     _i_btn = cuerpo.find(follow_url)
                     _i_tbl = cuerpo.rfind("<table", 0, _i_btn) if _i_btn != -1 else -1
                     cuerpo = (cuerpo[:_i_tbl] + _bloque_nota + cuerpo[_i_tbl:]) if _i_tbl != -1 else (cuerpo + _bloque_nota)
+                _bloque_enc = variables_html.get("encuesta") or ""
+                if _bloque_enc and "{{encuesta}}" not in (tpl_email.get("cuerpo") or "") and "{{ encuesta }}" not in (tpl_email.get("cuerpo") or ""):
+                    _i_btn = cuerpo.find(follow_url)
+                    _i_tbl = cuerpo.rfind("<table", 0, _i_btn) if _i_btn != -1 else -1
+                    cuerpo = (cuerpo[:_i_tbl] + _bloque_enc + cuerpo[_i_tbl:]) if _i_tbl != -1 else (cuerpo + _bloque_enc)
                 # FIX 2026-06-19 (Daniel: "los correos me llegan SIN tracking, un
                 # perfil distinto al que enviamos"). CAUSA RAÍZ: si la plantilla de
                 # BD fue editada a mano (o quedó vieja) su `cuerpo` NO trae el
@@ -2553,6 +2583,8 @@ def register_pickup_routes(app, ctx):
                     ]
                     if _nota_cierre:
                         paragraphs.append('<span style="font-size:12.5px;color:#6b7280">' + _html_nt.escape(_nota_cierre, quote=True) + '</span>')
+                    if variables_html.get("encuesta"):
+                        paragraphs.append(variables_html["encuesta"])
                 elif kind == "reminder_24h":
                     paragraphs = [
                         f"Te recordamos que <strong>mañana retiramos tus productos</strong>.",
@@ -2591,6 +2623,11 @@ def register_pickup_routes(app, ctx):
                 print(f"[ILUS][PICKUP EMAIL] {str(exc).encode('ascii', 'ignore').decode('ascii')}")
             except Exception:
                 pass
+        if sent_mail and _enc_inv:
+            try:
+                app.extensions["retiros_encuesta"]["marcar_enviada"](req.get("id"))
+            except Exception as _e_enc:
+                print(f"[retiros-encuesta] marcar_enviada rid={req.get('id')}: {type(_e_enc).__name__}", flush=True)
 
         # ── WHATSAPP ───────────────────────────────────────────────────
         # Sólo intentamos si el canal está activo en COMM_CANALES_ACTIVOS
@@ -4944,7 +4981,18 @@ def register_pickup_routes(app, ctx):
                 pass
         req_safe["prep_total"] = prep_total
         req_safe["prep_hechos"] = prep_hechos
+        # Encuesta de satisfacción (apagada hasta que Daniel autorice): con el retiro ya retirado, el seguimiento ofrece responderla (mismo enlace del
+        # correo «retiro completado»). Apagada o sin retirar → None y la página no muestra nada.
+        encuesta_url = None
+        if (req.get("status") or "") in ("retirada", "cerrada"):
+            try:
+                _enc = (getattr(app, "extensions", {}) or {}).get("retiros_encuesta")
+                _inv = _enc["invitar"](req["id"]) if _enc else None
+                encuesta_url = _inv["ruta"] if _inv and _inv.get("ruta") else None
+            except Exception as _e_enc:
+                print(f"[retiros-encuesta] seguimiento rid={req.get('id')}: {type(_e_enc).__name__}", flush=True)
         _tracking_html = render_template("retiros/public_tracking.html",
+                               encuesta_url=encuesta_url,
                                req=req_safe, packages=packages, proposals=proposals,
                                logs=logs, attachments=attachments,
                                docs_asociados=docs_asociados,
@@ -6335,6 +6383,7 @@ def register_pickup_routes(app, ctx):
                 settings=settings(),
                 valores=valores, ficha_ubicacion=ficha_ubicacion, actividad=actividad,
                 hitos=hitos, info_completa=info_completa, guia=guia,
+                firma=_firma_para_ficha(rid, req),   # recepción firmada (None si no hay)
                 cierre=_cierre_info(req, logs),     # retiro terminado = ficha en solo lectura (Daniel 2026-10-06)
                 aviso_no_expedir=_aviso_no_expedir_texto(), retiro_auto_modo=_retiro_auto_modo(),
             )
@@ -6471,6 +6520,292 @@ def register_pickup_routes(app, ctx):
                     cuando = _cuando_cerro_txt({"closed_at": _l.get("created_at")}, con_hora=True)
                 break
         return {"cerrado": True, "estado": st, "como": _CERRADO_COMO.get(st, "Cerrado"), "cuando": cuando, "por": por}
+
+    # ══════════════════════════════════════════════════════════════════
+    #  FIRMA DIGITAL DE RECEPCIÓN + COMPROBANTE (Daniel, dueño, 2026-10-07: «firma digital del cliente al retirar, con comprobante por correo de
+    #  ILUS Fitness — logística verde, sin guías de despacho impresas, recepción del retiro certificada»)
+    #  · Una firma por retiro (UNIQUE request_id). Es EVIDENCIA: nunca se pisa ni se borra.
+    #  · Se puede firmar en preparación / cita confirmada (al entregar) y, por EXCEPCIÓN deliberada al solo-lectura (_rechazo_si_cerrado), con el
+    #    retiro ya cerrado si todavía no tiene firma (pudo cerrarse solo cuando bodega expidió en Check).
+    #  · Comprobante público: /retiros/comprobante/<token> (HMAC de app.secret_key + id; no es el public_token del seguimiento).
+    #  · Enganches para el correo «retiro completado»: _comprobante_bloque_email(rid) y _enviar_comprobante(rid, req). Lógica pura: retiros_firma.py.
+    # ══════════════════════════════════════════════════════════════════
+    _FIRMA_ESTADO = {"tabla": False}
+    _FIRMA_ESTADOS_OK = ("en_preparacion", "agenda_confirmada", "retirada", "cerrada")
+
+    def _firma_tabla():
+        """CREATE TABLE IF NOT EXISTS al primer uso (REGLA #18: barato si ya existe). True si la tabla está lista."""
+        if _FIRMA_ESTADO["tabla"]:
+            return True
+        try:
+            mysql_execute(
+                "CREATE TABLE IF NOT EXISTS pickup_firmas ("
+                "id INT AUTO_INCREMENT PRIMARY KEY, request_id INT NOT NULL, firmante_nombre VARCHAR(190) NOT NULL, "
+                "firmante_rut VARCHAR(20) NOT NULL, relacion VARCHAR(20) NOT NULL, conformidad TINYINT NOT NULL DEFAULT 1, "
+                "observaciones VARCHAR(500) NULL, firma_png MEDIUMTEXT NOT NULL, productos_json MEDIUMTEXT NULL, "
+                "hash_sha256 CHAR(64) NOT NULL, creado_en DATETIME NOT NULL, creado_por_user_id INT NULL, "
+                "creado_por_nombre VARCHAR(190) NULL, UNIQUE KEY uq_pickup_firmas_req (request_id)"
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+            _FIRMA_ESTADO["tabla"] = True
+        except Exception as _e_ft:
+            print(f"[retiros-firma] tabla: {type(_e_ft).__name__}", flush=True)
+        return _FIRMA_ESTADO["tabla"]
+
+    def _firma_row(rid):
+        # SOLO LECTURA: abrir la ficha no crea nada (la tabla nace al primer POST /firma). Sin tabla todavía = sin firma.
+        try:
+            return mysql_fetchone("SELECT * FROM pickup_firmas WHERE request_id=%s LIMIT 1", (rid,))
+        except Exception as _e_fr:
+            if "doesn't exist" not in str(_e_fr) and "1146" not in str(_e_fr):
+                print(f"[retiros-firma] leer rid={rid}: {type(_e_fr).__name__}", flush=True)
+            return None
+
+    def _comprobante_secreto():
+        return os.environ.get("ILUS_COMPROBANTE_SECRET") or app.secret_key or ""
+
+    def _comprobante_url(rid, base_url=None):
+        tok = _rfi.generar_token(_comprobante_secreto(), rid)
+        return (((base_url or _public_base_url()).rstrip("/")) + "/retiros/comprobante/" + tok) if tok else ""
+
+    def _firma_vista(fila, req=None):
+        """Fila de pickup_firmas → dict con textos listos para pantalla, correo y comprobante (hora Chile, RUT formateado)."""
+        import json as _json_fv
+        if not fila:
+            return None
+        try:
+            productos = _json_fv.loads(fila.get("productos_json") or "[]")
+        except Exception:
+            productos = []
+        creado = fila.get("creado_en")
+        try:
+            if isinstance(creado, str):
+                creado = datetime.strptime(creado[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            pass
+        fecha_iso = creado.strftime("%Y-%m-%dT%H:%M:%SZ") if isinstance(creado, datetime) else ""
+        # ¿el contenido guardado sigue calzando con su hash? (se recalcula; si alguien tocó la fila, se ve)
+        integra = False
+        try:
+            crudo, _err = _rfi.validar_firma_png(fila.get("firma_png") or "")
+            if crudo is not None:
+                code = (req or {}).get("code") or ""
+                integra = _rfi.hash_contenido(fila.get("request_id"), code, fila.get("firmante_nombre"), fila.get("firmante_rut"),
+                                              fila.get("relacion"), fila.get("conformidad"), fila.get("observaciones"), fecha_iso,
+                                              productos, _rfi.sha_bytes(crudo)) == (fila.get("hash_sha256") or "") if code else None
+        except Exception:
+            integra = False
+        h = fila.get("hash_sha256") or ""
+        return {
+            "nombre": fila.get("firmante_nombre") or "", "rut": fila.get("firmante_rut") or "",
+            "rut_fmt": _rfi.rut_formateado(fila.get("firmante_rut")),
+            "relacion": fila.get("relacion") or "", "relacion_txt": _rfi.RELACIONES.get(fila.get("relacion") or "", "Otra persona"),
+            "conformidad": bool(fila.get("conformidad")), "observaciones": fila.get("observaciones") or "",
+            "cuando": _cuando_cerro_txt({"closed_at": creado}, con_hora=True), "firma_png": fila.get("firma_png") or "",
+            "productos": productos, "unidades": _rfi.total_unidades(productos),
+            "hash": h, "hash_corto": h[:12], "integra": integra,
+            "por": fila.get("creado_por_nombre") or "",
+        }
+
+    def _firma_para_ficha(rid, req):
+        """Datos de la tarjeta «Recepción firmada» de la ficha (None si no hay firma). Nunca rompe la ficha."""
+        try:
+            v = _firma_vista(_firma_row(rid), req)
+            if v:
+                v["url"] = _comprobante_url(rid)
+            return v
+        except Exception as _e_ff:
+            print(f"[retiros-firma] ficha rid={rid}: {type(_e_ff).__name__}", flush=True)
+            return None
+
+    def _comprobante_bloque_email(rid, base_url=None):
+        """ENGANCHE: bloque HTML seguro para correo (resumen + botón «Ver comprobante»), o '' si el retiro no tiene firma."""
+        try:
+            req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or {}
+            v = _firma_vista(_firma_row(rid), req)
+            if not v:
+                return ""
+            return _rfi.bloque_email(v, _comprobante_url(rid, base_url))
+        except Exception as _e_bl:
+            print(f"[retiros-firma] bloque correo rid={rid}: {type(_e_bl).__name__}", flush=True)
+            return ""
+
+    def _enviar_comprobante(rid, req=None, base_url=None):
+        """ENGANCHE: correo «Comprobante de tu retiro RET-XXX» al cliente (mismo camino que notify: _send_pickup_email_multi → _send_ilus_email).
+        UNO por retiro (si la bitácora ya tiene «comprobante_enviado», no repite). Respeta el kill switch de correo y deja entrada en la bitácora.
+        Devuelve True si salió a algún destinatario."""
+        import html as _html_cp
+        try:
+            if req is None or not req.get("code"):
+                req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or (req or {})
+            fila = _firma_row(rid)
+            if not fila:
+                return False
+            # Daniel: «no generes ninguna notificación a ningún cliente hasta que te autorice» → APAGADO por defecto. Solo RETIROS_FIRMA_CORREO=1 exacto lo enciende.
+            if os.environ.get("RETIROS_FIRMA_CORREO", "") != "1":
+                if not mysql_fetchone(f"SELECT id FROM `{LOG}` WHERE request_id=%s AND action='comprobante_no_enviado' LIMIT 1", (rid,)):
+                    log_event(rid, "comprobante_no_enviado", None, None, "Comprobante no enviado: correo al cliente desactivado.",
+                              "sistema", actor_name="Sistema")
+                return False
+            if mysql_fetchone(f"SELECT id FROM `{LOG}` WHERE request_id=%s AND action='comprobante_enviado' LIMIT 1", (rid,)):
+                return False
+            _sw = ctx.get("comm_is_enabled")
+            if callable(_sw) and not _sw("email"):
+                log_event(rid, "comprobante_no_enviado", None, None, "Comprobante NO enviado: el correo está apagado (kill switch de Comunicaciones).",
+                          "sistema", actor_name="Sistema")
+                return False
+            v = _firma_vista(fila, req)
+            code = req.get("code") or ""
+            _bs = ctx.get("_brand_subject")
+            asunto = _bs(f"Comprobante de tu retiro {code}") if callable(_bs) else ""
+            if not isinstance(asunto, str) or not asunto.strip():
+                asunto = f"ILUS · Comprobante de tu retiro {code}"
+            nombre = _html_cp.escape(str(req.get("contact_name") or req.get("customer_name") or ""), quote=True)
+            cuerpo = (
+                '<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;padding:8px 4px;color:#111827">'
+                f'<h2 style="margin:0 0 6px;font-size:20px;color:#0a0a0a">Comprobante de tu retiro {_html_cp.escape(code, quote=True)}</h2>'
+                f'<p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151">Hola{(" " + nombre) if nombre else ""}, '
+                'dejamos registrada la recepción de tu pedido. Aquí está tu comprobante digital: no hace falta imprimir ninguna guía de despacho.</p>'
+                + _rfi.bloque_email(v, _comprobante_url(rid, base_url)) +
+                f'<p style="margin:0;font-size:12px;color:#6b7280">{_rfi.MARCA} · {_rfi.RAZON_SOCIAL} · RUT {_rfi.RUT_EMPRESA}. '
+                'Si algo de este comprobante no es correcto, responde a este correo o escribe a soportetec@sphs.cl.</p></div>')
+            _render = ctx.get("_comm_render_email_document")
+            doc = None
+            if callable(_render):
+                try:
+                    doc = _render(asunto, cuerpo)
+                except Exception:
+                    doc = None
+            if not isinstance(doc, str) or not doc:
+                doc = ('<!doctype html><html lang="es"><body style="margin:0;background:#f3f4f6;padding:20px">'
+                       '<div style="background:#ffffff;border-radius:12px;padding:20px">' + cuerpo + '</div></body></html>')
+            multi = _send_pickup_email_multi(req if req.get("id") else rid, asunto, doc)
+            if multi["sent"]:
+                log_event(rid, "comprobante_enviado", None, None,
+                          f"Comprobante de recepción enviado al cliente ({len(multi['sent'])} destinatario(s)). Firmó {v['nombre']} · {v['cuando']}.",
+                          "sistema", actor_name="Sistema")
+                return True
+            log_event(rid, "comprobante_no_enviado", None, None,
+                      "Comprobante NO enviado: el retiro no tiene un correo válido o el envío falló." if multi["total"] == 0 or not multi["failed"]
+                      else "Comprobante NO enviado: falló el envío del correo.", "sistema", actor_name="Sistema")
+            return False
+        except Exception as _e_ec:
+            print(f"[retiros-firma] enviar comprobante rid={rid}: {type(_e_ec).__name__}", flush=True)
+            return False
+
+    def _enviar_comprobante_async(rid, req):
+        snap = dict(req) if req else {}
+        base = _public_base_url()
+
+        def _run():
+            try:
+                with app.app_context():
+                    _enviar_comprobante(rid, snap, base_url=base)
+            except Exception as _e_ca:
+                print(f"[retiros-firma] async rid={rid}: {type(_e_ca).__name__}", flush=True)
+        threading.Thread(target=_run, daemon=True, name=f"pickup-team-notify-comprobante-{rid}").start()
+
+    @app.route("/retiros/<int:rid>/firma", methods=["POST"])
+    @require_permission("retiros")
+    def pickup_firma_recepcion(rid):
+        """Guarda la firma de recepción (JSON: nombre, rut, relacion, conformidad, observaciones, firma = data URL PNG)."""
+        import json as _json_fm
+        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+        if not req:
+            return jsonify({"ok": False, "error": "No encontramos ese retiro."}), 404
+        estado = str(req.get("status") or "")
+        if estado not in _FIRMA_ESTADOS_OK:
+            return jsonify({"ok": False, "error": "La recepción se firma al entregar el pedido: el retiro tiene que estar en preparación, "
+                                                   "con la cita confirmada o ya retirado."}), 409
+        if not _firma_tabla():
+            return jsonify({"ok": False, "error": "No pudimos guardar la firma ahora. Reintenta en un momento."}), 503
+        if _firma_row(rid):
+            return jsonify({"ok": False, "error": "Este retiro ya tiene su recepción firmada; una firma no se reemplaza.",
+                            "code": "FIRMA_YA_REGISTRADA"}), 409
+        d = request.get_json(silent=True) or {}
+        if not isinstance(d, dict):
+            d = {}
+
+        def _txt(v, mx):
+            return re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", re.sub(r"\s+", " ", str(v or ""))).strip()[:mx + 1]
+        nombre = _txt(d.get("nombre"), _rfi.MAX_NOMBRE)
+        if len(nombre) < 2 or len(nombre) > _rfi.MAX_NOMBRE:
+            return jsonify({"ok": False, "error": "Escribe el nombre de quien recibe."}), 400
+        rut = _rfi.rut_normalizado(d.get("rut"))
+        if not rut:
+            return jsonify({"ok": False, "error": "El RUT no es válido: revisa el número y el dígito verificador."}), 400
+        relacion = str(d.get("relacion") or "").strip().lower()
+        if relacion not in _rfi.RELACIONES:
+            return jsonify({"ok": False, "error": "Indica la relación de quien recibe con el cliente."}), 400
+        obs = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", str(d.get("observaciones") or "")).strip()
+        if len(obs) > _rfi.MAX_OBS:
+            return jsonify({"ok": False, "error": f"Las observaciones admiten hasta {_rfi.MAX_OBS} caracteres."}), 400
+        conforme = d.get("conformidad") in (True, 1, "1", "true", "on")
+        crudo, err_png = _rfi.validar_firma_png(d.get("firma"))
+        if crudo is None:
+            return jsonify({"ok": False, "error": err_png}), 400
+        try:
+            productos = _rfi.productos_snapshot((_pickup_lineas_consolidadas(rid) or {}).get("lineas") or [])
+        except Exception as _e_fp:
+            print(f"[retiros-firma] productos rid={rid}: {type(_e_fp).__name__}", flush=True)
+            productos = []
+        fecha = datetime.utcnow().replace(microsecond=0)
+        h = _rfi.hash_contenido(rid, req.get("code"), nombre, rut, relacion, conforme, obs, fecha.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                productos, _rfi.sha_bytes(crudo))
+        u = getattr(g, "user", None) or {}
+        try:
+            mysql_execute(
+                "INSERT INTO pickup_firmas (request_id, firmante_nombre, firmante_rut, relacion, conformidad, observaciones, firma_png, "
+                "productos_json, hash_sha256, creado_en, creado_por_user_id, creado_por_nombre) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (rid, nombre, rut, relacion, 1 if conforme else 0, obs or None, d.get("firma"),
+                 _json_fm.dumps(productos, ensure_ascii=False), h, fecha, u.get("id"), (u.get("nombre") or "")[:190] or None))
+        except Exception as _e_fi:
+            if _firma_row(rid):          # otra pestaña ganó la carrera (UNIQUE request_id)
+                return jsonify({"ok": False, "error": "Este retiro ya tiene su recepción firmada; una firma no se reemplaza.",
+                                "code": "FIRMA_YA_REGISTRADA"}), 409
+            print(f"[retiros-firma] insertar rid={rid}: {type(_e_fi).__name__}", flush=True)
+            return jsonify({"ok": False, "error": "No pudimos guardar la firma. Reintenta."}), 500
+        log_event(rid, "firma_recepcion", estado, estado,
+                  f"Recepción firmada por {nombre} (RUT {_rfi.rut_formateado(rut)}) · {_rfi.RELACIONES[relacion]} · "
+                  f"{'recibió conforme' if conforme else 'recibió con observaciones'} · código {h[:12]}.", "interno")
+        # El cierre automático por expedición en Check deja «quién retiró» vacío: se completa con el firmante. SOLO rellena: nunca pisa lo
+        # que una persona ya anotó.
+        try:
+            _upd = ctx.get("mysql_execute_returning_rowcount")
+            _sql_rt = (f"UPDATE `{REQ}` SET retirado_por_nombre=%s, "
+                       f"retirado_por_rut=IF(retirado_por_rut IS NULL OR retirado_por_rut='', %s, retirado_por_rut) "
+                       f"WHERE id=%s AND (retirado_por_nombre IS NULL OR retirado_por_nombre='')")
+            _par_rt = (nombre[:190], _rfi.rut_formateado(rut)[:30], rid)
+            _n_rt = int(_upd(_sql_rt, _par_rt) or 0) if _upd else int(mysql_execute(_sql_rt, _par_rt) or 0)
+            if _n_rt:
+                log_event(rid, "retiro_evidencia", estado, estado, f"Quién retiró: {nombre} (desde la firma de recepción)", "interno")
+        except Exception as _e_rt:
+            print(f"[retiros-firma] quién retiró rid={rid}: {type(_e_rt).__name__}", flush=True)
+        enviado = False
+        if estado in ("retirada", "cerrada"):
+            _enviar_comprobante_async(rid, req)       # ya estaba cerrado: el «retiro completado» ya salió, el comprobante va aparte
+            enviado = os.environ.get("RETIROS_FIRMA_CORREO", "") == "1"     # apagado por defecto: solo guarda y deja la bitácora
+        return jsonify({"ok": True, "comprobante_enviado": enviado, "hash": h[:12], "url": _comprobante_url(rid)})
+
+    @app.route("/retiros/comprobante/<token>", methods=["GET"])
+    def pickup_comprobante_publico(token):
+        """Comprobante de recepción PÚBLICO (sin login): el token es un HMAC de la clave del servidor + el id del retiro."""
+        from flask import make_response
+
+        def _resp(html_o_resp, estado=200):
+            r = make_response(html_o_resp, estado)
+            r.headers["Cache-Control"] = "no-store"
+            r.headers["X-Robots-Tag"] = "noindex, nofollow"
+            r.headers["Referrer-Policy"] = "no-referrer"
+            return r
+        rid = _rfi.id_de_token(_comprobante_secreto(), token)
+        fila = _firma_row(rid) if rid else None
+        req = (mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) if fila else None)
+        if not fila or not req:
+            return _resp(render_template("retiros/comprobante_firma.html", no_disponible=True), 404)
+        v = _firma_vista(fila, req)
+        return _resp(render_template("retiros/comprobante_firma.html", no_disponible=False, f=v, code=req.get("code") or "",
+                                     cliente=req.get("customer_name") or "", razon=_rfi.RAZON_SOCIAL, rut_empresa=_rfi.RUT_EMPRESA,
+                                     marca=_rfi.MARCA))
 
     def _pickup_generar_checklist(rid):
         """Checklist de picking por producto, desde las líneas consolidadas del retiro. Lo usan el botón «Enviar a preparación» y el

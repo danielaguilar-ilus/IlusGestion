@@ -1,0 +1,44 @@
+/* ILUS Fitness · Retiros · firma de recepción (ficha interna). Lenguaje de Retiros: tarjeta, círculo y chip de semáforo (rojo → ámbar → verde). Mobile-first. */
+.frm-bloque{border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin:4px 0 16px;background:#fafafa}
+.frm-cab{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.frm-cab-t{flex:1 1 180px;min-width:0}
+.frm-cab-t strong{display:block;font-size:.95rem}
+.frm-cab-t small{display:block;color:#6b7280;font-size:.78rem;line-height:1.35}
+.frm-circ{flex:none;width:38px;height:38px;border-radius:50%;background:#dc2626;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:1.05rem;transition:background .25s}
+.frm-circ.is-warn{background:#f59e0b}
+.frm-circ.is-ok{background:#16a34a;animation:frmPulso 1.6s ease-out 1}
+@keyframes frmPulso{0%{box-shadow:0 0 0 0 rgba(22,163,74,.5)}100%{box-shadow:0 0 0 12px rgba(22,163,74,0)}}
+.frm-chip{display:inline-block;border-radius:999px;padding:3px 12px;font-weight:700;font-size:.78rem}
+.frm-chip.is-pend{background:#fee2e2;color:#991b1b}
+.frm-chip.is-warn{background:#fff8e1;color:#92400e}
+.frm-chip.is-ok{background:#dcfce7;color:#166534}
+.frm-grid{display:grid;grid-template-columns:1fr;gap:10px}
+.frm-campo{margin-bottom:10px}
+.frm-campo label,.frm-conf{font-size:.8rem;font-weight:700;margin-bottom:4px;display:block}
+.frm-campo input,.frm-campo select,.frm-campo textarea{width:100%;min-height:44px;font-size:16px;padding:8px 10px;border:1px solid #d1d5db;border-radius:10px;background:#fff}
+.frm-campo textarea{min-height:64px;resize:vertical}
+.frm-conf{display:flex;align-items:center;gap:10px;min-height:44px;margin:2px 0 8px;cursor:pointer}
+.frm-conf input{width:22px;height:22px;accent-color:#16a34a}
+.frm-lienzo{position:relative;border:2px dashed #9ca3af;border-radius:12px;background:#fff;overflow:hidden}
+.frm-lienzo canvas{display:block;width:100%;height:auto;aspect-ratio:640/220;touch-action:none;cursor:crosshair}
+.frm-guia{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:.9rem;pointer-events:none}
+.frm-limpiar{margin-top:8px;min-height:44px;padding:0 16px;border:1px solid #d1d5db;border-radius:10px;background:#fff;font-weight:600;font-size:.88rem}
+.frm-priv{font-size:.74rem;color:#6b7280;line-height:1.45;margin:6px 0 0}
+@media (min-width:640px){.frm-grid{grid-template-columns:1.3fr 1fr 1fr}}
+
+/* tarjeta de la ficha */
+.frm-card{border:1px solid #bbf7d0;background:#f0fdf4;border-radius:14px;padding:14px;margin:0 0 14px}
+.frm-card.is-vacia{border-color:#fecaca;background:#fef2f2}
+.frm-card-cab{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.frm-card-cab>div{flex:1 1 180px;min-width:0}
+.frm-card-cab strong{display:block}
+.frm-card-cab small{display:block;color:#6b7280;font-size:.78rem}
+.frm-card-cuerpo{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
+.frm-card dl{display:grid;grid-template-columns:100px 1fr;gap:4px 10px;margin:0;flex:1 1 220px;font-size:.88rem}
+.frm-card dt{color:#6b7280}
+.frm-card dd{margin:0;font-weight:600;overflow-wrap:anywhere}
+.frm-hash{font-family:ui-monospace,Consolas,monospace;font-weight:500!important}
+.frm-firma-img{flex:1 1 200px;background:#fff;border:1px dashed #9ca3af;border-radius:10px;padding:6px;text-align:center}
+.frm-firma-img img{max-width:100%;max-height:120px}
+.frm-link{display:inline-flex;align-items:center;gap:6px;min-height:44px;margin-top:8px;font-weight:700;color:#166534;text-decoration:none}
+.frm-btn{min-height:44px;padding:0 18px;border:0;border-radius:10px;background:#dc2626;color:#fff;font-weight:700;cursor:pointer}

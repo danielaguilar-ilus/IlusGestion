@@ -6306,6 +6306,10 @@ def _csrf_get_token() -> str:
 def _csrf_is_exempt(path: str) -> bool:
     if path in _CSRF_EXEMPT_PATHS:
         return True
+    # Encuesta pública de Retiros (lista para cuando Daniel la autorice): SOLO /retiros/encuesta/<token> (el cliente sin sesión; el token HMAC ya
+    # autentica el enlace). El editor de preguntas y demás rutas de /retiros/encuesta/ siguen con CSRF.
+    if re.fullmatch(r"/retiros/encuesta/[0-9a-z]{1,12}-[0-9a-f]{24}", path or ""):
+        return True
     for pref in _CSRF_EXEMPT_PREFIXES:
         if path.startswith(pref):
             return True

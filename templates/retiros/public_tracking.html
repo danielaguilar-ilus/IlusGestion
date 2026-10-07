@@ -481,6 +481,20 @@
             {% endfor %}
           </div>
           <div id="ratingFeedback" class="small" style="color:#9ca3af;min-height:1.2em">Toca las estrellas para puntuar</div>
+          {% if encuesta_url %}
+          {# Encuesta de satisfacción (solo si está activa; apagada hasta que Daniel autorice): el mismo enlace del correo «retiro completado» #}
+          <a href="{{ encuesta_url }}" class="btn btn-danger mt-2" style="min-height:44px;font-weight:800;border-radius:10px;display:inline-flex;align-items:center;gap:6px">
+            <i class="bi bi-chat-heart-fill"></i>Responder la encuesta · 3 preguntas
+          </a>
+          {% endif %}
+        </div>
+        {% elif req.status == 'cerrada' and encuesta_url %}
+        <div class="rating-card">
+          <div class="eyebrow">¿Cómo te fue con tu retiro?</div>
+          <h4>Son 3 preguntas y toma menos de 1 minuto</h4>
+          <a href="{{ encuesta_url }}" class="btn btn-danger mt-2" style="min-height:44px;font-weight:800;border-radius:10px;display:inline-flex;align-items:center;gap:6px">
+            <i class="bi bi-chat-heart-fill"></i>Responder la encuesta
+          </a>
         </div>
         {% endif %}
 
