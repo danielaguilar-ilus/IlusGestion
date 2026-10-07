@@ -91,6 +91,8 @@ def _llamar(cuerpo, fila=None):
         "_ot_zz_topes_reales": lambda *a, **k: {"excluidos": [], "documentos": [1], "tope_servicio": 10 ** 9,
                                                 "tope_despacho": 10 ** 9},
         "_ot_doc_real_a_usuario": lambda t, n: (t, n),
+        # 2026-10-07 (documento absoluto): declarar garantía pasa por Daniel; acá se simula "superadmin ya lo registró".
+        "_ot_cobro_cero_desde_peticion": lambda vid, d, origen="": (None, None),
     })
     for nombre in FUNCS:     # que las funciones vean ESTE ámbito (con la BD simulada)
         f = amb[nombre]
@@ -364,6 +366,8 @@ def _llamar_vivo(cuerpo, fila=None):
         "_ot_zz_topes_reales": lambda *a, **k: {"excluidos": [], "documentos": [1], "tope_servicio": 10 ** 9,
                                                 "tope_despacho": 10 ** 9},
         "_ot_doc_real_a_usuario": lambda t, n: (t, n),
+        # 2026-10-07 (documento absoluto): declarar garantía pasa por Daniel; acá se simula "superadmin ya lo registró".
+        "_ot_cobro_cero_desde_peticion": lambda vid, d, origen="": (None, None),
     })
     for nombre in FUNCS:
         f = amb[nombre]

@@ -9,7 +9,7 @@
 
    Uso: ilusOtFinanzas(v, rep) con v = {modalidad_cobro, cubierto_por, tipo, cliente_id, contrato_real, costo,
    zz_monto, zz_codigo, zz_envio_monto, valor_origen, costo_proveedor, costo_despacho, proveedor_tipo,
-   valorizado_clp, valorizado_fuente} y rep = {costo, n_sin_costo, por_origen} (repuestos instalados) o null. */
+   valorizado_clp, valorizado_fuente, cobro_cero_motivo} y rep = {costo, n_sin_costo, por_origen} (repuestos instalados) o null. */
 (function(global){
   'use strict';
   var ORIGENES_NO_COBRO = ['estimado', 'interno'];
@@ -20,6 +20,9 @@
     cobra: 'Se le cobra al cliente',
     garantia: 'Garantía: no se le cobra',
     sin_costo: 'Cortesía: no se le cobra',
+    /* 2026-10-07 (Daniel): únicos motivos de $0: garantía, regalía, arriendo o leasing (cobro_cero_motivo). */
+    regalia: 'Regalía: no se le cobra',
+    arriendo_leasing: 'Arriendo o leasing: incluido en el arriendo',
     interno: 'Trabajo interno: no se le cobra',
     contrato: 'Mantención de contrato: se paga con el contrato'
   };
@@ -34,16 +37,23 @@
   function clp(n){ return '$' + Math.round(Math.abs(n || 0)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
   function r2(n){ return Math.round(n * 100) / 100; }
   function esInterna(v){
-    return low(v.modalidad_cobro) === 'interno' || low(v.tipo) === 'revision_interna'
-        || (Object.prototype.hasOwnProperty.call(v, 'cliente_id') && v.cliente_id === null);
+    /* 2026-10-07 (Daniel): interna = SIN cliente. Con cliente, 'interno'/'revision_interna' no exime. */
+    var tieneClave = Object.prototype.hasOwnProperty.call(v, 'cliente_id');
+    if (tieneClave && v.cliente_id === null) return true;
+    if (tieneClave && v.cliente_id !== null && v.cliente_id !== undefined) return false;
+    return low(v.modalidad_cobro) === 'interno' || low(v.tipo) === 'revision_interna';
   }
 
   function cobertura(v){
     v = v || {};
-    var mod = low(v.modalidad_cobro), cub = low(v.cubierto_por), tipo = low(v.tipo);
-    if (mod === 'garantia' || cub === 'garantia' || tipo === 'garantia') return 'garantia';
+    var mod = low(v.modalidad_cobro), cub = low(v.cubierto_por), tipo = low(v.tipo), cero = low(v.cobro_cero_motivo);
+    if (mod === 'garantia' || cub === 'garantia' || tipo === 'garantia' || cero === 'garantia') return 'garantia';
     if (esInterna(v)) return 'interno';
-    if (mod === 'sin_costo') return 'sin_costo';
+    if (mod === 'sin_costo' || cero === 'regalia' || cero === 'arriendo_leasing'){
+      if (cero === 'regalia') return 'regalia';
+      if (cero === 'arriendo_leasing') return 'arriendo_leasing';
+      return 'sin_costo';
+    }
     if (v.contrato_real && tipo === 'preventiva'){
       var zz = num(v.zz_monto) || 0, origen = low(v.valor_origen);
       if (!(zz > 0 && (origen === 'zz' || origen === 'doc_total'))) return 'contrato';

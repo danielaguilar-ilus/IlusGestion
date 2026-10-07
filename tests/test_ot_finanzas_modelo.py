@@ -180,6 +180,22 @@ class TestNoSeCobra(unittest.TestCase):
     def test_cortesia(self):
         self.assertEqual(F(modalidad_cobro="sin_costo", costo_proveedor=10000)["cobertura"], "sin_costo")
 
+    def test_regalia_y_arriendo_leasing_se_distinguen_por_el_motivo(self):
+        """Daniel 2026-10-07: los únicos motivos de $0 son Garantía, Regalía y Arriendo o leasing."""
+        r = F(modalidad_cobro="sin_costo", cobro_cero_motivo="regalia", costo_proveedor=10000)
+        self.assertEqual((r["cobertura"], r["cobertura_txt"], r["cobre"]["total"]),
+                         ("regalia", "Regalía: no se le cobra", 0))
+        r = F(modalidad_cobro="sin_costo", cobro_cero_motivo="arriendo_leasing", costo_proveedor=10000)
+        self.assertEqual((r["cobertura"], r["cobertura_txt"]),
+                         ("arriendo_leasing", "Arriendo o leasing: incluido en el arriendo"))
+        self.assertIn("Arriendo o leasing · nos costó $10.000", r["label"])
+        self.assertEqual(F(modalidad_cobro="pagado", cobro_cero_motivo="garantia")["cobertura"], "garantia")
+
+    def test_interno_con_cliente_ya_no_es_interno(self):
+        """2026-10-07: la exención por trabajo interno es SOLO sin cliente."""
+        self.assertEqual(F(modalidad_cobro="interno", cliente_id=5, costo_proveedor=0)["cobertura"], "cobra")
+        self.assertEqual(F(modalidad_cobro="interno", cliente_id=None)["cobertura"], "interno")
+
     def test_garantia_por_cubierto_por_tambien_cuenta(self):
         self.assertEqual(F(cubierto_por="garantia")["cobertura"], "garantia")
 

@@ -43,6 +43,14 @@ CASOS = [
     dict(modalidad_cobro="garantia"),
     dict(zz_monto=100000, valor_origen="zz", costo_proveedor=40000, costo_despacho=0, _rep=True),
     dict(zz_monto=99999, valor_origen="cotizacion", zz_envio_monto=12345, costo_proveedor=33333, costo_despacho=4444),
+    # 2026-10-07: motivos del $0 (regalía / arriendo-leasing) y "interno" CON cliente (ya no exime).
+    dict(modalidad_cobro="sin_costo", cobro_cero_motivo="regalia", costo_proveedor=10000),
+    dict(modalidad_cobro="sin_costo", cobro_cero_motivo="arriendo_leasing", costo_proveedor=10000, valorizado_clp=50000,
+         valorizado_fuente="contrato"),
+    dict(modalidad_cobro="pagado", cobro_cero_motivo="garantia", costo_proveedor=20000),
+    dict(modalidad_cobro="interno", cliente_id=5, costo_proveedor=0, zz_monto=30000, valor_origen="manual"),
+    dict(modalidad_cobro="interno", cliente_id=None, costo=40000),
+    dict(tipo="revision_interna", cliente_id=9, zz_monto=10000, valor_origen="zz", costo_proveedor=5000),
 ]
 CAMPOS = ("cobertura", "cobra", "clase", "label", "a_pagar_proveedor", "avisos")
 

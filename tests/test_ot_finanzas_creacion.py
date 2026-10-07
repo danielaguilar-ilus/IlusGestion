@@ -65,7 +65,9 @@ def _fuente(nombre):
 def N(fin, tipo="instalacion", interna=False, **kw):
     """_ot_validar_normalizar_finanzas sin tope de documentos (no se consulta el ERP en la prueba)."""
     amb = _amb()
-    amb["_ot_zz_topes_reales"] = lambda *a, **k: {"excluidos": [], "documentos": [1],
+    # 2026-10-07: el validador ahora lee tido/nudo de los documentos validados (para la puerta del documento).
+    amb["_ot_zz_topes_reales"] = lambda *a, **k: {"excluidos": [], "documentos": [{"tido": "FCV", "nudo": "11439",
+                                                                                  "servicio": 0, "despacho": 0}],
                                                     "tope_servicio": 10 ** 9, "tope_despacho": 10 ** 9}
     return amb["_ot_validar_normalizar_finanzas"](fin, tipo, interna, **kw)
 

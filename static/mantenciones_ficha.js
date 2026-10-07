@@ -1282,8 +1282,9 @@ function _estadoBadge(e, dias, s){
 }
 
 // 2026-10-07: cobertura de la cuenta única de la OT (¿se le cobra?) → mismo chip de siempre.
-const _FIN_COB_A_CHIP = {cobra:'cliente', garantia:'garantia', sin_costo:'mixto', interno:'mixto', contrato:'contrato'};
-const _FIN_COB_TXT = {cobra:'Cliente', garantia:'🛡 Garantía', sin_costo:'Cortesía', interno:'Interno', contrato:'Contrato'};
+const _FIN_COB_A_CHIP = {cobra:'cliente', garantia:'garantia', sin_costo:'mixto', regalia:'mixto', arriendo_leasing:'mixto', interno:'mixto', contrato:'contrato'};
+/* 2026-10-07 (Daniel): regalía y arriendo/leasing son los otros dos motivos de $0 (cobro_cero_motivo). */
+const _FIN_COB_TXT = {cobra:'Cliente', garantia:'🛡 Garantía', sin_costo:'Cortesía', regalia:'Regalía', arriendo_leasing:'Arriendo/leasing', interno:'Interno', contrato:'Contrato'};
 function _coverBadgeFin(s){
   if (!s || !s.cobertura) return _coverBadge(s ? s.cubierto_por : '', s && s.cubierto_por === 'garantia');
   return `<span class="fin-cover fin-cover-${_FIN_COB_A_CHIP[s.cobertura] || 'cliente'}" title="${_escH(s.cobertura_txt || '')}">${_FIN_COB_TXT[s.cobertura] || _escH(s.cobertura)}</span>`;

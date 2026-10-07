@@ -29307,6 +29307,9 @@ def _mantenciones_cron_run_once(slot_str=""):
                 })
 
         # Insertar OTs solo si el flag está ON
+        # 🔏 2026-10-07 — LA PUERTA DEL DOCUMENTO para los masivos: solo contrato REAL (filas: cliente_id,
+        # contrato_id, ...). Hoy la lista nunca se llena (flag OFF), pero la regla queda puesta.
+        batch_visitas = [_b for _b in batch_visitas if _ot_contrato_es_real(_b[1], _b[0])]
         if batch_visitas:
             try:
                 conn = get_mysql()
@@ -65180,6 +65183,9 @@ def mant_generar_calendario(cid):
         "SELECT razon_social, dia_mantencion_pref FROM mant_clientes WHERE id=%s", (cid,))
     if not ct:
         return jsonify({"error": "Sin contrato activo para este cliente"}), 404
+    # 🔏 2026-10-07 — LA PUERTA DEL DOCUMENTO para los masivos: solo con contrato REAL (ver auto-calendar).
+    if not _ot_contrato_es_real(ct.get("id"), cid):
+        return _ot_puerta_respuesta(_ot_puerta_documento_eval({"cliente_id": cid, "tipo": "preventiva"}, "crear"))
 
     frecuencia = ct.get("ai_frecuencia_sug") or ct.get("frecuencia_meses") or 3
     desde = datetime.strptime(desde_str, "%Y-%m-%d").date() if desde_str else datetime.now().date()
@@ -73477,6 +73483,12 @@ def mant_visita_multi(cid):
         f"Equipos involucrados ({len(rows)}):\n{detalle_equipos}\n\n"
         f"Motivo:\n{motivo}\n"
     )
+    # 🔏 2026-10-07 — LA PUERTA DEL DOCUMENTO (Daniel: "Todo con documento tiene que ser absoluto"). Este camino
+    # nunca pidió documento (Aarón abrió OT in situ por acá): ahora nace solo con documento validado, $0
+    # autorizado o autorización de Daniel; si no, 409 DOC_REQUERIDO «Pedir autorización».
+    _puerta_mv = _ot_puerta_desde_body(d, cid, tipo_visita, modalidad=mv_modalidad, garantia=bool(_gar_aplica_mv))
+    if not _puerta_mv["ok"]:
+        return _ot_puerta_respuesta(_puerta_mv)
 
     conn = get_mysql()
     try:
@@ -73528,6 +73540,8 @@ def mant_visita_multi(cid):
                      costo, current_username())
                 )
             vid = cur.lastrowid
+            # 🔏 2026-10-07 — constancia de la puerta: documentos validados y/o autorización consumida.
+            _ot_puerta_aplicar(cur, vid, _puerta_mv, fin_argumento=d.get("cobro_cero_argumento"))
 
             # 1.b Insertar técnicos asignados (N:N) si hay
             # Mismo patrón que el flujo de Levantamiento (app.py:66341-66352):
@@ -75180,6 +75194,11 @@ def mant_maquina_solicitar_cambio(mid):
         f"Unidades afectadas: {cant_afectada} de {maq.get('cantidad',1)}\n"
         f"Motivo: {motivo}\n"
     )
+    # 🔏 2026-10-07 — LA PUERTA DEL DOCUMENTO: tipo 'garantia' = $0 que pasa por Daniel (motivo garantia +
+    # argumento + autorización); correctiva = documento validado o autorización. Sin eso, 409 DOC_REQUERIDO.
+    _puerta_sc = _ot_puerta_desde_body(d, cid, tipo_visita, garantia=(tipo_visita == "garantia"))
+    if not _puerta_sc["ok"]:
+        return _ot_puerta_respuesta(_puerta_sc)
 
     conn = get_mysql()
     try:
@@ -75197,6 +75216,7 @@ def mant_maquina_solicitar_cambio(mid):
                 (cid, titulo, fecha_prog, tipo_visita, descripcion, tecnico_asign, current_username())
             )
             vid = cur.lastrowid
+            _ot_puerta_aplicar(cur, vid, _puerta_sc, fin_argumento=d.get("cobro_cero_argumento"))   # 🔏 2026-10-07
         conn.commit()
         _mant_log("maquina", mid, "solicitud_cambio",
                   f"{cant_afectada} unidad(es), {tipo_visita}, fecha {fecha_prog}, motivo: {motivo[:80]}")
@@ -82285,6 +82305,11 @@ def mant_visita_historica(cid):
         return jsonify({"ok": False, "error": "Falta el centro de costo (Servicio Técnico, Logística o Comercial)."}), 400
     if not tecnico:
         return jsonify({"ok": False, "error": "Falta el técnico que hizo el trabajo."}), 400
+    # 🔏 2026-10-07 — LA PUERTA DEL DOCUMENTO: nace 'completada', así que con más razón necesita documento
+    # validado, contrato REAL (preventiva), $0 autorizado o autorización de Daniel.
+    _puerta_vh = _ot_puerta_desde_body(d, cid, tipo, contrato_id=contrato_id, garantia=(tipo == "garantia"))
+    if not _puerta_vh["ok"]:
+        return _ot_puerta_respuesta(_puerta_vh)
 
     conn = get_mysql()
     try:
@@ -82298,6 +82323,7 @@ def mant_visita_historica(cid):
                  tipo, tecnico, observ, costo, centro_costo, current_username())
             )
             vid_historica = cur.lastrowid
+            _ot_puerta_aplicar(cur, vid_historica, _puerta_vh, fin_argumento=d.get("cobro_cero_argumento"))   # 🔏 2026-10-07
         conn.commit()
         try:
             _mant_log("visita", vid_historica, "registrada_historica",
@@ -82459,6 +82485,16 @@ def mant_visita_retroactiva(cid):
     contrato_id = contrato.get("id") if contrato else None
 
     titulo = (f"Mantención {tipo.capitalize()} histórica")[:200]
+    # 🔏 2026-10-07 — LA PUERTA DEL DOCUMENTO: la factura/cotización que venía como texto libre ahora se valida
+    # contra el ERP (lectura) y solo cuenta si existe; sin documento válido, contrato REAL (preventiva), $0
+    # autorizado ni autorización de Daniel → 409 DOC_REQUERIDO. Lo que escribe el INSERT no cambia (REGLA #4.2).
+    _docs_retro = []
+    if cot_tido and cot_nudo:
+        _docs_retro.append({"tipo": cot_tido, "numero": cot_nudo})
+    _puerta_rt = _ot_puerta_desde_body(d, cid, tipo, contrato_id=contrato_id, extra_docs=_docs_retro,
+                                       garantia=(tipo == "garantia"))
+    if not _puerta_rt["ok"]:
+        return _ot_puerta_respuesta(_puerta_rt)
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
@@ -82485,6 +82521,7 @@ def mant_visita_retroactiva(cid):
                  current_username())
             )
             vid = cur.lastrowid
+            _ot_puerta_aplicar(cur, vid, _puerta_rt, fin_argumento=d.get("cobro_cero_argumento"))   # 🔏 2026-10-07
         conn.commit()
         try:
             _mant_log("visita", vid, "retroactiva_creada",
@@ -82553,6 +82590,10 @@ def mant_contrato_auto_calendar(ctid):
     if ct.get("estado") not in ("vigente", "indefinido"):
         return jsonify({"ok": False,
                         "error": f"Contrato en estado '{ct.get('estado')}' — no se calendariza"}), 400
+    # 🔏 2026-10-07 — LA PUERTA DEL DOCUMENTO para los masivos: solo un contrato REAL (no el «Contenedor de
+    # documentos») es documento de sus mantenciones preventivas. Si no, cada OT necesitaría su documento.
+    if not _ot_contrato_es_real(ctid, ct.get("cliente_id")):
+        return _ot_puerta_respuesta(_ot_puerta_documento_eval({"cliente_id": ct.get("cliente_id"), "tipo": "preventiva"}, "crear"))
 
     freq = ct.get("frecuencia_meses") or ct.get("ai_frecuencia_sug") or 0
     if not freq or freq <= 0:
@@ -83427,6 +83468,10 @@ _OT_FIN_COBERTURA_TXT = {
     "cobra": "Se le cobra al cliente",
     "garantia": "Garantía: no se le cobra",
     "sin_costo": "Cortesía: no se le cobra",
+    # 🔏 2026-10-07 (Daniel): los únicos motivos de $0 son Garantía, Regalía (lo que era cortesía/sin costo) y
+    # Arriendo o Leasing (el servicio va incluido en el arriendo). Se distinguen por cobro_cero_motivo.
+    "regalia": "Regalía: no se le cobra",
+    "arriendo_leasing": "Arriendo o leasing: incluido en el arriendo",
     "interno": "Trabajo interno: no se le cobra",
     "contrato": "Mantención de contrato: se paga con el contrato",
 }
@@ -83459,11 +83504,18 @@ def _ot_cobertura(v):
     mod = (v.get("modalidad_cobro") or "").strip().lower()
     cub = (v.get("cubierto_por") or "").strip().lower()
     tipo = (v.get("tipo") or "").strip().lower()
-    if mod == "garantia" or cub == "garantia" or tipo == "garantia":
+    # 🔏 2026-10-07 (Daniel): el motivo del $0 manda sobre la modalidad -- regalía y arriendo/leasing viven en
+    # modalidad 'sin_costo' (el ENUM no se amplía) y se distinguen acá. Espejo: static/ot_finanzas.js.
+    cero = (v.get("cobro_cero_motivo") or "").strip().lower()
+    if mod == "garantia" or cub == "garantia" or tipo == "garantia" or cero == "garantia":
         return "garantia"
     if _ot_es_interna(v):
         return "interno"
-    if mod == "sin_costo":
+    if mod == "sin_costo" or cero in ("regalia", "arriendo_leasing"):
+        if cero == "regalia":
+            return "regalia"
+        if cero == "arriendo_leasing":
+            return "arriendo_leasing"
         return "sin_costo"
     if v.get("contrato_real") and tipo == "preventiva":
         zz = _ot_fin_num(v.get("zz_monto")) or 0
@@ -83633,7 +83685,8 @@ def _ot_finanzas(v, rep=None):
 # Campos de mant_visitas que lee _ot_finanzas.
 _OT_FIN_BASE_CAMPOS = ("modalidad_cobro", "cubierto_por", "tipo", "cliente_id", "contrato_real", "costo",
                        "zz_monto", "zz_codigo", "zz_envio_monto", "valor_origen", "costo_proveedor",
-                       "costo_despacho", "proveedor_tipo", "valorizado_clp", "valorizado_fuente")
+                       "costo_despacho", "proveedor_tipo", "valorizado_clp", "valorizado_fuente",
+                       "cobro_cero_motivo")   # 2026-10-07: regalía / arriendo-leasing
 _OT_FIN_BASE_MONTOS = ("costo", "zz_monto", "zz_envio_monto", "costo_proveedor", "costo_despacho",
                        "valorizado_clp")
 # De dónde puede salir un valorizado (columna valorizado_fuente, VARCHAR(20)). Lo que no esté en la lista se
@@ -83762,11 +83815,12 @@ def _ot_fin_costo_espejo_sync(vid, cobre_antes, costo_antes, quien="sistema", do
 #  _ot_finanzas con estos ayudantes: las columnas que necesita, la bandera de contrato real y los repuestos
 #  instalados en UNA consulta por lote (nunca una por OT).
 # ═══════════════════════════════════════════════════════════════════════════
-_OT_FIN_COLS = ("modalidad_cobro", "cubierto_por", "tipo", "cliente_id", "contrato_id", "costo", "zz_monto",
+_OT_FIN_COLS = ("modalidad_cobro", "cubierto_por", "tipo", "cliente_id", "contrato_id", "costo", "zz_monto", "cobro_cero_motivo",
                 "zz_codigo", "zz_envio_monto", "valor_origen", "costo_proveedor", "costo_despacho",
                 "proveedor_tipo", "valorizado_clp", "valorizado_fuente")
 # Rótulo corto de la cobertura para chips y columnas (el largo es _OT_FIN_COBERTURA_TXT).
 _OT_FIN_COBERTURA_CORTA = {"cobra": "Se cobra", "garantia": "Garantía", "sin_costo": "Cortesía",
+                           "regalia": "Regalía", "arriendo_leasing": "Arriendo/leasing",   # 2026-10-07
                            "interno": "Trabajo interno", "contrato": "Contrato"}
 # En el resultado de VARIAS OT (un cliente, un técnico) el trabajo interno y la mantención de contrato van
 # aparte: el interno no es negocio con nadie y el contrato se paga con el contrato, no OT por OT (Daniel
@@ -85367,11 +85421,29 @@ def _mant_visita_crear_core(d):
             _cliente_rut_fin = _cli_fin.get("rut") if _cli_fin else None
         except Exception:
             _cliente_rut_fin = None
+    # 🔏 2026-10-07: un tipo de "trabajo interno" CON cliente no exime de finanzas ni de documento (la exención
+    # es solo SIN cliente: Daniel, "la gestión documental debe ser transparente").
+    _es_interna_fin = bool(_cliente_opcional and not d.get("cliente_id"))
     _fin_err, _fin_campos = _ot_validar_normalizar_finanzas(
-        _fin_in, tipo_ot, _cliente_opcional, cliente_rut=_cliente_rut_fin)
+        _fin_in, tipo_ot, _es_interna_fin, cliente_rut=_cliente_rut_fin)
     if _fin_err:
         return {"error": _fin_err["error"],
                 "error_codigo": _fin_err["error_codigo"]}, 400
+    # 🔏 2026-10-07 — LA PUERTA DEL DOCUMENTO (misma que el asistente OT 2.0, ver _ot_puerta_documento).
+    _puerta = None
+    if not _es_interna_fin:
+        _puerta = _ot_puerta_documento(_ot_puerta_payload_desde_campos(
+            _fin_campos, d.get("cliente_id"), tipo_ot, cliente_rut=_cliente_rut_fin,
+            contrato_id=d.get("contrato_id")), "crear")
+        if not _puerta["ok"]:
+            return {"ok": False, "error": _puerta["mensaje"], "error_codigo": _puerta["code"],
+                    "accion": _puerta["accion"], "autorizacion_id": _puerta.get("autorizacion_id")}, 409
+        _puerta["docs_ya_guardados"] = True
+    # 🔏 2026-10-07 — el estado inicial pasa por lista blanca: una OT nunca NACE completada/cerrada por acá
+    # (visita-historica y retroactiva son los únicos caminos para eso, y también pasan la puerta).
+    _estado_nac = (str(d.get("estado") or "programada").strip().lower())
+    if _estado_nac not in _OT_ESTADOS_NACIMIENTO:
+        _estado_nac = "programada"
 
     modalidad = _fin_campos["modalidad_cobro"]
     cubierto_por_ins = _fin_campos["cubierto_por"]
@@ -85424,7 +85496,7 @@ def _mant_visita_crear_core(d):
                      d.get("hora_inicio") or None, d.get("hora_fin") or None,
                      tecnico_txt, tecnico_user_id,
                      tipo_ot,
-                     d.get("estado","programada"), d.get("descripcion",""),
+                     _estado_nac, d.get("descripcion",""),
                      # 💰 2026-10-07: costo_cliente viene None (0 = default de
                      # la columna) salvo en una OT que se cobra, donde es el
                      # ESPEJO de lo cobrado -- ver _ot_fin_costo_espejo.
@@ -85485,11 +85557,14 @@ def _mant_visita_crear_core(d):
                      d.get("hora_inicio") or None, d.get("hora_fin") or None,
                      tecnico_txt, tecnico_user_id,
                      tipo_ot,
-                     d.get("estado","programada"), d.get("descripcion",""),
+                     _estado_nac, d.get("descripcion",""),
                      float(d.get("costo",0) or 0),
                      modalidad, prioridad, current_username())
                 )
             vid = cur.lastrowid
+            # 🔏 2026-10-07 — constancia de la puerta (ver _ot_puerta_aplicar).
+            if _puerta is not None:
+                _ot_puerta_aplicar(cur, vid, _puerta, fin_argumento=_fin_campos.get("cobro_cero_argumento"))
 
             # 📄 2026-09-17 -- mismo espejo que ot2_api_crear: los
             # documentos ERP declarados en `finanzas.documentos_extra`
@@ -85709,6 +85784,44 @@ def mant_visita_update(vid):
     # siendo None), así que se valida acá con el MISMO criterio: bloqueo si la
     # OT ya cerró, motivo de >=10 caracteres, y queda la traza de quién lo
     # declaró (el _mant_log de más abajo registra usuario + antes→después).
+    # 🔏 2026-10-07 — modalidad 'interno' con cliente ya no exime de nada (la exención es solo SIN cliente). Solo
+    # el superadministrador puede dejarla así, con motivo, y queda en la bitácora.
+    if _mod_pedida == "interno":
+        _row_int = mysql_fetchone("SELECT cliente_id, modalidad_cobro FROM mant_visitas WHERE id=%s", (vid,)) or {}
+        if _row_int.get("cliente_id") and (_row_int.get("modalidad_cobro") or "") != "interno":
+            _mot_int = (d.get("motivo") or d.get("garantia_motivo") or "").strip()
+            if not _ot_aut_es_superadmin() or len(_mot_int) < 10:
+                return jsonify({
+                    "ok": False,
+                    "error": "Una OT con cliente no puede marcarse como trabajo interno: la exención de documento es "
+                             "solo para trabajos sin cliente. Si corresponde, el superadministrador puede hacerlo con un motivo.",
+                    "error_codigo": "INTERNO_CON_CLIENTE",
+                }), 400
+            try:
+                _mant_log("visita", vid, "interno_con_cliente",
+                          f"modalidad interno con cliente autorizada por superadministrador · motivo: {_mot_int[:400]}")
+            except Exception:
+                pass
+    # 🔏 2026-10-07 (Daniel: "TODO $0 pasa por Daniel"): dejar la OT en garantía / sin costo desde este PUT ya no
+    # basta con un motivo de 10 caracteres. Si quien edita es superadministrador, el $0 se registra como
+    # autorizado (motivo + argumento ≥30); si no, se crea la solicitud 'cobro_cero' y se responde 202 sin
+    # cambiar la cobertura. Ver _ot_cobro_cero_desde_peticion.
+    _pide_cero = _cobertura_exenta_pedida or (gar_aplica_upd is True)
+    if _pide_cero:
+        _row_cero = mysql_fetchone("SELECT modalidad_cobro, cubierto_por, estado, cliente_id FROM mant_visitas WHERE id=%s",
+                                   (vid,)) or {}
+        _ya_cero = ((_row_cero.get("modalidad_cobro") or "") in ("garantia", "sin_costo")
+                    or (_row_cero.get("cubierto_por") or "") == "garantia")
+        if _row_cero.get("cliente_id") and not _ya_cero:
+            if (_row_cero.get("estado") or "") == "cerrada":
+                return jsonify({"ok": False, "error": "No se puede dejar en $0 una OT ya cerrada.",
+                                "error_codigo": "GARANTIA_OT_CERRADA"}), 400
+            _d_cero = dict(d)
+            _d_cero.setdefault("cobro_cero_motivo", "garantia" if (gar_aplica_upd is True or _mod_pedida == "garantia") else "regalia")
+            _resp_cero, _aid_cero = _ot_cobro_cero_desde_peticion(vid, _d_cero, origen="editar OT (PUT visita)")
+            if _resp_cero is not None:
+                return _resp_cero
+            d["garantia_motivo"] = (d.get("cobro_cero_argumento") or d.get("garantia_motivo") or "").strip()[:500] or None
     if _cobertura_exenta_pedida and _mod_pedida == "sin_costo":
         _row_sc = mysql_fetchone(
             "SELECT modalidad_cobro, estado FROM mant_visitas WHERE id=%s", (vid,)
@@ -85990,7 +86103,10 @@ def mant_visita_update(vid):
     # reagendada -- 'cerrada' nunca fue una opción de la UI, así que
     # bloquearla acá no quita ninguna función real (REGLA #4.2), solo cierra
     # una vía de escritura directa a la API que nadie usa legítimamente.
-    _ESTADOS_PROTEGIDOS_PUT = {"cerrada", "pendiente_aprobacion", "firmada_tecnico"}
+    # 🔏 2026-10-07 (atajo del mapa, Daniel: "AL CERRAR, revisión obligatoria"): 'completada' también sale de
+    # este PUT -- era la antesala del cierre y se podía poner editando el campo; la OT se completa por el flujo
+    # del técnico/ejecución, nunca desde "Editar OT".
+    _ESTADOS_PROTEGIDOS_PUT = {"cerrada", "pendiente_aprobacion", "firmada_tecnico", "completada"}
     if (d.get("estado") or "").strip().lower() in _ESTADOS_PROTEGIDOS_PUT:
         return jsonify({
             "ok": False,
@@ -88294,6 +88410,16 @@ def _ensure_mant_visita_documentos():
         except Exception as e:
             if "Duplicate column" not in str(e):
                 print(f"[ensure_visita_documentos] {_col}: {e}", flush=True)
+    # 🔏 2026-10-07 (Daniel: "todos los documentos deben estar declarados en la OT… para mayor trazabilidad"):
+    # reemplazado_por_id = la factura que dio de baja a esta nota de venta (las dos quedan visibles, nada se
+    # borra); cuenta = para qué cuenta el documento (servicio|despacho|nota_venta|cotizacion|referencia_garantia).
+    # Una cláusula por sentencia (REGLA #18).
+    for _col, _ddl in (("reemplazado_por_id", "INT NULL"), ("cuenta", "VARCHAR(20) NULL")):
+        try:
+            mysql_execute(f"ALTER TABLE mant_visita_documentos ADD COLUMN {_col} {_ddl}")
+        except Exception as e:
+            if "Duplicate column" not in str(e):
+                print(f"[ensure_visita_documentos] {_col}: {e}", flush=True)
 
 
 def _ensure_ot_finanzas_cols():
@@ -88350,6 +88476,12 @@ def _ensure_ot_finanzas_cols():
         # garantía"): cuánto VALE el servicio, solo como referencia. Nunca se suma a lo cobrado (ver _ot_finanzas).
         ("valorizado_clp",    "DECIMAL(12,2) NULL COMMENT 'Tarifa real del servicio (referencia, no es cobro)'"),
         ("valorizado_fuente", "VARCHAR(20) NULL COMMENT 'cotizador|contrato|documento|a_mano|dato_antiguo|estimado|supuesto'"),
+        # 🔏 2026-10-07 (Daniel: "TODO $0 pasa por Daniel… con motivo + argumento"): por qué no se le cobra al
+        # cliente (garantia|regalia|arriendo_leasing), qué autorización lo respalda (mant_ot_autorizaciones.id) y el
+        # argumento con el que se pidió. Sin autorización aprobada, un $0 no pasa la puerta (_ot_puerta_documento).
+        ("cobro_cero_motivo", "VARCHAR(20) NULL COMMENT 'garantia|regalia|arriendo_leasing'"),
+        ("cobro_cero_autorizacion_id", "INT NULL COMMENT 'mant_ot_autorizaciones.id que autorizo el $0'"),
+        ("cobro_cero_argumento", "VARCHAR(1000) NULL COMMENT 'Argumento del $0 (minimo 30 caracteres)'"),
     ]
     for _nombre, _ddl in _cols:
         try:
@@ -91840,6 +91972,15 @@ def ot2_api_finanzas(vid):
     _gar_mod_actual = (v.get("modalidad_cobro") or "").strip().lower() == "garantia"
     _gar_actual = _gar_mod_actual or (v.get("cubierto_por") or "").strip().lower() == "garantia"
     _cambia_garantia = _habla_garantia and ((garantia and not _gar_actual) or (not garantia and _gar_mod_actual))
+    # 🔏 2026-10-07 (Daniel: "TODO $0 pasa por Daniel"): pasar a garantía desde la tarjeta Finanzas / el modal de
+    # cierre crea la solicitud 'cobro_cero' (202) salvo que lo declare el superadministrador (queda registrado).
+    if _cambia_garantia and garantia and v.get("cliente_id"):
+        _d_fin0 = dict(d)
+        _d_fin0.setdefault("cobro_cero_motivo", "garantia")
+        _d_fin0.setdefault("cobro_cero_argumento", motivo)
+        _resp_fin0, _aid_fin0 = _ot_cobro_cero_desde_peticion(vid, _d_fin0, origen="tarjeta Finanzas")
+        if _resp_fin0 is not None:
+            return _resp_fin0
     if _cambia_garantia:
         _set_col("modalidad_cobro", 'garantia' if garantia else 'pagado')
         _set_col("cubierto_por", 'garantia' if garantia else 'cliente')
@@ -92798,6 +92939,1665 @@ def ot2_api_ruta_pin(vid):
     return jsonify({"ok": True, "guardado": bool(n)})
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  🔒 2026-10-07 — "DOCUMENTO ABSOLUTO": LA PUERTA ÚNICA DEL DOCUMENTO Y LAS AUTORIZACIONES DE DANIEL
+#
+#  Daniel, 2026-10-07, con el gerente general (OT 43 de Inmobiliaria de Deporte La Dehesa: mantención hecha en
+#  junio, no cobrada, sin documento; y dos OT abiertas in situ sin documento): "Los servicios deben cobrarse…
+#  Todo con documento tiene que ser absoluto y solamente pidiendo autorización remota con un argumento podrán
+#  solicitarme a mí remotamente que yo autorice algo… esto tiene que ser inviolable."
+#
+#  Reglas (decisiones del mismo día):
+#   1. CREAR una OT de CLIENTE sin documento: no se puede. La única salida es «Pedir autorización a Daniel» ANTES
+#      de crearla: la solicitud guarda todo lo que se iba a crear y, al aprobarse, el sistema crea la OT.
+#   2. TODO $0 pasa por Daniel: motivo (Garantía · Regalía · Arriendo o leasing) + argumento (mínimo 30
+#      caracteres) + autorización de un superadministrador (solicitud aprobada, o declarado por él mismo: cuenta
+#      como autorización y queda registrada). Cada $0 lleva centro de costo y valorizado sugerido.
+#      Excepciones: OT interna SIN cliente (no hay a quién cobrar) y mantención preventiva de un contrato REAL.
+#   3. Cobro: uno o más documentos del ERP (FCV/FCE/BLV/BLE y nota de venta NVV/NVI) validados contra el ERP.
+#   5. AL CERRAR, revisión obligatoria otra vez: documento de cobro o $0 autorizado. Con nota de venta queda
+#      «Falta factura» (estado_facturacion 'con_nota_venta') hasta ligar la factura.
+#   6. OT antiguas: bandeja «Regularizar» (GET /ot/api/regularizar).
+#  Requisito posterior de Daniel (mismo día): "tanto tickets y OT y cotización deberán siempre predominar con el
+#  documento de Random a menos que yo lo autorice, ahí predomina el argumento; que dejemos con la trazabilidad de
+#  quién autorizó" → la tabla mant_ot_autorizaciones es GENÉRICA (entidad ot|ticket|cotizacion) desde el inicio.
+#
+#  Una sola función decide (_ot_puerta_documento); TODOS los caminos que crean una OT de cliente y los dos que
+#  la cierran (aprobar-cierre, cierre del levantamiento) pasan por ella. tests/test_ot_puerta_documento.py vigila
+#  que ningún INSERT INTO mant_visitas de cliente quede fuera.
+# ═══════════════════════════════════════════════════════════════════════════
+# Documentos que COBRAN (factura/boleta). La nota de venta (_OT_DOCS_NOTA_VENTA) es una promesa de cobro.
+_OT_DOCS_COBRO = ("FCV", "FCE", "BLV", "BLE")
+# Los ÚNICOS motivos de un $0 (Daniel 2026-10-07) y la modalidad con que queda la OT. "Regalía" es lo que hasta
+# hoy se llamaba cortesía/sin costo; "arriendo o leasing" = el servicio va incluido en el arriendo.
+_OT_COBRO_CERO_MOTIVOS = {"garantia": "Garantía", "regalia": "Regalía", "arriendo_leasing": "Arriendo o leasing"}
+_OT_COBRO_CERO_MODALIDAD = {"garantia": "garantia", "regalia": "sin_costo", "arriendo_leasing": "sin_costo"}
+_OT_AUT_TIPOS = ("crear_sin_documento", "cobro_cero", "cerrar_sin_documento")
+_OT_AUT_TIPO_TXT = {"crear_sin_documento": "Crear OT sin documento", "cobro_cero": "Cobrar $0",
+                    "cerrar_sin_documento": "Cerrar OT sin documento"}
+_OT_AUT_ESTADO_TXT = {"pendiente": "Esperando a Daniel", "aprobada": "Autorizada", "rechazada": "Rechazada",
+                      "anulada": "Anulada"}
+_OT_AUT_ARGUMENTO_MIN = 30
+_OT_AUT_ENTIDADES = ("ot", "ticket", "cotizacion")
+# ¿Una nota de venta basta para CERRAR? Requisito 3 de Daniel (2026-10-07, manda sobre la decisión 5): "CERRAR
+# exige SIEMPRE factura/boleta". Si algún día Daniel acepta cerrar con nota de venta (dejando «Falta factura»
+# visible), este interruptor pasa a True: la OT cierra y queda 'con_nota_venta' en la bandeja Regularizar.
+_OT_PUERTA_NV_CIERRA = False
+_OT_PUERTA_MSG = ("Esta OT necesita un documento (factura, boleta o nota de venta) o la autorización de Daniel. "
+                  "Usa «Pedir autorización».")
+_OT_PUERTA_MSG_FACTURA = ("Esta OT partió con una nota de venta: para cerrarla liga la factura o boleta, o pide la "
+                          "autorización de Daniel. Usa «Pedir autorización».")
+_OT_PUERTA_MSG_CERO = ("Esta OT se declaró en $0 ({motivo}) sin la autorización de Daniel. "
+                       "Usa «Pedir autorización».")
+
+
+def _ot_puerta_contrato_real(cliente_id, contrato_id=None):
+    """¿El cliente tiene un contrato REAL que cubra una OT? Misma regla que _OT_FIN_SQL_CONTRATO_REAL, para una OT
+    que todavía no existe (al crear): si apunta a un contrato real cuenta aunque haya vencido; si no, cuenta el
+    contrato real en vigor del cliente. El «Contenedor de documentos» (ficticio) nunca cuenta."""
+    try:
+        cid = int(cliente_id)
+    except (TypeError, ValueError):
+        return False
+    try:
+        ctid = int(contrato_id) if contrato_id else None
+    except (TypeError, ValueError):
+        ctid = None
+    try:
+        r = mysql_fetchone(
+            "SELECT 1 AS x FROM mant_contratos ctr WHERE ctr.cliente_id=%s "
+            "  AND COALESCE(ctr.nombre,'')<>'Contenedor de documentos' "
+            "  AND (ctr.id=%s OR ctr.estado IN ('vigente','por_vencer','indefinido')) LIMIT 1",
+            (cid, ctid or 0))
+        return bool(r)
+    except Exception as e:
+        print(f"[ot-puerta] contrato real cid={cid}: {type(e).__name__}", flush=True)
+        return False
+
+
+def _ot_puerta_docs_de(vid):
+    """Documentos VALIDADOS contra el ERP que tiene la OT: filas de mant_visita_documentos origen 'erp' (las escriben
+    el asistente, el núcleo clásico, el levantamiento y POST /ot/api/<vid>/documentos, todos tras consultar el
+    ERP) y, para OT anteriores a la tabla puente, el principal de mant_visitas SOLO si lo ligó asociar-factura
+    (factura_asociada_por / factura_rut_ok: ahí sí se consultó el ERP). Un factura_tido/nudo escrito como texto
+    libre (PUT) NO cuenta. Devuelve [{tido, nudo, origen, es_cobro, es_principal}] (tido en mayúsculas)."""
+    out, vistos = [], set()
+    try:
+        vid = int(vid)
+    except (TypeError, ValueError):
+        return out
+    try:
+        for r in (mysql_fetchall(
+                "SELECT erp_tido, erp_nudo, es_cobro, es_principal FROM mant_visita_documentos "
+                " WHERE visita_id=%s AND origen='erp' AND COALESCE(erp_nudo,'')<>'' ORDER BY es_principal DESC, id",
+                (vid,)) or []):
+            t = (r.get("erp_tido") or "").strip().upper()
+            n = (r.get("erp_nudo") or "").strip()
+            k = (t, n.lstrip("0"))
+            if not t or not n or k in vistos:
+                continue
+            vistos.add(k)
+            out.append({"tido": t, "nudo": n, "origen": "erp", "es_cobro": bool(r.get("es_cobro", 1)),
+                        "es_principal": bool(r.get("es_principal"))})
+    except Exception as e:
+        print(f"[ot-puerta] docs vid={vid}: {type(e).__name__}", flush=True)
+    try:
+        v = mysql_fetchone(
+            "SELECT factura_tido, factura_nudo, factura_asociada_por, factura_rut_ok FROM mant_visitas WHERE id=%s",
+            (vid,)) or {}
+        t = (v.get("factura_tido") or "").strip().upper()
+        n = (v.get("factura_nudo") or "").strip()
+        validado = bool((v.get("factura_asociada_por") or "").strip()) or v.get("factura_rut_ok") is not None
+        if t and n and validado and (t, n.lstrip("0")) not in vistos:
+            out.append({"tido": t, "nudo": n, "origen": "erp", "es_cobro": True, "es_principal": True})
+    except Exception as e:
+        print(f"[ot-puerta] principal vid={vid}: {type(e).__name__}", flush=True)
+    return out
+
+
+def _ot_puerta_docs_lote(vids):
+    """{vid: [docs]} para la bandeja: dos consultas para todo el lote (nunca una por OT)."""
+    try:
+        ids = sorted({int(x) for x in vids if x})
+    except (TypeError, ValueError):
+        ids = []
+    out = {i: [] for i in ids}
+    if not ids:
+        return out
+    ph = ",".join(["%s"] * len(ids))
+    vistos = set()
+    try:
+        for r in (mysql_fetchall(
+                "SELECT visita_id, erp_tido, erp_nudo, es_cobro, es_principal FROM mant_visita_documentos "
+                f" WHERE visita_id IN ({ph}) AND origen='erp' AND COALESCE(erp_nudo,'')<>'' "
+                " ORDER BY visita_id, es_principal DESC, id", tuple(ids)) or []):
+            t = (r.get("erp_tido") or "").strip().upper()
+            n = (r.get("erp_nudo") or "").strip()
+            k = (int(r["visita_id"]), t, n.lstrip("0"))
+            if not t or not n or k in vistos:
+                continue
+            vistos.add(k)
+            out[int(r["visita_id"])].append({"tido": t, "nudo": n, "origen": "erp",
+                                             "es_cobro": bool(r.get("es_cobro", 1)),
+                                             "es_principal": bool(r.get("es_principal"))})
+        for v in (mysql_fetchall(
+                "SELECT id, factura_tido, factura_nudo, factura_asociada_por, factura_rut_ok FROM mant_visitas "
+                f" WHERE id IN ({ph})", tuple(ids)) or []):
+            t = (v.get("factura_tido") or "").strip().upper()
+            n = (v.get("factura_nudo") or "").strip()
+            validado = bool((v.get("factura_asociada_por") or "").strip()) or v.get("factura_rut_ok") is not None
+            if t and n and validado and (int(v["id"]), t, n.lstrip("0")) not in vistos:
+                out[int(v["id"])].append({"tido": t, "nudo": n, "origen": "erp", "es_cobro": True,
+                                          "es_principal": True})
+    except Exception as e:
+        print(f"[ot-puerta] docs lote n={len(ids)}: {type(e).__name__}", flush=True)
+    return out
+
+
+def _ot_puerta_autorizaciones_de(vid):
+    """Autorizaciones (todas, con su estado) de una OT, más recientes primero."""
+    try:
+        return [dict(r) for r in (mysql_fetchall(
+            "SELECT id, tipo, estado, motivo, argumento, centro_costo, valorizado_clp, solicitado_por_nombre, "
+            "       solicitado_at, resuelto_por_nombre, resuelto_at, comentario "
+            "  FROM mant_ot_autorizaciones WHERE visita_id=%s ORDER BY id DESC", (vid,)) or [])]
+    except Exception as e:
+        print(f"[ot-puerta] autorizaciones vid={vid}: {type(e).__name__}", flush=True)
+        return []
+
+
+def _ot_puerta_autorizaciones_lote(vids):
+    try:
+        ids = sorted({int(x) for x in vids if x})
+    except (TypeError, ValueError):
+        ids = []
+    out = {i: [] for i in ids}
+    if not ids:
+        return out
+    try:
+        for r in (mysql_fetchall(
+                "SELECT id, visita_id, tipo, estado, motivo, argumento, solicitado_por_nombre, solicitado_at, "
+                "       resuelto_por_nombre, resuelto_at, comentario FROM mant_ot_autorizaciones "
+                " WHERE visita_id IN (" + ",".join(["%s"] * len(ids)) + ") ORDER BY id DESC", tuple(ids)) or []):
+            out[int(r["visita_id"])].append(dict(r))
+    except Exception as e:
+        print(f"[ot-puerta] autorizaciones lote: {type(e).__name__}", flush=True)
+    return out
+
+
+def _ot_puerta_doc_norm(d):
+    """Un documento del body / del validador / de la tabla, normalizado a {tido, nudo, origen, validado, rut}."""
+    if not isinstance(d, dict):
+        return None
+    origen = (d.get("origen") or "erp").strip().lower()
+    if origen == "cotizacion":
+        ref = str(d.get("cotizacion") or d.get("numero") or d.get("cotizacion_id") or "").strip()
+        return {"tido": "COT", "nudo": ref, "origen": "cotizacion", "validado": bool(d.get("validado")),
+                "rut": None, "es_cobro": False} if ref else None
+    t = (d.get("tido") or d.get("tipo") or "").strip().upper()[:10]
+    n = str(d.get("nudo") or d.get("numero") or "").strip()[:30]
+    if not t or not n:
+        return None
+    return {"tido": t, "nudo": n, "origen": "erp", "validado": bool(d.get("validado")),
+            "rut": (d.get("rut") or None), "es_cobro": bool(d.get("es_cobro", True))}
+
+
+def _ot_puerta_validar_erp(doc, cli_rut=None):
+    """Confirma contra el ERP (SOLO LECTURA, REGLA #4.1) un documento que vino como texto del body. Devuelve el
+    doc con validado=True (y el tipo real que encontró el ERP) o None si no existe / el ERP no respondió."""
+    try:
+        tipo_enc, erp_doc, respondio, _err = _ot_resolver_doc_erp(doc["tido"], re.sub(r"[^0-9]", "", doc["nudo"]) or doc["nudo"], cli_rut)
+    except Exception as e:
+        print(f"[ot-puerta] ERP {doc.get('tido')} {doc.get('nudo')}: {type(e).__name__}", flush=True)
+        return None
+    if not erp_doc:
+        return None
+    out = dict(doc)
+    out["validado"] = True
+    if tipo_enc:
+        out["tido"] = str(tipo_enc).strip().upper()[:10]
+    out["rut"] = (erp_doc.get("cliente_rut") or "").strip()[:20] or None
+    return out
+
+
+def _ot_puerta_cotizacion_existe(ref):
+    try:
+        num = re.sub(r"[^0-9]", "", str(ref or ""))
+        return bool(mysql_fetchone(
+            "SELECT id FROM tk_cotizaciones WHERE numero_cotizacion=%s OR id=%s "
+            "   OR numero_cotizacion=CONCAT('COT-', LPAD(%s,6,'0')) LIMIT 1", (ref, num or 0, num or 0)))
+    except Exception:
+        return False
+
+
+def _ot_puerta_autorizacion_por_id(aid):
+    try:
+        r = mysql_fetchone("SELECT * FROM mant_ot_autorizaciones WHERE id=%s", (int(aid),))
+        return dict(r) if r else None
+    except (TypeError, ValueError):
+        return None
+    except Exception as e:
+        print(f"[ot-puerta] autorización {aid}: {type(e).__name__}", flush=True)
+        return None
+
+
+def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_declara=None):
+    """★ LA PUERTA. ¿Esta OT (fila o payload de una por crear) tiene con qué existir / cerrarse?
+
+    v: dict con cliente_id, tipo, modalidad_cobro, cubierto_por y, si existe, id. Opcionales:
+       contrato_real (si falta y hay id/cliente_id, se consulta), contrato_id, cliente_rut,
+       documentos (lista de {tido|tipo, nudo|numero, validado?} o {origen:'cotizacion', cotizacion}; los que no
+         vienen validados se confirman contra el ERP en solo lectura), documentos_validados (los que el validador
+         de finanzas ya confirmó), autorizacion_id (una autorización aprobada con la que se crea),
+       autorizaciones (si falta y hay id, se leen), cobro_cero_motivo, cobro_cero_argumento,
+       cobro_cero_autorizacion_id.
+    momento: 'crear' | 'cerrar'.
+    autorizacion: fila de mant_ot_autorizaciones (aprobada) con la que se está creando/cerrando, o None.
+    superadmin_declara: True si quien escribe es superadministrador y declara él mismo el $0 (cuenta como
+       autorización; quien llama la REGISTRA con _ot_puerta_aplicar / _ot_cobro_cero_registrar). None = se mira
+       la sesión (_ot_aut_es_superadmin).
+
+    Devuelve {"ok": True, "via": ..., "documentos_ok": [...]} o {"ok": False, "code": "DOC_REQUERIDO",
+    "falta": "documento" | "factura" | "autorizacion_cobro_cero", "accion": "pedir_autorizacion",
+    "mensaje": texto para la persona}. Además "nota_venta": True y "estado_facturacion": "con_nota_venta"
+    cuando pasa solo con una nota de venta («Falta factura»). FUNCIÓN DE DECISIÓN: no escribe nada."""
+    v = dict(v or {})
+    momento = "cerrar" if (momento or "").strip().lower() == "cerrar" else "crear"
+    vid = v.get("id")
+    tipo = (v.get("tipo") or "").strip().lower()
+    mod = (v.get("modalidad_cobro") or "").strip().lower()
+    cub = (v.get("cubierto_por") or "").strip().lower()
+    if superadmin_declara is None:
+        superadmin_declara = _ot_aut_es_superadmin()
+
+    def _ok(via, **extra):
+        out = {"ok": True, "via": via, "code": None, "falta": None, "accion": None, "mensaje": "",
+               "nota_venta": False, "documentos_ok": []}
+        out.update(extra)
+        return out
+
+    def _no(falta, mensaje):
+        return {"ok": False, "via": None, "code": "DOC_REQUERIDO", "falta": falta, "accion": "pedir_autorizacion",
+                "mensaje": mensaje, "nota_venta": False, "documentos_ok": []}
+
+    # 1) OT interna SIN cliente: no hay a quién cobrar (la única exención por "interno" -- un tipo de trabajo
+    #    interno CON cliente es una OT de cliente, Daniel 2026-10-07).
+    if v.get("cliente_id") in (None, "", 0, "0"):
+        return _ok("interna_sin_cliente")
+
+    # 2) La autorización con la que se está creando / cerrando (fila, o solo su id).
+    if autorizacion is None and v.get("autorizacion_id"):
+        autorizacion = _ot_puerta_autorizacion_por_id(v.get("autorizacion_id"))
+    if isinstance(autorizacion, dict) and (autorizacion.get("estado") or "") == "aprobada":
+        t_aut = autorizacion.get("tipo") or ""
+        a_vid = autorizacion.get("visita_id")
+        if momento == "crear" and t_aut == "crear_sin_documento" and not autorizacion.get("visita_creada_id"):
+            return _ok("autorizacion_crear", autorizacion_id=autorizacion.get("id"), motivo=autorizacion.get("motivo"))
+        if momento == "cerrar" and t_aut == "cerrar_sin_documento" and (not vid or not a_vid or int(a_vid) == int(vid)):
+            return _ok("autorizacion_cerrar", autorizacion_id=autorizacion.get("id"))
+    auts = v.get("autorizaciones")
+    if auts is None:
+        auts = _ot_puerta_autorizaciones_de(vid) if vid else []
+    if momento == "cerrar":
+        for a in auts:
+            if a.get("tipo") == "cerrar_sin_documento" and a.get("estado") == "aprobada":
+                return _ok("autorizacion_cerrar", autorizacion_id=a.get("id"))
+
+    # 3) Mantención preventiva de un contrato REAL: el contrato es el documento.
+    if tipo == "preventiva":
+        cr = v.get("contrato_real")
+        if cr is None:
+            cr = (_ot_fin_contrato_real_de([vid]).get(int(vid), False) if vid
+                  else _ot_puerta_contrato_real(v.get("cliente_id"), v.get("contrato_id")))
+        if cr:
+            return _ok("contrato_real")
+
+    # 4) Documentos del ERP. Los validados (tabla puente, validador de finanzas, asociar-factura) cuentan; los que
+    #    vienen como texto del body se confirman contra el ERP (lectura). Una cotización interna basta para
+    #    CREAR (requisito 3 de Daniel: "crear con nota de venta o cotización basta"), nunca para cerrar.
+    docs = []
+    for lst in (v.get("documentos_validados"), v.get("documentos")):
+        for d in (lst or []):
+            nd = _ot_puerta_doc_norm(d)
+            if nd:
+                docs.append(nd)
+    if v.get("documentos") is None and v.get("documentos_validados") is None and vid:
+        # Lo que ya está en la base viene validado (tabla puente / asociar-factura).
+        docs = [dict(nd, validado=True) for nd in
+                (_ot_puerta_doc_norm(x) for x in _ot_puerta_docs_de(vid)) if nd]
+    if "documentos_validados" in v and v.get("documentos_validados") is not None:
+        for d in docs:
+            if any(_ot_puerta_doc_norm(x) and _ot_puerta_doc_norm(x)["tido"] == d["tido"]
+                   and _ot_puerta_doc_norm(x)["nudo"] == d["nudo"] for x in v.get("documentos_validados") or []):
+                d["validado"] = True
+    docs_ok, vistos = [], set()
+    for d in docs:
+        if d["origen"] == "cotizacion":
+            if d["validado"] or _ot_puerta_cotizacion_existe(d["nudo"]):
+                d["validado"] = True
+                docs_ok.append(d)
+            continue
+        if not d["validado"]:
+            d = _ot_puerta_validar_erp(d, v.get("cliente_rut"))
+            if not d:
+                continue
+        k = (d["tido"], d["nudo"].lstrip("0"))
+        if k in vistos:
+            continue
+        vistos.add(k)
+        docs_ok.append(d)
+    tidos = {d["tido"] for d in docs_ok if d["origen"] == "erp" and d.get("es_cobro", True)}
+    if tidos & set(_OT_DOCS_COBRO):
+        return _ok("documento", documentos_ok=docs_ok)
+    if tidos & set(_OT_DOCS_NOTA_VENTA):
+        if momento == "crear" or _OT_PUERTA_NV_CIERRA:
+            return _ok("nota_venta", nota_venta=True, estado_facturacion="con_nota_venta", documentos_ok=docs_ok)
+        return _no("factura", _OT_PUERTA_MSG_FACTURA)
+    if momento == "crear" and any(d["origen"] == "cotizacion" for d in docs_ok):
+        return _ok("cotizacion", documentos_ok=docs_ok)
+
+    # 5) $0 (garantía, regalía, arriendo/leasing) con su autorización.
+    motivo = (v.get("cobro_cero_motivo") or "").strip().lower()
+    es_cero = bool(motivo) or mod in ("garantia", "sin_costo") or cub == "garantia" or tipo == "garantia"
+    if es_cero:
+        if motivo not in _OT_COBRO_CERO_MOTIVOS:
+            motivo = "garantia" if (mod == "garantia" or cub == "garantia" or tipo == "garantia") else "regalia"
+        aut_id = v.get("cobro_cero_autorizacion_id")
+        for a in auts:
+            if a.get("tipo") == "cobro_cero" and a.get("estado") == "aprobada" and (
+                    not aut_id or int(a.get("id") or 0) == int(aut_id)):
+                return _ok("cobro_cero", autorizacion_id=a.get("id"), motivo=motivo)
+        if isinstance(autorizacion, dict) and autorizacion.get("tipo") == "cobro_cero" \
+                and autorizacion.get("estado") == "aprobada":
+            return _ok("cobro_cero", autorizacion_id=autorizacion.get("id"), motivo=motivo)
+        arg = (v.get("cobro_cero_argumento") or "").strip()
+        if superadmin_declara and len(arg) >= _OT_AUT_ARGUMENTO_MIN:
+            return _ok("cobro_cero_superadmin", motivo=motivo, argumento=arg)
+        return _no("autorizacion_cobro_cero",
+                   _OT_PUERTA_MSG_CERO.format(motivo=_OT_COBRO_CERO_MOTIVOS.get(motivo, motivo or "sin motivo")))
+
+    return _no("documento", _OT_PUERTA_MSG)
+
+
+def _ot_puerta_documento_eval(v, momento="crear"):
+    """Alias de lectura de la puerta (misma función, nombre que usan los caminos masivos)."""
+    return _ot_puerta_documento(v, momento)
+
+
+def _ot_contrato_es_real(ctid, cliente_id):
+    """¿El contrato `ctid` del cliente es REAL (no el «Contenedor de documentos»)? Para los caminos masivos."""
+    try:
+        r = mysql_fetchone("SELECT 1 AS x FROM mant_contratos WHERE id=%s AND cliente_id=%s "
+                           "  AND COALESCE(nombre,'')<>'Contenedor de documentos' LIMIT 1", (int(ctid or 0), int(cliente_id or 0)))
+        return bool(r)
+    except Exception as e:
+        print(f"[ot-puerta] contrato real {ctid}: {type(e).__name__}", flush=True)
+        return False
+
+
+# Estados con los que puede NACER una OT por el núcleo clásico (lista blanca, Daniel 2026-10-07: nunca nace
+# completada/cerrada por ahí; visita-historica y retroactiva son los únicos caminos, y también pasan la puerta).
+_OT_ESTADOS_NACIMIENTO = ("programada", "creada", "asignada", "reagendada", "pendiente_info")
+
+
+def _ot_puerta_409(p, **extra):
+    """La respuesta HTTP uniforme de una puerta cerrada (409): el código estable, qué falta y qué hacer."""
+    payload = {"ok": False, "error": p.get("mensaje") or _OT_PUERTA_MSG, "error_codigo": "DOC_REQUERIDO",
+               "codigo": "DOC_REQUERIDO", "falta": p.get("falta"), "accion": p.get("accion") or "pedir_autorizacion",
+               "puede_pedir_autorizacion": True}
+    payload.update(extra)
+    return jsonify(payload), 409
+
+
+def _ot_puerta_desde_body(d, cliente_id, tipo, modalidad=None, contrato_id=None, extra_docs=None,
+                          garantia=False):
+    """Puerta 'crear' para los caminos que NO pasan por _ot_validar_normalizar_finanzas (visita-multi,
+    solicitar-cambio, visita-historica, retroactiva, intel/accion). Lee del body: documentos [{tipo, numero}|
+    {origen:'cotizacion', cotizacion}], factura_tido/nudo, cobro_cero_motivo, cobro_cero_argumento,
+    autorizacion_id. `garantia`=True (flag viejo) equivale a motivo 'garantia'."""
+    d = d or {}
+    docs = list(extra_docs or [])
+    if isinstance(d.get("documentos"), list):
+        docs += [x for x in d["documentos"] if isinstance(x, dict)]
+    if d.get("factura_tido") and d.get("factura_nudo"):
+        docs.append({"tipo": d.get("factura_tido"), "numero": d.get("factura_nudo")})
+    motivo = (str(d.get("cobro_cero_motivo") or "").strip().lower()) or ("garantia" if garantia else None)
+    cli_rut = None
+    try:
+        if cliente_id:
+            cli_rut = (mysql_fetchone("SELECT rut FROM mant_clientes WHERE id=%s", (cliente_id,)) or {}).get("rut")
+    except Exception:
+        cli_rut = None
+    return _ot_puerta_documento({
+        "cliente_id": cliente_id, "tipo": tipo, "contrato_id": contrato_id, "cliente_rut": cli_rut,
+        "modalidad_cobro": modalidad or ("garantia" if garantia else "pagado"),
+        "documentos": docs or None, "cobro_cero_motivo": motivo,
+        "cobro_cero_argumento": d.get("cobro_cero_argumento"), "autorizacion_id": d.get("autorizacion_id"),
+    }, "crear")
+
+
+def _ot_puerta_respuesta(res, http=409):
+    """Respuesta Flask de una puerta cerrada (mismo contrato que _ot_puerta_409)."""
+    r, _ = _ot_puerta_409(res)
+    return r, http
+
+
+def _ot_puerta_aplicar(cur, vid, p, fin_argumento=None):
+    """Después del INSERT de una OT que pasó la puerta 'crear': deja la CONSTANCIA en la misma transacción.
+      · documentos_ok que vinieron del body (no espejados por el núcleo: `docs_ya_guardados` ausente) → fila en
+        mant_visita_documentos (origen erp validado / cotización de referencia) y el principal en factura_*.
+      · via 'autorizacion_crear' → la OT queda ligada a la autorización (visita_id / visita_creada_id) y, si la
+        solicitud era de $0, cobro_cero_* apuntan a ella.
+      · via 'cobro_cero_superadmin' → el superadministrador declaró el $0: se registra la autorización aprobada a
+        su nombre (_ot_cobro_cero_registrar). Daniel: "cuenta como autorización y queda registrada".
+      · via 'cobro_cero' (autorización aprobada previa) → se liga.
+      · via 'nota_venta' → estado_facturacion 'con_nota_venta' («Falta factura»).
+    Nunca lanza: si falla, la OT ya creada sigue creada y queda el print."""
+    p = p or {}
+    try:
+        via = p.get("via") or ""
+        aid = p.get("autorizacion_id")
+        motivo = p.get("motivo")
+        if not p.get("docs_ya_guardados"):
+            primero = True
+            for d in (p.get("documentos_ok") or []):
+                if d.get("origen") == "cotizacion":
+                    cur.execute("SELECT id FROM tk_cotizaciones WHERE numero_cotizacion=%s OR id=%s LIMIT 1",
+                                (d["nudo"], re.sub(r"[^0-9]", "", d["nudo"]) or 0))
+                    c = cur.fetchone()
+                    cid_cot = (c.get("id") if isinstance(c, dict) else (c[0] if c else None)) if c else None
+                    if cid_cot:
+                        cur.execute("INSERT INTO mant_visita_documentos (visita_id, origen, es_cobro, es_principal, "
+                                    " cotizacion_id, etiqueta, asociado_por) VALUES (%s,'cotizacion',0,0,%s,%s,%s)",
+                                    (vid, cid_cot, "Referencia al crear", current_username()))
+                    continue
+                cur.execute("INSERT INTO mant_visita_documentos (visita_id, origen, es_cobro, es_principal, erp_tido, "
+                            " erp_nudo, rut, rut_ok, asociado_por) VALUES (%s,'erp',1,%s,%s,%s,%s,NULL,%s)",
+                            (vid, 1 if primero else 0, d["tido"], d["nudo"], d.get("rut"), current_username()))
+                if primero:
+                    cur.execute("UPDATE mant_visitas SET factura_tido=COALESCE(factura_tido,%s), "
+                                " factura_nudo=COALESCE(factura_nudo,%s), factura_asociada_por=COALESCE(factura_asociada_por,%s), "
+                                " estado_facturacion=%s WHERE id=%s",
+                                (d["tido"], d["nudo"][:20], current_username(),
+                                 "con_nota_venta" if d["tido"] in _OT_DOCS_NOTA_VENTA else "facturado", vid))
+                primero = False
+        if via == "autorizacion_crear" and aid:
+            cur.execute("UPDATE mant_ot_autorizaciones SET visita_id=COALESCE(visita_id,%s), visita_creada_id=%s "
+                        " WHERE id=%s", (vid, vid, aid))
+            cur.execute("SELECT motivo, argumento, centro_costo, valorizado_clp FROM mant_ot_autorizaciones WHERE id=%s",
+                        (aid,))
+            a = cur.fetchone() or {}
+            if isinstance(a, dict) and a.get("motivo") in _OT_COBRO_CERO_MOTIVOS:
+                cur.execute("UPDATE mant_visitas SET cobro_cero_motivo=%s, cobro_cero_autorizacion_id=%s, "
+                            " cobro_cero_argumento=%s, modalidad_cobro=%s, cubierto_por=%s, estado_facturacion='no_aplica', "
+                            " centro_costo=COALESCE(centro_costo,%s), valorizado_clp=COALESCE(valorizado_clp,%s) WHERE id=%s",
+                            (a["motivo"], aid, (a.get("argumento") or fin_argumento or "")[:1000],
+                             _OT_COBRO_CERO_MODALIDAD[a["motivo"]], "garantia" if a["motivo"] == "garantia" else "cliente",
+                             a.get("centro_costo"), a.get("valorizado_clp"), vid))
+            cur.execute("INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) VALUES ('visita',%s,%s,%s,%s)",
+                        (vid, "creada_con_autorizacion",
+                         f"Sin documento de Random · creada desde la autorización N° {aid}", current_username() or "sistema"))
+        elif via == "cobro_cero_superadmin" and motivo:
+            cur.execute("SELECT centro_costo, valorizado_clp FROM mant_visitas WHERE id=%s", (vid,))
+            r = cur.fetchone() or {}
+            _ot_cobro_cero_registrar(vid, motivo, fin_argumento or p.get("argumento") or "",
+                                     (r.get("centro_costo") if isinstance(r, dict) else None),
+                                     (r.get("valorizado_clp") if isinstance(r, dict) else None),
+                                     cur=cur, origen="al crear la OT")
+        elif via == "cobro_cero" and aid:
+            cur.execute("UPDATE mant_visitas SET cobro_cero_motivo=COALESCE(cobro_cero_motivo,%s), "
+                        " cobro_cero_autorizacion_id=%s, cobro_cero_argumento=COALESCE(cobro_cero_argumento,%s) WHERE id=%s",
+                        (motivo, aid, (fin_argumento or "")[:1000], vid))
+            cur.execute("UPDATE mant_ot_autorizaciones SET visita_id=COALESCE(visita_id,%s) WHERE id=%s", (vid, aid))
+        elif via == "nota_venta":
+            cur.execute("UPDATE mant_visitas SET estado_facturacion='con_nota_venta' WHERE id=%s", (vid,))
+    except Exception as e:
+        print(f"[ot-puerta] aplicar vid={vid} via={p.get('via')}: {type(e).__name__}: {e}", flush=True)
+
+
+def _ensure_ot_autorizaciones():
+    """Alias de _ensure_mant_ot_autorizaciones (el bloque de arranque la llama con este nombre)."""
+    return _ensure_mant_ot_autorizaciones()
+
+
+# ── 🔏 2026-10-07 — cada rechazo de cierre trae la ACCIÓN que lo resuelve desde el modal (Daniel: "sin ciclos sin
+# salida"). Código estable → (tipo de acción para la pantalla, texto para la persona).
+_OT_CIERRE_ACCIONES = {
+    "SIN_FACTURA":                 ("ligar_factura", "Ligar la factura o boleta, declarar $0 autorizado o pedir autorización para cerrar"),
+    "FALTA_FACTURA":               ("ligar_factura", "Ligar la factura o boleta que da de baja la nota de venta"),
+    "COBRO_CERO_SIN_AUTORIZACION": ("pedir_autorizacion", "Pedir a Daniel la autorización del $0 (motivo + argumento)"),
+    "AUTORIZACION_PENDIENTE":      ("esperar_autorizacion", "Esperando autorización de Daniel para cerrar"),
+    "SIN_VALORIZAR":               ("declarar_cobro", "Declarar cuánto se cobró (servicio y despacho) en Finanzas"),
+    "SIN_CENTRO_COSTO":            ("declarar_centro", "Declarar el centro de costo"),
+    "SIN_COSTO_PROVEEDOR":         ("declarar_costo_proveedor", "Declarar lo que cobró el técnico/proveedor (0 si es propio)"),
+    "ANEXO_DESACTUALIZADO":        ("actualizar_anexo", "Regenerar el anexo de servicios"),
+    "SOLO_NOTA_VENTA":             ("ligar_factura", "Ligar la factura o boleta que da de baja la nota de venta"),
+    "DOC_REQUERIDO":               ("pedir_autorizacion", "Ligar un documento o pedir autorización a Daniel"),
+}
+_OT_PUERTA_FALTA_A_CODIGO = {"factura": "FALTA_FACTURA", "autorizacion_cobro_cero": "COBRO_CERO_SIN_AUTORIZACION",
+                             "documento": "SIN_FACTURA"}
+
+
+def _ot_cierre_accion(code, vid=None):
+    tipo, label = _OT_CIERRE_ACCIONES.get(code, ("ver_ot", "Revisar la OT"))
+    return {"tipo": tipo, "label": label,
+            "url": ("/ot/autorizaciones" if tipo == "esperar_autorizacion" else (f"/ot/{vid}" if vid else None))}
+
+
+def _ot_cierre_rechazo(p, vid, autorizaciones=None):
+    """Respuesta (409) de la puerta 'cerrar' con el código estable y la acción que lo resuelve. Si hay una
+    solicitud pendiente a Daniel, el código es AUTORIZACION_PENDIENTE («Esperando autorización de Daniel»)."""
+    auts = autorizaciones if autorizaciones is not None else _ot_puerta_autorizaciones_de(vid)
+    pend = next((a for a in (auts or []) if a.get("estado") == "pendiente"), None)
+    if pend:
+        code = "AUTORIZACION_PENDIENTE"
+        msg = (f"Esperando autorización de Daniel para cerrar (solicitud N° {pend.get('id')}: "
+               f"{_OT_AUT_TIPO_TXT.get(pend.get('tipo') or '', pend.get('tipo') or '')}).")
+    else:
+        code = _OT_PUERTA_FALTA_A_CODIGO.get((p or {}).get("falta") or "", "SIN_FACTURA")
+        msg = (p or {}).get("mensaje") or _OT_PUERTA_MSG
+    return jsonify({"ok": False, "error": msg, "error_codigo": code, "codigo": code, "falta": (p or {}).get("falta"),
+                    "accion": _ot_cierre_accion(code, vid), "puede_pedir_autorizacion": code != "AUTORIZACION_PENDIENTE",
+                    "autorizacion_id": (pend or {}).get("id"), "visita_id": vid}), 409
+
+
+def _ot_puerta_cerrar_fila(vid):
+    """La OT como la necesita la puerta 'cerrar' (fila mínima)."""
+    return mysql_fetchone(
+        "SELECT v.id, v.cliente_id, v.tipo, v.estado, v.modalidad_cobro, v.cubierto_por, v.contrato_id, v.centro_costo, "
+        "       v.cobro_cero_motivo, v.cobro_cero_argumento, v.cobro_cero_autorizacion_id, v.numero_ot "
+        "  FROM mant_visitas v WHERE v.id=%s", (vid,))
+
+
+def _regla_fresca(clave, default=None):
+    """Una regla de negocio leída DIRECTO de la base (sin la caché por proceso). Para `ot_factura_gate_activo`:
+    con varias instancias de Cloud Run, la caché sin vencimiento dejaba el candado encendido en una y apagado en
+    otra (atajo real del mapa 2026-10-07). Si la base no responde, cae a la caché."""
+    spec = _REGLAS_DEFAULTS.get(clave)
+    try:
+        r = mysql_fetchone("SELECT valor, tipo_dato FROM mant_reglas_negocio WHERE clave=%s", (clave,))
+        if r:
+            return _reglas_cast(r.get("valor"), r.get("tipo_dato") or (spec[1] if spec else "string"))
+    except Exception as e:
+        print(f"[reglas] lectura fresca de {clave}: {type(e).__name__}", flush=True)
+    try:
+        return _reglas_cargar().get(clave, default)
+    except Exception:
+        return default
+
+
+# ── La tabla de autorizaciones (genérica: OT hoy; Tickets y Cotizaciones la reutilizan después) ──────────────
+def _ensure_mant_ot_autorizaciones():
+    """mant_ot_autorizaciones — las solicitudes de autorización remota a Daniel. SIEMPRE, incluso con
+    ILUS_SKIP_MIGRATIONS=1. Idempotente (CREATE TABLE IF NOT EXISTS pasa por _ddl_ya_aplicado, REGLA #18)."""
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_ot_autorizaciones (
+                id                     INT AUTO_INCREMENT PRIMARY KEY,
+                entidad                ENUM('ot','ticket','cotizacion') NOT NULL DEFAULT 'ot',
+                entidad_id             INT NULL,
+                tipo                   ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento') NOT NULL,
+                visita_id              INT NULL,
+                cliente_id             INT NULL,
+                payload_json           MEDIUMTEXT NULL,
+                motivo                 VARCHAR(20) NULL,
+                argumento              VARCHAR(1000) NOT NULL,
+                centro_costo           VARCHAR(20) NULL,
+                valorizado_clp         DECIMAL(12,2) NULL,
+                solicitado_por_user_id INT NULL,
+                solicitado_por_nombre  VARCHAR(190) NULL,
+                solicitado_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                estado                 ENUM('pendiente','aprobada','rechazada','anulada') NOT NULL DEFAULT 'pendiente',
+                resuelto_por_user_id   INT NULL,
+                resuelto_por_nombre    VARCHAR(190) NULL,
+                resuelto_at            DATETIME NULL,
+                comentario             VARCHAR(1000) NULL,
+                visita_creada_id       INT NULL,
+                INDEX idx_aut_estado_fecha (estado, solicitado_at),
+                INDEX idx_aut_visita_estado (visita_id, estado),
+                INDEX idx_aut_entidad (entidad, entidad_id, estado)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_ot_autorizaciones] {e}", flush=True)
+
+
+def _ot_aut_es_superadmin():
+    try:
+        if _ot_fin_es_superadmin():
+            return True
+        return ((getattr(g, "user", None) or {}).get("role") or "").strip().lower() == "superadmin"
+    except Exception:
+        return False
+
+
+def _ot_aut_usuario():
+    """(user_id, nombre) de quien pide/resuelve, desde la sesión (nunca del navegador)."""
+    u = getattr(g, "user", None) or {}
+    try:
+        uid = int(u.get("id")) if u.get("id") else None
+    except (TypeError, ValueError):
+        uid = None
+    nombre = (u.get("nombre") or u.get("username") or current_username() or "?")
+    return uid, str(nombre)[:190]
+
+
+def _ot_aut_fila(aid):
+    try:
+        r = mysql_fetchone("SELECT * FROM mant_ot_autorizaciones WHERE id=%s", (int(aid),))
+        return dict(r) if r else None
+    except Exception:
+        return None
+
+
+def _ot_aut_json(r):
+    """Una autorización lista para la pantalla: fechas en hora Chile (REGLA #6), textos, constancia completa."""
+    if not r:
+        return None
+    r = dict(r)
+    try:
+        payload = json.loads(r.get("payload_json") or "null")
+    except Exception:
+        payload = None
+    sol_at = chile_fmt_filter(r.get("solicitado_at")) if r.get("solicitado_at") else ""
+    res_at = chile_fmt_filter(r.get("resuelto_at")) if r.get("resuelto_at") else ""
+    estado = r.get("estado") or "pendiente"
+    constancia = ""
+    if estado == "aprobada":
+        constancia = (f"Autorizada por {r.get('resuelto_por_nombre') or '?'} el {res_at}: "
+                      f"{r.get('argumento') or ''}")
+    elif estado == "rechazada":
+        constancia = (f"Rechazada por {r.get('resuelto_por_nombre') or '?'} el {res_at}: "
+                      f"{r.get('comentario') or ''}")
+    return {
+        "id": r.get("id"), "entidad": r.get("entidad") or "ot", "entidad_id": r.get("entidad_id"),
+        "tipo": r.get("tipo"), "tipo_txt": _OT_AUT_TIPO_TXT.get(r.get("tipo"), r.get("tipo")),
+        "visita_id": r.get("visita_id"), "cliente_id": r.get("cliente_id"),
+        "motivo": r.get("motivo"), "motivo_txt": _OT_COBRO_CERO_MOTIVOS.get(r.get("motivo") or "", ""),
+        "argumento": r.get("argumento") or "", "centro_costo": r.get("centro_costo"),
+        "valorizado_clp": (float(r["valorizado_clp"]) if r.get("valorizado_clp") is not None else None),
+        "solicitado_por_user_id": r.get("solicitado_por_user_id"),
+        "solicitado_por_nombre": r.get("solicitado_por_nombre"), "solicitado_at": sol_at,
+        "estado": estado, "estado_txt": _OT_AUT_ESTADO_TXT.get(estado, estado),
+        "resuelto_por_user_id": r.get("resuelto_por_user_id"),
+        "resuelto_por_nombre": r.get("resuelto_por_nombre"), "resuelto_at": res_at,
+        "comentario": r.get("comentario") or "", "visita_creada_id": r.get("visita_creada_id"),
+        "payload": payload, "constancia": constancia,
+        "url": f"/ot/autorizaciones/{r.get('id')}",
+    }
+
+
+def _ot_aut_superadmins():
+    try:
+        return [dict(r) for r in (mysql_fetchall(
+            "SELECT id, username, nombre FROM app_users WHERE active=1 AND role LIKE 'superadmin%%'") or [])]
+    except Exception as e:
+        print(f"[ot-aut] superadmins: {type(e).__name__}", flush=True)
+        return []
+
+
+def _ot_aut_resumen(a, numero_ot=None, cliente=None):
+    """Una línea que explica la solicitud (campana, correo, bitácora)."""
+    t = _OT_AUT_TIPO_TXT.get(a.get("tipo"), a.get("tipo"))
+    m = _OT_COBRO_CERO_MOTIVOS.get(a.get("motivo") or "", "")
+    partes = [t]
+    if m:
+        partes.append(m)
+    if numero_ot:
+        partes.append(str(numero_ot))
+    if cliente:
+        partes.append(str(cliente))
+    return " · ".join(partes)
+
+
+def _ot_aut_notificar_superadmins(a):
+    """Campana + correo INTERNO a cada superadministrador activo (correo interno, no al cliente: permitido por las
+    REGLAS #22/#23). Best-effort: nunca rompe la solicitud. Devuelve cuántos recibieron la campana."""
+    n = 0
+    aid = a.get("id")
+    url = f"/ot/autorizaciones/{aid}"
+    numero_ot, cliente = None, None
+    try:
+        if a.get("visita_id"):
+            r = mysql_fetchone("SELECT v.numero_ot, c.razon_social FROM mant_visitas v "
+                               " LEFT JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (a["visita_id"],))
+            numero_ot, cliente = (r or {}).get("numero_ot"), (r or {}).get("razon_social")
+        elif a.get("cliente_id"):
+            r = mysql_fetchone("SELECT razon_social FROM mant_clientes WHERE id=%s", (a["cliente_id"],))
+            cliente = (r or {}).get("razon_social")
+    except Exception:
+        pass
+    resumen = _ot_aut_resumen(a, numero_ot, cliente)
+    titulo = f"Autorización pendiente: {resumen}"[:200]
+    cuerpo = (f"{a.get('solicitado_por_nombre') or '?'} pide: {a.get('argumento') or ''}")[:1500]
+    for sa in _ot_aut_superadmins():
+        try:
+            # tipo 'otro' (valor ya existente del ENUM); con cliente/visita vacíos el dedupe usa url+título.
+            _mant_notificar(sa["id"], "otro", titulo, cuerpo, url_accion=url, prioridad="alta")
+            _mant_notif_cache_invalidar(sa["id"])
+            n += 1
+        except Exception as e:
+            print(f"[ot-aut] campana a {sa.get('id')}: {type(e).__name__}", flush=True)
+        correo = (sa.get("username") or "").strip()
+        if "@" not in correo:
+            continue
+        try:
+            from markupsafe import escape as _esc
+            link = (request.host_url.rstrip("/") + url) if request else url
+            filas = "".join(
+                f'<tr><td style="padding:6px 10px;color:#68707c;font-size:13px">{_esc(k)}</td>'
+                f'<td style="padding:6px 10px;font-size:13px"><b>{_esc(str(val))}</b></td></tr>'
+                for k, val in (("Tipo", _OT_AUT_TIPO_TXT.get(a.get("tipo"), a.get("tipo"))),
+                               ("Motivo", _OT_COBRO_CERO_MOTIVOS.get(a.get("motivo") or "", "—")),
+                               ("OT", numero_ot or "por crear"), ("Cliente", cliente or "—"),
+                               ("Centro de costo", a.get("centro_costo") or "—"),
+                               ("Valorizado sugerido", (_ot_fin_clp(float(a["valorizado_clp"]))
+                                                        if a.get("valorizado_clp") else "—")),
+                               ("Pide", a.get("solicitado_por_nombre") or "?")) if val is not None)
+            html = _ilus_email_master({
+                "subject": _brand_subject(f"Autorización pendiente · {resumen}"),
+                "preheader": "Una OT necesita tu autorización remota.",
+                "status_label": "Autorización pendiente",
+                "title": "Te piden autorizar algo que no tiene documento",
+                "subtitle": resumen,
+                "customer_name": sa.get("nombre") or "",
+                "message": (f"<p><b>Argumento de {_esc(a.get('solicitado_por_nombre') or '?')}:</b></p>"
+                            f"<p style=\"white-space:pre-wrap\">{_esc(a.get('argumento') or '')}</p>"),
+                "detail_rows_html": filas,
+                "primary_cta_url": link, "primary_cta_label": "Revisar",
+                "closing_message": "<p>Correo interno de ILUS Fitness: no se le envía nada al cliente.</p>",
+            })
+            _send_ilus_email(correo, _brand_subject(f"Autorización pendiente · {resumen}"), html,
+                             evento="ot_autorizacion_pendiente", modulo="mantenciones",
+                             ref={"tipo": "ot_autorizacion", "id": aid})
+        except Exception as e:
+            print(f"[ot-aut] correo a {correo}: {type(e).__name__}", flush=True)
+    return n
+
+
+def _ot_aut_notificar_solicitante(a):
+    """Campana a quien pidió, con el resultado y el comentario de Daniel."""
+    uid = a.get("solicitado_por_user_id")
+    if not uid:
+        return None
+    estado = a.get("estado")
+    titulo = (f"{_OT_AUT_ESTADO_TXT.get(estado, estado)}: {_OT_AUT_TIPO_TXT.get(a.get('tipo'), a.get('tipo'))}")[:200]
+    cuerpo = (f"{a.get('resuelto_por_nombre') or 'Daniel'}"
+              + (f": {a.get('comentario')}" if a.get("comentario") else "")
+              + (f" · OT creada #{a.get('visita_creada_id')}" if a.get("visita_creada_id") else ""))[:1500]
+    url = (f"/ot/{a['visita_creada_id']}" if a.get("visita_creada_id")
+           else (f"/ot/{a['visita_id']}" if a.get("visita_id") else f"/ot/autorizaciones/{a.get('id')}"))
+    try:
+        nid = _mant_notificar(int(uid), "otro", titulo, cuerpo, url_accion=url,
+                              prioridad=("alta" if estado == "rechazada" else "media"))
+        _mant_notif_cache_invalidar(int(uid))
+        return nid
+    except Exception as e:
+        print(f"[ot-aut] campana solicitante {uid}: {type(e).__name__}", flush=True)
+        return None
+
+
+def _ot_aut_validar(tipo, motivo, argumento):
+    """Validación común de una solicitud. Devuelve (error_dict|None, motivo_normalizado)."""
+    tipo = (tipo or "").strip().lower()
+    if tipo not in _OT_AUT_TIPOS:
+        return {"error": "Ese tipo de autorización no existe.", "error_codigo": "TIPO_INVALIDO"}, None
+    motivo = (motivo or "").strip().lower() or None
+    if motivo and motivo not in _OT_COBRO_CERO_MOTIVOS:
+        return {"error": "El motivo del $0 solo puede ser Garantía, Regalía o Arriendo/Leasing.",
+                "error_codigo": "MOTIVO_INVALIDO"}, None
+    if tipo == "cobro_cero" and not motivo:
+        return {"error": "Indica el motivo del $0: Garantía, Regalía o Arriendo/Leasing.",
+                "error_codigo": "MOTIVO_REQUERIDO"}, None
+    argumento = (argumento or "").strip()
+    if len(argumento) < _OT_AUT_ARGUMENTO_MIN:
+        return {"error": f"Explica el argumento con al menos {_OT_AUT_ARGUMENTO_MIN} caracteres: es lo que "
+                         "Daniel va a leer para autorizar.", "error_codigo": "ARGUMENTO_CORTO"}, None
+    return None, motivo
+
+
+def _ot_aut_insertar(cur, campos):
+    """INSERT de una autorización. Con `cur` va dentro de la transacción del llamador; sin `cur`, conexión propia.
+    Devuelve el id."""
+    sql = ("INSERT INTO mant_ot_autorizaciones (entidad, entidad_id, tipo, visita_id, cliente_id, payload_json, "
+           " motivo, argumento, centro_costo, valorizado_clp, solicitado_por_user_id, solicitado_por_nombre, "
+           " estado, resuelto_por_user_id, resuelto_por_nombre, resuelto_at, comentario, visita_creada_id) "
+           "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)")
+    params = (campos.get("entidad") or "ot", campos.get("entidad_id"), campos["tipo"], campos.get("visita_id"),
+              campos.get("cliente_id"), campos.get("payload_json"), campos.get("motivo"),
+              (campos.get("argumento") or "")[:1000], campos.get("centro_costo"), campos.get("valorizado_clp"),
+              campos.get("solicitado_por_user_id"), campos.get("solicitado_por_nombre"),
+              campos.get("estado") or "pendiente", campos.get("resuelto_por_user_id"),
+              campos.get("resuelto_por_nombre"), campos.get("resuelto_at"), campos.get("comentario"),
+              campos.get("visita_creada_id"))
+    if cur is not None:
+        cur.execute(sql, params)
+        return cur.lastrowid
+    conn = get_mysql()
+    try:
+        with conn.cursor() as c2:
+            c2.execute(sql, params)
+            aid = c2.lastrowid
+        conn.commit()
+        return aid
+    finally:
+        conn.close()
+
+
+def _ot_cobro_cero_registrar(vid, motivo, argumento, centro_costo=None, valorizado_clp=None, cur=None,
+                             autorizacion=None, origen=""):
+    """Deja constancia de un $0 AUTORIZADO en la OT: si viene `autorizacion` (aprobada, de un solicitante) se liga;
+    si no, el superadministrador lo declara él mismo y se registra una autorización 'aprobada' a su nombre (Daniel:
+    "cuenta como autorización y queda registrada"). Escribe cobro_cero_motivo/argumento/autorizacion_id,
+    modalidad_cobro (garantía→'garantia'; regalía y arriendo/leasing→'sin_costo'), cubierto_por,
+    estado_facturacion='no_aplica', centro de costo y valorizado si vienen, y mant_logs. Devuelve el id de la
+    autorización o None. Con `cur` corre dentro de la transacción del llamador."""
+    motivo = (motivo or "").strip().lower()
+    if motivo not in _OT_COBRO_CERO_MOTIVOS:
+        return None
+    uid, nombre = _ot_aut_usuario()
+    aid = None
+    propia = cur is None
+    conn = None
+    try:
+        if propia:
+            conn = get_mysql()
+            conn.autocommit(False)
+            cur = conn.cursor()
+        if isinstance(autorizacion, dict) and autorizacion.get("id"):
+            aid = int(autorizacion["id"])
+            quien = f"{autorizacion.get('resuelto_por_nombre') or '?'} (autorización N° {aid})"
+        else:
+            aid = _ot_aut_insertar(cur, {
+                "tipo": "cobro_cero", "visita_id": vid, "motivo": motivo, "argumento": argumento,
+                "centro_costo": centro_costo, "valorizado_clp": valorizado_clp,
+                "solicitado_por_user_id": uid, "solicitado_por_nombre": nombre, "estado": "aprobada",
+                "resuelto_por_user_id": uid, "resuelto_por_nombre": nombre, "resuelto_at": datetime.utcnow(),
+                "comentario": "Declarado por el superadministrador" + (f" · {origen}" if origen else ""),
+            })
+            quien = f"{nombre} (superadministrador, autorización N° {aid})"
+        try:
+            cur.execute("SELECT cliente_id FROM mant_visitas WHERE id=%s", (vid,))
+            _row_cc = cur.fetchone() or {}
+            _cli_cc = _row_cc.get("cliente_id") if isinstance(_row_cc, dict) else None
+            cur.execute("UPDATE mant_ot_autorizaciones SET cliente_id=COALESCE(cliente_id,%s), "
+                        " visita_id=COALESCE(visita_id,%s) WHERE id=%s", (_cli_cc, vid, aid))
+        except Exception:
+            pass
+        cur.execute(
+            "UPDATE mant_visitas SET cobro_cero_motivo=%s, cobro_cero_autorizacion_id=%s, cobro_cero_argumento=%s, "
+            "  modalidad_cobro=%s, cubierto_por=%s, estado_facturacion='no_aplica', "
+            "  garantia_motivo=COALESCE(NULLIF(garantia_motivo,''), %s), "
+            "  centro_costo=COALESCE(%s, centro_costo), "
+            "  valorizado_clp=COALESCE(%s, valorizado_clp), "
+            "  valorizado_fuente=CASE WHEN %s IS NULL THEN valorizado_fuente ELSE 'a_mano' END "
+            " WHERE id=%s",
+            (motivo, aid, (argumento or "")[:1000], _OT_COBRO_CERO_MODALIDAD[motivo],
+             ("garantia" if motivo == "garantia" else "cliente"), (argumento or "")[:500],
+             centro_costo, valorizado_clp, valorizado_clp, vid))
+        cur.execute(
+            "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) VALUES ('visita',%s,%s,%s,%s)",
+            (vid, "cobro_cero_autorizado",
+             (f"$0 · {_OT_COBRO_CERO_MOTIVOS[motivo]} · autorizado por {quien}"
+              + (f" · centro {centro_costo}" if centro_costo else "")
+              + (f" · valorizado {_ot_fin_clp(float(valorizado_clp))}" if valorizado_clp else "")
+              + f" · argumento: {(argumento or '')[:600]}" + (f" · {origen}" if origen else ""))[:4000],
+             current_username() or "sistema"))
+        if propia:
+            conn.commit()
+        return aid
+    except Exception as e:
+        if propia and conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        print(f"[ot-aut] registrar $0 vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return None
+    finally:
+        if propia and conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _ot_cobro_cero_desde_peticion(vid, d, origen=""):
+    """Lo que hacen TODOS los escritores que pueden dejar una OT en $0 después de creada (PUT de la visita,
+    /cobertura, /ot/api/finanzas): si quien escribe es superadministrador, registra el $0 como autorizado (y el
+    llamador sigue); si no, crea la solicitud 'cobro_cero' para Daniel y responde 202 "Se pidió autorización a
+    Daniel" (el llamador corta ahí: la cobertura NO cambia hasta que se apruebe).
+
+    d: body de la petición. Lee cobro_cero_motivo (por defecto 'garantia'), cobro_cero_argumento (o
+    garantia_motivo / motivo), centro_costo, valorizado_clp (o monto).
+    Devuelve (respuesta_flask | None, autorizacion_id | None). Respuesta None = seguir."""
+    motivo = (d.get("cobro_cero_motivo") or "garantia")
+    argumento = (d.get("cobro_cero_argumento") or d.get("garantia_motivo") or d.get("motivo") or "").strip()
+    err, motivo = _ot_aut_validar("cobro_cero", motivo, argumento)
+    if err:
+        return (jsonify({"ok": False, **err}), 400), None
+    centro = (str(d.get("centro_costo") or "").strip().lower()) or None
+    if centro and centro not in dict(_OT2_CENTROS_COSTO):
+        centro = None
+    val = None
+    for k in ("valorizado_clp", "monto"):
+        raw = d.get(k)
+        if raw is None or str(raw).strip() == "":
+            continue
+        try:
+            val = float(str(raw).replace(".", "").replace(",", ".") if isinstance(raw, str) else raw)
+        except (TypeError, ValueError):
+            val = None
+        if val is not None and not (0 < val < 1e10):
+            val = None
+        break
+    if _ot_aut_es_superadmin():
+        aid = _ot_cobro_cero_registrar(vid, motivo, argumento, centro, val, origen=origen)
+        if not aid:
+            return (jsonify({"ok": False, "error": "No se pudo registrar la autorización del $0.",
+                             "error_codigo": "ERROR_INTERNO"}), 500), None
+        return None, aid
+    # Gestión sin ser superadministrador: se pide a Daniel.
+    try:
+        ya = mysql_fetchone("SELECT id FROM mant_ot_autorizaciones WHERE visita_id=%s AND tipo='cobro_cero' "
+                            " AND estado='pendiente' ORDER BY id DESC LIMIT 1", (vid,))
+    except Exception:
+        ya = None
+    if ya:
+        return (jsonify({"ok": True, "pendiente_autorizacion": True, "autorizacion_id": ya["id"],
+                         "mensaje": "Ya hay una solicitud de $0 esperando a Daniel para esta OT.",
+                         "url": f"/ot/autorizaciones/{ya['id']}"}), 202), ya["id"]
+    uid, nombre = _ot_aut_usuario()
+    cli = None
+    try:
+        cli = (mysql_fetchone("SELECT cliente_id FROM mant_visitas WHERE id=%s", (vid,)) or {}).get("cliente_id")
+    except Exception:
+        pass
+    try:
+        aid = _ot_aut_insertar(None, {
+            "tipo": "cobro_cero", "visita_id": vid, "cliente_id": cli, "motivo": motivo, "argumento": argumento,
+            "centro_costo": centro, "valorizado_clp": val, "solicitado_por_user_id": uid,
+            "solicitado_por_nombre": nombre, "estado": "pendiente",
+        })
+    except Exception as e:
+        print(f"[ot-aut] solicitud $0 vid={vid}: {type(e).__name__}", flush=True)
+        return (jsonify({"ok": False, "error": "No se pudo guardar la solicitud de autorización.",
+                         "error_codigo": "ERROR_INTERNO"}), 500), None
+    a = _ot_aut_fila(aid) or {"id": aid, "tipo": "cobro_cero", "visita_id": vid, "motivo": motivo,
+                              "argumento": argumento, "solicitado_por_nombre": nombre}
+    try:
+        _mant_log("visita", vid, "autorizacion_solicitada",
+                  f"$0 · {_OT_COBRO_CERO_MOTIVOS[motivo]} · pedida a Daniel por {nombre} (N° {aid})"
+                  + (f" · {origen}" if origen else "") + f" · argumento: {argumento[:600]}")
+    except Exception:
+        pass
+    n = _ot_aut_notificar_superadmins(a)
+    return (jsonify({"ok": True, "pendiente_autorizacion": True, "autorizacion_id": aid, "notificados": n,
+                     "mensaje": "Se pidió autorización a Daniel. La OT sigue cobrándose hasta que la apruebe.",
+                     "url": f"/ot/autorizaciones/{aid}"}), 202), aid
+
+
+# ── Rutas: solicitudes de autorización ───────────────────────────────────────────────────────────────────────
+@app.route("/ot/api/autorizaciones", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot_aut_api_crear():
+    """Pide la autorización remota de Daniel. body: {tipo, visita_id?, cliente_id?, payload?, motivo?, argumento,
+    centro_costo?, valorizado_clp?, entidad?, entidad_id?}. 'crear_sin_documento' exige payload (el body completo
+    del asistente POST /ot/api/crear); 'cobro_cero' y 'cerrar_sin_documento' exigen visita_id."""
+    d = request.get_json(silent=True) or {}
+    tipo = (d.get("tipo") or "").strip().lower()
+    err, motivo = _ot_aut_validar(tipo, d.get("motivo"), d.get("argumento"))
+    if err:
+        return jsonify({"ok": False, **err}), 400
+    argumento = (d.get("argumento") or "").strip()[:1000]
+    entidad = (d.get("entidad") or "ot").strip().lower()
+    if entidad not in _OT_AUT_ENTIDADES:
+        return jsonify({"ok": False, "error": "Entidad no reconocida.", "error_codigo": "ENTIDAD_INVALIDA"}), 400
+    try:
+        entidad_id = int(d.get("entidad_id")) if d.get("entidad_id") else None
+    except (TypeError, ValueError):
+        entidad_id = None
+    centro = (str(d.get("centro_costo") or "").strip().lower()) or None
+    if centro and centro not in dict(_OT2_CENTROS_COSTO):
+        return jsonify({"ok": False, "error": "Ese centro de costo no existe.", "error_codigo": "CENTRO_INVALIDO"}), 400
+    val = None
+    if d.get("valorizado_clp") is not None and str(d.get("valorizado_clp")).strip() != "":
+        try:
+            val = float(d.get("valorizado_clp"))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "El valorizado no es válido.", "error_codigo": "VALORIZADO_INVALIDO"}), 400
+        if not (0 < val < 1e10):
+            val = None
+    visita_id, cliente_id, payload_json = None, None, None
+    if tipo == "crear_sin_documento":
+        payload = d.get("payload")
+        if not isinstance(payload, dict) or not payload:
+            return jsonify({"ok": False, "error": "Falta lo que se iba a crear (payload del asistente).",
+                            "error_codigo": "PAYLOAD_REQUERIDO"}), 400
+        try:
+            cliente_id = int(payload.get("cliente_id") or d.get("cliente_id") or 0) or None
+        except (TypeError, ValueError):
+            cliente_id = None
+        if not cliente_id:
+            return jsonify({"ok": False, "error": "La OT a crear necesita un cliente.",
+                            "error_codigo": "CLIENTE_REQUERIDO"}), 400
+        if not centro:
+            centro = (str((payload.get("finanzas") or {}).get("centro_costo") or "").strip().lower()) or None
+        payload = dict(payload)
+        payload["_autorizacion_argumento"] = argumento
+        if motivo:
+            payload.setdefault("finanzas", {})
+            if isinstance(payload["finanzas"], dict):
+                payload["finanzas"]["cobro_cero_motivo"] = motivo
+                payload["finanzas"]["cobro_cero_argumento"] = argumento
+        payload_json = json.dumps(payload, ensure_ascii=False, default=str)
+        if len(payload_json) > 4_000_000:
+            return jsonify({"ok": False, "error": "La solicitud es demasiado grande.", "error_codigo": "PAYLOAD_GRANDE"}), 400
+    else:
+        try:
+            visita_id = int(d.get("visita_id") or 0) or None
+        except (TypeError, ValueError):
+            visita_id = None
+        if not visita_id:
+            return jsonify({"ok": False, "error": "Falta la OT (visita_id).", "error_codigo": "VISITA_REQUERIDA"}), 400
+        v = mysql_fetchone("SELECT id, cliente_id, estado, numero_ot FROM mant_visitas WHERE id=%s", (visita_id,))
+        if not v:
+            return jsonify({"ok": False, "error": "No encontramos esa OT.", "error_codigo": "OT_NO_EXISTE"}), 404
+        if (v.get("estado") or "") in ("cancelada", "anulada"):
+            return jsonify({"ok": False, "error": "Esa OT está cancelada o anulada.", "error_codigo": "OT_CERRADA"}), 409
+        cliente_id = v.get("cliente_id")
+        if not cliente_id:
+            return jsonify({"ok": False, "error": "Una OT interna sin cliente no necesita autorización.",
+                            "error_codigo": "NO_APLICA"}), 400
+    uid, nombre = _ot_aut_usuario()
+    # Sin duplicar una pendiente igual.
+    try:
+        if visita_id:
+            ya = mysql_fetchone("SELECT id FROM mant_ot_autorizaciones WHERE visita_id=%s AND tipo=%s "
+                                " AND estado='pendiente' LIMIT 1", (visita_id, tipo))
+        else:
+            ya = mysql_fetchone("SELECT id FROM mant_ot_autorizaciones WHERE tipo=%s AND cliente_id=%s "
+                                " AND solicitado_por_user_id<=>%s AND estado='pendiente' AND payload_json=%s LIMIT 1",
+                                (tipo, cliente_id, uid, payload_json))
+    except Exception:
+        ya = None
+    if ya:
+        return jsonify({"ok": False, "error": "Ya hay una solicitud igual esperando a Daniel.",
+                        "error_codigo": "YA_PENDIENTE", "autorizacion_id": ya["id"],
+                        "url": f"/ot/autorizaciones/{ya['id']}"}), 409
+    try:
+        aid = _ot_aut_insertar(None, {
+            "entidad": entidad, "entidad_id": entidad_id or visita_id, "tipo": tipo, "visita_id": visita_id,
+            "cliente_id": cliente_id, "payload_json": payload_json, "motivo": motivo, "argumento": argumento,
+            "centro_costo": centro, "valorizado_clp": val, "solicitado_por_user_id": uid,
+            "solicitado_por_nombre": nombre, "estado": "pendiente",
+        })
+    except Exception as e:
+        print(f"[ot-aut] crear: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar la solicitud.", "error_codigo": "ERROR_INTERNO"}), 500
+    a = _ot_aut_fila(aid)
+    try:
+        _mant_log("visita" if visita_id else "cliente", visita_id or cliente_id, "autorizacion_solicitada",
+                  f"{_OT_AUT_TIPO_TXT.get(tipo, tipo)} (N° {aid}) pedida a Daniel por {nombre}"
+                  + (f" · {_OT_COBRO_CERO_MOTIVOS[motivo]}" if motivo else "") + f" · argumento: {argumento[:600]}")
+    except Exception:
+        pass
+    n = _ot_aut_notificar_superadmins(a or {"id": aid, "tipo": tipo, "visita_id": visita_id, "cliente_id": cliente_id,
+                                            "motivo": motivo, "argumento": argumento,
+                                            "solicitado_por_nombre": nombre})
+    return jsonify({"ok": True, "id": aid, "estado": "pendiente", "notificados": n,
+                    "mensaje": "Se pidió autorización a Daniel.", "autorizacion": _ot_aut_json(a)}), 201
+
+
+@app.route("/ot/api/autorizaciones", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_aut_api_listar():
+    """Lista paginada (REGLA #4.3). Superadministrador: todas; el resto: las propias. Filtros: estado, tipo,
+    visita_id, page, per_page (máx 200)."""
+    es_sa = _ot_aut_es_superadmin()
+    uid, _ = _ot_aut_usuario()
+    where, params = ["1=1"], []
+    if not es_sa:
+        where.append("a.solicitado_por_user_id<=>%s")
+        params.append(uid)
+    est = (request.args.get("estado") or "").strip().lower()
+    if est in _OT_AUT_ESTADO_TXT:
+        where.append("a.estado=%s")
+        params.append(est)
+    tp = (request.args.get("tipo") or "").strip().lower()
+    if tp in _OT_AUT_TIPOS:
+        where.append("a.tipo=%s")
+        params.append(tp)
+    try:
+        vq = int(request.args.get("visita_id") or 0)
+    except (TypeError, ValueError):
+        vq = 0
+    if vq:
+        where.append("a.visita_id=%s")
+        params.append(vq)
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+        per_page = min(200, max(1, int(request.args.get("per_page") or 50)))
+    except (TypeError, ValueError):
+        page, per_page = 1, 50
+    w = " AND ".join(where)
+    try:
+        total = int((mysql_fetchone(f"SELECT COUNT(*) AS n FROM mant_ot_autorizaciones a WHERE {w}",
+                                    tuple(params)) or {}).get("n") or 0)
+        rows = mysql_fetchall(
+            "SELECT a.*, v.numero_ot, COALESCE(c.razon_social, c2.razon_social) AS cliente "
+            "  FROM mant_ot_autorizaciones a "
+            "  LEFT JOIN mant_visitas v ON v.id=a.visita_id "
+            "  LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
+            "  LEFT JOIN mant_clientes c2 ON c2.id=a.cliente_id "
+            f" WHERE {w} ORDER BY FIELD(a.estado,'pendiente') DESC, a.solicitado_at DESC, a.id DESC "
+            " LIMIT %s OFFSET %s", tuple(params) + (per_page, (page - 1) * per_page)) or []
+        pend = int((mysql_fetchone("SELECT COUNT(*) AS n FROM mant_ot_autorizaciones WHERE estado='pendiente'"
+                                   + ("" if es_sa else " AND solicitado_por_user_id<=>%s"),
+                                   () if es_sa else (uid,)) or {}).get("n") or 0)
+    except Exception as e:
+        print(f"[ot-aut] listar: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo leer la lista de autorizaciones."}), 500
+    items = []
+    for r in rows:
+        j = _ot_aut_json(r)
+        j["numero_ot"] = r.get("numero_ot")
+        j["cliente"] = r.get("cliente")
+        items.append(j)
+    pages = max(1, (total + per_page - 1) // per_page)
+    return jsonify({"ok": True, "items": items, "total": total, "page": page, "per_page": per_page,
+                    "pages": pages, "desde": ((page - 1) * per_page + 1) if total else 0,
+                    "hasta": min(page * per_page, total), "pendientes": pend, "superadmin": es_sa,
+                    "motivos": [{"v": k, "n": n} for k, n in _OT_COBRO_CERO_MOTIVOS.items()],
+                    "tipos": [{"v": k, "n": n} for k, n in _OT_AUT_TIPO_TXT.items()]})
+
+
+@app.route("/ot/api/autorizaciones/<int:aid>", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_aut_api_detalle(aid):
+    a = _ot_aut_fila(aid)
+    if not a:
+        return jsonify({"ok": False, "error": "No encontramos esa solicitud."}), 404
+    uid, _ = _ot_aut_usuario()
+    if not _ot_aut_es_superadmin() and a.get("solicitado_por_user_id") != uid:
+        return jsonify({"ok": False, "error": "Solo puedes ver tus propias solicitudes."}), 403
+    j = _ot_aut_json(a)
+    try:
+        if a.get("visita_id"):
+            r = mysql_fetchone("SELECT v.numero_ot, v.estado, c.razon_social FROM mant_visitas v "
+                               " LEFT JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (a["visita_id"],)) or {}
+            j["numero_ot"], j["ot_estado"], j["cliente"] = r.get("numero_ot"), r.get("estado"), r.get("razon_social")
+        elif a.get("cliente_id"):
+            r = mysql_fetchone("SELECT razon_social FROM mant_clientes WHERE id=%s", (a["cliente_id"],)) or {}
+            j["cliente"] = r.get("razon_social")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "autorizacion": j, "superadmin": _ot_aut_es_superadmin()})
+
+
+def _ot_aut_resolver_guard(aid):
+    """Candados comunes de aprobar/rechazar: SOLO superadministrador, y la solicitud tiene que estar pendiente."""
+    if not _ot_aut_es_superadmin():
+        return None, (jsonify({"ok": False, "error": "Solo el superadministrador (Daniel) puede resolver una "
+                                                      "autorización.", "error_codigo": "SOLO_SUPERADMIN"}), 403)
+    a = _ot_aut_fila(aid)
+    if not a:
+        return None, (jsonify({"ok": False, "error": "No encontramos esa solicitud."}), 404)
+    if (a.get("estado") or "") != "pendiente":
+        return None, (jsonify({"ok": False, "error": f"Esta solicitud ya está {_OT_AUT_ESTADO_TXT.get(a.get('estado'), a.get('estado')).lower()}.",
+                               "error_codigo": "YA_RESUELTA", "autorizacion": _ot_aut_json(a)}), 409)
+    return a, None
+
+
+@app.route("/ot/api/autorizaciones/<int:aid>/aprobar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot_aut_api_aprobar(aid):
+    """SOLO superadministrador. body: {comentario?}. Según el tipo:
+      · crear_sin_documento → crea la OT desde payload_json por la MISMA función del asistente (_ot2_crear_core).
+      · cobro_cero → aplica motivo/argumento/centro/valorizado a la OT (_ot_cobro_cero_registrar).
+      · cerrar_sin_documento → la OT queda habilitada para cerrar (la puerta la lee).
+    Todo con mant_logs; se avisa al solicitante por la campana."""
+    a, resp = _ot_aut_resolver_guard(aid)
+    if resp:
+        return resp
+    d = request.get_json(silent=True) or {}
+    comentario = (d.get("comentario") or "").strip()[:1000] or None
+    uid, nombre = _ot_aut_usuario()
+    tipo = a.get("tipo")
+    ahora = datetime.utcnow()
+    aprobada = dict(a, estado="aprobada", resuelto_por_user_id=uid, resuelto_por_nombre=nombre, resuelto_at=ahora,
+                    comentario=comentario)
+    constancia = f"Autorizada por {nombre} el {chile_fmt_filter(ahora)}: {a.get('argumento') or ''}"
+
+    if tipo == "crear_sin_documento":
+        try:
+            payload = json.loads(a.get("payload_json") or "{}")
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict) or not payload:
+            return jsonify({"ok": False, "error": "La solicitud no trae lo que se iba a crear.",
+                            "error_codigo": "PAYLOAD_VACIO"}), 422
+        # Se marca aprobada ANTES de crear (la OT la crea el mismo núcleo del asistente con esta autorización) y,
+        # si la creación falla, vuelve a pendiente con el motivo: nada queda a medias.
+        try:
+            n_upd = mysql_execute_returning_rowcount(
+                "UPDATE mant_ot_autorizaciones SET estado='aprobada', resuelto_por_user_id=%s, resuelto_por_nombre=%s, "
+                " resuelto_at=%s, comentario=%s WHERE id=%s AND estado='pendiente'", (uid, nombre, ahora, comentario, aid))
+        except Exception as e:
+            print(f"[ot-aut] aprobar {aid}: {type(e).__name__}", flush=True)
+            n_upd = 0
+        if not n_upd:
+            return jsonify({"ok": False, "error": "Otra sesión resolvió esta solicitud primero.",
+                            "error_codigo": "CONFLICTO_CONCURRENCIA"}), 409
+        r = _ot2_crear_core(payload, autorizacion=aprobada)
+        resp_obj, http = (r if isinstance(r, tuple) else (r, 200))
+        try:
+            cuerpo = resp_obj.get_json(silent=True) or {}
+        except Exception:
+            cuerpo = {}
+        if http != 200 or not cuerpo.get("ok"):
+            try:
+                mysql_execute("UPDATE mant_ot_autorizaciones SET estado='pendiente', resuelto_por_user_id=NULL, "
+                              " resuelto_por_nombre=NULL, resuelto_at=NULL, comentario=%s WHERE id=%s",
+                              ((f"No se pudo crear la OT al aprobar: {cuerpo.get('error') or http}")[:1000], aid))
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error_codigo": cuerpo.get("codigo") or "NO_SE_PUDO_CREAR",
+                            "error": "Se aprobó, pero la OT no se pudo crear con lo que traía la solicitud: "
+                                     + str(cuerpo.get("error") or "error al crear") + " La solicitud vuelve a "
+                                     "pendiente para corregirla.", "detalle": cuerpo}), 422
+        vid_nuevo = cuerpo.get("visita_id")
+        try:
+            mysql_execute("UPDATE mant_ot_autorizaciones SET visita_id=COALESCE(visita_id,%s), visita_creada_id=%s "
+                          " WHERE id=%s", (vid_nuevo, vid_nuevo, aid))
+            mysql_execute("UPDATE mant_visitas SET cobro_cero_autorizacion_id=COALESCE(cobro_cero_autorizacion_id,%s) "
+                          " WHERE id=%s AND modalidad_cobro IN ('garantia','sin_costo')", (aid, vid_nuevo))
+        except Exception as e:
+            print(f"[ot-aut] ligar OT {vid_nuevo} a {aid}: {type(e).__name__}", flush=True)
+        try:
+            _mant_log("visita", vid_nuevo, "creada_con_autorizacion",
+                      f"Sin documento de Random · {constancia} · pedida por {a.get('solicitado_por_nombre') or '?'} "
+                      f"(autorización N° {aid})" + (f" · comentario: {comentario}" if comentario else ""))
+        except Exception:
+            pass
+        aprobada["visita_creada_id"] = vid_nuevo
+        _ot_aut_notificar_solicitante(aprobada)
+        return jsonify({"ok": True, "estado": "aprobada", "visita_id": vid_nuevo, "numero_ot": cuerpo.get("numero_ot"),
+                        "ot_url": cuerpo.get("ot_url"), "avisos": cuerpo.get("avisos") or [],
+                        "autorizacion": _ot_aut_json(_ot_aut_fila(aid))})
+
+    vid = a.get("visita_id")
+    conn = get_mysql()
+    try:
+        conn.autocommit(False)
+        cur = conn.cursor()
+        cur.execute("UPDATE mant_ot_autorizaciones SET estado='aprobada', resuelto_por_user_id=%s, "
+                    " resuelto_por_nombre=%s, resuelto_at=%s, comentario=%s WHERE id=%s AND estado='pendiente'",
+                    (uid, nombre, ahora, comentario, aid))
+        if not cur.rowcount:
+            conn.rollback()
+            return jsonify({"ok": False, "error": "Otra sesión resolvió esta solicitud primero.",
+                            "error_codigo": "CONFLICTO_CONCURRENCIA"}), 409
+        if tipo == "cobro_cero":
+            rid = _ot_cobro_cero_registrar(vid, a.get("motivo"), a.get("argumento"), a.get("centro_costo"),
+                                           a.get("valorizado_clp"), cur=cur, autorizacion=aprobada,
+                                           origen="aprobación remota")
+            if not rid:
+                conn.rollback()
+                return jsonify({"ok": False, "error": "No se pudo aplicar el $0 a la OT.",
+                                "error_codigo": "ERROR_INTERNO"}), 500
+        else:   # cerrar_sin_documento
+            cur.execute("INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) VALUES ('visita',%s,%s,%s,%s)",
+                        (vid, "cierre_sin_documento_autorizado",
+                         (f"Sin documento de Random · {constancia} · pedida por {a.get('solicitado_por_nombre') or '?'} "
+                          f"(autorización N° {aid})" + (f" · comentario: {comentario}" if comentario else ""))[:4000],
+                         current_username() or "sistema"))
+        conn.commit()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"[ot-aut] aprobar {aid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo aprobar la solicitud.", "error_codigo": "ERROR_INTERNO"}), 500
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    _ot_aut_notificar_solicitante(aprobada)
+    return jsonify({"ok": True, "estado": "aprobada", "visita_id": vid, "autorizacion": _ot_aut_json(_ot_aut_fila(aid))})
+
+
+@app.route("/ot/api/autorizaciones/<int:aid>/rechazar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot_aut_api_rechazar(aid):
+    """SOLO superadministrador. body: {comentario} (obligatorio): se le avisa al solicitante con ese comentario."""
+    a, resp = _ot_aut_resolver_guard(aid)
+    if resp:
+        return resp
+    d = request.get_json(silent=True) or {}
+    comentario = (d.get("comentario") or "").strip()[:1000]
+    if len(comentario) < 5:
+        return jsonify({"ok": False, "error": "Explica por qué se rechaza: es lo que va a leer quien la pidió.",
+                        "error_codigo": "COMENTARIO_REQUERIDO"}), 400
+    uid, nombre = _ot_aut_usuario()
+    ahora = datetime.utcnow()
+    try:
+        n = mysql_execute_returning_rowcount(
+            "UPDATE mant_ot_autorizaciones SET estado='rechazada', resuelto_por_user_id=%s, resuelto_por_nombre=%s, "
+            " resuelto_at=%s, comentario=%s WHERE id=%s AND estado='pendiente'", (uid, nombre, ahora, comentario, aid))
+    except Exception as e:
+        print(f"[ot-aut] rechazar {aid}: {type(e).__name__}", flush=True)
+        n = 0
+    if not n:
+        return jsonify({"ok": False, "error": "Otra sesión resolvió esta solicitud primero.",
+                        "error_codigo": "CONFLICTO_CONCURRENCIA"}), 409
+    rech = dict(a, estado="rechazada", resuelto_por_user_id=uid, resuelto_por_nombre=nombre, resuelto_at=ahora,
+                comentario=comentario)
+    try:
+        _mant_log("visita" if a.get("visita_id") else "cliente", a.get("visita_id") or a.get("cliente_id") or 0,
+                  "autorizacion_rechazada",
+                  f"{_OT_AUT_TIPO_TXT.get(a.get('tipo'), a.get('tipo'))} (N° {aid}) rechazada por {nombre}: {comentario}")
+    except Exception:
+        pass
+    _ot_aut_notificar_solicitante(rech)
+    return jsonify({"ok": True, "estado": "rechazada", "autorizacion": _ot_aut_json(_ot_aut_fila(aid))})
+
+
+@app.route("/ot/api/autorizaciones/<int:aid>/anular", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot_aut_api_anular(aid):
+    """Quien pidió (o el superadministrador) retira una solicitud que sigue pendiente."""
+    a = _ot_aut_fila(aid)
+    if not a:
+        return jsonify({"ok": False, "error": "No encontramos esa solicitud."}), 404
+    uid, nombre = _ot_aut_usuario()
+    if not _ot_aut_es_superadmin() and a.get("solicitado_por_user_id") != uid:
+        return jsonify({"ok": False, "error": "Solo puedes anular tus propias solicitudes."}), 403
+    if (a.get("estado") or "") != "pendiente":
+        return jsonify({"ok": False, "error": "Esta solicitud ya fue resuelta.", "error_codigo": "YA_RESUELTA"}), 409
+    try:
+        n = mysql_execute_returning_rowcount(
+            "UPDATE mant_ot_autorizaciones SET estado='anulada', resuelto_por_user_id=%s, resuelto_por_nombre=%s, "
+            " resuelto_at=%s WHERE id=%s AND estado='pendiente'", (uid, nombre, datetime.utcnow(), aid))
+    except Exception:
+        n = 0
+    if not n:
+        return jsonify({"ok": False, "error": "No se pudo anular.", "error_codigo": "CONFLICTO_CONCURRENCIA"}), 409
+    try:
+        _mant_log("visita" if a.get("visita_id") else "cliente", a.get("visita_id") or a.get("cliente_id") or 0,
+                  "autorizacion_anulada", f"N° {aid} anulada por {nombre}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "estado": "anulada"})
+
+
+# ── Bandeja «Regularizar» y recorrido de una OT ──────────────────────────────────────────────────────────────
+_OT_REG_ESTADO_TXT = {
+    "creada": "Creada", "programada": "Programada", "asignada": "Asignada", "en_curso": "En curso",
+    "en_ejecucion": "En ejecución", "firmada_tecnico": "Firmada por el técnico", "pendiente_info": "Pendiente de info",
+    "pendiente_repuesto": "Pendiente de repuesto", "pendiente_aprobacion": "Pendiente de aprobación",
+    "completada": "Completada", "cerrada": "Cerrada", "reagendada": "Reagendada",
+}
+_OT_REG_FALTA_TXT = {
+    "documento": "Sin documento ni $0 autorizado",
+    "factura": "Falta factura (solo nota de venta)",
+    "autorizacion_cobro_cero": "$0 sin autorización de Daniel",
+}
+
+
+def _ot_fecha_txt(f):
+    if not f:
+        return ""
+    try:
+        return f.strftime("%d/%m/%Y")
+    except Exception:
+        return str(f)[:10]
+
+
+@app.route("/ot/api/regularizar", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_api_regularizar():
+    """Bandeja «Regularizar» (Daniel 2026-10-07): toda OT de cliente, no cancelada ni anulada, que NO pasa la puerta
+    'cerrar' (sin documento de cobro validado ni $0 autorizado), más las que solo tienen nota de venta («Falta
+    factura»). Paginada en el servidor (REGLA #4.3). Filtros: estado, cliente (id), creador (texto), mes (AAAA-MM),
+    falta (documento|factura|autorizacion_cobro_cero), page, per_page. Superadministrador: todo; el resto: las OT
+    que creó. Las OT cerradas se regularizan ligando el documento o declarando/pidiendo el $0: nunca tocando
+    estado, firmas ni fechas (OT = evidencia)."""
+    es_sa = _ot_aut_es_superadmin()
+    uid, nombre = _ot_aut_usuario()
+    where = ["v.cliente_id IS NOT NULL", "v.estado NOT IN ('cancelada','anulada')",
+             "NOT EXISTS (SELECT 1 FROM mant_visita_documentos md WHERE md.visita_id=v.id AND md.origen='erp' "
+             "            AND md.es_cobro=1 AND UPPER(COALESCE(md.erp_tido,'')) IN ('FCV','FCE','BLV','BLE'))",
+             "NOT (v.factura_asociada_por IS NOT NULL AND UPPER(COALESCE(v.factura_tido,'')) IN ('FCV','FCE','BLV','BLE'))",
+             "NOT (v.tipo='preventiva' AND " + _OT_FIN_SQL_CONTRATO_REAL + ")"]
+    params = []
+    if not es_sa:
+        where.append("(v.created_by_user_id<=>%s OR v.created_by=%s)")
+        params += [uid, current_username() or ""]
+    est = (request.args.get("estado") or "").strip().lower()
+    if est and est in _OT_REG_ESTADO_TXT:
+        where.append("v.estado=%s")
+        params.append(est)
+    try:
+        cli = int(request.args.get("cliente") or 0)
+    except (TypeError, ValueError):
+        cli = 0
+    if cli:
+        where.append("v.cliente_id=%s")
+        params.append(cli)
+    cre = (request.args.get("creador") or "").strip()[:100]
+    if cre:
+        where.append("v.created_by LIKE %s")
+        params.append(f"%{cre}%")
+    mes = (request.args.get("mes") or "").strip()[:7]
+    if re.fullmatch(r"\d{4}-\d{2}", mes or ""):
+        where.append("DATE_FORMAT(v.fecha_programada,'%%Y-%%m')=%s")
+        params.append(mes)
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+        per_page = min(200, max(1, int(request.args.get("per_page") or 50)))
+    except (TypeError, ValueError):
+        page, per_page = 1, 50
+    falta_f = (request.args.get("falta") or "").strip().lower()
+    try:
+        rows = mysql_fetchall(
+            "SELECT v.id, v.numero_ot, v.cliente_id, c.razon_social AS cliente, v.fecha_programada, v.estado, v.tipo, "
+            "       v.created_by, v.created_by_user_id, v.created_at, v.modalidad_cobro, v.cubierto_por, v.contrato_id, "
+            "       v.estado_facturacion, v.centro_costo, v.cobro_cero_motivo, v.cobro_cero_autorizacion_id, "
+            "       v.cobro_cero_argumento, v.factura_tido, v.factura_nudo, "
+            "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
+            "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
+            " WHERE " + " AND ".join(where) +
+            " ORDER BY v.fecha_programada DESC, v.id DESC LIMIT 2000", tuple(params)) or []
+    except Exception as e:
+        print(f"[ot-regularizar] {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo leer la bandeja."}), 500
+    ids = [int(r["id"]) for r in rows]
+    docs = _ot_puerta_docs_lote(ids)
+    auts = _ot_puerta_autorizaciones_lote(ids)
+    pend_sol = {}
+    for i, lst in auts.items():
+        for a in lst:
+            if a.get("estado") == "pendiente":
+                pend_sol[i] = a
+                break
+    items = []
+    for r in rows:
+        r = dict(r)
+        vid = int(r["id"])
+        r["documentos"] = docs.get(vid, [])
+        r["autorizaciones"] = auts.get(vid, [])
+        p = _ot_puerta_documento(r, "cerrar")
+        falta = None
+        if not p["ok"]:
+            falta = p.get("falta") or "documento"
+        elif p.get("nota_venta") or (r.get("estado_facturacion") == "con_nota_venta"):
+            falta = "factura"
+        if not falta:
+            continue
+        if falta_f and falta != falta_f:
+            continue
+        ps = pend_sol.get(vid)
+        items.append({
+            "id": vid, "numero_ot": r.get("numero_ot") or f"V-{vid:05d}", "cliente_id": r.get("cliente_id"),
+            "cliente": r.get("cliente") or "", "fecha": _ot_fecha_txt(r.get("fecha_programada")),
+            "creada_el": chile_fmt_filter(r.get("created_at")) if r.get("created_at") else "",
+            "estado": r.get("estado"), "estado_txt": _OT_REG_ESTADO_TXT.get(r.get("estado"), r.get("estado")),
+            "tipo": r.get("tipo"), "creado_por": r.get("created_by") or "",
+            "cobertura": _ot_cobertura(r), "modalidad_cobro": r.get("modalidad_cobro"),
+            "centro_costo": r.get("centro_costo"),
+            "falta": falta, "falta_txt": _OT_REG_FALTA_TXT.get(falta, falta), "mensaje": p.get("mensaje") or "",
+            "documentos": [{"tido": x["tido"], "nudo": x["nudo"]} for x in r["documentos"]],
+            "cerrada": r.get("estado") == "cerrada",
+            "solicitud_pendiente": ({"id": ps["id"], "tipo": ps["tipo"], "solicitado_por": ps.get("solicitado_por_nombre"),
+                                     "solicitado_at": chile_fmt_filter(ps["solicitado_at"]) if ps.get("solicitado_at") else ""}
+                                    if ps else None),
+            "url": f"/ot/{vid}",
+        })
+    total = len(items)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = min(page, pages)
+    ini = (page - 1) * per_page
+    resumen = {k: sum(1 for it in items if it["falta"] == k) for k in _OT_REG_FALTA_TXT}
+    return jsonify({"ok": True, "items": items[ini:ini + per_page], "total": total, "page": page,
+                    "per_page": per_page, "pages": pages, "desde": (ini + 1) if total else 0,
+                    "hasta": min(ini + per_page, total), "resumen": resumen, "superadmin": es_sa,
+                    "truncado": len(rows) >= 2000, "estados": _OT_REG_ESTADO_TXT, "faltas": _OT_REG_FALTA_TXT})
+
+
+@app.route("/ot/api/<int:vid>/recorrido", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_api_recorrido(vid):
+    """El «pequeño tracking» de la plata de una OT (Daniel 2026-10-07), 6 pasos con estado hecho | falta | no_aplica |
+    pendiente, textos y cifras del modelo único: ① ¿Se cobra? → ② Documentos → ③ Cobré → ④ Me cobró el proveedor →
+    ⑤ Margen → ⑥ Revisión al cerrar. Lleva montos: nunca para técnicos (REGLA #19)."""
+    try:
+        v = mysql_fetchone(
+            "SELECT v.id, v.numero_ot, v.estado, v.cerrada_at, v.created_by, v.centro_costo, v.estado_facturacion, "
+            "       v.factura_tido, v.factura_nudo, v.contrato_id, v.cobro_cero_motivo, v.cobro_cero_autorizacion_id, "
+            "       v.cobro_cero_argumento, v.garantia_motivo, c.razon_social AS cliente, c.tipo_cliente, "
+            "       " + _ot_fin_cols_sql("v") +
+            "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (vid,))
+    except Exception as e:
+        print(f"[ot-recorrido] vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo leer la OT."}), 500
+    if not v:
+        return jsonify({"ok": False, "error": "No encontramos esa OT."}), 404
+    v = dict(v)
+    try:
+        rep = _ot_fin_rep_liviano(_ot_repuestos_desglose([vid]).get(vid))
+    except Exception:
+        rep = None
+    fin = _ot_finanzas(v, rep)
+    docs_val = _ot_puerta_docs_de(vid)
+    auts = _ot_puerta_autorizaciones_de(vid)
+    v["documentos"], v["autorizaciones"] = docs_val, auts
+    p_cerrar = _ot_puerta_documento(v, "cerrar")
+    try:
+        docs_todos = _ot_docs_listar(vid).get("documentos") or []
+    except Exception:
+        docs_todos = []
+    cob = fin["cobertura"]
+    cerrada = (v.get("estado") or "") == "cerrada"
+    aut_cero = next((a for a in auts if a.get("tipo") == "cobro_cero" and a.get("estado") == "aprobada"), None)
+    aut_cerrar = next((a for a in auts if a.get("tipo") == "cerrar_sin_documento" and a.get("estado") == "aprobada"), None)
+    pend = next((a for a in auts if a.get("estado") == "pendiente"), None)
+
+    def _const(a):
+        if not a:
+            return ""
+        return (f"Autorizado por {a.get('resuelto_por_nombre') or '?'} el "
+                f"{chile_fmt_filter(a.get('resuelto_at')) if a.get('resuelto_at') else ''}: {a.get('argumento') or ''}")
+
+    # ① ¿Se cobra?
+    if cob == "cobra":
+        p1 = {"estado": "hecho", "texto": "Se le cobra al cliente"}
+    elif cob == "contrato":
+        p1 = {"estado": "hecho", "texto": fin["cobertura_txt"] + " (el contrato es el documento)"}
+    elif cob == "interno":
+        p1 = {"estado": "no_aplica", "texto": fin["cobertura_txt"]}
+    else:
+        if aut_cero:
+            p1 = {"estado": "hecho", "texto": f"$0 · {fin['cobertura_txt']} · {_const(aut_cero)}"}
+        elif pend and pend.get("tipo") == "cobro_cero":
+            p1 = {"estado": "falta", "texto": f"$0 · {fin['cobertura_txt']} · esperando a Daniel (solicitud N° {pend['id']})"}
+        else:
+            p1 = {"estado": "falta", "texto": f"$0 · {fin['cobertura_txt']} · sin autorización de Daniel"}
+    # ② Documentos
+    nv = bool({x["tido"] for x in docs_val} & set(_OT_DOCS_NOTA_VENTA))
+    cobro_doc = bool({x["tido"] for x in docs_val} & set(_OT_DOCS_COBRO))
+    if cobro_doc:
+        p2 = {"estado": "hecho", "texto": ", ".join(f"{x['tido']} {x['nudo']}" for x in docs_val)}
+    elif nv:
+        p2 = {"estado": "falta", "texto": "Falta factura: " + ", ".join(f"{x['tido']} {x['nudo']}" for x in docs_val)}
+    elif cob in ("contrato", "interno") or aut_cero or aut_cerrar:
+        p2 = {"estado": "no_aplica", "texto": ("Sin documento de Random · " + _const(aut_cerrar or aut_cero))
+              if (aut_cerrar or aut_cero) else "No necesita documento"}
+    else:
+        p2 = {"estado": "falta", "texto": "Sin documento validado del ERP"}
+    # ③ Cobré
+    c = fin["cobre"]
+    if cob != "cobra":
+        p3 = {"estado": "no_aplica", "texto": "$0 (no se cobra)"}
+    elif c["hay"] and c["total"] > 0:
+        p3 = {"estado": "hecho", "texto": f"Servicio {_ot_fin_clp(c['servicio'])} + despacho {_ot_fin_clp(c['despacho'])} = {_ot_fin_clp(c['total'])}"}
+    else:
+        p3 = {"estado": "falta", "texto": "Falta lo que cobraste (servicio y despacho)"}
+    # ④ Me cobró el proveedor
+    m = fin["me_cobraron"]
+    if m["falta_tecnico"]:
+        p4 = {"estado": "falta", "texto": "Falta lo que te cobró el técnico/proveedor por la instalación"}
+    elif m["falta_despacho"]:
+        p4 = {"estado": "falta", "texto": "Falta el costo del despacho"}
+    else:
+        p4 = {"estado": "hecho", "texto": f"Instalación {_ot_fin_clp(m['tecnico'] or 0)} + despacho {_ot_fin_clp(m['despacho'] or 0)}"
+              + (f" + repuestos {_ot_fin_clp(m['repuestos'])}" if m.get("repuestos") else "") + f" = {_ot_fin_clp(m['total'])}"}
+    # ⑤ Margen
+    if cob == "cobra":
+        p5 = {"estado": ("hecho" if fin["queda"]["mostrar"] else "falta"), "texto": fin["frase"], "clase": fin["clase"]}
+    else:
+        p5 = {"estado": ("hecho" if not m["falta_tecnico"] else "falta"),
+              "texto": fin["frase"] + (f" → centro {v.get('centro_costo') or '—'}"), "clase": fin["clase"]}
+    # ⑥ Revisión al cerrar
+    if cerrada and p_cerrar["ok"]:
+        p6 = {"estado": "hecho", "texto": f"Cerrada el {chile_fmt_filter(v['cerrada_at']) if v.get('cerrada_at') else ''} · {p_cerrar.get('via')}"}
+    elif not p_cerrar["ok"]:
+        p6 = {"estado": "falta", "texto": p_cerrar.get("mensaje") + (" (OT ya cerrada: regularizar)" if cerrada else "")}
+    else:
+        p6 = {"estado": "pendiente", "texto": "Puede cerrar: " + {"documento": "documento de cobro validado",
+                                                                  "contrato_real": "mantención de contrato real",
+                                                                  "cobro_cero": "$0 autorizado",
+                                                                  "autorizacion_cerrar": "cierre autorizado por Daniel",
+                                                                  "nota_venta": "nota de venta (queda «Falta factura»)",
+                                                                  "interna_sin_cliente": "trabajo interno"}.get(p_cerrar.get("via"), p_cerrar.get("via") or "")}
+    pasos = [dict(n=1, titulo="¿Se cobra?", **p1), dict(n=2, titulo="Documentos", **p2),
+             dict(n=3, titulo="Cobré", **p3), dict(n=4, titulo="Me cobró el proveedor", **p4),
+             dict(n=5, titulo="Margen", **p5), dict(n=6, titulo="Revisión al cerrar", **p6)]
+    return jsonify({
+        "ok": True, "visita_id": vid, "numero_ot": v.get("numero_ot"), "cliente": v.get("cliente"),
+        "estado": v.get("estado"), "cerrada": cerrada, "pasos": pasos, "fin": fin,
+        "puerta": p_cerrar, "documentos": docs_todos, "documentos_validados": docs_val,
+        "autorizaciones": [_ot_aut_json(a) for a in auts], "solicitud_pendiente": (_ot_aut_json(pend) if pend else None),
+        "cobro_cero": {"motivo": v.get("cobro_cero_motivo"), "motivo_txt": _OT_COBRO_CERO_MOTIVOS.get(v.get("cobro_cero_motivo") or "", ""),
+                       "argumento": v.get("cobro_cero_argumento"), "autorizacion_id": v.get("cobro_cero_autorizacion_id"),
+                       "constancia": _const(aut_cero)},
+        "estado_facturacion": v.get("estado_facturacion"), "falta_factura": nv and not cobro_doc,
+        "superadmin": _ot_aut_es_superadmin(), "motivos": [{"v": k, "n": n} for k, n in _OT_COBRO_CERO_MOTIVOS.items()],
+    })
+
+
+
+
 @app.route("/ot/api/<int:vid>/documentos", methods=["GET"])
 @_mant_required
 @_ot_can_view
@@ -93109,6 +94909,13 @@ def ot2_api_documentos_agregar(vid):
     # ¿Es el primero? Entonces además se espeja al campo principal, que es
     # el que gobierna cierre/PDF/margen y ya existía desde siempre.
     _es_primero = not (v.get("factura_nudo") or "").strip()
+    # 🔏 2026-10-07 (REQUISITO 3 de Daniel): si el principal era una NOTA DE VENTA y llega la factura/boleta, la
+    # factura pasa a ser el principal y la nota queda «dada de baja» por ella (reemplazado_por_id), visible.
+    _reemplaza_nv = (_tipo_real in _OT_DOCS_COBRO
+                     and (v.get("factura_tido") or "").strip().upper() in _OT_DOCS_NOTA_VENTA
+                     and bool((v.get("factura_nudo") or "").strip()))
+    if _reemplaza_nv:
+        _es_primero = True
     # 🐛 2026-09-10: la fecha pasa por _erp_fecha_a_date (ver su docstring).
     # Antes iba `str(doc.get("fecha"))[:10]` y una fecha chilena del ERP
     # ('26/06/2026') hacía que MySQL rechazara el INSERT completo con un 500.
@@ -93117,8 +94924,8 @@ def ot2_api_documentos_agregar(vid):
             "INSERT INTO mant_visita_documentos "
             "  (visita_id, origen, es_cobro, es_principal, erp_tido, erp_nudo, "
             "   etiqueta, monto, rut, rut_ok, rut_justif, emitido_el, asociado_por, "
-            "   zz_serv_monto, zz_envio_monto) "
-            "VALUES (%s,'erp',1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "   zz_serv_monto, zz_envio_monto, cuenta) "
+            "VALUES (%s,'erp',1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (vid, 1 if _es_primero else 0, _tipo_real, _numero_real[:30], etiqueta,
              _monto, rut_fact[:20] or None, 1 if analisis["match"] else 0,
              justif or None, _erp_fecha_a_date(doc.get("fecha")),
@@ -93126,7 +94933,9 @@ def ot2_api_documentos_agregar(vid):
              # Solo si de verdad se sumó algo: NULL = no aportó al valor,
              # y así el "quitar" sabe que no tiene nada que restar.
              _zz_serv if (_zz_leido and _zz_total) else None,
-             _zz_envio if (_zz_leido and _zz_total) else None))
+             _zz_envio if (_zz_leido and _zz_total) else None,
+             # 🔏 2026-10-07: para qué cuenta el documento (nota de venta = falta facturar).
+             ("nota_venta" if _tipo_real in _OT_DOCS_NOTA_VENTA else "servicio")))
     except Exception as _e_ins:
         # Defensa en profundidad: si algún otro dato del documento no le
         # calza a su columna, el usuario tiene que leer QUÉ pasó con su
@@ -93141,6 +94950,12 @@ def ot2_api_documentos_agregar(vid):
                      f"en el log para revisarlo.",
         }), 500
 
+    if _reemplaza_nv:
+        # 🔏 2026-10-07: la nota de venta anterior queda dada de baja por esta factura (sin borrar nada) y
+        # esta factura pasa a ser el principal (el UPDATE de abajo lo espeja en factura_*).
+        _ot_doc_registrar_fila(vid, _tipo_real, _numero_real, _monto, rut_fact, analisis["match"], justif,
+                               doc.get("fecha"), {"factura_tido": v.get("factura_tido"), "factura_nudo": v.get("factura_nudo")},
+                               es_nota_venta=False)
     if _es_primero:
         _estado_fact = ("con_nota_venta" if _tipo_real in _OT_DOCS_NOTA_VENTA
                         else "facturado")
@@ -101433,8 +103248,29 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
 
     _fin_gar = bool(_fin.get("garantia_aplica"))
     _fin_motivo = (_fin.get("garantia_motivo") or "").strip()[:500] or None
-    # Garantía y documento son EXCLUYENTES (misma regla que ot2_api_finanzas).
-    if _fin_gar:
+    # 🔏 2026-10-07 (Daniel: "TODO $0 pasa por Daniel"): el $0 nace con su motivo (garantia | regalia |
+    # arriendo_leasing), su argumento (≥30, lo lee Daniel) y, si ya existe, la autorización aprobada. "Aplica
+    # garantía" sin motivo = motivo 'garantia' (compatibilidad con el wizard). La PUERTA (_ot_puerta_documento)
+    # decide después si el $0 está autorizado; acá solo se valida la forma.
+    _fin_cero_motivo = (str(_fin.get("cobro_cero_motivo") or "").strip().lower()) or None
+    if _fin_cero_motivo and _fin_cero_motivo not in _OT_COBRO_CERO_MOTIVOS:
+        return _ferr("El motivo del $0 no es válido: Garantía, Regalía o Arriendo/Leasing.",
+                     "COBRO_CERO_MOTIVO"), None
+    if _fin_gar and not _fin_cero_motivo:
+        _fin_cero_motivo = "garantia"
+    if _fin_cero_motivo == "garantia":
+        _fin_gar = True
+    _fin_cero = _fin_cero_motivo is not None
+    _fin_cero_argumento = (str(_fin.get("cobro_cero_argumento") or "").strip()[:1000]) or None
+    _fin_aut_id = _fin.get("autorizacion_id")
+    try:
+        _fin_aut_id = int(_fin_aut_id) if _fin_aut_id not in (None, "", 0, "0") else None
+    except (TypeError, ValueError):
+        return _ferr("La autorización indicada no es válida.", "AUTORIZACION_INVALIDA"), None
+    if _fin_cero and not _fin_gar and not _fin_motivo:
+        _fin_motivo = (_fin_cero_argumento or _OT_COBRO_CERO_MOTIVOS[_fin_cero_motivo])[:500]
+    # $0 (garantía, regalía, arriendo/leasing) y documento son EXCLUYENTES (misma regla que ot2_api_finanzas).
+    if _fin_cero:
         _fin_tido, _fin_nudo = None, None
     else:
         _fin_tido = (_fin.get("factura_tido") or "").strip()[:5].upper() or None
@@ -101454,10 +103290,13 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
     # un valor declarado a mano (zz_monto de todos modos, ver
     # o2fFinPayload/crear() en _modal_crear.html) — nunca queda en blanco.
     if not es_interna:
-        if not _fin_gar and not (_fin_tido and _fin_nudo):
+        # 🔏 2026-10-07: sin documento ni $0, la PUERTA decide (DOC_REQUERIDO → «Pedir autorización»). Si viene
+        # una autorización de Daniel o documentos por validar (cotización incluida), este rechazo no se adelanta.
+        if (not _fin_cero and not (_fin_tido and _fin_nudo) and not _fin_aut_id
+                and not _fin.get("documentos") and not _fin.get("documentos_extra")):
             return _ferr(
-                "Asocia el documento del ERP (factura, boleta o nota de "
-                "venta) o declara la OT como garantía antes de crear.",
+                "Asocia el documento del ERP (factura, boleta, nota de venta o cotización) o pide a Daniel "
+                "la autorización para crear sin documento, o declárala en $0 con motivo y argumento.",
                 "FINANZAS_SIN_COBERTURA"), None
         if _fin_gar and (not _fin_motivo or len(_fin_motivo) < 10):
             return _ferr(
@@ -101470,7 +103309,7 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
         # CIERRE (_ot2_finanzas_estado) ya eximía bien a garantía de este
         # monto -- este quedó mal copiado el 2026-09-09. Mismo fix en
         # completo('finanzas') de _modal_crear.html.
-        if not _fin_gar and (_fin_zzm is None or _fin_zzm <= 0):
+        if not _fin_cero and not _fin_aut_id and (_fin_zzm is None or _fin_zzm <= 0):
             return _ferr(
                 "Falta declarar el monto estimado del servicio (línea del "
                 "documento, cotización asociada, o un valor a mano).",
@@ -101607,7 +103446,7 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
     # garantía sigue exactamente igual que el 2026-09-21.
     if exigir_costo_prov_desp:
         _fin_costo_prov_raw = _fin.get("costo_proveedor")
-        if not es_interna and not _fin_gar and (_fin_costo_prov_raw is None or str(_fin_costo_prov_raw).strip() == ""):
+        if not es_interna and not _fin_cero and (_fin_costo_prov_raw is None or str(_fin_costo_prov_raw).strip() == ""):
             return _ferr(
                 "Indica cuánto le pagamos al proveedor externo por esta OT (0 si no hay "
                 "proveedor de por medio): así el reporte de margen no queda con un vacío "
@@ -101671,8 +103510,11 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
     # al menos un documento asociado: sin documento (garantía, o el hueco
     # de "supuesto" que sigue existiendo mientras no se resuelva el caso de
     # "factura no ha llegado todavía"), no hay contra qué topear.
-    if not es_interna and not _fin_gar and (_fin_tido and _fin_nudo or _docs_extra_norm):
+    _fin_docs_validados = []   # 🔏 2026-10-07: lo que el ERP confirmó (lectura), para la puerta
+    if not es_interna and not _fin_cero and (_fin_tido and _fin_nudo or _docs_extra_norm):
         _topes = _ot_zz_topes_reales(_fin_tido, _fin_nudo, _docs_extra_norm, cliente_rut)
+        _fin_docs_validados = [{"origen": "erp", "tipo": _dv["tido"], "numero": _dv["nudo"], "validado": True}
+                               for _dv in (_topes.get("documentos") or [])]
         if _topes["excluidos"] and not _topes["documentos"]:
             # Todos los documentos declarados fallaron o son de otro cliente:
             # no hay NINGÚN tope real que validar -- mejor cortar acá que
@@ -101703,7 +103545,7 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
         # Sugerencia por tipo: instalación → ZZINSTALACION, mantención →
         # ZZMANTENCION (Daniel 2026-08-26).
         _fin_zzc = _OT2_LINEA_ZZ.get(tipo_ot)
-    if _fin_gar:
+    if _fin_cero:
         _fin_estado_fact = "no_aplica"
     elif _fin_nudo and (_fin_tido or "").upper() in ("NVV", "NVI"):
         _fin_estado_fact = "con_nota_venta"
@@ -101761,6 +103603,10 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
     # comercial como si hubiera que cobrárselo a alguien.
     if _fin_gar:
         _fin_modalidad, _fin_cubierto = "garantia", "garantia"
+    elif _fin_cero:
+        # 🔏 2026-10-07: regalía y arriendo/leasing van en modalidad 'sin_costo' (el ENUM no cambia); el
+        # motivo exacto queda en cobro_cero_motivo y _ot_cobertura lo distingue.
+        _fin_modalidad, _fin_cubierto = "sin_costo", "cliente"
     elif es_interna:
         _fin_modalidad, _fin_cubierto = "interno", "contrato"
     else:
@@ -101774,7 +103620,8 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
     # casillero queda cada número.
     _fin_cobertura = _ot_cobertura({
         "modalidad_cobro": modalidad_forzada or _fin_modalidad, "cubierto_por": _fin_cubierto,
-        "tipo": tipo_ot, "zz_monto": _fin_zzm, "valor_origen": _fin_valor_origen})
+        "tipo": tipo_ot, "zz_monto": _fin_zzm, "valor_origen": _fin_valor_origen,
+        "cobro_cero_motivo": _fin_cero_motivo})
     # 🔴 2026-10-07 (revisión adversarial) -- dos combinaciones que el formulario dejaba pasar y que la regla única
     # lee DISTINTO de lo que la persona declaró. Se rechazan diciendo qué hacer; nada se corrige en silencio.
     #  1) Tipo «Garantía» marcado «Sí, con documento»: _ot_cobertura trata el tipo Garantía como garantía, así que
@@ -101841,8 +103688,28 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
         "valorizado_clp": _fin_reparto["valorizado_clp"],
         "valorizado_fuente": _fin_reparto["valorizado_fuente"],
         "cobertura": _fin_cobertura,
+        # 🔏 2026-10-07 — lo que lee la puerta del documento (_ot_puerta_documento) y la constancia del $0.
+        "cobro_cero_motivo": _fin_cero_motivo,
+        "cobro_cero_argumento": _fin_cero_argumento,
+        "autorizacion_id": _fin_aut_id,
+        "documentos_validados": _fin_docs_validados,
+        "documentos_body": (_fin.get("documentos") if isinstance(_fin.get("documentos"), list) else None),
     }
     return None, campos
+
+
+def _ot_puerta_payload_desde_campos(fin_campos, cliente_id, tipo_ot, cliente_rut=None, contrato_id=None,
+                                    modalidad=None):
+    """Payload de la puerta 'crear' para los núcleos que ya pasaron por _ot_validar_normalizar_finanzas."""
+    fc = fin_campos or {}
+    return {
+        "cliente_id": cliente_id, "tipo": tipo_ot, "contrato_id": contrato_id, "cliente_rut": cliente_rut,
+        "modalidad_cobro": modalidad or fc.get("modalidad_cobro"), "cubierto_por": fc.get("cubierto_por"),
+        "centro_costo": fc.get("centro_costo"), "cobro_cero_motivo": fc.get("cobro_cero_motivo"),
+        "cobro_cero_argumento": fc.get("cobro_cero_argumento"), "autorizacion_id": fc.get("autorizacion_id"),
+        "documentos_validados": list(fc.get("documentos_validados") or []),
+        "documentos": fc.get("documentos_body") or None,
+    }
 
 
 
@@ -101853,12 +103720,34 @@ def ot2_api_crear():
 
     Devuelve {ok, visita_id, numero_ot, ot_url, n_tareas}.
 
+    🔏 2026-10-07: el cuerpo vive en _ot2_crear_core(d) para que la aprobación de una autorización
+    'crear_sin_documento' (Daniel: "pidiendo autorización remota con un argumento… que yo autorice") cree la OT
+    por el MISMO camino del asistente, con las mismas validaciones. La ruta no cambia nada: solo delega.
+    """
+    return _ot2_crear_core(request.get_json(silent=True) or {})
+
+
+def _ot2_crear_core(d, autorizacion=None):
+    """Núcleo de creación de OT 2.0 (ver ot2_api_crear). `d` = body del asistente; `autorizacion` = fila de
+    mant_ot_autorizaciones aprobada cuando la OT nace desde una solicitud (d['autorizacion_id'] también la trae).
+
     Todas las validaciones corren ANTES de tocar la base: si algo falta,
     la OT no se empieza a crear a medias. La escritura completa vive en
     UNA transacción — o queda todo, o no queda nada (incluido el
     correlativo, que se devuelve solo con el rollback).
     """
-    d = request.get_json(silent=True) or {}
+    d = d or {}
+    if autorizacion and not (d.get("finanzas") or {}).get("autorizacion_id"):
+        d = dict(d)
+        d["finanzas"] = dict(d.get("finanzas") or {})
+        d["finanzas"]["autorizacion_id"] = autorizacion.get("id")
+        if autorizacion.get("motivo") and not d["finanzas"].get("cobro_cero_motivo"):
+            d["finanzas"]["cobro_cero_motivo"] = autorizacion.get("motivo")
+            d["finanzas"]["cobro_cero_argumento"] = autorizacion.get("argumento")
+    elif d.get("autorizacion_id") and not (d.get("finanzas") or {}).get("autorizacion_id"):
+        d = dict(d)
+        d["finanzas"] = dict(d.get("finanzas") or {})
+        d["finanzas"]["autorizacion_id"] = d.get("autorizacion_id")
 
     # ── 1. TIPO — obligatorio y explícito. Nunca hay default. ──────────
     tipo_ot = (d.get("tipo_ot") or "").strip().lower()
@@ -102334,6 +104223,16 @@ def ot2_api_crear():
         exigir_costo_prov_desp=True)
     if _fin_err:
         return _ot2_err(_fin_err["error"], _fin_err["error_codigo"])
+    # 🔏 2026-10-07 — LA PUERTA DEL DOCUMENTO (Daniel: "Todo con documento tiene que ser absoluto… inviolable").
+    # Una OT de cliente nace solo con documento validado (factura/boleta/nota de venta/cotización), $0 autorizado
+    # o autorización 'crear_sin_documento' aprobada. Lo demás → 409 DOC_REQUERIDO «Pedir autorización».
+    _puerta = None
+    if not es_interna:
+        _puerta = _ot_puerta_documento(_ot_puerta_payload_desde_campos(
+            _fin_campos, cliente_id, tipo_ot, cliente_rut=(_cli.get("rut") if cliente_id and _cli else None)), "crear")
+        if not _puerta["ok"]:
+            return _ot_puerta_respuesta(_puerta)
+        _puerta["docs_ya_guardados"] = True   # este núcleo espeja factura_*/documentos_extra más abajo
     _fin_centro = _fin_campos["centro_costo"]
     _fin_valor_origen = _fin_campos["valor_origen"]
     _fin_gar = _fin_campos["garantia_aplica"]
@@ -102476,6 +104375,9 @@ def ot2_api_crear():
              current_username() if _fin_declarada else None,
              current_username()))
         vid = cur.lastrowid
+        # 🔏 2026-10-07 — constancia de la puerta (autorización consumida, $0 declarado por superadmin, etc.).
+        if _puerta is not None:
+            _ot_puerta_aplicar(cur, vid, _puerta, fin_argumento=_fin_campos.get("cobro_cero_argumento"))
 
         # El solape autorizado a mano queda registrado con nombre y apellido.
         if _choque_forzado_txt:
@@ -111900,10 +113802,18 @@ def _ot_es_interna(v):
     """
     if not v:
         return False
+    # 🔏 2026-10-07 (Daniel: la exención por "trabajo interno" es SOLO sin cliente): si la fila trae un cliente,
+    # la modalidad 'interno' o el tipo revision_interna ya no la convierten en interna -- hay a quién cobrarle y
+    # quién firma. Sin la clave cliente_id (filas parciales) se conserva el criterio anterior. Espejo: esInterna
+    # en static/ot_finanzas.js.
     try:
+        _tiene_cli = ("cliente_id" in v and v.get("cliente_id") is not None)
+        if "cliente_id" in v and v.get("cliente_id") is None:
+            return True
+        if _tiene_cli:
+            return False
         return ((v.get("modalidad_cobro") or "").strip().lower() == "interno"
-                or (v.get("tipo") or "").strip().lower() == "revision_interna"
-                or ("cliente_id" in v and v.get("cliente_id") is None))
+                or (v.get("tipo") or "").strip().lower() == "revision_interna")
     except Exception:
         return False
 
@@ -113678,8 +115588,10 @@ def mant_ot_aprobar_cierre(vid):
     # asociarla (con justificación obligatoria si no coincide).
     # Interruptor en /mantenciones/configuracion (regla ot_factura_gate_activo,
     # default ON) — Daniel puede dar holgura apagándolo sin deploy.
+    # 🔏 2026-10-07 (atajo del mapa): el interruptor se lee FRESCO de la base (_regla_fresca), no de la caché por
+    # proceso -- con varias instancias de Cloud Run podía quedar encendido en una y apagado en otra.
     try:
-        _gate_on = bool(_reglas_cargar().get("ot_factura_gate_activo", True))
+        _gate_on = bool(_regla_fresca("ot_factura_gate_activo", True))
     except Exception:
         _gate_on = True
     _mod_cobro = (v.get("modalidad_cobro") or "").strip().lower()
@@ -113691,18 +115603,46 @@ def mant_ot_aprobar_cierre(vid):
     # modalidad 'pagado') sigue pidiendo documento como antes, a propósito: unificar ahí aflojaría el candado
     # sin que Daniel lo haya visto (advertencia del verificador, 2026-10-07).
     _cob_cierre = _ot_cobertura(v)
+    # 🔏 2026-10-07: interna = SIN cliente (una OT de cliente con modalidad 'interno' no se exime de nada), y una
+    # OT autorizada por Daniel a cerrar sin documento / con $0 autorizado / de contrato real no vuelve a pedir
+    # documento ni cobro (_via_cierre la llena la puerta, más abajo).
+    _interna_cierre = _ot_es_interna(v) and not v.get("cliente_id")
+    _via_cierre = ""
     _exenta_doc_cliente = _mod_cobro in ("garantia", "sin_costo") or _cob_cierre == "contrato"
     # 'interno' se exime igual que garantia/sin_costo: un trabajo interno de
     # ILUS no se factura a nadie, así que exigirle factura para firmar el
     # cierre lo dejaba trabado (Daniel 2026-08-08).
-    if (_gate_on and not _ot_es_interna(v)
+    # 🔏 2026-10-07 — LA PUERTA al CERRAR (Daniel, decisión 5: "AL CERRAR, revisión obligatoria otra vez:
+    # documento de cobro o $0 autorizado sí o sí; cerrar sin documento solo con autorización remota"). Pasa con
+    # documento de cobro validado, contrato REAL (preventiva), $0 con autorización aprobada o autorización
+    # 'cerrar_sin_documento'. Una nota de venta sola NO cierra (requisito 3; ver _OT_PUERTA_NV_CIERRA). Mismo
+    # interruptor que los demás candados (solo lo cambia el superadministrador).
+    if _gate_on and not _interna_cierre:
+        _v_puerta = dict(v, id=vid)
+        _p_cierre = _ot_puerta_documento(_v_puerta, "cerrar")
+        if not _p_cierre["ok"]:
+            return _ot_cierre_rechazo(_p_cierre, vid)
+        _via_cierre = _p_cierre.get("via") or ""
+        if _p_cierre.get("nota_venta"):
+            try:
+                mysql_execute("UPDATE mant_visitas SET estado_facturacion='con_nota_venta' WHERE id=%s "
+                              "  AND COALESCE(estado_facturacion,'')<>'facturado'", (vid,))
+            except Exception:
+                pass
+    # 🔏 2026-10-07 (Daniel: "Todo con documento tiene que ser absoluto"): SIN_FACTURA ya no mira el texto de
+    # factura_nudo (un PUT podía escribirlo a mano) sino los documentos VALIDADOS contra el ERP
+    # (_ot_puerta_docs_de: tabla puente + asociar-factura).
+    _docs_cierre = _ot_puerta_docs_de(vid)
+    if (_gate_on and not _interna_cierre
             and not _exenta_doc_cliente
-            and not (v.get("factura_nudo") or "").strip()):
+            and _via_cierre not in ("autorizacion_cerrar", "cobro_cero", "contrato_real", "documento")
+            and not _docs_cierre):
         return jsonify({
             "ok": False,
             "error_codigo": "SIN_FACTURA",
-            "error": "Esta OT es cobrable y aún NO tiene factura asociada. "
-                     "Asocia la factura (o marca la OT como garantía) antes de firmar el cierre.",
+            "accion": _ot_cierre_accion("SIN_FACTURA", vid),
+            "error": "Esta OT es cobrable y aún NO tiene un documento validado asociado. "
+                     "Asocia la factura o boleta (o declara el $0 con autorización de Daniel) antes de firmar el cierre.",
         }), 400
     # 🔒 2026-09-11 (Fase 4, Daniel: "toda OT valorizada" como exigencia MÁS
     # FUERTE que solo tener un documento asociado). SIN_FACTURA de arriba
@@ -113726,12 +115666,14 @@ def mant_ot_aprobar_cierre(vid):
     # así (_ot_validar_normalizar_finanzas y el asistente lo impiden). Una OT que NO se cobra (garantía -- también la
     # marcada por cubierto_por --, cortesía, interno, contrato real) no tiene nada que declarar acá, y el
     # valorizado NUNCA se exige (decisión de Daniel: es sugerido).
-    if (_gate_on and not _ot_es_interna(v)
+    if (_gate_on and not _interna_cierre
             and _cob_cierre == "cobra"
+            and _via_cierre != "autorizacion_cerrar"   # 2026-10-07: autorizada a cerrar sin documento: no hay cobro que declarar
             and not (_ot_finanzas(v)["cobre"]["total"] > 0)):
         return jsonify({
             "ok": False,
             "error_codigo": "SIN_VALORIZAR",
+            "accion": _ot_cierre_accion("SIN_VALORIZAR", vid),
             "error": "Falta declarar cuánto se le cobró al cliente (la línea de servicio del documento, "
                      "o escrito a mano con su motivo) antes de firmar el cierre: decláralo en la tarjeta "
                      "Finanzas de la OT. Un estimado o un valorizado no cuentan como cobro. Si no se le "
@@ -113746,11 +115688,12 @@ def mant_ot_aprobar_cierre(vid):
     # activo) -- si esto traba a alguien de madrugada, Daniel lo apaga desde
     # /mantenciones/configuracion sin necesitar un deploy. Trabajo interno
     # queda exento, igual que el gate de factura.
-    if (_gate_on and not _ot_es_interna(v)
+    if (_gate_on and not _interna_cierre
             and not (v.get("centro_costo") or "").strip()):
         return jsonify({
             "ok": False,
             "error_codigo": "SIN_CENTRO_COSTO",
+            "accion": _ot_cierre_accion("SIN_CENTRO_COSTO", vid),
             "error": "Falta declarar el centro de costo de esta OT antes de firmar el cierre.",
         }), 400
     # 🔒 2026-09-03 (Daniel, textual): "necesito cerrar cuanto me cobro el
@@ -113776,10 +115719,11 @@ def mant_ot_aprobar_cierre(vid):
     # Mismo kill-switch que los otros dos (ot_factura_gate_activo): si esto
     # traba a alguien, Daniel lo apaga desde /mantenciones/configuracion sin
     # esperar un deploy.
-    if _gate_on and not _ot_es_interna(v) and v.get("costo_proveedor") is None:
+    if _gate_on and not _interna_cierre and v.get("costo_proveedor") is None:
         return jsonify({
             "ok": False,
             "error_codigo": "SIN_COSTO_PROVEEDOR",
+            "accion": _ot_cierre_accion("SIN_COSTO_PROVEEDOR", vid),
             "error": "Falta declarar cuánto nos cobró el técnico o proveedor. "
                      "Sin ese dato el margen de la OT queda inflado y el "
                      "informe de resultados sale mal.",
@@ -113795,7 +115739,7 @@ def mant_ot_aprobar_cierre(vid):
     # ese monto, se exige uno nuevo antes de poder cerrar -- garantía y
     # trabajo interno quedan exentos (mismo criterio que los gates de
     # arriba: ahí no hay proveedor externo al que pagarle distinto).
-    if _gate_on and not _ot_es_interna(v) and _mod_cobro not in ("garantia", "sin_costo"):
+    if _gate_on and not _interna_cierre and _mod_cobro not in ("garantia", "sin_costo"):
         try:
             _v_ext_cierre = mysql_fetchone(
                 "SELECT COALESCE(au.role,'') AS rol_tec, "
@@ -113828,6 +115772,7 @@ def mant_ot_aprobar_cierre(vid):
                         return jsonify({
                             "ok": False,
                             "error_codigo": "ANEXO_DESACTUALIZADO",
+            "accion": _ot_cierre_accion("ANEXO_DESACTUALIZADO", vid),
                             "error": (
                                 f"Lo que se le paga al proveedor cambió desde que firmó el Anexo N° "
                                 f"{_anx_firmado_cierre.get('numero')} (firmó ${_monto_anexo_cierre:,.0f}, "
@@ -113859,8 +115804,9 @@ def mant_ot_aprobar_cierre(vid):
     # siempre recibe factura por OT -- para esos, la nota de venta SÍ cierra,
     # sin necesitar superadmin. El resto de clientes sigue exactamente igual.
     _cliente_acepta_nvv = (v.get("cliente_tipo") or "").strip().lower() in ("arriendo", "leasing")
-    if (_gate_on and not _ot_es_interna(v) and not _cliente_acepta_nvv
+    if (_gate_on and not _interna_cierre and not _cliente_acepta_nvv
             and not _exenta_doc_cliente   # 2026-10-07: + mantención de contrato real (ver SIN_FACTURA)
+            and _via_cierre not in ("autorizacion_cerrar", "cobro_cero", "contrato_real", "documento")
             and ((v.get("factura_tido") or "").upper() in _OT_DOCS_NOTA_VENTA)):
         _u_cierre = getattr(g, "user", None) or {}
         _es_superadmin_cierre = (_u_cierre.get("role") or "").lower() == "superadmin"
@@ -113868,6 +115814,7 @@ def mant_ot_aprobar_cierre(vid):
             return jsonify({
                 "ok": False,
                 "error_codigo": "SOLO_NOTA_VENTA",
+            "accion": _ot_cierre_accion("SOLO_NOTA_VENTA", vid),
                 "error": f"Esta OT solo tiene una nota de venta asociada "
                          f"({v.get('factura_tido')} {v.get('factura_nudo')}) -- eso "
                          f"es una promesa de cobro, no un cobro. Asocia la factura o "
@@ -113979,6 +115926,53 @@ def mant_ot_aprobar_cierre(vid):
         return jsonify({"ok": True, "estado": "cerrada"})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+def _ot_doc_registrar_fila(vid, tipo_real, numero_real, monto, rut, rut_ok, justif, fecha, doc_previo,
+                           es_nota_venta=False, estado_ot=None, usuario=None):
+    """🔏 2026-10-07 — asociar-factura deja su fila en mant_visita_documentos (sin pisar las anteriores). Si el
+    principal anterior era una nota de venta y llega una factura/boleta, la nota queda dada de baja por ella
+    (reemplazado_por_id) y deja de ser principal; las dos siguen visibles. En una OT cerrada queda constancia en
+    mant_logs (solo se completan documentos). Nunca lanza."""
+    usuario = usuario or current_username() or "sistema"
+    try:
+        ya = mysql_fetchone("SELECT id FROM mant_visita_documentos WHERE visita_id=%s AND origen='erp' "
+                            "  AND erp_tido=%s AND TRIM(LEADING '0' FROM erp_nudo)=TRIM(LEADING '0' FROM %s) LIMIT 1",
+                            (vid, tipo_real, str(numero_real)[:30]))
+        if not ya:
+            mysql_execute("UPDATE mant_visita_documentos SET es_principal=0 WHERE visita_id=%s AND es_principal=1", (vid,))
+            mysql_execute(
+                "INSERT INTO mant_visita_documentos (visita_id, origen, es_cobro, es_principal, erp_tido, erp_nudo, "
+                "  monto, rut, rut_ok, rut_justif, emitido_el, asociado_por, cuenta) "
+                "VALUES (%s,'erp',1,1,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (vid, tipo_real, str(numero_real)[:30], monto, (str(rut or "")[:20] or None),
+                 (1 if rut_ok else 0), (justif or None), (_erp_fecha_a_date(fecha) if fecha else None), usuario,
+                 ("nota_venta" if es_nota_venta else "servicio")))
+            ya = mysql_fetchone("SELECT id FROM mant_visita_documentos WHERE visita_id=%s AND erp_tido=%s AND erp_nudo=%s "
+                                " ORDER BY id DESC LIMIT 1", (vid, tipo_real, str(numero_real)[:30]))
+        nuevo_id = (ya or {}).get("id")
+        if nuevo_id and not es_nota_venta and tipo_real in _OT_DOCS_COBRO:
+            _nvs = ",".join(["%s"] * len(_OT_DOCS_NOTA_VENTA))
+            mysql_execute(f"UPDATE mant_visita_documentos SET reemplazado_por_id=%s, es_principal=0 "
+                          f" WHERE visita_id=%s AND origen='erp' AND erp_tido IN ({_nvs}) AND reemplazado_por_id IS NULL AND id<>%s",
+                          (nuevo_id, vid) + tuple(_OT_DOCS_NOTA_VENTA) + (nuevo_id,))
+            _pt = (str((doc_previo or {}).get("factura_tido") or "")).upper()
+            _pn = str((doc_previo or {}).get("factura_nudo") or "")
+            if _pt in _OT_DOCS_NOTA_VENTA and _pn and not mysql_fetchone(
+                    "SELECT id FROM mant_visita_documentos WHERE visita_id=%s AND erp_tido=%s AND erp_nudo=%s LIMIT 1",
+                    (vid, _pt, _pn[:30])):
+                # La nota de venta vivía solo en mant_visitas.factura_*: queda como fila dada de baja.
+                mysql_execute(
+                    "INSERT INTO mant_visita_documentos (visita_id, origen, es_cobro, es_principal, erp_tido, erp_nudo, "
+                    "  asociado_por, cuenta, reemplazado_por_id) VALUES (%s,'erp',1,0,%s,%s,%s,'nota_venta',%s)",
+                    (vid, _pt, _pn[:30], usuario, nuevo_id))
+                _mant_log("visita", vid, "nota_venta_reemplazada",
+                          f"{_pt} {_pn} dada de baja por {tipo_real} {numero_real} (las dos quedan visibles)")
+        if (estado_ot or "") in ("cerrada", "completada"):
+            _mant_log("visita", vid, "documento_en_ot_cerrada",
+                      f"{tipo_real} {numero_real} ligado con la OT {estado_ot}: solo documentos/finanzas, sin tocar estado ni firmas")
+    except Exception as e:
+        print(f"[ot_docs] registrar fila vid={vid} {tipo_real} {numero_real}: {type(e).__name__}: {e}", flush=True)
 
 
 def _rut_analisis_comparacion(rut_cliente, rut_factura):
@@ -114175,6 +116169,16 @@ def mant_ot_declarar_cobertura(vid):
         return jsonify({"ok": False, "error": "No se pudo mapear la cobertura"}), 400
 
     _gar_efectiva = (cobertura.get("modalidad_cobro") == "garantia")
+    # 🔏 2026-10-07 (Daniel: "TODO $0 pasa por Daniel… motivo + argumento (mínimo 30) + autorización de un
+    # superadmin"): declarar la garantía por acá crea la solicitud 'cobro_cero' (202, la OT sigue cobrándose) salvo
+    # que lo declare el superadministrador, que queda registrado como autorización. Ver _ot_cobro_cero_desde_peticion.
+    if _gar_efectiva and (v.get("modalidad_cobro") or "") != "garantia":
+        _d_cob = dict(d)
+        _d_cob.setdefault("cobro_cero_motivo", "garantia")
+        _d_cob.setdefault("cobro_cero_argumento", motivo)
+        _resp_cob, _aid_cob = _ot_cobro_cero_desde_peticion(vid, _d_cob, origen="declarar cobertura")
+        if _resp_cob is not None:
+            return _resp_cob
     _doc_previo = ""
     if v.get("factura_nudo"):
         _doc_previo = f"{v.get('factura_tido') or 'FCV'} {v.get('factura_nudo')}"
@@ -114366,8 +116370,12 @@ def mant_ot_asociar_factura(vid):
     # propósito (candado maestro, ya pasó _puede_ot_accion arriba).
     _u_req = getattr(g, "user", None) or {}
     _es_superadmin_req = (_u_req.get("role") or "").lower() == "superadmin"
+    # 🔏 2026-10-07 (Daniel, decisión 6 -- bandeja Regularizar): ligar la factura debe funcionar con la OT
+    # pendiente, firmada, completada o cerrada (solo se completan documentos: estado, firmas y fechas no se tocan;
+    # queda constancia en mant_logs). Solo cancelada/anulada quedan fuera.
     _where_lock = "" if _es_superadmin_req else (
-        " AND estado NOT IN ('completada','cerrada','cancelada','anulada')")
+        " AND estado NOT IN ('cancelada','anulada')")
+    _doc_previo_af = mysql_fetchone("SELECT factura_tido, factura_nudo, estado FROM mant_visitas WHERE id=%s", (vid,)) or {}
     try:
         _n_upd = mysql_execute_returning_rowcount(
             "UPDATE mant_visitas SET factura_tido=%s, factura_nudo=%s, "
@@ -114407,6 +116415,13 @@ def mant_ot_asociar_factura(vid):
                      "actual e inténtalo de nuevo.",
         }), 409
 
+    # 🔏 2026-10-07 (Daniel: "todos los documentos deben estar declarados en la OT que ya es multidocumentos"):
+    # el documento también queda como fila en mant_visita_documentos (antes solo sobrescribía el principal) y el
+    # anterior se CONSERVA: si era una nota de venta y esto es la factura, la nota queda «dada de baja» por ella
+    # (reemplazado_por_id), visible, sin borrar nada.
+    _ot_doc_registrar_fila(vid, _tipo_real, _numero_real, _monto, rut_fact, analisis.get("match"), justif,
+                           doc.get("fecha"), _doc_previo_af, es_nota_venta=_es_nota_venta,
+                           estado_ot=_doc_previo_af.get("estado"))
     _mant_log("visita", vid, "factura_asociada",
               f"{tipo} {numero} · ${_monto or 0:,.0f} · "
               + ("NOTA DE VENTA (aún facturable) · " if _es_nota_venta else "")
@@ -124061,20 +126076,35 @@ def mant_intel_accion(cid):
             # cerca del cierre/pago que una 'programada', así que el hueco era
             # más grave todavía.
             _rv_cob = _pl_cobertura_contrato(cid)
+            # 🔏 2026-10-07 — LA PUERTA DEL DOCUMENTO: con contrato REAL pasa (el contrato es el documento);
+            # sin él, documento validado del body o autorización de Daniel; si no, 409 DOC_REQUERIDO.
+            _puerta_rv = _ot_puerta_desde_body(d, cid, "preventiva", contrato_id=_rv_cob.get("contrato_id"))
+            if not _puerta_rv["ok"]:
+                return _ot_puerta_respuesta(_puerta_rv)
             # 💰 2026-10-07: el valor por visita ya no va a `costo` -- ver _pl_cobertura_contrato.
-            mysql_execute(
-                "INSERT INTO mant_visitas (cliente_id, contrato_id, titulo, tipo, estado, "
-                " fecha_programada, fecha_realizada, es_retroactiva, cubierto_por, "
-                " centro_costo, garantia_motivo, zz_monto, valor_origen, valorizado_clp, valorizado_fuente, "
-                " costo, created_by, created_by_user_id) "
-                "VALUES (%s,%s,%s,'preventiva','completada',%s,%s,1,%s,'sstt',%s,%s,%s,%s,%s,%s,%s,%s)",
-                (cid, _rv_cob["contrato_id"], "Mantención preventiva (registro retroactivo)",
-                 fecha, fecha, _rv_cob["cubierto_por"], _rv_cob["motivo"],
-                 _rv_cob["zz_monto"], _rv_cob["valor_origen"],
-                 _rv_cob["valorizado_clp"], _rv_cob["valorizado_fuente"],
-                 # 2026-10-07 (integración fin-paso3): `costo` = espejo de lo cobrado (solo sin contrato real).
-                 _pl_costo_espejo(_rv_cob),
-                 current_username(), uid))
+            _conn_rv = get_mysql()
+            try:
+                _conn_rv.autocommit(False)
+                _cur_rv = _conn_rv.cursor()
+                _cur_rv.execute(
+                    "INSERT INTO mant_visitas (cliente_id, contrato_id, titulo, tipo, estado, "
+                    " fecha_programada, fecha_realizada, es_retroactiva, cubierto_por, "
+                    " centro_costo, garantia_motivo, zz_monto, valor_origen, valorizado_clp, valorizado_fuente, "
+                    " costo, created_by, created_by_user_id) "
+                    "VALUES (%s,%s,%s,'preventiva','completada',%s,%s,1,%s,'sstt',%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (cid, _rv_cob["contrato_id"], "Mantención preventiva (registro retroactivo)",
+                     fecha, fecha, _rv_cob["cubierto_por"], _rv_cob["motivo"],
+                     _rv_cob["zz_monto"], _rv_cob["valor_origen"],
+                     _rv_cob["valorizado_clp"], _rv_cob["valorizado_fuente"],
+                     # 2026-10-07 (integración fin-paso3): `costo` = espejo de lo cobrado (solo sin contrato real).
+                     _pl_costo_espejo(_rv_cob),
+                     current_username(), uid))
+                _ot_puerta_aplicar(_cur_rv, _cur_rv.lastrowid, _puerta_rv, fin_argumento=d.get("cobro_cero_argumento"))
+                _conn_rv.commit()
+            except Exception:
+                try: _conn_rv.rollback()
+                except Exception: pass
+                raise
         elif accion == "set_campo_cliente":
             campo = (d.get("campo") or "").strip()
             valor = (d.get("valor") or "").strip()
@@ -124121,12 +126151,27 @@ def mant_intel_accion(cid):
             uid = None
             try: uid = (g.user or {}).get("id")
             except Exception: uid = None
-            mysql_execute(
-                "INSERT INTO mant_visitas (cliente_id, contrato_id, titulo, tipo, estado, "
-                " fecha_programada, cubierto_por, created_by, created_by_user_id) "
-                "VALUES (%s,%s,%s,'preventiva','programada',%s,'contrato',%s,%s)",
-                (cid, _intel_contrato_id(cid), "Mantención preventiva (agendada por el Agente)",
-                 fecha, current_username(), uid))
+            # 🔏 2026-10-07 — LA PUERTA DEL DOCUMENTO: igual que registrar_visita_retro.
+            _ctid_prog = _intel_contrato_id(cid)
+            _puerta_pr = _ot_puerta_desde_body(d, cid, "preventiva", contrato_id=_ctid_prog)
+            if not _puerta_pr["ok"]:
+                return _ot_puerta_respuesta(_puerta_pr)
+            _conn_pr = get_mysql()
+            try:
+                _conn_pr.autocommit(False)
+                _cur_pr = _conn_pr.cursor()
+                _cur_pr.execute(
+                    "INSERT INTO mant_visitas (cliente_id, contrato_id, titulo, tipo, estado, "
+                    " fecha_programada, cubierto_por, created_by, created_by_user_id) "
+                    "VALUES (%s,%s,%s,'preventiva','programada',%s,'contrato',%s,%s)",
+                    (cid, _ctid_prog, "Mantención preventiva (agendada por el Agente)",
+                     fecha, current_username(), uid))
+                _ot_puerta_aplicar(_cur_pr, _cur_pr.lastrowid, _puerta_pr, fin_argumento=d.get("cobro_cero_argumento"))
+                _conn_pr.commit()
+            except Exception:
+                try: _conn_pr.rollback()
+                except Exception: pass
+                raise
         elif accion == "descartar_consulta":
             # No persiste nada — solo señal al frontend de que la tarjeta se ocultó.
             # Devolver sin intel evita que el re-render la reactive en esta sesión.
@@ -124194,6 +126239,11 @@ def mant_reglas_guardar():
     actualizadas = 0
     try:
         for clave, valor in cambios.items():
+            # 🔏 2026-10-07 (atajo del mapa): apagar el candado de documento al cerrar la OT es decisión de Daniel.
+            # Un admin ya no puede tocar este interruptor (los demás siguen igual).
+            if clave == "ot_factura_gate_activo" and not _ot_aut_es_superadmin():
+                return jsonify({"error": "Solo el superadministrador puede cambiar el candado de documento al cerrar la OT.",
+                                "error_codigo": "SOLO_SUPERADMIN", "clave": clave}), 403
             r = mysql_fetchone("SELECT tipo_dato, min_val, max_val FROM mant_reglas_negocio WHERE clave=%s", (clave,))
             if not r:
                 continue
@@ -124605,6 +126655,17 @@ def mant_planificador_generar_ots():
                     # Servicio Técnico). Ver _pl_cobertura_contrato() (REGLA #4,
                     # mismo criterio que registrar_visita_retro).
                     _pl_cob = _pl_cobertura_contrato(cid)
+                    # 🔏 2026-10-07 — LA PUERTA DEL DOCUMENTO para los masivos: el Plan Anual solo crea OT de
+                    # un contrato REAL (el contrato es el documento). Sin contrato real, la OT se omite y se
+                    # informa (DOC_REQUERIDO): esa mantención se crea a mano con su documento o autorización.
+                    _p_plan = _ot_puerta_documento_eval({"cliente_id": cid, "tipo": "preventiva",
+                                                         "contrato_id": _pl_cob.get("contrato_id"),
+                                                         "contrato_real": bool(_pl_cob.get("contrato_real"))}, "crear")
+                    if not _p_plan["ok"]:
+                        omitidas.append({"cliente_id": cid, "razon_social": cand["razon_social"],
+                                         "motivo": "sin contrato real: necesita documento o autorización de Daniel",
+                                         "error_codigo": "DOC_REQUERIDO"})
+                        continue
                     # 💰 2026-10-07: el valor por visita ya no va a `costo` -- con contrato real es cuánto
                     # VALE (valorizado, no se cobra); sin contrato es el precio acordado que se cobra
                     # (zz_monto, valor_origen 'contrato'). Ver _pl_cobertura_contrato.
@@ -138219,6 +140280,9 @@ def _ot_crear_visita_espejo(conn, cur, cid, tipo_ot, tarea_tipo, titulo, notas, 
             _visita_vals_base
         )
     visita_id = cur.lastrowid
+    # 🔏 2026-10-07 — constancia de la puerta (ver _mant_lev_crear_ot_core / _ot_puerta_aplicar).
+    if (fin_campos or {}).get("_puerta"):
+        _ot_puerta_aplicar(cur, visita_id, fin_campos["_puerta"], fin_argumento=fin_campos.get("cobro_cero_argumento"))
     if lev_id:
         cur.execute("UPDATE mant_levantamientos SET visita_id=%s WHERE id=%s", (visita_id, lev_id))
 
@@ -138403,6 +140467,21 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
             "error": _fin_err["error"],
             "error_codigo": _fin_err["error_codigo"],
         }, 400
+    # 🔏 2026-10-07 — LA PUERTA DEL DOCUMENTO, también para la OT espejo del levantamiento y la que nace de un
+    # Ticket (mismo núcleo). Un levantamiento nace en $0 (regalía) y, como todo $0, pasa por Daniel: sin
+    # documento ni autorización no nace. El resultado viaja en fin_campos['_puerta'] hasta el INSERT del espejo.
+    _fin_campos = dict(_fin_campos)
+    if tipo_ot == "levantamiento" and not _fin_campos.get("cobro_cero_motivo") and not _fin_campos.get("documentos_validados") \
+            and not (data.get("finanzas") or {}).get("documentos"):
+        _fin_campos["cobro_cero_motivo"] = (data.get("finanzas") or {}).get("cobro_cero_motivo") or "regalia"
+    _puerta_lev = _ot_puerta_documento(_ot_puerta_payload_desde_campos(
+        _fin_campos, cid, tipo_ot, cliente_rut=_cliente_rut_lev,
+        modalidad=("sin_costo" if tipo_ot == "levantamiento" else ("garantia" if aplica_garantia else None))), "crear")
+    if not _puerta_lev["ok"]:
+        return {"ok": False, "error": _puerta_lev["mensaje"], "error_codigo": _puerta_lev["code"],
+                "accion": _puerta_lev["accion"], "autorizacion_id": _puerta_lev.get("autorizacion_id")}, 409
+    _puerta_lev["docs_ya_guardados"] = True
+    _fin_campos["_puerta"] = _puerta_lev
 
     # 2026-08-13 (Daniel, en vivo: "no quiero nada automático, todo lo debe
     # escoger el usuario y si no escoge no lo debe dejar avanzar"): valida
@@ -139635,6 +141714,28 @@ def mant_lev_cerrar(lid):
         return _lev_403_response("ejecutar")
     if lev["estado"] == "cerrado":
         return jsonify({"ok": False, "error": "Ya estaba cerrado"}), 400
+    # 🔏 2026-10-07 (atajo del mapa): este cierre dejaba la OT espejo 'cerrada' sin finanzas ni documento. Ahora
+    # pasa por LA PUERTA 'cerrar' antes de tocar nada (misma regla que aprobar-cierre, mismo interruptor).
+    if lev.get("visita_id"):
+        try:
+            _v_lev = mysql_fetchone(
+                "SELECT v.id, v.cliente_id, v.tipo, v.modalidad_cobro, v.cubierto_por, v.contrato_id, v.estado, "
+                "       v.cobro_cero_motivo, v.cobro_cero_argumento, v.cobro_cero_autorizacion_id, "
+                "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
+                "  FROM mant_visitas v WHERE v.id=%s", (lev["visita_id"],))
+        except Exception as _e_vl:
+            print(f"[lev_cerrar] puerta vid={lev.get('visita_id')}: {type(_e_vl).__name__}", flush=True)
+            _v_lev = None
+        if _v_lev and (_v_lev.get("estado") or "") not in ("cerrada", "cancelada", "anulada"):
+            try:
+                _gate_lev = bool(_regla_fresca("ot_factura_gate_activo", True))
+            except Exception:
+                _gate_lev = True
+            if _gate_lev:
+                _p_lev = _ot_puerta_documento(dict(_v_lev), "cerrar")
+                if not _p_lev["ok"]:
+                    return _ot_puerta_409(_p_lev, visita_id=lev["visita_id"],
+                                          error="La OT de este levantamiento no se puede cerrar: " + _p_lev["mensaje"])
 
     user = current_username() or 'sistema'
     mysql_execute(
@@ -150481,6 +152582,14 @@ try:
         _ensure_ot_finanzas_correcciones()
 except Exception as _ensure_fc_err:
     print(f"[ILUS][WARN] _ensure_ot_finanzas_correcciones: {_ensure_fc_err}", flush=True)
+
+# 🔏 Autorizaciones remotas de Daniel (documento absoluto), 2026-10-07 — SIEMPRE, incluso con
+# ILUS_SKIP_MIGRATIONS=1: sin la tabla, la puerta y las solicitudes no funcionan.
+try:
+    with app.app_context():
+        _ensure_ot_autorizaciones()
+except Exception as _ensure_oa_err:
+    print(f"[ILUS][WARN] _ensure_ot_autorizaciones: {_ensure_oa_err}", flush=True)
 
 # Multidocumento de la OT (varias facturas + cotizaciones de referencia),
 # Daniel 2026-09-05 — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
