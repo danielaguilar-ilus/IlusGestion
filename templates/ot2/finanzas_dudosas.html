@@ -46,7 +46,10 @@
     <h4><i class="bi bi-cash-coin me-2"></i>OT con finanzas dudosas</h4>
     <div class="sub">De {{ revisadas }} OT completadas o cerradas, {{ total_dudosas }} merecen una revisión. Solo lectura: la corrección se hace dentro de cada OT.</div>
   </div>
-  <a href="{{ url_for('ot2_panel') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Volver a las OT</a>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="/ot/finanzas-modelo" class="btn btn-sm btn-dark"><i class="bi bi-arrow-left-right me-1"></i>Antes y después (cuenta nueva)</a>
+    <a href="{{ url_for('ot2_panel') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Volver a las OT</a>
+  </div>
 </div>
 
 <div class="fd-chips">

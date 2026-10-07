@@ -141,9 +141,18 @@ class TestCorreccion(unittest.TestCase):
         self.assertEqual((http, cuerpo["codigo"]), (400, "SIN_CAMBIOS"))
 
     def test_rechaza_montos_invalidos(self):
-        for malo in ("abc", -5, ""):
+        for malo in ("abc", -5):
             cuerpo, http = _llamar(_ambito(cuerpo={"costo_proveedor": malo, "motivo": "motivo largo suficiente"}))
             self.assertEqual(http, 400, malo)
+
+    def test_vaciar_un_casillero_quita_ese_monto(self):
+        # Daniel, OT-201: el $1 de ZZRETIRO no es un cobro y no se podía borrar
+        amb = _ambito(cuerpo={"zz_monto": "", "motivo": "El $1 es un retiro en bodega, no un cobro del servicio"})
+        cuerpo = _llamar(amb)
+        self.assertTrue(cuerpo["ok"])
+        self.assertEqual(cuerpo["cambios"]["zz_monto"], {"antes": 239200, "despues": None})
+        self.assertTrue(amb["_conn"].log[0][0].startswith("UPDATE mant_visitas SET zz_monto=%s WHERE id=%s"))
+        self.assertEqual(amb["_conn"].log[0][1], (None, 211))
 
     def test_centro_de_costo_inexistente(self):
         cuerpo, http = _llamar(_ambito(cuerpo={"centro_costo": "otro", "motivo": "motivo largo suficiente"}))

@@ -83317,6 +83317,239 @@ def _ot_resultado_financiero(v, rep=None):
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  💰 MODELO ÚNICO DE FINANZAS DE UNA OT — "COBRÉ − ME COBRARON = QUEDA" (+ VALORIZADO aparte)
+#
+#  Daniel, 2026-10-07 (viendo la OT-2026-00201, que mostraba a la vez "Cobramos $200.000 / Queda $0",
+#  "Cobramos $0 / Queda −$200.000" y "$1 ZZRETIRO"): "tenemos que definir cuánto me cobraron, cuánto cobré
+#  yo. Olvidémonos de valorizar de momento el servicio... la tarifa real la podemos colocar como el valorizado
+#  en caso de que sea una garantía... necesito que ya quede completamente entendible y amigable" y "yo ni
+#  entiendo ahora en este minuto el tema de las finanzas".
+#
+#  Decisiones de Daniel (mismo día):
+#   · No se cobra (Cobré = $0) en: garantía, cortesía/sin costo, trabajo interno y mantención de contrato
+#     (OT con contrato_id: la plata del contrato se mide en Vida del cliente, no OT por OT).
+#   · El valorizado (tarifa real) es SUGERIDO, nunca obligatorio, y jamás se suma a lo cobrado.
+#   · Sin línea de servicio útil en el documento, el cobro se escribe a mano con motivo y el total se calcula.
+#   · OT antiguas: el "Precio al cliente" de las que no se cobran se COPIA (sin borrar nada) al valorizado,
+#     y antes de publicar Daniel ve la lista de OT cuyo "Queda" cambia.
+#
+#  Por qué hacía falta: la plata de una OT vivía en tres casilleros que significaban cosas distintas según
+#  quién los escribía (`costo` = precio al cliente / valor de una garantía / estimado interno / valor del
+#  Plan Anual...; `zz_monto` = línea del documento / estimado / cotización / supuesto) y cada pantalla los
+#  sumaba con su propia fórmula (seis distintas para "lo que cobramos"). Esta función es la regla ÚNICA.
+#  `_ot_resultado_financiero` (la cuenta de hoy) NO se toca en esta entrega: se usa como "antes" en la
+#  página de comparación hasta que Daniel apruebe el cambio.
+# ═══════════════════════════════════════════════════════════════════════════
+# Orígenes de zz_monto que son una VALORIZACIÓN (cuánto vale), no un cobro (ver _OT2_VALOR_ORIGENES).
+# 'supuesto' NO está acá a propósito (revisión 2026-10-07): el asistente marca 'supuesto' o 'manual' según si
+# había o no una sugerencia en pantalla, pero en los dos casos una persona escribió cuánto se cobra.
+_OT_FIN_ORIGENES_NO_COBRO = ("estimado", "interno")
+# Rótulo amable de dónde salió lo cobrado por el servicio.
+_OT_FIN_FUENTE_COBRO = {
+    "zz": "línea del documento", "doc_total": "total del documento", "cotizacion": "cotización",
+    "contrato": "precio acordado", "manual": "escrito a mano", "supuesto": "escrito a mano", "": "declarado",
+}
+# Líneas ZZ del ERP que NO son de servicio aunque se puedan elegir (Daniel pidió seguir ofreciéndolas todas):
+# su monto nunca cuenta como cobro del servicio (OT-201: $1 de "Retiro en bodega").
+_OT_FIN_ZZ_NO_SERVICIO = ("ZZRETIRO",)
+_OT_FIN_COBERTURA_TXT = {
+    "cobra": "Se le cobra al cliente",
+    "garantia": "Garantía: no se le cobra",
+    "sin_costo": "Cortesía: no se le cobra",
+    "interno": "Trabajo interno: no se le cobra",
+    "contrato": "Mantención de contrato: se paga con el contrato",
+}
+_OT_FIN_UMBRAL_BAJO = 10   # % -- mismo umbral que ya conoce Daniel ("Margen bajo, menos de 10 %")
+# ¿La OT es una mantención cubierta por un contrato REAL del cliente? (para el SELECT de quien use _ot_finanzas,
+# con la visita como alias `v`). El "Contenedor de documentos" (contrato ficticio que se crea al subir papeles de
+# un cliente sin contrato) NO cuenta. Si la OT apunta a un contrato real, cuenta aunque ya haya vencido; si no
+# apunta a ninguno, cuenta el contrato real vigente del cliente (las preventivas del asistente no guardan
+# contrato_id). El tipo (preventiva) lo decide _ot_cobertura.
+_OT_FIN_SQL_CONTRATO_REAL = (
+    "EXISTS (SELECT 1 FROM mant_contratos ctr WHERE ctr.cliente_id=v.cliente_id "
+    "  AND COALESCE(ctr.nombre,'')<>'Contenedor de documentos' "
+    "  AND (ctr.id=v.contrato_id OR ctr.estado IN ('vigente','por_vencer','indefinido')))")
+
+
+def _ot_cobertura(v):
+    """¿Se le cobra al cliente ESTA OT? Devuelve 'cobra' | 'garantia' | 'sin_costo' | 'interno' | 'contrato'.
+    ÚNICA regla (antes había tres criterios distintos de garantía en el sistema).
+    'contrato' exige la bandera `contrato_real` (ver _OT_FIN_SQL_CONTRATO_REAL), que la OT sea una preventiva y
+    que NO tenga un cobro respaldado por un documento (si se facturó, se cobró)."""
+    v = v or {}
+    mod = (v.get("modalidad_cobro") or "").strip().lower()
+    cub = (v.get("cubierto_por") or "").strip().lower()
+    tipo = (v.get("tipo") or "").strip().lower()
+    if mod == "garantia" or cub == "garantia" or tipo == "garantia":
+        return "garantia"
+    if _ot_es_interna(v):
+        return "interno"
+    if mod == "sin_costo":
+        return "sin_costo"
+    if v.get("contrato_real") and tipo == "preventiva":
+        zz = _ot_fin_num(v.get("zz_monto")) or 0
+        origen = (v.get("valor_origen") or "").strip().lower()
+        if not (zz > 0 and origen in ("zz", "doc_total")):
+            return "contrato"
+    return "cobra"
+
+
+def _ot_fin_num(x):
+    if x is None or x == "":
+        return None
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
+def _ot_fin_clp(n):
+    return "$" + f"{abs(round(n or 0)):,.0f}".replace(",", ".")
+
+
+def _ot_finanzas(v, rep=None):
+    """★ LA cuenta de una OT. Cobré − Me cobraron = Queda, y el Valorizado aparte.
+
+    v: fila de mant_visitas con, al menos: modalidad_cobro, cubierto_por, tipo, cliente_id, contrato_real (ver
+       _OT_FIN_SQL_CONTRATO_REAL), costo, zz_monto, zz_codigo, zz_envio_monto, valor_origen, costo_proveedor,
+       costo_despacho, proveedor_tipo, valorizado_clp, valorizado_fuente (las que falten se tratan como vacías).
+    rep: entrada de _ot_repuestos_desglose para esta OT (repuestos INSTALADOS), o None.
+
+    Reglas (Daniel 2026-10-07):
+      · Cobré = cobro del servicio + cobro del despacho. $0 si la OT no se cobra (_ot_cobertura).
+        El servicio es zz_monto, salvo que sea una valorización (origen estimado/interno) o una línea que no es
+        de servicio (ZZRETIRO). Si no hay zz pero sí un "Precio al cliente" (`costo`), ese cuenta como lo
+        cobrado, marcado "sin separar servicio y despacho" (así se anotaban las OT antiguas y el Plan Anual).
+      · Me cobraron = técnico/proveedor (costo_proveedor) + despacho (costo_despacho) + repuestos instalados.
+        Técnico vacío = falta (salvo trabajo interno hecho por técnicos propios: $0); 0 = declarado. Despacho
+        vacío = $0 (es opcional), salvo que se haya cobrado un despacho: ahí falta su costo.
+      · Queda = Cobré − Me cobraron. En una OT que no se cobra es "lo que nos costó".
+      · Valorizado = solo referencia (valorizado_clp; si está vacío y la OT no se cobra, el "Precio al cliente"
+        o el monto del documento).
+    """
+    v = v or {}
+    rep = rep or {"costo": 0.0, "por_origen": {"bodega": 0.0, "compra": 0.0, "manual": 0.0}, "n_sin_costo": 0}
+    cobertura = _ot_cobertura(v)
+    cobra = cobertura == "cobra"
+    origen = (v.get("valor_origen") or "").strip().lower()
+    zz = _ot_fin_num(v.get("zz_monto"))
+    zz_cod = (v.get("zz_codigo") or "").strip().upper()
+    zz_no_serv = zz_cod in _OT_FIN_ZZ_NO_SERVICIO
+    env = _ot_fin_num(v.get("zz_envio_monto"))
+    tot = _ot_fin_num(v.get("costo"))
+    kI = _ot_fin_num(v.get("costo_proveedor"))
+    kD = _ot_fin_num(v.get("costo_despacho"))
+    if kI is None and cobertura == "interno" and (v.get("proveedor_tipo") or "").strip().lower() != "externo":
+        kI = 0.0   # trabajo interno hecho por técnicos propios: no hay a quién pagarle aparte
+    k_rep = round(float(rep.get("costo") or 0), 2)
+    avisos = []
+
+    # ── COBRÉ ────────────────────────────────────────────────────────────────
+    zz_es_cobro = zz is not None and origen not in _OT_FIN_ORIGENES_NO_COBRO and not zz_no_serv
+    serv, fuente = None, None
+    if zz_es_cobro:
+        serv, fuente = zz, _OT_FIN_FUENTE_COBRO.get(origen, "declarado")
+    elif (zz is None or zz_no_serv) and tot is not None and tot > 0:
+        serv, fuente = max(tot - (env or 0.0), 0.0), "precio al cliente (sin separar servicio y despacho)"
+    if cobra:
+        c_serv = serv or 0.0
+        c_desp = env or 0.0
+        hay_cobro = serv is not None or env is not None
+        if fuente and fuente.startswith("precio al cliente"):
+            avisos.append("El cobro sale del «Precio al cliente» anotado: no separa servicio y despacho.")
+        if zz_es_cobro and tot is not None and tot > 0 and abs(tot - (c_serv + c_desp)) >= 1:
+            avisos.append(f"El «Precio al cliente» anotado ({_ot_fin_clp(tot)}) no coincide con lo cobrado "
+                          f"({_ot_fin_clp(c_serv + c_desp)}): manda lo cobrado.")
+        if zz is not None and zz > 0 and origen in _OT_FIN_ORIGENES_NO_COBRO and serv is None:
+            avisos.append(f"El monto anotado ({_ot_fin_clp(zz)}) es un estimado, no un cobro: "
+                          "falta declarar cuánto se cobró.")
+    else:
+        c_serv = c_desp = 0.0
+        hay_cobro = True
+    if zz_no_serv and zz is not None:
+        avisos.append(f"La línea del documento ({zz_cod}, {_ot_fin_clp(zz)}) no es de servicio: no cuenta como cobro.")
+    cobre_total = round(c_serv + c_desp, 2)
+
+    # ── ME COBRARON ──────────────────────────────────────────────────────────
+    falta_tecnico = kI is None
+    falta_despacho = kD is None and cobra and (env or 0) > 0
+    m_tec = kI or 0.0
+    m_desp = kD or 0.0
+    me_total = round(m_tec + m_desp + k_rep, 2)
+    if int(rep.get("n_sin_costo") or 0):
+        avisos.append(f"{int(rep.get('n_sin_costo'))} repuesto(s) instalado(s) sin costo: no suman.")
+
+    # ── QUEDA ────────────────────────────────────────────────────────────────
+    queda_total = round(cobre_total - me_total, 2)
+    queda_serv = round(c_serv - m_tec, 2)
+    queda_desp = round(c_desp - m_desp, 2)
+    pct = round(queda_total / cobre_total * 100, 1) if (cobra and cobre_total > 0) else None
+
+    # ── ESTADO / SEMÁFORO (en palabras de Daniel) ────────────────────────────
+    mostrar_queda = True
+    if not cobra:
+        if falta_tecnico:
+            clase, label, mostrar_queda = "ambar", "Falta lo que te cobró el técnico", False
+        else:
+            clase, label = "info", f"{_OT_FIN_COBERTURA_TXT[cobertura].split(':')[0]} · nos costó {_ot_fin_clp(me_total)}"
+    elif not hay_cobro:
+        clase, label, mostrar_queda = "gris", "Falta lo que cobraste", False
+    elif falta_tecnico:
+        clase, label, mostrar_queda = "ambar", "Falta lo que te cobró el técnico", False
+    elif falta_despacho:
+        clase, label, mostrar_queda = "ambar", "Falta el costo del despacho", False
+    elif cobre_total <= 0:
+        # Se declaró explícitamente que se cobró $0 en una OT que sí se cobra: es un dato, no un "falta".
+        clase, label = ("rojo", "Cobro declarado en $0") if me_total > 0 else ("gris", "Cobro declarado en $0")
+    elif queda_total < 0:
+        clase, label = "rojo", "Pérdida"
+    elif pct is not None and pct < _OT_FIN_UMBRAL_BAJO:
+        clase, label = "bajo", f"Margen bajo (menos de {_OT_FIN_UMBRAL_BAJO} %)"
+    else:
+        clase, label = "ok", "Margen sano"
+
+    # ── VALORIZADO (solo referencia) ─────────────────────────────────────────
+    val = _ot_fin_num(v.get("valorizado_clp"))
+    val_fuente = (v.get("valorizado_fuente") or "").strip() or None
+    if val is None and not cobra:
+        if tot is not None and tot > 0:
+            val, val_fuente = tot, ("interno" if cobertura == "interno" else "dato_antiguo")
+        elif zz is not None and zz > 1 and not zz_no_serv:
+            val, val_fuente = zz, (origen or "documento")
+    if val is None and cobra and zz is not None and zz > 0 and origen in _OT_FIN_ORIGENES_NO_COBRO:
+        val, val_fuente = zz, origen
+
+    # ── FRASE (lo que lee Daniel de un vistazo) ─────────────────────────────
+    if not cobra and not falta_tecnico:
+        frase = (f"{_OT_FIN_COBERTURA_TXT[cobertura]}. Nos costó {_ot_fin_clp(me_total)}"
+                 + (f" (valorizada en {_ot_fin_clp(val)})" if val else "") + ".")
+    elif mostrar_queda:
+        frase = (f"Cobré {_ot_fin_clp(cobre_total)} − me cobraron {_ot_fin_clp(me_total)} = "
+                 f"{'quedan' if queda_total >= 0 else 'se pierden'} {_ot_fin_clp(queda_total)}"
+                 + (f" ({pct:.1f} %)".replace(".", ",") if pct is not None else "") + ".")
+    else:
+        frase = label + "."
+
+    return {
+        "cobertura": cobertura, "cobertura_txt": _OT_FIN_COBERTURA_TXT[cobertura], "cobra": cobra,
+        "cobre": {"servicio": round(c_serv, 2), "despacho": round(c_desp, 2), "total": cobre_total,
+                  "fuente": fuente if cobra else None, "hay": bool(hay_cobro)},
+        "me_cobraron": {"tecnico": (round(kI, 2) if kI is not None else None),
+                        "despacho": (round(kD, 2) if kD is not None else None),
+                        "repuestos": k_rep, "total": me_total,
+                        "falta_tecnico": falta_tecnico, "falta_despacho": falta_despacho,
+                        "repuestos_sin_costo": int(rep.get("n_sin_costo") or 0),
+                        "repuestos_desglose": rep.get("por_origen") or {"bodega": 0.0, "compra": 0.0, "manual": 0.0}},
+        "queda": {"servicio": queda_serv, "despacho": queda_desp, "repuestos": round(-k_rep, 2),
+                  "total": queda_total, "pct": pct, "mostrar": mostrar_queda},
+        # Lo que se le paga al técnico/proveedor (conciliación con sus facturas): SIN repuestos.
+        "a_pagar_proveedor": round(m_tec + m_desp, 2),
+        "valorizado": {"monto": (round(val, 2) if val is not None else None), "fuente": val_fuente},
+        "clase": clase, "label": label, "frase": frase, "avisos": avisos,
+    }
+
+
 @app.route("/mantenciones/api/clientes/<int:cid>/vida-cliente", methods=["GET"])
 @_mant_required
 @_no_tecnico
@@ -87746,6 +87979,10 @@ def _ensure_ot_finanzas_cols():
         ("zz_envio_motivo_manual", "VARCHAR(500) NULL COMMENT 'Por que zz_envio_monto se declaro/edito a mano'"),
         ("finanzas_at",   "DATETIME NULL COMMENT 'Cuando se declaro la parte financiera'"),
         ("finanzas_por",  "VARCHAR(190) NULL"),
+        # 💰 2026-10-07 (Daniel: "la tarifa real la podemos colocar como el valorizado en caso de que sea una
+        # garantía"): cuánto VALE el servicio, solo como referencia. Nunca se suma a lo cobrado (ver _ot_finanzas).
+        ("valorizado_clp",    "DECIMAL(12,2) NULL COMMENT 'Tarifa real del servicio (referencia, no es cobro)'"),
+        ("valorizado_fuente", "VARCHAR(20) NULL COMMENT 'cotizador|contrato|documento|a_mano|dato_antiguo|estimado|supuesto'"),
     ]
     for _nombre, _ddl in _cols:
         try:
@@ -90332,7 +90569,10 @@ def ot2_api_finanzas_corregir(vid):
             continue
         raw = d.get(campo)
         if raw is None or str(raw).strip() == "":
-            return _ot2_err(f"«{_OT_FIN_CORR_ROT[campo]}»: escribe un monto (0 si no hubo).", "MONTO_VACIO")
+            # 2026-10-07 (Daniel, en la OT-201: "no puedo borrarlo" -- el $1 de ZZRETIRO que no es un cobro):
+            # dejar el casillero VACÍO quita ese monto (queda "sin declarar"). 0 sigue siendo "declarado en cero".
+            nuevos[campo] = None
+            continue
         try:
             val = int(round(float(str(raw).replace(".", "").replace(",", ".") if isinstance(raw, str) else raw)))
         except (TypeError, ValueError):
@@ -90511,6 +90751,170 @@ def ot2_finanzas_dudosas():
     return render_template("ot2/finanzas_dudosas.html", filas=vista, total=total, total_dudosas=total_dudosas,
                            revisadas=len(rows), resumen=sorted(resumen.items(), key=lambda kv: -kv[1]),
                            page=page, paginas=paginas, por=por, filtro=filtro, q=q)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  💰 2026-10-07 — "ANTES Y DESPUÉS" del modelo único de finanzas (solo superadmin)
+#  Daniel aprobó el modelo "Cobré − Me cobraron = Queda (+ Valorizado)" con una condición: "antes de
+#  publicar, muéstrame la lista de OT cuyo Queda cambia, con antes y después". Esta página NO cambia nada:
+#  compara la cuenta que muestran hoy la tarjeta y Vida del cliente (_ot_resultado_financiero) con la nueva
+#  (_ot_finanzas). Desde aquí también se hace la copia aprobada del "Precio al cliente" al Valorizado en las
+#  OT que no se cobran (solo llena un casillero nuevo y vacío; no borra ni pisa nada).
+# ═══════════════════════════════════════════════════════════════════════════
+_OT_FIN_CMP_COLS = (
+    "v.id, v.numero_ot, v.estado, v.tipo, v.cliente_id, v.contrato_id, v.created_at, v.fecha_programada, "
+    "v.costo, v.zz_monto, v.zz_codigo, v.zz_envio_monto, v.valor_origen, v.costo_proveedor, v.costo_despacho, "
+    "v.modalidad_cobro, v.cubierto_por, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, "
+    "c.razon_social AS cliente, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real")
+
+
+def _ot_fin_cmp_cargar(limite=6000):
+    """Todas las OT (más recientes primero) con la cuenta de hoy y la nueva. Solo lectura."""
+    rows = mysql_fetchall(
+        f"SELECT {_OT_FIN_CMP_COLS} FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
+        " WHERE LOWER(COALESCE(v.estado,'')) NOT IN ('cancelada','anulada') "
+        " ORDER BY v.id DESC LIMIT %s", (limite,)) or []
+    # Una sola consulta de repuestos para todo el lote (COALESCE(...) IN no usa índice: mejor UNA pasada).
+    reps = _ot_repuestos_desglose([int(r["id"]) for r in rows]) if rows else {}
+    out = []
+    for r in rows:
+        rep = reps.get(int(r["id"]))
+        hoy = _ot_resultado_financiero(r, rep)
+        nuevo = _ot_finanzas(r, rep)
+        hoy_cobra = float(hoy.get("cobrado") or 0)
+        hoy_queda = hoy.get("margen_clp")
+        nvo_queda = nuevo["queda"]["total"] if nuevo["queda"]["mostrar"] else None
+        if not nuevo["cobra"] and hoy_cobra > 0:
+            cat = "garantia_cobrada"     # hoy se mostraba como cobrado algo que no se cobra
+        elif nuevo["cobra"] and abs(hoy_cobra - nuevo["cobre"]["total"]) >= 1:
+            cat = "cobro_distinto"
+        elif (hoy_queda is None) != (nvo_queda is None) or (
+                hoy_queda is not None and nvo_queda is not None and abs(hoy_queda - nvo_queda) >= 1):
+            cat = "queda_distinto"
+        else:
+            cat = "igual"
+        out.append({
+            "id": int(r["id"]), "numero": r.get("numero_ot") or f"VS-{int(r['id']):05d}",
+            "cliente": r.get("cliente") or "Trabajo interno", "estado": r.get("estado") or "",
+            "tipo": r.get("tipo") or "", "cat": cat,
+            "hoy": {"cobra": hoy_cobra, "cuesta": float(hoy.get("costo_total") or 0), "queda": hoy_queda,
+                    "label": hoy.get("label") or ""},
+            "nuevo": nuevo,
+            "copiable": (not nuevo["cobra"] and r.get("valorizado_clp") is None
+                         and (_ot_fin_num(r.get("costo")) or 0) > 0),
+            "costo": _ot_fin_num(r.get("costo")),
+        })
+    return out, len(rows), len(rows) >= limite
+
+
+_OT_FIN_CMP_CATS = (
+    ("garantia_cobrada", "Hoy aparecen como cobradas y no se cobran"),
+    ("cobro_distinto", "Lo cobrado cambia"),
+    ("queda_distinto", "Solo cambia lo que queda"),
+    ("igual", "No cambian"),
+)
+
+
+@app.route("/ot/finanzas-modelo", methods=["GET"])
+@_mant_required
+def ot2_finanzas_modelo():
+    """Antes y después del modelo único de finanzas. Solo superadmin. No cambia nada."""
+    if not _ot_fin_es_superadmin():
+        return _friendly_error_page("Sin acceso", "Esta comparación es solo para el superadministrador.", 403)
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        por = int(request.args.get("por", 50))
+    except (TypeError, ValueError):
+        por = 50
+    por = por if por in (25, 50, 100, 200) else 50
+    cat = (request.args.get("cat") or "").strip()
+    cob = (request.args.get("cob") or "").strip()
+    q = (request.args.get("q") or "").strip()
+    filas, revisadas, truncado = _ot_fin_cmp_cargar()
+    resumen = {k: 0 for k, _ in _OT_FIN_CMP_CATS}
+    coberturas = {}
+    for f in filas:
+        resumen[f["cat"]] = resumen.get(f["cat"], 0) + 1
+        coberturas[f["nuevo"]["cobertura"]] = coberturas.get(f["nuevo"]["cobertura"], 0) + 1
+    copiables = [f for f in filas if f["copiable"]]
+    vista = filas
+    if cat:
+        vista = [f for f in vista if f["cat"] == cat]
+    else:
+        vista = [f for f in vista if f["cat"] != "igual"]    # por defecto, solo las que cambian
+    if cob:
+        vista = [f for f in vista if f["nuevo"]["cobertura"] == cob]
+    if q:
+        ql = q.lower()
+        vista = [f for f in vista if ql in f["numero"].lower() or ql in (f["cliente"] or "").lower()]
+    total = len(vista)
+    paginas = max(1, (total + por - 1) // por)
+    page = min(page, paginas)
+    return render_template(
+        "ot2/finanzas_modelo.html", filas=vista[(page - 1) * por: page * por], total=total, revisadas=revisadas,
+        resumen=resumen, cats=_OT_FIN_CMP_CATS, coberturas=coberturas, cob_txt=_OT_FIN_COBERTURA_TXT,
+        n_copiables=len(copiables), monto_copiable=sum(f["costo"] or 0 for f in copiables),
+        page=page, paginas=paginas, por=por, cat=cat, cob=cob, q=q, truncado=truncado)
+
+
+@app.route("/ot/api/finanzas-modelo/copiar-valorizado", methods=["POST"])
+@_mant_required
+def ot2_api_finanzas_modelo_copiar():
+    """Copia aprobada por Daniel (2026-10-07): en las OT que NO se cobran (garantía, cortesía, interno,
+    contrato) y que todavía no tienen valorizado, copia su "Precio al cliente" (`costo`) al casillero nuevo
+    `valorizado_clp` con fuente 'dato_antiguo'. Solo llena un casillero vacío: NO borra ni cambia `costo`, ni
+    firmas, ni estado. Deja una línea en la bitácora de cada OT. Exige escribir COPIAR. Solo superadmin."""
+    if not _ot_fin_es_superadmin():
+        return _ot2_err("Solo el superadministrador.", "SOLO_SUPERADMIN", 403)
+    d = request.get_json(silent=True) or {}
+    if (d.get("confirm_text") or "").strip().upper() != "COPIAR":
+        return _ot2_err("Para confirmar, escribe COPIAR.", "CONFIRM_TEXT_NO_COINCIDE")
+    filas, _, _ = _ot_fin_cmp_cargar()
+    candidatas = [f for f in filas if f["copiable"]]
+    quien = current_username() or "?"
+    copiadas, fallidas = 0, 0
+    conn = get_mysql()
+    try:
+        # De a 200 OT por transacción. `updated_at=updated_at`: la copia no debe "tocar" la fecha de
+        # modificación de OT cerradas (la leen la huella del Monitor TV y otros filtros). La bitácora va en la
+        # MISMA transacción: si la copia queda, su constancia también.
+        for i in range(0, len(candidatas), 200):
+            lote = candidatas[i:i + 200]
+            try:
+                with conn.cursor() as cur:
+                    hechas = []
+                    for f in lote:
+                        fuente = "interno" if f["nuevo"]["cobertura"] == "interno" else "dato_antiguo"
+                        cur.execute(
+                            "UPDATE mant_visitas SET valorizado_clp=costo, valorizado_fuente=%s, updated_at=updated_at "
+                            " WHERE id=%s AND valorizado_clp IS NULL AND costo > 0", (fuente, f["id"]))
+                        if cur.rowcount:
+                            hechas.append(f)
+                    if hechas:
+                        cur.executemany(
+                            "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) VALUES (%s,%s,%s,%s,%s)",
+                            [("visita", f["id"], "valorizado_copiado",
+                              f"{quien} copió el «Precio al cliente» ({_ot_fin_clp(f['costo'])}) al Valorizado: "
+                              f"la OT no se cobra ({f['nuevo']['cobertura_txt']}). No se cambió nada más.", quien)
+                             for f in hechas])
+                conn.commit()
+                copiadas += len(hechas)
+            except Exception as e:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                fallidas += len(lote)
+                print(f"[fin-modelo copiar] lote {i}: {type(e).__name__}", flush=True)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return jsonify({"ok": True, "copiadas": copiadas, "fallidas": fallidas, "candidatas": len(candidatas)})
 
 
 @app.route("/ot/api/finanzas/<int:vid>", methods=["GET", "POST"])
@@ -115516,7 +115920,8 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
                    "cubierto_por", "garantia_motivo",
                    "factura_tido", "factura_nudo",
                    "valor_origen", "estado_facturacion",
-                   "finanzas_at", "finanzas_por"):
+                   "finanzas_at", "finanzas_por",
+                   "valorizado_clp", "valorizado_fuente"):   # 2026-10-07: el valorizado tampoco es del cliente
             ctx["visita"].pop(_k, None)
     return ctx, "ok", []
 

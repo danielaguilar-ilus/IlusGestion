@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Finanzas de OT · antes y después · ILUS Fitness{% endblock %}
+
+{#
+  💰 2026-10-07 (Daniel aprobó "Cobré − Me cobraron = Queda (+ Valorizado)" con la condición de ver ANTES la
+  lista de OT cuyo Queda cambia). Solo superadmin. Esta página NO cambia ninguna pantalla ni ningún número:
+  compara la cuenta de hoy (tarjeta de la OT / Vida del cliente) con la nueva. El único botón que escribe es
+  "Copiar al Valorizado" (aprobado por Daniel): llena un casillero nuevo y vacío, no borra ni pisa nada.
+  Pagina como Etiquetas (REGLA #4.3).
+#}
+
+{% macro plata(n) -%}
+  {%- if n is none -%}<span class="fm-nd">—</span>
+  {%- else -%}{{ '−' if n < 0 }}${{ '{:,.0f}'.format((n if n >= 0 else -n)).replace(',', '.') }}{%- endif -%}
+{%- endmacro %}
+
+{% block content %}
+<style>
+.fm-intro{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px 16px;margin-bottom:14px;font-size:.88rem;color:#374151}
+.fm-intro b{color:#0a0a0a}
+.fm-ec{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 0}
+.fm-ec span{background:#f3f4f6;border-radius:10px;padding:8px 12px;font-weight:800;font-size:.82rem}
+.fm-ec span i{font-style:normal;color:#6b7280;font-weight:600}
+.fm-chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px}
+.fm-chip{display:inline-flex;align-items:center;gap:7px;border:1px solid #e5e7eb;background:#fff;color:#374151;border-radius:999px;
+  padding:7px 13px;font-size:.8rem;font-weight:800;text-decoration:none;min-height:40px}
+.fm-chip b{font-variant-numeric:tabular-nums;color:#dc2626}
+.fm-chip.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}.fm-chip.on b{color:#fff}
+.fm-copia{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;background:#eff6ff;border:1px solid #bfdbfe;
+  border-radius:14px;padding:12px 16px;margin:0 0 14px;color:#1e3a8a;font-size:.86rem}
+.fm-copia button{min-height:44px;border:0;border-radius:10px;background:#1d4ed8;color:#fff;font-weight:800;padding:0 16px}
+.fm-copia button:disabled{opacity:.5}
+.fm-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
+.fm-bar input,.fm-bar select{font-size:16px;min-height:44px;border:1px solid #d1d5db;border-radius:9px;padding:0 12px}
+.fm-btn{min-height:44px;padding:0 16px;border-radius:9px;border:1px solid #0a0a0a;background:#0a0a0a;color:#fff;font-weight:800;font-size:.85rem}
+.fm-wrap{background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden}
+.fm-t{width:100%;border-collapse:collapse;font-size:.84rem}
+.fm-t th{background:#0a0a0a;color:#fff;padding:9px 10px;text-align:left;font-size:.68rem;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+.fm-t th.g{background:#374151}.fm-t th.n{background:#991b1b}
+.fm-t td{padding:9px 10px;border-bottom:1px solid #f1f5f9;vertical-align:top}
+.fm-t .m{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.fm-t td.hoy{background:#f9fafb;color:#6b7280}
+.fm-t .neg{color:#b91c1c;font-weight:800}.fm-t .pos{color:#15803d;font-weight:800}
+.fm-nd{color:#9ca3af}
+.fm-cob{display:inline-block;border-radius:999px;padding:2px 9px;font-size:.7rem;font-weight:800;white-space:nowrap}
+.fm-cob.cobra{background:#dcfce7;color:#166534}.fm-cob.garantia{background:#dbeafe;color:#1d4ed8}
+.fm-cob.sin_costo,.fm-cob.interno,.fm-cob.contrato{background:#f3f4f6;color:#374151}
+.fm-frase{font-size:.78rem;color:#0a0a0a;font-weight:700;margin-top:3px}
+.fm-av{display:flex;flex-direction:column;gap:3px;margin-top:4px}
+.fm-av span{font-size:.72rem;font-weight:700;color:#92400e;background:#fff8e1;border-radius:6px;padding:2px 8px;width:fit-content}
+.fm-ot{font-weight:900;color:#0a0a0a;text-decoration:none}.fm-ot:hover{color:#dc2626}
+.fm-pie{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:12px 4px}
+.fm-pie a,.fm-pie span.b{min-height:44px;display:inline-flex;align-items:center;padding:0 14px;border:1px solid #d1d5db;border-radius:9px;
+  background:#fff;color:#0a0a0a;font-weight:800;text-decoration:none;font-size:.84rem}
+.fm-pie span.off{opacity:.4}
+@media (max-width:768px){
+  .fm-t thead{display:none}
+  .fm-t,.fm-t tbody,.fm-t tr,.fm-t td{display:block;width:100%}
+  .fm-t tr{border-bottom:8px solid #f3f4f6;padding:8px 4px}
+  .fm-t td{border:0;padding:4px 10px}.fm-t .m{text-align:left}
+  .fm-t td[data-k]::before{content:attr(data-k) ": ";font-size:.66rem;font-weight:800;text-transform:uppercase;color:#6b7280}
+}
+</style>
+
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-arrow-left-right me-2"></i>Finanzas de OT · antes y después</h4>
+    <div class="sub">Revisadas {{ revisadas }} OT{{ ' (las más recientes: hay más)' if truncado }}. Nada de esto cambia todavía lo que se ve en las OT.</div>
+  </div>
+  <a href="{{ url_for('ot2_panel') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Volver a las OT</a>
+</div>
+
+<div class="fm-intro">
+  <b>La cuenta nueva, igual en todas partes:</b>
+  <div class="fm-ec">
+    <span>Cobré <i>lo que le cobraste al cliente</i></span><span>−</span>
+    <span>Me cobraron <i>técnico + despacho + repuestos</i></span><span>=</span>
+    <span>Queda</span>
+    <span>· Valorizado <i>solo referencia, nunca se suma</i></span>
+  </div>
+  <div style="margin-top:8px">Garantía, cortesía, trabajo interno y mantención de contrato: <b>Cobré $0</b> y se muestra cuánto nos costó.</div>
+</div>
+
+<div class="fm-chips">
+  {% for k, t in cats %}
+  <a class="fm-chip{{ ' on' if cat == k or (not cat and k != 'igual' and false) }}" href="?cat={{ k }}&por={{ por }}">{{ t }} <b>{{ resumen.get(k, 0) }}</b></a>
+  {% endfor %}
+  <a class="fm-chip{{ ' on' if not cat }}" href="?por={{ por }}">Todas las que cambian <b>{{ revisadas - resumen.get('igual', 0) }}</b></a>
+</div>
+<div class="fm-chips">
+  {% for k, n in coberturas.items() %}
+  <a class="fm-chip{{ ' on' if cob == k }}" href="?cob={{ k }}{{ '&cat=' ~ cat if cat }}&por={{ por }}">{{ cob_txt[k] }} <b>{{ n }}</b></a>
+  {% endfor %}
+</div>
+
+{% if n_copiables %}
+<div class="fm-copia">
+  <div><i class="bi bi-copy me-1"></i><b>{{ n_copiables }} OT</b> que no se cobran tienen un «Precio al cliente» anotado
+    (en total ${{ '{:,.0f}'.format(monto_copiable).replace(',', '.') }}). Al copiarlo, queda como su <b>Valorizado</b>:
+    no se borra ni se cambia nada más.</div>
+  <button type="button" id="fmCopiar" onclick="fmCopiar({{ n_copiables }})"><i class="bi bi-check2-circle me-1"></i>Copiar al Valorizado</button>
+</div>
+{% endif %}
+
+<form class="fm-bar" method="get">
+  {% if cat %}<input type="hidden" name="cat" value="{{ cat }}">{% endif %}
+  {% if cob %}<input type="hidden" name="cob" value="{{ cob }}">{% endif %}
+  <input type="search" name="q" value="{{ q }}" placeholder="Buscar por N° de OT o cliente" style="min-width:min(320px,100%)">
+  <select name="por" aria-label="OT por página" onchange="this.form.submit()">
+    {% for n in (25, 50, 100, 200) %}<option value="{{ n }}" {{ 'selected' if n == por }}>{{ n }} por página</option>{% endfor %}
+  </select>
+  <button class="fm-btn" type="submit">Buscar</button>
+  {% if q or cat or cob %}<a class="btn btn-sm btn-outline-secondary" style="min-height:44px;display:inline-flex;align-items:center" href="?por={{ por }}">Limpiar</a>{% endif %}
+</form>
+
+<div class="fm-wrap">
+  <table class="fm-t">
+    <thead><tr>
+      <th>OT</th><th>¿Se le cobra?</th>
+      <th class="g m">Hoy: cobramos</th><th class="g m">Hoy: queda</th>
+      <th class="n m">Cobré</th><th class="n m">Me cobraron</th><th class="n m">Queda</th><th class="n m">Valorizado</th>
+    </tr></thead>
+    <tbody>
+    {% for f in filas %}
+      {% set n = f.nuevo %}
+      <tr>
+        <td data-k="OT"><a class="fm-ot" href="/ot/{{ f.id }}">{{ f.numero }}</a>
+          <div class="text-muted" style="font-size:.74rem">{{ f.cliente }} · {{ f.tipo|replace('_',' ') }} · {{ f.estado }}</div>
+          <div class="fm-frase">{{ n.frase }}</div>
+          {% if n.avisos %}<div class="fm-av">{% for a in n.avisos %}<span>{{ a }}</span>{% endfor %}</div>{% endif %}</td>
+        <td data-k="¿Se le cobra?"><span class="fm-cob {{ n.cobertura }}">{{ n.cobertura_txt }}</span></td>
+        <td data-k="Hoy: cobramos" class="m hoy">{{ plata(f.hoy.cobra) }}</td>
+        <td data-k="Hoy: queda" class="m hoy">{% if f.hoy.queda is none %}<span class="fm-nd">{{ f.hoy.label or '—' }}</span>{% else %}{{ plata(f.hoy.queda) }}{% endif %}</td>
+        <td data-k="Cobré" class="m">{{ plata(n.cobre.total) }}</td>
+        <td data-k="Me cobraron" class="m">{{ plata(n.me_cobraron.total) }}</td>
+        <td data-k="Queda" class="m {{ 'neg' if n.queda.total < 0 else 'pos' }}">{% if n.queda.mostrar %}{{ plata(n.queda.total) }}{% else %}<span class="fm-nd">{{ n.label }}</span>{% endif %}</td>
+        <td data-k="Valorizado" class="m">{{ plata(n.valorizado.monto) }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="text-center text-muted" style="padding:28px">No hay OT con ese criterio.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% set desde = ((page - 1) * por + 1) if total else 0 %}
+{% set hasta = [page * por, total]|min %}
+{% set base = '&por=' ~ por ~ ('&cat=' ~ cat if cat else '') ~ ('&cob=' ~ cob if cob else '') ~ ('&q=' ~ q|urlencode if q else '') %}
+<div class="fm-pie">
+  <span>Mostrando {{ desde }}–{{ hasta }} de {{ total }}</span>
+  <div class="d-flex gap-2 align-items-center">
+    {% if page > 1 %}<a href="?page={{ page - 1 }}{{ base }}">Anterior</a>{% else %}<span class="b off">Anterior</span>{% endif %}
+    <span>Página {{ page }} de {{ paginas }}</span>
+    {% if page < paginas %}<a href="?page={{ page + 1 }}{{ base }}">Siguiente</a>{% else %}<span class="b off">Siguiente</span>{% endif %}
+  </div>
+</div>
+
+<script>
+async function fmCopiar(n){
+  const txt = await ilusPrompt({
+    title: 'Copiar al Valorizado',
+    message: 'Se copiará el «Precio al cliente» de ' + n + ' OT que no se cobran a su casillero «Valorizado». No se borra ni se cambia nada más, y queda anotado en cada OT.',
+    sub: 'Para confirmar, escribe <strong>COPIAR</strong>', subHtml: true,
+    placeholder: 'COPIAR', required: true, okLabel: 'Copiar', cancelLabel: 'Cancelar',
+    validate: function(v){ return (v || '').trim().toUpperCase() === 'COPIAR' ? {ok:true} : {ok:false, error:'Escribe COPIAR'}; },
+  });
+  if (!txt) return;
+  const btn = document.getElementById('fmCopiar'); if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/ot/api/finanzas-modelo/copiar-valorizado', {method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({confirm_text: txt})});
+    const d = await r.json().catch(function(){ return {}; });
+    if (!r.ok || !d.ok){ ilusToast(d.error || 'No se pudo copiar.', {type:'error'}); if (btn) btn.disabled = false; return; }
+    await ilusAlert({title: 'Listo', type: 'success',
+      message: 'Se copiaron ' + d.copiadas + ' de ' + d.candidatas + ' OT.' + (d.fallidas ? ' ' + d.fallidas + ' no se pudieron copiar: vuelve a intentarlo.' : '')});
+    location.reload();
+  } catch(e){ ilusToast('Error de conexión. Inténtalo de nuevo.', {type:'error'}); if (btn) btn.disabled = false; }
+}
+</script>
+{% endblock %}

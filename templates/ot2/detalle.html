@@ -7062,7 +7062,7 @@ async function otdFinCorrGuardar(){
   var body = {motivo: motivo};
   ['zz_monto','zz_envio_monto','costo_proveedor','costo_despacho'].forEach(function(k){
     var v = _otdFcNum('otdFc_' + k);
-    if (v !== null) body[k] = v;
+    body[k] = v;   // 2026-10-07: vacío = quitar ese monto (antes un casillero vacío no se enviaba y no se podía borrar)
   });
   body.centro_costo = document.getElementById('otdFc_centro_costo').value;
   var btn = document.getElementById('otdFcBtn'); btn.disabled = true;
