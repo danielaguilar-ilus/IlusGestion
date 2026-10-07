@@ -58,6 +58,8 @@
 #}
 
 {% block content %}
+{#- 💰 2026-10-07 — "$1.234.567" (y "−$…" si es negativo) para la cuenta única de finanzas. -#}
+{% macro _fclp(n) %}{% if (n or 0) < 0 %}−{% endif %}${{ '{:,.0f}'.format(((n or 0)|float)|abs)|replace(',', '.') }}{% endmacro %}
 {# 🆕 2026-08-28 (Daniel, 2do pedido del mismo tema hoy: "que se pueda
    realizar la firma... que firme el técnico, después el cliente, se pueda
    enviar por correo o WhatsApp... y que declaren la finanza al aprobar").
@@ -549,6 +551,39 @@
 .otd-fchip.sem-rojo{background:#fee2e2;color:#991b1b}
 .otd-fchip.sem-gris{background:#f3f4f6;color:#4b5563}
 .otd-fin-faltan{margin:0 0 10px}
+/* 💰 2026-10-07 — modelo único "Cobré − Me cobraron = Queda" (+ Valorizado
+   aparte). Chip de cobertura ("¿se le cobra?"); "Nos costó" en AZUL
+   informativo en las OT que no se cobran (garantía, cortesía, interno,
+   contrato: no es una pérdida roja); la frase de la cuenta; los avisos de los
+   documentos y el valorizado (solo referencia, nunca se suma a lo cobrado). */
+.otd-fbar[data-sem="info"]{border-left-color:#3b82f6}
+.otd-fbar-cell.sem-info{background:#dbeafe;color:#1e3a8a}
+.otd-fchip.sem-info{background:#dbeafe;color:#1e3a8a}
+.otd-fchip.cob-si{background:#f3f4f6;color:#374151;border-color:#e5e7eb}
+.otd-fchip.cob-no{background:#dbeafe;color:#1e3a8a;border-color:#bfdbfe}
+.otd-fbar-cob{display:flex;flex-wrap:wrap;gap:6px;padding:9px 10px 0}
+.otd-fbar-frase{margin:0;padding:0 12px 10px;font-size:.8rem;font-weight:700;color:#374151;line-height:1.4;
+  overflow-wrap:anywhere}
+.otd-fbar-frase:empty{display:none}
+.otd-fdet-row .info{color:#1d4ed8}
+.otd-fres-frase .b{color:#1d4ed8}
+.otd-zz-avisos{margin:8px 0 0;padding:0 0 0 18px;font-size:.76rem;font-weight:600;color:#92400e;line-height:1.45}
+.otd-zz-avisos li{margin:2px 0;overflow-wrap:anywhere}
+.otd-zz-tag{display:inline-block;font-size:.64rem;font-weight:800;color:#92400e;background:#fff8e1;
+  border:1px solid #fcd34d;border-radius:999px;padding:0 7px;margin-left:4px;vertical-align:1px}
+.otd-fnocobra{border:1px solid #bfdbfe;background:#eff6ff;color:#1e3a8a;border-radius:12px;padding:10px 12px;
+  font-size:.82rem;line-height:1.45}
+.otd-fnocobra .big{display:block;font-size:1.02rem;font-weight:900;margin-bottom:3px}
+.otd-fval{margin-top:10px}
+.otd-fval-abrir{min-height:44px;border:1.5px dashed #cbd5e1;background:#fff;color:#374151;border-radius:10px;
+  padding:0 14px;font-size:.8rem;font-weight:800;display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.otd-fval-abrir:hover{border-color:#3b82f6;color:#1d4ed8}
+.otd-fm-row.otd-fval-row{border-style:dashed;background:#f8fafc}
+.otd-fval-row .otd-fm-refs{font-size:.7rem;color:#475569}
+/* "Total al cliente" ya no se escribe: es la suma (se ve como lo que es). */
+#otdFinCosto[readonly]{background:#1f2937;color:#fff;border-color:#4b5563;cursor:default}
+#otdFinCosto[readonly]:focus{box-shadow:none;border-color:#4b5563}
+.otd-fcotiz-usar.otd-fcotiz-val{background:#fff;color:#1d4ed8;border:1.5px solid #3b82f6}
 
 /* ── Pasos de Finanzas (mismo .otd-fpaso de siempre, marcado por data-paso) ── */
 #otdCardFinanzas .otd-fpaso[data-paso] > .hd{font-size:.86rem;padding:10px 12px}
@@ -700,6 +735,9 @@
   .otd-fbar[data-sem="verde"] .otd-fbar-eq{border-left-color:#16a34a}
   .otd-fbar[data-sem="ambar"] .otd-fbar-eq{border-left-color:#f59e0b}
   .otd-fbar[data-sem="rojo"] .otd-fbar-eq{border-left-color:#dc2626}
+  .otd-fbar[data-sem="info"] .otd-fbar-eq{border-left-color:#3b82f6}
+  .otd-fbar-cob{padding:10px 2px 0}
+  .otd-fbar-frase{padding:6px 2px 0}
   .otd-fbar-cuenta{flex:1 1 0;gap:2px;flex-wrap:nowrap}
   .otd-fbar-cell{flex:1 1 0;min-width:0;padding:3px 5px;border-radius:8px}
   .otd-fbar-cell.q{flex-grow:1.2}
@@ -3093,7 +3131,25 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
          era el número principal y en la OT-249 mostraba $959.000 cuando el
          servicio era $252.101 -- tres "cobros" distintos en una pantalla.
          .in usa column-reverse: .sub va primero para quedar abajo. #}
-      {% if not es_tecnico and valor_proyecto and (valor_proyecto.n or valor_proyecto.servicio is not none) %}
+      {#- 💰 2026-10-07 (modelo único): el número grande es "Cobré" (servicio + despacho
+          según la cuenta única, _ot_finanzas); en una OT que no se cobra dice la
+          cobertura y el valorizado ("Garantía · valorizado $X"), nunca un monto
+          como si se hubiera cobrado. Si la cuenta faltara (`fin` vacío) queda el
+          chip de antes, tal cual (abajo, en el elif). -#}
+      {% if not es_tecnico and fin and (not fin.cobra or fin.cobre.hay or (valor_proyecto and valor_proyecto.n)) %}
+      <div class="otd-d d-valproy" role="button" tabindex="0"
+           onclick="otdIrAFinanzas()" onkeydown="if(event.key==='Enter')otdIrAFinanzas()"
+           title="Lo que le cobraste al cliente en esta OT (servicio + despacho) -- ir a Finanzas">
+        <i class="bi bi-cash-stack"></i>
+        <div class="in">
+          <div class="sub" id="otdHdrValorDocs" {% if not (valor_proyecto and valor_proyecto.n) %}hidden{% endif %}>Documentos con productos:
+            ${{ '{:,.0f}'.format((valor_proyecto.total if valor_proyecto else 0) or 0).replace(',', '.') }}{% if valor_proyecto and valor_proyecto.n > 1 %} ({{ valor_proyecto.n }} doc.){% endif %}</div>
+          {#- El chip es angosto y su número no se puede cortar (REGLA #15): las
+              palabras van en el rótulo chico (que sí baja de línea) y el número solo. -#}
+          <span class="k" id="otdHdrValorK">{% if fin.cobra %}Cobré{% else %}{{ fin.cobertura_txt.split(':')[0] }} · {{ 'valorizado' if fin.valorizado.monto else 'no se cobra' }}{% endif %}</span>
+          <span class="v" id="otdHdrValorServ">{% if fin.cobra %}{% if fin.cobre.hay %}{{ _fclp(fin.cobre.total) }}{% else %}Sin declarar{% endif %}{% elif fin.valorizado.monto %}{{ _fclp(fin.valorizado.monto) }}{% else %}$0{% endif %}</span>
+        </div></div>
+      {% elif not es_tecnico and not fin and valor_proyecto and (valor_proyecto.n or valor_proyecto.servicio is not none) %}
       <div class="otd-d d-valproy" role="button" tabindex="0"
            onclick="otdIrAFinanzas()" onkeydown="if(event.key==='Enter')otdIrAFinanzas()"
            title="Valor del servicio de esta OT -- ir a Finanzas">
@@ -4444,7 +4500,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       {% endmacro %}
       <div class="otd-card" id="otdCardFinanzas">
         <h3><i class="bi bi-cash-coin"></i> Finanzas de la OT
-          <span class="n">Cobramos − Nos cuesta = Queda</span></h3>
+          <span class="n">Cobré − Me cobraron = Queda</span></h3>
         {#- 💰 2026-10-07 (Daniel: "como superadmin editar estos valores, con registro"): solo el superadmin ve esto.
             Funciona aunque la OT esté cerrada (la edición normal de abajo se bloquea por evidencia) y deja un
             registro que nunca se modifica. No toca firmas, estado ni documentos. -#}
@@ -4477,6 +4533,20 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
         {% set _fin_neg = 'la instalación' if _fin_es_inst else 'el servicio' %}
         {% set _fin_cc_nom = {'sstt':'Servicio Técnico','logistica':'Logística','comercial':'Comercial','marketing':'Marketing'} %}
         {% set _fin_gar = (v.modalidad_cobro or '')|lower == 'garantia' or (v.cubierto_por or '')|lower == 'garantia' %}
+        {#- 💰 2026-10-07 (modelo único): ¿el servicio guardado (zz_monto) cuenta como
+            cobro? No si es un estimado o una línea que no es de servicio (ZZRETIRO,
+            "retiro en bodega"). Mismas listas que _ot_finanzas. -#}
+        {% set _zz_cuenta = v.zz_monto is not none and (v.zz_codigo or '')|upper not in (fin_zz_no_servicio or []) and (v.valor_origen or '')|lower not in (fin_origenes_no_cobro or []) %}
+        {% set _zz_tag = '' %}
+        {% if v.zz_monto is not none and (v.zz_codigo or '')|upper in (fin_zz_no_servicio or []) %}{% set _zz_tag = 'no es de servicio: no cuenta' %}
+        {% elif v.zz_monto is not none and (v.valor_origen or '')|lower in (fin_origenes_no_cobro or []) %}{% set _zz_tag = 'estimado: no es un cobro' %}
+        {% elif v.zz_monto is not none and (v.valor_origen or '')|lower in ('manual', 'supuesto') %}{% set _zz_tag = 'escrito a mano' %}{% endif %}
+        {% set _fin_nocobra_txt = {
+            'garantia': 'Lo cobrado es $0. Lo que nos costó se declara en el Paso 2. Si al final sí se le cobra, quita la garantía al cerrar la OT y declara el documento.',
+            'sin_costo': 'Lo cobrado es $0 (cortesía). Lo que nos costó se declara en el Paso 2.',
+            'interno': 'No hay un cliente a quien cobrarle: lo cobrado es $0. Lo que nos costó se declara en el Paso 2.',
+            'contrato': 'Se paga con el contrato del cliente (eso se mide en Vida del cliente, no OT por OT): lo cobrado en esta OT es $0. Si esta visita se facturó aparte, suma el documento y pasa a cobrarse.',
+          } %}
         <div class="otd-fin-body">
 
           {# ── 0 · BARRA "Resultado de la OT" ──────────────────────────────
@@ -4493,23 +4563,28 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                data-tot="{{ v.costo|float if v.costo is not none else '' }}"
                data-kinst="{{ v.costo_proveedor|float if v.costo_proveedor is not none else '' }}"
                data-kdesp="{{ v.costo_despacho|float if v.costo_despacho is not none else '' }}">
+            {#- 💰 2026-10-07: arriba de la cuenta, la pregunta que la decide: ¿se le
+                cobra al cliente? (Garantía / Cortesía / Trabajo interno / Contrato). -#}
+            <div class="otd-fbar-cob">
+              <span class="otd-fchip cob {{ 'cob-si' if (not fin or fin.cobra) else 'cob-no' }}" id="otdFinBarCob">{{ fin.cobertura_txt if fin else '' }}</span>
+            </div>
             <div class="otd-fbar-eq" id="otdFinBarEq">
               <div class="otd-fbar-cuenta" id="otdFinBarCuenta" role="button" tabindex="0"
                    aria-controls="otdFinBarDet" aria-expanded="false"
                    title="Ver lo que queda por negocio (instalación y despacho)">
                 <div class="otd-fbar-cell" id="otdFinBarCobroCell">
-                  <span class="otd-fbar-lab">Cobramos</span>
+                  <span class="otd-fbar-lab">Cobré</span>
                   <span class="otd-fbar-num" id="otdFinBarCobro">—</span>
                   <span class="otd-fbar-flash" id="otdFinBarFlash" hidden></span>
                 </div>
                 <span class="otd-fbar-op" aria-hidden="true">−</span>
                 <div class="otd-fbar-cell">
-                  <span class="otd-fbar-lab">Nos cuesta</span>
+                  <span class="otd-fbar-lab">Me cobraron</span>
                   <span class="otd-fbar-num" id="otdFinBarCosto">—</span>
                 </div>
                 <span class="otd-fbar-op" aria-hidden="true">=</span>
                 <div class="otd-fbar-cell q sem-gris" id="otdFinBarQueda">
-                  <span class="otd-fbar-lab">Queda</span>
+                  <span class="otd-fbar-lab" id="otdFinBarQuedaLab">Queda</span>
                   <span class="otd-fbar-num" id="otdFinMargen">—</span>
                   <span class="otd-fbar-pct"><span class="dot"></span><span id="otdFinMargenPct">—</span></span>
                 </div>
@@ -4534,12 +4609,15 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               <span class="otd-fchip amb" id="otdFinBarDocs" hidden></span>
               <span class="otd-fbar-est" id="otdFinBarEstado">{% if v.finanzas_at %}Declaradas por {{ v.finanzas_por or '—' }} el {{ v.finanzas_at | chile_fmt('%d/%m %H:%M') }}{% else %}Sin declarar todavía{% endif %}</span>
             </div>
+            {#- La frase de la cuenta única, en palabras de Daniel. -#}
+            <p class="otd-fbar-frase" id="otdFinBarFrase">{{ fin.frase if fin else '' }}</p>
             <div class="otd-fbar-det" id="otdFinBarDet" hidden>
               <div id="otdFinBarDetFilas"></div>
               <div class="otd-fdet-ley">Semáforo de lo que queda:
                 <span><i style="background:#16a34a"></i>verde desde 10 %</span>
                 <span><i style="background:#f59e0b"></i>ámbar bajo 10 %</span>
-                <span><i style="background:#dc2626"></i>rojo pérdida</span></div>
+                <span><i style="background:#dc2626"></i>rojo pérdida</span>
+                <span><i style="background:#3b82f6"></i>azul: no se le cobra (lo que nos costó)</span></div>
             </div>
           </div>
 
@@ -4677,9 +4755,14 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                   </div>
                   <div class="otd-fchip-row">
                     {# Lo que exige el cierre (factura_*): antes nadie lo veía. #}
-                    <span class="otd-fchip" id="otdFinCuentaCierre">
-                      {%- if _fin_gar %}Garantía: no se le cobra al cliente
-                      {%- elif (v.cubierto_por or '')|lower == 'contrato' %}Cubierta por contrato
+                    {#- 💰 2026-10-07: la cobertura sale de la cuenta única (_ot_cobertura),
+                        la misma regla en todo el sistema (antes "Cubierta por contrato"
+                        salía con cualquier cubierto_por='contrato', que es el valor por
+                        defecto de toda OT). -#}
+                    <span class="otd-fchip{{ ' cob-no' if (fin and not fin.cobra) else '' }}" id="otdFinCuentaCierre">
+                      {%- if fin and not fin.cobra %}{{ fin.cobertura_txt }}
+                      {%- elif not fin and _fin_gar %}Garantía: no se le cobra al cliente
+                      {%- elif not fin and (v.cubierto_por or '')|lower == 'contrato' %}Cubierta por contrato
                       {%- elif v.factura_nudo %}Cuenta para cerrar: <b>{{ v.factura_tido or 'DOC' }} {{ v.factura_nudo }}</b> (principal)
                       {%- else %}Cuenta para cerrar: falta el documento{% endif %}</span>
                   </div>
@@ -4726,20 +4809,31 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                      rotulada como lo que es -- lo GUARDADO en la OT, que es la
                      suma de sus documentos -- y siempre presente (oculta si
                      está vacía) para poder refrescarla sin recargar. #}
-                  <div class="otd-zzbox" id="otdZzBox" {% if not (_zz_serv or _zz_env) %}hidden{% endif %}>
-                    <div class="zh"><i class="bi bi-receipt"></i> Guardado en la OT (suma de los documentos)</div>
+                  {#- 💰 2026-10-07 (modelo único): "Lo que dicen los documentos" (antes
+                      "Guardado en la OT (suma de los documentos)"). Además de los montos
+                      guardados de las líneas ZZ dice, en palabras simples, lo que la cuenta
+                      única encontró raro (avisos de _ot_finanzas). "Usar estos montos" copia
+                      solo lo que CUENTA como cobro: un ZZRETIRO o un estimado no pasan al
+                      servicio. -#}
+                  <div class="otd-zzbox" id="otdZzBox" {% if not (_zz_serv or _zz_env or (fin and fin.avisos)) %}hidden{% endif %}>
+                    <div class="zh"><i class="bi bi-receipt"></i> Lo que dicen los documentos</div>
                     <div class="ln">
                       <span id="otdZzBoxServW" {% if not _zz_serv %}hidden{% endif %}><b id="otdZzBoxServ">${{ '{:,.0f}'.format(_zz_serv)|replace(',','.') }}</b>
-                        {{ v.zz_codigo or 'servicio' }}</span>
+                        <span id="otdZzBoxServCod">{{ v.zz_codigo or 'servicio' }}</span>
+                        <span class="otd-zz-tag" id="otdZzBoxServTag" {% if not _zz_tag %}hidden{% endif %}>{{ _zz_tag }}</span></span>
                       <span id="otdZzBoxEnvW" {% if not _zz_env %}hidden{% endif %}><b id="otdZzBoxEnv">${{ '{:,.0f}'.format(_zz_env)|replace(',','.') }}</b>
                         {{ v.zz_envio_codigo or 'envío' }}</span>
-                      <span class="tot">Total <b id="otdZzBoxTot">${{ '{:,.0f}'.format(_zz_serv + _zz_env)|replace(',','.') }}</b></span>
+                      <span class="tot">Total <b id="otdZzBoxTot">${{ '{:,.0f}'.format((_zz_serv if _zz_cuenta else 0) + _zz_env)|replace(',','.') }}</b></span>
                     </div>
+                    <ul class="otd-zz-avisos" id="otdZzAvisos" {% if not (fin and fin.avisos) %}hidden{% endif %}>
+                      {%- for _a in ((fin.avisos if fin else none) or []) %}<li>{{ _a }}</li>{% endfor -%}
+                    </ul>
                     {# 💰 2026-09-10: además del total viajan las dos mitades,
                        para llenar los dos campos de abajo (otdAplicarTotalZz). #}
                     <button type="button" class="usar" id="otdZzUsar"
-                            data-total="{{ (_zz_serv + _zz_env)|int }}"
-                            data-serv="{{ _zz_serv|int }}" data-envio="{{ _zz_env|int }}"
+                            data-total="{{ ((_zz_serv if _zz_cuenta else 0) + _zz_env)|int }}"
+                            data-serv="{{ _zz_serv|int if _zz_cuenta else '' }}" data-envio="{{ _zz_env|int if v.zz_envio_monto is not none else '' }}"
+                            {% if not (_zz_cuenta or v.zz_envio_monto is not none) %}hidden{% endif %}
                             onclick="otdUsarPrecioDocumento(this)">
                       <i class="bi bi-arrow-down-circle-fill"></i> Usar estos montos</button>
                   </div>
@@ -4754,17 +4848,27 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                   {# 💰 2026-09-10 (Daniel, OT-2026-00157 -- instalación a
                      medias: "quiero que me diga claramente qué cobro yo por
                      despacho y que sea modificable"). Cada mitad por separado
-                     y el total es la suma; el total sigue guardándose en
-                     `costo`, que es lo que leen el margen, el informe y el
-                     candado del cierre. Se lee hacia abajo: A + B = total. #}
+                     y el total es la suma. Se lee hacia abajo: A + B = total.
+                     💰 2026-10-07: el total ya NO se escribe a mano ni se guarda
+                     en `costo` (Daniel aprobó que "Total al cliente" sea siempre
+                     la suma); `costo` queda como historia.
+                     En una OT que no se cobra (garantía, cortesía, interno,
+                     contrato) lo cobrado es $0 por definición: los campos del
+                     cobro se ocultan (no se borran) y se dice por qué. #}
+                  <div class="otd-fnocobra" id="otdFinNoCobra" {% if not (fin and not fin.cobra) %}hidden{% endif %}>
+                    <span class="big" id="otdFinNoCobraTxt">{{ fin.cobertura_txt if fin else '' }}</span>
+                    {{ _fin_nocobra_txt.get(fin.cobertura, '') if fin else '' }}
+                  </div>
+                  <div id="otdFinCobroMontos" {% if fin and not fin.cobra %}hidden{% endif %}>
                   <div class="otd-fmoney">
                     <div class="otd-fm-row">
                       <label class="otd-fm-lab" for="otdFinZzServ">{{ 'Instalación / servicio' if _fin_es_inst else 'Servicio' }}
-                        <small>líneas de servicio de los documentos</small></label>
+                        <small>línea de servicio del documento, o a mano con su motivo</small></label>
                       <div class="otd-fm-in"><span>$</span>
+                        {#- 2026-10-07: placeholder "—" (no "0"): vacío es "no declarado", no $0. -#}
                         <input type="text" id="otdFinZzServ" class="form-control" data-money="1"
-                               inputmode="numeric" autocomplete="off" placeholder="0"
-                               value="{{ '{:,.0f}'.format(v.zz_monto|float)|replace(',','.') if v.zz_monto is not none else '' }}"></div>
+                               inputmode="numeric" autocomplete="off" placeholder="—"
+                               value="{{ '{:,.0f}'.format(v.zz_monto|float)|replace(',','.') if _zz_cuenta else '' }}"></div>
                       <div class="otd-fm-refs">
                         <div id="otdFinZzServErp" class="small text-muted" style="font-size:.7rem"></div>
                         {# 💰 FASE 1 -- 2026-09-11: saldo del documento para este
@@ -4781,7 +4885,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                         <small>línea de envío (ZZENVIO) · 0 si no se cobra</small></label>
                       <div class="otd-fm-in"><span>$</span>
                         <input type="text" id="otdFinZzEnvio" class="form-control" data-money="1"
-                               inputmode="numeric" autocomplete="off" placeholder="0"
+                               inputmode="numeric" autocomplete="off" placeholder="—"
                                value="{{ '{:,.0f}'.format(v.zz_envio_monto|float)|replace(',','.') if v.zz_envio_monto is not none else '' }}"></div>
                       <div class="otd-fm-refs">
                         <div id="otdFinZzEnvioErp" class="small text-muted" style="font-size:.7rem"></div>
@@ -4791,26 +4895,49 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                     <div class="otd-fm-op" aria-hidden="true"><span>=</span></div>
                     <div class="otd-fm-row tot">
                       <label class="otd-fm-lab" for="otdFinCosto">Total al cliente
-                        <small>lo que ILUS Fitness cobra por esta OT</small></label>
+                        <small>lo que le cobraste: servicio + despacho</small></label>
                       <div class="otd-fm-in"><span>$</span>
                         <input type="text" id="otdFinCosto" class="form-control" data-money="1"
-                               inputmode="numeric" autocomplete="off"
-                               value="{{ '{:,.0f}'.format(v.costo|float)|replace(',','.') if v.costo is not none else '' }}"></div>
+                               inputmode="numeric" autocomplete="off" readonly tabindex="-1" aria-readonly="true"
+                               value="{{ '{:,.0f}'.format(fin.cobre.total|float)|replace(',','.') if (fin and fin.cobra and fin.cobre.hay) else '' }}"></div>
                       <div class="otd-fm-refs">
-                        <i class="bi bi-calculator me-1"></i>Se calcula solo con los dos de arriba.
-                        Puedes escribirlo a mano si el cobro no se separa así.
+                        <i class="bi bi-calculator me-1"></i>Se calcula solo con los dos de arriba: ya no se
+                        escribe a mano. <span id="otdFinTotFuente"></span>
                       </div>
                     </div>
                   </div>
                   {# El motivo aparece SOLO cuando lo declarado no cuadra con lo
                      que trajo el documento. No bloquea guardar. #}
                   <div id="otdFinZzMotivoBox" style="display:none;margin-top:10px">
-                    <label class="form-label small fw-semibold mb-1" for="otdFinZzMotivo">
+                    <label class="form-label small fw-semibold mb-1" for="otdFinZzMotivo" id="otdFinZzMotivoLab">
                       ¿Por qué no es lo que dice el documento?</label>
                     <input type="text" id="otdFinZzMotivo" class="form-control form-control-sm"
                            maxlength="500" autocomplete="off"
                            placeholder="Ej: se instaló solo la mitad de las máquinas; el resto queda para otra visita"
                            value="{{ (v.zz_motivo_manual or '')|e }}">
+                  </div>
+                  </div>{# /otdFinCobroMontos #}
+                  {#- 💰 2026-10-07 — VALORIZADO (tarifa real): solo referencia, nunca se
+                      suma a lo cobrado ni pesa en el cierre (Daniel: sugerido, nunca
+                      obligatorio). En una OT que no se cobra se ofrece ya rellenado con la
+                      sugerencia; en las demás queda plegado en "Valorizar (opcional)". -#}
+                  {% set _val_m = fin.valorizado.monto if fin else none %}
+                  {% set _val_abierto = (fin and not fin.cobra) or _val_m is not none %}
+                  <div class="otd-fval" id="otdFinValBox">
+                    <button type="button" class="otd-fval-abrir" id="otdFinValAbrir" onclick="otdFinValAbrir()"
+                            {% if _val_abierto %}hidden{% endif %}>
+                      <i class="bi bi-tag"></i> Valorizar (opcional)</button>
+                    <div class="otd-fm-row otd-fval-row" id="otdFinValRow" {% if not _val_abierto %}hidden{% endif %}>
+                      <label class="otd-fm-lab" for="otdFinValorizado">Valorizado
+                        <small>cuánto vale el servicio · referencia, no se suma a lo cobrado</small></label>
+                      <div class="otd-fm-in"><span>$</span>
+                        <input type="text" id="otdFinValorizado" class="form-control" data-money="1"
+                               inputmode="numeric" autocomplete="off" placeholder="—"
+                               data-origen="{{ (fin.valorizado.fuente or '') if fin else '' }}"
+                               data-origen-valor="{{ (_val_m|round|int) if _val_m is not none else '' }}"
+                               value="{{ '{:,.0f}'.format(_val_m|float)|replace(',','.') if _val_m is not none else '' }}"></div>
+                      <div class="otd-fm-refs" id="otdFinValRef"></div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -4819,7 +4946,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
 
           {# ── PASO 2: lo que nos cuesta ────────────────────────────────── #}
           <div class="otd-fpaso" data-paso="costo" id="otdFinPasoCosto">
-            <div class="hd"><span class="num">2</span> Lo que nos cuesta
+            <div class="hd"><span class="num">2</span> Lo que me cobraron
               <span class="est">Pendiente</span></div>
             <div class="bd">
               <div class="otd-fsplit">
@@ -4848,7 +4975,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                 </div>
 
                 <div class="otd-fhalf">
-                  <div class="otd-fhalf-t">Cuánto nos cuesta</div>
+                  <div class="otd-fhalf-t">Cuánto me cobraron</div>
                   {# 🏷️ 2026-09-10: en espejo con el Paso 1 (allá lo que
                      COBRAMOS, acá lo que nos CUESTA). Los ids no cambian. El
                      paso queda Listo solo con los DOS costos declarados, aunque
@@ -4876,9 +5003,10 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                     </div>
                     <div class="otd-fm-op" aria-hidden="true"><span>=</span></div>
                     <div class="otd-fm-row tot">
-                      <span class="otd-fm-lab">Nos cuesta en total
-                        <small>lo que ILUS Fitness paga por esta OT</small></span>
+                      <span class="otd-fm-lab">Me cobraron en total
+                        <small>técnico + despacho + repuestos instalados</small></span>
                       <span class="otd-fm-val" id="otdFinCostoTotal">—</span>
+                      <span class="otd-fm-refs" id="otdFinCostoTotalRep"></span>
                     </div>
                   </div>
                 </div>
@@ -5024,34 +5152,70 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           {# Vista de solo lectura (gestión sin permiso de metadata, o la OT
              ya pendiente de aprobación). Misma barra y mismo Resultado de
              arriba, y los datos en el orden del recorrido. #}
-          {% if _zz_serv or _zz_env %}
+          {#- 💰 2026-10-07 (modelo único): en solo lectura (OT cerrada o sin permiso
+              de edición) se ve lo mismo que en la editable: la cobertura ("¿se le
+              cobra?"), lo que dicen los documentos con sus avisos, Cobré / Me
+              cobraron y el valorizado aparte. Antes esta vista no decía "garantía"
+              en ninguna parte y una garantía cerrada se leía como una venta con
+              margen bajo (OT-201). -#}
+          {% if _zz_serv or _zz_env or (fin and fin.avisos) %}
           <div class="otd-zzbox">
-            <div class="zh"><i class="bi bi-receipt"></i> Guardado en la OT (suma de los documentos)</div>
+            <div class="zh"><i class="bi bi-receipt"></i> Lo que dicen los documentos</div>
             <div class="ln">
               {% if _zz_serv %}
               <span><b>${{ '{:,.0f}'.format(_zz_serv)|replace(',','.') }}</b>
-                {{ v.zz_codigo or 'servicio' }}</span>
+                {{ v.zz_codigo or 'servicio' }}{% if _zz_tag %} <span class="otd-zz-tag">{{ _zz_tag }}</span>{% endif %}</span>
               {% endif %}
               {% if _zz_env %}
               <span><b>${{ '{:,.0f}'.format(_zz_env)|replace(',','.') }}</b>
                 {{ v.zz_envio_codigo or 'envío' }}</span>
               {% endif %}
-              <span class="tot">Total <b>${{ '{:,.0f}'.format(_zz_serv + _zz_env)|replace(',','.') }}</b></span>
+              <span class="tot">Total <b>${{ '{:,.0f}'.format((_zz_serv if _zz_cuenta else 0) + _zz_env)|replace(',','.') }}</b></span>
             </div>
+            {% if fin and fin.avisos %}
+            <ul class="otd-zz-avisos">{% for _a in fin.avisos %}<li>{{ _a }}</li>{% endfor %}</ul>
+            {% endif %}
           </div>
           {% endif %}
           <div class="otd-din">
+            {% if fin %}
+            <div class="row"><span>¿Se le cobra?</span>
+              <b><span class="otd-fchip {{ 'cob-si' if fin.cobra else 'cob-no' }}">{{ fin.cobertura_txt }}</span></b></div>
+            {% endif %}
             {% set _doc_tido_ro2 = v.documento_erp_tido or v.factura_tido %}
             {% set _doc_nudo_ro2 = v.documento_erp_nudo or v.factura_nudo %}
             {% if _doc_nudo_ro2 %}
             <div class="row"><span>Documento</span>
               <b>{{ _doc_tido_ro2 or 'DOC' }} {{ _doc_nudo_ro2 }}</b></div>
             {% endif %}
+            {% if fin %}
+            <div class="row"><span>Cobré</span>
+              <b>{% if fin.cobre.hay %}{{ _fclp(fin.cobre.total) }}{% else %}—{% endif %}
+                {%- if fin.cobra and fin.cobre.fuente %} <small class="text-muted">· {{ fin.cobre.fuente }}</small>{% endif %}</b></div>
+            {#- REGLA #4.2: el «Precio al cliente» anotado se sigue viendo cuando no es
+                lo mismo que lo cobrado (ni el valorizado), rotulado como lo que es. -#}
+            {% if v.costo is not none and ((v.costo|float) - fin.cobre.total)|abs >= 1 and (fin.cobra or fin.valorizado.monto is none or ((v.costo|float) - fin.valorizado.monto)|abs >= 1) %}
+            <div class="row"><span>Precio al cliente anotado</span>
+              <b>{{ _fclp(v.costo) }} <small class="text-muted">· dato anterior, no es lo cobrado</small></b></div>
+            {% endif %}
+            <div class="row"><span>Me cobraron</span>
+              <b>{% if fin.me_cobraron.tecnico is none %}falta lo del técnico{% else %}{{ _fclp(fin.me_cobraron.total) }}{% endif %}
+                <small class="text-muted">· técnico {{ _fclp(fin.me_cobraron.tecnico) if fin.me_cobraron.tecnico is not none else '—' }}
+                  + despacho {{ _fclp(fin.me_cobraron.despacho or 0) }}
+                  {%- if fin.me_cobraron.repuestos %} + repuestos {{ _fclp(fin.me_cobraron.repuestos) }}{% endif %}
+                  {%- if v.proveedor_nombre %} · {{ v.proveedor_nombre }}{% endif %}</small></b></div>
+            {% if fin.valorizado.monto %}
+            <div class="row"><span>Valorizado (referencia)</span>
+              <b>{{ _fclp(fin.valorizado.monto) }} <small class="text-muted">· no se suma a lo cobrado</small></b></div>
+            {% endif %}
+            {% else %}
             <div class="row"><span>Precio al cliente</span>
               <b>{{ '$' ~ '{:,}'.format(v.costo|int)|replace(',', '.') if v.costo is not none else '—' }}</b></div>
+            {% endif %}
             {# 💸 Lo que le pagamos al proveedor externo (antes esta vista de
-               solo lectura no lo mostraba y una OT cerrada quedaba sin ese dato) #}
-            {% if v.costo_proveedor or v.costo_despacho %}
+               solo lectura no lo mostraba y una OT cerrada quedaba sin ese dato).
+               2026-10-07: con la cuenta única ya va en "Me cobraron", arriba. #}
+            {% if not fin and (v.costo_proveedor or v.costo_despacho) %}
             <div class="row"><span>Costo proveedor</span>
               <b>${{ '{:,.0f}'.format((v.costo_proveedor or 0)|float)|replace(',', '.') }}{% if v.costo_despacho %} + despacho ${{ '{:,.0f}'.format((v.costo_despacho or 0)|float)|replace(',', '.') }}{% endif %}
                 {% if v.proveedor_nombre %}<small class="text-muted">· {{ v.proveedor_nombre }}</small>{% endif %}</b></div>
@@ -6945,6 +7109,11 @@ function otdIniciarRuta(app){
   </div>
 </div>
 
+{#- 💰 2026-10-07 — la cuenta única de finanzas en el navegador (espejo exacto de
+    _ot_finanzas en app.py; tests/test_ot_finanzas_js_espejo.py los compara). La
+    usan la tarjeta "Finanzas de la OT" mientras se escribe y el modal "Corregir
+    finanzas". No lleva datos: es solo la regla. -#}
+<script src="{{ url_for('static', filename='ot_finanzas.js') }}"></script>
 {# ═══════════════════════════════════════════════════════════════════════════
    💰 MODAL: Corregir finanzas (solo superadmin) — 2026-10-07. A NIVEL RAÍZ (no dentro del hero ni de una pestaña:
    ver gotcha_ot2_detalle_scope_y_modales). Habla con POST /ot/api/finanzas/<vid>/corregir.
@@ -6963,6 +7132,7 @@ function otdIniciarRuta(app){
           <span>Esta OT puede estar cerrada: es evidencia. Solo cambian estos montos; <b>las firmas, el estado y los documentos no se tocan</b>.
           Cada corrección guarda el valor de antes y de después, quién la hizo y por qué, y no se puede borrar.</span></div>
         <div class="otd-fincorr-res" id="otdFcRes"></div>
+        <div class="otd-fincorr-frase" id="otdFcFrase"></div>
         <div class="row g-2">
           <div class="col-6"><label class="form-label small fw-semibold mb-1">Cobro del servicio ($)</label>
             <input type="text" inputmode="numeric" class="form-control" id="otdFc_zz_monto" oninput="otdFinCorrCalc()"></div>
@@ -6972,6 +7142,9 @@ function otdIniciarRuta(app){
             <input type="text" inputmode="numeric" class="form-control" id="otdFc_costo_proveedor" oninput="otdFinCorrCalc()"></div>
           <div class="col-6"><label class="form-label small fw-semibold mb-1">Costo del despacho ($)</label>
             <input type="text" inputmode="numeric" class="form-control" id="otdFc_costo_despacho" oninput="otdFinCorrCalc()"></div>
+          <div class="col-12"><label class="form-label small fw-semibold mb-1">Valorizado ($)
+              <span class="fw-normal text-muted">· cuánto vale el servicio; solo referencia, no se suma a lo cobrado</span></label>
+            <input type="text" inputmode="numeric" class="form-control" id="otdFc_valorizado_clp" oninput="otdFinCorrCalc()"></div>
           <div class="col-12"><label class="form-label small fw-semibold mb-1">Centro de costo</label>
             <select class="form-select" id="otdFc_centro_costo"></select></div>
           <div class="col-12"><label class="form-label small fw-semibold mb-1">Motivo de la corrección <span class="text-danger">*</span></label>
@@ -7002,6 +7175,9 @@ function otdIniciarRuta(app){
 .otd-fincorr-res{display:flex;justify-content:space-between;align-items:center;gap:10px;border-radius:10px;padding:10px 14px;margin-bottom:12px;
   background:#f3f4f6;font-weight:800}
 .otd-fincorr-res b{font-size:1.1rem;font-variant-numeric:tabular-nums}.otd-fincorr-res.pos b{color:#15803d}.otd-fincorr-res.neg b{color:#b91c1c}
+.otd-fincorr-res.info{background:#dbeafe;color:#1e3a8a}.otd-fincorr-res.info b{color:#1d4ed8}
+.otd-fincorr-frase{font-size:.78rem;color:#374151;margin:-6px 0 12px;line-height:1.45;overflow-wrap:anywhere}
+.otd-fincorr-frase:empty{display:none}
 .otd-fincorr-hist{margin-top:14px;display:flex;flex-direction:column;gap:8px}
 .otd-fincorr-hist .h{border:1px solid #e5e7eb;border-radius:10px;padding:9px 12px;font-size:.78rem;background:#fafafa}
 .otd-fincorr-hist .h .q{font-weight:800;color:#0a0a0a}.otd-fincorr-hist .h .m{color:#374151;margin-top:3px;overflow-wrap:anywhere}
@@ -7016,14 +7192,52 @@ function otdIniciarRuta(app){
 /* 💰 Corregir finanzas (solo superadmin) — 2026-10-07 */
 var _otdFcPlata = function(n){ return '$' + Math.round(n || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.'); };
 var _otdFcNum = function(id){ var s = (document.getElementById(id).value || '').replace(/[^0-9]/g, ''); return s === '' ? null : parseInt(s, 10); };
+var _otdFcEsc = function(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; });
+};
 var _otdFcGar = false, _otdFcInicial = {};
+// 2026-10-07 (modelo único): los datos guardados con que se hace la cuenta, los repuestos instalados, la
+// línea de servicio del tipo de OT y las líneas que no son de servicio (los manda /correcciones).
+var _otdFcBase = null, _otdFcRep = null, _otdFcSug = null, _otdFcNoServ = ['ZZRETIRO'];
+var _OTD_FC_CAMPOS = ['zz_monto', 'zz_envio_monto', 'costo_proveedor', 'costo_despacho', 'valorizado_clp'];
+/* 2026-10-07 (modelo único): ya NO hace su propia cuenta (antes: cobro 0 si era garantía, sin repuestos y
+   sin mirar si el monto era un estimado o un ZZRETIRO). Pinta lo que devuelve la cuenta única del navegador
+   (static/ot_finanzas.js = _ot_finanzas), con los mismos cambios que hará el servidor al guardar: el cobro
+   corregido queda "escrito a mano" y deja la línea que no es de servicio; el valorizado corregido, a mano. */
 function otdFinCorrCalc(){
-  var cobro = _otdFcGar ? 0 : ((_otdFcNum('otdFc_zz_monto') || 0) + (_otdFcNum('otdFc_zz_envio_monto') || 0));
-  var pago = (_otdFcNum('otdFc_costo_proveedor') || 0) + (_otdFcNum('otdFc_costo_despacho') || 0);
-  var q = cobro - pago;
   var el = document.getElementById('otdFcRes');
-  el.className = 'otd-fincorr-res ' + (q < 0 ? 'neg' : 'pos');
-  el.innerHTML = '<span>Cobramos ' + _otdFcPlata(cobro) + ' − Nos cuesta ' + _otdFcPlata(pago) + ' = Queda</span><b>' + (q < 0 ? '−' : '') + _otdFcPlata(Math.abs(q)) + '</b>';
+  var v = Object.assign({}, _otdFcBase || {});
+  _OTD_FC_CAMPOS.forEach(function(k){ v[k] = _otdFcNum('otdFc_' + k); });
+  var ini = function(k){
+    var x = _otdFcInicial[k];
+    return (x === null || x === undefined || x === '') ? null : Math.round(Number(x));
+  };
+  if (v.zz_monto !== null && v.zz_monto !== ini('zz_monto')){
+    v.valor_origen = 'manual';
+    if (_otdFcNoServ.indexOf(String(v.zz_codigo || '').toUpperCase()) >= 0) v.zz_codigo = _otdFcSug;
+  }
+  if (v.valorizado_clp !== ini('valorizado_clp')) v.valorizado_fuente = v.valorizado_clp === null ? null : 'a_mano';
+  var r = (typeof window.ilusOtFinanzas === 'function') ? window.ilusOtFinanzas(v, _otdFcRep) : null;
+  var fr = document.getElementById('otdFcFrase');
+  if (!r){
+    el.className = 'otd-fincorr-res';
+    el.textContent = 'No se pudo calcular: recarga la página.';
+    if (fr) fr.textContent = '';
+    return;
+  }
+  var M = r.me_cobraron.total, Q = r.queda.total;
+  if (!r.cobra){
+    // Una OT que no se cobra no "pierde": lo que queda es lo que nos costó (azul).
+    el.className = 'otd-fincorr-res info';
+    el.innerHTML = '<span>' + _otdFcEsc(r.cobertura_txt) + ' · Cobré $0 − Me cobraron ' + _otdFcPlata(M) +
+      '</span><b>Nos costó ' + _otdFcPlata(M) + '</b>';
+  } else {
+    el.className = 'otd-fincorr-res ' + (Q < 0 ? 'neg' : 'pos');
+    el.innerHTML = '<span>Cobré ' + _otdFcPlata(r.cobre.total) + ' − Me cobraron ' + _otdFcPlata(M) +
+      ' = Queda</span><b>' + (Q < 0 ? '−' : '') + _otdFcPlata(Math.abs(Q)) + '</b>';
+  }
+  if (fr) fr.textContent = (r.frase || '') + ((r.avisos && r.avisos.length) ? ' ' + r.avisos.join(' ') : '');
 }
 async function otdFinCorrAbrir(){
   document.getElementById('otdFcErr').textContent = '';
@@ -7034,11 +7248,16 @@ async function otdFinCorrAbrir(){
     var j = await r.json();
     if (!j.ok) throw new Error(j.error || 'No se pudo cargar');
     var a = j.actual || {};
-    _otdFcGar = !!j.garantia;   // en garantía no se cobra: el resultado se calcula con cobro 0
-    ['zz_monto','zz_envio_monto','costo_proveedor','costo_despacho'].forEach(function(k){
+    _otdFcGar = !!j.garantia;   // se conserva; la cuenta usa ahora la cobertura de la cuenta única
+    _otdFcBase = j.base || null;
+    _otdFcRep = j.rep || null;
+    _otdFcSug = j.zz_sugerida || null;
+    if (Array.isArray(j.zz_no_servicio)) _otdFcNoServ = j.zz_no_servicio;
+    _OTD_FC_CAMPOS.forEach(function(k){
       document.getElementById('otdFc_' + k).value = (a[k] === null || a[k] === undefined) ? '' : String(Math.round(Number(a[k])));
     });
-    _otdFcInicial = {zz_monto:a.zz_monto, zz_envio_monto:a.zz_envio_monto, costo_proveedor:a.costo_proveedor, costo_despacho:a.costo_despacho, centro_costo:a.centro_costo || ''};
+    _otdFcInicial = {zz_monto:a.zz_monto, zz_envio_monto:a.zz_envio_monto, costo_proveedor:a.costo_proveedor,
+                     costo_despacho:a.costo_despacho, valorizado_clp:a.valorizado_clp, centro_costo:a.centro_costo || ''};
     var sel = document.getElementById('otdFc_centro_costo');
     sel.innerHTML = '<option value="">Sin centro de costo</option>' + (j.centros || []).map(function(c){
       return '<option value="' + otdEsc(c.v) + '"' + (c.v === a.centro_costo ? ' selected' : '') + '>' + otdEsc(c.n) + '</option>'; }).join('');
@@ -7049,7 +7268,8 @@ async function otdFinCorrAbrir(){
           return '<div class="h"><div class="q">' + otdEsc(x.usuario || '?') + ' · ' + otdEsc(x.cuando || '') + '</div>' +
             '<div class="m">' + otdEsc(x.motivo || '') + '</div>' +
             '<div class="d">' + (x.cambios || []).map(function(c){ return otdEsc(c.campo) + ': ' + otdEsc(String(c.antes)) + ' → ' + otdEsc(String(c.despues)); }).join(' · ') +
-            ' · Quedó ' + _otdFcPlata(x.ganancia_antes) + ' → ' + _otdFcPlata(x.ganancia_despues) + '</div></div>'; }).join('')
+            ' · Quedó ' + _otdFcPlata(x.ganancia_antes) + ' → ' + _otdFcPlata(x.ganancia_despues) +
+            ' (cuenta de ese momento)</div></div>'; }).join('')
       : '<div class="tit">Sin correcciones anteriores</div>';
   } catch(e){
     document.getElementById('otdFcErr').textContent = 'No se pudieron cargar los valores actuales. Cierra y vuelve a abrir.';
@@ -7060,7 +7280,7 @@ async function otdFinCorrGuardar(){
   var motivo = (document.getElementById('otdFc_motivo').value || '').trim();
   if (motivo.length < 15){ err.textContent = 'Escribe el motivo (mínimo 15 caracteres): queda registrado con tu nombre.'; return; }
   var body = {motivo: motivo};
-  ['zz_monto','zz_envio_monto','costo_proveedor','costo_despacho'].forEach(function(k){
+  _OTD_FC_CAMPOS.forEach(function(k){
     var v = _otdFcNum('otdFc_' + k);
     body[k] = v;   // 2026-10-07: vacío = quitar ese monto (antes un casillero vacío no se enviaba y no se podía borrar)
   });
@@ -8052,14 +8272,26 @@ window.otdMoneySet = function(id, n){
    instalación que dejó $52.101 y un despacho sin cobrar que se comió
    $50.000, y la pantalla nunca lo separaba). UNA función arma la cuenta
    (otdFinCuenta) y UNA la pinta (otdFinPintar) para las DOS vistas: la
-   editable la alimenta con los campos, la de solo lectura con lo guardado
-   (data-* de #otdFinBar). Regla de siempre: vacío (null) NO es $0 -- "no
-   se declaró" no es "no hubo". Van ANTES de la IIFE del margen (que las
-   llama al cargar), igual que otdMoneyVal/otdMoneySet (bug del 09-02). */
+   editable la alimenta con los campos, la de solo lectura con lo guardado.
+   Van ANTES de la IIFE del margen (que las llama al cargar), igual que
+   otdMoneyVal/otdMoneySet (bug del 09-02).
+   💰 2026-10-07 — MODELO ÚNICO (Daniel: "tenemos que definir cuánto me
+   cobraron, cuánto cobré yo… necesito que ya quede completamente entendible
+   y amigable"): "Cobré − Me cobraron = Queda", y el Valorizado aparte, solo
+   de referencia (nunca se suma a lo cobrado). otdFinCuenta YA NO calcula por
+   su cuenta: delega en la cuenta única del navegador (static/ot_finanzas.js,
+   espejo exacto de _ot_finanzas en app.py; una prueba compara los dos). Así
+   la barra, el Resultado, el modal «Corregir finanzas», el informe de OT
+   dudosas y la página «Antes y después» dicen lo mismo -- la OT-201 llegó a
+   mostrar tres resultados distintos. Regla de siempre: el técnico vacío NO
+   es $0 ("no se declaró" no es "no hubo"); el despacho vacío sí cuenta $0,
+   salvo que se le haya cobrado un despacho al cliente. */
 window.OTD_FIN = {
-  garantia: {{ 'true' if ((v.modalidad_cobro or '')|lower == 'garantia' or (v.cubierto_por or '')|lower == 'garantia') else 'false' }},
-  contrato: {{ 'true' if (v.cubierto_por or '')|lower == 'contrato' else 'false' }},
-  interna: {{ 'true' if ((v.modalidad_cobro or '')|lower == 'interno' or v.tipo == 'revision_interna' or not v.cliente_id) else 'false' }},
+  // Cobertura de la cuenta única (_ot_cobertura). Para el técnico (sin `fin`)
+  // queda la regla de antes: estas tres banderas no llevan montos.
+  garantia: {{ 'true' if ((fin.cobertura == 'garantia') if fin else ((v.modalidad_cobro or '')|lower == 'garantia' or (v.cubierto_por or '')|lower == 'garantia')) else 'false' }},
+  contrato: {{ 'true' if ((fin.cobertura == 'contrato') if fin else ((v.cubierto_por or '')|lower == 'contrato')) else 'false' }},
+  interna: {{ 'true' if ((fin.cobertura == 'interno') if fin else ((v.modalidad_cobro or '')|lower == 'interno' or v.tipo == 'revision_interna' or not v.cliente_id)) else 'false' }},
   neg: {{ ('la instalación' if (v.tipo or '')|lower == 'instalacion' else 'el servicio') | tojson }},
   Neg: {{ ('Instalación' if (v.tipo or '')|lower == 'instalacion' else 'Servicio') | tojson }},
   // Lo que exige el cierre (factura_*): "VD 10666", o null si no hay.
@@ -8068,6 +8300,15 @@ window.OTD_FIN = {
   declarada: {{ 'true' if v.finanzas_at else 'false' }},
   anexoFirmado: {{ 'true' if (anexo and anexo.firmado_at) else 'false' }},
   anexoNumero: {{ (anexo.numero if anexo and anexo.firmado_at else none) | tojson }},
+  // 💰 2026-10-07 — modelo único. Solo gestión: para el técnico todo esto es
+  // null (REGLA #19: ningún monto viaja a su navegador).
+  cobertura: {{ (fin.cobertura if fin else none) | tojson }},
+  fin: {{ fin | tojson if fin else 'null' }},              // la cuenta de lo GUARDADO (la hizo el servidor)
+  base: {{ fin_base | tojson if fin_base else 'null' }},   // los datos guardados con que se hace la cuenta
+  rep: {{ fin_rep | tojson if fin_rep else 'null' }},      // repuestos instalados (suman a "Me cobraron")
+  zzNoServ: {{ (fin_zz_no_servicio or []) | tojson }},     // líneas ZZ que no son de servicio (ZZRETIRO)
+  origNoCobro: {{ (fin_origenes_no_cobro or []) | tojson }}, // orígenes que son un estimado, no un cobro
+  zzSugerida: {{ (fin_zz_sugerida if fin_zz_sugerida is defined else none) | tojson }}, // línea del tipo de OT
 };
 // Daniel: "ámbar bajo 10 %" (verde desde 10 %, rojo con pérdida).
 window.OTD_FIN_UMBRAL_BAJO = 10;
@@ -8084,60 +8325,42 @@ window.otdFinPct = function(p){
   const a = Math.abs(p).toFixed(1).replace('.', ',');
   return (p < 0 && a !== '0,0' ? '−' : '') + a + ' %';
 };
-window.otdFinCuenta = function(d){
-  const num = x => (x === null || x === undefined || x === '' || !isFinite(Number(x))) ? null : Number(x);
-  const serv = num(d.serv), env = num(d.env), tot = num(d.tot);
-  const kI = num(d.kInst), kD = num(d.kDesp);
-  // 💰 D2 (revisión Opus 2026-09-26 -- Daniel: "Nos cuesta = técnico/
-  // proveedor + despacho + repuestos, con desglose visible"): kRep viene
-  // de GET /ot/api/<vid>/resultado-financiero (window.OTD_KREP, ver el
-  // fetch al pie de este script) -- MISMA función que usa Vida del
-  // cliente para "Margen por OT" (_ot_resultado_financiero, único lugar
-  // que calcula esto). Es INFORMATIVO: no participa en `costoCompleto`
-  // (esa bandera sigue siendo solo técnico+despacho -- los repuestos
-  // nunca bloquean nada, D2) pero SÍ suma al total real "Nos cuesta"/
-  // "Queda"/semáforo, que es lo que se pidió.
-  const kR = num(d.kRep);
-  const c = {kInstN: kI, kDespN: kD, kRepN: kR};
-  c.hayCobro = tot !== null || serv !== null || env !== null;
-  c.cDesp = env || 0;
-  c.cTot = tot !== null ? tot : ((serv || 0) + (env || 0));
-  // Si el total se escribió a mano distinto de la suma, lo que no es
-  // despacho se lee como instalación: así las filas SIEMPRE suman el total.
-  c.cInst = tot !== null ? (tot - c.cDesp) : (serv || 0);
-  c.hayCosto = kI !== null || kD !== null;
-  c.costoCompleto = kI !== null && kD !== null;
-  c.kInst = kI || 0; c.kDesp = kD || 0; c.kRep = kR || 0;
-  c.kTot = c.kInst + c.kDesp + c.kRep;
-  c.qInst = c.cInst - c.kInst; c.qDesp = c.cDesp - c.kDesp; c.qTot = c.cTot - c.kTot;
-  c.pInst = c.cInst > 0 ? c.qInst / c.cInst * 100 : null;
-  c.pDesp = c.cDesp > 0 ? c.qDesp / c.cDesp * 100 : null;
-  c.pTot  = c.cTot  > 0 ? c.qTot  / c.cTot  * 100 : null;
-  const bajo = window.OTD_FIN_UMBRAL_BAJO;
-  if (!(c.cTot > 0)){
-    // Garantía: se valoriza aunque no se cobre -- el resultado es la caja.
-    if (d.garantia){
-      c.sem = 'ambar';
-      c.semTxt = c.hayCosto && !c.costoCompleto ? 'Falta un costo' : 'Valorizada sin cobro (garantía)';
-      c.mostrarQueda = c.costoCompleto;
-    }
-    else { c.sem = 'gris'; c.semTxt = 'Falta lo que se cobra'; c.mostrarQueda = false; }
-  } else if (!c.hayCosto){ c.sem = 'ambar'; c.semTxt = 'Falta el costo'; c.mostrarQueda = false; }
-  // Un costo declarado y el otro vacío: vacío NO es $0 (regla aprobada).
-  // La barra no da un "Queda" que suponga el otro costo en cero.
-  else if (!c.costoCompleto){ c.sem = 'ambar'; c.semTxt = 'Falta un costo'; c.mostrarQueda = false; }
-  else if (c.qTot < 0){ c.sem = 'rojo'; c.semTxt = 'Pérdida'; c.mostrarQueda = true; }
-  else if (c.pTot < bajo){ c.sem = 'ambar'; c.semTxt = 'Margen bajo (menos de ' + bajo + ' %)'; c.mostrarQueda = true; }
-  else { c.sem = 'verde'; c.semTxt = 'Margen'; c.mostrarQueda = true; }
-  return c;
-};
-// Qué falta, dicho corto, cuando no se puede mostrar el "Queda" total.
-function _otdFinFaltaTxt(c, d){
-  if (!c.hayCobro && !d.garantia) return 'falta el cobro';
-  if (c.hayCosto && !c.costoCompleto) return 'falta un costo';
-  return 'falta el costo';
+// Este bloque corre antes de que exista otdEsc (más abajo): escape propio.
+function _otdFinEsc(s){
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
-// Semáforo de UNA fila del resultado (instalación / despacho).
+// Clase de la cuenta única → color de la pantalla. 'info' (azul) = OT que no
+// se cobra: lo que queda ahí es lo que nos costó, no una "pérdida" roja.
+window.otdFinSem = function(clase){
+  return ({ok: 'verde', bajo: 'ambar', ambar: 'ambar', rojo: 'rojo', gris: 'gris', info: 'info'})[clase] || 'gris';
+};
+/* ¿El monto guardado del servicio (zz_monto) cuenta como cobro? No si es un
+   estimado o una línea que no es de servicio (ZZRETIRO): mismas listas que la
+   cuenta única (vienen del servidor). */
+window.otdFinZzCuenta = function(B){
+  const F = window.OTD_FIN || {};
+  if (!B || B.zz_monto === null || B.zz_monto === undefined || B.zz_monto === '') return false;
+  const o = String(B.valor_origen || '').trim().toLowerCase();
+  const c = String(B.zz_codigo || '').trim().toUpperCase();
+  return (F.origNoCobro || []).indexOf(o) < 0 && (F.zzNoServ || []).indexOf(c) < 0;
+};
+/* LA CUENTA. `v` = los datos de la OT (los guardados, o con lo que se está
+   escribiendo encima: otdFinVivo); `rep` = repuestos instalados. Devuelve lo
+   mismo que _ot_finanzas en el servidor. */
+window.otdFinCuenta = function(v, rep){
+  const F = window.OTD_FIN || {};
+  if (typeof window.ilusOtFinanzas !== 'function') return F.fin || null;
+  return window.ilusOtFinanzas(v || F.base || {}, rep === undefined ? F.rep : rep);
+};
+// Qué falta, dicho corto, cuando no se puede mostrar lo que queda.
+function _otdFinFaltaTxt(r){
+  if (r.cobra && !r.cobre.hay) return 'falta lo que cobraste';
+  if (r.me_cobraron.falta_tecnico) return 'falta lo del técnico';
+  if (r.me_cobraron.falta_despacho) return 'falta el costo del despacho';
+  return '—';
+}
+// Semáforo de UNA fila del resultado (servicio / despacho) en una OT que se cobra.
 function _otdFinSemFila(cob, cue, q){
   if (cue === null) return 'ambar';
   if (!cob && !cue) return 'gris';
@@ -8145,143 +8368,192 @@ function _otdFinSemFila(cob, cue, q){
   if (!cob) return 'ambar';
   return (q / cob * 100) < window.OTD_FIN_UMBRAL_BAJO ? 'ambar' : 'verde';
 }
-// Una fila del resultado = la MISMA resta de la barra, con las mismas palabras.
-function _otdFinEqHtml(cob, cue, q, sem, pctTxt){
+// Una fila del resultado = la MISMA resta de la barra, con las mismas
+// palabras. En una OT que no se cobra la última celda dice "Nos costó"
+// (azul, sin signo): no es una pérdida.
+function _otdFinEqHtml(cob, cue, q, sem, pctTxt, nosCosto){
   const f = window.otdFinFmt;
-  return '<div class="otd-fbar-cell"><span class="otd-fbar-lab">Cobramos</span>' +
+  return '<div class="otd-fbar-cell"><span class="otd-fbar-lab">Cobré</span>' +
       '<span class="otd-fbar-num">' + f(cob) + '</span></div>' +
     '<span class="otd-fbar-op" aria-hidden="true">−</span>' +
-    '<div class="otd-fbar-cell"><span class="otd-fbar-lab">Nos cuesta</span>' +
+    '<div class="otd-fbar-cell"><span class="otd-fbar-lab">Me cobraron</span>' +
       '<span class="otd-fbar-num">' + f(cue) + '</span></div>' +
     '<span class="otd-fbar-op" aria-hidden="true">=</span>' +
-    '<div class="otd-fbar-cell q sem-' + sem + '"><span class="otd-fbar-lab">Queda</span>' +
-      '<span class="otd-fbar-num">' + f(q, true) + '</span>' +
+    '<div class="otd-fbar-cell q sem-' + sem + '"><span class="otd-fbar-lab">' + (nosCosto ? 'Nos costó' : 'Queda') + '</span>' +
+      '<span class="otd-fbar-num">' + (nosCosto ? f(q) : f(q, true)) + '</span>' +
       '<span class="otd-fbar-pct"><span class="dot"></span>' + pctTxt + '</span></div>';
 }
-window.otdFinPintar = function(d){
-  const c = window.otdFinCuenta(d);
+/* Pinta una cuenta (el resultado de otdFinCuenta / _ot_finanzas) en la barra,
+   el desglose, el cuadro "Resultado de la OT" y su frase. Solo pinta: no
+   calcula nada. */
+window.otdFinPintar = function(r){
+  if (!r) return r;
+  const F = window.OTD_FIN || {};
   const f = window.otdFinFmt, P = window.otdFinPct;
   const el = id => document.getElementById(id);
-  const Neg = d.Neg || 'Instalación';
-  const negFrase = (d.neg || 'la instalación').charAt(0).toUpperCase() + (d.neg || 'la instalación').slice(1);
+  const Neg = F.Neg || 'Instalación';
+  const negTxt = F.neg || 'la instalación';
+  const negFrase = negTxt.charAt(0).toUpperCase() + negTxt.slice(1);
+  const sem = window.otdFinSem(r.clase);
+  const C = r.cobre, M = r.me_cobraron, Q = r.queda;
+  const corto = String(r.cobertura_txt || '').split(':')[0];
+  window.OTD_FIN_ULTIMO = r;
 
-  // ── Barra ──
+  // ── Chip de cobertura, arriba de la barra: "¿se le cobra al cliente?" ──
+  const cob = el('otdFinBarCob');
+  if (cob){
+    cob.textContent = r.cobertura_txt || '';
+    cob.className = 'otd-fchip cob ' + (r.cobra ? 'cob-si' : 'cob-no');
+  }
+
+  // ── Barra: Cobré − Me cobraron = Queda ──
   // En el celular, si un número no cabe, se corta DESPUÉS de un punto de
   // miles (espacio de ancho cero), nunca en medio de los dígitos.
   const fb = (x, s) => f(x, s).replace(/\./g, '.​');
   const bar = el('otdFinBar');
-  if (bar) bar.dataset.sem = c.sem;
-  if (el('otdFinBarCobro')) el('otdFinBarCobro').textContent = c.hayCobro ? fb(c.cTot) : '—';
-  if (el('otdFinBarCosto')) el('otdFinBarCosto').textContent = c.costoCompleto ? fb(c.kTot) : '—';
-  if (el('otdFinMargen')) el('otdFinMargen').textContent = c.mostrarQueda ? fb(c.qTot, true) : '—';
-  if (el('otdFinMargenPct')){
-    el('otdFinMargenPct').textContent = c.mostrarQueda
-      ? (c.pTot === null ? 'sin cobro' : P(c.pTot))
-      : _otdFinFaltaTxt(c, d);
+  if (bar) bar.dataset.sem = sem;
+  if (el('otdFinBarCobro')) el('otdFinBarCobro').textContent = C.hay ? fb(C.total) : '—';
+  if (el('otdFinBarCosto')) el('otdFinBarCosto').textContent = M.falta_tecnico ? '—' : fb(M.total);
+  const lab = el('otdFinBarQuedaLab'), qn = el('otdFinMargen'), qp = el('otdFinMargenPct');
+  if (!r.cobra){
+    // OT que no se cobra: no es "pérdida", es lo que nos costó (azul).
+    if (lab) lab.textContent = 'Nos costó';
+    if (qn) qn.textContent = M.falta_tecnico ? '—' : fb(M.total);
+    if (qp) qp.textContent = M.falta_tecnico ? _otdFinFaltaTxt(r) : corto.toLowerCase();
+  } else {
+    if (lab) lab.textContent = 'Queda';
+    if (qn) qn.textContent = Q.mostrar ? fb(Q.total, true) : '—';
+    if (qp) qp.textContent = Q.mostrar ? (Q.pct === null ? 'sin cobro' : P(Q.pct)) : _otdFinFaltaTxt(r);
   }
-  if (el('otdFinBarQueda')) el('otdFinBarQueda').className = 'otd-fbar-cell q sem-' + c.sem;
+  if (el('otdFinBarQueda')) el('otdFinBarQueda').className = 'otd-fbar-cell q sem-' + sem;
   const semTxt = el('otdFinBarSemTxt');
   if (semTxt){
-    semTxt.className = 'otd-fchip sem-' + c.sem;
-    semTxt.textContent = c.semTxt;
+    semTxt.className = 'otd-fchip sem-' + sem;
+    semTxt.textContent = r.label || '—';
   }
+  // La frase de la cuenta, en palabras de Daniel ("Cobré $X − me cobraron $Y = quedan $Z").
+  if (el('otdFinBarFrase')) el('otdFinBarFrase').textContent = r.frase || '';
 
   // ── Desglose por negocio (se abre tocando la barra) ──
   const det = el('otdFinBarDetFilas');
   if (det){
-    const cls = x => x > 0 ? 'pos' : (x < 0 ? 'neg' : 'cero');
-    const cue = (k) => k === null ? '—' : f(k);
-    // Sin cobro declarado (fuera de garantía) no hay "Queda": falta un dato.
-    const sinCob = !c.hayCobro && !d.garantia;
-    const qq = (q, k) => (k === null || sinCob) ? '<span class="cero">—</span>' : '<span class="' + cls(q) + '">' + f(q, true) + '</span>';
-    det.innerHTML =
-      '<div class="otd-fdet-row cab"><span>Por negocio</span><span>Cobramos</span><span>Nos cuesta</span><span>Queda</span></div>' +
-      '<div class="otd-fdet-row"><span>' + Neg + '</span><span>' + (sinCob ? '—' : f(c.cInst)) + '</span><span>' +
-        cue(c.kInstN) + '</span>' + qq(c.qInst, c.kInstN) + '</div>' +
-      '<div class="otd-fdet-row"><span>Despacho</span><span>' + (sinCob ? '—' : f(c.cDesp)) + '</span><span>' +
-        cue(c.kDespN) + '</span>' + qq(c.qDesp, c.kDespN) + '</div>' +
-      '<div class="otd-fdet-row tot"><span>Total OT</span><span>' + (sinCob ? '—' : f(c.cTot)) + '</span><span>' +
-        (c.costoCompleto ? f(c.kTot) : '—') + '</span>' +
-        (c.mostrarQueda ? '<span class="' + cls(c.qTot) + '">' + f(c.qTot, true) +
-          (c.pTot !== null ? ' · ' + P(c.pTot) : '') + '</span>' : '<span class="cero">—</span>') + '</div>';
+    const cls = x => r.cobra ? (x > 0 ? 'pos' : (x < 0 ? 'neg' : 'cero')) : 'info';
+    // Sin cobro declarado (en una OT que se cobra) no hay "Queda": falta un dato.
+    const sinCob = r.cobra && !C.hay;
+    const cobTxt = x => sinCob ? '—' : f(x);
+    const kDes = M.despacho === null ? (M.falta_despacho ? null : 0) : M.despacho;
+    const qq = (q, falta) => (falta || sinCob) ? '<span class="cero">—</span>'
+      : '<span class="' + cls(q) + '">' + f(q, true) + '</span>';
+    let html =
+      '<div class="otd-fdet-row cab"><span>Por negocio</span><span>Cobré</span><span>Me cobraron</span><span>' +
+        (r.cobra ? 'Queda' : 'Nos costó') + '</span></div>' +
+      '<div class="otd-fdet-row"><span>' + _otdFinEsc(Neg) + '</span><span>' + cobTxt(C.servicio) + '</span><span>' +
+        f(M.tecnico) + '</span>' + qq(Q.servicio, M.falta_tecnico) + '</div>' +
+      '<div class="otd-fdet-row"><span>Despacho</span><span>' + cobTxt(C.despacho) + '</span><span>' +
+        f(kDes) + '</span>' + qq(Q.despacho, M.falta_despacho) + '</div>';
+    if (M.repuestos > 0 || M.repuestos_sin_costo > 0){
+      html += '<div class="otd-fdet-row"><span>Repuestos instalados</span><span>' + f(0) + '</span><span>' +
+        f(M.repuestos) + '</span>' + qq(Q.repuestos, false) + '</div>';
+    }
+    html += '<div class="otd-fdet-row tot"><span>Total OT</span><span>' + cobTxt(C.total) + '</span><span>' +
+        (M.falta_tecnico ? '—' : f(M.total)) + '</span>' +
+        ((Q.mostrar && !sinCob) ? '<span class="' + cls(Q.total) + '">' + f(Q.total, true) +
+          (Q.pct !== null ? ' · ' + P(Q.pct) : '') + '</span>' : '<span class="cero">—</span>') + '</div>';
+    det.innerHTML = html;
   }
 
   // ── Cuadro "Resultado de la OT": mismas celdas, mismo semáforo ──
-  const pctFila = (cob, cue, q, p) => cue === null ? 'falta el costo'
-    : (cob > 0 ? P(p) : (q < 0 ? 'pérdida' : (!cob && !cue ? 'no aplica' : 'sin cobro')));
-  // Sin nada declarado en el cobro, las filas dicen "—", no "$0". Y sin
-  // cobro (fuera de garantía) no hay "pérdida": falta un dato -- gris, igual
-  // que la barra y la fila Total.
-  const cobF = x => c.hayCobro ? x : null;
-  const faltaCobro = !c.hayCobro && !d.garantia;
-  const fila = (cob, k, q, p) => faltaCobro
-    ? _otdFinEqHtml(null, k, null, 'gris', 'falta el cobro')
-    : _otdFinEqHtml(cobF(cob), k, k === null ? null : q, _otdFinSemFila(cob, k, q), pctFila(cob, k, q, p));
-  if (el('otdFinResInst')) el('otdFinResInst').innerHTML = fila(c.cInst, c.kInstN, c.qInst, c.pInst);
-  if (el('otdFinResDesp')) el('otdFinResDesp').innerHTML = fila(c.cDesp, c.kDespN, c.qDesp, c.pDesp);
+  const fila = function(cob, cue, q){
+    if (!r.cobra){
+      // No se cobra: Cobré $0 − Me cobraron $X = Nos costó $X (azul).
+      return _otdFinEqHtml(0, cue, cue === null ? null : -q, 'info',
+        cue === null ? 'falta el costo' : 'no se cobra', true);
+    }
+    if (!C.hay) return _otdFinEqHtml(null, cue, null, 'gris', 'falta el cobro');
+    const pctTxt = cue === null ? 'falta el costo'
+      : (cob > 0 ? P(q / cob * 100) : (q < 0 ? 'pérdida' : (!cob && !cue ? 'no aplica' : 'sin cobro')));
+    return _otdFinEqHtml(cob, cue, cue === null ? null : q, _otdFinSemFila(cob, cue, q), pctTxt);
+  };
+  const kDesN = M.despacho === null ? (M.falta_despacho ? null : 0) : M.despacho;
+  if (el('otdFinResInst')) el('otdFinResInst').innerHTML = fila(C.servicio, M.tecnico, Q.servicio);
+  if (el('otdFinResDesp')) el('otdFinResDesp').innerHTML = fila(C.despacho, kDesN, Q.despacho);
   if (el('otdFinResTot')){
-    el('otdFinResTot').innerHTML = _otdFinEqHtml(c.hayCobro ? c.cTot : null, c.costoCompleto ? c.kTot : null,
-      c.mostrarQueda ? c.qTot : null, c.sem,
-      c.mostrarQueda ? (c.pTot === null ? 'sin cobro' : P(c.pTot)) : _otdFinFaltaTxt(c, d));
+    el('otdFinResTot').innerHTML = !r.cobra
+      ? _otdFinEqHtml(0, M.falta_tecnico ? null : M.total, M.falta_tecnico ? null : M.total, 'info',
+          M.falta_tecnico ? _otdFinFaltaTxt(r) : corto.toLowerCase(), true)
+      : _otdFinEqHtml(C.hay ? C.total : null, M.falta_tecnico ? null : M.total, Q.mostrar ? Q.total : null, sem,
+          Q.mostrar ? (Q.pct === null ? 'sin cobro' : P(Q.pct)) : _otdFinFaltaTxt(r));
   }
   if (el('otdFinResDespN')){
-    el('otdFinResDespN').textContent = (c.cDesp === 0 && c.kDesp > 0)
+    el('otdFinResDespN').textContent = (r.cobra && C.despacho === 0 && (M.despacho || 0) > 0)
       ? 'se pagó despacho y no se le cobró al cliente' : '';
   }
   if (el('otdFinResInstN')){
-    el('otdFinResInstN').textContent = (c.cInst <= 0 && c.kInst > 0 && !d.garantia)
-      ? 'se pagó ' + (d.neg || 'la instalación') + ' y no se le cobró al cliente' : '';
+    el('otdFinResInstN').textContent = (r.cobra && C.hay && C.servicio <= 0 && (M.tecnico || 0) > 0)
+      ? 'se pagó ' + negTxt + ' y no se le cobró al cliente' : '';
+  }
+  // Repuestos instalados (D2, 2026-09-26): informativos -- suman a "Me
+  // cobraron" y nunca bloquean nada. Oculto si no hay.
+  const rWrap = el('otdFinResRepWrap'), rVal = el('otdFinResRep'), rNota = el('otdFinResRepN');
+  if (rWrap && rVal){
+    const hayRep = M.repuestos > 0 || M.repuestos_sin_costo > 0;
+    rWrap.hidden = !hayRep;
+    if (hayRep){
+      rVal.textContent = M.repuestos > 0 ? f(M.repuestos) : '—';
+      const dsg = M.repuestos_desglose || {};
+      const partes = [];
+      if (dsg.bodega) partes.push('bodega ' + f(dsg.bodega));
+      if (dsg.compra) partes.push('compra ' + f(dsg.compra));
+      if (dsg.manual) partes.push('manual ' + f(dsg.manual));
+      if (rNota){
+        rNota.textContent = partes.join(' · ') + (M.repuestos_sin_costo
+          ? (partes.length ? ' · ' : '') + M.repuestos_sin_costo + ' sin costo registrado' : '');
+      }
+    }
   }
 
   // ── La frase: lo que pasó, dicho en una línea ──
   const fr = el('otdFinFrase'), fs = el('otdFinFraseSub');
   if (fr){
     const g = x => '<span class="g">' + f(x) + '</span>';
-    const r = x => '<span class="r">' + f(x) + '</span>';
-    const despSin = (c.cDesp === 0 && c.kDesp > 0) ? ' sin cobrar' : '';
+    const rr = x => '<span class="r">' + f(x) + '</span>';
+    const b = x => '<span class="b">' + f(x) + '</span>';
     let t, sub = '';
-    if (!(c.cTot > 0) && !d.garantia){
-      t = 'Falta declarar lo que se le cobra al cliente: sin eso no se puede saber lo que queda.';
-    } else if (!c.hayCosto){
-      t = 'Falta declarar lo que nos cuesta: sin eso no se puede saber lo que queda.';
-    } else if (!(c.cTot > 0) && !c.costoCompleto){
-      t = 'Es garantía: no se le cobra al cliente. Falta declarar lo que nos cuesta ' +
-          (c.kInstN === null ? (d.neg || 'la instalación') : 'el despacho') + ' (si no hubo, escribe 0).';
-    } else if (!(c.cTot > 0)){
-      t = 'Es garantía: no se le cobra al cliente y a ILUS Fitness le cuesta ' + r(c.kTot) + '.';
-    } else if (c.kInstN === null || c.kDespN === null){
-      // Un costo declarado y el otro vacío: se dice lo que se sabe y lo que
-      // falta -- vacío es "no se declaró", no "no hubo".
-      if (c.kInstN !== null){
-        const qi = c.qInst;
-        t = negFrase + (qi > 0 ? ' dejó ' + g(qi) : (qi < 0 ? ' perdió ' + r(-qi) : ' no dejó margen')) +
-            '. Falta declarar lo que nos cuesta el despacho (si no hubo, escribe 0).';
-      } else {
-        const qd = c.qDesp;
-        t = 'Falta declarar lo que nos cuesta ' + (d.neg || 'la instalación') + ' (si no hubo, escribe 0).' +
-            (qd < 0 ? ' El despacho' + despSin + ' se comió ' + r(-qd) + '.' : '');
-      }
-      sub = 'Con lo declarado hasta ahora la OT queda con ' + f(c.qTot, true) + ' (' + P(c.pTot) + ') sobre ' +
-            f(c.cTot) + ' cobrados al cliente.';
+    if (!r.cobra){
+      t = _otdFinEsc(r.cobertura_txt) + '. ' + (M.falta_tecnico
+        ? 'Falta declarar lo que te cobró el técnico (si no hubo, escribe 0).'
+        : 'Nos costó ' + b(M.total) + '.');
+      sub = (r.valorizado && r.valorizado.monto)
+        ? 'Valorizada en ' + f(r.valorizado.monto) + ': es solo referencia, no se suma a lo cobrado.' : '';
+    } else if (!C.hay){
+      t = 'Falta declarar lo que le cobraste al cliente: sin eso no se puede saber lo que queda.';
+    } else if (M.falta_tecnico){
+      t = 'Falta declarar lo que te cobró el técnico (si no hubo, escribe 0): sin eso no se puede saber lo que queda.';
+    } else if (M.falta_despacho){
+      const qi = Q.servicio;
+      t = negFrase + (qi > 0 ? ' dejó ' + g(qi) : (qi < 0 ? ' perdió ' + rr(-qi) : ' no dejó margen')) +
+          '. Le cobraste un despacho al cliente: falta declarar cuánto costó.';
     } else {
-      const qi = c.qInst, qd = c.qDesp;
-      if (qi > 0 && qd < 0)       t = negFrase + ' dejó ' + g(qi) + ', pero el despacho' + despSin + ' se comió ' + r(-qd) + '.';
-      else if (qi > 0 && qd === 0) t = negFrase + ' dejó ' + g(qi) + (c.cDesp === 0 && c.kDesp === 0 ? '; no hubo despacho.' : ' y el despacho quedó en cero.');
+      const qi = Q.servicio, qd = Q.despacho;
+      const despSin = (C.despacho === 0 && (M.despacho || 0) > 0) ? ' sin cobrar' : '';
+      if (qi > 0 && qd < 0)       t = negFrase + ' dejó ' + g(qi) + ', pero el despacho' + despSin + ' se comió ' + rr(-qd) + '.';
+      else if (qi > 0 && qd === 0) t = negFrase + ' dejó ' + g(qi) + (C.despacho === 0 && !M.despacho ? '; no hubo despacho.' : ' y el despacho quedó en cero.');
       else if (qi > 0)            t = negFrase + ' dejó ' + g(qi) + ' y el despacho, ' + g(qd) + '.';
-      else if (qi < 0 && qd < 0)  t = negFrase + ' perdió ' + r(-qi) + ' y el despacho' + despSin + ', otros ' + r(-qd) + '.';
-      else if (qi < 0 && qd > 0)  t = negFrase + ' perdió ' + r(-qi) + ' y el despacho dejó ' + g(qd) + '.';
-      else if (qi < 0)            t = negFrase + ' perdió ' + r(-qi) + '.';
-      else if (qd < 0)            t = negFrase + ' no dejó margen y el despacho' + despSin + ' se comió ' + r(-qd) + '.';
+      else if (qi < 0 && qd < 0)  t = negFrase + ' perdió ' + rr(-qi) + ' y el despacho' + despSin + ', otros ' + rr(-qd) + '.';
+      else if (qi < 0 && qd > 0)  t = negFrase + ' perdió ' + rr(-qi) + ' y el despacho dejó ' + g(qd) + '.';
+      else if (qi < 0)            t = negFrase + ' perdió ' + rr(-qi) + '.';
+      else if (qd < 0)            t = negFrase + ' no dejó margen y el despacho' + despSin + ' se comió ' + rr(-qd) + '.';
       else if (qd > 0)            t = negFrase + ' no dejó margen; el despacho dejó ' + g(qd) + '.';
       else                        t = negFrase + ' no dejó margen: se cobró lo mismo que costó.';
-      sub = 'En total la OT queda con ' + f(c.qTot, true) + ' (' + P(c.pTot) + ') sobre ' +
-            f(c.cTot) + ' cobrados al cliente.';
-      if (c.sem === 'ambar') sub += ' Es margen bajo: menos de ' + window.OTD_FIN_UMBRAL_BAJO + ' %.';
+      sub = 'En total la OT queda con ' + f(Q.total, true) + (Q.pct !== null ? ' (' + P(Q.pct) + ')' : '') +
+            ' sobre ' + f(C.total) + ' cobrados al cliente.';
+      if (M.repuestos > 0) sub += ' Incluye ' + f(M.repuestos) + ' en repuestos instalados.';
+      if (r.clase === 'bajo') sub += ' Es margen bajo: menos de ' + window.OTD_FIN_UMBRAL_BAJO + ' %.';
     }
     fr.innerHTML = t;
     if (fs) fs.textContent = sub;
   }
-  return c;
+  return r;
 };
 
 /* Desglose por negocio: se abre tocando la barra (o "Desglose"). */
@@ -8338,27 +8610,23 @@ window.otdFinToggleDesglose = function(forzar){
     ro.observe(bar); if (eq) ro.observe(eq); if (tabs) ro.observe(tabs);
   }
   window.addEventListener('resize', medir);
-  // Vista de solo lectura: no hay campos, se pinta con lo guardado.
+  // Vista de solo lectura: no hay campos, se pinta con la cuenta que hizo el
+  // servidor con lo guardado (2026-10-07: antes la rehacía con una fórmula
+  // propia leyendo data-* de la barra).
   if (!document.getElementById('otdFinCosto')){
-    const ds = bar.dataset;
-    const n = x => (x === undefined || x === '') ? null : Number(x);
-    window.otdFinPintar({serv: n(ds.serv), env: n(ds.env), tot: n(ds.tot),
-      kInst: n(ds.kinst), kDesp: n(ds.kdesp), kRep: window.OTD_KREP,
-      garantia: window.OTD_FIN.garantia, neg: window.OTD_FIN.neg, Neg: window.OTD_FIN.Neg});
+    const F = window.OTD_FIN || {};
+    if (F.fin) window.otdFinPintar(F.fin);
   }
 })();
 
 /* 💰 D2 (revisión Opus 2026-09-26 -- Daniel: "la tarjeta de la OT y la
    fila de esa OT en Vida deben dar EXACTAMENTE el mismo Cobramos/Nos
-   cuesta/Queda/semáforo"): GET /ot/api/<vid>/resultado-financiero -- la
-   MISMA función (_ot_resultado_financiero) que ya usa Vida del cliente
-   para "Margen por OT".
-   🔧 FIX (revisión Opus #2, (d)): la versión anterior dependía de
-   `OTD_VID` (una `const` declarada más abajo en este mismo <script>) y
-   usaba `setTimeout(...,0)` solo para esperar a que existiera -- fràgil
-   (dependía del orden de ejecución del resto del archivo). Esta OT ya
-   está disponible como `{{ v.id }}` directo desde Jinja, sin esperar
-   nada -- se usa ese valor, sin importar OTD_VID en absoluto. */
+   cuesta/Queda/semáforo"): GET /ot/api/<vid>/resultado-financiero.
+   🔧 FIX (revisión Opus #2, (d)): usa `{{ v.id }}` directo desde Jinja, sin
+   depender de OTD_VID (declarada más abajo).
+   💰 2026-10-07: los repuestos instalados ya vienen con la página (fin_rep);
+   esto solo los refresca por si alguien instaló uno mientras tanto, y la
+   respuesta trae la cuenta única ("fin") además de las claves de antes. */
 (function(){
   const bar = document.getElementById('otdFinBar');
   if (!bar) return;   // técnico: la tarjeta no existe, nada que pedir
@@ -8368,51 +8636,33 @@ window.otdFinToggleDesglose = function(forzar){
       const r = await fetch('/ot/api/' + vid + '/resultado-financiero', {credentials: 'same-origin'});
       const j = await r.json();
       if (!j.ok) return;
-      window.OTD_KREP = j.costo_repuestos || 0;
-      const wrap = document.getElementById('otdFinResRepWrap');
-      const val = document.getElementById('otdFinResRep');
-      const nota = document.getElementById('otdFinResRepN');
-      if (j.costo_repuestos > 0 && wrap && val){
-        wrap.hidden = false;
-        val.textContent = window.otdFinFmt(j.costo_repuestos);
-        const dsg = j.repuestos_desglose || {};
-        const partes = [];
-        if (dsg.bodega) partes.push('bodega ' + window.otdFinFmt(dsg.bodega));
-        if (dsg.compra) partes.push('compra ' + window.otdFinFmt(dsg.compra));
-        if (dsg.manual) partes.push('manual ' + window.otdFinFmt(dsg.manual));
-        if (nota) nota.textContent = partes.join(' · ')
-          + (j.repuestos_sin_costo ? (partes.length ? ' · ' : '') + j.repuestos_sin_costo + ' sin costo' : '');
-      } else if (j.repuestos_sin_costo > 0 && wrap && val){
-        // Hay repuestos instalados pero NINGUNO tiene costo todavía --
-        // se muestra igual (transparencia) en vez de desaparecer la fila.
-        wrap.hidden = false;
-        val.textContent = '—';
-        if (nota) nota.textContent = j.repuestos_sin_costo + ' repuesto(s) sin costo registrado';
-      }
-      // Repinta con el kRep ya cargado -- el primer pintado (arriba) corrió
-      // sin este dato porque el fetch todavía no volvía.
-      if (window.OTD_KREP && document.getElementById('otdFinCosto')){
+      const F = window.OTD_FIN || {};
+      if (j.rep) F.rep = j.rep;
+      if (j.fin) F.fin = j.fin;
+      // Compatibilidad: lo leían versiones anteriores de esta pantalla.
+      window.OTD_KREP = (F.rep && F.rep.costo) || j.costo_repuestos || 0;
+      if (document.getElementById('otdFinCosto')){
         if (typeof window.otdPintarResultado === 'function') window.otdPintarResultado();
-      } else if (window.OTD_KREP && !document.getElementById('otdFinCosto')){
-        const ds = bar.dataset;
-        const n = x => (x === undefined || x === '') ? null : Number(x);
-        window.otdFinPintar({serv: n(ds.serv), env: n(ds.env), tot: n(ds.tot),
-          kInst: n(ds.kinst), kDesp: n(ds.kdesp), kRep: window.OTD_KREP,
-          garantia: window.OTD_FIN.garantia, neg: window.OTD_FIN.neg, Neg: window.OTD_FIN.Neg});
+      } else if (F.fin){
+        window.otdFinPintar(F.fin);
       }
-    } catch (e) { /* informativo -- si falla, la tarjeta sigue sin repuestos, nunca rompe nada */ }
+    } catch (e) { /* informativo -- si falla, la tarjeta queda con lo que trajo la página */ }
   })();
 })();
 
 /* 🔴 2026-08-30 (Daniel: "compórtate tal cual como las finanzas del
    [ejecutar]... el margen debería salir allí"): MISMA fórmula y MISMO
    endpoint que `recalcular()`/`guardarFinanzasOT()` en ot_ejecutar.html --
-   se clona el comportamiento, no se inventa un cálculo nuevo. */
+   se clona el comportamiento, no se inventa un cálculo nuevo.
+   💰 2026-10-07: "la misma fórmula" es ahora la cuenta única (otdFinCuenta →
+   static/ot_finanzas.js, espejo de _ot_finanzas). Acá solo se arma lo que
+   quedaría guardado (otdFinVivo) y se pinta lo que devuelve la cuenta. */
 (function(){
   const elCosto = document.getElementById('otdFinCosto');
   if (!elCosto) return; // card no renderizada (técnico, o sin permiso)
   const elCostoProv = document.getElementById('otdFinCostoProveedor');
   const elCostoDespacho = document.getElementById('otdFinCostoDespacho');
+  const elValorizado = document.getElementById('otdFinValorizado');
   // #otdFinMargen / #otdFinMargenPct se mudaron a la barra y los pinta
   // otdFinPintar (mismo id de siempre).
   const elMargenWarn = document.getElementById('otdFinMargenWarn');
@@ -8426,12 +8676,14 @@ window.otdFinToggleDesglose = function(forzar){
      escribe y después deja el número como estaba, no hay nada sin guardar.
      Los montos se comparan sin puntos ("252.101" = "252101"). Los documentos
      se guardan solos al sumarlos; los montos, con Guardar -- este aviso deja
-     a la vista esa diferencia (no la unifica). */
+     a la vista esa diferencia (no la unifica).
+     💰 2026-10-07: la MISMA foto decide qué viaja al Guardar: del cobro y del
+     valorizado solo lo que cambió (otdFinCambio). */
   const _CAMPOS_FIN = ['otdFinZzServ','otdFinZzEnvio','otdFinCosto','otdFinZzMotivo',
     'otdFinCostoProveedor','otdFinCostoDespacho','otdFinProveedorNombre','otdFinProveedorTipo',
-    'otdFinDocErpTido','otdFinDocErpNudo','otdFinCentroCosto'];
+    'otdFinDocErpTido','otdFinDocErpNudo','otdFinCentroCosto','otdFinValorizado'];
   const _MONEY_FIN = {otdFinZzServ:1, otdFinZzEnvio:1, otdFinCosto:1,
-                      otdFinCostoProveedor:1, otdFinCostoDespacho:1};
+                      otdFinCostoProveedor:1, otdFinCostoDespacho:1, otdFinValorizado:1};
   function _valorCampo(id){
     const x = document.getElementById(id);
     if (!x) return '';
@@ -8457,6 +8709,8 @@ window.otdFinToggleDesglose = function(forzar){
     return !!_guardado && ['otdFinZzServ','otdFinZzEnvio','otdFinCosto']
       .some(function(id){ return _valorCampo(id) !== _guardado[id]; });
   };
+  // 💰 2026-10-07: ¿este campo cambió desde lo último guardado?
+  window.otdFinCambio = function(id){ return !!_guardado && _valorCampo(id) !== _guardado[id]; };
   let _estadoDeclarado = ((document.getElementById('otdFinBarEstado') || {}).textContent || '').trim();
   window.otdFinSetEstadoDeclarado = function(txt){ _estadoDeclarado = txt; };
 
@@ -8487,12 +8741,18 @@ window.otdFinToggleDesglose = function(forzar){
     if (!m) return null;
     return (m[1] === 'NVV' ? 'VD' : m[1]) + ' ' + m[2];
   }
-  function _pintarCuentaCierre(){
+  function _pintarCuentaCierre(r){
     const F = window.OTD_FIN;
     const chip = document.getElementById('otdFinCuentaCierre');
     const pri = _principal();
-    if (chip && !F.garantia && !F.contrato){
-      if (F.interna && !pri){
+    if (chip){
+      if (r && !r.cobra){
+        // 2026-10-07: garantía, cortesía, interno o contrato -- la cobertura de la cuenta única.
+        chip.className = 'otd-fchip cob-no';
+        chip.textContent = r.cobertura_txt;
+      } else if (!r && (F.garantia || F.contrato)){
+        // sin cuenta (no debería pasar en gestión): se deja lo que pintó el servidor
+      } else if (F.interna && !pri){
         chip.className = 'otd-fchip';
         chip.textContent = 'Trabajo interno: se valoriza, no se le cobra a un cliente';
       } else {
@@ -8519,23 +8779,73 @@ window.otdFinToggleDesglose = function(forzar){
     }
   }
 
+  /* ── 💰 2026-10-07: de dónde salió lo escrito en un campo ──────────────────
+     "Leer documento → Usar estos montos" deja el origen 'zz', "Usar este valor"
+     de la cotización deja 'cotizacion', y el cotizador o la sugerencia dejan su
+     fuente en el valorizado. Si después alguien cambia el número, ya no es ese
+     origen: es "a mano". Se compara el VALOR (no un evento), así da lo mismo si
+     el campo se llenó con o sin evento 'input'. */
+  function _origenDe(el, porDefecto){
+    if (!el) return porDefecto;
+    const val = String(el.value || '').replace(/[^\d]/g, '');
+    return (el.dataset.origen && el.dataset.origenValor === val) ? el.dataset.origen : porDefecto;
+  }
+  const elZzServ = document.getElementById('otdFinZzServ');
+  const elZzEnvio = document.getElementById('otdFinZzEnvio');
+  const elZzMotivoBox = document.getElementById('otdFinZzMotivoBox');
+  window.otdFinOrigenServ = function(){ return _origenDe(elZzServ, 'manual'); };
+  window.otdFinFuenteVal = function(){ return _origenDe(elValorizado, 'a_mano'); };
+
+  /* Los datos de la OT tal como quedarían al apretar Guardar: lo guardado
+     (OTD_FIN.base) con lo que se cambió en pantalla encima, con las MISMAS
+     reglas que aplica /ot/api/finanzas (solo viaja lo que cambió; un cobro
+     escrito a mano queda 'manual' y, si la línea guardada no era de servicio,
+     pasa a la línea del tipo de OT). Es lo que recibe la cuenta única. */
+  function vivo(){
+    const F = window.OTD_FIN || {};
+    const v = Object.assign({}, F.base || {});
+    const M = window.otdMoneyVal;
+    if (window.otdFinCambio('otdFinZzServ')){
+      v.zz_monto = M('otdFinZzServ');
+      if (v.zz_monto === null){
+        v.zz_codigo = null;
+      } else {
+        v.valor_origen = window.otdFinOrigenServ();
+        const cod = String(v.zz_codigo || '').trim().toUpperCase();
+        if (!cod || (F.zzNoServ || []).indexOf(cod) >= 0) v.zz_codigo = F.garantia ? null : (F.zzSugerida || null);
+      }
+    }
+    // Despacho y costos: vacío no viaja (el servidor conserva lo guardado).
+    if (window.otdFinCambio('otdFinZzEnvio') && M('otdFinZzEnvio') !== null) v.zz_envio_monto = M('otdFinZzEnvio');
+    const kp = M('otdFinCostoProveedor'); if (kp !== null) v.costo_proveedor = kp;
+    const kd = M('otdFinCostoDespacho'); if (kd !== null) v.costo_despacho = kd;
+    const pt = document.getElementById('otdFinProveedorTipo');
+    if (pt) v.proveedor_tipo = pt.value || null;
+    if (elValorizado){
+      const vz = M('otdFinValorizado');
+      v.valorizado_clp = vz;
+      v.valorizado_fuente = vz === null ? null : window.otdFinFuenteVal();
+    }
+    return v;
+  }
+  window.otdFinVivo = vivo;
+
   /* ── Pasos Listo / Pendiente ─────────────────────────────────────────
      🔁 2026-09-25: por data-paso, NUNCA por posición (bug del 09-09: al
      colar una tarjeta en el medio, cada paso se pintaba con la regla del
-     siguiente). Reglas nuevas:
-       cobro = hay documento principal (factura_*) y el total es > 0
-               (garantía/contrato: no se cobra; interna: basta el valor);
-       costo = los DOS costos con valor, aunque sea un 0 escrito (vacío es
-               "no se declaró") -- regla del wizard del 21-sep;
+     siguiente).
+     💰 2026-10-07 (cuenta única):
+       cobro = la OT no se cobra (garantía, cortesía, interno, contrato), o
+               hay documento principal (factura_*) y lo cobrado es > 0;
+       costo = está declarado lo que cobró el técnico (0 es un dato) y, si se
+               le cobró un despacho al cliente, su costo (el despacho es
+               opcional: Daniel 27-09);
        area  = hay centro de costo. */
   let _primerPintado = true;
-  function pintarPasos(){
-    const F = window.OTD_FIN;
-    const tot = window.otdMoneyVal('otdFinCosto') || 0;
+  function pintarPasos(r){
     const listos = {
-      cobro: (F.garantia || F.contrato) ? true : (F.interna ? tot > 0 : (!!_principal() && tot > 0)),
-      costo: window.otdMoneyVal('otdFinCostoProveedor') !== null
-             && window.otdMoneyVal('otdFinCostoDespacho') !== null,
+      cobro: !!r && (!r.cobra || (!!_principal() && r.cobre.total > 0)),
+      costo: !!r && !r.me_cobraron.falta_tecnico && !r.me_cobraron.falta_despacho,
       area: !!((document.getElementById('otdFinCentroCosto') || {}).value || ''),
     };
     document.querySelectorAll('#otdCardFinanzas .otd-fpaso[data-paso]').forEach(function(p){
@@ -8552,23 +8862,85 @@ window.otdFinToggleDesglose = function(forzar){
     _primerPintado = false;
   }
 
+  /* De dónde sale el valorizado, dicho simple (debajo de su campo). */
+  const _VAL_FUENTE_TXT = {dato_antiguo: 'del «Precio al cliente» anotado antes', documento: 'del documento',
+    zz: 'del documento', doc_total: 'del total del documento', estimado: 'del estimado por clasificación',
+    interno: 'del valor interno', cotizador: 'del cotizador', cotizacion: 'de la cotización',
+    contrato: 'del contrato', a_mano: 'escrito a mano', supuesto: 'escrito a mano', manual: 'escrito a mano'};
+  function _pintarValRef(r){
+    const ref = document.getElementById('otdFinValRef');
+    if (!ref || !elValorizado) return;
+    const F = window.OTD_FIN || {};
+    const vz = window.otdMoneyVal('otdFinValorizado');
+    const B = F.base || {};
+    const guardado = (B.valorizado_clp === null || B.valorizado_clp === undefined) ? null : Math.round(Number(B.valorizado_clp));
+    const fu = window.otdFinFuenteVal();
+    let t;
+    if (vz === null) t = r && r.cobra ? 'Opcional.' : 'Sin valorizar.';
+    else if (guardado !== null && guardado === vz) t = 'Guardado (' + (_VAL_FUENTE_TXT[B.valorizado_fuente] || 'a mano') + ').';
+    else if (fu !== 'a_mano') t = 'Sugerido ' + (_VAL_FUENTE_TXT[fu] || '') + ': puedes cambiarlo. Se guarda con «Guardar».';
+    else t = 'Escrito a mano: se guarda con «Guardar».';
+    ref.textContent = t + ' Es solo referencia: nunca se suma a lo cobrado.';
+  }
+
+  /* El motivo del cobro: aparece cuando lo declarado no cuadra con lo que
+     trajo el documento (2026-09-10) y -- 2026-10-07, Daniel: "sin línea de
+     servicio útil, el cobro se escribe a mano con motivo" -- cuando el cobro
+     se escribe a mano. En ese caso es obligatorio (lo exige el servidor). */
+  function _pintarMotivo(){
+    if (!elZzMotivoBox) return;
+    const lab = document.getElementById('otdFinZzMotivoLab');
+    const yaEscrito = ((document.getElementById('otdFinZzMotivo') || {}).value || '').trim();
+    const manual = window.otdFinCambio('otdFinZzServ') && window.otdMoneyVal('otdFinZzServ') !== null
+                   && window.otdFinOrigenServ() === 'manual';
+    const difDoc = !!window._otdFinDifDoc;
+    elZzMotivoBox.style.display = (difDoc || manual || yaEscrito) ? '' : 'none';
+    if (lab){
+      lab.textContent = (manual && !difDoc) ? '¿Por qué escribes el cobro a mano? (obligatorio)'
+        : (manual ? '¿Por qué no es lo que dice el documento? (obligatorio)' : '¿Por qué no es lo que dice el documento?');
+    }
+  }
+
   /* ── La barra, el desglose, el Resultado y todo lo que depende de ellos ──
      otdMoneySet NO dispara eventos: por eso esto se llama al FINAL de
      recalcularOtdFin (y desde afuera como window.otdPintarResultado), no
      colgado de un 'input'. */
   function pintarResultado(){
-    const F = window.OTD_FIN;
-    const c = window.otdFinPintar({
-      serv: window.otdMoneyVal('otdFinZzServ'), env: window.otdMoneyVal('otdFinZzEnvio'),
-      tot: window.otdMoneyVal('otdFinCosto'),
-      kInst: window.otdMoneyVal('otdFinCostoProveedor'), kDesp: window.otdMoneyVal('otdFinCostoDespacho'),
-      kRep: window.OTD_KREP,
-      garantia: F.garantia, neg: F.neg, Neg: F.Neg,
-    });
-    // "Nos cuesta en total": texto calculado, no un campo.
+    const F = window.OTD_FIN || {};
+    const r = window.otdFinCuenta(vivo(), F.rep);
+    if (!r) return;
+    window.otdFinPintar(r);
+    // ¿Se le cobra? En una OT que no se cobra el cobro no se escribe: en su
+    // lugar se dice por qué (2026-10-07; los campos no se borran, se ocultan).
+    const bloqueCobro = document.getElementById('otdFinCobroMontos');
+    const noCobra = document.getElementById('otdFinNoCobra');
+    if (bloqueCobro) bloqueCobro.hidden = !r.cobra;
+    if (noCobra) noCobra.hidden = !!r.cobra;
+    const ncTxt = document.getElementById('otdFinNoCobraTxt');
+    if (ncTxt && !r.cobra) ncTxt.textContent = r.cobertura_txt;
+    // "Total al cliente": ya NO se escribe a mano -- es servicio + despacho
+    // (Daniel lo aprobó el 2026-10-07). En OT antiguas sin servicio separado,
+    // la cuenta lo toma del «Precio al cliente» anotado y lo dice.
+    window.otdMoneySet('otdFinCosto', (r.cobra && r.cobre.hay) ? Math.round(r.cobre.total) : '');
+    const tf = document.getElementById('otdFinTotFuente');
+    if (tf){
+      const fu = r.cobra ? (r.cobre.fuente || '') : '';
+      tf.textContent = !fu ? '' : (fu.indexOf('precio al cliente') === 0
+        ? 'Sale del «Precio al cliente» anotado antes: no separa servicio y despacho. Escribe los dos para separarlo.'
+        : 'Lo cobrado sale de: ' + fu + '.');
+    }
+    // "Me cobraron en total": técnico + despacho + repuestos instalados.
     const kt = document.getElementById('otdFinCostoTotal');
-    if (kt) kt.textContent = c.costoCompleto ? window.otdFinFmt(c.kTot)
-      : (c.hayCosto ? window.otdFinFmt(c.kTot) + ' (falta un costo)' : '—');
+    if (kt){
+      const Mc = r.me_cobraron;
+      kt.textContent = Mc.falta_tecnico
+        ? (Mc.total ? window.otdFinFmt(Mc.total) + ' (falta lo del técnico)' : '—')
+        : window.otdFinFmt(Mc.total);
+    }
+    const ktr = document.getElementById('otdFinCostoTotalRep');
+    if (ktr) ktr.textContent = r.me_cobraron.repuestos > 0
+      ? 'Incluye ' + window.otdFinFmt(r.me_cobraron.repuestos) + ' en repuestos instalados.' : '';
+    _pintarValRef(r);
     // "Se carga a: …"
     const cc = document.getElementById('otdFinCentroCosto');
     const ccTxt = document.getElementById('otdFinBarCentro');
@@ -8580,7 +8952,7 @@ window.otdFinToggleDesglose = function(forzar){
     const chipDocs = document.getElementById('otdFinBarDocs');
     if (chipDocs){
       const suma = _docsZz();
-      const difiere = suma !== null && Math.abs(Math.round(suma) - Math.round(c.cTot)) > 1;
+      const difiere = r.cobra && suma !== null && Math.abs(Math.round(suma) - Math.round(r.cobre.total)) > 1;
       chipDocs.hidden = !difiere;
       if (difiere) chipDocs.textContent = 'Los documentos suman ' + window.otdFinFmt(suma);
     }
@@ -8592,40 +8964,38 @@ window.otdFinToggleDesglose = function(forzar){
       est.textContent = sucio ? 'Cambios sin guardar' : _estadoDeclarado;
       est.classList.toggle('sucio', sucio);
     }
-    pintarPasos();
-    _pintarCuentaCierre();
+    pintarPasos(r);
+    _pintarCuentaCierre(r);
+    _avisoMargen(r);
+    _pintarMotivo();
     if (window.otdFinCotizComparar) window.otdFinCotizComparar();
   }
   window.otdPintarResultado = pintarResultado;
 
-  /* Aviso de pérdida / de precio faltante (vive en el Paso 3, junto a la
-     decisión que lo resuelve). Misma lógica de siempre; cambian los textos
-     que "mentían" ("arriba", "el botón verde de arriba"). */
-  function _avisoMargen(){
+  /* Aviso de pérdida / de cobro faltante (vive en el Paso 3, junto a la
+     decisión que lo resuelve). 2026-10-07: lee la cuenta única; en una OT que
+     no se cobra no hay "pérdida" que avisar (es lo que nos costó). */
+  function _avisoMargen(r){
     if (!elMargenWarn) return;
-    // 2026-09-02: SIEMPRE por otdMoneyVal (los campos llevan puntos de miles).
-    const precio = window.otdMoneyVal('otdFinCosto') || 0;
-    const costoTotal = (window.otdMoneyVal('otdFinCostoProveedor') || 0)
-                     + (window.otdMoneyVal('otdFinCostoDespacho') || 0);
-    if (!precio && !costoTotal){ elMargenWarn.style.display = 'none'; return; }
-    /* 🐛 FIX 2026-09-02 (OT-149): costos declarados SIN precio al cliente no
-       es una pérdida: es un dato que falta. (En garantía no se cobra: ahí no
-       corresponde pedir precio.) */
-    if (!precio && costoTotal){
-      if (window.OTD_FIN.garantia){ elMargenWarn.style.display = 'none'; return; }
+    if (!r || !r.cobra){ elMargenWarn.style.display = 'none'; return; }
+    const Mc = r.me_cobraron;
+    /* 🐛 FIX 2026-09-02 (OT-149): costos declarados SIN cobro al cliente no
+       es una pérdida: es un dato que falta. */
+    if (!r.cobre.hay){
+      if (!(Mc.total > 0)){ elMargenWarn.style.display = 'none'; return; }
       elMargenWarn.style.display = 'flex';
       elMargenWarn.innerHTML = '<i class="bi bi-info-circle-fill" style="margin-top:2px"></i>' +
-        '<span>Falta el <b>precio al cliente</b> para poder calcular lo que queda. ' +
-        'Si el documento ya lo trae, úsalo con «Usar estos montos» en el Paso 1.</span>';
+        '<span>Falta lo que le <b>cobraste al cliente</b> para poder calcular lo que queda. ' +
+        'Si el documento ya lo trae, úsalo con «Usar estos montos» en el Paso 1; si no trae una línea de ' +
+        'servicio, escríbelo a mano con el motivo.</span>';
       elMargenWarn.style.background = '#eff6ff';
       elMargenWarn.style.borderColor = '#3b82f6';
       elMargenWarn.style.color = '#1e40af';
       return;
     }
-    const margen = precio - costoTotal;
     const cc = document.getElementById('otdFinCentroCosto');
     const ccVal = cc ? cc.value : '';
-    const avisar = margen < 0 && (ccVal === '' || ccVal === 'sstt');
+    const avisar = r.queda.mostrar && r.queda.total < 0 && (ccVal === '' || ccVal === 'sstt');
     if (avisar){
       elMargenWarn.innerHTML = '<i class="bi bi-exclamation-triangle-fill" style="margin-top:2px"></i>' +
         '<span>Esta OT muestra <b>pérdida</b>. Si no es atribuible a Servicio Técnico, ' +
@@ -8638,23 +9008,15 @@ window.otdFinToggleDesglose = function(forzar){
   }
 
   function recalcularOtdFin(){
-    _avisoMargen();
     pintarResultado();
   }
-  /* 💰 2026-09-10 (Daniel, OT-2026-00157 instalada a medias). El Paso 2
-     ahora declara las dos mitades de lo COBRADO (instalación + despacho) y
-     el total se calcula solo. Reglas:
-     · Si el usuario toca alguna de las dos mitades, el total se recalcula.
-     · Si escribe el total a mano, se respeta (hay cobros que no se separan
-       así) y deja de auto-calcularse hasta que vuelva a tocar una mitad.
-     · Al lado de cada mitad se dice qué monto trajo el ERP, y si lo
-       declarado no coincide aparece el campo del motivo -- visible, no
-       bloqueante. */
-  const elZzServ = document.getElementById('otdFinZzServ');
-  const elZzEnvio = document.getElementById('otdFinZzEnvio');
-  const elZzMotivoBox = document.getElementById('otdFinZzMotivoBox');
-  let _totalAMano = false;
-
+  /* 💰 2026-09-10 (Daniel, OT-2026-00157 instalada a medias). El Paso 1
+     declara las dos mitades de lo COBRADO (instalación + despacho) y el total
+     se calcula solo. Al lado de cada mitad se dice qué monto trajo el ERP, y
+     si lo declarado no coincide aparece el campo del motivo -- visible, no
+     bloqueante.
+     💰 2026-10-07: el total ya no se puede escribir a mano (Daniel aprobó que
+     "Total al cliente" sea siempre la suma); lo pinta pintarResultado. */
   function _otdErpRef(idRef, montoErp, montoDeclarado){
     const ref = document.getElementById(idRef);
     if (!ref) return false;
@@ -8692,14 +9054,11 @@ window.otdFinToggleDesglose = function(forzar){
         'Saldo del documento tras esto: ' + fmtCLP(restante) + '</span>';
   }
 
+  // `veniaDeMitad` se conserva por compatibilidad (antes decidía si el total
+  // "escrito a mano" se pisaba; el total ya no se escribe a mano).
   function _otdSincronizarZz(veniaDeMitad){
     const serv = window.otdMoneyVal('otdFinZzServ');
     const envio = window.otdMoneyVal('otdFinZzEnvio');
-    if (veniaDeMitad) _totalAMano = false;
-    // El total solo se pisa si NO lo escribieron a mano y hay algo que sumar.
-    if (!_totalAMano && (serv !== null || envio !== null) && window.otdMoneySet){
-      window.otdMoneySet('otdFinCosto', (serv || 0) + (envio || 0));
-    }
     // Referencia al ERP: los montos leídos del documento los deja
     // otdAplicarMontosZz() en estos data-* (o vienen del último guardado).
     const erpServ = elZzServ && elZzServ.dataset.erp !== undefined && elZzServ.dataset.erp !== ''
@@ -8710,38 +9069,41 @@ window.otdFinToggleDesglose = function(forzar){
     const d2 = _otdErpRef('otdFinZzEnvioErp', erpEnvio, envio);
     _otdSaldoRef('otdFinZzServSaldo', elZzServ, serv);
     _otdSaldoRef('otdFinZzEnvioSaldo', elZzEnvio, envio);
-    if (elZzMotivoBox){
-      const yaEscrito = (document.getElementById('otdFinZzMotivo') || {}).value;
-      elZzMotivoBox.style.display = (d1 || d2 || (yaEscrito || '').trim()) ? '' : 'none';
-    }
+    window._otdFinDifDoc = !!(d1 || d2);
     recalcularOtdFin();
   }
   window.otdSincronizarZz = _otdSincronizarZz;
 
   /* 💰 2026-09-25 — sumar o quitar un documento ya NO recarga la página:
      la respuesta de /documentos trae lo que quedó GUARDADO en la OT
-     (zz_monto, zz_envio_monto, costo) y con eso se reescriben los tres
-     campos del cobro. Se escriben con otdMoneySet y el total que viene del
-     servidor NO queda marcado como "escrito a mano" (_totalAMano solo si de
-     verdad no es servicio + despacho). Las referencias "El documento dice…"
-     y el saldo eran de UN documento leído: con la suma ya no aplican.
-     Costos, técnico y centro de costo no se tocan. Devuelve false si la
-     respuesta no trae los montos (el caller recarga, como antes). */
+     (zz_monto, zz_envio_monto) y con eso se reescriben los campos del cobro.
+     Las referencias "El documento dice…" y el saldo eran de UN documento
+     leído: con la suma ya no aplican. Costos, técnico y centro de costo no se
+     tocan. Devuelve false si la respuesta no trae los montos (el caller
+     recarga, como antes).
+     💰 2026-10-07: además se actualiza la base de la cuenta única y se pide al
+     servidor la base completa (el código y el origen de la línea también
+     cambian al sumar un documento). */
   window.otdFinRefrescarCobro = function(d){
-    if (!d || !('costo' in d) || !('zz_monto' in d) || !('zz_envio_monto' in d)) return false;
+    if (!d || !('zz_monto' in d) || !('zz_envio_monto' in d)) return false;
+    const F = window.OTD_FIN || {};
     const perdidos = window.otdFinCamposCobroSucios && window.otdFinCamposCobroSucios();
-    window.otdMoneySet('otdFinZzServ', d.zz_monto);
+    if (F.base){
+      F.base.zz_monto = d.zz_monto;
+      F.base.zz_envio_monto = d.zz_envio_monto;
+      if ('costo' in d) F.base.costo = d.costo;
+    }
+    window.otdMoneySet('otdFinZzServ', window.otdFinZzCuenta(F.base) ? d.zz_monto : '');
     window.otdMoneySet('otdFinZzEnvio', d.zz_envio_monto);
-    window.otdMoneySet('otdFinCosto', d.costo);
     [elZzServ, elZzEnvio].forEach(function(x){
-      if (x){ delete x.dataset.erp; delete x.dataset.saldo; }
+      if (x){ delete x.dataset.erp; delete x.dataset.saldo; delete x.dataset.origen; delete x.dataset.origenValor; }
     });
-    const suma = (d.zz_monto || 0) + (d.zz_envio_monto || 0);
-    _totalAMano = (d.costo !== null && Math.round(d.costo) !== Math.round(suma));
-    _otdSincronizarZz(false);
     window.otdFinMarcarGuardado(['otdFinZzServ', 'otdFinZzEnvio', 'otdFinCosto']);
-    if (window.otdFinPintarZzBox) window.otdFinPintarZzBox(d.zz_monto, d.zz_envio_monto);
-    pintarResultado();
+    if (F.base) F.fin = window.otdFinCuenta(F.base, F.rep);
+    _otdSincronizarZz(false);
+    if (window.otdFinPintarZzBox) window.otdFinPintarZzBox();
+    if (window.otdFinPintarHeader) window.otdFinPintarHeader({fin: F.fin});
+    if (window.otdFinRecargarBase) window.otdFinRecargarBase();
     if (perdidos && window.ilusToast){
       ilusToast('Ojo: lo que habías escrito a mano en el cobro se reemplazó por lo guardado ' +
                 'en la OT (la suma de sus documentos).', {type: 'warning'});
@@ -8749,12 +9111,48 @@ window.otdFinToggleDesglose = function(forzar){
     return true;
   };
 
+  /* 💰 2026-10-07 — trae del servidor la base y la cuenta GUARDADAS (la misma
+     respuesta de /resultado-financiero). Un campo del cobro que nadie tocó en
+     pantalla se reescribe con lo guardado; uno que alguien está escribiendo,
+     no se pisa. */
+  window.otdFinRecargarBase = async function(){
+    try {
+      const resp = await fetch('/ot/api/{{ v.id }}/resultado-financiero', {credentials: 'same-origin', cache: 'no-store'});
+      const j = await resp.json();
+      if (!j || !j.ok || !j.base) return;
+      const F = window.OTD_FIN || {};
+      F.base = j.base;
+      if (j.rep) F.rep = j.rep;
+      F.fin = j.fin || window.otdFinCuenta(F.base, F.rep);
+      if (!window.otdFinCambio('otdFinZzServ')){
+        window.otdMoneySet('otdFinZzServ', window.otdFinZzCuenta(F.base) ? F.base.zz_monto : '');
+        window.otdFinMarcarGuardado(['otdFinZzServ']);
+      }
+      if (!window.otdFinCambio('otdFinZzEnvio')){
+        window.otdMoneySet('otdFinZzEnvio', F.base.zz_envio_monto);
+        window.otdFinMarcarGuardado(['otdFinZzEnvio']);
+      }
+      if (window.otdFinPintarZzBox) window.otdFinPintarZzBox();
+      if (window.otdFinPintarHeader) window.otdFinPintarHeader({fin: F.fin});
+      pintarResultado();
+    } catch (e) { /* si falla, queda lo que dijo la respuesta del documento */ }
+  };
+
+  /* 💰 2026-10-07 — "Valorizar (opcional)": en una OT que se cobra el
+     valorizado queda plegado detrás de este botón (es solo referencia). */
+  window.otdFinValAbrir = function(foco){
+    const row = document.getElementById('otdFinValRow');
+    const btn = document.getElementById('otdFinValAbrir');
+    if (row) row.hidden = false;
+    if (btn) btn.hidden = true;
+    if (foco !== false && elValorizado){ try { elValorizado.focus(); } catch(e){} }
+  };
+
   [elZzServ, elZzEnvio].forEach(function(el){
     if (el) el.addEventListener('input', function(){ _otdSincronizarZz(true); });
   });
-  if (elCosto) elCosto.addEventListener('input', function(){ _totalAMano = true; });
-
-  [elCosto, elCostoProv, elCostoDespacho].forEach(function(el){
+  // "Total al cliente" es de solo lectura (la suma): ya no tiene "escrito a mano".
+  [elCostoProv, elCostoDespacho, elValorizado].forEach(function(el){
     if (el) el.addEventListener('input', recalcularOtdFin);
   });
   const ccSel = document.getElementById('otdFinCentroCosto');
@@ -8775,23 +9173,55 @@ window.otdFinToggleDesglose = function(forzar){
   pintarResultado();
 })();
 
-/* Caja verde "Guardado en la OT (suma de los documentos)": se repinta
-   después de Guardar y después de sumar/quitar un documento (antes quedaba
-   desactualizada hasta recargar). */
-window.otdFinPintarZzBox = function(serv, env){
+/* Caja "Lo que dicen los documentos" (antes "Guardado en la OT (suma de los
+   documentos)"): se repinta después de Guardar y después de sumar/quitar un
+   documento (antes quedaba desactualizada hasta recargar).
+   💰 2026-10-07: se pinta con lo GUARDADO (window.OTD_FIN.base) y además dice,
+   en palabras simples, lo que la cuenta única encontró raro (sus avisos: una
+   línea que no es de servicio, un «Precio al cliente» que no coincide, un
+   estimado que no es cobro…). Los argumentos de antes (serv, env) ya no se
+   usan: todo sale de la base, para no pintar algo distinto de lo guardado. */
+window.otdFinPintarZzBox = function(){
   const box = document.getElementById('otdZzBox');
-  if (!box) return;
-  const s = Number(serv) || 0, e = Number(env) || 0;
-  box.hidden = !(s || e);
+  const F = window.OTD_FIN || {};
+  if (!box || !F.base) return;
+  const B = F.base;
+  const R = F.fin || window.otdFinCuenta(B, F.rep);
+  const s = Number(B.zz_monto) || 0, e = Number(B.zz_envio_monto) || 0;
+  const cuenta = window.otdFinZzCuenta(B);
+  const avisos = (R && R.avisos) || [];
+  box.hidden = !(s || e || avisos.length);
   const set = function(id, n){ const x = document.getElementById(id); if (x) x.textContent = window.otdFinFmt(n); };
-  set('otdZzBoxServ', s); set('otdZzBoxEnv', e); set('otdZzBoxTot', s + e);
+  set('otdZzBoxServ', s); set('otdZzBoxEnv', e); set('otdZzBoxTot', (cuenta ? s : 0) + e);
   const ws = document.getElementById('otdZzBoxServW'); if (ws) ws.hidden = !s;
   const we = document.getElementById('otdZzBoxEnvW'); if (we) we.hidden = !e;
+  const cod = document.getElementById('otdZzBoxServCod'); if (cod) cod.textContent = B.zz_codigo || 'servicio';
+  const tag = document.getElementById('otdZzBoxServTag');
+  if (tag){
+    // Lo que se guardó como "servicio" no siempre salió de un documento: se dice.
+    const c = String(B.zz_codigo || '').toUpperCase(), o = String(B.valor_origen || '').toLowerCase();
+    let tx = '';
+    if (B.zz_monto !== null && B.zz_monto !== undefined){
+      if ((F.zzNoServ || []).indexOf(c) >= 0) tx = 'no es de servicio: no cuenta';
+      else if ((F.origNoCobro || []).indexOf(o) >= 0) tx = 'estimado: no es un cobro';
+      else if (o === 'manual' || o === 'supuesto') tx = 'escrito a mano';
+    }
+    tag.textContent = tx;
+    tag.hidden = !tx;
+  }
+  const ul = document.getElementById('otdZzAvisos');
+  if (ul){
+    ul.innerHTML = avisos.map(function(a){ return '<li>' + _otdFinEsc(a) + '</li>'; }).join('');
+    ul.hidden = !avisos.length;
+  }
+  // "Usar estos montos" trae solo lo que CUENTA como cobro (un ZZRETIRO o un
+  // estimado no se copia al servicio).
   const b = document.getElementById('otdZzUsar');
   if (b){
-    b.dataset.total = String(Math.round(s + e));
-    b.dataset.serv = String(Math.round(s));
-    b.dataset.envio = String(Math.round(e));
+    b.dataset.serv = (cuenta && B.zz_monto !== null && B.zz_monto !== undefined) ? String(Math.round(s)) : '';
+    b.dataset.envio = (B.zz_envio_monto !== null && B.zz_envio_monto !== undefined) ? String(Math.round(e)) : '';
+    b.dataset.total = String(Math.round((cuenta ? s : 0) + e));
+    b.hidden = !(b.dataset.serv || b.dataset.envio);
   }
 };
 /* "VD 10667", "NVV 10667" y "VD 00010667" son el mismo documento. */
@@ -8814,7 +9244,7 @@ window.otdFinOtrosDocsConZz = function(docTxt){
   });
   return out;
 };
-/* "+$X · VD 10667" destella sobre COBRAMOS cuando un documento mueve la plata. */
+/* "+$X · VD 10667" destella sobre COBRÉ cuando un documento mueve la plata. */
 window.otdFinDestellar = function(txt, negativo){
   const f = document.getElementById('otdFinBarFlash');
   const cell = document.getElementById('otdFinBarCobroCell');
@@ -8830,16 +9260,35 @@ window.otdFinDestellar = function(txt, negativo){
     if (cell) cell.classList.remove('destello');
   }, 3000);
 };
-/* Chip "Valor del servicio" del encabezado: se mantiene al día sin recargar. */
+/* Chip del encabezado: se mantiene al día sin recargar.
+   💰 2026-10-07: el número grande es "Cobré" de la cuenta única (lo GUARDADO);
+   en una OT que no se cobra dice la cobertura y el valorizado ("Garantía ·
+   valorizado $X"). `d` puede traer la respuesta de /documentos (n_cobro,
+   total_cobro: la línea chica "Documentos con productos") y/o {fin}. */
 window.otdFinPintarHeader = function(d){
   if (!d) return;
-  const v = document.getElementById('otdHdrValorServ');
-  if (v && d.valor_ot !== undefined) v.textContent = d.valor_ot === null ? 'Sin valorizar' : window.otdFinFmt(d.valor_ot);
   const s = document.getElementById('otdHdrValorDocs');
   if (s && d.n_cobro !== undefined){
     s.hidden = !d.n_cobro;
     s.textContent = 'Documentos con productos: ' + window.otdFinFmt(d.total_cobro || 0) +
                     (d.n_cobro > 1 ? ' (' + d.n_cobro + ' doc.)' : '');
+  }
+  const v = document.getElementById('otdHdrValorServ');
+  const k = document.getElementById('otdHdrValorK');
+  const r = d.fin || (window.OTD_FIN || {}).fin;
+  if (v && r){
+    // El chip es angosto y su número no se puede cortar (REGLA #15): las
+    // palabras van en el rótulo chico y el número solo.
+    if (r.cobra){
+      if (k) k.textContent = 'Cobré';
+      v.textContent = r.cobre.hay ? window.otdFinFmt(r.cobre.total) : 'Sin declarar';
+    } else {
+      const _val = r.valorizado && r.valorizado.monto;
+      if (k) k.textContent = String(r.cobertura_txt || '').split(':')[0] + ' · ' + (_val ? 'valorizado' : 'no se cobra');
+      v.textContent = _val ? window.otdFinFmt(_val) : '$0';
+    }
+  } else if (v && d.valor_ot !== undefined){
+    v.textContent = d.valor_ot === null ? 'Sin valorizar' : window.otdFinFmt(d.valor_ot);
   }
 };
 
@@ -8848,13 +9297,12 @@ window.otdGuardarFinanzas = async function(){
   // al backend tiene que viajar 352029. Leer .value crudo mandaría 352.
   // 💰 2026-09-10: viajan también las dos mitades de lo COBRADO al cliente
   // (instalación y despacho) y el motivo si se declararon distinto de lo que
-  // dice el documento. El PUT las acepta desde hoy -- antes se mandaban al
-  // vacío. `null` = campo vacío, "no declarado" (≠ 0, que es "no se cobra").
+  // dice el documento. `null` = campo vacío, "no declarado" (≠ 0, que es "no
+  // se cobra").
+  const F = window.OTD_FIN || {};
+  const _cambio = window.otdFinCambio || function(){ return true; };
   const _zzMotivo = (document.getElementById('otdFinZzMotivo') || {}).value || '';
   const body = {
-    costo: window.otdMoneyVal('otdFinCosto'),
-    zz_monto: window.otdMoneyVal('otdFinZzServ'),
-    zz_envio_monto: window.otdMoneyVal('otdFinZzEnvio'),
     zz_motivo_manual: _zzMotivo.trim(),
     proveedor_tipo: document.getElementById('otdFinProveedorTipo').value || '',
     proveedor_nombre: document.getElementById('otdFinProveedorNombre').value.trim(),
@@ -8862,6 +9310,18 @@ window.otdGuardarFinanzas = async function(){
     documento_erp_nudo: document.getElementById('otdFinDocErpNudo').value.trim(),
     centro_costo: document.getElementById('otdFinCentroCosto').value || '',
   };
+  /* 💰 2026-10-07 (modelo único) — lo cobrado viaja SOLO si se cambió en
+     pantalla. Antes viajaba siempre y el servidor reescribía la línea y su
+     código en cada guardado (así un ZZRETIRO de $1 terminaba pasando por cobro
+     de instalación). Un cobro escrito a mano viaja rotulado 'manual'; uno
+     traído del documento, 'zz'; de la cotización, 'cotizacion'.
+     "Total al cliente" ya NO viaja: es la suma de servicio + despacho y la
+     columna `costo` quedó como historia (Daniel lo aprobó). */
+  if (_cambio('otdFinZzServ')){
+    body.zz_monto = window.otdMoneyVal('otdFinZzServ');
+    if (body.zz_monto !== null) body.valor_origen = window.otdFinOrigenServ ? window.otdFinOrigenServ() : 'manual';
+  }
+  if (_cambio('otdFinZzEnvio')) body.zz_envio_monto = window.otdMoneyVal('otdFinZzEnvio');
   /* 🔁 2026-09-25: los costos viajan SOLO si tienen valor (un 0 escrito sí
      viaja: "no hubo" es un dato). Antes un campo vacío se mandaba como
      `|| 0`: eso borraba el candado SIN_COSTO_PROVEEDOR del cierre y la
@@ -8869,19 +9329,16 @@ window.otdGuardarFinanzas = async function(){
      columna no se toca (el backend hace COALESCE). */
   const _kProv = window.otdMoneyVal('otdFinCostoProveedor');
   const _kDesp = window.otdMoneyVal('otdFinCostoDespacho');
-  // Un monto YA declarado que se dejó vacío no se puede borrar así (el
-  // backend hace COALESCE en costo, zz_envio_monto, costo_proveedor y
-  // costo_despacho: lo conserva): se dice en vez de "guardar" algo que no
-  // cambia -- y en vez de pintar como guardado un vacío que la base no tiene.
-  // 🔧 CORRECCIÓN 2026-09-27 (Daniel, corrigiendo una OT ya creada: "no es
-  // solo cuando creamos la OT... me obliga a pedir el transporte y a veces
-  // no es necesario. Ese valor es opcional, el despacho"). El despacho
-  // sale de esta lista: dejarlo en blanco ya NO exige "escribe 0" -- el
-  // campo simplemente no viaja (COALESCE conserva lo que hubiera, si algo
-  // hubiera). El costo del servicio sigue protegido igual que antes.
-  const _vacioDeclarado = [['otdFinCostoProveedor', _kProv, 'Costo ' + ((window.OTD_FIN || {}).neg || 'de la instalación'), 'costo'],
-                           ['otdFinZzEnvio', body.zz_envio_monto, 'Despacho al cliente', 'cobro'],
-                           ['otdFinCosto', body.costo, 'Total al cliente', 'cobro']]
+  // Un monto YA declarado que se dejó vacío no se puede borrar así: se dice
+  // en vez de "guardar" algo que no cambia.
+  // 🔧 CORRECCIÓN 2026-09-27 (Daniel: "ese valor es opcional, el despacho"):
+  // el costo del despacho sale de esta lista. 2026-10-07: "Total al cliente"
+  // también (ya no se escribe: es la suma) y entra el servicio, que es ahora
+  // el que lleva el cobro.
+  const _vacioDeclarado = [['otdFinCostoProveedor', _kProv, 'Costo ' + (F.neg || 'de la instalación'), 'costo'],
+                           ['otdFinZzServ', window.otdMoneyVal('otdFinZzServ'),
+                            (F.Neg === 'Instalación' ? 'Instalación / servicio' : 'Servicio'), 'cobro'],
+                           ['otdFinZzEnvio', window.otdMoneyVal('otdFinZzEnvio'), 'Despacho al cliente', 'cobro']]
     .find(function(x){ return x[1] === null && window.otdFinValorGuardado && window.otdFinValorGuardado(x[0]) !== ''; });
   if (_vacioDeclarado){
     if (window.ilusToast){
@@ -8893,8 +9350,31 @@ window.otdGuardarFinanzas = async function(){
     if (_c) _c.focus();
     return;
   }
+  // Daniel 2026-10-07: "sin línea de servicio útil, el cobro se escribe a mano
+  // con motivo". El servidor lo exige igual; acá se dice antes de mandar.
+  if (body.zz_monto !== undefined && body.zz_monto !== null && body.valor_origen === 'manual' && !_zzMotivo.trim()){
+    if (window.ilusToast){
+      ilusToast('Escribe por qué el cobro va a mano (por ejemplo: el documento no trae una línea de servicio).',
+                {type: 'warning'});
+    }
+    const _mb = document.getElementById('otdFinZzMotivoBox'); if (_mb) _mb.style.display = '';
+    const _m = document.getElementById('otdFinZzMotivo'); if (_m) _m.focus();
+    return;
+  }
   if (_kProv !== null) body.costo_proveedor = _kProv;
   if (_kDesp !== null) body.costo_despacho = _kDesp;
+  // 💰 2026-10-07 — Valorizado: solo referencia (nunca se suma a lo cobrado).
+  // Viaja si es distinto de lo guardado: una sugerencia a la vista se guarda
+  // al apretar Guardar, con su fuente; vaciarlo lo quita.
+  if (document.getElementById('otdFinValorizado')){
+    const _vz = window.otdMoneyVal('otdFinValorizado');
+    const _vb = (F.base && F.base.valorizado_clp !== null && F.base.valorizado_clp !== undefined)
+      ? Math.round(Number(F.base.valorizado_clp)) : null;
+    if (_vz !== _vb){
+      body.valorizado_clp = _vz;
+      body.valorizado_fuente = _vz === null ? null : (window.otdFinFuenteVal ? window.otdFinFuenteVal() : 'a_mano');
+    }
+  }
   /* 🔀 FASE 2 — 2026-09-11 (Daniel: "cámbialo"). Esta tarjeta guardaba por
      el PUT genérico de la visita, mientras /ot/api/finanzas se declaraba "el
      dueño de la fila financiera": dos dueños para la misma plata, y de ahí
@@ -8919,9 +9399,9 @@ window.otdGuardarFinanzas = async function(){
     if (r.ok && j.ok !== false){
       if (window.ilusToast) ilusToast('✓ Finanzas de la OT guardadas', {type: 'success'});
       /* 🔁 2026-09-25: guardar no recarga la página, así que "quién
-         declaró", la caja verde, lo que falta para cerrar y el estado de la
-         barra se actualizan acá (antes quedaban desactualizados). Hora de
-         Chile siempre (REGLA #6). */
+         declaró", la caja de los documentos, lo que falta para cerrar y el
+         estado de la barra se actualizan acá (antes quedaban
+         desactualizados). Hora de Chile siempre (REGLA #6). */
       try {
         const ahora = new Intl.DateTimeFormat('es-CL', {timeZone: 'America/Santiago',
           day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -8939,16 +9419,20 @@ window.otdGuardarFinanzas = async function(){
             ahora.hour + ':' + ahora.minute + '.';
         }
       } catch (_eFecha){}
-      if (window.OTD_FIN) window.OTD_FIN.declarada = true;
-      if (window.otdFinPintarZzBox) window.otdFinPintarZzBox(body.zz_monto, body.zz_envio_monto);
-      // Chip "Valor del servicio" del encabezado: misma regla que valor_ot
-      // en _ot_docs_listar (servicio + despacho; si ambos vacíos, el total).
-      // Con el freno de arriba, lo enviado es lo que quedó en la base.
-      if (window.otdFinPintarHeader){
-        const _vz = (body.zz_monto !== null || body.zz_envio_monto !== null)
-          ? (body.zz_monto || 0) + (body.zz_envio_monto || 0) : body.costo;
-        window.otdFinPintarHeader({valor_ot: _vz});
+      if (window.OTD_FIN){
+        window.OTD_FIN.declarada = true;
+        // 💰 2026-10-07: la base y la cuenta guardadas las devuelve el servidor
+        // (lo que de verdad quedó). Si no vinieran, se aplica lo enviado.
+        if (j.base) window.OTD_FIN.base = j.base;
+        else if (window.OTD_FIN.base){
+          ['zz_monto', 'zz_envio_monto', 'costo_proveedor', 'costo_despacho', 'valorizado_clp',
+           'valorizado_fuente', 'valor_origen'].forEach(function(k){ if (k in body) window.OTD_FIN.base[k] = body[k]; });
+        }
+        if (j.rep) window.OTD_FIN.rep = j.rep;
+        window.OTD_FIN.fin = j.fin || window.otdFinCuenta(window.OTD_FIN.base, window.OTD_FIN.rep);
       }
+      if (window.otdFinPintarZzBox) window.otdFinPintarZzBox();
+      if (window.otdFinPintarHeader) window.otdFinPintarHeader({fin: window.OTD_FIN && window.OTD_FIN.fin});
       const falt = document.getElementById('otdFinFaltan');
       if (falt && Array.isArray(j.faltan)){
         falt.hidden = !j.faltan.length;
@@ -9269,8 +9753,12 @@ window.otdCorregirFinanzas = async function(){
   if (window.otdPintarResultado) window.otdPintarResultado();
   // 2026-09-25: el campo tiene scroll-margin igual al alto de la barra
   // pegada, así al enfocarlo no queda tapado por ella.
-  const primero = document.getElementById('otdFinCosto');
-  if (primero){ primero.focus(); primero.select(); }
+  // 2026-10-07: "Total al cliente" es de solo lectura (la suma): se enfoca el
+  // servicio o, si la OT no se cobra, lo que me cobraron.
+  const _bloqueCobro = document.getElementById('otdFinCobroMontos');
+  const primero = (_bloqueCobro && !_bloqueCobro.hidden) ? document.getElementById('otdFinZzServ')
+                                                         : document.getElementById('otdFinCostoProveedor');
+  if (primero){ primero.focus(); try { primero.select(); } catch(e){} }
 };
 (function(){
   // Al cargar: si la OT ya tiene finanzas declaradas, arranca bloqueada.
@@ -9541,10 +10029,16 @@ window.otdLeerLineasZz = async function(){
       return;
     }
     const fmt = n => '$' + Math.round(n || 0).toLocaleString('es-CL');
+    // 💰 2026-10-07: una línea que no es de servicio (ZZRETIRO, "retiro en
+    // bodega") se sigue mostrando -- Daniel pidió ofrecerlas todas -- pero no
+    // cuenta como cobro del servicio (misma lista que la cuenta única).
+    const _NO_SERV = (window.OTD_FIN && window.OTD_FIN.zzNoServ) || ['ZZRETIRO'];
+    const _noServ = l => !l.es_envio && _NO_SERV.indexOf(String(l.codigo || '').toUpperCase()) >= 0;
     let html = '<div class="otd-zzl">';
     j.zz.forEach(function(l){
-      const tag = l.sugerida ? '<span class="tag">de esta OT</span>'
-                : (l.es_envio ? '<span class="tag">envío</span>' : '');
+      const tag = _noServ(l) ? '<span class="tag" style="background:#fff8e1;color:#92400e">no es de servicio: no cuenta</span>'
+                : (l.sugerida ? '<span class="tag">de esta OT</span>'
+                : (l.es_envio ? '<span class="tag">envío</span>' : ''));
       // El nombre real de la línea (nombre_app / descripcion_erp) solo se
       // muestra cuando aporta algo distinto del código.
       const nom = (l.nombre && l.nombre !== l.codigo)
@@ -9571,14 +10065,15 @@ window.otdLeerLineasZz = async function(){
        mitades por separado (instalación/servicio y envío) para poder llenar
        los dos campos del Paso 2. Es la misma clasificación que ya usa la
        lista de arriba (l.es_envio), no un criterio nuevo. */
-    const _zzServ = j.zz.filter(l => !l.es_envio)
+    const _zzServ = j.zz.filter(l => !l.es_envio && !_noServ(l))
                         .reduce((a, l) => a + (Number(l.monto) || 0), 0);
+    const _hayServ = j.zz.some(l => !l.es_envio && !_noServ(l));
     const _zzEnvio = j.zz.filter(l => l.es_envio)
                          .reduce((a, l) => a + (Number(l.monto) || 0), 0);
     // 💰 FASE 1 -- saldo TOTAL disponible por concepto (línea real menos lo
     // que ya declararon otras OT), para que el botón deje precargado no solo
     // "cuánto dice el documento" sino "cuánto queda para esta OT".
-    const _saldoServ = j.zz.filter(l => !l.es_envio)
+    const _saldoServ = j.zz.filter(l => !l.es_envio && !_noServ(l))
                            .reduce((a, l) => a + (Number(l.saldo ?? l.monto) || 0), 0);
     const _saldoEnvio = j.zz.filter(l => l.es_envio)
                             .reduce((a, l) => a + (Number(l.saldo ?? l.monto) || 0), 0);
@@ -9591,10 +10086,12 @@ window.otdLeerLineasZz = async function(){
     const _docLeido = (j.documento && j.documento.tido ? j.documento.tido : tido) + ' ' + nudo;
     const _otros = window.otdFinOtrosDocsConZz ? window.otdFinOtrosDocsConZz(_docLeido) : {n: 0, total: 0};
     const _soloEste = _otros.n > 0;
-    html += '<div class="tot-zz"><span>Total al cliente</span>' +
+    // 2026-10-07: "Total al cliente" pasó a ser la suma calculada de la OT;
+    // acá es solo lo que suman las líneas de ESTE documento.
+    html += '<div class="tot-zz"><span>Suman las líneas ZZ</span>' +
             '<span class="mon">' + fmt(j.total) + '</span></div>' +
-            '<button type="button" class="aplicar" data-total="' + Math.round(j.total) + '" ' +
-            'data-serv="' + Math.round(_zzServ) + '" data-envio="' + Math.round(_zzEnvio) + '" ' +
+            '<button type="button" class="aplicar" data-total="' + Math.round(_zzServ + _zzEnvio) + '" ' +
+            'data-serv="' + (_hayServ ? Math.round(_zzServ) : '') + '" data-envio="' + Math.round(_zzEnvio) + '" ' +
             'data-saldo-serv="' + Math.round(_saldoServ) + '" data-saldo-envio="' + Math.round(_saldoEnvio) + '" ' +
             (_soloEste ? 'data-confirmar="1" data-otros-n="' + _otros.n + '" data-otros-total="' +
               Math.round(_otros.total) + '" data-doc="' + _docLeido.replace(/[^\w ]/g, '') + '" ' : '') +
@@ -9602,8 +10099,12 @@ window.otdLeerLineasZz = async function(){
             '<i class="bi bi-check2-circle"></i> ' +
             (_soloEste
               ? 'Usar solo este documento (' + fmt(j.total) + ')'
-              : 'Usar estos montos (' + fmt(_zzServ) + ' instalación + ' + fmt(_zzEnvio) + ' despacho)') +
-            '</button></div>';
+              : (_hayServ ? 'Usar estos montos (' + fmt(_zzServ) + ' instalación + ' + fmt(_zzEnvio) + ' despacho)'
+                          : 'Usar el despacho (' + fmt(_zzEnvio) + ')')) +
+            '</button>' +
+            (_hayServ ? '' : '<div class="small" style="color:#92400e;margin-top:6px">Este documento no trae una ' +
+              'línea de servicio: escribe a mano lo que le cobraste al cliente, con el motivo.</div>') +
+            '</div>';
     cont.innerHTML = html;
     cont.style.display = '';
     let detalle = j.documento.cliente_nombre
@@ -9625,13 +10126,19 @@ window.otdLeerLineasZz = async function(){
   }
 };
 
-/* Aplica el total de las líneas ZZ al precio al cliente. Igual que el
-   botón del documento: deja el número puesto y espera el Guardar -- nunca
-   escribe plata sin que alguien lo confirme. */
+/* Aplica los montos de las líneas ZZ a lo que se cobra. Igual que el botón
+   del documento: deja los números puestos y espera el Guardar -- nunca
+   escribe plata sin que alguien lo confirme.
+   💰 2026-10-07 (modelo único): ya no escribe el "Total al cliente" (es la
+   suma, se calcula sola) y no toca un campo cuyo monto viene vacío
+   (data-serv="" = el documento no trae línea de servicio: un ZZRETIRO no es
+   un cobro). Lo que deja en el servicio queda marcado como "del documento"
+   (origen 'zz'); si después alguien lo cambia, pasa a "a mano". */
 window.otdAplicarTotalZz = async function(btn){
+  const tieneServ = btn.dataset.serv !== undefined && btn.dataset.serv !== '';
+  const tieneEnv = btn.dataset.envio !== undefined && btn.dataset.envio !== '';
+  if (!tieneServ && !tieneEnv) return;
   const total = parseFloat(btn.dataset.total || 0) || 0;
-  const el = document.getElementById('otdFinCosto');
-  if (!el || !total) return;
   /* 💰 2026-09-25: "Usar solo este documento" -- la OT suma plata de otros
      documentos y esto la reemplaza por la de uno solo. Se pregunta en serio
      (REGLA #1: nunca confirm() nativo). */
@@ -9648,29 +10155,31 @@ window.otdAplicarTotalZz = async function(btn){
     });
     if (!ok) return;
   }
-  /* 💰 2026-09-10: además del total se llenan las dos mitades del Paso 2 y
-     se recuerda en cada campo (dataset.erp) qué dijo el documento -- así, si
-     después se corrige un monto (instalación parcial, despacho absorbido),
-     la pantalla puede decir "el documento decía otra cosa" y pedir el
-     motivo, en vez de perder la referencia. */
+  /* 💰 2026-09-10: se llenan las dos mitades del Paso 1 y se recuerda en cada
+     campo (dataset.erp) qué dijo el documento -- así, si después se corrige un
+     monto (instalación parcial, despacho absorbido), la pantalla puede decir
+     "el documento decía otra cosa" y pedir el motivo, en vez de perder la
+     referencia. */
   const serv = parseFloat(btn.dataset.serv || 0) || 0;
   const envio = parseFloat(btn.dataset.envio || 0) || 0;
   const elServ = document.getElementById('otdFinZzServ');
   const elEnvio = document.getElementById('otdFinZzEnvio');
-  if (elServ){ elServ.dataset.erp = String(Math.round(serv)); window.otdMoneySet('otdFinZzServ', serv); }
-  if (elEnvio){ elEnvio.dataset.erp = String(Math.round(envio)); window.otdMoneySet('otdFinZzEnvio', envio); }
+  if (elServ && tieneServ){
+    elServ.dataset.erp = String(Math.round(serv));
+    elServ.dataset.origen = 'zz';
+    elServ.dataset.origenValor = String(Math.round(serv));
+    window.otdMoneySet('otdFinZzServ', serv);
+  }
+  if (elEnvio && tieneEnv){ elEnvio.dataset.erp = String(Math.round(envio)); window.otdMoneySet('otdFinZzEnvio', envio); }
   // 💰 FASE 1 -- 2026-09-11: se recuerda también el SALDO disponible (línea
   // real del documento menos lo que ya declararon otras OT), para que al
   // escribir un monto la pantalla pueda avisar "te pasaste por $X" contra
   // lo que de verdad queda -- no solo contra el total del documento.
-  if (elServ) elServ.dataset.saldo = btn.dataset.saldoServ || '';
-  if (elEnvio) elEnvio.dataset.saldo = btn.dataset.saldoEnvio || '';
-  // 2026-09-02: el campo lleva separador de miles -- se escribe formateado
-  // para que lo que se ve coincida con lo que se va a guardar.
-  el.value = window.otdMoneyFmt(total);
+  if (elServ && tieneServ) elServ.dataset.saldo = btn.dataset.saldoServ || '';
+  if (elEnvio && tieneEnv) elEnvio.dataset.saldo = btn.dataset.saldoEnvio || '';
   if (window.otdSincronizarZz) window.otdSincronizarZz(true);
-  el.dispatchEvent(new Event('input', {bubbles: true}));
-  (elServ || el).focus();
+  const _foco = (tieneServ ? elServ : elEnvio) || elServ;
+  if (_foco) _foco.focus();
   if (window.ilusToast) ilusToast('Montos traídos del documento — revisa y presiona Guardar', {type:'success'});
 };
 
@@ -11687,6 +12196,9 @@ window.otdAplicarCotizacion = function(btn){
   const monto = parseFloat(btn.dataset.monto || 0) || 0;
   const elServ = document.getElementById('otdFinZzServ');
   if (!elServ || !monto) return;
+  // 2026-10-07: queda marcado de dónde salió (si alguien lo cambia, pasa a "a mano").
+  elServ.dataset.origen = 'cotizacion';
+  elServ.dataset.origenValor = String(Math.round(monto));
   window.otdMoneySet('otdFinZzServ', monto);
   if (window.otdSincronizarZz) window.otdSincronizarZz(true);
   elServ.dispatchEvent(new Event('input', {bubbles: true}));
@@ -11989,7 +12501,29 @@ window.otdFinCotizComparar = function(){
         'con el monto correcto.</div>';
     }
   }
+  // 💰 2026-10-07 — lo que el cotizador le cobraría al cliente sirve de
+  // VALORIZADO (tarifa real, solo referencia): un clic lo deja en su campo y se
+  // guarda con «Guardar». Nunca se suma a lo cobrado.
+  if (Number(j.total_precio) > 0 && document.getElementById('otdFinValorizado')){
+    html += '<button type="button" class="otd-fcotiz-usar otd-fcotiz-val" onclick="otdFinValUsarCotizador()">' +
+      '<i class="bi bi-tag-fill"></i> Valorizar con el cotizador: ' + f(j.total_precio) + ' (solo referencia)</button>';
+  }
   box.innerHTML = html;
+};
+window.otdFinValUsarCotizador = function(){
+  const j = _otdCotiz;
+  const el = document.getElementById('otdFinValorizado');
+  if (!j || !(Number(j.total_precio) > 0) || !el) return;
+  const n = Math.round(Number(j.total_precio));
+  window.otdMoneySet('otdFinValorizado', n);
+  el.dataset.origen = 'cotizador';
+  el.dataset.origenValor = String(n);
+  if (window.otdFinValAbrir) window.otdFinValAbrir(false);
+  el.dispatchEvent(new Event('input', {bubbles: true}));
+  if (window.ilusToast){
+    ilusToast('Valorizado en ' + window.otdFinFmt(n) + ' (lo que el cotizador le cobraría). Es solo referencia: ' +
+              'no se suma a lo cobrado. Aprieta Guardar.', {type: 'success'});
+  }
 };
 window.otdFinCotizUsar = function(){
   const j = _otdCotiz;
@@ -14619,27 +15153,27 @@ const OT2F = (function(){
       return;
     }
     const rawD = inpD ? String(inpD.value).trim() : '';
-    const cd = rawD === '' ? 0 : parseFloat(rawD.replace(/[^0-9.]/g, ''));
-    if (!isFinite(cd) || cd < 0){
+    // 2026-10-07: el despacho es opcional (Daniel 27-09): vacío ya no se guarda
+    // como 0 -- si se le cobró un despacho al cliente, la cuenta única pide su
+    // costo en vez de dar por hecho que fue $0.
+    const cd = rawD === '' ? null : parseFloat(rawD.replace(/[^0-9.]/g, ''));
+    if (cd !== null && (!isFinite(cd) || cd < 0)){
       ilusToast('El despacho tiene que ser un número mayor o igual a 0.', {type:'warning'});
       if (inpD) inpD.focus();
       return;
     }
-    const cuerpo = {
-      costo_proveedor: cp,
-      costo_despacho: cd,
-      // Se reenvía lo que YA está declarado: /ot/api/finanzas hace un
-      // UPDATE de toda la fila financiera, así que omitir estos campos
-      // borraría la factura, el centro de costo y la cobertura.
-      centro_costo: OTF_FIN_ACTUAL.centro_costo || '',
-      costo: OTF_FIN_ACTUAL.costo,
-      zz_codigo: OTF_FIN_ACTUAL.zz_codigo || '',
-      zz_monto: OTF_FIN_ACTUAL.zz_monto,
-      factura_tido: OTF_FIN_ACTUAL.factura_tido || '',
-      factura_nudo: OTF_FIN_ACTUAL.factura_nudo || '',
-      garantia_aplica: OTF_FIN_ACTUAL.garantia,
-      garantia_motivo: OTF_FIN_ACTUAL.garantia_motivo || '',
-    };
+    /* 🔴 FIX 2026-10-07 — solo viaja lo que este paso declara. Antes se
+       reenviaba una FOTO de la fila financiera (OTF_FIN_ACTUAL, tomada al
+       cargar la página) porque /ot/api/finanzas reescribía la fila completa;
+       desde la FASE 2 (2026-09-11) ese endpoint toca SOLO lo que viene en la
+       petición, y la foto se había vuelto un riesgo: si en la tarjeta de
+       Finanzas se sumaba un documento o se cambiaba el cobro sin recargar,
+       este paso escribía de vuelta lo viejo; y reenviar garantia_aplica
+       convertía en 'pagado' una garantía marcada por cubierto_por o una
+       mantención de contrato (y borraba su motivo). OTF_FIN_ACTUAL se
+       conserva (no se borra nada); este paso ya no la reenvía. */
+    const cuerpo = {costo_proveedor: cp};
+    if (cd !== null) cuerpo.costo_despacho = cd;
     try {
       const r = await fetch(`/ot/api/finanzas/${VID}`, {
         method:'POST', headers:{'Content-Type':'application/json'},
