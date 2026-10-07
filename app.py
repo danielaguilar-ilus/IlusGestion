@@ -83558,6 +83558,53 @@ def _ot_finanzas(v, rep=None):
     }
 
 
+# 💰 2026-10-07 — lo que necesita la pantalla de la OT para usar la cuenta única en el navegador
+# (static/ot_finanzas.js, espejo exacto de _ot_finanzas) mientras alguien escribe montos.
+# Campos de mant_visitas que lee _ot_finanzas.
+_OT_FIN_BASE_CAMPOS = ("modalidad_cobro", "cubierto_por", "tipo", "cliente_id", "contrato_real", "costo",
+                       "zz_monto", "zz_codigo", "zz_envio_monto", "valor_origen", "costo_proveedor",
+                       "costo_despacho", "proveedor_tipo", "valorizado_clp", "valorizado_fuente")
+_OT_FIN_BASE_MONTOS = ("costo", "zz_monto", "zz_envio_monto", "costo_proveedor", "costo_despacho",
+                       "valorizado_clp")
+# De dónde puede salir un valorizado (columna valorizado_fuente, VARCHAR(20)). Lo que no esté en la lista se
+# guarda como 'a_mano': nunca se escribe un rótulo inventado por el navegador.
+_OT_FIN_VALORIZADO_FUENTES = ("cotizador", "contrato", "documento", "a_mano", "dato_antiguo", "estimado",
+                              "supuesto", "interno", "cotizacion", "zz", "doc_total")
+
+
+def _ot_fin_base(v):
+    """Los datos de una OT que usa _ot_finanzas, listos para JSON (Decimal -> float). Lleva montos: quien la
+    llame ya descartó al técnico (REGLA #19). Una clave ausente en `v` no se inventa (en particular
+    `cliente_id`: vacío significaría "trabajo interno" para la cuenta)."""
+    v = v or {}
+    out = {}
+    for k in _OT_FIN_BASE_CAMPOS:
+        if k not in v:
+            continue
+        x = v.get(k)
+        if k in _OT_FIN_BASE_MONTOS:
+            x = _ot_fin_num(x)
+        elif k == "contrato_real":
+            x = 1 if x else 0
+        elif k == "cliente_id":
+            try:
+                x = int(x) if x is not None else None
+            except (TypeError, ValueError):
+                x = None
+        elif x is not None and not isinstance(x, str):
+            x = str(x)
+        out[k] = x
+    return out
+
+
+def _ot_fin_rep_liviano(rep):
+    """La entrada de _ot_repuestos_desglose sin el detalle por ítem: es lo único que pide la cuenta."""
+    rep = rep or {}
+    return {"costo": round(float(rep.get("costo") or 0), 2),
+            "por_origen": rep.get("por_origen") or {"bodega": 0.0, "compra": 0.0, "manual": 0.0},
+            "n_sin_costo": int(rep.get("n_sin_costo") or 0)}
+
+
 @app.route("/mantenciones/api/clientes/<int:cid>/vida-cliente", methods=["GET"])
 @_mant_required
 @_no_tecnico
@@ -88125,9 +88172,12 @@ def _ot2_finanzas_estado(v):
         # bloquea nada); el candado al CREAR vive en ot2_api_crear
         # (FINANZAS_SIN_VALOR_INTERNO). Si el caller no trajo `costo`, no
         # se exige -- misma guarda que la valorización de cliente.
-        if "costo" in v:
+        # 💰 2026-10-07: desde hoy ese valor nace en valorizado_clp (ya no en `costo`, ver
+        # _ot_fin_reparto_creacion): cuenta cualquiera de los dos. Se juzga SOLO si el llamador trae
+        # valorizado_clp -- con `costo` a secas una OT interna nueva diría "falta" sin que falte nada.
+        if "valorizado_clp" in v:
             try:
-                _costo_int = float(v.get("costo") or 0)
+                _costo_int = max(float(v.get("valorizado_clp") or 0), float(v.get("costo") or 0))
             except (TypeError, ValueError):
                 _costo_int = 0.0
             if _costo_int <= 0:
@@ -88403,6 +88453,10 @@ def ot2_detalle(vid):
         "       c.contacto_email AS cli_contacto_email, "
         "       c.tel_empresa, "
         "       c.direccion_lat AS cliente_lat, c.direccion_lng AS cliente_lng, "
+        # 💰 2026-10-07 — modelo único de finanzas (_ot_finanzas): ¿la OT es una mantención de un contrato
+        # REAL del cliente? (el "Contenedor de documentos" no cuenta). Sin este dato la cuenta no puede
+        # reconocer la cobertura 'contrato'. valorizado_clp/valorizado_fuente ya vienen en v.*.
+        "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real, "
         "       COALESCE(au.nombre, au.username) AS tecnico_nombre "
         "  FROM mant_visitas v "
         "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
@@ -89134,6 +89188,23 @@ def ot2_detalle(vid):
     valor_proyecto = {"n": _docs_proyecto["n_cobro"], "total": _docs_proyecto["total_cobro"],
                       "servicio": _docs_proyecto.get("valor_ot")}
 
+    # 💰 2026-10-07 — MODELO ÚNICO de finanzas (Daniel: "Cobré − Me cobraron = Queda", y el valorizado aparte,
+    # solo como referencia). La tarjeta "Finanzas de la OT", su vista de solo lectura y el chip del
+    # encabezado se pintan con ESTA cuenta (_ot_finanzas, la misma de la página "Antes y después"); el
+    # navegador la repite con static/ot_finanzas.js solo mientras alguien escribe. Antes la tarjeta tenía su
+    # propia fórmula y por eso la OT-201 mostraba tres resultados distintos. El técnico nunca recibe montos
+    # (REGLA #19): para él no se calcula nada.
+    fin = fin_base = fin_rep = None
+    if not _es_rol_tecnico():
+        try:
+            _rep_fin = _ot_repuestos_desglose([vid]).get(vid)
+            fin = _ot_finanzas(v, _rep_fin)
+            fin_base = _ot_fin_base(v)
+            fin_rep = _ot_fin_rep_liviano(_rep_fin)
+        except Exception as _e_fin:
+            print(f"[ot2_detalle] finanzas vid={vid}: {type(_e_fin).__name__}: {_e_fin}", flush=True)
+            fin = fin_base = fin_rep = None
+
     # ═══════════════════════════════════════════════════════════════════
     # 🆕 2026-09-02 — ACTIVIDAD DE LA OT (Daniel, urgente: "necesito algo
     # parecido a una trazabilidad como esta, la de los tickets... tiene que
@@ -89666,6 +89737,11 @@ def ot2_detalle(vid):
         doc_header=doc_header,
         # 2026-09-11 — chip "Valor del proyecto" en el header (ver arriba).
         valor_proyecto=valor_proyecto,
+        # 💰 2026-10-07 — modelo único de finanzas (ver el bloque `fin` más arriba). None para el técnico.
+        fin=fin, fin_base=fin_base, fin_rep=fin_rep,
+        fin_zz_no_servicio=list(_OT_FIN_ZZ_NO_SERVICIO),
+        fin_origenes_no_cobro=list(_OT_FIN_ORIGENES_NO_COBRO),
+        fin_zz_sugerida=_OT2_LINEA_ZZ.get((v.get("tipo") or "").lower()),
         # 2026-09-02 — bitácora de la OT, estilo "Actividad del ticket".
         actividad=actividad,
         # 2026-09-02 — cronómetro del técnico (ver el bloque `cronometro`).
@@ -90510,11 +90586,16 @@ def ot2_api_centro_costo(vid):
 #  actualiza ni se borra. JAMÁS toca firmas, estado, cliente ni documentos: solo los 4 montos y el centro
 #  de costo.
 # ═══════════════════════════════════════════════════════════════════════════
-_OT_FIN_CORR_CAMPOS = ("zz_monto", "zz_envio_monto", "costo_proveedor", "costo_despacho")
+# 2026-10-07 (modelo único): también el valorizado (tarifa real, solo referencia) se puede corregir.
+_OT_FIN_CORR_CAMPOS = ("zz_monto", "zz_envio_monto", "costo_proveedor", "costo_despacho", "valorizado_clp")
 _OT_FIN_CORR_ROT = {
     "zz_monto": "Cobro del servicio", "zz_envio_monto": "Cobro del despacho",
     "costo_proveedor": "Pago al técnico/proveedor", "costo_despacho": "Costo del despacho",
     "centro_costo": "Centro de costo",
+    "valorizado_clp": "Valorizado (referencia)",
+    # Estos tres no se escriben a mano: cambian solos cuando se corrige un monto y quedan en el registro.
+    "valorizado_fuente": "Origen del valorizado", "valor_origen": "Origen del cobro",
+    "zz_codigo": "Línea del cobro",
 }
 _OT_FIN_CORR_MOTIVO_MIN = 15
 
@@ -90537,23 +90618,37 @@ def _ensure_ot_finanzas_correcciones():
         ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
 
 
-def _ot_fin_ganancia(r):
-    """Cobramos − Nos cuesta = Queda, con la MISMA regla del informe de Facturación de proveedores:
-    en garantía no se cobra, pero el costo igual se paga."""
-    es_gar = ((r.get("modalidad_cobro") or "").lower() == "garantia"
-              or (r.get("cubierto_por") or "").lower() == "garantia")
-    cobro = 0.0 if es_gar else (float(r.get("zz_monto") or 0) + float(r.get("zz_envio_monto") or 0))
-    pago = float(r.get("costo_proveedor") or 0) + float(r.get("costo_despacho") or 0)
-    return cobro - pago
+def _ot_fin_ganancia(r, rep=None):
+    """Lo que QUEDA de una OT (Cobré − Me cobraron) según la cuenta única _ot_finanzas.
+
+    2026-10-07 (modelo único): antes tenía su propia fórmula (zz + envío, sin repuestos, sin mirar si el
+    zz era un estimado o una línea que no es de servicio) y por eso "Queda" del registro de una corrección
+    no coincidía con la barra de la tarjeta. Ahora es la misma cuenta: en una OT que no se cobra (garantía,
+    cortesía, interno, contrato) lo cobrado es $0 y queda lo que nos costó; los repuestos instalados (`rep`,
+    de _ot_repuestos_desglose) suman a lo que me cobraron. Las filas viejas del registro guardan la cuenta
+    de ese momento (no se reescriben)."""
+    return _ot_finanzas(r, rep)["queda"]["total"]
 
 
 def _ot_fin_es_superadmin():
     return bool((getattr(g, "permissions", None) or {}).get("superadmin"))
 
 
-_OT_FIN_SELECT = ("SELECT id, numero_ot, estado, tipo, cliente_id, zz_monto, zz_envio_monto, costo_proveedor, "
-                  "       costo_despacho, centro_costo, modalidad_cobro, cubierto_por "
-                  "  FROM mant_visitas WHERE id=%s")
+_OT_FIN_SELECT = ("SELECT v.id, v.numero_ot, v.estado, v.tipo, v.cliente_id, v.zz_monto, v.zz_envio_monto, "
+                  "       v.costo_proveedor, v.costo_despacho, v.centro_costo, v.modalidad_cobro, v.cubierto_por, "
+                  # 2026-10-07: lo demás que necesita la cuenta única (_ot_finanzas) y el valorizado.
+                  "       v.costo, v.zz_codigo, v.valor_origen, v.proveedor_tipo, v.valorizado_clp, "
+                  "       v.valorizado_fuente, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
+                  "  FROM mant_visitas v WHERE v.id=%s")
+
+
+def _ot_fin_rep_de(vid):
+    """Repuestos instalados de UNA OT para la cuenta única; si la consulta falla, la cuenta sigue sin ellos."""
+    try:
+        return _ot_repuestos_desglose([vid]).get(vid)
+    except Exception as e:
+        print(f"[ot-fin] repuestos vid={vid}: {type(e).__name__}", flush=True)
+        return None
 
 
 @app.route("/ot/api/finanzas/<int:vid>/corregir", methods=["POST"])
@@ -90601,10 +90696,27 @@ def ot2_api_finanzas_corregir(vid):
             cambios[k] = {"antes": (None if av is None else (int(av) if k != "centro_costo" else av)), "despues": nv}
     if not cambios:
         return _ot2_err("No hay nada que cambiar: los valores son iguales a los que ya tiene la OT.", "SIN_CAMBIOS")
-    ganancia_antes = _ot_fin_ganancia(v)
+    # 💰 2026-10-07 (modelo único) — corregir el cobro del servicio es escribirlo a mano: queda rotulado
+    # 'manual' (antes el rótulo viejo, 'zz' o 'estimado', seguía pegado al número nuevo). Y si la línea guardada
+    # no es de servicio (ZZRETIRO, el "retiro en bodega" de la OT-201), el monto corregido no contaría nunca
+    # como cobro: pasa a la línea de servicio del tipo de OT. Igual con el valorizado: corregido = a mano.
+    # Los tres quedan en el registro (antes/después) como cualquier otro cambio.
+    if "zz_monto" in cambios and cambios["zz_monto"]["despues"] is not None:
+        if (v.get("valor_origen") or None) != "manual":
+            cambios["valor_origen"] = {"antes": v.get("valor_origen"), "despues": "manual"}
+        _cod_corr = (v.get("zz_codigo") or "").strip().upper()
+        if _cod_corr in _OT_FIN_ZZ_NO_SERVICIO:
+            cambios["zz_codigo"] = {"antes": v.get("zz_codigo"),
+                                    "despues": _OT2_LINEA_ZZ.get((v.get("tipo") or "").lower())}
+    if "valorizado_clp" in cambios:
+        _vf_corr = "a_mano" if cambios["valorizado_clp"]["despues"] is not None else None
+        if (v.get("valorizado_fuente") or None) != _vf_corr:
+            cambios["valorizado_fuente"] = {"antes": v.get("valorizado_fuente"), "despues": _vf_corr}
+    _rep_corr = _ot_fin_rep_de(vid)
+    ganancia_antes = _ot_fin_ganancia(v, _rep_corr)
     v2 = dict(v)
     v2.update({k: c["despues"] for k, c in cambios.items()})
-    ganancia_despues = _ot_fin_ganancia(v2)
+    ganancia_despues = _ot_fin_ganancia(v2, _rep_corr)
     sets = ", ".join(f"{k}=%s" for k in cambios)
     params = tuple(c["despues"] for c in cambios.values()) + (vid,)
     quien = current_username() or "?"
@@ -90672,35 +90784,58 @@ def ot2_api_finanzas_correcciones(vid):
             "cambios": [{"campo": _OT_FIN_CORR_ROT.get(k, k), "antes": antes.get(k), "despues": despues.get(k)}
                         for k in despues],
         })
+    # 💰 2026-10-07 — el modal recalcula con la cuenta única del navegador (static/ot_finanzas.js): necesita
+    # los datos guardados (base), los repuestos instalados (rep) y la línea de servicio del tipo de OT.
+    _rep_corr = _ot_fin_rep_de(vid)
+    fin = _ot_finanzas(v, _rep_corr)
     return jsonify({
         "ok": True, "historial": out,
         "actual": {k: v.get(k) for k in (*_OT_FIN_CORR_CAMPOS, "centro_costo")},
-        "ganancia": _ot_fin_ganancia(v),
-        "garantia": ((v.get("modalidad_cobro") or "").lower() == "garantia"
-                     or (v.get("cubierto_por") or "").lower() == "garantia"),
+        "ganancia": fin["queda"]["total"],
+        # Misma regla de cobertura que todo el sistema (_ot_cobertura): antes había tres criterios distintos.
+        "garantia": fin["cobertura"] == "garantia",
+        "cobertura": fin["cobertura"], "cobra": fin["cobra"], "fin": fin,
+        "base": _ot_fin_base(v), "rep": _ot_fin_rep_liviano(_rep_corr),
+        "zz_sugerida": _OT2_LINEA_ZZ.get((v.get("tipo") or "").lower()),
+        "zz_no_servicio": list(_OT_FIN_ZZ_NO_SERVICIO),
         "centros": [{"v": c, "n": n} for c, n in _OT2_CENTROS_COSTO],
     })
 
 
-def _ot_fin_dudosas_motivos(r):
-    """Por qué las finanzas de una OT cerrada merecen revisión (lista de textos; vacía = sin dudas)."""
+def _ot_fin_dudosas_motivos(r, rep=None, fin=None):
+    """Por qué las finanzas de una OT cerrada merecen revisión (lista de textos; vacía = sin dudas).
+
+    2026-10-07 (modelo único): lee la cuenta única _ot_finanzas (`fin`, o se calcula con `rep`). Una OT que
+    no se cobra (garantía, cortesía, interno, contrato) nunca sale como "sin cobro" ni como "pérdida": lo
+    que queda ahí es lo que nos costó. Motivos nuevos: la línea ZZ guardada no es de servicio (OT-201:
+    $1 de ZZRETIRO), el «Precio al cliente» anotado no coincide con lo cobrado, y el cobro sale del
+    «Precio al cliente» sin separar servicio y despacho."""
+    f = fin or _ot_finanzas(r, rep)
     m = []
-    es_gar = ((r.get("modalidad_cobro") or "").lower() == "garantia"
-              or (r.get("cubierto_por") or "").lower() == "garantia")
-    zz = float(r.get("zz_monto") or 0)
-    envio = float(r.get("zz_envio_monto") or 0)
-    pago = float(r.get("costo_proveedor") or 0) + float(r.get("costo_despacho") or 0)
+    cobra = f["cobra"]
+    cobre = f["cobre"]["total"]
+    me = f["me_cobraron"]
     ext = (r.get("proveedor_tipo") or "").lower() == "externo"
     if not (r.get("centro_costo") or "").strip():
         m.append("Sin centro de costo")
-    if not es_gar and zz <= 0:
-        m.append("Sin cobro declarado (y no es garantía)")
-    if not es_gar and (zz + envio) > 0 and r.get("costo_proveedor") is None and ext:
+    if cobra and not f["cobre"]["hay"]:
+        m.append("Sin cobro declarado (y la OT se cobra)")
+    elif cobra and cobre <= 0:
+        m.append("Cobro declarado en $0 (y la OT se cobra)")
+    if cobra and cobre > 0 and me["falta_tecnico"] and ext:
         m.append("Técnico externo sin costo declarado: la ganancia sale inflada")
-    if not es_gar and (zz + envio) > 0 and pago <= 0:
+    if cobra and cobre > 0 and me["total"] <= 0:
         m.append("Cobro sin ningún costo: la ganancia es el 100% del cobro")
-    if (zz + envio if not es_gar else 0) - pago < 0:
+    if cobra and f["queda"]["mostrar"] and f["queda"]["total"] < 0:
         m.append("Pérdida: lo que cuesta supera lo cobrado")
+    if ((r.get("zz_codigo") or "").strip().upper() in _OT_FIN_ZZ_NO_SERVICIO
+            and _ot_fin_num(r.get("zz_monto")) is not None):
+        m.append("Línea ZZ que no es de servicio")
+    _tot = _ot_fin_num(r.get("costo"))
+    if cobra and (f["cobre"]["fuente"] or "").startswith("precio al cliente"):
+        m.append("Sin separar servicio y despacho")
+    elif cobra and f["cobre"]["hay"] and _tot is not None and _tot > 0 and abs(_tot - cobre) >= 1:
+        m.append("Precio al cliente distinto de lo cobrado")
     return m
 
 
@@ -90723,15 +90858,26 @@ def ot2_finanzas_dudosas():
     filtro = (request.args.get("m") or "").strip()
     q = (request.args.get("q") or "").strip()
     rows = mysql_fetchall(
-        "SELECT v.id, v.numero_ot, v.estado, v.tipo, v.zz_monto, v.zz_envio_monto, v.costo_proveedor, "
-        "       v.costo_despacho, v.centro_costo, v.modalidad_cobro, v.cubierto_por, v.proveedor_tipo, "
+        "SELECT v.id, v.numero_ot, v.estado, v.tipo, v.cliente_id, v.zz_monto, v.zz_envio_monto, v.zz_codigo, "
+        "       v.costo, v.valor_origen, v.costo_proveedor, v.costo_despacho, v.centro_costo, v.modalidad_cobro, "
+        "       v.cubierto_por, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, "
+        # 2026-10-07: la cuenta única necesita saber si es mantención de un contrato real.
+        "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real, "
         "       c.razon_social AS cliente "
         "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
         " WHERE LOWER(COALESCE(v.estado,'')) IN ('completada','cerrada') "
         " ORDER BY v.id DESC LIMIT 5000") or []
+    # Repuestos instalados de todo el lote en UNA consulta (suman a "Me cobraron", igual que en la tarjeta).
+    try:
+        reps = _ot_repuestos_desglose([int(r["id"]) for r in rows]) if rows else {}
+    except Exception as _e_rp:
+        print(f"[fin-dudosas] repuestos: {type(_e_rp).__name__}", flush=True)
+        reps = {}
     todas, resumen = [], {}
     for r in rows:
-        mot = _ot_fin_dudosas_motivos(r)
+        # 💰 2026-10-07: una sola cuenta (_ot_finanzas) para los motivos y para las cifras de la fila.
+        fin = _ot_finanzas(r, reps.get(int(r["id"])))
+        mot = _ot_fin_dudosas_motivos(r, fin=fin)
         if not mot:
             continue
         for t in mot:
@@ -90739,11 +90885,11 @@ def ot2_finanzas_dudosas():
         item = {
             "id": r["id"], "numero": r.get("numero_ot") or f"VS-{int(r['id']):05d}",
             "cliente": r.get("cliente") or "—", "tipo": r.get("tipo") or "", "estado": r.get("estado"),
-            "cobro": float(r.get("zz_monto") or 0) + float(r.get("zz_envio_monto") or 0),
-            "pago": float(r.get("costo_proveedor") or 0) + float(r.get("costo_despacho") or 0),
-            "ganancia": _ot_fin_ganancia(r), "motivos": mot,
-            "garantia": ((r.get("modalidad_cobro") or "").lower() == "garantia"
-                         or (r.get("cubierto_por") or "").lower() == "garantia"),
+            "cobro": fin["cobre"]["total"],
+            "pago": fin["me_cobraron"]["total"],
+            "ganancia": fin["queda"]["total"], "motivos": mot,
+            "garantia": fin["cobertura"] == "garantia",
+            "cobra": fin["cobra"], "cobertura_txt": fin["cobertura_txt"],
         }
         todas.append(item)
     total_dudosas = len(todas)
@@ -90969,6 +91115,8 @@ def ot2_api_finanzas(vid):
         "       factura_tido, factura_nudo, "
         # valor_origen 2026-09-15 (columna de _ensure_ot_valor_origen_col).
         "       valor_origen, cliente_id, "
+        # 2026-10-07 (modelo único): para comparar lo que llega con lo guardado y no reescribir lo mismo.
+        "       zz_motivo_manual, proveedor_tipo, valorizado_clp, valorizado_fuente, "
         "       estado_facturacion, finanzas_at, finanzas_por "
         "  FROM mant_visitas WHERE id=%s", (vid,))
     if not v:
@@ -91011,12 +91159,24 @@ def ot2_api_finanzas(vid):
     # revienta con ValueError. Pasar por float() primero acepta enteros,
     # strings decimales y floats por igual -- nunca inventa un monto, solo
     # deja de romperse con el formato que el propio backend acaba de emitir.
+    # 💰 2026-10-07 (modelo único, Daniel aprobó que "Total al cliente" pase a ser la suma servicio + despacho):
+    # `costo` ("Precio al cliente") YA NO se escribe desde acá. Era el total escrito a mano y terminó guardando
+    # siete cosas distintas (cobro, valor de una garantía, estimado interno...). Lo cobrado es ahora servicio
+    # (zz_monto) + despacho (zz_envio_monto); la columna queda como historia y solo la lee _ot_finanzas en OT
+    # antiguas. Si un llamador viejo todavía lo manda, se ignora sin error. (Revisión 2026-10-07: la única
+    # escritura que queda es la copia de lo cobrado a un «Precio al cliente» que ya existía, más abajo, para
+    # que lo que ve el cliente no quede con un número viejo.)
+    # 🐛 2026-10-07: el 0 es un dato ("no se cobró"), no un casillero vacío. Antes `str(0 or "")` daba "" y
+    # un cobro de $0 se perdía (y en el servicio borraba lo que había).
+    def _monto_opt(raw):
+        if raw is None or str(raw).strip() == "":
+            return None
+        val = int(round(float(raw)))
+        if val < 0 or val > 2_000_000_000:
+            raise ValueError("fuera de rango")
+        return val
     try:
-        costo = int(round(float(d.get("costo")))) if str(d.get("costo") or "").strip() else None
-    except (TypeError, ValueError):
-        return _ot2_err("El monto no es válido.", "MONTO_INVALIDO")
-    try:
-        zz_monto = int(round(float(d.get("zz_monto")))) if str(d.get("zz_monto") or "").strip() else None
+        zz_monto = _monto_opt(d.get("zz_monto"))
     except (TypeError, ValueError):
         return _ot2_err("El monto de la línea de servicio no es válido.", "ZZ_INVALIDO")
 
@@ -91036,10 +91196,7 @@ def ot2_api_finanzas(vid):
     # COALESCE), igual que costo_proveedor/costo_despacho. 0 sí se guarda: un
     # despacho que no se cobra es un dato, no un campo sin llenar.
     try:
-        if "zz_envio_monto" in d and str(d.get("zz_envio_monto") or "").strip() != "":
-            zz_envio_monto = int(round(float(d.get("zz_envio_monto"))))
-        else:
-            zz_envio_monto = None
+        zz_envio_monto = _monto_opt(d.get("zz_envio_monto")) if "zz_envio_monto" in d else None
     except (TypeError, ValueError):
         return _ot2_err("El monto del despacho no es válido.", "ZZ_ENVIO_INVALIDO")
 
@@ -91107,10 +91264,32 @@ def ot2_api_finanzas(vid):
     _doc_erp_nudo = ((d.get("documento_erp_nudo") or "").strip()[:20] or None
                      if "documento_erp_nudo" in d else None)
 
-    zz_cod = (d.get("zz_codigo") or "").strip().upper()[:30] or None
+    _zz_cod_pedido = (d.get("zz_codigo") or "").strip().upper()[:30] or None
+    zz_cod = _zz_cod_pedido
     # Si no lo indican, se sugiere la línea que corresponde al tipo.
     if not zz_cod and not garantia:
         zz_cod = _OT2_LINEA_ZZ.get((v.get("tipo") or "").lower())
+
+    # 💰 2026-10-07 (modelo único) — ¿la petición CAMBIA el cobro del servicio? Solo entonces se escribe.
+    # Reenviar lo mismo (el modal de cierre reenviaba una foto de la fila) ya no reescribe la línea ni su
+    # código: antes CADA guardado cambiaba el código por el del tipo de OT, y así un ZZRETIRO ("retiro en
+    # bodega", que no es un cobro) quedaba disfrazado de ZZINSTALACION.
+    def _mismo_monto(a, b):
+        a, b = _ot_fin_num(a), _ot_fin_num(b)
+        if a is None or b is None:
+            return a is None and b is None
+        return abs(a - b) < 0.5
+    _zz_cambia = ("zz_monto" in d) and not _mismo_monto(zz_monto, v.get("zz_monto"))
+    _cod_actual = (v.get("zz_codigo") or "").strip().upper() or None
+    if _zz_cambia:
+        if _zz_cod_pedido:
+            zz_cod = _zz_cod_pedido
+        elif zz_monto is None:
+            zz_cod = None
+        elif _cod_actual and _cod_actual not in _OT_FIN_ZZ_NO_SERVICIO:
+            zz_cod = _cod_actual      # se ajusta el monto de la MISMA línea (ej. instalación a medias)
+        # si no, queda la línea de servicio del tipo de OT (calculada arriba)
+    _cod_cambia = bool(_zz_cod_pedido) and _zz_cod_pedido != _cod_actual
 
     # 🔴 2026-09-19 (Daniel, checklist de finanzas): mismo tope real que
     # _ot_validar_normalizar_finanzas (creación) -- este endpoint es el
@@ -91173,6 +91352,34 @@ def ot2_api_finanzas(vid):
         if _valor_origen and _valor_origen not in _OT2_VALOR_ORIGENES:
             return _ot2_err("El origen del valor no es válido.", "VALOR_ORIGEN_INVALIDO")
 
+    # 💰 2026-10-07 — un cobro escrito a mano queda rotulado 'manual' (antes el rótulo viejo -- 'zz',
+    # 'estimado' -- se quedaba pegado aunque alguien hubiera cambiado el número) y lleva su motivo. Daniel:
+    # "sin línea de servicio útil, el cobro se escribe a mano con motivo". Solo cuando el cobro CAMBIA:
+    # guardar lo mismo no pide nada.
+    _escribe_origen = ("valor_origen" in d) or (_zz_cambia and zz_monto is not None)
+    _origen_final = _valor_origen if "valor_origen" in d else (
+        "manual" if (_zz_cambia and zz_monto is not None) else (v.get("valor_origen") or None))
+    if _zz_cambia and zz_monto is not None and (_origen_final or "") in _OT2_VALOR_ORIGENES_CON_MOTIVO:
+        _mot_cobro = ((d.get("zz_motivo_manual") or "") if "zz_motivo_manual" in d
+                      else (v.get("zz_motivo_manual") or "")).strip()
+        if not _mot_cobro:
+            return _ot2_err("Escribe por qué el cobro va escrito a mano (por ejemplo: el documento no trae una "
+                            "línea de servicio). Queda guardado junto al monto.", "COBRO_MANUAL_SIN_MOTIVO")
+
+    # 💰 2026-10-07 — VALORIZADO (tarifa real): solo referencia, nunca se suma a lo cobrado ni pesa en el
+    # cierre. Se toca solo si la petición lo trae; vacío = quitarlo a propósito.
+    _val_clp, _val_fuente = None, None
+    if "valorizado_clp" in d:
+        try:
+            _val_clp = _monto_opt(d.get("valorizado_clp"))
+        except (TypeError, ValueError):
+            return _ot2_err("El valorizado no es válido.", "VALORIZADO_INVALIDO")
+        _val_fuente = (str(d.get("valorizado_fuente") or "").strip().lower()[:20]) or None
+        if _val_clp is None:
+            _val_fuente = None
+        elif _val_fuente not in _OT_FIN_VALORIZADO_FUENTES:
+            _val_fuente = "a_mano"
+
     # estado_facturacion se deriva, no se pide: la pantalla no debería
     # tener que saber el vocabulario interno del pipeline comercial.
     if garantia:
@@ -91228,15 +91435,21 @@ def ot2_api_finanzas(vid):
     # zz_codigo y zz_monto son un par: un código sin monto no dice nada, y
     # la inferencia por tipo de OT (más arriba) solo tiene sentido cuando la
     # petición está declarando la línea de servicio.
-    if ("zz_monto" in d) or ("zz_codigo" in d):
+    # 2026-10-07: la línea de servicio se escribe solo si su monto CAMBIA (ver _zz_cambia); un código
+    # pedido explícitamente sí se escribe solo.
+    if _zz_cambia:
         _set_col("zz_codigo", zz_cod)
         _set_col("zz_monto", zz_monto)
-    if "valor_origen" in d:
-        _set_col("valor_origen", _valor_origen)
+    elif _cod_cambia:
+        _set_col("zz_codigo", _zz_cod_pedido)
+    if _escribe_origen:
+        _set_col("valor_origen", _origen_final)
+    if "valorizado_clp" in d:
+        _set_col("valorizado_clp", _val_clp)
+        _set_col("valorizado_fuente", _val_fuente)
 
-    # Estas cuatro ya eran no destructivas (COALESCE / SET condicional).
-    _sets.append("  costo=COALESCE(%s, costo)")
-    _params.append(costo)
+    # Estas ya eran no destructivas (COALESCE / SET condicional). `costo` salió de esta lista el 2026-10-07
+    # (ver arriba: "Total al cliente" es ahora la suma y la columna queda como historia).
     _sets.append("  zz_envio_monto=COALESCE(%s, zz_envio_monto)")
     _params.append(zz_envio_monto)
     if _set_motivos:
@@ -91262,19 +91475,32 @@ def ot2_api_finanzas(vid):
     _habla_garantia = "garantia_aplica" in d
     _habla_doc = ("factura_tido" in d) or ("factura_nudo" in d)
 
-    if _habla_garantia:
+    # 🔴 FIX 2026-10-07 — la cobertura se toca SOLO si la petición la CAMBIA. El modal de cierre
+    # (guardarCosto) reenviaba garantia_aplica = (modalidad_cobro == 'garantia') junto al costo del técnico:
+    # en una garantía marcada por cubierto_por, en una mantención de contrato o en una cortesía eso escribía
+    # 'pagado'/'cliente' y borraba garantia_motivo (que en el Plan Anual guarda el texto del contrato) sin que
+    # nadie lo pidiera. Ahora: declarar garantía cuando no lo es, o retractarla cuando la modalidad es
+    # garantía, son cambios; repetir lo que ya está, no. (Quitar una garantía marcada solo por cubierto_por se
+    # hace con «Quitar garantía», que es su camino propio.)
+    _gar_mod_actual = (v.get("modalidad_cobro") or "").strip().lower() == "garantia"
+    _gar_actual = _gar_mod_actual or (v.get("cubierto_por") or "").strip().lower() == "garantia"
+    _cambia_garantia = _habla_garantia and ((garantia and not _gar_actual) or (not garantia and _gar_mod_actual))
+    if _cambia_garantia:
         _set_col("modalidad_cobro", 'garantia' if garantia else 'pagado')
         _set_col("cubierto_por", 'garantia' if garantia else 'cliente')
+        _set_col("garantia_motivo", motivo)
+    elif _habla_garantia and garantia and motivo and motivo != (v.get("garantia_motivo") or "").strip():
+        # Ya era garantía y llega otro motivo: se actualiza solo el motivo.
         _set_col("garantia_motivo", motivo)
 
     # El documento se escribe si la petición lo trae, o si se está
     # declarando garantía -- ahí se limpia a propósito (excluyentes).
     # Retractarse de la garantía (garantia_aplica=false) ya NO borra el
     # documento: antes sí, y eso dejaba la OT sin cobertura de golpe.
-    if _habla_doc or (_habla_garantia and garantia):
+    if _habla_doc or (_cambia_garantia and garantia):
         _set_col("factura_tido", f_tido)
         _set_col("factura_nudo", f_nudo)
-    if _habla_doc or _habla_garantia:
+    if _habla_doc or _cambia_garantia:
         _set_col("estado_facturacion", estado_fact)
 
     _sets.append("  finanzas_at=NOW()")
@@ -91295,12 +91521,66 @@ def ot2_api_finanzas(vid):
             "Esta orden de trabajo ya está cerrada — no se puede modificar "
             "su información financiera.", "CONFLICTO_CONCURRENCIA", http=409)
 
+    # 💰 2026-10-07 (revisión del modelo único) — lo que quedó guardado, leído UNA vez: alimenta la cuenta que
+    # vuelve a la tarjeta, lo que falta para cerrar y la copia de `costo` de abajo. Protegido: si falla, lo
+    # guardado sigue guardado (abajo se cae a la consulta corta de siempre).
+    _vf = None
+    try:
+        _vf = mysql_fetchone(
+            "SELECT v.centro_costo, v.modalidad_cobro, v.garantia_motivo, v.factura_tido, v.factura_nudo, "
+            "       v.zz_monto, v.zz_envio_monto, v.cubierto_por, v.tipo, v.costo, v.cliente_id, v.zz_codigo, "
+            "       v.valor_origen, v.costo_proveedor, v.costo_despacho, v.proveedor_tipo, v.valorizado_clp, "
+            "       v.valorizado_fuente, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
+            "  FROM mant_visitas v WHERE v.id=%s", (vid,))
+    except Exception as _e_vf:
+        print(f"[ot2_finanzas] relectura vid={vid}: {type(_e_vf).__name__}", flush=True)
+
+    # 💰 2026-10-07 (revisión) — `costo` ("Precio al cliente") = lo cobrado, como HISTORIA. Daniel aprobó que
+    # "Total al cliente" deje de escribirse a mano y sea la suma servicio + despacho; la cuenta única ya no lo
+    # usa salvo en OT antiguas. Pero la columna todavía la lee lo que ve el CLIENTE -- el correo "visita
+    # agendada" ("Costo estimado"), el PDF y el informe post-servicio -- y esos no cambian sin el sí de Daniel
+    # (REGLAS #22 y #23). La tarjeta, antes, la mantenía igual a servicio + despacho; si dejara de escribirla,
+    # tras corregir el cobro el cliente vería el número viejo. Por eso, SOLO cuando esta petición cambia lo
+    # cobrado, la OT se cobra y ya TENÍA un «Precio al cliente», ese número se iguala a "Cobré" de la cuenta
+    # única (nunca un número a mano). No se crea uno donde no había (las OT nuevas ya no lo llevan), no se toca
+    # en una OT que no se cobra (su valor vive en valorizado_clp), ni cuando lo cobrado sale del mismo
+    # «Precio al cliente» (OT antigua sin servicio separado), ni con $0, ni en una OT ya cerrada (evidencia:
+    # ni siquiera el superadmin la cambia por este camino).
+    _env_cambia = ("zz_envio_monto" in d and zz_envio_monto is not None
+                   and not _mismo_monto(zz_envio_monto, v.get("zz_envio_monto")))
+    _costo_sync = None
+    if _vf and (_zz_cambia or _env_cambia):
+        try:
+            _f_sync = _ot_finanzas(_vf)   # sin repuestos: "Cobré" no depende de ellos
+            _c_sync = _f_sync["cobre"]
+            _tot_ant = _ot_fin_num(_vf.get("costo"))
+            if (_f_sync["cobra"] and _c_sync["hay"] and _c_sync["total"] > 0
+                    and not (_c_sync["fuente"] or "").startswith("precio al cliente")
+                    and _tot_ant is not None and _tot_ant > 0 and abs(_tot_ant - _c_sync["total"]) >= 1):
+                _cs_val = int(round(_c_sync["total"]))
+                if mysql_execute_returning_rowcount(
+                        "UPDATE mant_visitas SET costo=%s WHERE id=%s"
+                        " AND estado NOT IN ('completada','cerrada','cancelada','anulada')", (_cs_val, vid)):
+                    _costo_sync = _cs_val
+                    _vf["costo"] = _cs_val
+        except Exception as _e_cs:
+            print(f"[ot2_finanzas] costo=cobrado vid={vid}: {type(_e_cs).__name__}", flush=True)
+
     try:
         _mant_log("visita", vid, "finanzas_declaradas",
                   f"centro={centro or '—'} · "
                   + (f"GARANTÍA: {motivo[:80]}" if garantia
                      else f"doc={f_tido or ''}{f_nudo or '—'}")
-                  + (f" · {zz_cod}" if zz_cod else ""))
+                  # 2026-10-07: el código de la línea solo si esta petición la escribió.
+                  + (f" · {zz_cod}" if (zz_cod and (_zz_cambia or _cod_cambia)) else "")
+                  # 2026-10-07: qué cambió del cobro y del valorizado, en palabras (antes no quedaban montos).
+                  + (f" · cobro del servicio {_ot_fin_clp(zz_monto) if zz_monto is not None else 'vacío'}"
+                     f" ({_origen_final or 'sin origen'})" if _zz_cambia else "")
+                  + (f" · valorizado {_ot_fin_clp(_val_clp) if _val_clp is not None else 'quitado'}"
+                     if "valorizado_clp" in d else "")
+                  # 2026-10-07 (revisión): la copia de lo cobrado al «Precio al cliente» (ver arriba).
+                  + (f" · «Precio al cliente» = lo cobrado {_ot_fin_clp(_costo_sync)}"
+                     if _costo_sync is not None else ""))
     except Exception:
         pass
 
@@ -91344,14 +91624,27 @@ def ot2_api_finanzas(vid):
     except Exception as _e_recon:
         print(f"[ot2_finanzas] alerta estimado-vs-real vid={vid}: {_e_recon}", flush=True)
 
-    v2 = mysql_fetchone(
+    # 2026-10-07 (revisión): lo que falta para cerrar se calcula con la MISMA relectura (trae el valorizado,
+    # cliente_id y la bandera de contrato real, así una OT interna valorizada en valorizado_clp ya no dice
+    # "falta cuánto vale"). La consulta corta de siempre queda de respaldo.
+    v2 = _vf or mysql_fetchone(
         "SELECT centro_costo, modalidad_cobro, garantia_motivo, "
         "       factura_tido, factura_nudo, zz_monto, zz_envio_monto, "
-        "       cubierto_por, tipo, costo "
+        "       cubierto_por, tipo, costo, cliente_id, valorizado_clp "
         "  FROM mant_visitas WHERE id=%s", (vid,)) or {}
     ok, faltan = _ot2_finanzas_estado(v2)
+    # 💰 2026-10-07 — la cuenta única recién guardada, para que la tarjeta repinte con lo que de verdad quedó
+    # en la base (y no con lo que creía mandar). Va aparte y protegida: si falla, lo guardado sigue guardado.
+    _fin_out = {}
+    try:
+        if _vf:
+            _rep_f = _ot_fin_rep_de(vid)
+            _fin_out = {"fin": _ot_finanzas(_vf, _rep_f), "base": _ot_fin_base(_vf),
+                        "rep": _ot_fin_rep_liviano(_rep_f)}
+    except Exception as _e_fo:
+        print(f"[ot2_finanzas] cuenta vid={vid}: {type(_e_fo).__name__}", flush=True)
     return jsonify({"ok": True, "completa": ok, "faltan": faltan,
-                    "estado_facturacion": estado_fact})
+                    "estado_facturacion": estado_fact, **_fin_out})
 
 
 @app.route("/ot/api/finanzas/<int:vid>/buscar-erp", methods=["POST"])
@@ -107465,14 +107758,30 @@ def ot2_api_resultado_financiero(vid):
     if _es_rol_tecnico():
         return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
     v = mysql_fetchone(
-        "SELECT id, tipo, cubierto_por, costo, costo_proveedor, costo_despacho, "
-        "       zz_monto, zz_envio_monto, "
-        "       modalidad_cobro, cliente_id FROM mant_visitas WHERE id=%s", (vid,))
+        "SELECT v.id, v.tipo, v.cubierto_por, v.costo, v.costo_proveedor, v.costo_despacho, "
+        "       v.zz_monto, v.zz_envio_monto, "
+        "       v.modalidad_cobro, v.cliente_id, "
+        # 💰 2026-10-07 — lo demás que necesita la cuenta única (_ot_finanzas).
+        "       v.zz_codigo, v.valor_origen, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, "
+        "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
+        "  FROM mant_visitas v WHERE v.id=%s", (vid,))
     if not v:
         return jsonify({"ok": False, "error": "No encontramos esa orden."}), 404
     rep = _ot_repuestos_desglose([vid]).get(vid)
     resultado = _ot_resultado_financiero(v, rep)
-    return jsonify({"ok": True, **resultado})
+    # 💰 2026-10-07 — modelo único "Cobré − Me cobraron = Queda" (+ Valorizado). Se AGREGAN sus claves sin
+    # quitar las viejas (clase/label/cobrado/margen_clp... siguen siendo las de _ot_resultado_financiero, para
+    # no romper a otro llamador); la cuenta nueva completa va además en "fin", y "base"/"rep" son los datos
+    # guardados con que la tarjeta la repite en el navegador mientras se escribe.
+    fin = _ot_finanzas(v, rep)
+    out = {"ok": True, **resultado}
+    for _k in ("cobertura", "cobertura_txt", "cobra", "cobre", "me_cobraron", "queda", "a_pagar_proveedor",
+               "valorizado", "frase", "avisos"):
+        out[_k] = fin[_k]
+    out["fin"] = fin
+    out["base"] = _ot_fin_base(v)
+    out["rep"] = _ot_fin_rep_liviano(rep)
+    return jsonify(out)
 
 
 # ── Panel de administración de pantallas ─────────────────────────────

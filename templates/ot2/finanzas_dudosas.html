@@ -7,6 +7,9 @@
   revisión (sin centro de costo, sin cobro, cobro sin costo, pérdida). No cambia nada: desde cada OT, el
   botón «Corregir finanzas» (solo superadmin, con motivo y registro) hace la corrección.
   Pagina como Etiquetas (REGLA #4.3): Mostrando A–B de N, N por página, Anterior / Página X de Y / Siguiente.
+  💰 2026-10-07 (modelo único): las cifras y los motivos salen de la cuenta única (_ot_finanzas) y se dicen
+  con las palabras de Daniel: Cobré − Me cobraron = Queda. En una OT que no se cobra (garantía, cortesía,
+  interno, contrato) la última columna es "nos costó" en azul: no es una pérdida.
 #}
 
 {% block content %}
@@ -25,6 +28,7 @@
 .fd-t td{padding:10px 12px;border-bottom:1px solid #f1f5f9;vertical-align:top}
 .fd-t .n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .fd-t .neg{color:#b91c1c;font-weight:800}.fd-t .pos{color:#15803d;font-weight:800}
+.fd-t .info{color:#1d4ed8;font-weight:800}
 .fd-mot{display:flex;flex-direction:column;gap:3px}
 .fd-mot span{font-size:.74rem;font-weight:700;color:#92400e;background:#fff8e1;border-radius:6px;padding:2px 8px;width:fit-content}
 .fd-ot{font-weight:900;color:#0a0a0a;text-decoration:none}.fd-ot:hover{color:#dc2626}
@@ -72,17 +76,22 @@
 <div class="fd-wrap">
   <table class="fd-t">
     <thead><tr>
-      <th>OT</th><th>Cliente</th><th class="n">Cobro</th><th class="n">Costo</th><th class="n">Queda</th><th>Qué revisar</th>
+      <th>OT</th><th>Cliente</th><th class="n">Cobré</th><th class="n">Me cobraron</th><th class="n">Queda</th><th>Qué revisar</th>
     </tr></thead>
     <tbody>
     {% for f in filas %}
       <tr>
         <td data-k="OT"><a class="fd-ot" href="/ot/{{ f.id }}">{{ f.numero }}</a>
-          <div class="text-muted" style="font-size:.72rem">{{ f.tipo|replace('_',' ')|title }}{{ ' · garantía' if f.garantia }}</div></td>
+          <div class="text-muted" style="font-size:.72rem">{{ f.tipo|replace('_',' ')|title }}
+            {%- if f.cobra is defined and not f.cobra %} · {{ (f.cobertura_txt or '').split(':')[0]|lower }}{% elif f.garantia %} · garantía{% endif %}</div></td>
         <td data-k="Cliente">{{ f.cliente }}</td>
-        <td data-k="Cobro" class="n">${{ '{:,.0f}'.format(f.cobro).replace(',', '.') }}</td>
-        <td data-k="Costo" class="n">${{ '{:,.0f}'.format(f.pago).replace(',', '.') }}</td>
+        <td data-k="Cobré" class="n">${{ '{:,.0f}'.format(f.cobro).replace(',', '.') }}</td>
+        <td data-k="Me cobraron" class="n">${{ '{:,.0f}'.format(f.pago).replace(',', '.') }}</td>
+        {% if f.cobra is defined and not f.cobra %}
+        <td data-k="Nos costó" class="n info">nos costó ${{ '{:,.0f}'.format(f.pago).replace(',', '.') }}</td>
+        {% else %}
         <td data-k="Queda" class="n {{ 'neg' if f.ganancia < 0 else 'pos' }}">${{ '{:,.0f}'.format(f.ganancia).replace(',', '.') }}</td>
+        {% endif %}
         <td data-k="Revisar"><div class="fd-mot">{% for t in f.motivos %}<span>{{ t }}</span>{% endfor %}</div></td>
       </tr>
     {% else %}
