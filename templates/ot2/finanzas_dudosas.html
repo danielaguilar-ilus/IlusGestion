@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}OT con finanzas dudosas · ILUS Fitness{% endblock %}
+
+{#
+  💰 2026-10-07 (Daniel: "poder reparar varias OT que las finanzas están mal… debemos ordenar eso").
+  Informe SOLO LECTURA, solo superadmin. Lista las OT completadas o cerradas cuyas finanzas merecen una
+  revisión (sin centro de costo, sin cobro, cobro sin costo, pérdida). No cambia nada: desde cada OT, el
+  botón «Corregir finanzas» (solo superadmin, con motivo y registro) hace la corrección.
+  Pagina como Etiquetas (REGLA #4.3): Mostrando A–B de N, N por página, Anterior / Página X de Y / Siguiente.
+#}
+
+{% block content %}
+<style>
+.fd-chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+.fd-chip{display:inline-flex;align-items:center;gap:7px;border:1px solid #e5e7eb;background:#fff;color:#374151;
+  border-radius:999px;padding:7px 13px;font-size:.8rem;font-weight:800;text-decoration:none;min-height:40px}
+.fd-chip b{font-variant-numeric:tabular-nums;color:#dc2626}
+.fd-chip.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}.fd-chip.on b{color:#fff}
+.fd-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
+.fd-bar input,.fd-bar select{font-size:16px;min-height:44px;border:1px solid #d1d5db;border-radius:9px;padding:0 12px}
+.fd-btn{min-height:44px;padding:0 16px;border-radius:9px;border:1px solid #0a0a0a;background:#0a0a0a;color:#fff;font-weight:800;font-size:.85rem}
+.fd-wrap{background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden}
+.fd-t{width:100%;border-collapse:collapse;font-size:.86rem}
+.fd-t th{background:#0a0a0a;color:#fff;padding:10px 12px;text-align:left;font-size:.72rem;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+.fd-t td{padding:10px 12px;border-bottom:1px solid #f1f5f9;vertical-align:top}
+.fd-t .n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.fd-t .neg{color:#b91c1c;font-weight:800}.fd-t .pos{color:#15803d;font-weight:800}
+.fd-mot{display:flex;flex-direction:column;gap:3px}
+.fd-mot span{font-size:.74rem;font-weight:700;color:#92400e;background:#fff8e1;border-radius:6px;padding:2px 8px;width:fit-content}
+.fd-ot{font-weight:900;color:#0a0a0a;text-decoration:none}.fd-ot:hover{color:#dc2626}
+.fd-pie{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:12px 4px}
+.fd-pie a,.fd-pie span.b{min-height:44px;display:inline-flex;align-items:center;padding:0 14px;border:1px solid #d1d5db;border-radius:9px;
+  background:#fff;color:#0a0a0a;font-weight:800;text-decoration:none;font-size:.84rem}
+.fd-pie span.off{opacity:.4}
+@media (max-width:768px){
+  .fd-t thead{display:none}
+  .fd-t,.fd-t tbody,.fd-t tr,.fd-t td{display:block;width:100%}
+  .fd-t tr{border-bottom:8px solid #f3f4f6;padding:8px 4px}
+  .fd-t td{border:0;padding:4px 10px}.fd-t .n{text-align:left}
+  .fd-t td[data-k]::before{content:attr(data-k) ": ";font-size:.68rem;font-weight:800;text-transform:uppercase;color:#6b7280}
+}
+</style>
+
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-cash-coin me-2"></i>OT con finanzas dudosas</h4>
+    <div class="sub">De {{ revisadas }} OT completadas o cerradas, {{ total_dudosas }} merecen una revisión. Solo lectura: la corrección se hace dentro de cada OT.</div>
+  </div>
+  <a href="{{ url_for('ot2_panel') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Volver a las OT</a>
+</div>
+
+<div class="fd-chips">
+  <a class="fd-chip{{ ' on' if not filtro }}" href="?por={{ por }}{{ '&q=' ~ q|urlencode if q }}">Todas <b>{{ total_dudosas }}</b></a>
+  {% for texto, n in resumen %}
+  <a class="fd-chip{{ ' on' if filtro == texto }}" href="?m={{ texto|urlencode }}&por={{ por }}{{ '&q=' ~ q|urlencode if q }}">{{ texto }} <b>{{ n }}</b></a>
+  {% endfor %}
+</div>
+
+<form class="fd-bar" method="get">
+  {% if filtro %}<input type="hidden" name="m" value="{{ filtro }}">{% endif %}
+  <input type="search" name="q" value="{{ q }}" placeholder="Buscar por N° de OT o cliente" style="min-width:min(320px,100%)">
+  <select name="por" aria-label="OT por página" onchange="this.form.submit()">
+    {% for n in (25, 50, 100, 200) %}<option value="{{ n }}" {{ 'selected' if n == por }}>{{ n }} por página</option>{% endfor %}
+  </select>
+  <button class="fd-btn" type="submit">Buscar</button>
+  {% if q or filtro %}<a class="btn btn-sm btn-outline-secondary" style="min-height:44px;display:inline-flex;align-items:center" href="?por={{ por }}">Limpiar</a>{% endif %}
+</form>
+
+<div class="fd-wrap">
+  <table class="fd-t">
+    <thead><tr>
+      <th>OT</th><th>Cliente</th><th class="n">Cobro</th><th class="n">Costo</th><th class="n">Queda</th><th>Qué revisar</th>
+    </tr></thead>
+    <tbody>
+    {% for f in filas %}
+      <tr>
+        <td data-k="OT"><a class="fd-ot" href="/ot/{{ f.id }}">{{ f.numero }}</a>
+          <div class="text-muted" style="font-size:.72rem">{{ f.tipo|replace('_',' ')|title }}{{ ' · garantía' if f.garantia }}</div></td>
+        <td data-k="Cliente">{{ f.cliente }}</td>
+        <td data-k="Cobro" class="n">${{ '{:,.0f}'.format(f.cobro).replace(',', '.') }}</td>
+        <td data-k="Costo" class="n">${{ '{:,.0f}'.format(f.pago).replace(',', '.') }}</td>
+        <td data-k="Queda" class="n {{ 'neg' if f.ganancia < 0 else 'pos' }}">${{ '{:,.0f}'.format(f.ganancia).replace(',', '.') }}</td>
+        <td data-k="Revisar"><div class="fd-mot">{% for t in f.motivos %}<span>{{ t }}</span>{% endfor %}</div></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="text-center text-muted" style="padding:28px">No hay OT con ese criterio.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% set desde = ((page - 1) * por + 1) if total else 0 %}
+{% set hasta = [page * por, total]|min %}
+{% set base = '&por=' ~ por ~ ('&m=' ~ filtro|urlencode if filtro else '') ~ ('&q=' ~ q|urlencode if q else '') %}
+<div class="fd-pie">
+  <span>Mostrando {{ desde }}–{{ hasta }} de {{ total }}</span>
+  <div class="d-flex gap-2 align-items-center">
+    {% if page > 1 %}<a href="?page={{ page - 1 }}{{ base }}">Anterior</a>{% else %}<span class="b off">Anterior</span>{% endif %}
+    <span>Página {{ page }} de {{ paginas }}</span>
+    {% if page < paginas %}<a href="?page={{ page + 1 }}{{ base }}">Siguiente</a>{% else %}<span class="b off">Siguiente</span>{% endif %}
+  </div>
+</div>
+{% endblock %}

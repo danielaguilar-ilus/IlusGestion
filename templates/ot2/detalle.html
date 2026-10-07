@@ -4445,6 +4445,16 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       <div class="otd-card" id="otdCardFinanzas">
         <h3><i class="bi bi-cash-coin"></i> Finanzas de la OT
           <span class="n">Cobramos − Nos cuesta = Queda</span></h3>
+        {#- 💰 2026-10-07 (Daniel: "como superadmin editar estos valores, con registro"): solo el superadmin ve esto.
+            Funciona aunque la OT esté cerrada (la edición normal de abajo se bloquea por evidencia) y deja un
+            registro que nunca se modifica. No toca firmas, estado ni documentos. -#}
+        {% if permissions and permissions.superadmin %}
+        <div class="otd-fincorr-bar">
+          <button type="button" class="otd-fincorr-btn" onclick="otdFinCorrAbrir()"><i class="bi bi-pencil-square"></i> Corregir finanzas
+            <small>solo superadmin · con registro</small></button>
+          <a class="otd-fincorr-lnk" href="/ot/finanzas-dudosas"><i class="bi bi-clipboard2-pulse"></i> OT con finanzas dudosas</a>
+        </div>
+        {% endif %}
         {# ══ FINANZAS POR PASOS · 2026-09-25 ══════════════════════════════
            Daniel, sobre la OT-2026-00249 (boceto aprobado: "Sí, constrúyela
            así"). Antes la resta nunca se escribía: el total al cliente
@@ -6934,6 +6944,141 @@ function otdIniciarRuta(app){
     </div>
   </div>
 </div>
+
+{# ═══════════════════════════════════════════════════════════════════════════
+   💰 MODAL: Corregir finanzas (solo superadmin) — 2026-10-07. A NIVEL RAÍZ (no dentro del hero ni de una pestaña:
+   ver gotcha_ot2_detalle_scope_y_modales). Habla con POST /ot/api/finanzas/<vid>/corregir.
+   ═══════════════════════════════════════════════════════════════════════════ #}
+{% if permissions and permissions.superadmin %}
+<div class="modal fade" id="otdModalFinCorr" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:14px;overflow:hidden">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff">
+        <h6 class="modal-title fw-bold"><i class="bi bi-pencil-square me-2" style="color:#dc2626"></i>Corregir finanzas
+          <small class="d-block fw-normal" style="font-size:.72rem;opacity:.8">{{ v.numero_ot or ('OT ' ~ v.id) }} · queda registrado con tu nombre</small></h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <div class="otd-fincorr-aviso"><i class="bi bi-shield-lock-fill"></i>
+          <span>Esta OT puede estar cerrada: es evidencia. Solo cambian estos montos; <b>las firmas, el estado y los documentos no se tocan</b>.
+          Cada corrección guarda el valor de antes y de después, quién la hizo y por qué, y no se puede borrar.</span></div>
+        <div class="otd-fincorr-res" id="otdFcRes"></div>
+        <div class="row g-2">
+          <div class="col-6"><label class="form-label small fw-semibold mb-1">Cobro del servicio ($)</label>
+            <input type="text" inputmode="numeric" class="form-control" id="otdFc_zz_monto" oninput="otdFinCorrCalc()"></div>
+          <div class="col-6"><label class="form-label small fw-semibold mb-1">Cobro del despacho ($)</label>
+            <input type="text" inputmode="numeric" class="form-control" id="otdFc_zz_envio_monto" oninput="otdFinCorrCalc()"></div>
+          <div class="col-6"><label class="form-label small fw-semibold mb-1">Pago al técnico / proveedor ($)</label>
+            <input type="text" inputmode="numeric" class="form-control" id="otdFc_costo_proveedor" oninput="otdFinCorrCalc()"></div>
+          <div class="col-6"><label class="form-label small fw-semibold mb-1">Costo del despacho ($)</label>
+            <input type="text" inputmode="numeric" class="form-control" id="otdFc_costo_despacho" oninput="otdFinCorrCalc()"></div>
+          <div class="col-12"><label class="form-label small fw-semibold mb-1">Centro de costo</label>
+            <select class="form-select" id="otdFc_centro_costo"></select></div>
+          <div class="col-12"><label class="form-label small fw-semibold mb-1">Motivo de la corrección <span class="text-danger">*</span></label>
+            <textarea class="form-control" id="otdFc_motivo" rows="3" maxlength="500"
+              placeholder="Por qué se corrige (mínimo 15 caracteres). Ej.: el costo del técnico no se declaró al cerrar; factura N° 1234."></textarea></div>
+        </div>
+        <div class="text-danger small mt-2" id="otdFcErr"></div>
+        <div class="otd-fincorr-hist" id="otdFcHist"></div>
+      </div>
+      <div class="modal-footer py-2" style="border-top:1px solid #f3f4f6">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn fw-bold" id="otdFcBtn" style="background:#dc2626;color:#fff;min-height:46px" onclick="otdFinCorrGuardar()">
+          <i class="bi bi-check2-circle me-1"></i>Guardar corrección</button>
+      </div>
+    </div>
+  </div>
+</div>
+<style>
+.otd-fincorr-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:2px 0 12px}
+.otd-fincorr-btn{border:1.5px solid #dc2626;background:#fff;color:#b91c1c;border-radius:10px;min-height:44px;padding:6px 14px;
+  font-weight:800;font-size:.84rem;display:inline-flex;align-items:center;gap:7px;cursor:pointer}
+.otd-fincorr-btn small{font-weight:600;font-size:.68rem;color:#6b7280}
+.otd-fincorr-btn:hover{background:#dc2626;color:#fff}.otd-fincorr-btn:hover small{color:#fecaca}
+.otd-fincorr-lnk{font-size:.8rem;font-weight:800;color:#374151;text-decoration:none;min-height:44px;display:inline-flex;align-items:center;gap:6px}
+.otd-fincorr-lnk:hover{color:#dc2626}
+.otd-fincorr-aviso{display:flex;gap:10px;background:#fff8e1;border:1px solid #fde68a;color:#92400e;border-radius:10px;padding:10px 12px;font-size:.78rem;margin-bottom:12px}
+.otd-fincorr-aviso i{font-size:1.1rem;flex:none}
+.otd-fincorr-res{display:flex;justify-content:space-between;align-items:center;gap:10px;border-radius:10px;padding:10px 14px;margin-bottom:12px;
+  background:#f3f4f6;font-weight:800}
+.otd-fincorr-res b{font-size:1.1rem;font-variant-numeric:tabular-nums}.otd-fincorr-res.pos b{color:#15803d}.otd-fincorr-res.neg b{color:#b91c1c}
+.otd-fincorr-hist{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+.otd-fincorr-hist .h{border:1px solid #e5e7eb;border-radius:10px;padding:9px 12px;font-size:.78rem;background:#fafafa}
+.otd-fincorr-hist .h .q{font-weight:800;color:#0a0a0a}.otd-fincorr-hist .h .m{color:#374151;margin-top:3px;overflow-wrap:anywhere}
+.otd-fincorr-hist .h .d{color:#6b7280;margin-top:3px;overflow-wrap:anywhere}
+.otd-fincorr-hist .tit{font-size:.7rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#6b7280}
+@media (max-width:768px){
+  #otdModalFinCorr .modal-header{padding-top:max(.75rem,env(safe-area-inset-top,0px))}
+  #otdModalFinCorr .modal-content{border-radius:0 !important}
+}
+</style>
+<script>
+/* 💰 Corregir finanzas (solo superadmin) — 2026-10-07 */
+var _otdFcPlata = function(n){ return '$' + Math.round(n || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.'); };
+var _otdFcNum = function(id){ var s = (document.getElementById(id).value || '').replace(/[^0-9]/g, ''); return s === '' ? null : parseInt(s, 10); };
+var _otdFcGar = false, _otdFcInicial = {};
+function otdFinCorrCalc(){
+  var cobro = _otdFcGar ? 0 : ((_otdFcNum('otdFc_zz_monto') || 0) + (_otdFcNum('otdFc_zz_envio_monto') || 0));
+  var pago = (_otdFcNum('otdFc_costo_proveedor') || 0) + (_otdFcNum('otdFc_costo_despacho') || 0);
+  var q = cobro - pago;
+  var el = document.getElementById('otdFcRes');
+  el.className = 'otd-fincorr-res ' + (q < 0 ? 'neg' : 'pos');
+  el.innerHTML = '<span>Cobramos ' + _otdFcPlata(cobro) + ' − Nos cuesta ' + _otdFcPlata(pago) + ' = Queda</span><b>' + (q < 0 ? '−' : '') + _otdFcPlata(Math.abs(q)) + '</b>';
+}
+async function otdFinCorrAbrir(){
+  document.getElementById('otdFcErr').textContent = '';
+  document.getElementById('otdFc_motivo').value = '';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('otdModalFinCorr')).show();
+  try {
+    var r = await fetch('/ot/api/finanzas/' + OTD_VID + '/correcciones', {credentials:'same-origin', cache:'no-store'});
+    var j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'No se pudo cargar');
+    var a = j.actual || {};
+    _otdFcGar = !!j.garantia;   // en garantía no se cobra: el resultado se calcula con cobro 0
+    ['zz_monto','zz_envio_monto','costo_proveedor','costo_despacho'].forEach(function(k){
+      document.getElementById('otdFc_' + k).value = (a[k] === null || a[k] === undefined) ? '' : String(Math.round(Number(a[k])));
+    });
+    _otdFcInicial = {zz_monto:a.zz_monto, zz_envio_monto:a.zz_envio_monto, costo_proveedor:a.costo_proveedor, costo_despacho:a.costo_despacho, centro_costo:a.centro_costo || ''};
+    var sel = document.getElementById('otdFc_centro_costo');
+    sel.innerHTML = '<option value="">Sin centro de costo</option>' + (j.centros || []).map(function(c){
+      return '<option value="' + otdEsc(c.v) + '"' + (c.v === a.centro_costo ? ' selected' : '') + '>' + otdEsc(c.n) + '</option>'; }).join('');
+    otdFinCorrCalc();
+    var h = j.historial || [];
+    document.getElementById('otdFcHist').innerHTML = h.length
+      ? '<div class="tit">Correcciones anteriores</div>' + h.map(function(x){
+          return '<div class="h"><div class="q">' + otdEsc(x.usuario || '?') + ' · ' + otdEsc(x.cuando || '') + '</div>' +
+            '<div class="m">' + otdEsc(x.motivo || '') + '</div>' +
+            '<div class="d">' + (x.cambios || []).map(function(c){ return otdEsc(c.campo) + ': ' + otdEsc(String(c.antes)) + ' → ' + otdEsc(String(c.despues)); }).join(' · ') +
+            ' · Quedó ' + _otdFcPlata(x.ganancia_antes) + ' → ' + _otdFcPlata(x.ganancia_despues) + '</div></div>'; }).join('')
+      : '<div class="tit">Sin correcciones anteriores</div>';
+  } catch(e){
+    document.getElementById('otdFcErr').textContent = 'No se pudieron cargar los valores actuales. Cierra y vuelve a abrir.';
+  }
+}
+async function otdFinCorrGuardar(){
+  var err = document.getElementById('otdFcErr'); err.textContent = '';
+  var motivo = (document.getElementById('otdFc_motivo').value || '').trim();
+  if (motivo.length < 15){ err.textContent = 'Escribe el motivo (mínimo 15 caracteres): queda registrado con tu nombre.'; return; }
+  var body = {motivo: motivo};
+  ['zz_monto','zz_envio_monto','costo_proveedor','costo_despacho'].forEach(function(k){
+    var v = _otdFcNum('otdFc_' + k);
+    if (v !== null) body[k] = v;
+  });
+  body.centro_costo = document.getElementById('otdFc_centro_costo').value;
+  var btn = document.getElementById('otdFcBtn'); btn.disabled = true;
+  try {
+    var r = await fetch('/ot/api/finanzas/' + OTD_VID + '/corregir', {method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    var j = await r.json().catch(function(){ return {}; });
+    if (!r.ok || !j.ok){ err.textContent = j.error || 'No se pudo guardar.'; btn.disabled = false; return; }
+    ilusToast('✓ Finanzas corregidas · queda ' + _otdFcPlata(j.ganancia_despues), {type:'success'});
+    setTimeout(function(){ location.reload(); }, 900);
+  } catch(e){
+    err.textContent = 'Error de conexión. Inténtalo de nuevo.'; btn.disabled = false;
+  }
+}
+</script>
+{% endif %}
 
 {# ═════════════════════════════════════════════════════════════════════
    MODAL: Firma (técnico / cliente) — namespace OT2F, 2026-08-28.

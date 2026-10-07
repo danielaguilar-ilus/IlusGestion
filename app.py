@@ -90240,6 +90240,267 @@ def ot2_api_centro_costo(vid):
     return jsonify({"ok": True, "centro_costo": centro, "label": _label})
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  💰 2026-10-07 — CORREGIR FINANZAS DE UNA OT (solo superadmin, con registro) + informe de dudosas
+#
+#  Daniel: "la OT 211 está declarada con ganancia 239.200 y quisiera poder, como superadmin, editar estos
+#  valores, obviamente con registro, además de poder reparar varias OT que las finanzas están mal".
+#
+#  Por qué es un camino APARTE de /ot/api/finanzas/<vid>: ese formulario se bloquea con la OT completada o
+#  cerrada (regla de EVIDENCIA, 2026-09-04) y así debe seguir para todos. Este es la excepción deliberada y
+#  trazable: SOLO superadmin, motivo obligatorio, funciona aunque la OT esté cerrada, y deja una fila
+#  inmutable (antes / después / quién / cuándo / por qué) en mant_ot_finanzas_correcciones, que NUNCA se
+#  actualiza ni se borra. JAMÁS toca firmas, estado, cliente ni documentos: solo los 4 montos y el centro
+#  de costo.
+# ═══════════════════════════════════════════════════════════════════════════
+_OT_FIN_CORR_CAMPOS = ("zz_monto", "zz_envio_monto", "costo_proveedor", "costo_despacho")
+_OT_FIN_CORR_ROT = {
+    "zz_monto": "Cobro del servicio", "zz_envio_monto": "Cobro del despacho",
+    "costo_proveedor": "Pago al técnico/proveedor", "costo_despacho": "Costo del despacho",
+    "centro_costo": "Centro de costo",
+}
+_OT_FIN_CORR_MOTIVO_MIN = 15
+
+
+def _ensure_ot_finanzas_correcciones():
+    """Tabla de correcciones de finanzas (solo se agrega, nunca se modifica). SIEMPRE al arrancar."""
+    mysql_execute(
+        "CREATE TABLE IF NOT EXISTS mant_ot_finanzas_correcciones ("
+        " id INT AUTO_INCREMENT PRIMARY KEY,"
+        " visita_id INT NOT NULL,"
+        " numero_ot VARCHAR(60) NULL,"
+        " usuario VARCHAR(190) NULL,"
+        " motivo VARCHAR(500) NOT NULL,"
+        " antes_json TEXT NULL,"
+        " despues_json TEXT NULL,"
+        " ganancia_antes DECIMAL(14,2) NULL,"
+        " ganancia_despues DECIMAL(14,2) NULL,"
+        " created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        " INDEX idx_ofc_visita (visita_id, created_at)"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+
+
+def _ot_fin_ganancia(r):
+    """Cobramos − Nos cuesta = Queda, con la MISMA regla del informe de Facturación de proveedores:
+    en garantía no se cobra, pero el costo igual se paga."""
+    es_gar = ((r.get("modalidad_cobro") or "").lower() == "garantia"
+              or (r.get("cubierto_por") or "").lower() == "garantia")
+    cobro = 0.0 if es_gar else (float(r.get("zz_monto") or 0) + float(r.get("zz_envio_monto") or 0))
+    pago = float(r.get("costo_proveedor") or 0) + float(r.get("costo_despacho") or 0)
+    return cobro - pago
+
+
+def _ot_fin_es_superadmin():
+    return bool((getattr(g, "permissions", None) or {}).get("superadmin"))
+
+
+_OT_FIN_SELECT = ("SELECT id, numero_ot, estado, tipo, cliente_id, zz_monto, zz_envio_monto, costo_proveedor, "
+                  "       costo_despacho, centro_costo, modalidad_cobro, cubierto_por "
+                  "  FROM mant_visitas WHERE id=%s")
+
+
+@app.route("/ot/api/finanzas/<int:vid>/corregir", methods=["POST"])
+@_mant_required
+def ot2_api_finanzas_corregir(vid):
+    """Corrige montos y centro de costo de una OT, aunque esté cerrada. Solo superadmin; motivo obligatorio."""
+    if not _ot_fin_es_superadmin():
+        return _ot2_err("Solo el superadministrador puede corregir las finanzas de una OT cerrada.",
+                        "SOLO_SUPERADMIN", 403)
+    v = mysql_fetchone(_OT_FIN_SELECT, (vid,))
+    if not v:
+        return _ot2_err("No encontramos esa orden.", "NO_ENCONTRADA", 404)
+    d = request.get_json(silent=True) or {}
+    motivo = (d.get("motivo") or "").strip()[:500]
+    if len(motivo) < _OT_FIN_CORR_MOTIVO_MIN:
+        return _ot2_err(f"Escribe el motivo de la corrección (mínimo {_OT_FIN_CORR_MOTIVO_MIN} caracteres): "
+                        "queda registrado con tu nombre.", "MOTIVO_CORTO")
+    nuevos = {}
+    for campo in _OT_FIN_CORR_CAMPOS:
+        if campo not in d:
+            continue
+        raw = d.get(campo)
+        if raw is None or str(raw).strip() == "":
+            return _ot2_err(f"«{_OT_FIN_CORR_ROT[campo]}»: escribe un monto (0 si no hubo).", "MONTO_VACIO")
+        try:
+            val = int(round(float(str(raw).replace(".", "").replace(",", ".") if isinstance(raw, str) else raw)))
+        except (TypeError, ValueError):
+            return _ot2_err(f"«{_OT_FIN_CORR_ROT[campo]}»: el monto no es válido.", "MONTO_INVALIDO")
+        if val < 0 or val > 2_000_000_000:
+            return _ot2_err(f"«{_OT_FIN_CORR_ROT[campo]}»: el monto está fuera de rango.", "MONTO_RANGO")
+        nuevos[campo] = val
+    if "centro_costo" in d:
+        cc = (d.get("centro_costo") or "").strip().lower() or None
+        if cc and cc not in [c for c, _ in _OT2_CENTROS_COSTO]:
+            return _ot2_err("Ese centro de costo no existe.", "CENTRO_INVALIDO")
+        nuevos["centro_costo"] = cc
+    cambios = {}
+    for k, nv in nuevos.items():
+        av = v.get(k)
+        av_cmp = (int(av) if av is not None and k != "centro_costo" else av)
+        if av_cmp != nv:
+            cambios[k] = {"antes": (None if av is None else (int(av) if k != "centro_costo" else av)), "despues": nv}
+    if not cambios:
+        return _ot2_err("No hay nada que cambiar: los valores son iguales a los que ya tiene la OT.", "SIN_CAMBIOS")
+    ganancia_antes = _ot_fin_ganancia(v)
+    v2 = dict(v)
+    v2.update({k: c["despues"] for k, c in cambios.items()})
+    ganancia_despues = _ot_fin_ganancia(v2)
+    sets = ", ".join(f"{k}=%s" for k in cambios)
+    params = tuple(c["despues"] for c in cambios.values()) + (vid,)
+    quien = current_username() or "?"
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            # Solo esas columnas: las firmas, el estado, el cliente y los documentos NO se tocan.
+            cur.execute(f"UPDATE mant_visitas SET {sets} WHERE id=%s", params)
+            cur.execute(
+                "INSERT INTO mant_ot_finanzas_correcciones "
+                "(visita_id, numero_ot, usuario, motivo, antes_json, despues_json, ganancia_antes, ganancia_despues) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                (vid, v.get("numero_ot"), quien, motivo,
+                 json.dumps({k: c["antes"] for k, c in cambios.items()}, ensure_ascii=False),
+                 json.dumps({k: c["despues"] for k, c in cambios.items()}, ensure_ascii=False),
+                 ganancia_antes, ganancia_despues))
+        conn.commit()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"[ot-fin-corregir] vid={vid}: {type(e).__name__}", flush=True)
+        return _ot2_err("No se pudo guardar la corrección. Inténtalo de nuevo.", "ERROR_GUARDAR", 500)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    try:
+        resumen = "; ".join(f"{_OT_FIN_CORR_ROT[k]}: {c['antes']} → {c['despues']}" for k, c in cambios.items())
+        _mant_log("visita", vid, "finanzas_corregidas",
+                  f"{quien} corrigió las finanzas de {v.get('numero_ot') or ('OT ' + str(vid))} (superadmin): "
+                  f"{resumen}. Queda {ganancia_antes:,.0f} → {ganancia_despues:,.0f}. Motivo: {motivo}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "cambios": cambios, "ganancia_antes": ganancia_antes,
+                    "ganancia_despues": ganancia_despues})
+
+
+@app.route("/ot/api/finanzas/<int:vid>/correcciones", methods=["GET"])
+@_mant_required
+def ot2_api_finanzas_correcciones(vid):
+    """Historial de correcciones de una OT (más reciente primero). Solo superadmin."""
+    if not _ot_fin_es_superadmin():
+        return _ot2_err("Solo el superadministrador.", "SOLO_SUPERADMIN", 403)
+    v = mysql_fetchone(_OT_FIN_SELECT, (vid,))
+    if not v:
+        return _ot2_err("No encontramos esa orden.", "NO_ENCONTRADA", 404)
+    filas = mysql_fetchall(
+        "SELECT usuario, motivo, antes_json, despues_json, ganancia_antes, ganancia_despues, created_at "
+        "  FROM mant_ot_finanzas_correcciones WHERE visita_id=%s ORDER BY id DESC LIMIT 50", (vid,)) or []
+    out = []
+    for r in filas:
+        try:
+            antes = json.loads(r.get("antes_json") or "{}")
+            despues = json.loads(r.get("despues_json") or "{}")
+        except Exception:
+            antes, despues = {}, {}
+        out.append({
+            "usuario": r.get("usuario"), "motivo": r.get("motivo"),
+            "cuando": chile_fmt_filter(r.get("created_at"), "%d/%m/%Y %H:%M"),
+            "ganancia_antes": float(r.get("ganancia_antes") or 0),
+            "ganancia_despues": float(r.get("ganancia_despues") or 0),
+            "cambios": [{"campo": _OT_FIN_CORR_ROT.get(k, k), "antes": antes.get(k), "despues": despues.get(k)}
+                        for k in despues],
+        })
+    return jsonify({
+        "ok": True, "historial": out,
+        "actual": {k: v.get(k) for k in (*_OT_FIN_CORR_CAMPOS, "centro_costo")},
+        "ganancia": _ot_fin_ganancia(v),
+        "garantia": ((v.get("modalidad_cobro") or "").lower() == "garantia"
+                     or (v.get("cubierto_por") or "").lower() == "garantia"),
+        "centros": [{"v": c, "n": n} for c, n in _OT2_CENTROS_COSTO],
+    })
+
+
+def _ot_fin_dudosas_motivos(r):
+    """Por qué las finanzas de una OT cerrada merecen revisión (lista de textos; vacía = sin dudas)."""
+    m = []
+    es_gar = ((r.get("modalidad_cobro") or "").lower() == "garantia"
+              or (r.get("cubierto_por") or "").lower() == "garantia")
+    zz = float(r.get("zz_monto") or 0)
+    envio = float(r.get("zz_envio_monto") or 0)
+    pago = float(r.get("costo_proveedor") or 0) + float(r.get("costo_despacho") or 0)
+    ext = (r.get("proveedor_tipo") or "").lower() == "externo"
+    if not (r.get("centro_costo") or "").strip():
+        m.append("Sin centro de costo")
+    if not es_gar and zz <= 0:
+        m.append("Sin cobro declarado (y no es garantía)")
+    if not es_gar and (zz + envio) > 0 and r.get("costo_proveedor") is None and ext:
+        m.append("Técnico externo sin costo declarado: la ganancia sale inflada")
+    if not es_gar and (zz + envio) > 0 and pago <= 0:
+        m.append("Cobro sin ningún costo: la ganancia es el 100% del cobro")
+    if (zz + envio if not es_gar else 0) - pago < 0:
+        m.append("Pérdida: lo que cuesta supera lo cobrado")
+    return m
+
+
+@app.route("/ot/finanzas-dudosas", methods=["GET"])
+@_mant_required
+def ot2_finanzas_dudosas():
+    """Informe SOLO LECTURA de OT completadas/cerradas con finanzas dudosas, para decidir cuáles corregir.
+    Solo superadmin. No cambia nada."""
+    if not _ot_fin_es_superadmin():
+        return _friendly_error_page("Sin acceso", "Este informe es solo para el superadministrador.", 403)
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        por = int(request.args.get("por", 50))
+    except (TypeError, ValueError):
+        por = 50
+    por = por if por in (25, 50, 100, 200) else 50
+    filtro = (request.args.get("m") or "").strip()
+    q = (request.args.get("q") or "").strip()
+    rows = mysql_fetchall(
+        "SELECT v.id, v.numero_ot, v.estado, v.tipo, v.zz_monto, v.zz_envio_monto, v.costo_proveedor, "
+        "       v.costo_despacho, v.centro_costo, v.modalidad_cobro, v.cubierto_por, v.proveedor_tipo, "
+        "       c.razon_social AS cliente "
+        "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
+        " WHERE LOWER(COALESCE(v.estado,'')) IN ('completada','cerrada') "
+        " ORDER BY v.id DESC LIMIT 5000") or []
+    todas, resumen = [], {}
+    for r in rows:
+        mot = _ot_fin_dudosas_motivos(r)
+        if not mot:
+            continue
+        for t in mot:
+            resumen[t] = resumen.get(t, 0) + 1
+        item = {
+            "id": r["id"], "numero": r.get("numero_ot") or f"VS-{int(r['id']):05d}",
+            "cliente": r.get("cliente") or "—", "tipo": r.get("tipo") or "", "estado": r.get("estado"),
+            "cobro": float(r.get("zz_monto") or 0) + float(r.get("zz_envio_monto") or 0),
+            "pago": float(r.get("costo_proveedor") or 0) + float(r.get("costo_despacho") or 0),
+            "ganancia": _ot_fin_ganancia(r), "motivos": mot,
+            "garantia": ((r.get("modalidad_cobro") or "").lower() == "garantia"
+                         or (r.get("cubierto_por") or "").lower() == "garantia"),
+        }
+        todas.append(item)
+    total_dudosas = len(todas)
+    if filtro:
+        todas = [x for x in todas if filtro in x["motivos"]]
+    if q:
+        ql = q.lower()
+        todas = [x for x in todas if ql in x["numero"].lower() or ql in (x["cliente"] or "").lower()]
+    total = len(todas)
+    paginas = max(1, (total + por - 1) // por)
+    page = min(page, paginas)
+    vista = todas[(page - 1) * por: page * por]
+    return render_template("ot2/finanzas_dudosas.html", filas=vista, total=total, total_dudosas=total_dudosas,
+                           revisadas=len(rows), resumen=sorted(resumen.items(), key=lambda kv: -kv[1]),
+                           page=page, paginas=paginas, por=por, filtro=filtro, q=q)
+
+
 @app.route("/ot/api/finanzas/<int:vid>", methods=["GET", "POST"])
 @_mant_required
 @_ot_can_cobertura
@@ -148513,6 +148774,14 @@ try:
         _ensure_ot_valor_origen_col()
 except Exception as _ensure_vo_err:
     print(f"[ILUS][WARN] _ensure_ot_valor_origen_col: {_ensure_vo_err}", flush=True)
+
+# Correcciones de finanzas de una OT (solo superadmin, registro que nunca se modifica), Daniel 2026-10-07 —
+# SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_ot_finanzas_correcciones()
+except Exception as _ensure_fc_err:
+    print(f"[ILUS][WARN] _ensure_ot_finanzas_correcciones: {_ensure_fc_err}", flush=True)
 
 # Multidocumento de la OT (varias facturas + cotizaciones de referencia),
 # Daniel 2026-09-05 — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
