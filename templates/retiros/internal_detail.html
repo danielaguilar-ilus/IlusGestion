@@ -568,6 +568,8 @@
    quedan como tarjetas sueltas, en el orden del boceto aprobado. #}
 {# Guía de 6 pasos: justo antes de los pasos, tras cabecera y tracking (ficha v7) #}
 {% include "retiros/_guia.html" %}
+{# Encuesta de satisfacción (creada, AÚN NO LANZADA: RETIROS_ENCUESTA_ACTIVA apagada): solo con el retiro terminado, solo lectura #}
+{% if req.status in ('retirada', 'cerrada') %}{% include "retiros/_encuesta_ficha.html" %}{% endif %}
 
 <div class="rd-flow">
 

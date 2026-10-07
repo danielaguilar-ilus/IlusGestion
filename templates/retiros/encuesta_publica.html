@@ -1,0 +1,133 @@
+{% extends "retiros/_encuesta_base.html" %}
+{# Encuesta de satisfacción — formulario DINÁMICO (las preguntas salen de la base de datos y se editan en
+   /retiros/encuesta/preguntas). Funciona sin JavaScript (POST normal); el JS agrega progreso, semáforo y guía.
+   Sin datos personales: ni nombre, ni RUT, ni correo, ni teléfono. Aviso de privacidad antes de responder y
+   consentimiento explícito (checkbox NO premarcado) antes de enviar. #}
+{% block titulo %}Cuéntanos cómo te fue — ILUS Fitness{% endblock %}
+
+{% block contenido %}
+{% set requeridas = preguntas|selectattr('obligatoria')|list|length %}
+<form id="encForm" class="enc-form" method="post" action="{{ accion }}" novalidate data-total="{{ requeridas }}">
+  {% if csrf_token is defined %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+
+  {# ── HERO ───────────────────────────────────────────────────────── #}
+  <header class="enc-hero">
+    <img src="{{ url_for('static', filename='logo_ilus_fitness_blanco.png') }}" class="enc-hero-logo" alt="ILUS Fitness" width="140" height="50" decoding="async" fetchpriority="high">
+    <h1 class="enc-hero-title">Cuéntanos cómo te fue <span class="enc-red">en tu retiro</span></h1>
+    <p class="enc-hero-copy">Tu opinión nos ayuda a que tu próximo retiro sea más rápido. Son solo <strong>{{ preguntas|length }} pregunta{{ 's' if preguntas|length != 1 }}</strong> y te toma <strong>menos de 1 minuto</strong>.</p>
+    <ul class="enc-chips">
+      <li><span aria-hidden="true">⏱</span> Menos de 1 minuto</li>
+      <li><span aria-hidden="true">📱</span> Pensada para tu celular</li>
+      <li><span aria-hidden="true">🔒</span> No te pedimos datos personales</li>
+    </ul>
+  </header>
+
+  {# ── AVISO DE PRIVACIDAD (antes de responder) ───────────────────── #}
+  <section class="enc-privacidad" aria-labelledby="privTitulo">
+    <h2 id="privTitulo"><span aria-hidden="true">🔒</span> Tu privacidad, en breve</h2>
+    <ul>
+      <li><b>Quién:</b> {{ aviso.razon }} (RUT {{ aviso.rut }}), marca ILUS Fitness.</li>
+      <li><b>Para qué:</b> {{ aviso.finalidad }}. Nada más.</li>
+      <li><b>Qué guardamos:</b> solo tus respuestas, unidas a tu retiro por un enlace único. <b>No te pedimos nombre, RUT, correo ni teléfono</b> y no guardamos tu dirección IP.</li>
+      <li><b>Cuánto tiempo:</b> hasta {{ aviso.meses }} meses; después se anonimizan.</li>
+      <li><b>Tus derechos:</b> acceso, rectificación, supresión, oposición y portabilidad. Escríbenos a <a href="mailto:{{ aviso.contacto }}">{{ aviso.contacto }}</a>.</li>
+    </ul>
+    <p class="enc-priv-ver">Responder es voluntario y puedes retirar tu consentimiento cuando quieras. Aviso versión {{ aviso.version }}.</p>
+  </section>
+
+  {# ── PROGRESO ───────────────────────────────────────────────────── #}
+  <div class="enc-progress" id="encProgress" aria-live="polite">
+    <div class="enc-progress-row">
+      <span class="enc-progress-txt" id="encProgresoTxt">0 de {{ requeridas }} respondidas</span>
+      <span class="enc-progress-hint" id="encProgresoHint">Tu opinión cuenta</span>
+    </div>
+    <div class="enc-bar" role="progressbar" aria-valuemin="0" aria-valuemax="{{ requeridas }}" aria-valuenow="0" aria-label="Preguntas respondidas">
+      <div class="enc-bar-fill" id="encBarra"></div>
+    </div>
+  </div>
+
+  {% if errores %}
+  <div class="enc-errores" role="alert" id="encErrores">
+    {% if errores.get('_general') %}
+      <strong>{{ errores.get('_general') }}</strong>
+    {% else %}
+      <strong>Falta{{ 'n' if errores|length != 1 }} {{ errores|length }} respuesta{{ 's' if errores|length != 1 }}.</strong> Revisa las tarjetas marcadas en rojo.
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if not preguntas %}
+  <section class="step-section is-comments"><p class="enc-nota" style="margin:0">No hay preguntas activas en este momento. Actívalas en «Editar preguntas».</p></section>
+  {% endif %}
+
+  {# ── UNA TARJETA POR PREGUNTA ───────────────────────────────────── #}
+  {% for p in preguntas %}
+  {% set campo = 'p_' ~ p.id %}
+  {% set valor = datos_form.get(campo) %}
+  <section class="step-section{{ ' is-comments' if p.tipo == 'texto' }}{{ ' has-error' if errores.get(campo) }}" id="paso-{{ p.id }}"
+           data-pid="{{ p.id }}" data-campo="{{ campo }}" data-tipo="{{ p.tipo }}" data-obligatoria="{{ 1 if p.obligatoria else 0 }}">
+    <div class="step-header">
+      <div class="step-circle{{ ' step-circle-opt' if not p.obligatoria }}" aria-hidden="true"><span class="step-num-text">{{ loop.index }}</span><span class="step-check">✓</span></div>
+      <div class="step-titles">
+        <h2 id="{{ campo }}-t">{{ p.texto }}{% if not p.obligatoria %} <span class="enc-opt">(opcional)</span>{% endif %}</h2>
+        {% if p.ayuda %}<p id="{{ campo }}-a">{{ p.ayuda }}</p>{% endif %}
+      </div>
+    </div>
+    <fieldset class="enc-q" aria-labelledby="{{ campo }}-t"{% if p.ayuda %} aria-describedby="{{ campo }}-a"{% endif %}>
+      {% if p.tipo == 'estrellas' %}
+        <div class="enc-escala" role="radiogroup" aria-labelledby="{{ campo }}-t">
+          {% for n in range(1, 6) %}
+            <input class="enc-radio" type="radio" name="{{ campo }}" id="{{ campo }}-{{ n }}" value="{{ n }}"{{ ' checked' if valor|string == n|string }}>
+            <label class="enc-pill esc-{{ n }}" for="{{ campo }}-{{ n }}">
+              <span class="enc-face" aria-hidden="true">{{ emojis[n] }}</span>
+              <span class="enc-pill-n">{{ n }}<span class="enc-sr"> de 5, {{ etiquetas_estrellas[n] }}</span></span>
+              <span class="enc-pill-l" aria-hidden="true">{{ etiquetas_estrellas[n] }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      {% elif p.tipo == 'si_no' %}
+        <div class="enc-sino" role="radiogroup" aria-labelledby="{{ campo }}-t">
+          <input class="enc-radio" type="radio" name="{{ campo }}" id="{{ campo }}-si" value="si"{{ ' checked' if valor in ('si', '1') }}>
+          <label class="enc-big enc-big-si" for="{{ campo }}-si"><span class="enc-big-ico" aria-hidden="true">✅</span><span>Sí</span></label>
+          <input class="enc-radio" type="radio" name="{{ campo }}" id="{{ campo }}-no" value="no"{{ ' checked' if valor in ('no', '0') }}>
+          <label class="enc-big enc-big-no" for="{{ campo }}-no"><span class="enc-big-ico" aria-hidden="true">⚠️</span><span>No</span></label>
+        </div>
+      {% elif p.tipo == 'opcion' %}
+        <div class="enc-opciones" role="radiogroup" aria-labelledby="{{ campo }}-t">
+          {% for o in p.opciones %}
+            <input class="enc-radio" type="radio" name="{{ campo }}" id="{{ campo }}-{{ o.valor }}" value="{{ o.valor }}"{{ ' checked' if valor == o.valor }}>
+            <label class="enc-opt-big op-{{ o.color }}" for="{{ campo }}-{{ o.valor }}"><span class="enc-opt-dot" aria-hidden="true"></span><span>{{ o.etiqueta }}</span></label>
+          {% endfor %}
+        </div>
+      {% else %}
+        <label for="{{ campo }}" class="enc-sr">{{ p.texto }}</label>
+        <textarea id="{{ campo }}" name="{{ campo }}" rows="4" maxlength="{{ max_texto }}" data-contador="cnt-{{ p.id }}">{{ valor or '' }}</textarea>
+        <div class="enc-count"><span id="cnt-{{ p.id }}">0</span> / {{ max_texto }}</div>
+      {% endif %}
+      {% if errores.get(campo) %}<p class="enc-error" role="alert">{{ errores.get(campo) }}</p>{% endif %}
+    </fieldset>
+  </section>
+  {% endfor %}
+
+  {# ── CONSENTIMIENTO + ENVÍO ─────────────────────────────────────── #}
+  <section class="enc-consent{{ ' has-error' if errores.get('consentimiento') }}" id="encConsent">
+    <input class="enc-check" type="checkbox" id="consentimiento" name="consentimiento" value="1"{{ ' checked' if datos_form.get('consentimiento') }}>
+    <label for="consentimiento">
+      <span class="enc-box" aria-hidden="true"></span>
+      <span>Acepto que {{ aviso.razon }} (ILUS Fitness) use mis respuestas para {{ aviso.finalidad }}, según el aviso de privacidad de arriba.</span>
+    </label>
+    {% if errores.get('consentimiento') %}<p class="enc-error" role="alert">{{ errores.get('consentimiento') }}</p>{% endif %}
+  </section>
+
+  <div class="enc-enviar">
+    <p class="enc-faltan" id="encFaltan" role="status" aria-live="polite"></p>
+    <button type="submit" class="enc-btn" id="encEnviar">Enviar mis respuestas</button>
+    <p class="enc-legal">No pedimos tu nombre, RUT, correo ni teléfono. Si escribes un comentario, por favor no incluyas datos personales.</p>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<noscript><style>.step-section .enc-detalle[hidden]{display:block !important}</style></noscript>
+<script src="{{ url_for('static', filename='retiros_encuesta.js') }}" defer></script>
+{% endblock %}

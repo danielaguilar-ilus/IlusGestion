@@ -140150,6 +140150,15 @@ try:
 except Exception as _pickup_reg_err:
     print(f"[ILUS][WARN] register_pickup_routes: {_pickup_reg_err}")
 
+# Encuesta de satisfacción de Retiros (Daniel 2026-10-06: «creémosla con su base de datos, preguntas editables y la ley 21.719; todavía no
+# la apliquemos»). Mientras RETIROS_ENCUESTA_ACTIVA no esté en 1, el cliente recibe 404 y no se envía nada a nadie.
+try:
+    from retiros_encuesta import register_encuesta_routes
+    register_encuesta_routes(app, globals())
+    print("[ILUS] Encuesta de retiros registrada (no lanzada).")
+except Exception as _enc_reg_err:
+    print(f"[ILUS][WARN] register_encuesta_routes: {_enc_reg_err}")
+
 # Modulo TICKETS CENTRAL (fork de ilus-back/front replicado en Flask). Fase 1:
 # CRUD interno + conversacion interna + adjuntos GCS + autocompletar cliente
 # desde el ERP. Ver BLUEPRINT-TICKETS-CENTRAL.md. No toca mant_tickets (Regla #4.2).

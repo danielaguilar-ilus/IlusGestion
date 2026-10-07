@@ -1,0 +1,81 @@
+{# ════════════════════════════════════════════════════════════════════════
+   ILUS Fitness · Retiros — BLOQUE «Encuesta de satisfacción» para la ficha interna del retiro.
+   Autocontenido: estilos, marcado y script propios. Necesita solo `req.id` en el contexto.
+   Uso (UNA línea en internal_detail.html, donde Daniel quiera el bloque):
+        {% include "retiros/_encuesta_ficha.html" %}
+   Solo LECTURA: muestra el enlace de la encuesta (copiar) y su estado (no enviada / respondida + resultado).
+   NO envía nada y NO agrega nada al correo del cliente mientras RETIROS_ENCUESTA_ACTIVA esté apagada.
+   ════════════════════════════════════════════════════════════════════════ #}
+<style>
+  .encf{background:#fff;border:1px solid #e5e7eb;border-left:6px solid #9ca3af;border-radius:16px;padding:16px 18px;margin:14px 0;box-shadow:0 4px 8px -2px rgba(15,23,42,.06)}
+  .encf.is-resp{border-left-color:#16a34a;background:linear-gradient(180deg,#f0fdf4,#fff 60%)}
+  .encf.is-env{border-left-color:#f59e0b}
+  .encf-top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  .encf-top h6{margin:0;font-weight:900;font-size:1rem}
+  .encf-chip{font-size:.74rem;font-weight:800;border-radius:99px;padding:4px 11px;background:#f3f4f6;color:#374151}
+  .encf.is-resp .encf-chip{background:#dcfce7;color:#14532d}
+  .encf.is-env .encf-chip{background:#fff8e1;color:#7c4a03}
+  .encf-nota{margin:8px 0 0;font-size:.8rem;color:#6b7280;line-height:1.5}
+  .encf-link{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .encf-link input{flex:1 1 240px;min-width:0;min-height:44px;border:2px solid #e5e7eb;border-radius:10px;padding:8px 12px;font-size:16px;background:#f9fafb;color:#374151}
+  .encf-link .btn{min-height:44px;font-weight:700}
+  .encf-res{margin:12px 0 0;padding:0;list-style:none;display:grid;gap:6px;font-size:.9rem}
+  .encf-res li{display:flex;justify-content:space-between;gap:12px;border-bottom:1px dashed #e5e7eb;padding-bottom:6px}
+  .encf-res li.txt{display:block}
+  .encf-res b{font-weight:800}
+</style>
+<section class="encf" id="encfBloque" data-rid="{{ req.id }}" data-url="/retiros/encuesta/ficha/{{ req.id }}" aria-label="Encuesta de satisfacción">
+  <div class="encf-top">
+    <h6><i class="bi bi-emoji-smile me-1" style="color:#dc2626"></i>Encuesta de satisfacción</h6>
+    <span class="encf-chip" id="encfEstado">Cargando…</span>
+  </div>
+  <div class="encf-link" id="encfLink" hidden>
+    <input type="text" id="encfUrl" readonly aria-label="Enlace de la encuesta de este retiro">
+    <button type="button" class="btn btn-sm btn-outline-dark" id="encfCopiar"><i class="bi bi-clipboard me-1"></i>Copiar enlace</button>
+    <a class="btn btn-sm btn-outline-dark" href="/retiros/encuesta/vista-previa" target="_blank" rel="noopener"><i class="bi bi-eye me-1"></i>Vista previa</a>
+  </div>
+  <ul class="encf-res" id="encfRes" hidden></ul>
+  <p class="encf-nota" id="encfNota"></p>
+</section>
+<script>
+(function () {
+  var b = document.getElementById('encfBloque');
+  if (!b) return;
+  var $ = function (id) { return document.getElementById(id); };
+  fetch(b.getAttribute('data-url'), { headers: { 'Accept': 'application/json' } })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (!j.ok) { $('encfEstado').textContent = 'No disponible'; return; }
+      $('encfEstado').textContent = j.estado_txt;
+      if (j.estado === 'respondida') b.classList.add('is-resp');
+      if (j.estado === 'enviada') b.classList.add('is-env');
+      if (j.url) { $('encfUrl').value = j.url; $('encfLink').hidden = false; }
+      var nota = [];
+      if (!j.activa) nota.push('La encuesta aún NO está lanzada: ningún cliente la ha recibido y este enlace no funciona para ellos. Solo tú (personal) puedes abrirlo, en vista previa.');
+      else if (!j.elegible) nota.push('El retiro todavía no está retirado: el enlace funcionará cuando se complete.');
+      nota.push('El enlace no se envía solo: aquí solo se muestra.');
+      if (j.vence) nota.push('Vence el ' + j.vence + '.');
+      if (j.respondida) nota.unshift('Respondida el ' + j.respondida + '.');
+      $('encfNota').textContent = nota.join(' ');
+      if (j.respuestas && j.respuestas.length) {
+        var ul = $('encfRes'); ul.hidden = false; ul.textContent = '';
+        j.respuestas.forEach(function (r) {
+          var li = document.createElement('li');
+          if (r.texto) li.className = 'txt';
+          var a = document.createElement('span'); a.textContent = r.pregunta;
+          var v = document.createElement('b'); v.textContent = r.valor;
+          if (r.texto) { a.style.display = 'block'; a.style.color = '#6b7280'; }
+          li.appendChild(a); li.appendChild(v); ul.appendChild(li);
+        });
+      }
+    })
+    .catch(function () { $('encfEstado').textContent = 'No disponible'; });
+  var cp = $('encfCopiar');
+  if (cp) cp.addEventListener('click', function () {
+    var inp = $('encfUrl');
+    var listo = function () { if (typeof window.ilusToast === 'function') window.ilusToast('Enlace copiado.', { type: 'success' }); };
+    if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(inp.value).then(listo); }
+    else { inp.select(); document.execCommand('copy'); listo(); }
+  });
+})();
+</script>

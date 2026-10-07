@@ -1,0 +1,17 @@
+{% extends "retiros/_encuesta_base.html" %}
+{% block titulo %}Gracias por tu opinión — ILUS Fitness{% endblock %}
+{% block pildora %}Gracias{% endblock %}
+{% block aviso_preview %}Así se verá el agradecimiento. No se guardó ninguna respuesta y no se envió nada a nadie.{% endblock %}
+{% block contenido %}
+<section class="enc-gracias" aria-live="polite">
+  <div class="enc-gracias-circle" aria-hidden="true">✓</div>
+  <h1>{% if ya_respondida %}Ya recibimos tu opinión{% else %}¡Gracias por tu opinión!{% endif %}</h1>
+  {% if ya_respondida %}
+    <p>Tus respuestas ya están con nuestro equipo. No hace falta que hagas nada más.</p>
+  {% else %}
+    <p>Tus respuestas llegan directo al equipo de bodega y las usamos para que tu próximo retiro sea más rápido.</p>
+  {% endif %}
+  <p class="enc-gracias-nota">Si quieres ejercer tus derechos sobre tus datos, o tuviste algún problema con tu pedido, escríbenos a <a href="mailto:{{ aviso.contacto }}">{{ aviso.contacto }}</a>.</p>
+  <p class="enc-gracias-firma">Equipo ILUS Fitness</p>
+</section>
+{% endblock %}

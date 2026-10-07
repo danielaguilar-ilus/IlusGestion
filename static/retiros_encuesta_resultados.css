@@ -1,0 +1,75 @@
+/* ILUS Fitness · Retiros — Resultados de la encuesta de satisfacción (vista interna). Prefijo .encr-* */
+.encr{--verde:#16a34a;--verde-bg:#dcfce7;--ambar:#f59e0b;--ambar-bg:#fff8e1;--rojo:#dc2626;--rojo-bg:#fee2e2;--linea:#e5e7eb;--muted:#6b7280;max-width:1180px}
+.encr *{box-sizing:border-box}
+.encr-estado{display:flex;gap:14px;align-items:flex-start;border-radius:16px;padding:16px 18px;margin-bottom:14px;border:2px solid}
+.encr-estado>i{font-size:1.6rem;line-height:1;margin-top:2px}
+.encr-estado strong{display:block;font-size:1.12rem;font-weight:900;letter-spacing:-.01em;margin-bottom:3px}
+.encr-estado span{display:block;font-size:.9rem;line-height:1.5}
+.encr-estado-off{background:var(--ambar-bg);border-color:var(--ambar);color:#7c4a03}
+.encr-estado-on{background:var(--verde-bg);border-color:var(--verde);color:#14532d;align-items:center}
+.encr-estado-n{margin-top:6px}
+.encr-demo{background:#eef2ff;border:2px dashed #6366f1;color:#312e81;border-radius:14px;padding:12px 16px;margin-bottom:14px;font-size:.92rem}
+.encr-error{background:var(--rojo-bg);border-color:var(--rojo);color:#7f1d1d}
+.encr-aviso{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:.88rem}
+
+.encr-card{background:#fff;border:1px solid var(--linea);border-radius:18px;padding:20px;margin-bottom:14px;box-shadow:0 4px 8px -2px rgba(15,23,42,.06),0 12px 24px -10px rgba(15,23,42,.08)}
+.encr-h{font-size:1.02rem;font-weight:900;letter-spacing:-.01em;margin:0;line-height:1.35}
+.encr-h small{font-weight:600;color:var(--muted);font-size:.8em}
+.encr-arch{display:inline-block;font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;background:#e5e7eb;color:#4b5563;border-radius:99px;padding:2px 8px;vertical-align:middle;margin-left:6px}
+.encr-nota{margin:12px 0 0;font-size:.8rem;color:var(--muted);line-height:1.5}
+.encr-vacio{text-align:center;padding:36px 20px}
+.encr-vacio-ico{font-size:2.4rem;color:#9ca3af}
+.encr-vacio h5{font-weight:900;margin:8px 0}
+.encr-vacio p{max-width:560px;margin:0 auto;color:var(--muted)}
+
+.encr-kpi{background:#fff;border:1px solid var(--linea);border-left:6px solid #111827;border-radius:16px;padding:14px 18px;margin-bottom:14px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.encr-kpi-l{font-size:.76rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.encr-kpi-n{font-size:2.4rem;font-weight:900;line-height:1.1;letter-spacing:-.03em;color:#0a0a0a}
+.encr-kpi-s{font-size:.82rem;color:var(--muted)}
+
+/* tarjetas por pregunta con semáforo */
+.encr-tarjetas{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px;margin-bottom:0}
+.encr-tarjetas>.encr-card{margin-bottom:0}
+.encr-pregunta{border-left:6px solid #9ca3af}
+.encr-pregunta.sem-verde{border-left-color:var(--verde);background:linear-gradient(180deg,#f0fdf4,#fff 55%)}
+.encr-pregunta.sem-ambar{border-left-color:var(--ambar);background:linear-gradient(180deg,#fffbeb,#fff 55%)}
+.encr-pregunta.sem-rojo{border-left-color:var(--rojo);background:linear-gradient(180deg,#fef2f2,#fff 55%)}
+.encr-pregunta-top{display:flex;justify-content:space-between;align-items:flex-start;gap:14px}
+.encr-pregunta .encr-kpi-n{font-size:2.6rem;flex-shrink:0}
+.sem-n-verde{color:#15803d !important}.sem-n-ambar{color:#b45309 !important}.sem-n-rojo{color:#b91c1c !important}
+.sem-bg-verde{background:var(--verde)}.sem-bg-ambar{background:var(--ambar)}.sem-bg-rojo{background:var(--rojo)}.sem-bg-gris{background:#9ca3af}
+.encr-barras{margin-top:14px;display:grid;gap:8px}
+.encr-barra{display:grid;grid-template-columns:minmax(80px,36%) 1fr 84px;gap:10px;align-items:center;font-size:.86rem}
+.encr-barra-l{font-weight:600;line-height:1.3;overflow-wrap:anywhere}
+.encr-barra-bar{display:block;height:12px;border-radius:99px;background:var(--linea);overflow:hidden}
+.encr-barra-bar span{display:block;height:100%;border-radius:99px}
+.encr-barra-v{font-weight:800;white-space:nowrap;text-align:right}
+.encr-barra-v small{color:var(--muted);font-weight:600}
+.encr>.encr-card{margin-top:14px}
+
+/* comentarios (tarjetas: fluyen en celular, 2 columnas en pantalla ancha) */
+.encr-coms{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.encr-com{border:1px solid var(--linea);border-radius:14px;padding:12px 14px;background:#fafafa}
+.encr-com-meta{font-size:.78rem;color:var(--muted)}
+.encr-com-txt{margin:6px 0 0;font-size:.92rem;line-height:1.5;overflow-wrap:anywhere}
+
+/* pie de tabla (patrón Etiquetas, REGLA #4.3) */
+.encr-pie{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid var(--linea)}
+.encr-pie-info{font-size:.88rem;color:#374151}
+.encr-pie-sel{font-size:.84rem;color:var(--muted);display:flex;align-items:center;gap:8px;margin:0}
+.encr-pie-sel select{min-height:40px;border:1px solid #d1d5db;border-radius:10px;padding:4px 10px;background:#fff;font-size:16px}
+.encr-pie-nav{display:flex;align-items:center;gap:10px}
+.encr-pie-nav .btn{min-height:40px;display:inline-flex;align-items:center}
+.encr-pie-pag{font-size:.86rem;font-weight:700}
+
+@media(max-width:900px){
+  .encr-coms{grid-template-columns:1fr}
+  .encr-tarjetas{grid-template-columns:1fr}
+}
+@media(max-width:560px){
+  .encr-card{padding:16px 14px}
+  .encr-pie{flex-direction:column;align-items:stretch}
+  .encr-pie-nav{justify-content:space-between}
+  .encr-barra{grid-template-columns:1fr 84px;gap:4px 10px}
+  .encr-barra-l{grid-column:1 / -1}
+}

@@ -1,0 +1,66 @@
+/* ILUS Fitness · Retiros — Editor de preguntas de la encuesta. Prefijo .ence-* (lenguaje visual de Retiros) */
+.ence{--verde:#16a34a;--ambar:#f59e0b;--rojo:#dc2626;--linea:#e5e7eb;--muted:#6b7280;max-width:1240px}
+.ence *{box-sizing:border-box}
+.ence-estado{display:flex;gap:12px;align-items:center;border-radius:14px;padding:12px 16px;margin-bottom:14px;border:2px solid;font-size:.92rem}
+.ence-estado>i{font-size:1.4rem}
+.ence-off{background:#fff8e1;border-color:var(--ambar);color:#7c4a03}
+.ence-on{background:#dcfce7;border-color:var(--verde);color:#14532d}
+.ence-grid{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:18px;align-items:start}
+.ence-aviso{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;border-radius:12px;padding:10px 14px;margin-bottom:12px;font-size:.88rem}
+.ence-card{background:#fff;border:1px solid var(--linea);border-radius:18px;padding:18px;margin-bottom:12px;box-shadow:0 4px 8px -2px rgba(15,23,42,.06),0 12px 24px -10px rgba(15,23,42,.08)}
+.ence-sub{margin:18px 0 10px;font-weight:900;font-size:.82rem;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.ence-nota{margin:10px 0 12px;font-size:.82rem;color:var(--muted);line-height:1.5}
+.ence-cargando{padding:30px;text-align:center;color:var(--muted)}
+
+/* formulario */
+.ence-form{border-left:6px solid var(--rojo)}
+.ence-form h5{font-weight:900;margin:0 0 14px}
+.ence-campo{margin-bottom:14px}
+.ence-campo label{display:block;font-weight:700;font-size:.88rem;margin-bottom:5px}
+.ence-campo input[type=text],.ence-campo textarea,.ence-campo select{width:100%;border:2px solid var(--linea);border-radius:10px;padding:9px 12px;font:inherit;font-size:16px;background:#fff;min-height:44px}
+.ence-campo textarea{resize:vertical}
+.ence-campo input:focus,.ence-campo textarea:focus,.ence-campo select:focus{outline:none;border-color:var(--rojo);box-shadow:0 0 0 4px rgba(220,38,38,.16)}
+.ence-fila{display:grid;grid-template-columns:1fr auto;gap:14px;align-items:end}
+.ence-check{display:flex;align-items:center;gap:8px;min-height:44px}
+.ence-check input{width:22px;height:22px;accent-color:var(--rojo)}
+.ence-check label{margin:0}
+.ence-req{color:var(--rojo)}.ence-opc{color:var(--muted);font-weight:500}
+.ence-err{display:block;color:#b91c1c;font-weight:700;font-size:.82rem;margin-top:4px}
+.ence-opfila{display:grid;grid-template-columns:1fr 150px auto;gap:8px;margin-bottom:8px}
+.ence-opfila input,.ence-opfila select{width:100%;border:2px solid var(--linea);border-radius:10px;padding:8px 10px;font-size:16px;min-height:44px}
+.ence-opfila .btn{min-height:44px;min-width:44px}
+
+/* tarjeta de pregunta */
+.ence-preg{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:start}
+.ence-preg.is-arch{opacity:.7;background:#fafafa;border-style:dashed}
+.ence-num{width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Bebas Neue','Inter',sans-serif;font-size:1.4rem;background:linear-gradient(150deg,var(--rojo),#a60000);box-shadow:0 8px 18px -6px rgba(220,38,38,.5)}
+.is-arch .ence-num{background:linear-gradient(150deg,#9ca3af,#6b7280);box-shadow:none}
+.ence-preg-texto{font-weight:800;font-size:1.02rem;line-height:1.35;overflow-wrap:anywhere}
+.ence-preg-ayuda{font-size:.84rem;color:var(--muted);margin-top:2px}
+.ence-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.ence-chip{font-size:.72rem;font-weight:800;background:#f3f4f6;color:#374151;border-radius:99px;padding:3px 10px}
+.ence-chip.is-obl{background:#fee2e2;color:#991b1b}
+.ence-ops{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:4px;font-size:.86rem}
+.ence-op{display:flex;align-items:center;gap:8px}
+.ence-dot{width:11px;height:11px;border-radius:50%;background:#9ca3af;flex-shrink:0}
+.ence-op-verde .ence-dot{background:var(--verde)}.ence-op-ambar .ence-dot{background:var(--ambar)}.ence-op-rojo .ence-dot{background:var(--rojo)}
+.ence-acc{display:flex;flex-direction:column;gap:6px;align-items:stretch}
+.ence-acc .btn{min-height:40px;min-width:44px}
+
+/* vista previa en marco de celular */
+.ence-prev{position:sticky;top:12px}
+.ence-prev-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px}
+.ence-phone{width:100%;max-width:390px;margin:0 auto;border:10px solid #0a0a0a;border-radius:38px;overflow:hidden;background:#fff;box-shadow:0 24px 50px -16px rgba(0,0,0,.45);height:700px}
+.ence-phone iframe{width:100%;height:100%;border:0;display:block}
+
+@media(max-width:1100px){
+  .ence-grid{grid-template-columns:1fr}
+  .ence-prev{position:static}
+  .ence-phone{height:620px}
+}
+@media(max-width:560px){
+  .ence-preg{grid-template-columns:auto 1fr}
+  .ence-acc{grid-column:1 / -1;flex-direction:row;flex-wrap:wrap}
+  .ence-fila{grid-template-columns:1fr}
+  .ence-opfila{grid-template-columns:1fr 120px auto}
+}

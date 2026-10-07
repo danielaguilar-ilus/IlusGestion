@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+{# ILUS Fitness · Encuesta de satisfacción de Retiros — layout público (sin sidebar, sin base.html).
+   Lenguaje visual de /retiros/solicitar: mini-bar negra, tarjetas, step-circle rojo→verde. #}
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>{% block titulo %}Tu opinión — ILUS Fitness{% endblock %}</title>
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#0a0a0a">
+  <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='favicon.png') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='Logo.png') }}">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='retiros_encuesta.css') }}">
+</head>
+<body class="enc-body{% block clase_body %}{% endblock %}">
+  <a class="enc-skip" href="#enc-main">Saltar al contenido</a>
+
+  <div class="enc-minibar">
+    <span class="enc-minipill">{% block pildora %}Encuesta de satisfacción{% endblock %}</span>
+    <span class="enc-minitxt">Retiros en bodega</span>
+  </div>
+
+  {% if vista_previa %}
+  <div class="enc-preview" role="status">
+    <strong>VISTA PREVIA DEL PERSONAL.</strong>
+    {% block aviso_preview %}Así la verá un cliente. Nada se guarda y no se envía a nadie.{% endblock %}
+  </div>
+  {% endif %}
+
+  <main id="enc-main" class="enc-main">
+    {% block contenido %}{% endblock %}
+  </main>
+
+  <footer class="enc-footer">
+    <img src="{{ url_for('static', filename='logo_ilus_black.png') }}" alt="ILUS Fitness" width="96" height="32" decoding="async" loading="lazy">
+    <p>ILUS Fitness &middot; Bodega Quilicura</p>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

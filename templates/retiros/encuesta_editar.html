@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Editar preguntas · Encuesta de Retiros - ILUS{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='retiros_encuesta_editar.css') }}">
+{% endblock %}
+{% block content %}
+{# ════════════════════════════════════════════════════════════════════════
+   ILUS Fitness · Retiros — EDITOR DE PREGUNTAS de la encuesta de satisfacción.
+   Solo admin / superadmin / jefatura de Retiros. Las preguntas se VERSIONAN: si ya tienen respuestas, editar crea una
+   versión nueva y las respuestas viejas siguen apuntando al texto que vio el cliente. Nada se borra: se archiva.
+   Usa ilusConfirm / ilusToast (REGLA #1). La vista previa de la derecha es la página real que verá el cliente.
+   ════════════════════════════════════════════════════════════════════════ #}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-pencil-square me-2" style="color:var(--ilus-red)"></i>Preguntas de la encuesta · Retiros</h4>
+    <div class="sub">Edita el texto, el tipo, el orden y qué preguntas se muestran. Los cambios se ven al instante en la vista previa.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-sm btn-outline-dark fw-bold" href="{{ url_for('retiros_encuesta_resultados') }}"><i class="bi bi-bar-chart me-1"></i>Resultados</a>
+    <button type="button" class="btn btn-sm btn-danger fw-bold" id="encNueva"><i class="bi bi-plus-lg me-1"></i>Nueva pregunta</button>
+  </div>
+</div>
+
+<div class="ence">
+  {% if activa %}
+  <div class="ence-estado ence-on"><i class="bi bi-broadcast"></i><div><strong>Encuesta ACTIVA.</strong> Los cambios llegan a los clientes que reciban el enlace.</div></div>
+  {% else %}
+  <div class="ence-estado ence-off"><i class="bi bi-lock-fill"></i><div><strong>Encuesta creada, aún NO lanzada.</strong> Ningún cliente la ha recibido: puedes editar con tranquilidad.</div></div>
+  {% endif %}
+
+  <div class="ence-grid">
+    <div class="ence-col">
+      <div class="ence-aviso" id="encAviso" hidden></div>
+
+      {# ── Formulario (aparece al crear o editar) ───────────────────── #}
+      <section class="ence-card ence-form" id="encForm" hidden aria-labelledby="encFormTitulo">
+        <h5 id="encFormTitulo">Nueva pregunta</h5>
+        <input type="hidden" id="fId">
+        <div class="ence-campo">
+          <label for="fTexto">Pregunta <span class="ence-req">*</span></label>
+          <textarea id="fTexto" rows="2" maxlength="300" placeholder="Ej.: ¿Tu pedido estaba listo cuando llegaste?"></textarea>
+          <small class="ence-err" id="eTexto" role="alert"></small>
+        </div>
+        <div class="ence-campo">
+          <label for="fAyuda">Texto de ayuda <span class="ence-opc">(opcional)</span></label>
+          <input type="text" id="fAyuda" maxlength="300" placeholder="Una línea bajo la pregunta que explica qué se pregunta.">
+        </div>
+        <div class="ence-fila">
+          <div class="ence-campo">
+            <label for="fTipo">Tipo de respuesta</label>
+            <select id="fTipo">
+              {% for k, v in tipos.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
+            </select>
+            <small class="ence-err" id="eTipo" role="alert"></small>
+          </div>
+          <div class="ence-campo ence-check">
+            <input type="checkbox" id="fObl" checked>
+            <label for="fObl">Es obligatoria</label>
+          </div>
+        </div>
+        <div class="ence-campo" id="bloqueOpciones" hidden>
+          <label>Opciones <span class="ence-req">*</span> <span class="ence-opc">(de 2 a 6; el color sirve para el semáforo)</span></label>
+          <div id="listaOpciones"></div>
+          <button type="button" class="btn btn-sm btn-outline-dark" id="encAddOpcion"><i class="bi bi-plus"></i> Agregar opción</button>
+          <small class="ence-err" id="eOpciones" role="alert"></small>
+        </div>
+        <p class="ence-nota"><i class="bi bi-info-circle"></i> Si esta pregunta ya tiene respuestas, al guardar se crea una <b>versión nueva</b>: las respuestas anteriores siguen asociadas al texto que vio el cliente.</p>
+        <div class="d-flex gap-2 flex-wrap">
+          <button type="button" class="btn btn-danger fw-bold" id="encGuardar"><i class="bi bi-check2 me-1"></i>Guardar pregunta</button>
+          <button type="button" class="btn btn-outline-dark fw-bold" id="encCancelar">Cancelar</button>
+        </div>
+      </section>
+
+      {# ── Lista ─────────────────────────────────────────────────────── #}
+      <div id="encLista" class="ence-lista" aria-live="polite"><div class="ence-cargando">Cargando preguntas…</div></div>
+    </div>
+
+    {# ── Vista previa: la página real, en un marco de celular ─────── #}
+    <aside class="ence-prev" aria-label="Vista previa para el cliente">
+      <div class="ence-prev-top">
+        <strong><i class="bi bi-phone me-1"></i>Así la ve el cliente</strong>
+        <a href="{{ url_for('retiros_encuesta_vista_previa') }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-dark">Abrir completa</a>
+      </div>
+      <div class="ence-phone"><iframe id="encPrev" title="Vista previa de la encuesta" src="{{ url_for('retiros_encuesta_vista_previa') }}" loading="lazy"></iframe></div>
+      <p class="ence-nota">Es la encuesta real: puedes probarla. Nada se guarda ni se envía.</p>
+    </aside>
+  </div>
+</div>
+
+<script type="application/json" id="encConfig">{{ {'datos': url_for('retiros_encuesta_datos'), 'guardar': url_for('retiros_encuesta_guardar'), 'base': url_for('retiros_encuesta_resultados') ~ '/preguntas', 'previa': url_for('retiros_encuesta_vista_previa'), 'max': maximo_recomendado, 'tipos': tipos, 'colores': colores}|tojson }}</script>
+<script src="{{ url_for('static', filename='retiros_encuesta_editar.js') }}" defer></script>
+{% endblock %}

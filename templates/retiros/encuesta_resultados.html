@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Encuesta de satisfacción · Retiros - ILUS{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='retiros_encuesta_resultados.css') }}">
+{% endblock %}
+{% block content %}
+{# ════════════════════════════════════════════════════════════════════════
+   ILUS Fitness · Retiros — RESULTADOS DE LA ENCUESTA DE SATISFACCIÓN (solo personal, permiso «retiros»).
+   La encuesta está CREADA pero NO lanzada: ningún cliente la ha recibido (RETIROS_ENCUESTA_ACTIVA apagada).
+   «Ver con datos de ejemplo» (?demo=1) genera respuestas sintéticas en memoria: no se guardan ni son clientes.
+   ════════════════════════════════════════════════════════════════════════ #}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-emoji-smile me-2" style="color:var(--ilus-red)"></i>Encuesta de satisfacción · Retiros</h4>
+    <div class="sub">Si el pedido estaba listo al llegar, cuánto esperó y cómo fue la atención en bodega</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    {% if puede_editar %}
+    <a class="btn btn-sm btn-outline-dark fw-bold" href="{{ url_for('retiros_encuesta_editor') }}"><i class="bi bi-pencil-square me-1"></i>Editar preguntas</a>
+    {% endif %}
+    {% if demo %}
+      <a class="btn btn-sm btn-outline-dark fw-bold" href="{{ url_for('retiros_encuesta_resultados') }}"><i class="bi bi-database me-1"></i>Ver resultados reales</a>
+    {% else %}
+      <a class="btn btn-sm btn-outline-dark fw-bold" href="{{ url_for('retiros_encuesta_resultados', demo=1) }}"><i class="bi bi-magic me-1"></i>Ver con datos de ejemplo</a>
+    {% endif %}
+    <a class="btn btn-sm btn-danger fw-bold" href="{{ url_for('retiros_encuesta_vista_previa') }}" target="_blank" rel="noopener"><i class="bi bi-eye me-1"></i>Vista previa de la encuesta</a>
+  </div>
+</div>
+
+<div class="encr">
+
+  {% if activa %}
+  <div class="encr-estado encr-estado-on" role="status">
+    <i class="bi bi-broadcast"></i>
+    <div><strong>Encuesta ACTIVA.</strong> Los clientes con un enlace válido pueden responderla (RETIROS_ENCUESTA_ACTIVA encendida).</div>
+  </div>
+  {% else %}
+  <div class="encr-estado encr-estado-off" role="status">
+    <i class="bi bi-lock-fill"></i>
+    <div>
+      <strong>Encuesta creada, aún NO lanzada: ningún cliente la ha recibido.</strong>
+      <span>No se ha enviado ningún correo, mensaje ni enlace. Solo el personal puede abrirla (vista previa). El lanzamiento será un paso aparte que se aprueba antes.</span>
+      {% if elegibles is not none %}<span class="encr-estado-n">Si se lanzara hoy, serían elegibles <b>{{ elegibles }}</b> retiros completados en los últimos 30 días.</span>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if demo %}
+  <div class="encr-demo" role="status"><i class="bi bi-magic"></i> <strong>DATOS DE EJEMPLO.</strong> Respuestas inventadas para mostrar cómo se verá esta pantalla. No son clientes reales y no se guardaron.</div>
+  {% endif %}
+
+  {% if error_datos %}
+  <div class="encr-demo encr-error" role="alert"><i class="bi bi-exclamation-triangle"></i> No pudimos leer las respuestas guardadas. Inténtalo de nuevo en un momento.</div>
+  {% endif %}
+
+  {% if n_activas > 4 %}
+  <div class="encr-aviso"><i class="bi bi-info-circle"></i> Hay {{ n_activas }} preguntas activas. Una encuesta de más de 4 preguntas baja la cantidad de clientes que la contestan.</div>
+  {% endif %}
+
+  {% if not hay_datos %}
+  <section class="encr-card encr-vacio">
+    <div class="encr-vacio-ico"><i class="bi bi-inbox"></i></div>
+    <h5>Todavía no hay respuestas</h5>
+    <p>Cuando la encuesta se lance y los clientes la respondan, aquí verás cada pregunta con su semáforo y los comentarios. Mientras tanto puedes probar el formulario con <b>Vista previa</b> o ver cómo quedará esta pantalla con <b>datos de ejemplo</b>.</p>
+  </section>
+  {% else %}
+
+  {% if pocos %}
+  <div class="encr-aviso"><i class="bi bi-info-circle"></i> Con menos de 10 respuestas las cifras son orientativas: un solo cliente mueve mucho los porcentajes.</div>
+  {% endif %}
+
+  <div class="encr-kpi encr-kpi-resp">
+    <div class="encr-kpi-l">Respuestas recibidas</div>
+    <div class="encr-kpi-n">{{ n_resp }}</div>
+    <div class="encr-kpi-s">de {{ n_inv }} invitaci{{ 'ones' if n_inv != 1 else 'ón' }}</div>
+  </div>
+
+  {# ── UNA TARJETA POR PREGUNTA, CON SU SEMÁFORO ─────────────────── #}
+  <div class="encr-tarjetas">
+    {% for t in tarjetas %}
+    <section class="encr-card encr-pregunta sem-{{ t.color }}">
+      <div class="encr-pregunta-top">
+        <h5 class="encr-h">{{ t.texto }}{% if not t.activa %} <span class="encr-arch">archivada</span>{% endif %}</h5>
+        <div class="encr-kpi-n sem-n-{{ t.color }}">{{ t.kpi }}</div>
+      </div>
+      <div class="encr-kpi-s">{{ t.kpi_sub }} · {{ t.n }} respuesta{{ 's' if t.n != 1 }}</div>
+      <div class="encr-barras">
+        {% for b in t.barras %}
+        <div class="encr-barra">
+          <span class="encr-barra-l">{{ b.etiqueta }}</span>
+          <span class="encr-barra-bar"><span class="sem-bg-{{ b.color }}" style="width:{{ b.pct }}%"></span></span>
+          <span class="encr-barra-v">{{ b.c }} <small>({{ b.pct }}%)</small></span>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+  </div>
+
+  {# ── COMENTARIOS (paginados como Etiquetas, REGLA #4.3) ─────────── #}
+  <section class="encr-card">
+    <h5 class="encr-h">Comentarios recientes <small>({{ total_coment }})</small></h5>
+    {% if comentarios %}
+    <div class="encr-coms">
+      {% for c in comentarios %}
+      <article class="encr-com">
+        <div class="encr-com-meta">{% if c.code %}<b>{{ c.code }}</b> · {% endif %}{{ c.cuando }}</div>
+        <p class="encr-com-txt">{{ c.texto }}</p>
+      </article>
+      {% endfor %}
+    </div>
+    <form class="encr-pie" method="get" action="{{ url_for('retiros_encuesta_resultados') }}">
+      {% if demo %}<input type="hidden" name="demo" value="1">{% endif %}
+      <div class="encr-pie-info">Mostrando <b>{{ desde }}–{{ hasta }}</b> de <b>{{ total_coment }}</b></div>
+      <label class="encr-pie-sel">Por página
+        <select name="por_pagina" onchange="this.form.pagina.value=1;this.form.submit()">
+          {% for o in opciones_pagina %}<option value="{{ o }}"{{ ' selected' if o == por_pagina }}>{{ o }}</option>{% endfor %}
+        </select>
+      </label>
+      <input type="hidden" name="pagina" value="{{ pagina }}">
+      <div class="encr-pie-nav">
+        {% if pagina > 1 %}<a class="btn btn-sm btn-outline-dark" href="{{ url_for('retiros_encuesta_resultados', pagina=pagina-1, por_pagina=por_pagina, demo=1 if demo else None) }}">Anterior</a>{% else %}<span class="btn btn-sm btn-outline-secondary disabled">Anterior</span>{% endif %}
+        <span class="encr-pie-pag">Página {{ pagina }} de {{ paginas }}</span>
+        {% if pagina < paginas %}<a class="btn btn-sm btn-outline-dark" href="{{ url_for('retiros_encuesta_resultados', pagina=pagina+1, por_pagina=por_pagina, demo=1 if demo else None) }}">Siguiente</a>{% else %}<span class="btn btn-sm btn-outline-secondary disabled">Siguiente</span>{% endif %}
+      </div>
+    </form>
+    {% else %}
+    <p class="encr-nota">Aún no hay comentarios escritos.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <section class="encr-card">
+    <h5 class="encr-h">Privacidad y conservación</h5>
+    <p class="encr-nota" style="margin:0"><i class="bi bi-shield-lock"></i> No se pide nombre, RUT, correo ni teléfono, y no se guarda la IP. La respuesta se asocia al retiro por un enlace con token (que no abre el seguimiento del cliente). Se guarda la fecha y la versión del aviso aceptado. Las respuestas se conservan 24 meses y luego se anonimizan.</p>
+  </section>
+
+</div>
+{% endblock %}
