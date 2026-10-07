@@ -69,6 +69,8 @@ class BDFalsa:
         self.admins = []            # [{'id': 11}, …]: quienes reciben la campana de avisos al equipo
         self.falla_escritura_si = []  # [(regex, Excepcion)]: hace fallar INSERT/UPDATE/DELETE que coincidan
         self.snapshots = {}         # request_id -> {'payload': str, 'huella': str}: registro de Check guardado en ILUS
+        self.prep_tiempos = {}      # request_id -> fila de pickup_prep_tiempos (análisis de tiempos guardado como evidencia)
+        self.prep_productos = []    # filas de pickup_prep_productos (minutos de picking por producto)
         self.snapshot_viejo = False  # True: la lectura «¿hay un cambio pedido por el cliente?» sigue viendo el mundo de hace un minuto
         self.plantillas = {}        # (estado, canal) -> {'asunto','cuerpo'}: plantillas de Retiros de comm_templates (la BD de plantillas)
         self.al_leer = []           # [(regex, funcion)]: tras la PRIMERA lectura que coincide, corre la función (alguien cambia algo justo después)
@@ -217,6 +219,10 @@ class BDFalsa:
                 if p["request_id"] == rid and p["status"] == "pending" and (p.get("proposed_by") or "").lower() == "cliente":
                     return {"id": p["id"]}
             return None
+        if low.startswith("select huella, en_curso from pickup_prep_tiempos where request_id=%s") or                 low.startswith("select payload from pickup_prep_tiempos where request_id=%s"):
+            self.consultas.append((s, params))
+            f = self.prep_tiempos.get(int(params[0]))
+            return dict(f) if f else None
         if low.startswith("select payload, huella from pickup_check_snapshots where request_id=%s"):
             self.consultas.append((s, params))
             return dict(self.snapshots[int(params[0])]) if int(params[0]) in self.snapshots else None
@@ -287,6 +293,18 @@ class BDFalsa:
         if low.startswith("insert into pickup_check_snapshots"):
             rid, payload, huella = params
             self.snapshots[int(rid)] = {"payload": payload, "huella": huella}
+            return 1
+        if low.startswith("insert into pickup_prep_tiempos"):
+            cols = [c.strip() for c in s[s.index("(") + 1:s.index(")")].split(",")]
+            self.prep_tiempos[int(params[0])] = dict(zip(cols, params))
+            return 1
+        if low.startswith("delete from pickup_prep_productos where request_id=%s"):
+            antes = len(self.prep_productos)
+            self.prep_productos = [p for p in self.prep_productos if p["request_id"] != int(params[0])]
+            return antes - len(self.prep_productos)
+        if low.startswith("insert into pickup_prep_productos"):
+            cols = [c.strip() for c in s[s.index("(") + 1:s.index(")")].split(",")]
+            self.prep_productos.append(dict(zip(cols, params)))
             return 1
         if low.startswith("delete from pickup_check_snapshots"):
             return 1 if self.snapshots.pop(int(params[0]), None) else 0

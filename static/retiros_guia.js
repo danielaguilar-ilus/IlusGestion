@@ -581,6 +581,13 @@
       if (d.mas) h += '<p class="ck-vacio">…y ' + d.mas + ' OT más.</p>';
       h += '</div>';
     });
+    var T = ACT.tiempos;
+    if (T && T.calculado && !T.en_curso) {
+      h += '<p class="ck-evid" title="' + esc(T.criterio || '') + '"><i class="bi bi-shield-check"></i><span><b>Tiempos guardados como evidencia</b> el ' + esc(T.calculado) +
+        ': trabajo ' + durTxt(T.trabajo_min || 0) + ' en ' + (T.n_ot || 0) + ' OT · preparación efectiva ' + durTxt(T.efectivo_min || 0) +
+        (T.pausas_min ? ' · pausas ' + durTxt(T.pausas_min) : '') +
+        (T.min_por_unidad != null ? ' · picking ' + String(T.min_por_unidad).replace('.', ',') + ' min por unidad' : '') + '.</span></p>';
+    }
     if (ACT.desde_registro) {
       return h + '<p class="ck-pie">Registro guardado en ILUS el ' + esc(ACT.registrado || '') + ': lo que Check informó mientras se preparaba el pedido, con la hora que entrega Check. Check solo se consulta, nunca se modifica.</p></section>';
     }

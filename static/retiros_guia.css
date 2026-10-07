@@ -551,6 +551,8 @@
 .ck-tsep{font-size:.7rem;color:#6b7280}
 .ck-t.is-trabajo{background:rgba(59,130,246,.38)}
 .ck-otlista{display:grid;gap:3px}
+.ck-evid{display:flex;align-items:flex-start;gap:7px;margin:8px 0 0;padding:6px 10px;border-radius:9px;background:#dcfce7;border:1px solid #86efac;color:#14532d;font-size:.82rem}
+.ck-evid .bi{color:#16a34a;font-size:1rem;margin-top:1px}
 .ck-otl{display:grid;grid-template-columns:max-content minmax(120px,.9fr) minmax(150px,1.3fr) max-content max-content;
   align-items:center;gap:4px 10px;min-height:40px;padding:3px 6px 3px 8px;border:1.5px solid #e5e7eb;border-left:5px solid #9ca3af;border-radius:9px;background:#fff;font-size:.86rem;
   transition:box-shadow .15s,border-color .15s}

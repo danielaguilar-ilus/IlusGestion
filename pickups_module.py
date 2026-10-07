@@ -14,6 +14,7 @@ import retiros_horarios as _rh    # días especiales: víspera de feriado y sali
 import retiros_guia as _rg         # guía de 6 pasos de la ficha (funciones puras)
 import retiros_check as _rck       # preparación según CheckWMS (funciones puras; Check es SOLO LECTURA, REGLA #4.4)
 import retiros_check_ot as _rco    # movimientos (OT) de CheckWMS por documento: quién, cuándo, estado (puras; SOLO LECTURA)
+import retiros_tiempos as _rti     # tiempos de preparación según las OT de Check: trabajo, pausas, por producto (puras)
 
 
 def _public_base_url():
@@ -9150,6 +9151,12 @@ def register_pickup_routes(app, ctx):
             mysql_execute("DELETE FROM pickup_check_snapshots WHERE request_id=%s", (rid,))      # el registro de Check se va con el retiro
         except Exception:
             pass
+        for _tabla_pt in ("pickup_prep_tiempos", "pickup_prep_productos"):                    # y su análisis de tiempos
+            try:
+                if _PREP_T["tabla"]:
+                    mysql_execute(f"DELETE FROM {_tabla_pt} WHERE request_id=%s", (rid,))
+            except Exception:
+                pass
 
         try:
             # Cascade automático borra todas las tablas relacionadas
@@ -12217,6 +12224,7 @@ def register_pickup_routes(app, ctx):
             if len(texto) > 400000:
                 return False
             huella = _hl_sn.sha1(texto.encode("utf-8")).hexdigest()
+            _prep_tiempos_guardar(rid, docs, huella)      # el análisis de tiempos queda como evidencia (salta si ya está con esta huella)
             if previo and previo.get("huella") == huella:
                 return False
             payload = _json_sn.dumps({"documentos": docs, "guardado_en": _ahora_chile().strftime("%d/%m/%Y %H:%M")}, ensure_ascii=False, default=str)
@@ -12256,9 +12264,168 @@ def register_pickup_routes(app, ctx):
             print(f"[retiros-check-snap] desde cache rid={rid}: {e}", flush=True)
             return False
 
+    # ── TIEMPOS DE PREPARACIÓN como evidencia (Daniel 2026-10-06: «crear los datos persistentes con análisis inteligente de cuánto se tardó…
+    #    del inicio al fin puede haber una intermitencia… calcular los minutos que se prepara el retiro según el WMS y tener toda la evidencia…
+    #    registro de cuánto se tarda por producto en promedio»). Cada vez que se guarda el registro de Check se guarda también su análisis
+    #    (retiros_tiempos, con el criterio escrito) y los minutos de picking repartidos por producto. Solo ILUS; Check solo se consulta.
+    _PREP_T = {"tabla": False}
+
+    def _prep_tiempos_tablas():
+        if _PREP_T["tabla"]:
+            return True
+        try:
+            mysql_execute(
+                "CREATE TABLE IF NOT EXISTS pickup_prep_tiempos ("
+                "request_id INT NOT NULL PRIMARY KEY, huella VARCHAR(40) NOT NULL, version INT NOT NULL DEFAULT 1, "
+                "en_curso TINYINT(1) NOT NULL DEFAULT 0, n_ot INT NOT NULL DEFAULT 0, "
+                "trabajo_min INT NULL, efectivo_min INT NULL, pausas_min INT NULL, principio_fin_min INT NULL, reloj_min INT NULL, "
+                "listo_esperando_min INT NULL, espera_asignacion_min INT NULL, vs_cita_min INT NULL, "
+                "picking_min INT NULL, picking_unidades DECIMAL(12,2) NULL, min_por_unidad DECIMAL(10,2) NULL, "
+                "inicio_check VARCHAR(16) NULL, salida_check VARCHAR(16) NULL, payload MEDIUMTEXT NOT NULL, "
+                "calculado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, "
+                "KEY idx_prep_t_calc (en_curso, calculado_en)"
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+            mysql_execute(
+                "CREATE TABLE IF NOT EXISTS pickup_prep_productos ("
+                "id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, request_id INT NOT NULL, sku VARCHAR(64) NOT NULL, "
+                "descripcion VARCHAR(255) NULL, unidades DECIMAL(12,2) NOT NULL DEFAULT 0, minutos DECIMAL(10,2) NULL, ot VARCHAR(40) NULL, "
+                "creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                "KEY idx_prep_p_req (request_id), KEY idx_prep_p_sku (sku, creado_en)"
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+            _PREP_T["tabla"] = True
+        except Exception as e:
+            print(f"[retiros-prep-tiempos] tablas: {e}", flush=True)
+        return _PREP_T["tabla"]
+
+    def _cita_txt(req):
+        """'dd/mm/aaaa hh:mm' de la cita confirmada, o None."""
+        f, t = (req or {}).get("confirmed_date"), (req or {}).get("confirmed_time_from")
+        if not f or t in (None, ""):
+            return None
+        try:
+            if isinstance(t, timedelta):
+                s = int(t.total_seconds())
+                hm = f"{s // 3600:02d}:{(s % 3600) // 60:02d}"
+            else:
+                hm = str(t)[:5]
+            fd = f if hasattr(f, "strftime") else datetime.strptime(str(f)[:10], "%Y-%m-%d")
+            return fd.strftime("%d/%m/%Y") + " " + hm
+        except Exception:
+            return None
+
+    def _prep_tiempos_guardar(rid, docs, huella):
+        """Calcula y guarda el análisis de tiempos del retiro (y sus minutos por producto). Salta si ya está guardado con esta huella y
+        terminado. Devuelve el análisis (o None). Nunca lanza: un problema aquí no puede tapar el registro de Check."""
+        import json as _json_pt
+        try:
+            if not _prep_tiempos_tablas():
+                return None
+            previo = mysql_fetchone("SELECT huella, en_curso FROM pickup_prep_tiempos WHERE request_id=%s", (rid,))
+            if previo and previo.get("huella") == huella and not int(previo.get("en_curso") or 0):
+                return None
+            req = mysql_fetchone(f"SELECT confirmed_date, confirmed_time_from FROM `{REQ}` WHERE id=%s", (rid,)) or {}
+            a = _rti.analizar_retiro(docs, cita=_cita_txt(req), ahora=_ahora_chile().replace(tzinfo=None))
+            if not a:
+                return None
+            payload = _json_pt.dumps(a, ensure_ascii=False, default=str)
+            if len(payload) > 400000:
+                return None
+            mysql_execute(
+                "INSERT INTO pickup_prep_tiempos (request_id, huella, version, en_curso, n_ot, trabajo_min, efectivo_min, pausas_min, principio_fin_min, "
+                "reloj_min, listo_esperando_min, espera_asignacion_min, vs_cita_min, picking_min, picking_unidades, min_por_unidad, inicio_check, "
+                "salida_check, payload) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                "ON DUPLICATE KEY UPDATE huella=VALUES(huella), version=VALUES(version), en_curso=VALUES(en_curso), n_ot=VALUES(n_ot), "
+                "trabajo_min=VALUES(trabajo_min), efectivo_min=VALUES(efectivo_min), pausas_min=VALUES(pausas_min), "
+                "principio_fin_min=VALUES(principio_fin_min), reloj_min=VALUES(reloj_min), listo_esperando_min=VALUES(listo_esperando_min), "
+                "espera_asignacion_min=VALUES(espera_asignacion_min), vs_cita_min=VALUES(vs_cita_min), picking_min=VALUES(picking_min), "
+                "picking_unidades=VALUES(picking_unidades), min_por_unidad=VALUES(min_por_unidad), inicio_check=VALUES(inicio_check), "
+                "salida_check=VALUES(salida_check), payload=VALUES(payload)",
+                (rid, huella, a.get("version") or 1, 1 if a.get("en_curso") else 0, a.get("n_ot") or 0, a.get("trabajo_min"), a.get("efectivo_min"),
+                 a.get("pausas_min"), a.get("principio_fin_min"), a.get("reloj_min"), a.get("listo_esperando_min"), a.get("espera_asignacion_min"),
+                 a.get("vs_cita_min"), a.get("picking_min"), a.get("picking_unidades"), a.get("min_por_unidad"), a.get("inicio"), a.get("salida"),
+                 payload))
+            if not a.get("en_curso"):
+                mysql_execute("DELETE FROM pickup_prep_productos WHERE request_id=%s", (rid,))
+                for p in (a.get("productos") or [])[:300]:
+                    if not p.get("sku"):
+                        continue
+                    mysql_execute(
+                        "INSERT INTO pickup_prep_productos (request_id, sku, descripcion, unidades, minutos, ot) VALUES (%s,%s,%s,%s,%s,%s)",
+                        (rid, str(p["sku"])[:64], (p.get("descripcion") or "")[:255] or None, p.get("unidades") or 0, p.get("min"), (p.get("ot") or "")[:40] or None))
+            return a
+        except Exception as e:
+            print(f"[retiros-prep-tiempos] guardar rid={rid}: {type(e).__name__}: {e}", flush=True)
+            return None
+
+    def _prep_tiempos_leer(rid):
+        """Análisis guardado (con 'calculado': 'dd/mm/aaaa hh:mm' hora Chile) o None."""
+        import json as _json_pt
+        try:
+            if not _prep_tiempos_tablas():
+                return None
+            f = mysql_fetchone("SELECT payload FROM pickup_prep_tiempos WHERE request_id=%s", (rid,))
+            a = _json_pt.loads(f.get("payload") or "null") if f else None
+            return a if isinstance(a, dict) else None
+        except Exception as e:
+            print(f"[retiros-prep-tiempos] leer rid={rid}: {e}", flush=True)
+            return None
+
+    def _tiempos_resumen(rid):
+        """Lo que la ficha muestra del análisis guardado (sin el detalle por producto)."""
+        a = _prep_tiempos_leer(rid)
+        if not a:
+            return None
+        return {k: a.get(k) for k in ("calculado", "criterio", "en_curso", "n_ot", "trabajo_min", "efectivo_min", "pausas_min", "principio_fin_min",
+                                      "listo_esperando_min", "espera_asignacion_min", "salida", "vs_cita_min", "picking_min", "picking_unidades",
+                                      "min_por_unidad")}
+
+    @app.route("/retiros/api/tiempos-preparacion", methods=["GET"])
+    @require_permission("retiros")
+    def pickup_tiempos_preparacion():
+        """Promedios de preparación según Check (los retiros con su análisis guardado, terminados): minutos efectivos, pausas, principio a fin,
+        cuánto quedó listo esperando y minutos de picking por unidad; más el promedio por producto (SKU). ?dias=90 (7–365)."""
+        try:
+            dias = max(7, min(365, int(request.args.get("dias") or 90)))
+        except ValueError:
+            dias = 90
+        if not _prep_tiempos_tablas():
+            return jsonify({"ok": False, "error": "Los tiempos aún no están disponibles."}), 503
+        try:
+            g = mysql_fetchone(
+                "SELECT COUNT(*) AS n, AVG(efectivo_min) AS efectivo, AVG(trabajo_min) AS trabajo, AVG(pausas_min) AS pausas, "
+                "AVG(principio_fin_min) AS principio_fin, AVG(listo_esperando_min) AS listo, AVG(espera_asignacion_min) AS asignacion, "
+                "SUM(picking_min) AS pk_min, SUM(picking_unidades) AS pk_uni "
+                "FROM pickup_prep_tiempos WHERE en_curso=0 AND calculado_en >= NOW() - INTERVAL %s DAY", (dias,)) or {}
+            prods = mysql_fetchall(
+                "SELECT sku, MAX(descripcion) AS descripcion, COUNT(DISTINCT request_id) AS retiros, SUM(unidades) AS unidades, SUM(minutos) AS minutos "
+                "FROM pickup_prep_productos WHERE minutos IS NOT NULL AND creado_en >= NOW() - INTERVAL %s DAY "
+                "GROUP BY sku ORDER BY retiros DESC, unidades DESC LIMIT 30", (dias,)) or []
+        except Exception as e:
+            print(f"[retiros-prep-tiempos] promedios: {e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudieron calcular los promedios ahora."}), 500
+
+        def _r(v, d=1):
+            try:
+                return round(float(v), d) if v is not None else None
+            except (TypeError, ValueError):
+                return None
+        pk_uni = float(g.get("pk_uni") or 0)
+        return jsonify({
+            "ok": True, "dias": dias, "retiros": int(g.get("n") or 0),
+            "efectivo_min": _r(g.get("efectivo")), "trabajo_min": _r(g.get("trabajo")), "pausas_min": _r(g.get("pausas")),
+            "principio_fin_min": _r(g.get("principio_fin")), "listo_esperando_min": _r(g.get("listo")), "espera_asignacion_min": _r(g.get("asignacion")),
+            "min_por_unidad": _r(float(g.get("pk_min") or 0) / pk_uni, 2) if pk_uni else None,
+            "productos": [{"sku": p.get("sku"), "descripcion": p.get("descripcion") or "", "retiros": int(p.get("retiros") or 0),
+                           "unidades": _r(p.get("unidades"), 2), "min_por_unidad": _r(float(p.get("minutos") or 0) / float(p.get("unidades")), 2)
+                           if float(p.get("unidades") or 0) else None} for p in prods],
+            "criterio": ("Según Check: trabajo = suma de cada OT; efectivo = tiempo con al menos una OT abierta; pausas = "
+                         "principio a fin − efectivo; tramos de un día a otro solo cuentan la jornada de bodega."),
+        })
+
     def _check_snap_respuesta(snap):
         resp = jsonify({"ok": True, "estado": "listo", "desde_registro": True, "registrado": snap.get("guardado_en") or "", "edad_s": 0,
-                        "refrescando": False, "total_movimientos": 0, "campos": [], "documentos": snap.get("documentos") or []})
+                        "refrescando": False, "total_movimientos": 0, "campos": [], "documentos": snap.get("documentos") or [],
+                        "tiempos": _tiempos_resumen(snap.get("_rid")) if snap.get("_rid") else None})
         resp.headers["Cache-Control"] = "no-store"
         return resp
 
@@ -12272,7 +12439,11 @@ def register_pickup_routes(app, ctx):
             return jsonify({"ok": False, "error": "Retiro no encontrado."}), 404
         terminado = (req_min.get("status") or "") in ("retirada", "cerrada")
         snap = _check_snap_leer(rid)
+        if snap:
+            snap["_rid"] = rid
         if terminado and snap:                       # retiro completado con registro guardado: no se le pide nada más a Check
+            if not _prep_tiempos_leer(rid):          # registros guardados antes de que existiera el análisis: se calcula una vez
+                _prep_tiempos_guardar(rid, snap.get("documentos") or [], snap.get("huella") or "")
             return _check_snap_respuesta(snap)
         docs = mysql_fetchall(
             "SELECT document_type, document_number FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC",
@@ -12304,7 +12475,8 @@ def register_pickup_routes(app, ctx):
                     pass
         resp = jsonify({"ok": True, "estado": "listo", "edad_s": int(edad or 0), "refrescando": cargando,
                         "total_movimientos": len(filas),
-                        "campos": _rco.catalogo_campos(coincidencias or filas[:200]), "documentos": salida})
+                        "campos": _rco.catalogo_campos(coincidencias or filas[:200]), "documentos": salida,
+                        "tiempos": _tiempos_resumen(rid)})
         resp.headers["Cache-Control"] = "no-store"
         return resp
 
