@@ -645,6 +645,21 @@
 .o2m-sem.perdida{background:#fef2f2;border-color:#fecaca}
 .o2m-sem.perdida .ic{background:linear-gradient(140deg,#dc2626,#991b1b)}
 .o2m-sem.perdida .tt{color:#991b1b} .o2m-sem.perdida .sb{color:#b91c1c}
+/* 💰 2026-10-07: semáforo del modelo único (static/ot_finanzas.js) -- azul = no se le cobra (garantía:
+   "nos costó", nunca "pérdida"), gris = falta lo que cobraste. Paleta de apoyo de la REGLA #2. */
+.o2m-sem.info{background:#eff6ff;border-color:#bfdbfe}
+.o2m-sem.info .ic{background:linear-gradient(140deg,#3b82f6,#2563eb)}
+.o2m-sem.info .tt{color:#1d4ed8} .o2m-sem.info .sb{color:#1e40af}
+.o2m-sem.gris{background:#f3f4f6;border-color:#d1d5db}
+.o2m-sem.gris .ic{background:linear-gradient(140deg,#9ca3af,#6b7280)}
+.o2m-sem.gris .tt{color:#374151} .o2m-sem.gris .sb{color:#4b5563}
+.o2m-fin-desglose .fila.sub span{padding-left:14px}
+.o2m-fin-desglose .fila.ref{background:#eff6ff}
+.o2m-fin-desglose .fila.ref span,.o2m-fin-desglose .fila.ref b{color:#1d4ed8}
+.o2m-fin-avisos{margin:6px 0 0;padding:0;list-style:none}
+.o2m-fin-avisos li{font-size:.85rem;color:#92400e;background:#fffbeb;border:1px solid #fde68a;
+  border-radius:9px;padding:8px 11px;margin-top:6px;line-height:1.4}
+.o2m-valorizar{margin-top:12px;padding-top:10px;border-top:1px dashed #e5e7eb}
 .o2m-fin-desglose .fila.caja{background:#fef2f2}
 .o2m-fin-desglose .fila.caja span{color:#991b1b;font-weight:800}
 .o2m-fin-desglose .fila.caja b{color:#991b1b;white-space:nowrap}
@@ -1056,6 +1071,9 @@
   </div>
 </div>
 
+{# 💰 2026-10-07: espejo en el navegador de la cuenta única de finanzas (_ot_finanzas de app.py). Lo usa la
+   vista previa del paso Costos (_pintarFinMargenDom): el asistente todavía no tiene vid. #}
+<script src="{{ url_for('static', filename='ot_finanzas.js') }}"></script>
 <script>
 /* ══════════════════════════════════════════════════════════════════════
    OT2C — motor del modal de creación de OT 2.0
@@ -1335,6 +1353,9 @@ window.OT2C = (function(){
          // (técnico vs. transporte) -- mezclarlos impediría separar cuánto
          // es de cada uno.
          fin_costo_proveedor:'', fin_costo_despacho:'',
+         // 💰 2026-10-07: "Valorizar (opcional)" en una OT que se cobra -- cuánto vale el servicio según
+         // tarifa, solo referencia (valorizado_clp). En garantía el valorizado es el campo del sub-paso 2.
+         fin_valorizado:'',
          // 💰 2026-09-15 (Daniel: "toda OT debe salir VALORIZADA, se cobre o
          // no... si no hay línea ZZ, se declara un SUPUESTO"). De dónde
          // salió el valor vigente de fin_zz_monto -- viaja al backend como
@@ -5404,6 +5425,20 @@ window.OT2C = (function(){
   }
   function setFinCostoProveedor(el){ _o2mInputDineroCambio(el, 'fin_costo_proveedor'); _pintarFinCostoChipDom(); _o2mFinEstadosDom(); _o2mAnexoSeguirCostos(); }
   function setFinCostoDespacho(el){ _o2mInputDineroCambio(el, 'fin_costo_despacho'); _o2mFinEstadosDom(); _o2mAnexoSeguirCostos(); }
+  /* 💰 2026-10-07 (Daniel, modelo único): "Valorizar (opcional)" en una OT que SE COBRA -- cuánto vale el
+     servicio según tarifa, solo como referencia (valorizado_clp). Nunca se suma a lo cobrado ni se exige
+     (decisión de Daniel: el valorizado es sugerido). En garantía no aparece: ahí el valorizado es el mismo
+     campo del sub-paso 2. */
+  function setFinValorizado(el){ _o2mInputDineroCambio(el, 'fin_valorizado'); }
+  function _o2mFinValorizarHtml(){
+    return '<div class="o2m-valorizar"><label class="fl" for="o2mFinValorizadoInput">Valorizar '+
+      '<span class="text-muted" style="font-weight:400">(opcional)</span></label>'+
+      '<div class="o2m-money sm"><span class="pre">$</span>'+
+      '<input type="text" inputmode="numeric" id="o2mFinValorizadoInput" placeholder="Tarifa de referencia" '+
+      'value="'+esc(_o2mFormatearMiles(S.fin_valorizado))+'" oninput="OT2C.setFinValorizado(this)"></div>'+
+      '<div class="o2m-fin-hint" style="margin:4px 0 0">Cuánto vale el servicio según tarifa. Es solo referencia: '+
+      'nunca se suma a lo que le cobras.</div></div>';
+  }
   /* 2026-09-15: mientras el usuario NO haya editado la tabla del anexo, sus
      ítems siguen a Costos en vivo (antes solo se recalculaban al volver a
      pintar el paso Anexo). Si ya los editó, no se tocan. */
@@ -5495,9 +5530,17 @@ window.OT2C = (function(){
         '<div class="o2m-fin-hint" style="margin-bottom:0">Solo para valorización interna (informe de costos por centro): '+
         'este trabajo no se factura ni se cobra.</div>';
     } else {
+      // 💰 2026-10-07 (Daniel, modelo único "Cobré − Me cobraron = Queda"): la MISMA casilla responde dos
+      // preguntas según la cobertura (sub-paso 3). Se cobra -> "Le cobras": es lo cobrado (zz_monto).
+      // Garantía -> "Vale": es el valorizado (referencia, opcional, nunca se suma a lo cobrado). Nada se
+      // quitó: mismos chips, mismo input y mismas acciones; en una OT que se cobra se agrega debajo
+      // "Valorizar (opcional)". Al cambiar la cobertura, setFinGarantia() repinta la sección.
+      var _lblValor = S.fin_garantia
+        ? 'Vale <span class="text-muted" style="font-weight:400">(referencia, no se cobra)</span>'
+        : 'Le cobras *';
       valorHtml =
         '<div id="o2mFinFuentes"></div>'+
-        '<div class="o2m-valor-hero"><label class="fl" for="o2mFinValorInput">Esta OT vale *</label>'+
+        '<div class="o2m-valor-hero"><label class="fl" for="o2mFinValorInput">'+_lblValor+'</label>'+
           '<div class="o2m-money"><span class="pre">$</span>'+
           '<input type="text" inputmode="numeric" id="o2mFinValorInput" placeholder="Ej: 45.000" '+
           'value="'+esc(_o2mFormatearMiles(S.fin_zz_monto))+'" oninput="OT2C._o2mFinMontoServicioCambio(this)" '+
@@ -5505,7 +5548,8 @@ window.OT2C = (function(){
           '<div class="o2m-valor-origen" id="o2mFinOrigen"></div></div>'+
         '<div id="o2mFinMotivo"></div>'+
         '<div id="o2mFinZZ"></div>'+
-        '<div id="o2mFinAcciones">'+_o2mFinCotizacionHtml()+'</div>';
+        '<div id="o2mFinAcciones">'+_o2mFinCotizacionHtml()+'</div>'+
+        (S.fin_garantia ? '' : _o2mFinValorizarHtml());
     }
 
     // ── Sub-paso 3: "¿Se le cobra al cliente?" ─────────────────────────
@@ -5519,7 +5563,7 @@ window.OT2C = (function(){
             '<span class="l">Factura, boleta o nota de venta del ERP</span></span></button>'+
           '<button type="button" class="o2m-op'+(S.fin_garantia?' sel-warn':'')+'" onclick="OT2C.setFinCobro(\'gar\')">'+
             '<i class="bi bi-shield-check ic"></i><span class="tx"><span class="n">No, va por garantía</span>'+
-            '<span class="l">Se conserva el valor, se cobra $0</span></span></button>'+
+            '<span class="l">Se cobra $0 · el valor queda solo como referencia</span></span></button>'+
         '</div>'+
         (S.fin_garantia
           ? '<div id="o2mFinGarResumen"></div>'+
@@ -5581,14 +5625,22 @@ window.OT2C = (function(){
 
     b.innerHTML =
       '<h6 class="t">Costos</h6>'+
-      '<p class="d">Toda OT sale valorizada, se cobre o no: así cada centro de costo sabe cuánto trabajo le atribuimos.</p>'+
+      // 💰 2026-10-07: el texto de cabecera habla en el idioma del modelo único (Cobré / Me cobraron / Queda).
+      (interno
+        ? '<p class="d">Toda OT sale valorizada, se cobre o no: así cada centro de costo sabe cuánto trabajo le atribuimos.</p>'
+        : '<p class="d">Cuánto le cobras al cliente, cuánto te cobra el técnico y cuánto queda. En garantía no se cobra: '+
+          'puedes anotar cuánto vale, solo como referencia.</p>')+
       _o2mFpasoHtml('centro', 1, '¿A qué centro de costo se atribuye?', centroHtml,
         'Si el costo no es de Servicio Técnico, cárgalo a Logística, Comercial o Marketing: así el informe no se lo atribuye al área equivocada.')+
       (!centroElegido
         ? '<div class="o2m-aviso"><i class="bi bi-arrow-up-circle me-1"></i>'+
           'Elige primero el centro de costo para continuar con el valor, la cobertura y los costos.</div>'
-        : _o2mFpasoHtml('valor', 2, '¿Cuánto vale esta OT?', valorHtml,
-            interno ? '' : 'Toca una referencia para usarla, o escribe el valor tú mismo. Si lo cambias, cuéntanos por qué.')+
+        : _o2mFpasoHtml('valor', 2,
+            interno ? '¿Cuánto vale esta OT?' : (S.fin_garantia ? 'Valorizar (opcional)' : '¿Cuánto le cobras?'),
+            valorHtml,
+            interno ? '' : (S.fin_garantia
+              ? 'Va por garantía: no se le cobra. Si quieres, anota cuánto vale el servicio (solo referencia, nunca se suma a lo cobrado).'
+              : 'Toca una referencia para usarla, o escribe cuánto le cobras. Si lo cambias, cuéntanos por qué.'))+
           (interno ? '' :
             _o2mFpasoHtml('cobro', 3, '¿Se le cobra al cliente?', cobroHtml, '')+
             _o2mFpasoHtml('costo', 4, '¿Cuánto nos cuesta?', costoHtml, '')+
@@ -5952,7 +6004,9 @@ window.OT2C = (function(){
           + '<div class="o2m-supuesto"><i class="bi bi-lightbulb-fill"></i><div>'+
           '<b>No encontré una referencia de precio para esta OT.</b>'+
           '<span>Tipo "'+esc(tInfo ? tInfo.n : (S.tipo||''))+'"'+(vacios.length ? ': '+esc(vacios.join(', '))+'.' : '.')+
-          ' Declara un supuesto: cuánto vale este trabajo aunque se cobre $0. Queda registrado como supuesto y se puede corregir después en la ficha.</span>'+
+          (S.fin_garantia
+            ? ' Si quieres, anota cuánto vale este trabajo (solo referencia, no se cobra). Queda registrado como supuesto y se puede corregir después en la ficha.'
+            : ' Escribe cuánto le cobras y en qué te basas. Queda registrado como supuesto y se puede corregir después en la ficha.')+'</span>'+
           '</div></div>';
       } else {
         cF.innerHTML = '<div class="o2m-fuentes">'+fuentes.map(_o2mFinChipHtml).join('')+'</div>';
@@ -5961,7 +6015,9 @@ window.OT2C = (function(){
     if (cO){
       var txt = '', cls = '';
       if (S.fin_zz_monto == null){
-        txt = cargando ? 'Consultando referencias…' : 'Escribe o elige cuánto vale esta OT.'; cls = '';
+        txt = cargando ? 'Consultando referencias…'
+          : (S.fin_garantia ? 'Opcional: escribe o elige cuánto vale esta OT.' : 'Escribe o elige cuánto le cobras.');
+        cls = '';
       } else if (manualAhora){
         if (origen === 'supuesto'){ txt = 'Supuesto declarado — sin referencia en el ERP ni en el catálogo'; cls = 'supuesto'; }
         else { txt = 'Editado a mano — explica por qué abajo'; cls = 'manual'; }
@@ -6026,11 +6082,14 @@ window.OT2C = (function(){
   function _pintarFinGarResumenDom(){
     var c = document.getElementById('o2mFinGarResumen'); if (!c) return;
     var v = S.fin_zz_monto;
+    // 💰 2026-10-07 (Daniel, modelo único): en garantía Cobré es $0 y el valor es el VALORIZADO -- referencia
+    // opcional, nunca se suma a lo cobrado. Lo que de verdad cuesta la garantía se ve en el sub-paso 4.
     c.innerHTML = '<div class="o2m-gar-resumen">'+
-      '<div class="c"><span class="l">Valor atribuido a '+esc(_o2mCentroNombre(S.fin_centro))+'</span>'+
-      '<span class="v">'+(v > 0 ? $o2mPesos(v) : '<small>falta el valor (sub-paso 2)</small>')+'</span></div>'+
-      '<div class="c"><span class="l">Cobro al cliente</span><span class="v">$0 <small>· garantía</small></span></div>'+
-      '<div class="tx">El valor se registra igual para medir cuánto trabajo absorbe el centro de costo.</div>'+
+      '<div class="c"><span class="l">Cobré</span><span class="v">$0 <small>· garantía</small></span></div>'+
+      '<div class="c"><span class="l">Valorizado (referencia)</span>'+
+      '<span class="v">'+(v > 0 ? $o2mPesos(v) : '<small>sin valorizar (opcional)</small>')+'</span></div>'+
+      '<div class="tx">No se le cobra al cliente. El valorizado es solo referencia para '+esc(_o2mCentroNombre(S.fin_centro) || 'el centro de costo')+
+      ': nunca se suma a lo cobrado. Lo que nos cuesta se declara en "¿Cuánto nos cuesta?".</div>'+
       '</div>';
   }
   /* Chip "Costo del proveedor: valor de visita de {nombre}" -- solo si el
@@ -7707,89 +7766,140 @@ window.OT2C = (function(){
      desglose por negocio que Daniel dictó, solo cuando hay costo; en
      garantía se agrega "Resultado en caja (cobro $0 − costo)" para que la
      caja se vea tal cual aunque el valor se atribuya igual. */
+  /* 💰 2026-10-07 (Daniel, modelo único "Cobré − Me cobraron = Queda" + Valorizado aparte): la vista previa
+     ya NO hace su propia cuenta (antes "venta" = el valor de la OT aunque fuera garantía, y el despacho vacío
+     dejaba "Sin costo declarado"). La hace window.ilusOtFinanzas (static/ot_finanzas.js), espejo EXACTO de
+     _ot_finanzas del servidor -- tests/test_ot_finanzas_js_espejo.py vigila que den lo mismo -- con los MISMOS
+     datos que crear() va a mandar: lo que se ve al crear es lo que después mostrará la OT. Este asistente
+     todavía no tiene vid (la OT se inserta al final de ot2_api_crear): por eso el espejo en el navegador y no
+     una consulta al servidor. Se conservan el semáforo, el desglose por negocio ("la instalación dejó X, el
+     despacho se comió Y") y los recuadros de abajo; nunca bloquea (Daniel: "estamos autorizados a trabajar
+     sin margen"). */
+  var _O2M_VALORIZADO_FUENTE = {zz:'documento', doc_total:'documento', cotizacion:'cotizador', contrato:'contrato',
+                                estimado:'estimado', supuesto:'supuesto', manual:'a_mano'};
+  function _o2mFinNumCampo(x){
+    if (typeof x === 'number') return isFinite(x) ? Math.round(x) : null;
+    var s = _o2mLimpiarNumero(x);
+    if (s === '') return null;
+    var n = parseInt(s, 10);
+    return isFinite(n) ? n : null;
+  }
+  /* El monto del sub-paso 2 tal como lo manda crear(): el campo declarado, o (respaldo) la cotización o el
+     estimado. ÚNICA fuente para crear() y para la vista previa -- si cambia una regla acá, cambian las dos. */
+  function _o2mFinMontoServicio(){
+    // 2026-08-30 (Daniel: "valorizar el servicio siempre, aunque cierre como garantía"): el monto ya NO
+    // depende de que exista un documento -- puede venir de una línea ZZ real O ser 100% manual (ver
+    // _pintarFinZZDom), con el motivo cuando corresponde declarar por qué es manual.
+    if (S.fin_zz_monto != null){
+      return {zz_codigo: S.fin_zz_codigo || null, zz_monto: S.fin_zz_monto,
+              zz_motivo_manual: _o2mFinEsManual() ? (S.fin_zz_motivo_manual || '') : null,
+              // 💰 2026-09-15: de dónde salió el valor (mant_visitas.valor_origen): zz | doc_total |
+              // cotizacion | contrato | estimado | supuesto | manual. El motivo manual viaja SIN prefijos.
+              valor_origen: _o2mFinEsManual()
+                ? (S.fin_valor_origen === 'supuesto' ? 'supuesto' : 'manual')
+                : (S.fin_valor_origen || (S.fin_zz_codigo ? 'zz' : 'manual'))};
+    }
+    // 🔒 2026-09-09 / 2026-09-15: ramas de RESPALDO (el chip ya escribe en fin_zz_monto, así que normalmente
+    // entra la de arriba) -- una OT valorizada con "Buscar cotización" o solo con el estimado no puede crearse
+    // sin ningún monto guardado.
+    if (S.fin_cotizacion && S.fin_cotizacion.total != null){
+      return {zz_monto: Math.round(S.fin_cotizacion.total), valor_origen: 'cotizacion',
+              zz_motivo_manual: 'Valorizado con cotización ' + (S.fin_cotizacion.numero || ('#' + S.fin_cotizacion.id))};
+    }
+    if (S.fin_costo_estimado && S.fin_costo_estimado.total_neto != null){
+      return {zz_monto: Math.round(S.fin_costo_estimado.total_neto), valor_origen: 'estimado',
+              zz_motivo_manual: 'Estimado automático por clasificación del producto'};
+    }
+    return null;
+  }
+  /* Cuánto VALE la OT (valorizado_clp) según lo que hay en pantalla: en garantía es el mismo campo del
+     sub-paso 2; en una OT que se cobra, el "Valorizar (opcional)". */
+  function _o2mFinValorizado(ms){
+    if (S.fin_garantia){
+      if (!(ms && ms.zz_monto > 0)) return null;
+      return {monto: ms.zz_monto, fuente: _O2M_VALORIZADO_FUENTE[ms.valor_origen] || 'a_mano'};
+    }
+    var n = _o2mFinNumCampo(S.fin_valorizado);
+    return (n != null && n > 0) ? {monto: n, fuente: 'a_mano'} : null;
+  }
+  function _o2mFinVistaPrevia(){
+    var gar = !!S.fin_garantia;
+    var ms = _o2mFinMontoServicio();
+    var vz = _o2mFinValorizado(ms);
+    return window.ilusOtFinanzas({
+      modalidad_cobro: gar ? 'garantia' : 'pagado', cubierto_por: gar ? 'garantia' : 'cliente',
+      tipo: S.tipo || '',
+      zz_monto: (!gar && ms) ? ms.zz_monto : null,
+      zz_codigo: (!gar && ms) ? (ms.zz_codigo || null) : null,
+      valor_origen: ms ? ms.valor_origen : null,
+      zz_envio_monto: (S.fin_zz_envio && S.fin_zz_envio.monto != null) ? S.fin_zz_envio.monto : null,
+      costo_proveedor: _o2mFinNumCampo(S.fin_costo_proveedor),
+      costo_despacho: _o2mFinNumCampo(S.fin_costo_despacho),
+      proveedor_tipo: _liderEsExterno() ? 'externo' : 'interno',
+      valorizado_clp: vz ? vz.monto : null, valorizado_fuente: vz ? vz.fuente : null
+    }, null);
+  }
   function _pintarFinMargenDom(){
     var c = document.getElementById('o2mFinMargen'); if (!c) return;
-    var costoInst = String(S.fin_costo_proveedor||'').trim() === '' ? NaN : parseFloat(S.fin_costo_proveedor);
-    if (!isFinite(costoInst) || costoInst < 0) costoInst = null;
-    var costoEnvio = String(S.fin_costo_despacho||'').trim() === '' ? NaN : parseFloat(S.fin_costo_despacho);
-    if (!isFinite(costoEnvio) || costoEnvio < 0) costoEnvio = null;
-    // El valor declarado manda; _ventaActual() queda como respaldo.
-    var ventaInst = (S.fin_zz_monto > 0) ? S.fin_zz_monto : _ventaActual();
-    var hayVentaInst = ventaInst != null && ventaInst > 0;
-    var ventaEnvio = (S.fin_zz_envio && S.fin_zz_envio.monto != null) ? S.fin_zz_envio.monto : null;
-    var hayVentaEnvio = ventaEnvio != null && ventaEnvio > 0;
-    var hayCosto = costoInst != null || costoEnvio != null;
+    if (typeof window.ilusOtFinanzas !== 'function'){ c.innerHTML = ''; _o2mFinEstadosDom(); return; }
+    var r = _o2mFinVistaPrevia();
     var gar = !!S.fin_garantia;
-    var centroTxt = _o2mCentroNombre(S.fin_centro) || 'el centro de costo';
-    // 2026-08-29 (Daniel: "necesito que el argumento salga en frente,
-    // traelo al frente... establece una regla al implementar este modal"):
-    // REGLA para este archivo -- ningun aviso que explique por qué falta
-    // algo va en texto gris chico (.text-muted small). Todo mensaje
-    // explicativo usa .o2m-aviso o, desde hoy, el semáforo .o2m-sem.
-    function $f(n){ return '$'+Math.round(n).toLocaleString('es-CL'); }
+    var co = r.cobre, me = r.me_cobraron, q = r.queda;
+    // Daniel 2026-09-27: "Me cobraron" si lo hizo un externo, "Nos costó" si fue un técnico propio.
+    var lblCosto = _liderEsExterno() ? 'Me cobraron' : 'Nos costó';
+    var neg = S.tipo === 'instalacion' ? 'instalación' : 'servicio';
+    // 2026-08-29 (Daniel: "necesito que el argumento salga en frente"): REGLA para este archivo -- ningún
+    // aviso que explique por qué falta algo va en texto gris chico; todo mensaje usa .o2m-aviso o .o2m-sem.
+    function $f(n){ return (n < 0 ? '−' : '') + window.ilusOtFinClp(n); }
+    function pct(p){ return p == null ? '—' : p.toFixed(1).replace('.', ',') + ' %'; }
     function sem(cls, ico, tt, sb){
       return '<div class="o2m-sem '+cls+'"><span class="ic"><i class="bi '+ico+'"></i></span>'+
         '<div class="tx"><div class="tt">'+tt+'</div><div class="sb">'+sb+'</div></div></div>';
     }
-    var ventaTotal = (hayVentaInst?ventaInst:0) + (hayVentaEnvio?ventaEnvio:0);
-    var costoTotal = (costoInst||0) + (costoEnvio||0);
-    var margenPeso = ventaTotal - costoTotal;
-    var margenPct = ventaTotal > 0 ? Math.round(margenPeso / ventaTotal * 100) : 0;
-    var semHtml;
-    if (!hayVentaInst && !hayVentaEnvio){
-      semHtml = sem('neutro', 'bi-hourglass-split', 'Falta el valor de la OT',
-        'Declara arriba cuánto vale esta OT para ver el margen.');
-    } else if (!hayCosto){
-      semHtml = sem('neutro', 'bi-hourglass-split', 'Sin costo declarado todavía',
-        'Ingresa lo que nos cuesta para ver el margen. Puedes crear la OT sin este dato.');
-    } else if (margenPeso < 0){
-      semHtml = sem('perdida', 'bi-graph-down-arrow', 'Pérdida '+$f(Math.abs(margenPeso))+' · '+margenPct+'%',
-        'Nos cuesta más de lo que vale. No bloquea: queda registrado para el informe.');
-    } else if (gar){
-      semHtml = sem('neutro', 'bi-shield-check', 'Valorizada sin cobro',
-        'Vale '+$f(ventaTotal)+', va por garantía. Nos cuesta '+$f(costoTotal)+': lo absorbe '+esc(centroTxt)+'.');
-    } else {
-      semHtml = sem('ok', 'bi-graph-up-arrow', 'Margen '+$f(margenPeso)+' · '+margenPct+'%',
-        'Se cobra '+$f(ventaTotal)+' y nos cuesta '+$f(costoTotal)+'.');
-    }
-    if (!hayCosto || (!hayVentaInst && !hayVentaEnvio)){
-      c.innerHTML = semHtml;
-      _o2mFinEstadosDom();
-      return;
-    }
-    function bloque(titulo, venta, costo){
-      var c2 = costo != null ? costo : 0;
-      var m = venta - c2;
-      return '<div class="fila" style="font-weight:600;margin-top:6px"><span>'+esc(titulo)+'</span><span></span></div>'+
-        '<div class="fila"><span>'+(gar ? 'Valor' : 'Venta')+'</span><b>'+$f(venta)+'</b></div>'+
-        '<div class="fila"><span>Costo proveedor</span><b>'+(costo!=null?$f(costo):'—')+'</b></div>'+
-        '<div class="fila total"><span>'+(gar ? 'Margen sobre valor en ' : 'Gané en ')+esc(titulo.toLowerCase())+'</span>'+
-        '<b style="color:'+(m<0?'#991b1b':'#166534')+'">'+$f(m)+'</b></div>';
-    }
+    function fila(cls, l, v){ return '<div class="fila'+(cls ? ' '+cls : '')+'"><span>'+l+'</span><b>'+v+'</b></div>'; }
+    var SEM = {ok:['ok','bi-graph-up-arrow'], bajo:['neutro','bi-exclamation-triangle'],
+               ambar:['neutro','bi-hourglass-split'], rojo:['perdida','bi-graph-down-arrow'],
+               gris:['gris','bi-hourglass-split'], info:['info','bi-shield-check']};
+    var s = SEM[r.clase] || ['neutro','bi-info-circle'];
+    var sb;
+    if (r.cobra && !co.hay) sb = 'Declara arriba cuánto le cobras para ver cuánto queda.';
+    else if (me.falta_tecnico) sb = 'Ingresa lo que te cobra el técnico para ver cuánto queda.' +
+      (gar ? ' En garantía puedes crear la OT sin este dato y declararlo después.' : '');
+    else if (me.falta_despacho) sb = 'Le cobras despacho al cliente: ingresa también lo que te cuesta el despacho.';
+    else sb = r.frase + (r.clase === 'rojo' ? ' No bloquea: queda registrado para el informe.' : '');
+    var html = sem(s[0], s[1], esc(r.label), esc(sb));
     var filas = '';
-    if (hayVentaInst) filas += bloque(S.tipo==='instalacion' ? 'Instalación' : 'Servicio', ventaInst, costoInst);
-    if (hayVentaEnvio) filas += bloque('Transporte', ventaEnvio, costoEnvio);
-    // Informativo nada más -- Daniel: "identificando si hay margen o no da
-    // lo mismo, pero estamos autorizados a trabajar sin margen". Nunca
-    // bloquea nada, solo avisa con color si el margen es negativo.
-    var color = margenPeso < 0 ? '#991b1b' : '#166534';
-    var bg = margenPeso < 0 ? '#fef2f2' : '#f0fdf4';
-    var tileK = gar ? 'Margen sobre valor' : 'Margen';
-    c.innerHTML =
-      semHtml+
-      '<div class="o2m-fin-desglose">'+filas+
-      (gar ? '<div class="fila caja"><span>Resultado en caja (cobro $0 − costo)</span><b>−'+$f(costoTotal)+'</b></div>' : '')+
-      '</div>'+
-      '<div class="fila total" style="margin-top:8px;border-top:2px solid #0a0a0a;padding-top:8px">'+
-        '<span style="font-weight:700">TOTAL GENERAL</span><span></span></div>'+
-      '<div class="o2m-res">'+
-        '<div class="b" style="background:'+bg+'">'+
-          '<span class="k">'+tileK+' ($)</span><span class="v" style="color:'+color+'">'+$f(margenPeso)+'</span>'+
-        '</div>'+
-        '<div class="b" style="background:'+bg+'">'+
-          '<span class="k">'+tileK+' (%)</span><span class="v" style="color:'+color+'">'+margenPct+'%</span>'+
-        '</div>'+
-      '</div>';
+    if (q.mostrar){
+      filas += fila('total', r.cobra ? 'Cobré' : 'Cobré · '+esc(r.cobertura_txt.split(':')[0].toLowerCase()), $f(co.total));
+      if (r.cobra){
+        filas += fila('sub', neg.charAt(0).toUpperCase() + neg.slice(1), $f(co.servicio));
+        if (co.despacho > 0) filas += fila('sub', 'Despacho', $f(co.despacho));
+      }
+      filas += fila('total', lblCosto, $f(me.total));
+      filas += fila('sub', 'Técnico o proveedor', me.tecnico != null ? $f(me.tecnico) : '—');
+      if ((me.despacho || 0) > 0 || co.despacho > 0) filas += fila('sub', 'Despacho', me.despacho != null ? $f(me.despacho) : '—');
+      var colorQ = q.total < 0 ? '#991b1b' : '#166534';
+      filas += '<div class="fila total"><span>'+(r.cobra ? 'Queda' : 'Resultado en caja (cobro $0 − costo)')+'</span>'+
+        '<b style="color:'+colorQ+'">'+$f(q.total)+(r.cobra && q.pct != null ? ' · '+pct(q.pct) : '')+'</b></div>';
+      if (r.cobra && (co.despacho > 0 || (me.despacho || 0) > 0)){
+        filas += fila('sub', (neg === 'instalación' ? 'La instalación ' : 'El servicio ') + (q.servicio < 0 ? 'se comió' : 'dejó'),
+                      window.ilusOtFinClp(q.servicio));
+        filas += fila('sub', 'El despacho ' + (q.despacho < 0 ? 'se comió' : 'dejó'), window.ilusOtFinClp(q.despacho));
+      }
+    }
+    if (r.valorizado.monto != null) filas += fila('ref', 'Valorizado (referencia, no se suma)', $f(r.valorizado.monto));
+    if (filas) html += '<div class="o2m-fin-desglose">'+filas+'</div>';
+    if (q.mostrar && r.cobra){
+      var color = q.total < 0 ? '#991b1b' : '#166534', bg = q.total < 0 ? '#fef2f2' : '#f0fdf4';
+      html += '<div class="o2m-res">'+
+        '<div class="b" style="background:'+bg+'"><span class="k">Queda ($)</span><span class="v" style="color:'+color+'">'+$f(q.total)+'</span></div>'+
+        '<div class="b" style="background:'+bg+'"><span class="k">Queda (%)</span><span class="v" style="color:'+color+'">'+pct(q.pct)+'</span></div>'+
+        '</div>';
+    }
+    if (r.avisos.length){
+      html += '<ul class="o2m-fin-avisos">'+r.avisos.map(function(a){ return '<li>'+esc(a)+'</li>'; }).join('')+'</ul>';
+    }
+    c.innerHTML = html;
     _o2mFinEstadosDom();
   }
   // Secuencia (no un simple booleano): si el usuario sale y vuelve a
@@ -9155,41 +9265,23 @@ window.OT2C = (function(){
         body.finanzas.factura_tido = S.fin_doc.tido;
         body.finanzas.factura_nudo = S.fin_doc.nudo;
       }
-      // 2026-08-30 (Daniel: "valorizar el servicio siempre, aunque cierre
-      // como garantía"): el monto del servicio ya NO depende de que exista
-      // un documento -- puede venir de una línea ZZ real O ser 100%
-      // manual (ver _pintarFinZZDom). Se manda siempre que haya un valor,
-      // junto con el motivo cuando corresponda declarar por qué es manual.
-      if (S.fin_zz_monto != null){
-        body.finanzas.zz_codigo = S.fin_zz_codigo || null;
-        body.finanzas.zz_monto = S.fin_zz_monto;
-        if (_o2mFinEsManual()) body.finanzas.zz_motivo_manual = S.fin_zz_motivo_manual || '';
-        // 💰 2026-09-15: de dónde salió el valor (columna nueva
-        // mant_visitas.valor_origen): zz | doc_total | cotizacion |
-        // contrato | estimado | supuesto | manual. El motivo manual viaja
-        // SIN prefijos (texto libre del usuario) cuando es manual/supuesto.
-        body.finanzas.valor_origen = _o2mFinEsManual()
-          ? (S.fin_valor_origen === 'supuesto' ? 'supuesto' : 'manual')
-          : (S.fin_valor_origen || (S.fin_zz_codigo ? 'zz' : 'manual'));
-      } else if (S.fin_cotizacion && S.fin_cotizacion.total != null){
-        // 🔒 2026-09-09 (Daniel: "las finanzas... requisito indispensable y
-        // con datos persistentes"): _ventaActual() ya usaba este total para
-        // pintar el margen en pantalla, pero nunca viajaba al backend -- una
-        // OT valorizada con "Buscar cotización" (garantía o sin documento
-        // todavía) se creaba sin ningún monto guardado. El backend ahora
-        // exige un monto siempre (ver ot2_api_crear), así que esto deja de
-        // ser opcional.
-        // 2026-09-15: ramas de RESPALDO (el chip ya escribe en fin_zz_monto,
-        // así que normalmente entra la primera rama) -- se dejan tal cual
-        // por si el estado quedara inconsistente; solo se suma valor_origen.
-        body.finanzas.zz_monto = Math.round(S.fin_cotizacion.total);
-        body.finanzas.zz_motivo_manual = 'Valorizado con cotización ' +
-          (S.fin_cotizacion.numero || ('#' + S.fin_cotizacion.id));
-        body.finanzas.valor_origen = 'cotizacion';
-      } else if (S.fin_costo_estimado && S.fin_costo_estimado.total_neto != null){
-        body.finanzas.zz_monto = Math.round(S.fin_costo_estimado.total_neto);
-        body.finanzas.zz_motivo_manual = 'Estimado automático por clasificación del producto';
-        body.finanzas.valor_origen = 'estimado';
+      // 💰 2026-10-07: el monto sale de _o2mFinMontoServicio() -- la MISMA función que usa la vista previa
+      // del paso Costos, así lo que se ve antes de crear es exactamente lo que se manda. Las tres ramas de
+      // siempre (campo declarado / cotización / estimado) y sus comentarios viven ahora ahí, sin cambios.
+      var _finMs = _o2mFinMontoServicio();
+      if (_finMs){
+        if ('zz_codigo' in _finMs) body.finanzas.zz_codigo = _finMs.zz_codigo;
+        body.finanzas.zz_monto = _finMs.zz_monto;
+        if (_finMs.zz_motivo_manual != null) body.finanzas.zz_motivo_manual = _finMs.zz_motivo_manual;
+        body.finanzas.valor_origen = _finMs.valor_origen;
+      }
+      // 💰 2026-10-07 (Daniel, modelo único "Cobré − Me cobraron = Queda"): cuánto VALE la OT viaja aparte
+      // (valorizado_clp). En garantía es el monto de arriba -- el backend ya no lo guarda como lo cobrado
+      // (_ot_fin_reparto_creacion) --; en una OT que se cobra, el "Valorizar (opcional)" si se escribió.
+      var _finVz = _o2mFinValorizado(_finMs);
+      if (_finVz){
+        body.finanzas.valorizado_clp = _finVz.monto;
+        body.finanzas.valorizado_fuente = _finVz.fuente;
       }
       // ZZENVIO: aparte, en columnas propias (zz_envio_codigo/zz_envio_monto)
       // -- nunca dentro de costo_proveedor/costo_despacho, que son lo que le
@@ -9708,6 +9800,7 @@ window.OT2C = (function(){
           abrirBusquedaFinCotizacion:abrirBusquedaFinCotizacion, limpiarFinCotizacion:limpiarFinCotizacion,
           _o2mFinCotArmarEspera:_o2mFinCotArmarEspera,
           setFinCostoProveedor:setFinCostoProveedor, setFinCostoDespacho:setFinCostoDespacho,
+          setFinValorizado:setFinValorizado,   // 💰 2026-10-07 "Valorizar (opcional)"
           _o2mFinMontoServicioCambio:_o2mFinMontoServicioCambio, _o2mFinMontoEnvioCambio:_o2mFinMontoEnvioCambio,
           setFinMotivoManual:setFinMotivoManual, setFinEnvioMotivoManual:setFinEnvioMotivoManual,
           // 💰 2026-09-15: paso Costos rediseñado (valorización de toda OT)

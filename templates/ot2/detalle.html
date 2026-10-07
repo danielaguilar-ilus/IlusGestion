@@ -14456,20 +14456,25 @@ const OT2F = (function(){
     });
     if (!motivo) return;
     if (motivo.trim().length < 10){ ilusToast('El motivo debe tener al menos 10 caracteres.', {type:'warning'}); return; }
+    // 💰 2026-10-07 (Daniel, modelo único "Cobré − Me cobraron = Queda"): este monto es el VALORIZADO --
+    // cuánto vale la visita, solo referencia, nunca se suma a lo cobrado -- y es SUGERIDO, no obligatorio:
+    // se puede dejar vacío. El servidor (/cobertura) lo guarda en valorizado_clp, ya no en `costo`.
     const montoTxt = await ilusPrompt({
-      title: '¿Cuánto vale esta visita?',
-      message: 'Monto en pesos, sin puntos ni símbolos (ej: 85000).',
-      sub: 'No se le cobra al cliente — queda solo para control interno de cuánto se entregó en garantía.',
+      title: 'Valorizar (opcional)',
+      message: '¿Cuánto vale esta visita? Monto en pesos, sin puntos ni símbolos (ej: 85000). Puedes dejarlo vacío.',
+      sub: 'No se le cobra al cliente y nunca se suma a lo cobrado: es solo referencia. Lo que nos costó la garantía se declara aparte (costo del técnico).',
       placeholder: 'Ej: 85000', inputType: 'number',
       defaultValue: (COSTO_ACTUAL > 0) ? String(COSTO_ACTUAL) : '',
-      required: true, okLabel: 'Continuar',
+      required: false, okLabel: 'Continuar',
     });
     if (montoTxt === null) return;
-    const monto = parseFloat(String(montoTxt).replace(/[^0-9.]/g, ''));
-    if (!monto || monto <= 0){ ilusToast('Indica un monto mayor a 0 para poder controlarlo.', {type:'warning'}); return; }
+    const _montoGar = parseFloat(String(montoTxt).replace(/[^0-9.]/g, ''));
+    const monto = (_montoGar > 0) ? _montoGar : null;
+    const _montoTxtGar = monto ? (' ($' + monto.toLocaleString('es-CL') + ')') : '';
     const ok = await ilusConfirm({
       title: 'Confirmar garantía',
-      message: `Esta OT quedará como GARANTÍA, valorizada en $${monto.toLocaleString('es-CL')}.`,
+      message: monto ? `Esta OT quedará como GARANTÍA, valorizada en $${monto.toLocaleString('es-CL')}.`
+                     : 'Esta OT quedará como GARANTÍA (sin valorizar).',
       sub: 'Podrá cerrarse sin factura y no se le cobra al cliente. Si tenía un documento de cobro asociado, se anula. Queda todo en el registro de la OT.',
       okLabel: 'Sí, es garantía', cancelLabel: 'Cancelar',
     });
@@ -14491,8 +14496,8 @@ const OT2F = (function(){
         await ilusAlert({ title:'Garantía no aplicable', message:d.warning, type:'warning' });
       } else {
         ilusToast(d.documento_anulado
-          ? `✓ Garantía declarada ($${monto.toLocaleString('es-CL')}) — documento ${d.documento_anulado} anulado`
-          : `✓ Garantía declarada ($${monto.toLocaleString('es-CL')}) — ya puedes firmar el cierre`,
+          ? `✓ Garantía declarada${_montoTxtGar} — documento ${d.documento_anulado} anulado`
+          : `✓ Garantía declarada${_montoTxtGar} — ya puedes firmar el cierre`,
           {type:'success'});
       }
       _reabrirYRecargar(1100);

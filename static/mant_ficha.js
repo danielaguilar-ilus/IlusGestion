@@ -755,6 +755,11 @@ function editarVisita(v) {
   document.getElementById('vi_hora_fin').value = v.hora_fin || '';
   document.getElementById('vi_tecnico').value = v.tecnico || '';
   document.getElementById('vi_costo').value = v.costo || '';
+  // 💰 2026-10-07 (Daniel, modelo único de finanzas): en una OT ya creada este monto ya no se guarda desde
+  // aquí (el PUT dejó de escribir `costo`): lo cobrado se declara en la tarjeta Finanzas de la OT.
+  document.getElementById('vi_costo').disabled = true;
+  const _viCostoHint = document.getElementById('vi_costo_hint');
+  if (_viCostoHint) _viCostoHint.style.display = '';
   document.getElementById('vi_descripcion').value = v.descripcion || '';
   // FINANZAS (2026-06-10): costo del proveedor + quién ejecutó → margen.
   const _cp = document.getElementById('vi_costo_prov');
@@ -827,6 +832,12 @@ function viFinCobroToggle() {
   const motivoWrap = document.getElementById('vi_fin_gar_motivo_wrap');
   if (docWrap) docWrap.style.display = esGarantia ? 'none' : '';
   if (motivoWrap) motivoWrap.style.display = esGarantia ? '' : 'none';
+  // 💰 2026-10-07 (Daniel, modelo único): en garantía el monto es cuánto VALE (referencia, opcional, nunca se
+  // suma a lo cobrado); si se cobra, es lo que le cobras.
+  const lbl = document.getElementById('vi_costo_lbl');
+  if (lbl) lbl.innerHTML = esGarantia
+    ? 'Cuánto vale $ <span class="text-muted fw-normal">(opcional, no se cobra)</span>'
+    : 'Le cobras $ <span class="text-danger">*</span>';
 }
 
 // ── ¿Aplica mantención? (2026-06-10, Daniel) ─────────────────────────
@@ -5130,10 +5141,13 @@ async function guardarVisita() {
     if (!finCentro) {
       ilusToast('Elige el centro de costo (sección Costos)', { type:'warning' }); return;
     }
-    if (!(costoVal > 0)) {
-      ilusToast('Indica cuánto vale esta OT (sección Costos)', { type:'warning' }); return;
+    // 💰 2026-10-07 (Daniel, modelo único): si se cobra, el monto es lo que le cobras y es obligatorio; en
+    // garantía es cuánto vale (valorizado) y es OPCIONAL -- el backend lo guarda como referencia, nunca
+    // como cobro (_ot_fin_reparto_creacion).
+    if (!garNueva && !(costoVal > 0)) {
+      ilusToast('Indica cuánto le cobras (sección Costos)', { type:'warning' }); return;
     }
-    if (!finOrigen) {
+    if (costoVal > 0 && !finOrigen) {
       ilusToast('Indica de dónde sale ese valor (sección Costos)', { type:'warning' }); return;
     }
     if ((finOrigen === 'supuesto' || finOrigen === 'manual') && !finOrigenMotivo) {
@@ -5161,14 +5175,18 @@ async function guardarVisita() {
     hora_inicio:     document.getElementById('vi_hora_inicio').value || null,
     hora_fin:        document.getElementById('vi_hora_fin').value || null,
     tecnico:         document.getElementById('vi_tecnico').value.trim(),
-    costo:           costoVal,
+    // 💰 2026-10-07: `costo` ya no viaja -- al crear lo usa el bloque `finanzas` de abajo y al editar el PUT
+    // ya no lo escribe (modelo único de finanzas).
     descripcion:     document.getElementById('vi_descripcion').value.trim(),
     // Garantía transversal (Aplica/No aplica) — independiente del tipo.
     garantia_aplica: garNueva,
     // Motivo: corrección retroactiva (edición) o campo persistente (creación).
     garantia_motivo: garantiaMotivoFinal,
     // FINANZAS (2026-06-10): margen = cobrado - costo proveedor.
-    costo_proveedor: parseFloat(document.getElementById('vi_costo_prov')?.value) || null,
+    // 💰 FIX 2026-10-07: un 0 escrito viaja como 0 ("no me cobró nada" es un dato); vacío = null. Antes
+    // `|| null` convertía el 0 en null y el PUT borraba un costo ya declarado en $0.
+    costo_proveedor: (function(){ const n = parseFloat(document.getElementById('vi_costo_prov')?.value);
+                                  return isNaN(n) ? null : n; })(),
     proveedor_tipo:  document.getElementById('vi_prov_tipo')?.value || null,
     proveedor_nombre: (document.getElementById('vi_prov_nombre')?.value || '').trim() || null,
   };
@@ -5179,7 +5197,7 @@ async function guardarVisita() {
   data.finanzas = {
     centro_costo: finCentro || null,
     valor_origen: finOrigen || null,
-    zz_monto: costoVal,
+    zz_monto: costoVal > 0 ? costoVal : null,   // 2026-10-07: en garantía puede ir vacío
     garantia_aplica: garNueva,
     garantia_motivo: garNueva ? (garantiaMotivoFinal || '') : '',
     factura_tido: garNueva ? null : (finDocTipo || null),
@@ -6960,6 +6978,9 @@ function agendarDesdeProyeccion(fechaISO, ctid) {
   document.getElementById('vi_titulo').value = 'Mantención preventiva programada';
   document.getElementById('vi_descripcion').value = '';
   document.getElementById('vi_costo').value = '';
+  document.getElementById('vi_costo').disabled = false;   // 💰 2026-10-07: solo se bloquea al editar
+  const _viCostoHint2 = document.getElementById('vi_costo_hint');
+  if (_viCostoHint2) _viCostoHint2.style.display = 'none';
   const _cpEl = document.getElementById('vi_costo_prov'); if (_cpEl) _cpEl.value = '';
   const _cdEl = document.getElementById('vi_costo_desp'); if (_cdEl) _cdEl.value = '';
   const _ptEl = document.getElementById('vi_prov_tipo'); if (_ptEl) _ptEl.value = '';

@@ -808,8 +808,12 @@
 
                 <div class="row g-3 mt-1">
                   <div class="col-12 col-md-6">
-                    <label class="form-label fw-semibold small">Esta OT vale $ <span class="text-danger">*</span></label>
+                    {# 💰 2026-10-07 (Daniel, modelo único "Cobré − Me cobraron = Queda"): si se cobra, este monto es
+                       lo que le cobras (zz_monto); en garantía es cuánto VALE (valorizado, opcional). El rótulo lo
+                       cambia viFinCobroToggle(). Al editar una OT ya creada se muestra pero no se guarda. #}
+                    <label class="form-label fw-semibold small" id="vi_costo_lbl">Le cobras $ <span class="text-danger">*</span></label>
                     <input type="number" id="vi_costo" class="form-control" min="0" step="1000" placeholder="0">
+                    <div class="form-text small" id="vi_costo_hint" style="display:none">En una OT ya creada lo cobrado se declara en la tarjeta Finanzas de la OT: este campo ya no se guarda desde aquí.</div>
                   </div>
                   <div class="col-12 col-md-6">
                     <label class="form-label fw-semibold small">¿De dónde sale ese valor? <span class="text-danger">*</span></label>
@@ -1658,6 +1662,12 @@ function abrirVisitaModal(vid){
     const el = document.getElementById(id);
     if (el) el.disabled = !_puedeEditar;
   });
+  // 💰 2026-10-07 (Daniel, modelo único de finanzas): en una OT ya creada este monto ya no se guarda desde
+  // aquí (el PUT dejó de escribir `costo`): lo cobrado se declara en la tarjeta Finanzas de la OT.
+  const _viCosto = document.getElementById('vi_costo');
+  if (_viCosto) _viCosto.disabled = true;
+  const _viCostoHint = document.getElementById('vi_costo_hint');
+  if (_viCostoHint) _viCostoHint.style.display = '';
   // Botón Eliminar solo existe para superadmin (Jinja); defensivo si no.
   const _btnDel = document.getElementById('btnEliminarVisita');
   if (_btnDel) _btnDel.style.display = 'none';   // reaparece solo en modo edición
@@ -1743,6 +1753,8 @@ function abrirNuevaVisita(){
     const el = document.getElementById(id);
     if (el) el.disabled = false;
   });
+  const _viCostoHint2 = document.getElementById('vi_costo_hint');   // 💰 2026-10-07: solo al editar
+  if (_viCostoHint2) _viCostoHint2.style.display = 'none';
   // Botón Eliminar solo existe para superadmin (Jinja); defensivo si no.
   const _btnDel2 = document.getElementById('btnEliminarVisita');
   if (_btnDel2) _btnDel2.style.display = 'none';
@@ -1784,6 +1796,12 @@ function viFinCobroToggle(){
   const motivoWrap = document.getElementById('vi_fin_gar_motivo_wrap');
   if (docWrap) docWrap.style.display = esGarantia ? 'none' : '';
   if (motivoWrap) motivoWrap.style.display = esGarantia ? '' : 'none';
+  // 💰 2026-10-07 (Daniel, modelo único): en garantía el monto es cuánto VALE (referencia, opcional, nunca se
+  // suma a lo cobrado); si se cobra, es lo que le cobras.
+  const lbl = document.getElementById('vi_costo_lbl');
+  if (lbl) lbl.innerHTML = esGarantia
+    ? 'Cuánto vale $ <span class="text-muted fw-normal">(opcional, no se cobra)</span>'
+    : 'Le cobras $ <span class="text-danger">*</span>';
 }
 
 async function guardarVisita(){
@@ -1811,11 +1829,14 @@ async function guardarVisita(){
       if (window.ilusToast) ilusToast('Elige el centro de costo (sección Costos)', { type:'warning' });
       return;
     }
-    if (!(costoVal > 0)) {
-      if (window.ilusToast) ilusToast('Indica cuánto vale esta OT (sección Costos)', { type:'warning' });
+    // 💰 2026-10-07 (Daniel, modelo único): si se cobra, el monto es lo que le cobras y es obligatorio; en
+    // garantía es cuánto vale (valorizado) y es OPCIONAL -- el backend lo guarda como referencia, nunca
+    // como cobro (_ot_fin_reparto_creacion).
+    if (!esGarantia && !(costoVal > 0)) {
+      if (window.ilusToast) ilusToast('Indica cuánto le cobras (sección Costos)', { type:'warning' });
       return;
     }
-    if (!finOrigen) {
+    if (costoVal > 0 && !finOrigen) {
       if (window.ilusToast) ilusToast('Indica de dónde sale ese valor (sección Costos)', { type:'warning' });
       return;
     }
@@ -1842,7 +1863,8 @@ async function guardarVisita(){
     estado:      document.getElementById('vi_estado').value,
     tecnico:     document.getElementById('vi_tecnico').value.trim(),
     descripcion: document.getElementById('vi_descripcion').value.trim(),
-    costo:       costoVal,
+    // 💰 2026-10-07: `costo` ya no viaja -- al crear lo usa el bloque `finanzas` de abajo y al editar el PUT
+    // ya no lo escribe (modelo único de finanzas).
     // Garantía transversal, mismo campo que ya lee _mant_visita_crear_core.
     garantia_aplica: esGarantia,
     garantia_motivo: esGarantia ? finGarMotivo : null,
@@ -1853,7 +1875,7 @@ async function guardarVisita(){
   body.finanzas = {
     centro_costo: finCentro || null,
     valor_origen: finOrigen || null,
-    zz_monto: costoVal,
+    zz_monto: costoVal > 0 ? costoVal : null,   // 2026-10-07: en garantía puede ir vacío
     garantia_aplica: esGarantia,
     garantia_motivo: esGarantia ? finGarMotivo : '',
     factura_tido: esGarantia ? null : (finDocTipo || null),
