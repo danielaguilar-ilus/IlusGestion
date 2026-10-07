@@ -267,6 +267,19 @@
 {% set _hdecl = (((req.document_type or '')|upper) ~ ' ' ~ (req.document_number or ''))|trim if req.document_number else '' %}
 {% set _hdecl_lbl = 'Sin asociar:' if req.request_source == 'backoffice' else 'Declaró:' %}
 {% set _hdecl_ok = (docs_asociados or []) | selectattr('document_number', 'equalto', req.document_number) | list | length > 0 if req.document_number else true %}
+{# ── RETIRO CERRADO = SOLO LECTURA (Daniel 2026-10-06: «una vez que se cierra… que no pueda agregar factura… ya se cerró, ya está listo»).
+   El servidor rechaza con 409 toda gestión de un retiro terminado (pickups_module.py: _rechazo_si_cerrado); esta franja lo explica y el JS
+   (retiros_internal_detail.js, bloque «SOLO LECTURA») bloquea los botones y campos con aviso. «Cambiar estado» sigue abierto: es la forma de reabrir. #}
+{% if cierre and cierre.cerrado %}
+<div class="rd-cerrado-banner{% if req.status in ['rechazada','fallida'] %} is-fail{% endif %}" id="rdCerradoBanner" role="status" aria-live="polite">
+  <i class="bi bi-lock-fill" aria-hidden="true"></i>
+  <div class="rd-cerrado-txt">
+    <strong>Retiro cerrado{% if cierre.cuando %} el {{ cierre.cuando }}{% endif %}{% if cierre.por %} por {{ cierre.por }}{% endif %} ({{ cierre.como }}).</strong>
+    La ficha queda en solo lectura: no se puede agregar ni quitar facturas, cambiar productos, datos o fechas.
+    <span class="rd-cerrado-sub">Si de verdad hay que corregir algo, reábrelo desde <a href="#tab-acciones" class="rd-cerrado-link" onclick="event.preventDefault(); if (typeof cambiarTabInfo === 'function') cambiarTabInfo('acciones');">Cambiar estado</a>. El chat y los mensajes con el cliente siguen disponibles.</span>
+  </div>
+</div>
+{% endif %}
 <section class="rh-hero rh-{{ _sello }}" id="rhHero" data-sello-docs="{{ 1 if _sello_docs else 0 }}" aria-label="Datos del retiro y del cliente">
   <div class="rh-top" id="paso-1">
     <div class="rh-id">
@@ -2187,6 +2200,8 @@ window.RETIROS_DETAIL_DATA = {
   pedidoCliente: {{ ({'fecha': (_contraprop_cliente.date|string)[:10], 'tf': (_contraprop_cliente.time_from|hm), 'tt': (_contraprop_cliente.time_to|hm)} if _contraprop_cliente else ({'fecha': (req.requested_date|string)[:10], 'tf': (req.requested_time_from|hm), 'tt': (req.requested_time_to|hm)} if req.requested_date else none))|tojson }},
   contactName: {{ (req.contact_name or req.customer_name or '')|tojson }},
   estado: {{ (req.status or '')|tojson }},
+  // Retiro terminado = ficha en solo lectura (Daniel 2026-10-06): {cerrado, estado, como, cuando, por}. Ver el bloque «SOLO LECTURA» del JS.
+  cierre: {{ (cierre or {'cerrado': false})|tojson }},
 };
 </script>
 <script defer src="{{ url_for('static', filename='retiros_internal_detail.js') }}"></script>

@@ -107,7 +107,9 @@ class QuienYCuando(unittest.TestCase):
         self.assertIn("usuarioPicking", d["campos"])
         # solo lectura de Check: no se le habla directo (usa lo que ya hay en memoria) y no se refresca. Lo único que ILUS escribe es el REGISTRO guardado
         # de lo que Check informó (2026-10-06); nada del retiro, ni la bitácora, ni mensajes.
-        self.assertTrue(all("pickup_check_snapshots" in e[0] for e in db.escrituras), db.escrituras)
+        # Solo se escriben tablas PROPIAS de ILUS: el registro de Check y, desde 2026-10-07, su análisis de tiempos (Check sigue solo lectura)
+        self.assertTrue(all(any(t in e[0] for t in ("pickup_check_snapshots", "pickup_prep_tiempos", "pickup_prep_productos"))
+                            for e in db.escrituras), db.escrituras)
         self.assertEqual(esp.check.llamadas, [])
         traer.assert_not_called()
 

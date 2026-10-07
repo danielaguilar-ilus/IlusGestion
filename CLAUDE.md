@@ -884,8 +884,22 @@ de la sesión, nunca del navegador):
 - **Registro de Check guardado** (`pickup_check_snapshots`, solo OT, quién y cuándo, fusionado por OT): la tarjeta de preparación sigue mostrando lo que Check informó con el retiro completado. Check sigue SOLO LECTURA (REGLA #4.4).
 - **Horario de cobertura** (lunes a viernes hábiles 08:00–17:00, colación 13:00–14:00, hora Chile; variables `RETIROS_COBERTURA_DESDE/_HASTA/_COLACION_DESDE/_COLACION_HASTA`): `/retiros/api/cobertura` + `static/retiros_cobertura.js` avisan **antes** de gestionar un retiro a mano fuera de horario (calendario, Kanban, ficha). Es solo un aviso: no bloquea. El envío automático de la REGLA #20 respeta ese mismo horario.
 - El Monitor muestra «Solicitada dd/mm/aaaa hh:mm · hace X» y lee `peso_real_kg`/`peso_vol_kg` (los que se completan), no `total_weight_kg` del formulario (bulto de relleno en 0).
+- **El reloj del SLA («Sin responder») corre en el MISMO horario de cobertura** (`_cc_ventanas()` → `mon.ventanas`; servidor y navegador iguales). Nunca un contador «00:00:00»: fuera de horario dice cuándo parte el reloj.
 
 ---
 
-_Última actualización: 2026-10-06_
+## ⏱️ REGLA #23 — Retiros: tiempo medido y controlado (Check = evidencia), y lo que NO se activa sin Daniel
+
+**Pedido de Daniel (2026-10-06): "hay que medirlo… prometer automatización, tiempo controlado, una gestión de retiro a nivel de gerencia operacional logística"** y "calcular los minutos que se prepara el retiro según el WMS y tener toda la evidencia… registro de cuánto se tarda por producto en promedio".
+
+- **Una sola lógica de tiempos:** `retiros_tiempos.py` (puro, con pruebas) y su espejo en `static/retiros_guia.js`. Trabajo = suma de cada OT; preparación efectiva = tiempo con al menos una OT abierta; pausas = principio a fin − efectiva; un tramo que pasa de un día a otro solo cuenta la jornada de bodega (07:30–20:00 L–V, `RETIROS_JORNADA_BODEGA`). Si cambias una, cambia la otra y sus pruebas.
+- Se guarda como evidencia en `pickup_prep_tiempos` (con el criterio escrito) y `pickup_prep_productos` (minutos de picking por SKU) al guardar el registro de Check. Alimenta los KPIs «Gestión operacional» y `/retiros/api/tiempos-preparacion`.
+- **Expedición en Check = RETIRADO está en MODO SOMBRA** (`RETIROS_RETIRO_AUTO=sombra`: solo avisa al equipo). Pasarlo a `activo` (cierra el retiro y le escribe al cliente) **solo con el «sí» explícito de Daniel**.
+- **La encuesta de satisfacción está CREADA y NO lanzada** (`RETIROS_ENCUESTA_ACTIVA` apagada: el cliente ve 404, no se envía nada). Lanzarla, y cualquier firma digital del cliente, **solo con el «sí» explícito de Daniel**. Los datos de la encuesta siguen la Ley 21.719 (aviso, consentimiento, sin datos personales, 24 meses).
+- El tiempo estimado de preparación **nunca** se le muestra al cliente (hay pruebas que lo vigilan).
+- **Retiro terminado = ficha en SOLO LECTURA** (Daniel 2026-10-06: «una vez que se cierra… que no se pueda gestionar nada más, que no pueda agregar factura»). Con estado retirada, cerrada, rechazada o fallida, toda ruta de gestión responde 409 (`_rechazo_si_cerrado`) y la ficha muestra la franja «Retiro cerrado…». Siguen abiertos: reabrir desde Cambiar estado (`/status`), el chat con el cliente, las lecturas y los procesos automáticos. Toda ruta NUEVA que modifique un retiro debe pasar por `_rechazo_si_cerrado`.
+
+---
+
+_Última actualización: 2026-10-07_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

@@ -3744,6 +3744,7 @@ function _ensureInlineIndicator(el){
 }
 
 async function _saveInlineField(el){
+  if (typeof _rdCerrado === 'function' && _rdCerrado()) return;     // retiro terminado: solo lectura (Daniel 2026-10-06)
   const field = el.dataset.inlineEdit;
   const newValue = el.textContent.replace(/\s+/g, ' ').trim();
   const originalValue = el.dataset.inlineOriginal || '';
@@ -3817,6 +3818,12 @@ function setupInlineEdit(root){
   const scope = root || document;
   scope.querySelectorAll('[data-inline-edit]:not([data-inline-ready])').forEach(el => {
     el.dataset.inlineReady = '1';
+    // Retiro terminado = solo lectura (Daniel 2026-10-06): el campo se ve pero no se edita ni se guarda.
+    if (typeof _rdCerrado === 'function' && _rdCerrado()){
+      el.contentEditable = 'false';
+      el.classList.add('inline-edit-locked');
+      return;
+    }
     el.contentEditable = 'true';
     el.spellcheck = false;
     el.classList.add('inline-edit-field');
@@ -4171,3 +4178,123 @@ async function _confirmarCambioEstado(ev){
   form.submit();
   return false;
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+//  SOLO LECTURA con el retiro TERMINADO (Daniel 2026-10-06: «una vez que se cierra… que no pueda agregar factura… ya se cerró, ya está listo»)
+//  Con el retiro retirado, cerrado, rechazado o no concretado, la ficha no deja gestionar nada: agregar o quitar facturas, editar productos,
+//  datos del cliente o notas, proponer o aceptar fechas, «Me hago cargo», enviar a preparación o marcar retirado. El SERVIDOR es quien manda
+//  (pickups_module.py: _rechazo_si_cerrado → 409); esto solo lo muestra y evita viajes inútiles. Sigue abierto: «Cambiar estado» (así se reabre),
+//  el chat y los mensajes con el cliente, Check, el historial y «Eliminar solicitud» del superadmin.
+// ═══════════════════════════════════════════════════════════════════════
+function _rdCerrado(){
+  const C = (window.RETIROS_DETAIL_DATA || {}).cierre || {};
+  return !!C.cerrado;
+}
+function _rdMsgCerrado(){
+  const C = (window.RETIROS_DETAIL_DATA || {}).cierre || {};
+  const dia = (C.cuando || '').split(' ')[0];
+  return 'Este retiro ya está cerrado (' + (C.como || 'Cerrado') + (dia ? ' el ' + dia : '') + '). No se puede modificar. ' +
+         'Si de verdad hay que corregir algo, primero reábrelo desde Cambiar estado.';
+}
+(function _rdSoloLectura(){
+  'use strict';
+  if (!_rdCerrado()) return;
+  const D = window.RETIROS_DETAIL_DATA || {};
+  document.body.classList.add('rd-cerrado');
+
+  // Aviso (sin repetirse si se toca varias veces seguidas)
+  let _ultimo = 0;
+  function avisar(){
+    const t = Date.now();
+    if (t - _ultimo < 1500) return;
+    _ultimo = t;
+    if (typeof ilusToast === 'function') ilusToast('🔒 ' + _rdMsgCerrado(), { type: 'warning', duration: 7000 });
+  }
+
+  // 1) Botones de gestión: el clic se frena ANTES de que lo vea cualquier otro manejador (también el data-api de Bootstrap).
+  const SEL = [
+    '#btnEditarFicha', '#heroRetiraTile', '.fv8-corregir', '[data-bs-target="#modalFichaEditar"]',
+    '.btn-asociar-compact', '#btnTomarRetiro', '#btnAbrirProponerFecha', '#iwShowReproposeBtn', '#btnEnviarPropuesta',
+    '#formEnviarPreparacion .cierre-next-btn', '.cierre-next-btn.is-green',
+  ].join(',');
+  const RE_ONCLICK = /\b(rbaOpen|rbaAsociar\w*|quitarDoc|_docsTablaQuitarSeleccionados|enviarPropuestaWizard|aceptarContrapropuesta|marcarAceptadaManual|tomarRetiro|abrirModalRetirar|_confirmarEnviarPreparacion|pa1UsarClienteComoContacto|_pdToggleAll|_pdEntregarIgual|_pdQuitarAutorizacion|iwShowReproposeBtn)\b/;
+  document.addEventListener('click', (ev) => {
+    const t = ev.target && ev.target.closest ? ev.target : null;
+    if (!t) return;
+    let bloquear = !!t.closest(SEL);
+    if (!bloquear) {
+      const conOnclick = t.closest('[onclick]');
+      bloquear = !!(conOnclick && RE_ONCLICK.test(conOnclick.getAttribute('onclick') || ''));
+    }
+    if (!bloquear) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    ev.stopImmediatePropagation();
+    avisar();
+  }, true);
+
+  // 2) Formularios que cambian el estado desde la ficha (enviar a preparación, marcar retirado) o proponen fecha: no se envían.
+  //    «Cambiar estado» (#formCambiarEstadoAvanzado) y el envío de mensajes al cliente NO se tocan.
+  document.addEventListener('submit', (ev) => {
+    const f = ev.target;
+    if (!f || !f.getAttribute) return;
+    const accion = f.getAttribute('action') || '';
+    const esEstado = /\/retiros\/\d+\/status\/?$/.test(accion) && f.id !== 'formCambiarEstadoAvanzado';
+    if (esEstado || f.id === 'iwProposeFormEl') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      ev.stopImmediatePropagation();
+      avisar();
+    }
+  }, true);
+
+  // 3) Red de seguridad: ningún fetch de gestión sale hacia el servidor. Responde lo mismo que respondería el servidor (409 + error), así los
+  //    manejadores que ya existen muestran su mensaje de siempre. Los GET, el chat (/mensaje), /message y /status NO se tocan.
+  if (typeof window.fetch === 'function') {
+    const fetch0 = window.fetch.bind(window);
+    const RE_GESTION = new RegExp('^/retiros/' + String(D.reqId || 0) +
+      '/(docs/agregar|docs/\\d+(/lineas)?|customer|field|proposal|aceptar-contrapropuesta|marcar-aceptada-manual|tomar|picking/toggle|confirmar-docs|confirmar-productos|validar-doc)/?$');
+    window.fetch = function (input, init) {
+      try {
+        const url = new URL(typeof input === 'string' ? input : ((input && input.url) || ''), window.location.href);
+        const metodo = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+        if (metodo !== 'GET' && metodo !== 'HEAD' && RE_GESTION.test(url.pathname)) {
+          return Promise.resolve(new Response(JSON.stringify({ ok: false, error: _rdMsgCerrado(), code: 'RETIRO_CERRADO' }),
+            { status: 409, headers: { 'Content-Type': 'application/json' } }));
+        }
+      } catch (e) { /* ante la duda, que decida el servidor */ }
+      return fetch0(input, init);
+    };
+  }
+
+  // 4) Campos y controles de edición (productos a retirar, datos del cliente, notas): deshabilitados, también los que se dibujan después.
+  const CAMPOS = '.pd-doc input, .pd-doc button, .pd-doc select, .pd-doc textarea, #modalFichaEditar input, #modalFichaEditar textarea, #modalFichaEditar select';
+  function candar(){
+    document.querySelectorAll(CAMPOS).forEach((el) => {
+      if (el.disabled) return;
+      el.disabled = true;
+      el.classList.add('rd-lock');
+      if (!el.title) el.title = 'Retiro cerrado: solo lectura';
+    });
+    document.querySelectorAll('[data-inline-edit]').forEach((el) => {
+      if (el.isContentEditable || el.contentEditable === 'true') el.contentEditable = 'false';
+      el.classList.add('inline-edit-locked');
+    });
+    document.querySelectorAll(SEL).forEach((el) => {
+      if (el.classList.contains('rd-lock-visual')) return;
+      if (el.id === 'heroRetiraTile') return;            // es un dato (quién retira) que se sigue leyendo: solo se frena el clic
+      el.classList.add('rd-lock-visual');
+      el.setAttribute('aria-disabled', 'true');
+      if (!el.dataset.rdTitulo) { el.dataset.rdTitulo = '1'; el.title = 'Retiro cerrado: solo lectura. Para corregir algo, reábrelo desde Cambiar estado.'; }
+    });
+  }
+  let _pend = null;
+  function programar(){
+    if (_pend) return;
+    _pend = requestAnimationFrame(() => { _pend = null; candar(); });
+  }
+  candar();
+  if (window.MutationObserver) {
+    new MutationObserver(programar).observe(document.body, { subtree: true, childList: true });
+  }
+})();

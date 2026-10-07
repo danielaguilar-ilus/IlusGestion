@@ -2559,3 +2559,23 @@
     .trk-cards{grid-template-columns:1fr}
     .resp-btn{width:100%;justify-content:center}
   }
+
+  /* ── RETIRO TERMINADO = FICHA EN SOLO LECTURA (Daniel 2026-10-06) ─────────────────────────────────────────────
+     Franja arriba (verde ILUS: «ya está listo»; roja si el retiro se rechazó o no se concretó) y controles de gestión atenuados con candado.
+     Los frena el bloque «SOLO LECTURA» de retiros_internal_detail.js; el servidor rechaza igual con 409. */
+  .rd-cerrado-banner{display:flex;align-items:flex-start;gap:14px;margin:0 0 16px;padding:16px 18px;border-radius:14px;
+    background:#dcfce7;border:1.5px solid #16a34a;color:#14532d;font-size:.95rem;line-height:1.5}
+  .rd-cerrado-banner > i{flex-shrink:0;font-size:1.6rem;color:#16a34a;margin-top:1px}
+  .rd-cerrado-banner strong{display:block;font-size:1.02rem;font-weight:800;color:#166534}
+  .rd-cerrado-banner .rd-cerrado-sub{display:block;margin-top:4px;font-size:.88rem;color:#166534;opacity:.92}
+  .rd-cerrado-banner .rd-cerrado-link{color:#166534;font-weight:800;text-decoration:underline}
+  .rd-cerrado-banner.is-fail{background:#fee2e2;border-color:#dc2626;color:#7f1d1d}
+  .rd-cerrado-banner.is-fail > i{color:#dc2626}
+  .rd-cerrado-banner.is-fail strong,.rd-cerrado-banner.is-fail .rd-cerrado-sub,.rd-cerrado-banner.is-fail .rd-cerrado-link{color:#991b1b}
+  body.rd-cerrado .rd-lock-visual,body.rd-cerrado .rd-lock{opacity:.5;cursor:not-allowed;filter:grayscale(.35)}
+  body.rd-cerrado .rd-lock-visual::after{content:"\1F512";margin-left:6px;font-size:.85em}
+  body.rd-cerrado .inline-edit-locked{cursor:default;background:transparent;border-color:transparent;box-shadow:none}
+  @media (max-width:768px){
+    .rd-cerrado-banner{padding:14px;gap:10px}
+    .rd-cerrado-banner > i{font-size:1.35rem}
+  }

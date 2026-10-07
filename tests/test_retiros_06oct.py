@@ -358,5 +358,6 @@ class TestMonitor:
         raiz = os.path.dirname(_TESTS)
         with open(os.path.join(raiz, "templates", "retiros", "_monitor_tabla.html"), encoding="utf-8") as f:
             html = f.read()
-        assert "Solicitada {{ r.m_creado_full }}" in html and "r.m_hace" in html
+        # 2026-10-07 (fila compacta): la palabra «Solicitada» va en su propia etiqueta (se oculta en pantallas angostas, queda en el title)
+        assert '<span class="rm-lbl">Solicitada </span>{{ r.m_creado_full }}' in html and "r.m_hace" in html
         jinja2.Environment().parse(html)

@@ -6335,6 +6335,7 @@ def register_pickup_routes(app, ctx):
                 settings=settings(),
                 valores=valores, ficha_ubicacion=ficha_ubicacion, actividad=actividad,
                 hitos=hitos, info_completa=info_completa, guia=guia,
+                cierre=_cierre_info(req, logs),     # retiro terminado = ficha en solo lectura (Daniel 2026-10-06)
                 aviso_no_expedir=_aviso_no_expedir_texto(), retiro_auto_modo=_retiro_auto_modo(),
             )
         except Exception as _e_detail:
@@ -6395,6 +6396,81 @@ def register_pickup_routes(app, ctx):
         return ((request.headers.get("X-Requested-With") or "").lower() == "xmlhttprequest"
                 or (request.headers.get("Sec-Fetch-Dest") or "").lower() == "empty"
                 or "application/json" in (request.headers.get("Accept") or "").lower())
+
+    # ── RETIRO TERMINADO = FICHA EN SOLO LECTURA (Daniel 2026-10-06: «una vez que se cierra, hacerle una inteligencia para que no se pueda
+    #    gestionar nada más, que no pueda agregar factura… ya se cerró, ya está listo») ──────────────────────────────────────────────
+    # Con el retiro en un estado TERMINAL (retirada, cerrada, rechazada o fallida: los mismos cuatro que ya cierran la agenda, el responsable
+    # y el seguimiento público) el servidor rechaza con 409 toda gestión: agregar/quitar facturas, editar productos, cubicación, datos del
+    # cliente, notas, proponer o aceptar fechas, validar documentación, marcar el picking. La forma deliberada de corregir algo es reabrir el
+    # retiro desde «Cambiar estado» (/status), que NO se bloquea. Siguen abiertos (no son gestión del retiro): el chat y los mensajes con el
+    # cliente, las lecturas (GET), Check, el registro de Check, los tiempos, la encuesta, los procesos automáticos y el borrado del superadmin.
+    # Rechazada y fallida también se bloquean: son estados finales del mismo modo (el cliente ya recibió el aviso y no hay nada que preparar);
+    # para corregir un rechazo se reabre primero. La ficha (internal_detail.html + retiros_internal_detail.js) refleja lo mismo en pantalla.
+    _ESTADOS_TERMINADOS = ("retirada", "cerrada", "rechazada", "fallida")
+    _CERRADO_COMO = {"retirada": "Retirado", "cerrada": "Cerrado", "rechazada": "Rechazado", "fallida": "No concretado"}
+
+    def _retiro_cerrado(req):
+        """¿El retiro está en un estado terminal? (solo lectura)"""
+        return str((req or {}).get("status") or "") in _ESTADOS_TERMINADOS
+
+    def _cuando_cerro_txt(req, con_hora=False):
+        """closed_at (UTC, como lo guarda MySQL) → «dd/mm/aaaa» u «dd/mm/aaaa hh:mm» en hora Chile (REGLA #6). '' si no hay dato."""
+        v = (req or {}).get("closed_at")
+        if not v:
+            return ""
+        try:
+            if isinstance(v, str):
+                v = datetime.strptime(v[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
+            if not isinstance(v, datetime):
+                return ""
+            from zoneinfo import ZoneInfo as _ZI_cerr
+            if v.tzinfo is None:
+                from datetime import timezone as _tz_cerr
+                v = v.replace(tzinfo=_tz_cerr.utc)
+            v = v.astimezone(_ZI_cerr("America/Santiago"))
+            return v.strftime("%d/%m/%Y %H:%M" if con_hora else "%d/%m/%Y")
+        except Exception:
+            return ""
+
+    def _msg_retiro_cerrado(req):
+        como = _CERRADO_COMO.get(str((req or {}).get("status") or ""), "Cerrado")
+        cuando = _cuando_cerro_txt(req)
+        return (f"Este retiro ya está cerrado ({como}{(' el ' + cuando) if cuando else ''}). No se puede modificar. "
+                "Si de verdad hay que corregir algo, primero reábrelo desde Cambiar estado.")
+
+    def _rechazo_si_cerrado(rid, req=None, json=False):
+        """None si el retiro admite cambios; si está terminado, la respuesta 409 amigable (JSON para fetch o `json=True`; si no, flash + redirect a la
+        ficha). `req` (opcional) evita una consulta cuando la ruta ya leyó el retiro (necesita status y closed_at). Si no se puede leer el estado
+        no se bloquea: la propia ruta falla después con su error de siempre."""
+        if req is None:
+            try:
+                req = mysql_fetchone(f"SELECT id, status, closed_at FROM `{REQ}` WHERE id=%s", (rid,))
+            except Exception as _e_cerr:
+                print(f"[pickup-cerrado] rid={rid}: {_e_cerr}", flush=True)
+                return None
+        if not _retiro_cerrado(req):
+            return None
+        msg = _msg_retiro_cerrado(req)
+        if json or _es_fetch():
+            return jsonify({"ok": False, "error": msg, "code": "RETIRO_CERRADO"}), 409
+        flash(msg, "warning")
+        return redirect(url_for("pickup_detail", rid=rid))
+
+    def _cierre_info(req, logs):
+        """Datos para la franja «Retiro cerrado» de la ficha (solo lectura): estado, cuándo (hora Chile) y quién lo cerró según la bitácora (`logs` viene
+        del más nuevo al más viejo)."""
+        st = str((req or {}).get("status") or "")
+        if st not in _ESTADOS_TERMINADOS:
+            return {"cerrado": False}
+        cuando = _cuando_cerro_txt(req, con_hora=True)
+        por = ""
+        for _l in (logs or []):
+            if (_l.get("action") == "estado_actualizado") and (_l.get("new_status") or "") == st:
+                por = (_l.get("actor_name") or "").strip()
+                if not cuando:
+                    cuando = _cuando_cerro_txt({"closed_at": _l.get("created_at")}, con_hora=True)
+                break
+        return {"cerrado": True, "estado": st, "como": _CERRADO_COMO.get(st, "Cerrado"), "cuando": cuando, "por": por}
 
     def _pickup_generar_checklist(rid):
         """Checklist de picking por producto, desde las líneas consolidadas del retiro. Lo usan el botón «Enviar a preparación» y el
@@ -6687,6 +6763,9 @@ def register_pickup_routes(app, ctx):
         req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
         if not req:
             return redirect(url_for("pickup_dashboard"))
+        _cerr = _rechazo_si_cerrado(rid, req)       # retiro terminado: solo lectura (Daniel 2026-10-06)
+        if _cerr:
+            return _cerr
 
         action = (request.form.get("action") or "").strip()
         notes  = (request.form.get("notes") or "").strip()[:1000]
@@ -7250,16 +7329,28 @@ def register_pickup_routes(app, ctx):
                 except Exception:
                     pass  # snapshot ausente/corrupto → quedan None
             out.append(d)
-        totales = _pickup_recalc_totales(rid)
+        # Estado del retiro para refrescar el wizard sin recargar página
+        req_state = mysql_fetchone(
+            f"SELECT doc_validation_status, status, proposed_date, confirmed_date, "
+            f"peso_real_kg, peso_vol_kg, total_volume_m3, tiempo_estimado_min "
+            f"FROM `{REQ}` WHERE id=%s", (rid,)
+        ) or {}
+        if _retiro_cerrado(req_state):
+            # Retiro terminado = solo lectura (Daniel 2026-10-06): esta lectura NO recalcula ni reescribe peso/volumen; devuelve lo guardado.
+            totales = {
+                "peso_real_kg": float(req_state.get("peso_real_kg") or 0),
+                "peso_vol_kg": float(req_state.get("peso_vol_kg") or 0),
+                "volumen_m3": float(req_state.get("total_volume_m3") or 0),
+                "n_docs": len(out),
+                "lineas_total": 0,
+                "tiempo_estimado_min": int(req_state.get("tiempo_estimado_min") or 0),
+            }
+        else:
+            totales = _pickup_recalc_totales(rid)
         # Conteo de docs con saldo (para habilitar el paso 4 del wizard)
         docs_con_saldo = sum(1 for d in out if d.get("con_saldo") == 1)
         docs_sin_saldo = sum(1 for d in out if d.get("con_saldo") == 0)
         docs_no_verif  = sum(1 for d in out if d.get("con_saldo") is None)
-        # Estado del retiro para refrescar el wizard sin recargar página
-        req_state = mysql_fetchone(
-            f"SELECT doc_validation_status, status, proposed_date, confirmed_date "
-            f"FROM `{REQ}` WHERE id=%s", (rid,)
-        ) or {}
         _resp_docs = {
             "ok": True,
             "docs": out,
@@ -7503,11 +7594,14 @@ def register_pickup_routes(app, ctx):
         # otro RUT") para poder comparar contra el RUT del documento del ERP
         # y para el log_event de trazabilidad más abajo.
         req = mysql_fetchone(
-            f"SELECT id, code, customer_rut, customer_name, status FROM `{REQ}` WHERE id=%s",
+            f"SELECT id, code, customer_rut, customer_name, status, closed_at FROM `{REQ}` WHERE id=%s",
             (rid,)
         )
         if not req:
             return jsonify({"ok": False, "error": "Retiro no existe"}), 404
+        _cerr = _rechazo_si_cerrado(rid, req, json=True)    # retiro terminado: no se agregan facturas (Daniel 2026-10-06)
+        if _cerr:
+            return _cerr
         body = request.get_json(silent=True) or {}
         tipo = (body.get("document_type") or "").strip().upper()
         numero = (body.get("document_number") or "").strip()
@@ -8192,6 +8286,9 @@ def register_pickup_routes(app, ctx):
         """
         if request.method == "POST" and (request.form.get("_method") or "").upper() != "DELETE":
             return jsonify({"ok": False, "error": "Método inválido"}), 405
+        _cerr = _rechazo_si_cerrado(rid, json=True)         # retiro terminado: no se quitan facturas (Daniel 2026-10-06)
+        if _cerr:
+            return _cerr
         row = mysql_fetchone(
             "SELECT id, document_type, document_number "
             "FROM pickup_request_docs WHERE id=%s AND request_id=%s",
@@ -8997,6 +9094,9 @@ def register_pickup_routes(app, ctx):
 
         Body: {lineas: [{sku, incluida, cantidad_seleccionada, nota?}]}
         """
+        _cerr = _rechazo_si_cerrado(rid, json=True)         # retiro terminado: no se editan productos (Daniel 2026-10-06)
+        if _cerr:
+            return _cerr
         doc = mysql_fetchone(
             "SELECT id, document_type, document_number, erp_snapshot "
             "FROM pickup_request_docs WHERE id=%s AND request_id=%s",
@@ -10367,6 +10467,9 @@ def register_pickup_routes(app, ctx):
         req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
         if not req:
             return jsonify({"ok": False, "error": "Retiro no existe"}), 404
+        _cerr = _rechazo_si_cerrado(rid, req, json=True)    # retiro terminado: no se cambian los datos del cliente (Daniel 2026-10-06)
+        if _cerr:
+            return _cerr
 
         body = request.get_json(silent=True) or {}
         new_name = (body.get("customer_name") or "").strip()[:200]
@@ -10628,6 +10731,9 @@ def register_pickup_routes(app, ctx):
 
         Devuelve: {ok:True, field, value, changed:bool, saved_at}
         """
+        _cerr = _rechazo_si_cerrado(rid, json=True)         # retiro terminado: ningún campo se edita (Daniel 2026-10-06)
+        if _cerr:
+            return _cerr
         body = request.get_json(silent=True) or {}
         field = (body.get("field") or "").strip()
         value = body.get("value")
@@ -14162,6 +14268,9 @@ def register_pickup_routes(app, ctx):
         picked = 1 if body.get("picked") else 0
         if not item_id:
             return jsonify({"ok": False, "error": "Falta item_id"}), 400
+        _cerr = _rechazo_si_cerrado(rid, json=True)         # retiro terminado: el checklist de bodega ya no se toca (Daniel 2026-10-06)
+        if _cerr:
+            return _cerr
         quien = ((getattr(g, "user", None) or {}).get("nombre") or "interno")[:190]
         try:
             antes = _picking_estado(rid)
