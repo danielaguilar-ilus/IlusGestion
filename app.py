@@ -87055,13 +87055,18 @@ def _ot2_lote_gate_superadmin():
     """403 JSON si el usuario NO es superadmin; None si puede seguir.
     Va ADEMÁS de @_mant_required (que solo pide el permiso genérico
     'mantenciones', el mismo que tienen supervisor/ejecutivo/técnico)."""
-    if not (getattr(g, "permissions", None) or {}).get("superadmin"):
+    # 2026-10-07 (Daniel: "habilítale eliminar OT a Aaron para que limpie las OT a mi nombre que están
+    # realizadas y son antiguas"): además del superadmin, puede quien tenga el permiso "Eliminar OT /
+    # cliente" (mantenciones.eliminar, de la matriz /admin/roles o dado a una PERSONA en sus permisos
+    # individuales). Nace en OFF para todos: no se abre a ningún rol sin que Daniel lo marque.
+    _perm = (getattr(g, "permissions", None) or {})
+    if not (_perm.get("superadmin") or _perm.get("mant_eliminar")):
         _u = getattr(g, "user", None) or {}
         print(f"[SECURITY] {_u.get('id')} ({_u.get('username')}) intentó "
-              f"eliminar OT en lote sin ser superadmin", flush=True)
+              f"eliminar OT en lote sin permiso", flush=True)
         return jsonify({
             "ok": False,
-            "error": "Solo el superadministrador puede eliminar OT en lote",
+            "error": "Solo el superadministrador o quien tenga el permiso «Eliminar OT» puede eliminar OT en lote",
             "error_codigo": "SOLO_SUPERADMIN",
         }), 403
     return None

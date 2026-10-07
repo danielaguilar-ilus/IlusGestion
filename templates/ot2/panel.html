@@ -834,7 +834,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
        más abajo, dentro del <thead>, y todavía no existe en este punto del
        template (Jinja lo trata como Undefined/falso y el bloque entero se
        saltaba en silencio, verificado en vivo). Misma condición inline. #}
-    {% if permissions and permissions.superadmin %}
+    {% if permissions and (permissions.superadmin or permissions.mant_eliminar) %}
     <div class="ot2-selmobile" id="ot2SelMobile">
       <label class="ot2-chk"><input type="checkbox" id="ot2SelAllMobile" autocomplete="off" aria-label="Seleccionar/deseleccionar todo"></label>
       <span>Seleccionar todo</span>
@@ -865,7 +865,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
           {# 2026-09-16 (Daniel): columna de selección + eliminar en lote,
              SOLO superadmin (decisión 1). Para cualquier otro rol la tabla
              es exactamente la de siempre: ni checkboxes, ni barra, ni modal. #}
-          {% set puede_lote = permissions and permissions.superadmin %}
+          {% set puede_lote = permissions and (permissions.superadmin or permissions.mant_eliminar) %}
           <thead>
             <tr>
               {% if puede_lote %}
@@ -1588,7 +1588,7 @@ window.OT2D = (function(){
    palabra ELIMINAR · cualquier estado, pero el modal muestra el desglose y
    avisa firmas/cerradas · las OT en factura de proveedor se omiten.
    Kanban y calendario no cambian. #}
-{% if vista == 'tabla' and filas and permissions and permissions.superadmin %}
+{% if vista == 'tabla' and filas and permissions and (permissions.superadmin or permissions.mant_eliminar) %}
 <div id="ot2SelBar" class="ot2-selbar" hidden>
   <div class="ot2-selbar-in" role="region" aria-label="OT seleccionadas">
     <span class="ot2-selbar-n"><i class="bi bi-check2-square"></i><b id="ot2SelN">0</b> <span id="ot2SelTxt">OT seleccionadas</span></span>
