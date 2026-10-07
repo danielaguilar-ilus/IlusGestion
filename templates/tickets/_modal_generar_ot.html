@@ -781,7 +781,9 @@
             </div>
             <input type="hidden" id="finCentroCosto" value="">
 
-            <label class="form-label small fw-semibold" for="finValorOT">Esta OT vale $ *</label>
+            {# 💰 2026-10-07 (Daniel, modelo único): en garantía este monto es cuánto VALE (valorizado: opcional,
+               solo referencia, nunca se suma a lo cobrado). El rótulo lo cambia tkotFinCoberturaUI(). #}
+            <label class="form-label small fw-semibold" for="finValorOT" id="finValorOTLbl">Esta OT vale $ *</label>
             <div class="input-group input-group-sm mb-3" style="max-width:260px">
               <span class="input-group-text">$</span>
               <input type="number" id="finValorOT" class="form-control" min="1" step="1000" placeholder="0">

@@ -4917,6 +4917,12 @@ function tkotFinCoberturaUI(){
   if(wd) wd.style.display = (v === 'documento') ? '' : 'none';
   const wg = document.getElementById('finGarantiaWrap');
   if(wg) wg.style.display = (v === 'garantia') ? '' : 'none';
+  // 💰 2026-10-07 (Daniel, modelo único "Cobré − Me cobraron = Queda"): en garantía el valor es cuánto VALE
+  // (valorizado): opcional, solo referencia. El backend ya no lo guarda como lo cobrado.
+  const lv = document.getElementById('finValorOTLbl');
+  if(lv) lv.innerHTML = (v === 'garantia')
+    ? 'Cuánto vale $ <span class="text-muted" style="font-weight:400">(opcional, no se cobra)</span>'
+    : 'Esta OT vale $ *';
 }
 function tkotResetFinanzas(){
   ['finCentroCosto', 'finOrigenValor', 'finCobertura'].forEach(function(id){
@@ -5071,10 +5077,14 @@ const TKOT_STEP_RULES = {
   8: function(){
     const val = function(id){ const e = document.getElementById(id); return (e && e.value || '').trim(); };
     if(!val('finCentroCosto')) return false;
-    if(!(parseFloat(val('finValorOT')) > 0)) return false;
+    // 💰 2026-10-07 (Daniel): en garantía el valor es el valorizado y es OPCIONAL; si se escribe, se pide
+    // de dónde sale (y el motivo si es supuesto/manual), igual que siempre.
+    const _gar8 = val('finCobertura') === 'garantia';
+    const _hayValor8 = parseFloat(val('finValorOT')) > 0;
+    if(!_gar8 && !_hayValor8) return false;
     const origen = val('finOrigenValor');
-    if(!origen) return false;
-    if((origen === 'supuesto' || origen === 'manual') && !val('finMotivoManual')) return false;
+    if(_hayValor8 && !origen) return false;
+    if(_hayValor8 && (origen === 'supuesto' || origen === 'manual') && !val('finMotivoManual')) return false;
     const cobertura = val('finCobertura');
     if(!cobertura) return false;
     if(cobertura === 'documento') return !!(val('finDocTipo') && val('finDocNumero'));
@@ -5444,15 +5454,18 @@ async function tkotGenerar(){
   const finCentroCosto = (document.getElementById('finCentroCosto')?.value || '').trim();
   if(!finCentroCosto){ ilusToast('Selecciona el centro de costo de la OT', {type:'warning'}); return; }
   const finValorOT = parseFloat(document.getElementById('finValorOT')?.value || '');
-  if(!(finValorOT > 0)){
+  // 💰 2026-10-07 (Daniel, modelo único): en garantía el valor es cuánto VALE (valorizado) y es OPCIONAL --
+  // el backend lo guarda como referencia, nunca como lo cobrado (_ot_fin_reparto_creacion).
+  const _finEsGar = (document.getElementById('finCobertura')?.value || '').trim() === 'garantia';
+  if(!_finEsGar && !(finValorOT > 0)){
     ilusToast('Indica cuánto vale esta OT (debe ser mayor a 0)', {type:'warning'});
     document.getElementById('finValorOT')?.focus();
     return;
   }
   const finOrigenValor = (document.getElementById('finOrigenValor')?.value || '').trim();
-  if(!finOrigenValor){ ilusToast('Indica de dónde sale ese valor', {type:'warning'}); return; }
+  if(finValorOT > 0 && !finOrigenValor){ ilusToast('Indica de dónde sale ese valor', {type:'warning'}); return; }
   const finMotivoManual = (document.getElementById('finMotivoManual')?.value || '').trim();
-  if((finOrigenValor === 'supuesto' || finOrigenValor === 'manual') && !finMotivoManual){
+  if(finValorOT > 0 && (finOrigenValor === 'supuesto' || finOrigenValor === 'manual') && !finMotivoManual){
     ilusToast(finOrigenValor === 'supuesto' ? 'Explica en qué te basas para ese valor' : 'Explica por qué se declara ese valor a mano', {type:'warning'});
     document.getElementById('finMotivoManual')?.focus();
     return;
@@ -5546,7 +5559,7 @@ async function tkotGenerar(){
       finanzas: {
         centro_costo: finCentroCosto,
         valor_origen: finOrigenValor,
-        zz_monto: finValorOT,
+        zz_monto: finValorOT > 0 ? finValorOT : null,   // 2026-10-07: en garantía puede ir vacío
         garantia_aplica: finCobertura === 'garantia',
         garantia_motivo: finCobertura === 'garantia' ? finGarantiaMotivo : '',
         factura_tido: finCobertura === 'documento' ? finFacturaTido : '',

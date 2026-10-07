@@ -3141,8 +3141,11 @@ async function o2fGenerar(){
       document.getElementById('o2fFinGarMotivo')?.focus();
       return;
     }
-    if(!(_finGar ? _finMontoGar : _finMonto)){
-      ilusToast('Falta el monto estimado del servicio (paso Finanzas).', {type:'warning'});
+    // 💰 2026-10-07 (Daniel, modelo único "Cobré − Me cobraron = Queda"): en garantía el monto es el
+    // VALORIZADO (cuánto vale, solo referencia) y es SUGERIDO, no obligatorio. Fuera de garantía sigue
+    // exigiéndose: es lo que se le cobra al cliente.
+    if(!_finGar && !_finMonto){
+      ilusToast('Falta el monto que le cobras por el servicio (paso Finanzas).', {type:'warning'});
       document.getElementById('o2fStep8')?.scrollIntoView({behavior:'smooth', block:'center'});
       return;
     }
@@ -3652,10 +3655,10 @@ function o2fFinRefrescar() {
   var card = document.getElementById('o2fStep8');
   if (!card) return;
   var sw = document.getElementById('o2fFinGarantia');
+  // 💰 2026-10-07: en garantía basta el motivo -- el valorizado (o2fFinMontoGar) es opcional.
   var completo = !!_o2fCentroCosto && (
     (sw && sw.checked)
       ? !!(document.getElementById('o2fFinGarMotivo') || {}).value.trim()
-        && !!(document.getElementById('o2fFinMontoGar') || {}).value
       : !!(document.getElementById('o2fFinNudo') || {}).value
         && !!(document.getElementById('o2fFinMonto') || {}).value
   );
@@ -3673,8 +3676,10 @@ function o2fFinSugerirZZ() {
 
 /* Lo que se manda al crear. 🔒 2026-09-09: ya no es opcional (ver
    o2fGenerar) -- el backend (ot2_api_crear) también lo exige para OT de
-   cliente. El monto de garantía (o2fFinMontoGar) viaja igual como
-   zz_monto: el backend no distingue la fuente, solo exige que exista. */
+   cliente.
+   💰 2026-10-07 (Daniel, modelo único "Cobré − Me cobraron = Queda"): el monto de garantía
+   (o2fFinMontoGar) ya NO viaja como zz_monto (el casillero de lo COBRADO): viaja como
+   valorizado_clp -- cuánto vale, solo referencia, opcional, nunca se suma a lo cobrado. */
 function o2fFinPayload() {
   var sw = document.getElementById('o2fFinGarantia');
   var g = !!(sw && sw.checked);
@@ -3687,7 +3692,9 @@ function o2fFinPayload() {
     factura_tido: g ? null : (v('o2fFinTido') || null),
     factura_nudo: g ? null : (v('o2fFinNudo') || null),
     zz_codigo: g ? null : (v('o2fFinZZ') || _O2F_LINEA_ZZ[tipo] || null),
-    zz_monto: g ? (v('o2fFinMontoGar') || null) : (v('o2fFinMonto') || null)
+    zz_monto: g ? null : (v('o2fFinMonto') || null),
+    valorizado_clp: g ? (v('o2fFinMontoGar') || null) : null,
+    valorizado_fuente: (g && v('o2fFinMontoGar')) ? 'a_mano' : null
   };
 }
 

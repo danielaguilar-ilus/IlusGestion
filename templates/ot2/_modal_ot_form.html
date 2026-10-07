@@ -810,11 +810,13 @@
               <small class="text-muted" style="font-size:.7rem">
                 Queda registrado: es lo que permite defender después por qué no se cobró.
               </small>
-              <label class="form-label small fw-semibold mt-2">Monto estimado del servicio *</label>
+              {# 💰 2026-10-07 (Daniel, modelo único): en garantía este monto es el VALORIZADO -- cuánto vale,
+                 solo referencia, opcional (decisión de Daniel) y nunca se suma a lo cobrado. #}
+              <label class="form-label small fw-semibold mt-2">Cuánto vale <span class="text-muted fw-normal">(opcional)</span></label>
               <input type="number" class="form-control form-control-sm" id="o2fFinMontoGar"
                      placeholder="0" min="0">
               <small class="text-muted" style="font-size:.7rem">
-                Aunque no se cobre, queda para medir cuánto se entregó en garantía.
+                Solo referencia: no se le cobra al cliente y nunca se suma a lo cobrado.
               </small>
             </div>
 

@@ -6194,7 +6194,7 @@
           </div>
           <div class="col-6">
             <label class="form-label fw-semibold">Tipo <span class="text-danger">*</span></label>
-            <select id="vi_tipo" class="form-select">
+            <select id="vi_tipo" class="form-select" onchange="viTipoCambio()">
               <option value="preventiva">Preventiva</option>
               <option value="correctiva">Correctiva</option>
               <option value="garantia">Garantía</option>
@@ -6259,8 +6259,12 @@
 
               <div class="row g-3 mt-1">
                 <div class="col-6">
-                  <label class="form-label fw-semibold small">Esta OT vale $ <span class="text-danger">*</span></label>
+                  {# 💰 2026-10-07 (Daniel, modelo único "Cobré − Me cobraron = Queda"): si se cobra, este monto es
+                     lo que le cobras (zz_monto); en garantía es cuánto VALE (valorizado, opcional). El rótulo lo
+                     cambia viFinCobroToggle(). Al editar una OT ya creada se muestra pero no se guarda. #}
+                  <label class="form-label fw-semibold small" id="vi_costo_lbl">Le cobras $ <span class="text-danger">*</span></label>
                   <input type="number" id="vi_costo" class="form-control" placeholder="0" min="0" step="1000">
+                  <div class="form-text" id="vi_costo_hint" style="font-size:.72rem;display:none">En una OT ya creada lo cobrado se declara en la tarjeta Finanzas de la OT: este campo ya no se guarda desde aquí.</div>
                 </div>
                 <div class="col-6">
                   <label class="form-label fw-semibold small">¿De dónde sale ese valor? <span class="text-danger">*</span></label>
