@@ -5041,7 +5041,10 @@ def register_pickup_routes(app, ctx):
         # ── KPIs del monitor (Daniel 2026-06-20, levantamiento) ────────────────
         # Métricas ejecutivas arriba del monitor. Best-effort: si una query falla
         # (columna vieja, etc.) el dashboard igual carga con el KPI en 0.
-        kpis = {"semana": 0, "tasa_conf": None, "ciclo_h": None, "msgs": 0}
+        kpis = {"semana": 0, "tasa_conf": None, "ciclo_h": None, "msgs": 0, "tasa_pend": 0, "tasa_base": 0}
+        # Tasa de confirmación: sobre las solicitudes YA DECIDIDAS (2026-10-07: antes las que aún se están gestionando contaban como «no
+        # confirmadas» y bajaban la tasa sin razón). Las abiertas se informan aparte en la tarjeta.
+        _ABIERTAS_SQL = "'solicitud_recibida','en_revision','informacion_incompleta','propuesta_enviada','esperando_cliente'"
         try:
             from zoneinfo import ZoneInfo as _ZI_k
             _hoy_cl = datetime.now(_ZI_k("America/Santiago")).date()
@@ -5057,10 +5060,11 @@ def register_pickup_routes(app, ctx):
         try:
             _r = mysql_fetchone(
                 f"SELECT SUM(status IN ('agenda_confirmada','reagendada','en_preparacion',"
-                f"'retirada','cerrada')) AS conf, COUNT(*) AS tot FROM `{REQ}` "
+                f"'retirada','cerrada')) AS conf, SUM(status IN ({_ABIERTAS_SQL})) AS pend, COUNT(*) AS tot FROM `{REQ}` "
                 f"WHERE created_at >= NOW() - INTERVAL 30 DAY") or {}
-            _tot = int(_r.get("tot") or 0)
-            if _tot:
+            _tot = int(_r.get("tot") or 0) - int(_r.get("pend") or 0)
+            kpis["tasa_pend"], kpis["tasa_base"] = int(_r.get("pend") or 0), max(0, _tot)
+            if _tot > 0:
                 kpis["tasa_conf"] = round(int(_r.get("conf") or 0) * 100.0 / _tot)
         except Exception: pass
         try:
@@ -5096,7 +5100,9 @@ def register_pickup_routes(app, ctx):
                "limite": 250, "total": len(rows), "ok": False,
                # El reloj de "Sin responder" solo avanza en día hábil (lo lee retiros_monitor.js)
                "hoy_habil": hoy_cl.weekday() < 5 and hoy_cl.isoformat() not in feriados_mon,
-               "sla_ambar_s": int(_CC_SLA_AMBAR_H * 3600), "sla_rojo_s": int(_CC_SLA_ROJO_H * 3600)}
+               "sla_ambar_s": int(_CC_SLA_AMBAR_H * 3600), "sla_rojo_s": int(_CC_SLA_ROJO_H * 3600),
+               # Tramos en que corre el reloj (minutos del día, hora Chile): el JS no repite números (cobertura 08–17 sin colación)
+               "ventanas": _cc_ventanas()}
         try:
             mon["total"] = int((mysql_fetchone(
                 f"SELECT COUNT(*) AS n FROM `{REQ}` WHERE {' AND '.join(where)}", tuple(params)) or {}).get("n") or 0)
@@ -5121,7 +5127,7 @@ def register_pickup_routes(app, ctx):
                 logs_mon = {}
             try:
                 _rmon.enriquecer_filas(
-                    rows, hoy=hoy_cl, ahora=ahora_cl, horas_habiles=_cc_horas_habiles,
+                    rows, hoy=hoy_cl, ahora=ahora_cl, horas_habiles=_cc_horas_habiles, ventanas=_cc_ventanas(),
                     utc_a_chile=_cc_utc_a_chile, td_hhmm=_td_to_hhmm, estados=PICKUP_STATUS,
                     grupos=PIPELINE_GROUPS, relaciones=dict(PICKUP_RELATIONS), feriados=feriados_mon,
                     sla_ambar=_CC_SLA_AMBAR_H, sla_rojo=_CC_SLA_ROJO_H, logs=logs_mon)
@@ -5147,11 +5153,11 @@ def register_pickup_routes(app, ctx):
         try:
             _rt = mysql_fetchall(
                 f"SELECT YEARWEEK(created_at,1) AS w, SUM(status IN ({_CONF})) AS conf, COUNT(*) AS tot "
-                f"FROM `{REQ}` WHERE created_at >= NOW() - INTERVAL 56 DAY GROUP BY w ORDER BY w") or []
+                f"FROM `{REQ}` WHERE created_at >= NOW() - INTERVAL 56 DAY AND status NOT IN ({_ABIERTAS_SQL}) GROUP BY w ORDER BY w") or []
             _serie_t = [round(int(x["conf"] or 0) * 100.0 / int(x["tot"])) for x in _rt if int(x["tot"] or 0)]
             _rp = mysql_fetchone(
                 f"SELECT SUM(status IN ({_CONF})) AS conf, COUNT(*) AS tot FROM `{REQ}` "
-                f"WHERE created_at >= NOW() - INTERVAL 60 DAY AND created_at < NOW() - INTERVAL 30 DAY") or {}
+                f"WHERE created_at >= NOW() - INTERVAL 60 DAY AND created_at < NOW() - INTERVAL 30 DAY AND status NOT IN ({_ABIERTAS_SQL})") or {}
             _prev_t = round(int(_rp.get("conf") or 0) * 100.0 / int(_rp["tot"])) if int(_rp.get("tot") or 0) else None
             kx["tasa"] = {"spark": _rmon.spark(_serie_t), "prev": _prev_t,
                           "delta": _rmon.delta(kpis["tasa_conf"], _prev_t, unidad=" pts")}
@@ -5182,6 +5188,51 @@ def register_pickup_routes(app, ctx):
                                  "nivel": "rojo" if _h >= _CC_SLA_ROJO_H else ("ambar" if _h >= _CC_SLA_AMBAR_H else "verde")}
         except Exception:
             pass
+        # ── Gestión operacional (Daniel 2026-10-06: «hay que medirlo… prometer tiempo controlado, una gestión de retiro a nivel de gerencia
+        #    operacional logística; que sepan con quién están tratando»). Cuatro números, 30 días, cada uno best-effort:
+        #    1) primera respuesta del equipo en horas hábiles de cobertura, 2) preparación efectiva según Check, 3) % de pedidos LISTOS antes de
+        #    la hora de la cita (fin del picking ≤ cita), 4) reacción de bodega (OT asignada → empezada).
+        ope = {}
+        try:
+            _fr = mysql_fetchall(
+                f"SELECT r.id, r.created_at, MIN(l.created_at) AS resp FROM `{REQ}` r "
+                f"LEFT JOIN `{LOG}` l ON l.request_id=r.id AND l.actor_type='interno' "
+                f"WHERE r.created_at >= NOW() - INTERVAL 30 DAY GROUP BY r.id, r.created_at") or []
+            _hs, _sin = [], 0
+            for x in _fr:
+                if not x.get("resp"):
+                    _sin += 1
+                    continue
+                _hs.append(_cc_horas_habiles(_cc_utc_a_chile(x["created_at"]), _cc_utc_a_chile(x["resp"]), feriados_mon))
+            if _hs:
+                _hs.sort()
+                ope["resp"] = {"prom": _rmon.fmt_horas_habiles(sum(_hs) / len(_hs)), "mediana": _rmon.fmt_horas_habiles(_hs[len(_hs) // 2]),
+                               "en_sla": round(sum(1 for h in _hs if h <= _CC_SLA_AMBAR_H) * 100.0 / len(_hs)), "n": len(_hs), "sin": _sin,
+                               "sla": _rmon.fmt_horas_habiles(_CC_SLA_AMBAR_H),
+                               "nivel": "verde" if sum(_hs) / len(_hs) <= _CC_SLA_AMBAR_H else ("ambar" if sum(_hs) / len(_hs) <= _CC_SLA_ROJO_H else "rojo")}
+        except Exception as _e_ope:
+            print(f"[retiros/kpi] primera respuesta: {type(_e_ope).__name__}", flush=True)
+        try:
+            if _prep_tiempos_tablas():
+                _rp = mysql_fetchone(
+                    "SELECT COUNT(*) AS n, AVG(efectivo_min) AS efectivo, AVG(pausas_min) AS pausas, SUM(picking_min) AS pk_min, "
+                    "SUM(picking_unidades) AS pk_uni, SUM(listo_antes_cita_min >= 0) AS listos, COUNT(listo_antes_cita_min) AS con_cita, "
+                    "AVG(espera_asignacion_min) AS asig, COUNT(espera_asignacion_min) AS n_asig "
+                    "FROM pickup_prep_tiempos WHERE en_curso=0 AND calculado_en >= NOW() - INTERVAL 30 DAY") or {}
+                _n = int(_rp.get("n") or 0)
+                if _n:
+                    _pk_uni = float(_rp.get("pk_uni") or 0)
+                    ope["prep"] = {"n": _n, "efectivo": round(float(_rp.get("efectivo") or 0)), "pausas": round(float(_rp.get("pausas") or 0)),
+                                   "min_unidad": (str(round(float(_rp.get("pk_min") or 0) / _pk_uni, 1)).replace(".", ",") if _pk_uni else None)}
+                if int(_rp.get("con_cita") or 0):
+                    _pct = round(int(_rp.get("listos") or 0) * 100.0 / int(_rp["con_cita"]))
+                    ope["listo"] = {"pct": _pct, "n": int(_rp["con_cita"]), "listos": int(_rp.get("listos") or 0),
+                                    "nivel": "verde" if _pct >= 90 else ("ambar" if _pct >= 75 else "rojo")}
+                if int(_rp.get("n_asig") or 0):
+                    ope["asig"] = {"prom": round(float(_rp.get("asig") or 0)), "n": int(_rp["n_asig"])}
+        except Exception as _e_ope:
+            print(f"[retiros/kpi] preparación: {type(_e_ope).__name__}", flush=True)
+        kx["ope"] = ope
         templates = mysql_fetchall(f"SELECT id, code, title, body, channel, active FROM `{TPL}` WHERE active=1 ORDER BY title")
         return render_template(
             "retiros/internal_dashboard.html",
@@ -5223,25 +5274,37 @@ def register_pickup_routes(app, ctx):
         except Exception:
             return dt_utc
 
+    def _cc_ventanas():
+        """Tramos del día en que corre el reloj del SLA = horario de cobertura (Daniel 2026-10-06: 08:00–17:00, colación 13:00–14:00 que NO
+        corre). Lista de (desde, hasta) en minutos del día. Mismas variables que _cobertura_estado (RETIROS_COBERTURA_*)."""
+        desde, hasta = _cob_min("RETIROS_COBERTURA_DESDE", "08:00"), _cob_min("RETIROS_COBERTURA_HASTA", "17:00")
+        col_d, col_h = _cob_min("RETIROS_COBERTURA_COLACION_DESDE", "13:00"), _cob_min("RETIROS_COBERTURA_COLACION_HASTA", "14:00")
+        if not desde < hasta:
+            desde, hasta = 480, 1020
+        if desde < col_d < col_h < hasta:
+            return [(desde, col_d), (col_h, hasta)]
+        return [(desde, hasta)]
+
     def _cc_horas_habiles(desde, hasta, feriados=()):
-        """Horas hábiles (lun-vie 09:00-18:00, sin feriados) entre dos datetimes
-        naive en hora Chile. Es el reloj del SLA: una solicitud del viernes a
-        las 19:00 no está "atrasada" el sábado."""
+        """Horas hábiles (lun-vie dentro del horario de cobertura, sin colación ni feriados) entre dos datetimes naive en hora Chile.
+        Es el reloj del SLA: una solicitud del viernes a las 19:00 no está "atrasada" el sábado. (Antes 09:00–18:00 fijo; desde
+        2026-10-07 usa la cobertura confirmada por Daniel, la misma del aviso de fuera de horario.)"""
         if not desde or not hasta or hasta <= desde:
             return 0.0
         total = 0.0
         dia = desde.date()
         fin_dia = hasta.date()
+        ventanas = _cc_ventanas()
         # Tope de seguridad: 60 días de recorrido
         for _ in range(62):
             if dia > fin_dia:
                 break
             if dia.weekday() < 5 and dia.isoformat() not in feriados:
-                ini = datetime.combine(dia, datetime.min.time()).replace(hour=9)
-                fin = datetime.combine(dia, datetime.min.time()).replace(hour=18)
-                a, b = max(ini, desde), min(fin, hasta)
-                if b > a:
-                    total += (b - a).total_seconds() / 3600.0
+                base = datetime.combine(dia, datetime.min.time())
+                for v0, v1 in ventanas:
+                    a, b = max(base + timedelta(minutes=v0), desde), min(base + timedelta(minutes=v1), hasta)
+                    if b > a:
+                        total += (b - a).total_seconds() / 3600.0
             dia = dia + timedelta(days=1)
         return round(total, 2)
 
@@ -12281,7 +12344,7 @@ def register_pickup_routes(app, ctx):
                 "trabajo_min INT NULL, efectivo_min INT NULL, pausas_min INT NULL, principio_fin_min INT NULL, reloj_min INT NULL, "
                 "listo_esperando_min INT NULL, espera_asignacion_min INT NULL, vs_cita_min INT NULL, "
                 "picking_min INT NULL, picking_unidades DECIMAL(12,2) NULL, min_por_unidad DECIMAL(10,2) NULL, "
-                "inicio_check VARCHAR(16) NULL, salida_check VARCHAR(16) NULL, payload MEDIUMTEXT NOT NULL, "
+                "inicio_check VARCHAR(16) NULL, salida_check VARCHAR(16) NULL, listo_antes_cita_min INT NULL, payload MEDIUMTEXT NOT NULL, "
                 "calculado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, "
                 "KEY idx_prep_t_calc (en_curso, calculado_en)"
                 ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
@@ -12292,6 +12355,10 @@ def register_pickup_routes(app, ctx):
                 "creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
                 "KEY idx_prep_p_req (request_id), KEY idx_prep_p_sku (sku, creado_en)"
                 ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+            try:      # tablas creadas con la primera versión (07-oct, madrugada): una cláusula por sentencia (REGLA #18)
+                mysql_execute("ALTER TABLE pickup_prep_tiempos ADD COLUMN listo_antes_cita_min INT NULL")
+            except Exception:
+                pass
             _PREP_T["tabla"] = True
         except Exception as e:
             print(f"[retiros-prep-tiempos] tablas: {e}", flush=True)
@@ -12333,17 +12400,17 @@ def register_pickup_routes(app, ctx):
             mysql_execute(
                 "INSERT INTO pickup_prep_tiempos (request_id, huella, version, en_curso, n_ot, trabajo_min, efectivo_min, pausas_min, principio_fin_min, "
                 "reloj_min, listo_esperando_min, espera_asignacion_min, vs_cita_min, picking_min, picking_unidades, min_por_unidad, inicio_check, "
-                "salida_check, payload) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                "salida_check, listo_antes_cita_min, payload) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
                 "ON DUPLICATE KEY UPDATE huella=VALUES(huella), version=VALUES(version), en_curso=VALUES(en_curso), n_ot=VALUES(n_ot), "
                 "trabajo_min=VALUES(trabajo_min), efectivo_min=VALUES(efectivo_min), pausas_min=VALUES(pausas_min), "
                 "principio_fin_min=VALUES(principio_fin_min), reloj_min=VALUES(reloj_min), listo_esperando_min=VALUES(listo_esperando_min), "
                 "espera_asignacion_min=VALUES(espera_asignacion_min), vs_cita_min=VALUES(vs_cita_min), picking_min=VALUES(picking_min), "
                 "picking_unidades=VALUES(picking_unidades), min_por_unidad=VALUES(min_por_unidad), inicio_check=VALUES(inicio_check), "
-                "salida_check=VALUES(salida_check), payload=VALUES(payload)",
+                "salida_check=VALUES(salida_check), listo_antes_cita_min=VALUES(listo_antes_cita_min), payload=VALUES(payload)",
                 (rid, huella, a.get("version") or 1, 1 if a.get("en_curso") else 0, a.get("n_ot") or 0, a.get("trabajo_min"), a.get("efectivo_min"),
                  a.get("pausas_min"), a.get("principio_fin_min"), a.get("reloj_min"), a.get("listo_esperando_min"), a.get("espera_asignacion_min"),
                  a.get("vs_cita_min"), a.get("picking_min"), a.get("picking_unidades"), a.get("min_por_unidad"), a.get("inicio"), a.get("salida"),
-                 payload))
+                 a.get("listo_antes_cita_min"), payload))
             if not a.get("en_curso"):
                 mysql_execute("DELETE FROM pickup_prep_productos WHERE request_id=%s", (rid,))
                 for p in (a.get("productos") or [])[:300]:

@@ -26,6 +26,7 @@ GRUPOS = [
 ]
 RELACIONES = {"dueno": "Dueño / titular", "chofer": "Chofer"}
 
+COB = {"desde": 480, "hasta": 1020, "col_d": 780, "col_h": 840}   # 08:00-17:00, colación 13:00-14:00
 HOY = date(2026, 9, 29)                 # martes
 AHORA = datetime(2026, 9, 29, 15, 0)    # hora Chile
 
@@ -38,7 +39,7 @@ def _hh(td):
 def _enriquecer(filas, logs=None, horas=None):
     return rm.enriquecer_filas(
         filas, hoy=HOY, ahora=AHORA,
-        horas_habiles=horas or (lambda d, h, f: (h - d).total_seconds() / 3600.0),
+        reloj_horas=horas or (lambda d, h, f: (h - d).total_seconds() / 3600.0),
         utc_a_chile=lambda dt: (dt - timedelta(hours=3)) if dt else None,
         td_hhmm=_hh, estados=ESTADOS, grupos=GRUPOS, relaciones=RELACIONES, logs=logs)
 
@@ -118,7 +119,10 @@ class TestSemaforo(unittest.TestCase):
         self.assertEqual(self._nivel(horas=2.0)[0], "ambar")
         self.assertEqual(self._nivel(horas=3.9)[0], "ambar")
         self.assertEqual(self._nivel(horas=4.0)[0], "rojo")
-        self.assertIn("5 h hábiles", self._nivel(horas=5.2)[1])
+        self.assertIn("5 h 12 min hábiles", self._nivel(horas=5.2)[1])      # lenguaje humano: nunca HH:MM:SS
+        self.assertIn("5 h hábiles", self._nivel(horas=5.0)[1])
+        self.assertIn("45 min hábiles", self._nivel(horas=0.75)[1])
+        self.assertNotIn(":", self._nivel(horas=0.5)[1].split("·")[1])
 
     def test_esperando_al_cliente_es_gris(self):
         self.assertEqual(self._nivel(status="propuesta_enviada")[0], "gris")
@@ -166,6 +170,118 @@ class TestSemaforo(unittest.TestCase):
         g = _enriquecer([_fila(horas_x=1)], horas=lambda d, a, fer: 9.0)[0]  # sin responder rojo, pero no agendada
         self.assertEqual(g["m_al_nivel"], "rojo")
         self.assertFalse(g["m_vencida"])
+
+
+class TestHorarioDeCobertura(unittest.TestCase):
+    """Daniel 2026-10-06: el reloj usa el mismo horario que el aviso de cobertura (08-17, colación 13-14), no 09-18."""
+
+    def test_colacion_no_corre(self):
+        # martes 12:00 → 15:00 = 1 h antes de la colación + 1 h después
+        self.assertEqual(rm.horas_cobertura(datetime(2026, 9, 29, 12, 0), datetime(2026, 9, 29, 15, 0), (), COB), 2.0)
+        # día completo = 8 h (9 h de horario menos 1 h de colación)
+        self.assertEqual(rm.horas_cobertura(datetime(2026, 9, 29, 0, 0), datetime(2026, 9, 30, 0, 0), (), COB), 8.0)
+
+    def test_fuera_de_horario_fin_de_semana_y_feriado_no_cuentan(self):
+        self.assertEqual(rm.horas_cobertura(datetime(2026, 9, 29, 17, 0), datetime(2026, 9, 30, 8, 0), (), COB), 0.0)
+        # viernes 16:00 → lunes 09:00: 1 h del viernes + 1 h del lunes
+        self.assertEqual(rm.horas_cobertura(datetime(2026, 10, 2, 16, 0), datetime(2026, 10, 5, 9, 0), (), COB), 2.0)
+        # con el lunes feriado no cuenta
+        self.assertEqual(rm.horas_cobertura(datetime(2026, 10, 2, 16, 0), datetime(2026, 10, 5, 9, 0), {"2026-10-05"}, COB), 1.0)
+        self.assertEqual(rm.horas_cobertura(datetime(2026, 9, 29, 15, 0), datetime(2026, 9, 29, 14, 0), (), COB), 0.0)
+
+    def test_se_lee_de_las_mismas_variables_que_el_aviso_de_cobertura(self):
+        import os
+        guardado = {k: os.environ.get(k) for k in ("RETIROS_COBERTURA_DESDE", "RETIROS_COBERTURA_HASTA",
+                                                  "RETIROS_COBERTURA_COLACION_DESDE", "RETIROS_COBERTURA_COLACION_HASTA")}
+        try:
+            for k in guardado:
+                os.environ.pop(k, None)
+            self.assertEqual(rm.cobertura_por_defecto(), COB)
+            os.environ["RETIROS_COBERTURA_DESDE"] = "09:00"
+            os.environ["RETIROS_COBERTURA_HASTA"] = "18:00"
+            self.assertEqual(rm.cobertura_por_defecto(), {"desde": 540, "hasta": 1080, "col_d": 780, "col_h": 840})
+            os.environ["RETIROS_COBERTURA_DESDE"] = "basura"
+            self.assertEqual(rm.cobertura_por_defecto()["desde"], 480)     # un valor roto cae al horario confirmado
+        finally:
+            for k, v in guardado.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_proxima_apertura(self):
+        ap = lambda *a: rm.proxima_apertura(datetime(*a), (), COB)   # noqa: E731
+        self.assertIsNone(ap(2026, 9, 29, 10, 0))                              # abierto
+        self.assertEqual(ap(2026, 9, 29, 13, 30), datetime(2026, 9, 29, 14, 0))   # colación
+        self.assertEqual(ap(2026, 9, 29, 6, 0), datetime(2026, 9, 29, 8, 0))      # antes de abrir
+        self.assertEqual(ap(2026, 9, 29, 22, 41), datetime(2026, 9, 30, 8, 0))    # de noche → mañana
+        self.assertEqual(ap(2026, 10, 2, 17, 30), datetime(2026, 10, 5, 8, 0))    # viernes tarde → lunes
+        self.assertEqual(rm.proxima_apertura(datetime(2026, 10, 2, 17, 30), {"2026-10-05"}, COB), datetime(2026, 10, 6, 8, 0))
+
+    def test_plazo_de_4_h_habiles_salta_la_colacion_y_la_noche(self):
+        hh = lambda d, h, f=(): rm.horas_cobertura(d, h, f, COB)   # noqa: E731
+        self.assertEqual(rm.plazo_sla(datetime(2026, 9, 29, 11, 0), 4.0, hh), datetime(2026, 9, 29, 16, 0))
+        llego_de_noche = rm.plazo_sla(datetime(2026, 9, 29, 22, 41), 4.0, hh)    # el reloj parte a las 08:00
+        self.assertEqual(llego_de_noche, datetime(2026, 9, 30, 12, 0))
+        self.assertEqual(rm.fmt_cuando(llego_de_noche, date(2026, 9, 29)), "mañana 12:00")
+
+    def test_textos_en_lenguaje_humano_sin_contador_en_cero(self):
+        self.assertEqual(rm.dur_habil(0), "menos de 1 min")
+        self.assertEqual(rm.dur_habil(45 * 60), "45 min hábiles")
+        self.assertEqual(rm.dur_habil(3600), "1 h hábil")
+        self.assertEqual(rm.dur_habil(4800), "1 h 20 min hábiles")
+        self.assertEqual(rm.dur_habil(9 * 3600), "9 h hábiles")
+        self.assertEqual(rm.dur_resta(2 * 3600 + 40 * 60), "2 h 40 min")
+        self.assertEqual(rm.fmt_cuando(datetime(2026, 9, 28, 22, 41), date(2026, 9, 29)), "ayer 22:41")
+
+    def test_llego_de_noche_no_dice_cero_dice_cuando_parte(self):
+        t = rm.textos_reloj(0, 4 * 3600, False, "22:41", "mañana 08:00", "mañana 12:00")
+        self.assertTrue(t["pausa0"])
+        self.assertEqual(t["pill"], "Llegó 22:41 · el reloj parte mañana 08:00")
+        self.assertEqual(t["sub"], "Plazo 4 h hábiles · vence mañana 12:00")
+        self.assertEqual(t["tag"], "")
+        for txt in t.values():
+            self.assertNotIn("00:00", str(txt))
+
+    def test_con_tiempo_acumulado_muestra_lo_que_queda_y_cuando_vence(self):
+        pausa = rm.textos_reloj(4800, 4 * 3600, False, "10:00", "mañana 08:00", "mañana 10:40")
+        self.assertFalse(pausa["pausa0"])
+        self.assertEqual(pausa["pill"], "Sin responder · 1 h 20 min hábiles")
+        self.assertEqual(pausa["tag"], "hasta mañana 08:00")
+        self.assertEqual(pausa["sub"], "Quedan 2 h 40 min hábiles · vence mañana 10:40")
+        corre = rm.textos_reloj(4800, 4 * 3600, True, "10:00", "", "hoy 15:40")
+        self.assertEqual(corre["tag"], "")
+        vencido = rm.textos_reloj(5 * 3600, 4 * 3600, True, "07:00", "", "hoy 12:00")
+        self.assertEqual(vencido["sub"], "Plazo vencido (vencía hoy 12:00): responder ya")
+
+    def test_si_quien_llama_pasa_horas_habiles_o_ventanas_se_usan_esas(self):
+        # pickups_module pasa su _cc_horas_habiles (ya alineado a la cobertura) y mon["ventanas"]: una sola definición del horario.
+        kw = dict(hoy=date(2026, 9, 29), ahora=datetime(2026, 9, 29, 22, 50),
+                  utc_a_chile=lambda d: d - timedelta(hours=3), td_hhmm=lambda t: "", estados={}, grupos=[], relaciones={})
+        f1 = dict(id=1, status="solicitud_recibida", created_at=datetime(2026, 9, 29, 14, 0))
+        rm.enriquecer_filas([f1], horas_habiles=lambda d, h, fer=(): 3.0, **kw)
+        self.assertEqual(f1["m_reloj"]["espera_s"], 3 * 3600)
+        self.assertEqual(f1["m_reloj"]["ventanas"], "480-780,840-1020")
+        f2 = dict(id=2, status="solicitud_recibida", created_at=datetime(2026, 9, 29, 14, 0))
+        rm.enriquecer_filas([f2], ventanas=[(540, 1080)], **kw)               # horario de 09 a 18 sin colación, venido del servidor
+        self.assertEqual(f2["m_reloj"]["ventanas"], "540-1080")
+        self.assertEqual(f2["m_reloj"]["espera_s"], 7 * 3600)                 # 11:00 → 18:00
+        self.assertEqual(f2["m_reloj"]["reanuda"], "mañana 09:00")
+
+    def test_la_fila_que_llego_de_noche_trae_el_reloj_en_pausa(self):
+        kw = dict(hoy=date(2026, 9, 29), ahora=datetime(2026, 9, 29, 22, 50), cobertura=COB,
+                  utc_a_chile=lambda d: d - timedelta(hours=3), td_hhmm=lambda t: "", estados={}, grupos=[], relaciones={})
+        nueva = dict(id=1, status="solicitud_recibida", created_at=datetime(2026, 9, 30, 1, 41))     # 22:41 Chile
+        vieja = dict(id=2, status="solicitud_recibida", created_at=datetime(2026, 9, 29, 14, 0))     # 11:00 Chile (6 h hábiles)
+        rm.enriquecer_filas([nueva, vieja], **kw)
+        r = nueva["m_reloj"]
+        self.assertFalse(r["abierta"])
+        self.assertTrue(r["pausa0"])
+        self.assertEqual((r["llego"], r["reanuda"], r["vence"]), ("22:41", "mañana 08:00", "mañana 12:00"))
+        self.assertEqual(r["pill"], "Llegó 22:41 · el reloj parte mañana 08:00")
+        self.assertEqual(nueva["m_al_nivel"], "verde")                       # nadie está atrasado: el reloj ni partió
+        self.assertEqual(vieja["m_reloj"]["espera_s"], 5 * 3600)             # 11:00-13:00 + 14:00-17:00
+        self.assertEqual(vieja["m_al_nivel"], "rojo")
 
 
 class TestEnriquecer(unittest.TestCase):
@@ -248,6 +364,48 @@ class TestEnriquecer(unittest.TestCase):
         self.assertEqual(g["m_carga_txt"], "3 bultos")
         self.assertFalse(g["m_sin_peso"])
 
+    def test_carga_nunca_muestra_cero_kg_como_si_fuera_un_dato(self):
+        # Daniel 2026-10-06: un retiro completado salía «0.0 kg · PV 0.0». Lo que no se midió no se muestra.
+        sin = _enriquecer([_fila(status="retirada", total_weight_kg=0, total_volumetric_weight=0)])[0]
+        self.assertTrue(sin["m_sin_peso"])
+        self.assertEqual(sin["m_carga_det"], [])
+        self.assertEqual(sin["m_m3_txt"], "")
+        # los valores reales (peso_real_kg / peso_vol_kg / total_volume_m3) mandan sobre los del formulario
+        real = _enriquecer([_fila(status="retirada", total_weight_kg=0, peso_real_kg=48.34, peso_vol_kg=51.0,
+                                  total_volume_m3=0.25)])[0]
+        self.assertFalse(real["m_sin_peso"])
+        self.assertEqual(real["m_carga_det"], ["48.3 kg", "PV 51.0"])
+        self.assertEqual(real["m_m3_txt"], "0.25 m³")
+        # solo uno de los dos pesos: se muestra únicamente ese
+        solo_pv = _enriquecer([_fila(peso_vol_kg=12.0)])[0]
+        self.assertEqual(solo_pv["m_carga_det"], ["PV 12.0"])
+        # volumen sin ceros de relleno
+        self.assertEqual(rm.fmt_m3(1.35), "1.35")
+        self.assertEqual(rm.fmt_m3(0.004), "0.004")
+        self.assertEqual(rm.fmt_m3(2), "2")
+
+    def test_quien_retira_es_el_mismo_cliente(self):
+        igual = _enriquecer([_fila(pickup_person_name="  JOSÉ núñez peña ")])[0]
+        self.assertTrue(igual["m_ret_mismo"])
+        por_rut = _enriquecer([_fila(pickup_person_name="Representante", pickup_person_rut="12345678-5")])[0]
+        self.assertTrue(por_rut["m_ret_mismo"])
+        otro = _enriquecer([_fila()])[0]                       # Pedro Soto, otro RUT
+        self.assertFalse(otro["m_ret_mismo"])
+        sin = _enriquecer([_fila(pickup_person_name="", pickup_person_rut="")])[0]
+        self.assertFalse(sin["m_ret_mismo"])
+
+    def test_orden_de_la_columna_tiempo_va_de_lo_mas_urgente_a_lo_menos(self):
+        sin_resp = _enriquecer([_fila(created_at=datetime(2026, 9, 29, 9, 0))])[0]       # 06:00 Chile: 9 h → rojo
+        ambar = _enriquecer([_fila(created_at=datetime(2026, 9, 29, 15, 30))])[0]        # 2,5 h → ámbar
+        verde = _enriquecer([_fila(status="agenda_confirmada", confirmed_date=date(2026, 10, 5))])[0]
+        gris = _enriquecer([_fila(status="propuesta_enviada")])[0]
+        orden = [f["m_tiempo_ord"] for f in (sin_resp, ambar, verde, gris)]
+        self.assertEqual(orden, sorted(orden, reverse=True))
+        self.assertEqual(len(set(orden)), 4)
+        # entre dos rojos, el que más espera va primero
+        peor = _enriquecer([_fila(created_at=datetime(2026, 9, 29, 8, 0))])[0]
+        self.assertGreater(peor["m_tiempo_ord"], sin_resp["m_tiempo_ord"])
+
     def test_calidad_de_retiro_interno_no_se_muestra_como_cero(self):
         interno = _enriquecer([_fila(request_source="backoffice", information_quality_score=0)])[0]
         self.assertTrue(interno["m_cal_na"])
@@ -285,6 +443,9 @@ class TestEnriquecer(unittest.TestCase):
         self.assertEqual(c["Fecha de retiro"], "01-10-2026")
         self.assertEqual(c["Horario"], "09:00-09:30")
         self.assertEqual(c["Canal"], "Web")
+        self.assertEqual(c["Responder antes de"], "las 19:00")   # el plazo del reloj de respuesta (columna Tiempo); aquí el reloj de prueba es corrido
+        retirado = _enriquecer([_fila(status="retirada")])[0]["m_csv"]
+        self.assertEqual(retirado["Responder antes de"], "")
 
     def test_linea_de_tiempo_solo_lo_entendible_y_maximo_4(self):
         logs = {1: [
@@ -433,14 +594,18 @@ class TestPlazoSla(unittest.TestCase):
         self.assertEqual(rm.fmt_plazo(p, date(2026, 10, 2)), "el mar 06-10 12:00")
 
     def test_la_fila_trae_el_reloj(self):
-        kw = dict(hoy=date(2026, 9, 29), ahora=datetime(2026, 9, 29, 11, 30), horas_habiles=self._hh,
+        # Horario de COBERTURA real (lun-vie 08:00-17:00, colación 13:00-14:00 que no corre), no el 09-18 del Centro de control
+        kw = dict(hoy=date(2026, 9, 29), ahora=datetime(2026, 9, 29, 11, 30), cobertura=COB,
                   utc_a_chile=lambda d: d - timedelta(hours=3), td_hhmm=lambda t: "",
                   estados={}, grupos=[], relaciones={})
         sin_resp = dict(id=1, status="solicitud_recibida", created_at=datetime(2026, 9, 29, 14, 0))  # 11:00 Chile
         retirado = dict(id=2, status="retirada", created_at=datetime(2026, 9, 29, 14, 0))
         rm.enriquecer_filas([sin_resp, retirado], **kw)
         self.assertEqual(sin_resp["m_reloj"]["espera_s"], 1800)     # 11:00 → 11:30
-        self.assertEqual(sin_resp["m_reloj"]["plazo_txt"], "las 15:00")
+        self.assertEqual(sin_resp["m_reloj"]["plazo_txt"], "las 16:00")   # 11:00 + 4 h hábiles, saltando la colación 13-14
+        self.assertEqual(sin_resp["m_reloj"]["vence"], "hoy 16:00")
+        self.assertTrue(sin_resp["m_reloj"]["abierta"])
+        self.assertEqual(sin_resp["m_reloj"]["ventanas"], "480-780,840-1020")   # los tramos viajan al navegador (data-ventanas)
         self.assertIsNone(retirado["m_reloj"])
 
 

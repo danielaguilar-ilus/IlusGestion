@@ -33,6 +33,7 @@ def test_caso_real_gerd():
     assert a["listo_esperando_min"] == 30
     assert a["salida"] == "05/10/2026 08:56"
     assert a["vs_cita_min"] == 124           # salió 2 h 4 min antes de la cita
+    assert a["listo_antes_cita_min"] == 154 and a["listo_en"] == "05/10/2026 08:26"   # picking listo 2 h 34 min antes
     assert a["pausas"] == [{"desde": "05/10/2026 08:26", "hasta": "05/10/2026 08:56", "min": 30, "reloj_min": 30, "noche": False}]
     assert not a["en_curso"] and not a["sin_noches"]
 

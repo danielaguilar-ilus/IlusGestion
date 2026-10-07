@@ -9,6 +9,7 @@ definición de SLA en todo el proyecto (la del Centro de control).
 Solo datos reales: nada estimado ni inventado (ilus_design_system).
 Fechas: created_at viene en UTC; las fechas y horas de agenda ya están en hora Chile.
 """
+import os
 import re
 import unicodedata
 from datetime import date, datetime, timedelta
@@ -97,6 +98,141 @@ def iniciales(nombre):
     return "".join(p[0] for p in partes[:2]).upper()
 
 
+def fmt_m3(v):
+    """Volumen en m³ sin ceros de relleno: 0.25, 1.35, 0.004."""
+    return f"{float(v):.3f}".rstrip("0").rstrip(".")
+
+
+# ── Horario de cobertura (Daniel 2026-10-06) ─────────────────────────────────
+# Lunes a viernes hábiles 08:00–17:00 con colación 13:00–14:00 que no corre. Es el MISMO horario que
+# _cobertura_estado() de pickups_module (env RETIROS_COBERTURA_DESDE / _HASTA / _COLACION_DESDE / _COLACION_HASTA):
+# el reloj de «Sin responder» cuenta solo mientras hay alguien para responder. Las ventanas viajan al navegador
+# (data-cob) para que el reloj en vivo use los mismos números, sin duplicarlos en el JS.
+def _hhmm_env(nombre, defecto):
+    v = (os.environ.get(nombre) or defecto).strip()
+    try:
+        h, m = v.split(":")[:2]
+        return max(0, min(int(h) * 60 + int(m), 24 * 60))
+    except (ValueError, TypeError):
+        h, m = defecto.split(":")
+        return int(h) * 60 + int(m)
+
+
+def cobertura_por_defecto():
+    """Ventanas de cobertura en minutos del día: {'desde', 'hasta', 'col_d', 'col_h'}."""
+    return {"desde": _hhmm_env("RETIROS_COBERTURA_DESDE", "08:00"), "hasta": _hhmm_env("RETIROS_COBERTURA_HASTA", "17:00"),
+            "col_d": _hhmm_env("RETIROS_COBERTURA_COLACION_DESDE", "13:00"),
+            "col_h": _hhmm_env("RETIROS_COBERTURA_COLACION_HASTA", "14:00")}
+
+
+def _ventanas(cob):
+    """Tramos del día que corren: antes y después de la colación (si la colación cae dentro del horario).
+    Acepta también la lista de tramos [(480, 780), (840, 1020)] que entrega pickups_module (mon["ventanas"])."""
+    if not isinstance(cob, dict):
+        return [(int(a), int(b)) for a, b in cob]
+    d, h, cd, ch = cob["desde"], cob["hasta"], cob["col_d"], cob["col_h"]
+    if d < cd < ch < h:
+        return [(d, cd), (ch, h)]
+    return [(d, h)]
+
+
+def fmt_ventanas(ventanas):
+    """«480-780,840-1020»: lo que lee el reloj del navegador (data-ventanas)."""
+    return ",".join(f"{a}-{b}" for a, b in _ventanas(ventanas))
+
+
+def _dia_habil(dia, feriados):
+    return dia.weekday() < 5 and dia.isoformat() not in feriados
+
+
+def horas_cobertura(desde, hasta, feriados=(), cob=None):
+    """Horas de cobertura (lun-vie, sin feriados, sin colación) entre dos datetimes naive en hora Chile."""
+    cob = cob or cobertura_por_defecto()
+    if not desde or not hasta or hasta <= desde:
+        return 0.0
+    ventanas, total, dia = _ventanas(cob), 0.0, desde.date()
+    for _ in range(62):
+        if dia > hasta.date():
+            break
+        if _dia_habil(dia, feriados):
+            base = datetime.combine(dia, datetime.min.time())
+            for a, b in ventanas:
+                ini, fin = max(base + timedelta(minutes=a), desde), min(base + timedelta(minutes=b), hasta)
+                if fin > ini:
+                    total += (fin - ini).total_seconds() / 3600.0
+        dia += timedelta(days=1)
+    return round(total, 4)
+
+
+def proxima_apertura(ahora, feriados=(), cob=None):
+    """None si ahora hay cobertura; si no, el próximo momento (hora Chile) en que el reloj vuelve a correr."""
+    cob = cob or cobertura_por_defecto()
+    ventanas, dia = _ventanas(cob), ahora.date()
+    for k in range(0, 22):
+        d = dia + timedelta(days=k)
+        if not _dia_habil(d, feriados):
+            continue
+        base = datetime.combine(d, datetime.min.time())
+        for a, b in ventanas:
+            ini, fin = base + timedelta(minutes=a), base + timedelta(minutes=b)
+            if k == 0 and ini <= ahora < fin:
+                return None
+            if ini > ahora:
+                return ini
+    return None
+
+
+def fmt_cuando(dt, hoy):
+    """«hoy 14:00», «mañana 08:00», «ayer 22:41», «lun 12-10 08:00»."""
+    if not dt:
+        return ""
+    hhmm = dt.strftime("%H:%M")
+    delta = (dt.date() - hoy).days
+    if delta == 0:
+        return f"hoy {hhmm}"
+    if delta == 1:
+        return f"mañana {hhmm}"
+    if delta == -1:
+        return f"ayer {hhmm}"
+    return f"{DIAS_CORTOS[dt.weekday()]} {dt.strftime('%d-%m')} {hhmm}"
+
+
+def dur_habil(seg):
+    """Tiempo hábil en lenguaje humano, nunca HH:MM:SS: «45 min hábiles», «1 h 20 min hábiles», «9 h hábiles»."""
+    seg = max(int(seg), 0)
+    if seg < 60:
+        return "menos de 1 min"
+    h, m = seg // 3600, seg % 3600 // 60
+    if h == 0:
+        return f"{m} min hábiles"
+    if m == 0:
+        return f"{h} h hábil" if h == 1 else f"{h} h hábiles"
+    return f"{h} h {m} min hábiles"
+
+
+def dur_resta(seg):
+    """«2 h 40 min», «15 min» (redondeado hacia arriba al minuto)."""
+    min_ = -(-max(int(seg), 0) // 60)
+    h, m = divmod(min_, 60)
+    return (f"{h} h {m} min" if m else f"{h} h") if h else f"{m} min"
+
+
+def textos_reloj(espera_s, rojo_s, abierta, llego_txt, reanuda_txt, vence_txt):
+    """Lo que dice la celda «Tiempo» de una solicitud sin responder (el navegador usa la misma lógica, en vivo).
+    pill: qué pasa; tag: «en pausa» junto a la barra; sub: qué queda y a qué hora vence; pausa0: aún no corre el reloj."""
+    plazo_h = f"{rojo_s / 3600:g} h hábiles"
+    if not abierta and espera_s < 60:
+        return {"pausa0": True, "tag": "",
+                "pill": f"Llegó {llego_txt} · el reloj parte {reanuda_txt}".strip(),
+                "sub": f"Plazo {plazo_h}" + (f" · vence {vence_txt}" if vence_txt else "")}
+    if espera_s >= rojo_s:
+        sub = "Plazo vencido" + (f" (vencía {vence_txt})" if vence_txt else "") + ": responder ya"
+    else:
+        sub = f"Quedan {dur_resta(rojo_s - espera_s)} hábiles" + (f" · vence {vence_txt}" if vence_txt else "")
+    return {"pausa0": False, "pill": f"Sin responder · {dur_habil(espera_s)}",
+            "tag": "" if abierta else f"hasta {reanuda_txt}".strip(), "sub": sub}
+
+
 def plural(n, singular, plural_):
     return f"{n} {singular if n == 1 else plural_}"
 
@@ -177,7 +313,7 @@ def _alerta(st, dias, ini_min, ahora_min, horas_espera, sla_ambar, sla_rojo):
         nivel = "rojo" if horas_espera >= sla_rojo else ("ambar" if horas_espera >= sla_ambar else "verde")
         ico = {"rojo": "bi-exclamation-octagon-fill", "ambar": "bi-exclamation-triangle-fill",
                "verde": "bi-check-circle-fill"}[nivel]
-        return nivel, f"Sin responder · {fmt_horas_habiles(horas_espera)}", ico
+        return nivel, f"Sin responder · {dur_habil(horas_espera * 3600)}", ico
     if st in ESPERA_CLIENTE:
         return "gris", "Esperando al cliente", "bi-hourglass-split"
     if st in AGENDADOS:
@@ -221,11 +357,20 @@ def _timeline(logs, estados, utc_a_chile):
     return salida
 
 
-def enriquecer_filas(rows, *, hoy, ahora, horas_habiles, utc_a_chile, td_hhmm, estados, grupos,
-                     relaciones, feriados=(), sla_ambar=2.0, sla_rojo=4.0, logs=None):
+def enriquecer_filas(rows, *, hoy, ahora, horas_habiles=None, utc_a_chile, td_hhmm, estados, grupos,
+                     relaciones, feriados=(), sla_ambar=2.0, sla_rojo=4.0, logs=None, cobertura=None, reloj_horas=None, ventanas=None):
     """Agrega a cada fila (dict) las claves `m_*` que usa la tabla del Monitor.
-    No cambia ninguna clave existente."""
+    No cambia ninguna clave existente.
+
+    El reloj de «Sin responder» (semáforo, tiempo transcurrido y plazo) usa el horario de COBERTURA (lun-vie 08:00-17:00,
+    colación 13:00-14:00), igual que el aviso de horario de pickups_module. Una sola definición: si quien llama pasa
+    `horas_habiles` (pickups_module._cc_horas_habiles, ya alineado a la cobertura) se usa esa; si no, el cálculo propio con
+    `ventanas` (lista de tramos en minutos del día, mon["ventanas"]) o `cobertura` (dict) o las variables RETIROS_COBERTURA_*."""
     logs = logs or {}
+    cob = ventanas or cobertura or cobertura_por_defecto()      # tramos de pickups_module (mon["ventanas"]) > cobertura > variables de entorno
+    abierta_ahora = proxima_apertura(ahora, feriados, cob) is None
+    # `reloj_horas` (d, h, feriados) -> horas: solo para pruebas; en producción manda el horario de cobertura.
+    horas_cob = reloj_horas or horas_habiles or (lambda d, h, f=(): horas_cobertura(d, h, f, cob))   # noqa: E731
     grupo_de = {}
     for g in grupos:
         for s in g["statuses"]:
@@ -249,15 +394,23 @@ def enriquecer_filas(rows, *, hoy, ahora, horas_habiles, utc_a_chile, td_hhmm, e
 
         horas_espera = 0.0
         if st in POR_RESPONDER and creado:
-            horas_espera = horas_habiles(creado, ahora, feriados)
+            horas_espera = horas_cob(creado, ahora, feriados)
         nivel, al_txt, al_ico = _alerta(st, dias, ini_min, ahora_min, horas_espera, sla_ambar, sla_rojo)
         # Reloj en vivo del "Sin responder" (Daniel 2026-09-29): tiempo hábil ya
         # transcurrido + hora límite; static/retiros_monitor.js lo hace avanzar.
         reloj = None
         if st in POR_RESPONDER and creado:
-            reloj = {"espera_s": int(horas_espera * 3600),
+            plazo_dt = plazo_sla(creado, sla_rojo, horas_cob, feriados)
+            apertura = proxima_apertura(ahora, feriados, cob)
+            espera_s = int(horas_espera * 3600)
+            llego_txt = creado.strftime("%H:%M") if creado.date() == hoy else fmt_cuando(creado, hoy)
+            reloj = {"espera_s": espera_s,
                      "pct": min(100, int(horas_espera / sla_rojo * 100)) if sla_rojo else 100,
-                     "plazo_txt": fmt_plazo(plazo_sla(creado, sla_rojo, horas_habiles, feriados), hoy)}
+                     "plazo_txt": fmt_plazo(plazo_dt, hoy),
+                     "abierta": abierta_ahora, "ventanas": fmt_ventanas(cob),
+                     "llego": llego_txt, "vence": fmt_cuando(plazo_dt, hoy),
+                     "reanuda": fmt_cuando(apertura, hoy) if apertura else ""}
+            reloj.update(textos_reloj(espera_s, int(sla_rojo * 3600), abierta_ahora, llego_txt, reloj["reanuda"], reloj["vence"]))
 
         if fch and activo:
             rel_nivel = "rojo" if dias < 0 else ("ambar" if dias == 0 else "verde")
@@ -322,6 +475,16 @@ def enriquecer_filas(rows, *, hoy, ahora, horas_habiles, utc_a_chile, td_hhmm, e
         r["m_doc_val_nivel"], r["m_doc_val_txt"] = doc_val
         r["m_carga_txt"] = plural(bultos, "bulto", "bultos")
         r["m_sin_peso"] = kg == 0 and pv == 0
+        # Piezas de la carga para la tabla (Daniel 2026-10-06): jamás «0.0 kg» como si fuera un dato;
+        # lo que no se midió no se muestra y, si no hay nada, la tabla dice «Peso por confirmar».
+        r["m_carga_det"] = ([f"{kg:.1f} kg"] if kg > 0 else []) + ([f"PV {pv:.1f}"] if pv > 0 else [])
+        r["m_m3_txt"] = f"{fmt_m3(m3)} m³" if m3 > 0 else ""
+        # Quién retira: si es el mismo cliente (mismo nombre o mismo RUT) se dice una sola vez.
+        _p_nom, _p_rut = norm(r.get("pickup_person_name")), _solo_alfanum(r.get("pickup_person_rut"))
+        r["m_ret_mismo"] = bool(_p_nom) and (_p_nom == norm(r.get("customer_name")) or (
+            _p_rut != "" and _p_rut == _solo_alfanum(r.get("customer_rut"))))
+        # Orden de la columna «Tiempo»: primero lo más urgente (semáforo) y, a igual color, lo que más espera.
+        r["m_tiempo_ord"] = {"rojo": 3, "ambar": 2, "verde": 1}.get(nivel, 0) * 10_000_000 + (reloj["espera_s"] if reloj else 0)
         r["m_cal_na"] = cal_na
         r["m_cal"] = cal
         r["m_timeline"] = _timeline(logs.get(int(r["id"])) if r.get("id") is not None else None,
@@ -343,6 +506,7 @@ def enriquecer_filas(rows, *, hoy, ahora, horas_habiles, utc_a_chile, td_hhmm, e
             "Responsable": resp, "Fecha de retiro": fch.strftime("%d-%m-%Y") if fch else "",
             "Horario": f"{desde}-{hasta}" if desde and hasta else "", "Bultos": bultos, "Peso kg": round(kg, 1),
             "Peso volumétrico": round(pv, 1), "Volumen m3": round(m3, 3), "Semáforo": al_txt,
+            "Responder antes de": reloj["plazo_txt"] if reloj else "",
             "Creada": r["m_creado_txt"], "Canal": origen,
         }
     return rows

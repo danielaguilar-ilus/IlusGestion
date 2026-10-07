@@ -52,13 +52,14 @@
     <div class="rm-kpi-head"><span class="rm-kpi-lbl">Tasa confirmación 30d</span><i class="bi bi-graph-up-arrow"></i></div>
     <div class="rm-kpi-num">{% if kpis.tasa_conf is not none %}{{ kpis.tasa_conf }}<small>%</small>{% else %}—{% endif %}</div>
     <div class="rm-kpi-foot">{{ chip_delta(_t.get('delta'), 'vs. 30 días antes') }}</div>
+    {% if kpis.tasa_base is defined %}<div class="rm-kpi-foot"><span>Sobre {{ kpis.tasa_base }} ya decididas{% if kpis.tasa_pend %} · {{ kpis.tasa_pend }} aún en gestión{% endif %}</span></div>{% endif %}
     {{ linea_svg(_t.get('spark')) }}
   </div>
 
   {# 3 · Ciclo promedio #}
   {% set _c = _kx.get('ciclo') or {} %}
   <div class="rm-kpi" style="--acc:#3b82f6">
-    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Ciclo promedio 90d</span><i class="bi bi-stopwatch"></i></div>
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Ciclo promedio 90d</span><i class="bi bi-stopwatch" title="Desde la solicitud hasta el retiro: incluye los días que el cliente eligió esperar"></i></div>
     <div class="rm-kpi-num">{% if kpis.ciclo_h is not none %}{{ kpis.ciclo_h }}<small>h</small>{% else %}—{% endif %}</div>
     <div class="rm-kpi-foot">{{ chip_delta(_c.get('delta'), 'vs. 90 días antes') }}</div>
     {{ linea_svg(_c.get('spark')) }}
@@ -89,6 +90,46 @@
     <div class="rm-kpi-head"><span class="rm-kpi-lbl">Mensajes sin leer</span><i class="bi bi-chat-dots"></i></div>
     <div class="rm-kpi-num" id="rkKpiMsgs">{{ kpis.msgs }}</div>
     <div class="rm-kpi-foot"><span>Mensajes de clientes por leer</span></div>
+  </div>
+</section>
+
+{# ── Gestión operacional (Daniel 2026-10-06: «medirlo… prometer tiempo controlado, gestión de retiro a nivel de gerencia operacional
+   logística»). 30 días. Datos: pickup_dashboard → kx.ope. Las tarjetas sin datos dicen por qué, nunca un 0 inventado. #}
+{% set _o = _kx.get('ope') or {} %}
+<section class="rm-kpis" aria-label="Gestión operacional de retiros (30 días)">
+  {% set _r = _o.get('resp') %}
+  <div class="rm-kpi" style="--acc:{{ '#16a34a' if _r and _r.nivel == 'verde' else ('#f59e0b' if _r and _r.nivel == 'ambar' else '#dc2626') }}">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Primera respuesta 30d</span><i class="bi bi-reply-fill" title="Desde que llega la solicitud hasta la primera gestión de una persona del equipo, en horas hábiles de cobertura (08:00–17:00, sin colación)"></i></div>
+    {% if _r %}
+    <div class="rm-kpi-num">{{ _r.prom }}</div>
+    <div class="rm-kpi-foot"><span class="rm-pill {{ _r.nivel }}" style="margin-top:0">{{ _r.en_sla }}% dentro de {{ _r.sla }}</span></div>
+    <div class="rm-kpi-foot"><span>Mediana {{ _r.mediana }} · {{ _r.n }} solicitudes{% if _r.sin %} · {{ _r.sin }} sin gestión aún{% endif %}</span></div>
+    {% else %}<div class="rm-kpi-num">—</div><div class="rm-kpi-foot"><span>Sin solicitudes gestionadas en 30 días</span></div>{% endif %}
+  </div>
+  {% set _p = _o.get('prep') %}
+  <div class="rm-kpi" style="--acc:#0a0a0a">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Preparación en bodega</span><i class="bi bi-box-seam-fill" title="Según las OT de Check: tiempo con al menos una OT abierta (lo que realmente tomó preparar). Las noches y fines de semana no se cuentan."></i></div>
+    {% if _p %}
+    <div class="rm-kpi-num">{{ _p.efectivo }}<small>min</small></div>
+    <div class="rm-kpi-foot"><span>Promedio de {{ _p.n }} retiros{% if _p.pausas %} · pausas {{ _p.pausas }} min{% endif %}</span></div>
+    {% if _p.min_unidad %}<div class="rm-kpi-foot"><span>Picking: {{ _p.min_unidad }} min por unidad</span></div>{% endif %}
+    {% else %}<div class="rm-kpi-num">—</div><div class="rm-kpi-foot"><span>Se llena solo al abrir las fichas con OT de Check</span></div>{% endif %}
+  </div>
+  {% set _l = _o.get('listo') %}
+  <div class="rm-kpi" style="--acc:{{ '#16a34a' if _l and _l.nivel == 'verde' else ('#f59e0b' if _l and _l.nivel == 'ambar' else '#dc2626') }}">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Listo antes de la cita</span><i class="bi bi-alarm-fill" title="Pedidos cuyo picking en Check terminó antes de la hora de la cita del cliente"></i></div>
+    {% if _l %}
+    <div class="rm-kpi-num">{{ _l.pct }}<small>%</small></div>
+    <div class="rm-kpi-foot"><span class="rm-pill {{ _l.nivel }}" style="margin-top:0">{{ _l.listos }} de {{ _l.n }} con cita</span></div>
+    {% else %}<div class="rm-kpi-num">—</div><div class="rm-kpi-foot"><span>Aún sin retiros con cita y picking en Check</span></div>{% endif %}
+  </div>
+  {% set _a = _o.get('asig') %}
+  <div class="rm-kpi" style="--acc:#3b82f6">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Reacción de bodega</span><i class="bi bi-lightning-charge-fill" title="Desde que se asigna la OT en Check hasta que el operario la empieza (sin contar noches ni fines de semana)"></i></div>
+    {% if _a %}
+    <div class="rm-kpi-num">{{ _a.prom }}<small>min</small></div>
+    <div class="rm-kpi-foot"><span>OT asignada → empezada · {{ _a.n }} retiros</span></div>
+    {% else %}<div class="rm-kpi-num">—</div><div class="rm-kpi-foot"><span>Check aún no informa asignaciones</span></div>{% endif %}
   </div>
 </section>
 

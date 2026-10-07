@@ -192,6 +192,10 @@ def analizar(ots, cita=None, ahora=None, jor=None):
     salida = sal[0]["ini"] if sal else None
     c = _fecha(cita)
     vs_cita = round((c - salida).total_seconds() / 60) if (c and salida) else None
+    # ¿El pedido estaba LISTO antes de la cita? (lo que más le importa al cliente: llegar y que esté preparado). Minutos entre el fin del
+    # picking y la hora de la cita: positivo = listo antes; negativo = se terminó de preparar después de la hora acordada.
+    pk_fin = max((t["fin"] for t in pk if not t["curso"]), default=None) if pk and not any(t["curso"] for t in pk) else None
+    listo_vs_cita = round((c - pk_fin).total_seconds() / 60) if (c and pk_fin) else None
 
     # Por producto (Daniel 2026-10-06: «registro de cuánto se tarda por producto en promedio»): los minutos de cada OT de PICKING se reparten
     # entre sus líneas según las unidades ejecutadas; así, sumando muchos retiros, sale el promedio de minutos por unidad de cada SKU.
@@ -224,7 +228,7 @@ def analizar(ots, cita=None, ahora=None, jor=None):
         "principio_fin_min": round(pf["min"]), "reloj_min": round(pf["reloj"]),
         "pausas_min": max(0, round(pf["min"] - efectivo)), "pausas": pausas, "sin_noches": bool(pf["pausa"] or noches),
         "listo_esperando_min": listo, "espera_asignacion_min": espera_asig,
-        "salida": _fmt(salida), "vs_cita_min": vs_cita,
+        "salida": _fmt(salida), "vs_cita_min": vs_cita, "listo_antes_cita_min": listo_vs_cita, "listo_en": _fmt(pk_fin),
         "ots": [{"ot": t["ot"], "tipo": t["tipo"], "inicio": _fmt(t["ini"]), "fin": None if t["curso"] else _fmt(t["fin"]),
                  "min": t["min"], "en_curso": t["curso"]} for t in tramos],
     }

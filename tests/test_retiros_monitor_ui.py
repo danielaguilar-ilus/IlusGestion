@@ -47,7 +47,8 @@ console.log(JSON.stringify(out));
 def F(**kw):
     """Fila tal como la lee el navegador desde los data-*."""
     base = dict(orden=0, id="1", search="", grupo="por_revisar", alerta="verde", resp="", fecha="", dias=None,
-                semana=False, vencida=False, req="", conf="", creado=0, cliente="", bultos=0, cal=0, estadoIdx=0)
+                semana=False, vencida=False, req="", conf="", creado=0, cliente="", bultos=0, cal=0, estadoIdx=0,
+                tiempo=None)
     base.update(kw)
     return base
 
@@ -104,6 +105,92 @@ class TestLogicaDelNavegador(unittest.TestCase):
             "sf_ok": ["coincide", [F(fecha=""), {"fecha": "sin_fecha"}]], "sf_no": ["coincide", [F(fecha="2026-10-01"), {"fecha": "sin_fecha"}]]})
         self.assertEqual([r[k] for k in ("conf", "req", "prop", "man_ok", "man_no", "sem_ok", "sem_no", "ven_ok", "ven_no", "sf_ok", "sf_no")],
                          [True, True, False, True, False, True, False, True, False, True, False])
+
+    def test_por_defecto_el_monitor_no_muestra_las_ya_retiradas(self):
+        # Daniel 2026-10-06: «deja por defecto el filtro excluyendo las ya retiradas».
+        ret, act = F(grupo="retirada"), F(grupo="preparacion")
+        r = _node({
+            "ret_oculta": ["coincide", [ret, {"grupo": "__activos__"}]], "act_visible": ["coincide", [act, {"grupo": "__activos__"}]],
+            "todos": ["coincide", [ret, {"grupo": ""}]],                                  # «Todos» las incluye
+            "solo_ret": ["coincide", [ret, {"grupo": "retirada"}]],                       # el chip «Retirada» sigue mostrándolas
+            "solo_ret_no": ["coincide", [act, {"grupo": "retirada"}]],
+            "cancel": ["coincide", [F(grupo="canceladas"), {"grupo": "__activos__"}]],   # cerradas/rechazadas no son «retiradas»
+            "con_busqueda": ["coincide", [ret, {"grupo": "__activos__", "terms": ["x"]}]]})
+        self.assertEqual([r[k] for k in ("ret_oculta", "act_visible", "todos", "solo_ret", "solo_ret_no", "cancel", "con_busqueda")],
+                         [False, True, True, True, False, True, False])
+
+    def test_contadores_con_activos_son_coherentes_con_las_filas(self):
+        filas = [F(id="1", grupo="por_revisar"), F(id="2", grupo="retirada"), F(id="3", grupo="retirada"), F(id="4", grupo="preparacion")]
+        st = {"grupo": "__activos__"}
+        r = _node({"g": ["conteos", [filas, st, "grupo"]]})
+        # «Todos» = 4; «Retirada» = 2; «Activos» = Todos - Retirada = las filas que se ven
+        self.assertEqual((r["g"]["__total__"], r["g"].get("retirada")), (4, 2))
+        visibles = [f for f in filas if _node({"v": ["coincide", [f, st]]})["v"]]
+        self.assertEqual(len(visibles), r["g"]["__total__"] - r["g"]["retirada"])
+
+    def test_reloj_de_respuesta_en_el_navegador_mismas_reglas_que_el_servidor(self):
+        V = [[480, 780], [840, 1020]]
+        r = _node({
+            "cob": ["parseVentanas", ["480-780,840-1020"]], "rota": ["parseVentanas", ["x,y"]],
+            "abierto": ["enCobertura", [630, "Tue", True, V]],
+            "colacion": ["enCobertura", [800, "Tue", True, V]],
+            "noche": ["enCobertura", [1300, "Tue", True, V]],
+            "sabado": ["enCobertura", [630, "Sat", True, V]],
+            "feriado": ["enCobertura", [630, "Mon", False, V]],
+            "a1": ["proximaApertura", [1300, "Tue", True, V]],
+            "a2": ["proximaApertura", [1100, "Fri", True, V]],
+            "a3": ["proximaApertura", [800, "Wed", True, V]],
+            "a4": ["proximaApertura", [300, "Wed", True, V]]})
+        self.assertEqual(r["cob"], V)
+        self.assertEqual(r["rota"], V)                                    # sin los tramos del servidor: el horario confirmado
+        self.assertEqual([r[k] for k in ("abierto", "colacion", "noche", "sabado", "feriado")], [True, False, False, False, False])
+        self.assertEqual([r[k] for k in ("a1", "a2", "a3", "a4")], ["mañana 08:00", "lun 08:00", "hoy 14:00", "hoy 08:00"])
+
+    def test_reloj_humano_sin_contador_en_cero_ni_hh_mm_ss(self):
+        r = _node({
+            "d0": ["durHumana", [0, False]], "d45": ["durHumana", [2700, False]], "viva": ["durHumana", [725, True]],
+            "h": ["durHumana", [4800, False]], "h1": ["durHumana", [3600, False]], "h9": ["durHumana", [9 * 3600, False]],
+            "hviva": ["durHumana", [4800, True]],                                       # desde 1 h ya no hay segundos
+            "noche": ["textoReloj", [{"espera": 0, "rojo": 14400, "abierta": False, "llego": "22:41", "reanuda": "mañana 08:00", "vence": "mañana 12:00"}]],
+            "pausa": ["textoReloj", [{"espera": 4800, "rojo": 14400, "abierta": False, "llego": "10:00", "reanuda": "mañana 08:00", "vence": "mañana 10:40"}]],
+            "corre": ["textoReloj", [{"espera": 125, "rojo": 14400, "abierta": True, "llego": "10:00", "reanuda": "", "vence": "hoy 15:00"}]],
+            "vencido": ["textoReloj", [{"espera": 18000, "rojo": 14400, "abierta": True, "llego": "07:00", "reanuda": "", "vence": "hoy 12:00"}]]})
+        self.assertEqual((r["d0"], r["d45"], r["viva"]), ("menos de 1 min", "45 min hábiles", "12:05 min"))   # mm:ss solo si es menos de 1 h y corre
+        self.assertEqual((r["h"], r["h1"], r["h9"], r["hviva"]), ("1 h 20 min hábiles", "1 h hábil", "9 h hábiles", "1 h 20 min hábiles"))
+        # llegó de noche: dice qué pasa, jamás «00:00:00», sin barra (pausa0)
+        self.assertEqual(r["noche"]["pill"], "Llegó 22:41 · el reloj parte mañana 08:00")
+        self.assertEqual(r["noche"]["sub"], "Plazo 4 h hábiles · vence mañana 12:00")
+        self.assertTrue(r["noche"]["pausa0"])
+        self.assertEqual(r["pausa"]["pill"], "Sin responder · 1 h 20 min hábiles")
+        self.assertEqual(r["pausa"]["tag"], "hasta mañana 08:00")
+        self.assertEqual(r["pausa"]["sub"], "Quedan 2 h 40 min hábiles · vence mañana 10:40")
+        self.assertEqual(r["corre"]["pill"], "Sin responder · 02:05 min")
+        self.assertEqual(r["corre"]["tag"], "")
+        self.assertEqual(r["vencido"]["sub"], "Plazo vencido (vencía hoy 12:00): responder ya")
+        for k in ("noche", "pausa", "corre", "vencido"):
+            self.assertNotRegex(" ".join(str(v) for v in r[k].values()), r"\d\d:\d\d:\d\d")
+
+    def test_servidor_y_navegador_dicen_lo_mismo(self):
+        import retiros_monitor as m
+        casos = [(0, False), (4800, False), (4800, True), (18000, True), (30, False), (2700, False)]
+        entradas = {f"c{i}": ["textoReloj", [{"espera": e, "rojo": 14400, "abierta": a, "llego": "10:00", "reanuda": "mañana 08:00", "vence": "hoy 15:00"}]]
+                    for i, (e, a) in enumerate(casos)}
+        js = _node(entradas)
+        for i, (e, a) in enumerate(casos):
+            py = m.textos_reloj(e, 14400, a, "10:00", "mañana 08:00", "hoy 15:00")
+            if a and e < 3600 and e >= 60:
+                continue          # corriendo y con menos de 1 h el navegador muestra mm:ss en vivo (el servidor, minutos)
+            self.assertEqual(py["pill"], js[f"c{i}"]["pill"], casos[i])
+            self.assertEqual(py["sub"], js[f"c{i}"]["sub"], casos[i])
+            self.assertEqual(py["tag"], js[f"c{i}"]["tag"], casos[i])
+            self.assertEqual(py["pausa0"], js[f"c{i}"]["pausa0"], casos[i])
+
+    def test_orden_por_tiempo_lo_mas_urgente_primero_y_sin_dato_al_final(self):
+        filas = [F(orden=0, id="gris", tiempo=0), F(orden=1, id="rojo", tiempo=30000000 + 900), F(orden=2, id="verde", tiempo=10000000),
+                 F(orden=3, id="sin", tiempo=None), F(orden=4, id="ambar", tiempo=20000000)]
+        r = _node({"d": ["ordenar", [filas, "tiempo", "desc"]], "a": ["ordenar", [filas, "tiempo", "asc"]]})
+        self.assertEqual([x["id"] for x in r["d"]], ["rojo", "ambar", "verde", "gris", "sin"])
+        self.assertEqual([x["id"] for x in r["a"]], ["gris", "verde", "ambar", "rojo", "sin"])
 
     def test_orden_alfabetico_en_espanol_y_descendente(self):
         filas = [F(orden=0, id="a", cliente="zapata"), F(orden=1, id="b", cliente="ñandú"), F(orden=2, id="c", cliente="álvarez"),
@@ -218,8 +305,7 @@ def _filas(n=12, **extra):
 def _enriquecer(filas):
     import pickups_module as pm
     rm.enriquecer_filas(
-        filas, hoy=HOY, ahora=AHORA, horas_habiles=lambda d, h, fer: (h - d).total_seconds() / 3600.0,
-        utc_a_chile=lambda dt: (dt - timedelta(hours=3)) if dt else None,
+        filas, hoy=HOY, ahora=AHORA, utc_a_chile=lambda dt: (dt - timedelta(hours=3)) if dt else None,
         td_hhmm=lambda t: f"{int(t.total_seconds()) // 3600:02d}:{(int(t.total_seconds()) % 3600) // 60:02d}",
         estados=pm.PICKUP_STATUS, grupos=pm.PIPELINE_GROUPS, relaciones=dict(pm.PICKUP_RELATIONS))
     return filas
@@ -324,7 +410,7 @@ class TestPlantillaTabla(unittest.TestCase):
     def test_columnas_nuevas_y_las_de_siempre(self):
         html = self._render(_filas(1))
         for col in ("Solicitud", "Cliente", "Documento", "Quién retira", "Responsable", "Fecha de retiro", "Estado",
-                    "Calidad", "Carga", "Acción"):
+                    "Tiempo", "Calidad", "Carga", "Acción"):
             self.assertIn(col, html)
         # El menú ⋮ se conserva, pero se arma en el navegador al abrirlo (no viaja repetido en cada fila)
         self.assertIn('<ul class="dropdown-menu dropdown-menu-end shadow-sm"></ul>', html)
@@ -345,7 +431,8 @@ class TestPlantillaTabla(unittest.TestCase):
         filas = re.findall(r'<tr class="rm-row.*?</tr>', html, re.S)
         promedio = sum(len(f) for f in filas) // len(filas)
         # 2026-09-29: +300 por el reloj en vivo de "Sin responder" (aquí TODAS las filas lo llevan: peor caso).
-        self.assertLess(promedio, 4000, f"cada fila pesa {promedio} bytes: el detalle y el menú no deben repetirse en el HTML")
+        # 2026-10-06: +500 por la columna «Tiempo» y las piezas de carga (cada dato en su propio elemento, sin truncar).
+        self.assertLess(promedio, 4500, f"cada fila pesa {promedio} bytes: el detalle y el menú no deben repetirse en el HTML")
         datos = re.search(r'id="rmData">(.*?)</script>', html, re.S).group(1)
         self.assertLess(len(datos) // 40, 1100)
 
@@ -385,7 +472,43 @@ class TestPlantillaTabla(unittest.TestCase):
     def test_semaforo_de_la_fila(self):
         rojo = self._render(_filas(1, created_at=datetime(2026, 9, 29, 9, 0)))   # 06:00 Chile → 9 h sin responder
         self.assertIn('data-alerta="rojo"', rojo)
-        self.assertIn("Sin responder · 9 h hábiles", rojo)
+        self.assertIn("Sin responder · 6 h hábiles", rojo)       # horario de cobertura: 08-13 + 14-15 (la colación no corre)
+
+    def test_llego_de_noche_la_celda_dice_cuando_parte_el_reloj(self):
+        # Daniel 2026-10-06 (captura de producción de noche): «Sin responder · 00:00:00 · en pausa» en verde con la barra vacía.
+        import pickups_module  # noqa: F401  (entorno de plantillas)
+        ahora = datetime(2026, 9, 29, 22, 50)
+        filas = _filas(1, created_at=datetime(2026, 9, 30, 1, 41))
+        rm.enriquecer_filas(
+            filas, hoy=HOY, ahora=ahora, horas_habiles=None, utc_a_chile=lambda dt: (dt - timedelta(hours=3)) if dt else None,
+            td_hhmm=lambda t: f"{int(t.total_seconds()) // 3600:02d}:{(int(t.total_seconds()) % 3600) // 60:02d}",
+            estados=self.pm.PICKUP_STATUS, grupos=self.pm.PIPELINE_GROUPS, relaciones=dict(self.pm.PICKUP_RELATIONS),
+            cobertura={"desde": 480, "hasta": 1020, "col_d": 780, "col_h": 840})
+        mon = {"hoy": "2026-09-29", "lunes": "2026-09-28", "domingo": "2026-10-04", "limite": 250, "total": 1, "ok": True,
+               "datos": rm.armar_datos(filas, self.rut)}
+        html = self.env.get_template("_monitor_tabla.html").render(rows=filas, mon=mon)
+        celda = re.search(r'<td class="rm-c-tie".*?</td>', html, re.S).group(0)
+        self.assertIn("Llegó 22:41 · el reloj parte mañana 08:00", celda)
+        self.assertIn("Plazo 4 h hábiles · vence mañana 12:00", celda)
+        self.assertIn("pausa0", celda)                                         # el CSS esconde la barra vacía
+        self.assertIn('data-abierta="0"', celda)
+        self.assertIn('data-reanuda="mañana 08:00"', celda)
+        self.assertNotIn("00:00:00", celda)
+        self.assertIn('class="rm-pill verde"', celda)                          # nadie está atrasado: el reloj ni partió
+        css = _leer("static", "retiros_monitor.css")
+        self.assertIn(".rm-reloj.pausa0 .rm-reloj-fila", css)
+
+    def test_los_tramos_de_cobertura_del_servidor_viajan_una_vez_en_la_tabla(self):
+        # El coordinador entrega mon["ventanas"] = [(480, 780), (840, 1020)]: va en la tabla y no se repite por fila.
+        filas = _filas(3)
+        _enriquecer(filas)
+        mon = {"hoy": "2026-09-29", "lunes": "2026-09-28", "domingo": "2026-10-04", "limite": 250, "total": 3, "ok": True,
+               "datos": rm.armar_datos(filas, self.rut), "ventanas": [(480, 780), (840, 1020)]}
+        html = self.env.get_template("_monitor_tabla.html").render(rows=filas, mon=mon)
+        self.assertIn('data-ventanas="480-780,840-1020"', re.search(r'<table[^>]*>', html, re.S).group(0))
+        self.assertEqual(html.count("data-ventanas="), 1)
+        sin = self._render(_filas(3))                                              # sin mon.ventanas: cada reloj trae los suyos
+        self.assertEqual(sin.count("data-ventanas="), 3)
 
     def test_calidad_de_retiro_interno_no_se_pinta_como_cero(self):
         interno = self._render(_filas(1, request_source="backoffice", information_quality_score=0))
@@ -412,6 +535,60 @@ class TestPlantillaTabla(unittest.TestCase):
 
     def test_sin_filas_muestra_el_mensaje_de_siempre(self):
         self.assertIn("Sin solicitudes de retiro.", self._render([]))
+
+    def test_columna_tiempo_trae_el_reloj_y_estado_queda_liviano(self):
+        # Daniel 2026-10-06: la fila medía ~185 px porque «Estado» amontonaba todo; el reloj ahora vive en «Tiempo».
+        html = self._render(_filas(1))
+        fila = re.search(r'<tr class="rm-row.*?</tr>', html, re.S).group(0)
+        estado = re.search(r'<td data-label="Estado">.*?</td>', fila, re.S).group(0)
+        tiempo = re.search(r'<td class="rm-c-tie" data-label="Tiempo">.*?</td>', fila, re.S).group(0)
+        self.assertIn("rm-estado", estado)
+        self.assertIn("Siguiente: proponer fecha al cliente", estado)
+        self.assertNotIn("rm-reloj", estado)
+        for pieza in ("rm-reloj ", 'data-espera="', 'data-ventanas="480-780,840-1020"', "rm-reloj-t", "rm-reloj-barra", "rm-reloj-plazo",
+                      "rm-reloj-pausa", "Quedan 4 h hábiles · vence"):
+            self.assertIn(pieza, tiempo)
+        self.assertIn('data-sort="tiempo"', html)
+        self.assertIn('data-tiempo="', html)
+        self.assertIn('data-rm-col="tiempo"', html)       # el selector «Columnas» lo puede ocultar
+        self.assertEqual(html.count('colspan="12"'), 1)    # con la columna nueva ahora son 12
+        self.assertNotIn('colspan="11"', html)
+        # un retiro ya retirado no tiene reloj: la columna dice solo su semáforo
+        ret = self._render(_filas(1, status="retirada"))
+        celda = re.search(r'<td class="rm-c-tie".*?</td>', ret, re.S).group(0)
+        self.assertNotIn("rm-reloj", celda)
+        self.assertIn("Retirado", celda)
+
+    def test_quien_retira_dice_el_mismo_cliente_una_sola_vez(self):
+        mismo = self._render(_filas(1, pickup_person_name="Cliente 0", pickup_person_rut=""))
+        celda = re.search(r'<td class="desktop-only rm-c-ret".*?</td>', mismo, re.S).group(0)
+        self.assertIn("El mismo cliente", celda)
+        self.assertIn("Chofer", celda)                     # la relación se conserva
+        otro = self._render(_filas(1))
+        celda = re.search(r'<td class="desktop-only rm-c-ret".*?</td>', otro, re.S).group(0)
+        self.assertNotIn("El mismo cliente", celda)
+        self.assertIn("Pedro Soto", celda)
+        self.assertIn("9.876.543-3", celda)
+
+    def test_carga_de_un_retiro_completado_no_muestra_cero_kg(self):
+        # Daniel 2026-10-06: «0.0 kg · PV 0.0» parecía un dato real.
+        cero = self._render(_filas(1, status="retirada"))
+        self.assertNotIn("0.0 kg", cero)
+        self.assertNotIn("PV 0.0", cero)
+        self.assertIn("Peso por confirmar", cero)
+        real = self._render(_filas(1, status="retirada", peso_real_kg=48.3, peso_vol_kg=51.0, total_volume_m3=0.25))
+        self.assertIn("<span>48.3 kg</span>", real)
+        self.assertIn("<span>PV 51.0</span>", real)
+        self.assertIn("0.25 m³", real)
+        self.assertNotIn("Peso por confirmar", re.search(r'<td class="text-end rm-c-carga".*?</td>', real, re.S).group(0))
+
+    def test_chips_activos_por_defecto_y_todos_siguen_existiendo(self):
+        html = self._render(_filas(2))
+        chips = re.findall(r'<button type="button" class="rm-chip" data-rm-grupo="([^"]*)"', html)
+        self.assertEqual(chips[:2], ["__activos__", ""])                  # «Activos» primero y «Todos» a su lado
+        self.assertIn("retirada", chips)                                   # el chip «Retirada» sigue ahí (REGLA #4.2)
+        self.assertIn('id="rmEmptyRet"', html)                             # y desde un resultado vacío se pueden ver
+        self.assertIn(">Activos <", html)
 
     def test_estado_con_contraste_legible(self):
         html = self._render(_filas(1, status="propuesta_enviada",
@@ -455,6 +632,22 @@ class TestCableado(unittest.TestCase):
         jinja2.Environment().parse(self.tpl)
         for n in ("_monitor_kpis.html", "_monitor_tabla.html"):
             jinja2.Environment().parse(_leer("templates", "retiros", n))
+
+    def test_js_conecta_activos_columna_tiempo_y_reloj(self):
+        js = _leer("static", "retiros_monitor.js")
+        self.assertIn("grupo: ACTIVOS", js)                                # el valor por defecto aplica siempre al entrar
+        self.assertNotIn("grupo: pref", js)                                 # no se guarda en localStorage (solo columnas y filas por página)
+        self.assertIn("var COLS = ['doc', 'ret', 'resp', 'tiempo', 'cal', 'carga'];", js)
+        self.assertIn("td.colSpan = 12;", js)
+        self.assertIn("tiempo: function (f) { return f.tiempo; }", js)
+        self.assertIn(".rm-reloj-pausa", js)                                # «en pausa» vive junto a la barra, en la columna Tiempo
+        self.assertIn("data-ventanas", _leer("templates", "retiros", "_monitor_tabla.html"))   # los tramos de cobertura los entrega el servidor
+        self.assertIn("mon.ventanas", _leer("templates", "retiros", "_monitor_tabla.html"))
+        self.assertNotIn("hc.hora >= 9", js)                                # ya no el 09-18 viejo
+        self.assertNotIn("00:00:00", js)
+        css = _leer("static", "retiros_monitor.css")
+        self.assertIn(".rm-hide-tiempo .rm-c-tie", css)
+        self.assertIn('grid-template-areas:"sol acc" "cli cli" "est est" "tie tie" "fec fec" "resp car"', css)  # el celular sigue viendo el tiempo
 
     def test_js_de_la_tabla_es_valido(self):
         if not HAY_NODE:

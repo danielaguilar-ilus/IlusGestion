@@ -26,7 +26,10 @@
 
     <div class="rm-tools-row">
       <div class="rm-chips" role="group" aria-label="Filtrar por etapa">
-        <button type="button" class="rm-chip" data-rm-grupo=""><i class="bi bi-list-ul"></i>Todos <span class="n">0</span></button>
+        {# Daniel 2026-10-06: al entrar NO se ven las ya retiradas. «Activos» = todo menos la etapa Retirada
+           (es el valor por defecto); «Todos» las incluye y el chip «Retirada» muestra solo esas. #}
+        <button type="button" class="rm-chip" data-rm-grupo="__activos__" title="Todo lo que sigue en marcha (no incluye las ya retiradas)"><i class="bi bi-lightning-charge"></i>Activos <span class="n">0</span></button>
+        <button type="button" class="rm-chip" data-rm-grupo="" title="Todas las solicitudes, incluidas las ya retiradas"><i class="bi bi-list-ul"></i>Todos <span class="n">0</span></button>
         {% for g in pipeline_groups %}
         <button type="button" class="rm-chip" data-rm-grupo="{{ g.key }}"><i class="bi {{ g.icon }}"></i>{{ g.label }} <span class="n">0</span></button>
         {% endfor %}
@@ -63,6 +66,7 @@
             <label><input type="checkbox" data-rm-col="doc" checked>Documento</label>
             <label><input type="checkbox" data-rm-col="ret" checked>Quién retira</label>
             <label><input type="checkbox" data-rm-col="resp" checked>Responsable</label>
+            <label><input type="checkbox" data-rm-col="tiempo" checked>Tiempo</label>
             <label><input type="checkbox" data-rm-col="cal">Calidad</label>
             <label><input type="checkbox" data-rm-col="carga" checked>Carga</label>
             <div class="sep"></div>
@@ -83,7 +87,7 @@
          todo y casi siempre marca alto); se activa en "Columnas". #}
       <table class="ilus-table table-mobile-cards rm-table align-middle rm-hide-cal" id="rmTable"
              data-hoy="{{ mon.hoy }}" data-lunes="{{ mon.lunes }}" data-domingo="{{ mon.domingo }}"
-             data-hoy-habil="{{ 1 if mon.hoy_habil else 0 }}" data-sla-ambar="{{ mon.sla_ambar_s or 7200 }}" data-sla-rojo="{{ mon.sla_rojo_s or 14400 }}"
+             data-hoy-habil="{{ 1 if mon.hoy_habil else 0 }}"{% if mon.ventanas %} data-ventanas="{% for _a, _b in mon.ventanas %}{{ _a }}-{{ _b }}{{ ',' if not loop.last }}{% endfor %}"{% endif %} data-sla-ambar="{{ mon.sla_ambar_s or 7200 }}" data-sla-rojo="{{ mon.sla_rojo_s or 14400 }}"
              data-super="{{ 1 if (current_user and current_user.role == 'superadmin') else 0 }}">
         <thead><tr>
           <th class="rm-c-exp"><button type="button" class="rm-ic-btn" id="rmExpandAll" aria-label="Abrir o cerrar el detalle de todas las filas" title="Abrir / cerrar todo el detalle"><i class="bi bi-arrows-expand"></i></button></th>
@@ -94,15 +98,18 @@
           <th class="desktop-only rm-c-resp rm-sortable" data-sort="resp">Responsable <i class="bi bi-arrow-down-up"></i></th>
           <th class="rm-sortable" data-sort="fecha">Fecha de retiro <i class="bi bi-arrow-down-up"></i></th>
           <th class="rm-sortable" data-sort="estado">Estado <i class="bi bi-arrow-down-up"></i></th>
+          <th class="desktop-only rm-c-tie rm-sortable" data-sort="tiempo" title="Reloj de respuesta y plazo: lo más urgente primero">Tiempo <i class="bi bi-arrow-down-up"></i></th>
           <th class="desktop-only rm-c-cal rm-sortable" data-sort="cal">Calidad <i class="bi bi-arrow-down-up"></i></th>
           <th class="rm-c-carga rm-sortable text-end" data-sort="carga">Carga <i class="bi bi-arrow-down-up"></i></th>
           <th class="text-end rm-c-acc">Acción</th>
         </tr></thead>
         <tbody>
-          <tr id="rmEmpty" class="rm-empty" hidden><td colspan="11">
-            <i class="bi bi-search"></i>Ninguna solicitud coincide con lo que buscas.
+          <tr id="rmEmpty" class="rm-empty" hidden><td colspan="12">
+            <i class="bi bi-search"></i><span id="rmEmptyTxt">Ninguna solicitud coincide con lo que buscas.</span>
             <div style="margin-top:12px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
               <button type="button" class="rm-btn" id="rmEmptyClear">Limpiar filtros de la tabla</button>
+              {# Solo aparece si lo que no se ve son retiros ya retirados (filtro por defecto «Activos») #}
+              <button type="button" class="rm-btn" id="rmEmptyRet" hidden><i class="bi bi-check-circle"></i><span></span></button>
               {# La tabla trae los últimos 250 retiros; esto busca en todo el historial (2026-09-29) #}
               <a class="rm-btn" id="rmEmptyHist" href="#" hidden><i class="bi bi-clock-history"></i>Buscar en todo el historial</a>
             </div>
@@ -118,19 +125,18 @@ data-resp="{{ r.m_resp_norm }}" data-cliente="{{ r.m_cliente_norm }}"
 data-fecha="{{ r.m_fecha_iso }}" data-dias="{{ '' if r.m_dias is none else r.m_dias }}"
 data-semana="{{ 1 if r.m_en_semana else 0 }}" data-vencida="{{ 1 if r.m_vencida else 0 }}"
 data-req="{{ r.m_req_iso }}" data-conf="{{ r.m_conf_iso }}" data-creado="{{ r.m_creado_ts }}"
-data-bultos="{{ r.total_packages or 0 }}" data-cal="{{ r.m_cal }}"
+data-bultos="{{ r.total_packages or 0 }}" data-cal="{{ r.m_cal }}" data-tiempo="{{ r.m_tiempo_ord }}"
 data-search="{{ r.m_search }}" style="cursor:pointer">
 <td class="rm-c-exp"><button type="button" class="rm-ic-btn rm-exp" aria-expanded="false"
 aria-label="Ver el detalle de {{ r.code }}" title="Ver el detalle"><i class="bi bi-chevron-right"></i></button></td>
 <td data-label="Solicitud"><div class="rm-cell">
-<span class="rm-code rm-hl">{{ r.code }}</span><span class="js-row-chat"></span>
-<div class="rm-sub"><span class="rm-origen {{ 'interno' if r.m_origen == 'Interno' else '' }}" style="margin-left:0">{{ r.m_origen }}</span>
-{% if r.m_creado_full %}<span class="rm-solicitada" title="Fecha y hora en que se solicitó el retiro (hora Chile)"> Solicitada {{ r.m_creado_full }}{% if r.m_hace %} · {{ r.m_hace }}{% endif %}</span>{% elif r.m_hace %}<span> {{ r.m_hace }}</span>{% endif %}</div>
+<div class="rm-l1"><span class="rm-code rm-hl">{{ r.code }}</span><span class="js-row-chat"></span></div>
+<div class="rm-sub rm-l2"><span class="rm-origen {{ 'interno' if r.m_origen == 'Interno' else '' }}">{{ r.m_origen }}</span>{% if r.m_hace %}<span class="rm-hace">{{ r.m_hace }}</span>{% endif %}</div>
+{% if r.m_creado_full %}<div class="rm-sub rm-solicitada" title="Fecha y hora en que se solicitó el retiro (hora Chile)"><span class="rm-lbl">Solicitada </span>{{ r.m_creado_full }}</div>{% endif %}
 </div></td>
 <td data-label="Cliente"><div class="rm-cell">
 <div class="rm-cli-name rm-hl">{{ r.customer_name }}</div>
-{% if r.customer_rut %}<div class="rm-sub desktop-only">RUT {{ r.customer_rut | rut_fmt }}</div>{% endif %}
-<div class="rm-sub"><i class="bi bi-person"></i><span class="rm-hl">{{ r.contact_name }}</span>{% if r.contact_phone %} · <a class="rm-tel" href="tel:{{ r.contact_phone | replace(' ', '') }}" onclick="event.stopPropagation()">{{ r.contact_phone }}</a>{% endif %}</div>
+<div class="rm-sub rm-cli-meta">{% if r.customer_rut %}<span class="desktop-only rm-rut">RUT {{ r.customer_rut | rut_fmt }}</span>{% endif %}{% if r.contact_phone %}<a class="rm-tel" href="tel:{{ r.contact_phone | replace(' ', '') }}" onclick="event.stopPropagation()">{{ r.contact_phone }}</a>{% endif %}<span class="rm-contacto"><i class="bi bi-person"></i><span class="rm-hl">{{ r.contact_name }}</span></span></div>
 </div></td>
 <td class="desktop-only rm-c-doc" data-label="Documento"><div class="rm-cell">
 {% if r.document_number %}
@@ -139,7 +145,10 @@ aria-label="Ver el detalle de {{ r.code }}" title="Ver el detalle"><i class="bi 
 {% else %}<span class="rm-sub" style="font-style:italic">Sin factura</span>{% endif %}
 </div></td>
 <td class="desktop-only rm-c-ret" data-label="Quién retira"><div class="rm-cell">
-{% if r.pickup_person_name %}
+{% if r.m_ret_mismo %}
+<div class="rm-hl rm-ret-mismo" style="font-weight:600" title="{{ r.pickup_person_name }}">El mismo cliente</div>
+{% if r.m_relacion %}<div class="rm-sub">{{ r.m_relacion }}</div>{% endif %}
+{% elif r.pickup_person_name %}
 <div class="rm-hl" style="font-weight:600">{{ r.pickup_person_name }}</div>
 <div class="rm-sub">{{ r.m_relacion }}{% if r.pickup_person_rut %}{% if r.m_relacion %} · {% endif %}{{ r.pickup_person_rut | rut_fmt }}{% endif %}</div>
 {% else %}<span class="rm-sub">No indicado</span>{% endif %}
@@ -151,20 +160,28 @@ aria-label="Ver el detalle de {{ r.code }}" title="Ver el detalle"><i class="bi 
 <td data-label="Fecha de retiro"><div class="rm-cell">
 {% if r.m_fecha %}
 <div class="rm-fecha-main">{{ r.m_fecha_txt }}</div>
-<div class="rm-sub">{% if r.m_desde %}{{ r.m_desde }}–{{ r.m_hasta }} · {% endif %}{{ r.m_fecha_tipo }}</div>
-{% if r.m_rel_txt %}<span class="rm-pill {{ r.m_rel_nivel }}"><i class="bi bi-{{ 'exclamation-octagon-fill' if r.m_rel_nivel == 'rojo' else ('clock-fill' if r.m_rel_nivel == 'ambar' else 'calendar-check') }}"></i>{{ r.m_rel_txt }}</span>{% endif %}
+{% if r.m_desde %}<div class="rm-sub rm-horario">{{ r.m_desde }}–{{ r.m_hasta }}</div>{% endif %}
+<div class="rm-sub rm-fecha-tipo"><span class="rm-tipo">{{ r.m_fecha_tipo }}</span>{% if r.m_rel_txt %} <span class="rm-pill {{ r.m_rel_nivel }}"><i class="bi bi-{{ 'exclamation-octagon-fill' if r.m_rel_nivel == 'rojo' else ('clock-fill' if r.m_rel_nivel == 'ambar' else 'calendar-check') }}"></i>{{ r.m_rel_txt }}</span>{% endif %}</div>
 {% else %}<span class="rm-sub">Sin fecha</span>{% endif %}
 </div></td>
 <td data-label="Estado"><div class="rm-cell">
 <span class="badge bg-{{ b.color }} {{ 'text-dark' if b.color in ['warning', 'info'] else '' }} rm-estado"><i class="bi {{ r.m_grupo_ico }}"></i>{{ b.label }}</span>
-{% if r.m_reloj %}{# Reloj en vivo: static/retiros_monitor.js (iniciarRelojes) lo hace avanzar #}
-<div class="rm-reloj {{ r.m_al_nivel }}" data-espera="{{ r.m_reloj.espera_s }}" data-plazo="{{ r.m_reloj.plazo_txt }}">
-<span class="rm-pill {{ r.m_al_nivel }}"><i class="bi bi-stopwatch"></i><span class="rm-reloj-t">{{ r.m_al_txt }}</span></span>
-<div class="rm-reloj-barra"><i style="width:{{ r.m_reloj.pct }}%"></i></div>
-{% if r.m_reloj.plazo_txt %}<div class="rm-sub rm-reloj-plazo">Responder antes de {{ r.m_reloj.plazo_txt }}</div>{% endif %}
+{% if r.m_siguiente %}<div class="rm-sub desktop-only rm-sig">{{ r.m_siguiente }}</div>{% endif %}
+</div></td>
+{# Columna TIEMPO (Daniel 2026-10-06): el reloj de respuesta, su barra y el plazo salen de «Estado» para que la fila no se alargue.
+   El reloj en vivo lo hace avanzar static/retiros_monitor.js (iniciarRelojes). #}
+<td class="rm-c-tie" data-label="Tiempo"><div class="rm-cell">
+{% if r.m_reloj %}{% set _rj = r.m_reloj %}
+{# Compromiso a la vista (Daniel 2026-10-06): qué pasa (pastilla), cuánto falta (barra) y a qué hora vence (línea de abajo). Fuera de horario
+   NO hay contador en cero: dice cuándo llegó y cuándo parte el reloj. Las ventanas de cobertura (data-ventanas, mon.ventanas) las entrega el servidor. #}
+<div class="rm-reloj {{ r.m_al_nivel }}{{ ' pausa0' if _rj.pausa0 }}{{ ' en-pausa' if not _rj.abierta }}" data-espera="{{ _rj.espera_s }}" data-plazo="{{ _rj.plazo_txt }}"
+{% if not mon.ventanas %}data-ventanas="{{ _rj.ventanas }}" {% endif %} data-abierta="{{ 1 if _rj.abierta else 0 }}" data-llego="{{ _rj.llego }}" data-reanuda="{{ _rj.reanuda }}" data-vence="{{ _rj.vence }}">
+<span class="rm-pill {{ r.m_al_nivel }}"><i class="bi bi-{{ 'stopwatch' if _rj.abierta else 'pause-circle' }}"></i><span class="rm-reloj-t">{{ _rj.pill }}</span></span>
+<div class="rm-reloj-fila"><div class="rm-reloj-barra"><i style="width:{{ _rj.pct }}%"></i></div><span class="rm-reloj-pausa" {% if not _rj.tag %}hidden{% endif %}><i class="bi bi-pause-circle"></i><span>{{ _rj.tag }}</span></span></div>
+<div class="rm-sub rm-reloj-plazo">{{ _rj.sub }}</div>
 </div>
-{% elif r.m_al_txt %}<div><span class="rm-pill {{ r.m_al_nivel }}"><i class="bi {{ r.m_al_ico }}"></i>{{ r.m_al_txt }}</span></div>{% endif %}
-{% if r.m_siguiente %}<div class="rm-sub desktop-only">{{ r.m_siguiente }}</div>{% endif %}
+{% elif r.m_al_txt %}<div><span class="rm-pill {{ r.m_al_nivel }}"><i class="bi {{ r.m_al_ico }}"></i>{{ r.m_al_txt }}</span></div>
+{% else %}<span class="rm-sub">—</span>{% endif %}
 </div></td>
 <td class="desktop-only rm-c-cal" data-label="Calidad"><div class="rm-cell">
 {% if r.m_cal_na %}<span class="rm-sub" title="Los retiros internos no se puntúan">—</span>
@@ -175,8 +192,10 @@ aria-label="Ver el detalle de {{ r.code }}" title="Ver el detalle"><i class="bi 
 </div></td>
 <td class="text-end rm-c-carga" data-label="Carga"><div class="rm-cell">
 <div class="rm-carga-main">{{ r.m_carga_txt }}</div>
+{# Nunca «0.0 kg» como si fuera un dato: lo que no se midió no se muestra (2026-10-06) #}
 {% if r.m_sin_peso %}<div class="rm-sub">Peso por confirmar</div>
-{% else %}<div class="rm-sub">{{ "%.1f"|format((r.total_weight_kg or 0)|float) }} kg · PV {{ "%.1f"|format((r.total_volumetric_weight or 0)|float) }}</div>{% endif %}
+{% else %}<div class="rm-sub rm-carga-det">{% for t in r.m_carga_det %}<span>{{ t }}</span>{% endfor %}</div>{% endif %}
+{% if r.m_m3_txt %}<div class="rm-sub rm-m3">{{ r.m_m3_txt }}</div>{% endif %}
 </div></td>
 {# Columna Acción: el menú ⋮ (Ver ficha, Link cliente, Reagendar, Eliminar) se arma en el navegador
 al abrirlo (static/retiros_monitor.js, llenarMenu): así no se repite 250 veces en el HTML. #}
@@ -190,7 +209,7 @@ al abrirlo (static/retiros_monitor.js, llenarMenu): así no se repite 250 veces 
 </td>
 </tr>
           {% else %}
-          <tr><td colspan="11" class="text-center py-5 text-muted">Sin solicitudes de retiro.</td></tr>
+          <tr><td colspan="12" class="text-center py-5 text-muted">Sin solicitudes de retiro.</td></tr>
           {% endfor %}
         </tbody>
       </table>

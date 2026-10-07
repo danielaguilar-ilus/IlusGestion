@@ -10,6 +10,7 @@
   function norm(s) {
     return String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
   }
+  var ACTIVOS = '__activos__';
   function terminos(q) { return norm(q).split(/\s+/).filter(Boolean); }
 
   // Cada palabra debe aparecer. Se acepta también sin puntos, guiones ni "+", para
@@ -25,7 +26,9 @@
         }
       }
     }
-    if (st.grupo && f.grupo !== st.grupo) return false;
+    // «__activos__» (valor por defecto del Monitor, Daniel 2026-10-06): todo menos la etapa Retirada.
+    if (st.grupo === ACTIVOS) { if (f.grupo === 'retirada') return false; }
+    else if (st.grupo && f.grupo !== st.grupo) return false;
     if (st.alerta && f.alerta !== st.alerta) return false;
     if (st.resp) {
       if (st.resp === '__sin__') { if (f.resp) return false; }
@@ -48,7 +51,9 @@
     fecha: function (f) { return f.fecha; },
     estado: function (f) { return f.estadoIdx; },
     cal: function (f) { return f.cal; },
-    carga: function (f) { return f.bultos; }
+    carga: function (f) { return f.bultos; },
+    // «Tiempo»: primero lo más urgente (semáforo) y, a igual color, lo que más lleva esperando.
+    tiempo: function (f) { return f.tiempo; }
   };
 
   // Estable: a igual valor se respeta el orden que trajo el servidor.
@@ -137,16 +142,69 @@
     return '﻿' + lineas.join('\r\n');
   }
 
+  // ── Reloj de respuesta (Daniel 2026-10-06) ──
+  // Cuenta solo en horario de COBERTURA (lun-vie 08:00-17:00, colación 13:00-14:00; los tramos los entrega el servidor en
+  // data-ventanas (mon.ventanas de pickups_module, los mismos de _cobertura_estado()): aquí no hay horas escritas). Mismas reglas de texto que retiros_monitor.textos_reloj
+  // (Python): nunca HH:MM:SS con ceros; fuera de horario dice qué pasa en vez de un contador en cero.
+  function parseVentanas(txt) {
+    var v = String(txt || '').split(',').map(function (t) {
+      var p = t.split('-').map(function (x) { return parseInt(x, 10); });
+      return p.length === 2 && !isNaN(p[0]) && !isNaN(p[1]) && p[1] > p[0] ? p : null;
+    }).filter(Boolean);
+    return v.length ? v : [[480, 780], [840, 1020]];       // sin datos del servidor: el horario confirmado por Daniel
+  }
+  function enCobertura(min, dia, hoyHabil, ventanas) {
+    if (!hoyHabil || dia === 'Sat' || dia === 'Sun') return false;
+    return ventanas.some(function (w) { return min >= w[0] && min < w[1]; });
+  }
+  // Cuándo vuelve a correr el reloj (sin conocer feriados: si el servidor sabe, manda su texto).
+  function proximaApertura(min, dia, hoyHabil, ventanas) {
+    var habil = hoyHabil && dia !== 'Sat' && dia !== 'Sun';
+    var hh = function (m) { return (m < 600 ? '0' : '') + Math.floor(m / 60) + ':' + (m % 60 < 10 ? '0' : '') + (m % 60); };
+    if (habil) {
+      for (var i = 0; i < ventanas.length; i++) { if (ventanas[i][0] > min) return 'hoy ' + hh(ventanas[i][0]); }
+    }
+    return (dia === 'Fri' || dia === 'Sat' || dia === 'Sun' ? 'lun ' : 'mañana ') + hh(ventanas[0][0]);
+  }
+  function durHumana(seg, vivo) {
+    seg = Math.max(0, Math.floor(seg));
+    var h = Math.floor(seg / 3600), m = Math.floor(seg % 3600 / 60), x = seg % 60;
+    if (seg < 3600) {
+      if (vivo) return (m < 10 ? '0' : '') + m + ':' + (x < 10 ? '0' : '') + x + ' min';     // mm:ss solo si es menos de 1 h
+      return seg < 60 ? 'menos de 1 min' : m + ' min hábiles';
+    }
+    return h + ' h' + (m ? ' ' + m + ' min' : '') + (m ? ' hábiles' : (h === 1 ? ' hábil' : ' hábiles'));
+  }
+  function restaHumana(seg) {
+    var min = Math.ceil(Math.max(0, seg) / 60), h = Math.floor(min / 60), m = min % 60;
+    return h ? (m ? h + ' h ' + m + ' min' : h + ' h') : m + ' min';
+  }
+  // o: { espera (s), rojo (s), abierta, llego, reanuda, vence }
+  function textoReloj(o) {
+    var plazoH = (o.rojo / 3600) + ' h hábiles';
+    if (!o.abierta && o.espera < 60) {
+      return { pausa0: true, tag: '', pill: ('Llegó ' + (o.llego || '') + ' · el reloj parte ' + (o.reanuda || '')).trim(),
+               sub: 'Plazo ' + plazoH + (o.vence ? ' · vence ' + o.vence : '') };
+    }
+    var sub = o.espera >= o.rojo
+      ? 'Plazo vencido' + (o.vence ? ' (vencía ' + o.vence + ')' : '') + ': responder ya'
+      : 'Quedan ' + restaHumana(o.rojo - o.espera) + ' hábiles' + (o.vence ? ' · vence ' + o.vence : '');
+    return { pausa0: false, pill: 'Sin responder · ' + durHumana(o.espera, o.abierta),
+             tag: o.abierta ? '' : ('hasta ' + (o.reanuda || '')).trim(), sub: sub };
+  }
+
   global.RetirosMonitorLogica = {
     norm: norm, terminos: terminos, coincide: coincide, ordenar: ordenar, paginar: paginar,
-    conteos: conteos, segmentar: segmentar, aCsv: aCsv
+    conteos: conteos, segmentar: segmentar, aCsv: aCsv, ACTIVOS: ACTIVOS,
+    parseVentanas: parseVentanas, enCobertura: enCobertura, proximaApertura: proximaApertura, durHumana: durHumana,
+    restaHumana: restaHumana, textoReloj: textoReloj
   };
 
   // ═════════════ Conexión con la tabla ═════════════
   if (typeof document === 'undefined') return;
 
   var GUARDA = 'ilus.retiros.monitor.v1';
-  var COLS = ['doc', 'ret', 'resp', 'cal', 'carga'];
+  var COLS = ['doc', 'ret', 'resp', 'tiempo', 'cal', 'carga'];
 
   function $(id) { return document.getElementById(id); }
   function el(tag, cls, txt) {
@@ -173,7 +231,9 @@
     var DATOS = {};
     try { DATOS = JSON.parse(($('rmData') || {}).textContent || '{}') || {}; } catch (e) { DATOS = {}; }
     var pref = leerPref();
-    var st = { q: '', terms: [], grupo: '', alerta: '', fecha: '', resp: '', sort: '', dir: 'asc',
+    // Por defecto NO se ven las ya retiradas (Daniel 2026-10-06): grupo = «Activos». Los filtros no se guardan
+    // en localStorage (solo columnas y filas por página), así que este valor aplica siempre al entrar.
+    var st = { q: '', terms: [], grupo: ACTIVOS, alerta: '', fecha: '', resp: '', sort: '', dir: 'asc',
                page: 1, per: [10, 25, 50, 100].indexOf(pref.per) !== -1 ? pref.per : 10, hoy: tabla.dataset.hoy || '' };
     var filas = [];
 
@@ -187,7 +247,8 @@
           fecha: d.fecha || '', dias: d.dias === '' || d.dias == null ? null : parseInt(d.dias, 10),
           semana: d.semana === '1', vencida: d.vencida === '1', req: d.req || '', conf: d.conf || '',
           creado: parseInt(d.creado || '0', 10), cliente: d.cliente || '', bultos: parseInt(d.bultos || '0', 10),
-          cal: parseInt(d.cal || '0', 10), estadoIdx: parseInt(d.estadoIdx || '99', 10)
+          cal: parseInt(d.cal || '0', 10), estadoIdx: parseInt(d.estadoIdx || '99', 10),
+          tiempo: d.tiempo === '' || d.tiempo == null ? null : parseInt(d.tiempo, 10)
         };
       });
     }
@@ -211,7 +272,7 @@
     function crearDetalle(f) {
       var d = DATOS[f.id];
       var tr = el('tr', 'rm-detail'), td = el('td');
-      td.colSpan = 11;
+      td.colSpan = 12;
       var g = el('div', 'rm-panels');
       if (!d) {
         g.appendChild(panel('bi-info-circle', 'Detalle', [linea('Solicitud', 'Sin datos adicionales')]));
@@ -227,12 +288,13 @@
           linea('RUT', c['RUT quien retira']), linea('Teléfono', x.ptel)] : [linea('Persona', 'No indicada')]));
         var bultos = parseInt(c['Bultos'], 10) || 0;
         var carga = [linea('Bultos', bultos + (bultos === 1 ? ' bulto' : ' bultos'))];
+        // Nunca «0 kg» como si fuera un dato: solo lo que de verdad se midió (2026-10-06).
         if (x.sp) carga.push(linea('Peso', 'Por confirmar'));
         else {
-          carga.push(linea('Peso real', c['Peso kg'] + ' kg'));
-          carga.push(linea('Peso volumétrico', c['Peso volumétrico'] + ' kg'));
-          carga.push(linea('Volumen', c['Volumen m3'] + ' m³'));
+          if (parseFloat(c['Peso kg']) > 0) carga.push(linea('Peso real', c['Peso kg'] + ' kg'));
+          if (parseFloat(c['Peso volumétrico']) > 0) carga.push(linea('Peso volumétrico', c['Peso volumétrico'] + ' kg'));
         }
+        if (parseFloat(c['Volumen m3']) > 0) carga.push(linea('Volumen', c['Volumen m3'] + ' m³'));
         if (x.min) carga.push(linea('Preparación estimada', x.min + ' min'));
         g.appendChild(panel('bi-box-seam', 'Documento y carga',
           [linea('Documento', c['Documento'] || 'Sin factura'), linea('Validación', x.dv || '—')].concat(carga)));
@@ -341,12 +403,16 @@
       var v = filas.filter(function (f) { return coincide(f, st); });
       return st.sort ? ordenar(v, st.sort, st.dir) : v;
     }
-    function hayFiltros() { return !!(st.q || st.grupo || st.alerta || st.fecha || st.resp); }
+    // «Activos» y «Todos» son vistas, no filtros: el contador «de N» y «filtrado de» solo hablan de lo demás.
+    function hayFiltros() { return !!(st.q || (st.grupo && st.grupo !== ACTIVOS) || st.alerta || st.fecha || st.resp); }
+    // «Limpiar filtros» vuelve al valor por defecto (Activos), así que también aparece si se eligió «Todos».
+    function difiereDelInicio() { return hayFiltros() || st.grupo !== ACTIVOS; }
+    function nRetiradas(cg) { return cg.retirada || 0; }
 
     function pintarContadores() {
       var cg = conteos(filas, st, 'grupo'), ca = conteos(filas, st, 'alerta');
       [].forEach.call(document.querySelectorAll('[data-rm-grupo]'), function (b) {
-        var k = b.dataset.rmGrupo, n = k === '' ? cg.__total__ : (cg[k] || 0);
+        var k = b.dataset.rmGrupo, n = k === '' ? cg.__total__ : (k === ACTIVOS ? cg.__total__ - nRetiradas(cg) : (cg[k] || 0));
         var s = b.querySelector('.n'); if (s) s.textContent = n;
         b.classList.toggle('is-active', st.grupo === k);
         b.classList.toggle('is-zero', n === 0);
@@ -365,6 +431,9 @@
       });
     }
 
+    function base0() {
+      return st.grupo === ACTIVOS ? filas.filter(function (f) { return f.grupo !== 'retirada'; }).length : filas.length;
+    }
     function render() {
       var vis = filtradas();
       var pg = paginar(vis.length, st.page, st.per);
@@ -378,6 +447,17 @@
         resaltar(f.el);
       });
       if (vacio) vacio.hidden = vis.length > 0 || !filas.length;
+      // Si lo que no se ve son retiros ya retirados (filtro por defecto «Activos»), se ofrece verlos.
+      var ocultas = st.grupo === ACTIVOS ? nRetiradas(conteos(filas, st, 'grupo')) : 0;
+      var btnRet = $('rmEmptyRet');
+      if (btnRet) {
+        btnRet.hidden = !(vis.length === 0 && ocultas > 0);
+        var tb = btnRet.querySelector('span');
+        if (tb) tb.textContent = 'Ver ' + (ocultas === 1 ? 'la solicitud retirada que coincide' : 'las ' + ocultas + ' retiradas que coinciden');
+      }
+      var txtVacio = $('rmEmptyTxt');
+      if (txtVacio) txtVacio.textContent = (vis.length === 0 && ocultas > 0)
+        ? 'No hay solicitudes activas con esto: lo que coincide ya fue retirado.' : 'Ninguna solicitud coincide con lo que buscas.';
       // La tabla trae los últimos 250 retiros: si lo buscado no está, se ofrece
       // buscarlo en TODO el historial (búsqueda del servidor, ?q=) — 2026-09-29.
       var hist = $('rmEmptyHist');
@@ -389,9 +469,11 @@
       var cnt = $('rmCount');
       if (cnt) {
         // El sustantivo va en su propio <span>: en celular se oculta y queda solo el número (CSS).
+        // La base es el universo de la vista elegida: con «Activos» no cuenta las ya retiradas.
+        var base = st.grupo === ACTIVOS ? filas.filter(function (f) { return f.grupo !== 'retirada'; }).length : filas.length;
         cnt.textContent = '';
-        cnt.appendChild(document.createTextNode(hayFiltros() ? vis.length + ' de ' + filas.length : String(filas.length)));
-        if (!hayFiltros()) cnt.appendChild(el('span', 'rm-count-txt', filas.length === 1 ? ' solicitud' : ' solicitudes'));
+        cnt.appendChild(document.createTextNode(hayFiltros() ? vis.length + ' de ' + base : String(base)));
+        if (!hayFiltros()) cnt.appendChild(el('span', 'rm-count-txt', ' ' + (base === 1 ? 'solicitud' : 'solicitudes') + (st.grupo === ACTIVOS ? (base === 1 ? ' activa' : ' activas') : '')));
       }
       var pie = $('rmFootCount');
       if (pie) {
@@ -401,14 +483,22 @@
           pie.appendChild(el('strong', null, pg.desde + '–' + pg.hasta));
           pie.appendChild(document.createTextNode(' de '));
           pie.appendChild(el('strong', null, String(vis.length)));
-          if (hayFiltros()) pie.appendChild(document.createTextNode(' (filtrado de ' + filas.length + ')'));
+          if (hayFiltros()) pie.appendChild(document.createTextNode(' (filtrado de ' + base0() + ')'));
         } else pie.appendChild(document.createTextNode('Sin resultados'));
+        // «Activos» (por defecto): se dice cuántas retiradas quedan fuera y se puede verlas con un clic.
+        if (ocultas > 0) {
+          pie.appendChild(document.createTextNode(' · '));
+          var ver = el('button', 'rm-link', ocultas + (ocultas === 1 ? ' retirada oculta' : ' retiradas ocultas') + ' · ver');
+          ver.type = 'button'; ver.title = 'Mostrar también las solicitudes ya retiradas';
+          ver.addEventListener('click', function () { fijar('grupo', ''); });
+          pie.appendChild(ver);
+        }
       }
       var info = $('rmPageInfo'); if (info) info.textContent = 'Página ' + pg.pagina + ' de ' + pg.paginas;
       var ant = $('rmPrev'), sig = $('rmNext');
       if (ant) ant.disabled = pg.pagina <= 1;
       if (sig) sig.disabled = pg.pagina >= pg.paginas;
-      var lim = $('rmClear'); if (lim) lim.hidden = !hayFiltros();
+      var lim = $('rmClear'); if (lim) lim.hidden = !difiereDelInicio();
       var x = $('rmSearchClear'); if (x) x.hidden = !st.q;
       [].forEach.call(tabla.querySelectorAll('th.rm-sortable'), function (th) {
         var on = st.sort === th.dataset.sort, ic = th.querySelector('.bi');
@@ -436,8 +526,12 @@
     }
     var x = $('rmSearchClear');
     if (x) x.addEventListener('click', function () { caja.value = ''; st.q = ''; st.terms = []; st.page = 1; render(); caja.focus(); });
+    // Tocar la etapa elegida otra vez vuelve a «Activos» (el valor por defecto); «Activos» y «Todos» solo se fijan.
     [].forEach.call(document.querySelectorAll('[data-rm-grupo]'), function (b) {
-      b.addEventListener('click', function () { fijar('grupo', st.grupo === b.dataset.rmGrupo ? '' : b.dataset.rmGrupo); });
+      b.addEventListener('click', function () {
+        var v = b.dataset.rmGrupo;
+        fijar('grupo', st.grupo === v && v !== '' && v !== ACTIVOS ? ACTIVOS : v);
+      });
     });
     [].forEach.call(document.querySelectorAll('[data-rm-alerta]'), function (b) {
       b.addEventListener('click', function () { fijar('alerta', st.alerta === b.dataset.rmAlerta ? '' : b.dataset.rmAlerta); });
@@ -448,7 +542,13 @@
     [].forEach.call(document.querySelectorAll('[data-rm-filter]'), function (k) {
       function accionar() {
         var par = k.dataset.rmFilter.split(':');
-        fijar(par[0], st[par[0]] === par[1] ? '' : par[1]);
+        // Las tarjetas de arriba cuentan también las ya retiradas: al elegir una por fecha, se muestran todas
+        // (si no, el número de la tarjeta y las filas no coincidirían) y al soltarla vuelve «Activos».
+        if (par[0] === 'fecha') {
+          if (st.fecha === par[1]) { if (st.grupo === '' && st._sinActivos) st.grupo = ACTIVOS; st._sinActivos = false; }
+          else if (st.grupo === ACTIVOS) { st.grupo = ''; st._sinActivos = true; }
+          fijar('fecha', st.fecha === par[1] ? '' : par[1]);
+        } else fijar(par[0], st[par[0]] === par[1] ? ACTIVOS : par[1]);
         if (sf && par[0] === 'fecha') sf.value = st.fecha;
         if (raiz && st[par[0]]) { try { raiz.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* navegador viejo */ } }
       }
@@ -457,11 +557,12 @@
     });
     var lim = $('rmClear');
     if (lim) lim.addEventListener('click', function () {
-      st.q = ''; st.terms = []; st.grupo = ''; st.alerta = ''; st.fecha = ''; st.resp = ''; st.sort = ''; st.dir = 'asc'; st.page = 1;
+      st.q = ''; st.terms = []; st.grupo = ACTIVOS; st._sinActivos = false; st.alerta = ''; st.fecha = ''; st.resp = ''; st.sort = ''; st.dir = 'asc'; st.page = 1;
       if (caja) caja.value = ''; if (sf) sf.value = ''; if (sr) sr.value = '';
       render();
     });
     var vaciar = $('rmEmptyClear'); if (vaciar && lim) vaciar.addEventListener('click', function () { lim.click(); });
+    var verRet = $('rmEmptyRet'); if (verRet) verRet.addEventListener('click', function () { fijar('grupo', ''); });
     [].forEach.call(tabla.querySelectorAll('th.rm-sortable'), function (th) {
       th.tabIndex = 0;
       function ciclo() {
@@ -548,52 +649,53 @@
     global.RetirosMonitor = { estado: st, datos: DATOS, render: render, reindexar: function () { leerFilas(); render(); } };
   }
 
-  // ── Reloj en vivo de "Sin responder" (Daniel 2026-09-29: "que tenga un reloj o al menos que avise") ──
-  // El servidor entrega el tiempo hábil ya transcurrido y la hora límite (retiros_monitor.py,
-  // m_reloj). Aquí avanza cada segundo, pero solo en horario hábil (lun-vie 09-18 hora Chile y
-  // día no feriado, igual que el SLA del Centro de control): fuera de horario queda en pausa.
+  // ── Reloj en vivo de "Sin responder" (Daniel 2026-09-29; horario de cobertura 2026-10-06) ──
+  // El servidor entrega el tiempo hábil ya transcurrido, el plazo y las ventanas de cobertura (retiros_monitor.py, m_reloj).
+  // Aquí avanza cada segundo, pero solo mientras hay cobertura (lun-vie 08-17 hora Chile sin la colación y día no feriado);
+  // fuera de horario NO muestra un contador en cero: dice cuándo llegó y cuándo parte el reloj.
   // Al pasar a rojo con el Monitor abierto: aviso en pantalla y la fila parpadea.
   function horaChile() {
     try {
       var p = {};
-      new Intl.DateTimeFormat('en-US', { timeZone: 'America/Santiago', weekday: 'short', hour: 'numeric', hour12: false })
+      new Intl.DateTimeFormat('en-US', { timeZone: 'America/Santiago', weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false })
         .formatToParts(new Date()).forEach(function (x) { p[x.type] = x.value; });
-      return { dia: p.weekday, hora: parseInt(p.hour, 10) % 24 };
+      return { dia: p.weekday, min: (parseInt(p.hour, 10) % 24) * 60 + parseInt(p.minute, 10) };
     } catch (e) { return null; }
-  }
-  function durTxt(s) {
-    s = Math.max(0, Math.floor(s));
-    var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
-    return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m + ':' + (x < 10 ? '0' : '') + x;
-  }
-  function restaTxt(s) {
-    var min = Math.ceil(s / 60), h = Math.floor(min / 60), m = min % 60;
-    return h ? (m ? h + ' h ' + m + ' min' : h + ' h') : m + ' min';
   }
   function iniciarRelojes(tabla) {
     var relojes = [].slice.call(tabla.querySelectorAll('.rm-reloj[data-espera]')).map(function (el) {
-      var tr = el.closest('tr'), cod = tr && tr.querySelector('.rm-code');
-      return { el: el, base: +el.dataset.espera || 0, ambar: +tabla.dataset.slaAmbar || 7200, rojo: +tabla.dataset.slaRojo || 14400,
-               plazo: el.dataset.plazo || '', code: cod ? cod.textContent.trim() : 'Un retiro', nivel: '' };
+      var tr = el.closest('tr'), cod = tr && tr.querySelector('.rm-code'), d = el.dataset;
+      return { el: el, base: +d.espera || 0, ambar: +tabla.dataset.slaAmbar || 7200, rojo: +tabla.dataset.slaRojo || 14400,
+               ventanas: parseVentanas(d.ventanas || tabla.dataset.ventanas), vence: d.vence || '', llego: d.llego || '', reanuda: d.reanuda || '', abiertaIni: d.abierta !== '0',
+               code: cod ? cod.textContent.trim() : 'Un retiro', nivel: '' };
     });
     if (!relojes.length) return;
     var hoyHabil = tabla.dataset.hoyHabil !== '0';
-    var extra = 0, ultimo = Date.now();
+    var ultimo = Date.now();
     function tic() {
       var ahora = Date.now(), hc = horaChile();
-      var enHorario = hoyHabil && hc && hc.dia !== 'Sat' && hc.dia !== 'Sun' && hc.hora >= 9 && hc.hora < 18;
-      if (enHorario) extra += (ahora - ultimo) / 1000;
-      ultimo = ahora;
       relojes.forEach(function (r) {
-        var s = r.base + extra;
+        var abierta = hc ? enCobertura(hc.min, hc.dia, hoyHabil, r.ventanas) : r.abiertaIni;
+        if (abierta) r.extra = (r.extra || 0) + (ahora - ultimo) / 1000;
+        var s = r.base + (r.extra || 0);
         var nivel = s >= r.rojo ? 'rojo' : (s >= r.ambar ? 'ambar' : 'verde');
-        var pill = r.el.querySelector('.rm-pill'), t = r.el.querySelector('.rm-reloj-t');
+        // «parte mañana 08:00»: si el servidor ya sabía cuándo, su texto (conoce feriados); si no, se calcula.
+        var reanuda = abierta ? '' : ((!r.abiertaIni && r.reanuda) ? r.reanuda : (hc ? proximaApertura(hc.min, hc.dia, hoyHabil, r.ventanas) : r.reanuda));
+        var tx = textoReloj({ espera: s, rojo: r.rojo, abierta: abierta, llego: r.llego, reanuda: reanuda, vence: r.vence });
+        var pill = r.el.querySelector('.rm-pill'), t = r.el.querySelector('.rm-reloj-t'), ico = pill && pill.querySelector('.bi');
         var barra = r.el.querySelector('.rm-reloj-barra i'), plazo = r.el.querySelector('.rm-reloj-plazo');
-        if (t) t.textContent = 'Sin responder · ' + durTxt(s) + (enHorario ? '' : ' · en pausa');
+        var pausa = r.el.querySelector('.rm-reloj-pausa');
+        if (t && t.textContent !== tx.pill) t.textContent = tx.pill;
+        if (ico) ico.className = 'bi ' + (abierta ? 'bi-stopwatch' : 'bi-pause-circle');
+        r.el.classList.toggle('pausa0', tx.pausa0);
+        r.el.classList.toggle('en-pausa', !abierta);
         if (barra) barra.style.width = Math.min(100, s / r.rojo * 100) + '%';
-        if (plazo) plazo.textContent = s >= r.rojo
-          ? 'Plazo vencido' + (r.plazo ? ' (' + r.plazo + ')' : '') + ': responder ya'
-          : 'Quedan ' + restaTxt(r.rojo - s) + ' hábiles' + (r.plazo ? ' · antes de ' + r.plazo : '');
+        if (plazo && plazo.textContent !== tx.sub) plazo.textContent = tx.sub;
+        if (pausa) {
+          pausa.hidden = !tx.tag;
+          var pt = pausa.querySelector('span');
+          if (pt && pt.textContent !== tx.tag) pt.textContent = tx.tag;
+        }
         if (nivel !== r.nivel) {
           ['verde', 'ambar', 'rojo'].forEach(function (n) {
             r.el.classList.toggle(n, n === nivel);
@@ -609,6 +711,7 @@
           r.nivel = nivel;
         }
       });
+      ultimo = ahora;
     }
     tic();
     setInterval(tic, 1000);
