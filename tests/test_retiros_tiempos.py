@@ -95,3 +95,18 @@ def test_jornada_por_variable(monkeypatch):
     assert rt.jornada() == (480, 1080)
     monkeypatch.setenv("RETIROS_JORNADA_BODEGA", "basura")
     assert rt.jornada() == (450, 1200)
+
+
+def test_minutos_por_producto_se_reparten_por_unidades():
+    o = ot("481516", "PICKING", "02/10/2026 15:32", "02/10/2026 15:40", estado="TERMINADA")
+    o["lineas"] = [{"sku": "FZADI0275", "descripcion": "Set Discos", "ejecutado": 3, "solicitado": 3},
+                   {"sku": "BANCO01", "descripcion": "Banco plano", "ejecutado": 1, "solicitado": 1}]
+    a = rt.analizar([o], jor=JOR)
+    assert a["picking_min"] == 8 and a["picking_unidades"] == 4 and a["picking_lineas"] == 2
+    assert a["min_por_unidad"] == 2.0
+    assert [(p["sku"], p["unidades"], p["min"]) for p in a["productos"]] == [("FZADI0275", 3, 6.0), ("BANCO01", 1, 2.0)]
+
+
+def test_control_de_salida_no_cuenta_como_picking_por_producto():
+    a = rt.analizar(GERD, jor=JOR)
+    assert a["picking_min"] == 15 and a["productos"] == [] and a["min_por_unidad"] is None

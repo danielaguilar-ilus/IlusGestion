@@ -766,6 +766,13 @@ def logs_desfase(env):
 
 
 class TestDesfaseCheckDespachado:
+    """El aviso de desfase («Check ya preparó y despachó… márcalo RETIRADO») sigue valiendo con la expedición automática APAGADA. Encendida (por
+    defecto «sombra») de ese mismo caso se encarga el aviso «Check ya expidió el pedido» (tests/test_retiros_07oct_expedicion.py): no se avisa dos veces."""
+
+    @pytest.fixture(autouse=True)
+    def _expedicion_apagada(self, monkeypatch):
+        monkeypatch.setenv("RETIROS_RETIRO_AUTO", "0")
+
     def test_no_se_mueve_ni_se_le_escribe_al_cliente_pero_se_avisa_al_equipo(self, env):
         env.db.admins = [{"id": 11}, {"id": 12}]
         retiro(env, responsable_user_id=None, responsable_nombre=None)           # tal cual el retiro real: sin responsable

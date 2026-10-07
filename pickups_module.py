@@ -2258,7 +2258,7 @@ def register_pickup_routes(app, ctx):
         else:
             # Solicitud web sin cubicar: no inventar "1 bulto — 0 kg".
             _carga_txt = "según los productos de tu compra"
-        return {
+        _vars = {
             "code":              req.get("code") or "",
             "cliente":           req.get("customer_name") or "",
             "persona_retira":    req.get("pickup_person_name") or req.get("contact_name") or "",
@@ -2300,6 +2300,12 @@ def register_pickup_routes(app, ctx):
             # retirara otro día (prueba de tráfico 2026-09-29).
             "fecha_retiro":          _fmt_fecha(_pickup_fecha_retiro_cl(req)) or _fmt_fecha(req.get("confirmed_date")),
         }
+        # El TIEMPO ESTIMADO de preparación/carga es de uso interno y NUNCA se le muestra al cliente (Daniel 2026-10-06: «el tiempo estimado,
+        # tener precaución: no mostrárselo nunca al cliente»). Ninguna variable de tiempo llega a un correo o WhatsApp: si alguien agrega una
+        # arriba (o una plantilla de la BD la pide), aquí se descarta y {{variable}} queda vacía. La prueba tests/test_retiros_07oct_tiempo.py lo vigila.
+        for _k_t in [k for k in _vars if any(p in k.lower() for p in ("tiempo", "duracion", "minutos", "demora"))]:
+            _vars.pop(_k_t, None)
+        return _vars
 
 
     def _apply_template(text, variables):
@@ -2408,6 +2414,18 @@ def register_pickup_routes(app, ctx):
             + _html_nt.escape(_msg_prop, quote=True).replace("\n", "<br>")
             + '</td></tr></table>'
         ) if (kind == "proposal" and _msg_prop) else ""
+        # Nota sutil del cierre AUTOMÁTICO (Daniel 2026-10-06: «muy sutilmente, que el proceso se cierra al momento de despachar el producto: es
+        # posible que bodega haya adelantado este paso, para que el cliente no se alarme»). Solo el correo «done» con custom_message la lleva
+        # (el cierre manual no pasa custom_message). Una plantilla de la BD puede ubicarla con {{nota_cierre}}; si no la trae, se inserta antes
+        # del botón (igual que «Mensaje de ILUS»), así NO hace falta tocar la plantilla.
+        _nota_cierre = (custom_message or "").strip() if kind == "done" else ""
+        variables["nota_cierre"] = _nota_cierre
+        variables_html["nota_cierre"] = (
+            '<table cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 18px"><tr>'
+            '<td style="padding:0 4px;font-size:12.5px;color:#6b7280;line-height:1.6;text-align:center">'
+            + _html_nt.escape(_nota_cierre, quote=True)
+            + '</td></tr></table>'
+        ) if _nota_cierre else ""
         estado = _KIND_TO_ESTADO.get(kind)
         # "Retirado el" de la plantilla sembrada usa {{fecha_confirmada}}: en el correo
         # "completado" ese dato es el día real de la entrega ({{fecha_retiro}}).
@@ -2442,6 +2460,11 @@ def register_pickup_routes(app, ctx):
                     _i_btn = cuerpo.find(follow_url)
                     _i_tbl = cuerpo.rfind("<table", 0, _i_btn) if _i_btn != -1 else -1
                     cuerpo = (cuerpo[:_i_tbl] + _bloque_msg + cuerpo[_i_tbl:]) if _i_tbl != -1 else (cuerpo + _bloque_msg)
+                _bloque_nota = variables_html.get("nota_cierre") or ""
+                if _bloque_nota and "nota_cierre" not in (tpl_email.get("cuerpo") or ""):
+                    _i_btn = cuerpo.find(follow_url)
+                    _i_tbl = cuerpo.rfind("<table", 0, _i_btn) if _i_btn != -1 else -1
+                    cuerpo = (cuerpo[:_i_tbl] + _bloque_nota + cuerpo[_i_tbl:]) if _i_tbl != -1 else (cuerpo + _bloque_nota)
                 # FIX 2026-06-19 (Daniel: "los correos me llegan SIN tracking, un
                 # perfil distinto al que enviamos"). CAUSA RAÍZ: si la plantilla de
                 # BD fue editada a mano (o quedó vieja) su `cuerpo` NO trae el
@@ -2527,6 +2550,8 @@ def register_pickup_routes(app, ctx):
                         "<strong>Tu retiro fue completado.</strong> ¡Gracias por preferir ILUS!",
                         "Si necesitas un comprobante o tienes alguna consulta sobre este retiro, responde a este correo o escríbenos por soporte.",
                     ]
+                    if _nota_cierre:
+                        paragraphs.append('<span style="font-size:12.5px;color:#6b7280">' + _html_nt.escape(_nota_cierre, quote=True) + '</span>')
                 elif kind == "reminder_24h":
                     paragraphs = [
                         f"Te recordamos que <strong>mañana retiramos tus productos</strong>.",
@@ -2605,6 +2630,8 @@ def register_pickup_routes(app, ctx):
                             f"Bodega: {variables['warehouse_name']}\n"
                             f"Seguimiento: {follow_url}"
                         )
+                if _nota_cierre and _nota_cierre not in wa_body:
+                    wa_body = wa_body.rstrip() + "\n\n" + _nota_cierre
                 sent_wa = _send_whatsapp(
                     wa_cfg["account_sid"], wa_cfg["auth_token"], wa_cfg["from_number"],
                     req["contact_phone"], wa_body
@@ -4985,12 +5012,27 @@ def register_pickup_routes(app, ctx):
                 ORDER BY created_at DESC LIMIT 250""",
             tuple(params)
         )
+        # Peso y m³ de los retiros que nadie ha abierto (la ficha los completa al abrirse): se completan aquí, de a pocos por carga.
+        _pickup_sync_totales_pendientes(rows)
+        # El peso que importa es el de los PRODUCTOS (peso_real_kg / peso_vol_kg); total_weight_kg y total_volumetric_weight los deja en 0 el
+        # formulario público (bultos que nadie midió). Las plantillas del Monitor y de las tarjetas pintan estos dos últimos: se igualan en
+        # memoria (nada se guarda) para que la fila muestre los kg reales y no «0 kg» (2026-10-06, RET-VQJ58N).
+        for _r in rows:
+            try:
+                if float(_r.get("peso_real_kg") or 0) > 0:
+                    _r["total_weight_kg"] = float(_r["peso_real_kg"])
+                if float(_r.get("peso_vol_kg") or 0) > 0:
+                    _r["total_volumetric_weight"] = float(_r["peso_vol_kg"])
+            except (TypeError, ValueError):
+                pass
         counts = mysql_fetchall(f"SELECT status, COUNT(*) AS n FROM `{REQ}` GROUP BY status")
         stats = {r["status"]: int(r["n"]) for r in counts}
         today = _now_chile().date().isoformat()
+        # Franja «HOY»: peso real y volumétrico de los productos (peso_real_kg / peso_vol_kg), con respaldo en los que llena el formulario público
         day = mysql_fetchone(
             f"""SELECT COUNT(*) AS total, COALESCE(SUM(total_packages),0) AS bultos,
-                       COALESCE(SUM(total_weight_kg),0) AS peso, COALESCE(SUM(total_volumetric_weight),0) AS pvol,
+                       COALESCE(SUM(COALESCE(NULLIF(peso_real_kg,0), total_weight_kg)),0) AS peso,
+                       COALESCE(SUM(COALESCE(NULLIF(peso_vol_kg,0), total_volumetric_weight)),0) AS pvol,
                        COALESCE(SUM(total_volume_m3),0) AS m3
                 FROM `{REQ}` WHERE requested_date=%s OR confirmed_date=%s""",
             (today, today),
@@ -5237,7 +5279,8 @@ def register_pickup_routes(app, ctx):
 
         # ── 1) TORRE DE CONTROL DEL DÍA ─────────────────────────────────
         filas_hoy = mysql_fetchall(
-            f"""SELECT id, code, status, customer_name, total_packages, total_weight_kg,
+            f"""SELECT id, code, status, customer_name, total_packages,
+                       COALESCE(NULLIF(peso_real_kg,0), total_weight_kg) AS total_weight_kg,
                        confirmed_time_from, confirmed_time_to, responsable_nombre
                   FROM `{REQ}`
                  WHERE confirmed_date=%s
@@ -6228,6 +6271,7 @@ def register_pickup_routes(app, ctx):
                 settings=settings(),
                 valores=valores, ficha_ubicacion=ficha_ubicacion, actividad=actividad,
                 hitos=hitos, info_completa=info_completa, guia=guia,
+                aviso_no_expedir=_aviso_no_expedir_texto(), retiro_auto_modo=_retiro_auto_modo(),
             )
         except Exception as _e_detail:
             # Logging COMPLETO con traceback para diagnóstico inmediato
@@ -6539,7 +6583,8 @@ def register_pickup_routes(app, ctx):
                 if new_status == "en_preparacion":
                     _notificar_equipo_retiros(
                         f"📦 Retiro {_cod} en preparación",
-                        f"{_cli} — bodega alistando el pedido para el retiro.",
+                        f"{_cli} — bodega alistando el pedido para el retiro."
+                        + ((" " + _aviso_no_expedir_texto()) if _aviso_no_expedir_texto() else ""),
                         rid, _cod, prioridad="media", tipo="retiro_preparacion", send_email=False)
                 elif new_status == "retirada":
                     _notificar_equipo_retiros(
@@ -6773,15 +6818,25 @@ def register_pickup_routes(app, ctx):
             return {}
         return {"peso": peso, "pvol": pvol, "vol": vol}
 
-    def _pickup_sync_totales_si_faltan(rid, req):
+    def _pickup_sync_totales_si_faltan(rid, req, totales=None):
         """Completa el peso / peso volumétrico / m³ del retiro cuando quedaron en 0 aunque los productos sí los tienen (Daniel 2026-10-06, retiro
         de Gerd Müller: «no los refleja ni aquí ni en el dashboard»). SOLO rellena lo que está en 0: jamás pisa una cubicación hecha por una
-        persona. No manda correo ni mensaje al cliente. Actualiza `req` en memoria. Devuelve True si cambió algo."""
+        persona. No manda correo ni mensaje al cliente. Actualiza `req` en memoria. Devuelve True si cambió algo.
+
+        `totales` (opcional): los totales que ya calculó el diagnóstico de productos (`_pickup_productos_diagnostico`: peso_total_kg /
+        vol_total_m3 / peso_vol_total_kg); sin él se recalculan desde los productos a retirar. El UPDATE vuelve a exigir «sigue en 0» en la
+        propia consulta: si la ficha y el endpoint de productos corren a la vez, solo uno escribe y solo uno deja la bitácora (una vez)."""
         campos = (("peso_real_kg", "peso"), ("peso_vol_kg", "pvol"), ("total_volume_m3", "vol"))
         faltan = [(c, k) for c, k in campos if not float(req.get(c) or 0)]
         if not faltan:
             return False
-        alt = _pickup_totales_desde_productos(rid)
+        if totales:
+            alt = {"peso": float(totales.get("peso_total_kg") or 0), "pvol": float(totales.get("peso_vol_total_kg") or 0),
+                   "vol": float(totales.get("vol_total_m3") or 0)}
+            if alt["peso"] <= 0 and alt["pvol"] <= 0 and alt["vol"] <= 0:
+                alt = _pickup_totales_desde_productos(rid)
+        else:
+            alt = _pickup_totales_desde_productos(rid)
         if not alt:
             return False
         pares = []
@@ -6791,14 +6846,50 @@ def register_pickup_routes(app, ctx):
                 pares.append((col, v))
         if not pares:
             return False
-        mysql_execute(f"UPDATE `{REQ}` SET {', '.join(c + '=%s' for c, _v in pares)} WHERE id=%s", tuple(v for _c, v in pares) + (rid,))
-        antes = [f"{c}: 0 → {v:g}" for c, v in pares]
+        sql = (f"UPDATE `{REQ}` SET {', '.join(c + '=%s' for c, _v in pares)} WHERE id=%s AND ("
+               + " OR ".join(f"COALESCE({c},0)=0" for c, _v in pares) + ")")
+        conteo = ctx.get("mysql_execute_returning_rowcount")
+        if conteo:
+            escribio = conteo(sql, tuple(v for _c, v in pares) + (rid,))
+        else:
+            mysql_execute(sql, tuple(v for _c, v in pares) + (rid,))
+            escribio = True
         for c, v in pares:
             req[c] = v
+        if not escribio:                # otro proceso llegó primero y ya lo completó (y dejó la bitácora)
+            return False
+        antes = [f"{c}: 0 → {v:g}" for c, v in pares]
         log_event(rid, "totales_sincronizados", req.get("status"), req.get("status"),
                   "El peso y el volumen estaban en 0 y se completaron con los productos a retirar (" + "; ".join(antes) + ").",
                   "sistema", "ILUS (automático)")
         return True
+
+    _TOT_SIN_DATO = {}                  # rid → ts de la última vez que no había nada con qué completar (no insistir en cada carga del Monitor)
+
+    def _pickup_sync_totales_pendientes(rows, limite=8):
+        """Monitor: completa el peso / m³ de los retiros que nadie ha abierto desde que se asociaron sus documentos (la ficha lo hace al
+        abrirse; sin esto el Monitor mostraba 0 kg hasta que alguien entrara). Acotado (`limite` retiros por carga) y con memoria de 30 min de
+        los que no tienen productos con ficha logística. Mejor esfuerzo: nunca rompe el Monitor. Actualiza `rows` en memoria."""
+        hecho = 0
+        ahora = time.time()
+        for r in rows or []:
+            if hecho >= limite:
+                break
+            try:
+                if (r.get("status") or "") in ("rechazada", "fallida") or not r.get("document_number"):
+                    continue
+                if float(r.get("peso_real_kg") or 0) and float(r.get("peso_vol_kg") or 0) and float(r.get("total_volume_m3") or 0):
+                    continue
+                rid = int(r["id"])
+                if ahora - _TOT_SIN_DATO.get(rid, 0) < 1800:
+                    continue
+                hecho += 1
+                if not _pickup_sync_totales_si_faltan(rid, r):
+                    _TOT_SIN_DATO[rid] = ahora
+                    if len(_TOT_SIN_DATO) > 2000:
+                        _TOT_SIN_DATO.clear()
+            except Exception as e:
+                print(f"[pickup-totales] monitor rid={r.get('id')}: {type(e).__name__}: {e}", flush=True)
 
     def _apply_lineas_seleccion_inline(rid, doc_id, lineas_in):
         """Aplica selección granular a un doc ya asociado. Usado en flujo
@@ -8607,7 +8698,16 @@ def register_pickup_routes(app, ctx):
     @require_permission("view")
     def pickup_productos_erp(rid):
         try:
-            return jsonify(_pickup_productos_diagnostico(rid, refrescar=request.args.get("refrescar") == "1"))
+            diag = _pickup_productos_diagnostico(rid, refrescar=request.args.get("refrescar") == "1")
+            # Los totales de este diagnóstico son los de la ficha: si el retiro los tiene en 0, se completan (solo lo que está en 0; sin correo)
+            try:
+                _tot_req = mysql_fetchone(
+                    f"SELECT status, peso_real_kg, peso_vol_kg, total_volume_m3 FROM `{REQ}` WHERE id=%s", (rid,))
+                if _tot_req:
+                    _pickup_sync_totales_si_faltan(rid, _tot_req, diag.get("totales"))
+            except Exception as _e_tot:
+                print(f"[productos-erp] totales rid={rid}: {type(_e_tot).__name__}: {_e_tot}", flush=True)
+            return jsonify(diag)
         except Exception as e:
             import traceback as _tb_pe
             print(f"[productos-erp] rid={rid} {type(e).__name__}: {e}\n{_tb_pe.format_exc()}", flush=True)
@@ -11945,10 +12045,17 @@ def register_pickup_routes(app, ctx):
             return jsonify({"ok": False, "error": "No se pudo consultar Check."}), 500
         aplicado = False
         prep_auto = False
+        retiro_auto = False
         if not request.args.get("solo_lectura"):
             aplicado = _check_aplicar_listo(rid, req, res["evaluacion"])
             prep_auto = _prep_auto_aplicar(rid, req, res["evaluacion"])      # «Enviar a preparación» automático
+            try:
+                retiro_auto = _retiro_auto_aplicar(rid, req, res["evaluacion"])   # «Check expidió» = retirado (sombra: solo aviso al equipo)
+            except Exception as e:
+                print(f"[retiros-retiro-auto] ficha rid={rid}: {e}", flush=True)
+                retiro_auto = False
         resp = jsonify({"ok": True, "status": req.get("status"), "aplicado_ahora": aplicado, "prep_auto_ahora": prep_auto,
+                        "retiro_auto_ahora": retiro_auto, "retiro_auto_modo": _retiro_auto_modo(),
                         "prep_auto_activo": _prep_auto_activo(),
                         "auto_activo": _check_auto_activo(), "conexion": _check_conexion(res),
                         "preparado": _retiro_preparado(rid, req.get("status") or ""), **res})
@@ -11968,11 +12075,15 @@ def register_pickup_routes(app, ctx):
                 for f in filas:
                     try:
                         rid = int(f["id"])
-                        if _retiro_preparado(rid, "en_preparacion"):
+                        ya_listo = _retiro_preparado(rid, "en_preparacion")
+                        if ya_listo and _retiro_auto_modo() == "apagado":
                             continue
                         req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
                         if req:
-                            _check_aplicar_listo(rid, req, _check_prep_retiro(rid)["evaluacion"])
+                            ev = _check_prep_retiro(rid)["evaluacion"]
+                            if not ya_listo:
+                                _check_aplicar_listo(rid, req, ev)
+                            _retiro_auto_aplicar(rid, req, ev)       # «Check expidió» = retirado (sombra: solo aviso al equipo)
                     except Exception as e:      # un retiro con datos raros no frena a los demás
                         print(f"[retiros-check] barrido rid={f.get('id')}: {e}", flush=True)
                 # Retiros con la cita confirmada y cercana: si bodega ya empezó a juntar, pasan solos a «En preparación»
@@ -11982,7 +12093,9 @@ def register_pickup_routes(app, ctx):
                         rid = int(f["id"])
                         req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
                         if req:
-                            _prep_auto_aplicar(rid, req, _check_prep_retiro(rid)["evaluacion"])
+                            ev = _check_prep_retiro(rid)["evaluacion"]
+                            _prep_auto_aplicar(rid, req, ev)
+                            _retiro_auto_aplicar(rid, req, ev)       # cita cercana y Check ya expidió todo (sombra: solo aviso al equipo)
                     except Exception as e:
                         print(f"[retiros-prep-auto] barrido rid={f.get('id')}: {e}", flush=True)
         except Exception as e:
@@ -12459,6 +12572,10 @@ def register_pickup_routes(app, ctx):
                 return False
             if not _prep_auto_activo() or not _prep_auto_en_ventana(req) or not _prep_auto_en_horario():
                 return False
+            # Si Check ya expidió TODO el pedido, de eso se encarga el aviso de expedición (_retiro_auto_aplicar: sombra o activo): no se avisa dos
+            # veces. Con un documento compartido ese aviso no actúa y este sigue valiendo.
+            if _retiro_auto_modo() != "apagado" and _check_expedido(ev) and not _prep_auto_doc_compartido(rid):
+                return False
             if _aviso_equipo_ya_enviado(rid, "check_desfase", horas=24):
                 return False
             code = req.get("code") or "?"
@@ -12565,14 +12682,235 @@ def register_pickup_routes(app, ctx):
         except Exception:
             pass
         try:
+            _aviso_ne = (" " + _aviso_no_expedir_texto()) if _aviso_no_expedir_texto() else ""     # «no expidan en Check hasta que llegue el cliente»
             _notificar_equipo_retiros(
                 f"📦 Retiro {req.get('code') or '?'} en preparación (automático)",
                 f"{req.get('customer_name') or 'Cliente'} — Check detectó que bodega ya empezó a juntar el pedido."
-                + ("" if _tiene_responsable(req) else " ⚠️ Este retiro NO tiene responsable: alguien debe tocar «Me hago cargo»."),
+                + ("" if _tiene_responsable(req) else " ⚠️ Este retiro NO tiene responsable: alguien debe tocar «Me hago cargo».") + _aviso_ne,
                 rid, req.get("code") or "?", prioridad="media", tipo="retiro_preparacion", send_email=False)
         except Exception as e:
             print(f"[retiros-prep-auto] aviso equipo rid={rid}: {e}", flush=True)
         print(f"[retiros-prep-auto] rid={rid} {req.get('code')} -> en_preparacion (automatico, Check)", flush=True)
+        return True
+
+    # ══════════════════════════════════════════════════════════════════
+    #  EXPEDICIÓN EN CHECK = RETIRADO (Daniel 2026-10-06): «que de manera automática, cuando bodega expida en Check, el retiro se dé por
+    #  retirado — eso le manda al cliente el correo de retiro. Que cuando se envíe a preparar se alerte al personal de que NO tiene que expedir
+    #  en Check hasta que llegue el cliente, porque se considerará como retirado. Y en el correo de retirado, muy sutilmente, que el proceso se
+    #  cierra al momento de despachar el producto: es posible que bodega haya adelantado este paso, para que el cliente no se alarme de que
+    #  alguien lo retiró. Capacitar al personal: eso generará un mensaje de retirado; lo ideal es expedir en tiempo real.»
+    #  Caso real: RET-VQJ58N, cita 05/10 11:00; en Check el picking fue 08:11–08:26 y el CONTROL DE SALIDA (OT CSAL…, «Control Salida /
+    #  Integraciones», FINALIZADA) a las 08:56: bodega expidió 2 h antes de que llegara el cliente.
+    #
+    #  MODO (RETIROS_RETIRO_AUTO): «sombra» (POR DEFECTO) · «activo» · «0» (apagado).
+    #   · SOMBRA: ve la señal y avisa al equipo (campana, bitácora `check_expedido`, UNA vez por retiro); NO cambia el estado ni le escribe al cliente.
+    #   · ACTIVO: pasa a «retirada» (closed_at; `retirado_por_nombre` queda vacío para que una persona lo complete) y envía el correo «done» con una
+    #     línea sutil que explica que el proceso se cierra al despachar. Solo el cierre automático lleva esa línea (el manual no).
+    #   · RETIROS_CHECK_AUTO=0 («Check solo informa») también lo apaga.
+    #  Salvaguardas (mismo molde que «Enviar a preparación» automático): señal «TODO despachado» en TODOS los documentos con datos, vista en dos
+    #  lecturas separadas (la segunda se pide DE VERDAD a Check) · solo en horario de cobertura · retiro en preparación o con la cita confirmada
+    #  dentro de la ventana · nunca con un documento en OTRO retiro activo · nunca con un cambio de fecha del cliente pendiente · UPDATE atómico.
+    #  Check solo se consulta (REGLA #4.4): GetSeguimientoDespacho.
+    # ══════════════════════════════════════════════════════════════════
+    _CHECK_EXPEDIDO_VISTO = {}      # rid → ts de la primera lectura «Check ya expidió»
+    _NOTA_CIERRE_AUTO = ("Registramos tu retiro en el momento en que bodega despachó tu pedido. Si aún no pasas a buscarlo, no te preocupes: "
+                         "bodega lo dejó listo con anticipación y te esperamos en la fecha acordada.")
+
+    def _retiro_auto_modo():
+        """'sombra' (por defecto: cualquier valor que no sea «activo» ni un «apagado» explícito) | 'activo' | 'apagado'."""
+        if not _check_auto_activo():
+            return "apagado"
+        v = (os.environ.get("RETIROS_RETIRO_AUTO") or "sombra").strip().lower()
+        if v in ("0", "false", "no", "off", "apagado", "apagada"):
+            return "apagado"
+        if v in ("activo", "activa"):
+            return "activo"
+        return "sombra"
+
+    def _aviso_no_expedir_texto(modo=None):
+        """Aviso para el PERSONAL (nunca para el cliente) al enviar un retiro a preparación: expedir en Check lo cierra. '' si la función está apagada."""
+        modo = modo or _retiro_auto_modo()
+        if modo == "activo":
+            return "⚠️ No expidan en Check hasta que el cliente esté retirando: al expedir, ILUS lo da por RETIRADO y le avisa al cliente."
+        if modo == "sombra":
+            return "⚠️ No expidan en Check hasta que el cliente esté retirando: al expedir, ILUS avisará que el pedido ya salió."
+        return ""
+
+    def _check_expedido(ev):
+        """¿Check da TODO el pedido por despachado en TODOS los documentos del retiro? Despachadas ≥ pedidas (cada línea acotada a lo pedido, así una
+        línea sobre-despachada no compensa a otra) y todos los documentos con datos. Datos que no se entienden o conexión caída → False."""
+        try:
+            pedidas = float(ev.get("pedidas") or 0)
+            desp = float(ev.get("despachadas") or 0)
+            docs = int(ev.get("documentos") or 0)
+            if pedidas <= 0 or docs <= 0 or int(ev.get("documentos_con_datos") or 0) != docs:
+                return False
+            if "no se entienden" in (ev.get("alerta") or ""):
+                return False
+            return desp >= pedidas - 0.0001
+        except (TypeError, ValueError):
+            return False
+
+    def _expedicion_check_detalle(rid):
+        """(texto, hora «HH:MM» de Check o '') del CONTROL DE SALIDA que Check ya informó en su reporte de movimientos (solo lo que hay en memoria:
+        nunca espera a Check ni dispara una descarga). Ej.: «BLV 23732: OT CSAL0001 (FINALIZADA) · Usuario picking JPEREZ · Fin 05/10/2026 08:56»."""
+        try:
+            cache = ctx.get("_CHECKWMS_TRAZA")
+            filas = cache.get("rows") if cache else None
+            if not isinstance(filas, list):
+                return "", ""
+            docs = mysql_fetchall("SELECT document_type, document_number FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC",
+                                  (rid,)) or []
+            partes, hora = [], ""
+            for d in docs[:6]:
+                tipo = (d.get("document_type") or "").strip().upper()[:5]
+                num = re.sub(r"\D", "", d.get("document_number") or "")[:12]
+                if not tipo or not num:
+                    continue
+                for o in _rco.agrupar_por_ot(_rco.filas_del_documento(filas, tipo, num)):
+                    if not (re.search(r"salida", o.get("tipo") or "", re.I) or str(o.get("ot") or "").upper().startswith("CSAL")):
+                        continue
+                    quien = ", ".join(f"{p['etiqueta']} {p['valor']}" for p in (o.get("personas") or [])[:3])
+                    cuando = o.get("fin") or o.get("inicio") or ""
+                    if not hora:
+                        m = re.search(r"(\d{1,2}:\d{2})\s*$", cuando)
+                        hora = m.group(1) if m else ""
+                    partes.append(f"{tipo} {num}: OT {o.get('ot') or 's/n'}" + (f" ({o['estado']})" if o.get("estado") else "")
+                                  + (f" · {quien}" if quien else "") + (f" · Fin {cuando}" if cuando else ""))
+            return "; ".join(partes)[:480], hora
+        except Exception as e:
+            print(f"[retiros-retiro-auto] detalle de la salida rid={rid}: {e}", flush=True)
+            return "", ""
+
+    def _retiro_auto_aplicar(rid, req, ev, confirmado=None, sincrono=False):
+        """Check ya expidió TODO el pedido. SOMBRA: avisa al equipo (una vez) y no cambia nada. ACTIVO: pasa el retiro a «retirada» y le avisa al cliente.
+        Devuelve True si ESTA llamada actuó (avisó en sombra o cerró en activo). `confirmado` / `sincrono`: igual que `_prep_auto_aplicar`."""
+        modo = _retiro_auto_modo()
+        if modo == "apagado" or (req.get("status") or "") not in ("en_preparacion", "agenda_confirmada") \
+                or not _check_expedido(ev) or not _prep_auto_en_horario():
+            _CHECK_EXPEDIDO_VISTO.pop(rid, None)
+            return False
+        if (req.get("status") or "") == "agenda_confirmada" and not _prep_auto_en_ventana(req):
+            _CHECK_EXPEDIDO_VISTO.pop(rid, None)
+            return False
+        espera = _check_confirmacion_s()
+        if confirmado is None:
+            ahora = time.time()
+            primera = _CHECK_EXPEDIDO_VISTO.get(rid)
+            if primera is None or ahora - primera > _CHECK_INICIO_VIGENCIA_S:
+                primera = _CHECK_EXPEDIDO_VISTO[rid] = ahora             # primera vez (o una nota vieja): solo toma nota
+            if ahora - primera < espera:
+                return False
+            if espera > 0:                                                # segunda lectura DE VERDAD: sin la memoria de 45 s de Check
+                _check_olvidar(rid)
+                nuevo = _check_prep_retiro(rid)["evaluacion"]
+                if not _check_expedido(nuevo):
+                    _CHECK_EXPEDIDO_VISTO.pop(rid, None)
+                    return False
+                ev, confirmado = nuevo, True
+        code = req.get("code") or "?"
+        with _CHECK_APLICAR_LOCK:
+            try:
+                get_db().commit()       # lo que se relee abajo es lo de AHORA (REPEATABLE READ)
+            except Exception:
+                pass
+            fresco = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or {}
+            estado = fresco.get("status") or ""
+            if estado not in ("en_preparacion", "agenda_confirmada") \
+                    or (estado == "agenda_confirmada" and not _prep_auto_en_ventana(fresco)) or _prep_auto_cambio_pendiente(rid):
+                _CHECK_EXPEDIDO_VISTO.pop(rid, None)
+                return False
+            otro = _prep_auto_doc_compartido(rid)
+            if otro:
+                print(f"[retiros-retiro-auto] rid={rid} {code}: no actúa, comparte documento con {otro}", flush=True)
+                _CHECK_EXPEDIDO_VISTO.pop(rid, None)
+                return False
+            detalle, hora_check = _expedicion_check_detalle(rid)
+            ahora_txt = _ahora_chile().strftime("%d/%m/%Y %H:%M")
+            lectura = "; confirmado con una segunda lectura a Check" if (confirmado or espera > 0) else ""
+            base = (f"Check WMS informa el pedido como EXPEDIDO ({ev.get('despachadas')} de {ev.get('pedidas')} unidades despachadas{lectura}). "
+                    + (f"Check: {detalle}. " if detalle else "OT y usuario: Check aún no los informa en el reporte de movimientos. "))
+            if modo == "sombra":
+                if _aviso_equipo_ya_enviado(rid, "check_expedido", horas=24 * 3650):
+                    _CHECK_EXPEDIDO_VISTO.pop(rid, None)
+                    return False
+                try:
+                    log_event(rid, "check_expedido", estado, estado,
+                              ("Automático · MODO SOMBRA (no se cambió el estado ni se le escribió al cliente). " + base
+                               + f"Detectado el {ahora_txt} (hora Chile). Si el cliente ya se llevó el pedido, hay que marcarlo como RETIRADO.")[:900],
+                              "sistema", "Check WMS")
+                except Exception as e:
+                    print(f"[retiros-retiro-auto] bitácora rid={rid}: {e}", flush=True)
+                    return False
+            else:
+                conteo = ctx.get("mysql_execute_returning_rowcount")
+                try:
+                    if conteo:
+                        if not conteo(f"UPDATE `{REQ}` SET status='retirada', closed_at=NOW() WHERE id=%s AND status IN ('en_preparacion','agenda_confirmada') "
+                                      f"AND NOT EXISTS (SELECT 1 FROM `{PROP}` WHERE request_id=%s AND status='pending' AND LOWER(proposed_by)='cliente')",
+                                      (rid, rid)):
+                            _CHECK_EXPEDIDO_VISTO.pop(rid, None)         # una persona (o el cliente) llegó primero
+                            return False
+                    else:
+                        mysql_execute(f"UPDATE `{REQ}` SET status='retirada', closed_at=NOW() WHERE id=%s AND status IN ('en_preparacion','agenda_confirmada') "
+                                      f"AND NOT EXISTS (SELECT 1 FROM `{PROP}` WHERE request_id=%s AND status='pending' AND LOWER(proposed_by)='cliente')",
+                                      (rid, rid))
+                    log_event(rid, "estado_actualizado", estado, "retirada",
+                              ("Automático · Check WMS: bodega expidió el pedido, así que el retiro se da por RETIRADO. " + base
+                               + f"Registrado el {ahora_txt} (hora Chile). Quién retiró queda sin completar: una persona debe anotarlo. "
+                                 "Al cliente se le envía el correo de retiro completado.")[:900],
+                              "sistema", "Check WMS (automático)")
+                except Exception as e:
+                    print(f"[retiros-retiro-auto] rid={rid}: {e}", flush=True)
+                    return False
+            _CHECK_EXPEDIDO_VISTO.pop(rid, None)
+        quien_hora = f"a las {hora_check}" if hora_check else f"(detectado a las {_ahora_chile().strftime('%H:%M')})"
+        docs_txt = ""
+        try:
+            docs_txt = ", ".join(f"{(d.get('document_type') or '').strip().upper()} {d.get('document_number') or ''}".strip() for d in (mysql_fetchall(
+                "SELECT document_type, document_number FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC", (rid,)) or [])[:4])
+        except Exception:
+            pass
+        if modo == "sombra":
+            try:
+                _notificar_equipo_retiros(
+                    f"📦 {code}: Check ya expidió el pedido",
+                    f"{req.get('customer_name') or 'Cliente'} — Check ya expidió el pedido{(' ' + docs_txt) if docs_txt else ''} {quien_hora}: "
+                    f"si el cliente ya se lo llevó, márcalo como RETIRADO (cuando el cierre automático esté activo, esto lo cerrará solo y le avisará al cliente).",
+                    rid, code, prioridad="alta", tipo="retiro_expedido", send_email=False)
+            except Exception as e:
+                print(f"[retiros-retiro-auto] aviso equipo rid={rid}: {e}", flush=True)
+            print(f"[retiros-retiro-auto] rid={rid} {code}: Check expidió (SOMBRA: solo aviso al equipo)", flush=True)
+            return True
+        # ACTIVO: los mismos efectos que marcarlo RETIRADO a mano, cada uno por separado (ninguno frena al resto ni deshace el cambio)
+        try:
+            mysql_execute(f"UPDATE `{PROP}` SET status='superseded', answered_at=NOW() WHERE request_id=%s AND status='pending'", (rid,))
+        except Exception as e:
+            print(f"[retiros-retiro-auto] cerrar propuestas pendientes rid={rid}: {e}", flush=True)
+        _check_snap_desde_cache(rid)
+        try:
+            req_despues = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or req
+            if sincrono:
+                notify(req_despues, "done", custom_message=_NOTA_CIERRE_AUTO)
+            else:
+                notify_async(req_despues, "done", custom_message=_NOTA_CIERRE_AUTO)
+        except Exception as e:
+            print(f"[retiros-retiro-auto] aviso al cliente rid={rid}: {e}", flush=True)
+        try:
+            tok = req.get("public_token")
+            if tok:
+                _POLL_CACHE.pop(tok, None)
+            _DISPO_CACHE["payload"] = None
+        except Exception:
+            pass
+        try:
+            _notificar_equipo_retiros(
+                f"🎉 Retiro {code} cerrado automáticamente",
+                f"{req.get('customer_name') or 'Cliente'} — Check expidió el pedido {quien_hora}: ILUS lo dio por RETIRADO y le avisó al cliente. "
+                f"Falta anotar quién retiró.", rid, code, prioridad="media", tipo="retiro_cerrado", send_email=False)
+        except Exception as e:
+            print(f"[retiros-retiro-auto] aviso equipo rid={rid}: {e}", flush=True)
+        print(f"[retiros-retiro-auto] rid={rid} {code} -> retirada (automatico, Check expidio)", flush=True)
         return True
 
     def _prep_auto_candidatos(limite=30):
@@ -12601,13 +12939,15 @@ def register_pickup_routes(app, ctx):
             pass
 
     def _prep_auto_barrido_sync(max_s=90, dry=False):
-        """Revisa en Check los retiros con cita cercana y pasa a «En preparación» los que ya tienen picking. Dentro de UNA petición
-        (la que hace Cloud Scheduler), porque Cloud Run casi no da CPU a un hilo fuera de una petición. La señal se confirma releyendo
-        a Check tras RETIROS_CHECK_CONFIRMACION_S segundos (una sola espera para todos los candidatos). Fuera del horario de la bodega no
-        lee ni escribe nada (salvo con dry=True, que solo mira)."""
+        """Revisa en Check los retiros con cita cercana y pasa a «En preparación» los que ya tienen picking; y avisa (modo sombra) o cierra (modo
+        activo) los que Check ya EXPIDIÓ por completo. Dentro de UNA petición (la que hace Cloud Scheduler), porque Cloud Run casi no da CPU a
+        un hilo fuera de una petición. La señal se confirma releyendo a Check tras RETIROS_CHECK_CONFIRMACION_S segundos (una sola espera para
+        todos los candidatos). Fuera del horario de la bodega no lee ni escribe nada (salvo con dry=True, que solo mira)."""
         t0 = time.time()
-        res = {"activo": _prep_auto_activo(), "en_horario": True, "revisados": 0, "con_senal": [], "pasaron": [], "desfase": [], "errores": 0}
-        if not res["activo"]:
+        modo_ret = _retiro_auto_modo()
+        res = {"activo": _prep_auto_activo(), "en_horario": True, "revisados": 0, "con_senal": [], "pasaron": [], "desfase": [], "errores": 0,
+               "retiro_auto_modo": modo_ret, "expedidos": [], "expedidos_actuaron": []}
+        if not res["activo"] and modo_ret == "apagado":
             return res
         res["en_horario"] = _prep_auto_en_horario()
         if not res["en_horario"] and not dry:
@@ -12616,8 +12956,8 @@ def register_pickup_routes(app, ctx):
         def _lee(rid):
             req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
             return req, (_check_prep_retiro(rid)["evaluacion"] if req else None)
-        senal = []
-        for f in _prep_auto_candidatos():
+        senal, senal_exp = [], []
+        for f in (_prep_auto_candidatos() if res["activo"] else []):
             if time.time() - t0 > max_s * 0.45:
                 break
             try:
@@ -12629,10 +12969,34 @@ def register_pickup_routes(app, ctx):
                 if req and ev and ev.get("iniciada_auto") and _prep_auto_en_ventana(req) and not _prep_auto_cambio_pendiente(rid):
                     senal.append(rid)
                     res["con_senal"].append(req.get("code") or rid)
+                if req and ev and modo_ret != "apagado" and _check_expedido(ev) and _prep_auto_en_ventana(req) \
+                        and not _prep_auto_cambio_pendiente(rid):
+                    senal_exp.append(rid)
+                    res["expedidos"].append(req.get("code") or rid)
             except Exception as e:
                 res["errores"] += 1
                 print(f"[retiros-prep-auto] barrido rid={f.get('id')}: {e}", flush=True)
-        if senal and not dry:
+        # «Check expidió» = retirado: los retiros que YA están en preparación (los de cita confirmada se vieron arriba)
+        if modo_ret != "apagado":
+            try:
+                en_prep = mysql_fetchall(f"SELECT id FROM `{REQ}` WHERE status='en_preparacion' ORDER BY id DESC LIMIT 30") or []
+            except Exception as e:
+                en_prep = []
+                print(f"[retiros-retiro-auto] barrido, lista de retiros en preparación: {e}", flush=True)
+            for f in en_prep:
+                if time.time() - t0 > max_s * 0.55:
+                    break
+                try:
+                    rid = int(f["id"])
+                    req, ev = _lee(rid)
+                    res["revisados"] += 1
+                    if req and ev and _check_expedido(ev) and not _prep_auto_cambio_pendiente(rid):
+                        senal_exp.append(rid)
+                        res["expedidos"].append(req.get("code") or rid)
+                except Exception as e:
+                    res["errores"] += 1
+                    print(f"[retiros-retiro-auto] barrido rid={f.get('id')}: {e}", flush=True)
+        if (senal or senal_exp) and not dry:
             try:
                 get_db().commit()       # no dormir con una transacción abierta (bloqueos de las tablas pickup_* y lectura vieja)
             except Exception:
@@ -12652,6 +13016,18 @@ def register_pickup_routes(app, ctx):
                 except Exception as e:
                     res["errores"] += 1
                     print(f"[retiros-prep-auto] confirmación rid={rid}: {e}", flush=True)
+            for rid in senal_exp:
+                if time.time() - t0 > max_s:
+                    print(f"[retiros-retiro-auto] barrido: sin tiempo, el resto queda para el próximo ciclo (rid={rid})", flush=True)
+                    break
+                try:
+                    _check_olvidar(rid)
+                    req, ev = _lee(rid)
+                    if req and ev and _retiro_auto_aplicar(rid, req, ev, confirmado=True, sincrono=True):
+                        res["expedidos_actuaron"].append(req.get("code") or rid)
+                except Exception as e:
+                    res["errores"] += 1
+                    print(f"[retiros-retiro-auto] confirmación rid={rid}: {e}", flush=True)
         res["segundos"] = round(time.time() - t0, 1)
         return res
 

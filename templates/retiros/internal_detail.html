@@ -1629,6 +1629,7 @@
           {% elif req.status == 'en_preparacion' %}
           <h5>Bodega está preparando el pedido</h5>
           <p class="step-sub">Marca cada producto en la lista a medida que bodega lo junta. Cuando el cliente venga y se lo lleve, marca el retiro como <strong>RETIRADO</strong>.</p>
+          {% if aviso_no_expedir %}<p class="step-sub" id="avisoNoExpedir" role="alert" style="margin-top:8px;padding:8px 12px;border-radius:10px;background:#fff8e1;border:1px solid #f59e0b;color:#92400e;font-weight:700">{{ aviso_no_expedir }} <span style="font-weight:500">Lo ideal es expedir en tiempo real, cuando el cliente se lleva el pedido.</span></p>{% endif %}
           {% else %}
           <h5>El cliente confirmó — ahora toca preparar</h5>
           <p class="step-sub">La fecha ya está acordada. El siguiente paso es avisarle a bodega que arme el pedido.</p>
@@ -1701,6 +1702,7 @@
               <li><span>2</span>Al cliente le llega un <strong>correo</strong> avisando que su pedido se está preparando.</li>
               <li><span>3</span>Cuando el cliente se lo lleve, marcas el retiro como <strong>RETIRADO</strong>.</li>
             </ol>
+            {% if aviso_no_expedir %}<p class="cierre-next-p" role="alert" style="padding:8px 12px;border-radius:10px;background:#fff8e1;border:1px solid #f59e0b;color:#92400e;font-weight:700">{{ aviso_no_expedir }}</p>{% endif %}
             <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" id="formEnviarPreparacion">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="status" value="en_preparacion">

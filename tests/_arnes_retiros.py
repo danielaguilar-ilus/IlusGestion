@@ -70,6 +70,7 @@ class BDFalsa:
         self.falla_escritura_si = []  # [(regex, Excepcion)]: hace fallar INSERT/UPDATE/DELETE que coincidan
         self.snapshots = {}         # request_id -> {'payload': str, 'huella': str}: registro de Check guardado en ILUS
         self.snapshot_viejo = False  # True: la lectura «¿hay un cambio pedido por el cliente?» sigue viendo el mundo de hace un minuto
+        self.plantillas = {}        # (estado, canal) -> {'asunto','cuerpo'}: plantillas de Retiros de comm_templates (la BD de plantillas)
         self.al_leer = []           # [(regex, funcion)]: tras la PRIMERA lectura que coincide, corre la función (alguien cambia algo justo después)
 
     # ── construcción de datos ─────────────────────────────────────────────
@@ -250,6 +251,17 @@ class BDFalsa:
                             and self.solicitudes[otra["request_id"]]["status"] not in terminales:
                         return {"code": self.solicitudes[otra["request_id"]]["code"]}
             return None
+        if low.startswith("select") and "from `pickup_requests` where public_token=%s" in low:
+            # el seguimiento público y su /status buscan el retiro por el token del enlace
+            self.consultas.append((s, params))
+            for r in self.solicitudes.values():
+                if r.get("public_token") == params[0]:
+                    return dict(r)
+            return None
+        if low.startswith("select") and "from comm_templates where modulo='retiros'" in low:
+            self.consultas.append((s, params))
+            fila = self.plantillas.get((params[0], params[1]))
+            return dict(fila) if fila else None
         if re.match(r"^select (?!\*).+ from `pickup_requests` where id=%s$", low):
             # «SELECT status FROM pickup_requests WHERE id=%s» (el estado se relee dentro del candado) y similares
             self.consultas.append((s, params))
@@ -303,6 +315,19 @@ class BDFalsa:
                 fila["status"] = nuevo
                 return 1
             return 0
+        if low.startswith("update `pickup_requests` set status='retirada', closed_at=now() where id=%s and status in ('en_preparacion','agenda_confirmada')"):
+            # «Check expidió» = retirado (modo activo): atómico, y no toca el retiro si el cliente pidió cambiar la fecha
+            rid = int(params[0])
+            fila = self.solicitudes.get(rid)
+            if " not exists (select 1 from `pickup_proposals`" in low and any(
+                    p["request_id"] == rid and p["status"] == "pending" and (p.get("proposed_by") or "").lower() == "cliente"
+                    for p in self.propuestas):
+                return 0
+            if fila and fila.get("status") in ("en_preparacion", "agenda_confirmada"):
+                fila["status"] = "retirada"
+                fila["closed_at"] = "NOW()"
+                return 1
+            return 0
         if low.startswith("update pickup_picking_items set picked=1"):
             rid = int(params[0])
             n = 0
@@ -311,6 +336,16 @@ class BDFalsa:
                     x["picked"], x["picked_by"] = 1, "Check WMS"
                     n += 1
             return n
+        m_tot = re.match(r"^update `pickup_requests` set ((?:\w+=%s(?:, )?)+) where id=%s and \(((?:coalesce\(\w+,0\)=0(?: or )?)+)\)$", low)
+        if m_tot:
+            # Totales (peso / peso volumétrico / m³) que se completan SOLO si siguen en 0: devuelve las filas «encontradas», como MySQL
+            cols = [c.split("=")[0] for c in m_tot.group(1).split(", ")]
+            fila = self.solicitudes.get(int(params[-1]))
+            if fila and any(not float(fila.get(c) or 0) for c in cols):
+                for c, v in zip(cols, params[:-1]):
+                    fila[c] = v
+                return 1
+            return 0
         if low.startswith("update `pickup_requests` set responsable_user_id"):
             uid, nombre, rid = params
             fila = self.solicitudes[int(rid)]
@@ -374,8 +409,9 @@ def fila_check(**kw):
     return base
 
 
-def construir_app(usuario=None):
-    """Registra las rutas REALES de Retiros sobre un Flask de mentira. Devuelve (app, db, ctx, esp)."""
+def construir_app(usuario=None, extra=None):
+    """Registra las rutas REALES de Retiros sobre un Flask de mentira. Devuelve (app, db, ctx, esp).
+    `extra`: llaves de ctx que se fijan ANTES de registrar (el módulo toma varias al registrarse, p. ej. `_canal_activo`)."""
     import pickups_module
 
     db = BDFalsa()
@@ -403,6 +439,7 @@ def construir_app(usuario=None):
               "permission_set", "rate_limited", "_cubicador_fetch", "_rut_cuerpo"):
         ctx.setdefault(k, None)
     ctx["rate_limited"] = None
+    ctx.update(extra or {})
 
     usuario = usuario if usuario is not None else {"id": 7, "nombre": "Samantha Blacio", "username": "sam@sphs.cl"}
 

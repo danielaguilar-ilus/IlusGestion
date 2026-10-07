@@ -1412,9 +1412,24 @@ class TestCandadosDeCodigo:
         # Único aviso al cliente permitido (Daniel 2026-10-02, «envíes a preparación en automático»): el MISMO correo «preparing»
         # del botón «Enviar a preparación» (solo trae la fecha agendada), y solo desde el envío automático: en un hilo (ficha abierta)
         # o dentro de la misma petición (el cron, donde Cloud Run no da CPU a un hilo suelto).
+        # Segundo (y último) aviso al cliente permitido (Daniel 2026-10-06, «cuando bodega expida en Check, el retiro se dé por retirado — eso
+        # le manda al cliente el correo de retiro»): el correo «done» del cierre automático por expedición, SOLO en modo «activo» (en «sombra»
+        # la función retorna antes) y SOLO dentro de _retiro_auto_aplicar. Lleva la nota sutil como custom_message.
         llamadas = re.findall(r"\bnotify(?:_async)?\((.*?)\)\s*(?:#.*)?\n", bloque)
-        assert llamadas and all(x.replace(" ", "") == 'req_despues,"preparing"' for x in llamadas), llamadas
-        assert len(llamadas) == 2, "solo el envío automático (hilo o cron) avisa al cliente"
+        prep = [x for x in llamadas if x.replace(" ", "") == 'req_despues,"preparing"']
+        cierre = [x for x in llamadas if x.replace(" ", "") == 'req_despues,"done",custom_message=_NOTA_CIERRE_AUTO']
+        assert llamadas and len(prep) + len(cierre) == len(llamadas), llamadas
+        assert len(prep) == 2, "el envío automático a preparación (hilo o cron) avisa al cliente"
+        assert len(cierre) == 2, "solo el cierre automático por expedición (hilo o cron) avisa al cliente con el correo de retiro"
+        i_fn = bloque.index("def _retiro_auto_aplicar(")
+        i_fin = bloque.index("def _prep_auto_candidatos(", i_fn)
+        assert all(bloque.index(x) > i_fn for x in ('notify(req_despues, "done"', 'notify_async(req_despues, "done"')), \
+            "el correo de retiro solo sale desde _retiro_auto_aplicar"
+        cuerpo_fn = bloque[i_fn:i_fin]
+        i_sombra = cuerpo_fn.index("SOMBRA: solo aviso al equipo")
+        assert cuerpo_fn[i_sombra:].lstrip().split("\n")[1].strip() == "return True" \
+            and i_sombra < cuerpo_fn.index('notify(req_despues, "done"'), \
+            "en modo sombra la función debe retornar ANTES de escribirle al cliente"
         # el único aviso permitido es al equipo interno y sin correo directo
         for llamada in re.findall(r"_notificar_equipo_retiros\((.*?)\)\s*\n", bloque, re.S):
             assert "send_email=False" in llamada, llamada

@@ -114,6 +114,26 @@ def _asignada(o):
     return None
 
 
+def _uni(linea):
+    for k in ("ejecutado", "solicitado"):
+        try:
+            v = float(linea.get(k))
+            if v > 0:
+                return v
+        except (TypeError, ValueError):
+            pass
+    return 0.0
+
+
+def _pares(ots, tramos):
+    """(OT original, tramo) de las OT que traen hora, en el orden de los tramos."""
+    por_id = {}
+    for o in ots or []:
+        if isinstance(o, dict):
+            por_id.setdefault(id(o), o)
+    return [(por_id[t["_id"]], t) for t in tramos if t.get("_id") in por_id]
+
+
 def analizar(ots, cita=None, ahora=None, jor=None):
     """Análisis de tiempos de las OT de UN documento (o de todo el retiro). None si ninguna OT trae hora.
 
@@ -129,7 +149,7 @@ def analizar(ots, cita=None, ahora=None, jor=None):
             continue
         fin = _fin(o)
         curso = fin is None and not _final(o)
-        tramos.append({"ot": o.get("ot") or "", "clase": _clase(o), "tipo": o.get("tipo") or "", "ini": ini,
+        tramos.append({"_id": id(o), "ot": o.get("ot") or "", "clase": _clase(o), "tipo": o.get("tipo") or "", "ini": ini,
                        "fin": fin or (ahora if curso else ini), "curso": curso, "asignada": _asignada(o)})
     if not tramos:
         return None
@@ -173,8 +193,28 @@ def analizar(ots, cita=None, ahora=None, jor=None):
     c = _fecha(cita)
     vs_cita = round((c - salida).total_seconds() / 60) if (c and salida) else None
 
+    # Por producto (Daniel 2026-10-06: «registro de cuánto se tarda por producto en promedio»): los minutos de cada OT de PICKING se reparten
+    # entre sus líneas según las unidades ejecutadas; así, sumando muchos retiros, sale el promedio de minutos por unidad de cada SKU.
+    productos, pk_min, pk_uni, pk_lin = [], 0.0, 0.0, 0
+    for o, t in _pares(ots, tramos):
+        if t["clase"] != "picking" or t["curso"]:
+            continue
+        lineas = [l for l in (o.get("lineas") or []) if isinstance(l, dict)]
+        uni_ot = sum(_uni(l) for l in lineas)
+        pk_min += t["min"]
+        pk_uni += uni_ot
+        pk_lin += len(lineas)
+        for l in lineas:
+            u = _uni(l)
+            if not l.get("sku") and not l.get("descripcion"):
+                continue
+            productos.append({"sku": l.get("sku") or "", "descripcion": l.get("descripcion") or "", "unidades": u, "ot": t["ot"],
+                              "min": round(t["min"] * (u / uni_ot), 2) if uni_ot else None})
+
     return {
         "version": VERSION,
+        "picking_min": round(pk_min), "picking_unidades": pk_uni, "picking_lineas": pk_lin,
+        "min_por_unidad": round(pk_min / pk_uni, 2) if pk_uni else None, "productos": productos,
         "criterio": ("Hora de Check. Tramos de un día a otro: solo jornada de bodega %02d:%02d–%02d:%02d lunes a viernes. "
                      "Trabajo = suma de cada OT; preparación efectiva = tiempo con al menos una OT abierta; "
                      "pausas = principio a fin − preparación efectiva.") % (jor[0] // 60, jor[0] % 60, jor[1] // 60, jor[1] % 60),
