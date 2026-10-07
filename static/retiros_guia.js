@@ -315,37 +315,39 @@
     var m = /^(\d{2}\/\d{2}\/\d{4})(?:\s+(\d{2}:\d{2}))?$/.exec(String(v || '').trim());
     return m ? { f: m[1], h: m[2] || '' } : { f: String(v || ''), h: '' };
   }
-  // Una OT de Check: estado, QUIÉN (usuarios / responsable / asignado) y CUÁNDO, más todos los campos que Check entrega
+  // Una OT de Check en una tarjeta COMPACTA (Daniel 2026-10-06: «tarjetas más chicas, con menos scroll, mejor distribuidas… resaltar el número de OT
+  // para que se entienda qué interesa a la hora de buscar información en Check»): N° de OT grande y copiable, estado, tipo, quién y cuándo en una línea.
+  function cuandoTxt(momentos) {
+    var ms = (momentos || []).map(function (m) { var pm = partesMomento(m.valor); return { e: m.etiqueta, f: pm.f, h: pm.h }; });
+    if (!ms.length) return '';
+    var unaFecha = ms.every(function (m) { return m.f === ms[0].f && m.h; });
+    if (unaFecha) {
+      return '<span class="ck-otc-f">' + esc(ms[0].f) + '</span>' +
+        ms.map(function (m) { return '<span>' + esc(m.e) + ' <b>' + esc(m.h) + '</b></span>'; }).join('<i class="bi bi-arrow-right"></i>');
+    }
+    return ms.map(function (m) { return '<span>' + esc(m.e) + ' <b>' + esc(m.f + (m.h ? ' ' + m.h : '')) + '</b></span>'; }).join('<i class="bi bi-arrow-right"></i>');
+  }
   function otHtml(o, clave) {
     var est = String(o.estado || '').toLowerCase();
     var cls = /termin|final|cerr|complet|ejecut|ok/.test(est) ? 'ok' : (/anul|cancel|error|rechaz/.test(est) ? 'mal' : 'en');
-    var h = '<article class="ck-ot is-' + cls + '"><header class="ck-ot-h"><span class="ck-ot-n"><small>OT</small>' + esc(o.ot || 's/n') + '</span>' +
-      (o.tipo ? '<span class="ck-tag">' + esc(o.tipo) + '</span>' : '') +
-      (o.estado ? '<span class="ck-est is-' + cls + '">' + esc(o.estado) + '</span>' : '') +
-      '<span class="ck-ot-res">' + o.n_lineas + (o.n_lineas === 1 ? ' línea' : ' líneas') + (o.unidades ? ' · ' + o.unidades + ' unidades' : '') + '</span></header>';
-    h += '<div class="ck-ot-g"><section class="ck-quien"><h6><i class="bi bi-people-fill"></i>Quién</h6>';
+    var h = '<article class="ck-otc is-' + cls + '"><div class="ck-otc-top">' +
+      '<span class="ck-otn" title="Número de la OT: con él se busca en Check"><small>N° OT</small><b>' + esc(o.ot || 's/n') + '</b>' +
+      (o.ot ? '<button type="button" class="ck-copiar" data-copiar="' + esc(o.ot) + '" title="Copiar el N° de OT para buscarlo en Check" aria-label="Copiar N° de OT ' + esc(o.ot) + '"><i class="bi bi-copy"></i></button>' : '') +
+      '</span>' + (o.estado ? '<span class="ck-est is-' + cls + '">' + esc(o.estado) + '</span>' : '') + '</div>' +
+      '<div class="ck-otc-meta">' + (o.tipo ? '<b>' + esc(o.tipo) + '</b> · ' : '') + o.n_lineas + (o.n_lineas === 1 ? ' línea' : ' líneas') +
+      (o.unidades ? ' · ' + o.unidades + (o.unidades === 1 ? ' unidad' : ' unidades') : '') + '</div>';
     if ((o.personas || []).length) {
-      h += '<ul>' + o.personas.map(function (p) {
-        return '<li class="ck-per"><span class="ck-av" style="background:' + colorAv(p.valor) + '" aria-hidden="true">' + esc(iniciales(p.valor)) + '</span>' +
-          '<div><b>' + esc(p.valor) + '</b><small>' + esc(p.etiqueta) + '</small></div></li>';
-      }).join('') + '</ul>';
+      h += '<div class="ck-otc-q">' + o.personas.map(function (p) {
+        return '<span class="ck-otc-per"><span class="ck-av" style="background:' + colorAv(p.valor) + '" aria-hidden="true">' + esc(iniciales(p.valor)) + '</span>' +
+          '<b>' + esc(p.valor) + '</b><small>' + esc(p.etiqueta) + '</small></span>';
+      }).join('') + '</div>';
     } else {
-      h += '<p class="ck-vacio"><i class="bi bi-info-circle"></i>Check no informa un usuario ni un responsable en esta OT. Revisa «todos los datos» por si viene con otro nombre.</p>';
+      h += '<div class="ck-otc-q ck-otc-nada"><i class="bi bi-info-circle"></i>Check no informa quién</div>';
     }
-    h += '</section><section class="ck-cuando"><h6><i class="bi bi-clock-history"></i>Cuándo</h6>';
-    if ((o.momentos || []).length) {
-      h += '<ol class="ck-tl">' + o.momentos.map(function (m, i) {
-        var pm = partesMomento(m.valor);
-        var ultimo = i === o.momentos.length - 1;
-        return '<li class="' + (ultimo ? 'es-ultimo' : '') + '"><i class="ck-dot"></i><div class="ck-mom"><b>' + esc(pm.h || pm.f) + '</b>' +
-          (pm.h ? '<span>' + esc(pm.f) + '</span>' : '') + '</div><small>' + esc(m.etiqueta) + '</small></li>';
-      }).join('') + '</ol>';
-    } else {
-      h += '<p class="ck-vacio"><i class="bi bi-info-circle"></i>Check no informa fechas ni horas en esta OT.</p>';
-    }
-    h += '</section></div>';
+    var c = cuandoTxt(o.momentos);
+    h += '<div class="ck-otc-c"><i class="bi bi-clock-history"></i>' + (c || 'Check no informa fecha ni hora') + '</div>';
     if (o.datos && o.datos.length) {
-      h += '<details class="ck-raw" data-k="' + clave + '"><summary><i class="bi bi-braces"></i>Ver todos los datos de Check (' + o.n_datos + ' campos)</summary><dl>' +
+      h += '<details class="ck-raw" data-k="' + clave + '"><summary><i class="bi bi-braces"></i>Todos los datos de Check (' + o.n_datos + ')</summary><dl>' +
         o.datos.map(function (d) { return '<dt>' + esc(d.etiqueta) + '</dt><dd>' + esc(d.valor) + '</dd>'; }).join('') + '</dl></details>';
     }
     return h + '</article>';
@@ -366,7 +368,7 @@
       h += '<div class="ck-doc"><div class="ck-doc-h"><span class="ck-doc-t">' + esc(d.rotulo) + '</span><span class="ck-doc-n">' +
         (d.ots.length ? d.n_ot + (d.n_ot === 1 ? ' OT' : ' OT') : 'sin OT todavía') + '</span></div>';
       if (!d.ots.length) h += '<p class="ck-vacio"><i class="bi bi-hourglass-split"></i>Check todavía no muestra una OT (movimiento de bodega) para este documento.</p>';
-      d.ots.forEach(function (o, j) { h += otHtml(o, 'd' + i + 'o' + j); });
+      if (d.ots.length) h += '<div class="ck-otgrid">' + d.ots.map(function (o, j) { return otHtml(o, 'd' + i + 'o' + j); }).join('') + '</div>';
       if (d.mas) h += '<p class="ck-vacio">…y ' + d.mas + ' OT más.</p>';
       h += '</div>';
     });
@@ -611,6 +613,14 @@
     if (b) { accionar(parseInt(b.dataset.gpAcc, 10), b); return; }
     if (t.closest('#gpCheckSlot [data-gp-check-refresh]')) { cargarCheck(true); ACT_REINTENTOS = 0; cargarActividad(); }
     if (t.closest('[data-gp-retirar]')) { ev.preventDefault(); retirarDesdeCheck(); }
+    var cp = t.closest('[data-copiar]');
+    if (cp) {
+      ev.preventDefault();
+      var txt = cp.getAttribute('data-copiar');
+      var a_mano = function () { toast('Copia a mano el N° de OT: ' + txt, 'info'); };
+      try { navigator.clipboard.writeText(txt).then(function () { toast('✓ N° de OT ' + txt + ' copiado: pégalo en Check para buscarlo.', 'success'); }, a_mano); }
+      catch (e) { a_mano(); }
+    }
   });
 
   // ── Enter = ir al siguiente pendiente, por prioridad de tarjeta ─────────────────────────────────────────

@@ -949,6 +949,7 @@ select.nri-field-locked{pointer-events:none}
       const g = document.getElementById('rgmGrid'); if (g && g.scrollIntoView) g.scrollIntoView({ behavior:'smooth', block:'center' });
       return;
     }
+    if (window.retirosAvisoCorreo && !(await window.retirosAvisoCorreo({ que: `la propuesta de fecha: ${fecha.split('-').reverse().join('/')}, de ${tf} a ${tt}`, ok: 'Enviar propuesta' }))) return;
     btn.disabled = true;
     const _orig = btn.innerHTML;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
@@ -1555,6 +1556,11 @@ select.nri-field-locked{pointer-events:none}
       badgeClass: badge ? badge.className : '',
       badgeText: badge ? badge.textContent : '',
     };
+
+    // Daniel 2026-10-06: todo paso que le escribe al cliente avisa antes (los cuatro de arriba ya tienen su propio aviso)
+    const _correoEstado = (window.RETIROS_CORREO_POR_ESTADO || {})[nuevoEstado];
+    if (_correoEstado && ['en_preparacion', 'en_revision', 'rechazada', 'retirada'].indexOf(nuevoEstado) < 0 && window.retirosAvisoCorreo
+        && !(await window.retirosAvisoCorreo({ que: _correoEstado, mensaje: 'Mover ' + code + ': al cliente le llega ' + _correoEstado + '.' }))) return;
 
     // Optimista: mover card + contadores + badge + acento
     moverDom(card, colDestino);

@@ -1664,6 +1664,7 @@ async function agiConfirmarMover(){
   if (!rid || !fecha || !tf || !tt){
     ilusToast('Datos incompletos', { type:'error' }); return;
   }
+  if (window.retirosAvisoCorreo && !(await window.retirosAvisoCorreo({ que: `la propuesta de fecha: ${agiFormatDateBonita(fecha)}, de ${tf} a ${tt}`, ok: 'Enviar propuesta' }))) return;
   try {
     const r = await fetch(`/retiros/${rid}/proposal`, {
       method: 'POST',
@@ -1745,6 +1746,7 @@ async function agiConfirmarMoverMobile(){
   if (!rid || !fecha || !tf || !tt){
     ilusToast('Completa fecha y horario', { type:'warning' }); return;
   }
+  if (window.retirosAvisoCorreo && !(await window.retirosAvisoCorreo({ que: `la propuesta de fecha: ${agiFormatDateBonita(fecha)}, de ${tf} a ${tt}`, ok: 'Enviar propuesta' }))) return;
   try {
     const r = await fetch(`/retiros/${rid}/proposal`, {
       method: 'POST',
@@ -2115,6 +2117,7 @@ function agiAbrirMoverDesdeDrawer(rid){
 // ── Aceptar la contrapropuesta pendiente del cliente ─────────────────
 // POST /retiros/<rid>/aceptar-contrapropuesta (AJAX) → {ok, message, confirmed}
 async function agiAceptarContrapropuesta(rid, btnEl){
+  if (window.retirosAvisoCorreo && !(await window.retirosAvisoCorreo({ que: 'la confirmación de su cita con la fecha que pidió', ok: 'Aceptar y avisar' }))) return;
   if (btnEl){ btnEl.disabled = true; btnEl.style.opacity = '.6'; }
   try {
     const r = await fetch(`/retiros/${rid}/aceptar-contrapropuesta`, {

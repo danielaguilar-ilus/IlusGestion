@@ -2337,7 +2337,7 @@ window.RETIROS_DETAIL_DATA = {
           {% if req.status == 'agenda_confirmada' %}
           <div class="alert alert-info py-2 px-3 small mb-2"><i class="bi bi-info-circle me-1"></i>Este retiro no pasó por «En preparación»: al cliente <strong>no</strong> le llega el aviso «estamos preparando», solo el de retiro completado.</div>
           {% endif %}
-          <div class="text-muted small mt-2"><i class="bi bi-info-circle me-1"></i>Esto CIERRA el proceso: el cliente recibe el correo de "retiro completado".</div>
+          <div class="alert alert-warning py-2 px-3 small mt-2 mb-0"><i class="bi bi-envelope-fill me-1"></i><strong>Esto le envía un correo al cliente:</strong> cierra el proceso y le llega «retiro completado». Si no estás seguro, <strong>Cancelar</strong> o Esc para volver.</div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
@@ -2358,7 +2358,7 @@ window.RETIROS_DETAIL_DATA = {
     <button class="x" id="opChatClose">&times;</button></div>
   <div class="opc-body" id="opChatBody"></div>
   <div class="opc-foot">
-    <input id="opChatInput" type="text" placeholder="Responder al cliente…" maxlength="2000" autocomplete="off">
+    <input id="opChatInput" type="text" placeholder="Responder al cliente (le llega por correo)…" maxlength="2000" autocomplete="off">
     <button id="opChatSend"><i class="bi bi-send-fill"></i></button>
   </div>
 </div>

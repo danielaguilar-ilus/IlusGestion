@@ -500,3 +500,32 @@
 .gp-check-listo #formEnviarPreparacion{opacity:.6}
 .gp-check-listo #paso5Content .cierre-next:not(.is-green)::before{content:"Check ya lo preparó: lo normal es marcarlo como RETIRADO (arriba). Enviarlo a preparación le manda al cliente el aviso «estamos preparando».";
   display:block;margin:0 0 10px;padding:8px 12px;border-radius:10px;background:#fef2f2;border:2px solid #fca5a5;color:#991b1b;font-size:.95rem;font-weight:700}
+
+/* ══ OT de Check en tarjetas compactas (Daniel 2026-10-06: «más chicas, menos scroll, mejor distribuidas; resaltar el N° de OT») ══ */
+.ck-otgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:8px;margin-top:8px}
+.ck-otc{display:grid;gap:5px;align-content:start;min-width:0;padding:9px 11px;border:2px solid #e5e7eb;border-left:6px solid #9ca3af;border-radius:12px;background:#fff}
+.ck-otc.is-ok{border-left-color:#16a34a}
+.ck-otc.is-en{border-left-color:#f59e0b}
+.ck-otc.is-mal{border-left-color:#dc2626}
+.ck-otc-top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px}
+.ck-otn{display:inline-flex;align-items:center;gap:7px;min-width:0;padding:3px 4px 3px 10px;border-radius:9px;background:#0a0a0a;color:#fff;box-shadow:0 0 0 3px #fde68a}
+.ck-otn small{font-size:.66rem;font-weight:900;letter-spacing:.08em;color:#fbbf24}
+.ck-otn b{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:1.08rem;font-weight:900;letter-spacing:.02em;overflow-wrap:anywhere}
+.ck-copiar{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:0;border-radius:7px;background:rgba(255,255,255,.14);color:#fff;cursor:pointer}
+.ck-copiar:hover{background:rgba(255,255,255,.28)}
+.ck-copiar:focus-visible{outline:3px solid #fbbf24;outline-offset:1px}
+.ck-otc-meta{font-size:.82rem;font-weight:600;color:#4b5563;overflow-wrap:anywhere}
+.ck-otc-meta b{font-weight:800;color:#111827;text-transform:uppercase;letter-spacing:.03em}
+.ck-otc-q{display:flex;flex-wrap:wrap;gap:4px 12px}
+.ck-otc-per{display:inline-flex;align-items:center;gap:6px;min-width:0}
+.ck-otc-per .ck-av{width:26px;height:26px;font-size:.72rem;box-shadow:none}
+.ck-otc-per b{font-size:.95rem;overflow-wrap:anywhere}
+.ck-otc-per small{font-size:.74rem;font-weight:600;color:#6b7280}
+.ck-otc-nada{font-size:.85rem;color:#6b7280;align-items:center;gap:6px}
+.ck-otc-c{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:.88rem;color:#374151}
+.ck-otc-c>.bi:first-child{color:#6b7280}
+.ck-otc-c .bi-arrow-right{font-size:.75rem;color:#9ca3af}
+.ck-otc-c b{font-variant-numeric:tabular-nums;font-weight:900;color:#111827}
+.ck-otc-f{font-weight:800;color:#111827}
+.ck-otc .ck-raw{margin:2px -11px -9px;border-radius:0 0 10px 10px}
+.ck-otc .ck-raw summary{min-height:36px;font-size:.82rem}
