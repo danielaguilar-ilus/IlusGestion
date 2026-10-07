@@ -6,6 +6,9 @@ Qué se vigila:
     reenviar lo que ya estaba no reescribe nada, y la cobertura (garantía/contrato/cortesía) solo cambia si la
     petición la cambia de verdad (el modal de cierre la estaba borrando).
   · La tarjeta "Finanzas de la OT" pinta la cuenta única (static/ot_finanzas.js) en vez de una fórmula propia.
+  · Revisión 2026-10-07: el Paso 3 del modal de cierre usa la misma cuenta; `costo` acompaña a lo cobrado solo si
+    ya existía (lo lee lo que ve el cliente); la OT interna valorizada no dice "falta cuánto vale"; y escribir a
+    mano el cobro de una preventiva de contrato real ya no esconde el campo: se avisa y se pregunta al guardar.
 Sin BD ni Flask: se extraen las funciones de app.py con ast y se ejecutan con una BD simulada.
 Correr con:  py -m unittest tests.test_ot_finanzas_pantalla
 """
@@ -13,6 +16,9 @@ import ast
 import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import types
 import unittest
 
@@ -252,6 +258,267 @@ class TestPantalla(unittest.TestCase):
         self.assertIn("_ot_resultado_financiero(v, rep)", cuerpo, "las claves de antes siguen")
         self.assertIn("_ot_finanzas(v, rep)", cuerpo)
         self.assertIn("_es_rol_tecnico()", cuerpo)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  2026-10-07 — revisión adversarial del frente "pantalla de la OT"
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+OT201 = {"modalidad_cobro": "garantia", "cubierto_por": "garantia", "tipo": "instalacion", "cliente_id": 5,
+         "contrato_real": 0, "costo": 200000, "zz_monto": 1, "zz_codigo": "ZZRETIRO", "zz_envio_monto": None,
+         "valor_origen": "zz", "costo_proveedor": 130000, "costo_despacho": 70000, "proveedor_tipo": "externo",
+         "valorizado_clp": None, "valorizado_fuente": None, "tecnico_nombre": "Técnico externo"}
+COBRADA = {"modalidad_cobro": "pagado", "cubierto_por": "cliente", "tipo": "instalacion", "cliente_id": 5,
+           "contrato_real": 0, "costo": 180000, "zz_monto": 150000, "zz_codigo": "ZZINSTALACION",
+           "zz_envio_monto": 30000, "valor_origen": "zz", "costo_proveedor": 100000, "costo_despacho": 20000,
+           "proveedor_tipo": "externo", "valorizado_clp": None, "valorizado_fuente": None, "tecnico_nombre": "X"}
+
+
+def _fin(v):
+    return _base_ambito()["_ot_finanzas"](v, None)
+
+
+class TestModalCierrePaso3(unittest.TestCase):
+    """El Paso 3 del modal "Firmar y cerrar OT" usa la cuenta única (antes: costo − proveedor − despacho)."""
+
+    @classmethod
+    def setUpClass(cls):
+        import jinja2
+        with open(os.path.join(RAIZ, "templates", "ot2", "detalle.html"), encoding="utf-8") as fh:
+            html = fh.read().replace(chr(13) + chr(10), chr(10))
+        i = html.index("{% macro _fclp(n) %}")
+        macro = html[i:html.index("{% endmacro %}", i) + len("{% endmacro %}")]
+        j = html.index("{# ══ PASO 3 — FINANZAS")
+        paso3 = html[j:html.index("{# ══ PASO 4", j)]
+        cls.tpl = jinja2.Environment(autoescape=True).from_string(macro + paso3)
+
+    def _render(self, v, fin, es_int=False):
+        return self.tpl.render(v=v, fin=fin, _es_int=es_int, puede_cobertura=True,
+                               _falta_costo=(not es_int) and v.get("costo_proveedor") is None)
+
+    def test_garantia_ot201_no_dice_le_cobre_ni_gane(self):
+        out = self._render(OT201, _fin(OT201))
+        self.assertNotIn("Le cobré al cliente", out)
+        self.assertNotIn("Gané", out)
+        self.assertNotIn("% de margen", out)
+        self.assertIn("Garantía: no se le cobra", out)
+        self.assertIn("Nos costó", out)
+        self.assertIn("$200.000", out)
+        self.assertIn('class="v info"', out, "lo que nos costó va en azul informativo, no como pérdida")
+
+    def test_ot_cobrada_cobre_me_cobraron_queda(self):
+        out = self._render(COBRADA, _fin(COBRADA))
+        for t in (">Cobré</span>", "$180.000", ">Me cobraron</span>", "$120.000", ">Queda</span>", "$60.000",
+                  "33,3 % de margen"):
+            self.assertIn(t, out, t)
+        self.assertNotIn("Le cobré al cliente", out)
+
+    def test_falta_lo_del_tecnico(self):
+        v = dict(COBRADA, costo_proveedor=None)
+        out = self._render(v, _fin(v))
+        self.assertIn("Por declarar", out)
+        self.assertIn("No se puede calcular", out)
+
+    def test_sin_fin_queda_el_calculo_de_antes(self):
+        out = self._render(COBRADA, None)
+        self.assertIn("Le cobré al cliente", out)
+
+    def test_trabajo_interno_dice_lo_que_nos_costo(self):
+        v = dict(COBRADA, cliente_id=None, modalidad_cobro="interno", proveedor_tipo="interno",
+                 costo_proveedor=None, costo_despacho=None, zz_monto=None, zz_envio_monto=None, costo=None)
+        out = self._render(v, _fin(v), es_int=True)
+        self.assertIn("Trabajo interno: no se le cobra", out)
+
+
+def _llamar_vivo(cuerpo, fila=None):
+    """Como _llamar, pero la BD simulada APLICA los UPDATE (así la relectura ve lo guardado)."""
+    fila = dict(FILA, **(fila or {}))
+    updates, vistos = [], []
+
+    def _ejecutar(sql, params):
+        updates.append((sql, params))
+        sets_sql = sql.split(" SET ", 1)[1].split(" WHERE ", 1)[0]
+        i = 0
+        for p in sets_sql.split(","):
+            if "=" not in p or "%s" not in p:
+                continue
+            col = p.split("=", 1)[0].strip()
+            val = params[i]
+            i += 1
+            if "COALESCE" in p and val is None:
+                continue
+            fila[col] = val
+        return 1
+
+    amb = dict(_base_ambito())
+    amb.update({
+        "request": _Req(cuerpo), "jsonify": lambda d: d, "print": lambda *a, **k: None,
+        "g": types.SimpleNamespace(user={"role": "admin", "username": "daniel"}),
+        "mysql_fetchone": lambda sql, p=None: dict(fila),
+        "mysql_fetchall": lambda sql, p=None: [],
+        "mysql_execute_returning_rowcount": _ejecutar,
+        "_mant_log": lambda *a, **k: None, "_mant_notificar": lambda *a, **k: None,
+        "current_username": lambda: "daniel",
+        "_ot2_finanzas_estado": lambda v: (vistos.append(dict(v)) or (True, [])),
+        "_ot_repuestos_desglose": lambda vids: {},
+        "_OT2_CENTROS_COSTO": [("sstt", "Servicio Técnico"), ("logistica", "Logística")],
+        "_ot_zz_topes_reales": lambda *a, **k: {"excluidos": [], "documentos": [1], "tope_servicio": 10 ** 9,
+                                                "tope_despacho": 10 ** 9},
+        "_ot_doc_real_a_usuario": lambda t, n: (t, n),
+    })
+    for nombre in FUNCS:
+        f = amb[nombre]
+        amb[nombre] = types.FunctionType(f.__code__, amb, f.__name__, f.__defaults__, f.__closure__)
+    r = amb["ot2_api_finanzas"](249)
+    if isinstance(r, tuple):
+        r = r[0]
+    return r, updates, fila, vistos
+
+
+class TestPrecioAlClienteComoHistoria(unittest.TestCase):
+    """`costo` lo sigue leyendo lo que ve el cliente (correo "visita agendada"): si ya existía, acompaña a lo
+    cobrado cuando la tarjeta lo cambia. Nunca se crea, nunca en una OT que no se cobra, nunca en una cerrada."""
+
+    def test_acompana_a_lo_cobrado_si_ya_existia(self):
+        r, up, fila, _ = _llamar_vivo({"zz_monto": 280000, "valor_origen": "zz"})
+        self.assertEqual(len(up), 2, up)
+        sql, params = up[1]
+        self.assertTrue(sql.startswith("UPDATE mant_visitas SET costo=%s WHERE id=%s"), sql)
+        self.assertIn("estado NOT IN ('completada','cerrada','cancelada','anulada')", sql)
+        self.assertEqual(params, (280000, 249))
+        self.assertEqual(fila["costo"], 280000)
+        self.assertEqual(r["fin"]["cobre"]["total"], 280000)
+        self.assertFalse([a for a in r["fin"]["avisos"] if "Precio al cliente" in a])
+
+    def test_no_se_crea_si_no_habia(self):
+        r, up, fila, _ = _llamar_vivo({"zz_monto": 280000, "valor_origen": "zz"}, fila={"costo": None})
+        self.assertEqual(len(up), 1)
+        self.assertIsNone(fila["costo"])
+
+    def test_no_se_toca_si_el_cobro_no_cambia(self):
+        r, up, fila, _ = _llamar_vivo({"costo_proveedor": 1000, "costo": 1})
+        self.assertEqual(len(up), 1)
+        self.assertEqual(fila["costo"], 252101)
+
+    def test_no_se_toca_en_una_ot_que_no_se_cobra(self):
+        r, up, fila, _ = _llamar_vivo({"zz_envio_monto": 30000},
+                                      fila={"modalidad_cobro": "garantia", "cubierto_por": "garantia",
+                                            "garantia_motivo": "falla de fábrica"})
+        self.assertEqual(len(up), 1)
+        self.assertEqual(fila["costo"], 252101)
+
+    def test_no_se_toca_si_lo_cobrado_sale_del_mismo_precio(self):
+        r, up, fila, _ = _llamar_vivo({"zz_envio_monto": 20000}, fila={"zz_monto": None, "costo": 100000})
+        self.assertEqual(len(up), 1)
+        self.assertEqual(fila["costo"], 100000)
+
+    def test_lo_que_falta_se_calcula_con_la_relectura_completa(self):
+        r, up, fila, vistos = _llamar_vivo({"costo_proveedor": 1000})
+        self.assertTrue(vistos)
+        for k in ("valorizado_clp", "cliente_id", "contrato_real"):
+            self.assertIn(k, vistos[-1], k)
+
+
+class TestFaltanTrabajoInterno(unittest.TestCase):
+    """Una OT interna valorizada en valorizado_clp (donde la deja la tarjeta) ya no dice "falta cuánto vale"."""
+
+    @classmethod
+    def setUpClass(cls):
+        _, arbol = _codigo_y_arbol()
+        amb = dict(_base_ambito())
+        for nodo in arbol.body:
+            if isinstance(nodo, ast.FunctionDef) and nodo.name == "_ot2_finanzas_estado":
+                exec(compile(ast.Module(body=[nodo], type_ignores=[]), "<app>", "exec"), amb)
+        cls.estado = staticmethod(amb["_ot2_finanzas_estado"])
+
+    def _faltan(self, **kw):
+        v = {"centro_costo": "sstt", "cliente_id": None, "modalidad_cobro": "interno", "tipo": "revision_interna",
+             "costo": None, "valorizado_clp": None}
+        v.update(kw)
+        return self.estado(v)[1]
+
+    def test_valorizado_resuelve(self):
+        self.assertEqual(self._faltan(valorizado_clp=50000), [])
+
+    def test_costo_antiguo_tambien(self):
+        self.assertEqual(self._faltan(costo=40000), [])
+
+    def test_sin_ninguno_falta(self):
+        self.assertTrue([f for f in self._faltan() if "cuánto vale" in f])
+
+
+@unittest.skipUnless(shutil.which("node"), "node no está instalado")
+class TestCoberturaEnVivo(unittest.TestCase):
+    """Preventiva de contrato real: bajar a mano el cobro del documento la vuelve "contrato" (Cobré $0).
+    La tarjeta ya no esconde el campo que se está escribiendo: avisa, y Guardar / Corregir preguntan antes."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(RAIZ, "templates", "ot2", "detalle.html"), encoding="utf-8") as fh:
+            cls.html = fh.read().replace(chr(13) + chr(10), chr(10))
+
+    def _node(self, codigo):
+        js = os.path.join(RAIZ, "static", "ot_finanzas.js")
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as fh:
+            fh.write("const m = require(%s);\n" % json.dumps(js))
+            fh.write(codigo)
+            script = fh.name
+        try:
+            return json.loads(subprocess.run(["node", script], capture_output=True, text=True, encoding="utf-8",
+                                             check=True).stdout)
+        finally:
+            os.unlink(script)
+
+    def _region(self):
+        i = self.html.index("window.otdFinFmt = function")
+        j = self.html.index("window.otfPintarPaso3 = function", i)
+        k = self.html.index(chr(10) + "};" + chr(10), j) + 3
+        return self.html[i:k]
+
+    def test_la_regla_cambia_la_cobertura_al_escribir_a_mano(self):
+        base = {"modalidad_cobro": "pagado", "cubierto_por": "contrato", "tipo": "preventiva", "cliente_id": 5,
+                "contrato_real": 1, "zz_monto": 100000, "zz_codigo": "ZZMANTENCION", "valor_origen": "zz",
+                "costo_proveedor": 40000}
+        out = self._node("const b = %s;\nprocess.stdout.write(JSON.stringify([m.finanzas(b, null).cobertura, "
+                         "m.finanzas(Object.assign({}, b, {zz_monto: 80000, valor_origen: 'manual'}), null).cobertura]));"
+                         % json.dumps(base))
+        self.assertEqual(out, ["cobra", "contrato"])
+
+    def test_el_bloque_no_se_esconde_mientras_se_escribe(self):
+        i = self.html.index("function pintarResultado(){")
+        cuerpo = self.html[i:i + 4000]
+        self.assertIn("bloqueCobro.hidden = !(r.cobra || cobraGuardada)", cuerpo)
+        self.assertNotIn("bloqueCobro.hidden = !r.cobra;", cuerpo)
+        self.assertIn("otdFinCobVivoAviso", cuerpo)
+
+    def test_guardar_y_corregir_preguntan_antes(self):
+        i = self.html.index("window.otdGuardarFinanzas = async function")
+        self.assertIn("Esta OT dejaría de cobrarse", self.html[i:i + 9000])
+        i = self.html.index("async function otdFinCorrGuardar(")
+        self.assertIn("_otdFcPierde", self.html[i:i + 2500])
+
+    def test_aviso_y_paso3_en_el_navegador(self):
+        # OJO: la región trae '%' (otdFinPct): los datos se pegan aparte, sin formatear con %.
+        codigo = (
+            "const window = {}; const elems = {otfFin3Box: {innerHTML: ''}};\n"
+            "const document = {getElementById: id => elems[id] || null};\n"
+            + self._region() + "\n"
+            + "const g = m.finanzas(" + json.dumps(OT201) + ", null);\n"
+            + "const c = m.finanzas(" + json.dumps(COBRADA) + ", null);\n"
+            "window.otfPintarPaso3(g); const paso3gar = elems.otfFin3Box.innerHTML;\n"
+            "window.otfPintarPaso3(c); const paso3cob = elems.otfFin3Box.innerHTML;\n"
+            "const aviso = window.otdFinPierdeCobroHtml({cobertura: 'contrato', "
+            "cobertura_txt: 'Mantención de contrato: se paga con el contrato'});\n"
+            "process.stdout.write(JSON.stringify([paso3gar, paso3cob, aviso]));\n"
+        )
+        paso3gar, paso3cob, aviso = self._node(codigo)
+        self.assertIn("Nos costó", paso3gar)
+        self.assertIn("$200.000", paso3gar)
+        self.assertIn("Garantía: no se le cobra", paso3gar)
+        self.assertNotIn("Le cobré", paso3gar)
+        for t in ("$180.000", "$120.000", "$60.000", "33,3 % de margen"):
+            self.assertIn(t, paso3cob, t)
+        self.assertIn("Mantención de contrato", aviso)
+        self.assertIn("$0", aviso)
 
 
 if __name__ == "__main__":

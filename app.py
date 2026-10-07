@@ -88172,9 +88172,12 @@ def _ot2_finanzas_estado(v):
         # bloquea nada); el candado al CREAR vive en ot2_api_crear
         # (FINANZAS_SIN_VALOR_INTERNO). Si el caller no trajo `costo`, no
         # se exige -- misma guarda que la valorización de cliente.
-        if "costo" in v:
+        # 💰 2026-10-07: desde hoy ese valor nace en valorizado_clp (ya no en `costo`, ver
+        # _ot_fin_reparto_creacion): cuenta cualquiera de los dos. Se juzga SOLO si el llamador trae
+        # valorizado_clp -- con `costo` a secas una OT interna nueva diría "falta" sin que falte nada.
+        if "valorizado_clp" in v:
             try:
-                _costo_int = float(v.get("costo") or 0)
+                _costo_int = max(float(v.get("valorizado_clp") or 0), float(v.get("costo") or 0))
             except (TypeError, ValueError):
                 _costo_int = 0.0
             if _costo_int <= 0:
@@ -91160,7 +91163,9 @@ def ot2_api_finanzas(vid):
     # `costo` ("Precio al cliente") YA NO se escribe desde acá. Era el total escrito a mano y terminó guardando
     # siete cosas distintas (cobro, valor de una garantía, estimado interno...). Lo cobrado es ahora servicio
     # (zz_monto) + despacho (zz_envio_monto); la columna queda como historia y solo la lee _ot_finanzas en OT
-    # antiguas. Si un llamador viejo todavía lo manda, se ignora sin error.
+    # antiguas. Si un llamador viejo todavía lo manda, se ignora sin error. (Revisión 2026-10-07: la única
+    # escritura que queda es la copia de lo cobrado a un «Precio al cliente» que ya existía, más abajo, para
+    # que lo que ve el cliente no quede con un número viejo.)
     # 🐛 2026-10-07: el 0 es un dato ("no se cobró"), no un casillero vacío. Antes `str(0 or "")` daba "" y
     # un cobro de $0 se perdía (y en el servicio borraba lo que había).
     def _monto_opt(raw):
@@ -91516,6 +91521,51 @@ def ot2_api_finanzas(vid):
             "Esta orden de trabajo ya está cerrada — no se puede modificar "
             "su información financiera.", "CONFLICTO_CONCURRENCIA", http=409)
 
+    # 💰 2026-10-07 (revisión del modelo único) — lo que quedó guardado, leído UNA vez: alimenta la cuenta que
+    # vuelve a la tarjeta, lo que falta para cerrar y la copia de `costo` de abajo. Protegido: si falla, lo
+    # guardado sigue guardado (abajo se cae a la consulta corta de siempre).
+    _vf = None
+    try:
+        _vf = mysql_fetchone(
+            "SELECT v.centro_costo, v.modalidad_cobro, v.garantia_motivo, v.factura_tido, v.factura_nudo, "
+            "       v.zz_monto, v.zz_envio_monto, v.cubierto_por, v.tipo, v.costo, v.cliente_id, v.zz_codigo, "
+            "       v.valor_origen, v.costo_proveedor, v.costo_despacho, v.proveedor_tipo, v.valorizado_clp, "
+            "       v.valorizado_fuente, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
+            "  FROM mant_visitas v WHERE v.id=%s", (vid,))
+    except Exception as _e_vf:
+        print(f"[ot2_finanzas] relectura vid={vid}: {type(_e_vf).__name__}", flush=True)
+
+    # 💰 2026-10-07 (revisión) — `costo` ("Precio al cliente") = lo cobrado, como HISTORIA. Daniel aprobó que
+    # "Total al cliente" deje de escribirse a mano y sea la suma servicio + despacho; la cuenta única ya no lo
+    # usa salvo en OT antiguas. Pero la columna todavía la lee lo que ve el CLIENTE -- el correo "visita
+    # agendada" ("Costo estimado"), el PDF y el informe post-servicio -- y esos no cambian sin el sí de Daniel
+    # (REGLAS #22 y #23). La tarjeta, antes, la mantenía igual a servicio + despacho; si dejara de escribirla,
+    # tras corregir el cobro el cliente vería el número viejo. Por eso, SOLO cuando esta petición cambia lo
+    # cobrado, la OT se cobra y ya TENÍA un «Precio al cliente», ese número se iguala a "Cobré" de la cuenta
+    # única (nunca un número a mano). No se crea uno donde no había (las OT nuevas ya no lo llevan), no se toca
+    # en una OT que no se cobra (su valor vive en valorizado_clp), ni cuando lo cobrado sale del mismo
+    # «Precio al cliente» (OT antigua sin servicio separado), ni con $0, ni en una OT ya cerrada (evidencia:
+    # ni siquiera el superadmin la cambia por este camino).
+    _env_cambia = ("zz_envio_monto" in d and zz_envio_monto is not None
+                   and not _mismo_monto(zz_envio_monto, v.get("zz_envio_monto")))
+    _costo_sync = None
+    if _vf and (_zz_cambia or _env_cambia):
+        try:
+            _f_sync = _ot_finanzas(_vf)   # sin repuestos: "Cobré" no depende de ellos
+            _c_sync = _f_sync["cobre"]
+            _tot_ant = _ot_fin_num(_vf.get("costo"))
+            if (_f_sync["cobra"] and _c_sync["hay"] and _c_sync["total"] > 0
+                    and not (_c_sync["fuente"] or "").startswith("precio al cliente")
+                    and _tot_ant is not None and _tot_ant > 0 and abs(_tot_ant - _c_sync["total"]) >= 1):
+                _cs_val = int(round(_c_sync["total"]))
+                if mysql_execute_returning_rowcount(
+                        "UPDATE mant_visitas SET costo=%s WHERE id=%s"
+                        " AND estado NOT IN ('completada','cerrada','cancelada','anulada')", (_cs_val, vid)):
+                    _costo_sync = _cs_val
+                    _vf["costo"] = _cs_val
+        except Exception as _e_cs:
+            print(f"[ot2_finanzas] costo=cobrado vid={vid}: {type(_e_cs).__name__}", flush=True)
+
     try:
         _mant_log("visita", vid, "finanzas_declaradas",
                   f"centro={centro or '—'} · "
@@ -91527,7 +91577,10 @@ def ot2_api_finanzas(vid):
                   + (f" · cobro del servicio {_ot_fin_clp(zz_monto) if zz_monto is not None else 'vacío'}"
                      f" ({_origen_final or 'sin origen'})" if _zz_cambia else "")
                   + (f" · valorizado {_ot_fin_clp(_val_clp) if _val_clp is not None else 'quitado'}"
-                     if "valorizado_clp" in d else ""))
+                     if "valorizado_clp" in d else "")
+                  # 2026-10-07 (revisión): la copia de lo cobrado al «Precio al cliente» (ver arriba).
+                  + (f" · «Precio al cliente» = lo cobrado {_ot_fin_clp(_costo_sync)}"
+                     if _costo_sync is not None else ""))
     except Exception:
         pass
 
@@ -91571,21 +91624,19 @@ def ot2_api_finanzas(vid):
     except Exception as _e_recon:
         print(f"[ot2_finanzas] alerta estimado-vs-real vid={vid}: {_e_recon}", flush=True)
 
-    v2 = mysql_fetchone(
+    # 2026-10-07 (revisión): lo que falta para cerrar se calcula con la MISMA relectura (trae el valorizado,
+    # cliente_id y la bandera de contrato real, así una OT interna valorizada en valorizado_clp ya no dice
+    # "falta cuánto vale"). La consulta corta de siempre queda de respaldo.
+    v2 = _vf or mysql_fetchone(
         "SELECT centro_costo, modalidad_cobro, garantia_motivo, "
         "       factura_tido, factura_nudo, zz_monto, zz_envio_monto, "
-        "       cubierto_por, tipo, costo "
+        "       cubierto_por, tipo, costo, cliente_id, valorizado_clp "
         "  FROM mant_visitas WHERE id=%s", (vid,)) or {}
     ok, faltan = _ot2_finanzas_estado(v2)
     # 💰 2026-10-07 — la cuenta única recién guardada, para que la tarjeta repinte con lo que de verdad quedó
     # en la base (y no con lo que creía mandar). Va aparte y protegida: si falla, lo guardado sigue guardado.
     _fin_out = {}
     try:
-        _vf = mysql_fetchone(
-            "SELECT v.modalidad_cobro, v.cubierto_por, v.tipo, v.cliente_id, v.costo, v.zz_monto, v.zz_codigo, "
-            "       v.zz_envio_monto, v.valor_origen, v.costo_proveedor, v.costo_despacho, v.proveedor_tipo, "
-            "       v.valorizado_clp, v.valorizado_fuente, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
-            "  FROM mant_visitas v WHERE v.id=%s", (vid,))
         if _vf:
             _rep_f = _ot_fin_rep_de(vid)
             _fin_out = {"fin": _ot_finanzas(_vf, _rep_f), "base": _ot_fin_base(_vf),

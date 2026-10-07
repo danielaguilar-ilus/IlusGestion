@@ -318,6 +318,11 @@
 .otf-fin3 .v.neg{color:#dc2626}
 .otf-fin3 .v.pend{color:#b45309;font-size:.82rem}
 .otf-fin3 .d{font-size:.66rem;color:#94a3b8;line-height:1.25}
+/* 2026-10-07: en una OT que no se cobra la última cifra es "Nos costó" (azul
+   informativo, no una pérdida roja), igual que en la tarjeta de Finanzas. */
+.otf-fin3 .v.info{color:#1d4ed8}
+.otf-fin3-frase{font-size:.74rem;color:#475569;margin-top:6px;line-height:1.4;overflow-wrap:anywhere}
+.otf-fin3-frase:empty{display:none}
 .otf-costo-box{margin-top:10px;padding:12px;border-radius:12px;
   background:#fef2f2;border:1.5px solid #fecaca}
 .otf-costo-row{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end}
@@ -574,6 +579,8 @@
 .otd-fnocobra{border:1px solid #bfdbfe;background:#eff6ff;color:#1e3a8a;border-radius:12px;padding:10px 12px;
   font-size:.82rem;line-height:1.45}
 .otd-fnocobra .big{display:block;font-size:1.02rem;font-weight:900;margin-bottom:3px}
+.otd-fcobvivo{border:1px solid #fcd34d;background:#fff8e1;color:#92400e;border-radius:12px;padding:10px 12px;
+  font-size:.8rem;line-height:1.45;margin-bottom:10px;overflow-wrap:anywhere}
 .otd-fval{margin-top:10px}
 .otd-fval-abrir{min-height:44px;border:1.5px dashed #cbd5e1;background:#fff;color:#374151;border-radius:10px;
   padding:0 14px;font-size:.8rem;font-weight:800;display:inline-flex;align-items:center;gap:6px;cursor:pointer}
@@ -4849,9 +4856,10 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                      medias: "quiero que me diga claramente qué cobro yo por
                      despacho y que sea modificable"). Cada mitad por separado
                      y el total es la suma. Se lee hacia abajo: A + B = total.
-                     💰 2026-10-07: el total ya NO se escribe a mano ni se guarda
-                     en `costo` (Daniel aprobó que "Total al cliente" sea siempre
-                     la suma); `costo` queda como historia.
+                     💰 2026-10-07: el total ya NO se escribe a mano (Daniel aprobó
+                     que "Total al cliente" sea siempre la suma); `costo` queda como
+                     historia: el servidor solo lo iguala a lo cobrado cuando ya
+                     existía, porque lo lee lo que ve el cliente (REGLAS #22/#23).
                      En una OT que no se cobra (garantía, cortesía, interno,
                      contrato) lo cobrado es $0 por definición: los campos del
                      cobro se ocultan (no se borran) y se dice por qué. #}
@@ -4859,6 +4867,11 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                     <span class="big" id="otdFinNoCobraTxt">{{ fin.cobertura_txt if fin else '' }}</span>
                     {{ _fin_nocobra_txt.get(fin.cobertura, '') if fin else '' }}
                   </div>
+                  {#- 🔴 2026-10-07 (revisión): aviso cuando lo que se está escribiendo cambia la
+                      cobertura (ej. preventiva de contrato real: un cobro escrito a mano o desde
+                      la cotización la deja como "Mantención de contrato", Cobré $0). Lo pinta
+                      pintarResultado(); el bloque del cobro ya no se esconde mientras se escribe. -#}
+                  <div class="otd-fcobvivo" id="otdFinCobVivoAviso" role="status" hidden></div>
                   <div id="otdFinCobroMontos" {% if fin and not fin.cobra %}hidden{% endif %}>
                   <div class="otd-fmoney">
                     <div class="otd-fm-row">
@@ -7133,6 +7146,7 @@ function otdIniciarRuta(app){
           Cada corrección guarda el valor de antes y de después, quién la hizo y por qué, y no se puede borrar.</span></div>
         <div class="otd-fincorr-res" id="otdFcRes"></div>
         <div class="otd-fincorr-frase" id="otdFcFrase"></div>
+        <div class="otd-fcobvivo" id="otdFcCobAviso" role="status" hidden></div>
         <div class="row g-2">
           <div class="col-6"><label class="form-label small fw-semibold mb-1">Cobro del servicio ($)</label>
             <input type="text" inputmode="numeric" class="form-control" id="otdFc_zz_monto" oninput="otdFinCorrCalc()"></div>
@@ -7200,6 +7214,7 @@ var _otdFcGar = false, _otdFcInicial = {};
 // 2026-10-07 (modelo único): los datos guardados con que se hace la cuenta, los repuestos instalados, la
 // línea de servicio del tipo de OT y las líneas que no son de servicio (los manda /correcciones).
 var _otdFcBase = null, _otdFcRep = null, _otdFcSug = null, _otdFcNoServ = ['ZZRETIRO'];
+var _otdFcPierde = null;   // 2026-10-07: la cuenta de cómo quedaría, si la corrección deja la OT sin cobro
 var _OTD_FC_CAMPOS = ['zz_monto', 'zz_envio_monto', 'costo_proveedor', 'costo_despacho', 'valorizado_clp'];
 /* 2026-10-07 (modelo único): ya NO hace su propia cuenta (antes: cobro 0 si era garantía, sin repuestos y
    sin mirar si el monto era un estimado o un ZZRETIRO). Pinta lo que devuelve la cuenta única del navegador
@@ -7238,6 +7253,15 @@ function otdFinCorrCalc(){
       ' = Queda</span><b>' + (Q < 0 ? '−' : '') + _otdFcPlata(Math.abs(Q)) + '</b>';
   }
   if (fr) fr.textContent = (r.frase || '') + ((r.avisos && r.avisos.length) ? ' ' + r.avisos.join(' ') : '');
+  // 🔴 2026-10-07 (revisión): corregir el cobro lo deja "escrito a mano"; en una preventiva de contrato real
+  // la regla única la toma entonces como mantención de contrato (Cobré $0). Se avisa acá y al guardar.
+  var r0 = _otdFcBase ? window.ilusOtFinanzas(_otdFcBase, _otdFcRep) : null;
+  _otdFcPierde = !!(r0 && r0.cobra && !r.cobra) ? r : null;
+  var av = document.getElementById('otdFcCobAviso');
+  if (av){
+    av.hidden = !_otdFcPierde;
+    if (_otdFcPierde && window.otdFinPierdeCobroHtml) av.innerHTML = window.otdFinPierdeCobroHtml(r, _otdFcEsc);
+  }
 }
 async function otdFinCorrAbrir(){
   document.getElementById('otdFcErr').textContent = '';
@@ -7285,6 +7309,18 @@ async function otdFinCorrGuardar(){
     body[k] = v;   // 2026-10-07: vacío = quitar ese monto (antes un casillero vacío no se enviaba y no se podía borrar)
   });
   body.centro_costo = document.getElementById('otdFc_centro_costo').value;
+  otdFinCorrCalc();
+  if (_otdFcPierde){
+    var okCob = await ilusConfirm({
+      title: 'Esta OT dejaría de cobrarse',
+      message: 'Con esta corrección la OT pasa a contarse como «' + String(_otdFcPierde.cobertura_txt || '').split(':')[0] +
+               '» y lo cobrado queda en $0.',
+      sub: window.otdFinPierdeCobroHtml ? window.otdFinPierdeCobroHtml(_otdFcPierde, _otdFcEsc) : '',
+      subHtml: true,
+      okLabel: 'Guardar igual', cancelLabel: 'Volver a revisar', danger: true,
+    });
+    if (!okCob) return;
+  }
   var btn = document.getElementById('otdFcBtn'); btn.disabled = true;
   try {
     var r = await fetch('/ot/api/finanzas/' + OTD_VID + '/corregir', {method:'POST', credentials:'same-origin',
@@ -7846,10 +7882,79 @@ async function otdFinCorrGuardar(){
             <span class="est">{{ 'Falta' if _falta_costo else ('No aplica' if _es_int else 'Listo') }}</span>
           </div>
           <div class="bd">
+            {#- 💰 2026-10-07 (revisión del modelo único) — este paso usa la MISMA cuenta que la
+                tarjeta "Finanzas de la OT" (`fin` = _ot_finanzas: Cobré − Me cobraron = Queda).
+                Antes hacía su propia resta con `costo` ("Precio al cliente"): en una garantía
+                valorizada en $200.000 decía "Le cobré $200.000 · Gané $0 · 0,0 % de margen"
+                mientras la tarjeta decía "Garantía · nos costó $200.000" -- dos cuentas en la
+                misma página, justo la confusión de la OT-201. Sin `fin` (no se pudo calcular)
+                queda el cálculo de antes como respaldo. La repinta otfPintarPaso3() al guardar
+                la tarjeta sin recargar (mismo dibujo). -#}
             {% if _es_int %}
+              {% if fin %}
+              <div class="small" id="otfFin3Int" style="color:#1e3a8a;overflow-wrap:anywhere">
+                <i class="bi bi-info-circle me-1"></i>{% if fin.me_cobraron.falta_tecnico %}{{ fin.cobertura_txt }}. {% endif %}{{ fin.frase }}
+              </div>
+              {% else %}
               <div class="text-muted small">
                 <i class="bi bi-info-circle me-1"></i>
                 Trabajo interno: no se le cobra a nadie ni hay proveedor que cobre.
+              </div>
+              {% endif %}
+            {% elif fin %}
+              {% set _m3 = fin.me_cobraron %}
+              <div id="otfFin3Box">
+                {% if not fin.cobra %}
+                <div class="mb-2"><span class="otd-fchip cob-no">{{ fin.cobertura_txt }}</span></div>
+                {% endif %}
+                <div class="otf-fin3">
+                  <div class="c">
+                    <span class="l">Cobré</span>
+                    {% if fin.cobra and not fin.cobre.hay %}
+                    <b class="v pend">Sin declarar</b>
+                    <span class="d">falta lo que cobraste</span>
+                    {% else %}
+                    <b class="v">{{ _fclp(fin.cobre.total) }}</b>
+                    <span class="d">{{ (fin.cobre.fuente or '') if fin.cobra else 'no se le cobra' }}</span>
+                    {% endif %}
+                  </div>
+                  <div class="c">
+                    <span class="l">Me cobraron</span>
+                    {% if _m3.falta_tecnico %}
+                    <b class="v pend">Por declarar</b>
+                    <span class="d">falta lo del técnico</span>
+                    {% else %}
+                    <b class="v">{{ _fclp(_m3.total) }}</b>
+                    {% if _m3.despacho or _m3.repuestos %}
+                    <span class="d">{{ _fclp(_m3.tecnico) }} técnico{% if _m3.despacho %} + {{ _fclp(_m3.despacho) }} despacho{% endif %}{% if _m3.repuestos %} + {{ _fclp(_m3.repuestos) }} repuestos{% endif %}</span>
+                    {% endif %}
+                    {% endif %}
+                  </div>
+                  <div class="c">
+                    {% if not fin.cobra %}
+                    <span class="l">Nos costó</span>
+                    {% if _m3.falta_tecnico %}
+                    <b class="v pend">No se puede calcular</b>
+                    <span class="d">falta lo del técnico</span>
+                    {% else %}
+                    <b class="v info">{{ _fclp(_m3.total) }}</b>
+                    <span class="d">{% if fin.valorizado.monto %}valorizada en {{ _fclp(fin.valorizado.monto) }}{% else %}no se le cobra: no es una pérdida{% endif %}</span>
+                    {% endif %}
+                    {% elif fin.queda.mostrar %}
+                    <span class="l">Queda</span>
+                    <b class="v {{ 'neg' if fin.queda.total < 0 else 'pos' }}">{{ _fclp(fin.queda.total) }}</b>
+                    {% if fin.queda.pct is not none %}
+                    {% set _pa3 = ('%.1f'|format(fin.queda.pct|abs))|replace('.', ',') %}
+                    <span class="d">{{ '−' if (fin.queda.pct < 0 and _pa3 != '0,0') else '' }}{{ _pa3 }} % de margen</span>
+                    {% endif %}
+                    {% else %}
+                    <span class="l">Queda</span>
+                    <b class="v pend">No se puede calcular</b>
+                    <span class="d">{{ fin.label|lower }}</span>
+                    {% endif %}
+                  </div>
+                </div>
+                <div class="otf-fin3-frase">{{ fin.frase }}</div>
               </div>
             {% else %}
               <div class="otf-fin3">
@@ -7879,6 +7984,8 @@ async function otdFinCorrGuardar(){
                   {% endif %}
                 </div>
               </div>
+            {% endif %}
+            {% if not _es_int %}
 
               {% if _falta_costo and puede_cobertura %}
               <div class="otf-costo-box">
@@ -8319,6 +8426,22 @@ window.otdFinFmt = function(n, conSigno){
   if (r < 0) return '−' + s;
   return (conSigno && r > 0) ? '+' + s : s;
 };
+/* 🔴 2026-10-07 (revisión) — qué pasa si se guarda un cobro que la cuenta única no
+   toma como cobro (hoy: preventiva de un cliente con contrato REAL, donde solo
+   cuenta la línea del documento; escrito a mano o desde la cotización, la visita
+   se toma como pagada por el contrato). `r` = la cuenta de cómo QUEDARÍA. */
+window.otdFinPierdeCobroHtml = function(r, esc){
+  esc = esc || function(s){ return String(s == null ? '' : s); };
+  const cob = String((r && r.cobertura_txt) || '').split(':')[0];
+  let t = 'Ojo: así como está escrito, al guardar esta OT pasa a contarse como <b>' + esc(cob) +
+          '</b> y lo cobrado queda en <b>$0</b>.';
+  if (r && r.cobertura === 'contrato'){
+    t += ' En una mantención preventiva de un cliente con contrato, el cobro cuenta solo si sale de la línea' +
+         ' del documento («Leer documento» → «Usar estos montos»). Escrito a mano o desde la cotización, la' +
+         ' visita se toma como pagada por el contrato.';
+  }
+  return t;
+};
 // "0,8 %" (antes "0.8%": toFixed a secas).
 window.otdFinPct = function(p){
   if (p === null || p === undefined || !isFinite(p)) return '—';
@@ -8334,6 +8457,51 @@ function _otdFinEsc(s){
 // se cobra: lo que queda ahí es lo que nos costó, no una "pérdida" roja.
 window.otdFinSem = function(clase){
   return ({ok: 'verde', bajo: 'ambar', ambar: 'ambar', rojo: 'rojo', gris: 'gris', info: 'info'})[clase] || 'gris';
+};
+/* 💰 2026-10-07 (revisión) — Paso 3 del modal "Firmar y cerrar OT" con la cuenta
+   única, al día sin recargar: lo llama otdGuardarFinanzas al guardar la tarjeta
+   (antes el modal se quedaba con la cifra de cuando se abrió la página). Es el
+   MISMO dibujo que el Jinja del paso (#otfFin3Box / #otfFin3Int); si el modal no
+   está en la página (sin permiso, o la OT no está por cerrarse), no hace nada. */
+window.otfPintarPaso3 = function(r){
+  if (!r) return;
+  const f = window.otdFinFmt, e = _otdFinEsc;
+  const M = r.me_cobraron || {}, C = r.cobre || {}, Q = r.queda || {};
+  const intEl = document.getElementById('otfFin3Int');
+  if (intEl){
+    intEl.innerHTML = '<i class="bi bi-info-circle me-1"></i>' +
+      e((M.falta_tecnico ? (r.cobertura_txt || '') + '. ' : '') + (r.frase || ''));
+  }
+  const box = document.getElementById('otfFin3Box');
+  if (!box) return;
+  const celda = function(l, v, cls, d){
+    return '<div class="c"><span class="l">' + e(l) + '</span><b class="v' + (cls ? ' ' + cls : '') + '">' +
+      e(v) + '</b>' + (d ? '<span class="d">' + e(d) + '</span>' : '') + '</div>';
+  };
+  let c1, c2, c3;
+  if (r.cobra && !C.hay) c1 = celda('Cobré', 'Sin declarar', 'pend', 'falta lo que cobraste');
+  else c1 = celda('Cobré', f(C.total), '', r.cobra ? (C.fuente || '') : 'no se le cobra');
+  if (M.falta_tecnico) c2 = celda('Me cobraron', 'Por declarar', 'pend', 'falta lo del técnico');
+  else {
+    let d2 = '';
+    if (M.despacho || M.repuestos){
+      d2 = f(M.tecnico) + ' técnico' + (M.despacho ? ' + ' + f(M.despacho) + ' despacho' : '') +
+           (M.repuestos ? ' + ' + f(M.repuestos) + ' repuestos' : '');
+    }
+    c2 = celda('Me cobraron', f(M.total), '', d2);
+  }
+  if (!r.cobra){
+    c3 = M.falta_tecnico ? celda('Nos costó', 'No se puede calcular', 'pend', 'falta lo del técnico')
+      : celda('Nos costó', f(M.total), 'info',
+              (r.valorizado && r.valorizado.monto) ? 'valorizada en ' + f(r.valorizado.monto) : 'no se le cobra: no es una pérdida');
+  } else if (Q.mostrar){
+    c3 = celda('Queda', f(Q.total), Q.total < 0 ? 'neg' : 'pos',
+               (Q.pct === null || Q.pct === undefined) ? '' : window.otdFinPct(Q.pct) + ' de margen');
+  } else {
+    c3 = celda('Queda', 'No se puede calcular', 'pend', String(r.label || '').toLowerCase());
+  }
+  box.innerHTML = (r.cobra ? '' : '<div class="mb-2"><span class="otd-fchip cob-no">' + e(r.cobertura_txt) + '</span></div>') +
+    '<div class="otf-fin3">' + c1 + c2 + c3 + '</div><div class="otf-fin3-frase">' + e(r.frase || '') + '</div>';
 };
 /* ¿El monto guardado del servicio (zz_monto) cuenta como cobro? No si es un
    estimado o una línea que no es de servicio (ZZRETIRO): mismas listas que la
@@ -8912,12 +9080,28 @@ window.otdFinToggleDesglose = function(forzar){
     window.otdFinPintar(r);
     // ¿Se le cobra? En una OT que no se cobra el cobro no se escribe: en su
     // lugar se dice por qué (2026-10-07; los campos no se borran, se ocultan).
+    // 🔴 FIX 2026-10-07 (revisión): el bloque se muestra según la cobertura
+    // GUARDADA (F.fin), o la que va a quedar si pasa a cobrarse -- nunca según
+    // la que se va calculando con cada dígito. Caso: preventiva de un cliente
+    // con contrato real, cobro tomado de la línea del documento ($100.000); al
+    // escribir $80.000 el cobro pasa a "escrito a mano" y la regla única la toma
+    // como mantención de contrato (Cobré $0). Antes eso escondía el campo que
+    // se estaba escribiendo y la caja del motivo (que Guardar exige): la
+    // pantalla quedaba trabada. Ahora el bloque sigue a la vista y se avisa.
     const bloqueCobro = document.getElementById('otdFinCobroMontos');
     const noCobra = document.getElementById('otdFinNoCobra');
-    if (bloqueCobro) bloqueCobro.hidden = !r.cobra;
-    if (noCobra) noCobra.hidden = !!r.cobra;
+    const cobraGuardada = (F.fin && typeof F.fin.cobra === 'boolean') ? F.fin.cobra : r.cobra;
+    const pierdeCobro = cobraGuardada && !r.cobra;
+    if (bloqueCobro) bloqueCobro.hidden = !(r.cobra || cobraGuardada);
+    if (noCobra) noCobra.hidden = !!r.cobra || pierdeCobro;
     const ncTxt = document.getElementById('otdFinNoCobraTxt');
     if (ncTxt && !r.cobra) ncTxt.textContent = r.cobertura_txt;
+    const avCob = document.getElementById('otdFinCobVivoAviso');
+    if (avCob){
+      avCob.hidden = !pierdeCobro;
+      if (pierdeCobro) avCob.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>' +
+        window.otdFinPierdeCobroHtml(r, _escF);
+    }
     // "Total al cliente": ya NO se escribe a mano -- es servicio + despacho
     // (Daniel lo aprobó el 2026-10-07). En OT antiguas sin servicio separado,
     // la cuenta lo toma del «Precio al cliente» anotado y lo dice.
@@ -9361,6 +9545,26 @@ window.otdGuardarFinanzas = async function(){
     const _m = document.getElementById('otdFinZzMotivo'); if (_m) _m.focus();
     return;
   }
+  // 🔴 2026-10-07 (revisión): si lo que se va a guardar deja la OT sin cobro
+  // (preventiva de contrato real con el cobro escrito a mano o desde la
+  // cotización: la regla única la toma como mantención de contrato, Cobré $0),
+  // se pregunta ANTES de mandar, con la misma explicación del aviso.
+  if (F.fin && F.fin.cobra && body.zz_monto !== undefined && body.zz_monto !== null &&
+      window.otdFinVivo && window.otdFinCuenta){
+    const _rNueva = window.otdFinCuenta(window.otdFinVivo(), F.rep);
+    if (_rNueva && !_rNueva.cobra){
+      const _okCob = await ilusConfirm({
+        title: 'Esta OT dejaría de cobrarse',
+        message: 'Al guardar así, la OT pasa a contarse como «' + String(_rNueva.cobertura_txt || '').split(':')[0] +
+                 '» y lo cobrado queda en $0.',
+        sub: window.otdFinPierdeCobroHtml(_rNueva, function(s){
+          return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }),
+        subHtml: true,
+        okLabel: 'Guardar igual', cancelLabel: 'Volver a revisar', danger: true,
+      });
+      if (!_okCob) return;
+    }
+  }
   if (_kProv !== null) body.costo_proveedor = _kProv;
   if (_kDesp !== null) body.costo_despacho = _kDesp;
   // 💰 2026-10-07 — Valorizado: solo referencia (nunca se suma a lo cobrado).
@@ -9430,6 +9634,8 @@ window.otdGuardarFinanzas = async function(){
         }
         if (j.rep) window.OTD_FIN.rep = j.rep;
         window.OTD_FIN.fin = j.fin || window.otdFinCuenta(window.OTD_FIN.base, window.OTD_FIN.rep);
+        // 2026-10-07 (revisión): el Paso 3 del modal de cierre, con la misma cuenta guardada.
+        if (window.otfPintarPaso3) window.otfPintarPaso3(window.OTD_FIN.fin);
       }
       if (window.otdFinPintarZzBox) window.otdFinPintarZzBox();
       if (window.otdFinPintarHeader) window.otdFinPintarHeader({fin: window.OTD_FIN && window.OTD_FIN.fin});
