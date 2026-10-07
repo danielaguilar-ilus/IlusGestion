@@ -677,6 +677,7 @@
       color:#0f172a;overflow-wrap:anywhere}
     .tabla-eq th.n,.tabla-eq td.n{text-align:right;white-space:nowrap}
 </style>
+<link rel="stylesheet" href="{{ url_for('static', filename='ilus_firma.css') }}">
 </head>
 <body>
 
@@ -1189,6 +1190,7 @@
   </footer>
 
 {% if valido and not ya_firmado %}
+<script src="{{ url_for('static', filename='ilus_firma.js') }}"></script>
 <script>
 (function(){
   'use strict';
@@ -1349,128 +1351,27 @@
      para poder redibujar tras un resize o giro del teléfono sin
      perder la firma. Dibujo suavizado con curvas por punto medio.
      ══════════════════════════════════════════════════════════════ */
-  var ctx = null;
-  var trazos = [];        // [[{x,y}, ...], ...] — todos los trazos
-  var trazoActual = null; // el trazo en curso
+  /* 2026-10-07 (unificación de firma): el dibujo lo hace el componente único static/ilus_firma.js.
+     Conserva lo que ya hacía esta pantalla: trazos vectoriales, suavizado por punto medio, redibujado
+     al girar, FONDO BLANCO dentro del canvas (modo oscuro forzado) y PNG archivado con fondo blanco.
+     La línea base y la «X» siguen siendo las del CSS (.canvas-wrap::after y .canvas-x). */
   var hayFirma = false;
-
-  function prepararCanvas(){
-    var dpr = Math.max(1, window.devicePixelRatio || 1);
-    var rect = canvas.getBoundingClientRect();
-    canvas.width  = Math.round(rect.width * dpr);
-    canvas.height = Math.round(rect.height * dpr);
-    ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr);
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#111827';
-    ctx.lineWidth = 2.4;
-    redibujar();
-  }
-
-  function dibujarTrazo(pts){
-    if (!pts.length) return;
-    if (pts.length < 3){
-      // Punto o trazo muy corto: un círculo pequeño
-      ctx.beginPath();
-      ctx.arc(pts[0].x, pts[0].y, 1.4, 0, Math.PI * 2);
-      ctx.fillStyle = '#111827';
-      ctx.fill();
-      if (pts.length === 2){
-        ctx.beginPath();
-        ctx.moveTo(pts[0].x, pts[0].y);
-        ctx.lineTo(pts[1].x, pts[1].y);
-        ctx.stroke();
-      }
-      return;
+  var firma = window.IlusFirma.crear(canvas, {
+    color: '#111827', grosor: 2.4, fondoPantalla: true,
+    onCambio: function(firmado, info){
+      hayFirma = firmado;
+      canvasWrap.classList.toggle('has-stroke', firmado || info.trazos > 0);
+      actualizarUI();
     }
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for (var i = 1; i < pts.length - 1; i++){
-      var mx = (pts[i].x + pts[i + 1].x) / 2;
-      var my = (pts[i].y + pts[i + 1].y) / 2;
-      ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
-    }
-    ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
-    ctx.stroke();
-  }
-
-  function redibujar(){
-    var rect = canvas.getBoundingClientRect();
-    ctx.clearRect(0, 0, rect.width, rect.height);
-    /* Fondo blanco DENTRO del canvas, no solo en el CSS del contenedor.
-       Un navegador con modo oscuro forzado puede oscurecer el recuadro por
-       CSS, pero no repinta el mapa de bits de un canvas: así el trazo
-       queda oscuro sobre claro aunque `color-scheme` se ignore. Va acá
-       porque redibujar() es el único punto que limpia — lo llaman el
-       borrado, el resize y cada trazo nuevo.
-       No cambia lo que se archiva: firmaComoDataUrl() ya compone sobre su
-       propio fondo blanco. */
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, rect.width, rect.height);
-    ctx.strokeStyle = '#111827';
-    for (var i = 0; i < trazos.length; i++) dibujarTrazo(trazos[i]);
-    if (trazoActual) dibujarTrazo(trazoActual);
-  }
-
-  function puntoDesdeEvento(ev){
-    var rect = canvas.getBoundingClientRect();
-    return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
-  }
-
-  canvas.addEventListener('pointerdown', function(ev){
-    ev.preventDefault();
-    canvas.setPointerCapture(ev.pointerId);
-    trazoActual = [puntoDesdeEvento(ev)];
-    redibujar();
   });
-  canvas.addEventListener('pointermove', function(ev){
-    if (!trazoActual) return;
-    ev.preventDefault();
-    trazoActual.push(puntoDesdeEvento(ev));
-    redibujar();
-  });
-  function terminarTrazo(ev){
-    if (!trazoActual) return;
-    if (trazoActual.length > 1 || trazos.length > 0 || trazoActual.length === 1){
-      trazos.push(trazoActual);
-    }
-    trazoActual = null;
-    hayFirma = trazos.some(function(t){ return t.length > 1; });
-    canvasWrap.classList.toggle('has-stroke', hayFirma || trazos.length > 0);
-    redibujar();
-    actualizarUI();
-  }
-  canvas.addEventListener('pointerup', terminarTrazo);
-  canvas.addEventListener('pointercancel', terminarTrazo);
 
   btnBorrar.addEventListener('click', function(){
-    trazos = [];
-    trazoActual = null;
-    hayFirma = false;
-    canvasWrap.classList.remove('has-stroke');
-    redibujar();
-    actualizarUI();
+    firma.limpiar();       // onCambio quita has-stroke y actualiza el estado de los pasos
   });
 
-  // Redibuja sin perder la firma al girar el teléfono / redimensionar
-  var resizeTimer = null;
-  window.addEventListener('resize', function(){
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(prepararCanvas, 150);
-  });
-  prepararCanvas();
-
-  // Exporta la firma como PNG con fondo blanco (el canvas es transparente)
+  // Exporta la firma como PNG con fondo blanco (≤ ~300 KB, ancho máx. 1200 px)
   function firmaComoDataUrl(){
-    var tmp = document.createElement('canvas');
-    tmp.width = canvas.width;
-    tmp.height = canvas.height;
-    var tctx = tmp.getContext('2d');
-    tctx.fillStyle = '#ffffff';
-    tctx.fillRect(0, 0, tmp.width, tmp.height);
-    tctx.drawImage(canvas, 0, 0);
-    return tmp.toDataURL('image/png');
+    return firma.aDataUrl();
   }
 
   /* ══════════════════════════════════════════════════════════════

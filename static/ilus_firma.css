@@ -1,0 +1,11 @@
+/* ILUS Fitness · Componente de firma (static/ilus_firma.js). Solo lo mínimo que exige el comportamiento:
+   el canvas no debe hacer scroll/zoom con el dedo ni abrir menús de selección mientras se firma. */
+canvas.ilus-firma{
+  touch-action:none;
+  -webkit-user-select:none;user-select:none;
+  -webkit-touch-callout:none;
+  -webkit-tap-highlight-color:transparent;
+  cursor:crosshair;
+}
+/* el texto guía nunca intercepta el dedo */
+.ilus-firma-guia{pointer-events:none}

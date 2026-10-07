@@ -448,6 +448,7 @@
       .step-circle,.submit-btn,.tool-btn,.eq-bar-fill{transition:none}
     }
   </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ilus_firma.css') }}">
 </head>
 <body>
   <div class="bg-tex" aria-hidden="true"></div>
@@ -668,6 +669,7 @@
   </div>
 
   {% if estado == 'firmar' %}
+  <script src="{{ url_for('static', filename='ilus_firma.js') }}"></script>
   <script>
     const TOKEN = {{ token|tojson }};
 
@@ -692,109 +694,29 @@
       }
       el.value = out + '-' + dv;
     }
-    const cv = document.getElementById('sig'), ctx = cv.getContext('2d');
-    const sigHint = document.getElementById('sigHint');
-    let drawing = false, has = false;
-    let history = [];              // stack de dataURL para "deshacer" (mismo patrón que el canvas interno de la app)
-    const MAX_HISTORY = 20;
+    const cv = document.getElementById('sig');
+    let has = false;
+    // Componente único de firma (static/ilus_firma.js): trazos vectoriales que se redibujan solos al
+    // girar el teléfono o aparecer el teclado (ya no se borra ni se deforma la firma).
+    // `permitir` aplica el candado del lápiz; onCambio mantiene `has` y los pasos al día.
+    const _firma = window.IlusFirma.crear(cv, {
+      color: '#111', grosor: 2.5, guia: 'sigHint',
+      permitir: function(){ return !sigLocked; },
+      onCambio: function(firmado){ has = firmado; _syncSteps(); }
+    });
     // ── Candado del lápiz (Daniel 2026-08-13: "no debe firmar si no se
     //    identifica ok"). Mientras nombre/RUT no estén OK, el overlay
     //    #sigLock intercepta el puntero Y start() ignora el evento. El
     //    backend valida lo mismo por su cuenta — esto es la guía visual.
     let sigLocked = true;
 
-    // 2026-08-12 (Daniel, "potenciar la firma"): fix de un bug real -- la
-    // versión anterior capturaba cv.toDataURL() en un resize pero NUNCA lo
-    // restauraba, así que cualquier resize (el teclado virtual aparece al
-    // enfocar Nombre/RUT, o una rotación de pantalla) BORRABA la firma ya
-    // dibujada sin avisar. Ahora sí se restaura después de reajustar.
-    function fit(){
-      const r = cv.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      let prevImg = null;
-      if (has && cv.width > 0 && cv.height > 0){
-        try { prevImg = cv.toDataURL('image/png'); } catch(e) {}
-      }
-      cv.width = r.width * dpr; cv.height = r.height * dpr;
-      ctx.scale(dpr, dpr);
-      ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#111';
-      if (prevImg){
-        const img = new Image();
-        img.onload = () => { ctx.drawImage(img, 0, 0, r.width, r.height); };
-        img.src = prevImg;
-      }
-    }
-    fit();
-    // Debounce: iOS/Android disparan varios 'resize' seguidos al mostrar/
-    // ocultar el teclado virtual -- evita re-ajustar (y redibujar) de más.
-    let resizeT = null;
-    window.addEventListener('resize', () => {
-      clearTimeout(resizeT);
-      resizeT = setTimeout(fit, 120);
-    });
-
-    function pos(e){
-      const r = cv.getBoundingClientRect();
-      return { x: e.clientX - r.left, y: e.clientY - r.top };
-    }
-    function pushHistory(){
-      try {
-        history.push(cv.toDataURL('image/png'));
-        if (history.length > MAX_HISTORY) history.shift();
-      } catch(e) {}
-    }
-    // Pointer Events unificados (mouse + touch + lápiz óptico en un solo set
-    // de handlers) con setPointerCapture: el trazo sigue perteneciendo al
-    // canvas aunque el dedo/stylus se mueva rápido y "se escape" del área
-    // durante el gesto -- más robusto entre navegadores/dispositivos
-    // táctiles que los mousedown/touchstart separados de antes.
-    function start(e){
-      if (sigLocked) return;  // sin identificarse no se firma (el overlay ya intercepta; esto es el cinturón)
-      if (drawing) return;  // ignora un segundo pointer (ej. un segundo dedo accidental) mientras ya hay un trazo en curso
-      e.preventDefault();
-      try { cv.setPointerCapture(e.pointerId); } catch(err) {}
-      pushHistory();
-      drawing = true;
-      const p = pos(e);
-      ctx.beginPath(); ctx.moveTo(p.x, p.y);
-      sigHint.style.display = 'none';
-    }
-    function move(e){
-      if (!drawing) return;
-      e.preventDefault();
-      const p = pos(e);
-      ctx.lineTo(p.x, p.y); ctx.stroke();
-      has = true;
-    }
-    function end(e){
-      if (!drawing) return;
-      drawing = false;
-      try { cv.releasePointerCapture(e.pointerId); } catch(err) {}
-    }
-    cv.addEventListener('pointerdown', start);
-    cv.addEventListener('pointermove', move);
-    cv.addEventListener('pointerup', end);
-    cv.addEventListener('pointercancel', end);
-    cv.addEventListener('pointerleave', e => { if (drawing) end(e); });
-
+    // Resize / rotación / teclado virtual: lo resuelve el componente (vectores + ResizeObserver).
+    // Los botones de abajo (onclick="deshacerFirma()" / "limpiarFirma()") se conservan tal cual.
     function limpiarFirma(){
-      ctx.clearRect(0, 0, cv.width, cv.height);
-      has = false; history = [];
-      sigHint.style.display = '';
-      _syncSteps();
+      _firma.limpiar();      // onCambio deja has=false, muestra la guía y sincroniza los pasos
     }
     function deshacerFirma(){
-      if (!history.length){ limpiarFirma(); return; }
-      const dataUrl = history.pop();
-      const img = new Image();
-      img.onload = () => {
-        const dpr = window.devicePixelRatio || 1;
-        ctx.clearRect(0, 0, cv.width, cv.height);
-        ctx.drawImage(img, 0, 0, cv.width / dpr, cv.height / dpr);
-        if (!history.length){ has = false; sigHint.style.display = ''; }
-        _syncSteps();
-      };
-      img.src = dataUrl;
+      _firma.deshacer();     // quita el último trazo; sin trazos no hace nada (el estado ya es «sin firma»)
     }
     async function enviar(){
       const nombre = document.getElementById('fNombre').value.trim();
@@ -810,7 +732,7 @@
       try{
         const r = await fetch('/firmar-ot/' + encodeURIComponent(TOKEN), {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ firma_cliente: cv.toDataURL('image/png'), firma_cliente_nombre: nombre, firma_cliente_rut: rut })
+          body: JSON.stringify({ firma_cliente: _firma.aDataUrl(), firma_cliente_nombre: nombre, firma_cliente_rut: rut })
         });
         const d = await r.json().catch(()=>({}));
         if(!r.ok || !d.ok){ err.textContent = (d.error || 'No se pudo registrar la firma.'); btn.disabled = false; btn.textContent = 'Firmar y enviar'; return; }

@@ -77,6 +77,7 @@
     .en-toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
     .en-toast.err{ background:var(--ilus-red); } .en-toast.ok{ background:var(--ok); }
   </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='ilus_firma.css') }}">
 </head>
 <body>
   <div class="en-top">
@@ -153,6 +154,7 @@
 
   <div class="en-toast" id="enToast"></div>
 
+  <script src="{{ url_for('static', filename='ilus_firma.js') }}"></script>
   <script>
     const SUBMIT_URL = "{{ url_for('chofer_entrega_submit', mid=manifiesto.id, commitment_id=parada.commitment_id) }}";
     const POD = { fotos_min: {{ pod.fotos_min }}, firma_req: {{ 'true' if pod.firma_req else 'false' }},
@@ -243,21 +245,11 @@
     window._delFoto = function(i){ _fotos.splice(i,1); _renderFotos(); };
 
     // ── Firma canvas ──
-    const canvas = document.getElementById('firmaCanvas'), ctx = canvas.getContext('2d');
-    let drawing=false, hasSign=false;
-    function resizeCanvas(){
-      const r=canvas.getBoundingClientRect(); const dpr=window.devicePixelRatio||1;
-      canvas.width=r.width*dpr; canvas.height=r.height*dpr; ctx.scale(dpr,dpr);
-      ctx.lineWidth=2.5; ctx.lineCap='round'; ctx.strokeStyle='#0a0a0a';
-    }
-    function pos(e){ const r=canvas.getBoundingClientRect(); const t=e.touches?e.touches[0]:e; return {x:t.clientX-r.left,y:t.clientY-r.top}; }
-    function start(e){ drawing=true; const p=pos(e); ctx.beginPath(); ctx.moveTo(p.x,p.y); e.preventDefault(); }
-    function move(e){ if(!drawing)return; const p=pos(e); ctx.lineTo(p.x,p.y); ctx.stroke();
-      if(!hasSign){ hasSign=true; document.getElementById('firmaPh').style.display='none'; } e.preventDefault(); }
-    function end(){ drawing=false; }
-    canvas.addEventListener('mousedown',start); canvas.addEventListener('mousemove',move); canvas.addEventListener('mouseup',end);
-    canvas.addEventListener('touchstart',start,{passive:false}); canvas.addEventListener('touchmove',move,{passive:false}); canvas.addEventListener('touchend',end);
-    window.limpiarFirma = function(){ ctx.clearRect(0,0,canvas.width,canvas.height); hasSign=false; document.getElementById('firmaPh').style.display='block'; };
+    // Componente único de firma (static/ilus_firma.js): vectores + redibujado ante resize/rotación,
+    // así el tamaño del canvas ya no borra ni deja en blanco la firma.
+    const canvas = document.getElementById('firmaCanvas');
+    const _firma = window.IlusFirma.crear(canvas, { color:'#0a0a0a', grosor:2.5, guia:'firmaPh' });
+    window.limpiarFirma = function(){ _firma.limpiar(); };
 
     // ── Enviar ──
     async function enviarEntrega(){
@@ -269,9 +261,9 @@
       if (!nombre){ toast('Falta el nombre de quien recibe','err'); return; }
       if (POD.rut_req && !rutValido(rut)){ toast('Ingresa un RUT válido','err'); return; }
       if (POD.fotos_min && _fotos.length < POD.fotos_min){ toast('Faltan fotos (mín. '+POD.fotos_min+')','err'); return; }
-      if (POD.firma_req && !hasSign){ toast('Falta la firma del cliente','err'); return; }
+      if (POD.firma_req && !_firma.firmado()){ toast('Falta la firma del cliente','err'); return; }
 
-      const firma = hasSign ? canvas.toDataURL('image/png') : null;
+      const firma = _firma.firmado() ? _firma.aDataUrl() : null;
       const btn = document.getElementById('btnSubmit'); btn.disabled=true;
       btn.innerHTML='<i class="bi bi-hourglass-split"></i>Enviando…';
       try {
@@ -298,8 +290,7 @@
       }
     }
 
-    document.addEventListener('DOMContentLoaded', function(){ resizeCanvas(); initGps(); });
-    window.addEventListener('resize', resizeCanvas);
+    document.addEventListener('DOMContentLoaded', function(){ initGps(); });
 
     // ── PING GPS silencioso cada 30s ──
     (function(){

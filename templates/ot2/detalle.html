@@ -69,6 +69,7 @@
    hay selectores globales tipo body/button/.btn/.modal que puedan chocar
    con el resto de esta pantalla) -- cero riesgo de colisión visual. #}
 <link rel="stylesheet" href="{{ url_for('static', filename='mantenciones_ot_ejecutar.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='ilus_firma.css') }}">
 <style>
 .otd{
   --pend:#3b82f6; --ejec:#dc2626; --comp:#16a34a; --cerr:#4b5563;
@@ -13490,6 +13491,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
+<script src="{{ url_for('static', filename='ilus_firma.js') }}"></script>
 <script>
 /* ══════════════════════════════════════════════════════════════════════
    OT2F — Firma y cierre de la OT, DENTRO de /ot/<id>.
@@ -13558,89 +13560,45 @@ const OT2F = (function(){
   function initCanvas(id){
     const cv = document.getElementById(id);
     if (!cv) return;
+    /* 2026-10-07 (unificación de firma): el dibujo ahora lo hace el componente único static/ilus_firma.js.
+       Guarda los trazos como vectores, así que reabrir el modal o rotar el teléfono ya NO borra ni
+       desfasa la firma. initCanvas se sigue llamando en cada apertura: si ya existe, solo redibuja. */
+    if (_sig[id]){ _sig[id].firma.redibujar(); return; }
     const wrap = document.getElementById('wrap-' + id);
-    const dpr = window.devicePixelRatio || 1;
-    const rect = cv.getBoundingClientRect();
-    cv.width = rect.width * dpr; cv.height = rect.height * dpr;
-    const ctx = cv.getContext('2d');
-    ctx.scale(dpr, dpr);
-    ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     /* 🖊️ 2026-09-03 (Daniel: "deja por defecto siempre para que firme en
        AZUL, para que se vea original, no en negro, para que no se vea como
        copia. Pero déjalo como opción"). Una firma azul sobre un documento
        impreso se lee como trazo hecho a mano; una negra se confunde con la
        impresión y parece fotocopia -- en un anexo con efecto contractual
        eso importa. El negro y el rojo siguen disponibles en el selector. */
-    ctx.strokeStyle = '#1e40af';
-    _sig[id] = { ctx, drawing:false, last:null, has:false, color:'#1e40af', wrap, history:[] };
-
-    function pushHistory(){
-      try {
-        _sig[id].history.push(cv.toDataURL('image/png'));
-        if (_sig[id].history.length > 20) _sig[id].history.shift();
-      } catch(e){}
-    }
-    function setHas(){ _sig[id].has = true; if (wrap) wrap.classList.add('has-firma'); }
-    const start = (x,y) => { _sig[id].drawing = true; _sig[id].last = {x,y}; pushHistory(); };
-    const move = (x,y) => {
-      if (!_sig[id].drawing) return;
-      ctx.beginPath(); ctx.moveTo(_sig[id].last.x, _sig[id].last.y); ctx.lineTo(x, y); ctx.stroke();
-      _sig[id].last = {x, y}; setHas();
-    };
-    const end = () => { _sig[id].drawing = false; _sig[id].last = null; };
-    const getXY = (ev) => {
-      const r = cv.getBoundingClientRect();
-      if (ev.touches){ const t = ev.touches[0]; return {x:t.clientX-r.left, y:t.clientY-r.top}; }
-      return {x:ev.clientX-r.left, y:ev.clientY-r.top};
-    };
-    // 🔴 FIX 2026-09-02 (auditoría, hallazgo B3): initCanvas corre CADA vez
-    // que se abre el modal de firma, y volvía a registrar los mismos 7
-    // listeners sobre el mismo canvas. Abrir "Firmar", cerrar y volver a
-    // abrir duplicaba cada trazo (y el historial de deshacer) -- una firma
-    // doble y temblorosa en el documento que el cliente firma. Se marca el
-    // canvas para no volver a engancharlos.
-    if (cv.dataset.sigWired === '1') return;
-    cv.dataset.sigWired = '1';
-    cv.addEventListener('mousedown', e => { const p = getXY(e); start(p.x, p.y); });
-    cv.addEventListener('mousemove', e => { const p = getXY(e); move(p.x, p.y); });
-    cv.addEventListener('mouseup', end);
-    cv.addEventListener('mouseleave', end);
-    cv.addEventListener('touchstart', e => { e.preventDefault(); const p = getXY(e); start(p.x, p.y); }, { passive:false });
-    cv.addEventListener('touchmove', e => { e.preventDefault(); const p = getXY(e); move(p.x, p.y); }, { passive:false });
-    cv.addEventListener('touchend', end);
+    // `has` y la clase has-firma siguen igual que antes (otros bloques leen _sig[id].has); ahora los alimenta onCambio.
+    const st = { has:false, color:'#1e40af', wrap, firma:null };
+    st.firma = window.IlusFirma.crear(cv, {
+      color: '#1e40af', grosor: 3,
+      onCambio: (firmado) => {
+        st.has = firmado;
+        if (wrap) wrap.classList.toggle('has-firma', firmado);
+      }
+    });
+    _sig[id] = st;
   }
 
   function limpiarFirma(id){
-    const cv = document.getElementById(id);
-    if (!cv) return;
-    cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
-    if (_sig[id]){
-      _sig[id].has = false; _sig[id].history = [];
-      if (_sig[id].wrap) _sig[id].wrap.classList.remove('has-firma');
-    }
+    if (_sig[id]) _sig[id].firma.limpiar();   // onCambio deja has=false y quita has-firma
   }
 
   function undoFirma(id){
-    if (!_sig[id] || !_sig[id].history.length) return;
-    const cv = document.getElementById(id);
-    if (!cv) return;
-    const ctx = cv.getContext('2d');
-    const dataUrl = _sig[id].history.pop();
-    const img = new Image();
-    img.onload = () => {
-      ctx.clearRect(0, 0, cv.width, cv.height);
-      ctx.drawImage(img, 0, 0, cv.width / (window.devicePixelRatio||1), cv.height / (window.devicePixelRatio||1));
-      if (_sig[id].history.length === 0){
-        _sig[id].has = false;
-        if (_sig[id].wrap) _sig[id].wrap.classList.remove('has-firma');
-      }
-    };
-    img.src = dataUrl;
+    if (_sig[id]) _sig[id].firma.deshacer();  // quita el último trazo; sin trazos no hace nada
+  }
+
+  // PNG (fondo blanco) de la firma de un canvas, para enviarlo al servidor
+  function _firmaPng(id){
+    return _sig[id] ? _sig[id].firma.aDataUrl() : '';
   }
 
   function setFirmaColor(id, color, el){
     if (!_sig[id]) return;
-    _sig[id].color = color; _sig[id].ctx.strokeStyle = color;
+    _sig[id].color = color; _sig[id].firma.setColor(color);
     const wrap = _sig[id].wrap;
     if (wrap){
       const toolbar = wrap.nextElementSibling;
@@ -14039,7 +13997,7 @@ const OT2F = (function(){
         if (!seguir) return;
       }
     } catch(e){ /* silencioso -- un fallo de red en este chequeo no debe bloquear la firma */ }
-    const firmaTec = document.getElementById('otfCanvasTec').toDataURL('image/png');
+    const firmaTec = _firmaPng('otfCanvasTec');
     btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
     try {
       const r = await fetch(`/mantenciones/api/visitas/${VID}/firmar-revision`, {
@@ -14102,7 +14060,7 @@ const OT2F = (function(){
     // cliente no lo tiene a mano se puede dejar vacío. Si se escribe algo,
     // sí debe parecer un RUT real (el backend valida el dígito verificador).
     if (cliRut && cliRut.replace(/[^0-9kK]/g,'').length < 7){ ilusToast('El RUT ingresado no parece válido (o déjalo vacío)', {type:'warning'}); return; }
-    const firmaCli = cvCli.toDataURL('image/png');
+    const firmaCli = _firmaPng('otfCanvasCli');
     btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando…';
     try {
       const r = await fetch(`/mantenciones/api/visitas/${VID}/firmar-cliente`, {
@@ -14159,7 +14117,7 @@ const OT2F = (function(){
   async function confirmarAprobacion(){
     const cv = document.getElementById('otfCanvasAprob');
     if (!_sig.otfCanvasAprob || !_sig.otfCanvasAprob.has){ ilusToast('Falta tu firma como aprobador', {type:'warning'}); return; }
-    const firma = cv.toDataURL('image/png');
+    const firma = _firmaPng('otfCanvasAprob');
     const nombre = (document.getElementById('otfAprobNombre')?.value || '').trim();
     const comentario = (document.getElementById('otfAprobComentario')?.value || '').trim();
     const btn = document.getElementById('otfBtnAprobConfirm');

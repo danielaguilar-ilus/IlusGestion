@@ -6,7 +6,8 @@
    Avisos con ilusToast/ilusConfirm (REGLA #1), nunca alert/confirm nativos. */
 (function () {
   'use strict';
-  var bloque = null, canvas = null, ctx2d = null, dibujando = false, trazos = 0, largo = 0, ultimo = null;
+  // El dibujo lo hace el componente único static/ilus_firma.js (vectores, nítido en retina, redibuja al girar).
+  var bloque = null, canvas = null, firma = null;
 
   function $(id) { return document.getElementById(id); }
   function toast(msg, tipo) { if (typeof window.ilusToast === 'function') window.ilusToast(msg, { type: tipo || 'info', duration: 6000 }); }
@@ -31,41 +32,17 @@
 
   // ── lienzo ──
   function limpiarLienzo() {
-    if (!ctx2d) return;
-    ctx2d.clearRect(0, 0, canvas.width, canvas.height);
-    trazos = 0; largo = 0; ultimo = null;
-    var g = $('frmGuia'); if (g) g.style.display = '';
-    estado();
-  }
-  function punto(ev) {
-    var r = canvas.getBoundingClientRect();
-    return { x: (ev.clientX - r.left) * canvas.width / r.width, y: (ev.clientY - r.top) * canvas.height / r.height };
+    if (!firma) return;
+    firma.limpiar();      // onCambio muestra la guía y recalcula el semáforo
   }
   function iniciarLienzo() {
     canvas = $('frmCanvas');
     if (!canvas || canvas.dataset.listo) return;
     canvas.dataset.listo = '1';
-    ctx2d = canvas.getContext('2d');
-    ctx2d.lineWidth = 3.2; ctx2d.lineCap = 'round'; ctx2d.lineJoin = 'round'; ctx2d.strokeStyle = '#0a0a0a';
-    canvas.addEventListener('pointerdown', function (ev) {
-      ev.preventDefault();
-      try { canvas.setPointerCapture(ev.pointerId); } catch (e) { /* sin captura: sigue funcionando */ }
-      dibujando = true; ultimo = punto(ev); trazos++;
-      ctx2d.beginPath(); ctx2d.arc(ultimo.x, ultimo.y, 1.6, 0, Math.PI * 2); ctx2d.fillStyle = '#0a0a0a'; ctx2d.fill();
-      var g = $('frmGuia'); if (g) g.style.display = 'none';
+    firma = window.IlusFirma.crear(canvas, {
+      color: '#0a0a0a', grosor: 3.2, guia: 'frmGuia',
+      onCambio: function () { estado(); }
     });
-    canvas.addEventListener('pointermove', function (ev) {
-      if (!dibujando) return;
-      ev.preventDefault();
-      var p = punto(ev);
-      ctx2d.beginPath(); ctx2d.moveTo(ultimo.x, ultimo.y); ctx2d.lineTo(p.x, p.y); ctx2d.stroke();
-      largo += Math.abs(p.x - ultimo.x) + Math.abs(p.y - ultimo.y);
-      ultimo = p;
-    });
-    function fin(ev) { if (!dibujando) return; dibujando = false; try { canvas.releasePointerCapture(ev.pointerId); } catch (e) {} estado(); }
-    canvas.addEventListener('pointerup', fin);
-    canvas.addEventListener('pointercancel', fin);
-    canvas.addEventListener('pointerleave', fin);
     var l = $('frmLimpiar'); if (l) l.addEventListener('click', limpiarLienzo);
     ['frmNombre', 'frmRut', 'frmRelacion', 'frmConforme', 'frmObs'].forEach(function (id) {
       var el = $(id); if (el) el.addEventListener('input', estado);
@@ -74,7 +51,7 @@
     if (rutEl) rutEl.addEventListener('blur', function () { if (rutEl.value) rutEl.value = rutFormato(rutEl.value); estado(); });
     estado();
   }
-  function firmado() { return trazos > 0 && largo > 40; }
+  function firmado() { return !!firma && firma.firmado(); }
 
   // semáforo: rojo = falta la firma · ámbar = firmó pero faltan datos · verde = lista
   function estado() {
@@ -97,7 +74,7 @@
     return { datos: {
       nombre: nombre, rut: rutFormato($('frmRut').value), relacion: $('frmRelacion').value,
       conformidad: $('frmConforme').checked, observaciones: ($('frmObs').value || '').trim(),
-      firma: canvas.toDataURL('image/png')
+      firma: firma.aDataUrl()
     } };
   }
 
