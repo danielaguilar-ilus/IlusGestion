@@ -266,8 +266,10 @@ def enriquecer_filas(rows, *, hoy, ahora, horas_habiles, utc_a_chile, td_hhmm, e
             rel_nivel, rel_txt = "gris", ""
 
         bultos = int(r.get("total_packages") or 0)
-        kg = float(r.get("total_weight_kg") or 0)
-        pv = float(r.get("total_volumetric_weight") or 0)
+        # peso_real_kg / peso_vol_kg son los que se completan al asociar los documentos y los productos; total_weight_kg y total_volumetric_weight
+        # solo los llena el formulario público con bultos que nadie midió (0). Antes el Monitor leía solo estos últimos y mostraba 0 kg (2026-10-06).
+        kg = float(r.get("peso_real_kg") or r.get("total_weight_kg") or 0)
+        pv = float(r.get("peso_vol_kg") or r.get("total_volumetric_weight") or 0)
         m3 = float(r.get("total_volume_m3") or 0)
         cal = int(r.get("information_quality_score") or 0)
         # Los retiros internos nunca se puntúan (quedan en 0): mostrar 0 % en rojo
@@ -289,6 +291,7 @@ def enriquecer_filas(rows, *, hoy, ahora, horas_habiles, utc_a_chile, td_hhmm, e
         r["m_estado_idx"] = orden_estado.get(st, 99)
         r["m_origen"] = origen
         r["m_creado_txt"] = creado.strftime("%d-%m-%Y %H:%M") if creado else ""
+        r["m_creado_full"] = creado.strftime("%d/%m/%Y %H:%M") if creado else ""      # día/mes/año hora:minuto (hora Chile) junto al «hace X»
         r["m_creado_ts"] = int((creado - datetime(1970, 1, 1)).total_seconds()) if creado else 0
         r["m_hace"] = hace(ahora - creado) if creado else ""
         r["m_fecha_tipo"] = tipo or ""

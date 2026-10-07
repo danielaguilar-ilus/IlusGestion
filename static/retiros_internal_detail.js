@@ -4032,8 +4032,10 @@ async function _confirmarEnviarPreparacion(btn){
   const quien = D.contactName || 'el cliente';
   const unidades = document.querySelector('.pd-totales b');
   const cl = window.RETIROS_CHECK_LISTO;          // lo fija la guía cuando Check ya preparó (y quizá despachó) el pedido
+  const fuera = window.retirosAvisoCobertura ? await window.retirosAvisoCobertura() : '';      // Daniel 2026-10-06: fuera de horario de cobertura
   const sub =
     '<div style="text-align:left;line-height:1.6">' +
+    (fuera ? '⏰ <strong>' + _esc(fuera) + '</strong><br>' : '') +
     (cl ? (cl.despachado
       ? '🚫 <strong>Check ya DESPACHÓ este pedido.</strong> Si lo envías a preparación, al cliente le llega «estamos preparando» cuando el pedido ya salió de bodega. Lo normal es marcarlo como RETIRADO.<br>'
       : '⚠️ <strong>Check ya muestra el pedido preparado.</strong> El aviso «estamos preparando» llegaría tarde. Lo normal es marcarlo como RETIRADO cuando el cliente se lo lleve.<br>') : '') +
@@ -4157,10 +4159,11 @@ async function _confirmarCambioEstado(ev){
   const actual = (window.RETIROS_DETAIL_DATA || {}).estado || '';
   if (!efecto || nuevo === actual) return true;
   ev.preventDefault();
+  const fuera = window.retirosAvisoCobertura ? await window.retirosAvisoCobertura() : '';
   const ok = await ilusConfirm({
     title: '¿Cambiar el estado y avisarle al cliente?',
     message: `Pasar este retiro a "${sel.options[sel.selectedIndex].text}".`,
-    sub: `📧 Al cliente ${efecto}. No se puede deshacer.`,
+    sub: (fuera ? `⏰ ${fuera} ` : '') + `📧 Al cliente ${efecto}. No se puede deshacer.`,
     okLabel: 'Sí, cambiar y avisar', cancelLabel: 'Cancelar', type: 'warning', danger: true,
   });
   if (!ok) return false;

@@ -502,7 +502,7 @@
       <span class="pipe-step-num">Paso 1</span>
       <div class="pipe-circle"><span class="pipe-emoji">📩</span></div>
       <div class="pipe-label">Solicitada</div>
-      <div class="pipe-sub">{{ req.created_at | chile_fmt('%d-%m-%Y') if req.created_at else '—' }}</div>
+      <div class="pipe-sub">{{ req.created_at | chile_fmt('%d/%m/%Y %H:%M') if req.created_at else '—' }}</div>
     </div>
     <div class="pipe-step {% if 2 < _pipe_active %}done{% elif _doc_incomp %}fail{% elif 2 == _pipe_active %}active{% endif %}" onclick="document.getElementById('paso-2').scrollIntoView({behavior:'smooth',block:'center'})">
       <span class="pipe-step-num">Paso 2</span>
@@ -1734,23 +1734,42 @@
            fusiona acá. La tabla "Fechas relevantes" que vivía junto a
            esto se RETIRA (autorizado — 4ª repetición del pipeline). #}
         <div class="row g-3 mt-1">
-          <div class="col-md-6">
+          <div class="col-lg-5">
             <div style="font-size:.7rem;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;font-weight:700">Bodega del retiro</div>
             <div class="fw-bold mt-1">{{ settings.warehouse_name }}</div>
             <div class="small text-muted">{{ settings.warehouse_addr }}</div>
             <a href="{{ settings.maps_url }}" target="_blank" class="btn btn-sm btn-outline-dark mt-2"><i class="bi bi-map me-1"></i>Abrir en mapa</a>
           </div>
-          {% if packages %}
-          <div class="col-md-6">
-            <div style="font-size:.7rem;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:5px">Bultos del retiro</div>
-            <div class="table-responsive">
+          {# 2026-10-06 (Daniel, retiro de Gerd Müller: «los bultos del retiro para nada son los datos, todo está en cero»): el formulario público crea un
+             bulto de relleno en 0 que nadie midió. La carga se muestra con los datos reales (peso, peso volumétrico y m³ de los productos a retirar) y la
+             tabla de bultos solo aparece si alguien los midió de verdad. #}
+          {% set _cb_kg = (req.peso_real_kg or req.total_weight_kg or 0)|float %}
+          {% set _cb_pv = (req.peso_vol_kg or req.total_volumetric_weight or 0)|float %}
+          {% set _cb_m3 = (req.total_volume_m3 or 0)|float %}
+          {% set _cb_med = [] %}
+          {% for p in packages %}{% if (p.weight_kg or 0)|float > 0 or (p.length_cm or 0)|float > 0 %}{% if _cb_med.append(p) %}{% endif %}{% endif %}{% endfor %}
+          <div class="col-lg-7 cb-carga" id="cargaDelRetiro">
+            <div class="cb-tit">Carga del retiro <small>según los productos a retirar</small></div>
+            <div class="cb-tiles">
+              <div class="cb-tile"><span class="cb-l">Bultos</span><b>{{ req.total_packages or '—' }}</b><small>{% if _cb_med %}medidos{% else %}sin medir{% endif %}</small></div>
+              <div class="cb-tile{% if not _cb_kg %} is-vacio{% endif %}"><span class="cb-l">Peso real</span><b>{{ ("%.1f"|format(_cb_kg))|replace('.', ',') }} kg</b></div>
+              <div class="cb-tile{% if not _cb_pv %} is-vacio{% endif %}"><span class="cb-l">Peso volumétrico</span><b>{{ ("%.1f"|format(_cb_pv))|replace('.', ',') }} kg</b></div>
+              <div class="cb-tile{% if not _cb_m3 %} is-vacio{% endif %}"><span class="cb-l">Volumen</span><b>{{ ("%.3f"|format(_cb_m3))|replace('.', ',') }} m³</b></div>
+            </div>
+            {% if not _cb_kg and not _cb_pv and not _cb_m3 %}
+            <p class="cb-nota is-aviso"><i class="bi bi-exclamation-triangle-fill"></i>Todavía no hay peso ni volumen: los productos de las facturas no traen ficha con medidas. Revisa el paso «Productos a retirar».</p>
+            {% elif not _cb_med %}
+            <p class="cb-nota"><i class="bi bi-info-circle"></i>Peso y volumen salen de los productos de la factura (ERP). Los bultos aún no se midieron en bodega.</p>
+            {% endif %}
+            {% if _cb_med %}
+            <div class="table-responsive mt-2">
               <table class="table table-sm ilus-table mb-0">
-                <thead><tr><th>#</th><th>Largo</th><th>Alto</th><th>Ancho</th><th>Peso kg</th><th>Peso vol.</th><th>M3</th></tr></thead>
-                <tbody>{% for p in packages %}<tr><td>{{ p.package_number }}</td><td>{{ p.length_cm }}</td><td>{{ p.height_cm }}</td><td>{{ p.width_cm }}</td><td>{{ p.weight_kg }}</td><td>{{ p.volumetric_weight }}</td><td>{{ p.volume_m3 }}</td></tr>{% endfor %}</tbody>
+                <thead><tr><th>#</th><th>Largo cm</th><th>Alto cm</th><th>Ancho cm</th><th>Peso kg</th><th>Peso vol. kg</th><th>m³</th></tr></thead>
+                <tbody>{% for p in _cb_med %}<tr><td>{{ p.package_number }}</td><td>{{ ("%.1f"|format((p.length_cm or 0)|float))|replace('.', ',') }}</td><td>{{ ("%.1f"|format((p.height_cm or 0)|float))|replace('.', ',') }}</td><td>{{ ("%.1f"|format((p.width_cm or 0)|float))|replace('.', ',') }}</td><td>{{ ("%.1f"|format((p.weight_kg or 0)|float))|replace('.', ',') }}</td><td>{{ ("%.1f"|format((p.volumetric_weight or 0)|float))|replace('.', ',') }}</td><td>{{ ("%.3f"|format((p.volume_m3 or 0)|float))|replace('.', ',') }}</td></tr>{% endfor %}</tbody>
               </table>
             </div>
+            {% endif %}
           </div>
-          {% endif %}
         </div>
       </div>
     </section>
@@ -2168,6 +2187,7 @@ window.RETIROS_DETAIL_DATA = {
 </script>
 <script defer src="{{ url_for('static', filename='retiros_internal_detail.js') }}"></script>
 <script defer src="{{ url_for('static', filename='retiros_ficha_v7.js') }}"></script>
+<script defer src="{{ url_for('static', filename='retiros_cobertura.js') }}"></script>
 
 <script defer src="{{ url_for('static', filename='retiros_calendar.js') }}"></script>
 

@@ -67,6 +67,8 @@ class BDFalsa:
         self.falla_si = []       # [(regex, Excepcion)]: hace fallar consultas que coincidan
         self.falla_si_params = []   # [(regex, predicado(params)->bool, Excepcion)]: falla solo si el predicado da True
         self.admins = []            # [{'id': 11}, …]: quienes reciben la campana de avisos al equipo
+        self.falla_escritura_si = []  # [(regex, Excepcion)]: hace fallar INSERT/UPDATE/DELETE que coincidan
+        self.snapshots = {}         # request_id -> {'payload': str, 'huella': str}: registro de Check guardado en ILUS
         self.snapshot_viejo = False  # True: la lectura «¿hay un cambio pedido por el cliente?» sigue viendo el mundo de hace un minuto
         self.al_leer = []           # [(regex, funcion)]: tras la PRIMERA lectura que coincide, corre la función (alguien cambia algo justo después)
 
@@ -214,6 +216,9 @@ class BDFalsa:
                 if p["request_id"] == rid and p["status"] == "pending" and (p.get("proposed_by") or "").lower() == "cliente":
                     return {"id": p["id"]}
             return None
+        if low.startswith("select payload, huella from pickup_check_snapshots where request_id=%s"):
+            self.consultas.append((s, params))
+            return dict(self.snapshots[int(params[0])]) if int(params[0]) in self.snapshots else None
         m_est = re.match(r"^select id from `pickup_logs` where request_id=%s and action='estado_actualizado' and new_status='(\w+)'", low)
         if m_est:
             # «¿pasó alguna vez por ese estado?»: la evidencia de que un retiro «cerrado» sí se retiró (retirada) y el freno del envío
@@ -262,8 +267,17 @@ class BDFalsa:
 
     def execute(self, sql, params=()):
         s = _n(sql)
-        self.escrituras.append((s, params))
         low = s.lower()
+        for patron, exc in self.falla_escritura_si:
+            if re.search(patron, low):
+                raise exc
+        self.escrituras.append((s, params))
+        if low.startswith("insert into pickup_check_snapshots"):
+            rid, payload, huella = params
+            self.snapshots[int(rid)] = {"payload": payload, "huella": huella}
+            return 1
+        if low.startswith("delete from pickup_check_snapshots"):
+            return 1 if self.snapshots.pop(int(params[0]), None) else 0
         if low.startswith("insert into `pickup_logs`") or low.startswith("insert into pickup_logs"):
             (rid, actor_type, actor_name, action, old_status, new_status, notes, _ip, _ua) = params
             self._id_log += 1

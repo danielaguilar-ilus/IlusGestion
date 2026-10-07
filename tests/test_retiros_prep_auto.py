@@ -447,8 +447,11 @@ class TestVentanaYHorario:
 
     @pytest.mark.parametrize("ahora", [
         dt.datetime(2026, 10, 7, 3, 0),       # de madrugada
-        dt.datetime(2026, 10, 7, 7, 29),      # un minuto antes de abrir
-        dt.datetime(2026, 10, 7, 20, 0),      # en punto de la noche
+        dt.datetime(2026, 10, 7, 7, 59),      # un minuto antes de que empiece la cobertura
+        dt.datetime(2026, 10, 7, 13, 0),      # colación (13:00–14:00)
+        dt.datetime(2026, 10, 7, 13, 59),
+        dt.datetime(2026, 10, 7, 17, 0),      # terminó la cobertura (Daniel 2026-10-06: «no mostrar este mensaje a las cinco de la tarde»)
+        dt.datetime(2026, 10, 7, 20, 0),
         dt.datetime(2026, 10, 7, 23, 50),
         dt.datetime(2026, 10, 3, 11, 0),      # sábado
         dt.datetime(2026, 10, 4, 11, 0),      # domingo
@@ -461,8 +464,9 @@ class TestVentanaYHorario:
         assert revisar(env)["prep_auto_ahora"] is False
         assert_quieto(env)
 
-    @pytest.mark.parametrize("ahora", [dt.datetime(2026, 10, 7, 7, 30), dt.datetime(2026, 10, 7, 19, 59)])
-    def test_en_el_horario_de_la_bodega_si(self, env, ahora):
+    @pytest.mark.parametrize("ahora", [dt.datetime(2026, 10, 7, 8, 0), dt.datetime(2026, 10, 7, 12, 59),
+                                       dt.datetime(2026, 10, 7, 14, 0), dt.datetime(2026, 10, 7, 16, 59)])
+    def test_en_el_horario_de_cobertura_si(self, env, ahora):
         env.reloj["ahora"] = ahora
         retiro(env, confirmed_date=ahora.date().isoformat())
         env.esp.check.respuestas["*"] = EMPEZO

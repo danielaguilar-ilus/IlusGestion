@@ -125,7 +125,7 @@ aria-label="Ver el detalle de {{ r.code }}" title="Ver el detalle"><i class="bi 
 <td data-label="Solicitud"><div class="rm-cell">
 <span class="rm-code rm-hl">{{ r.code }}</span><span class="js-row-chat"></span>
 <div class="rm-sub"><span class="rm-origen {{ 'interno' if r.m_origen == 'Interno' else '' }}" style="margin-left:0">{{ r.m_origen }}</span>
-{% if r.m_hace %}<span> {{ r.m_hace }}</span>{% endif %}</div>
+{% if r.m_creado_full %}<span class="rm-solicitada" title="Fecha y hora en que se solicitó el retiro (hora Chile)"> Solicitada {{ r.m_creado_full }}{% if r.m_hace %} · {{ r.m_hace }}{% endif %}</span>{% elif r.m_hace %}<span> {{ r.m_hace }}</span>{% endif %}</div>
 </div></td>
 <td data-label="Cliente"><div class="rm-cell">
 <div class="rm-cli-name rm-hl">{{ r.customer_name }}</div>

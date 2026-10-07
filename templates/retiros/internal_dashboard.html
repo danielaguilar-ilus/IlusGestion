@@ -978,6 +978,7 @@ select.nri-field-locked{pointer-events:none}
 
 {# Daniel 2026-06-16: widget de calendario (mismo del formulario público / Paso 4) #}
 <script defer src="{{ url_for('static', filename='retiros_calendar.js') }}"></script>
+<script defer src="{{ url_for('static', filename='retiros_cobertura.js') }}"></script>
 {# 2026-09-15: asistente ERP del modal "Nuevo retiro interno" (Paso 1 documento
    potente, Paso 2 cliente potente, Paso 5 carga precargada, crear = asociar).
    defer → corre después del <script> inline de abajo, que ya expuso
@@ -1502,6 +1503,10 @@ select.nri-field-locked{pointer-events:none}
     // reputación"): estos dos destinos también le escriben al cliente
     // (kind_map de pickup_update_status: en_preparacion → "preparing",
     // en_revision → "created") y antes se mandaban sin preguntar.
+    // Daniel 2026-10-06: fuera del horario de cobertura se avisa antes de mandar algo al cliente (el aviso igual sale si se confirma)
+    const fuera = (['en_preparacion', 'en_revision', 'rechazada', 'retirada'].indexOf(nuevoEstado) >= 0 && window.retirosAvisoCobertura)
+      ? await window.retirosAvisoCobertura() : '';
+    const ava = fuera ? '⏰ ' + fuera + ' ' : '';
     if (nuevoEstado === 'en_preparacion' || nuevoEstado === 'en_revision'){
       const prep = nuevoEstado === 'en_preparacion';
       const ok = await ilusConfirm({
@@ -1509,9 +1514,9 @@ select.nri-field-locked{pointer-events:none}
         message: prep
           ? '¿Enviar ' + code + ' a preparación? Bodega recibe la lista de productos.'
           : '¿Pasar ' + code + ' a "Por revisar"?',
-        sub: prep
+        sub: ava + (prep
           ? 'Al cliente le llega un correo avisando que su pedido se está preparando. No se puede deshacer.'
-          : 'Al cliente le llega un correo de "estamos revisando tu solicitud". No se puede deshacer.',
+          : 'Al cliente le llega un correo de "estamos revisando tu solicitud". No se puede deshacer.'),
         okLabel: prep ? 'Sí, enviar a preparación' : 'Sí, pasar a revisión', cancelLabel: 'Cancelar',
         type: 'warning',
       });
@@ -1522,6 +1527,7 @@ select.nri-field-locked{pointer-events:none}
       const ok = await ilusConfirm({
         title: 'Cancelar retiro',
         message: '¿Marcar ' + code + ' como rechazada? El cliente recibirá un correo.',
+        sub: ava || undefined,
         okLabel: 'Sí, rechazar', cancelLabel: 'Cancelar',
         danger: true,
       });
@@ -1533,7 +1539,7 @@ select.nri-field-locked{pointer-events:none}
       const ok = await ilusConfirm({
         title: 'Marcar como retirado',
         message: '¿' + code + ' ya fue retirado por el cliente?',
-        sub: 'Cierra el proceso y el cliente recibe el correo de "retiro completado".',
+        sub: ava + 'Cierra el proceso y el cliente recibe el correo de "retiro completado".',
         okLabel: 'Sí, marcar retirado', cancelLabel: 'Cancelar',
         type: 'question',
       });

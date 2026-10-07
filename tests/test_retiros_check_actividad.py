@@ -105,8 +105,9 @@ class QuienYCuando(unittest.TestCase):
         self.assertEqual({p["campo"]: p["valor"] for p in o["personas"]}, {"usuarioPicking": "JPEREZ", "usuarioAsignado": "MGOMEZ"})
         self.assertEqual((o["inicio"], o["fin"]), ("02/10/2026 15:32", "02/10/2026 15:40"))
         self.assertIn("usuarioPicking", d["campos"])
-        # solo lectura: nada se escribe, no se le habla a Check directo (usa lo que ya hay en memoria) y no se refresca
-        self.assertEqual(db.escrituras, [])
+        # solo lectura de Check: no se le habla directo (usa lo que ya hay en memoria) y no se refresca. Lo único que ILUS escribe es el REGISTRO guardado
+        # de lo que Check informó (2026-10-06); nada del retiro, ni la bitácora, ni mensajes.
+        self.assertTrue(all("pickup_check_snapshots" in e[0] for e in db.escrituras), db.escrituras)
         self.assertEqual(esp.check.llamadas, [])
         traer.assert_not_called()
 

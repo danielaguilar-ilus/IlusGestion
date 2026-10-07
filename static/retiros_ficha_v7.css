@@ -126,3 +126,20 @@
 .rh-sub span,#rhContactoTxt{min-width:0;overflow-wrap:anywhere}    /* un correo largo no se corta en el celular */
 .fv8-modal .ficha-sub span{min-width:0;overflow-wrap:anywhere}
 .fv8-alerta[hidden]{display:none !important}
+
+/* ══ Carga del retiro (2026-10-06): peso, peso volumétrico y m³ con datos reales ══ */
+.cb-carga{min-width:0}
+.cb-tit{margin:0 0 8px;font-size:.78rem;font-weight:900;letter-spacing:.07em;text-transform:uppercase;color:#374151}
+.cb-tit small{margin-left:8px;font-size:.78rem;font-weight:600;letter-spacing:0;text-transform:none;color:#6b7280}
+.cb-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:8px}
+.cb-tile{display:grid;gap:2px;padding:9px 12px;border:2px solid #d1fae5;border-radius:12px;background:#fff}
+.cb-tile .cb-l{font-size:.72rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#6b7280}
+.cb-tile b{font-size:1.3rem;font-weight:900;font-variant-numeric:tabular-nums;color:#111827}
+.cb-tile small{font-size:.8rem;font-weight:600;color:#6b7280}
+.cb-tile.is-vacio{border-color:#fca5a5;background:#fef2f2}
+.cb-tile.is-vacio b{color:#991b1b}
+.cb-nota{display:flex;align-items:flex-start;gap:8px;margin:8px 0 0;font-size:.92rem;font-weight:600;color:#374151}
+.cb-nota .bi{flex:0 0 auto;margin-top:2px;color:#6b7280}
+.cb-nota.is-aviso{padding:8px 12px;border:2px solid #f59e0b;border-radius:10px;background:#fffbeb;color:#78350f}
+.cb-nota.is-aviso .bi{color:#b45309}
+.rm-solicitada{white-space:normal}

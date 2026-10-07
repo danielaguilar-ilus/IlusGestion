@@ -5943,6 +5943,8 @@ def register_pickup_routes(app, ctx):
         "productos_confirmados": ("cambios", "bi-patch-check-fill", "ok", "confirmó los productos y cantidades"),
         "retiro_evidencia": ("cambios", "bi-person-check-fill", "ok", "registró quién retiró"),
         "retiro_evidencia_foto": ("archivos", "bi-camera-fill", "file", "subió la foto de evidencia del retiro"),
+        "totales_sincronizados": ("cambios", "bi-calculator-fill", "doc", "completó el peso y el volumen con los productos"),
+        "check_desfase": ("cambios", "bi-exclamation-triangle-fill", "warn", "avisó que Check ya despachó el pedido"),
     }
 
     def _act_corta(s, n):
@@ -6089,6 +6091,12 @@ def register_pickup_routes(app, ctx):
                     req["observations"] = obs.decode("utf-8", errors="replace") if isinstance(obs, (bytes, bytearray)) else str(obs)
             except Exception:
                 pass
+
+            # Peso y volumen en 0 con productos que sí los tienen: se completan (solo lo que está en 0; nada sale al cliente)
+            try:
+                _pickup_sync_totales_si_faltan(rid, req)
+            except Exception as _e_tot:
+                print(f"[pickup_detail] totales rid={rid}: {_e_tot}", flush=True)
 
             # ⚠️ FIX CRÍTICO (Daniel 2026-05-24 mañana):
             # El threading paralelo INTRODUCÍA un bug: get_db() de Flask retorna
@@ -6379,6 +6387,11 @@ def register_pickup_routes(app, ctx):
             _quien = ((getattr(g, "user", None) or {}).get("nombre") or "un usuario").strip()
             _notas_log = (f"Manual: {_quien} pasó el retiro a «En preparación»." + (f" Nota: {notes}" if notes else "")).strip()
         log_event(rid, "estado_actualizado", old_status, new_status, _notas_log, "interno")
+        if new_status in ("retirada", "cerrada") and old_status != new_status:
+            try:
+                _check_snap_desde_cache(rid)         # lo que Check informó queda guardado antes de cerrar
+            except Exception as _e_snap:
+                print(f"[pickup-updstatus] registro de Check rid={rid}: {_e_snap}", flush=True)
         # Una propuesta pendiente no puede sobrevivir a un cambio manual a
         # confirmado / preparación / estado terminal: desde el link viejo el
         # cliente la confirmaba y "revivía" el retiro (auditoría 2026-09-24).
@@ -6712,6 +6725,12 @@ def register_pickup_routes(app, ctx):
         vol_m3    = float(agg.get("m3") or 0)
         lineas_total = int(agg.get("lineas_total") or 0)
         n_docs    = int(agg.get("n_docs") or 0)
+        # 2026-10-06: si los documentos no traen peso/volumen pero los PRODUCTOS sí (paso «Productos a retirar»), se usan esos:
+        # antes el retiro quedaba en 0 kg / 0 m³ aunque la ficha mostrara los productos con su peso (retiro de Gerd Müller).
+        if n_docs > 0 and peso_real <= 0 and peso_vol <= 0 and vol_m3 <= 0:
+            _alt = _pickup_totales_desde_productos(rid)
+            if _alt:
+                peso_real, peso_vol, vol_m3 = _alt["peso"], _alt["pvol"], _alt["vol"]
         # Si hay docs: estimar tiempo basado en líneas. Si no: 0 (sin sobreescribir
         # tiempo manual del operador — solo se autocalcula con docs presentes).
         tiempo = None
@@ -6741,6 +6760,45 @@ def register_pickup_routes(app, ctx):
             "lineas_total": lineas_total,
             "tiempo_estimado_min": tiempo or 0,
         }
+
+    def _pickup_totales_desde_productos(rid):
+        """Peso, peso volumétrico y m³ según los PRODUCTOS a retirar (la misma cuenta del paso «Productos a retirar»). {} si no hay datos."""
+        try:
+            tot = (_pickup_lineas_consolidadas(rid) or {}).get("totales") or {}
+        except Exception as e:
+            print(f"[pickup-totales] rid={rid} productos: {e}", flush=True)
+            return {}
+        peso, pvol, vol = (float(tot.get("peso_total_kg") or 0), float(tot.get("peso_vol_total_kg") or 0), float(tot.get("vol_total_m3") or 0))
+        if peso <= 0 and pvol <= 0 and vol <= 0:
+            return {}
+        return {"peso": peso, "pvol": pvol, "vol": vol}
+
+    def _pickup_sync_totales_si_faltan(rid, req):
+        """Completa el peso / peso volumétrico / m³ del retiro cuando quedaron en 0 aunque los productos sí los tienen (Daniel 2026-10-06, retiro
+        de Gerd Müller: «no los refleja ni aquí ni en el dashboard»). SOLO rellena lo que está en 0: jamás pisa una cubicación hecha por una
+        persona. No manda correo ni mensaje al cliente. Actualiza `req` en memoria. Devuelve True si cambió algo."""
+        campos = (("peso_real_kg", "peso"), ("peso_vol_kg", "pvol"), ("total_volume_m3", "vol"))
+        faltan = [(c, k) for c, k in campos if not float(req.get(c) or 0)]
+        if not faltan:
+            return False
+        alt = _pickup_totales_desde_productos(rid)
+        if not alt:
+            return False
+        pares = []
+        for col, k in faltan:
+            v = round(alt[k], 4 if col == "total_volume_m3" else 3)
+            if v > 0:
+                pares.append((col, v))
+        if not pares:
+            return False
+        mysql_execute(f"UPDATE `{REQ}` SET {', '.join(c + '=%s' for c, _v in pares)} WHERE id=%s", tuple(v for _c, v in pares) + (rid,))
+        antes = [f"{c}: 0 → {v:g}" for c, v in pares]
+        for c, v in pares:
+            req[c] = v
+        log_event(rid, "totales_sincronizados", req.get("status"), req.get("status"),
+                  "El peso y el volumen estaban en 0 y se completaron con los productos a retirar (" + "; ".join(antes) + ").",
+                  "sistema", "ILUS (automático)")
+        return True
 
     def _apply_lineas_seleccion_inline(rid, doc_id, lineas_in):
         """Aplica selección granular a un doc ya asociado. Usado en flujo
@@ -8988,6 +9046,10 @@ def register_pickup_routes(app, ctx):
               f"code={req.get('code')} status={req.get('status')} "
               f"cliente='{req.get('customer_name')}' rut={req.get('customer_rut')} "
               f"por={actor_email}")
+        try:
+            mysql_execute("DELETE FROM pickup_check_snapshots WHERE request_id=%s", (rid,))      # el registro de Check se va con el retiro
+        except Exception:
+            pass
 
         try:
             # Cascade automático borra todas las tablas relacionadas
@@ -11829,6 +11891,7 @@ def register_pickup_routes(app, ctx):
                 print(f"[retiros-check] aplicar rid={rid}: {e}", flush=True)
                 return False
             _CHECK_LISTO_VISTO.pop(rid, None)
+        _check_snap_desde_cache(rid)
         try:
             _notificar_equipo_retiros(
                 f"📦✅ Pedido {req.get('code') or '?'} LISTO para entrega",
@@ -11971,12 +12034,133 @@ def register_pickup_routes(app, ctx):
             threading.Thread(target=_refrescar, daemon=True).start()
         return (filas if isinstance(filas, list) else None), edad, bool(_CHECK_OT["corriendo"])
 
+    # ── REGISTRO GUARDADO de lo que Check informó (Daniel 2026-10-06: «en la parte de preparación no quedó persistente el dato de Check en la
+    #    tarjeta… necesito los datos como lo tenías: quién asignó, quién de la OT, Luis, Samuel, el número de OT»). El reporte de movimientos de
+    #    Check es en vivo y solo recuerda unos días: lo que informó mientras se preparaba el pedido se guarda en ILUS (solo la OT, quién y cuándo;
+    #    nunca se escribe en Check) para que la tarjeta lo siga mostrando con el retiro completado. Se fusiona por OT: lo ya guardado no se pierde.
+    _CHECK_SNAP = {"tabla": False}
+
+    def _check_snap_tabla():
+        if _CHECK_SNAP["tabla"]:
+            return True
+        try:
+            mysql_execute(
+                "CREATE TABLE IF NOT EXISTS pickup_check_snapshots ("
+                "request_id INT NOT NULL PRIMARY KEY, payload MEDIUMTEXT NOT NULL, huella VARCHAR(40) NOT NULL, "
+                "creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                "actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+            _CHECK_SNAP["tabla"] = True
+        except Exception as e:
+            print(f"[retiros-check-snap] tabla: {e}", flush=True)
+        return _CHECK_SNAP["tabla"]
+
+    def _check_snap_leer(rid):
+        """{'documentos': [...], 'guardado_en': 'dd/mm/aaaa hh:mm', 'huella': '…'} o None."""
+        import json as _json_sn
+        try:
+            if not _check_snap_tabla():
+                return None
+            fila = mysql_fetchone("SELECT payload, huella FROM pickup_check_snapshots WHERE request_id=%s", (rid,))
+            if not fila:
+                return None
+            datos = _json_sn.loads(fila.get("payload") or "{}")
+            if not isinstance(datos.get("documentos"), list):
+                return None
+            datos["huella"] = fila.get("huella") or ""
+            return datos
+        except Exception as e:
+            print(f"[retiros-check-snap] leer rid={rid}: {e}", flush=True)
+            return None
+
+    def _check_snap_fusionar(previos, nuevos):
+        """Une lo guardado con lo que Check informa ahora, por documento y por OT (lo nuevo manda; lo que Check ya no trae se conserva)."""
+        por_doc = {}
+        orden = []
+        for fuente in (nuevos or [], previos or []):
+            for d in fuente:
+                rot = d.get("rotulo")
+                if rot not in por_doc:
+                    por_doc[rot] = {}
+                    orden.append(rot)
+                for o in d.get("ots") or []:
+                    por_doc[rot].setdefault(o.get("ot"), o)       # el primero que llega gana: «nuevos» va antes que «previos»
+        salida = []
+        for rot in orden:
+            ots = list(por_doc[rot].values())
+            salida.append({"rotulo": rot, "n_ot": len(ots), "ots": ots[:_CHECK_OT_MAX_OT], "mas": max(0, len(ots) - _CHECK_OT_MAX_OT)})
+        return salida
+
+    def _check_snap_guardar(rid, salida):
+        """Guarda (fusionado) lo que Check informó. Solo si hay al menos una OT y cambió algo. Devuelve True si escribió. Nunca lanza."""
+        import hashlib as _hl_sn
+        import json as _json_sn
+        try:
+            if not any((d.get("ots") for d in (salida or []))):
+                return False
+            previo = _check_snap_leer(rid)
+            docs = _check_snap_fusionar((previo or {}).get("documentos"), salida)
+            texto = _json_sn.dumps(docs, sort_keys=True, ensure_ascii=False, default=str)
+            if len(texto) > 400000:
+                return False
+            huella = _hl_sn.sha1(texto.encode("utf-8")).hexdigest()
+            if previo and previo.get("huella") == huella:
+                return False
+            payload = _json_sn.dumps({"documentos": docs, "guardado_en": _ahora_chile().strftime("%d/%m/%Y %H:%M")}, ensure_ascii=False, default=str)
+            mysql_execute(
+                "INSERT INTO pickup_check_snapshots (request_id, payload, huella) VALUES (%s,%s,%s) "
+                "ON DUPLICATE KEY UPDATE payload=VALUES(payload), huella=VALUES(huella)", (rid, payload, huella))
+            return True
+        except Exception as e:
+            print(f"[retiros-check-snap] guardar rid={rid}: {e}", flush=True)
+            return False
+
+    def _check_ot_salida(docs, filas):
+        """(salida por documento, filas coincidentes) a partir del reporte de movimientos de Check ya en memoria."""
+        salida, coincidencias = [], []
+        for d in (docs or [])[:_CHECK_PREP_MAX_DOCS]:
+            tipo = (d.get("document_type") or "").strip().upper()[:5]
+            num = re.sub(r"\D", "", d.get("document_number") or "")[:12]
+            if not tipo or not num:
+                continue
+            filas_doc = _rco.filas_del_documento(filas, tipo, num)
+            coincidencias.extend(filas_doc)
+            ots = _rco.agrupar_por_ot(filas_doc)
+            salida.append({"rotulo": f"{tipo} {num}", "n_ot": len(ots), "ots": ots[:_CHECK_OT_MAX_OT], "mas": max(0, len(ots) - _CHECK_OT_MAX_OT)})
+        return salida, coincidencias
+
+    def _check_snap_desde_cache(rid):
+        """Guarda lo que el reporte de Check YA tiene en memoria para este retiro. Nunca espera a Check ni le pide nada. Nunca lanza."""
+        try:
+            cache = ctx.get("_CHECKWMS_TRAZA")
+            filas = cache.get("rows") if cache else None
+            if not isinstance(filas, list):
+                return False
+            docs = mysql_fetchall("SELECT document_type, document_number FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC", (rid,)) or []
+            salida, _c = _check_ot_salida(docs, filas)
+            return _check_snap_guardar(rid, salida)
+        except Exception as e:
+            print(f"[retiros-check-snap] desde cache rid={rid}: {e}", flush=True)
+            return False
+
+    def _check_snap_respuesta(snap):
+        resp = jsonify({"ok": True, "estado": "listo", "desde_registro": True, "registrado": snap.get("guardado_en") or "", "edad_s": 0,
+                        "refrescando": False, "total_movimientos": 0, "campos": [], "documentos": snap.get("documentos") or []})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
     @app.route("/retiros/<int:rid>/check-actividad", methods=["GET"])
     @require_permission("retiros")
     def pickup_check_actividad(rid):
-        """OT de Check de cada documento del retiro (quién, cuándo, estado, asignación y TODOS los campos). Solo lectura."""
-        if not mysql_fetchone(f"SELECT id FROM `{REQ}` WHERE id=%s", (rid,)):
+        """OT de Check de cada documento del retiro (quién, cuándo, estado, asignación y TODOS los campos). Solo lectura de Check; lo que informó
+        se guarda en ILUS para que siga visible con el retiro completado."""
+        req_min = mysql_fetchone(f"SELECT id, status FROM `{REQ}` WHERE id=%s", (rid,))
+        if not req_min:
             return jsonify({"ok": False, "error": "Retiro no encontrado."}), 404
+        terminado = (req_min.get("status") or "") in ("retirada", "cerrada")
+        snap = _check_snap_leer(rid)
+        if terminado and snap:                       # retiro completado con registro guardado: no se le pide nada más a Check
+            return _check_snap_respuesta(snap)
         docs = mysql_fetchall(
             "SELECT document_type, document_number FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC",
             (rid,)) or []
@@ -11991,17 +12175,11 @@ def register_pickup_routes(app, ctx):
             resp = jsonify({"ok": True, "estado": estado, "documentos": []})
             resp.headers["Cache-Control"] = "no-store"
             return resp
-        salida, coincidencias = [], []
-        for d in docs[:_CHECK_PREP_MAX_DOCS]:
-            tipo = (d.get("document_type") or "").strip().upper()[:5]
-            num = re.sub(r"\D", "", d.get("document_number") or "")[:12]
-            if not tipo or not num:
-                continue
-            filas_doc = _rco.filas_del_documento(filas, tipo, num)
-            coincidencias.extend(filas_doc)
-            ots = _rco.agrupar_por_ot(filas_doc)
-            salida.append({"rotulo": f"{tipo} {num}", "n_ot": len(ots), "ots": ots[:_CHECK_OT_MAX_OT],
-                           "mas": max(0, len(ots) - _CHECK_OT_MAX_OT)})
+        salida, coincidencias = _check_ot_salida(docs, filas)
+        if any(d.get("ots") for d in salida):
+            _check_snap_guardar(rid, salida)         # lo que Check informa queda guardado en ILUS
+        elif snap:                                   # Check ya no lo trae (el reporte solo recuerda unos días): se muestra lo guardado
+            return _check_snap_respuesta(snap)
         # Una vez por proceso (y otra la primera vez que aparece una OT) se deja en el log QUÉ campos entrega Check,
         # para poder afinar la pantalla sin pedirle capturas a nadie. Solo nombres de campo y valores de personas/momentos.
         for clave in (("global",) + (("coincide",) if coincidencias else ())):
@@ -12092,8 +12270,6 @@ def register_pickup_routes(app, ctx):
     # ══════════════════════════════════════════════════════════════════
     _CHECK_INICIO_VISTO = {}        # rid → ts de la primera lectura «bodega ya empezó» (camino de la ficha / barrido en hilo)
     _CHECK_INICIO_VIGENCIA_S = 300  # una primera lectura de hace más de 5 min ya no cuenta
-    _PREP_AUTO_DESDE_MIN = 7 * 60 + 30      # el correo al cliente solo sale entre las 07:30 …
-    _PREP_AUTO_HASTA_MIN = 20 * 60          # … y las 20:00 (hora Chile) de un día en que la bodega abre
 
     def _prep_auto_activo():
         """Encendido por defecto. RETIROS_PREP_AUTO=0 lo apaga; RETIROS_CHECK_AUTO=0 («Check solo informa y no escribe nada») también."""
@@ -12155,17 +12331,75 @@ def register_pickup_routes(app, ctx):
             return False
         return _prep_auto_dias_abiertos(hoy, cd, cerrado) <= _prep_auto_dias()
 
-    def _prep_auto_en_horario():
-        """El correo al cliente no sale de madrugada ni de noche ni un día en que la bodega no abre (fin de semana, feriado o cierre)."""
-        ahora = _ahora_chile()
-        if not (_PREP_AUTO_DESDE_MIN <= ahora.hour * 60 + ahora.minute < _PREP_AUTO_HASTA_MIN):
-            return False
+    # ── HORARIO DE COBERTURA (Daniel 2026-10-06: «la cobertura día a día de 8 de la mañana… y no mostrar este mensaje a cinco de la tarde, con
+    #    descanso a la una de la tarde»): lunes a viernes hábiles de 08:00 a 17:00, con colación de 13:00 a 14:00 (hora Chile). Fuera de ese horario
+    #    nadie puede responderle al cliente: se AVISA antes de gestionar un retiro a mano (el correo igual sale) y el envío automático espera.
+    #    Configurable: RETIROS_COBERTURA_DESDE / _HASTA / _COLACION_DESDE / _COLACION_HASTA («HH:MM»).
+    def _cob_min(nombre, defecto):
+        v = (os.environ.get(nombre) or defecto).strip()
+        try:
+            h, m = v.split(":")[:2]
+            return max(0, min(int(h) * 60 + int(m), 24 * 60))
+        except (ValueError, TypeError):
+            h, m = defecto.split(":")
+            return int(h) * 60 + int(m)
+
+    def _cob_txt(minutos):
+        return f"{minutos // 60:02d}:{minutos % 60:02d}"
+
+    def _cobertura_estado(ahora=None):
+        """{'abierta': bool, 'motivo': str, 'horario': '08:00–17:00 (colación 13:00–14:00)', 'vuelve': 'hoy a las 14:00' | 'mañana a las 08:00' | …}"""
+        ahora = ahora or _ahora_chile()
+        desde, hasta = _cob_min("RETIROS_COBERTURA_DESDE", "08:00"), _cob_min("RETIROS_COBERTURA_HASTA", "17:00")
+        col_d, col_h = _cob_min("RETIROS_COBERTURA_COLACION_DESDE", "13:00"), _cob_min("RETIROS_COBERTURA_COLACION_HASTA", "14:00")
+        horario = f"{_cob_txt(desde)}–{_cob_txt(hasta)} (colación {_cob_txt(col_d)}–{_cob_txt(col_h)})"
         hoy = ahora.date()
         try:
-            return not _dias_ctx(hoy, hoy)["cerrado"](hoy)
+            cd = _dias_ctx(hoy, hoy + timedelta(days=21))
+            cerrado = cd["cerrado"]
+            info = lambda d: _info_dia(cd, d).get("razon") or "No hábil"       # noqa: E731
         except Exception as e:
-            print(f"[retiros-prep-auto] calendario de la bodega: {e}", flush=True)
-            return hoy.isoweekday() < 6
+            print(f"[retiros-cobertura] calendario de la bodega: {e}", flush=True)
+            cerrado = lambda d: d.isoweekday() >= 6                              # noqa: E731
+            info = lambda d: "Fin de semana"                                     # noqa: E731
+        m = ahora.hour * 60 + ahora.minute
+        motivo = ""
+        if cerrado(hoy):
+            motivo = f"Hoy no hay cobertura ({info(hoy).lower()})"
+        elif m < desde:
+            motivo = f"Todavía no empieza la cobertura (desde las {_cob_txt(desde)})"
+        elif col_d <= m < col_h:
+            motivo = f"El equipo está en colación ({_cob_txt(col_d)}–{_cob_txt(col_h)})"
+        elif m >= hasta:
+            motivo = f"La cobertura terminó a las {_cob_txt(hasta)}"
+        if not motivo:
+            return {"abierta": True, "motivo": "", "horario": horario, "vuelve": ""}
+        if not cerrado(hoy) and m < desde:
+            vuelve = f"hoy a las {_cob_txt(desde)}"
+        elif not cerrado(hoy) and col_d <= m < col_h:
+            vuelve = f"hoy a las {_cob_txt(col_h)}"
+        else:
+            vuelve = ""
+            nombres = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
+            for k in range(1, 22):
+                d = hoy + timedelta(days=k)
+                if not cerrado(d):
+                    vuelve = (f"mañana a las {_cob_txt(desde)}" if k == 1
+                              else f"el {nombres[d.weekday()]} {d.strftime('%d/%m')} a las {_cob_txt(desde)}")
+                    break
+        return {"abierta": False, "motivo": motivo, "horario": horario, "vuelve": vuelve}
+
+    def _prep_auto_en_horario():
+        """El correo al cliente solo sale en horario de cobertura: ni de madrugada, ni en colación, ni de tarde, ni un día no hábil."""
+        return bool(_cobertura_estado()["abierta"])
+
+    @app.route("/retiros/api/cobertura", methods=["GET"])
+    @require_permission("retiros")
+    def pickup_cobertura_api():
+        """¿Hay cobertura ahora? Lo usan las pantallas para avisar antes de gestionar un retiro a mano fuera de horario. Solo lectura."""
+        resp = jsonify({"ok": True, **_cobertura_estado()})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
 
     def _prep_auto_cambio_pendiente(rid):
         """¿El cliente pidió cambiar la fecha y nadie le ha respondido? (misma guarda que el botón)."""
@@ -12232,6 +12466,7 @@ def register_pickup_routes(app, ctx):
                       f"Check ya preparó y despachó el pedido ({ev.get('despachadas')} de {ev.get('pedidas')} unidades despachadas), pero el retiro sigue en "
                       f"«Cita confirmada». Si el cliente ya se lo llevó, hay que marcarlo como RETIRADO. Aviso al equipo el "
                       f"{_ahora_chile().strftime('%d/%m/%Y %H:%M')} (hora Chile).", "sistema", "Check WMS")
+            _check_snap_desde_cache(rid)
             _notificar_equipo_retiros(
                 f"📦 {code}: Check ya preparó y despachó el pedido",
                 f"{req.get('customer_name') or 'Cliente'} — en ILUS sigue en «Cita confirmada». Si el cliente ya se lo llevó, márcalo como RETIRADO "
@@ -12313,6 +12548,7 @@ def register_pickup_routes(app, ctx):
         except Exception as e:
             print(f"[retiros-prep-auto] cerrar propuestas pendientes rid={rid}: {e}", flush=True)
         _pickup_generar_checklist(rid)
+        _check_snap_desde_cache(rid)
         try:
             req_despues = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or req
             if sincrono:

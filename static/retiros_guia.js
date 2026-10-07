@@ -370,10 +370,23 @@
       if (d.mas) h += '<p class="ck-vacio">…y ' + d.mas + ' OT más.</p>';
       h += '</div>';
     });
+    if (ACT.desde_registro) {
+      return h + '<p class="ck-pie">Registro guardado en ILUS el ' + esc(ACT.registrado || '') + ': lo que Check informó mientras se preparaba el pedido, con la hora que entrega Check. Check solo se consulta, nunca se modifica.</p></section>';
+    }
     return h + '<p class="ck-pie">Datos tal como los informa Check (solo lectura), con la hora que entrega Check · última lectura hace ' + esc(haceTxt(ACT.edad_s)) +
       (ACT.refrescando ? ' · actualizando…' : '') + '.</p></section>';
   }
+  // Retiro completado: solo el registro de bodega (quién y cuándo), sin conexión en vivo ni botones
+  function registroCheckHtml() {
+    if (!G.pasos[0].detalle || !G.pasos[0].detalle.length || G.terminal) return '';
+    var guardado = ACT && ACT.desde_registro;
+    return '<div class="gp-check ck is-ok" data-gp-noclick="1"><div class="ck-head"><div class="ck-tit"><span class="ck-ico"><i class="bi bi-box-seam-fill"></i></span>' +
+      '<div><b>Check · Bodega</b><small>Registro de la preparación de este retiro</small></div></div>' +
+      (guardado ? '<span class="gp-conex is-neutro" role="status" title="Lo que Check informó mientras se preparaba el pedido, guardado en ILUS"><i class="gp-conex-dot"></i><b>Registro guardado</b><small>' + esc(ACT.registrado || '') + '</small></span>' : '') +
+      '</div><div class="ck-cuerpo">' + actHtml() + '</div></div>';
+  }
   function checkHtml() {
+    if (esRetirado()) return registroCheckHtml();
     if (STATUS !== 'agenda_confirmada' && STATUS !== 'en_preparacion') return '';
     if (!G.pasos[0].detalle || !G.pasos[0].detalle.length) return '';
     var cx = CHECK && CHECK.conexion ? CHECK.conexion.estado : '';
@@ -712,6 +725,12 @@
       .then(function (d) { if (d && d.ok) aplicar(d); })
       .catch(function () { /* sin red: se queda como está */ });
   }
+  // Retiro completado: la tarjeta de preparación sigue mostrando lo que Check informó (OT, quién, cuándo), guardado en ILUS (Daniel 2026-10-06)
+  function esRetirado() { return STATUS === 'retirada' || STATUS === 'cerrada'; }
+  function relevanteActividad() {
+    if (esRetirado()) return !!(G.pasos[0].detalle && G.pasos[0].detalle.length && !G.terminal);
+    return relevanteCheck();
+  }
   function relevanteCheck() {
     return (STATUS === 'agenda_confirmada' || STATUS === 'en_preparacion') && G.pasos[0].detalle && G.pasos[0].detalle.length && !G.terminal;
   }
@@ -722,7 +741,8 @@
   // Quién pickeó / responsable / cuándo / asignado, según las OT de Check. La primera lectura puede tardar (Check entrega
   // un volcado grande): el servidor responde «cargando» y aquí se reintenta cada 6 s (hasta ~1 minuto).
   function cargarActividad() {
-    if (!relevanteCheck() || ACT_CARGANDO) return;
+    if (!relevanteActividad() || ACT_CARGANDO) return;
+    if (esRetirado() && ACT && ACT.estado === 'listo') return;          // ya está guardado: no hace falta volver a pedirlo
     ACT_CARGANDO = true;
     var ctrl = window.AbortController ? new AbortController() : null;
     var corte = setTimeout(function () { if (ctrl) ctrl.abort(); }, 25000);

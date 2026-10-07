@@ -2142,11 +2142,14 @@ async function agiAceptarContrapropuesta(rid, btnEl){
 // POST clásico a /retiros/<rid>/status (responde redirect → lo manejamos
 // con redirect:'manual' y refrescamos el calendario nosotros).
 async function agiCambiarEstado(rid, status, label){
+  // Daniel 2026-10-06: fuera del horario de cobertura nadie puede responderle al cliente → se avisa antes (el correo igual sale)
+  const fuera = window.retirosAvisoCobertura ? await window.retirosAvisoCobertura() : '';
   const ok = await ilusConfirm({
-    title: 'Cambiar estado',
+    title: fuera ? 'Fuera del horario de cobertura' : 'Cambiar estado',
     message: `¿Marcar este retiro como "${label}"?`,
-    sub: 'El cliente recibirá la notificación del avance.',
-    okLabel: label, cancelLabel: 'Cancelar',
+    sub: (fuera ? '⏰ ' + fuera + ' ' : '') + 'El cliente recibirá la notificación del avance.',
+    okLabel: fuera ? 'Marcar igual' : label, cancelLabel: 'Cancelar',
+    type: fuera ? 'warning' : undefined,
   });
   if (!ok) return;
   try {
@@ -2327,4 +2330,5 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 <script defer src="{{ url_for('static', filename='retiros_calendar.js') }}"></script>
+<script defer src="{{ url_for('static', filename='retiros_cobertura.js') }}"></script>
 {% endblock %}

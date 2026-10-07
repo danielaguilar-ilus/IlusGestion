@@ -837,7 +837,7 @@ Internamente… al cliente le va a dar fecha nada más".**
   pickeada y nada despachado). Mismo camino que el botón: checklist de bodega, correo al cliente y aviso interno. Código: `pickups_module.py` (bloque «ENVIAR A
   PREPARACIÓN» AUTOMÁTICO), señal en `retiros_check.evaluar`.
 - **Salvaguardas (revisión adversarial 2026-10-02 — no quitarlas):** cita de **hoy o de los próximos N días HÁBILES** de la bodega (N=1; viernes → lunes cuenta 1; una
-  cita pasada la decide una persona) · solo en **horario de bodega** (07:30–20:00, día abierto, hora Chile: ningún correo de madrugada ni en fin de semana o feriado) ·
+  cita pasada la decide una persona) · solo en **horario de cobertura** (lunes a viernes hábiles 08:00–17:00 con colación 13:00–14:00, hora Chile; `RETIROS_COBERTURA_*`: ningún correo de madrugada, en colación, de tarde ni en fin de semana o feriado) ·
   **una sola vez por retiro** (si una persona lo devuelve a «Cita confirmada», el automático no lo repite ni le vuelve a escribir al cliente) · nunca con un cambio de
   fecha del cliente pendiente (la guarda va también dentro del UPDATE) · nunca si la factura o boleta está en **otro retiro activo** (Check informa por documento) ·
   **no exige responsable** (no es una persona: el 2026-10-05 el retiro real no tenía y bodega terminó sola sin que ILUS lo notara; el aviso interno dice «sin responsable») · la señal se ve en **dos lecturas** y la segunda se pide **de verdad** a Check (sin su memoria de 45 s).
@@ -875,5 +875,17 @@ de la sesión, nunca del navegador):
 
 ---
 
-_Última actualización: 2026-10-05_
+## 🛡️ REGLA #22 — Retiros está en AMBIENTE REAL: cero correos o cambios visibles para el cliente al probar o corregir
+
+**Pedido explícito de Daniel (2026-10-06): "ten mucho cuidado de enviar algún correo, ya que este es el ambiente real y hay clientes reales de por medio… no genere ningún mensaje o correo o cambio que genere una molestia hacia el cliente… no pases a llevar nada".**
+
+- Todo se prueba con el arnés (`tests/_arnes_retiros.py`, correo/WhatsApp de mentira) o con la vista previa local; **jamás** contra un retiro real ni con el correo real encendido.
+- Una corrección de datos de un retiro real **no se hace escribiendo a mano en la base**: se hace con código que rellena solo lo que falta (ej. `_pickup_sync_totales_si_faltan`: peso, peso volumétrico y m³ en 0 se completan con los productos; **nunca pisa** una cubicación de una persona) y deja constancia en la bitácora.
+- **Registro de Check guardado** (`pickup_check_snapshots`, solo OT, quién y cuándo, fusionado por OT): la tarjeta de preparación sigue mostrando lo que Check informó con el retiro completado. Check sigue SOLO LECTURA (REGLA #4.4).
+- **Horario de cobertura** (lunes a viernes hábiles 08:00–17:00, colación 13:00–14:00, hora Chile; variables `RETIROS_COBERTURA_DESDE/_HASTA/_COLACION_DESDE/_COLACION_HASTA`): `/retiros/api/cobertura` + `static/retiros_cobertura.js` avisan **antes** de gestionar un retiro a mano fuera de horario (calendario, Kanban, ficha). Es solo un aviso: no bloquea. El envío automático de la REGLA #20 respeta ese mismo horario.
+- El Monitor muestra «Solicitada dd/mm/aaaa hh:mm · hace X» y lee `peso_real_kg`/`peso_vol_kg` (los que se completan), no `total_weight_kg` del formulario (bulto de relleno en 0).
+
+---
+
+_Última actualización: 2026-10-06_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_
