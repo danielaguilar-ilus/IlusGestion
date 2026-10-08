@@ -235,6 +235,7 @@ function fprUltimos(n){
         <td>
           <a class="fp-ot" href="{{ url_for('ot2_detalle', vid=d.vid) }}">{{ d.numero_ot }}</a>
           <div class="fp-sub">Cerrada {{ d.cerrada }}</div>
+          {% for a in (d.saldo_avisos or []) %}<div class="fp-sub fp-saldo"><i class="bi bi-exclamation-triangle-fill"></i> {{ a }}</div>{% endfor %}
         </td>
         <td>{{ d.proveedor }}{% if d.tecnico and d.tecnico | lower != d.proveedor | lower %}<div class="fp-sub"><i class="bi bi-person"></i> {{ d.tecnico }}</div>{% endif %}</td>
         <td>{{ d.cliente }}</td>
@@ -378,6 +379,7 @@ document.addEventListener('DOMContentLoaded', function(){ fpPaginar(1); });
 .fp-tabla td.tot{font-weight:900;color:#0f172a}
 .fp-nom{font-weight:800;color:#0f172a}
 .fp-sub{font-size:.7rem;color:#94a3b8}
+.fp-sub.fp-saldo{color:#b45309;font-weight:700;white-space:normal;max-width:340px}
 .fp-ot{font-weight:800;color:#dc2626;text-decoration:none}
 .fp-ot:hover{text-decoration:underline}
 .fp-tipo{font-size:.68rem;font-weight:800;background:#f1f5f9;color:#475569;

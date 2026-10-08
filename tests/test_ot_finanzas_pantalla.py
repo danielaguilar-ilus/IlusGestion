@@ -22,6 +22,7 @@ import tempfile
 import types
 import unittest
 
+import ot_saldo_servicio
 from tests.test_incidencias_bajas import _codigo_y_arbol
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -93,6 +94,11 @@ def _llamar(cuerpo, fila=None):
         "_ot_doc_real_a_usuario": lambda t, n: (t, n),
         # 2026-10-07 (documento absoluto): declarar garantía pasa por Daniel; acá se simula "superadmin ya lo registró".
         "_ot_cobro_cero_desde_peticion": lambda vid, d, origen="": (None, None),
+        # 2026-10-08 (saldo por línea de servicio): estas pruebas no tienen documentos; el candado se prueba en
+        # tests/test_ot_saldo_servicio.py.
+        "_saldo": ot_saldo_servicio, "_ot_saldo_docs_de_ot": lambda vid: [], "_ot_saldo_chequear": lambda *a, **k: None,
+        "_ot_saldo_autorizado_hasta": lambda *a, **k: {}, "_ot_saldo_error_json": lambda e, vid=None: (dict(e), 409),
+        "_ot_saldo_reanotar_aportes": lambda vid, docs=None: None,
     })
     for nombre in FUNCS:     # que las funciones vean ESTE ámbito (con la BD simulada)
         f = amb[nombre]
@@ -331,7 +337,7 @@ class TestModalCierrePaso3(unittest.TestCase):
         self.assertIn("Trabajo interno: no se le cobra", out)
 
 
-def _llamar_vivo(cuerpo, fila=None):
+def _llamar_vivo(cuerpo, fila=None, saldo_err=None):
     """Como _llamar, pero la BD simulada APLICA los UPDATE (así la relectura ve lo guardado)."""
     fila = dict(FILA, **(fila or {}))
     updates, vistos = [], []
@@ -368,6 +374,14 @@ def _llamar_vivo(cuerpo, fila=None):
         "_ot_doc_real_a_usuario": lambda t, n: (t, n),
         # 2026-10-07 (documento absoluto): declarar garantía pasa por Daniel; acá se simula "superadmin ya lo registró".
         "_ot_cobro_cero_desde_peticion": lambda vid, d, origen="": (None, None),
+        # 2026-10-08 (saldo por línea de servicio): sin documentos no hay saldo que mirar; con `saldo_err` el candado
+        # rechaza (tests/test_ot_saldo_servicio.py).
+        "_saldo": ot_saldo_servicio,
+        "_ot_saldo_docs_de_ot": lambda vid: ([("FCV", "11439")] if saldo_err else []),
+        "_ot_saldo_chequear": lambda *a, **k: (dict(saldo_err) if saldo_err else None),
+        "_ot_saldo_autorizado_hasta": lambda *a, **k: {},
+        "_ot_saldo_error_json": lambda e, vid=None: (dict(e, visita_id=vid), 409),
+        "_ot_saldo_reanotar_aportes": lambda vid, docs=None: amb.setdefault("_reanotado", []).append(vid),
     })
     for nombre in FUNCS:
         f = amb[nombre]

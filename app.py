@@ -62,6 +62,7 @@ except ImportError:
 import erp_engine
 import transporte_tarifas as _ttar  # motor de tarifas réplica EXACTA de la macro SPHS
 import usuarios_perfil as _uperf  # datos personales del usuario: fecha de nacimiento y dirección validada con Google
+import ot_saldo_servicio as _saldo  # saldo por línea de servicio de cada documento (módulo puro con pruebas)
 import fedex_labels as _fxlabels    # parser puro de etiquetas FedEx (testeable)
 _ERP = erp_engine.init_engine(
     base_url=ERP_CONFIG.get("api_url", "https://lab.random.cl/ilus"),
@@ -85537,8 +85538,8 @@ def _mant_visita_crear_core(d):
     _fin_err, _fin_campos = _ot_validar_normalizar_finanzas(
         _fin_in, tipo_ot, _es_interna_fin, cliente_rut=_cliente_rut_fin)
     if _fin_err:
-        return {"error": _fin_err["error"],
-                "error_codigo": _fin_err["error_codigo"]}, 400
+        return dict({"error": _fin_err["error"], "error_codigo": _fin_err["error_codigo"]},
+                    **(_fin_err.get("extra") or {})), _fin_err.get("http", 400)
     # 🔏 2026-10-07 — LA PUERTA DEL DOCUMENTO (misma que el asistente OT 2.0, ver _ot_puerta_documento).
     _puerta = None
     if not _es_interna_fin:
@@ -85694,12 +85695,12 @@ def _mant_visita_crear_core(d):
                     cur.execute(
                         "INSERT INTO mant_visita_documentos "
                         "  (visita_id, origen, es_cobro, es_principal, erp_tido, erp_nudo, "
-                        "   rut, etiqueta, asociado_por) "
-                        "VALUES (%s,'erp',1,%s,%s,%s,%s,%s,%s)",
+                        "   rut, etiqueta, asociado_por, zz_serv_monto, zz_envio_monto) "
+                        "VALUES (%s,'erp',1,%s,%s,%s,%s,%s,%s,%s,%s)",
                         (vid, 1 if _fdx.get("_principal") else 0,
                          _fdx["tido"], _fdx["nudo"],
                          _fdx.get("rut") or None, _fdx.get("cliente_nombre") or None,
-                         current_username()))
+                         current_username(), *_ot_saldo_aporte_en(_fin_campos, _fdx["tido"], _fdx["nudo"])))
                 except Exception as _e_fdx:
                     print(f"[crear-ot] documento finanzas {_fdx.get('tido')} "
                           f"{_fdx.get('nudo')}: {_e_fdx}", flush=True)
@@ -92006,6 +92007,39 @@ def ot2_api_finanzas(vid):
                 "nunca subirlo por encima del documento real.",
                 "ZZ_ENVIO_SUPERA_DOCUMENTO")
 
+    # 🧮 2026-10-08 (Daniel: «evitar que dos instalaciones se paguen con el mismo saldo»): lo que se declara como
+    # cobro del servicio / despacho tampoco puede pasar del SALDO de las líneas de los documentos de la OT
+    # (monto de la línea − lo que ya cobran otras OT). Solo cuando la petición CAMBIA el cobro. Si excede: 409 con
+    # las salidas (tomar solo el saldo, ligar otra factura, pasar a garantía, pedir autorización con argumento);
+    # `tomar_saldo`=true baja el monto al saldo y sigue.
+    _sal_env_cambia = zz_envio_monto is not None and not _mismo_monto(zz_envio_monto, v.get("zz_envio_monto"))
+    _tomo_saldo = False
+    if not garantia and ((_zz_cambia and zz_monto is not None) or _sal_env_cambia):
+        _docs_sal = _ot_saldo_docs_de_ot(vid)
+        if f_tido and f_nudo and _saldo.clave_doc(f_tido, f_nudo) not in {_saldo.clave_doc(a, b) for a, b in _docs_sal}:
+            _docs_sal.append((f_tido, f_nudo))
+        if _docs_sal:
+            _cli_rut_sal = None
+            try:
+                if v.get("cliente_id"):
+                    _cli_rut_sal = (mysql_fetchone("SELECT rut FROM mant_clientes WHERE id=%s",
+                                                   (v.get("cliente_id"),)) or {}).get("rut")
+            except Exception:
+                _cli_rut_sal = None
+            _sal_err = _ot_saldo_chequear(
+                _docs_sal,
+                {"servicio": zz_monto if (_zz_cambia and zz_monto is not None) else None,
+                 "despacho": zz_envio_monto if _sal_env_cambia else None},
+                excluir_vid=vid, cliente_rut=_cli_rut_sal, autorizado_hasta=_ot_saldo_autorizado_hasta(vid=vid))
+            if _sal_err:
+                if not d.get("tomar_saldo"):
+                    return _ot_saldo_error_json(_sal_err, vid)
+                if "servicio" in _sal_err["permitido"] and zz_monto is not None:
+                    zz_monto = _sal_err["permitido"]["servicio"]
+                if "despacho" in _sal_err["permitido"] and zz_envio_monto is not None:
+                    zz_envio_monto = _sal_err["permitido"]["despacho"]
+                _tomo_saldo = True
+
     # 💰 2026-09-15 -- origen del valor (ver _OT2_VALOR_ORIGENES). Misma
     # regla que el resto de este endpoint: se toca solo si la petición lo
     # trae; vacío = limpiar a propósito; fuera de la lista = error.
@@ -92271,9 +92305,17 @@ def ot2_api_finanzas(vid):
                      if "valorizado_clp" in d else "")
                   # 2026-10-07 (revisión): la copia de lo cobrado al «Precio al cliente» (ver arriba).
                   + (f" · «Precio al cliente» = lo cobrado {_ot_fin_clp(_costo_sync)}"
-                     if _costo_sync is not None else ""))
+                     if _costo_sync is not None else "")
+                  + (" · tomó solo el saldo disponible de la línea del documento" if _tomo_saldo else ""))
     except Exception:
         pass
+    # 🧮 2026-10-08: lo que la OT cobra se reparte entre sus documentos y queda anotado en cada uno: así las demás OT
+    # ven cuánto saldo consumió. Best-effort: si falla, lo ya guardado sigue guardado.
+    if _zz_cambia or _env_cambia:
+        try:
+            _ot_saldo_reanotar_aportes(vid)
+        except Exception as _e_ra:
+            print(f"[ot2_finanzas] aportes por documento vid={vid}: {type(_e_ra).__name__}", flush=True)
 
     # 💰 2026-09-16 (Daniel: "que el sistema le diga al usuario que
     # lamentablemente se cobró mal" -- pedido tras revisar el paso Costos
@@ -93162,9 +93204,10 @@ _OT_DOCS_COBRO = ("FCV", "FCE", "BLV", "BLE")
 # hoy se llamaba cortesía/sin costo; "arriendo o leasing" = el servicio va incluido en el arriendo.
 _OT_COBRO_CERO_MOTIVOS = {"garantia": "Garantía", "regalia": "Regalía", "arriendo_leasing": "Arriendo o leasing"}
 _OT_COBRO_CERO_MODALIDAD = {"garantia": "garantia", "regalia": "sin_costo", "arriendo_leasing": "sin_costo"}
-_OT_AUT_TIPOS = ("crear_sin_documento", "cobro_cero", "cerrar_sin_documento")
+_OT_AUT_TIPOS = ("crear_sin_documento", "cobro_cero", "cerrar_sin_documento", "exceder_saldo")
 _OT_AUT_TIPO_TXT = {"crear_sin_documento": "Crear OT sin documento", "cobro_cero": "Cobrar $0",
-                    "cerrar_sin_documento": "Cerrar OT sin documento"}
+                    "cerrar_sin_documento": "Cerrar OT sin documento",
+                    "exceder_saldo": "Cobrar más que el saldo del documento"}
 _OT_AUT_ESTADO_TXT = {"pendiente": "Esperando a Daniel", "aprobada": "Autorizada", "rechazada": "Rechazada",
                       "anulada": "Anulada"}
 _OT_AUT_ARGUMENTO_MIN = 30
@@ -93751,6 +93794,7 @@ _OT_CIERRE_ACCIONES = {
     "ANEXO_DESACTUALIZADO":        ("actualizar_anexo", "Regenerar el anexo de servicios"),
     "SOLO_NOTA_VENTA":             ("ligar_factura", "Ligar la factura o boleta que da de baja la nota de venta"),
     "DOC_REQUERIDO":               ("pedir_autorizacion", "Ligar un documento o pedir autorización a Daniel"),
+    "ZZ_SALDO_CONSUMIDO":          ("resolver_saldo", "Resolver el saldo: tomar solo lo que queda, ligar otra factura, pasar a garantía o pedir autorización"),
 }
 _OT_PUERTA_FALTA_A_CODIGO = {"factura": "FALTA_FACTURA", "autorizacion_cobro_cero": "COBRO_CERO_SIN_AUTORIZACION",
                              "documento": "SIN_FACTURA"}
@@ -93814,7 +93858,7 @@ def _ensure_mant_ot_autorizaciones():
                 id                     INT AUTO_INCREMENT PRIMARY KEY,
                 entidad                ENUM('ot','ticket','cotizacion') NOT NULL DEFAULT 'ot',
                 entidad_id             INT NULL,
-                tipo                   ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento') NOT NULL,
+                tipo                   ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento','exceder_saldo') NOT NULL,
                 visita_id              INT NULL,
                 cliente_id             INT NULL,
                 payload_json           MEDIUMTEXT NULL,
@@ -93838,6 +93882,12 @@ def _ensure_mant_ot_autorizaciones():
         """)
     except Exception as e:
         print(f"[ensure_ot_autorizaciones] {e}", flush=True)
+    # 🧮 2026-10-08: nuevo tipo «exceder_saldo» (cobrar más que el saldo de la línea del documento, con argumento).
+    # Agregar un valor al final del ENUM; _ddl_ya_aplicado salta la sentencia si ya está (REGLA #18).
+    try:
+        mysql_execute("ALTER TABLE mant_ot_autorizaciones MODIFY tipo ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento','exceder_saldo') NOT NULL")
+    except Exception as e:
+        print(f"[ensure_ot_autorizaciones] tipo exceder_saldo: {e}", flush=True)
 
 
 def _ot_aut_es_superadmin():
@@ -94248,7 +94298,9 @@ def ot_aut_api_crear():
         if not (0 < val < 1e10):
             val = None
     visita_id, cliente_id, payload_json = None, None, None
-    if tipo == "crear_sin_documento":
+    # 🧮 2026-10-08: «exceder_saldo» sin OT todavía (el asistente de crear) viaja como el 'crear_sin_documento':
+    # con el payload completo; con OT (ficha / modal de cierre) lleva visita_id y lo que se quiere cobrar.
+    if tipo == "crear_sin_documento" or (tipo == "exceder_saldo" and not d.get("visita_id")):
         payload = d.get("payload")
         if not isinstance(payload, dict) or not payload:
             return jsonify({"ok": False, "error": "Falta lo que se iba a crear (payload del asistente).",
@@ -94288,6 +94340,13 @@ def ot_aut_api_crear():
         if not cliente_id:
             return jsonify({"ok": False, "error": "Una OT interna sin cliente no necesita autorización.",
                             "error_codigo": "NO_APLICA"}), 400
+        if tipo == "exceder_saldo":
+            sp = d.get("saldo_pedido") if isinstance(d.get("saldo_pedido"), dict) else {}
+            pedido_sp = {c: max(0, _saldo._entero(sp.get(c))) for c in _saldo.CATEGORIAS}
+            if not any(pedido_sp.values()):
+                return jsonify({"ok": False, "error": "Indica cuánto se quiere cobrar por encima del saldo.",
+                                "error_codigo": "SALDO_PEDIDO_REQUERIDO"}), 400
+            payload_json = json.dumps({"saldo_pedido": pedido_sp}, ensure_ascii=False)
     uid, nombre = _ot_aut_usuario()
     # Sin duplicar una pendiente igual.
     try:
@@ -94451,7 +94510,7 @@ def ot_aut_api_aprobar(aid):
                     comentario=comentario)
     constancia = f"Autorizada por {nombre} el {chile_fmt_filter(ahora)}: {a.get('argumento') or ''}"
 
-    if tipo == "crear_sin_documento":
+    if tipo == "crear_sin_documento" or (tipo == "exceder_saldo" and not a.get("visita_id")):
         try:
             payload = json.loads(a.get("payload_json") or "{}")
         except Exception:
@@ -94498,7 +94557,8 @@ def ot_aut_api_aprobar(aid):
             print(f"[ot-aut] ligar OT {vid_nuevo} a {aid}: {type(e).__name__}", flush=True)
         try:
             _mant_log("visita", vid_nuevo, "creada_con_autorizacion",
-                      f"Sin documento de Random · {constancia} · pedida por {a.get('solicitado_por_nombre') or '?'} "
+                      ("Sin documento de Random" if tipo == "crear_sin_documento" else "Cobro por encima del saldo del documento")
+                      + f" · {constancia} · pedida por {a.get('solicitado_por_nombre') or '?'} "
                       f"(autorización N° {aid})" + (f" · comentario: {comentario}" if comentario else ""))
         except Exception:
             pass
@@ -94528,6 +94588,13 @@ def ot_aut_api_aprobar(aid):
                 conn.rollback()
                 return jsonify({"ok": False, "error": "No se pudo aplicar el $0 a la OT.",
                                 "error_codigo": "ERROR_INTERNO"}), 500
+        elif tipo == "exceder_saldo":
+            cur.execute("INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) VALUES ('visita',%s,%s,%s,%s)",
+                        (vid, "saldo_servicio_autorizado",
+                         (f"Cobro por encima del saldo del documento · {constancia} · pedida por "
+                          f"{a.get('solicitado_por_nombre') or '?'} (autorización N° {aid})"
+                          + (f" · comentario: {comentario}" if comentario else ""))[:4000],
+                         current_username() or "sistema"))
         else:   # cerrar_sin_documento
             cur.execute("INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) VALUES ('visita',%s,%s,%s,%s)",
                         (vid, "cierre_sin_documento_autorizado",
@@ -94751,7 +94818,15 @@ def ot_api_regularizar():
     page = min(page, pages)
     ini = (page - 1) * per_page
     resumen = {k: sum(1 for it in items if it["falta"] == k) for k in _OT_REG_FALTA_TXT}
-    return jsonify({"ok": True, "items": items[ini:ini + per_page], "total": total, "page": page,
+    pagina = items[ini:ini + per_page]
+    # 🧮 2026-10-08: aviso si la OT toma plata de un documento que otras OT también usan (saldo ya consumido).
+    try:
+        _comp_sal = _ot_saldo_compartidos_lote([it["id"] for it in pagina])
+        for it in pagina:
+            it["saldo_avisos"] = _ot_saldo_avisos_de(it["id"], _comp_sal)
+    except Exception as e:
+        print(f"[ot-regularizar] avisos de saldo: {type(e).__name__}", flush=True)
+    return jsonify({"ok": True, "items": pagina, "total": total, "page": page,
                     "per_page": per_page, "pages": pages, "desde": (ini + 1) if total else 0,
                     "hasta": min(ini + per_page, total), "resumen": resumen, "superadmin": es_sa,
                     "truncado": len(rows) >= 2000, "estados": _OT_REG_ESTADO_TXT, "faltas": _OT_REG_FALTA_TXT})
@@ -95048,7 +95123,8 @@ def ot_api_panorama(vid):
     try:
         v = mysql_fetchone(
             "SELECT v.id, v.numero_ot, v.estado, v.centro_costo, v.cliente_id, v.proveedor_tipo, v.costo_proveedor, "
-            "       v.costo_despacho, v.factura_asociada_por, v.estado_facturacion, c.razon_social AS cliente, "
+            "       v.costo_despacho, v.zz_monto, v.zz_envio_monto, v.factura_asociada_por, v.estado_facturacion, "
+            "       c.razon_social AS cliente, "
             "       COALESCE(au.nombre, au.username) AS tecnico "
             "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
             "  LEFT JOIN app_users au ON au.id=v.tecnico_user_id WHERE v.id=%s", (vid,))
@@ -95098,6 +95174,39 @@ def ot_api_panorama(vid):
                 and not d.get("zz_serv") and not d.get("zz_envio")):
             d["cuenta"] = "otros"
     cont["incompleto"] = bool(cont.get("sin_leer"))
+    # 🧮 2026-10-08 (Daniel: «este nuevo motor indica todo cierto en un panel: cuántas facturas están involucradas y
+    # cuántas tienen el servicio de instalación y despacho, y si se usó anteriormente»): el SALDO de cada línea de
+    # servicio y despacho de cada documento de cobro, lo que ya usan OTRAS OT (número, cliente, enlace) y lo que queda.
+    saldo_ot = None
+    try:
+        infos_s = []
+        for d in docs:
+            ln = d.get("lineas")
+            if (d.get("origen") != "erp" or ln is None or d.get("dada_de_baja_por")
+                    or not d.get("es_cobro", True) or d.get("categoria") == "otro"):
+                continue
+            s_doc = _ot_saldo_doc(d.get("erp_tido") or d.get("tido"), d.get("erp_nudo") or d.get("nudo"),
+                                  excluir_vid=vid, zz_lineas=(ln.get("servicio") or []) + (ln.get("despacho") or []))
+            d["saldo"] = s_doc
+            infos_s.append(s_doc)
+        contados_s = _saldo.marcar_omitidas(infos_s)
+        comb_s = _saldo.combinar(contados_s)
+        cobro_s = {"servicio": _saldo._entero(v.get("zz_monto")), "despacho": _saldo._entero(v.get("zz_envio_monto"))}
+        ev_s = _saldo.evaluar_pedido(comb_s, cobro_s)
+        cont["docs_con_servicio"] = sum(1 for s in infos_s if s["servicio"]["hay_lineas"])
+        cont["docs_con_despacho"] = sum(1 for s in infos_s if s["despacho"]["hay_lineas"])
+        cont["docs_usados_en_otras"] = sum(1 for s in infos_s if s["usos"])
+        cont["docs_saldo_agotado"] = sum(
+            1 for s in contados_s
+            if (s["servicio"]["hay_lineas"] and s["servicio"]["saldo"] <= 0)
+            or (s["despacho"]["hay_lineas"] and s["despacho"]["saldo"] <= 0))
+        saldo_ot = {"combinado": comb_s, "cobro": cobro_s, "excedido": not ev_s["ok"], "excesos": ev_s["excesos"],
+                    "permitido": ev_s["permitido"],
+                    "acciones": ([] if ev_s["ok"] else _saldo.acciones_exceso(ev_s["excesos"])),
+                    "texto": ("" if ev_s["ok"] else _saldo.texto_exceso(
+                        ev_s["excesos"], [s for s in infos_s if s.get("usos")]))}
+    except Exception as e:
+        print(f"[ot-panorama] saldo vid={vid}: {type(e).__name__}", flush=True)
     # ── LO QUE NOS COSTÓ, registro por registro ──
     try:
         rep = (_ot_repuestos_desglose([vid]).get(vid)) or {}
@@ -95128,7 +95237,7 @@ def ot_api_panorama(vid):
     return jsonify({
         "ok": True, "visita_id": vid, "numero_ot": v.get("numero_ot"), "cliente": v.get("cliente") or "",
         "estado": v.get("estado"), "cerrada": (v.get("estado") or "") == "cerrada",
-        "contadores": cont, "documentos": docs,
+        "contadores": cont, "documentos": docs, "saldo": saldo_ot,
         "costos": {"registros": regs, "total": total_costo, "sin_costo": int(rep.get("n_sin_costo") or 0)},
         "centro": {"valor": v.get("centro_costo"), "nombre": dict(_OT2_CENTROS_COSTO).get(v.get("centro_costo") or "", ""),
                    "opciones": [{"v": c, "n": n} for c, n in _OT2_CENTROS_COSTO]},
@@ -95629,6 +95738,22 @@ def ot2_api_documentos_agregar(vid):
                               f"venta, sumarlo cobraría dos veces.").replace(",", "."),
                 }), 409
 
+    # 🧮 2026-10-08 (Daniel: «evitar que dos instalaciones se paguen con el mismo saldo»): lo que este documento
+    # aporta a la OT no puede pasar del SALDO de sus líneas (monto − lo que ya cobran otras OT). Si excede: 409
+    # con las salidas; `tomar_saldo`=true liga el documento aportando solo lo que queda. Regularizar pasa por acá.
+    _tomo_saldo = False
+    if _zz_leido and _zz_total:
+        _sal_err = _ot_saldo_chequear(
+            [(tipo, numero)], {"servicio": _zz_serv, "despacho": _zz_envio}, excluir_vid=vid,
+            cliente_rut=v.get("cli_rut"), autorizado_hasta=_ot_saldo_autorizado_hasta(vid=vid))
+        if _sal_err:
+            if not d.get("tomar_saldo"):
+                return _ot_saldo_error_json(_sal_err, vid)
+            _zz_serv = min(_zz_serv, _sal_err["permitido"].get("servicio", _zz_serv))
+            _zz_envio = min(_zz_envio, _sal_err["permitido"].get("despacho", _zz_envio))
+            _zz_total = _zz_serv + _zz_envio
+            _tomo_saldo = True
+
     # ¿Es el primero? Entonces además se espeja al campo principal, que es
     # el que gobierna cierre/PDF/margen y ya existía desde siempre.
     _es_primero = not (v.get("factura_nudo") or "").strip()
@@ -95795,6 +95920,7 @@ def ot2_api_documentos_agregar(vid):
                   + (f" · ZZ ${_zz_total:,.0f}".replace(",", ".") if _zz_total else " · sin ZZ")
                   + (f" · {etiqueta}" if etiqueta else "")
                   + (" · PRINCIPAL" if _es_primero else " · adicional")
+                  + (" · tomó solo el saldo disponible de la línea" if _tomo_saldo else "")
                   # Quién decidió sumar un posible duplicado, queda escrito.
                   + (" · el usuario confirmó que NO es duplicado"
                      if d.get("confirmar_duplicado") else ""))
@@ -104277,6 +104403,7 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
     # de "supuesto" que sigue existiendo mientras no se resuelva el caso de
     # "factura no ha llegado todavía"), no hay contra qué topear.
     _fin_docs_validados = []   # 🔏 2026-10-07: lo que el ERP confirmó (lectura), para la puerta
+    _fin_docs_aporte = []      # 🧮 2026-10-08: reparto de lo cobrado entre los documentos (ver más abajo)
     if not es_interna and not _fin_cero and (_fin_tido and _fin_nudo or _docs_extra_norm):
         _topes = _ot_zz_topes_reales(_fin_tido, _fin_nudo, _docs_extra_norm, cliente_rut)
         _fin_docs_validados = [{"origen": "erp", "tipo": _dv["tido"], "numero": _dv["nudo"], "validado": True}
@@ -104302,6 +104429,22 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
                 f"los documentos asociados (${_clp(_topes['tope_despacho'])}). "
                 "Puedes bajarlo, nunca subirlo por encima del documento real.",
                 "ZZ_ENVIO_SUPERA_DOCUMENTO"), None
+        # 🧮 2026-10-08 (Daniel: «evitar que dos instalaciones se paguen con el mismo saldo»): el cobro tampoco puede
+        # pasar del SALDO de las líneas de esos documentos, descontando lo que ya cobran otras OT. Con una
+        # autorización 'exceder_saldo' aprobada (autorizacion_id) se permite hasta lo que Daniel autorizó.
+        _sal_err = _ot_saldo_chequear(
+            [(_dv["tido"], _dv["nudo"]) for _dv in (_topes.get("documentos") or [])],
+            {"servicio": _fin_zzm, "despacho": _fin_zz_envio_m}, excluir_vid=None, cliente_rut=cliente_rut,
+            autorizado_hasta=_ot_saldo_autorizado_hasta(aut_id=_fin_aut_id))
+        if _sal_err:
+            return dict(_sal_err, http=409,
+                        extra={k: v for k, v in _sal_err.items() if k not in ("error", "error_codigo", "ok")}), None
+        # Lo que esta OT aporta desde cada documento (en orden, hasta la capacidad de cada uno): se guarda con el
+        # documento para que las próximas OT vean cuánto saldo queda.
+        _fin_docs_aporte = [
+            {"tido": _dd["tido"], "nudo": _dd["nudo"], "servicio": _rr["servicio"], "despacho": _rr["despacho"]}
+            for _dd, _rr in zip(_topes.get("documentos") or [],
+                                _saldo.repartir_aportes(_topes.get("documentos") or [], _fin_zzm, _fin_zz_envio_m))]
 
     _fin_prov_tipo = (_fin.get("proveedor_tipo") or "").strip().lower()
     _fin_prov_tipo = _fin_prov_tipo if _fin_prov_tipo in ("interno", "externo") else None
@@ -104459,6 +104602,7 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
         "cobro_cero_argumento": _fin_cero_argumento,
         "autorizacion_id": _fin_aut_id,
         "documentos_validados": _fin_docs_validados,
+        "docs_aporte": _fin_docs_aporte,
         "documentos_body": (_fin.get("documentos") if isinstance(_fin.get("documentos"), list) else None),
     }
     return None, campos
@@ -104988,7 +105132,8 @@ def _ot2_crear_core(d, autorizacion=None):
         # wizard de OT 2.0 (_modal_crear.html) ya pide los dos campos.
         exigir_costo_prov_desp=True)
     if _fin_err:
-        return _ot2_err(_fin_err["error"], _fin_err["error_codigo"])
+        return _ot2_err(_fin_err["error"], _fin_err["error_codigo"], http=_fin_err.get("http", 400),
+                        **(_fin_err.get("extra") or {}))
     # 🔏 2026-10-07 — LA PUERTA DEL DOCUMENTO (Daniel: "Todo con documento tiene que ser absoluto… inviolable").
     # Una OT de cliente nace solo con documento validado (factura/boleta/nota de venta/cotización), $0 autorizado
     # o autorización 'crear_sin_documento' aprobada. Lo demás → 409 DOC_REQUERIDO «Pedir autorización».
@@ -105374,11 +105519,12 @@ def _ot2_crear_core(d, autorizacion=None):
                 cur.execute(
                     "INSERT INTO mant_visita_documentos "
                     "  (visita_id, origen, es_cobro, es_principal, erp_tido, erp_nudo, "
-                    "   rut, etiqueta, asociado_por) "
-                    "VALUES (%s,'erp',1,%s,%s,%s,%s,%s,%s)",
+                    "   rut, etiqueta, asociado_por, zz_serv_monto, zz_envio_monto) "
+                    "VALUES (%s,'erp',1,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (vid, _dx["principal"], _dx["tido"], _dx["nudo"],
                      _dx.get("rut") or None,
-                     _dx.get("cliente_nombre") or None, current_username()))
+                     _dx.get("cliente_nombre") or None, current_username(),
+                     *_ot_saldo_aporte_en(_fin_campos, _dx["tido"], _dx["nudo"])))
             except Exception as _e_dx:
                 # Nunca tumba la creación: el JSON ya quedó guardado y el
                 # documento se puede reasociar desde el detalle.
@@ -110648,6 +110794,513 @@ def _ot_zz_topes_reales(tido_principal, nudo_principal, documentos_extra, client
         detalle.append({"tido": tido, "nudo": nudo, "servicio": _serv, "despacho": _desp})
     return {"tope_servicio": tope_servicio, "tope_despacho": tope_despacho,
             "documentos": detalle, "excluidos": excluidos}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  🧮 2026-10-08 — SALDO POR LÍNEA DE SERVICIO DE CADA DOCUMENTO
+#  Daniel (08-oct): «algo bien inteligente para evitar que dos instalaciones se paguen con el mismo saldo».
+#  Una línea de servicio (ZZINSTALACION, ZZMANTENCION…) o de despacho (ZZENVIO) de una factura no puede contarse
+#  como cobro, sumando todas las OT (no canceladas ni anuladas), por más que su monto. La lógica pura vive en
+#  ot_saldo_servicio.py (con pruebas); acá están las lecturas (base + ERP en SOLO LECTURA, REGLA #4.1) y el
+#  candado que usan: el asistente de crear, ligar documento (POST /ot/api/<vid>/documentos, asociar-factura,
+#  regularizar), declarar el cobro (/ot/api/finanzas) y el modal de cierre. Una nota de venta dada de baja por
+#  su factura NO cuenta doble: la factura hereda lo que usó la nota (familia del documento).
+# ═══════════════════════════════════════════════════════════════════════════
+_OT_SALDO_FAM_CACHE = {}
+_OT_SALDO_FAM_TTL = 600
+_OT_SALDO_ORIGENES_NO_DOC = ("manual", "supuesto", "estimado", "contrato")
+_OT_SALDO_USOS_MAX = 60
+
+
+def _ot_saldo_real(clave):
+    """('VD','10667') → ('NVV','VD00010667'); ('FCV','11439') → ('FCV','0000011439'): la forma de MAEEDO/MAEDDO."""
+    t, n = clave
+    if t in ("VD", "WEB"):
+        return "NVV", t + n.zfill(10 - len(t))
+    return t, n.zfill(10)
+
+
+def _ot_saldo_familia(tido, nudo):
+    """El documento y los que son EL MISMO cobro: una factura y su nota de venta de origen (o la nota y su factura),
+    según el ERP (MAEDDO.TIDOPA/NUDOPA, SOLO LECTURA por _random_sql_query). Si el ERP no responde, solo el propio."""
+    k = _saldo.clave_doc(tido, nudo)
+    fam = {k}
+    if not k[0] or not k[1]:
+        return fam
+    ahora = time.time()
+    hit = _OT_SALDO_FAM_CACHE.get(k)
+    if hit and ahora - hit[0] < _OT_SALDO_FAM_TTL:
+        return fam | set(hit[1])
+    t_r, n_r = _ot_saldo_real(k)
+    otros, leyo = set(), False
+    try:
+        if k[0] in _saldo.DOCS_COBRO:
+            filas = _random_sql_query(
+                "SELECT DISTINCT TOP 20 TIDOPA, NUDOPA FROM MAEDDO "
+                "WHERE TIDO=%s AND NUDO=%s AND TIDOPA IN ('NVV','NVI')", (t_r, n_r))
+            if filas is not None:
+                leyo = True
+                for f in filas:
+                    kk = _saldo.clave_doc(f.get("TIDOPA"), f.get("NUDOPA"))
+                    if kk[0] and kk[1]:
+                        otros.add(kk)
+        elif k[0] in _saldo.NOTAS_VENTA:
+            filas = _random_sql_query(
+                "SELECT DISTINCT TOP 20 TIDO, NUDO FROM MAEDDO "
+                "WHERE TIDOPA=%s AND NUDOPA=%s AND TIDO IN ('FCV','FCE','BLV','BLE')", (t_r, n_r))
+            if filas is not None:
+                leyo = True
+                for f in filas:
+                    kk = _saldo.clave_doc(f.get("TIDO"), f.get("NUDO"))
+                    if kk[0] and kk[1]:
+                        otros.add(kk)
+    except Exception as e:
+        print(f"[ot-saldo] familia {k}: {type(e).__name__}", flush=True)
+    if leyo:
+        if len(_OT_SALDO_FAM_CACHE) > 500:
+            _OT_SALDO_FAM_CACHE.clear()
+        _OT_SALDO_FAM_CACHE[k] = (ahora, set(otros))
+    return fam | otros
+
+
+def _ot_saldo_usos(claves, excluir_vid=None, cap=None):
+    """Lo que OTRAS OT (no canceladas ni anuladas) ya usan de estos documentos: filas crudas para
+    ot_saldo_servicio.consolidar_usos. Tres fuentes, sin sumar dos veces el mismo aporte:
+      1) el aporte que cada OT guardó POR DOCUMENTO (mant_visita_documentos.zz_serv_monto/zz_envio_monto);
+      2) OT anteriores a eso: lo cobrado a nivel OT (zz_monto/zz_envio_monto) que ningún documento tiene anotado
+         se atribuye a sus documentos, con tope en la capacidad de cada uno;
+      3) OT con el documento solo en factura_* (sin fila en la tabla puente)."""
+    pares = []
+    for k in claves:
+        for p in _saldo.variantes_sql(k):
+            if p not in pares:
+                pares.append(p)
+    if not pares:
+        return []
+    try:
+        ex = int(excluir_vid) if excluir_vid else 0
+    except (TypeError, ValueError):
+        ex = 0
+    cap = cap or {}
+    filas = []
+
+    def _cond(col_t, col_n):
+        return " OR ".join([f"({col_t}=%s AND {col_n}=%s)"] * len(pares))
+    base = tuple(x for p in pares for x in p)
+
+    def _tope(c, monto):
+        m = _saldo._entero(monto)
+        capc = _saldo._entero(cap.get(c))
+        return min(m, capc) if capc > 0 else m
+
+    try:
+        sql = ("SELECT d.visita_id, d.erp_tido, d.erp_nudo, d.zz_serv_monto, d.zz_envio_monto, v.numero_ot, v.estado, "
+               "       c.razon_social AS cliente "
+               "  FROM mant_visita_documentos d JOIN mant_visitas v ON v.id=d.visita_id "
+               "  LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
+               " WHERE d.origen='erp' AND d.reemplazado_por_id IS NULL "
+               "   AND (d.zz_serv_monto IS NOT NULL OR d.zz_envio_monto IS NOT NULL) "
+               "   AND v.estado NOT IN ('cancelada','anulada') AND (" + _cond("d.erp_tido", "d.erp_nudo") + ")")
+        par = list(base)
+        if ex:
+            sql += " AND d.visita_id<>%s"
+            par.append(ex)
+        sql += " LIMIT %s"
+        par.append(_OT_SALDO_USOS_MAX)
+        for r in (mysql_fetchall(sql, tuple(par)) or []):
+            filas.append({"vid": r["visita_id"], "numero_ot": r.get("numero_ot"), "cliente": r.get("cliente"),
+                          "estado": r.get("estado"), "servicio": r.get("zz_serv_monto"),
+                          "despacho": r.get("zz_envio_monto"),
+                          "clave": _saldo.clave_doc(r.get("erp_tido"), r.get("erp_nudo"))})
+    except Exception as e:
+        print(f"[ot-saldo] usos por documento: {type(e).__name__}", flush=True)
+    try:
+        resid = ("(SELECT COALESCE(SUM({col}),0) FROM mant_visita_documentos x WHERE x.visita_id=v.id "
+                 "  AND x.origen='erp' AND x.reemplazado_por_id IS NULL)")
+        sql = ("SELECT v.id AS visita_id, d.erp_tido, d.erp_nudo, v.numero_ot, v.estado, c.razon_social AS cliente, "
+               "       GREATEST(COALESCE(v.zz_monto,0)-" + resid.format(col="x.zz_serv_monto") + ",0) AS res_serv, "
+               "       GREATEST(COALESCE(v.zz_envio_monto,0)-" + resid.format(col="x.zz_envio_monto") + ",0) AS res_env "
+               "  FROM mant_visita_documentos d JOIN mant_visitas v ON v.id=d.visita_id "
+               "  LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
+               " WHERE d.origen='erp' AND d.es_cobro=1 AND d.reemplazado_por_id IS NULL "
+               "   AND d.zz_serv_monto IS NULL AND d.zz_envio_monto IS NULL "
+               "   AND v.estado NOT IN ('cancelada','anulada') "
+               "   AND COALESCE(v.modalidad_cobro,'') NOT IN ('garantia','sin_costo') "
+               "   AND COALESCE(v.valor_origen,'') NOT IN ('" + "','".join(_OT_SALDO_ORIGENES_NO_DOC) + "') "
+               "   AND (" + _cond("d.erp_tido", "d.erp_nudo") + ")")
+        par = list(base)
+        if ex:
+            sql += " AND v.id<>%s"
+            par.append(ex)
+        sql += " LIMIT %s"
+        par.append(_OT_SALDO_USOS_MAX)
+        for r in (mysql_fetchall(sql, tuple(par)) or []):
+            s, e_ = _tope("servicio", r.get("res_serv")), _tope("despacho", r.get("res_env"))
+            if s or e_:
+                filas.append({"vid": r["visita_id"], "numero_ot": r.get("numero_ot"), "cliente": r.get("cliente"),
+                              "estado": r.get("estado"), "servicio": s, "despacho": e_,
+                              "clave": _saldo.clave_doc(r.get("erp_tido"), r.get("erp_nudo"))})
+    except Exception as e:
+        print(f"[ot-saldo] usos anteriores: {type(e).__name__}", flush=True)
+    try:
+        sql = ("SELECT v.id AS visita_id, v.factura_tido, v.factura_nudo, v.zz_monto, v.zz_envio_monto, v.numero_ot, "
+               "       v.estado, c.razon_social AS cliente "
+               "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
+               " WHERE v.estado NOT IN ('cancelada','anulada') "
+               "   AND (COALESCE(v.zz_monto,0)>0 OR COALESCE(v.zz_envio_monto,0)>0) "
+               "   AND COALESCE(v.modalidad_cobro,'') NOT IN ('garantia','sin_costo') "
+               "   AND COALESCE(v.valor_origen,'') NOT IN ('" + "','".join(_OT_SALDO_ORIGENES_NO_DOC) + "') "
+               "   AND NOT EXISTS (SELECT 1 FROM mant_visita_documentos x WHERE x.visita_id=v.id AND x.origen='erp') "
+               "   AND (" + _cond("v.factura_tido", "v.factura_nudo") + ")")
+        par = list(base)
+        if ex:
+            sql += " AND v.id<>%s"
+            par.append(ex)
+        sql += " LIMIT %s"
+        par.append(_OT_SALDO_USOS_MAX)
+        for r in (mysql_fetchall(sql, tuple(par)) or []):
+            s, e_ = _tope("servicio", r.get("zz_monto")), _tope("despacho", r.get("zz_envio_monto"))
+            if s or e_:
+                filas.append({"vid": r["visita_id"], "numero_ot": r.get("numero_ot"), "cliente": r.get("cliente"),
+                              "estado": r.get("estado"), "servicio": s, "despacho": e_,
+                              "clave": _saldo.clave_doc(r.get("factura_tido"), r.get("factura_nudo"))})
+    except Exception as e:
+        print(f"[ot-saldo] usos en factura_*: {type(e).__name__}", flush=True)
+    return filas
+
+
+def _ot_saldo_doc(tido, nudo, excluir_vid=None, zz_lineas=None, cliente_rut=None):
+    """Saldo de UN documento: cada categoría con su total (suma de las líneas), lo usado en otras OT y el saldo,
+    más quién lo usa (número de OT, cliente, enlace). `zz_lineas`: las líneas ya leídas (si no, se leen del ERP en
+    solo lectura). `leido`=False si el ERP no respondió; `otro_cliente`=True si es de otro RUT (no cuenta)."""
+    k = _saldo.clave_doc(tido, nudo)
+    tu, nu = _ot_doc_real_a_usuario(tido, nudo)
+    res = {"tido": tu, "nudo": nu, "clave": list(k), "titulo": f"{tu} {nu}".strip(), "leido": True,
+           "otro_cliente": False}
+    if zz_lineas is None:
+        header, zz_lineas, _tot = _erp_zz_lineas(tido, nudo)
+        if not header:
+            res["leido"] = False
+            zz_lineas = []
+        elif cliente_rut:
+            try:
+                if not _rut_analisis_comparacion(cliente_rut, header.get("cliente_rut")).get("match"):
+                    res["otro_cliente"] = True
+            except Exception:
+                pass
+    cap, _ln = _saldo.clasificar_lineas(zz_lineas)
+    fam = _ot_saldo_familia(tido, nudo)
+    usos = _saldo.consolidar_usos(_ot_saldo_usos(fam, excluir_vid, cap))
+    for u in usos:
+        u["url"] = f"/ot/{u['vid']}"
+    res.update(_saldo.calcular(zz_lineas, usos))
+    res["familia"] = [list(x) for x in sorted(fam) if x != k]
+    return res
+
+
+def _ot_saldo_docs_de_ot(vid):
+    """Los documentos de COBRO de una OT, en orden (el principal primero), sin las notas de venta ya dadas de baja
+    por su factura. [(tido, nudo)] en la forma que guardó la tabla puente."""
+    out, vistos = [], set()
+    try:
+        for r in (mysql_fetchall(
+                "SELECT erp_tido, erp_nudo FROM mant_visita_documentos "
+                " WHERE visita_id=%s AND origen='erp' AND es_cobro=1 AND reemplazado_por_id IS NULL "
+                "   AND COALESCE(erp_nudo,'')<>'' ORDER BY es_principal DESC, id", (vid,)) or []):
+            k = _saldo.clave_doc(r.get("erp_tido"), r.get("erp_nudo"))
+            if k not in vistos:
+                vistos.add(k)
+                out.append((r.get("erp_tido"), r.get("erp_nudo")))
+        if not out:
+            v = mysql_fetchone("SELECT factura_tido, factura_nudo FROM mant_visitas WHERE id=%s", (vid,)) or {}
+            if (v.get("factura_tido") or "").strip() and (v.get("factura_nudo") or "").strip():
+                out.append((v["factura_tido"], v["factura_nudo"]))
+    except Exception as e:
+        print(f"[ot-saldo] documentos de la OT {vid}: {type(e).__name__}", flush=True)
+    return out
+
+
+def _ot_saldo_de_docs(docs, excluir_vid=None, cliente_rut=None):
+    """Saldo del CONJUNTO de documentos de una OT: {por_doc: [...], combinado: {...}}. Una nota de venta cuya factura
+    también está en la OT no se cuenta (es el mismo cobro: cuenta la factura). Un documento de otro cliente o que el
+    ERP no devolvió no cuenta (y se informa)."""
+    infos, vistos = [], set()
+    for t, n in (docs or []):
+        k = _saldo.clave_doc(t, n)
+        if not k[0] or not k[1] or k in vistos:
+            continue
+        vistos.add(k)
+        infos.append(_ot_saldo_doc(t, n, excluir_vid, cliente_rut=cliente_rut))
+    contados = _saldo.marcar_omitidas(infos)
+    return {"por_doc": infos, "combinado": _saldo.combinar(contados)}
+
+
+def _ot_saldo_autorizado_hasta(vid=None, aut_id=None):
+    """Lo máximo que una autorización 'exceder_saldo' APROBADA deja cobrar por encima del saldo, por categoría
+    ({servicio, despacho}). Por OT (visita_id) o por el id con el que se está creando (todavía sin OT)."""
+    out = {"servicio": 0, "despacho": 0}
+    filas = []
+    try:
+        if aut_id:
+            f = mysql_fetchone("SELECT payload_json, visita_id, visita_creada_id FROM mant_ot_autorizaciones "
+                               " WHERE id=%s AND tipo='exceder_saldo' AND estado='aprobada'", (int(aut_id),))
+            if f and not f.get("visita_creada_id"):
+                filas.append(f)
+        if vid:
+            filas += list(mysql_fetchall(
+                "SELECT payload_json, visita_id, visita_creada_id FROM mant_ot_autorizaciones "
+                " WHERE visita_id=%s AND tipo='exceder_saldo' AND estado='aprobada'", (int(vid),)) or [])
+    except (TypeError, ValueError):
+        return out
+    except Exception as e:
+        print(f"[ot-saldo] autorizaciones: {type(e).__name__}", flush=True)
+        return out
+    for f in filas:
+        try:
+            p = json.loads(f.get("payload_json") or "{}")
+        except Exception:
+            p = {}
+        sp = p.get("saldo_pedido") if isinstance(p, dict) else None
+        if not isinstance(sp, dict) and isinstance(p, dict) and isinstance(p.get("finanzas"), dict):
+            sp = {"servicio": p["finanzas"].get("zz_monto"), "despacho": p["finanzas"].get("zz_envio_monto")}
+        if isinstance(sp, dict):
+            for c in _saldo.CATEGORIAS:
+                out[c] = max(out[c], _saldo._entero(sp.get(c)))
+    return out
+
+
+def _ot_saldo_chequear(docs, pedido, excluir_vid=None, cliente_rut=None, autorizado_hasta=None, puede_garantia=True):
+    """El CANDADO. `pedido` = {servicio: n|None, despacho: n|None}: lo que la OT quiere declarar como cobro. None si
+    cabe en el saldo de sus documentos (o si no hay nada que verificar: sin líneas de servicio o ERP caído); si no,
+    el dict de error ZZ_SALDO_CONSUMIDO con el texto, las acciones (tomar el saldo, ligar otra factura, pasar a
+    garantía, pedir autorización con argumento) y el saldo por documento."""
+    try:
+        r = _ot_saldo_de_docs(docs, excluir_vid, cliente_rut)
+    except Exception as e:
+        print(f"[ot-saldo] chequear: {type(e).__name__}: {e}", flush=True)
+        return None
+    comb = {c: dict(r["combinado"][c]) for c in _saldo.CATEGORIAS}
+    for c in _saldo.CATEGORIAS:
+        ah = _saldo._entero((autorizado_hasta or {}).get(c))
+        if ah and comb[c]["hay_lineas"]:
+            comb[c]["saldo"] = max(comb[c]["saldo"], ah)
+    ev = _saldo.evaluar_pedido(comb, pedido or {})
+    if ev["ok"]:
+        return None
+    acciones = _saldo.acciones_exceso(ev["excesos"], puede_garantia=puede_garantia)
+    detalle = [s for s in r["por_doc"] if s.get("usos")]
+    return {"ok": False, "error": _saldo.texto_exceso(ev["excesos"], detalle), "error_codigo": "ZZ_SALDO_CONSUMIDO",
+            "codigo": "ZZ_SALDO_CONSUMIDO", "excesos": ev["excesos"], "permitido": ev["permitido"],
+            "acciones": acciones, "accion": {"tipo": "resolver_saldo", "label": acciones[0]["label"]},
+            "puede_pedir_autorizacion": True, "saldo": comb,
+            "documentos": [{"titulo": s["titulo"], "tido": s["tido"], "nudo": s["nudo"],
+                            "servicio": {k: s["servicio"][k] for k in ("total", "usado", "saldo", "hay_lineas")},
+                            "despacho": {k: s["despacho"][k] for k in ("total", "usado", "saldo", "hay_lineas")},
+                            "usos": s["usos"]} for s in r["por_doc"] if s["leido"] and not s["otro_cliente"]]}
+
+
+def _ot_saldo_error_json(err, vid=None):
+    """El error del candado como respuesta HTTP 409 (mismo contrato que el resto de los rechazos con acción)."""
+    payload = dict(err)
+    if vid:
+        payload["visita_id"] = vid
+    return jsonify(payload), 409
+
+
+def _ot_saldo_compartidos_lote(vids):
+    """AVISO barato (solo base, sin ERP) para Regularizar y Facturación de proveedor: por OT, los documentos de los que
+    toma plata que otras OT (no canceladas ni anuladas) también usan. {vid: [{titulo, otras: [{vid, numero_ot,
+    cliente}]}]}. El saldo exacto (cuánto queda) lo da el motor de la OT."""
+    out = {}
+    try:
+        ids = sorted({int(x) for x in (vids or [])})
+    except (TypeError, ValueError):
+        return out
+    if not ids:
+        return out
+    for i in range(0, len(ids), 400):
+        trozo = ids[i:i + 400]
+        ph = ",".join(["%s"] * len(trozo))
+        try:
+            filas = mysql_fetchall(
+                "SELECT a.visita_id AS vid, a.erp_tido, a.erp_nudo, b.visita_id AS otra, ov.numero_ot, oc.razon_social AS cliente "
+                "  FROM mant_visita_documentos a "
+                "  JOIN mant_visita_documentos b ON b.erp_tido=a.erp_tido "
+                "       AND TRIM(LEADING '0' FROM b.erp_nudo)=TRIM(LEADING '0' FROM a.erp_nudo) AND b.visita_id<>a.visita_id "
+                "  JOIN mant_visitas ov ON ov.id=b.visita_id AND ov.estado NOT IN ('cancelada','anulada') "
+                "  LEFT JOIN mant_clientes oc ON oc.id=ov.cliente_id "
+                f" WHERE a.visita_id IN ({ph}) AND a.origen='erp' AND b.origen='erp' "
+                "   AND a.reemplazado_por_id IS NULL AND b.reemplazado_por_id IS NULL "
+                "   AND (a.zz_serv_monto IS NOT NULL OR a.zz_envio_monto IS NOT NULL) "
+                "   AND (b.zz_serv_monto IS NOT NULL OR b.zz_envio_monto IS NOT NULL) "
+                " ORDER BY a.visita_id, b.visita_id", tuple(trozo)) or []
+        except Exception as e:
+            print(f"[ot-saldo] compartidos: {type(e).__name__}", flush=True)
+            continue
+        for f in filas:
+            tu, nu = _ot_doc_real_a_usuario(f.get("erp_tido"), f.get("erp_nudo"))
+            lst = out.setdefault(int(f["vid"]), [])
+            titulo = f"{tu} {nu}".strip()
+            ent = next((x for x in lst if x["titulo"] == titulo), None)
+            if ent is None:
+                ent = {"titulo": titulo, "otras": []}
+                lst.append(ent)
+            if not any(o["vid"] == f["otra"] for o in ent["otras"]):
+                ent["otras"].append({"vid": f["otra"], "numero_ot": f.get("numero_ot"), "cliente": f.get("cliente")})
+    return out
+
+
+def _ot_saldo_avisos_de(vid, compartidos):
+    """Los textos de aviso de una OT a partir de _ot_saldo_compartidos_lote."""
+    return [t for t in (_saldo.aviso_compartido(x["titulo"], x["otras"]) for x in ((compartidos or {}).get(int(vid)) or [])) if t]
+
+
+def _ot_saldo_aporte_en(fin_campos, tido, nudo):
+    """(servicio, despacho) que la OT nueva aporta desde ESTE documento, según el reparto que calculó el validador de
+    finanzas (campos['docs_aporte']); (None, None) si no aporta nada (NULL = no tocó el saldo, igual que siempre)."""
+    k = _saldo.clave_doc(tido, nudo)
+    for a in ((fin_campos or {}).get("docs_aporte") or []):
+        if _saldo.clave_doc(a.get("tido"), a.get("nudo")) == k:
+            s, e = a.get("servicio") or 0, a.get("despacho") or 0
+            return (s, e) if (s or e) else (None, None)
+    return (None, None)
+
+
+def _ot_saldo_reanotar_aportes(vid, docs=None):
+    """Reparte lo cobrado por la OT entre sus documentos (el principal primero, hasta la capacidad de cada uno) y lo
+    anota en mant_visita_documentos.zz_serv_monto/zz_envio_monto: así las demás OT ven cuánto saldo consumió."""
+    v = mysql_fetchone("SELECT zz_monto, zz_envio_monto FROM mant_visitas WHERE id=%s", (vid,)) or {}
+    docs = docs if docs is not None else _ot_saldo_docs_de_ot(vid)
+    caps = []
+    for t, n in docs:
+        _h, zz, _tot = _erp_zz_lineas(t, n)
+        c, _l = _saldo.clasificar_lineas(zz)
+        caps.append({"tido": t, "nudo": n, "servicio": c["servicio"], "despacho": c["despacho"]})
+    rep = _saldo.repartir_aportes(caps, v.get("zz_monto"), v.get("zz_envio_monto"))
+    for cp, ap in zip(caps, rep):
+        mysql_execute("UPDATE mant_visita_documentos SET zz_serv_monto=%s, zz_envio_monto=%s "
+                      " WHERE visita_id=%s AND origen='erp' AND erp_tido=%s AND erp_nudo=%s "
+                      "   AND reemplazado_por_id IS NULL",
+                      (ap["servicio"] or None, ap["despacho"] or None, vid, cp["tido"], cp["nudo"]))
+
+
+@app.route("/ot/api/saldo-servicio/<tido>/<nudo>", methods=["GET"])
+@_mant_required
+def ot_api_saldo_servicio_doc(tido, nudo):
+    """El saldo de un documento por línea de servicio y despacho: monto, cuánto usan otras OT (con número, cliente y
+    enlace) y saldo disponible. Lo usa el asistente de crear OT al elegir el documento y el motor. Query:
+    excluir_vid (la OT que se está mirando: su propio aporte no cuenta contra ella), cliente_id (para descartar un
+    documento de otro cliente). Solo lectura (REGLA #4.1). Lleva montos: 403 para técnicos (REGLA #19)."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
+    tido = (tido or "").strip().upper()[:10]
+    nudo = (nudo or "").strip()[:30]
+    if not tido or not nudo:
+        return jsonify({"ok": False, "error": "Falta el tipo o el número del documento."}), 400
+    cli_rut = None
+    try:
+        cid = int(request.args.get("cliente_id") or 0)
+        if cid:
+            cli_rut = (mysql_fetchone("SELECT rut FROM mant_clientes WHERE id=%s", (cid,)) or {}).get("rut")
+    except (TypeError, ValueError):
+        cli_rut = None
+    try:
+        ex = int(request.args.get("excluir_vid") or 0) or None
+    except (TypeError, ValueError):
+        ex = None
+    try:
+        s = _ot_saldo_doc(tido, nudo, ex, cliente_rut=cli_rut)
+    except Exception as e:
+        print(f"[ot-saldo] doc {tido} {nudo}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No pudimos calcular el saldo de ese documento."}), 500
+    return jsonify({"ok": True, **s, "puede_autorizar": _ot_aut_es_superadmin()})
+
+
+@app.route("/ot/api/<int:vid>/saldo-servicio", methods=["GET"])
+@_mant_required
+@_ot_can_view
+def ot_api_saldo_servicio_ot(vid):
+    """El saldo de los documentos de UNA OT frente a lo que esa OT cobra (zz_monto / zz_envio_monto)."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
+    v = mysql_fetchone("SELECT v.id, v.zz_monto, v.zz_envio_monto, c.rut AS cli_rut "
+                       "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "No encontramos esa OT."}), 404
+    docs = _ot_saldo_docs_de_ot(vid)
+    r = _ot_saldo_de_docs(docs, vid, v.get("cli_rut"))
+    cobro = {"servicio": _saldo._entero(v.get("zz_monto")), "despacho": _saldo._entero(v.get("zz_envio_monto"))}
+    ev = _saldo.evaluar_pedido(r["combinado"], cobro)
+    return jsonify({"ok": True, "visita_id": vid, "documentos": r["por_doc"], "combinado": r["combinado"],
+                    "cobro": cobro, "excedido": not ev["ok"], "excesos": ev["excesos"], "permitido": ev["permitido"],
+                    "acciones": ([] if ev["ok"] else _saldo.acciones_exceso(ev["excesos"]))})
+
+
+@app.route("/ot/api/<int:vid>/saldo-servicio/tomar", methods=["POST"])
+@_mant_required
+@_ot_can_finanzas_cierre
+def ot_api_saldo_servicio_tomar(vid):
+    """«Tomar solo el saldo»: baja lo cobrado por la OT (servicio y/o despacho) hasta lo que de verdad le queda a sus
+    documentos. Solo baja, nunca sube; deja constancia en la bitácora con el valor anterior. Solo antes de cerrar
+    (el decorador lo exige). Nunca toca estado ni firmas."""
+    v = mysql_fetchone("SELECT v.id, v.zz_monto, v.zz_envio_monto, v.costo, c.rut AS cli_rut "
+                       "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "No encontramos esa OT."}), 404
+    docs = _ot_saldo_docs_de_ot(vid)
+    if not docs:
+        return jsonify({"ok": False, "error": "La OT no tiene documentos de cobro de los que tomar un saldo.",
+                        "error_codigo": "SIN_DOCUMENTOS"}), 409
+    r = _ot_saldo_de_docs(docs, vid, v.get("cli_rut"))
+    cobro = {"servicio": _saldo._entero(v.get("zz_monto")), "despacho": _saldo._entero(v.get("zz_envio_monto"))}
+    ev = _saldo.evaluar_pedido(r["combinado"], cobro)
+    if ev["ok"]:
+        return jsonify({"ok": True, "sin_cambios": True, "mensaje": "El cobro ya cabe en el saldo de sus documentos."})
+    cats = {e["categoria"] for e in ev["excesos"]}
+    nuevos = {c: (ev["permitido"][c] if c in cats else cobro[c]) for c in _saldo.CATEGORIAS}
+    mysql_execute("UPDATE mant_visitas SET zz_monto=%s, zz_envio_monto=%s WHERE id=%s "
+                  "  AND estado NOT IN ('cerrada','cancelada','anulada')",
+                  (nuevos["servicio"] if "servicio" in cats else v.get("zz_monto"),
+                   nuevos["despacho"] if "despacho" in cats else v.get("zz_envio_monto"), vid))
+    try:
+        _ot_saldo_reanotar_aportes(vid, docs)
+    except Exception as e:
+        print(f"[ot-saldo] reanotar vid={vid}: {type(e).__name__}", flush=True)
+    quien = current_username() or "?"
+    try:
+        _mant_log("visita", vid, "saldo_servicio_ajustado",
+                  "Cobro bajado al saldo disponible de sus documentos: "
+                  + " · ".join(f"{_saldo.CATEGORIA_TXT[e['categoria']]} {_saldo.clp(e['pedido'])} → {_saldo.clp(e['saldo'])}"
+                               for e in ev["excesos"]) + f" · por {quien}")
+    except Exception:
+        pass
+    try:
+        _ot_fin_costo_espejo_sync(vid, None, v.get("costo"), quien=quien, donde="saldo del documento")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "nuevos": nuevos,
+                    "mensaje": "El cobro quedó en el saldo disponible. Queda registrado con tu nombre."})
+
+
+def _ot_saldo_tomar_core(vid):
+    """El cuerpo de POST /ot/api/<vid>/saldo-servicio/tomar sin los candados de ruta (el llamador ya tiene los suyos).
+    El UPDATE conserva su propia guarda de estado: nunca toca una OT cerrada, cancelada o anulada."""
+    n = ot_api_saldo_servicio_tomar
+    while hasattr(n, "__wrapped__"):
+        n = n.__wrapped__
+    return n(vid)
+
+
+def _ot_saldo_resumen(tido, nudo, excluir_vid=None, cliente_rut=None):
+    """Saldo compacto de un documento para la vista previa de «Ligar documento»."""
+    s = _ot_saldo_doc(tido, nudo, excluir_vid, cliente_rut=cliente_rut)
+    if not s["leido"]:
+        return None
+    return {"titulo": s["titulo"],
+            "servicio": {k: s["servicio"][k] for k in ("total", "usado", "saldo", "hay_lineas")},
+            "despacho": {k: s["despacho"][k] for k in ("total", "usado", "saldo", "hay_lineas")},
+            "usos": [{"vid": u["vid"], "numero_ot": u["numero_ot"], "cliente": u["cliente"], "url": u["url"],
+                      "servicio": u["servicio"], "despacho": u["despacho"]} for u in s["usos"]]}
 
 
 @app.route("/ot/api/lineas-zz/<tido>/<nudo>", methods=["GET"])
@@ -116454,6 +117107,24 @@ def mant_ot_aprobar_cierre(vid):
                      "Finanzas de la OT. Un estimado o un valorizado no cuentan como cobro. Si no se le "
                      "cobra, declárala como garantía o cortesía.",
         }), 400
+    # 🧮 2026-10-08 (Daniel: «esto debe funcionar para el modal de cerrar OT con la firma, para no trabar el
+    # proceso»): lo que la OT cobra no puede pasar del SALDO de las líneas de sus documentos (monto − lo que ya
+    # cobran otras OT). Excede → 409 ZZ_SALDO_CONSUMIDO con las salidas en el MISMO modal (tomar solo el saldo,
+    # ligar otra factura, pasar a garantía, pedir autorización con argumento): nunca un callejón sin salida.
+    # No toca estado ni firmas. Mismo interruptor que los demás candados.
+    if (_gate_on and not _interna_cierre and _cob_cierre == "cobra" and _via_cierre != "autorizacion_cerrar"
+            and (v.get("valor_origen") or "") not in _OT_SALDO_ORIGENES_NO_DOC):
+        try:
+            _docs_cs = _ot_saldo_docs_de_ot(vid)
+            if _docs_cs:
+                _rut_cs = (mysql_fetchone("SELECT rut FROM mant_clientes WHERE id=%s", (v.get("cliente_id"),)) or {}).get("rut")
+                _sal_cs = _ot_saldo_chequear(
+                    _docs_cs, {"servicio": v.get("zz_monto"), "despacho": v.get("zz_envio_monto")}, excluir_vid=vid,
+                    cliente_rut=_rut_cs, autorizado_hasta=_ot_saldo_autorizado_hasta(vid=vid))
+                if _sal_cs:
+                    return _ot_saldo_error_json(dict(_sal_cs, accion=_ot_cierre_accion("ZZ_SALDO_CONSUMIDO", vid)), vid)
+        except Exception as _e_cs2:
+            print(f"[aprobar-cierre] saldo vid={vid}: {type(_e_cs2).__name__}", flush=True)
     # 🔒 FIX 2026-08-27 (Daniel, autorizado explícitamente esta noche —
     # "endurece el candado de cierre"): el centro de costo se exige SIEMPRE
     # al cerrar, garantía incluida ("una garantía también hay que poder
@@ -117128,8 +117799,13 @@ def mant_ot_asociar_factura(vid):
             "monto": _monto, "fecha": str(doc.get("fecha") or "")[:10]}
 
     if not confirmar:
+        _sal_prev = None
+        try:
+            _sal_prev = _ot_saldo_resumen(_tipo_real, _numero_real, vid, v.get("cli_rut"))
+        except Exception as _e_sp:
+            print(f"[asociar-factura] saldo vista previa vid={vid}: {type(_e_sp).__name__}", flush=True)
         return jsonify({"ok": True, "preview": True, "factura": fact,
-                        "analisis": analisis,
+                        "analisis": analisis, "saldo": _sal_prev,
                         "requiere_justificacion": not analisis["match"]})
 
     if not analisis["match"] and not justif:
@@ -117137,6 +117813,26 @@ def mant_ot_asociar_factura(vid):
                         "error": "El RUT de la factura no coincide con el del cliente. "
                                  "Explica en texto por qué corresponde igual.",
                         "analisis": analisis}), 409
+
+    # 🧮 2026-10-08: si la OT ya declara un cobro, ese cobro tiene que caber en el saldo de sus documentos con este
+    # incluido (lo que otras OT ya usan de la línea no se puede cobrar dos veces). Excede → 409 con las salidas;
+    # `tomar_saldo`=true liga el documento y baja el cobro al saldo (después de ligar).
+    _tomo_saldo_af = False
+    try:
+        _vcb = mysql_fetchone("SELECT zz_monto, zz_envio_monto, valor_origen, modalidad_cobro FROM mant_visitas "
+                              " WHERE id=%s", (vid,)) or {}
+        _cobro_af = {"servicio": _saldo._entero(_vcb.get("zz_monto")), "despacho": _saldo._entero(_vcb.get("zz_envio_monto"))}
+        if (any(_cobro_af.values()) and (_vcb.get("valor_origen") or "") not in _OT_SALDO_ORIGENES_NO_DOC
+                and (_vcb.get("modalidad_cobro") or "") not in ("garantia", "sin_costo")):
+            _sal_err = _ot_saldo_chequear(
+                _ot_saldo_docs_de_ot(vid) + [(_tipo_real, _numero_real)], _cobro_af, excluir_vid=vid,
+                cliente_rut=v.get("cli_rut"), autorizado_hasta=_ot_saldo_autorizado_hasta(vid=vid))
+            if _sal_err:
+                if not d.get("tomar_saldo"):
+                    return _ot_saldo_error_json(_sal_err, vid)
+                _tomo_saldo_af = True
+    except Exception as _e_sal:
+        print(f"[asociar-factura] saldo vid={vid}: {type(_e_sal).__name__}", flush=True)
 
     # La nota de venta NO marca la OT como facturada: queda en su propio
     # estado para que Cobranza pueda encontrar lo que falta convertir.
@@ -117219,7 +117915,13 @@ def mant_ot_asociar_factura(vid):
               + "RUT "
               + ("coincide" if analisis["match"]
                  else f"NO coincide ({analisis['nivel']}) — justif: {justif[:150]}"))
-    return jsonify({"ok": True, "guardado": True, "factura": fact, "analisis": analisis})
+    if _tomo_saldo_af:
+        try:
+            _ot_saldo_tomar_core(vid)
+        except Exception as _e_ts:
+            print(f"[asociar-factura] tomar saldo vid={vid}: {type(_e_ts).__name__}", flush=True)
+    return jsonify({"ok": True, "guardado": True, "factura": fact, "analisis": analisis,
+                    "tomo_saldo": _tomo_saldo_af})
 
 
 @app.route("/mantenciones/api/visitas/<int:vid>/rechazar-cierre", methods=["POST"])
@@ -127687,6 +128389,11 @@ def _facprov_datos(desde, hasta):
 
     provs = {}
     detalle = []
+    # 🧮 2026-10-08: aviso por OT si toma plata de un documento (factura) que otras OT también usan.
+    try:
+        _comp_sal = _ot_saldo_compartidos_lote([f["id"] for f in filas])
+    except Exception:
+        _comp_sal = {}
     for f in filas:
         f = dict(f)
         nombre = ((f.get("prov_ficha") or "").strip()
@@ -127819,6 +128526,7 @@ def _facprov_datos(desde, hasta):
             "cobertura": _fin["cobertura"], "cobertura_txt": _fin["cobertura_txt"],
             "cobertura_corta": _OT_FIN_COBERTURA_CORTA.get(_fin["cobertura"], ""),
             "avisos": _cobro["avisos"],
+            "saldo_avisos": _ot_saldo_avisos_de(f["id"], _comp_sal),   # 🧮 2026-10-08: usa saldo que otras OT también usan
             "cerrada": chile_fmt_filter(f.get("cerrada_at"), "%d/%m/%Y") if f.get("cerrada_at") else "",
         })
 
@@ -141162,12 +141870,12 @@ def _ot_crear_visita_espejo(conn, cur, cid, tipo_ot, tarea_tipo, titulo, notas, 
             cur.execute(
                 "INSERT INTO mant_visita_documentos "
                 "  (visita_id, origen, es_cobro, es_principal, erp_tido, erp_nudo, "
-                "   rut, etiqueta, asociado_por) "
-                "VALUES (%s,'erp',1,%s,%s,%s,%s,%s,%s)",
+                "   rut, etiqueta, asociado_por, zz_serv_monto, zz_envio_monto) "
+                "VALUES (%s,'erp',1,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (visita_id, 1 if _fdx.get("_principal") else 0,
                  _fdx["tido"], _fdx["nudo"],
                  _fdx.get("rut") or None, _fdx.get("cliente_nombre") or None,
-                 current_username()))
+                 current_username(), *_ot_saldo_aporte_en(fin_campos, _fdx["tido"], _fdx["nudo"])))
         except Exception as _e_fdx:
             print(f"[lev_crear] documento finanzas {_fdx.get('tido')} "
                   f"{_fdx.get('nudo')}: {_e_fdx}", flush=True)
@@ -141319,11 +142027,11 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
         modalidad_forzada=("sin_costo" if tipo_ot == "levantamiento"
                            else ("garantia" if aplica_garantia else None)))
     if _fin_err:
-        return {
+        return dict({
             "ok": False,
             "error": _fin_err["error"],
             "error_codigo": _fin_err["error_codigo"],
-        }, 400
+        }, **(_fin_err.get("extra") or {})), _fin_err.get("http", 400)
     # 🔏 2026-10-07 — LA PUERTA DEL DOCUMENTO, también para la OT espejo del levantamiento y la que nace de un
     # Ticket (mismo núcleo). Un levantamiento nace en $0 (regalía) y, como todo $0, pasa por Daniel: sin
     # documento ni autorización no nace. El resultado viaja en fin_campos['_puerta'] hasta el INSERT del espejo.

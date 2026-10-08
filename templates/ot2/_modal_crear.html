@@ -508,6 +508,27 @@
 /* Hint de apoyo de un sub-paso: legible (no .text-muted small, regla de
    este archivo -- ver _pintarFinMargenDom). */
 .o2m-fin-hint{font-size:.85rem;color:#6b7280;line-height:1.4;margin-bottom:10px}
+/* 🧮 2026-10-08 SALDO por línea de servicio de cada documento (Daniel: «evitar que dos instalaciones se paguen con el mismo saldo»). */
+.o2m-saldo{margin-top:10px;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px;background:#fcfcfd}
+.o2m-saldo-h{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;font-size:.8rem;color:#374151;margin-bottom:8px}
+.o2m-saldo-h b{font-weight:900;color:#0a0a0a}
+.o2m-saldo-doc{border-top:1px dashed #e5e7eb;padding:8px 0}
+.o2m-saldo-doc:first-of-type{border-top:0}
+.o2m-saldo-doc h6{margin:0 0 4px;font-size:.84rem;font-weight:900}
+.o2m-saldo-doc table{width:100%;border-collapse:collapse;font-size:.78rem}
+.o2m-saldo-doc th{font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;text-align:right;padding:2px 0;font-weight:800}
+.o2m-saldo-doc th:first-child{text-align:left}
+.o2m-saldo-doc td{padding:3px 0;text-align:right;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.o2m-saldo-doc td:first-child{text-align:left}
+.o2m-saldo-doc td small{display:block;color:#6b7280;font-size:.68rem}
+.o2m-saldo-doc tr.cero td b{color:#b91c1c}.o2m-saldo-doc tr.parcial td b{color:#b45309}.o2m-saldo-doc tr.libre td b{color:#15803d}
+.o2m-saldo-usos{list-style:none;margin:4px 0 0;padding:0;font-size:.74rem;color:#374151}
+.o2m-saldo-usos a{color:#b91c1c;font-weight:800}
+.o2m-saldo-alerta{margin-top:8px;border:1px solid #fecaca;background:#fee2e2;border-radius:10px;padding:9px 11px;font-size:.8rem;color:#7f1d1d}
+.o2m-saldo-acc{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.o2m-saldo-acc button{min-height:44px;padding:0 12px;border:1px solid #d1d5db;background:#fff;border-radius:10px;font-weight:800;font-size:.8rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;color:#0a0a0a}
+.o2m-saldo-acc button:hover{border-color:#dc2626}
+.o2m-saldo-acc button.pri{background:#dc2626;border-color:#dc2626;color:#fff}
 
 /* Sub-paso 1: centro de costo como 3 rectángulos con icono y color (clon
    de .otd-cc de la ficha). El color se recuerda por dónde está. */
@@ -5569,6 +5590,7 @@ window.OT2C = (function(){
           '<div class="o2m-valor-origen" id="o2mFinOrigen"></div></div>'+
         '<div id="o2mFinMotivo"></div>'+
         '<div id="o2mFinZZ"></div>'+
+        '<div id="o2mFinSaldo"></div>'+
         '<div id="o2mFinAcciones">'+_o2mFinCotizacionHtml()+'</div>'+
         (S.fin_garantia ? '' : _o2mFinValorizarHtml());
     }
@@ -6531,6 +6553,7 @@ window.OT2C = (function(){
       _pintarFinMargenDom();
       _o2mFinEstadosDom();
       refrescarAnclas();
+      _o2mFinCargarSaldo();
     });
   }
 
@@ -6542,6 +6565,140 @@ window.OT2C = (function(){
      manual" = no hay documento detrás, O el número vigente ya no coincide
      con el que trajo el documento -- en cualquiera de los dos casos se
      exige un motivo escrito (ver completo('finanzas')). */
+  /* ── SALDO POR LÍNEA DE SERVICIO DE CADA DOCUMENTO ───────────────────────────────────────────────
+     2026-10-08 (Daniel: «algo bien inteligente para evitar que dos instalaciones se paguen con el mismo saldo» y
+     «esto debe funcionar para el modal de crear OT… para no trabar el proceso»). Al elegir los documentos se
+     muestra, por línea de servicio y de despacho: el monto, cuánto ya usan OTRAS OT (con su número, cliente y
+     enlace) y el saldo; el asistente PROPONE tomar solo el saldo y, si ya no queda nada, ofrece las otras salidas
+     (ligar otra factura, pasar a garantía, pedir autorización a Daniel) SIN bloquear el resto del asistente.
+     GET /ot/api/saldo-servicio/<tido>/<nudo> (solo lectura del ERP). El servidor vuelve a validar al crear. */
+  var _finSaldoSeq = 0;
+  var _O2M_SAL_NV = ['NVV','NVI','VD','WEB'], _O2M_SAL_COBRO = ['FCV','FCE','BLV','BLE'];
+  function _o2mFinCargarSaldo(){
+    var docs = _o2mFinDocsTodos();
+    if (!docs.length || esInterno()){ S.fin_saldo = null; _pintarFinSaldoDom(); return; }
+    var seq = ++_finSaldoSeq;
+    var cid = (S.cliente && S.cliente.id) || '';
+    Promise.all(docs.map(function(d){
+      return fetch('/ot/api/saldo-servicio/'+encodeURIComponent(d.tido)+'/'+encodeURIComponent(d.nudo)+
+                   (cid ? '?cliente_id='+encodeURIComponent(cid) : ''), {credentials:'same-origin'})
+        .then(function(r){ return r.json(); }).catch(function(){ return null; });
+    })).then(function(res){
+      if (seq !== _finSaldoSeq) return;
+      var lista = res.filter(function(j){ return j && j.ok && j.leido && !j.otro_cliente; });
+      S.fin_saldo = _o2mFinSaldoCombinar(lista);
+      _pintarFinSaldoDom();
+      refrescarAnclas();
+    });
+  }
+  function _o2mFinSaldoCombinar(lista){
+    var cobro = {};
+    lista.forEach(function(s){ if (_O2M_SAL_COBRO.indexOf(s.clave[0]) >= 0) cobro[s.clave.join('|')] = 1; });
+    var cont = lista.filter(function(s){
+      if (_O2M_SAL_NV.indexOf(s.clave[0]) >= 0 && (s.familia || []).some(function(f){ return cobro[f.join('|')]; })){ s.omitido = true; return false; }
+      return true;
+    });
+    var out = {docs: lista};
+    ['servicio','despacho'].forEach(function(c){
+      var o = {hay:false, total:0, usado:0, saldo:0};
+      cont.forEach(function(s){ var x = s[c]; if (x && x.hay_lineas){ o.hay = true; o.total += x.total; o.usado += x.usado; o.saldo += x.saldo; } });
+      out[c] = o;
+    });
+    return out;
+  }
+  /* Lo que esta OT quiere cobrar por encima del saldo (vacío = cabe). En garantía no se cobra: nada que comparar. */
+  function _o2mFinSaldoExcesos(){
+    var s = S.fin_saldo, ex = [];
+    if (!s || S.fin_garantia) return ex;
+    if (s.servicio.hay && S.fin_zz_monto != null && S.fin_zz_monto > s.servicio.saldo)
+      ex.push({categoria:'servicio', pedido:S.fin_zz_monto, saldo:s.servicio.saldo});
+    if (s.despacho.hay && S.fin_zz_envio && S.fin_zz_envio.monto != null && S.fin_zz_envio.monto > s.despacho.saldo)
+      ex.push({categoria:'despacho', pedido:S.fin_zz_envio.monto, saldo:s.despacho.saldo});
+    return ex;
+  }
+  function _o2mPesos(n){ return '$'+Math.round(Number(n)||0).toLocaleString('es-CL'); }
+  function _o2mFinSaldoAccionesHtml(ex){
+    var saldoTot = ex.reduce(function(a, e){ return a + e.saldo; }, 0);
+    return '<div class="o2m-saldo-acc">'+
+      (saldoTot > 0 ? '<button type="button" class="pri" onclick="OT2C.saldoAccion(\'tomar\')"><i class="bi bi-arrow-down-circle-fill"></i>Tomar solo el saldo ('+_o2mPesos(saldoTot)+')</button>' : '')+
+      '<button type="button" onclick="OT2C.saldoAccion(\'ligar\')"><i class="bi bi-link-45deg"></i>Ligar otra factura</button>'+
+      '<button type="button" onclick="OT2C.saldoAccion(\'garantia\')"><i class="bi bi-shield-check"></i>Pasar a garantía</button>'+
+      '<button type="button" onclick="OT2C.saldoAccion(\'autorizar\')"><i class="bi bi-shield-lock"></i>Pedir autorización a Daniel</button></div>';
+  }
+  function _pintarFinSaldoDom(){
+    var c = document.getElementById('o2mFinSaldo'); if (!c) return;
+    var s = S.fin_saldo;
+    if (!s || !s.docs.length || (!s.servicio.hay && !s.despacho.hay)){ c.innerHTML = ''; return; }
+    var conSer = 0, conDes = 0, usados = 0;
+    s.docs.forEach(function(d){ if (d.servicio.hay_lineas) conSer++; if (d.despacho.hay_lineas) conDes++; if ((d.usos||[]).length) usados++; });
+    var html = '<div class="o2m-saldo"><div class="o2m-saldo-h"><span><b>'+s.docs.length+'</b> documento'+(s.docs.length===1?'':'s')+'</span>'+
+      '<span><b>'+conSer+'</b> con instalación o servicio</span><span><b>'+conDes+'</b> con despacho</span>'+
+      '<span><b>'+usados+'</b> usado'+(usados===1?'':'s')+' en otras OT</span></div>';
+    s.docs.forEach(function(d){
+      var filas = '';
+      ['servicio','despacho'].forEach(function(cat){
+        var x = d[cat]; if (!x || !x.hay_lineas) return;
+        (x.lineas || []).forEach(function(l){
+          filas += '<tr class="'+(l.saldo <= 0 ? 'cero' : (l.usado > 0 ? 'parcial' : 'libre'))+'"><td>'+(cat === 'servicio' ? 'Instalación o servicio' : 'Despacho')+
+            '<small>'+esc(l.sku)+'</small></td><td>'+_o2mPesos(l.monto)+'</td><td>'+_o2mPesos(l.usado)+'</td><td><b>'+_o2mPesos(l.saldo)+'</b></td></tr>';
+        });
+      });
+      if (!filas) return;
+      html += '<div class="o2m-saldo-doc"><h6>'+esc(d.titulo)+(d.omitido ? ' <span class="text-muted" style="font-weight:600">· su factura ya cuenta</span>' : '')+'</h6>'+
+        '<table><thead><tr><th>Línea</th><th>Monto</th><th>Usado en otras OT</th><th>Saldo</th></tr></thead><tbody>'+filas+'</tbody></table>'+
+        ((d.usos||[]).length ? '<ul class="o2m-saldo-usos">'+d.usos.map(function(u){
+          return '<li><a href="'+esc(u.url)+'" target="_blank" rel="noopener">'+esc(u.numero_ot || ('OT #'+u.vid))+'</a>'+(u.cliente ? ' · '+esc(u.cliente) : '')+
+            ' · usa '+[u.servicio ? 'servicio '+_o2mPesos(u.servicio) : '', u.despacho ? 'despacho '+_o2mPesos(u.despacho) : ''].filter(Boolean).join(' + ')+'</li>';
+        }).join('')+'</ul>' : '')+'</div>';
+    });
+    var ex = _o2mFinSaldoExcesos();
+    if (ex.length){
+      html += '<div class="o2m-saldo-alerta"><i class="bi bi-exclamation-octagon-fill me-1"></i><b>Ese cobro supera el saldo de la línea.</b> '+
+        ex.map(function(e){ return (e.categoria === 'servicio' ? 'Servicio' : 'Despacho')+': quieres cobrar '+_o2mPesos(e.pedido)+' y quedan '+_o2mPesos(e.saldo); }).join(' · ')+
+        '. Un mismo servicio de una factura no se puede cobrar en dos OT.'+_o2mFinSaldoAccionesHtml(ex)+'</div>';
+    }
+    c.innerHTML = html + '</div>';
+  }
+  /* Las cuatro salidas del asistente (nunca un callejón sin salida). */
+  function saldoAccion(que){
+    var s = S.fin_saldo, ex = _o2mFinSaldoExcesos();
+    if (que === 'tomar'){
+      if (s && s.servicio.hay && S.fin_zz_monto != null && S.fin_zz_monto > s.servicio.saldo && s.servicio.saldo > 0){
+        setFinZZ(S.fin_zz_codigo, s.servicio.saldo);   // el número sigue saliendo del documento: no pide motivo
+      }
+      if (s && s.despacho.hay && S.fin_zz_envio && S.fin_zz_envio.monto != null && S.fin_zz_envio.monto > s.despacho.saldo){
+        S.fin_zz_envio.monto = s.despacho.saldo; S.fin_zz_envio_original = s.despacho.saldo; S.fin_zz_envio_motivo_manual = '';
+      }
+      _pintarFinZZDom(); _pintarFinValorDom(); _pintarFinMargenDom(); _o2mFinEstadosDom(); refrescarAnclas();
+      if (window.ilusToast) ilusToast('Quedó el cobro en el saldo disponible de la línea.', {type:'success'});
+    } else if (que === 'ligar'){
+      abrirBusquedaFinDoc();
+    } else if (que === 'garantia'){
+      setFinCobro('gar');
+    } else if (que === 'autorizar'){
+      if (typeof ilusPrompt !== 'function') return;
+      ilusPrompt({ title:'Pedir autorización a Daniel', message:'Explica por qué se cobra más que el saldo de la línea del documento:',
+        sub:'Mínimo 30 caracteres: es lo que Daniel va a leer para autorizar. La OT se crea cuando la apruebe.',
+        placeholder:'Ej: la factura trae una sola línea de instalación pero cubre dos equipos instalados en visitas distintas',
+        required:true, okLabel:'Pedir autorización', cancelLabel:'Cancelar' }).then(function(arg){
+        if (!arg) return;
+        arg = String(arg).trim();
+        if (arg.length < 30){ if (window.ilusToast) ilusToast('Escribe al menos 30 caracteres.', {type:'warning'}); return; }
+        S._saldoAut = {argumento: arg};
+        crear();
+      });
+    }
+  }
+  /* El servidor rechazó la creación por saldo consumido: el mismo mensaje y las mismas salidas, en el pie del asistente. */
+  function _o2mFinSaldoErrorCrear(j){
+    var e = document.getElementById('o2mErr');
+    var ex = (j.excesos || []).map(function(x){ return {categoria:x.categoria, pedido:x.pedido, saldo:x.saldo}; });
+    if (e) e.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+esc(j.error || 'El cobro supera el saldo del documento.')+
+      _o2mFinSaldoAccionesHtml(ex)+'</div>';
+    _o2mFinCargarSaldo();
+    try { senalarPaso('finanzas'); } catch(_e){}
+  }
+
   function _o2mFinEsManual(){
     if (S.fin_zz_monto == null) return false;
     return S.fin_zz_monto_original == null || S.fin_zz_monto !== S.fin_zz_monto_original;
@@ -6625,6 +6782,7 @@ window.OT2C = (function(){
      total del documento pasó a ser el chip "Total del documento" (misma
      función usarTotalDocumentoComoServicio). */
   function _pintarFinZZDom(){
+    try { _pintarFinSaldoDom(); } catch(e){}
     var c = document.getElementById('o2mFinZZ'); if (!c) return;
     if (!(S.fin_zz_lineas||[]).length && !S.fin_zz_envio && !S.fin_doc_rut_difiere){ c.innerHTML = ''; return; }
     // ZZENVIO nunca se ofrece como opción de "línea de servicio" -- se
@@ -9274,12 +9432,13 @@ window.OT2C = (function(){
   }
 
   /* 🔏 2026-10-07: «Pedir autorización a Daniel» (o «Autorizar y crear» si quien crea es superadministrador). */
-  function pedirAutorizacionCrear(body, esSA, sig, origSig){
-    var arg = (S.fin_garantia_motivo || '').trim();
+  function pedirAutorizacionCrear(body, esSA, sig, origSig, opts){
+    opts = opts || {};
+    var arg = (opts.argumento || S.fin_garantia_motivo || '').trim();
     var payload = JSON.parse(JSON.stringify(body));
     payload.anexo_delegado = false;   // la OT nace al aprobarse: el anexo automático la acompaña
-    var cuerpo = { tipo: 'crear_sin_documento', payload: payload, argumento: arg, centro_costo: S.fin_centro || null,
-      motivo: S.fin_garantia ? (S.fin_cero_motivo || 'garantia') : null, cliente_id: body.cliente_id };
+    var cuerpo = { tipo: opts.tipo || 'crear_sin_documento', payload: payload, argumento: arg, centro_costo: S.fin_centro || null,
+      motivo: (!opts.tipo && S.fin_garantia) ? (S.fin_cero_motivo || 'garantia') : null, cliente_id: body.cliente_id };
     var vz = body.finanzas && body.finanzas.valorizado_clp;
     if (vz) cuerpo.valorizado_clp = vz;
     function falla(msg){
@@ -9525,6 +9684,11 @@ window.OT2C = (function(){
     // 🔏 2026-10-07 (documento absoluto): sin documento, o con $0 sin ser superadministrador, la OT NO se crea: se pide
     // la autorización de Daniel y la OT nace cuando él la aprueba (por este mismo asistente, con lo que pusiste acá).
     var _esSA = !!window.OT2C_ES_SUPERADMIN;
+    // 🧮 2026-10-08: «Pedir autorización a Daniel» por cobrar más que el saldo de la línea (tipo exceder_saldo).
+    if (S._saldoAut && !esInterno()){
+      var _sa = S._saldoAut; S._saldoAut = null;
+      return pedirAutorizacionCrear(body, _esSA, sig, _origSig, {tipo: 'exceder_saldo', argumento: _sa.argumento});
+    }
     if (!esInterno() && (S.fin_aut || (S.fin_garantia && !_esSA))){
       return pedirAutorizacionCrear(body, _esSA, sig, _origSig);
     }
@@ -9542,6 +9706,7 @@ window.OT2C = (function(){
           // 2026-08-30: #o2mErr vive ahora en el footer fijo del modal (ver
           // markup) desde que se quitó el paso "Revisar" -- siempre visible,
           // ya no hace falta navegar a ningún ancla para mostrarlo.
+          if (res.j.codigo === 'ZZ_SALDO_CONSUMIDO'){ _o2mFinSaldoErrorCrear(res.j); return; }
           if (e) e.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
             esc(res.j.error || 'No se pudo crear la orden.')+'</div>';
           return;
@@ -9939,7 +10104,7 @@ window.OT2C = (function(){
           recargarPlantillasInterno:recargarPlantillasInterno,
           setFinCentro:setFinCentro, setFinGarantia:setFinGarantia,
           setFinGarantiaMotivo:setFinGarantiaMotivo, limpiarFinDoc:limpiarFinDoc,
-          abrirBusquedaFinDoc:abrirBusquedaFinDoc, setFinZZ:setFinZZ,
+          abrirBusquedaFinDoc:abrirBusquedaFinDoc, setFinZZ:setFinZZ, saldoAccion:saldoAccion,
           usarTotalDocumentoComoServicio:usarTotalDocumentoComoServicio,
           abrirBusquedaFinCotizacion:abrirBusquedaFinCotizacion, limpiarFinCotizacion:limpiarFinCotizacion,
           _o2mFinCotArmarEspera:_o2mFinCotArmarEspera,

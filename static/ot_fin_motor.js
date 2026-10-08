@@ -201,7 +201,7 @@
   function accionDeRechazo(d) {
     var a = d && d.accion; if (!a) return '';
     var m = { ligar_factura: 'ligarDoc', pedir_autorizacion: 'pedirCierre', declarar_cobro: 'declararCobro',
-      declarar_centro: 'enfocarCentro', declarar_costo_proveedor: 'corregirProv' }[a.tipo];
+      declarar_centro: 'enfocarCentro', declarar_costo_proveedor: 'corregirProv', resolver_saldo: 'resolverSaldo' }[a.tipo];
     if (a.tipo === 'esperar_autorizacion') return '<a class="fm-btn fm-btn-pri" href="' + esc(a.url || '/ot/autorizaciones') + '">Ver la solicitud</a>';
     if (a.tipo === 'actualizar_anexo') return '<span class="fm-help">' + esc(a.label || '') + '</span>';
     if (!m) return a.label ? '<span class="fm-help">' + esc(a.label) + '</span>' : '';
@@ -214,7 +214,14 @@
     function tile(n, titulo, sub, cls) {
       return '<div class="fm-tile ' + (cls || '') + (n ? '' : ' cero') + '"><b>' + n + '</b><span>' + esc(titulo) + '</span>' + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</div>';
     }
+    /* 2026-10-08 (Daniel: «este nuevo motor indica todo cierto en un panel: cuántas facturas están involucradas y
+       cuántas tienen el servicio de instalación y despacho, y si se usó anteriormente»). */
     return '<div class="fm-tiles">' +
+      tile(c.total || 0, 'Documentos involucrados', 'Todos los de esta OT', '') +
+      tile(c.docs_con_servicio || 0, 'Con instalación o servicio', 'Traen línea ZZ de servicio', 'ser') +
+      tile(c.docs_con_despacho || 0, 'Con despacho', 'Traen línea ZZENVIO', 'des') +
+      tile(c.docs_usados_en_otras || 0, 'Usados en otras OT', (c.docs_usados_en_otras || 0) ? 'Otra OT ya toma plata de ellos' : 'Nadie más los usa', (c.docs_usados_en_otras || 0) ? 'warn' : '') +
+      tile(c.docs_saldo_agotado || 0, 'Saldo agotado', (c.docs_saldo_agotado || 0) ? 'No queda nada por cobrar' : 'Todos con saldo', (c.docs_saldo_agotado || 0) ? 'mal' : '') +
       tile(c.facturas || 0, 'Facturas y boletas', 'Documentos que cobran', 'ok') +
       tile(c.notas_venta || 0, 'Notas de venta', baja ? (baja + ' ya dada' + (baja > 1 ? 's' : '') + ' de baja por factura') : ((c.notas_venta || 0) ? 'Falta ligar la factura' : ''), 'nv') +
       tile(c.cotizaciones || 0, 'Cotizaciones', 'Referencia', '') +
@@ -254,6 +261,37 @@
     return { cls: 'si', total: (s || 0) + (e || 0), txt: 'Aporta al cobro: servicio ' + clp(s || 0) + ' + despacho ' + clp(e || 0) + ' = ' + clp((s || 0) + (e || 0)) };
   }
 
+  /* SALDO por línea de servicio y despacho (Daniel 2026-10-08: «evitar que dos instalaciones se paguen con el mismo
+     saldo»): monto de la línea, cuánto ya usan OTRAS OT (con su número, cliente y enlace) y lo que queda. */
+  var CAT_TXT = { servicio: 'Instalación o servicio', despacho: 'Despacho' };
+  function htmlSaldoDoc(d) {
+    var s = d.saldo;
+    if (!s || !(s.servicio && s.servicio.hay_lineas) && !(s.despacho && s.despacho.hay_lineas)) return '';
+    var agotado = false, usado = false, filas = '';
+    ['servicio', 'despacho'].forEach(function (c) {
+      var x = s[c]; if (!x || !x.hay_lineas) return;
+      if (x.saldo <= 0) agotado = true;
+      if (x.usado > 0) usado = true;
+      (x.lineas || []).forEach(function (l) {
+        filas += '<tr class="' + (l.saldo <= 0 ? 'cero' : (l.usado > 0 ? 'parcial' : 'libre')) + '"><td class="fm-d">' + esc(CAT_TXT[c]) +
+          '<small>' + esc(l.sku) + (l.descripcion && l.descripcion !== l.sku ? ' · ' + esc(l.descripcion) : '') + '</small></td>' +
+          '<td class="fm-n">' + clp(l.monto) + '</td><td class="fm-n">' + clp(l.usado) + '</td><td class="fm-n"><b>' + clp(l.saldo) + '</b></td></tr>';
+      });
+    });
+    var usos = (s.usos || []).map(function (u) {
+      var partes = [];
+      if (u.servicio) partes.push('servicio ' + clp(u.servicio));
+      if (u.despacho) partes.push('despacho ' + clp(u.despacho));
+      return '<li><a href="' + esc(u.url || ('/ot/' + u.vid)) + '"><b>' + esc(u.numero_ot || ('OT #' + u.vid)) + '</b></a>' +
+        (u.cliente ? ' · ' + esc(u.cliente) : '') + ' · usa ' + partes.join(' + ') + '</li>';
+    }).join('');
+    var estado = agotado ? ['mal', 'Saldo agotado'] : (usado ? ['aviso', 'Usado en parte por otras OT'] : ['ok', 'Sin usar en otras OT']);
+    return '<div class="fm-saldo' + (d.dada_de_baja_por ? ' off' : '') + '"><h5><i class="bi bi-pie-chart-fill"></i> Saldo de las líneas <span class="fm-sd ' + estado[0] + '">' + estado[1] + '</span></h5>' +
+      '<table class="fm-lt fm-st"><thead><tr><th>Línea</th><th>Monto</th><th>Usado en otras OT</th><th>Saldo</th></tr></thead><tbody>' + filas + '</tbody></table>' +
+      (usos ? '<ul class="fm-usos">' + usos + '</ul>' : '') +
+      (s.omitido ? '<div class="fm-help">' + esc(s.omitido) + '</div>' : '') + '</div>';
+  }
+
   function htmlDoc(d) {
     var rut = RUT_TXT[d.rut_estado] || RUT_TXT.sin_verificar;
     var ap = aporteDoc(d);
@@ -285,7 +323,7 @@
     return '<article class="' + cls + '"><header><span class="fm-chip">' + esc(d.tipo_txt) + '</span><h4>' + esc(d.titulo) + '</h4>' +
       '<span class="fm-cuenta">' + esc(cuentaTxt(d)) + '</span>' +
       (d.es_principal ? '<span class="fm-pri">Principal</span>' : '') +
-      '<span class="fm-aporta ' + ap.cls + '">' + esc(ap.txt) + '</span></header>' + meta + nota + lineas + '</article>';
+      '<span class="fm-aporta ' + ap.cls + '">' + esc(ap.txt) + '</span></header>' + meta + nota + lineas + htmlSaldoDoc(d) + '</article>';
   }
   function cuentaTxt(d) {
     return { servicio: 'Cobro del servicio', despacho: 'Cobro del despacho',
@@ -310,6 +348,12 @@
         h += '<div class="fm-aviso"><i class="bi bi-exclamation-triangle-fill"></i> Las líneas de los documentos suman ' + clp(sumaAp) +
           ', pero lo cobrado en la cuenta de la OT es ' + (fin.cobre.hay ? clp(fin.cobre.total) : 'nada todavía (falta declararlo)') +
           '. Manda lo declarado en la OT: revisa el cobro del servicio.</div>';
+      }
+      var sal = inst.pan.saldo;
+      if (sal && sal.excedido) {
+        h += '<div class="fm-saldo-alerta" role="alert"><i class="bi bi-exclamation-octagon-fill"></i><div><b>Esta OT cobra más de lo que le queda a sus documentos</b>' +
+          '<span>' + esc(sal.texto || 'Un mismo servicio de una factura no se puede cobrar en dos OT.') + '</span></div>' +
+          ((inst.pan.puede_editar) ? boton('resolverSaldoOt', 'Resolver el saldo', 'bi-sliders', 'fm-btn-pri') : '') + '</div>';
       }
       h += '<div class="fm-docs">' + docs.map(htmlDoc).join('') + '</div>';
     }
@@ -474,7 +518,93 @@
           if (ok) { cuerpo.confirmar_duplicado = true; return enviarDoc(inst, cuerpo); }
         });
       }
+      if (j.error_codigo === 'ZZ_SALDO_CONSUMIDO') {
+        return resolverSaldo(inst, j, function (extra) { for (var k in extra) cuerpo[k] = extra[k]; return enviarDoc(inst, cuerpo); });
+      }
       toast(j.error || 'No se pudo ligar el documento.', 'error');
+    });
+  }
+
+  /* ── Saldo consumido: nunca un callejón sin salida ───────────────────────────────────────────────────────── */
+  var ICONO_ACC = { tomar_saldo: 'bi-arrow-down-circle-fill', ligar_factura: 'bi-link-45deg', pasar_garantia: 'bi-shield-check',
+    pedir_autorizacion: 'bi-shield-lock' };
+  function dialogoAcciones(o) {
+    return new Promise(function (resolve) {
+      var ov = document.createElement('div');
+      ov.className = 'fm-ov'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true');
+      ov.innerHTML = '<div class="fm-dlg"><div class="fm-dlg-h"><b>' + esc(o.titulo || '') + '</b><button type="button" class="fm-x" aria-label="Cerrar">&times;</button></div>' +
+        '<div class="fm-dlg-b"><p class="fm-dlg-intro">' + (o.intro || '') + '</p><div class="fm-acc-list">' +
+        (o.acciones || []).map(function (a) {
+          return '<button type="button" class="fm-acc" data-a="' + esc(a.tipo) + '"><i class="bi ' + (ICONO_ACC[a.tipo] || 'bi-arrow-right-circle') + '"></i><span>' + esc(a.label) + '</span></button>';
+        }).join('') + '</div></div>' +
+        '<div class="fm-dlg-f"><button type="button" class="fm-btn" data-r="no">Ahora no</button></div></div>';
+      var host = document.body;
+      try {
+        var tka = document.getElementById('tkaModal');
+        host = (tka && tka.classList.contains('is-open')) ? tka : (document.querySelector('.modal.show') || document.body);
+      } catch (e) { host = document.body; }
+      host.appendChild(ov);
+      var cerrado = false;
+      function cerrar(v) {
+        if (cerrado) return; cerrado = true;
+        document.removeEventListener('keydown', alTecla, true);
+        if (ov.parentNode) ov.parentNode.removeChild(ov);
+        resolve(v);
+      }
+      function alTecla(e) { if (e.key === 'Escape') { e.stopPropagation(); cerrar(null); } }
+      document.addEventListener('keydown', alTecla, true);
+      ov.addEventListener('click', function (e) {
+        if (e.target === ov) return;
+        if (e.target.closest('.fm-x') || e.target.closest('[data-r="no"]')) return cerrar(null);
+        var b = e.target.closest('[data-a]');
+        if (b) cerrar(b.getAttribute('data-a'));
+      });
+      var primero = ov.querySelector('.fm-acc'); if (primero) setTimeout(function () { try { primero.focus(); } catch (e) { } }, 60);
+    });
+  }
+
+  /* El servidor rechazó un cobro porque supera el saldo de las líneas de sus documentos: ofrece las cuatro salidas.
+     `reintento(extra)` (opcional) repite la petición original con {tomar_saldo:true}; sin él, «tomar solo el saldo»
+     baja el cobro de la OT con POST /ot/api/<vid>/saldo-servicio/tomar. */
+  function resolverSaldo(inst, err, reintento) {
+    err = err || {};
+    var acc = err.acciones || [];
+    if (!acc.length) { toast(err.error || 'El cobro supera el saldo disponible del documento.', 'warning'); return Promise.resolve(); }
+    return dialogoAcciones({ titulo: 'Ese cobro supera el saldo del documento', intro: esc(err.error || ''), acciones: acc }).then(function (tipo) {
+      if (!tipo) return;
+      if (tipo === 'tomar_saldo') {
+        if (reintento) return reintento({ tomar_saldo: true });
+        return api('/ot/api/' + inst.vid + '/saldo-servicio/tomar', { method: 'POST', body: {} }).then(function (r) {
+          if (r.ok) return despuesDeEscribir(inst, (r.j && r.j.mensaje) || 'El cobro quedó en el saldo disponible.');
+          toast((r.j && r.j.error) || 'No se pudo ajustar el cobro al saldo.', 'error');
+        });
+      }
+      if (tipo === 'ligar_factura') return ligarDoc(inst);
+      if (tipo === 'pasar_garantia') return pedirAutorizacion(inst, 'cobro_cero');
+      if (tipo === 'pedir_autorizacion') return pedirExceder(inst, err);
+    });
+  }
+
+  function pedirExceder(inst, err) {
+    var sa = inst.pan && inst.pan.superadmin, sp = {};
+    (err.excesos || []).forEach(function (e) { sp[e.categoria] = e.pedido; });
+    return dialogo({
+      titulo: 'Cobrar más que el saldo del documento',
+      intro: sa ? 'Eres superadministrador: tu decisión queda registrada como autorización, con tu nombre y la hora.'
+        : 'Esto le llega a ' + CAMPANA_DAN + ' a su celular, con tu argumento. Mientras responde, el cobro no puede pasar del saldo.',
+      ok: sa ? 'Autorizar y registrar' : 'Pedir autorización a ' + CAMPANA_DAN,
+      campos: [{ k: 'argumento', label: 'Argumento', tipo: 'area', req: true, min: 30,
+        placeholder: 'Ej: la factura trae una sola línea de instalación pero cubre dos equipos instalados en visitas distintas' }]
+    }).then(function (v) {
+      if (!v) return;
+      return api('/ot/api/autorizaciones', { method: 'POST', body: { tipo: 'exceder_saldo', visita_id: inst.vid, argumento: v.argumento, saldo_pedido: sp } }).then(function (r) {
+        if (!r.ok) { toast((r.j && r.j.error) || 'No se pudo pedir la autorización.', 'error'); return; }
+        if (!sa) return despuesDeEscribir(inst, 'Se pidió autorización a ' + CAMPANA_DAN + '.');
+        return api('/ot/api/autorizaciones/' + r.j.id + '/aprobar', { method: 'POST', body: { comentario: 'Autorizado por quien lo declara (superadministrador).' } }).then(function (a) {
+          if (a.ok) return despuesDeEscribir(inst, 'Autorizado y registrado con tu nombre.');
+          toast((a.j && a.j.error) || 'Se creó la solicitud pero no se pudo aprobar.', 'error');
+        });
+      });
     });
   }
 
@@ -562,10 +692,16 @@
       if (!v) return;
       var body = { zz_monto: v.zz_monto, zz_motivo_manual: v.zz_motivo_manual };
       if (v.zz_envio_monto !== '') body.zz_envio_monto = v.zz_envio_monto;
-      return api('/ot/api/finanzas/' + inst.vid, { method: 'POST', body: body }).then(function (r) {
-        if (r.ok) return despuesDeEscribir(inst, 'Cobro declarado. Quedó registrado con tu nombre y el motivo.');
-        toast((r.j && r.j.error) || 'No se pudo guardar el cobro.', 'error');
-      });
+      function enviar() {
+        return api('/ot/api/finanzas/' + inst.vid, { method: 'POST', body: body }).then(function (r) {
+          if (r.ok) return despuesDeEscribir(inst, 'Cobro declarado. Quedó registrado con tu nombre y el motivo.');
+          if (r.j && r.j.error_codigo === 'ZZ_SALDO_CONSUMIDO') {
+            return resolverSaldo(inst, r.j, function (extra) { for (var k in extra) body[k] = extra[k]; return enviar(); });
+          }
+          toast((r.j && r.j.error) || 'No se pudo guardar el cobro.', 'error');
+        });
+      }
+      return enviar();
     });
   }
 
@@ -587,6 +723,13 @@
     pedirCierre: function (inst) { return pedirAutorizacion(inst, 'cerrar_sin_documento'); },
     irFinanzas: function (inst) { return irFinanzas(inst); },
     declararCobro: function (inst) { return declararCobro(inst); },
+    /* El cierre fue rechazado por saldo consumido: sus salidas se ofrecen en el mismo modal. */
+    resolverSaldo: function (inst) { return resolverSaldo(inst, inst.rechazo); },
+    /* El panel del motor detectó que lo cobrado supera el saldo: mismas salidas, con los datos del panorama. */
+    resolverSaldoOt: function (inst) {
+      var s = inst.pan.saldo || {};
+      return resolverSaldo(inst, { error: s.texto || '', excesos: s.excesos || [], acciones: s.acciones || [] });
+    },
     enfocarCentro: function (inst) { var s = inst.el.querySelector('[data-fm-cc-grid]'); if (s) { s.scrollIntoView({ behavior: 'smooth', block: 'center' }); var b = s.querySelector('[data-fm-cc]'); if (b) b.focus(); } }
   };
 
@@ -635,6 +778,14 @@
       o = o || {};
       return pedirAutorizacion({ vid: vid, modo: 'ficha', hecho: o.hecho || function () { },
         pan: { superadmin: !!o.superadmin, centro: { valor: o.centro || '', opciones: o.opciones || [] } } }, tipo);
+    },
+    /* El servidor rechazó un cobro por saldo consumido (tarjeta de Finanzas, «Otros documentos», «Asociar factura»
+       del modal de cierre): las mismas cuatro salidas. `o.reintento(extra)` repite la petición original con
+       {tomar_saldo:true}; `o.superadmin` hace que «pedir autorización» quede aprobada al declararla. */
+    resolverSaldoExterno: function (vid, err, o) {
+      o = o || {};
+      return resolverSaldo({ vid: vid, modo: 'ficha', hecho: o.hecho, pan: { superadmin: !!o.superadmin, centro: { valor: '', opciones: [] } } },
+        err, o.reintento);
     },
     /* El servidor rechazó el cierre: cada rechazo trae su acción ({tipo,label,url}) y se resuelve acá mismo. */
     alCerrarRechazado: function (d) {

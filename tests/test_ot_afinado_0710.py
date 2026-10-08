@@ -170,7 +170,8 @@ class TestSinCiclos(unittest.TestCase):
         mapa = dict(re.findall(r"(\w+):\s*'(\w+)'", mapa))
         # tipo de acción → función del motor → ruta que la sirve (y su permiso)
         sirve = {"ligarDoc": "ot2_api_documentos_agregar", "corregirProv": "ot_api_costo_proveedor",
-                 "declararCobro": "ot2_api_finanzas", "enfocarCentro": "ot2_api_centro_costo"}
+                 "declararCobro": "ot2_api_finanzas", "enfocarCentro": "ot2_api_centro_costo",
+                 "resolverSaldo": "ot_api_saldo_servicio_tomar"}
         for codigo, (tipo, _txt) in acciones.items():
             if tipo in ("esperar_autorizacion", "actualizar_anexo", "ver_ot"):
                 continue                      # solo informan o llevan a la solicitud

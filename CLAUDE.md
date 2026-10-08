@@ -902,5 +902,17 @@ de la sesión, nunca del navegador):
 
 ---
 
-_Última actualización: 2026-10-07_
+## 🧮 REGLA #25 — Una línea de servicio de una factura no se cobra dos veces (saldo por línea; no negociable)
+
+**Pedido explícito de Daniel (2026-10-08): «algo bien inteligente para evitar que dos instalaciones se paguen con el mismo saldo»**, y «esto debe funcionar para el modal de crear OT y para el modal de cerrar OT con la firma, para no trabar el proceso».
+
+- Cada línea de servicio (ZZINSTALACION, ZZMANTENCION…) y de despacho (ZZENVIO) de un documento de Random tiene un **saldo** = su monto − lo que ya cobran **otras** OT (no canceladas ni anuladas). Ninguna OT puede declarar como cobro más que ese saldo. Una **nota de venta dada de baja por su factura no cuenta doble** (la factura hereda lo que usó la nota).
+- Lógica pura y probada en `ot_saldo_servicio.py`; las lecturas (base + ERP en SOLO LECTURA, REGLA #4.1) y el candado en `app.py` (`_ot_saldo_*`, `_ot_saldo_chequear`). Pruebas: `tests/test_ot_saldo_servicio.py`.
+- **El candado está en todos los caminos**: asistente de crear y los otros dos núcleos (`_ot_validar_normalizar_finanzas`), ligar documento (`POST /ot/api/<vid>/documentos`, que también usa Regularizar), `asociar-factura`, declarar el cobro (`POST /ot/api/finanzas/<vid>`) y el modal de cierre con la firma (`ZZ_SALDO_CONSUMIDO`). Todo camino NUEVO que escriba lo cobrado o ligue un documento pasa por `_ot_saldo_chequear`.
+- **Nunca un callejón sin salida**: cada rechazo trae las cuatro salidas (`acciones`): tomar solo el saldo (`tomar_saldo`), ligar otra factura, pasar a garantía o pedir autorización a Daniel con argumento (tipo `exceder_saldo`, autoriza hasta lo pedido). El asistente de crear no se bloquea entero. El rechazo jamás toca estado ni firmas.
+- El motor de la OT (`/ot/api/<vid>/panorama`) muestra cuántos documentos hay, cuántos traen servicio y cuántos despacho, el saldo por línea y qué OT ya lo usa (número, cliente, enlace). Regularizar y Facturación de proveedor avisan si una OT usa saldo que otras OT también usan. El saldo es interno: nunca se le muestra al cliente.
+
+---
+
+_Última actualización: 2026-10-08_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

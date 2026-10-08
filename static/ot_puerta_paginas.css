@@ -70,3 +70,6 @@
   .pp-rt td[data-k]::before{content:attr(data-k);display:block;font-size:.66rem;font-weight:800;text-transform:uppercase;color:var(--gris)}
   .pp-rt .acc{min-width:0}
 }
+
+/* 🧮 2026-10-08: aviso de saldo consumido (la OT usa plata de un documento que otras OT también usan). */
+.pp-saldo{color:#b45309;font-weight:700}

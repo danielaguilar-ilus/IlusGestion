@@ -33,11 +33,13 @@
   var ICONOS = { pendiente: 'bi-hourglass-split', aprobada: 'bi-check-lg', rechazada: 'bi-x-lg', anulada: 'bi-slash-circle' };
   var ENTIDAD = { ot: 'Orden de trabajo', ticket: 'Ticket', cotizacion: 'Cotización' };
 
+  /* Una solicitud que CREA la OT al aprobarse: 'crear_sin_documento' y 'exceder_saldo' cuando todavía no hay OT (2026-10-08). */
+  function creaOt(a) { return a.tipo === 'crear_sin_documento' || (a.tipo === 'exceder_saldo' && !a.visita_id); }
   function tarjeta(a, completa) {
     var titulo = a.tipo_txt + (a.motivo_txt ? ' · ' + a.motivo_txt : '');
     var destino = a.visita_id
       ? '<a href="/ot/' + a.visita_id + '">' + esc(a.numero_ot || ('OT ' + a.visita_id)) + '</a>'
-      : (a.tipo === 'crear_sin_documento' ? 'OT por crear' : '—');
+      : (creaOt(a) ? 'OT por crear' : '—');
     var h = '<article class="pp-card ' + esc(a.estado) + '" data-id="' + a.id + '"><span class="pp-circ"><i class="bi ' + (ICONOS[a.estado] || 'bi-circle') + '"></i></span>' +
       '<h3><a href="' + esc(a.url) + '">' + esc(titulo) + '</a><span class="pp-estado">' + esc(a.estado_txt) + '</span></h3>' +
       '<div class="pp-sub">Solicitud N° ' + a.id + ' · ' + esc(ENTIDAD[a.entidad] || a.entidad) + ' · ' + esc(a.cliente || 'Sin cliente') + '</div>' +
@@ -47,20 +49,26 @@
       '<div><dt>Centro de costo</dt><dd>' + esc(CENTROS[a.centro_costo] || a.centro_costo || 'Sin definir') + '</dd></div>' +
       '<div><dt>Valorizado sugerido</dt><dd>' + clp(a.valorizado_clp) + '</dd></div></dl>' +
       '<div class="pp-arg"><small>Argumento (completo)</small>' + esc(a.argumento) + '</div>';
+    /* 2026-10-08: cobrar más que el saldo de la línea del documento: qué se quiere cobrar. */
+    if (a.tipo === 'exceder_saldo' && a.payload && a.payload.saldo_pedido) {
+      var sp = a.payload.saldo_pedido;
+      h += '<div class="pp-arg"><small>Quiere cobrar por encima del saldo</small>' +
+        [sp.servicio ? 'Servicio ' + clp(sp.servicio) : '', sp.despacho ? 'Despacho ' + clp(sp.despacho) : ''].filter(Boolean).join(' · ') + '</div>';
+    }
     if (a.constancia) h += '<div class="pp-const"><b>' + esc(a.estado_txt) + '.</b> ' + esc(a.constancia) + '</div>';
     if (a.estado === 'aprobada' && a.visita_creada_id) h += '<div class="pp-const">La OT creada: <a href="/ot/' + a.visita_creada_id + '"><b>abrirla</b></a></div>';
     h += '<div class="pp-acc">';
     if (a.estado === 'pendiente' && esSA) {
       /* Aprobar una creación crea la OT en ese instante, sin vuelta atrás: desde la lista solo se rechaza o se abre
          el detalle ("Ver todo": tipo de trabajo, equipos, montos, proveedor); se aprueba viendo qué se creará. */
-      if (a.tipo === 'crear_sin_documento' && !completa) {
+      if (creaOt(a) && !completa) {
         h += '<a class="pp-btn ok" href="' + esc(a.url) + '"><i class="bi bi-eye"></i> Ver qué se creará y aprobar</a>';
       } else {
         h += '<button type="button" class="pp-btn ok" data-aprobar="' + a.id + '"><i class="bi bi-check-lg"></i> Aprobar</button>';
       }
       h += '<button type="button" class="pp-btn mal" data-rechazar="' + a.id + '"><i class="bi bi-x-lg"></i> Rechazar</button>';
     }
-    if (!completa && !(a.estado === 'pendiente' && esSA && a.tipo === 'crear_sin_documento')) h += '<a class="pp-btn" href="' + esc(a.url) + '"><i class="bi bi-eye"></i> Ver todo</a>';
+    if (!completa && !(a.estado === 'pendiente' && esSA && creaOt(a))) h += '<a class="pp-btn" href="' + esc(a.url) + '"><i class="bi bi-eye"></i> Ver todo</a>';
     if (a.visita_id) h += '<a class="pp-btn" href="/ot/' + a.visita_id + '"><i class="bi bi-clipboard2-pulse"></i> Abrir la OT</a>';
     return h + '</div></article>';
   }

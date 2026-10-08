@@ -9771,6 +9771,20 @@ window.otdGuardarFinanzas = async function(){
       // que el siguiente que pase por la pantalla no la toque sin querer.
       if (window.otdBloquearFinanzas) window.otdBloquearFinanzas();
       if (window.otdPintarResultado) window.otdPintarResultado();
+    } else if (j.error_codigo === 'ZZ_SALDO_CONSUMIDO' && window.OTFinMotor && OTFinMotor.resolverSaldoExterno){
+      /* 🧮 2026-10-08: el cobro supera el saldo de la línea del documento (otra OT ya lo usa): cuatro salidas, ninguna sin salida. */
+      if (window.ilusToast) ilusToast(j.error || 'El cobro supera el saldo del documento.', {type: 'warning'});
+      OTFinMotor.resolverSaldoExterno({{ v.id }}, j, { reintento: async function(extra){
+        const r2 = await fetch(`/ot/api/finanzas/{{ v.id }}`, {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(Object.assign({}, body, extra)),
+        });
+        const j2 = await r2.json().catch(() => ({}));
+        if (r2.ok && j2.ok !== false){
+          if (window.ilusToast) ilusToast('✓ Finanzas guardadas con el saldo disponible', {type: 'success'});
+          setTimeout(() => location.reload(), 700);
+        } else if (window.ilusToast){ ilusToast(j2.error || 'No se pudo guardar.', {type: 'error'}); }
+      }});
     } else {
       if (window.ilusToast) ilusToast(j.error || 'No se pudo guardar. Intenta de nuevo.', {type: 'error'});
     }
@@ -12555,6 +12569,8 @@ async function otdDocAgregar(tipoDirecto, numDirecto){
   const body = (tipo === '__cot__')
     ? {origen: 'cotizacion', cotizacion: num, etiqueta: etiq}
     : {origen: 'erp', tipo: tipo, numero: num, etiqueta: etiq};
+  // 🧮 2026-10-08: reintento después de elegir «Tomar solo el saldo» (ver ZZ_SALDO_CONSUMIDO más abajo).
+  if (window._otdDocExtra){ Object.assign(body, window._otdDocExtra); window._otdDocExtra = null; }
   try {
     let r = await fetch(`/ot/api/${OTD_VID}/documentos`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -12598,6 +12614,16 @@ async function otdDocAgregar(tipoDirecto, numDirecto){
       d = await r.json().catch(() => ({}));
     }
     err.style.color = '';
+    if (!d.ok && d.error_codigo === 'ZZ_SALDO_CONSUMIDO' && window.OTFinMotor && OTFinMotor.resolverSaldoExterno){
+      // 🧮 2026-10-08 (Daniel: «evitar que dos instalaciones se paguen con el mismo saldo»): la línea de servicio de
+      // ese documento ya la usa otra OT. Tomar solo el saldo, ligar otra factura, pasar a garantía o pedir autorización.
+      err.textContent = d.error || '';
+      OTFinMotor.resolverSaldoExterno(OTD_VID, d, { reintento: function(extra){
+        window._otdDocExtra = extra;
+        return otdDocAgregar(tipoDirecto, numDirecto);
+      }});
+      return;
+    }
     if (!d.ok){ err.textContent = d.error || 'No se pudo agregar.'; return; }
     err.textContent = '';
     document.getElementById('otdDocNum').value = '';
@@ -15228,6 +15254,17 @@ const OT2F = (function(){
     try { return '$' + Math.round(m).toLocaleString('es-CL'); } catch(_e){ return '$' + m; }
   }
 
+  /* 🧮 2026-10-08: el saldo de las líneas de servicio / despacho del documento que se va a ligar (qué usa otra OT). */
+  function _factSaldoHtml(s){
+    if (!s) return '';
+    const fila = (n, x) => (x && x.hay_lineas)
+      ? `<div>${n}: ${_factMonto(x.total)} · usado en otras OT ${_factMonto(x.usado)} · <b style="color:${x.saldo > 0 ? '#15803d' : '#b91c1c'}">saldo ${_factMonto(x.saldo)}</b></div>` : '';
+    const f1 = fila('Instalación o servicio', s.servicio), f2 = fila('Despacho', s.despacho);
+    if (!f1 && !f2) return '';
+    const usos = (s.usos || []).map(u => `<a href="${u.url}" target="_blank" rel="noopener">${u.numero_ot || ('OT #' + u.vid)}</a>`).join(', ');
+    return `<div class="mt-2 pt-2" style="border-top:1px dashed #e5e7eb"><div class="fw-bold">Saldo de las líneas del documento</div>${f1}${f2}${usos ? '<div>Ya lo usan: ' + usos + '</div>' : ''}</div>`;
+  }
+
   async function factConsultar(){
     const err = _factEl('otfFactErr'); err.textContent = '';
     const numero = (_factEl('otfFactNumero').value || '').replace(/\D/g, '');
@@ -15255,6 +15292,7 @@ const OT2F = (function(){
           <div class="mt-1 fw-semibold" style="color:${okRut ? '#15803d' : '#b45309'}">
             <i class="bi ${okRut ? 'bi-check-circle-fill' : 'bi-exclamation-triangle-fill'} me-1"></i>${a.detalle || ''}
           </div>
+          ${_factSaldoHtml(d.saldo)}
         </div>`;
       _factEl('otfFactPreview').style.display = '';
       if (d.requiere_justificacion) _factEl('otfFactJustifWrap').style.display = '';
@@ -15300,6 +15338,18 @@ const OT2F = (function(){
         err.textContent = d.error || 'No se pudo asociar.';
         if (d.error_codigo === 'RUT_NO_COINCIDE') _factEl('otfFactJustifWrap').style.display = '';
         btn.disabled = false; btn.innerHTML = orig;
+        // 🧮 2026-10-08: el cobro de la OT no cabe en el saldo de los documentos → las cuatro salidas, en este mismo modal.
+        if (d.error_codigo === 'ZZ_SALDO_CONSUMIDO' && window.OTFinMotor && OTFinMotor.resolverSaldoExterno){
+          OTFinMotor.resolverSaldoExterno(VID, d, { reintento: async function(extra){
+            const r2 = await fetch(`/mantenciones/api/visitas/${VID}/asociar-factura`, {
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify(Object.assign({ tipo:_factEl('otfFactTipo').value, numero, confirmar:true, justificacion:justif }, extra)),
+            });
+            const d2 = await r2.json().catch(() => ({}));
+            if (r2.ok && d2.ok){ _finGuardadoOk('✓ Documento asociado con el saldo disponible', 700); }
+            else { err.textContent = d2.error || 'No se pudo asociar.'; }
+          }});
+        }
         return;
       }
       _finGuardadoOk('✓ Documento asociado — ya puedes firmar el cierre', 700);

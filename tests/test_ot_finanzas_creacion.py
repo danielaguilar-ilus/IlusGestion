@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 import unittest
 
+import ot_saldo_servicio
 from tests.test_incidencias_bajas import _codigo_y_arbol
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -69,6 +70,10 @@ def N(fin, tipo="instalacion", interna=False, **kw):
     amb["_ot_zz_topes_reales"] = lambda *a, **k: {"excluidos": [], "documentos": [{"tido": "FCV", "nudo": "11439",
                                                                                   "servicio": 0, "despacho": 0}],
                                                     "tope_servicio": 10 ** 9, "tope_despacho": 10 ** 9}
+    # 2026-10-08: el saldo por línea de servicio (ot_saldo_servicio) también se mira al crear; acá no hay base ni ERP.
+    amb.setdefault("_saldo", ot_saldo_servicio)
+    amb["_ot_saldo_chequear"] = lambda *a, **k: None
+    amb["_ot_saldo_autorizado_hasta"] = lambda *a, **k: {}
     return amb["_ot_validar_normalizar_finanzas"](fin, tipo, interna, **kw)
 
 

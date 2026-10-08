@@ -49,7 +49,8 @@
       '<small>' + esc(it.fecha || 'Sin fecha') + (it.cerrada ? ' · cerrada: solo se regulariza la plata y el documento' : '') + '</small></td>' +
       '<td data-k="Cliente">' + esc(it.cliente) + '<small>Creada por ' + esc(it.creado_por || '—') + (it.creada_el ? ' · ' + esc(it.creada_el) : '') + '</small></td>' +
       '<td data-k="Estado">' + esc(it.estado_txt) + '<small>' + esc(it.cobertura || '') + '</small></td>' +
-      '<td data-k="Qué falta"><span class="pp-sem ' + esc(it.falta) + '">' + esc(it.falta_txt) + '</span><small>' + esc(it.mensaje) + '</small></td>' +
+      '<td data-k="Qué falta"><span class="pp-sem ' + esc(it.falta) + '">' + esc(it.falta_txt) + '</span><small>' + esc(it.mensaje) + '</small>' +
+      (it.saldo_avisos || []).map(function (a) { return '<small class="pp-saldo"><i class="bi bi-exclamation-triangle-fill"></i> ' + esc(a) + '</small>'; }).join('') + '</td>' +
       '<td data-k="Documentos">' + docs(it) + '</td>' +
       '<td data-k="Acciones"><div class="acc">' + acc + '</div></td></tr>';
   }

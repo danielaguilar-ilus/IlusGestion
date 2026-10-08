@@ -257,3 +257,29 @@
 @keyframes fmCcPop{0%{transform:scale(.94)}60%{transform:scale(1.04)}100%{transform:scale(1)}}
 @supports not (color: color-mix(in srgb, red 50%, transparent)){.fm-cc.on{background:#f9fafb}}
 @media (prefers-reduced-motion:reduce){.fm-cc,.fm-cc.on,.fm-cc.pulsa{animation:none;transition:none}}
+
+/* ══ SALDO por línea de servicio · 2026-10-08 ═════════════════════════════════════════════════════════════════
+   Daniel: «evitar que dos instalaciones se paguen con el mismo saldo». Cada documento muestra el monto de sus líneas,
+   lo que ya usan otras OT (con enlace) y el saldo; semáforo: verde = sin usar, ámbar = usado en parte, rojo = agotado. */
+.fm-tile.warn b{color:#b45309}.fm-tile.mal b{color:#b91c1c}
+.fm-saldo{margin-top:8px;border:1px solid var(--fm-borde);border-radius:9px;padding:7px 9px;background:#fcfcfd}
+.fm-saldo.off{opacity:.6}
+.fm-saldo h5{margin:0 0 4px;font-size:.66rem;text-transform:uppercase;letter-spacing:.05em;font-weight:900;color:#374151;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.fm-saldo h5 i{color:var(--fm-azul)}
+.fm-sd{font-size:.64rem;font-weight:900;border-radius:999px;padding:2px 8px;text-transform:none;letter-spacing:0}
+.fm-sd.ok{background:var(--fm-verde-f);color:#14532d}.fm-sd.aviso{background:var(--fm-ambar-f);color:#78350f}.fm-sd.mal{background:var(--fm-rojo-f);color:#991b1b}
+.fm-st th{font-size:.6rem;text-transform:uppercase;letter-spacing:.04em;color:var(--fm-gris);font-weight:800;text-align:right;padding:2px 0}
+.fm-st th:first-child{text-align:left}
+.fm-st tr.cero td b{color:#b91c1c}.fm-st tr.parcial td b{color:#b45309}.fm-st tr.libre td b{color:#15803d}
+.fm-usos{list-style:none;margin:4px 0 0;padding:0;display:flex;flex-direction:column;gap:2px;font-size:.74rem;color:#374151}
+.fm-usos a{color:#b91c1c;font-weight:800;text-decoration:none}.fm-usos a:hover{text-decoration:underline}
+.fm-saldo-alerta{display:flex;flex-wrap:wrap;align-items:center;gap:10px;background:var(--fm-rojo-f);border:1px solid #fecaca;border-radius:10px;padding:8px 10px;margin-bottom:8px}
+.fm-saldo-alerta>i{font-size:1.3rem;color:#b91c1c}
+.fm-saldo-alerta div{flex:1 1 220px;min-width:0}.fm-saldo-alerta b{display:block}
+.fm-saldo-alerta span{display:block;font-size:.76rem;color:#374151;overflow-wrap:anywhere}
+.fm-acc-list{display:flex;flex-direction:column;gap:8px}
+.fm-acc{display:flex;align-items:center;gap:10px;text-align:left;width:100%;min-height:48px;padding:8px 12px;border:2px solid #e5e7eb;border-radius:11px;background:#fff;
+  font:inherit;font-weight:800;font-size:.84rem;cursor:pointer;color:var(--fm-negro,#0a0a0a);transition:border-color .15s,background .15s,transform .12s}
+.fm-acc i{font-size:1.25rem;color:var(--fm-rojo);flex:0 0 auto}
+.fm-acc span{min-width:0;overflow-wrap:anywhere}
+.fm-acc:hover,.fm-acc:focus-visible{border-color:var(--fm-rojo);background:#fffafa;transform:translateY(-1px);outline:none}
