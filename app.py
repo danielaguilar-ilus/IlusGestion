@@ -101031,7 +101031,9 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
         # CIERRE (_ot2_finanzas_estado) ya eximía bien a garantía de este
         # monto -- este quedó mal copiado el 2026-09-09. Mismo fix en
         # completo('finanzas') de _modal_crear.html.
-        if not _fin_gar and (_fin_zzm is None or _fin_zzm <= 0):
+        # 🔴 2026-10-08 (Daniel, OT 281: "si el usuario dice que es 0 entonces no alteres eso"): un $0 declarado
+        # es válido y se guarda como 0; al ser escrito a mano exige su motivo (ver FINANZAS_CERO_SIN_MOTIVO abajo).
+        if not _fin_gar and (_fin_zzm is None or _fin_zzm < 0):
             return _ferr(
                 "Falta declarar el monto estimado del servicio (línea del "
                 "documento, cotización asociada, o un valor a mano).",
@@ -101057,6 +101059,8 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
     # el candado real de "no se puede crear sin esto" ya vive en el propio
     # botón Crear orden, que no se habilita hasta que completo() sea true).
     _fin_zz_motivo_manual = (_fin.get("zz_motivo_manual") or "").strip()[:500] or None
+    if (not es_interna and not _fin_gar and _fin_zzm == 0 and not _fin_zz_motivo_manual):
+        return _ferr("Declaraste $0 en lo que se cobra: explica por qué (motivo).", "FINANZAS_CERO_SIN_MOTIVO"), None
     _fin_zz_envio_motivo_manual = (_fin.get("zz_envio_motivo_manual") or "").strip()[:500] or None
     # 💰 2026-09-15 (Daniel: "si no hay línea ZZ, se declara un SUPUESTO
     # bien presentado... los valores son editables"). Ahora que el origen

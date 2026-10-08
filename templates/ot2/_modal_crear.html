@@ -1641,7 +1641,9 @@ window.OT2C = (function(){
         // de este monto -- este quedó mal copiado. Lo que sí corresponde
         // exigir en garantía (costo_proveedor/costo_despacho) sigue
         // obligatorio más abajo, sin cambios.
-        if (!S.fin_garantia && !(S.fin_zz_monto > 0)) return false;
+        // 2026-10-08 (Daniel, OT 281): un $0 declarado por la persona es válido -- se respeta tal cual y,
+        // como es escrito a mano, exige su motivo (línea de abajo). Solo falta si el casillero está vacío.
+        if (!S.fin_garantia && (S.fin_zz_monto == null || S.fin_zz_monto < 0)) return false;
         if (S.fin_garantia && (S.fin_garantia_motivo||'').trim().length < 10) return false;
         // 2026-08-30 (Daniel: "si no trae esto se podrá declarar a mano,
         // pero deberá reportarse con un argumento... hay que ser bien
@@ -5371,7 +5373,10 @@ window.OT2C = (function(){
     // Solo dígitos -- sirve igual si pegan "154.000" o escriben "154000".
     // Sin decimales a propósito (mismo criterio que el resto de este
     // archivo para montos: Math.round(x).toLocaleString('es-CL')).
-    return String(v||'').replace(/[^0-9]/g,'');
+    // 🔴 FIX 2026-10-08 (Daniel, OT 281: "le pusimos valor 0… si el usuario dice que es 0 entonces no alteres
+    // eso"): con String(v||'') el número 0 se volvía '' -- el casillero mostraba vacío, el valor quedaba en
+    // null y el envío caía al estimado/cotización. El 0 es un dato: se conserva.
+    return String(v == null ? '' : v).replace(/[^0-9]/g,'');
   }
   function _o2mFormatearMiles(v){
     var digitos = _o2mLimpiarNumero(v);
@@ -6116,7 +6121,7 @@ window.OT2C = (function(){
           if (_o2mFinEsManual() && !(S.fin_zz_motivo_manual||'').trim()) return {cls:'falta', txt:'Falta el motivo'};
           return {cls:'opcional', txt:'Opcional'};
         }
-        if (!(S.fin_zz_monto > 0)) return {cls:'falta', txt:'Pendiente'};
+        if (S.fin_zz_monto == null) return {cls:'falta', txt:'Pendiente'};
         if (_o2mFinEsManual() && !(S.fin_zz_motivo_manual||'').trim()) return {cls:'falta', txt:'Falta el motivo'};
         // 2026-09-15 (revisión): el motivo del ZZENVIO editado a mano se
         // exige ACÁ, no en 'cobro' -- el input de transporte y su textarea
@@ -7714,7 +7719,7 @@ window.OT2C = (function(){
     var costoEnvio = String(S.fin_costo_despacho||'').trim() === '' ? NaN : parseFloat(S.fin_costo_despacho);
     if (!isFinite(costoEnvio) || costoEnvio < 0) costoEnvio = null;
     // El valor declarado manda; _ventaActual() queda como respaldo.
-    var ventaInst = (S.fin_zz_monto > 0) ? S.fin_zz_monto : _ventaActual();
+    var ventaInst = (S.fin_zz_monto != null) ? S.fin_zz_monto : _ventaActual();   // 2026-10-08: el $0 declarado manda
     var hayVentaInst = ventaInst != null && ventaInst > 0;
     var ventaEnvio = (S.fin_zz_envio && S.fin_zz_envio.monto != null) ? S.fin_zz_envio.monto : null;
     var hayVentaEnvio = ventaEnvio != null && ventaEnvio > 0;
@@ -9171,7 +9176,8 @@ window.OT2C = (function(){
         body.finanzas.valor_origen = _o2mFinEsManual()
           ? (S.fin_valor_origen === 'supuesto' ? 'supuesto' : 'manual')
           : (S.fin_valor_origen || (S.fin_zz_codigo ? 'zz' : 'manual'));
-      } else if (S.fin_cotizacion && S.fin_cotizacion.total != null){
+      } else if (!S.fin_valor_tocado && S.fin_cotizacion && S.fin_cotizacion.total != null){
+        // 2026-10-08: las ramas de respaldo solo corren si la persona NO tocó el valor (nunca reemplazan lo que escribió).
         // 🔒 2026-09-09 (Daniel: "las finanzas... requisito indispensable y
         // con datos persistentes"): _ventaActual() ya usaba este total para
         // pintar el margen en pantalla, pero nunca viajaba al backend -- una
@@ -9186,7 +9192,7 @@ window.OT2C = (function(){
         body.finanzas.zz_motivo_manual = 'Valorizado con cotización ' +
           (S.fin_cotizacion.numero || ('#' + S.fin_cotizacion.id));
         body.finanzas.valor_origen = 'cotizacion';
-      } else if (S.fin_costo_estimado && S.fin_costo_estimado.total_neto != null){
+      } else if (!S.fin_valor_tocado && S.fin_costo_estimado && S.fin_costo_estimado.total_neto != null){
         body.finanzas.zz_monto = Math.round(S.fin_costo_estimado.total_neto);
         body.finanzas.zz_motivo_manual = 'Estimado automático por clasificación del producto';
         body.finanzas.valor_origen = 'estimado';
