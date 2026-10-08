@@ -324,10 +324,13 @@
       lineas = '<div class="fm-nolin">Cotización interna: sirve de referencia, no de cobro.</div>';
     } else if (d.lineas) {
       var ln = d.lineas;
-      lineas = '<div class="fm-lineas">' + grupoLineas('Servicio', ln.servicio, 'ser', false) + grupoLineas('Despacho', ln.despacho, 'des', false) +
-        grupoLineas('Productos', ln.productos, 'pro', true) +
-        '<div class="fm-ltot">Suma de las líneas (neto): <b>' + clp(ln.total) + '</b></div></div>';
-      if (!ln.servicio.length && !ln.despacho.length && !ln.productos.length) lineas = '<div class="fm-nolin">Random no devolvió líneas para este documento.</div>';
+      // 2026-10-08 (Daniel, viendo la VD 10653: "no me interesan los productos en este punto… me interesa la
+      // instalación y el envío… ese detalle está muy largo, no consideres los productos"): en las finanzas de la OT
+      // cada documento muestra SOLO sus líneas de servicio (instalación/mantención) y de despacho. Los productos y la
+      // suma neta del documento no aportan a la cuenta del servicio y alargaban la tarjeta.
+      lineas = '<div class="fm-lineas">' + grupoLineas('Servicio', ln.servicio, 'ser', false) + grupoLineas('Despacho', ln.despacho, 'des', false) + '</div>';
+      if (!ln.servicio.length && !ln.despacho.length)
+        lineas = '<div class="fm-nolin">' + (ln.productos.length ? 'Este documento no trae línea de instalación ni de despacho (solo productos).' : 'Random no devolvió líneas para este documento.') + '</div>';
     } else if (d.lineas_omitidas) {
       lineas = '<div class="fm-nolin">Hay muchos documentos: las líneas de este se leen en su ficha de Random.</div>';
     } else if (d.tido && ['GDV', 'COV'].indexOf(d.tido) < 0) {

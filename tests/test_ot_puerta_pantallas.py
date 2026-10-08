@@ -100,8 +100,10 @@ class TestMotorUnico(unittest.TestCase):
                       "Todos los documentos de la OT", "Lo que nos costó", "La cuenta de esta OT", "Centro de costo",
                       "Esperando autorización de", "ya dada", "Dada de baja por la factura", "Fecha de emisión", "Lo ligó",
                       "El RUT coincide con el del cliente", "Pedir autorización a", "Corregir lo que cobró el proveedor",
-                      "Autorizaciones de esta OT", "Servicio", "Despacho", "Productos"):
+                      "Autorizaciones de esta OT", "Servicio", "Despacho", "solo productos"):
             self.assertIn(texto, js, texto)
+        # 2026-10-08 (Daniel): cada documento muestra solo instalación/servicio y despacho; los productos no se pintan.
+        self.assertNotIn("grupoLineas('Productos'", js)
         # Cada paso del recorrido con su acción cuando falta.
         for accion in ("ligarDoc", "pedirCero", "pedirCierre", "irFinanzas", "corregirProv", "enfocarCentro"):
             self.assertIn(accion, js)
