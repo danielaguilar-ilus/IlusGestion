@@ -67375,6 +67375,300 @@ def mant_api_incidencias_list():
     })
 
 
+# ══ Excel de la bodega de Incidencias (Daniel, 2026-10-08) ═════════════════
+# "una tarea adicional solo para el admin: quiero que bajes el detalle de la
+# bodega de Incidencias en Excel para análisis". Solo LECTURA: reutiliza
+# _inc_anotar_ingreso (días en bodega desde la GRI), _inc_comparativa_ua y la
+# respuesta YA cacheada de CheckWMS (una sola lectura, no una por fila:
+# REGLA #4.4). Fechas dd/mm/aaaa en hora Chile (REGLA #6).
+def _inc_rango_dias(dias):
+    """Rango de antigüedad para el Resumen del Excel. PURA."""
+    if dias is None:
+        return "Sin fecha"
+    if dias <= 30:
+        return "0-30 días"
+    if dias <= 90:
+        return "31-90 días"
+    if dias <= 365:
+        return "91-365 días"
+    return "Más de 365 días"
+
+
+def _inc_excel_dt_chile(valor):
+    """datetime/texto 'YYYY-MM-DD HH:MM:SS' en UTC -> datetime naive en hora Chile
+    (listo para una celda de Excel). None si no hay dato."""
+    if not valor:
+        return None
+    try:
+        from datetime import datetime as _DT
+        dt = _DT.strptime(str(valor)[:19], "%Y-%m-%d %H:%M:%S") if isinstance(valor, str) else valor
+        c = to_chile_filter(dt)
+        return c.replace(tzinfo=None) if c else None
+    except Exception:
+        return None
+
+
+def _inc_excel_fecha(valor):
+    """'YYYY-MM-DD' (o date) -> date para una celda de Excel. None si no hay."""
+    if not valor:
+        return None
+    try:
+        from datetime import datetime as _DT
+        if isinstance(valor, str):
+            return _DT.strptime(valor[:10], "%Y-%m-%d").date()
+        return valor.date() if hasattr(valor, "date") else valor
+    except Exception:
+        return None
+
+
+_INC_EXCEL_CHK_TEXTO = {
+    "coincide": "Coincide", "distinta": "Ubicación distinta", "no_esta": "UA no está en Check",
+    "sin_ua": "Sin UA", "sin_ubicacion_nuestra": "Sin ubicación nuestra", "sin_datos": "Check sin datos",
+}
+
+
+def _inc_excel_repuesto(r):
+    """('Sí'|'No'|'Sin definir', 'En stock'|'Sin stock'|'Sin definir'|''). PURA."""
+    req = (r.get("req_repuesto") or "").strip()
+    if req == "si":
+        stock = {"hay": "En stock", "no_hay": "Sin stock"}.get(r.get("stock_repuesto") or "", "Sin definir")
+        return "Sí", stock
+    if req == "no":
+        return "No", ""
+    return "Sin definir", ""
+
+
+def _inc_excel_bytes(filas, ahora_chile, motivos_baja=None):
+    """Arma el .xlsx (bytes) de la bodega de Incidencias. `filas`: dicts ya anotados
+    (ingreso_fecha/ingreso_gri/ingreso_origen, chk_*, baja, foto_url, n_fotos).
+    `ahora_chile`: datetime naive en hora Chile (base de los días en bodega).
+    Sin red ni BD: testeable. Hojas: «Incidencias» y «Resumen»."""
+    import io
+    from collections import Counter
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    motivos_baja = motivos_baja or {}
+    hoy = ahora_chile.date()
+    F_NORMAL = Font(name="Arial", size=10)
+    F_ENC = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+    F_LINK = Font(name="Arial", size=10, color="0563C1", underline="single")
+    RELLENO_ENC = PatternFill("solid", fgColor="DC2626")
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Incidencias"
+    # (título, ancho, formato de número, ajustar texto)
+    cols = [
+        ("ID", 8, "0", False), ("UA", 16, "@", False), ("SKU", 16, "@", False),
+        ("Descripción", 42, "@", True), ("Cantidad", 10, "#,##0", False),
+        ("Motivo", 40, "@", True), ("Estado", 11, "@", False),
+        ("¿Requiere repuesto?", 13, "@", False), ("Stock del repuesto", 14, "@", False),
+        ("Descripción del repuesto", 32, "@", True),
+        ("Ubicación (nuestra)", 18, "@", False), ("UA en Check", 16, "@", False),
+        ("Ubicación en Check", 18, "@", False), ("Ubicación/UA vs Check", 22, "@", False),
+        ("Fecha de ingreso a bodega", 14, "dd/mm/yyyy", False),
+        ("Origen de la fecha de ingreso", 18, "@", False), ("N° GRI", 10, "@", False),
+        ("Días en bodega", 11, "#,##0", False), ("Rango de días", 16, "@", False),
+        ("Fecha de resolución", 14, "dd/mm/yyyy", False),
+        ("Fecha de creación", 17, "dd/mm/yyyy hh:mm", False), ("Creada por", 24, "@", False),
+        ("Última modificación", 17, "dd/mm/yyyy hh:mm", False), ("Modificada por", 24, "@", False),
+        ("Observación", 40, "@", True), ("Sugerencia", 40, "@", True),
+        ("Dada de baja", 11, "@", False), ("Motivo de la baja", 36, "@", True),
+        ("Dada de baja por", 24, "@", False), ("Fecha de la baja", 17, "dd/mm/yyyy hh:mm", False),
+        ("Fotos", 8, "#,##0", False), ("Enlace a la foto", 18, "@", False),
+    ]
+    for i, (titulo, ancho, _fmt, _aj) in enumerate(cols, 1):
+        c = ws.cell(row=1, column=i, value=titulo)
+        c.font, c.fill = F_ENC, RELLENO_ENC
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        ws.column_dimensions[get_column_letter(i)].width = ancho
+    ws.row_dimensions[1].height = 32
+
+    origen_txt = {"manual": "Escrita a mano", "gri": "GRI del ERP", "registro": "Fecha de registro"}
+    cuentas = {"estado": Counter(), "rango": Counter(), "repuesto": Counter(),
+               "ubicacion": Counter(), "chk": Counter()}
+    for n, r in enumerate(filas, 2):
+        base = _inc_excel_fecha(r.get("ingreso_fecha"))
+        dias = (hoy - base).days if base else None
+        if dias is not None and dias < 0:
+            dias = None
+        rango = _inc_rango_dias(dias)
+        req, stock = _inc_excel_repuesto(r)
+        baja = r.get("baja") or {}
+        motivo_baja = ""
+        if baja:
+            motivo_baja = motivos_baja.get(baja.get("motivo_codigo"), baja.get("motivo_codigo") or "")
+            if baja.get("motivo_texto"):
+                motivo_baja = (motivo_baja + " — " if motivo_baja else "") + baja["motivo_texto"]
+        ubic = (r.get("ubicacion") or "").strip()
+        chk_txt = _INC_EXCEL_CHK_TEXTO.get(r.get("chk_estado") or "sin_datos", "Check sin datos")
+        estado_txt = "Resuelta" if r.get("estado") == "resuelta" else "Abierta"
+        valores = [
+            r.get("id"), r.get("recomendacion") or "", r.get("sku") or "", r.get("descripcion") or "",
+            int(r.get("cantidad") or 0), r.get("motivo") or "", estado_txt,
+            req, stock, r.get("descripcion_repuesto") or "",
+            ubic, r.get("chk_ua") or "", r.get("chk_ubicacion") or "", chk_txt,
+            base, origen_txt.get(r.get("ingreso_origen"), ""), r.get("ingreso_gri") or "",
+            dias, rango, _inc_excel_fecha(r.get("fecha_resolucion")),
+            _inc_excel_dt_chile(r.get("created_at")), r.get("created_by") or "",
+            _inc_excel_dt_chile(r.get("updated_at")), r.get("updated_by") or "",
+            r.get("observacion") or "", r.get("sugerencia") or "",
+            "Sí" if baja else "No", motivo_baja, baja.get("baja_by") or "",
+            _inc_excel_dt_chile(baja.get("baja_at")) if baja else None,
+            int(r.get("n_fotos") or 0), "",
+        ]
+        for i, v in enumerate(valores, 1):
+            c = ws.cell(row=n, column=i, value=v)
+            c.font = F_NORMAL
+            c.number_format = cols[i - 1][2]
+            c.alignment = Alignment(vertical="top", wrap_text=cols[i - 1][3])
+        if r.get("foto_url"):
+            c = ws.cell(row=n, column=len(cols), value="Ver foto")
+            c.hyperlink = r["foto_url"]
+            c.font = F_LINK
+        cuentas["estado"][estado_txt] += 1
+        cuentas["rango"][rango] += 1
+        cuentas["repuesto"][req if req != "Sí" else f"Sí · {stock.lower()}"] += 1
+        cuentas["ubicacion"][ubic or "(sin ubicación)"] += 1
+        cuentas["chk"][chk_txt] += 1
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(cols))}{max(1, len(filas) + 1)}"
+
+    # ── Hoja Resumen ──
+    rs = wb.create_sheet("Resumen")
+    rs.column_dimensions["A"].width = 44
+    rs.column_dimensions["B"].width = 14
+    rs.column_dimensions["C"].width = 14
+    rs["A1"] = "Incidencias de bodega — resumen"
+    rs["A1"].font = Font(name="Arial", size=14, bold=True, color="DC2626")
+    rs["A2"] = f"Generado el {ahora_chile.strftime('%d/%m/%Y %H:%M')} (hora Chile) · {len(filas)} incidencias en el detalle"
+    rs["A2"].font = Font(name="Arial", size=9, italic=True, color="6B7280")
+    fila = 4
+    total = max(1, len(filas))
+    orden_rangos = ["0-30 días", "31-90 días", "91-365 días", "Más de 365 días", "Sin fecha"]
+    bloques = [
+        ("Por estado", ["Abierta", "Resuelta"], cuentas["estado"]),
+        ("Por días en bodega", orden_rangos, cuentas["rango"]),
+        ("Por repuesto", None, cuentas["repuesto"]),
+        ("Por ubicación (nuestra)", None, cuentas["ubicacion"]),
+        ("Por ubicación/UA vs Check", None, cuentas["chk"]),
+    ]
+    for titulo, orden, cnt in bloques:
+        for i, h in enumerate((titulo, "Cantidad", "% del total"), 1):
+            c = rs.cell(row=fila, column=i, value=h)
+            c.font, c.fill = F_ENC, RELLENO_ENC
+            c.alignment = Alignment(horizontal="left" if i == 1 else "center")
+        fila += 1
+        claves = list(orden) if orden else [k for k, _ in cnt.most_common()]
+        for k in claves:
+            rs.cell(row=fila, column=1, value=k).font = F_NORMAL
+            c = rs.cell(row=fila, column=2, value=cnt.get(k, 0))
+            c.font, c.number_format = F_NORMAL, "#,##0"
+            c = rs.cell(row=fila, column=3, value=cnt.get(k, 0) / total)
+            c.font, c.number_format = F_NORMAL, "0.0%"
+            fila += 1
+        fila += 1
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+@app.route("/mantenciones/api/incidencias/excel", methods=["GET"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_excel():
+    """Descarga en Excel el detalle de la bodega de Incidencias (solo admin y
+    superadmin; el técnico nunca). Respeta los filtros de la pantalla por
+    querystring: q, estado, f_chk, ver_todo=1 (incluye las que no cuadran) y
+    bajas=1 (incluye las dadas de baja). `todo=1` ignora todos los filtros e
+    incluye las dadas de baja. Solo lectura. Las eliminadas nunca salen."""
+    perms = g.get("permissions") or {}
+    if not (perms.get("admin") or perms.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo un administrador puede descargar este Excel."}), 403
+    try:
+        import openpyxl  # noqa: F401
+    except ImportError:
+        return jsonify({"ok": False, "error": "Falta openpyxl en el servidor."}), 500
+
+    todo = (request.args.get("todo") or "").strip() == "1"
+    q = "" if todo else (request.args.get("q") or "").strip()
+    estado = "" if todo else (request.args.get("estado") or "").strip()
+    f_chk = "" if todo else (request.args.get("f_chk") or "").strip()
+    ver_todo = todo or (request.args.get("ver_todo") or "").strip() == "1"
+    con_bajas = todo or (request.args.get("bajas") or "").strip() == "1"
+
+    where = ["COALESCE(eliminada,0) = 0"]
+    params = []
+    if not con_bajas:
+        ids_baja = _inc_ids_en_baja()
+        if ids_baja:
+            where.append("id NOT IN (" + ",".join(["%s"] * len(ids_baja)) + ")")
+            params += list(ids_baja)
+    if not ver_todo:
+        ids_nc = _inc_ids_no_cuadran()
+        if ids_nc:
+            where.append("id NOT IN (" + ",".join(["%s"] * len(ids_nc)) + ")")
+            params += list(ids_nc)
+    if q:
+        where.append("(sku LIKE %s OR descripcion LIKE %s OR motivo LIKE %s OR recomendacion LIKE %s)")
+        params += [f"%{q}%"] * 4
+    if estado in ("abierta", "resuelta"):
+        where.append("estado = %s")
+        params.append(estado)
+
+    try:
+        filas = [_mant_incidencia_row(r) for r in (mysql_fetchall(
+            "SELECT * FROM mant_incidencias WHERE " + " AND ".join(where)
+            + " ORDER BY created_at DESC LIMIT 20000", params) or [])]
+        filas = _inc_anotar_ingreso(filas)
+        try:
+            wms_rows = _checkwms_stock_rows()   # cacheada 1 h: una lectura, no una por fila
+            wms_rows = wms_rows if wms_rows else None
+        except Exception as _e:
+            print(f"[incidencias excel] CheckWMS no disponible: {_e}", flush=True)
+            wms_rows = None
+        filas = _inc_comparativa_ua(filas, wms_rows)
+        if f_chk in _INC_CHK_ESTADOS:
+            filas = [r for r in filas if r.get("chk_estado") == f_chk]
+
+        ids = [r["id"] for r in filas]
+        bajas, fotos, n_fotos = {}, {}, {}
+        if ids:
+            for b in mysql_fetchall(
+                    "SELECT incidencia_id, motivo_codigo, motivo_texto, baja_by, baja_at "
+                    "  FROM mant_incidencia_bajas "
+                    " WHERE origen='incidencia' AND reactivada_at IS NULL AND incidencia_id IS NOT NULL "
+                    " ORDER BY id") or []:
+                bajas[b["incidencia_id"]] = b
+            for i in range(0, len(ids), 500):
+                lote = ids[i:i + 500]
+                for f in mysql_fetchall(
+                        "SELECT incidencia_id, gcs_key FROM mant_incidencia_fotos "
+                        " WHERE incidencia_id IN (" + ",".join(["%s"] * len(lote)) + ") "
+                        " ORDER BY incidencia_id, orden", lote) or []:
+                    n_fotos[f["incidencia_id"]] = n_fotos.get(f["incidencia_id"], 0) + 1
+                    fotos.setdefault(f["incidencia_id"], f["gcs_key"])
+        base_url = request.host_url.rstrip("/")
+        for r in filas:
+            r["baja"] = bajas.get(r["id"])
+            r["n_fotos"] = n_fotos.get(r["id"], 0)
+            r["foto_url"] = (base_url + "/f/" + fotos[r["id"]]) if r["id"] in fotos else None
+        data = _inc_excel_bytes(filas, _now_chile().replace(tzinfo=None), INC_BAJA_MOTIVOS)
+    except Exception as e:
+        print(f"[incidencias excel] error: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo generar el Excel. Intenta de nuevo."}), 500
+
+    nombre = f"incidencias_bodega_{_now_chile_str('%d-%m-%Y')}.xlsx"
+    return Response(
+        data,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nombre}"'},
+    )
+
+
 @app.route("/mantenciones/api/incidencias", methods=["POST"])
 @_mant_required
 @_no_tecnico_salvo_taller
