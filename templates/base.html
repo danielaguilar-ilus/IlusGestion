@@ -724,6 +724,31 @@
       <i class="bi bi-clipboard2-pulse-fill"></i><span>Órdenes de Trabajo</span>
     </a>
     {% endif %}
+    {# 🔏 2026-10-07 (Daniel: documento absoluto): «Regularizar OT» (gestión) y «Autorizaciones» (superadmin, con el
+       contador de lo que espera su respuesta; cada solicitud nueva también llega a la campana). #}
+    {% if not es_tecnico %}
+    <a href="{{ url_for('ot_regularizar_pagina') }}"
+       class="sidebar-link{% if request.endpoint == 'ot_regularizar_pagina' %} active{% endif %}">
+      <i class="bi bi-clipboard2-check"></i><span>Regularizar OT</span>
+    </a>
+    {% if permissions.superadmin %}
+    <a href="{{ url_for('ot_aut_pagina') }}"
+       class="sidebar-link{% if request.endpoint in ['ot_aut_pagina','ot_aut_pagina_detalle'] %} active{% endif %}"
+       style="display:flex;align-items:center;gap:8px">
+      <i class="bi bi-shield-lock"></i><span>Autorizaciones</span>
+      <span id="sgAutBadge" style="display:none;margin-left:auto;background:#dc2626;color:#fff;border-radius:999px;font-size:.7rem;font-weight:900;padding:1px 8px"></span>
+    </a>
+    <script>
+    (function(){ try {
+      fetch('/ot/api/autorizaciones?estado=pendiente&per_page=1', {credentials:'same-origin'})
+        .then(function(r){ return r.json(); })
+        .then(function(j){ var b = document.getElementById('sgAutBadge');
+          if (b && j && j.ok && j.total > 0) { b.textContent = j.total; b.style.display = 'inline-block'; } })
+        .catch(function(){});
+    } catch(e){} })();
+    </script>
+    {% endif %}
+    {% endif %}
     {# ── Taller (2026-07-29, Daniel: "Servicio Técnico está muy largo, se
        tiene que contraer") — agrupa lo de apoyo al taller (plantillas de
        checklist, proveedores/repuestos, técnicos) detrás de un segundo

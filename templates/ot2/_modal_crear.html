@@ -1075,6 +1075,8 @@
    vista previa del paso Costos (_pintarFinMargenDom): el asistente todavía no tiene vid. #}
 <script src="{{ url_for('static', filename='ot_finanzas.js') }}"></script>
 <script>
+// 🔏 2026-10-07: ¿quien crea es superadministrador? (puede «Autorizar y crear» sin esperar a Daniel).
+window.OT2C_ES_SUPERADMIN = {{ 'true' if (permissions and permissions.superadmin) else 'false' }};
 /* ══════════════════════════════════════════════════════════════════════
    OT2C — motor del modal de creación de OT 2.0
    Namespace propio. No comparte una sola línea con _TKOT (el modal viejo).
@@ -1306,6 +1308,10 @@ window.OT2C = (function(){
          // "Factura o boleta"; este es el documento de COBERTURA de
          // Finanzas, que aplica sin importar de dónde nació la OT.
          fin_centro:null, fin_garantia:false, fin_garantia_motivo:'',
+         // 🔏 2026-10-07 (Daniel: documento absoluto): sin factura/boleta/nota de venta/cotización la OT solo se crea con la
+         // autorización de Daniel. fin_aut = «sin documento»; fin_cero_motivo = Garantía | Regalía | Arriendo o leasing.
+         // El argumento (mínimo 30) vive en fin_garantia_motivo, igual que el motivo de la garantía de siempre.
+         fin_aut:false, fin_cero_motivo:'garantia',
          fin_doc:null, fin_costo_estimado:null,
          // 2026-08-29 (Daniel: "los costos y lo que nos cobra el
          // proveedor... % de margen sí o sí"): lineas ZZ reales del
@@ -1641,7 +1647,7 @@ window.OT2C = (function(){
         // Daniel) -- centro de costo + "Esta OT vale" > 0 (horas × tarifa
         // o escrito a mano). Sin cobro, sin documento, sin proveedor.
         if (esInterno()) return _o2mCostoInternoNum() > 0;
-        if (!(S.fin_garantia || !!(S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo))) return false;
+        if (!(S.fin_garantia || S.fin_aut || !!(S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo))) return false;
         // 🔒 2026-09-09 (Daniel, explícito: "los documentos y las finanzas
         // deben ser requisito indispensable... con datos persistentes en la
         // OT"): antes el monto en sí quedaba deliberadamente fuera de esta
@@ -1663,7 +1669,7 @@ window.OT2C = (function(){
         // exigir en garantía (costo_proveedor/costo_despacho) sigue
         // obligatorio más abajo, sin cambios.
         if (!S.fin_garantia && !(S.fin_zz_monto > 0)) return false;
-        if (S.fin_garantia && (S.fin_garantia_motivo||'').trim().length < 10) return false;
+        if ((S.fin_garantia || S.fin_aut) && (S.fin_garantia_motivo||'').trim().length < 30) return false;   // 🔏 argumento ≥ 30
         // 2026-08-30 (Daniel: "si no trae esto se podrá declarar a mano,
         // pero deberá reportarse con un argumento... hay que ser bien
         // riguroso y detallista con esto"): esto SÍ bloquea -- a diferencia
@@ -1883,12 +1889,25 @@ window.OT2C = (function(){
 
     atras.style.visibility = 'visible';
     sig.style.display = '';
+    _o2mSigRotular();
     body.className = 'o2m-body';
     // 2026-08-30 (Daniel, confirmado dos veces: "que se complete cada paso
     // en orden estricto"): reemplaza el subtítulo viejo ("puedes moverte
     // libremente") -- ver pasoActualIndex()/pintarAnclas() para el bloqueo real.
     document.getElementById('o2mSub').textContent = 'Completa cada paso en orden para avanzar al siguiente';
     return pintarFormulario();
+  }
+
+  /* 🔏 2026-10-07: el botón dice lo que va a pasar. Sin documento (o $0 sin ser superadministrador) la OT no se crea:
+     «Pedir autorización a Daniel»; el superadministrador ve «Autorizar y crear». */
+  function _o2mSigRotular(){
+    var sig = document.getElementById('o2mSig');
+    if (!sig || sig.disabled) return;
+    var sa = !!window.OT2C_ES_SUPERADMIN;
+    var pide = !esInterno() && (S.fin_aut || (S.fin_garantia && !sa));
+    var txt = pide ? 'Pedir autorización a Daniel' : ((!esInterno() && S.fin_aut && sa) ? 'Autorizar y crear' : 'Crear orden');
+    if (!esInterno() && S.fin_aut && sa) txt = 'Autorizar y crear';
+    sig.innerHTML = '<i class="bi ' + ((pide || txt === 'Autorizar y crear') ? 'bi-shield-lock' : 'bi-check-lg') + ' me-1"></i>' + txt;
   }
 
   /* Construye TODAS las secciones del formulario largo de una sola vez y
@@ -5557,7 +5576,7 @@ window.OT2C = (function(){
     // ── Sub-paso 3: "¿Se le cobra al cliente?" ─────────────────────────
     var cobroHtml = '';
     if (!interno){
-      var docSel = !S.fin_garantia && !!docTxt;
+      var docSel = !S.fin_garantia && !S.fin_aut && !!docTxt;
       cobroHtml =
         '<div class="o2m-cobro-toggle">'+
           '<button type="button" class="o2m-op'+(docSel?' sel-ok':'')+'" onclick="OT2C.setFinCobro(\'doc\')">'+
@@ -5565,24 +5584,30 @@ window.OT2C = (function(){
             '<span class="l">Factura, boleta o nota de venta del ERP</span></span></button>'+
           '<button type="button" class="o2m-op'+(S.fin_garantia?' sel-warn':'')+'" onclick="OT2C.setFinCobro(\'gar\')">'+
             '<i class="bi bi-shield-check ic"></i><span class="tx"><span class="n">No, va por garantía</span>'+
-            '<span class="l">Se cobra $0 · el valor queda solo como referencia</span></span></button>'+
+            '<span class="l">Se cobra $0 · lo autoriza Daniel</span></span></button>'+
+          '<button type="button" class="o2m-op'+(S.fin_aut?' sel-warn':'')+'" onclick="OT2C.setFinCobro(\'aut\')">'+
+            '<i class="bi bi-shield-lock ic"></i><span class="tx"><span class="n">Todavía no hay documento</span>'+
+            '<span class="l">Se pide la autorización de Daniel con un argumento</span></span></button>'+
         '</div>'+
         (S.fin_garantia
           ? '<div id="o2mFinGarResumen"></div>'+
-            '<label class="fl">Motivo de la garantía *</label>'+
+            '<label class="fl">Motivo del $0 *</label>'+_o2mCeroMotivoHtml()+
+            '<label class="fl">Argumento para Daniel * <span class="text-muted" style="font-weight:400">(mínimo 30 caracteres)</span></label>'+
             '<textarea class="form-control mb-2" rows="2" maxlength="500" '+
-            'placeholder="Por qué queda cubierto sin cobrar…" '+
+            'placeholder="Por qué queda cubierto sin cobrar: es lo que Daniel va a leer para autorizar…" '+
             'oninput="OT2C.setFinGarantiaMotivo(this.value)">'+esc(S.fin_garantia_motivo)+'</textarea>'+
+            '<div id="o2mArgCnt" style="font-size:.76rem;font-weight:700;margin:-4px 0 8px">'+_o2mArgCntTxt()+'</div>'+
+            _o2mAutAvisoHtml()+
             (docTxt
               ? '<div class="o2m-fin-docchip ref"><i class="bi bi-file-earmark-text"></i>Documento: <b>'+esc(docTxt)+'</b>'+
                 '<span>· referencia, no se cobra</span>'+
                 '<button type="button" class="btn btn-sm btn-link p-0" onclick="OT2C.limpiarFinDoc()">cambiar</button></div>'
               : '')
-          : (docTxt
+          : (S.fin_aut ? _o2mAutHtml() : (docTxt
               ? '<div class="o2m-fin-docchip"><i class="bi bi-check-circle-fill"></i>Documento: <b>'+esc(docTxt)+'</b>'+
                 '<button type="button" class="btn btn-sm btn-link p-0" onclick="OT2C.limpiarFinDoc()">cambiar</button></div>'
               : '<button type="button" class="btn btn-outline-secondary" style="min-height:44px" onclick="OT2C.abrirBusquedaFinDoc()">'+
-                '<i class="bi bi-search me-1"></i>Buscar documento en el ERP</button>'));
+                '<i class="bi bi-search me-1"></i>Buscar documento en el ERP</button>')));
     }
 
     // ── Sub-paso 4: "¿Cuánto nos cuesta?" ──────────────────────────────
@@ -5675,9 +5700,41 @@ window.OT2C = (function(){
   /* Sub-paso 3 como dos tarjetas: 'doc' = Sí, con documento · 'gar' = No,
      va por garantía. Si se elige documento y todavía no hay uno, se abre
      el buscador del ERP de una (es lo único que falta para resolverlo). */
+  /* 🔏 2026-10-07 (Daniel: "tanto tickets y OT y cotización deberán siempre predominar con el documento de Random a
+     menos que yo lo autorice"). Tres caminos: con documento / $0 (garantía, regalía, arriendo o leasing) / todavía sin
+     documento. Los dos últimos piden la autorización de Daniel con un argumento de mínimo 30 caracteres. */
+  var _O2M_CERO_MOTIVOS = [['garantia','Garantía'],['regalia','Regalía'],['arriendo_leasing','Arriendo o leasing']];
+  function _o2mCeroMotivoHtml(){
+    return '<select class="form-select mb-2" style="min-height:44px;font-size:16px" onchange="OT2C.setFinCeroMotivo(this.value)">'+
+      _O2M_CERO_MOTIVOS.map(function(m){ return '<option value="'+m[0]+'"'+(S.fin_cero_motivo===m[0]?' selected':'')+'>'+m[1]+'</option>'; }).join('')+'</select>';
+  }
+  function setFinCeroMotivo(v){ S.fin_cero_motivo = v; }
+  function _o2mArgCntTxt(){
+    var n = (S.fin_garantia_motivo||'').trim().length;
+    return '<span style="color:'+(n>=30?'#15803d':'#b45309')+'">'+n+' de 30 caracteres como mínimo'+(n>=30?' ✓':'')+'</span>';
+  }
+  function _o2mAutAvisoHtml(){
+    var sa = !!window.OT2C_ES_SUPERADMIN;
+    return '<div class="o2m-fin-docchip ref" style="margin-bottom:8px"><i class="bi bi-shield-lock"></i>'+
+      (sa ? 'Eres superadministrador: tu decisión queda registrada como autorización.'
+          : 'La OT <b>no se crea todavía</b>: se le pide a Daniel y él decide desde su celular. Te avisamos en la campana.')+'</div>';
+  }
+  function _o2mAutHtml(){
+    return '<div id="o2mFinGarResumen"></div>'+
+      '<div class="o2m-fin-docchip ref" style="margin-bottom:8px"><i class="bi bi-exclamation-triangle-fill"></i>'+
+      '<b>Esta OT necesita un documento de Random</b><span>· factura, boleta, nota de venta o cotización</span></div>'+
+      '<label class="fl">Argumento para Daniel * <span class="text-muted" style="font-weight:400">(mínimo 30 caracteres)</span></label>'+
+      '<textarea class="form-control mb-1" rows="3" maxlength="500" placeholder="Por qué se hace la visita sin documento: es lo que Daniel va a leer para autorizar…" '+
+      'oninput="OT2C.setFinGarantiaMotivo(this.value)">'+esc(S.fin_garantia_motivo)+'</textarea>'+
+      '<div id="o2mArgCnt" style="font-size:.76rem;font-weight:700;margin-bottom:8px">'+_o2mArgCntTxt()+'</div>'+
+      '<button type="button" class="btn btn-outline-secondary" style="min-height:44px" onclick="OT2C.abrirBusquedaFinDoc()">'+
+      '<i class="bi bi-search me-1"></i>Mejor busco el documento en el ERP</button>'+_o2mAutAvisoHtml();
+  }
   function setFinCobro(modo){
     var abrirBuscador = (modo === 'doc' && !(S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo));
+    if (modo === 'aut'){ S.fin_aut = true; S.fin_garantia_motivo = ''; } else { S.fin_aut = false; }
     setFinGarantia(modo === 'gar');
+    _o2mSigRotular();
     if (abrirBuscador) abrirBusquedaFinDoc();
   }
   /* 💰 2026-09-15 (decisión de Daniel: "en garantía la OT conserva el
@@ -5692,7 +5749,10 @@ window.OT2C = (function(){
     repintarSeccion('finanzas');
     refrescarAnclas();
   }
-  function setFinGarantiaMotivo(v){ S.fin_garantia_motivo = v; _o2mFinEstadosDom(); }
+  function setFinGarantiaMotivo(v){
+    S.fin_garantia_motivo = v; _o2mFinEstadosDom();
+    var c = document.getElementById('o2mArgCnt'); if (c) c.innerHTML = _o2mArgCntTxt();
+  }
   /* Al soltar el documento se vuelve a partir de cero en el valor (el
      número venía de ahí): la auto-selección por prioridad corre de nuevo. */
   function _o2mFinResetValor(){
@@ -6202,7 +6262,9 @@ window.OT2C = (function(){
           // 🔴 FIX 2026-09-18: en garantía no se le cobra al cliente, así
           // que este sub-paso ya no exige el monto -- solo el motivo de
           // la garantía (mismo fix que en 'valor', más arriba).
-          if ((S.fin_garantia_motivo||'').trim().length < 10) return {cls:'falta', txt:'Falta el motivo'};
+          if ((S.fin_garantia_motivo||'').trim().length < 30) return {cls:'falta', txt:'Falta el argumento (30 caracteres)'};
+        } else if (S.fin_aut){
+          if ((S.fin_garantia_motivo||'').trim().length < 30) return {cls:'falta', txt:'Falta el argumento (30 caracteres)'};
         } else {
           if (!(S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo)) return {cls:'falta', txt:'Pendiente'};
         }
@@ -9207,6 +9269,46 @@ window.OT2C = (function(){
     return true;
   }
 
+  /* 🔏 2026-10-07: «Pedir autorización a Daniel» (o «Autorizar y crear» si quien crea es superadministrador). */
+  function pedirAutorizacionCrear(body, esSA, sig, origSig){
+    var arg = (S.fin_garantia_motivo || '').trim();
+    var payload = JSON.parse(JSON.stringify(body));
+    payload.anexo_delegado = false;   // la OT nace al aprobarse: el anexo automático la acompaña
+    var cuerpo = { tipo: 'crear_sin_documento', payload: payload, argumento: arg, centro_costo: S.fin_centro || null,
+      motivo: S.fin_garantia ? (S.fin_cero_motivo || 'garantia') : null, cliente_id: body.cliente_id };
+    var vz = body.finanzas && body.finanzas.valorizado_clp;
+    if (vz) cuerpo.valorizado_clp = vz;
+    function falla(msg){
+      sig.disabled = false; sig.innerHTML = origSig;
+      var e = document.getElementById('o2mErr');
+      if (e) e.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+esc(msg)+'</div>';
+    }
+    sig.disabled = true;
+    sig.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>' + (esSA ? 'Autorizando…' : 'Pidiendo autorización…');
+    fetch('/ot/api/autorizaciones', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(cuerpo) })
+      .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+      .then(function(res){
+        if (!res.j.ok){ return falla(res.j.error || 'No se pudo pedir la autorización.'); }
+        if (!esSA){
+          if (window.ilusToast) ilusToast('Se pidió autorización a Daniel. La OT se crea cuando la apruebe.', {type:'success', duration:7000});
+          sig.disabled = false; sig.innerHTML = origSig;
+          cerrar();
+          return;
+        }
+        return fetch('/ot/api/autorizaciones/'+res.j.id+'/aprobar', { method:'POST', credentials:'same-origin',
+          headers:{'Content-Type':'application/json'}, body: JSON.stringify({comentario:'Autorizado por quien la crea (superadministrador).'}) })
+          .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+          .then(function(a){
+            if (!a.j.ok) return falla(a.j.error || 'La solicitud quedó pendiente: no se pudo crear la OT.');
+            if (window.ilusToast) ilusToast('✓ '+(a.j.numero_ot||'OT')+' creada con tu autorización', {type:'success'});
+            var vid = a.j.visita_id, url = a.j.ot_url;
+            if (typeof S.onCreada === 'function') S.onCreada(vid, url); else location.href = url;
+          });
+      })
+      .catch(function(){ falla('No hay conexión con el servidor. Reintenta.'); });
+  }
+
   function crear(){
     if (!validarTodo()) return;
     var body = {
@@ -9287,6 +9389,10 @@ window.OT2C = (function(){
       if (S.fin_garantia){
         body.finanzas.garantia_aplica = true;
         body.finanzas.garantia_motivo = S.fin_garantia_motivo || '';
+        // 🔏 2026-10-07: el $0 lleva su motivo (Garantía | Regalía | Arriendo o leasing) y su argumento; la puerta del
+        // documento los lee (superadministrador = autoriza al declararlo; el resto = se pide a Daniel).
+        body.finanzas.cobro_cero_motivo = S.fin_cero_motivo || 'garantia';
+        body.finanzas.cobro_cero_argumento = S.fin_garantia_motivo || '';
         delete body.finanzas.factura_tido; delete body.finanzas.factura_nudo;
       } else if (S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo){
         body.finanzas.factura_tido = S.fin_doc.tido;
@@ -9411,6 +9517,13 @@ window.OT2C = (function(){
 
     var sig = document.getElementById('o2mSig');
     var _origSig = sig.innerHTML;
+
+    // 🔏 2026-10-07 (documento absoluto): sin documento, o con $0 sin ser superadministrador, la OT NO se crea: se pide
+    // la autorización de Daniel y la OT nace cuando él la aprueba (por este mismo asistente, con lo que pusiste acá).
+    var _esSA = !!window.OT2C_ES_SUPERADMIN;
+    if (!esInterno() && (S.fin_aut || (S.fin_garantia && !_esSA))){
+      return pedirAutorizacionCrear(body, _esSA, sig, _origSig);
+    }
     sig.disabled = true; sig.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';
 
     fetch('/ot/api/crear', {
@@ -9831,7 +9944,7 @@ window.OT2C = (function(){
           _o2mFinMontoServicioCambio:_o2mFinMontoServicioCambio, _o2mFinMontoEnvioCambio:_o2mFinMontoEnvioCambio,
           setFinMotivoManual:setFinMotivoManual, setFinEnvioMotivoManual:setFinEnvioMotivoManual,
           // 💰 2026-09-15: paso Costos rediseñado (valorización de toda OT)
-          setFinCobro:setFinCobro, usarFuenteValor:usarFuenteValor, usarTarifaProveedor:usarTarifaProveedor,
+          setFinCobro:setFinCobro, setFinCeroMotivo:setFinCeroMotivo, usarFuenteValor:usarFuenteValor, usarTarifaProveedor:usarTarifaProveedor,
           _o2mFinCostoInternoHeroCambio:_o2mFinCostoInternoHeroCambio, usarCostoInternoAuto:usarCostoInternoAuto,
           _o2mFinHeroBlur:_o2mFinHeroBlur,
           setAnexoItemMonto:setAnexoItemMonto, setAnexoItemConcepto:setAnexoItemConcepto,

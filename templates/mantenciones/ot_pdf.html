@@ -1331,6 +1331,17 @@
         </div>
       </div>
       {% endif %}
+      {# 🔏 2026-10-07 (Daniel: "cuando el reporte se gestione deberán aparecer [todos los documentos] para mayor
+         trazabilidad y transparencia"): TODOS los documentos declarados de la OT. Al cliente SOLO tipo y número:
+         nunca montos, costos ni proveedores (ctx["documentos_ot"], _ot_docs_para_informe). #}
+      {% if documentos_ot %}
+      <div class="ic-row" id="pdfDocumentosOt">
+        <div class="ic-text">
+          <span class="lbl">Documentos de la OT</span>
+          {% for d in documentos_ot %}<span class="val">{{ d.tipo }} {{ d.numero }}</span>{% endfor %}
+        </div>
+      </div>
+      {% endif %}
       {% if ot_datos and ot_datos.causa_raiz_label %}
       <div class="ic-row">
         <div class="ic-text">

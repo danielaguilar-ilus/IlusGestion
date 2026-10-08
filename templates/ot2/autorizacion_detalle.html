@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Solicitud de autorización · ILUS Fitness{% endblock %}
+
+{#
+  🔏 2026-10-07: una solicitud de autorización completa para el celular de Daniel (REGLA #3): quién la pidió y cuándo,
+  cliente, qué se va a crear o qué OT es, el argumento COMPLETO, centro de costo y valorizado. Aprobar / Rechazar con
+  comentario obligatorio. Datos: GET /ot/api/autorizaciones/<id>.
+#}
+
+{% block head_extra %}<link rel="stylesheet" href="{{ url_for('static', filename='ot_puerta_paginas.css') }}">{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-shield-lock me-2"></i>Solicitud N° {{ aid }}</h4>
+    <div class="sub">Lee el argumento y decide. Queda registrado con tu nombre, la fecha y la hora.</div>
+  </div>
+  <a href="{{ url_for('ot_aut_pagina') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Todas las solicitudes</a>
+</div>
+<div class="pp" id="ppAut" data-modo="detalle" data-id="{{ aid }}" data-sa="{{ '1' if es_superadmin else '0' }}">
+  <div class="pp-vacio">Cargando la solicitud…</div>
+</div>
+{% endblock %}
+
+{% block scripts %}<script src="{{ url_for('static', filename='ot_autorizaciones.js') }}"></script>{% endblock %}

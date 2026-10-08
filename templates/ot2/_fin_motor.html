@@ -1,0 +1,13 @@
+{# 🧭 MOTOR DE FINANZAS Y DOCUMENTOS DE LA OT — un solo componente, dos lugares (Daniel 2026-10-07: "necesito que
+   ese mismo motor funcione" en el modal del autorizador). Se incluye con:
+     {% with fm_vid=v.id, fm_modo='ficha', fm_assets=True %}{% include 'ot2/_fin_motor.html' %}{% endwith %}
+   La ficha y el modal de aprobación y cierre usan EXACTAMENTE static/ot_fin_motor.js. Solo gestión: jamás para técnicos
+   (REGLA #19: lleva montos, costos y proveedores). Todo el contenido lo pinta el JS con /ot/api/<vid>/recorrido y
+   /ot/api/<vid>/panorama. #}
+{% if fm_assets %}
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_fin_motor.css') }}">
+<script src="{{ url_for('static', filename='ot_fin_motor.js') }}" defer></script>
+{% endif %}
+<div class="fm" data-fin-motor data-vid="{{ fm_vid }}" data-modo="{{ fm_modo or 'ficha' }}">
+  <div class="fm-cargando"><i class="bi bi-hourglass-split"></i> Cargando finanzas y documentos…</div>
+</div>

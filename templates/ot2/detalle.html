@@ -4479,6 +4479,14 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
        con sus 4 pasos en 2x2 -- la única tarjeta que de verdad
        aprovecha el ancho de esta pantalla. Ver REGLA #16. #}
       {% if not es_tecnico %}
+      {# 🧭 2026-10-07 (Daniel: "este módulo lo necesito potente, con espacios ergonómicos donde se pueda visualizar todo
+         el panorama"): el MOTOR de finanzas y documentos -- recorrido de 6 pasos, contadores, TODOS los documentos con
+         su detalle, lo que nos costó y la cuenta. Es el MISMO componente del modal de aprobación y cierre
+         (static/ot_fin_motor.js). Tarjeta a ANCHO COMPLETO (REGLA #16). La tarjeta "Finanzas de la OT" de abajo
+         conserva todos sus controles (REGLA #4.2). #}
+      <div class="otd-card otd-span2" id="otdCardMotor">
+        {% with fm_vid=v.id, fm_modo='ficha', fm_assets=True %}{% include 'ot2/_fin_motor.html' %}{% endwith %}
+      </div>
       {# 💸 2026-09-14 (Daniel: "controlar los cobros de los externos").
          Estado del pago al proveedor externo -- viene de Facturas de
          proveedor (SSTT). Solo lectura acá: se gestiona allá. Macro porque
@@ -7551,6 +7559,13 @@ async function otdFinCorrGuardar(){
           garantía, y el costo del proveedor: queda todo guardado para cuando llegue esa firma.
         </div>
         {% endif %}
+
+        {# 🧭 2026-10-07: el MISMO motor de la ficha, acá adentro: es la «segunda opción de modificar» del autorizador
+           (ligar la factura que da de baja la nota de venta, pasar a $0 pidiendo autorización, corregir lo que cobró
+           el proveedor, elegir el centro de costo). Cada rechazo de cierre trae su acción y se resuelve acá mismo. #}
+        <div class="mb-3" id="otfMotorCierre">
+          {% with fm_vid=v.id, fm_modo='modal', fm_assets=False %}{% include 'ot2/_fin_motor.html' %}{% endwith %}
+        </div>
 
         {# ══ PASO 1 — FINANZAS Y DOCUMENTO ═══════════════════════════════
            🆕 2026-09-02 (Daniel: "ese modal quiero que lo diseñes con el
@@ -15036,6 +15051,8 @@ const OT2F = (function(){
         setTimeout(() => location.reload(), 400);
       } else {
         ilusToast(d.error || 'Error al cerrar la OT', {type:'error'});
+        // 🧭 2026-10-07: cada rechazo trae su acción ({tipo,label,url}) y el motor la ofrece acá mismo: ningún ciclo sin salida.
+        try { if (d.accion && window.OTFinMotor) OTFinMotor.alCerrarRechazado(d); } catch(_e){}
         btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Firmar y cerrar OT';
       }
     } catch(e){

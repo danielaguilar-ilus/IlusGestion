@@ -94398,6 +94398,10 @@ def ot_api_regularizar():
     if cre:
         where.append("v.created_by LIKE %s")
         params.append(f"%{cre}%")
+    cli_q = (request.args.get("cliente_q") or "").strip()[:100]   # 2026-10-07: el cliente se busca por nombre
+    if cli_q:
+        where.append("c.razon_social LIKE %s")
+        params.append(f"%{cli_q}%")
     mes = (request.args.get("mes") or "").strip()[:7]
     if re.fullmatch(r"\d{4}-\d{2}", mes or ""):
         where.append("DATE_FORMAT(v.fecha_programada,'%%Y-%%m')=%s")
@@ -94596,6 +94600,422 @@ def ot_api_recorrido(vid):
     })
 
 
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  🧭 2026-10-07 — EL MOTOR DE FINANZAS Y DOCUMENTOS (pantallas)
+#  Daniel: "este módulo lo necesito potente, con espacios ergonómicos donde se pueda visualizar todo el panorama:
+#  cuántas facturas, cuántos servicios… siempre hay que pasar todas completas, pero con un detalle".
+#  GET /ot/api/<vid>/panorama alimenta static/ot_fin_motor.js (el MISMO componente en la ficha de la OT y en el
+#  modal de aprobación y cierre). Solo lectura del ERP (REGLA #4.1). Lleva montos: nunca para técnicos (#19).
+#  POST /ot/api/<vid>/costo-proveedor: la segunda opción de modificar lo que cobró el proveedor (con motivo).
+#  Páginas: /ot/autorizaciones, /ot/autorizaciones/<id> (para el celular de Daniel) y /ot/regularizar.
+# ═══════════════════════════════════════════════════════════════════════════
+_OT_TIDO_TXT = {"FCV": "Factura", "FCE": "Factura exenta", "BLV": "Boleta", "BLE": "Boleta electrónica",
+                "NVV": "Nota de venta", "NVI": "Nota de venta interna", "VD": "Nota de venta",
+                "WEB": "Nota de venta web", "GDV": "Guía de despacho", "COV": "Cotización del ERP"}
+_OT_DOC_CUENTA_TXT = {"servicio": "Cobro del servicio", "despacho": "Cobro del despacho",
+                      "nota_venta": "Nota de venta: promesa de cobro, falta la factura",
+                      "cotizacion": "Cotización: solo referencia",
+                      "referencia_garantia": "Referencia de la garantía: no se cobra"}
+_OT_PANORAMA_MAX_LECTURAS_ERP = 12
+
+
+def _ot_doc_tipo_txt(tido):
+    t = (tido or "").strip().upper()
+    return _OT_TIDO_TXT.get(t, t or "Documento")
+
+
+def _ot_doc_categoria(tido):
+    """cobro (factura/boleta) | nota_venta | otro, para un tipo ya en la forma de la app (VD, FCV...)."""
+    t = (tido or "").strip().upper()
+    if t in _OT_DOCS_COBRO:
+        return "cobro"
+    if t in _OT_DOCS_NOTA_VENTA:
+        return "nota_venta"
+    return "otro"
+
+
+def _ot_panorama_lineas(tido, nudo):
+    """Las líneas de un documento del ERP (SOLO LECTURA, REGLA #4.1) separadas como las lee Daniel: servicio
+    (ZZ…), despacho (ZZENVIO) y productos. None si el ERP no respondió o el documento no existe."""
+    try:
+        header, lineas = _mant_erp_doc_cached(tido, nudo)
+    except Exception as e:
+        print(f"[ot-panorama] lineas {tido} {nudo}: {type(e).__name__}", flush=True)
+        return None
+    if not header:
+        return None
+    out = {"servicio": [], "despacho": [], "productos": [], "total": 0}
+    for ln in (lineas or []):
+        sku = (ln.get("sku") or "").strip().upper()
+        try:
+            monto = int(round(float(ln.get("vaneli") or 0)))
+        except (TypeError, ValueError):
+            monto = 0
+        try:
+            cant = float(ln.get("cantidad") or 0)
+        except (TypeError, ValueError):
+            cant = 0.0
+        item = {"sku": sku, "cantidad": (cant if cant else None), "monto": monto,
+                "descripcion": (str(ln.get("descripcion_erp") or ln.get("nombre_app") or sku).strip())[:200]}
+        out["total"] += monto
+        if sku == "ZZENVIO":
+            out["despacho"].append(item)
+        elif sku.startswith("ZZ"):
+            out["servicio"].append(item)
+        else:
+            out["productos"].append(item)
+    return out
+
+
+def _ot_panorama_docs(vid, v):
+    """Todos los documentos declarados de la OT (tabla puente + principal/extra anteriores a ella), completos."""
+    try:
+        filas = mysql_fetchall(
+            "SELECT d.*, c.numero_cotizacion, c.total AS cot_total, c.estado AS cot_estado "
+            "  FROM mant_visita_documentos d LEFT JOIN tk_cotizaciones c ON c.id=d.cotizacion_id "
+            " WHERE d.visita_id=%s ORDER BY d.es_principal DESC, d.id", (vid,)) or []
+    except Exception as e:
+        print(f"[ot-panorama] docs vid={vid}: {type(e).__name__}", flush=True)
+        filas = []
+    docs, ya = [], set()
+    for f in filas:
+        f = dict(f)
+        zs, ze = f.get("zz_serv_monto"), f.get("zz_envio_monto")
+        base = {"id": f.get("id"), "es_principal": bool(f.get("es_principal")), "es_cobro": bool(f.get("es_cobro", 1)),
+                "etiqueta": f.get("etiqueta") or "", "asociado_por": f.get("asociado_por") or "",
+                "asociado_at": chile_fmt_filter(f["created_at"]) if f.get("created_at") else "",
+                "fecha": _ot_fecha_txt(f.get("emitido_el")),
+                "reemplazado_por_id": f.get("reemplazado_por_id"), "cuenta": f.get("cuenta") or ""}
+        if f.get("origen") == "cotizacion":
+            base.update({"origen": "cotizacion", "categoria": "cotizacion", "tipo_txt": "Cotización",
+                         "titulo": f.get("numero_cotizacion") or f"Cotización {f.get('cotizacion_id')}",
+                         "tido": None, "nudo": None, "monto": (float(f["cot_total"]) if f.get("cot_total") is not None else None),
+                         "rut": "", "rut_estado": "no_aplica", "rut_justif": "", "cuenta": base["cuenta"] or "cotizacion",
+                         "estado_cot": f.get("cot_estado") or ""})
+            docs.append(base)
+            continue
+        tido_r, nudo_r = (f.get("erp_tido") or "FCV"), (f.get("erp_nudo") or "")
+        tu, nu = _ot_doc_real_a_usuario(tido_r, nudo_r)
+        ya.add((tido_r.upper(), nudo_r.lstrip("0")))
+        rut_ok = f.get("rut_ok")
+        rut_estado = ("ok" if rut_ok in (1, True) else ("justificado" if (rut_ok in (0, False) and (f.get("rut_justif") or "").strip())
+                      else ("distinto" if rut_ok in (0, False) else "sin_verificar")))
+        cat = _ot_doc_categoria(tu)
+        cuenta = base["cuenta"]
+        if not cuenta:
+            if cat == "nota_venta":
+                cuenta = "nota_venta"
+            elif not base["es_cobro"]:
+                cuenta = "referencia_garantia"
+            elif ze is not None and float(ze or 0) > 0 and not float(zs or 0):
+                cuenta = "despacho"
+            elif cat == "cobro":
+                cuenta = "servicio"
+        base.update({"origen": "erp", "categoria": cat, "tipo_txt": _ot_doc_tipo_txt(tu), "titulo": f"{tu} {nu}".strip(),
+                     "tido": tu, "nudo": nu, "erp_tido": tido_r, "erp_nudo": nudo_r,
+                     "monto": (float(f["monto"]) if f.get("monto") is not None else None),
+                     "rut": f.get("rut") or "", "rut_estado": rut_estado, "rut_justif": f.get("rut_justif") or "",
+                     "cuenta": cuenta, "zz_serv": (float(zs) if zs is not None else None),
+                     "zz_envio": (float(ze) if ze is not None else None)})
+        docs.append(base)
+    # Anteriores a la tabla puente (principal solo en mant_visitas.factura_* / documentos_extra del asistente).
+    try:
+        for d in (_ot_docs_listar(vid).get("documentos") or []):
+            if d.get("id") is not None or d.get("origen") != "erp":
+                continue
+            partes = (d.get("titulo") or "").split(" ", 1)
+            tu, nu = partes[0], (partes[1] if len(partes) > 1 else "")
+            if not nu:
+                continue
+            cat = _ot_doc_categoria(tu)
+            docs.append({"id": None, "es_principal": bool(d.get("es_principal")), "es_cobro": bool(d.get("es_cobro", True)),
+                         "etiqueta": d.get("etiqueta") or "", "asociado_por": (v.get("factura_asociada_por") or "") if d.get("es_principal") else "",
+                         "asociado_at": "", "fecha": ("" if not d.get("emitido_el") else
+                                                     "/".join(reversed(str(d["emitido_el"])[:10].split("-")))),
+                         "reemplazado_por_id": None, "cuenta": "nota_venta" if cat == "nota_venta" else ("servicio" if cat == "cobro" else ""),
+                         "origen": "erp", "categoria": cat, "tipo_txt": _ot_doc_tipo_txt(tu), "titulo": d.get("titulo"),
+                         "tido": tu, "nudo": nu, "erp_tido": tu, "erp_nudo": nu, "monto": d.get("monto"),
+                         "rut": d.get("rut") or "", "rut_estado": ("ok" if d.get("rut_ok") in (1, True) else "sin_verificar"),
+                         "rut_justif": "", "zz_serv": None, "zz_envio": None, "anterior": True})
+    except Exception as e:
+        print(f"[ot-panorama] legacy vid={vid}: {type(e).__name__}", flush=True)
+    por_id = {d["id"]: d for d in docs if d.get("id") is not None}
+    for d in docs:
+        rid = d.get("reemplazado_por_id")
+        if rid and rid in por_id:
+            d["dada_de_baja_por"] = {"id": rid, "titulo": por_id[rid]["titulo"]}
+            por_id[rid].setdefault("da_de_baja", []).append({"id": d["id"], "titulo": d["titulo"]})
+    return docs
+
+
+@app.route("/ot/api/<int:vid>/panorama", methods=["GET"])
+@_mant_required
+@_ot_can_view
+def ot_api_panorama(vid):
+    """Documentos completos (con sus líneas del ERP), contadores, lo que nos costó y el centro de costo de una OT:
+    todo lo que pinta el motor de finanzas y documentos. Lleva montos: 403 para técnicos (REGLA #19)."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Sin permiso para ver documentos y montos."}), 403
+    try:
+        v = mysql_fetchone(
+            "SELECT v.id, v.numero_ot, v.estado, v.centro_costo, v.cliente_id, v.proveedor_tipo, v.costo_proveedor, "
+            "       v.costo_despacho, v.factura_asociada_por, v.estado_facturacion, c.razon_social AS cliente, "
+            "       COALESCE(au.nombre, au.username) AS tecnico "
+            "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
+            "  LEFT JOIN app_users au ON au.id=v.tecnico_user_id WHERE v.id=%s", (vid,))
+    except Exception as e:
+        print(f"[ot-panorama] vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo leer la OT."}), 500
+    if not v:
+        return jsonify({"ok": False, "error": "No encontramos esa OT."}), 404
+    v = dict(v)
+    docs = _ot_panorama_docs(vid, v)
+    # Líneas del ERP: solo lectura, con tope para que una OT con muchos documentos no tarde.
+    leidos = 0
+    for d in docs:
+        d["lineas"] = None
+        if d.get("origen") != "erp" or d.get("categoria") == "otro" and d.get("tido") in ("GDV", "COV"):
+            continue
+        if leidos >= _OT_PANORAMA_MAX_LECTURAS_ERP:
+            d["lineas_omitidas"] = True
+            continue
+        leidos += 1
+        d["lineas"] = _ot_panorama_lineas(d.get("erp_tido") or d.get("tido"), d.get("erp_nudo") or d.get("nudo"))
+    cont = {"facturas": 0, "notas_venta": 0, "notas_venta_dadas_de_baja": 0, "cotizaciones": 0, "servicios": 0,
+            "despachos": 0, "otros": 0, "total": len(docs)}
+    for d in docs:
+        if d["categoria"] == "cobro":
+            cont["facturas"] += 1
+        elif d["categoria"] == "nota_venta":
+            cont["notas_venta"] += 1
+            if d.get("dada_de_baja_por"):
+                cont["notas_venta_dadas_de_baja"] += 1
+        elif d["categoria"] == "cotizacion":
+            cont["cotizaciones"] += 1
+        else:
+            cont["otros"] += 1
+        ln = d.get("lineas") or {}
+        cont["servicios"] += len(ln.get("servicio") or [])
+        cont["despachos"] += len(ln.get("despacho") or [])
+    # ── LO QUE NOS COSTÓ, registro por registro ──
+    try:
+        rep = (_ot_repuestos_desglose([vid]).get(vid)) or {}
+    except Exception:
+        rep = {}
+    regs = []
+    ext = (v.get("proveedor_tipo") or "").strip().lower() == "externo"
+    kI, kD = v.get("costo_proveedor"), v.get("costo_despacho")
+    regs.append({"clave": "tecnico", "rotulo": "Instalación o servicio del técnico / proveedor",
+                 "detalle": ((v.get("tecnico") or "Sin técnico asignado") + (" · proveedor externo" if ext else " · técnico propio")),
+                 "monto": (float(kI) if kI is not None else None), "falta": kI is None})
+    if kD is not None:
+        regs.append({"clave": "despacho", "rotulo": "Despacho del proveedor", "detalle": "Flete o courier que nos cobraron",
+                     "monto": float(kD), "falta": False})
+    for it in (rep.get("items") or []):
+        o = it.get("costo_origen")
+        regs.append({"clave": f"rep{it.get('id')}", "rotulo": f"Repuesto: {it.get('repuesto_nombre') or 'sin nombre'}",
+                     "detalle": f"{int(it['cantidad']) if float(it.get('cantidad') or 0).is_integer() else it.get('cantidad')} u"
+                                + (f" · origen: {o}" if o else " · sin costo registrado"),
+                     "monto": it.get("costo_linea"), "falta": it.get("costo_linea") is None})
+    total_costo = round(sum(float(r["monto"] or 0) for r in regs), 2)
+    cerrada = (v.get("estado") or "") in ("cerrada", "completada")
+    puede_cob = False
+    try:
+        puede_cob = bool(_puede_ot_accion(vid, "cobertura", getattr(g, "user", None) or {}))
+    except Exception:
+        puede_cob = False
+    return jsonify({
+        "ok": True, "visita_id": vid, "numero_ot": v.get("numero_ot"), "cliente": v.get("cliente") or "",
+        "estado": v.get("estado"), "cerrada": (v.get("estado") or "") == "cerrada",
+        "contadores": cont, "documentos": docs,
+        "costos": {"registros": regs, "total": total_costo, "sin_costo": int(rep.get("n_sin_costo") or 0)},
+        "centro": {"valor": v.get("centro_costo"), "nombre": dict(_OT2_CENTROS_COSTO).get(v.get("centro_costo") or "", ""),
+                   "opciones": [{"v": c, "n": n} for c, n in _OT2_CENTROS_COSTO]},
+        "puede_editar": puede_cob and (v.get("estado") or "") not in ("cerrada", "cancelada", "anulada"),
+        "puede_regularizar": _ot_puede_regularizar(),
+        "superadmin": _ot_aut_es_superadmin(),
+        "estado_facturacion": v.get("estado_facturacion"),
+    })
+
+
+@app.route("/ot/api/<int:vid>/costo-proveedor", methods=["POST"])
+@_mant_required
+@_ot_can_cobertura
+def ot_api_costo_proveedor(vid):
+    """La «segunda opción de modificar» (Daniel 2026-10-07): corregir lo que cobró el técnico/proveedor y su
+    despacho cuando hubo una desviación o un error del proveedor. Motivo OBLIGATORIO (≥ 10 caracteres): queda en la
+    bitácora con el valor anterior, el nuevo y quién lo cambió. Solo hasta antes de cerrar (el decorador lo
+    exige); una OT cerrada se corrige con «Corregir finanzas» (superadministrador). body:
+    {costo_proveedor?, costo_despacho?, motivo}. Escribe SOLO esas dos columnas."""
+    d = request.get_json(silent=True) or {}
+    motivo = (d.get("motivo") or "").strip()[:500]
+    if len(motivo) < 10:
+        return jsonify({"ok": False, "error": "Explica por qué cambia (mínimo 10 caracteres): queda registrado con tu "
+                                              "nombre.", "error_codigo": "MOTIVO_CORTO"}), 400
+    v = mysql_fetchone("SELECT id, estado, cliente_id, costo_proveedor, costo_despacho FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "No encontramos esa OT."}), 404
+    if (v.get("estado") or "") in ("cerrada", "cancelada", "anulada"):
+        return jsonify({"ok": False, "error": "La OT ya está cerrada: se corrige con «Corregir finanzas» "
+                                              "(superadministrador).", "error_codigo": "OT_CERRADA"}), 409
+    nuevos = {}
+    for campo, rot in (("costo_proveedor", "Lo que cobró el técnico o proveedor"), ("costo_despacho", "El costo del despacho")):
+        if campo not in d:
+            continue
+        raw = d.get(campo)
+        if raw is None or str(raw).strip() == "":
+            continue
+        try:
+            val = int(round(float(str(raw).replace(".", "").replace(",", ".") if isinstance(raw, str) else raw)))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": f"«{rot}»: el monto no es válido.", "error_codigo": "MONTO_INVALIDO"}), 400
+        if val < 0 or val > 2_000_000_000:
+            return jsonify({"ok": False, "error": f"«{rot}»: el monto está fuera de rango.", "error_codigo": "MONTO_RANGO"}), 400
+        nuevos[campo] = val
+    if not nuevos:
+        return jsonify({"ok": False, "error": "Escribe el monto que cobró el proveedor.", "error_codigo": "SIN_CAMBIOS"}), 400
+    cambios = {k: nv for k, nv in nuevos.items() if v.get(k) is None or int(round(float(v.get(k)))) != nv}
+    if not cambios:
+        return jsonify({"ok": True, "sin_cambios": True, "mensaje": "Ya estaba con esos valores."})
+    sets = ", ".join(f"{k}=%s" for k in cambios)
+    mysql_execute(f"UPDATE mant_visitas SET {sets} WHERE id=%s", tuple(cambios.values()) + (vid,))
+    quien = current_username() or "?"
+    try:
+        det = " · ".join(f"{k.replace('_', ' ')}: {('$' + format(int(round(float(v[k]))), ',d').replace(',', '.')) if v.get(k) is not None else 'sin declarar'}"
+                         f" → ${format(nv, ',d').replace(',', '.')}" for k, nv in cambios.items())
+        _mant_log("visita", vid, "costo_proveedor_corregido", f"{det} · por {quien} · motivo: {motivo}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "cambios": cambios, "mensaje": "Quedó registrado con tu nombre y el motivo."})
+
+
+def _ot_puede_regularizar(user=None):
+    """Gestión (superadmin, admin, supervisor, ejecutivo): quien puede regularizar el documento de una OT cerrada."""
+    try:
+        u = user if user is not None else getattr(g, "user", None)
+        return _rol_familia((u["role"] if u else "") or "") in ("superadmin", "admin", "supervisor", "ejecutivo")
+    except Exception:
+        return False
+
+
+@app.route("/ot/api/<int:vid>/documentos/regularizar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot_api_documentos_regularizar(vid):
+    """Liga un documento a una OT: el MISMO camino de POST /ot/api/<vid>/documentos (validación contra el ERP en solo
+    lectura, RUT, posible duplicado, nota de venta dada de baja por la factura), pero también para una OT ya CERRADA
+    (Daniel 2026-10-07: «las OT antiguas se regularizan»). En una OT cerrada solo se escribe el documento y la
+    plata que declara: NUNCA el estado, las firmas ni las fechas (OT = evidencia), y queda constancia en la bitácora
+    con quién, cuándo y qué documento. Solo gestión; una OT cerrada se regulariza solo si de verdad le falta
+    el documento (sin factura/boleta validada o con nota de venta pendiente)."""
+    if not _ot_puede_regularizar():
+        return jsonify({"ok": False, "error": "Solo gestión puede ligar documentos.", "error_codigo": "SIN_PERMISO"}), 403
+    v = mysql_fetchone("SELECT id, estado, cliente_id, tipo FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return jsonify({"ok": False, "error": "OT no encontrada"}), 404
+    if (v.get("estado") or "") in ("cancelada", "anulada"):
+        return jsonify({"ok": False, "error": "Esa OT está cancelada o anulada.", "error_codigo": "OT_CERRADA"}), 409
+    if _puede_ot_accion(vid, "cobertura"):
+        return ot2_api_documentos_agregar(vid)   # OT abierta: el camino de siempre, con su propio permiso
+    # OT cerrada: solo si de verdad necesita regularizarse.
+    try:
+        fila = dict(v, **(_ot_puerta_cerrar_fila(vid) or {}))
+        p = _ot_puerta_documento(fila, "cerrar")
+    except Exception as e:
+        print(f"[ot-regularizar] puerta vid={vid}: {type(e).__name__}", flush=True)
+        p = {"ok": False}
+    if p.get("ok") and not p.get("nota_venta") and p.get("via") != "nota_venta":
+        return jsonify({"ok": False, "error": "Esta OT ya tiene su documento: no necesita regularizarse.",
+                        "error_codigo": "NO_NECESITA"}), 409
+    _nucleo = ot2_api_documentos_agregar
+    while hasattr(_nucleo, "__wrapped__"):   # el cuerpo de la ruta, sin su candado de OT abierta (ya revisamos arriba)
+        _nucleo = _nucleo.__wrapped__
+    r = _nucleo(vid)
+    try:
+        resp, http = (r if isinstance(r, tuple) else (r, 200))
+        if http == 200:
+            d = request.get_json(silent=True) or {}
+            _mant_log("visita", vid, "documento_regularizado",
+                      f"OT cerrada regularizada: se ligó {str(d.get('tipo') or d.get('cotizacion') or '')} "
+                      f"{str(d.get('numero') or '')} por {current_username() or '?'} · estado, firmas y fechas intactos")
+    except Exception as e:
+        print(f"[ot-regularizar] log vid={vid}: {type(e).__name__}", flush=True)
+    return r
+
+
+# ── Páginas ────────────────────────────────────────────────────────────────────────────────────────────────
+@app.route("/ot/autorizaciones", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_aut_pagina():
+    """Bandeja de autorizaciones para el celular de Daniel (superadmin ve todas; el resto, las que pidió)."""
+    return render_template("ot2/autorizaciones.html", es_superadmin=_ot_aut_es_superadmin())
+
+
+@app.route("/ot/autorizaciones/<int:aid>", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_aut_pagina_detalle(aid):
+    return render_template("ot2/autorizacion_detalle.html", aid=aid, es_superadmin=_ot_aut_es_superadmin())
+
+
+@app.route("/ot/regularizar", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_regularizar_pagina():
+    """Bandeja Regularizar: las OT que no pasan la puerta del documento (datos: GET /ot/api/regularizar)."""
+    return render_template("ot2/regularizar.html", es_superadmin=_ot_aut_es_superadmin(),
+                           estados=_OT_REG_ESTADO_TXT, faltas=_OT_REG_FALTA_TXT,
+                           centros=[{"v": c, "n": n} for c, n in _OT2_CENTROS_COSTO])
+
+
+# ── Todos los documentos declarados, para el informe/PDF y el Excel (Daniel: "cuando el reporte se gestione
+#    deberán aparecer para mayor trazabilidad y transparencia"). Al cliente SOLO tipo y número. ──────────────
+def _ot_docs_para_informe(vid):
+    """[{tipo, numero}] de TODOS los documentos de la OT. Nunca montos, costos ni proveedores."""
+    out, vistos = [], set()
+    try:
+        for d in (_ot_docs_listar(vid).get("documentos") or []):
+            titulo = (d.get("titulo") or "").strip()
+            if not titulo or titulo in vistos:
+                continue
+            vistos.add(titulo)
+            if d.get("origen") == "cotizacion":
+                out.append({"tipo": "Cotización", "numero": titulo})
+                continue
+            partes = titulo.split(" ", 1)
+            out.append({"tipo": _ot_doc_tipo_txt(partes[0]), "numero": (partes[1] if len(partes) > 1 else "")})
+    except Exception as e:
+        print(f"[ot-docs-informe] vid={vid}: {type(e).__name__}", flush=True)
+    return out
+
+
+def _ot_docs_texto_lote(vids):
+    """{vid: 'Factura FCV 123 · Nota de venta VD 45 (dada de baja)'} para el Excel: una consulta por lote."""
+    try:
+        ids = sorted({int(x) for x in vids if x})
+    except (TypeError, ValueError):
+        ids = []
+    out = {i: [] for i in ids}
+    for ini in range(0, len(ids), 500):
+        chunk = ids[ini:ini + 500]
+        try:
+            for r in (mysql_fetchall(
+                    "SELECT d.visita_id, d.origen, d.erp_tido, d.erp_nudo, d.reemplazado_por_id, c.numero_cotizacion "
+                    "  FROM mant_visita_documentos d LEFT JOIN tk_cotizaciones c ON c.id=d.cotizacion_id "
+                    " WHERE d.visita_id IN (" + ",".join(["%s"] * len(chunk)) + ") "
+                    " ORDER BY d.visita_id, d.es_principal DESC, d.id", tuple(chunk)) or []):
+                if r.get("origen") == "cotizacion":
+                    txt = f"Cotización {r.get('numero_cotizacion') or ''}".strip()
+                else:
+                    tu, nu = _ot_doc_real_a_usuario(r.get("erp_tido") or "FCV", r.get("erp_nudo") or "")
+                    txt = f"{_ot_doc_tipo_txt(tu)} {tu} {nu}".strip() + (" (dada de baja por factura)" if r.get("reemplazado_por_id") else "")
+                out[int(r["visita_id"])].append(txt)
+        except Exception as e:
+            print(f"[ot-docs-texto] lote: {type(e).__name__}", flush=True)
+    return {i: " · ".join(lst) for i, lst in out.items()}
 
 
 @app.route("/ot/api/<int:vid>/documentos", methods=["GET"])
@@ -109283,7 +109703,7 @@ def ot2_reporte_xlsx():
                "Costo proveedor", "Costo despacho", "Repuestos instalados",
                "Me cobraron", "Queda (margen)", "% margen", "Valorizado (referencia)",
                "Cobertura", "Estado facturación",
-               "Documento", "Creada por", "Creada", "Cerrada",
+               "Documentos (todos los declarados)", "Creada por", "Creada", "Cerrada",
                "Observaciones (revisar)"]
     NCOLS = len(headers)
     # Columnas por NOMBRE (no por número fijo): agregar una columna no corre los formatos.
@@ -109328,6 +109748,8 @@ def ot2_reporte_xlsx():
     fin_tot = {"proveedor": 0.0, "despacho": 0.0, "repuestos": 0.0, "no_sstt_ot": 0}
     _fins_res, _fins_res_no_sstt = [], []
     # 💰 2026-10-07: la cuenta de cada OT con la regla única (repuestos instalados en UNA consulta).
+    # 🔏 2026-10-07: todos los documentos declarados de cada OT (una consulta por lote).
+    _docs_xl = _ot_docs_texto_lote([x.get("id") for x in rows])
     _fins = _ot_fin_lote(rows)
     r = 3
     for f in rows:
@@ -109437,7 +109859,7 @@ def ot2_reporte_xlsx():
             (round(margen_pct, 1) if margen_pct is not None else None),
             _fin["valorizado"]["monto"],
             _fin["cobertura_txt"], f.get("estado_facturacion") or "",
-            ((f.get("factura_tido") or "") + " " + (f.get("factura_nudo") or "")).strip(),
+            (_docs_xl.get(int(f["id"])) or ((f.get("factura_tido") or "") + " " + (f.get("factura_nudo") or "")).strip()),
             f.get("created_by") or "", _dt_cl(f.get("created_at")),
             _dt_cl(f.get("cerrada_at")), " · ".join(obs),
         ]
@@ -118915,6 +119337,14 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
             # -- el template ya lo guarda con {% if rep_resumen %}.
             "rep_resumen": [],
         })
+    # 🔏 2026-10-07 (Daniel: "cuando el reporte se gestione deberán aparecer [todos los documentos] para mayor
+    # trazabilidad y transparencia"): el informe/PDF lista TODOS los documentos declarados de la OT. Al cliente
+    # SOLO tipo y número: nunca montos, costos ni proveedores.
+    try:
+        ctx["documentos_ot"] = _ot_docs_para_informe(vid)
+    except Exception as _e_docs_pdf:
+        print(f"[_ot_pdf_context][documentos_ot] vid={vid}: {_e_docs_pdf}", flush=True)
+        ctx["documentos_ot"] = []
     if publico:
         # Columnas de dinero de mant_visitas -- MISMA lista que expone
         # /ot/api/finanzas/<vid> (el endpoint interno de gestión), para

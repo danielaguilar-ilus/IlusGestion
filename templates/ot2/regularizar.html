@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Regularizar OT · ILUS Fitness{% endblock %}
+
+{#
+  🔏 2026-10-07 (Daniel: documento absoluto): bandeja de las OT que no pasan la puerta del documento. Semáforo: sin
+  documento / $0 sin autorizar / nota de venta sin factura. Por fila: ligar el documento (mismo diálogo del motor de
+  finanzas) o pedir la autorización de Daniel. Paginada (REGLA #4.3). En OT cerradas solo se regulariza el documento y
+  la plata: jamás estado, firmas ni fechas. Datos: GET /ot/api/regularizar.
+#}
+
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_puerta_paginas.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_fin_motor.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-clipboard2-check me-2"></i>Regularizar OT</h4>
+    <div class="sub">Las OT que todavía no tienen su documento de Random ni un $0 autorizado. Cada una se resuelve ligando el documento o pidiendo la autorización de Daniel.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    {% if es_superadmin %}<a href="{{ url_for('ot_aut_pagina') }}" class="btn btn-sm btn-dark"><i class="bi bi-shield-lock me-1"></i>Autorizaciones</a>{% endif %}
+    <a href="{{ url_for('ot2_panel') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Volver a las OT</a>
+  </div>
+</div>
+<div class="pp" id="ppReg" data-sa="{{ '1' if es_superadmin else '0' }}" data-centros='{{ centros | tojson }}'>
+  <div class="pp-vacio">Cargando la bandeja…</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='ot_fin_motor.js') }}"></script>
+<script src="{{ url_for('static', filename='ot_regularizar.js') }}"></script>
+{% endblock %}
