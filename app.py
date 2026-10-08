@@ -6983,6 +6983,15 @@ def close_db(exc=None):
             db.close()
         except Exception:
             pass
+    # 🧮 2026-10-08: candado del saldo de servicio (ver _ot_saldo_reservar). Se suelta AL FINAL de la petición, ya con
+    # lo escrito confirmado: cerrar la conexión dedicada libera todos sus GET_LOCK.
+    _lk = g.pop("_ot_saldo_lock_conn", None)
+    g.pop("_ot_saldo_lock_names", None)
+    if _lk is not None:
+        try:
+            _lk.close()
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────
@@ -111465,11 +111474,51 @@ def _ot_saldo_autorizado_hasta(vid=None, aut_id=None, cliente_rut=None):
     return out
 
 
+def _ot_saldo_reservar(docs):
+    """🧮 CARRERA DEL SALDO (revisión 2026-10-08): dos personas que ligan la MISMA factura a la vez pasaban las dos el
+    control (cada una leía el saldo antes de que la otra escribiera). Se serializa con un GET_LOCK de MySQL por
+    documento, tomado en una conexión DEDICADA y mantenido hasta el final de la petición (close_db lo suelta con lo
+    escrito ya confirmado): el segundo en llegar espera al primero y entonces SÍ ve su uso. Los documentos se piden
+    en orden fijo (sin interbloqueo entre dos peticiones). Si no se consigue el candado en 5 s, o no hay petición /
+    base, se sigue SIN él (igual que antes: nunca traba el trabajo). No escribe nada: solo es un candado consultivo."""
+    try:
+        from flask import has_app_context
+        if not has_app_context():
+            return
+        import hashlib
+        nombres = sorted({"otsaldo_" + hashlib.md5("|".join(str(x) for x in _saldo.clave_doc(t, n)).encode("utf-8")).hexdigest()
+                          for (t, n) in (docs or []) if t and n})
+        if not nombres:
+            return
+        tomados = g.get("_ot_saldo_lock_names")
+        if tomados is None:
+            tomados = set()
+            g._ot_saldo_lock_names = tomados
+        pend = [n for n in nombres if n not in tomados]
+        if not pend:
+            return
+        conn = g.get("_ot_saldo_lock_conn")
+        if conn is None:
+            conn = get_mysql()
+            g._ot_saldo_lock_conn = conn
+        with conn.cursor() as cur:
+            for n in pend:
+                cur.execute("SELECT GET_LOCK(%s, 5) AS l", (n,))
+                r = cur.fetchone() or {}
+                if int(list(r.values())[0] or 0) == 1:
+                    tomados.add(n)
+                else:
+                    print("[ot-saldo] candado no obtenido (se sigue sin él)", flush=True)
+    except Exception as e:
+        print(f"[ot-saldo] reservar: {type(e).__name__}", flush=True)
+
+
 def _ot_saldo_chequear(docs, pedido, excluir_vid=None, cliente_rut=None, autorizado_hasta=None, puede_garantia=True):
     """El CANDADO. `pedido` = {servicio: n|None, despacho: n|None}: lo que la OT quiere declarar como cobro. None si
     cabe en el saldo de sus documentos (o si no hay nada que verificar: sin líneas de servicio o ERP caído); si no,
     el dict de error ZZ_SALDO_CONSUMIDO con el texto, las acciones (tomar el saldo, ligar otra factura, pasar a
     garantía, pedir autorización con argumento) y el saldo por documento."""
+    _ot_saldo_reservar(docs)   # antes de leer el saldo: serializa a quienes ligan el mismo documento
     try:
         r = _ot_saldo_de_docs(docs, excluir_vid, cliente_rut)
     except Exception as e:

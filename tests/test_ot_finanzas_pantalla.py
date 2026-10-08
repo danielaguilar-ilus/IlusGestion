@@ -469,8 +469,10 @@ class TestFaltanTrabajoInterno(unittest.TestCase):
     def test_costo_antiguo_tambien(self):
         self.assertEqual(self._faltan(costo=40000), [])
 
-    def test_sin_ninguno_falta(self):
-        self.assertTrue([f for f in self._faltan() if "cuánto vale" in f])
+    def test_sin_ninguno_no_falta(self):
+        # 2026-10-08 (Daniel): el valor del trabajo interno es SUGERIDO -- vacío o $0 ya no es un faltante.
+        self.assertEqual([f for f in self._faltan() if "cuánto vale" in f], [])
+        self.assertEqual(self._faltan(valorizado_clp=0, costo=0), [])
 
 
 @unittest.skipUnless(shutil.which("node"), "node no está instalado")

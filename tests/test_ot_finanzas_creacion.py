@@ -273,8 +273,9 @@ class TestEstadoFinanzas(unittest.TestCase):
     def test_interno_lee_el_valorizado(self):
         b = {"centro_costo": "sstt", "modalidad_cobro": "interno", "tipo": "revision_interna"}
         self.assertEqual(_amb()["_ot2_finanzas_estado"](dict(b, valorizado_clp=45000, costo=None)), (True, []))
+        # 2026-10-08 (Daniel): el valor interno es sugerido -- vacío o $0 no deja la OT incompleta.
         ok, faltan = _amb()["_ot2_finanzas_estado"](dict(b, valorizado_clp=None, costo=0))
-        self.assertFalse(ok)
+        self.assertTrue(ok)
         self.assertEqual(_amb()["_ot2_finanzas_estado"](dict(b, costo=0)), (True, []),
                          "sin valorizado_clp en la fila no se puede juzgar: no inventa un 'falta'")
 

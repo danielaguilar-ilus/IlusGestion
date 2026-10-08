@@ -117,7 +117,7 @@ class TestPuro(unittest.TestCase):
 
 
 # ───────────────────────── el candado de app.py, con un mundo en memoria ─────────────────────────
-FUNCS = ("_ot_saldo_real", "_ot_saldo_doc", "_ot_saldo_de_docs", "_ot_saldo_chequear", "_ot_saldo_aporte_en",
+FUNCS = ("_ot_saldo_reservar", "_ot_saldo_real", "_ot_saldo_doc", "_ot_saldo_de_docs", "_ot_saldo_chequear", "_ot_saldo_aporte_en",
          "_ot_saldo_avisos_de", "_ot_doc_real_a_usuario")
 _ARBOL = None
 
