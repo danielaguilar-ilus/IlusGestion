@@ -1,6 +1,7 @@
 """Integracion fin-paso3 + main (08-oct-2026). Sin BD ni Flask (texto/ast):
-  A. Un $0 escrito se respeta: se conserva, se envia como 0 y no hay respaldo (cotizacion/estimado) si la persona toco el
-     valor; un cobro de $0 en una OT que se cobra sigue el camino de la rama (cobro_cero + autorizacion de Daniel).
+  A. Un $0 escrito se respeta: se conserva y se envia como 0; un cobro de $0 en una OT que se cobra sigue el camino de la
+     rama (cobro_cero + autorizacion de Daniel). 08-oct (limpieza del paso de valor, ver tests/test_asistente_valor_plano.py):
+     ya NO existen los respaldos con cotizacion/estimado -- ni siquiera cuando la persona no toco el valor.
   B. OT interna: el valor es SUGERIDO; vacio o $0 nunca traba crear ni firmar.
   C. Carrera del saldo: el chequeo toma un candado por documento (GET_LOCK) hasta el final de la peticion.
 Correr con:  py -m unittest tests.test_ot_cero_interno_saldo_0810
@@ -31,20 +32,25 @@ class TestCeroEscrito(unittest.TestCase):
     def test_limpiar_numero_conserva_el_cero(self):
         self.assertIn("String(v == null ? '' : v).replace(/[^0-9]/g,'')", _funcion_js(M, "_o2mLimpiarNumero"))
 
-    def test_respaldos_solo_si_no_toco_el_valor(self):
+    def test_no_hay_respaldos(self):
+        # 08-oct (Daniel: "limpia el paso de valor del asistente"): antes el respaldo con la cotizacion o el estimado solo
+        # corria si la persona NO habia tocado el valor (!S.fin_valor_tocado); ahora no existe ningun respaldo: si el
+        # casillero esta vacio no viaja monto alguno, y un 0 escrito viaja como 0.
         f = _funcion_js(M, "_o2mFinMontoServicio")
-        self.assertIn("if (S.fin_zz_monto != null)", f)
-        self.assertIn("!S.fin_valor_tocado && S.fin_cotizacion", f)
-        self.assertIn("!S.fin_valor_tocado && S.fin_costo_estimado", f)
+        self.assertIn("if (S.fin_zz_monto == null) return null;", f)
+        self.assertNotIn("fin_cotizacion", f)
+        self.assertNotIn("fin_costo_estimado", f)
 
     def test_crear_usa_la_misma_fuente_y_sin_respaldos_sueltos(self):
-        self.assertIn("var _finMs = _o2mFinMontoServicio();", M)
-        self.assertNotIn("} else if (!S.fin_valor_tocado && S.fin_cotizacion", M)
+        # crear() y la vista previa comparten _o2mFinMontosEnvio (que a su vez lee _o2mFinMontoServicio)
+        self.assertIn("Object.assign(body.finanzas, _o2mFinMontosEnvio());", M)
+        self.assertNotIn("var _finMs = _o2mFinMontoServicio();", M)
+        self.assertIn("_o2mFinMontoServicio()", _funcion_js(M, "_o2mFinMontosEnvio"))
 
     def test_vista_previa_manda_el_cero(self):
         f = _funcion_js(M, "_o2mFinVistaPrevia")
-        self.assertIn("_o2mFinMontoServicio()", f)
-        self.assertIn("zz_monto: (!gar && ms) ? ms.zz_monto : null", f)
+        self.assertIn("_o2mFinMontosEnvio()", f)
+        self.assertIn("zz_monto: gar ? null : nz(m.zz_monto)", f)
 
     def test_cobro_cero_sin_garantia_sigue_el_camino_de_la_rama(self):
         # la pantalla: monto 0 en una OT que se cobra no avanza como monto; se declara garantia/regalia/arriendo
