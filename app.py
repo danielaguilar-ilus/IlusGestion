@@ -81005,6 +81005,28 @@ def mant_visita_cerrar(vid):
             "validacion": validacion,
         }), 400
 
+    # 🔒 2026-10-08 (REGLA #24, revisión adversarial): esta ruta cerraba sin mirar documento ni centro de costo (solo
+    # pedía las firmas). Las OT de cliente con la firma del supervisor anterior a la regla se cerraban por aquí sin
+    # puerta. Misma puerta y mismo interruptor que aprobar-cierre; el trabajo interno (sin cliente) no se toca.
+    try:
+        _gate_cerrar = bool(_regla_fresca("ot_factura_gate_activo", True))
+        _vc_puerta = mysql_fetchone(
+            "SELECT v.id, v.cliente_id, v.tipo, v.modalidad_cobro, v.cubierto_por, v.contrato_id, v.centro_costo, "
+            "       v.cobro_cero_motivo, v.cobro_cero_argumento, v.cobro_cero_autorizacion_id "
+            "  FROM mant_visitas v WHERE v.id=%s", (vid,)) if _gate_cerrar else None
+    except Exception as _e_cp:
+        print(f"[ot_cerrar] puerta vid={vid}: {type(_e_cp).__name__}", flush=True)
+        return jsonify({"ok": False, "error": "No pudimos revisar el documento de la OT. Reintenta en unos segundos.",
+                        "error_codigo": "REVISION_NO_DISPONIBLE"}), 503
+    if _vc_puerta and _vc_puerta.get("cliente_id"):
+        _p_cerrar_ruta = _ot_puerta_documento(dict(_vc_puerta), "cerrar")
+        if not _p_cerrar_ruta["ok"]:
+            return _ot_cierre_rechazo(_p_cerrar_ruta, vid)
+        if not (_vc_puerta.get("centro_costo") or "").strip():
+            return jsonify({
+                "ok": False, "error_codigo": "SIN_CENTRO_COSTO", "accion": _ot_cierre_accion("SIN_CENTRO_COSTO", vid),
+                "error": "Falta declarar el centro de costo de esta OT antes de cerrarla."}), 400
+
     causa = (d.get("causa_raiz") or "").strip().lower() or None
     if causa and causa not in ("desgaste","mal_uso","falta_mantencion","defecto_fabrica","accidente","otro"):
         causa = "otro"
@@ -82307,7 +82329,8 @@ def mant_visita_historica(cid):
         return jsonify({"ok": False, "error": "Falta el técnico que hizo el trabajo."}), 400
     # 🔏 2026-10-07 — LA PUERTA DEL DOCUMENTO: nace 'completada', así que con más razón necesita documento
     # validado, contrato REAL (preventiva), $0 autorizado o autorización de Daniel.
-    _puerta_vh = _ot_puerta_desde_body(d, cid, tipo, contrato_id=contrato_id, garantia=(tipo == "garantia"))
+    _puerta_vh = _ot_puerta_desde_body(d, cid, tipo, contrato_id=contrato_id, garantia=(tipo == "garantia"),
+                                       momento="cerrar")   # 🔒 2026-10-08: nace completada = trabajo terminado
     if not _puerta_vh["ok"]:
         return _ot_puerta_respuesta(_puerta_vh)
 
@@ -82492,7 +82515,7 @@ def mant_visita_retroactiva(cid):
     if cot_tido and cot_nudo:
         _docs_retro.append({"tipo": cot_tido, "numero": cot_nudo})
     _puerta_rt = _ot_puerta_desde_body(d, cid, tipo, contrato_id=contrato_id, extra_docs=_docs_retro,
-                                       garantia=(tipo == "garantia"))
+                                       garantia=(tipo == "garantia"), momento="cerrar")   # 🔒 2026-10-08: nace completada
     if not _puerta_rt["ok"]:
         return _ot_puerta_respuesta(_puerta_rt)
     conn = get_mysql()
@@ -86106,6 +86129,27 @@ def mant_visita_update(vid):
     # 🔏 2026-10-07 (atajo del mapa, Daniel: "AL CERRAR, revisión obligatoria"): 'completada' también sale de
     # este PUT -- era la antesala del cierre y se podía poner editando el campo; la OT se completa por el flujo
     # del técnico/ejecución, nunca desde "Editar OT".
+    # 🔒 2026-10-08 (revisión adversarial): ni el tipo ni el documento ligado se cambian editando el campo.
+    #  · Pasar una correctiva a «preventiva» la exime del documento (contrato real): se pide a Daniel.
+    #  · factura_tido/nudo de una OT cuyo documento ya se ligó y validó contra el ERP solo cambian ligando otro
+    #    documento («Ligar documento»), que valida y deja constancia: el texto libre no cuenta como factura.
+    if "tipo" in d or "factura_tido" in d or "factura_nudo" in d:
+        _fila_g = mysql_fetchone(
+            "SELECT tipo, cliente_id, factura_tido, factura_nudo, factura_asociada_por, factura_rut_ok "
+            "  FROM mant_visitas WHERE id=%s", (vid,)) or {}
+        if ("tipo" in d and (d.get("tipo") or "").strip().lower() == "preventiva" and _fila_g.get("cliente_id")
+                and (_fila_g.get("tipo") or "").strip().lower() != "preventiva" and not _ot_aut_es_superadmin()):
+            return jsonify({
+                "ok": False, "error_codigo": "TIPO_PROTEGIDO",
+                "error": "Una OT de cliente no pasa a «preventiva» editando el campo (la preventiva de un contrato "
+                         "real no lleva documento). Pídele a Daniel que la cambie."}), 409
+        if (("factura_tido" in d or "factura_nudo" in d) and _ot_factura_escritura_protegida(
+                _fila_g, d.get("factura_tido", _fila_g.get("factura_tido")),
+                d.get("factura_nudo", _fila_g.get("factura_nudo")))):
+            return jsonify({
+                "ok": False, "error_codigo": "DOCUMENTO_PROTEGIDO",
+                "error": "El documento de esta OT ya quedó ligado y validado contra el ERP. Para cambiarlo usa "
+                         "«Ligar documento» (valida contra el ERP y deja constancia)."}), 409
     _ESTADOS_PROTEGIDOS_PUT = {"cerrada", "pendiente_aprobacion", "firmada_tecnico", "completada"}
     if (d.get("estado") or "").strip().lower() in _ESTADOS_PROTEGIDOS_PUT:
         return jsonify({
@@ -86225,6 +86269,10 @@ def mant_visita_update(vid):
                                 "cobre": _ot_finanzas(_r_esp)["cobre"]["total"]}
         except Exception as _e_esp:
             print(f"[visita-upd] espejo costo vid={vid}: {type(_e_esp).__name__}", flush=True)
+    # 🔒 2026-10-08: retractarse de la garantía por este PUT también limpia la constancia del $0 (la regla única da
+    # prioridad al motivo del $0; sin esto la OT seguía «Garantía, cobré $0» aunque volviera a cobrarse).
+    if gar_aplica_upd is False and "modalidad_cobro" in d and (d.get("modalidad_cobro") or "") != "garantia":
+        sets += ["cobro_cero_motivo=NULL", "cobro_cero_autorizacion_id=NULL", "cobro_cero_argumento=NULL"]
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
@@ -90204,8 +90252,24 @@ def ot2_detalle(vid):
         except Exception as _e_fp:
             print(f"[ot2_detalle] factura proveedor vid={vid}: {_e_fp}", flush=True)
 
+    # 🔒 2026-10-08 (REGLA #24): lo que dice LA PUERTA al cerrar, para que el semáforo del modal de cierre no cuente otra
+    # historia que el servidor ni que el motor de finanzas. Sin montos (nada que filtrar a un técnico).
+    puerta_cierre = None
+    try:
+        if v.get("cliente_id"):
+            _vp = {k: v.get(k) for k in ("id", "cliente_id", "tipo", "modalidad_cobro", "cubierto_por", "contrato_id",
+                                         "cobro_cero_motivo", "cobro_cero_argumento", "cobro_cero_autorizacion_id")}
+            _vp["id"] = vid
+            _pc = _ot_puerta_documento(_vp, "cerrar")
+            puerta_cierre = {"ok": bool(_pc.get("ok")), "falta": _pc.get("falta"), "mensaje": _pc.get("mensaje") or "",
+                             "pendiente": any((a.get("estado") == "pendiente") for a in _ot_puerta_autorizaciones_de(vid))}
+    except Exception as _e_pc:
+        print(f"[ot2_detalle] puerta cierre vid={vid}: {type(_e_pc).__name__}", flush=True)
+        puerta_cierre = None
+
     return render_template(
         "ot2/detalle.html",
+        puerta_cierre=puerta_cierre,
         v=v, ruta=ruta, equipos=equipos, hitos=hitos, kpis=kpis, firmas=firmas,
         factura_prov=factura_prov, factura_prov_aplica=factura_prov_aplica,
         lev=lev,
@@ -91637,6 +91701,15 @@ def ot2_api_finanzas(vid):
         f_tido = (d.get("factura_tido") or "").strip()[:5].upper() or None
         f_nudo = (d.get("factura_nudo") or "").strip()[:20] or None
         motivo = None
+        # 🔒 2026-10-08: el documento ya ligado y validado solo cambia con «Ligar documento» (ver mant_visita_update).
+        if ("factura_tido" in d or "factura_nudo" in d) and (f_tido or f_nudo):
+            _fila_pf = mysql_fetchone(
+                "SELECT factura_tido, factura_nudo, factura_asociada_por, factura_rut_ok FROM mant_visitas WHERE id=%s",
+                (vid,)) or {}
+            if _ot_factura_escritura_protegida(_fila_pf, f_tido, f_nudo):
+                return _ot2_err(
+                    "El documento de esta OT ya quedó ligado y validado contra el ERP. Para cambiarlo usa «Ligar "
+                    "documento» (valida contra el ERP y deja constancia).", "DOCUMENTO_PROTEGIDO", http=409)
 
     # 🔧 FIX 2026-08-31 (Daniel trabado en OT-140, ciclo "El monto no es
     # válido"): costo/zz_monto son columnas DECIMAL -- un caller que primero
@@ -91985,6 +92058,18 @@ def ot2_api_finanzas(vid):
         _set_col("modalidad_cobro", 'garantia' if garantia else 'pagado')
         _set_col("cubierto_por", 'garantia' if garantia else 'cliente')
         _set_col("garantia_motivo", motivo)
+        if not garantia:
+            # 🔒 2026-10-08: retractarse del $0 limpia también su constancia en la OT (la regla única da prioridad
+            # al motivo del $0: sin esto la tarjeta seguía en «Garantía, cobré $0» y el cierre pedía documento). La
+            # autorización queda intacta en su tabla y el cambio en la bitácora.
+            _set_col("cobro_cero_motivo", None)
+            _set_col("cobro_cero_autorizacion_id", None)
+            _set_col("cobro_cero_argumento", None)
+            try:
+                _mant_log("visita", vid, "cobro_cero_retractado",
+                          f"Se retractó el $0 ({v.get('modalidad_cobro') or '—'}): vuelve a cobrarse · por {current_username() or '?'}")
+            except Exception:
+                pass
     elif _habla_garantia and garantia and motivo and motivo != (v.get("garantia_motivo") or "").strip():
         # Ya era garantía y llega otro motivo: se actualiza solo el motivo.
         _set_col("garantia_motivo", motivo)
@@ -92989,6 +93074,23 @@ _OT_PUERTA_MSG_FACTURA = ("Esta OT partió con una nota de venta: para cerrarla 
                           "autorización de Daniel. Usa «Pedir autorización».")
 _OT_PUERTA_MSG_CERO = ("Esta OT se declaró en $0 ({motivo}) sin la autorización de Daniel. "
                        "Usa «Pedir autorización».")
+# 🔒 2026-10-08: los caminos que NO son el asistente «Nueva OT» (visita-multi, solicitar-cambio, histórica,
+# retroactiva, plan anual, levantamiento) no tienen botón de solicitud: el mensaje dice por dónde seguir.
+_OT_PUERTA_MSG_FUERA = ("Desde aquí no se puede pedir la autorización: crea la OT desde «Nueva OT» (ahí, en «Todavía no hay "
+                        "documento», está «Pedir autorización a Daniel»), o liga primero la factura, la nota de venta o "
+                        "la cotización.")
+
+
+def _ot_puerta_fuera_asistente(p):
+    """La respuesta de la puerta para un camino sin botón «Pedir autorización»: mismo veredicto, con el texto que
+    explica cómo seguir. No toca las que pasan."""
+    if not p or p.get("ok"):
+        return p
+    p = dict(p)
+    base = (p.get("mensaje") or "").replace("Usa «Pedir autorización».", "").strip()
+    p["mensaje"] = (base + " " + _OT_PUERTA_MSG_FUERA).strip()
+    p["fuera_asistente"] = True
+    return p
 
 
 def _ot_puerta_contrato_real(cliente_id, contrato_id=None):
@@ -93125,20 +93227,27 @@ def _ot_puerta_autorizaciones_lote(vids):
     return out
 
 
-def _ot_puerta_doc_norm(d):
-    """Un documento del body / del validador / de la tabla, normalizado a {tido, nudo, origen, validado, rut}."""
+def _ot_puerta_doc_norm(d, confiable=False):
+    """Un documento del body / del validador / de la tabla, normalizado a {tido, nudo, origen, validado, rut}.
+
+    🔒 2026-10-08 (revisión adversarial): `confiable`=True SOLO para lo que el SERVIDOR ya validó (la tabla puente,
+    el validador de finanzas, asociar-factura): ahí el documento cuenta como validado y conserva su es_cobro y su
+    RUT. Un documento que viene del body (confiable=False) NUNCA trae su propia bandera: `validado`, `es_cobro` y
+    `rut` del navegador se ignoran, y la puerta lo confirma contra el ERP en solo lectura."""
     if not isinstance(d, dict):
         return None
     origen = (d.get("origen") or "erp").strip().lower()
     if origen == "cotizacion":
         ref = str(d.get("cotizacion") or d.get("numero") or d.get("cotizacion_id") or "").strip()
-        return {"tido": "COT", "nudo": ref, "origen": "cotizacion", "validado": bool(d.get("validado")),
+        return {"tido": "COT", "nudo": ref, "origen": "cotizacion", "validado": bool(confiable),
                 "rut": None, "es_cobro": False} if ref else None
     t = (d.get("tido") or d.get("tipo") or "").strip().upper()[:10]
     n = str(d.get("nudo") or d.get("numero") or "").strip()[:30]
     if not t or not n:
         return None
-    return {"tido": t, "nudo": n, "origen": "erp", "validado": bool(d.get("validado")),
+    if not confiable:
+        return {"tido": t, "nudo": n, "origen": "erp", "validado": False, "rut": None, "es_cobro": True}
+    return {"tido": t, "nudo": n, "origen": "erp", "validado": True,
             "rut": (d.get("rut") or None), "es_cobro": bool(d.get("es_cobro", True))}
 
 
@@ -93157,15 +93266,37 @@ def _ot_puerta_validar_erp(doc, cli_rut=None):
     if tipo_enc:
         out["tido"] = str(tipo_enc).strip().upper()[:10]
     out["rut"] = (erp_doc.get("cliente_rut") or "").strip()[:20] or None
+    # 🔒 2026-10-08: el documento tiene que ser DEL cliente de la OT. Una factura de otro RUT no sirve de
+    # documento (la salida es «Pedir autorización» o ligarla en la ficha con su justificación de RUT).
+    if cli_rut and out["rut"]:
+        try:
+            if not _rut_analisis_comparacion(cli_rut, out["rut"]).get("match"):
+                print(f"[ot-puerta] ERP {doc.get('tido')} {doc.get('nudo')}: RUT distinto al del cliente", flush=True)
+                return None
+        except Exception:
+            pass
     return out
 
 
-def _ot_puerta_cotizacion_existe(ref):
+def _ot_puerta_cotizacion_existe(ref, cli_rut=None):
+    """¿Existe la cotización interna, no está rechazada y (si se conoce el RUT del cliente) es de ese cliente?
+    🔒 2026-10-08: antes bastaba que existiera una cualquiera, de cualquier cliente."""
     try:
         num = re.sub(r"[^0-9]", "", str(ref or ""))
-        return bool(mysql_fetchone(
-            "SELECT id FROM tk_cotizaciones WHERE numero_cotizacion=%s OR id=%s "
-            "   OR numero_cotizacion=CONCAT('COT-', LPAD(%s,6,'0')) LIMIT 1", (ref, num or 0, num or 0)))
+        r = mysql_fetchone(
+            "SELECT id, rut, estado FROM tk_cotizaciones WHERE numero_cotizacion=%s OR id=%s "
+            "   OR numero_cotizacion=CONCAT('COT-', LPAD(%s,6,'0')) LIMIT 1", (ref, num or 0, num or 0))
+        if not r:
+            return False
+        if (r.get("estado") or "") == "rejected":
+            return False
+        if cli_rut and (r.get("rut") or "").strip():
+            try:
+                if not _rut_analisis_comparacion(cli_rut, r.get("rut")).get("match"):
+                    return False
+            except Exception:
+                pass
+        return True
     except Exception:
         return False
 
@@ -93179,6 +93310,38 @@ def _ot_puerta_autorizacion_por_id(aid):
     except Exception as e:
         print(f"[ot-puerta] autorización {aid}: {type(e).__name__}", flush=True)
         return None
+
+
+def _ot_factura_escritura_protegida(fila, tido, nudo):
+    """🔒 2026-10-08: ¿escribir (tido, nudo) en factura_* cambiaría un documento que ya se ligó y validó contra el ERP
+    (factura_asociada_por / factura_rut_ok)? Repetir el mismo documento o vaciarlo no cuenta. `fila` trae
+    factura_tido, factura_nudo, factura_asociada_por, factura_rut_ok."""
+    try:
+        fila = fila or {}
+        ligado = bool((fila.get("factura_asociada_por") or "").strip()) or fila.get("factura_rut_ok") is not None
+        if not ligado:
+            return False
+        nt, nn = (tido or "").strip().upper(), str(nudo or "").strip().lstrip("0")
+        if not nt and not nn:
+            return False
+        at, an = (fila.get("factura_tido") or "").strip().upper(), str(fila.get("factura_nudo") or "").strip().lstrip("0")
+        return (nt, nn) != (at, an)
+    except Exception:
+        return False
+
+
+def _ot_puerta_aut_crear_valida(aut, cliente_id):
+    """🔒 2026-10-08: una autorización 'crear_sin_documento' aprobada sirve para crear UNA OT del cliente para el que
+    se pidió, y solo la usa quien la pidió (o el superadministrador que la aprueba y la crea). Nunca una ajena."""
+    try:
+        if aut.get("cliente_id") and cliente_id and int(aut["cliente_id"]) != int(cliente_id):
+            return False
+        if _ot_aut_es_superadmin():
+            return True
+        uid, _ = _ot_aut_usuario()
+        return bool(uid) and aut.get("solicitado_por_user_id") == uid
+    except Exception:
+        return False
 
 
 def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_declara=None):
@@ -93231,9 +93394,10 @@ def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_decla
     if isinstance(autorizacion, dict) and (autorizacion.get("estado") or "") == "aprobada":
         t_aut = autorizacion.get("tipo") or ""
         a_vid = autorizacion.get("visita_id")
-        if momento == "crear" and t_aut == "crear_sin_documento" and not autorizacion.get("visita_creada_id"):
+        if (momento == "crear" and t_aut == "crear_sin_documento" and not autorizacion.get("visita_creada_id")
+                and _ot_puerta_aut_crear_valida(autorizacion, v.get("cliente_id"))):
             return _ok("autorizacion_crear", autorizacion_id=autorizacion.get("id"), motivo=autorizacion.get("motivo"))
-        if momento == "cerrar" and t_aut == "cerrar_sin_documento" and (not vid or not a_vid or int(a_vid) == int(vid)):
+        if momento == "cerrar" and t_aut == "cerrar_sin_documento" and vid and a_vid and int(a_vid) == int(vid):
             return _ok("autorizacion_cerrar", autorizacion_id=autorizacion.get("id"))
     auts = v.get("autorizaciones")
     if auts is None:
@@ -93255,25 +93419,27 @@ def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_decla
     # 4) Documentos del ERP. Los validados (tabla puente, validador de finanzas, asociar-factura) cuentan; los que
     #    vienen como texto del body se confirman contra el ERP (lectura). Una cotización interna basta para
     #    CREAR (requisito 3 de Daniel: "crear con nota de venta o cotización basta"), nunca para cerrar.
-    docs = []
-    for lst in (v.get("documentos_validados"), v.get("documentos")):
+    # 🔒 2026-10-08: solo `documentos_validados` (lo que confirmó el servidor) viene validado; `documentos` es lo que
+    # escribió una persona: la bandera `validado` del navegador no vale, la puerta lo confirma contra el ERP.
+    docs, _claves_docs = [], set()
+    for lst, _conf in ((v.get("documentos_validados"), True), (v.get("documentos"), False)):
         for d in (lst or []):
-            nd = _ot_puerta_doc_norm(d)
-            if nd:
-                docs.append(nd)
+            nd = _ot_puerta_doc_norm(d, confiable=_conf)
+            if not nd:
+                continue
+            _k_doc = (nd["origen"], nd["tido"], nd["nudo"].lstrip("0"))
+            if _k_doc in _claves_docs:
+                continue
+            _claves_docs.add(_k_doc)
+            docs.append(nd)
     if v.get("documentos") is None and v.get("documentos_validados") is None and vid:
         # Lo que ya está en la base viene validado (tabla puente / asociar-factura).
         docs = [dict(nd, validado=True) for nd in
-                (_ot_puerta_doc_norm(x) for x in _ot_puerta_docs_de(vid)) if nd]
-    if "documentos_validados" in v and v.get("documentos_validados") is not None:
-        for d in docs:
-            if any(_ot_puerta_doc_norm(x) and _ot_puerta_doc_norm(x)["tido"] == d["tido"]
-                   and _ot_puerta_doc_norm(x)["nudo"] == d["nudo"] for x in v.get("documentos_validados") or []):
-                d["validado"] = True
+                (_ot_puerta_doc_norm(x, confiable=True) for x in _ot_puerta_docs_de(vid)) if nd]
     docs_ok, vistos = [], set()
     for d in docs:
         if d["origen"] == "cotizacion":
-            if d["validado"] or _ot_puerta_cotizacion_existe(d["nudo"]):
+            if d["validado"] or _ot_puerta_cotizacion_existe(d["nudo"], v.get("cliente_rut")):
                 d["validado"] = True
                 docs_ok.append(d)
             continue
@@ -93307,8 +93473,10 @@ def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_decla
             if a.get("tipo") == "cobro_cero" and a.get("estado") == "aprobada" and (
                     not aut_id or int(a.get("id") or 0) == int(aut_id)):
                 return _ok("cobro_cero", autorizacion_id=a.get("id"), motivo=motivo)
+        # 🔒 2026-10-08: un $0 aprobado vale solo para LA OT para la que se pidió (nunca para crear otra).
         if isinstance(autorizacion, dict) and autorizacion.get("tipo") == "cobro_cero" \
-                and autorizacion.get("estado") == "aprobada":
+                and autorizacion.get("estado") == "aprobada" and vid and autorizacion.get("visita_id") \
+                and int(autorizacion["visita_id"]) == int(vid):
             return _ok("cobro_cero", autorizacion_id=autorizacion.get("id"), motivo=motivo)
         arg = (v.get("cobro_cero_argumento") or "").strip()
         if superadmin_declara and len(arg) >= _OT_AUT_ARGUMENTO_MIN:
@@ -93321,7 +93489,7 @@ def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_decla
 
 def _ot_puerta_documento_eval(v, momento="crear"):
     """Alias de lectura de la puerta (misma función, nombre que usan los caminos masivos)."""
-    return _ot_puerta_documento(v, momento)
+    return _ot_puerta_fuera_asistente(_ot_puerta_documento(v, momento))
 
 
 def _ot_contrato_es_real(ctid, cliente_id):
@@ -93350,7 +93518,7 @@ def _ot_puerta_409(p, **extra):
 
 
 def _ot_puerta_desde_body(d, cliente_id, tipo, modalidad=None, contrato_id=None, extra_docs=None,
-                          garantia=False):
+                          garantia=False, momento="crear"):
     """Puerta 'crear' para los caminos que NO pasan por _ot_validar_normalizar_finanzas (visita-multi,
     solicitar-cambio, visita-historica, retroactiva, intel/accion). Lee del body: documentos [{tipo, numero}|
     {origen:'cotizacion', cotizacion}], factura_tido/nudo, cobro_cero_motivo, cobro_cero_argumento,
@@ -93368,12 +93536,12 @@ def _ot_puerta_desde_body(d, cliente_id, tipo, modalidad=None, contrato_id=None,
             cli_rut = (mysql_fetchone("SELECT rut FROM mant_clientes WHERE id=%s", (cliente_id,)) or {}).get("rut")
     except Exception:
         cli_rut = None
-    return _ot_puerta_documento({
+    return _ot_puerta_fuera_asistente(_ot_puerta_documento({
         "cliente_id": cliente_id, "tipo": tipo, "contrato_id": contrato_id, "cliente_rut": cli_rut,
         "modalidad_cobro": modalidad or ("garantia" if garantia else "pagado"),
         "documentos": docs or None, "cobro_cero_motivo": motivo,
         "cobro_cero_argumento": d.get("cobro_cero_argumento"), "autorizacion_id": d.get("autorizacion_id"),
-    }, "crear")
+    }, momento))
 
 
 def _ot_puerta_respuesta(res, http=409):
@@ -93398,9 +93566,14 @@ def _ot_puerta_aplicar(cur, vid, p, fin_argumento=None):
         via = p.get("via") or ""
         aid = p.get("autorizacion_id")
         motivo = p.get("motivo")
-        if not p.get("docs_ya_guardados"):
-            primero = True
+        # 🔒 2026-10-08: aunque el núcleo ya espejó sus documentos (docs_ya_guardados), los que la puerta confirmó
+        # y el núcleo NO espejó (venían en el body) también quedan guardados: `docs_espejados` lista los que sí.
+        if not p.get("docs_ya_guardados") or p.get("docs_espejados") is not None:
+            primero = not p.get("docs_ya_guardados")
+            _esp = set(p.get("docs_espejados") or []) if p.get("docs_ya_guardados") else set()
             for d in (p.get("documentos_ok") or []):
+                if d.get("origen") != "cotizacion" and (d["tido"], d["nudo"].lstrip("0")) in _esp:
+                    continue
                 if d.get("origen") == "cotizacion":
                     cur.execute("SELECT id FROM tk_cotizaciones WHERE numero_cotizacion=%s OR id=%s LIMIT 1",
                                 (d["nudo"], re.sub(r"[^0-9]", "", d["nudo"]) or 0))
@@ -94421,7 +94594,7 @@ def ot_api_regularizar():
             "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
             "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
             " WHERE " + " AND ".join(where) +
-            " ORDER BY v.fecha_programada DESC, v.id DESC LIMIT 2000", tuple(params)) or []
+            " ORDER BY v.fecha_programada DESC, v.id DESC LIMIT 6000", tuple(params)) or []
     except Exception as e:
         print(f"[ot-regularizar] {type(e).__name__}: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo leer la bandeja."}), 500
@@ -94439,6 +94612,7 @@ def ot_api_regularizar():
         r = dict(r)
         vid = int(r["id"])
         r["documentos"] = docs.get(vid, [])
+        r["documentos_validados"] = docs.get(vid, [])   # 🔒 2026-10-08: ya los validó el servidor: sin volver al ERP
         r["autorizaciones"] = auts.get(vid, [])
         p = _ot_puerta_documento(r, "cerrar")
         falta = None
@@ -94506,6 +94680,7 @@ def ot_api_recorrido(vid):
     docs_val = _ot_puerta_docs_de(vid)
     auts = _ot_puerta_autorizaciones_de(vid)
     v["documentos"], v["autorizaciones"] = docs_val, auts
+    v["documentos_validados"] = docs_val   # 🔒 2026-10-08: de la base = ya validados por el servidor
     p_cerrar = _ot_puerta_documento(v, "cerrar")
     try:
         docs_todos = _ot_docs_listar(vid).get("documentos") or []
@@ -94577,6 +94752,9 @@ def ot_api_recorrido(vid):
         p6 = {"estado": "hecho", "texto": f"Cerrada el {chile_fmt_filter(v['cerrada_at']) if v.get('cerrada_at') else ''} · {p_cerrar.get('via')}"}
     elif not p_cerrar["ok"]:
         p6 = {"estado": "falta", "texto": p_cerrar.get("mensaje") + (" (OT ya cerrada: regularizar)" if cerrada else "")}
+    elif v.get("cliente_id") and not (v.get("centro_costo") or "").strip():
+        # 🔒 2026-10-08: el servidor también rechaza el cierre sin centro de costo (SIN_CENTRO_COSTO).
+        p6 = {"estado": "falta", "texto": "Documento listo, pero falta el centro de costo: se exige al cerrar"}
     else:
         p6 = {"estado": "pendiente", "texto": "Puede cerrar: " + {"documento": "documento de cobro validado",
                                                                   "contrato_real": "mantención de contrato real",
@@ -94617,7 +94795,8 @@ _OT_TIDO_TXT = {"FCV": "Factura", "FCE": "Factura exenta", "BLV": "Boleta", "BLE
 _OT_DOC_CUENTA_TXT = {"servicio": "Cobro del servicio", "despacho": "Cobro del despacho",
                       "nota_venta": "Nota de venta: promesa de cobro, falta la factura",
                       "cotizacion": "Cotización: solo referencia",
-                      "referencia_garantia": "Referencia de la garantía: no se cobra"}
+                      "referencia_garantia": "Referencia de la garantía: no se cobra",
+                      "otros": "Factura de productos u otros: no es del servicio"}
 _OT_PANORAMA_MAX_LECTURAS_ERP = 12
 
 
@@ -94797,8 +94976,20 @@ def ot_api_panorama(vid):
         else:
             cont["otros"] += 1
         ln = d.get("lineas") or {}
-        cont["servicios"] += len(ln.get("servicio") or [])
-        cont["despachos"] += len(ln.get("despacho") or [])
+        # 🔒 2026-10-08: una nota de venta dada de baja por la factura y un documento de referencia (no cobra) no suman
+        # servicios ni despachos (era el mismo cobro dos veces). Si una lectura al ERP falló o se pasó del tope, el
+        # contador lo dice (`incompleto`) en vez de bajar en silencio.
+        if d.get("origen") == "erp" and d.get("lineas") is None and d.get("categoria") != "otro":
+            cont["sin_leer"] = cont.get("sin_leer", 0) + 1
+        if not d.get("dada_de_baja_por") and d.get("es_cobro", True):
+            cont["servicios"] += len(ln.get("servicio") or [])
+            cont["despachos"] += len(ln.get("despacho") or [])
+        # Una factura que no trae líneas ZZ (productos, repuestos) no es «cobro del servicio».
+        if (d.get("categoria") == "cobro" and d.get("cuenta") == "servicio" and d.get("lineas") is not None
+                and not (ln.get("servicio") or []) and not (ln.get("despacho") or [])
+                and not d.get("zz_serv") and not d.get("zz_envio")):
+            d["cuenta"] = "otros"
+    cont["incompleto"] = bool(cont.get("sin_leer"))
     # ── LO QUE NOS COSTÓ, registro por registro ──
     try:
         rep = (_ot_repuestos_desglose([vid]).get(vid)) or {}
@@ -95309,6 +95500,10 @@ def ot2_api_documentos_agregar(vid):
         except Exception as _e_ex:
             print(f"[ot_docs] duplicado vid={vid}: {_e_ex}", flush=True)
         for _t_e, _n_e in _existentes:
+            # 🔒 2026-10-08: la factura/boleta de una nota de venta ligada es el flujo normal («empezar con nota de
+            # venta y terminar facturando»): la nota queda dada de baja por ella, no se cobra dos veces.
+            if _tipo_real in _OT_DOCS_COBRO and (_t_e or "").upper() in _OT_DOCS_NOTA_VENTA:
+                continue
             try:
                 _h_e, _zz_e, _tot_e = _erp_zz_lineas(_t_e, _n_e)
             except Exception:
@@ -95336,6 +95531,21 @@ def ot2_api_documentos_agregar(vid):
                      and bool((v.get("factura_nudo") or "").strip()))
     if _reemplaza_nv:
         _es_primero = True
+    # 🔒 2026-10-08: lo que las notas de venta SIN dar de baja aportaron al valor (filas con aporte registrado) se
+    # resta al reemplazarlas por la factura, en vez de fijar el valor (que borraba lo de otros documentos).
+    _nv_n, _nv_s, _nv_e, _nv_c = 0, 0.0, 0.0, 0
+    if _tipo_real in _OT_DOCS_COBRO:
+        try:
+            _ph_nv = ",".join(["%s"] * len(_OT_DOCS_NOTA_VENTA))
+            _r_nv = mysql_fetchone(
+                "SELECT COUNT(*) AS n, COALESCE(SUM(zz_serv_monto),0) AS s, COALESCE(SUM(zz_envio_monto),0) AS e, "
+                "       COUNT(zz_serv_monto)+COUNT(zz_envio_monto) AS c FROM mant_visita_documentos "
+                f" WHERE visita_id=%s AND origen='erp' AND erp_tido IN ({_ph_nv}) AND reemplazado_por_id IS NULL",
+                (vid,) + tuple(_OT_DOCS_NOTA_VENTA)) or {}
+            _nv_n, _nv_s = int(_r_nv.get("n") or 0), float(_r_nv.get("s") or 0)
+            _nv_e, _nv_c = float(_r_nv.get("e") or 0), int(_r_nv.get("c") or 0)
+        except Exception as _e_nv:
+            print(f"[ot_docs] aporte de notas de venta vid={vid}: {_e_nv}", flush=True)
     # 🐛 2026-09-10: la fecha pasa por _erp_fecha_a_date (ver su docstring).
     # Antes iba `str(doc.get("fecha"))[:10]` y una fecha chilena del ERP
     # ('26/06/2026') hacía que MySQL rechazara el INSERT completo con un 500.
@@ -95370,7 +95580,7 @@ def ot2_api_documentos_agregar(vid):
                      f"en el log para revisarlo.",
         }), 500
 
-    if _reemplaza_nv:
+    if _reemplaza_nv or _nv_n:
         # 🔏 2026-10-07: la nota de venta anterior queda dada de baja por esta factura (sin borrar nada) y
         # esta factura pasa a ser el principal (el UPDATE de abajo lo espeja en factura_*).
         _ot_doc_registrar_fila(vid, _tipo_real, _numero_real, _monto, rut_fact, analisis["match"], justif,
@@ -95426,7 +95636,24 @@ def ot2_api_documentos_agregar(vid):
         # Ahora `costo` se toca solo si la OT ya lo tenía (OT antigua): ahí sigue cuadrando como siempre. Una OT
         # nueva nunca recibe el casillero viejo.
         try:
-            if _es_primero:
+            if _nv_c and _tipo_real in _OT_DOCS_COBRO:
+                # 🔒 2026-10-08: reemplazo de notas de venta con aporte registrado: se resta lo de ellas y se suma lo de
+                # la factura (lo de los demás documentos queda), y las notas dadas de baja dejan de aportar.
+                mysql_execute(
+                    "UPDATE mant_visitas SET "
+                    "  zz_monto=GREATEST(COALESCE(zz_monto,0)-%s,0)+%s, "
+                    "  zz_envio_monto=GREATEST(COALESCE(zz_envio_monto,0)-%s,0)+%s, "
+                    "  costo=CASE WHEN costo IS NULL OR costo=0 THEN costo ELSE GREATEST(costo-%s,0)+%s END, "
+                    "  zz_codigo=COALESCE(NULLIF(zz_codigo,''), %s), valor_origen='zz' "
+                    " WHERE id=%s",
+                    (_nv_s, _zz_serv, _nv_e, _zz_envio, _nv_s + _nv_e, _zz_total, _cod_serv, vid))
+                _ph_nv2 = ",".join(["%s"] * len(_OT_DOCS_NOTA_VENTA))
+                mysql_execute(
+                    "UPDATE mant_visita_documentos SET zz_serv_monto=NULL, zz_envio_monto=NULL "
+                    f" WHERE visita_id=%s AND origen='erp' AND erp_tido IN ({_ph_nv2}) AND reemplazado_por_id IS NOT NULL "
+                    "   AND (zz_serv_monto IS NOT NULL OR zz_envio_monto IS NOT NULL)",
+                    (vid,) + tuple(_OT_DOCS_NOTA_VENTA))
+            elif _es_primero:
                 mysql_execute(
                     "UPDATE mant_visitas SET zz_monto=%s, zz_envio_monto=%s, "
                     "  costo=CASE WHEN costo IS NULL OR costo=0 THEN costo ELSE %s END, "
@@ -95484,10 +95711,16 @@ def ot2_api_documentos_quitar(vid, did):
     """
     f = mysql_fetchone(
         "SELECT id, es_principal, origen, erp_tido, erp_nudo, cotizacion_id, "
-        "       zz_serv_monto, zz_envio_monto "
+        "       zz_serv_monto, zz_envio_monto, reemplazado_por_id "
         "  FROM mant_visita_documentos WHERE id=%s AND visita_id=%s", (did, vid))
     if not f:
         return jsonify({"ok": False, "error": "Documento no encontrado en esta OT."}), 404
+    if f.get("reemplazado_por_id"):
+        # 🔒 2026-10-08: «nada se pisa, nada se borra»: la nota de venta dada de baja por la factura es evidencia.
+        return jsonify({
+            "ok": False, "error_codigo": "DADA_DE_BAJA",
+            "error": "Esa nota de venta ya fue dada de baja por la factura que la reemplazó: queda en la OT como "
+                     "evidencia y no se quita."}), 409
     if f.get("es_principal"):
         return jsonify({
             "ok": False, "error_codigo": "ES_PRINCIPAL",
@@ -104653,6 +104886,10 @@ def _ot2_crear_core(d, autorizacion=None):
         if not _puerta["ok"]:
             return _ot_puerta_respuesta(_puerta)
         _puerta["docs_ya_guardados"] = True   # este núcleo espeja factura_*/documentos_extra más abajo
+        _puerta["docs_espejados"] = ({((_x.get("tipo") or "").strip().upper(), str(_x.get("numero") or "").lstrip("0"))
+                                      for _x in (_fin_campos.get("documentos_validados") or [])}
+                                     | {((_fin_campos.get("factura_tido") or "").strip().upper(),
+                                         str(_fin_campos.get("factura_nudo") or "").lstrip("0"))})
     _fin_centro = _fin_campos["centro_costo"]
     _fin_valor_origen = _fin_campos["valor_origen"]
     _fin_gar = _fin_campos["garantia_aplica"]
@@ -104793,7 +105030,9 @@ def _ot2_crear_core(d, autorizacion=None):
              # conversión a hora Chile es cosa de la vista).
              datetime.utcnow() if _fin_declarada else None,
              current_username() if _fin_declarada else None,
-             current_username()))
+             # 🔒 2026-10-08: si la OT nace de una autorización aprobada por Daniel, la creó quien la pidió (así la ve
+             # en «mis OT» y en Regularizar); la aprobación de Daniel queda en mant_ot_autorizaciones y mant_logs.
+             ((autorizacion or {}).get("solicitado_por_nombre") or current_username())))
         vid = cur.lastrowid
         # 🔏 2026-10-07 — constancia de la puerta (autorización consumida, $0 declarado por superadmin, etc.).
         if _puerta is not None:
@@ -115988,6 +116227,7 @@ def mant_ot_aprobar_cierre(vid):
         # bandera contrato_real -- lo que necesita la regla única (_ot_cobertura / _ot_finanzas) para decidir
         # si la OT se cobra y cuánto se cobró (gates SIN_FACTURA / SIN_VALORIZAR, más abajo).
         "SELECT v.estado, v.modalidad_cobro, v.factura_nudo, v.factura_tido, v.cliente_id, "
+        "       v.cobro_cero_motivo, v.cobro_cero_autorizacion_id, "
         "       v.centro_costo, v.costo_proveedor, v.costo_despacho, v.tecnico_user_id, "
         "       v.tipo, v.zz_monto, v.zz_envio_monto, v.costo, c.tipo_cliente AS cliente_tipo, "
         "       v.cubierto_por, v.valor_origen, v.zz_codigo, v.contrato_id, v.proveedor_tipo, "
@@ -116351,7 +116591,7 @@ def mant_ot_aprobar_cierre(vid):
 
 
 def _ot_doc_registrar_fila(vid, tipo_real, numero_real, monto, rut, rut_ok, justif, fecha, doc_previo,
-                           es_nota_venta=False, estado_ot=None, usuario=None):
+                           es_nota_venta=False, estado_ot=None, usuario=None, no_principal=False):
     """🔏 2026-10-07 — asociar-factura deja su fila en mant_visita_documentos (sin pisar las anteriores). Si el
     principal anterior era una nota de venta y llega una factura/boleta, la nota queda dada de baja por ella
     (reemplazado_por_id) y deja de ser principal; las dos siguen visibles. En una OT cerrada queda constancia en
@@ -116362,16 +116602,21 @@ def _ot_doc_registrar_fila(vid, tipo_real, numero_real, monto, rut, rut_ok, just
                             "  AND erp_tido=%s AND TRIM(LEADING '0' FROM erp_nudo)=TRIM(LEADING '0' FROM %s) LIMIT 1",
                             (vid, tipo_real, str(numero_real)[:30]))
         if not ya:
-            mysql_execute("UPDATE mant_visita_documentos SET es_principal=0 WHERE visita_id=%s AND es_principal=1", (vid,))
+            # 🔒 2026-10-08: primero se INSERTA (no principal) y después el principal cambia en UN solo UPDATE: un
+            # fallo entre medio ya no deja la OT sin documento principal. `no_principal`: la nota de venta que llega
+            # cuando la principal ya es una factura queda como fila adicional.
             mysql_execute(
                 "INSERT INTO mant_visita_documentos (visita_id, origen, es_cobro, es_principal, erp_tido, erp_nudo, "
                 "  monto, rut, rut_ok, rut_justif, emitido_el, asociado_por, cuenta) "
-                "VALUES (%s,'erp',1,1,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "VALUES (%s,'erp',1,0,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (vid, tipo_real, str(numero_real)[:30], monto, (str(rut or "")[:20] or None),
                  (1 if rut_ok else 0), (justif or None), (_erp_fecha_a_date(fecha) if fecha else None), usuario,
                  ("nota_venta" if es_nota_venta else "servicio")))
             ya = mysql_fetchone("SELECT id FROM mant_visita_documentos WHERE visita_id=%s AND erp_tido=%s AND erp_nudo=%s "
                                 " ORDER BY id DESC LIMIT 1", (vid, tipo_real, str(numero_real)[:30]))
+            if ya and not no_principal:
+                mysql_execute("UPDATE mant_visita_documentos SET es_principal=IF(id=%s,1,0) WHERE visita_id=%s",
+                              (ya.get("id"), vid))
         nuevo_id = (ya or {}).get("id")
         if nuevo_id and not es_nota_venta and tipo_real in _OT_DOCS_COBRO:
             _nvs = ",".join(["%s"] * len(_OT_DOCS_NOTA_VENTA))
@@ -116623,6 +116868,9 @@ def mant_ot_declarar_cobertura(vid):
             "garantia_motivo=%s"]
     params = [cobertura["cubierto_por"], cobertura["modalidad_cobro"],
               cobertura["estado_facturacion"], motivo[:500]]
+    if not _gar_efectiva:
+        # 🔒 2026-10-08: volver a servicio pagado limpia la constancia del $0 (ver /ot/api/finanzas).
+        sets += ["cobro_cero_motivo=NULL", "cobro_cero_autorizacion_id=NULL", "cobro_cero_argumento=NULL"]
     if monto is not None:
         # 💰 2026-10-07: al valorizado (referencia), ya no a `costo` -- ver el docstring.
         sets += ["valorizado_clp=%s", "valorizado_fuente=%s"]
@@ -116798,36 +117046,44 @@ def mant_ot_asociar_factura(vid):
     _where_lock = "" if _es_superadmin_req else (
         " AND estado NOT IN ('cancelada','anulada')")
     _doc_previo_af = mysql_fetchone("SELECT factura_tido, factura_nudo, estado FROM mant_visitas WHERE id=%s", (vid,)) or {}
-    try:
+    # 🔒 2026-10-08 (revisión adversarial, «nada se pisa»): si el principal ya es una FACTURA/BOLETA y llega una
+    # nota de venta, la nota queda como fila NO principal y factura_*/estado_facturacion no se tocan.
+    _nv_bajo_factura = bool(_es_nota_venta and str(_doc_previo_af.get("factura_tido") or "").strip().upper() in _OT_DOCS_COBRO)
+    if _nv_bajo_factura:
         _n_upd = mysql_execute_returning_rowcount(
-            "UPDATE mant_visitas SET factura_tido=%s, factura_nudo=%s, "
-            "  factura_emitida_at=COALESCE(factura_emitida_at, NOW()), "
-            "  factura_rut=%s, factura_monto=%s, factura_rut_ok=%s, "
-            "  factura_rut_justif=%s, factura_asociada_por=%s, "
-            # 💰 2026-10-07 (Daniel, modelo único de finanzas): ya NO se rellena `costo` con el total BRUTO
-            # de la factura (antes "valorización de la visita", 2026-08-19). Ese total trae los PRODUCTOS
-            # vendidos, no lo cobrado por el servicio, y la barra de la OT lo leía como "Cobramos".
-            # El bruto queda en factura_monto; lo cobrado por el servicio se declara en la tarjeta
-            # Finanzas (líneas ZZ del documento).
-            "  estado_facturacion=%s "
-            " WHERE id=%s" + _where_lock,
-            (_tipo_real, _numero_real[:20], rut_fact[:20] or None, _monto,
-             1 if analisis["match"] else 0, justif or None,
-             current_username(), _estado_fact, vid))
-    except Exception as _e_up:
-        # Fallback: base sin la migración del ENUM todavía aplicada. La OT
-        # igual queda amarrada al documento (que es lo que destraba la firma).
-        print(f"[asociar-factura] UPDATE con estado={_estado_fact} falló vid={vid}: "
-              f"{_e_up} — reintento sin el estado nuevo", flush=True)
-        _n_upd = mysql_execute_returning_rowcount(
-            "UPDATE mant_visitas SET factura_tido=%s, factura_nudo=%s, "
-            "  factura_emitida_at=COALESCE(factura_emitida_at, NOW()), "
-            "  factura_rut=%s, factura_monto=%s, factura_rut_ok=%s, "
-            "  factura_rut_justif=%s, factura_asociada_por=%s "
-            " WHERE id=%s" + _where_lock,
-            (_tipo_real, _numero_real[:20], rut_fact[:20] or None, _monto,
-             1 if analisis["match"] else 0, justif or None,
-             current_username(), vid))
+            "UPDATE mant_visitas SET factura_asociada_por=COALESCE(factura_asociada_por, %s) WHERE id=%s" + _where_lock,
+            (current_username(), vid))
+    else:
+        try:
+            _n_upd = mysql_execute_returning_rowcount(
+                "UPDATE mant_visitas SET factura_tido=%s, factura_nudo=%s, "
+                "  factura_emitida_at=COALESCE(factura_emitida_at, NOW()), "
+                "  factura_rut=%s, factura_monto=%s, factura_rut_ok=%s, "
+                "  factura_rut_justif=%s, factura_asociada_por=%s, "
+                # 💰 2026-10-07 (Daniel, modelo único de finanzas): ya NO se rellena `costo` con el total BRUTO
+                # de la factura (antes "valorización de la visita", 2026-08-19). Ese total trae los PRODUCTOS
+                # vendidos, no lo cobrado por el servicio, y la barra de la OT lo leía como "Cobramos".
+                # El bruto queda en factura_monto; lo cobrado por el servicio se declara en la tarjeta
+                # Finanzas (líneas ZZ del documento).
+                "  estado_facturacion=%s "
+                " WHERE id=%s" + _where_lock,
+                (_tipo_real, _numero_real[:20], rut_fact[:20] or None, _monto,
+                 1 if analisis["match"] else 0, justif or None,
+                 current_username(), _estado_fact, vid))
+        except Exception as _e_up:
+            # Fallback: base sin la migración del ENUM todavía aplicada. La OT
+            # igual queda amarrada al documento (que es lo que destraba la firma).
+            print(f"[asociar-factura] UPDATE con estado={_estado_fact} falló vid={vid}: "
+                  f"{_e_up} — reintento sin el estado nuevo", flush=True)
+            _n_upd = mysql_execute_returning_rowcount(
+                "UPDATE mant_visitas SET factura_tido=%s, factura_nudo=%s, "
+                "  factura_emitida_at=COALESCE(factura_emitida_at, NOW()), "
+                "  factura_rut=%s, factura_monto=%s, factura_rut_ok=%s, "
+                "  factura_rut_justif=%s, factura_asociada_por=%s "
+                " WHERE id=%s" + _where_lock,
+                (_tipo_real, _numero_real[:20], rut_fact[:20] or None, _monto,
+                 1 if analisis["match"] else 0, justif or None,
+                 current_username(), vid))
 
     if _n_upd == 0:
         return jsonify({
@@ -116843,7 +117099,7 @@ def mant_ot_asociar_factura(vid):
     # (reemplazado_por_id), visible, sin borrar nada.
     _ot_doc_registrar_fila(vid, _tipo_real, _numero_real, _monto, rut_fact, analisis.get("match"), justif,
                            doc.get("fecha"), _doc_previo_af, es_nota_venta=_es_nota_venta,
-                           estado_ot=_doc_previo_af.get("estado"))
+                           estado_ot=_doc_previo_af.get("estado"), no_principal=_nv_bajo_factura)
     _mant_log("visita", vid, "factura_asociada",
               f"{tipo} {numero} · ${_monto or 0:,.0f} · "
               + ("NOTA DE VENTA (aún facturable) · " if _es_nota_venta else "")
@@ -126671,7 +126927,9 @@ def mant_reglas_guardar():
         for clave, valor in cambios.items():
             # 🔏 2026-10-07 (atajo del mapa): apagar el candado de documento al cerrar la OT es decisión de Daniel.
             # Un admin ya no puede tocar este interruptor (los demás siguen igual).
-            if clave == "ot_factura_gate_activo" and not _ot_aut_es_superadmin():
+            # 🔒 2026-10-08: MySQL compara la clave sin distinguir mayúsculas; aquí también (si no, «OT_FACTURA_GATE_ACTIVO»
+            # se saltaba el candado y el UPDATE igual afectaba la fila real).
+            if str(clave).strip().lower() == "ot_factura_gate_activo" and not _ot_aut_es_superadmin():
                 return jsonify({"error": "Solo el superadministrador puede cambiar el candado de documento al cerrar la OT.",
                                 "error_codigo": "SOLO_SUPERADMIN", "clave": clave}), 403
             r = mysql_fetchone("SELECT tipo_dato, min_val, max_val FROM mant_reglas_negocio WHERE clave=%s", (clave,))
@@ -140964,6 +141222,7 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
         _fin_campos, cid, tipo_ot, cliente_rut=_cliente_rut_lev,
         modalidad=("sin_costo" if tipo_ot == "levantamiento" else ("garantia" if aplica_garantia else None))), "crear")
     if not _puerta_lev["ok"]:
+        _puerta_lev = _ot_puerta_fuera_asistente(_puerta_lev)   # 🔒 2026-10-08: el levantamiento no tiene botón de solicitud
         return {"ok": False, "error": _puerta_lev["mensaje"], "error_codigo": _puerta_lev["code"],
                 "accion": _puerta_lev["accion"], "autorizacion_id": _puerta_lev.get("autorizacion_id")}, 409
     _puerta_lev["docs_ya_guardados"] = True
@@ -142206,12 +142465,14 @@ def mant_lev_cerrar(lid):
         try:
             _v_lev = mysql_fetchone(
                 "SELECT v.id, v.cliente_id, v.tipo, v.modalidad_cobro, v.cubierto_por, v.contrato_id, v.estado, "
-                "       v.cobro_cero_motivo, v.cobro_cero_argumento, v.cobro_cero_autorizacion_id, "
+                "       v.centro_costo, v.cobro_cero_motivo, v.cobro_cero_argumento, v.cobro_cero_autorizacion_id, "
                 "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
                 "  FROM mant_visitas v WHERE v.id=%s", (lev["visita_id"],))
         except Exception as _e_vl:
+            # 🔒 2026-10-08: si la lectura falla NO se salta la puerta (antes fallaba abierto): se pide reintentar.
             print(f"[lev_cerrar] puerta vid={lev.get('visita_id')}: {type(_e_vl).__name__}", flush=True)
-            _v_lev = None
+            return jsonify({"ok": False, "error": "No pudimos revisar la OT del levantamiento. Reintenta en unos "
+                                                  "segundos.", "error_codigo": "REVISION_NO_DISPONIBLE"}), 503
         if _v_lev and (_v_lev.get("estado") or "") not in ("cerrada", "cancelada", "anulada"):
             try:
                 _gate_lev = bool(_regla_fresca("ot_factura_gate_activo", True))
@@ -142222,6 +142483,11 @@ def mant_lev_cerrar(lid):
                 if not _p_lev["ok"]:
                     return _ot_puerta_409(_p_lev, visita_id=lev["visita_id"],
                                           error="La OT de este levantamiento no se puede cerrar: " + _p_lev["mensaje"])
+                # 🔒 2026-10-08: el centro de costo se exige SIEMPRE al cerrar una OT de cliente (como en aprobar-cierre).
+                if _v_lev.get("cliente_id") and not (_v_lev.get("centro_costo") or "").strip():
+                    return jsonify({
+                        "ok": False, "error_codigo": "SIN_CENTRO_COSTO", "accion": _ot_cierre_accion("SIN_CENTRO_COSTO", _v_lev["id"]),
+                        "error": "Falta declarar el centro de costo de la OT de este levantamiento antes de cerrarlo."}), 400
 
     user = current_username() or 'sistema'
     mysql_execute(

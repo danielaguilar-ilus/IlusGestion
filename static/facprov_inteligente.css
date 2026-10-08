@@ -73,6 +73,11 @@
   .fpl.abierto .fpl-extra{display:block}
   .fpl.abierto .fpl-prov{display:flex}
   .fpl.abierto .fpl-k small{display:block}
+  /* 🔒 2026-10-08: la factura del proveedor (lo que activa el cuadre) y el porqué de la diferencia se ven SIEMPRE;
+     el panel abierto se limita a la pantalla y se desplaza por dentro, sin tapar la lista. */
+  .fpl-k.fac.fpl-extra{display:block}
+  .fpl-k.dif small{display:block}
+  .fpl.abierto{max-height:calc(100dvh - var(--topbar-h,56px) - 24px);overflow-y:auto;-webkit-overflow-scrolling:touch}
   .fpl-grid{grid-template-columns:repeat(auto-fit,minmax(104px,1fr))}
   .fp-tabla tbody tr.fpv-av-row{margin-top:-12px;border-top:0;border-radius:0 0 12px 12px}
   .fp-tabla tbody tr.fpv-av-row td{padding:2px 12px 8px}

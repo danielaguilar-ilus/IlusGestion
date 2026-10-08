@@ -51,10 +51,16 @@
     if (a.estado === 'aprobada' && a.visita_creada_id) h += '<div class="pp-const">La OT creada: <a href="/ot/' + a.visita_creada_id + '"><b>abrirla</b></a></div>';
     h += '<div class="pp-acc">';
     if (a.estado === 'pendiente' && esSA) {
-      h += '<button type="button" class="pp-btn ok" data-aprobar="' + a.id + '"><i class="bi bi-check-lg"></i> Aprobar</button>' +
-        '<button type="button" class="pp-btn mal" data-rechazar="' + a.id + '"><i class="bi bi-x-lg"></i> Rechazar</button>';
+      /* Aprobar una creación crea la OT en ese instante, sin vuelta atrás: desde la lista solo se rechaza o se abre
+         el detalle ("Ver todo": tipo de trabajo, equipos, montos, proveedor); se aprueba viendo qué se creará. */
+      if (a.tipo === 'crear_sin_documento' && !completa) {
+        h += '<a class="pp-btn ok" href="' + esc(a.url) + '"><i class="bi bi-eye"></i> Ver qué se creará y aprobar</a>';
+      } else {
+        h += '<button type="button" class="pp-btn ok" data-aprobar="' + a.id + '"><i class="bi bi-check-lg"></i> Aprobar</button>';
+      }
+      h += '<button type="button" class="pp-btn mal" data-rechazar="' + a.id + '"><i class="bi bi-x-lg"></i> Rechazar</button>';
     }
-    if (!completa) h += '<a class="pp-btn" href="' + esc(a.url) + '"><i class="bi bi-eye"></i> Ver todo</a>';
+    if (!completa && !(a.estado === 'pendiente' && esSA && a.tipo === 'crear_sin_documento')) h += '<a class="pp-btn" href="' + esc(a.url) + '"><i class="bi bi-eye"></i> Ver todo</a>';
     if (a.visita_id) h += '<a class="pp-btn" href="/ot/' + a.visita_id + '"><i class="bi bi-clipboard2-pulse"></i> Abrir la OT</a>';
     return h + '</div></article>';
   }

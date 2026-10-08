@@ -7601,9 +7601,17 @@ async function otdFinCorrGuardar(){
            "asociar factura" en vez de reconocer la cobertura vigente. #}
         {% set _mod_cobro = (v.modalidad_cobro or '')|lower %}
         {% set _falta_cc  = (not _es_int) and (not v.centro_costo) %}
+        {# 🔒 2026-10-08 (REGLA #24): el documento lo decide LA PUERTA del servidor (puerta_cierre), la misma que
+           rechaza el cierre y que lee el motor de finanzas: una nota de venta sola no es documento de cierre, un
+           $0 sin autorización de Daniel tampoco, y un cierre autorizado por él sí. Sin puerta_cierre (técnico,
+           error de lectura) se cae a la regla anterior. #}
         {% set _falta_doc = (not _es_int)
-                            and _mod_cobro not in ('garantia', 'sin_costo')
-                            and (not v.factura_nudo) %}
+                            and ((not puerta_cierre.ok) if puerta_cierre
+                                 else (_mod_cobro not in ('garantia', 'sin_costo') and (not v.factura_nudo))) %}
+        {% set _falta_doc_txt = ('Esperando autorización de Daniel' if (puerta_cierre and puerta_cierre.pendiente)
+                                 else ('Falta ligar la factura o boleta' if (puerta_cierre and puerta_cierre.falta == 'factura')
+                                       else ('$0 sin autorización de Daniel' if (puerta_cierre and puerta_cierre.falta == 'autorizacion_cobro_cero')
+                                             else 'Documento o autorización'))) %}
         {# 🔒 2026-09-03 (Daniel): "necesito cerrar cuánto me cobró el técnico,
            eso tiene que ser un impedimento de cierre... para saber cuánto
            cobré yo, cuánto me cobraron a mí, cuánto gané, cuánto perdí".
@@ -7648,7 +7656,7 @@ async function otdFinCorrGuardar(){
                 {% endif %}
                 {% if _falta_doc %}
                 <span class="otf-sem-chip" onclick="OT2F.irAPaso('otfPaso2')">
-                  <i class="bi bi-receipt"></i> Documento o garantía</span>
+                  <i class="bi bi-receipt"></i> {{ _falta_doc_txt }}</span>
                 {% endif %}
                 {% if _falta_costo %}
                 <span class="otf-sem-chip" onclick="OT2F.irAPaso('otfPaso3')">

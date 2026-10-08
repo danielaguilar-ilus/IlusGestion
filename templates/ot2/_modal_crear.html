@@ -6349,6 +6349,9 @@ window.OT2C = (function(){
     // rut viaja acá para el chequeo de coincidencia contra S.cliente.rut
     // que hace _o2mFinCargarZZ cuando encuentra la línea de servicio real.
     S.fin_doc = {tido: header.tido, nudo: header.nudo, rut: header.rut || ''};
+    // 🔒 2026-10-08: elegir un documento apaga «Todavía no hay documento» (si no, la pantalla no lo mostraba y el
+    // botón seguía diciendo «Pedir autorización a Daniel»).
+    S.fin_aut = false; _o2mSigRotular();
     S.fin_zz_lineas = []; S.fin_zz_codigo = null; S.fin_zz_monto = null;
     S.fin_zz_envio = null; S.fin_doc_rut_difiere = false;
     // 2026-09-15: con documento nuevo, el valor parte de cero -- la línea
@@ -8236,6 +8239,7 @@ window.OT2C = (function(){
     // elegir el MISMO documento por segunda vez.
     if (S.doc_origen && ['FCV','BLV','NVV','NVI','WEB'].indexOf(S.doc_origen.tido) >= 0){
       S.fin_doc = {tido: S.doc_origen.tido, nudo: S.doc_origen.nudo, rut: header.rut || ''};
+      S.fin_aut = false; _o2mSigRotular();   // 🔒 2026-10-08: ya hay documento: no se pide autorización
     }
     // Líneas con SKU real solamente (la búsqueda ya filtra las líneas ZZ de
     // servicio) -- quedan como referencia informativa en la sección Equipos

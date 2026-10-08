@@ -16,11 +16,11 @@ from tests.test_incidencias_bajas import _codigo_y_arbol
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FUNCS = ("_ot_es_interna", "_ot_cobertura", "_ot_fin_num", "_ot_puerta_documento", "_ot_puerta_documento_eval",
          "_ot_puerta_desde_body", "_ot_puerta_doc_norm", "_ot_puerta_validar_erp", "_ot_puerta_cotizacion_existe",
-         "_ot_puerta_autorizacion_por_id")
+         "_ot_puerta_autorizacion_por_id", "_ot_puerta_aut_crear_valida", "_ot_puerta_fuera_asistente")
 CONSTS = ("_OT_DOCS_NOTA_VENTA", "_OT_DOCS_CIERRE", "_OT_DOCS_COBRO", "_OT_COBRO_CERO_MOTIVOS",
           "_OT_COBRO_CERO_MODALIDAD", "_OT_AUT_TIPOS", "_OT_AUT_ARGUMENTO_MIN", "_OT_PUERTA_NV_CIERRA",
           "_OT_PUERTA_MSG", "_OT_PUERTA_MSG_FACTURA", "_OT_PUERTA_MSG_CERO", "_OT_ESTADOS_NACIMIENTO",
-          "_OT_FIN_COBERTURA_TXT", "_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_ZZ_NO_SERVICIO")
+          "_OT_FIN_COBERTURA_TXT", "_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_ZZ_NO_SERVICIO", "_OT_PUERTA_MSG_FUERA")
 
 _CODIGO = None
 _ARBOL = None
@@ -56,7 +56,11 @@ def _cargar():
     amb["mysql_fetchone"] = lambda *a, **k: None
     amb["mysql_fetchall"] = lambda *a, **k: []
     amb["_ot_aut_es_superadmin"] = lambda *a, **k: False
+    amb["_ot_aut_usuario"] = lambda: (1, "Aaron")
     amb["_ot_aut_fila"] = lambda aid: None
+    # El RUT del documento contra el del cliente (la comparación real vive en app.py con su dígito verificador).
+    amb["_rut_analisis_comparacion"] = lambda a, b: {"match": re.sub(r"[^0-9kK]", "", str(a or "")).upper()
+                                                     == re.sub(r"[^0-9kK]", "", str(b or "")).upper()}
     return amb
 
 
@@ -69,6 +73,25 @@ def P(v, momento="crear", **kw):
         AMB = _cargar()
     base = {"cliente_id": 7, "tipo": "instalacion", "modalidad_cobro": "pagado", "cubierto_por": "cliente",
             "documentos": [], "autorizaciones": [], "contrato_real": False}
+    base.update(v)
+    # Lo que el SERVIDOR ya validó (tabla puente, validador de finanzas) viaja en `documentos_validados`; lo que escribe
+    # una persona, en `documentos` (la bandera `validado` del body NO vale: ver TestNoSeConfiaEnElBody).
+    docs = base.get("documentos")
+    if docs:
+        val = [d for d in docs if d.get("validado")]
+        if val:
+            base["documentos_validados"] = val
+        base["documentos"] = [d for d in docs if not d.get("validado")]
+    return AMB["_ot_puerta_documento"](base, momento, **kw)
+
+
+def PR(v, momento="crear", **kw):
+    """La puerta SIN el atajo de P: el body tal cual llega (para probar que no se confía en él)."""
+    global AMB
+    if AMB is None:
+        AMB = _cargar()
+    base = {"cliente_id": 7, "tipo": "instalacion", "modalidad_cobro": "pagado", "cubierto_por": "cliente",
+            "autorizaciones": [], "contrato_real": False}
     base.update(v)
     return AMB["_ot_puerta_documento"](base, momento, **kw)
 
@@ -164,11 +187,113 @@ class TestPuertaCrear(unittest.TestCase):
         self.assertFalse(P({"tipo": "correctiva", "contrato_real": True})["ok"])
 
     def test_autorizacion_crear_sin_documento_aprobada(self):
-        a = {"id": 9, "tipo": "crear_sin_documento", "estado": "aprobada"}
+        a = {"id": 9, "tipo": "crear_sin_documento", "estado": "aprobada", "solicitado_por_user_id": 1, "cliente_id": 7}
         r = P({}, autorizacion=a)
         self.assertTrue(r["ok"]); self.assertEqual(r["via"], "autorizacion_crear"); self.assertEqual(r["autorizacion_id"], 9)
         self.assertFalse(P({}, autorizacion=dict(a, estado="pendiente"))["ok"])
         self.assertFalse(P({}, autorizacion=dict(a, tipo="cerrar_sin_documento"))["ok"])
+
+
+class TestNoSeConfiaEnElBody(unittest.TestCase):
+    """Revisión adversarial 2026-10-08: lo que dice el navegador no abre la puerta."""
+
+    def setUp(self):
+        P({})   # carga AMB
+        self._res = AMB["_ot_resolver_doc_erp"]
+
+    def tearDown(self):
+        AMB["_ot_resolver_doc_erp"] = self._res
+
+    def test_validado_del_body_se_ignora(self):
+        r = PR({"documentos": [{"tipo": "FCV", "numero": "999999", "validado": True}]})
+        self.assertFalse(r["ok"])
+        r = PR({"documentos": [{"origen": "cotizacion", "cotizacion": "COT-9", "validado": True}]})
+        self.assertFalse(r["ok"])
+
+    def test_es_cobro_y_rut_del_body_se_ignoran(self):
+        AMB["_ot_resolver_doc_erp"] = lambda t, n, r=None: ("FCV", {"cliente_rut": "11.111.111-1"}, True, None)
+        r = PR({"documentos": [{"tipo": "FCV", "numero": "55", "es_cobro": False, "rut": "99.999.999-9"}],
+                "cliente_rut": "11.111.111-1"})
+        self.assertTrue(r["ok"]); self.assertTrue(r["documentos_ok"][0]["es_cobro"])
+        self.assertEqual(r["documentos_ok"][0]["rut"], "11.111.111-1")
+
+    def test_el_documento_se_confirma_contra_el_erp(self):
+        AMB["_ot_resolver_doc_erp"] = lambda t, n, r=None: ("FCV", {"cliente_rut": "11.111.111-1"}, True, None)
+        self.assertTrue(PR({"documentos": [{"tipo": "FCV", "numero": "55"}], "cliente_rut": "11.111.111-1"})["ok"])
+
+    def test_factura_de_otro_rut_no_sirve(self):
+        AMB["_ot_resolver_doc_erp"] = lambda t, n, r=None: ("FCV", {"cliente_rut": "22.222.222-2"}, True, None)
+        r = PR({"documentos": [{"tipo": "FCV", "numero": "55"}], "cliente_rut": "11.111.111-1"})
+        self.assertFalse(r["ok"]); self.assertEqual(r["falta"], "documento")
+
+    def test_los_validados_por_el_servidor_si_cuentan_y_conservan_es_cobro(self):
+        r = PR({"documentos_validados": [{"origen": "erp", "tipo": "FCV", "numero": "55", "validado": True}]})
+        self.assertTrue(r["ok"])
+        r = PR({"documentos_validados": [{"origen": "erp", "tipo": "FCV", "numero": "55", "es_cobro": False}]})
+        self.assertFalse(r["ok"])   # referencia de garantía: no cobra
+
+    def test_desde_body_nace_completada_se_revisa_como_cerrar(self):
+        AMB["_ot_resolver_doc_erp"] = lambda t, n, r=None: ("NVV", {"cliente_rut": ""}, True, None)
+        d = {"documentos": [{"tipo": "NVV", "numero": "VD00010667"}]}
+        self.assertTrue(AMB["_ot_puerta_desde_body"](d, 7, "correctiva")["ok"])                       # crear: basta la nota de venta
+        r = AMB["_ot_puerta_desde_body"](d, 7, "correctiva", momento="cerrar")                          # nace completada: no
+        self.assertFalse(r["ok"]); self.assertEqual(r["falta"], "factura")
+
+    def test_cotizacion_de_otro_cliente_o_rechazada_no_sirve(self):
+        previa = AMB["mysql_fetchone"]
+        try:
+            AMB["mysql_fetchone"] = lambda *a, **k: {"id": 1, "rut": "22.222.222-2", "estado": "draft"}
+            d = {"documentos": [{"origen": "cotizacion", "cotizacion": "COT-000001"}], "cliente_rut": "11.111.111-1"}
+            self.assertFalse(PR(d)["ok"])
+            AMB["mysql_fetchone"] = lambda *a, **k: {"id": 1, "rut": "11.111.111-1", "estado": "draft"}
+            self.assertTrue(PR(d)["ok"])
+            AMB["mysql_fetchone"] = lambda *a, **k: {"id": 1, "rut": "11.111.111-1", "estado": "rejected"}
+            self.assertFalse(PR(d)["ok"])
+        finally:
+            AMB["mysql_fetchone"] = previa
+
+    def test_fuera_del_asistente_el_mensaje_dice_por_donde_seguir(self):
+        r = AMB["_ot_puerta_desde_body"]({}, 7, "correctiva")
+        self.assertFalse(r["ok"]); self.assertTrue(r.get("fuera_asistente"))
+        self.assertIn("Nueva OT", r["mensaje"]); self.assertIn("Pedir autorización", r["mensaje"])
+
+
+class TestAutorizacionesAjenas(unittest.TestCase):
+    """Una autorización aprobada vale para SU cliente, SU OT y quien la pidió."""
+
+    def test_crear_sin_documento_de_otro_cliente_no_sirve(self):
+        a = {"id": 9, "tipo": "crear_sin_documento", "estado": "aprobada", "solicitado_por_user_id": 1, "cliente_id": 99}
+        self.assertFalse(P({"cliente_id": 7}, autorizacion=a)["ok"])
+
+    def test_crear_sin_documento_de_otra_persona_no_sirve(self):
+        a = {"id": 9, "tipo": "crear_sin_documento", "estado": "aprobada", "solicitado_por_user_id": 2, "cliente_id": 7}
+        self.assertFalse(P({}, autorizacion=a)["ok"])
+
+    def test_superadmin_que_aprueba_y_crea_si_pasa(self):
+        P({})
+        previa = AMB["_ot_aut_es_superadmin"]
+        AMB["_ot_aut_es_superadmin"] = lambda *a, **k: True
+        try:
+            a = {"id": 9, "tipo": "crear_sin_documento", "estado": "aprobada", "solicitado_por_user_id": 2, "cliente_id": 7}
+            self.assertTrue(P({}, autorizacion=a)["ok"])
+        finally:
+            AMB["_ot_aut_es_superadmin"] = previa
+
+    def test_cobro_cero_aprobado_no_sirve_para_crear_otra_ot(self):
+        a = {"id": 5, "tipo": "cobro_cero", "estado": "aprobada", "motivo": "garantia", "visita_id": 123}
+        r = P({"modalidad_cobro": "garantia", "cobro_cero_motivo": "garantia", "cobro_cero_argumento": ARG}, autorizacion=a)
+        self.assertFalse(r["ok"]); self.assertEqual(r["falta"], "autorizacion_cobro_cero")
+
+    def test_cobro_cero_de_otra_ot_no_sirve_al_cerrar(self):
+        a = {"id": 5, "tipo": "cobro_cero", "estado": "aprobada", "motivo": "garantia", "visita_id": 123}
+        v = {"id": 200, "modalidad_cobro": "garantia", "cobro_cero_motivo": "garantia"}
+        self.assertFalse(P(v, "cerrar", autorizacion=a)["ok"])
+        self.assertTrue(P(dict(v, id=123), "cerrar", autorizacion=a)["ok"])
+
+    def test_cerrar_sin_documento_de_otra_ot_no_sirve(self):
+        a = {"id": 3, "tipo": "cerrar_sin_documento", "estado": "aprobada", "visita_id": 123}
+        self.assertFalse(P({"id": 200}, "cerrar", autorizacion=a)["ok"])
+        self.assertTrue(P({"id": 123}, "cerrar", autorizacion=a)["ok"])
 
 
 class TestPuertaCerrar(unittest.TestCase):
@@ -291,6 +416,47 @@ class TestCandadosDeRutas(unittest.TestCase):
         guard = _src("_ot_aut_resolver_guard")
         self.assertIn("_ot_aut_es_superadmin(", guard); self.assertIn("SOLO_SUPERADMIN", guard)
         self.assertIn("comentario", _src(rutas["rechazar"]))
+
+    def test_interruptor_del_cierre_no_se_salta_con_mayusculas(self):
+        src = _src("mant_reglas_guardar")
+        self.assertRegex(src, r'str\(clave\)\.strip\(\)\.lower\(\)\s*==\s*"ot_factura_gate_activo"')
+
+    def test_put_no_cambia_el_tipo_a_preventiva_ni_el_documento_ligado(self):
+        src = _src("mant_visita_update")
+        self.assertIn("TIPO_PROTEGIDO", src)
+        self.assertIn("DOCUMENTO_PROTEGIDO", src)
+        self.assertIn("_ot_factura_escritura_protegida(", src)
+        self.assertIn("_ot_factura_escritura_protegida(", _src("ot2_api_finanzas"))
+
+    def test_retractar_el_cero_limpia_la_constancia(self):
+        for fn in ("ot2_api_finanzas", "mant_ot_declarar_cobertura"):
+            src = _src(fn)
+            self.assertIn("cobro_cero_motivo", src, fn)
+            self.assertRegex(src, r"cobro_cero_autorizacion_id(=NULL|\", None)", fn)
+        self.assertIn("cobro_cero_motivo", _src("mant_ot_aprobar_cierre").split("FROM mant_visitas v")[0])
+
+    def test_regularizar_no_vuelve_al_erp_por_cada_ot(self):
+        self.assertIn("documentos_validados", _src("ot_api_regularizar"))
+
+    def test_cerrar_ruta_vieja_pasa_la_puerta_y_el_centro(self):
+        src = _src("mant_visita_cerrar")
+        self.assertIn('_ot_puerta_documento(', src); self.assertIn("SIN_CENTRO_COSTO", src)
+
+    def test_levantamiento_exige_centro_y_no_falla_abierto(self):
+        src = _src("mant_lev_cerrar")
+        self.assertIn("SIN_CENTRO_COSTO", src)
+        self.assertIn("REVISION_NO_DISPONIBLE", src)
+
+    def test_historica_y_retroactiva_nacen_completadas_y_se_revisan_al_cerrar(self):
+        for fn in ("mant_visita_historica", "mant_visita_retroactiva"):
+            self.assertIn('momento="cerrar"', _src(fn), fn)
+
+    def test_ot_creada_por_autorizacion_queda_a_nombre_de_quien_la_pidio(self):
+        self.assertIn("solicitado_por_nombre", _src("_ot2_crear_core"))
+
+    def test_nucleo_espeja_los_documentos_del_body_que_confirmo_la_puerta(self):
+        self.assertIn("docs_espejados", _src("_ot2_crear_core"))
+        self.assertIn("docs_espejados", _src("_ot_puerta_aplicar"))
 
     def test_interruptor_del_cierre_solo_superadmin(self):
         src = _src("mant_reglas_guardar")

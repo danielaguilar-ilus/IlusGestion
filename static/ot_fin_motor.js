@@ -77,7 +77,15 @@
         '<div class="fm-dlg-b">' + cuerpo + '<div class="fm-dlg-err" id="fmErr" role="alert"></div></div>' +
         '<div class="fm-dlg-f"><button type="button" class="fm-btn" data-r="no">' + esc(o.cancelar || 'Cancelar') + '</button>' +
         '<button type="button" class="fm-btn fm-btn-pri" data-r="si">' + esc(o.ok || 'Aceptar') + '</button></div></div>';
-      document.body.appendChild(ov);
+      /* El diálogo va DENTRO del modal Bootstrap abierto (si lo hay): con el focus trap de Bootstrap 5.3, un
+         diálogo colgado de <body> no deja escribir en sus cajas dentro de «Firmar y cerrar OT». Mismo criterio que
+         _ilusOverlayHost de ilus_ui.js (z-index 2100 del overlay > modal). */
+      var host = document.body;
+      try {
+        var tka = document.getElementById('tkaModal');
+        host = (tka && tka.classList.contains('is-open')) ? tka : (document.querySelector('.modal.show') || document.body);
+      } catch (e) { host = document.body; }
+      host.appendChild(ov);
       var cerrado = false;
       function cerrar(v) {
         if (cerrado) return;
@@ -210,8 +218,8 @@
       tile(c.facturas || 0, 'Facturas y boletas', 'Documentos que cobran', 'ok') +
       tile(c.notas_venta || 0, 'Notas de venta', baja ? (baja + ' ya dada' + (baja > 1 ? 's' : '') + ' de baja por factura') : ((c.notas_venta || 0) ? 'Falta ligar la factura' : ''), 'nv') +
       tile(c.cotizaciones || 0, 'Cotizaciones', 'Referencia', '') +
-      tile(c.servicios || 0, 'Servicios', 'Líneas de servicio (ZZ)', 'ser') +
-      tile(c.despachos || 0, 'Despachos', 'Líneas de despacho', 'des') +
+      tile(c.servicios || 0, 'Servicios', c.incompleto ? ('Líneas de servicio (ZZ) · +' + (c.sin_leer || 0) + ' documento' + ((c.sin_leer || 0) > 1 ? 's' : '') + ' sin leer') : 'Líneas de servicio (ZZ)', 'ser') +
+      tile(c.despachos || 0, 'Despachos', c.incompleto ? ('Líneas de despacho · +' + (c.sin_leer || 0) + ' sin leer') : 'Líneas de despacho', 'des') +
       tile(c.otros || 0, 'Otros documentos', 'Guías y otros', '') +
       '</div>';
   }
@@ -263,7 +271,8 @@
   function cuentaTxt(d) {
     return { servicio: 'Cobro del servicio', despacho: 'Cobro del despacho',
       nota_venta: 'Nota de venta: promesa de cobro', cotizacion: 'Cotización: solo referencia',
-      referencia_garantia: 'Referencia de la garantía: no se cobra' }[d.cuenta] || (d.es_cobro ? 'Documento de cobro' : 'Referencia');
+      referencia_garantia: 'Referencia de la garantía: no se cobra',
+      otros: 'Factura de productos u otros: no es del servicio' }[d.cuenta] || (d.es_cobro ? 'Documento de cobro' : 'Referencia');
   }
 
   function htmlDocs(inst) {

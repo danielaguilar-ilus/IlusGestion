@@ -573,8 +573,25 @@ class TestDocumentosSinCosto(unittest.TestCase):
         db.execute(sql, (50000, 0, 50000, "ZZINSTALACION", 1))
         self.assertEqual(self._fila(db)["costo"], 230000)
 
+    def test_factura_que_reemplaza_notas_de_venta_resta_su_aporte(self):
+        """2026-10-08: al reemplazar una nota de venta con aporte registrado, se resta lo de ella y se suma lo de la
+        factura; lo que aportaron otros documentos se conserva (antes el valor se fijaba y se perdía)."""
+        sql = [s for s in self._updates("ot2_api_documentos_agregar") if "GREATEST(COALESCE(zz_monto,0)-" in s]
+        self.assertEqual(len(sql), 1)
+        # OT: nota de venta (100k + 20k) + otro documento (50k + 10k) = 150k / 30k. Llega la factura de 100k / 20k.
+        db = self._db(zz_monto=150000, zz_envio_monto=30000, costo=None, zz_codigo="ZZINSTALACION", valor_origen="zz")
+        db.execute(sql[0], (100000, 100000, 20000, 20000, 120000, 120000, "ZZINSTALACION", 1))
+        f = self._fila(db)
+        self.assertEqual((f["zz_monto"], f["zz_envio_monto"], f["costo"]), (150000, 30000, None))
+        # Si la factura trae otro valor, cambia solo esa parte.
+        db = self._db(zz_monto=150000, zz_envio_monto=30000, costo=180000, zz_codigo="ZZINSTALACION", valor_origen="zz")
+        db.execute(sql[0], (100000, 120000, 20000, 25000, 120000, 145000, "ZZINSTALACION", 1))
+        f = self._fila(db)
+        self.assertEqual((f["zz_monto"], f["zz_envio_monto"], f["costo"]), (170000, 35000, 205000))
+
     def test_primer_documento(self):
-        sql = [s for s in self._updates("ot2_api_documentos_agregar") if "valor_origen='zz'" in s]
+        sql = [s for s in self._updates("ot2_api_documentos_agregar")
+               if "valor_origen='zz'" in s and "GREATEST(COALESCE(zz_monto,0)-" not in s]
         self.assertEqual(len(sql), 1)
         db = self._db(costo=None)
         db.execute(sql[0], (100000, 20000, 120000, "ZZMANTENCION", 1))
