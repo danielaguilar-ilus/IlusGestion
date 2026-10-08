@@ -245,8 +245,12 @@ class TestInformeDudosas(unittest.TestCase):
         distinto = dict(FILA, centro_costo="sstt", costo=300000, costo_proveedor=100000, costo_despacho=0)
         self.assertIn("Precio al cliente distinto de lo cobrado", self.motivos(distinto))
         antiguo = dict(FILA, centro_costo="sstt", zz_monto=None, costo=300000, costo_proveedor=100000,
-                       costo_despacho=0, valor_origen="doc_total")
+                       costo_despacho=0, valor_origen="cotizacion")
         self.assertIn("Sin separar servicio y despacho", self.motivos(antiguo))
+        # 2026-10-08 (revision): con la linea vaciada, 'doc_total' ya no respalda el precio: es un precio anotado.
+        vaciada = dict(FILA, centro_costo="sstt", zz_monto=None, costo=300000, costo_proveedor=100000,
+                       costo_despacho=0, valor_origen="doc_total")
+        self.assertIn("Precio anotado sin documento de cobro (no cuenta como cobro)", self.motivos(vaciada))
         # 2026-10-08: un precio anotado SIN respaldo (sin documento ni cobro declarado) no es un cobro.
         anotado = dict(FILA, centro_costo="sstt", zz_monto=None, costo=300000, costo_proveedor=100000,
                        costo_despacho=0, valor_origen=None)

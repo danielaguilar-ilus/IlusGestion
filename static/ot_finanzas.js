@@ -17,7 +17,7 @@
     contrato: 'precio acordado', manual: 'escrito a mano', supuesto: 'escrito a mano', '': 'declarado'};
   var ZZ_NO_SERVICIO = ['ZZRETIRO'];
   /* valor_origen que respalda un «Precio al cliente» anotado sin línea de servicio (espejo de ORIGENES_COBRO_RESPALDO) */
-  var ORIGENES_COBRO_RESPALDO = ['zz', 'doc_total', 'cotizacion', 'contrato', 'manual', 'supuesto'];
+  var ORIGENES_COBRO_RESPALDO = ['cotizacion', 'contrato', 'manual', 'supuesto'];   /* manual/supuesto solo con motivo escrito */
   var COBERTURA_TXT = {
     cobra: 'Se le cobra al cliente',
     garantia: 'Garantía: no se le cobra',
@@ -81,7 +81,9 @@
     var serv = null, fuente = null, precioAnotado = null;
     if (zzEsCobro){ serv = zz; fuente = FUENTE_COBRO.hasOwnProperty(origen) ? FUENTE_COBRO[origen] : 'declarado'; }
     else if ((zz === null || zzNoServ) && tot !== null && tot > 0){
-      if (zz === null && ORIGENES_COBRO_RESPALDO.indexOf(origen) >= 0){
+      var respaldo = ORIGENES_COBRO_RESPALDO.indexOf(origen) >= 0 &&
+        ((origen !== 'manual' && origen !== 'supuesto') || String(v.zz_motivo_manual == null ? '' : v.zz_motivo_manual).trim() !== '');
+      if (zz === null && respaldo){
         serv = Math.max(tot - (env || 0), 0); fuente = 'precio al cliente (sin separar servicio y despacho)';
       } else { precioAnotado = tot; }
     }

@@ -107,7 +107,7 @@ class TestCobroDeFacturacion(unittest.TestCase):
     def test_precio_al_cliente_de_cotizacion_contrato_o_a_mano_si_es_cobro(self):
         a = _amb()
         for origen in ("cotizacion", "contrato", "manual", "supuesto"):
-            v = V(costo=200000, valor_origen=origen, costo_proveedor=130000)
+            v = V(costo=200000, valor_origen=origen, costo_proveedor=130000, zz_motivo_manual="cobro aparte")
             self.assertEqual(a["_ot_cobro_cliente"](v), (200000.0, 0.0, "valor_ot"), origen)
             self.assertFalse(a["_mfp_fila_ot"](v)["sin_cobro_declarado"], origen)
 

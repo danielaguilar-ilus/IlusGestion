@@ -91,10 +91,23 @@ class TestCobra(unittest.TestCase):
 
     def test_sin_zz_usa_el_precio_al_cliente_si_tiene_respaldo(self):
         # 2026-10-08: solo con respaldo (documento, cotización, contrato o cobro declarado a mano con motivo).
-        r = F(costo=100000, costo_proveedor=60000, valor_origen="doc_total")
+        r = F(costo=100000, costo_proveedor=60000, valor_origen="cotizacion")
         self.assertEqual(r["cobre"]["total"], 100000)
         self.assertTrue(r["cobre"]["fuente"].startswith("precio al cliente"))
         self.assertTrue(any("no separa servicio y despacho" in a for a in r["avisos"]))
+
+    def test_sin_zz_el_origen_zz_o_doc_total_no_respalda_nada(self):
+        # 2026-10-08 (revisión): con la línea vaciada (zz_monto NULL) el espejo `costo` no resucita el cobro.
+        for origen in ("zz", "doc_total", None, ""):
+            r = F(costo=200000, costo_proveedor=60000, valor_origen=origen)
+            self.assertEqual(r["cobre"]["total"], 0, origen)
+
+    def test_manual_o_supuesto_sin_linea_exigen_motivo_escrito(self):
+        for origen in ("manual", "supuesto"):
+            sin = F(costo=90000, valor_origen=origen, costo_proveedor=10000)
+            self.assertEqual(sin["cobre"]["total"], 0, origen)
+            con = F(costo=90000, valor_origen=origen, costo_proveedor=10000, zz_motivo_manual="Se cobró aparte")
+            self.assertEqual(con["cobre"]["total"], 90000, origen)
 
     def test_escrito_a_mano_cuenta_como_cobro_tenga_o_no_sugerencia(self):
         for origen in ("supuesto", "manual"):

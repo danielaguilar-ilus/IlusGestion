@@ -236,8 +236,9 @@ class TestEstadoFinanzas(unittest.TestCase):
         self.assertEqual(self.E(zz_monto=80000, valor_origen="zz"), (True, []))
 
     def test_ot_antigua_con_precio_al_cliente_y_respaldo_sigue_valorizada(self):
-        self.assertEqual(self.E(zz_monto=None, costo=120000, valor_origen="doc_total"), (True, []))
-        self.assertEqual(self.E(zz_monto=None, costo=120000, valor_origen="manual"), (True, []))
+        self.assertEqual(self.E(zz_monto=None, costo=120000, valor_origen="cotizacion"), (True, []))
+        self.assertEqual(self.E(zz_monto=None, costo=120000, valor_origen="manual", zz_motivo_manual="cobro aparte"),
+                         (True, []))
 
     def test_precio_anotado_sin_documento_ya_no_es_cobro(self):
         # 2026-10-08 (Daniel: "sigue diciendo que cobramos 200"): el «Precio al cliente» suelto no cuenta.
@@ -502,6 +503,15 @@ class TestSqlCobrePositivo(unittest.TestCase):
         dict(zz_monto=50000, valor_origen=None, zz_codigo=None),
         dict(zz_monto=70000, valor_origen="interno"),
         dict(zz_monto=40000, valor_origen="supuesto", costo=0),
+        # 2026-10-08 (revision): sin linea, solo respaldan cotizacion/contrato o manual/supuesto con motivo escrito.
+        dict(zz_monto=None, costo=120000, valor_origen="doc_total"),
+        dict(zz_monto=None, costo=120000, valor_origen="zz"),
+        dict(zz_monto=None, costo=120000, valor_origen="cotizacion"),
+        dict(zz_monto=None, costo=120000, valor_origen="contrato"),
+        dict(zz_monto=None, costo=120000, valor_origen="manual"),
+        dict(zz_monto=None, costo=120000, valor_origen="manual", zz_motivo_manual="  "),
+        dict(zz_monto=None, costo=120000, valor_origen="manual", zz_motivo_manual="cobro aparte"),
+        dict(zz_monto=None, costo=120000, valor_origen="supuesto", zz_motivo_manual="tarifa habitual"),
     ]
 
     def test_misma_respuesta_que_la_regla(self):
@@ -509,13 +519,14 @@ class TestSqlCobrePositivo(unittest.TestCase):
         expr = amb["_OT_FIN_SQL_COBRE_POSITIVO"]
         db = sqlite3.connect(":memory:")
         db.execute("CREATE TABLE mant_visitas (id INTEGER PRIMARY KEY, zz_monto INTEGER, zz_envio_monto INTEGER, "
-                   "costo REAL, valor_origen TEXT, zz_codigo TEXT)")
+                   "costo REAL, valor_origen TEXT, zz_codigo TEXT, zz_motivo_manual TEXT)")
         for i, caso in enumerate(self.CASOS, 1):
-            fila = dict(zz_monto=None, zz_envio_monto=None, costo=None, valor_origen=None, zz_codigo=None)
+            fila = dict(zz_monto=None, zz_envio_monto=None, costo=None, valor_origen=None, zz_codigo=None,
+                        zz_motivo_manual=None)
             fila.update(caso)
-            db.execute("INSERT INTO mant_visitas VALUES (?,?,?,?,?,?)",
+            db.execute("INSERT INTO mant_visitas VALUES (?,?,?,?,?,?,?)",
                        (i, fila["zz_monto"], fila["zz_envio_monto"], fila["costo"], fila["valor_origen"],
-                        fila["zz_codigo"]))
+                        fila["zz_codigo"], fila["zz_motivo_manual"]))
             sql_dice = bool(db.execute("SELECT " + expr + " FROM mant_visitas v WHERE v.id=?", (i,)).fetchone()[0])
             v = dict(fila, modalidad_cobro="pagado", cubierto_por="cliente", tipo="instalacion", cliente_id=3)
             fin = amb["_ot_finanzas"](v)

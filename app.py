@@ -56121,19 +56121,32 @@ _OT_FIN_ESTADOS_CIERRE = ("completada", "pendiente_aprobacion", "firmada_tecnico
 _OT_FIN_ESTADOS_SELLADOS = ("cerrada", "cancelada", "anulada")
 
 
-def _ot_puede_finanzas_cierre(vid, user=None):
+def _ot_puede_finanzas_cierre(vid, user=None, _info=None):
     """¿Puede este usuario declarar/corregir finanzas de la OT en la ventana de cierre? Primero el permiso de siempre
     ('cobertura'); si lo niega solo porque la OT está 'completada' (esperando el cierre), gestión lo conserva."""
     u = user if user is not None else (getattr(g, "user", None) or {})
     try:
         if _puede_ot_accion(vid, "cobertura", u):
             return True
-        if _rol_familia(((u.get("role") or "") if u else "").lower()) not in ("superadmin", "admin", "supervisor", "ejecutivo"):
+        _rol_u = ((u.get("role") or "") if u else "").lower()
+        _fam_u = _rol_familia(_rol_u)
+        if _fam_u == "tecnico":
             return False
-        f = mysql_fetchone("SELECT estado, firma_supervisor_user_id FROM mant_visitas WHERE id=%s", (vid,))
+        # 2026-10-08 (revisión): gestión, o un rol que ya tiene el permiso de rol «ot_finanzas» (finanzas fuera de
+        # admin/supervisor/ejecutivo), conserva la ventana de cierre. El técnico nunca.
+        if _fam_u not in ("superadmin", "admin", "supervisor", "ejecutivo"):
+            try:
+                if not has_role_permission(_rol_u, "mantenciones", "ot_finanzas"):
+                    return False
+            except Exception:
+                return False
+        f = mysql_fetchone("SELECT estado, firma_supervisor_user_id, firma_cliente_url FROM mant_visitas WHERE id=%s", (vid,))
         if not f:
             return False
-        return ((f.get("estado") or "").lower() in _OT_FIN_ESTADOS_CIERRE and not f.get("firma_supervisor_user_id"))
+        ok = ((f.get("estado") or "").lower() in _OT_FIN_ESTADOS_CIERRE and not f.get("firma_supervisor_user_id"))
+        if ok and _info is not None:
+            _info["tras_firma_cliente"] = bool(f.get("firma_cliente_url"))
+        return ok
     except Exception as e:
         print(f"[ot-fin-cierre] vid={vid}: {type(e).__name__}", flush=True)
         return False
@@ -56145,8 +56158,18 @@ def _ot_can_finanzas_cierre(view_func):
     @wraps(view_func)
     def wrapped(vid, *args, **kwargs):
         u = getattr(g, "user", None) or {}
-        if not _ot_puede_finanzas_cierre(vid, u):
+        _info = {}
+        if not _ot_puede_finanzas_cierre(vid, u, _info):
             return _ot_403_response(vid, (u.get("role") or "").lower(), u.get("id"), u.get("username"), accion="cobertura")
+        # 🔏 2026-10-08 (revisión): editar finanzas con la OT ya firmada por el cliente deja constancia visible en la
+        # bitácora (quién, cuándo y qué ruta). Solo en escrituras; la OT cerrada sigue sellada.
+        if _info.get("tras_firma_cliente") and request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            try:
+                _mant_log("visita", vid, "finanzas_tras_firma_cliente",
+                          f"{u.get('username') or '?'} editó finanzas/documentos después de la firma del cliente "
+                          f"({request.method} {request.path}); la OT aún no está cerrada.")
+            except Exception:
+                pass
         return view_func(vid, *args, **kwargs)
     return wrapped
 
@@ -83522,7 +83545,9 @@ _OT_FIN_ORIGENES_NO_COBRO = ("estimado", "interno")
 # 2026-10-08 (Daniel): un «Precio al cliente» (`costo`) sin línea de servicio SOLO cuenta como cobro si tiene respaldo:
 # el documento (zz / total del documento), una cotización, un contrato o un cobro declarado a mano con motivo.
 # Espejo en static/ot_finanzas.js (ORIGENES_COBRO_RESPALDO) y en _OT_FIN_SQL_COBRE_POSITIVO.
-_OT_FIN_ORIGENES_COBRO_RESPALDO = ("zz", "doc_total", "cotizacion", "contrato", "manual", "supuesto")
+# 2026-10-08 (revisión): con zz_monto vacío la línea ya no existe, así que 'zz' y 'doc_total' (el total del documento puede
+# incluir equipos) NO respaldan nada. 'manual' y 'supuesto' solo valen con el motivo escrito (zz_motivo_manual).
+_OT_FIN_ORIGENES_COBRO_RESPALDO = ("cotizacion", "contrato", "manual", "supuesto")
 # Rótulo amable de dónde salió lo cobrado por el servicio.
 _OT_FIN_FUENTE_COBRO = {
     "zz": "línea del documento", "doc_total": "total del documento", "cotizacion": "cotización",
@@ -83653,7 +83678,10 @@ def _ot_finanzas(v, rep=None):
         # declarado a mano con motivo (valor_origen). Sin respaldo es un precio anotado: referencia, no cobro.
         # (valor_origen que respalda: documento de Random, cotización, contrato o cobro declarado a mano;
         #  espejo en static/ot_finanzas.js ORIGENES_COBRO_RESPALDO.)
-        if zz is None and origen in _OT_FIN_ORIGENES_COBRO_RESPALDO:
+        _motivo_cobro = (v.get("zz_motivo_manual") or "").strip()
+        _respaldo = origen in _OT_FIN_ORIGENES_COBRO_RESPALDO and (
+            origen not in ("manual", "supuesto") or bool(_motivo_cobro))
+        if zz is None and _respaldo:
             serv, fuente = max(tot - (env or 0.0), 0.0), "precio al cliente (sin separar servicio y despacho)"
         else:
             precio_anotado = tot
@@ -83767,7 +83795,8 @@ def _ot_finanzas(v, rep=None):
 _OT_FIN_BASE_CAMPOS = ("modalidad_cobro", "cubierto_por", "tipo", "cliente_id", "contrato_real", "costo",
                        "zz_monto", "zz_codigo", "zz_envio_monto", "valor_origen", "costo_proveedor",
                        "costo_despacho", "proveedor_tipo", "valorizado_clp", "valorizado_fuente",
-                       "cobro_cero_motivo")   # 2026-10-07: regalía / arriendo-leasing
+                       "cobro_cero_motivo",   # 2026-10-07: regalía / arriendo-leasing
+                       "zz_motivo_manual")    # 2026-10-08: respaldo de un cobro 'manual'/'supuesto' sin línea
 _OT_FIN_BASE_MONTOS = ("costo", "zz_monto", "zz_envio_monto", "costo_proveedor", "costo_despacho",
                        "valorizado_clp")
 # De dónde puede salir un valorizado (columna valorizado_fuente, VARCHAR(20)). Lo que no esté en la lista se
@@ -83898,7 +83927,7 @@ def _ot_fin_costo_espejo_sync(vid, cobre_antes, costo_antes, quien="sistema", do
 # ═══════════════════════════════════════════════════════════════════════════
 _OT_FIN_COLS = ("modalidad_cobro", "cubierto_por", "tipo", "cliente_id", "contrato_id", "costo", "zz_monto", "cobro_cero_motivo",
                 "zz_codigo", "zz_envio_monto", "valor_origen", "costo_proveedor", "costo_despacho",
-                "proveedor_tipo", "valorizado_clp", "valorizado_fuente")
+                "proveedor_tipo", "valorizado_clp", "valorizado_fuente", "zz_motivo_manual")
 # Rótulo corto de la cobertura para chips y columnas (el largo es _OT_FIN_COBERTURA_TXT).
 _OT_FIN_COBERTURA_CORTA = {"cobra": "Se cobra", "garantia": "Garantía", "sin_costo": "Cortesía",
                            "regalia": "Regalía", "arriendo_leasing": "Arriendo/leasing",   # 2026-10-07
@@ -88855,7 +88884,10 @@ _OT_FIN_SQL_COBRE_POSITIVO = (
     "  AND UPPER(TRIM(COALESCE(v.zz_codigo,''))) NOT IN ('" + "','".join(_OT_FIN_ZZ_NO_SERVICIO) + "')"
     "  THEN (v.zz_monto + COALESCE(v.zz_envio_monto,0)) > 0"
     " WHEN v.zz_monto IS NULL"
-    "  AND LOWER(TRIM(COALESCE(v.valor_origen,''))) IN ('" + "','".join(_OT_FIN_ORIGENES_COBRO_RESPALDO) + "')"
+    "  AND (LOWER(TRIM(COALESCE(v.valor_origen,''))) IN ('" + "','".join(
+        o for o in _OT_FIN_ORIGENES_COBRO_RESPALDO if o not in ("manual", "supuesto")) + "')"
+    "       OR (LOWER(TRIM(COALESCE(v.valor_origen,''))) IN ('manual','supuesto')"
+    "           AND LENGTH(TRIM(COALESCE(v.zz_motivo_manual,''))) > 0))"
     "  AND COALESCE(v.costo,0) > 0 THEN 1"
     " ELSE COALESCE(v.zz_envio_monto,0) > 0 END)")
 
@@ -91242,7 +91274,7 @@ _OT_FIN_SELECT = ("SELECT v.id, v.numero_ot, v.estado, v.tipo, v.cliente_id, v.z
                   "       v.costo_proveedor, v.costo_despacho, v.centro_costo, v.modalidad_cobro, v.cubierto_por, "
                   # 2026-10-07: lo demás que necesita la cuenta única (_ot_finanzas) y el valorizado.
                   "       v.costo, v.zz_codigo, v.valor_origen, v.proveedor_tipo, v.valorizado_clp, "
-                  "       v.valorizado_fuente, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
+                  "       v.valorizado_fuente, v.zz_motivo_manual, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
                   "  FROM mant_visitas v WHERE v.id=%s")
 
 
@@ -91312,6 +91344,17 @@ def ot2_api_finanzas_corregir(vid):
         if _cod_corr in _OT_FIN_ZZ_NO_SERVICIO:
             cambios["zz_codigo"] = {"antes": v.get("zz_codigo"),
                                     "despues": _OT2_LINEA_ZZ.get((v.get("tipo") or "").lower())}
+    # 🧾 2026-10-08 (revisión): vaciar el cobro del servicio no puede dejar vivo su espejo. `costo` es la copia del
+    # cobro anterior (_ot_fin_costo_espejo): si coincide, se vacía también y ambos cambios quedan en antes/después.
+    if "zz_monto" in cambios and cambios["zz_monto"]["despues"] is None and "costo" not in cambios:
+        try:
+            _cobre_ant = _ot_finanzas(v, _ot_fin_rep_de(vid))["cobre"]["total"]
+        except Exception:
+            _cobre_ant = None
+        _costo_ant = _ot_fin_num(v.get("costo"))
+        if (_costo_ant is not None and _costo_ant > 0 and _cobre_ant is not None
+                and abs(_costo_ant - _cobre_ant) < 1):
+            cambios["costo"] = {"antes": int(_costo_ant), "despues": None}
     if "valorizado_clp" in cambios:
         _vf_corr = "a_mano" if cambios["valorizado_clp"]["despues"] is not None else None
         if (v.get("valorizado_fuente") or None) != _vf_corr:
@@ -91466,7 +91509,7 @@ def ot2_finanzas_dudosas():
     rows = mysql_fetchall(
         "SELECT v.id, v.numero_ot, v.estado, v.tipo, v.cliente_id, v.zz_monto, v.zz_envio_monto, v.zz_codigo, "
         "       v.costo, v.valor_origen, v.costo_proveedor, v.costo_despacho, v.centro_costo, v.modalidad_cobro, "
-        "       v.cubierto_por, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, "
+        "       v.cubierto_por, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, v.zz_motivo_manual, "
         # 2026-10-07: la cuenta única necesita saber si es mantención de un contrato real.
         "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real, "
         "       c.razon_social AS cliente "
@@ -91524,7 +91567,7 @@ def ot2_finanzas_dudosas():
 _OT_FIN_CMP_COLS = (
     "v.id, v.numero_ot, v.estado, v.tipo, v.cliente_id, v.contrato_id, v.created_at, v.fecha_programada, "
     "v.costo, v.zz_monto, v.zz_codigo, v.zz_envio_monto, v.valor_origen, v.costo_proveedor, v.costo_despacho, "
-    "v.modalidad_cobro, v.cubierto_por, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, "
+    "v.modalidad_cobro, v.cubierto_por, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, v.zz_motivo_manual, "
     "c.razon_social AS cliente, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real")
 
 
@@ -92173,7 +92216,7 @@ def ot2_api_finanzas(vid):
             "SELECT v.centro_costo, v.modalidad_cobro, v.garantia_motivo, v.factura_tido, v.factura_nudo, "
             "       v.zz_monto, v.zz_envio_monto, v.cubierto_por, v.tipo, v.costo, v.cliente_id, v.zz_codigo, "
             "       v.valor_origen, v.costo_proveedor, v.costo_despacho, v.proveedor_tipo, v.valorizado_clp, "
-            "       v.valorizado_fuente, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
+            "       v.valorizado_fuente, v.zz_motivo_manual, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
             "  FROM mant_visitas v WHERE v.id=%s", (vid,))
     except Exception as _e_vf:
         print(f"[ot2_finanzas] relectura vid={vid}: {type(_e_vf).__name__}", flush=True)
@@ -95767,6 +95810,11 @@ def ot2_api_documentos_agregar(vid):
 @_ot_can_cobertura
 def ot2_api_documentos_quitar(vid, did):
     """Quita un documento ADICIONAL de la OT.
+
+    2026-10-08 (decisión explícita, revisión): se queda con @_ot_can_cobertura, que NO rige en 'completada'. Agregar
+    un documento se abrió en el cierre porque destraba un rechazo; QUITAR uno con el cliente ya firmado es borrar
+    evidencia (principio «nada se pisa, nada se borra»). Si se ligó uno equivocado, el superadmin lo corrige con
+    «Corregir finanzas» (queda en el registro) y el motor muestra el aviso de desacople.
 
     El documento PRINCIPAL no se quita por acá a propósito: es el que
     sostiene el cierre, el PDF y el margen, y sacarlo por una lista sería
@@ -111026,7 +111074,7 @@ def ot2_api_resultado_financiero(vid):
         "       v.zz_monto, v.zz_envio_monto, "
         "       v.modalidad_cobro, v.cliente_id, "
         # 💰 2026-10-07 — lo demás que necesita la cuenta única (_ot_finanzas).
-        "       v.zz_codigo, v.valor_origen, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, "
+        "       v.zz_codigo, v.valor_origen, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, v.zz_motivo_manual, "
         "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
         "  FROM mant_visitas v WHERE v.id=%s", (vid,))
     if not v:
@@ -116296,7 +116344,7 @@ def mant_ot_aprobar_cierre(vid):
         "       v.centro_costo, v.costo_proveedor, v.costo_despacho, v.tecnico_user_id, "
         "       v.tipo, v.zz_monto, v.zz_envio_monto, v.costo, c.tipo_cliente AS cliente_tipo, "
         "       v.cubierto_por, v.valor_origen, v.zz_codigo, v.contrato_id, v.proveedor_tipo, "
-        "       v.valorizado_clp, v.valorizado_fuente, "
+        "       v.valorizado_clp, v.valorizado_fuente, v.zz_motivo_manual, "
         "       " + _ot_fin_sql_contrato_real("v") + " AS contrato_real "
         "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
         " WHERE v.id=%s",
@@ -128047,7 +128095,7 @@ _MFP_SELECT_OT = (
     "       c.rut AS cliente_rut, c.direccion AS cliente_direccion, "
     "       v.centro_costo, v.zz_codigo, v.cubierto_por, v.estado_facturacion, "
     # 💰 2026-10-07: lo que falta para leer la plata con la cuenta única (_ot_finanzas).
-    "       v.cliente_id, v.contrato_id, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, "
+    "       v.cliente_id, v.contrato_id, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, v.zz_motivo_manual, "
     # 🧠 2026-10-07: el motivo del $0 (garantía / regalía / arriendo-leasing) y quién lo autorizó, para explicarlo en la tarjeta.
     "       v.cobro_cero_motivo, "
     "       (SELECT aq.resuelto_por_nombre FROM mant_ot_autorizaciones aq WHERE aq.id = v.cobro_cero_autorizacion_id) AS cero_aut_por, "

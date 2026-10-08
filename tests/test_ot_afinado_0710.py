@@ -37,10 +37,17 @@ class TestPrecioAnotado(unittest.TestCase):
         self.assertTrue(any("precio anotado" in a.lower() for a in r["avisos"]))
 
     def test_con_respaldo_si_cuenta(self):
-        for origen in ("doc_total", "cotizacion", "contrato", "manual", "supuesto", "zz"):
-            r = F(costo=200000, costo_proveedor=50000, valor_origen=origen)
+        # 2026-10-08 (revision): 'zz' y 'doc_total' sin linea no respaldan nada; manual/supuesto piden motivo escrito.
+        for origen in ("cotizacion", "contrato", "manual", "supuesto"):
+            r = F(costo=200000, costo_proveedor=50000, valor_origen=origen, zz_motivo_manual="cobro aparte")
             self.assertEqual(r["cobre"]["total"], 200000, origen)
             self.assertIsNone(r["precio_anotado"], origen)
+
+    def test_zz_y_doc_total_sin_linea_no_respaldan_ni_manual_sin_motivo(self):
+        for origen in ("doc_total", "zz", "manual", "supuesto"):
+            r = F(costo=200000, costo_proveedor=50000, valor_origen=origen)
+            self.assertEqual(r["cobre"]["total"], 0, origen)
+            self.assertEqual(r["precio_anotado"], 200000, origen)
 
     def test_zzretiro_o_estimado_con_precio_anotado_no_cuentan(self):
         r = F(zz_monto=1, zz_codigo="ZZRETIRO", valor_origen="zz", costo=200000, costo_proveedor=1000)

@@ -251,7 +251,7 @@
       if (d.categoria === 'nota_venta') return { cls: 'nv', txt: 'Promesa de cobro: falta la factura' };
       return { cls: 'no', txt: 'No trae líneas de servicio ni despacho' };
     }
-    return { cls: 'si', txt: 'Aporta al cobro: servicio ' + clp(s || 0) + ' + despacho ' + clp(e || 0) + ' = ' + clp((s || 0) + (e || 0)) };
+    return { cls: 'si', total: (s || 0) + (e || 0), txt: 'Aporta al cobro: servicio ' + clp(s || 0) + ' + despacho ' + clp(e || 0) + ' = ' + clp((s || 0) + (e || 0)) };
   }
 
   function htmlDoc(d) {
@@ -302,6 +302,15 @@
       h += '<div class="fm-vacio"><i class="bi bi-file-earmark-x"></i><b>Esta OT no tiene ningún documento declarado.</b>' +
         '<span>Liga una factura, boleta, nota de venta o cotización; o pide la autorización de ' + CAMPANA_DAN + '.</span></div>';
     } else {
+      /* 2026-10-08 (revisión): el «Cobré» de la OT sale de lo declarado (zz_monto / despacho), no de las líneas leídas en
+         Random. Si no coinciden, se dice: dos números distintos en la misma pantalla sin explicación confunden. */
+      var fin = (inst.rec && inst.rec.fin) || null, sumaAp = 0, hayAp = false;
+      docs.forEach(function (d) { var a = aporteDoc(d); if (a.total !== undefined) { sumaAp += a.total; hayAp = true; } });
+      if (fin && fin.cobra && fin.cobre && hayAp && Math.abs(sumaAp - (fin.cobre.hay ? Number(fin.cobre.total) || 0 : 0)) >= 1) {
+        h += '<div class="fm-aviso"><i class="bi bi-exclamation-triangle-fill"></i> Las líneas de los documentos suman ' + clp(sumaAp) +
+          ', pero lo cobrado en la cuenta de la OT es ' + (fin.cobre.hay ? clp(fin.cobre.total) : 'nada todavía (falta declararlo)') +
+          '. Manda lo declarado en la OT: revisa el cobro del servicio.</div>';
+      }
       h += '<div class="fm-docs">' + docs.map(htmlDoc).join('') + '</div>';
     }
     return h;
