@@ -291,7 +291,7 @@ setTimeout(function () { process.stdout.write(el.innerHTML); }, 80);
                "puede_editar": True, "puede_regularizar": True, "superadmin": False, "cerrada": False}
         return rec, pan
 
-    PROHIBIDO = ("Pedir autorización", "Autorizar", "declarar $0", "Ligar factura", "Esperando autorización",
+    PROHIBIDO = ("Pedir autorización", "Autorizar", "declarar $0", "Agregar factura", "Esperando autorización",
                  "pide la autorización", "Sin autorización de", "Declarar lo que cobré", "data-fm-act=\"pedirCero\"",
                  "data-fm-act=\"pedirCierre\"", "data-fm-act=\"ligarDoc\"", "data-fm-act=\"declararCobro\"",
                  "No tiene ningún documento", "no tiene ningún documento")

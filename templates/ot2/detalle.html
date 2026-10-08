@@ -489,24 +489,30 @@
 #otdCardFinanzas > .otd-fin-body{padding:0 16px 16px}
 .otd-fnum{font-variant-numeric:tabular-nums}
 
-/* ══ 2026-10-08 · LA TARJETA ES LA SECCIÓN DE EDICIÓN (el motor de arriba es la vista principal) ═══════════════════
-   Daniel: «necesito que los tamaños los achique… cero espacios en blanco… los botones están desalineados».
-   El motor (#otdCardMotor) muestra la cuenta; esta tarjeta conserva TODO para editar (REGLA #4.2). Para no tener dos
-   «Cobré» a la vista, la barra con la cuenta solo aparece mientras se edita («Con lo que estás escribiendo»); los
-   botones (Desglose, Guardar, Corregir) quedan siempre, en UNA fila y de la misma altura. En el celular no cambia. */
+/* ══ 2026-10-08 · UN SOLO BLOQUE «Finanzas y documentos de la OT» ═════════════════════════════════════════════════
+   Daniel: «la finanza y finanzas y documentos de la OT te quedó mucho espacio; ahora es el momento de ahorrar espacio,
+   compactemos todo en un mismo lugar». El bloque de arriba (#otdCardMotor, static/ot_fin_motor.js) es LA vista: encabezado
+   con Actualizar · Corregir finanzas · OT con finanzas dudosas, recorrido, cuenta, documentos y costos. Esta tarjeta
+   (#otdCardFinanzas) queda como la sección de EDICIÓN, debajo (REGLA #4.2: no se quita ninguna función ni ningún id):
+     · OT sin permiso de edición (cerrada): su vista de solo lectura repite al bloque y NO se muestra (`.fin-ro`). Si el
+       bloque no pudo leer, el JS le pone `.fin-motor-fallo` y esa vista vuelve a verse.
+     · Las tres cajas «Resultado de la OT» (Servicio/Despacho/Total) viven ahora en la cuenta del bloque (mini-tabla): no
+       se muestran, pero siguen en la página y se siguen pintando (otdFinPintar).
+     · La barra con Cobré − Me cobraron = Queda solo aparece mientras se escribe («Con lo que estás escribiendo»), también
+       en el celular; los botones (Desglose, Guardar, Corregir) quedan siempre, en UNA fila y de la misma altura. */
 #otdCardFinanzas > h3{font-size:.95rem;margin-bottom:6px}
-#otdCardFinanzas .otd-fincorr-bar{margin:0 16px 8px;gap:8px}
-#otdCardFinanzas .otd-fincorr-btn,#otdCardFinanzas .otd-fincorr-lnk{min-height:36px;height:36px;padding:0 12px;border-radius:9px;font-size:.78rem;box-sizing:border-box}
-#otdCardFinanzas .otd-fincorr-lnk{border:1px solid #d1d5db;background:#fff;padding:0 12px}
+#otdCardFinanzas.fin-ro:not(.fin-motor-fallo){display:none}
+#otdCardFinanzas:not(.fin-motor-fallo) #otdFinResultado{display:none}
+#otdCardFinanzas:not(.fin-editando) .otd-fbar-cuenta,
+#otdCardFinanzas:not(.fin-editando) .otd-fbar-frase,
+#otdCardFinanzas:not(.fin-editando) .otd-fbar-cob,
+#otdCardFinanzas:not(.fin-editando) .otd-fbar-meta .otd-fchip:not(.amb){display:none}
+#otdCardFinanzas:not(.fin-editando) .otd-fbar{position:static}
+#otdCardFinanzas:not(.fin-editando) .otd-fbar-acc{margin-left:0}
+#otdCardFinanzas.fin-editando .otd-fbar-cuenta::before{content:"Con lo que estás escribiendo";position:absolute;margin-top:-13px;font-size:.62rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:#b45309}
+#otdCardFinanzas.fin-editando .otd-fbar-eq{padding-top:18px}
 @media (min-width:769px){
   #otdCardFinanzas .otd-fbar-chev,#otdCardFinanzas .otd-fbar-btn{min-height:36px;height:36px;padding:0 12px;border-radius:9px;font-size:.78rem;box-sizing:border-box}
-  #otdCardFinanzas:not(.fin-editando) .otd-fbar-cuenta,
-  #otdCardFinanzas:not(.fin-editando) .otd-fbar-frase,
-  #otdCardFinanzas:not(.fin-editando) .otd-fbar-cob{display:none}
-  #otdCardFinanzas:not(.fin-editando) .otd-fbar{position:static}
-  #otdCardFinanzas:not(.fin-editando) .otd-fbar-acc{margin-left:0}
-  #otdCardFinanzas.fin-editando .otd-fbar-cuenta::before{content:"Con lo que estás escribiendo";position:absolute;margin-top:-13px;font-size:.62rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:#b45309}
-  #otdCardFinanzas.fin-editando .otd-fbar-eq{padding-top:18px}
   #otdCardFinanzas .otd-fbar-num{font-size:1.1rem}
   #otdCardFinanzas .otd-cc{min-height:58px;padding:6px 4px}
   #otdCardFinanzas .otd-fpaso > .hd{padding:8px 12px}
@@ -4555,9 +4561,6 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
          su detalle, lo que nos costó y la cuenta. Es el MISMO componente del modal de aprobación y cierre
          (static/ot_fin_motor.js). Tarjeta a ANCHO COMPLETO (REGLA #16). La tarjeta "Finanzas de la OT" de abajo
          conserva todos sus controles (REGLA #4.2). #}
-      <div class="otd-card otd-span2" id="otdCardMotor">
-        {% with fm_vid=v.id, fm_modo='ficha', fm_assets=True %}{% include 'ot2/_fin_motor.html' %}{% endwith %}
-      </div>
       {# 💸 2026-09-14 (Daniel: "controlar los cobros de los externos").
          Estado del pago al proveedor externo -- viene de Facturas de
          proveedor (SSTT). Solo lectura acá: se gestiona allá. Macro porque
@@ -4584,19 +4587,39 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
         </div>
         {% endif %}
       {% endmacro %}
-      <div class="otd-card" id="otdCardFinanzas">
-        <h3><i class="bi bi-cash-coin"></i> Finanzas de la OT
-          <span class="n">Cobré − Me cobraron = Queda</span></h3>
-        {#- 💰 2026-10-07 (Daniel: "como superadmin editar estos valores, con registro"): solo el superadmin ve esto.
-            Funciona aunque la OT esté cerrada (la edición normal de abajo se bloquea por evidencia) y deja un
-            registro que nunca se modifica. No toca firmas, estado ni documentos. -#}
-        {% if permissions and permissions.superadmin %}
-        <div class="otd-fincorr-bar">
-          <button type="button" class="otd-fincorr-btn" onclick="otdFinCorrAbrir()"><i class="bi bi-pencil-square"></i> Corregir finanzas
-            <small>solo superadmin · con registro</small></button>
-          <a class="otd-fincorr-lnk" href="/ot/finanzas-dudosas"><i class="bi bi-clipboard2-pulse"></i> OT con finanzas dudosas</a>
+      {# 🧭 2026-10-08 (Daniel: «la finanza y finanzas y documentos de la OT te quedó mucho espacio… compactemos todo en un mismo
+         lugar»): este es el UNICO bloque «Finanzas y documentos de la OT». Trae el encabezado (Actualizar · Corregir finanzas ·
+         OT con finanzas dudosas), el recorrido en chips, la cuenta con el centro de costo, los documentos y lo que nos costó.
+         Debajo, la tarjeta de edición solo existe para quien puede editar. #}
+      <div class="otd-card otd-span2" id="otdCardMotor">
+        {% with fm_vid=v.id, fm_modo='ficha', fm_assets=True %}{% include 'ot2/_fin_motor.html' %}{% endwith %}
+        {# Antes vivía al pie de la tarjeta «Finanzas de la OT». 2026-10-08: sube al bloque único (mismo id, mismo texto,
+           lo sigue actualizando otdGuardarFinanzas). #}
+        <div class="otd-warn otd-fin-faltan" id="otdFinFaltan" {% if not (finanzas and finanzas.faltan) %}hidden{% endif %}>
+          <i class="bi bi-exclamation-triangle-fill"></i>
+          {# 🔴 FIX 2026-09-09 (Daniel, confusión real viendo OT-2026-00161:
+             "el técnico no tiene por qué detenerse por esto... esto lo
+             tiene que ver Juan Martínez, Aarón o Víctor"). "Antes de pedir
+             la firma" no decía DE QUIÉN -- se leía como si bloqueara la
+             firma del técnico, que nunca la exige (ver firmar-revision):
+             esto es SOLO el candado del cierre final (aprobar-cierre),
+             que resuelve gestión. #}
+          <div>Falta declarar para poder <b>cerrar</b> esta OT (lo resuelve
+            gestión — no bloquea la firma del técnico ni del cliente):
+            <span id="otdFinFaltanTxt">{{ (finanzas.faltan if finanzas and finanzas.faltan else []) | join(', ') }}</span>.</div>
         </div>
+        {#- La factura del proveedor externo: en la tarjeta de edición vive dentro del Paso 2; sin permiso de edición (OT
+            cerrada) se ve acá, en el mismo bloque. -#}
+        {% if not puede_metadata %}
+        {{ facprov_bloque(factura_prov if factura_prov is defined else none, factura_prov_aplica if factura_prov_aplica is defined else false) }}
         {% endif %}
+      </div>
+      <div class="otd-card{{ '' if puede_metadata else ' fin-ro' }}" id="otdCardFinanzas">
+        <h3><i class="bi bi-cash-coin"></i> {{ 'Editar finanzas' if puede_metadata else 'Finanzas de la OT' }}
+          <span class="n">Cobré − Me cobraron = Queda</span></h3>
+        {#- 💰 2026-10-07 (Daniel: "como superadmin editar estos valores, con registro"): «Corregir finanzas» (otdFinCorrAbrir) y
+            «OT con finanzas dudosas» (/ot/finanzas-dudosas), solo superadmin. 2026-10-08: se mudaron al ENCABEZADO del bloque
+            único de arriba (plantilla _fin_motor, misma altura que «Actualizar»); la función es la misma. -#}
         {# ══ FINANZAS POR PASOS · 2026-09-25 ══════════════════════════════
            Daniel, sobre la OT-2026-00249 (boceto aprobado: "Sí, constrúyela
            así"). Antes la resta nunca se escribía: el total al cliente
@@ -4705,22 +4728,6 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                 <span><i style="background:#dc2626"></i>rojo pérdida</span>
                 <span><i style="background:#3b82f6"></i>azul: no se le cobra (lo que nos costó)</span></div>
             </div>
-          </div>
-
-          {# Antes vivía al pie de la tarjeta. Arriba, justo bajo la barra:
-             es lo primero que hay que saber (y se ve en las dos vistas). #}
-          <div class="otd-warn otd-fin-faltan" id="otdFinFaltan" {% if not (finanzas and finanzas.faltan) %}hidden{% endif %}>
-            <i class="bi bi-exclamation-triangle-fill"></i>
-            {# 🔴 FIX 2026-09-09 (Daniel, confusión real viendo OT-2026-00161:
-               "el técnico no tiene por qué detenerse por esto... esto lo
-               tiene que ver Juan Martínez, Aarón o Víctor"). "Antes de pedir
-               la firma" no decía DE QUIÉN -- se leía como si bloqueara la
-               firma del técnico, que nunca la exige (ver firmar-revision):
-               esto es SOLO el candado del cierre final (aprobar-cierre),
-               que resuelve gestión. #}
-            <div>Falta declarar para poder <b>cerrar</b> esta OT (lo resuelve
-              gestión — no bloquea la firma del técnico ni del cliente):
-              <span id="otdFinFaltanTxt">{{ (finanzas.faltan if finanzas and finanzas.faltan else []) | join(', ') }}</span>.</div>
           </div>
 
           {% if puede_metadata %}
@@ -5686,7 +5693,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             <i class="bi bi-tools"></i>
             <div class="inf">
               <b>{{ s.repuesto_nombre }} × {{ '%g' | format(s.cantidad or 1) }}{% if s.stock_sku %} · {{ s.stock_sku }}{% endif %}</b>
-              <small>{{ s.maquina_nombre or ('Equipo #' ~ s.maquina_id) if s.maquina_id else 'Sin equipo ligado' }}{% if s.cliente_nombre %} · {{ s.cliente_nombre }}{% endif %}</small>
+              <small>{{ s.maquina_nombre or ('Equipo #' ~ s.maquina_id) if s.maquina_id else 'Sin equipo asociado' }}{% if s.cliente_nombre %} · {{ s.cliente_nombre }}{% endif %}</small>
             </div>
             <span class="est {{ s.estado }}">{{ (s.estado_label or s.estado).split(' · ')[0] }}</span>
             {% if s.estado in ('validado', 'recibido') and puede_marcar_repuesto %}
@@ -7756,7 +7763,7 @@ async function otdFinCorrGuardar(){
                             and ((not puerta_cierre.ok) if puerta_cierre
                                  else (_mod_cobro not in ('garantia', 'sin_costo') and (not v.factura_nudo))) %}
         {% set _falta_doc_txt = ('Esperando autorización de Daniel' if (puerta_cierre and puerta_cierre.pendiente)
-                                 else ('Falta ligar la factura o boleta' if (puerta_cierre and puerta_cierre.falta == 'factura')
+                                 else ('Falta agregar la factura o boleta' if (puerta_cierre and puerta_cierre.falta == 'factura')
                                        else ('$0 sin autorización de Daniel' if (puerta_cierre and puerta_cierre.falta == 'autorizacion_cobro_cero')
                                              else 'Documento o autorización'))) %}
         {# 🔒 2026-09-03 (Daniel): "necesito cerrar cuánto me cobró el técnico,
@@ -10356,7 +10363,9 @@ window.otdSetCentroCosto = function(btn){
 window.otdIrAFinanzas = function(){
   const tabInfo = document.querySelector('#otdTabs .otd-tab[data-tab="info"]');
   if (tabInfo && !tabInfo.classList.contains('on')) tabInfo.click();
-  const card = document.getElementById('otdCardFinanzas');
+  let card = document.getElementById('otdCardFinanzas');
+  // 2026-10-08: en una OT cerrada la tarjeta de edición no se muestra; el destino es el bloque único de finanzas.
+  if (!card || !card.offsetParent) card = document.getElementById('otdCardMotor') || card;
   if (!card) return;
   // El click de arriba puede haber cambiado el layout: se espera al
   // siguiente frame para que el scroll caiga en la posición correcta.
@@ -13017,7 +13026,8 @@ document.addEventListener('DOMContentLoaded', function(){
     const tabInfo = document.querySelector('#otdTabs .otd-tab[data-tab="info"]');
     if (tabInfo && !tabInfo.classList.contains('on')) tabInfo.click();
     setTimeout(function(){
-      const card = document.getElementById('otdCardFinanzas');
+      let card = document.getElementById('otdCardFinanzas');
+      if (!card || !card.offsetParent) card = document.getElementById('otdCardMotor') || card;
       if (card) card.scrollIntoView({behavior: 'smooth', block: 'start'});
       if (window.otdFinDestellar) window.otdFinDestellar(_volver.txt, false);
     }, 250);
@@ -16908,7 +16918,7 @@ async function levdEliminar(iid){
               <label class="form-label fw-semibold small mb-1">Nombre del repuesto <span class="text-danger">*</span></label>
               <input type="text" id="otrep_nombre" class="form-control" placeholder="Ej: Pad de leg extension, rodamiento 6203, correa..."
                      autocomplete="off" oninput="otrepSelManual()">
-              <small class="text-muted d-block" style="font-size:.7rem">No está en la bodega todavía: queda <b>por validar</b> y bodega lo crea o lo liga a uno existente.</small>
+              <small class="text-muted d-block" style="font-size:.7rem">No está en la bodega todavía: queda <b>por validar</b> y bodega lo crea o lo asocia a uno existente.</small>
               <button type="button" class="otrep-link" onclick="otrepTab('docs')"><i class="bi bi-file-earmark-pdf"></i>¿No sabes el nombre exacto? Revisa el Manual del equipo</button>
             </div>
             {#- 🧭 2026-10-01 (Daniel): el manual que sube Juan en el Catálogo, para que el técnico
@@ -17031,7 +17041,7 @@ async function levdEliminar(iid){
             </div>
             <div class="otd-fs-badge" id="otrepFsYa" style="display:none;margin-top:8px">
               <i class="bi bi-exclamation-octagon-fill"></i>
-              <span><b>Ya está fuera de servicio.</b> La solicitud queda ligada a esa urgencia.</span>
+              <span><b>Ya está fuera de servicio.</b> La solicitud queda asociada a esa urgencia.</span>
             </div>
           </div>
         </section>
@@ -17148,7 +17158,7 @@ function otrepPintarCompat(j, comp){
   }
   document.getElementById('otrepNCompat').textContent = '(' + comp.length + ')';
   otrepPintarOpciones('otrepCompatLista', comp, 'compatible',
-    j.modelo ? 'La bodega no tiene repuestos ligados al modelo ' + (j.modelo.nombre || j.modelo.sku) + '. Busca en bodega o escríbelo a mano.'
+    j.modelo ? 'La bodega no tiene repuestos asociados al modelo ' + (j.modelo.nombre || j.modelo.sku) + '. Busca en bodega o escríbelo a mano.'
              : 'Este equipo no tiene modelo en el Catálogo (SKU sin match), así que no hay compatibles. Busca en bodega o escríbelo a mano.');
   otrepPintarModeloInfo(j);
   otrepPintarPosibles(j);
@@ -18029,7 +18039,7 @@ async function otdRepAInstalarRefrescar(){
       return '<div class="otd-repai-it ' + (cerrada ? 'cerrada' : '') + '" data-sid="' + s.id + '">' +
         '<i class="bi bi-tools"></i><div class="inf"><b>' + otdEsc(s.repuesto_nombre) + ' × ' +
         _otrepFmt(s.cantidad || 1) + (s.stock_sku ? ' · ' + otdEsc(s.stock_sku) : '') + '</b>' +
-        '<small>' + otdEsc(s.maquina_nombre || (s.maquina_id ? ('Equipo #' + s.maquina_id) : 'Sin equipo ligado')) +
+        '<small>' + otdEsc(s.maquina_nombre || (s.maquina_id ? ('Equipo #' + s.maquina_id) : 'Sin equipo asociado')) +
         (s.cliente_nombre ? ' · ' + otdEsc(s.cliente_nombre) : '') + '</small></div>' +
         '<span class="est ' + otdEsc(s.estado) + '">' + otdEsc(lbl) + '</span>' + btn + '</div>';
     }).join('');

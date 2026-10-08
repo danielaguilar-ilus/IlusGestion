@@ -239,10 +239,18 @@ class TestMotorYTarjeta(unittest.TestCase):
         self.assertIn("function aporteDoc(d)", js)
         self.assertIn("Aporta al cobro: servicio", js)
         self.assertIn("fm-aporta", js)
-        # orden: documentos → lo que nos costó → el resultado
+        # 2026-10-08 (un solo bloque compacto, Daniel): el orden en pantalla ahora es encabezado → franja de chips → contadores →
+        # la cuenta en una línea con el centro de costo → cuerpo en dos columnas, con los documentos a la izquierda y «Lo que nos
+        # costó» (+ «Modificar») a la derecha. Antes: documentos → lo que nos costó → el resultado.
         pinta = js.split("function pintar(inst)")[1]
-        self.assertLess(pinta.index("htmlDocs(inst)"), pinta.index("htmlCostos(inst)"))
-        self.assertLess(pinta.index("htmlCostos(inst)"), pinta.index("htmlCuenta(inst)"))
+        armado = pinta.split("inst.el.innerHTML =")[1]
+        for antes, despues in (("htmlCabecera(inst)", "htmlPasos(inst)"), ("htmlPasos(inst)", "htmlContadores(inst)"),
+                               ("htmlContadores(inst)", "htmlCuenta(inst)"), ("htmlCuenta(inst)", "htmlCentro(inst)"),
+                               ("htmlCentro(inst)", "cuerpo")):
+            self.assertLess(armado.index(antes), armado.index(despues), f"{antes} va antes que {despues}")
+        cuerpo = pinta.split("if (hayDocs) {")[1].split("} else {")[0]
+        self.assertLess(cuerpo.index("htmlDocs(inst)"), cuerpo.index("htmlCostos(inst)"), "documentos a la izquierda, costos a la derecha")
+        self.assertLess(cuerpo.index("htmlCostos(inst)"), cuerpo.index("htmlAcciones(inst"))
 
     def test_compacto_y_sin_scroll_horizontal(self):
         css = _leer("static/ot_fin_motor.css")
