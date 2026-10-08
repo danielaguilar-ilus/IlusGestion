@@ -88441,8 +88441,9 @@ def _ot2_finanzas_estado(v):
                 _costo_int = float(v.get("costo") or 0)
             except (TypeError, ValueError):
                 _costo_int = 0.0
-            if _costo_int <= 0:
-                faltan.append("cuánto vale esta OT (referencial, no se factura)")
+            # 🔓 2026-10-08 (Daniel): en trabajo interno el valor es sugerido -- vacío o $0 ya no cuenta como
+            # faltante (antes podía dejar la OT "incompleta" y trabar la firma de una OT de bodega).
+            _ = _costo_int
         return (not faltan), faltan
 
     # OJO: mant_visitas NO tiene una columna `garantia_aplica` -- esa vive
@@ -101100,11 +101101,10 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
     # en el reporte por centro de costo aportaba $0 en silencio. Ahora
     # tiene que venir y ser > 0 -- sigue siendo referencial (no se factura,
     # no entra a estado_facturacion ni a garantía), pero tiene que existir.
-    if es_interna and (_fin_costo_int is None or _fin_costo_int <= 0):
-        return _ferr(
-            "Indica cuánto vale este trabajo interno (referencial, no se "
-            "factura): así el centro de costo sabe cuánto trabajo absorbe.",
-            "FINANZAS_SIN_VALOR_INTERNO"), None
+    # 🔓 2026-10-08 (Daniel: "al intentar crear la OT interna no deja colocar valor 0… nosotros no cobramos por esos
+    # servicios internos, no debería trabar la operación, sobre todo de OT internas"): el valor del trabajo interno
+    # pasa a ser SUGERIDO (decisión del 07-10: "Valorizado sugerido, no obligatorio"). Vacío o $0 se aceptan tal cual;
+    # el código FINANZAS_SIN_VALOR_INTERNO queda sin uso (no se borra nada más).
     # 2026-08-29 (wizard OT 2.0, Daniel: "los costos y lo que nos cobra el
     # proveedor... % de margen sí o sí"): mant_visitas.costo_proveedor/
     # proveedor_tipo/proveedor_nombre/costo_despacho ya existen desde
