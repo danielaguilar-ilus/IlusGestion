@@ -104624,6 +104624,15 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
     # solo como red para callers viejos que no lo mandan.
     _fin_centro = _fin_centro or "sstt"
 
+    # 🧹 2026-10-08 (Daniel: "limpia el paso de valor del asistente") -- de dónde puede salir lo COBRADO (el zz_monto
+    # de una OT que se cobra), y de ningún otro lado: (a) la línea de servicio del documento de Random que la
+    # persona eligió (valor_origen zz | doc_total) o (b) un monto que ella escribió con motivo (manual | supuesto).
+    # Una referencia (cotizacion | contrato) entra solo si la persona la aceptó con «Usar este monto». El estimado por
+    # clasificación y el valor interno son VALORIZACIONES: en una OT que se cobra no pueden ser lo cobrado
+    # (FINANZAS_ESTIMADO_NO_ES_COBRO más abajo) y el asistente los manda como 'manual' con motivo cuando la persona
+    # los acepta. Este servidor NO rellena ningún monto por su cuenta: ni zz_monto, ni el espejo `costo` (que solo
+    # copia lo ya cobrado, ver _ot_fin_costo_espejo). Un $0 escrito se respeta tal cual: en una OT que se cobra se
+    # declara como garantía, regalía o arriendo/leasing (FINANZAS_CERO_SIN_DECLARAR) y pasa por Daniel (REGLA #24).
     # 💰 2026-09-15 -- ORIGEN del valor (ver _OT2_VALOR_ORIGENES y
     # _ensure_ot_valor_origen_col). Opcional para no romper callers que no
     # lo mandan, pero si viene tiene que ser uno de la lista: un origen
@@ -104662,8 +104671,12 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
         _fin_tido = (_fin.get("factura_tido") or "").strip()[:5].upper() or None
         _fin_nudo = (_fin.get("factura_nudo") or "").strip()[:20] or None
         _fin_motivo = None
+    # 🧹 2026-10-08 (Daniel: "si el usuario dice que es 0 entonces no alteres eso"): un 0 numérico es un monto ESCRITO,
+    # no un campo vacío. Antes `str(0 or "")` lo convertía en None y el servidor lo trataba como "falta el monto"
+    # (FINANZAS_SIN_MONTO) en vez de pedir que el $0 se declare como garantía, regalía o arriendo (CERO_SIN_DECLARAR).
+    _zz_raw = _fin.get("zz_monto")
     try:
-        _fin_zzm = int(_fin.get("zz_monto")) if str(_fin.get("zz_monto") or "").strip() else None
+        _fin_zzm = int(_zz_raw) if (_zz_raw is not None and str(_zz_raw).strip() != "") else None
     except (TypeError, ValueError):
         return _ferr("El monto de la línea de servicio no es válido.", "ZZ_INVALIDO"), None
     # 🔒 2026-09-09 (Daniel, mismo pedido de arriba): documento-o-garantía y

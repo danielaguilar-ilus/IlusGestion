@@ -563,6 +563,9 @@
 .o2m-fchip .tx{display:flex;flex-direction:column;min-width:0;line-height:1.2}
 .o2m-fchip .nm{font-weight:800;font-size:.86rem;color:#0a0a0a}
 .o2m-fchip .sb{font-size:.74rem;color:#6b7280;margin-top:1px}
+/* 2026-10-08: «Usar este monto» -- la referencia solo entra al cobro cuando la persona la aprieta. */
+.o2m-fchip .use{font-size:.74rem;font-weight:800;color:#1d4ed8;margin-top:3px}
+.o2m-fchip.is-sel .use{color:var(--ilus-red,#dc2626)}
 .o2m-fchip .mt{font-weight:800;font-size:.95rem;color:#374151;margin-left:auto;
   font-variant-numeric:tabular-nums;white-space:nowrap;flex:none;padding-left:6px}
 .o2m-fchip.is-sel{border-color:var(--ilus-red,#dc2626);background:#fff5f5;
@@ -1370,9 +1373,8 @@ window.OT2C = (function(){
          // Cotización interna elegida DESDE Finanzas cuando todavía no hay
          // documento real del ERP (Daniel: "generar/asociar una cotización
          // ahí mismo, para no dejar la OT sin valorizar") -- {id, numero,
-         // total}. Es un ayudante de VALORIZACIÓN (alimenta _ventaActual()
-         // para ver el margen), no reemplaza la cobertura documento/garantía
-         // que ya exige completo('finanzas').
+         // total}. Es una REFERENCIA (chip «Cotización interna» con su botón «Usar este monto»): no escribe el
+         // cobro por su cuenta (2026-10-08) ni reemplaza la cobertura documento/garantía que exige completo('finanzas').
          fin_cotizacion:null,
          // costo_proveedor/costo_despacho van SEPARADOS a propósito (mismo
          // criterio que ya usa mant_visitas desde 2026-08-27): más adelante
@@ -1391,10 +1393,10 @@ window.OT2C = (function(){
          //   manual | interno.
          // fin_valor_origen_base: el chip cuyo monto es el "original"
          // (para volver a ese origen si el usuario deshace su edición).
-         // fin_valor_tocado: el usuario editó a mano o eligió un chip él
-         // mismo -- desde ahí la auto-selección por prioridad NO pisa nada
-         // (una fuente nueva de mayor prioridad solo se ofrece con toast).
-         fin_valor_origen:null, fin_valor_origen_base:null, fin_valor_tocado:false,
+         // 🧹 2026-10-08 (Daniel: "limpia el paso de valor del asistente"): fin_zz_monto SOLO lo escribe la persona
+         // -- teclea, elige una línea del documento o aprieta «Usar este monto» en una referencia. Se quitó
+         // fin_valor_tocado: existía para proteger lo escrito de la auto-selección por prioridad, que ya no existe.
+         fin_valor_origen:null, fin_valor_origen_base:null,
          // Chip "Contrato del cliente": valorizacion.neto + origen_precio de
          // GET /mantenciones/api/clientes/<cid>/inteligencia (solo tipos
          // preventiva/correctiva: es precio por mantención). {cid, neto,
@@ -1677,13 +1679,10 @@ window.OT2C = (function(){
         // OT"): antes el monto en sí quedaba deliberadamente fuera de esta
         // validación -- ahora el backend (ot2_api_crear) también lo exige,
         // así que dejarlo pasar acá solo produciría un 400 sorpresa al
-        // apretar "Crear orden". _ventaActual() ya resuelve la MISMA
-        // prioridad que usa crear() para armar el payload: línea ZZ real →
-        // cotización interna → estimado automático por clasificación.
-        // 💰 2026-09-15: ahora el chip auto-seleccionado (o el usuario)
-        // ESCRIBE el valor en S.fin_zz_monto -- ese es el único "Esta OT
-        // vale". _ventaActual() se mantiene como respaldo del margen, pero
-        // acá manda el campo declarado.
+        // apretar "Crear orden".
+        // 💰 2026-09-15 / 🧹 2026-10-08: el único «Le cobras» es S.fin_zz_monto y solo lo escribe la persona (lo
+        // teclea, elige una línea del documento o aprieta «Usar este monto»). Nada lo rellena por su cuenta: ni
+        // una cotización, ni un estimado, ni una línea "sugerida".
         // 🔴 FIX 2026-09-18 (Daniel: "cuando son garantías le tienen que
         // poner precio" -- no debería). En garantía no se le cobra NADA
         // al cliente por definición, así que exigir un "monto cobrado" > 0
@@ -5524,8 +5523,21 @@ window.OT2C = (function(){
      no hay línea ZZ, se declara un SUPUESTO bien presentado en el modal;
      los valores son editables; la parte de costos tiene que ser premium".
 
+     🧹 2026-10-08 (Daniel: "limpia el paso de valor del asistente" -- OT 281: escribió $0 y se mandó un estimado
+     de $10.034; OT 282: el candado ">0" obligó a escribir $1; una OT de $20.068 era un estimado guardado como
+     cobro). UNA sola regla, sin parches:
+       1. Lo que se COBRA (S.fin_zz_monto) sale de DOS fuentes y de ninguna otra: (a) la línea de servicio del
+          documento de Random que la persona ELIGE (clic en el chip o en la línea), o (b) un monto que la persona
+          ESCRIBE, con motivo. El sistema nunca pone un monto de cobro por su cuenta: el 0 escrito es 0.
+       2. Las referencias (cotización, contrato, estimado, total del documento) se MUESTRAN como sugerencias con su
+          botón «Usar este monto»; solo entran al cobro si la persona lo aprieta. Un estimado aceptado en una OT
+          que se cobra pide motivo, igual que lo escrito a mano.
+       3. El VALORIZADO (solo referencia) es aparte y opcional; nunca se guarda como cobro.
+       4. Trabajo interno: no hay cobro; su valor es solo valorizado opcional (vacío o $0 pasan).
+       5. La vista previa del margen usa EXACTAMENTE lo que se va a enviar (_o2mFinMontosEnvio).
+
      Principio: UNA pregunta central -- "¿Cuánto vale esta OT?" -- con UN
-     solo campo (S.fin_zz_monto, siempre > 0, garantía incluida), y todo lo
+     solo campo (S.fin_zz_monto), y todo lo
      demás orbita alrededor: de dónde sale el número (chips de origen), si
      se cobra o no (cobertura), cuánto nos cuesta (proveedor) y cuánto
      queda (semáforo). Dos conceptos que antes estaban mezclados:
@@ -5573,7 +5585,10 @@ window.OT2C = (function(){
     if (interno){
       valorHtml =
         '<div class="o2m-fuentes" id="o2mFinFuentes"></div>'+
-        '<div class="o2m-valor-hero"><label class="fl" for="o2mFinValorInput">Esta OT vale *</label>'+
+        // 🧹 2026-10-08 (Daniel): el trabajo interno no se cobra y su valor es solo valorizado OPCIONAL (vacío o $0
+        // pasan), así que el rótulo ya no lleva el asterisco de "obligatorio".
+        '<div class="o2m-valor-hero"><label class="fl" for="o2mFinValorInput">Esta OT vale '+
+          '<span class="text-muted" style="font-weight:400">(opcional)</span></label>'+
           '<div class="o2m-money"><span class="pre">$</span>'+
           '<input type="text" inputmode="numeric" id="o2mFinValorInput" placeholder="Ej: 45.000" '+
           'value="'+esc(_o2mFormatearMiles(S.costo_interno))+'" oninput="OT2C._o2mFinCostoInternoHeroCambio(this)" '+
@@ -5699,7 +5714,7 @@ window.OT2C = (function(){
             valorHtml,
             interno ? '' : (S.fin_garantia
               ? 'Va por garantía: no se le cobra. Si quieres, anota cuánto vale el servicio (solo referencia, nunca se suma a lo cobrado).'
-              : 'Toca una referencia para usarla, o escribe cuánto le cobras. Si lo cambias, cuéntanos por qué.'))+
+              : 'Elige la línea de servicio del documento, toca «Usar este monto» en una referencia o escribe cuánto le cobras. Lo que escribas lleva su motivo.'))+
           (interno ? '' :
             _o2mFpasoHtml('cobro', 3, '¿Se le cobra al cliente?', cobroHtml, '')+
             _o2mFpasoHtml('costo', 4, '¿Cuánto nos cuesta?', costoHtml, '')+
@@ -5718,7 +5733,7 @@ window.OT2C = (function(){
         // ver _o2mFinDocsTodos), no solo el de cobertura: es lo que ya hacía
         // _o2mFinCargarZZ por dentro desde el 2026-09-06.
         if (_o2mFinDocsTodos().length) _o2mFinCargarZZ();
-        else { _o2mFinAutoSeleccionar(); _pintarFinZZDom(); }
+        else { _pintarFinZZDom(); }
         _pintarFinValorDom();
         _pintarFinGarResumenDom();
         _pintarFinCostoChipDom();
@@ -5786,10 +5801,10 @@ window.OT2C = (function(){
     var c = document.getElementById('o2mArgCnt'); if (c) c.innerHTML = _o2mArgCntTxt();
   }
   /* Al soltar el documento se vuelve a partir de cero en el valor (el
-     número venía de ahí): la auto-selección por prioridad corre de nuevo. */
+     número venía de ahí): la persona vuelve a elegir o a escribir. */
   function _o2mFinResetValor(){
     S.fin_zz_monto = null; S.fin_zz_monto_original = null; S.fin_zz_motivo_manual = '';
-    S.fin_valor_origen = null; S.fin_valor_origen_base = null; S.fin_valor_tocado = false;
+    S.fin_valor_origen = null; S.fin_valor_origen_base = null;
   }
   function limpiarFinDoc(){
     S.fin_doc = null; S.fin_zz_lineas = []; S.fin_zz_codigo = null; S.fin_zz_monto = null;
@@ -5804,12 +5819,11 @@ window.OT2C = (function(){
   }
 
   /* ── Fuentes del valor (chips) ─────────────────────────────────────────
-     Se muestran TODAS las disponibles (no solo la ganadora) para que se
-     vean las alternativas; la de mayor prioridad nace seleccionada.
-     Prioridad: zz > cotizacion > contrato > estimado > doc_total (documento
-     real manda sobre cotización, y cotización sobre un cálculo teórico; el
-     contrato es dato real del cliente, va antes que el estimado). */
-  var _O2M_FUENTE_PRIORIDAD = {zz:1, cotizacion:2, contrato:3, estimado:4, doc_total:5};
+     Se muestran TODAS las disponibles como SUGERENCIAS, cada una con su botón «Usar este monto».
+     🧹 2026-10-08 (Daniel: "limpia el paso de valor del asistente"): ninguna nace seleccionada ni se elige por
+     prioridad. Solo entra al cobro la que la persona aprieta (usarFuenteValor), la línea que elige de la lista
+     del documento (setFinZZ) o el monto que ella escribe. Se quitó la tabla de prioridades
+     (zz > cotización > contrato > estimado > total del documento): no hay nada que ordenar si nada se elige solo. */
   function _o2mFinLineaZZActual(){
     var lineas = (S.fin_zz_lineas || []).filter(function(l){ return (l.sku||'').toUpperCase() !== 'ZZENVIO'; });
     if (!lineas.length) return null;
@@ -5898,87 +5912,43 @@ window.OT2C = (function(){
   function _o2mFinFuentesCargando(){
     return _o2mFinFuentes().some(function(f){ return f.estado === 'cargando'; });
   }
-  function _o2mFinMejorFuente(){
-    var ok = _o2mFinFuentes().filter(function(f){ return f.estado === 'ok' && f.monto > 0; });
-    ok.sort(function(a,b){ return (_O2M_FUENTE_PRIORIDAD[a.src]||9) - (_O2M_FUENTE_PRIORIDAD[b.src]||9); });
-    return ok[0] || null;
+  /* ¿Hay al menos una referencia con monto a la vista? Solo CLASIFICA un monto escrito: «manual» (había con qué
+     compararlo) o «supuesto» (no había nada). No elige ni escribe ningún monto. */
+  function _o2mFinHayReferencia(){
+    return _o2mFinFuentes().some(function(f){ return f.estado === 'ok' && f.monto > 0; });
   }
-  /* Aplica un chip como valor de la OT. Elegir una fuente REAL (documento,
-     cotización, contrato, estimado) no es "declarar a mano": el original
-     se resetea a ESE monto y no se pide motivo (mismo criterio que setFinZZ
-     y usarTotalDocumentoComoServicio, que se reusan tal cual). */
-  function _o2mFinAplicarFuente(f, auto){
-    var desde = S.fin_zz_monto, tocadoAntes = S.fin_valor_tocado;
-    if (f.src === 'zz'){
-      var ln = _o2mFinLineaZZActual();
-      if (!ln) return;
-      setFinZZ(ln.sku, ln.monto);      // ya repinta ZZ + margen
-    } else if (f.src === 'doc_total'){
-      S.fin_zz_codigo = null;
-      usarTotalDocumentoComoServicio();
-    } else {
-      S.fin_zz_codigo = null;
-      S.fin_zz_monto = Math.round(f.monto);
-      S.fin_zz_monto_original = S.fin_zz_monto;
-      S.fin_zz_motivo_manual = '';
-      _pintarFinZZDom(); _pintarFinMargenDom();
-    }
-    S.fin_valor_origen = f.src; S.fin_valor_origen_base = f.src;
-    // setFinZZ/usarTotalDocumentoComoServicio marcan "tocado" (son
-    // acciones del usuario cuando se llaman directo); en auto-selección se
-    // restaura lo que había.
-    S.fin_valor_tocado = auto ? tocadoAntes : true;
-    // setFinZZ/usarTotalDocumentoComoServicio ya hicieron el count-up.
-    _pintarFinValorDom((f.src === 'zz' || f.src === 'doc_total') ? undefined : desde);
-    _pintarFinGarResumenDom();
-    _o2mFinEstadosDom();
-    refrescarAnclas();
-  }
+  /* «Usar este monto»: la persona aprieta una referencia y recién ahí su monto entra al cobro. Elegir una fuente
+     REAL (documento, cotización, contrato, estimado) no es "declarar a mano": el original se resetea a ESE monto
+     y no se pide motivo (mismo criterio que setFinZZ y usarTotalDocumentoComoServicio). La única excepción es el
+     estimado en una OT que se cobra, que pide motivo (ver _o2mFinEstimadoComoCobro). */
   function usarFuenteValor(src){
     var f = _o2mFinFuentes().filter(function(x){ return x.src === src && x.estado === 'ok'; })[0];
     if (!f) return;
-    // Las referencias que YA estaban a la vista cuando el usuario eligió no
-    // se le vuelven a ofrecer con toast -- solo las que lleguen después.
-    _o2mFinMarcarOfrecidas();
-    _o2mFinAplicarFuente(f, false);
-  }
-  function _o2mFinMarcarOfrecidas(){
-    _o2mFinFuentes().forEach(function(x){ if (x.estado === 'ok') _o2mFinToastOfrecido[x.src] = 1; });
-  }
-  /* Auto-selección por prioridad -- SOLO si el usuario no editó a mano ni
-     eligió un chip él mismo (S.fin_valor_tocado). Si ya había un chip
-     aplicado y llega uno de MAYOR prioridad (ej. asocia el documento tras
-     ver el estimado), reemplaza; si el valor vigente fue editado a mano,
-     no se toca: se ofrece con un toast. */
-  var _o2mFinToastOfrecido = {};
-  function _o2mFinAutoSeleccionar(){
-    if (esInterno()) return;
-    var mejor = _o2mFinMejorFuente();
-    if (!mejor) return;
-    var prioAct = S.fin_valor_origen ? (_O2M_FUENTE_PRIORIDAD[S.fin_valor_origen] || 9) : 99;
-    var prioNueva = _O2M_FUENTE_PRIORIDAD[mejor.src] || 9;
-    if (S.fin_valor_tocado){
-      // 2026-09-15 (revisión): si el usuario escribió el valor mientras las
-      // referencias todavía cargaban, quedó como 'supuesto' ("sin
-      // referencia"). Ahora que SÍ llegó una fuente ok, ese dato es falso:
-      // pasa a 'manual' (el motivo sigue siendo obligatorio) y se repinta la
-      // línea de origen + el label del textarea. Los callers repintan igual
-      // después; se hace acá también por si alguno no lo hace.
-      if (S.fin_valor_origen === 'supuesto' && _o2mFinEsManual()){
-        S.fin_valor_origen = 'manual';
-        _pintarFinValorDom(); _o2mFinEstadosDom();
-      }
-      if (prioNueva < prioAct && S.fin_zz_monto !== Math.round(mejor.monto) && !_o2mFinToastOfrecido[mejor.src] && window.ilusToast){
-        _o2mFinToastOfrecido[mejor.src] = 1;
-        ilusToast(mejor.nm + ' trae ' + $o2mPesos(mejor.monto) + '. Tócalo si quieres usarlo.', {type:'info', duration:6000});
-      }
+    if (f.src === 'zz'){
+      var ln = _o2mFinLineaZZActual();
+      if (ln) setFinZZ(ln.sku, ln.monto);      // ya repinta ZZ + margen
       return;
     }
-    if (S.fin_zz_monto == null || prioNueva < prioAct ||
-        (S.fin_valor_origen === mejor.src && S.fin_zz_monto !== Math.round(mejor.monto) && !_o2mFinEsManual())){
-      _o2mFinAplicarFuente(mejor, true);
+    if (f.src === 'doc_total'){
+      S.fin_zz_codigo = null;
+      usarTotalDocumentoComoServicio();
+      return;
     }
+    // cotizacion | contrato | estimado
+    S.fin_zz_codigo = null;
+    S.fin_zz_monto = Math.round(f.monto);
+    S.fin_zz_monto_original = S.fin_zz_monto;
+    S.fin_zz_motivo_manual = '';
+    S.fin_valor_origen = f.src; S.fin_valor_origen_base = f.src;
+    _pintarFinZZDom(); _pintarFinValorDom(); _pintarFinGarResumenDom(); _pintarFinMargenDom();
+    _o2mFinEstadosDom(); refrescarAnclas();
   }
+  /* 🧹 2026-10-08 (Daniel: "limpia el paso de valor del asistente"): la auto-selección por prioridad se QUITÓ.
+     Elegía sola la "mejor" fuente (línea ZZ, cotización, contrato, estimado o total del documento) y escribía su
+     monto en el casillero sin que nadie lo pidiera: de ahí salieron el estimado de $10.034 que pisó el $0 escrito
+     (OT 281) y los estimados guardados como cobro. Queda como NO-OP documentado (nadie la llama) para que no se
+     reintroduzca: las referencias se muestran y solo entran al cobro con «Usar este monto». */
+  function _o2mFinAutoSeleccionar(){}
   /* Chip "Contrato del cliente" -- SOLO tipo preventiva. 2026-09-15
      (revisión): el neto de /inteligencia (valorizacion.neto) es el precio
      por MANTENCIÓN PREVENTIVA del contrato (costo_por_mant / valor definido
@@ -6011,14 +5981,14 @@ window.OT2C = (function(){
       .then(function(){
         if (seq !== _finContratoSeq) return;
         S.fin_contrato_cargando = false;
-        _o2mFinAutoSeleccionar(); _pintarFinValorDom(); _o2mFinEstadosDom();
+        _pintarFinValorDom(); _o2mFinEstadosDom();
       });
   }
 
-  /* ── Pintado del sub-paso 2 (chips + origen + motivo), sin tocar el input
-     mientras el usuario escribe en él. `desde` = monto anterior para el
-     count-up del hero (solo al aplicar un chip). ─────────────────────── */
-  function _pintarFinValorDom(desde){
+  /* ── Pintado del sub-paso 2 (chips + origen + motivo). 🧹 2026-10-08: el casillero muestra SIEMPRE lo que dice
+     S.fin_zz_monto -- sin animaciones ni números intermedios que la persona no haya pedido (se quitó el
+     count-up del cobro). ─────────────────────────────────────────────── */
+  function _pintarFinValorDom(){
     var cF = document.getElementById('o2mFinFuentes');
     var cO = document.getElementById('o2mFinOrigen');
     var cM = document.getElementById('o2mFinMotivo');
@@ -6058,6 +6028,10 @@ window.OT2C = (function(){
     var hayOk = fuentes.some(function(f){ return f.estado === 'ok'; });
     var cargando = fuentes.some(function(f){ return f.estado === 'cargando'; });
     var manualAhora = _o2mFinEsManual();
+    // Un monto escrito mientras las referencias todavía cargaban quedó como «supuesto» (no había con qué
+    // compararlo). Si ahora SÍ hay una a la vista, ese dato sería falso: pasa a «manual» (el motivo sigue siendo
+    // obligatorio). Solo cambia la etiqueta; el monto no se toca.
+    if (manualAhora && S.fin_valor_origen === 'supuesto' && hayOk) S.fin_valor_origen = 'manual';
     var origen = S.fin_valor_origen;
     function _o2mFinChipHtml(f){
       var sel = (f.estado === 'ok' && origen === f.src && !manualAhora);
@@ -6079,9 +6053,11 @@ window.OT2C = (function(){
           '<span class="tx"><span class="nm">'+esc(f.nm)+'</span><span class="sb">'+esc(f.sb||'')+'</span></span>'+
           '<i class="bi bi-chevron-right mt"></i></button>';
       }
+      // 🧹 2026-10-08: la referencia es una SUGERENCIA; entra al cobro solo con «Usar este monto».
       return '<button type="button" class="o2m-fchip'+(sel?' is-sel':'')+'" onclick="OT2C.usarFuenteValor(\''+f.src+'\')">'+
         '<i class="bi '+(sel?'bi-check-circle-fill':f.ico)+'"></i>'+
-        '<span class="tx"><span class="nm">'+esc(f.nm)+'</span><span class="sb">'+esc(f.sb||'')+'</span></span>'+
+        '<span class="tx"><span class="nm">'+esc(f.nm)+'</span><span class="sb">'+esc(f.sb||'')+'</span>'+
+        '<span class="use">'+(sel ? 'En uso' : 'Usar este monto')+'</span></span>'+
         '<b class="mt">'+$o2mPesos(f.monto)+'</b></button>';
     }
     if (cF){
@@ -6110,7 +6086,8 @@ window.OT2C = (function(){
       var txt = '', cls = '';
       if (S.fin_zz_monto == null){
         txt = cargando ? 'Consultando referencias…'
-          : (S.fin_garantia ? 'Opcional: escribe o elige cuánto vale esta OT.' : 'Escribe o elige cuánto le cobras.');
+          : (S.fin_garantia ? 'Opcional: escribe cuánto vale esta OT o toca «Usar este monto» en una referencia.'
+                            : 'Escribe cuánto le cobras o toca «Usar este monto» en una referencia.');
         cls = '';
       } else if (manualAhora){
         if (origen === 'supuesto'){ txt = 'Supuesto declarado — sin referencia en el ERP ni en el catálogo'; cls = 'supuesto'; }
@@ -6151,20 +6128,19 @@ window.OT2C = (function(){
           'oninput="OT2C.setFinMotivoManual(this.value)">'+esc(S.fin_zz_motivo_manual)+'</textarea>';
       }
     }
-    // 2026-09-15 (revisión): el input se protege SOLO mientras el usuario
-    // escribe en él (foco + S.fin_valor_tocado). Si hizo clic en el campo y
-    // se quedó esperando "Consultando referencias…", la auto-selección que
-    // llega después tiene que verse en el hero -- antes el chip quedaba
-    // seleccionado, el sub-paso en "Listo" y el número grande en blanco.
-    if (inp && (document.activeElement !== inp || !S.fin_valor_tocado)){
-      if (desde != null && S.fin_zz_monto != null && desde !== S.fin_zz_monto) _o2mCountUp(inp, desde, S.fin_zz_monto);
-      else if (!inp._o2mAnim) inp.value = _o2mFormatearMiles(S.fin_zz_monto);
+    // 🧹 2026-10-08: el casillero se reescribe solo si su texto difiere de S.fin_zz_monto. Mientras la persona
+    // teclea ya coinciden (el handler formatea el campo antes de repintar), así que no se le pisa el cursor; y si
+    // aprieta un chip con el foco en el casillero (Safari no pasa el foco a un botón), el número nuevo se ve.
+    if (inp){
+      var _txt = _o2mFormatearMiles(S.fin_zz_monto);
+      if (inp.value !== _txt) inp.value = _txt;
     }
   }
   /* 2026-09-15 (revisión): al salir del hero se resincroniza con el estado
-     (cubre cualquier auto-selección que haya llegado mientras tenía el foco). */
+     (por si algún repintado llegó mientras tenía el foco). */
   function _o2mFinHeroBlur(){ _pintarFinValorDom(); }
-  /* Count-up de 250 ms del hero al aplicar un chip (directo si
+  /* Count-up de 250 ms. 🧹 2026-10-08: ya NO se usa en el cobro (el casillero muestra el número tal cual); solo lo
+     usa el chip «Horas de agenda × tarifa» del trabajo interno, que la persona aprieta (directo si
      prefers-reduced-motion). */
   function _o2mCountUp(inp, desde, hasta){
     var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -6387,8 +6363,7 @@ window.OT2C = (function(){
     S.fin_aut = false; _o2mSigRotular();
     S.fin_zz_lineas = []; S.fin_zz_codigo = null; S.fin_zz_monto = null;
     S.fin_zz_envio = null; S.fin_doc_rut_difiere = false;
-    // 2026-09-15: con documento nuevo, el valor parte de cero -- la línea
-    // ZZ real manda sobre lo que hubiera antes (auto-selección de nuevo).
+    // 2026-09-15: con documento nuevo, el valor parte de cero -- la persona elige de nuevo la línea (o escribe).
     _o2mFinResetValor();
     repintarSeccion('finanzas');
     refrescarAnclas();
@@ -6511,39 +6486,23 @@ window.OT2C = (function(){
         res.reduce(function(acc, r){ return acc + (r.total || 0); }, 0);
 
       var envioLn = S.fin_zz_lineas.filter(function(l){ return l.sku === 'ZZENVIO'; })[0];
-      S.fin_zz_envio = envioLn ? {sku: envioLn.sku, monto: envioLn.monto} : null;
+      // 🧹 2026-10-08 (Daniel: "el sistema NUNCA pone un monto de cobro por su cuenta"): el transporte (ZZENVIO) del
+      // documento se RECONOCE y se muestra (referencia en fin_zz_envio_original), pero su monto no entra al cobro
+      // hasta que la persona lo pide con «Usar este monto» (usarEnvioDocumento) o lo escribe. Si ya había uno
+      // (elegido o escrito), se conserva: recargar las líneas no se lo pisa.
+      var _envioAntes = S.fin_zz_envio;
+      S.fin_zz_envio = envioLn ? {sku: envioLn.sku, monto: (_envioAntes && _envioAntes.monto != null) ? _envioAntes.monto : null} : null;
       S.fin_zz_envio_original = envioLn ? envioLn.monto : null;
 
-      // Auto-elige la sugerida (o la única que haya, EXCLUYENDO ZZENVIO)
-      // sin pisar una elección manual ya hecha por el usuario.
-      // 2026-09-15: "manual" incluye ahora haber escrito el valor a mano o
-      // elegido otro chip (S.fin_valor_tocado) -- en ese caso la línea ZZ
-      // se ofrece como chip (con toast, ver _o2mFinAutoSeleccionar), no se
-      // aplica sola.
-      var sug = null;
-      if (!S.fin_zz_codigo && S.fin_zz_lineas.length && !S.fin_valor_tocado){
-        var candidatas = S.fin_zz_lineas.filter(function(l){ return l !== envioLn; });
-        sug = candidatas.filter(function(l){ return l.sugerida; })[0] || candidatas[0] || null;
-        if (sug){
-          S.fin_zz_codigo = sug.sku; S.fin_zz_monto = sug.monto;
-          S.fin_zz_monto_original = sug.monto; S.fin_zz_motivo_manual = '';
-          S.fin_valor_origen = 'zz'; S.fin_valor_origen_base = 'zz';
-        }
-      } else if (S.fin_zz_codigo){
-        // El usuario ya habia elegido un codigo: si ahora hay mas
-        // documentos, su monto de referencia es la suma nueva.
-        var act = S.fin_zz_lineas.filter(function(l){ return l.sku === S.fin_zz_codigo; })[0];
-        if (act){
-          S.fin_zz_monto_original = act.monto;
-          // 2026-09-15: si el usuario no lo editó a mano, el monto vigente
-          // sigue a la suma nueva (si no, quedaría "editado a mano" solo
-          // por haber agregado un documento).
-          if (!S.fin_valor_tocado) S.fin_zz_monto = act.monto;
-        }
-      }
-
-      var actual = sug || S.fin_zz_lineas.filter(function(l){ return l.sku === S.fin_zz_codigo; })[0];
-      var lineaServicioEncontrada = !!(actual && actual.sugerida);
+      // 🧹 2026-10-08 (Daniel: "limpia el paso de valor del asistente"): las líneas del documento se MUESTRAN (chip y
+      // lista) pero ninguna se elige sola ni escribe el monto: la persona toca la que quiere cobrar. Si ya había
+      // elegido una y ahora hay más documentos, solo se actualiza la referencia contra la que se compara su monto
+      // (si difiere, pide motivo); el monto no se mueve.
+      var actualSel = S.fin_zz_lineas.filter(function(l){ return l.sku === S.fin_zz_codigo; })[0];
+      if (actualSel) S.fin_zz_monto_original = actualSel.monto;
+      // El aviso de RUT vale cuando el documento trae la línea de servicio del tipo de OT (la sugerida),
+      // aunque la persona todavía no la haya elegido.
+      var lineaServicioEncontrada = S.fin_zz_lineas.some(function(l){ return l !== envioLn && l.sugerida; });
       var rutDoc = (S.fin_doc && S.fin_doc.rut) || '';
       var rutCliente = (S.cliente && S.cliente.rut) || '';
       var _difieraAntes = S.fin_doc_rut_difiere;
@@ -6554,10 +6513,7 @@ window.OT2C = (function(){
           {type:'warning', duration:6000});
       }
       S.fin_zz_cargando = false;
-      // 2026-09-15: con las líneas ya leídas, la prioridad decide (ZZ real
-      // manda; si no hay ZZ, sigue cotización > contrato > estimado >
-      // total del documento) y se repintan chips + hero + estados.
-      _o2mFinAutoSeleccionar();
+      // 🧹 2026-10-08: con las líneas ya leídas solo se repintan chips + hero + estados; nada se elige solo.
       _pintarFinZZDom();
       _pintarFinValorDom();
       _pintarFinGarResumenDom();
@@ -6729,15 +6685,13 @@ window.OT2C = (function(){
     S.fin_zz_monto = digitos ? parseInt(digitos, 10) : null;
     el.value = _o2mFormatearMiles(digitos);
     try { var pos = Math.max(0, el.value.length - resto); el.setSelectionRange(pos, pos); } catch(e){}
-    if (!S.fin_valor_tocado) _o2mFinMarcarOfrecidas();
-    S.fin_valor_tocado = true;
     if (!_o2mFinEsManual()){
       S.fin_zz_motivo_manual = '';
       S.fin_valor_origen = (S.fin_zz_monto == null) ? null : (S.fin_valor_origen_base || S.fin_valor_origen);
     } else {
       // "supuesto" = no había NINGUNA referencia disponible; si había chips
       // y el usuario prefirió su propio número, es "manual".
-      S.fin_valor_origen = (S.fin_valor_origen_base || _o2mFinMejorFuente()) ? 'manual' : 'supuesto';
+      S.fin_valor_origen = (S.fin_valor_origen_base || _o2mFinHayReferencia()) ? 'manual' : 'supuesto';
     }
     _pintarFinZZDom(); _pintarFinValorDom(); _pintarFinGarResumenDom(); _pintarFinMargenDom();
     _o2mFinEstadosDom(); refrescarAnclas();
@@ -6774,6 +6728,8 @@ window.OT2C = (function(){
     var manual = _o2mFinEnvioEsManual();
     var tag = document.getElementById('o2mFinEnvioEdit');
     if (tag) tag.innerHTML = manual ? ' <span style="color:#dc2626">(editado a mano)</span>' : '';
+    var sug = document.getElementById('o2mFinEnvioSug');
+    if (sug) sug.innerHTML = _o2mFinEnvioSugHtml();
     var cM = document.getElementById('o2mFinEnvioMotivo');
     if (cM){
       var modo = manual ? 'manual' : '';
@@ -6782,6 +6738,23 @@ window.OT2C = (function(){
         cM.innerHTML = _o2mFinEnvioMotivoHtml();
       }
     }
+  }
+  /* 🧹 2026-10-08: lo que el documento trae por transporte se muestra como REFERENCIA con su botón «Usar este
+     monto»; solo entra al cobro del despacho si la persona lo aprieta (o lo escribe en la caja). */
+  function _o2mFinEnvioSugHtml(){
+    var ref = S.fin_zz_envio_original;
+    if (!S.fin_zz_envio || ref == null) return '';
+    var usado = (S.fin_zz_envio.monto === ref);
+    return '<div class="o2m-fin-hint" style="margin:6px 0 0">El documento trae transporte por <b>'+$o2mPesos(ref)+'</b>.'+
+      (usado ? ' <b style="color:#166534">En uso</b>' : '')+'</div>'+
+      (usado ? '' : '<button type="button" class="btn btn-sm btn-outline-secondary mt-1" style="min-height:44px" '+
+        'onclick="OT2C.usarEnvioDocumento()"><i class="bi bi-truck me-1"></i>Usar este monto</button>');
+  }
+  function usarEnvioDocumento(){
+    if (!S.fin_zz_envio || S.fin_zz_envio_original == null) return;
+    S.fin_zz_envio.monto = S.fin_zz_envio_original;
+    S.fin_zz_envio_motivo_manual = '';
+    _pintarFinZZDom(); _pintarFinMargenDom(); _o2mFinEstadosDom(); refrescarAnclas();
   }
   function setFinMotivoManual(v){ S.fin_zz_motivo_manual = v; _o2mFinEstadosDom(); refrescarAnclas(); }
   function setFinEnvioMotivoManual(v){ S.fin_zz_envio_motivo_manual = v; _o2mFinEstadosDom(); refrescarAnclas(); }
@@ -6814,7 +6787,8 @@ window.OT2C = (function(){
       : '';
     var servicioHtml = seleccionables.length
       ? '<div class="mt-2">'+cabeceraDocs+'<label class="fl">Línea de servicio '+(_nDocs>1?'(sumada)':'del documento')+
-        (seleccionables.length > 1 ? ' — toca otra para cambiarla' : '')+'</label>'+
+        (!S.fin_zz_codigo ? ' — toca la que quieres cobrar'
+          : (seleccionables.length > 1 ? ' — toca otra para cambiarla' : ''))+'</label>'+
         seleccionables.map(function(l){
           var sel = (S.fin_zz_codigo === l.sku);
           return '<div class="o2m-it '+(sel?'sel':'')+'" onclick="OT2C.setFinZZ(\''+l.sku+'\','+l.monto+')">'+
@@ -6853,6 +6827,7 @@ window.OT2C = (function(){
         'oninput="OT2C._o2mFinMontoEnvioCambio(this)">'+
         '<div class="text-muted" style="font-size:.72rem;margin-top:4px">Lo que el documento le cobra al cliente por transporte — '+
         'se reconoce aparte, no se mezcla con el valor del servicio.</div>'+
+        '<div id="o2mFinEnvioSug">'+_o2mFinEnvioSugHtml()+'</div>'+
         '<div id="o2mFinEnvioMotivo" data-modo="'+(envioManual?'manual':'')+'">'+_o2mFinEnvioMotivoHtml()+'</div>'+
       '</div>';
     }
@@ -6864,17 +6839,15 @@ window.OT2C = (function(){
      eso NO pide motivo (ver _o2mFinEsManual). */
   function usarTotalDocumentoComoServicio(){
     if (!S.fin_doc_total_sugerido) return;
-    var desde = S.fin_zz_monto;
     S.fin_zz_monto = S.fin_doc_total_sugerido;
     S.fin_zz_monto_original = S.fin_doc_total_sugerido;
     S.fin_zz_motivo_manual = '';
     // 2026-09-15: origen estructurado + hero (chip "Total del documento").
-    S.fin_valor_origen = 'doc_total'; S.fin_valor_origen_base = 'doc_total'; S.fin_valor_tocado = true;
+    S.fin_valor_origen = 'doc_total'; S.fin_valor_origen_base = 'doc_total';
     _pintarFinZZDom(); _pintarFinMargenDom();
-    _pintarFinValorDom(desde); _pintarFinGarResumenDom(); _o2mFinEstadosDom(); refrescarAnclas();
+    _pintarFinValorDom(); _pintarFinGarResumenDom(); _o2mFinEstadosDom(); refrescarAnclas();
   }
   function setFinZZ(sku, monto){
-    var desde = S.fin_zz_monto;
     S.fin_zz_codigo = sku; S.fin_zz_monto = monto;
     // Elegir una línea REAL del documento (aunque no sea la sugerida) no es
     // "declarar a mano" -- el número sigue siendo el que dice el ERP. El
@@ -6882,7 +6855,7 @@ window.OT2C = (function(){
     // recién ahí se le pide motivo (ver _o2mFinMontoCambio).
     S.fin_zz_monto_original = monto; S.fin_zz_motivo_manual = '';
     // 2026-09-15: origen estructurado (viaja como finanzas.valor_origen).
-    S.fin_valor_origen = 'zz'; S.fin_valor_origen_base = 'zz'; S.fin_valor_tocado = true;
+    S.fin_valor_origen = 'zz'; S.fin_valor_origen_base = 'zz';
     // El usuario puede haber elegido a mano una línea distinta a la
     // sugerida -- se re-evalúa si corresponde mostrar el aviso de RUT
     // (solo aplica cuando la elegida es realmente la de servicio).
@@ -6892,7 +6865,7 @@ window.OT2C = (function(){
     S.fin_doc_rut_difiere = !!(actual && actual.sugerida && rutDoc && rutCliente &&
       _o2mRutCuerpo(rutDoc) !== _o2mRutCuerpo(rutCliente));
     _pintarFinZZDom(); _pintarFinMargenDom();
-    _pintarFinValorDom(desde); _pintarFinGarResumenDom(); _o2mFinEstadosDom(); refrescarAnclas();
+    _pintarFinValorDom(); _pintarFinGarResumenDom(); _o2mFinEstadosDom(); refrescarAnclas();
   }
   // setFinCostoProveedor/setFinCostoDespacho viven arriba, junto al resto
   // del helper de input de dinero (2026-08-30) -- quedaban duplicadas acá
@@ -7835,20 +7808,11 @@ window.OT2C = (function(){
     document.body.appendChild(ov);
   }
 
-  /* "Venta" de referencia para el margen: el monto REAL del documento si
-     ya se eligió una línea ZZ, si no el estimado por clasificación -- en
-     ese orden, nunca al revés (el documento real siempre manda sobre un
-     cálculo teórico). */
+  /* "Venta" de referencia para el margen = lo que la persona dejó en «Le cobras» (S.fin_zz_monto), nada más.
+     🧹 2026-10-08: antes caía a la cotización interna y al estimado por clasificación cuando el casillero estaba
+     vacío; ese respaldo se quitó (el margen usa exactamente lo que se va a enviar, ver _o2mFinMontosEnvio). */
   function _ventaActual(){
-    if (S.fin_zz_monto != null) return S.fin_zz_monto;
-    // 2026-08-30: una cotización interna elegida a mano en este mismo paso
-    // (ver _o2mFinCotizacionSeleccionada) es un número REAL, aunque no sea
-    // un documento del ERP -- manda sobre el estimado genérico por
-    // clasificación, pero sigue detrás de una línea ZZ real (el documento
-    // real siempre manda sobre cualquier otra fuente).
-    if (S.fin_cotizacion && S.fin_cotizacion.total != null) return S.fin_cotizacion.total;
-    if (S.fin_costo_estimado && S.fin_costo_estimado.total_neto != null) return S.fin_costo_estimado.total_neto;
-    return null;
+    return S.fin_zz_monto != null ? S.fin_zz_monto : null;
   }
   /* "Buscar/generar cotización" (2026-08-30, Daniel: "generar/asociar una
      cotización ahí mismo, para no dejar la OT sin valorizar") -- ayudante
@@ -7913,11 +7877,9 @@ window.OT2C = (function(){
       return;
     }
     S.fin_cotizacion = {id: header.id || null, numero: header.numero_cotizacion || null, total: total};
+    // 🧹 2026-10-08: elegir la cotización solo la deja a la vista como referencia (chip «Cotización interna» con su
+    // botón «Usar este monto»). Elegir un DOCUMENTO no es elegir un MONTO: entra al cobro cuando la persona lo pide.
     repintarSeccion('finanzas');
-    // 2026-09-15: buscarla fue una acción explícita del usuario -- se
-    // aplica como valor de la OT aunque haya una fuente de mayor prioridad
-    // (esa se ofrece con toast cuando llegue, ver _o2mFinAutoSeleccionar).
-    usarFuenteValor('cotizacion');
   }
 
   /* ── "Vuelta automática" del cotizador (2026-09-17, Daniel: "ahí se
@@ -7978,13 +7940,17 @@ window.OT2C = (function(){
         sub: '¿La usamos como el valor de esta OT?',
         okLabel: 'Sí, usarla', cancelLabel: 'No, gracias',
       }) : true;
-      if (ok) _o2mFinCotizacionSeleccionada([], {id: nueva.id, numero_cotizacion: nueva.numero_cotizacion, total: monto});
+      if (ok){
+        _o2mFinCotizacionSeleccionada([], {id: nueva.id, numero_cotizacion: nueva.numero_cotizacion, total: monto});
+        // «Sí, usarla» (la pregunta dice "¿La usamos como el valor de esta OT?") es la persona pidiéndolo.
+        usarFuenteValor('cotizacion');
+      }
     }catch(e){ /* silencioso -- no es crítico, sigue disponible "Buscar cotización" */ }
   }
   function limpiarFinCotizacion(){
     S.fin_cotizacion = null;
     // Si el valor vigente venía de esa cotización, se parte de cero para
-    // que la prioridad elija otra referencia.
+    // que la persona vuelva a elegir o a escribir.
     if (S.fin_valor_origen_base === 'cotizacion') _o2mFinResetValor();
     repintarSeccion('finanzas');
     refrescarAnclas();
@@ -8037,42 +8003,72 @@ window.OT2C = (function(){
      (SIN_VALORIZAR) la trababa después sin salida clara. Si la persona lo usa como «Le cobras», es un cobro
      declarado a mano (Daniel: "sin línea de servicio útil, el cobro se escribe a mano con motivo"): viaja como
      'manual' y pide el motivo, igual que un número editado. En garantía (ahí es el valorizado) y en trabajo
-     interno no aplica. El chip, el monto y la auto-selección no cambian. */
+     interno no aplica. 🧹 2026-10-08: el estimado nunca se aplica solo; llega al casillero únicamente si la persona
+     aprieta «Usar este monto» (y entonces pide motivo, como lo escrito a mano). */
   function _o2mFinEstimadoComoCobro(){
     return !esInterno() && !S.fin_garantia && S.fin_zz_monto != null && !_o2mFinEsManual()
       && S.fin_valor_origen === 'estimado';
   }
   function _o2mFinPideMotivo(){ return _o2mFinEsManual() || _o2mFinEstimadoComoCobro(); }
-  /* El monto del sub-paso 2 tal como lo manda crear(): el campo declarado, o (respaldo) la cotización o el
-     estimado. ÚNICA fuente para crear() y para la vista previa -- si cambia una regla acá, cambian las dos. */
+  /* El monto del sub-paso 2 tal como lo manda crear(): el que la persona dejó en el casillero, nada más. ÚNICA
+     fuente para crear() y para la vista previa (vía _o2mFinMontosEnvio) -- si cambia una regla acá, cambian las dos. */
   function _o2mFinMontoServicio(){
+    // 🧹 2026-10-08 (Daniel: "si el usuario dice que es 0 entonces no alteres eso"): SIN respaldos. Antes, si la
+    // persona no había "tocado" el valor, se mandaba la cotización o el estimado por clasificación como si fuera el
+    // monto (OT 281: escribió $0 y salió un estimado de $10.034; una OT de $20.068 era un estimado guardado como
+    // cobro). Ahora, si no hay un monto en el casillero, no viaja ninguno; un 0 escrito viaja como 0.
+    if (S.fin_zz_monto == null) return null;
     // 2026-08-30 (Daniel: "valorizar el servicio siempre, aunque cierre como garantía"): el monto ya NO
     // depende de que exista un documento -- puede venir de una línea ZZ real O ser 100% manual (ver
     // _pintarFinZZDom), con el motivo cuando corresponde declarar por qué es manual.
-    if (S.fin_zz_monto != null){
-      // 2026-10-07: el estimado usado como cobro viaja como cobro escrito a mano, con su motivo.
-      var _aMano = _o2mFinEsManual(), _estCobro = _o2mFinEstimadoComoCobro();
-      return {zz_codigo: S.fin_zz_codigo || null, zz_monto: S.fin_zz_monto,
-              zz_motivo_manual: (_aMano || _estCobro) ? (S.fin_zz_motivo_manual || '') : null,
-              // 💰 2026-09-15: de dónde salió el valor (mant_visitas.valor_origen): zz | doc_total |
-              // cotizacion | contrato | estimado | supuesto | manual. El motivo manual viaja SIN prefijos.
-              valor_origen: _aMano
-                ? (S.fin_valor_origen === 'supuesto' ? 'supuesto' : 'manual')
-                : (_estCobro ? 'manual' : (S.fin_valor_origen || (S.fin_zz_codigo ? 'zz' : 'manual')))};
+    // 2026-10-07: el estimado usado como cobro viaja como cobro escrito a mano, con su motivo.
+    var _aMano = _o2mFinEsManual(), _estCobro = _o2mFinEstimadoComoCobro();
+    return {zz_codigo: S.fin_zz_codigo || null, zz_monto: S.fin_zz_monto,
+            zz_motivo_manual: (_aMano || _estCobro) ? (S.fin_zz_motivo_manual || '') : null,
+            // 💰 2026-09-15: de dónde salió el valor (mant_visitas.valor_origen): zz | doc_total |
+            // cotizacion | contrato | estimado | supuesto | manual. El motivo manual viaja SIN prefijos.
+            valor_origen: _aMano
+              ? (S.fin_valor_origen === 'supuesto' ? 'supuesto' : 'manual')
+              : (_estCobro ? 'manual' : (S.fin_valor_origen || (S.fin_zz_codigo ? 'zz' : 'manual')))};
+  }
+  /* 🧹 2026-10-08 (Daniel: "la vista previa usa EXACTAMENTE lo que se va a enviar"): los montos del paso Costos TAL
+     COMO viajan en el POST. ÚNICA fuente de crear() y de _o2mFinVistaPrevia: lo que se ve antes de crear es lo que
+     se manda. Solo trae lo que la persona dejó en pantalla (un 0 escrito es 0); no inventa ni rellena nada. */
+  function _o2mFinMontosEnvio(){
+    var o = {};
+    var ms = _o2mFinMontoServicio();
+    if (ms){
+      if ('zz_codigo' in ms) o.zz_codigo = ms.zz_codigo;
+      o.zz_monto = ms.zz_monto;
+      if (ms.zz_motivo_manual != null) o.zz_motivo_manual = ms.zz_motivo_manual;
+      o.valor_origen = ms.valor_origen;
     }
-    // 🔒 2026-09-09 / 2026-09-15: ramas de RESPALDO (el chip ya escribe en fin_zz_monto, así que normalmente
-    // entra la de arriba) -- una OT valorizada con "Buscar cotización" o solo con el estimado no puede crearse
-    // sin ningún monto guardado.
-    // 2026-10-08: el respaldo solo corre si la persona NO tocó el valor (un $0 escrito nunca se reemplaza).
-    if (!S.fin_valor_tocado && S.fin_cotizacion && S.fin_cotizacion.total != null){
-      return {zz_monto: Math.round(S.fin_cotizacion.total), valor_origen: 'cotizacion',
-              zz_motivo_manual: 'Valorizado con cotización ' + (S.fin_cotizacion.numero || ('#' + S.fin_cotizacion.id))};
+    // 💰 2026-10-07 (Daniel, modelo único "Cobré − Me cobraron = Queda"): cuánto VALE la OT viaja aparte
+    // (valorizado_clp). En garantía es el monto de arriba -- el backend ya no lo guarda como lo cobrado
+    // (_ot_fin_reparto_creacion) --; en una OT que se cobra, el "Valorizar (opcional)" si se escribió.
+    var vz = _o2mFinValorizado(ms);
+    if (vz){ o.valorizado_clp = vz.monto; o.valorizado_fuente = vz.fuente; }
+    // ZZENVIO: aparte, en columnas propias (zz_envio_codigo/zz_envio_monto)
+    // -- nunca dentro de costo_proveedor/costo_despacho, que son lo que le
+    // PAGAMOS a un proveedor (costo), mientras que ZZENVIO es lo que el
+    // documento le está cobrando AL CLIENTE (venta) -- mezclarlos
+    // invertiría el signo en el cálculo de margen.
+    if (S.fin_zz_envio && S.fin_zz_envio.monto != null){
+      o.zz_envio_codigo = S.fin_zz_envio.sku;
+      o.zz_envio_monto = S.fin_zz_envio.monto;
+      if (_o2mFinEnvioEsManual()) o.zz_envio_motivo_manual = S.fin_zz_envio_motivo_manual || '';
     }
-    if (!S.fin_valor_tocado && S.fin_costo_estimado && S.fin_costo_estimado.total_neto != null){
-      return {zz_monto: Math.round(S.fin_costo_estimado.total_neto), valor_origen: 'estimado',
-              zz_motivo_manual: 'Estimado automático por clasificación del producto'};
+    // 2026-08-29: costo_proveedor/costo_despacho ya existen en mant_visitas -- son las columnas REALES que alimenta
+    // _mant_visita_crear_core y que ya lee el reporte de margen (_cliente_inteligencia).
+    // 2026-09-15 (contrato con el backend): si el usuario escribió 0, viaja 0 como NÚMERO y se guarda 0 (no NULL) --
+    // "técnico interno sin costo" es un dato, no una omisión. Vacío = la clave no viaja.
+    if (String(S.fin_costo_proveedor||'').trim() !== ''){
+      o.costo_proveedor = parseInt(_o2mLimpiarNumero(S.fin_costo_proveedor), 10) || 0;
     }
-    return null;
+    if (String(S.fin_costo_despacho||'').trim() !== ''){
+      o.costo_despacho = parseInt(_o2mLimpiarNumero(S.fin_costo_despacho), 10) || 0;
+    }
+    return o;
   }
   /* Cuánto VALE la OT (valorizado_clp) según lo que hay en pantalla: en garantía es el mismo campo del
      sub-paso 2; en una OT que se cobra, el "Valorizar (opcional)". */
@@ -8086,19 +8082,19 @@ window.OT2C = (function(){
   }
   function _o2mFinVistaPrevia(){
     var gar = !!S.fin_garantia;
-    var ms = _o2mFinMontoServicio();
-    var vz = _o2mFinValorizado(ms);
+    var m = _o2mFinMontosEnvio();      // 🧹 2026-10-08: EXACTAMENTE lo que crear() va a mandar
+    function nz(x){ return x == null ? null : x; }
     return window.ilusOtFinanzas({
       modalidad_cobro: gar ? 'garantia' : 'pagado', cubierto_por: gar ? 'garantia' : 'cliente',
       tipo: S.tipo || '',
-      zz_monto: (!gar && ms) ? ms.zz_monto : null,
-      zz_codigo: (!gar && ms) ? (ms.zz_codigo || null) : null,
-      valor_origen: ms ? ms.valor_origen : null,
-      zz_envio_monto: (S.fin_zz_envio && S.fin_zz_envio.monto != null) ? S.fin_zz_envio.monto : null,
-      costo_proveedor: _o2mFinNumCampo(S.fin_costo_proveedor),
-      costo_despacho: _o2mFinNumCampo(S.fin_costo_despacho),
+      zz_monto: gar ? null : nz(m.zz_monto),
+      zz_codigo: gar ? null : (m.zz_codigo || null),
+      valor_origen: nz(m.valor_origen),
+      zz_envio_monto: nz(m.zz_envio_monto),
+      costo_proveedor: nz(m.costo_proveedor),
+      costo_despacho: nz(m.costo_despacho),
       proveedor_tipo: _liderEsExterno() ? 'externo' : 'interno',
-      valorizado_clp: vz ? vz.monto : null, valorizado_fuente: vz ? vz.fuente : null
+      valorizado_clp: nz(m.valorizado_clp), valorizado_fuente: nz(m.valorizado_fuente)
     }, null);
   }
   function _pintarFinMargenDom(){
@@ -8179,9 +8175,7 @@ window.OT2C = (function(){
       if (seq !== _finEstimarSeq) return;
       S.fin_estimado_cargando = false;
       _pintarFinEstimadoDom();
-      // Si el estimado resultó ser la mejor referencia disponible (o el
-      // usuario no ha elegido nada), se aplica solo por prioridad.
-      _o2mFinAutoSeleccionar();
+      // 🧹 2026-10-08: el estimado llega como SUGERENCIA (chip con «Usar este monto»); no se aplica solo.
       _pintarFinValorDom(); _pintarFinGarResumenDom(); _pintarFinMargenDom();
       _o2mFinEstadosDom(); refrescarAnclas();
     };
@@ -8860,6 +8854,8 @@ window.OT2C = (function(){
       var horas = (mFin - mIni) / 60;
       if (!(horas > 0)) return;
       var costo = Math.round(horas * _o2mTarifaHoraCache);
+      // 🧹 2026-10-08: en el trabajo interno NO hay cobro; este número es solo VALORIZADO. Se prellena como
+      // SUGERENCIA visible en el casillero (editable y vaciable; vacío o $0 pasan) y nunca se guarda como cobro.
       S.costo_interno = costo;
       if (el) el.value = costo;
       // 2026-09-15 (revisión, hallazgo "hero en blanco con el foco"): el
@@ -9573,51 +9569,11 @@ window.OT2C = (function(){
         body.finanzas.factura_tido = S.fin_doc.tido;
         body.finanzas.factura_nudo = S.fin_doc.nudo;
       }
-      // 💰 2026-10-07: el monto sale de _o2mFinMontoServicio() -- la MISMA función que usa la vista previa
-      // del paso Costos, así lo que se ve antes de crear es exactamente lo que se manda. Las tres ramas de
-      // siempre (campo declarado / cotización / estimado) y sus comentarios viven ahora ahí, sin cambios.
-      var _finMs = _o2mFinMontoServicio();
-      if (_finMs){
-        if ('zz_codigo' in _finMs) body.finanzas.zz_codigo = _finMs.zz_codigo;
-        body.finanzas.zz_monto = _finMs.zz_monto;
-        if (_finMs.zz_motivo_manual != null) body.finanzas.zz_motivo_manual = _finMs.zz_motivo_manual;
-        body.finanzas.valor_origen = _finMs.valor_origen;
-      }
-      // 💰 2026-10-07 (Daniel, modelo único "Cobré − Me cobraron = Queda"): cuánto VALE la OT viaja aparte
-      // (valorizado_clp). En garantía es el monto de arriba -- el backend ya no lo guarda como lo cobrado
-      // (_ot_fin_reparto_creacion) --; en una OT que se cobra, el "Valorizar (opcional)" si se escribió.
-      var _finVz = _o2mFinValorizado(_finMs);
-      if (_finVz){
-        body.finanzas.valorizado_clp = _finVz.monto;
-        body.finanzas.valorizado_fuente = _finVz.fuente;
-      }
-      // ZZENVIO: aparte, en columnas propias (zz_envio_codigo/zz_envio_monto)
-      // -- nunca dentro de costo_proveedor/costo_despacho, que son lo que le
-      // PAGAMOS a un proveedor (costo), mientras que ZZENVIO es lo que el
-      // documento le está cobrando AL CLIENTE (venta) -- mezclarlos
-      // invertiría el signo en el cálculo de margen.
-      if (S.fin_zz_envio && S.fin_zz_envio.monto != null){
-        body.finanzas.zz_envio_codigo = S.fin_zz_envio.sku;
-        body.finanzas.zz_envio_monto = S.fin_zz_envio.monto;
-        if (_o2mFinEnvioEsManual()) body.finanzas.zz_envio_motivo_manual = S.fin_zz_envio_motivo_manual || '';
-      }
-      // 2026-08-29 (correćion sobre la primera versión de esta sección):
-      // costo_proveedor/proveedor_tipo/proveedor_nombre/costo_despacho ya
-      // existen en mant_visitas desde 2026-06-10/2026-08-27 -- son las
-      // columnas REALES que alimenta _mant_visita_crear_core y que ya lee
-      // el reporte de margen (_cliente_inteligencia). La primera versión de
-      // este wizard los reusaba mal (los mandaba como "costo_interno", el
-      // campo genérico de trabajo interno) -- con esto quedan en la columna
-      // que el resto del sistema ya sabe leer.
-      // 2026-09-15 (contrato con el backend): si el usuario escribió 0,
-      // viaja 0 como NÚMERO y se guarda 0 (no NULL) -- "técnico interno sin
-      // costo" es un dato, no una omisión. Vacío = la clave no viaja.
-      if (String(S.fin_costo_proveedor||'').trim() !== ''){
-        body.finanzas.costo_proveedor = parseInt(_o2mLimpiarNumero(S.fin_costo_proveedor), 10) || 0;
-      }
-      if (String(S.fin_costo_despacho||'').trim() !== ''){
-        body.finanzas.costo_despacho = parseInt(_o2mLimpiarNumero(S.fin_costo_despacho), 10) || 0;
-      }
+      // 💰 2026-10-07 / 🧹 2026-10-08: los montos (servicio, valorizado, ZZENVIO y costos) salen de
+      // _o2mFinMontosEnvio() -- la MISMA función que usa la vista previa del margen, así lo que se ve antes de crear
+      // es exactamente lo que se manda. SIN respaldos: si la persona no puso un monto, no viaja ninguno (ni la
+      // cotización ni el estimado), y un 0 escrito viaja como 0.
+      Object.assign(body.finanzas, _o2mFinMontosEnvio());
       // proveedor_tipo/nombre se derivan solos del técnico LÍDER ya elegido
       // en el paso Técnicos -- no hace falta preguntarlo dos veces (mismo
       // dato, dos lugares). Si no hay líder todavía, queda sin declarar.
@@ -10124,6 +10080,7 @@ window.OT2C = (function(){
           setFinValorizado:setFinValorizado,   // 💰 2026-10-07 "Valorizar (opcional)"
           _o2mFinMontoServicioCambio:_o2mFinMontoServicioCambio, _o2mFinMontoEnvioCambio:_o2mFinMontoEnvioCambio,
           setFinMotivoManual:setFinMotivoManual, setFinEnvioMotivoManual:setFinEnvioMotivoManual,
+          usarEnvioDocumento:usarEnvioDocumento,   // 🧹 2026-10-08 «Usar este monto» del transporte del documento
           // 💰 2026-09-15: paso Costos rediseñado (valorización de toda OT)
           setFinCobro:setFinCobro, setFinCeroMotivo:setFinCeroMotivo, usarFuenteValor:usarFuenteValor, usarTarifaProveedor:usarTarifaProveedor,
           _o2mFinCostoInternoHeroCambio:_o2mFinCostoInternoHeroCambio, usarCostoInternoAuto:usarCostoInternoAuto,
