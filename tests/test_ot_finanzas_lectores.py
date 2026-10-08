@@ -411,7 +411,8 @@ class TestLectoresUsanLaCuentaUnica(unittest.TestCase):
     def test_lo_pagado_al_proveedor_sigue_sin_repuestos(self):
         for nombre in ("_mfp_fila_ot", "_facprov_datos"):
             src = _fuente_de(nombre)
-            self.assertIn('float(f.get("costo_proveedor") or 0)', src, nombre)
+            # 2026-10-07: lo pagado ya no es una fórmula propia: es el a_pagar_proveedor del motor (sin repuestos).
+            self.assertIn('_fin["a_pagar_proveedor"]', src, nombre)
             self.assertNotIn("_ot_repuestos_desglose", src, nombre)
 
     def test_finanzas_servicios_bloquea_al_tecnico(self):

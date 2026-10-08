@@ -127323,8 +127323,6 @@ def _facprov_datos(desde, hasta):
                   or (f.get("tecnico_nombre") or "").strip()
                   or "Sin proveedor declarado")
         tipo = (f.get("tipo") or "").lower()
-        serv = float(f.get("costo_proveedor") or 0)
-        desp = float(f.get("costo_despacho") or 0)
 
         # Lo que se le COBRA al cliente. La fuente correcta son las lineas
         # ZZ del documento: `zz_monto` es el servicio (ZZINSTALACION /
@@ -127368,7 +127366,10 @@ def _facprov_datos(desde, hasta):
         # `es_garantia` conserva su nombre (lo leen la plantilla y la serie
         # mensual) pero ahora significa "no se cobra", con la regla única.
         es_garantia = not _fin["cobra"]
-        pagado = serv + desp
+        # 💰 2026-10-07: lo pagado al proveedor es el `a_pagar_proveedor` de la cuenta única (sin fórmula propia).
+        serv = float(_fin["me_cobraron"]["tecnico"] or 0)
+        desp = float(_fin["me_cobraron"]["despacho"] or 0)
+        pagado = float(_fin["a_pagar_proveedor"])
         margen = cobrado - pagado
         # Una OT sin cobro declarado NO es margen negativo: es un dato que
         # falta. Se cuentan aparte para que el total no mienta. Un cobro
@@ -127724,6 +127725,10 @@ _MFP_SELECT_OT = (
     "       v.centro_costo, v.zz_codigo, v.cubierto_por, v.estado_facturacion, "
     # 💰 2026-10-07: lo que falta para leer la plata con la cuenta única (_ot_finanzas).
     "       v.cliente_id, v.contrato_id, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, "
+    # 🧠 2026-10-07: el motivo del $0 (garantía / regalía / arriendo-leasing) y quién lo autorizó, para explicarlo en la tarjeta.
+    "       v.cobro_cero_motivo, "
+    "       (SELECT aq.resuelto_por_nombre FROM mant_ot_autorizaciones aq WHERE aq.id = v.cobro_cero_autorizacion_id) AS cero_aut_por, "
+    "       (SELECT aq2.resuelto_at FROM mant_ot_autorizaciones aq2 WHERE aq2.id = v.cobro_cero_autorizacion_id) AS cero_aut_at, "
     "       " + _ot_fin_sql_contrato_real("v") + " AS contrato_real, "
     "       v.factura_tido, v.factura_nudo, v.created_by, v.created_at, "
     "       (SELECT tk1.numero_ticket FROM tk_tickets tk1 WHERE tk1.visita_id = v.id ORDER BY tk1.id LIMIT 1) AS ticket_numero, "
@@ -127826,8 +127831,6 @@ def _mfp_nombre_proveedor_ot(f):
 
 def _mfp_fila_ot(f):
     f = dict(f)
-    serv = float(f.get("costo_proveedor") or 0)
-    desp = float(f.get("costo_despacho") or 0)
     tipo = (f.get("tipo") or "").lower()
     _fecha = f.get("cerrada_at") or f.get("fecha_programada")
     # 💰 2026-09-19 (Daniel: "comparemos el total cobrado por ILUS y el
@@ -127846,10 +127849,50 @@ def _mfp_fila_ot(f):
     _fin = _cobro["fin"]
     _venta_serv, _venta_envio, _fuente_cobro = _cobro["servicio"], _cobro["envio"], _cobro["fuente"]
     cobrado_cliente = _venta_serv + _venta_envio
-    pagado_proveedor = serv + desp
+    # 💰 2026-10-07 (facturación de proveedor conectada al motor): lo que se le paga al proveedor es el
+    # `a_pagar_proveedor` de _ot_finanzas (técnico + despacho, SIN repuestos); no hay fórmula propia.
+    serv = float(_fin["me_cobraron"]["tecnico"] or 0)
+    desp = float(_fin["me_cobraron"]["despacho"] or 0)
+    pagado_proveedor = float(_fin["a_pagar_proveedor"])
     margen = cobrado_cliente - pagado_proveedor
     _anx_estado = (f.get("anexo_estado") or "").lower()
     _prov_ficha_id = int(f["prov_ficha_id"]) if f.get("prov_ficha_id") else None
+    # 🧠 2026-10-07 (Daniel: "que se sienta más inteligente"): el estado de la fila y el POR QUÉ, en palabras.
+    # Todo sale de la cuenta única (_fin) y de los datos de la OT; nada se inventa.
+    _mc = _fin["me_cobraron"]
+    _falta_tec, _falta_desp = bool(_mc["falta_tecnico"]), bool(_mc["falta_despacho"])
+    _estado_ot = f.get("estado") or ""
+    _no_cerr = _estado_ot not in _MFP_ESTADOS_FACTURABLES
+    _aut_por = (f.get("cero_aut_por") or "").strip()
+    _aut_at = chile_fmt_filter(f.get("cero_aut_at"), "%d/%m/%Y %H:%M") if f.get("cero_aut_at") else ""
+    _avisos = []
+    if _falta_tec:
+        _avisos.append({"n": "ambar", "t": "Falta lo que cobró el técnico: cárgalo en Finanzas de la OT para poder pagarla."})
+    if _falta_desp:
+        _avisos.append({"n": "ambar", "t": "Se cobró despacho al cliente, pero falta el costo del despacho del proveedor."})
+    if _no_cerr:
+        _avisos.append({"n": "ambar", "t": "La OT aún no está cerrada (" + _estado_ot.replace("_", " ") + "): se puede pagar, queda anotado."})
+    if not _fin["cobra"]:
+        _t = _fin["cobertura_txt"] + ". Se le paga al proveedor igual: " + _ot_fin_clp(pagado_proveedor) + "."
+        if _aut_por:
+            _t += " $0 autorizado por " + _aut_por + ((" el " + _aut_at) if _aut_at else "") + "."
+        _avisos.append({"n": "azul", "t": _t})
+    elif _cobro["sin_cobro"]:
+        _avisos.append({"n": "ambar", "t": "Falta lo que cobraste al cliente: el margen no se puede calcular."})
+    elif margen < 0:
+        _avisos.append({"n": "rojo", "t": "Pérdida: se cobró " + _ot_fin_clp(cobrado_cliente) + " y se paga " + _ot_fin_clp(pagado_proveedor) + "."})
+    if _anx_estado != "firmado":
+        _avisos.append({"n": "info", "t": "Sin anexo firmado: se avisa, no bloquea."})
+    if f.get("fac_id"):
+        _avisos.append({"n": "rojo", "t": "Ya está en la factura #" + str(f.get("fac_id")) + "."})
+    if not _fin["cobra"]:
+        _estado_fila = "garantia"
+    elif _falta_tec or _falta_desp or _no_cerr or _cobro["sin_cobro"]:
+        _estado_fila = "falta"
+    elif margen < 0:
+        _estado_fila = "perdida"
+    else:
+        _estado_fila = "ok"
     return {
         "id": f["id"],
         "numero_ot": f.get("numero_ot") or ("OT #" + str(f["id"])),
@@ -127903,6 +127946,12 @@ def _mfp_fila_ot(f):
         # proveedor que no cobró), que sí es un dato -- mismo criterio NULL
         # vs 0 que ya usa el resto de finanzas de la OT.
         "sin_costo": f.get("costo_proveedor") is None and f.get("costo_despacho") is None,
+        # 🧠 2026-10-07: "lista para facturar" = cerrada, con lo que cobró el técnico (y el despacho si se cobró).
+        "falta_tecnico": _falta_tec, "falta_despacho": _falta_desp,
+        "listo": (not _no_cerr) and not _falta_tec and not _falta_desp,
+        "estado_fila": _estado_fila, "fin_clase": _fin["clase"], "fin_label": _fin["label"], "fin_frase": _fin["frase"],
+        "avisos_fila": _avisos, "cero_motivo": (f.get("cobro_cero_motivo") or "").strip().lower(),
+        "cero_aut_por": _aut_por, "cero_aut_at": _aut_at,
         # 2026-09-21: la OT que aún no está cerrada se muestra (ámbar), no se esconde.
         "no_cerrada": (f.get("estado") or "") not in _MFP_ESTADOS_FACTURABLES,
         "comuna": (f.get("comuna") or "").strip(),
@@ -128177,8 +128226,10 @@ def _mfp_proveedores_chips(por_facturar_todas, mapa_facturas=None):
     pend = {}
     for d in por_facturar_todas:
         k = d.get("prov_ficha_id") or 0
-        p = pend.setdefault(k, {"n": 0, "monto": 0.0, "nombre": d.get("proveedor"), "tecnicos": set()})
+        p = pend.setdefault(k, {"n": 0, "n_listas": 0, "monto": 0.0, "nombre": d.get("proveedor"), "tecnicos": set()})
         p["n"] += 1
+        if d.get("listo"):
+            p["n_listas"] += 1
         p["monto"] += float(d.get("sugerido") or 0)
         if d.get("tecnico_nombre"):
             p["tecnicos"].add(d["tecnico_nombre"])
@@ -128212,6 +128263,7 @@ def _mfp_proveedores_chips(por_facturar_todas, mapa_facturas=None):
         chips.append({
             "id": int(r["id"]), "nombre": nombre, "rut": r.get("rut_empresa") or "",
             "tecnicos": tecs, "n": int(p.get("n") or 0), "monto": float(p.get("monto") or 0),
+            "n_listas": int(p.get("n_listas") or 0),
             "ini": _mfp_iniciales(nombre),
             "n_fac": int(fc.get("n") or 0), "n_fac_pend": int(fc.get("pend") or 0),
             "monto_fac_pend": float(fc.get("monto_pend") or 0),
@@ -128225,6 +128277,7 @@ def _mfp_proveedores_chips(por_facturar_todas, mapa_facturas=None):
         if k and k not in _con_chip:
             chips.append({"id": int(k), "nombre": p.get("nombre") or f"Proveedor #{k}", "rut": "",
                           "tecnicos": ", ".join(sorted(p["tecnicos"])), "n": p["n"], "monto": p["monto"],
+                          "n_listas": int(p.get("n_listas") or 0),
                           "ini": _mfp_iniciales(p.get("nombre") or ""),
                           "n_fac": 0, "n_fac_pend": 0, "monto_fac_pend": 0.0})
     if pend.get(0, {}).get("n") or facs.get(0, {}).get("n"):
@@ -128232,6 +128285,7 @@ def _mfp_proveedores_chips(por_facturar_todas, mapa_facturas=None):
         fc0 = facs.get(0, {})
         chips.append({"id": 0, "nombre": "Sin ficha de proveedor", "rut": "",
                       "tecnicos": ", ".join(sorted(p["tecnicos"])), "n": p["n"], "monto": p["monto"], "ini": "?",
+                      "n_listas": int(p.get("n_listas") or 0),
                       "n_fac": int(fc0.get("n") or 0), "n_fac_pend": int(fc0.get("pend") or 0),
                       "monto_fac_pend": float(fc0.get("monto_pend") or 0)})
     # Primero los que tienen algo pendiente (lo que Daniel va a cobrar), y
@@ -128276,17 +128330,11 @@ def _mfp_resumen(incluir_pruebas=False, ids_prueba_facturas=()):
            "pendiente_n": 0, "pendiente_monto": 0.0,
            "pagado_mes_n": 0, "pagado_mes_monto": 0.0}
     try:
-        r = mysql_fetchone(
-            "SELECT COUNT(*) AS n, "
-            "       COALESCE(SUM(COALESCE(v.costo_proveedor,0)+COALESCE(v.costo_despacho,0)),0) AS m "
-            + _MFP_JOINS_OT +
-            " WHERE " + _MFP_SQL_OT_EXTERNA +
-            "   AND " + _MFP_SQL_ESTADO_OK +
-            ("" if incluir_pruebas else "   AND " + _MFP_SQL_SIN_PRUEBA) +
-            # 🔴 2026-09-21: ya no se exige costo > 0 -- ver _mfp_por_facturar.
-            "   AND fpi.id IS NULL") or {}
-        out["por_facturar_n"] = int(r.get("n") or 0)
-        out["por_facturar_monto"] = float(r.get("m") or 0)
+        # 💰 2026-10-07: el total por facturar sale de las MISMAS filas (y del mismo `a_pagar_proveedor` de la
+        # cuenta única) que la lista de abajo: antes era una suma SQL aparte que podía no cuadrar con ella.
+        _filas_pf = _mfp_por_facturar(incluir_pruebas=bool(incluir_pruebas))
+        out["por_facturar_n"] = len(_filas_pf)
+        out["por_facturar_monto"] = sum(float(d.get("sugerido") or 0) for d in _filas_pf)
         # 🧪 Facturas de fichas de prueba fuera de "sin pagar" y "pagado este
         # mes" (se resuelven por el mismo mapa que usan chips y lista).
         _sql_sin_prueba_f, _p_sin_prueba = "", ()
@@ -128653,7 +128701,8 @@ def mant_facturas_proveedor():
     # SQL simples: cobrado_cliente/margen salen de zz_monto+costo con
     # fallback), así que se ordena la lista ya transformada, antes de
     # paginar -- mismo criterio que ya usa REGLA #4.3 para esta tabla.
-    pf_orden = (request.args.get("pf_orden") or "fecha").strip()
+    # 🧠 2026-10-07: por defecto "listas primero" (cerradas y con lo que cobró el técnico), después las que faltan datos.
+    pf_orden = (request.args.get("pf_orden") or "listas").strip()
     pf_dir = "asc" if (request.args.get("pf_dir") or "").strip() == "asc" else "desc"
     _PF_ORDEN_KEYS = {
         "fecha": lambda d: (d.get("fecha_raw").isoformat() if d.get("fecha_raw") else ""),
@@ -128662,10 +128711,16 @@ def mant_facturas_proveedor():
         "pagado_total": lambda d: d.get("sugerido") or 0,
         "cobrado_total": lambda d: d.get("cobrado_cliente") or 0,
         "margen": lambda d: d.get("margen") or 0,
+        "listas": lambda d: (d.get("fecha_raw").isoformat() if d.get("fecha_raw") else ""),
     }
     if pf_orden not in _PF_ORDEN_KEYS:
-        pf_orden = "fecha"
-    por_facturar_todas.sort(key=_PF_ORDEN_KEYS[pf_orden], reverse=(pf_dir == "desc"))
+        pf_orden = "listas"
+    if pf_orden == "listas":
+        # Dos pasadas estables: más recientes primero y, encima, las listas para facturar antes que las que faltan datos.
+        por_facturar_todas.sort(key=_PF_ORDEN_KEYS["listas"], reverse=True)
+        por_facturar_todas.sort(key=lambda d: 0 if d.get("listo") else 1)
+    else:
+        por_facturar_todas.sort(key=_PF_ORDEN_KEYS[pf_orden], reverse=(pf_dir == "desc"))
     pf_total = len(por_facturar_todas)
     pf_total_paginas = max(1, -(-pf_total // pf_per_page))
     if pf_page > pf_total_paginas:
@@ -130038,7 +130093,7 @@ def mant_facturas_proveedor_xlsx():
         "       v.zz_monto, v.zz_envio_monto, v.costo_proveedor, v.costo_despacho, v.costo, "
         "       v.modalidad_cobro, v.cubierto_por, v.garantia_motivo, v.zz_motivo_manual, "
         # 💰 2026-10-07: lo que falta para leer la plata con la cuenta única (_ot_finanzas).
-        "       v.zz_codigo, v.valor_origen, v.contrato_id, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, "
+        "       v.zz_codigo, v.valor_origen, v.contrato_id, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, v.cobro_cero_motivo, "
         "       " + _ot_fin_sql_contrato_real("v") + " AS contrato_real, "
         "       v.diagnostico, v.proveedor_nombre, "
         "       v.firma_tecnico_at, v.firma_cliente_at, v.firma_supervisor_at, "
@@ -130169,9 +130224,10 @@ def mant_facturas_proveedor_xlsx():
         _fin = _cobro["fin"]
         es_gar = not _fin["cobra"]
         cobro_inst, cobro_flete, _fuente_cobro = _cobro["servicio"], _cobro["envio"], _cobro["fuente"]
-        pago_inst = float(r.get("costo_proveedor") or 0)
-        pago_flete = float(r.get("costo_despacho") or 0)
-        pago_total = pago_inst + pago_flete
+        # 💰 2026-10-07: lo pagado = `a_pagar_proveedor` de la cuenta única (técnico + despacho, sin repuestos).
+        pago_inst = float(_fin["me_cobraron"]["tecnico"] or 0)
+        pago_flete = float(_fin["me_cobraron"]["despacho"] or 0)
+        pago_total = float(_fin["a_pagar_proveedor"])
         cobro_total = cobro_inst + cobro_flete
         ganancia = cobro_total - pago_total
 

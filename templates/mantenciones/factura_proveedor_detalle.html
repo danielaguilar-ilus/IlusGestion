@@ -46,6 +46,7 @@
 {% set accion_completar = 'fpdEditar()' if pendiente else 'fpdCompletar()' %}
 
 {% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='facprov_inteligente.css') }}">
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
   <div class="d-flex align-items-start gap-2">
     <a href="/servicio-tecnico/facturas-proveedor" class="btn btn-light btn-sm" style="min-height:44px;display:inline-flex;align-items:center"
@@ -271,14 +272,14 @@
   </div>
 
   <div class="fpd-summary">
-    <div class="fpd-cell"><div class="l">OT asignadas</div><div class="v">{{ items|length }}</div></div>
+    <div class="fpd-cell" id="fpdCellN"><div class="l">OT asignadas</div><div class="v">{{ items|length }}</div></div>
     <div class="fpd-cell"><div class="l">Monto de la factura</div><div class="v">{{ clp(factura.monto_total) }}</div>
       <div class="s">{{ 'según documento N° ' ~ factura.numero_documento if s3_ok else 'declarado en la solicitud' }}</div></div>
-    <div class="fpd-cell"><div class="l">Asignado en OT</div><div class="v">{{ clp(total_asignado) }}</div>
+    <div class="fpd-cell" id="fpdCellAsig"><div class="l">Asignado en OT</div><div class="v">{{ clp(total_asignado) }}</div>
       <div class="s">suma de lo que cobra cada OT</div></div>
     {# Semáforo: verde cuadra, ámbar la factura cobra más, rojo las OT suman más #}
     {% set dif_clase = 'muted' if not items else ('pos' if diferencia|round(0) == 0 else ('warn' if diferencia > 0 else 'neg')) %}
-    <div class="fpd-cell sem-{{ dif_clase }}">
+    <div class="fpd-cell sem-{{ dif_clase }}" id="fpdCellDif">
       <div class="l"><span class="fpd-dot"></span>Diferencia</div>
       {% if not items %}<div class="v muted">—</div><div class="s">sin OT todavía</div>
       {% elif diferencia|round(0) == 0 %}<div class="v pos"><i class="bi bi-check2"></i> Cuadra</div><div class="s">factura y OT coinciden</div>
@@ -289,10 +290,10 @@
        total cobrado por el proveedor, así sé si pierdo o gano"). Mismas OT,
        mirando el otro lado del negocio: lo que ILUS le cobró a SU cliente,
        al lado de lo que esta factura le paga al proveedor. #}
-    <div class="fpd-cell"><div class="l">Cobrado a cliente</div><div class="v">{{ clp(total_cobrado_cliente) }}</div>
+    <div class="fpd-cell" id="fpdCellCob"><div class="l">Cobrado a cliente</div><div class="v">{{ clp(total_cobrado_cliente) }}</div>
       <div class="s">lo que ILUS cobró por estas OT</div></div>
     {% set mg_clase = 'muted' if not items else ('pos' if margen_total > 0 else ('neg' if margen_total < 0 else 'warn')) %}
-    <div class="fpd-cell sem-{{ mg_clase }}">
+    <div class="fpd-cell sem-{{ mg_clase }}" id="fpdCellMg">
       <div class="l"><span class="fpd-dot"></span>Margen del lote</div>
       {% if not items %}<div class="v muted">—</div>
       {% else %}<div class="v {{ mg_clase }}">{{ '+' if margen_total > 0 else '' }}{{ clp(margen_total) }}</div>
@@ -475,7 +476,31 @@
   </div>
   <div class="fp-sub mb-2">Solo aparecen OT ejecutadas por un proveedor externo, con costo declarado, y con la firma del
     cliente o ya cerradas. Si una OT ya está en otra factura, se muestra marcada y no se puede asignar hasta quitarla de allá.</div>
-  <div id="fpdResultados"><div class="fp-sub">Presiona Buscar para ver las OT disponibles.</div></div>
+  {# 🧠 2026-10-07 (Daniel: "cuando selecciono o deselecciono, abajo cambia, está bien, pero me gustaría que arriba también cambiara,
+     para que no sea tan repetitivo"). Mientras marcas OT cambia este panel Y las tarjetas de arriba (Asignado en OT,
+     Diferencia, Cobrado, Margen), que muestran cómo QUEDARÍA el lote con tu selección. Las cifras salen de la cuenta única de
+     cada OT; acá solo se suman. #}
+  <div class="fpl" id="fpdLive" hidden>
+    <div class="fpl-top">
+      <div class="fpl-ttl"><i class="bi bi-ui-checks-grid"></i> Tu selección para esta factura</div>
+      <button type="button" class="fpl-mas" id="fpdLiveMas" onclick="fpdLiveToggleMas()" aria-expanded="false"><i class="bi bi-chevron-down"></i> Ver más</button>
+    </div>
+    <div class="fpl-frase" id="fpdFrase" aria-live="polite"></div>
+    <div class="fpl-grid">
+      <div class="fpl-k n"><span>OT seleccionadas</span><b id="fpdLiveN">0</b><small id="fpdLiveNsub"></small></div>
+      <div class="fpl-k pay"><span>A pagar al proveedor</span><b id="fpdLivePagar">$0</b><small id="fpdLivePagarSub">técnico + despacho, sin repuestos</small></div>
+      <div class="fpl-k fac fpl-extra"><span>Factura del proveedor</span><b id="fpdLiveFac">{{ clp(factura.monto_total) }}</b><small id="fpdLiveFacSub"></small></div>
+      <div class="fpl-k dif" id="fpdLiveDifBox"><span>Diferencia con su factura</span><b id="fpdLiveDif">—</b><small id="fpdLiveDifSub"></small></div>
+      <div class="fpl-k cob fpl-extra"><span>Cobrado al cliente (lote)</span><b id="fpdLiveCob">$0</b><small id="fpdLiveCobSub"></small></div>
+      <div class="fpl-k que fpl-extra" id="fpdLiveQueBox"><span>Margen del lote</span><b id="fpdLiveQue">—</b><small id="fpdLiveQueSub"></small></div>
+    </div>
+    <div class="fpl-sug" id="fpdSug" hidden></div>
+    <div class="fpl-obj fpl-extra">
+      <label for="fpdObj">¿Quieres cuadrar con otro monto? Escríbelo y te sugiero qué OT marcar</label>
+      <label class="fpl-in"><i>$</i><input type="text" inputmode="numeric" id="fpdObj" placeholder="Monto a cuadrar" autocomplete="off" oninput="fpdObjInput(this)"></label>
+    </div>
+  </div>
+  <div id="fpdResultados"><div class="fp-sub"><i class="bi bi-hourglass-split me-1"></i>Buscando las OT disponibles…</div></div>
 </div>
 {% endif %}
 
@@ -641,12 +666,16 @@
 </div>
 {% endif %}
 
+<script src="{{ url_for('static', filename='facprov_inteligente.js') }}"></script>
 <script>
 const FPD_FID = {{ factura.id }};
 const FPD_URL_OTS = "{{ url_for('mant_factura_proveedor_ot_disponibles', fid=factura.id) }}";
 const FPD_URL_ASIGNAR = "{{ url_for('mant_factura_proveedor_asignar', fid=factura.id) }}";
 const FPD_URL_BASE = "{{ url_for('mant_factura_proveedor_editar', fid=factura.id) }}";
 let FPD_OTS = [];
+// 🧠 2026-10-07: lo que ya tiene el lote (para ver cómo QUEDARÍA con la selección). Cifras del servidor, que salen de la cuenta única.
+const FPD_BASE = {n: {{ items|length }}, factura: {{ factura.monto_total }}, asignado: {{ total_asignado }}, cobrado: {{ total_cobrado_cliente }}};
+const FPD_CLP = n => fpi.clp(n);
 
 function clpJs(n){ return '$' + Math.round(Number(n) || 0).toLocaleString('es-CL'); }
 function escFpd(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -667,20 +696,33 @@ async function fpdBuscar(){
     if (!r.ok || d.ok === false){
       cont.innerHTML = '<div class="text-danger small">' + escFpd(d.error || 'No se pudo buscar') + '</div>'; return;
     }
-    FPD_OTS = d.ots || [];
+    FPD_OTS = fpdOrdenar(d.ots || []);
     fpdRender();
   }catch(e){
     cont.innerHTML = '<div class="text-danger small">Error de conexión</div>';
   }
 }
 
+// 🧠 Orden inteligente: primero las listas para facturar (cerradas y con lo que cobró el técnico), después las que
+// tienen datos pendientes y, al final, las que ya están en otra factura.
+function fpdOrdenar(arr){
+  const rank = o => o.fac_id ? 2 : (o.listo ? 0 : 1);
+  return arr.map((o, i) => [o, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(x => x[0]);
+}
+function fpdAvisosHtml(o){
+  return (o.avisos_fila || []).filter(a => a.n !== 'info').map(a =>
+    '<div class="fp-av ' + a.n + '"><i class="bi bi-' + (a.n === 'rojo' ? 'exclamation-octagon-fill' : (a.n === 'azul' ? 'shield-check' : 'exclamation-triangle-fill')) +
+    '"></i> ' + escFpd(a.t) + '</div>').join('');
+}
 function fpdRender(){
   const cont = document.getElementById('fpdResultados');
   const libres = FPD_OTS.filter(o => !o.fac_id);
+  const listas = libres.filter(o => o.listo).length;
   if (!FPD_OTS.length){
     cont.innerHTML = '<div class="fp-vacio"><i class="bi bi-inbox"></i><div><b>Sin OT disponibles con esos filtros.</b> ' +
       (document.getElementById('fpdTodas').checked ? '' :
        'Prueba marcando "Ver todas las OT de externos" si el nombre del proveedor no coincide exacto.') + '</div></div>';
+    document.getElementById('fpdLive').hidden = true;
     return;
   }
   /* REGLA #14: toda lista con selección múltiple lleva marcar/desmarcar todo. */
@@ -688,34 +730,175 @@ function fpdRender(){
     '<button type="button" class="btn btn-sm btn-light" style="min-height:44px" onclick="fpdToggleTodas()">' +
     '<i class="bi bi-check-all me-1"></i>Seleccionar/deseleccionar todo</button>' +
     '<button type="button" class="btn btn-sm btn-danger fw-bold" style="min-height:44px" id="fpdBtnAsignarSel" onclick="fpdAsignarSeleccionadas()" disabled>' +
-    '<i class="bi bi-check-lg me-1"></i>Asignar seleccionadas (<span id="fpdNSel">0</span>)</button>' +
-    '<span class="fp-sub">' + libres.length + ' disponible(s) · ' + (FPD_OTS.length - libres.length) + ' ya en una factura</span></div>';
+    '<i class="bi bi-check-lg me-1"></i>Asignar seleccionadas (<span id="fpdNSel">0</span>)<span id="fpdSelMonto"></span></button>' +
+    '<span class="fp-sub">' + libres.length + ' disponible(s) · <b style="color:#15803d">' + listas + ' lista(s) para facturar</b>' +
+    (libres.length - listas ? ' · <b style="color:#b45309">' + (libres.length - listas) + ' con datos pendientes</b>' : '') +
+    ' · ' + (FPD_OTS.length - libres.length) + ' ya en una factura</span></div>';
   html += FPD_OTS.map((o, i) => {
     const bloqueada = !!o.fac_id;
     let badge = '';
     if (o.en_esta) badge = '<span class="fpd-badge ok"><i class="bi bi-check2"></i> Ya está en esta factura</span>';
     else if (bloqueada) badge = '<span class="fpd-badge warn"><i class="bi bi-lock-fill"></i> En la factura #' + o.fac_id + ' (' + escFpd(o.fac_numero) + ', ' + escFpd(o.fac_estado) + ')</span>';
-    return '<div class="fpd-row' + (bloqueada ? ' bloq' : '') + '" id="fpdRow' + o.id + '">' +
-      '<label class="fpd-sel"><input type="checkbox" class="fpd-cb" data-i="' + i + '" ' + (bloqueada ? 'disabled' : '') + ' onchange="fpdContarSel()"></label>' +
+    const margen = o.es_garantia ? '<span class="fp-sindoc gar">' + escFpd(o.cobertura_corta || 'Garantía') + ' · no se cobra</span>'
+      : (o.sin_cobro_declarado ? '<span class="fp-sindoc">Sin cobro declarado</span>'
+        : '<b class="' + (o.margen > 0 ? 'fp-margen-pos' : (o.margen < 0 ? 'fp-margen-neg' : '')) + '">' + fpi.clpFirma(o.margen) + '</b>');
+    return '<div class="fpd-row est-' + escFpd(o.estado_fila || 'ok') + (bloqueada ? ' bloq' : '') + '" id="fpdRow' + o.id + '">' +
+      '<label class="fpd-sel"><input type="checkbox" class="fpd-cb" data-i="' + i + '" ' + (bloqueada ? 'disabled' : '') + ' aria-label="Marcar ' + escFpd(o.numero_ot) + '" onchange="fpdContarSel()"></label>' +
       '<div class="fpd-info">' +
         '<div><a class="fp-ot" href="/ot/' + o.id + '" target="_blank" rel="noopener">' + escFpd(o.numero_ot) + '</a> — ' + escFpd(o.cliente) +
-        ' <span class="fp-tipo">' + escFpd(o.tipo_label) + '</span> <span class="fp-est est-' + escFpd(o.estado) + '">' + escFpd(o.estado.replace(/_/g,' ')) + '</span></div>' +
-        '<div class="fp-sub">' + escFpd(o.fecha) + ' · proveedor: ' + escFpd(o.proveedor) +
-        ' · declarado: inst. ' + clpJs(o.servicio) + (o.despacho ? ' + desp. ' + clpJs(o.despacho) : '') + '</div>' + badge +
+        ' <span class="fp-tipo">' + escFpd(o.tipo_label) + '</span> <span class="fp-est est-' + escFpd(o.estado) + '">' + escFpd(o.estado.replace(/_/g,' ')) + '</span>' +
+        (o.es_garantia ? ' <span class="fp-gar">' + escFpd(o.cobertura_corta || 'Garantía') + '</span>' : '') +
+        (o.listo && !bloqueada ? ' <span class="fpd-listo"><i class="bi bi-check-circle-fill"></i> lista para facturar</span>' : '') + '</div>' +
+        '<div class="fp-sub">' + escFpd(o.fecha) + ' · proveedor: ' + escFpd(o.proveedor) + '</div>' +
+        '<div class="fpd-cifras">Se le paga: inst. ' + FPD_CLP(o.servicio) + (o.despacho ? ' + desp. ' + FPD_CLP(o.despacho) : '') + ' = <b>' + FPD_CLP(o.sugerido) +
+        '</b> · Cobrado al cliente <b>' + FPD_CLP(o.cobrado_cliente) + '</b> · Margen ' + margen + '</div>' +
+        fpdAvisosHtml(o) + badge +
       '</div>' +
       '<div class="fpd-monto"><div class="input-group input-group-sm"><span class="input-group-text">$</span>' +
         '<input type="text" inputmode="numeric" class="form-control" id="fpdMonto' + o.id + '" value="' + Math.round(o.sugerido).toLocaleString('es-CL') + '" ' + (bloqueada ? 'disabled' : '') +
-        ' oninput="this.value=(this.value.replace(/\\D/g,\'\')?Number(this.value.replace(/\\D/g,\'\')).toLocaleString(\'es-CL\'):\'\')"></div></div>' +
+        ' aria-label="Monto de ' + escFpd(o.numero_ot) + '" oninput="fpdMontoInput(this)"></div></div>' +
       '<button type="button" class="btn btn-sm btn-outline-dark fw-bold" style="min-height:44px" ' + (bloqueada ? 'disabled' : '') +
         ' onclick="fpdAsignar(' + o.id + ')"><i class="bi bi-plus-lg me-1"></i>Asignar</button>' +
     '</div>';
   }).join('');
   cont.innerHTML = html;
+  const rest = Math.max(FPD_BASE.factura - FPD_BASE.asignado, 0);
+  const obj = document.getElementById('fpdObj');
+  if (obj && !obj.value && rest > 0) obj.value = Math.round(rest).toLocaleString('es-CL');
+  document.getElementById('fpdLive').hidden = false;
+  fpdContarSel();
+}
+function fpdMontoInput(el){
+  const n = fpi.soloDigitos(el.value);
+  el.value = n ? n.toLocaleString('es-CL') : '';
+  fpdContarSel();
+}
+function fpdObjInput(el){
+  const n = fpi.soloDigitos(el.value);
+  el.value = n ? n.toLocaleString('es-CL') : '';
+  fpdContarSel();
+}
+function fpdLiveToggleMas(){
+  const el = document.getElementById('fpdLive'), b = document.getElementById('fpdLiveMas');
+  const abierto = el.classList.toggle('abierto');
+  b.setAttribute('aria-expanded', abierto ? 'true' : 'false');
+  b.innerHTML = '<i class="bi bi-chevron-' + (abierto ? 'up' : 'down') + '"></i> ' + (abierto ? 'Ver menos' : 'Ver más');
+}
+function fpdItems(){
+  return FPD_OTS.map((o, i) => ({id: String(o.id), numero: o.numero_ot, prov: o.proveedor, provNombre: o.proveedor, pagar: fpdMontoDe(o.id),
+    cobrado: Number(o.cobrado_cliente) || 0, garantia: !!o.es_garantia, sincobro: !!o.sin_cobro_declarado, listo: !!o.listo,
+    libre: !o.fac_id, cb: document.querySelector('.fpd-cb[data-i="' + i + '"]')}));
+}
+function fpdSet(id, txt){ const e = document.getElementById(id); if (e) e.textContent = txt; }
+// Las tarjetas de arriba (Asignado, Diferencia, Cobrado, Margen) muestran cómo QUEDARÍA el lote con lo marcado.
+const FPD_CELDAS = {};
+function fpdGuardarCeldas(){
+  ['fpdCellN','fpdCellAsig','fpdCellDif','fpdCellCob','fpdCellMg'].forEach(id => {
+    const el = document.getElementById(id); if (el && !FPD_CELDAS[id]) FPD_CELDAS[id] = {html: el.innerHTML, cls: el.className};
+  });
+}
+function fpdCelda(id, cls, v, vcls, s){
+  const el = document.getElementById(id); if (!el) return;
+  const etiqueta = FPD_CELDAS[id].html.match(/<div class="l">[\s\S]*?<\/div>/)[0];
+  el.className = 'fpd-cell proy ' + cls;
+  el.innerHTML = etiqueta + '<div class="v ' + vcls + '">' + v + '</div><div class="s">' + s + '</div>';
 }
 function fpdContarSel(){
-  const n = document.querySelectorAll('.fpd-cb:checked').length;
+  const todos = fpdItems();
+  const sel = todos.filter(x => x.cb && x.cb.checked);
+  const noSel = todos.filter(x => x.libre && !(x.cb && x.cb.checked));
+  const n = sel.length;
+  const tot = fpi.sumar(sel);
+  const btn = document.getElementById('fpdBtnAsignarSel');
   document.getElementById('fpdNSel').textContent = n;
-  document.getElementById('fpdBtnAsignarSel').disabled = !n;
+  btn.disabled = !n;
+  fpdSet('fpdSelMonto', n ? ' · ' + FPD_CLP(tot.pagar) : '');
+  todos.forEach(x => { const r = document.getElementById('fpdRow' + x.id); if (r) r.classList.toggle('sel', !!(x.cb && x.cb.checked)); });
+  // — panel —
+  const live = document.getElementById('fpdLive');
+  const asign2 = FPD_BASE.asignado + tot.pagar;
+  const sem = fpi.semaforo(FPD_BASE.factura, asign2);
+  const resta = Math.max(FPD_BASE.factura - FPD_BASE.asignado, 0);
+  live.classList.toggle('on', n > 0);
+  ['ok','warn','neg','muted'].forEach(c => live.classList.toggle('sem-' + c, sem.clase === c && n > 0));
+  fpdSet('fpdLiveN', n);
+  fpdSet('fpdLiveNsub', n ? (tot.listas + ' lista' + (tot.listas === 1 ? '' : 's') + (tot.faltan ? ' · ' + tot.faltan + ' con datos pendientes' : '')) : 'marca las OT que cobra esta factura');
+  fpdSet('fpdLivePagar', FPD_CLP(tot.pagar));
+  fpdSet('fpdLivePagarSub', n ? ('sin repuestos' + (tot.gar_n ? ' · ' + tot.gar_n + ' sin cobro al cliente' : '')) : 'técnico + despacho, sin repuestos');
+  fpdSet('fpdLiveFacSub', 'ya asignado ' + FPD_CLP(FPD_BASE.asignado) + (resta > 0 ? ' · falta ' + FPD_CLP(resta) : ''));
+  if (FPD_BASE.factura > 0 && n){
+    fpdSet('fpdLiveDif', sem.clase === 'ok' ? 'Cuadra' : fpi.clpFirma(sem.dif));
+    fpdSet('fpdLiveDifSub', sem.clase === 'ok' ? 'el lote suma lo que dice su factura' : (sem.dif > 0 ? 'faltarían ' + FPD_CLP(sem.dif) + ' para su factura' : 'sobrarían ' + FPD_CLP(-sem.dif) + ' sobre su factura'));
+  } else { fpdSet('fpdLiveDif', '—'); fpdSet('fpdLiveDifSub', n ? 'la factura no tiene monto' : 'se calcula al marcar'); }
+  const cob2 = FPD_BASE.cobrado + tot.cobrado, mg2 = cob2 - FPD_BASE.factura;
+  fpdSet('fpdLiveCob', FPD_CLP(cob2));
+  fpdSet('fpdLiveCobSub', n ? 'con tu selección (+' + FPD_CLP(tot.cobrado) + ')' : 'lo que ILUS cobró por las OT ya asignadas');
+  fpdSet('fpdLiveQue', FPD_BASE.factura > 0 ? fpi.clpFirma(mg2) : '—');
+  fpdSet('fpdLiveQueSub', n ? 'cobrado al cliente − factura, con tu selección' : 'cobrado al cliente − factura');
+  const q = document.getElementById('fpdLiveQueBox');
+  q.classList.toggle('pos', FPD_BASE.factura > 0 && mg2 > 0); q.classList.toggle('neg', FPD_BASE.factura > 0 && mg2 < 0);
+  // — frase —
+  let fr;
+  if (!n){
+    fr = 'Esta factura dice ' + FPD_CLP(FPD_BASE.factura) + (resta > 0 ? ' y ya tiene ' + FPD_CLP(FPD_BASE.asignado) + ' asignado: faltan ' + FPD_CLP(resta) + ' por cubrir.' : (FPD_BASE.n ? ' y las OT asignadas ya la cubren.' : '.')) + ' Marca las OT que cobra.';
+  } else {
+    const nombres = Array.from(new Set(sel.map(x => x.provNombre)));
+    fr = 'Seleccionaste ' + n + ' OT' + (nombres.length === 1 ? ' de ' + nombres[0] : '') + ' por ' + FPD_CLP(tot.pagar) + '.';
+    if (tot.gar_n) fr += ' ' + tot.gar_n + ' va' + (tot.gar_n === 1 ? '' : 'n') + ' sin cobro al cliente (' + FPD_CLP(tot.gar_pagar) + '): se paga igual.';
+    if (tot.faltan) fr += ' ' + tot.faltan + ' con datos pendientes.';
+    if (FPD_BASE.factura > 0){
+      fr += ' Con las ' + FPD_BASE.n + ' ya asignadas el lote sumaría ' + FPD_CLP(asign2) + '; la factura dice ' + FPD_CLP(FPD_BASE.factura) + ': ';
+      if (sem.clase === 'ok') fr += 'cuadra exacto.';
+      else if (sem.dif > 0){ const e = fpi.explicarDif(noSel, sem.dif); fr += 'faltan ' + FPD_CLP(sem.dif) + (e ? ' (¿será la ' + e + '?).' : ' (¿una OT sin marcar o un despacho sin declarar?).'); }
+      else { const e2 = fpi.explicarDif(sel, -sem.dif); fr += 'sobran ' + FPD_CLP(-sem.dif) + (e2 ? ' (¿sobra la ' + e2 + '?).' : ' (una OT de más o un costo mal cargado).'); }
+    }
+  }
+  fpdSet('fpdFrase', fr);
+  // — sugerencia: qué OT disponibles suman el monto a cuadrar —
+  const objetivo = fpi.soloDigitos((document.getElementById('fpdObj') || {}).value);
+  const sug = document.getElementById('fpdSug');
+  let html = '';
+  window.FPD_SUG_IDS = [];
+  if (objetivo > 0){
+    const grupos = {};
+    todos.filter(x => x.libre).forEach(x => { (grupos[x.prov] = grupos[x.prov] || {nombre: x.provNombre, items: []}).items.push(x); });
+    const res = fpi.sugerirPorProveedor(grupos, objetivo);
+    if (res){
+      const ids = res.sug.items.map(x => x.id);
+      const igual = ids.length === n && ids.every(i => sel.some(x => x.id === i));
+      if (!igual){
+        window.FPD_SUG_IDS = ids;
+        html = '<i class="bi bi-magic"></i> <span><b>' + (res.sug.exacto ? 'Calzan exacto' : 'La combinación más cercana') + ':</b> ' + res.sug.items.length + ' OT (' +
+          res.sug.items.map(x => escFpd(x.numero)).join(', ') + ') suman ' + FPD_CLP(res.sug.suma) + ' de los ' + FPD_CLP(objetivo) + ' que quieres cuadrar' +
+          (res.sug.exacto ? '.' : '; quedan ' + FPD_CLP(res.sug.dif) + ' fuera: revisa si falta declarar un despacho u otra OT.') + '</span>' +
+          '<button type="button" class="btn btn-sm btn-dark fw-bold" onclick="fpdMarcarSugeridas()"><i class="bi bi-check2-all me-1"></i>Marcar las sugeridas</button>';
+      }
+    } else {
+      html = '<i class="bi bi-info-circle"></i> <span>Ninguna combinación de las OT disponibles suma ' + FPD_CLP(objetivo) + ' sin pasarse.</span>';
+    }
+  }
+  sug.hidden = !html; sug.innerHTML = html;
+  // — tarjetas de arriba, en vivo —
+  fpdGuardarCeldas();
+  if (!n){
+    Object.keys(FPD_CELDAS).forEach(id => { const el = document.getElementById(id); if (el){ el.innerHTML = FPD_CELDAS[id].html; el.className = FPD_CELDAS[id].cls; } });
+  } else {
+    const sc = sem.clase === 'ok' ? 'pos' : sem.clase;
+    fpdCelda('fpdCellN', '', String(FPD_BASE.n + n), '', FPD_BASE.n + ' ya asignadas + ' + n + ' que marcaste');
+    fpdCelda('fpdCellAsig', '', FPD_CLP(asign2), '', 'con tu selección (+' + FPD_CLP(tot.pagar) + ')');
+    if (FPD_BASE.factura > 0) fpdCelda('fpdCellDif', 'sem-' + sc, sem.clase === 'ok' ? '<i class="bi bi-check2"></i> Cuadra' : fpi.clpFirma(sem.dif), sc,
+      sem.clase === 'ok' ? 'factura y OT coincidirían' : (sem.dif > 0 ? 'faltarían ' + FPD_CLP(sem.dif) + ' para su factura' : 'sobrarían ' + FPD_CLP(-sem.dif) + ' sobre su factura'));
+    fpdCelda('fpdCellCob', '', FPD_CLP(cob2), '', 'con tu selección (+' + FPD_CLP(tot.cobrado) + ')');
+    if (FPD_BASE.factura > 0) fpdCelda('fpdCellMg', 'sem-' + (mg2 > 0 ? 'pos' : (mg2 < 0 ? 'neg' : 'warn')), fpi.clpFirma(mg2), mg2 > 0 ? 'pos' : (mg2 < 0 ? 'neg' : 'warn'),
+      (mg2 > 0 ? 'ganaría ILUS' : (mg2 < 0 ? 'perdería ILUS' : 'sin margen')) + (cob2 > 0 ? ' · ' + (mg2 / cob2 * 100).toFixed(1) + '%' : ''));
+  }
+}
+function fpdMarcarSugeridas(){
+  const ids = new Set((window.FPD_SUG_IDS || []).map(String));
+  if (!ids.size) return;
+  document.querySelectorAll('.fpd-cb:not(:disabled)').forEach(c => { c.checked = ids.has(String(FPD_OTS[Number(c.dataset.i)].id)); });
+  fpdContarSel();
+  ilusToast('✓ Marqué las ' + ids.size + ' OT sugeridas', {type:'success'});
 }
 function fpdToggleTodas(){
   const cbs = Array.from(document.querySelectorAll('.fpd-cb:not(:disabled)'));
@@ -937,6 +1120,7 @@ async function fpdGuardarEdicion(){
   setTimeout(() => window.location.reload(), 400);
 }
 {% endif %}
+document.addEventListener('DOMContentLoaded', function(){ if (document.getElementById('fpdResultados')) fpdBuscar(); });
 </script>
 
 <style>
@@ -1173,5 +1357,18 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
   .fpd-acc-txt{display:inline;margin-left:6px}
   .fpd-monto{width:100%}
 }
+.fpd-row.est-garantia{background:#f5f9ff;box-shadow:inset 4px 0 0 #3b82f6}
+.fpd-row.est-perdida{background:#fff7f7;box-shadow:inset 4px 0 0 #dc2626}
+.fpd-row.est-falta{background:#fffbeb;box-shadow:inset 4px 0 0 #f59e0b}
+.fpd-row.est-ok{box-shadow:inset 4px 0 0 #16a34a}
+.fpd-row.sel{background:#fef2f2;box-shadow:inset 5px 0 0 #dc2626}
+.fpd-row{padding-left:12px;border-radius:8px}
+.fpd-cifras{font-size:.78rem;color:#475569;margin-top:2px;line-height:1.4}
+.fpd-listo{font-size:.66rem;font-weight:800;color:#166534;background:#dcfce7;border:1px solid #bbf7d0;border-radius:999px;padding:2px 8px;white-space:nowrap}
+.fpd-cell.proy{outline:2px dashed #dc2626;outline-offset:-2px}
+.fpd-cell.proy .l::after{content:'con tu selección';margin-left:auto;font-size:.56rem;font-weight:800;color:#dc2626;letter-spacing:.03em}
+.fpl-obj{margin-top:9px;font-size:.74rem;font-weight:700;color:#cbd5e1}
+.fpl-obj .fpl-in{max-width:260px;margin-top:4px}
+#fpdLive{margin:0 0 10px}
 </style>
 {% endblock %}

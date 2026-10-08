@@ -1,0 +1,81 @@
+/* 🧠 2026-10-07 Facturación de proveedor: panel en vivo, filas con color por estado y avisos con el porqué.
+   Lo usan facturas_proveedor.html y factura_proveedor_detalle.html. */
+/* 🧠 2026-10-07 panel en vivo "Tu selección" + filas con color por estado + avisos con el porqué */
+.fpl{position:sticky;top:0;z-index:30;background:linear-gradient(135deg,#0a0a0a 0%,#1c1c1c 100%);color:#fff;border-radius:14px;
+  border-left:6px solid #64748b;padding:11px 14px 12px;margin:0 0 10px;box-shadow:0 6px 18px rgba(10,10,10,.22);transition:border-color .2s}
+.fpl.on{border-left-color:#dc2626}
+.fpl.on.sem-ok{border-left-color:#16a34a}.fpl.on.sem-warn{border-left-color:#f59e0b}.fpl.on.sem-neg{border-left-color:#dc2626}
+.fpl-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.fpl-ttl{font-size:.68rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;color:#cbd5e1}
+.fpl-ttl i{color:#dc2626;margin-right:4px}
+.fpl-mas{display:none;background:transparent;border:1px solid #475569;color:#e2e8f0;border-radius:8px;min-height:44px;padding:0 12px;font-size:.78rem;font-weight:800}
+.fpl-frase{font-size:.9rem;font-weight:700;line-height:1.35;margin:4px 0 9px;color:#f1f5f9}
+.fpl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:8px 12px}
+.fpl-k{border-left:3px solid #475569;padding:1px 0 1px 10px;min-width:0}
+.fpl-k span{display:block;font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8}
+.fpl-k b{display:block;font-size:1.55rem;font-weight:900;line-height:1.15;font-variant-numeric:tabular-nums;color:#fff}
+.fpl-k small{display:block;font-size:.68rem;font-weight:600;color:#94a3b8;line-height:1.25}
+.fpl-k.pay{border-left-color:#dc2626}.fpl-k.cob{border-left-color:#3b82f6}.fpl-k.n{border-left-color:#e2e8f0}
+.fpl-k.que{border-left-color:#64748b}.fpl-k.que.pos{border-left-color:#16a34a}.fpl-k.que.pos b{color:#4ade80}
+.fpl-k.que.neg{border-left-color:#dc2626}.fpl-k.que.neg b{color:#f87171}
+.fpl-k.dif{border-left-color:#64748b}
+.fpl.on.sem-ok .fpl-k.dif{border-left-color:#16a34a}.fpl.on.sem-ok .fpl-k.dif b{color:#4ade80}
+.fpl.on.sem-warn .fpl-k.dif{border-left-color:#f59e0b}.fpl.on.sem-warn .fpl-k.dif b{color:#fbbf24}
+.fpl.on.sem-neg .fpl-k.dif{border-left-color:#dc2626}.fpl.on.sem-neg .fpl-k.dif b{color:#f87171}
+.fpl-in{display:flex;align-items:center;gap:4px;background:#0a0a0a;border:1px solid #475569;border-radius:9px;padding:0 10px;min-height:44px;margin:2px 0}
+.fpl-in i{font-style:normal;font-weight:900;color:#94a3b8}
+.fpl-in input{background:transparent;border:0;outline:0;color:#fff;font-size:16px;font-weight:900;width:100%;min-height:42px;font-variant-numeric:tabular-nums}
+.fpl-in:focus-within{border-color:#dc2626}
+.fpl-sug{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff8e1;color:#0f172a;border:1px solid #fde68a;border-radius:10px;
+  padding:9px 12px;margin-top:10px;font-size:.82rem;font-weight:600}
+.fpl-sug[hidden]{display:none}
+.fpl-sug > i{color:#b45309;font-size:1.05rem}
+.fpl-sug span{flex:1 1 260px}
+.fpl-sug .btn{min-height:44px}
+.fpl-prov{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:.74rem;font-weight:600;color:#cbd5e1;margin-top:8px}
+.fpl-prov:empty{display:none}
+.fpl-pp b{color:#fff}.fpl-pp i{color:#fbbf24}
+.fpl-hint{color:#fbbf24;font-weight:800}
+.fpl-orden{display:inline-flex;align-items:center;gap:6px;font-size:.74rem;font-weight:800;color:#64748b;margin-left:auto}
+.fpl-orden a{color:#475569;text-decoration:none;border:1px solid #d1d5db;border-radius:999px;padding:7px 12px;background:#fff;min-height:36px;display:inline-flex;align-items:center}
+.fpl-orden a.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.fpv-otbar-dif{color:#fbbf24;font-weight:800}
+.fp-prov-n em.lis{color:#16a34a;font-weight:800}
+.fp-prov.on .fp-prov-n em.lis{color:#4ade80}
+/* Filas con color por estado: seleccionada · garantía/$0 azul · pérdida roja · falta dato ámbar */
+.fp-tabla tbody tr.fpv-fila td:first-child{box-shadow:inset 5px 0 0 #16a34a}
+.fp-tabla tbody tr.fpv-fila.est-garantia{background:#f5f9ff}
+.fp-tabla tbody tr.fpv-fila.est-garantia td:first-child{box-shadow:inset 5px 0 0 #3b82f6}
+.fp-tabla tbody tr.fpv-fila.est-perdida{background:#fff7f7}
+.fp-tabla tbody tr.fpv-fila.est-perdida td:first-child{box-shadow:inset 5px 0 0 #dc2626}
+.fp-tabla tbody tr.fpv-fila.est-falta{background:#fffbeb}
+.fp-tabla tbody tr.fpv-fila.est-falta td:first-child{box-shadow:inset 5px 0 0 #f59e0b}
+.fp-tabla tbody tr.fpv-fila.sel,.fp-tabla tbody tr.fpv-av-row.sel{background:#fef2f2}
+.fp-tabla tbody tr.fpv-fila.sel td{border-top-color:#fca5a5;border-bottom-color:#fca5a5}
+.fp-tabla tbody tr.fpv-fila.sel td:first-child{box-shadow:inset 5px 0 0 #dc2626}
+.fp-tabla tbody tr.fpv-fila.tiene-av td{border-bottom-color:transparent}
+.fp-tabla tbody tr.fpv-fila.tiene-av td:first-child{border-bottom-left-radius:0}
+.fp-tabla tbody tr.fpv-fila.tiene-av td:last-child{border-bottom-right-radius:0}
+.fp-tabla tbody tr.fpv-av-row{box-shadow:none;margin-top:-5px}
+.fp-tabla tbody tr.fpv-av-row td{border-top:0;border-radius:0 0 9px 9px;padding:2px 12px 9px 52px;border-left:1px solid #e5e7eb;border-right:1px solid #e5e7eb}
+.fp-tabla tbody tr.fpv-av-row.est-garantia{background:#f5f9ff}.fp-tabla tbody tr.fpv-av-row.est-perdida{background:#fff7f7}.fp-tabla tbody tr.fpv-av-row.est-falta{background:#fffbeb}
+.fp-av{font-size:.76rem;font-weight:700;line-height:1.35;padding:1px 0}
+.fp-av i{margin-right:4px}
+.fp-av.ambar{color:#92400e}.fp-av.rojo{color:#b91c1c}.fp-av.azul{color:#1e40af}.fp-av.info{color:#64748b}
+@media (max-width:768px){
+  .fpl{top:var(--topbar-h,56px);padding:8px 12px 9px;border-radius:12px}
+  .fpl-mas{display:inline-flex;align-items:center;gap:4px}
+  .fpl-frase{font-size:.8rem;margin:2px 0 6px}
+  .fpl-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 8px}
+  .fpl-k b{font-size:1.1rem}
+  .fpl-k small{display:none}
+  .fpl-extra,.fpl-sug .btn span{display:none}
+  .fpl.abierto .fpl-extra{display:block}
+  .fpl.abierto .fpl-prov{display:flex}
+  .fpl.abierto .fpl-k small{display:block}
+  .fpl-grid{grid-template-columns:repeat(auto-fit,minmax(104px,1fr))}
+  .fp-tabla tbody tr.fpv-av-row{margin-top:-12px;border-top:0;border-radius:0 0 12px 12px}
+  .fp-tabla tbody tr.fpv-av-row td{padding:2px 12px 8px}
+  .fp-tabla tbody tr.fpv-fila.tiene-av{border-bottom-left-radius:0;border-bottom-right-radius:0;margin-bottom:0}
+  .fpl-orden{margin-left:0;width:100%}
+}

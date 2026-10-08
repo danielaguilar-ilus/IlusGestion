@@ -32,6 +32,7 @@
 {%- endmacro %}
 
 {% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='facprov_inteligente.css') }}">
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
   <div>
     <h1 class="mb-1"><i class="bi bi-receipt-cutoff me-2" style="color:#dc2626"></i>Facturas de proveedor</h1>
@@ -233,7 +234,8 @@
     <span class="fp-prov-tx"><b>{{ p.nombre }}</b>
       {% if p.tecnicos %}<small><i class="bi bi-person"></i> {{ p.tecnicos }}</small>{% elif p.rut %}<small>{{ p.rut | rut_fmt }}</small>{% endif %}
       <small>{{ p.n_fac }} factura{{ '' if p.n_fac == 1 else 's' }}{% if p.n_fac_pend %} · <b class="pend">{{ p.n_fac_pend }} por pagar</b>{% endif %}</small></span>
-    {% if p.n %}<span class="fp-prov-n"><b>{{ p.n }}</b><em>OT · {{ clp(p.monto) }}</em></span>
+    {% if p.n %}<span class="fp-prov-n"><b>{{ p.n }}</b><em>OT · {{ clp(p.monto) }}</em>
+      <em class="lis" title="Listas = OT cerradas y con lo que cobró el técnico">{{ p.n_listas }} lista{{ '' if p.n_listas == 1 else 's' }}{% if p.n - p.n_listas %} · {{ p.n - p.n_listas }} con datos pendientes{% endif %}</em></span>
     {% else %}<span class="fp-prov-n cero"><b>0</b><em>por facturar</em></span>{% endif %}
   </a>
   {% endfor %}
@@ -280,12 +282,44 @@
       {% if _chip_es_sin_ficha %}<b style="color:#b45309">Estas OT no resuelven a ninguna empresa</b>: asigna el técnico a su empresa en Proveedores nacionales.{% endif %}</span></div>
 </div>
 {% if puede_seleccionar %}
+{# 🧠 2026-10-07 (Daniel: "lo siento un poquito incómodo… arriba me gusta que cambie cuando selecciono o deselecciono… que se
+   sienta más inteligente"). Panel pegajoso con LO QUE VAS MARCANDO: se actualiza en vivo al marcar o desmarcar. Las sumas
+   salen de la cuenta única de cada OT (a pagar = a_pagar_proveedor, cobrado = Cobré); acá solo se suman. El pie de abajo
+   queda como franja de acción compacta, sin repetir estas cifras. #}
+<div class="fpl" id="fpvLive" data-total="{{ por_facturar | length }}">
+  <div class="fpl-top">
+    <div class="fpl-ttl"><i class="bi bi-ui-checks-grid"></i> Tu selección</div>
+    <button type="button" class="fpl-mas" id="fpvLiveMas" onclick="fpvLiveToggleMas()" aria-expanded="false">
+      <i class="bi bi-chevron-down"></i> Ver más</button>
+  </div>
+  <div class="fpl-frase" id="fpvFrase" aria-live="polite"></div>
+  <div class="fpl-grid">
+    <div class="fpl-k n"><span>OT seleccionadas</span><b id="fpvLiveN">0</b><small id="fpvLiveNsub">de {{ por_facturar | length }} en esta página</small></div>
+    <div class="fpl-k pay"><span>A pagar al proveedor</span><b id="fpvLivePagar">$0</b><small id="fpvLivePagarSub">técnico + despacho, sin repuestos</small></div>
+    <div class="fpl-k fac fpl-extra"><span>Factura del proveedor</span>
+      <label class="fpl-in"><i>$</i><input type="text" inputmode="numeric" id="fpvFacMonto" placeholder="Su monto" autocomplete="off"
+        aria-label="Monto de la factura del proveedor" oninput="fpvFacMontoInput(this)"></label>
+      <small>opcional: cuadra y sugiere qué OT marcar</small></div>
+    <div class="fpl-k dif" id="fpvLiveDifBox"><span>Diferencia con su factura</span><b id="fpvLiveDif">—</b><small id="fpvLiveDifSub">escribe su monto</small></div>
+    <div class="fpl-k cob fpl-extra"><span>Cobrado al cliente</span><b id="fpvLiveCob">$0</b><small id="fpvLiveCobSub"></small></div>
+    <div class="fpl-k que fpl-extra" id="fpvLiveQueBox"><span>Te queda</span><b id="fpvLiveQue">$0</b><small id="fpvLiveQueSub"></small></div>
+  </div>
+  <div class="fpl-sug" id="fpvSug" hidden></div>
+  <div class="fpl-prov fpl-extra" id="fpvLiveProv"></div>
+</div>
+{% endif %}
+{% if puede_seleccionar %}
 {# REGLA #14: marcar/desmarcar todo también en el teléfono, donde el thead
    (y su checkbox maestro) se oculta. Si hay más OT que las de esta página,
    se dice: una OC "de todo" no puede salir de una selección a medias. #}
 <div class="fpv-selrow">
   <button type="button" class="btn btn-sm btn-outline-dark fpv-selall" onclick="fpvOtToggleAllBtn()">
     <i class="bi bi-check2-square me-1"></i><span id="fpvSelAllLbl">Marcar las {{ por_facturar | length }} de esta página</span></button>
+  <span class="fpl-orden">Orden:
+    <a class="{{ 'on' if pf_orden == 'listas' }}" href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, pruebas=('1' if f_pruebas else None), per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=1, pf_orden='listas') }}"
+       title="Primero las OT cerradas y con lo que cobró el técnico; después las que faltan datos">Listas primero</a>
+    <a class="{{ 'on' if pf_orden == 'fecha' }}" href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, pruebas=('1' if f_pruebas else None), per_page=per_page, page=page, pf_per_page=pf_per_page, pf_page=1, pf_orden='fecha', pf_dir='desc') }}">Más recientes</a>
+  </span>
   {% if pf_total > (por_facturar | length) %}
   <span class="fpv-selhint">Viendo {{ por_facturar | length }} de {{ pf_total }} —
     <a href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, pruebas=('1' if f_pruebas else None), per_page=per_page, page=page, pf_per_page=100, pf_page=1, pf_orden=pf_orden, pf_dir=pf_dir) }}">ver hasta 100 por página</a></span>
@@ -316,13 +350,14 @@
     </thead>
     <tbody>
       {% for d in por_facturar %}
-      <tr>
+      <tr class="fpv-fila est-{{ d.estado_fila }}{{ ' tiene-av' if d.avisos_fila | selectattr('n', 'ne', 'info') | list }}" id="fpvRow{{ d.id }}">
         {% if puede_seleccionar %}
         <td data-label=""><span class="fp-chk-wrap"><input type="checkbox" class="fpv-ot-chk" value="{{ d.id }}"
             data-monto="{{ d.sugerido }}" data-numero="{{ d.numero_ot }}" data-prov="{{ d.prov_key }}"
             data-provnombre="{{ d.proveedor }}" data-anexo="{{ 1 if d.anexo_firmado else 0 }}" data-nocerrada="{{ 1 if d.no_cerrada else 0 }}"
             data-cobrado="{{ d.cobrado_cliente }}" data-garantia="{{ 1 if d.es_garantia else 0 }}"
-            data-sincobro="{{ 1 if d.sin_cobro_declarado else 0 }}" onchange="fpvOtRefreshBar()"></span></td>
+            data-sincobro="{{ 1 if d.sin_cobro_declarado else 0 }}" data-listo="{{ 1 if d.listo else 0 }}"
+            aria-label="Marcar {{ d.numero_ot }}" onchange="fpvOtRefreshBar()"></span></td>
         {% endif %}
         {# 📋 2026-09-21 (Daniel: "calidad de información"): N° OT + ticket de
            origen + fechas reales (programada → cierre), sin abrir la OT. #}
@@ -391,15 +426,25 @@
           {% if d.margen_pct is not none %}<div class="fp-pct {{ 'neg' if d.margen_pct < 0 }}">{{ '%.1f' | format(d.margen_pct) }}%{% if d.fuente_cobro == 'valor_ot' %} · valor OT{% endif %}</div>{% endif %}
           {% endif %}</td>
       </tr>
+      {# 🧠 2026-10-07: el POR QUÉ de la fila, en palabras (falta lo del técnico, garantía autorizada por X, OT sin cerrar,
+         pérdida…). Vienen de _mfp_fila_ot; lo "informativo" (sin anexo) ya está en su columna. #}
+      {% set _avs = d.avisos_fila | selectattr('n', 'ne', 'info') | list %}
+      {% if _avs %}
+      <tr class="fpv-av-row est-{{ d.estado_fila }}" data-for="{{ d.id }}">
+        <td colspan="{{ 9 if puede_seleccionar else 8 }}">
+          {% for a in _avs %}<div class="fp-av {{ a.n }}"><i class="bi bi-{{ 'exclamation-octagon-fill' if a.n == 'rojo' else ('shield-check' if a.n == 'azul' else 'exclamation-triangle-fill') }}"></i> {{ a.t }}</div>{% endfor %}
+        </td>
+      </tr>
+      {% endif %}
       {% endfor %}
     </tbody>
   </table>
 </div>
 {% if puede_seleccionar %}
 <div class="fpv-otbar" id="fpvOtBar">
-  <div class="fpv-otbar-info"><span id="fpvOtBarN">0</span> OT seleccionadas · a pagar <span id="fpvOtBarMonto">$0</span>
-    <div class="fpv-otbar-fin" id="fpvOtBarFin"></div>
-    <div class="fpv-otbar-det" id="fpvOtBarDet"></div></div>
+  {# El detalle (cobrado, te queda, por proveedor, diferencia) vive en el panel de arriba; acá solo el resumen corto. #}
+  <div class="fpv-otbar-info"><span id="fpvOtBarN">0</span> OT · a pagar <span id="fpvOtBarMonto">$0</span>
+    <span class="fpv-otbar-dif" id="fpvOtBarDif"></span></div>
   <div class="fpv-otbar-btns">
     <button type="button" class="btn btn-outline-light fw-bold" style="min-height:44px" onclick="fpvExcelCorte('interno', true)"
             title="Solo las OT marcadas — versión completa, para ti">
@@ -685,6 +730,7 @@
   </div>
 </div>
 
+<script src="{{ url_for('static', filename='facprov_inteligente.js') }}"></script>
 <script>
 {# Nombre real de la empresa filtrada; el chip sintético "Sin ficha" (id 0)
    no es un proveedor y no debe prellenar ningún buscador. #}
@@ -853,55 +899,137 @@ function fpvOtToggleAll(checked){
   document.querySelectorAll('.fpv-ot-chk').forEach(function(cb){ cb.checked = checked; });
   fpvOtRefreshBar();
 }
+// 🧠 2026-10-07: panel en vivo + franja de acción. Las OT salen de las casillas (data-*), que traen lo que dice la
+// cuenta única de cada OT; acá solo se suma (static/facprov_inteligente.js).
+function fpvItems(){
+  return Array.from(document.querySelectorAll('.fpv-ot-chk')).map(function(cb){
+    return {id: cb.value, cb: cb, numero: cb.dataset.numero, prov: cb.dataset.prov || cb.dataset.provnombre,
+      provNombre: cb.dataset.provnombre, pagar: Number(cb.dataset.monto) || 0, cobrado: Number(cb.dataset.cobrado) || 0,
+      garantia: cb.dataset.garantia === '1', sincobro: cb.dataset.sincobro === '1', listo: cb.dataset.listo === '1'};
+  });
+}
+function fpvFacMontoInput(inp){
+  const n = fpi.soloDigitos(inp.value);
+  inp.value = n ? n.toLocaleString('es-CL') : '';
+  fpvOtRefreshBar();
+}
+function fpvLiveToggleMas(){
+  const el = document.getElementById('fpvLive'), b = document.getElementById('fpvLiveMas');
+  const abierto = el.classList.toggle('abierto');
+  b.setAttribute('aria-expanded', abierto ? 'true' : 'false');
+  b.innerHTML = '<i class="bi bi-chevron-' + (abierto ? 'up' : 'down') + '"></i> ' + (abierto ? 'Ver menos' : 'Ver más');
+}
+function fpvMarcarSugeridas(){
+  const ids = new Set((window.FPV_SUG_IDS || []).map(String));
+  if (!ids.size) return;
+  document.querySelectorAll('.fpv-ot-chk').forEach(function(cb){ cb.checked = ids.has(cb.value); });
+  fpvOtRefreshBar();
+  ilusToast('✓ Marqué las ' + ids.size + ' OT sugeridas', {type:'success'});
+}
+function fpvSet(id, txt){ const e = document.getElementById(id); if (e) e.textContent = txt; }
 function fpvOtRefreshBar(){
   const bar = document.getElementById('fpvOtBar');
   if (!bar) return;
-  const chks = Array.from(document.querySelectorAll('.fpv-ot-chk:checked'));
-  const n = chks.length;
-  const monto = chks.reduce(function(s, cb){ return s + (Number(cb.dataset.monto) || 0); }, 0);
-  document.getElementById('fpvOtBarN').textContent = n;
-  document.getElementById('fpvOtBarMonto').textContent = FPV_CLP(monto);
+  const todos = fpvItems();
+  const sel = todos.filter(function(x){ return x.cb.checked; });
+  const noSel = todos.filter(function(x){ return !x.cb.checked; });
+  const n = sel.length;
+  const tot = fpi.sumar(sel);
+  const objetivo = fpi.soloDigitos((document.getElementById('fpvFacMonto') || {}).value);
+  const sem = fpi.semaforo(objetivo, tot.pagar);
+  // Color de la fila según esté marcada
+  todos.forEach(function(x){
+    const tr = x.cb.closest('tr');
+    if (tr){ tr.classList.toggle('sel', x.cb.checked);
+      const nx = tr.nextElementSibling; if (nx && nx.classList.contains('fpv-av-row')) nx.classList.toggle('sel', x.cb.checked); }
+  });
+  // Franja de acción (compacta)
+  fpvSet('fpvOtBarN', n);
+  fpvSet('fpvOtBarMonto', FPV_CLP(tot.pagar));
+  fpvSet('fpvOtBarDif', objetivo > 0 ? (sem.clase === 'ok' ? '· cuadra con su factura' : ('· ' + (sem.dif > 0 ? 'faltan ' : 'sobran ') + FPV_CLP(Math.abs(sem.dif)))) : '');
   bar.classList.toggle('on', n > 0);
   const master = document.getElementById('fpvOtCheckAll');
-  const todas = document.querySelectorAll('.fpv-ot-chk');
-  if (master) master.checked = todas.length > 0 && n === todas.length;
+  if (master) master.checked = todos.length > 0 && n === todos.length;
   const lbl = document.getElementById('fpvSelAllLbl');
-  if (lbl) lbl.textContent = (todas.length > 0 && n === todas.length)
-    ? 'Desmarcar las ' + todas.length : 'Marcar las ' + todas.length + ' de esta página';
-  // 💰 Lo marcado, en plata: cobrado y ganancia con la misma regla de la
-  // franja "Lo filtrado" (solo OT con cobro declarado; garantía aparte).
-  const fin = document.getElementById('fpvOtBarFin');
-  if (fin){
-    let cob = 0, pagComp = 0, nComp = 0, gar = 0, sinCob = 0, nGar = 0, nSin = 0;
-    chks.forEach(cb => {
-      const pag = Number(cb.dataset.monto) || 0, c = Number(cb.dataset.cobrado) || 0;
-      if (cb.dataset.garantia === '1'){ gar += pag; nGar++; }
-      // 2026-10-07: "sin cobro" = falta lo que cobraste (cuenta única); un $0 declarado sí entra a la ganancia.
-      else if (cb.dataset.sincobro !== undefined ? cb.dataset.sincobro === '1' : c <= 0){ sinCob += pag; nSin++; }
-      else { cob += c; pagComp += pag; nComp++; }
-    });
-    const gan = cob - pagComp;
-    fin.innerHTML = n ? ('Cobrado al cliente <b>' + FPV_CLP(cob) + '</b> · Ganancia <b class="' + (gan < 0 ? 'neg' : 'pos') + '">' +
-      (gan > 0 ? '+' : '') + FPV_CLP(gan) + (cob > 0 ? ' (' + (gan / cob * 100).toFixed(1) + '%)' : '') + '</b>' +
-      (nGar ? ' · ' + nGar + ' en garantía ' + FPV_CLP(gar) : '') + (nSin ? ' · ' + nSin + ' sin cobro ' + FPV_CLP(sinCob) : '')) : '';
-  }
-  // Desglose por proveedor: "DAP Servicio 2 OT · $500.000 · Milling 1 OT · $…"
-  const grupos = fpvOtGrupos();
-  const det = document.getElementById('fpvOtBarDet');
-  if (det){
-    det.innerHTML = grupos.map(g =>
-      '<span><b>' + fpvEsc(g.nombre) + '</b> ' + g.n + ' OT · ' + FPV_CLP(g.monto) +
-      (g.sinAnexo ? ' <i class="bi bi-exclamation-triangle-fill" title="' + g.sinAnexo + ' sin anexo firmado"></i>' : '') + '</span>'
-    ).join('');
-    if (grupos.length > 1) det.insertAdjacentHTML('afterbegin', '<span class="fpv-otbar-hint">' + grupos.length + ' proveedores → ' + grupos.length + ' órdenes de compra</span>');
+  if (lbl) lbl.textContent = (todos.length > 0 && n === todos.length)
+    ? 'Desmarcar las ' + todos.length : 'Marcar las ' + todos.length + ' de esta página';
+  // Panel de arriba (cambia en vivo)
+  const live = document.getElementById('fpvLive');
+  if (live){
+    live.classList.toggle('on', n > 0);
+    ['ok','warn','neg','muted'].forEach(function(c){ live.classList.toggle('sem-' + c, sem.clase === c && n > 0); });
+    fpvSet('fpvLiveN', n);
+    fpvSet('fpvLiveNsub', tot.listas || tot.faltan ? (tot.listas + ' lista' + (tot.listas === 1 ? '' : 's') + (tot.faltan ? ' · ' + tot.faltan + ' con datos pendientes' : '')) : ('de ' + todos.length + ' en esta página'));
+    fpvSet('fpvLivePagar', FPV_CLP(tot.pagar));
+    fpvSet('fpvLivePagarSub', n ? ('sin repuestos · ' + (tot.gar_n ? tot.gar_n + ' sin cobro al cliente' : 'todas se cobran')) : 'técnico + despacho, sin repuestos');
+    if (objetivo > 0 && n){
+      fpvSet('fpvLiveDif', sem.clase === 'ok' ? 'Cuadra' : fpi.clpFirma(-sem.dif));
+      fpvSet('fpvLiveDifSub', sem.clase === 'ok' ? 'tu selección = su factura' : (sem.dif > 0 ? 'faltan ' + FPV_CLP(sem.dif) + ' para llegar a su factura' : 'sobran ' + FPV_CLP(-sem.dif) + ' sobre su factura'));
+    } else if (objetivo > 0){
+      fpvSet('fpvLiveDif', FPV_CLP(objetivo)); fpvSet('fpvLiveDifSub', 'su factura; marca OT para comparar');
+    } else { fpvSet('fpvLiveDif', '—'); fpvSet('fpvLiveDifSub', 'escribe el monto de su factura'); }
+    fpvSet('fpvLiveCob', FPV_CLP(tot.cobrado));
+    fpvSet('fpvLiveCobSub', n ? (tot.comp_n + ' OT con cobro declarado') : '');
+    const q = document.getElementById('fpvLiveQueBox');
+    fpvSet('fpvLiveQue', tot.comp_n ? fpi.clpFirma(tot.margen) : '—');
+    fpvSet('fpvLiveQueSub', tot.comp_n ? (tot.margen_pct !== null ? tot.margen_pct.toFixed(1).replace('.', ',') + ' % sobre lo cobrado' : '') : 'sin cobro declarado para comparar');
+    if (q){ q.classList.toggle('pos', tot.comp_n > 0 && tot.margen > 0); q.classList.toggle('neg', tot.comp_n > 0 && tot.margen < 0); }
+    const fueraTxt = (tot.gar_n ? tot.gar_n + ' que no se cobran ' + FPV_CLP(tot.gar_pagar) : '') + (tot.gar_n && tot.sin_n ? ' · ' : '') + (tot.sin_n ? tot.sin_n + ' sin cobro declarado ' + FPV_CLP(tot.sin_pagar) : '');
+    if (fueraTxt) fpvSet('fpvLiveQueSub', document.getElementById('fpvLiveQueSub').textContent + (document.getElementById('fpvLiveQueSub').textContent ? ' · ' : '') + 'fuera: ' + fueraTxt);
+    // Frase guía
+    const grupos = fpvOtGrupos();
+    const provTxt = grupos.length === 1 ? grupos[0].nombre : (grupos.length > 1 ? grupos.length + ' proveedores' : '');
+    fpvSet('fpvFrase', fpi.frase({n: n, tot: tot, objetivo: objetivo, provNombre: provTxt, marcadas: sel, noMarcadas: noSel.filter(function(x){ return !grupos.length || grupos.some(function(g){ return g.nombre === x.provNombre; }); })}));
+    // Por proveedor: cuántas OT, cuánto, y la advertencia de las órdenes de compra
+    const det = document.getElementById('fpvLiveProv');
+    if (det){
+      det.innerHTML = grupos.map(function(g){
+        return '<span class="fpl-pp"><b>' + fpvEsc(g.nombre) + '</b> ' + g.n + ' OT · ' + FPV_CLP(g.monto) +
+          (g.sinAnexo ? ' <i class="bi bi-exclamation-triangle-fill" title="' + g.sinAnexo + ' sin anexo firmado"></i>' : '') + '</span>';
+      }).join('');
+      if (grupos.length > 1) det.insertAdjacentHTML('afterbegin', '<span class="fpl-hint">' + grupos.length + ' proveedores → ' + grupos.length + ' órdenes de compra</span>');
+    }
+    // Sugerencia: qué OT del proveedor suman el monto de su factura
+    const sug = document.getElementById('fpvSug');
+    if (sug){
+      let html = '', res = null;
+      if (objetivo > 0){
+        const gruposSug = {};
+        const provSel = new Set(sel.map(function(x){ return x.prov; }));
+        todos.forEach(function(x){
+          if (provSel.size && !provSel.has(x.prov)) return;
+          (gruposSug[x.prov] = gruposSug[x.prov] || {nombre: x.provNombre, items: []}).items.push(x);
+        });
+        res = fpi.sugerirPorProveedor(gruposSug, objetivo);
+      }
+      window.FPV_SUG_IDS = [];
+      if (res){
+        const ids = res.sug.items.map(function(x){ return x.id; });
+        const igual = ids.length === sel.length && ids.every(function(i){ return sel.some(function(x){ return x.id === i; }); });
+        if (!igual){
+          window.FPV_SUG_IDS = ids;
+          const num = res.sug.items.map(function(x){ return fpvEsc(x.numero); }).join(', ');
+          html = '<i class="bi bi-magic"></i> <span><b>' + (res.sug.exacto ? 'Calzan exacto' : 'La combinación más cercana') + ':</b> ' +
+            res.sug.items.length + ' OT de <b>' + fpvEsc(res.nombre) + '</b> (' + num + ') suman ' + FPV_CLP(res.sug.suma) +
+            (res.sug.exacto ? ', justo lo que dice su factura.' : ' y quedan ' + FPV_CLP(res.sug.dif) + ' fuera: revisa si falta declarar un despacho u otra OT.') + '</span>' +
+            '<button type="button" class="btn btn-sm btn-dark fw-bold" onclick="fpvMarcarSugeridas()"><i class="bi bi-check2-all me-1"></i>Marcar las sugeridas</button>';
+        }
+      } else if (objetivo > 0){
+        html = '<i class="bi bi-info-circle"></i> <span>Ninguna combinación de las OT visibles suma esa cifra sin pasarse: puede incluir OT de otras páginas, un despacho o un cobro que aún no está declarado.</span>';
+      }
+      sug.hidden = !html;
+      sug.innerHTML = html;
+    }
   }
   // Marcar pagado reconoce una deuda de UN proveedor -- con varios se apaga.
+  const grupos2 = fpvOtGrupos();
   const bp = document.getElementById('fpvBtnPagado');
   if (bp){
-    bp.disabled = grupos.length !== 1;
-    bp.title = grupos.length > 1 ? 'Marcar pagado es por un proveedor a la vez' : '';
+    bp.disabled = grupos2.length !== 1;
+    bp.title = grupos2.length > 1 ? 'Marcar pagado es por un proveedor a la vez' : '';
   }
 }
+document.addEventListener('DOMContentLoaded', function(){ try{ fpvOtRefreshBar(); }catch(e){} });
 // 🔴 2026-09-21 (Daniel: "todo lo dejes pagado de aquí para atrás... ya por
 // favor paremos con esto"): si el lote trae OT sin costo declarado, el
 // superadmin puede asumir $0 en ellas y seguir — el $0 queda escrito en la
@@ -1270,7 +1398,11 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
   .fp-sec-btns{margin-left:0;width:100%}
   .fp-sec-btns .btn{flex:1 1 auto;min-height:44px}
   .fpv-otbar-btns{width:100%}
-  .fpv-otbar-btns .btn{flex:1 1 100%}
+  /* Franja compacta: Solicitar OC a todo el ancho y el resto de a dos */
+  .fpv-otbar{padding:8px 10px;gap:6px}
+  .fpv-otbar-btns{gap:6px}
+  .fpv-otbar-btns .btn{flex:1 1 calc(50% - 6px);font-size:.74rem;padding:4px 6px}
+  .fpv-otbar-btns .btn.btn-danger{flex:1 1 100%;order:-1;font-size:.84rem}
 }
 </style>
 {% endblock %}
