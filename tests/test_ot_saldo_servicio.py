@@ -146,7 +146,7 @@ class Mundo:
         amb["_ot_saldo_familia"] = self._familia
         amb["_ot_saldo_usos"] = self._usos
         amb["_rut_analisis_comparacion"] = lambda a, b: {"match": (a or "") == (b or "")}
-        amb["_ot_saldo_autorizado_hasta"] = lambda vid=None, aut_id=None: dict(self.autorizado)
+        amb["_ot_saldo_autorizado_hasta"] = lambda vid=None, aut_id=None, cliente_rut=None: dict(self.autorizado)
         self.amb = amb
 
     # ERP
@@ -427,7 +427,7 @@ class TestCableado(unittest.TestCase):
     def test_crear_pasa_por_el_candado_y_anota_el_aporte_por_documento(self):
         v = _fuente("_ot_validar_normalizar_finanzas")
         self.assertIn("_ot_saldo_chequear(", v)
-        self.assertIn("_ot_saldo_autorizado_hasta(aut_id=_fin_aut_id)", v)
+        self.assertIn("_ot_saldo_autorizado_hasta(aut_id=_fin_aut_id, cliente_rut=cliente_rut)", v)
         self.assertIn('"docs_aporte": _fin_docs_aporte', v)
         self.assertIn("http=409", v)
         app = _leer("app.py")
