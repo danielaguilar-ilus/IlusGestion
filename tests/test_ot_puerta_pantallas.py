@@ -81,7 +81,9 @@ class TestMotorUnico(unittest.TestCase):
         i_ficha = det.index("fm_modo='ficha'")
         self.assertIn('id="otdCardMotor"', det)
         self.assertIn("otd-span2", det[i_ficha - 400:i_ficha])
-        self.assertIn("{% if not es_tecnico %}", det[i_ficha - 1500:i_ficha], "el motor de la ficha es solo para gestión")
+        # 2026-10-08 (un solo bloque compacto): el macro de la factura del proveedor se definió ANTES del bloque (lo usa el bloque
+        # único cuando la OT está cerrada), así que el {% if not es_tecnico %} queda más lejos que antes: ventana de 6000 caracteres.
+        self.assertIn("{% if not es_tecnico %}", det[i_ficha - 6000:i_ficha], "el motor de la ficha es solo para gestión")
 
     def test_el_modal_se_resuelve_ahi_mismo_cuando_el_cierre_rebota(self):
         det = _leer("templates/ot2/detalle.html")
@@ -97,8 +99,10 @@ class TestMotorUnico(unittest.TestCase):
         for ruta in ("/recorrido", "/panorama", "/costo-proveedor", "/documentos", "/centro-costo", "/ot/api/autorizaciones"):
             self.assertIn(ruta, js)
         for texto in ("Facturas y boletas", "Notas de venta", "Cotizaciones", "Servicios", "Despachos", "Otros documentos",
-                      "Todos los documentos de la OT", "Lo que nos costó", "La cuenta de esta OT", "Centro de costo",
-                      "Esperando autorización de", "ya dada", "Dada de baja por la factura", "Fecha de emisión", "Lo ligó",
+                      # 2026-10-08 (un solo bloque compacto): la columna de documentos se llama «Documentos» y la cuenta ya no es una
+                      # sección con título sino UNA línea (queda con su aria-label «La cuenta de esta OT»).
+                      "<h3>Documentos <small>", "Lo que nos costó", "La cuenta de esta OT", "Centro de costo",
+                      "Esperando autorización de", "ya dada", "Dada de baja por la factura", "Fecha de emisión", "Lo agregó",
                       "El RUT coincide con el del cliente", "Pedir autorización a", "Corregir lo que cobró el proveedor",
                       "Autorizaciones de esta OT", "Servicio", "Despacho", "solo productos"):
             self.assertIn(texto, js, texto)

@@ -281,9 +281,17 @@ class TestRutasYTablas(unittest.TestCase):
     def test_la_ui_solo_se_dibuja_para_superadmin(self):
         with open(os.path.join(RAIZ, "templates", "ot2", "detalle.html"), encoding="utf-8") as fh:
             html = fh.read()
-        self.assertIn("{% if permissions and permissions.superadmin %}\n        <div class=\"otd-fincorr-bar\">",
-                      html.replace(chr(13) + chr(10), chr(10)))
+        # 2026-10-08 (un solo bloque compacto): «Corregir finanzas» y «OT con finanzas dudosas» pasaron de la tarjeta vieja al
+        # ENCABEZADO del motor (templates/ot2/_fin_motor.html, junto a «Actualizar»), con el MISMO permiso: solo se dibujan para
+        # superadmin y solo en la ficha (nunca en el modal de cierre). Antes era un <div class="otd-fincorr-bar"> en detalle.html.
+        with open(os.path.join(RAIZ, "templates", "ot2", "_fin_motor.html"), encoding="utf-8") as fh:
+            motor = fh.read().replace(chr(13) + chr(10), chr(10))
+        self.assertIn("{% if (fm_modo or 'ficha') == 'ficha' and permissions and permissions.superadmin %}\n  <template data-fm-extra>", motor)
+        self.assertIn('onclick="otdFinCorrAbrir()"', motor)
+        self.assertIn('href="/ot/finanzas-dudosas"', motor)
+        self.assertNotIn('class="otd-fincorr-bar"', html)
         self.assertIn('id="otdModalFinCorr"', html)
+        self.assertIn("async function otdFinCorrAbrir(){", html)
 
 
 if __name__ == "__main__":

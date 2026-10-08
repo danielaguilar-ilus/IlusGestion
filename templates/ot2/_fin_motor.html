@@ -9,5 +9,15 @@
 <script src="{{ url_for('static', filename='ot_fin_motor.js') }}" defer></script>
 {% endif %}
 <div class="fm" data-fin-motor data-vid="{{ fm_vid }}" data-modo="{{ fm_modo or 'ficha' }}">
+  {#- 💰 2026-10-08 (Daniel: «compactemos todo en un mismo lugar»): «Corregir finanzas» y «OT con finanzas dudosas» vivían en la
+      tarjeta «Finanzas de la OT» (solo superadmin, con registro). Ahora van en el ENCABEZADO de este bloque, a la misma altura
+      que «Actualizar»; static/ot_fin_motor.js los lee de acá y los acomoda. Misma función de siempre: otdFinCorrAbrir() y
+      /ot/finanzas-dudosas (el servidor los sigue exigiendo superadmin). Nunca en el modal de cierre, ni para técnicos. -#}
+  {% if (fm_modo or 'ficha') == 'ficha' and permissions and permissions.superadmin %}
+  <template data-fm-extra>
+    <button type="button" class="fm-btn" onclick="otdFinCorrAbrir()" title="Solo superadmin: reabre lo declarado y deja el registro de quién lo cambió y por qué"><i class="bi bi-pencil-square"></i> Corregir finanzas <small>solo superadmin</small></button>
+    <a class="fm-btn" href="/ot/finanzas-dudosas"><i class="bi bi-clipboard2-pulse"></i> OT con finanzas dudosas</a>
+  </template>
+  {% endif %}
   <div class="fm-cargando"><i class="bi bi-hourglass-split"></i> Cargando finanzas y documentos…</div>
 </div>
