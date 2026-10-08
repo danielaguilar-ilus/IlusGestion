@@ -56694,7 +56694,7 @@ def init_mantenciones_tables():
                 # `sugerencia` es el campo "Sugerencia" de la macro -- DISTINTO
                 # de `recomendacion`, que ya se usa como la UA (compatibilidad
                 # de datos: no se toca `recomendacion`, se abre uno nuevo).
-                # `repuesto_stock_id` liga la incidencia a un repuesto real de
+                # `repuesto_stock_id` asocia la incidencia a un repuesto real de
                 # la Bodega elegido con el buscador compartido RepBuscador.
                 "ALTER TABLE mant_incidencias ADD COLUMN sugerencia TEXT NULL "
                 "COMMENT 'Sugerencia/recomendación libre -- campo propio, distinto de recomendacion (=UA)'",
@@ -69402,7 +69402,7 @@ def repuestos_hub_list():
     de mant_repuestos), permite filtrar/ordenar por ellas, y trae el
     proveedor con su canal de contacto (mant_proveedores_repuesto) para
     el botón "Asignar a ticket". cliente_id ahora puede ser NULL (repuestos
-    de la planilla sin cliente ligado) → LEFT JOIN en vez de JOIN."""
+    de la planilla sin cliente asociado) → LEFT JOIN en vez de JOIN."""
     filtro_estado = (request.args.get("estado") or "").strip()
     filtro_q = (request.args.get("q") or "").strip()
     filtro_ticket = (request.args.get("ticket") or "").strip()  # "con"|"sin"|""
@@ -83488,7 +83488,7 @@ def mant_ots_borrar_batch():
 
 
 # ─────────────────────────────────────────────────────────────────────
-# TRAZABILIDAD FINANCIERA — ligar cotización / OC / factura a una visita
+# TRAZABILIDAD FINANCIERA — agregar cotización / OC / factura a una visita
 # ─────────────────────────────────────────────────────────────────────
 
 @app.route("/mantenciones/api/visitas/<int:vid>/cotizacion", methods=["POST"])
@@ -83499,7 +83499,7 @@ def mant_visita_ligar_cotizacion(vid):
     Body: {tido: 'COV'|'NVV', nudo: string}. Valida con _cubicador_fetch.
 
     🔐 SEGURIDAD 2026-08-26: faltaba @_ot_can_metadata — cualquier usuario con
-    permiso "mantenciones" podía ligar documentos ERP a una OT ajena.
+    permiso "mantenciones" podía agregar documentos ERP a una OT ajena.
     """
     d = request.get_json(silent=True) or {}
     tido = (d.get("tido") or "").strip().upper()
@@ -85658,7 +85658,7 @@ def _mapear_garantia_a_cobertura(garantia_aplica, tipo):
                          estado_facturacion='no_aplica' (no se cobra, cerrable).
       - NO APLICA (False) → cubierto_por='cliente', modalidad_cobro='pagado',
                          estado_facturacion='sin_cotizar' (PENDIENTE DE FACTURAR
-                         hasta ligar una factura del ERP).
+                         hasta agregar una factura del ERP).
 
     Si el tipo está en _OT_TIPOS_SIN_GARANTIA (hoy: ninguno -- Daniel
     2026-09-15: "todos los tipos de OT permiten garantía"), se degrada a
@@ -86371,7 +86371,7 @@ def mant_visita_update(vid):
         if cobertura_upd:
             d["cubierto_por"]   = cobertura_upd["cubierto_por"]
             d["modalidad_cobro"] = cobertura_upd["modalidad_cobro"]
-            # No degradar el pipeline si ya hay una factura ligada: un servicio
+            # No degradar el pipeline si ya hay una factura asociada: un servicio
             # ya 'facturado' marcado como "no aplica garantía" sigue facturado.
             _ef_now = _row_gar_actual.get("estado_facturacion")
             if not (gar_aplica_upd is False and _ef_now == "facturado"):
@@ -86595,10 +86595,10 @@ def mant_visita_update(vid):
     # 🔏 2026-10-07 (atajo del mapa, Daniel: "AL CERRAR, revisión obligatoria"): 'completada' también sale de
     # este PUT -- era la antesala del cierre y se podía poner editando el campo; la OT se completa por el flujo
     # del técnico/ejecución, nunca desde "Editar OT".
-    # 🔒 2026-10-08 (revisión adversarial): ni el tipo ni el documento ligado se cambian editando el campo.
+    # 🔒 2026-10-08 (revisión adversarial): ni el tipo ni el documento asociado se cambian editando el campo.
     #  · Pasar una correctiva a «preventiva» la exime del documento (contrato real): se pide a Daniel.
-    #  · factura_tido/nudo de una OT cuyo documento ya se ligó y validó contra el ERP solo cambian ligando otro
-    #    documento («Ligar documento»), que valida y deja constancia: el texto libre no cuenta como factura.
+    #  · factura_tido/nudo de una OT cuyo documento ya se agregó y validó contra el ERP solo cambian agregando otro
+    #    documento («Agregar documento»), que valida y deja constancia: el texto libre no cuenta como factura.
     if "tipo" in d or "factura_tido" in d or "factura_nudo" in d:
         _fila_g = mysql_fetchone(
             "SELECT tipo, cliente_id, factura_tido, factura_nudo, factura_asociada_por, factura_rut_ok "
@@ -86614,8 +86614,8 @@ def mant_visita_update(vid):
                 d.get("factura_nudo", _fila_g.get("factura_nudo")))):
             return jsonify({
                 "ok": False, "error_codigo": "DOCUMENTO_PROTEGIDO",
-                "error": "El documento de esta OT ya quedó ligado y validado contra el ERP. Para cambiarlo usa "
-                         "«Ligar documento» (valida contra el ERP y deja constancia)."}), 409
+                "error": "El documento de esta OT ya quedó asociado y validado contra el ERP. Para cambiarlo usa "
+                         "«Agregar documento» (valida contra el ERP y deja constancia)."}), 409
     _ESTADOS_PROTEGIDOS_PUT = {"cerrada", "pendiente_aprobacion", "firmada_tecnico", "completada"}
     if (d.get("estado") or "").strip().lower() in _ESTADOS_PROTEGIDOS_PUT:
         return jsonify({
@@ -89653,7 +89653,7 @@ def ot2_detalle(vid):
     # es que una OT cuyos equipos se dieron de baja DESPUÉS de crearla se
     # ve exactamente igual que una OT que nunca tuvo equipos -- y el
     # mensaje en pantalla mentía. Acá se cuenta lo mismo SIN el filtro de
-    # baja: si hay equipos ligados pero ninguno visible, la pantalla lo
+    # baja: si hay equipos asociados pero ninguno visible, la pantalla lo
     # dice con todas sus letras en vez de sugerir que nadie los asignó.
     try:
         _eq_tot = mysql_fetchone(
@@ -89667,7 +89667,7 @@ def ot2_detalle(vid):
             (vid, vid)) or {}
         _n_eq_ligados = int(_eq_tot.get("n") or 0)
     except Exception as _e_eqb:
-        print(f"[ot2_detalle] conteo equipos ligados vid={vid}: {_e_eqb}", flush=True)
+        print(f"[ot2_detalle] conteo equipos asociados vid={vid}: {_e_eqb}", flush=True)
         _n_eq_ligados = len(equipos)
     equipos_ocultos_baja = max(0, _n_eq_ligados - len(equipos))
 
@@ -92262,14 +92262,14 @@ def ot2_api_finanzas(vid):
         f_tido = (d.get("factura_tido") or "").strip()[:5].upper() or None
         f_nudo = (d.get("factura_nudo") or "").strip()[:20] or None
         motivo = None
-        # 🔒 2026-10-08: el documento ya ligado y validado solo cambia con «Ligar documento» (ver mant_visita_update).
+        # 🔒 2026-10-08: el documento ya asociado y validado solo cambia con «Agregar documento» (ver mant_visita_update).
         if ("factura_tido" in d or "factura_nudo" in d) and (f_tido or f_nudo):
             _fila_pf = mysql_fetchone(
                 "SELECT factura_tido, factura_nudo, factura_asociada_por, factura_rut_ok FROM mant_visitas WHERE id=%s",
                 (vid,)) or {}
             if _ot_factura_escritura_protegida(_fila_pf, f_tido, f_nudo):
                 return _ot2_err(
-                    "El documento de esta OT ya quedó ligado y validado contra el ERP. Para cambiarlo usa «Ligar "
+                    "El documento de esta OT ya quedó asociado y validado contra el ERP. Para cambiarlo usa «Agregar "
                     "documento» (valida contra el ERP y deja constancia).", "DOCUMENTO_PROTEGIDO", http=409)
 
     # 🔧 FIX 2026-08-31 (Daniel trabado en OT-140, ciclo "El monto no es
@@ -92467,7 +92467,7 @@ def ot2_api_finanzas(vid):
     # 🧮 2026-10-08 (Daniel: «evitar que dos instalaciones se paguen con el mismo saldo»): lo que se declara como
     # cobro del servicio / despacho tampoco puede pasar del SALDO de las líneas de los documentos de la OT
     # (monto de la línea − lo que ya cobran otras OT). Solo cuando la petición CAMBIA el cobro. Si excede: 409 con
-    # las salidas (tomar solo el saldo, ligar otra factura, pasar a garantía, pedir autorización con argumento);
+    # las salidas (tomar solo el saldo, agregar otra factura, pasar a garantía, pedir autorización con argumento);
     # `tomar_saldo`=true baja el monto al saldo y sigue.
     _sal_env_cambia = zz_envio_monto is not None and not _mismo_monto(zz_envio_monto, v.get("zz_envio_monto"))
     _tomo_saldo = False
@@ -93645,7 +93645,7 @@ def ot2_api_ruta_pin(vid):
 #      Excepciones: OT interna SIN cliente (no hay a quién cobrar) y mantención preventiva de un contrato REAL.
 #   3. Cobro: uno o más documentos del ERP (FCV/FCE/BLV/BLE y nota de venta NVV/NVI) validados contra el ERP.
 #   5. AL CERRAR, revisión obligatoria otra vez: documento de cobro o $0 autorizado. Con nota de venta queda
-#      «Falta factura» (estado_facturacion 'con_nota_venta') hasta ligar la factura.
+#      «Falta factura» (estado_facturacion 'con_nota_venta') hasta agregar la factura.
 #   6. OT antiguas: bandeja «Regularizar» (GET /ot/api/regularizar).
 #  Requisito posterior de Daniel (mismo día): "tanto tickets y OT y cotización deberán siempre predominar con el
 #  documento de Random a menos que yo lo autorice, ahí predomina el argumento; que dejemos con la trazabilidad de
@@ -93675,7 +93675,7 @@ _OT_AUT_ENTIDADES = ("ot", "ticket", "cotizacion")
 _OT_PUERTA_NV_CIERRA = False
 _OT_PUERTA_MSG = ("Esta OT necesita un documento (factura, boleta o nota de venta) o la autorización de Daniel. "
                   "Usa «Pedir autorización».")
-_OT_PUERTA_MSG_FACTURA = ("Esta OT partió con una nota de venta: para cerrarla liga la factura o boleta, o pide la "
+_OT_PUERTA_MSG_FACTURA = ("Esta OT partió con una nota de venta: para cerrarla agrega la factura o boleta, o pide la "
                           "autorización de Daniel. Usa «Pedir autorización».")
 _OT_PUERTA_MSG_CERO = ("Esta OT se declaró en $0 ({motivo}) sin la autorización de Daniel. "
                        "Usa «Pedir autorización».")
@@ -93725,7 +93725,7 @@ def _ot_puerta_contrato_real(cliente_id, contrato_id=None):
 def _ot_puerta_docs_de(vid):
     """Documentos VALIDADOS contra el ERP que tiene la OT: filas de mant_visita_documentos origen 'erp' (las escriben
     el asistente, el núcleo clásico, el levantamiento y POST /ot/api/<vid>/documentos, todos tras consultar el
-    ERP) y, para OT anteriores a la tabla puente, el principal de mant_visitas SOLO si lo ligó asociar-factura
+    ERP) y, para OT anteriores a la tabla puente, el principal de mant_visitas SOLO si lo agregó asociar-factura
     (factura_asociada_por / factura_rut_ok: ahí sí se consultó el ERP). Un factura_tido/nudo escrito como texto
     libre (PUT) NO cuenta. Devuelve [{tido, nudo, origen, es_cobro, es_principal}] (tido en mayúsculas)."""
     out, vistos = [], set()
@@ -93872,7 +93872,7 @@ def _ot_puerta_validar_erp(doc, cli_rut=None):
         out["tido"] = str(tipo_enc).strip().upper()[:10]
     out["rut"] = (erp_doc.get("cliente_rut") or "").strip()[:20] or None
     # 🔒 2026-10-08: el documento tiene que ser DEL cliente de la OT. Una factura de otro RUT no sirve de
-    # documento (la salida es «Pedir autorización» o ligarla en la ficha con su justificación de RUT).
+    # documento (la salida es «Pedir autorización» o agregarla en la ficha con su justificación de RUT).
     if cli_rut and out["rut"]:
         try:
             if not _rut_analisis_comparacion(cli_rut, out["rut"]).get("match"):
@@ -93918,7 +93918,7 @@ def _ot_puerta_autorizacion_por_id(aid):
 
 
 def _ot_factura_escritura_protegida(fila, tido, nudo):
-    """🔒 2026-10-08: ¿escribir (tido, nudo) en factura_* cambiaría un documento que ya se ligó y validó contra el ERP
+    """🔒 2026-10-08: ¿escribir (tido, nudo) en factura_* cambiaría un documento que ya se agregó y validó contra el ERP
     (factura_asociada_por / factura_rut_ok)? Repetir el mismo documento o vaciarlo no cuenta. `fila` trae
     factura_tido, factura_nudo, factura_asociada_por, factura_rut_ok."""
     try:
@@ -94159,7 +94159,7 @@ def _ot_puerta_aplicar(cur, vid, p, fin_argumento=None):
     """Después del INSERT de una OT que pasó la puerta 'crear': deja la CONSTANCIA en la misma transacción.
       · documentos_ok que vinieron del body (no espejados por el núcleo: `docs_ya_guardados` ausente) → fila en
         mant_visita_documentos (origen erp validado / cotización de referencia) y el principal en factura_*.
-      · via 'autorizacion_crear' → la OT queda ligada a la autorización (visita_id / visita_creada_id) y, si la
+      · via 'autorizacion_crear' → la OT queda asociada a la autorización (visita_id / visita_creada_id) y, si la
         solicitud era de $0, cobro_cero_* apuntan a ella.
       · via 'cobro_cero_superadmin' → el superadministrador declaró el $0: se registra la autorización aprobada a
         su nombre (_ot_cobro_cero_registrar). Daniel: "cuenta como autorización y queda registrada".
@@ -94251,7 +94251,7 @@ _OT_CIERRE_ACCIONES = {
     "ANEXO_DESACTUALIZADO":        ("actualizar_anexo", "Regenerar el anexo de servicios"),
     "SOLO_NOTA_VENTA":             ("ligar_factura", "Ligar la factura o boleta que da de baja la nota de venta"),
     "DOC_REQUERIDO":               ("pedir_autorizacion", "Ligar un documento o pedir autorización a Daniel"),
-    "ZZ_SALDO_CONSUMIDO":          ("resolver_saldo", "Resolver el saldo: tomar solo lo que queda, ligar otra factura, pasar a garantía o pedir autorización"),
+    "ZZ_SALDO_CONSUMIDO":          ("resolver_saldo", "Resolver el saldo: tomar solo lo que queda, agregar otra factura, pasar a garantía o pedir autorización"),
 }
 _OT_PUERTA_FALTA_A_CODIGO = {"factura": "FALTA_FACTURA", "autorizacion_cobro_cero": "COBRO_CERO_SIN_AUTORIZACION",
                              "documento": "SIN_FACTURA"}
@@ -95011,7 +95011,7 @@ def ot_aut_api_aprobar(aid):
             mysql_execute("UPDATE mant_visitas SET cobro_cero_autorizacion_id=COALESCE(cobro_cero_autorizacion_id,%s) "
                           " WHERE id=%s AND modalidad_cobro IN ('garantia','sin_costo')", (aid, vid_nuevo))
         except Exception as e:
-            print(f"[ot-aut] ligar OT {vid_nuevo} a {aid}: {type(e).__name__}", flush=True)
+            print(f"[ot-aut] asociar OT {vid_nuevo} a {aid}: {type(e).__name__}", flush=True)
         try:
             _mant_log("visita", vid_nuevo, "creada_con_autorizacion",
                       ("Sin documento de Random" if tipo == "crear_sin_documento" else "Cobro por encima del saldo del documento")
@@ -95813,7 +95813,7 @@ def ot_api_documentos_regularizar(vid):
     con quién, cuándo y qué documento. Solo gestión; una OT cerrada se regulariza solo si de verdad le falta
     el documento (sin factura/boleta validada o con nota de venta pendiente)."""
     if not _ot_puede_regularizar():
-        return jsonify({"ok": False, "error": "Solo gestión puede ligar documentos.", "error_codigo": "SIN_PERMISO"}), 403
+        return jsonify({"ok": False, "error": "Solo gestión puede agregar documentos.", "error_codigo": "SIN_PERMISO"}), 403
     v = mysql_fetchone("SELECT id, estado, cliente_id, tipo FROM mant_visitas WHERE id=%s", (vid,))
     if not v:
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
@@ -95840,7 +95840,7 @@ def ot_api_documentos_regularizar(vid):
         if http == 200:
             d = request.get_json(silent=True) or {}
             _mant_log("visita", vid, "documento_regularizado",
-                      f"OT cerrada regularizada: se ligó {str(d.get('tipo') or d.get('cotizacion') or '')} "
+                      f"OT cerrada regularizada: se asoció {str(d.get('tipo') or d.get('cotizacion') or '')} "
                       f"{str(d.get('numero') or '')} por {current_username() or '?'} · estado, firmas y fechas intactos")
     except Exception as e:
         print(f"[ot-regularizar] log vid={vid}: {type(e).__name__}", flush=True)
@@ -96211,7 +96211,7 @@ def ot2_api_documentos_agregar(vid):
         except Exception as _e_ex:
             print(f"[ot_docs] duplicado vid={vid}: {_e_ex}", flush=True)
         for _t_e, _n_e in _existentes:
-            # 🔒 2026-10-08: la factura/boleta de una nota de venta ligada es el flujo normal («empezar con nota de
+            # 🔒 2026-10-08: la factura/boleta de una nota de venta asociada es el flujo normal («empezar con nota de
             # venta y terminar facturando»): la nota queda dada de baja por ella, no se cobra dos veces.
             if _tipo_real in _OT_DOCS_COBRO and (_t_e or "").upper() in _OT_DOCS_NOTA_VENTA:
                 continue
@@ -96234,7 +96234,7 @@ def ot2_api_documentos_agregar(vid):
 
     # 🧮 2026-10-08 (Daniel: «evitar que dos instalaciones se paguen con el mismo saldo»): lo que este documento
     # aporta a la OT no puede pasar del SALDO de sus líneas (monto − lo que ya cobran otras OT). Si excede: 409
-    # con las salidas; `tomar_saldo`=true liga el documento aportando solo lo que queda. Regularizar pasa por acá.
+    # con las salidas; `tomar_saldo`=true agrega el documento aportando solo lo que queda. Regularizar pasa por acá.
     _tomo_saldo = False
     if _zz_leido and _zz_total:
         _sal_err = _ot_saldo_chequear(
@@ -96433,7 +96433,7 @@ def ot2_api_documentos_quitar(vid, did):
 
     2026-10-08 (decisión explícita, revisión): se queda con @_ot_can_cobertura, que NO rige en 'completada'. Agregar
     un documento se abrió en el cierre porque destraba un rechazo; QUITAR uno con el cliente ya firmado es borrar
-    evidencia (principio «nada se pisa, nada se borra»). Si se ligó uno equivocado, el superadmin lo corrige con
+    evidencia (principio «nada se pisa, nada se borra»). Si se agregó uno equivocado, el superadmin lo corrige con
     «Corregir finanzas» (queda en el registro) y el motor muestra el aviso de desacople.
 
     El documento PRINCIPAL no se quita por acá a propósito: es el que
@@ -96588,9 +96588,9 @@ def ot2_api_proveedor_del_tecnico(vid):
                 (uid, _por_rut["id"]))
             _mant_log("sistema", 0, "proveedor_ligado_a_tecnico",
                       f"Proveedor #{_por_rut['id']} ({_por_rut.get('razon_social')}) "
-                      f"ligado al técnico {v.get('tec_nombre')} desde la OT {vid}.")
+                      f"asociado al técnico {v.get('tec_nombre')} desde la OT {vid}.")
         except Exception as e:
-            print(f"[prov_tecnico] ligar vid={vid}: {e}", flush=True)
+            print(f"[prov_tecnico] asociar vid={vid}: {e}", flush=True)
         return jsonify({"ok": True, "creado": False,
                         "proveedor": {"id": _por_rut["id"], "razon_social": _por_rut.get("razon_social"),
                                       "rut_empresa": rut},
@@ -96877,7 +96877,7 @@ def _ot_equipo_fuera_servicio_marcar(vid, mid, motivo, v, m, crear_urgencia=True
 #      "Se deja la máquina andando, pero con la alerta".
 #
 #  Trayectoria de una solicitud (mant_ot_repuesto_solicitudes.estado):
-#    solicitado → validado (ligado a un repuesto REAL de la Bodega)
+#    solicitado → validado (asociado a un repuesto REAL de la Bodega)
 #               → pedido (proveedor obligatorio / OC) → recibido → instalado
 #    y rechazado desde cualquiera (con nota). Al cerrar la última abierta el
 #    ticket agrupador se resuelve solo y la alerta de la máquina se apaga
@@ -96912,7 +96912,7 @@ _OTREP_ORIGEN_LABEL = {
 # bodega ya tenía stock, no hay nada que pedir.
 # 🔒 2026-09-26 (revisión Fase 5, hallazgo ALTA #3): el mapa GLOBAL de
 # transiciones NO se toca -- "solicitado" nunca salta directo a "pedido"
-# para NADIE. El caso "solicitado ya ligado a proveedor, sin repuesto de
+# para NADIE. El caso "solicitado ya asociado a proveedor, sin repuesto de
 # bodega" que la spec de Compras mencionaba se resuelve más simple: primero
 # se valida/liga a bodega (transición normal 'solicitado' -> 'validado'),
 # y RECIÉN desde 'validado' se puede comprar -- así el kardex de Fase 3
@@ -96949,7 +96949,7 @@ _OTREP_STOCK_SOLO_GESTION_PROV = ("proveedor", "proveedor_id", "proveedor_contac
                                   "proveedor_telefono", "proveedor_email", "proveedor_canal",
                                   "costo_unitario")
 # Mismo criterio para la fila de una SOLICITUD (_otrep_fila): proveedor, OC, la
-# nota de gestión (suele hablar del proveedor) y todo lo que ligue la solicitud
+# nota de gestión (suele hablar del proveedor) y todo lo que asocie la solicitud
 # a la Compra/ticket de compra (ahí vive el contacto del proveedor). Se
 # conservan estado, estado_label, compra_estado_label y compra_eta: el técnico
 # sí puede saber que su repuesto "está pedido" y cuándo llega.
@@ -96974,7 +96974,7 @@ _OTREP_SOL_NO_EXTERNO = ("nota_gestion", "oc_numero", "proveedor_nombre", "prove
                          "validado_por", "resuelto_por",
                          # 🔒 FIX 2026-09-20 (revisión): _OTREP_SQL_SOL trae
                          # el stock/descripción de bodega del repuesto ya
-                         # ligado -- la política del bloque es que el
+                         # asociado -- la política del bloque es que el
                          # externo no vea stock (mismo criterio que
                          # _OTREP_STOCK_NO_EXTERNO, que sí lo cubre en el
                          # buscador pero no llegaba hasta acá).
@@ -98238,7 +98238,7 @@ def _otrep_etapa_y_plazo(s):
     if est == "solicitado":
         etapa, desde = "gestionar", s.get("created_at")
         objetivo = _OTREP_PLAZO_H["gestionar_fs"] if s.get("prioridad_fs") else _OTREP_PLAZO_H["gestionar"]
-        sig = "Gestionar: ligar o crear el repuesto y elegir el camino"
+        sig = "Gestionar: asociar o crear el repuesto y elegir el camino"
     elif est == "pedido" or (est == "validado" and s.get("compra_id")):
         etapa, desde = "compra", s.get("pedido_at") or s.get("validado_at")
         sig = "Esperar al proveedor y recibir en bodega"
@@ -98472,7 +98472,7 @@ def _otrep_cargar_ot_y_equipo(vid, mid):
       1. la OT tiene cliente (una OT de trabajo interno, cliente_id NULL,
          no tiene equipos de ficha que mover);
       2. el equipo es de ESE cliente;
-      3. el equipo está ligado a ESTA OT (tareas o mant_visita_equipos) --
+      3. el equipo está asociado a ESTA OT (tareas o mant_visita_equipos) --
          el mismo criterio con que la pantalla lo lista.
     Devuelve (v, m, None) o (None, None, respuesta_error)."""
     v = mysql_fetchone(
@@ -98497,7 +98497,7 @@ def _otrep_cargar_ot_y_equipo(vid, mid):
             "SELECT 1 AS x FROM mant_visita_equipos WHERE visita_id=%s AND maquina_id=%s LIMIT 1",
             (vid, mid))
     except Exception as e:
-        print(f"[otrep] ligado vid={vid} mid={mid}: {e}", flush=True)
+        print(f"[otrep] asociado vid={vid} mid={mid}: {e}", flush=True)
         ligado = None
     if not ligado:
         return None, None, _ot2_err("Ese equipo no está en esta OT.", "EQUIPO_NO_EN_OT", http=403)
@@ -99661,7 +99661,7 @@ def ot2_api_equipo_solicitar_repuesto(vid, mid):
         avisos.append("La solicitud quedó guardada, pero no se pudo crear el ticket de seguimiento. "
                        "Gestión puede crearlo desde Repuestos → Solicitudes desde OT.")
     # 🔒 FIX 2026-09-20 (revisión adversarial, hallazgo severidad media): al
-    # crear la solicitud YA ligada a un repuesto real de bodega (origen
+    # crear la solicitud YA asociada a un repuesto real de bodega (origen
     # compatible/bodega, "stock" quedó asignado arriba), es el primer
     # momento en que el repuesto puede quedar sobre-comprometido -- antes
     # este cálculo solo corría al validar o al editar la cantidad, nunca al
@@ -100237,7 +100237,7 @@ def ot2_api_equipo_dar_baja(vid, mid):
     try:
         # 🔒 2026-09-26 (revisión #2, hallazgo MEDIA #5): esta baja rechaza
         # solicitudes con SQL directo (no pasa por _otrep_cambiar_estado ni
-        # por el wrapper de la cola) -- si alguna estaba ligada a una
+        # por el wrapper de la cola) -- si alguna estaba asociada a una
         # Compra a proveedor, se limpia compra_id y se recalcula el
         # agregado de esa Compra, mismo criterio que el resto de los
         # caminos de rechazo/reapertura (ver MEDIA #6 en
@@ -100418,7 +100418,7 @@ def _otrep_filtros_query():
     q = (request.args.get("q") or "").strip()
     if q:
         like = f"%{q}%"
-        # 🔎 2026-10-04: también por SKU de la solicitud (aunque no esté ligada a
+        # 🔎 2026-10-04: también por SKU de la solicitud (aunque no esté asociada a
         # bodega), por persona (quién la pidió / quién la gestiona) y por
         # proveedor (este último nunca para un técnico, REGLA #19).
         _q_or = ("s.repuesto_nombre LIKE %s OR v.numero_ot LIKE %s OR m.nombre LIKE %s "
@@ -100980,7 +100980,7 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
         rid = str(d.get("repuesto_stock_id") or s.get("repuesto_stock_id") or "").strip()
         if not rid.isdigit():
             return False, 400, {"ok": False, "error":
-                            "Para validar hay que ligar la solicitud a un repuesto REAL de la Bodega "
+                            "Para validar hay que asociar la solicitud a un repuesto REAL de la Bodega "
                             "(uno existente, o créalo primero con su ubicación)."}
         stock = mysql_fetchone(
             "SELECT id, sku, descripcion, cantidad, proveedor_id, costo_unitario FROM mant_repuestos_stock "
@@ -101107,7 +101107,7 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
                 if d.get("_entrada_ya_registrada"):
                     mov_aviso = None
                 elif not s.get("repuesto_stock_id"):
-                    mov_aviso = ("Esta solicitud no está ligada a un repuesto de bodega: el "
+                    mov_aviso = ("Esta solicitud no está asociada a un repuesto de bodega: el "
                                  "movimiento de bodega no se registró.")
                 elif s.get("es_reposicion"):
                     # 🔒 ALTA #1: una reposición SIEMPRE hace la entrada al
@@ -101163,7 +101163,7 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
                         " LIMIT 1", (sid,))
                     _tiene_entrada = cur.fetchone() is not None
                 if not s.get("repuesto_stock_id"):
-                    mov_aviso = ("Esta solicitud no está ligada a un repuesto de bodega: el "
+                    mov_aviso = ("Esta solicitud no está asociada a un repuesto de bodega: el "
                                  "movimiento de bodega no se registró.")
                 elif actual == "recibido" and not _tiene_entrada:
                     # 🔒 MEDIA #3 (revisión Fase 3): esta solicitud ya estaba
@@ -101325,7 +101325,7 @@ def repstock_solicitud_ot_estado(sid):
     comportamiento de antes.
 
     🧾 Fase 5 (2026-09-26, revisión hallazgo MEDIA #6): si la solicitud
-    estaba ligada a una Compra (compra_id), un cambio de estado disparado
+    estaba asociada a una Compra (compra_id), un cambio de estado disparado
     desde ACÁ (el botón individual de la tarjeta, no desde Compras) debe
     seguir reflejándose en la Compra: rechazar/reabrir la suelta (vuelve a
     NULL -- ya no cuenta ni como pedida ni como recibida) y recibir/
@@ -101418,7 +101418,7 @@ def _otrep_compra_elegible(s):
 
     🔒 2026-09-26 (revisión Fase 5, hallazgo ALTA #3): se simplificó a
     propósito -- la spec original mencionaba un segundo camino
-    ("solicitado ya ligado a proveedor, sin repuesto de bodega") que
+    ("solicitado ya asociado a proveedor, sin repuesto de bodega") que
     hubiera exigido tocar el mapa GLOBAL `_OTREP_TRANSICIONES` para dejar
     saltar 'solicitado' -> 'pedido' fuera del flujo normal. Se prefirió lo
     más simple y seguro: toda solicitud pasa PRIMERO por 'validado' (se
@@ -101427,7 +101427,7 @@ def _otrep_compra_elegible(s):
     presente) sigue funcionando sin un segundo camino especial que
     mantener.
 
-    1. 'validado' -- bodega YA la revisó y la ligó a un repuesto real, PERO
+    1. 'validado' -- bodega YA la revisó y la asoció a un repuesto real, PERO
        el disponible no alcanza (hallazgo MEDIA #9: "sin stock suficiente",
        no cualquier validado -- si hay de sobra en bodega, no hay nada que
        comprarle a nadie).
@@ -102301,7 +102301,7 @@ def _otrep_compra_prorratear_costo(cid):
 
     Si CUALQUIERA de las líneas pendientes de costear no tiene una
     referencia de bodega (repuesto sin costo_unitario, o sin
-    repuesto_stock_id ligado), NO prorratea nada -- ninguna línea, ni
+    repuesto_stock_id asociado), NO prorratea nada -- ninguna línea, ni
     siquiera las que sí tendrían referencia: mejor "sin costo registrado"
     en todas que inventar un número en la mitad de ellas y dejar la otra
     mitad con una base de cálculo distinta que confunda el desglose.
@@ -102385,7 +102385,7 @@ def repstock_compra_recibir(cid):
       1. Incrementa `cantidad_recibida` de forma atómica (MEDIA #2:
          `SET cantidad_recibida=cantidad_recibida+%s WHERE ... AND
          compra_id=%s AND estado='pedido'` + rowcount).
-      2. Si tiene repuesto de bodega ligado, registra la ENTRADA real de
+      2. Si tiene repuesto de bodega asociado, registra la ENTRADA real de
          kardex para ESTA entrega vía `_repstock_mover(cur=cur)` -- el
          excedente sobre lo pedido entra igual (el stock físico debe
          calzar con lo que de verdad llegó) y queda anotado en la nota.
@@ -102670,7 +102670,7 @@ def repstock_solicitud_ot_repartir(sid):
     uno se puede gestionar la instalación directamente con el cliente" + "por
     trazabilidad tendríamos que recibir las 10 y ahí gestionar la orden de trabajo
     de instalación para consumir las recibidas". Decisión (AskUserQuestion): la
-    parte que queda en bodega nace como solicitud HIJA ligada a la original.
+    parte que queda en bodega nace como solicitud HIJA asociada a la original.
 
     Cómo queda (body: {instalar: N}):
       - La original (madre) sigue siendo la del cliente, ahora por N: es la que
@@ -102787,7 +102787,7 @@ def repstock_solicitud_ot_repartir(sid):
     # pedido al proveedor), las unidades de bodega tampoco existen ahí: se avisa.
     aviso = None
     if not s.get("repuesto_stock_id"):
-        aviso = ("Esta solicitud no está ligada a un repuesto de bodega: las unidades separadas "
+        aviso = ("Esta solicitud no está asociada a un repuesto de bodega: las unidades separadas "
                  "no figuran en el inventario.")
     else:
         _ent = mysql_fetchone(
@@ -103444,7 +103444,7 @@ def repstock_solicitud_manual():
     """"Solicitar repuesto" potente (Fase 2, 2026-09-25 -- Daniel: "el
     solicitar repuesto debe ser bien potente"). Crea VARIAS solicitudes de
     una sola vez (una por repuesto elegido en el paso 2 del modal), todas
-    con el MISMO lote_id -- así "Solicitudes" las puede mostrar ligadas y,
+    con el MISMO lote_id -- así "Solicitudes" las puede mostrar asociadas y,
     más adelante, un ticket de compra agrupado (Fase 5) las reconoce como
     un solo pedido.
 
@@ -103452,7 +103452,7 @@ def repstock_solicitud_manual():
     "Reposición de stock propio" (es_reposicion=true, entonces sin cliente).
     Cada repuesto puede venir de la Bodega (repuesto_stock_id -> nace
     'validado', mismo criterio y aviso de comprometido que ya usa la
-    transición a validado) o manual/ERP sin ligar (nace 'solicitado', "por
+    transición a validado) o manual/ERP sin agregar (nace 'solicitado', "por
     validar").
 
     Acepta JSON puro (sin adjunto) o multipart (con adjunto, campo
@@ -103515,7 +103515,7 @@ def repstock_solicitud_manual():
     if mq.isdigit():
         if not cliente_id:
             return jsonify({"ok": False, "error":
-                            "Un equipo solo se puede ligar cuando la solicitud es para un cliente."}), 400
+                            "Un equipo solo se puede asociar cuando la solicitud es para un cliente."}), 400
         maq = mysql_fetchone("SELECT id FROM mant_maquinas WHERE id=%s AND cliente_id=%s",
                               (int(mq), cliente_id))
         if not maq:
@@ -103924,7 +103924,7 @@ def repstock_solicitud_ot_preparar_ot(sid):
                            tiene cliente_id (no es "reposición de stock
                            propio"), el cliente YA está resuelto -- mismo
                            trato que origen OT, incluido el equipo si se
-                           ligó uno al crearla. Si es reposición (sin
+                           asoció uno al crearla. Si es reposición (sin
                            cliente), el wizard nace en blanco como Incidencia.
     """
     row = mysql_fetchone(_OTREP_SQL_SOL + " WHERE s.id=%s", (sid,))
@@ -104406,7 +104406,7 @@ def ot2_api_repuesto_instalar(vid, sid):
     ok, http, payload = _otrep_cambiar_estado(sid, "instalado", user, d)
     # 🧾 Fase 5 (2026-09-26, revisión hallazgo MEDIA #6): "Marcar instalado"
     # desde la OT es otro botón INDIVIDUAL que puede tocar una solicitud
-    # ligada a una Compra -- mismo motivo que en repstock_solicitud_ot_estado,
+    # asociada a una Compra -- mismo motivo que en repstock_solicitud_ot_estado,
     # se recalcula el agregado para que el semáforo de "Compras" no quede
     # desactualizado por haberse instalado desde acá en vez de esa pantalla.
     if ok and s.get("compra_id"):
@@ -108929,7 +108929,7 @@ def _anexo_dict(row):
 @_mant_required
 @_ot_can_view
 def ot2_anexos_list(vid):
-    """Anexos ligados a esta OT — para la ficha administrativa.
+    """Anexos asociados a esta OT — para la ficha administrativa.
 
     Visible solo para gestión (el decorador @_ot_can_view ya excluye a un
     técnico no asignado; el candado de "solo administración, nunca técnico"
@@ -109566,7 +109566,7 @@ def ot2_api_anexo_enviar(aid):
     # vería la OT". Un solo correo cumple las dos cosas: avisa la OT nueva
     # Y trae el link que la desbloquea — no dos correos separados que se
     # puedan desincronizar. Los datos de la OT son opcionales (un anexo
-    # puede no estar ligado a una OT todavía) para no romper ese caso.
+    # puede no estar asociado a una OT todavía) para no romper ese caso.
     _ot_ctx = ""
     _v = None
     if a.get("ot_id"):
@@ -109590,7 +109590,7 @@ def ot2_api_anexo_enviar(aid):
     # pidió una plantilla EDITABLE (comm_templates) para este correo, con el
     # link del anexo Y el link a la orden de trabajo preseleccionada — antes
     # salía 100% hardcodeado en Python. Solo aplica cuando el anexo SÍ está
-    # ligado a una OT (a['ot_id']): sin OT no hay nada que enlazar y seguimos
+    # asociado a una OT (a['ot_id']): sin OT no hay nada que enlazar y seguimos
     # con el flujo de siempre, más abajo.
     #
     # El link a la OT apunta a la ficha normal (mant_ot_ficha), NO a un
@@ -110005,7 +110005,7 @@ def _anexo_pdf_bytes(a):
     # los equipos YA asociados a la OT (mant_visita_tareas.maquina_id, "la
     # fuente universal de qué equipo tiene una OT", ver comentario en
     # app.py ~68765) en vez de pedirle a alguien que los vuelva a tipear a
-    # mano -- si el anexo no tiene OT (proveedor sin OT ligada todavía),
+    # mano -- si el anexo no tiene OT (proveedor sin OT asociada todavía),
     # simplemente no sale la tabla, no se inventa una captura manual nueva.
     # Un anexo FIRMADO muestra lo que se firmo, no lo que la OT tenga hoy.
     # Mientras esta sin firmar sigue el estado vivo de la OT, que es lo
@@ -111442,7 +111442,7 @@ def _ot_zz_topes_reales(tido_principal, nudo_principal, documentos_extra, client
 #  Una línea de servicio (ZZINSTALACION, ZZMANTENCION…) o de despacho (ZZENVIO) de una factura no puede contarse
 #  como cobro, sumando todas las OT (no canceladas ni anuladas), por más que su monto. La lógica pura vive en
 #  ot_saldo_servicio.py (con pruebas); acá están las lecturas (base + ERP en SOLO LECTURA, REGLA #4.1) y el
-#  candado que usan: el asistente de crear, ligar documento (POST /ot/api/<vid>/documentos, asociar-factura,
+#  candado que usan: el asistente de crear, agregar documento (POST /ot/api/<vid>/documentos, asociar-factura,
 #  regularizar), declarar el cobro (/ot/api/finanzas) y el modal de cierre. Una nota de venta dada de baja por
 #  su factura NO cuenta doble: la factura hereda lo que usó la nota (familia del documento).
 # ═══════════════════════════════════════════════════════════════════════════
@@ -111767,7 +111767,7 @@ def _ot_saldo_reservar(docs):
 def _ot_saldo_chequear(docs, pedido, excluir_vid=None, cliente_rut=None, autorizado_hasta=None, puede_garantia=True):
     """El CANDADO. `pedido` = {servicio: n|None, despacho: n|None}: lo que la OT quiere declarar como cobro. None si
     cabe en el saldo de sus documentos (o si no hay nada que verificar: sin líneas de servicio o ERP caído); si no,
-    el dict de error ZZ_SALDO_CONSUMIDO con el texto, las acciones (tomar el saldo, ligar otra factura, pasar a
+    el dict de error ZZ_SALDO_CONSUMIDO con el texto, las acciones (tomar el saldo, agregar otra factura, pasar a
     garantía, pedir autorización con argumento) y el saldo por documento."""
     _ot_saldo_reservar(docs)   # antes de leer el saldo: serializa a quienes ligan el mismo documento
     try:
@@ -112012,7 +112012,7 @@ def _ot_saldo_tomar_core(vid):
 
 
 def _ot_saldo_resumen(tido, nudo, excluir_vid=None, cliente_rut=None):
-    """Saldo compacto de un documento para la vista previa de «Ligar documento»."""
+    """Saldo compacto de un documento para la vista previa de «Agregar documento»."""
     s = _ot_saldo_doc(tido, nudo, excluir_vid, cliente_rut=cliente_rut)
     if not s["leido"]:
         return None
@@ -117830,7 +117830,7 @@ def mant_ot_aprobar_cierre(vid):
     # 🧮 2026-10-08 (Daniel: «esto debe funcionar para el modal de cerrar OT con la firma, para no trabar el
     # proceso»): lo que la OT cobra no puede pasar del SALDO de las líneas de sus documentos (monto − lo que ya
     # cobran otras OT). Excede → 409 ZZ_SALDO_CONSUMIDO con las salidas en el MISMO modal (tomar solo el saldo,
-    # ligar otra factura, pasar a garantía, pedir autorización con argumento): nunca un callejón sin salida.
+    # agregar otra factura, pasar a garantía, pedir autorización con argumento): nunca un callejón sin salida.
     # No toca estado ni firmas. Mismo interruptor que los demás candados.
     if (_gate_on and not _interna_cierre and _cob_cierre == "cobra" and _via_cierre != "autorizacion_cerrar"
             and (v.get("valor_origen") or "") not in _OT_SALDO_ORIGENES_NO_DOC):
@@ -118145,7 +118145,7 @@ def _ot_doc_registrar_fila(vid, tipo_real, numero_real, monto, rut, rut_ok, just
                           f"{_pt} {_pn} dada de baja por {tipo_real} {numero_real} (las dos quedan visibles)")
         if (estado_ot or "") in ("cerrada", "completada"):
             _mant_log("visita", vid, "documento_en_ot_cerrada",
-                      f"{tipo_real} {numero_real} ligado con la OT {estado_ot}: solo documentos/finanzas, sin tocar estado ni firmas")
+                      f"{tipo_real} {numero_real} asociado con la OT {estado_ot}: solo documentos/finanzas, sin tocar estado ni firmas")
     except Exception as e:
         print(f"[ot_docs] registrar fila vid={vid} {tipo_real} {numero_real}: {type(e).__name__}: {e}", flush=True)
 
@@ -118293,7 +118293,7 @@ def mant_ot_declarar_cobertura(vid):
       · Solo hasta antes de cerrar la OT (lo enforcea `_ot_can_cobertura`).
       · tipo='levantamiento' NUNCA admite garantía — `_mapear_garantia_a_
         cobertura` lo degrada a pagado y se devuelve el warning al frontend.
-      · Al pasar a garantía se ANULA el documento de cobro ligado (si había):
+      · Al pasar a garantía se ANULA el documento de cobro asociado (si había):
         una OT que no se cobra no puede quedar apuntando a una factura. El
         valor anterior queda escrito en `mant_logs` (REGLA #5), nunca se
         pierde. NO se toca `documento_erp_*` (la nota de venta de origen):
@@ -118540,7 +118540,7 @@ def mant_ot_asociar_factura(vid):
 
     # 🧮 2026-10-08: si la OT ya declara un cobro, ese cobro tiene que caber en el saldo de sus documentos con este
     # incluido (lo que otras OT ya usan de la línea no se puede cobrar dos veces). Excede → 409 con las salidas;
-    # `tomar_saldo`=true liga el documento y baja el cobro al saldo (después de ligar).
+    # `tomar_saldo`=true agrega el documento y baja el cobro al saldo (después de agregar).
     _tomo_saldo_af = False
     try:
         _vcb = mysql_fetchone("SELECT zz_monto, zz_envio_monto, valor_origen, modalidad_cobro, estado FROM mant_visitas "
@@ -118556,10 +118556,10 @@ def mant_ot_asociar_factura(vid):
                     return _ot_saldo_error_json(_sal_err, vid)
                 if (_vcb.get("estado") or "") == "cerrada":
                     # 🔒 2026-10-08 (revisión): una OT cerrada no baja su cobro (el UPDATE de «tomar saldo» la
-                    # respeta): ligar así dejaría el sobrecobro. Se pide autorización en vez de ligar a medias.
+                    # respeta): asociar así dejaría el sobrecobro. Se pide autorización en vez de asociar a medias.
                     return _ot_saldo_error_json(dict(
                         _sal_err, error="La OT ya está cerrada: su cobro no se puede bajar al saldo desde acá. "
-                                        "Pide autorización con argumento o liga otra factura. " + str(_sal_err.get("error") or "")), vid)
+                                        "Pide autorización con argumento o agrega otra factura. " + str(_sal_err.get("error") or "")), vid)
                 _tomo_saldo_af = True
     except Exception as _e_sal:
         print(f"[asociar-factura] saldo vid={vid}: {type(_e_sal).__name__}", flush=True)
@@ -118579,7 +118579,7 @@ def mant_ot_asociar_factura(vid):
     # propósito (candado maestro, ya pasó _puede_ot_accion arriba).
     _u_req = getattr(g, "user", None) or {}
     _es_superadmin_req = (_u_req.get("role") or "").lower() == "superadmin"
-    # 🔏 2026-10-07 (Daniel, decisión 6 -- bandeja Regularizar): ligar la factura debe funcionar con la OT
+    # 🔏 2026-10-07 (Daniel, decisión 6 -- bandeja Regularizar): agregar la factura debe funcionar con la OT
     # pendiente, firmada, completada o cerrada (solo se completan documentos: estado, firmas y fechas no se tocan;
     # queda constancia en mant_logs). Solo cancelada/anulada quedan fuera.
     _where_lock = "" if _es_superadmin_req else (
@@ -135560,7 +135560,7 @@ def mant_repuesto_asignar_ticket(rid):
 def mant_repuesto_solicitar():
     """2026-07-13 (Daniel): "toda solicitud de repuesto SIEMPRE crea un
     ticket automáticamente" — no opcional. Crea el ticket (tk_tickets,
-    tipo 'spare_parts') y la fila en mant_repuestos ligada a él en una
+    tipo 'spare_parts') y la fila en mant_repuestos asociada a él en una
     sola operación desde el punto de vista del usuario. Body:
       {marca, familia, nombre, cantidad, motivo, maquina_ids: [int,...],
        cliente_id: int|None}
@@ -135621,7 +135621,7 @@ def mant_repuesto_solicitar():
         finally:
             conn.close()
 
-        # Paso 2: crear el repuesto ligado al ticket recién creado. Si algo
+        # Paso 2: crear el repuesto asociado al ticket recién creado. Si algo
         # falla acá, revertimos el ticket huérfano (no queda a mitad de camino).
         try:
             fields = {
@@ -136999,7 +136999,7 @@ def _repstock_mover(repuesto_id, delta, tipo, motivo_tipo, *, solicitud_id=None,
     de pedir el lock nunca pisa un cambio que otra persona hizo justo en el
     medio (el delta se recalcula sobre el dato fresco, no sobre el viejo).
 
-    Idempotencia (spec Fase 3): un movimiento ligado a una SOLICITUD
+    Idempotencia (spec Fase 3): un movimiento asociado a una SOLICITUD
     (motivo_tipo 'recepcion_proveedor' o 'instalacion') no se inserta dos
     veces para el mismo (solicitud_id, motivo_tipo) -- si ya existe (ej. el
     usuario hizo doble click, o un reintento de red repite la transición de
@@ -151943,7 +151943,7 @@ def _ensure_mant_intel_tables():
     # planilla de seguimiento real (repuestos_2026-07-10.csv, 72 filas)
     # con columnas que mant_repuestos no tenía: Marca, Ubicación, UA,
     # Motivo, N° OT, TicketID, Código Repuesto, Garantía, Recomendación.
-    # También pidió poder ligar el repuesto a un proveedor CON canal de
+    # También pidió poder asociar el repuesto a un proveedor CON canal de
     # contacto (WhatsApp/WeChat/teléfono/email) para verlo directo desde
     # el ticket. Todo idempotente vía information_schema, patrón ya
     # usado arriba (costo_proveedor, aplica_mantencion, etc.).
@@ -151987,7 +151987,7 @@ def _ensure_mant_intel_tables():
             except Exception as e_idx2:
                 print(f"[ensure_intel] idx_rep_ticket: {e_idx2}", flush=True)
         # Relajar cliente_id a NULL: el CSV de Daniel trae repuestos con
-        # "Cliente" = texto libre no ligado a un cliente real (ej "ilus")
+        # "Cliente" = texto libre no asociado a un cliente real (ej "ilus")
         # — no podemos forzarlos a un cliente_id inventado. El CRUD real
         # (mant_repuesto_crear) sigue mandando cliente_id siempre, así
         # que esto no cambia el comportamiento de la ficha de cliente.
@@ -152567,7 +152567,7 @@ def _ensure_email_log_trazabilidad():
 # BODEGA DE REPUESTOS — inventario físico real (2026-08-07, Daniel).
 #
 # Esto es DISTINTO de `mant_repuestos` (seguimiento comercial: cotizado→
-# aprobado→instalado→facturado, ligado a cliente/ticket) y de
+# aprobado→instalado→facturado, asociado a cliente/ticket) y de
 # `mant_visita_repuestos` (qué se usó en una OT puntual). Ninguna de esas
 # dos tablas guarda un saldo físico — "cuántas unidades tengo hoy en el
 # estante". Esta sí.
@@ -155280,7 +155280,7 @@ except Exception as _ensure_pd_err:
 
 # Plantilla editable 'anexo_nueva_ot' (mantenciones/email) SIEMPRE sembrada
 # (incluso skip-migrations) — la usa ot2_api_anexo_enviar cuando el Anexo de
-# Servicios está ligado a una OT. Pedido de Daniel 2026-08-29 (wizard OT 2.0
+# Servicios está asociado a una OT. Pedido de Daniel 2026-08-29 (wizard OT 2.0
 # en vivo, por voz).
 try:
     with app.app_context():

@@ -2217,7 +2217,7 @@ async function aplicarPlantillaAOT(){
     // aplicará a TODAS automáticamente (anti-bug Vitacura). Si dice
     // que NO quiere así, le permitimos forzar `sin_maquina=true` para
     // crear tareas globales (uso avanzado: tareas administrativas no
-    // ligadas a un equipo).
+    // asociadas a un equipo).
     const ok = await ilusConfirm({
       title: 'Aplicar a todas las máquinas',
       message: `No marcaste ninguna máquina. ¿Aplicar la plantilla a las ${totalChk} máquinas del cliente?`,

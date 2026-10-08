@@ -7,7 +7,7 @@ todas las OT (no canceladas ni anuladas), por más que su monto. Qué se vigila:
   · El candado de app.py (_ot_saldo_chequear y sus lecturas) con un mundo en memoria: dos OT con la misma factura de
     $200.000, la segunda solo toma el saldo; con saldo 0, rechazo CON salidas; la nota de venta dada de baja por su
     factura no cuenta doble.
-  · Que el candado esté cableado en TODOS los caminos (crear, ligar documento, regularizar, asociar-factura, declarar
+  · Que el candado esté cableado en TODOS los caminos (crear, agregar documento, regularizar, asociar-factura, declarar
     el cobro, modal de cierre), con la acción «tomar solo el saldo» y las avisos en Regularizar y Facturación de
     proveedor, y que el motor, el asistente y el modal de cierre lo ofrezcan sin callejón sin salida.
 Sin BD, sin Flask, sin ERP (solo lectura, REGLA #4.1: nada de esto escribe en Random).
@@ -564,7 +564,7 @@ class TestPantallas(unittest.TestCase):
         # las cuatro salidas
         for tipo in ("tomar_saldo", "ligar_factura", "pasar_garantia", "pedir_autorizacion"):
             self.assertIn(tipo, js)
-        # ligar documento y declarar el cobro reciben el rechazo y lo resuelven en el mismo lugar
+        # agregar documento y declarar el cobro reciben el rechazo y lo resuelven en el mismo lugar
         self.assertEqual(js.count("ZZ_SALDO_CONSUMIDO"), 2)
         css = _leer("static/ot_fin_motor.css")
         for clave in (".fm-saldo", ".fm-saldo-alerta", ".fm-acc"):
@@ -573,7 +573,7 @@ class TestPantallas(unittest.TestCase):
     def test_el_asistente_de_crear_muestra_el_saldo_y_no_se_bloquea_entero(self):
         h = _leer("templates/ot2/_modal_crear.html")
         for clave in ('id="o2mFinSaldo"', "function _o2mFinCargarSaldo()", "/ot/api/saldo-servicio/", "function saldoAccion(que)",
-                      "Tomar solo el saldo", "Pedir autorización a Daniel", "Ligar otra factura", "Pasar a garantía",
+                      "Tomar solo el saldo", "Pedir autorización a Daniel", "Agregar otra factura", "Pasar a garantía",
                       "tipo: 'exceder_saldo'", "ZZ_SALDO_CONSUMIDO", "saldoAccion:saldoAccion"):
             self.assertIn(clave, h)
         # «tomar el saldo» no pide motivo: el número sigue saliendo del documento

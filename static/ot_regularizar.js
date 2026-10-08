@@ -1,7 +1,7 @@
 /* Bandeja «Regularizar» (Daniel 2026-10-07): las OT que no pasan la puerta del documento. Paginada en el servidor
    (REGLA #4.3: Mostrando A–B de N, N por página, Anterior / Página X de Y / Siguiente). Cada fila: sus documentos
    completos, el semáforo (sin documento / $0 sin autorizar / nota de venta sin factura) y las dos salidas:
-   ligar el documento (mismo diálogo del motor, POST /ot/api/<vid>/documentos) o pedir la autorización de Daniel.
+   agregar el documento (mismo diálogo del motor, POST /ot/api/<vid>/documentos) o pedir la autorización de Daniel.
    En OT cerradas solo se regulariza el documento / la plata: nunca estado, firmas ni fechas (OT = evidencia).
    Datos: GET /ot/api/regularizar. Requiere static/ot_fin_motor.js (los diálogos). */
 (function () {
@@ -38,7 +38,7 @@
   }
   function fila(it) {
     var pend = it.solicitud_pendiente;
-    var acc = '<button type="button" class="pp-btn pri" data-lig="' + it.id + '"><i class="bi bi-link-45deg"></i> Ligar documento</button>';
+    var acc = '<button type="button" class="pp-btn pri" data-lig="' + it.id + '"><i class="bi bi-link-45deg"></i> Agregar documento</button>';
     if (pend) {
       acc += '<a class="pp-btn" href="/ot/autorizaciones/' + pend.id + '"><i class="bi bi-hourglass-split"></i> Esperando a Daniel</a>';
     } else {

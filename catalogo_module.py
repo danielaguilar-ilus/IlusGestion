@@ -1,6 +1,6 @@
 """Modulo Catalogo de Productos ILUS (independiente de Tickets y del
 cubicador). Prefijo de tablas `cat_` para NO colisionar con
-PRODUCTS_TABLE/PHOTOS_TABLE de app.py (esas son del cubicador, ligadas 1:1
+PRODUCTS_TABLE/PHOTOS_TABLE de app.py (esas son del cubicador, asociadas 1:1
 al SKU del ERP para /cubicador). Este catalogo es de referencia general:
 ficha por SKU con fotos (hasta 10) + manual PDF, sin relacion con el ERP.
 
@@ -1165,7 +1165,7 @@ def register_catalogo_routes(app, ctx):
         # "TypeError: not enough arguments for format string"): pymysql aplica
         # %-formatting a la query SIN params tambien, asi que un "%" LITERAL de
         # LIKE escrito directo en el string rompe el execute. El patron LIKE va
-        # como parametro ligado (%s), nunca como texto crudo de la query.
+        # como parametro asociado (%s), nunca como texto crudo de la query.
         rows = mysql_fetchall(
             "SELECT clave, valor FROM tk_settings "
             "WHERE clave='cotiz_valor_hh' OR clave='cotiz_margen_pct' "

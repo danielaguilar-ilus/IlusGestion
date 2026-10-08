@@ -6537,7 +6537,7 @@ window.OT2C = (function(){
      «esto debe funcionar para el modal de crear OT… para no trabar el proceso»). Al elegir los documentos se
      muestra, por línea de servicio y de despacho: el monto, cuánto ya usan OTRAS OT (con su número, cliente y
      enlace) y el saldo; el asistente PROPONE tomar solo el saldo y, si ya no queda nada, ofrece las otras salidas
-     (ligar otra factura, pasar a garantía, pedir autorización a Daniel) SIN bloquear el resto del asistente.
+     (agregar otra factura, pasar a garantía, pedir autorización a Daniel) SIN bloquear el resto del asistente.
      GET /ot/api/saldo-servicio/<tido>/<nudo> (solo lectura del ERP). El servidor vuelve a validar al crear. */
   var _finSaldoSeq = 0;
   var _O2M_SAL_NV = ['NVV','NVI','VD','WEB'], _O2M_SAL_COBRO = ['FCV','FCE','BLV','BLE'];
@@ -6588,7 +6588,7 @@ window.OT2C = (function(){
     var saldoTot = ex.reduce(function(a, e){ return a + e.saldo; }, 0);
     return '<div class="o2m-saldo-acc">'+
       (saldoTot > 0 ? '<button type="button" class="pri" onclick="OT2C.saldoAccion(\'tomar\')"><i class="bi bi-arrow-down-circle-fill"></i>Tomar solo el saldo ('+_o2mPesos(saldoTot)+')</button>' : '')+
-      '<button type="button" onclick="OT2C.saldoAccion(\'ligar\')"><i class="bi bi-link-45deg"></i>Ligar otra factura</button>'+
+      '<button type="button" onclick="OT2C.saldoAccion(\'ligar\')"><i class="bi bi-link-45deg"></i>Agregar otra factura</button>'+
       '<button type="button" onclick="OT2C.saldoAccion(\'garantia\')"><i class="bi bi-shield-check"></i>Pasar a garantía</button>'+
       '<button type="button" onclick="OT2C.saldoAccion(\'autorizar\')"><i class="bi bi-shield-lock"></i>Pedir autorización a Daniel</button></div>';
   }
@@ -7285,7 +7285,7 @@ window.OT2C = (function(){
       var t = _primerTecnicoExterno();
       // 2026-10-05 (Anexo N°202): el proveedor es la EMPRESA (DAP), no la
       // persona (Jean Carlos Araujo). Solo si el técnico no tiene empresa
-      // ligada se usa su propio nombre.
+      // asociada se usa su propio nombre.
       if (t) a.proveedor_nombre = t.empresa_nombre || t.nombre || '';
     }
     // 2026-08-30 (Daniel, viendo el anexo en vivo, textual: "el correo de
@@ -7298,7 +7298,7 @@ window.OT2C = (function(){
     // sigue vacío, nunca pisa algo que el usuario ya escribió a mano.
     var _tExt = _primerTecnicoExterno();
     if (_tExt){
-      // Con empresa ligada, RUT/correo/teléfono son los de la EMPRESA.
+      // Con empresa asociada, RUT/correo/teléfono son los de la EMPRESA.
       var _eRut = _tExt.empresa_nombre ? (_tExt.empresa_rut || '') : (_tExt.rut || '');
       var _eMail = (_tExt.empresa_nombre && _tExt.empresa_email) || _tExt.email;
       var _eTel = (_tExt.empresa_nombre && _tExt.empresa_tel) || _tExt.telefono;

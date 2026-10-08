@@ -840,7 +840,7 @@ a.pv-it:hover{transform:translateX(3px);border-color:#dc2626;box-shadow:0 4px 12
         <div class="trx-empty">
           <div class="trx-empty-ico"><i class="bi bi-truck"></i></div>
           <div class="trx-empty-t">Todavía no hay proveedores registrados</div>
-          <div class="trx-empty-d">Crea el primero para ligarle sus repuestos y pedirle en lotes.</div>
+          <div class="trx-empty-d">Crea el primero para asociarle sus repuestos y pedirle en lotes.</div>
           <button class="trx-btn-primary" type="button" onclick="provAbrirNuevo()"><i class="bi bi-plus-lg"></i>Nuevo proveedor</button>
         </div>
       </div>
@@ -2099,8 +2099,8 @@ function pvfRepRender(){
   const d = _pvf.rel || {}, reps = d.repuestos || [], leg = d.legacy || [];
   const box = document.getElementById('pvfPaneRep');
   if (!reps.length){
-    box.innerHTML = '<div class="pv-vacio"><i class="bi bi-box me-1"></i>Todavía no hay repuestos de la bodega ligados a este proveedor.</div>' +
-      (leg.length ? '<div class="mt-2 small text-muted">Hay ' + leg.length + ' repuesto(s) del sistema anterior ligados a este proveedor.</div>' : '');
+    box.innerHTML = '<div class="pv-vacio"><i class="bi bi-box me-1"></i>Todavía no hay repuestos de la bodega asociados a este proveedor.</div>' +
+      (leg.length ? '<div class="mt-2 small text-muted">Hay ' + leg.length + ' repuesto(s) del sistema anterior asociados a este proveedor.</div>' : '');
     return;
   }
   const valor = reps.reduce(function(a, r){ return a + (r.cantidad || 0) * (r.costo_unitario || 0); }, 0);
@@ -2157,7 +2157,7 @@ function pvfRepRender(){
     pvfTabla('rep', [{k:'foto', t:'Foto', m:'foto'}, {k:'rep', t:'Repuesto', m:'main'}, {k:'ficha', t:'Ficha'}, {k:'stk', t:'Stock', num:true}, {k:'min', t:'Mínimo', num:true, m:'hide'}, {k:'costo', t:'Costo', num:true},
       {k:'valor', t:'Valor en bodega', num:true, m:'hide'}, {k:'ped', t:'Pedidos 12 m', num:true}, {k:'uni', t:'Unidades 12 m', num:true, m:'hide'}],
       filas, 'Ningún repuesto con ese filtro.') +
-    (leg.length ? '<div class="mt-2 small text-muted">Además hay ' + leg.length + ' repuesto(s) del sistema anterior ligados a este proveedor.</div>' : '');
+    (leg.length ? '<div class="mt-2 small text-muted">Además hay ' + leg.length + ' repuesto(s) del sistema anterior asociados a este proveedor.</div>' : '');
 }
 function pvfRepLista(){
   // Buscar sin perder el foco del cuadro de búsqueda.

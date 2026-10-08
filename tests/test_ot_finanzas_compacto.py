@@ -405,7 +405,7 @@ class TestCuerpoYSinDocumentos(_Base):
         self.assertIn('data-fm-act="ligarDoc"', linea)
         self.assertNotIn("fm-vacio", html)
         mod = html.split('<div class="fm-acciones">')[1].split("</div>")[0]
-        self.assertNotIn('data-fm-act="ligarDoc"', mod, "el botón de ligar ya está en la línea: no se repite en «Modificar»")
+        self.assertNotIn('data-fm-act="ligarDoc"', mod, "el botón de asociar ya está en la línea: no se repite en «Modificar»")
         self.assertIn('data-fm-act="pedirCero"', mod)
         self.assertIn('<div class="fm-main fm-main-uno">', html)
 

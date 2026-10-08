@@ -95,7 +95,7 @@
       {% if en_ficha %}
       <button type="button" class="pa pa-main" onclick="cotizarPlan('mantencion')"><i class="bi bi-calculator-fill"></i> Cotizar</button>
       {% else %}
-      <a class="pa pa-main" target="_blank" title="Abre el cotizador con los equipos del plan, ligado al ticket de la oferta"
+      <a class="pa pa-main" target="_blank" title="Abre el cotizador con los equipos del plan, asociado al ticket de la oferta"
          href="/tickets/cotizaciones?desde_cliente={{ c.id }}&plan=1&tipo=mantencion&descuento={{ plan_cfg.descuento }}&frecuencia={{ plan_cfg.visitas }}{% if of.id and of.abierto %}&ticket={{ of.id }}{% endif %}"><i class="bi bi-calculator-fill"></i> Cotizar</a>
       {% endif %}
       <button type="button" class="pa pa-no" data-cid="{{ c.id }}" data-cli="{{ c.razon_social }}"

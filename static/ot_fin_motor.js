@@ -24,7 +24,7 @@
   /* 2026-10-08 (Daniel: «la autorización del trabajo interno estaba presentando problemas, no deberían para el cierre
      ya que son trabajos internos y no tienen clientes ni facturas o documentos»). Una OT interna SIN cliente no tiene a
      quién cobrarle ni documento que pedir: el servidor la deja pasar (puerta + aprobar-cierre) y lo informa en
-     recorrido.interna / panorama.interna. Con eso el motor NO ofrece ligar documento, declarar cobro/$0 ni pedir
+     recorrido.interna / panorama.interna. Con eso el motor NO ofrece agregar documento, declarar cobro/$0 ni pedir
      autorización: antes la barra «Modificar» se los ofrecía igual y el servidor respondía «no necesita autorización». */
   var TXT_INTERNA = 'Trabajo interno: no necesita documento ni autorización.';
   var SOLO_CLIENTE = { ligarDoc: 1, pedirCero: 1, pedirCierre: 1, declararCobro: 1, resolverSaldo: 1, resolverSaldoOt: 1 };
@@ -580,11 +580,11 @@
     return h + '</ul>';
   }
 
-  /* «Modificar»: dentro de la sección «Lo que nos costó». `sinLigar`: la línea «Sin documentos aún» ya ofrece ligar. */
+  /* «Modificar»: dentro de la sección «Lo que nos costó». `sinLigar`: la línea «Sin documentos aún» ya ofrece agregar. */
   function htmlAcciones(inst, sinLigar) {
     var p = inst.pan;
     if (!(p.puede_editar || (p.cerrada && p.puede_regularizar))) return '';
-    /* 2026-10-08: trabajo interno sin cliente. Ni ligar documento, ni «declarar $0», ni pedir autorización: no aplican. */
+    /* 2026-10-08: trabajo interno sin cliente. Ni agregar documento, ni «declarar $0», ni pedir autorización: no aplican. */
     if (esInterna(inst)) {
       if (!p.puede_editar) return '';
       return '<div class="fm-acciones"><span>Modificar</span>' +
@@ -843,7 +843,7 @@
     var anotado = fin.precio_anotado;
     return dialogo({
       titulo: 'Declarar lo que cobré',
-      intro: 'Escribe lo que se le cobró al cliente por esta OT.' + (anotado ? ' Hay un precio anotado de <b>' + clp(anotado) + '</b> sin documento: no cuenta como cobro hasta que lo declares aquí o ligues el documento.' : '') +
+      intro: 'Escribe lo que se le cobró al cliente por esta OT.' + (anotado ? ' Hay un precio anotado de <b>' + clp(anotado) + '</b> sin documento: no cuenta como cobro hasta que lo declares aquí o agregues el documento.' : '') +
         ' Si hay factura o boleta de Random, lo mejor es agregarla.',
       ok: 'Guardar y registrar',
       campos: [

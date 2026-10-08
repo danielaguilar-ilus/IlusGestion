@@ -171,7 +171,7 @@
          líneas -- spec: "Ficha del ticket: tarjeta 'Compra de repuestos'
          con proveedor, estado, ETA, líneas y links a las solicitudes/OT
          (solo gestión)". Mismo patrón async que cardRepuestosOT: se llena
-         por API y solo aparece si hay una Compra ligada a este ticket. #}
+         por API y solo aparece si hay una Compra asociada a este ticket. #}
       <div class="tk-card" id="cardCompraRepuesto" style="display:none">
         <h6 style="display:flex;align-items:center;gap:8px"><i class="bi bi-cart-check"></i>Compra de repuestos
           <span class="badge" id="rccEst" style="font-size:.66rem"></span>
@@ -717,7 +717,7 @@ async function tkRepuestosOT(){
         (s.maquina_nombre ? '<div style="color:#374151;margin-top:3px">' + esc(s.maquina_nombre) + (s.maquina_serie ? ' · S/N ' + esc(s.maquina_serie) : '') +
           (s.dejo_fuera_servicio ? ' · <b style="color:#991b1b">quedó fuera de servicio</b>' : '') + '</div>' : '') +
         '<div style="color:#374151;margin-top:3px">' +
-          (s.stock_sku ? 'bodega <b>' + esc(s.stock_sku) + '</b>' : '<span style="color:#b45309;font-weight:700">sin repuesto de bodega ligado</span>') +
+          (s.stock_sku ? 'bodega <b>' + esc(s.stock_sku) + '</b>' : '<span style="color:#b45309;font-weight:700">sin repuesto de bodega asociado</span>') +
           (s.proveedor_nombre ? ' · proveedor ' + esc(s.proveedor_nombre) : '') + (s.oc_numero ? ' · OC ' + esc(s.oc_numero) : '') + '</div>' +
         '<div style="color:#1f2937;margin-top:4px;white-space:pre-wrap"><i class="bi bi-stethoscope me-1" style="color:#dc2626"></i>' + esc(s.motivo || '') + '</div>' +
         (evs ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' + evs + '</div>' : '') +

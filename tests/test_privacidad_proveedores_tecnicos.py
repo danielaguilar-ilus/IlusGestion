@@ -800,14 +800,14 @@ class TestTicketsTextoSinProveedor(unittest.TestCase):
 
     def test_quita_las_lineas_de_cambio_de_estado(self):
         nota = ("Solicitud de repuesto #12 (Perno): Validado → Pedido\n"
-                "Ligada a REP-1 · Perno\n"
+                "Asociada a REP-1 · Perno\n"
                 "Proveedor: Drax Fitness\n"
                 "OC OC-2026-77\n"
                 "Pedido por WhatsApp")
         r = self.texto(nota)
         self.assertNotIn("Proveedor:", r)
         self.assertNotIn("OC OC-2026-77", r)
-        self.assertIn("Ligada a REP-1 · Perno", r)
+        self.assertIn("Asociada a REP-1 · Perno", r)
         self.assertIn("Pedido por WhatsApp", r)
 
     def test_la_lista_del_lote_pierde_el_proveedor_pero_no_el_resto(self):
@@ -885,7 +885,7 @@ class TestTicketsDeCompra(unittest.TestCase):
     def test_la_busqueda_de_tickets_tambien_los_excluye(self):
         fuente = _fuente_modulo(TICKETS, "tk_api_tickets_buscar")
         self.assertIn("_tk_es_tecnico()", fuente)
-        # (revisión 2026-10-01) por compra ligada, no por tipo: esos tipos también los usan clientes
+        # (revisión 2026-10-01) por compra asociada, no por tipo: esos tipos también los usan clientes
         self.assertIn("NOT EXISTS (SELECT 1 FROM mant_repuestos_compras", fuente)
 
     # ---- comportamiento del decorador y del WHERE ----
@@ -935,7 +935,7 @@ class TestTicketsDeCompra(unittest.TestCase):
         self.assertTrue(amb.get("_flasheado"))
 
     def test_el_tecnico_si_abre_cualquier_otro_ticket(self):
-        # incluido un ticket PÚBLICO de cliente tipo "Repuestos bodega": sin compra ligada, se abre
+        # incluido un ticket PÚBLICO de cliente tipo "Repuestos bodega": sin compra asociada, se abre
         amb = self._ambito(True, False)
         self.assertEqual(self._vista(amb)(tid=9), "VISTA-OK")
 

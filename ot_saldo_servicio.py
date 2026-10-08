@@ -177,7 +177,7 @@ def evaluar_pedido(saldo, pedido):
 
 def acciones_exceso(excesos, puede_garantia=True):
     """Las salidas que se ofrecen SIEMPRE que un cobro excede el saldo (nunca un callejón sin salida):
-    tomar solo el saldo (si hay algo), ligar otra factura, pasar a garantía, pedir autorización con argumento."""
+    tomar solo el saldo (si hay algo), agregar otra factura, pasar a garantía, pedir autorización con argumento."""
     total_saldo = sum(_entero(e.get("saldo")) for e in (excesos or []))
     acc = []
     if total_saldo > 0:

@@ -506,7 +506,7 @@ _TK_LINEA_LOTE_PROV_RE = re.compile(
 def _tk_texto_sin_proveedor(txt):
     """Devuelve `txt` sin las líneas que nombran al proveedor o a la OC.
 
-    Función PURA: solo toca el texto de las notas del sistema ligadas a
+    Función PURA: solo toca el texto de las notas del sistema asociadas a
     solicitudes de repuesto; el resto de las líneas queda exacto."""
     if not txt:
         return txt
@@ -522,7 +522,7 @@ def _tk_texto_sin_proveedor(txt):
 
 
 def _tk_mensajes_sin_proveedor(mensajes):
-    """Copia de las filas crudas de tk_mensajes donde las notas ligadas a
+    """Copia de las filas crudas de tk_mensajes donde las notas asociadas a
     solicitudes de repuesto (metadata con `solicitud_repuesto_id[s]`) pierden
     las líneas de proveedor/OC. Los demás mensajes pasan tal cual."""
     salida = []
@@ -2859,7 +2859,7 @@ def register_tickets_routes(app, ctx):
         # con el mismo patrón acá): pymysql aplica %-formatting a la query
         # SIEMPRE, incluso sin params -- un "%" LITERAL de LIKE en el texto
         # de la query rompe el execute ("not enough arguments for format
-        # string"). El patrón LIKE va como parámetro ligado (%s).
+        # string"). El patrón LIKE va como parámetro asociado (%s).
         rows = mysql_fetchall(
             "SELECT clave, valor FROM tk_settings "
             "WHERE clave IN ('cotiz_valor_hh','cotiz_margen_pct','cotiz_iva_pct') "
@@ -6872,7 +6872,7 @@ def register_tickets_routes(app, ctx):
             "documentos": docs_out,
             "cotizaciones": cot_out,
             "finanzas_ocultas": _finanzas_ocultas,
-            # 🔒 2026-10-01: a un técnico se le quitan, de las notas ligadas a
+            # 🔒 2026-10-01: a un técnico se le quitan, de las notas asociadas a
             # solicitudes de repuesto, las líneas con el proveedor y la OC.
             "mensajes": [_fmt_row(r) for r in
                          (_tk_mensajes_sin_proveedor(mensajes) if _finanzas_ocultas else mensajes)],
@@ -7064,7 +7064,7 @@ def register_tickets_routes(app, ctx):
     #  explicitamente que SI incluye los migrados de Triple A). Mismo
     #  patron que el importador CSV: dry_run por defecto (nunca borra sin
     #  que el front pida dry_run=false explicitamente) + confirm exacto
-    #  ligado al correo (evita reusar el mismo texto para otro alcance) +
+    #  asociado al correo (evita reusar el mismo texto para otro alcance) +
     #  audit ANTES de borrar (Regla #5). El DELETE en tk_tickets cascadea
     #  via FK a tk_mensajes/tk_adjuntos/tk_ticket_equipos/
     #  tk_ticket_documentos/tk_vistas; tk_cotizaciones queda con
@@ -8243,7 +8243,7 @@ def register_tickets_routes(app, ctx):
             return False
 
     # ─────────────────────────────────────────────────────────────────
-    #  API — Generar OT (Tickets crea una mant_visita REAL, ligada
+    #  API — Generar OT (Tickets crea una mant_visita REAL, asociada
     #  bidireccionalmente vía tk_tickets.visita_id). Wizard de 3 pasos del
     #  frontend (Cliente/equipo -> Técnico/horario -> Confirmación). Reusa
     #  el motor de OTs de Mantenciones (_next_ot_number,

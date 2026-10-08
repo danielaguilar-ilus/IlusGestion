@@ -76,7 +76,7 @@ class TestVidaClienteBucket(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # staticmethod(): sin esto, `self.bucket(...)` la haría un metodo
-        # ligado y le colaria `self` como primer argumento posicional.
+        # asociado y le colaria `self` como primer argumento posicional.
         cls.bucket = staticmethod(_cargar_con_dependencias(
             "_vida_cliente_bucket", nombres_globales=["_VIDA_CLIENTE_TIPO_BUCKET"]))
 

@@ -159,9 +159,9 @@ class TestCompraElegible(unittest.TestCase):
         self.assertTrue(self.elegible(s))
 
     def test_solicitado_ya_no_es_elegible_bajo_ningun_caso(self):
-        # 🔒 ALTA #3: se elimino el camino "solicitado ya ligado a
+        # 🔒 ALTA #3: se elimino el camino "solicitado ya asociado a
         # proveedor" -- ahora SIEMPRE hay que pasar por 'validado' primero,
-        # sin excepcion, aunque tenga proveedor_id y no tenga stock ligado.
+        # sin excepcion, aunque tenga proveedor_id y no tenga stock asociado.
         s = {"estado": "solicitado", "repuesto_stock_id": None, "proveedor_id": 3, "compra_id": None}
         self.assertFalse(self.elegible(s))
 

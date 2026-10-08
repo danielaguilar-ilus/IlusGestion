@@ -150,7 +150,7 @@ class TestModelosDeMaquina(unittest.TestCase):
         bd = _BDFalsa(respuestas)
         amb["mysql_fetchall"] = bd
         amb["_otrep_producto_de_maquina"] = lambda m: principal
-        # Las funciones ya viven en el ámbito `base`: se vuelven a ligar con la BD falsa.
+        # Las funciones ya viven en el ámbito `base`: se vuelven a asociar con la BD falsa.
         fn = amb["_otrep_modelos_de_maquina"]
         fn.__globals__.update(mysql_fetchall=bd, _otrep_producto_de_maquina=amb["_otrep_producto_de_maquina"])
         return fn(maquina), bd

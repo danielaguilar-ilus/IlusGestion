@@ -7714,7 +7714,7 @@ async function otdFinCorrGuardar(){
         {% endif %}
 
         {# 🧭 2026-10-07: el MISMO motor de la ficha, acá adentro: es la «segunda opción de modificar» del autorizador
-           (ligar la factura que da de baja la nota de venta, pasar a $0 pidiendo autorización, corregir lo que cobró
+           (agregar la factura que da de baja la nota de venta, pasar a $0 pidiendo autorización, corregir lo que cobró
            el proveedor, elegir el centro de costo). Cada rechazo de cierre trae su acción y se resuelve acá mismo. #}
         <div class="mb-3" id="otfMotorCierre">
           {% with fm_vid=v.id, fm_modo='modal', fm_assets=False %}{% include 'ot2/_fin_motor.html' %}{% endwith %}
@@ -12736,7 +12736,7 @@ async function otdDocAgregar(tipoDirecto, numDirecto){
     err.style.color = '';
     if (!d.ok && d.error_codigo === 'ZZ_SALDO_CONSUMIDO' && window.OTFinMotor && OTFinMotor.resolverSaldoExterno){
       // 🧮 2026-10-08 (Daniel: «evitar que dos instalaciones se paguen con el mismo saldo»): la línea de servicio de
-      // ese documento ya la usa otra OT. Tomar solo el saldo, ligar otra factura, pasar a garantía o pedir autorización.
+      // ese documento ya la usa otra OT. Tomar solo el saldo, agregar otra factura, pasar a garantía o pedir autorización.
       err.textContent = d.error || '';
       OTFinMotor.resolverSaldoExterno(OTD_VID, d, { reintento: function(extra){
         window._otdDocExtra = extra;
@@ -15375,7 +15375,7 @@ const OT2F = (function(){
     try { return '$' + Math.round(m).toLocaleString('es-CL'); } catch(_e){ return '$' + m; }
   }
 
-  /* 🧮 2026-10-08: el saldo de las líneas de servicio / despacho del documento que se va a ligar (qué usa otra OT). */
+  /* 🧮 2026-10-08: el saldo de las líneas de servicio / despacho del documento que se va a agregar (qué usa otra OT). */
   function _factSaldoHtml(s){
     if (!s) return '';
     const fila = (n, x) => (x && x.hay_lineas)
@@ -17582,7 +17582,7 @@ function otrepAgregarALaLista(){
    bodega -- no basta con mostrar "hay stock" del momento en que se agregó,
    si el técnico después sube la cantidad a más de lo disponible tiene que
    verse "Falta". Repuestos manuales (sin stock_id, disponible siempre
-   null) quedan como "Por validar": bodega todavía no los ligó a nada. */
+   null) quedan como "Por validar": bodega todavía no los asoció a nada. */
 function _otrepBadgeLista(it){
   if (it.disponible == null) return '<span class="stk validar">Por validar</span>';
   if (it.disponible <= 0) return '<span class="stk sin">Sin stock</span>';

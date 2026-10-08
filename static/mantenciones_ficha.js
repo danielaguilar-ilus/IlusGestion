@@ -1206,7 +1206,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 /* ==== from ficha.html lines 4819-5072 ==== */
-// Estado cacheado de la última carga, usado para exportar y para acciones de ligar
+// Estado cacheado de la última carga, usado para exportar y para acciones de asociar
 window._finServicios = [];
 window._finTotales = {};
 
@@ -1322,13 +1322,13 @@ function finRender(d){
     document.getElementById('finTblBody').innerHTML = servicios.map(s => {
       const cot = s.cotizacion
         ? `<span class="fin-chip fin-chip-cov" onclick="finVerDoc('${s.cotizacion.split(' ')[0]}','${s.cotizacion.split(' ')[1]||''}')" title="Ver cotización en Random">${_escH(s.cotizacion)}</span>`
-        : `<span class="fin-chip fin-chip-empty" onclick="finLigar(${s.id}, 'cotizacion')">+ ligar</span>`;
+        : `<span class="fin-chip fin-chip-empty" onclick="finLigar(${s.id}, 'cotizacion')">+ agregar</span>`;
       const oc = s.oc_numero
         ? `<span class="fin-chip fin-chip-oc" title="OC del cliente">${_escH(s.oc_numero)}</span>`
-        : `<span class="fin-chip fin-chip-empty" onclick="finLigar(${s.id}, 'oc')">+ ligar</span>`;
+        : `<span class="fin-chip fin-chip-empty" onclick="finLigar(${s.id}, 'oc')">+ agregar</span>`;
       const fac = s.factura
         ? `<span class="fin-chip fin-chip-fac" onclick="finVerDoc('${s.factura.split(' ')[0]}','${s.factura.split(' ')[1]||''}')" title="Ver factura en Random">${_escH(s.factura)}</span>`
-        : `<span class="fin-chip fin-chip-empty" onclick="finLigar(${s.id}, 'factura')">+ ligar</span>`;
+        : `<span class="fin-chip fin-chip-empty" onclick="finLigar(${s.id}, 'factura')">+ agregar</span>`;
       const desc = (s.titulo || '—') + (s.es_retroactiva ? ' <span title="Visita histórica" style="font-size:.7rem">📜</span>' : '');
       const garFlag = (s.cubierto_por === 'garantia');
       return `<tr>

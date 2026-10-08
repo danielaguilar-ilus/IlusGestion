@@ -1948,7 +1948,7 @@ function rbAbrirEditar(r, modelos, fotos){
      al lote de compra ni se reconoce al llegar) -- el endpoint los vuelve a exigir;
    · la foto puede ser una de la propia solicitud (se COPIA) y el equipo, el de
      la solicitud;
-   · queda ligado a la solicitud (validada) en la misma operación, todo o nada.
+   · queda asociado a la solicitud (validada) en la misma operación, todo o nada.
    s = la solicitud tal como la trae /repuestos/api/solicitudes-ot. */
 async function rbAbrirDesdeSolicitud(s, cb){
   cb = cb || {};
@@ -2005,7 +2005,7 @@ function rbSolPintar(){
       (s.cliente_nombre ? ' · ' + escHtmlRb(s.cliente_nombre) : '') + (s.numero_ot ? ' · ' + escHtmlRb(s.numero_ot) : '') + '</small></div>' +
       '<span class="rb-sol-pill' + (faltan.length ? '' : ' ok') + '">' + (5 - faltan.length) + ' de 5</span></div>' +
     '<div class="rb-sol-req">' + items.map(function(it){ return '<span class="' + (it[1] ? 'ok' : 'no') + '"><i class="bi ' + (it[1] ? 'bi-check-circle-fill' : 'bi-circle') + '"></i>' + it[0] + '</span>'; }).join('') + '</div>' +
-    '<div class="rb-sol-info"><i class="bi bi-hourglass-split"></i>Nace <b>«por llegar»</b>: cantidad 0 y sin ubicación (se escanea al recibirlo). Queda ligado a la solicitud y validado.</div>' +
+    '<div class="rb-sol-info"><i class="bi bi-hourglass-split"></i>Nace <b>«por llegar»</b>: cantidad 0 y sin ubicación (se escanea al recibirlo). Queda asociado a la solicitud y validado.</div>' +
     (s.maquina_id ? '<div class="rb-sol-fila"><span class="k">Equipo</span><button type="button" class="rb-sol-opt' + (RB_SOL.usarEquipo ? ' on' : '') + '" onclick="rbSolUsarEquipo(!RB_SOL.usarEquipo)">' +
       '<i class="bi ' + (RB_SOL.usarEquipo ? 'bi-check-square-fill' : 'bi-square') + '"></i>Sirve para el equipo de la solicitud: <b>' + escHtmlRb(s.maquina_nombre || ('#' + s.maquina_id)) + '</b></button>' +
       '<small>o agrega otros modelos en el paso 4</small></div>' : '') +

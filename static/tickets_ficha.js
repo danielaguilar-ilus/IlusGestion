@@ -3807,7 +3807,7 @@ function tkdayAbrirDetalle(lista){
       + '<div class="pop-grp-cliente">' + esc(v.cliente_nombre || 'Cliente sin nombre') + '</div>';
     // "equipos" lo entrega mant_calendario_mes desde 2026-08-12 (GROUP BY
     // batch en el backend, no 1 query por visita) -- puede venir vacío en OT
-    // sin tareas ligadas a máquina todavía (recién creada, o levantamiento
+    // sin tareas asociadas a máquina todavía (recién creada, o levantamiento
     // por descubrimiento sin materializar). Tope de 3 nombres + "+N" para no
     // desbordar la tarjeta con clientes que tienen muchos equipos en una OT.
     const eqList = Array.isArray(v.equipos) ? v.equipos : [];

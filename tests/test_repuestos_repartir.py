@@ -181,7 +181,7 @@ class TestRepartir(unittest.TestCase):
         sqls = [s for s, _ in conn.sqls]
         # 1) candado de fila antes de tocar nada
         self.assertIn("FOR UPDATE", sqls[0])
-        # 2) la hija: reposición recibida, ligada a la madre, por 9, con lo recibido
+        # 2) la hija: reposición recibida, asociada a la madre, por 9, con lo recibido
         ins = next((s, p) for s, p in conn.sqls if s.startswith("INSERT INTO mant_ot_repuesto_solicitudes"))
         self.assertIn("solicitud_padre_id", ins[0])
         self.assertIn("'recibido'", ins[0])
