@@ -13,7 +13,7 @@ from tests.test_incidencias_bajas import _codigo_y_arbol
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FUNCS = ("_ot_es_interna", "_ot_cobertura", "_ot_fin_num", "_ot_fin_clp", "_ot_finanzas")
-CONSTS = ("_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_FUENTE_COBRO", "_OT_FIN_ZZ_NO_SERVICIO",
+CONSTS = ("_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_ORIGENES_COBRO_RESPALDO", "_OT_FIN_FUENTE_COBRO", "_OT_FIN_ZZ_NO_SERVICIO",
           "_OT_FIN_COBERTURA_TXT", "_OT_FIN_UMBRAL_BAJO")
 
 
@@ -89,8 +89,9 @@ class TestCobra(unittest.TestCase):
         self.assertEqual(r["label"], "Falta el documento de cobro")
         self.assertEqual(r["valorizado"]["monto"], 80000)
 
-    def test_sin_zz_usa_el_precio_al_cliente_marcado(self):
-        r = F(costo=100000, costo_proveedor=60000)
+    def test_sin_zz_usa_el_precio_al_cliente_si_tiene_respaldo(self):
+        # 2026-10-08: solo con respaldo (documento, cotización, contrato o cobro declarado a mano con motivo).
+        r = F(costo=100000, costo_proveedor=60000, valor_origen="doc_total")
         self.assertEqual(r["cobre"]["total"], 100000)
         self.assertTrue(r["cobre"]["fuente"].startswith("precio al cliente"))
         self.assertTrue(any("no separa servicio y despacho" in a for a in r["avisos"]))

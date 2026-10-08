@@ -27,7 +27,7 @@ FUNCS = ("_ot_es_interna", "_ot_cobertura", "_ot_fin_num", "_ot_fin_clp", "_ot_f
          "_ot2_finanzas_estado", "_anexo_ot_en_garantia", "_pl_cobertura_contrato", "_ot_fin_sql_contrato_real",
          # 2026-10-07 (integración fin-paso3): `costo` como espejo de lo cobrado.
          "_ot_fin_costo_espejo", "_ot_fin_costo_espejo_toca", "_pl_costo_espejo")
-CONSTS = ("_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_FUENTE_COBRO", "_OT_FIN_ZZ_NO_SERVICIO", "_OT_FIN_COBERTURA_TXT",
+CONSTS = ("_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_ORIGENES_COBRO_RESPALDO", "_OT_FIN_FUENTE_COBRO", "_OT_FIN_ZZ_NO_SERVICIO", "_OT_FIN_COBERTURA_TXT",
           "_OT_FIN_UMBRAL_BAJO", "_OT_FIN_VALORIZADO_FUENTE_POR_ORIGEN", "_OT_FIN_VALORIZADO_FUENTES",
           "_OT2_CENTROS_COSTO", "_OT2_VALOR_ORIGENES", "_OT2_VALOR_ORIGENES_CON_MOTIVO", "_OT2_LINEA_ZZ",
           "_OT_FIN_SQL_CONTRATO_REAL", "_OT_FIN_SQL_COBRE_POSITIVO")
@@ -235,8 +235,16 @@ class TestEstadoFinanzas(unittest.TestCase):
     def test_la_linea_del_documento_si(self):
         self.assertEqual(self.E(zz_monto=80000, valor_origen="zz"), (True, []))
 
-    def test_ot_antigua_con_precio_al_cliente_sigue_valorizada(self):
-        self.assertEqual(self.E(zz_monto=None, costo=120000), (True, []))
+    def test_ot_antigua_con_precio_al_cliente_y_respaldo_sigue_valorizada(self):
+        self.assertEqual(self.E(zz_monto=None, costo=120000, valor_origen="doc_total"), (True, []))
+        self.assertEqual(self.E(zz_monto=None, costo=120000, valor_origen="manual"), (True, []))
+
+    def test_precio_anotado_sin_documento_ya_no_es_cobro(self):
+        # 2026-10-08 (Daniel: "sigue diciendo que cobramos 200"): el «Precio al cliente» suelto no cuenta.
+        for origen in (None, "", "estimado", "interno"):
+            ok, faltan = self.E(zz_monto=None, costo=120000, valor_origen=origen)
+            self.assertFalse(ok, origen)
+            self.assertTrue(any("cuánto se cobra" in f for f in faltan), origen)
 
     def test_garantia_por_cubierto_por_no_pide_documento(self):
         ok, faltan = self.E(cubierto_por="garantia", factura_nudo=None, garantia_motivo="falla de fábrica")

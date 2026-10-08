@@ -186,7 +186,7 @@
       if (p.estado === 'falta' && puede) {
         if (p.n === 1) act = boton('pedirCero', 'Pedir autorización del $0', 'bi-shield-check');
         else if (p.n === 2) act = boton('ligarDoc', 'Ligar factura o boleta', 'bi-link-45deg', 'fm-btn-pri') + boton('pedirCierre', 'Pedir autorización a ' + CAMPANA_DAN, 'bi-shield-lock');
-        else if (p.n === 3 && inst.pan.puede_editar) act = boton('irFinanzas', 'Declarar lo que cobré', 'bi-cash-coin');
+        else if (p.n === 3 && inst.pan.puede_editar) act = boton('declararCobro', 'Declarar lo que cobré', 'bi-cash-coin');
         else if (p.n === 4 && inst.pan.puede_editar) act = boton('corregirProv', 'Declarar lo que cobró el proveedor', 'bi-pencil-square');
         else if (p.n === 6 && !pend) act = boton('pedirCierre', 'Pedir autorización a ' + CAMPANA_DAN, 'bi-shield-lock');
       }
@@ -200,7 +200,7 @@
 
   function accionDeRechazo(d) {
     var a = d && d.accion; if (!a) return '';
-    var m = { ligar_factura: 'ligarDoc', pedir_autorizacion: 'pedirCierre', declarar_cobro: 'irFinanzas',
+    var m = { ligar_factura: 'ligarDoc', pedir_autorizacion: 'pedirCierre', declarar_cobro: 'declararCobro',
       declarar_centro: 'enfocarCentro', declarar_costo_proveedor: 'corregirProv' }[a.tipo];
     if (a.tipo === 'esperar_autorizacion') return '<a class="fm-btn fm-btn-pri" href="' + esc(a.url || '/ot/autorizaciones') + '">Ver la solicitud</a>';
     if (a.tipo === 'actualizar_anexo') return '<span class="fm-help">' + esc(a.label || '') + '</span>';
@@ -237,8 +237,26 @@
   var RUT_TXT = { ok: ['ok', 'El RUT coincide con el del cliente'], justificado: ['aviso', 'RUT distinto, justificado'],
     distinto: ['mal', 'RUT distinto, sin justificar'], sin_verificar: ['gris', 'RUT sin verificar'], no_aplica: ['gris', 'No aplica'] };
 
+  /* Lo que ESTE documento aporta al cobro (servicio + despacho), o por qué no suma. 2026-10-08 (Daniel: «los
+     servicios por factura»): cada documento es un bloque con sus líneas y lo que aporta. */
+  function sumaMontos(arr) { var t = 0; (arr || []).forEach(function (l) { t += Number(l.monto) || 0; }); return t; }
+  function aporteDoc(d) {
+    if (d.dada_de_baja_por) return { cls: 'no', txt: 'No suma: la factura que la reemplaza ya cobra' };
+    if (d.origen === 'cotizacion') return { cls: 'no', txt: 'Referencia: no suma al cobro' };
+    if (!d.es_cobro) return { cls: 'no', txt: 'No suma: referencia de la garantía' };
+    var s = null, e = null;
+    if (d.lineas) { s = sumaMontos(d.lineas.servicio); e = sumaMontos(d.lineas.despacho); }
+    if (!s && !e) { s = d.zz_serv; e = d.zz_envio; }
+    if (!s && !e) {
+      if (d.categoria === 'nota_venta') return { cls: 'nv', txt: 'Promesa de cobro: falta la factura' };
+      return { cls: 'no', txt: 'No trae líneas de servicio ni despacho' };
+    }
+    return { cls: 'si', txt: 'Aporta al cobro: servicio ' + clp(s || 0) + ' + despacho ' + clp(e || 0) + ' = ' + clp((s || 0) + (e || 0)) };
+  }
+
   function htmlDoc(d) {
     var rut = RUT_TXT[d.rut_estado] || RUT_TXT.sin_verificar;
+    var ap = aporteDoc(d);
     var baja = d.dada_de_baja_por;
     var cls = 'fm-doc cat-' + esc(d.categoria) + (baja ? ' baja' : '');
     var meta = '<dl class="fm-meta">' +
@@ -266,7 +284,8 @@
     }
     return '<article class="' + cls + '"><header><span class="fm-chip">' + esc(d.tipo_txt) + '</span><h4>' + esc(d.titulo) + '</h4>' +
       '<span class="fm-cuenta">' + esc(cuentaTxt(d)) + '</span>' +
-      (d.es_principal ? '<span class="fm-pri">Principal</span>' : '') + '</header>' + meta + nota + lineas + '</article>';
+      (d.es_principal ? '<span class="fm-pri">Principal</span>' : '') +
+      '<span class="fm-aporta ' + ap.cls + '">' + esc(ap.txt) + '</span></header>' + meta + nota + lineas + '</article>';
   }
   function cuentaTxt(d) {
     return { servicio: 'Cobro del servicio', despacho: 'Cobro del despacho',
@@ -277,7 +296,8 @@
 
   function htmlDocs(inst) {
     var docs = inst.pan.documentos || [];
-    var h = '<div class="fm-sec-h"><span class="fm-num">2</span><h3>Todos los documentos de la OT <small>' + docs.length + '</small></h3></div>';
+    var h = '<div class="fm-sec-h"><span class="fm-num">1</span><h3>Todos los documentos de la OT <small>' + docs.length + '</small></h3>' +
+      '<span class="fm-help">Servicios por factura: cada documento con sus líneas y lo que aporta al cobro.</span></div>';
     if (!docs.length) {
       h += '<div class="fm-vacio"><i class="bi bi-file-earmark-x"></i><b>Esta OT no tiene ningún documento declarado.</b>' +
         '<span>Liga una factura, boleta, nota de venta o cotización; o pide la autorización de ' + CAMPANA_DAN + '.</span></div>';
@@ -289,7 +309,7 @@
 
   function htmlCostos(inst) {
     var c = inst.pan.costos, puede = inst.pan.puede_editar;
-    var h = '<div class="fm-sec-h"><span class="fm-num">3</span><h3>Lo que nos costó</h3>' +
+    var h = '<div class="fm-sec-h"><span class="fm-num">2</span><h3>Lo que nos costó</h3>' +
       (puede ? boton('corregirProv', 'Corregir lo que cobró el proveedor', 'bi-pencil-square') : '') + '</div>' +
       '<table class="fm-costos"><tbody>';
     (c.registros || []).forEach(function (r) {
@@ -304,11 +324,11 @@
   function htmlCuenta(inst) {
     var fin = inst.rec.fin, cc = inst.rec.cobro_cero || {};
     var cobra = fin.cobra;
-    var h = '<div class="fm-sec-h"><span class="fm-num">4</span><h3>La cuenta de esta OT</h3></div>';
+    var h = '<div class="fm-sec-h"><span class="fm-num">3</span><h3>La cuenta de esta OT</h3></div>';
     if (cobra) {
       var q = fin.queda;
       h += '<div class="fm-cuenta-g c-' + esc(fin.clase) + '">' +
-        '<div><small>Cobré</small><b>' + clp(fin.cobre.total) + '</b><span>servicio ' + clp(fin.cobre.servicio) + ' + despacho ' + clp(fin.cobre.despacho) + '</span></div>' +
+        '<div><small>Cobré</small><b>' + (fin.cobre.hay ? clp(fin.cobre.total) : '—') + '</b><span>' + (fin.cobre.hay ? 'servicio ' + clp(fin.cobre.servicio) + ' + despacho ' + clp(fin.cobre.despacho) : 'falta el documento de cobro') + '</span></div>' +
         '<i>−</i><div><small>Me cobraron</small><b>' + clp(fin.me_cobraron.total) + '</b><span>técnico ' + clp(fin.me_cobraron.tecnico || 0) + ' + despacho ' + clp(fin.me_cobraron.despacho || 0) + ' + repuestos ' + clp(fin.me_cobraron.repuestos) + '</span></div>' +
         '<i>=</i><div class="q"><small>Queda</small><b>' + (q.mostrar ? clp(q.total) : '—') + '</b><span>' + esc(q.mostrar && q.pct != null ? String(q.pct).replace('.', ',') + ' %' : fin.label) + '</span></div></div>';
     } else {
@@ -323,13 +343,24 @@
     return h;
   }
 
+  /* Centro de costo con BOTONES (Daniel 2026-10-08: «hazlo con botones, dinámico, bonito»): el mismo diseño que los
+     rectángulos del asistente de creación (.o2m-cc), un solo componente para la ficha y el modal de cierre. */
+  var CC_META = {
+    sstt: { cls: 'cc-sstt', ico: 'bi-wrench-adjustable-circle-fill', sub: 'El costo es nuestro' },
+    logistica: { cls: 'cc-log', ico: 'bi-truck', sub: 'Despacho o bodega' },
+    comercial: { cls: 'cc-com', ico: 'bi-briefcase-fill', sub: 'Convenio o venta' },
+    marketing: { cls: 'cc-mkt', ico: 'bi-megaphone-fill', sub: 'Campaña o contenido' }
+  };
+
   function htmlCentro(inst) {
     var c = inst.pan.centro, puede = inst.pan.puede_editar;
-    var h = '<div class="fm-sec-h"><span class="fm-num">5</span><h3>Centro de costo <small class="' + (c.valor ? 'ok' : 'mal') + '">' + (c.valor ? 'declarado' : 'obligatorio') + '</small></h3></div>';
-    h += '<div class="fm-centro"><select id="fmCentro' + inst.id + '" data-fm-centro ' + (puede ? '' : 'disabled') + '>' +
-      '<option value="">Elige el centro de costo…</option>' + c.opciones.map(function (o) {
-        return '<option value="' + esc(o.v) + '"' + (o.v === c.valor ? ' selected' : '') + '>' + esc(o.n) + '</option>';
-      }).join('') + '</select>' +
+    var h = '<div class="fm-sec-h"><span class="fm-num">4</span><h3>Centro de costo <small class="' + (c.valor ? 'ok' : 'mal') + '">' + (c.valor ? 'declarado' : 'obligatorio') + '</small></h3></div>';
+    h += '<div class="fm-centro"><div class="fm-cc-grid" data-fm-cc-grid role="group" aria-label="Centro de costo">' + c.opciones.map(function (o) {
+      var m = CC_META[o.v] || { cls: '', ico: 'bi-circle', sub: '' };
+      var on = o.v === c.valor;
+      return '<button type="button" class="fm-cc ' + m.cls + (on ? ' on' : '') + '" data-fm-cc="' + esc(o.v) + '" aria-pressed="' + (on ? 'true' : 'false') + '"' +
+        (puede ? '' : ' disabled') + '><i class="bi ' + m.ico + '"></i><b>' + esc(o.n) + '</b><small>' + esc(m.sub) + '</small></button>';
+    }).join('') + '</div>' +
       '<span class="fm-help">' + (inst.pan.cerrada ? 'OT cerrada: el superadministrador lo corrige con «Corregir finanzas» (queda registrado).' : 'Se guarda al elegirlo y queda registrado. Sin centro de costo la OT no se cierra.') + '</span></div>';
     return h;
   }
@@ -337,7 +368,7 @@
   function htmlHistorial(inst) {
     var a = inst.rec.autorizaciones || [];
     if (!a.length) return '';
-    var h = '<div class="fm-sec-h"><span class="fm-num">6</span><h3>Autorizaciones de esta OT <small>' + a.length + '</small></h3></div><ul class="fm-hist">';
+    var h = '<div class="fm-sec-h"><span class="fm-num">5</span><h3>Autorizaciones de esta OT <small>' + a.length + '</small></h3></div><ul class="fm-hist">';
     a.forEach(function (x) {
       h += '<li class="' + esc(x.estado) + '"><b>' + esc(x.tipo_txt) + (x.motivo_txt ? ' · ' + esc(x.motivo_txt) : '') + ' <span>' + esc(x.estado_txt) + '</span></b>' +
         '<small>La pidió ' + esc(x.solicitado_por_nombre) + ' el ' + esc(x.solicitado_at) + '</small>' +
@@ -366,17 +397,20 @@
 
   function pintar(inst) {
     var p = inst.pan, rec = inst.rec;
+    /* 2026-10-08 (Daniel: «cero espacios en blanco… las cosas ordenadas»): arriba los pasos y el panorama a lo ancho;
+       abajo DOS columnas — a la izquierda los servicios por documento; a la derecha lo que nos costó, la cuenta,
+       el centro de costo y las autorizaciones. Orden: documentos → lo que nos costó → el resultado. */
     inst.el.innerHTML =
       '<div class="fm-head"><div><h3><i class="bi bi-compass-fill"></i> Finanzas y documentos' + (inst.modo === 'modal' ? ' para cerrar' : ' de la OT') + '</h3>' +
       '<p>' + esc(p.numero_ot || '') + (p.cliente ? ' · ' + esc(p.cliente) : '') + ' · todo lo declarado, completo y con quién lo hizo.</p></div>' +
       '<button type="button" class="fm-btn" data-fm-act="recargar" title="Volver a leer"><i class="bi bi-arrow-clockwise"></i> Actualizar</button></div>' +
       '<section class="fm-sec fm-s1">' + htmlPasos(inst) + '</section>' +
-      '<section class="fm-sec fm-s0">' + '<div class="fm-sec-h"><span class="fm-num">1</span><h3>El panorama</h3></div>' + htmlContadores(inst) + '</section>' +
-      '<section class="fm-sec">' + htmlDocs(inst) + '</section>' +
-      '<div class="fm-dos"><section class="fm-sec">' + htmlCostos(inst) + '</section>' +
-      '<section class="fm-sec">' + htmlCuenta(inst) + '</section></div>' +
-      '<div class="fm-dos"><section class="fm-sec">' + htmlCentro(inst) + '</section>' +
-      '<section class="fm-sec">' + htmlHistorial(inst) + '</section></div>' +
+      htmlContadores(inst) +
+      '<div class="fm-main"><section class="fm-sec fm-izq">' + htmlDocs(inst) + '</section>' +
+      '<div class="fm-col"><section class="fm-sec">' + htmlCostos(inst) + '</section>' +
+      '<section class="fm-sec">' + htmlCuenta(inst) + '</section>' +
+      '<section class="fm-sec">' + htmlCentro(inst) + '</section>' +
+      '<section class="fm-sec">' + htmlHistorial(inst) + '</section></div></div>' +
       htmlAcciones(inst);
     var r = inst.el.querySelector('#fmRechazo');
     if (r && inst.rechazo && inst.rechazo.__nuevo) { inst.rechazo.__nuevo = false; try { r.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { } }
@@ -489,13 +523,40 @@
     });
   }
 
-  function guardarCentro(inst, sel) {
-    var valor = sel.value;
+  function guardarCentro(inst, valor, btn) {
     if (!valor) return;
+    if (btn) { btn.classList.add('pulsa'); }
     api('/ot/api/' + inst.vid + '/centro-costo', { method: 'POST', body: { centro_costo: valor } }).then(function (r) {
       if (r.ok) return despuesDeEscribir(inst, 'Centro de costo guardado.');
       toast((r.j && r.j.error) || 'No se pudo guardar el centro de costo.', 'error');
       cargar(inst);
+    });
+  }
+
+  /* «Declarar lo que cobré» sin salir del modal de cierre: servicio y despacho escritos a mano, con motivo. Es el
+     mismo POST que la tarjeta (/ot/api/finanzas/<vid>): rotula el cobro «escrito a mano», deja el motivo y queda en la
+     bitácora (finanzas_declaradas). No toca estado ni firmas. */
+  function declararCobro(inst) {
+    var fin = (inst.rec && inst.rec.fin) || {};
+    var anotado = fin.precio_anotado;
+    return dialogo({
+      titulo: 'Declarar lo que cobré',
+      intro: 'Escribe lo que se le cobró al cliente por esta OT.' + (anotado ? ' Hay un precio anotado de <b>' + clp(anotado) + '</b> sin documento: no cuenta como cobro hasta que lo declares aquí o ligues el documento.' : '') +
+        ' Si hay factura o boleta de Random, lo mejor es ligarla.',
+      ok: 'Guardar y registrar',
+      campos: [
+        { k: 'zz_monto', label: 'Cobro del servicio', tipo: 'monto', req: true, valor: anotado ? Math.round(anotado) : '' },
+        { k: 'zz_envio_monto', label: 'Cobro del despacho (si hubo)', tipo: 'monto', valor: '' },
+        { k: 'zz_motivo_manual', label: 'Por qué va escrito a mano', tipo: 'area', req: true, min: 10, placeholder: 'Ej: el documento no trae una línea de servicio; se cobró según la cotización 45' }
+      ]
+    }).then(function (v) {
+      if (!v) return;
+      var body = { zz_monto: v.zz_monto, zz_motivo_manual: v.zz_motivo_manual };
+      if (v.zz_envio_monto !== '') body.zz_envio_monto = v.zz_envio_monto;
+      return api('/ot/api/finanzas/' + inst.vid, { method: 'POST', body: body }).then(function (r) {
+        if (r.ok) return despuesDeEscribir(inst, 'Cobro declarado. Quedó registrado con tu nombre y el motivo.');
+        toast((r.j && r.j.error) || 'No se pudo guardar el cobro.', 'error');
+      });
     });
   }
 
@@ -516,7 +577,8 @@
     pedirCero: function (inst) { return pedirAutorizacion(inst, 'cobro_cero'); },
     pedirCierre: function (inst) { return pedirAutorizacion(inst, 'cerrar_sin_documento'); },
     irFinanzas: function (inst) { return irFinanzas(inst); },
-    enfocarCentro: function (inst) { var s = inst.el.querySelector('[data-fm-centro]'); if (s) { s.scrollIntoView({ behavior: 'smooth', block: 'center' }); s.focus(); } }
+    declararCobro: function (inst) { return declararCobro(inst); },
+    enfocarCentro: function (inst) { var s = inst.el.querySelector('[data-fm-cc-grid]'); if (s) { s.scrollIntoView({ behavior: 'smooth', block: 'center' }); var b = s.querySelector('[data-fm-cc]'); if (b) b.focus(); } }
   };
 
   function montar(el) {
@@ -530,9 +592,11 @@
       var fn = ACCIONES[b.getAttribute('data-fm-act')];
       if (fn) { e.preventDefault(); fn(inst); }
     });
-    el.addEventListener('change', function (e) {
-      var s = e.target.closest('[data-fm-centro]');
-      if (s) guardarCentro(inst, s);
+    el.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-fm-cc]');
+      if (!b || !el.contains(b) || b.disabled) return;
+      e.preventDefault();
+      guardarCentro(inst, b.getAttribute('data-fm-cc'), b);
     });
     var modal = el.closest('.modal');
     if (modal) {

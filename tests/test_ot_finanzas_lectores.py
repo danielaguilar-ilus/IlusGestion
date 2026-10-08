@@ -20,7 +20,7 @@ FUNCS = ("_ot_es_interna", "_ot_cobertura", "_ot_fin_num", "_ot_fin_clp", "_ot_f
          "_ot_fin_agregado", "_ot_fin_de_fila", "_ot_cobro_de_fin", "_ot_cobro_facprov", "_ot_cobro_cliente",
          "_ot_tv_fin_resumen", "_ot_fin_sql_contrato_real", "_ot_fin_cols_sql", "_ot_fin_contrato_real_de",
          "_ot_fin_lote", "_mfp_fila_ot", "_mfp_nombre_proveedor_ot", "_mfp_resumen_filas", "mant_cliente_finanzas")
-CONSTS = ("_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_FUENTE_COBRO", "_OT_FIN_ZZ_NO_SERVICIO", "_OT_FIN_COBERTURA_TXT",
+CONSTS = ("_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_ORIGENES_COBRO_RESPALDO", "_OT_FIN_FUENTE_COBRO", "_OT_FIN_ZZ_NO_SERVICIO", "_OT_FIN_COBERTURA_TXT",
           "_OT_FIN_UMBRAL_BAJO", "_OT_FIN_COBERTURA_CORTA", "_OT_FIN_AGG_APARTE", "_OT_FIN_COLS",
           "_OT_FIN_SQL_CONTRATO_REAL", "_MFP_ESTADOS_FACTURABLES", "_COBRO_ORIGENES_REALES")
 

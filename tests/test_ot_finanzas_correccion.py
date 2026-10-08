@@ -85,7 +85,7 @@ def _ambito(superadmin=True, cuerpo=None, fila=FILA):
          # la cuenta única y lo que usa
          "_ot_finanzas", "_ot_cobertura", "_ot_es_interna", "_ot_fin_num", "_ot_fin_clp"],
         ["_OT_FIN_CORR_CAMPOS", "_OT_FIN_CORR_ROT", "_OT_FIN_CORR_MOTIVO_MIN", "_OT_FIN_SQL_CONTRATO_REAL",
-         "_OT_FIN_SELECT", "_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_FUENTE_COBRO", "_OT_FIN_ZZ_NO_SERVICIO",
+         "_OT_FIN_SELECT", "_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_ORIGENES_COBRO_RESPALDO", "_OT_FIN_FUENTE_COBRO", "_OT_FIN_ZZ_NO_SERVICIO",
          "_OT_FIN_COBERTURA_TXT", "_OT_FIN_UMBRAL_BAJO", "_OT2_LINEA_ZZ"],
         extra={
             "json": json, "print": lambda *a, **k: None,
@@ -245,8 +245,15 @@ class TestInformeDudosas(unittest.TestCase):
         distinto = dict(FILA, centro_costo="sstt", costo=300000, costo_proveedor=100000, costo_despacho=0)
         self.assertIn("Precio al cliente distinto de lo cobrado", self.motivos(distinto))
         antiguo = dict(FILA, centro_costo="sstt", zz_monto=None, costo=300000, costo_proveedor=100000,
-                       costo_despacho=0)
+                       costo_despacho=0, valor_origen="doc_total")
         self.assertIn("Sin separar servicio y despacho", self.motivos(antiguo))
+        # 2026-10-08: un precio anotado SIN respaldo (sin documento ni cobro declarado) no es un cobro.
+        anotado = dict(FILA, centro_costo="sstt", zz_monto=None, costo=300000, costo_proveedor=100000,
+                       costo_despacho=0, valor_origen=None)
+        m = self.motivos(anotado)
+        self.assertIn("Precio anotado sin documento de cobro (no cuenta como cobro)", m)
+        self.assertIn("Cobro declarado en $0 (y la OT se cobra)", m)   # FILA trae el despacho en $0
+        self.assertNotIn("Sin separar servicio y despacho", m)
 
 
 class TestRutasYTablas(unittest.TestCase):

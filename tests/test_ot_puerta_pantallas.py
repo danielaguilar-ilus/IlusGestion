@@ -158,7 +158,8 @@ class TestRutasYPaginas(unittest.TestCase):
         codigo, arbol = _arbol()
         fn = next(n for n in arbol.body if isinstance(n, ast.FunctionDef) and n.name == "ot_api_costo_proveedor")
         t = ast.get_source_segment(codigo, fn)
-        self.assertIn("_ot_can_cobertura", [ast.get_source_segment(codigo, d) for d in fn.decorator_list])
+        # 2026-10-08: la misma gestión, también con la OT 'completada' (ventana de «Firmar y cerrar»).
+        self.assertIn("_ot_can_finanzas_cierre", [ast.get_source_segment(codigo, d) for d in fn.decorator_list])
         self.assertIn("MOTIVO_CORTO", t)
         self.assertIn("_mant_log(", t)
         self.assertIn("costo_proveedor_corregido", t)

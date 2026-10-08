@@ -28,7 +28,7 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 FUNCS = ("ot2_api_finanzas", "_ot2_err", "_ot_fin_rep_de", "_ot_fin_base", "_ot_fin_rep_liviano",
          "_ot_finanzas", "_ot_cobertura", "_ot_es_interna", "_ot_fin_num", "_ot_fin_clp")
-CONSTS = ("_OT_FIN_SQL_CONTRATO_REAL", "_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_FUENTE_COBRO", "_OT_FIN_ZZ_NO_SERVICIO",
+CONSTS = ("_OT_FIN_SQL_CONTRATO_REAL", "_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_ORIGENES_COBRO_RESPALDO", "_OT_FIN_FUENTE_COBRO", "_OT_FIN_ZZ_NO_SERVICIO",
           "_OT_FIN_COBERTURA_TXT", "_OT_FIN_UMBRAL_BAJO", "_OT_FIN_BASE_CAMPOS", "_OT_FIN_BASE_MONTOS",
           "_OT_FIN_VALORIZADO_FUENTES", "_OT2_LINEA_ZZ", "_OT2_VALOR_ORIGENES", "_OT2_VALOR_ORIGENES_CON_MOTIVO")
 

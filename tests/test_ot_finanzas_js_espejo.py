@@ -50,9 +50,15 @@ CASOS = [
     dict(modalidad_cobro="pagado", cobro_cero_motivo="garantia", costo_proveedor=20000),
     dict(modalidad_cobro="interno", cliente_id=5, costo_proveedor=0, zz_monto=30000, valor_origen="manual"),
     dict(modalidad_cobro="interno", cliente_id=None, costo=40000),
+    # 2026-10-08: el «Precio al cliente» suelto es un precio anotado, no un cobro (con y sin respaldo).
+    dict(costo=200000, costo_proveedor=200000),
+    dict(costo=200000, costo_proveedor=50000, valor_origen="doc_total"),
+    dict(costo=200000, costo_proveedor=50000, valor_origen="manual", zz_envio_monto=20000, costo_despacho=5000),
+    dict(zz_monto=1, zz_codigo="ZZRETIRO", valor_origen="zz", costo=200000, costo_proveedor=1000),
+    dict(costo=90000, valor_origen="estimado", costo_proveedor=1000),
     dict(tipo="revision_interna", cliente_id=9, zz_monto=10000, valor_origen="zz", costo_proveedor=5000),
 ]
-CAMPOS = ("cobertura", "cobra", "clase", "label", "a_pagar_proveedor", "avisos")
+CAMPOS = ("cobertura", "cobra", "clase", "label", "a_pagar_proveedor", "avisos", "precio_anotado")
 
 
 @unittest.skipUnless(shutil.which("node"), "node no está instalado")

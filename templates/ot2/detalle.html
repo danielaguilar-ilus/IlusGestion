@@ -481,6 +481,29 @@
 #otdCardFinanzas > .otd-fin-body{padding:0 16px 16px}
 .otd-fnum{font-variant-numeric:tabular-nums}
 
+/* ══ 2026-10-08 · LA TARJETA ES LA SECCIÓN DE EDICIÓN (el motor de arriba es la vista principal) ═══════════════════
+   Daniel: «necesito que los tamaños los achique… cero espacios en blanco… los botones están desalineados».
+   El motor (#otdCardMotor) muestra la cuenta; esta tarjeta conserva TODO para editar (REGLA #4.2). Para no tener dos
+   «Cobré» a la vista, la barra con la cuenta solo aparece mientras se edita («Con lo que estás escribiendo»); los
+   botones (Desglose, Guardar, Corregir) quedan siempre, en UNA fila y de la misma altura. En el celular no cambia. */
+#otdCardFinanzas > h3{font-size:.95rem;margin-bottom:6px}
+#otdCardFinanzas .otd-fincorr-bar{margin:0 16px 8px;gap:8px}
+#otdCardFinanzas .otd-fincorr-btn,#otdCardFinanzas .otd-fincorr-lnk{min-height:36px;height:36px;padding:0 12px;border-radius:9px;font-size:.78rem;box-sizing:border-box}
+#otdCardFinanzas .otd-fincorr-lnk{border:1px solid #d1d5db;background:#fff;padding:0 12px}
+@media (min-width:769px){
+  #otdCardFinanzas .otd-fbar-chev,#otdCardFinanzas .otd-fbar-btn{min-height:36px;height:36px;padding:0 12px;border-radius:9px;font-size:.78rem;box-sizing:border-box}
+  #otdCardFinanzas:not(.fin-editando) .otd-fbar-cuenta,
+  #otdCardFinanzas:not(.fin-editando) .otd-fbar-frase,
+  #otdCardFinanzas:not(.fin-editando) .otd-fbar-cob{display:none}
+  #otdCardFinanzas:not(.fin-editando) .otd-fbar{position:static}
+  #otdCardFinanzas:not(.fin-editando) .otd-fbar-acc{margin-left:0}
+  #otdCardFinanzas.fin-editando .otd-fbar-cuenta::before{content:"Con lo que estás escribiendo";position:absolute;margin-top:-13px;font-size:.62rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:#b45309}
+  #otdCardFinanzas.fin-editando .otd-fbar-eq{padding-top:18px}
+  #otdCardFinanzas .otd-fbar-num{font-size:1.1rem}
+  #otdCardFinanzas .otd-cc{min-height:58px;padding:6px 4px}
+  #otdCardFinanzas .otd-fpaso > .hd{padding:8px 12px}
+}
+
 /* ── 0 · Barra de resultado ── */
 .otd-fbar{position:sticky;top:8px;z-index:15;background:#fff;border:1px solid #e5e7eb;
   border-left:5px solid #9ca3af;border-radius:12px;margin:12px 0 10px;
@@ -7155,20 +7178,32 @@ function otdIniciarRuta(app){
         <div class="otd-fincorr-res" id="otdFcRes"></div>
         <div class="otd-fincorr-frase" id="otdFcFrase"></div>
         <div class="otd-fcobvivo" id="otdFcCobAviso" role="status" hidden></div>
+        <div class="otd-fc-sec cobre">
+          <div class="otd-fc-h"><b>Cobré</b> <small>lo que se le cobró al cliente · sale de los documentos</small></div>
+          <div class="otd-fc-fuente" id="otdFcFuente"></div>
+          <div class="row g-2">
+            <div class="col-6"><label class="form-label small fw-semibold mb-1">Cobro del servicio ($)</label>
+              <input type="text" inputmode="numeric" class="form-control" id="otdFc_zz_monto" oninput="otdFinCorrCalc()"></div>
+            <div class="col-6"><label class="form-label small fw-semibold mb-1">Cobro del despacho ($)</label>
+              <input type="text" inputmode="numeric" class="form-control" id="otdFc_zz_envio_monto" oninput="otdFinCorrCalc()"></div>
+          </div>
+        </div>
+        <div class="otd-fc-sec cuesta">
+          <div class="otd-fc-h"><b>Me cobraron</b> <small>lo que nos cobró el técnico o proveedor</small></div>
+          <div class="row g-2">
+            <div class="col-6"><label class="form-label small fw-semibold mb-1">Pago al técnico / proveedor ($)</label>
+              <input type="text" inputmode="numeric" class="form-control" id="otdFc_costo_proveedor" oninput="otdFinCorrCalc()"></div>
+            <div class="col-6"><label class="form-label small fw-semibold mb-1">Costo del despacho ($)</label>
+              <input type="text" inputmode="numeric" class="form-control" id="otdFc_costo_despacho" oninput="otdFinCorrCalc()"></div>
+          </div>
+        </div>
         <div class="row g-2">
-          <div class="col-6"><label class="form-label small fw-semibold mb-1">Cobro del servicio ($)</label>
-            <input type="text" inputmode="numeric" class="form-control" id="otdFc_zz_monto" oninput="otdFinCorrCalc()"></div>
-          <div class="col-6"><label class="form-label small fw-semibold mb-1">Cobro del despacho ($)</label>
-            <input type="text" inputmode="numeric" class="form-control" id="otdFc_zz_envio_monto" oninput="otdFinCorrCalc()"></div>
-          <div class="col-6"><label class="form-label small fw-semibold mb-1">Pago al técnico / proveedor ($)</label>
-            <input type="text" inputmode="numeric" class="form-control" id="otdFc_costo_proveedor" oninput="otdFinCorrCalc()"></div>
-          <div class="col-6"><label class="form-label small fw-semibold mb-1">Costo del despacho ($)</label>
-            <input type="text" inputmode="numeric" class="form-control" id="otdFc_costo_despacho" oninput="otdFinCorrCalc()"></div>
           <div class="col-12"><label class="form-label small fw-semibold mb-1">Valorizado ($)
               <span class="fw-normal text-muted">· cuánto vale el servicio; solo referencia, no se suma a lo cobrado</span></label>
             <input type="text" inputmode="numeric" class="form-control" id="otdFc_valorizado_clp" oninput="otdFinCorrCalc()"></div>
           <div class="col-12"><label class="form-label small fw-semibold mb-1">Centro de costo</label>
-            <select class="form-select" id="otdFc_centro_costo"></select></div>
+            <select class="form-select" id="otdFc_centro_costo" hidden></select>
+            <div class="otd-cc-grid" id="otdFcCcGrid" role="group" aria-label="Centro de costo"></div></div>
           <div class="col-12"><label class="form-label small fw-semibold mb-1">Motivo de la corrección <span class="text-danger">*</span></label>
             <textarea class="form-control" id="otdFc_motivo" rows="3" maxlength="500"
               placeholder="Por qué se corrige (mínimo 15 caracteres). Ej.: el costo del técnico no se declaró al cerrar; factura N° 1234."></textarea></div>
@@ -7200,6 +7235,13 @@ function otdIniciarRuta(app){
 .otd-fincorr-res.info{background:#dbeafe;color:#1e3a8a}.otd-fincorr-res.info b{color:#1d4ed8}
 .otd-fincorr-frase{font-size:.78rem;color:#374151;margin:-6px 0 12px;line-height:1.45;overflow-wrap:anywhere}
 .otd-fincorr-frase:empty{display:none}
+.otd-fc-sec{border:1px solid #e5e7eb;border-radius:10px;padding:9px 10px;margin-bottom:10px;background:#fafafa}
+.otd-fc-sec.cobre{border-left:4px solid #16a34a}.otd-fc-sec.cuesta{border-left:4px solid #dc2626}
+#otdFcCcGrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.otd-fc-h{margin-bottom:6px;font-size:.84rem}.otd-fc-h small{color:#6b7280;font-weight:600;margin-left:4px}
+.otd-fc-fuente{font-size:.76rem;color:#374151;margin-bottom:8px;line-height:1.45;overflow-wrap:anywhere}
+.otd-fc-fuente .pa{display:block;margin-top:5px;background:#fff8e1;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:6px 9px;font-weight:700}
+.otd-fc-fuente .pa button{margin-top:5px;min-height:34px;border:1px solid #92400e;background:#fff;color:#92400e;border-radius:8px;font-weight:800;font-size:.76rem;padding:0 10px;display:block}
 .otd-fincorr-hist{margin-top:14px;display:flex;flex-direction:column;gap:8px}
 .otd-fincorr-hist .h{border:1px solid #e5e7eb;border-radius:10px;padding:9px 12px;font-size:.78rem;background:#fafafa}
 .otd-fincorr-hist .h .q{font-weight:800;color:#0a0a0a}.otd-fincorr-hist .h .m{color:#374151;margin-top:3px;overflow-wrap:anywhere}
@@ -7271,6 +7313,45 @@ function otdFinCorrCalc(){
     if (_otdFcPierde && window.otdFinPierdeCobroHtml) av.innerHTML = window.otdFinPierdeCobroHtml(r, _otdFcEsc);
   }
 }
+/* 2026-10-08 (Daniel: «el centro de costo hazlo con botones»): los mismos rectángulos de la ficha (.otd-cc). El <select>
+   oculto (#otdFc_centro_costo) sigue siendo el que lee «Guardar corrección». Tocar el seleccionado lo quita. */
+var _OTD_FC_CC = {sstt:['cc-sstt','bi-wrench-adjustable-circle-fill','El costo es nuestro'], logistica:['cc-log','bi-truck','Despacho o bodega'],
+                  comercial:['cc-com','bi-briefcase-fill','Convenio o venta'], marketing:['cc-mkt','bi-megaphone-fill','Campaña o contenido']};
+function otdFinCorrCcPintar(centros, actual){
+  var g = document.getElementById('otdFcCcGrid'); if (!g) return;
+  g.innerHTML = centros.map(function(c){
+    var m = _OTD_FC_CC[c.v] || ['', 'bi-circle', ''];
+    return '<button type="button" class="otd-cc ' + m[0] + (c.v === actual ? ' on' : '') + '" data-cc="' + otdEsc(c.v) + '" aria-pressed="' + (c.v === actual) + '">' +
+      '<i class="bi ' + m[1] + '"></i><b>' + otdEsc(c.n) + '</b><small>' + otdEsc(m[2]) + '</small></button>'; }).join('');
+  g.onclick = function(e){
+    var b = e.target.closest('.otd-cc'); if (!b) return;
+    var sel = document.getElementById('otdFc_centro_costo');
+    var ya = b.classList.contains('on');
+    g.querySelectorAll('.otd-cc').forEach(function(x){ x.classList.remove('on'); x.setAttribute('aria-pressed', 'false'); });
+    if (!ya){ b.classList.add('on'); b.setAttribute('aria-pressed', 'true'); }
+    sel.value = ya ? '' : b.getAttribute('data-cc');
+  };
+}
+/* Cobré vs Me cobraron, sin inventar un cobro: dice de DÓNDE sale lo cobrado y muestra el «Precio al cliente» anotado
+   sin documento aparte, como referencia (no cuenta como cobro hasta que se declare con su motivo). */
+function otdFinCorrFuente(f){
+  var el = document.getElementById('otdFcFuente'); if (!el) return;
+  if (!f){ el.innerHTML = ''; return; }
+  var C = f.cobre || {}, html = '';
+  if (!f.cobra) html = 'Esta OT no se cobra (' + _otdFcEsc(String(f.cobertura_txt || '').split(':')[0]) + '): lo cobrado es $0.';
+  else if (C.hay) html = 'Lo cobrado sale de: <b>' + _otdFcEsc(C.fuente || 'lo declarado') + '</b> · servicio ' + _otdFcPlata(C.servicio) +
+                         ' + despacho ' + _otdFcPlata(C.despacho) + '.';
+  else html = '<b>Todavía no hay cobro:</b> falta el documento de Random o declarar lo cobrado a mano con su motivo.';
+  if (f.cobra && f.precio_anotado != null)
+    html += '<span class="pa">Precio anotado sin documento: ' + _otdFcPlata(f.precio_anotado) + '. No cuenta como cobro.' +
+            '<button type="button" onclick="otdFinCorrUsarAnotado(' + Math.round(f.precio_anotado) + ')">Usar como cobro del servicio</button></span>';
+  el.innerHTML = html;
+}
+function otdFinCorrUsarAnotado(n){
+  var i = document.getElementById('otdFc_zz_monto'); if (!i) return;
+  i.value = String(n); otdFinCorrCalc();
+  var m = document.getElementById('otdFc_motivo'); if (m) m.focus();
+}
 async function otdFinCorrAbrir(){
   document.getElementById('otdFcErr').textContent = '';
   document.getElementById('otdFc_motivo').value = '';
@@ -7293,6 +7374,8 @@ async function otdFinCorrAbrir(){
     var sel = document.getElementById('otdFc_centro_costo');
     sel.innerHTML = '<option value="">Sin centro de costo</option>' + (j.centros || []).map(function(c){
       return '<option value="' + otdEsc(c.v) + '"' + (c.v === a.centro_costo ? ' selected' : '') + '>' + otdEsc(c.n) + '</option>'; }).join('');
+    otdFinCorrCcPintar(j.centros || [], a.centro_costo || '');
+    otdFinCorrFuente(j.fin || null);
     otdFinCorrCalc();
     var h = j.historial || [];
     document.getElementById('otdFcHist').innerHTML = h.length
@@ -7343,6 +7426,21 @@ async function otdFinCorrGuardar(){
 }
 </script>
 {% endif %}
+<script>
+/* 2026-10-08 — la tarjeta «Finanzas de la OT» es la sección de EDICIÓN: su barra con la cuenta solo se ve mientras se
+   escribe (ver el CSS «LA TARJETA ES LA SECCIÓN DE EDICIÓN»). Marca la tarjeta como «editando» al primer cambio. */
+(function(){
+  var c = document.getElementById('otdCardFinanzas'); if (!c) return;
+  function marca(e){
+    var t = e.target; if (!t || !t.closest) return;
+    if (t.closest('.otd-erpdoc-search') || !t.closest('.otd-fin-body')) return;
+    c.classList.add('fin-editando');
+  }
+  c.addEventListener('input', marca, true);
+  c.addEventListener('change', marca, true);
+  c.addEventListener('click', function(e){ if (e.target.closest && e.target.closest('.otd-cc,.otd-tecchip,.otd-fadd-btn,#otdBtnLeerZz')) marca(e); }, true);
+})();
+</script>
 
 {# ═════════════════════════════════════════════════════════════════════
    MODAL: Firma (técnico / cliente) — namespace OT2F, 2026-08-28.

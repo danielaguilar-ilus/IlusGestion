@@ -56111,6 +56111,46 @@ def _ot_can_cobertura(view_func):
     return wrapped
 
 
+# 🔓 2026-10-08 (Daniel: "que no puedan entramparse en un ciclo que no tiene solución"): las acciones de FINANZAS que
+# resuelven un rechazo de «Firmar y cerrar» (centro de costo, documento, cobro, costo del proveedor) tienen que
+# funcionar en el MISMO estado en que la OT llega a ese modal. aprobar-cierre acepta 'pendiente_aprobacion' y
+# 'completada'; el permiso 'cobertura' negaba 'completada' y el centro de costo la excluía del UPDATE: el candado
+# SIN_CENTRO_COSTO quedaba sin manija. Esto abre SOLO esa ventana, para gestión, sin tocar estado ni firmas, y nunca
+# con la OT cerrada (evidencia) ni cuando ya hay firma del responsable.
+_OT_FIN_ESTADOS_CIERRE = ("completada", "pendiente_aprobacion", "firmada_tecnico")
+_OT_FIN_ESTADOS_SELLADOS = ("cerrada", "cancelada", "anulada")
+
+
+def _ot_puede_finanzas_cierre(vid, user=None):
+    """¿Puede este usuario declarar/corregir finanzas de la OT en la ventana de cierre? Primero el permiso de siempre
+    ('cobertura'); si lo niega solo porque la OT está 'completada' (esperando el cierre), gestión lo conserva."""
+    u = user if user is not None else (getattr(g, "user", None) or {})
+    try:
+        if _puede_ot_accion(vid, "cobertura", u):
+            return True
+        if _rol_familia(((u.get("role") or "") if u else "").lower()) not in ("superadmin", "admin", "supervisor", "ejecutivo"):
+            return False
+        f = mysql_fetchone("SELECT estado, firma_supervisor_user_id FROM mant_visitas WHERE id=%s", (vid,))
+        if not f:
+            return False
+        return ((f.get("estado") or "").lower() in _OT_FIN_ESTADOS_CIERRE and not f.get("firma_supervisor_user_id"))
+    except Exception as e:
+        print(f"[ot-fin-cierre] vid={vid}: {type(e).__name__}", flush=True)
+        return False
+
+
+def _ot_can_finanzas_cierre(view_func):
+    """Como @_ot_can_cobertura, pero también en 'completada' (ver _ot_puede_finanzas_cierre). Para las rutas de
+    finanzas y documentos que el modal de cierre usa para resolver un rechazo."""
+    @wraps(view_func)
+    def wrapped(vid, *args, **kwargs):
+        u = getattr(g, "user", None) or {}
+        if not _ot_puede_finanzas_cierre(vid, u):
+            return _ot_403_response(vid, (u.get("role") or "").lower(), u.get("id"), u.get("username"), accion="cobertura")
+        return view_func(vid, *args, **kwargs)
+    return wrapped
+
+
 def _ot_can_metadata(view_func):
     """Decorador para PUT de visita (editar título, fecha, técnico, tipo,
     estado, etc.).
@@ -83479,6 +83519,10 @@ def _ot_resultado_financiero(v, rep=None):
 # 'supuesto' NO está acá a propósito (revisión 2026-10-07): el asistente marca 'supuesto' o 'manual' según si
 # había o no una sugerencia en pantalla, pero en los dos casos una persona escribió cuánto se cobra.
 _OT_FIN_ORIGENES_NO_COBRO = ("estimado", "interno")
+# 2026-10-08 (Daniel): un «Precio al cliente» (`costo`) sin línea de servicio SOLO cuenta como cobro si tiene respaldo:
+# el documento (zz / total del documento), una cotización, un contrato o un cobro declarado a mano con motivo.
+# Espejo en static/ot_finanzas.js (ORIGENES_COBRO_RESPALDO) y en _OT_FIN_SQL_COBRE_POSITIVO.
+_OT_FIN_ORIGENES_COBRO_RESPALDO = ("zz", "doc_total", "cotizacion", "contrato", "manual", "supuesto")
 # Rótulo amable de dónde salió lo cobrado por el servicio.
 _OT_FIN_FUENTE_COBRO = {
     "zz": "línea del documento", "doc_total": "total del documento", "cotizacion": "cotización",
@@ -83609,7 +83653,7 @@ def _ot_finanzas(v, rep=None):
         # declarado a mano con motivo (valor_origen). Sin respaldo es un precio anotado: referencia, no cobro.
         # (valor_origen que respalda: documento de Random, cotización, contrato o cobro declarado a mano;
         #  espejo en static/ot_finanzas.js ORIGENES_COBRO_RESPALDO.)
-        if zz is None and origen in ("zz", "doc_total", "cotizacion", "contrato", "manual", "supuesto"):
+        if zz is None and origen in _OT_FIN_ORIGENES_COBRO_RESPALDO:
             serv, fuente = max(tot - (env or 0.0), 0.0), "precio al cliente (sin separar servicio y despacho)"
         else:
             precio_anotado = tot
@@ -88810,8 +88854,8 @@ _OT_FIN_SQL_COBRE_POSITIVO = (
     "  AND LOWER(TRIM(COALESCE(v.valor_origen,''))) NOT IN ('" + "','".join(_OT_FIN_ORIGENES_NO_COBRO) + "')"
     "  AND UPPER(TRIM(COALESCE(v.zz_codigo,''))) NOT IN ('" + "','".join(_OT_FIN_ZZ_NO_SERVICIO) + "')"
     "  THEN (v.zz_monto + COALESCE(v.zz_envio_monto,0)) > 0"
-    " WHEN (v.zz_monto IS NULL"
-    "       OR UPPER(TRIM(COALESCE(v.zz_codigo,''))) IN ('" + "','".join(_OT_FIN_ZZ_NO_SERVICIO) + "'))"
+    " WHEN v.zz_monto IS NULL"
+    "  AND LOWER(TRIM(COALESCE(v.valor_origen,''))) IN ('" + "','".join(_OT_FIN_ORIGENES_COBRO_RESPALDO) + "')"
     "  AND COALESCE(v.costo,0) > 0 THEN 1"
     " ELSE COALESCE(v.zz_envio_monto,0) > 0 END)")
 
@@ -91068,7 +91112,7 @@ def ot2_api_cliente_crear():
 
 
 @app.route("/ot/api/<int:vid>/centro-costo", methods=["POST"])
-@_ot_can_cobertura
+@_ot_can_finanzas_cierre
 def ot2_api_centro_costo(vid):
     """Declara SOLO el centro de costo de una OT.
 
@@ -91113,7 +91157,7 @@ def ot2_api_centro_costo(vid):
     _n = mysql_execute_returning_rowcount(
         "UPDATE mant_visitas SET centro_costo=%s "
         " WHERE id=%s AND COALESCE(estado,'') NOT IN "
-        "       ('completada','cerrada','cancelada','anulada')",
+        "       ('cerrada','cancelada','anulada')",
         (centro, vid))
     if not _n:
         return jsonify({
@@ -91396,6 +91440,8 @@ def _ot_fin_dudosas_motivos(r, rep=None, fin=None):
         m.append("Sin separar servicio y despacho")
     elif cobra and f["cobre"]["hay"] and _tot is not None and _tot > 0 and abs(_tot - cobre) >= 1:
         m.append("Precio al cliente distinto de lo cobrado")
+    if cobra and f.get("precio_anotado") is not None:
+        m.append("Precio anotado sin documento de cobro (no cuenta como cobro)")
     return m
 
 
@@ -91633,7 +91679,7 @@ def ot2_api_finanzas_modelo_copiar():
 
 @app.route("/ot/api/finanzas/<int:vid>", methods=["GET", "POST"])
 @_mant_required
-@_ot_can_cobertura
+@_ot_can_finanzas_cierre
 def ot2_api_finanzas(vid):
     """Parte financiera de una OT — declarar, consultar y RETRACTARSE.
 
@@ -91972,8 +92018,10 @@ def ot2_api_finanzas(vid):
     # el cierre) no se pisen en silencio. superadmin excluido a propósito.
     _u_req = getattr(g, "user", None) or {}
     _es_superadmin_req = (_u_req.get("role") or "").lower() == "superadmin"
+    # 🔓 2026-10-08: 'completada' (esperando el cierre) deja de ser un candado para gestión: es justo el estado en que
+    # «Firmar y cerrar» pide declarar el cobro (SIN_VALORIZAR). Siguen sellados cerrada/cancelada/anulada.
     _where_lock = "" if _es_superadmin_req else (
-        " AND estado NOT IN ('completada','cerrada','cancelada','anulada')")
+        " AND estado NOT IN ('cerrada','cancelada','anulada')")
     # ══════════════════════════════════════════════════════════════════
     # FASE 2 — 2026-09-11 (Daniel: "cámbialo", sobre que la tarjeta de
     # Finanzas guardara por el PUT genérico y no por acá).
@@ -92252,7 +92300,7 @@ def ot2_api_finanzas(vid):
 
 @app.route("/ot/api/finanzas/<int:vid>/buscar-erp", methods=["POST"])
 @_mant_required
-@_ot_can_cobertura
+@_ot_can_finanzas_cierre
 def ot2_api_finanzas_buscar_erp(vid):
     """Busca documentos del cliente en el ERP Random para asociarlos a la OT.
 
@@ -92460,7 +92508,7 @@ def ot2_api_finanzas_buscar_erp(vid):
 
 @app.route("/ot/api/finanzas/<int:vid>/lineas-zz", methods=["POST"])
 @_mant_required
-@_ot_can_cobertura
+@_ot_can_finanzas_cierre
 def ot2_api_finanzas_lineas_zz(vid):
     """Lee las líneas ZZ de un documento del ERP para llenar las finanzas.
 
@@ -94745,7 +94793,10 @@ def ot_api_recorrido(vid):
     elif c["hay"] and c["total"] > 0:
         p3 = {"estado": "hecho", "texto": f"Servicio {_ot_fin_clp(c['servicio'])} + despacho {_ot_fin_clp(c['despacho'])} = {_ot_fin_clp(c['total'])}"}
     else:
-        p3 = {"estado": "falta", "texto": "Falta lo que cobraste (servicio y despacho)"}
+        p3 = {"estado": "falta", "texto": ("Falta el documento de cobro: hay un precio anotado de "
+                                           f"{_ot_fin_clp(fin['precio_anotado'])} que no cuenta como cobro"
+                                           if fin.get("precio_anotado") is not None
+                                           else "Falta lo que cobraste (servicio y despacho)")}
     # ④ Me cobró el proveedor
     m = fin["me_cobraron"]
     if m["falta_tecnico"]:
@@ -95028,7 +95079,7 @@ def ot_api_panorama(vid):
     cerrada = (v.get("estado") or "") in ("cerrada", "completada")
     puede_cob = False
     try:
-        puede_cob = bool(_puede_ot_accion(vid, "cobertura", getattr(g, "user", None) or {}))
+        puede_cob = bool(_ot_puede_finanzas_cierre(vid, getattr(g, "user", None) or {}))
     except Exception:
         puede_cob = False
     return jsonify({
@@ -95047,7 +95098,7 @@ def ot_api_panorama(vid):
 
 @app.route("/ot/api/<int:vid>/costo-proveedor", methods=["POST"])
 @_mant_required
-@_ot_can_cobertura
+@_ot_can_finanzas_cierre
 def ot_api_costo_proveedor(vid):
     """La «segunda opción de modificar» (Daniel 2026-10-07): corregir lo que cobró el técnico/proveedor y su
     despacho cuando hubo una desviación o un error del proveedor. Motivo OBLIGATORIO (≥ 10 caracteres): queda en la
@@ -95122,7 +95173,7 @@ def ot_api_documentos_regularizar(vid):
         return jsonify({"ok": False, "error": "OT no encontrada"}), 404
     if (v.get("estado") or "") in ("cancelada", "anulada"):
         return jsonify({"ok": False, "error": "Esa OT está cancelada o anulada.", "error_codigo": "OT_CERRADA"}), 409
-    if _puede_ot_accion(vid, "cobertura"):
+    if _ot_puede_finanzas_cierre(vid):
         return ot2_api_documentos_agregar(vid)   # OT abierta: el camino de siempre, con su propio permiso
     # OT cerrada: solo si de verdad necesita regularizarse.
     try:
@@ -95344,7 +95395,7 @@ def _ot_resolver_doc_erp(tipo, numero, cli_rut=None):
 
 @app.route("/ot/api/<int:vid>/documentos", methods=["POST"])
 @_mant_required
-@_ot_can_cobertura
+@_ot_can_finanzas_cierre
 def ot2_api_documentos_agregar(vid):
     """Asocia OTRO documento a la OT (multidocumento).
 

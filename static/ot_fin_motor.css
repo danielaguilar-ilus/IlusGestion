@@ -155,3 +155,105 @@
 .otd-grid > #otdCardMotor{grid-column:1/-1}
 @media (max-width:980px){.otd-grid > #otdCardMotor{order:-1}}
 #otdCardMotor{background:#f9fafb;border:1px solid #e5e7eb;border-radius:14px;padding:14px}
+
+/* ══ COMPACTO · 2026-10-08 ═══════════════════════════════════════════════════════════════════════════════════════
+   Daniel (mirando producción): «necesito que los tamaños los achique… aprovechemos los espacios, cero espacios en
+   blanco… los botones están desalineados, quiero ver las cosas ordenadas». Mismo contenido, tamaños de escritorio
+   más chicos; en el celular (≤560px) se conservan los botones táctiles de 44px. */
+.fm{gap:10px;font-size:.84rem}
+.fm-head h3{font-size:.98rem}
+.fm-head p{font-size:.76rem}
+.fm-sec{padding:10px 12px;border-radius:10px}
+.fm-sec-h{gap:8px;margin-bottom:8px}
+.fm-sec-h h3{font-size:.9rem}
+.fm-sec-h .fm-help{flex:1 1 100%;margin-top:-4px}
+.fm-num{width:22px;height:22px;font-size:.72rem}
+.fm-btn{min-height:34px;padding:0 11px;font-size:.78rem;border-radius:8px;justify-content:center}
+.fm-s1{padding:8px}
+.fm-pasos{grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.fm-paso{display:flex;flex-direction:column;padding:8px 8px 8px 44px;border-radius:10px}
+.fm-paso .fm-circ{left:8px;top:8px;width:28px;height:28px;font-size:.9rem}
+.fm-paso-t b{font-size:.82rem}
+.fm-paso p{font-size:.74rem;margin-top:2px}
+.fm-paso-a{margin-top:auto;padding-top:6px;gap:4px}
+.fm-paso-a .fm-btn{width:100%;min-height:30px;padding:0 8px;font-size:.72rem}
+.fm-tiles{grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:6px}
+.fm-tile{padding:6px 9px;border-radius:9px;display:grid;grid-template-columns:auto 1fr;column-gap:8px;align-items:center}
+.fm-tile b{font-size:1.3rem;grid-row:1 / span 2}
+.fm-tile span{font-size:.76rem;line-height:1.15}
+.fm-tile small{font-size:.66rem;line-height:1.15}
+.fm-main{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;min-width:0;align-items:start}
+.fm-col{display:flex;flex-direction:column;gap:10px;min-width:0}
+@media (min-width:1000px){
+  .fm-main{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}
+  .fm-col{position:sticky;top:8px}
+}
+.fm-docs{grid-template-columns:minmax(0,1fr);gap:8px}
+.fm-doc{padding:9px 10px;border-radius:10px;border-left-width:4px}
+.fm-doc header{gap:6px;margin-bottom:6px}
+.fm-doc h4{font-size:.95rem}
+.fm-chip{font-size:.62rem;padding:2px 6px}
+.fm-cuenta{font-size:.68rem;padding:2px 8px}
+.fm-pri{font-size:.64rem;padding:2px 7px}
+.fm-aporta{margin-left:auto;font-size:.72rem;font-weight:900;border-radius:6px;padding:3px 8px;background:var(--fm-gris-f);color:#374151}
+.fm-aporta.si{background:var(--fm-verde-f);color:#14532d}
+.fm-aporta.nv{background:var(--fm-ambar-f);color:#78350f}
+.fm-meta{grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:4px 12px;margin-bottom:6px}
+.fm-meta dt{font-size:.6rem}
+.fm-meta dd{font-size:.78rem}
+.fm-meta dd small{font-size:.68rem}
+.fm-baja{padding:5px 8px;font-size:.74rem;margin-bottom:6px}
+.fm-lineas{gap:6px}
+.fm-grp h5{font-size:.66rem;margin-bottom:2px}
+.fm-lt{font-size:.76rem}
+.fm-lt td{padding:3px 0}
+.fm-ltot{font-size:.72rem;padding-top:2px}
+.fm-nolin{font-size:.74rem;padding:6px 8px}
+.fm-vacio{padding:12px}
+.fm-costos{font-size:.8rem}
+.fm-costos td{padding:5px 0}
+.fm-costos tr.tot td{font-size:.88rem}
+.fm-cuenta-g{gap:4px 6px}
+.fm-cuenta-g>div{padding:7px 4px;border-radius:10px}
+.fm-cuenta-g b{font-size:1.05rem}
+.fm-cuenta-g small{font-size:.6rem}
+.fm-cuenta-g span{font-size:.64rem}
+.fm-cuenta-g>i{font-size:1.1rem}
+.fm-cero{padding:9px}
+.fm-cero>b{font-size:1.4rem}
+.fm-frase{margin-top:6px;font-size:.8rem}
+.fm-aviso{margin-top:6px;padding:6px 8px;font-size:.74rem}
+.fm-hist li{padding:7px 9px}
+.fm-hist p{font-size:.78rem;margin:2px 0}
+.fm-acciones{padding:8px 10px;gap:6px}
+.fm-acciones>span{font-size:.62rem}
+.fm-espera,.fm-rechazo{padding:8px 10px;margin-bottom:8px;gap:8px}
+@media (max-width:560px){
+  .fm{font-size:.88rem}
+  .fm-btn{min-height:44px}
+  .fm-paso-a .fm-btn{min-height:44px}
+  .fm-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .fm-aporta{margin-left:0;flex:1 1 100%}
+}
+
+/* Centro de costo: los rectángulos del asistente de creación (.o2m-cc), en pequeño y con el seleccionado animado. */
+.fm-cc-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+@media (min-width:420px){.fm-cc-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media (min-width:1000px) and (max-width:1399px){.fm-cc-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.fm-cc{--c:#6b7280;border:2px solid #e5e7eb;background:#fff;border-radius:11px;padding:8px 6px;cursor:pointer;text-align:center;
+  min-height:68px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-family:inherit;
+  transition:border-color .16s,background .16s,transform .14s,box-shadow .18s}
+.fm-cc i{font-size:1.2rem;color:#9ca3af;transition:color .16s,transform .2s}
+.fm-cc b{font-size:.78rem;font-weight:800;color:#374151;line-height:1.2;overflow-wrap:anywhere}
+.fm-cc small{font-size:.62rem;color:#9ca3af;line-height:1.2}
+.fm-cc:hover:not(:disabled){border-color:var(--c);transform:translateY(-1px)}
+.fm-cc:hover:not(:disabled) i{color:var(--c)}
+.fm-cc.on{border-color:var(--c);background:color-mix(in srgb,var(--c) 9%,#fff);box-shadow:0 4px 14px -6px var(--c);animation:fmCcPop .35s ease}
+.fm-cc.on i{color:var(--c);transform:scale(1.12)}
+.fm-cc.on b{color:var(--c)}
+.fm-cc.pulsa{animation:fmCcPop .35s ease;border-color:var(--c)}
+.fm-cc:disabled{cursor:default;opacity:.7}
+.fm-cc.cc-sstt{--c:#dc2626}.fm-cc.cc-log{--c:#2563eb}.fm-cc.cc-com{--c:#d97706}.fm-cc.cc-mkt{--c:#16a34a}
+@keyframes fmCcPop{0%{transform:scale(.94)}60%{transform:scale(1.04)}100%{transform:scale(1)}}
+@supports not (color: color-mix(in srgb, red 50%, transparent)){.fm-cc.on{background:#f9fafb}}
+@media (prefers-reduced-motion:reduce){.fm-cc,.fm-cc.on,.fm-cc.pulsa{animation:none;transition:none}}
