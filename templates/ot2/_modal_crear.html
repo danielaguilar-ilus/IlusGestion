@@ -1667,7 +1667,10 @@ window.OT2C = (function(){
         // 💰 2026-09-15: trabajo interno también se valoriza (decisión de
         // Daniel) -- centro de costo + "Esta OT vale" > 0 (horas × tarifa
         // o escrito a mano). Sin cobro, sin documento, sin proveedor.
-        if (esInterno()) return _o2mCostoInternoNum() > 0;
+        // 2026-10-08 (Daniel: "al intentar crear la OT interna no deja colocar valor 0... nosotros no cobramos por
+        // esos servicios internos, no debería trabar la operación"): el valor del trabajo interno es una referencia
+        // SUGERIDA, nunca obligatoria. Vacío o $0 pasan.
+        if (esInterno()) return true;
         if (!(S.fin_garantia || S.fin_aut || !!(S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo))) return false;
         // 🔒 2026-09-09 (Daniel, explícito: "los documentos y las finanzas
         // deben ser requisito indispensable... con datos persistentes en la
@@ -1689,7 +1692,11 @@ window.OT2C = (function(){
         // de este monto -- este quedó mal copiado. Lo que sí corresponde
         // exigir en garantía (costo_proveedor/costo_despacho) sigue
         // obligatorio más abajo, sin cambios.
-        if (!S.fin_garantia && !(S.fin_zz_monto > 0)) return false;
+        // 2026-10-08 (Daniel, OT 281): un $0 escrito se respeta tal cual (no se reemplaza). Pero un cobro de $0 en
+        // una OT que se cobra se declara como Garantía/Regalía/Arriendo con su argumento y pasa por Daniel (REGLA #24):
+        // por eso acá el monto debe existir y, si es 0, solo avanza por ese camino (S.fin_garantia).
+        if (!S.fin_garantia && (S.fin_zz_monto == null || S.fin_zz_monto < 0)) return false;
+        if (!S.fin_garantia && S.fin_zz_monto === 0) return false;
         if ((S.fin_garantia || S.fin_aut) && (S.fin_garantia_motivo||'').trim().length < 30) return false;   // 🔏 argumento ≥ 30
         // 2026-08-30 (Daniel: "si no trae esto se podrá declarar a mano,
         // pero deberá reportarse con un argumento... hay que ser bien
@@ -5434,7 +5441,10 @@ window.OT2C = (function(){
     // Solo dígitos -- sirve igual si pegan "154.000" o escriben "154000".
     // Sin decimales a propósito (mismo criterio que el resto de este
     // archivo para montos: Math.round(x).toLocaleString('es-CL')).
-    return String(v||'').replace(/[^0-9]/g,'');
+    // 🔴 FIX 2026-10-08 (Daniel, OT 281: "le pusimos valor 0… si el usuario dice que es 0 entonces no alteres
+    // eso"): con String(v||'') el número 0 se volvía '' -- el casillero mostraba vacío, el valor quedaba en
+    // null y el envío caía al estimado/cotización. El 0 es un dato: se conserva.
+    return String(v == null ? '' : v).replace(/[^0-9]/g,'');
   }
   function _o2mFormatearMiles(v){
     var digitos = _o2mLimpiarNumero(v);
@@ -6259,7 +6269,7 @@ window.OT2C = (function(){
     switch(sub){
       case 'centro': return S.fin_centro ? {cls:'listo', txt:'Listo'} : {cls:'falta', txt:'Pendiente'};
       case 'valor':
-        if (interno) return _o2mCostoInternoNum() > 0 ? {cls:'listo', txt:'Listo'} : {cls:'falta', txt:'Pendiente'};
+        if (interno) return String(S.costo_interno == null ? '' : S.costo_interno).trim() !== '' ? {cls:'listo', txt:'Listo'} : {cls:'opcional', txt:'Opcional'};
         // 🔴 FIX 2026-09-18: en garantía no se cobra nada al cliente, así
         // que este sub-paso no puede seguir pidiendo el monto (ver el
         // mismo fix en el gate de 'finanzas' más arriba en este archivo).
@@ -6269,7 +6279,8 @@ window.OT2C = (function(){
           if (_o2mFinEsManual() && !(S.fin_zz_motivo_manual||'').trim()) return {cls:'falta', txt:'Falta el motivo'};
           return {cls:'opcional', txt:'Opcional'};
         }
-        if (!(S.fin_zz_monto > 0)) return {cls:'falta', txt:'Pendiente'};
+        if (S.fin_zz_monto == null) return {cls:'falta', txt:'Pendiente'};
+        if (S.fin_zz_monto === 0) return {cls:'falta', txt:'$0: declara garantía, regalía o arriendo'};
         // 2026-10-07: _o2mFinPideMotivo = editado a mano O estimado usado como cobro.
         if (_o2mFinPideMotivo() && !(S.fin_zz_motivo_manual||'').trim()) return {cls:'falta', txt:'Falta el motivo'};
         // 2026-09-15 (revisión): el motivo del ZZENVIO editado a mano se
@@ -8052,11 +8063,12 @@ window.OT2C = (function(){
     // 🔒 2026-09-09 / 2026-09-15: ramas de RESPALDO (el chip ya escribe en fin_zz_monto, así que normalmente
     // entra la de arriba) -- una OT valorizada con "Buscar cotización" o solo con el estimado no puede crearse
     // sin ningún monto guardado.
-    if (S.fin_cotizacion && S.fin_cotizacion.total != null){
+    // 2026-10-08: el respaldo solo corre si la persona NO tocó el valor (un $0 escrito nunca se reemplaza).
+    if (!S.fin_valor_tocado && S.fin_cotizacion && S.fin_cotizacion.total != null){
       return {zz_monto: Math.round(S.fin_cotizacion.total), valor_origen: 'cotizacion',
               zz_motivo_manual: 'Valorizado con cotización ' + (S.fin_cotizacion.numero || ('#' + S.fin_cotizacion.id))};
     }
-    if (S.fin_costo_estimado && S.fin_costo_estimado.total_neto != null){
+    if (!S.fin_valor_tocado && S.fin_costo_estimado && S.fin_costo_estimado.total_neto != null){
       return {zz_monto: Math.round(S.fin_costo_estimado.total_neto), valor_origen: 'estimado',
               zz_motivo_manual: 'Estimado automático por clasificación del producto'};
     }
@@ -9529,7 +9541,7 @@ window.OT2C = (function(){
     }
     // 28-08-2026: costo referencial de trabajo interno -- independiente del
     // bloque de arriba (un trabajo de bodega nunca tiene doc_origen).
-    if (esInterno() && String(S.costo_interno||'').trim() !== ''){
+    if (esInterno() && String(S.costo_interno == null ? '' : S.costo_interno).trim() !== ''){   // 2026-10-08: un 0 escrito viaja como 0
       body.finanzas = body.finanzas || {};
       // 💰 2026-09-15 (decisión de Daniel: el trabajo interno también se
       // valoriza obligatoriamente y elige centro de costo): número (> 0,

@@ -13,6 +13,33 @@
    Retiros tal cual (barra de búsqueda, cabecera negra, semáforo por fila,
    pastillas, detalle desplegable, pie negro) -- no se copian. #}
 <link rel="stylesheet" href="{{ url_for('static', filename='retiros_monitor.css') }}">
+{#- 🎨 2026-10-08 (Daniel: "esos botones más bonitos, no tienen ni forma"): los botones del encabezado eran
+    contornos rojos finos sobre el fondo oscuro. Ahora son botones con cuerpo: fondo, ícono en su propia
+    pastilla de color según lo que hacen, misma altura y alineados. -#}
+<style>
+  .inc-hacc{display:flex;gap:10px;flex-wrap:wrap;align-items:stretch}
+  .inc-hbtn{display:inline-flex;align-items:center;gap:10px;min-height:44px;padding:6px 16px 6px 6px;border-radius:12px;
+    border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.08);color:#fff !important;font-weight:700;
+    font-size:.92rem;line-height:1.1;text-decoration:none;transition:transform .15s ease,background .15s ease,box-shadow .15s ease;
+    box-shadow:0 2px 6px rgba(0,0,0,.25)}
+  .inc-hbtn:hover,.inc-hbtn:focus-visible{background:rgba(255,255,255,.16);transform:translateY(-1px);
+    box-shadow:0 6px 16px rgba(0,0,0,.35);color:#fff}
+  .inc-hbtn:focus-visible{outline:2px solid #fff;outline-offset:2px}
+  .inc-hbtn .ic{width:32px;height:32px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;
+    font-size:1rem;flex:0 0 32px;color:#fff}
+  .inc-hbtn .tx{display:flex;flex-direction:column;align-items:flex-start;text-align:left}
+  .inc-hbtn .tx small{font-weight:500;font-size:.72rem;opacity:.75}
+  .inc-hbtn.gris .ic{background:#6b7280}
+  .inc-hbtn.verde .ic{background:#16a34a}
+  .inc-hbtn.ambar .ic{background:#f59e0b}
+  .inc-hbtn.rojo{background:#dc2626;border-color:#dc2626}
+  .inc-hbtn.rojo:hover,.inc-hbtn.rojo:focus-visible{background:#b91c1c}
+  .inc-hbtn.rojo .ic{background:rgba(255,255,255,.2)}
+  .inc-hbtn.dropdown-toggle::after{margin-left:4px;opacity:.8}
+  @media (prefers-reduced-motion:reduce){.inc-hbtn{transition:none}.inc-hbtn:hover{transform:none}}
+  @media (max-width:576px){.inc-hacc{width:100%}.inc-hacc>*{flex:1 1 calc(50% - 10px)}.inc-hacc .inc-hbtn{width:100%;justify-content:flex-start}
+    .inc-hbtn .tx small{display:none}}
+</style>
 {% endblock %}
 {% block content %}
 
@@ -21,17 +48,29 @@
     <h4><i class="bi bi-exclamation-triangle me-2"></i>Incidencias</h4>
     <div class="sub">Sobrantes/faltantes de máquinas al recibir del ERP — registro manual del taller</div>
   </div>
-  <div class="d-flex gap-2">
+  <div class="inc-hacc">
     {% if permissions.superadmin %}
-    <button class="btn btn-ilus-outline" id="incBtnImportar" type="button"
+    <button class="btn inc-hbtn gris" id="incBtnImportar" type="button"
             title="Migrar el CSV exportado de la planilla Excel/VBA antigua">
-      <i class="bi bi-upload me-1"></i>Importar CSV</button>
+      <span class="ic"><i class="bi bi-upload"></i></span><span class="tx">Importar CSV<small>planilla antigua</small></span></button>
     {% endif %}
-    <button class="btn btn-ilus-outline" id="incBtnConciliar" type="button"
+    {% if permissions.admin or permissions.superadmin %}
+    {#- 2026-10-08 (Daniel): Excel de la bodega de Incidencias para análisis, solo admin (también se exige en el servidor). -#}
+    <div class="dropdown">
+      <button class="btn inc-hbtn verde dropdown-toggle" id="incBtnExcel" type="button" data-bs-toggle="dropdown" aria-expanded="false"
+              title="Bajar el detalle de la bodega en Excel para análisis">
+        <span class="ic"><i class="bi bi-file-earmark-excel"></i></span><span class="tx">Descargar Excel<small>para análisis</small></span></button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><a class="dropdown-item" href="#" id="incExcelFiltros">Con los filtros actuales</a></li>
+        <li><a class="dropdown-item" href="#" id="incExcelTodo">Todo (incluye dadas de baja)</a></li>
+      </ul>
+    </div>
+    {% endif %}
+    <button class="btn inc-hbtn ambar" id="incBtnConciliar" type="button"
             title="Comparar nuestra base contra el ERP Random y CheckWMS">
-      <i class="bi bi-shield-check me-1"></i>Revisar diferencias</button>
-    <button class="btn btn-ilus" id="incBtnNueva" type="button">
-      <i class="bi bi-plus-lg me-1"></i>Nueva incidencia</button>
+      <span class="ic"><i class="bi bi-shield-check"></i></span><span class="tx">Revisar diferencias<small>vs ERP y Check</small></span></button>
+    <button class="btn inc-hbtn rojo" id="incBtnNueva" type="button">
+      <span class="ic"><i class="bi bi-plus-lg"></i></span><span class="tx">Nueva incidencia<small>registrar en taller</small></span></button>
   </div>
 </div>
 
@@ -1762,6 +1801,22 @@
     abrirEdicion(id, rows);
     setTimeout(function(){ document.getElementById('incBtnSolicitarRepuesto').click(); }, 350);
   }
+
+  // 2026-10-08: Excel de la bodega (admin). Mismos filtros que la tabla; la ruta vuelve a exigir admin.
+  (function(){
+    var a = document.getElementById('incExcelFiltros'), b = document.getElementById('incExcelTodo');
+    if(!a || !b) return;
+    a.addEventListener('click', function(e){
+      e.preventDefault();
+      var url = '/mantenciones/api/incidencias/excel?q='+encodeURIComponent(incQ)+'&estado='+encodeURIComponent(incEstado);
+      if(incFChk) url += '&f_chk='+encodeURIComponent(incFChk);
+      window.location.href = url;
+    });
+    b.addEventListener('click', function(e){
+      e.preventDefault();
+      window.location.href = '/mantenciones/api/incidencias/excel?todo=1';
+    });
+  })();
 
   function cargar(){
     var box = document.getElementById('incLista');

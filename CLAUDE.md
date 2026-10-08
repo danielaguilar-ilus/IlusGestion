@@ -902,6 +902,18 @@ de la sesión, nunca del navegador):
 
 ---
 
+## 🧾 REGLA #24 — El documento de Random manda en OT, Tickets y Cotizaciones; sin documento solo con autorización de Daniel (no negociable)
+
+**Pedido explícito de Daniel (2026-10-07), tras revisar con el gerente general OT de junio sin documento (OT 43 La Dehesa) y OT in situ abiertas sin documento:** "Los servicios deben cobrarse… Todo con documento tiene que ser absoluto y solamente pidiendo autorización remota con un argumento… esto tiene que ser inviolable." Y: "tanto tickets y OT y cotización deberán siempre predominar con el documento de Random a menos que yo lo autorice, ahí predomina el argumento; que dejemos con la trazabilidad de quién autorizó."
+
+- **OT de cliente:** no se crea ni se cierra sin documento de Random (factura, boleta o nota de venta, validado contra el ERP y el RUT). La única salida es «Pedir autorización a Daniel» con argumento; un superadmin aprueba o rechaza a distancia. **Todo $0** (garantía, regalía, arriendo/leasing) también pasa por esa autorización. Exentas solo: OT interna sin cliente y mantención preventiva de un contrato REAL. **Para CREAR basta nota de venta o cotización; para CERRAR siempre factura/boleta** (la nota de venta queda como documento anterior, dada de baja por la factura; deja sin efecto la regla del 19-08 «la NV cierra»). En el modal de cierre el autorizador (Aarón, Juan Pablo, Víctor) puede retractar el cobro y pedir garantía con argumento (va a Daniel). **Centro de costo obligatorio siempre.** Ningún candado sin salida: cada rechazo de cierre dice qué hacer y se resuelve desde el mismo modal (Daniel: «que no puedan entramparse en un ciclo que no tiene solución»).
+- **Tickets y Cotizaciones:** mismo principio (documento de Random primero; sin él, argumento + autorización). Usan el MISMO mecanismo de autorizaciones (tabla genérica con `entidad`), no uno propio.
+- **Trazabilidad siempre:** quién pidió, quién autorizó o rechazó, cuándo (hora Chile) y el argumento completo, visible donde se vea el documento. Nada se borra; se registra.
+- **Gestión documental transparente:** todos los documentos de una OT viven en `mant_visita_documentos` (multidocumento); ninguno se sobrescribe; aparecen en la ficha, el recorrido, las bandejas, el Excel y el informe/PDF (al cliente solo tipo y número, nunca montos internos ni proveedores).
+- Una puerta única (`_ot_puerta_documento`) cubre todos los caminos que crean o cierran OT. Todo camino NUEVO pasa por ella. El interruptor del candado solo lo cambia superadmin.
+
+---
+
 ## 🧮 REGLA #25 — Una línea de servicio de una factura no se cobra dos veces (saldo por línea; no negociable)
 
 **Pedido explícito de Daniel (2026-10-08): «algo bien inteligente para evitar que dos instalaciones se paguen con el mismo saldo»**, y «esto debe funcionar para el modal de crear OT y para el modal de cerrar OT con la firma, para no trabar el proceso».
