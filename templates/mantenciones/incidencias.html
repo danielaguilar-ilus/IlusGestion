@@ -27,6 +27,18 @@
             title="Migrar el CSV exportado de la planilla Excel/VBA antigua">
       <i class="bi bi-upload me-1"></i>Importar CSV</button>
     {% endif %}
+    {% if permissions.admin or permissions.superadmin %}
+    {#- 2026-10-08 (Daniel): Excel de la bodega de Incidencias para análisis, solo admin (también se exige en el servidor). -#}
+    <div class="dropdown">
+      <button class="btn btn-ilus-outline dropdown-toggle" id="incBtnExcel" type="button" data-bs-toggle="dropdown" aria-expanded="false"
+              title="Bajar el detalle de la bodega en Excel para análisis">
+        <i class="bi bi-file-earmark-excel me-1"></i>Descargar Excel</button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><a class="dropdown-item" href="#" id="incExcelFiltros">Con los filtros actuales</a></li>
+        <li><a class="dropdown-item" href="#" id="incExcelTodo">Todo (incluye dadas de baja)</a></li>
+      </ul>
+    </div>
+    {% endif %}
     <button class="btn btn-ilus-outline" id="incBtnConciliar" type="button"
             title="Comparar nuestra base contra el ERP Random y CheckWMS">
       <i class="bi bi-shield-check me-1"></i>Revisar diferencias</button>
@@ -1762,6 +1774,22 @@
     abrirEdicion(id, rows);
     setTimeout(function(){ document.getElementById('incBtnSolicitarRepuesto').click(); }, 350);
   }
+
+  // 2026-10-08: Excel de la bodega (admin). Mismos filtros que la tabla; la ruta vuelve a exigir admin.
+  (function(){
+    var a = document.getElementById('incExcelFiltros'), b = document.getElementById('incExcelTodo');
+    if(!a || !b) return;
+    a.addEventListener('click', function(e){
+      e.preventDefault();
+      var url = '/mantenciones/api/incidencias/excel?q='+encodeURIComponent(incQ)+'&estado='+encodeURIComponent(incEstado);
+      if(incFChk) url += '&f_chk='+encodeURIComponent(incFChk);
+      window.location.href = url;
+    });
+    b.addEventListener('click', function(e){
+      e.preventDefault();
+      window.location.href = '/mantenciones/api/incidencias/excel?todo=1';
+    });
+  })();
 
   function cargar(){
     var box = document.getElementById('incLista');
