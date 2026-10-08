@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}OT bloqueada: falta el Anexo — ILUS Fitness{% endblock %}
+{% block content %}
+{#- 2026-10-08 (Daniel): "Hay que avisar que la OT no tiene acceso cuando no firman el anexo, ahora solo te bota en
+    silencio". Antes era un flash + redirect al calendario: en el celular del técnico externo no se veía y parecía
+    que la app lo echaba sin razón. Ahora es una pantalla propia que dice qué pasa y qué hacer. -#}
+<style>
+  .anx-wrap{max-width:560px;margin:24px auto;padding:0 16px}
+  .anx-card{background:#fff;border-radius:16px;box-shadow:0 6px 24px rgba(0,0,0,.08);overflow:hidden;border:1px solid #fde68a}
+  .anx-head{background:#0a0a0a;color:#fff;padding:18px 20px;display:flex;gap:14px;align-items:center}
+  .anx-ico{width:48px;height:48px;border-radius:50%;background:#dc2626;display:flex;align-items:center;justify-content:center;
+    font-size:24px;flex:0 0 48px;animation:anxPulso 1.6s ease-in-out infinite}
+  @keyframes anxPulso{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.55)}50%{box-shadow:0 0 0 10px rgba(220,38,38,0)}}
+  @media (prefers-reduced-motion:reduce){.anx-ico{animation:none}}
+  .anx-head h1{font-size:1.15rem;margin:0;font-weight:800}
+  .anx-head small{color:#d1d5db}
+  .anx-body{padding:18px 20px;font-size:1rem;color:#1f2937}
+  .anx-paso{display:flex;gap:10px;align-items:flex-start;background:#fff8e1;border-left:4px solid #f59e0b;border-radius:8px;
+    padding:10px 12px;margin:12px 0}
+  .anx-btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+  .anx-btns .btn{min-height:44px;display:inline-flex;align-items:center;gap:6px;font-weight:700}
+</style>
+<div class="anx-wrap">
+  <div class="anx-card">
+    <div class="anx-head">
+      <div class="anx-ico"><i class="bi bi-file-earmark-lock2"></i></div>
+      <div>
+        <h1>Esta OT está bloqueada</h1>
+        <small>{{ numero_ot or ('OT #' ~ vid) }}{% if cliente %} · {{ cliente }}{% endif %}</small>
+      </div>
+    </div>
+    <div class="anx-body">
+      {% if sin_anexo %}
+        <p class="mb-2"><strong>Todavía no hay un Anexo de Servicios para esta OT.</strong>
+          Como la ejecuta un proveedor externo, primero ILUS Fitness debe crear el anexo y enviártelo para que lo firmes.</p>
+        <div class="anx-paso"><i class="bi bi-telephone-fill text-warning"></i>
+          <div>Avísale a quien te asignó la OT que <strong>falta crear y enviarte el anexo</strong>.
+            Apenas lo firmes, la OT se abre sola.</div></div>
+      {% else %}
+        <p class="mb-2"><strong>Falta que firmes el Anexo de Servicios{% if anexo_numero %} N° {{ anexo_numero }}{% endif %}.</strong>
+          Es el documento que fija el precio pactado y las condiciones del servicio. Sin esa firma no se puede ver ni trabajar la OT.</p>
+        <div class="anx-paso"><i class="bi bi-envelope-paper-fill text-warning"></i>
+          <div>Busca el enlace para firmar en tu <strong>correo o WhatsApp</strong>. Si no te llegó,
+            pide que te lo reenvíen. Apenas lo firmes, la OT se abre sola.</div></div>
+      {% endif %}
+      <div class="anx-btns">
+        <a class="btn btn-dark" href="{{ url_for('mant_calendario') }}"><i class="bi bi-calendar3"></i>Volver a mi calendario</a>
+        <a class="btn btn-outline-secondary" href="{{ request.path }}"><i class="bi bi-arrow-clockwise"></i>Ya lo firmé, reintentar</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

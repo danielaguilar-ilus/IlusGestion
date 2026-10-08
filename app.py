@@ -55770,16 +55770,33 @@ def _ot_403_response(vid, role, uid, username, accion="ejecutar"):
     # anexo sin firmar merece un mensaje que se lo diga, no "no tienes
     # acceso" a secas -- eso suena a error del sistema, no a "te falta un
     # paso tuyo".
-    if role == "tecnico":
+    # 🔴 FIX 2026-10-08 (Daniel: "Hay que avisar que la OT no tiene acceso cuando no firman el anexo, ahora solo
+    # te bota en silencio"). Dos fallas: (1) se comparaba role == "tecnico", pero el técnico EXTERNO -- el único al
+    # que le aplica el anexo -- tiene rol 'tecnico_externo', así que nunca entraba acá y caía al "no tienes acceso"
+    # genérico; (2) el aviso era un flash + redirect al calendario que en el celular no se veía. Ahora cualquier rol
+    # técnico con el anexo pendiente recibe una PANTALLA propia que dice qué pasa y qué hacer (status 403).
+    if role.startswith("tecnico"):
         _anexo_num = _anexo_bloquea_ot(vid)
         if _anexo_num:
-            msg = ("Debes firmar el Anexo de Servicios antes de trabajar esta OT. "
-                   "Si no te llegó, pide que te reenvíen el link para firmarlo.")
+            _sin_anexo = (_anexo_num == "SIN_ANEXO")
+            msg = ("Esta OT está bloqueada: todavía no hay Anexo de Servicios. Pide que te lo creen y envíen para firmarlo."
+                   if _sin_anexo else
+                   "Esta OT está bloqueada: debes firmar el Anexo de Servicios antes de verla o trabajarla. "
+                   "Si no te llegó el enlace, pide que te lo reenvíen.")
             if is_api:
                 return jsonify({"ok": False, "error": msg,
                                 "error_codigo": "ANEXO_SIN_FIRMAR"}), 403
-            flash(msg, "warning")
-            return redirect(url_for("mant_ots_list"))
+            _ctx = {}
+            try:
+                _ctx = mysql_fetchone(
+                    "SELECT v.numero_ot, c.razon_social AS cliente FROM mant_visitas v "
+                    "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id WHERE v.id=%s", (vid,)) or {}
+            except Exception as _e:
+                print(f"[anexo_bloqueo] contexto vid={vid}: {_e}", flush=True)
+            return render_template("ot2/anexo_bloqueo.html", vid=vid,
+                                   numero_ot=_ctx.get("numero_ot"), cliente=_ctx.get("cliente"),
+                                   sin_anexo=_sin_anexo,
+                                   anexo_numero=(None if _sin_anexo else _anexo_num)), 403
     if is_api:
         if accion == "ejecutar":
             msg = "Solo el técnico asignado puede gestionar esta OT."
