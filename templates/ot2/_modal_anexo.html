@@ -1471,6 +1471,11 @@ window.OT2ANX = (function(){
                   + '. El link de firma sí va.', {type:'warning'});
       } else if (j.correo_enviado){
         ilusToast('✓ Correo enviado al proveedor', {type:'success'});
+      } else if (j.correo_intentado){
+        /* 2026-10-08: se pidió mandar el correo y NO salió (llave de correos apagada, proveedor de correo). Antes decía
+           «Anexo enviado» igual y el proveedor nunca recibía nada. El anexo sí quedó listo para firmar. */
+        ilusToast((j.correo_mensaje || 'El correo no salió.') + ' El anexo quedó listo para firmar: copia el link y mándalo por WhatsApp.',
+                  {type:'warning'});
       } else {
         ilusToast('Anexo enviado — comparte el link tú mismo', {type:'success'});
       }

@@ -16,6 +16,16 @@
 
   var CAMPANA_DAN = 'Daniel';
   var montados = [];
+  /* 2026-10-08 (Daniel: «la autorización del trabajo interno estaba presentando problemas, no deberían para el cierre
+     ya que son trabajos internos y no tienen clientes ni facturas o documentos»). Una OT interna SIN cliente no tiene a
+     quién cobrarle ni documento que pedir: el servidor la deja pasar (puerta + aprobar-cierre) y lo informa en
+     recorrido.interna / panorama.interna. Con eso el motor NO ofrece ligar documento, declarar cobro/$0 ni pedir
+     autorización: antes la barra «Modificar» se los ofrecía igual y el servidor respondía «no necesita autorización». */
+  var TXT_INTERNA = 'Trabajo interno: no necesita documento ni autorización.';
+  var SOLO_CLIENTE = { ligarDoc: 1, pedirCero: 1, pedirCierre: 1, declararCobro: 1, resolverSaldo: 1, resolverSaldoOt: 1 };
+  function esInterna(inst) {
+    return !!(inst && ((inst.rec && inst.rec.interna) || (inst.pan && inst.pan.interna)));
+  }
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -170,7 +180,8 @@
     var rec = inst.rec, puede = inst.pan.puede_editar || (inst.pan.cerrada && inst.pan.puede_regularizar);
     var pend = rec.solicitud_pendiente;
     var html = '';
-    if (pend) {
+    var interna = esInterna(inst);
+    if (pend && !interna) {
       html += '<div class="fm-espera"><i class="bi bi-hourglass-split"></i><div><b>Esperando autorización de ' + CAMPANA_DAN + ' desde ' + esc(pend.solicitado_at) + '</b>' +
         '<span>' + esc(pend.tipo_txt) + (pend.motivo_txt ? ' · ' + esc(pend.motivo_txt) : '') + ' · la pidió ' + esc(pend.solicitado_por_nombre) + '. ' +
         'Hasta que responda, la OT no se puede cerrar.</span></div>' +
@@ -184,11 +195,12 @@
     (rec.pasos || []).forEach(function (p) {
       var act = '';
       if (p.estado === 'falta' && puede) {
-        if (p.n === 1) act = boton('pedirCero', 'Pedir autorización del $0', 'bi-shield-check');
-        else if (p.n === 2) act = boton('ligarDoc', 'Ligar factura o boleta', 'bi-link-45deg', 'fm-btn-pri') + boton('pedirCierre', 'Pedir autorización a ' + CAMPANA_DAN, 'bi-shield-lock');
-        else if (p.n === 3 && inst.pan.puede_editar) act = boton('declararCobro', 'Declarar lo que cobré', 'bi-cash-coin');
+        /* Interna sin cliente: solo el costo del proveedor (paso 4) puede ofrecer algo; documento, cobro y cierre no. */
+        if (p.n === 1 && !interna) act = boton('pedirCero', 'Pedir autorización del $0', 'bi-shield-check');
+        else if (p.n === 2 && !interna) act = boton('ligarDoc', 'Ligar factura o boleta', 'bi-link-45deg', 'fm-btn-pri') + boton('pedirCierre', 'Pedir autorización a ' + CAMPANA_DAN, 'bi-shield-lock');
+        else if (p.n === 3 && !interna && inst.pan.puede_editar) act = boton('declararCobro', 'Declarar lo que cobré', 'bi-cash-coin');
         else if (p.n === 4 && inst.pan.puede_editar) act = boton('corregirProv', 'Declarar lo que cobró el proveedor', 'bi-pencil-square');
-        else if (p.n === 6 && !pend) act = boton('pedirCierre', 'Pedir autorización a ' + CAMPANA_DAN, 'bi-shield-lock');
+        else if (p.n === 6 && !pend && !interna) act = boton('pedirCierre', 'Pedir autorización a ' + CAMPANA_DAN, 'bi-shield-lock');
       }
       html += '<li class="fm-paso ' + esc(p.estado) + (p.clase ? ' c-' + esc(p.clase) : '') + '">' +
         '<span class="fm-circ"><i class="bi ' + (ICONO_PASO[p.estado] || 'bi-circle') + '"></i></span>' +
@@ -210,6 +222,7 @@
 
   function htmlContadores(inst) {
     var c = inst.pan.contadores || {};
+    if (esInterna(inst) && !(c.total || 0)) return '';   /* trabajo interno: no hay documentos que contar */
     var baja = c.notas_venta_dadas_de_baja || 0;
     function tile(n, titulo, sub, cls) {
       return '<div class="fm-tile ' + (cls || '') + (n ? '' : ' cero') + '"><b>' + n + '</b><span>' + esc(titulo) + '</span>' + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</div>';
@@ -336,7 +349,10 @@
     var docs = inst.pan.documentos || [];
     var h = '<div class="fm-sec-h"><span class="fm-num">1</span><h3>Todos los documentos de la OT <small>' + docs.length + '</small></h3>' +
       '<span class="fm-help">Servicios por factura: cada documento con sus líneas y lo que aporta al cobro.</span></div>';
-    if (!docs.length) {
+    if (!docs.length && esInterna(inst)) {
+      h += '<div class="fm-vacio"><i class="bi bi-info-circle"></i><b>' + esc(TXT_INTERNA) + '</b>' +
+        '<span>No tiene cliente: no hay a quién cobrarle ni factura que ligar.</span></div>';
+    } else if (!docs.length) {
       h += '<div class="fm-vacio"><i class="bi bi-file-earmark-x"></i><b>Esta OT no tiene ningún documento declarado.</b>' +
         '<span>Liga una factura, boleta, nota de venta o cotización; o pide la autorización de ' + CAMPANA_DAN + '.</span></div>';
     } else {
@@ -389,7 +405,7 @@
       var centro = inst.pan.centro.nombre || 'sin centro de costo';
       h += '<div class="fm-cero c-info"><b>$0</b><span>' + esc(motivo) + ' · nos costó <b>' + clp(fin.me_cobraron.total) + '</b> · centro ' + esc(centro) +
         (fin.valorizado && fin.valorizado.monto ? ' · valorizada en ' + clp(fin.valorizado.monto) : '') + '</span>' +
-        '<p class="fm-const">' + (cc.constancia ? esc(cc.constancia) : '<em>Sin autorización de ' + CAMPANA_DAN + ' todavía.</em>') + '</p></div>';
+        '<p class="fm-const">' + (cc.constancia ? esc(cc.constancia) : (esInterna(inst) ? '<em>' + esc(TXT_INTERNA) + '</em>' : '<em>Sin autorización de ' + CAMPANA_DAN + ' todavía.</em>')) + '</p></div>';
     }
     h += '<div class="fm-frase">' + esc(fin.frase || '') + '</div>';
     (fin.avisos || []).forEach(function (a) { h += '<div class="fm-aviso">' + esc(a) + '</div>'; });
@@ -435,6 +451,13 @@
   function htmlAcciones(inst) {
     var p = inst.pan;
     if (!(p.puede_editar || (p.cerrada && p.puede_regularizar))) return '';
+    /* 2026-10-08: trabajo interno sin cliente. Ni ligar documento, ni «declarar $0», ni pedir autorización: no aplican. */
+    if (esInterna(inst)) {
+      if (!p.puede_editar) return '';
+      return '<div class="fm-acciones"><span>Modificar</span>' +
+        boton('corregirProv', 'Corregir lo que cobró el proveedor', 'bi-pencil-square') +
+        '<span class="fm-help" style="width:100%">' + esc(TXT_INTERNA) + '</span></div>';
+    }
     var h = '<div class="fm-acciones"><span>Modificar</span>' +
       boton('ligarDoc', 'Ligar factura, boleta o nota de venta', 'bi-link-45deg', 'fm-btn-pri');
     if (p.cerrada) {
@@ -481,6 +504,7 @@
   }
 
   function ligarDoc(inst, pre) {
+    if (esInterna(inst)) { toast(TXT_INTERNA, 'info'); return Promise.resolve(); }
     return dialogo({
       titulo: 'Ligar un documento a la OT',
       intro: 'Se busca en Random (solo lectura) y se valida el RUT del cliente. Si ya hay una nota de venta, la factura la da de baja y las dos quedan visibles.',
@@ -633,6 +657,7 @@
   }
 
   function pedirAutorizacion(inst, tipo) {
+    if (esInterna(inst)) { toast(TXT_INTERNA, 'info'); return Promise.resolve(); }
     var cero = tipo === 'cobro_cero', sa = inst.pan.superadmin;
     var campos = [];
     if (cero) campos.push({ k: 'motivo', label: 'Motivo del $0', tipo: 'select', valor: 'garantia', opciones: [
@@ -676,6 +701,7 @@
      mismo POST que la tarjeta (/ot/api/finanzas/<vid>): rotula el cobro «escrito a mano», deja el motivo y queda en la
      bitácora (finanzas_declaradas). No toca estado ni firmas. */
   function declararCobro(inst) {
+    if (esInterna(inst)) { toast(TXT_INTERNA, 'info'); return Promise.resolve(); }
     var fin = (inst.rec && inst.rec.fin) || {};
     var anotado = fin.precio_anotado;
     return dialogo({
@@ -741,7 +767,9 @@
     el.addEventListener('click', function (e) {
       var b = e.target.closest('[data-fm-act]');
       if (!b || !el.contains(b)) return;
-      var fn = ACCIONES[b.getAttribute('data-fm-act')];
+      var act = b.getAttribute('data-fm-act');
+      var fn = ACCIONES[act];
+      if (fn && SOLO_CLIENTE[act] && esInterna(inst)) { e.preventDefault(); toast(TXT_INTERNA, 'info'); return; }
       if (fn) { e.preventDefault(); fn(inst); }
     });
     el.addEventListener('click', function (e) {

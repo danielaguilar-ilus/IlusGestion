@@ -9654,6 +9654,58 @@ def _modulo_desde_evento(evento: str) -> str:
     return "general"
 
 
+def _email_marcar_bloqueo(tipo, modulo):
+    """2026-10-08: _send_ilus_email devuelve False tanto si una llave de paso lo frena como si el proveedor de correo
+    lo rechaza, y quien llama no podía distinguirlos (el anexo del proveedor quedaba «Enviado» con el correo frenado
+    por el kill switch). Deja el motivo en `g` (solo ese request); NO cambia el retorno ni la firma de nadie.
+    tipo: 'global' | 'modulo'."""
+    try:
+        g._last_email_bloqueo = {"tipo": tipo, "modulo": modulo}
+    except Exception:
+        pass
+
+
+def _email_ultimo_bloqueo():
+    """El bloqueo del ÚLTIMO _send_ilus_email de este request ({'tipo','modulo'}), o None si no fue una llave."""
+    try:
+        return getattr(g, "_last_email_bloqueo", None)
+    except Exception:
+        return None
+
+
+_KS_MODULO_TXT = {"mantenciones": "Mantenciones", "general": "General", "transporte": "Transporte",
+                  "retiros": "Retiros", "comunicacion_interna": "Comunicación interna", "tickets": "Tickets",
+                  "catalogo": "Catálogo"}
+
+
+def _email_motivo_bloqueo_txt(tipo, modulo):
+    """Frase para una persona: por qué una llave frenó el correo."""
+    if tipo == "global":
+        return "el envío de correos está apagado (interruptor general)"
+    return f"el envío de correos de {_KS_MODULO_TXT.get((modulo or '').lower(), (modulo or 'General').title())} está apagado"
+
+
+def _email_resultado(enviado):
+    """Qué pasó con el ÚLTIMO _send_ilus_email de este request, dicho con la verdad.
+    enviado: lo que devolvió _send_ilus_email. Devuelve {"salio": bool, "causa": 'salio'|'apagado'|'fallo',
+    "motivo": frase corta, "mensaje": 'El correo no salió: …' (vacío si salió), "modulo"}.
+    Una llave cerrada (kill switch global o del módulo) NO es un fallo del proveedor: el correo ni se intentó."""
+    if enviado:
+        return {"salio": True, "causa": "salio", "motivo": "", "mensaje": "", "modulo": None}
+    b = _email_ultimo_bloqueo()
+    if b:
+        mot = _email_motivo_bloqueo_txt(b.get("tipo"), b.get("modulo"))
+        return {"salio": False, "causa": "apagado", "motivo": mot, "mensaje": "El correo no salió: " + mot,
+                "modulo": b.get("modulo")}
+    err = ""
+    try:
+        err = str(getattr(g, "_last_email_error", None) or "").strip()
+    except Exception:
+        err = ""
+    mot = "el proveedor de correo no lo aceptó" + (f" ({err[:120]})" if err else "")
+    return {"salio": False, "causa": "fallo", "motivo": mot, "mensaje": "El correo no salió: " + mot, "modulo": None}
+
+
 def _send_ilus_email(to_addr: str, subject: str, html_body: str, *,
                      evento: str = None, modulo: str = None,
                      asincrono: bool = False, ref: dict = None, **kwargs) -> bool:
@@ -9701,9 +9753,14 @@ def _send_ilus_email(to_addr: str, subject: str, html_body: str, *,
     y reenviarlo desde el Historial.
     """
     _adj = kwargs.get("attachments")
+    try:
+        g._last_email_bloqueo = None   # 2026-10-08: ver _email_marcar_bloqueo
+    except Exception:
+        pass
 
     # 1) KILL SWITCH GLOBAL (todo email)
     if not comm_is_enabled("email"):
+        _email_marcar_bloqueo("global", (modulo or _modulo_desde_evento(evento) or "general").strip().lower())
         try:
             _mod_g = (modulo or _modulo_desde_evento(evento) or "general").strip().lower()
             _email_log(to_addr, subject, evento, 'bloqueado',
@@ -9716,6 +9773,7 @@ def _send_ilus_email(to_addr: str, subject: str, html_body: str, *,
     # 2) LLAVE DE PASO POR MÓDULO
     mod_resolved = (modulo or _modulo_desde_evento(evento) or "general").strip().lower()
     if _modulo_canal_bloqueado(mod_resolved, "email"):
+        _email_marcar_bloqueo("modulo", mod_resolved)
         try:
             _email_log(to_addr, subject, evento, 'bloqueado',
                        error_msg=f'Llave de paso cerrada para módulo "{mod_resolved}" — email no enviado',
@@ -90515,9 +90573,18 @@ def ot2_detalle(vid):
     try:
         # 🆕 2026-09-02: a quién y cuántas veces se mandó el link. Sin esto
         # el reenvío obligaba a recordar el correo de memoria.
-        anexo = mysql_fetchone(
-            _ANEXO_SEL_BASE + ", enviado_email, enviado_tel, envios_n, visto_at "
-            "  FROM mant_anexos WHERE ot_id=%s ORDER BY id DESC LIMIT 1", (vid,))
+        try:
+            # 📮 2026-10-08: + lo que pasó de verdad con el correo al proveedor (correo_estado / correo_motivo).
+            anexo = mysql_fetchone(
+                _ANEXO_SEL_BASE + ", enviado_email, enviado_tel, envios_n, visto_at, "
+                "       correo_estado, correo_motivo, correo_at "
+                "  FROM mant_anexos WHERE ot_id=%s ORDER BY id DESC LIMIT 1", (vid,))
+        except Exception as _e_anx_cor:
+            # Columnas del correo aún sin migrar: la consulta de siempre (la pantalla no se cae).
+            print(f"[ot2_detalle] anexo sin columnas del correo: {type(_e_anx_cor).__name__}", flush=True)
+            anexo = mysql_fetchone(
+                _ANEXO_SEL_BASE + ", enviado_email, enviado_tel, envios_n, visto_at "
+                "  FROM mant_anexos WHERE ot_id=%s ORDER BY id DESC LIMIT 1", (vid,))
     except Exception as _e_anx_col:
         # REGLA #5: estas tres columnas se agregan por ALTER idempotente en
         # `_ensure_mant_anexos`, que corre al arrancar incluso con
@@ -90549,6 +90616,17 @@ def ot2_detalle(vid):
                     anexo["enviado_tel"] = (_anx_tec.get("contacto_tel") or "").strip()
         except Exception as _e_anx_tec:
             print(f"[ot2_detalle] contacto proveedor del anexo: {_e_anx_tec}", flush=True)
+        # 📮 2026-10-08 (anexo N° 212 de la OT-2026-00287: «Enviado a lyt.milling@gmail.com» y el correo nunca salió).
+        # Un anexo enviado ANTES de que se guardara si el correo salió (correo_estado vacío) se revisa en el Historial
+        # de correos (solo lectura): si lo frenó una llave de paso o falló, la tarjeta lo dice. No escribe nada.
+        try:
+            if (not anexo.get("correo_estado") and anexo.get("enviado_at") and not anexo.get("visto_at")
+                    and not anexo.get("firmado_at") and anexo.get("enviado_email")):
+                _cv_anx = _anexo_correo_desde_registro(anexo)
+                if _cv_anx:
+                    anexo["correo_estado"], anexo["correo_motivo"] = _cv_anx["estado"], _cv_anx["motivo"]
+        except Exception as _e_cv_anx:
+            print(f"[ot2_detalle] correo del anexo desde el historial: {type(_e_cv_anx).__name__}", flush=True)
 
     # ⭐ 2026-09-26 (Daniel, en vivo: "brindarle la oportunidad al técnico
     # de elegir la foto principal de cada OT, bien informativo, y todo
@@ -95211,6 +95289,22 @@ def ot_api_regularizar():
                     "truncado": len(rows) >= 2000, "estados": _OT_REG_ESTADO_TXT, "faltas": _OT_REG_FALTA_TXT})
 
 
+_OT_TXT_INTERNA = "Trabajo interno: no necesita documento ni autorización"
+
+
+def _ot_interna_sin_cliente(v):
+    """🔒 2026-10-08 (Daniel: «la autorización del trabajo interno estaba presentando problemas… son trabajos internos y
+    no tienen clientes ni facturas o documentos»). ¿Es una OT interna SIN cliente? Es EXACTAMENTE la condición con la
+    que la puerta (_ot_puerta_documento) y aprobar-cierre dejan pasar sin documento ni autorización: cliente vacío.
+    Las pantallas (recorrido, panorama, motor de finanzas) la leen para no ofrecer nada que el servidor no pide.
+    Más estricta que la puerta a propósito: una fila SIN la clave cliente_id (parcial) no se toma por interna, para no
+    esconderle a una OT de cliente los botones de documento y autorización."""
+    try:
+        return isinstance(v, dict) and "cliente_id" in v and v["cliente_id"] in (None, "", 0, "0")
+    except Exception:
+        return False
+
+
 @app.route("/ot/api/<int:vid>/recorrido", methods=["GET"])
 @_mant_required
 @_no_tecnico
@@ -95231,6 +95325,7 @@ def ot_api_recorrido(vid):
     if not v:
         return jsonify({"ok": False, "error": "No encontramos esa OT."}), 404
     v = dict(v)
+    interna = _ot_interna_sin_cliente(v)
     try:
         rep = _ot_fin_rep_liviano(_ot_repuestos_desglose([vid]).get(vid))
     except Exception:
@@ -95324,11 +95419,25 @@ def ot_api_recorrido(vid):
                                                                   "autorizacion_cerrar": "cierre autorizado por Daniel",
                                                                   "nota_venta": "nota de venta (queda «Falta factura»)",
                                                                   "interna_sin_cliente": "trabajo interno"}.get(p_cerrar.get("via"), p_cerrar.get("via") or "")}
+    if interna:
+        # 🔒 2026-10-08: trabajo interno SIN cliente = no hay a quién cobrarle ni documento que pedir (la puerta y
+        # aprobar-cierre lo dejan pasar). Ningún paso de documento, cobro o cierre queda en «falta», y ninguno ofrece
+        # pedir autorización. Solo se conserva el costo del proveedor (paso 4), que no es documento ni autorización.
+        p1 = {"estado": "no_aplica", "texto": "Trabajo interno: no se le cobra a nadie"}
+        p2 = {"estado": "no_aplica", "texto": _OT_TXT_INTERNA}
+        p3 = {"estado": "no_aplica", "texto": "Trabajo interno: no hay cobro que declarar"}
+        if cerrada:
+            _cuando_int = chile_fmt_filter(v["cerrada_at"]) if v.get("cerrada_at") else ""
+            p6 = {"estado": "hecho", "texto": "Cerrada" + (f" el {_cuando_int}" if _cuando_int else "") + " · " + _OT_TXT_INTERNA}
+        else:
+            p6 = {"estado": "pendiente", "texto": _OT_TXT_INTERNA}
     pasos = [dict(n=1, titulo="¿Se cobra?", **p1), dict(n=2, titulo="Documentos", **p2),
              dict(n=3, titulo="Cobré", **p3), dict(n=4, titulo="Me cobró el proveedor", **p4),
              dict(n=5, titulo="Margen", **p5), dict(n=6, titulo="Revisión al cerrar", **p6)]
     return jsonify({
         "ok": True, "visita_id": vid, "numero_ot": v.get("numero_ot"), "cliente": v.get("cliente"),
+        # 🔒 2026-10-08: el motor de finanzas (static/ot_fin_motor.js) no pinta documento/cobro/autorización si esto es True.
+        "interna": interna, "puede_pedir_autorizacion": not interna,
         "estado": v.get("estado"), "cerrada": cerrada, "pasos": pasos, "fin": fin,
         "puerta": p_cerrar, "documentos": docs_todos, "documentos_validados": docs_val,
         "autorizaciones": [_ot_aut_json(a) for a in auts], "solicitud_pendiente": (_ot_aut_json(pend) if pend else None),
@@ -95513,6 +95622,7 @@ def ot_api_panorama(vid):
     if not v:
         return jsonify({"ok": False, "error": "No encontramos esa OT."}), 404
     v = dict(v)
+    interna = _ot_interna_sin_cliente(v)   # 🔒 2026-10-08: trabajo interno sin cliente (ver _ot_interna_sin_cliente)
     docs = _ot_panorama_docs(vid, v)
     # Líneas del ERP: solo lectura, con tope para que una OT con muchos documentos no tarde.
     leidos = 0
@@ -95594,9 +95704,13 @@ def ot_api_panorama(vid):
     regs = []
     ext = (v.get("proveedor_tipo") or "").strip().lower() == "externo"
     kI, kD = v.get("costo_proveedor"), v.get("costo_despacho")
+    # 🔒 2026-10-08: en un trabajo interno hecho por técnico propio no hay a quién pagarle: $0, no «falta declararlo»
+    # (misma regla que _ot_finanzas: kI vacío + interno + no externo = 0).
+    _tec_propio_interna = bool(interna and not ext and kI is None)
     regs.append({"clave": "tecnico", "rotulo": "Instalación o servicio del técnico / proveedor",
                  "detalle": ((v.get("tecnico") or "Sin técnico asignado") + (" · proveedor externo" if ext else " · técnico propio")),
-                 "monto": (float(kI) if kI is not None else None), "falta": kI is None})
+                 "monto": (float(kI) if kI is not None else (0.0 if _tec_propio_interna else None)),
+                 "falta": (kI is None and not _tec_propio_interna)})
     if kD is not None:
         regs.append({"clave": "despacho", "rotulo": "Despacho del proveedor", "detalle": "Flete o courier que nos cobraron",
                      "monto": float(kD), "falta": False})
@@ -95615,6 +95729,7 @@ def ot_api_panorama(vid):
         puede_cob = False
     return jsonify({
         "ok": True, "visita_id": vid, "numero_ot": v.get("numero_ot"), "cliente": v.get("cliente") or "",
+        "interna": interna,   # 🔒 2026-10-08: trabajo interno sin cliente: el motor no ofrece documento/cobro/autorización
         "estado": v.get("estado"), "cerrada": (v.get("estado") or "") == "cerrada",
         "contadores": cont, "documentos": docs, "saldo": saldo_ot,
         "costos": {"registros": regs, "total": total_costo, "sin_costo": int(rep.get("n_sin_costo") or 0)},
@@ -106179,6 +106294,7 @@ def _ot2_crear_core(d, autorizacion=None):
                     _tok_auto = secrets.token_urlsafe(30)[:40]
                     _exp_auto = datetime.utcnow() + timedelta(days=15)
                     _correo_ok = False
+                    _res_auto = None   # 2026-10-08: lo que pasó de verdad con el correo (salió / llave apagada / fallo)
                     try:
                         mysql_execute(
                             "UPDATE mant_anexos SET token=%s, token_expira_at=%s, estado='enviado', "
@@ -106189,7 +106305,7 @@ def _ot2_crear_core(d, autorizacion=None):
                              _prov_email or None, _aid_auto))
                         if _prov_email:
                             _link_auto = url_for("ot2_anexo_firma_publica", token=_tok_auto, _external=True)
-                            _correo_ok = bool(_send_ilus_email(
+                            _env_auto = _send_ilus_email(
                                 _prov_email,
                                 _brand_subject(f"Nueva orden de trabajo — firma el Anexo N° {_num_auto}"),
                                 f"<p>Hola,</p>"
@@ -106201,15 +106317,29 @@ def _ot2_crear_core(d, autorizacion=None):
                                 f"el Anexo de Servicios N° {_num_auto} con las condiciones del trabajo. "
                                 f"Mientras no esté firmado, no podrás ver ni iniciar la orden de trabajo.</p>"
                                 f'<p><a href="{_link_auto}">Revisar y firmar el Anexo N° {_num_auto}</a></p>'
-                                f"<p>El enlace vence en 15 días.</p>"))
+                                f"<p>El enlace vence en 15 días.</p>")
+                            _correo_ok = bool(_env_auto)
+                            _res_auto = _email_resultado(_env_auto)
                     except Exception as _e_env:
                         print(f"[ot2_crear][anexo_auto] enviar: {_e_env}", flush=True)
+                        if _prov_email and _res_auto is None:
+                            _res_auto = {"salio": False, "causa": "fallo", "modulo": None,
+                                         "motivo": "el envío falló por un error interno",
+                                         "mensaje": "El correo no salió: el envío falló por un error interno"}
+                    # 📮 2026-10-08 (anexo N° 212 de la OT-2026-00287): el correo lo frenó el kill switch y la ficha
+                    # decía «Enviado». El anexo queda listo para firmar ('enviado' = candado), pero se guarda y se
+                    # dice la verdad del correo.
+                    if _prov_email and _res_auto is not None:
+                        _anexo_registrar_correo(_aid_auto, _res_auto)
                     try:
                         _mant_log("visita", vid,
                                   "anexo_enviado" if _correo_ok else "anexo_creado_sin_enviar",
                                   f"Anexo N° {_num_auto} "
                                   + (f"a {_prov_email} (automático)" if _correo_ok
-                                     else "— sin correo del proveedor, revisar ficha"))
+                                     else ((f"— {_res_auto['mensaje']} (destino {_prov_email}); quedó listo para firmar: "
+                                            "enviar el enlace por WhatsApp o reenviar el correo")
+                                           if (_prov_email and _res_auto)
+                                           else "— sin correo del proveedor, revisar ficha")))
                     except Exception:
                         pass
                     if _correo_ok:
@@ -106217,8 +106347,9 @@ def _ot2_crear_core(d, autorizacion=None):
                             f"Anexo de Servicios N° {_num_auto} creado y enviado por correo a {_prov_email}.")
                     elif _prov_email:
                         avisos.append(
-                            f"Anexo de Servicios N° {_num_auto} creado, pero el correo a {_prov_email} "
-                            "no se pudo enviar — reenvíalo desde la ficha de la OT.")
+                            f"Anexo de Servicios N° {_num_auto} creado y listo para firmar, pero el correo a {_prov_email} "
+                            f"NO salió ({(_res_auto or {}).get('motivo') or 'no se pudo enviar'}). "
+                            "Copia el enlace para mandarlo por WhatsApp o reenvía el correo desde la ficha de la OT.")
                     else:
                         avisos.append(
                             f"Anexo de Servicios N° {_num_auto} creado, pero el proveedor no tiene correo "
@@ -108396,6 +108527,15 @@ def _ensure_mant_anexos():
                 # hay que perseguir el correo o llamar al proveedor.
                 ("visto_at",      "ALTER TABLE mant_anexos ADD COLUMN visto_at DATETIME NULL "
                                   "COMMENT 'cuando el proveedor abrio el link de firma por primera vez'"),
+                # 📮 2026-10-08 (Daniel: el anexo N° 212 decía «Enviado a lyt.milling@gmail.com» y el correo NUNCA
+                # salió: el kill switch lo frenó). El estado del anexo no cambia (sigue 'enviado' = listo para
+                # firmar, con su candado); estas columnas guardan la VERDAD del correo. NULL = anexo anterior a esto.
+                ("correo_estado", "ALTER TABLE mant_anexos ADD COLUMN correo_estado VARCHAR(12) NULL "
+                                  "COMMENT 'salio | no_salio: lo que pasó de verdad con el ultimo correo al proveedor'"),
+                ("correo_motivo", "ALTER TABLE mant_anexos ADD COLUMN correo_motivo VARCHAR(300) NULL "
+                                  "COMMENT 'por que no salio el correo (llave apagada, proveedor de correo)'"),
+                ("correo_at",     "ALTER TABLE mant_anexos ADD COLUMN correo_at DATETIME NULL "
+                                  "COMMENT 'cuando se intento el ultimo correo al proveedor'"),
                 # 📋 2026-09-03 (Daniel: "deja PRODUCTOS ASOCIADOS con una
                 # tablita: SKU, descripcion y cantidad"). Antes los equipos
                 # iban embutidos como texto dentro de objetivo_servicio, y
@@ -109258,6 +109398,82 @@ def ot2_api_anexo_editar(aid):
     })
 
 
+def _anexo_registrar_correo(aid, res):
+    """2026-10-08: guarda la VERDAD del último correo al proveedor ('salio' | 'no_salio' + por qué + cuándo). El
+    estado del anexo ('enviado' = listo para firmar, con su candado) no se toca. Nunca lanza: si las columnas aún
+    no existen (ALTER pendiente) solo deja el print."""
+    try:
+        res = res or {}
+        mysql_execute(
+            "UPDATE mant_anexos SET correo_estado=%s, correo_motivo=%s, correo_at=NOW() WHERE id=%s",
+            ("salio" if res.get("salio") else "no_salio",
+             None if res.get("salio") else ((res.get("motivo") or "")[:300] or None), aid))
+    except Exception as e:
+        print(f"[anexo] correo_estado aid={aid}: {type(e).__name__}", flush=True)
+
+
+def _anexo_correo_desde_registro(a):
+    """Anexos enviados ANTES de que se guardara si el correo salió (correo_estado vacío): se lee el Historial de
+    correos (email_log, SOLO LECTURA) cerca de la hora del envío. Devuelve {"estado": 'salio'|'no_salio', "motivo"}
+    o None si no hay registro. No escribe nada."""
+    try:
+        destino = (a.get("enviado_email") or "").strip()
+        env_at = a.get("enviado_at")
+        num = a.get("numero")
+        if not (destino and env_at and num):
+            return None
+        filas = mysql_fetchall(
+            "SELECT estado, error_msg FROM email_log WHERE destinatario=%s AND asunto LIKE %s "
+            "   AND created_at BETWEEN DATE_SUB(%s, INTERVAL 10 MINUTE) AND DATE_ADD(%s, INTERVAL 10 MINUTE) "
+            " ORDER BY id DESC LIMIT 10",
+            (destino[:300], f"%Anexo N° {num}%", env_at, env_at)) or []
+    except Exception as e:
+        print(f"[anexo] correo desde registro: {type(e).__name__}", flush=True)
+        return None
+    if not filas:
+        return None
+    if any((f.get("estado") or "") == "enviado" for f in filas):
+        return {"estado": "salio", "motivo": ""}
+    f0 = filas[0]
+    err = (f0.get("error_msg") or "")
+    if (f0.get("estado") or "") == "bloqueado":
+        if "kill switch global" in err.lower() or "deshabilitado por superadmin" in err.lower():
+            mot = _email_motivo_bloqueo_txt("global", None)
+        else:
+            m = re.search(r'm[oó]dulo "([a-z_]+)"', err)
+            mot = _email_motivo_bloqueo_txt("modulo", m.group(1) if m else "general")
+    else:
+        mot = "el proveedor de correo no lo aceptó"
+    return {"estado": "no_salio", "motivo": mot}
+
+
+@app.route("/ot/api/anexos/<int:aid>/enlace", methods=["GET"])
+@_mant_required
+def ot2_api_anexo_enlace(aid):
+    """2026-10-08: el enlace de firma YA generado, para copiarlo y mandarlo por WhatsApp cuando el correo no salió
+    (kill switch apagado, correo mal escrito). No genera nada ni envía nada: solo lee. Si el enlace venció o el
+    anexo nunca se envió, dice qué hacer (reenviar). El anexo va al PROVEEDOR: nada de esto le llega al cliente."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Los anexos son de uso administrativo."}), 403
+    a = mysql_fetchone("SELECT id, numero, estado, token, token_expira_at, enviado_tel FROM mant_anexos WHERE id=%s", (aid,))
+    if not a:
+        return jsonify({"ok": False, "error": "Anexo no encontrado"}), 404
+    if a["estado"] in ("firmado", "rechazado", "anulado"):
+        return jsonify({"ok": False, "error_codigo": "ANEXO_CERRADO",
+                        "error": {"firmado": "Este anexo ya está firmado: no hace falta mandar el enlace.",
+                                  "rechazado": "El proveedor rechazó este anexo. Crea uno nuevo.",
+                                  "anulado": "Este anexo está anulado."}.get(a["estado"], "El anexo ya no admite firma.")}), 409
+    tok = (a.get("token") or "").strip()
+    exp = a.get("token_expira_at")
+    if not tok or not exp or exp <= datetime.utcnow():
+        return jsonify({"ok": False, "error_codigo": "ENLACE_NO_VIGENTE",
+                        "error": "El enlace de este anexo no existe o venció. Usa «Reenviar» para generar uno nuevo."}), 409
+    link = url_for("ot2_anexo_firma_publica", token=tok, _external=True)
+    mensaje = (f"🔧 ILUS · Anexo de Servicios N° {a['numero']}\n\n"
+               f"Antes de iniciar el trabajo, necesitamos que revises y firmes el anexo:\n{link}\n\n— ILUS Fitness")
+    return jsonify({"ok": True, "link": link, "mensaje": mensaje, "numero": a["numero"]})
+
+
 @app.route("/ot/api/anexos/<int:aid>/enviar", methods=["POST"])
 @_mant_required
 def ot2_api_anexo_enviar(aid):
@@ -109418,6 +109634,7 @@ def ot2_api_anexo_enviar(aid):
             print(f"[anexo_enviar] sin adjunto aid={aid}: {_e_pdf}", flush=True)
 
     enviado_correo = False
+    _res_correo = None   # 2026-10-08: qué pasó de verdad con el correo (salió / llave apagada / fallo)
     if email_destino:
         try:
             if _tpl_anexo:
@@ -109451,9 +109668,24 @@ def ot2_api_anexo_enviar(aid):
             # bloqueada, con el proveedor sin enterarse de nada. Ahora se
             # mira el retorno de verdad.
             enviado_correo = bool(_env_ok)
+            _res_correo = _email_resultado(_env_ok)
         except Exception as e:
             enviado_correo = False
+            _res_correo = {"salio": False, "causa": "fallo", "modulo": None,
+                           "motivo": "el envío falló por un error interno",
+                           "mensaje": "El correo no salió: el envío falló por un error interno"}
             print(f"[anexo_enviar] correo: {e}", flush=True)
+    # 📮 2026-10-08: el anexo quedó listo para firmar (estado 'enviado' = candado de la OT), pero si el correo NO salió
+    # se guarda y se dice: antes la ficha cantaba «Enviado a <correo>» con el correo frenado por el kill switch.
+    if email_destino and _res_correo is not None:
+        _anexo_registrar_correo(aid, _res_correo)
+        if not enviado_correo and a.get("ot_id"):
+            try:
+                _mant_log("visita", a["ot_id"], "anexo_correo_no_salio",
+                          f"Anexo N° {a.get('numero') or aid} — {_res_correo['mensaje']} (destino {email_destino}). "
+                          "Quedó listo para firmar: se puede mandar el enlace por WhatsApp o reenviar el correo.")
+            except Exception:
+                pass
 
     wa_link = None
     if telefono:
@@ -109476,11 +109708,17 @@ def ot2_api_anexo_enviar(aid):
     try:
         _mant_log("anexo", aid, "enviado",
                   f"correo={'sí' if enviado_correo else 'no'} · wa_link={'sí' if wa_link else 'no'}"
+                  + ((" · " + _res_correo["mensaje"]) if (email_destino and _res_correo and not enviado_correo) else "")
                   + (" · con PDF adjunto" if _pdf_fue
                      else (f" · SIN PDF ({_pdf_error})" if _pdf_pedido and _pdf_error else "")))
     except Exception:
         pass
     return jsonify({"ok": True, "link": link, "correo_enviado": enviado_correo,
+                    # 2026-10-08: la pantalla necesita saber si el correo se INTENTÓ y, si no salió, por qué.
+                    "correo_intentado": bool(email_destino),
+                    "correo_causa": ((_res_correo or {}).get("causa") if email_destino else ""),
+                    "correo_motivo": ((_res_correo or {}).get("motivo") if email_destino and not enviado_correo else ""),
+                    "correo_mensaje": ((_res_correo or {}).get("mensaje") if email_destino and not enviado_correo else ""),
                     "whatsapp_link": wa_link,
                     # La pantalla necesita poder decir la verdad: si el PDF se
                     # pidió y no salió, avisarlo en vez de cantar victoria.
@@ -117820,9 +118058,13 @@ def mant_ot_aprobar_cierre(vid):
         _ot_alta_equipos_al_cerrar(vid, usuario=current_username())
         # 2026-05-22 (Daniel) — Notificar al técnico (campana) y opcionalmente
         # al cliente por email (env MANT_NOTIF_CLIENTE_EMAIL_ENABLED).
+        # 2026-10-08: _notificar_cierre_ot_async se borró en un cleanup antiguo (commit f3cb145e) y quedaron estas
+        # llamadas, que fallaban con «name '_notificar_cierre_ot_async' is not defined» en cada cierre. NO se inventa
+        # un correo nuevo: si la función existe se usa; si no, se omite en silencio.
         try:
-            _notificar_cierre_ot_async(vid, resultado="aprobada",
-                                       motivo=comentario, host_url=request.host_url)
+            _fn_nca = globals().get("_notificar_cierre_ot_async")
+            if _fn_nca:
+                _fn_nca(vid, resultado="aprobada", motivo=comentario, host_url=request.host_url)
         except Exception as _e_nca:
             print(f"[aprobar-cierre notif] {_e_nca}", flush=True)
         # Sincronizar estado del ticket vinculado (si lo hay): OT cerrada con
@@ -118475,9 +118717,11 @@ def mant_ot_rechazar_cierre(vid):
         except Exception: pass
         # 2026-05-22 (Daniel) — Notificar al técnico (campana) que la OT
         # fue rechazada y debe corregir + refirmar.
+        # 2026-10-08: misma guarda que en aprobar-cierre (la función se borró en el commit f3cb145e).
         try:
-            _notificar_cierre_ot_async(vid, resultado="rechazada",
-                                       motivo=motivo, host_url=request.host_url)
+            _fn_ncr = globals().get("_notificar_cierre_ot_async")
+            if _fn_ncr:
+                _fn_ncr(vid, resultado="rechazada", motivo=motivo, host_url=request.host_url)
         except Exception as _e_ncr:
             print(f"[rechazar-cierre notif] {_e_ncr}", flush=True)
         return jsonify({"ok": True, "estado": "programada", "motivo": motivo})
