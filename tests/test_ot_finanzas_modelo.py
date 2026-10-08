@@ -86,7 +86,7 @@ class TestCobra(unittest.TestCase):
         r = F(zz_monto=80000, valor_origen="estimado", costo=80000, costo_proveedor=50000)
         self.assertEqual(r["cobre"]["total"], 0)
         self.assertEqual(r["clase"], "gris")
-        self.assertEqual(r["label"], "Falta lo que cobraste")
+        self.assertEqual(r["label"], "Falta el documento de cobro")
         self.assertEqual(r["valorizado"]["monto"], 80000)
 
     def test_sin_zz_usa_el_precio_al_cliente_marcado(self):
@@ -104,7 +104,7 @@ class TestCobra(unittest.TestCase):
     def test_zzretiro_nunca_es_cobro_del_servicio(self):
         r = F(zz_monto=1, zz_codigo="ZZRETIRO", valor_origen="zz", costo_proveedor=130000, costo_despacho=70000)
         self.assertEqual(r["cobre"]["total"], 0)
-        self.assertEqual(r["label"], "Falta lo que cobraste")
+        self.assertEqual(r["label"], "Falta el documento de cobro")
 
     def test_cobro_declarado_en_cero(self):
         r = F(zz_monto=0, valor_origen="zz", costo_proveedor=30000)

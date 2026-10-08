@@ -16,6 +16,8 @@
   var FUENTE_COBRO = {zz: 'línea del documento', doc_total: 'total del documento', cotizacion: 'cotización',
     contrato: 'precio acordado', manual: 'escrito a mano', supuesto: 'escrito a mano', '': 'declarado'};
   var ZZ_NO_SERVICIO = ['ZZRETIRO'];
+  /* valor_origen que respalda un «Precio al cliente» anotado sin línea de servicio (espejo de ORIGENES_COBRO_RESPALDO) */
+  var ORIGENES_COBRO_RESPALDO = ['zz', 'doc_total', 'cotizacion', 'contrato', 'manual', 'supuesto'];
   var COBERTURA_TXT = {
     cobra: 'Se le cobra al cliente',
     garantia: 'Garantía: no se le cobra',
@@ -76,14 +78,18 @@
 
     // COBRÉ
     var zzEsCobro = zz !== null && ORIGENES_NO_COBRO.indexOf(origen) < 0 && !zzNoServ;
-    var serv = null, fuente = null;
+    var serv = null, fuente = null, precioAnotado = null;
     if (zzEsCobro){ serv = zz; fuente = FUENTE_COBRO.hasOwnProperty(origen) ? FUENTE_COBRO[origen] : 'declarado'; }
     else if ((zz === null || zzNoServ) && tot !== null && tot > 0){
-      serv = Math.max(tot - (env || 0), 0); fuente = 'precio al cliente (sin separar servicio y despacho)';
+      if (zz === null && ORIGENES_COBRO_RESPALDO.indexOf(origen) >= 0){
+        serv = Math.max(tot - (env || 0), 0); fuente = 'precio al cliente (sin separar servicio y despacho)';
+      } else { precioAnotado = tot; }
     }
     var cServ, cDesp, hayCobro;
     if (cobra){
       cServ = serv || 0; cDesp = env || 0; hayCobro = serv !== null || env !== null;
+      if (precioAnotado !== null && serv === null)
+        avisos.push('Hay un precio anotado (' + clp(precioAnotado) + ') sin documento de cobro: no cuenta como cobro. Falta el documento de Random o declarar el cobro con su motivo.');
       if (fuente && fuente.indexOf('precio al cliente') === 0)
         avisos.push('El cobro sale del «Precio al cliente» anotado: no separa servicio y despacho.');
       if (zzEsCobro && tot !== null && tot > 0 && Math.abs(tot - (cServ + cDesp)) >= 1)
@@ -112,7 +118,7 @@
     if (!cobra){
       if (faltaTec){ clase = 'ambar'; label = 'Falta lo que te cobró el técnico'; mostrar = false; }
       else { clase = 'info'; label = corto + ' · nos costó ' + clp(meTotal); }
-    } else if (!hayCobro){ clase = 'gris'; label = 'Falta lo que cobraste'; mostrar = false; }
+    } else if (!hayCobro){ clase = 'gris'; label = 'Falta el documento de cobro'; mostrar = false; }
     else if (faltaTec){ clase = 'ambar'; label = 'Falta lo que te cobró el técnico'; mostrar = false; }
     else if (faltaDesp){ clase = 'ambar'; label = 'Falta el costo del despacho'; mostrar = false; }
     else if (cobreTotal <= 0){ clase = meTotal > 0 ? 'rojo' : 'gris'; label = 'Cobro declarado en $0'; }
@@ -127,6 +133,7 @@
       else if (zz !== null && zz > 1 && !zzNoServ){ val = zz; valF = origen || 'documento'; }
     }
     if (val === null && cobra && zz !== null && zz > 0 && ORIGENES_NO_COBRO.indexOf(origen) >= 0){ val = zz; valF = origen; }
+    if (val === null && cobra && precioAnotado !== null){ val = precioAnotado; valF = 'precio_anotado'; }
 
     var frase;
     if (!cobra && !faltaTec) frase = COBERTURA_TXT[cob] + '. Nos costó ' + clp(meTotal) + (val ? ' (valorizada en ' + clp(val) + ')' : '') + '.';
@@ -143,6 +150,7 @@
       queda: {servicio: r2(cServ - mTec), despacho: r2(cDesp - mDesp), repuestos: r2(-kRep), total: quedaTotal, pct: pct, mostrar: mostrar},
       a_pagar_proveedor: r2(mTec + mDesp),
       valorizado: {monto: val !== null ? r2(val) : null, fuente: valF},
+      precio_anotado: (cobra && precioAnotado !== null && serv === null) ? r2(precioAnotado) : null,
       clase: clase, label: label, frase: frase, avisos: avisos
     };
   }

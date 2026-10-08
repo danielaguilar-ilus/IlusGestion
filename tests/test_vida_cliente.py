@@ -355,7 +355,7 @@ class TestVidaClienteModeloUnico(unittest.TestCase):
     def test_sin_cobro_y_sin_garantia_sigue_siendo_falta_lo_que_cobraste(self):
         # Igual que antes ("Falta lo que se cobra", gris, fuera del margen).
         r = self._base(zz_monto=None, valor_origen=None, costo=None)
-        self.assertEqual((r["clase"], r["label"]), ("gris", "Falta lo que cobraste"))
+        self.assertEqual((r["clase"], r["label"]), ("gris", "Falta el documento de cobro"))
         self.assertEqual(self.agregado([r])["n_fuera"], 1)
 
     def test_repuestos_suman_igual_que_antes(self):

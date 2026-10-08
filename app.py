@@ -83601,14 +83601,25 @@ def _ot_finanzas(v, rep=None):
     # ── COBRÉ ────────────────────────────────────────────────────────────────
     zz_es_cobro = zz is not None and origen not in _OT_FIN_ORIGENES_NO_COBRO and not zz_no_serv
     serv, fuente = None, None
+    precio_anotado = None   # 2026-10-07 (Daniel): un «Precio al cliente» suelto NO es un cobro (REGLA #24)
     if zz_es_cobro:
         serv, fuente = zz, _OT_FIN_FUENTE_COBRO.get(origen, "declarado")
     elif (zz is None or zz_no_serv) and tot is not None and tot > 0:
-        serv, fuente = max(tot - (env or 0.0), 0.0), "precio al cliente (sin separar servicio y despacho)"
+        # Solo cuenta si tiene respaldo: una línea del documento, una cotización, un contrato o un cobro
+        # declarado a mano con motivo (valor_origen). Sin respaldo es un precio anotado: referencia, no cobro.
+        # (valor_origen que respalda: documento de Random, cotización, contrato o cobro declarado a mano;
+        #  espejo en static/ot_finanzas.js ORIGENES_COBRO_RESPALDO.)
+        if zz is None and origen in ("zz", "doc_total", "cotizacion", "contrato", "manual", "supuesto"):
+            serv, fuente = max(tot - (env or 0.0), 0.0), "precio al cliente (sin separar servicio y despacho)"
+        else:
+            precio_anotado = tot
     if cobra:
         c_serv = serv or 0.0
         c_desp = env or 0.0
         hay_cobro = serv is not None or env is not None
+        if precio_anotado is not None and serv is None:
+            avisos.append(f"Hay un precio anotado ({_ot_fin_clp(precio_anotado)}) sin documento de cobro: "
+                          "no cuenta como cobro. Falta el documento de Random o declarar el cobro con su motivo.")
         if fuente and fuente.startswith("precio al cliente"):
             avisos.append("El cobro sale del «Precio al cliente» anotado: no separa servicio y despacho.")
         if zz_es_cobro and tot is not None and tot > 0 and abs(tot - (c_serv + c_desp)) >= 1:
@@ -83647,7 +83658,7 @@ def _ot_finanzas(v, rep=None):
         else:
             clase, label = "info", f"{_OT_FIN_COBERTURA_TXT[cobertura].split(':')[0]} · nos costó {_ot_fin_clp(me_total)}"
     elif not hay_cobro:
-        clase, label, mostrar_queda = "gris", "Falta lo que cobraste", False
+        clase, label, mostrar_queda = "gris", "Falta el documento de cobro", False
     elif falta_tecnico:
         clase, label, mostrar_queda = "ambar", "Falta lo que te cobró el técnico", False
     elif falta_despacho:
@@ -83672,6 +83683,8 @@ def _ot_finanzas(v, rep=None):
             val, val_fuente = zz, (origen or "documento")
     if val is None and cobra and zz is not None and zz > 0 and origen in _OT_FIN_ORIGENES_NO_COBRO:
         val, val_fuente = zz, origen
+    if val is None and cobra and precio_anotado is not None:
+        val, val_fuente = precio_anotado, "precio_anotado"   # «Precio anotado (sin documento)»: solo referencia
 
     # ── FRASE (lo que lee Daniel de un vistazo) ─────────────────────────────
     if not cobra and not falta_tecnico:
@@ -83699,6 +83712,7 @@ def _ot_finanzas(v, rep=None):
         # Lo que se le paga al técnico/proveedor (conciliación con sus facturas): SIN repuestos.
         "a_pagar_proveedor": round(m_tec + m_desp, 2),
         "valorizado": {"monto": (round(val, 2) if val is not None else None), "fuente": val_fuente},
+        "precio_anotado": (round(precio_anotado, 2) if (cobra and precio_anotado is not None and serv is None) else None),
         "clase": clase, "label": label, "frase": frase, "avisos": avisos,
     }
 
