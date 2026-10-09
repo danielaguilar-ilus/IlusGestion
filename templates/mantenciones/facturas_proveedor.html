@@ -330,7 +330,7 @@
 {# 💸 2026-09-17 marcar pagado sin factura (solo superadmin, un proveedor) y
    🏢 2026-09-20 solicitar OC sobre VARIOS proveedores a la vez (una OC por
    cada uno) + Excel del corte: el checkbox va siempre, no solo filtrando. #}
-<div class="table-responsive">
+<div class="fpl-card"><div class="table-responsive">
   {# 📐 2026-09-30 (Daniel: "que quepa todo en la pantalla"): eran 14 columnas y
      ~1800px mínimos, así que cortaba a la derecha incluso en pantalla grande. Ahora
      Pagado y Cobrado son UNA columna cada uno (total + instalación + despacho
@@ -440,7 +440,7 @@
       {% endfor %}
     </tbody>
   </table>
-</div>
+</div></div>
 {% if puede_seleccionar %}
 <div class="fpv-otbar" id="fpvOtBar">
   {# El detalle (cobrado, te queda, por proveedor, diferencia) vive en el panel de arriba; acá solo el resumen corto. #}
@@ -1383,7 +1383,27 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 /* Aprietan la tabla solo si hace falta: un nombre de servicio largo ("Mantención
    preventiva programada"), el chip del anexo y el aviso "sin costo" se parten en
    2 líneas en vez de ensanchar la tabla y cortarla a la derecha. */
-.fp-tabla-ot tbody td,.fp-tabla-ot thead th{padding-left:8px;padding-right:8px}
+/* 🎨 2026-10-08 (Daniel: «veo esa tabla del lote sin márgenes, toda pegada, se ve fea»): "OT por facturar" vive en una
+   tarjeta con márgenes laterales y cada celda respira (9px a los lados, 12px en los extremos, 11px arriba y abajo). El
+   aire es horizontal: la tabla sigue cabiendo en 1280px sin barra y el alto de las filas casi no cambia. Mismo
+   lenguaje que Incidencias y el Monitor de Retiros. */
+.fpl-card{background:#f8fafc;border:1px solid #e5e7eb;border-radius:14px;padding:6px 12px 10px;
+  box-shadow:0 2px 10px rgba(15,23,42,.05)}
+@media (min-width:769px){
+  .fp-tabla-ot{border-spacing:0 9px}
+  .fp-tabla-ot thead th{padding:6px 9px 2px;font-size:.66rem}
+  .fp-tabla-ot tbody td{padding:11px 9px}
+  .fp-tabla-ot tbody td:first-child,.fp-tabla-ot thead th:first-child{padding-left:12px}
+  .fp-tabla-ot tbody td:last-child,.fp-tabla-ot thead th:last-child{padding-right:10px}
+  .fp-tabla-ot td[data-label="OT"]{min-width:128px}
+}
+@media (min-width:1500px){
+  .fpl-card{padding:8px 18px 14px}
+  .fp-tabla-ot thead th{padding:6px 13px 3px}
+  .fp-tabla-ot tbody td{padding:13px 13px}
+  .fp-tabla-ot tbody td:first-child,.fp-tabla-ot thead th:first-child{padding-left:16px}
+  .fp-tabla-ot tbody td:last-child,.fp-tabla-ot thead th:last-child{padding-right:14px}
+}
 .fp-tabla-ot .fp-td-serv .fp-tipo{white-space:normal;display:inline-block;border-radius:10px}
 .fp-tabla-ot .fp-td-anx .fp-anx{flex-wrap:wrap;border-radius:12px}
 .fp-sindoc.fp-sindoc-wrap{white-space:normal;display:inline-block;border-radius:10px;line-height:1.3;text-align:left;max-width:190px}
@@ -1465,9 +1485,10 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 .fpv-step.listo .fpv-circle .ok{display:inline}
 @keyframes fpvPulso{0%{box-shadow:0 0 0 0 rgba(22,163,74,.45)}100%{box-shadow:0 0 0 10px rgba(22,163,74,0)}}
 @media (max-width:768px){
+  .fpl-card{background:transparent;border:0;box-shadow:none;padding:0}
   .fp-tabla thead{display:none}
-  .fp-tabla tbody tr{display:block;border:1px solid #e5e7eb;border-radius:12px;padding:8px 0;margin-bottom:10px}
-  .fp-tabla tbody td{display:block;border:0;padding:3px 12px;text-align:left}
+  .fp-tabla tbody tr{display:block;border:1px solid #e5e7eb;border-radius:12px;padding:10px 0;margin-bottom:12px}
+  .fp-tabla tbody td{display:block;border:0;padding:4px 16px;text-align:left}
   .fp-tabla th.m,.fp-tabla td.m{text-align:left}
   /* Apilada en tarjeta, cada cifra lleva su nombre (REGLA #15) */
   .fp-tabla tbody td[data-label]::before{content:attr(data-label);display:block;font-size:.62rem;font-weight:900;
@@ -1513,7 +1534,11 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 #fpvTabla thead th.rm-sortable:focus-visible{outline:2px solid #f87171;outline-offset:-2px}
 .fp-sec-tot .fpv-tot-gen{color:#64748b;font-weight:700}
 /* Fila de filtros: debajo de cada encabezado, sobre el mismo fondo negro */
-#fpvTabla thead tr.rm-filtros th{padding:6px 5px 10px;background:#161616;vertical-align:top;text-transform:none;letter-spacing:0;white-space:normal}
+#fpvTabla thead tr.rm-filtros th{padding:6px 6px 12px;background:#161616;vertical-align:top;text-transform:none;letter-spacing:0;white-space:normal}
+@media (min-width:769px){
+  #fpvTabla thead tr.rm-filtros th:first-child{padding-left:16px}
+  #fpvTabla thead tr.rm-filtros th:last-child{padding-right:12px}
+}
 #fpvTabla thead tr.rm-filtros .fpv-fl{display:block;width:100%;min-width:0;min-height:34px;padding:0 8px;border:1px solid #4b5563;border-radius:8px;
   background:#fff;color:var(--rm-ink);font-size:.84rem;font-weight:600}
 #fpvTabla thead tr.rm-filtros .fpv-fl + .fpv-fl{margin-top:4px}
@@ -1522,9 +1547,15 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 #fpvTabla thead tr.rm-filtros input[type=date]{font-size:.72rem;padding:0 2px;min-width:0}
 #fpvTabla thead tr.rm-filtros input.fpv-fl:not([type=date]):not(:placeholder-shown){border-color:#f87171;box-shadow:0 0 0 2px rgba(248,113,113,.35)}
 @media (min-width:769px){
-  #fpvTabla thead th{padding:8px 5px;font-size:.76rem;letter-spacing:.02em;white-space:normal;line-height:1.2;vertical-align:middle}
+  /* 🎨 2026-10-08 (Daniel: «sin márgenes, toda pegada»): 6px a los lados de cada celda (antes 5px) y 8px arriba y abajo
+     (antes 6px), 16px de aire antes de la primera columna (junto a la barra del semáforo) y 12px después de la última.
+     En 1280px más no cabe sin partir las columnas: desde 1360px y 1500px el aire crece (bloques de abajo). */
+  #fpvTabla thead th{padding:10px 6px;font-size:.76rem;letter-spacing:.02em;white-space:normal;line-height:1.2;vertical-align:middle}
   #fpvTabla thead th .bi{margin-left:3px}
-  #fpvTabla tbody td{padding:6px 5px;vertical-align:middle;font-size:.84rem;line-height:1.28}
+  #fpvTabla tbody td{padding:8px 6px;vertical-align:middle;font-size:.84rem;line-height:1.28}
+  #fpvTabla thead th:first-child,#fpvTabla tbody td:first-child{padding-left:16px}
+  #fpvTabla thead th:last-child,#fpvTabla tbody td:last-child{padding-right:12px}
+  #fpvTabla .fpv-c-fecha .rm-sub{white-space:normal}
   #fpvTabla .rm-sub{margin-top:1px;font-size:.78rem;line-height:1.25}
   #fpvTabla .rm-code{font-size:.95rem}
   #fpvTabla .rm-cli-name{font-size:.88rem;line-height:1.25}
@@ -1535,10 +1566,9 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
   #fpvTabla .fp-trk-s{min-width:30px;gap:1px}
   #fpvTabla .fp-trk-c{width:23px;height:23px;font-size:.7rem}
   #fpvTabla .fp-trk-l{width:3px}
-  #fpvTabla .fp-trk-s small{font-size:.5rem;letter-spacing:0}
+  #fpvTabla .fp-trk-s small{font-size:.46rem;letter-spacing:0}
   #fpvTabla .fp-otlist{max-width:210px}
   #fpvTabla .fpv-c-lote .rm-sub .bi{display:none}
-  #fpvTabla .fpv-c-fecha .rm-sub{white-space:nowrap}
   #fpvTabla thead th.fpv-c-lote{width:78px}
   #fpvTabla thead th.fpv-c-prov{width:110px}
   #fpvTabla thead th.fpv-c-trk{width:168px}
@@ -1550,10 +1580,18 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
   #fpvTabla thead th.fpv-c-est{width:98px}
   #fpvTabla thead tr.rm-filtros .fpv-fl{min-height:32px}
 }
+@media (min-width:1360px){
+  #fpvTabla thead th,#fpvTabla thead tr.rm-filtros th{padding-left:9px;padding-right:9px}
+  #fpvTabla tbody td{padding:9px 9px}
+  #fpvTabla thead th:first-child,#fpvTabla tbody td:first-child,#fpvTabla thead tr.rm-filtros th:first-child{padding-left:18px}
+  #fpvTabla thead th:last-child,#fpvTabla tbody td:last-child,#fpvTabla thead tr.rm-filtros th:last-child{padding-right:14px}
+}
 @media (min-width:1500px){
-  #fpvTabla tbody td{padding:8px 9px}
-  #fpvTabla thead th{padding:9px 9px}
-  #fpvTabla thead tr.rm-filtros th{padding:6px 9px 10px}
+  #fpvTabla tbody td{padding:10px 12px}
+  #fpvTabla thead th{padding:11px 12px}
+  #fpvTabla thead tr.rm-filtros th{padding:6px 12px 12px}
+  #fpvTabla thead th:first-child,#fpvTabla tbody td:first-child,#fpvTabla thead tr.rm-filtros th:first-child{padding-left:20px}
+  #fpvTabla thead th:last-child,#fpvTabla tbody td:last-child,#fpvTabla thead tr.rm-filtros th:last-child{padding-right:16px}
   #fpvTabla thead th.fpv-c-prov{width:240px}
   #fpvTabla thead th.fpv-c-trk{width:230px}
   #fpvTabla thead th.fpv-c-ot{width:170px}

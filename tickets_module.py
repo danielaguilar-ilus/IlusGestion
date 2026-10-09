@@ -2505,6 +2505,26 @@ def register_tickets_routes(app, ctx):
             return view(*a, **k)
         return wrapped
 
+    def _tk_sin_cotizaciones_tecnico(view):
+        """Decorador (2026-10-08, REGLA #26 -- Daniel: «cuidemos la imagen y la confidencialidad de la empresa»):
+        una cotización es plata que se le cobra al cliente (precios, totales, márgenes). Un técnico -- interno,
+        elevado o externo -- no las abre, no las busca, no las calcula ni las envía. JSON 403 amable en las APIs;
+        en las páginas, un aviso y vuelta al listado de tickets. Gestión no cambia nada. Se aplica DESPUÉS de
+        @_tickets_required."""
+        @wraps(view)
+        def wrapped(*a, **k):
+            if _tk_es_tecnico():
+                if _is_ajaxish() or request.path.startswith("/tickets/api/"):
+                    return jsonify({
+                        "ok": False,
+                        "error": "Las cotizaciones las gestiona el equipo comercial y de gestión.",
+                        "error_codigo": "COTIZACION_SIN_ACCESO",
+                    }), 403
+                flash("Las cotizaciones las gestiona el equipo comercial y de gestión.", "warning")
+                return redirect(url_for("tk_list"))
+            return view(*a, **k)
+        return wrapped
+
     def _tk_list_where_scoped(args):
         """_tk_list_where + (solo para un técnico) excluir los tickets de
         compra a proveedor. Una sola fuente para el listado, los KPIs y los
@@ -3362,6 +3382,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/cotizaciones/preview-clasificacion", methods=["POST"])
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_api_cotizacion_preview_clasificacion():
         d = request.get_json(silent=True) or {}
         items = d.get("items") or []
@@ -3389,6 +3410,7 @@ def register_tickets_routes(app, ctx):
 
     @app.route("/tickets/api/cotizaciones/preview-precio", methods=["POST"])
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_api_cotizacion_preview_precio():
         d = request.get_json(silent=True) or {}
         tipo_servicio = (d.get("tipo_servicio") or "mantencion").strip().lower()
@@ -3427,6 +3449,7 @@ def register_tickets_routes(app, ctx):
 
     @app.route("/tickets/api/cotizaciones/costo-ruta", methods=["GET"])
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_api_cotizacion_costo_ruta():
         """Costo de ruta sugerido por comuna (tk_cotiz_rutas, importada del
         CSV real de Daniel). Para el hint del wizard: "Se obtiene
@@ -4161,6 +4184,7 @@ def register_tickets_routes(app, ctx):
 
     @app.route("/tickets/cotizaciones/<int:cid>/pdf")
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_cotizacion_pdf(cid):
         """PDF de la cotización (Playwright). ?descargar=1 fuerza la descarga
         (attachment) en vez de abrir inline en el navegador."""
@@ -4184,6 +4208,7 @@ def register_tickets_routes(app, ctx):
 
     @app.route("/tickets/cotizaciones/<int:cid>/ver")
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_cotizacion_ver(cid):
         """Visor rápido: la MISMA plantilla del PDF renderizada como HTML al
         instante (sin Playwright), con toolbar de Descargar/Imprimir/Enviar.
@@ -4476,6 +4501,7 @@ def register_tickets_routes(app, ctx):
 
     @app.route("/tickets/cotizaciones/<int:cid>/detalle-calculo")
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_cotizacion_detalle_calculo(cid):
         if not _tk_solo_superadmin():
             msg = "Solo un superadministrador puede ver el detalle de cálculo."
@@ -4489,6 +4515,7 @@ def register_tickets_routes(app, ctx):
 
     @app.route("/tickets/cotizaciones/<int:cid>/detalle-calculo/pdf")
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_cotizacion_detalle_calculo_pdf(cid):
         if not _tk_solo_superadmin():
             return "Solo un superadministrador puede descargar el detalle de cálculo.", 403
@@ -4528,6 +4555,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/cotizaciones/historico")
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_cotizaciones_historico():
         q = (request.args.get("q") or "").strip()
         where, params = "1=1", []
@@ -4636,6 +4664,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/cotizaciones/desde-erp", methods=["POST"])
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_api_cotizacion_desde_erp():
         d = request.get_json(silent=True) or {}
         items = d.get("items") or []
@@ -5119,6 +5148,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/cotizaciones/<int:cid>/recalcular", methods=["POST"])
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_api_cotizacion_recalcular(cid):
         user = current_username() or "sistema"
         d = request.get_json(silent=True) or {}
@@ -5158,6 +5188,7 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     @app.route("/tickets/api/cotizaciones/<int:cid>/generar-ticket", methods=["POST"])
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_api_cotizacion_generar_ticket(cid):
         # Atajo rapido (NO es la proteccion real -- ver FOR UPDATE abajo):
         # evita abrir una conexion de escritura para un id que ni existe.
@@ -5592,6 +5623,7 @@ def register_tickets_routes(app, ctx):
 
     @app.route("/tickets/api/cotizaciones/<int:cid>", methods=["GET"])
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_api_cotizacion_get(cid):
         """Cotización completa (cabecera + ítems + destinatarios sugeridos)
         para precargar el wizard en modo edición."""
@@ -5638,6 +5670,7 @@ def register_tickets_routes(app, ctx):
 
     @app.route("/tickets/api/cotizaciones/buscar", methods=["GET"])
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_api_cotizacion_buscar():
         """Búsqueda liviana de cotizaciones (número / empresa / RUT) para
         el selector de origen "Generar OT" (2026-08-12,
@@ -5748,6 +5781,7 @@ def register_tickets_routes(app, ctx):
 
     @app.route("/tickets/api/cotizaciones/<int:cid>/actualizar", methods=["POST"])
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_api_cotizacion_actualizar(cid):
         """Guarda la edición de una cotización (cabecera + ítems) y recalcula.
         NUNCA toca numero_cotizacion, estado, created_by/at ni el snapshot de
@@ -6170,6 +6204,7 @@ def register_tickets_routes(app, ctx):
 
     @app.route("/tickets/api/cotizaciones/<int:cid>/estado", methods=["POST"])
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_api_cotizacion_estado(cid):
         """Aprobar / rechazar / reabrir una cotización. SOLO superadmin
         (Daniel: "aprobar y borrar, pero solamente es superadministrador")."""
@@ -6190,6 +6225,7 @@ def register_tickets_routes(app, ctx):
 
     @app.route("/tickets/api/cotizaciones/<int:cid>/eliminar", methods=["POST"])
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_api_cotizacion_eliminar(cid):
         """Borrado SOFT (Regla #5: el correlativo COT jamás debe desaparecer).
         SOLO superadmin. La fila deja de aparecer en el listado pero queda en
@@ -6208,6 +6244,7 @@ def register_tickets_routes(app, ctx):
 
     @app.route("/tickets/api/cotizaciones/<int:cid>/log", methods=["GET"])
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_api_cotizacion_log(cid):
         """Historial de la cotización (Daniel: "evidencia de que alguien hizo
         algo"). Visible para admin/superadmin."""
@@ -6225,6 +6262,7 @@ def register_tickets_routes(app, ctx):
 
     @app.route("/tickets/api/cotizaciones/<int:cid>/enviar", methods=["POST"])
     @_tickets_required
+    @_tk_sin_cotizaciones_tecnico
     def tk_api_cotizacion_enviar(cid):
         """Envía el PDF de la cotización a uno o varios destinatarios
         (cliente, ejecutivo, propio; editables). Daniel: "que se pueda agregar
