@@ -4155,7 +4155,6 @@ const _ESTADOS_CON_CORREO = {
   reagendada: 'le llega el aviso de reagendamiento',
   informacion_incompleta: 'le llega un correo pidiéndole información',
   esperando_cliente: 'le llega un correo pidiéndole información',
-  en_revision: 'le llega un correo de "estamos revisando tu solicitud"',
 };
 async function _confirmarCambioEstado(ev){
   const form = ev.target;

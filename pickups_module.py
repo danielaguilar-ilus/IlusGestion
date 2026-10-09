@@ -7016,7 +7016,8 @@ def register_pickup_routes(app, ctx):
             "informacion_incompleta": "info_incompleta",
             # Nuevos: cuando un operador cambia manualmente a estos también
             # mandamos email (antes se quedaban en silencio).
-            "en_revision":            "created",   # reusa plantilla de "estamos revisando"
+            # "en_revision" YA NO manda correo (Daniel 2026-10-08, «quítalo»): reusaba la plantilla de
+            # «Solicitud recibida» y el cliente la recibía dos veces. Pasar a revisión es un paso interno.
             "esperando_cliente":      "info_incompleta",
         }
         kind = kind_map.get(new_status)
@@ -13510,13 +13511,18 @@ def register_pickup_routes(app, ctx):
             lectura = "; confirmado con una segunda lectura a Check" if (confirmado or espera > 0) else ""
             base = (f"Check WMS informa el pedido como EXPEDIDO ({ev.get('despachadas')} de {ev.get('pedidas')} unidades despachadas{lectura}). "
                     + (f"Check: {detalle}. " if detalle else "OT y usuario: Check aún no los informa en el reporte de movimientos. "))
-            if modo == "sombra":
+            # Candado extra (2026-10-08, antes de activarlo con clientes reales): en ACTIVO solo se CIERRA un retiro que ya está «En preparación»
+            # (bodega lo preparó para esta cita). Con la cita solo confirmada, una expedición puede ser de otra salida del mismo documento: se avisa
+            # al equipo igual que en sombra y una persona decide.
+            cierra = (modo == "activo" and estado == "en_preparacion")
+            if not cierra:
                 if _aviso_equipo_ya_enviado(rid, "check_expedido", horas=24 * 3650):
                     _CHECK_EXPEDIDO_VISTO.pop(rid, None)
                     return False
                 try:
                     log_event(rid, "check_expedido", estado, estado,
-                              ("Automático · MODO SOMBRA (no se cambió el estado ni se le escribió al cliente). " + base
+                              (("Automático · MODO SOMBRA (no se cambió el estado ni se le escribió al cliente). " if modo == "sombra" else
+                                "Automático · Check expidió con la cita aún sin «En preparación»: no se cierra solo ni se le escribe al cliente. ") + base
                                + f"Detectado el {ahora_txt} (hora Chile). Si el cliente ya se llevó el pedido, hay que marcarlo como RETIRADO.")[:900],
                               "sistema", "Check WMS")
                 except Exception as e:
@@ -13551,12 +13557,13 @@ def register_pickup_routes(app, ctx):
                 "SELECT document_type, document_number FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC", (rid,)) or [])[:4])
         except Exception:
             pass
-        if modo == "sombra":
+        if not cierra:
             try:
                 _notificar_equipo_retiros(
                     f"📦 {code}: Check ya expidió el pedido",
                     f"{req.get('customer_name') or 'Cliente'} — Check ya expidió el pedido{(' ' + docs_txt) if docs_txt else ''} {quien_hora}: "
-                    f"si el cliente ya se lo llevó, márcalo como RETIRADO (cuando el cierre automático esté activo, esto lo cerrará solo y le avisará al cliente).",
+                    + (f"si el cliente ya se lo llevó, márcalo como RETIRADO (cuando el cierre automático esté activo, esto lo cerrará solo y le avisará al cliente)."
+                     if modo == "sombra" else "el retiro no estaba «En preparación», así que no se cerró solo: si el cliente ya se lo llevó, márcalo como RETIRADO."),
                     rid, code, prioridad="alta", tipo="retiro_expedido", send_email=False)
             except Exception as e:
                 print(f"[retiros-retiro-auto] aviso equipo rid={rid}: {e}", flush=True)

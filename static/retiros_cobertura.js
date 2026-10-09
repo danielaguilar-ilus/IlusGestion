@@ -21,7 +21,6 @@
     fallida: 'el aviso de que no se pudo completar su retiro',
     informacion_incompleta: 'un correo pidiéndole la información que falta',
     esperando_cliente: 'un correo pidiéndole la información que falta',
-    en_revision: 'el correo «estamos revisando tu solicitud»',
     en_preparacion: 'el correo «estamos preparando tu pedido»',
     retirada: 'el correo «retiro completado»'
   };

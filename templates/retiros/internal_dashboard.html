@@ -1505,11 +1505,12 @@ select.nri-field-locked{pointer-events:none}
     // (kind_map de pickup_update_status: en_preparacion → "preparing",
     // en_revision → "created") y antes se mandaban sin preguntar.
     // Daniel 2026-10-06: fuera del horario de cobertura se avisa antes de mandar algo al cliente (el aviso igual sale si se confirma)
-    const fuera = (['en_preparacion', 'en_revision', 'rechazada', 'retirada'].indexOf(nuevoEstado) >= 0 && window.retirosAvisoCobertura)
+    const fuera = (['en_preparacion', 'rechazada', 'retirada'].indexOf(nuevoEstado) >= 0 && window.retirosAvisoCobertura)
       ? await window.retirosAvisoCobertura() : '';
     const ava = fuera ? '⏰ ' + fuera + ' ' : '';
-    if (nuevoEstado === 'en_preparacion' || nuevoEstado === 'en_revision'){
-      const prep = nuevoEstado === 'en_preparacion';
+    // 2026-10-08: pasar a "Por revisar" ya NO le escribe al cliente (era un duplicado de «Solicitud recibida»): no pide confirmación.
+    if (nuevoEstado === 'en_preparacion'){
+      const prep = true;
       const ok = await ilusConfirm({
         title: prep ? 'Enviar a preparación' : 'Pasar a "Por revisar"',
         message: prep

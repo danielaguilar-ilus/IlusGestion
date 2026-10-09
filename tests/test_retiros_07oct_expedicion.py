@@ -209,15 +209,20 @@ class TestActivo:
             assert revisar(env)["retiro_auto_ahora"] is False
         assert len(correos_al_cliente(env)) == n == 1 and len(logs(env, "estado_actualizado")) == 1
 
-    def test_desde_cita_confirmada_dentro_de_la_ventana(self, activo):
+    def test_desde_cita_confirmada_no_cierra_solo_y_avisa_al_equipo(self, activo):
+        # 2026-10-08 (candado antes de activarlo): en ACTIVO solo se cierra un retiro «En preparación». Con la cita solo confirmada, la
+        # expedición se avisa al equipo y una persona decide: ni cambio de estado ni correo al cliente.
         env = activo
         retiro(env, status="agenda_confirmada", confirmed_date=cita(1))
         env.esp.check.respuestas["*"] = EXPEDIDO
         revisar(env)
-        assert env.db.solicitudes[RID]["status"] == "retirada"
-        (e,) = logs(env, "estado_actualizado")
-        assert (e["old_status"], e["new_status"]) == ("agenda_confirmada", "retirada")
-        assert len(correos_al_cliente(env)) == 1
+        assert env.db.solicitudes[RID]["status"] == "agenda_confirmada"
+        assert logs(env, "estado_actualizado") == []
+        (e,) = logs(env, "check_expedido")
+        assert "no se cierra solo" in e["notes"]
+        assert correos_al_cliente(env) == []
+        (titulo, cuerpo), = campanas(env)
+        assert "no se cerró solo" in cuerpo
 
     def test_el_cierre_manual_no_lleva_la_linea_sutil(self, activo):
         env = activo
