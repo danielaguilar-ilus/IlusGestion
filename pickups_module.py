@@ -16,6 +16,7 @@ import retiros_check as _rck       # preparación según CheckWMS (funciones pur
 import retiros_check_ot as _rco    # movimientos (OT) de CheckWMS por documento: quién, cuándo, estado (puras; SOLO LECTURA)
 import retiros_tiempos as _rti     # tiempos de preparación según las OT de Check: trabajo, pausas, por producto (puras)
 import retiros_firma as _rfi       # firma digital de recepción + comprobante: RUT, PNG, hash, token, bloque de correo (puras)
+from retiros_encuesta import usuario_en_vista_previa as _en_vista_previa   # encuesta y firma: por ahora solo las ve Daniel
 
 
 def _public_base_url():
@@ -6536,6 +6537,15 @@ def register_pickup_routes(app, ctx):
     #  · Enganches para el correo «retiro completado»: _comprobante_bloque_email(rid) y _enviar_comprobante(rid, req). Lógica pura: retiros_firma.py.
     # ══════════════════════════════════════════════════════════════════
     _FIRMA_ESTADO = {"tabla": False}
+
+    def _vista_previa_ok():
+        """¿El usuario de la sesión ve la encuesta y la firma? Por ahora solo Daniel (RETIROS_VISTA_PREVIA_USUARIOS; ver retiros_encuesta)."""
+        return _en_vista_previa(getattr(g, "user", None))
+
+    try:
+        app.jinja_env.globals["retiros_vista_previa"] = _vista_previa_ok
+    except Exception as _e_vp:
+        print(f"[retiros-vista-previa] {_e_vp}", flush=True)
     _FIRMA_ESTADOS_OK = ("en_preparacion", "agenda_confirmada", "retirada", "cerrada")
 
     def _firma_tabla():
@@ -6713,6 +6723,8 @@ def register_pickup_routes(app, ctx):
     @require_permission("retiros")
     def pickup_firma_recepcion(rid):
         """Guarda la firma de recepción (JSON: nombre, rut, relacion, conformidad, observaciones, firma = data URL PNG)."""
+        if not _vista_previa_ok():          # vista previa: por ahora solo Daniel registra firmas
+            return jsonify({"ok": False, "error": "La firma de recepción todavía no está habilitada."}), 403
         import json as _json_fm
         req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
         if not req:

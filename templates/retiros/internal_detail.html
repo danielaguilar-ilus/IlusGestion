@@ -582,7 +582,7 @@
 {# Guía de 6 pasos: justo antes de los pasos, tras cabecera y tracking (ficha v7) #}
 {% include "retiros/_guia.html" %}
 {# Encuesta de satisfacción (creada, AÚN NO LANZADA: RETIROS_ENCUESTA_ACTIVA apagada): solo con el retiro terminado, solo lectura #}
-{% if req.status in ('retirada', 'cerrada') %}{% include "retiros/_encuesta_ficha.html" %}{% endif %}
+{% if req.status in ('retirada', 'cerrada') and retiros_vista_previa is defined and retiros_vista_previa() %}{% include "retiros/_encuesta_ficha.html" %}{% endif %}
 
 <div class="rd-flow">
 
@@ -1665,7 +1665,7 @@
         {% endif %}
       </p>
       <div class="step-content" id="paso5Content">
-        {% include 'retiros/_firma_ficha.html' %}
+        {% if retiros_vista_previa is defined and retiros_vista_previa() %}{% include 'retiros/_firma_ficha.html' %}{% endif %}
         {% if req.status in ['retirada','cerrada'] %}
         <div class="d-flex gap-2 flex-wrap align-items-center">
             <span class="step-badge-ok"><i class="bi bi-check2-circle me-1"></i>Retiro completado</span>
@@ -2208,10 +2208,12 @@ window.RETIROS_DETAIL_DATA = {
 <script defer src="{{ url_for('static', filename='retiros_internal_detail.js') }}"></script>
 <script defer src="{{ url_for('static', filename='retiros_ficha_v7.js') }}"></script>
 <script defer src="{{ url_for('static', filename='retiros_cobertura.js') }}"></script>
+{% if retiros_vista_previa is defined and retiros_vista_previa() %}{# firma de recepción: por ahora solo la ve Daniel #}
 <link rel="stylesheet" href="{{ url_for('static', filename='ilus_firma.css') }}">
 <script defer src="{{ url_for('static', filename='ilus_firma.js') }}"></script>
 <link rel="stylesheet" href="{{ url_for('static', filename='retiros_firma.css') }}">
 <script defer src="{{ url_for('static', filename='retiros_firma.js') }}"></script>
+{% endif %}
 
 <script defer src="{{ url_for('static', filename='retiros_calendar.js') }}"></script>
 
@@ -2356,7 +2358,7 @@ window.RETIROS_DETAIL_DATA = {
           {% if firma %}
           <div class="alert alert-success py-2 px-3 small"><i class="bi bi-patch-check-fill me-1"></i>La recepción ya está <strong>firmada</strong> por {{ firma.nombre }} ({{ firma.rut_fmt }}).</div>
           {% else %}
-          {% include 'retiros/_firma_bloque.html' %}
+          {% if retiros_vista_previa is defined and retiros_vista_previa() %}{% include 'retiros/_firma_bloque.html' %}{% endif %}
           {% endif %}
           <div class="mb-1">
             <label class="form-label small fw-bold">📸 Foto de evidencia (opcional)</label>
@@ -2379,7 +2381,7 @@ window.RETIROS_DETAIL_DATA = {
 {% endif %}
 
 {# ════════ REGISTRAR FIRMA DE RECEPCIÓN con el retiro ya cerrado y sin firma (excepción deliberada al solo-lectura) ════════ #}
-{% if req.status in ['retirada', 'cerrada'] and not firma %}
+{% if req.status in ['retirada', 'cerrada'] and not firma and retiros_vista_previa is defined and retiros_vista_previa() %}
 <div class="modal fade" id="modalFirma" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content border-0 shadow">

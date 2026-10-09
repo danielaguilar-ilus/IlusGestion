@@ -46,6 +46,9 @@ def cuerpo(**kw):
 def env(monkeypatch):
     for k in ("RETIROS_PREP_AUTO", "RETIROS_EXIGE_RESPONSABLE", "RETIROS_CHECK_AUTO", "RETIROS_RETIRO_AUTO", "RETIROS_FIRMA_CORREO"):
         monkeypatch.delenv(k, raising=False)
+    # Vista previa (2026-10-09: por ahora solo Daniel ve la firma): estas pruebas son del funcionamiento, con el usuario del arnés habilitado;
+    # el candado «solo Daniel» tiene sus propias pruebas al final del archivo.
+    monkeypatch.setenv("RETIROS_VISTA_PREVIA_USUARIOS", "sam@sphs.cl")
     app, db, ctx, esp = A.construir_app()
     return SimpleNamespace(app=app, db=db, ctx=ctx, esp=esp, cli=app.test_client(), mp=monkeypatch)
 
@@ -314,3 +317,37 @@ def test_las_plantillas_y_el_js_estan_sanos():
         subprocess.run(["node", "--check", os.path.join(raiz, "static", "retiros_firma.js")], check=True, capture_output=True)
     except FileNotFoundError:
         pytest.skip("node no está instalado")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  VISTA PREVIA (Daniel 2026-10-09: «de momento, los cambios de la encuesta y la firma los vea yo nada más»)
+# ══════════════════════════════════════════════════════════════════════════════
+class TestFirmaSoloDanielPorAhora:
+    def test_el_equipo_no_puede_registrar_una_firma(self, env):
+        env.mp.delenv("RETIROS_VISTA_PREVIA_USUARIOS", raising=False)          # el valor por defecto: solo Daniel
+        env.db.nueva_solicitud(1, status="retirada", responsable_user_id=7, responsable_nombre="Sam")
+        r = env.cli.post("/retiros/1/firma", json={"nombre": "Gerd Müller", "rut": "11.111.111-1", "relacion": "titular",
+                                                   "conformidad": True, "firma": "data:image/png;base64,AAAA"})
+        assert r.status_code == 403 and env.db.firmas == {}
+        assert env.esp.correo.call_args_list == []
+
+    def test_daniel_si_puede(self, monkeypatch):
+        monkeypatch.delenv("RETIROS_VISTA_PREVIA_USUARIOS", raising=False)
+        app, db, ctx, esp = A.construir_app(usuario={"id": 1, "nombre": "Daniel Aguilar", "username": "daniel.aguilar@sphs.cl"})
+        db.nueva_solicitud(1, status="retirada", responsable_user_id=1, responsable_nombre="Daniel")
+        r = app.test_client().post("/retiros/1/firma", json={"nombre": "Gerd", "rut": "11.111.111-1", "relacion": "titular",
+                                                             "conformidad": True, "firma": "data:image/png;base64,AAAA"})
+        assert r.status_code != 403
+
+    def test_la_ficha_solo_muestra_la_firma_y_la_encuesta_en_vista_previa(self):
+        import re as _re
+        html = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates", "retiros", "internal_detail.html"),
+                    encoding="utf-8").read()
+        for parcial in ("_firma_ficha.html", "_firma_bloque.html", "_encuesta_ficha.html"):
+            for m in _re.finditer(_re.escape(parcial), html):
+                bloque = html[html.rfind("{% if", 0, m.start()): m.start()]      # el {% if %} que la envuelve (en la línea o el del modal)
+                assert "retiros_vista_previa()" in bloque, bloque[:200]
+        i = html.index('id="modalFirma"')
+        assert "retiros_vista_previa()" in html[html.rfind("{% if", 0, i): i]
+        j = html.index("retiros_firma.js")
+        assert "retiros_vista_previa()" in html[html.rfind("{% if", 0, j): j]

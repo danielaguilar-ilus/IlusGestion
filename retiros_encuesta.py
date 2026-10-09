@@ -50,6 +50,20 @@ from flask import (abort, jsonify, make_response, redirect, render_template, req
 #  CONSTANTES
 # ════════════════════════════════════════════════════════════════════════
 RUTA_BASE = "/retiros/encuesta"
+VISTA_PREVIA_POR_DEFECTO = "daniel.aguilar@sphs.cl"
+
+
+def usuario_en_vista_previa(usuario):
+    """Encuesta y firma de recepción en VISTA PREVIA (Daniel 2026-10-09: «de momento, los cambios de la encuesta y la firma los vea yo nada
+    más»). Solo los usuarios de RETIROS_VISTA_PREVIA_USUARIOS (usernames separados por coma; en este proyecto el username es el correo;
+    «*» = todo el equipo). Por defecto, solo Daniel. No toca lo que ve el cliente: eso sigue bajo RETIROS_ENCUESTA_ACTIVA / RETIROS_FIRMA_CORREO."""
+    if not usuario:
+        return False
+    lista = os.environ.get("RETIROS_VISTA_PREVIA_USUARIOS") or VISTA_PREVIA_POR_DEFECTO
+    permitidos = {x.strip().lower() for x in lista.split(",") if x.strip()}
+    if "*" in permitidos:
+        return True
+    return any(str(usuario.get(k) or "").strip().lower() in permitidos for k in ("username", "email"))
 DIAS_VIGENCIA_ENLACE = 30          # el enlace de una invitación vence a los 30 días de creada
 MESES_CONSERVACION = 24            # luego las respuestas se anonimizan (ver purgar_vencidas)
 MAX_TEXTO = 1000                   # largo máximo de una respuesta de texto libre
@@ -474,15 +488,18 @@ def register_encuesta_routes(app, ctx):
     def _perms():
         return getattr(g, "permissions", None) or {}
 
+    def _vista_previa():
+        return usuario_en_vista_previa(getattr(g, "user", None))
+
     def _es_personal():
         u = getattr(g, "user", None)
-        return bool(u and (_perms().get("superadmin") or _perms().get("retiros")))
+        return bool(u and (_perms().get("superadmin") or _perms().get("retiros")) and _vista_previa())
 
     def _puede_editar():
-        """Editar las preguntas: admin, superadmin o la jefatura de Retiros (ret_horarios)."""
+        """Editar las preguntas: admin, superadmin o la jefatura de Retiros (ret_horarios), y mientras esté en vista previa, solo Daniel."""
         u = getattr(g, "user", None)
         p = _perms()
-        return bool(u and (p.get("superadmin") or p.get("admin") or p.get("ret_horarios")))
+        return bool(u and (p.get("superadmin") or p.get("admin") or p.get("ret_horarios")) and _vista_previa())
 
     def _quien():
         u = getattr(g, "user", None) or {}
@@ -648,6 +665,8 @@ def register_encuesta_routes(app, ctx):
     @app.route(f"{RUTA_BASE}/vista-previa", methods=["GET", "POST"])
     @require_permission("retiros")
     def retiros_encuesta_vista_previa():
+        if not _vista_previa():      # vista previa: solo Daniel (RETIROS_VISTA_PREVIA_USUARIOS)
+            return _no_disponible()
         preguntas = _preguntas_vigentes(solo_activas=True)
         accion = url_for("retiros_encuesta_vista_previa")
         if request.method == "POST":
@@ -662,6 +681,8 @@ def register_encuesta_routes(app, ctx):
     @app.route(RUTA_BASE, methods=["GET"])
     @require_permission("retiros")
     def retiros_encuesta_resultados():
+        if not _vista_previa():      # vista previa: solo Daniel (RETIROS_VISTA_PREVIA_USUARIOS)
+            return _no_disponible()
         demo = request.args.get("demo") == "1"
         try:
             por_pagina = int(request.args.get("por_pagina") or 25)
@@ -852,6 +873,8 @@ def register_encuesta_routes(app, ctx):
     @app.route(f"{RUTA_BASE}/ficha/<int:rid>", methods=["GET"])
     @require_permission("retiros")
     def retiros_encuesta_ficha(rid):
+        if not _vista_previa():      # vista previa: solo Daniel (RETIROS_VISTA_PREVIA_USUARIOS)
+            return _json({"ok": False, "error": "No disponible."}, 404)
         fila = mysql_fetchone(f"SELECT id, status, public_token, closed_at FROM `{REQ}` WHERE id=%s LIMIT 1", (rid,))
         if not fila:
             return _json({"ok": False, "error": "Retiro no encontrado."}, 404)

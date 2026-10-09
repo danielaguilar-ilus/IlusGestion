@@ -123,8 +123,14 @@ def _require_permission(perm):
     return deco
 
 
-def construir(monkeypatch, con_rowcount=True):
+def construir(monkeypatch, con_rowcount=True, vista_previa="*"):
     monkeypatch.delenv("RETIROS_ENCUESTA_ACTIVA", raising=False)
+    # Vista previa (2026-10-09: por ahora solo Daniel ve la encuesta): estas pruebas son del funcionamiento, así que todo el equipo la ve;
+    # el candado «solo Daniel» tiene sus propias pruebas al final del archivo.
+    if vista_previa is None:
+        monkeypatch.delenv("RETIROS_VISTA_PREVIA_USUARIOS", raising=False)
+    else:
+        monkeypatch.setenv("RETIROS_VISTA_PREVIA_USUARIOS", vista_previa)
     monkeypatch.setattr(enc, "_ahora", lambda: T0)
     db, esp = BDFalsa(), Espias()
     sesion = {"user": None, "permissions": {}}
@@ -834,3 +840,52 @@ def test_plantillas_publicas_sin_alert_confirm_ni_nombre_viejo():
     for rel in ("retiros_encuesta.js", "retiros_encuesta_editar.js"):
         txt = open(os.path.join(RAIZ, "static", rel), encoding="utf-8").read()
         assert not re.search(r"(?<![\w.])(alert|prompt)\(", txt) and "window.confirm" not in txt, rel
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  VISTA PREVIA (Daniel 2026-10-09: «de momento, los cambios de la encuesta y la firma los vea yo nada más»)
+# ══════════════════════════════════════════════════════════════════════════════
+class TestSoloDanielPorAhora:
+    def _entorno(self, monkeypatch):
+        e = construir(monkeypatch, vista_previa=None)            # sin variable: el valor por defecto (solo Daniel)
+        e.equipo = lambda: e.sesion.update(user={"id": 7, "nombre": "Sam", "username": "sam@sphs.cl"},
+                                           permissions={"retiros": True, "admin": True, "ret_horarios": True})
+        e.daniel = lambda: e.sesion.update(user={"id": 1, "nombre": "Daniel", "username": "daniel.aguilar@sphs.cl"},
+                                           permissions={"retiros": True, "superadmin": True})
+        return e
+
+    @pytest.mark.parametrize("ruta", ["/retiros/encuesta", "/retiros/encuesta/vista-previa", "/retiros/encuesta/preguntas",
+                                      "/retiros/encuesta/preguntas/datos", "/retiros/encuesta/ficha/1"])
+    def test_el_equipo_no_la_ve_aunque_sea_admin(self, monkeypatch, ruta):
+        e = self._entorno(monkeypatch)
+        e.equipo()
+        assert e.client.get(ruta).status_code in (403, 404)
+
+    @pytest.mark.parametrize("ruta", ["/retiros/encuesta", "/retiros/encuesta/vista-previa", "/retiros/encuesta/preguntas",
+                                      "/retiros/encuesta/ficha/1"])
+    def test_daniel_si(self, monkeypatch, ruta):
+        e = self._entorno(monkeypatch)
+        e.daniel()
+        assert e.client.get(ruta).status_code == 200
+
+    def test_el_equipo_no_puede_guardar_preguntas(self, monkeypatch):
+        e = self._entorno(monkeypatch)
+        e.equipo()
+        r = e.client.post("/retiros/encuesta/preguntas/guardar", json={"texto": "¿Otra?", "tipo": "escala"})
+        assert r.status_code in (403, 404)
+
+    def test_el_enlace_del_cliente_no_se_abre_para_el_equipo_mientras_no_se_lance(self, monkeypatch):
+        e = self._entorno(monkeypatch)
+        e.equipo()
+        assert e.client.get(f"/retiros/encuesta/{e.token()}").status_code == 404
+
+    @pytest.mark.parametrize("valor, esperado", [("*", True), ("sam@sphs.cl, otro@sphs.cl", True), ("otro@sphs.cl", False), ("", False)])
+    def test_la_lista_se_puede_ampliar_por_entorno(self, monkeypatch, valor, esperado):
+        monkeypatch.setenv("RETIROS_VISTA_PREVIA_USUARIOS", valor)
+        if valor == "":
+            esperado = False                                     # vacía = el valor por defecto (solo Daniel)
+        assert enc.usuario_en_vista_previa({"username": "sam@sphs.cl"}) is esperado
+
+    def test_sin_sesion_nunca(self, monkeypatch):
+        monkeypatch.setenv("RETIROS_VISTA_PREVIA_USUARIOS", "*")
+        assert enc.usuario_en_vista_previa(None) is False
