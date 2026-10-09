@@ -86,6 +86,10 @@
     </div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
+    {# 📊 2026-10-08 (Daniel: "perdí el detalle, no veo un Excel para sacar un detalle de esto"): resumen + OT + historial del lote. #}
+    <a class="btn btn-sm btn-outline-dark" style="min-height:44px;display:inline-flex;align-items:center"
+       href="{{ url_for('mant_factura_proveedor_excel', fid=factura.id) }}"
+       title="Detalle de este lote en Excel: resumen, una fila por OT e historial"><i class="bi bi-file-earmark-excel me-1"></i>Descargar detalle (Excel)</a>
     {% if pendiente %}
     <button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="fpdEditar()">
       <i class="bi bi-pencil me-1"></i>Editar</button>
@@ -112,6 +116,9 @@
     {% endif %}
   </div>
 </div>
+
+{# 2026-10-08: aviso que sobrevive a la recarga tras asignar/quitar/ajustar (ver fpdMostrarAvisoGuardado). #}
+<div class="fpd-flash" id="fpdAvisoFlash" role="status" aria-live="polite" hidden></div>
 
 {# ── Tracking del ciclo del lote ─────────────────────────────────── #}
 {% if anulada %}
@@ -274,7 +281,7 @@
   <div class="fpd-summary">
     <div class="fpd-cell" id="fpdCellN"><div class="l">OT asignadas</div><div class="v">{{ items|length }}</div></div>
     <div class="fpd-cell"><div class="l">Monto de la factura</div><div class="v">{{ clp(factura.monto_total) }}</div>
-      <div class="s">{{ 'según documento N° ' ~ factura.numero_documento if s3_ok else 'declarado en la solicitud' }}</div></div>
+      <div class="s">{{ 'según documento N° ' ~ factura.numero_documento if s3_ok else ('suma de las OT; se actualiza sola hasta que llegue la factura' if pendiente else 'declarado en la solicitud') }}</div></div>
     <div class="fpd-cell" id="fpdCellAsig"><div class="l">Asignado en OT</div><div class="v">{{ clp(total_asignado) }}</div>
       <div class="s">suma de lo que cobra cada OT</div></div>
     {# Semáforo: verde cuadra, ámbar la factura cobra más, rojo las OT suman más #}
@@ -302,6 +309,28 @@
     </div>
   </div>
 </div>
+
+{# 🧮 2026-10-08 (lote #17): cuando el monto del lote no calza con la suma de sus OT, se dice con todas las letras y
+   se ofrece igualarlo. Con factura real el monto es el del documento: avisa y pide confirmación; sin factura es solo
+   una solicitud de OC y el monto debería ser lo que suman las OT. #}
+{% if items and diferencia|round(0) != 0 %}
+<div class="fpd-ajuste {{ 'real' if s3_ok }}" id="fpdAjuste">
+  <i class="bi bi-calculator"></i>
+  <div class="fpd-ajuste-tx">
+    {% if s3_ok %}
+    <b>La factura dice {{ clp(factura.monto_total) }} y las OT suman {{ clp(total_asignado) }}: diferencia {{ '-' if diferencia < 0 }}{{ clp(diferencia | abs) }}.</b>
+    <span>El monto es el del documento del proveedor, por eso no cambia solo cuando se agregan o quitan OT.</span>
+    {% else %}
+    <b>El monto del lote ({{ clp(factura.monto_total) }}) no coincide con la suma de sus OT ({{ clp(total_asignado) }}): diferencia {{ '-' if diferencia < 0 }}{{ clp(diferencia | abs) }}.</b>
+    <span>Como todavía no tiene factura del proveedor, el monto debería ser lo que suman las OT.</span>
+    {% endif %}
+  </div>
+  {% if pendiente %}
+  <button type="button" class="btn btn-sm btn-dark fw-bold" style="min-height:44px" onclick="fpdAjustarMonto()">
+    <i class="bi bi-arrow-repeat me-1"></i>Ajustar el monto a la suma de las OT ({{ clp(total_asignado) }})</button>
+  {% endif %}
+</div>
+{% endif %}
 
 {# ── OT en esta factura ──────────────────────────────────────────── #}
 <div class="fp-sec">OT que cobra esta factura <span class="fp-sec-n">{{ items|length }}</span></div>
@@ -460,6 +489,24 @@
   </table>
 </div>
 {% endif %}
+
+{# ── Historial del lote (mant_logs) ──────────────────────────────── #}
+{# 📋 2026-10-08 (lote #17): qué se agregó o quitó, cuándo y quién, sin bajar el Excel. Los 10 más nuevos; se pagina con /historial. #}
+<div class="fp-sec">Historial del lote <span class="fp-sec-n" id="fphTotal">{{ historial_total }}</span></div>
+<div class="fph" id="fphBox">
+  <div id="fphLista" aria-live="polite"></div>
+  <div class="fph-foot">
+    <div class="fph-rango"><i class="bi bi-clock-history"></i> <span id="fphRango"></span></div>
+    <div class="fph-ctrl">
+      <select class="form-select form-select-sm" id="fphSize" aria-label="Eventos por página" style="min-height:44px;font-size:16px;width:auto">
+        <option value="10">10 por página</option><option value="25">25 por página</option><option value="50">50 por página</option>
+      </select>
+      <button type="button" class="btn btn-sm btn-outline-dark" id="fphPrev" style="min-height:44px"><i class="bi bi-chevron-left"></i> Anterior</button>
+      <span id="fphInfo" class="fph-info"></span>
+      <button type="button" class="btn btn-sm btn-outline-dark" id="fphNext" style="min-height:44px">Siguiente <i class="bi bi-chevron-right"></i></button>
+    </div>
+  </div>
+</div>
 
 {# ── Asignar OT (solo pendiente) ─────────────────────────────────── #}
 {% if pendiente %}
@@ -675,6 +722,8 @@ const FPD_URL_BASE = "{{ url_for('mant_factura_proveedor_editar', fid=factura.id
 let FPD_OTS = [];
 // 🧠 2026-10-07: lo que ya tiene el lote (para ver cómo QUEDARÍA con la selección). Cifras del servidor, que salen de la cuenta única.
 const FPD_BASE = {n: {{ items|length }}, factura: {{ factura.monto_total }}, asignado: {{ total_asignado }}, cobrado: {{ total_cobrado_cliente }}};
+const FPD_TIENE_FACTURA = {{ 'true' if s3_ok else 'false' }};
+const FPH_INI = {{ {'eventos': historial, 'total': historial_total} | tojson }};
 const FPD_CLP = n => fpi.clp(n);
 
 function clpJs(n){ return '$' + Math.round(Number(n) || 0).toLocaleString('es-CL'); }
@@ -788,6 +837,20 @@ function fpdItems(){
   return FPD_OTS.map((o, i) => ({id: String(o.id), numero: o.numero_ot, prov: o.proveedor, provNombre: o.proveedor, pagar: fpdMontoDe(o.id),
     cobrado: Number(o.cobrado_cliente) || 0, garantia: !!o.es_garantia, sincobro: !!o.sin_cobro_declarado, listo: !!o.listo,
     libre: !o.fac_id, cb: document.querySelector('.fpd-cb[data-i="' + i + '"]')}));
+}
+// 2026-10-08: el aviso del monto del lote (actualizado solo / diferencia con la factura) tiene que sobrevivir a la
+// recarga de la página: se guarda en sessionStorage (si el navegador no deja, igual se muestra el toast).
+function fpdGuardarAviso(msg, nivel){
+  if (!msg) return;
+  try { sessionStorage.setItem('fpdAviso' + FPD_FID, JSON.stringify({m: msg, n: nivel || 'info'})); } catch (e) {}
+}
+function fpdMostrarAvisoGuardado(){
+  let a = null;
+  try { const raw = sessionStorage.getItem('fpdAviso' + FPD_FID); if (raw){ sessionStorage.removeItem('fpdAviso' + FPD_FID); a = JSON.parse(raw); } } catch (e) {}
+  if (!a || !a.m) return;
+  const box = document.getElementById('fpdAvisoFlash');
+  if (box){ box.className = 'fpd-flash ' + (a.n || 'info'); box.textContent = a.m; box.hidden = false; }
+  ilusToast(a.m, {type: a.n === 'success' ? 'success' : (a.n === 'warning' ? 'warning' : 'info')});
 }
 function fpdSet(id, txt){ const e = document.getElementById(id); if (e) e.textContent = txt; }
 // Las tarjetas de arriba (Asignado, Diferencia, Cobrado, Margen) muestran cómo QUEDARÍA el lote con lo marcado.
@@ -914,12 +977,14 @@ async function fpdAsignarUna(vid){
   const r = await fetch(FPD_URL_ASIGNAR, {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({visita_id: vid, monto: fpdMontoDe(vid)})});
   const d = await r.json().catch(() => ({}));
-  return {ok: r.ok && d.ok !== false, error: d.error || ('HTTP ' + r.status), codigo: d.error_codigo};
+  const ml = d.monto_lote || {};
+  return {ok: r.ok && d.ok !== false, error: d.error || ('HTTP ' + r.status), codigo: d.error_codigo, aviso: ml.aviso || '', nivel: ml.nivel || 'info'};
 }
 async function fpdAsignar(vid){
   const res = await fpdAsignarUna(vid);
   if (!res.ok){ ilusToast(res.error, {type: res.codigo === 'OT_YA_FACTURADA' ? 'warning' : 'error'}); return; }
   ilusToast('✓ OT asignada', {type:'success'});
+  fpdGuardarAviso(res.aviso, res.nivel);
   setTimeout(() => window.location.reload(), 500);
 }
 async function fpdAsignarSeleccionadas(){
@@ -928,11 +993,12 @@ async function fpdAsignarSeleccionadas(){
   const ok = await ilusConfirm({title:'Asignar ' + ids.length + ' OT', message:'¿Asignar las OT seleccionadas a esta factura con el monto indicado en cada una?',
     okLabel:'Asignar', cancelLabel:'Cancelar'});
   if (!ok) return;
-  let bien = 0; const errores = [];
+  let bien = 0, ultimoAviso = null; const errores = [];
   for (const vid of ids){
     const res = await fpdAsignarUna(vid);
-    if (res.ok) bien++; else errores.push(res.error);
+    if (res.ok){ bien++; ultimoAviso = res; } else errores.push(res.error);
   }
+  if (ultimoAviso) fpdGuardarAviso(ultimoAviso.aviso, ultimoAviso.nivel);
   if (errores.length) await ilusAlert({title: bien + ' asignada(s), ' + errores.length + ' con problema', message: errores.join('\n'), type:'warning'});
   else ilusToast('✓ ' + bien + ' OT asignadas', {type:'success'});
   window.location.reload();
@@ -946,6 +1012,7 @@ async function fpdQuitar(vid, numero){
   const d = await r.json().catch(() => ({}));
   if (!r.ok || d.ok === false){ ilusToast(d.error || 'No se pudo quitar', {type:'error'}); return; }
   ilusToast('OT quitada de la factura', {type:'success'});
+  if (d.monto_lote) fpdGuardarAviso(d.monto_lote.aviso, d.monto_lote.nivel);
   setTimeout(() => window.location.reload(), 500);
 }
 // 🔒 2026-09-21 (Daniel: "cuál sería la opción para reabrir solo 1 y no
@@ -982,6 +1049,30 @@ async function fpdQuitarPagada(vid, numero){
   const d = await r.json().catch(() => ({}));
   if (!r.ok || d.ok === false){ ilusToast(d.error || 'No se pudo quitar', {type:'error'}); return; }
   ilusToast('OT quitada de la factura pagada', {type:'success'});
+  if (d.monto_lote) fpdGuardarAviso(d.monto_lote.aviso, d.monto_lote.nivel);
+  setTimeout(() => window.location.reload(), 500);
+}
+// 🧮 2026-10-08 (lote #17): iguala el monto del lote a la suma de sus OT. Con factura real del proveedor avisa y
+// pide confirmación; el servidor también lo exige (confirmar_factura_real).
+async function fpdAjustarMonto(){
+  const real = FPD_TIENE_FACTURA, suma = FPD_BASE.asignado;
+  const ok = await ilusConfirm({
+    title: 'Ajustar el monto del lote',
+    message: real
+      ? 'La factura del proveedor dice ' + FPD_CLP(FPD_BASE.factura) + '; ¿seguro? Las OT suman ' + FPD_CLP(suma) + '.'
+      : 'El monto del lote pasará de ' + FPD_CLP(FPD_BASE.factura) + ' a ' + FPD_CLP(suma) + ' (la suma de sus OT).',
+    sub: real
+      ? 'El documento del proveedor no cambia: solo se iguala este monto a lo que suman las OT. Queda anotado en el historial del lote.'
+      : 'Queda anotado en el historial del lote.',
+    okLabel: 'Sí, ajustar', cancelLabel: 'Cancelar', danger: real,
+  });
+  if (!ok) return;
+  const r = await fetch(FPD_URL_BASE + '/ajustar-monto', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({confirmar_factura_real: real})});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d.ok === false){ ilusToast(d.error || 'No se pudo ajustar el monto', {type:'error'}); return; }
+  fpdGuardarAviso(d.aviso, 'success');
+  ilusToast('✓ ' + (d.aviso || 'Monto ajustado'), {type:'success'});
   setTimeout(() => window.location.reload(), 500);
 }
 async function fpdPagar(){
@@ -1120,7 +1211,42 @@ async function fpdGuardarEdicion(){
   setTimeout(() => window.location.reload(), 400);
 }
 {% endif %}
-document.addEventListener('DOMContentLoaded', function(){ if (document.getElementById('fpdResultados')) fpdBuscar(); });
+// 📋 2026-10-08: historial del lote, paginado (Mostrando A–B de N, N por página, Anterior / Página X de Y / Siguiente).
+const FPH = {pagina: 1, por: 10, total: FPH_INI.total, paginas: Math.max(1, Math.ceil(FPH_INI.total / 10))};
+function fphPintar(eventos){
+  const box = document.getElementById('fphLista');
+  if (!eventos.length){ box.innerHTML = '<div class="fph-vacio"><i class="bi bi-inbox"></i> Todavía no hay eventos registrados para este lote.</div>'; return; }
+  box.innerHTML = eventos.map(e =>
+    '<div class="fph-row"><div class="fph-cuando"><b>' + fpdEsc(e.fecha) + '</b><span><i class="bi bi-person"></i> ' + fpdEsc(e.usuario || '—') + '</span></div>'
+    + '<div class="fph-que"><span class="fph-acc a-' + fpdEsc(e.accion) + '">' + fpdEsc(e.accion_txt) + '</span>'
+    + (e.detalle ? '<div class="fph-det">' + fpdEsc(e.detalle) + '</div>' : '') + '</div></div>').join('');
+}
+function fphActualizarPie(){
+  const desde = FPH.total ? (FPH.pagina - 1) * FPH.por + 1 : 0;
+  const hasta = Math.min(FPH.pagina * FPH.por, FPH.total);
+  document.getElementById('fphRango').textContent = 'Mostrando ' + desde + '–' + hasta + ' de ' + FPH.total;
+  document.getElementById('fphInfo').textContent = 'Página ' + FPH.pagina + ' de ' + FPH.paginas;
+  document.getElementById('fphPrev').disabled = FPH.pagina <= 1;
+  document.getElementById('fphNext').disabled = FPH.pagina >= FPH.paginas;
+  document.getElementById('fphTotal').textContent = FPH.total;
+}
+async function fphIr(pagina){
+  try {
+    const r = await fetch(FPD_URL_BASE + '/historial?pagina=' + pagina + '&por_pagina=' + FPH.por);
+    const d = await r.json();
+    if (!r.ok || d.ok === false) throw new Error(d.error || 'HTTP ' + r.status);
+    FPH.pagina = d.pagina; FPH.paginas = d.paginas; FPH.total = d.total; FPH.por = d.por_pagina;
+    fphPintar(d.eventos); fphActualizarPie();
+  } catch (e) { ilusToast('No se pudo cargar el historial del lote.', {type:'error'}); }
+}
+document.getElementById('fphPrev').addEventListener('click', () => fphIr(FPH.pagina - 1));
+document.getElementById('fphNext').addEventListener('click', () => fphIr(FPH.pagina + 1));
+document.getElementById('fphSize').addEventListener('change', function(){ FPH.por = Number(this.value) || 10; fphIr(1); });
+fphPintar(FPH_INI.eventos); fphActualizarPie();
+document.addEventListener('DOMContentLoaded', function(){
+  fpdMostrarAvisoGuardado();
+  if (document.getElementById('fpdResultados')) fpdBuscar();
+});
 </script>
 
 <style>
@@ -1370,5 +1496,37 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 .fpl-obj{margin-top:9px;font-size:.74rem;font-weight:700;color:#cbd5e1}
 .fpl-obj .fpl-in{max-width:260px;margin-top:4px}
 #fpdLive{margin:0 0 10px}
+/* ── Aviso del monto del lote + botón de ajustar (2026-10-08) ── */
+.fpd-flash{border-radius:12px;padding:10px 14px;margin:10px 0;font-size:.86rem;font-weight:700;border:1px solid #bfdbfe;background:#dbeafe;color:#1e40af}
+.fpd-flash.success{border-color:#bbf7d0;background:#dcfce7;color:#166534}
+.fpd-flash.warning{border-color:#fde68a;background:#fff8e1;color:#92400e}
+.fpd-ajuste{display:flex;align-items:center;gap:12px;flex-wrap:wrap;border:1px solid #fde68a;background:#fff8e1;border-radius:12px;padding:10px 14px;margin:0 0 14px}
+.fpd-ajuste.real{border-color:#fecaca;background:#fef2f2}
+.fpd-ajuste > .bi{font-size:1.2rem;color:#b45309}
+.fpd-ajuste.real > .bi{color:#b91c1c}
+.fpd-ajuste-tx{flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:2px;font-size:.84rem;color:#374151}
+.fpd-ajuste-tx b{color:#0a0a0a}
+/* ── Historial del lote ── */
+.fph{background:#fff;border:1px solid #e5e7eb;border-radius:14px;margin:0 0 14px;overflow:hidden}
+.fph-row{display:flex;gap:14px;padding:10px 14px;border-bottom:1px solid #f1f5f9;align-items:flex-start}
+.fph-cuando{flex:0 0 150px;display:flex;flex-direction:column;font-size:.8rem;color:#0a0a0a}
+.fph-cuando span{font-size:.72rem;color:#6b7280}
+.fph-que{flex:1 1 auto;min-width:0}
+.fph-acc{display:inline-block;font-size:.7rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em;border-radius:999px;padding:3px 10px;background:#f1f5f9;color:#475569}
+.fph-acc.a-ot_asignada,.fph-acc.a-solicitud_oc_creada,.fph-acc.a-creada,.fph-acc.a-pagada{background:#dcfce7;color:#166534}
+.fph-acc.a-ot_quitada,.fph-acc.a-ot_quitada_de_pagada,.fph-acc.a-ot_quitada_por_eliminacion,.fph-acc.a-anulada{background:#fee2e2;color:#991b1b}
+.fph-acc.a-monto_ajustado,.fph-acc.a-monto_actualizado_auto,.fph-acc.a-editada{background:#fff8e1;color:#92400e}
+.fph-det{font-size:.82rem;color:#374151;margin-top:4px;white-space:pre-line;word-break:break-word}
+.fph-vacio{padding:18px;text-align:center;color:#6b7280;font-size:.86rem}
+.fph-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;background:#0a0a0a;color:#fff;padding:8px 14px}
+.fph-rango{font-size:.78rem;font-weight:700}
+.fph-ctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.fph-ctrl .btn{background:#fff}
+.fph-info{font-size:.78rem;font-weight:700}
+@media (max-width:640px){
+  .fph-row{flex-direction:column;gap:6px}
+  .fph-cuando{flex:0 0 auto;flex-direction:row;gap:8px;align-items:baseline;flex-wrap:wrap}
+  .fpd-ajuste .btn{width:100%}
+}
 </style>
 {% endblock %}
