@@ -3113,6 +3113,15 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           {% endif %}
           {% if v.cliente_rut %}<span>· RUT {{ v.cliente_rut | rut_fmt }}</span>{% endif %}
         </div>
+        {#- 2026-10-09 (Daniel: "quitaste sin darme cuenta que cuando entraba me indicaba quién había generado la OT… lo necesito como estaba,
+            abajito, porque no voy a revisar la actividad hasta ver quién la creó"): quién y cuándo creó la OT, SIEMPRE a la vista justo
+            debajo del título (además de la tarjeta de «Información»), para cualquiera que la vea: no es un dato de plata. -#}
+        {% if v.created_by or v.created_at %}
+        <div class="otd-creada" id="otdCreadaPor" style="margin-top:6px;font-size:.8rem;color:#e5e7eb;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <i class="bi bi-person-check-fill" style="color:#f87171"></i>
+          <span>Creada{% if v.created_by %} por <b style="color:#fff">{{ v.created_by }}</b>{% endif %}{% if v.created_at %} el {{ v.created_at | chile_fmt('%d/%m/%Y %H:%M') }}{% endif %}</span>
+        </div>
+        {% endif %}
       </div>
       <div class="otd-sello s-{{ v.estado_fase or 'pend' }}">
         <div class="ico"><i class="bi {{ v.estado_icon or 'bi-circle' }}"></i></div>
