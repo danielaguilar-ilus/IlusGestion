@@ -79,6 +79,11 @@ def _limpiar_carpetas_temporales():
 def env(monkeypatch):
     monkeypatch.setenv("RETIROS_CHECK_CONFIRMACION_S", "0")      # sin espera entre las dos lecturas «listo»
     monkeypatch.delenv("RETIROS_CHECK_AUTO", raising=False)      # marcado automático encendido (por defecto)
+    # Reloj fijo (2026-10-09): lunes 05/10 a las 07:00, antes de la jornada de la bodega y de las citas de estas pruebas. Antes dependían
+    # de la hora real en que se corrían (las citas del 05/10 ya vencieron, y de día actúan los automáticos de Check).
+    import datetime as _dt_r
+    import pickups_module
+    monkeypatch.setattr(pickups_module, "_RELOJ_CHILE", lambda: _dt_r.datetime(2026, 10, 5, 7, 0))
     app, db, ctx, esp = construir()
     db.admins = [{"id": 11, "username": "admin1@sphs.cl"}, {"id": 12, "username": "admin2@sphs.cl"}]
     esp.check = EspiaCheckConTiempo()

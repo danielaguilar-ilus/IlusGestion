@@ -2343,6 +2343,13 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
             </div>
           </div>
           <div class="col-12">
+            <div class="hz-obj" data-obj="4.2b">
+              <div class="hz-obj-head"><span class="hz-obj-num"><span class="n">4.2b</span><i class="bi bi-check-lg chk"></i></span><label class="form-label" for="hzBodegaInp">Correos de bodega para avisos de «no se retiró»</label><span class="hz-obj-estado"></span></div>
+              <input type="text" class="form-control" id="hzBodegaInp" name="aviso_bodega_emails" value="{{ settings.aviso_bodega_emails or '' }}" placeholder="ej.: bodega@ilusfitness.com, jefe.bodega@sphs.cl" autocomplete="off">
+              <div class="hz-help">Cuando un cliente no viene, se reagenda o se cancela un retiro, el responsable puede marcar «Avisar a bodega» en «¿Qué pasó?» y estos correos reciben el aviso de no expedir el pedido en Check. Sepáralos con coma. Al cliente nunca le llega este correo.</div>
+            </div>
+          </div>
+          <div class="col-12">
             <div class="hz-obj" data-obj="4.3">
               <div class="hz-obj-head"><span class="hz-obj-num"><span class="n">4.3</span><i class="bi bi-check-lg chk"></i></span><label class="form-label" for="hzAlertaOn">Alerta pública en el formulario</label><span class="hz-obj-estado"></span></div>
               <label class="form-check form-switch m-0 d-flex align-items-center gap-2 ps-0 mb-3">
@@ -2603,6 +2610,8 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
     const nomWeb = opWeb && opWeb[0] ? String(opWeb[0].textContent || '').trim() : '';
     objeto('4.1', web ? 'ok' : 'opt', web ? 'Responsable: ' + nomWeb : 'Sin responsable automático');
     objeto('4.2', correos.length ? 'ok' : 'opt', correos.length ? plural(correos.length, 'persona recibe', 'personas reciben') + ' el correo' : 'Nadie todavía');
+    const _bod = String(($('hzBodegaInp') || {}).value || '').split(/[,;\s]+/).map(x => x.trim()).filter(x => x.indexOf('@') > 0);
+    objeto('4.2b', _bod.length ? 'ok' : 'opt', _bod.length ? plural(_bod.length, 'correo de bodega', 'correos de bodega') : 'Sin correos de bodega');
     if (!web && !correos.length) r.avisos.push({txt: 'nadie recibe el correo de las solicitudes nuevas: elige un responsable o agrega correos'});
     if (on){
       const t = val('alert_title'), m = val('alert_message');

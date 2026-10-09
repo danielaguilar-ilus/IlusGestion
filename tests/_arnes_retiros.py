@@ -75,6 +75,8 @@ class BDFalsa:
         self.plantillas = {}        # (estado, canal) -> {'asunto','cuerpo'}: plantillas de Retiros de comm_templates (la BD de plantillas)
         self.firmas = {}            # request_id -> fila de pickup_firmas (una por retiro: UNIQUE)
         self.al_leer = []           # [(regex, funcion)]: tras la PRIMERA lectura que coincide, corre la función (alguien cambia algo justo después)
+        self.desviaciones = []      # filas de pickup_desviaciones («¿Qué pasó?»: no vino, reagendar, cancelar, incidencia)
+        self.config = None          # fila de pickup_settings (None = la configuración por defecto del módulo)
 
     # ── construcción de datos ─────────────────────────────────────────────
     def nueva_solicitud(self, rid=1, **kw):
@@ -189,6 +191,20 @@ class BDFalsa:
         if low.startswith("select id from `pickup_requests` where status='en_preparacion'"):
             return [{"id": r["id"]} for r in sorted(self.solicitudes.values(), key=lambda r: -r["id"])
                     if r["status"] == "en_preparacion"][:30]
+        if low.startswith("select tipo, motivo_texto, detalle, accion, estado_antes, estado_despues, aviso_cliente, aviso_bodega, usuario_nombre, creado_en from pickup_desviaciones where request_id=%s"):
+            rid = int(params[0])
+            return [dict(x) for x in sorted((x for x in self.desviaciones if int(x["request_id"]) == rid), key=lambda x: -x["id"])][:30]
+        if low.startswith("select * from `pickup_requests` where status in ('agenda_confirmada','en_preparacion') and confirmed_date between %s and %s"):
+            import datetime as _dt
+            desde, hasta = params[0], params[1]
+
+            def _f(v):
+                if isinstance(v, _dt.datetime):
+                    return v.date()
+                return v if isinstance(v, _dt.date) else _dt.date.fromisoformat(str(v)[:10])
+            return [dict(r) for r in sorted(self.solicitudes.values(), key=lambda r: (str(r.get("confirmed_date")), r["id"]))
+                    if r["status"] in ("agenda_confirmada", "en_preparacion") and r.get("confirmed_date")
+                    and desde <= _f(r["confirmed_date"]) <= hasta][:int(params[2])]
         if low.startswith("select id, code, closed_at from `pickup_requests` where status in ('retirada','cerrada')"):
             # Retiros cerrados hace poco (el filtro por días lo vuelve a aplicar el módulo en Python con closed_at)
             return [{"id": r["id"], "code": r["code"], "closed_at": r.get("closed_at")}
@@ -228,6 +244,13 @@ class BDFalsa:
             self.consultas.append((s, params))
             f = self.prep_tiempos.get(int(params[0]))
             return dict(f) if f else None
+        if low.startswith("select id from `pickup_logs` where request_id=%s and action='cita_vencida' and notes like %s"):
+            self.consultas.append((s, params))
+            rid, patron = int(params[0]), str(params[1]).strip("%")
+            for x in self.logs:
+                if x["request_id"] == rid and x["action"] == "cita_vencida" and patron in (x.get("notes") or ""):
+                    return {"id": x["id"]}
+            return None
         if low.startswith("select payload, huella from pickup_check_snapshots where request_id=%s"):
             self.consultas.append((s, params))
             return dict(self.snapshots[int(params[0])]) if int(params[0]) in self.snapshots else None
@@ -281,6 +304,12 @@ class BDFalsa:
                 if x["request_id"] == int(params[0]) and x["action"] == m_lg.group(1):
                     return {"id": x["id"]}
             return None
+        if low == "select * from `pickup_settings` where id=1" and self.config is not None:
+            self.consultas.append((s, params))
+            base = {"open_time": "09:00:00", "close_time": "16:30:00", "lunch_start": "12:30:00", "lunch_end": "14:00:00",
+                    "slot_minutes": 30, "buffer_cierre_min": 0}
+            base.update(self.config)
+            return base
         if low.startswith("select") and "from comm_templates where modulo='retiros'" in low:
             self.consultas.append((s, params))
             fila = self.plantillas.get((params[0], params[1]))
@@ -359,6 +388,22 @@ class BDFalsa:
                 fila["status"] = "en_preparacion"
                 return 1
             return 0
+        if low.startswith("update `pickup_requests` set status=%s, closed_at=now() where id=%s and status=%s"):
+            # «¿Qué pasó?» → No concretado / Cancelar: atómico, solo si el retiro sigue en el estado que se leyó
+            nuevo, rid, antes = params
+            fila = self.solicitudes.get(int(rid))
+            if fila and fila.get("status") == antes:
+                fila["status"], fila["closed_at"] = nuevo, "NOW()"
+                return 1
+            return 0
+        if low.startswith("insert into pickup_desviaciones"):
+            import datetime as _dt
+            cols = [c.strip() for c in s[s.index("(") + 1:s.index(")")].split(",")]
+            fila = dict(zip(cols, params))
+            fila["id"] = len(self.desviaciones) + 1
+            fila["creado_en"] = _dt.datetime(2026, 10, 7, 14, 0)        # UTC → 11:00 hora Chile
+            self.desviaciones.append(fila)
+            return 1
         if low.startswith("update `pickup_requests` set status=%s, closed_at="):
             nuevo, _, rid = params
             fila = self.solicitudes.get(int(rid))

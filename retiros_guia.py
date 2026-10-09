@@ -66,11 +66,13 @@ def evaluar(c):
       status, n_docs, docs (lista de {'rotulo','con_saldo','otro_rut'}), docs_firma, docs_conf (firma
       confirmada o None), docs_conf_quien, prod_n, prod_firma, prod_conf, prod_conf_quien,
       adelantado, responsable (nombre), exige_responsable (True por defecto), correo_ok, propuesta (bool), cita (bool), cambio_pedido,
-      preparado, picking_total, picking_hechos, check_listo (None si no se sabe)."""
+      preparado, picking_total, picking_hechos, check_listo (None si no se sabe),
+      cita_vencida (la cita confirmada ya pasó y el retiro sigue esperando), cita_txt («dd/mm/aaaa hh:mm»)."""
     st = c.get("status") or ""
     n_docs = int(c.get("n_docs") or 0)
     adelantado = bool(c.get("adelantado"))
-    terminal = {"rechazada": "El cliente rechazó este retiro.", "fallida": "Este retiro no se concretó."}.get(st)
+    terminal = {"rechazada": "Este retiro se canceló: lo rechazó el cliente o lo canceló el equipo (el motivo está en la bitácora).",
+                "fallida": "Este retiro no se concretó."}.get(st)
     # «cerrada» también se usa para cerrar duplicados o spam que nunca se retiraron: solo cuenta como
     # retiro completado si hay evidencia (quién retiró o el paso por «retirada»).
     if st == "cerrada" and not c.get("evidencia_retiro", True):
@@ -183,6 +185,11 @@ def evaluar(c):
     p5 = _paso(5)
     if retirado:
         p5.update(estado="hecho", resumen="Pedido preparado")
+    elif st == "en_preparacion" and c.get("cita_vencida"):
+        p5.update(estado="actual",
+                  faltan=[f"La cita{(' del ' + c['cita_txt']) if c.get('cita_txt') else ''} ya pasó y el pedido sigue sin retirar. "
+                          "Registra qué pasó: si el cliente retiró, márcalo como RETIRADO; si no vino, reagenda o ciérralo."],
+                  accion={"tipo": "que_paso", "texto": "¿Qué pasó?"})
     elif st == "en_preparacion":
         if preparado:
             p5.update(estado="hecho", resumen="Pedido listo para entregar")
@@ -193,6 +200,13 @@ def evaluar(c):
                               + (f" Van {hec} de {tot}." if tot else "")])
     elif (cita or c.get("propuesta")) and cambio:
         p5.update(estado="bloqueado", bloquea=True, faltan=["Primero responde el cambio de fecha del cliente (paso 4)."])
+    elif cita and c.get("cita_vencida"):
+        # Daniel 2026-10-09: «si el cliente no viene… reagendar o cancelar». Con la cita ya pasada no se ofrece «Enviar a preparación»
+        # (le llegaría «Estamos preparando» por una cita que ya venció): se pregunta qué pasó.
+        p5.update(estado="actual",
+                  faltan=[f"La cita{(' del ' + c['cita_txt']) if c.get('cita_txt') else ''} ya pasó y el cliente no ha retirado. "
+                          "Registra qué pasó: si retiró, si no vino, si hay que reagendar o cancelar."],
+                  accion={"tipo": "que_paso", "texto": "¿Qué pasó?"})
     elif cita:
         p5.update(estado="actual", correo=True,
                   faltan=["Enviar el pedido a preparación: bodega recibe la lista y al cliente le llega un correo."],
@@ -204,6 +218,9 @@ def evaluar(c):
     p6 = _paso(6)
     if retirado:
         p6.update(estado="hecho", resumen="Retiro completado")
+    elif st == "en_preparacion" and c.get("cita_vencida"):
+        p6.update(estado="pendiente", faltan=["Si el cliente ya se llevó el pedido: «Marcar como RETIRADO» y anotar quién lo retiró."],
+                  accion={"tipo": "retirar", "texto": "Marcar como RETIRADO"})
     elif st == "en_preparacion" and preparado:
         p6.update(estado="actual", correo=True,
                   faltan=["Cuando el cliente llegue y se lleve el pedido: «Marcar como RETIRADO» y anotar quién lo retiró."],

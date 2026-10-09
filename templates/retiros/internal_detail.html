@@ -581,6 +581,8 @@
    quedan como tarjetas sueltas, en el orden del boceto aprobado. #}
 {# Guía de 6 pasos: justo antes de los pasos, tras cabecera y tracking (ficha v7) #}
 {% include "retiros/_guia.html" %}
+{# «¿Qué pasó?»: desviaciones del retiro (no vino, reagendar, cancelar, incidencia) — Daniel 2026-10-09 #}
+{% if permissions.retiros and req.status not in ['retirada','cerrada','rechazada','fallida'] %}{% include "retiros/_desviacion_modal.html" %}{% endif %}
 {# Encuesta de satisfacción (creada, AÚN NO LANZADA: RETIROS_ENCUESTA_ACTIVA apagada): solo con el retiro terminado, solo lectura #}
 {% if req.status in ('retirada', 'cerrada') and retiros_vista_previa is defined and retiros_vista_previa() %}{% include "retiros/_encuesta_ficha.html" %}{% endif %}
 
@@ -1720,6 +1722,7 @@
             </ol>
             {% if aviso_no_expedir %}<p class="cierre-next-p" role="alert" style="padding:8px 12px;border-radius:10px;background:#fff8e1;border:1px solid #f59e0b;color:#92400e;font-weight:700">{{ aviso_no_expedir }}</p>{% endif %}
             <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" id="formEnviarPreparacion">
+              <input type="hidden" name="estado_visto" value="{{ req.status }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="status" value="en_preparacion">
               <button type="button" class="cierre-next-btn" onclick="_confirmarEnviarPreparacion(this)">
@@ -2008,6 +2011,7 @@
       <span>Uso avanzado — salta el flujo guiado de los pasos de arriba, úsalo solo si sabes lo que haces. Casi todos los estados le mandan un correo al cliente.</span>
     </div>
     <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" id="formCambiarEstadoAvanzado" onsubmit="return _confirmarCambioEstado(event)">
+              <input type="hidden" name="estado_visto" value="{{ req.status }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="row g-2">
         <div class="col-md-6">
@@ -2338,6 +2342,7 @@ window.RETIROS_DETAIL_DATA = {
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" enctype="multipart/form-data">
+              <input type="hidden" name="estado_visto" value="{{ req.status }}">
         <div class="modal-body">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="status" value="retirada">

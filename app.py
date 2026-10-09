@@ -51070,6 +51070,25 @@ def _build_retiro_email_templates():
          '',
          '⚠ *ILUS* — Tu retiro *{{code}}* fue cancelado. Si fue error, escríbenos.'),
 
+        # ─── 7b) No concretado (2026-10-09, desviaciones): el cliente no retiró en su cita y el equipo lo cerró sin entrega. Antes reusaba
+        #     la plantilla de «cancelado». Solo sale si el responsable marca «Avisar al cliente» (o desde «Cambiar estado», con su aviso previo).
+        ('fallida', 'email',
+         'No pudimos concretar tu retiro {{code}}',
+         _ret_hero_block(
+             "Retiro no concretado", "#fef3c7", "#78350f",
+             "No pudimos concretar tu retiro {{code}}",
+             "Coordinemos una nueva fecha"
+         ) +
+         '<p style="font-size:14px;color:#374151;line-height:1.65;margin:0 0 16px">'
+         'Hola <strong>{{persona_retira}}</strong>, tu retiro <strong>{{code}}</strong> no se pudo concretar. '
+         'Si todavía necesitas retirar tu pedido, te contactaremos para coordinar una nueva fecha; también '
+         'puedes responder este correo y te ayudamos a la brevedad.</p>' +
+         _ret_info_card(_DATOS_BASE) +
+         _ret_cta("link_seguimiento", "Ver mi retiro")),
+        ('fallida', 'whatsapp',
+         '',
+         '⚠ *ILUS* — No pudimos concretar tu retiro *{{code}}*. Te contactaremos para coordinar una nueva fecha.'),
+
         # ─── 8) Reagendada ──────────────────────────────────────
         ('reagendada', 'email',
          'Tu retiro {{code}} fue reagendado',
@@ -59636,7 +59655,9 @@ def init_mantenciones_tables():
                 "       'retiro_nuevo','retiro_respuesta','retiro_sin_saldo',"
                 "       'otro',"
                 "       'retiro_confirmado','retiro_mensaje','retiro_preparacion',"
-                "       'retiro_listo','retiro_cerrado') DEFAULT 'otro'",
+                "       'retiro_listo','retiro_cerrado',"
+                "       'retiro_propuesta','retiro_expedido','retiro_desfase','retiro_cierre',"
+                "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida') DEFAULT 'otro'",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_destino_no_leida "
                 "  (destino_user_id, leida_at, archivada_at)",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_visita (visita_id)",
@@ -85331,8 +85352,27 @@ def mant_cliente_garantia_alertas(cid):
 # NOTIFICACIONES INTERNAS — campana en header (sin DNS)
 # ─────────────────────────────────────────────────────────────────────
 
+def _campana_solo_propias():
+    """¿Este usuario entra a la campana por Retiros, sin permiso de Mantenciones? (2026-10-09, auditoría: el contador le respondía 403
+    4.084 veces en 7 días a editor/transporte, que son quienes operan Retiros, y los avisos de Retiros —cita vencida, desviaciones,
+    expedición— nunca les llegaban). Esos usuarios ven SOLO las notificaciones dirigidas a ellos: nunca los avisos generales."""
+    perms = g.get("permissions") or {}
+    return not (perms.get("mantenciones") or perms.get("superadmin"))
+
+
+def _campana_required(view):
+    """Decorador de la campana: Mantenciones (igual que siempre) o Retiros (solo sus propias notificaciones)."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        perms = g.get("permissions") or {}
+        if perms.get("mantenciones") or perms.get("superadmin") or perms.get("retiros"):
+            return view(*args, **kwargs)
+        return _mant_required(view)(*args, **kwargs)      # el mismo rechazo de siempre
+    return wrapped
+
+
 @app.route("/mantenciones/api/notif-interna", methods=["GET"])
-@_mant_required
+@_campana_required
 def mant_notif_interna_list():
     """Lista notificaciones internas del usuario actual.
 
@@ -85368,8 +85408,9 @@ def mant_notif_interna_list():
     params = []
     # Filtro destino
     _es_tec_n = _es_rol_tecnico()
-    if _es_tec_n:
+    if _es_tec_n or _campana_solo_propias():
         # 🔒 2026-10-08 (REGLA #26): un técnico ve SOLO las suyas (nunca los avisos generales de la gerencia).
+        # 2026-10-09: lo mismo quien entra por Retiros sin permiso de Mantenciones.
         if user_id:
             sql += " AND n.destino_user_id=%s "
             params.append(user_id)
@@ -85413,15 +85454,16 @@ def mant_notif_interna_list():
 
 
 @app.route("/mantenciones/api/notif-interna/<int:nid>/leida", methods=["POST"])
-@_mant_required
+@_campana_required
 def mant_notif_interna_leida(nid):
     """Marca una notificación como leída."""
     try:
+        _propias = _campana_solo_propias()            # entra por Retiros: solo puede tocar las suyas
         mysql_execute(
             "UPDATE mant_notificaciones SET leida_at=NOW(), "
             "  estado=CASE WHEN estado='pendiente' THEN 'leida' ELSE estado END "
-            "WHERE id=%s AND leida_at IS NULL",
-            (nid,)
+            "WHERE id=%s AND leida_at IS NULL" + (" AND destino_user_id=%s" if _propias else ""),
+            (nid, (g.user or {}).get("id")) if _propias else (nid,)
         )
         return jsonify({"ok": True})
     except Exception as e:
@@ -85429,15 +85471,16 @@ def mant_notif_interna_leida(nid):
 
 
 @app.route("/mantenciones/api/notif-interna/<int:nid>/archivar", methods=["POST"])
-@_mant_required
+@_campana_required
 def mant_notif_interna_archivar(nid):
     """Archiva una notificación (no aparece más en la campana)."""
     try:
+        _propias = _campana_solo_propias()            # entra por Retiros: solo puede tocar las suyas
         mysql_execute(
             "UPDATE mant_notificaciones SET archivada_at=NOW(), "
             "  leida_at=COALESCE(leida_at, NOW()) "
-            "WHERE id=%s",
-            (nid,)
+            "WHERE id=%s" + (" AND destino_user_id=%s" if _propias else ""),
+            (nid, (g.user or {}).get("id")) if _propias else (nid,)
         )
         return jsonify({"ok": True})
     except Exception as e:
@@ -85470,7 +85513,7 @@ def _mant_notif_cache_invalidar(user_id=None):
 
 
 @app.route("/mantenciones/api/notif-interna/contador", methods=["GET"])
-@_mant_required
+@_campana_required
 def mant_notif_interna_contador():
     """Devuelve {no_leidas, urgentes} para el badge de la campana.
     Cacheado 45s por usuario (DevTools audit: era 840ms x 5/página = 4.2s).
@@ -85515,7 +85558,14 @@ def mant_notif_interna_contador():
         "WHERE leida_at IS NULL AND archivada_at IS NULL "
     )
     params = []
-    if not es_admin and user_id:
+    if _campana_solo_propias():
+        # 2026-10-09: quien entra por Retiros sin permiso de Mantenciones cuenta SOLO las suyas (igual que lo que ve en la lista)
+        if user_id:
+            sql += " AND destino_user_id=%s "
+            params.append(user_id)
+        else:
+            sql += " AND 1=0 "
+    elif not es_admin and user_id:
         sql += " AND (destino_user_id=%s OR destino_user_id IS NULL) "
         params.append(user_id)
     elif not es_admin and not user_id:
@@ -117292,7 +117342,12 @@ def _ensure_mant_notif_tipo_ot_firmada_cliente():
     retiro_preparacion / retiro_listo / retiro_cerrado. pickups_module los
     usaba y el INSERT fallaba en silencio (modo estricto): la campana nunca
     avisaba de un mensaje del cliente ni de una cita confirmada a mano. Van
-    AL FINAL (después de 'otro') para no reordenar los valores existentes."""
+    AL FINAL (después de 'otro') para no reordenar los valores existentes.
+
+    2026-10-09 (revisión de «desviaciones»): + retiro_propuesta / retiro_expedido / retiro_desfase / retiro_cierre / retiro_anulado (ya se
+    usaban y fallaban en silencio: el aviso de expedición en Check, el de desfase, la propuesta de ILUS, el cierre y la anulación nunca
+    llegaban a la campana) + retiro_desviacion / retiro_cita_vencida (nuevos). También al final. La guardia _ddl_ya_aplicado salta el
+    MODIFY cuando ya están todos (REGLA #18). tests/test_retiros_09oct_desviaciones.py vigila que todo tipo usado esté en el ENUM."""
     try:
         mysql_execute(
             "ALTER TABLE mant_notificaciones MODIFY COLUMN tipo "
@@ -117306,7 +117361,9 @@ def _ensure_mant_notif_tipo_ot_firmada_cliente():
             "       'retiro_nuevo','retiro_respuesta','retiro_sin_saldo',"
             "       'otro',"
             "       'retiro_confirmado','retiro_mensaje','retiro_preparacion',"
-            "       'retiro_listo','retiro_cerrado') DEFAULT 'otro'"
+            "       'retiro_listo','retiro_cerrado',"
+            "       'retiro_propuesta','retiro_expedido','retiro_desfase','retiro_cierre',"
+            "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida') DEFAULT 'otro'"
         )
     except Exception as e:
         print(f"[ensure] mant_notificaciones.tipo (+ot_firmada_cliente): {e}", flush=True)

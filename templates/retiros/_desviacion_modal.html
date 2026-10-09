@@ -1,0 +1,328 @@
+{# ════════════════════════════════════════════════════════════════════════
+   ILUS Fitness · Retiros — «¿Qué pasó?»: DESVIACIONES de un retiro (Daniel 2026-10-09).
+   «Si el cliente no viene… reagendar o cancelar… varias desviaciones que pueden pasar a lo largo de la operación:
+   decisiones humanas, incidencia, no pudo llegar».
+   · Motivo OBLIGATORIO de una lista (+ detalle; con «Otro motivo» el detalle es obligatorio).
+   · Al cliente SOLO se le escribe si el responsable marca «Avisar al cliente» (con el texto a la vista y confirmación).
+   · Aviso a bodega con los correos configurados (Configuración → Equipo y alertas).
+   Catálogo y reglas: retiros_desviaciones.py · servidor: GET /retiros/<id>/desviaciones, POST /retiros/<id>/desviacion.
+   Autocontenido (estilos, marcado y script). Formato Retiros (REGLA #15): tarjetas, círculos de paso, semáforo.
+   ════════════════════════════════════════════════════════════════════════ #}
+<style>
+  .dv-entrada{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:#fff;border:1px solid #e5e7eb;
+    border-left:6px solid #f59e0b;border-radius:14px;padding:12px 16px;margin:12px 0}
+  .dv-entrada.is-vencida{border-left-color:#dc2626;background:linear-gradient(180deg,#fef2f2,#fff 70%)}
+  .dv-entrada-txt{display:flex;gap:10px;align-items:flex-start;color:#111827;font-weight:700;line-height:1.35}
+  .dv-entrada-txt i{color:#f59e0b;font-size:1.25rem;line-height:1}
+  .dv-entrada.is-vencida .dv-entrada-txt i{color:#dc2626}
+  .dv-entrada-txt small{display:block;font-weight:500;color:#6b7280;font-size:.84rem}
+  .dv-entrada-btn{min-height:44px;border:0;border-radius:12px;padding:10px 18px;font-weight:800;background:#0a0a0a;color:#fff;display:inline-flex;align-items:center;gap:8px}
+  .dv-entrada.is-vencida .dv-entrada-btn{background:#dc2626}
+  .dv-entrada-btn:focus-visible{outline:3px solid #fca5a5;outline-offset:2px}
+
+  #modalDesviacion .modal-content{border:0;border-radius:18px;overflow:hidden}
+  #modalDesviacion .modal-header{background:#0a0a0a;color:#fff;border:0}
+  #modalDesviacion .modal-title{font-weight:900}
+  #modalDesviacion .btn-close{width:44px;height:44px;padding:0;background-size:14px;flex:0 0 44px}
+  .dv-sub{font-size:.85rem;color:#d1d5db;margin-top:2px;font-weight:500}
+  .dv-alerta{display:flex;gap:10px;background:#fee2e2;border:1px solid #fecaca;color:#7f1d1d;border-radius:12px;padding:10px 14px;font-weight:700;margin-bottom:14px}
+  .dv-paso{border:1px solid #e5e7eb;border-radius:16px;padding:14px 16px;margin-bottom:12px;background:#fff}
+  .dv-paso.is-off{opacity:.45;pointer-events:none}
+  .dv-paso-cab{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .dv-circ{width:30px;height:30px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:900;background:#dc2626;color:#fff;flex:0 0 30px}
+  .dv-paso.is-ok .dv-circ{background:#16a34a}
+  .dv-paso-cab h6{margin:0;font-weight:900;font-size:1rem;color:#111827}
+  .dv-paso-cab small{display:block;color:#6b7280;font-weight:500}
+  .dv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+  .dv-card{position:relative;text-align:left;border:2px solid #e5e7eb;border-radius:14px;padding:12px 14px;background:#fff;min-height:64px;cursor:pointer;
+    display:flex;gap:10px;align-items:flex-start;width:100%;color:#111827}
+  .dv-card i{font-size:1.3rem;line-height:1}
+  .dv-card b{display:block;font-weight:800}
+  .dv-card small{display:block;color:#6b7280;font-weight:500;line-height:1.35}
+  .dv-card.c-rojo i{color:#dc2626} .dv-card.c-ambar i{color:#d97706} .dv-card.c-azul i{color:#2563eb} .dv-card.c-verde i{color:#16a34a}
+  .dv-card[aria-pressed="true"]{border-color:#dc2626;box-shadow:0 0 0 3px #fee2e2}
+  .dv-card.c-verde[aria-pressed="true"]{border-color:#16a34a;box-shadow:0 0 0 3px #dcfce7}
+  .dv-card:focus-visible{outline:3px solid #fca5a5;outline-offset:2px}
+  .dv-motivos{display:flex;flex-wrap:wrap;gap:8px}
+  .dv-chip{min-height:44px;border:2px solid #e5e7eb;background:#fff;border-radius:99px;padding:8px 14px;font-weight:700;color:#111827;text-align:left}
+  .dv-chip[aria-pressed="true"]{border-color:#dc2626;background:#fef2f2;color:#7f1d1d}
+  .dv-chip:focus-visible{outline:3px solid #fca5a5;outline-offset:2px}
+  .dv-paso textarea{width:100%;min-height:80px;border:2px solid #e5e7eb;border-radius:12px;padding:10px 12px;font-size:16px;margin-top:10px}
+  .dv-paso textarea:focus{border-color:#dc2626;outline:none}
+  .dv-label{font-size:.85rem;font-weight:700;color:#374151;margin-top:10px;display:block}
+  .dv-aviso{display:flex;gap:12px;align-items:flex-start;border:2px solid #e5e7eb;border-radius:14px;padding:12px 14px;margin-top:8px;cursor:pointer}
+  .dv-aviso input{width:22px;height:22px;margin-top:2px;flex:0 0 22px;accent-color:#dc2626}
+  .dv-aviso b{display:block}
+  .dv-aviso small{display:block;color:#6b7280;line-height:1.4}
+  .dv-aviso.is-off{opacity:.55;cursor:not-allowed}
+  .dv-hist{margin:4px 0 0;padding:0;list-style:none;display:grid;gap:8px}
+  .dv-hist li{border:1px solid #e5e7eb;border-left:5px solid #9ca3af;border-radius:12px;padding:8px 12px;font-size:.88rem;line-height:1.45}
+  .dv-hist li.t-no_vino,.dv-hist li.t-cancelar{border-left-color:#dc2626}
+  .dv-hist li.t-reagendar{border-left-color:#f59e0b}
+  .dv-hist li.t-incidencia{border-left-color:#3b82f6}
+  .dv-hist b{font-weight:800}
+  .dv-hist small{color:#6b7280}
+  #modalDesviacion .modal-footer{border-top:1px solid #f3f4f6}
+  body.dv-abierto #opChatBtn{display:none}   /* el botón flotante del chat no tapa el pie del modal */
+  #modalDesviacion .modal-footer .btn{min-height:44px;font-weight:800;border-radius:12px}
+  @media (max-width:600px){
+    #modalDesviacion .modal-dialog{margin:0;max-width:100%;height:100dvh}
+    #modalDesviacion .modal-content{height:100dvh;border-radius:0}
+    .dv-grid{grid-template-columns:1fr}
+  }
+  @media (prefers-reduced-motion:reduce){ #modalDesviacion .modal-dialog{transition:none} }
+</style>
+
+<div class="dv-entrada" id="dvEntrada" data-rid="{{ req.id }}">
+  <div class="dv-entrada-txt"><i class="bi bi-signpost-split"></i>
+    <span>¿Algo no salió como estaba previsto?<small id="dvEntradaSub">No vino, reagendar, cancelar o una incidencia: queda registrado quién decidió, cuándo y por qué.</small></span>
+  </div>
+  <button type="button" class="dv-entrada-btn" data-dv-abrir><i class="bi bi-question-circle"></i>¿Qué pasó?</button>
+</div>
+
+<div class="modal fade" id="modalDesviacion" tabindex="-1" aria-labelledby="dvTitulo" aria-hidden="true" data-bs-keyboard="false">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title" id="dvTitulo"><i class="bi bi-signpost-split me-2"></i>¿Qué pasó con este retiro?</h5>
+          <div class="dv-sub" id="dvSub">{{ req.code }}</div>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body" id="dvCuerpo">
+        <div class="text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Cargando…</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Volver</button>
+        <button type="button" class="btn btn-danger" id="dvGuardar" disabled>Registrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var ent = document.getElementById('dvEntrada');
+  var modalEl = document.getElementById('modalDesviacion');
+  if (!ent || !modalEl) return;
+  var RID = ent.dataset.rid;
+  var cuerpo = document.getElementById('dvCuerpo');
+  var btnG = document.getElementById('dvGuardar');
+  var D = null;                         // respuesta del servidor
+  var S = { tipo: '', motivo: '', accion: '', detalle: '', cliente: false, bodega: false };
+  var ocupado = false;
+
+  function esc(t) { var d = document.createElement('div'); d.textContent = t == null ? '' : String(t); return d.innerHTML; }
+  function toast(m, t) { if (window.ilusToast) window.ilusToast(m, { type: t || 'info' }); }
+  function modal() { return window.bootstrap ? window.bootstrap.Modal.getOrCreateInstance(modalEl) : null; }
+
+  function cargar() {
+    return fetch('/retiros/' + RID + '/desviaciones', { credentials: 'same-origin', cache: 'no-store', headers: { 'Accept': 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (!d || !d.ok) throw new Error((d && d.error) || 'No se pudo cargar.'); D = d; return d; });
+  }
+
+  // Al abrir la ficha: si la cita ya venció, la franja se pone roja y lo dice
+  cargar().then(function (d) {
+    if (d.terminado) { ent.style.display = 'none'; return; }
+    if (d.vencida) {
+      ent.classList.add('is-vencida');
+      var sub = document.getElementById('dvEntradaSub');
+      if (sub) sub.textContent = 'La cita' + (d.cita ? ' del ' + d.cita : '') + ' ya pasó y el retiro no se ha cerrado. Registra qué pasó.';
+    }
+  }).catch(function () { /* la franja sigue disponible: al abrir se vuelve a cargar */ });
+
+  function tiposVisibles() {
+    var t = [];
+    if (D.puede_retirar) t.push({ clave: 'retiro', titulo: 'Sí retiró', icono: 'bi-bag-check', color: 'verde', ayuda: 'El cliente se llevó el pedido: falta marcarlo como RETIRADO.' });
+    D.catalogo.tipos.forEach(function (x) {
+      if (x.clave === 'no_vino' && !D.vencida) return;      // «No vino» solo cuando la cita ya pasó
+      t.push(x);
+    });
+    return t;
+  }
+  function cardColor(c) { return { rojo: 'c-rojo', ambar: 'c-ambar', azul: 'c-azul', verde: 'c-verde' }[c] || ''; }
+
+  function accionesDe(tipo) { return (D.catalogo.acciones_por_tipo[tipo] || []); }
+  function bodegaPorDefecto(tipo) { return !!(D.en_preparacion && tipo !== 'incidencia' && tipo !== 'retiro' && (D.bodega_emails || []).length); }
+  function accionFinal() { var a = accionesDe(S.tipo); return a.length === 1 ? a[0] : S.accion; }
+  function correoInfo() { return D.catalogo.correo_por_accion[accionFinal()] || null; }
+  function cierra() { var a = D.catalogo.acciones[accionFinal()]; return !!(a && a.estado); }
+
+  function render() {
+    var h = '';
+    if (D.vencida) h += '<div class="dv-alerta" role="alert"><i class="bi bi-alarm"></i><span>La cita' + (D.cita ? ' del ' + esc(D.cita) : '') + ' ya pasó y el retiro sigue «' + esc(D.estado_txt) + '».</span></div>';
+    // Paso 1 · qué pasó
+    h += '<div class="dv-paso' + (S.tipo ? ' is-ok' : '') + '"><div class="dv-paso-cab"><span class="dv-circ">1</span><div><h6>¿Qué pasó?</h6><small>Elige la situación.</small></div></div><div class="dv-grid">';
+    tiposVisibles().forEach(function (t) {
+      h += '<button type="button" class="dv-card ' + cardColor(t.color) + '" data-dv-tipo="' + esc(t.clave) + '" aria-pressed="' + (S.tipo === t.clave) + '">'
+        + '<i class="bi ' + esc(t.icono) + '" aria-hidden="true"></i><span><b>' + esc(t.titulo) + '</b><small>' + esc(t.ayuda) + '</small></span></button>';
+    });
+    h += '</div></div>';
+    if (S.tipo && S.tipo !== 'retiro') {
+      // Paso 2 · motivo (obligatorio)
+      h += '<div class="dv-paso' + (S.motivo ? ' is-ok' : '') + '"><div class="dv-paso-cab"><span class="dv-circ">2</span><div><h6>Motivo</h6><small>Obligatorio. Con «Otro motivo», cuéntalo en el detalle.</small></div></div><div class="dv-motivos">';
+      (D.catalogo.motivos[S.tipo] || []).forEach(function (m) {
+        h += '<button type="button" class="dv-chip" data-dv-motivo="' + esc(m.clave) + '" aria-pressed="' + (S.motivo === m.clave) + '">' + esc(m.texto) + '</button>';
+      });
+      h += '</div><label class="dv-label" for="dvDetalle">Detalle' + (S.motivo === 'otro' ? ' (obligatorio)' : ' (opcional)') + '</label>'
+        + '<textarea id="dvDetalle" maxlength="' + D.catalogo.detalle_max + '" placeholder="Ej.: llamó a las 10:15, pide venir el lunes en la tarde.">' + esc(S.detalle) + '</textarea></div>';
+      // Paso 3 · qué hacemos (solo «no vino» tiene opciones)
+      var acc = accionesDe(S.tipo);
+      if (acc.length > 1) {
+        h += '<div class="dv-paso' + (S.accion ? ' is-ok' : '') + '"><div class="dv-paso-cab"><span class="dv-circ">3</span><div><h6>¿Qué hacemos?</h6><small>Decide el responsable.</small></div></div><div class="dv-grid">';
+        acc.forEach(function (k) {
+          var a = D.catalogo.acciones[k];
+          h += '<button type="button" class="dv-card ' + (a.estado ? 'c-rojo' : (k === 'reagendar' ? 'c-ambar' : 'c-azul')) + '" data-dv-accion="' + esc(k) + '" aria-pressed="' + (S.accion === k) + '">'
+            + '<i class="bi ' + (k === 'reagendar' ? 'bi-calendar2-week' : (a.estado ? 'bi-x-octagon' : 'bi-hourglass-split')) + '" aria-hidden="true"></i><span><b>' + esc(a.titulo) + '</b><small>' + esc(a.ayuda) + '</small></span></button>';
+        });
+        h += '</div></div>';
+      }
+      // Paso 4 · avisos
+      var n = acc.length > 1 ? 4 : 3;
+      var ci = correoInfo();
+      var puedeCliente = !!ci && D.correo_cliente;
+      if (!puedeCliente) S.cliente = false;
+      var hayBodega = (D.bodega_emails || []).length > 0;
+      if (!hayBodega) S.bodega = false;
+      h += '<div class="dv-paso"><div class="dv-paso-cab"><span class="dv-circ">' + n + '</span><div><h6>Avisos</h6><small>Nada le llega al cliente si no lo marcas.</small></div></div>';
+      h += '<label class="dv-aviso' + (puedeCliente ? '' : ' is-off') + '"><input type="checkbox" id="dvCliente"' + (S.cliente ? ' checked' : '') + (puedeCliente ? '' : ' disabled') + '>'
+        + '<span><b>Avisar al cliente</b><small>' + (ci ? (D.correo_cliente ? 'Le llega: ' + esc(ci.texto) : 'El retiro no tiene un correo válido del cliente.')
+          : (accionFinal() === 'reagendar' ? 'Al proponer la fecha nueva en la agenda, el cliente la recibe para aceptarla (con su aviso previo).' : 'Esta acción no le escribe al cliente.')) + '</small></span></label>';
+      h += '<label class="dv-aviso' + (hayBodega ? '' : ' is-off') + '"><input type="checkbox" id="dvBodega"' + (S.bodega ? ' checked' : '') + (hayBodega ? '' : ' disabled') + '>'
+        + '<span><b>Avisar a bodega</b><small>' + (hayBodega ? 'Correo a ' + esc(D.bodega_emails.join(', ')) + ': que no expidan el pedido en Check.'
+          : 'No hay correos de bodega configurados (Retiros → Horarios y alertas → Equipo y alertas).') + '</small></span></label></div>';
+    }
+    // Lo ya registrado
+    if ((D.registradas || []).length) {
+      h += '<div class="dv-paso"><div class="dv-paso-cab"><span class="dv-circ" style="background:#6b7280"><i class="bi bi-clock-history"></i></span><div><h6>Ya registrado en este retiro</h6></div></div><ul class="dv-hist">';
+      D.registradas.forEach(function (r) {
+        h += '<li class="t-' + esc(r.tipo) + '"><b>' + esc(r.titulo) + '</b> · ' + esc(r.motivo) + (r.detalle ? ' — ' + esc(r.detalle) : '')
+          + '<br><small>' + esc(r.accion) + ' · ' + esc(r.quien) + ' · ' + esc(r.cuando) + (r.aviso_cliente ? ' · se avisó al cliente' : '') + (r.aviso_bodega ? ' · se avisó a bodega' : '') + '</small></li>';
+      });
+      h += '</ul></div>';
+    }
+    // El foco vuelve al mismo botón tras redibujar (teclado y lector de pantalla no pierden su lugar)
+    var a = document.activeElement, clave = null;
+    if (a && cuerpo.contains(a)) {
+      ['dvTipo', 'dvMotivo', 'dvAccion'].forEach(function (k) { if (a.dataset && a.dataset[k]) clave = [k, a.dataset[k]]; });
+      if (!clave && a.id) clave = ['id', a.id];
+    }
+    cuerpo.innerHTML = h;
+    actualizarBoton();
+    if (clave) {
+      var sel = clave[0] === 'id' ? '#' + clave[1]
+        : '[data-' + clave[0].replace(/[A-Z]/g, function (m) { return '-' + m.toLowerCase(); }) + '="' + clave[1] + '"]';
+      var nuevo = cuerpo.querySelector(sel);
+      if (nuevo) nuevo.focus();
+    }
+  }
+
+  function listo() {
+    if (!S.tipo) return false;
+    if (S.tipo === 'retiro') return true;
+    if (!S.motivo) return false;
+    if (S.motivo === 'otro' && (S.detalle || '').trim().length < 5) return false;
+    if (!accionFinal()) return false;
+    return true;
+  }
+  function actualizarBoton() {
+    var txt = 'Registrar';
+    if (S.tipo === 'retiro') txt = 'Marcar como RETIRADO';
+    else if (S.tipo) {
+      var a = accionFinal();
+      txt = { reagendar: 'Registrar y proponer fecha nueva', no_concretado: 'Cerrar como «No concretado»', cancelar: 'Cancelar el retiro', esperar: 'Registrar y esperar', registrar: 'Registrar la incidencia' }[a] || 'Registrar';
+    }
+    btnG.textContent = txt;
+    btnG.className = 'btn ' + (S.tipo === 'retiro' ? 'btn-success' : 'btn-danger');
+    btnG.disabled = !listo() || ocupado;
+  }
+
+  cuerpo.addEventListener('click', function (ev) {
+    var t = ev.target.closest ? ev.target : null;
+    if (!t) return;
+    var b = t.closest('[data-dv-tipo]');
+    if (b) { if (S.tipo !== b.dataset.dvTipo) { S = { tipo: b.dataset.dvTipo, motivo: '', accion: '', detalle: S.detalle, cliente: false, bodega: bodegaPorDefecto(b.dataset.dvTipo) }; } render(); return; }
+    var m = t.closest('[data-dv-motivo]');
+    if (m) { S.motivo = m.dataset.dvMotivo; render(); var ta = document.getElementById('dvDetalle'); if (ta && S.motivo === 'otro') ta.focus(); return; }
+    var a = t.closest('[data-dv-accion]');
+    if (a) { S.accion = a.dataset.dvAccion; S.cliente = false; render(); return; }
+  });
+  cuerpo.addEventListener('input', function (ev) { if (ev.target.id === 'dvDetalle') { S.detalle = ev.target.value; actualizarBoton(); } });
+  cuerpo.addEventListener('change', function (ev) {
+    if (ev.target.id === 'dvCliente') S.cliente = ev.target.checked;
+    if (ev.target.id === 'dvBodega') S.bodega = ev.target.checked;
+  });
+
+  btnG.addEventListener('click', async function () {
+    if (!listo() || ocupado) return;
+    if (S.tipo === 'retiro') {
+      var m0 = modal(); if (m0) m0.hide();
+      setTimeout(function () {
+        if (typeof window.abrirModalRetirar === 'function' && document.getElementById('modalRetirar')) window.abrirModalRetirar();
+        else toast('Abre «Marcar como RETIRADO» en el paso de entrega.', 'warning');
+      }, 350);
+      return;
+    }
+    var acc = accionFinal();
+    ocupado = true; actualizarBoton();          // antes de preguntar: un doble clic no apila dos confirmaciones
+    if (cierra() || S.cliente) {
+      var ok = await window.ilusConfirm({
+        title: cierra() ? (acc === 'cancelar' ? '¿Cancelar este retiro?' : '¿Cerrar como «No concretado»?') : '¿Avisar al cliente?',
+        message: cierra() ? 'El retiro se cierra sin entrega y libera su cupo en la agenda.' : 'Se registra la desviación.',
+        sub: (S.cliente ? '<strong>Al cliente le llega un aviso</strong>: ' + esc((correoInfo() || {}).texto || '') : 'Al cliente <strong>no</strong> se le envía ningún correo.')
+          + (cierra() ? '<br>Su página de seguimiento mostrará «' + (acc === 'cancelar' ? 'Solicitud cancelada' : 'Retiro no completado') + '».' : ''),
+        subHtml: true, okLabel: 'Sí, continuar', cancelLabel: 'Volver', danger: cierra(), type: cierra() ? 'warning' : 'question'
+      });
+      if (!ok) { ocupado = false; actualizarBoton(); return; }
+    }
+    try {
+      var r = await fetch('/retiros/' + RID + '/desviacion', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        body: JSON.stringify({ tipo: S.tipo, motivo: S.motivo, detalle: S.detalle, accion: acc, avisar_cliente: !!S.cliente, avisar_bodega: !!S.bodega })
+      });
+      var d = await r.json().catch(function () { return {}; });
+      if (!r.ok || !d.ok) { toast((d && d.error) || 'No se pudo registrar. Reintenta.', 'error'); ocupado = false; actualizarBoton(); return; }
+      var m1 = modal(); if (m1) m1.hide();
+      var extra = d.bodega ? (d.bodega.ok ? ' Se avisó a bodega.' : ' ' + (d.bodega.motivo || '')) : '';
+      if (d.siguiente === 'proponer') {
+        toast('✓ Registrado. Ahora elige la fecha nueva en la agenda: al proponerla, el cliente la recibe para aceptarla.' + extra, 'success');
+        setTimeout(function () {
+          var cal = document.getElementById('sec-calendario');
+          if (cal) cal.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          var lock = document.getElementById('icdLockBar');
+          if (lock && lock.classList.contains('is-locked') && typeof window._icdToggleLock === 'function') window._icdToggleLock();
+        }, 400);
+        ocupado = false;
+        return;
+      }
+      toast('✓ Registrado' + (d.cliente_avisado ? ': se le avisó al cliente.' : '.') + extra, 'success');
+      setTimeout(function () { window.location.reload(); }, 900);
+    } catch (e) {
+      toast('Sin conexión: no se registró.', 'error'); ocupado = false; actualizarBoton();
+    }
+  });
+
+  function abrir(tipoInicial) {
+    S = { tipo: tipoInicial || '', motivo: '', accion: '', detalle: '', cliente: false, bodega: false };
+    cuerpo.innerHTML = '<div class="text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Cargando…</div>';
+    btnG.disabled = true;
+    var m = modal(); if (m) m.show();
+    cargar().then(function (d) {
+      if (d.terminado) { cuerpo.innerHTML = '<div class="dv-alerta">El retiro ya está terminado: queda en solo lectura.</div>'; return; }
+      var sub = document.getElementById('dvSub');
+      if (sub) sub.textContent = (sub.textContent.split(' · ')[0]) + ' · ' + d.estado_txt + (d.cita ? ' · cita ' + d.cita : '');
+      if ((S.tipo === 'retiro' && !d.puede_retirar) || (S.tipo === 'no_vino' && !d.vencida)) S.tipo = '';
+      if (S.tipo && S.tipo !== 'retiro') S.bodega = bodegaPorDefecto(S.tipo);
+      render();
+    }).catch(function (e) { cuerpo.innerHTML = '<div class="dv-alerta">' + esc(e.message || 'No se pudo cargar.') + '</div>'; });
+  }
+  modalEl.addEventListener('show.bs.modal', function () { document.body.classList.add('dv-abierto'); });
+  modalEl.addEventListener('hidden.bs.modal', function () { document.body.classList.remove('dv-abierto'); });
+  window.abrirQuePaso = abrir;
+  ent.querySelector('[data-dv-abrir]').addEventListener('click', function () { abrir(''); });
+})();
+</script>

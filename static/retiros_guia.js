@@ -684,6 +684,7 @@
     document.body.classList.toggle('gp-check-listo', activo);
     if (!activo || G.pasos[4].estado === 'hecho') return;
     var p5 = G.pasos[4], p6 = G.pasos[5];
+    var vencida = !!(p5.accion && p5.accion.tipo === 'que_paso');    // la cita ya pasó (servidor): se pregunta qué pasó, sin empujar un correo
     p5.estado = 'hecho'; p5.resumen = desp ? 'Check: preparado y despachado' : 'Check: pedido preparado';
     p5.faltan = []; p5.avisos = []; p5.accion = null; p5.correo = false; p5.bloquea = false;
     p6.estado = 'actual'; p6.bloquea = false; p6.correo = true; p6.avisos = [];
@@ -691,6 +692,13 @@
       ? 'Check ya preparó y despachó el pedido. Si el cliente ya se lo llevó: «Marcar como RETIRADO» y anota quién lo retiró. No lo envíes a preparación.'
       : 'Check ya preparó el pedido. Cuando el cliente venga y se lo lleve: «Marcar como RETIRADO» y anota quién lo retiró.'];
     p6.accion = G.sin_responsable ? { tipo: 'retirar', texto: 'Marcar como RETIRADO', deshabilitada: true, motivo: MSG_RESP } : { tipo: 'retirar', texto: 'Marcar como RETIRADO' };
+    if (vencida) {
+      p6.correo = false;
+      p6.faltan = ['Check ya preparó el pedido y la cita ya pasó. Registra qué pasó: si el cliente retiró, márcalo como RETIRADO; si no vino, reagenda o ciérralo.'];
+      p6.accion = { tipo: 'que_paso', texto: '¿Qué pasó?' };
+      G.siguiente = 6;
+      return;
+    }
     if (!G.sin_responsable) G.siguiente = 6;
   }
   // «Marcar como RETIRADO» desde el panel de Check (el mismo modal de siempre: quién retiró + RUT + foto)
@@ -800,6 +808,11 @@
       if (real && visible(real)) real.click();
       else toast('Ese botón todavía no está disponible: ' + (p.faltan[0] || 'falta terminar un paso anterior.'), 'warning');
     };
+    if (a.tipo === 'que_paso') {                       // cita vencida: registrar qué pasó (no vino, reagendar, cancelar…)
+      if (typeof window.abrirQuePaso === 'function') window.abrirQuePaso('');
+      else toast('Recarga la página para registrar qué pasó.', 'warning');
+      return;
+    }
     if (a.tipo === 'proponer') return activar('#paso-4');
     if (a.tipo === 'preparacion') return activar('#paso-confirmacion');
     if (a.tipo === 'retirar') {

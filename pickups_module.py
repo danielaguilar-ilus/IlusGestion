@@ -16,6 +16,7 @@ import retiros_check as _rck       # preparación según CheckWMS (funciones pur
 import retiros_check_ot as _rco    # movimientos (OT) de CheckWMS por documento: quién, cuándo, estado (puras; SOLO LECTURA)
 import retiros_tiempos as _rti     # tiempos de preparación según las OT de Check: trabajo, pausas, por producto (puras)
 import retiros_firma as _rfi       # firma digital de recepción + comprobante: RUT, PNG, hash, token, bloque de correo (puras)
+import retiros_desviaciones as _rdv  # desviaciones: no vino, reagendar, cancelar, incidencias; cita vencida (puras)
 from retiros_encuesta import usuario_en_vista_previa as _en_vista_previa   # encuesta y firma: por ahora solo las ve Daniel
 
 
@@ -737,6 +738,9 @@ def register_pickup_routes(app, ctx):
         for _col_sql in (
             f"ALTER TABLE `{SET}` ADD COLUMN aviso_equipo_emails TEXT NULL "
             f"COMMENT 'Correos (CSV) que reciben un aviso interno por cada gestión de un retiro'",
+            # Correos de bodega para avisos de retiros que no se van a retirar (desviaciones, Daniel 2026-10-09).
+            f"ALTER TABLE `{SET}` ADD COLUMN aviso_bodega_emails TEXT NULL "
+            f"COMMENT 'Correos (CSV) de bodega para avisos de retiros que no se retiran en su cita'",
             # Salida temprano automática la víspera de un feriado (Daniel 2026-09-30).
             f"ALTER TABLE `{SET}` ADD COLUMN vispera_activa TINYINT(1) NOT NULL DEFAULT 0",
             f"ALTER TABLE `{SET}` ADD COLUMN vispera_hasta VARCHAR(5) NOT NULL DEFAULT '15:00'",
@@ -1169,6 +1173,7 @@ def register_pickup_routes(app, ctx):
             "notify_emails": "",
             "web_responsable_user_id": None,
             "aviso_equipo_emails": "",
+            "aviso_bodega_emails": "",
             "vispera_activa": 0,
             "vispera_hasta": "15:00",
         }
@@ -2383,7 +2388,7 @@ def register_pickup_routes(app, ctx):
         "rescheduled":       "reagendada",
         "reminder_24h":      "recordatorio_24h",
         "info_incompleta":   "informacion_incompleta",
-        "failed":            "rechazada",     # reusamos plantilla de cancelación
+        "failed":            "fallida",       # «No pudimos concretar tu retiro» (2026-10-09; antes reusaba la de «cancelado»)
         "closed":            "retirada",      # reusamos plantilla de retirada
         "message":           None,            # custom — sin plantilla
     }
@@ -6868,6 +6873,18 @@ def register_pickup_routes(app, ctx):
             flash("Estado no valido.", "danger")
             return redirect(url_for("pickup_detail", rid=rid))
         old_status = req.get("status") or ""
+
+        # ── GUARDA DE FICHA VIEJA (revisión adversarial 2026-10-09): los formularios de la ficha mandan el estado que la persona estaba viendo.
+        # Si el retiro ya cambió (otra persona en «¿Qué pasó?», o un automático), no se aplica: se pide recargar. Evita, p. ej., que el cliente
+        # reciba «No pudimos concretar tu retiro» y enseguida «Tu retiro fue completado» porque dos personas actuaron a la vez.
+        _visto = (request.form.get("estado_visto") or "").strip()
+        if _visto and _visto != old_status:
+            _msg_v = (f"El retiro cambió mientras tenías la ficha abierta: ahora está «{PICKUP_STATUS.get(old_status, old_status)}». "
+                      f"Recarga la ficha antes de seguir; no se cambió nada.")
+            if _es_fetch():
+                return jsonify({"ok": False, "error": _msg_v, "code": "ESTADO_CAMBIO"}), 409
+            flash(_msg_v, "warning")
+            return redirect(url_for("pickup_detail", rid=rid))
 
         # ── GUARDA DE RESPONSABLE (Daniel 2026-10-02): «para avanzar debe declarar el responsable, y para agendar o liberar el calendario».
         # Cualquier cambio de estado de un retiro sin responsable (Kanban, Cambiar estado, botones de la ficha) pide primero «Me hago cargo».
@@ -12298,6 +12315,7 @@ def register_pickup_routes(app, ctx):
             "propuesta": propuesta, "cita": cita, "cambio_pedido": cambio,
             "preparado": _retiro_preparado(rid, st),
             "picking_total": pk.get("total"), "picking_hechos": pk.get("hechos"),
+            "cita_vencida": _rdv.cita_vencida(req, _ahora_chile()), "cita_txt": _cita_txt(req) or "",
         })
         # Lo que se va a confirmar, a la vista y COMPLETO (REGLA #15: nada recortado): documento, cliente, RUT y saldo.
         def _saldo_txt(v):
@@ -13481,7 +13499,8 @@ def register_pickup_routes(app, ctx):
         (el cron: Cloud Run casi no da CPU a un hilo que sigue corriendo cuando la petición ya respondió)."""
         _prep_auto_desfase(rid, req, ev)        # Check ya despachó y el retiro sigue en «Cita confirmada»: no se mueve solo, pero se AVISA
         if (req.get("status") or "") != "agenda_confirmada" or not _prep_auto_activo() or not ev.get("iniciada_auto") \
-                or not _prep_auto_en_ventana(req) or not _prep_auto_en_horario():
+                or not _prep_auto_en_ventana(req) or not _prep_auto_en_horario() or _rdv.cita_vencida(req, _ahora_chile()):
+            # Con la cita YA vencida no se le escribe «Estamos preparando» (revisión 2026-10-09): decide una persona en «¿Qué pasó?»
             _CHECK_INICIO_VISTO.pop(rid, None)
             return False
         espera = _check_confirmacion_s()
@@ -13506,7 +13525,7 @@ def register_pickup_routes(app, ctx):
                 pass
             fresco = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or {}
             if (fresco.get("status") or "") != "agenda_confirmada" or not _prep_auto_en_ventana(fresco) \
-                    or _prep_auto_cambio_pendiente(rid) or _prep_auto_ya_paso(rid):
+                    or _rdv.cita_vencida(fresco, _ahora_chile()) or _prep_auto_cambio_pendiente(rid) or _prep_auto_ya_paso(rid):
                 _CHECK_INICIO_VISTO.pop(rid, None)
                 return False
             otro = _prep_auto_doc_compartido(rid)
@@ -13859,6 +13878,10 @@ def register_pickup_routes(app, ctx):
         modo_ret = _retiro_auto_modo()
         res = {"activo": _prep_auto_activo(), "en_horario": True, "en_jornada_bodega": True, "revisados": 0, "con_senal": [], "pasaron": [],
                "desfase": [], "errores": 0, "retiro_auto_modo": modo_ret, "expedidos": [], "expedidos_actuaron": []}
+        # Citas vencidas (Daniel 2026-10-09): aviso al responsable y al equipo, una vez por cita, en la jornada de la bodega. Nunca al cliente.
+        if not dry and _retiro_auto_en_horario() and \
+                (os.environ.get("RETIROS_AVISO_CITA_VENCIDA") or "1").strip().lower() not in ("0", "false", "no", "off"):
+            res["citas_vencidas"] = _citas_vencidas_avisar()
         if not res["activo"] and modo_ret == "apagado":
             return res
         # «Enviar a preparación» (correo «Estamos preparando») solo en la cobertura 08–17; la expedición = retirado en la jornada de la bodega
@@ -14251,6 +14274,18 @@ def register_pickup_routes(app, ctx):
                     (",".join(_lista[:20]),))
             except Exception as _e_ae:
                 print(f"[pickup_settings] aviso_equipo_emails: {_e_ae}", flush=True)
+        # Correos de bodega (desviaciones, 2026-10-09): mismo trato que la lista del equipo.
+        if "aviso_bodega_emails" in data:
+            try:
+                _lista_b, _vistos_b = [], set()
+                for _e in re.split(r"[,;\s]+", data.get("aviso_bodega_emails") or ""):
+                    _e = _e.strip().lower()
+                    if _e and _e not in _vistos_b and is_valid_email(_e) and len(_e) <= 180:
+                        _vistos_b.add(_e)
+                        _lista_b.append(_e)
+                mysql_execute(f"UPDATE `{SET}` SET aviso_bodega_emails=%s WHERE id=1", (",".join(_lista_b[:20]),))
+            except Exception as _e_ab:
+                print(f"[pickup_settings] aviso_bodega_emails: {_e_ab}", flush=True)
         # Responsable automático de solicitudes web (UPDATE aparte: si la
         # columna aún no existiera, el resto de la configuración igual se guarda).
         try:
@@ -14269,6 +14304,270 @@ def register_pickup_routes(app, ctx):
         except Exception: pass
         flash("Configuracion de retiros actualizada.", "success")
         return redirect(url_for("pickup_dashboard"))
+
+    # ══════════════════════════════════════════════════════════════════
+    #  DESVIACIONES DE UN RETIRO (Daniel 2026-10-09): «si el cliente no viene… es necesario tomar también una opción de reagendar o
+    #  cancelar… varias desviaciones que pueden pasar a lo largo de la operación: decisiones humanas, incidencia, no pudo llegar».
+    #  Catálogo y reglas puras en retiros_desviaciones.py. Decisiones de Daniel: cita vencida = aviso al responsable (al cliente nada solo) ·
+    #  correo al cliente SOLO si el responsable lo marca · motivo obligatorio de una lista · aviso a bodega. Todo queda en
+    #  pickup_desviaciones + bitácora: quién decidió, cuándo, el motivo y la acción.
+    # ══════════════════════════════════════════════════════════════════
+    _DESV = {"tabla": False}
+
+    def _desv_tabla():
+        if _DESV["tabla"]:
+            return True
+        try:
+            mysql_execute(
+                "CREATE TABLE IF NOT EXISTS pickup_desviaciones ("
+                "id INT AUTO_INCREMENT PRIMARY KEY, request_id INT NOT NULL, tipo VARCHAR(20) NOT NULL, motivo VARCHAR(30) NOT NULL, "
+                "motivo_texto VARCHAR(160) NOT NULL, detalle TEXT NULL, accion VARCHAR(20) NOT NULL, "
+                "estado_antes VARCHAR(40) NULL, estado_despues VARCHAR(40) NULL, "
+                "aviso_cliente TINYINT(1) NOT NULL DEFAULT 0, aviso_bodega TINYINT(1) NOT NULL DEFAULT 0, cita_txt VARCHAR(40) NULL, "
+                "usuario_id INT NULL, usuario_nombre VARCHAR(160) NULL, creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                "INDEX idx_desv_req (request_id, creado_en), INDEX idx_desv_tipo (tipo, creado_en)"
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+            _DESV["tabla"] = True
+        except Exception as e:
+            print(f"[retiros-desviacion] tabla: {e}", flush=True)
+        return _DESV["tabla"]
+
+    def _bodega_emails():
+        """Correos de bodega para los avisos de un retiro que no se va a retirar (Configuración → Equipo y alertas). Lista vacía si no hay."""
+        lista = []
+        try:
+            for e in re.split(r"[,;\s]+", str(settings().get("aviso_bodega_emails") or "")):
+                e = e.strip().lower()
+                if e and is_valid_email(e) and e not in lista:
+                    lista.append(e)
+        except Exception as e_b:
+            print(f"[retiros-desviacion] correos de bodega: {e_b}", flush=True)
+        return lista[:20]
+
+    def _utc_a_chile_txt(v):
+        """DATETIME de MySQL (UTC) → «dd/mm/aaaa hh:mm» hora Chile (REGLA #6)."""
+        try:
+            if isinstance(v, str):
+                v = datetime.strptime(v[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
+            if not isinstance(v, datetime):
+                return ""
+            from zoneinfo import ZoneInfo as _ZI_dv
+            return (v if v.tzinfo else v.replace(tzinfo=timezone.utc)).astimezone(_ZI_dv("America/Santiago")).strftime("%d/%m/%Y %H:%M")
+        except Exception:
+            return ""
+
+    def _desv_registradas(rid):
+        if not _desv_tabla():
+            return []
+        filas = mysql_fetchall(
+            "SELECT tipo, motivo_texto, detalle, accion, estado_antes, estado_despues, aviso_cliente, aviso_bodega, usuario_nombre, creado_en "
+            "FROM pickup_desviaciones WHERE request_id=%s ORDER BY id DESC LIMIT 30", (rid,)) or []
+        out = []
+        for f in filas:
+            out.append({"tipo": f.get("tipo"), "titulo": (_rdv.TIPOS.get(f.get("tipo")) or {}).get("titulo") or f.get("tipo"),
+                        "motivo": f.get("motivo_texto") or "", "detalle": f.get("detalle") or "",
+                        "accion": (_rdv.ACCIONES.get(f.get("accion")) or {}).get("titulo") or f.get("accion"),
+                        "aviso_cliente": bool(f.get("aviso_cliente")), "aviso_bodega": bool(f.get("aviso_bodega")),
+                        "quien": f.get("usuario_nombre") or "", "cuando": _utc_a_chile_txt(f.get("creado_en"))})
+        return out
+
+    def _tiene_cita(req):
+        return str((req or {}).get("confirmed_date") or "").strip() not in ("", "None")
+
+    @app.route("/retiros/<int:rid>/desviaciones", methods=["GET"])
+    @require_permission("retiros")
+    def pickup_desviaciones(rid):
+        """Lo que necesita el modal «¿Qué pasó?»: catálogo, estado del retiro, si la cita venció, a quién se avisaría y lo ya registrado."""
+        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+        if not req:
+            return jsonify({"ok": False, "error": "Retiro no encontrado."}), 404
+        st = req.get("status") or ""
+        try:
+            correo_cliente = bool(_get_pickup_all_emails(req))
+        except Exception:
+            correo_cliente = bool(is_valid_email(req.get("contact_email") or ""))
+        resp = jsonify({
+            "ok": True, "catalogo": _rdv.catalogo(), "estado": st, "estado_txt": PICKUP_STATUS.get(st, st),
+            "terminado": st in _rdv.TERMINADOS, "tiene_cita": _tiene_cita(req), "cita": _cita_txt(req) or "",
+            "vencida": _rdv.cita_vencida(req, _ahora_chile()), "en_preparacion": st == "en_preparacion",
+            "puede_retirar": st in ("agenda_confirmada", "en_preparacion"),
+            "bodega_emails": _bodega_emails(), "correo_cliente": correo_cliente,
+            "sin_responsable": bool(_sin_responsable(req)), "registradas": _desv_registradas(rid)})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    def _avisar_bodega(req, n, quien):
+        """Correo a bodega: el pedido no se va a retirar en su cita (o se cerró). Nunca le escribe al cliente. {'ok', 'a': [...], 'motivo'}"""
+        dest = _bodega_emails()
+        if not dest:
+            return {"ok": False, "a": [], "motivo": "No hay correos de bodega configurados (Configuración → Equipo y alertas)."}
+        import html as _h_b
+        code = req.get("code") or "?"
+        docs = ""
+        try:
+            docs = ", ".join(f"{(d.get('document_type') or '').strip().upper()} {d.get('document_number') or ''}".strip() for d in (mysql_fetchall(
+                "SELECT document_type, document_number FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC", (req.get("id"),)) or [])[:6])
+        except Exception:
+            pass
+        if n["estado_nuevo"]:
+            que_hacer = ("Este retiro se cerró sin entrega: NO expidan el pedido en Check. Déjenlo en espera o devuélvanlo a stock según el "
+                         "procedimiento de bodega.")
+        elif n["tipo"] == "incidencia":
+            que_hacer = "Se registró una incidencia en este retiro. Revísenla; el retiro sigue igual (no cambia su estado)."
+        elif n["accion"] == "reagendar":
+            que_hacer = ("El retiro se va a reagendar: mantengan el pedido preparado y NO lo expidan en Check hasta que el cliente esté "
+                         "retirando en su nueva fecha (al expedir, ILUS da el retiro por entregado y le avisa al cliente).")
+        else:
+            que_hacer = ("El cliente no vino a su cita: mantengan el pedido preparado y NO lo expidan en Check hasta que el cliente esté "
+                         "retirando (al expedir, ILUS da el retiro por entregado y le avisa al cliente).")
+        titulo = f"Bodega: {code} — {_rdv.TIPOS[n['tipo']]['titulo']}"
+        parrafos = [
+            f"Retiro <strong>{_h_b.escape(code)}</strong> · {_h_b.escape(req.get('customer_name') or 'Cliente')}"
+            + (f" · {_h_b.escape(docs)}" if docs else "") + (f" · Cita: {_h_b.escape(_cita_txt(req) or '')}" if _cita_txt(req) else ""),
+            f"<strong>Qué pasó:</strong> {_h_b.escape(n['motivo_texto'])}" + (f" — {_h_b.escape(n['detalle'])}" if n.get("detalle") else ""),
+            f"<strong>Qué hacer en bodega:</strong> {_h_b.escape(que_hacer)}",
+            f"Lo registró {_h_b.escape(quien or 'el equipo de Retiros')} el {_ahora_chile().strftime('%d/%m/%Y %H:%M')} (hora Chile).",
+        ]
+        enviados = []
+        try:
+            html = _ilus_email_html(titulo=titulo, subtitulo=f"Retiro {code}", saludo="Equipo de bodega", parrafos=parrafos,
+                                    btn_primario_txt="Abrir retiro", btn_primario_url=_public_base_url() + f"/retiros/{req.get('id')}")
+            for d_b in dest:
+                try:
+                    if _send_ilus_email(d_b, f"ILUS - {titulo}", html, evento="retiros_bodega", modulo="comunicacion_interna",
+                                        asincrono=True) is not False:      # False = lo frenó el interruptor de correos
+                        enviados.append(d_b)
+                except Exception as e_m:
+                    print(f"[retiros-desviacion] correo a bodega {_mask_email(d_b)}: {e_m}", flush=True)
+        except Exception as e_h:
+            print(f"[retiros-desviacion] aviso a bodega: {e_h}", flush=True)
+        return {"ok": bool(enviados), "a": enviados, "motivo": "" if enviados else "No se pudo enviar el correo a bodega."}
+
+    @app.route("/retiros/<int:rid>/desviacion", methods=["POST"])
+    @require_permission("retiros")
+    def pickup_desviacion(rid):
+        """Registra una desviación (JSON: tipo, motivo, detalle, accion, avisar_cliente, avisar_bodega). Si la acción cierra el retiro
+        («No concretado» o «Cancelar») el cambio de estado es atómico. Al cliente SOLO se le escribe si avisar_cliente viene marcado."""
+        d = request.get_json(silent=True) or {}
+        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+        if not req:
+            return jsonify({"ok": False, "error": "Retiro no encontrado."}), 404
+        st = req.get("status") or ""
+        n, err = _rdv.validar(d, st, tiene_cita=_tiene_cita(req), cita_vencida=_rdv.cita_vencida(req, _ahora_chile()))
+        if err:
+            return jsonify({"ok": False, "error": err}), 409 if st in _rdv.TERMINADOS else 400
+        if n["estado_nuevo"] and _sin_responsable(req):
+            return jsonify({"ok": False, "error": _MSG_SIN_RESPONSABLE, "code": "SIN_RESPONSABLE"}), 409
+        if not _desv_tabla():
+            return jsonify({"ok": False, "error": "No se pudo registrar ahora. Reintenta en un momento."}), 503
+        u = getattr(g, "user", None) or {}
+        quien = str(u.get("nombre") or u.get("username") or "Equipo ILUS")[:160]
+        uid = u.get("id")
+        code = req.get("code") or "?"
+        texto = _rdv.texto_bitacora(n, quien)
+        estado_despues = st
+        if n["estado_nuevo"]:
+            conteo = ctx.get("mysql_execute_returning_rowcount")
+            try:
+                sql_up = f"UPDATE `{REQ}` SET status=%s, closed_at=NOW() WHERE id=%s AND status=%s"
+                if conteo:
+                    if not conteo(sql_up, (n["estado_nuevo"], rid, st)):
+                        return jsonify({"ok": False, "error": "El retiro cambió mientras tanto. Recarga la ficha y vuelve a intentarlo."}), 409
+                else:
+                    mysql_execute(sql_up, (n["estado_nuevo"], rid, st))
+            except Exception as e_u:
+                print(f"[retiros-desviacion] rid={rid} cambio de estado: {e_u}", flush=True)
+                return jsonify({"ok": False, "error": "No se pudo cambiar el estado. Reintenta en un momento."}), 500
+            estado_despues = n["estado_nuevo"]
+            try:
+                mysql_execute(f"UPDATE `{PROP}` SET status='superseded', answered_at=NOW() WHERE request_id=%s AND status='pending'", (rid,))
+            except Exception as e_p:
+                print(f"[retiros-desviacion] rid={rid} propuestas pendientes: {e_p}", flush=True)
+            log_event(rid, "estado_actualizado", st, estado_despues, f"Desviación · {texto}"[:900], "interno", quien)
+            try:
+                tok = req.get("public_token")
+                if tok:
+                    _POLL_CACHE.pop(tok, None)
+                _DISPO_CACHE["payload"] = None
+            except Exception:
+                pass
+        try:
+            mysql_execute(
+                "INSERT INTO pickup_desviaciones (request_id, tipo, motivo, motivo_texto, detalle, accion, estado_antes, estado_despues, "
+                "aviso_cliente, aviso_bodega, cita_txt, usuario_id, usuario_nombre) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (rid, n["tipo"], n["motivo"], n["motivo_texto"], n["detalle"] or None, n["accion"], st, estado_despues,
+                 1 if n["avisar_cliente"] else 0, 1 if n["avisar_bodega"] else 0, (_cita_txt(req) or None), uid, quien))
+        except Exception as e_i:
+            print(f"[retiros-desviacion] rid={rid} registro: {e_i}", flush=True)
+        log_event(rid, "desviacion", st, estado_despues, texto, "interno", quien)
+        bodega = _avisar_bodega(req, n, quien) if n["avisar_bodega"] else None
+        cliente = False
+        if n["avisar_cliente"] and n["estado_nuevo"]:
+            try:
+                kind = _rdv.CORREO_POR_ACCION[n["accion"]][0]
+                notify_async(mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or req, kind)
+                cliente = True
+            except Exception as e_c:
+                print(f"[retiros-desviacion] rid={rid} aviso al cliente: {e_c}", flush=True)
+        try:
+            _notificar_equipo_retiros(
+                f"⚠️ {code}: {_rdv.TIPOS[n['tipo']]['titulo']}",
+                f"{req.get('customer_name') or 'Cliente'} — {n['motivo_texto']}" + (f": {n['detalle']}" if n["detalle"] else "")
+                + f". Acción: {_rdv.ACCIONES[n['accion']]['titulo']}. Lo registró {quien}."
+                + (" Se envió el aviso al cliente." if cliente else (" Al cliente no se le envió nada." if n["estado_nuevo"] else "")),
+                rid, code, prioridad=("alta" if n["estado_nuevo"] or n["tipo"] == "no_vino" else "media"), tipo="retiro_desviacion",
+                send_email=bool(n["estado_nuevo"]))
+        except Exception as e_eq:
+            print(f"[retiros-desviacion] rid={rid} aviso al equipo: {e_eq}", flush=True)
+        return jsonify({"ok": True, "estado": estado_despues, "estado_txt": PICKUP_STATUS.get(estado_despues, estado_despues),
+                        "siguiente": "proponer" if n["accion"] == "reagendar" else None, "cliente_avisado": cliente, "bodega": bodega})
+
+    def _citas_vencidas_avisar(limite=40):
+        """Retiros con la cita confirmada YA PASADA (+30 min) que siguen esperando al cliente: se avisa UNA vez por cita al responsable
+        (campana) y al equipo. Nunca le escribe al cliente ni cambia el estado (Daniel 2026-10-09). Solo citas de los últimos 3 días: lo
+        más antiguo ya se ve en rojo en el Monitor. Devuelve los códigos avisados. Nunca lanza."""
+        avisados = []
+        try:
+            ahora = _ahora_chile()
+            filas = mysql_fetchall(
+                f"SELECT * FROM `{REQ}` WHERE status IN ('agenda_confirmada','en_preparacion') "
+                f"AND confirmed_date BETWEEN %s AND %s ORDER BY confirmed_date DESC, id DESC LIMIT %s",
+                (ahora.date() - timedelta(days=3), ahora.date(), int(limite))) or []
+            for req in filas:
+                try:
+                    if not _rdv.cita_vencida(req, ahora):
+                        continue
+                    rid = int(req["id"])
+                    cita = _cita_txt(req) or str(req.get("confirmed_date") or "")[:10]
+                    marca = f"cita {cita}"
+                    if mysql_fetchone(f"SELECT id FROM `{LOG}` WHERE request_id=%s AND action='cita_vencida' AND notes LIKE %s LIMIT 1",
+                                      (rid, f"%{marca}%")):
+                        continue
+                    code = req.get("code") or "?"
+                    st = req.get("status") or ""
+                    log_event(rid, "cita_vencida", st, st,
+                              f"Automático · La {marca} pasó y el retiro sigue en «{PICKUP_STATUS.get(st, st)}». Se avisó "
+                              + ("al responsable y al equipo" if req.get("responsable_user_id") else "al equipo (el retiro no tiene responsable)")
+                              + " para que registren qué pasó (al cliente no se le envía nada).", "sistema", "ILUS (automático)")
+                    titulo = f"⏰ {code}: la cita pasó y el cliente no ha retirado"
+                    cuerpo = (f"{req.get('customer_name') or 'Cliente'} — cita {cita}. Entra a la ficha y usa «¿Qué pasó?»: retiró, no vino, "
+                              f"reagendar o cancelar." + ("" if _tiene_responsable(req) else " ⚠️ Este retiro NO tiene responsable."))
+                    _mant = ctx.get("_mant_notificar")
+                    if _mant and req.get("responsable_user_id"):
+                        try:
+                            _mant(destino_user_id=int(req["responsable_user_id"]), tipo="retiro_cita_vencida", titulo=titulo[:200],
+                                  cuerpo=cuerpo[:2000], url_accion=f"/retiros/{rid}", prioridad="alta", cliente_id=None, visita_id=None)
+                        except Exception as e_r:
+                            print(f"[retiros-cita-vencida] campana del responsable rid={rid}: {e_r}", flush=True)
+                    _notificar_equipo_retiros(titulo, cuerpo, rid, code, prioridad="alta", tipo="retiro_cita_vencida", send_email=False)
+                    avisados.append(code)
+                except Exception as e_1:
+                    print(f"[retiros-cita-vencida] rid={req.get('id')}: {e_1}", flush=True)
+            if avisados:
+                print(f"[retiros-cita-vencida] avisados: {avisados}", flush=True)
+        except Exception as e:
+            print(f"[retiros-cita-vencida] {e}", flush=True)
+        return avisados
 
     # ══════════════════════════════════════════════════════════════════
     #  CALENDARIO DE EXCEPCIONES (Daniel 2026-09-30) — Horarios y alertas

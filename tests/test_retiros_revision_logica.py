@@ -48,9 +48,17 @@ def setUpModule():
             os.environ.pop(k, None)
         else:
             os.environ[k] = v
+    # Reloj fijo (2026-10-09): el 03/10 a las 07:00, antes de la cita del caso real. Con la hora real la cita ya venció y la guía
+    # (con razón) pregunta «¿Qué pasó?» en vez de esperar a bodega.
+    import datetime as _dt_r
+    import pickups_module as _pm_r
+    _ENV_ANTES["__reloj__"] = _pm_r._RELOJ_CHILE
+    _pm_r._RELOJ_CHILE = lambda: _dt_r.datetime(2026, 10, 3, 7, 0)
 
 
 def tearDownModule():
+    import pickups_module as _pm_r
+    _pm_r._RELOJ_CHILE = _ENV_ANTES.pop("__reloj__", None)
     for k, v in _ENV_ANTES.items():
         if v is None:
             os.environ.pop(k, None)
