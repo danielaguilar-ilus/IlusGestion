@@ -165,10 +165,19 @@
       if (!r[0].ok || !r[1].ok) {
         inst.el.innerHTML = '<div class="fm-err"><i class="bi bi-exclamation-triangle-fill"></i> ' +
           esc((r[0].j && r[0].j.error) || (r[1].j && r[1].j.error) || 'No se pudo leer las finanzas y documentos de esta OT.') +
-          ' <button type="button" class="fm-btn" data-fm-act="recargar">Reintentar</button></div>';
+          ' <button type="button" class="fm-btn" data-fm-act="recargar">Reintentar</button>' + (inst.editar || '') + '</div>';
         /* 2026-10-08: la vista de solo lectura de la tarjeta «Finanzas de la OT» se oculta mientras el motor está presente;
            si el motor no pudo leer, vuelve a mostrarse para no dejar la OT sin ver sus finanzas. */
-        try { var viejaFin = document.getElementById('otdCardFinanzas'); if (viejaFin) viejaFin.classList.add('fin-motor-fallo'); } catch (e) { }
+        try {
+          var viejaFin = document.getElementById('otdCardFinanzas');
+          if (viejaFin) {
+            viejaFin.classList.add('fin-motor-fallo');
+            /* 2026-10-08: la tarjeta vive a nivel raíz (en el modal de edición, o suelta si no se puede editar). Sin permiso de
+               edición, su vista de solo lectura se acomoda justo debajo del bloque para que se vea junto a él. */
+            var bloque = document.getElementById('otdCardMotor');
+            if (!viejaFin.closest('.modal') && bloque && bloque.parentNode && inst.el.closest('#otdCardMotor')) bloque.parentNode.insertBefore(viejaFin, bloque.nextSibling);
+          }
+        } catch (e) { }
         return;
       }
       inst.rec = r[0].j;
@@ -188,14 +197,17 @@
   /* ── Encabezado en UNA fila (2026-10-08, Daniel: «compactemos todo en un mismo lugar») ──────────────────────────
      Título + Actualizar + (solo superadmin, en la ficha) Corregir finanzas y OT con finanzas dudosas: todos los
      botones de la misma altura. Los dos últimos los dibuja el servidor en la plantilla del motor (<template
-     data-fm-extra>, con su permiso) y aquí solo se acomodan; antes vivían en la tarjeta «Finanzas de la OT». */
+     data-fm-extra>, con su permiso) y aquí solo se acomodan; antes vivían en la tarjeta «Finanzas de la OT».
+     2026-10-08 (Daniel: «el Editar finanzas está de más y ocupa muchísimo espacio»): la tarjeta de edición ya no está en la página; vive
+     en el modal «Editar cobro y costos» (#otdFinModal, en detalle.html) y se abre con el botón de <template data-fm-edit> (el
+     servidor lo dibuja solo para quien puede editar: puede_metadata; nunca en el modal de cierre ni para técnicos). */
   function htmlCabecera(inst) {
     var p = inst.pan;
     var sub = esc(p.numero_ot || '') + (p.cliente ? ' · ' + esc(p.cliente) : '');
-    return '<div class="fm-head"><h3><i class="bi bi-compass-fill"></i> Finanzas y documentos' + (inst.modo === 'modal' ? ' para cerrar' : ' de la OT') +
+    return '<div class="fm-head"><h3><i class="bi bi-compass-fill"></i> Costos y documentación' + (inst.modo === 'modal' ? ' para cerrar' : ' de la OT') +
       (sub ? '<small>' + sub + '</small>' : '') + '</h3>' +
       '<div class="fm-head-a"><button type="button" class="fm-btn" data-fm-act="recargar" title="Volver a leer lo declarado"><i class="bi bi-arrow-clockwise"></i> Actualizar</button>' +
-      (inst.extra || '') + '</div></div>';
+      (inst.editar || '') + (inst.extra || '') + '</div></div>';
   }
 
   /* Botón chico dentro de un chip del recorrido: el texto completo queda en el tooltip. */
@@ -485,18 +497,18 @@
 
   function signo(n) { return (n > 0 ? '+' : '') + clp(n); }
 
-  /* El desglose por negocio (antes las tres cajas «Resultado de la OT» de la tarjeta de abajo): una mini-tabla de dos
-     filas (servicio y despacho; una tercera si hay repuestos instalados). El total es la línea de arriba. */
+  /* El desglose por negocio (antes las tres cajas «Resultado de la OT»): Cobramos / Nos cobraron / Queda para la instalación o el
+     servicio, el despacho, los repuestos instalados (si hay) y el total. */
   function htmlNegocios(inst) {
     var fin = inst.rec.fin, C = fin.cobre || {}, M = fin.me_cobraron || {}, Q = fin.queda || {};
     if (!fin.cobra || !C.hay) return '';
     var kDes = M.despacho === null || M.despacho === undefined ? (M.falta_despacho ? null : 0) : M.despacho;
-    function fila(rotulo, cob, cue, q, falta, nota) {
+    function fila(rotulo, cob, cue, q, falta, nota, tot) {
       var cls = falta ? '' : (q > 0 ? 'pos' : (q < 0 ? 'neg' : 'cero'));
-      return '<tr><th scope="row">' + esc(rotulo) + (nota ? '<small>' + esc(nota) + '</small>' : '') + '</th><td>' + clp(cob) + '</td><td>' + (cue === null || cue === undefined ? '—' : clp(cue)) + '</td>' +
+      return '<tr' + (tot ? ' class="tot"' : '') + '><th scope="row">' + esc(rotulo) + (nota ? '<small>' + esc(nota) + '</small>' : '') + '</th><td>' + clp(cob) + '</td><td>' + (cue === null || cue === undefined ? '—' : clp(cue)) + '</td>' +
         '<td class="' + cls + '">' + (falta ? '—' : signo(q)) + '</td></tr>';
     }
-    var h = '<table class="fm-neg"><thead><tr><th>Por negocio</th><th>Cobré</th><th>Me cobraron</th><th>Queda</th></tr></thead><tbody>' +
+    var h = '<table class="fm-neg"><thead><tr><th>Por negocio</th><th>Cobramos</th><th>Nos cobraron</th><th>Queda</th></tr></thead><tbody>' +
       fila('Instalación o servicio', C.servicio, M.tecnico, Q.servicio, M.falta_tecnico,
         (C.servicio <= 0 && (M.tecnico || 0) > 0) ? 'se pagó el servicio y no se le cobró al cliente' : '') +
       fila('Despacho', C.despacho, kDes, Q.despacho, M.falta_despacho,
@@ -509,32 +521,72 @@
       if (M.repuestos_sin_costo) partes.push(M.repuestos_sin_costo + ' sin costo registrado');
       h += fila('Repuestos instalados', 0, M.repuestos > 0 ? M.repuestos : null, Q.repuestos, M.repuestos <= 0, partes.join(' · '));
     }
+    h += fila('Total', C.total, M.falta_tecnico ? null : M.total, Q.total, !Q.mostrar, '', true);
     return h + '</tbody></table>';
   }
 
-  /* LA CUENTA en una línea: «Cobré $X − Me cobraron $Y = Queda $Z (n %)» (o «Nos costó $Y» si no se cobra), con el
-     semáforo, el valorizado aparte y chico, y los avisos. La frase del modelo viaja en el tooltip. */
+  function pctTxt(p) { return p === null || p === undefined ? '' : String(p).replace('.', ',').replace('-', '−') + ' %'; }
+
+  /* «De dónde sale lo cobrado», en palabras de Daniel: de la VD 10653: servicio $899.726 + despacho $553.460. Un renglón por
+     documento que de verdad suma al cobro (los de referencia, dados de baja o sin líneas de servicio no entran). */
+  function origenCobro(inst) {
+    var partes = [];
+    ((inst.pan && inst.pan.documentos) || []).forEach(function (d) {
+      if (aporteDoc(d).cls !== 'si') return;
+      var s = null, e = null;
+      if (d.lineas) { s = sumaMontos(d.lineas.servicio); e = sumaMontos(d.lineas.despacho); }
+      if (!s && !e) { s = d.zz_serv; e = d.zz_envio; }
+      var p = [];
+      if (s) p.push('servicio ' + clp(s));
+      if (e) p.push('despacho ' + clp(e));
+      if (p.length) partes.push('la ' + d.titulo + ': ' + p.join(' + '));
+    });
+    return partes;
+  }
+
+  /* LA CUENTA, en palabras de Daniel (2026-10-08: «dejemos cuánto ganamos, cuánto cobramos, cuánto nos cobraron, cuánto perdimos…
+     todo bien detalladito»): «Cobramos $X» (servicio + despacho) · «Nos cobraron $Y» (técnico o proveedor + despacho + repuestos) y el
+     resultado en grande y con color: «Ganamos $Z (n %)» o «Perdimos $Z»; si no se cobra (garantía, regalía, interno): «No se cobra ·
+     nos costó $Y». Debajo, la mini-tabla por negocio y UNA línea por dato: de dónde sale lo cobrado, el valorizado de referencia, quién
+     lo declaró y cuándo, y la autorización si la hay. La frase completa del modelo viaja en el tooltip. */
   function htmlCuenta(inst) {
     var fin = inst.rec.fin, cc = inst.rec.cobro_cero || {}, cobra = fin.cobra, M = fin.me_cobraron || {}, C = fin.cobre || {}, Q = fin.queda || {};
-    var h = '<section class="fm-cta c-' + esc(fin.clase || 'gris') + '" aria-label="La cuenta de esta OT" title="' + esc(fin.frase || '') + '">';
+    var clase = (cobra && Q.mostrar && Q.total < 0) ? 'rojo' : (fin.clase || 'gris');
+    var h = '<section class="fm-cta c-' + esc(clase) + '" aria-label="La cuenta de esta OT" title="' + esc(fin.frase || '') + '">';
     /* El semáforo («Margen sano», «Pérdida», «Falta…») va al final de la misma línea (baja si no cabe). */
     var sem = (cobra || M.falta_tecnico) ? '<span class="fm-sem">' + esc(fin.label || '') + '</span>' : '';
+    h += '<div class="fm-res">';
     if (cobra) {
-      h += '<div class="fm-eq">' +
-        '<span class="fm-eq-i"><small>Cobré</small><b>' + (C.hay ? clp(C.total) : '—') + '</b></span><i>−</i>' +
-        '<span class="fm-eq-i"><small>Me cobraron</small><b>' + (M.falta_tecnico ? '—' : clp(M.total)) + '</b></span><i>=</i>' +
-        '<span class="fm-eq-i q"><small>Queda</small><b>' + (Q.mostrar ? clp(Q.total) : '—') + '</b>' +
-        (Q.mostrar && Q.pct != null ? '<em>' + esc(String(Q.pct).replace('.', ',')) + ' %</em>' : '') + '</span>' + sem + '</div>';
+      h += '<div class="fm-res-i"><small>Cobramos</small><b>' + (C.hay ? clp(C.total) : '—') + '</b></div>' +
+        '<div class="fm-res-i"><small>Nos cobraron</small><b>' + (M.falta_tecnico ? '—' : clp(M.total)) + '</b></div>';
+      var rot, val, pie = '';
+      if (Q.mostrar && Q.total > 0) { rot = 'Ganamos'; val = clp(Q.total); pie = pctTxt(Q.pct); }
+      else if (Q.mostrar && Q.total < 0) { rot = 'Perdimos'; val = clp(Math.abs(Q.total)); pie = pctTxt(Q.pct); }
+      else if (Q.mostrar) { rot = 'Resultado'; val = '$0'; pie = 'ni ganamos ni perdimos'; }
+      else { rot = 'Resultado'; val = '—'; pie = 'falta un dato para calcularlo'; }
+      h += '<div class="fm-res-i q"><small>' + rot + '</small><b>' + val + (pie ? '<em>' + (Q.mostrar && Q.total !== 0 ? '(' + esc(pie) + ')' : esc(pie)) + '</em>' : '') + '</b></div>' + sem;
     } else {
       var motivo = cc.motivo_txt || String(fin.cobertura_txt || '').split(':')[0];
-      h += '<div class="fm-eq"><span class="fm-eq-i"><small>Cobré</small><b>$0</b></span><span class="fm-motivo">' + esc(motivo) + ': no se cobra</span>' +
-        '<span class="fm-eq-i q"><small>Nos costó</small><b>' + (M.falta_tecnico ? '—' : clp(M.total)) + '</b></span>' + sem + '</div>';
+      h += '<div class="fm-res-i q"><small>No se cobra</small><b>' + (M.falta_tecnico ? 'falta declarar lo que nos costó' : 'nos costó ' + clp(M.total)) + '</b></div>' +
+        '<span class="fm-motivo">' + esc(motivo) + '</span>' + sem;
     }
-    var meta = '';
-    if (fin.valorizado && fin.valorizado.monto)
-      meta += '<span class="fm-val">Valorizado (referencia): <b>' + clp(fin.valorizado.monto) + '</b> · no se suma a lo cobrado</span>';
-    if (meta) h += '<div class="fm-meta-c">' + meta + '</div>';
+    h += '</div>';
     h += htmlNegocios(inst);
+    var det = [];
+    if (cobra) {
+      var orig = origenCobro(inst);
+      if (orig.length) det.push({ o: true, t: 'Lo cobrado sale de ' + esc(orig.join(' · ')) });
+      else if (C.hay && fin.cobre && fin.cobre.fuente) det.push({ o: true, t: 'Lo cobrado: ' + esc(fin.cobre.fuente) + ' (no viene de un documento de Random)' });
+    }
+    if (fin.valorizado && fin.valorizado.monto)
+      det.push({ t: 'Valorizado (referencia): <b>' + clp(fin.valorizado.monto) + '</b> · no se suma a lo cobrado' });
+    var declaro = '';
+    try { declaro = inst.el.getAttribute('data-declaro') || ''; } catch (e) { declaro = ''; }
+    if (declaro) det.push({ t: esc(declaro.replace(/^Declaradas por/, 'Costos declarados por')) });
+    var aprob = (inst.rec.autorizaciones || []).filter(function (a) { return a.estado === 'aprobada'; })[0];
+    if (cobra && aprob && !esInterna(inst))
+      det.push({ t: 'Autorización: ' + esc(aprob.tipo_txt) + (aprob.motivo_txt ? ' · ' + esc(aprob.motivo_txt) : '') + ', aprobada por ' + esc(aprob.resuelto_por_nombre) + (aprob.resuelto_at ? ' el ' + esc(aprob.resuelto_at) : '') });
+    if (det.length) h += '<ul class="fm-det">' + det.map(function (x) { return '<li' + (x.o ? ' class="o"' : '') + '>' + x.t + '</li>'; }).join('') + '</ul>';
     /* La constancia de quién autorizó el $0 (con su argumento completo). En un trabajo interno no hay autorización: la línea
        «Trabajo interno: no necesita documento ni autorización» de más abajo ya lo dice, no se repite. */
     if (!cobra && !esInterna(inst)) {
@@ -904,6 +956,7 @@
     /* Botones extra del encabezado (solo superadmin: Corregir finanzas y OT con finanzas dudosas): los dibuja la
        plantilla del servidor, con su permiso, dentro de <template data-fm-extra>; se leen ANTES del primer pintado. */
     try { var ex = el.querySelector && el.querySelector('template[data-fm-extra]'); inst.extra = ex ? ex.innerHTML : ''; } catch (e) { inst.extra = ''; }
+    try { var ed = el.querySelector && el.querySelector('template[data-fm-edit]'); inst.editar = ed ? ed.innerHTML : ''; } catch (e) { inst.editar = ''; }
     montados.push(inst);
     el.addEventListener('click', function (e) {
       var b = e.target.closest('[data-fm-act]');

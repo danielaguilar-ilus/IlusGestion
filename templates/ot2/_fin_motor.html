@@ -8,7 +8,17 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='ot_fin_motor.css') }}">
 <script src="{{ url_for('static', filename='ot_fin_motor.js') }}" defer></script>
 {% endif %}
-<div class="fm" data-fin-motor data-vid="{{ fm_vid }}" data-modo="{{ fm_modo or 'ficha' }}">
+{#- 2026-10-08: «Costos y documentación de la OT». `data-declaro` = quién declaró la plata y cuándo (lo lee el resumen de la cuenta); lo
+    mantiene al día otdFinSetEstadoDeclarado (detalle.html) al guardar. Solo en la ficha. -#}
+<div class="fm" data-fin-motor data-vid="{{ fm_vid }}" data-modo="{{ fm_modo or 'ficha' }}"{% if (fm_modo or 'ficha') == 'ficha' and v is defined and v and v.finanzas_at %} data-declaro="Declaradas por {{ v.finanzas_por or '—' }} el {{ v.finanzas_at | chile_fmt('%d/%m %H:%M') }}"{% endif %}>
+  {#- 2026-10-08 (Daniel: «el Editar finanzas está de más y ocupa muchísimo espacio»): el formulario de edición ya no es una tarjeta de la
+      página sino el modal «Editar cobro y costos» (#otdFinModal, detalle.html). Este botón lo abre; el servidor solo lo dibuja para quien
+      puede editar (`fm_edita` = puede_metadata), jamás en el modal de cierre ni para técnicos. -#}
+  {% if (fm_modo or 'ficha') == 'ficha' and fm_edita %}
+  <template data-fm-edit>
+    <button type="button" class="fm-btn fm-btn-pri" onclick="otdFinModalAbrir()" title="Abre el formulario para escribir lo cobrado, lo que nos cobraron, el documento y el centro de costo"><i class="bi bi-pencil-square"></i> Editar cobro y costos</button>
+  </template>
+  {% endif %}
   {#- 💰 2026-10-08 (Daniel: «compactemos todo en un mismo lugar»): «Corregir finanzas» y «OT con finanzas dudosas» vivían en la
       tarjeta «Finanzas de la OT» (solo superadmin, con registro). Ahora van en el ENCABEZADO de este bloque, a la misma altura
       que «Actualizar»; static/ot_fin_motor.js los lee de acá y los acomoda. Misma función de siempre: otdFinCorrAbrir() y
@@ -19,5 +29,5 @@
     <a class="fm-btn" href="/ot/finanzas-dudosas"><i class="bi bi-clipboard2-pulse"></i> OT con finanzas dudosas</a>
   </template>
   {% endif %}
-  <div class="fm-cargando"><i class="bi bi-hourglass-split"></i> Cargando finanzas y documentos…</div>
+  <div class="fm-cargando"><i class="bi bi-hourglass-split"></i> Cargando costos y documentación…</div>
 </div>

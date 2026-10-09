@@ -9,11 +9,14 @@ cajas, una lista de solo lectura). Ahora:
   1. Encabezado en UNA fila: título + Actualizar · Corregir finanzas (solo superadmin) · OT con finanzas dudosas.
   2. El recorrido de 6 pasos es UNA franja de 6 chips (círculo de estado + título corto + una línea de estado).
   3. Los contadores son una fila de chips chicos.
-  4. La cuenta va en una línea «Cobré − Me cobraron = Queda», con el centro de costo (4 botones compactos) al lado.
+  4. La cuenta va en una línea, con el centro de costo (4 botones compactos) al lado. (2026-10-08, segunda vuelta: la línea ahora dice
+     «Cobramos $X · Nos cobraron $Y · Ganamos $Z (n %)» y el bloque se llama «Costos y documentación de la OT»: ver
+     tests/test_ot_costos_documentacion.py.)
   5. Cuerpo en dos columnas: «Documentos» (sin productos) | «Lo que nos costó» + «Modificar». Sin documentos NO hay caja punteada
      grande: una sola línea, y «Lo que nos costó» ocupa el ancho completo.
   6. La tarjeta vieja no se borra (REGLA #4.2): su vista de solo lectura y las tres cajas «Resultado» dejan de mostrarse, y la tarjeta
-     queda como la sección «Editar finanzas» de quien puede editar.
+     queda como la sección de edición de quien puede editar. (2026-10-08, segunda vuelta: esa sección salió de la página y es el modal
+     «Editar cobro y costos»; ver tests/test_ot_costos_documentacion.py.)
 
 Sin BD ni Flask: texto de las plantillas/JS/CSS, la plantilla del motor renderizada con jinja2 y el motor JS ejecutado en node con un
 DOM mínimo.  Correr con:  py -m unittest tests.test_ot_finanzas_compacto
@@ -217,7 +220,8 @@ class TestEncabezadoUnico(_Base):
         self.assertNotIn("Corregir finanzas", self._pintar("cobro_2docs"))
         self.assertNotIn("Corregir finanzas", self._pintar("cobro_2docs", modo="modal", extra=""))
         modal = self._pintar("cobro_2docs", modo="modal")
-        self.assertIn("Finanzas y documentos para cerrar", modal)
+        # 2026-10-08: el bloque pasó a llamarse «Costos y documentación» (Daniel: «COSTOS Y DOCUMENTACIÓN de la orden de trabajo»)
+        self.assertIn("Costos y documentación para cerrar", modal)
         self.assertIn('data-fm-act="recargar"', modal)
 
     def test_la_plantilla_dibuja_los_botones_solo_para_superadmin_y_solo_en_la_ficha(self):
@@ -308,9 +312,10 @@ class TestContadoresYCuenta(_Base):
     def test_la_cuenta_va_en_una_linea_y_el_desglose_en_una_mini_tabla_de_dos_filas(self):
         html = self._pintar("cobro_2docs")
         cta = html.split('<section class="fm-cta ')[1].split("</section>")[0]
-        i1, i2, i3 = cta.index("Cobré</small><b>$302.101"), cta.index("Me cobraron</small><b>$250.000"), cta.index("Queda</small><b>$52.101")
+        # 2026-10-08: con las palabras de Daniel: «Cobramos $X», «Nos cobraron $Y» y el resultado en grande, «Ganamos $Z (n %)»
+        i1, i2, i3 = cta.index("Cobramos</small><b>$302.101"), cta.index("Nos cobraron</small><b>$250.000"), cta.index("Ganamos</small><b>$52.101")
         self.assertTrue(i1 < i2 < i3)
-        self.assertIn("<em>17,2 %</em>", cta)
+        self.assertIn("<em>(17,2 %)</em>", cta)
         self.assertIn("Margen sano", cta)
         mini = cta.split('<table class="fm-neg">')[1].split("</table>")[0]
         self.assertEqual(mini.count("<tr>"), 3, "encabezado + 2 filas (servicio y despacho)")
@@ -325,8 +330,9 @@ class TestContadoresYCuenta(_Base):
     def test_en_una_ot_que_no_se_cobra_dice_nos_costo_y_la_constancia_completa(self):
         html = self._pintar("garantia_nv")
         cta = html.split('<section class="fm-cta ')[1].split("</section>")[0]
-        self.assertIn("Nos costó</small><b>$200.000", cta)
-        self.assertIn("Garantía: no se cobra", cta)
+        # 2026-10-08: «No se cobra · nos costó $Y» (la cuenta ya no repite «Cobré $0 − …»); el motivo va aparte
+        self.assertIn("No se cobra</small><b>nos costó $200.000", cta)
+        self.assertIn('<span class="fm-motivo">Garantía</span>', cta)
         self.assertIn("Autorizado por Daniel el 07/10/2026 14:00: falla de fábrica", cta)
         self.assertNotIn("fm-neg", cta, "sin cobro no hay desglose Cobré/Queda por negocio")
         self.assertIn("Valorizado (referencia): <b>$959.000</b>", cta)
@@ -470,7 +476,10 @@ class TestLaTarjetaViejaNoSeMuestraDuplicada(unittest.TestCase):
 
     def test_la_tarjeta_de_edicion_conserva_su_formulario_y_se_llama_editar_finanzas(self):
         det = self.det
-        self.assertIn("{{ 'Editar finanzas' if puede_metadata else 'Finanzas de la OT' }}", det)
+        # 2026-10-08 (Daniel: «el Editar finanzas está de más y ocupa muchísimo espacio»): ya no se llama «Editar finanzas» ni está en la
+        # página; es el modal «Editar cobro y costos» (tests/test_ot_costos_documentacion.py). Conserva su formulario completo.
+        self.assertIn("{{ 'Editar cobro y costos' if puede_metadata else 'Costos y documentación de la OT' }}", det)
+        self.assertNotIn("'Editar finanzas'", det)
         for ident in ("otdFinZzServ", "otdFinZzEnvio", "otdFinCosto", "otdFinCostoProveedor", "otdFinCostoDespacho", "otdFinValorizado",
                       "otdFinProveedorNombre", "otdErpDocQ", "otdBtnLeerZz"):
             self.assertIn(f'id="{ident}"', det, ident)
