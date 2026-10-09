@@ -130261,6 +130261,57 @@ def _mfp_403():
                     "error_codigo": "SIN_PERMISO"}), 403
 
 
+# 📋 2026-10-08 (Daniel: "los lotes ordenados por número... déjalo ordenado por el número de
+# correlativo" + "tabla de verdad que se pueda FILTRAR LAS COLUMNAS"). La tabla "Facturas
+# registradas" ahora filtra, ordena y pagina en el navegador (static/facprov_tabla.js) sobre TODAS
+# las facturas que dejan pasar los filtros de arriba (buscador, chip de empresa, estado, fechas),
+# hasta este tope. Antes el servidor paginaba y ordenaba "pendientes primero" (FIELD(estado_pago))
+# y por eso un lote pagado nuevo (#17) quedaba bajo uno pendiente viejo.
+_FACPROV_TOPE = 1000
+
+
+def _facprov_ordenar_por_lote(lista):
+    """Orden por defecto de los lotes: por número de lote (correlativo) DESCENDENTE, el más nuevo
+    primero. Sin prioridad por proveedor ni por estado de pago. Mismo criterio que el SQL
+    (ORDER BY f.id DESC) y que el Excel."""
+    return sorted(lista or [], key=lambda x: int((x or {}).get("id") or 0), reverse=True)
+
+
+def _facprov_fecha_fila(f):
+    """(ISO, dd/mm/aaaa, origen) de la fecha de un lote: la del documento; si aún no tiene factura
+    (solicitud de OC, pago sin factura), el día en que se registró (hora Chile)."""
+    fecha = f.get("fecha")
+    try:
+        if fecha:
+            d = fecha.date() if hasattr(fecha, "hour") else fecha
+            return d.isoformat(), d.strftime("%d/%m/%Y"), "documento"
+        ca = f.get("created_at")
+        if ca:
+            c = to_chile_filter(ca)
+            return c.date().isoformat(), c.strftime("%d/%m/%Y"), "registro"
+    except Exception:
+        pass
+    return "", "", ""
+
+
+def _facprov_semaforo(f):
+    """Color de la fila (borde izquierdo, igual que Retiros): verde = pagada y con todos sus papeles;
+    ámbar = por pagar (o pagada a la que le falta OC/factura); rojo = por pagar y el monto no cuadra
+    con las OT; gris = anulada."""
+    estado = (f.get("estado_pago") or "").lower()
+    if estado == "anulada":
+        return "gris"
+    falta_papel = not (str(f.get("numero_oc") or "").strip() and str(f.get("numero_documento") or "").strip())
+    if estado == "pagada":
+        return "ambar" if falta_papel else "verde"
+    try:
+        if f.get("n_ot") and round(float(f.get("diferencia") or 0)) != 0:
+            return "rojo"
+    except (TypeError, ValueError):
+        pass
+    return "ambar"
+
+
 @app.route("/mantenciones/facturas-proveedor")
 @app.route("/servicio-tecnico/facturas-proveedor")
 @_mant_required
@@ -130384,9 +130435,10 @@ def mant_facturas_proveedor():
         total = int((mysql_fetchone(
             "SELECT COUNT(*) AS n FROM mant_facturas_proveedor f" + where_sql,
             tuple(params)) or {}).get("n") or 0)
-        total_paginas = max(1, -(-total // per_page))
-        if page > total_paginas:
-            page = total_paginas
+        # La paginación de esta tabla es del navegador (facprov_tabla.js); el servidor entrega todo
+        # (hasta _FACPROV_TOPE) en una sola página.
+        total_paginas = 1
+        page = 1
         facturas = mysql_fetchall(
             "SELECT f.*, "
             "       COUNT(i.id) AS n_ot, COALESCE(SUM(i.monto),0) AS total_asignado, "
@@ -130413,10 +130465,12 @@ def mant_facturas_proveedor():
             "  LEFT JOIN mant_tecnicos_externos tc ON tc.id = " + _SQL_FICHA_POR_ITEMS + " "
             + where_sql +
             " GROUP BY f.id "
-            " ORDER BY FIELD(f.estado_pago,'pendiente','pagada','anulada'), f.fecha DESC, f.id DESC "
-            " LIMIT %s OFFSET %s",
-            tuple(params) + (per_page, (page - 1) * per_page)) or []
-        facturas = [dict(x) for x in facturas]
+            # 📋 2026-10-08: por número de lote DESCENDENTE (el más nuevo primero), sin prioridad
+            # por estado de pago. La tabla filtra/ordena/pagina en el navegador sobre todo esto.
+            " ORDER BY f.id DESC "
+            " LIMIT %s",
+            tuple(params) + (_FACPROV_TOPE,)) or []
+        facturas = _facprov_ordenar_por_lote([dict(x) for x in facturas])
         for x in facturas:
             x["total_asignado"] = float(x.get("total_asignado") or 0)
             x["monto_total"] = float(x.get("monto_total") or 0)
@@ -130444,6 +130498,8 @@ def mant_facturas_proveedor():
                 x["etapa"] = 2
             else:
                 x["etapa"] = 1
+            x["fecha_ord"], x["fecha_lbl"], x["fecha_origen"] = _facprov_fecha_fila(x)
+            x["semaforo"] = _facprov_semaforo(x)
     except Exception as e:
         print(f"[facprov] listado: {e}", flush=True)
         total_paginas = 1
@@ -130567,6 +130623,7 @@ def mant_facturas_proveedor():
         "mantenciones/facturas_proveedor.html",
         facturas=facturas, total=total, page=page, per_page=per_page,
         total_paginas=total_paginas, per_page_opciones=_MFP_PER_PAGE,
+        facturas_tope=_FACPROV_TOPE,
         f_prov=f_prov, f_estado=f_estado, f_prov_id=f_prov_id, chip_activo=chip_activo,
         f_desde=f_desde, f_hasta=f_hasta,
         resumen=_mfp_resumen(incluir_pruebas=f_pruebas, ids_prueba_facturas=ids_prueba_facturas),
@@ -132176,7 +132233,8 @@ def mant_facturas_proveedor_xlsx():
         "  LEFT JOIN mant_factura_proveedor_items i ON i.factura_proveedor_id = f.id "
         "  LEFT JOIN mant_visitas v ON v.id = i.visita_id "
         " WHERE " + " AND ".join(fwhere) +
-        " GROUP BY f.id ORDER BY f.fecha ASC, f.id ASC",
+        # 📋 2026-10-08 (Daniel): los lotes siempre por número de lote, el más nuevo primero.
+        " GROUP BY f.id ORDER BY f.id DESC",
         tuple(fparams)) or []
     for f in facturas:
         monto = float(f.get("monto_total") or 0)
