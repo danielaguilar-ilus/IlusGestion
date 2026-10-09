@@ -1183,8 +1183,11 @@ class TestCheckPreparacion:
         env.esp.check.respuestas["23732"] = TODO_PICKEADO
         assert env.cli.get(f"/retiros/{RID}/check-preparacion?solo_lectura=1").get_json()["auto_activo"] is True
 
-    def test_con_unidades_despachadas_no_se_marca_solo(self, env):
+    def test_con_unidades_despachadas_no_se_marca_solo(self, env, monkeypatch):
         """Check ya da unidades por despachadas (¿entregado antes?): se MUESTRA, pero decide una persona."""
+        # La expedición (otro aviso, con sus propias pruebas en test_retiros_07oct_expedicion.py) se apaga: si no, esta prueba dependería de
+        # la hora real en que se corre (en la jornada de la bodega escribe su aviso en la bitácora).
+        monkeypatch.setenv("RETIROS_RETIRO_AUTO", "0")
         retiro_en_preparacion(env, items=(("DISCO25", 1),))
         env.esp.check.respuestas["23732"] = A.respuesta_check(A.fila_check(solicitado=1, despachado=1))
         for _ in range(2):

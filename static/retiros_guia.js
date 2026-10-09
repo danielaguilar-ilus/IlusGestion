@@ -980,7 +980,8 @@
   // un volcado grande): el servidor responde «cargando» y aquí se reintenta cada 6 s (hasta ~1 minuto).
   function cargarActividad() {
     if (!relevanteActividad() || ACT_CARGANDO) return;
-    if (esRetirado() && ACT && ACT.estado === 'listo') return;          // ya está guardado: no hace falta volver a pedirlo
+    // ya está guardado: no hace falta volver a pedirlo (salvo que el servidor esté trayendo de Check la OT de control de salida que le falta)
+    if (esRetirado() && ACT && ACT.estado === 'listo' && !ACT.refrescando) return;
     ACT_CARGANDO = true;
     var ctrl = window.AbortController ? new AbortController() : null;
     var corte = setTimeout(function () { if (ctrl) ctrl.abort(); }, 25000);
@@ -992,6 +993,7 @@
         ACT = (d && d.ok) ? d : { estado: 'error' };
         renderCheck();
         if (ACT.estado === 'cargando' && ACT_REINTENTOS < 10) { ACT_REINTENTOS++; setTimeout(cargarActividad, 6000); }
+        else if (ACT.estado === 'listo' && ACT.desde_registro && ACT.refrescando && ACT_REINTENTOS < 8) { ACT_REINTENTOS++; setTimeout(cargarActividad, 8000); }
         else if (ACT.estado === 'listo') ACT_REINTENTOS = 0;
       })
       .catch(function () {

@@ -393,9 +393,21 @@ class TestCron:
         assert d["con_senal"] and d["pasaron"] == []
         assert env.db.solicitudes[RID]["status"] == "agenda_confirmada" and correos_al_cliente(env) == []
 
-    def test_con_el_interruptor_apagado_no_revisa_nada(self, env, monkeypatch):
+    def test_con_el_interruptor_apagado_no_se_mueve_a_preparacion(self, env, monkeypatch):
+        # La expedición tiene su propio interruptor (RETIROS_RETIRO_AUTO): puede seguir mirando, pero nada pasa a preparación
         monkeypatch.setenv("ILUS_CRON_TOKEN", "secreto-cron")
         monkeypatch.setenv("RETIROS_PREP_AUTO", "0")
+        monkeypatch.delenv("RETIROS_RETIRO_AUTO", raising=False)
+        retiro(env)
+        env.esp.check.respuestas["*"] = EMPEZO
+        d = env.cli.get("/retiros/cron/check-barrido", headers={"X-Cron-Token": "secreto-cron"}).get_json()
+        assert d["activo"] is False and d["con_senal"] == [] and d["pasaron"] == []
+        assert env.db.solicitudes[RID]["status"] == "agenda_confirmada" and correos_al_cliente(env) == []
+
+    def test_con_los_dos_interruptores_apagados_no_revisa_nada(self, env, monkeypatch):
+        monkeypatch.setenv("ILUS_CRON_TOKEN", "secreto-cron")
+        monkeypatch.setenv("RETIROS_PREP_AUTO", "0")
+        monkeypatch.setenv("RETIROS_RETIRO_AUTO", "0")
         retiro(env)
         env.esp.check.respuestas["*"] = EMPEZO
         d = env.cli.get("/retiros/cron/check-barrido", headers={"X-Cron-Token": "secreto-cron"}).get_json()
@@ -572,8 +584,12 @@ class TestFrenos:
         assert d["prep_auto_ahora"] is False and d["prep_auto_activo"] is False
         assert_quieto(env)
 
-    def test_el_barrido_del_monitor_con_el_interruptor_apagado_ni_siquiera_le_pregunta_a_check(self, env, monkeypatch):
+    @pytest.mark.parametrize("retiro_auto", ["0", "sombra"])
+    def test_el_barrido_del_monitor_con_el_interruptor_apagado_no_mueve_nada(self, env, monkeypatch, retiro_auto):
+        # Con los dos interruptores apagados ni siquiera le pregunta a Check; con la expedición encendida (otro interruptor) puede mirar,
+        # pero con el picking nada pasa a preparación ni se le escribe al cliente.
         monkeypatch.setenv("RETIROS_PREP_AUTO", "0")
+        monkeypatch.setenv("RETIROS_RETIRO_AUTO", retiro_auto)
         retiro(env)
         env.esp.check.respuestas["*"] = EMPEZO
         capturados = []
@@ -594,7 +610,9 @@ class TestFrenos:
         (objetivo,) = [t for t in capturados if getattr(t, "__name__", "") == "_check_barrido"]
         with env.app.app_context():
             objetivo()
-        assert env.esp.check.llamadas == [] and env.db.solicitudes[RID]["status"] == "agenda_confirmada"
+        assert env.db.solicitudes[RID]["status"] == "agenda_confirmada" and correos_al_cliente(env) == []
+        if retiro_auto == "0":
+            assert env.esp.check.llamadas == []
 
 
 # ══════════════════════════════════════════════════════════════════════════════

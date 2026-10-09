@@ -209,20 +209,33 @@ class TestActivo:
             assert revisar(env)["retiro_auto_ahora"] is False
         assert len(correos_al_cliente(env)) == n == 1 and len(logs(env, "estado_actualizado")) == 1
 
-    def test_desde_cita_confirmada_no_cierra_solo_y_avisa_al_equipo(self, activo):
-        # 2026-10-08 (candado antes de activarlo): en ACTIVO solo se cierra un retiro «En preparación». Con la cita solo confirmada, la
-        # expedición se avisa al equipo y una persona decide: ni cambio de estado ni correo al cliente.
+    def test_desde_cita_confirmada_cierra_y_registra_la_preparacion_sin_correo_de_preparacion(self, activo):
+        # 2026-10-09 (Daniel, con BLV 23732 de modelo): «cuando se asignara el picking se iba a gestionar la preparación, y cuando se
+        # integrara y se expidiera, la entrega». El candado del 08/10 dejaba en «Cita confirmada» un pedido ya entregado (RET-YWN4D4).
         env = activo
         retiro(env, status="agenda_confirmada", confirmed_date=cita(1))
+        poner_salida_en_check(env)
         env.esp.check.respuestas["*"] = EXPEDIDO
-        revisar(env)
-        assert env.db.solicitudes[RID]["status"] == "agenda_confirmada"
-        assert logs(env, "estado_actualizado") == []
-        (e,) = logs(env, "check_expedido")
-        assert "no se cierra solo" in e["notes"]
-        assert correos_al_cliente(env) == []
-        (titulo, cuerpo), = campanas(env)
-        assert "no se cerró solo" in cuerpo
+        assert revisar(env)["retiro_auto_ahora"] is True
+        assert env.db.solicitudes[RID]["status"] == "retirada"
+        prep, ret = logs(env, "estado_actualizado")
+        assert (prep["old_status"], prep["new_status"]) == ("agenda_confirmada", "en_preparacion")
+        assert (ret["old_status"], ret["new_status"]) == ("en_preparacion", "retirada")
+        assert prep["actor_name"] == ret["actor_name"] == "Check WMS (automático)"
+        assert "preparación se registra junto con la entrega" in prep["notes"] and "no se le envía «Estamos preparando»" in prep["notes"]
+        assert "481516" in prep["notes"] or "CSAL000123" in prep["notes"]          # lo que Check informa del pedido
+        (c,) = correos_al_cliente(env)                                             # UN solo correo: «Retiro completado», nunca «Estamos preparando»
+        assert NOTA in c.args[2] and "prepar" not in (c.args[1] or "").lower()
+        assert logs(env, "check_expedido") == []
+        (titulo, _cuerpo), = campanas(env)
+        assert "cerrado automáticamente" in titulo
+
+    def test_desde_cita_confirmada_fuera_de_la_ventana_no_cierra(self, activo):
+        env = activo
+        retiro(env, status="agenda_confirmada", confirmed_date=cita(5))
+        env.esp.check.respuestas["*"] = EXPEDIDO
+        assert revisar(env)["retiro_auto_ahora"] is False
+        assert_quieto(env, "agenda_confirmada")
 
     def test_el_cierre_manual_no_lleva_la_linea_sutil(self, activo):
         env = activo
@@ -380,11 +393,14 @@ class TestNoActua:
         assert revisar(env)["retiro_auto_ahora"] is False
         assert_quieto(env)
 
+    # 2026-10-09: la expedición se registra en tiempo real durante la JORNADA de la bodega (07:30–20:00, días hábiles), no solo en la cobertura
     @pytest.mark.parametrize("ahora", [dt.datetime(2026, 10, 7, 3, 0),          # de madrugada
-                                       dt.datetime(2026, 10, 7, 13, 30),         # colación
-                                       dt.datetime(2026, 10, 7, 17, 30),         # terminó la cobertura
-                                       dt.datetime(2026, 10, 10, 11, 0)])        # sábado
-    def test_fuera_del_horario_de_cobertura(self, modo, ahora):
+                                       dt.datetime(2026, 10, 7, 7, 29),          # antes de que abra la bodega
+                                       dt.datetime(2026, 10, 7, 20, 0),          # la bodega ya cerró
+                                       dt.datetime(2026, 10, 7, 23, 30),
+                                       dt.datetime(2026, 10, 10, 11, 0),         # sábado
+                                       dt.datetime(2026, 10, 12, 11, 0)])        # lunes feriado
+    def test_fuera_de_la_jornada_de_la_bodega(self, modo, ahora):
         env = modo
         env.reloj["ahora"] = ahora
         retiro(env, confirmed_date=ahora.date().isoformat())

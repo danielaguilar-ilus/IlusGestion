@@ -39024,6 +39024,7 @@ def tr_cron_simpliroute_poll():
 
     Query: ?dry=1 (no escribe) · ?limit=N
     """
+    _t_peticion = time.time()     # Retiros: la descarga larga de Check solo si la petición aún tiene tiempo (deadline de Cloud Scheduler 300 s)
     tok = _cron_extract_token()
     esperado = ((os.environ.get("ILUS_CRON_TOKEN") or "").strip()
                 or (os.environ.get("FEDEX_CRON_TOKEN") or "").strip())
@@ -39045,7 +39046,7 @@ def tr_cron_simpliroute_poll():
         try:
             _fn_rp = globals().get("_retiros_prep_auto_barrido")
             if _fn_rp:
-                res["retiros_prep_auto"] = _fn_rp(max_s=70)
+                res["retiros_prep_auto"] = _fn_rp(max_s=70, t_peticion=_t_peticion)
         except Exception as _e_rp:
             print(f"[cron-simpliroute] retiros prep auto: {_e_rp}", flush=True)
     # Vigilancia: toda instalación NUEVA deja su ficha de cliente (Daniel 2026-10-04). No envía nada. Si falla no afecta al polling.

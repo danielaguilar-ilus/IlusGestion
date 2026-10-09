@@ -189,6 +189,10 @@ class BDFalsa:
         if low.startswith("select id from `pickup_requests` where status='en_preparacion'"):
             return [{"id": r["id"]} for r in sorted(self.solicitudes.values(), key=lambda r: -r["id"])
                     if r["status"] == "en_preparacion"][:30]
+        if low.startswith("select id, code, closed_at from `pickup_requests` where status in ('retirada','cerrada')"):
+            # Retiros cerrados hace poco (el filtro por días lo vuelve a aplicar el módulo en Python con closed_at)
+            return [{"id": r["id"], "code": r["code"], "closed_at": r.get("closed_at")}
+                    for r in sorted(self.solicitudes.values(), key=lambda r: -r["id"]) if r["status"] in ("retirada", "cerrada")][:20]
         self.sin_manejar.append(s)
         return []
 

@@ -3,7 +3,7 @@ import re
 import secrets
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 from flask import flash, has_request_context, jsonify, redirect, render_template, request, send_from_directory, url_for
@@ -940,14 +940,19 @@ def register_pickup_routes(app, ctx):
                     INDEX idx_doc_incluida (doc_id, incluida)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
-            # Foreign keys separadas (algunos hosts no aceptan en CREATE)
-            for fk_sql in [
-                "ALTER TABLE pickup_doc_lineas ADD CONSTRAINT fk_pdl_req "
-                f"FOREIGN KEY (request_id) REFERENCES `{REQ}`(id) ON DELETE CASCADE",
-                "ALTER TABLE pickup_doc_lineas ADD CONSTRAINT fk_pdl_doc "
-                "FOREIGN KEY (doc_id) REFERENCES pickup_request_docs(id) ON DELETE CASCADE",
+            # Foreign keys separadas (algunos hosts no aceptan en CREATE). REGLA #18: la guardia de DDL no reconoce ADD CONSTRAINT, así que este
+            # ALTER corría en CADA arranque pidiendo un bloqueo exclusivo de la tabla (0,4–2,3 s medidos en producción, 2026-10-09) aunque la llave
+            # ya existiera. Se pregunta antes a information_schema (lectura liviana, no bloquea a nadie) y solo se crea si falta.
+            for nombre_fk, fk_sql in [
+                ("fk_pdl_req", "ALTER TABLE pickup_doc_lineas ADD CONSTRAINT fk_pdl_req "
+                               f"FOREIGN KEY (request_id) REFERENCES `{REQ}`(id) ON DELETE CASCADE"),
+                ("fk_pdl_doc", "ALTER TABLE pickup_doc_lineas ADD CONSTRAINT fk_pdl_doc "
+                               "FOREIGN KEY (doc_id) REFERENCES pickup_request_docs(id) ON DELETE CASCADE"),
             ]:
-                try: mysql_execute(fk_sql)
+                try:
+                    if not mysql_fetchone("SELECT 1 AS existe FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=DATABASE() "
+                                          "AND TABLE_NAME='pickup_doc_lineas' AND CONSTRAINT_NAME=%s LIMIT 1", (nombre_fk,)):
+                        mysql_execute(fk_sql)
                 except Exception: pass
         except Exception as e:
             print(f"[ensure_multidoc_tables] pickup_doc_lineas: {e}", flush=True)
@@ -12598,9 +12603,10 @@ def register_pickup_routes(app, ctx):
                             _retiro_auto_aplicar(rid, req, ev)       # «Check expidió» = retirado (sombra: solo aviso al equipo)
                     except Exception as e:      # un retiro con datos raros no frena a los demás
                         print(f"[retiros-check] barrido rid={f.get('id')}: {e}", flush=True)
-                # Retiros con la cita confirmada y cercana: si bodega ya empezó a juntar, pasan solos a «En preparación»
-                # (con el interruptor apagado o fuera del horario de la bodega ni siquiera se le pregunta a Check)
-                for f in (_prep_auto_candidatos() if (_prep_auto_activo() and _prep_auto_en_horario()) else []):
+                # Retiros con la cita confirmada y cercana: si bodega ya empezó a juntar, pasan solos a «En preparación» (en la cobertura); si ya
+                # expidió, se dan por retirados (en la jornada de la bodega). Con los interruptores apagados o fuera de horario ni se le pregunta a Check.
+                revisar = (_prep_auto_activo() and _prep_auto_en_horario()) or (_retiro_auto_modo() != "apagado" and _retiro_auto_en_horario())
+                for f in (_prep_auto_candidatos() if revisar else []):
                     try:
                         rid = int(f["id"])
                         req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
@@ -12645,6 +12651,8 @@ def register_pickup_routes(app, ctx):
             return None, None, False
         filas = cache.get("rows")
         edad = (time.time() - (cache.get("ts") or 0)) if filas is not None else None
+        if _CHECK_OT["corriendo"] and time.time() - _CHECK_OT["intento"] > 300:
+            _CHECK_OT["corriendo"] = False             # un refresco que nunca terminó (hilo muerto o Check colgado): no queda «cargando» para siempre
         if (filas is None or edad > _CHECK_OT_MAX_EDAD) and not _CHECK_OT["corriendo"] \
                 and time.time() - _CHECK_OT["intento"] > _CHECK_OT_REINTENTO:
             _CHECK_OT["corriendo"], _CHECK_OT["intento"] = True, time.time()
@@ -12656,7 +12664,11 @@ def register_pickup_routes(app, ctx):
                     print(f"[retiros-check-ot] refresco: {e}", flush=True)
                 finally:
                     _CHECK_OT["corriendo"] = False
-            threading.Thread(target=_refrescar, daemon=True).start()
+            try:
+                threading.Thread(target=_refrescar, daemon=True).start()
+            except Exception as e:
+                _CHECK_OT["corriendo"] = False
+                print(f"[retiros-check-ot] no se pudo lanzar el refresco: {e}", flush=True)
         return (filas if isinstance(filas, list) else None), edad, bool(_CHECK_OT["corriendo"])
 
     # ── REGISTRO GUARDADO de lo que Check informó (Daniel 2026-10-06: «en la parte de preparación no quedó persistente el dato de Check en la
@@ -12709,7 +12721,12 @@ def register_pickup_routes(app, ctx):
                     por_doc[rot] = {}
                     orden.append(rot)
                 for o in d.get("ots") or []:
-                    por_doc[rot].setdefault(o.get("ot"), o)       # el primero que llega gana: «nuevos» va antes que «previos»
+                    ya = por_doc[rot].get(o.get("ot"))
+                    if ya is None:
+                        por_doc[rot][o.get("ot")] = o              # el primero que llega gana: «nuevos» va antes que «previos»…
+                    elif not (ya.get("fin") or "") and (o.get("fin") or ""):
+                        por_doc[rot][o.get("ot")] = o              # …salvo que lo guardado ya traiga el fin y lo nuevo no: un volcado más viejo
+                                                                   # de otro proceso no devuelve una OT terminada a «en proceso»
         salida = []
         for rot in orden:
             ots = list(por_doc[rot].values())
@@ -12741,8 +12758,17 @@ def register_pickup_routes(app, ctx):
             print(f"[retiros-check-snap] guardar rid={rid}: {e}", flush=True)
             return False
 
-    def _check_ot_salida(docs, filas):
-        """(salida por documento, filas coincidentes) a partir del reporte de movimientos de Check ya en memoria."""
+    def _ot_empezo_antes(o, hasta):
+        """¿La OT empezó (o terminó, si no trae inicio) a más tardar en `hasta` (hora Chile, sin zona)? Sin fecha legible → False."""
+        try:
+            d = _rco.momento(o.get("inicio") or "") or _rco.momento(o.get("fin") or "")
+            return bool(d) and d.replace(tzinfo=None) <= hasta
+        except Exception:
+            return False
+
+    def _check_ot_salida(docs, filas, hasta=None):
+        """(salida por documento, filas coincidentes) a partir del reporte de movimientos de Check ya en memoria. Con `hasta` (retiro cerrado), solo
+        las OT que empezaron antes de esa hora: así no se cuelan las de OTRO retiro posterior con la misma factura."""
         salida, coincidencias = [], []
         for d in (docs or [])[:_CHECK_PREP_MAX_DOCS]:
             tipo = (d.get("document_type") or "").strip().upper()[:5]
@@ -12752,6 +12778,8 @@ def register_pickup_routes(app, ctx):
             filas_doc = _rco.filas_del_documento(filas, tipo, num)
             coincidencias.extend(filas_doc)
             ots = _rco.agrupar_por_ot(filas_doc)
+            if hasta is not None:
+                ots = [o for o in ots if _ot_empezo_antes(o, hasta)]
             salida.append({"rotulo": f"{tipo} {num}", "n_ot": len(ots), "ots": ots[:_CHECK_OT_MAX_OT], "mas": max(0, len(ots) - _CHECK_OT_MAX_OT)})
         return salida, coincidencias
 
@@ -12768,6 +12796,115 @@ def register_pickup_routes(app, ctx):
         except Exception as e:
             print(f"[retiros-check-snap] desde cache rid={rid}: {e}", flush=True)
             return False
+
+    # ── El registro de un retiro CERRADO se sigue completando unos días (Daniel 2026-10-09, con BLV 23732 de Gerd Müller como modelo: «cuando se
+    #    asignara el picking se iba a gestionar la preparación, y cuando se integrara y se expidiera, la entrega… al meterme a otros pedidos queda
+    #    como en picking de material»). El registro se congelaba al cerrar el retiro con lo que Check tenía en memoria en ese momento (hasta 1 h
+    #    de antigüedad), así que la OT de CONTROL DE SALIDA (la expedición, la que cierra el retiro) quedaba fuera. Mientras Check aún lo recuerda,
+    #    se completa con su reporte de movimientos (solo lectura): solo se AGREGA, lo ya guardado nunca se pierde.
+    _SNAP_VIVO_DIAS = 7             # días después del cierre en que la ficha todavía completa el registro con Check
+    _SNAP_PEND_DIAS = 5             # días después del cierre en que el barrido del cron lo completa solo, aunque nadie abra la ficha (cubre un fin de semana largo)
+    _SNAP_PEND_TRAER_CADA = 3600    # s mínimos entre dos descargas del reporte de movimientos pedidas por el barrido (es pesado para Check)
+    _SNAP_PEND = {"ts": 0.0}
+
+    def _snap_tiene_salida(snap):
+        """¿El registro guardado ya trae la OT de CONTROL DE SALIDA (la expedición)? Mismo criterio que el aviso de expedición."""
+        for d in (snap or {}).get("documentos") or []:
+            for o in d.get("ots") or []:
+                if re.search(r"salida", str(o.get("tipo") or ""), re.I) or str(o.get("ot") or "").upper().startswith("CSAL"):
+                    return True
+        return False
+
+    def _cerrado_hace_poco(req, dias):
+        """¿Se cerró hace menos de `dias` días? closed_at viene de NOW() de MySQL (UTC). Sin fecha legible → False (se usa solo lo guardado)."""
+        v = (req or {}).get("closed_at")
+        if isinstance(v, str):
+            try:
+                v = datetime.strptime(v[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return False
+        if not isinstance(v, datetime):
+            return False
+        if v.tzinfo is not None:
+            v = v.astimezone(timezone.utc).replace(tzinfo=None)
+        return timedelta(0) <= datetime.now(timezone.utc).replace(tzinfo=None) - v <= timedelta(days=dias)
+
+    _SNAP_MARGEN_CIERRE_H = 8       # horas después del cierre en que todavía cuenta una OT (bodega puede expedir después de que una persona lo cerró)
+
+    def _tope_ot_cierre(req):
+        """Hora Chile (sin zona) hasta la que una OT de Check pertenece a este retiro cerrado: cierre + margen. None si no se sabe."""
+        v = (req or {}).get("closed_at")
+        if isinstance(v, str):
+            try:
+                v = datetime.strptime(v[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return None
+        if not isinstance(v, datetime):
+            return None
+        try:
+            from zoneinfo import ZoneInfo as _ZI_tope
+            local = (v if v.tzinfo else v.replace(tzinfo=timezone.utc)).astimezone(_ZI_tope("America/Santiago")).replace(tzinfo=None)
+        except Exception:
+            local = v.replace(tzinfo=None) - timedelta(hours=3)
+        return local + timedelta(hours=_SNAP_MARGEN_CIERRE_H)
+
+    def _check_snap_completar(rid, filas, hasta=None):
+        """Agrega al registro guardado lo que el reporte de movimientos de Check (ya en memoria) trae ahora para este retiro (con `hasta`, solo
+        las OT que empezaron antes). True si escribió."""
+        if not isinstance(filas, list) or not filas:
+            return False
+        docs = mysql_fetchall("SELECT document_type, document_number FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC", (rid,)) or []
+        salida, _c = _check_ot_salida(docs, filas, hasta=hasta)
+        return _check_snap_guardar(rid, salida)
+
+    def _check_snap_pendientes(t0, max_s, t_peticion=None):
+        """Barrido del cron: retiros cerrados en los últimos días cuyo registro todavía NO trae la OT de control de salida. Si hay alguno, se pide
+        el reporte de movimientos de Check (SOLO LECTURA, por la puerta única; a lo más una vez por hora y solo si queda tiempo en la petición)
+        y se completa su registro. Nunca cambia el estado de un retiro ni le escribe a nadie. Nunca lanza."""
+        res = {"pendientes": 0, "completados": [], "consulto_check": False}
+        try:
+            filas_req = mysql_fetchall(
+                f"SELECT id, code, closed_at FROM `{REQ}` WHERE status IN ('retirada','cerrada') AND closed_at >= NOW() - INTERVAL %s DAY "
+                f"ORDER BY closed_at DESC LIMIT 20", (int(_SNAP_PEND_DIAS),)) or []
+            # Solo los que tuvieron actividad en Check (registro guardado) y aún sin la OT de salida: un retiro cerrado sin actividad (duplicado,
+            # spam, cancelado) no hace que se le pida el reporte a Check cada 20 min.
+            pendientes = []
+            for f in filas_req:
+                if _cerrado_hace_poco(f, _SNAP_PEND_DIAS):
+                    snap_f = _check_snap_leer(int(f["id"]))
+                    if snap_f and not _snap_tiene_salida(snap_f):
+                        pendientes.append(f)
+            res["pendientes"] = len(pendientes)
+            if not pendientes:
+                return res
+            cache = ctx.get("_CHECKWMS_TRAZA")
+            traer = ctx.get("_checkwms_trazabilidad_rows")
+            if cache is None or traer is None:
+                return res
+            edad = time.time() - float(cache.get("ts") or 0)
+            hay_tiempo = time.time() - t0 < max_s * 0.5 and (t_peticion is None or time.time() - t_peticion < 120)
+            if (cache.get("rows") is None or edad > 600) and not _CHECK_OT["corriendo"] \
+                    and time.time() - _SNAP_PEND["ts"] > _SNAP_PEND_TRAER_CADA and hay_tiempo:
+                _SNAP_PEND["ts"] = time.time()
+                _CHECK_OT["corriendo"], _CHECK_OT["intento"] = True, time.time()
+                res["consulto_check"] = True
+                try:
+                    get_db().commit()         # no esperar a Check con una transacción abierta (bloqueos de metadatos, REGLA #18)
+                except Exception:
+                    pass
+                try:
+                    traer(forzar=True)        # GET a Check (lista blanca); tarda 15-35 s: por eso va dentro de la petición del cron
+                finally:
+                    _CHECK_OT["corriendo"] = False
+            filas = cache.get("rows")
+            for f in pendientes:
+                if _check_snap_completar(int(f["id"]), filas, hasta=_tope_ot_cierre(f)):
+                    res["completados"].append(f.get("code") or f["id"])
+            print(f"[retiros-check-snap] cerrados sin la OT de salida: {len(pendientes)}; completados: {res['completados']}; "
+                  f"consultó Check: {res['consulto_check']}", flush=True)
+        except Exception as e:
+            print(f"[retiros-check-snap] pendientes: {e}", flush=True)
+        return res
 
     # ── TIEMPOS DE PREPARACIÓN como evidencia (Daniel 2026-10-06: «crear los datos persistentes con análisis inteligente de cuánto se tardó…
     #    del inicio al fin puede haber una intermitencia… calcular los minutos que se prepara el retiro según el WMS y tener toda la evidencia…
@@ -12931,9 +13068,9 @@ def register_pickup_routes(app, ctx):
                          "principio a fin − efectivo; tramos de un día a otro solo cuentan la jornada de bodega."),
         })
 
-    def _check_snap_respuesta(snap):
+    def _check_snap_respuesta(snap, refrescando=False):
         resp = jsonify({"ok": True, "estado": "listo", "desde_registro": True, "registrado": snap.get("guardado_en") or "", "edad_s": 0,
-                        "refrescando": False, "total_movimientos": 0, "campos": [], "documentos": snap.get("documentos") or [],
+                        "refrescando": bool(refrescando), "total_movimientos": 0, "campos": [], "documentos": snap.get("documentos") or [],
                         "tiempos": _tiempos_resumen(snap.get("_rid")) if snap.get("_rid") else None})
         resp.headers["Cache-Control"] = "no-store"
         return resp
@@ -12943,17 +13080,29 @@ def register_pickup_routes(app, ctx):
     def pickup_check_actividad(rid):
         """OT de Check de cada documento del retiro (quién, cuándo, estado, asignación y TODOS los campos). Solo lectura de Check; lo que informó
         se guarda en ILUS para que siga visible con el retiro completado."""
-        req_min = mysql_fetchone(f"SELECT id, status FROM `{REQ}` WHERE id=%s", (rid,))
+        req_min = mysql_fetchone(f"SELECT id, status, closed_at FROM `{REQ}` WHERE id=%s", (rid,))
         if not req_min:
             return jsonify({"ok": False, "error": "Retiro no encontrado."}), 404
         terminado = (req_min.get("status") or "") in ("retirada", "cerrada")
         snap = _check_snap_leer(rid)
         if snap:
             snap["_rid"] = rid
-        if terminado and snap:                       # retiro completado con registro guardado: no se le pide nada más a Check
+        if terminado and snap:                       # retiro completado con registro guardado
+            refrescando = False
+            # Cerrado hace pocos días y el registro aún sin la OT de CONTROL DE SALIDA: se completa con lo que Check informe (solo se agrega)
+            try:
+                if _cerrado_hace_poco(req_min, _SNAP_VIVO_DIAS) and not _snap_tiene_salida(snap):
+                    filas, _edad, refrescando = _check_ot_filas()
+                    if _check_snap_completar(rid, filas, hasta=_tope_ot_cierre(req_min)):
+                        snap = _check_snap_leer(rid) or snap
+                        snap["_rid"] = rid
+                    refrescando = refrescando and not _snap_tiene_salida(snap)
+            except Exception as e:                   # completar es un extra: si falla, se muestra lo guardado como siempre
+                print(f"[retiros-check-snap] completar rid={rid}: {e}", flush=True)
+                refrescando = False
             if not _prep_tiempos_leer(rid):          # registros guardados antes de que existiera el análisis: se calcula una vez
                 _prep_tiempos_guardar(rid, snap.get("documentos") or [], snap.get("huella") or "")
-            return _check_snap_respuesta(snap)
+            return _check_snap_respuesta(snap, refrescando)
         docs = mysql_fetchall(
             "SELECT document_type, document_number FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC",
             (rid,)) or []
@@ -13187,6 +13336,23 @@ def register_pickup_routes(app, ctx):
         """El correo al cliente solo sale en horario de cobertura: ni de madrugada, ni en colación, ni de tarde, ni un día no hábil."""
         return bool(_cobertura_estado()["abierta"])
 
+    def _retiro_auto_en_horario(ahora=None):
+        """La EXPEDICIÓN se registra en tiempo real mientras la bodega trabaja (Daniel 2026-10-08: «la expedición se tiene que hacer en tiempo real
+        con respecto al retiro»): día hábil de la bodega y dentro de su jornada (07:30–20:00, RETIROS_JORNADA_BODEGA), no solo en la cobertura de
+        08:00–17:00 (bodega entrega hasta las 20:00). El correo «Retiro completado» acompaña al cliente que está retirando; de madrugada, en fin
+        de semana o en feriado no actúa. «Enviar a preparación» automático sigue en la cobertura (REGLA #20): ese correo no acompaña a nadie."""
+        ahora = ahora or _ahora_chile()
+        hoy = ahora.date()
+        try:
+            if _dias_ctx(hoy, hoy)["cerrado"](hoy):
+                return False
+        except Exception as e:
+            print(f"[retiros-retiro-auto] calendario de la bodega: {e}", flush=True)
+            if hoy.isoweekday() >= 6:
+                return False
+        desde, hasta = _rti.jornada()
+        return desde <= ahora.hour * 60 + ahora.minute < hasta
+
     @app.route("/retiros/api/cobertura", methods=["GET"])
     @require_permission("retiros")
     def pickup_cobertura_api():
@@ -13206,6 +13372,13 @@ def register_pickup_routes(app, ctx):
         return bool(mysql_fetchone(
             f"SELECT id FROM `{LOG}` WHERE request_id=%s AND action='estado_actualizado' AND new_status='en_preparacion' LIMIT 1", (rid,)))
 
+    def _retiro_ya_paso_por(rid, estado):
+        """¿El retiro estuvo alguna vez en ese estado (según la bitácora)? Hoy se usa con «retirada»: un retiro reabierto."""
+        if estado == "retirada":
+            return bool(mysql_fetchone(
+                f"SELECT id FROM `{LOG}` WHERE request_id=%s AND action='estado_actualizado' AND new_status='retirada' LIMIT 1", (rid,)))
+        return False
+
     def _prep_auto_doc_compartido(rid):
         """Código de OTRO retiro activo que comparte una factura o boleta con este, o None. Check informa por DOCUMENTO, no por retiro:
         el picking que ve podría ser del otro retiro."""
@@ -13216,6 +13389,19 @@ def register_pickup_routes(app, ctx):
             f"JOIN `{REQ}` otro_r ON otro_r.id=otra.request_id "
             f"WHERE mia.request_id=%s AND otro_r.status NOT IN ('retirada','cerrada','rechazada','fallida') LIMIT 1", (rid,))
         return ((fila.get("code") or "otro retiro") if fila else None)
+
+    def _retiro_doc_sin_saldo_al_asociar(rid):
+        """Rótulo del primer documento que YA NO tenía saldo en el ERP cuando se asoció al retiro (con_saldo=0), o None. Si Check lo da por
+        expedido, esa salida pudo ser anterior al retiro (se entregó por otro lado): con la cita solo confirmada no se cierra solo."""
+        try:
+            for d in mysql_fetchall("SELECT document_type, document_number, con_saldo FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC",
+                                    (rid,)) or []:
+                if d.get("con_saldo") is not None and int(d.get("con_saldo")) == 0:
+                    return f"{(d.get('document_type') or '').strip().upper()} {d.get('document_number') or ''}".strip()
+        except Exception as e:
+            print(f"[retiros-retiro-auto] saldo de los documentos rid={rid}: {e}", flush=True)
+            return "(no se pudo revisar el saldo)"
+        return None
 
     def _prep_auto_detalle_check(rid):
         """«FCV 10953: OT 481516 (TERMINADA) · Usuario picking JPEREZ · Inicio 02/10/2026 15:32» con lo que YA hay en memoria del
@@ -13468,7 +13654,7 @@ def register_pickup_routes(app, ctx):
         Devuelve True si ESTA llamada actuó (avisó en sombra o cerró en activo). `confirmado` / `sincrono`: igual que `_prep_auto_aplicar`."""
         modo = _retiro_auto_modo()
         if modo == "apagado" or (req.get("status") or "") not in ("en_preparacion", "agenda_confirmada") \
-                or not _check_expedido(ev) or not _prep_auto_en_horario():
+                or not _check_expedido(ev) or not _retiro_auto_en_horario():
             _CHECK_EXPEDIDO_VISTO.pop(rid, None)
             return False
         if (req.get("status") or "") == "agenda_confirmada" and not _prep_auto_en_ventana(req):
@@ -13511,18 +13697,30 @@ def register_pickup_routes(app, ctx):
             lectura = "; confirmado con una segunda lectura a Check" if (confirmado or espera > 0) else ""
             base = (f"Check WMS informa el pedido como EXPEDIDO ({ev.get('despachadas')} de {ev.get('pedidas')} unidades despachadas{lectura}). "
                     + (f"Check: {detalle}. " if detalle else "OT y usuario: Check aún no los informa en el reporte de movimientos. "))
-            # Candado extra (2026-10-08, antes de activarlo con clientes reales): en ACTIVO solo se CIERRA un retiro que ya está «En preparación»
-            # (bodega lo preparó para esta cita). Con la cita solo confirmada, una expedición puede ser de otra salida del mismo documento: se avisa
-            # al equipo igual que en sombra y una persona decide.
-            cierra = (modo == "activo" and estado == "en_preparacion")
+            # En ACTIVO se cierra también con la cita confirmada (dentro de la ventana, revisado arriba). Daniel 2026-10-09: «habíamos quedado que
+            # cuando se asignara el picking se iba a gestionar la preparación, y cuando se integrara y se expidiera, la entrega». El candado del
+            # 08/10 (cerrar solo desde «En preparación») dejó a RET-YWN4D4 en «Cita confirmada» con el pedido ya entregado: si el picking cae fuera de
+            # la cobertura, «En preparación» nunca llega antes de la expedición. El documento en otro retiro activo y el cambio de fecha pendiente
+            # siguen frenándolo.
+            # Salvaguarda: con la cita solo confirmada, un documento que ya NO tenía saldo al asociarlo pudo despacharse antes del retiro (por
+            # otro lado): esa expedición no prueba que el cliente retiró. Se avisa al equipo, como en sombra, y una persona decide.
+            sin_saldo = _retiro_doc_sin_saldo_al_asociar(rid) if (modo == "activo" and estado == "agenda_confirmada") else None
+            # Una persona ya decidió: el retiro estuvo «Retirada» y lo reabrieron (p. ej. bodega expidió antes y el cliente aún no pasa), o tenía la
+            # cita confirmada después de haber estado «En preparación» (lo devolvieron, REGLA #20). El automático no lo vuelve a cerrar ni le escribe
+            # otra vez al cliente: solo avisa al equipo.
+            reabierto = modo == "activo" and (_retiro_ya_paso_por(rid, "retirada")
+                                              or (estado == "agenda_confirmada" and _prep_auto_ya_paso(rid)))
+            motivo = ("una persona lo había reabierto o devuelto a «Cita confirmada», así que el automático no lo vuelve a cerrar" if reabierto else
+                      (f"{sin_saldo} ya no tenía saldo en el ERP cuando se asoció al retiro (pudo entregarse antes)" if sin_saldo else ""))
+            cierra = (modo == "activo") and not motivo
             if not cierra:
                 if _aviso_equipo_ya_enviado(rid, "check_expedido", horas=24 * 3650):
                     _CHECK_EXPEDIDO_VISTO.pop(rid, None)
                     return False
                 try:
                     log_event(rid, "check_expedido", estado, estado,
-                              (("Automático · MODO SOMBRA (no se cambió el estado ni se le escribió al cliente). " if modo == "sombra" else
-                                "Automático · Check expidió con la cita aún sin «En preparación»: no se cierra solo ni se le escribe al cliente. ") + base
+                              (("Automático · MODO SOMBRA (no se cambió el estado ni se le escribió al cliente). " if not motivo else
+                                f"Automático · no se cierra solo ni se le escribe al cliente: {motivo}. ") + base
                                + f"Detectado el {ahora_txt} (hora Chile). Si el cliente ya se llevó el pedido, hay que marcarlo como RETIRADO.")[:900],
                               "sistema", "Check WMS")
                 except Exception as e:
@@ -13541,7 +13739,21 @@ def register_pickup_routes(app, ctx):
                         mysql_execute(f"UPDATE `{REQ}` SET status='retirada', closed_at=NOW() WHERE id=%s AND status IN ('en_preparacion','agenda_confirmada') "
                                       f"AND NOT EXISTS (SELECT 1 FROM `{PROP}` WHERE request_id=%s AND status='pending' AND LOWER(proposed_by)='cliente')",
                                       (rid, rid))
-                    log_event(rid, "estado_actualizado", estado, "retirada",
+                    desde = estado
+                    if estado == "agenda_confirmada":
+                        # Bodega preparó (picking) y expidió antes de que ILUS lo pasara a «En preparación»: la preparación queda registrada con la
+                        # entrega, igual que en los demás retiros (hito «Preparación» de la ficha). SIN el correo «Estamos preparando»: el pedido ya salió.
+                        try:            # si la bitácora de la preparación falla, el cierre y el correo siguen igual
+                            detalle_prep = _prep_auto_detalle_check(rid)
+                            log_event(rid, "estado_actualizado", "agenda_confirmada", "en_preparacion",
+                                      ("Automático · Check WMS: bodega preparó el pedido (picking) y lo expidió antes de que ILUS lo pasara a «En preparación»; "
+                                       "la preparación se registra junto con la entrega. " + (f"Check: {detalle_prep}. " if detalle_prep else "")
+                                       + f"Registrado el {ahora_txt} (hora Chile). Al cliente no se le envía «Estamos preparando»: el pedido ya salió.")[:900],
+                                      "sistema", "Check WMS (automático)")
+                            desde = "en_preparacion"
+                        except Exception as e_prep:
+                            print(f"[retiros-retiro-auto] bitácora de la preparación rid={rid}: {e_prep}", flush=True)
+                    log_event(rid, "estado_actualizado", desde, "retirada",
                               ("Automático · Check WMS: bodega expidió el pedido, así que el retiro se da por RETIRADO. " + base
                                + f"Registrado el {ahora_txt} (hora Chile). Quién retiró queda sin completar: una persona debe anotarlo. "
                                  "Al cliente se le envía el correo de retiro completado.")[:900],
@@ -13562,12 +13774,13 @@ def register_pickup_routes(app, ctx):
                 _notificar_equipo_retiros(
                     f"📦 {code}: Check ya expidió el pedido",
                     f"{req.get('customer_name') or 'Cliente'} — Check ya expidió el pedido{(' ' + docs_txt) if docs_txt else ''} {quien_hora}: "
-                    + (f"si el cliente ya se lo llevó, márcalo como RETIRADO (cuando el cierre automático esté activo, esto lo cerrará solo y le avisará al cliente)."
-                     if modo == "sombra" else "el retiro no estaba «En preparación», así que no se cerró solo: si el cliente ya se lo llevó, márcalo como RETIRADO."),
+                    + ("si el cliente ya se lo llevó, márcalo como RETIRADO (cuando el cierre automático esté activo, esto lo cerrará solo y le avisará al cliente)."
+                       if not motivo else f"no se cerró solo: {motivo}. Si el cliente ya se lo llevó, márcalo como RETIRADO."),
                     rid, code, prioridad="alta", tipo="retiro_expedido", send_email=False)
             except Exception as e:
                 print(f"[retiros-retiro-auto] aviso equipo rid={rid}: {e}", flush=True)
-            print(f"[retiros-retiro-auto] rid={rid} {code}: Check expidió (SOMBRA: solo aviso al equipo)", flush=True)
+            por_que = " · reabierto por una persona" if reabierto else (" · documento sin saldo al asociar" if sin_saldo else "")
+            print(f"[retiros-retiro-auto] rid={rid} {code}: Check expidió (SOMBRA: solo aviso al equipo){por_que}", flush=True)
             return True
         # ACTIVO: los mismos efectos que marcarlo RETIRADO a mano, cada uno por separado (ninguno frena al resto ni deshace el cambio)
         try:
@@ -13625,38 +13838,43 @@ def register_pickup_routes(app, ctx):
         except Exception:
             pass
 
-    def _prep_auto_barrido_sync(max_s=90, dry=False):
+    def _prep_auto_barrido_sync(max_s=90, dry=False, t_peticion=None):
         """Revisa en Check los retiros con cita cercana y pasa a «En preparación» los que ya tienen picking; y avisa (modo sombra) o cierra (modo
         activo) los que Check ya EXPIDIÓ por completo. Dentro de UNA petición (la que hace Cloud Scheduler), porque Cloud Run casi no da CPU a
         un hilo fuera de una petición. La señal se confirma releyendo a Check tras RETIROS_CHECK_CONFIRMACION_S segundos (una sola espera para
         todos los candidatos). Fuera del horario de la bodega no lee ni escribe nada (salvo con dry=True, que solo mira)."""
         t0 = time.time()
         modo_ret = _retiro_auto_modo()
-        res = {"activo": _prep_auto_activo(), "en_horario": True, "revisados": 0, "con_senal": [], "pasaron": [], "desfase": [], "errores": 0,
-               "retiro_auto_modo": modo_ret, "expedidos": [], "expedidos_actuaron": []}
+        res = {"activo": _prep_auto_activo(), "en_horario": True, "en_jornada_bodega": True, "revisados": 0, "con_senal": [], "pasaron": [],
+               "desfase": [], "errores": 0, "retiro_auto_modo": modo_ret, "expedidos": [], "expedidos_actuaron": []}
         if not res["activo"] and modo_ret == "apagado":
             return res
+        # «Enviar a preparación» (correo «Estamos preparando») solo en la cobertura 08–17; la expedición = retirado en la jornada de la bodega
+        # (07:30–20:00): el cliente está retirando y el correo lo acompaña en tiempo real.
         res["en_horario"] = _prep_auto_en_horario()
-        if not res["en_horario"] and not dry:
+        res["en_jornada_bodega"] = _retiro_auto_en_horario()
+        prep_ok = res["activo"] and (res["en_horario"] or dry)
+        exp_ok = modo_ret != "apagado" and (res["en_jornada_bodega"] or dry)
+        if not prep_ok and not exp_ok:
             return res
 
         def _lee(rid):
             req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
             return req, (_check_prep_retiro(rid)["evaluacion"] if req else None)
         senal, senal_exp = [], []
-        for f in (_prep_auto_candidatos() if res["activo"] else []):
+        for f in (_prep_auto_candidatos() if (prep_ok or exp_ok) else []):
             if time.time() - t0 > max_s * 0.45:
                 break
             try:
                 rid = int(f["id"])
                 req, ev = _lee(rid)
                 res["revisados"] += 1
-                if req and ev and not dry and _prep_auto_desfase(rid, req, ev):
+                if req and ev and prep_ok and not dry and _prep_auto_desfase(rid, req, ev):
                     res["desfase"].append(req.get("code") or rid)
-                if req and ev and ev.get("iniciada_auto") and _prep_auto_en_ventana(req) and not _prep_auto_cambio_pendiente(rid):
+                if req and ev and prep_ok and ev.get("iniciada_auto") and _prep_auto_en_ventana(req) and not _prep_auto_cambio_pendiente(rid):
                     senal.append(rid)
                     res["con_senal"].append(req.get("code") or rid)
-                if req and ev and modo_ret != "apagado" and _check_expedido(ev) and _prep_auto_en_ventana(req) \
+                if req and ev and exp_ok and _check_expedido(ev) and _prep_auto_en_ventana(req) \
                         and not _prep_auto_cambio_pendiente(rid):
                     senal_exp.append(rid)
                     res["expedidos"].append(req.get("code") or rid)
@@ -13664,7 +13882,7 @@ def register_pickup_routes(app, ctx):
                 res["errores"] += 1
                 print(f"[retiros-prep-auto] barrido rid={f.get('id')}: {e}", flush=True)
         # «Check expidió» = retirado: los retiros que YA están en preparación (los de cita confirmada se vieron arriba)
-        if modo_ret != "apagado":
+        if exp_ok:
             try:
                 en_prep = mysql_fetchall(f"SELECT id FROM `{REQ}` WHERE status='en_preparacion' ORDER BY id DESC LIMIT 30") or []
             except Exception as e:
@@ -13715,6 +13933,9 @@ def register_pickup_routes(app, ctx):
                 except Exception as e:
                     res["errores"] += 1
                     print(f"[retiros-retiro-auto] confirmación rid={rid}: {e}", flush=True)
+        # Registro de Check de los retiros cerrados hace poco que aún no trae la OT de CONTROL DE SALIDA (solo ILUS; Check solo se consulta)
+        if exp_ok and not dry:
+            res["registro_check"] = _check_snap_pendientes(t0, max_s, t_peticion)
         res["segundos"] = round(time.time() - t0, 1)
         return res
 
