@@ -299,7 +299,7 @@ setTimeout(function () { process.stdout.write(el.innerHTML); }, 80);
     def test_interna_no_muestra_ni_ofrece_documento_cobro_ni_autorizacion(self):
         for modo in ("ficha", "modal"):
             html = self._pintar(*self._datos(True), modo=modo)
-            self.assertIn("Finanzas y documentos", html, modo)
+            self.assertIn("Costos y documentación", html, modo)   # 2026-10-08: el bloque se llama así (antes «Finanzas y documentos»)
             for malo in self.PROHIBIDO:
                 self.assertNotIn(malo, html, f"{modo}: la OT interna ofrece «{malo}»")
             self.assertIn(TXT_INTERNA, html, modo)
