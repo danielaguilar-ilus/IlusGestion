@@ -130676,6 +130676,336 @@ def mant_facturas_proveedor_crear():
     return jsonify({"ok": True, "id": fid})
 
 
+# 🧮 2026-10-08 (Daniel, lote #17 de Transportes felcarm SPA): el lote se creó con 10 OT por $8.503.000 y,
+# al agregarle una OT más ($250.000), «Monto de la factura» siguió en $8.503.000 y la Diferencia quedó en
+# -$250.000: "debería tener 250 lucas más". Además: "perdí el detalle, no veo un Excel".
+#
+# Regla de fondo: `monto_total` es el monto DEL DOCUMENTO del proveedor cuando el lote ya tiene su factura real
+# (número de documento escrito). Mientras el lote solo es una «Solicitud de OC» (numero_documento NULL o vacío,
+# la misma condición con la que la pantalla dice «Sin factura — pendiente de completar»), el monto es solo la
+# suma de lo que se le va a pagar: ahí se recalcula solo al asignar o quitar una OT. Con factura real NO se toca:
+# se avisa la diferencia. Y «Ajustar el monto a la suma de las OT» lo fija a mano, con constancia en la bitácora.
+_MFP_ACCION_TXT = {
+    "creada": "Lote creado",
+    "solicitud_oc_creada": "Solicitud de OC creada",
+    "creada_pagada_sin_factura": "Lote creado como pagado (sin factura)",
+    "editada": "Lote editado",
+    "ot_asignada": "OT asignada",
+    "ot_quitada": "OT quitada",
+    "ot_quitada_de_pagada": "OT quitada (lote ya pagado)",
+    "ot_quitada_por_eliminacion": "OT eliminada y quitada del lote",
+    "monto_actualizado_auto": "Monto actualizado solo (sin factura aún)",
+    "monto_ajustado": "Monto ajustado a la suma de las OT",
+    "pagada": "Marcada como pagada",
+    "reabierta": "Reabierta",
+    "anulada": "Anulada",
+    "completada_con_factura_real": "Factura real registrada",
+    "archivo_subido": "Respaldo subido",
+}
+
+
+def _mfp_clp_txt(v):
+    """$8.503.000 (con signo si es negativo): el mismo formato que ve Daniel en pantalla."""
+    n = round(float(v or 0))
+    return ("-" if n < 0 else "") + "$" + f"{abs(n):,.0f}".replace(",", ".")
+
+
+def _mfp_tiene_factura_real(f):
+    """True si el lote ya tiene el documento REAL del proveedor (número escrito). Es la misma condición que usa
+    la pantalla (s3_ok) para dejar de decir «Sin factura — pendiente de completar»."""
+    return bool(str((f or {}).get("numero_documento") or "").strip())
+
+
+def _mfp_totales_lote(monto_total, items):
+    """Las cifras del lote, UNA sola vez, para la pantalla y para el Excel (no hay fórmula propia en ninguno):
+    «cobra esta factura» de cada OT es lo que se fijó al asignar (fac_monto) o, si no, lo declarado (sugerido);
+    la diferencia es monto del lote − suma de las OT; el margen del lote, cobrado al cliente − monto del lote."""
+    monto = float(monto_total or 0)
+    asignado = sum(float(i["sugerido"] if i.get("fac_monto") is None else i["fac_monto"]) for i in items)
+    cobrado = sum(float(i.get("cobrado_cliente") or 0) for i in items)
+    return {
+        "monto_total": monto, "total_asignado": asignado, "diferencia": monto - asignado,
+        "total_cobrado_cliente": cobrado, "margen_total": cobrado - monto, "margen_filas": cobrado - asignado,
+        "n_ot": len(items),
+        "n_no_cobran": sum(1 for i in items if i.get("es_garantia")),
+        "n_sin_cerrar": sum(1 for i in items if i.get("no_cerrada")),
+        "n_sin_costo": sum(1 for i in items if i.get("sin_costo")),
+    }
+
+
+def _mfp_monto_lote_al_dia(fid, f=None, cambio=None):
+    """Se llama DESPUÉS de asignar o quitar una OT. Devuelve un dict con `aviso` (texto listo para mostrar) y
+    `recalculado`. Lote sin factura real y pendiente: monto_total = suma de los items (con constancia en
+    mant_logs). Lote con factura real: no se toca, solo se avisa la diferencia. `cambio` = ("agregó"|"quitó", OT)."""
+    info = {"recalculado": False, "tiene_factura": False, "antes": 0.0, "despues": 0.0, "suma": 0.0,
+            "diferencia": 0.0, "aviso": "", "nivel": "info"}
+    try:
+        fresca = _mfp_cargar(fid) or f or {}
+        fila = mysql_fetchone(
+            "SELECT COALESCE(SUM(monto),0) AS suma FROM mant_factura_proveedor_items "
+            " WHERE factura_proveedor_id=%s", (fid,)) or {}
+        suma = float(fila.get("suma") or 0)
+        antes = float(fresca.get("monto_total") or 0)
+        real = _mfp_tiene_factura_real(fresca)
+        info.update(tiene_factura=real, antes=antes, despues=antes, suma=suma, diferencia=antes - suma)
+        if abs(antes - suma) < 0.5:
+            return info
+        if (not real) and fresca.get("estado_pago") == "pendiente":
+            n = mysql_execute_returning_rowcount(
+                "UPDATE mant_facturas_proveedor SET monto_total=%s "
+                " WHERE id=%s AND estado_pago='pendiente' "
+                "   AND (numero_documento IS NULL OR TRIM(numero_documento)='')", (suma, fid))
+            if n:
+                verbo, num = cambio or ("cambió", "una OT")
+                _mant_log("factura_proveedor", fid, "monto_actualizado_auto",
+                          f"monto del lote actualizado de {_mfp_clp_txt(antes)} a {_mfp_clp_txt(suma)}: "
+                          f"se {verbo} la {num} (sin factura aún)")
+                info.update(recalculado=True, despues=suma, diferencia=0.0, nivel="success",
+                            aviso=f"El monto del lote se actualizó a {_mfp_clp_txt(suma)} porque todavía "
+                                  f"no tiene factura del proveedor.")
+                return info
+        if real:
+            info["aviso"] = (f"La factura dice {_mfp_clp_txt(antes)} y las OT suman {_mfp_clp_txt(suma)}: "
+                             f"diferencia {_mfp_clp_txt(antes - suma)}.")
+        else:
+            info["aviso"] = (f"El monto del lote ({_mfp_clp_txt(antes)}) no se toca porque el lote está "
+                             f"{fresca.get('estado_pago')}; las OT suman {_mfp_clp_txt(suma)}: "
+                             f"diferencia {_mfp_clp_txt(antes - suma)}.")
+        info["nivel"] = "warning"
+    except Exception as e:
+        print(f"[facprov] monto al día fid={fid}: {e}", flush=True)
+    return info
+
+
+def _mfp_evento_fila(r):
+    accion = (r.get("accion") or "").strip()
+    return {
+        "id": r.get("id"),
+        "fecha": chile_fmt_filter(r.get("created_at"), "%d/%m/%Y %H:%M") if r.get("created_at") else "",
+        "usuario": (r.get("usuario") or "").strip(),
+        "accion": accion,
+        "accion_txt": _MFP_ACCION_TXT.get(accion) or accion.replace("_", " ").capitalize(),
+        "detalle": (r.get("detalle") or "").strip(),
+    }
+
+
+def _mfp_eventos_total(fid):
+    return int((mysql_fetchone(
+        "SELECT COUNT(*) AS n FROM mant_logs WHERE entidad='factura_proveedor' AND entidad_id=%s",
+        (fid,)) or {}).get("n") or 0)
+
+
+def _mfp_eventos_lote(fid, limite=10, desplazar=0, ascendente=False):
+    """Eventos del lote desde mant_logs (entidad factura_proveedor), fecha y hora Chile. Pantalla: los más
+    nuevos primero y paginados; Excel: todos, en orden cronológico."""
+    orden = "ASC" if ascendente else "DESC"
+    rows = mysql_fetchall(
+        "SELECT id, accion, detalle, usuario, created_at FROM mant_logs "
+        " WHERE entidad='factura_proveedor' AND entidad_id=%s "
+        f" ORDER BY created_at {orden}, id {orden} LIMIT %s OFFSET %s",
+        (fid, int(limite), int(desplazar))) or []
+    return [_mfp_evento_fila(dict(r)) for r in rows]
+
+
+def _mfp_proveedor_canon(factura, items, fid):
+    """La EMPRESA como título del lote (ficha guardada si está vigente; si no, la del técnico de sus OT) y el
+    nombre escrito a mano como alias. Devuelve (nombre, rut, ficha_id)."""
+    canon, canon_rut, canon_id = "", "", None
+    try:
+        tf = None
+        if factura.get("tecnico_externo_id"):
+            tf = mysql_fetchone(
+                "SELECT id, razon_social, rut_empresa FROM mant_tecnicos_externos "
+                " WHERE id=%s AND COALESCE(estado,'activo') <> 'baja'", (int(factura["tecnico_externo_id"]),))
+        if not tf:
+            pid = next((i.get("prov_ficha_id") for i in items if i.get("prov_ficha_id")), None)
+            if pid:
+                tf = mysql_fetchone(
+                    "SELECT id, razon_social, rut_empresa FROM mant_tecnicos_externos WHERE id=%s", (int(pid),))
+        if tf:
+            canon, canon_rut, canon_id = (tf.get("razon_social") or "").strip(), tf.get("rut_empresa") or "", int(tf["id"])
+    except Exception as e_canon:
+        print(f"[facprov] canon fid={fid}: {e_canon}", flush=True)
+    return canon, canon_rut, canon_id
+
+
+def _mfp_excel_lote(factura, items, eventos, prov_nombre, prov_rut, meta):
+    """Detalle de UN lote en Excel (3 hojas): Resumen (con fórmulas sobre la hoja de OT), OT del lote (una fila
+    por OT con lo mismo que muestra la pantalla de detalle) e Historial (mant_logs). Devuelve un BytesIO.
+    Las cifras por OT salen de _mfp_items (= _mfp_fila_ot = la cuenta única _ot_finanzas): no hay fórmula propia."""
+    import io as _io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    tot = _mfp_totales_lote(factura.get("monto_total"), items)
+    n = len(items)
+    last = max(n + 1, 2)
+    f_n = Font(name="Arial", size=10)
+    f_b = Font(name="Arial", size=10, bold=True)
+    f_h = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+    f_rojo = Font(name="Arial", size=10, bold=True, color="B91C1C")
+    fill_h = PatternFill("solid", fgColor="0A0A0A")
+    fill_t = PatternFill("solid", fgColor="F1F5F9")
+    clp = '"$"#,##0;[Red]-"$"#,##0'
+    pct = '0.0%'
+
+    def _encabezar(ws, cols, anchos):
+        ws.append(cols)
+        for i in range(1, len(cols) + 1):
+            c = ws.cell(row=1, column=i)
+            c.fill, c.font = fill_h, f_h
+            c.alignment = Alignment(vertical="center", wrap_text=True)
+            ws.column_dimensions[get_column_letter(i)].width = anchos[i - 1] if i - 1 < len(anchos) else 14
+        ws.freeze_panes = "A2"
+        ws.row_dimensions[1].height = 30
+
+    def _neutralizar_texto(ws, desde, hasta):
+        # Texto escrito por personas (observación, cliente, detalle de la bitácora) que empieza con = + - @ no debe
+        # ejecutarse como fórmula al abrir el Excel: se fuerza a texto.
+        for fila in ws.iter_rows(min_row=desde, max_row=hasta):
+            for cel in fila:
+                if isinstance(cel.value, str) and cel.value[:1] in ("=", "+", "-", "@"):
+                    cel.data_type = "s"
+
+    wb = Workbook()
+    ws_r = wb.active
+    ws_r.title = "Resumen"
+    ws_o = wb.create_sheet("OT del lote")
+    ws_h = wb.create_sheet("Historial")
+
+    # ── OT del lote ───────────────────────────────────────────────────────────
+    cols_o = ["N° OT", "Fecha", "Técnico", "Proveedor de la OT", "Cliente", "Tipo de trabajo", "Cobertura",
+              "Estado", "N° de anexo", "Anexo firmado", "Pago instalación", "Pago despacho",
+              "Total que paga esta factura", "Cobrado instalación", "Cobrado despacho", "Cobrado total",
+              "Margen", "Margen %", "Observación", "Asignada por", "Asignada el"]
+    _encabezar(ws_o, cols_o, [16, 11, 22, 26, 32, 18, 22, 16, 11, 14, 15, 15, 18, 15, 15, 15, 14, 10, 44, 18, 17])
+    for it in items:
+        cobra = it["sugerido"] if it.get("fac_monto") is None else it["fac_monto"]
+        cobertura = ((it.get("cobertura_txt") or it.get("cobertura_corta") or "No se cobra")
+                     if it.get("es_garantia") else "Se cobra")
+        if it.get("anexo_numero"):
+            anexo_n, anexo_f = it["anexo_numero"], ("Sí" if it.get("anexo_firmado") else "No")
+        else:
+            anexo_n, anexo_f = "", "Sin anexo"
+        estado = (it.get("estado") or "").replace("_", " ") + (" (no cerrada)" if it.get("no_cerrada") else "")
+        pct_fila = it.get("margen_fila_pct")
+        ws_o.append([
+            it.get("numero_ot"), it.get("fecha") or "", it.get("tecnico_nombre") or "", it.get("proveedor") or "",
+            it.get("cliente") or "", it.get("tipo_label") or "", cobertura, estado, anexo_n, anexo_f,
+            float(it.get("servicio") or 0), float(it.get("despacho") or 0), float(cobra or 0),
+            float(it.get("cobrado_cliente_serv") or 0), float(it.get("cobrado_cliente_envio") or 0),
+            float(it.get("cobrado_cliente") or 0), float(it.get("margen_fila") or 0),
+            (pct_fila / 100.0) if pct_fila is not None else "",
+            it.get("observacion") or "", it.get("usuario") or "", it.get("asignada") or ""])
+    for r in range(2, n + 2):
+        for c in range(1, len(cols_o) + 1):
+            cel = ws_o.cell(row=r, column=c)
+            cel.font = f_n
+            if 11 <= c <= 17:
+                cel.number_format = clp
+            elif c == 18:
+                cel.number_format = pct
+            elif c == 19:
+                cel.alignment = Alignment(wrap_text=True, vertical="top")
+        if items[r - 2].get("no_cerrada"):
+            ws_o.cell(row=r, column=8).font = f_rojo
+        if not items[r - 2].get("anexo_firmado"):
+            ws_o.cell(row=r, column=10).font = f_rojo
+    fila_tot = n + 2
+    ws_o.cell(row=fila_tot, column=1, value="TOTALES")
+    for c in range(11, 18):
+        col = get_column_letter(c)
+        ws_o.cell(row=fila_tot, column=c, value=f"=SUM({col}2:{col}{last})").number_format = clp
+    ws_o.cell(row=fila_tot, column=18, value=f'=IF(P{fila_tot}>0,Q{fila_tot}/P{fila_tot},"")').number_format = pct
+    for c in range(1, len(cols_o) + 1):
+        cel = ws_o.cell(row=fila_tot, column=c)
+        cel.font, cel.fill = f_b, fill_t
+    ws_o.auto_filter.ref = f"A1:{get_column_letter(len(cols_o))}{last if n else 1}"
+    _neutralizar_texto(ws_o, 2, n + 1)
+
+    # ── Resumen (fórmulas sobre la hoja de OT) ────────────────────────────────
+    rng = lambda col: f"'OT del lote'!{col}2:{col}{last}"
+    tiene_real = _mfp_tiene_factura_real(factura)
+    estado_txt = {"pendiente": "Pendiente de pago", "pagada": "Pagada", "anulada": "Anulada"}.get(
+        factura.get("estado_pago"), factura.get("estado_pago") or "")
+    tipo_lbl = {"factura": "Factura", "boleta_honorarios": "Boleta de honorarios",
+                "otro": "Documento"}.get(factura.get("tipo_documento"), "Documento")
+    if tiene_real:
+        doc_txt = f"{tipo_lbl} N° {str(factura.get('numero_documento')).strip()}"
+        origen_monto = "Monto del documento del proveedor"
+    else:
+        doc_txt = "Sin factura aún (solicitud de orden de compra)"
+        origen_monto = "Declarado en la solicitud; se actualiza solo con las OT mientras no haya factura"
+    ws_r.append(["Concepto", "Valor", "Detalle"])
+    for i in range(1, 4):
+        c = ws_r.cell(row=1, column=i)
+        c.fill, c.font = fill_h, f_h
+    ws_r.column_dimensions["A"].width = 40
+    ws_r.column_dimensions["B"].width = 36
+    ws_r.column_dimensions["C"].width = 72
+    ws_r.freeze_panes = "A2"
+    filas_r = [
+        ("Lote N°", int(factura.get("id") or 0), "", None),
+        ("Proveedor", prov_nombre or factura.get("proveedor_nombre") or "", "", None),
+        ("RUT", prov_rut or "", "", None),
+        ("Estado de pago", estado_txt, meta.get("pagada_txt") or "", None),
+        ("N° de orden de compra", factura.get("numero_oc") or "(sin N° de OC)", "", None),
+        ("Documento del proveedor", doc_txt, "", None),
+        ("Fecha del documento", meta.get("fecha_doc") or "", "", None),
+        ("Lote creado", meta.get("creado_txt") or "", "", None),
+        ("Monto declarado del lote", tot["monto_total"], origen_monto, clp),
+        ("Suma de las OT", f"=SUM({rng('M')})", "Lo que cobra cada OT de este lote (hoja «OT del lote»)", clp),
+        ("Diferencia", "=B10-B11", "Monto declarado − suma de las OT (negativo: las OT suman más que el monto)", clp),
+        ("Cobrado a cliente", f"=SUM({rng('P')})", "Lo que ILUS cobró a sus clientes por estas OT", clp),
+        ("Margen del lote", "=B13-B10", "Cobrado a cliente − monto declarado del lote", clp),
+        ("Margen sobre las OT", "=B13-B11", "Cobrado a cliente − suma de las OT", clp),
+        ("Cantidad de OT", f"=COUNTA({rng('A')})", "", None),
+        ("OT que no se cobran al cliente", tot["n_no_cobran"], "Garantía, cortesía, contrato o trabajo interno: se paga igual", None),
+        ("OT sin cerrar", tot["n_sin_cerrar"], "Se pueden pagar; queda anotado", None),
+        ("Generado", meta.get("generado_txt") or "", "Hora de Chile", None),
+    ]
+    for etiqueta, valor, nota, fmt in filas_r:
+        ws_r.append([etiqueta, valor, nota])
+        r = ws_r.max_row
+        ws_r.cell(row=r, column=1).font = f_b
+        ws_r.cell(row=r, column=2).font = f_n
+        ws_r.cell(row=r, column=3).font = f_n
+        ws_r.cell(row=r, column=2).alignment = Alignment(horizontal="left", wrap_text=True)
+        ws_r.cell(row=r, column=3).alignment = Alignment(wrap_text=True)
+        if fmt:
+            ws_r.cell(row=r, column=2).number_format = fmt
+    for r in (11, 12, 14):
+        ws_r.cell(row=r, column=1).fill = fill_t
+        ws_r.cell(row=r, column=2).fill = fill_t
+        ws_r.cell(row=r, column=3).fill = fill_t
+
+    # ── Historial ─────────────────────────────────────────────────────────────
+    _encabezar(ws_h, ["Fecha y hora (Chile)", "Usuario", "Acción", "Detalle"], [20, 26, 36, 100])
+    for ev in eventos:
+        ws_h.append([ev.get("fecha") or "", ev.get("usuario") or "", ev.get("accion_txt") or "", ev.get("detalle") or ""])
+    for r in range(2, len(eventos) + 2):
+        for c in range(1, 5):
+            cel = ws_h.cell(row=r, column=c)
+            cel.font = f_n
+            cel.alignment = Alignment(wrap_text=True, vertical="top")
+    ws_h.auto_filter.ref = f"A1:D{max(len(eventos) + 1, 1)}"
+    _neutralizar_texto(ws_h, 2, len(eventos) + 1)
+
+    buf = _io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def _mfp_excel_nombre(fid, prov_nombre, hoy):
+    """lote_<N>_<proveedor>_dd-mm-aaaa.xlsx (solo ASCII, sin espacios ni símbolos)."""
+    import unicodedata as _ud
+    base = _ud.normalize("NFKD", prov_nombre or "proveedor").encode("ascii", "ignore").decode("ascii")
+    base = re.sub(r"[^A-Za-z0-9]+", "-", base).strip("-")[:40] or "proveedor"
+    return f"lote_{int(fid)}_{base}_{hoy.strftime('%d-%m-%Y')}.xlsx"
+
+
 @app.route("/mantenciones/facturas-proveedor/<int:fid>")
 @app.route("/servicio-tecnico/facturas-proveedor/<int:fid>")
 @_mant_required
@@ -130691,42 +131021,36 @@ def mant_factura_proveedor_detalle(fid):
     factura = dict(factura)
     factura["monto_total"] = float(factura.get("monto_total") or 0)
     items = _mfp_items(fid)
-    total_asignado = sum(i["sugerido"] if i["fac_monto"] is None else i["fac_monto"] for i in items)
-    # 💰 2026-09-19 (Daniel: "comparemos el total cobrado por ILUS y el
-    # total cobrado por el proveedor, así sé si pierdo o gano"). Suma de
-    # lo que ILUS le cobró a SU cliente en cada OT de esta factura, para
-    # verla al lado de lo que esta factura le paga al proveedor.
-    total_cobrado_cliente = sum(i["cobrado_cliente"] for i in items)
-    # 🏢 2026-09-20: la EMPRESA como título (ficha guardada si está vigente,
-    # si no la del técnico de sus OT); el nombre escrito a mano queda como
-    # alias -- "Daniel Pulgar" en el encabezado de una factura de DAP Servicio
+    # 2026-10-08: las cifras del lote salen de UNA función (_mfp_totales_lote), la misma que usa el Excel del lote.
+    # 💰 2026-09-19 (Daniel: "comparemos el total cobrado por ILUS y el total cobrado por el proveedor, así sé si
+    # pierdo o gano"): total_cobrado_cliente = suma de lo que ILUS le cobró a SU cliente en cada OT del lote.
+    tot_lote = _mfp_totales_lote(factura["monto_total"], items)
+    total_asignado = tot_lote["total_asignado"]
+    total_cobrado_cliente = tot_lote["total_cobrado_cliente"]
+    # 🏢 2026-09-20: la EMPRESA como título (ficha guardada si está vigente, si no la del técnico de sus OT); el
+    # nombre escrito a mano queda como alias -- "Daniel Pulgar" en el encabezado de una factura de DAP Servicio
     # es justo lo que Daniel pidió unificar.
-    _canon, _canon_rut, _canon_id = "", "", None
-    try:
-        _tf = None
-        if factura.get("tecnico_externo_id"):
-            _tf = mysql_fetchone(
-                "SELECT id, razon_social, rut_empresa FROM mant_tecnicos_externos "
-                " WHERE id=%s AND COALESCE(estado,'activo') <> 'baja'", (int(factura["tecnico_externo_id"]),))
-        if not _tf:
-            _pid = next((i.get("prov_ficha_id") for i in items if i.get("prov_ficha_id")), None)
-            if _pid:
-                _tf = mysql_fetchone("SELECT id, razon_social, rut_empresa FROM mant_tecnicos_externos WHERE id=%s", (int(_pid),))
-        if _tf:
-            _canon, _canon_rut, _canon_id = (_tf.get("razon_social") or "").strip(), _tf.get("rut_empresa") or "", int(_tf["id"])
-    except Exception as _e_canon:
-        print(f"[facprov] detalle canon fid={fid}: {_e_canon}", flush=True)
+    _canon, _canon_rut, _canon_id = _mfp_proveedor_canon(factura, items, fid)
     _orig = (factura.get("proveedor_nombre") or "").strip()
     factura["prov_canon"] = _canon or _orig
     factura["prov_canon_rut"] = _canon_rut or (factura.get("proveedor_rut") or "")
     factura["prov_canon_id"] = _canon_id
     factura["prov_alias"] = _orig if (_canon and _orig.lower() != _canon.lower()) else ""
+    # 📋 2026-10-08: historial del lote (los 10 más nuevos; el resto se pagina con /historial).
+    try:
+        historial = _mfp_eventos_lote(fid, limite=10)
+        historial_total = _mfp_eventos_total(fid)
+    except Exception as _e_hist:
+        print(f"[facprov] historial fid={fid}: {_e_hist}", flush=True)
+        historial, historial_total = [], 0
     return render_template(
         "mantenciones/factura_proveedor_detalle.html",
         factura=factura, items=items, total_asignado=total_asignado,
-        diferencia=factura["monto_total"] - total_asignado,
+        diferencia=tot_lote["diferencia"],
         total_cobrado_cliente=total_cobrado_cliente,
-        margen_total=total_cobrado_cliente - factura["monto_total"],
+        margen_total=tot_lote["margen_total"],
+        tiene_factura_real=_mfp_tiene_factura_real(factura),
+        historial=historial, historial_total=historial_total,
         es_superadmin=bool((getattr(g, "permissions", {}) or {}).get("superadmin")),
     )
 
@@ -130911,7 +131235,9 @@ def mant_factura_proveedor_asignar(fid):
               f"{ot['numero_ot']} · ${monto:,.0f}{' · ' + observacion if observacion else ''}")
     _mant_log("visita", vid, "factura_proveedor_asignada",
               f"Factura #{fid} ({f.get('proveedor_nombre')} {f.get('numero_documento')}) · ${monto:,.0f}")
-    return jsonify({"ok": True, "monto": monto})
+    # 2026-10-08: sin factura real el monto del lote sigue a las OT; con factura real solo se avisa la diferencia.
+    monto_lote = _mfp_monto_lote_al_dia(fid, f, ("agregó", ot["numero_ot"]))
+    return jsonify({"ok": True, "monto": monto, "monto_lote": monto_lote})
 
 
 @app.route("/mantenciones/api/facturas-proveedor/<int:fid>/items/<int:vid>", methods=["DELETE"])
@@ -130942,6 +131268,9 @@ def mant_factura_proveedor_desasignar(fid, vid):
     # real del documento del proveedor), nunca se recalcula desde los
     # items -- así que "Diferencia" simplemente deja de cuadrar después de
     # esto, que es la alerta correcta, no un bug.
+    # 2026-10-08: eso vale cuando el lote ya tiene la factura REAL del proveedor.
+    # Mientras sea solo una «Solicitud de OC» sin factura (y pendiente), el monto
+    # sí sigue a las OT -- ver _mfp_monto_lote_al_dia.
     if _estado == "pagada":
         if not (getattr(g, "permissions", {}) or {}).get("superadmin"):
             return jsonify({"ok": False, "error":
@@ -130976,7 +131305,124 @@ def mant_factura_proveedor_desasignar(fid, vid):
     _mant_log("visita", vid, "factura_proveedor_quitada",
               f"Sale de la factura #{fid} ({f.get('proveedor_nombre')} {f.get('numero_documento')})"
               + (f" · motivo: {_motivo}" if _motivo else ""))
-    return jsonify({"ok": True})
+    # 2026-10-08: sin factura real el monto del lote sigue a las OT; con factura real solo se avisa la diferencia.
+    monto_lote = _mfp_monto_lote_al_dia(fid, f, ("quitó", _num))
+    return jsonify({"ok": True, "monto_lote": monto_lote})
+
+
+@app.route("/mantenciones/api/facturas-proveedor/<int:fid>/ajustar-monto", methods=["POST"])
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/ajustar-monto", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_factura_proveedor_ajustar_monto(fid):
+    """2026-10-08 (lote #17): fija el monto del lote = suma de lo que cobran sus OT. Solo lote PENDIENTE (mismos
+    permisos que editar). Si el lote ya tiene la factura real del proveedor, el monto es el del documento: hay que
+    confirmarlo a propósito (confirmar_factura_real=true). Deja antes → después y usuario en la bitácora."""
+    if not _facprov_puede():
+        return _mfp_403()
+    f = _mfp_cargar(fid)
+    if not f:
+        return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
+    if f.get("estado_pago") != "pendiente":
+        return jsonify({"ok": False, "error_codigo": "FACTURA_NO_EDITABLE",
+                        "error": f"La factura está {f.get('estado_pago')}: no se ajusta el monto. "
+                                 "Un superadministrador puede reabrirla."}), 409
+    d = request.get_json(silent=True) or {}
+    fila = mysql_fetchone(
+        "SELECT COALESCE(SUM(monto),0) AS suma, COUNT(*) AS n FROM mant_factura_proveedor_items "
+        " WHERE factura_proveedor_id=%s", (fid,)) or {}
+    n_ot = int(fila.get("n") or 0)
+    suma = float(fila.get("suma") or 0)
+    antes = float(f.get("monto_total") or 0)
+    if not n_ot:
+        return jsonify({"ok": False, "error_codigo": "SIN_OT",
+                        "error": "El lote no tiene OT asignadas: no hay nada que sumar."}), 400
+    real = _mfp_tiene_factura_real(f)
+    if abs(antes - suma) < 0.5:
+        return jsonify({"ok": True, "cambio": False, "monto": suma,
+                        "aviso": "El monto del lote ya coincide con la suma de las OT."})
+    if real and not d.get("confirmar_factura_real"):
+        return jsonify({
+            "ok": False, "error_codigo": "CONFIRMAR_FACTURA_REAL",
+            "error": (f"La factura del proveedor (N° {str(f.get('numero_documento')).strip()}) dice "
+                      f"{_mfp_clp_txt(antes)} y las OT suman {_mfp_clp_txt(suma)}. Cambiar el monto no cambia "
+                      f"el documento: confirma que quieres igualarlo a las OT."),
+            "antes": antes, "suma": suma}), 409
+    n = mysql_execute_returning_rowcount(
+        "UPDATE mant_facturas_proveedor SET monto_total=%s WHERE id=%s AND estado_pago='pendiente'", (suma, fid))
+    if not n:
+        return jsonify({"ok": False, "error": "La factura cambió de estado en otra pestaña."}), 409
+    _mant_log("factura_proveedor", fid, "monto_ajustado",
+              f"monto del lote ajustado de {_mfp_clp_txt(antes)} a {_mfp_clp_txt(suma)} "
+              f"(suma de {n_ot} OT) por {current_username()}"
+              + (f" · el documento N° {str(f.get('numero_documento')).strip()} del proveedor decía {_mfp_clp_txt(antes)}"
+                 if real else " · sin factura aún"))
+    return jsonify({"ok": True, "cambio": True, "antes": antes, "monto": suma,
+                    "aviso": f"Monto del lote ajustado de {_mfp_clp_txt(antes)} a {_mfp_clp_txt(suma)}."})
+
+
+@app.route("/mantenciones/api/facturas-proveedor/<int:fid>/historial")
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/historial")
+@_mant_required
+@_no_tecnico
+def mant_factura_proveedor_historial(fid):
+    """Eventos del lote (mant_logs) paginados, los más nuevos primero. ?pagina=1&por_pagina=10"""
+    if not _facprov_puede():
+        return _mfp_403()
+    if not _mfp_cargar(fid):
+        return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
+    try:
+        por_pagina = int(request.args.get("por_pagina") or 10)
+    except (TypeError, ValueError):
+        por_pagina = 10
+    por_pagina = por_pagina if por_pagina in (10, 25, 50) else 10
+    total = _mfp_eventos_total(fid)
+    paginas = max(1, -(-total // por_pagina))
+    try:
+        pagina = int(request.args.get("pagina") or 1)
+    except (TypeError, ValueError):
+        pagina = 1
+    pagina = min(max(1, pagina), paginas)
+    eventos = _mfp_eventos_lote(fid, limite=por_pagina, desplazar=(pagina - 1) * por_pagina)
+    return jsonify({"ok": True, "total": total, "pagina": pagina, "paginas": paginas,
+                    "por_pagina": por_pagina, "eventos": eventos})
+
+
+@app.route("/mantenciones/facturas-proveedor/<int:fid>/excel")
+@app.route("/servicio-tecnico/facturas-proveedor/<int:fid>/excel")
+@_mant_required
+@_no_tecnico
+def mant_factura_proveedor_excel(fid):
+    """2026-10-08 (Daniel: "perdí el detalle, no veo un Excel para sacar un detalle de esto"): el detalle de UN lote
+    en Excel. Hojas: Resumen, OT del lote e Historial. Mismo permiso que la pantalla de detalle."""
+    if not _facprov_puede():
+        return _mfp_403()
+    f = _mfp_cargar(fid)
+    if not f:
+        return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
+    f = dict(f)
+    f["monto_total"] = float(f.get("monto_total") or 0)
+    items = _mfp_items(fid)
+    canon, canon_rut, _canon_id = _mfp_proveedor_canon(f, items, fid)
+    prov_nombre = canon or (f.get("proveedor_nombre") or "").strip()
+    prov_rut = canon_rut or (f.get("proveedor_rut") or "")
+    try:
+        prov_rut = rut_fmt_filter(prov_rut) if prov_rut else ""
+    except Exception:
+        pass
+    eventos = _mfp_eventos_lote(fid, limite=5000, desplazar=0, ascendente=True)
+    ahora = _now_chile()
+    meta = {
+        "creado_txt": ((chile_fmt_filter(f.get("created_at"), "%d/%m/%Y %H:%M") if f.get("created_at") else "")
+                       + (f" · por {f.get('created_by')}" if f.get("created_by") else "")),
+        "fecha_doc": chile_fmt_filter(f.get("fecha"), "%d/%m/%Y") if f.get("fecha") else "",
+        "pagada_txt": (f"el {chile_fmt_filter(f.get('pagada_at'), '%d/%m/%Y %H:%M')} por {f.get('pagada_por') or '—'}"
+                       if f.get("estado_pago") == "pagada" and f.get("pagada_at") else ""),
+        "generado_txt": f"{ahora.strftime('%d/%m/%Y %H:%M')} · {current_username() or ''}",
+    }
+    buf = _mfp_excel_lote(f, items, eventos, prov_nombre, prov_rut, meta)
+    return send_file(buf, as_attachment=True, download_name=_mfp_excel_nombre(fid, prov_nombre, ahora),
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @app.route("/mantenciones/api/facturas-proveedor/<int:fid>/pagar", methods=["POST"])

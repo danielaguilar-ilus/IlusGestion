@@ -636,7 +636,10 @@
             <td class="fpv-c-lote" data-label="Lote"><div class="rm-cell"><a class="rm-code fp-ot" href="/servicio-tecnico/facturas-proveedor/{{ f.id }}">#{{ f.id }}</a>
               <div class="rm-sub" title="Creado el {{ f.created_at | chile_fmt if f.created_at else '' }}{% if f.created_by %} por {{ f.created_by }}{% endif %}">
                 <i class="bi bi-clock-history"></i>{{ f.created_at | chile_fmt('%d/%m/%Y') if f.created_at else '—' }}</div>
-              {% if f.created_by %}<div class="rm-sub"><i class="bi bi-person"></i>{{ f.created_by }}</div>{% endif %}</div></td>
+              {% if f.created_by %}<div class="rm-sub"><i class="bi bi-person"></i>{{ f.created_by }}</div>{% endif %}
+              {# 📊 2026-10-08: detalle de este lote en Excel (resumen, OT e historial), sin salir de la lista. #}
+              <a class="fpv-xl" href="/servicio-tecnico/facturas-proveedor/{{ f.id }}/excel" title="Descargar el detalle del lote #{{ f.id }} en Excel"
+                 aria-label="Descargar el detalle del lote {{ f.id }} en Excel"><i class="bi bi-file-earmark-excel"></i><span>Excel</span></a></div></td>
             {# 🏢 2026-09-20: la EMPRESA resuelta (ficha guardada o la del técnico
                de sus OT); si se escribió a mano con otro nombre ("Milling",
                "Daniel Pulgar"), ese queda como alias debajo -- ya no parecen
@@ -1619,5 +1622,9 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
   #fpvMonitor .rm-search-count{padding:0 8px;font-size:.85rem}
   #fpvTq{font-size:16px}
 }
+/* 📊 2026-10-08: botón Excel por lote (dentro de la celda Lote; táctil de 44 px en celular) */
+.fpv-xl{display:inline-flex;align-items:center;gap:4px;margin-top:4px;font-size:.7rem;font-weight:800;color:#166534;background:#dcfce7;border:1px solid #bbf7d0;border-radius:999px;padding:2px 9px;text-decoration:none;white-space:nowrap}
+.fpv-xl:hover{background:#bbf7d0;color:#14532d}
+@media (max-width:768px){ .fpv-xl{min-height:44px;padding:0 14px;font-size:.8rem} }
 </style>
 {% endblock %}
