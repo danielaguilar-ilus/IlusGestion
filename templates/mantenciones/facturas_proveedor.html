@@ -33,6 +33,7 @@
 
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='facprov_inteligente.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='retiros_monitor.css') }}">
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
   <div>
     <h1 class="mb-1"><i class="bi bi-receipt-cutoff me-2" style="color:#dc2626"></i>Facturas de proveedor</h1>
@@ -498,13 +499,18 @@
 {% endif %}
 
 {# ── Facturas registradas ──────────────────────────────────────────── #}
+{#- 📋 2026-10-08 (Daniel: "los lotes ordenados por número... tabla de verdad, como la de Retiros, que se
+    pueda FILTRAR LAS COLUMNAS"). Estilos rm-* de static/retiros_monitor.css (cabecera negra, semáforo por
+    fila, pastillas, pie negro), igual que Incidencias. Las filas las entrega el servidor ya por número de
+    lote DESCENDENTE; filtrar / ordenar / paginar lo hace static/facprov_tabla.js en el navegador (sus
+    funciones puras las prueba tests/test_facturas_proveedor_tabla.py). El semáforo viene de
+    _facprov_semaforo (app.py). -#}
 <div class="fp-sec fp-sec-row">
-  <span>Facturas registradas{% if total %} · {{ total }}{% endif %}</span>
-  {% if fac_fin.n %}
-  <span class="fp-sec-tot">{{ clp(fac_fin.monto) }} en {{ fac_fin.n }} factura{{ '' if fac_fin.n == 1 else 's' }}
+  <span>Facturas registradas · <span id="fpvSecN">{{ total }}</span></span>
+  <span class="fp-sec-tot" id="fpvTot">
+  {% if fac_fin.n %}{{ clp(fac_fin.monto) }} en {{ fac_fin.n }} factura{{ '' if fac_fin.n == 1 else 's' }}
     {% if fac_fin.n_pend %} · <b class="pend">por pagar {{ clp(fac_fin.monto_pend) }} ({{ fac_fin.n_pend }})</b>{% endif %}
-    {% if fac_fin.n_pag %} · <b class="ok">pagadas {{ clp(fac_fin.monto_pag) }} ({{ fac_fin.n_pag }})</b>{% endif %}</span>
-  {% endif %}
+    {% if fac_fin.n_pag %} · <b class="ok">pagadas {{ clp(fac_fin.monto_pag) }} ({{ fac_fin.n_pag }})</b>{% endif %}{% endif %}</span>
 </div>
 {% if not facturas %}
 <div class="fp-vacio">
@@ -514,134 +520,211 @@
     Después le asignas las OT que cobra.</div>
 </div>
 {% else %}
-<div class="table-responsive">
-  <table class="fp-tabla fpv-clic">
-    <thead>
-      {# 📋 2026-09-21 (Daniel: "mejorar la vista de las tablas con calidad
-         de información"): cada lote dice de un vistazo en qué etapa va
-         (Solicitud → OC → Factura → Pago), qué OT y anexos contiene, y si
-         los montos cuadran. Las columnas viejas (Asignado en OT, Diferencia)
-         se conservan, plegadas dentro de "Monto" (REGLA #4.2). #}
-      <tr>
-        <th>Lote</th><th>Proveedor</th><th>Tracking</th><th>OC · Factura</th><th>OT y anexos</th>
-        <th class="m">Monto</th><th>Estado</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for f in facturas %}
-      {# Cada paso se marca hecho por SU dato, no por orden: un lote pagado
-         sin N° de OC muestra Pagada en verde y OC pendiente (ámbar) -- así
-         se ve qué papel falta aunque la plata ya haya salido. #}
-      {% set _hecho = {'1': true, '2': f.numero_oc | default('', true) | trim != '', '3': f.numero_documento | default('', true) | trim != '', '4': f.estado_pago == 'pagada'} %}
-      {% set _etapas = [('Solicitud', 'file-earmark-plus', '1'), ('OC', 'file-earmark-text', '2'), ('Factura', 'receipt', '3'), ('Pagada', 'cash-coin', '4')] %}
-      {% set _falta = [] %}
-      {% for _lbl, _ico, _n in _etapas %}{% if not _hecho[_n] %}{% set _ = _falta.append(_lbl) %}{% endif %}{% endfor %}
-      <tr onclick="window.location='/servicio-tecnico/facturas-proveedor/{{ f.id }}'" class="{{ 'fp-row-anulada' if f.estado_pago == 'anulada' }}">
-        <td data-label="Lote"><a class="fp-ot" href="/servicio-tecnico/facturas-proveedor/{{ f.id }}" onclick="event.stopPropagation()">#{{ f.id }}</a>
-          <div class="fp-sub" title="Creado el {{ f.created_at | chile_fmt if f.created_at else '' }}{% if f.created_by %} por {{ f.created_by }}{% endif %}">
-            <i class="bi bi-clock-history"></i> {{ f.created_at | chile_fmt('%d/%m/%Y') if f.created_at else '—' }}</div>
-          {% if f.created_by %}<div class="fp-sub"><i class="bi bi-person"></i> {{ f.created_by }}</div>{% endif %}</td>
-        {# 🏢 2026-09-20: la EMPRESA resuelta (ficha guardada o la del técnico
-           de sus OT); si se escribió a mano con otro nombre ("Milling",
-           "Daniel Pulgar"), ese queda como alias debajo -- ya no parecen
-           dos proveedores distintos. #}
-        <td data-label="Proveedor"><div class="fp-nom">{{ f.prov_canon or f.proveedor_nombre }}</div>
-          {% if f.prov_canon_rut %}<div class="fp-sub">{{ f.prov_canon_rut | rut_fmt }}</div>{% endif %}
-          {% if f.prov_alias %}<div class="fp-sub" title="Nombre con el que se registró esta factura">registrada como “{{ f.prov_alias }}”</div>{% endif %}</td>
-        <td data-label="Tracking">
-          {% if f.estado_pago == 'anulada' %}
-          <span class="fp-trk-anulada"><i class="bi bi-slash-circle"></i> Lote anulado</span>
-          {% else %}
-          <div class="fp-trk" title="Solicitud de OC → N° de OC → factura del proveedor → pago">
-            {% for _lbl, _ico, _n in _etapas %}
-            {% set _ok = _hecho[_n] %}
-            {% set _now = (not _ok) and (_falta and _falta[0] == _lbl) %}
-            <div class="fp-trk-s {{ 'done' if _ok else ('now' if _now else 'falta') }}" title="{{ _lbl }}: {{ 'listo' if _ok else 'pendiente' }}">
-              <span class="fp-trk-c">{% if _ok %}<i class="bi bi-check-lg"></i>{% else %}<i class="bi bi-{{ _ico }}"></i>{% endif %}</span>
-              <small>{{ _lbl }}</small>
-            </div>
-            {% if not loop.last %}<span class="fp-trk-l {{ 'done' if _ok }}"></span>{% endif %}
-            {% endfor %}
-          </div>
-          <div class="fp-sub">
-            {% if f.estado_pago == 'pagada' %}Pagada{% if f.pagada_at %} el {{ f.pagada_at | chile_fmt('%d/%m/%Y') }}{% endif %}{% if f.pagada_por %} · {{ f.pagada_por }}{% endif %}{% if _falta %} · <span style="color:#b45309">falta {{ _falta | join(' y ') | lower }}</span>{% endif %}
-            {% elif _falta | length == 1 %}Falta el pago
-            {% elif not _hecho['2'] and not _hecho['3'] %}Solicitud de OC — falta el N° de OC y la factura
-            {% elif not _hecho['2'] %}Factura recibida — falta el N° de OC y el pago
-            {% else %}OC emitida — esperando la factura del proveedor{% endif %}
-          </div>
-          {% endif %}
-        </td>
-        <td data-label="OC · Factura">
-          <div class="fp-sub" style="margin-top:0">{% if f.numero_oc %}<span class="fp-doc fp-doc-oc"><i class="bi bi-file-earmark-text"></i> OC {{ f.numero_oc }}</span>{% else %}<span class="fp-doc fp-doc-falta"><i class="bi bi-hourglass-split"></i> Sin N° de OC</span>{% endif %}</div>
-          <div class="fp-sub">
-            {% if f.numero_documento %}
-            <span class="fp-doc">{{ {'factura':'FACT','boleta_honorarios':'BH','otro':'DOC'}[f.tipo_documento] }} {{ f.numero_documento }}</span>
-            {% if f.fecha %}<span class="fp-sub" style="display:inline"> · {{ f.fecha | chile_fmt('%d/%m/%Y') }}</span>{% endif %}
-            {% else %}
-            <span class="fp-doc fp-doc-falta"><i class="bi bi-hourglass-split"></i> Sin factura aún</span>
-            {% endif %}
-          </div>
-          {% if f.archivo_url %}<div class="fp-sub"><i class="bi bi-paperclip"></i> con respaldo adjunto</div>{% endif %}</td>
-        <td data-label="OT y anexos">
-          {% if f.ot_lista %}
-          <div class="fp-otlist">
-            {% for o in f.ot_lista[:8] %}<span class="fp-otpill">{{ o | replace('OT-2026-','') }}</span>{% endfor %}
-            {% if f.ot_lista | length > 8 %}<span class="fp-otpill more" title="{{ f.ot_lista | join(', ') }}">+{{ f.ot_lista | length - 8 }}</span>{% endif %}
-          </div>
-          <div class="fp-sub">{{ f.n_ot }} OT{% if f.n_no_cerradas %} · <b style="color:#b45309">{{ f.n_no_cerradas }} no cerrada{{ '' if f.n_no_cerradas == 1 else 's' }}</b>{% endif %}
-            {% if f.anexos_lista %} · <i class="bi bi-patch-check-fill" style="color:#16a34a"></i> anexo{{ '' if f.anexos_lista | length == 1 else 's' }} N° {{ f.anexos_lista | join(', ') }}{% else %} · <span style="color:#b45309">sin anexo firmado</span>{% endif %}</div>
-          {% else %}
-          <span class="fp-sindoc"><i class="bi bi-exclamation-triangle-fill"></i> Sin OT asignadas</span>
-          {% endif %}</td>
-        <td class="m tot" data-label="Monto">{{ clp(f.monto_total) }}
-          <div class="fp-sub" style="font-weight:600">
-            {% if f.n_ot and f.diferencia|round(0) == 0 %}<span class="fp-margen pos">Cuadra con las OT</span>
-            {% elif not f.n_ot %}—
-            {% else %}en OT {{ clp(f.total_asignado) }} · <span class="fp-margen {{ 'neg' if f.diferencia < 0 else 'warn' }}">{{ '+' if f.diferencia > 0 else '' }}{{ clp(f.diferencia) }}</span>{% endif %}
-          </div></td>
-        <td data-label="Estado"><span class="fp-pago pago-{{ f.estado_pago }}">
-          {% if f.estado_pago == 'pagada' %}<i class="bi bi-check-circle-fill"></i> Pagada
-          {% elif f.estado_pago == 'anulada' %}<i class="bi bi-slash-circle"></i> Anulada
-          {% else %}<i class="bi bi-hourglass-split"></i> Pendiente de pago{% endif %}</span>
-          {% if f.estado_pago == 'pagada' and f.pagada_at %}<div class="fp-sub">{{ f.pagada_at | chile_fmt('%d/%m/%Y') }}</div>{% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-
-{# Paginación REGLA #4.3 #}
-<div class="fp-pag">
-  <div class="fp-pag-info">
-    Mostrando {{ (page - 1) * per_page + 1 }}–{{ [page * per_page, total] | min }} de {{ total }}
-  </div>
-  <div class="fp-pag-ctl">
-    <form method="get" class="d-inline">
-      <input type="hidden" name="proveedor" value="{{ f_prov }}">
-      <input type="hidden" name="estado" value="{{ f_estado }}">
-      {% if f_prov_id is not none %}<input type="hidden" name="prov_id" value="{{ f_prov_id }}">{% endif %}
-      {% if f_desde %}<input type="hidden" name="desde" value="{{ f_desde }}">{% endif %}
-      {% if f_hasta %}<input type="hidden" name="hasta" value="{{ f_hasta }}">{% endif %}
-      {% if f_pruebas %}<input type="hidden" name="pruebas" value="1">{% endif %}
-      <input type="hidden" name="pf_per_page" value="{{ pf_per_page }}">
-      <input type="hidden" name="pf_page" value="{{ pf_page }}">
-      <label>Por página
-        <select name="per_page" onchange="this.form.submit()">
-          {% for n in per_page_opciones %}<option value="{{ n }}" {{ 'selected' if n == per_page }}>{{ n }}</option>{% endfor %}
+<section class="rm-monitor fpv-monitor" id="fpvMonitor" aria-label="Facturas registradas">
+  <div class="rm-toolbar">
+    <div class="rm-search" role="search">
+      <label class="rm-search-tag" for="fpvTq"><i class="bi bi-search"></i><span>Buscar</span></label>
+      <input id="fpvTq" type="search" autocomplete="off" spellcheck="false" data-fpt-f="q"
+             placeholder="Lote, proveedor, OC, factura, OT, fecha…" aria-label="Buscar en las facturas registradas">
+      <button type="button" class="rm-x" id="fpvTqX" hidden aria-label="Borrar la búsqueda"><i class="bi bi-x-lg"></i></button>
+      <span class="rm-search-count" id="fpvCount" aria-live="polite"></span>
+    </div>
+    <div class="rm-tools-row">
+      <div class="rm-tools">
+        <button type="button" class="rm-btn fpv-solo-movil" id="fpvFiltrosBtn" aria-expanded="false" aria-controls="fpvTabla">
+          <i class="bi bi-funnel"></i>Filtros por columna</button>
+        <select id="fpvOrdMov" class="rm-select fpv-solo-movil" aria-label="Ordenar por">
+          <option value="lote">Ordenar: Lote</option>
+          <option value="prov">Ordenar: Proveedor</option>
+          <option value="tracking">Ordenar: Etapa</option>
+          <option value="oc">Ordenar: OC</option>
+          <option value="fact">Ordenar: Factura</option>
+          <option value="fecha">Ordenar: Fecha</option>
+          <option value="ot">Ordenar: N° de OT</option>
+          <option value="monto">Ordenar: Monto</option>
+          <option value="estado">Ordenar: Estado</option>
         </select>
-      </label>
-    </form>
-    <a class="fp-pag-btn {{ 'dis' if page <= 1 }}"
-       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, pruebas=('1' if f_pruebas else None), per_page=per_page, page=page-1, pf_per_page=pf_per_page, pf_page=pf_page) if page > 1 else '#' }}">
-      <i class="bi bi-chevron-left"></i>Anterior</a>
-    <span class="fp-pag-num">Página {{ page }} de {{ total_paginas }}</span>
-    <a class="fp-pag-btn {{ 'dis' if page >= total_paginas }}"
-       href="{{ url_for('mant_facturas_proveedor', proveedor=f_prov or None, prov_id=f_prov_id, estado=f_estado or None, desde=f_desde or None, hasta=f_hasta or None, pruebas=('1' if f_pruebas else None), per_page=per_page, page=page+1, pf_per_page=pf_per_page, pf_page=pf_page) if page < total_paginas else '#' }}">
-      Siguiente<i class="bi bi-chevron-right"></i></a>
+        <button type="button" class="rm-btn fpv-solo-movil" id="fpvOrdDir" aria-label="Orden descendente"><i class="bi bi-sort-down"></i></button>
+        <button type="button" class="rm-btn rm-btn-rojo" id="fpvLimpiar" disabled><i class="bi bi-x-circle"></i>Limpiar filtros</button>
+      </div>
+      <div class="fpv-leyenda" aria-label="Significado de los colores de cada fila">
+        <span><i class="rm-dot verde"></i>Pagada y completa</span>
+        <span><i class="rm-dot ambar"></i>Por pagar o falta un papel</span>
+        <span><i class="rm-dot rojo"></i>No cuadra con las OT</span>
+      </div>
+    </div>
   </div>
-</div>
+
+  <div class="rm-wrap">
+    <div class="fpv-scroll">
+      <table class="rm-table table-mobile-cards align-middle" id="fpvTabla"
+             data-per-page="{{ per_page }}" data-estado-servidor="{{ f_estado }}">
+        <thead>
+          {# 📋 2026-09-21 (Daniel: "calidad de información"): cada lote dice de un vistazo en qué etapa va
+             (Solicitud → OC → Factura → Pago), qué OT y anexos contiene, y si los montos cuadran. Las
+             columnas viejas (Asignado en OT, Diferencia) se conservan, plegadas dentro de "Monto" (REGLA #4.2). #}
+          <tr class="fpv-heads">
+            <th class="rm-sortable is-desc fpv-c-lote" data-sort="lote" tabindex="0" aria-sort="descending">Lote <i class="bi bi-sort-down"></i></th>
+            <th class="rm-sortable fpv-c-prov" data-sort="prov" tabindex="0" aria-sort="none">Proveedor <i class="bi bi-arrow-down-up"></i></th>
+            <th class="rm-sortable fpv-c-trk" data-sort="tracking" tabindex="0" aria-sort="none">Tracking <i class="bi bi-arrow-down-up"></i></th>
+            <th class="rm-sortable fpv-c-oc" data-sort="oc" tabindex="0" aria-sort="none">OC <i class="bi bi-arrow-down-up"></i></th>
+            <th class="rm-sortable fpv-c-fact" data-sort="fact" tabindex="0" aria-sort="none">Factura <i class="bi bi-arrow-down-up"></i></th>
+            <th class="rm-sortable fpv-c-fecha" data-sort="fecha" tabindex="0" aria-sort="none">Fecha <i class="bi bi-arrow-down-up"></i></th>
+            <th class="rm-sortable fpv-c-ot" data-sort="ot" tabindex="0" aria-sort="none">OT y anexos <i class="bi bi-arrow-down-up"></i></th>
+            <th class="rm-sortable fpv-c-monto m" data-sort="monto" tabindex="0" aria-sort="none">Monto <i class="bi bi-arrow-down-up"></i></th>
+            <th class="rm-sortable fpv-c-est" data-sort="estado" tabindex="0" aria-sort="none">Estado <i class="bi bi-arrow-down-up"></i></th>
+          </tr>
+          {# Fila de filtros: un filtro bajo cada encabezado. Vaciar un filtro vuelve a calcular la tabla (REGLA #4.3). #}
+          <tr class="rm-filtros">
+            <th data-fl="Lote"><input type="text" class="fpv-fl" data-fpt-f="lote" inputmode="numeric" autocomplete="off" placeholder="N° de lote" aria-label="Filtrar por N° de lote"></th>
+            <th data-fl="Proveedor"><input type="text" class="fpv-fl" data-fpt-f="prov" autocomplete="off" placeholder="Nombre o RUT" aria-label="Filtrar por proveedor o RUT"></th>
+            <th data-fl="Tracking">
+              <select class="fpv-fl" data-fpt-f="etapa" aria-label="Filtrar por etapa del tracking">
+                <option value="">Todas las etapas</option>
+                <optgroup label="Etapa en que va">
+                  <option value="e1">Solicitó (sin OC)</option>
+                  <option value="e2">OC emitida</option>
+                  <option value="e3">Factura recibida</option>
+                  <option value="e4">Pagada</option>
+                  <option value="e0">Anulado</option>
+                </optgroup>
+                <optgroup label="Qué falta">
+                  <option value="f_oc">Falta el N° de OC</option>
+                  <option value="f_fact">Falta la factura</option>
+                  <option value="f_pago">Falta el pago</option>
+                </optgroup>
+              </select></th>
+            <th data-fl="OC"><input type="text" class="fpv-fl" data-fpt-f="oc" autocomplete="off" placeholder="N° de OC" aria-label="Filtrar por N° de OC"></th>
+            <th data-fl="Factura"><input type="text" class="fpv-fl" data-fpt-f="fact" autocomplete="off" placeholder="N° de factura" aria-label="Filtrar por N° de factura"></th>
+            <th data-fl="Fecha">
+              <input type="date" class="fpv-fl" data-fpt-f="desde" aria-label="Fecha desde" title="Desde">
+              <input type="date" class="fpv-fl" data-fpt-f="hasta" aria-label="Fecha hasta" title="Hasta"></th>
+            <th data-fl="OT y anexos"><input type="text" class="fpv-fl" data-fpt-f="ot" autocomplete="off" placeholder="OT o anexo" aria-label="Filtrar por OT o anexo"></th>
+            <th data-fl="Monto">
+              <input type="text" class="fpv-fl" data-fpt-f="montoMin" inputmode="numeric" autocomplete="off" placeholder="Mín. $" aria-label="Monto mínimo">
+              <input type="text" class="fpv-fl" data-fpt-f="montoMax" inputmode="numeric" autocomplete="off" placeholder="Máx. $" aria-label="Monto máximo"></th>
+            <th data-fl="Estado">
+              <select class="fpv-fl" data-fpt-f="estado" aria-label="Filtrar por estado del pago">
+                <option value="">Todos</option>
+                <option value="pendiente">Pendiente de pago</option>
+                <option value="pagada">Pagada</option>
+                <option value="anulada">Anulada</option>
+              </select></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for f in facturas %}
+          {# Cada paso se marca hecho por SU dato, no por orden: un lote pagado
+             sin N° de OC muestra Pagada en verde y OC pendiente (ámbar) -- así
+             se ve qué papel falta aunque la plata ya haya salido. #}
+          {% set _hecho = {'1': true, '2': f.numero_oc | default('', true) | trim != '', '3': f.numero_documento | default('', true) | trim != '', '4': f.estado_pago == 'pagada'} %}
+          {% set _etapas = [('Solicitud', 'file-earmark-plus', '1'), ('OC', 'file-earmark-text', '2'), ('Factura', 'receipt', '3'), ('Pagada', 'cash-coin', '4')] %}
+          {% set _falta = [] %}
+          {% for _lbl, _ico, _n in _etapas %}{% if not _hecho[_n] %}{% set _ = _falta.append(_lbl) %}{% endif %}{% endfor %}
+          {% set _doc_lbl = {'factura':'FACT','boleta_honorarios':'BH','otro':'DOC'}[f.tipo_documento] | default('DOC', true) %}
+          <tr class="rm-row {{ 'fp-row-anulada' if f.estado_pago == 'anulada' }}" tabindex="0"
+              data-href="/servicio-tecnico/facturas-proveedor/{{ f.id }}"
+              data-id="{{ f.id }}" data-alerta="{{ f.semaforo or 'ambar' }}"
+              data-nombre="{{ f.prov_canon or f.proveedor_nombre }}"
+              data-prov="{{ (f.prov_canon or '') ~ ' ' ~ (f.prov_alias or '') ~ ' ' ~ (f.proveedor_nombre or '') ~ ' ' ~ (f.prov_canon_rut or '') ~ ((' ' ~ (f.prov_canon_rut | rut_fmt)) if f.prov_canon_rut else '') }}"
+              data-oc="{{ (f.numero_oc or '') | trim }}"
+              data-fact="{{ ((_doc_lbl ~ ' ' ~ f.numero_documento) if f.numero_documento else '') }}"
+              data-fecha="{{ f.fecha_ord or '' }}" data-fecha-lbl="{{ f.fecha_lbl or '' }}"
+              data-ots="{{ (f.ot_lista | join(' ')) ~ ((' anexo ' ~ (f.anexos_lista | join(' '))) if f.anexos_lista else '') }}"
+              data-not="{{ f.n_ot or 0 }}" data-monto="{{ (f.monto_total or 0) | int }}"
+              data-estado="{{ f.estado_pago }}" data-etapa="{{ f.etapa }}">
+            <td class="fpv-c-lote" data-label="Lote"><div class="rm-cell"><a class="rm-code fp-ot" href="/servicio-tecnico/facturas-proveedor/{{ f.id }}">#{{ f.id }}</a>
+              <div class="rm-sub" title="Creado el {{ f.created_at | chile_fmt if f.created_at else '' }}{% if f.created_by %} por {{ f.created_by }}{% endif %}">
+                <i class="bi bi-clock-history"></i>{{ f.created_at | chile_fmt('%d/%m/%Y') if f.created_at else '—' }}</div>
+              {% if f.created_by %}<div class="rm-sub"><i class="bi bi-person"></i>{{ f.created_by }}</div>{% endif %}</div></td>
+            {# 🏢 2026-09-20: la EMPRESA resuelta (ficha guardada o la del técnico
+               de sus OT); si se escribió a mano con otro nombre ("Milling",
+               "Daniel Pulgar"), ese queda como alias debajo -- ya no parecen
+               dos proveedores distintos. #}
+            <td class="fpv-c-prov" data-label="Proveedor"><div class="rm-cell"><div class="rm-cli-name">{{ f.prov_canon or f.proveedor_nombre }}</div>
+              {% if f.prov_canon_rut %}<div class="rm-sub">{{ f.prov_canon_rut | rut_fmt }}</div>{% endif %}
+              {% if f.prov_alias %}<div class="rm-sub" title="Nombre con el que se registró esta factura">registrada como “{{ f.prov_alias }}”</div>{% endif %}</div></td>
+            <td class="fpv-c-trk" data-label="Tracking"><div class="rm-cell">
+              {% if f.estado_pago == 'anulada' %}
+              <span class="fp-trk-anulada"><i class="bi bi-slash-circle"></i> Lote anulado</span>
+              {% else %}
+              <div class="fp-trk" title="Solicitud de OC → N° de OC → factura del proveedor → pago">
+                {% for _lbl, _ico, _n in _etapas %}
+                {% set _ok = _hecho[_n] %}
+                {% set _now = (not _ok) and (_falta and _falta[0] == _lbl) %}
+                <div class="fp-trk-s {{ 'done' if _ok else ('now' if _now else 'falta') }}" title="{{ _lbl }}: {{ 'listo' if _ok else 'pendiente' }}">
+                  <span class="fp-trk-c">{% if _ok %}<i class="bi bi-check-lg"></i>{% else %}<i class="bi bi-{{ _ico }}"></i>{% endif %}</span>
+                  <small>{{ _lbl }}</small>
+                </div>
+                {% if not loop.last %}<span class="fp-trk-l {{ 'done' if _ok }}"></span>{% endif %}
+                {% endfor %}
+              </div>
+              <div class="rm-sub">
+                {% if f.estado_pago == 'pagada' %}Pagada{% if f.pagada_at %} el {{ f.pagada_at | chile_fmt('%d/%m/%Y') }}{% endif %}{% if f.pagada_por %} · {{ f.pagada_por }}{% endif %}{% if _falta %} · <span style="color:#b45309">falta {{ _falta | join(' y ') | lower }}</span>{% endif %}
+                {% elif _falta | length == 1 %}Falta el pago
+                {% elif not _hecho['2'] and not _hecho['3'] %}Solicitud de OC — falta el N° de OC y la factura
+                {% elif not _hecho['2'] %}Factura recibida — falta el N° de OC y el pago
+                {% else %}OC emitida — esperando la factura del proveedor{% endif %}
+              </div>
+              {% endif %}</div></td>
+            <td class="fpv-c-oc" data-label="OC"><div class="rm-cell">
+              {% if f.numero_oc %}<span class="fp-doc fp-doc-oc"><i class="bi bi-file-earmark-text"></i> {{ f.numero_oc }}</span>{% else %}<span class="fp-doc fp-doc-falta"><i class="bi bi-hourglass-split"></i> Sin N° de OC</span>{% endif %}</div></td>
+            <td class="fpv-c-fact" data-label="Factura"><div class="rm-cell">
+              {% if f.numero_documento %}
+              <span class="fp-doc">{{ _doc_lbl }} {{ f.numero_documento }}</span>
+              {% else %}
+              <span class="fp-doc fp-doc-falta"><i class="bi bi-hourglass-split"></i> Sin factura aún</span>
+              {% endif %}
+              {% if f.archivo_url %}<div class="rm-sub" title="con respaldo adjunto"><i class="bi bi-paperclip"></i>con respaldo adjunto</div>{% endif %}</div></td>
+            <td class="fpv-c-fecha" data-label="Fecha"><div class="rm-cell">
+              {% if f.fecha_lbl %}<div class="rm-fecha-main">{{ f.fecha_lbl }}</div>
+              <div class="rm-sub">{{ 'del documento' if f.fecha_origen == 'documento' else 'día de registro' }}</div>
+              {% else %}<span class="rm-sub">—</span>{% endif %}</div></td>
+            <td class="fpv-c-ot" data-label="OT y anexos"><div class="rm-cell">
+              {% if f.ot_lista %}
+              <div class="fp-otlist">
+                {% for o in f.ot_lista[:8] %}<span class="fp-otpill">{{ o | replace('OT-2026-','') }}</span>{% endfor %}
+                {% if f.ot_lista | length > 8 %}<span class="fp-otpill more" title="{{ f.ot_lista | join(', ') }}">+{{ f.ot_lista | length - 8 }}</span>{% endif %}
+              </div>
+              <div class="rm-sub">{{ f.n_ot }} OT{% if f.n_no_cerradas %} · <b style="color:#b45309">{{ f.n_no_cerradas }} no cerrada{{ '' if f.n_no_cerradas == 1 else 's' }}</b>{% endif %}
+                {% if f.anexos_lista %} · <i class="bi bi-patch-check-fill" style="color:#16a34a;margin-right:2px"></i>anexo{{ '' if f.anexos_lista | length == 1 else 's' }} N° {{ f.anexos_lista | join(', ') }}{% else %} · <span style="color:#b45309">sin anexo firmado</span>{% endif %}</div>
+              {% else %}
+              <span class="fp-sindoc"><i class="bi bi-exclamation-triangle-fill"></i> Sin OT asignadas</span>
+              {% endif %}</div></td>
+            <td class="fpv-c-monto m" data-label="Monto"><div class="rm-cell"><div class="rm-carga-main">{{ clp(f.monto_total) }}</div>
+              <div class="rm-sub" style="font-weight:600">
+                {% if f.n_ot and f.diferencia|round(0) == 0 %}<span class="fp-margen pos">Cuadra con las OT</span>
+                {% elif not f.n_ot %}—
+                {% else %}en OT {{ clp(f.total_asignado) }} · <span class="fp-margen {{ 'neg' if f.diferencia < 0 else 'warn' }}">{{ '+' if f.diferencia > 0 else '' }}{{ clp(f.diferencia) }}</span>{% endif %}
+              </div></div></td>
+            <td class="fpv-c-est" data-label="Estado"><div class="rm-cell">
+              {% if f.estado_pago == 'pagada' %}<span class="rm-pill verde"><i class="bi bi-check-circle-fill"></i>Pagada</span>
+              {% elif f.estado_pago == 'anulada' %}<span class="rm-pill gris"><i class="bi bi-slash-circle"></i>Anulada</span>
+              {% else %}<span class="rm-pill ambar"><i class="bi bi-hourglass-split"></i>Pendiente de pago</span>{% endif %}
+              {% if f.estado_pago == 'pagada' and f.pagada_at %}<div class="rm-sub">{{ f.pagada_at | chile_fmt('%d/%m/%Y') }}</div>{% endif %}</div></td>
+          </tr>
+          {% endfor %}
+          <tr class="rm-empty" id="fpvVacio" hidden><td colspan="9"><i class="bi bi-search"></i><span id="fpvVacioMsg">Ninguna factura coincide con esos filtros.</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    {# Pie negro, mismo patrón que Etiquetas / Retiros (REGLA #4.3): Mostrando A–B de N, N por página, Anterior / Página X de Y / Siguiente #}
+    <div class="rm-foot">
+      <div class="rm-foot-count"><i class="bi bi-collection"></i><span id="fpvRango"></span></div>
+      <div class="rm-foot-ctrl">
+        <select class="rm-select" id="fpvSize" aria-label="Facturas por página">
+          {% for n in per_page_opciones %}<option value="{{ n }}" {{ 'selected' if n == per_page }}>{{ n }} por página</option>{% endfor %}
+        </select>
+        <button type="button" class="rm-btn" id="fpvPrev"><i class="bi bi-chevron-left"></i>Anterior</button>
+        <span id="fpvPageInfo"></span>
+        <button type="button" class="rm-btn" id="fpvNext">Siguiente<i class="bi bi-chevron-right"></i></button>
+      </div>
+    </div>
+    {% if total > facturas_tope %}
+    <div class="rm-limit">Hay {{ total }} facturas con estos filtros; se muestran las {{ facturas_tope }} de lote más nuevo. Afina con el buscador o las fechas de arriba para ver las demás.</div>
+    {% endif %}
+  </div>
+</section>
 {% endif %}
 
 {# ── Modal: nueva factura (6 campos → Bootstrap modal, REGLA #8) ─────── #}
@@ -731,6 +814,7 @@
 </div>
 
 <script src="{{ url_for('static', filename='facprov_inteligente.js') }}"></script>
+<script src="{{ url_for('static', filename='facprov_tabla.js') }}"></script>
 <script>
 {# Nombre real de la empresa filtrada; el chip sintético "Sin ficha" (id 0)
    no es un proveedor y no debe prellenar ningún buscador. #}
@@ -1403,6 +1487,137 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
   .fpv-otbar-btns{gap:6px}
   .fpv-otbar-btns .btn{flex:1 1 calc(50% - 6px);font-size:.74rem;padding:4px 6px}
   .fpv-otbar-btns .btn.btn-danger{flex:1 1 100%;order:-1;font-size:.84rem}
+}
+
+/* ═══ 📋 2026-10-08 Tabla de verdad de "Facturas registradas" ═══
+   Los colores, la cabecera negra, el semáforo, las pastillas y el pie salen de static/retiros_monitor.css
+   (clases rm-*). Acá solo lo propio: la fila de filtros, el ancho de cada columna y la tarjeta del celular.
+   Todo cuelga de #fpvTabla / .fpv-monitor para no tocar la tabla "OT por facturar" (.fp-tabla). */
+.fpv-monitor{margin-top:6px}
+.fpv-scroll{overflow-x:auto}
+.fpv-leyenda{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:.85rem;font-weight:600;color:var(--rm-ink2)}
+.fpv-leyenda span{display:inline-flex;align-items:center;gap:6px}
+.fpv-solo-movil{display:none}
+#fpvTabla tbody tr[hidden]{display:none !important}
+#fpvTabla tbody tr.rm-row{cursor:pointer}
+#fpvTabla tbody tr.rm-row:focus-visible{outline:3px solid var(--rm-black);outline-offset:-3px}
+#fpvTabla th.m,#fpvTabla td.m{text-align:right}
+#fpvTabla .fp-ot{color:var(--rm-ink);text-decoration:none}
+#fpvTabla .fp-ot:hover{color:var(--rm-red);text-decoration:underline}
+#fpvTabla td.m .rm-cell{text-align:right}
+#fpvTabla .fp-doc,#fpvTabla .fp-doc-falta{white-space:nowrap}
+#fpvTabla .fp-sindoc{white-space:normal}
+#fpvTabla thead th.rm-sortable:focus-visible{outline:2px solid #f87171;outline-offset:-2px}
+.fp-sec-tot .fpv-tot-gen{color:#64748b;font-weight:700}
+/* Fila de filtros: debajo de cada encabezado, sobre el mismo fondo negro */
+#fpvTabla thead tr.rm-filtros th{padding:6px 5px 10px;background:#161616;vertical-align:top;text-transform:none;letter-spacing:0;white-space:normal}
+#fpvTabla thead tr.rm-filtros .fpv-fl{display:block;width:100%;min-width:0;min-height:34px;padding:0 8px;border:1px solid #4b5563;border-radius:8px;
+  background:#fff;color:var(--rm-ink);font-size:.84rem;font-weight:600}
+#fpvTabla thead tr.rm-filtros .fpv-fl + .fpv-fl{margin-top:4px}
+#fpvTabla thead tr.rm-filtros .fpv-fl::placeholder{color:#6b7280;font-weight:500}
+#fpvTabla thead tr.rm-filtros .fpv-fl:focus{outline:0;border-color:var(--rm-red);box-shadow:0 0 0 3px rgba(220,38,38,.3)}
+#fpvTabla thead tr.rm-filtros input[type=date]{font-size:.72rem;padding:0 2px;min-width:0}
+#fpvTabla thead tr.rm-filtros input.fpv-fl:not([type=date]):not(:placeholder-shown){border-color:#f87171;box-shadow:0 0 0 2px rgba(248,113,113,.35)}
+@media (min-width:769px){
+  #fpvTabla thead th{padding:8px 5px;font-size:.76rem;letter-spacing:.02em;white-space:normal;line-height:1.2;vertical-align:middle}
+  #fpvTabla thead th .bi{margin-left:3px}
+  #fpvTabla tbody td{padding:6px 5px;vertical-align:middle;font-size:.84rem;line-height:1.28}
+  #fpvTabla .rm-sub{margin-top:1px;font-size:.78rem;line-height:1.25}
+  #fpvTabla .rm-code{font-size:.95rem}
+  #fpvTabla .rm-cli-name{font-size:.88rem;line-height:1.25}
+  #fpvTabla .rm-carga-main{font-size:.92rem}
+  #fpvTabla .rm-pill{margin-top:0;padding:2px 8px;font-size:.76rem;white-space:normal;border-radius:12px;line-height:1.2}
+  #fpvTabla .fp-doc{font-size:.76rem}
+  #fpvTabla .fp-doc-falta{white-space:normal;display:inline-block;line-height:1.2}
+  #fpvTabla .fp-trk-s{min-width:30px;gap:1px}
+  #fpvTabla .fp-trk-c{width:23px;height:23px;font-size:.7rem}
+  #fpvTabla .fp-trk-l{width:3px}
+  #fpvTabla .fp-trk-s small{font-size:.5rem;letter-spacing:0}
+  #fpvTabla .fp-otlist{max-width:210px}
+  #fpvTabla .fpv-c-lote .rm-sub .bi{display:none}
+  #fpvTabla .fpv-c-fecha .rm-sub{white-space:nowrap}
+  #fpvTabla thead th.fpv-c-lote{width:78px}
+  #fpvTabla thead th.fpv-c-prov{width:110px}
+  #fpvTabla thead th.fpv-c-trk{width:168px}
+  #fpvTabla thead th.fpv-c-oc{width:82px}
+  #fpvTabla thead th.fpv-c-fact{width:90px}
+  #fpvTabla thead th.fpv-c-fecha{width:108px}
+  #fpvTabla thead th.fpv-c-ot{width:128px}
+  #fpvTabla thead th.fpv-c-monto{width:90px}
+  #fpvTabla thead th.fpv-c-est{width:98px}
+  #fpvTabla thead tr.rm-filtros .fpv-fl{min-height:32px}
+}
+@media (min-width:1500px){
+  #fpvTabla tbody td{padding:8px 9px}
+  #fpvTabla thead th{padding:9px 9px}
+  #fpvTabla thead tr.rm-filtros th{padding:6px 9px 10px}
+  #fpvTabla thead th.fpv-c-prov{width:240px}
+  #fpvTabla thead th.fpv-c-trk{width:230px}
+  #fpvTabla thead th.fpv-c-ot{width:170px}
+  #fpvTabla .fp-trk-s{min-width:44px}
+  #fpvTabla .fp-trk-s small{font-size:.58rem;letter-spacing:.02em}
+  #fpvTabla .fp-trk-l{width:12px}
+  #fpvTabla .rm-pill{white-space:nowrap}
+}
+/* ── Celular: cada fila es una tarjeta (como Retiros / Incidencias); los filtros por columna se abren con un botón ── */
+@media (max-width:768px){
+  .fpv-solo-movil{display:inline-flex}
+  select.fpv-solo-movil{display:block}
+  .fpv-leyenda{font-size:.8rem}
+  .fpv-scroll{overflow-x:visible}
+  #fpvMonitor .rm-wrap{border-radius:12px}
+  #fpvTabla{display:block;width:100%}
+  #fpvTabla thead{display:none}
+  #fpvTabla.fpv-fl-open thead{display:block}
+  #fpvTabla.fpv-fl-open thead tr.fpv-heads{display:none}
+  #fpvTabla.fpv-fl-open thead tr.rm-filtros{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 10px;padding:12px;background:#161616}
+  #fpvTabla.fpv-fl-open thead tr.rm-filtros th{display:block;padding:0;background:transparent;min-width:0}
+  #fpvTabla.fpv-fl-open thead tr.rm-filtros th::before{content:attr(data-fl);display:block;margin-bottom:3px;font-size:.78rem;font-weight:800;
+    letter-spacing:.05em;text-transform:uppercase;color:#e5e7eb}
+  #fpvTabla thead tr.rm-filtros .fpv-fl{min-height:44px;font-size:16px}
+  #fpvTabla tbody{display:block;padding:10px}
+  #fpvTabla tbody tr.rm-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));column-gap:10px;row-gap:8px;
+    padding:12px 12px 12px 14px;margin-bottom:10px;border:1px solid var(--rm-line);border-left:6px solid var(--rm-sem,#d1d5db);border-radius:12px}
+  #fpvTabla tbody tr.rm-row:active{transform:none}
+  #fpvTabla tbody tr.rm-row td:first-child{box-shadow:none}
+  /* "con respaldo adjunto" queda solo como clip (el texto va en el title): ahorra 3 líneas por tarjeta */
+  #fpvTabla td.fpv-c-fact .rm-sub{font-size:0}
+  #fpvTabla td.fpv-c-fact .rm-sub .bi{font-size:1rem;margin:0}
+  #fpvTabla tbody tr.rm-row > td{display:block;margin:0;padding:0;border:0;min-width:0;width:auto}
+  #fpvTabla tbody tr.rm-row > td::before{display:none}
+  #fpvTabla tbody tr.rm-row > td.fpv-c-oc::before,#fpvTabla tbody tr.rm-row > td.fpv-c-fact::before,
+  #fpvTabla tbody tr.rm-row > td.fpv-c-fecha::before,#fpvTabla tbody tr.rm-row > td.fpv-c-monto::before,
+  #fpvTabla tbody tr.rm-row > td.fpv-c-ot::before{display:block;content:attr(data-label);margin-bottom:2px;font-size:.72rem;font-weight:800;
+    letter-spacing:.05em;text-transform:uppercase;color:#6b7280}
+  #fpvTabla td.fpv-c-lote{grid-column:1/3;grid-row:1}
+  #fpvTabla td.fpv-c-est{grid-column:3;grid-row:1;justify-self:end;text-align:right}
+  #fpvTabla td.fpv-c-prov{grid-column:1/-1;grid-row:2}
+  #fpvTabla td.fpv-c-trk{grid-column:1/-1;grid-row:3}
+  #fpvTabla td.fpv-c-oc{grid-column:1;grid-row:4}
+  #fpvTabla td.fpv-c-fact{grid-column:2;grid-row:4}
+  #fpvTabla td.fpv-c-fecha{grid-column:3;grid-row:4}
+  #fpvTabla td.fpv-c-monto{grid-column:1;grid-row:5;text-align:left}
+  #fpvTabla td.fpv-c-ot{grid-column:2/-1;grid-row:5}
+  #fpvTabla td.fpv-c-lote .rm-cell{display:flex;flex-wrap:wrap;align-items:baseline;gap:0 10px}
+  #fpvTabla td.fpv-c-lote .rm-code{flex:0 0 100%}
+  #fpvTabla td.fpv-c-prov .rm-cell{display:flex;flex-wrap:wrap;align-items:baseline;gap:0 10px}
+  #fpvTabla td.fpv-c-prov .rm-cli-name{flex:0 0 100%}
+  #fpvTabla td.fpv-c-trk .fp-trk-s{min-width:44px}
+  #fpvTabla td.m .rm-cell,#fpvTabla .rm-cell{text-align:left}
+  #fpvTabla .rm-cli-name{font-size:1.05rem}
+  #fpvTabla .rm-carga-main{font-size:1.05rem}
+  #fpvTabla td.fpv-c-est .rm-pill{margin-top:0}
+  #fpvTabla .fp-otlist{max-width:none}
+  #fpvTabla .rm-empty{display:block;border:0}
+  #fpvTabla .rm-empty td{display:block;padding:24px 8px !important}
+  #fpvMonitor .rm-tools > *{flex:1 1 auto}
+  #fpvMonitor .rm-foot-count{width:100%}
+  #fpvMonitor .rm-foot-ctrl{width:100%;display:grid;grid-template-columns:1fr auto 1fr;gap:8px}
+  #fpvMonitor .rm-foot-ctrl .rm-select{grid-column:1/-1;width:100%}
+  #fpvMonitor .rm-foot-ctrl .rm-btn{justify-content:center}
+  #fpvPageInfo{text-align:center;white-space:nowrap}
+  #fpvMonitor .rm-search-count{padding:0 8px;font-size:.85rem}
+  #fpvTq{font-size:16px}
 }
 </style>
 {% endblock %}
