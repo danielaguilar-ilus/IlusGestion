@@ -717,10 +717,13 @@
               <div class="vi-info-lbl"><i class="bi bi-people me-1"></i>Técnicos asignados</div>
               <div class="vi-info-val" id="vi_info_tecnicos">—</div>
             </div>
+            {# 🔒 2026-10-08 (REGLA #26): el costo/cobro de la OT no se dibuja para ningún técnico. #}
+            {% if not es_tecnico %}
             <div class="vi-info-item">
               <div class="vi-info-lbl"><i class="bi bi-cash-coin me-1"></i>Costo</div>
               <div class="vi-info-val" id="vi_info_costo">—</div>
             </div>
+            {% endif %}
             <div class="vi-info-item vi-info-full">
               <div class="vi-info-lbl"><i class="bi bi-geo-alt me-1"></i>Dirección</div>
               <div class="vi-info-val" id="vi_info_direccion">—</div>
@@ -1652,7 +1655,8 @@ function abrirVisitaModal(vid){
   document.getElementById('vi_info_tecnicos').textContent = ev.tecnicos.length
     ? ev.tecnicos.map(t => t.nombre + (t.especialidad ? ' (' + t.especialidad + ')' : '')).join(', ')
     : 'Sin asignar';
-  document.getElementById('vi_info_costo').textContent = (ev.cobra === false) ? (ev.cobertura_txt || 'No se cobra')
+  const _viInfoCosto = document.getElementById('vi_info_costo');   // no existe para un técnico (REGLA #26)
+  if (_viInfoCosto) _viInfoCosto.textContent = (ev.cobra === false) ? (ev.cobertura_txt || 'No se cobra')
     : (ev.cobra === true ? (ev.cobre != null ? 'Cobré ' + fmtCLP(ev.cobre) : 'Falta lo que cobraste')
        : (ev.costo ? fmtCLP(ev.costo) : 'Sin costo asociado'));
   document.getElementById('vi_info_direccion').textContent = ev.cliente.direccion

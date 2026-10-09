@@ -688,10 +688,13 @@
        "Clasificación"), mismo gate admin/superadmin. La ruta sigue
        intacta, solo cambió desde dónde se llega. #}
     {% endif %}
+    {# 🔒 2026-10-08 (REGLA #26): el Dashboard lleva cuentas de la empresa; no se ofrece a ningún técnico. #}
+    {% if not es_tecnico %}
     <a href="{{ url_for('mant_index') }}"
        class="sidebar-link{% if request.endpoint == 'mant_index' %} active{% endif %}">
       <i class="bi bi-speedometer2"></i><span>Dashboard</span>
     </a>
+    {% endif %}
     {# 🔴 FIX 2026-09-19 (Daniel, en vivo: "quiero eliminar la OT normal").
        Se quita el link duplicado -- apuntaba a mant_ots_list, que ahora es
        un wrapper que redirige a ot2_panel (mismo destino del link de abajo).
@@ -805,7 +808,7 @@
          Facturas que los proveedores externos le emiten a ILUS por sus OT,
          con candado anti doble cobro. Mismo permiso que el reporte
          "Facturación de proveedores" (ver _facprov_puede). #}
-      {% if permissions and (permissions.mant_facturacion_proveedores or permissions.superadmin) %}
+      {% if permissions and (permissions.mant_facturacion_proveedores or permissions.superadmin) and not es_tecnico %}
       <a href="/servicio-tecnico/facturas-proveedor"
          class="sidebar-link{% if request.endpoint in ['mant_facturas_proveedor', 'mant_factura_proveedor_detalle'] %} active{% endif %}">
         <i class="bi bi-receipt-cutoff"></i><span>Facturas proveedor</span>
@@ -839,7 +842,7 @@
          class="sidebar-link{% if request.endpoint == 'repuestos_ubicaciones_page' %} active{% endif %}">
         <i class="bi bi-geo-alt-fill"></i><span>Ubicaciones</span>
       </a>
-      {% if not is_tecnico %}
+      {% if not es_tecnico %}
       <a href="{{ url_for('mant_tecnicos_externos_index') }}"
          class="sidebar-link{% if request.endpoint in ['mant_tecnicos_index','mant_tecnicos_externos_index'] %} active{% endif %}">
         <i class="bi bi-person-badge"></i><span>Técnicos</span>
@@ -859,12 +862,12 @@
     {% endif %}
 
     {# ══ LOGÍSTICA ══ #}
-    {% if (permissions.retiros or permissions.superadmin or permissions.cubicador or permissions.transporte) and not is_tecnico %}
+    {% if (permissions.retiros or permissions.superadmin or permissions.cubicador or permissions.transporte) and not es_tecnico %}
     <div class="sg-section-label">Logística</div>
     {% endif %}
 
     {# ── RETIROS (módulo independiente) ── #}
-    {% if (permissions.retiros or permissions.superadmin) and not is_tecnico %}
+    {% if (permissions.retiros or permissions.superadmin) and not es_tecnico %}
     <button class="sg-toggle" data-sg="retiros">
       <i class="bi bi-box-arrow-up-right"></i>Retiros
       <i class="bi bi-chevron-right sg-chevron"></i>
@@ -885,7 +888,7 @@
     {% endif %}
 
     {# ── TRANSPORTE (Cubicador + Transporte unificado) ── #}
-    {% if (permissions.cubicador or permissions.transporte) and not is_tecnico %}
+    {% if (permissions.cubicador or permissions.transporte) and not es_tecnico %}
     <button class="sg-toggle" data-sg="transporte">
       <i class="bi bi-truck"></i>Transporte
       <i class="bi bi-chevron-right sg-chevron"></i>

@@ -1,118 +1,299 @@
 {% extends "base.html" %}
 {% block title %}Servicio Técnico — ILUS{% endblock %}
+{#- 🎨 2026-10-08 (Daniel: «ese dashboard igual mejorarlo con el formato que estamos usando»): mismo lenguaje que Retiros e
+    Incidencias -- cabecera oscura con botones de cuerpo (.inc-hbtn), tarjetas KPI con color y semáforo, tablas con los
+    estilos rm-* de retiros_monitor.css, compacto y sin huecos. NO cambia ningún dato ni quita ninguna sección (REGLA
+    #4.2): solo la presentación. Lo que lleva plata (MRR, proveedores externos, costos por técnico, visitas sin facturar,
+    análisis económico) se dibuja solo para gestión (nunca para técnicos: REGLA #26). -#}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='retiros_monitor.css') }}">
+<style>
+  /* ── Botones del encabezado (los mismos de Incidencias) ── */
+  .inc-hacc{display:flex;gap:8px;flex-wrap:wrap;align-items:stretch}
+  .inc-hbtn{display:inline-flex;align-items:center;gap:9px;min-height:44px;padding:5px 14px 5px 5px;border-radius:12px;
+    border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.08);color:#fff !important;font-weight:700;
+    font-size:.88rem;line-height:1.1;text-decoration:none;transition:transform .15s ease,background .15s ease,box-shadow .15s ease;
+    box-shadow:0 2px 6px rgba(0,0,0,.25);position:relative}
+  .inc-hbtn:hover,.inc-hbtn:focus-visible{background:rgba(255,255,255,.16);transform:translateY(-1px);
+    box-shadow:0 6px 16px rgba(0,0,0,.35);color:#fff}
+  .inc-hbtn:focus-visible{outline:2px solid #fff;outline-offset:2px}
+  .inc-hbtn .ic{width:32px;height:32px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;
+    font-size:1rem;flex:0 0 32px;color:#fff}
+  .inc-hbtn .tx{display:flex;flex-direction:column;align-items:flex-start;text-align:left}
+  .dsh-head.page-header{padding:14px 18px;margin-bottom:12px}
+  .inc-hbtn .tx small{font-weight:500;font-size:.72rem;opacity:.75}
+  .inc-hbtn.gris .ic{background:#6b7280}
+  .inc-hbtn.verde .ic{background:#16a34a}
+  .inc-hbtn.ambar .ic{background:#f59e0b}
+  .inc-hbtn.azul .ic{background:#3b82f6}
+  .inc-hbtn.rojo{background:#dc2626;border-color:#dc2626}
+  .inc-hbtn.rojo:hover,.inc-hbtn.rojo:focus-visible{background:#b91c1c}
+  .inc-hbtn.rojo .ic{background:rgba(255,255,255,.2)}
+  .inc-hbtn.peligro .ic{background:#7f1d1d}
+  .inc-hbtn .badge-sug{position:absolute;top:-6px;right:-6px;background:#dc2626;color:#fff;border-radius:999px;
+    font-size:.7rem;font-weight:800;padding:2px 7px;border:2px solid #1f2937}
+  @media (prefers-reduced-motion:reduce){.inc-hbtn{transition:none}.inc-hbtn:hover{transform:none}}
+  @media (max-width:576px){.inc-hacc{width:100%}.inc-hacc>*{flex:1 1 calc(50% - 10px)}.inc-hacc .inc-hbtn{width:100%;justify-content:flex-start}
+    .inc-hbtn .tx small{display:none}}
+
+  /* ── Variables del lenguaje rm-* para todo el dashboard ── */
+  .dsh{--rm-red:#dc2626;--rm-black:#0a0a0a;--rm-green:#16a34a;--rm-amber:#f59e0b;--rm-blue:#3b82f6;
+    --rm-ink:#111827;--rm-ink2:#374151;--rm-line:#e5e7eb;--rm-bg:#f9fafb}
+
+  /* ── Tarjetas KPI (rm-kpi, compactas, en 4 columnas) ── */
+  .dsh .rm-kpis{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:12px}
+  @media (max-width:991px){.dsh .rm-kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}}
+  .dsh .rm-kpi{min-height:0;padding:9px 14px 8px;gap:0}
+  .dsh .rm-kpi-lbl{font-size:.76rem}
+  .dsh .rm-kpi-num{font-size:1.9rem}
+  .dsh .rm-kpi-foot{font-size:.78rem;margin-top:3px}
+  .dsh .rm-kpi .rm-delta{font-size:.76rem;padding:1px 9px;white-space:nowrap}
+  .dsh .rm-kpi-num.dinero{font-size:1.75rem}
+  @media (max-width:576px){
+    .dsh .rm-kpi{padding:9px 12px 8px}
+    .dsh .rm-kpi-num{font-size:1.6rem}
+    .dsh .rm-kpi-num.dinero{font-size:1.35rem}
+    .dsh .rm-kpi-lbl{font-size:.7rem}
+    .dsh .rm-kpi .rm-delta{white-space:normal;font-size:.72rem}
+    .dsh-alerta .dsh-btn{width:100%;justify-content:center;min-height:44px}
+  }
+
+  /* ── Tarjeta de sección ── */
+  .dsh-card{background:#fff;border:1px solid var(--rm-line);border-top:4px solid var(--acc,#dc2626);border-radius:14px;
+    box-shadow:0 2px 10px rgba(10,10,10,.05);overflow:hidden;margin-bottom:12px}
+  .dsh-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:9px 16px;
+    border-bottom:1px solid var(--rm-line)}
+  .dsh-tit{display:flex;align-items:center;gap:10px;font-size:.95rem;font-weight:800;color:var(--rm-ink);min-width:0}
+  .dsh-ic{width:30px;height:30px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;
+    background:var(--acc,#dc2626);color:#fff;font-size:.95rem;flex:0 0 30px}
+  .dsh-n{display:inline-block;min-width:26px;padding:1px 9px;border-radius:999px;background:var(--rm-black);color:#fff;
+    font-size:.8rem;font-weight:800;text-align:center}
+  .dsh-sub{font-size:.8rem;font-weight:500;color:#6b7280}
+  .dsh-acc{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .dsh-pad{padding:12px 16px}
+  .dsh-btn{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 12px;background:#fff;border:1.5px solid var(--rm-black);
+    border-radius:10px;color:var(--rm-black);font-size:.82rem;font-weight:700;text-decoration:none;cursor:pointer;white-space:nowrap}
+  .dsh-btn:hover{background:var(--rm-black);color:#fff}
+  .dsh-btn.rojo{border-color:var(--rm-red);color:#b91c1c}
+  .dsh-btn.rojo:hover{background:var(--rm-red);color:#fff}
+  .dsh-select{min-height:36px;padding:0 28px 0 10px;border:1.5px solid #9ca3af;border-radius:10px;background-color:#fff;
+    color:var(--rm-ink);font-size:.85rem;font-weight:600}
+  .dsh-grid{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:14px;margin-bottom:14px}
+  .dsh-grid > .dsh-card{margin-bottom:0}
+  .dsh-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:14px;align-items:start}
+  .dsh-grid2 > .dsh-card{margin-bottom:0}
+  .dsh-grid2 > .dsh-card:only-child{grid-column:1/-1}
+  .dsh-grid2 .dsh-cli{grid-template-columns:repeat(2,minmax(0,1fr))}
+  @media (max-width:991px){.dsh-grid,.dsh-grid2{grid-template-columns:minmax(0,1fr)}}
+  .dsh-vacio{display:flex;align-items:center;gap:12px;padding:14px 16px;color:var(--rm-ink2);font-size:.9rem}
+  .dsh-vacio > .bi{font-size:1.6rem;color:#16a34a;opacity:.8}
+  .dsh-vacio.gris > .bi{color:#9ca3af}
+
+  /* ── Tablas (rm-table) en versión compacta ── */
+  .dsh .rm-wrap{border:0;border-radius:0;box-shadow:none}
+  .dsh-table thead th{padding:8px 14px;font-size:.76rem}
+  .dsh-table tbody td{padding:8px 14px;vertical-align:middle;font-size:.88rem;line-height:1.3}
+  .dsh-table td.t-end{white-space:nowrap}
+  .dsh-table tbody td:first-child{padding-left:18px}
+  .dsh-table tbody td:last-child{padding-right:16px}
+  .dsh-table th.t-end,.dsh-table td.t-end{text-align:right}
+  .dsh-table .rm-sub{font-size:.8rem;margin-top:1px}
+  .dsh-table a.dsh-lnk{color:var(--rm-ink);font-weight:700;text-decoration:none}
+  .dsh-table a.dsh-lnk:hover{color:var(--rm-red);text-decoration:underline}
+  .rm-pill.azul{background:#dbeafe;color:#1e40af;border:1px solid #93c5fd}
+  .dsh-table .rm-pill{margin-top:0;font-size:.78rem;padding:2px 9px}
+  .dsh-chip{display:inline-block;padding:2px 9px;border-radius:999px;background:#f3f4f6;color:#374151;border:1px solid #d1d5db;
+    font-size:.74rem;font-weight:700;text-transform:capitalize}
+  @media (max-width:768px){
+    .dsh-table thead{display:none}
+    .dsh-table,.dsh-table tbody,.dsh-table tr,.dsh-table td{display:block;width:100%}
+    .dsh-table tbody tr.rm-row{padding:10px 14px 10px 16px;border-bottom:1px solid var(--rm-line);border-left:5px solid var(--rm-sem,transparent)}
+    .dsh-table tbody tr.rm-row td:first-child{box-shadow:none}
+    .dsh-table tbody td{border:0;padding:3px 0 !important;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;
+      text-align:right;font-size:.9rem}
+    .dsh-table tbody td::before{content:attr(data-label);flex:0 0 auto;font-size:.7rem;font-weight:800;letter-spacing:.05em;
+      text-transform:uppercase;color:#6b7280;padding-top:3px;text-align:left}
+    .dsh-table tbody td.t-main{display:block;text-align:left;font-size:1rem}
+    .dsh-table tbody td.t-main::before{display:none}
+    .dsh-table tbody td.t-end{justify-content:flex-end}
+    .dsh-table tbody td.t-end::before{display:none}
+    .dsh-table .rm-empty{display:block}
+    .dsh-table .rm-empty td{display:block;text-align:center}
+    .dsh-table .rm-empty td::before{display:none}
+    .dsh-hd{padding:10px 12px}
+    .dsh-pad{padding:10px 12px}
+  }
+
+  /* ── Lista de alertas de contratos y clientes sin visita ── */
+  .dsh-li{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:8px 16px 8px 18px;
+    border-bottom:1px solid var(--rm-line);border-left:5px solid var(--rm-sem,transparent)}
+  .dsh-li:last-child{border-bottom:0}
+  .dsh-li[data-alerta=rojo]{--rm-sem:#dc2626}.dsh-li[data-alerta=ambar]{--rm-sem:#f59e0b}
+  .dsh-li[data-alerta=verde]{--rm-sem:#16a34a}.dsh-li[data-alerta=gris]{--rm-sem:#9ca3af}
+  .dsh-li .nm{font-weight:800;color:var(--rm-ink);text-decoration:none;display:block;line-height:1.25}
+  .dsh-li a.nm:hover{color:var(--rm-red);text-decoration:underline}
+  .dsh-li .sb{font-size:.82rem;color:var(--rm-ink2);margin-top:1px}
+  .dsh-li .rm-pill{margin-top:0;flex:0 0 auto}
+  .dsh-cli{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:10px 14px}
+  @media (max-width:991px){.dsh-cli{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media (max-width:576px){.dsh-cli{grid-template-columns:minmax(0,1fr)}}
+  .dsh-cli a{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:12px;background:#f9fafb;
+    border:1px solid var(--rm-line);border-left:5px solid #3b82f6;text-decoration:none;min-width:0}
+  .dsh-cli a:hover{background:#eff6ff}
+  .dsh-cli .ci{width:34px;height:34px;border-radius:50%;background:#dbeafe;color:#1d4ed8;display:flex;align-items:center;
+    justify-content:center;flex:0 0 34px}
+  .dsh-cli .nm{font-weight:800;color:var(--rm-ink);font-size:.88rem;line-height:1.25;overflow-wrap:anywhere}
+  .dsh-cli .sb{font-size:.8rem;color:var(--rm-ink2)}
+
+  /* ── Tarjetas de análisis ── */
+  .dsh-lnk-card{display:flex;align-items:center;gap:14px;padding:14px 16px;text-decoration:none;color:inherit;background:#fff;
+    border:1px solid var(--rm-line);border-top:4px solid var(--acc,#dc2626);border-radius:14px;box-shadow:0 2px 10px rgba(10,10,10,.05);
+    transition:transform .15s,box-shadow .15s}
+  .dsh-lnk-card:hover{transform:translateY(-2px);box-shadow:0 10px 24px rgba(10,10,10,.10);color:inherit}
+  .dsh-lnk-card .ic{width:46px;height:46px;border-radius:13px;background:var(--acc,#dc2626);color:#fff;display:flex;
+    align-items:center;justify-content:center;font-size:1.25rem;flex:0 0 46px}
+  .dsh-lnk-card .t{font-weight:800;color:var(--rm-ink);font-size:1rem}
+  .dsh-lnk-card .d{font-size:.82rem;color:var(--rm-ink2);margin-top:2px;line-height:1.35}
+  .dsh-lnk-card .go{margin-left:auto;font-size:1.4rem;color:var(--acc,#dc2626)}
+  .dsh-seccion{font-size:.8rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--rm-ink);margin:6px 0 10px;
+    display:flex;align-items:center;gap:8px}
+  .dsh-seccion::before{content:'';width:4px;height:15px;background:var(--rm-red);border-radius:2px}
+  .dsh-seccion small{font-size:.8rem;font-weight:500;text-transform:none;letter-spacing:0;color:#6b7280}
+
+  /* ── Aviso de OT auto-creadas ── */
+  .dsh-alerta{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;padding:9px 16px;
+    background:#fef2f2;border:1px solid #fecaca;border-left:6px solid #dc2626;border-radius:14px}
+  .dsh-alerta .t{font-weight:800;color:#7f1d1d}
+  .dsh-alerta .d{font-size:.82rem;color:#7c2d12;line-height:1.3}
+  .dsh-alerta > .d-flex{flex:1 1 360px;min-width:0}
+
+  /* ── Proveedores externos del mes y costos por técnico (mismo bloque de siempre, con el lenguaje rm-*) ── */
+  .mfp-card{background:#fff;border:1px solid var(--rm-line);border-top:4px solid #0a0a0a;border-radius:14px;padding:0;
+    margin-bottom:12px;box-shadow:0 2px 10px rgba(10,10,10,.05);overflow:hidden}
+  .mfp-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;padding:9px 16px;
+    margin:0;border-bottom:1px solid var(--rm-line)}
+  .mfp-tit{font-size:.95rem;font-weight:800;color:var(--rm-ink);display:flex;align-items:center;gap:10px}
+  .mfp-tit i{width:30px;height:30px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;
+    background:#dc2626;color:#fff;font-size:.95rem}
+  .mfp-sub{font-size:.8rem;color:#6b7280;margin-top:2px}
+  .mfp-acc{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .mfp-total{text-align:right;margin-right:6px}
+  .mfp-total span{display:block;font-size:.66rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#6b7280}
+  .mfp-total b{font-size:1.2rem;font-weight:800;color:var(--rm-ink);font-variant-numeric:tabular-nums}
+  .mfp-btn{display:inline-flex;align-items:center;gap:6px;font-size:.82rem;font-weight:700;padding:0 12px;border-radius:10px;
+    text-decoration:none;border:1.5px solid var(--rm-black);color:var(--rm-black);background:#fff;min-height:36px}
+  .mfp-btn:hover{background:var(--rm-black);color:#fff}
+  .mfp-btn.dark{background:var(--rm-black);color:#fff}
+  .mfp-btn.dark:hover{background:#1f2937}
+  .mfp-tabla-wrap{overflow-x:auto}
+  .mfp-tabla{width:100%;border-collapse:separate;border-spacing:0;font-size:.88rem}
+  .mfp-tabla thead th{background:var(--rm-black);color:#fff;font-size:.76rem;font-weight:700;text-transform:uppercase;
+    letter-spacing:.04em;padding:9px 14px;text-align:left;white-space:nowrap}
+  .mfp-tabla th.m,.mfp-tabla td.m{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mfp-tabla tbody td{padding:8px 14px;border-bottom:1px solid var(--rm-line);vertical-align:middle;line-height:1.25}
+  .mfp-tabla tbody td:first-child{padding-left:18px}
+  .mfp-tabla tbody td:last-child{padding-right:16px}
+  .mfp-tabla tbody tr:hover td{background:#f9fafb}
+  .mfp-tabla td.tot{font-weight:800;color:var(--rm-ink)}
+  .mfp-nom{font-weight:800;color:var(--rm-ink)}
+  .mfp-ot{font-size:.8rem;color:#6b7280}
+  .mfp-mas{display:flex;align-items:center;gap:6px;padding:10px 16px;font-size:.84rem;font-weight:700;color:#dc2626;
+    text-decoration:none;border-top:1px solid var(--rm-line)}
+  .mfp-mas:hover{background:#fef2f2;color:#b91c1c}
+  .mfp-vacio{display:flex;gap:12px;align-items:flex-start;background:#f9fafb;margin:10px 16px;
+    border:1px solid var(--rm-line);border-radius:12px;padding:12px 14px;font-size:.88rem;color:var(--rm-ink)}
+  .mfp-vacio > i{font-size:1.3rem;color:#9ca3af}
+  .mfp-vacio span{display:block;font-size:.8rem;color:#6b7280;margin-top:2px}
+  #cptBody{padding:10px 16px}
+  #cptBody .mfp-vacio{margin:0}
+  #cptBody .mfp-tabla-wrap{margin:0 -16px -12px}
+  @media (max-width:768px){
+    .mfp-acc{width:100%;justify-content:space-between}
+    .mfp-total{text-align:left;margin-right:0;width:100%}
+    .mfp-tabla thead{display:none}
+    .mfp-tabla,.mfp-tabla tbody,.mfp-tabla tr,.mfp-tabla td{display:block;width:100%}
+    .mfp-tabla tbody tr{padding:10px 14px 10px 16px;border-bottom:1px solid var(--rm-line)}
+    .mfp-tabla tbody td{border:0;padding:3px 0 !important;display:flex;justify-content:space-between;gap:12px;font-size:.9rem}
+    .mfp-tabla tbody td[data-label]::before{content:attr(data-label);font-size:.7rem;font-weight:800;letter-spacing:.05em;
+      text-transform:uppercase;color:#6b7280;padding-top:3px}
+    .mfp-tabla tbody td.mfp-main{display:block}
+    .mfp-tabla tbody td.mfp-main::before{display:none}
+  }
+
+  /* ── Badges de estado (se conservan por si otra pantalla los reusa) ── */
+  .mant-kpi { background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 2px 10px rgba(0,0,0,.07);border:1px solid #eee;
+              display:flex;flex-direction:column;gap:4px; }
+  .badge-estado { display:inline-block;padding:2px 9px;border-radius:50px;font-size:.68rem;font-weight:700; }
+</style>
+{% endblock %}
 
 {% block content %}
-<style>
-.mant-kpi { background:#fff;border-radius:12px;padding:18px 20px;
-            box-shadow:0 2px 10px rgba(0,0,0,.07);border:1px solid #eee;
-            display:flex;flex-direction:column;gap:4px; }
-.mant-kpi .kpi-num  { font-size:2rem;font-weight:900;line-height:1; }
-.mant-kpi .kpi-lbl  { font-size:.75rem;color:#888;text-transform:uppercase;letter-spacing:.8px; }
-.mant-kpi.red .kpi-num  { color:var(--ilus-red); }
-.mant-kpi.grn .kpi-num  { color:#1a7a1a; }
-.mant-kpi.amb .kpi-num  { color:#e65100; }
-.mant-kpi.blu .kpi-num  { color:#0066cc; }
-
-.mant-table { font-size:.83rem; }
-.mant-table thead th { background:#f8f9fa;font-weight:700;font-size:.72rem;
-                        text-transform:uppercase;letter-spacing:.5px;color:#666; }
-.badge-estado { display:inline-block;padding:2px 9px;border-radius:50px;
-                font-size:.68rem;font-weight:700; }
-.badge-programada { background:#e3f2fd;color:#0066cc; }
-.badge-completada  { background:#e8f5e9;color:#1a7a1a; }
-.badge-cancelada   { background:#f5f5f5;color:#666; }
-.badge-reagendada  { background:#fff3e0;color:#e65100; }
-.badge-vigente    { background:#e8f5e9;color:#1a7a1a; }
-.badge-por_vencer { background:#fff3e0;color:#e65100; }
-.badge-vencido    { background:#fdecea;color:#c62828; }
-.badge-indefinido { background:#ede7f6;color:#512da8; }
-</style>
-
-<div class="page-header">
+<div class="page-header dsh-head">
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
       <h4><i class="bi bi-wrench-adjustable me-2" style="color:var(--ilus-red)"></i>Servicio Técnico</h4>
       <div class="sub">Dashboard operacional — ILUS Fitness</div>
     </div>
-    <div class="d-flex gap-2 flex-wrap">
+    <div class="inc-hacc">
       {# 2026-05-22 — "Mi día" para Lenin (técnico) y Aaron (ejecutivo). Visible
          para todos los roles que entren a mantenciones; cada uno ve solo lo suyo. #}
-      <a href="{{ url_for('mant_mi_dia') }}" class="btn btn-ilus fw-bold px-3"
-         style="background:linear-gradient(135deg,#dc2626,#7f1d1d);border:0"
-         title="Tus OTs de hoy + semana + por aprobar">
-        <i class="bi bi-sun-fill me-1"></i>Mi día
-      </a>
+      <a href="{{ url_for('mant_mi_dia') }}" class="inc-hbtn rojo" title="Tus OTs de hoy + semana + por aprobar">
+        <span class="ic"><i class="bi bi-sun-fill"></i></span><span class="tx">Mi día<small>tus OT de hoy</small></span></a>
       {#- 🔴 FIX 2026-09-09 (Daniel: "en el dashboard está apuntando un
           botón que dice órdenes de trabajo, y lo envía a las órdenes de
           trabajo normal, debe ser a las 2.0"). Apuntaba a mant_ots_list
           (listado clásico) -- ahora va al panel de OT 2.0. mant_ots_list
           NO se borra (Regla #4.2), sigue viva para quien la tenga
           enlazada; solo se cambia a dónde lleva este botón. -#}
-      <a href="{{ url_for('ot2_panel') }}" class="btn btn-dark fw-bold px-3"
-         style="background:linear-gradient(135deg,#0a0a0a,#2a0d0d);border:0">
-        <i class="bi bi-clipboard2-pulse me-1"></i>Órdenes de Trabajo
-      </a>
-      <a href="{{ url_for('mant_cliente_wizard') }}" class="btn btn-ilus fw-bold px-3">
-        <i class="bi bi-building-add me-1"></i>Nuevo cliente
-      </a>
+      <a href="{{ url_for('ot2_panel') }}" class="inc-hbtn azul">
+        <span class="ic"><i class="bi bi-clipboard2-pulse"></i></span><span class="tx">Órdenes de Trabajo<small>panel de OT</small></span></a>
+      <a href="{{ url_for('mant_cliente_wizard') }}" class="inc-hbtn verde">
+        <span class="ic"><i class="bi bi-building-add"></i></span><span class="tx">Nuevo cliente<small>alta de cliente</small></span></a>
       {# Reporte Excel Clientes+Contratos+Productos — pedido Daniel/Félix 2026-06:
          cruce de cartera con área general + Finanzas. Oculto para técnicos
          (el endpoint es @_no_tecnico — info comercial, no operativa). #}
       {% set _role_low = (current_user.role if current_user else '') | lower %}
       {% if not _role_low.startswith('tecnico') %}
-      <button type="button" class="btn fw-bold px-3" onclick="abrirReporteExcel()"
-              style="background:#14532d;color:#fff;border:0"
+      <button type="button" class="btn inc-hbtn verde" onclick="abrirReporteExcel()"
               title="Descargar Excel de clientes: RUT, dirección, contrato (condición y tipo) + hoja de productos por RUT — para cruzar con Finanzas">
-        <i class="bi bi-file-earmark-excel me-1"></i>Reporte Excel
-      </button>
+        <span class="ic"><i class="bi bi-file-earmark-excel"></i></span><span class="tx">Reporte Excel<small>cartera y contratos</small></span></button>
       {% endif %}
       {# 🆕 2026-09-09 -- reparación retroactiva de N° de serie faltantes
          (bug histórico ya corregido de raíz). Solo superadmin: escribe en
          la base de datos de producción. #}
       {% if permissions.superadmin %}
-      <a href="{{ url_for('admin_backfill_series_maquinas') }}" class="btn fw-bold px-3"
-         style="background:#92400e;color:#fff;border:0"
+      <a href="{{ url_for('admin_backfill_series_maquinas') }}" class="inc-hbtn ambar"
          title="Diagnóstico + reparación de equipos que quedaron sin N° de serie por un bug ya corregido">
-        <i class="bi bi-upc-scan me-1"></i>Reparar N° de serie
-      </a>
+        <span class="ic"><i class="bi bi-upc-scan"></i></span><span class="tx">Reparar N° de serie<small>solo superadmin</small></span></a>
       {% endif %}
       {# Plan 2026-05-21 Capa 9-C: dashboard puede cargar visitas históricas
          eligiendo el cliente vía autocomplete. #}
-      <button type="button" class="btn btn-outline-secondary" onclick="abrirVisitaHistDashboard()"
+      <button type="button" class="btn inc-hbtn gris" onclick="abrirVisitaHistDashboard()"
               title="Registrar una visita que ya ocurrió">
-        <i class="bi bi-clock-history me-1"></i>Visita histórica
-      </button>
-      <a href="{{ url_for('mant_calendario') }}" class="btn btn-outline-secondary">
-        <i class="bi bi-calendar3 me-1"></i>Calendario
-      </a>
+        <span class="ic"><i class="bi bi-clock-history"></i></span><span class="tx">Visita histórica<small>registrar pasada</small></span></button>
+      <a href="{{ url_for('mant_calendario') }}" class="inc-hbtn azul">
+        <span class="ic"><i class="bi bi-calendar3"></i></span><span class="tx">Calendario<small>agenda de OT</small></span></a>
       {# Sugerencias con evidencia: el sistema sugiere, el usuario decide.
          Cada decisión (aceptar/rechazar/ignorar) queda registrada. #}
-      <a href="{{ url_for('mant_sugerencias_page') }}" class="btn btn-outline-warning position-relative"
-         style="border-color:#f59e0b;color:#92400e"
+      <a href="{{ url_for('mant_sugerencias_page') }}" class="inc-hbtn ambar"
          title="Sugerencias generadas por el sistema para tu revisión">
-        <i class="bi bi-lightbulb me-1"></i>Sugerencias
-        <span id="sugBadgeIndex"
-              class="position-absolute top-0 start-100 translate-middle badge rounded-pill"
-              style="background:#dc2626;display:none">
-          <span id="sugBadgeIndexNum">0</span>
-        </span>
+        <span class="ic"><i class="bi bi-lightbulb"></i></span><span class="tx">Sugerencias<small>para tu revisión</small></span>
+        <span id="sugBadgeIndex" class="badge-sug" style="display:none"><span id="sugBadgeIndexNum">0</span></span>
       </a>
-      <a href="{{ url_for('mant_tecnicos_externos_index') }}" class="btn btn-outline-dark"
+      <a href="{{ url_for('mant_tecnicos_externos_index') }}" class="inc-hbtn gris"
          title="Contratistas y empresas tercerizadas">
-        <i class="bi bi-building-fill-gear me-1"></i>Proveedores nacionales
-      </a>
+        <span class="ic"><i class="bi bi-building-fill-gear"></i></span><span class="tx">Proveedores nacionales<small>contratistas</small></span></a>
       {% if permissions.superadmin %}
-      <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#modalResetMant"
-              title="Borrar todos los datos de mantenciones (solo superadmin)">
-        <i class="bi bi-trash3"></i>
-      </button>
+      <button type="button" class="btn inc-hbtn peligro" data-bs-toggle="modal" data-bs-target="#modalResetMant"
+              title="Borrar todos los datos de mantenciones (solo superadmin)" aria-label="Borrar todos los datos de mantenciones">
+        <span class="ic"><i class="bi bi-trash3"></i></span><span class="tx">Reiniciar<small>solo superadmin</small></span></button>
       {% endif %}
     </div>
   </div>
 </div>
 
 {% include "mantenciones/_reporte_excel_modal.html" %}
-
+<div class="dsh">
 {# ══════════════════════════════════════════════════════════════════
    MODAL: Reset completo de datos de mantenciones (SOLO superadmin)
    Doble confirmación: tipear "RESET" para habilitar el botón.
@@ -229,30 +410,17 @@ async function ejecutarResetMantenciones(){
    /mantenciones/ots/auto-creadas para revisarlas y borrarlas.
 ══════════════════════════════════════════════════════════════════ #}
 {% if permissions.admin or permissions.superadmin %}
-<div id="autoCreadasBanner" class="mb-3" style="display:none">
-  <div class="ilus-card"
-       style="background:linear-gradient(135deg,#fef2f2,#fee2e2);
-              border-left:5px solid #dc2626">
-    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
-      <div class="d-flex align-items-center gap-3">
-        <i class="bi bi-exclamation-octagon-fill"
-           style="font-size:2rem;color:#dc2626"></i>
-        <div>
-          <div class="fw-bold" style="color:#7f1d1d;font-size:1rem">
-            <span id="autoCreadasN">—</span> OT(s) auto-creadas para revisar
-          </div>
-          <div class="small" style="color:#7c2d12">
-            Detectadas OTs creadas por proceso automático (cron / sistema)
-            sin acción manual de un ejecutivo. Revísalas y borra las que no
-            correspondan.
-          </div>
-        </div>
+<div id="autoCreadasBanner" style="display:none">
+  <div class="dsh-alerta">
+    <div class="d-flex align-items-center gap-3">
+      <i class="bi bi-exclamation-octagon-fill" style="font-size:1.6rem;color:#dc2626"></i>
+      <div>
+        <div class="t"><span id="autoCreadasN">—</span> OT(s) auto-creadas para revisar</div>
+        <div class="d">Detectadas OTs creadas por proceso automático (cron / sistema) sin acción manual de un ejecutivo.
+          Revísalas y borra las que no correspondan.</div>
       </div>
-      <a href="{{ url_for('mant_ots_auto_creadas_page') }}"
-         class="btn btn-danger fw-bold">
-        <i class="bi bi-shield-check me-1"></i>Revisar y limpiar
-      </a>
     </div>
+    <a href="{{ url_for('mant_ots_auto_creadas_page') }}" class="dsh-btn rojo"><i class="bi bi-shield-check"></i>Revisar y limpiar</a>
   </div>
 </div>
 <script>
@@ -269,32 +437,34 @@ async function ejecutarResetMantenciones(){
 </script>
 {% endif %}
 
-{# ── KPIs ── #}
-<div class="row g-3 mb-4">
-  <div class="col-6 col-md-3">
-    <div class="mant-kpi grn">
-      <div class="kpi-num">{{ kpi_clientes }}</div>
-      <div class="kpi-lbl"><i class="bi bi-building me-1"></i>Clientes activos</div>
+{# ── KPIs (rm-kpi: color por tarjeta + semáforo en el pie) ── #}
+<div class="rm-kpis">
+  <div class="rm-kpi" style="--acc:#16a34a">
+    <div class="rm-kpi-head"><div class="rm-kpi-lbl">Clientes activos</div><i class="bi bi-building"></i></div>
+    <div class="rm-kpi-num">{{ kpi_clientes }}</div>
+    <div class="rm-kpi-foot"><span class="rm-delta bueno"><i class="bi bi-check-circle-fill"></i>Cartera activa</span></div>
+  </div>
+  <div class="rm-kpi" style="--acc:#3b82f6">
+    <div class="rm-kpi-head"><div class="rm-kpi-lbl">Contratos vigentes</div><i class="bi bi-file-earmark-text"></i></div>
+    <div class="rm-kpi-num">{{ kpi_contratos }}</div>
+    <div class="rm-kpi-foot"><span class="rm-delta neutro"><i class="bi bi-infinity"></i>Vigentes e indefinidos</span></div>
+  </div>
+  <div class="rm-kpi" style="--acc:{{ '#f59e0b' if kpi_vencen > 0 else '#16a34a' }}">
+    <div class="rm-kpi-head"><div class="rm-kpi-lbl">Vencen pronto</div><i class="bi bi-exclamation-triangle"></i></div>
+    <div class="rm-kpi-num">{{ kpi_vencen }}</div>
+    <div class="rm-kpi-foot">
+      {% if kpi_vencen > 0 %}<span class="rm-delta malo"><i class="bi bi-exclamation-circle-fill"></i>Revisar contratos</span>
+      {% else %}<span class="rm-delta bueno"><i class="bi bi-check-circle-fill"></i>Todo al día</span>{% endif %}
     </div>
   </div>
-  <div class="col-6 col-md-3">
-    <div class="mant-kpi blu">
-      <div class="kpi-num">{{ kpi_contratos }}</div>
-      <div class="kpi-lbl"><i class="bi bi-file-earmark-text me-1"></i>Contratos vigentes</div>
-    </div>
+  {# 🔒 2026-10-08 (REGLA #26): el MRR es plata de la empresa; solo para gestión. #}
+  {% if not es_tecnico %}
+  <div class="rm-kpi" style="--acc:#dc2626">
+    <div class="rm-kpi-head"><div class="rm-kpi-lbl">MRR contratos</div><i class="bi bi-currency-dollar"></i></div>
+    <div class="rm-kpi-num dinero">${{ "{:,.0f}".format(kpi_ingresos).replace(",",".") }}</div>
+    <div class="rm-kpi-foot"><span class="rm-delta neutro"><i class="bi bi-arrow-repeat"></i>Mensual recurrente</span></div>
   </div>
-  <div class="col-6 col-md-3">
-    <div class="mant-kpi {% if kpi_vencen > 0 %}amb{% else %}grn{% endif %}">
-      <div class="kpi-num">{{ kpi_vencen }}</div>
-      <div class="kpi-lbl"><i class="bi bi-exclamation-triangle me-1"></i>Vencen pronto</div>
-    </div>
-  </div>
-  <div class="col-6 col-md-3">
-    <div class="mant-kpi red">
-      <div class="kpi-num">${{ "{:,.0f}".format(kpi_ingresos).replace(",",".") }}</div>
-      <div class="kpi-lbl"><i class="bi bi-currency-dollar me-1"></i>MRR contratos</div>
-    </div>
-  </div>
+  {% endif %}
 </div>
 
 {#- ══════════════════════════════════════════════════════════════
@@ -313,7 +483,7 @@ async function ejecutarResetMantenciones(){
     Solo OT CERRADAS: mientras una sigue abierta su costo puede cambiar
     y el total del mes se movería solo.
 -#}
-{% if facprov %}
+{% if facprov and not es_tecnico %}
 {% set _MESES = ['enero','febrero','marzo','abril','mayo','junio','julio',
                  'agosto','septiembre','octubre','noviembre','diciembre'] %}
 {% macro _clp(v) -%}${{ '{:,.0f}'.format(v or 0)|replace(',', '.') }}{%- endmacro %}
@@ -363,15 +533,15 @@ async function ejecutarResetMantenciones(){
       <tbody>
         {% for p in facprov.provs %}
         <tr>
-          <td>
+          <td class="mfp-main">
             <div class="mfp-nom">{{ p.nombre }}</div>
             <div class="mfp-ot">{{ p.n_ot }} OT</div>
           </td>
-          <td class="m">{{ _clp(p.instalacion) if p.instalacion else '—' }}</td>
-          <td class="m">{{ _clp(p.mantencion) if p.mantencion else '—' }}</td>
-          {% if facprov.tot.otros %}<td class="m">{{ _clp(p.otros) if p.otros else '—' }}</td>{% endif %}
-          <td class="m">{{ _clp(p.despacho) if p.despacho else '—' }}</td>
-          <td class="m tot">{{ _clp(p.total) }}</td>
+          <td class="m" data-label="Instalación">{{ _clp(p.instalacion) if p.instalacion else '—' }}</td>
+          <td class="m" data-label="Mantención">{{ _clp(p.mantencion) if p.mantencion else '—' }}</td>
+          {% if facprov.tot.otros %}<td class="m" data-label="Otros">{{ _clp(p.otros) if p.otros else '—' }}</td>{% endif %}
+          <td class="m" data-label="Despacho">{{ _clp(p.despacho) if p.despacho else '—' }}</td>
+          <td class="m tot" data-label="Total">{{ _clp(p.total) }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -386,46 +556,6 @@ async function ejecutarResetMantenciones(){
   {% endif %}
 </div>
 
-<style>
-.mfp-card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:16px 18px;
-  margin-bottom:1.5rem;box-shadow:0 1px 3px rgba(15,23,42,.06);border-left:5px solid #0a0a0a}
-.mfp-head{display:flex;justify-content:space-between;align-items:flex-start;
-  flex-wrap:wrap;gap:12px;margin-bottom:12px}
-.mfp-tit{font-size:1rem;font-weight:900;color:#0f172a;display:flex;align-items:center;gap:8px}
-.mfp-tit i{color:#dc2626}
-.mfp-sub{font-size:.76rem;color:#64748b;margin-top:2px}
-.mfp-acc{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.mfp-total{text-align:right;margin-right:4px}
-.mfp-total span{display:block;font-size:.62rem;font-weight:900;text-transform:uppercase;
-  letter-spacing:.05em;color:#94a3b8}
-.mfp-total b{font-size:1.15rem;font-weight:900;color:#0f172a;font-variant-numeric:tabular-nums}
-.mfp-btn{display:inline-flex;align-items:center;gap:6px;font-size:.76rem;font-weight:800;
-  padding:7px 12px;border-radius:8px;text-decoration:none;border:1px solid #d1d5db;
-  color:#374151;background:#fff;min-height:36px}
-.mfp-btn:hover{background:#f8fafc;color:#0f172a}
-.mfp-btn.dark{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
-.mfp-btn.dark:hover{background:#1f2937;color:#fff}
-.mfp-tabla-wrap{overflow-x:auto}
-.mfp-tabla{width:100%;border-collapse:collapse;font-size:.83rem}
-.mfp-tabla thead th{font-size:.62rem;font-weight:900;text-transform:uppercase;
-  letter-spacing:.05em;color:#64748b;padding:0 10px 6px;text-align:left;white-space:nowrap}
-.mfp-tabla th.m,.mfp-tabla td.m{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-.mfp-tabla tbody td{padding:8px 10px;border-top:1px solid #f1f5f9;vertical-align:middle}
-.mfp-tabla td.tot{font-weight:900;color:#0f172a}
-.mfp-nom{font-weight:800;color:#0f172a}
-.mfp-ot{font-size:.7rem;color:#94a3b8}
-.mfp-mas{display:inline-flex;align-items:center;gap:6px;margin-top:10px;font-size:.76rem;
-  font-weight:800;color:#dc2626;text-decoration:none}
-.mfp-mas:hover{text-decoration:underline;color:#b91c1c}
-.mfp-vacio{display:flex;gap:10px;align-items:flex-start;background:#f8fafc;
-  border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;font-size:.83rem;color:#0f172a}
-.mfp-vacio > i{font-size:1.2rem;color:#94a3b8}
-.mfp-vacio span{display:block;font-size:.76rem;color:#64748b;margin-top:2px}
-@media (max-width:768px){
-  .mfp-acc{width:100%;justify-content:space-between}
-  .mfp-total{text-align:left;margin-right:0;width:100%}
-}
-</style>
 {% endif %}
 
 {#- ══════════════════════════════════════════════════════════════
@@ -440,8 +570,8 @@ async function ejecutarResetMantenciones(){
     bloque de "Proveedores externos" de arriba, acá no hay un técnico
     "por defecto" que mostrar: se elige uno a la vez.
 -#}
-{% if permissions.superadmin %}
-<div class="mfp-card" id="cptCard" style="border-left-color:#dc2626">
+{% if permissions.superadmin and not es_tecnico %}
+<div class="mfp-card" id="cptCard" style="border-top-color:#dc2626">
   <div class="mfp-head">
     <div>
       <div class="mfp-tit"><i class="bi bi-graph-up-arrow"></i>Costos por técnico</div>
@@ -556,234 +686,154 @@ function escCpt(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
 </style>
 {% endif %}
 
-<div class="row g-3">
-
-  {# ── Pendientes de facturar (Plan 2026-05-21 Capa 9-B) ── #}
-  <div class="col-12">
-    <div class="ilus-card" id="pendientesFacturarWrap"
-         style="background:linear-gradient(135deg,#fffaf0,#fef2f2);border-left:5px solid #f59e0b">
-      <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
-        <div class="fw-bold" style="font-size:.95rem;color:#7c2d12">
-          <i class="bi bi-exclamation-triangle-fill me-2" style="color:#dc2626"></i>
-          Visitas sin facturar
-          <span class="badge ms-2" id="pfBadge" style="background:#dc2626;color:#fff;font-size:.7rem">—</span>
-        </div>
-        <div class="d-flex align-items-center gap-2 flex-wrap">
-          <label class="small text-muted me-1">Antigüedad mín.</label>
-          <select id="pfDiasMin" class="form-select form-select-sm" style="width:auto" onchange="cargarPendientesFacturar()">
-            <option value="3" selected>3 días</option>
-            <option value="7">7 días</option>
-            <option value="15">15 días</option>
-            <option value="30">30 días</option>
-          </select>
-          <button class="btn btn-sm btn-outline-dark" onclick="cargarPendientesFacturar()" title="Refrescar">
-            <i class="bi bi-arrow-clockwise"></i>
-          </button>
-        </div>
-      </div>
-      <div id="pfList">
-        <div class="text-muted py-3 text-center small">
-          <div class="spinner-border spinner-border-sm me-2"></div>Cargando…
-        </div>
-      </div>
+{% if not es_tecnico %}
+<div class="dsh-card" id="pendientesFacturarWrap" style="--acc:#f59e0b">
+  <div class="dsh-hd">
+    <div class="dsh-tit"><span class="dsh-ic"><i class="bi bi-exclamation-triangle-fill"></i></span>Visitas sin facturar
+      <span class="dsh-n" id="pfBadge" style="background:#dc2626">—</span></div>
+    <div class="dsh-acc">
+      <label class="dsh-sub" for="pfDiasMin">Antigüedad mín.</label>
+      <select id="pfDiasMin" class="dsh-select" onchange="cargarPendientesFacturar()">
+        <option value="3" selected>3 días</option>
+        <option value="7">7 días</option>
+        <option value="15">15 días</option>
+        <option value="30">30 días</option>
+      </select>
+      <button class="dsh-btn" onclick="cargarPendientesFacturar()" title="Refrescar" aria-label="Refrescar">
+        <i class="bi bi-arrow-clockwise"></i></button>
     </div>
   </div>
-
-  {# ── Próximas OTs (visitas) ── #}
-  <div class="col-12 col-lg-7">
-    <div class="ilus-card h-100">
-      <div class="d-flex justify-content-between align-items-center mb-3">
-        <div class="fw-bold" style="font-size:.9rem">
-          <i class="bi bi-clipboard2-pulse me-2" style="color:var(--ilus-red)"></i>Próximas Órdenes de Trabajo (30 días)
-        </div>
-        <a href="{{ url_for('ot2_panel') }}" class="btn btn-sm py-0 px-2 fw-bold"
-           style="font-size:.72rem;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5">
-           <i class="bi bi-list-ul me-1"></i>Ver todas las OTs
-        </a>
-      </div>
-      {% if prox_visitas %}
-      <div class="table-responsive">
-        <table class="table mant-table mb-0">
-          <thead><tr>
-            <th>Fecha</th><th>Cliente / Título</th><th>Tipo</th><th>Estado</th><th class="text-end pe-2">Acción</th>
-          </tr></thead>
-          <tbody>
-          {% for v in prox_visitas %}
-          <tr>
-            <td class="fw-semibold text-nowrap">{{ v.fecha_programada.strftime('%d/%m/%Y') if v.fecha_programada else '—' }}</td>
-            <td>
-              {# FIX 2026-08-11: v.cliente_id NULL en OT "Trabajo interno". #}
-              {% if v.cliente_id %}
-              <a href="{{ url_for('mant_ficha', cid=v.cliente_id) }}" class="text-decoration-none fw-semibold">
-                {{ v.razon_social }}
-              </a>
-              {% else %}
-              <span class="fw-semibold text-muted"><i class="bi bi-clipboard2-check me-1"></i>Trabajo interno</span>
-              {% endif %}
-              {% if v.titulo %}<div class="small text-muted">{{ v.titulo }}</div>{% endif %}
-            </td>
-            <td><span class="badge bg-secondary" style="font-size:.65rem">{{ v.tipo }}</span></td>
-            <td><span class="badge-estado badge-{{ v.estado }}">{{ v.estado.replace('_',' ').title() }}</span></td>
-            <td class="text-end pe-2">
-              <a href="{{ url_for('mant_ot_ficha', vid=v.id) }}" class="btn btn-sm btn-ilus fw-bold py-0 px-2"
-                 style="font-size:.72rem" title="Abrir OT con tareas, fotos y técnicos">
-                 <i class="bi bi-clipboard2-pulse"></i> Abrir OT
-              </a>
-            </td>
-          </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% else %}
-      <div class="text-center py-4 text-muted">
-        <i class="bi bi-calendar-x" style="font-size:1.8rem;opacity:.4;display:block;margin-bottom:8px"></i>
-        Sin Órdenes de Trabajo programadas para los próximos 30 días.
-        <div class="mt-2">
-          <a href="{{ url_for('ot2_panel') }}" class="btn btn-sm btn-outline-dark">
-            <i class="bi bi-clipboard2-pulse me-1"></i>Ver todas las OTs históricas
-          </a>
-        </div>
-      </div>
-      {% endif %}
-    </div>
+  <div id="pfList">
+    <div class="dsh-vacio gris"><span class="spinner-border spinner-border-sm"></span>Cargando…</div>
   </div>
-
-  {# ── Alertas contratos ── #}
-  <div class="col-12 col-lg-5">
-    <div class="ilus-card h-100">
-      <div class="fw-bold mb-3" style="font-size:.9rem">
-        <i class="bi bi-exclamation-triangle me-2" style="color:#e65100"></i>Alertas de contratos
-      </div>
-      {% if alertas %}
-        {% for ct in alertas %}
-        <div class="d-flex justify-content-between align-items-start mb-3 pb-3 border-bottom">
-          <div style="min-width:0;flex:1">
-            <a href="{{ url_for('mant_ficha', cid=ct.cliente_id) }}" class="fw-semibold text-decoration-none d-block text-truncate">
-              {{ ct.razon_social }}
-            </a>
-            <div class="small text-muted">{{ ct.nombre or 'Contrato' }}</div>
-            <div class="small" style="color:#888">
-              {% if ct.fecha_vencimiento %}
-                Vence: <strong>{{ ct.fecha_vencimiento.strftime('%d/%m/%Y') }}</strong>
-              {% endif %}
-            </div>
-          </div>
-          <span class="badge-estado badge-{{ ct.estado }} ms-2 flex-shrink-0">{{ ct.estado.replace('_',' ').title() }}</span>
-        </div>
-        {% endfor %}
-      {% else %}
-        <div class="text-center py-4 text-muted">
-          <i class="bi bi-check-circle" style="font-size:1.8rem;color:#1a7a1a;opacity:.6;display:block;margin-bottom:8px"></i>
-          Sin alertas críticas de contratos
-        </div>
-      {% endif %}
-    </div>
-  </div>
-
-  {# ── Clientes sin visita reciente ── #}
-  {% if sin_visita %}
-  <div class="col-12">
-    <div class="ilus-card">
-      <div class="fw-bold mb-3" style="font-size:.9rem">
-        <i class="bi bi-clock-history me-2" style="color:#0066cc"></i>Clientes sin visita reciente (+180 días)
-      </div>
-      <div class="row g-2">
-        {% for c in sin_visita %}
-        <div class="col-12 col-sm-6 col-md-4">
-          <a href="{{ url_for('mant_ficha', cid=c.id) }}"
-             class="d-flex align-items-center gap-3 p-3 rounded-3 text-decoration-none"
-             style="background:#f8f9fa;border:1px solid #eee">
-            <div style="width:38px;height:38px;border-radius:50%;background:#0066cc22;
-                        display:flex;align-items:center;justify-content:center;flex-shrink:0">
-              <i class="bi bi-building" style="color:#0066cc"></i>
-            </div>
-            <div style="min-width:0">
-              <div class="fw-semibold text-truncate" style="color:#111;font-size:.85rem">{{ c.razon_social }}</div>
-              <div class="small text-muted">
-                Última: {{ c.ultima_visita.strftime('%d/%m/%Y') if c.ultima_visita else 'Nunca' }}
-              </div>
-            </div>
-          </a>
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-  </div>
-  {% endif %}
-
-  {# ══════════════════════════════════════════════════════════════
-     SECCIÓN ANÁLISIS Y ANALYTICS — antes módulos separados del sidebar,
-     ahora absorbidos por el dashboard (2026-05-12, pedido del usuario).
-     Las rutas /mantenciones/analisis y /mantenciones/analytics siguen
-     existiendo; estos cards son la única forma de llegar.
-  ══════════════════════════════════════════════════════════════ #}
-  <div class="col-12 mt-3">
-    <div class="fw-bold mb-3" style="font-size:.95rem;color:#0f172a">
-      <i class="bi bi-graph-up me-2" style="color:var(--ilus-red)"></i>Análisis & Analytics
-      <span class="text-muted ms-2" style="font-size:.78rem;font-weight:500">Vistas detalladas en una sola pantalla</span>
-    </div>
-  </div>
-
-  {# Card 1: Análisis Económico (MRR, ingresos, contratos) #}
-  <div class="col-12 col-lg-6">
-    <a href="{{ url_for('mant_analisis') }}" class="text-decoration-none">
-      <div class="ilus-card h-100" style="background:linear-gradient(135deg,#ffffff 0%,#fef2f2 100%);border-left:5px solid #dc2626;cursor:pointer;transition:transform .15s,box-shadow .15s"
-           onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 18px rgba(0,0,0,.08)'"
-           onmouseout="this.style.transform='';this.style.boxShadow=''">
-        <div class="d-flex align-items-start gap-3">
-          <div style="width:54px;height:54px;border-radius:14px;background:#dc2626;color:#fff;
-                      display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:1.4rem">
-            <i class="bi bi-graph-up-arrow"></i>
-          </div>
-          <div style="flex:1;min-width:0">
-            <div class="fw-bold" style="font-size:1rem;color:#111">Análisis Económico</div>
-            <div class="small text-muted mb-2">
-              MRR & ARR proyectado · Top clientes por ingreso · Visitas últimos 6 meses ·
-              Contratos por vencer · Proyección 6 meses
-            </div>
-            <div class="d-flex flex-wrap gap-2 mt-2">
-              <span class="badge bg-light text-dark" style="font-size:.68rem">📊 Ingresos mensuales</span>
-              <span class="badge bg-light text-dark" style="font-size:.68rem">💰 MRR / ARR</span>
-              <span class="badge bg-light text-dark" style="font-size:.68rem">📅 Visitas 6m</span>
-            </div>
-          </div>
-          <i class="bi bi-arrow-right-circle-fill" style="font-size:1.5rem;color:#dc2626"></i>
-        </div>
-      </div>
-    </a>
-  </div>
-
-  {# Card 2: Analytics Operacional (KPIs operativos, máquinas, técnicos) #}
-  <div class="col-12 col-lg-6">
-    <a href="{{ url_for('mant_analytics_page') }}" class="text-decoration-none">
-      <div class="ilus-card h-100" style="background:linear-gradient(135deg,#ffffff 0%,#eff6ff 100%);border-left:5px solid #1d4ed8;cursor:pointer;transition:transform .15s,box-shadow .15s"
-           onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 18px rgba(0,0,0,.08)'"
-           onmouseout="this.style.transform='';this.style.boxShadow=''">
-        <div class="d-flex align-items-start gap-3">
-          <div style="width:54px;height:54px;border-radius:14px;background:#1d4ed8;color:#fff;
-                      display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:1.4rem">
-            <i class="bi bi-bar-chart-fill"></i>
-          </div>
-          <div style="flex:1;min-width:0">
-            <div class="fw-bold" style="font-size:1rem;color:#111">Analytics Operacional</div>
-            <div class="small text-muted mb-2">
-              Tiempo de reparación · OT a tiempo · Overrun · Tasa garantías · Top máquinas con fallas ·
-              Top técnicos · Heatmap semanal · Proyección de carga
-            </div>
-            <div class="d-flex flex-wrap gap-2 mt-2">
-              <span class="badge bg-light text-dark" style="font-size:.68rem">⚙️ KPIs operativos</span>
-              <span class="badge bg-light text-dark" style="font-size:.68rem">🔧 Top fallas</span>
-              <span class="badge bg-light text-dark" style="font-size:.68rem">👨‍🔧 Eficiencia técnicos</span>
-            </div>
-          </div>
-          <i class="bi bi-arrow-right-circle-fill" style="font-size:1.5rem;color:#1d4ed8"></i>
-        </div>
-      </div>
-    </a>
-  </div>
-
 </div>
+{% endif %}
+
+{# ── Próximas OTs (visitas) ── #}
+  <div class="dsh-card" style="--acc:#dc2626">
+    <div class="dsh-hd">
+      <div class="dsh-tit"><span class="dsh-ic"><i class="bi bi-clipboard2-pulse"></i></span>Próximas Órdenes de Trabajo
+        <span class="dsh-sub">(30 días)</span></div>
+      <a href="{{ url_for('ot2_panel') }}" class="dsh-btn"><i class="bi bi-list-ul"></i>Ver todas las OTs</a>
+    </div>
+    {% if prox_visitas %}
+    <div class="rm-wrap">
+      <table class="rm-table dsh-table">
+        <thead><tr>
+          <th>Fecha</th><th>Cliente / Título</th><th>Tipo</th><th>Estado</th><th class="t-end">Acción</th>
+        </tr></thead>
+        <tbody>
+        {% for v in prox_visitas %}
+        {% set _dias = ((v.fecha_programada - hoy).days if (v.fecha_programada and hoy) else 99) %}
+        <tr class="rm-row" data-alerta="{{ 'rojo' if (v.estado == 'reagendada' or _dias < 0) else ('ambar' if _dias <= 2 else 'gris') }}">
+          <td class="fw-semibold text-nowrap" data-label="Fecha">{{ v.fecha_programada.strftime('%d/%m/%Y') if v.fecha_programada else '—' }}
+            {% if _dias == 0 %}<div class="rm-sub" style="color:#92400e;font-weight:700">Hoy</div>
+            {% elif _dias == 1 %}<div class="rm-sub" style="color:#92400e;font-weight:700">Mañana</div>{% endif %}</td>
+          <td class="t-main" data-label="Cliente">
+            {# FIX 2026-08-11: v.cliente_id NULL en OT "Trabajo interno". #}
+            {% if v.cliente_id %}
+            <a href="{{ url_for('mant_ficha', cid=v.cliente_id) }}" class="dsh-lnk">{{ v.razon_social }}</a>
+            {% else %}
+            <span class="fw-semibold text-muted"><i class="bi bi-clipboard2-check me-1"></i>Trabajo interno</span>
+            {% endif %}
+            {% if v.titulo %}<div class="rm-sub">{{ v.titulo }}</div>{% endif %}</td>
+          <td data-label="Tipo"><span class="dsh-chip">{{ v.tipo }}</span></td>
+          <td data-label="Estado"><span class="rm-pill {{ {'programada':'azul','completada':'verde','reagendada':'ambar','cancelada':'gris'}.get(v.estado, 'gris') }}">{{ v.estado.replace('_',' ').title() }}</span></td>
+          <td class="t-end">
+            <a href="{{ url_for('mant_ot_ficha', vid=v.id) }}" class="dsh-btn rojo" title="Abrir OT con tareas, fotos y técnicos">
+              <i class="bi bi-clipboard2-pulse"></i>Abrir OT</a>
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="dsh-vacio gris"><i class="bi bi-calendar-x"></i>
+      <div>Sin Órdenes de Trabajo programadas para los próximos 30 días.
+        <div class="mt-2"><a href="{{ url_for('ot2_panel') }}" class="dsh-btn"><i class="bi bi-clipboard2-pulse"></i>Ver todas las OTs históricas</a></div>
+      </div></div>
+    {% endif %}
+  </div>
+
+<div class="dsh-grid2">
+  {# ── Alertas contratos ── #}
+  <div class="dsh-card" style="--acc:#f59e0b">
+    <div class="dsh-hd">
+      <div class="dsh-tit"><span class="dsh-ic"><i class="bi bi-exclamation-triangle"></i></span>Alertas de contratos
+        {% if alertas %}<span class="dsh-n">{{ alertas|length }}</span>{% endif %}</div>
+    </div>
+    {% if alertas %}
+      {% for ct in alertas %}
+      <div class="dsh-li" data-alerta="{{ 'rojo' if ct.estado == 'vencido' else 'ambar' }}">
+        <div style="min-width:0;flex:1">
+          <a href="{{ url_for('mant_ficha', cid=ct.cliente_id) }}" class="nm">{{ ct.razon_social }}</a>
+          <div class="sb">{{ ct.nombre or 'Contrato' }}
+            {% if ct.fecha_vencimiento %} · Vence: <strong>{{ ct.fecha_vencimiento.strftime('%d/%m/%Y') }}</strong>{% endif %}</div>
+        </div>
+        <span class="rm-pill {{ 'rojo' if ct.estado == 'vencido' else ('ambar' if ct.estado == 'por_vencer' else 'verde') }}">{{ ct.estado.replace('_',' ').title() }}</span>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="dsh-vacio"><i class="bi bi-check-circle"></i>Sin alertas críticas de contratos</div>
+    {% endif %}
+  </div>
+
+{# ── Clientes sin visita reciente ── #}
+{% if sin_visita %}
+<div class="dsh-card" style="--acc:#3b82f6">
+  <div class="dsh-hd">
+    <div class="dsh-tit"><span class="dsh-ic"><i class="bi bi-clock-history"></i></span>Clientes sin visita reciente
+      <span class="dsh-sub">(+180 días)</span><span class="dsh-n">{{ sin_visita|length }}</span></div>
+  </div>
+  <div class="dsh-cli">
+    {% for c in sin_visita %}
+    <a href="{{ url_for('mant_ficha', cid=c.id) }}">
+      <span class="ci"><i class="bi bi-building"></i></span>
+      <span style="min-width:0">
+        <span class="nm d-block">{{ c.razon_social }}</span>
+        <span class="sb d-block">Última: {{ c.ultima_visita.strftime('%d/%m/%Y') if c.ultima_visita else 'Nunca' }}</span>
+      </span>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+</div>
+
+{# ══════════════════════════════════════════════════════════════
+   SECCIÓN ANÁLISIS Y ANALYTICS — antes módulos separados del sidebar,
+   ahora absorbidos por el dashboard (2026-05-12, pedido del usuario).
+   Las rutas /mantenciones/analisis y /mantenciones/analytics siguen
+   existiendo; estos cards son la única forma de llegar.
+══════════════════════════════════════════════════════════════ #}
+<div class="dsh-seccion">Análisis &amp; Analytics
+  <small>Vistas detalladas en una sola pantalla</small></div>
+<div class="dsh-grid2">
+  {# Card 1: Análisis Económico (MRR, ingresos, contratos) -- solo gestión (REGLA #26) #}
+  {% if not es_tecnico %}
+  <a href="{{ url_for('mant_analisis') }}" class="dsh-lnk-card" style="--acc:#dc2626">
+    <span class="ic"><i class="bi bi-graph-up-arrow"></i></span>
+    <span style="min-width:0">
+      <span class="t d-block">Análisis Económico</span>
+      <span class="d d-block">MRR &amp; ARR proyectado · Top clientes por ingreso · Visitas últimos 6 meses ·
+        Contratos por vencer · Proyección 6 meses</span>
+    </span>
+    <i class="bi bi-arrow-right-circle-fill go"></i>
+  </a>
+  {% endif %}
+  {# Card 2: Analytics Operacional (KPIs operativos, máquinas, técnicos) #}
+  <a href="{{ url_for('mant_analytics_page') }}" class="dsh-lnk-card" style="--acc:#1d4ed8">
+    <span class="ic"><i class="bi bi-bar-chart-fill"></i></span>
+    <span style="min-width:0">
+      <span class="t d-block">Analytics Operacional</span>
+      <span class="d d-block">Tiempo de reparación · OT a tiempo · Overrun · Tasa garantías · Top máquinas con fallas ·
+        Top técnicos · Heatmap semanal · Proyección de carga</span>
+    </span>
+    <i class="bi bi-arrow-right-circle-fill go"></i>
+  </a>
+</div>
+</div>{# /.dsh #}
 
 {# ════════════════════════════════════════════════════════════════════
    Modal: Visita histórica desde el dashboard (sin contexto cliente fijo).
@@ -879,8 +929,9 @@ function escCpt(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
    ────────────────────────────────────────────────────────────── */
 async function cargarPendientesFacturar(){
   const cont = document.getElementById('pfList');
+  if (!cont) return;   // 🔒 REGLA #26: la tarjeta no existe para un técnico
   const dMin = parseInt(document.getElementById('pfDiasMin').value || 3);
-  cont.innerHTML = '<div class="text-muted py-3 text-center small"><div class="spinner-border spinner-border-sm me-2"></div>Cargando…</div>';
+  cont.innerHTML = '<div class="dsh-vacio gris"><span class="spinner-border spinner-border-sm"></span>Cargando…</div>';
   try {
     const r = await fetch(`/mantenciones/api/visitas-sin-facturar?dias_min=${dMin}`);
     const d = await r.json();
@@ -889,23 +940,22 @@ async function cargarPendientesFacturar(){
     const arr = d.visitas || [];
     if (!arr.length){
       cont.innerHTML = `
-        <div class="text-center py-3" style="color:#166534">
-          <i class="bi bi-check-circle-fill" style="font-size:1.8rem;display:block;margin-bottom:6px;opacity:.8"></i>
-          <strong>Todo al día</strong> — no hay visitas pendientes de facturar (>= ${dMin} días).
+        <div class="dsh-vacio"><i class="bi bi-check-circle-fill"></i>
+          <div><strong>Todo al día</strong> — no hay visitas pendientes de facturar (>= ${dMin} días).</div>
         </div>`;
       return;
     }
     const top = arr.slice(0, 10);
     cont.innerHTML = `
-      <div class="table-responsive">
-        <table class="table mant-table mb-0">
+      <div class="rm-wrap">
+        <table class="rm-table dsh-table">
           <thead><tr>
             <th>Cliente</th>
             <th>Tipo</th>
             <th class="text-nowrap">Fecha visita</th>
-            <th class="text-end">Días</th>
+            <th class="t-end">Días</th>
             <th>Estado</th>
-            <th class="text-end pe-2">Acción</th>
+            <th class="t-end">Acción</th>
           </tr></thead>
           <tbody>
             ${top.map(v => {
@@ -913,35 +963,33 @@ async function cargarPendientesFacturar(){
                 ? new Date(v.fecha + 'T00:00:00').toLocaleDateString('es-CL')
                 : '—';
               const dias = v.dias_sin_facturar;
-              const col = dias >= 30 ? '#991b1b' : dias >= 15 ? '#b45309' : '#1e40af';
+              const sem = dias >= 30 ? 'rojo' : dias >= 15 ? 'ambar' : 'gris';
               const estBadge = {
-                sin_cotizar: ['#fee2e2','#991b1b','Sin cotizar'],
-                cotizado:    ['#fef3c7','#92400e','Cotizado'],
-                con_oc:      ['#ffedd5','#9a3412','Con OC'],
-              }[v.estado_facturacion] || ['#f3f4f6','#475569', v.estado_facturacion || '—'];
-              return `<tr>
-                <td>
-                  <a href="${_pfEsc(v.url)}" class="fw-semibold text-decoration-none">${_pfEsc(v.cliente || '—')}</a>
-                  ${v.titulo ? '<div class="small text-muted text-truncate" style="max-width:280px">'+_pfEsc(v.titulo)+'</div>' : ''}
+                sin_cotizar: ['rojo','Sin cotizar'],
+                cotizado:    ['ambar','Cotizado'],
+                con_oc:      ['ambar','Con OC'],
+              }[v.estado_facturacion] || ['gris', v.estado_facturacion || '—'];
+              return `<tr class="rm-row" data-alerta="${sem}">
+                <td class="t-main" data-label="Cliente">
+                  <a href="${_pfEsc(v.url)}" class="dsh-lnk">${_pfEsc(v.cliente || '—')}</a>
+                  ${v.titulo ? '<div class="rm-sub">'+_pfEsc(v.titulo)+'</div>' : ''}
                 </td>
-                <td><span class="badge bg-secondary" style="font-size:.65rem">${_pfEsc(v.tipo_visita || '—')}</span></td>
-                <td class="text-nowrap">${fStr}</td>
-                <td class="text-end fw-bold" style="color:${col}">${dias} d</td>
-                <td><span style="background:${estBadge[0]};color:${estBadge[1]};padding:2px 8px;border-radius:50px;font-size:.65rem;font-weight:700">${estBadge[2]}</span></td>
-                <td class="text-end pe-2">
-                  <a href="${_pfEsc(v.url)}#tab-finanzas" class="btn btn-sm btn-ilus py-0 px-2" style="font-size:.72rem">
-                    <i class="bi bi-arrow-right"></i> Ir a ficha
-                  </a>
+                <td data-label="Tipo"><span class="dsh-chip">${_pfEsc(v.tipo_visita || '—')}</span></td>
+                <td class="text-nowrap" data-label="Fecha visita">${fStr}</td>
+                <td class="t-end fw-bold" data-label="Días" style="color:${sem === 'rojo' ? '#991b1b' : sem === 'ambar' ? '#b45309' : '#1e40af'}">${dias} d</td>
+                <td data-label="Estado"><span class="rm-pill ${estBadge[0]}">${estBadge[1]}</span></td>
+                <td class="t-end">
+                  <a href="${_pfEsc(v.url)}#tab-finanzas" class="dsh-btn rojo"><i class="bi bi-arrow-right"></i>Ir a ficha</a>
                 </td>
               </tr>`;
             }).join('')}
           </tbody>
         </table>
       </div>
-      ${arr.length > 10 ? `<div class="text-muted small mt-2 text-center">${arr.length - 10} más no mostradas — usa la antigüedad para refinar.</div>` : ''}
+      ${arr.length > 10 ? `<div class="dsh-pad dsh-sub text-center">${arr.length - 10} más no mostradas — usa la antigüedad para refinar.</div>` : ''}
     `;
   } catch(e){
-    cont.innerHTML = `<div class="alert alert-danger small mb-0">Error: ${_pfEsc(e.message)}</div>`;
+    cont.innerHTML = `<div class="dsh-vacio"><i class="bi bi-x-circle" style="color:#dc2626"></i><div>Error: ${_pfEsc(e.message)}</div></div>`;
   }
 }
 

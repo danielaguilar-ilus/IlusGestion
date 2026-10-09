@@ -926,5 +926,18 @@ de la sesión, nunca del navegador):
 
 ---
 
+## 🔒 REGLA #26 — Ningún técnico ve cuentas, deudas ni plata de la empresa (no negociable)
+
+**Pedido explícito de Daniel (2026-10-08, revisión con Gerencia): «Anteriormente las órdenes de trabajo no exponían las deudas, las cuentas, nada a los técnicos externos. Así que tampoco a los internos… Cuidemos la imagen y la confidencialidad de la empresa, sobre todo cuando cae en el dashboard».**
+
+«Técnicos» = TODA la familia: interno (`tecnico`), elevado (`tecnico_ejecutivo`: Jaizer, Lenin, Dave) y externo (`tecnico_externo`). Es la REGLA #19 llevada a la plata: un técnico NO recibe, en ninguna pantalla, API, Excel, PDF, notificación ni bitácora, montos cobrados al cliente, lo que cobran proveedores o técnicos, costos, márgenes, deudas, facturas de proveedor, N° de OC, valorizados ni autorizaciones de $0.
+
+- **El dato se quita en el servidor**, no solo en la plantilla (lo que viaja en un `tojson` se lee con «ver código fuente»). Ayudas: `_es_rol_tecnico()`, `_oculta_proveedores()`, `_ot_sin_finanzas(v)`, `_ot_actividad_para_tecnico()` (bitácora: LISTA BLANCA, lo que no está se oculta aunque mañana alguien agregue una acción nueva), `_mant_notif_tecnico_ok()` (campana: solo lo suyo y sin plata), `_erp_doc_sin_montos()`.
+- **Toda ruta nueva con nombre o ruta financiera** (`finanz|costo|factura|autoriz|regulariz|dashboard|facprov|margen|valoriz`) lleva `@_no_tecnico` (o `_require_superadmin`, `_ot_can_finanzas_cierre`, `_facprov_puede`…) o entra a la lista blanca de `tests/test_confidencialidad_financiera_tecnicos.py` con su razón verificada. Esa prueba recorre TODAS las rutas del proyecto y falla si una queda abierta.
+- `@_no_tecnico` responde JSON 403 en cualquier ruta `/api/`; `_facprov_puede()` y `_tr_required` (Transporte) nunca dejan pasar a un técnico aunque su rol tenga el permiso encendido en `/admin/roles`.
+- Gestión no pierde nada: lo que ve un ejecutivo/supervisor/admin/superadmin queda exactamente igual.
+
+---
+
 _Última actualización: 2026-10-08_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

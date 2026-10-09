@@ -17665,7 +17665,8 @@ def erp_documento_unificado():
     _doc_key = f"{tido}|{nudo}"
     _doc_hit = _ERP_DOC_CACHE.get(_doc_key)
     if _doc_hit and (time.time() - _doc_hit[1]) < 300:
-        return jsonify(_doc_hit[0])
+        # 🔒 2026-10-08 (REGLA #26): un técnico recibe el documento SIN importes (neto, bruto, IVA, precios).
+        return jsonify(_erp_doc_sin_montos(_doc_hit[0]) if _es_rol_tecnico() else _doc_hit[0])
 
     # FIX 2026-05-19: logging detallado
     print(f"[cub-fetch] inicio tido={tido} nudo={nudo} user={current_username()}", flush=True)
@@ -17822,7 +17823,7 @@ def erp_documento_unificado():
                     _ERP_DOC_CACHE.pop(_k, None)
     except Exception:
         pass
-    return jsonify(_resp_doc)
+    return jsonify(_erp_doc_sin_montos(_resp_doc) if _es_rol_tecnico() else _resp_doc)   # 🔒 2026-10-08 (REGLA #26)
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -25737,6 +25738,11 @@ def _tr_required(fn):
         if not g.permissions.get("transporte"):
             flash("Sin acceso al módulo Transporte.", "danger")
             return redirect(url_for("index"))
+        # 🔒 2026-10-08 (REGLA #26): Transporte lleva facturas de proveedor, tarifas y costos de couriers; la familia
+        # técnico no entra, aunque a su rol le hayan marcado el permiso en /admin/roles.
+        if _es_rol_tecnico():
+            flash("Sin acceso al módulo Transporte.", "danger")
+            return redirect(url_for("mant_ots_list"))
         return fn(*a, **kw)
     return wrapper
 
@@ -54829,6 +54835,111 @@ def _oculta_proveedores(user=None):
         return False
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  REGLA #26 — CONFIDENCIALIDAD FINANCIERA PARA TODA LA FAMILIA TÉCNICO
+#  (Daniel, 2026-10-08, revisión con Gerencia: «Anteriormente las órdenes de trabajo no exponían las deudas, las
+#  cuentas, nada a los técnicos externos. Así que tampoco a los internos… Cuidemos la imagen y la confidencialidad
+#  de la empresa»). Un técnico (interno, elevado tipo `tecnico_ejecutivo` o externo) NO recibe: montos cobrados al
+#  cliente, lo que cobran proveedores o técnicos, costos, márgenes, deudas, facturas de proveedor, N° de OC,
+#  valorizados ni autorizaciones de $0 — ni en pantallas, ni en APIs, ni en la bitácora, ni en la campana.
+#  El dato se quita EN EL SERVIDOR: lo que viaja en un `tojson` se lee con «ver código fuente».
+#  Mismas ayudas que la REGLA #19: `_es_rol_tecnico()` / `_oculta_proveedores()` (una sola fuente de verdad).
+# ═══════════════════════════════════════════════════════════════════════════
+_OT_COLS_FINANZAS_TECNICO = (
+    "costo", "costo_presupuestado", "costo_real", "costo_proveedor", "costo_despacho",
+    "zz_monto", "zz_envio_monto", "zz_codigo", "zz_motivo_manual",
+    "valor_origen", "valorizado_clp", "valorizado_fuente",
+    "cobro_cero_motivo", "cobro_cero_argumento", "cobro_cero_autorizacion_id",
+    "oc_numero", "oc_fecha", "oc_archivo_url",
+    "cotizacion_tido", "cotizacion_nudo",
+    "estado_facturacion", "factura_emitida_at", "factura_asociada_por", "centro_costo",
+)
+
+
+def _ot_sin_finanzas(d):
+    """Copia de una fila de OT (mant_visitas) con la plata, el N° de OC, las cotizaciones y el centro de costo en
+    None. Se usa SOLO para un técnico, justo antes de entregar la fila a una plantilla o a un JSON."""
+    out = dict(d or {})
+    for k in _OT_COLS_FINANZAS_TECNICO:
+        if k in out:
+            out[k] = None
+    return out
+
+
+# Bitácora de la OT para un técnico: LISTA BLANCA (lo que no está aquí no se le muestra, aunque mañana alguien
+# agregue una acción nueva con plata). Las acciones de finanzas, documentos de cobro, facturas de proveedor,
+# autorizaciones de $0, saldos y costos nunca aparecen.
+_ACT_TEC_PERMITIDAS = frozenset({
+    "creada", "retroactiva_creada", "registrada_historica", "programada_auto", "actualizada",
+    "edicion_post_firma", "eliminada", "tecnico_agregado", "tecnico_quitado", "ruta_iniciada",
+    "equipo_agregado_permiso_rol", "plantilla_aplicada", "plantilla_reasignada",
+    "diagnostico_guardado", "diagnostico_compuesto", "diagnostico_tecnico",
+    "firmada_tecnico", "firmada_cliente", "firmada_cliente_remoto", "firma_tecnico_liberada",
+    "firma_con_borradores", "aprobada_supervisor", "rechazada_supervisor",
+    "email_enviado", "firma_remota_enviada", "firma_remota_whatsapp_generada", "ot_compartida_wa",
+    "informe_postservicio", "anexo_enviado", "anexo_reenviado",
+    "adjunto_subido", "adjunto_eliminado", "grabacion_video", "foto_eliminada", "foto_giro_descartado",
+    "tarea_foto_backfill_historico", "geofence_sin_destino",
+    "repuesto_solicitado", "repuesto_solicitud_estado", "repuesto_solicitud_cantidad",
+    "repuesto_solicitud_repartida", "repuesto_ot_generada", "repuesto_ot_lote_generada",
+    "equipo_fuera_de_servicio", "equipo_dado_de_baja", "equipos_alta_desde_documento",
+})
+# Se muestran con su etiqueta, pero sin el detalle (la ruta o el documento pueden delatar plata).
+_ACT_TEC_SIN_DETALLE = frozenset({"edicion_post_firma", "anexo_enviado", "anexo_reenviado",
+                                  "equipos_alta_desde_documento"})
+_ACT_TEC_PREFIJOS_VEDADOS = ("cobertura", "⚠", "cobro", "modalidad", "garant", "valor", "costo", "monto",
+                             "factura", "centro", "oc ", "queda")
+_ACT_TEC_RE_MONTO = re.compile(r"[−-]?\$\s?[\d\.,]+")
+
+
+def _ot_actividad_para_tecnico(accion, detalle):
+    """(mostrar, detalle_seguro) de un evento de la bitácora de la OT para un técnico (REGLA #26)."""
+    acc = (accion or "").strip().lower()
+    if acc not in _ACT_TEC_PERMITIDAS and not acc.startswith("levantamiento_"):
+        return False, ""
+    if acc in _ACT_TEC_SIN_DETALLE:
+        return True, ""
+    det = (detalle or "").strip()
+    if acc in ("actualizada", "creada", "retroactiva_creada"):
+        partes = [p.strip() for p in det.split(" · ")]
+        det = " · ".join(p for p in partes if p and not p.lower().startswith(_ACT_TEC_PREFIJOS_VEDADOS))
+    return True, _ACT_TEC_RE_MONTO.sub("[oculto]", det)
+
+
+# Campana del técnico: solo lo SUYO (nunca los avisos generales para la gerencia) y nada que hable de plata,
+# autorizaciones, proveedores o documentos de cobro.
+_NOTIF_TEC_RE_VEDADO = re.compile(
+    r"\$|autoriz|factur|cobr|costo|margen|valor|deuda|pago|pagad|monto|\bOC\b|orden de compra|proveedor|"
+    r"finanz|presupuest|tarifa|precio|cotiz|nota de venta|estimado|ingres|pérdida|perdida|ganancia",
+    re.I)
+
+
+def _mant_notif_tecnico_ok(tipo, titulo, cuerpo):
+    """¿Esta notificación puede llegar a la campana de un técnico? (REGLA #26)."""
+    return not _NOTIF_TEC_RE_VEDADO.search(f"{tipo or ''} {titulo or ''} {cuerpo or ''}")
+
+
+# Importes de un documento del ERP (Random) que un técnico NO recibe (REGLA #26). Solo lectura (REGLA #4.1).
+_ERP_CLAVES_PLATA_RE = re.compile(
+    r"(precio|valor|neto|bruto|monto|vaneli|vabrli|ppprne|ppprbr|descuento|importe|iva|costo|subtotal)", re.I)
+
+
+def _erp_doc_sin_montos(resp):
+    """Copia de la respuesta de /api/erp/documento sin ningún importe: cabecera y líneas conservan lo operativo
+    (tipo, número, cliente, SKU, nombre, cantidad, saldo, stock). Se usa SOLO para un técnico."""
+    try:
+        h = dict((resp or {}).get("hdr") or {})
+        for k in list(h):
+            if _ERP_CLAVES_PLATA_RE.search(str(k)):
+                h[k] = None
+        h["raw_sample"] = {}
+        lineas = [{k: v for k, v in dict(ln).items() if not _ERP_CLAVES_PLATA_RE.search(str(k))}
+                  for ln in ((resp or {}).get("lineas") or [])]
+        return {"hdr": h, "lineas": lineas}
+    except Exception:
+        return {"hdr": {}, "lineas": []}
+
+
 _OTREP_LOG_ESTADO_RE = re.compile(r"^(#\d+ .*?: \S+ → \S+)")
 
 
@@ -54899,6 +55010,7 @@ def _no_tecnico(view):
                 or (request.headers.get("Accept") or "").startswith("application/json")
                 or request.is_json
                 or request.path.startswith("/mantenciones/api/")
+                or "/api/" in (request.path or "")   # 2026-10-08: /ot/api, /servicio-tecnico/api, /tickets/api…
             )
             if is_ajax:
                 return jsonify({
@@ -63549,6 +63661,7 @@ def mant_index():
 @app.route("/mantenciones/api/dashboard/costos-tecnico")
 @app.route("/servicio-tecnico/api/dashboard/costos-tecnico")
 @_mant_required
+@_no_tecnico
 def mant_dashboard_costos_tecnico():
     """💰 2026-09-17 (Daniel: "necesito que en el dashboard me deje una
     sección de costos donde yo pueda filtrar el técnico y me pueda decir
@@ -65015,6 +65128,7 @@ def _contrato_match_erp(rut, razon=None):
 
 @app.route("/mantenciones/api/agente-contrato", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_agente_contrato():
     """
     AGENTE ILUS DE CONTRATOS — DETERMINISTA, CERO IA.
@@ -65399,6 +65513,7 @@ def mant_generar_calendario(cid):
 
 @app.route("/mantenciones/api/contratos/<int:ctid>/ai-editar", methods=["PUT"])
 @_mant_required
+@_no_tecnico
 def mant_contrato_ai_editar(ctid):
     """Guarda los campos del análisis IA editados manualmente por el usuario."""
     d = request.get_json(silent=True) or {}
@@ -65833,6 +65948,7 @@ def clientes_hub_tipo_relacion(cid):
 
 @app.route("/dashboard")
 @_mant_required
+@_no_tecnico
 def dashboard_hub():
     """Dashboard general = mismo dashboard agregado de Mantenciones
     (mant_index), solo con URL de nivel superior."""
@@ -74164,6 +74280,11 @@ def mant_tecnicos_list_api():
                                   if r.get("tarifa_visita") is not None else None)
         except (TypeError, ValueError):
             r["tarifa_visita"] = None
+        if _oculta_proveedores():
+            # 🔒 2026-10-08 (REGLA #26 + #19): lo que cobra un proveedor externo y los datos de su empresa no son
+            # para un técnico (el desplegable solo necesita nombre y rol).
+            for _k in ("tarifa_visita", "empresa_rut", "empresa_email", "empresa_tel"):
+                r[_k] = None
         out.append(r)
     return jsonify(out)
 
@@ -74496,6 +74617,7 @@ def _ext_row_to_dict(r):
 @app.route("/mantenciones/tecnicos-externos")
 @app.route("/servicio-tecnico/tecnicos-externos")
 @_mant_required
+@_no_tecnico
 @_no_tecnico_externo
 def mant_tecnicos_externos_index():
     """Listado de técnicos externos (cards grandes con foto, especialidades, rating)."""
@@ -74526,6 +74648,7 @@ def mant_tecnicos_externos_index():
 @app.route("/mantenciones/tecnicos-externos/nuevo")
 @app.route("/servicio-tecnico/tecnicos-externos/nuevo")
 @_mant_required
+@_no_tecnico
 def mant_tecnico_externo_wizard():
     """Wizard de alta de técnico externo (4 pasos)."""
     return render_template("mantenciones/tecnico_externo_wizard.html")
@@ -74534,6 +74657,7 @@ def mant_tecnico_externo_wizard():
 @app.route("/mantenciones/tecnicos-externos/<int:eid>")
 @app.route("/servicio-tecnico/tecnicos-externos/<int:eid>")
 @_mant_required
+@_no_tecnico
 def mant_tecnico_externo_ficha(eid):
     """Ficha detalle del técnico externo (tabs: General · Facturación · Historial · Contrato · Notas)."""
     r = mysql_fetchone(
@@ -74677,6 +74801,7 @@ def _ext_validate_payload(d, partial=False):
 
 @app.route("/mantenciones/api/tecnicos-externos", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_tecnicos_externos_list_api():
     """JSON ligero — para dropdowns / filtros."""
     only_active = request.args.get("activos") == "1"
@@ -74693,6 +74818,7 @@ def mant_tecnicos_externos_list_api():
 
 @app.route("/mantenciones/api/tecnicos-externos", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_tecnico_externo_crear():
     """Crea un técnico externo nuevo."""
     d = request.get_json(silent=True) or {}
@@ -74754,6 +74880,7 @@ def mant_tecnico_externo_crear():
 
 @app.route("/mantenciones/api/tecnicos-externos/<int:eid>", methods=["PUT"])
 @_mant_required
+@_no_tecnico
 def mant_tecnico_externo_editar(eid):
     """Edita un técnico externo (parcial — solo campos enviados)."""
     if not mysql_fetchone("SELECT id FROM mant_tecnicos_externos WHERE id=%s", (eid,)):
@@ -74806,6 +74933,7 @@ def mant_tecnico_externo_editar(eid):
 
 @app.route("/mantenciones/api/tecnicos-externos/<int:eid>", methods=["DELETE"])
 @_mant_required
+@_no_tecnico
 def mant_tecnico_externo_eliminar(eid):
     """Soft-delete: estado='baja'. Hard delete solo si confirm_text=BAJA y superadmin."""
     confirm = (request.args.get("confirm_text") or "").strip().upper()
@@ -74833,6 +74961,7 @@ def mant_tecnico_externo_eliminar(eid):
 
 @app.route("/mantenciones/api/tecnicos-externos/<int:eid>/usuarios", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_tecnico_externo_usuarios_listar(eid):
     """Lista los técnicos (usuarios app_users, rol tecnico_externo*) asignados
     a esta empresa proveedora. Una empresa puede tener varios técnicos."""
@@ -74852,6 +74981,7 @@ def mant_tecnico_externo_usuarios_listar(eid):
 
 @app.route("/mantenciones/api/tecnicos-externos-disponibles", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_tecnicos_externos_usuarios_disponibles():
     """Usuarios con rol tecnico_externo* para el selector de 'Asignar técnico'
     en la ficha de empresa. Incluye a qué empresa está asignado hoy (si alguna),
@@ -74871,6 +75001,7 @@ def mant_tecnicos_externos_usuarios_disponibles():
 
 @app.route("/mantenciones/api/tecnicos-externos/<int:eid>/usuarios", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_tecnico_externo_usuario_asignar(eid):
     """Asigna (o reasigna) un usuario técnico_externo a esta empresa.
     Un técnico pertenece a una sola empresa a la vez -- reasignar lo mueve."""
@@ -74904,6 +75035,7 @@ def mant_tecnico_externo_usuario_asignar(eid):
 
 @app.route("/mantenciones/api/tecnicos-externos/<int:eid>/usuarios/<int:user_id>", methods=["DELETE"])
 @_mant_required
+@_no_tecnico
 def mant_tecnico_externo_usuario_quitar(eid, user_id):
     """Desvincula un técnico de esta empresa (no borra al usuario/login)."""
     if not mysql_fetchone(
@@ -74924,6 +75056,7 @@ def mant_tecnico_externo_usuario_quitar(eid, user_id):
 
 @app.route("/mantenciones/api/tecnicos-externos/<int:eid>/invitar", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_tecnico_externo_invitar(eid):
     """
     Genera un token de invitación (7 días) y envía email al contacto.
@@ -75130,6 +75263,7 @@ def registro_tecnico_externo():
 
 @app.route("/mantenciones/api/tecnicos-externos/<int:eid>/contrato", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_tecnico_externo_subir_contrato(eid):
     """
     Sube PDF de contrato a Cloudinary y persiste URL.
@@ -75344,6 +75478,7 @@ def _prov_docs_resumen(eid):
 
 @app.route("/mantenciones/api/tecnicos-externos/<int:eid>/documentos", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_prov_docs_list(eid):
     """Documentación vigente del proveedor (seguros, laboral, seguridad)."""
     if not mysql_fetchone("SELECT id FROM mant_tecnicos_externos WHERE id=%s", (eid,)):
@@ -75355,6 +75490,7 @@ def mant_prov_docs_list(eid):
 
 @app.route("/mantenciones/api/tecnicos-externos/<int:eid>/documentos", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_prov_docs_crear(eid):
     """Registra un documento del proveedor.
 
@@ -75418,6 +75554,7 @@ def mant_prov_docs_crear(eid):
 @app.route("/mantenciones/api/tecnicos-externos/<int:eid>/documentos/<int:did>",
            methods=["DELETE"])
 @_mant_required
+@_no_tecnico
 def mant_prov_docs_borrar(eid, did):
     """Quita un documento registrado. Queda en la bitácora: la
     documentación de un proveedor es justamente lo que hay que poder
@@ -75444,6 +75581,7 @@ def mant_prov_docs_borrar(eid, did):
 
 @app.route("/mantenciones/api/tecnicos-externos/<int:eid>/foto", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_tecnico_externo_subir_foto(eid):
     """Sube avatar/logo del técnico externo a Cloudinary."""
     if not mysql_fetchone("SELECT id FROM mant_tecnicos_externos WHERE id=%s", (eid,)):
@@ -76070,6 +76208,7 @@ def _validar_y_reparar_pdf(file_obj, filename: str = "") -> dict:
 
 @app.route("/mantenciones/api/contratos/<int:ctid>", methods=["DELETE"])
 @_mant_required
+@_no_tecnico
 def mant_contrato_delete(ctid):
     """Elimina un contrato — SOLO superadmin.
 
@@ -76164,6 +76303,7 @@ MANT_CONTRATOS_MAX_POR_CLIENTE = 5
 
 @app.route("/mantenciones/api/clientes/<int:cid>/contratos", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_contrato_subir(cid):
     """Sube un contrato PDF al cliente.
 
@@ -76502,6 +76642,7 @@ def mant_contrato_subir(cid):
 
 @app.route("/mantenciones/api/contratos/<int:ctid>/check-archivo")
 @_mant_required
+@_no_tecnico
 def mant_contrato_check_archivo(ctid):
     """Verifica disponibilidad del archivo del contrato.
 
@@ -76685,6 +76826,7 @@ def mant_contrato_mover_a_documentos(ctid):
 
 @app.route("/mantenciones/api/contratos/<int:ctid>/re-subir", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_contrato_re_subir(ctid):
     """Re-sube el archivo físico de un contrato existente.
 
@@ -76848,6 +76990,7 @@ def mant_contrato_re_subir(ctid):
 # ════════════════════════════════════════════════════════════════════════
 @app.route("/mantenciones/api/contratos/backfill-cloudinary", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_contrato_backfill_cloudinary():
     """Sube a Cloudinary los contratos cuyo archivo está en disco pero
     cloudinary_url IS NULL. Solo admin/superadmin.
@@ -76949,6 +77092,7 @@ def mant_contrato_backfill_cloudinary():
 
 @app.route("/mantenciones/api/contratos/<int:ctid>", methods=["PUT"])
 @_mant_required
+@_no_tecnico
 def mant_contrato_update(ctid):
     d = request.get_json(silent=True) or {}
     allowed = ["nombre","fecha_inicio","fecha_vencimiento","es_indefinido",
@@ -76977,6 +77121,7 @@ def mant_contrato_update(ctid):
 
 @app.route("/mantenciones/api/contratos/<int:ctid>/archivo")
 @_mant_required
+@_no_tecnico
 def mant_contrato_archivo(ctid):
     """Sirve el archivo del contrato.
 
@@ -77927,6 +78072,7 @@ def mant_ai_metricas():
 # ══════════════════════════════════════════════════════════════════════
 @app.route("/mantenciones/api/ia/alertas-diarias-run", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_ia_alertas_diarias_manual():
     """Disparo manual del resumen IA diario."""
     if not (g.permissions or {}).get("superadmin"):
@@ -78055,6 +78201,7 @@ Devuelve el JSON completo."""
 
 @app.route("/mantenciones/api/clientes/<int:cid>/ai-analisis", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_cliente_ai_analisis(cid):
     """Análisis integral del cliente con Claude: economía + ops + recomendaciones.
 
@@ -78785,6 +78932,7 @@ def _ocr_contrato(fpath, max_pages=12):
 
 @app.route("/mantenciones/api/contratos/<int:ctid>/analizar", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_contrato_analizar(ctid):
     """
     Llama a Claude API para analizar el contrato de mantención.
@@ -79118,6 +79266,7 @@ cobertura. Detecta SLA, penalidades y cláusulas de exclusión que perjudiquen a
 
 @app.route("/mantenciones/api/contratos/<int:ctid>/clausulas", methods=["PUT"])
 @_mant_required
+@_no_tecnico
 def mant_contrato_clausulas(ctid):
     """Guarda cláusulas personalizadas y variables adicionales del contrato."""
     d = request.get_json(silent=True) or {}
@@ -79154,6 +79303,7 @@ def mant_contrato_clausulas(ctid):
 
 @app.route("/mantenciones/api/contratos/<int:ctid>/clausulas", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_contrato_clausulas_get(ctid):
     """Devuelve cláusulas personalizadas y variables de un contrato."""
     ct = mysql_fetchone(
@@ -79318,6 +79468,10 @@ def mant_calendario_dia_drill(fecha):
             (fecha, *_extra_params)
         ) or []
         visitas = [dict(v) for v in visitas]
+        if _es_rol_tecnico():   # 🔒 2026-10-08 (REGLA #26): sin precios para un técnico
+            for v in visitas:
+                v.pop("costo", None)
+                v.pop("costo_real", None)
 
         # Calcular delta y overrun por visita
         for v in visitas:
@@ -82299,7 +82453,8 @@ def mant_visitas_api():
             "tipo":        r.get("tipo"),
             "estado":      r.get("estado"),
             "descripcion": (r.get("descripcion") or "")[:300],
-            "costo":       float(r.get("costo") or 0),
+            # 🔒 2026-10-08 (REGLA #26): a un técnico no se le manda el precio (None, no 0: «sin dato»).
+            "costo":       (None if _es_rol_tecnico() else float(r.get("costo") or 0)),
             # 2026-10-07: la cuenta única de la OT (solo gestión; ver _fins_cal arriba).
             **({"cobra": _fins_cal[r["id"]]["cobra"],
                 "cobre": (_fins_cal[r["id"]]["cobre"]["total"]
@@ -82325,7 +82480,7 @@ def mant_visitas_api():
             # estos campos no viajaban). SIN defaults: null se respeta.
             "es_retroactiva":     bool(r.get("es_retroactiva")),
             "cubierto_por":       r.get("cubierto_por"),
-            "estado_facturacion": r.get("estado_facturacion"),
+            "estado_facturacion": (None if _es_rol_tecnico() else r.get("estado_facturacion")),
             "fecha_realizada":    (str(r["fecha_realizada"])[:10]
                                    if r.get("fecha_realizada") else ""),
             "color_tipo":      TIPO_COLOR.get(r.get("tipo"), "#6b7280"),
@@ -83023,6 +83178,7 @@ def mant_visita_retroactiva(cid):
 @app.route("/mantenciones/api/contratos/<int:ctid>/auto-calendar",
            methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_contrato_auto_calendar(ctid):
     """Genera todas las visitas preventivas futuras del contrato hasta
     `fecha_vencimiento` según `frecuencia_meses`. Idempotente: no duplica
@@ -85033,6 +85189,7 @@ def mant_finanzas_servicios(cid):
 
 @app.route("/mantenciones/api/visitas-sin-facturar", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_visitas_sin_facturar():
     """Lista cross-cliente de visitas completadas hace >3 días sin factura.
 
@@ -85209,7 +85366,15 @@ def mant_notif_interna_list():
     )
     params = []
     # Filtro destino
-    if es_admin:
+    _es_tec_n = _es_rol_tecnico()
+    if _es_tec_n:
+        # 🔒 2026-10-08 (REGLA #26): un técnico ve SOLO las suyas (nunca los avisos generales de la gerencia).
+        if user_id:
+            sql += " AND n.destino_user_id=%s "
+            params.append(user_id)
+        else:
+            sql += " AND 1=0 "
+    elif es_admin:
         # Admin ve todas (las suyas + broadcast + cualquiera)
         pass
     elif user_id:
@@ -85237,6 +85402,8 @@ def mant_notif_interna_list():
     out = []
     for r in rows:
         d = dict(r)
+        if _es_tec_n and not _mant_notif_tecnico_ok(d.get("tipo"), d.get("titulo"), d.get("cuerpo")):
+            continue   # 🔒 2026-10-08 (REGLA #26): nada de plata, autorizaciones ni proveedores en la campana del técnico
         for k in ("created_at", "leida_at", "archivada_at"):
             if d.get(k):
                 d[k] = str(d[k])[:19]
@@ -85324,6 +85491,21 @@ def mant_notif_interna_contador():
         return jsonify(entry[0])
 
     # ── CACHE MISS — Query original ────────────────────────────────
+    if _es_rol_tecnico():
+        # 🔒 2026-10-08 (REGLA #26): el contador del técnico cuenta lo MISMO que ve en la lista (solo las suyas y sin plata).
+        try:
+            _filas_t = (mysql_fetchall(
+                "SELECT tipo, prioridad, titulo, COALESCE(cuerpo, mensaje) AS cuerpo FROM mant_notificaciones "
+                " WHERE leida_at IS NULL AND archivada_at IS NULL AND destino_user_id=%s", (user_id,)) or []) if user_id else []
+            _ok_t = [f for f in _filas_t if _mant_notif_tecnico_ok(f.get("tipo"), f.get("titulo"), f.get("cuerpo"))]
+            data = {"ok": True, "no_leidas": len(_ok_t),
+                    "urgentes": sum(1 for f in _ok_t if f.get("prioridad") in ("alta", "urgente")),
+                    "_cached_ttl": _MANT_NOTIF_CONT_TTL}
+            with _MANT_NOTIF_CONT_LOCK:
+                _MANT_NOTIF_CONT_CACHE[cache_key] = (data, _now)
+            return jsonify(data)
+        except Exception as e:
+            return jsonify({"ok": False, "no_leidas": 0, "urgentes": 0, "error": "No se pudo leer."}), 200
     sql = (
         "SELECT "
         "  COUNT(*) AS no_leidas, "
@@ -87605,6 +87787,11 @@ def _ot2_enriquecer_fila(f, hoy):
     f["ring_offset"] = round(163.36 * (1 - f["check_pct"] / 100), 1)
 
     _ot2_calcular_salud(f, hoy)
+
+    # 🔒 2026-10-08 (REGLA #26): el N° y el estado de la factura del proveedor son cuentas de la empresa: un técnico
+    # (interno, elevado o externo) no los recibe en ninguna de las 4 vistas del panel.
+    if _es_rol_tecnico():
+        f["fac_numero"] = f["fac_estado"] = None
 
 
 # Salud/SLA de la OT: "programada -> cerrada" (Daniel, 2026-08-25, brief
@@ -90339,14 +90526,13 @@ def ot2_detalle(vid):
             if _acc == "actualizada" and _det.upper().startswith("REAGENDADA"):
                 _lbl, _ico, _col = "reagendó la OT", "bi-calendar-event-fill", "ambar"
             if _ES_TEC:
-                # El técnico ve QUE pasó (sirve para entender la OT), pero
-                # no CUÁNTO. Dos capas: las acciones conocidas se vacían
-                # enteras, y a cualquier otra se le borra el monto -- así
-                # una acción nueva con plata no vuelve a filtrarse sola.
-                if _acc in _ACT_SIN_DETALLE_TECNICO:
-                    _det = ""
-                elif "$" in _det:
-                    _det = _RE_MONTO.sub("[oculto]", _det)
+                # 🔒 2026-10-08 (REGLA #26): LISTA BLANCA. El técnico ve QUE pasó lo operativo (firmas, rutas,
+                # fotos, repuestos, reagendamientos…), pero los eventos de finanzas, documentos de cobro, facturas
+                # de proveedor, autorizaciones de $0, saldos y costos NO le llegan (ni su etiqueta). Antes era una
+                # lista negra y «Queda −200.000» (sin signo $) o «finanzas corregidas» se le filtraban.
+                _act_ok, _det = _ot_actividad_para_tecnico(_acc, _det)
+                if not _act_ok:
+                    continue
                 # 🔒 2026-10-01 (Daniel: "ni siquiera pueden ver mis proveedores"): el cambio
                 # de estado de una solicitud de repuesto se anota con "· proveedor X · <nota
                 # de gestión>". Al técnico le queda solo "#N repuesto: antes → después".
@@ -90790,6 +90976,17 @@ def ot2_detalle(vid):
     except Exception as _e_pc:
         print(f"[ot2_detalle] puerta cierre vid={vid}: {type(_e_pc).__name__}", flush=True)
         puerta_cierre = None
+
+    # 🔒 2026-10-08 (REGLA #26): a un técnico NO viaja nada de plata ni de cuentas hacia la plantilla (lo que va en un
+    # `tojson` se lee con «ver código fuente»). La fila `v`, el valor del proyecto, lo que falta de finanzas, el chip
+    # del documento, la puerta de cierre y la factura de proveedor salen vacíos. Gestión no cambia.
+    if _es_rol_tecnico():
+        v = _ot_sin_finanzas(v)
+        valor_proyecto = {"n": 0, "total": 0, "servicio": None}
+        _fin_ok, _fin_faltan = True, []
+        doc_header = None
+        puerta_cierre = None
+        factura_prov, factura_prov_aplica = None, False
 
     return render_template(
         "ot2/detalle.html",
@@ -91723,6 +91920,7 @@ def _ot_fin_rep_de(vid):
 
 @app.route("/ot/api/finanzas/<int:vid>/corregir", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def ot2_api_finanzas_corregir(vid):
     """Corrige montos y centro de costo de una OT, aunque esté cerrada. Solo superadmin; motivo obligatorio."""
     if not _ot_fin_es_superadmin():
@@ -91864,6 +92062,7 @@ def ot2_api_finanzas_corregir(vid):
 
 @app.route("/ot/api/finanzas/<int:vid>/correcciones", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def ot2_api_finanzas_correcciones(vid):
     """Historial de correcciones de una OT (más reciente primero). Solo superadmin."""
     if not _ot_fin_es_superadmin():
@@ -91948,6 +92147,7 @@ def _ot_fin_dudosas_motivos(r, rep=None, fin=None):
 
 @app.route("/ot/finanzas-dudosas", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def ot2_finanzas_dudosas():
     """Informe SOLO LECTURA de OT completadas/cerradas con finanzas dudosas, para decidir cuáles corregir.
     Solo superadmin. No cambia nada."""
@@ -92078,6 +92278,7 @@ _OT_FIN_CMP_CATS = (
 
 @app.route("/ot/finanzas-modelo", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def ot2_finanzas_modelo():
     """Antes y después del modelo único de finanzas. Solo superadmin. No cambia nada."""
     if not _ot_fin_es_superadmin():
@@ -92123,6 +92324,7 @@ def ot2_finanzas_modelo():
 
 @app.route("/ot/api/finanzas-modelo/copiar-valorizado", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def ot2_api_finanzas_modelo_copiar():
     """Copia aprobada por Daniel (2026-10-07): en las OT que NO se cobran (garantía, cortesía, interno,
     contrato) y que todavía no tienen valorizado, copia su "Precio al cliente" (`costo`) al casillero nuevo
@@ -114059,6 +114261,7 @@ def mant_tarifa_hora_tecnica():
 
 @app.route("/mantenciones/api/plantillas/tarifa-sugerida", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_plantillas_tarifa_sugerida():
     """?nombre=...&categoria_admin=instalacion|mantencion|visitas
     Mismo cálculo que mant_plantilla_detalle, pero para cuando la plantilla
@@ -125656,6 +125859,7 @@ def mant_analytics_data():
 @app.route("/mantenciones/analisis")
 @app.route("/servicio-tecnico/analisis")
 @_mant_required
+@_no_tecnico
 def mant_analisis():
     # Ingresos por contrato (12 meses)
     ingresos_mes = mysql_fetchall(
@@ -126052,6 +126256,7 @@ def mant_productos_buscar():
 
 @app.route("/mantenciones/api/documento")
 @_mant_required
+@_no_tecnico
 def mant_documento_erp():
     """
     Busca un documento ERP por tipo + número usando la REST API (igual que cubicador).
@@ -126302,6 +126507,7 @@ def mant_saldo_debug():
 
 @app.route("/mantenciones/api/erp/documento-saldos", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_documento_erp_saldos():
     """Igual que /mantenciones/api/erp/documento PERO enriquecido con saldos.
 
@@ -126458,6 +126664,7 @@ _RANDOM_TIDOS_VENTA = ('FCV','BLV','NVI','NVV','GDV','GDP','GTR','GRD','FCO','CO
 
 @app.route("/mantenciones/api/buscar-erp-sql", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_buscar_erp_sql():
     """
     Búsqueda inteligente de documentos en Random ERP via SQL Server directo.
@@ -128509,6 +128716,7 @@ def mant_reglas_guardar():
 
 @app.route("/mantenciones/api/radar", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_radar_data():
     if not _intel_es_admin():
         return jsonify({"error": "Solo admin/superadmin"}), 403
@@ -129063,6 +129271,9 @@ def _facprov_puede():
     u = getattr(g, "user", None) or {}
     if (u.get("role") or "").lower() == "superadmin":
         return True
+    # 🔒 2026-10-08 (REGLA #26): a un técnico NUNCA, aunque a su rol le hayan marcado el permiso en /admin/roles.
+    if _es_rol_tecnico(u):
+        return False
     try:
         return bool((getattr(g, "permissions", None) or {}).get("mant_facturacion_proveedores"))
     except Exception:
@@ -132732,6 +132943,7 @@ def mant_facturas_proveedor_xlsx():
 
 @app.route("/mantenciones/facturacion-proveedores")
 @_mant_required
+@_no_tecnico
 def mant_facturacion_proveedores_legacy():
     """La URL vieja. El modulo se llama Servicio Tecnico, no Mantenciones
     (Daniel, 06-09-2026: "el endpoint debe ser de SSTT y no de
@@ -132744,6 +132956,7 @@ def mant_facturacion_proveedores_legacy():
 
 @app.route("/mantenciones/facturacion-proveedores.xlsx")
 @_mant_required
+@_no_tecnico
 def mant_facturacion_proveedores_xlsx_legacy():
     """Misma redireccion para la descarga."""
     return redirect(url_for("mant_facturacion_proveedores_xlsx",
@@ -134548,6 +134761,7 @@ def _informe_ficha_html(d, ct, cliente, auto_print=True):
 @app.route("/mantenciones/api/clientes/<int:cid>/informe-ficha", methods=["GET"])
 @app.route("/servicio-tecnico/api/clientes/<int:cid>/informe-ficha", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_informe_ficha(cid):
     """Informe de gestión del cliente (Agente ILUS determinista). Vista imprimible → PDF."""
     cli = mysql_fetchone("SELECT * FROM mant_clientes WHERE id=%s", (cid,))
@@ -135107,6 +135321,7 @@ def _contrato_analisis_to_pdf_html(ct, cliente, auto_print=True):
 @app.route("/mantenciones/api/contratos/<int:ctid>/analisis/pdf", methods=["GET"])
 @app.route("/servicio-tecnico/api/contratos/<int:ctid>/analisis/pdf", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_contrato_analisis_pdf(ctid):
     """Vista imprimible del Análisis 360° del contrato (el navegador genera el PDF)."""
     ct = mysql_fetchone(
@@ -135440,6 +135655,7 @@ ALLOWED_ADJUNTO_TIPOS = {
 
 @app.route("/mantenciones/api/contratos/<int:ctid>/adjuntos", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_adjuntos_list(ctid):
     """Lista adjuntos del contrato con URL servible.
 
@@ -135470,6 +135686,7 @@ def mant_adjuntos_list(ctid):
 
 @app.route("/mantenciones/api/contratos/<int:ctid>/adjuntos", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_adjunto_subir(ctid):
     """Sube un adjunto al contrato (anexo, externo, otro tipo).
 
@@ -135762,6 +135979,7 @@ def mant_adjunto_del(aid):
 
 @app.route("/mantenciones/api/clientes/<int:cid>/repuestos", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_repuestos_list(cid):
     """Lista repuestos del cliente. Filtros opcionales: ?tipo=, ?estado=, ?visita_id=, ?reporte_id="""
     where = ["cliente_id=%s"]; params = [cid]
@@ -135802,6 +136020,7 @@ def mant_repuestos_list(cid):
 
 @app.route("/mantenciones/api/clientes/<int:cid>/repuestos", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_repuesto_crear(cid):
     d = request.get_json(silent=True) or {}
     nombre = (d.get("nombre") or "").strip()
@@ -136194,6 +136413,7 @@ def mant_repuesto_solicitar():
 
 @app.route("/mantenciones/api/repuestos/desde-erp", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_repuesto_crear_desde_erp():
     """2026-07-12 (Daniel): botón "Buscar en ERP" de la vista central de
     Repuestos (/repuestos) usa el modal compartido tkaOpen({mode:'seleccionar'})
@@ -140946,6 +141166,7 @@ def mant_email_manual(cid):
 
 @app.route("/mantenciones/api/notificaciones")
 @_mant_required
+@_no_tecnico
 def mant_notif_list():
     """Lista notificaciones (todas o filtradas por cliente)."""
     cid    = request.args.get("cliente_id")
@@ -143575,7 +143796,7 @@ def mant_erp_doc_info():
         "fecha": str(doc.get("fecha") or "")[:10],
         "cliente_nombre": doc.get("cliente_nombre") or "",
         "cliente_rut": doc.get("cliente_rut") or "",
-        "monto": _monto,
+        "monto": (None if _es_rol_tecnico() else _monto),   # 🔒 2026-10-08 (REGLA #26)
     }, "analisis": analisis})
 
 
@@ -156508,6 +156729,7 @@ def mant_ia_plan_verificar(cid):
 
 @app.route("/mantenciones/api/clientes/<int:cid>/plan-mejora", methods=["POST"])
 @_mant_required
+@_no_tecnico
 def mant_plan_mejora(cid):
     """
     Genera un plan de mejora ENRIQUECIDO usando Claude AI.
@@ -157557,6 +157779,7 @@ EVIDENCIA VISUAL — fotos por tipo (últimos 90 días):
 # ni fue listado explícitamente) — se deja intacto y se reporta a Daniel.
 @app.route("/mantenciones/api/tarifas/servicios", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_tarifas_servicios_list():
     """Catálogo de servicios para autocompletar items."""
     rows = mysql_fetchall(
@@ -157569,6 +157792,7 @@ def mant_tarifas_servicios_list():
 
 @app.route("/mantenciones/api/tarifas/tecnicos", methods=["GET"])
 @_mant_required
+@_no_tecnico
 def mant_tarifas_tecnicos_list():
     """Catálogo de tarifas técnico/hora."""
     rows = mysql_fetchall(
