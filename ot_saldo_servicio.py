@@ -183,7 +183,7 @@ def acciones_exceso(excesos, puede_garantia=True):
     if total_saldo > 0:
         acc.append({"tipo": "tomar_saldo", "label": "Tomar solo el saldo (" + clp(total_saldo) + ")",
                     "monto": total_saldo})
-    acc.append({"tipo": "ligar_factura", "label": "Ligar otra factura que tenga saldo"})
+    acc.append({"tipo": "ligar_factura", "label": "Agregar otra factura que tenga saldo"})
     if puede_garantia:
         acc.append({"tipo": "pasar_garantia", "label": "Pasar a garantía (no se le cobra al cliente)"})
     acc.append({"tipo": "pedir_autorizacion",

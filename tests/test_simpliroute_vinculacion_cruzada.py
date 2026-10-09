@@ -6,7 +6,7 @@ BUG REAL (2026-08-10). Daniel, por voz: "el manifiesto diecisiete tiene el
 pedido... y está entregado a transporte el diez de agosto... no puede decir
 entregado en el reporte en el manifiesto antiguo, que tiene dos días y
 diecinueve horas, y decir que lo entregué hoy... como lo actualicé en el
-otro manifiesto, entonces se está ligando la información."
+otro manifiesto, entonces se está asociando la información."
 
 CÓMO PASABA DE VERDAD (leyendo el código y los logs de Cloud Run):
   1. tr_asignar_a_manifiesto permite (con confirm_dup) agregar el MISMO

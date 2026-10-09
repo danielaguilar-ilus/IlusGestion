@@ -721,7 +721,7 @@ class TestPantallas(unittest.TestCase):
         self.assertIn("_mfp_monto_lote_al_dia(fid, f, (\"quitó\", _num))", _fuente_de("mant_factura_proveedor_desasignar"))
 
     def test_espanol_latinoamericano_en_lo_nuevo(self):
-        # Daniel es venezolano: «agregar», «asociar», «presionar/tocar»; nada de «ligar», «pulsar» ni «vale».
+        # Daniel es venezolano: «agregar», «asociar», «presionar/tocar»; nada de «asociar», «pulsar» ni «vale».
         textos = "\n".join(_fuente_de(n) for n in ("_mfp_monto_lote_al_dia", "mant_factura_proveedor_ajustar_monto",
                                                   "_mfp_excel_lote", "_mfp_evento_fila"))
         t = self._leer("templates", "mantenciones", "factura_proveedor_detalle.html")

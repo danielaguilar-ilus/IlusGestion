@@ -38250,7 +38250,7 @@ def _simpliroute_reconciliar_huerfanos(limit=200, dry=False, dias_ventana=2):
 
     BUG REAL (2026-08-10, Daniel: caso FCV 11240 / manifiesto 17 vs 41 —
     "no puede decir entregado en el manifiesto antiguo... como lo actualicé
-    en el otro manifiesto, se está ligando la información"). El mismo
+    en el otro manifiesto, se está asociando la información"). El mismo
     commitment puede quedar en DOS manifiestos a la vez (tr_asignar_a_manifiesto
     lo permite con confirm_dup — caso legítimo: la subida del manifiesto
     viejo falló de verdad y Daniel lo re-agregó a uno nuevo). Esta función
@@ -45379,7 +45379,7 @@ def tr_item_simpliroute_desvincular_duplicado(item_id):
 
     BUG REAL (2026-08-10, Daniel: caso FCV 11240, manifiesto 17 vs 41 —
     "no puede decir entregado en el manifiesto antiguo... como lo actualicé
-    en el otro manifiesto, se está ligando la información"). Cuando el mismo
+    en el otro manifiesto, se está asociando la información"). Cuando el mismo
     commitment queda en dos manifiestos (confirm_dup permite esto: la subida
     del manifiesto viejo falló de verdad y se re-agregó a uno nuevo que sí
     subió bien), _simpliroute_reconciliar_huerfanos podía pegarle al item del
@@ -83651,7 +83651,7 @@ def mant_ots_borrar_batch():
 @_mant_required
 @_ot_can_metadata
 def mant_visita_ligar_cotizacion(vid):
-    """Liga una cotización ERP Random a la visita.
+    """Agrega una cotización ERP Random a la visita.
     Body: {tido: 'COV'|'NVV', nudo: string}. Valida con _cubicador_fetch.
 
     🔐 SEGURIDAD 2026-08-26: faltaba @_ot_can_metadata — cualquier usuario con
@@ -83750,7 +83750,7 @@ def mant_visita_ligar_oc(vid):
 @_mant_required
 @_ot_can_metadata
 def mant_visita_ligar_factura(vid):
-    """Liga la factura final (FCV/BLV) a la visita.
+    """Agrega la factura final (FCV/BLV) a la visita.
     Body: {tido, nudo}. Valida con _cubicador_fetch.
 
     🔐 SEGURIDAD 2026-08-26: faltaba @_ot_can_metadata (mismo hallazgo que
@@ -90468,9 +90468,9 @@ def ot2_detalle(vid):
         # ── Dinero y documentos
         "finanzas_declaradas":          ("declaró las finanzas", "bi-cash-coin", "verde", "cambios"),
         "factura_asociada":             ("asoció un documento", "bi-file-earmark-check-fill", "verde", "cambios"),
-        "factura_ligada":               ("ligó una factura", "bi-file-earmark-check-fill", "verde", "cambios"),
-        "cotizacion_ligada":            ("ligó una cotización", "bi-file-earmark-text-fill", "azul", "cambios"),
-        "oc_ligada":                    ("ligó una orden de compra", "bi-file-earmark-text-fill", "azul", "cambios"),
+        "factura_ligada":               ("agregó una factura", "bi-file-earmark-check-fill", "verde", "cambios"),
+        "cotizacion_ligada":            ("agregó una cotización", "bi-file-earmark-text-fill", "azul", "cambios"),
+        "oc_ligada":                    ("agregó una orden de compra", "bi-file-earmark-text-fill", "azul", "cambios"),
         # ── Envíos
         "email_enviado":                ("envió un correo", "bi-envelope-fill", "azul", "envios"),
         "firma_remota_enviada":         ("envió el link de firma por correo", "bi-envelope-paper-fill", "azul", "envios"),
@@ -94443,16 +94443,16 @@ def _ensure_ot_autorizaciones():
 # ── 🔏 2026-10-07 — cada rechazo de cierre trae la ACCIÓN que lo resuelve desde el modal (Daniel: "sin ciclos sin
 # salida"). Código estable → (tipo de acción para la pantalla, texto para la persona).
 _OT_CIERRE_ACCIONES = {
-    "SIN_FACTURA":                 ("ligar_factura", "Ligar la factura o boleta, declarar $0 autorizado o pedir autorización para cerrar"),
-    "FALTA_FACTURA":               ("ligar_factura", "Ligar la factura o boleta que da de baja la nota de venta"),
+    "SIN_FACTURA":                 ("ligar_factura", "Agregar la factura o boleta, declarar $0 autorizado o pedir autorización para cerrar"),
+    "FALTA_FACTURA":               ("ligar_factura", "Agregar la factura o boleta que da de baja la nota de venta"),
     "COBRO_CERO_SIN_AUTORIZACION": ("pedir_autorizacion", "Pedir a Daniel la autorización del $0 (motivo + argumento)"),
     "AUTORIZACION_PENDIENTE":      ("esperar_autorizacion", "Esperando autorización de Daniel para cerrar"),
     "SIN_VALORIZAR":               ("declarar_cobro", "Declarar cuánto se cobró (servicio y despacho) en Finanzas"),
     "SIN_CENTRO_COSTO":            ("declarar_centro", "Declarar el centro de costo"),
     "SIN_COSTO_PROVEEDOR":         ("declarar_costo_proveedor", "Declarar lo que cobró el técnico/proveedor (0 si es propio)"),
     "ANEXO_DESACTUALIZADO":        ("actualizar_anexo", "Regenerar el anexo de servicios"),
-    "SOLO_NOTA_VENTA":             ("ligar_factura", "Ligar la factura o boleta que da de baja la nota de venta"),
-    "DOC_REQUERIDO":               ("pedir_autorizacion", "Ligar un documento o pedir autorización a Daniel"),
+    "SOLO_NOTA_VENTA":             ("ligar_factura", "Agregar la factura o boleta que da de baja la nota de venta"),
+    "DOC_REQUERIDO":               ("pedir_autorizacion", "Agregar un documento o pedir autorización a Daniel"),
     "ZZ_SALDO_CONSUMIDO":          ("resolver_saldo", "Resolver el saldo: tomar solo lo que queda, agregar otra factura, pasar a garantía o pedir autorización"),
 }
 _OT_PUERTA_FALTA_A_CODIGO = {"factura": "FALTA_FACTURA", "autorizacion_cobro_cero": "COBRO_CERO_SIN_AUTORIZACION",
@@ -95374,7 +95374,7 @@ def ot_api_regularizar():
     'cerrar' (sin documento de cobro validado ni $0 autorizado), más las que solo tienen nota de venta («Falta
     factura»). Paginada en el servidor (REGLA #4.3). Filtros: estado, cliente (id), creador (texto), mes (AAAA-MM),
     falta (documento|factura|autorizacion_cobro_cero), page, per_page. Superadministrador: todo; el resto: las OT
-    que creó. Las OT cerradas se regularizan ligando el documento o declarando/pidiendo el $0: nunca tocando
+    que creó. Las OT cerradas se regularizan agregando el documento o declarando/pidiendo el $0: nunca tocando
     estado, firmas ni fechas (OT = evidencia)."""
     es_sa = _ot_aut_es_superadmin()
     uid, nombre = _ot_aut_usuario()
@@ -96008,7 +96008,7 @@ def _ot_puede_regularizar(user=None):
 @_mant_required
 @_no_tecnico
 def ot_api_documentos_regularizar(vid):
-    """Liga un documento a una OT: el MISMO camino de POST /ot/api/<vid>/documentos (validación contra el ERP en solo
+    """Agrega un documento a una OT: el MISMO camino de POST /ot/api/<vid>/documentos (validación contra el ERP en solo
     lectura, RUT, posible duplicado, nota de venta dada de baja por la factura), pero también para una OT ya CERRADA
     (Daniel 2026-10-07: «las OT antiguas se regularizan»). En una OT cerrada solo se escribe el documento y la
     plata que declara: NUNCA el estado, las firmas ni las fechas (OT = evidencia), y queda constancia en la bitácora
@@ -136248,7 +136248,7 @@ def mant_repuesto_del(rid):
 @app.route("/mantenciones/api/repuestos/<int:rid>/asignar-ticket", methods=["POST"])
 @_mant_required
 def mant_repuesto_asignar_ticket(rid):
-    """Liga un repuesto (mant_repuestos) a un ticket existente (tk_tickets).
+    """Asocia un repuesto (mant_repuestos) a un ticket existente (tk_tickets).
     2026-07-12 (Daniel): "cuando abro un ticket quiero ver el repuesto y
     el contacto del proveedor ahí mismo". body: {ticket_id: int|None}
     ticket_id=None desvincula (permite corregir una asignación errada)."""

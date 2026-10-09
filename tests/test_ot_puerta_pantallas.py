@@ -200,7 +200,7 @@ class TestRutasYPaginas(unittest.TestCase):
 
 
 class TestRegularizarCerradas(unittest.TestCase):
-    """Una OT cerrada se regulariza ligando el documento; nunca se toca estado, firmas ni fechas."""
+    """Una OT cerrada se regulariza agregando el documento; nunca se toca estado, firmas ni fechas."""
 
     def test_endpoint_solo_gestion_y_sin_tocar_el_estado(self):
         codigo, arbol = _arbol()

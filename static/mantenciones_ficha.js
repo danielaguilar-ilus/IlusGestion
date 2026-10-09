@@ -1390,7 +1390,7 @@ async function finVerDoc(tido, nudo){
 
 async function finLigar(vid, tipo){
   if (tipo === 'oc'){
-    const numero = await ilusPrompt({title:'Ligar OC', message:'Número de OC del cliente', placeholder:'OC-77821', required:true});
+    const numero = await ilusPrompt({title:'Agregar OC', message:'Número de OC del cliente', placeholder:'OC-77821', required:true});
     if (!numero) return;
     try {
       const r = await fetch(`/mantenciones/api/visitas/${vid}/oc`, {
@@ -1399,7 +1399,7 @@ async function finLigar(vid, tipo){
       });
       const d = await r.json();
       if (!d.ok) throw new Error(d.error || 'Error');
-      ilusToast('✓ OC ligada', {type:'success'});
+      ilusToast('✓ OC asociada', {type:'success'});
       cargarFinanzas();
     } catch(e){ ilusToast('Error: '+e.message, {type:'error'}); }
     return;
@@ -1409,7 +1409,7 @@ async function finLigar(vid, tipo){
   const opciones = isFac ? ['FCV (factura)','BLV (boleta)'] : ['COV (cotización)','NVV (nota venta)'];
   const codes    = isFac ? ['FCV','BLV'] : ['COV','NVV'];
   const tidoStr = await ilusPrompt({
-    title: 'Ligar ' + (isFac ? 'factura' : 'cotización'),
+    title: 'Agregar ' + (isFac ? 'factura' : 'cotización'),
     message: 'TIDO (' + opciones.join(' / ') + ')',
     placeholder: codes[0],
     required: true,
@@ -1432,7 +1432,7 @@ async function finLigar(vid, tipo){
     });
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || 'Error');
-    ilusToast('✓ ' + (isFac?'Factura':'Cotización') + ' ligada', {type:'success'});
+    ilusToast('✓ ' + (isFac?'Factura':'Cotización') + ' asociada', {type:'success'});
     cargarFinanzas();
   } catch(e){
     ilusToast('Error: '+e.message, {type:'error'});
