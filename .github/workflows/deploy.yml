@@ -188,7 +188,7 @@ jobs:
           # --- Inyectar credenciales FedEx desde secrets separados ---
           # Quitar primero cualquier linea FedEx que viniera en GCP_ENV_VARS,
           # para no generar claves YAML duplicadas (gcloud rechaza duplicados).
-          grep -vE '^(FEDEX_RATE_CLIENT_ID|FEDEX_RATE_CLIENT_SECRET|FEDEX_ACCOUNT|SIMPLIROUTE_API_TOKEN_MILLING|SIMPLIROUTE_API_TOKEN_RAFA|ILUS_CRON_TOKEN|SIMPLIROUTE_WEBHOOK_SECRET|CHECKWMS_UID_INS|CHECKWMS_UID_ERP|SHIPIT_API_TOKEN|SHIPIT_API_EMAIL|CLICKEX_API_USERNAME|CLICKEX_API_PASSWORD|CLICKEX_API_KEY):' \
+          grep -vE '^(FEDEX_RATE_CLIENT_ID|FEDEX_RATE_CLIENT_SECRET|FEDEX_ACCOUNT|SIMPLIROUTE_API_TOKEN_MILLING|SIMPLIROUTE_API_TOKEN_RAFA|ILUS_CRON_TOKEN|SIMPLIROUTE_WEBHOOK_SECRET|CHECKWMS_UID_INS|CHECKWMS_UID_ERP|SHIPIT_API_TOKEN|SHIPIT_API_EMAIL|CLICKEX_API_USERNAME|CLICKEX_API_PASSWORD|CLICKEX_API_KEY|RETIROS_RETIRO_AUTO):' \
             /tmp/env.yaml > /tmp/env.clean || true
           mv /tmp/env.clean /tmp/env.yaml
           # Garantizar salto de linea final antes de anexar
@@ -223,6 +223,11 @@ jobs:
           append_env CLICKEX_API_USERNAME          "$CLICKEX_API_USERNAME"
           append_env CLICKEX_API_PASSWORD          "$CLICKEX_API_PASSWORD"
           append_env CLICKEX_API_KEY               "$CLICKEX_API_KEY"
+          # Interruptor de Retiros (NO es secreto; versionado aqui para que no se pierda en cada deploy). Daniel 2026-10-08, autorizado
+          # explicitamente: expedir en Check un retiro «En preparacion» lo cierra como RETIRADO y le avisa al cliente («activo»).
+          # «sombra» = solo avisa al equipo; «0» = apagado. Cambiarlo solo con su permiso. La encuesta y el comprobante siguen APAGADOS.
+          echo "Interruptores de Retiros:"
+          append_env RETIROS_RETIRO_AUTO           "activo"
 
           # Verificar que se escribio algo razonable (sin mostrar el contenido)
           BYTES=$(wc -c < /tmp/env.yaml)

@@ -101,4 +101,6 @@ def test_el_deploy_no_enciende_nada_sin_autorizacion_de_daniel():
     raiz = os.path.dirname(_TESTS)
     with open(os.path.join(raiz, ".github", "workflows", "deploy.yml"), encoding="utf-8") as f:
         y = f.read()
-    assert "RETIROS_ENCUESTA_ACTIVA" not in y and "RETIROS_RETIRO_AUTO" not in y
+    assert "RETIROS_ENCUESTA_ACTIVA" not in y and "RETIROS_FIRMA_CORREO" not in y
+    # 2026-10-08: Daniel autorizó explícitamente el cierre automático por expedición (activo). Solo ese.
+    assert 'append_env RETIROS_RETIRO_AUTO           "activo"' in y
