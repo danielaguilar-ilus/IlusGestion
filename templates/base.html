@@ -734,6 +734,11 @@
        class="sidebar-link{% if request.endpoint == 'ot_regularizar_pagina' %} active{% endif %}">
       <i class="bi bi-clipboard2-check"></i><span>Regularizar OT</span>
     </a>
+    {# 📒 2026-10-11 (Daniel, auditoría): el libro de saldo de facturas — cada factura se cobra una sola vez. #}
+    <a href="{{ url_for('ot_saldo_facturas_pagina') }}"
+       class="sidebar-link{% if request.endpoint == 'ot_saldo_facturas_pagina' %} active{% endif %}">
+      <i class="bi bi-safe2"></i><span>Saldo de facturas</span>
+    </a>
     {% if permissions.superadmin %}
     <a href="{{ url_for('ot_aut_pagina') }}"
        class="sidebar-link{% if request.endpoint in ['ot_aut_pagina','ot_aut_pagina_detalle'] %} active{% endif %}"

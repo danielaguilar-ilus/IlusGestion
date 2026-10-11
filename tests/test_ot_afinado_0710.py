@@ -178,6 +178,11 @@ class TestSinCiclos(unittest.TestCase):
             if tipo == "pedir_autorizacion":
                 self.assertEqual(mapa[tipo], "pedirCierre", codigo)
                 continue
+            if tipo == "pedir_aut_perdida":   # 📒 2026-10-11 (REGLA #28): pide 'cerrar_con_perdida' a Daniel desde el mismo modal
+                self.assertEqual(mapa[tipo], "pedirPerdida", codigo)
+                self.assertIn("tipo: 'cerrar_con_perdida'", js)
+                self.assertIn("_no_tecnico", _decoradores("ot_aut_api_crear"))
+                continue
             fn = mapa.get(tipo)
             self.assertIsNotNone(fn, f"{codigo}: el motor no resuelve «{tipo}»")
             self.assertIn(fn, sirve, f"{codigo}: «{fn}» no tiene ruta")

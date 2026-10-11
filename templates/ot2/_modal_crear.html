@@ -8620,6 +8620,34 @@ window.OT2C = (function(){
       }
     }
     await _o2mResolverClienteYEquipos(header, items);
+    _o2mHeredarDocsTicket(d.documentos, t.numero_ticket);
+  }
+
+  /* 📒 2026-10-11 (Daniel: «si en un ticket ocupa una factura, esa misma deberá usarse en la OT… así venga
+     heredado»): la OT que nace de un ticket HEREDA sus documentos de Random. El de cobro (factura o boleta; si no
+     hay, la nota de venta) queda elegido en Costos exactamente como si la persona lo hubiera buscado
+     (_o2mFinDocumentoSeleccionado) y los demás entran como documentos adicionales. Se ve y se puede cambiar. Solo la
+     OT consume el saldo de la factura: el candado del saldo se revisa igual al crear y al cerrar. */
+  function _o2mHeredarDocsTicket(docs, numeroTicket){
+    try {
+      var COBRO = ['FCV','FCE','BLV','BLE'], NV = ['NVV','NVI','VD','WEB'];
+      function rango(t){ t = String(t || '').toUpperCase(); return COBRO.indexOf(t) >= 0 ? 0 : (NV.indexOf(t) >= 0 ? 1 : 2); }
+      var lista = (Array.isArray(docs) ? docs : []).filter(function(x){ return x && x.erp_tido && x.erp_nudo && rango(x.erp_tido) < 2; });
+      if (!lista.length) return;
+      lista.sort(function(a, b){ return rango(a.erp_tido) - rango(b.erp_tido); });
+      var rut = (S.cliente && S.cliente.rut) || '';
+      var principal = lista[0];
+      if (!(S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo)){
+        _o2mFinDocumentoSeleccionado([], {tido: String(principal.erp_tido).toUpperCase(), nudo: String(principal.erp_nudo), rut: rut});
+      }
+      lista.slice(1).forEach(function(x){
+        _o2mDocExtraRegistrar({tido: String(x.erp_tido).toUpperCase(), nudo: String(x.erp_nudo), rut: rut}, {rut: rut});
+      });
+      S.docs_heredados_ticket = numeroTicket || true;
+      var nombres = lista.map(function(x){ return String(x.erp_tido).toUpperCase() + ' ' + String(x.erp_nudo).replace(/^(VD|WEB)?0+/, '$1'); });
+      if (window.ilusToast) ilusToast('Se heredó ' + nombres.join(', ') + ' del ticket' + (numeroTicket ? ' ' + numeroTicket : '') +
+        ': es el documento de esta OT (su saldo se controla al crear y al cerrar).', {type: 'info', duration: 7000});
+    } catch (e) { if (window.console) console.warn('[OT] herencia de documentos del ticket', e); }
   }
 
   function setTipo(i){
@@ -10020,6 +10048,8 @@ window.OT2C = (function(){
         }
         if (t.titulo || t.asunto) opts.titulo = (t.titulo || t.asunto);
         abrir(opts);
+        // 📒 2026-10-11: la OT hereda la factura del ticket (ver _o2mHeredarDocsTicket).
+        _o2mHeredarDocsTicket(j && j.documentos, t.numero_ticket);
       })
       .catch(function(){ abrir({origen:'ticket', ticket_id:_tid, onCreada:onCreada}); });
   }

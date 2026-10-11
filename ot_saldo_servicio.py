@@ -235,3 +235,155 @@ def aviso_compartido(titulo_doc, otras):
     mas = (" y %d más" % (len(otras) - 4)) if len(otras) > 4 else ""
     return ("Usa saldo de %s, que también usan %s%s: revisa que el servicio no se cobre dos veces."
             % (titulo_doc, nombres, mas))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  📒 LIBRO DE SALDO DE FACTURAS (Daniel, 11-oct-2026, antes de la auditoría del martes)
+#  «Si ya utilicé una factura y se ocupó el saldo en otra orden de trabajo, ese saldo tiene que quedar bloqueado…
+#  necesito decirle [al auditor] que mi sistema se encarga de eso». Solo la OT consume el saldo (el ticket y la
+#  cotización heredan la factura). Cada vez que lo que una OT toma de una factura cambia, queda un MOVIMIENTO que no
+#  se borra (consumo o liberación), con quién, cuándo y por qué. Funciones PURAS: las lecturas y escrituras viven en
+#  app.py (_fac_libro_*).
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+ESTADOS_FACTURA = {
+    "libre":      {"txt": "Sin usar", "clase": "info",
+                   "frase": "Nadie la ha usado todavía: todo su saldo está disponible."},
+    "con_saldo":  {"txt": "Con saldo", "clase": "ok",
+                   "frase": "Ya se usó una parte: lo que queda se puede usar en otra OT."},
+    "agotada":    {"txt": "Saldo agotado", "clase": "agotada",
+                   "frase": "Ya se usó completa: una OT nueva con esta factura necesita la autorización de Daniel."},
+    "excedida":   {"txt": "Doble cobro", "clase": "rojo",
+                   "frase": "Las OT suman más de lo que trae la factura: revisa cuál cobra de más."},
+    "sin_lineas": {"txt": "Sin líneas de servicio", "clase": "gris",
+                   "frase": "No trae instalación, mantención ni despacho (líneas ZZ): no hay saldo de servicio que controlar."},
+    "sin_leer":   {"txt": "Sin leer en Random", "clase": "gris",
+                   "frase": "Random no respondió al leerla: se vuelve a revisar sola."},
+}
+ORDEN_ESTADOS = ("excedida", "agotada", "con_saldo", "libre", "sin_lineas", "sin_leer")
+
+
+def clave_libro(tido, nudo, categoria):
+    """La llave de un saldo en el libro: ('FCV', '11439', 'servicio'). Mismo canon que clave_doc."""
+    t, n = clave_doc(tido, nudo)
+    return (t, n, categoria)
+
+
+def aportes_de_ot(filas_usos, vid):
+    """Lo que UNA OT toma de cada documento, desde las filas crudas de usos (las mismas que alimentan el saldo):
+    {('FCV','11439','servicio'): 50000, ...}. Si por algún motivo dos fuentes traen el mismo documento, se toma el
+    mayor (igual que consolidar_usos: nunca se suma dos veces el mismo aporte). Solo montos > 0."""
+    try:
+        vid = int(vid)
+    except (TypeError, ValueError):
+        return {}
+    out = {}
+    for f in (filas_usos or []):
+        try:
+            if int(f.get("vid")) != vid:
+                continue
+        except (TypeError, ValueError):
+            continue
+        if str(f.get("estado") or "").lower() in ESTADOS_OT_FUERA:
+            continue
+        k = f.get("clave") or ("", "")
+        t, n = (k[0], k[1]) if len(k) >= 2 else ("", "")
+        if not t or not n:
+            continue
+        for c in CATEGORIAS:
+            m = _entero(f.get(c))
+            if m > 0:
+                kk = (t, n, c)
+                out[kk] = max(out.get(kk, 0), m)
+    return out
+
+
+def movimientos_libro(anterior, actual):
+    """Compara lo que una OT tomaba de cada documento (`anterior`, el último acumulado del libro) con lo que toma
+    ahora (`actual`) y devuelve los movimientos a registrar, en orden estable:
+    [{tido, nudo, categoria, movimiento: 'consumo'|'liberacion', monto (con signo), acumulado}].
+    Sube → consumo (+). Baja o desaparece → liberación (−). Sin cambio → nada."""
+    anterior = anterior or {}
+    actual = actual or {}
+    movs = []
+    for k in sorted(set(anterior) | set(actual)):
+        a = _entero(anterior.get(k))
+        b = _entero(actual.get(k))
+        if a == b:
+            continue
+        movs.append({"tido": k[0], "nudo": k[1], "categoria": k[2],
+                     "movimiento": "consumo" if b > a else "liberacion", "monto": b - a, "acumulado": b})
+    return movs
+
+
+def estado_factura(servicio, despacho, leido=True):
+    """Semáforo de UNA factura a partir de su saldo por categoría ({total, usado} cada una, como lo entrega
+    calcular()). Devuelve {estado, txt, clase, frase, total, usado, saldo, pct_usado, exceso}."""
+    s = servicio or {}
+    d = despacho or {}
+    tot = _entero(s.get("total")) + _entero(d.get("total"))
+    usado = _entero(s.get("usado")) + _entero(d.get("usado"))
+    exceso = sum(max(0, _entero(x.get("usado")) - _entero(x.get("total"))) for x in (s, d) if _entero(x.get("total")) > 0)
+    saldo = sum(max(0, _entero(x.get("total")) - _entero(x.get("usado"))) for x in (s, d))
+    if not leido:
+        est = "sin_leer"
+    elif tot <= 0:
+        est = "sin_lineas"
+    elif exceso > 0:
+        est = "excedida"
+    elif usado <= 0:
+        est = "libre"
+    elif saldo <= 0:
+        est = "agotada"
+    else:
+        est = "con_saldo"
+    info = ESTADOS_FACTURA[est]
+    pct = round(usado * 100.0 / tot, 1) if tot > 0 else 0.0
+    return {"estado": est, "txt": info["txt"], "clase": info["clase"], "frase": info["frase"], "total": tot,
+            "usado": usado, "saldo": saldo, "pct_usado": pct, "exceso": exceso}
+
+
+def puede_usar(servicio, despacho, pedido=None):
+    """¿Se puede crear una OT con esta factura? Veredicto en palabras para la consulta «¿Puedo usar esta factura?».
+    `pedido` opcional ({servicio, despacho}). Devuelve {ok, clase, titulo, texto, disponible: {servicio, despacho}}."""
+    s = servicio or {}
+    d = despacho or {}
+    disp = {"servicio": max(0, _entero(s.get("total")) - _entero(s.get("usado"))),
+            "despacho": max(0, _entero(d.get("total")) - _entero(d.get("usado")))}
+    hay = _entero(s.get("total")) > 0 or _entero(d.get("total")) > 0
+    if not hay:
+        return {"ok": True, "clase": "gris", "titulo": "Sin líneas de servicio ni despacho",
+                "texto": "Esta factura no trae instalación, mantención ni despacho: no tiene saldo de servicio que "
+                         "controlar. Si la OT cobra un servicio, debe salir de otra factura o declararse con su motivo.",
+                "disponible": disp}
+    if pedido:
+        ev = evaluar_pedido({"servicio": dict(s, saldo=disp["servicio"], hay_lineas=_entero(s.get("total")) > 0),
+                             "despacho": dict(d, saldo=disp["despacho"], hay_lineas=_entero(d.get("total")) > 0)}, pedido)
+        if not ev["ok"]:
+            return {"ok": False, "clase": "rojo", "titulo": "No alcanza el saldo",
+                    "texto": "; ".join("%s: pides %s y quedan %s" % (CATEGORIA_TXT[e["categoria"]], clp(e["pedido"]), clp(e["saldo"]))
+                                       for e in ev["excesos"]) + ". Para cobrar más se necesita la autorización de Daniel.",
+                    "disponible": disp}
+    if disp["servicio"] <= 0 and disp["despacho"] <= 0:
+        return {"ok": False, "clase": "rojo", "titulo": "Saldo agotado",
+                "texto": "Esta factura ya se usó completa en otras OT. Una OT nueva con ella necesita la "
+                         "autorización de Daniel, con argumento.", "disponible": disp}
+    partes = []
+    if _entero(s.get("total")) > 0:
+        partes.append("%s de instalación o servicio" % clp(disp["servicio"]))
+    if _entero(d.get("total")) > 0:
+        partes.append("%s de despacho" % clp(disp["despacho"]))
+    return {"ok": True, "clase": "ok", "titulo": "Tiene saldo",
+            "texto": "Puedes crear una OT que cobre hasta " + " y ".join(partes) + ".", "disponible": disp}
+
+
+def perdida_cierre(cobre_total, me_cobraron_total, autorizada=0):
+    """¿La OT cierra a pérdida? (Daniel: «te va a indicar si la factura va a pérdida y eso iría autorizado por mí»).
+    Pérdida = lo que nos cobraron − lo que cobramos, si es positivo. Pasa si no hay pérdida o si la autorización
+    aprobada cubre esa pérdida (1 peso de tolerancia por redondeo). Devuelve {perdida, ok, falta_autorizar}."""
+    cob = _entero(cobre_total)
+    me = _entero(me_cobraron_total)
+    per = max(0, me - cob)
+    aut = max(0, _entero(autorizada))
+    ok = per <= 0 or aut + 1 >= per
+    return {"perdida": per, "ok": ok, "falta_autorizar": 0 if ok else per - aut}

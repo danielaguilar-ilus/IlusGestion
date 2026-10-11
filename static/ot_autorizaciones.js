@@ -55,6 +55,11 @@
       h += '<div class="pp-arg"><small>Quiere cobrar por encima del saldo</small>' +
         [sp.servicio ? 'Servicio ' + clp(sp.servicio) : '', sp.despacho ? 'Despacho ' + clp(sp.despacho) : ''].filter(Boolean).join(' · ') + '</div>';
     }
+    /* 📒 2026-10-11: cerrar con pérdida: la cuenta de la OT al pedirla (se autoriza hasta esa pérdida). */
+    if (a.tipo === 'cerrar_con_perdida' && a.payload && a.payload.perdida) {
+      h += '<div class="pp-arg pp-perdida"><small>La cuenta de la OT al pedirla</small>Cobramos ' + clp(a.payload.cobre) +
+        ' · nos cobraron ' + clp(a.payload.me_cobraron) + ' · <b>se pierden ' + clp(a.payload.perdida) + '</b></div>';
+    }
     if (a.constancia) h += '<div class="pp-const"><b>' + esc(a.estado_txt) + '.</b> ' + esc(a.constancia) + '</div>';
     if (a.estado === 'aprobada' && a.visita_creada_id) h += '<div class="pp-const">La OT creada: <a href="/ot/' + a.visita_creada_id + '"><b>abrirla</b></a></div>';
     h += '<div class="pp-acc">';

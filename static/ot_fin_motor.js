@@ -274,6 +274,7 @@
         else if (p.n === 2 && !interna) act = botonChip('ligarDoc', 'Agregar factura', 'bi-link-45deg', true, 'Agregar factura o boleta') + botonChip('pedirCierre', 'Pedir autorización', 'bi-shield-lock', false, 'Pedir autorización a ' + CAMPANA_DAN);
         else if (p.n === 3 && !interna && inst.pan.puede_editar) act = botonChip('declararCobro', 'Declarar cobro', 'bi-cash-coin', false, 'Declarar lo que cobré');
         else if (p.n === 4 && inst.pan.puede_editar) act = botonChip('corregirProv', 'Declarar costo', 'bi-pencil-square', false, 'Declarar lo que cobró el proveedor');
+        else if (p.n === 6 && !pend && !interna && p.accion === 'pedir_aut_perdida') act = botonChip('pedirPerdida', 'Pedir autorización', 'bi-shield-exclamation', true, 'Pedir a ' + CAMPANA_DAN + ' la autorización para cerrar con pérdida');
         else if (p.n === 6 && !pend && !interna) act = botonChip('pedirCierre', 'Pedir autorización', 'bi-shield-lock', false, 'Pedir autorización a ' + CAMPANA_DAN);
       }
       html += '<li class="fm-paso ' + esc(p.estado) + (p.clase ? ' c-' + esc(p.clase) : '') + '" title="' + esc('Paso ' + p.n + ' · ' + p.titulo + ': ' + (p.texto || '')) + '">' +
@@ -286,7 +287,7 @@
 
   function accionDeRechazo(d) {
     var a = d && d.accion; if (!a) return '';
-    var m = { ligar_factura: 'ligarDoc', pedir_autorizacion: 'pedirCierre', declarar_cobro: 'declararCobro',
+    var m = { ligar_factura: 'ligarDoc', pedir_autorizacion: 'pedirCierre', pedir_aut_perdida: 'pedirPerdida', declarar_cobro: 'declararCobro',
       declarar_centro: 'enfocarCentro', declarar_costo_proveedor: 'corregirProv', resolver_saldo: 'resolverSaldo' }[a.tipo];
     if (a.tipo === 'esperar_autorizacion') return '<a class="fm-btn fm-btn-pri" href="' + esc(a.url || '/ot/autorizaciones') + '">Ver la solicitud</a>';
     if (a.tipo === 'actualizar_anexo') return '<span class="fm-help">' + esc(a.label || '') + '</span>';
@@ -876,6 +877,36 @@
     });
   }
 
+  /* 📒 2026-10-11 (Daniel: «te va a indicar si la factura va a pérdida y eso iría autorizado por mí»): una OT que se
+     cobra y cierra con lo cobrado por debajo de lo que nos cobraron necesita la autorización 'cerrar_con_perdida'. El
+     diálogo muestra la cuenta completa para que el argumento se escriba viendo los números; Daniel la recibe en su
+     celular y autoriza HASTA esa pérdida (si después crece, se vuelve a pedir). */
+  function pedirPerdida(inst) {
+    if (esInterna(inst)) { toast(TXT_INTERNA, 'info'); return Promise.resolve(); }
+    var sa = inst.pan && inst.pan.superadmin;
+    var pr = (inst.rec && inst.rec.perdida) || (inst.rechazo && inst.rechazo.perdida) || {};
+    var cuenta = (pr.perdida ? '<span class="fm-perdida-cuenta"><span>Cobramos <b>' + clp(pr.cobre) + '</b></span><span>Nos cobraron <b>' + clp(pr.me_cobraron) + '</b></span>' +
+      '<span class="mal">Se pierden <b>' + clp(pr.perdida) + '</b></span></span>' : '');
+    return dialogo({
+      titulo: 'Cerrar esta OT con pérdida',
+      intro: cuenta + (sa ? 'Eres superadministrador: tu decisión queda registrada como autorización, con tu nombre y la hora.'
+        : 'Esto le llega a ' + CAMPANA_DAN + ' a su celular con la cuenta de la OT. Mientras no responda, la OT no se puede cerrar.'),
+      ok: sa ? 'Autorizar y registrar' : 'Pedir autorización a ' + CAMPANA_DAN,
+      campos: [{ k: 'argumento', label: 'Por qué se cierra con pérdida', tipo: 'area', req: true, min: 30,
+        placeholder: 'Ej: el proveedor cobró un despacho extra por acceso difícil que no se le cobró al cliente; se acordó absorberlo' }]
+    }).then(function (v) {
+      if (!v) return;
+      return api('/ot/api/autorizaciones', { method: 'POST', body: { tipo: 'cerrar_con_perdida', visita_id: inst.vid, argumento: v.argumento } }).then(function (r) {
+        if (!r.ok) { toast((r.j && r.j.error) || 'No se pudo pedir la autorización.', 'error'); return; }
+        if (!sa) return despuesDeEscribir(inst, 'Se pidió autorización a ' + CAMPANA_DAN + '.');
+        return api('/ot/api/autorizaciones/' + r.j.id + '/aprobar', { method: 'POST', body: { comentario: 'Autorizado por quien lo declara (superadministrador).' } }).then(function (a) {
+          if (a.ok) return despuesDeEscribir(inst, 'Autorizado y registrado con tu nombre.');
+          toast((a.j && a.j.error) || 'Se creó la solicitud pero no se pudo aprobar.', 'error');
+        });
+      });
+    });
+  }
+
   function guardarCentro(inst, valor, btn) {
     if (!valor) return;
     if (btn) { btn.classList.add('pulsa'); }
@@ -937,6 +968,7 @@
     corregirProv: function (inst) { return corregirProv(inst); },
     pedirCero: function (inst) { return pedirAutorizacion(inst, 'cobro_cero'); },
     pedirCierre: function (inst) { return pedirAutorizacion(inst, 'cerrar_sin_documento'); },
+    pedirPerdida: function (inst) { return pedirPerdida(inst); },
     irFinanzas: function (inst) { return irFinanzas(inst); },
     declararCobro: function (inst) { return declararCobro(inst); },
     /* El cierre fue rechazado por saldo consumido: sus salidas se ofrecen en el mismo modal. */

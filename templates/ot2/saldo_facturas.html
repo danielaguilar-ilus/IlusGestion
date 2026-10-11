@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Saldo de facturas · ILUS Fitness{% endblock %}
+
+{#
+  📒 2026-10-11 (Daniel, antes de la auditoría del martes): «si ya utilicé una factura y se ocupó el saldo en otra orden
+  de trabajo, ese saldo tiene que quedar bloqueado… necesito decirle [al auditor] que mi sistema se encarga de eso».
+  Pantalla del libro de saldo de facturas: consulta «¿Puedo usar esta factura?» (saldo en vivo con el MISMO motor del
+  candado), listado paginado con semáforo (REGLA #4.3) y el libro de movimientos. Solo gestión (REGLA #26: nunca técnicos).
+  Datos: GET /ot/api/saldo-facturas, GET /ot/api/saldo-facturas/doc/<tido>/<nudo>, POST /ot/api/saldo-facturas/revisar.
+#}
+
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_puerta_paginas.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_saldo_facturas.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-safe2 me-2"></i>Saldo de facturas</h4>
+    <div class="sub">Cada factura se cobra una sola vez: solo la OT consume su saldo de servicio y despacho, y lo usado queda bloqueado y registrado.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('ot_saldo_facturas_excel') }}" class="btn btn-sm btn-danger"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Excel para auditoría</a>
+    <a href="{{ url_for('ot_regularizar_pagina') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-clipboard2-check me-1"></i>Regularizar OT</a>
+    <a href="{{ url_for('ot2_panel') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Volver a las OT</a>
+  </div>
+</div>
+
+<div class="sf" id="sfApp" data-sa="{{ '1' if es_superadmin else '0' }}">
+
+  <section class="sf-hero" aria-labelledby="sfHeroT">
+    <div class="sf-hero-t">
+      <span class="sf-eyebrow">Antes de crear o cobrar una OT</span>
+      <h2 id="sfHeroT">¿Puedo usar esta factura?</h2>
+      <p>Escribe el documento y te digo cuánto saldo le queda, qué OT lo usaron y si todavía se puede cobrar.</p>
+    </div>
+    <form class="sf-busca" id="sfForm" autocomplete="off">
+      <label class="sf-campo">
+        <span>Tipo</span>
+        <select id="sfTipo" aria-label="Tipo de documento">
+          <option value="FCV">Factura (FCV)</option>
+          <option value="BLV">Boleta (BLV)</option>
+          <option value="FCE">Factura exenta (FCE)</option>
+          <option value="NVV">Nota de venta (NVV)</option>
+        </select>
+      </label>
+      <label class="sf-campo sf-campo-num">
+        <span>Número</span>
+        <input id="sfNum" type="text" inputmode="numeric" placeholder="Ej: 11439 o FCV 11439" aria-label="Número del documento">
+      </label>
+      <button class="sf-go" type="submit"><i class="bi bi-search"></i><span>Consultar</span></button>
+    </form>
+    <ol class="sf-reglas">
+      <li><span class="sf-n">1</span><div><b>La factura trae su saldo</b><small>Sus líneas de instalación o mantención (servicio) y de despacho.</small></div></li>
+      <li><span class="sf-n">2</span><div><b>Solo la OT lo consume</b><small>El ticket y la cotización heredan la factura, pero no la descuentan.</small></div></li>
+      <li><span class="sf-n">3</span><div><b>Lo usado queda bloqueado</b><small>Cobrarlo de nuevo, o cerrar una OT a pérdida, necesita la autorización de Daniel.</small></div></li>
+    </ol>
+  </section>
+
+  <section id="sfRes" class="sf-res" aria-live="polite" hidden></section>
+
+  <section id="sfRev" class="sf-rev" aria-live="polite"></section>
+
+  <section id="sfKpis" class="sf-kpis" aria-label="Resumen"></section>
+
+  <section class="sf-lista" aria-labelledby="sfListaT">
+    <div class="sf-lista-h">
+      <h3 id="sfListaT">Facturas que usan las OT</h3>
+      <span id="sfListaSub" class="sf-muted"></span>
+    </div>
+    <div class="pp-chips" id="sfChips" role="tablist" aria-label="Filtrar por estado"></div>
+    <div class="pp-bar">
+      <input id="sfQ" type="search" placeholder="Buscar por número, cliente, RUT u OT" aria-label="Buscar factura" class="sf-q">
+      <label class="sf-per">Por página
+        <select id="sfPer" aria-label="Facturas por página"><option>25</option><option selected>50</option><option>100</option><option>200</option></select>
+      </label>
+    </div>
+    <div id="sfTabla" class="sf-tabla"><div class="pp-vacio">Cargando las facturas…</div></div>
+    <div class="pp-pie" id="sfPie"></div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='ot_saldo_facturas.js') }}"></script>
+{% endblock %}

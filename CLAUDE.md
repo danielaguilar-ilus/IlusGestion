@@ -945,5 +945,31 @@ de la sesión, nunca del navegador):
 
 ---
 
-_Última actualización: 2026-10-08_
+## 📒 REGLA #28 — Libro de saldo de facturas: cada factura se cobra una sola vez, y la pérdida la autoriza Daniel (no negociable)
+
+**Pedido explícito de Daniel (2026-10-11, antes de una auditoría):** «si ya utilicé una factura y se ocupó el saldo en otra orden de trabajo, ese saldo tiene que quedar bloqueado… necesito decirle que mi sistema se encarga de eso». «Solo consume el saldo la OT, que es la realización del servicio; el ticket y la cotización heredan». «Te va a indicar si la factura va a pérdida y eso iría autorizado por mí».
+
+- **Solo la OT consume** el saldo de una factura (servicio = líneas ZZ de instalación/mantención; despacho = ZZENVIO), con el MISMO motor de la REGLA #25 (`_ot_saldo_usos` / `_ot_saldo_doc`). El ticket y la cotización **heredan** la factura: la OT que nace de un ticket la trae elegida (`_o2mHeredarDocsTicket` en el asistente).
+- **Libro inmutable** `ot_fac_libro`: cada cambio de lo que una OT toma de una factura es un movimiento (consumo + / liberación −) con OT, quién, cuándo y por qué. **Nunca** un `UPDATE` ni `DELETE` sobre esa tabla (hay prueba que lo vigila). Se registra solo: `_fac_libro_tras_escritura` (after_request, con huella barata) y el barrido cada 10 min colgado de `simpliroute-poll` (`_fac_libro_barrido`). `ot_fac_doc` es la foto por factura para la pantalla **«Saldo de facturas»** (`/ot/saldo-facturas`) y el **Excel de auditoría**.
+- **OT a pérdida = autorización de Daniel:** una OT que se cobra y cierra con lo cobrado por debajo de lo que nos cobraron (técnico + despacho + repuestos) no cierra sin la autorización `cerrar_con_perdida` (misma tabla `mant_ot_autorizaciones`), válida HASTA el monto que Daniel vio; si la pérdida crece, se vuelve a pedir. Candado en `mant_ot_aprobar_cierre` (`CIERRE_CON_PERDIDA`, con la acción para pedirla), aviso en el paso 6 del motor.
+- Todo camino NUEVO que escriba lo cobrado o documentos de una OT termina pasando por el registro de fin de petición (rutas `/ot/`, `/mantenciones/`, `/servicio-tecnico/`, `/tickets/`); si escribe fuera de esas rutas, llama `_fac_libro_marcar(vid)`. Pruebas: `tests/test_fac_libro_saldo.py`.
+
+---
+
+## 🎨 REGLA #27 — Las skills de diseño externas (Impeccable, UI/UX Pro Max, SkillUI, Playwright) se SOMETEN a las reglas del proyecto
+
+**Pedido explícito de Daniel (2026-10-09): «la UI/UX debe someterse a las reglas del proyecto».**
+
+Cualquier skill, plugin o herramienta externa de diseño que se instale propone, audita o prueba; **nunca decide**. Si lo que sugiere choca con una regla de este archivo, **gana la regla**:
+
+- **Paleta y marca:** REGLA #0 y #2 (rojo `#dc2626`, negro `#0a0a0a`, blanco; ILUS Fitness). No se aceptan paletas, tipografías de marca ni «direcciones visuales» nuevas de una skill.
+- **Lenguaje visual:** REGLA #15 (formato Retiros: tarjetas, semáforo, datos completos sin truncar), #16 (grillas de 2 columnas), #4.3 (tablas paginadas), #14 (marcar/desmarcar todo), #3 (mobile-first) y #1 (nada de `alert/confirm/prompt` nativos).
+- **Confidencialidad:** REGLA #19 y #26 (técnicos no ven plata ni proveedores) no se relajan por «claridad» visual.
+- **Cómo se usan:** Impeccable y Playwright en modo **auditoría primero** (lista de problemas ordenada, sin tocar nada); las correcciones se aplican de a una y se verifican en navegador real. UI/UX Pro Max y SkillUI solo como **referencia**: no reemplazan el sistema de diseño de ILUS (`ilus_design_system` en memoria) ni se copian estilos de webs externas literalmente.
+- **Regla #4.2 sigue vigente:** una auditoría que sugiera «quitar» una columna, botón o módulo se pregunta antes; no se borra.
+- Probar siempre con datos de mentira o en vista previa local (REGLA #22: cero correos o cambios visibles para clientes reales).
+
+---
+
+_Última actualización: 2026-10-09_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

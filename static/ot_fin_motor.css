@@ -293,3 +293,8 @@
   .fm-sindoc .fm-btn{margin-left:0;flex:1 1 100%}
   .fm-tg{width:52px}
 }
+
+/* 📒 2026-10-11: la cuenta de la OT al pedir la autorización de cerrar con pérdida */
+.fm-perdida-cuenta{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+.fm-perdida-cuenta>span{background:#f3f4f6;border-radius:999px;padding:4px 12px;font-size:.82rem;color:#374151}
+.fm-perdida-cuenta>span.mal{background:#fee2e2;color:#991b1b}

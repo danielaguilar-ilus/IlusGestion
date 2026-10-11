@@ -39067,6 +39067,13 @@ def tr_cron_simpliroute_poll():
             res["prospectos_oferta"] = _prospectos_oferta_barrido()
         except Exception as _e_po:
             print(f"[cron-simpliroute] prospectos oferta: {_e_po}", flush=True)
+    # 📒 Libro de saldo de facturas (Daniel 2026-10-11, auditoría): carga inicial y revisión continua por tramos, con
+    # tope de tiempo (la petición tiene 300 s). Mismo criterio: si falla no afecta al polling.
+    if not dry and time.time() - _t_peticion < 200:
+        try:
+            res["libro_facturas"] = _fac_libro_barrido(max_s=min(40, max(5, 240 - (time.time() - _t_peticion))))
+        except Exception as _e_fl:
+            print(f"[cron-simpliroute] libro de facturas: {_e_fl}", flush=True)
     return jsonify(res), (200 if res.get("ok") else 502)
 
 
@@ -93914,10 +93921,11 @@ _OT_DOCS_COBRO = ("FCV", "FCE", "BLV", "BLE")
 # hoy se llamaba cortesía/sin costo; "arriendo o leasing" = el servicio va incluido en el arriendo.
 _OT_COBRO_CERO_MOTIVOS = {"garantia": "Garantía", "regalia": "Regalía", "arriendo_leasing": "Arriendo o leasing"}
 _OT_COBRO_CERO_MODALIDAD = {"garantia": "garantia", "regalia": "sin_costo", "arriendo_leasing": "sin_costo"}
-_OT_AUT_TIPOS = ("crear_sin_documento", "cobro_cero", "cerrar_sin_documento", "exceder_saldo")
+_OT_AUT_TIPOS = ("crear_sin_documento", "cobro_cero", "cerrar_sin_documento", "exceder_saldo", "cerrar_con_perdida")
 _OT_AUT_TIPO_TXT = {"crear_sin_documento": "Crear OT sin documento", "cobro_cero": "Cobrar $0",
                     "cerrar_sin_documento": "Cerrar OT sin documento",
-                    "exceder_saldo": "Cobrar más que el saldo del documento"}
+                    "exceder_saldo": "Cobrar más que el saldo del documento",
+                    "cerrar_con_perdida": "Cerrar OT con pérdida"}
 _OT_AUT_ESTADO_TXT = {"pendiente": "Esperando a Daniel", "aprobada": "Autorizada", "rechazada": "Rechazada",
                       "anulada": "Anulada"}
 _OT_AUT_ARGUMENTO_MIN = 30
@@ -94505,6 +94513,7 @@ _OT_CIERRE_ACCIONES = {
     "SOLO_NOTA_VENTA":             ("ligar_factura", "Agregar la factura o boleta que da de baja la nota de venta"),
     "DOC_REQUERIDO":               ("pedir_autorizacion", "Agregar un documento o pedir autorización a Daniel"),
     "ZZ_SALDO_CONSUMIDO":          ("resolver_saldo", "Resolver el saldo: tomar solo lo que queda, agregar otra factura, pasar a garantía o pedir autorización"),
+    "CIERRE_CON_PERDIDA":          ("pedir_aut_perdida", "Pedir a Daniel la autorización para cerrar con pérdida (con argumento)"),
 }
 _OT_PUERTA_FALTA_A_CODIGO = {"factura": "FALTA_FACTURA", "autorizacion_cobro_cero": "COBRO_CERO_SIN_AUTORIZACION",
                              "documento": "SIN_FACTURA"}
@@ -94568,7 +94577,7 @@ def _ensure_mant_ot_autorizaciones():
                 id                     INT AUTO_INCREMENT PRIMARY KEY,
                 entidad                ENUM('ot','ticket','cotizacion') NOT NULL DEFAULT 'ot',
                 entidad_id             INT NULL,
-                tipo                   ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento','exceder_saldo') NOT NULL,
+                tipo                   ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento','exceder_saldo','cerrar_con_perdida') NOT NULL,
                 visita_id              INT NULL,
                 cliente_id             INT NULL,
                 payload_json           MEDIUMTEXT NULL,
@@ -94593,11 +94602,13 @@ def _ensure_mant_ot_autorizaciones():
     except Exception as e:
         print(f"[ensure_ot_autorizaciones] {e}", flush=True)
     # 🧮 2026-10-08: nuevo tipo «exceder_saldo» (cobrar más que el saldo de la línea del documento, con argumento).
-    # Agregar un valor al final del ENUM; _ddl_ya_aplicado salta la sentencia si ya está (REGLA #18).
+    # 📒 2026-10-11: nuevo tipo «cerrar_con_perdida» (Daniel: «si la factura va a pérdida, eso iría autorizado por mí»).
+    # UNA sola sentencia define la columna (REGLA #18: nunca dos migraciones con valores distintos); cada valor nuevo
+    # se agrega AL FINAL y _ddl_ya_aplicado salta la sentencia si ya están todos.
     try:
-        mysql_execute("ALTER TABLE mant_ot_autorizaciones MODIFY tipo ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento','exceder_saldo') NOT NULL")
+        mysql_execute("ALTER TABLE mant_ot_autorizaciones MODIFY tipo ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento','exceder_saldo','cerrar_con_perdida') NOT NULL")
     except Exception as e:
-        print(f"[ensure_ot_autorizaciones] tipo exceder_saldo: {e}", flush=True)
+        print(f"[ensure_ot_autorizaciones] tipo cerrar_con_perdida: {e}", flush=True)
 
 
 def _ot_aut_es_superadmin():
@@ -95057,6 +95068,15 @@ def ot_aut_api_crear():
                 return jsonify({"ok": False, "error": "Indica cuánto se quiere cobrar por encima del saldo.",
                                 "error_codigo": "SALDO_PEDIDO_REQUERIDO"}), 400
             payload_json = json.dumps({"saldo_pedido": pedido_sp}, ensure_ascii=False)
+        if tipo == "cerrar_con_perdida":
+            # 📒 2026-10-11: la cuenta de la OT en el momento de pedir (Daniel la ve en su celular y autoriza HASTA ese
+            # monto de pérdida; si la pérdida crece después, se vuelve a pedir).
+            _fp = _fac_perdida_de_ot(visita_id)
+            if not _fp.get("perdida"):
+                return jsonify({"ok": False, "error": "Esta OT no va a pérdida: no necesita esta autorización.",
+                                "error_codigo": "NO_APLICA"}), 400
+            payload_json = json.dumps({"perdida": _fp["perdida"], "cobre": _fp["cobre"],
+                                       "me_cobraron": _fp["me_cobraron"]}, ensure_ascii=False)
     uid, nombre = _ot_aut_usuario()
     # Sin duplicar una pendiente igual.
     try:
@@ -95302,6 +95322,18 @@ def ot_aut_api_aprobar(aid):
             cur.execute("INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) VALUES ('visita',%s,%s,%s,%s)",
                         (vid, "saldo_servicio_autorizado",
                          (f"Cobro por encima del saldo del documento · {constancia} · pedida por "
+                          f"{a.get('solicitado_por_nombre') or '?'} (autorización N° {aid})"
+                          + (f" · comentario: {comentario}" if comentario else ""))[:4000],
+                         current_username() or "sistema"))
+        elif tipo == "cerrar_con_perdida":
+            try:
+                _pp = json.loads(a.get("payload_json") or "{}") or {}
+            except Exception:
+                _pp = {}
+            cur.execute("INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) VALUES ('visita',%s,%s,%s,%s)",
+                        (vid, "cierre_con_perdida_autorizado",
+                         (f"Cierre con pérdida de {_saldo.clp(_pp.get('perdida'))} (cobramos {_saldo.clp(_pp.get('cobre'))}, "
+                          f"nos cobraron {_saldo.clp(_pp.get('me_cobraron'))}) · {constancia} · pedida por "
                           f"{a.get('solicitado_por_nombre') or '?'} (autorización N° {aid})"
                           + (f" · comentario: {comentario}" if comentario else ""))[:4000],
                          current_username() or "sistema"))
@@ -95672,6 +95704,25 @@ def ot_api_recorrido(vid):
                                                                   "autorizacion_cerrar": "cierre autorizado por Daniel",
                                                                   "nota_venta": "nota de venta (queda «Falta factura»)",
                                                                   "interna_sin_cliente": "trabajo interno"}.get(p_cerrar.get("via"), p_cerrar.get("via") or "")}
+    # 📒 2026-10-11 (Daniel: «te va a indicar si la factura va a pérdida y eso iría autorizado por mí»): una OT que se
+    # cobra y va a pérdida cierra solo con la autorización 'cerrar_con_perdida'. El paso 6 lo dice ANTES de firmar.
+    perdida = None
+    if cob == "cobra" and not interna and fin["queda"].get("mostrar"):
+        try:
+            perdida = _fac_perdida_info(vid, fin)
+        except Exception as _e_rp:
+            print(f"[ot-recorrido] pérdida vid={vid}: {type(_e_rp).__name__}", flush=True)
+            perdida = None
+    if perdida and perdida.get("perdida") and not cerrada and p6.get("estado") in ("pendiente", "falta"):
+        if not perdida["ok"] and perdida.get("pendiente_id"):
+            p6 = {"estado": "falta", "texto": f"Va a pérdida de {_ot_fin_clp(perdida['perdida'])}: esperando la "
+                                             f"autorización de Daniel (solicitud N° {perdida['pendiente_id']})"}
+        elif not perdida["ok"] and p6.get("estado") == "pendiente":
+            p6 = {"estado": "falta", "accion": "pedir_aut_perdida",
+                  "texto": f"Va a pérdida de {_ot_fin_clp(perdida['perdida'])}: para cerrar necesita la autorización de Daniel"}
+        elif perdida["ok"] and p6.get("estado") == "pendiente":
+            p6 = dict(p6, texto=p6["texto"] + f" · pérdida de {_ot_fin_clp(perdida['perdida'])} autorizada"
+                      + (f" por {perdida['autorizada_por']}" if perdida.get("autorizada_por") else ""))
     if interna:
         # 🔒 2026-10-08: trabajo interno SIN cliente = no hay a quién cobrarle ni documento que pedir (la puerta y
         # aprobar-cierre lo dejan pasar). Ningún paso de documento, cobro o cierre queda en «falta», y ninguno ofrece
@@ -95699,6 +95750,7 @@ def ot_api_recorrido(vid):
                        "constancia": _const(aut_cero)},
         "estado_facturacion": v.get("estado_facturacion"), "falta_factura": nv and not cobro_doc,
         "superadmin": _ot_aut_es_superadmin(), "motivos": [{"v": k, "n": n} for k, n in _OT_COBRO_CERO_MOTIVOS.items()],
+        "perdida": perdida,
     })
 
 
@@ -111756,13 +111808,14 @@ def _ot_saldo_familia(tido, nudo):
     return fam | otros
 
 
-def _ot_saldo_usos(claves, excluir_vid=None, cap=None):
+def _ot_saldo_usos(claves, excluir_vid=None, cap=None, solo_vid=None):
     """Lo que OTRAS OT (no canceladas ni anuladas) ya usan de estos documentos: filas crudas para
     ot_saldo_servicio.consolidar_usos. Tres fuentes, sin sumar dos veces el mismo aporte:
       1) el aporte que cada OT guardó POR DOCUMENTO (mant_visita_documentos.zz_serv_monto/zz_envio_monto);
       2) OT anteriores a eso: lo cobrado a nivel OT (zz_monto/zz_envio_monto) que ningún documento tiene anotado
          se atribuye a sus documentos, con tope en la capacidad de cada uno;
-      3) OT con el documento solo en factura_* (sin fila en la tabla puente)."""
+      3) OT con el documento solo en factura_* (sin fila en la tabla puente).
+    `solo_vid` (2026-10-11, libro de saldo de facturas): solo las filas de ESA OT (lo que ella toma)."""
     pares = []
     for k in claves:
         for p in _saldo.variantes_sql(k):
@@ -111774,6 +111827,10 @@ def _ot_saldo_usos(claves, excluir_vid=None, cap=None):
         ex = int(excluir_vid) if excluir_vid else 0
     except (TypeError, ValueError):
         ex = 0
+    try:
+        solo = int(solo_vid) if solo_vid else 0
+    except (TypeError, ValueError):
+        solo = 0
     cap = cap or {}
     filas = []
 
@@ -111800,6 +111857,9 @@ def _ot_saldo_usos(claves, excluir_vid=None, cap=None):
         if ex:
             sql += " AND d.visita_id<>%s"
             par.append(ex)
+        if solo:
+            sql += " AND d.visita_id=%s"
+            par.append(solo)
         sql += " LIMIT %s"
         par.append(_OT_SALDO_USOS_MAX)
         for r in (mysql_fetchall(sql, tuple(par)) or []):
@@ -111827,6 +111887,9 @@ def _ot_saldo_usos(claves, excluir_vid=None, cap=None):
         if ex:
             sql += " AND v.id<>%s"
             par.append(ex)
+        if solo:
+            sql += " AND v.id=%s"
+            par.append(solo)
         sql += " LIMIT %s"
         par.append(_OT_SALDO_USOS_MAX)
         for r in (mysql_fetchall(sql, tuple(par)) or []):
@@ -111851,6 +111914,9 @@ def _ot_saldo_usos(claves, excluir_vid=None, cap=None):
         if ex:
             sql += " AND v.id<>%s"
             par.append(ex)
+        if solo:
+            sql += " AND v.id=%s"
+            par.append(solo)
         sql += " LIMIT %s"
         par.append(_OT_SALDO_USOS_MAX)
         for r in (mysql_fetchall(sql, tuple(par)) or []):
@@ -112142,6 +112208,7 @@ def _ot_saldo_aporte_en(fin_campos, tido, nudo):
 def _ot_saldo_reanotar_aportes(vid, docs=None):
     """Reparte lo cobrado por la OT entre sus documentos (el principal primero, hasta la capacidad de cada uno) y lo
     anota en mant_visita_documentos.zz_serv_monto/zz_envio_monto: así las demás OT ven cuánto saldo consumió."""
+    _fac_libro_marcar(vid)   # 📒 2026-10-11: el libro de saldo de facturas lo registra al terminar la petición
     v = mysql_fetchone("SELECT zz_monto, zz_envio_monto FROM mant_visitas WHERE id=%s", (vid,)) or {}
     docs = docs if docs is not None else _ot_saldo_docs_de_ot(vid)
     caps = []
@@ -112274,6 +112341,894 @@ def _ot_saldo_resumen(tido, nudo, excluir_vid=None, cliente_rut=None):
             "despacho": {k: s["despacho"][k] for k in ("total", "usado", "saldo", "hay_lineas")},
             "usos": [{"vid": u["vid"], "numero_ot": u["numero_ot"], "cliente": u["cliente"], "url": u["url"],
                       "servicio": u["servicio"], "despacho": u["despacho"]} for u in s["usos"]]}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  📒 2026-10-11 — LIBRO DE SALDO DE FACTURAS (Daniel, antes de la auditoría del martes 13-oct)
+#  «Si ya utilicé una factura y se ocupó el saldo en otra orden de trabajo, es necesario que ese saldo quede
+#  bloqueado… necesito decirle [al auditor] que mi sistema se encarga de eso, que están cubiertos para una
+#  duplicidad de documentos, y que te va a indicar si la factura va a pérdida y eso iría autorizado por mí».
+#
+#  · Solo la OT CONSUME el saldo de una factura (servicio = líneas ZZ de instalación/mantención; despacho = ZZENVIO).
+#    El ticket y la cotización HEREDAN la factura (la OT que nace de un ticket trae sus documentos).
+#  · El saldo lo sigue calculando el MISMO motor (_ot_saldo_usos / _ot_saldo_doc): el libro no inventa otra cuenta.
+#  · Cada vez que lo que una OT toma de una factura cambia, queda un MOVIMIENTO en ot_fac_libro que no se borra ni se
+#    edita (consumo + / liberación −), con la OT, quién, cuándo (UTC; se muestra en hora Chile) y por qué.
+#  · Se registra solo: después de cualquier escritura sobre una OT (after_request, con una huella barata que evita
+#    trabajo si la plata no cambió) y con la revisión completa («Revisar todas las OT»), que también es la carga inicial.
+#  · ot_fac_doc guarda la foto de cada factura (capacidad leída de Random en SOLO LECTURA, usado, saldo y semáforo)
+#    para la pantalla «Saldo de facturas» y el Excel de auditoría.
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+_FAC_LIBRO_DESDE = datetime(2026, 10, 11, 0, 0, 0)   # UTC: lo que ya existía antes queda como «carga inicial»
+_FAC_ORIGEN_TXT = {
+    "inicial": "Carga inicial del libro (la OT ya existía)",
+    "revision": "Revisión del sistema",
+    "crear": "Creación de la OT",
+    "documentos": "Agregar o quitar un documento",
+    "finanzas": "Cobro declarado o corregido",
+    "saldo": "Ajuste al saldo disponible",
+    "cierre": "Cierre de la OT",
+    "estado": "Cambio de estado de la OT",
+    "autorizacion": "Autorización de Daniel",
+    "ticket": "OT generada desde un ticket",
+    "eliminada": "OT eliminada",
+    "edicion": "Edición de la OT",
+}
+_FAC_RUTAS_ORIGEN = (("/saldo-servicio/tomar", "saldo"), ("/documentos", "documentos"), ("/asociar-factura", "documentos"),
+                     ("/finanzas", "finanzas"), ("aprobar-cierre", "cierre"), ("/cierre", "cierre"),
+                     ("/autorizaciones", "autorizacion"), ("/generar-ot", "ticket"), ("/crear", "crear"),
+                     ("/estado", "estado"))
+_FAC_REVISION_LOTE = 12
+
+
+def _ensure_fac_libro():
+    """Tablas del libro (idempotentes; CREATE TABLE IF NOT EXISTS pasa por _ddl_ya_aplicado, REGLA #18)."""
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS ot_fac_libro (
+                id            BIGINT AUTO_INCREMENT PRIMARY KEY,
+                creado_el     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                doc_tido      VARCHAR(6)  NOT NULL,
+                doc_nudo      VARCHAR(24) NOT NULL,
+                categoria     ENUM('servicio','despacho') NOT NULL,
+                movimiento    ENUM('consumo','liberacion') NOT NULL,
+                monto         INT NOT NULL COMMENT 'con signo: + consume saldo, - lo libera',
+                acumulado_ot  INT NOT NULL COMMENT 'lo que esa OT toma de la factura después del movimiento',
+                visita_id     INT NOT NULL,
+                numero_ot     VARCHAR(40)  NULL,
+                cliente       VARCHAR(190) NULL,
+                origen        VARCHAR(24)  NOT NULL,
+                usuario       VARCHAR(190) NULL,
+                user_id       INT NULL,
+                detalle       VARCHAR(500) NULL,
+                INDEX idx_fl_doc (doc_tido, doc_nudo, id),
+                INDEX idx_fl_ot (visita_id, id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[fac-libro] ensure libro: {e}", flush=True)
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS ot_fac_doc (
+                doc_tido        VARCHAR(6)  NOT NULL,
+                doc_nudo        VARCHAR(24) NOT NULL,
+                titulo          VARCHAR(40) NULL,
+                cliente_rut     VARCHAR(20) NULL,
+                cliente         VARCHAR(190) NULL,
+                fecha_doc       VARCHAR(20) NULL,
+                total_doc       BIGINT NULL,
+                cap_servicio    INT NOT NULL DEFAULT 0,
+                cap_despacho    INT NOT NULL DEFAULT 0,
+                usado_servicio  INT NOT NULL DEFAULT 0,
+                usado_despacho  INT NOT NULL DEFAULT 0,
+                n_ot            INT NOT NULL DEFAULT 0,
+                ots_txt         VARCHAR(500) NULL,
+                estado          VARCHAR(16) NOT NULL DEFAULT 'libre',
+                familia_de      VARCHAR(40) NULL COMMENT 'nota de venta: la factura que la da de baja',
+                erp_leido       TINYINT NOT NULL DEFAULT 0,
+                actualizado_el  DATETIME NULL,
+                PRIMARY KEY (doc_tido, doc_nudo),
+                INDEX idx_fd_estado (estado, actualizado_el)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[fac-libro] ensure doc: {e}", flush=True)
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS ot_fac_huella (
+                visita_id    INT NOT NULL PRIMARY KEY,
+                huella       CHAR(32) NOT NULL,
+                revisado_el  DATETIME NOT NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[fac-libro] ensure huella: {e}", flush=True)
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS ot_fac_cursor (
+                id           TINYINT NOT NULL PRIMARY KEY,
+                desde        INT NOT NULL DEFAULT 0,
+                vuelta       INT NOT NULL DEFAULT 0,
+                actualizado  DATETIME NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[fac-libro] ensure cursor: {e}", flush=True)
+
+
+def _fac_libro_marcar(vid):
+    """Avisa al registro de fin de petición que esta OT tocó su plata (lo llaman los escritores del saldo)."""
+    try:
+        from flask import has_request_context
+        if has_request_context() and vid:
+            s = g.get("_fac_libro_vids")
+            if s is None:
+                s = set()
+                g._fac_libro_vids = s
+            s.add(int(vid))
+    except Exception:
+        pass
+
+
+def _fac_huella_ot(vid):
+    """(huella, huella_anterior, fila) de la plata de una OT: estado, cobertura, cobro y sus documentos. Una sola
+    consulta barata: si la huella no cambió, el libro no tiene nada que revisar."""
+    import hashlib
+    r = mysql_fetchone(
+        "SELECT v.id, v.numero_ot, v.created_at, v.estado, v.modalidad_cobro, v.cobro_cero_motivo, v.valor_origen, "
+        "       v.zz_monto, v.zz_envio_monto, v.factura_tido, v.factura_nudo, c.razon_social AS cliente, "
+        "       (SELECT GROUP_CONCAT(CONCAT_WS(':', d.erp_tido, d.erp_nudo, d.es_cobro, IFNULL(d.reemplazado_por_id,'-'), "
+        "               IFNULL(d.zz_serv_monto,'-'), IFNULL(d.zz_envio_monto,'-')) ORDER BY d.id SEPARATOR '|') "
+        "          FROM mant_visita_documentos d WHERE d.visita_id=v.id AND d.origen='erp') AS docs, "
+        "       (SELECT h.huella FROM ot_fac_huella h WHERE h.visita_id=v.id) AS h_prev "
+        "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (int(vid),))
+    if not r:
+        prev = (mysql_fetchone("SELECT huella FROM ot_fac_huella WHERE visita_id=%s", (int(vid),)) or {}).get("huella")
+        return "eliminada", prev, None
+    # Del estado solo importa si la OT dejó de contar (cancelada/anulada): firmar o cerrar no mueve el saldo.
+    fuera = str((r.get("estado") or "").lower() in _saldo.ESTADOS_OT_FUERA)
+    base = fuera + "|" + "|".join(str(r.get(k)) for k in ("modalidad_cobro", "cobro_cero_motivo", "valor_origen", "zz_monto",
+                                                          "zz_envio_monto", "factura_tido", "factura_nudo", "docs"))
+    return hashlib.md5(base.encode("utf-8")).hexdigest(), r.get("h_prev"), r
+
+
+def _fac_aportes_ot(vid):
+    """Lo que UNA OT toma hoy de cada documento: {(tido, nudo, categoria): monto}. Usa las MISMAS filas que el motor
+    del saldo (_ot_saldo_usos, solo de esta OT) — el libro nunca calcula distinto que el candado."""
+    docs = []
+    try:
+        for r in (mysql_fetchall("SELECT erp_tido, erp_nudo FROM mant_visita_documentos "
+                                 " WHERE visita_id=%s AND origen='erp' AND COALESCE(erp_nudo,'')<>''", (int(vid),)) or []):
+            docs.append((r.get("erp_tido"), r.get("erp_nudo")))
+        v = mysql_fetchone("SELECT factura_tido, factura_nudo FROM mant_visitas WHERE id=%s", (int(vid),)) or {}
+        if (v.get("factura_tido") or "").strip() and (v.get("factura_nudo") or "").strip():
+            docs.append((v["factura_tido"], v["factura_nudo"]))
+    except Exception as e:
+        print(f"[fac-libro] documentos de la OT {vid}: {type(e).__name__}", flush=True)
+    out, vistos = {}, set()
+    for t, n in docs:
+        k = _saldo.clave_doc(t, n)
+        if not k[0] or not k[1] or k in vistos:
+            continue
+        vistos.add(k)
+        cap = {}
+        try:
+            h, zz, _tot = _erp_zz_lineas(t, n)
+            if h:
+                cap, _l = _saldo.clasificar_lineas(zz)
+        except Exception:
+            cap = {}
+        for kk, m in _saldo.aportes_de_ot(_ot_saldo_usos({k}, None, cap, solo_vid=vid), vid).items():
+            out[kk] = max(out.get(kk, 0), m)
+    return out
+
+
+def _fac_libro_ultimo(vid):
+    """El último acumulado que el libro registró para cada (documento, categoría) de una OT."""
+    out = {}
+    try:
+        for r in (mysql_fetchall(
+                "SELECT l.doc_tido, l.doc_nudo, l.categoria, l.acumulado_ot FROM ot_fac_libro l "
+                " WHERE l.id IN (SELECT MAX(x.id) FROM ot_fac_libro x WHERE x.visita_id=%s "
+                "                 GROUP BY x.doc_tido, x.doc_nudo, x.categoria)", (int(vid),)) or []):
+            out[(r["doc_tido"], r["doc_nudo"], r["categoria"])] = int(r.get("acumulado_ot") or 0)
+    except Exception as e:
+        print(f"[fac-libro] último de la OT {vid}: {type(e).__name__}", flush=True)
+    return out
+
+
+def _fac_libro_conciliar_ot(vid, origen="revision", detalle=None, forzar=False):
+    """Pone al día el libro de UNA OT: compara lo que toma hoy de cada factura con lo último registrado y anota la
+    diferencia como movimiento (consumo o liberación). Nunca borra ni edita un movimiento. Serializado por OT con un
+    GET_LOCK (dos peticiones a la vez no anotan dos veces). Devuelve {movimientos, docs: [(tido, nudo)]}."""
+    try:
+        vid = int(vid)
+    except (TypeError, ValueError):
+        return {"movimientos": 0, "docs": []}
+    conn_lock = None
+    try:
+        # Primero la huella (una consulta del pool): si la plata no cambió, ni siquiera se pide el candado. Solo
+        # cuando cambió se abre la conexión del GET_LOCK y se vuelve a leer adentro (otra petición pudo anotar ya).
+        huella, previa, fila = _fac_huella_ot(vid)
+        if not forzar and previa and huella == previa:
+            return {"movimientos": 0, "docs": []}
+        try:
+            conn_lock = get_mysql()
+            with conn_lock.cursor() as cur:
+                cur.execute("SELECT GET_LOCK(%s, 5) AS l", (f"faclibro_{vid}",))
+        except Exception:
+            conn_lock = None
+        huella, previa, fila = _fac_huella_ot(vid)
+        if not forzar and previa and huella == previa:
+            return {"movimientos": 0, "docs": []}
+        actual = _fac_aportes_ot(vid) if fila else {}
+        ultimo = _fac_libro_ultimo(vid)
+        movs = _saldo.movimientos_libro(ultimo, actual)
+        if fila is None and not ultimo:
+            return {"movimientos": 0, "docs": []}
+        org = origen if fila else "eliminada"
+        det = detalle
+        if fila and not ultimo and not previa:
+            # Primera vez que el libro ve esta OT: si ya existía antes del libro, su consumo es la «carga inicial».
+            try:
+                if fila.get("created_at") and fila["created_at"] < _FAC_LIBRO_DESDE:
+                    org = "inicial"
+                    det = "Lo que la OT ya tomaba de la factura cuando empezó el libro (" + \
+                          chile_fmt_filter(_FAC_LIBRO_DESDE, "%d/%m/%Y") + ")"
+            except Exception:
+                pass
+        uid, nombre = (None, None)
+        try:
+            uid, nombre = _ot_aut_usuario()
+        except Exception:
+            pass
+        quien = (nombre or current_username() or "Sistema") if org not in ("inicial", "revision") else "Sistema"
+        num = (fila or {}).get("numero_ot") or f"V-{vid:05d}"
+        cli = (fila or {}).get("cliente")
+        for m in movs:
+            mysql_execute(
+                "INSERT INTO ot_fac_libro (doc_tido, doc_nudo, categoria, movimiento, monto, acumulado_ot, visita_id, "
+                " numero_ot, cliente, origen, usuario, user_id, detalle) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (m["tido"], m["nudo"], m["categoria"], m["movimiento"], int(m["monto"]), int(m["acumulado"]), vid, num,
+                 (cli or "")[:190] or None, org, (quien or "")[:190] or None, uid if quien != "Sistema" else None,
+                 (det or "")[:500] or None))
+        if fila:
+            mysql_execute("INSERT INTO ot_fac_huella (visita_id, huella, revisado_el) VALUES (%s,%s,%s) "
+                          "ON DUPLICATE KEY UPDATE huella=VALUES(huella), revisado_el=VALUES(revisado_el)",
+                          (vid, huella, datetime.utcnow()))
+        else:
+            mysql_execute("DELETE FROM ot_fac_huella WHERE visita_id=%s", (vid,))
+        docs = sorted({(m["tido"], m["nudo"]) for m in movs} | {(k[0], k[1]) for k in actual})
+        return {"movimientos": len(movs), "docs": docs}
+    except Exception as e:
+        print(f"[fac-libro] conciliar OT {vid}: {type(e).__name__}: {e}", flush=True)
+        return {"movimientos": 0, "docs": []}
+    finally:
+        if conn_lock is not None:
+            try:
+                with conn_lock.cursor() as cur:
+                    cur.execute("SELECT RELEASE_LOCK(%s)", (f"faclibro_{vid}",))
+            except Exception:
+                pass
+            try:
+                conn_lock.close()
+            except Exception:
+                pass
+
+
+def _fac_doc_refrescar(tido, nudo):
+    """Foto de UNA factura en ot_fac_doc con el MISMO motor del candado (_ot_saldo_doc): capacidad (Random, solo
+    lectura), usado por las OT (familia nota de venta ↔ factura incluida), saldo y semáforo. Si Random no responde,
+    conserva la última capacidad leída. Devuelve (saldo_doc, estado)."""
+    k = _saldo.clave_doc(tido, nudo)
+    if not k[0] or not k[1]:
+        return None, None
+    t_real, n_real = _ot_saldo_real(k)
+    s = _ot_saldo_doc(t_real, n_real)
+    previo = mysql_fetchone("SELECT * FROM ot_fac_doc WHERE doc_tido=%s AND doc_nudo=%s", k) or {}
+    leido = bool(s.get("leido"))
+    serv, desp = dict(s["servicio"]), dict(s["despacho"])
+    if not leido and previo.get("erp_leido"):
+        serv["total"], desp["total"] = int(previo.get("cap_servicio") or 0), int(previo.get("cap_despacho") or 0)
+        leido = True
+    est = _saldo.estado_factura(serv, desp, leido)
+    header = {}
+    try:
+        header, _l = _mant_erp_doc_cached(t_real, n_real)
+        header = header or {}
+    except Exception:
+        header = {}
+    familia_de = None
+    if k[0] in _saldo.NOTAS_VENTA:
+        cobros = [f for f in (s.get("familia") or []) if f and f[0] in _saldo.DOCS_COBRO]
+        if cobros:
+            tu, nu = _ot_doc_real_a_usuario(*_ot_saldo_real(tuple(cobros[0])))
+            familia_de = f"{tu} {nu}".strip()
+    ots = [u.get("numero_ot") or f"OT #{u.get('vid')}" for u in (s.get("usos") or [])]
+    try:
+        total_doc = int(round(float(header.get("valor_bruto") or 0))) or previo.get("total_doc")
+    except (TypeError, ValueError):
+        total_doc = previo.get("total_doc")
+    mysql_execute(
+        "INSERT INTO ot_fac_doc (doc_tido, doc_nudo, titulo, cliente_rut, cliente, fecha_doc, total_doc, cap_servicio, "
+        " cap_despacho, usado_servicio, usado_despacho, n_ot, ots_txt, estado, familia_de, erp_leido, actualizado_el) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+        "ON DUPLICATE KEY UPDATE titulo=VALUES(titulo), cliente_rut=COALESCE(VALUES(cliente_rut), cliente_rut), "
+        " cliente=COALESCE(VALUES(cliente), cliente), fecha_doc=COALESCE(VALUES(fecha_doc), fecha_doc), "
+        " total_doc=COALESCE(VALUES(total_doc), total_doc), cap_servicio=VALUES(cap_servicio), "
+        " cap_despacho=VALUES(cap_despacho), usado_servicio=VALUES(usado_servicio), usado_despacho=VALUES(usado_despacho), "
+        " n_ot=VALUES(n_ot), ots_txt=VALUES(ots_txt), estado=VALUES(estado), familia_de=VALUES(familia_de), "
+        " erp_leido=VALUES(erp_leido), actualizado_el=VALUES(actualizado_el)",
+        (k[0], k[1], s.get("titulo") or f"{k[0]} {k[1]}", (header.get("cliente_rut") or None),
+         ((header.get("cliente_nombre") or "")[:190] or None), (header.get("fecha") or None), total_doc,
+         int(serv["total"]), int(desp["total"]), int(serv["usado"]), int(desp["usado"]), len(ots),
+         (", ".join(ots))[:500] or None, est["estado"], familia_de, 1 if leido else 0, datetime.utcnow()))
+    return s, est
+
+
+@app.after_request
+def _fac_libro_tras_escritura(resp):
+    """Después de CUALQUIER escritura que toque una OT (crear, documentos, cobro, cierre, cancelar, eliminar,
+    generar desde un ticket…), el libro se pone al día solo. La huella hace que cueste una consulta cuando la plata
+    no cambió. Nunca rompe la respuesta."""
+    try:
+        if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+            return resp
+        if resp.status_code >= 400 or resp.direct_passthrough:
+            return resp
+        p = request.path or ""
+        if not p.startswith(("/ot/", "/mantenciones/", "/servicio-tecnico/", "/tickets/")) or "/saldo-facturas" in p:
+            return resp
+        vids = set(g.get("_fac_libro_vids") or ())
+        va = request.view_args or {}
+        for k in ("vid", "visita_id"):
+            try:
+                if va.get(k):
+                    vids.add(int(va[k]))
+            except (TypeError, ValueError):
+                pass
+        if resp.is_json:
+            j = resp.get_json(silent=True)
+            if isinstance(j, dict):
+                for k in ("visita_id", "visita_creada_id"):
+                    try:
+                        if j.get(k):
+                            vids.add(int(j[k]))
+                    except (TypeError, ValueError):
+                        pass
+        if not vids:
+            return resp
+        origen = next((o for frag, o in _FAC_RUTAS_ORIGEN if frag in p), "edicion")
+        if origen == "edicion" and request.method == "PUT":
+            d = request.get_json(silent=True) or {}
+            if isinstance(d, dict) and d.get("estado"):
+                origen = "estado"
+        if request.method == "DELETE" and "/mantenciones/api/visitas/" in p:
+            origen = "eliminada"
+        for vid in sorted(vids)[:6]:
+            r = _fac_libro_conciliar_ot(vid, origen, detalle=f"{request.method} {p}"[:200])
+            for t, n in (r.get("docs") or [])[:6]:
+                try:
+                    _fac_doc_refrescar(t, n)
+                except Exception as e:
+                    print(f"[fac-libro] refrescar {t} {n}: {type(e).__name__}", flush=True)
+    except Exception as e:
+        print(f"[fac-libro] tras escritura: {type(e).__name__}: {e}", flush=True)
+    return resp
+
+
+# ── Pantalla, API y Excel ────────────────────────────────────────────────────────────────────────────────────────
+def _fac_fila_lista(r):
+    serv = {"total": int(r.get("cap_servicio") or 0), "usado": int(r.get("usado_servicio") or 0)}
+    desp = {"total": int(r.get("cap_despacho") or 0), "usado": int(r.get("usado_despacho") or 0)}
+    est = _saldo.estado_factura(serv, desp, bool(r.get("erp_leido")))
+    tu, nu = _ot_doc_real_a_usuario(*_ot_saldo_real((r["doc_tido"], r["doc_nudo"])))
+    return {"tido": r["doc_tido"], "nudo": r["doc_nudo"], "titulo": f"{tu} {nu}".strip(),
+            "cliente": r.get("cliente") or "", "cliente_rut": r.get("cliente_rut") or "", "fecha": r.get("fecha_doc") or "",
+            "total_doc": int(r.get("total_doc") or 0),
+            "servicio": dict(serv, saldo=max(0, serv["total"] - serv["usado"])),
+            "despacho": dict(desp, saldo=max(0, desp["total"] - desp["usado"])),
+            "n_ot": int(r.get("n_ot") or 0), "ots": r.get("ots_txt") or "", "familia_de": r.get("familia_de"),
+            "estado": est, "revisada": chile_fmt_filter(r["actualizado_el"]) if r.get("actualizado_el") else ""}
+
+
+@app.route("/ot/saldo-facturas", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_saldo_facturas_pagina():
+    """«Saldo de facturas»: consulta «¿Puedo usar esta factura?», listado con semáforo y el libro de movimientos."""
+    return render_template("ot2/saldo_facturas.html", es_superadmin=_ot_aut_es_superadmin(),
+                           estados=_saldo.ESTADOS_FACTURA)
+
+
+@app.route("/ot/api/saldo-facturas", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_api_saldo_facturas():
+    """Listado paginado (REGLA #4.3) de las facturas que usan las OT, con su semáforo. Filtros: q (número, cliente o
+    RUT), estado (libre|con_saldo|agotada|excedida|sin_lineas|sin_leer), notas=1 (incluir notas de venta ya
+    reemplazadas por su factura), page, per_page."""
+    q = (request.args.get("q") or "").strip()[:80]
+    est = (request.args.get("estado") or "").strip().lower()
+    where, par = [], []
+    if request.args.get("notas") != "1":
+        where.append("familia_de IS NULL")
+    if q:
+        qn = re.sub(r"[^0-9A-Za-z]", "", q).lstrip("0")
+        where.append("(doc_nudo LIKE %s OR cliente LIKE %s OR cliente_rut LIKE %s OR titulo LIKE %s OR ots_txt LIKE %s)")
+        par += [f"%{qn or q}%", f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%"]
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+        per_page = min(200, max(10, int(request.args.get("per_page") or 50)))
+    except (TypeError, ValueError):
+        page, per_page = 1, 50
+    try:
+        base_w = (" WHERE " + " AND ".join(where)) if where else ""
+        conteo = {r["estado"]: int(r["n"]) for r in (mysql_fetchall(
+            "SELECT estado, COUNT(*) AS n FROM ot_fac_doc" + base_w + " GROUP BY estado", tuple(par)) or [])}
+        tot = mysql_fetchone(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(cap_servicio+cap_despacho),0) AS cap, "
+            "       COALESCE(SUM(usado_servicio+usado_despacho),0) AS usado, "
+            "       COALESCE(SUM(GREATEST(cap_servicio-usado_servicio,0)+GREATEST(cap_despacho-usado_despacho,0)),0) AS saldo "
+            "  FROM ot_fac_doc" + base_w, tuple(par)) or {}
+        w2, p2 = list(where), list(par)
+        if est in _saldo.ESTADOS_FACTURA:
+            w2.append("estado=%s")
+            p2.append(est)
+        wsql = (" WHERE " + " AND ".join(w2)) if w2 else ""
+        n = int((mysql_fetchone("SELECT COUNT(*) AS n FROM ot_fac_doc" + wsql, tuple(p2)) or {}).get("n") or 0)
+        pages = max(1, (n + per_page - 1) // per_page)
+        page = min(page, pages)
+        orden = "FIELD(estado," + ",".join(f"'{e}'" for e in _saldo.ORDEN_ESTADOS) + "), actualizado_el DESC"
+        rows = mysql_fetchall("SELECT * FROM ot_fac_doc" + wsql + " ORDER BY " + orden + " LIMIT %s OFFSET %s",
+                              tuple(p2) + (per_page, (page - 1) * per_page)) or []
+        ult = mysql_fetchone("SELECT MAX(revisado_el) AS r, COUNT(*) AS n FROM ot_fac_huella") or {}
+    except Exception as e:
+        print(f"[fac-libro] listado: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo leer el saldo de las facturas."}), 500
+    return jsonify({"ok": True, "items": [_fac_fila_lista(r) for r in rows], "total": n, "page": page,
+                    "per_page": per_page, "pages": pages, "desde": ((page - 1) * per_page + 1) if n else 0,
+                    "hasta": min(page * per_page, n), "conteo": conteo,
+                    "totales": {"facturas": int(tot.get("n") or 0), "capacidad": int(tot.get("cap") or 0),
+                                "usado": int(tot.get("usado") or 0), "saldo": int(tot.get("saldo") or 0)},
+                    "revision": {"ots_revisadas": int(ult.get("n") or 0),
+                                 "ultima": chile_fmt_filter(ult["r"]) if ult.get("r") else ""},
+                    "estados": _saldo.ESTADOS_FACTURA})
+
+
+def _fac_herencia_doc(k):
+    """Tickets y cotizaciones que traen esta factura (la heredan; no consumen saldo)."""
+    out = {"tickets": [], "cotizaciones": []}
+    pares = _saldo.variantes_sql(k)
+    if not pares:
+        return out
+    cond = " OR ".join(["(td.erp_tido=%s AND td.erp_nudo=%s)"] * len(pares))
+    par = tuple(x for p in pares for x in p)
+    try:
+        for r in (mysql_fetchall(
+                "SELECT DISTINCT t.id, t.numero_ticket, t.titulo, t.estado, t.visita_id FROM tk_ticket_documentos td "
+                "  JOIN tk_tickets t ON t.id=td.ticket_id WHERE " + cond + " ORDER BY t.id DESC LIMIT 30", par) or []):
+            out["tickets"].append({"id": r["id"], "numero": r.get("numero_ticket") or f"#{r['id']}",
+                                   "titulo": r.get("titulo") or "", "estado": r.get("estado") or "",
+                                   "visita_id": r.get("visita_id"), "url": f"/tickets/{r['id']}"})
+    except Exception as e:
+        print(f"[fac-libro] herencia tickets: {type(e).__name__}", flush=True)
+    try:
+        cond2 = cond.replace("td.", "ci.")
+        for r in (mysql_fetchall(
+                "SELECT DISTINCT c.id, c.numero_cotizacion, c.estado, c.ticket_id FROM tk_cotizacion_items ci "
+                "  JOIN tk_cotizaciones c ON c.id=ci.cotizacion_id WHERE " + cond2 + " ORDER BY c.id DESC LIMIT 30", par) or []):
+            out["cotizaciones"].append({"id": r["id"], "numero": r.get("numero_cotizacion") or f"#{r['id']}",
+                                        "estado": r.get("estado") or "", "ticket_id": r.get("ticket_id"),
+                                        "url": f"/cotizaciones/{r['id']}"})
+    except Exception as e:
+        print(f"[fac-libro] herencia cotizaciones: {type(e).__name__}", flush=True)
+    return out
+
+
+def _fac_movimientos_doc(claves, limite=300):
+    pares, par = [], []
+    for k in claves:
+        pares.append("(doc_tido=%s AND doc_nudo=%s)")
+        par += [k[0], k[1]]
+    if not pares:
+        return []
+    rows = mysql_fetchall("SELECT * FROM ot_fac_libro WHERE " + " OR ".join(pares) + " ORDER BY id DESC LIMIT %s",
+                          tuple(par) + (limite,)) or []
+    out = []
+    for r in rows:
+        tu, nu = _ot_doc_real_a_usuario(*_ot_saldo_real((r["doc_tido"], r["doc_nudo"])))
+        out.append({"id": r["id"], "fecha": chile_fmt_filter(r["creado_el"]) if r.get("creado_el") else "",
+                    "documento": f"{tu} {nu}".strip(), "categoria": r["categoria"],
+                    "categoria_txt": _saldo.CATEGORIA_TXT.get(r["categoria"], r["categoria"]),
+                    "movimiento": r["movimiento"], "monto": int(r["monto"]), "acumulado": int(r["acumulado_ot"]),
+                    "vid": r["visita_id"], "numero_ot": r.get("numero_ot") or "", "cliente": r.get("cliente") or "",
+                    "origen": r.get("origen"), "origen_txt": _FAC_ORIGEN_TXT.get(r.get("origen") or "", r.get("origen") or ""),
+                    "usuario": r.get("usuario") or "Sistema", "detalle": r.get("detalle") or "", "url": f"/ot/{r['visita_id']}"})
+    return out
+
+
+def _fac_finanzas_de_ots(vids):
+    """La cuenta (Cobré − Me cobraron = Queda) de cada OT, con la MISMA función que su ficha (_ot_finanzas)."""
+    out = {}
+    try:
+        ids = sorted({int(x) for x in vids if x})
+    except (TypeError, ValueError):
+        return out
+    if not ids:
+        return out
+    ph = ",".join(["%s"] * len(ids))
+    try:
+        rows = mysql_fetchall(
+            "SELECT v.*, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real FROM mant_visitas v WHERE v.id IN (" + ph + ")",
+            tuple(ids)) or []
+        reps = _ot_repuestos_desglose(ids)
+        for r in rows:
+            f = _ot_finanzas(r, _ot_fin_rep_liviano(reps.get(int(r["id"]))))
+            out[int(r["id"])] = {
+                "cobra": f["cobra"], "cobertura_txt": f["cobertura_txt"], "cobre": f["cobre"]["total"],
+                "me_cobraron": f["me_cobraron"]["total"], "queda": f["queda"]["total"],
+                "clase": f.get("clase"), "label": f.get("label"), "frase": f.get("frase"),
+                "estado": r.get("estado"), "estado_txt": _OT_REG_ESTADO_TXT.get(r.get("estado"), r.get("estado") or ""),
+                "fecha": _ot_fecha_txt(r.get("fecha_programada")), "tipo": r.get("tipo") or ""}
+    except Exception as e:
+        print(f"[fac-libro] finanzas de las OT: {type(e).__name__}: {e}", flush=True)
+    return out
+
+
+@app.route("/ot/api/saldo-facturas/doc/<tido>/<nudo>", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_api_saldo_facturas_doc(tido, nudo):
+    """«¿Puedo usar esta factura?»: el saldo EN VIVO de una factura (servicio y despacho), quién la usó y cuánto, la
+    cuenta de cada una de esas OT (para ver si va a pérdida), el libro de movimientos, la familia (nota de venta ↔
+    factura) y los tickets/cotizaciones que la heredan. Solo lectura del ERP (REGLA #4.1)."""
+    tido = (tido or "").strip().upper()[:6]
+    nudo = (nudo or "").strip()[:24]
+    k = _saldo.clave_doc(tido, nudo)
+    if not k[0] or not k[1]:
+        return jsonify({"ok": False, "error": "Escribe el tipo y el número del documento."}), 400
+    try:
+        s, est = _fac_doc_refrescar(tido, nudo)
+    except Exception as e:
+        print(f"[fac-libro] doc {tido} {nudo}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No pudimos calcular el saldo de ese documento."}), 500
+    if s is None:
+        return jsonify({"ok": False, "error": "Documento no válido."}), 400
+    t_real, n_real = _ot_saldo_real(k)
+    header = {}
+    try:
+        header, _l = _mant_erp_doc_cached(t_real, n_real)
+        header = header or {}
+    except Exception:
+        header = {}
+    if not s.get("leido") and not s.get("usos"):
+        return jsonify({"ok": False, "error_codigo": "NO_ENCONTRADO",
+                        "error": f"No encontramos {s.get('titulo') or (tido + ' ' + nudo)} en Random ni en ninguna OT. "
+                                 "Revisa el tipo y el número."}), 404
+    fins = _fac_finanzas_de_ots([u["vid"] for u in (s.get("usos") or [])])
+    usos = []
+    for u in (s.get("usos") or []):
+        usos.append(dict(u, url=f"/ot/{u['vid']}", fin=fins.get(int(u["vid"]))))
+    fam = [tuple(x) for x in (s.get("familia") or [])]
+    familia = []
+    for f in fam:
+        tu, nu = _ot_doc_real_a_usuario(*_ot_saldo_real(f))
+        familia.append({"titulo": f"{tu} {nu}".strip(), "tido": f[0], "nudo": f[1],
+                        "rol": "Nota de venta de origen" if f[0] in _saldo.NOTAS_VENTA else "Factura que la reemplaza"})
+    try:
+        movs = _fac_movimientos_doc([k] + fam)
+    except Exception as e:
+        print(f"[fac-libro] movimientos {k}: {type(e).__name__}", flush=True)
+        movs = []
+    return jsonify({
+        "ok": True,
+        "doc": {"tido": s.get("tido"), "nudo": s.get("nudo"), "titulo": s.get("titulo"), "clave": list(k),
+                "cliente": header.get("cliente_nombre") or "", "cliente_rut": header.get("cliente_rut") or "",
+                "fecha": header.get("fecha") or "", "total_doc": int(round(float(header.get("valor_bruto") or 0))),
+                "leido": bool(s.get("leido"))},
+        "estado": est, "veredicto": _saldo.puede_usar(s["servicio"], s["despacho"]),
+        "servicio": s["servicio"], "despacho": s["despacho"], "usos": usos, "familia": familia,
+        "movimientos": movs, "herencia": _fac_herencia_doc(k), "puede_autorizar": _ot_aut_es_superadmin()})
+
+
+@app.route("/ot/api/saldo-facturas/revisar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot_api_saldo_facturas_revisar():
+    """Revisión completa (también es la carga inicial del libro): recorre por tramos TODAS las OT que tienen un
+    documento de Random y pone al día su libro y la foto de sus facturas. body: {desde: último id revisado}.
+    Devuelve el avance para que la pantalla siga pidiendo el siguiente tramo. Nunca toca la OT."""
+    d = request.get_json(silent=True) or {}
+    try:
+        desde = max(0, int(d.get("desde") or 0))
+    except (TypeError, ValueError):
+        desde = 0
+    cond = _FAC_SQL_OT_CON_DOC
+    try:
+        total = int((mysql_fetchone("SELECT COUNT(*) AS n FROM mant_visitas v WHERE " + cond) or {}).get("n") or 0)
+        hechas = int((mysql_fetchone("SELECT COUNT(*) AS n FROM mant_visitas v WHERE v.id<=%s AND " + cond, (desde,)) or {}).get("n") or 0)
+        ids = [int(r["id"]) for r in (mysql_fetchall(
+            "SELECT v.id FROM mant_visitas v WHERE v.id>%s AND " + cond + " ORDER BY v.id LIMIT %s",
+            (desde, _FAC_REVISION_LOTE)) or [])]
+    except Exception as e:
+        print(f"[fac-libro] revisar: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo leer la lista de OT."}), 500
+    movs, docs = 0, set()
+    for vid in ids:
+        r = _fac_libro_conciliar_ot(vid, "revision", detalle="Revisión completa del libro", forzar=True)
+        movs += r["movimientos"]
+        docs |= set(r["docs"])
+    n_docs = 0
+    for t, n in sorted(docs):
+        try:
+            _fac_doc_refrescar(t, n)
+            n_docs += 1
+        except Exception as e:
+            print(f"[fac-libro] refrescar {t} {n}: {type(e).__name__}", flush=True)
+    hechas += len(ids)
+    fin = len(ids) < _FAC_REVISION_LOTE
+    return jsonify({"ok": True, "procesadas": len(ids), "hechas": min(hechas, total), "total": total,
+                    "siguiente": ids[-1] if ids else desde, "fin": fin, "movimientos": movs, "facturas": n_docs})
+
+
+_FAC_SQL_OT_CON_DOC = ("(EXISTS (SELECT 1 FROM mant_visita_documentos md WHERE md.visita_id=v.id AND md.origen='erp' "
+                       "         AND COALESCE(md.erp_nudo,'')<>'') OR COALESCE(v.factura_nudo,'')<>'')")
+
+
+def _fac_libro_barrido(max_s=40, max_ots=60):
+    """Barrido programado del libro (cuelga del trabajo de Cloud Scheduler `simpliroute-poll`, cada 10 min): recorre
+    las OT con documento por tramos y retoma donde quedó (ot_fac_cursor). La primera vuelta es la carga inicial; las
+    siguientes cuestan una consulta por OT (la huella salta las que no cambiaron) y atrapan cualquier camino que no
+    haya pasado por el registro de fin de petición. Nunca toca la OT."""
+    t0 = time.time()
+    try:
+        cur = mysql_fetchone("SELECT desde, vuelta FROM ot_fac_cursor WHERE id=1") or {}
+    except Exception:
+        cur = {}
+    desde, vuelta = int(cur.get("desde") or 0), int(cur.get("vuelta") or 0)
+    try:
+        ids = [int(r["id"]) for r in (mysql_fetchall(
+            "SELECT v.id FROM mant_visitas v WHERE v.id>%s AND " + _FAC_SQL_OT_CON_DOC + " ORDER BY v.id LIMIT %s",
+            (desde, max_ots)) or [])]
+    except Exception as e:
+        print(f"[fac-libro] barrido: {type(e).__name__}: {e}", flush=True)
+        return {"ok": False}
+    proc, movs, docs = 0, 0, set()
+    for vid in ids:
+        if time.time() - t0 > max_s:
+            break
+        r = _fac_libro_conciliar_ot(vid, "revision", detalle="Revisión automática del libro")
+        movs += r["movimientos"]
+        docs |= set(r["docs"])
+        desde, proc = vid, proc + 1
+    for t, n in sorted(docs):
+        if time.time() - t0 > max_s + 15:
+            break
+        try:
+            _fac_doc_refrescar(t, n)
+        except Exception as e:
+            print(f"[fac-libro] barrido refrescar {t} {n}: {type(e).__name__}", flush=True)
+    if proc == len(ids) and len(ids) < max_ots:
+        desde, vuelta = 0, vuelta + 1
+    try:
+        mysql_execute("INSERT INTO ot_fac_cursor (id, desde, vuelta, actualizado) VALUES (1,%s,%s,%s) "
+                      "ON DUPLICATE KEY UPDATE desde=VALUES(desde), vuelta=VALUES(vuelta), actualizado=VALUES(actualizado)",
+                      (desde, vuelta, datetime.utcnow()))
+    except Exception as e:
+        print(f"[fac-libro] cursor: {type(e).__name__}", flush=True)
+    return {"ok": True, "ots": proc, "movimientos": movs, "facturas": len(docs), "desde": desde, "vuelta": vuelta}
+
+
+@app.route("/ot/saldo-facturas/excel", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_saldo_facturas_excel():
+    """Excel para la auditoría: cómo funciona el control, resumen, todas las facturas con su saldo, alertas (doble
+    cobro / OT a pérdida) y el libro completo de movimientos. Fechas en hora Chile (REGLA #6)."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    ROJO, NEGRO = "DC2626", "0A0A0A"
+    hdr_font = Font(bold=True, color="FFFFFF", name="Arial", size=10)
+    hdr_fill = PatternFill("solid", fgColor=NEGRO)
+    base = Font(name="Arial", size=10)
+    fino = Side(style="thin", color="D1D5DB")
+    borde = Border(bottom=fino)
+    fills = {"excedida": "FEE2E2", "agotada": "F3F4F6", "con_saldo": "DCFCE7", "libre": "DBEAFE",
+             "sin_lineas": "FFFFFF", "sin_leer": "FFF8E1"}
+    clp_fmt = '"$"#,##0;[Red]-"$"#,##0;"-"'
+
+    def hoja(ws, cols, filas, anchos):
+        ws.append(cols)
+        for i, _c in enumerate(cols, 1):
+            cel = ws.cell(row=1, column=i)
+            cel.font, cel.fill = hdr_font, hdr_fill
+            cel.alignment = Alignment(vertical="center", wrap_text=True)
+        for f in filas:
+            ws.append(f)
+        for i, a in enumerate(anchos, 1):
+            ws.column_dimensions[get_column_letter(i)].width = a
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
+        for row in ws.iter_rows(min_row=2):
+            for c in row:
+                c.font, c.border = base, borde
+
+    try:
+        docs = mysql_fetchall("SELECT * FROM ot_fac_doc ORDER BY FIELD(estado," +
+                              ",".join(f"'{e}'" for e in _saldo.ORDEN_ESTADOS) + "), doc_tido, doc_nudo") or []
+        libro = mysql_fetchall("SELECT * FROM ot_fac_libro ORDER BY id") or []
+        rev = mysql_fetchone("SELECT MAX(revisado_el) AS r, COUNT(*) AS n FROM ot_fac_huella") or {}
+    except Exception as e:
+        print(f"[fac-libro] excel: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo armar el Excel."}), 500
+    filas_docs = [_fac_fila_lista(r) for r in docs]
+    wb = Workbook()
+
+    ws = wb.active
+    ws.title = "Cómo funciona"
+    ahora = chile_fmt_filter(datetime.utcnow())
+    texto = [
+        ("Control de saldo de facturas · ILUS Fitness · Servicio Técnico", True),
+        (f"Generado el {ahora} (hora Chile) por {current_username() or '?'}.", False),
+        ("", False),
+        ("Qué controla", True),
+        ("Cada factura o boleta de Random trae líneas de servicio (instalación, mantención: ZZ…) y de despacho (ZZENVIO). "
+         "Ese monto es el SALDO que las órdenes de trabajo (OT) pueden usar como cobro.", False),
+        ("Solo la OT consume el saldo, porque la OT es la realización del servicio. Los tickets y las cotizaciones heredan "
+         "la factura, pero no la descuentan.", False),
+        ("Una vez usado, el saldo queda bloqueado: ninguna otra OT puede volver a cobrar el mismo servicio de la misma factura. "
+         "Si se usa solo una parte, el resto queda disponible (ej.: factura de $100.000; una OT usa $10.000 y otra $80.000: "
+         "quedan $10.000 libres).", False),
+        ("Una OT que quiere cobrar más de lo que queda NO se puede crear, agregar ni cerrar: el sistema ofrece tomar solo el "
+         "saldo, agregar otra factura, pasar a garantía o pedir la autorización de Daniel Aguilar con un argumento escrito.", False),
+        ("Una OT que se cobra y queda a PÉRDIDA (lo cobrado no cubre lo que nos cobraron) no se puede cerrar sin la "
+         "autorización de Daniel Aguilar, hasta el monto autorizado.", False),
+        ("La nota de venta y la factura que la reemplaza son el mismo cobro: nunca se cuentan dos veces.", False),
+        ("", False),
+        ("Trazabilidad", True),
+        ("Cada consumo o liberación de saldo queda en el libro de movimientos (hoja «Movimientos»): fecha y hora, factura, "
+         "OT, cliente, monto, quién y por qué. Los movimientos no se borran ni se editan.", False),
+        (f"OT revisadas por el sistema: {int(rev.get('n') or 0)} · última revisión: "
+         f"{chile_fmt_filter(rev['r']) if rev.get('r') else 'sin revisar'}.", False),
+        ("Lectura de Random: solo consulta (el sistema nunca modifica el ERP).", False),
+    ]
+    for t, negrita in texto:
+        ws.append([t])
+        c = ws.cell(row=ws.max_row, column=1)
+        c.font = Font(name="Arial", size=12 if negrita else 10, bold=negrita, color=(ROJO if negrita else "1F2937"))
+        c.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.column_dimensions["A"].width = 120
+
+    ws = wb.create_sheet("Resumen")
+    conteo = {}
+    for f in filas_docs:
+        conteo[f["estado"]["estado"]] = conteo.get(f["estado"]["estado"], 0) + 1
+    filas = [[_saldo.ESTADOS_FACTURA[e]["txt"], conteo.get(e, 0), _saldo.ESTADOS_FACTURA[e]["frase"]]
+             for e in _saldo.ORDEN_ESTADOS]
+    filas.append(["Total de facturas", len(filas_docs), ""])
+    filas.append(["Saldo total de servicio y despacho", sum(f["servicio"]["total"] + f["despacho"]["total"] for f in filas_docs), ""])
+    filas.append(["Usado por las OT", sum(f["servicio"]["usado"] + f["despacho"]["usado"] for f in filas_docs), ""])
+    filas.append(["Disponible", sum(f["servicio"]["saldo"] + f["despacho"]["saldo"] for f in filas_docs), ""])
+    hoja(ws, ["Estado", "Facturas / monto", "Qué significa"], filas, [34, 18, 100])
+    for r in range(len(_saldo.ORDEN_ESTADOS) + 3, ws.max_row + 1):
+        ws.cell(row=r, column=2).number_format = clp_fmt
+
+    ws = wb.create_sheet("Facturas")
+    filas = []
+    for f in filas_docs:
+        filas.append([f["titulo"], f["cliente"], f["cliente_rut"], f["fecha"], f["total_doc"] or None,
+                      f["servicio"]["total"], f["servicio"]["usado"], f["servicio"]["saldo"],
+                      f["despacho"]["total"], f["despacho"]["usado"], f["despacho"]["saldo"],
+                      f["estado"]["txt"], f["n_ot"], f["ots"], f["familia_de"] or "", f["revisada"]])
+    hoja(ws, ["Documento", "Cliente", "RUT", "Fecha", "Total documento", "Servicio: monto", "Servicio: usado",
+              "Servicio: saldo", "Despacho: monto", "Despacho: usado", "Despacho: saldo", "Estado", "N° OT",
+              "OT que la usan", "Nota de venta de", "Revisada (hora Chile)"],
+         filas, [16, 34, 14, 12, 15, 15, 15, 15, 15, 15, 15, 18, 7, 40, 18, 18])
+    for i, f in enumerate(filas_docs, 2):
+        for col in range(5, 12):
+            ws.cell(row=i, column=col).number_format = clp_fmt
+        ws.cell(row=i, column=12).fill = PatternFill("solid", fgColor=fills.get(f["estado"]["estado"], "FFFFFF"))
+
+    ws = wb.create_sheet("Alertas")
+    filas = []
+    for f in filas_docs:
+        if f["estado"]["estado"] == "excedida":
+            filas.append(["Doble cobro", f["titulo"], f["cliente"], f["estado"]["exceso"], f["ots"],
+                          "Las OT suman más de lo que trae la factura: revisar cuál cobra de más."])
+    vids_alerta = set()
+    try:
+        for r in (mysql_fetchall("SELECT DISTINCT visita_id FROM ot_fac_libro WHERE acumulado_ot>0") or []):
+            vids_alerta.add(int(r["visita_id"]))
+    except Exception:
+        pass
+    fins = _fac_finanzas_de_ots(sorted(vids_alerta)[:3000])
+    for vid, f in sorted(fins.items()):
+        if f["cobra"] and f["me_cobraron"] > f["cobre"] and f["estado"] not in ("cancelada", "anulada"):
+            aut = mysql_fetchone("SELECT id, resuelto_por_nombre FROM mant_ot_autorizaciones WHERE visita_id=%s "
+                                 " AND tipo='cerrar_con_perdida' AND estado='aprobada' ORDER BY id DESC LIMIT 1", (vid,)) or {}
+            num = (mysql_fetchone("SELECT numero_ot FROM mant_visitas WHERE id=%s", (vid,)) or {}).get("numero_ot") or f"V-{vid:05d}"
+            filas.append(["OT a pérdida", num, f["estado_txt"], f["me_cobraron"] - f["cobre"], f["frase"],
+                          (f"Autorizada por {aut.get('resuelto_por_nombre')} (N° {aut['id']})" if aut.get("id")
+                           else "Sin autorización de pérdida: no puede cerrar sin la autorización de Daniel")])
+    if not filas:
+        filas.append(["Sin alertas", "", "", None, "", "Ninguna factura con doble cobro ni OT a pérdida al momento de generar."])
+    hoja(ws, ["Alerta", "Documento / OT", "Cliente / estado", "Monto", "Detalle", "Qué pasa"], filas, [16, 22, 34, 15, 60, 70])
+    for i in range(2, ws.max_row + 1):
+        ws.cell(row=i, column=4).number_format = clp_fmt
+
+    ws = wb.create_sheet("Movimientos")
+    filas = []
+    for r in libro:
+        tu, nu = _ot_doc_real_a_usuario(*_ot_saldo_real((r["doc_tido"], r["doc_nudo"])))
+        filas.append([r["id"], chile_fmt_filter(r["creado_el"]) if r.get("creado_el") else "", f"{tu} {nu}".strip(),
+                      _saldo.CATEGORIA_TXT.get(r["categoria"], r["categoria"]),
+                      "Consumo" if r["movimiento"] == "consumo" else "Liberación", int(r["monto"]), int(r["acumulado_ot"]),
+                      r.get("numero_ot") or "", r.get("cliente") or "",
+                      _FAC_ORIGEN_TXT.get(r.get("origen") or "", r.get("origen") or ""), r.get("usuario") or "Sistema",
+                      r.get("detalle") or ""])
+    hoja(ws, ["N°", "Fecha (hora Chile)", "Documento", "Categoría", "Movimiento", "Monto", "La OT queda tomando",
+              "OT", "Cliente", "Por qué", "Quién", "Detalle"], filas, [8, 17, 16, 20, 12, 14, 18, 16, 32, 34, 22, 50])
+    for i in range(2, ws.max_row + 1):
+        ws.cell(row=i, column=6).number_format = clp_fmt
+        ws.cell(row=i, column=7).number_format = clp_fmt
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    nombre = "Saldo_de_facturas_" + chile_fmt_filter(datetime.utcnow(), "%d-%m-%Y") + ".xlsx"
+    return send_file(buf, as_attachment=True, download_name=nombre,
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+# ── 📒 2026-10-11 — OT a PÉRDIDA = autorización de Daniel ─────────────────────────────────────────────────────────
+#  Daniel: «te va a indicar si es que ya la factura va a pérdida y eso iría autorizado por mí». Pérdida = lo que nos
+#  cobraron (técnico + despacho + repuestos) − lo que cobramos, en una OT que SE COBRA (la cuenta de _ot_finanzas, la
+#  misma de la ficha). La autorización 'cerrar_con_perdida' vale HASTA el monto que Daniel vio al aprobar.
+def _fac_perdida_info(vid, fin):
+    """{cobra, completa, cobre, me_cobraron, perdida, autorizada, autorizada_por, ok, pendiente_id} a partir de la
+    cuenta de la OT (`fin` = _ot_finanzas) y de sus autorizaciones 'cerrar_con_perdida'."""
+    cobre = int(round(float(fin["cobre"]["total"] or 0)))
+    me = int(round(float(fin["me_cobraron"]["total"] or 0)))
+    autorizada, por, pend = 0, None, None
+    try:
+        for a in (mysql_fetchall(
+                "SELECT id, estado, payload_json, resuelto_por_nombre FROM mant_ot_autorizaciones "
+                " WHERE visita_id=%s AND tipo='cerrar_con_perdida' AND estado IN ('aprobada','pendiente') ORDER BY id",
+                (int(vid),)) or []):
+            if a.get("estado") == "pendiente":
+                pend = a["id"]
+                continue
+            try:
+                pl = json.loads(a.get("payload_json") or "{}") or {}
+            except Exception:
+                pl = {}
+            m = _saldo._entero(pl.get("perdida"))
+            if m >= autorizada:
+                autorizada, por = m, a.get("resuelto_por_nombre")
+    except Exception as e:
+        print(f"[ot-perdida] autorizaciones vid={vid}: {type(e).__name__}", flush=True)
+    r = _saldo.perdida_cierre(cobre, me, autorizada)
+    return {"cobra": bool(fin.get("cobra")), "completa": bool(fin["queda"].get("mostrar")) and bool(fin["cobre"].get("hay")),
+            "cobre": cobre, "me_cobraron": me, "perdida": r["perdida"], "autorizada": autorizada,
+            "autorizada_por": por, "ok": r["ok"], "falta_autorizar": r["falta_autorizar"], "pendiente_id": pend}
+
+
+def _fac_perdida_de_ot(vid):
+    """La pérdida de una OT leída de la base con la MISMA cuenta que su ficha (_ot_finanzas + repuestos instalados)."""
+    v = mysql_fetchone("SELECT v.id, " + _ot_fin_cols_sql("v") + " FROM mant_visitas v WHERE v.id=%s", (int(vid),))
+    if not v:
+        return {"cobra": False, "completa": False, "cobre": 0, "me_cobraron": 0, "perdida": 0, "autorizada": 0,
+                "autorizada_por": None, "ok": True, "falta_autorizar": 0, "pendiente_id": None}
+    try:
+        rep = _ot_fin_rep_liviano(_ot_repuestos_desglose([int(vid)]).get(int(vid)))
+    except Exception:
+        rep = None
+    fin = _ot_finanzas(dict(v), rep)
+    if not fin.get("cobra"):
+        return {"cobra": False, "completa": False, "cobre": 0, "me_cobraron": 0, "perdida": 0, "autorizada": 0,
+                "autorizada_por": None, "ok": True, "falta_autorizar": 0, "pendiente_id": None}
+    return _fac_perdida_info(vid, fin)
 
 
 @app.route("/ot/api/lineas-zz/<tido>/<nudo>", methods=["GET"])
@@ -118155,6 +119110,32 @@ def mant_ot_aprobar_cierre(vid):
                      "Sin ese dato el margen de la OT queda inflado y el "
                      "informe de resultados sale mal.",
         }), 400
+    # 📒 2026-10-11 (Daniel: «te va a indicar si la factura va a pérdida y eso iría autorizado por mí»): una OT que SE
+    # COBRA y cierra con lo cobrado por debajo de lo que nos cobraron (técnico + despacho + repuestos) solo cierra con
+    # la autorización 'cerrar_con_perdida' de Daniel, hasta el monto autorizado. Nunca un callejón sin salida: el
+    # rechazo trae la acción (pedir la autorización con argumento) y la cuenta. Mismo interruptor que los demás
+    # candados; trabajo interno, garantía, contrato y cierre autorizado sin documento quedan fuera (no se cobran).
+    if _gate_on and not _interna_cierre and _cob_cierre == "cobra" and _via_cierre != "autorizacion_cerrar":
+        try:
+            _fp_c = _fac_perdida_de_ot(vid)
+        except Exception as _e_fp:
+            print(f"[aprobar-cierre] pérdida vid={vid}: {type(_e_fp).__name__}", flush=True)
+            _fp_c = None
+        if _fp_c and _fp_c.get("completa") and not _fp_c.get("ok"):
+            if _fp_c.get("pendiente_id"):
+                return jsonify({"ok": False, "error_codigo": "AUTORIZACION_PENDIENTE", "codigo": "AUTORIZACION_PENDIENTE",
+                                "accion": _ot_cierre_accion("AUTORIZACION_PENDIENTE", vid), "perdida": _fp_c,
+                                "autorizacion_id": _fp_c["pendiente_id"], "visita_id": vid,
+                                "error": f"Esta OT va a pérdida ({_saldo.clp(_fp_c['perdida'])}) y está esperando la "
+                                         f"autorización de Daniel (solicitud N° {_fp_c['pendiente_id']})."}), 409
+            return jsonify({"ok": False, "error_codigo": "CIERRE_CON_PERDIDA", "codigo": "CIERRE_CON_PERDIDA",
+                            "accion": _ot_cierre_accion("CIERRE_CON_PERDIDA", vid), "perdida": _fp_c,
+                            "puede_pedir_autorizacion": True, "visita_id": vid,
+                            "error": (f"Esta OT cierra a pérdida: cobramos {_saldo.clp(_fp_c['cobre'])} y nos cobraron "
+                                      f"{_saldo.clp(_fp_c['me_cobraron'])}, se pierden {_saldo.clp(_fp_c['perdida'])}"
+                                      + (f" (Daniel autorizó hasta {_saldo.clp(_fp_c['autorizada'])})" if _fp_c.get("autorizada") else "")
+                                      + ". Para cerrarla pide la autorización de Daniel con un argumento, o revisa el "
+                                        "cobro: agrega la factura que falta o corrige lo que cobró el proveedor.")}), 409
     # 🔒 2026-09-17 (Daniel, dictando el diseño: "si cambian los valores...
     # eso estaría alterando lo que es el anexo, entonces yo propondría
     # volverlo a firmar... y si hay garantía obviamente [no hace falta],
@@ -155683,6 +156664,13 @@ try:
         _ensure_ot_autorizaciones()
 except Exception as _ensure_oa_err:
     print(f"[ILUS][WARN] _ensure_ot_autorizaciones: {_ensure_oa_err}", flush=True)
+
+# 📒 Libro de saldo de facturas (Daniel 2026-10-11, auditoría) — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+try:
+    with app.app_context():
+        _ensure_fac_libro()
+except Exception as _ensure_fl_err:
+    print(f"[ILUS][WARN] _ensure_fac_libro: {_ensure_fl_err}", flush=True)
 
 # Multidocumento de la OT (varias facturas + cotizaciones de referencia),
 # Daniel 2026-09-05 — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.

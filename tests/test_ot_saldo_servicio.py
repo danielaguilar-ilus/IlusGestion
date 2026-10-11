@@ -509,7 +509,10 @@ class TestCableado(unittest.TestCase):
 
     def test_autorizacion_exceder_saldo(self):
         app = _leer("app.py")
-        self.assertIn('_OT_AUT_TIPOS = ("crear_sin_documento", "cobro_cero", "cerrar_sin_documento", "exceder_saldo")', app)
+        # 2026-10-11: la tupla creció con «cerrar_con_perdida» (REGLA #28); exceder_saldo sigue en ella.
+        tipos = app.split("_OT_AUT_TIPOS = ", 1)[1].split("\n", 1)[0]
+        for t in ("crear_sin_documento", "cobro_cero", "cerrar_sin_documento", "exceder_saldo"):
+            self.assertIn('"%s"' % t, tipos)
         self.assertGreaterEqual(app.count("'exceder_saldo'"), 2)           # CREATE TABLE y MODIFY del ENUM
         crear = _fuente("ot_aut_api_crear")
         self.assertIn('"exceder_saldo"', crear)
