@@ -544,7 +544,7 @@ class TestTablasDelLote(unittest.TestCase):
     def test_detalle_del_lote_en_una_tarjeta_con_aire(self):
         h = _leer("templates", "mantenciones", "factura_proveedor_detalle.html").replace("\r\n", "\n")
         self.assertIn('<div class="fpd-tabla-card"><div class="table-responsive">', h)
-        self.assertIn(".fpd-tabla-card{background:#f8fafc;border:1px solid #e5e7eb;border-radius:14px;padding:6px 16px 12px", h)
+        self.assertIn(".fpd-tabla-card{background:#f8fafc;border:1px solid var(--gray-200);border-radius:14px;padding:6px 16px 12px", h)
         self.assertIn(".fpd-tabla tbody td{padding:11px 10px}", h)
         self.assertIn(".fpd-tabla tbody td:first-child,.fpd-tabla thead th:first-child{padding-left:14px}", h)
 

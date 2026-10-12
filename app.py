@@ -87945,10 +87945,17 @@ def _ot2_panel_extras(filas):
     la tabla se muestra igual sin ese dato (nunca se inventa)."""
     for f in filas:
         f["n_equipos"], f["docs"], f["rep_abiertos"], f["rep_instalar"] = 0, [], 0, 0
+        f["fac_alerta"] = None
     ids = [int(f["id"]) for f in filas if f.get("id")]
     if not ids:
         return
     por_id = {int(f["id"]): f for f in filas}
+    # 🚩 2026-10-12 (Daniel: «avisar hasta en la tabla que se despachó sin saldo… persistente»): la marca de factura
+    # sin saldo, vigente o resuelta. Es dato financiero: a un técnico no se le entrega (REGLA #26, en el servidor).
+    if not _es_rol_tecnico():
+        for vid, a in _fac_alertas_de(ids).items():
+            if vid in por_id:
+                por_id[vid]["fac_alerta"] = a
     ph = ",".join(["%s"] * len(ids))
     try:
         for r in (mysql_fetchall(
@@ -91048,8 +91055,14 @@ def ot2_detalle(vid):
         puerta_cierre = None
         factura_prov, factura_prov_aplica = None, False
 
+    # 🚩 2026-10-12: marca persistente de «factura sin saldo» (dato financiero: nunca a un técnico, REGLA #26).
+    try:
+        fac_alerta = None if _es_rol_tecnico() else _fac_alertas_de([vid]).get(int(vid))
+    except Exception:
+        fac_alerta = None
     return render_template(
         "ot2/detalle.html",
+        fac_alerta=fac_alerta,
         puerta_cierre=puerta_cierre,
         v=v, ruta=ruta, equipos=equipos, hitos=hitos, kpis=kpis, firmas=firmas,
         factura_prov=factura_prov, factura_prov_aplica=factura_prov_aplica,
@@ -95607,6 +95620,15 @@ def ot_api_regularizar():
         _comp_sal = _ot_saldo_compartidos_lote([it["id"] for it in pagina])
         for it in pagina:
             it["saldo_avisos"] = _ot_saldo_avisos_de(it["id"], _comp_sal)
+        # 🚩 2026-10-12: la marca persistente de «factura sin saldo» (vigente primero; la corregida queda dicha).
+        _al = _fac_alertas_de([it["id"] for it in pagina])
+        for it in pagina:
+            a = _al.get(int(it["id"]))
+            if a and a["estado"] == "vigente":
+                it["saldo_avisos"] = ["Factura sin saldo · " + (x.get("texto") or "") for x in a["vigentes"]] + (it.get("saldo_avisos") or [])
+            elif a:
+                it["saldo_avisos"] = (it.get("saldo_avisos") or []) + ["Tuvo factura sin saldo (" + (a["resueltas"][-1].get("titulo") or "")
+                                                                       + "), corregido el " + (a["resueltas"][-1].get("resuelta_el") or "") + "."]
     except Exception as e:
         print(f"[ot-regularizar] avisos de saldo: {type(e).__name__}", flush=True)
     return jsonify({"ok": True, "items": pagina, "total": total, "page": page,
@@ -112580,6 +112602,32 @@ def _ensure_fac_libro():
         """)
     except Exception as e:
         print(f"[fac-libro] ensure cursor: {e}", flush=True)
+    try:
+        # 🚩 2026-10-12 (Daniel: «avisar hasta en la tabla que se despachó sin saldo… que sea persistente, es muy
+        # importante»): una fila por OT y factura sin saldo. NUNCA se borra: si se corrige pasa a 'resuelta' (con
+        # fecha) y la tabla lo sigue mostrando en gris; si vuelve a pasar, vuelve a 'vigente' (veces + 1).
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS ot_fac_alerta (
+                id             BIGINT AUTO_INCREMENT PRIMARY KEY,
+                visita_id      INT NOT NULL,
+                doc_tido       VARCHAR(6)  NOT NULL,
+                doc_nudo       VARCHAR(24) NOT NULL,
+                titulo         VARCHAR(40) NULL,
+                tipo           VARCHAR(20) NOT NULL COMMENT 'sin_saldo | saldo_insuficiente',
+                detalle        VARCHAR(500) NULL,
+                otras_ots      VARCHAR(300) NULL,
+                estado         ENUM('vigente','resuelta') NOT NULL DEFAULT 'vigente',
+                veces          INT NOT NULL DEFAULT 1,
+                detectada_el   DATETIME NOT NULL,
+                detectada_por  VARCHAR(190) NULL,
+                resuelta_el    DATETIME NULL,
+                actualizado_el DATETIME NULL,
+                UNIQUE KEY uq_fa_ot_doc (visita_id, doc_tido, doc_nudo),
+                INDEX idx_fa_estado (estado, actualizado_el)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[fac-libro] ensure alerta: {e}", flush=True)
 
 
 def _fac_libro_marcar(vid):
@@ -112994,6 +113042,11 @@ def _fac_libro_tras_escritura(resp):
                     _fac_doc_refrescar(t, n)
                 except Exception as e:
                     print(f"[fac-libro] refrescar {t} {n}: {type(e).__name__}", flush=True)
+        # 🚩 2026-10-12: la marca persistente de «factura sin saldo» de estas OT (y de hasta 4 que comparten su factura)
+        try:
+            _fac_alerta_revisar(sorted(vids)[:3], quien=current_username(), vecinos=4)
+        except Exception as e:
+            print(f"[fac-alerta] tras escritura: {type(e).__name__}", flush=True)
     except Exception as e:
         print(f"[fac-libro] tras escritura: {type(e).__name__}: {e}", flush=True)
     return resp
@@ -113357,6 +113410,34 @@ def _fac_libro_barrido(max_s=40, max_ots=60):
                 pass
     except Exception as e:
         print(f"[fac-libro] barrido fotos: {type(e).__name__}", flush=True)
+    # 🚩 2026-10-12: marcas persistentes de «factura sin saldo» — primero las vigentes más antiguas (para resolverlas si
+    # se corrigieron), después un tramo de todas las OT con documento (cursor 2: así se encuentran también los casos
+    # antiguos). Tope de 25 s para no alargar el trabajo programado.
+    alertas = 0
+    try:
+        t_a = time.time()
+        vig = [int(r["visita_id"]) for r in (mysql_fetchall(
+            "SELECT visita_id FROM ot_fac_alerta WHERE estado='vigente' GROUP BY visita_id "
+            " ORDER BY MIN(actualizado_el) LIMIT 8") or [])]
+        alertas += _fac_alerta_revisar(vig)
+        c2 = mysql_fetchone("SELECT desde, vuelta FROM ot_fac_cursor WHERE id=2") or {}
+        d2, v2 = int(c2.get("desde") or 0), int(c2.get("vuelta") or 0)
+        tramo = [int(r["id"]) for r in (mysql_fetchall(
+            "SELECT v.id FROM mant_visitas v WHERE v.id>%s AND " + _FAC_SQL_OT_CON_DOC + " ORDER BY v.id LIMIT 20",
+            (d2,)) or [])]
+        hechas = 0
+        for vid in tramo:
+            if time.time() - t_a > 25:
+                break
+            alertas += _fac_alerta_revisar([vid])
+            d2, hechas = vid, hechas + 1
+        if hechas == len(tramo) and len(tramo) < 20:
+            d2, v2 = 0, v2 + 1
+        mysql_execute("INSERT INTO ot_fac_cursor (id, desde, vuelta, actualizado) VALUES (2,%s,%s,%s) "
+                      "ON DUPLICATE KEY UPDATE desde=VALUES(desde), vuelta=VALUES(vuelta), actualizado=VALUES(actualizado)",
+                      (d2, v2, datetime.utcnow()))
+    except Exception as e:
+        print(f"[fac-alerta] barrido: {type(e).__name__}: {e}", flush=True)
     if proc == len(ids) and len(ids) < max_ots:
         desde, vuelta = 0, vuelta + 1
     try:
@@ -113365,7 +113446,8 @@ def _fac_libro_barrido(max_s=40, max_ots=60):
                       (desde, vuelta, datetime.utcnow()))
     except Exception as e:
         print(f"[fac-libro] cursor: {type(e).__name__}", flush=True)
-    return {"ok": True, "ots": proc, "movimientos": movs, "facturas": len(docs), "desde": desde, "vuelta": vuelta}
+    return {"ok": True, "ots": proc, "movimientos": movs, "facturas": len(docs), "desde": desde, "vuelta": vuelta,
+            "alertas_revisadas": alertas}
 
 
 @app.route("/ot/saldo-facturas/excel", methods=["GET"])
@@ -113760,7 +113842,7 @@ def _fac_equilibrio_ot(vid, pago=None, solo_cache=False):
         st, cap = _fac_leer_capacidad(t, n, solo_cache=solo_cache)
         tu, nu = _ot_doc_real_a_usuario(t, n)
         ap = {c: sum(_saldo._entero(aportes.get((kk[0], kk[1], c))) for kk in fam) for c in _saldo.CATEGORIAS}
-        info = {"titulo": ("%s %s" % (tu, nu)).strip(), "leido": cap is not None,
+        info = {"titulo": ("%s %s" % (tu, nu)).strip(), "leido": cap is not None, "clave": list(_saldo.clave_doc(t, n)),
                 "herencia": [("%s %s" % _ot_doc_real_a_usuario(kk[0], kk[1])).strip() for kk in sorted(fam) if kk != k],
                 "capacidad": dict(cap or {}), "aporte_ot": ap, "otras": [], "usado_otras": {c: 0 for c in _saldo.CATEGORIAS},
                 "reduccion": 0}
@@ -113786,6 +113868,14 @@ def _fac_equilibrio_ot(vid, pago=None, solo_cache=False):
         reduccion += red
         if usos:
             out["compartida"] = True
+        # 🚩 2026-10-12: ¿la factura está sin saldo para ESTA OT? (marca persistente en ot_fac_alerta)
+        info["sin_saldo"] = _saldo.clasificar_sin_saldo(sum(_saldo._entero(ap.get(c)) for c in _saldo.CATEGORIAS),
+                                                        cap, info["usado_otras"], red, bool(usos))
+        if info["sin_saldo"]:
+            out.setdefault("alertas_doc", []).append({
+                "clave": info.get("clave"), "titulo": info["titulo"], "tipo": info["sin_saldo"],
+                "otras": [o.get("numero_ot") or ("OT #%s" % o["vid"]) for o in info["otras"]],
+                "otras_vid": [int(o["vid"]) for o in info["otras"]]})
     eq = _saldo.equilibrio_pago(p, cobre, reduccion, out["autorizada"])
     out.update(cobro_efectivo=eq["cobro_efectivo"], reduccion=eq["reduccion"], exceso=eq["exceso"],
                falta_autorizar=eq["falta_autorizar"])
@@ -113810,6 +113900,118 @@ def _fac_equilibrio_ot(vid, pago=None, solo_cache=False):
                        % (num, _saldo.clp(p), _saldo.clp(eq["cobro_efectivo"]), detalle_red, _saldo.clp(eq["exceso"])))
     if out["pendiente_id"]:
         out["mensaje"] += " Ya está pedida (N° %s): espera su respuesta." % out["pendiente_id"]
+    return out
+
+
+_FAC_ALERTA_TIPO_TXT = {"sin_saldo": "Factura sin saldo", "saldo_insuficiente": "Saldo insuficiente"}
+
+
+def _fac_alerta_texto(a):
+    """La frase de una alerta de factura sin saldo (bitácora y tablas)."""
+    otras = ", ".join(a.get("otras") or [])
+    if a.get("tipo") == "saldo_insuficiente":
+        return ("%s: a esta OT le alcanza solo una parte del saldo; el resto ya lo usó %s." % (a.get("titulo"), otras or "otra OT"))
+    return ("%s ya estaba consumida%s: esta OT no tiene cobro respaldado por esa factura."
+            % (a.get("titulo"), (" por " + otras) if otras else ""))
+
+
+def _fac_alerta_revisar(vids, quien=None, vecinos=0):
+    """🚩 2026-10-12 Marca PERSISTENTE de «factura sin saldo» (Daniel: «que sea persistente, es muy importante»).
+    Evalúa cada OT con el MISMO motor del candado de pago (_fac_equilibrio_ot) y deja el resultado en ot_fac_alerta:
+    nueva → 'vigente' + bitácora; corregida → 'resuelta' (con fecha) + bitácora; nunca se borra una fila. Si Random no
+    respondió no cambia nada (no se resuelve a ciegas). `vecinos`: cuántas OT que comparten esas facturas se revisan
+    también (cuando una OT toma saldo, a otra le puede dejar de alcanzar). Solo lectura del ERP (REGLA #4.1).
+    Devuelve cuántas OT se revisaron."""
+    quien = (quien or "Revisión automática")[:190]
+    pend, vistos, n = [int(v) for v in (vids or []) if v], set(), 0
+    extra = 0
+    while pend:
+        vid = pend.pop(0)
+        if vid in vistos:
+            continue
+        vistos.add(vid)
+        try:
+            v = mysql_fetchone("SELECT estado FROM mant_visitas WHERE id=%s", (vid,))
+            previas = {(r["doc_tido"], r["doc_nudo"]): r for r in (mysql_fetchall(
+                "SELECT id, doc_tido, doc_nudo, titulo, estado FROM ot_fac_alerta WHERE visita_id=%s", (vid,)) or [])}
+            if not v or (v.get("estado") or "") in ("cancelada", "anulada"):
+                actuales, motivo_fin = {}, "la OT ya no existe o está cancelada/anulada"
+            else:
+                eq = _fac_equilibrio_ot(vid)
+                if eq.get("code") in ("LECTURA_INCOMPLETA", "OT_NO_EXISTE") or eq.get("estado") == "sin_verificar":
+                    continue
+                actuales = {tuple(a["clave"][:2]): a for a in (eq.get("alertas_doc") or []) if a.get("clave")}
+                motivo_fin = "la factura ya respalda el cobro de esta OT"
+                if vecinos and extra < vecinos:
+                    for a in (eq.get("alertas_doc") or []):
+                        for o in a.get("otras_vid") or []:
+                            if extra < vecinos and o not in vistos and o not in pend:
+                                pend.append(int(o))
+                                extra += 1
+            n += 1
+            ahora = datetime.utcnow()
+            for k, a in actuales.items():
+                txt = _fac_alerta_texto(a)
+                p = previas.get(k)
+                otras = (", ".join(a.get("otras") or []))[:300] or None
+                if not p:
+                    mysql_execute(
+                        "INSERT INTO ot_fac_alerta (visita_id, doc_tido, doc_nudo, titulo, tipo, detalle, otras_ots, estado, "
+                        " veces, detectada_el, detectada_por, actualizado_el) VALUES (%s,%s,%s,%s,%s,%s,%s,'vigente',1,%s,%s,%s) "
+                        "ON DUPLICATE KEY UPDATE actualizado_el=VALUES(actualizado_el)",
+                        (vid, k[0], k[1], (a.get("titulo") or "")[:40], a["tipo"], txt[:500], otras, ahora, quien, ahora))
+                    _mant_log("visita", vid, "factura_sin_saldo",
+                              f"{_FAC_ALERTA_TIPO_TXT.get(a['tipo'], a['tipo'])}: {txt} (detectado: {quien})"[:1000])
+                elif p.get("estado") == "resuelta":
+                    mysql_execute("UPDATE ot_fac_alerta SET estado='vigente', veces=veces+1, resuelta_el=NULL, tipo=%s, "
+                                  " detalle=%s, otras_ots=%s, actualizado_el=%s WHERE id=%s",
+                                  (a["tipo"], txt[:500], otras, ahora, p["id"]))
+                    _mant_log("visita", vid, "factura_sin_saldo",
+                              f"Otra vez {_FAC_ALERTA_TIPO_TXT.get(a['tipo'], a['tipo']).lower()}: {txt} (detectado: {quien})"[:1000])
+                else:
+                    mysql_execute("UPDATE ot_fac_alerta SET tipo=%s, detalle=%s, otras_ots=%s, actualizado_el=%s WHERE id=%s",
+                                  (a["tipo"], txt[:500], otras, ahora, p["id"]))
+            for k, p in previas.items():
+                if k not in actuales and p.get("estado") == "vigente":
+                    mysql_execute("UPDATE ot_fac_alerta SET estado='resuelta', resuelta_el=%s, actualizado_el=%s WHERE id=%s",
+                                  (ahora, ahora, p["id"]))
+                    _mant_log("visita", vid, "factura_sin_saldo_resuelta",
+                              f"{p.get('titulo') or k[0] + ' ' + k[1]}: ya no está sin saldo ({motivo_fin}). "
+                              f"La marca queda en el historial de la OT.")
+        except Exception as e:
+            print(f"[fac-alerta] vid={vid}: {type(e).__name__}: {e}", flush=True)
+    return n
+
+
+def _fac_alertas_de(vids):
+    """Las marcas de «factura sin saldo» de estas OT (una consulta): {vid: {estado, vigentes, resueltas, docs, texto,
+    detectada_el, resuelta_el}}. 'vigente' si alguna lo está. Es dato financiero: quien llama no se lo da a un técnico
+    (REGLA #26)."""
+    out = {}
+    ids = sorted({int(x) for x in (vids or []) if x})
+    if not ids:
+        return out
+    try:
+        for i in range(0, len(ids), 400):
+            trozo = ids[i:i + 400]
+            for r in (mysql_fetchall(
+                    "SELECT visita_id, titulo, tipo, detalle, estado, veces, detectada_el, detectada_por, resuelta_el "
+                    "  FROM ot_fac_alerta WHERE visita_id IN (" + ",".join(["%s"] * len(trozo)) + ") ORDER BY id",
+                    tuple(trozo)) or []):
+                a = out.setdefault(int(r["visita_id"]), {"estado": "resuelta", "vigentes": [], "resueltas": [], "docs": []})
+                fila = {"titulo": r.get("titulo"), "tipo": r.get("tipo"), "texto": r.get("detalle") or "",
+                        "veces": int(r.get("veces") or 1), "detectada_por": r.get("detectada_por") or "",
+                        "detectada_el": chile_fmt_filter(r["detectada_el"], "%d/%m/%Y %H:%M") if r.get("detectada_el") else "",
+                        "resuelta_el": chile_fmt_filter(r["resuelta_el"], "%d/%m/%Y %H:%M") if r.get("resuelta_el") else ""}
+                if r.get("estado") == "vigente":
+                    a["estado"] = "vigente"
+                    a["vigentes"].append(fila)
+                else:
+                    a["resueltas"].append(fila)
+                if r.get("titulo") and r["titulo"] not in a["docs"]:
+                    a["docs"].append(r["titulo"])
+    except Exception as e:
+        print(f"[fac-alerta] leer: {type(e).__name__}", flush=True)
     return out
 
 
@@ -131676,7 +131878,30 @@ def _mfp_items(fid):
         it["margen_fila_pct"] = (it["margen_fila"] / it["cobrado_respaldado"] * 100.0) if it["cobrado_respaldado"] > 0 else None
         it["asignada"] = chile_fmt_filter(r.get("fac_asignada_at"), "%d/%m/%Y %H:%M") if r.get("fac_asignada_at") else ""
         out.append(it)
-    return out
+    return _mfp_agregar_alertas(out)
+
+
+def _mfp_agregar_alertas(filas):
+    """🚩 2026-10-12: la marca persistente de «factura sin saldo» en las filas de Facturación de proveedor (OT por
+    facturar y el lote): `fac_alerta` y un aviso en la fila (rojo vigente; ámbar si ya se corrigió, para que no se
+    pierda). Una consulta para todas. Facturación nunca la ve un técnico (doble candado), pero igual se cuida acá."""
+    if not filas or _es_rol_tecnico():
+        return filas
+    al = _fac_alertas_de([d.get("id") for d in filas])
+    for d in filas:
+        a = al.get(int(d.get("id") or 0))
+        d["fac_alerta"] = a
+        if not a:
+            continue
+        if a["estado"] == "vigente":
+            for x in a["vigentes"]:
+                d.setdefault("avisos_fila", []).insert(0, {"n": "rojo", "t": "Factura sin saldo · " + (x.get("texto") or "")
+                                                          + " Detectado el " + (x.get("detectada_el") or "") + "."})
+        else:
+            x = a["resueltas"][-1]
+            d.setdefault("avisos_fila", []).append({"n": "ambar", "t": "Tuvo factura sin saldo (" + (x.get("titulo") or "")
+                                                    + "), corregido el " + (x.get("resuelta_el") or "") + "."})
+    return filas
 
 
 def _mfp_cobro_respaldado(it):
@@ -131794,7 +132019,7 @@ def _mfp_por_facturar(limit=None, proveedor=None, prov_id=None, ids=None, desde=
             except Exception:
                 return str(f)[:10]
         filas = [d for d in filas if (not desde or _dia(d) >= desde) and (not hasta or _dia(d) <= hasta)]
-    return filas
+    return _mfp_agregar_alertas(filas)
 
 
 _MFP_INI_STOP = {"y", "e", "de", "del", "la", "el", "los", "las", "spa", "ltda", "s.a.", "sa", "eirl", "cia", "cía", "&"}

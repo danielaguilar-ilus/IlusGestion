@@ -1574,6 +1574,14 @@
    de la tarjeta oscura de arriba. Pasa a control segmentado (fondo gris +
    píldora roja sólida en la activa) -- mismo patrón de "elección visible
    de un vistazo" que ya usa el proyecto en otros selectores. */
+.otd-sinsaldo{display:flex;gap:10px;align-items:flex-start;border-radius:12px;padding:10px 14px;margin:0 0 12px;font-size:.86rem}
+.otd-sinsaldo > .bi{font-size:1.2rem;flex-shrink:0;margin-top:1px}
+.otd-sinsaldo-tx{display:flex;flex-direction:column;gap:3px;min-width:0}
+.otd-sinsaldo-tx span{font-size:.8rem;line-height:1.4;word-break:break-word}
+.otd-sinsaldo.vigente{background:#fef2f2;border:1px solid #fecaca;color:#7f1d1d}
+.otd-sinsaldo.vigente > .bi{color:#dc2626}
+.otd-sinsaldo.resuelta{background:#f3f4f6;border:1px solid #e5e7eb;color:#374151}
+.otd-sinsaldo.resuelta > .bi{color:#6b7280}
 .otd-tabs{display:flex;gap:4px;margin-bottom:14px;padding:5px;
   background:#f3f4f6;border:1px solid var(--line);border-radius:12px;
   overflow-x:auto}
@@ -3532,6 +3540,21 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
      aparezca siempre en Trabajo"): desde entonces Información pasó a
      concentrar el documento, las finanzas, las firmas y la trazabilidad,
      que es lo que Daniel viene a mirar al abrir una OT. #}
+  {#- 🚩 2026-10-12 (Daniel: «si ingresamos una OT con una factura ya consumida… es sospechoso; avisar… persistente»).
+      Marca de factura sin saldo: roja mientras siga así, gris cuando se corrigió (nunca desaparece; queda también en
+      la bitácora). Solo equipo interno: el servidor no la entrega a un técnico (REGLA #26). -#}
+  {% if fac_alerta and not es_tecnico %}
+  {% set _fa_l = fac_alerta.vigentes if fac_alerta.estado == 'vigente' else fac_alerta.resueltas %}
+  <div class="otd-sinsaldo {{ fac_alerta.estado }}" role="{{ 'alert' if fac_alerta.estado == 'vigente' else 'note' }}">
+    <i class="bi bi-{{ 'exclamation-octagon-fill' if fac_alerta.estado == 'vigente' else 'clock-history' }}"></i>
+    <div class="otd-sinsaldo-tx">
+      <b>{% if fac_alerta.estado == 'vigente' %}{{ 'Saldo insuficiente en su factura' if (_fa_l and _fa_l[0].tipo == 'saldo_insuficiente') else 'Esta OT usa una factura sin saldo' }}{% else %}Esta OT tuvo una factura sin saldo (ya corregido){% endif %}</b>
+      {% for x in fac_alerta.vigentes + fac_alerta.resueltas %}
+      <span>{{ x.texto }} Detectado el {{ x.detectada_el }}{% if x.detectada_por %} ({{ x.detectada_por }}){% endif %}{% if x.resuelta_el %} · corregido el {{ x.resuelta_el }}{% endif %}{% if x.veces > 1 %} · ocurrió {{ x.veces }} veces{% endif %}.</span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
   <div class="otd-tabs" id="otdTabs">
     <button type="button" class="otd-tab on" data-tab="info">
       <i class="bi bi-clipboard2-data"></i> Información</button>

@@ -202,6 +202,7 @@ def _entorno(db):
         # ⚖️ 2026-10-12: el candado del punto de equilibrio se prueba en tests/test_facprov_equilibrio.py; acá pasa.
         "_fac_equilibrio_ot": lambda vid, pago=None, solo_cache=False: {"ok": True, "vid": vid},
         "_fac_equilibrio_rechazo": lambda resultados: None,
+        "_mfp_agregar_alertas": lambda filas: filas,   # 🚩 marca de factura sin saldo: se prueba en test_fac_alerta_sin_saldo.py
         "_ot_fin_clp": lambda v: "$" + format(int(round(float(v or 0))), ",").replace(",", "."),
     }
     for nodo in arbol.body:

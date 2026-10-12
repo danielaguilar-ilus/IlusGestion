@@ -483,6 +483,28 @@ def reduccion_por_saldo(aporte_ot, capacidad, usado_antes):
     return max(0, _entero(aporte_ot) - disponible)
 
 
+def clasificar_sin_saldo(aporte_ot, capacidad, usado_otras, reduccion, hay_otras):
+    """🚩 2026-10-12 (Daniel: «si ingresamos una OT con una factura ya consumida… si no tiene saldo igual es
+    sospechoso; hay que avisar hasta en la tabla, persistente»). ¿Esta OT tiene una factura SIN saldo para ella?
+    `aporte_ot`: lo que la OT toma de la factura (servicio + despacho); `capacidad` / `usado_otras`: {servicio,
+    despacho} de la factura y lo que ya usan las demás OT; `reduccion`: lo que la OT dice cobrar de ella sin saldo
+    que lo respalde (punto de equilibrio); `hay_otras`: otras OT la usan.
+    Devuelve None (todo bien), 'sin_saldo' (la factura ya estaba consumida: esta OT no recibe nada de ella) o
+    'saldo_insuficiente' (le alcanza solo una parte de lo que cobra). Una factura sin líneas de servicio ni despacho
+    no tiene saldo que controlar: None."""
+    cap = {c: _entero((capacidad or {}).get(c)) for c in CATEGORIAS}
+    if not any(cap.values()):
+        return None
+    ap, red = _entero(aporte_ot), _entero(reduccion)
+    if ap > 0 and red > 0:
+        return "sin_saldo" if red >= ap else "saldo_insuficiente"
+    if ap <= 0 and hay_otras:
+        libre = [cap[c] - _entero((usado_otras or {}).get(c)) for c in CATEGORIAS if cap[c] > 0]
+        if libre and all(x <= 0 for x in libre):
+            return "sin_saldo"
+    return None
+
+
 def equilibrio_pago(pago, cobre, reduccion=0, autorizada=0, exento=False):
     """¿Se le puede pagar `pago` al proveedor por una OT que cobró `cobre`? El cobro que vale es el que la factura
     respalda: `cobre` − `reduccion` (el saldo que otras OT ya usaron). El límite es el punto de equilibrio: pagar
