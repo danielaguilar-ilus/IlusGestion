@@ -132915,7 +132915,13 @@ def mant_factura_proveedor_detalle(fid):
         return redirect(url_for("mant_facturas_proveedor"))
     factura = dict(factura)
     factura["monto_total"] = float(factura.get("monto_total") or 0)
+    _t_items = time.time()
     items = _mfp_items(fid)
+    # 🔎 2026-10-12 (auditoría Impeccable, rendimiento): cada OT ahora calcula su saldo y punto de equilibrio. Antes de
+    # optimizar esa cuenta (es la promesa de pago de Daniel: no se toca a ciegas) se mide con lotes reales.
+    _t_items = time.time() - _t_items
+    if _t_items > 1.5:
+        print(f"[facprov] lote {fid}: {len(items)} OT en {_t_items:.2f}s (saldo + equilibrio por OT)", flush=True)
     # 2026-10-08: las cifras del lote salen de UNA función (_mfp_totales_lote), la misma que usa el Excel del lote.
     # 💰 2026-09-19 (Daniel: "comparemos el total cobrado por ILUS y el total cobrado por el proveedor, así sé si
     # pierdo o gano"): total_cobrado_cliente = suma de lo que ILUS le cobró a SU cliente en cada OT del lote.

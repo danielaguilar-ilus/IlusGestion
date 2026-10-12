@@ -95,7 +95,7 @@
       {% endif %}
       <label class="btn btn-sm btn-outline-light fpd-hbtn mb-0" style="cursor:pointer">
         <i class="bi bi-paperclip"></i> {{ 'Cambiar respaldo' if factura.archivo_url else 'Subir respaldo' }}
-        <input type="file" id="fpdArchivo" accept=".pdf,.jpg,.jpeg,.png" hidden onchange="fpdSubirArchivo(this)">
+        <input type="file" id="fpdArchivo" class="fpd-file" accept=".pdf,.jpg,.jpeg,.png" onchange="fpdSubirArchivo(this)">
       </label>
       {% if pendiente %}
       <button type="button" class="btn btn-sm btn-success fw-bold fpd-hbtn" onclick="fpdPagar()"
@@ -189,9 +189,9 @@
     (gris → ámbar a los 3 días → rojo a la semana), las líneas que se pintan de verde paso a paso y, al pagarse, el
     cierre celebrado con cuántos días tomó de la solicitud al pago. Los días los cuenta el navegador (data-*). -#}
 {% set completo = pasos_ok == 4 and not anulada %}
-<div class="fpd-track {{ 'is-anulada' if anulada }} {{ 'is-completo' if completo }}" style="--fpd-pct:{{ pasos_ok * 25 }}%">
+<div class="fpd-track {{ 'is-anulada' if anulada }} {{ 'is-completo' if completo }}" style="--fpd-pct:{{ pasos_ok * 25 }}%;--fpd-esc:{{ pasos_ok * 0.25 }}">
   <div class="fpd-track-hd">
-    <div class="fpd-track-t"><i class="bi bi-signpost-split" style="color:#dc2626"></i> Seguimiento del lote
+    <div class="fpd-track-t" role="heading" aria-level="2"><i class="bi bi-signpost-split" style="color:#dc2626"></i> Seguimiento del lote
       <span class="fpd-track-s">del pedido de OC al pago al proveedor</span></div>
     <div class="fpd-track-prog {{ 'ok' if pasos_ok == 4 }}">
       {% if anulada %}<i class="bi bi-slash-circle"></i> Anulado
@@ -358,7 +358,7 @@
 {% endif %}
 
 {# ── OT en esta factura ──────────────────────────────────────────── #}
-<div class="fp-sec">OT que cobra esta factura <span class="fp-sec-n">{{ items|length }}</span></div>
+<div class="fp-sec" role="heading" aria-level="2">OT que cobra esta factura <span class="fp-sec-n">{{ items|length }}</span></div>
 {% if not items %}
 <div class="fp-vacio">
   <i class="bi bi-inbox"></i>
@@ -553,7 +553,7 @@
 
 {# ── Historial del lote (mant_logs) ──────────────────────────────── #}
 {# 📋 2026-10-08 (lote #17): qué se agregó o quitó, cuándo y quién, sin bajar el Excel. Los 10 más nuevos; se pagina con /historial. #}
-<div class="fp-sec">Historial del lote <span class="fp-sec-n" id="fphTotal">{{ historial_total }}</span></div>
+<div class="fp-sec" role="heading" aria-level="2">Historial del lote <span class="fp-sec-n" id="fphTotal">{{ historial_total }}</span></div>
 <div class="fph" id="fphBox">
   <div id="fphLista" aria-live="polite"></div>
   <div class="fph-foot">
@@ -571,13 +571,13 @@
 
 {# ── Asignar OT (solo pendiente) ─────────────────────────────────── #}
 {% if pendiente %}
-<div class="fp-sec" id="fpdAsignar">Asignar OT a esta factura</div>
+<div class="fp-sec" id="fpdAsignar" role="heading" aria-level="2">Asignar OT a esta factura</div>
 <div class="fpd-buscar">
   <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
-    <input type="search" class="form-control form-control-sm" id="fpdQ" style="max-width:240px;min-height:44px;font-size:16px"
+    <input type="search" class="form-control form-control-sm" id="fpdQ" aria-label="Buscar OT por número o cliente" style="max-width:240px;min-height:44px;font-size:16px"
            placeholder="N° OT o cliente…">
-    <input type="date" class="form-control form-control-sm" id="fpdDesde" style="max-width:160px;min-height:44px;font-size:16px" title="Desde">
-    <input type="date" class="form-control form-control-sm" id="fpdHasta" style="max-width:160px;min-height:44px;font-size:16px" title="Hasta">
+    <input type="date" class="form-control form-control-sm" id="fpdDesde" style="max-width:160px;min-height:44px;font-size:16px" title="Desde" aria-label="Desde">
+    <input type="date" class="form-control form-control-sm" id="fpdHasta" style="max-width:160px;min-height:44px;font-size:16px" title="Hasta" aria-label="Hasta">
     <label class="fpd-check"><input type="checkbox" id="fpdTodas"> Ver todas las OT de externos, no solo de {{ prov_nombre }}</label>
     <button type="button" class="btn btn-dark btn-sm px-3" style="min-height:44px" onclick="fpdBuscar()">
       <i class="bi bi-search me-1"></i>Buscar</button>
@@ -629,9 +629,9 @@
             <div><div class="fpv-step-t">¿Quién factura?</div><div class="fpv-step-s">Si cambias el nombre, se suelta el vínculo con la ficha del proveedor</div></div>
           </div>
           <div class="fpv-step-bd">
-            <label class="fpv-lbl">Proveedor <span class="text-danger">*</span></label>
+            <label for="fpeProv" class="fpv-lbl">Proveedor <span class="text-danger">*</span></label>
             <input type="text" class="form-control" id="fpeProv" value="{{ factura.proveedor_nombre }}" oninput="fpeRefreshSteps()">
-            <label class="fpv-lbl mt-2">RUT</label>
+            <label for="fpeRut" class="fpv-lbl mt-2">RUT</label>
             <input type="text" class="form-control" id="fpeRut" value="{{ factura.proveedor_rut or '' }}">
           </div>
         </section>
@@ -642,18 +642,18 @@
           </div>
           <div class="fpv-step-bd">
             <div class="row g-2">
-              <div class="col-12 col-sm-4"><label class="fpv-lbl">Tipo</label>
+              <div class="col-12 col-sm-4"><label for="fpeTipo" class="fpv-lbl">Tipo</label>
                 <select class="form-select" id="fpeTipo">
                   <option value="factura" {{ 'selected' if factura.tipo_documento == 'factura' }}>Factura</option>
                   <option value="boleta_honorarios" {{ 'selected' if factura.tipo_documento == 'boleta_honorarios' }}>Boleta de honorarios</option>
                   <option value="otro" {{ 'selected' if factura.tipo_documento == 'otro' }}>Otro</option>
                 </select></div>
-              <div class="col-6 col-sm-4"><label class="fpv-lbl">N° <span class="text-danger">*</span></label>
+              <div class="col-6 col-sm-4"><label for="fpeNumero" class="fpv-lbl">N° <span class="text-danger">*</span></label>
                 <input type="text" class="form-control" id="fpeNumero" value="{{ factura.numero_documento or '' }}" oninput="fpeRefreshSteps()"></div>
-              <div class="col-6 col-sm-4"><label class="fpv-lbl">Fecha <span class="text-danger">*</span></label>
+              <div class="col-6 col-sm-4"><label for="fpeFecha" class="fpv-lbl">Fecha <span class="text-danger">*</span></label>
                 <input type="date" class="form-control" id="fpeFecha" value="{{ factura.fecha.strftime('%Y-%m-%d') if factura.fecha else '' }}" onchange="fpeRefreshSteps()"></div>
             </div>
-            <label class="fpv-lbl mt-2">N° de orden de compra (opcional)</label>
+            <label for="fpeOC" class="fpv-lbl mt-2">N° de orden de compra (opcional)</label>
             <input type="text" class="form-control" id="fpeOC" value="{{ factura.numero_oc or '' }}">
           </div>
         </section>
@@ -663,10 +663,10 @@
             <div><div class="fpv-step-t">¿Cuánto?</div><div class="fpv-step-s">Monto total del documento</div></div>
           </div>
           <div class="fpv-step-bd">
-            <label class="fpv-lbl">Monto total (CLP) <span class="text-danger">*</span></label>
+            <label for="fpeMonto" class="fpv-lbl">Monto total (CLP) <span class="text-danger">*</span></label>
             <div class="input-group"><span class="input-group-text">$</span>
               <input type="text" inputmode="numeric" class="form-control" id="fpeMonto" value="{{ '{:,.0f}'.format(factura.monto_total or 0)|replace(',', '.') }}"></div>
-            <label class="fpv-lbl mt-2">Notas</label>
+            <label for="fpeNotas" class="fpv-lbl mt-2">Notas</label>
             <textarea class="form-control" id="fpeNotas" rows="2">{{ factura.notas or '' }}</textarea>
           </div>
         </section>
@@ -688,7 +688,7 @@
             </div>
             <label class="btn btn-sm btn-outline-dark mb-0" style="min-height:44px;display:inline-flex;align-items:center;cursor:pointer">
               <i class="bi bi-upload me-1"></i>{{ 'Cambiar archivo' if factura.archivo_url else 'Adjuntar archivo' }}
-              <input type="file" accept=".pdf,.jpg,.jpeg,.png" hidden onchange="fpdArchivoModal(this,'fpeArchivoEstado')">
+              <input type="file" class="fpd-file" accept=".pdf,.jpg,.jpeg,.png" onchange="fpdArchivoModal(this,'fpeArchivoEstado')">
             </label>
           </div>
         </section>
@@ -721,7 +721,7 @@
         </div>
         <div class="row g-2">
           <div class="col-12 col-sm-4">
-            <label class="fpv-lbl">Tipo</label>
+            <label for="fpcTipo" class="fpv-lbl">Tipo</label>
             <select class="form-select" id="fpcTipo">
               <option value="factura">Factura</option>
               <option value="boleta_honorarios">Boleta de honorarios</option>
@@ -729,20 +729,20 @@
             </select>
           </div>
           <div class="col-6 col-sm-4">
-            <label class="fpv-lbl">N° <span class="text-danger">*</span></label>
+            <label for="fpcNumero" class="fpv-lbl">N° <span class="text-danger">*</span></label>
             <input type="text" class="form-control" id="fpcNumero" placeholder="Ej: 1234">
           </div>
           <div class="col-6 col-sm-4">
-            <label class="fpv-lbl">Fecha <span class="text-danger">*</span></label>
+            <label for="fpcFecha" class="fpv-lbl">Fecha <span class="text-danger">*</span></label>
             <input type="date" class="form-control" id="fpcFecha">
           </div>
         </div>
         {# 2026-09-21: el endpoint /completar ya aceptaba numero_oc (desde el
            2026-09-19) pero el modal no lo pedía -- ahora el paso ② del
            tracking manda acá cuando falta la OC en un lote pagado. #}
-        <label class="fpv-lbl mt-2">N° de orden de compra {{ '(ya registrada)' if factura.numero_oc else '(opcional)' }}</label>
+        <label for="fpcOC" class="fpv-lbl mt-2">N° de orden de compra {{ '(ya registrada)' if factura.numero_oc else '(opcional)' }}</label>
         <input type="text" class="form-control" id="fpcOC" value="{{ factura.numero_oc or '' }}" placeholder="Ej: OC-2026-015">
-        <label class="fpv-lbl mt-2">Monto total (CLP)</label>
+        <label for="fpcMonto" class="fpv-lbl mt-2">Monto total (CLP)</label>
         <div class="input-group">
           <span class="input-group-text">$</span>
           <input type="text" inputmode="numeric" class="form-control" id="fpcMonto"
@@ -760,7 +760,7 @@
           </div>
           <label class="btn btn-sm btn-outline-dark mb-0" style="min-height:44px;display:inline-flex;align-items:center;cursor:pointer">
             <i class="bi bi-upload me-1"></i>{{ 'Cambiar archivo' if factura.archivo_url else 'Adjuntar archivo' }}
-            <input type="file" accept=".pdf,.jpg,.jpeg,.png" hidden onchange="fpdArchivoModal(this,'fpcArchivoEstado')">
+            <input type="file" class="fpd-file" accept=".pdf,.jpg,.jpeg,.png" onchange="fpdArchivoModal(this,'fpcArchivoEstado')">
           </label>
         </div>
       </div>
@@ -1510,10 +1510,10 @@ async function fpdCopiarSolicitud(){
 @keyframes fpdPulseRed{0%{box-shadow:0 0 0 0 rgba(220,38,38,.55)}70%{box-shadow:0 0 0 9px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
 /* ❤️ 2026-10-12: barra de avance, paso activo con calor, líneas que se pintan y cierre celebrado */
 .fpd-bar{height:6px;border-radius:99px;background:#f1f5f9;overflow:hidden;margin:0 0 10px}
-.fpd-bar span{display:block;height:100%;width:var(--fpd-pct);border-radius:99px;background:linear-gradient(90deg,#dc2626,#f59e0b);
-  animation:fpdLlenar 1.1s cubic-bezier(.2,.8,.2,1) both}
+.fpd-bar span{display:block;height:100%;width:100%;border-radius:99px;background:linear-gradient(90deg,#dc2626,#f59e0b);
+  transform-origin:left center;transform:scaleX(var(--fpd-esc,0));animation:fpdLlenar 1.1s cubic-bezier(.2,.8,.2,1) both}
 .fpd-track.is-completo .fpd-bar span{background:linear-gradient(90deg,#22c55e,#16a34a)}
-@keyframes fpdLlenar{from{width:0}}
+@keyframes fpdLlenar{from{transform:scaleX(0)}}
 .fpd-step{padding:8px 10px 8px 8px;border-radius:12px;transition:background .25s}
 .fpd-step.is-activo{background:linear-gradient(180deg,#fef2f2,#fff 85%);box-shadow:inset 0 0 0 1px #fecaca}
 .fpd-step .fpd-circle i.n{font-size:.95rem}
@@ -1896,5 +1896,8 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 /* Paso a paso en 2×2 (tablet): la línea que une los pasos no tiene a quién unir */
 @media (max-width:1100px){ .fpd-line{display:none} }
 
+/* ── 🔎 2026-10-12 auditoría Impeccable · Fase 3 ── archivo enfocable con el teclado (oculto a la vista) */
+.fpd-file{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+label.btn{position:relative}
 </style>
 {% endblock %}
