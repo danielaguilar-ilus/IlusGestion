@@ -470,6 +470,37 @@ def perdida_de_cuenta(cobre_total, me_tecnico, me_despacho, autorizada=0):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  ⚖️ PUNTO DE EQUILIBRIO AL PAGARLE AL PROVEEDOR (Daniel, 12-oct-2026)
+#  «Primero evaluamos la factura. Si está repetida, evaluamos cuánto tiene de saldo. Y el límite es el punto de
+#  equilibrio, donde no ganemos ni perdamos por el servicio. Si se pasa de allí, no puedes asignarla sin autorización»
+#  y «el sistema por ninguna razón debe permitir que paguemos dos veces por un servicio».
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+def reduccion_por_saldo(aporte_ot, capacidad, usado_antes):
+    """Cuánto de lo que una OT dice cobrar de una factura NO tiene respaldo porque otras OT con prioridad (las que ya
+    se le pagaron al proveedor y las anteriores) ya usaron ese saldo. 0 si alcanza. Por categoría."""
+    disponible = max(0, _entero(capacidad) - _entero(usado_antes))
+    return max(0, _entero(aporte_ot) - disponible)
+
+
+def equilibrio_pago(pago, cobre, reduccion=0, autorizada=0, exento=False):
+    """¿Se le puede pagar `pago` al proveedor por una OT que cobró `cobre`? El cobro que vale es el que la factura
+    respalda: `cobre` − `reduccion` (el saldo que otras OT ya usaron). El límite es el punto de equilibrio: pagar
+    hasta lo cobrado. Si se pasa, el exceso necesita la autorización de Daniel (la MISMA autorización de pérdida que
+    se pide al cerrar la OT, válida hasta el monto que él vio; 1 peso de tolerancia). `exento`: $0 ya autorizado
+    (garantía, contrato, interna) — se paga sin cobrar, con permiso previo.
+    Devuelve {pago, cobre, cobro_efectivo, reduccion, exceso, ok, falta_autorizar}."""
+    p, c, red = _entero(pago), _entero(cobre), _entero(reduccion)
+    efectivo = max(0, c - red)
+    if exento:
+        return {"pago": p, "cobre": c, "cobro_efectivo": efectivo, "reduccion": red, "exceso": 0, "ok": True,
+                "falta_autorizar": 0}
+    r = perdida_cierre(efectivo, p, autorizada)
+    return {"pago": p, "cobre": c, "cobro_efectivo": efectivo, "reduccion": red, "exceso": r["perdida"],
+            "ok": r["ok"], "falta_autorizar": r["falta_autorizar"]}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
 #  🚦 AVISO AL ELEGIR UN DOCUMENTO (Daniel, 12-oct-2026)
 #  «La OT le debe avisar al usuario, ya que si no sabe puede duplicar el servicio con un documento con el saldo ya
 #  consumido» · «que sea inteligente de reconocer cuando una nota de venta llega a esta [factura] y cuando esa nota de

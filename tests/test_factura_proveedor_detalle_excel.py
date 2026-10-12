@@ -199,6 +199,9 @@ def _entorno(db):
         "send_file": lambda buf, **kw: {"buf": buf, **kw},
         "_es_rol_tecnico": lambda: False,
         "flash": lambda *a, **k: None, "redirect": lambda u: ("redirect", u), "url_for": lambda n, **k: "/" + n,
+        # ⚖️ 2026-10-12: el candado del punto de equilibrio se prueba en tests/test_facprov_equilibrio.py; acá pasa.
+        "_fac_equilibrio_ot": lambda vid, pago=None, solo_cache=False: {"ok": True, "vid": vid},
+        "_fac_equilibrio_rechazo": lambda resultados: None,
     }
     for nodo in arbol.body:
         if isinstance(nodo, ast.Assign) and len(nodo.targets) == 1 and getattr(nodo.targets[0], "id", "") == "_MFP_ACCION_TXT":

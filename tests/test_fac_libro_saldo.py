@@ -577,7 +577,9 @@ class TestPerdidaEnElCierre(unittest.TestCase):
     def test_solicitud_guarda_la_cuenta_y_aprobar_deja_constancia(self):
         c = _fuente("ot_aut_api_crear")
         self.assertIn('if tipo == "cerrar_con_perdida":', c)
-        self.assertIn('"perdida": _fp["perdida"]', c)
+        # ⚖️ 2026-10-12: la pérdida que se pide es la mayor entre la del cierre y la del pago al proveedor
+        self.assertIn('_per = max(_saldo._entero(_fp.get("perdida")), _saldo._entero(_eq.get("exceso")))', c)
+        self.assertIn('{"perdida": _per, "cobre": _fp["cobre"], "me_cobraron": _fp["me_cobraron"]}', c)
         a = _fuente("ot_aut_api_aprobar")
         self.assertIn('elif tipo == "cerrar_con_perdida":', a)
         self.assertIn("cierre_con_perdida_autorizado", a)

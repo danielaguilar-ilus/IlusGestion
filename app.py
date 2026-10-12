@@ -95079,11 +95079,23 @@ def ot_aut_api_crear():
             # 📒 2026-10-11: la cuenta de la OT en el momento de pedir (Daniel la ve en su celular y autoriza HASTA ese
             # monto de pérdida; si la pérdida crece después, se vuelve a pedir).
             _fp = _fac_perdida_de_ot(visita_id)
-            if not _fp.get("perdida"):
+            # ⚖️ 2026-10-12 (Daniel: UNA autorización por OT): la misma cubre el pago al proveedor. Si la OT está en un
+            # lote, cuenta lo que el lote le paga y el saldo que su factura ya dio a otras OT (punto de equilibrio).
+            try:
+                _it = mysql_fetchone("SELECT monto FROM mant_factura_proveedor_items WHERE visita_id=%s", (visita_id,))
+                _eq = _fac_equilibrio_ot(visita_id, pago=(_it or {}).get("monto"))
+            except Exception as _e_eq:
+                print(f"[ot-aut] equilibrio vid={visita_id}: {type(_e_eq).__name__}", flush=True)
+                _eq = {}
+            _per = max(_saldo._entero(_fp.get("perdida")), _saldo._entero(_eq.get("exceso")))
+            if not _per:
                 return jsonify({"ok": False, "error": "Esta OT no va a pérdida: no necesita esta autorización.",
                                 "error_codigo": "NO_APLICA"}), 400
-            payload_json = json.dumps({"perdida": _fp["perdida"], "cobre": _fp["cobre"],
-                                       "me_cobraron": _fp["me_cobraron"]}, ensure_ascii=False)
+            _pl = {"perdida": _per, "cobre": _fp["cobre"], "me_cobraron": _fp["me_cobraron"]}
+            if _saldo._entero(_eq.get("exceso")) >= _saldo._entero(_fp.get("perdida")) and _eq.get("exceso"):
+                _pl.update(pago_proveedor=_eq.get("pago"), cobro_efectivo=_eq.get("cobro_efectivo"),
+                           saldo_usado_por_otras=_eq.get("reduccion"))
+            payload_json = json.dumps(_pl, ensure_ascii=False)
     uid, nombre = _ot_aut_usuario()
     # Sin duplicar una pendiente igual.
     try:
@@ -113618,6 +113630,183 @@ def _fac_perdida_de_ot(vid):
         return {"cobra": False, "completa": False, "cobre": 0, "me_cobraron": 0, "perdida": 0, "autorizada": 0,
                 "autorizada_por": None, "ok": True, "falta_autorizar": 0, "pendiente_id": None}
     return _fac_perdida_info(vid, fin)
+
+
+# ⚖️ 2026-10-12 PUNTO DE EQUILIBRIO AL PAGARLE AL PROVEEDOR (Daniel: «primero evaluamos la factura; si está repetida,
+# evaluamos cuánto tiene de saldo; el límite es el punto de equilibrio… si se pasa, no puedes asignarla sin
+# autorización» y «por ninguna razón pagar dos veces por un servicio»). Decisiones de Daniel (12-oct): la autorización
+# es la MISMA de pérdida del cierre (cerrar_con_perdida, hasta el monto que vio); una OT en $0 pasa si ese $0 está
+# autorizado; el candado va al asignar a un lote y al marcar pagado (los lotes ya pagados no se tocan).
+def _fac_pagados_a_proveedor(vids):
+    """De estas OT, las que ya están en un lote PAGADO al proveedor (tienen prioridad sobre el saldo de su factura)."""
+    ids = sorted({int(x) for x in (vids or []) if x})
+    if not ids:
+        return set()
+    try:
+        ph = ",".join(["%s"] * len(ids))
+        return {int(r["visita_id"]) for r in (mysql_fetchall(
+            "SELECT i.visita_id FROM mant_factura_proveedor_items i JOIN mant_facturas_proveedor f "
+            "  ON f.id=i.factura_proveedor_id WHERE f.estado_pago='pagada' AND i.visita_id IN (" + ph + ")",
+            tuple(ids)) or [])}
+    except Exception as e:
+        print(f"[facprov-eq] pagados: {type(e).__name__}", flush=True)
+        return set()
+
+
+def _fac_equilibrio_ot(vid, pago=None, solo_cache=False):
+    """¿Se le puede pagar al proveedor por esta OT? Evalúa, en este orden: 1) que la OT tenga su documento de Random
+    ingresado (factura, boleta o nota de venta, heredado del ticket, la cotización o puesto en la OT) o su $0
+    autorizado; 2) si la factura está REPETIDA en otras OT, cuánto saldo le queda a esta (tienen prioridad las OT que
+    ya se le pagaron al proveedor y las anteriores); 3) el punto de equilibrio: lo que se le paga al proveedor
+    (técnico + despacho; los productos/repuestos van aparte) no puede pasar de lo que la OT cobra con respaldo de su
+    factura, salvo con la autorización de pérdida de Daniel.
+    `pago`: lo que el lote le paga por esta OT (por defecto, lo que dice su cuenta). `solo_cache`: para mostrar en
+    listas (nunca sale a Random; si algo no está leído queda «sin verificar»). Solo lectura: no escribe nada.
+    Devuelve {ok, code, estado, mensaje, numero_ot, pago, cobre, cobro_efectivo, reduccion, exceso, falta_autorizar,
+    autorizada, autorizada_por, pendiente_id, documentos: [...], via, nota_venta, compartida}."""
+    vid = int(vid)
+    out = {"vid": vid, "ok": True, "code": None, "estado": "ok", "mensaje": "", "numero_ot": "", "pago": 0, "cobre": 0,
+           "cobro_efectivo": 0, "reduccion": 0, "exceso": 0, "falta_autorizar": 0, "autorizada": 0,
+           "autorizada_por": None, "pendiente_id": None, "documentos": [], "via": None, "nota_venta": False,
+           "compartida": False, "cobra": True}
+    v = mysql_fetchone(
+        "SELECT v.id, v.numero_ot, v.cliente_id, v.tipo, v.modalidad_cobro, v.cubierto_por, v.cobro_cero_motivo, "
+        "       c.rut AS cliente_rut, " + _ot_fin_cols_sql("v") +
+        "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (vid,))
+    if not v:
+        out.update(ok=False, code="OT_NO_EXISTE", estado="error", mensaje="La OT no existe.")
+        return out
+    num = v.get("numero_ot") or ("OT #%s" % vid)
+    out["numero_ot"] = num
+    try:
+        rep = _ot_fin_rep_liviano(_ot_repuestos_desglose([vid]).get(vid))
+    except Exception:
+        rep = None
+    fin = _ot_finanzas(dict(v), rep)
+    p = _saldo._entero(fin.get("a_pagar_proveedor") if pago is None else pago)
+    cobre = int(round(float((fin.get("cobre") or {}).get("total") or 0)))
+    out.update(pago=p, cobre=cobre, cobro_efectivo=cobre, cobra=bool(fin.get("cobra")))
+    puerta = _ot_puerta_documento(dict(v), "cerrar", superadmin_declara=False)
+    out["via"] = puerta.get("via")
+    out["nota_venta"] = puerta.get("falta") == "factura"
+    doc_ok = bool(puerta.get("ok")) or out["nota_venta"]
+
+    # $0 (garantía, contrato, interna): pasa si ese $0 está autorizado (decisión de Daniel, 12-oct).
+    if not fin.get("cobra"):
+        if puerta.get("ok"):
+            out.update(estado="exento", mensaje="%s no se le cobra al cliente (%s): el $0 está autorizado, se le paga "
+                                                 "al proveedor igual." % (num, (fin.get("cobertura_txt") or "sin cobro").lower()))
+        else:
+            out.update(ok=False, code="SIN_AUTORIZACION_CERO", estado="sin_documento",
+                       mensaje="%s no se le cobra al cliente y ese $0 no está autorizado: pide la autorización del $0 "
+                               "en la OT antes de pagarle al proveedor." % num)
+        return out
+    if not doc_ok:
+        out.update(ok=False, code="SIN_DOCUMENTO", estado="sin_documento",
+                   mensaje="%s no tiene ingresada su factura, boleta o nota de venta de Random: sin documento no se "
+                           "sabe qué se cobró ni cuánto saldo queda. Agrégala en la OT (o pide la autorización de "
+                           "Daniel para cerrarla sin documento)." % num)
+        return out
+    pin = _fac_perdida_info(vid, fin)
+    out.update(autorizada=pin.get("autorizada") or 0, autorizada_por=pin.get("autorizada_por"),
+               pendiente_id=pin.get("pendiente_id"))
+    if out["via"] == "autorizacion_cerrar" and cobre <= 0:
+        out.update(estado="exento", mensaje="%s: Daniel autorizó cerrarla sin documento ni cobro; se le paga al "
+                                             "proveedor sin cobrar." % num)
+        return out
+
+    # 2) Las facturas de la OT: ¿alguna repetida en otras OT?, ¿cuánto saldo le queda a esta?
+    incompleto = False
+    try:
+        aportes = _fac_aportes_ot(vid, solo_cache=solo_cache) or {}
+    except _saldo.LecturaIncompleta:
+        aportes, incompleto = {}, True
+    docs = list(_ot_saldo_docs_de_ot(vid))
+    for (t0, n0, _c0) in aportes:
+        if not any(_saldo.clave_doc(a, b) == (t0, n0) for a, b in docs):
+            docs.append((t0, n0))
+    fams, reduccion = [], 0
+    for t, n in docs:
+        k = _saldo.clave_doc(t, n)
+        if not k[0] or not k[1] or any(k in f for f, _x in fams):
+            continue
+        if solo_cache:
+            _hit = _OT_SALDO_FAM_CACHE.get(k)
+            fam = {k} | (set(_hit[1]) if _hit else set())
+        else:
+            fam = _ot_saldo_familia(t, n)
+        fams.append((fam, (t, n)))
+    otros_todos = set()
+    filas_fam = []
+    for fam, (t, n) in fams:
+        st, cap = _fac_leer_capacidad(t, n, solo_cache=solo_cache)
+        tu, nu = _ot_doc_real_a_usuario(t, n)
+        ap = {c: sum(_saldo._entero(aportes.get((kk[0], kk[1], c))) for kk in fam) for c in _saldo.CATEGORIAS}
+        info = {"titulo": ("%s %s" % (tu, nu)).strip(), "leido": cap is not None,
+                "herencia": [("%s %s" % _ot_doc_real_a_usuario(kk[0], kk[1])).strip() for kk in sorted(fam) if kk != k],
+                "capacidad": dict(cap or {}), "aporte_ot": ap, "otras": [], "usado_otras": {c: 0 for c in _saldo.CATEGORIAS},
+                "reduccion": 0}
+        if cap is None:
+            incompleto = True
+            out["documentos"].append(info)
+            continue
+        usos = _saldo.consolidar_usos(_ot_saldo_usos(fam, excluir_vid=vid, cap=cap))
+        filas_fam.append((info, cap, ap, usos))
+        for u in usos:
+            otros_todos.add(int(u["vid"]))
+        out["documentos"].append(info)
+    pagados = _fac_pagados_a_proveedor(otros_todos)
+    for info, cap, ap, usos in filas_fam:
+        red = 0
+        for c in _saldo.CATEGORIAS:
+            usado_prio = sum(_saldo._entero(u.get(c)) for u in usos if int(u["vid"]) < vid or int(u["vid"]) in pagados)
+            info["usado_otras"][c] = sum(_saldo._entero(u.get(c)) for u in usos)
+            red += _saldo.reduccion_por_saldo(ap.get(c), cap.get(c), usado_prio)
+        info["otras"] = [{"vid": u["vid"], "numero_ot": u.get("numero_ot"), "cliente": u.get("cliente"),
+                          "pagada_proveedor": int(u["vid"]) in pagados} for u in usos]
+        info["reduccion"] = red
+        reduccion += red
+        if usos:
+            out["compartida"] = True
+    eq = _saldo.equilibrio_pago(p, cobre, reduccion, out["autorizada"])
+    out.update(cobro_efectivo=eq["cobro_efectivo"], reduccion=eq["reduccion"], exceso=eq["exceso"],
+               falta_autorizar=eq["falta_autorizar"])
+    if incompleto and not (out["autorizada"] and out["autorizada"] + 1 >= p):
+        out.update(estado="sin_verificar",
+                   mensaje="No pudimos leer en Random la factura de %s: no se puede saber cuánto saldo le queda. "
+                           "Reintenta en unos minutos." % num)
+        if not solo_cache:
+            out.update(ok=False, code="LECTURA_INCOMPLETA")
+        return out
+    if eq["ok"]:
+        if eq["exceso"]:
+            out.update(estado="autorizada", mensaje="%s se paga sobre su punto de equilibrio por %s, con la "
+                                                     "autorización de %s." % (num, _saldo.clp(eq["exceso"]),
+                                                                              out["autorizada_por"] or "Daniel"))
+        return out
+    detalle_red = (" (de los %s que declara, %s de su factura ya los usaron otras OT)" % (_saldo.clp(cobre),
+                   _saldo.clp(eq["reduccion"]))) if eq["reduccion"] else ""
+    out.update(ok=False, code="SOBRE_EQUILIBRIO", estado="sobre_equilibrio",
+               mensaje="%s: se le pagaría %s al proveedor y la OT cobra %s con respaldo de su factura%s. Se pasa del "
+                       "punto de equilibrio por %s: necesita la autorización de Daniel."
+                       % (num, _saldo.clp(p), _saldo.clp(eq["cobro_efectivo"]), detalle_red, _saldo.clp(eq["exceso"])))
+    if out["pendiente_id"]:
+        out["mensaje"] += " Ya está pedida (N° %s): espera su respuesta." % out["pendiente_id"]
+    return out
+
+
+def _fac_equilibrio_rechazo(resultados):
+    """Respuesta 409 con las OT que no pasan el candado (asignar a un lote, solicitar OC, marcar pagado)."""
+    malos = [r for r in resultados if not r.get("ok")]
+    if not malos:
+        return None
+    codigo = malos[0].get("code") if len(malos) == 1 else "EQUILIBRIO_LOTE"
+    texto = malos[0]["mensaje"] if len(malos) == 1 else (
+        "%d OT no se pueden pagar todavía:\n" % len(malos) + "\n".join("• " + m["mensaje"] for m in malos[:15]))
+    return jsonify({"ok": False, "error_codigo": codigo, "error": texto,
+                    "equilibrio": [{k: m.get(k) for k in ("vid", "numero_ot", "code", "estado", "mensaje", "pago",
+                                                          "cobre", "cobro_efectivo", "reduccion", "exceso",
+                                                          "pendiente_id")} for m in malos]}), 409
 
 
 @app.route("/ot/api/lineas-zz/<tido>/<nudo>", methods=["GET"])
@@ -132685,8 +132874,21 @@ def mant_factura_proveedor_detalle(fid):
     except Exception as _e_hist:
         print(f"[facprov] historial fid={fid}: {_e_hist}", flush=True)
         historial, historial_total = [], 0
+    # ⚖️ 2026-10-12: por OT, su documento de Random, si la factura está repetida, el saldo y el punto de equilibrio
+    # (lectura liviana: nunca sale a Random; el candado de verdad está al asignar y al marcar pagado).
+    eq_sobre = 0
+    for it in items:
+        try:
+            _pago = it["fac_monto"] if it.get("fac_monto") is not None else it.get("sugerido")
+            it["eq"] = _fac_equilibrio_ot(it["id"], pago=_pago, solo_cache=True)
+        except Exception as _e_eq:
+            print(f"[facprov] equilibrio vid={it.get('id')}: {type(_e_eq).__name__}", flush=True)
+            it["eq"] = None
+        if it["eq"] and not it["eq"].get("ok"):
+            eq_sobre += 1
     return render_template(
         "mantenciones/factura_proveedor_detalle.html",
+        eq_sobre=eq_sobre,
         factura=factura, items=items, total_asignado=total_asignado,
         diferencia=tot_lote["diferencia"],
         total_cobrado_cliente=total_cobrado_cliente,
@@ -132860,6 +133062,10 @@ def mant_factura_proveedor_asignar(fid):
         observacion = (observacion + " " if observacion else "") + f"⚠ OT no cerrada al asignarla ({ot['estado']})."
     if monto <= 0:
         monto = ot["sugerido"]
+    # ⚖️ 2026-10-12: documento ingresado, saldo de su factura y punto de equilibrio (o la autorización de Daniel).
+    _rech = _fac_equilibrio_rechazo([_fac_equilibrio_ot(vid, pago=monto)])
+    if _rech:
+        return _rech
     # 2026-09-21: $0 es válido (garantía / sin cobro) -- ya no se rechaza.
     try:
         mysql_execute(
@@ -133091,6 +133297,13 @@ def mant_factura_proveedor_pagar(fid):
         return jsonify({"ok": False, "error_codigo": "SIN_OT",
                         "error": "La factura no tiene ninguna OT asignada. Asigna primero qué "
                                  "trabajos cobra antes de marcarla pagada."}), 400
+    # ⚖️ 2026-10-12: ninguna OT del lote se paga sobre su punto de equilibrio sin la autorización de Daniel.
+    _rech = _fac_equilibrio_rechazo([
+        _fac_equilibrio_ot(int(r["visita_id"]), pago=r.get("monto"))
+        for r in (mysql_fetchall("SELECT visita_id, monto FROM mant_factura_proveedor_items "
+                                 " WHERE factura_proveedor_id=%s", (fid,)) or [])])
+    if _rech:
+        return _rech
     d = request.get_json(silent=True) or {}
     ref = (d.get("pago_referencia") or "").strip()[:120] or None
     n = mysql_execute_returning_rowcount(
@@ -133334,6 +133547,11 @@ def mant_facturas_proveedor_marcar_pagado_sin_factura():
     if err:
         return err
     asumidas_cero = [vid for vid, f in filas.items() if f.get("sin_costo")]
+    # ⚖️ 2026-10-12: documento, saldo de su factura y punto de equilibrio de cada OT (o la autorización de Daniel).
+    _rech = _fac_equilibrio_rechazo([_fac_equilibrio_ot(vid, pago=(0 if vid in asumidas_cero else f["sugerido"]))
+                                     for vid, f in filas.items()])
+    if _rech:
+        return _rech
     no_cerradas = [f["numero_ot"] for f in filas.values() if f["estado"] not in _MFP_ESTADOS_FACTURABLES]
 
     user = current_username() or "sistema"
@@ -133487,6 +133705,12 @@ def mant_facturas_proveedor_solicitar_oc():
     grupos, err = _mfp_validar_lote_ot_grupos(d.get("visita_ids"), asumir_cero=_mfp_asumir_cero_permitido(d))
     if err:
         return err
+    # ⚖️ 2026-10-12: documento, saldo de su factura y punto de equilibrio de cada OT (o la autorización de Daniel).
+    _rech = _fac_equilibrio_rechazo([
+        _fac_equilibrio_ot(vid, pago=(0 if vid in g_["asumidas_cero"] else f["sugerido"]))
+        for g_ in grupos for vid, f in g_["filas"].items()])
+    if _rech:
+        return _rech
     if len(grupos) > 1:
         numero_oc = None
 

@@ -145,6 +145,9 @@
       {% elif activo == 4 %}<b>La factura llegó: revisa que cuadre con las OT y márcala pagada.</b>
       {% elif pagada and activo in (2, 3) %}<b>Pagada, pero falta {{ 'el N° de orden de compra' if activo == 2 else 'el documento del proveedor' }} para cerrar el registro.</b>
       {% else %}<b>Ciclo completo: pagada el {{ factura.pagada_at | chile_fmt('%d/%m/%Y') if factura.pagada_at else '—' }} por {{ factura.pagada_por or '—' }}.</b>{% endif %}
+      {% if eq_sobre and pendiente %}
+      <span class="fpd-next-warn"><i class="bi bi-exclamation-octagon-fill"></i> {{ eq_sobre }} OT {{ 'no se puede' if eq_sobre == 1 else 'no se pueden' }} pagar todavía: sin documento o sobre el punto de equilibrio (detalle en cada OT).</span>
+      {% endif %}
       {% if items and diferencia|round(0) != 0 and not anulada %}
       <span class="fpd-next-warn"><i class="bi bi-exclamation-triangle-fill"></i> El monto del lote y la suma de las OT difieren en {{ clp(diferencia | abs) }} (detalle abajo).</span>
       {% endif %}
@@ -479,6 +482,35 @@
             <div class="fpd-obs-meta"><i class="bi bi-person-plus"></i> Asignada por <b>{{ it.usuario or '—' }}</b>{% if it.asignada %} · {{ it.asignada }}{% endif %}</div>
             {% if it.observacion %}<div class="fpd-obs-txt"><i class="bi bi-chat-left-text"></i> {{ it.observacion }}</div>
             {% else %}<div class="fpd-obs-txt muted"><i class="bi bi-chat-left"></i> Sin observación</div>{% endif %}
+            {#- ⚖️ 2026-10-12 (Daniel: «primero evaluamos la factura; si está repetida, cuánto saldo tiene; el límite es
+                el punto de equilibrio»). Documento de Random de la OT, de dónde viene, si otras OT lo usan y si lo que
+                se le paga al proveedor cabe en lo que la OT cobra con respaldo de su factura. -#}
+            {% set eq = it.eq %}
+            {% if eq %}
+            {% set eq_lbl = {'ok': ('check-circle-fill', 'Dentro del equilibrio'), 'exento': ('shield-check', '$0 autorizado'),
+                             'autorizada': ('patch-check-fill', 'Pérdida autorizada'), 'sobre_equilibrio': ('exclamation-octagon-fill', 'Sobre el equilibrio'),
+                             'sin_documento': ('file-earmark-x-fill', 'Sin documento'), 'sin_verificar': ('cloud-slash', 'Sin verificar con Random')}.get(eq.estado, ('dot', eq.estado)) %}
+            <div class="fpd-eq fpd-eq-{{ eq.estado }}">
+              <span class="fpd-eq-sem"><i class="bi bi-{{ eq_lbl[0] }}"></i> {{ eq_lbl[1] }}</span>
+              <span class="fpd-eq-doc"><i class="bi bi-receipt"></i> Factura del cliente:
+                {% if eq.documentos %}{% for d in eq.documentos %}<b>{{ d.titulo }}</b>
+                  {%- if d.herencia %} <span class="fpd-eq-her">(misma venta que {{ d.herencia | join(', ') }})</span>{% endif %}
+                  {%- if d.otras %} <span class="fpd-eq-rep">· repetida en {{ d.otras | map(attribute='numero_ot') | join(', ') }}</span>{% endif %}
+                  {{- '; ' if not loop.last }}{% endfor %}
+                {% elif eq.estado == 'exento' %}no aplica{% else %}<b>no ingresada</b>{% endif %}</span>
+              {% if eq.cobra and eq.estado != 'sin_documento' %}
+              <span class="fpd-eq-cta">Cobra {{ clp(eq.cobro_efectivo) }} · se paga {{ clp(eq.pago) }}
+                {%- if eq.exceso %} · <b>{{ clp(eq.exceso) }} sobre el equilibrio</b>{% elif eq.cobro_efectivo > eq.pago %} · gana {{ clp(eq.cobro_efectivo - eq.pago) }}{% endif %}</span>
+              {% endif %}
+              {% if eq.estado == 'sobre_equilibrio' and pendiente and not eq.pendiente_id %}
+              <button type="button" class="btn btn-sm btn-danger fw-bold fpd-mini" onclick="fpdPedirAutEquilibrio({{ it.id }}, '{{ it.numero_ot }}', {{ eq.exceso }})">
+                <i class="bi bi-send"></i> Pedir autorización a Daniel</button>
+              {% elif eq.pendiente_id and not eq.ok %}
+              <a class="fpd-eq-pend" href="/ot/autorizaciones/{{ eq.pendiente_id }}"><i class="bi bi-hourglass-split"></i> Autorización N° {{ eq.pendiente_id }} pedida</a>
+              {% endif %}
+              {% if eq.mensaje and (not eq.ok or eq.estado in ('autorizada', 'sin_verificar')) %}<div class="fpd-eq-msg">{{ eq.mensaje }}</div>{% endif %}
+            </div>
+            {% endif %}
           </div></td>
       </tr>
       {% endfor %}
@@ -1000,10 +1032,43 @@ async function fpdAsignarUna(vid){
     body: JSON.stringify({visita_id: vid, monto: fpdMontoDe(vid)})});
   const d = await r.json().catch(() => ({}));
   const ml = d.monto_lote || {};
-  return {ok: r.ok && d.ok !== false, error: d.error || ('HTTP ' + r.status), codigo: d.error_codigo, aviso: ml.aviso || '', nivel: ml.nivel || 'info'};
+  return {ok: r.ok && d.ok !== false, error: d.error || ('HTTP ' + r.status), codigo: d.error_codigo, aviso: ml.aviso || '', nivel: ml.nivel || 'info',
+          equilibrio: d.equilibrio || []};
+}
+// ⚖️ 2026-10-12 (Daniel: «por ninguna razón pagar dos veces por un servicio… si se pasa del punto de equilibrio no
+// puedes asignarla sin autorización»). El servidor decide; acá solo se explica y se ofrece pedir la autorización.
+function fpdEsCandadoEquilibrio(c){
+  return ['SOBRE_EQUILIBRIO', 'SIN_DOCUMENTO', 'SIN_AUTORIZACION_CERO', 'LECTURA_INCOMPLETA', 'EQUILIBRIO_LOTE'].indexOf(c) >= 0;
+}
+async function fpdMostrarCandado(res){
+  const e = (res.equilibrio || [])[0] || {};
+  if (res.codigo === 'SOBRE_EQUILIBRIO' && e.vid && !e.pendiente_id){
+    const ok = await ilusConfirm({title: 'No se puede asignar ' + (e.numero_ot || 'la OT'), message: res.error,
+      sub: 'Para pagarle igual, Daniel tiene que autorizar esa pérdida. Es la misma autorización de pérdida de la OT: vale hasta el monto que él vea.',
+      okLabel: 'Pedir autorización a Daniel', cancelLabel: 'Cerrar', type: 'warning'});
+    if (ok) await fpdPedirAutEquilibrio(e.vid, e.numero_ot || '', e.exceso || 0);
+    return;
+  }
+  await ilusAlert({title: res.codigo === 'EQUILIBRIO_LOTE' ? 'Hay OT que no se pueden pagar todavía' : 'No se puede asignar',
+                   message: res.error, type: res.codigo === 'LECTURA_INCOMPLETA' ? 'warning' : 'error'});
+}
+async function fpdPedirAutEquilibrio(vid, numero, exceso){
+  const arg = await ilusPrompt({title: 'Pedir autorización a Daniel · ' + numero,
+    message: 'Se le pagaría al proveedor ' + FPD_CLP(exceso) + ' por encima de lo que la OT cobra con respaldo de su factura. Explica por qué hay que pagarle igual.',
+    sub: 'Mínimo 30 caracteres. Daniel lo ve en su celular y autoriza hasta ese monto.',
+    placeholder: 'Ej: el cliente pagó la instalación en otra factura que todavía no se asocia a la OT…', required: true});
+  if (!arg) return;
+  if (arg.trim().length < 30){ ilusToast('El argumento necesita al menos 30 caracteres.', {type: 'warning'}); return; }
+  const r = await fetch('/ot/api/autorizaciones', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({tipo: 'cerrar_con_perdida', visita_id: vid, argumento: arg.trim()})});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d.ok === false){ ilusToast(d.error || 'No se pudo pedir la autorización', {type: d.error_codigo === 'YA_PENDIENTE' ? 'warning' : 'error'}); return; }
+  ilusToast('✓ Autorización pedida a Daniel (N° ' + d.id + ')', {type: 'success'});
+  setTimeout(() => window.location.reload(), 700);
 }
 async function fpdAsignar(vid){
   const res = await fpdAsignarUna(vid);
+  if (!res.ok && fpdEsCandadoEquilibrio(res.codigo)){ await fpdMostrarCandado(res); return; }
   if (!res.ok){ ilusToast(res.error, {type: res.codigo === 'OT_YA_FACTURADA' ? 'warning' : 'error'}); return; }
   ilusToast('✓ OT asignada', {type:'success'});
   fpdGuardarAviso(res.aviso, res.nivel);
@@ -1018,7 +1083,7 @@ async function fpdAsignarSeleccionadas(){
   let bien = 0, ultimoAviso = null; const errores = [];
   for (const vid of ids){
     const res = await fpdAsignarUna(vid);
-    if (res.ok){ bien++; ultimoAviso = res; } else errores.push(res.error);
+    if (res.ok){ bien++; ultimoAviso = res; } else errores.push((res.equilibrio && res.equilibrio[0] && res.equilibrio[0].mensaje) || res.error);
   }
   if (ultimoAviso) fpdGuardarAviso(ultimoAviso.aviso, ultimoAviso.nivel);
   if (errores.length) await ilusAlert({title: bien + ' asignada(s), ' + errores.length + ' con problema', message: errores.join('\n'), type:'warning'});
@@ -1105,7 +1170,10 @@ async function fpdPagar(){
   const r = await fetch(FPD_URL_BASE + '/pagar', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({pago_referencia: ref || ''})});
   const d = await r.json().catch(() => ({}));
-  if (!r.ok || d.ok === false){ ilusToast(d.error || 'No se pudo marcar pagada', {type:'error'}); return; }
+  if (!r.ok || d.ok === false){
+    if (fpdEsCandadoEquilibrio(d.error_codigo)){ await fpdMostrarCandado({codigo: d.error_codigo, error: d.error, equilibrio: d.equilibrio}); return; }
+    ilusToast(d.error || 'No se pudo marcar pagada', {type:'error'}); return;
+  }
   ilusToast('✓ Factura pagada y congelada', {type:'success'});
   setTimeout(() => window.location.reload(), 500);
 }
@@ -1461,6 +1529,25 @@ async function fpdCopiarSolicitud(){
   transform:translateX(-100%);animation:fpdBrillo 1.6s ease-out .6s 1}
 @keyframes fpdBrillo{to{transform:translateX(100%)}}
 @media(prefers-reduced-motion:reduce){.fpd-step.is-activo .fpd-circle,.fpd-step.is-ok .fpd-circle::after,.fpd-bar span,.fpd-step.is-ok .fpd-line,.fpd-celebra::after{animation:none}}
+
+/* ── ⚖️ 2026-10-12 Factura del cliente y punto de equilibrio por OT ── */
+.fpd-eq{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin-top:6px;padding:7px 10px;border-radius:9px;
+  border:1px solid #e5e7eb;background:#fff;font-size:.76rem;color:#334155}
+.fpd-eq-sem{font-size:.66rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em;border-radius:99px;padding:3px 9px;
+  display:inline-flex;align-items:center;gap:4px;background:#f1f5f9;color:#475569;white-space:nowrap}
+.fpd-eq-doc i,.fpd-eq-cta i{color:#94a3b8}
+.fpd-eq-her{color:#64748b}
+.fpd-eq-rep{color:#b45309;font-weight:800}
+.fpd-eq-cta{font-variant-numeric:tabular-nums}
+.fpd-eq-pend{font-size:.72rem;font-weight:800;color:#92400e;text-decoration:none}
+.fpd-eq-msg{flex:1 1 100%;font-size:.74rem;color:#7f1d1d;line-height:1.4}
+.fpd-eq-ok .fpd-eq-sem{background:#dcfce7;color:#166534}
+.fpd-eq-exento .fpd-eq-sem{background:#dbeafe;color:#1e40af}
+.fpd-eq-autorizada .fpd-eq-sem{background:#fff8e1;color:#92400e}
+.fpd-eq-autorizada .fpd-eq-msg{color:#92400e}
+.fpd-eq-sin_verificar .fpd-eq-msg{color:#475569}
+.fpd-eq-sobre_equilibrio,.fpd-eq-sin_documento{border-color:#fecaca;background:#fef2f2}
+.fpd-eq-sobre_equilibrio .fpd-eq-sem,.fpd-eq-sin_documento .fpd-eq-sem{background:#dc2626;color:#fff}
 
 /* ── Montos del lote: franja compacta de 6 ── */
 .fpd-summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:0 0 6px;min-width:0}

@@ -57,8 +57,16 @@
     }
     /* 📒 2026-10-11: cerrar con pérdida: la cuenta de la OT al pedirla (se autoriza hasta esa pérdida). */
     if (a.tipo === 'cerrar_con_perdida' && a.payload && a.payload.perdida) {
-      h += '<div class="pp-arg pp-perdida"><small>La cuenta de la OT al pedirla</small>Cobramos ' + clp(a.payload.cobre) +
-        ' · nos cobraron ' + clp(a.payload.me_cobraron) + ' · <b>se pierden ' + clp(a.payload.perdida) + '</b></div>';
+      /* ⚖️ 2026-10-12: si viene del pago al proveedor, se ve contra lo que la factura respalda (punto de equilibrio). */
+      if (a.payload.pago_proveedor !== undefined) {
+        h += '<div class="pp-arg pp-perdida"><small>Pago al proveedor sobre el punto de equilibrio</small>Se le paga ' +
+          clp(a.payload.pago_proveedor) + ' al proveedor · la OT cobra ' + clp(a.payload.cobro_efectivo) +
+          ' con respaldo de su factura' + (a.payload.saldo_usado_por_otras ? ' (' + clp(a.payload.saldo_usado_por_otras) +
+          ' de su factura ya lo usaron otras OT)' : '') + ' · <b>se pierden ' + clp(a.payload.perdida) + '</b></div>';
+      } else {
+        h += '<div class="pp-arg pp-perdida"><small>La cuenta de la OT al pedirla</small>Cobramos ' + clp(a.payload.cobre) +
+          ' · nos cobraron ' + clp(a.payload.me_cobraron) + ' · <b>se pierden ' + clp(a.payload.perdida) + '</b></div>';
+      }
     }
     if (a.constancia) h += '<div class="pp-const"><b>' + esc(a.estado_txt) + '.</b> ' + esc(a.constancia) + '</div>';
     if (a.estado === 'aprobada' && a.visita_creada_id) h += '<div class="pp-const">La OT creada: <a href="/ot/' + a.visita_creada_id + '"><b>abrirla</b></a></div>';

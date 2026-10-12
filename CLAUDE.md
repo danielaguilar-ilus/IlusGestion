@@ -958,6 +958,17 @@ de la sesión, nunca del navegador):
 
 ---
 
+## ⚖️ REGLA #29 — Pago al proveedor: documento, saldo de la factura y punto de equilibrio (no negociable)
+
+**Pedido explícito de Daniel (2026-10-12):** «el sistema por ninguna razón debe permitir que paguemos dos veces por un servicio… primero evaluamos la factura; si está repetida, evaluamos cuánto tiene de saldo; y el límite es el punto de equilibrio, donde no ganemos ni perdamos por el servicio. Si se pasa de allí, no puedes asignarla sin autorización». El documento de Random viaja de módulo en módulo (ticket → cotización → OT → factura de proveedor) y se controla en cada uno.
+
+- **Una sola función decide:** `_fac_equilibrio_ot(vid, pago)` en `app.py` (cuenta pura en `ot_saldo_servicio.equilibrio_pago` / `reduccion_por_saldo`). En orden: 1) documento de Random ingresado (factura, boleta o nota de venta, vía `_ot_puerta_documento`) o $0 autorizado; 2) si la factura está **repetida** en otras OT, cuánto saldo le queda a esta (prioridad: las OT ya pagadas al proveedor y las anteriores); 3) lo que se le paga al proveedor (técnico + despacho; productos/repuestos aparte) ≤ lo que la OT cobra con respaldo de su factura.
+- **Candado en los caminos que pagan:** asignar a un lote, «Solicitar OC», «Marcar pagado sin factura» y «Marcar pagada» (`_fac_equilibrio_rechazo` → 409 antes de escribir). Los lotes ya pagados no se tocan; «Cerrar histórico» (reconoce pagos ya hechos fuera del sistema) queda fuera.
+- **Decisiones de Daniel (12-oct):** la autorización es la **misma** de pérdida del cierre (`cerrar_con_perdida`, válida hasta el monto que él vio; la solicitud toma la mayor entre la pérdida del cierre y la del pago); una OT en $0 pasa **si ese $0 está autorizado**; Random caído = no se paga a ciegas (se reintenta).
+- La ficha del lote muestra en cada OT su factura, de qué venta viene (nota de venta ↔ factura), si está repetida y el equilibrio, con «Pedir autorización a Daniel». Pruebas: `tests/test_facprov_equilibrio.py`.
+
+---
+
 ## 🎨 REGLA #27 — Las skills de diseño externas (Impeccable, UI/UX Pro Max, SkillUI, Playwright) se SOMETEN a las reglas del proyecto
 
 **Pedido explícito de Daniel (2026-10-09): «la UI/UX debe someterse a las reglas del proyecto».**
