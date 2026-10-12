@@ -520,6 +520,25 @@ def _ot_txt(u):
     return "%s%s" % (u.get("numero_ot") or ("OT #%s" % u.get("vid")), (" (" + u["cliente"] + ")") if u.get("cliente") else "")
 
 
+def desglose_documento(productos, servicio, despacho):
+    """🧾 2026-10-12 (Daniel: «diferenciando la parte de los productos y la otra de los costos, algo bien entendible»).
+    Qué trae el documento, separado: productos (equipos, líneas que no son ZZ: no se cobran en la OT), instalación o
+    servicio (ZZ) y despacho (ZZENVIO). `productos`: {monto, lineas}; `servicio`/`despacho`: {total, hay_lineas}.
+    Devuelve {productos, n_productos, servicio, despacho, texto}."""
+    p = productos or {}
+    pm, pn = _entero(p.get("monto")), _entero(p.get("lineas"))
+    sv, dp = _entero((servicio or {}).get("total")), _entero((despacho or {}).get("total"))
+    partes = []
+    if pn:
+        partes.append("productos %s (%d %s)" % (clp(pm), pn, "línea" if pn == 1 else "líneas"))
+    partes.append(("instalación o servicio %s" % clp(sv)) if sv else "sin instalación ni servicio")
+    partes.append(("despacho %s" % clp(dp)) if dp else "sin despacho")
+    texto = "Este documento trae " + _lista_humana(partes) + "."
+    if pn:
+        texto += " Los productos son venta de equipos: no se cobran en la OT. La OT cobra solo el servicio y el despacho."
+    return {"productos": pm, "n_productos": pn, "servicio": sv, "despacho": dp, "texto": texto}
+
+
 def aviso_documento(clave, titulo, servicio, despacho, usos, familia, leido=True):
     """El aviso que ve la persona al elegir un documento para una OT.
     `clave`: (tido, nudo) canónica del documento elegido; `titulo`: «FCV 11439»; `servicio`/`despacho`: {total, usado,

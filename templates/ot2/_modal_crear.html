@@ -6600,7 +6600,19 @@ window.OT2C = (function(){
       '<div><b>'+esc(av.semaforo.titulo)+'</b>'+esc(av.semaforo.texto)+'</div></div>'+
       (av.avisos || []).map(function(a){
         return '<div class="o2m-sem-av '+esc(a.nivel)+'"><i class="bi bi-diagram-2-fill"></i><span>'+esc(a.texto)+'</span></div>';
-      }).join('');
+      }).join('') + _o2mDesgloseHtml(av.desglose);
+  }
+  /* 🧾 2026-10-12 (Daniel: «diferenciando la parte de los productos y la otra de los costos, algo bien entendible»):
+     qué trae el documento, en tres casillas — productos (no se cobran en la OT), servicio y despacho (sí). */
+  function _o2mDesgloseHtml(dg){
+    if (!dg) return '';
+    var clp = function(v){ return '$' + Math.round(Number(v) || 0).toLocaleString('es-CL'); };
+    var c = function(cls, lbl, val, sub){ return '<div class="o2m-dg-c '+cls+'"><span>'+lbl+'</span><b>'+val+'</b><small>'+sub+'</small></div>'; };
+    return '<div class="o2m-dg" role="note">' +
+      c('prod', 'Productos', dg.n_productos ? clp(dg.productos) : '—', dg.n_productos ? (dg.n_productos + (dg.n_productos === 1 ? ' línea' : ' líneas') + ' · no se cobran en la OT') : 'no trae equipos') +
+      c('serv', 'Instalación o servicio', dg.servicio ? clp(dg.servicio) : '—', dg.servicio ? 'lo cobra la OT' : 'no trae servicio') +
+      c('desp', 'Despacho', dg.despacho ? clp(dg.despacho) : '—', dg.despacho ? 'lo cobra la OT' : 'no trae despacho') +
+      '</div>';
   }
   function _o2mFinSaldoCombinar(lista){
     var cobro = {};

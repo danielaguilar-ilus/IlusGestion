@@ -146,7 +146,7 @@
       {% elif pagada and activo in (2, 3) %}<b>Pagada, pero falta {{ 'el N° de orden de compra' if activo == 2 else 'el documento del proveedor' }} para cerrar el registro.</b>
       {% else %}<b>Ciclo completo: pagada el {{ factura.pagada_at | chile_fmt('%d/%m/%Y') if factura.pagada_at else '—' }} por {{ factura.pagada_por or '—' }}.</b>{% endif %}
       {% if eq_sobre and pendiente %}
-      <span class="fpd-next-warn"><i class="bi bi-exclamation-octagon-fill"></i> {{ eq_sobre }} OT {{ 'no se puede' if eq_sobre == 1 else 'no se pueden' }} pagar todavía: sin documento o sobre el punto de equilibrio (detalle en cada OT).</span>
+      <span class="fpd-next-warn"><i class="bi bi-exclamation-octagon-fill"></i> {{ eq_sobre }} OT {{ 'no se puede' if eq_sobre == 1 else 'no se pueden' }} pagar todavía: su factura ya la usó otra OT o se pasa del punto de equilibrio (detalle en cada OT).</span>
       {% endif %}
       {% if items and diferencia|round(0) != 0 and not anulada %}
       <span class="fpd-next-warn"><i class="bi bi-exclamation-triangle-fill"></i> El monto del lote y la suma de las OT difieren en {{ clp(diferencia | abs) }} (detalle abajo).</span>
@@ -324,7 +324,7 @@
      mirando el otro lado del negocio: lo que ILUS le cobró a SU cliente,
      al lado de lo que esta factura le paga al proveedor. #}
   <div class="fpd-cell" id="fpdCellCob"><div class="l">Cobrado a cliente</div><div class="v">{{ clp(total_cobrado_cliente) }}</div>
-    <div class="s">lo que ILUS cobró por estas OT</div></div>
+    <div class="s">con respaldo de su factura{% if total_cobrado_declarado is defined and (total_cobrado_declarado - total_cobrado_cliente)|round(0) != 0 %} · declarado {{ clp(total_cobrado_declarado) }}{% endif %}</div></div>
   {% set mg_clase = 'muted' if not items else ('pos' if margen_total > 0 else ('neg' if margen_total < 0 else 'warn')) %}
   <div class="fpd-cell sem-{{ mg_clase }}" id="fpdCellMg">
     <div class="l"><span class="fpd-dot"></span>Margen del lote</div>
@@ -445,6 +445,10 @@
           <div class="fp-mt">{{ clp(it.cobrado_cliente) }}</div>
           <div class="fp-ml"><em title="Cobrado por la instalación">Inst.</em><span>{{ clp(it.cobrado_cliente_serv) if it.cobrado_cliente_serv else '—' }}</span></div>
           <div class="fp-ml"><em title="Cobrado por el despacho">Desp.</em><span>{{ clp(it.cobrado_cliente_envio) if it.cobrado_cliente_envio else '—' }}</span></div>
+          {# ⚖️ 2026-10-12: el margen usa lo que respalda la factura; si es menos que lo declarado, se dice acá. #}
+          {% if it.cobrado_respaldado is not none and (it.cobrado_respaldado - (it.cobrado_cliente or 0))|round(0) != 0 %}
+          <div class="fp-sub fpd-respaldo">con respaldo de su factura: <b>{{ clp(it.cobrado_respaldado) }}</b></div>
+          {% endif %}
         </div></td>
         <td class="m" data-label="Margen">
           {# Contra lo que cobra ESTA factura (margen_fila), para que la suma
@@ -489,7 +493,7 @@
             {% if eq %}
             {% set eq_lbl = {'ok': ('check-circle-fill', 'Dentro del equilibrio'), 'exento': ('shield-check', '$0 autorizado'),
                              'autorizada': ('patch-check-fill', 'Pérdida autorizada'), 'sobre_equilibrio': ('exclamation-octagon-fill', 'Sobre el equilibrio'),
-                             'sin_documento': ('file-earmark-x-fill', 'Sin documento'), 'sin_verificar': ('cloud-slash', 'Sin verificar con Random')}.get(eq.estado, ('dot', eq.estado)) %}
+                             'sin_documento': ('file-earmark-x', 'Sin documento: se paga igual'), 'sin_verificar': ('cloud-slash', 'Sin verificar con Random')}.get(eq.estado, ('dot', eq.estado)) %}
             <div class="fpd-eq fpd-eq-{{ eq.estado }}">
               <span class="fpd-eq-sem"><i class="bi bi-{{ eq_lbl[0] }}"></i> {{ eq_lbl[1] }}</span>
               <span class="fpd-eq-doc"><i class="bi bi-receipt"></i> Factura del cliente:
@@ -508,7 +512,7 @@
               {% elif eq.pendiente_id and not eq.ok %}
               <a class="fpd-eq-pend" href="/ot/autorizaciones/{{ eq.pendiente_id }}"><i class="bi bi-hourglass-split"></i> Autorización N° {{ eq.pendiente_id }} pedida</a>
               {% endif %}
-              {% if eq.mensaje and (not eq.ok or eq.estado in ('autorizada', 'sin_verificar')) %}<div class="fpd-eq-msg">{{ eq.mensaje }}</div>{% endif %}
+              {% if eq.mensaje and (not eq.ok or eq.estado in ('autorizada', 'sin_verificar', 'sin_documento')) %}<div class="fpd-eq-msg">{{ eq.mensaje }}</div>{% endif %}
             </div>
             {% endif %}
           </div></td>
@@ -530,6 +534,9 @@
         </div></td>
         <td class="m" data-label="Cobrado"><div class="fp-mstack">
           <div class="fp-mt">{{ clp(total_cobrado_cliente) }}</div>
+          {% if total_cobrado_declarado is defined and (total_cobrado_declarado - total_cobrado_cliente)|round(0) != 0 %}
+          <div class="fp-sub" style="color:#fcd34d;font-weight:800">con respaldo · declarado {{ clp(total_cobrado_declarado) }}</div>
+          {% endif %}
           <div class="fp-ml"><em title="Cobrado por la instalación">Inst.</em><span>{{ clp(tot.cserv) }}</span></div>
           <div class="fp-ml"><em title="Cobrado por el despacho">Desp.</em><span>{{ clp(tot.cenvio) }}</span></div>
         </div></td>
@@ -1531,6 +1538,8 @@ async function fpdCopiarSolicitud(){
 @media(prefers-reduced-motion:reduce){.fpd-step.is-activo .fpd-circle,.fpd-step.is-ok .fpd-circle::after,.fpd-bar span,.fpd-step.is-ok .fpd-line,.fpd-celebra::after{animation:none}}
 
 /* ── ⚖️ 2026-10-12 Factura del cliente y punto de equilibrio por OT ── */
+.fpd-respaldo{color:#b45309;font-weight:700;text-align:right}
+.fpd-respaldo b{color:#b45309}
 .fpd-eq{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin-top:6px;padding:7px 10px;border-radius:9px;
   border:1px solid #e5e7eb;background:#fff;font-size:.76rem;color:#334155}
 .fpd-eq-sem{font-size:.66rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em;border-radius:99px;padding:3px 9px;
@@ -1546,8 +1555,11 @@ async function fpdCopiarSolicitud(){
 .fpd-eq-autorizada .fpd-eq-sem{background:#fff8e1;color:#92400e}
 .fpd-eq-autorizada .fpd-eq-msg{color:#92400e}
 .fpd-eq-sin_verificar .fpd-eq-msg{color:#475569}
-.fpd-eq-sobre_equilibrio,.fpd-eq-sin_documento{border-color:#fecaca;background:#fef2f2}
-.fpd-eq-sobre_equilibrio .fpd-eq-sem,.fpd-eq-sin_documento .fpd-eq-sem{background:#dc2626;color:#fff}
+.fpd-eq-sobre_equilibrio{border-color:#fecaca;background:#fef2f2}
+.fpd-eq-sobre_equilibrio .fpd-eq-sem{background:#dc2626;color:#fff}
+.fpd-eq-sin_documento{border-color:#fde68a;background:#fffbeb}
+.fpd-eq-sin_documento .fpd-eq-sem{background:#fff8e1;color:#92400e}
+.fpd-eq-sin_documento .fpd-eq-msg{color:#92400e}
 
 /* ── Montos del lote: franja compacta de 6 ── */
 .fpd-summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:0 0 6px;min-width:0}

@@ -101,10 +101,12 @@ class TestMotorDeLaOT(unittest.TestCase):
         self.assertEqual(r["estado"], "ok")
         self.assertEqual(r["documentos"][0]["titulo"], "FCV 11439")
 
-    def test_sin_documento_no_se_paga(self):
+    def test_sin_documento_se_paga_igual_y_avisa(self):
+        # Daniel 12-oct: «no es culpa del proveedor si tiene o no factura»; el documento se exige al crear la OT.
         r = _motor(puerta={"ok": False, "via": None, "falta": "documento"})(50)
-        self.assertFalse(r["ok"])
-        self.assertEqual(r["code"], "SIN_DOCUMENTO")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["estado"], "sin_documento")
+        self.assertIn("no es su responsabilidad", r["mensaje"])
 
     def test_con_nota_de_venta_si_se_paga(self):
         r = _motor(puerta={"ok": False, "via": None, "falta": "factura"})(50)
@@ -136,6 +138,7 @@ class TestMotorDeLaOT(unittest.TestCase):
         self.assertEqual(_motor(fin=f0, puerta={"ok": True, "via": "cobro_cero"})(50)["estado"], "exento")
         r = _motor(fin=f0, puerta={"ok": False, "via": None, "falta": "autorizacion_cobro_cero"})(50)
         self.assertEqual(r["code"], "SIN_AUTORIZACION_CERO")
+        self.assertTrue(r["ok"])                     # tampoco es culpa del proveedor: se avisa, no frena
 
     def test_random_caido_no_paga_a_ciegas(self):
         r = _motor(lectura_falla=True)(50)
@@ -148,6 +151,76 @@ class TestMotorDeLaOT(unittest.TestCase):
         r = _motor(cap=False)(50, solo_cache=True)
         self.assertTrue(r["ok"])
         self.assertEqual(r["estado"], "sin_verificar")
+
+
+class TestMargenConRespaldo(unittest.TestCase):
+    """Daniel: «no nos podemos equivocar para tener los costos controlados, es mi promesa de pago». El margen del lote
+    (fila, totales, KPI y Excel) usa lo cobrado CON RESPALDO de la factura, no lo declarado."""
+
+    def _resp(self, it):
+        return _exec("_mfp_cobro_respaldado", {})(it)
+
+    def test_factura_ya_usada_por_otra_ot_no_cuenta_como_cobrado(self):
+        it = {"cobrado_cliente": 85000, "eq": {"estado": "sobre_equilibrio", "cobro_efectivo": 0}}
+        self.assertEqual(self._resp(it), 0)
+
+    def test_dentro_del_equilibrio_cuenta_lo_declarado(self):
+        it = {"cobrado_cliente": 120000, "eq": {"estado": "ok", "cobro_efectivo": 120000}}
+        self.assertEqual(self._resp(it), 120000)
+
+    def test_sin_documento_no_hay_cobro_respaldado(self):
+        self.assertEqual(self._resp({"cobrado_cliente": 90000, "eq": {"estado": "sin_documento"}}), 0)
+
+    def test_sin_verificar_queda_lo_declarado(self):
+        self.assertEqual(self._resp({"cobrado_cliente": 90000, "eq": {"estado": "sin_verificar"}}), 90000)
+
+    def test_los_totales_del_lote_suman_lo_respaldado(self):
+        tot = _exec("_mfp_totales_lote", {})(190000, [
+            {"sugerido": 70000, "fac_monto": None, "cobrado_cliente": 120000, "cobrado_respaldado": 120000},
+            {"sugerido": 60000, "fac_monto": None, "cobrado_cliente": 85000, "cobrado_respaldado": 0}])
+        self.assertEqual(tot["total_cobrado_cliente"], 120000)
+        self.assertEqual(tot["total_cobrado_declarado"], 205000)
+        self.assertEqual(tot["margen_filas"], 120000 - 130000)        # pierde: la segunda OT no tiene respaldo
+
+    def test_fila_y_excel_usan_la_misma_cuenta(self):
+        it = _fuente("_mfp_items")
+        self.assertIn('it["cobrado_respaldado"] = _mfp_cobro_respaldado(it)', it)
+        self.assertIn('it["margen_fila"] = it["cobrado_respaldado"] - _base', it)
+        x = _fuente("_mfp_excel_lote")
+        self.assertIn('"Cobrado con respaldo de su factura"', x)
+        self.assertIn("f\"=SUM({rng('V')})\"", x)
+        t = _leer("templates/mantenciones/factura_proveedor_detalle.html")
+        self.assertIn("con respaldo de su factura", t)
+
+
+class TestDesgloseDelDocumento(unittest.TestCase):
+    def test_productos_servicio_y_despacho_separados(self):
+        d = S.desglose_documento({"monto": 1500000, "lineas": 3}, {"total": 120000}, {"total": 30000})
+        self.assertEqual((d["productos"], d["servicio"], d["despacho"]), (1500000, 120000, 30000))
+        self.assertIn("no se cobran en la OT", d["texto"])
+
+    def test_el_asistente_y_la_ficha_lo_muestran(self):
+        self.assertIn("_o2mDesgloseHtml(av.desglose)", _leer("templates/ot2/_modal_crear.html"))
+        self.assertIn("av.desglose.texto", _leer("static/ot_fin_motor.js"))
+        self.assertIn("_saldo.desglose_documento(", _fuente("_ot_saldo_aviso"))
+
+
+class TestSoloEquipoInterno(unittest.TestCase):
+    """Daniel 12-oct: «los costos solo se pueden ver desde el equipo interno; excluye a los técnicos, tanto internos
+    como externos» (REGLA #19 y #26). Doble candado en cada camino: decorador y permiso que nunca deja pasar a un técnico."""
+
+    def test_rutas_del_lote_y_del_pago_cierran_a_los_tecnicos(self):
+        from tests.test_ot_saldo_servicio import _decoradores
+        for f in ("mant_factura_proveedor_detalle", "mant_factura_proveedor_excel", "mant_factura_proveedor_asignar",
+                  "mant_factura_proveedor_pagar", "mant_facturas_proveedor_solicitar_oc",
+                  "mant_facturas_proveedor_marcar_pagado_sin_factura", "ot_aut_api_crear"):
+            self.assertIn("_no_tecnico", _decoradores(f), f)
+        self.assertIn("if _es_rol_tecnico(u):", _fuente("_facprov_puede"))
+
+    def test_el_desglose_y_el_saldo_no_se_entregan_a_un_tecnico(self):
+        src = _fuente("ot_api_saldo_servicio_doc")
+        self.assertIn("if _es_rol_tecnico():", src)
+        self.assertLess(src.index("if _es_rol_tecnico():"), src.index("_ot_saldo_doc("))
 
 
 class TestCableado(unittest.TestCase):
@@ -169,7 +242,8 @@ class TestCableado(unittest.TestCase):
         self.assertIn("pago_proveedor", src)
 
     def test_la_ficha_del_lote_lo_muestra(self):
-        self.assertIn("_fac_equilibrio_ot(it[\"id\"], pago=_pago, solo_cache=True)", _fuente("mant_factura_proveedor_detalle"))
+        self.assertIn('_fac_equilibrio_ot(it["id"], pago=_base, solo_cache=True)', _fuente("_mfp_items"))
+        self.assertIn('eq_sobre = sum(1 for it in items if it.get("eq") and not it["eq"].get("ok"))', _fuente("mant_factura_proveedor_detalle"))
         t = _leer("templates/mantenciones/factura_proveedor_detalle.html")
         self.assertIn('class="fpd-eq fpd-eq-{{ eq.estado }}"', t)
         self.assertIn("function fpdPedirAutEquilibrio(", t)

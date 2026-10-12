@@ -726,14 +726,15 @@
       var av = r.ok && r.j && r.j.aviso;
       if (!av || !av.semaforo) return true;
       var hayAmbar = (av.avisos || []).some(function (a) { return a.nivel === 'ambar'; });
+      var dg = (av.desglose && av.desglose.texto) ? ' ' + av.desglose.texto : '';
       if (!av.alerta && av.semaforo.nivel !== 'ambar' && !hayAmbar) {
-        toast(av.semaforo.titulo + ': ' + av.semaforo.texto, av.semaforo.nivel === 'verde' ? 'success' : 'info');
+        toast(av.semaforo.titulo + ': ' + av.semaforo.texto + dg, av.semaforo.nivel === 'verde' ? 'success' : 'info');
         return true;
       }
       return global.ilusConfirm({
         title: av.semaforo.titulo + ' · ' + (r.j.titulo || (tipo + ' ' + n)),
         message: av.semaforo.texto,
-        sub: (av.avisos || []).map(function (a) { return a.texto; }).join(' '),
+        sub: (av.avisos || []).map(function (a) { return a.texto; }).join(' ') + dg,
         okLabel: 'Agregar de todas formas', cancelLabel: 'No agregar', danger: av.semaforo.nivel === 'rojo'
       });
     });

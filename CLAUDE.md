@@ -966,6 +966,9 @@ de la sesión, nunca del navegador):
 - **Candado en los caminos que pagan:** asignar a un lote, «Solicitar OC», «Marcar pagado sin factura» y «Marcar pagada» (`_fac_equilibrio_rechazo` → 409 antes de escribir). Los lotes ya pagados no se tocan; «Cerrar histórico» (reconoce pagos ya hechos fuera del sistema) queda fuera.
 - **Decisiones de Daniel (12-oct):** la autorización es la **misma** de pérdida del cierre (`cerrar_con_perdida`, válida hasta el monto que él vio; la solicitud toma la mayor entre la pérdida del cierre y la del pago); una OT en $0 pasa **si ese $0 está autorizado**; Random caído = no se paga a ciegas (se reintenta).
 - La ficha del lote muestra en cada OT su factura, de qué venta viene (nota de venta ↔ factura), si está repetida y el equilibrio, con «Pedir autorización a Daniel». Pruebas: `tests/test_facprov_equilibrio.py`.
+- **Sin documento NO frena el pago al proveedor** (Daniel, 12-oct: «no es culpa del proveedor si tiene o no factura»): se avisa en ámbar y la OT queda por regularizar. El documento se exige al CREAR la OT (REGLA #24): heredado del ticket o la cotización, o elegido de Random en el asistente, que muestra separado **productos** (no se cobran en la OT) / **servicio** / **despacho** (`desglose_documento`).
+- **El margen del lote usa lo cobrado CON RESPALDO de la factura** (`_mfp_cobro_respaldado`, en `_mfp_items`/`_mfp_totales_lote`: fila, totales, KPI y Excel con la misma cuenta). Factura ya usada por otra OT o sin documento = no cuenta como cobrado; lo declarado queda a la vista aparte. Daniel: «es mi promesa de pago, no nos podemos equivocar».
+- **Solo equipo interno:** todo esto es costo y margen: ningún técnico (interno, elevado ni externo) lo ve (REGLA #19/#26; doble candado `@_no_tecnico` + `_facprov_puede`, y `/ot/api/saldo-servicio` responde 403).
 
 ---
 

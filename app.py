@@ -112021,6 +112021,19 @@ def _ot_saldo_doc(tido, nudo, excluir_vid=None, zz_lineas=None, cliente_rut=None
             header, zz_lineas = None, []
         else:
             header, zz_lineas, _tot = _erp_zz_lineas(tido, nudo)
+            # 🧾 2026-10-12 (Daniel: «diferenciando la parte de los productos y la otra de los costos, algo bien
+            # entendible»): lo que el documento trae en productos (líneas que no son ZZ). Solo informa; el saldo es
+            # de las líneas de servicio y despacho.
+            _pm, _pn = 0, 0
+            for _ln in (_lin0 or []):
+                if (str(_ln.get("sku") or "")).strip().upper().startswith("ZZ"):
+                    continue
+                try:
+                    _pm += int(round(float(_ln.get("vaneli") or _ln.get("VANELI") or _ln.get("valor") or 0)))
+                    _pn += 1
+                except (TypeError, ValueError):
+                    continue
+            res["productos"] = {"monto": _pm, "lineas": _pn}
         if not header:
             res["leido"] = False
             zz_lineas = []
@@ -112428,8 +112441,11 @@ def _ot_saldo_aviso(s):
             k = _saldo.clave_doc(f[0], f[1])
             tu, nu = _ot_doc_real_a_usuario(*_ot_saldo_real(k))
             fam.append((k, f"{tu} {nu}".strip()))
-        return _saldo.aviso_documento(tuple(s.get("clave") or ("", "")), s.get("titulo") or "", s.get("servicio"),
-                                      s.get("despacho"), s.get("usos"), fam, leido=bool(s.get("leido")))
+        av = _saldo.aviso_documento(tuple(s.get("clave") or ("", "")), s.get("titulo") or "", s.get("servicio"),
+                                    s.get("despacho"), s.get("usos"), fam, leido=bool(s.get("leido")))
+        if s.get("leido") and s.get("productos") is not None:
+            av["desglose"] = _saldo.desglose_documento(s.get("productos"), s.get("servicio"), s.get("despacho"))
+        return av
     except Exception as e:
         print(f"[ot-saldo] aviso: {type(e).__name__}: {e}", flush=True)
         return None
@@ -113692,20 +113708,22 @@ def _fac_equilibrio_ot(vid, pago=None, solo_cache=False):
     doc_ok = bool(puerta.get("ok")) or out["nota_venta"]
 
     # $0 (garantía, contrato, interna): pasa si ese $0 está autorizado (decisión de Daniel, 12-oct).
+    # 🔁 2026-10-12 (Daniel: «no es culpa del proveedor si tiene o no factura»): que la OT no tenga su documento o su
+    # $0 autorizado NO frena el pago al proveedor; se avisa para que la OT lo regularice. Lo que sí frena es pagar
+    # dos veces con la misma factura o pasarse del punto de equilibrio. El documento se exige al CREAR la OT (REGLA #24).
     if not fin.get("cobra"):
         if puerta.get("ok"):
             out.update(estado="exento", mensaje="%s no se le cobra al cliente (%s): el $0 está autorizado, se le paga "
                                                  "al proveedor igual." % (num, (fin.get("cobertura_txt") or "sin cobro").lower()))
         else:
-            out.update(ok=False, code="SIN_AUTORIZACION_CERO", estado="sin_documento",
-                       mensaje="%s no se le cobra al cliente y ese $0 no está autorizado: pide la autorización del $0 "
-                               "en la OT antes de pagarle al proveedor." % num)
+            out.update(estado="sin_documento", code="SIN_AUTORIZACION_CERO",
+                       mensaje="%s no se le cobra al cliente y ese $0 no está autorizado. Se le paga al proveedor igual "
+                               "(no es su responsabilidad); la OT queda pendiente de regularizar su $0." % num)
         return out
     if not doc_ok:
-        out.update(ok=False, code="SIN_DOCUMENTO", estado="sin_documento",
-                   mensaje="%s no tiene ingresada su factura, boleta o nota de venta de Random: sin documento no se "
-                           "sabe qué se cobró ni cuánto saldo queda. Agrégala en la OT (o pide la autorización de "
-                           "Daniel para cerrarla sin documento)." % num)
+        out.update(estado="sin_documento", code="SIN_DOCUMENTO",
+                   mensaje="%s no tiene ingresada su factura, boleta o nota de venta de Random. Se le paga al proveedor "
+                           "igual (no es su responsabilidad); la OT queda pendiente de regularizar su documento." % num)
         return out
     pin = _fac_perdida_info(vid, fin)
     out.update(autorizada=pin.get("autorizada") or 0, autorizada_por=pin.get("autorizada_por"),
@@ -131645,11 +131663,34 @@ def _mfp_items(fid):
         # El margen de la fila se compara con lo que cobra ESTA factura (no
         # con el costo declarado) para que la suma cuadre con el KPI de arriba.
         _base = float(it["fac_monto"]) if it.get("fac_monto") is not None else float(it["sugerido"] or 0)
-        it["margen_fila"] = float(it["cobrado_cliente"] or 0) - _base
-        it["margen_fila_pct"] = (it["margen_fila"] / it["cobrado_cliente"] * 100.0) if (it.get("cobrado_cliente") or 0) > 0 else None
+        # ⚖️ 2026-10-12 (Daniel: «no nos podemos equivocar para tener los costos controlados, es mi promesa de pago»):
+        # el margen usa lo cobrado CON RESPALDO de su factura (_fac_equilibrio_ot): si la factura ya la usó otra OT, o
+        # la OT no tiene documento, lo declarado no cuenta como cobrado. Lo declarado queda a la vista aparte.
+        try:
+            it["eq"] = _fac_equilibrio_ot(it["id"], pago=_base, solo_cache=True)
+        except Exception as _e_eq:
+            print(f"[facprov] equilibrio vid={it.get('id')}: {type(_e_eq).__name__}", flush=True)
+            it["eq"] = None
+        it["cobrado_respaldado"] = _mfp_cobro_respaldado(it)
+        it["margen_fila"] = it["cobrado_respaldado"] - _base
+        it["margen_fila_pct"] = (it["margen_fila"] / it["cobrado_respaldado"] * 100.0) if it["cobrado_respaldado"] > 0 else None
         it["asignada"] = chile_fmt_filter(r.get("fac_asignada_at"), "%d/%m/%Y %H:%M") if r.get("fac_asignada_at") else ""
         out.append(it)
     return out
+
+
+def _mfp_cobro_respaldado(it):
+    """⚖️ 2026-10-12: lo que una OT del lote cobra con RESPALDO de su factura de Random. Con la factura leída: el cobro
+    efectivo del punto de equilibrio (lo declarado menos el saldo que ya usaron otras OT). Sin documento: $0 (no hay
+    factura que lo respalde). Sin poder verificar con Random: lo declarado (la fila lo avisa). No se cobra: $0."""
+    eq = it.get("eq") or {}
+    declarado = float(it.get("cobrado_cliente") or 0)
+    est = eq.get("estado")
+    if not eq or est in ("sin_verificar", None):
+        return declarado
+    if est in ("sin_documento", "exento"):
+        return 0.0
+    return min(declarado, float(eq.get("cobro_efectivo") or 0))
 
 
 def _mfp_por_facturar(limit=None, proveedor=None, prov_id=None, ids=None, desde=None, hasta=None,
@@ -132553,10 +132594,14 @@ def _mfp_totales_lote(monto_total, items):
     la diferencia es monto del lote − suma de las OT; el margen del lote, cobrado al cliente − monto del lote."""
     monto = float(monto_total or 0)
     asignado = sum(float(i["sugerido"] if i.get("fac_monto") is None else i["fac_monto"]) for i in items)
-    cobrado = sum(float(i.get("cobrado_cliente") or 0) for i in items)
+    # ⚖️ 2026-10-12: lo cobrado que cuenta es el que respalda la factura de cada OT (_mfp_cobro_respaldado).
+    cobrado = sum(float(i["cobrado_respaldado"] if i.get("cobrado_respaldado") is not None else (i.get("cobrado_cliente") or 0))
+                  for i in items)
+    declarado = sum(float(i.get("cobrado_cliente") or 0) for i in items)
     return {
         "monto_total": monto, "total_asignado": asignado, "diferencia": monto - asignado,
-        "total_cobrado_cliente": cobrado, "margen_total": cobrado - monto, "margen_filas": cobrado - asignado,
+        "total_cobrado_cliente": cobrado, "total_cobrado_declarado": declarado,
+        "margen_total": cobrado - monto, "margen_filas": cobrado - asignado,
         "n_ot": len(items),
         "n_no_cobran": sum(1 for i in items if i.get("es_garantia")),
         "n_sin_cerrar": sum(1 for i in items if i.get("no_cerrada")),
@@ -132660,6 +132705,17 @@ def _mfp_proveedor_canon(factura, items, fid):
     return canon, canon_rut, canon_id
 
 
+def _mfp_eq_texto(eq):
+    """El punto de equilibrio de una OT en una frase (Excel del lote)."""
+    if not eq:
+        return "Sin verificar"
+    lbl = {"ok": "Dentro del equilibrio", "exento": "$0 autorizado", "autorizada": "Pérdida autorizada por Daniel",
+           "sobre_equilibrio": "SOBRE EL EQUILIBRIO", "sin_documento": "Sin documento (se paga igual)",
+           "sin_verificar": "Sin verificar con Random"}.get(eq.get("estado"), eq.get("estado") or "")
+    docs = "; ".join(d.get("titulo") or "" for d in (eq.get("documentos") or []))
+    return lbl + (" · " + docs if docs else "") + ((" · " + eq["mensaje"]) if eq.get("mensaje") and eq.get("estado") != "ok" else "")
+
+
 def _mfp_excel_lote(factura, items, eventos, prov_nombre, prov_rut, meta):
     """Detalle de UN lote en Excel (3 hojas): Resumen (con fórmulas sobre la hoja de OT), OT del lote (una fila
     por OT con lo mismo que muestra la pantalla de detalle) e Historial (mant_logs). Devuelve un BytesIO.
@@ -132709,8 +132765,9 @@ def _mfp_excel_lote(factura, items, eventos, prov_nombre, prov_rut, meta):
     cols_o = ["N° OT", "Fecha", "Técnico", "Proveedor de la OT", "Cliente", "Tipo de trabajo", "Cobertura",
               "Estado", "N° de anexo", "Anexo firmado", "Pago instalación", "Pago despacho",
               "Total que paga esta factura", "Cobrado instalación", "Cobrado despacho", "Cobrado total",
-              "Margen", "Margen %", "Observación", "Asignada por", "Asignada el"]
-    _encabezar(ws_o, cols_o, [16, 11, 22, 26, 32, 18, 22, 16, 11, 14, 15, 15, 18, 15, 15, 15, 14, 10, 44, 18, 17])
+              "Margen (con respaldo)", "Margen %", "Observación", "Asignada por", "Asignada el",
+              "Cobrado con respaldo de su factura", "Punto de equilibrio"]
+    _encabezar(ws_o, cols_o, [16, 11, 22, 26, 32, 18, 22, 16, 11, 14, 15, 15, 18, 15, 15, 15, 14, 10, 44, 18, 17, 18, 60])
     for it in items:
         cobra = it["sugerido"] if it.get("fac_monto") is None else it["fac_monto"]
         cobertura = ((it.get("cobertura_txt") or it.get("cobertura_corta") or "No se cobra")
@@ -132728,7 +132785,9 @@ def _mfp_excel_lote(factura, items, eventos, prov_nombre, prov_rut, meta):
             float(it.get("cobrado_cliente_serv") or 0), float(it.get("cobrado_cliente_envio") or 0),
             float(it.get("cobrado_cliente") or 0), float(it.get("margen_fila") or 0),
             (pct_fila / 100.0) if pct_fila is not None else "",
-            it.get("observacion") or "", it.get("usuario") or "", it.get("asignada") or ""])
+            it.get("observacion") or "", it.get("usuario") or "", it.get("asignada") or "",
+            float(it["cobrado_respaldado"] if it.get("cobrado_respaldado") is not None else (it.get("cobrado_cliente") or 0)),
+            _mfp_eq_texto(it.get("eq"))])
     for r in range(2, n + 2):
         for c in range(1, len(cols_o) + 1):
             cel = ws_o.cell(row=r, column=c)
@@ -132737,8 +132796,10 @@ def _mfp_excel_lote(factura, items, eventos, prov_nombre, prov_rut, meta):
                 cel.number_format = clp
             elif c == 18:
                 cel.number_format = pct
-            elif c == 19:
+            elif c == 19 or c == 23:
                 cel.alignment = Alignment(wrap_text=True, vertical="top")
+            elif c == 22:
+                cel.number_format = clp
         if items[r - 2].get("no_cerrada"):
             ws_o.cell(row=r, column=8).font = f_rojo
         if not items[r - 2].get("anexo_firmado"):
@@ -132748,7 +132809,8 @@ def _mfp_excel_lote(factura, items, eventos, prov_nombre, prov_rut, meta):
     for c in range(11, 18):
         col = get_column_letter(c)
         ws_o.cell(row=fila_tot, column=c, value=f"=SUM({col}2:{col}{last})").number_format = clp
-    ws_o.cell(row=fila_tot, column=18, value=f'=IF(P{fila_tot}>0,Q{fila_tot}/P{fila_tot},"")').number_format = pct
+    ws_o.cell(row=fila_tot, column=22, value=f"=SUM(V2:V{last})").number_format = clp
+    ws_o.cell(row=fila_tot, column=18, value=f'=IF(V{fila_tot}>0,Q{fila_tot}/V{fila_tot},"")').number_format = pct
     for c in range(1, len(cols_o) + 1):
         cel = ws_o.cell(row=fila_tot, column=c)
         cel.font, cel.fill = f_b, fill_t
@@ -132788,7 +132850,9 @@ def _mfp_excel_lote(factura, items, eventos, prov_nombre, prov_rut, meta):
         ("Monto declarado del lote", tot["monto_total"], origen_monto, clp),
         ("Suma de las OT", f"=SUM({rng('M')})", "Lo que cobra cada OT de este lote (hoja «OT del lote»)", clp),
         ("Diferencia", "=B10-B11", "Monto declarado − suma de las OT (negativo: las OT suman más que el monto)", clp),
-        ("Cobrado a cliente", f"=SUM({rng('P')})", "Lo que ILUS cobró a sus clientes por estas OT", clp),
+        ("Cobrado a cliente", f"=SUM({rng('V')})", "Lo que ILUS cobró por estas OT CON RESPALDO de su factura de Random "
+         "(sin el saldo que ya usaron otras OT; una OT sin documento cuenta $0). Lo declarado en las OT suma "
+         + _ot_fin_clp(tot.get("total_cobrado_declarado") or 0) + ".", clp),
         ("Margen del lote", "=B13-B10", "Cobrado a cliente − monto declarado del lote", clp),
         ("Margen sobre las OT", "=B13-B11", "Cobrado a cliente − suma de las OT", clp),
         ("Cantidad de OT", f"=COUNTA({rng('A')})", "", None),
@@ -132876,22 +132940,15 @@ def mant_factura_proveedor_detalle(fid):
         historial, historial_total = [], 0
     # ⚖️ 2026-10-12: por OT, su documento de Random, si la factura está repetida, el saldo y el punto de equilibrio
     # (lectura liviana: nunca sale a Random; el candado de verdad está al asignar y al marcar pagado).
-    eq_sobre = 0
-    for it in items:
-        try:
-            _pago = it["fac_monto"] if it.get("fac_monto") is not None else it.get("sugerido")
-            it["eq"] = _fac_equilibrio_ot(it["id"], pago=_pago, solo_cache=True)
-        except Exception as _e_eq:
-            print(f"[facprov] equilibrio vid={it.get('id')}: {type(_e_eq).__name__}", flush=True)
-            it["eq"] = None
-        if it["eq"] and not it["eq"].get("ok"):
-            eq_sobre += 1
+    # (cada ítem ya trae su `eq` y su cobro con respaldo desde _mfp_items)
+    eq_sobre = sum(1 for it in items if it.get("eq") and not it["eq"].get("ok"))
     return render_template(
         "mantenciones/factura_proveedor_detalle.html",
         eq_sobre=eq_sobre,
         factura=factura, items=items, total_asignado=total_asignado,
         diferencia=tot_lote["diferencia"],
         total_cobrado_cliente=total_cobrado_cliente,
+        total_cobrado_declarado=tot_lote["total_cobrado_declarado"],
         margen_total=tot_lote["margen_total"],
         tiene_factura_real=_mfp_tiene_factura_real(factura),
         historial=historial, historial_total=historial_total,

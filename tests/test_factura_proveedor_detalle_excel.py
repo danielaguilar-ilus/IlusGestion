@@ -35,7 +35,7 @@ FUNCS = ("_mfp_clp_txt", "_mfp_tiene_factura_real", "_mfp_totales_lote", "_mfp_m
          "_mfp_eventos_total", "_mfp_eventos_lote", "_mfp_proveedor_canon", "_mfp_excel_lote", "_mfp_excel_nombre",
          "_mfp_items", "mant_factura_proveedor_asignar", "mant_factura_proveedor_desasignar",
          "mant_factura_proveedor_ajustar_monto", "mant_factura_proveedor_historial", "mant_factura_proveedor_excel",
-         "_no_tecnico")
+         "_no_tecnico", "_mfp_cobro_respaldado", "_mfp_eq_texto")
 RUTAS_NUEVAS = ("mant_factura_proveedor_ajustar_monto", "mant_factura_proveedor_historial", "mant_factura_proveedor_excel")
 
 AHORA = datetime.datetime(2026, 10, 8, 21, 50)
@@ -202,6 +202,7 @@ def _entorno(db):
         # ⚖️ 2026-10-12: el candado del punto de equilibrio se prueba en tests/test_facprov_equilibrio.py; acá pasa.
         "_fac_equilibrio_ot": lambda vid, pago=None, solo_cache=False: {"ok": True, "vid": vid},
         "_fac_equilibrio_rechazo": lambda resultados: None,
+        "_ot_fin_clp": lambda v: "$" + format(int(round(float(v or 0))), ",").replace(",", "."),
     }
     for nodo in arbol.body:
         if isinstance(nodo, ast.Assign) and len(nodo.targets) == 1 and getattr(nodo.targets[0], "id", "") == "_MFP_ACCION_TXT":
@@ -523,7 +524,8 @@ class TestExcel(unittest.TestCase):
         etiqueta = {ws.cell(row=i, column=1).value: i for i in range(2, ws.max_row + 1)}
         self.assertEqual(ws["B11"].value, "=SUM('OT del lote'!M2:M12)")
         self.assertEqual(ws["B12"].value, "=B10-B11")
-        self.assertTrue(str(ws["B13"].value).startswith("=SUM('OT del lote'!P2:P12)"))
+        # ⚖️ 2026-10-12: «Cobrado a cliente» suma lo cobrado CON RESPALDO de la factura (columna V), no lo declarado
+        self.assertTrue(str(ws["B13"].value).startswith("=SUM('OT del lote'!V2:V12)"))
         self.assertEqual(etiqueta["Suma de las OT"], 11)
         self.assertEqual(etiqueta["Diferencia"], 12)
         self.assertEqual(etiqueta["Monto declarado del lote"], 10)
@@ -557,14 +559,15 @@ class TestExcel(unittest.TestCase):
         cab = [c.value for c in ws[1]]
         for col in ("N° OT", "Fecha", "Técnico", "Cliente", "Tipo de trabajo", "Cobertura", "Estado", "N° de anexo",
                     "Anexo firmado", "Pago instalación", "Pago despacho", "Total que paga esta factura",
-                    "Cobrado instalación", "Cobrado despacho", "Cobrado total", "Margen", "Margen %", "Observación",
+                    "Cobrado instalación", "Cobrado despacho", "Cobrado total", "Margen (con respaldo)", "Margen %", "Observación", "Cobrado con respaldo de su factura", "Punto de equilibrio",
                     "Asignada por", "Asignada el"):
             self.assertIn(col, cab, col)
         self.assertEqual(ws.max_row, 13, "encabezado + 11 OT + fila de totales")
         self.assertEqual(ws["A13"].value, "TOTALES")
         self.assertEqual(ws["M13"].value, "=SUM(M2:M12)")
         self.assertEqual(ws["P13"].value, "=SUM(P2:P12)")
-        self.assertEqual(ws["R13"].value, '=IF(P13>0,Q13/P13,"")')
+        self.assertEqual(ws["R13"].value, '=IF(V13>0,Q13/V13,"")')
+        self.assertEqual(ws["V13"].value, "=SUM(V2:V12)")
         filas = {ws.cell(row=i, column=1).value: i for i in range(2, 13)}
         f162 = filas["OT-2026-00162"]
         self.assertEqual(ws.cell(row=f162, column=5).value, "Brave Spa")
@@ -578,7 +581,7 @@ class TestExcel(unittest.TestCase):
         self.assertIn("no cerrada", ws.cell(row=filas["OT-2026-00159"], column=8).value)
         # formato de la hoja: Arial, encabezado fijo, autofiltro, pesos
         self.assertEqual(ws.freeze_panes, "A2")
-        self.assertEqual(ws.auto_filter.ref, "A1:U12")
+        self.assertEqual(ws.auto_filter.ref, "A1:W12")
         self.assertEqual(ws["A1"].font.name, "Arial")
         self.assertEqual(ws["M2"].font.name, "Arial")
         self.assertEqual(ws["M2"].number_format, '"$"#,##0;[Red]-"$"#,##0')
