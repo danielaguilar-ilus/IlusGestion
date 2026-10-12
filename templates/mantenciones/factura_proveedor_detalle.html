@@ -1520,7 +1520,7 @@ async function fpdCopiarSolicitud(){
 .fpd-step.is-ok .fpd-line{transform-origin:left;animation:fpdPintar .5s ease-out both}
 .fpd-step:nth-child(2) .fpd-line{animation-delay:.25s}.fpd-step:nth-child(3) .fpd-line{animation-delay:.5s}
 @keyframes fpdPintar{from{transform:scaleX(0)}}
-.fpd-hace{font-size:.66rem;font-weight:700;color:#94a3b8;margin-left:2px}
+.fpd-hace{font-size:.66rem;font-weight:700;color:#475569;margin-left:2px}
 .fpd-aqui{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:2px}
 .fpd-aqui > span:first-child{font-size:.6rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;color:#fff;background:#dc2626;border-radius:99px;padding:2px 8px}
 .fpd-espera{font-size:.66rem;font-weight:800;border-radius:99px;padding:2px 8px;background:#f1f5f9;color:#475569}
@@ -1538,8 +1538,8 @@ async function fpdCopiarSolicitud(){
 @media(prefers-reduced-motion:reduce){.fpd-step.is-activo .fpd-circle,.fpd-step.is-ok .fpd-circle::after,.fpd-bar span,.fpd-step.is-ok .fpd-line,.fpd-celebra::after{animation:none}}
 
 /* ── ⚖️ 2026-10-12 Factura del cliente y punto de equilibrio por OT ── */
-.fpd-respaldo{color:#b45309;font-weight:700;text-align:right}
-.fpd-respaldo b{color:#b45309}
+.fp-sub.fpd-respaldo{color:#b45309;font-weight:700;text-align:right}
+.fp-sub.fpd-respaldo b{color:#92400e}
 .fpd-eq{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin-top:6px;padding:7px 10px;border-radius:9px;
   border:1px solid #e5e7eb;background:#fff;font-size:.76rem;color:#334155}
 .fpd-eq-sem{font-size:.66rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em;border-radius:99px;padding:3px 9px;
@@ -1567,7 +1567,7 @@ async function fpdCopiarSolicitud(){
 .fpd-cell .l{font-size:.6rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#64748b;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
 .fpd-cell .v{font-size:1.02rem;font-weight:900;color:#0f172a;margin-top:2px;font-variant-numeric:tabular-nums;word-break:break-word;line-height:1.2}
 .fpd-cell .v.pos{color:#15803d}.fpd-cell .v.neg{color:#b91c1c}.fpd-cell .v.warn{color:#b45309}.fpd-cell .v.muted{color:#94a3b8}
-.fpd-cell .s{font-size:.64rem;color:#94a3b8;margin-top:1px;line-height:1.3}
+.fpd-cell .s{font-size:.64rem;color:#64748b;margin-top:1px;line-height:1.3}
 /* Semáforo en la tarjeta: punto de color + borde/fondo suave */
 .fpd-dot{width:8px;height:8px;border-radius:50%;background:#cbd5e1;flex-shrink:0;display:inline-block}
 .fpd-cell.sem-pos{border-color:#bbf7d0;background:#f0fdf4}.fpd-cell.sem-pos .fpd-dot{background:#16a34a}
@@ -1615,7 +1615,7 @@ async function fpdCopiarSolicitud(){
 .fp-mstack{display:inline-flex;flex-direction:column;align-items:stretch;min-width:96px;line-height:1.25}
 .fp-mstack .fp-mt{font-weight:900;color:#0f172a;text-align:right}
 .fp-mstack .fp-ml{display:flex;justify-content:space-between;gap:10px;font-size:.7rem;font-weight:600;color:#64748b}
-.fp-mstack .fp-ml em{font-style:normal;font-weight:700;color:#94a3b8}
+.fp-mstack .fp-ml em{font-style:normal;font-weight:700;color:#64748b}
 .fp-mstack .fp-sub{text-align:right}
 .fp-tabla tfoot .fp-mstack .fp-mt{color:#fff}
 .fp-tabla tfoot .fp-ml{color:rgba(255,255,255,.72)}
@@ -1649,7 +1649,7 @@ async function fpdCopiarSolicitud(){
 .fp-margen-neg{color:#b91c1c;font-weight:800}
 .fp-gar{display:inline-block;font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.03em;
   background:#fff8e1;color:#92400e;border:1px solid #fde68a;border-radius:999px;padding:2px 8px;margin-left:5px;white-space:nowrap}
-.fp-sub{font-size:.7rem;color:#94a3b8}
+.fp-sub{font-size:.7rem;color:#64748b}
 .fp-ot{font-weight:800;color:#dc2626;text-decoration:none;white-space:nowrap}.fp-ot:hover{text-decoration:underline}
 .fp-tipo{font-size:.68rem;font-weight:800;background:#f1f5f9;color:#475569;border-radius:999px;padding:3px 9px;white-space:nowrap}
 .fp-est{font-size:.66rem;font-weight:800;border-radius:999px;padding:3px 9px;white-space:nowrap;text-transform:capitalize;background:#f1f5f9;color:#475569}
@@ -1675,7 +1675,7 @@ async function fpdCopiarSolicitud(){
 .fpd-obs{display:flex;flex-wrap:wrap;gap:4px 18px;align-items:flex-start}
 .fpd-obs-txt{font-size:.78rem;color:#334155;white-space:normal;line-height:1.4;word-break:break-word;flex:1 1 320px;min-width:0}
 .fpd-obs-txt i{color:#94a3b8;margin-right:2px}
-.fpd-obs-txt.muted{color:#94a3b8;font-style:italic}
+.fpd-obs-txt.muted{color:#64748b;font-style:italic}
 .fpd-obs-meta{font-size:.72rem;color:#64748b;font-weight:600;white-space:nowrap;flex:0 0 auto}
 .fpd-obs-meta b{color:#0f172a}
 .fpd-obs-meta i{color:#94a3b8}
@@ -1756,7 +1756,7 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
   .fpd-obs-meta{white-space:normal}
   .fp-tabla th.m,.fp-tabla td.m{text-align:left;white-space:normal}
   .fp-tabla tbody td[data-label]::before,.fp-tabla tfoot td[data-label]::before{content:attr(data-label);display:block;font-size:.62rem;font-weight:900;
-    text-transform:uppercase;letter-spacing:.04em;color:#94a3b8;margin-bottom:1px}
+    text-transform:uppercase;letter-spacing:.04em;color:#64748b;margin-bottom:1px}
   .fp-tabla tfoot tr{background:#0a0a0a;border-color:#0a0a0a}
   .fp-tabla tfoot td[data-label]::before{color:rgba(255,255,255,.55)}
   .fp-tabla tfoot td:empty{display:none}
@@ -1819,5 +1819,18 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
   .fph-cuando{flex:0 0 auto;flex-direction:row;gap:8px;align-items:baseline;flex-wrap:wrap}
   .fpd-ajuste .btn{width:100%}
 }
+/* ── 🔎 2026-10-12 auditoría Impeccable · Fase 1 ──
+   Texto secundario sobre las casillas de color: teñido del tono de la casilla (nunca gris sobre color). */
+.fpd-cell.sem-pos .l,.fpd-cell.sem-pos .s{color:#166534}
+.fpd-cell.sem-warn .l,.fpd-cell.sem-warn .s{color:#92400e}
+.fpd-cell.sem-neg .l,.fpd-cell.sem-neg .s{color:#991b1b}
+.fpd-track.is-completo .fpd-step-d{color:#14532d}
+.fpd-step .btn-outline-danger{color:#b91c1c;border-color:#b91c1c}
+.fpd-step .btn-outline-danger:hover{color:#fff;background:#b91c1c}
+/* Foco del teclado visible en TODOS los botones y enlaces de la página (antes Bootstrap lo dejaba invisible):
+   rojo ILUS sobre fondo claro, blanco sobre la cabecera negra. */
+.btn:focus-visible,a:focus-visible,label.btn:focus-within,.fpd-step-link:focus-visible{outline:3px solid #dc2626;outline-offset:2px;box-shadow:none}
+.page-header .btn:focus-visible,.page-header a:focus-visible,.page-header label.btn:focus-within{outline-color:#fff}
+::selection{background:#fee2e2;color:#0a0a0a}
 </style>
 {% endblock %}
