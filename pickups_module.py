@@ -305,6 +305,61 @@ _PREFIJO_DOC_RE = re.compile(
     r"^(?:N[°º]|NRO|NÚMERO|NUMERO|NUM|PEDIDO|ORDEN|WEB|BOLETA|FACTURA|FCV|BLV|NVV|NV|VD)[\s.:#\-]*")
 
 
+def inicio_minimo_habil(ahora, horas, es_habil):
+    """Primer momento (sin zona) que queda `horas` después de `ahora` contando SOLO el tiempo de los días hábiles (`es_habil(date)`).
+    Lo que cae en un día no hábil empieza a contar el siguiente día hábil a las 00:00. Pura (se prueba sin BD)."""
+    restante = timedelta(hours=max(0, horas))
+    t = ahora.replace(tzinfo=None)
+    cache = {}
+    for _ in range(120):                                     # tope de seguridad: 120 días
+        d = t.date()
+        if d not in cache:
+            cache[d] = bool(es_habil(d))
+        fin_dia = datetime.combine(d + timedelta(days=1), datetime.min.time())
+        if not cache[d]:
+            t = fin_dia
+            continue
+        tramo = fin_dia - t
+        if tramo >= restante:
+            return t + restante
+        restante -= tramo
+        t = fin_dia
+    return t
+
+
+MAX_DOCUMENTOS_FORMULARIO = 5
+TIPOS_DOCUMENTO_FORMULARIO = ("factura", "boleta", "nota_venta", "pedido")
+
+
+def documentos_extra_del_formulario(tipos, numeros, tipo_principal, numero_principal):
+    """Documentos 2 a 5 del formulario de la tienda (Daniel 2026-10-12: «que sea multidocumento… máximo de 5»).
+    `tipos`/`numeros`: las listas que llegan con el mismo nombre (request.form.getlist); el PRIMER par es el documento del retiro y ya
+    viene en `tipo_principal`/`numero_principal` (normalizado). Devuelve (extras, errores): extras = [{document_type, document_number
+    (normalizado), numero_cliente}], sin filas vacías ni repetidos (tampoco el principal). Pura: se prueba sin BD."""
+    extras, errores = [], []
+    vistos = {((tipo_principal or "").strip(), (numero_principal or "").strip())}
+    pares = list(zip(list(tipos or []), list(numeros or [])))[1:]
+    for tipo, numero in pares:
+        numero_cli = (numero or "").strip()
+        if not numero_cli:
+            continue
+        tipo = (tipo or "factura").strip()
+        if tipo not in TIPOS_DOCUMENTO_FORMULARIO:
+            errores.append("Elige el tipo de cada documento de la lista.")
+            break
+        numero_norm = _normalizar_numero_documento(numero_cli)
+        if len(numero_norm) > 60:
+            errores.append("El N° de un documento es demasiado largo (máximo 60 caracteres).")
+            break
+        if (tipo, numero_norm) in vistos:
+            continue
+        vistos.add((tipo, numero_norm))
+        extras.append({"document_type": tipo, "document_number": numero_norm, "numero_cliente": numero_cli[:60]})
+    if len(extras) > MAX_DOCUMENTOS_FORMULARIO - 1:
+        errores.append(f"Puedes agregar hasta {MAX_DOCUMENTOS_FORMULARIO} documentos por solicitud.")
+    return extras, errores
+
+
 def _normalizar_numero_documento(texto):
     """'#1136' / 'Pedido #1136' / 'WEB0001136' / 'N° 10.683' → solo el número
     ('1136', '10683'), que es lo que el buscador del ERP entiende (el prefijo
@@ -738,17 +793,32 @@ def register_pickup_routes(app, ctx):
         for _col_sql in (
             f"ALTER TABLE `{SET}` ADD COLUMN aviso_equipo_emails TEXT NULL "
             f"COMMENT 'Correos (CSV) que reciben un aviso interno por cada gestión de un retiro'",
+            # Anticipación mínima del cliente para agendar, editable en Horarios y alertas (Daniel 2026-10-12: «48 horas, así tenemos más
+            # capacidad de reacción… ¿se podrá arreglar por el front?»). Ya existía en algunas bases (init_db); aquí se asegura.
+            f"ALTER TABLE `{SET}` ADD COLUMN min_notice_hours INT DEFAULT 24 COMMENT 'Anticipacion minima del cliente en horas'",
             # Correos de bodega para avisos de retiros que no se van a retirar (desviaciones, Daniel 2026-10-09).
             f"ALTER TABLE `{SET}` ADD COLUMN aviso_bodega_emails TEXT NULL "
             f"COMMENT 'Correos (CSV) de bodega para avisos de retiros que no se retiran en su cita'",
             # Salida temprano automática la víspera de un feriado (Daniel 2026-09-30).
             f"ALTER TABLE `{SET}` ADD COLUMN vispera_activa TINYINT(1) NOT NULL DEFAULT 0",
             f"ALTER TABLE `{SET}` ADD COLUMN vispera_hasta VARCHAR(5) NOT NULL DEFAULT '15:00'",
+            # Marca de la migración única a 48 horas (abajo): con ella en 1 no se vuelve a tocar la anticipación.
+            f"ALTER TABLE `{SET}` ADD COLUMN min_notice_48_aplicado TINYINT(1) NOT NULL DEFAULT 0",
         ):
             try:
                 mysql_execute(_col_sql)
             except Exception:
                 pass
+        # Anticipación a 48 horas UNA sola vez (Daniel 2026-10-12: «lo que quiero es que lo cambies a 48 horas, así tenemos más capacidad
+        # de reacción»): solo si sigue en el valor de fábrica (24 o vacío). Desde ahí se cambia en Horarios y alertas y esto no lo pisa.
+        try:
+            _cnt_48 = ctx.get("mysql_execute_returning_rowcount") or mysql_execute
+            if _cnt_48(f"UPDATE `{SET}` SET min_notice_hours=48, min_notice_48_aplicado=1 "
+                       f"WHERE id=1 AND min_notice_48_aplicado=0 AND (min_notice_hours IS NULL OR min_notice_hours=24)"):
+                print("[pickup_settings] anticipación mínima del cliente: 24 → 48 horas (una sola vez)", flush=True)
+            mysql_execute(f"UPDATE `{SET}` SET min_notice_48_aplicado=1 WHERE id=1 AND min_notice_48_aplicado=0")
+        except Exception as _e_48:
+            print(f"[pickup_settings] anticipación 48 h: {_e_48}", flush=True)
         # Reglas por día (una fila por fecha): reabrir un feriado, cerrar más temprano
         # o quitarle la salida automática de víspera a un día puntual.
         try:
@@ -807,6 +877,58 @@ def register_pickup_routes(app, ctx):
     # Si por algún motivo la tabla cayera, el INSERT del endpoint tira
     # excepción y se puede forzar via /retiros/admin/migrate-now.
     _MULTIDOC_TABLES_READY = {"v": False}
+
+    _DOCS_DECL = {"tabla": False}
+    _DOC_NOMBRE_DECL = {"factura": "Factura", "boleta": "Boleta", "nota_venta": "Nota de venta", "pedido": "Pedido web"}
+
+    def _docs_declarados_tabla():
+        if _DOCS_DECL["tabla"]:
+            return True
+        try:
+            mysql_execute(
+                "CREATE TABLE IF NOT EXISTS pickup_docs_declarados ("
+                "id INT AUTO_INCREMENT PRIMARY KEY, request_id INT NOT NULL, orden TINYINT NOT NULL, "
+                "document_type VARCHAR(20) NOT NULL, document_number VARCHAR(60) NOT NULL, numero_cliente VARCHAR(60) NULL, "
+                "creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_decl_req (request_id)"
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+            _DOCS_DECL["tabla"] = True
+        except Exception as e:
+            print(f"[retiros-docs-declarados] tabla: {e}", flush=True)
+        return _DOCS_DECL["tabla"]
+
+    def _docs_declarados_guardar(rid, docs_extra):
+        """Documentos 2 a 5 que declaró el cliente en el formulario (el 1° vive en el retiro). Nunca lanza: un fallo aquí no puede
+        perder la solicitud ya creada (el log lo deja anotado)."""
+        try:
+            if not _docs_declarados_tabla():
+                return False
+            for i, x in enumerate(docs_extra[:4], start=2):
+                mysql_execute("INSERT INTO pickup_docs_declarados (request_id, orden, document_type, document_number, numero_cliente) "
+                              "VALUES (%s,%s,%s,%s,%s)", (rid, i, x["document_type"], x["document_number"], x.get("numero_cliente")))
+            return True
+        except Exception as e:
+            print(f"[retiros-docs-declarados] rid={rid}: {e}", flush=True)
+            return False
+
+    def _docs_declarados_extra(rid):
+        """Documentos 2 a 5 declarados por el cliente: [{'document_type', 'document_number'}]. [] si no hay o si la tabla no existe."""
+        if not rid:
+            return []
+        try:                                  # la tabla se crea en el arranque (ensure_multidoc_tables_runtime): leer no crea nada
+            return mysql_fetchall("SELECT document_type, document_number FROM pickup_docs_declarados WHERE request_id=%s "
+                                  "ORDER BY orden ASC, id ASC", (rid,)) or []
+        except Exception:
+            return []
+
+    def _docs_declarados_txt(req):
+        """Lo que declaró el cliente, listo para mostrar: ['FACTURA 1136', 'BOLETA 2211']."""
+        req = req or {}
+        out = []
+        if req.get("document_number"):
+            out.append(f"{(req.get('document_type') or '').upper()} {req.get('document_number')}".strip())
+        for x in _docs_declarados_extra(req.get("id")):
+            out.append(f"{(x.get('document_type') or '').upper()} {x.get('document_number') or ''}".strip())
+        return out
 
     def ensure_multidoc_tables_runtime(force=False):
         """Garantiza pickup_request_docs + pickup_doc_lineas + columnas nuevas.
@@ -961,6 +1083,12 @@ def register_pickup_routes(app, ctx):
                 except Exception: pass
         except Exception as e:
             print(f"[ensure_multidoc_tables] pickup_doc_lineas: {e}", flush=True)
+
+        # 4b. Documentos 2 a 5 declarados por el cliente en el formulario de la tienda (Daniel 2026-10-12, multidocumento)
+        try:
+            _docs_declarados_tabla()
+        except Exception as e:
+            print(f"[ensure_multidoc_tables] pickup_docs_declarados: {e}", flush=True)
 
         # 5. Tabla pickup_blocks (bloqueos de fechas) — si tampoco existe
         try:
@@ -1403,6 +1531,31 @@ def register_pickup_routes(app, ctx):
             return False, "La fecha seleccionada es feriado en Chile o está bloqueada."
         return True, ""
 
+    def _anticipacion_horas(cfg=None):
+        """Anticipación mínima (horas) con que el CLIENTE puede pedir un bloque: formulario de la tienda, el de ILUS y su «proponer otra
+        fecha». Se cambia en Retiros → Horarios y alertas (Daniel 2026-10-12: «48 horas, así tenemos más capacidad de reacción»).
+        El equipo interno puede agendar más cerca (modo «internal»)."""
+        cfg = cfg or settings()
+        try:
+            return max(1, min(int(cfg.get("min_notice_hours") or 24), 168))
+        except (TypeError, ValueError):
+            return 24
+
+    def _inicio_minimo_cliente(ahora, cfg=None):
+        """Primer momento en que el CLIENTE puede empezar un retiro: la anticipación se cuenta SOLO en días hábiles de la bodega
+        (Daniel 2026-10-12: «están solicitando reserva el sábado para el lunes: eso no tiene capacidad de reacción… el viernes tiene que
+        tener efecto inmediato en el vencimiento del lunes, no el fin de semana o el domingo»). Un pedido hecho en fin de semana o
+        feriado empieza a contar el siguiente día hábil a las 00:00. Días hábiles = los de date_allowed (días de trabajo, feriados de
+        Chile, días bloqueados). Ej. con 48 h: sábado → miércoles 00:00; viernes 15:00 → martes 15:00."""
+        cfg = cfg or settings()
+
+        def es_habil(d):
+            try:
+                return bool(date_allowed(d.isoformat(), cfg)[0])
+            except Exception:
+                return d.isoweekday() <= 5
+        return inicio_minimo_habil(ahora, _anticipacion_horas(cfg), es_habil)
+
     def next_allowed_date(cfg=None):
         cfg = cfg or settings()
         base = datetime.now().date() + timedelta(days=1)
@@ -1534,13 +1687,10 @@ def register_pickup_routes(app, ctx):
 
         # 4) Anticipación mínima (solo cliente: public/calendar)
         if mode in ("public", "calendar"):
-            try:
-                min_notice = int(cfg.get("min_notice_hours") or 24)
-            except (TypeError, ValueError):
-                min_notice = 24
-            if (start_dt - now).total_seconds() < min_notice * 3600:
-                return False, (f"Se requieren al menos {min_notice} horas de "
-                               f"anticipación. Elige una fecha más adelante.")
+            min_notice = _anticipacion_horas(cfg)
+            if start_dt < _inicio_minimo_cliente(now, cfg):
+                return False, (f"Necesitamos al menos {min_notice} horas hábiles de anticipación (no cuentan fines de semana ni "
+                               f"feriados). Elige una fecha más adelante.")
 
         # 5) Día hábil + feriados (reusa date_allowed)
         ok_day, msg_day = date_allowed(date_str, cfg)
@@ -2228,6 +2378,12 @@ def register_pickup_routes(app, ctx):
             t = (tipo or "").strip().upper()
             return f"{_DOC_NOMBRE.get(t, t)} {numero or ''}".strip()
         _documento = _fmt_doc(req.get("document_type"), req.get("document_number"))
+        try:
+            _extra_decl = _docs_declarados_extra(req.get("id")) if req.get("id") else []
+            if _extra_decl:
+                _documento = ", ".join([_documento] + [_fmt_doc(x.get("document_type"), x.get("document_number")) for x in _extra_decl])
+        except Exception:
+            pass
         try:
             if req.get("id"):
                 _dl = mysql_fetchall(
@@ -3715,6 +3871,18 @@ def register_pickup_routes(app, ctx):
                 if len(data.get(_campo) or "") > _max:
                     errors.append(f"{_lbl} es demasiado largo (máximo {_max} caracteres).")
 
+            # ── HASTA 5 DOCUMENTOS (Daniel 2026-10-12: «que sea multidocumento, un botón que diga agregar documento con un máximo de 5»).
+            # El formulario de la tienda manda varios pares document_type/document_number con el mismo nombre. El PRIMERO sigue siendo el
+            # documento del retiro (como siempre, y como lo manda el formulario viejo); los demás quedan «declarados» para que el equipo
+            # los busque en Random y los asocie. Se descartan filas vacías y repetidos.
+            try:
+                docs_extra, _err_docs = documentos_extra_del_formulario(
+                    form.getlist("document_type"), form.getlist("document_number"), data["document_type"], data["document_number"])
+            except Exception as _e_docs:
+                print(f"[pickup_public_request] documentos extra: {_e_docs}", flush=True)
+                docs_extra, _err_docs = [], []
+            errors.extend(_err_docs)
+
             # ── VALIDACIÓN EMAIL (robusta: regex + doble@ + espacios) ──
             if data["contact_email"]:
                 if not is_valid_email(data["contact_email"]):
@@ -4039,10 +4207,17 @@ def register_pickup_routes(app, ctx):
                         VALUES (%s,%s,%s,%s,'cliente')""",
                     (rid, fname, safe_name[:240], (f.mimetype or "")[:120]),
                 )
+            if docs_extra:
+                _docs_declarados_guardar(rid, docs_extra)
             req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
             _nota_creada = "Solicitud creada desde la página pública"
             if _num_doc_cliente and _num_doc_cliente != data["document_number"]:
                 _nota_creada += f" (N° escrito por el cliente: '{_num_doc_cliente[:60]}')"
+            if docs_extra:
+                _nota_creada += (f" · {len(docs_extra) + 1} documentos declarados: "
+                                 + ", ".join(_DOC_NOMBRE_DECL.get(x["document_type"], x["document_type"]) + " " + x["document_number"]
+                                             for x in ([{"document_type": data["document_type"], "document_number": data["document_number"]}]
+                                                       + docs_extra)))
             log_event(rid, "creada", None, "solicitud_recibida", _nota_creada, "cliente", data["contact_name"])
             # Invalidar cache del calendario público — el nuevo retiro
             # ocupa un slot, los demás clientes deben verlo al instante.
@@ -6395,6 +6570,7 @@ def register_pickup_routes(app, ctx):
                 valores=valores, ficha_ubicacion=ficha_ubicacion, actividad=actividad,
                 hitos=hitos, info_completa=info_completa, guia=guia,
                 firma=_firma_para_ficha(rid, req),   # recepción firmada (None si no hay)
+                docs_declarados=_docs_declarados_txt(req),   # lo que escribió el cliente (hasta 5 documentos)
                 cierre=_cierre_info(req, logs),     # retiro terminado = ficha en solo lectura (Daniel 2026-10-06)
                 aviso_no_expedir=_aviso_no_expedir_texto(), retiro_auto_modo=_retiro_auto_modo(),
             )
@@ -14286,6 +14462,18 @@ def register_pickup_routes(app, ctx):
                 mysql_execute(f"UPDATE `{SET}` SET aviso_bodega_emails=%s WHERE id=1", (",".join(_lista_b[:20]),))
             except Exception as _e_ab:
                 print(f"[pickup_settings] aviso_bodega_emails: {_e_ab}", flush=True)
+        # Anticipación mínima del cliente (Daniel 2026-10-12): entre 1 y 168 horas. Solo si llegó el campo (una pantalla vieja no la toca).
+        if "min_notice_hours" in data:
+            try:
+                _mn = int(str(data.get("min_notice_hours") or "").strip())
+                if 1 <= _mn <= 168:
+                    mysql_execute(f"UPDATE `{SET}` SET min_notice_hours=%s WHERE id=1", (_mn,))
+                else:
+                    flash("La anticipación mínima debe estar entre 1 y 168 horas: no se cambió.", "warning")
+            except (TypeError, ValueError):
+                flash("La anticipación mínima debe ser un número de horas: no se cambió.", "warning")
+            except Exception as _e_mn:
+                print(f"[pickup_settings] min_notice_hours: {_e_mn}", flush=True)
         # Responsable automático de solicitudes web (UPDATE aparte: si la
         # columna aún no existiera, el resto de la configuración igual se guarda).
         try:
@@ -15778,10 +15966,7 @@ def register_pickup_routes(app, ctx):
         # el operador interno puede agendar más cerca vía pickup_create_proposal).
         # Calculado en hora Chile para coincidir con el validador central.
         _now_cl = _now_chile()
-        try:
-            _min_notice_h = int(cfg.get("min_notice_hours") or 24)
-        except (TypeError, ValueError):
-            _min_notice_h = 24
+        _min_notice_h = _anticipacion_horas(cfg)
         # Daniel 2026-06-16: BUFFER de visualización (60 min). El calendario NO
         # ofrece bloques que estén a punto de cruzar el límite de min_notice
         # mientras el cliente llena el formulario. CAUSA del bug: la página
@@ -15791,7 +15976,8 @@ def register_pickup_routes(app, ctx):
         # lo rechazaba ("Se requieren al menos 24 horas"). Con el buffer, lo que
         # se OFRECE pasa cómodamente el submit (display más estricto que el POST).
         _display_buffer_min = 60
-        _min_dt = _now_cl + _td(hours=_min_notice_h) + _td(minutes=_display_buffer_min)
+        # Anticipación en días HÁBILES (Daniel 2026-10-12: lo pedido un sábado no puede ser para el lunes)
+        _min_dt = _inicio_minimo_cliente(_now_cl, cfg) + _td(minutes=_display_buffer_min)
 
         # Generar disponibilidad por día.
         # Si pidieron un día específico (?date=) iteramos solo ese; si no,
@@ -15982,6 +16168,10 @@ def register_pickup_routes(app, ctx):
             # (docs/shopify/formulario_retiro_ilus.html): así no queda escrita a mano.
             "warehouse_addr": cfg.get("warehouse_addr") or "",
             "maps_url": cfg.get("maps_url") or "",
+            # Anticipación mínima: el formulario de la tienda la muestra («Necesitamos al menos N horas…») sin volver a tocar Shopify.
+            "min_notice_hours": _min_notice_h,
+            "anticipacion_habil": True,         # las horas se cuentan solo en días hábiles (sin fines de semana ni feriados)
+            "max_documentos": 5,
             "open_time":  _td_to_hhmm(cfg.get("open_time") or "09:00"),
             "close_time": _td_to_hhmm(cfg.get("close_time") or "16:30"),
             "slot_minutes": slot_dur,

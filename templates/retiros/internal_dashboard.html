@@ -2317,6 +2317,13 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
         </div>
         <div class="row g-3">
           <div class="col-12">
+            <div class="hz-obj" data-obj="4.0">
+              <div class="hz-obj-head"><span class="hz-obj-num"><span class="n">4.0</span><i class="bi bi-check-lg chk"></i></span><label class="form-label" for="hzAnticipacion">Anticipación mínima para que el cliente agende (horas hábiles)</label><span class="hz-obj-estado"></span></div>
+              <input type="number" class="form-control" id="hzAnticipacion" name="min_notice_hours" min="1" max="168" step="1" inputmode="numeric" value="{{ settings.min_notice_hours or 24 }}" style="max-width:180px">
+              <div class="hz-help">Se cuentan solo las horas de días hábiles de la bodega: lo que se pide un sábado, domingo o feriado empieza a contar el siguiente día hábil (con 48 horas, lo pedido un sábado queda para el miércoles; un viernes a las 15:00, para el martes a las 15:00). Aplica al calendario del formulario de la tienda, al de ILUS y a «proponer otra fecha» del cliente. El equipo puede agendar más cerca desde la ficha. El formulario de la tienda muestra este número al cliente.</div>
+            </div>
+          </div>
+          <div class="col-12">
             <div class="hz-obj" data-obj="4.1">
               <div class="hz-obj-head"><span class="hz-obj-num"><span class="n">4.1</span><i class="bi bi-check-lg chk"></i></span><label class="form-label" for="webResponsableSel">Responsable de solicitudes web</label><span class="hz-obj-estado"></span></div>
               <select name="web_responsable_user_id" id="webResponsableSel" class="form-select" data-actual="{{ settings.web_responsable_user_id or '' }}">
@@ -2610,6 +2617,8 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
     const nomWeb = opWeb && opWeb[0] ? String(opWeb[0].textContent || '').trim() : '';
     objeto('4.1', web ? 'ok' : 'opt', web ? 'Responsable: ' + nomWeb : 'Sin responsable automático');
     objeto('4.2', correos.length ? 'ok' : 'opt', correos.length ? plural(correos.length, 'persona recibe', 'personas reciben') + ' el correo' : 'Nadie todavía');
+    const _antic = parseInt(($('hzAnticipacion') || {}).value || '0', 10);
+    objeto('4.0', _antic >= 1 && _antic <= 168 ? 'ok' : 'warn', _antic >= 1 && _antic <= 168 ? _antic + ' horas de anticipación' : 'Entre 1 y 168 horas');
     const _bod = String(($('hzBodegaInp') || {}).value || '').split(/[,;\s]+/).map(x => x.trim()).filter(x => x.indexOf('@') > 0);
     objeto('4.2b', _bod.length ? 'ok' : 'opt', _bod.length ? plural(_bod.length, 'correo de bodega', 'correos de bodega') : 'Sin correos de bodega');
     if (!web && !correos.length) r.avisos.push({txt: 'nadie recibe el correo de las solicitudes nuevas: elige un responsable o agrega correos'});

@@ -264,7 +264,8 @@
 {% if _hwa|length == 9 %}{% set _hwa = '56' ~ _hwa %}{% endif %}
 {% set _hdir = ficha_ubicacion.direccion if ficha_ubicacion else '' %}
 {% set _hcom = ficha_ubicacion.comuna if ficha_ubicacion else '' %}
-{% set _hdecl = (((req.document_type or '')|upper) ~ ' ' ~ (req.document_number or ''))|trim if req.document_number else '' %}
+{# Hasta 5 documentos declarados en el formulario de la tienda (Daniel 2026-10-12): se muestran todos, separados por « · ». #}
+{% set _hdecl = ((docs_declarados | join(' · ')) if (docs_declarados is defined and docs_declarados) else ((((req.document_type or '')|upper) ~ ' ' ~ (req.document_number or ''))|trim if req.document_number else '')) %}
 {% set _hdecl_lbl = 'Sin asociar:' if req.request_source == 'backoffice' else 'Declaró:' %}
 {% set _hdecl_ok = (docs_asociados or []) | selectattr('document_number', 'equalto', req.document_number) | list | length > 0 if req.document_number else true %}
 {# ── RETIRO CERRADO = SOLO LECTURA (Daniel 2026-10-06: «una vez que se cierra… que no pueda agregar factura… ya se cerró, ya está listo»).
