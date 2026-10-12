@@ -111934,17 +111934,24 @@ def _ot_saldo_usos(claves, excluir_vid=None, cap=None, solo_vid=None, errores=No
             par.append(solo)
         sql += " LIMIT %s"
         par.append(_OT_SALDO_USOS_MAX)
+        _memo_ap = {}
         for r in (mysql_fetchall(sql, tuple(par)) or []):
             s, e_ = _tope("servicio", r.get("res_serv")), _tope("despacho", r.get("res_env"))
-            # 📒 2026-10-11 (revisión 2): el residuo antiguo se reparte entre los documentos de ESA OT igual que el libro
-            # (aportes_reales_ot), sin contarlo entero en cada factura. Si algo no se pudo leer, queda el criterio
-            # conservador de arriba (el residuo hasta la capacidad de este documento).
-            try:
+            if not (s or e_):
+                continue   # sin residuo no hay nada que repartir (revisión 3: ni MySQL ni Random de más)
+            # 📒 2026-10-11 (revisión 2/3): el residuo antiguo se reparte entre los documentos de ESA OT igual que el
+            # libro (aportes_reales_ot), una vez por OT y SOLO con lo que ya está en caché (este camino es caliente: la
+            # ficha, el candado). Si algo no está leído, queda el criterio conservador de arriba.
+            _vr = int(r["visita_id"])
+            if _vr not in _memo_ap:
+                try:
+                    _memo_ap[_vr] = _fac_aportes_ot(_vr, solo_cache=True)
+                except Exception:
+                    _memo_ap[_vr] = None
+            if _memo_ap[_vr] is not None:
                 _kd = _saldo.clave_doc(r.get("erp_tido"), r.get("erp_nudo"))
-                _ap = _fac_aportes_ot(r["visita_id"])
-                s, e_ = _ap.get((_kd[0], _kd[1], "servicio"), 0), _ap.get((_kd[0], _kd[1], "despacho"), 0)
-            except Exception:
-                pass
+                s = _memo_ap[_vr].get((_kd[0], _kd[1], "servicio"), 0)
+                e_ = _memo_ap[_vr].get((_kd[0], _kd[1], "despacho"), 0)
             if s or e_:
                 filas.append({"vid": r["visita_id"], "numero_ot": r.get("numero_ot"), "cliente": r.get("cliente"),
                               "estado": r.get("estado"), "servicio": s, "despacho": e_,
@@ -112508,6 +112515,12 @@ def _ensure_fac_libro():
     except Exception as e:
         print(f"[fac-libro] ensure huella: {e}", flush=True)
     try:
+        # Revisión 3: cuándo se intentó por última vez refrescar la foto (rota los cupos del barrido sin adelantar la
+        # fecha de la capacidad leída). Una sentencia = una cláusula (REGLA #18).
+        mysql_execute("ALTER TABLE ot_fac_doc ADD COLUMN intentado_el DATETIME NULL")
+    except Exception as e:
+        print(f"[fac-libro] ensure intentado_el: {e}", flush=True)
+    try:
         mysql_execute("""
             CREATE TABLE IF NOT EXISTS ot_fac_cursor (
                 id           TINYINT NOT NULL PRIMARY KEY,
@@ -112567,33 +112580,82 @@ def _fac_db_fresca():
         pass
 
 
+_FAC_ESDO_CACHE = {}         # (tido_real, nudo_real) → (expira_epoch, resultado ESDO | None si Random falló)
+_FAC_ESDO_CACHE_LOCK = threading.Lock()
+_FAC_INCOMPLETO_HASTA = {}   # vid → epoch: tras una lectura incompleta, el registro de fin de petición no reintenta por 5 min
+
+
 def _fac_olvidar_cache(tido, nudo):
-    """Saca de la caché de 5 min una lectura de Random que vino incompleta (cabecera sin líneas), para no repetirla."""
+    """Saca de las DOS cachés de 5 min (la de la ficha y la del SQL de Random) una lectura que vino incompleta
+    (cabecera sin líneas), para que la próxima vez se vuelva a pedir (revisión 3: antes quedaba en la del SQL)."""
+    formas = {((tido or "").strip().upper(), (nudo or "").strip()), ((tido or "").upper(), nudo or "")}
+    try:
+        formas |= set(_saldo.variantes_sql(_saldo.clave_doc(tido, nudo)))
+    except Exception:
+        pass
     try:
         with _MANT_ERP_DOC_CACHE_LOCK:
-            _MANT_ERP_DOC_CACHE.pop(f"{(tido or '').strip().upper()}|{(nudo or '').strip()}", None)
+            for t, n in formas:
+                _MANT_ERP_DOC_CACHE.pop(f"{(t or '').upper()}|{n}", None)
+    except Exception:
+        pass
+    try:
+        for t, n in formas:
+            _TR_DOC_RAW_CACHE.pop(f"{(t or '').upper()}|{n}", None)
     except Exception:
         pass
 
 
-def _fac_leer_capacidad(tido, nudo):
-    """Capacidad de servicio/despacho de un documento para el libro (revisión 2, 2026-10-11). Tres casos que antes se
-    confundían: ('ok', cap) leído completo · ('sin_doc', ceros) el documento no existe o está ANULADO en Random (no
-    respalda cobro; antes dejaba la OT fuera del libro para siempre) · ('no_leido', None) Random no respondió o devolvió
-    la cabecera sin líneas (una factura real siempre tiene líneas; antes eso se leía como «sin líneas» y anotaba una
-    liberación falsa). Solo lectura (REGLA #4.1): la consulta de existencia pasa por _random_sql_query."""
-    header, lineas = _mant_erp_doc_cached(tido, nudo)
-    if header and lineas:
-        _h, zz, _tot = _erp_zz_lineas(tido, nudo)
-        return "ok", _saldo.clasificar_lineas(zz)[0]
-    if header:
-        _fac_olvidar_cache(tido, nudo)
-        return "no_leido", None
-    t_r, n_r = _ot_saldo_real(_saldo.clave_doc(tido, nudo))
+def _fac_esdo(t_r, n_r):
+    """¿Existe el documento en Random y en qué estado? SELECT TOP 1 ESDO (solo lectura, REGLA #4.1) con caché: 5 min
+    si respondió, 60 s si falló (con Random caído no se repite el intento en cada petición). Devuelve la lista de filas
+    o None si Random no respondió."""
+    import time as _t
+    k = (t_r, n_r)
+    with _FAC_ESDO_CACHE_LOCK:
+        hit = _FAC_ESDO_CACHE.get(k)
+        if hit and hit[0] > _t.time():
+            return hit[1]
     try:
         filas = _random_sql_query("SELECT TOP 1 ESDO FROM MAEEDO WHERE TIDO=%s AND NUDO=%s", (t_r, n_r))
     except Exception:
         filas = None
+    with _FAC_ESDO_CACHE_LOCK:
+        if len(_FAC_ESDO_CACHE) > 2000:
+            _FAC_ESDO_CACHE.clear()
+        _FAC_ESDO_CACHE[k] = (_t.time() + (300 if filas is not None else 60), filas)
+    return filas
+
+
+def _fac_leer_capacidad(tido, nudo, solo_cache=False):
+    """Capacidad de servicio/despacho de un documento para el libro (revisión 2, 2026-10-11). Tres casos que antes se
+    confundían: ('ok', cap) leído completo · ('sin_doc', ceros) el documento no existe o está ANULADO en Random (no
+    respalda cobro; antes dejaba la OT fuera del libro para siempre) · ('no_leido', None) Random no respondió o devolvió
+    la cabecera sin líneas (una factura real siempre tiene líneas; antes eso se leía como «sin líneas» y anotaba una
+    liberación falsa). Solo lectura (REGLA #4.1): la consulta de existencia pasa por _random_sql_query (con caché).
+    Se lee con la forma REAL del documento (comparte la caché con _ot_saldo_doc / _fac_doc_refrescar).
+    `solo_cache` (revisión 3, caminos calientes del candado): nunca sale a la red; si no hay una lectura completa en
+    caché responde 'no_leido' y quien llama usa su criterio conservador."""
+    t_r, n_r = _ot_saldo_real(_saldo.clave_doc(tido, nudo))
+    if solo_cache:
+        try:
+            import time as _t
+            with _MANT_ERP_DOC_CACHE_LOCK:
+                hit = _MANT_ERP_DOC_CACHE.get(f"{t_r}|{n_r}")
+            if not (hit and (_t.time() - hit[0]) < _MANT_ERP_DOC_CACHE_TTL and hit[1] and hit[2]):
+                return "no_leido", None
+        except Exception:
+            return "no_leido", None
+    header, lineas = _mant_erp_doc_cached(t_r, n_r)
+    if header and lineas:
+        _h, zz, _tot = _erp_zz_lineas(t_r, n_r)
+        return "ok", _saldo.clasificar_lineas(zz)[0]
+    if header:
+        _fac_olvidar_cache(t_r, n_r)
+        return "no_leido", None
+    if solo_cache:
+        return "no_leido", None
+    filas = _fac_esdo(t_r, n_r)
     if filas is None:
         return "no_leido", None
     if not filas or str((filas[0] or {}).get("ESDO") or "").strip().upper() == "NULO":
@@ -112601,7 +112663,24 @@ def _fac_leer_capacidad(tido, nudo):
     return "no_leido", None
 
 
-def _fac_aportes_ot(vid):
+class _FacCapsPerezosas(object):
+    """Capacidades que se leen recién cuando aportes_reales_ot las pide (revisión 3): una OT cancelada, en garantía,
+    con valor manual o sin residuo no toca Random."""
+
+    def __init__(self, formas, solo_cache=False):
+        self.formas, self.solo_cache, self.memo = formas, solo_cache, {}
+
+    def __bool__(self):
+        return True
+
+    def get(self, k, default=None):
+        if k not in self.memo:
+            t, n = self.formas.get(k, k)
+            self.memo[k] = _fac_leer_capacidad(t, n, solo_cache=self.solo_cache)[1]
+        return self.memo[k]
+
+
+def _fac_aportes_ot(vid, solo_cache=False):
     """Lo que UNA OT toma hoy de cada documento: {(tido, nudo, categoria): monto}, con el reparto EXACTO de
     ot_saldo_servicio.aportes_reales_ot (lo anotado por documento; lo antiguo se reparte sin duplicarse entre
     facturas y sin pasar su capacidad). Un error de lectura NO se convierte en «no toma nada»: se propaga, y si
@@ -112617,19 +112696,13 @@ def _fac_aportes_ot(vid):
     docs = [{"tido": r.get("erp_tido"), "nudo": r.get("erp_nudo"), "es_cobro": int(r.get("es_cobro") or 0),
              "reemplazado": bool(r.get("reemplazado_por_id")),
              "serv": r.get("zz_serv_monto"), "env": r.get("zz_envio_monto")} for r in filas]
-    caps = {}
-    necesita = []
+    formas = {}
     for d in docs:
-        if d["es_cobro"] and not d["reemplazado"] and d["serv"] is None and d["env"] is None:
-            necesita.append((d["tido"], d["nudo"]))
-    if not docs and (v.get("factura_tido") or "").strip() and (v.get("factura_nudo") or "").strip():
-        necesita.append((v["factura_tido"], v["factura_nudo"]))
-    for t, n in necesita:
-        k = _saldo.clave_doc(t, n)
-        if k in caps:
-            continue
-        _est, caps[k] = _fac_leer_capacidad(t, n)   # None = no se pudo leer (LecturaIncompleta si hace falta)
-    return _saldo.aportes_reales_ot(v, docs, caps)
+        formas.setdefault(_saldo.clave_doc(d["tido"], d["nudo"]), (d["tido"], d["nudo"]))
+    if (v.get("factura_tido") or "").strip() and (v.get("factura_nudo") or "").strip():
+        formas.setdefault(_saldo.clave_doc(v["factura_tido"], v["factura_nudo"]), (v["factura_tido"], v["factura_nudo"]))
+    # None = no se pudo leer (LecturaIncompleta si el reparto lo necesita)
+    return _saldo.aportes_reales_ot(v, docs, _FacCapsPerezosas(formas, solo_cache=solo_cache))
 
 
 def _fac_libro_ultimo(vid):
@@ -112771,7 +112844,15 @@ def _fac_doc_refrescar(tido, nudo, crear=True):
     leido = bool(s.get("leido"))
     est = _saldo.estado_factura(s["servicio"], s["despacho"], leido)
     if s.get("usos_incompletos"):
-        return s, est   # revisión 2: no se guarda una foto con lo que usan las OT leído a medias (se reintenta)
+        # revisión 2: no se guarda una foto con lo que usan las OT leído a medias (se reintenta); revisión 3: sí se
+        # anota el intento, para que el barrido rote.
+        if previo:
+            try:
+                mysql_execute("UPDATE ot_fac_doc SET intentado_el=%s WHERE doc_tido=%s AND doc_nudo=%s",
+                              (datetime.utcnow(), k[0], k[1]))
+            except Exception:
+                pass
+        return s, est
     if not crear and not previo and not (s.get("usos") or []):
         return s, est
     header = {}
@@ -112793,20 +112874,22 @@ def _fac_doc_refrescar(tido, nudo, crear=True):
         total_doc = previo.get("total_doc")
     mysql_execute(
         "INSERT INTO ot_fac_doc (doc_tido, doc_nudo, titulo, cliente_rut, cliente, fecha_doc, total_doc, cap_servicio, "
-        " cap_despacho, usado_servicio, usado_despacho, n_ot, ots_txt, estado, familia_de, erp_leido, actualizado_el) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+        " cap_despacho, usado_servicio, usado_despacho, n_ot, ots_txt, estado, familia_de, erp_leido, actualizado_el, "
+        " intentado_el) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
         "ON DUPLICATE KEY UPDATE titulo=VALUES(titulo), cliente_rut=COALESCE(VALUES(cliente_rut), cliente_rut), "
         " cliente=COALESCE(VALUES(cliente), cliente), fecha_doc=COALESCE(VALUES(fecha_doc), fecha_doc), "
         " total_doc=COALESCE(VALUES(total_doc), total_doc), cap_servicio=VALUES(cap_servicio), "
         " cap_despacho=VALUES(cap_despacho), usado_servicio=VALUES(usado_servicio), usado_despacho=VALUES(usado_despacho), "
         " n_ot=VALUES(n_ot), ots_txt=VALUES(ots_txt), estado=VALUES(estado), familia_de=VALUES(familia_de), "
-        " erp_leido=VALUES(erp_leido), actualizado_el=VALUES(actualizado_el)",
+        " erp_leido=VALUES(erp_leido), actualizado_el=VALUES(actualizado_el), intentado_el=VALUES(intentado_el)",
         (k[0], k[1], s.get("titulo") or f"{k[0]} {k[1]}", (header.get("cliente_rut") or None),
          ((header.get("cliente_nombre") or "")[:190] or None), (header.get("fecha") or None), total_doc,
          int(s["servicio"]["total"]), int(s["despacho"]["total"]), int(s["servicio"]["usado"]), int(s["despacho"]["usado"]),
          len(ots), (", ".join(ots))[:500] or None, est["estado"], familia_de, 1 if leido else 0,
          # Con Random caído no se adelanta la fecha de la foto: el barrido la vuelve a intentar.
-         (datetime.utcnow() if not s.get("capacidad_previa") else previo.get("actualizado_el"))))
+         (datetime.utcnow() if not s.get("capacidad_previa") else previo.get("actualizado_el")),
+         datetime.utcnow()))
     return s, est
 
 
@@ -112850,7 +112933,13 @@ def _fac_libro_tras_escritura(resp):
         if request.method == "DELETE" and "/mantenciones/api/visitas/" in p:
             origen = "eliminada"
         for vid in sorted(vids)[:6]:
+            if _FAC_INCOMPLETO_HASTA.get(vid, 0) > time.time():
+                continue   # revisión 3: Random no respondió hace poco para esta OT; lo retoma el barrido
             r = _fac_libro_conciliar_ot(vid, origen, detalle=f"{request.method} {p}"[:200])
+            if r.get("incompleto"):
+                if len(_FAC_INCOMPLETO_HASTA) > 2000:
+                    _FAC_INCOMPLETO_HASTA.clear()
+                _FAC_INCOMPLETO_HASTA[vid] = time.time() + 300
             for t, n in (r.get("docs") or [])[:6]:
                 try:
                     _fac_doc_refrescar(t, n)
@@ -113207,9 +113296,10 @@ def _fac_libro_barrido(max_s=40, max_ots=60):
             pass
     # Facturas que Random no respondió o cuya foto tiene más de un día: se vuelven a leer de a poco.
     try:
-        for r in (mysql_fetchall("SELECT doc_tido, doc_nudo FROM ot_fac_doc WHERE erp_leido=0 "
-                                 "    OR actualizado_el IS NULL OR actualizado_el < (UTC_TIMESTAMP() - INTERVAL 1 DAY) "
-                                 " ORDER BY actualizado_el LIMIT 10") or []):
+        for r in (mysql_fetchall("SELECT doc_tido, doc_nudo FROM ot_fac_doc "
+                                 " WHERE (erp_leido=0 OR actualizado_el IS NULL OR actualizado_el < (UTC_TIMESTAMP() - INTERVAL 1 DAY)) "
+                                 "   AND (intentado_el IS NULL OR intentado_el < (UTC_TIMESTAMP() - INTERVAL 1 HOUR)) "
+                                 " ORDER BY intentado_el IS NOT NULL, intentado_el LIMIT 10") or []):
             if time.time() - t0 > max_s + 25:
                 break
             try:
@@ -113276,7 +113366,8 @@ def ot_saldo_facturas_excel():
     filas_docs = [_fac_fila_lista(r) for r in docs]
     # 2026-10-11 (revisión): la nota de venta reemplazada por su factura es el MISMO cobro: va en «Facturas» (con su
     # columna «Nota de venta de») pero no suma en el Resumen ni en las Alertas.
-    filas_fact = [f for f in filas_docs if not f["familia_de"]]
+    _titulos = {f["titulo"] for f in filas_docs}
+    filas_fact = [f for f in filas_docs if not f["familia_de"] or f["familia_de"] not in _titulos]
     wb = Workbook()
 
     ws = wb.active

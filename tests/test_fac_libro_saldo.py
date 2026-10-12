@@ -29,6 +29,15 @@ import ot_saldo_servicio as S
 from tests.test_ot_saldo_servicio import _arbol, _fuente, _decoradores, _leer
 
 
+def _exec_clase(nombre, amb):
+    _codigo, arbol = _arbol()
+    for n in arbol.body:
+        if isinstance(n, ast.ClassDef) and n.name == nombre:
+            exec(compile(ast.Module(body=[ast.parse(ast.unparse(n)).body[0]], type_ignores=[]), "<app>", "exec"), amb)
+            return amb[nombre]
+    raise AssertionError("no está " + nombre)
+
+
 def _exec(nombre, amb):
     _codigo, arbol = _arbol()
     for n in arbol.body:
@@ -351,7 +360,7 @@ class TestLecturaDeRandom(unittest.TestCase):
         amb = {"_mant_erp_doc_cached": lambda t, n: (cabecera, lineas),
                "_erp_zz_lineas": lambda t, n: (cabecera, [l for l in lineas if str(l.get("sku", "")).startswith("ZZ")], 0),
                "_saldo": S, "_ot_saldo_real": lambda k: (k[0], k[1].zfill(10)),
-               "_random_sql_query": (lambda *a, **k: sql) if not isinstance(sql, Exception) else (lambda *a, **k: (_ for _ in ()).throw(sql)),
+               "_fac_esdo": lambda t, n: (None if isinstance(sql, Exception) else sql),
                "_fac_olvidar_cache": lambda t, n: olvidados.append((t, n))}
         return _exec("_fac_leer_capacidad", amb)("FCV", "11439"), olvidados
 
@@ -362,7 +371,7 @@ class TestLecturaDeRandom(unittest.TestCase):
     def test_cabecera_sin_lineas_es_no_leido_y_sale_de_la_cache(self):
         (est, cap), olv = self._f({"x": 1}, [], [])
         self.assertEqual((est, cap), ("no_leido", None))
-        self.assertEqual(olv, [("FCV", "11439")])
+        self.assertEqual(olv, [("FCV", "0000011439")])   # se olvida en la forma real (la que usa la caché)
 
     def test_random_caido_es_no_leido(self):
         self.assertEqual(self._f(None, [], None)[0], ("no_leido", None))
@@ -373,13 +382,61 @@ class TestLecturaDeRandom(unittest.TestCase):
         self.assertEqual(self._f(None, [], [{"ESDO": "NULO"}])[0], ("sin_doc", {"servicio": 0, "despacho": 0}))
         self.assertEqual(self._f(None, [], [{"ESDO": ""}])[0][0], "no_leido")   # existe, pero la lectura falló
 
+    def test_solo_cache_nunca_sale_a_la_red(self):
+        import threading
+        import time as _t
+        llamadas = []
+        cache = {}
+        amb = {"_mant_erp_doc_cached": lambda t, n: llamadas.append((t, n)) or (None, []),
+               "_erp_zz_lineas": lambda t, n: (None, [], 0), "_saldo": S, "_ot_saldo_real": lambda k: k,
+               "_fac_esdo": lambda t, n: llamadas.append("esdo") or [], "_fac_olvidar_cache": lambda t, n: None,
+               "_MANT_ERP_DOC_CACHE": cache, "_MANT_ERP_DOC_CACHE_LOCK": threading.Lock(), "_MANT_ERP_DOC_CACHE_TTL": 300}
+        f = _exec("_fac_leer_capacidad", amb)
+        self.assertEqual(f("FCV", "11439", solo_cache=True), ("no_leido", None))
+        self.assertEqual(llamadas, [])                                   # ni el ERP ni la consulta de existencia
+        cache["FCV|11439"] = (_t.time(), {"x": 1}, [{"sku": "ZZINSTALACION", "monto": 5}])
+        amb["_erp_zz_lineas"] = lambda t, n: ({"x": 1}, [{"sku": "ZZINSTALACION", "monto": 5}], 0)
+        amb["_mant_erp_doc_cached"] = lambda t, n: (cache["FCV|11439"][1], cache["FCV|11439"][2])
+        self.assertEqual(f("FCV", "11439", solo_cache=True)[0], "ok")    # con lectura completa en caché, sí responde
+
+    def test_la_consulta_de_existencia_tiene_cache(self):
+        import threading
+        n = []
+        amb = {"_random_sql_query": lambda *a, **k: n.append(1) or [{"ESDO": ""}], "_FAC_ESDO_CACHE": {},
+               "_FAC_ESDO_CACHE_LOCK": threading.Lock()}
+        f = _exec("_fac_esdo", amb)
+        f("FCV", "0000011439")
+        f("FCV", "0000011439")
+        self.assertEqual(len(n), 1)
+
+    def test_capacidades_perezosas_no_leen_si_la_ot_no_consume(self):
+        leidas = []
+        amb = {"_fac_leer_capacidad": lambda t, n, solo_cache=False: leidas.append((t, n)) or ("ok", {"servicio": 1, "despacho": 0})}
+        Caps = _exec_clase("_FacCapsPerezosas", amb)
+        caps = Caps({("FCV", "1"): ("FCV", "0000000001")})
+        ot = {"estado": "cancelada", "zz_monto": 100000, "valor_origen": "zz"}
+        S.aportes_reales_ot(ot, [{"tido": "FCV", "nudo": "1", "es_cobro": 1, "serv": None, "env": None}], caps)
+        self.assertEqual(leidas, [])
+        S.aportes_reales_ot(dict(ot, estado="cerrada"), [{"tido": "FCV", "nudo": "1", "es_cobro": 1, "serv": None, "env": None}], caps)
+        self.assertEqual(leidas, [("FCV", "0000000001")])
+
+    def test_fuente_2_solo_con_residuo_y_sin_red(self):
+        u = _fuente("_ot_saldo_usos")
+        self.assertIn("if not (s or e_):", u)
+        self.assertIn("_fac_aportes_ot(_vr, solo_cache=True)", u)
+        self.assertIn("_memo_ap", u)
+
+    def test_pausa_tras_lectura_incompleta_y_fotos_que_rotan(self):
+        self.assertIn("_FAC_INCOMPLETO_HASTA[vid] = time.time() + 300", _fuente("_fac_libro_tras_escritura"))
+        self.assertIn("intentado_el", _fuente("_fac_libro_barrido"))
+        self.assertIn("ADD COLUMN intentado_el", _fuente("_ensure_fac_libro"))
+
     def test_el_motor_no_toma_cabecera_sin_lineas_por_factura_sin_lineas(self):
         f = _fuente("_ot_saldo_doc")
         self.assertIn("if _hdr0 and not _lin0:", f)
         self.assertIn('res["usos_incompletos"] = bool(_err_usos)', f)
         u = _fuente("_ot_saldo_usos")
         self.assertEqual(u.count("errores.append("), 3)
-        self.assertIn("_ap = _fac_aportes_ot(r[\"visita_id\"])", u)     # el residuo antiguo, igual que el libro
         self.assertIn('if s.get("usos_incompletos"):', _fuente("_fac_doc_refrescar"))
 
     def test_cierre_falla_cerrado_si_no_puede_revisar_la_perdida(self):
@@ -415,8 +472,7 @@ class TestCableado(unittest.TestCase):
 
     def test_mismo_motor_que_el_candado(self):
         f = _fuente("_fac_aportes_ot")
-        self.assertIn("_saldo.aportes_reales_ot(v, docs, caps)", f)
-        self.assertIn("None", f.split("caps[k] =", 1)[1].split("\n", 1)[0])   # Random caído = capacidad desconocida
+        self.assertIn("_saldo.aportes_reales_ot(v, docs, _FacCapsPerezosas(formas, solo_cache=solo_cache))", f)
         self.assertIn("_ot_saldo_doc(", _fuente("_fac_doc_refrescar"))
         u = _fuente("_ot_saldo_usos")
         self.assertEqual(u.count("if solo:"), 3)
@@ -604,7 +660,7 @@ class TestExcelAuditoria(unittest.TestCase):
         self.assertIn("Sin autorización", perd[0][5])
         self.assertEqual(sum(1 for a in alertas if a[0] == "Doble cobro"), 1)
         resumen = {r[0].value: r[1].value for r in wb["Resumen"].iter_rows(min_row=2)}
-        self.assertEqual(resumen["Total de facturas"], 2)   # la nota de venta reemplazada no cuenta aparte
+        self.assertEqual(resumen["Total de facturas"], 2)   # la nota de venta reemplazada no cuenta aparte (su factura está)
         self.assertEqual(wb["Facturas"].max_row, 4)          # pero sí aparece en la hoja Facturas
         self.assertEqual(wb["Movimientos"].cell(row=2, column=6).value, 80000)
         texto = " ".join(str(c.value or "") for c in wb["Cómo funciona"]["A"])
