@@ -708,10 +708,34 @@
       ]
     }).then(function (v) {
       if (!v) return;
-      var cuerpo = v.tipo === 'COT'
-        ? { origen: 'cotizacion', cotizacion: v.numero, etiqueta: v.etiqueta }
-        : { origen: 'erp', tipo: v.tipo, numero: v.numero, etiqueta: v.etiqueta };
-      return enviarDoc(inst, cuerpo);
+      if (v.tipo === 'COT') return enviarDoc(inst, { origen: 'cotizacion', cotizacion: v.numero, etiqueta: v.etiqueta });
+      var cuerpo = { origen: 'erp', tipo: v.tipo, numero: v.numero, etiqueta: v.etiqueta };
+      return revisarAntesDeAgregar(inst, v.tipo, v.numero).then(function (seguir) { if (seguir) return enviarDoc(inst, cuerpo); });
+    });
+  }
+
+  /* 🚦 2026-10-12 (Daniel: «la OT le debe avisar al usuario, ya que si no sabe puede duplicar el servicio con un
+     documento con el saldo ya consumido»): antes de agregar, el semáforo del documento en palabras. Consumido, doble
+     cobro o una nota de venta que ya se facturó → hay que confirmar a conciencia; disponible → solo un aviso breve.
+     Si no se puede revisar, sigue (el servidor igual cuida el saldo al agregar). */
+  function revisarAntesDeAgregar(inst, tipo, numero) {
+    var n = String(numero || '').replace(/[^0-9]/g, '');
+    if (!n) return Promise.resolve(true);
+    toast('Revisando el saldo del documento…', 'info');
+    return api('/ot/api/saldo-servicio/' + encodeURIComponent(tipo) + '/' + encodeURIComponent(n) + '?excluir_vid=' + inst.vid).then(function (r) {
+      var av = r.ok && r.j && r.j.aviso;
+      if (!av || !av.semaforo) return true;
+      var hayAmbar = (av.avisos || []).some(function (a) { return a.nivel === 'ambar'; });
+      if (!av.alerta && av.semaforo.nivel !== 'ambar' && !hayAmbar) {
+        toast(av.semaforo.titulo + ': ' + av.semaforo.texto, av.semaforo.nivel === 'verde' ? 'success' : 'info');
+        return true;
+      }
+      return global.ilusConfirm({
+        title: av.semaforo.titulo + ' · ' + (r.j.titulo || (tipo + ' ' + n)),
+        message: av.semaforo.texto,
+        sub: (av.avisos || []).map(function (a) { return a.texto; }).join(' '),
+        okLabel: 'Agregar de todas formas', cancelLabel: 'No agregar', danger: av.semaforo.nivel === 'rojo'
+      });
     });
   }
   function enviarDoc(inst, cuerpo) {

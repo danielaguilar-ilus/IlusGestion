@@ -112308,6 +112308,9 @@ def ot_api_saldo_servicio_doc(tido, nudo):
     nudo = (nudo or "").strip()[:30]
     if not tido or not nudo:
         return jsonify({"ok": False, "error": "Falta el tipo o el número del documento."}), 400
+    # 2026-10-12: una nota de venta escrita como «NVV 10667» vive en Random como NVV «VD00010667».
+    if tido == "NVV" and nudo.isdigit():
+        tido, nudo = _ot_saldo_real(("VD", nudo.lstrip("0") or "0"))
     cli_rut = None
     try:
         cid = int(request.args.get("cliente_id") or 0)
@@ -112324,7 +112327,7 @@ def ot_api_saldo_servicio_doc(tido, nudo):
     except Exception as e:
         print(f"[ot-saldo] doc {tido} {nudo}: {type(e).__name__}: {e}", flush=True)
         return jsonify({"ok": False, "error": "No pudimos calcular el saldo de ese documento."}), 500
-    return jsonify({"ok": True, **s, "puede_autorizar": _ot_aut_es_superadmin()})
+    return jsonify({"ok": True, **s, "aviso": _ot_saldo_aviso(s), "puede_autorizar": _ot_aut_es_superadmin()})
 
 
 @app.route("/ot/api/<int:vid>/saldo-servicio", methods=["GET"])
@@ -112402,12 +112405,30 @@ def _ot_saldo_tomar_core(vid):
     return n(vid)
 
 
+def _ot_saldo_aviso(s):
+    """🚦 2026-10-12 (Daniel: «la OT le debe avisar al usuario, ya que si no sabe puede duplicar el servicio con un
+    documento con el saldo ya consumido»): el aviso EN PALABRAS de un documento — semáforo (consumido / parcial /
+    disponible / doble cobro), quién lo usa, y la relación nota de venta ↔ factura o boleta (la factura hereda lo que
+    se usó con la nota). Sale del MISMO saldo del candado (_ot_saldo_doc). None si algo falla (nunca traba)."""
+    try:
+        fam = []
+        for f in (s.get("familia") or []):
+            k = _saldo.clave_doc(f[0], f[1])
+            tu, nu = _ot_doc_real_a_usuario(*_ot_saldo_real(k))
+            fam.append((k, f"{tu} {nu}".strip()))
+        return _saldo.aviso_documento(tuple(s.get("clave") or ("", "")), s.get("titulo") or "", s.get("servicio"),
+                                      s.get("despacho"), s.get("usos"), fam, leido=bool(s.get("leido")))
+    except Exception as e:
+        print(f"[ot-saldo] aviso: {type(e).__name__}: {e}", flush=True)
+        return None
+
+
 def _ot_saldo_resumen(tido, nudo, excluir_vid=None, cliente_rut=None):
     """Saldo compacto de un documento para la vista previa de «Agregar documento»."""
     s = _ot_saldo_doc(tido, nudo, excluir_vid, cliente_rut=cliente_rut)
     if not s["leido"]:
         return None
-    return {"titulo": s["titulo"],
+    return {"titulo": s["titulo"], "aviso": _ot_saldo_aviso(s),
             "servicio": {k: s["servicio"][k] for k in ("total", "usado", "saldo", "hay_lineas")},
             "despacho": {k: s["despacho"][k] for k in ("total", "usado", "saldo", "hay_lineas")},
             "usos": [{"vid": u["vid"], "numero_ot": u["numero_ot"], "cliente": u["cliente"], "url": u["url"],

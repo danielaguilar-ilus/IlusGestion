@@ -529,6 +529,16 @@
 .o2m-saldo-acc button{min-height:44px;padding:0 12px;border:1px solid #d1d5db;background:#fff;border-radius:10px;font-weight:800;font-size:.8rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;color:#0a0a0a}
 .o2m-saldo-acc button:hover{border-color:#dc2626}
 .o2m-saldo-acc button.pri{background:#dc2626;border-color:#dc2626;color:#fff}
+/* 🚦 2026-10-12: el aviso en palabras al elegir un documento (semáforo grande + nota de venta ↔ factura) */
+.o2m-sem{display:flex;gap:10px;align-items:flex-start;border-radius:12px;padding:11px 13px;margin:6px 0;font-size:.84rem;line-height:1.35}
+.o2m-sem>i{font-size:1.45rem;line-height:1}
+.o2m-sem b{display:block;font-size:.95rem;font-weight:900;letter-spacing:.01em}
+.o2m-sem.rojo{background:#fee2e2;color:#7f1d1d;border:2px solid #dc2626}
+.o2m-sem.ambar{background:#fff8e1;color:#78350f;border:1px solid #f59e0b}
+.o2m-sem.verde{background:#dcfce7;color:#14532d;border:1px solid #16a34a}
+.o2m-sem.gris{background:#f3f4f6;color:#374151;border:1px solid #d1d5db}
+.o2m-sem-av{display:flex;gap:8px;align-items:flex-start;border-radius:10px;padding:8px 11px;margin:4px 0;font-size:.8rem;line-height:1.35}
+.o2m-sem-av.ambar{background:#fff8e1;color:#78350f}.o2m-sem-av.info{background:#dbeafe;color:#1e3a8a}
 
 /* Sub-paso 1: centro de costo como 3 rectángulos con icono y color (clon
    de .otd-cc de la ficha). El color se recuerda por dónde está. */
@@ -6556,7 +6566,41 @@ window.OT2C = (function(){
       S.fin_saldo = _o2mFinSaldoCombinar(lista);
       _pintarFinSaldoDom();
       refrescarAnclas();
+      _o2mFinAvisarDocumentos(lista);
     });
+  }
+  /* 🚦 2026-10-12 (Daniel: «la OT le debe avisar al usuario, ya que si no sabe puede duplicar el servicio con un
+     documento con el saldo ya consumido»): un documento consumido, con doble cobro, o una nota de venta que ya se
+     facturó, interrumpe con un aviso que hay que cerrar (una vez por documento). No bloquea: el servidor igual cuida
+     el saldo al crear y ofrece las salidas (tomar el saldo, otra factura, garantía, autorización). */
+  function _o2mFinAvisarDocumentos(lista){
+    if (typeof window.ilusAlert !== 'function') return;
+    S.fin_saldo_avisados = S.fin_saldo_avisados || {};
+    var porAvisar = (lista || []).filter(function(d){
+      var k = (d.clave || []).join('|');
+      return d.aviso && d.aviso.alerta && !S.fin_saldo_avisados[k];
+    });
+    (function siguiente(i){
+      if (i >= porAvisar.length) return;
+      var d = porAvisar[i], av = d.aviso;
+      S.fin_saldo_avisados[(d.clave || []).join('|')] = true;
+      var sub = (av.avisos || []).map(function(a){ return a.texto; }).join(' ');
+      Promise.resolve(window.ilusAlert({
+        title: av.semaforo.nivel === 'rojo' ? (av.semaforo.titulo + ' · ' + d.titulo) : ('Ojo con ' + d.titulo),
+        message: av.semaforo.nivel === 'rojo' ? av.semaforo.texto : (sub || av.semaforo.texto),
+        sub: av.semaforo.nivel === 'rojo' ? sub : '',
+        type: av.semaforo.nivel === 'rojo' ? 'danger' : 'warning'
+      })).then(function(){ siguiente(i + 1); });
+    })(0);
+  }
+  function _o2mFinSemHtml(av){
+    if (!av || !av.semaforo) return '';
+    var ic = {rojo: 'bi-x-octagon-fill', ambar: 'bi-exclamation-triangle-fill', verde: 'bi-check-circle-fill', gris: 'bi-info-circle-fill'};
+    return '<div class="o2m-sem '+esc(av.semaforo.nivel)+'" role="'+(av.semaforo.nivel === 'rojo' ? 'alert' : 'status')+'"><i class="bi '+(ic[av.semaforo.nivel] || 'bi-info-circle-fill')+'"></i>'+
+      '<div><b>'+esc(av.semaforo.titulo)+'</b>'+esc(av.semaforo.texto)+'</div></div>'+
+      (av.avisos || []).map(function(a){
+        return '<div class="o2m-sem-av '+esc(a.nivel)+'"><i class="bi bi-diagram-2-fill"></i><span>'+esc(a.texto)+'</span></div>';
+      }).join('');
   }
   function _o2mFinSaldoCombinar(lista){
     var cobro = {};
@@ -6595,7 +6639,7 @@ window.OT2C = (function(){
   function _pintarFinSaldoDom(){
     var c = document.getElementById('o2mFinSaldo'); if (!c) return;
     var s = S.fin_saldo;
-    if (!s || !s.docs.length || (!s.servicio.hay && !s.despacho.hay)){ c.innerHTML = ''; return; }
+    if (!s || !s.docs.length){ c.innerHTML = ''; return; }
     var conSer = 0, conDes = 0, usados = 0;
     s.docs.forEach(function(d){ if (d.servicio.hay_lineas) conSer++; if (d.despacho.hay_lineas) conDes++; if ((d.usos||[]).length) usados++; });
     var html = '<div class="o2m-saldo"><div class="o2m-saldo-h"><span><b>'+s.docs.length+'</b> documento'+(s.docs.length===1?'':'s')+'</span>'+
@@ -6610,9 +6654,10 @@ window.OT2C = (function(){
             '<small>'+esc(l.sku)+'</small></td><td>'+_o2mPesos(l.monto)+'</td><td>'+_o2mPesos(l.usado)+'</td><td><b>'+_o2mPesos(l.saldo)+'</b></td></tr>';
         });
       });
-      if (!filas) return;
-      html += '<div class="o2m-saldo-doc"><h6>'+esc(d.titulo)+(d.omitido ? ' <span class="text-muted" style="font-weight:600">· su factura ya cuenta</span>' : '')+'</h6>'+
-        '<table><thead><tr><th>Línea</th><th>Monto</th><th>Usado en otras OT</th><th>Saldo</th></tr></thead><tbody>'+filas+'</tbody></table>'+
+      var sem = _o2mFinSemHtml(d.aviso);
+      if (!filas && !sem) return;
+      html += '<div class="o2m-saldo-doc"><h6>'+esc(d.titulo)+(d.omitido ? ' <span class="text-muted" style="font-weight:600">· su factura ya cuenta</span>' : '')+'</h6>'+ sem +
+        (filas ? '<table><thead><tr><th>Línea</th><th>Monto</th><th>Usado en otras OT</th><th>Saldo</th></tr></thead><tbody>'+filas+'</tbody></table>' : '')+
         ((d.usos||[]).length ? '<ul class="o2m-saldo-usos">'+d.usos.map(function(u){
           return '<li><a href="'+esc(u.url)+'" target="_blank" rel="noopener">'+esc(u.numero_ot || ('OT #'+u.vid))+'</a>'+(u.cliente ? ' · '+esc(u.cliente) : '')+
             ' · usa '+[u.servicio ? 'servicio '+_o2mPesos(u.servicio) : '', u.despacho ? 'despacho '+_o2mPesos(u.despacho) : ''].filter(Boolean).join(' + ')+'</li>';

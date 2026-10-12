@@ -467,3 +467,89 @@ def perdida_de_cuenta(cobre_total, me_tecnico, me_despacho, autorizada=0):
     como producto, no como línea de servicio, y contarlos inventaba pérdidas que solo Daniel podía destrabar.
     Un costo de despacho vacío cuenta como $0: la pérdida calculada es un mínimo (si ya es > 0, existe)."""
     return perdida_cierre(cobre_total, _entero(me_tecnico) + _entero(me_despacho), autorizada)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  🚦 AVISO AL ELEGIR UN DOCUMENTO (Daniel, 12-oct-2026)
+#  «La OT le debe avisar al usuario, ya que si no sabe puede duplicar el servicio con un documento con el saldo ya
+#  consumido» · «que sea inteligente de reconocer cuando una nota de venta llega a esta [factura] y cuando esa nota de
+#  venta hereda el saldo a la factura o a la boleta». Texto en palabras + semáforo, con el MISMO saldo del candado.
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+def _lista_humana(xs):
+    xs = [x for x in xs if x]
+    if not xs:
+        return ""
+    if len(xs) == 1:
+        return xs[0]
+    return ", ".join(xs[:-1]) + " y " + xs[-1]
+
+
+def _ot_txt(u):
+    return "%s%s" % (u.get("numero_ot") or ("OT #%s" % u.get("vid")), (" (" + u["cliente"] + ")") if u.get("cliente") else "")
+
+
+def aviso_documento(clave, titulo, servicio, despacho, usos, familia, leido=True):
+    """El aviso que ve la persona al elegir un documento para una OT.
+    `clave`: (tido, nudo) canónica del documento elegido; `titulo`: «FCV 11439»; `servicio`/`despacho`: {total, usado,
+    saldo, hay_lineas} (calcular()); `usos`: OT que ya lo usan (consolidar_usos: incluye `documentos`, las claves por
+    las que cada OT lo usa, p. ej. la nota de venta); `familia`: [(clave, titulo)] de la nota de venta de origen o de la
+    factura/boleta que la reemplaza (Random: MAEDDO.TIDOPA/NUDOPA).
+    Devuelve {semaforo: {estado, nivel, titulo, texto}, avisos: [{nivel, texto}], alerta: bool}. `alerta`=True cuando
+    hay que interrumpir a la persona (consumido, doble cobro o una nota de venta que ya se facturó)."""
+    s = servicio or {}
+    d = despacho or {}
+    usos = list(usos or [])
+    tipo = (clave or ("", ""))[0]
+    es_nv = tipo in NOTAS_VENTA
+    nombre = "nota de venta" if es_nv else ("boleta" if tipo in ("BLV", "BLE") else "factura")
+    cobros = [t for k, t in (familia or []) if k and k[0] in DOCS_COBRO]
+    notas = [t for k, t in (familia or []) if k and k[0] in NOTAS_VENTA]
+    claves_nv = {tuple(k) for k, _t in (familia or []) if k and k[0] in NOTAS_VENTA}
+    quienes = _lista_humana([_ot_txt(u) for u in usos])
+    hay = bool(s.get("hay_lineas")) or bool(d.get("hay_lineas"))
+    saldo_s, saldo_d = _entero(s.get("saldo")), _entero(d.get("saldo"))
+    partes_saldo = []
+    if s.get("hay_lineas"):
+        partes_saldo.append("%s de instalación o servicio" % clp(saldo_s))
+    if d.get("hay_lineas"):
+        partes_saldo.append("%s de despacho" % clp(saldo_d))
+    excedido = bool(s.get("excedido")) or bool(d.get("excedido"))
+    agotado = hay and all(_entero(x.get("saldo")) <= 0 for x in (s, d) if x.get("hay_lineas"))
+
+    if not leido:
+        sem = {"estado": "sin_leer", "nivel": "gris", "titulo": "Random no respondió",
+               "texto": "No pudimos leer %s en Random: no se puede saber si tiene saldo. Reintenta en unos minutos." % titulo}
+    elif not hay:
+        sem = {"estado": "sin_lineas", "nivel": "gris", "titulo": "Sin servicio que controlar",
+               "texto": "%s no trae instalación, mantención ni despacho (líneas ZZ): no respalda el cobro de un servicio."
+                        % titulo}
+    elif excedido:
+        sem = {"estado": "doble", "nivel": "rojo", "titulo": "Doble cobro",
+               "texto": "Las OT que ya usan %s suman más de lo que trae (%s). No lo uses para cobrar otro servicio."
+                        % (titulo, quienes or "otras OT")}
+    elif agotado:
+        sem = {"estado": "consumido", "nivel": "rojo", "titulo": "Saldo consumido",
+               "texto": "%s ya se usó completo en %s. Si creas otra OT con este documento, estarías cobrando dos veces el "
+                        "mismo servicio: agrega otra factura o pide la autorización de Daniel." % (titulo, quienes or "otra OT")}
+    elif usos:
+        sem = {"estado": "parcial", "nivel": "ambar", "titulo": "Ya se usó una parte",
+               "texto": "%s ya lo usa %s. Quedan %s." % (titulo, quienes, _lista_humana(partes_saldo))}
+    else:
+        sem = {"estado": "disponible", "nivel": "verde", "titulo": "Disponible",
+               "texto": "Nadie ha usado %s. Tiene %s." % (titulo, _lista_humana(partes_saldo))}
+
+    avisos = []
+    if es_nv and cobros:
+        avisos.append({"nivel": "ambar",
+                       "texto": "Esta nota de venta ya se facturó en %s. Usa la %s: hereda lo que ya se usó con esta nota "
+                                "(no es un saldo nuevo)." % (_lista_humana(cobros), "factura o boleta" if len(cobros) > 1 else
+                                                              ("boleta" if cobros[0].startswith("BL") else "factura"))})
+    if not es_nv and notas:
+        via_nv = [u for u in usos if any(tuple(k) in claves_nv for k in (u.get("documentos") or []))]
+        txt = "Esta %s viene de la nota de venta %s." % (nombre, _lista_humana(notas))
+        if via_nv:
+            txt += " %s ya la usó con la nota de venta: ese saldo ya está tomado." % _lista_humana([_ot_txt(u) for u in via_nv])
+        avisos.append({"nivel": "ambar" if via_nv else "info", "texto": txt})
+    alerta = sem["nivel"] == "rojo" or (es_nv and bool(cobros))
+    return {"semaforo": sem, "avisos": avisos, "alerta": alerta}
