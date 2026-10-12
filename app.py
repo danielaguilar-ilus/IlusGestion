@@ -132694,6 +132694,8 @@ def mant_factura_proveedor_detalle(fid):
         tiene_factura_real=_mfp_tiene_factura_real(factura),
         historial=historial, historial_total=historial_total,
         es_superadmin=bool((getattr(g, "permissions", {}) or {}).get("superadmin")),
+        # 📋 2026-10-12: «Copiar solicitud para el proveedor» dice a quién facturar (razón social, REGLA #0).
+        ilus_legal=ILUS_LEGAL, ilus_rut=ILUS_RUT,
     )
 
 

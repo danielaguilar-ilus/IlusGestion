@@ -47,80 +47,131 @@
 
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='facprov_inteligente.css') }}">
-<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-  <div class="d-flex align-items-start gap-2">
-    <a href="/servicio-tecnico/facturas-proveedor" class="btn btn-light btn-sm" style="min-height:44px;display:inline-flex;align-items:center"
-       title="Volver a Facturas de proveedor"><i class="bi bi-arrow-left"></i></a>
-    <div>
-      <div style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.6)">
-        <a href="/servicio-tecnico/facturas-proveedor" style="color:inherit;text-decoration:none">Facturas de proveedor</a> ›
-        Lote #{{ factura.id }} · {{ tipo_lbl }} {{ factura.numero_documento or '(sin N°)' }}</div>
+{#- 🧭 2026-10-12 (Daniel, lote #19 de Transportes Milling: «la información está arriba pero no la encuentro amigable…
+    el botón de Excel no se ve… las tarjetas las veo muy grandes e inútiles… un header que de verdad informe… el
+    seguimiento puede ser un paso a paso con botoncitos» y «que sea cómodo para mí analizar y mandar a facturar»).
+      · Cabecera que informa: proveedor, estado, los datos del documento en fichas, y «Qué sigue» en una frase con
+        su botón. Los botones usan colores que se ven sobre el fondo negro (antes btn-outline-dark = negro sobre negro).
+      · La tarjeta negra del proveedor se fundió en la cabecera (RUT, alias, «ver todas», notas: nada se quitó).
+      · El respaldo adjunto pasó a una ficha de la cabecera (mismo enlace).
+      · Seguimiento = paso a paso horizontal con botones chicos; montos en una franja compacta (mismos id, el panel
+        en vivo de «Asignar OT» los sigue proyectando).
+      · «Copiar solicitud para el proveedor»: texto listo para pegar en el correo o WhatsApp (OC, OT, montos y a
+        quién facturar). No envía nada: lo manda la persona. Sin montos cobrados al cliente ni margen. -#}
+{% set n_nocerr = items | selectattr('no_cerrada') | list | length %}
+{% set n_sincosto = items | selectattr('sin_costo') | list | length %}
+<div class="page-header fpd-hero">
+  <div class="fpd-hero-top">
+    <a href="/servicio-tecnico/facturas-proveedor" class="btn btn-light btn-sm fpd-back" title="Volver a Facturas de proveedor"
+       aria-label="Volver a Facturas de proveedor"><i class="bi bi-arrow-left"></i></a>
+    <div class="fpd-hero-id">
+      <div class="fpd-crumb">
+        <a href="/servicio-tecnico/facturas-proveedor">Facturas de proveedor</a> › Lote #{{ factura.id }}
+        · {{ (tipo_lbl ~ ' N° ' ~ factura.numero_documento) if s3_ok else 'Solicitud de orden de compra' }}</div>
       {# 🏢 2026-09-20: la EMPRESA como título (DAP Servicio), el nombre escrito a
          mano ("Daniel Pulgar") queda como alias -- ver mant_factura_proveedor_detalle. #}
-      <h1 class="mb-1"><i class="bi bi-receipt-cutoff me-2" style="color:#dc2626"></i>{{ prov_nombre }}
-        <span class="fp-pago pago-{{ factura.estado_pago }}" style="vertical-align:middle;margin-left:6px">
+      <h1 class="fpd-hero-t"><i class="bi bi-receipt-cutoff" style="color:#dc2626"></i> {{ prov_nombre }}
+        <span class="fp-pago pago-{{ factura.estado_pago }}">
           {% if pagada %}<i class="bi bi-check-circle-fill"></i> Pagada
           {% elif anulada %}<i class="bi bi-slash-circle"></i> Anulada
-          {% else %}<i class="bi bi-hourglass-split"></i> Pendiente de pago{% endif %}</span>
-        {% if not s3_ok %}
-        <span class="fp-pago" style="vertical-align:middle;margin-left:4px;background:#fff8e1;color:#92400e;border:1px solid #fde68a">
-          <i class="bi bi-hourglass-split"></i> Sin factura — pendiente de completar</span>
-        {% endif %}
-        {% if s2_ok %}
-        <span class="fp-pago" style="vertical-align:middle;margin-left:4px;background:#dbeafe;color:#1e40af;border:1px solid #bfdbfe">
-          <i class="bi bi-file-earmark-text"></i> OC {{ factura.numero_oc }}</span>
-        {% endif %}</h1>
-      <div style="font-size:.86rem;color:rgba(255,255,255,.78)">
-        {% if s3_ok %}
-        {{ tipo_lbl }} <b>N° {{ factura.numero_documento }}</b>
-        · {{ factura.fecha | chile_fmt('%d/%m/%Y') if factura.fecha else '—' }}
-        {% elif pagada %}
-        <b>Todavía no llega el documento del proveedor</b> — el pago ya está reconocido y congelado.
-        {% else %}
-        <b>Solicitud de orden de compra</b> — todavía no se le paga al proveedor, se está esperando la factura real.
-        {% endif %}
-        {% if factura.prov_canon_rut %} · RUT {{ factura.prov_canon_rut | rut_fmt }}{% endif %}
-        {% if factura.prov_alias %} · registrada como “{{ factura.prov_alias }}”{% endif %}
-        {% if factura.prov_canon_id %} · <a href="/servicio-tecnico/facturas-proveedor?prov_id={{ factura.prov_canon_id }}" style="color:#fff;font-weight:800">Ver todas las facturas de este proveedor</a>{% endif %}
+          {% else %}<i class="bi bi-hourglass-split"></i> Pendiente de pago{% endif %}</span></h1>
+      <div class="fpd-hero-meta">
+        {% if factura.prov_canon_rut %}<span><i class="bi bi-person-vcard"></i> RUT {{ factura.prov_canon_rut | rut_fmt }}</span>{% endif %}
+        {% if factura.prov_alias %}<span><i class="bi bi-tag"></i> Registrada como “{{ factura.prov_alias }}”</span>{% endif %}
+        {% if factura.prov_canon_id %}<a href="/servicio-tecnico/facturas-proveedor?prov_id={{ factura.prov_canon_id }}"><i class="bi bi-collection"></i> Ver todas las facturas de este proveedor</a>{% endif %}
       </div>
     </div>
-  </div>
-  <div class="d-flex gap-2 flex-wrap">
-    {# 📊 2026-10-08 (Daniel: "perdí el detalle, no veo un Excel para sacar un detalle de esto"): resumen + OT + historial del lote. #}
-    <a class="btn btn-sm btn-outline-dark" style="min-height:44px;display:inline-flex;align-items:center"
-       href="{{ url_for('mant_factura_proveedor_excel', fid=factura.id) }}"
-       title="Detalle de este lote en Excel: resumen, una fila por OT e historial"><i class="bi bi-file-earmark-excel me-1"></i>Descargar detalle (Excel)</a>
-    {% if pendiente %}
-    <button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="fpdEditar()">
-      <i class="bi bi-pencil me-1"></i>Editar</button>
-    {% endif %}
-    <label class="btn btn-sm btn-outline-dark mb-0" style="min-height:44px;display:inline-flex;align-items:center;cursor:pointer">
-      <i class="bi bi-paperclip me-1"></i>{{ 'Cambiar respaldo' if factura.archivo_url else 'Subir respaldo' }}
-      <input type="file" id="fpdArchivo" accept=".pdf,.jpg,.jpeg,.png" hidden onchange="fpdSubirArchivo(this)">
-    </label>
-    {% if pendiente %}
-    <button type="button" class="btn btn-sm btn-success fw-bold" style="min-height:44px" onclick="fpdPagar()"
-            {% if not items %}disabled title="Asigna al menos una OT antes de marcarla pagada"{% endif %}>
-      <i class="bi bi-check2-circle me-1"></i>Marcar pagada</button>
-    {% elif pagada and es_superadmin %}
-      {% if not s3_ok %}
-      <button type="button" class="btn btn-sm btn-dark fw-bold" style="min-height:44px" onclick="fpdCompletar()">
-        <i class="bi bi-file-earmark-plus me-1"></i>Completar factura</button>
+    <div class="fpd-hero-acc">
+      {# 📊 2026-10-08 (Daniel: "perdí el detalle, no veo un Excel para sacar un detalle de esto"): resumen + OT + historial del lote. #}
+      <a class="btn btn-sm btn-light fw-bold fpd-hbtn" href="{{ url_for('mant_factura_proveedor_excel', fid=factura.id) }}"
+         title="Detalle de este lote en Excel: resumen, una fila por OT e historial"><i class="bi bi-file-earmark-excel-fill" style="color:#16a34a"></i> Descargar detalle (Excel)</a>
+      {% if items and not anulada %}
+      <button type="button" class="btn btn-sm btn-outline-light fpd-hbtn" onclick="fpdCopiarSolicitud()"
+              title="Texto listo para pegar en el correo o WhatsApp al proveedor: OC, OT, montos y a quién facturar">
+        <i class="bi bi-clipboard-check"></i> Copiar solicitud para el proveedor</button>
       {% endif %}
-    <button type="button" class="btn btn-sm btn-outline-danger" style="min-height:44px" onclick="fpdReabrir()">
-      <i class="bi bi-unlock me-1"></i>Reabrir</button>
-    {% endif %}
-    {% if pendiente and es_superadmin and not items %}
-    <button type="button" class="btn btn-sm btn-outline-secondary" style="min-height:44px" onclick="fpdAnular()">
-      <i class="bi bi-slash-circle me-1"></i>Anular</button>
-    {% endif %}
+      {% if pendiente %}
+      <button type="button" class="btn btn-sm btn-outline-light fpd-hbtn" onclick="fpdEditar()"><i class="bi bi-pencil"></i> Editar</button>
+      {% endif %}
+      <label class="btn btn-sm btn-outline-light fpd-hbtn mb-0" style="cursor:pointer">
+        <i class="bi bi-paperclip"></i> {{ 'Cambiar respaldo' if factura.archivo_url else 'Subir respaldo' }}
+        <input type="file" id="fpdArchivo" accept=".pdf,.jpg,.jpeg,.png" hidden onchange="fpdSubirArchivo(this)">
+      </label>
+      {% if pendiente %}
+      <button type="button" class="btn btn-sm btn-success fw-bold fpd-hbtn" onclick="fpdPagar()"
+              {% if not items %}disabled title="Asigna al menos una OT antes de marcarla pagada"{% endif %}>
+        <i class="bi bi-check2-circle"></i> Marcar pagada</button>
+      {% elif pagada and es_superadmin %}
+        {% if not s3_ok %}
+        <button type="button" class="btn btn-sm btn-light fw-bold fpd-hbtn" onclick="fpdCompletar()">
+          <i class="bi bi-file-earmark-plus"></i> Completar factura</button>
+        {% endif %}
+      <button type="button" class="btn btn-sm fpd-hbtn fpd-hbtn-danger" onclick="fpdReabrir()"><i class="bi bi-unlock"></i> Reabrir</button>
+      {% endif %}
+      {% if pendiente and es_superadmin and not items %}
+      <button type="button" class="btn btn-sm btn-outline-light fpd-hbtn" onclick="fpdAnular()"><i class="bi bi-slash-circle"></i> Anular</button>
+      {% endif %}
+    </div>
   </div>
+
+  {# Fichas con los datos del documento: se leen de un vistazo, sin buscar en el texto. #}
+  <div class="fpd-facts">
+    <div class="fpd-fact {{ 'ok' if s2_ok else 'falta' }}"><span>Orden de compra</span><b>{{ ('N° ' ~ factura.numero_oc) if s2_ok else 'Falta' }}</b></div>
+    <div class="fpd-fact {{ 'ok' if s3_ok else 'falta' }}"><span>{{ tipo_lbl if s3_ok else 'Factura del proveedor' }}</span>
+      <b>{{ ('N° ' ~ factura.numero_documento) if s3_ok else ('Sin documento (pagada)' if pagada else 'Aún no llega') }}</b>
+      {% if s3_ok and factura.fecha %}<small>{{ factura.fecha | chile_fmt('%d/%m/%Y') }}</small>
+      {% elif not s3_ok %}<small>Sin factura — pendiente de completar</small>{% endif %}</div>
+    <div class="fpd-fact"><span>Monto del lote</span><b>{{ clp(factura.monto_total) }}</b>
+      <small>{{ 'según el documento' if s3_ok else ('suma de las OT' if pendiente else 'declarado') }}</small></div>
+    <div class="fpd-fact"><span>OT en el lote</span><b>{{ items|length }}</b>
+      {% if n_nocerr or n_sincosto %}<small class="warn">{% if n_nocerr %}{{ n_nocerr }} sin cerrar{% endif %}{% if n_nocerr and n_sincosto %} · {% endif %}{% if n_sincosto %}{{ n_sincosto }} sin costo{% endif %}</small>
+      {% else %}<small>{{ 'todas listas' if items else 'ninguna todavía' }}</small>{% endif %}</div>
+    <div class="fpd-fact"><span>Creado</span><b>{{ factura.created_at | chile_fmt('%d/%m/%Y') if factura.created_at else '—' }}</b>
+      <small>{{ factura.created_by or '—' }}</small></div>
+    <div class="fpd-fact {{ 'ok' if factura.archivo_url }}"><span>Respaldo</span>
+      {% if factura.archivo_url %}<a href="{{ factura.archivo_url }}" target="_blank" rel="noopener"><i class="bi bi-file-earmark-pdf-fill"></i> {{ factura.archivo_nombre or 'Ver archivo' }}</a>
+      {% else %}<b>Sin adjunto</b>{% endif %}</div>
+  </div>
+
+  {# «Qué sigue»: el próximo paso en palabras, con su botón. #}
+  <div class="fpd-next {{ 'done' if (pasos_ok == 4 or anulada) }}">
+    <i class="bi bi-{{ 'slash-circle' if anulada else ('check-circle-fill' if pasos_ok == 4 else 'arrow-right-circle-fill') }}"></i>
+    <div class="fpd-next-tx">
+      <span class="fpd-next-l">Qué sigue</span>
+      {% if anulada %}<b>Lote anulado: queda como registro.</b>
+      {% elif not items and pendiente %}<b>Asigna las OT de {{ prov_nombre }} que cobra este lote.</b>
+      {% elif activo == 2 and pendiente %}<b>Anota el N° de orden de compra y envíale la solicitud a {{ prov_nombre }} para que facture.</b>
+      {% elif activo == 3 and pendiente %}<b>Esperando la factura de {{ prov_nombre }}{{ (' por la OC N° ' ~ factura.numero_oc) if s2_ok }}: regístrala cuando llegue.</b>
+      {% elif activo == 4 %}<b>La factura llegó: revisa que cuadre con las OT y márcala pagada.</b>
+      {% elif pagada and activo in (2, 3) %}<b>Pagada, pero falta {{ 'el N° de orden de compra' if activo == 2 else 'el documento del proveedor' }} para cerrar el registro.</b>
+      {% else %}<b>Ciclo completo: pagada el {{ factura.pagada_at | chile_fmt('%d/%m/%Y') if factura.pagada_at else '—' }} por {{ factura.pagada_por or '—' }}.</b>{% endif %}
+      {% if items and diferencia|round(0) != 0 and not anulada %}
+      <span class="fpd-next-warn"><i class="bi bi-exclamation-triangle-fill"></i> El monto del lote y la suma de las OT difieren en {{ clp(diferencia | abs) }} (detalle abajo).</span>
+      {% endif %}
+    </div>
+    <div class="fpd-next-acc">
+      {% if not items and pendiente %}
+      <a class="btn btn-sm btn-danger fw-bold fpd-mini" href="#fpdAsignar"><i class="bi bi-plus-lg"></i> Asignar OT</a>
+      {% elif activo == 2 and puede_completar_doc %}
+      <button type="button" class="btn btn-sm btn-danger fw-bold fpd-mini" onclick="{{ accion_completar }}"><i class="bi bi-pencil"></i> Anotar N° de OC</button>
+      {% elif activo == 3 and puede_completar_doc %}
+      <button type="button" class="btn btn-sm btn-danger fw-bold fpd-mini" onclick="{{ accion_completar }}"><i class="bi bi-file-earmark-plus"></i> {{ 'Registrar factura' if pendiente else 'Completar factura' }}</button>
+      {% elif activo == 4 and pendiente %}
+      <button type="button" class="btn btn-sm btn-success fw-bold fpd-mini" onclick="fpdPagar()"><i class="bi bi-check2-circle"></i> Marcar pagada</button>
+      {% endif %}
+      {% if items and pendiente and activo in (2, 3) %}
+      <button type="button" class="btn btn-sm btn-outline-light fpd-mini" onclick="fpdCopiarSolicitud()"><i class="bi bi-clipboard-check"></i> Copiar solicitud</button>
+      {% endif %}
+    </div>
+  </div>
+  {% if factura.notas and not anulada %}
+  <div class="fpd-hero-notas"><i class="bi bi-chat-left-text"></i> <span>{{ factura.notas }}</span></div>
+  {% endif %}
 </div>
 
 {# 2026-10-08: aviso que sobrevive a la recarga tras asignar/quitar/ajustar (ver fpdMostrarAvisoGuardado). #}
 <div class="fpd-flash" id="fpdAvisoFlash" role="status" aria-live="polite" hidden></div>
 
-{# ── Tracking del ciclo del lote ─────────────────────────────────── #}
 {% if anulada %}
 <div class="fpd-lock anulada">
   <i class="bi bi-slash-circle"></i>
@@ -129,121 +180,101 @@
 </div>
 {% endif %}
 
+{# ── Seguimiento del lote: paso a paso con botones chicos ────────── #}
 <div class="fpd-track {{ 'is-anulada' if anulada }}">
   <div class="fpd-track-hd">
-    <div>
-      <div class="fpd-track-t"><i class="bi bi-signpost-split me-1" style="color:#dc2626"></i>Seguimiento del lote</div>
-      <div class="fpd-track-s">Del pedido de orden de compra al pago al proveedor. El paso que parpadea es el que falta completar.</div>
-    </div>
+    <div class="fpd-track-t"><i class="bi bi-signpost-split" style="color:#dc2626"></i> Seguimiento del lote
+      <span class="fpd-track-s">del pedido de OC al pago al proveedor</span></div>
     <div class="fpd-track-prog {{ 'ok' if pasos_ok == 4 }}">
       {% if anulada %}<i class="bi bi-slash-circle"></i> Anulado
       {% elif pasos_ok == 4 %}<i class="bi bi-check-circle-fill"></i> Ciclo completo
       {% else %}{{ pasos_ok }} de 4 pasos{% endif %}
     </div>
   </div>
-  <div class="fpd-steps">
+  <ol class="fpd-steps">
 
     {# ① Solicitud de OC creada #}
-    <div class="fpd-step is-ok">
-      <div class="fpd-step-hd">
-        <div class="fpd-circle"><span class="n">1</span><i class="bi bi-check-lg ok"></i></div>
-        <div class="fpd-step-tt"><div class="fpd-step-t">Solicitud de OC creada</div>
-          <div class="fpd-step-s">Se agruparon las OT del proveedor</div></div>
-      </div>
-      <div class="fpd-step-bd">
-        <div class="fpd-dato"><i class="bi bi-calendar3"></i>
-          {{ factura.created_at | chile_fmt('%d/%m/%Y %H:%M') if factura.created_at else '—' }}</div>
-        <div class="fpd-dato"><i class="bi bi-person"></i> {{ factura.created_by or '—' }}</div>
-        <div class="fpd-dato"><i class="bi bi-list-check"></i> {{ items|length }} OT · {{ clp(total_asignado) }}</div>
-      </div>
-    </div>
+    <li class="fpd-step is-ok">
+      <div class="fpd-step-rail"><div class="fpd-circle"><span class="n">1</span><i class="bi bi-check-lg ok"></i></div><span class="fpd-line"></span></div>
+      <div class="fpd-step-t">Solicitud de OC</div>
+      <div class="fpd-step-d">{{ factura.created_at | chile_fmt('%d/%m/%Y %H:%M') if factura.created_at else '—' }} · {{ factura.created_by or '—' }}</div>
+      <div class="fpd-step-d">{{ items|length }} OT · {{ clp(total_asignado) }}</div>
+    </li>
 
-    {# ② N° de OC recibido #}
-    <div class="fpd-step {{ 'is-ok' if s2_ok else ('is-activo' if activo == 2 and not anulada) }}">
-      <div class="fpd-step-hd">
-        <div class="fpd-circle"><span class="n">2</span><i class="bi bi-check-lg ok"></i></div>
-        <div class="fpd-step-tt"><div class="fpd-step-t">N° de orden de compra</div>
-          <div class="fpd-step-s">Lo entrega ILUS al proveedor para que facture</div></div>
+    {# ② N° de OC: lo entrega ILUS al proveedor para que facture #}
+    <li class="fpd-step {{ 'is-ok' if s2_ok else ('is-activo' if activo == 2 and not anulada) }}">
+      <div class="fpd-step-rail"><div class="fpd-circle"><span class="n">2</span><i class="bi bi-check-lg ok"></i></div><span class="fpd-line"></span></div>
+      <div class="fpd-step-t">N° de orden de compra</div>
+      {% if s2_ok %}
+      <div class="fpd-step-d strong">OC N° {{ factura.numero_oc }}</div>
+      {% else %}
+      <div class="fpd-step-d falta">Falta anotarlo</div>
+      {% endif %}
+      <div class="fpd-step-btns">
+        {% if not s2_ok and puede_completar_doc %}
+        <button type="button" class="btn btn-sm btn-danger fw-bold fpd-mini" onclick="{{ accion_completar }}"><i class="bi bi-pencil"></i> Anotar OC</button>
+        {% elif not s2_ok and pagada and not es_superadmin %}
+        <div class="fpd-step-d">Solo un superadministrador puede completarlo en un lote pagado.</div>
+        {% endif %}
+        {% if items and pendiente %}
+        <button type="button" class="btn btn-sm btn-outline-dark fpd-mini" onclick="fpdCopiarSolicitud()" title="Texto para enviarle al proveedor"><i class="bi bi-clipboard-check"></i> Copiar solicitud</button>
+        {% endif %}
       </div>
-      <div class="fpd-step-bd">
-        {% if s2_ok %}
-        <div class="fpd-dato big"><i class="bi bi-file-earmark-text"></i> OC N° {{ factura.numero_oc }}</div>
-        {% else %}
-        <div class="fpd-falta"><i class="bi bi-exclamation-circle"></i> Todavía no se registra el N° de OC</div>
+    </li>
+
+    {# ③ Factura del proveedor #}
+    <li class="fpd-step {{ 'is-ok' if s3_ok else ('is-activo' if activo == 3 and not anulada) }}">
+      <div class="fpd-step-rail"><div class="fpd-circle"><span class="n">3</span><i class="bi bi-check-lg ok"></i></div><span class="fpd-line"></span></div>
+      <div class="fpd-step-t">Factura del proveedor</div>
+      {% if s3_ok %}
+      <div class="fpd-step-d strong">{{ tipo_lbl }} N° {{ factura.numero_documento }}</div>
+      <div class="fpd-step-d">{{ factura.fecha | chile_fmt('%d/%m/%Y') if factura.fecha else '—' }} · {{ clp(factura.monto_total) }}</div>
+      {% if factura.archivo_url %}
+      <a class="fpd-step-link" href="{{ factura.archivo_url }}" target="_blank" rel="noopener"><i class="bi bi-file-earmark-pdf-fill"></i> {{ factura.archivo_nombre or 'Ver respaldo' }}</a>
+      {% else %}
+      <div class="fpd-step-d">Sin respaldo adjunto: usa «Subir respaldo» arriba.</div>
+      {% endif %}
+      {% else %}
+      <div class="fpd-step-d falta">Aún no llega el documento</div>
+      <div class="fpd-step-btns">
         {% if puede_completar_doc %}
-        <button type="button" class="btn btn-sm btn-danger fw-bold fpd-step-btn" onclick="{{ accion_completar }}">
-          <i class="bi bi-pencil me-1"></i>Anotar N° de OC</button>
+        {# Rojo lleno solo si es el paso que toca ahora; si aún falta la OC, borde #}
+        <button type="button" class="btn btn-sm {{ 'btn-danger' if activo == 3 else 'btn-outline-dark' }} fw-bold fpd-mini" onclick="{{ accion_completar }}">
+          <i class="bi bi-file-earmark-plus"></i> {{ 'Registrar factura' if pendiente else 'Completar factura' }}</button>
         {% elif pagada and not es_superadmin %}
-        <div class="fp-sub">Solo un superadministrador puede completarlo en un lote pagado.</div>
-        {% endif %}
+        <div class="fpd-step-d">Solo un superadministrador puede completarla en un lote pagado.</div>
         {% endif %}
       </div>
-    </div>
+      {% endif %}
+    </li>
 
-    {# ③ Factura del proveedor recibida #}
-    <div class="fpd-step {{ 'is-ok' if s3_ok else ('is-activo' if activo == 3 and not anulada) }}">
-      <div class="fpd-step-hd">
-        <div class="fpd-circle"><span class="n">3</span><i class="bi bi-check-lg ok"></i></div>
-        <div class="fpd-step-tt"><div class="fpd-step-t">Factura del proveedor</div>
-          <div class="fpd-step-s">Documento real que respalda el pago</div></div>
-      </div>
-      <div class="fpd-step-bd">
-        {% if s3_ok %}
-        <div class="fpd-dato big"><i class="bi bi-receipt"></i> {{ tipo_lbl }} N° {{ factura.numero_documento }}</div>
-        <div class="fpd-dato"><i class="bi bi-calendar3"></i> {{ factura.fecha | chile_fmt('%d/%m/%Y') if factura.fecha else '—' }}
-          · {{ clp(factura.monto_total) }}</div>
-        {% if factura.archivo_url %}
-        <div class="fpd-dato"><i class="bi bi-file-earmark-pdf-fill" style="color:#dc2626"></i>
-          <a href="{{ factura.archivo_url }}" target="_blank" rel="noopener" style="color:#dc2626;font-weight:800">{{ factura.archivo_nombre or 'Ver respaldo' }}</a></div>
-        {% else %}
-        <div class="fp-sub"><i class="bi bi-paperclip"></i> Sin respaldo adjunto — usa “Subir respaldo” arriba.</div>
-        {% endif %}
-        {% else %}
-        <div class="fpd-falta"><i class="bi bi-exclamation-circle"></i> Aún no llega el documento del proveedor</div>
-        {% if puede_completar_doc %}
-        {# Rojo lleno solo si es el paso que toca ahora; si aún falta la OC, outline #}
-        <button type="button" class="btn btn-sm {{ 'btn-danger' if activo == 3 else 'btn-outline-dark' }} fw-bold fpd-step-btn" onclick="{{ accion_completar }}">
-          <i class="bi bi-file-earmark-plus me-1"></i>{{ 'Registrar factura' if pendiente else 'Completar factura' }}</button>
-        {% elif pagada and not es_superadmin %}
-        <div class="fp-sub">Solo un superadministrador puede completarla en un lote pagado.</div>
-        {% endif %}
-        {% endif %}
-      </div>
-    </div>
-
-    {# ④ Pagada #}
-    <div class="fpd-step {{ 'is-ok' if s4_ok else ('is-activo' if activo == 4 and not anulada) }}">
-      <div class="fpd-step-hd">
-        <div class="fpd-circle"><span class="n">4</span><i class="bi bi-check-lg ok"></i></div>
-        <div class="fpd-step-tt"><div class="fpd-step-t">Pagada al proveedor</div>
-          <div class="fpd-step-s">Congela el lote: sus OT quedan reservadas</div></div>
-      </div>
-      <div class="fpd-step-bd">
-        {% if s4_ok %}
-        <div class="fpd-dato big"><i class="bi bi-check-circle-fill" style="color:#16a34a"></i>
-          {{ factura.pagada_at | chile_fmt('%d/%m/%Y %H:%M') if factura.pagada_at else '—' }}</div>
-        <div class="fpd-dato"><i class="bi bi-person"></i> {{ factura.pagada_por or '—' }}</div>
-        {% if factura.pago_referencia %}<div class="fpd-dato"><i class="bi bi-hash"></i> ref. {{ factura.pago_referencia }}</div>{% endif %}
-        {% if es_superadmin %}
-        <button type="button" class="btn btn-sm btn-outline-danger fpd-step-btn" onclick="fpdReabrir()">
-          <i class="bi bi-unlock me-1"></i>Reabrir</button>
-        {% endif %}
-        {% elif anulada %}
-        <div class="fp-sub">No aplica: el lote está anulado.</div>
-        {% else %}
-        <div class="fpd-falta"><i class="bi bi-hourglass-split"></i> Pendiente de pago</div>
-        {% if pendiente %}
-        {# Verde lleno solo cuando OC y factura ya están; antes, outline (se puede igual, como en la cabecera) #}
-        <button type="button" class="btn btn-sm {{ 'btn-success' if activo == 4 else 'btn-outline-success' }} fw-bold fpd-step-btn" onclick="fpdPagar()"
+    {# ④ Pagada: congela el lote, sus OT quedan reservadas #}
+    <li class="fpd-step {{ 'is-ok' if s4_ok else ('is-activo' if activo == 4 and not anulada) }}">
+      <div class="fpd-step-rail"><div class="fpd-circle"><span class="n">4</span><i class="bi bi-check-lg ok"></i></div></div>
+      <div class="fpd-step-t">Pagada al proveedor</div>
+      {% if s4_ok %}
+      <div class="fpd-step-d strong">{{ factura.pagada_at | chile_fmt('%d/%m/%Y %H:%M') if factura.pagada_at else '—' }}</div>
+      <div class="fpd-step-d">{{ factura.pagada_por or '—' }}{% if factura.pago_referencia %} · ref. {{ factura.pago_referencia }}{% endif %}</div>
+      {% if es_superadmin %}
+      <div class="fpd-step-btns"><button type="button" class="btn btn-sm btn-outline-danger fpd-mini" onclick="fpdReabrir()"><i class="bi bi-unlock"></i> Reabrir</button></div>
+      {% endif %}
+      {% elif anulada %}
+      <div class="fpd-step-d">No aplica: el lote está anulado.</div>
+      {% else %}
+      <div class="fpd-step-d falta">Pendiente de pago</div>
+      {% if pendiente %}
+      <div class="fpd-step-btns">
+        {# Verde lleno solo cuando OC y factura ya están; antes, borde (se puede igual, como en la cabecera) #}
+        <button type="button" class="btn btn-sm {{ 'btn-success' if activo == 4 else 'btn-outline-success' }} fw-bold fpd-mini" onclick="fpdPagar()"
                 {% if not items %}disabled title="Asigna al menos una OT antes de marcarla pagada"{% endif %}>
-          <i class="bi bi-check2-circle me-1"></i>Marcar pagada</button>
-        {% if not items %}<div class="fp-sub">Asigna al menos una OT antes de marcarla pagada.</div>{% endif %}
-        {% endif %}
-        {% endif %}
+          <i class="bi bi-check2-circle"></i> Marcar pagada</button>
       </div>
-    </div>
+      {% if not items %}<div class="fpd-step-d">Asigna al menos una OT antes de marcarla pagada.</div>{% endif %}
+      {% endif %}
+      {% endif %}
+    </li>
 
-  </div>
+  </ol>
 </div>
 
 {% if pagada %}
@@ -256,57 +287,35 @@
 </div>
 {% endif %}
 
-{% if factura.archivo_url %}
-<div class="fpd-archivo">
-  <i class="bi bi-file-earmark-pdf-fill"></i>
-  <div><b>Respaldo del documento:</b>
-    <a href="{{ factura.archivo_url }}" target="_blank" rel="noopener">{{ factura.archivo_nombre or 'ver archivo' }}</a></div>
-</div>
-{% endif %}
-
-{# ── Cabecera: proveedor + semáforo de montos ────────────────────── #}
-<div class="fpd-head">
-  <div class="fpd-prov">
-    <div class="fpd-prov-l">Proveedor</div>
-    <div class="fpd-prov-n">{{ prov_nombre }}</div>
-    {% if factura.prov_canon_rut %}<div class="fpd-prov-d"><i class="bi bi-person-vcard"></i> RUT {{ factura.prov_canon_rut | rut_fmt }}</div>{% endif %}
-    {% if factura.prov_alias %}<div class="fpd-prov-d"><i class="bi bi-tag"></i> Registrada como “{{ factura.prov_alias }}”</div>{% endif %}
-    {% if factura.prov_canon_id %}
-    <a class="fpd-prov-d" style="color:#dc2626;font-weight:800;text-decoration:none" href="/servicio-tecnico/facturas-proveedor?prov_id={{ factura.prov_canon_id }}">
-      <i class="bi bi-collection"></i> Ver todas las facturas de este proveedor</a>
-    {% endif %}
-    {% if factura.notas %}<div class="fpd-prov-notas"><i class="bi bi-chat-left-text"></i> <span style="white-space:pre-line">{{ factura.notas }}</span></div>{% endif %}
+{# ── Montos del lote en una franja compacta (mismos id: el panel en vivo los proyecta) ── #}
+<div class="fpd-summary">
+  <div class="fpd-cell" id="fpdCellN"><div class="l">OT asignadas</div><div class="v">{{ items|length }}</div></div>
+  <div class="fpd-cell"><div class="l">Monto de la factura</div><div class="v">{{ clp(factura.monto_total) }}</div>
+    <div class="s">{{ 'según documento N° ' ~ factura.numero_documento if s3_ok else ('suma de las OT; se actualiza sola hasta que llegue la factura' if pendiente else 'declarado en la solicitud') }}</div></div>
+  <div class="fpd-cell" id="fpdCellAsig"><div class="l">Asignado en OT</div><div class="v">{{ clp(total_asignado) }}</div>
+    <div class="s">suma de lo que cobra cada OT</div></div>
+  {# Semáforo: verde cuadra, ámbar la factura cobra más, rojo las OT suman más #}
+  {% set dif_clase = 'muted' if not items else ('pos' if diferencia|round(0) == 0 else ('warn' if diferencia > 0 else 'neg')) %}
+  <div class="fpd-cell sem-{{ dif_clase }}" id="fpdCellDif">
+    <div class="l"><span class="fpd-dot"></span>Diferencia</div>
+    {% if not items %}<div class="v muted">—</div><div class="s">sin OT todavía</div>
+    {% elif diferencia|round(0) == 0 %}<div class="v pos"><i class="bi bi-check2"></i> Cuadra</div><div class="s">factura y OT coinciden</div>
+    {% else %}<div class="v {{ dif_clase }}">{{ '+' if diferencia > 0 else '' }}{{ clp(diferencia) }}</div>
+      <div class="s">{{ 'la factura cobra más que lo declarado en las OT' if diferencia > 0 else 'las OT suman más que la factura' }}</div>{% endif %}
   </div>
-
-  <div class="fpd-summary">
-    <div class="fpd-cell" id="fpdCellN"><div class="l">OT asignadas</div><div class="v">{{ items|length }}</div></div>
-    <div class="fpd-cell"><div class="l">Monto de la factura</div><div class="v">{{ clp(factura.monto_total) }}</div>
-      <div class="s">{{ 'según documento N° ' ~ factura.numero_documento if s3_ok else ('suma de las OT; se actualiza sola hasta que llegue la factura' if pendiente else 'declarado en la solicitud') }}</div></div>
-    <div class="fpd-cell" id="fpdCellAsig"><div class="l">Asignado en OT</div><div class="v">{{ clp(total_asignado) }}</div>
-      <div class="s">suma de lo que cobra cada OT</div></div>
-    {# Semáforo: verde cuadra, ámbar la factura cobra más, rojo las OT suman más #}
-    {% set dif_clase = 'muted' if not items else ('pos' if diferencia|round(0) == 0 else ('warn' if diferencia > 0 else 'neg')) %}
-    <div class="fpd-cell sem-{{ dif_clase }}" id="fpdCellDif">
-      <div class="l"><span class="fpd-dot"></span>Diferencia</div>
-      {% if not items %}<div class="v muted">—</div><div class="s">sin OT todavía</div>
-      {% elif diferencia|round(0) == 0 %}<div class="v pos"><i class="bi bi-check2"></i> Cuadra</div><div class="s">factura y OT coinciden</div>
-      {% else %}<div class="v {{ dif_clase }}">{{ '+' if diferencia > 0 else '' }}{{ clp(diferencia) }}</div>
-        <div class="s">{{ 'la factura cobra más que lo declarado en las OT' if diferencia > 0 else 'las OT suman más que la factura' }}</div>{% endif %}
-    </div>
-    {# 💰 2026-09-19 (Daniel: "comparemos el total cobrado por ILUS y el
-       total cobrado por el proveedor, así sé si pierdo o gano"). Mismas OT,
-       mirando el otro lado del negocio: lo que ILUS le cobró a SU cliente,
-       al lado de lo que esta factura le paga al proveedor. #}
-    <div class="fpd-cell" id="fpdCellCob"><div class="l">Cobrado a cliente</div><div class="v">{{ clp(total_cobrado_cliente) }}</div>
-      <div class="s">lo que ILUS cobró por estas OT</div></div>
-    {% set mg_clase = 'muted' if not items else ('pos' if margen_total > 0 else ('neg' if margen_total < 0 else 'warn')) %}
-    <div class="fpd-cell sem-{{ mg_clase }}" id="fpdCellMg">
-      <div class="l"><span class="fpd-dot"></span>Margen del lote</div>
-      {% if not items %}<div class="v muted">—</div>
-      {% else %}<div class="v {{ mg_clase }}">{{ '+' if margen_total > 0 else '' }}{{ clp(margen_total) }}</div>
-        <div class="s">{{ 'gana ILUS' if margen_total > 0 else ('pierde ILUS' if margen_total < 0 else 'sin margen') }}
-          {%- if total_cobrado_cliente > 0 %} · {{ '%.1f' | format(margen_total / total_cobrado_cliente * 100) }}%{% endif %}</div>{% endif %}
-    </div>
+  {# 💰 2026-09-19 (Daniel: "comparemos el total cobrado por ILUS y el
+     total cobrado por el proveedor, así sé si pierdo o gano"). Mismas OT,
+     mirando el otro lado del negocio: lo que ILUS le cobró a SU cliente,
+     al lado de lo que esta factura le paga al proveedor. #}
+  <div class="fpd-cell" id="fpdCellCob"><div class="l">Cobrado a cliente</div><div class="v">{{ clp(total_cobrado_cliente) }}</div>
+    <div class="s">lo que ILUS cobró por estas OT</div></div>
+  {% set mg_clase = 'muted' if not items else ('pos' if margen_total > 0 else ('neg' if margen_total < 0 else 'warn')) %}
+  <div class="fpd-cell sem-{{ mg_clase }}" id="fpdCellMg">
+    <div class="l"><span class="fpd-dot"></span>Margen del lote</div>
+    {% if not items %}<div class="v muted">—</div>
+    {% else %}<div class="v {{ mg_clase }}">{{ '+' if margen_total > 0 else '' }}{{ clp(margen_total) }}</div>
+      <div class="s">{{ 'gana ILUS' if margen_total > 0 else ('pierde ILUS' if margen_total < 0 else 'sin margen') }}
+        {%- if total_cobrado_cliente > 0 %} · {{ '%.1f' | format(margen_total / total_cobrado_cliente * 100) }}%{% endif %}</div>{% endif %}
   </div>
 </div>
 
@@ -510,7 +519,7 @@
 
 {# ── Asignar OT (solo pendiente) ─────────────────────────────────── #}
 {% if pendiente %}
-<div class="fp-sec">Asignar OT a esta factura</div>
+<div class="fp-sec" id="fpdAsignar">Asignar OT a esta factura</div>
 <div class="fpd-buscar">
   <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
     <input type="search" class="form-control form-control-sm" id="fpdQ" style="max-width:240px;min-height:44px;font-size:16px"
@@ -1247,69 +1256,164 @@ document.addEventListener('DOMContentLoaded', function(){
   fpdMostrarAvisoGuardado();
   if (document.getElementById('fpdResultados')) fpdBuscar();
 });
+
+// 📋 2026-10-12 (Daniel: «que sea cómodo… mandar a facturar de manera fácil»). Arma el texto para el proveedor
+// (OC, OT, montos que cobra esta factura y a quién facturar) y lo copia: la persona lo pega en su correo o WhatsApp.
+// No envía nada. Lleva solo lo que el proveedor debe facturar: nada de lo cobrado al cliente ni el margen.
+const FPD_SOLICITUD = {
+  lote: {{ factura.id }},
+  proveedor: {{ prov_nombre | tojson }},
+  rut: {{ ((factura.prov_canon_rut | rut_fmt) if factura.prov_canon_rut else '') | tojson }},
+  oc: {{ (factura.numero_oc or '') | tojson }},
+  legal: {{ (ilus_legal or '') | tojson }},
+  rutIlus: {{ (ilus_rut or '') | tojson }},
+  total: {{ (total_asignado or 0) | float }},
+  ots: [{% for it in items %}{% set cobra = it.fac_monto if it.fac_monto is not none else it.sugerido %}
+    {ot: {{ (it.numero_ot or '') | tojson }}, fecha: {{ (it.fecha | string if it.fecha else '') | tojson }},
+     cliente: {{ (it.cliente or '') | tojson }}, monto: {{ (cobra or 0) | float }}}{{ ',' if not loop.last }}{% endfor %}
+  ]
+};
+function fpdTextoSolicitud(){
+  const S = FPD_SOLICITUD;
+  const clp = v => '$' + Math.round(Number(v) || 0).toLocaleString('es-CL');
+  const l = [];
+  l.push('Solicitud de facturación · Lote #' + S.lote);
+  l.push('Proveedor: ' + S.proveedor + (S.rut ? ' (RUT ' + S.rut + ')' : ''));
+  l.push('Orden de compra: ' + (S.oc ? 'N° ' + S.oc : 'por confirmar'));
+  if (S.legal) l.push('Facturar a: ' + S.legal + (S.rutIlus ? ' · RUT ' + S.rutIlus : ''));
+  l.push('');
+  l.push('Servicios incluidos (' + S.ots.length + ' OT):');
+  S.ots.forEach(o => l.push('• ' + o.ot + (o.fecha ? ' · ' + o.fecha : '') + (o.cliente ? ' · ' + o.cliente : '') + ' · ' + clp(o.monto)));
+  l.push('');
+  l.push('Total de la solicitud: ' + clp(S.total));
+  if (S.oc) l.push('Por favor, indica la OC N° ' + S.oc + ' en la factura.');
+  return l.join('\n');
+}
+async function fpdCopiarSolicitud(){
+  const texto = fpdTextoSolicitud();
+  const esc = t => t.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const ok = await ilusConfirm({
+    title: 'Solicitud para ' + FPD_SOLICITUD.proveedor,
+    message: 'Revísala y cópiala para pegarla en tu correo o WhatsApp al proveedor.' + (FPD_SOLICITUD.oc ? '' : ' Todavía no tiene N° de orden de compra.'),
+    sub: '<div style="white-space:pre-wrap;text-align:left;font-size:.82rem;background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;max-height:46vh;overflow:auto">' + esc(texto) + '</div>',
+    subHtml: true, okLabel: 'Copiar', cancelLabel: 'Cerrar', type: 'info',
+  });
+  if (!ok) return;
+  let copiado = false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText){ await navigator.clipboard.writeText(texto); copiado = true; }
+  } catch (e) { copiado = false; }
+  if (!copiado){
+    // Navegador sin portapapeles moderno: se copia con un área de texto temporal.
+    const ta = document.createElement('textarea');
+    ta.value = texto; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { copiado = document.execCommand('copy'); } catch (e) { copiado = false; }
+    ta.remove();
+  }
+  ilusToast(copiado ? '✓ Solicitud copiada: pégala en el correo o WhatsApp al proveedor' : 'No se pudo copiar: selecciona el texto y cópialo a mano',
+            {type: copiado ? 'success' : 'warning'});
+}
 </script>
 
 <style>
-/* ── Tracking del lote (step-circle de Retiros: rojo → verde, pulso en el activo) ── */
-.fpd-track{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px 16px 12px;margin:14px 0 10px;box-shadow:0 1px 2px rgba(15,23,42,.05)}
+/* ── 🧭 2026-10-12 Cabecera que informa (fondo negro de .page-header) ── */
+.fpd-hero{padding:14px 18px 12px}
+.fpd-hero-top{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.fpd-back{min-height:40px;min-width:40px;display:inline-flex;align-items:center;justify-content:center}
+.fpd-hero-id{flex:1 1 320px;min-width:0}
+.fpd-crumb{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.6)}
+.page-header .fpd-crumb a{color:inherit;text-decoration:none}
+.fpd-hero-t{font-size:1.3rem;font-weight:900;line-height:1.2;margin:3px 0 4px;color:#fff;display:flex;align-items:center;gap:8px;flex-wrap:wrap;word-break:break-word}
+.fpd-hero-meta{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:.8rem;color:rgba(255,255,255,.78)}
+.fpd-hero-meta i{color:#dc2626}
+.page-header .fpd-hero-meta a{color:#fff;font-weight:800;text-decoration:none}
+.page-header .fpd-hero-meta a:hover{text-decoration:underline}
+.fpd-hero-acc{display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:flex-end}
+.fpd-hbtn{min-height:38px;display:inline-flex;align-items:center;gap:6px;border-radius:9px;font-size:.8rem}
+.page-header .fpd-hbtn.btn-outline-light{border-color:rgba(255,255,255,.35);color:#fff}
+.page-header .fpd-hbtn.btn-outline-light:hover{background:rgba(255,255,255,.12);border-color:#fff;color:#fff}
+.fpd-hbtn-danger{border:1px solid #f87171;color:#fecaca;background:transparent}
+.fpd-hbtn-danger:hover{background:rgba(220,38,38,.2);color:#fff}
+/* Fichas del documento */
+.fpd-facts{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-top:12px}
+.fpd-fact{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:7px 10px;min-width:0;display:flex;flex-direction:column;gap:1px}
+.fpd-fact span{font-size:.6rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.55)}
+.fpd-fact b{font-size:.92rem;font-weight:900;color:#fff;font-variant-numeric:tabular-nums;word-break:break-word;line-height:1.25}
+.fpd-fact small{font-size:.68rem;color:rgba(255,255,255,.6);word-break:break-word}
+.fpd-fact small.warn{color:#fcd34d;font-weight:800}
+.fpd-fact.ok{border-color:rgba(74,222,128,.45)}
+.fpd-fact.ok span::before{content:'● ';color:#4ade80}
+.fpd-fact.falta{border-color:rgba(248,113,113,.55);background:rgba(220,38,38,.12)}
+.fpd-fact.falta span::before{content:'● ';color:#f87171}
+.fpd-fact.falta b{color:#fecaca}
+.page-header .fpd-fact a{color:#fff;font-weight:800;font-size:.82rem;text-decoration:none;word-break:break-word}
+.page-header .fpd-fact a i{color:#f87171}
+.page-header .fpd-fact a:hover{text-decoration:underline}
+/* Qué sigue */
+.fpd-next{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;padding:9px 12px;border-radius:10px;
+  background:rgba(220,38,38,.16);border:1px solid rgba(248,113,113,.5)}
+.fpd-next > .bi{font-size:1.25rem;color:#f87171;flex-shrink:0}
+.fpd-next.done{background:rgba(22,163,74,.14);border-color:rgba(74,222,128,.45)}
+.fpd-next.done > .bi{color:#4ade80}
+.fpd-next-tx{flex:1 1 300px;min-width:0;display:flex;flex-direction:column;gap:2px;font-size:.88rem;color:#fff}
+.fpd-next-l{font-size:.6rem;font-weight:900;text-transform:uppercase;letter-spacing:.07em;color:rgba(255,255,255,.6)}
+.fpd-next-warn{font-size:.76rem;font-weight:700;color:#fcd34d}
+.fpd-next-acc{display:flex;gap:6px;flex-wrap:wrap}
+.page-header .fpd-next-acc .btn-outline-light{border-color:rgba(255,255,255,.4);color:#fff}
+.fpd-hero-notas{margin-top:8px;font-size:.78rem;color:rgba(255,255,255,.75);display:flex;gap:6px;align-items:flex-start;line-height:1.4}
+.fpd-hero-notas i{color:#dc2626;margin-top:2px}
+.fpd-hero-notas span{white-space:pre-line;word-break:break-word}
+/* Botón chico (pasos y «Qué sigue") */
+.fpd-mini{min-height:32px;padding:3px 10px;font-size:.74rem;border-radius:8px;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+
+/* ── Seguimiento del lote: paso a paso horizontal (step-circle de Retiros: rojo → verde, pulso en el activo) ── */
+.fpd-track{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 14px 12px;margin:0 0 10px;box-shadow:0 1px 2px rgba(15,23,42,.05)}
 .fpd-track.is-anulada{opacity:.6;filter:grayscale(.4)}
-.fpd-track-hd{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:12px}
-.fpd-track-t{font-size:.92rem;font-weight:900;color:#0a0a0a}
-.fpd-track-s{font-size:.74rem;color:#6b7280;margin-top:2px}
-.fpd-track-prog{font-size:.72rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#92400e;background:#fff8e1;border:1px solid #fde68a;border-radius:999px;padding:5px 12px;white-space:nowrap;display:inline-flex;align-items:center;gap:5px}
+.fpd-track-hd{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.fpd-track-t{font-size:.84rem;font-weight:900;color:#0a0a0a;display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
+.fpd-track-s{font-size:.72rem;font-weight:600;color:#6b7280}
+.fpd-track-prog{font-size:.66rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#92400e;background:#fff8e1;border:1px solid #fde68a;border-radius:999px;padding:3px 10px;white-space:nowrap;display:inline-flex;align-items:center;gap:5px}
 .fpd-track-prog.ok{color:#166534;background:#dcfce7;border-color:#bbf7d0}
-.fpd-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;position:relative}
-.fpd-step{position:relative;border:1.5px solid #e5e7eb;border-radius:12px;padding:11px 12px;background:#fff;transition:border-color .25s,background .25s;min-width:0}
-.fpd-step-hd{display:flex;align-items:flex-start;gap:10px;margin-bottom:8px}
-.fpd-step-tt{min-width:0;padding-top:2px}
-.fpd-step-t{font-size:.86rem;font-weight:800;color:#0a0a0a;line-height:1.2}
-.fpd-step-s{font-size:.7rem;color:#6b7280;margin-top:2px;line-height:1.3}
-.fpd-circle{width:36px;height:36px;border-radius:50%;background:#dc2626;color:#fff;display:flex;align-items:center;justify-content:center;
-  font-weight:900;font-size:1rem;flex:0 0 auto;border:2px solid #fff;box-shadow:0 4px 10px rgba(220,38,38,.3);position:relative;transition:background .3s}
-.fpd-circle .ok{display:none;font-size:1.1rem}
-.fpd-step-bd{padding-left:46px;display:flex;flex-direction:column;gap:3px}
-.fpd-dato{font-size:.78rem;color:#334155;font-weight:600;display:flex;align-items:flex-start;gap:6px;line-height:1.35;word-break:break-word}
-.fpd-dato i{color:#94a3b8;flex-shrink:0;margin-top:1px}
-.fpd-dato.big{font-size:.9rem;font-weight:900;color:#0a0a0a}
-.fpd-falta{font-size:.76rem;font-weight:800;color:#b91c1c;display:flex;align-items:flex-start;gap:6px;line-height:1.35}
-.fpd-falta i{flex-shrink:0;margin-top:1px}
-.fpd-step-btn{min-height:44px;margin-top:6px;align-self:flex-start}
-/* Paso completo: verde, con check y el pulso de Retiros (una vez) */
-.fpd-step.is-ok{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 60%)}
-.fpd-step.is-ok .fpd-circle{background:#16a34a;box-shadow:0 4px 10px rgba(22,163,74,.32)}
+.fpd-steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0}
+.fpd-step{min-width:0;padding-right:14px;display:flex;flex-direction:column;gap:2px}
+.fpd-step-rail{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.fpd-line{flex:1 1 auto;height:3px;border-radius:3px;background:#e5e7eb}
+.fpd-step.is-ok .fpd-line{background:#16a34a}
+.fpd-circle{width:30px;height:30px;border-radius:50%;background:#9ca3af;color:#fff;display:flex;align-items:center;justify-content:center;
+  font-weight:900;font-size:.86rem;flex:0 0 auto;position:relative;transition:background .3s}
+.fpd-circle .ok{display:none;font-size:1rem}
+.fpd-step-t{font-size:.82rem;font-weight:900;color:#0a0a0a;line-height:1.2}
+.fpd-step-d{font-size:.74rem;color:#475569;line-height:1.35;word-break:break-word}
+.fpd-step-d.strong{font-weight:900;color:#0a0a0a;font-size:.8rem}
+.fpd-step-d.falta{font-weight:800;color:#6b7280}
+.fpd-step-link{font-size:.74rem;font-weight:800;color:#dc2626;text-decoration:none;word-break:break-word}
+.fpd-step-link:hover{text-decoration:underline}
+.fpd-step-btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+/* Paso completo: verde con check y el pulso de Retiros (una vez) */
+.fpd-step.is-ok .fpd-circle{background:#16a34a;box-shadow:0 3px 8px rgba(22,163,74,.3)}
 .fpd-step.is-ok .fpd-circle .n{display:none}
 .fpd-step.is-ok .fpd-circle .ok{display:inline}
-.fpd-step.is-ok .fpd-circle::after{content:'';position:absolute;inset:-5px;border-radius:50%;border:2px solid #16a34a;opacity:.35;animation:fpdPulseGreen 1.4s ease-in-out 1}
+.fpd-step.is-ok .fpd-circle::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:2px solid #16a34a;opacity:.35;animation:fpdPulseGreen 1.4s ease-in-out 1}
 @keyframes fpdPulseGreen{0%{transform:scale(.85);opacity:.7}100%{transform:scale(1.25);opacity:0}}
-/* Paso activo (el que falta ahora): borde rojo y pulso permanente */
-.fpd-step.is-activo{border-color:#fca5a5;background:linear-gradient(180deg,#fef2f2 0%,#fff 60%);box-shadow:0 6px 18px -10px rgba(220,38,38,.4)}
-.fpd-step.is-activo .fpd-circle{animation:fpdPulseRed 1.8s ease-out infinite}
-@keyframes fpdPulseRed{0%{box-shadow:0 0 0 0 rgba(220,38,38,.55)}70%{box-shadow:0 0 0 10px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
-/* Paso pendiente que NO es el activo: gris, a la espera */
-.fpd-step:not(.is-ok):not(.is-activo) .fpd-circle{background:#9ca3af;box-shadow:0 4px 10px rgba(107,114,128,.25)}
-.fpd-step:not(.is-ok):not(.is-activo) .fpd-falta{color:#6b7280}
+/* Paso activo (el que falta ahora): rojo con pulso permanente */
+.fpd-step.is-activo .fpd-circle{background:#dc2626;box-shadow:0 3px 8px rgba(220,38,38,.3);animation:fpdPulseRed 1.8s ease-out infinite}
+.fpd-step.is-activo .fpd-step-d.falta{color:#b91c1c}
+@keyframes fpdPulseRed{0%{box-shadow:0 0 0 0 rgba(220,38,38,.55)}70%{box-shadow:0 0 0 9px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
 @media(prefers-reduced-motion:reduce){.fpd-step.is-activo .fpd-circle,.fpd-step.is-ok .fpd-circle::after{animation:none}}
 
-/* ── Cabecera: proveedor + KPIs ── */
-.fpd-head{display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:12px;margin:0 0 6px;align-items:stretch}
-.fpd-prov{background:#0a0a0a;color:#fff;border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:5px;min-width:0}
-.fpd-prov-l{font-size:.64rem;font-weight:900;text-transform:uppercase;letter-spacing:.08em;color:rgba(255,255,255,.55)}
-.fpd-prov-n{font-size:1.08rem;font-weight:900;line-height:1.2;word-break:break-word}
-.fpd-prov-d{font-size:.78rem;color:rgba(255,255,255,.82);display:flex;align-items:flex-start;gap:6px;line-height:1.35;word-break:break-word}
-.fpd-prov-d i{color:#dc2626;flex-shrink:0;margin-top:1px}
-.fpd-prov-notas{font-size:.76rem;color:rgba(255,255,255,.75);border-top:1px solid rgba(255,255,255,.12);padding-top:7px;margin-top:3px;display:flex;gap:6px;align-items:flex-start;line-height:1.4}
-.fpd-prov-notas i{color:#dc2626;flex-shrink:0;margin-top:2px}
-.fpd-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;min-width:0}
-.fpd-cell{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px;box-shadow:0 1px 2px rgba(15,23,42,.05);min-width:0}
-.fpd-cell .l{font-size:.66rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#64748b;display:flex;align-items:center;gap:5px}
-.fpd-cell .v{font-size:1.25rem;font-weight:900;color:#0f172a;margin-top:3px;font-variant-numeric:tabular-nums;word-break:break-word}
+/* ── Montos del lote: franja compacta de 6 ── */
+.fpd-summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:0 0 6px;min-width:0}
+.fpd-cell{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px 11px;box-shadow:0 1px 2px rgba(15,23,42,.04);min-width:0}
+.fpd-cell .l{font-size:.6rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#64748b;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.fpd-cell .v{font-size:1.02rem;font-weight:900;color:#0f172a;margin-top:2px;font-variant-numeric:tabular-nums;word-break:break-word;line-height:1.2}
 .fpd-cell .v.pos{color:#15803d}.fpd-cell .v.neg{color:#b91c1c}.fpd-cell .v.warn{color:#b45309}.fpd-cell .v.muted{color:#94a3b8}
-.fpd-cell .s{font-size:.7rem;color:#94a3b8;margin-top:2px;line-height:1.3}
+.fpd-cell .s{font-size:.64rem;color:#94a3b8;margin-top:1px;line-height:1.3}
 /* Semáforo en la tarjeta: punto de color + borde/fondo suave */
-.fpd-dot{width:9px;height:9px;border-radius:50%;background:#cbd5e1;flex-shrink:0;display:inline-block}
-.fpd-cell.sem-pos{border-color:#bbf7d0;background:linear-gradient(180deg,#f0fdf4,#fff 70%)}.fpd-cell.sem-pos .fpd-dot{background:#16a34a;box-shadow:0 0 0 3px #dcfce7}
-.fpd-cell.sem-warn{border-color:#fde68a;background:linear-gradient(180deg,#fffbeb,#fff 70%)}.fpd-cell.sem-warn .fpd-dot{background:#f59e0b;box-shadow:0 0 0 3px #fef3c7}
-.fpd-cell.sem-neg{border-color:#fecaca;background:linear-gradient(180deg,#fef2f2,#fff 70%)}.fpd-cell.sem-neg .fpd-dot{background:#dc2626;box-shadow:0 0 0 3px #fee2e2}
+.fpd-dot{width:8px;height:8px;border-radius:50%;background:#cbd5e1;flex-shrink:0;display:inline-block}
+.fpd-cell.sem-pos{border-color:#bbf7d0;background:#f0fdf4}.fpd-cell.sem-pos .fpd-dot{background:#16a34a}
+.fpd-cell.sem-warn{border-color:#fde68a;background:#fffbeb}.fpd-cell.sem-warn .fpd-dot{background:#f59e0b}
+.fpd-cell.sem-neg{border-color:#fecaca;background:#fef2f2}.fpd-cell.sem-neg .fpd-dot{background:#dc2626}
 
 .fpd-lock{display:flex;gap:10px;align-items:flex-start;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;
   padding:11px 14px;margin-bottom:10px;font-size:.85rem;color:#0f172a}
@@ -1461,18 +1565,23 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 .fp-sindoc{font-size:.68rem;font-weight:800;color:#92400e;background:#fff8e1;border:1px solid #fde68a;border-radius:999px;padding:2px 8px;white-space:nowrap}
 .fp-sindoc.gar{color:#1e40af;background:#dbeafe;border-color:#bfdbfe}
 
-/* ── Tablet: tracking en 2×2, cabecera apilada ── */
+/* ── Tablet: pasos en 2×2, fichas y montos en 3 ── */
 @media (max-width:1100px){
-  .fpd-steps{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .fpd-head{grid-template-columns:1fr}
+  .fpd-steps{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:12px}
+  .fpd-facts,.fpd-summary{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .fpd-hero-acc{justify-content:flex-start}
 }
 /* ── Mobile (REGLA #3): filas como tarjetas con data-label, botones 44px ── */
 @media (max-width:768px){
-  .fpd-steps{grid-template-columns:1fr}
-  .fpd-step-bd{padding-left:0}
-  .fpd-step-btn{width:100%;align-self:stretch}
-  .fpd-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .fpd-cell .v{font-size:1.05rem}
+  .fpd-steps{grid-template-columns:1fr;row-gap:10px}
+  .fpd-step{padding:0 0 10px;border-bottom:1px dashed #e5e7eb}
+  .fpd-step:last-child{border-bottom:0;padding-bottom:0}
+  .fpd-line{display:none}
+  .fpd-mini,.fpd-hbtn{min-height:44px}
+  .fpd-step-btns .fpd-mini{flex:1 1 auto;justify-content:center}
+  .fpd-facts,.fpd-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .fpd-hero-t{font-size:1.12rem}
+  .fpd-cell .v{font-size:.98rem}
   .fp-tabla thead{display:none}
   .fp-tabla tbody tr,.fp-tabla tfoot tr{display:block;border:1px solid #e5e7eb;border-radius:12px;padding:8px 0;margin-bottom:10px;background:#fff}
   .fp-tabla tbody tr.fpd-row-warn{border-left:4px solid #f59e0b}
