@@ -487,8 +487,9 @@ class TestOtrasPantallasParaElTecnico(unittest.TestCase):
         i = base.index("bi bi-speedometer2")
         self.assertIn("{% if not es_tecnico %}", base[i - 500:i], "el link del Dashboard va dentro de not es_tecnico")
         self.assertRegex(base, r"permissions\.mant_facturacion_proveedores or permissions\.superadmin\) and not es_tecnico")
-        self.assertIn("{% if not es_tecnico %}\n    <a href=\"{{ url_for('ot_regularizar_pagina') }}\"",
-                      base.replace("\r\n", "\n"))
+        # 🔒 2026-10-11: Regularizar salió del menú: es un botón de Órdenes de Trabajo solo para el superadministrador.
+        self.assertNotIn("url_for('ot_regularizar_pagina')", base)
+        self.assertIn("{% if es_superadmin_ot %}", _leer("templates", "ot2", "panel.html"))
         self.assertIn("{% if not es_tecnico %}\n      <a href=\"{{ url_for('mant_tecnicos_externos_index') }}\"",
                       base.replace("\r\n", "\n"))
 

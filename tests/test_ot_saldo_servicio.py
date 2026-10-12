@@ -143,6 +143,10 @@ class Mundo:
         faltan = [n for n in FUNCS if n not in amb]
         assert not faltan, faltan
         amb["_erp_zz_lineas"] = self._erp_zz_lineas
+        # 2026-10-11 (revisión 2 del libro): el motor mira la lectura cruda (cabecera + líneas) para no tomar una lectura
+        # incompleta de Random por «factura sin líneas». En este mundo un documento que existe trae sus líneas.
+        amb["_mant_erp_doc_cached"] = self._erp_crudo
+        amb["_fac_olvidar_cache"] = lambda t, n: None
         amb["_ot_saldo_familia"] = self._familia
         amb["_ot_saldo_usos"] = self._usos
         amb["_rut_analisis_comparacion"] = lambda a, b: {"match": (a or "") == (b or "")}
@@ -165,6 +169,12 @@ class Mundo:
             return None, [], 0
         return {"cliente_rut": d["rut"]}, list(d["zz"]), d["total"]
 
+    def _erp_crudo(self, t, n):
+        d = self.erp.get(S.clave_doc(t, n))
+        if not d:
+            return None, []
+        return {"cliente_rut": d["rut"]}, list(d["zz"]) + [{"sku": "PRODUCTO", "monto": 1}]
+
     def _familia(self, t, n):
         k = S.clave_doc(t, n)
         return {k} | self.familia.get(k, set())
@@ -176,7 +186,7 @@ class Mundo:
     def aporta(self, vid, doc, servicio=None, despacho=None):
         self.ots[vid]["aportes"][S.clave_doc(*doc)] = (servicio, despacho)
 
-    def _usos(self, claves, excluir_vid=None, cap=None):
+    def _usos(self, claves, excluir_vid=None, cap=None, **_kw):
         filas = []
         for vid, o in self.ots.items():
             if excluir_vid and vid == excluir_vid:

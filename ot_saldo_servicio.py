@@ -387,3 +387,83 @@ def perdida_cierre(cobre_total, me_cobraron_total, autorizada=0):
     aut = max(0, _entero(autorizada))
     ok = per <= 0 or aut + 1 >= per
     return {"perdida": per, "ok": ok, "falta_autorizar": 0 if ok else per - aut}
+
+
+class LecturaIncompleta(Exception):
+    """El libro no puede afirmar lo que toma una OT (Random no respondió para un documento que lo necesita). Quien
+    llama NO anota nada ni guarda la huella: el siguiente barrido lo vuelve a intentar."""
+
+
+def aportes_reales_ot(ot, docs, caps):
+    """📒 2026-10-11 (revisión adversarial): lo que UNA OT toma de verdad de cada documento, para el libro.
+    Mismas reglas que las tres fuentes del candado, pero sin contar dos veces lo antiguo:
+      · La OT no consume si está cancelada/anulada, en garantía/sin costo o con $0 autorizado.
+      · Fuente 1: lo anotado por documento (zz_serv_monto / zz_envio_monto) en filas vigentes (no reemplazadas).
+      · Fuente 2 (OT anteriores a esa anotación): el residuo de la OT (zz_monto − lo anotado) se REPARTE entre sus
+        documentos de cobro sin anotar, en orden (el principal primero) y sin pasar la capacidad de cada uno
+        (repartir_aportes). Un documento sin líneas de una categoría no consume esa categoría.
+      · Fuente 3 (OT sin tabla puente): el cobro sale de factura_* hasta su capacidad.
+      · Un valor estimado/manual/contrato no es plata de ninguna línea (no consume).
+    `ot`: {estado, modalidad_cobro, cobro_cero_motivo, valor_origen, zz_monto, zz_envio_monto, factura_tido,
+    factura_nudo}. `docs`: [{tido, nudo, es_cobro, reemplazado, serv, env}] en orden (principal primero; serv/env
+    None = sin anotar). `caps`: {clave_doc: {servicio, despacho}} o None si Random no respondió.
+    Devuelve {(tido, nudo, categoria): monto}. Lanza LecturaIncompleta si falta una capacidad que se necesita."""
+    ot = ot or {}
+    if str(ot.get("estado") or "").lower() in ESTADOS_OT_FUERA:
+        return {}
+    if str(ot.get("modalidad_cobro") or "").lower() in ("garantia", "sin_costo") or ot.get("cobro_cero_motivo"):
+        return {}
+    out = {}
+
+    def _sumar(clave, cat, m):
+        m = _entero(m)
+        if m > 0 and clave[0] and clave[1]:
+            kk = (clave[0], clave[1], cat)
+            out[kk] = max(out.get(kk, 0), m)
+
+    vigentes = [d for d in (docs or []) if not d.get("reemplazado")]
+    anotado = {c: 0 for c in CATEGORIAS}
+    sin_anotar = []
+    vistos = set()
+    for d in vigentes:
+        k = clave_doc(d.get("tido"), d.get("nudo"))
+        if not k[0] or not k[1]:
+            continue
+        if d.get("serv") is not None or d.get("env") is not None:
+            _sumar(k, "servicio", d.get("serv"))
+            _sumar(k, "despacho", d.get("env"))
+            anotado["servicio"] += _entero(d.get("serv"))
+            anotado["despacho"] += _entero(d.get("env"))
+        elif d.get("es_cobro") and k not in vistos:
+            sin_anotar.append(k)
+        vistos.add(k)
+    origen = str(ot.get("valor_origen") or "").lower()
+    if origen in ("manual", "supuesto", "estimado", "contrato"):
+        return out
+    resto = {"servicio": max(0, _entero(ot.get("zz_monto")) - anotado["servicio"]),
+             "despacho": max(0, _entero(ot.get("zz_envio_monto")) - anotado["despacho"])}
+    if not (resto["servicio"] or resto["despacho"]):
+        return out
+    if not vigentes:
+        k = clave_doc(ot.get("factura_tido"), ot.get("factura_nudo"))
+        sin_anotar = [k] if (k[0] and k[1]) else []
+    if not sin_anotar:
+        return out
+    filas = []
+    for k in sin_anotar:
+        cap = (caps or {}).get(k)
+        if cap is None:
+            raise LecturaIncompleta("%s %s" % k)
+        filas.append({"clave": k, "servicio": _entero(cap.get("servicio")), "despacho": _entero(cap.get("despacho"))})
+    for f, ap in zip(filas, repartir_aportes(filas, resto["servicio"], resto["despacho"])):
+        _sumar(f["clave"], "servicio", ap["servicio"])
+        _sumar(f["clave"], "despacho", ap["despacho"])
+    return out
+
+
+def perdida_de_cuenta(cobre_total, me_tecnico, me_despacho, autorizada=0):
+    """Pérdida que exige autorización al cerrar (revisión 2026-10-11): lo que nos cobraron por el SERVICIO (técnico +
+    despacho) − lo que cobramos. Los repuestos instalados se muestran aparte y no cuentan acá: la factura los cobra
+    como producto, no como línea de servicio, y contarlos inventaba pérdidas que solo Daniel podía destrabar.
+    Un costo de despacho vacío cuenta como $0: la pérdida calculada es un mínimo (si ya es > 0, existe)."""
+    return perdida_cierre(cobre_total, _entero(me_tecnico) + _entero(me_despacho), autorizada)

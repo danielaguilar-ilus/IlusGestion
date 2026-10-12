@@ -17,6 +17,8 @@
   var TIPO_LARGO = { FCV: 'Factura', FCE: 'Factura exenta', BLV: 'Boleta', BLE: 'Boleta exenta', NVV: 'Nota de venta', NVI: 'Nota de venta interna', VD: 'Nota de venta', WEB: 'Nota de venta web' };
   var CAT = { servicio: 'Instalación o servicio', despacho: 'Despacho' };
   var st = { estado: '', q: '', page: 1, per: 50, estados: {} };
+  /* Revisión 2026-10-11: una respuesta vieja nunca pisa a la nueva (REGLA #4.3: limpiar el filtro recarga de verdad). */
+  var seqLista = 0, seqDoc = 0;
   var LS_REV = 'sf_rev_desde';
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -40,13 +42,14 @@
   var fTipo = document.getElementById('sfTipo'), fNum = document.getElementById('sfNum'), fForm = document.getElementById('sfForm');
   var res = document.getElementById('sfRes');
 
-  /* «FCV 11439», «fcv11439» o «VD 10666» pegados en el número: se separa el tipo solo. */
+  /* «FCV 11439», «fcv11439», «VD 10.666» o «WEB 532» pegados en el número: se separa el tipo solo. Las notas de venta
+     de ILUS viven en Random como «VD…» (y las web como «WEB…»): una «NVV» con número suelto se consulta como VD. */
   function leerEntrada() {
-    var raw = (fNum.value || '').trim().toUpperCase();
-    var m = raw.match(/^(FCV|FCE|BLV|BLE|NVV|NVI|VD|WEB)\s*[-#N°º.:]*\s*(\d+)$/);
+    var raw = (fNum.value || '').trim().toUpperCase().replace(/\./g, '');
+    var m = raw.match(/^(FCV|FCE|BLV|BLE|NVV|NVI|VD|WEB)\s*[-#N°º:]*\s*(\d+)$/);
     var tipo = fTipo.value, num = raw.replace(/[^0-9]/g, '');
     if (m) {
-      tipo = (m[1] === 'VD' || m[1] === 'WEB' || m[1] === 'NVI') ? 'NVV' : m[1];
+      tipo = m[1] === 'NVV' ? 'VD' : m[1];
       num = m[2];
       if (fTipo.querySelector('option[value="' + tipo + '"]')) fTipo.value = tipo;
       fNum.value = num;
@@ -63,11 +66,13 @@
 
   function consultar(tido, nudo, mover) {
     var btn = fForm.querySelector('.sf-go');
+    var seq = ++seqDoc;
     btn.disabled = true;
     res.hidden = false;
     res.innerHTML = '<div class="pp-vacio">Leyendo ' + esc(tido + ' ' + nudo) + ' en Random y en las OT…</div>';
     if (mover) res.scrollIntoView({ behavior: 'smooth', block: 'start' });
     return api('/ot/api/saldo-facturas/doc/' + encodeURIComponent(tido) + '/' + encodeURIComponent(nudo)).then(function (r) {
+      if (seq !== seqDoc) return;   // llegó tarde: ya se pidió otro documento
       btn.disabled = false;
       if (!r.ok) {
         res.innerHTML = '<div class="pp-error"><i class="bi bi-exclamation-triangle-fill"></i> ' + esc(r.j.error || 'No se pudo leer el documento.') + '</div>';
@@ -126,6 +131,7 @@
       '<h2>' + esc(doc.titulo || '') + '</h2><p>' + esc(datos || 'Sin datos de cabecera en Random') + '</p></div>' +
       '<span class="sf-pill ' + esc(est.estado) + '"><i class="bi ' + (ICONO[est.estado] || 'bi-circle') + '"></i>' + esc(est.txt || '') + '</span></header>' +
       '<div class="sf-doc-b">';
+    if (d.aviso) h += '<div class="sf-ver gris"><i class="bi bi-cloud-slash"></i><div><b>Random no respondió</b>' + esc(d.aviso) + '</div></div>';
     /* Veredicto: lo que se puede hacer con esta factura, en una frase. Doble cobro manda sobre todo. */
     if (est.estado === 'excedida') {
       h += '<div class="sf-ver dos"><i class="bi bi-exclamation-octagon-fill"></i><div><b>Doble cobro detectado</b>' +
@@ -209,7 +215,9 @@
     var u = '/ot/api/saldo-facturas?page=' + st.page + '&per_page=' + st.per + (st.estado ? '&estado=' + encodeURIComponent(st.estado) : '') +
       (st.q ? '&q=' + encodeURIComponent(st.q) : '');
     tabla.setAttribute('aria-busy', 'true');
+    var seq = ++seqLista;
     return api(u).then(function (r) {
+      if (seq !== seqLista) return;   // llegó tarde: hay una búsqueda más nueva
       tabla.removeAttribute('aria-busy');
       if (!r.ok) { tabla.innerHTML = '<div class="pp-error">' + esc(r.j.error || 'No se pudo leer el listado.') + '</div>'; pie.innerHTML = ''; return; }
       var j = r.j;

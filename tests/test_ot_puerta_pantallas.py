@@ -190,13 +190,20 @@ class TestRutasYPaginas(unittest.TestCase):
         codigo, _ = _arbol()
         self.assertIn('request.args.get("cliente_q")', codigo)
 
-    def test_sidebar_con_los_dos_enlaces(self):
+    def test_botones_solo_superadmin_en_ordenes_de_trabajo(self):
+        # 🔒 2026-10-11 (Daniel: «quería que se viera como botones en la OT y que solo lo vea el super admin»;
+        # «los tres solo superadmin»): fuera del menú lateral, como botones arriba en Órdenes de Trabajo.
         base = _leer("templates/base.html")
-        self.assertIn("ot_regularizar_pagina", base)
-        self.assertIn("ot_aut_pagina", base)
-        self.assertIn("sgAutBadge", base)
-        i = base.index("ot_aut_pagina")
-        self.assertIn("permissions.superadmin", base[i - 300:i])
+        for x in ("ot_regularizar_pagina", "ot_aut_pagina", "ot_saldo_facturas_pagina", "sgAutBadge"):
+            self.assertNotIn("url_for('" + x + "')" if x != "sgAutBadge" else x, base, x)
+        panel = _leer("templates/ot2/panel.html")
+        i = panel.index('<nav class="ot2-sa-bar"')
+        self.assertIn("{% if es_superadmin_ot %}", panel[i - 600:i])
+        bloque = panel[i:panel.index("{% endif %}", i)]
+        for x in ("ot_aut_pagina", "ot_regularizar_pagina", "ot_saldo_facturas_pagina", "ot2SaAutBadge"):
+            self.assertIn(x, bloque, x)
+        codigo, _ = _arbol()
+        self.assertIn("es_superadmin_ot=_ot_aut_es_superadmin()", codigo)
 
 
 class TestRegularizarCerradas(unittest.TestCase):

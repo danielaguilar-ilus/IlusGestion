@@ -682,6 +682,48 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     </div>
   </div>
 
+  {# 🔒 2026-10-11 (Daniel: «quería que se viera como botones en la OT y que solo lo vea el super admin»): las tres
+     herramientas de control del documento y la plata, fuera del menú lateral. Solo superadministrador (las rutas
+     también lo exigen: _ot_solo_superadmin). Autorizaciones lleva el contador de lo que espera tu respuesta. #}
+  {% if es_superadmin_ot %}
+  <nav class="ot2-sa-bar" aria-label="Control de documentos y plata (superadministrador)">
+    <span class="ot2-sa-t"><i class="bi bi-shield-lock-fill"></i>Solo superadmin</span>
+    <a href="{{ url_for('ot_aut_pagina') }}" class="ot2-sa-btn">
+      <i class="bi bi-shield-check"></i><span>Autorizaciones</span>
+      <b id="ot2SaAutBadge" class="ot2-sa-badge" hidden></b>
+    </a>
+    <a href="{{ url_for('ot_regularizar_pagina') }}" class="ot2-sa-btn">
+      <i class="bi bi-clipboard2-check"></i><span>Regularizar OT</span>
+    </a>
+    <a href="{{ url_for('ot_saldo_facturas_pagina') }}" class="ot2-sa-btn">
+      <i class="bi bi-safe2"></i><span>Saldo de facturas</span>
+    </a>
+  </nav>
+  <style>
+    .ot2-sa-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:-4px 0 14px;padding:10px 12px;background:#0a0a0a;
+      border-radius:14px;border-bottom:3px solid #dc2626}
+    .ot2-sa-t{display:inline-flex;align-items:center;gap:6px;color:#fca5a5;font-size:.68rem;font-weight:900;text-transform:uppercase;
+      letter-spacing:.07em;margin-right:4px}
+    .ot2-sa-btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 16px;border-radius:10px;background:#1c1c1c;
+      border:1px solid #333;color:#fff;font-weight:800;font-size:.86rem;text-decoration:none}
+    .ot2-sa-btn:hover{background:#262626;border-color:#dc2626;color:#fff}
+    .ot2-sa-btn:focus-visible{outline:3px solid #dc2626;outline-offset:2px}
+    .ot2-sa-btn i{color:#fca5a5}
+    .ot2-sa-badge{background:#dc2626;color:#fff;border-radius:999px;font-size:.72rem;font-weight:900;padding:2px 9px;min-width:24px;text-align:center}
+    @media (max-width:640px){.ot2-sa-btn{flex:1 1 100%;justify-content:flex-start}}
+  </style>
+  <script>
+  (function(){ try {
+    fetch('/ot/api/autorizaciones?estado=pendiente&per_page=1', {credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(j){ var b = document.getElementById('ot2SaAutBadge');
+        if (b && j && j.ok && j.total > 0) { b.textContent = j.total; b.hidden = false;
+          b.setAttribute('aria-label', j.total + ' esperando tu respuesta'); } })
+      .catch(function(){});
+  } catch(e){} })();
+  </script>
+  {% endif %}
+
   {% if error %}
   <div class="alert alert-danger d-flex align-items-center gap-2 py-2">
     <i class="bi bi-exclamation-triangle-fill"></i>

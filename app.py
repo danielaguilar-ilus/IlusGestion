@@ -87255,6 +87255,7 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=
                      f"(la factura estaba {_fac.get('estado_pago')})]", _fac["id"]))
             cur.execute("DELETE FROM mant_visitas WHERE id=%s", (vid,))
         conn.commit()
+        _fac_libro_marcar(vid)   # 📒 2026-10-11: libera en el libro lo que la OT tomaba (el barrido cubre los lotes grandes)
         _detalle = f"{numero_ot} — {v_info.get('titulo') or ''}"
         if actor_desc:
             _detalle += f" · {actor_desc}"
@@ -88531,6 +88532,7 @@ def ot2_panel():
 
     return render_template(
         "ot2/panel.html",
+        es_superadmin_ot=_ot_aut_es_superadmin(),   # 🔒 2026-10-11: botones Regularizar / Saldo de facturas / Autorizaciones
         filas=filas, origen=origen, vista=vista, kpis=kpis,
         conteo_reales=conteo_reales, conteo_automaticas=conteo_automaticas,
         total_filtrado=total_filtrado, q=q, fase=fase,
@@ -94519,10 +94521,14 @@ _OT_PUERTA_FALTA_A_CODIGO = {"factura": "FALTA_FACTURA", "autorizacion_cobro_cer
                              "documento": "SIN_FACTURA"}
 
 
-def _ot_cierre_accion(code, vid=None):
+def _ot_cierre_accion(code, vid=None, aid=None):
     tipo, label = _OT_CIERRE_ACCIONES.get(code, ("ver_ot", "Revisar la OT"))
-    return {"tipo": tipo, "label": label,
-            "url": ("/ot/autorizaciones" if tipo == "esperar_autorizacion" else (f"/ot/{vid}" if vid else None))}
+    # 🔒 2026-10-11: la bandeja /ot/autorizaciones es solo del superadministrador; quien espera ve SU solicitud.
+    if tipo == "esperar_autorizacion":
+        url = f"/ot/autorizaciones/{aid}" if aid else (f"/ot/{vid}" if vid else None)
+    else:
+        url = f"/ot/{vid}" if vid else None
+    return {"tipo": tipo, "label": label, "url": url}
 
 
 def _ot_cierre_rechazo(p, vid, autorizaciones=None):
@@ -94538,7 +94544,8 @@ def _ot_cierre_rechazo(p, vid, autorizaciones=None):
         code = _OT_PUERTA_FALTA_A_CODIGO.get((p or {}).get("falta") or "", "SIN_FACTURA")
         msg = (p or {}).get("mensaje") or _OT_PUERTA_MSG
     return jsonify({"ok": False, "error": msg, "error_codigo": code, "codigo": code, "falta": (p or {}).get("falta"),
-                    "accion": _ot_cierre_accion(code, vid), "puede_pedir_autorizacion": code != "AUTORIZACION_PENDIENTE",
+                    "accion": _ot_cierre_accion(code, vid, aid=(pend or {}).get("id")),
+                    "puede_pedir_autorizacion": code != "AUTORIZACION_PENDIENTE",
                     "autorizacion_id": (pend or {}).get("id"), "visita_id": vid}), 409
 
 
@@ -95189,7 +95196,11 @@ def ot_aut_api_detalle(aid):
     if not a:
         return jsonify({"ok": False, "error": "No encontramos esa solicitud."}), 404
     uid, _ = _ot_aut_usuario()
-    if not _ot_aut_es_superadmin() and a.get("solicitado_por_user_id") != uid:
+    # 🔒 2026-10-11 (revisión): además de quien la pidió, la ve (solo lectura; aprobar/rechazar sigue siendo del
+    # superadministrador) la gestión que puede aprobar el cierre de esa OT: es a quien el cierre le dice «Ver la solicitud».
+    _puede_ver = (_ot_aut_es_superadmin() or a.get("solicitado_por_user_id") == uid
+                  or (a.get("visita_id") and _puede_ot_accion(a["visita_id"], "aprobar")))
+    if not _puede_ver:
         return jsonify({"ok": False, "error": "Solo puedes ver tus propias solicitudes."}), 403
     j = _ot_aut_json(a)
     try:
@@ -95449,15 +95460,33 @@ def _ot_fecha_txt(f):
         return str(f)[:10]
 
 
+def _ot_solo_superadmin(view):
+    """🔒 2026-10-11 (Daniel: «los tres solo superadmin»): Regularizar OT, Saldo de facturas y la BANDEJA de
+    Autorizaciones son solo del superadministrador; viven como botones arriba en Órdenes de Trabajo, fuera del menú
+    lateral. Página → vuelve a Órdenes de Trabajo con un aviso; API → JSON 403. (El detalle de UNA solicitud sigue
+    abierto a quien la pidió: es su comprobante, no la bandeja.)"""
+    @wraps(view)
+    def wrapped(*a, **kw):
+        if _ot_aut_es_superadmin():
+            return view(*a, **kw)
+        if "/api/" in (request.path or ""):
+            return jsonify({"ok": False, "error": "Solo el superadministrador puede ver esta sección."}), 403
+        flash("Esa sección es solo del superadministrador.", "warning")
+        return redirect(url_for("ot2_panel"))
+    return wrapped
+
+
 @app.route("/ot/api/regularizar", methods=["GET"])
 @_mant_required
 @_no_tecnico
+@_ot_solo_superadmin
 def ot_api_regularizar():
     """Bandeja «Regularizar» (Daniel 2026-10-07): toda OT de cliente, no cancelada ni anulada, que NO pasa la puerta
     'cerrar' (sin documento de cobro validado ni $0 autorizado), más las que solo tienen nota de venta («Falta
     factura»). Paginada en el servidor (REGLA #4.3). Filtros: estado, cliente (id), creador (texto), mes (AAAA-MM),
-    falta (documento|factura|autorizacion_cobro_cero), page, per_page. Superadministrador: todo; el resto: las OT
-    que creó. Las OT cerradas se regularizan agregando el documento o declarando/pidiendo el $0: nunca tocando
+    falta (documento|factura|autorizacion_cobro_cero), page, per_page. 🔒 2026-10-11: solo superadministrador
+    (Daniel: «los tres solo superadmin»; el filtro «las OT que creó» de abajo queda por si algún día se reabre a
+    gestión). Las OT cerradas se regularizan agregando el documento o declarando/pidiendo el $0: nunca tocando
     estado, firmas ni fechas (OT = evidencia)."""
     es_sa = _ot_aut_es_superadmin()
     uid, nombre = _ot_aut_usuario()
@@ -95707,9 +95736,11 @@ def ot_api_recorrido(vid):
     # 📒 2026-10-11 (Daniel: «te va a indicar si la factura va a pérdida y eso iría autorizado por mí»): una OT que se
     # cobra y va a pérdida cierra solo con la autorización 'cerrar_con_perdida'. El paso 6 lo dice ANTES de firmar.
     perdida = None
-    if cob == "cobra" and not interna and fin["queda"].get("mostrar"):
+    if cob == "cobra" and not interna and fin["cobre"].get("hay") and not fin["me_cobraron"].get("falta_tecnico"):
         try:
             perdida = _fac_perdida_info(vid, fin)
+            if not _fac_perdida_aplica(p_cerrar.get("via"), perdida):
+                perdida = None   # cierre autorizado sin documento y sin cobro: el servidor tampoco la exige
         except Exception as _e_rp:
             print(f"[ot-recorrido] pérdida vid={vid}: {type(_e_rp).__name__}", flush=True)
             perdida = None
@@ -96156,6 +96187,7 @@ def ot_api_documentos_regularizar(vid):
 @app.route("/ot/autorizaciones", methods=["GET"])
 @_mant_required
 @_no_tecnico
+@_ot_solo_superadmin
 def ot_aut_pagina():
     """Bandeja de autorizaciones para el celular de Daniel (superadmin ve todas; el resto, las que pidió)."""
     return render_template("ot2/autorizaciones.html", es_superadmin=_ot_aut_es_superadmin())
@@ -96171,6 +96203,7 @@ def ot_aut_pagina_detalle(aid):
 @app.route("/ot/regularizar", methods=["GET"])
 @_mant_required
 @_no_tecnico
+@_ot_solo_superadmin
 def ot_regularizar_pagina():
     """Bandeja Regularizar: las OT que no pasan la puerta del documento (datos: GET /ot/api/regularizar)."""
     return render_template("ot2/regularizar.html", es_superadmin=_ot_aut_es_superadmin(),
@@ -111808,14 +111841,18 @@ def _ot_saldo_familia(tido, nudo):
     return fam | otros
 
 
-def _ot_saldo_usos(claves, excluir_vid=None, cap=None, solo_vid=None):
+def _ot_saldo_usos(claves, excluir_vid=None, cap=None, solo_vid=None, errores=None):
     """Lo que OTRAS OT (no canceladas ni anuladas) ya usan de estos documentos: filas crudas para
     ot_saldo_servicio.consolidar_usos. Tres fuentes, sin sumar dos veces el mismo aporte:
       1) el aporte que cada OT guardó POR DOCUMENTO (mant_visita_documentos.zz_serv_monto/zz_envio_monto);
       2) OT anteriores a eso: lo cobrado a nivel OT (zz_monto/zz_envio_monto) que ningún documento tiene anotado
          se atribuye a sus documentos, con tope en la capacidad de cada uno;
       3) OT con el documento solo en factura_* (sin fila en la tabla puente).
-    `solo_vid` (2026-10-11, libro de saldo de facturas): solo las filas de ESA OT (lo que ella toma)."""
+    `solo_vid` (2026-10-11, libro de saldo de facturas): solo las filas de ESA OT (lo que ella toma).
+    `errores` (lista, revisión 2): si una lectura falla se anota acá, para que quien muestra el saldo no lo tome por
+    «nadie la usa». El candado sigue sin trabar el trabajo por un error de lectura (REGLA #25).
+    La fuente 2 (residuo antiguo) se reparte entre los documentos de esa OT igual que el libro (aportes_reales_ot).
+    """
     pares = []
     for k in claves:
         for p in _saldo.variantes_sql(k):
@@ -111831,6 +111868,7 @@ def _ot_saldo_usos(claves, excluir_vid=None, cap=None, solo_vid=None):
         solo = int(solo_vid) if solo_vid else 0
     except (TypeError, ValueError):
         solo = 0
+    cap_conocida = cap is not None   # 2026-10-11: None = Random no respondió (sin tope); {} o ceros = leída
     cap = cap or {}
     filas = []
 
@@ -111840,8 +111878,10 @@ def _ot_saldo_usos(claves, excluir_vid=None, cap=None, solo_vid=None):
 
     def _tope(c, monto):
         m = _saldo._entero(monto)
-        capc = _saldo._entero(cap.get(c))
-        return min(m, capc) if capc > 0 else m
+        if not cap_conocida:
+            return m
+        # 📒 2026-10-11 (revisión): una categoría sin líneas en el documento no puede consumirse (antes contaba entera).
+        return min(m, max(0, _saldo._entero(cap.get(c))))
 
     try:
         sql = ("SELECT d.visita_id, d.erp_tido, d.erp_nudo, d.zz_serv_monto, d.zz_envio_monto, v.numero_ot, v.estado, "
@@ -111869,6 +111909,8 @@ def _ot_saldo_usos(claves, excluir_vid=None, cap=None, solo_vid=None):
                           "clave": _saldo.clave_doc(r.get("erp_tido"), r.get("erp_nudo"))})
     except Exception as e:
         print(f"[ot-saldo] usos por documento: {type(e).__name__}", flush=True)
+        if errores is not None:
+            errores.append("documentos")
     try:
         resid = ("(SELECT COALESCE(SUM({col}),0) FROM mant_visita_documentos x WHERE x.visita_id=v.id "
                  "  AND x.origen='erp' AND x.reemplazado_por_id IS NULL)")
@@ -111894,12 +111936,23 @@ def _ot_saldo_usos(claves, excluir_vid=None, cap=None, solo_vid=None):
         par.append(_OT_SALDO_USOS_MAX)
         for r in (mysql_fetchall(sql, tuple(par)) or []):
             s, e_ = _tope("servicio", r.get("res_serv")), _tope("despacho", r.get("res_env"))
+            # 📒 2026-10-11 (revisión 2): el residuo antiguo se reparte entre los documentos de ESA OT igual que el libro
+            # (aportes_reales_ot), sin contarlo entero en cada factura. Si algo no se pudo leer, queda el criterio
+            # conservador de arriba (el residuo hasta la capacidad de este documento).
+            try:
+                _kd = _saldo.clave_doc(r.get("erp_tido"), r.get("erp_nudo"))
+                _ap = _fac_aportes_ot(r["visita_id"])
+                s, e_ = _ap.get((_kd[0], _kd[1], "servicio"), 0), _ap.get((_kd[0], _kd[1], "despacho"), 0)
+            except Exception:
+                pass
             if s or e_:
                 filas.append({"vid": r["visita_id"], "numero_ot": r.get("numero_ot"), "cliente": r.get("cliente"),
                               "estado": r.get("estado"), "servicio": s, "despacho": e_,
                               "clave": _saldo.clave_doc(r.get("erp_tido"), r.get("erp_nudo"))})
     except Exception as e:
         print(f"[ot-saldo] usos anteriores: {type(e).__name__}", flush=True)
+        if errores is not None:
+            errores.append("anteriores")
     try:
         sql = ("SELECT v.id AS visita_id, v.factura_tido, v.factura_nudo, v.zz_monto, v.zz_envio_monto, v.numero_ot, "
                "       v.estado, c.razon_social AS cliente "
@@ -111927,6 +111980,8 @@ def _ot_saldo_usos(claves, excluir_vid=None, cap=None, solo_vid=None):
                               "clave": _saldo.clave_doc(r.get("factura_tido"), r.get("factura_nudo"))})
     except Exception as e:
         print(f"[ot-saldo] usos en factura_*: {type(e).__name__}", flush=True)
+        if errores is not None:
+            errores.append("factura")
     return filas
 
 
@@ -111939,7 +111994,14 @@ def _ot_saldo_doc(tido, nudo, excluir_vid=None, zz_lineas=None, cliente_rut=None
     res = {"tido": tu, "nudo": nu, "clave": list(k), "titulo": f"{tu} {nu}".strip(), "leido": True,
            "otro_cliente": False}
     if zz_lineas is None:
-        header, zz_lineas, _tot = _erp_zz_lineas(tido, nudo)
+        # 📒 2026-10-11 (revisión 2): una cabecera sin líneas es una lectura incompleta de Random, no una factura sin
+        # líneas: se trata como no leída (igual que con Random caído) y no se deja en la caché.
+        _hdr0, _lin0 = _mant_erp_doc_cached(tido, nudo)
+        if _hdr0 and not _lin0:
+            _fac_olvidar_cache(tido, nudo)
+            header, zz_lineas = None, []
+        else:
+            header, zz_lineas, _tot = _erp_zz_lineas(tido, nudo)
         if not header:
             res["leido"] = False
             zz_lineas = []
@@ -111951,7 +112013,9 @@ def _ot_saldo_doc(tido, nudo, excluir_vid=None, zz_lineas=None, cliente_rut=None
                 pass
     cap, _ln = _saldo.clasificar_lineas(zz_lineas)
     fam = _ot_saldo_familia(tido, nudo)
-    usos = _saldo.consolidar_usos(_ot_saldo_usos(fam, excluir_vid, cap))
+    _err_usos = []
+    usos = _saldo.consolidar_usos(_ot_saldo_usos(fam, excluir_vid, cap if res["leido"] else None, errores=_err_usos))
+    res["usos_incompletos"] = bool(_err_usos)
     for u in usos:
         u["url"] = f"/ot/{u['vid']}"
     res.update(_saldo.calcular(zz_lineas, usos))
@@ -112487,68 +112551,113 @@ def _fac_huella_ot(vid):
         return "eliminada", prev, None
     # Del estado solo importa si la OT dejó de contar (cancelada/anulada): firmar o cerrar no mueve el saldo.
     fuera = str((r.get("estado") or "").lower() in _saldo.ESTADOS_OT_FUERA)
-    base = fuera + "|" + "|".join(str(r.get(k)) for k in ("modalidad_cobro", "cobro_cero_motivo", "valor_origen", "zz_monto",
+    # «v2» (2026-10-11): versión del cálculo. Al cambiar, TODAS las OT se vuelven a conciliar una vez y la diferencia
+    # queda anotada como «revisión» (el libro no se edita).
+    base = "v2|" + fuera + "|" + "|".join(str(r.get(k)) for k in ("modalidad_cobro", "cobro_cero_motivo", "valor_origen", "zz_monto",
                                                           "zz_envio_monto", "factura_tido", "factura_nudo", "docs"))
     return hashlib.md5(base.encode("utf-8")).hexdigest(), r.get("h_prev"), r
 
 
-def _fac_aportes_ot(vid):
-    """Lo que UNA OT toma hoy de cada documento: {(tido, nudo, categoria): monto}. Usa las MISMAS filas que el motor
-    del saldo (_ot_saldo_usos, solo de esta OT) — el libro nunca calcula distinto que el candado."""
-    docs = []
+def _fac_db_fresca():
+    """Cierra la foto de la conexión de la petición (REPEATABLE READ con autocommit apagado): sin esto, el libro
+    releía datos viejos y podía anotar dos veces el mismo movimiento (revisión 2026-10-11)."""
     try:
-        for r in (mysql_fetchall("SELECT erp_tido, erp_nudo FROM mant_visita_documentos "
-                                 " WHERE visita_id=%s AND origen='erp' AND COALESCE(erp_nudo,'')<>''", (int(vid),)) or []):
-            docs.append((r.get("erp_tido"), r.get("erp_nudo")))
-        v = mysql_fetchone("SELECT factura_tido, factura_nudo FROM mant_visitas WHERE id=%s", (int(vid),)) or {}
-        if (v.get("factura_tido") or "").strip() and (v.get("factura_nudo") or "").strip():
-            docs.append((v["factura_tido"], v["factura_nudo"]))
-    except Exception as e:
-        print(f"[fac-libro] documentos de la OT {vid}: {type(e).__name__}", flush=True)
-    out, vistos = {}, set()
-    for t, n in docs:
+        get_db().commit()
+    except Exception:
+        pass
+
+
+def _fac_olvidar_cache(tido, nudo):
+    """Saca de la caché de 5 min una lectura de Random que vino incompleta (cabecera sin líneas), para no repetirla."""
+    try:
+        with _MANT_ERP_DOC_CACHE_LOCK:
+            _MANT_ERP_DOC_CACHE.pop(f"{(tido or '').strip().upper()}|{(nudo or '').strip()}", None)
+    except Exception:
+        pass
+
+
+def _fac_leer_capacidad(tido, nudo):
+    """Capacidad de servicio/despacho de un documento para el libro (revisión 2, 2026-10-11). Tres casos que antes se
+    confundían: ('ok', cap) leído completo · ('sin_doc', ceros) el documento no existe o está ANULADO en Random (no
+    respalda cobro; antes dejaba la OT fuera del libro para siempre) · ('no_leido', None) Random no respondió o devolvió
+    la cabecera sin líneas (una factura real siempre tiene líneas; antes eso se leía como «sin líneas» y anotaba una
+    liberación falsa). Solo lectura (REGLA #4.1): la consulta de existencia pasa por _random_sql_query."""
+    header, lineas = _mant_erp_doc_cached(tido, nudo)
+    if header and lineas:
+        _h, zz, _tot = _erp_zz_lineas(tido, nudo)
+        return "ok", _saldo.clasificar_lineas(zz)[0]
+    if header:
+        _fac_olvidar_cache(tido, nudo)
+        return "no_leido", None
+    t_r, n_r = _ot_saldo_real(_saldo.clave_doc(tido, nudo))
+    try:
+        filas = _random_sql_query("SELECT TOP 1 ESDO FROM MAEEDO WHERE TIDO=%s AND NUDO=%s", (t_r, n_r))
+    except Exception:
+        filas = None
+    if filas is None:
+        return "no_leido", None
+    if not filas or str((filas[0] or {}).get("ESDO") or "").strip().upper() == "NULO":
+        return "sin_doc", {"servicio": 0, "despacho": 0}
+    return "no_leido", None
+
+
+def _fac_aportes_ot(vid):
+    """Lo que UNA OT toma hoy de cada documento: {(tido, nudo, categoria): monto}, con el reparto EXACTO de
+    ot_saldo_servicio.aportes_reales_ot (lo anotado por documento; lo antiguo se reparte sin duplicarse entre
+    facturas y sin pasar su capacidad). Un error de lectura NO se convierte en «no toma nada»: se propaga, y si
+    Random no responde para un documento que hace falta, LecturaIncompleta (quien llama no anota ni guarda la huella)."""
+    v = mysql_fetchone("SELECT id, estado, modalidad_cobro, cobro_cero_motivo, valor_origen, zz_monto, zz_envio_monto, "
+                       "       factura_tido, factura_nudo FROM mant_visitas WHERE id=%s", (int(vid),))
+    if not v:
+        return {}
+    filas = mysql_fetchall(
+        "SELECT erp_tido, erp_nudo, es_cobro, es_principal, reemplazado_por_id, zz_serv_monto, zz_envio_monto "
+        "  FROM mant_visita_documentos WHERE visita_id=%s AND origen='erp' AND COALESCE(erp_nudo,'')<>'' "
+        " ORDER BY es_principal DESC, id", (int(vid),)) or []
+    docs = [{"tido": r.get("erp_tido"), "nudo": r.get("erp_nudo"), "es_cobro": int(r.get("es_cobro") or 0),
+             "reemplazado": bool(r.get("reemplazado_por_id")),
+             "serv": r.get("zz_serv_monto"), "env": r.get("zz_envio_monto")} for r in filas]
+    caps = {}
+    necesita = []
+    for d in docs:
+        if d["es_cobro"] and not d["reemplazado"] and d["serv"] is None and d["env"] is None:
+            necesita.append((d["tido"], d["nudo"]))
+    if not docs and (v.get("factura_tido") or "").strip() and (v.get("factura_nudo") or "").strip():
+        necesita.append((v["factura_tido"], v["factura_nudo"]))
+    for t, n in necesita:
         k = _saldo.clave_doc(t, n)
-        if not k[0] or not k[1] or k in vistos:
+        if k in caps:
             continue
-        vistos.add(k)
-        cap = {}
-        try:
-            h, zz, _tot = _erp_zz_lineas(t, n)
-            if h:
-                cap, _l = _saldo.clasificar_lineas(zz)
-        except Exception:
-            cap = {}
-        for kk, m in _saldo.aportes_de_ot(_ot_saldo_usos({k}, None, cap, solo_vid=vid), vid).items():
-            out[kk] = max(out.get(kk, 0), m)
-    return out
+        _est, caps[k] = _fac_leer_capacidad(t, n)   # None = no se pudo leer (LecturaIncompleta si hace falta)
+    return _saldo.aportes_reales_ot(v, docs, caps)
 
 
 def _fac_libro_ultimo(vid):
-    """El último acumulado que el libro registró para cada (documento, categoría) de una OT."""
+    """El último acumulado que el libro registró para cada (documento, categoría) de una OT. Un error se propaga
+    (nunca «no había nada»: eso anotaba otra vez todos los consumos)."""
     out = {}
-    try:
-        for r in (mysql_fetchall(
-                "SELECT l.doc_tido, l.doc_nudo, l.categoria, l.acumulado_ot FROM ot_fac_libro l "
-                " WHERE l.id IN (SELECT MAX(x.id) FROM ot_fac_libro x WHERE x.visita_id=%s "
-                "                 GROUP BY x.doc_tido, x.doc_nudo, x.categoria)", (int(vid),)) or []):
-            out[(r["doc_tido"], r["doc_nudo"], r["categoria"])] = int(r.get("acumulado_ot") or 0)
-    except Exception as e:
-        print(f"[fac-libro] último de la OT {vid}: {type(e).__name__}", flush=True)
+    for r in (mysql_fetchall(
+            "SELECT l.doc_tido, l.doc_nudo, l.categoria, l.acumulado_ot FROM ot_fac_libro l "
+            " WHERE l.id IN (SELECT MAX(x.id) FROM ot_fac_libro x WHERE x.visita_id=%s "
+            "                 GROUP BY x.doc_tido, x.doc_nudo, x.categoria)", (int(vid),)) or []):
+        out[(r["doc_tido"], r["doc_nudo"], r["categoria"])] = int(r.get("acumulado_ot") or 0)
     return out
 
 
 def _fac_libro_conciliar_ot(vid, origen="revision", detalle=None, forzar=False):
     """Pone al día el libro de UNA OT: compara lo que toma hoy de cada factura con lo último registrado y anota la
     diferencia como movimiento (consumo o liberación). Nunca borra ni edita un movimiento. Serializado por OT con un
-    GET_LOCK (dos peticiones a la vez no anotan dos veces). Devuelve {movimientos, docs: [(tido, nudo)]}."""
+    GET_LOCK que SÍ se verifica, y releyendo con la foto de la base al día (revisión 2026-10-11: sin eso un doble
+    clic anotaba dos veces). Si una lectura falla o Random no responde para un documento que hace falta, no anota
+    nada ni guarda la huella (el barrido lo reintenta). Devuelve {movimientos, docs: [(tido, nudo)]}."""
     try:
         vid = int(vid)
     except (TypeError, ValueError):
         return {"movimientos": 0, "docs": []}
     conn_lock = None
     try:
-        # Primero la huella (una consulta del pool): si la plata no cambió, ni siquiera se pide el candado. Solo
-        # cuando cambió se abre la conexión del GET_LOCK y se vuelve a leer adentro (otra petición pudo anotar ya).
+        # Primero la huella (una consulta del pool): si la plata no cambió, ni siquiera se pide el candado.
+        _fac_db_fresca()
         huella, previa, fila = _fac_huella_ot(vid)
         if not forzar and previa and huella == previa:
             return {"movimientos": 0, "docs": []}
@@ -112556,15 +112665,26 @@ def _fac_libro_conciliar_ot(vid, origen="revision", detalle=None, forzar=False):
             conn_lock = get_mysql()
             with conn_lock.cursor() as cur:
                 cur.execute("SELECT GET_LOCK(%s, 5) AS l", (f"faclibro_{vid}",))
+                _r_lk = cur.fetchone() or {}
+            _tengo = int((list(_r_lk.values())[0] if isinstance(_r_lk, dict) else (_r_lk[0] if _r_lk else 0)) or 0) == 1
         except Exception:
-            conn_lock = None
+            _tengo = False
+        if not _tengo:
+            print(f"[fac-libro] OT {vid}: candado ocupado, se reintenta en el barrido", flush=True)
+            return {"movimientos": 0, "docs": []}
+        _fac_db_fresca()   # adentro del candado: ver lo que otra petición ya anotó
         huella, previa, fila = _fac_huella_ot(vid)
         if not forzar and previa and huella == previa:
             return {"movimientos": 0, "docs": []}
-        actual = _fac_aportes_ot(vid) if fila else {}
+        try:
+            actual = _fac_aportes_ot(vid) if fila else {}
+        except _saldo.LecturaIncompleta as e:
+            print(f"[fac-libro] OT {vid}: Random no respondió para {e}; se reintenta en el barrido", flush=True)
+            return {"movimientos": 0, "docs": [], "incompleto": True}
         ultimo = _fac_libro_ultimo(vid)
         movs = _saldo.movimientos_libro(ultimo, actual)
         if fila is None and not ultimo:
+            mysql_execute("DELETE FROM ot_fac_huella WHERE visita_id=%s", (vid,))
             return {"movimientos": 0, "docs": []}
         org = origen if fila else "eliminada"
         det = detalle
@@ -112585,19 +112705,30 @@ def _fac_libro_conciliar_ot(vid, origen="revision", detalle=None, forzar=False):
         quien = (nombre or current_username() or "Sistema") if org not in ("inicial", "revision") else "Sistema"
         num = (fila or {}).get("numero_ot") or f"V-{vid:05d}"
         cli = (fila or {}).get("cliente")
-        for m in movs:
-            mysql_execute(
-                "INSERT INTO ot_fac_libro (doc_tido, doc_nudo, categoria, movimiento, monto, acumulado_ot, visita_id, "
-                " numero_ot, cliente, origen, usuario, user_id, detalle) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (m["tido"], m["nudo"], m["categoria"], m["movimiento"], int(m["monto"]), int(m["acumulado"]), vid, num,
-                 (cli or "")[:190] or None, org, (quien or "")[:190] or None, uid if quien != "Sistema" else None,
-                 (det or "")[:500] or None))
-        if fila:
-            mysql_execute("INSERT INTO ot_fac_huella (visita_id, huella, revisado_el) VALUES (%s,%s,%s) "
-                          "ON DUPLICATE KEY UPDATE huella=VALUES(huella), revisado_el=VALUES(revisado_el)",
-                          (vid, huella, datetime.utcnow()))
-        else:
-            mysql_execute("DELETE FROM ot_fac_huella WHERE visita_id=%s", (vid,))
+        # Revisión 2: los movimientos y la huella van en UNA transacción (nunca un libro sin su huella o al revés).
+        _db = get_db()
+        try:
+            with _db.cursor() as _cur:
+                for m in movs:
+                    _cur.execute(
+                        "INSERT INTO ot_fac_libro (doc_tido, doc_nudo, categoria, movimiento, monto, acumulado_ot, visita_id, "
+                        " numero_ot, cliente, origen, usuario, user_id, detalle) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (m["tido"], m["nudo"], m["categoria"], m["movimiento"], int(m["monto"]), int(m["acumulado"]), vid, num,
+                         (cli or "")[:190] or None, org, (quien or "")[:190] or None, uid if quien != "Sistema" else None,
+                         (det or "")[:500] or None))
+                if fila:
+                    _cur.execute("INSERT INTO ot_fac_huella (visita_id, huella, revisado_el) VALUES (%s,%s,%s) "
+                                 "ON DUPLICATE KEY UPDATE huella=VALUES(huella), revisado_el=VALUES(revisado_el)",
+                                 (vid, huella, datetime.utcnow()))
+                else:
+                    _cur.execute("DELETE FROM ot_fac_huella WHERE visita_id=%s", (vid,))
+            _db.commit()
+        except Exception:
+            try:
+                _db.rollback()
+            except Exception:
+                pass
+            raise
         docs = sorted({(m["tido"], m["nudo"]) for m in movs} | {(k[0], k[1]) for k in actual})
         return {"movimientos": len(movs), "docs": docs}
     except Exception as e:
@@ -112616,22 +112747,33 @@ def _fac_libro_conciliar_ot(vid, origen="revision", detalle=None, forzar=False):
                 pass
 
 
-def _fac_doc_refrescar(tido, nudo):
+def _fac_doc_refrescar(tido, nudo, crear=True):
     """Foto de UNA factura en ot_fac_doc con el MISMO motor del candado (_ot_saldo_doc): capacidad (Random, solo
-    lectura), usado por las OT (familia nota de venta ↔ factura incluida), saldo y semáforo. Si Random no responde,
-    conserva la última capacidad leída. Devuelve (saldo_doc, estado)."""
+    lectura), usado por las OT (familia nota de venta ↔ factura incluida), saldo y semáforo. Si Random no responde
+    y ya había una capacidad leída, se recalcula con ESA capacidad (así el tope aplica y no aparece un «Doble cobro»
+    falso); `capacidad_previa`=True lo avisa. `crear`=False (la consulta de la pantalla) no deja filas nuevas de un
+    documento que nadie usa: solo actualiza una foto que ya existía o crea la de un documento que alguna OT usa.
+    Devuelve (saldo_doc, estado) coherentes entre sí."""
     k = _saldo.clave_doc(tido, nudo)
     if not k[0] or not k[1]:
         return None, None
     t_real, n_real = _ot_saldo_real(k)
-    s = _ot_saldo_doc(t_real, n_real)
     previo = mysql_fetchone("SELECT * FROM ot_fac_doc WHERE doc_tido=%s AND doc_nudo=%s", k) or {}
+    s = _ot_saldo_doc(t_real, n_real)
+    if not s.get("leido") and previo.get("erp_leido"):
+        sint = []
+        if int(previo.get("cap_servicio") or 0) > 0:
+            sint.append({"sku": "ZZSERVICIO", "descripcion": "Servicio (capacidad leída antes)", "monto": int(previo["cap_servicio"])})
+        if int(previo.get("cap_despacho") or 0) > 0:
+            sint.append({"sku": "ZZENVIO", "descripcion": "Despacho (capacidad leída antes)", "monto": int(previo["cap_despacho"])})
+        s = dict(_ot_saldo_doc(t_real, n_real, zz_lineas=sint), leido=True, capacidad_previa=True,
+                 capacidad_leida_el=(chile_fmt_filter(previo["actualizado_el"]) if previo.get("actualizado_el") else ""))
     leido = bool(s.get("leido"))
-    serv, desp = dict(s["servicio"]), dict(s["despacho"])
-    if not leido and previo.get("erp_leido"):
-        serv["total"], desp["total"] = int(previo.get("cap_servicio") or 0), int(previo.get("cap_despacho") or 0)
-        leido = True
-    est = _saldo.estado_factura(serv, desp, leido)
+    est = _saldo.estado_factura(s["servicio"], s["despacho"], leido)
+    if s.get("usos_incompletos"):
+        return s, est   # revisión 2: no se guarda una foto con lo que usan las OT leído a medias (se reintenta)
+    if not crear and not previo and not (s.get("usos") or []):
+        return s, est
     header = {}
     try:
         header, _l = _mant_erp_doc_cached(t_real, n_real)
@@ -112661,8 +112803,10 @@ def _fac_doc_refrescar(tido, nudo):
         " erp_leido=VALUES(erp_leido), actualizado_el=VALUES(actualizado_el)",
         (k[0], k[1], s.get("titulo") or f"{k[0]} {k[1]}", (header.get("cliente_rut") or None),
          ((header.get("cliente_nombre") or "")[:190] or None), (header.get("fecha") or None), total_doc,
-         int(serv["total"]), int(desp["total"]), int(serv["usado"]), int(desp["usado"]), len(ots),
-         (", ".join(ots))[:500] or None, est["estado"], familia_de, 1 if leido else 0, datetime.utcnow()))
+         int(s["servicio"]["total"]), int(s["despacho"]["total"]), int(s["servicio"]["usado"]), int(s["despacho"]["usado"]),
+         len(ots), (", ".join(ots))[:500] or None, est["estado"], familia_de, 1 if leido else 0,
+         # Con Random caído no se adelanta la fecha de la foto: el barrido la vuelve a intentar.
+         (datetime.utcnow() if not s.get("capacidad_previa") else previo.get("actualizado_el"))))
     return s, est
 
 
@@ -112735,6 +112879,7 @@ def _fac_fila_lista(r):
 @app.route("/ot/saldo-facturas", methods=["GET"])
 @_mant_required
 @_no_tecnico
+@_ot_solo_superadmin
 def ot_saldo_facturas_pagina():
     """«Saldo de facturas»: consulta «¿Puedo usar esta factura?», listado con semáforo y el libro de movimientos."""
     return render_template("ot2/saldo_facturas.html", es_superadmin=_ot_aut_es_superadmin(),
@@ -112744,6 +112889,7 @@ def ot_saldo_facturas_pagina():
 @app.route("/ot/api/saldo-facturas", methods=["GET"])
 @_mant_required
 @_no_tecnico
+@_ot_solo_superadmin
 def ot_api_saldo_facturas():
     """Listado paginado (REGLA #4.3) de las facturas que usan las OT, con su semáforo. Filtros: q (número, cliente o
     RUT), estado (libre|con_saldo|agotada|excedida|sin_lineas|sin_leer), notas=1 (incluir notas de venta ya
@@ -112848,48 +112994,60 @@ def _fac_movimientos_doc(claves, limite=300):
     return out
 
 
-def _fac_finanzas_de_ots(vids):
-    """La cuenta (Cobré − Me cobraron = Queda) de cada OT, con la MISMA función que su ficha (_ot_finanzas)."""
+def _fac_finanzas_de_ots(vids, fallos=None):
+    """La cuenta (Cobré − Me cobraron = Queda) de cada OT, con la MISMA función que su ficha (_ot_finanzas), más lo
+    que necesita la pérdida que se autoriza (técnico + despacho, sin repuestos). Por tramos de 400."""
     out = {}
     try:
         ids = sorted({int(x) for x in vids if x})
     except (TypeError, ValueError):
         return out
-    if not ids:
-        return out
-    ph = ",".join(["%s"] * len(ids))
-    try:
-        rows = mysql_fetchall(
-            "SELECT v.*, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real FROM mant_visitas v WHERE v.id IN (" + ph + ")",
-            tuple(ids)) or []
-        reps = _ot_repuestos_desglose(ids)
-        for r in rows:
-            f = _ot_finanzas(r, _ot_fin_rep_liviano(reps.get(int(r["id"]))))
-            out[int(r["id"])] = {
-                "cobra": f["cobra"], "cobertura_txt": f["cobertura_txt"], "cobre": f["cobre"]["total"],
-                "me_cobraron": f["me_cobraron"]["total"], "queda": f["queda"]["total"],
-                "clase": f.get("clase"), "label": f.get("label"), "frase": f.get("frase"),
-                "estado": r.get("estado"), "estado_txt": _OT_REG_ESTADO_TXT.get(r.get("estado"), r.get("estado") or ""),
-                "fecha": _ot_fecha_txt(r.get("fecha_programada")), "tipo": r.get("tipo") or ""}
-    except Exception as e:
-        print(f"[fac-libro] finanzas de las OT: {type(e).__name__}: {e}", flush=True)
+    for i in range(0, len(ids), 400):
+        trozo = ids[i:i + 400]
+        ph = ",".join(["%s"] * len(trozo))
+        try:
+            rows = mysql_fetchall(
+                "SELECT v.*, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real FROM mant_visitas v WHERE v.id IN (" + ph + ")",
+                tuple(trozo)) or []
+            reps = _ot_repuestos_desglose(trozo)
+            for r in rows:
+                f = _ot_finanzas(r, _ot_fin_rep_liviano(reps.get(int(r["id"]))))
+                m = f["me_cobraron"]
+                out[int(r["id"])] = {
+                    "cobra": f["cobra"], "cobertura_txt": f["cobertura_txt"], "cobre": f["cobre"]["total"],
+                    "cobre_hay": bool(f["cobre"].get("hay")), "me_cobraron": m["total"],
+                    "me_tecnico": m.get("tecnico") or 0, "me_despacho": m.get("despacho") or 0,
+                    "repuestos": m.get("repuestos") or 0, "falta_tecnico": bool(m.get("falta_tecnico")),
+                    "queda": f["queda"]["total"], "clase": f.get("clase"), "label": f.get("label"), "frase": f.get("frase"),
+                    "estado": r.get("estado"), "estado_txt": _OT_REG_ESTADO_TXT.get(r.get("estado"), r.get("estado") or ""),
+                    "numero_ot": r.get("numero_ot") or f"V-{int(r['id']):05d}", "cerrada_at": r.get("cerrada_at"),
+                    "fecha": _ot_fecha_txt(r.get("fecha_programada")), "tipo": r.get("tipo") or ""}
+        except Exception as e:
+            print(f"[fac-libro] finanzas de las OT: {type(e).__name__}: {e}", flush=True)
+            if fallos is not None:
+                fallos.append("finanzas")
     return out
 
 
 @app.route("/ot/api/saldo-facturas/doc/<tido>/<nudo>", methods=["GET"])
 @_mant_required
 @_no_tecnico
+@_ot_solo_superadmin
 def ot_api_saldo_facturas_doc(tido, nudo):
     """«¿Puedo usar esta factura?»: el saldo EN VIVO de una factura (servicio y despacho), quién la usó y cuánto, la
     cuenta de cada una de esas OT (para ver si va a pérdida), el libro de movimientos, la familia (nota de venta ↔
     factura) y los tickets/cotizaciones que la heredan. Solo lectura del ERP (REGLA #4.1)."""
     tido = (tido or "").strip().upper()[:6]
     nudo = (nudo or "").strip()[:24]
+    # 2026-10-11 (revisión): las notas de venta de ILUS viven en Random como NVV «VD000…»: una NVV con número suelto
+    # se busca como VD (igual que _ot_resolver_doc_erp).
+    if tido == "NVV" and nudo.isdigit():
+        tido = "VD"
     k = _saldo.clave_doc(tido, nudo)
     if not k[0] or not k[1]:
         return jsonify({"ok": False, "error": "Escribe el tipo y el número del documento."}), 400
     try:
-        s, est = _fac_doc_refrescar(tido, nudo)
+        s, est = _fac_doc_refrescar(tido, nudo, crear=False)
     except Exception as e:
         print(f"[fac-libro] doc {tido} {nudo}: {type(e).__name__}: {e}", flush=True)
         return jsonify({"ok": False, "error": "No pudimos calcular el saldo de ese documento."}), 500
@@ -112904,8 +113062,8 @@ def ot_api_saldo_facturas_doc(tido, nudo):
         header = {}
     if not s.get("leido") and not s.get("usos"):
         return jsonify({"ok": False, "error_codigo": "NO_ENCONTRADO",
-                        "error": f"No encontramos {s.get('titulo') or (tido + ' ' + nudo)} en Random ni en ninguna OT. "
-                                 "Revisa el tipo y el número."}), 404
+                        "error": f"No pudimos leer {s.get('titulo') or (tido + ' ' + nudo)} en Random y ninguna OT lo usa: "
+                                 "revisa el tipo y el número (o Random no está respondiendo; reintenta en unos minutos)."}), 404
     fins = _fac_finanzas_de_ots([u["vid"] for u in (s.get("usos") or [])])
     usos = []
     for u in (s.get("usos") or []):
@@ -112927,7 +113085,17 @@ def ot_api_saldo_facturas_doc(tido, nudo):
                 "cliente": header.get("cliente_nombre") or "", "cliente_rut": header.get("cliente_rut") or "",
                 "fecha": header.get("fecha") or "", "total_doc": int(round(float(header.get("valor_bruto") or 0))),
                 "leido": bool(s.get("leido"))},
-        "estado": est, "veredicto": _saldo.puede_usar(s["servicio"], s["despacho"]),
+        "estado": est,
+        "veredicto": ({"ok": False, "clase": "gris", "titulo": "No pudimos leer qué OT la usan",
+                       "texto": "La lectura de las OT que usan esta factura falló a medias: reintenta en unos segundos antes "
+                                "de decidir.", "disponible": {"servicio": 0, "despacho": 0}}
+                      if s.get("usos_incompletos") else
+                      _saldo.puede_usar(s["servicio"], s["despacho"]) if s.get("leido")
+                      else {"ok": False, "clase": "gris", "titulo": "Random no respondió",
+                            "texto": "No pudimos leer las líneas de la factura en Random. Lo que usan las OT sí está abajo; "
+                                     "reintenta en unos minutos para ver el saldo.", "disponible": {"servicio": 0, "despacho": 0}}),
+        "aviso": (("Random no respondió: el saldo se calculó con la capacidad leída el " + s.get("capacidad_leida_el", "")
+                   + ".") if s.get("capacidad_previa") else ""),
         "servicio": s["servicio"], "despacho": s["despacho"], "usos": usos, "familia": familia,
         "movimientos": movs, "herencia": _fac_herencia_doc(k), "puede_autorizar": _ot_aut_es_superadmin()})
 
@@ -112935,6 +113103,7 @@ def ot_api_saldo_facturas_doc(tido, nudo):
 @app.route("/ot/api/saldo-facturas/revisar", methods=["POST"])
 @_mant_required
 @_no_tecnico
+@_ot_solo_superadmin
 def ot_api_saldo_facturas_revisar():
     """Revisión completa (también es la carga inicial del libro): recorre por tramos TODAS las OT que tienen un
     documento de Random y pone al día su libro y la foto de sus facturas. body: {desde: último id revisado}.
@@ -112973,7 +113142,11 @@ def ot_api_saldo_facturas_revisar():
 
 
 _FAC_SQL_OT_CON_DOC = ("(EXISTS (SELECT 1 FROM mant_visita_documentos md WHERE md.visita_id=v.id AND md.origen='erp' "
-                       "         AND COALESCE(md.erp_nudo,'')<>'') OR COALESCE(v.factura_nudo,'')<>'')")
+                       "         AND COALESCE(md.erp_nudo,'')<>'') OR COALESCE(v.factura_nudo,'')<>'' "
+                       # revisión 2: una OT que perdió su documento (garantía retroactiva, documento quitado) sigue en
+                       # el barrido mientras el libro la tenga, para que su liberación no dependa de una sola petición.
+                       " OR EXISTS (SELECT 1 FROM ot_fac_huella h WHERE h.visita_id=v.id) "
+                       " OR EXISTS (SELECT 1 FROM ot_fac_libro l WHERE l.visita_id=v.id))")
 
 
 def _fac_libro_barrido(max_s=40, max_ots=60):
@@ -113009,6 +113182,42 @@ def _fac_libro_barrido(max_s=40, max_ots=60):
             _fac_doc_refrescar(t, n)
         except Exception as e:
             print(f"[fac-libro] barrido refrescar {t} {n}: {type(e).__name__}", flush=True)
+    # 2026-10-11 (revisión): una OT borrada (también en lote) ya no está en mant_visitas pero sí tiene huella: se
+    # concilia como «eliminada» y libera lo que tomaba.
+    docs_b = set()
+    try:
+        for r in (mysql_fetchall(
+                "SELECT l.visita_id FROM ot_fac_libro l "
+                "  JOIN (SELECT MAX(id) AS mid FROM ot_fac_libro GROUP BY visita_id, doc_tido, doc_nudo, categoria) u ON u.mid=l.id "
+                "  LEFT JOIN mant_visitas v ON v.id=l.visita_id "
+                " WHERE v.id IS NULL AND l.acumulado_ot>0 GROUP BY l.visita_id LIMIT 50") or []):
+            if time.time() - t0 > max_s:
+                break
+            rr = _fac_libro_conciliar_ot(int(r["visita_id"]), "eliminada", detalle="La OT ya no existe (borrada)")
+            movs += rr["movimientos"]
+            docs_b |= set(rr["docs"])
+    except Exception as e:
+        print(f"[fac-libro] barrido borradas: {type(e).__name__}", flush=True)
+    for t, n in sorted(docs_b):
+        if time.time() - t0 > max_s + 15:
+            break
+        try:
+            _fac_doc_refrescar(t, n)
+        except Exception:
+            pass
+    # Facturas que Random no respondió o cuya foto tiene más de un día: se vuelven a leer de a poco.
+    try:
+        for r in (mysql_fetchall("SELECT doc_tido, doc_nudo FROM ot_fac_doc WHERE erp_leido=0 "
+                                 "    OR actualizado_el IS NULL OR actualizado_el < (UTC_TIMESTAMP() - INTERVAL 1 DAY) "
+                                 " ORDER BY actualizado_el LIMIT 10") or []):
+            if time.time() - t0 > max_s + 25:
+                break
+            try:
+                _fac_doc_refrescar(r["doc_tido"], r["doc_nudo"])
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[fac-libro] barrido fotos: {type(e).__name__}", flush=True)
     if proc == len(ids) and len(ids) < max_ots:
         desde, vuelta = 0, vuelta + 1
     try:
@@ -113023,6 +113232,7 @@ def _fac_libro_barrido(max_s=40, max_ots=60):
 @app.route("/ot/saldo-facturas/excel", methods=["GET"])
 @_mant_required
 @_no_tecnico
+@_ot_solo_superadmin
 def ot_saldo_facturas_excel():
     """Excel para la auditoría: cómo funciona el control, resumen, todas las facturas con su saldo, alertas (doble
     cobro / OT a pérdida) y el libro completo de movimientos. Fechas en hora Chile (REGLA #6)."""
@@ -113064,6 +113274,9 @@ def ot_saldo_facturas_excel():
         print(f"[fac-libro] excel: {type(e).__name__}: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo armar el Excel."}), 500
     filas_docs = [_fac_fila_lista(r) for r in docs]
+    # 2026-10-11 (revisión): la nota de venta reemplazada por su factura es el MISMO cobro: va en «Facturas» (con su
+    # columna «Nota de venta de») pero no suma en el Resumen ni en las Alertas.
+    filas_fact = [f for f in filas_docs if not f["familia_de"]]
     wb = Workbook()
 
     ws = wb.active
@@ -113100,17 +113313,19 @@ def ot_saldo_facturas_excel():
         c.font = Font(name="Arial", size=12 if negrita else 10, bold=negrita, color=(ROJO if negrita else "1F2937"))
         c.alignment = Alignment(wrap_text=True, vertical="top")
     ws.column_dimensions["A"].width = 120
+    ws_como = ws
+    fallos = []   # revisión 2: cualquier lectura fallida se avisa en el archivo
 
     ws = wb.create_sheet("Resumen")
     conteo = {}
-    for f in filas_docs:
+    for f in filas_fact:
         conteo[f["estado"]["estado"]] = conteo.get(f["estado"]["estado"], 0) + 1
     filas = [[_saldo.ESTADOS_FACTURA[e]["txt"], conteo.get(e, 0), _saldo.ESTADOS_FACTURA[e]["frase"]]
              for e in _saldo.ORDEN_ESTADOS]
-    filas.append(["Total de facturas", len(filas_docs), ""])
-    filas.append(["Saldo total de servicio y despacho", sum(f["servicio"]["total"] + f["despacho"]["total"] for f in filas_docs), ""])
-    filas.append(["Usado por las OT", sum(f["servicio"]["usado"] + f["despacho"]["usado"] for f in filas_docs), ""])
-    filas.append(["Disponible", sum(f["servicio"]["saldo"] + f["despacho"]["saldo"] for f in filas_docs), ""])
+    filas.append(["Total de facturas", len(filas_fact), "Las notas de venta reemplazadas por su factura no se cuentan aparte."])
+    filas.append(["Saldo total de servicio y despacho", sum(f["servicio"]["total"] + f["despacho"]["total"] for f in filas_fact), ""])
+    filas.append(["Usado por las OT", sum(f["servicio"]["usado"] + f["despacho"]["usado"] for f in filas_fact), ""])
+    filas.append(["Disponible", sum(f["servicio"]["saldo"] + f["despacho"]["saldo"] for f in filas_fact), ""])
     hoja(ws, ["Estado", "Facturas / monto", "Qué significa"], filas, [34, 18, 100])
     for r in range(len(_saldo.ORDEN_ESTADOS) + 3, ws.max_row + 1):
         ws.cell(row=r, column=2).number_format = clp_fmt
@@ -113133,26 +113348,74 @@ def ot_saldo_facturas_excel():
 
     ws = wb.create_sheet("Alertas")
     filas = []
-    for f in filas_docs:
+    for f in filas_fact:
         if f["estado"]["estado"] == "excedida":
             filas.append(["Doble cobro", f["titulo"], f["cliente"], f["estado"]["exceso"], f["ots"],
                           "Las OT suman más de lo que trae la factura: revisar cuál cobra de más."])
+    # OT a pérdida (la del SERVICIO: técnico + despacho − cobrado; los repuestos van aparte, como dato): las que
+    # consumen saldo según el libro y todas las que declaran un cobro, con el estado REAL de su autorización.
     vids_alerta = set()
     try:
         for r in (mysql_fetchall("SELECT DISTINCT visita_id FROM ot_fac_libro WHERE acumulado_ot>0") or []):
             vids_alerta.add(int(r["visita_id"]))
-    except Exception:
-        pass
-    fins = _fac_finanzas_de_ots(sorted(vids_alerta)[:3000])
+        for r in (mysql_fetchall("SELECT id FROM mant_visitas WHERE estado NOT IN ('cancelada','anulada') "
+                                 "   AND (COALESCE(zz_monto,0)>0 OR COALESCE(zz_envio_monto,0)>0) "
+                                 " ORDER BY id DESC LIMIT 6000") or []):
+            vids_alerta.add(int(r["id"]))
+    except Exception as e:
+        print(f"[fac-libro] excel OT a revisar: {type(e).__name__}", flush=True)
+        fallos.append("ot")
+    fins = _fac_finanzas_de_ots(sorted(vids_alerta), fallos=fallos)
+    auts = {}
+    try:
+        ids_l = sorted(fins)
+        for i in range(0, len(ids_l), 400):
+            ph = ",".join(["%s"] * len(ids_l[i:i + 400]))
+            for a in (mysql_fetchall(
+                    "SELECT id, visita_id, estado, payload_json, resuelto_por_nombre FROM mant_ot_autorizaciones "
+                    f" WHERE tipo='cerrar_con_perdida' AND estado IN ('aprobada','pendiente') AND visita_id IN ({ph}) ORDER BY id",
+                    tuple(ids_l[i:i + 400])) or []):
+                auts.setdefault(int(a["visita_id"]), []).append(a)
+    except Exception as e:
+        print(f"[fac-libro] excel autorizaciones: {type(e).__name__}", flush=True)
+        fallos.append("autorizaciones")
     for vid, f in sorted(fins.items()):
-        if f["cobra"] and f["me_cobraron"] > f["cobre"] and f["estado"] not in ("cancelada", "anulada"):
-            aut = mysql_fetchone("SELECT id, resuelto_por_nombre FROM mant_ot_autorizaciones WHERE visita_id=%s "
-                                 " AND tipo='cerrar_con_perdida' AND estado='aprobada' ORDER BY id DESC LIMIT 1", (vid,)) or {}
-            num = (mysql_fetchone("SELECT numero_ot FROM mant_visitas WHERE id=%s", (vid,)) or {}).get("numero_ot") or f"V-{vid:05d}"
-            filas.append(["OT a pérdida", num, f["estado_txt"], f["me_cobraron"] - f["cobre"], f["frase"],
-                          (f"Autorizada por {aut.get('resuelto_por_nombre')} (N° {aut['id']})" if aut.get("id")
-                           else "Sin autorización de pérdida: no puede cerrar sin la autorización de Daniel")])
-    if not filas:
+        if not (f["cobra"] and f["cobre_hay"] and not f["falta_tecnico"]) or f["estado"] in ("cancelada", "anulada"):
+            continue
+        autorizada, por, pend = 0, None, None
+        for a in auts.get(vid, []):
+            if a.get("estado") == "pendiente":
+                pend = a["id"]
+                continue
+            try:
+                mm = _saldo._entero((json.loads(a.get("payload_json") or "{}") or {}).get("perdida"))
+            except Exception:
+                mm = 0
+            if mm >= autorizada:
+                autorizada, por = mm, a.get("resuelto_por_nombre")
+        pr = _saldo.perdida_de_cuenta(f["cobre"], f["me_tecnico"], f["me_despacho"], autorizada)
+        if not pr["perdida"]:
+            continue
+        if pr["ok"]:
+            que = f"Autorizada por {por or '?'} hasta {_saldo.clp(autorizada)}"
+        elif autorizada:
+            que = f"Autorizada hasta {_saldo.clp(autorizada)}; falta autorizar {_saldo.clp(pr['falta_autorizar'])}"
+        elif pend:
+            que = f"Esperando la autorización de Daniel (solicitud N° {pend})"
+        elif f["estado"] == "cerrada" and f.get("cerrada_at") and f["cerrada_at"] < _FAC_LIBRO_DESDE:
+            que = "Cerrada antes del control de pérdidas (11/10/2026), sin autorización"
+        else:
+            que = "Sin autorización: no puede cerrar sin la autorización de Daniel"
+        filas.append(["OT a pérdida", f["numero_ot"], f["estado_txt"], pr["perdida"],
+                      f"Cobramos {_saldo.clp(f['cobre'])} − técnico y despacho {_saldo.clp(_saldo._entero(f['me_tecnico']) + _saldo._entero(f['me_despacho']))}"
+                      + (f" (repuestos aparte: {_saldo.clp(f['repuestos'])})" if f.get("repuestos") else ""), que])
+    if fallos:
+        aviso_f = ("LECTURA INCOMPLETA: no se pudieron leer todos los datos al generar este archivo (" + ", ".join(sorted(set(fallos)))
+                   + "). Vuelve a descargarlo antes de usarlo.")
+        filas.insert(0, ["LECTURA INCOMPLETA", "", "", None, aviso_f, "Vuelve a descargar el Excel"])
+        ws_como.insert_rows(1)
+        ws_como.cell(row=1, column=1, value=aviso_f).font = Font(name="Arial", size=12, bold=True, color=ROJO)
+    elif not filas:
         filas.append(["Sin alertas", "", "", None, "", "Ninguna factura con doble cobro ni OT a pérdida al momento de generar."])
     hoja(ws, ["Alerta", "Documento / OT", "Cliente / estado", "Monto", "Detalle", "Qué pasa"], filas, [16, 22, 34, 15, 60, 70])
     for i in range(2, ws.max_row + 1):
@@ -113185,11 +113448,23 @@ def ot_saldo_facturas_excel():
 #  Daniel: «te va a indicar si es que ya la factura va a pérdida y eso iría autorizado por mí». Pérdida = lo que nos
 #  cobraron (técnico + despacho + repuestos) − lo que cobramos, en una OT que SE COBRA (la cuenta de _ot_finanzas, la
 #  misma de la ficha). La autorización 'cerrar_con_perdida' vale HASTA el monto que Daniel vio al aprobar.
+def _fac_perdida_aplica(via, info):
+    """¿El candado de pérdida aplica? Siempre en una OT que se cobra, salvo un cierre autorizado SIN documento que no
+    cobra nada (ahí Daniel ya aprobó cerrar sin cobro). Un «cerrar sin documento» autoriza la falta de documento, no
+    una pérdida: si después se declaró un cobro, la pérdida se autoriza aparte (revisión 2026-10-11)."""
+    info = info or {}
+    return not (via == "autorizacion_cerrar" and int(info.get("cobre") or 0) <= 0)
+
+
 def _fac_perdida_info(vid, fin):
-    """{cobra, completa, cobre, me_cobraron, perdida, autorizada, autorizada_por, ok, pendiente_id} a partir de la
-    cuenta de la OT (`fin` = _ot_finanzas) y de sus autorizaciones 'cerrar_con_perdida'."""
+    """{cobra, completa, cobre, me_cobraron, repuestos, perdida, autorizada, autorizada_por, ok, falta_autorizar,
+    pendiente_id} con la cuenta de la OT (`fin` = _ot_finanzas). La pérdida que se autoriza es la del SERVICIO
+    (técnico + despacho − cobrado); los repuestos van aparte, como dato (revisión 2026-10-11: contarlos inventaba
+    pérdidas). `completa` basta con que haya cobro y el costo del técnico declarado: un despacho sin costo cuenta $0
+    (la pérdida calculada es un mínimo), así no se esquiva el candado dejando ese costo vacío."""
+    m = fin["me_cobraron"]
     cobre = int(round(float(fin["cobre"]["total"] or 0)))
-    me = int(round(float(fin["me_cobraron"]["total"] or 0)))
+    me_t, me_d = m.get("tecnico") or 0, m.get("despacho") or 0
     autorizada, por, pend = 0, None, None
     try:
         for a in (mysql_fetchall(
@@ -113203,14 +113478,16 @@ def _fac_perdida_info(vid, fin):
                 pl = json.loads(a.get("payload_json") or "{}") or {}
             except Exception:
                 pl = {}
-            m = _saldo._entero(pl.get("perdida"))
-            if m >= autorizada:
-                autorizada, por = m, a.get("resuelto_por_nombre")
+            mm = _saldo._entero(pl.get("perdida"))
+            if mm >= autorizada:
+                autorizada, por = mm, a.get("resuelto_por_nombre")
     except Exception as e:
         print(f"[ot-perdida] autorizaciones vid={vid}: {type(e).__name__}", flush=True)
-    r = _saldo.perdida_cierre(cobre, me, autorizada)
-    return {"cobra": bool(fin.get("cobra")), "completa": bool(fin["queda"].get("mostrar")) and bool(fin["cobre"].get("hay")),
-            "cobre": cobre, "me_cobraron": me, "perdida": r["perdida"], "autorizada": autorizada,
+    r = _saldo.perdida_de_cuenta(cobre, me_t, me_d, autorizada)
+    return {"cobra": bool(fin.get("cobra")),
+            "completa": bool(fin["cobre"].get("hay")) and not bool(m.get("falta_tecnico")),
+            "cobre": cobre, "me_cobraron": _saldo._entero(me_t) + _saldo._entero(me_d),
+            "repuestos": int(round(float(m.get("repuestos") or 0))), "perdida": r["perdida"], "autorizada": autorizada,
             "autorizada_por": por, "ok": r["ok"], "falta_autorizar": r["falta_autorizar"], "pendiente_id": pend}
 
 
@@ -119115,24 +119392,27 @@ def mant_ot_aprobar_cierre(vid):
     # la autorización 'cerrar_con_perdida' de Daniel, hasta el monto autorizado. Nunca un callejón sin salida: el
     # rechazo trae la acción (pedir la autorización con argumento) y la cuenta. Mismo interruptor que los demás
     # candados; trabajo interno, garantía, contrato y cierre autorizado sin documento quedan fuera (no se cobran).
-    if _gate_on and not _interna_cierre and _cob_cierre == "cobra" and _via_cierre != "autorizacion_cerrar":
+    if _gate_on and not _interna_cierre and _cob_cierre == "cobra":
         try:
             _fp_c = _fac_perdida_de_ot(vid)
         except Exception as _e_fp:
+            # Revisión 2: falla CERRADO (antes una lectura fallida dejaba cerrar a pérdida sin autorización).
             print(f"[aprobar-cierre] pérdida vid={vid}: {type(_e_fp).__name__}", flush=True)
-            _fp_c = None
-        if _fp_c and _fp_c.get("completa") and not _fp_c.get("ok"):
+            return jsonify({"ok": False, "error_codigo": "REVISION_NO_DISPONIBLE", "visita_id": vid,
+                            "error": "No pudimos revisar si esta OT cierra a pérdida. Reintenta en unos segundos."}), 503
+        if _fp_c.get("completa") and not _fp_c.get("ok") and _fac_perdida_aplica(_via_cierre, _fp_c):
             if _fp_c.get("pendiente_id"):
                 return jsonify({"ok": False, "error_codigo": "AUTORIZACION_PENDIENTE", "codigo": "AUTORIZACION_PENDIENTE",
-                                "accion": _ot_cierre_accion("AUTORIZACION_PENDIENTE", vid), "perdida": _fp_c,
+                                "accion": _ot_cierre_accion("AUTORIZACION_PENDIENTE", vid, aid=_fp_c["pendiente_id"]),
+                                "perdida": _fp_c,
                                 "autorizacion_id": _fp_c["pendiente_id"], "visita_id": vid,
                                 "error": f"Esta OT va a pérdida ({_saldo.clp(_fp_c['perdida'])}) y está esperando la "
                                          f"autorización de Daniel (solicitud N° {_fp_c['pendiente_id']})."}), 409
             return jsonify({"ok": False, "error_codigo": "CIERRE_CON_PERDIDA", "codigo": "CIERRE_CON_PERDIDA",
                             "accion": _ot_cierre_accion("CIERRE_CON_PERDIDA", vid), "perdida": _fp_c,
                             "puede_pedir_autorizacion": True, "visita_id": vid,
-                            "error": (f"Esta OT cierra a pérdida: cobramos {_saldo.clp(_fp_c['cobre'])} y nos cobraron "
-                                      f"{_saldo.clp(_fp_c['me_cobraron'])}, se pierden {_saldo.clp(_fp_c['perdida'])}"
+                            "error": (f"Esta OT cierra a pérdida: cobramos {_saldo.clp(_fp_c['cobre'])} y el técnico y el "
+                                      f"despacho nos cobraron {_saldo.clp(_fp_c['me_cobraron'])}, se pierden {_saldo.clp(_fp_c['perdida'])}"
                                       + (f" (Daniel autorizó hasta {_saldo.clp(_fp_c['autorizada'])})" if _fp_c.get("autorizada") else "")
                                       + ". Para cerrarla pide la autorización de Daniel con un argumento, o revisa el "
                                         "cobro: agrega la factura que falta o corrige lo que cobró el proveedor.")}), 409
@@ -145810,6 +146090,23 @@ def mant_lev_cerrar(lid):
                     return jsonify({
                         "ok": False, "error_codigo": "SIN_CENTRO_COSTO", "accion": _ot_cierre_accion("SIN_CENTRO_COSTO", _v_lev["id"]),
                         "error": "Falta declarar el centro de costo de la OT de este levantamiento antes de cerrarlo."}), 400
+                # 📒 2026-10-11 (REGLA #28, revisión): mismo candado de pérdida que aprobar-cierre. A un técnico no se le
+                # muestran montos (REGLA #26): solo que falta una autorización de gestión.
+                if _ot_cobertura(dict(_v_lev)) == "cobra":
+                    try:
+                        _fp_l = _fac_perdida_de_ot(lev["visita_id"])
+                    except Exception as _e_fpl:
+                        print(f"[lev_cerrar] pérdida vid={lev.get('visita_id')}: {type(_e_fpl).__name__}", flush=True)
+                        return jsonify({"ok": False, "error": "No pudimos revisar la OT del levantamiento. Reintenta en unos "
+                                                              "segundos.", "error_codigo": "REVISION_NO_DISPONIBLE"}), 503
+                    if _fp_l.get("completa") and not _fp_l.get("ok") and _fac_perdida_aplica(_p_lev.get("via"), _fp_l):
+                        _msg_l = ("La OT de este levantamiento necesita una autorización de gestión antes de cerrarse."
+                                  if _es_rol_tecnico() else
+                                  f"La OT de este levantamiento cierra a pérdida ({_saldo.clp(_fp_l['perdida'])}): pide la "
+                                  "autorización de Daniel desde la ficha de la OT.")
+                        return jsonify({"ok": False, "error_codigo": "CIERRE_CON_PERDIDA", "error": _msg_l,
+                                        "accion": _ot_cierre_accion("CIERRE_CON_PERDIDA", _v_lev["id"]),
+                                        "visita_id": _v_lev["id"]}), 409
 
     user = current_username() or 'sistema'
     mysql_execute(

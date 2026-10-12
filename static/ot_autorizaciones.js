@@ -163,7 +163,9 @@
       if (!r.ok) { raiz.innerHTML = '<div class="pp-error">' + esc(r.j.error || 'No encontramos esa solicitud.') + '</div>'; return; }
       var a = r.j.autorizacion;
       raiz.innerHTML = '<div class="pp-lista">' + tarjeta(a, true) + '</div>' + queSeCreara(a) +
-        '<div class="pp-acc" style="margin-top:14px"><a class="pp-btn" href="/ot/autorizaciones"><i class="bi bi-arrow-left"></i> Volver a la bandeja</a></div>';
+        '<div class="pp-acc" style="margin-top:14px">' + (esSA
+          ? '<a class="pp-btn" href="/ot/autorizaciones"><i class="bi bi-arrow-left"></i> Volver a la bandeja</a>'
+          : '<a class="pp-btn" href="/ot/"><i class="bi bi-arrow-left"></i> Volver a las OT</a>') + '</div>';
     });
   }
   recargar();

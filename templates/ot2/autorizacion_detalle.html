@@ -15,7 +15,8 @@
     <h4><i class="bi bi-shield-lock me-2"></i>Solicitud N° {{ aid }}</h4>
     <div class="sub">Lee el argumento y decide. Queda registrado con tu nombre, la fecha y la hora.</div>
   </div>
-  <a href="{{ url_for('ot_aut_pagina') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Todas las solicitudes</a>
+  {% if es_superadmin %}<a href="{{ url_for('ot_aut_pagina') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Todas las solicitudes</a>
+  {% else %}<a href="{{ url_for('ot2_panel') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Volver a las OT</a>{% endif %}
 </div>
 <div class="pp" id="ppAut" data-modo="detalle" data-id="{{ aid }}" data-sa="{{ '1' if es_superadmin else '0' }}">
   <div class="pp-vacio">Cargando la solicitud…</div>
