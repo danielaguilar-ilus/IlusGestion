@@ -272,12 +272,13 @@
    El servidor rechaza con 409 toda gestión de un retiro terminado (pickups_module.py: _rechazo_si_cerrado); esta franja lo explica y el JS
    (retiros_internal_detail.js, bloque «SOLO LECTURA») bloquea los botones y campos con aviso. «Cambiar estado» sigue abierto: es la forma de reabrir. #}
 {% if cierre and cierre.cerrado %}
+{% set _es_super_cierre = current_user and current_user.role == 'superadmin' %}
 <div class="rd-cerrado-banner{% if req.status in ['rechazada','fallida'] %} is-fail{% endif %}" id="rdCerradoBanner" role="status" aria-live="polite">
   <i class="bi bi-lock-fill" aria-hidden="true"></i>
   <div class="rd-cerrado-txt">
     <strong>Retiro cerrado{% if cierre.cuando %} el {{ cierre.cuando }}{% endif %}{% if cierre.por %} por {{ cierre.por }}{% endif %} ({{ cierre.como }}).</strong>
-    La ficha queda en solo lectura: no se puede agregar ni quitar facturas, cambiar productos, datos o fechas.
-    <span class="rd-cerrado-sub">Si de verdad hay que corregir algo, reábrelo desde <a href="#tab-acciones" class="rd-cerrado-link" onclick="event.preventDefault(); if (typeof cambiarTabInfo === 'function') cambiarTabInfo('acciones');">Cambiar estado</a>. El chat y los mensajes con el cliente siguen disponibles.</span>
+    La ficha queda en solo lectura: no se puede agregar ni quitar facturas, cambiar productos, datos, fechas ni el estado.
+    <span class="rd-cerrado-sub">{% if _es_super_cierre %}Si de verdad hay que corregir algo, puedes reabrirlo desde <a href="#tab-acciones" class="rd-cerrado-link" onclick="event.preventDefault(); if (typeof cambiarTabInfo === 'function') cambiarTabInfo('acciones');">Cambiar estado</a> escribiendo el motivo (al cliente no le llega nada).{% else %}Si de verdad hay que corregir algo, solo un superadministrador puede reabrirlo desde Cambiar estado, con motivo.{% endif %} El chat y los mensajes con el cliente siguen disponibles.</span>
   </div>
 </div>
 {% endif %}
@@ -325,10 +326,18 @@
     <div class="rh-d d-resp"><i class="bi bi-person-badge"></i><div class="in">
       <span class="v">{{ req.responsable_nombre or 'Sin asignar' }}</span>
       <span class="k">Responsable ILUS</span></div></div>
+    {% if cierre and cierre.cerrado %}
+    {# Retiro cerrado (Daniel 2026-10-12, «hermético»): es un dato, no un botón — sin lápiz ni modal de edición #}
+    <div id="heroRetiraTile" class="rh-d d-ret is-solo-lectura" title="Quién retira · retiro cerrado: solo lectura">
+      <i class="bi bi-person-check"></i><div class="in">
+      <span class="v" id="heroRetiraTxt">{{ _hretira }}</span>
+      <span class="k">Quién retira <i class="bi bi-lock-fill"></i></span></div></div>
+    {% else %}
     <button type="button" id="heroRetiraTile" class="rh-d d-ret" data-bs-toggle="modal" data-bs-target="#modalFichaEditar" title="Cambiar quién retira o corregir los datos del cliente">
       <i class="bi bi-person-check"></i><div class="in">
       <span class="v" id="heroRetiraTxt">{{ _hretira }}</span>
       <span class="k">Quién retira <i class="bi bi-pencil-fill"></i></span></div></button>
+    {% endif %}
     <button type="button" id="heroDocTile" class="rh-d d-doc {% if _n_docs_inicial == 0 %}is-falta{% endif %}" data-declarado="{{ _hdecl }}" data-declarado-lbl="{{ _hdecl_lbl }}"
             onclick="document.getElementById('paso-2').scrollIntoView({behavior:'smooth',block:'start'})" title="Ir a los documentos">
       <i class="bi bi-receipt"></i><div class="in">
@@ -683,7 +692,7 @@
         </div>
 
         {# Sugerencias del cliente — docs con saldo en ERP #}
-        <div style="font-size:.74rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#0a0a0a;margin:18px 0 8px">
+        <div id="saldoSugHead" style="font-size:.74rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#0a0a0a;margin:18px 0 8px">
           <i class="bi bi-lightning-charge me-1" style="color:var(--ilus-red)"></i>Sugerencias para este cliente
           <span class="text-muted" style="font-weight:400;text-transform:none;letter-spacing:0;margin-left:6px">(últimos
             <select id="saldoDias" class="form-select form-select-sm d-inline-block" style="width:auto;padding:1px 18px 1px 6px;font-size:.74rem" onchange="cargarSaldoCliente({{ req.id }})">
@@ -1148,7 +1157,18 @@
            contexto arriba. Si `_can_change_agenda`, los bloques libres se
            pueden tocar para mover ESTE retiro ahí — con aviso previo de
            las consecuencias (nunca se manda el correo sin confirmar). #}
-        <div id="sec-calendario" class="icd-cal-card icd-cal-potenciado" data-can-change="{{ 1 if _can_change_agenda else 0 }}">
+        {% if cierre and cierre.cerrado %}
+        {# Retiro cerrado (Daniel 2026-10-12: «hasta puedo cambiarle de fecha al retiro… tiene que ser hermético»): no se muestra la agenda
+           navegable (parecía que se podía mover la cita); solo la cita que tuvo, fija. El servidor rechaza igual cualquier cambio de fecha. #}
+        <div class="rd-cita-cerrada" id="rdCitaCerrada">
+          <i class="bi bi-lock-fill" aria-hidden="true"></i>
+          <div>
+            <strong>{% if req.confirmed_date %}Cita del retiro: {{ req.confirmed_date | chile_fmt('%A %d/%m/%Y') }}{% if req.confirmed_time_from %} a las {{ req.confirmed_time_from|hm }}{% endif %}{% else %}El retiro se cerró sin una cita confirmada{% endif %}</strong>
+            <span>Retiro cerrado ({{ cierre.como }}): la agenda ya no se puede cambiar.</span>
+          </div>
+        </div>
+        {% endif %}
+        <div id="sec-calendario" class="icd-cal-card icd-cal-potenciado" data-can-change="{{ 1 if _can_change_agenda else 0 }}"{% if cierre and cierre.cerrado %} hidden{% endif %}>
           <div class="icd-cal-head">
             <div>
               <h6><i class="bi bi-calendar-week"></i>Agenda del retiro</h6>
@@ -2007,11 +2027,29 @@
 
   {# ── Cambiar estado (avanzado) — sin cambios funcionales ni de permisos ── #}
   <div class="rd-more-pane" id="tab-acciones" role="tabpanel" hidden>
+    {# Retiro cerrado = hermético (Daniel 2026-10-12): el estado de un retiro terminado solo lo cambia (reabre) un superadmin, con motivo, y sin
+       avisarle al cliente. El servidor lo exige igual (pickup_update_status); esto solo lo muestra. #}
+    {% set _cerrado_acc = cierre and cierre.cerrado %}
+    {% set _es_super_acc = current_user and current_user.role == 'superadmin' %}
+    {% if _cerrado_acc and not _es_super_acc %}
+    <div class="rd-reabrir-lock" id="rdReabrirLock">
+      <i class="bi bi-lock-fill" aria-hidden="true"></i>
+      <div><strong>Retiro cerrado ({{ cierre.como }}): el estado ya no se cambia.</strong>
+      Solo un superadministrador puede reabrirlo, escribiendo el motivo. Si hay que corregir algo, pídeselo.</div>
+    </div>
+    {% else %}
+    {% if _cerrado_acc %}
+    <div class="rid-advanced-warn">
+      <i class="bi bi-unlock-fill"></i>
+      <span>Reabrir un retiro cerrado (solo superadministrador). Escribe el motivo: queda en la bitácora con tu nombre. Reabrirlo <strong>no le avisa nada al cliente</strong>.</span>
+    </div>
+    {% else %}
     <div class="rid-advanced-warn">
       <i class="bi bi-exclamation-triangle-fill"></i>
       <span>Uso avanzado — salta el flujo guiado de los pasos de arriba, úsalo solo si sabes lo que haces. Casi todos los estados le mandan un correo al cliente.</span>
     </div>
-    <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" id="formCambiarEstadoAvanzado" onsubmit="return _confirmarCambioEstado(event)">
+    {% endif %}
+    <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" id="formCambiarEstadoAvanzado" onsubmit="return _confirmarCambioEstado(event)"{% if _cerrado_acc %} data-reabrir="1"{% endif %}>
               <input type="hidden" name="estado_visto" value="{{ req.status }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="row g-2">
@@ -2020,12 +2058,19 @@
           <select name="status" class="form-select form-select-sm">{% for k,v in statuses.items() %}<option value="{{ k }}" {% if req.status==k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
         </div>
         <div class="col-md-6">
+          {% if _cerrado_acc %}
+          <label class="form-label small fw-bold mb-1" for="rdMotivoReabrir">Motivo de la reapertura (obligatorio)</label>
+          <input type="text" name="notes" id="rdMotivoReabrir" class="form-control form-control-sm" required minlength="10" maxlength="500"
+                 placeholder="Ej.: el cliente vuelve por un producto que faltó">
+          {% else %}
           <label class="form-label small fw-bold mb-1">Nota interna (opcional)</label>
           <input type="text" name="notes" class="form-control form-control-sm" placeholder="Razón del cambio...">
+          {% endif %}
         </div>
       </div>
-      <button class="btn btn-dark fw-bold mt-2"><i class="bi bi-arrow-repeat me-1"></i>Actualizar estado</button>
+      <button class="btn btn-dark fw-bold mt-2"><i class="bi bi-arrow-repeat me-1"></i>{% if _cerrado_acc %}Reabrir retiro{% else %}Actualizar estado{% endif %}</button>
     </form>
+    {% endif %}
   </div>
 </section>
 

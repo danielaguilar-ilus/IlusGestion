@@ -1371,6 +1371,7 @@ select.nri-field-locked{pointer-events:none}
   .kanban-empty{opacity:.55}
   /* Botón ⋮ "Mover a..." — visible solo en móvil / pantallas touch */
   .kanban-move-btn{display:none}
+  .kanban-lock{color:#9ca3af;font-size:.85rem;padding:2px 4px}
   @media (max-width:768px), (pointer:coarse){
     .kanban-move-btn{
       display:inline-flex;align-items:center;justify-content:center;
@@ -1402,16 +1403,22 @@ select.nri-field-locked{pointer-events:none}
           {% set colcards.n = colcards.n + 1 %}
           {% set b = status_badge(r.status) %}
           {% set _fch = r.confirmed_date or r.proposed_date or r.requested_date %}
-          <div class="ilus-card p-3 mb-2 kanban-card" draggable="true" tabindex="0" role="link"
+          {# Retiro cerrado = hermético (Daniel 2026-10-12): una tarjeta terminada no se arrastra ni tiene «Mover a…» (el servidor lo rechaza igual) #}
+          {% set _kb_cerrado = r.status in ['retirada', 'cerrada', 'rechazada', 'fallida'] %}
+          <div class="ilus-card p-3 mb-2 kanban-card{% if _kb_cerrado %} is-cerrada{% endif %}" draggable="{{ 'false' if _kb_cerrado else 'true' }}" tabindex="0" role="link"
                data-rid="{{ r.id }}" data-code="{{ r.code }}" data-status="{{ r.status }}"
                data-fecha="{{ (_fch|string)[:10] if _fch else '' }}"
                data-href="{{ url_for('pickup_detail', rid=r.id) }}"
                style="border-left:4px solid {{ group.accent }}">
             <div class="d-flex justify-content-between align-items-start">
               <div class="fw-bold">{{ r.code }}</div>
+              {% if _kb_cerrado %}
+              <span class="kanban-lock" title="Retiro cerrado: no se mueve" aria-label="Retiro cerrado"><i class="bi bi-lock-fill"></i></span>
+              {% else %}
               <button type="button" class="kanban-move-btn" title="Mover a..." aria-label="Mover {{ r.code }} a otra columna">
                 <i class="bi bi-three-dots-vertical"></i>
               </button>
+              {% endif %}
             </div>
             <div class="small">{{ r.customer_name }}</div>
             {% if r.document_number %}<div class="small text-muted">{{ r.document_type }} {{ r.document_number }}</div>
@@ -1607,6 +1614,11 @@ select.nri-field-locked{pointer-events:none}
   board.addEventListener('dragstart', function(e){
     const card = e.target.closest('.kanban-card');
     if (!card) return;
+    if (['retirada', 'cerrada', 'rechazada', 'fallida'].indexOf(card.dataset.status) !== -1){   // retiro cerrado: no se mueve (Daniel 2026-10-12)
+      e.preventDefault();
+      ilusToast('🔒 ' + (card.dataset.code || 'Este retiro') + ' ya está cerrado: no se mueve. Solo un superadministrador puede reabrirlo desde la ficha, con motivo.', { type: 'warning', duration: 6000 });
+      return;
+    }
     dragCard = card; dragging = true;
     card.classList.add('is-dragging');
     e.dataTransfer.effectAllowed = 'move';

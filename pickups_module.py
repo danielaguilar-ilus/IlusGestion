@@ -6672,7 +6672,16 @@ def register_pickup_routes(app, ctx):
         como = _CERRADO_COMO.get(str((req or {}).get("status") or ""), "Cerrado")
         cuando = _cuando_cerro_txt(req)
         return (f"Este retiro ya está cerrado ({como}{(' el ' + cuando) if cuando else ''}). No se puede modificar. "
-                "Si de verdad hay que corregir algo, primero reábrelo desde Cambiar estado.")
+                "Si de verdad hay que corregir algo, un superadministrador puede reabrirlo desde Cambiar estado, con motivo.")
+
+    def _es_superadmin():
+        """¿La persona en sesión es superadmin? (mismo criterio que «Eliminar solicitud»: permiso superadmin o rol superadmin)."""
+        try:
+            perms = getattr(g, "permissions", None) or {}
+            u = getattr(g, "user", None) or {}
+            return bool(perms.get("superadmin")) or str(u.get("role") or "") == "superadmin"
+        except Exception:
+            return False
 
     def _rechazo_si_cerrado(rid, req=None, json=False):
         """None si el retiro admite cambios; si está terminado, la respuesta 409 amigable (JSON para fetch o `json=True`; si no, flash + redirect a la
@@ -7062,6 +7071,33 @@ def register_pickup_routes(app, ctx):
             flash(_msg_v, "warning")
             return redirect(url_for("pickup_detail", rid=rid))
 
+        # ── RETIRO CERRADO = HERMÉTICO (Daniel 2026-10-12: «el pedido se tiene que bloquear una vez que se retire completamente… tiene que ser un
+        # sistema hermético»). Un retiro terminado (retirada, cerrada, rechazada, fallida) ya no cambia de estado desde el Kanban, el calendario ni un
+        # formulario cualquiera: antes se podía arrastrar una tarjeta «Retirada» a Preparación y al cliente le llegaba «estamos preparando tu retiro».
+        # Solo un SUPERADMIN lo reabre, desde «Cambiar estado» de la ficha y escribiendo el motivo. Reabrir NO le escribe nada al cliente ni al equipo
+        # por correo: queda en la bitácora con nombre y motivo. Volver a mandar el mismo estado no reescribe nada (ni la hora de cierre ni quién retiró).
+        _reapertura = False
+        if old_status in _ESTADOS_TERMINADOS:
+            _como_c = _CERRADO_COMO.get(old_status, "Cerrado")
+            if new_status == old_status:
+                _msg_igual = f"Este retiro ya está cerrado ({_como_c}). No se cambió nada."
+                if _es_fetch():
+                    return jsonify({"ok": False, "error": _msg_igual, "code": "RETIRO_CERRADO"}), 409
+                flash(_msg_igual, "info")
+                return redirect(url_for("pickup_detail", rid=rid))
+            _msg_reabrir = (f"Este retiro ya está cerrado ({_como_c}): no se mueve desde el Kanban ni el calendario. Solo un superadministrador "
+                            f"puede reabrirlo desde la ficha (Cambiar estado), escribiendo el motivo. No se cambió nada.")
+            if _es_fetch():
+                return jsonify({"ok": False, "error": _msg_reabrir, "code": "RETIRO_CERRADO"}), 409
+            if not _es_superadmin():
+                flash(_msg_reabrir, "warning")
+                return redirect(url_for("pickup_detail", rid=rid))
+            if len((notes or "").strip()) < 10:
+                flash("Para reabrir un retiro cerrado escribe el motivo (al menos 10 caracteres). Queda en la bitácora con tu nombre. "
+                      "No se cambió nada.", "warning")
+                return redirect(url_for("pickup_detail", rid=rid))
+            _reapertura = True
+
         # ── GUARDA DE RESPONSABLE (Daniel 2026-10-02): «para avanzar debe declarar el responsable, y para agendar o liberar el calendario».
         # Cualquier cambio de estado de un retiro sin responsable (Kanban, Cambiar estado, botones de la ficha) pide primero «Me hago cargo».
         if old_status != new_status and _sin_responsable(req):
@@ -7115,6 +7151,10 @@ def register_pickup_routes(app, ctx):
         if new_status == "en_preparacion" and old_status != new_status:
             _quien = ((getattr(g, "user", None) or {}).get("nombre") or "un usuario").strip()
             _notas_log = (f"Manual: {_quien} pasó el retiro a «En preparación»." + (f" Nota: {notes}" if notes else "")).strip()
+        if _reapertura:
+            _quien_r = ((getattr(g, "user", None) or {}).get("nombre") or "un superadministrador").strip()
+            _notas_log = (f"Reabierto por {_quien_r} (superadmin), de «{PICKUP_STATUS.get(old_status, old_status)}» a "
+                          f"«{PICKUP_STATUS.get(new_status, new_status)}». Motivo: {notes.strip()}. Sin aviso al cliente.")[:900]
         log_event(rid, "estado_actualizado", old_status, new_status, _notas_log, "interno")
         if new_status in ("retirada", "cerrada") and old_status != new_status:
             try:
@@ -7239,6 +7279,8 @@ def register_pickup_routes(app, ctx):
         # pone ese estado) y el cliente recibía dos correos idénticos.
         if new_status == "cerrada":
             kind = None
+        if _reapertura:                      # reabrir un retiro cerrado es interno: el cliente no recibe nada (Daniel 2026-10-12)
+            kind = None
         if kind and old_status != new_status:
             try:
                 # Re-leer la solicitud actualizada (estado/fechas pueden haber cambiado)
@@ -7263,7 +7305,7 @@ def register_pickup_routes(app, ctx):
         # Antes pickup_update_status NO avisaba al equipo: el cliente se enteraba
         # por correo pero el equipo no tenía campana/email del avance ni del cierre.
         try:
-            if old_status != new_status:
+            if old_status != new_status and not _reapertura:
                 _cod = req.get("code") or "?"
                 _cli = req.get("customer_name") or "Cliente"
                 if new_status == "en_preparacion":

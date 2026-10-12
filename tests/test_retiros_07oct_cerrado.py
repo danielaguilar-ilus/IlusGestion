@@ -111,7 +111,7 @@ class TestServidorBloqueaTodaGestionConElRetiroTerminado:
         d = llamar(env, metodo, ruta, args).get_json()
         assert d["code"] == "RETIRO_CERRADO"
         assert f"Este retiro ya está cerrado ({COMO[estado]} el 06/10/2026)" in d["error"]
-        assert "No se puede modificar" in d["error"] and "reábrelo desde Cambiar estado" in d["error"]
+        assert "No se puede modificar" in d["error"] and "superadministrador puede reabrirlo desde Cambiar estado" in d["error"]
 
     def test_el_mensaje_usa_la_hora_chile_y_no_inventa_una_fecha_si_no_la_hay(self, env):
         retiro(env, "retirada", closed_at=dt.datetime(2026, 10, 7, 2, 30))        # 23:30 del 06/10 en Chile (UTC-3)
@@ -134,8 +134,19 @@ class TestServidorBloqueaTodaGestionConElRetiroTerminado:
         assert r.status_code != 409 or r.get_json().get("code") != "RETIRO_CERRADO"
 
 
+@pytest.fixture()
+def env_super(monkeypatch):
+    """Desde el 12-oct (retiro cerrado = hermético) solo un superadmin reabre, con motivo: ver tests/test_retiros_12oct_hermetico.py."""
+    for k in ("RETIROS_PREP_AUTO", "RETIROS_EXIGE_RESPONSABLE", "RETIROS_CHECK_AUTO", "RETIROS_RETIRO_AUTO"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(pickups_module, "_RELOJ_CHILE", lambda: AHORA)
+    app, db, ctx, esp = A.construir_app(usuario={"id": 1, "nombre": "Daniel Aguilar", "username": "daniel", "role": "superadmin"})
+    return SimpleNamespace(app=app, db=db, ctx=ctx, esp=esp, cli=app.test_client())
+
+
 class TestLoQueSigueFuncionandoConElRetiroTerminado:
-    def test_cambiar_estado_reabre_el_retiro(self, env):
+    def test_cambiar_estado_reabre_el_retiro(self, env_super):
+        env = env_super
         retiro(env, "cerrada")
         r = env.cli.post(f"/retiros/{RID}/status", data={"status": "agenda_confirmada", "notes": "Se reabre: el cliente trae otra factura"})
         assert r.status_code == 302
@@ -144,9 +155,10 @@ class TestLoQueSigueFuncionandoConElRetiroTerminado:
         A.esperar_hilos_de_aviso()
 
     @pytest.mark.parametrize("estado", TERMINALES)
-    def test_se_puede_reabrir_desde_cualquier_estado_terminal_y_luego_gestionar(self, env, estado):
+    def test_se_puede_reabrir_desde_cualquier_estado_terminal_y_luego_gestionar(self, env_super, estado):
+        env = env_super
         retiro(env, estado)
-        env.cli.post(f"/retiros/{RID}/status", data={"status": "en_revision", "notes": "reabierto"})
+        env.cli.post(f"/retiros/{RID}/status", data={"status": "en_revision", "notes": "reabierto por una prueba"})
         A.esperar_hilos_de_aviso()
         assert env.db.solicitudes[RID]["status"] == "en_revision"
         env.db.reiniciar_registro()

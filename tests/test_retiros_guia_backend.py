@@ -776,10 +776,17 @@ class TestResponsableObligatorio:
 
     @pytest.mark.parametrize("estado", ["rechazada", "cerrada", "retirada", "fallida"])
     def test_un_retiro_terminado_se_puede_reabrir_sin_responsable(self, env, estado):
-        """«Tomar» rechaza los retiros terminados (409), así que exigirles responsable para reabrirlos sería un callejón sin salida."""
+        """«Tomar» rechaza los retiros terminados (409), así que exigirles responsable para reabrirlos sería un callejón sin salida.
+        Desde el 12-oct (retiro cerrado = hermético, tests/test_retiros_12oct_hermetico.py) solo lo reabre un superadmin, con motivo."""
+        app, db, ctx, esp = construir(usuario={"id": 1, "nombre": "Daniel Aguilar", "username": "daniel", "role": "superadmin"})
+        sup = SimpleNamespace(app=app, db=db, ctx=ctx, esp=esp, cli=app.test_client())
+        self._sin_resp(sup, status=estado)
+        r = sup.cli.post(f"/retiros/{RID}/status", data={"status": "en_revision", "notes": "Reabierto para corregir la factura"})
+        assert r.status_code == 302 and sup.db.solicitudes[RID]["status"] == "en_revision"
+        # …y quien no es superadmin ya no lo reabre
         self._sin_resp(env, status=estado)
-        r = env.cli.post(f"/retiros/{RID}/status", data={"status": "en_revision"})
-        assert r.status_code == 302 and env.db.solicitudes[RID]["status"] == "en_revision"
+        r = env.cli.post(f"/retiros/{RID}/status", data={"status": "en_revision", "notes": "Reabierto para corregir la factura"})
+        assert r.status_code == 302 and env.db.solicitudes[RID]["status"] == estado
 
     def test_un_retiro_anterior_a_la_regla_no_se_frena_por_no_tener_responsable(self, env):
         """Retiro real RET-VQJ58N (2026-10-05): «esto avanzó antes de que fuera una restricción, por eso no avanzó». Los creados antes del 03-oct

@@ -4161,6 +4161,31 @@ async function _confirmarCambioEstado(ev){
   if (form.dataset.confirmado === '1') return true;
   const sel = form.querySelector('select[name=status]');
   const nuevo = sel ? sel.value : '';
+  // Retiro cerrado = hermético (Daniel 2026-10-12): solo un superadmin lo reabre, con motivo, y reabrir NO le escribe al cliente (el servidor lo exige igual)
+  if (form.dataset.reabrir === '1') {
+    ev.preventDefault();
+    const actualR = (window.RETIROS_DETAIL_DATA || {}).estado || '';
+    const motivo = ((form.querySelector('[name=notes]') || {}).value || '').trim();
+    if (nuevo === actualR) {
+      ilusToast('Elige el estado al que quieres reabrir el retiro.', { type: 'warning' });
+      return false;
+    }
+    if (motivo.length < 10) {
+      ilusToast('Escribe el motivo de la reapertura (al menos 10 caracteres).', { type: 'warning' });
+      const inp = form.querySelector('[name=notes]'); if (inp) inp.focus();
+      return false;
+    }
+    const okR = await ilusConfirm({
+      title: 'Reabrir este retiro cerrado',
+      message: `Pasará a "${sel.options[sel.selectedIndex].text}".`,
+      sub: 'Al cliente no le llega ningún correo ni WhatsApp. Queda en la bitácora con tu nombre y el motivo.',
+      okLabel: 'Sí, reabrir', cancelLabel: 'Cancelar', type: 'warning', danger: true,
+    });
+    if (!okR) return false;
+    form.dataset.confirmado = '1';
+    form.submit();
+    return false;
+  }
   const efecto = _ESTADOS_CON_CORREO[nuevo];
   const actual = (window.RETIROS_DETAIL_DATA || {}).estado || '';
   if (!efecto || nuevo === actual) return true;
@@ -4193,7 +4218,7 @@ function _rdMsgCerrado(){
   const C = (window.RETIROS_DETAIL_DATA || {}).cierre || {};
   const dia = (C.cuando || '').split(' ')[0];
   return 'Este retiro ya está cerrado (' + (C.como || 'Cerrado') + (dia ? ' el ' + dia : '') + '). No se puede modificar. ' +
-         'Si de verdad hay que corregir algo, primero reábrelo desde Cambiar estado.';
+         'Si de verdad hay que corregir algo, un superadministrador puede reabrirlo desde Cambiar estado, con motivo.';
 }
 (function _rdSoloLectura(){
   'use strict';
@@ -4284,7 +4309,7 @@ function _rdMsgCerrado(){
       if (el.id === 'heroRetiraTile') return;            // es un dato (quién retira) que se sigue leyendo: solo se frena el clic
       el.classList.add('rd-lock-visual');
       el.setAttribute('aria-disabled', 'true');
-      if (!el.dataset.rdTitulo) { el.dataset.rdTitulo = '1'; el.title = 'Retiro cerrado: solo lectura. Para corregir algo, reábrelo desde Cambiar estado.'; }
+      if (!el.dataset.rdTitulo) { el.dataset.rdTitulo = '1'; el.title = 'Retiro cerrado: solo lectura. Solo un superadministrador puede reabrirlo (Cambiar estado, con motivo).'; }
     });
   }
   let _pend = null;
