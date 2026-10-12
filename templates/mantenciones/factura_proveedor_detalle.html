@@ -524,18 +524,18 @@
         <td data-label="Totales" colspan="4"><b>Totales del lote</b>
           <div class="fp-sub">{{ items|length }} OT
             {%- if tot.garantias %} · {{ tot.garantias }} que no se cobran{% endif %}
-            {%- if tot.no_cerradas %} · <span style="color:#b45309;font-weight:800">{{ tot.no_cerradas }} sin cerrar</span>{% endif %}
-            {%- if tot.sin_costo %} · <span style="color:#b91c1c;font-weight:800">{{ tot.sin_costo }} sin costo declarado</span>{% endif %}</div></td>
+            {%- if tot.no_cerradas %} · <span class="fpd-pie-warn">{{ tot.no_cerradas }} sin cerrar</span>{% endif %}
+            {%- if tot.sin_costo %} · <span class="fpd-pie-neg">{{ tot.sin_costo }} sin costo declarado</span>{% endif %}</div></td>
         <td class="m" data-label="Cobra esta factura"><div class="fp-mstack">
           <div class="fp-mt">{{ clp(total_asignado) }}</div>
-          {% if diferencia|round(0) != 0 %}<div class="fp-sub" style="color:#b45309;font-weight:800">factura: {{ clp(factura.monto_total) }}</div>{% endif %}
+          {% if diferencia|round(0) != 0 %}<div class="fp-sub fpd-pie-warn">factura: {{ clp(factura.monto_total) }}</div>{% endif %}
           <div class="fp-ml"><em title="Pagado por la instalación">Inst.</em><span>{{ clp(tot.serv) }}</span></div>
           <div class="fp-ml"><em title="Pagado por el despacho">Desp.</em><span>{{ clp(tot.desp) }}</span></div>
         </div></td>
         <td class="m" data-label="Cobrado"><div class="fp-mstack">
           <div class="fp-mt">{{ clp(total_cobrado_cliente) }}</div>
           {% if total_cobrado_declarado is defined and (total_cobrado_declarado - total_cobrado_cliente)|round(0) != 0 %}
-          <div class="fp-sub" style="color:#fcd34d;font-weight:800">con respaldo · declarado {{ clp(total_cobrado_declarado) }}</div>
+          <div class="fp-sub fpd-pie-warn">con respaldo · declarado {{ clp(total_cobrado_declarado) }}</div>
           {% endif %}
           <div class="fp-ml"><em title="Cobrado por la instalación">Inst.</em><span>{{ clp(tot.cserv) }}</span></div>
           <div class="fp-ml"><em title="Cobrado por el despacho">Desp.</em><span>{{ clp(tot.cenvio) }}</span></div>
@@ -1832,5 +1832,69 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 .btn:focus-visible,a:focus-visible,label.btn:focus-within,.fpd-step-link:focus-visible{outline:3px solid #dc2626;outline-offset:2px;box-shadow:none}
 .page-header .btn:focus-visible,.page-header a:focus-visible,.page-header label.btn:focus-within{outline-color:#fff}
 ::selection{background:#fee2e2;color:#0a0a0a}
+/* ── 🔎 2026-10-12 auditoría Impeccable · Fase 2 ──
+   Pie negro de la tabla: ámbar y rojo claros (legibles sobre #0a0a0a). */
+.fp-tabla tfoot .fpd-pie-warn{color:#fcd34d;font-weight:800}
+.fp-tabla tfoot .fpd-pie-neg{color:#fca5a5;font-weight:800}
+/* Letra mínima de 11 px (0,7rem) en etiquetas y datos chicos: antes había rótulos de 9,6 px. */
+.fpd-fact span,.fpd-fact small,.fpd-next-l,.fpd-aqui > span:first-child,.fpd-espera,.fpd-hace,.fpd-track-prog,
+.fpd-cell .l,.fpd-cell .s,.fp-sec-n,.fpd-eq-sem,.fp-tabla thead th,.fpd-tabla thead th,.fp-tipo,.fp-est,.fp-pct,
+.fp-anx,.fp-anx small,.fp-gar,.fp-sindoc,.fpd-badge,.fpd-listo,.fph-acc,.fp-pago{font-size:max(.7rem,11px)}
+/* Celular (REGLA #3): los enlaces de la tabla y de la cabecera son blancos de toque de 44 px. */
+@media (max-width:768px){
+  .fp-ot,.fp-anx,.fpd-crumb a,.fpd-hero-meta a,.fpd-step-link,.fpd-eq-pend{display:inline-flex;align-items:center;min-height:44px}
+  .fp-anx{padding-top:6px;padding-bottom:6px}
+  .fpd-back{min-width:44px;min-height:44px}
+}
+/* ── 🔎 2026-10-12 auditoría Impeccable · responsivo ──
+   La tabla de OT se adapta al ESPACIO QUE TIENE (con el menú lateral, una pantalla de 1280 deja ~1000 px y una
+   tablet de 800-990 px deja ~550): si no le alcanza para las columnas, pasa a tarjetas como en el celular, en vez
+   de cortarse a la derecha o pedir deslizar de lado (REGLA #4.3: contenida en pantalla). */
+.fpd-tabla-card{container-type:inline-size;container-name:fpdtabla}
+/* Montos: los textos largos bajan de línea en vez de ensanchar la columna */
+.fp-tabla td.m .fp-sub.fpd-respaldo,.fp-tabla td.m .fpd-pie-warn{white-space:normal;max-width:150px;margin-left:auto}
+.fpd-tabla .fp-est{white-space:normal}
+@media (min-width:769px){ .fpd-tabla td.m,.fpd-tabla th.m{padding-left:8px} .fpd-tabla .fp-nom{min-width:112px} }
+@container fpdtabla (max-width: 900px){
+  .fpd-tabla-card .table-responsive{overflow:visible}
+  .fp-tabla thead{display:none}
+  .fp-tabla tbody tr,.fp-tabla tfoot tr{display:block;border:1px solid #e5e7eb;border-radius:12px;padding:8px 0;margin-bottom:10px;background:#fff}
+  .fp-tabla tbody tr.fpd-row-warn{border-left:4px solid #f59e0b}
+  .fp-tabla tbody tr.fpd-row-warn td:first-child{border-left:0}
+  .fp-tabla tbody td,.fp-tabla tfoot td{display:block;border:0;padding:4px 12px;text-align:left;border-radius:0!important}
+  .fp-tabla tbody tr:not(.fpd-obs-row){border-radius:12px 12px 0 0;margin-bottom:0;border-bottom:0}
+  .fp-tabla tbody tr.fpd-obs-row{border-radius:0 0 12px 12px;border-top:1px dashed #e5e7eb;background:#fafbfc;padding:6px 0}
+  .fp-tabla tbody tr.fpd-obs-row td{position:static;top:auto;border:0;background:transparent}
+  .fp-tabla tbody tr.fpd-obs-row.fpd-row-warn td{border-left:0}
+  .fpd-obs{flex-direction:column;gap:4px}
+  .fpd-obs-txt{flex:0 0 auto} /* en columna, el flex-basis de 320px sería ALTO, no ancho */
+  .fpd-obs-meta{white-space:normal}
+  .fp-tabla th.m,.fp-tabla td.m{text-align:left;white-space:normal}
+  .fp-tabla tbody td[data-label]::before,.fp-tabla tfoot td[data-label]::before{content:attr(data-label);display:block;font-size:max(.7rem,11px);font-weight:900;
+    text-transform:uppercase;letter-spacing:.04em;color:#64748b;margin-bottom:1px}
+  .fp-tabla tfoot tr{background:#0a0a0a;border-color:#0a0a0a}
+  .fp-tabla tfoot td[data-label]::before{color:rgba(255,255,255,.55)}
+  .fp-tabla tfoot td:empty{display:none}
+  .fp-nom{min-width:0}
+  .fp-mstack{min-width:170px}
+  .fp-mstack .fp-mt,.fp-mstack .fp-sub{text-align:left}
+  .fp-mstack .fp-mt{font-size:1rem}
+  .fp-tabla tbody tr,.fp-tabla tfoot tr{padding:10px 0;margin-bottom:12px}
+  .fp-tabla tbody td,.fp-tabla tfoot td{padding:5px 16px}
+  .fp-tabla tbody tr.fpd-obs-row{padding:8px 0}
+  .fpd-acc{padding-top:8px}
+  .fpd-acc .btn{width:100%}
+  .fpd-acc-txt{display:inline;margin-left:6px}
+  .fp-tabla td.m .fp-sub.fpd-respaldo,.fp-tabla td.m .fpd-pie-warn{max-width:none;margin-left:0}
+}
+/* Tarjetas con ancho de tablet: los datos de la OT en 3 columnas (no uno bajo otro); el botón y la observación a lo ancho */
+@container fpdtabla (min-width: 560px) and (max-width: 900px){
+  .fp-tabla tbody tr:not(.fpd-obs-row),.fp-tabla tfoot tr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));column-gap:6px;row-gap:4px;align-items:start}
+  .fp-tabla tbody tr:not(.fpd-obs-row) td.fpd-acc{grid-column:1/-1}
+  .fp-tabla tfoot td:first-child{grid-column:1/-1}
+}
+/* Paso a paso en 2×2 (tablet): la línea que une los pasos no tiene a quién unir */
+@media (max-width:1100px){ .fpd-line{display:none} }
+
 </style>
 {% endblock %}
