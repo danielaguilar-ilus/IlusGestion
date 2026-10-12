@@ -88,6 +88,19 @@
   outline-offset: 2px;
   border-radius: 4px;
 }
+/* 🔎 2026-10-12 (auditoría Impeccable): Bootstrap anula el marco de arriba en los botones (.btn:focus-visible con
+   outline:0) y en varias pantallas quedaba sin ninguna señal de foco. Se repone para TODO el sistema; solo aparece
+   al navegar con teclado (no al hacer clic). En fondos oscuros (cabecera de página, menú lateral) va en blanco. */
+.btn:focus-visible{
+  outline: 3px solid var(--ilus-red-500, #dc2626);
+  outline-offset: 2px;
+}
+.page-header .btn:focus-visible,
+.page-header a:focus-visible,
+.sidebar .btn:focus-visible,
+.sidebar a:focus-visible{
+  outline-color: #fff;
+}
 /* Inputs y selects mantienen su propio focus (con box-shadow rojo) */
 input:focus-visible,
 select:focus-visible,
