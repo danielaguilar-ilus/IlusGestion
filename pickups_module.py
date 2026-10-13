@@ -360,6 +360,20 @@ def documentos_extra_del_formulario(tipos, numeros, tipo_principal, numero_princ
     return extras, errores
 
 
+def correo_canonico(correo):
+    """El buzón real detrás de un correo, para el tope anti-spam del formulario público (revisión de seguridad 2026-10-12): sin lo que va
+    después de «+» y, en Gmail, sin puntos (ana.perez+1@gmail.com y anaperez@googlemail.com llegan al mismo buzón). Solo para contar:
+    el correo se guarda y se usa tal como lo escribió el cliente. Pura."""
+    c = (correo or "").strip().lower()
+    if c.count("@") != 1:
+        return c
+    local, dominio = c.split("@")
+    local = local.split("+", 1)[0]
+    if dominio in ("gmail.com", "googlemail.com"):
+        local, dominio = local.replace(".", ""), "gmail.com"
+    return local + "@" + dominio
+
+
 def _normalizar_numero_documento(texto):
     """'#1136' / 'Pedido #1136' / 'WEB0001136' / 'N° 10.683' → solo el número
     ('1136', '10683'), que es lo que el buscador del ERP entiende (el prefijo
@@ -1515,6 +1529,10 @@ def register_pickup_routes(app, ctx):
 
     def date_allowed(date_str, cfg=None):
         cfg = cfg or settings()
+        # Solo AAAA-MM-DD con ceros (revisión de seguridad 2026-10-12): «2026-12-8» se leía como fecha válida pero no coincidía con la lista
+        # de feriados (se compara el texto) y dejaba pedir un feriado o un día cerrado saltándose el formulario.
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(date_str or "")):
+            return False, "Fecha no valida."
         try:
             dt = datetime.strptime(date_str, "%Y-%m-%d").date()
         except Exception:
@@ -3727,7 +3745,8 @@ def register_pickup_routes(app, ctx):
     # y le habla a esta app: el navegador solo le deja leer la respuesta si la
     # app autoriza ese origen (CORS). Solo la tienda, solo estas dos rutas
     # públicas y sin cookies: ninguna sesión interna queda expuesta.
-    _ORIGEN_TIENDA_RE = re.compile(r"^https://((www\.)?ilusfitness\.com|[a-z0-9-]+\.myshopify\.com)$")
+    # Revisión de seguridad 2026-10-12: solo la tienda real (ilus-fitness.myshopify.com), no cualquier tienda Shopify.
+    _ORIGEN_TIENDA_RE = re.compile(r"^https://((www\.)?ilusfitness\.com|ilus-fitness\.myshopify\.com)$")
 
     @app.after_request
     def _cors_formulario_tienda(resp):
@@ -3756,6 +3775,14 @@ def register_pickup_routes(app, ctx):
         # un atacante crear cientos de retiros basura para llenar BD/disk.
         # 40 cubre clientes legítimos detrás de un NAT corporativo compartido.
         cfg = settings()
+        # Revisión de seguridad 2026-10-12: este formulario no recibe archivos; un envío de más de 64 KB no es de una persona (la app acepta
+        # hasta 60 MB en general). Se corta ANTES de leer el formulario.
+        if request.method == "POST" and (request.content_length or 0) > 64 * 1024:
+            print(f"[pickup_public_request] envío descartado por tamaño ({request.content_length} bytes)", flush=True)
+            if "application/json" in (request.headers.get("Accept") or "") or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return jsonify({"ok": False, "errors": ["El envío es demasiado grande. Recarga la página e inténtalo nuevamente."]}), 413
+            flash("El envío es demasiado grande. Recarga la página e inténtalo nuevamente.", "warning")
+            return redirect(url_for("pickup_public_request"))
         if request.method == "POST":
             form = request.form
             _is_ajax_pub = (
@@ -3786,6 +3813,8 @@ def register_pickup_routes(app, ctx):
                 _inv_total = float(str(form.get("invoice_total_amount") or "0").replace(",", "."))
             except (TypeError, ValueError):
                 _inv_total = 0.0
+            if not (0 <= _inv_total < 1e11):     # nan, infinito o negativo → 0 (la tienda lo manda en 0; la columna es DECIMAL(14,2))
+                _inv_total = 0.0
             data = {
                 "document_type": (form.get("document_type") or "factura").strip(),
                 "document_number": (form.get("document_number") or "").strip(),
@@ -3805,6 +3834,11 @@ def register_pickup_routes(app, ctx):
                 "observations": (form.get("observations") or "").strip()[:4000],
                 "invoice_total_amount": _inv_total,
             }
+            # Revisión de seguridad 2026-10-12: la relación solo de la lista (la columna es VARCHAR(40): un texto largo daba error 500) y el
+            # WhatsApp con tope (se agrega a las observaciones).
+            if data["pickup_person_relation"] not in {k for k, _v in PICKUP_RELATIONS}:
+                data["pickup_person_relation"] = "autorizado"
+            data["whatsapp_phone"] = data["whatsapp_phone"][:30]
             if not data["requested_date"]:
                 data["requested_date"] = next_allowed_date(cfg)
             # N° de documento: el comprador web escribe "#1136", "Pedido 1136" o
@@ -3877,7 +3911,7 @@ def register_pickup_routes(app, ctx):
             # los busque en Random y los asocie. Se descartan filas vacías y repetidos.
             try:
                 docs_extra, _err_docs = documentos_extra_del_formulario(
-                    form.getlist("document_type"), form.getlist("document_number"), data["document_type"], data["document_number"])
+                    form.getlist("document_type")[:10], form.getlist("document_number")[:10], data["document_type"], data["document_number"])
             except Exception as _e_docs:
                 print(f"[pickup_public_request] documentos extra: {_e_docs}", flush=True)
                 docs_extra, _err_docs = [], []
@@ -4067,7 +4101,21 @@ def register_pickup_routes(app, ctx):
                         f"  AND (request_source IS NULL OR request_source='web') "
                         f"  AND created_at >= NOW() - INTERVAL 1 DAY",
                         (data["contact_email"],)) or {}
-                    if int(_n_mail.get("n") or 0) >= 3:
+                    _n_buzon = int(_n_mail.get("n") or 0)
+                    # Revisión de seguridad 2026-10-12: las variantes del mismo buzón (puntos o «+algo») también cuentan. Se cuentan en Python
+                    # sobre las solicitudes web del día con el mismo dominio (pocas filas).
+                    _canon = correo_canonico(data["contact_email"])
+                    if _n_buzon < 3 and "@" in _canon:
+                        _dom = _canon.split("@")[1]
+                        _doms = ("gmail.com", "googlemail.com") if _dom == "gmail.com" else (_dom, _dom)
+                        _filas_dom = mysql_fetchall(
+                            f"SELECT contact_email FROM `{REQ}` "
+                            f"WHERE SUBSTRING_INDEX(LOWER(contact_email),'@',-1) IN (%s,%s) "
+                            f"  AND (request_source IS NULL OR request_source='web') "
+                            f"  AND created_at >= NOW() - INTERVAL 1 DAY LIMIT 500",
+                            _doms) or []
+                        _n_buzon = max(_n_buzon, sum(1 for _f in _filas_dom if correo_canonico(_f.get("contact_email")) == _canon))
+                    if _n_buzon >= 3:
                         errors.append(
                             "Ya recibimos 3 solicitudes con este correo hoy. "
                             "Si necesitas agendar otra, escríbenos a soportetec@sphs.cl.")
@@ -11579,6 +11627,10 @@ def register_pickup_routes(app, ctx):
             ]
             for ci, v in enumerate(row_vals, 1):
                 cell = ws.cell(ri, ci, v)
+                # Revisión de seguridad 2026-10-12: nombres y datos vienen del formulario público; un «=…» se guardaría como FÓRMULA y al
+                # abrir el Excel podría sacar datos de la hoja (mismo resguardo que /retiros/informe.xlsx).
+                if isinstance(v, str) and v.startswith("="):
+                    cell.data_type = "s"
                 if ci in (14, 15, 16, 17):
                     cell.alignment = NUM_ALIGN
 

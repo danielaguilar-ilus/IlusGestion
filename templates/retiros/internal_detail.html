@@ -817,7 +817,7 @@
                          muestra y permite marcar/desmarcar cada línea con su
                          saldo, guía y stock, sin salir de la ficha. #}
                       <button type="button" class="td-btn td-btn-quitar"
-                              onclick="quitarDoc({{ req.id }}, {{ d.id }}, '{{ d.document_type|upper }} {{ d.document_number }}')"
+                              data-rotulo="{{ d.document_type|upper }} {{ d.document_number }}" onclick="quitarDoc({{ req.id }}, {{ d.id }}, this.dataset.rotulo)"
                               title="Quitar del retiro (no afecta al ERP)">
                         <i class="bi bi-x-lg"></i><span>Quitar</span>
                       </button>
