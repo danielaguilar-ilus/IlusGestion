@@ -970,6 +970,7 @@ de la sesión, nunca del navegador):
 - **Sin documento NO frena el pago al proveedor** (Daniel, 12-oct: «no es culpa del proveedor si tiene o no factura»): se avisa en ámbar y la OT queda por regularizar. El documento se exige al CREAR la OT (REGLA #24): heredado del ticket o la cotización, o elegido de Random en el asistente, que muestra separado **productos** (no se cobran en la OT) / **servicio** / **despacho** (`desglose_documento`).
 - **El margen del lote usa lo cobrado CON RESPALDO de la factura** (`_mfp_cobro_respaldado`, en `_mfp_items`/`_mfp_totales_lote`: fila, totales, KPI y Excel con la misma cuenta). Factura ya usada por otra OT o sin documento = no cuenta como cobrado; lo declarado queda a la vista aparte. Daniel: «es mi promesa de pago, no nos podemos equivocar».
 - **Solo equipo interno:** todo esto es costo y margen: ningún técnico (interno, elevado ni externo) lo ve (REGLA #19/#26; doble candado `@_no_tecnico` + `_facprov_puede`, y `/ot/api/saldo-servicio` responde 403).
+- **Mostrar vs. candado (2026-10-12):** la ficha y el Excel del lote calculan el equilibrio sin salir a Random (`solo_cache`); con la caché fría usan la foto del libro (`ot_fac_doc`, `_fac_capacidad_persistida` / `_fac_familia_persistida`, refrescada por el barrido con el mismo motor). Sin foto leída dice «Sin verificar con Random» (nunca se inventa). Los candados de pago (asignar, OC, pagar) leen Random en vivo. Nada de hilos contra Random en una pantalla: cada proceso tiene solo 5 conexiones.
 
 ---
 
