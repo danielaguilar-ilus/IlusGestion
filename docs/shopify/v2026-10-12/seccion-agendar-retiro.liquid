@@ -160,10 +160,10 @@
       <section class="irf-step is-opt" data-paso="5">
         <div class="irf-step-h">
           <div class="irf-circle"><b>5</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
-          <div><h3 class="irf-step-t">¿Algo más que debamos saber? <span class="irf-tag">Opcional</span></h3>
+          <div><h3 class="irf-step-t" id="irf_obs_t">¿Algo más que debamos saber? <span class="irf-tag">Opcional</span></h3>
           <p class="irf-step-s">Vehículo en que vienes, productos delicados, instrucciones especiales.</p></div>
         </div>
-        <textarea class="irf-in" id="irf_obs" name="observations" maxlength="4000" rows="3" placeholder="Ej: Voy en camioneta. Prefiero después de las 15:00."></textarea>
+        <textarea class="irf-in" id="irf_obs" aria-labelledby="irf_obs_t" name="observations" maxlength="4000" rows="3" placeholder="Ej: Voy en camioneta. Prefiero después de las 15:00."></textarea>
       </section>
       <label class="irf-terms" id="irf_terms_box" for="irf_terms">
         <input type="checkbox" id="irf_terms" name="accept_terms" value="on">
@@ -175,7 +175,7 @@
         <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M15.6.4a.6.6 0 0 0-.6-.1L.8 5.9a.6.6 0 0 0 0 1.1l5.6 2.5 2.5 5.6a.6.6 0 0 0 1.1 0L15.7 1a.6.6 0 0 0-.1-.6zM6.7 8.4 3 6.8l9.4-3.8zm.9.9 5.4-5.4-3.8 9.4z"/></svg>
         <span id="irf_send_txt">Enviar solicitud de retiro</span>
       </button>
-      <p class="irf-priv">Tus datos solo se usan para gestionar este retiro. No se comparten con terceros.</p>
+      <p class="irf-priv">Tus datos solo se usan para gestionar este retiro y no se comparten con terceros. Por seguridad registramos la dirección IP desde la que se envía la solicitud.</p>
     </form>
     <div class="irf-ok" id="irf_ok" hidden tabindex="-1">
       <div class="irf-ok-ic"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>

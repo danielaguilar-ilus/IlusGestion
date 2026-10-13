@@ -11,3 +11,10 @@
 #ilus-rf .irf-docdel:hover,#ilus-rf .irf-docdel:focus-visible{border-color:var(--r);color:var(--r);outline:none}
 #ilus-rf .irf-docadd-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:14px}
 #ilus-rf .irf-docadd-row .irf-help{margin:0}
+
+/* ── v2026-10-12 · accesibilidad (auditoría Impeccable): sin cambiar el diseño ── */
+#ilus-rf .irf-wk span{color:#6b7280}
+#ilus-rf .irf-in:focus{box-shadow:0 0 0 3px rgba(28,28,28,.18)}
+#ilus-rf button:focus-visible,#ilus-rf a:focus-visible,#ilus-rf input[type=checkbox]:focus-visible,#ilus-rf .irf-docdel:focus-visible{outline:2px solid #1C1C1C;outline-offset:2px}
+#ilus-rf .irf-nav{width:44px;height:44px;min-height:44px}
+@media (prefers-reduced-motion:reduce){#ilus-rf *,#ilus-rf *::before,#ilus-rf *::after{transition-duration:.01s !important;animation-duration:.01s !important;scroll-behavior:auto !important}}

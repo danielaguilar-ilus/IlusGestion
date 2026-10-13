@@ -223,3 +223,100 @@ def test_quitar_no_arma_javascript_con_el_texto_del_documento():
     src = open(os.path.join(_RAIZ, "templates", "retiros", "internal_detail.html"), encoding="utf-8").read()
     assert not re.search(r"quitarDoc\([^)]*'\{\{", src), "el número del documento no debe ir dentro del onclick"
     assert 'data-rotulo="{{ d.document_type|upper }} {{ d.document_number }}" onclick="quitarDoc({{ req.id }}, {{ d.id }}, this.dataset.rotulo)"' in src
+
+
+# ── Permisos: ninguna ruta interna de Retiros se abre con el permiso genérico «view» ────────────────────────────────────────
+class TestPermisosInternos:
+    RUTAS = ["/retiros/<int:rid>", "/retiros/<int:rid>/docs", "/retiros/<int:rid>/docs/<int:doc_id>/lineas", "/retiros/<int:rid>/lineas-resumen",
+             "/retiros/<int:rid>/productos-erp", "/retiros/api/cliente/<rut>/ficha", "/retiros/api/cliente/<rut>/retiros-activos",
+             "/retiros/api/cliente/<rut>/saldo-pendiente", "/retiros/api/buscar-erp", "/retiros/<int:rid>/emails-info",
+             "/retiros/api/informe-mes.xlsx", "/retiros/adjuntos/<int:aid>", "/retiros/api/calendario", "/retiros/api/<int:rid>/full"]
+
+    def _src(self):
+        return open(os.path.join(_RAIZ, "pickups_module.py"), encoding="utf-8").read()
+
+    def test_ninguna_ruta_de_retiros_usa_view(self):
+        """«view» lo tiene cualquiera con Etiquetas, Mantenciones, Transporte o Comunicaciones (técnicos incluidos): datos de clientes
+        de retiros y saldos del ERP quedaban a su alcance (REGLAS #19 y #26). Si alguien agrega una ruta con «view», esta prueba falla."""
+        assert 'require_permission("view")' not in self._src()
+
+    def test_las_14_rutas_piden_el_permiso_de_retiros(self):
+        src = self._src()
+        for ruta in self.RUTAS:
+            m = re.search(re.escape(f'@app.route("{ruta}"') + r'[^\n]*\n\s*@require_permission\("([a-z_]+)"\)', src)
+            assert m, f"no encontré la ruta {ruta}"
+            assert m.group(1) == "retiros", (ruta, m.group(1))
+
+
+# ── Límites y alarma ────────────────────────────────────────────────────────────────────────────────────────────────────────
+class TestLimitesYAlarma:
+    def test_limites_por_conexion_10_por_hora_y_30_por_dia(self):
+        src = open(os.path.join(_RAIZ, "pickups_module.py"), encoding="utf-8").read()
+        bloque = src.split('@app.route("/retiros/solicitar", methods=["GET", "POST"])')[1].split("def pickup_public_request")[0]
+        assert '@_rate_limited("pickup_public_request", max_attempts=10, window_seconds=3600)' in bloque
+        assert '@_rate_limited("pickup_public_request_dia", max_attempts=30, window_seconds=86400)' in bloque
+
+    def _armar_con_volumen(self, n_hora, monkeypatch, umbral="5"):
+        monkeypatch.setenv("RETIROS_ALERTA_SOLICITUDES_HORA", umbral)
+        caja = {}
+
+        def fetchone(sql, params=()):
+            if "created_at >= NOW() - INTERVAL 1 HOUR" in sql and "COUNT(*) AS n" in sql:
+                return {"n": n_hora}
+            return caja["db"].fetchone(sql, params)
+
+        app, db, ctx, esp = A.construir_app(extra={"mysql_fetchone": fetchone})
+        caja["db"] = db
+        db.admins = [{"id": 11, "username": "admin1@sphs.cl"}]     # la campana va a los administradores
+        return app.test_client(), esp
+
+    @staticmethod
+    def _esperar_todo():
+        """El aviso corre en el hilo de después de crear la solicitud, que a su vez lanza el del equipo: se esperan ambos."""
+        import threading
+        import time
+        t0 = time.time()
+        while time.time() - t0 < 8:
+            vivos = [t for t in threading.enumerate()
+                     if t is not threading.current_thread() and ("pickup" in t.name or "_bg_post_insert" in t.name)]
+            if not vivos:
+                return
+            for t in vivos:
+                try:
+                    t.join(0.2)
+                except RuntimeError:
+                    time.sleep(0.05)
+
+    @staticmethod
+    def _avisos_volumen(esp):
+        textos = [str(c) for c in esp.mant_notif.call_args_list] + [str(c) for c in esp.correo.call_args_list]
+        return [t for t in textos if "Muchas solicitudes web" in t]
+
+    def test_con_mucho_volumen_avisa_al_equipo_una_vez_y_nunca_al_cliente(self, monkeypatch):
+        cli, esp = self._armar_con_volumen(9, monkeypatch)
+        for i in range(2):
+            r = cli.post("/retiros/solicitar", data=datos(contact_email=f"cliente{i}@example.cl"), headers=JSON)
+            self._esperar_todo()
+            assert r.status_code == 200, r.get_json()
+        avisos = self._avisos_volumen(esp)
+        assert avisos, "con 9 solicitudes en la hora (umbral 5) debía avisar al equipo"
+        assert len([c for c in esp.mant_notif.call_args_list if "Muchas solicitudes web" in str(c)]) <= 1, "avisa una sola vez por hora"
+        assert not [c for c in esp.correo.call_args_list if "Muchas solicitudes web" in str(c) and "example.cl" in str(c.args[:1])], \
+            "la alarma no se le manda al cliente"
+
+    def test_con_volumen_normal_no_avisa(self, monkeypatch):
+        cli, esp = self._armar_con_volumen(2, monkeypatch)
+        r = cli.post("/retiros/solicitar", data=datos(), headers=JSON)
+        self._esperar_todo()
+        assert r.status_code == 200 and not self._avisos_volumen(esp)
+
+    def test_se_puede_apagar(self, monkeypatch):
+        cli, esp = self._armar_con_volumen(50, monkeypatch, umbral="0")
+        r = cli.post("/retiros/solicitar", data=datos(), headers=JSON)
+        self._esperar_todo()
+        assert r.status_code == 200 and not self._avisos_volumen(esp)
+
+
+def test_el_aviso_de_privacidad_dice_que_se_registra_la_ip():
+    src = open(os.path.join(_RAIZ, "templates", "retiros", "public_request.html"), encoding="utf-8").read()
+    assert "registramos la dirección IP" in src and "no se comparten con terceros" in src

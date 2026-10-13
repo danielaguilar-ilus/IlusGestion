@@ -3767,13 +3767,40 @@ def register_pickup_routes(app, ctx):
             print(f"[pickup-cors] {_e_cors}", flush=True)
         return resp
 
+    _ALERTA_VOLUMEN = {"ultima": 0.0}
+
+    def _alerta_volumen_publico(rid, code):
+        """Alarma interna (revisión de seguridad 2026-10-12; Daniel eligió «endurecer límites», sin terceros por la Ley 21.719): si llegan
+        más solicitudes web de lo normal en una hora, avisa al equipo UNA vez por hora (por instancia). Nunca le escribe al cliente.
+        RETIROS_ALERTA_SOLICITUDES_HORA (12 por defecto; 0 la apaga). Devuelve True si avisó."""
+        try:
+            umbral = int(os.environ.get("RETIROS_ALERTA_SOLICITUDES_HORA", "12") or 0)
+        except ValueError:
+            umbral = 12
+        if umbral <= 0 or time.time() - _ALERTA_VOLUMEN["ultima"] < 3600:
+            return False
+        fila = mysql_fetchone(
+            f"SELECT COUNT(*) AS n FROM `{REQ}` WHERE (request_source IS NULL OR request_source='web') "
+            f"AND created_at >= NOW() - INTERVAL 1 HOUR") or {}
+        n = int(fila.get("n") or 0)
+        if n < umbral:
+            return False
+        _ALERTA_VOLUMEN["ultima"] = time.time()
+        print(f"[retiros-alerta] {n} solicitudes web en la última hora (umbral {umbral})", flush=True)
+        _notificar_equipo_retiros(
+            f"⚠️ Muchas solicitudes web en la última hora ({n})",
+            (f"Llegaron {n} solicitudes desde el formulario público en la última hora; lo normal es mucho menos. Puede ser un uso abusivo "
+             f"del formulario: revisa las últimas en el Monitor antes de gestionarlas. La más reciente es {code}."),
+            rid, code, prioridad="urgente", tipo="retiro_nuevo", send_email=True)
+        return True
+
     @app.route("/retiros/solicitar", methods=["GET", "POST"])
-    @_rate_limited("pickup_public_request", max_attempts=40, window_seconds=3600)
+    @_rate_limited("pickup_public_request", max_attempts=10, window_seconds=3600)
+    @_rate_limited("pickup_public_request_dia", max_attempts=30, window_seconds=86400)
     def pickup_public_request():
-        # Rate limit: 40 envíos / hora por IP (ver decorador max_attempts=40).
-        # Daniel pidió "sin brechas" — antes era ilimitado, lo que permitía a
-        # un atacante crear cientos de retiros basura para llenar BD/disk.
-        # 40 cubre clientes legítimos detrás de un NAT corporativo compartido.
+        # Límites por conexión (IP), endurecidos el 2026-10-12 en la revisión de seguridad (antes 40 por hora): 10 envíos por hora y 30 por
+        # día. Un cliente real manda 1 solicitud (con hasta 5 documentos); los límites frenan que el formulario se use para mandar correos
+        # de ILUS a cualquiera o para llenar la agenda. Daniel eligió esto en vez de un servicio externo (Ley 21.719: sin terceros).
         cfg = settings()
         # Revisión de seguridad 2026-10-12: este formulario no recibe archivos; un envío de más de 64 KB no es de una persona (la app acepta
         # hasta 60 MB en general). Se corta ANTES de leer el formulario.
@@ -4344,6 +4371,11 @@ def register_pickup_routes(app, ctx):
                         )
                     except Exception as _e_team:
                         print(f"[pickup_public_request][BG] team-notify error: {_e_team}", flush=True)
+                    # Alarma interna de volumen (revisión de seguridad 2026-10-12)
+                    try:
+                        _alerta_volumen_publico(rid_bg, _code_bg)
+                    except Exception as _e_vol:
+                        print(f"[pickup_public_request][BG] alarma de volumen: {_e_vol}", flush=True)
                 except Exception as _bg_exc:
                     print(f"[pickup_public_request][BG] crash rid={rid_bg}: {_bg_exc}", flush=True)
 
@@ -6447,7 +6479,7 @@ def register_pickup_routes(app, ctx):
         return items
 
     @app.route("/retiros/<int:rid>")
-    @require_permission("view")
+    @require_permission("retiros")   # antes «view»: lo tenía cualquiera con Etiquetas/Mantenciones/Transporte (revisión 2026-10-12)
     def pickup_detail(rid):
         """Vista interna del operador para un retiro.
 
@@ -7847,7 +7879,7 @@ def register_pickup_routes(app, ctx):
         return row or None
 
     @app.route("/retiros/<int:rid>/docs", methods=["GET"])
-    @require_permission("view")
+    @require_permission("retiros")   # antes «view»: lo tenía cualquiera con Etiquetas/Mantenciones/Transporte (revisión 2026-10-12)
     def pickup_docs_list(rid):
         """Lista todos los documentos asociados al retiro.
         Daniel 2026-05-23 — incluye con_saldo/saldo_zz para el wizard interno:
@@ -8969,7 +9001,7 @@ def register_pickup_routes(app, ctx):
     #      Recalcula totales del retiro considerando solo líneas incluidas.
     # ══════════════════════════════════════════════════════════════════
     @app.route("/retiros/<int:rid>/docs/<int:doc_id>/lineas", methods=["GET"])
-    @require_permission("view")
+    @require_permission("retiros")   # antes «view»: lo tenía cualquiera con Etiquetas/Mantenciones/Transporte (revisión 2026-10-12)
     def pickup_doc_lineas_listar(rid, doc_id):
         """Devuelve líneas del doc + estado de selección granular."""
         doc = mysql_fetchone(
@@ -9072,7 +9104,7 @@ def register_pickup_routes(app, ctx):
     #     devolver TODAS sus líneas con cantidad_doc completa.
     # ══════════════════════════════════════════════════════════════════
     @app.route("/retiros/<int:rid>/lineas-resumen", methods=["GET"])
-    @require_permission("view")
+    @require_permission("retiros")   # antes «view»: lo tenía cualquiera con Etiquetas/Mantenciones/Transporte (revisión 2026-10-12)
     def pickup_lineas_resumen(rid):
         """Resumen consolidado de productos de TODOS los docs asociados.
 
@@ -9492,7 +9524,7 @@ def register_pickup_routes(app, ctx):
         return data
 
     @app.route("/retiros/<int:rid>/productos-erp", methods=["GET"])
-    @require_permission("view")
+    @require_permission("retiros")   # antes «view»: lo tenía cualquiera con Etiquetas/Mantenciones/Transporte (revisión 2026-10-12)
     def pickup_productos_erp(rid):
         try:
             diag = _pickup_productos_diagnostico(rid, refrescar=request.args.get("refrescar") == "1")
@@ -9987,7 +10019,7 @@ def register_pickup_routes(app, ctx):
     #  READ-ONLY ABSOLUTO (REGLA #4.1): solo SELECT vía _random_sql_query.
     # ══════════════════════════════════════════════════════════════════
     @app.route("/retiros/api/cliente/<rut>/ficha", methods=["GET"])
-    @require_permission("view")
+    @require_permission("retiros")   # antes «view»: lo tenía cualquiera con Etiquetas/Mantenciones/Transporte (revisión 2026-10-12)
     def pickup_cliente_ficha_erp(rut):
         """Ficha del cliente en el ERP Random (tabla MAEEN) a partir del RUT.
 
@@ -10203,7 +10235,7 @@ def register_pickup_routes(app, ctx):
             return str(valor)
 
     @app.route("/retiros/api/cliente/<rut>/retiros-activos", methods=["GET"])
-    @require_permission("view")
+    @require_permission("retiros")   # antes «view»: lo tenía cualquiera con Etiquetas/Mantenciones/Transporte (revisión 2026-10-12)
     def pickup_cliente_retiros_activos(rut):
         """Retiros EN CURSO del cliente identificado por RUT (tablas ILUS, no ERP).
 
@@ -10395,7 +10427,7 @@ def register_pickup_routes(app, ctx):
     #  SALDO ERP — Documentos pendientes de despacho del cliente
     # ══════════════════════════════════════════════════════════════════
     @app.route("/retiros/api/cliente/<rut>/saldo-pendiente", methods=["GET"])
-    @require_permission("view")
+    @require_permission("retiros")   # antes «view»: lo tenía cualquiera con Etiquetas/Mantenciones/Transporte (revisión 2026-10-12)
     def pickup_cliente_saldo_erp(rut):
         """Lista documentos del cliente (por RUT) que aún tienen saldo en ZZ
         (producto Despacho/Retiro) o que no han sido marcados como despachados.
@@ -10735,7 +10767,7 @@ def register_pickup_routes(app, ctx):
     #  motor que mantenciones/buscar-erp-sql, sin duplicar lógica.
     # ══════════════════════════════════════════════════════════════════
     @app.route("/retiros/api/buscar-erp", methods=["POST"])
-    @require_permission("view")
+    @require_permission("retiros")   # antes «view»: lo tenía cualquiera con Etiquetas/Mantenciones/Transporte (revisión 2026-10-12)
     def pickup_buscar_erp():
         """Búsqueda inteligente en ERP Random (RUT / nombre / número).
 
@@ -11274,7 +11306,7 @@ def register_pickup_routes(app, ctx):
 
     # Endpoint para que la UI sepa qué emails están activos + sugerencias
     @app.route("/retiros/<int:rid>/emails-info", methods=["GET"])
-    @require_permission("view")
+    @require_permission("retiros")   # antes «view»: lo tenía cualquiera con Etiquetas/Mantenciones/Transporte (revisión 2026-10-12)
     def pickup_emails_info(rid):
         """Devuelve estado de emails de un retiro:
         - principal: contact_email del cliente declarado
@@ -11473,7 +11505,7 @@ def register_pickup_routes(app, ctx):
     #  INFORME MENSUAL XLSX — Daniel pidió 22/05/2026
     # ══════════════════════════════════════════════════════════════════
     @app.route("/retiros/api/informe-mes.xlsx", methods=["GET"])
-    @require_permission("view")
+    @require_permission("retiros")   # antes «view»: lo tenía cualquiera con Etiquetas/Mantenciones/Transporte (revisión 2026-10-12)
     def pickup_informe_mes_xlsx():
         """Excel con todos los retiros del mes solicitado (filtrable por RUT).
 
@@ -15348,7 +15380,7 @@ def register_pickup_routes(app, ctx):
         return redirect(url_for("marketing_settings"))
 
     @app.route("/retiros/adjuntos/<int:aid>")
-    @require_permission("view")
+    @require_permission("retiros")   # antes «view»: lo tenía cualquiera con Etiquetas/Mantenciones/Transporte (revisión 2026-10-12)
     def pickup_attachment(aid):
         row = mysql_fetchone(
             f"SELECT id, filename, original_name FROM `{ATT}` WHERE id=%s LIMIT 1",
@@ -15485,7 +15517,7 @@ def register_pickup_routes(app, ctx):
         )
 
     @app.route("/retiros/api/calendario")
-    @require_permission("view")
+    @require_permission("retiros")   # antes «view»: lo tenía cualquiera con Etiquetas/Mantenciones/Transporte (revisión 2026-10-12)
     def pickup_calendar_api():
         """Devuelve solicitudes de retiro entre 2 fechas con agregados por día/franja.
 
@@ -16296,7 +16328,7 @@ def register_pickup_routes(app, ctx):
         return jsonify({**_payload, "ahora_ts": int(_time_local.time())})
 
     @app.route("/retiros/api/<int:rid>/full")
-    @require_permission("view")
+    @require_permission("retiros")   # antes «view»: lo tenía cualquiera con Etiquetas/Mantenciones/Transporte (revisión 2026-10-12)
     def pickup_full_info(rid):
         """Ficha completa de un retiro: datos + bultos + adjuntos + logs + ERP.
 
