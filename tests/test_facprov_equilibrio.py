@@ -102,6 +102,13 @@ class TestMotorDeLaOT(unittest.TestCase):
         self.assertEqual(r["estado"], "ok")
         self.assertEqual(r["documentos"][0]["titulo"], "FCV 11439")
 
+    def test_varias_facturas_ninguna_es_misma_venta_que_si_misma(self):
+        # 🐛 caso real 12-10 (OT-2026-00171, lote 19): FCV 11439, 11440 y 11441 salían «misma venta que» sí mismas.
+        r = _motor(docs=(("FCV", "0000011439"), ("FCV", "0000011440"), ("FCV", "0000011441")))(50)
+        self.assertEqual([d["titulo"] for d in r["documentos"]], ["FCV 0000011439", "FCV 0000011440", "FCV 0000011441"]
+                         if r["documentos"][0]["titulo"].startswith("FCV 0") else ["FCV 11439", "FCV 11440", "FCV 11441"])
+        self.assertEqual([d["herencia"] for d in r["documentos"]], [[], [], []])
+
     def test_sin_documento_se_paga_igual_y_avisa(self):
         # Daniel 12-oct: «no es culpa del proveedor si tiene o no factura»; el documento se exige al crear la OT.
         r = _motor(puerta={"ok": False, "via": None, "falta": "documento"})(50)

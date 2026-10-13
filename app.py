@@ -114321,6 +114321,9 @@ def _fac_equilibrio_ot(vid, pago=None, solo_cache=False):
     otros_todos = set()
     filas_fam = []
     for fam, (t, n) in fams:
+        # 🐛 2026-10-12: la clave de ESTE documento (antes quedaba la del recorrido anterior = la última factura, y cada
+        # factura salía «misma venta que» sí misma en el lote).
+        k = _saldo.clave_doc(t, n)
         st, cap = _fac_leer_capacidad(t, n, solo_cache=solo_cache)
         tu, nu = _ot_doc_real_a_usuario(t, n)
         ap = {c: sum(_saldo._entero(aportes.get((kk[0], kk[1], c))) for kk in fam) for c in _saldo.CATEGORIAS}
