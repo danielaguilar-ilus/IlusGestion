@@ -226,6 +226,38 @@ def repartir_aportes(docs_caps, servicio, despacho):
     return out
 
 
+def repartir_por_saldo(docs_saldo, docs_cap, servicio, despacho):
+    """🧮 2026-10-12 (corrige el reparto): lo que cobra la OT se reparte entre sus documentos PRIMERO hasta el SALDO de
+    cada uno (lo que las otras OT no usan), en orden. Antes se repartía hasta la capacidad total, sin descontar lo que
+    ya usaban otras OT: con la factura A con $30.000 de saldo (de $100.000) y la B libre, un cobro de $80.000 quedaba
+    anotado entero contra A y el libro la veía sobreconsumida. Lo que sobre del saldo (solo pasa con la autorización
+    de Daniel para exceder el saldo) se reparte como antes, hasta la capacidad que le queda a cada documento.
+    `docs_saldo` / `docs_cap`: [{servicio, despacho}] alineados (saldo y capacidad de cada documento)."""
+    p1 = repartir_aportes(docs_saldo, servicio, despacho)
+    resto_s = max(0, _entero(servicio) - sum(_entero(x["servicio"]) for x in p1))
+    resto_d = max(0, _entero(despacho) - sum(_entero(x["despacho"]) for x in p1))
+    if not (resto_s or resto_d):
+        return p1
+    restante = [{c: max(0, _entero((cap or {}).get(c)) - _entero(p[c])) for c in CATEGORIAS}
+                for cap, p in zip(docs_cap or [], p1)]
+    p2 = repartir_aportes(restante, resto_s, resto_d)
+    return [{c: _entero(a[c]) + _entero(b[c]) for c in CATEGORIAS} for a, b in zip(p1, p2)]
+
+
+def ajuste_margen(saldo_facturas, cobro):
+    """⚖️ 2026-10-12 (Daniel: «la modificación de los datos, argumentativamente, en caso de generar más de 10% de
+    margen» → «cambio a mano que mueve el margen +10%»). Cuántos puntos mueve el margen un cobro escrito a mano
+    respecto de lo que dicen las facturas (su saldo disponible). Como el costo es el mismo en las dos cuentas, lo que
+    se mueve el margen es la diferencia de cobro sobre lo que dicen las facturas: |cobro − saldo| ÷ saldo × 100.
+    Sin facturas con saldo que respalden el cobro (saldo 0) y con cobro > 0, siempre pide argumento (es un supuesto).
+    Devuelve {base, cobro, puntos, pide_argumento}."""
+    base, real = _entero(saldo_facturas), _entero(cobro)
+    if base <= 0:
+        return {"base": base, "cobro": real, "puntos": None, "pide_argumento": real > 0}
+    puntos = abs(real - base) * 100.0 / base
+    return {"base": base, "cobro": real, "puntos": round(puntos, 1), "pide_argumento": puntos > 10}
+
+
 def aviso_compartido(titulo_doc, otras):
     """Texto corto de aviso para Regularizar y Facturación de proveedor: esta OT usa un documento que otras OT
     también usan. `otras`: [{numero_ot, cliente}]."""

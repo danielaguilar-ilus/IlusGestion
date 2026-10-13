@@ -105127,8 +105127,12 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
     # costo no puede defender. Solo para OT de cliente: el trabajo interno
     # tiene su propio valor (costo_interno) y su propio origen ('interno' o
     # 'manual'), y ahí el motivo no se exige -- es referencial, no se cobra.
+    # ⚖️ 2026-10-12 (Daniel: «cambio a mano que mueve el margen +10%» pide argumento): un cobro editado a mano SOBRE
+    # documentos del ERP se evalúa más abajo contra el saldo de esos documentos (ot_saldo_servicio.ajuste_margen); un
+    # supuesto, o un cobro a mano sin documentos, sigue pidiendo su motivo siempre, acá.
+    _fin_motivo_diferido = bool(_fin_valor_origen == "manual" and (_fin_tido and _fin_nudo or _fin.get("documentos_extra")))
     if (not es_interna and _fin_valor_origen in _OT2_VALOR_ORIGENES_CON_MOTIVO
-            and not _fin_zz_motivo_manual):
+            and not _fin_zz_motivo_manual and not _fin_motivo_diferido):
         return _ferr(
             "Explica en qué te basas para ese valor (es un supuesto o lo "
             "editaste a mano).", "FINANZAS_SUPUESTO_SIN_MOTIVO"), None
@@ -105292,6 +105296,7 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
     # "factura no ha llegado todavía"), no hay contra qué topear.
     _fin_docs_validados = []   # 🔏 2026-10-07: lo que el ERP confirmó (lectura), para la puerta
     _fin_docs_aporte = []      # 🧮 2026-10-08: reparto de lo cobrado entre los documentos (ver más abajo)
+    _fin_ajuste_evaluado = False   # ⚖️ 2026-10-12: la regla del 10 % corrió (si no, el motivo se exige como antes)
     if not es_interna and not _fin_cero and (_fin_tido and _fin_nudo or _docs_extra_norm):
         _topes = _ot_zz_topes_reales(_fin_tido, _fin_nudo, _docs_extra_norm, cliente_rut)
         _fin_docs_validados = [{"origen": "erp", "tipo": _dv["tido"], "numero": _dv["nudo"], "validado": True}
@@ -105328,12 +105333,49 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
             return dict(_sal_err, http=409,
                         extra={k: v for k, v in _sal_err.items()
                                if k not in ("error", "error_codigo", "ok", "codigo", "http")}), None
-        # Lo que esta OT aporta desde cada documento (en orden, hasta la capacidad de cada uno): se guarda con el
-        # documento para que las próximas OT vean cuánto saldo queda.
+        # Lo que esta OT aporta desde cada documento: se guarda con el documento para que las próximas OT vean cuánto
+        # saldo queda. 🧮 2026-10-12: PRIMERO hasta el SALDO de cada documento (lo que otras OT no usan), en orden; lo
+        # que sobre (solo con la autorización de Daniel para exceder) hasta la capacidad que le queda, como antes.
+        _docs_t = _topes.get("documentos") or []
+        try:
+            _sd = _ot_saldo_de_docs([(_dd["tido"], _dd["nudo"]) for _dd in _docs_t], None, cliente_rut)
+            _sal_por = {tuple(x.get("clave") or ()): x for x in (_sd.get("por_doc") or [])}
+        except Exception as _e_sd:
+            print(f"[ot-finanzas] saldo por documento: {type(_e_sd).__name__}", flush=True)
+            _sal_por = None
+        _fin_ajuste_evaluado = True
+        if _sal_por is not None:
+            _caps_saldo = []
+            for _dd in _docs_t:
+                _x = _sal_por.get(_saldo.clave_doc(_dd["tido"], _dd["nudo"]))
+                if not _x or not _x.get("leido") or _x.get("omitido"):
+                    _caps_saldo.append({"servicio": 0 if (_x and _x.get("omitido")) else _dd.get("servicio"),
+                                        "despacho": 0 if (_x and _x.get("omitido")) else _dd.get("despacho")})
+                else:
+                    _caps_saldo.append({"servicio": (_x.get("servicio") or {}).get("saldo", 0),
+                                        "despacho": (_x.get("despacho") or {}).get("saldo", 0)})
+            _rep = _saldo.repartir_por_saldo(_caps_saldo, _docs_t, _fin_zzm, _fin_zz_envio_m)
+            # ⚖️ 2026-10-12: un cobro editado a mano sobre estos documentos que mueve el margen más de 10 puntos
+            # respecto de lo que dicen (su saldo) necesita el argumento de quien lo escribe.
+            if _fin_motivo_diferido and not _fin_zz_motivo_manual:
+                _aj = _saldo.ajuste_margen(sum(_saldo._entero(c.get("servicio")) + _saldo._entero(c.get("despacho"))
+                                               for c in _caps_saldo),
+                                           _saldo._entero(_fin_zzm) + _saldo._entero(_fin_zz_envio_m))
+                if _aj["pide_argumento"]:
+                    return _ferr(
+                        "Cambiaste a mano lo que se cobra y eso mueve el margen más de 10 puntos respecto de lo que "
+                        "dicen las facturas" + (f" ({_aj['puntos']:.1f} puntos)".replace(".", ",") if _aj["puntos"] is not None else "")
+                        + ": escribe el argumento.", "FINANZAS_AJUSTE_SIN_ARGUMENTO"), None
+        else:
+            _rep = _saldo.repartir_aportes(_docs_t, _fin_zzm, _fin_zz_envio_m)
+            if _fin_motivo_diferido and not _fin_zz_motivo_manual:
+                return _ferr("Explica en qué te basas para ese valor (lo editaste a mano).",
+                             "FINANZAS_SUPUESTO_SIN_MOTIVO"), None
         _fin_docs_aporte = [
             {"tido": _dd["tido"], "nudo": _dd["nudo"], "servicio": _rr["servicio"], "despacho": _rr["despacho"]}
-            for _dd, _rr in zip(_topes.get("documentos") or [],
-                                _saldo.repartir_aportes(_topes.get("documentos") or [], _fin_zzm, _fin_zz_envio_m))]
+            for _dd, _rr in zip(_docs_t, _rep)]
+    if (not es_interna and _fin_motivo_diferido and not _fin_ajuste_evaluado and not _fin_zz_motivo_manual):
+        return _ferr("Explica en qué te basas para ese valor (lo editaste a mano).", "FINANZAS_SUPUESTO_SIN_MOTIVO"), None
 
     _fin_prov_tipo = (_fin.get("proveedor_tipo") or "").strip().lower()
     _fin_prov_tipo = _fin_prov_tipo if _fin_prov_tipo in ("interno", "externo") else None

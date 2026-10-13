@@ -255,7 +255,7 @@ class TestUnaSolaRegla(unittest.TestCase):
 
     def test_el_estimado_en_una_ot_que_se_cobra_pide_motivo(self):
         self.assertIn("if (_o2mFinPideMotivo() && !(S.fin_zz_motivo_manual||'').trim()) return false;", M)
-        self.assertIn("function _o2mFinPideMotivo(){ return _o2mFinEsManual() || _o2mFinEstimadoComoCobro(); }", M)
+        self.assertIn("return (_o2mFinEsManual() && (S.fin_valor_origen === 'supuesto' || _o2mFinAjusteGrande())) || _o2mFinEstimadoComoCobro();", M)  # ⚖️ 2026-10-12 regla del 10 %
 
 
 # ── Ejecución real de las funciones puras (node) ────────────────────────────────────────────────────────────────────
@@ -266,6 +266,8 @@ _FUNCIONES_NODE = (
     "usarTotalDocumentoComoServicio", "_o2mFinFuentes", "_o2mFinDocsTodos", "_o2mDocOrigenNorm", "_o2mFinDocTxt",
     "_o2mFinLineaZZActual", "_o2mFinContratoAplica", "_o2mFinContratoEsReal", "_o2mRutCuerpo",
     "usarEnvioDocumento", "_o2mFinEnvioSugHtml",
+    # ⚖️ 2026-10-12: regla del 10 % (la usa _o2mFinPideMotivo)
+    "_o2mFinSaldoFacturas", "_o2mFinCobroTotal", "_o2mFinAjuste", "_o2mFinAjusteGrande",
 )
 
 _BASE = {

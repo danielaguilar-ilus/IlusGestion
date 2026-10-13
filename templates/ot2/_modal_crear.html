@@ -510,6 +510,22 @@
 .o2m-fin-hint{font-size:.85rem;color:#6b7280;line-height:1.4;margin-bottom:10px}
 /* 🧮 2026-10-08 SALDO por línea de servicio de cada documento (Daniel: «evitar que dos instalaciones se paguen con el mismo saldo»). */
 .o2m-saldo{margin-top:10px;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px;background:#fcfcfd}
+/* 🧾 2026-10-12: saldo de las facturas bajo «Le cobras» */
+.o2m-saldotxt{margin-top:8px;border:1px solid #e5e7eb;border-radius:12px;padding:9px 12px;background:#fff;font-size:.8rem;color:#374151;
+  display:flex;flex-direction:column;gap:5px}
+.o2m-saldotxt .t{font-weight:900;color:#0a0a0a;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.o2m-saldotxt .t i{color:#dc2626}
+.o2m-saldotxt .t small{font-weight:600;color:#64748b}
+.o2m-saldotxt .d{line-height:1.45;word-break:break-word}
+.o2m-saldotxt .d .doc{margin-right:6px}
+.o2m-saldotxt .cat{font-weight:800;color:#0a0a0a}
+.o2m-saldotxt .sep{color:#cbd5e1;margin:0 6px}
+.o2m-saldotxt .tot{border-radius:9px;padding:6px 9px;background:#f0fdf4;color:#166534;font-weight:700;display:flex;gap:6px;align-items:flex-start}
+.o2m-saldotxt .tot.exc{background:#fef2f2;color:#991b1b}
+.o2m-saldotxt-add{align-self:flex-start;border:1px dashed #dc2626;color:#dc2626;background:#fff;border-radius:9px;font-weight:800;
+  font-size:.78rem;padding:6px 12px;min-height:40px;display:inline-flex;align-items:center;gap:5px}
+.o2m-saldotxt-add:hover{background:#fef2f2}
+@media (max-width:768px){ .o2m-saldotxt-add{min-height:44px;width:100%;justify-content:center} }
 .o2m-saldo-h{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;font-size:.8rem;color:#374151;margin-bottom:8px}
 .o2m-saldo-h b{font-weight:900;color:#0a0a0a}
 .o2m-saldo-doc{border-top:1px dashed #e5e7eb;padding:8px 0}
@@ -1715,7 +1731,7 @@ window.OT2C = (function(){
         // 💰 2026-10-07 (revisión): el «Estimado por clasificación» usado como cobro en una OT que se cobra
         // también es un cobro escrito a mano y pide su motivo (ver _o2mFinEstimadoComoCobro).
         if (_o2mFinPideMotivo() && !(S.fin_zz_motivo_manual||'').trim()) return false;
-        if (_o2mFinEnvioEsManual() && !(S.fin_zz_envio_motivo_manual||'').trim()) return false;
+        if (_o2mFinEnvioEsManual() && _o2mFinAjusteGrande() && !(S.fin_zz_envio_motivo_manual||'').trim()) return false;
         // 🔒 FIX 2026-09-21 (Daniel, confirmado explícito "obligatorio
         // siempre"): costo_proveedor/costo_despacho pasan de opcionales a
         // obligatorios -- mismo criterio que ya rige "Esta OT vale" para
@@ -5623,6 +5639,7 @@ window.OT2C = (function(){
           'value="'+esc(_o2mFormatearMiles(S.fin_zz_monto))+'" oninput="OT2C._o2mFinMontoServicioCambio(this)" '+
           'onblur="OT2C._o2mFinHeroBlur()"></div>'+
           '<div class="o2m-valor-origen" id="o2mFinOrigen"></div></div>'+
+        '<div id="o2mFinSaldoTxt"></div>'+
         '<div id="o2mFinMotivo"></div>'+
         '<div id="o2mFinZZ"></div>'+
         '<div id="o2mFinSaldo"></div>'+
@@ -6101,7 +6118,16 @@ window.OT2C = (function(){
         cls = '';
       } else if (manualAhora){
         if (origen === 'supuesto'){ txt = 'Supuesto declarado — sin referencia en el ERP ni en el catálogo'; cls = 'supuesto'; }
-        else { txt = 'Editado a mano — explica por qué abajo'; cls = 'manual'; }
+        else {
+          var _aj = _o2mFinAjuste();
+          if (_aj && _aj.puntos != null && !_aj.pide){
+            txt = 'Editado a mano — mueve el margen ' + String(_aj.puntos).replace('.', ',') + ' puntos respecto de las facturas (hasta 10 no pide argumento)';
+            cls = 'erp';
+          } else if (_aj && _aj.puntos != null){
+            txt = 'Editado a mano — mueve el margen ' + String(_aj.puntos).replace('.', ',') + ' puntos respecto de las facturas: explica por qué abajo';
+            cls = 'manual';
+          } else { txt = 'Editado a mano — explica por qué abajo'; cls = 'manual'; }
+        }
       } else {
         var ln = _o2mFinLineaZZActual();
         switch(origen){
@@ -6124,13 +6150,13 @@ window.OT2C = (function(){
     }
     if (cM){
       // 💰 2026-10-07: el estimado usado como cobro (OT que se cobra) también pide su motivo.
-      var modo = manualAhora ? (origen === 'supuesto' ? 'supuesto' : 'manual')
+      var modo = (manualAhora && (origen === 'supuesto' || _o2mFinAjusteGrande())) ? (origen === 'supuesto' ? 'supuesto' : 'manual')
         : (_o2mFinEstimadoComoCobro() ? 'estimado' : '');
       if (cM.getAttribute('data-modo') !== modo){
         cM.setAttribute('data-modo', modo);
         cM.innerHTML = !modo ? '' :
           '<label class="fl mt-1">'+(modo === 'supuesto' ? '¿En qué te basas? *'
-            : (modo === 'estimado' ? '¿Por qué le cobras el estimado? *' : '¿Por qué se declara a mano? *'))+'</label>'+
+            : (modo === 'estimado' ? '¿Por qué le cobras el estimado? *' : 'Argumento del cambio (mueve el margen más de 10 puntos) *'))+'</label>'+
           '<textarea class="form-control" rows="2" maxlength="500" placeholder="'+
           (modo === 'supuesto' ? 'Ej: tarifa habitual de visita técnica, valor promedio de OT similares…'
             : (modo === 'estimado' ? 'Ej: el documento no trae línea de servicio y se acordó esta tarifa con el cliente…'
@@ -6145,6 +6171,44 @@ window.OT2C = (function(){
       var _txt = _o2mFormatearMiles(S.fin_zz_monto);
       if (inp.value !== _txt) inp.value = _txt;
     }
+    _pintarFinSaldoTxtDom();
+  }
+  /* 🧾 2026-10-12 (Daniel: «tendrás que tener un texto abajo indicando cuál es el saldo total de la factura… y esto
+     lo podrás comparar con la base de datos si hay otra factura con dicho saldo»). Bajo «Le cobras»: el saldo de
+     cada factura (total − lo que ya usan otras OT), hasta dónde se puede cobrar sin autorización y cuánto quedaría.
+     Lo usado se recuerda siempre: aunque se mueva el campo, el tope es lo usado + lo que se pone ≤ el total.
+     El detalle de QUÉ OT y clientes la usan es solo del superadministrador (la tabla de abajo). */
+  function _pintarFinSaldoTxtDom(){
+    var c = document.getElementById('o2mFinSaldoTxt'); if (!c) return;
+    var s = S.fin_saldo;
+    if (!s || !s.docs || !s.docs.length || S.fin_garantia){ c.innerHTML = ''; return; }
+    var hayS = s.servicio && s.servicio.hay, hayD = s.despacho && s.despacho.hay;
+    var docs = s.docs.filter(function(d){ return !d.omitido; });
+    var fil = docs.map(function(d){
+      var partes = [];
+      ['servicio', 'despacho'].forEach(function(cat){
+        var x = d[cat]; if (!x || !x.hay_lineas) return;
+        partes.push('<span class="cat">' + (cat === 'servicio' ? 'Servicio' : 'Despacho') + '</span> total ' + _o2mPesos(x.total) +
+          (x.usado ? ' · ya usado por otras OT ' + _o2mPesos(x.usado) : '') + ' · <b>saldo ' + _o2mPesos(x.saldo) + '</b>');
+      });
+      if (!partes.length) partes.push('sin líneas de servicio ni despacho: no respalda el cobro');
+      return '<div class="d"><b class="doc">' + esc(d.titulo) + '</b>' + partes.join('<span class="sep">|</span>') + '</div>';
+    }).join('');
+    var maxS = hayS ? s.servicio.saldo : 0, maxD = hayD ? s.despacho.saldo : 0;
+    var cobS = Number(S.fin_zz_monto) || 0, cobD = (S.fin_zz_envio && Number(S.fin_zz_envio.monto)) || 0;
+    var exc = Math.max(0, cobS - maxS) + Math.max(0, cobD - maxD);
+    var tot = '<div class="tot' + (exc > 0 ? ' exc' : '') + '">' +
+      (exc > 0
+        ? '<i class="bi bi-exclamation-octagon-fill"></i> Te pasas del saldo por <b>' + _o2mPesos(exc) + '</b>: sin la autorización de Daniel no se puede cobrar más que eso.'
+        : '<i class="bi bi-check-circle-fill"></i> Puedes cobrar hasta <b>' + _o2mPesos(maxS + maxD) + '</b> sin autorización' +
+          (hayS && hayD ? ' (servicio ' + _o2mPesos(maxS) + ' + despacho ' + _o2mPesos(maxD) + ')' : '') +
+          '. Con lo que pusiste quedarían <b>' + _o2mPesos(Math.max(0, maxS - cobS) + Math.max(0, maxD - cobD)) + '</b> en las facturas.') +
+      '</div>';
+    c.innerHTML = '<div class="o2m-saldotxt">' +
+      '<div class="t"><i class="bi bi-receipt-cutoff"></i> Saldo de las facturas <small>(lo que dice Random menos lo que ya usan otras OT)</small></div>' +
+      fil + tot +
+      '<button type="button" class="o2m-saldotxt-add" onclick="OT2C.abrirAgregarDocExtra()"><i class="bi bi-plus-lg"></i> Agregar otra factura</button>' +
+      '</div>';
   }
   /* 2026-09-15 (revisión): al salir del hero se resincroniza con el estado
      (por si algún repintado llegó mientras tenía el foco). */
@@ -6654,12 +6718,17 @@ window.OT2C = (function(){
     if (!s || !s.docs.length){ c.innerHTML = ''; return; }
     var conSer = 0, conDes = 0, usados = 0;
     s.docs.forEach(function(d){ if (d.servicio.hay_lineas) conSer++; if (d.despacho.hay_lineas) conDes++; if ((d.usos||[]).length) usados++; });
+    _pintarFinSaldoTxtDom();
     var html = '<div class="o2m-saldo"><div class="o2m-saldo-h"><span><b>'+s.docs.length+'</b> documento'+(s.docs.length===1?'':'s')+'</span>'+
       '<span><b>'+conSer+'</b> con instalación o servicio</span><span><b>'+conDes+'</b> con despacho</span>'+
       '<span><b>'+usados+'</b> usado'+(usados===1?'':'s')+' en otras OT</span></div>';
+    // 🔒 2026-10-12 (Daniel: «deja esa súper tabla para el superadministrador de momento… a excepción de los
+    // técnicos»): las líneas y QUÉ OT y clientes usan cada factura las ve solo el superadministrador. El resto ve el
+    // aviso (semáforo), el desglose y el saldo bajo «Le cobras»; el aviso de exceso con sus salidas, todos.
+    var _esSA = !!window.OT2C_ES_SUPERADMIN;
     s.docs.forEach(function(d){
       var filas = '';
-      ['servicio','despacho'].forEach(function(cat){
+      if (_esSA) ['servicio','despacho'].forEach(function(cat){
         var x = d[cat]; if (!x || !x.hay_lineas) return;
         (x.lineas || []).forEach(function(l){
           filas += '<tr class="'+(l.saldo <= 0 ? 'cero' : (l.usado > 0 ? 'parcial' : 'libre'))+'"><td>'+(cat === 'servicio' ? 'Instalación o servicio' : 'Despacho')+
@@ -6670,7 +6739,7 @@ window.OT2C = (function(){
       if (!filas && !sem) return;
       html += '<div class="o2m-saldo-doc"><h6>'+esc(d.titulo)+(d.omitido ? ' <span class="text-muted" style="font-weight:600">· su factura ya cuenta</span>' : '')+'</h6>'+ sem +
         (filas ? '<table><thead><tr><th>Línea</th><th>Monto</th><th>Usado en otras OT</th><th>Saldo</th></tr></thead><tbody>'+filas+'</tbody></table>' : '')+
-        ((d.usos||[]).length ? '<ul class="o2m-saldo-usos">'+d.usos.map(function(u){
+        (_esSA && (d.usos||[]).length ? '<ul class="o2m-saldo-usos">'+d.usos.map(function(u){
           return '<li><a href="'+esc(u.url)+'" target="_blank" rel="noopener">'+esc(u.numero_ot || ('OT #'+u.vid))+'</a>'+(u.cliente ? ' · '+esc(u.cliente) : '')+
             ' · usa '+[u.servicio ? 'servicio '+_o2mPesos(u.servicio) : '', u.despacho ? 'despacho '+_o2mPesos(u.despacho) : ''].filter(Boolean).join(' + ')+'</li>';
         }).join('')+'</ul>' : '')+'</div>';
@@ -8066,7 +8135,28 @@ window.OT2C = (function(){
     return !esInterno() && !S.fin_garantia && S.fin_zz_monto != null && !_o2mFinEsManual()
       && S.fin_valor_origen === 'estimado';
   }
-  function _o2mFinPideMotivo(){ return _o2mFinEsManual() || _o2mFinEstimadoComoCobro(); }
+  /* ⚖️ 2026-10-12 (Daniel: «cambio a mano que mueve el margen +10%» pide argumento). Lo que el margen se mueve
+     respecto de lo que dicen las facturas = |cobro − saldo de las facturas| ÷ saldo × 100 (el costo es el mismo en las
+     dos cuentas). MISMO cálculo que el servidor (ot_saldo_servicio.ajuste_margen): si cambia uno, cambia el otro. */
+  function _o2mFinSaldoFacturas(){
+    var s = S.fin_saldo; if (!s) return null;
+    return (s.servicio && s.servicio.hay ? s.servicio.saldo : 0) + (s.despacho && s.despacho.hay ? s.despacho.saldo : 0);
+  }
+  function _o2mFinCobroTotal(){
+    return (Number(S.fin_zz_monto) || 0) + ((S.fin_zz_envio && Number(S.fin_zz_envio.monto)) || 0);
+  }
+  function _o2mFinAjuste(){
+    var base = _o2mFinSaldoFacturas();
+    if (base == null) return null;                       // sin saldo leído: rige la regla de siempre (motivo)
+    var cobro = _o2mFinCobroTotal();
+    if (base <= 0) return {base: 0, cobro: cobro, puntos: null, pide: cobro > 0};
+    var p = Math.abs(cobro - base) * 100 / base;
+    return {base: base, cobro: cobro, puntos: Math.round(p * 10) / 10, pide: p > 10};
+  }
+  function _o2mFinAjusteGrande(){ var a = _o2mFinAjuste(); return a ? a.pide : true; }
+  function _o2mFinPideMotivo(){
+    return (_o2mFinEsManual() && (S.fin_valor_origen === 'supuesto' || _o2mFinAjusteGrande())) || _o2mFinEstimadoComoCobro();
+  }
   /* El monto del sub-paso 2 tal como lo manda crear(): el que la persona dejó en el casillero, nada más. ÚNICA
      fuente para crear() y para la vista previa (vía _o2mFinMontosEnvio) -- si cambia una regla acá, cambian las dos. */
   function _o2mFinMontoServicio(){
@@ -8161,7 +8251,7 @@ window.OT2C = (function(){
     var gar = !!S.fin_garantia;
     var co = r.cobre, me = r.me_cobraron, q = r.queda;
     // Daniel 2026-09-27: "Me cobraron" si lo hizo un externo, "Nos costó" si fue un técnico propio.
-    var lblCosto = _liderEsExterno() ? 'Me cobraron' : 'Nos costó';
+    var lblCosto = _liderEsExterno() ? 'Le pagas al proveedor (lo que te cobra)' : 'Nos costó';
     var neg = S.tipo === 'instalacion' ? 'instalación' : 'servicio';
     // 2026-08-29 (Daniel: "necesito que el argumento salga en frente"): REGLA para este archivo -- ningún
     // aviso que explique por qué falta algo va en texto gris chico; todo mensaje usa .o2m-aviso o .o2m-sem.
@@ -8185,7 +8275,10 @@ window.OT2C = (function(){
     var html = sem(s[0], s[1], esc(r.label), esc(sb));
     var filas = '';
     if (q.mostrar){
-      filas += fila('total', r.cobra ? 'Cobré' : 'Cobré · '+esc(r.cobertura_txt.split(':')[0].toLowerCase()), $f(co.total));
+      filas += fila('total', r.cobra ? 'Le cobras al cliente' : 'Le cobras · '+esc(r.cobertura_txt.split(':')[0].toLowerCase()), $f(co.total));
+      // 🧾 2026-10-12: al lado, lo que respaldan sus facturas en Random (saldo que les queda), para comparar.
+      var _sf = _o2mFinSaldoFacturas();
+      if (r.cobra && _sf != null) filas += fila('sub', 'Saldo de sus facturas en Random', $f(_sf));
       if (r.cobra){
         filas += fila('sub', neg.charAt(0).toUpperCase() + neg.slice(1), $f(co.servicio));
         if (co.despacho > 0) filas += fila('sub', 'Despacho', $f(co.despacho));
@@ -8194,7 +8287,7 @@ window.OT2C = (function(){
       filas += fila('sub', 'Técnico o proveedor', me.tecnico != null ? $f(me.tecnico) : '—');
       if ((me.despacho || 0) > 0 || co.despacho > 0) filas += fila('sub', 'Despacho', me.despacho != null ? $f(me.despacho) : '—');
       var colorQ = q.total < 0 ? '#991b1b' : '#166534';
-      filas += '<div class="fila total"><span>'+(r.cobra ? 'Queda' : 'Resultado en caja (cobro $0 − costo)')+'</span>'+
+      filas += '<div class="fila total"><span>'+(r.cobra ? 'Margen' : 'Resultado en caja (cobro $0 − costo)')+'</span>'+
         '<b style="color:'+colorQ+'">'+$f(q.total)+(r.cobra && q.pct != null ? ' · '+pct(q.pct) : '')+'</b></div>';
       if (r.cobra && (co.despacho > 0 || (me.despacho || 0) > 0)){
         filas += fila('sub', (neg === 'instalación' ? 'La instalación ' : 'El servicio ') + (q.servicio < 0 ? 'se comió' : 'dejó'),
@@ -8207,14 +8300,15 @@ window.OT2C = (function(){
     if (q.mostrar && r.cobra){
       var color = q.total < 0 ? '#991b1b' : '#166534', bg = q.total < 0 ? '#fef2f2' : '#f0fdf4';
       html += '<div class="o2m-res">'+
-        '<div class="b" style="background:'+bg+'"><span class="k">Queda ($)</span><span class="v" style="color:'+color+'">'+$f(q.total)+'</span></div>'+
-        '<div class="b" style="background:'+bg+'"><span class="k">Queda (%)</span><span class="v" style="color:'+color+'">'+pct(q.pct)+'</span></div>'+
+        '<div class="b" style="background:'+bg+'"><span class="k">Margen ($)</span><span class="v" style="color:'+color+'">'+$f(q.total)+'</span></div>'+
+        '<div class="b" style="background:'+bg+'"><span class="k">Margen (%)</span><span class="v" style="color:'+color+'">'+pct(q.pct)+'</span></div>'+
         '</div>';
     }
     if (r.avisos.length){
       html += '<ul class="o2m-fin-avisos">'+r.avisos.map(function(a){ return '<li>'+esc(a)+'</li>'; }).join('')+'</ul>';
     }
     c.innerHTML = html;
+    _pintarFinSaldoTxtDom();
     _o2mFinEstadosDom();
   }
   // Secuencia (no un simple booleano): si el usuario sale y vuelve a

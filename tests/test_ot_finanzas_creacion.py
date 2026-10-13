@@ -687,7 +687,9 @@ class TestVistaPreviaAsistente(unittest.TestCase):
                      'function esInterno(){ return false; }' +
                      'function _o2mFinEnvioEsManual(){ if (!S.fin_zz_envio || S.fin_zz_envio.monto == null) return false;' +
                      '  return S.fin_zz_envio_original == null || S.fin_zz_envio.monto !== S.fin_zz_envio_original; }' +
-                     'function _o2mFinEstadosDom(){}' + BLOQUE +
+                     'function _o2mFinEstadosDom(){}' +
+                     'function _o2mFinSaldoFacturas(){ return null; } function _pintarFinSaldoTxtDom(){}' +
+                     'function _o2mFinAjusteGrande(){ return true; }' + BLOQUE +
                      '_pintarFinMargenDom(); var r = _o2mFinVistaPrevia();' +
                      'return [r.clase, r.cobre.total, r.queda.total, r.valorizado.monto, nodos.o2mFinMargen.innerHTML,' +
                      ' _o2mFinMontoServicio(), _o2mFinPideMotivo()];');
@@ -705,7 +707,7 @@ class TestVistaPreviaAsistente(unittest.TestCase):
         res = json.loads(r.stdout)
         for (s, ext, esperado), obtenido in zip(casos, res):
             self.assertEqual(obtenido[:4], esperado, s)
-        self.assertIn("Me cobraron", res[0][4], "externo: 'Me cobraron' (Daniel 2026-09-27)")
+        self.assertIn("Le pagas al proveedor (lo que te cobra)", res[0][4], "externo: lo que le pagas al proveedor (Daniel 2026-10-12)")
         self.assertIn("Nos costó", res[3][4], "técnico propio: 'Nos costó'")
         self.assertIn("Resultado en caja", res[2][4])
         # Lo que manda crear(): el estimado usado como cobro viaja 'manual' y pide motivo; en garantía no.
