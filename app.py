@@ -132402,6 +132402,146 @@ def _mfp_agregar_alertas(filas):
     return filas
 
 
+def _mfp_sugerido_ot(vid):
+    """Lo que la OT declara HOY que se le paga al proveedor (técnico + despacho), con la MISMA cuenta que la fila del
+    lote (_mfp_fila_ot → _ot_finanzas). None si la OT no tiene costo declarado (no se inventa un monto)."""
+    r = mysql_fetchone(_MFP_SELECT_OT + _MFP_JOINS_OT + " WHERE v.id=%s", (vid,))
+    if not r:
+        return None
+    fila = _mfp_fila_ot(r)
+    if fila.get("sin_costo"):
+        return None
+    return round(float(fila.get("sugerido") or 0), 2)
+
+
+def _mfp_aplicar_costo_ot(vid, nuevo, quien=None, motivo="se corrigió el costo en la OT"):
+    """⚖️ 2026-10-13 (Daniel, OT-2026-00264: «¿por qué no me reconoce que cambiaron los costos…? bajó de 65.000 a
+    20.000»). Pone el monto de la OT en su lote PENDIENTE de Facturación de proveedor igual a `nuevo` (lo que la OT
+    declara que se le paga al proveedor), con constancia en la bitácora del lote y de la OT, y deja el total del lote
+    al día si todavía no tiene la factura del proveedor (_mfp_monto_lote_al_dia). Un lote pagado o anulado nunca se
+    toca, ni se deja una OT en $0 dentro de un lote (si ya no se le paga nada, se quita la OT del lote).
+    Devuelve {antes, nuevo, fid, numero_ot, lote} o None si no había nada que cambiar."""
+    r = mysql_fetchone(
+        "SELECT fpi.id, fpi.factura_proveedor_id AS fid, fpi.monto, fp.estado_pago, fp.numero_oc, v.numero_ot "
+        "  FROM mant_factura_proveedor_items fpi "
+        "  JOIN mant_facturas_proveedor fp ON fp.id = fpi.factura_proveedor_id "
+        "  JOIN mant_visitas v ON v.id = fpi.visita_id "
+        " WHERE fpi.visita_id=%s", (vid,))
+    if not r or (r.get("estado_pago") or "") != "pendiente" or nuevo is None:
+        return None
+    antes = round(float(r.get("monto") or 0), 2)
+    nuevo = round(float(nuevo), 2)
+    if nuevo <= 0 or abs(nuevo - antes) < 0.5:
+        return None
+    n = mysql_execute_returning_rowcount(
+        "UPDATE mant_factura_proveedor_items fpi "
+        "  JOIN mant_facturas_proveedor fp ON fp.id = fpi.factura_proveedor_id "
+        "   SET fpi.monto=%s "
+        " WHERE fpi.id=%s AND fp.estado_pago='pendiente' AND ABS(fpi.monto - %s) < 0.5", (nuevo, r["id"], antes))
+    if not n:
+        return None
+    fid = int(r["fid"])
+    num = r.get("numero_ot") or f"OT #{vid}"
+    oc = str(r.get("numero_oc") or "").strip()
+    _mant_log("factura_proveedor", fid, "monto_ot_actualizado",
+              (f"{num}: lo que se le paga al proveedor en este lote pasó de {_mfp_clp_txt(antes)} a "
+               f"{_mfp_clp_txt(nuevo)} ({motivo}{', ' + quien if quien else ''})"
+               + (f" · ojo: la OC N° {oc} ya estaba anotada, revisa si hay que corregirla" if oc else ""))[:4000])
+    _mant_log("visita", vid, "factura_proveedor_monto_actualizado",
+              f"Lote #{fid}: lo que se le paga al proveedor pasó de {_mfp_clp_txt(antes)} a {_mfp_clp_txt(nuevo)} "
+              f"({motivo})")
+    lote = _mfp_monto_lote_al_dia(fid, None, ("actualizó", num))
+    return {"antes": antes, "nuevo": nuevo, "fid": fid, "numero_ot": num, "lote": lote}
+
+
+@app.before_request
+def _mfp_costo_previo():
+    """⚖️ 2026-10-13: antes de una escritura sobre una OT que está en un lote PENDIENTE de Facturación de proveedor, se
+    anota cuánto se le paga en el lote y cuánto declaraba la OT (para saber si el lote «seguía» a la OT). Una consulta
+    indexada; casi ninguna OT está en un lote pendiente. Nunca rompe la petición."""
+    try:
+        if request.method not in ("POST", "PUT", "PATCH"):
+            return None
+        p = request.path or ""
+        if not p.startswith(("/ot/", "/mantenciones/", "/servicio-tecnico/")) or "/facturas-proveedor" in p:
+            return None
+        va = request.view_args or {}
+        vid = va.get("vid") or va.get("visita_id")
+        if not vid:
+            return None
+        vid = int(vid)
+        it = mysql_fetchone(
+            "SELECT fpi.monto FROM mant_factura_proveedor_items fpi "
+            "  JOIN mant_facturas_proveedor fp ON fp.id = fpi.factura_proveedor_id "
+            " WHERE fpi.visita_id=%s AND fp.estado_pago='pendiente'", (vid,))
+        if it:
+            g._mfp_costo_previo = {vid: {"monto": round(float(it.get("monto") or 0), 2),
+                                         "sugerido": _mfp_sugerido_ot(vid)}}
+    except Exception as e:
+        print(f"[facprov] costo previo: {type(e).__name__}", flush=True)
+    return None
+
+
+@app.after_request
+def _mfp_costo_tras_escritura(resp):
+    """⚖️ 2026-10-13 (OT-2026-00264, lote #18): si la escritura cambió lo que la OT declara que se le paga al
+    proveedor y el lote PENDIENTE pagaba exactamente lo de antes (lo seguía), el lote toma el monto nuevo. Si alguien
+    había escrito a mano otro monto al asignar, no se pisa: la fila del lote sigue avisando «≠ declarado» con el
+    botón «Usar el costo de la OT»."""
+    try:
+        previo = getattr(g, "_mfp_costo_previo", None)
+        if not previo or resp.status_code >= 400:
+            return resp
+        for vid, ant in previo.items():
+            ahora = _mfp_sugerido_ot(vid)
+            if ahora is None or ant.get("sugerido") is None:
+                continue
+            if abs(ahora - ant["sugerido"]) < 0.5:
+                continue   # el costo de la OT no cambió
+            if abs(ant["monto"] - ant["sugerido"]) >= 0.5:
+                continue   # el lote no seguía a la OT (monto escrito a mano al asignar): no se pisa
+            _mfp_aplicar_costo_ot(vid, ahora, quien=current_username(), motivo="se corrigió el costo en la OT")
+    except Exception as e:
+        print(f"[facprov] costo tras escritura: {type(e).__name__}: {e}", flush=True)
+    return resp
+
+
+@app.route("/mantenciones/api/facturas-proveedor/<int:fid>/ot/<int:vid>/usar-costo-ot", methods=["POST"])
+@app.route("/servicio-tecnico/api/facturas-proveedor/<int:fid>/ot/<int:vid>/usar-costo-ot", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_factura_proveedor_usar_costo_ot(fid, vid):
+    """⚖️ 2026-10-13: botón «Usar el costo de la OT» de una fila del lote que dice «≠ declarado». Pone lo que se le
+    paga al proveedor por esa OT igual a lo que la OT declara hoy (el anexo firmado y la corrección de costos), con
+    el nombre de quien lo hizo en la bitácora. Solo lote PENDIENTE y mismos permisos que editar el lote."""
+    if not _facprov_puede():
+        return _mfp_403()
+    f = _mfp_cargar(fid)
+    if not f:
+        return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
+    if f.get("estado_pago") != "pendiente":
+        return jsonify({"ok": False, "error_codigo": "FACTURA_NO_EDITABLE",
+                        "error": f"La factura está {f.get('estado_pago')}: no se cambian sus montos."}), 409
+    it = mysql_fetchone("SELECT monto FROM mant_factura_proveedor_items WHERE factura_proveedor_id=%s AND visita_id=%s",
+                        (fid, vid))
+    if not it:
+        return jsonify({"ok": False, "error": "Esa OT no está en este lote."}), 404
+    nuevo = _mfp_sugerido_ot(vid)
+    if nuevo is None:
+        return jsonify({"ok": False, "error_codigo": "SIN_COSTO",
+                        "error": "La OT no tiene declarado lo que cobra el proveedor: decláralo primero en la OT."}), 409
+    if nuevo <= 0:
+        return jsonify({"ok": False, "error_codigo": "COSTO_CERO",
+                        "error": "La OT dice que al proveedor no se le paga nada: si es así, quita la OT del lote."}), 409
+    res = _mfp_aplicar_costo_ot(vid, nuevo, quien=current_username(), motivo="a mano desde el lote")
+    if not res:
+        return jsonify({"ok": True, "cambio": False, "aviso": "El monto ya coincide con el costo de la OT."})
+    return jsonify({"ok": True, "cambio": True, "antes": res["antes"], "monto": res["nuevo"],
+                    "monto_lote": res.get("lote") or {},
+                    "aviso": f"{res['numero_ot']}: ahora se le pagan {_mfp_clp_txt(res['nuevo'])} "
+                             f"(antes {_mfp_clp_txt(res['antes'])})."})
+
+
 def _mfp_cobro_respaldado(it):
     """⚖️ 2026-10-12: lo que una OT del lote cobra con RESPALDO de su factura de Random. Con la factura leída: el cobro
     efectivo del punto de equilibrio (lo declarado menos el saldo que ya usaron otras OT). Sin documento: $0 (no hay

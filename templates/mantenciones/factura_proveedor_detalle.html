@@ -431,6 +431,13 @@
           <div class="fp-mt">{{ clp(cobra) }}</div>
           {% if it.fac_monto is not none and (it.fac_monto - it.sugerido)|round(0) != 0 %}
           <div class="fp-sub" style="color:#b45309;font-weight:800">≠ declarado {{ clp(it.sugerido) }}</div>
+          {#- ⚖️ 2026-10-13 (OT-2026-00264): la OT corrigió su costo después de asignarla; un clic y el lote paga lo que
+              dice la OT (queda con tu nombre en la bitácora). -#}
+          {% if pendiente and not it.sin_costo and it.sugerido > 0 %}
+          <button type="button" class="btn btn-sm btn-outline-warning fw-bold fpd-mini mt-1"
+                  onclick="fpdUsarCostoOt({{ it.id }}, '{{ it.numero_ot }}', {{ it.fac_monto | round(0) | int }}, {{ it.sugerido | round(0) | int }})">
+            <i class="bi bi-arrow-repeat"></i> Usar el costo de la OT</button>
+          {% endif %}
           {% elif it.es_garantia and not cobra %}<div class="fp-sub">{{ (it.cobertura_corta or 'garantía') | lower }} · $0</div>{% endif %}
           {% if it.sin_costo %}
           <a class="fp-sindoc fp-sindoc-wrap" style="text-decoration:none" href="{{ url_for('ot2_detalle', vid=it.id) }}#otdCardFinanzas"
@@ -1084,6 +1091,22 @@ async function fpdPedirAutEquilibrio(vid, numero, exceso){
   const d = await r.json().catch(() => ({}));
   if (!r.ok || d.ok === false){ ilusToast(d.error || 'No se pudo pedir la autorización', {type: d.error_codigo === 'YA_PENDIENTE' ? 'warning' : 'error'}); return; }
   ilusToast('✓ Autorización pedida a Daniel (N° ' + d.id + ')', {type: 'success'});
+  setTimeout(() => window.location.reload(), 700);
+}
+// ⚖️ 2026-10-13: la fila dice «≠ declarado»: el lote paga lo que la OT declara hoy (anexo firmado / costo corregido).
+async function fpdUsarCostoOt(vid, numero, antes, nuevo){
+  const ok = await ilusConfirm({title: 'Usar el costo de la OT · ' + numero,
+    message: 'En este lote se le pagan ' + FPD_CLP(antes) + ' por esta OT, pero la OT declara ' + FPD_CLP(nuevo) + '.',
+    sub: '¿Pagarle ' + FPD_CLP(nuevo) + '? Queda con tu nombre en la bitácora del lote y de la OT.',
+    okLabel: 'Sí, usar ' + FPD_CLP(nuevo), cancelLabel: 'Todavía no', type: 'question'});
+  if (!ok) return;
+  const r = await fetch('/servicio-tecnico/api/facturas-proveedor/' + FPD_FID + '/ot/' + vid + '/usar-costo-ot',
+    {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d.ok === false){ ilusToast(d.error || 'No se pudo actualizar el monto', {type: 'error'}); return; }
+  ilusToast('✓ ' + (d.aviso || 'Monto actualizado'), {type: 'success'});
+  const ml = d.monto_lote || {};
+  if (ml.aviso) fpdGuardarAviso(ml.aviso, ml.nivel);
   setTimeout(() => window.location.reload(), 700);
 }
 async function fpdAsignar(vid){
