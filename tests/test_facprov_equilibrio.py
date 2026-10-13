@@ -81,6 +81,7 @@ def _motor(fin=None, puerta=None, aportes=None, docs=(("FCV", "0000011439"),), c
         "_ot_saldo_docs_de_ot": lambda vid: list(docs),
         "_ot_saldo_familia": lambda t, n: {S.clave_doc(t, n)},
         "_OT_SALDO_FAM_CACHE": {},
+        "_fac_familia_persistida": lambda k: set(),   # familia desde la foto del libro (caché fría): se prueba aparte
         "_fac_leer_capacidad": lambda t, n, solo_cache=False: ("ok", cap) if cap is not False else ("no_leido", None),
         "_ot_doc_real_a_usuario": lambda t, n: (t, str(n).lstrip("0")),
         "_ot_saldo_usos": lambda fam, excluir_vid=None, cap=None: list(usos),

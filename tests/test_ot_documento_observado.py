@@ -254,38 +254,37 @@ class TestClasificacionCalculada(unittest.TestCase):
         self.assertEqual(r[6]["codigo"], "arriendo_leasing")
 
 
-class TestPrecargaDelLote(unittest.TestCase):
-    """⚖️ El lote de Facturación lee en paralelo sus facturas de Random antes de calcular el equilibrio (con la caché
-    fría casi todo decía «Sin verificar con Random»), con tope de tiempo: lo lento queda «sin verificar»."""
+class TestFotoDelLibroParaMostrar(unittest.TestCase):
+    """⚖️ Con la caché de Random fría, la ficha del lote muestra el equilibrio con la foto del libro (ot_fac_doc, que
+    el barrido refresca con el mismo motor) en vez de «Sin verificar con Random». Los candados de pago leen en vivo.
+    (La precarga en hilos se retiró: abría conexiones nuevas a Random y podía ocupar las 5 del proceso.)"""
 
-    def test_lee_en_paralelo_con_tope_de_tiempo(self):
-        import contextlib
-        import threading
-        import time as _t
-        cache, lock = {}, threading.Lock()
+    def _amb(self, fila_doc, filas_familia=()):
+        return {"_saldo": S, "print": lambda *a, **k: None,
+                "mysql_fetchone": lambda sql, p=None: fila_doc,
+                "mysql_fetchall": lambda sql, p=None: list(filas_familia),
+                "_ot_doc_real_a_usuario": lambda t, n: (t, str(n).lstrip("0")),
+                "_ot_saldo_real": lambda k: (k[0], k[1].zfill(10))}
 
-        def cached(t, n):
-            _t.sleep(2 if n.endswith("999") else 0.05)   # una factura que Random no entrega a tiempo
-            cache["%s|%s" % (t, n)] = (_t.time(), {"x": 1}, [{"sku": "X"}])
+    def test_foto_leida_da_la_capacidad(self):
+        f = _exec("_fac_capacidad_persistida", self._amb({"cap_servicio": 100000, "cap_despacho": 25000, "erp_leido": 1}))
+        self.assertEqual(f("FCV", "0000011439"), ("ok", {"servicio": 100000, "despacho": 25000}))
 
-        class AppFalsa:
-            def app_context(self):
-                return contextlib.nullcontext()
-        amb = {"time": _t, "mysql_fetchall": lambda sql, p=None: [{"visita_id": 1}, {"visita_id": 2}],
-               "_ot_saldo_docs_de_ot": lambda vid: [("FCV", "11001"), ("FCV", "999")] if vid == 1 else [("FCV", "11002")],
-               "_saldo": S, "_ot_saldo_real": lambda k: (k[0], k[1]), "_MANT_ERP_DOC_CACHE_LOCK": lock,
-               "_MANT_ERP_DOC_CACHE": cache, "_MANT_ERP_DOC_CACHE_TTL": 300, "_OT_SALDO_FAM_CACHE": {},
-               "app": AppFalsa(), "_mant_erp_doc_cached": cached, "_ot_saldo_familia": lambda t, n: set(),
-               "print": lambda *a, **k: None}
-        f = _exec("_mfp_precalentar_erp", amb)
-        t0 = _t.time()
-        self.assertEqual(f(19, presupuesto=0.6), 2)          # las dos rápidas; la lenta no traba la página
-        self.assertLess(_t.time() - t0, 1.5)
+    def test_sin_foto_leida_no_se_inventa(self):
+        self.assertEqual(_exec("_fac_capacidad_persistida", self._amb({"cap_servicio": 9, "cap_despacho": 0, "erp_leido": 0}))
+                         ("FCV", "1"), ("no_leido", None))
+        self.assertEqual(_exec("_fac_capacidad_persistida", self._amb(None))("FCV", "1"), ("no_leido", None))
 
-    def test_pantalla_y_excel_precargan_antes_de_armar_las_filas(self):
-        for nombre in ("mant_factura_proveedor_detalle", "mant_factura_proveedor_excel"):
-            f = _fuente(nombre)
-            self.assertLess(f.index("_mfp_precalentar_erp(fid)"), f.index("items = _mfp_items(fid)"))
+    def test_familia_desde_la_foto(self):
+        f = _exec("_fac_familia_persistida", self._amb({"familia_de": "FCV 11439"}, [{"doc_tido": "VD", "doc_nudo": "10667"}]))
+        self.assertEqual(f(("VD", "10667")), {("FCV", "11439")})    # la nota de venta → su factura
+        self.assertEqual(f(("FCV", "11439")), {("VD", "10667")})    # la factura → su nota de venta
+
+    def test_solo_para_mostrar_con_cache_fria(self):
+        f = _fuente("_fac_leer_capacidad")
+        self.assertIn("return _fac_capacidad_persistida(tido, nudo)", f)
+        self.assertIn("else _fac_familia_persistida(k))", _fuente("_fac_equilibrio_ot"))
+        self.assertNotIn("_mfp_precalentar_erp", APP)   # nada de hilos contra Random en la ficha del lote
 
     def test_garantia_sin_autorizar_no_dice_sin_documento(self):
         h = _leer("templates/mantenciones/factura_proveedor_detalle.html")

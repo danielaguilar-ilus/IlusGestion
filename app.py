@@ -113179,7 +113179,9 @@ def _fac_leer_capacidad(tido, nudo, solo_cache=False):
             with _MANT_ERP_DOC_CACHE_LOCK:
                 hit = _MANT_ERP_DOC_CACHE.get(f"{t_r}|{n_r}")
             if not (hit and (_t.time() - hit[0]) < _MANT_ERP_DOC_CACHE_TTL and hit[1] and hit[2]):
-                return "no_leido", None
+                # ⚖️ 2026-10-12: caché fría → la foto del libro (ot_fac_doc), leída de Random por el barrido con el
+                # MISMO motor. Antes la ficha del lote decía «Sin verificar con Random» en casi todas las OT.
+                return _fac_capacidad_persistida(tido, nudo)
         except Exception:
             return "no_leido", None
     header, lineas = _mant_erp_doc_cached(t_r, n_r)
@@ -113197,6 +113199,47 @@ def _fac_leer_capacidad(tido, nudo, solo_cache=False):
     if not filas or str((filas[0] or {}).get("ESDO") or "").strip().upper() == "NULO":
         return "sin_doc", {"servicio": 0, "despacho": 0}
     return "no_leido", None
+
+
+def _fac_capacidad_persistida(tido, nudo):
+    """⚖️ 2026-10-12: la capacidad de servicio/despacho de una factura según la foto del libro (ot_fac_doc), que el
+    barrido refresca cada 10 min con el mismo motor (_fac_doc_refrescar → _ot_saldo_doc, Random en solo lectura).
+    Sirve para MOSTRAR sin salir a la red cuando la caché de Random está fría; los candados de pago leen en vivo.
+    Solo una foto leída de verdad (erp_leido=1) cuenta: si no hay, 'no_leido' como antes (nunca se inventa)."""
+    k = _saldo.clave_doc(tido, nudo)
+    if not k[0] or not k[1]:
+        return "no_leido", None
+    try:
+        r = mysql_fetchone("SELECT cap_servicio, cap_despacho, erp_leido FROM ot_fac_doc WHERE doc_tido=%s AND doc_nudo=%s",
+                           (k[0], k[1]))
+    except Exception as e:
+        print(f"[fac-libro] foto {k}: {type(e).__name__}", flush=True)
+        r = None
+    if r and int(r.get("erp_leido") or 0):
+        return "ok", {"servicio": int(r.get("cap_servicio") or 0), "despacho": int(r.get("cap_despacho") or 0)}
+    return "no_leido", None
+
+
+def _fac_familia_persistida(k):
+    """⚖️ 2026-10-12: la familia nota de venta ↔ factura según la foto del libro (ot_fac_doc.familia_de), para mostrar
+    sin salir a Random cuando su caché está fría. Solo agrega miembros; si falla, nada."""
+    out = set()
+    try:
+        if k[0] in _saldo.NOTAS_VENTA:
+            r = mysql_fetchone("SELECT familia_de FROM ot_fac_doc WHERE doc_tido=%s AND doc_nudo=%s", (k[0], k[1])) or {}
+            fd = str(r.get("familia_de") or "").strip()
+            if " " in fd:
+                t2, n2 = fd.split(" ", 1)
+                out.add(_saldo.clave_doc(t2, n2))
+        else:
+            tu, nu = _ot_doc_real_a_usuario(*_ot_saldo_real(k))
+            for r in (mysql_fetchall("SELECT doc_tido, doc_nudo FROM ot_fac_doc WHERE familia_de=%s",
+                                     (f"{tu} {nu}".strip(),)) or []):
+                out.add(_saldo.clave_doc(r.get("doc_tido"), r.get("doc_nudo")))
+    except Exception as e:
+        print(f"[fac-libro] familia {k}: {type(e).__name__}", flush=True)
+    out.discard(tuple(k))
+    return out
 
 
 class _FacCapsPerezosas(object):
@@ -114271,7 +114314,7 @@ def _fac_equilibrio_ot(vid, pago=None, solo_cache=False):
             continue
         if solo_cache:
             _hit = _OT_SALDO_FAM_CACHE.get(k)
-            fam = {k} | (set(_hit[1]) if _hit else set())
+            fam = {k} | (set(_hit[1]) if _hit else _fac_familia_persistida(k))
         else:
             fam = _ot_saldo_familia(t, n)
         fams.append((fam, (t, n)))
@@ -132356,63 +132399,6 @@ def _mfp_agregar_alertas(filas):
     return filas
 
 
-def _mfp_precalentar_erp(fid, presupuesto=3.0):
-    """⚖️ 2026-10-12 (noche antes de la auditoría): la ficha del lote calcula el punto de equilibrio SOLO con la caché
-    (para no ponerse lenta), y con la caché fría casi todas las filas decían «Sin verificar con Random». Antes de
-    armar la página (y el Excel) se leen EN PARALELO los documentos de Random de las OT del lote y su familia nota de
-    venta ↔ factura (solo lectura, REGLA #4.1), con un tope de tiempo: lo que no alcance a llegar queda «sin verificar»
-    como antes, nunca se inventa. Devuelve cuántos documentos quedaron leídos."""
-    import concurrent.futures as _cf
-    t0 = time.time()
-    try:
-        vids = [int(r["visita_id"]) for r in (mysql_fetchall(
-            "SELECT visita_id FROM mant_factura_proveedor_items WHERE factura_proveedor_id=%s", (fid,)) or [])
-            if r.get("visita_id")]
-    except Exception as e:
-        print(f"[facprov] precalentar {fid}: {type(e).__name__}", flush=True)
-        return 0
-    pend, vistos = [], set()
-    for vid in vids[:80]:
-        try:
-            docs = _ot_saldo_docs_de_ot(vid)
-        except Exception:
-            docs = []
-        for t, n in docs:
-            k = _saldo.clave_doc(t, n)
-            if not k[0] or not k[1] or k in vistos:
-                continue
-            vistos.add(k)
-            t_r, n_r = _ot_saldo_real(k)
-            with _MANT_ERP_DOC_CACHE_LOCK:
-                hit = _MANT_ERP_DOC_CACHE.get(f"{t_r}|{n_r}")
-            caliente = bool(hit and (time.time() - hit[0]) < _MANT_ERP_DOC_CACHE_TTL and hit[1] and hit[2])
-            if caliente and k in _OT_SALDO_FAM_CACHE:
-                continue
-            pend.append((t, n, t_r, n_r))
-    if not pend:
-        return 0
-
-    def _leer(item):
-        t, n, t_r, n_r = item
-        with app.app_context():
-            _mant_erp_doc_cached(t_r, n_r)
-            try:
-                _ot_saldo_familia(t, n)
-            except Exception:
-                pass
-        return item
-
-    ex = _cf.ThreadPoolExecutor(max_workers=6)
-    try:
-        futs = [ex.submit(_leer, it) for it in pend[:60]]
-        hechos, _faltan = _cf.wait(futs, timeout=max(0.5, presupuesto - (time.time() - t0)))
-    finally:
-        ex.shutdown(wait=False, cancel_futures=True)
-    if _faltan:
-        print(f"[facprov] precalentar {fid}: {len(hechos)}/{len(futs)} documentos en {time.time() - t0:.2f}s", flush=True)
-    return len(hechos)
-
-
 def _mfp_cobro_respaldado(it):
     """⚖️ 2026-10-12: lo que una OT del lote cobra con RESPALDO de su factura de Random. Con la factura leída: el cobro
     efectivo del punto de equilibrio (lo declarado menos el saldo que ya usaron otras OT). Sin documento: $0 (no hay
@@ -133652,7 +133638,6 @@ def mant_factura_proveedor_detalle(fid):
     factura = dict(factura)
     factura["monto_total"] = float(factura.get("monto_total") or 0)
     _t_items = time.time()
-    _mfp_precalentar_erp(fid)   # ⚖️ 2026-10-12: equilibrio verificado con Random (no «sin verificar» por caché fría)
     items = _mfp_items(fid)
     # 🔎 2026-10-12 (auditoría Impeccable, rendimiento): cada OT ahora calcula su saldo y punto de equilibrio. Antes de
     # optimizar esa cuenta (es la promesa de pago de Daniel: no se toca a ciegas) se mide con lotes reales.
@@ -134052,7 +134037,6 @@ def mant_factura_proveedor_excel(fid):
         return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
     f = dict(f)
     f["monto_total"] = float(f.get("monto_total") or 0)
-    _mfp_precalentar_erp(fid)   # ⚖️ 2026-10-12: mismo equilibrio verificado que la pantalla del lote
     items = _mfp_items(fid)
     canon, canon_rut, _canon_id = _mfp_proveedor_canon(f, items, fid)
     prov_nombre = canon or (f.get("proveedor_nombre") or "").strip()

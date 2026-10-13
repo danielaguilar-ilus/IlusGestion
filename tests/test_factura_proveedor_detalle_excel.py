@@ -203,7 +203,6 @@ def _entorno(db):
         "_fac_equilibrio_ot": lambda vid, pago=None, solo_cache=False: {"ok": True, "vid": vid},
         "_fac_equilibrio_rechazo": lambda resultados: None,
         "_mfp_agregar_alertas": lambda filas: filas,   # 🚩 marca de factura sin saldo: se prueba en test_fac_alerta_sin_saldo.py
-        "_mfp_precalentar_erp": lambda fid, presupuesto=3.0: 0,   # ⚖️ precarga de Random (lectura): se prueba aparte
         "_ot_fin_clp": lambda v: "$" + format(int(round(float(v or 0))), ",").replace(",", "."),
     }
     for nodo in arbol.body:
