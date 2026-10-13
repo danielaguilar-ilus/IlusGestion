@@ -231,16 +231,27 @@ class TestClasificacionCalculada(unittest.TestCase):
                         {"id": 3, "cliente_id": 3, "modalidad_cobro": "sin_costo", "factura_tido": None, "valor_origen": None,
                          "zz_motivo_manual": None, "fin_clasif_json": None},
                         {"id": 4, "cliente_id": 3, "modalidad_cobro": None, "factura_tido": None, "valor_origen": None,
-                         "zz_motivo_manual": None, "fin_clasif_json": None}]
+                         "zz_motivo_manual": None, "fin_clasif_json": None},
+                        # caso real del lote 19: preventiva de contrato real → «$0 autorizado» en Facturación
+                        {"id": 5, "cliente_id": 3, "modalidad_cobro": None, "tipo": "preventiva", "contrato_real": 1,
+                         "factura_tido": None, "valor_origen": None, "zz_motivo_manual": None, "fin_clasif_json": None},
+                        {"id": 6, "cliente_id": 3, "modalidad_cobro": None, "cobro_cero_motivo": "arriendo_leasing",
+                         "factura_tido": None, "valor_origen": None, "zz_motivo_manual": None, "fin_clasif_json": None}]
             if "mant_visita_documentos" in sql:
                 return [{"visita_id": 4, "erp_tido": "NVV"}]
             return []
-        f = _exec("_ot_fin_clasif_lote", {"mysql_fetchall": fetchall, "_saldo": S, "json": json, "print": lambda *a, **k: None})
-        r = f([1, 2, 3, 4])
+        amb = {"mysql_fetchall": fetchall, "_saldo": S, "json": json, "print": lambda *a, **k: None,
+               "_ot_fin_cols_sql": lambda alias: "v.x"}
+        for nombre in ("_ot_fin_num", "_ot_es_interna", "_ot_cobertura"):   # la MISMA regla de la cuenta de la OT
+            _exec(nombre, amb)
+        f = _exec("_ot_fin_clasif_lote", amb)
+        r = f([1, 2, 3, 4, 5, 6])
         self.assertEqual((r[1]["codigo"], r[1]["derivada"]), ("documento_antiguo", False))
         self.assertEqual((r[2]["texto"], r[2]["derivada"]), ("Sin documento", True))   # no dice «autorizada»
-        self.assertEqual(r[3]["texto"], "$0 · regalía o arriendo")
+        self.assertEqual(r[3]["texto"], "$0 · cortesía (sin costo)")
         self.assertEqual(r[4]["codigo"], "nota_venta")
+        self.assertEqual(r[5]["texto"], "Mantención de contrato · $0")   # nunca «Sin documento» junto a «$0 autorizado»
+        self.assertEqual(r[6]["codigo"], "arriendo_leasing")
 
 
 # ───────────────────────── asistente (funciones reales en Node) ─────────────────────────

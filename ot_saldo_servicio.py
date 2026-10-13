@@ -791,6 +791,7 @@ CLASIF_TXT = {
     "garantia": "$0 · garantía",
     "regalia": "$0 · regalía",
     "arriendo_leasing": "$0 · arriendo o leasing",
+    "contrato": "Mantención de contrato · $0",
     "sin_documento": "Sin documento · autorizada",
     "documento_antiguo": "Documento de más de 3 meses · autorizada",
     "productos_sin_saldo": "Productos sin saldo en Random · autorizada",
@@ -802,19 +803,19 @@ CLASIF_TXT = {
     "factura": "Factura con saldo",
 }
 CLASIF_NIVEL = {
-    "interna": "gris", "garantia": "azul", "regalia": "azul", "arriendo_leasing": "azul",
+    "interna": "gris", "garantia": "azul", "regalia": "azul", "arriendo_leasing": "azul", "contrato": "azul",
     "sin_documento": "rojo", "documento_antiguo": "rojo", "productos_sin_saldo": "rojo", "saldo_excedido": "rojo",
     "nota_venta": "ambar", "cotizacion": "ambar", "otro_documento": "ambar", "ajuste_manual": "ambar", "factura": "verde",
 }
 # El orden manda: la primera que aplica es la clasificación principal (lo más delicado primero).
-CLASIF_ORDEN = ("interna", "garantia", "regalia", "arriendo_leasing", "sin_documento", "documento_antiguo",
+CLASIF_ORDEN = ("interna", "garantia", "regalia", "arriendo_leasing", "contrato", "sin_documento", "documento_antiguo",
                 "productos_sin_saldo", "saldo_excedido", "nota_venta", "cotizacion", "otro_documento", "ajuste_manual",
                 "factura")
 COTIZACIONES = ("COV", "COT")
 
 
 def clasificar_ot(es_interna=False, cero_motivo=None, tidos=(), sin_documento=False, observaciones=(),
-                  saldo_excedido=False, ajuste_manual=False):
+                  saldo_excedido=False, ajuste_manual=False, contrato=False):
     """{codigo, codigos, texto, nivel}: cómo se está trabajando la OT. `tidos`: tipos de los documentos de Random
     asociados; `observaciones`: las de observar_documento (autorizadas); `saldo_excedido`: se cobró sobre el saldo
     con autorización; `ajuste_manual`: el cobro se editó a mano con argumento."""
@@ -823,8 +824,10 @@ def clasificar_ot(es_interna=False, cero_motivo=None, tidos=(), sin_documento=Fa
         cods.add("interna")
     if cero_motivo in ("garantia", "regalia", "arriendo_leasing"):
         cods.add(cero_motivo)
+    if contrato:
+        cods.add("contrato")   # preventiva de un contrato real: la paga el contrato (misma regla que _ot_cobertura)
     ts = [str(t or "").strip().upper() for t in (tidos or []) if str(t or "").strip()]
-    if sin_documento and not ts and not cero_motivo and not es_interna:
+    if sin_documento and not ts and not cero_motivo and not es_interna and not contrato:
         cods.add("sin_documento")
     for o in (observaciones or []):
         c = o.get("codigo") if isinstance(o, dict) else o

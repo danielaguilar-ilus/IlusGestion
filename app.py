@@ -112480,7 +112480,8 @@ def _ot_fin_clasif_guardar(cur, vid, campos, es_interna, autorizacion=None):
         tidos = [str(campos["factura_tido"]).strip().upper()]
     obs = campos.get("doc_observaciones") or []
     c = _saldo.clasificar_ot(
-        es_interna=es_interna, cero_motivo=campos.get("cobro_cero_motivo"), tidos=tidos,
+        es_interna=es_interna or campos.get("cobertura") == "interno", cero_motivo=campos.get("cobro_cero_motivo"),
+        tidos=tidos, contrato=(campos.get("cobertura") == "contrato"),
         sin_documento=(aut.get("tipo") == "crear_sin_documento"),
         observaciones=[o for d in obs for o in (d.get("observaciones") or [])],
         saldo_excedido=("exceder_saldo" in (aut.get("tipo"), obs_aut.get("tipo"))),
@@ -112522,15 +112523,17 @@ def _ot_fin_clasif_lote(ids):
     if not ids:
         return out
     ph = ",".join(["%s"] * len(ids))
+    # La cobertura sale de las MISMAS columnas y la MISMA regla que la cuenta de la OT y el punto de equilibrio
+    # (_ot_cobertura): así «$0 autorizado» en Facturación nunca convive con «Sin documento» en la clasificación.
+    _cols = _ot_fin_cols_sql("v")
     try:
         filas = mysql_fetchall(
-            f"SELECT id, cliente_id, modalidad_cobro, factura_tido, valor_origen, zz_motivo_manual, fin_clasif_json "
-            f"  FROM mant_visitas WHERE id IN ({ph})", tuple(ids)) or []
+            f"SELECT v.id, v.factura_tido, v.fin_clasif_json, {_cols} FROM mant_visitas v WHERE v.id IN ({ph})",
+            tuple(ids)) or []
     except Exception:
         try:
             filas = mysql_fetchall(
-                f"SELECT id, cliente_id, modalidad_cobro, factura_tido, valor_origen, zz_motivo_manual "
-                f"  FROM mant_visitas WHERE id IN ({ph})", tuple(ids)) or []
+                f"SELECT v.id, v.factura_tido, {_cols} FROM mant_visitas v WHERE v.id IN ({ph})", tuple(ids)) or []
         except Exception as e:
             print(f"[ot-clasif] lote: {type(e).__name__}", flush=True)
             return out
@@ -112566,21 +112569,26 @@ def _ot_fin_clasif_lote(ids):
                 pass
         a = auts.get(vid) or []
         tipos_a = {x.get("tipo") for x in a}
-        cero = next((x.get("motivo") for x in a if x.get("tipo") == "cobro_cero" and x.get("motivo")), None)
-        mod = (f.get("modalidad_cobro") or "").strip().lower()
-        if not cero and mod == "garantia":
-            cero = "garantia"
+        try:
+            cob = _ot_cobertura(f)
+        except Exception:
+            cob = "cobra"
+        cero = cob if cob in ("garantia", "regalia", "arriendo_leasing") else None
+        if not cero:
+            cero = next((x.get("motivo") for x in a if x.get("tipo") == "cobro_cero" and x.get("motivo")), None)
+        sin_costo = cob == "sin_costo" and not cero
         ts = tidos.get(vid) or ([str(f["factura_tido"]).strip().upper()] if f.get("factura_tido") else [])
-        sin_costo = not cero and mod == "sin_costo"
         c = _saldo.clasificar_ot(
-            es_interna=not f.get("cliente_id"), cero_motivo=cero or ("regalia" if sin_costo else None), tidos=ts,
-            sin_documento=bool(f.get("cliente_id")) and not ts and not cero and not sin_costo,
+            es_interna=(cob == "interno" or not f.get("cliente_id")),
+            cero_motivo=cero or ("regalia" if sin_costo else None),
+            tidos=ts, contrato=(cob == "contrato"),
+            sin_documento=(cob == "cobra" and bool(f.get("cliente_id")) and not ts),
             saldo_excedido="exceder_saldo" in tipos_a,
             ajuste_manual=bool(f.get("valor_origen") == "manual" and (f.get("zz_motivo_manual") or "").strip()))
         if c.get("codigo") == "sin_documento" and "crear_sin_documento" not in tipos_a:
             c["texto"] = "Sin documento"
         if c.get("codigo") == "regalia" and sin_costo:
-            c["texto"] = "$0 · regalía o arriendo"
+            c["texto"] = "$0 · cortesía (sin costo)"
         c["derivada"] = True
         out[vid] = c
     return out
