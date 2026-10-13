@@ -167,7 +167,11 @@ class TestUnaSolaRegla(unittest.TestCase):
         """Toda asignación de un valor (no null) a S.fin_zz_monto ocurre en una función que es un gesto de la persona:
         teclear (_o2mFinMontoServicioCambio), elegir una línea (setFinZZ), el total del documento
         (usarTotalDocumentoComoServicio) o el botón «Usar este monto» (usarFuenteValor). Las demás solo lo vacían."""
-        permitidas = {"_o2mFinMontoServicioCambio", "setFinZZ", "usarTotalDocumentoComoServicio", "usarFuenteValor"}
+        # 🧾 2026-10-12 (Daniel: «se va ingresando una factura… allí se alimenta lo que le cobré a mi cliente»): la
+        # «factura de la OT» (_o2mFinFacturaAplicar) escribe la SUMA de lo que la persona deja en cada factura (cada
+        # fila arranca en el saldo del documento y la persona la ajusta). Ninguna otra fuente lo rellena.
+        permitidas = {"_o2mFinMontoServicioCambio", "setFinZZ", "usarTotalDocumentoComoServicio", "usarFuenteValor",
+                      "_o2mFinFacturaAplicar"}
         con_valor = _quien(r"S\.fin_zz_monto\s*(?:[-+*/]=|=(?!=)(?!\s*null\b))")
         self.assertTrue(con_valor, "el patrón no encontró nada: el lexer o la regex se rompieron")
         self.assertLessEqual(con_valor, permitidas, "algo rellena el cobro por su cuenta: " + str(con_valor - permitidas))
@@ -179,7 +183,8 @@ class TestUnaSolaRegla(unittest.TestCase):
         si la persona lo escribe (_o2mFinMontoEnvioCambio) o aprieta «Usar este monto» (usarEnvioDocumento); «Tomar solo
         el saldo» (saldoAccion) solo BAJA un monto que la persona ya había puesto."""
         con_valor = _quien(r"S\.fin_zz_envio\.monto\s*(?:[-+*/]=|=(?!=)(?!\s*null\b))")
-        self.assertEqual(con_valor, {"_o2mFinMontoEnvioCambio", "usarEnvioDocumento", "saldoAccion"})
+        # 🧾 2026-10-12: la factura de la OT (_o2mFinFacturaAplicar) lleva el despacho de sus filas.
+        self.assertEqual(con_valor, {"_o2mFinMontoEnvioCambio", "usarEnvioDocumento", "saldoAccion", "_o2mFinFacturaAplicar"})
         c = _enmascarar(_fn("_o2mFinCargarZZ"))
         self.assertNotRegex(c, r"monto:\s*envioLn\.monto", "las líneas cargadas no escriben el despacho")
         self.assertEqual(_quien(r"\busarEnvioDocumento\s*\(", "usarEnvioDocumento"), set(), "solo se llega por su botón")
@@ -507,6 +512,8 @@ Object.keys(CASOS).forEach(function(k){
     function esInterno(){ return INT; }
     function _o2mFinPideMotivo(){ return false; }
     function _o2mFinEnvioEsManual(){ return false; }
+    function _o2mFinFacturaActiva(){ return false; } function _o2mFinFacturaExcedida(){ return false; }
+    function _o2mFinSaldoExcesos(){ return []; } function _o2mFinAjusteGrande(){ return true; }
     ` + GATE + `
     return gate();`);
   out[k] = f(CASOS[k][0], INTERNA.indexOf(k) >= 0);

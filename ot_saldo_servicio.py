@@ -244,6 +244,35 @@ def repartir_por_saldo(docs_saldo, docs_cap, servicio, despacho):
     return [{c: _entero(a[c]) + _entero(b[c]) for c in CATEGORIAS} for a, b in zip(p1, p2)]
 
 
+def validar_tomas(tomas, claves_docs, saldos, servicio, despacho):
+    """🧾 2026-10-12 El reparto por factura que manda el asistente («factura de la OT»). `tomas`: [{clave|tido+nudo,
+    servicio, despacho}]; `claves_docs`/`saldos`: los documentos validados de la OT, en orden, con su saldo.
+    Devuelve (ok, texto_exceso|None, reparto alineado con claves_docs). ok=False si el reparto no suma lo cobrado
+    (quien llama usa el reparto por saldo). texto_exceso si alguna factura pasa de su saldo (el servidor lo rechaza
+    salvo con la autorización de Daniel)."""
+    por = {}
+    for t in (tomas or [])[:40]:
+        if not isinstance(t, dict):
+            continue
+        k = tuple(t.get("clave") or ()) if t.get("clave") else clave_doc(t.get("tido"), t.get("nudo"))
+        k = clave_doc(k[0], k[1]) if len(k) == 2 else ("", "")
+        if k[0] and k[1]:
+            por[k] = {c: max(0, _entero(t.get(c))) for c in CATEGORIAS}
+    rep, excesos = [], []
+    for k, sal in zip(claves_docs or [], saldos or []):
+        tm = por.get(tuple(k), {c: 0 for c in CATEGORIAS})
+        for c in CATEGORIAS:
+            if tm[c] > max(0, _entero((sal or {}).get(c))):
+                excesos.append("%s %s: toma %s de %s y su saldo es %s" % (
+                    k[0], k[1], clp(tm[c]), "servicio" if c == "servicio" else "despacho", clp(max(0, _entero((sal or {}).get(c))))))
+        rep.append(tm)
+    suma_ok = (sum(x["servicio"] for x in rep) == max(0, _entero(servicio))
+               and sum(x["despacho"] for x in rep) == max(0, _entero(despacho)))
+    texto = ("Una factura no alcanza para lo que esta OT toma de ella (" + "; ".join(excesos) +
+             "). Baja ese monto o pide la autorización de Daniel.") if excesos else None
+    return suma_ok, texto, rep
+
+
 def ajuste_margen(saldo_facturas, cobro):
     """⚖️ 2026-10-12 (Daniel: «la modificación de los datos, argumentativamente, en caso de generar más de 10% de
     margen» → «cambio a mano que mueve el margen +10%»). Cuántos puntos mueve el margen un cobro escrito a mano

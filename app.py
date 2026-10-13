@@ -105355,6 +105355,21 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
                     _caps_saldo.append({"servicio": (_x.get("servicio") or {}).get("saldo", 0),
                                         "despacho": (_x.get("despacho") or {}).get("saldo", 0)})
             _rep = _saldo.repartir_por_saldo(_caps_saldo, _docs_t, _fin_zzm, _fin_zz_envio_m)
+            # 🧾 2026-10-12 (la «factura de la OT» del asistente): si viene el reparto exacto por factura
+            # (docs_tomas), se valida contra el saldo de CADA una y se guarda tal cual. Pasar el saldo de una
+            # factura solo con la autorización de Daniel; si el reparto no suma lo cobrado, manda el reparto por saldo.
+            _tomas = _fin.get("docs_tomas")
+            if isinstance(_tomas, list) and _tomas:
+                _ok_t, _exc_t, _rep_t = _saldo.validar_tomas(
+                    _tomas, [_saldo.clave_doc(_dd["tido"], _dd["nudo"]) for _dd in _docs_t], _caps_saldo,
+                    _fin_zzm, _fin_zz_envio_m)
+                _aut_t = _ot_saldo_autorizado_hasta(aut_id=_fin_aut_id, cliente_rut=cliente_rut) if _exc_t else {}
+                if _exc_t and not any((_aut_t or {}).values()):
+                    _e = _ferr(_exc_t, "ZZ_TOMA_SUPERA_FACTURA")
+                    _e["http"] = 409
+                    return _e, None
+                if _ok_t:
+                    _rep = _rep_t
             # ⚖️ 2026-10-12: un cobro editado a mano sobre estos documentos que mueve el margen más de 10 puntos
             # respecto de lo que dicen (su saldo) necesita el argumento de quien lo escribe.
             if _fin_motivo_diferido and not _fin_zz_motivo_manual:

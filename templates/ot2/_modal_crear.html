@@ -525,6 +525,37 @@
 .o2m-saldotxt-add{align-self:flex-start;border:1px dashed #dc2626;color:#dc2626;background:#fff;border-radius:9px;font-weight:800;
   font-size:.78rem;padding:6px 12px;min-height:40px;display:inline-flex;align-items:center;gap:5px}
 .o2m-saldotxt-add:hover{background:#fef2f2}
+/* 🧾 2026-10-12 Factura de la OT */
+.o2m-fac-on .o2m-legado{display:none !important}
+.o2m-fin-desglose .fila.margen{background:#f0fdf4;border-radius:10px;font-size:1.02rem;padding-top:10px;padding-bottom:10px}
+.o2m-fin-desglose .fila.margen.neg{background:#fef2f2}
+.o2m-fin-desglose .fila.margen b{font-size:1.12rem;font-variant-numeric:tabular-nums}
+.o2m-fac-on:not(.o2m-fac-sa) .o2m-legado-sa{display:none !important}
+.o2m-fac{border:1px solid #e5e7eb;border-radius:12px;background:#fff;padding:10px 12px;display:flex;flex-direction:column;gap:2px}
+.o2m-fac-h{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 10px;margin-bottom:4px}
+.o2m-fac-h span{font-weight:900;color:#0a0a0a;font-size:.88rem}
+.o2m-fac-h span i{color:#dc2626}
+.o2m-fac-h small{font-size:.74rem;color:#64748b}
+.o2m-fac-r{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:4px 12px;align-items:center;padding:8px 0;border-top:1px solid #f1f5f9}
+.o2m-fac-r .tx{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;min-width:0}
+.o2m-fac-r .tx b{color:#0a0a0a;font-size:.86rem}
+.o2m-fac-r .cat{font-size:.74rem;font-weight:800;color:#475569;background:#f1f5f9;border-radius:99px;padding:1px 8px}
+.o2m-fac-r .tx small{flex:1 1 100%;font-size:.74rem;color:#64748b;line-height:1.35}
+.o2m-fac-r .tx small b{font-size:.74rem;color:#166534}
+.o2m-fac-r .o2m-money input{text-align:right;font-variant-numeric:tabular-nums}
+.o2m-fac-r .err{grid-column:1/-1;font-size:.76rem;font-weight:700;color:#991b1b}
+.o2m-fac-r .err:empty{display:none}
+.o2m-fac-r .err .lnk{border:0;background:none;padding:0;color:#dc2626;font-weight:900;text-decoration:underline;cursor:pointer}
+.o2m-fac-r.exc{background:#fef2f2;border-radius:8px;padding-left:8px;padding-right:8px}
+.o2m-fac-r.exc .tx small b{color:#991b1b}
+.o2m-fac-r.vacia .tx small{color:#92400e}
+.o2m-fac-tot{display:flex;justify-content:space-between;align-items:baseline;border-top:2px solid #0a0a0a;margin-top:6px;padding-top:8px;
+  font-weight:900;color:#0a0a0a}
+.o2m-fac-tot b{font-size:1.1rem;font-variant-numeric:tabular-nums}
+@media (max-width:768px){
+  .o2m-fac-r{grid-template-columns:1fr}
+  .o2m-fac-r .o2m-money input{min-height:44px;font-size:16px}
+}
 @media (max-width:768px){ .o2m-saldotxt-add{min-height:44px;width:100%;justify-content:center} }
 .o2m-saldo-h{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;font-size:.8rem;color:#374151;margin-bottom:8px}
 .o2m-saldo-h b{font-weight:900;color:#0a0a0a}
@@ -1389,6 +1420,8 @@ window.OT2C = (function(){
          // _o2mFinMotivoRequerido()).
          fin_zz_monto_original:null, fin_zz_motivo_manual:'',
          fin_zz_envio_original:null, fin_zz_envio_motivo_manual:'',
+         // 🧾 2026-10-12: lo que esta OT toma de CADA factura {clave: {servicio, despacho}} (la «factura de la OT»).
+         fin_tomas:{},
          // Aviso (no bloqueante) cuando el documento elegido trae la línea
          // de servicio (ZZINSTALACION/ZZMANTENCION) pero su RUT no coincide
          // con el del cliente de la OT -- mismo criterio que "Documentos
@@ -1732,6 +1765,9 @@ window.OT2C = (function(){
         // también es un cobro escrito a mano y pide su motivo (ver _o2mFinEstimadoComoCobro).
         if (_o2mFinPideMotivo() && !(S.fin_zz_motivo_manual||'').trim()) return false;
         if (_o2mFinEnvioEsManual() && _o2mFinAjusteGrande() && !(S.fin_zz_envio_motivo_manual||'').trim()) return false;
+        // 🧾 2026-10-12: en la factura de la OT, una fila sobre su saldo con el total dentro del saldo se corrige moviendo
+        // el monto (no hay nada que autorizar).
+        if (_o2mFinFacturaActiva() && _o2mFinFacturaExcedida() && !_o2mFinSaldoExcesos().length) return false;
         // 🔒 FIX 2026-09-21 (Daniel, confirmado explícito "obligatorio
         // siempre"): costo_proveedor/costo_despacho pasan de opcionales a
         // obligatorios -- mismo criterio que ya rige "Esta OT vale" para
@@ -5632,18 +5668,19 @@ window.OT2C = (function(){
         ? 'Vale <span class="text-muted" style="font-weight:400">(referencia, no se cobra)</span>'
         : 'Le cobras *';
       valorHtml =
-        '<div id="o2mFinFuentes"></div>'+
-        '<div class="o2m-valor-hero"><label class="fl" for="o2mFinValorInput">'+_lblValor+'</label>'+
+        '<div id="o2mFinFactura"></div>'+
+        '<div id="o2mFinFuentes" class="o2m-legado"></div>'+
+        '<div class="o2m-valor-hero o2m-legado"><label class="fl" for="o2mFinValorInput">'+_lblValor+'</label>'+
           '<div class="o2m-money"><span class="pre">$</span>'+
           '<input type="text" inputmode="numeric" id="o2mFinValorInput" placeholder="Ej: 45.000" '+
           'value="'+esc(_o2mFormatearMiles(S.fin_zz_monto))+'" oninput="OT2C._o2mFinMontoServicioCambio(this)" '+
           'onblur="OT2C._o2mFinHeroBlur()"></div>'+
           '<div class="o2m-valor-origen" id="o2mFinOrigen"></div></div>'+
-        '<div id="o2mFinSaldoTxt"></div>'+
+        '<div id="o2mFinSaldoTxt" class="o2m-legado"></div>'+
         '<div id="o2mFinMotivo"></div>'+
-        '<div id="o2mFinZZ"></div>'+
-        '<div id="o2mFinSaldo"></div>'+
-        '<div id="o2mFinAcciones">'+_o2mFinCotizacionHtml()+'</div>'+
+        '<div id="o2mFinZZ" class="o2m-legado"></div>'+
+        '<div id="o2mFinSaldo" class="o2m-legado-sa"></div>'+
+        '<div id="o2mFinAcciones" class="o2m-legado">'+_o2mFinCotizacionHtml()+'</div>'+
         (S.fin_garantia ? '' : _o2mFinValorizarHtml());
     }
 
@@ -5761,6 +5798,7 @@ window.OT2C = (function(){
         // _o2mFinCargarZZ por dentro desde el 2026-09-06.
         if (_o2mFinDocsTodos().length) _o2mFinCargarZZ();
         else { _pintarFinZZDom(); }
+        _pintarFinFacturaDom();   // 🧾 2026-10-12: la factura de la OT con el saldo ya leído (sin parpadeo)
         _pintarFinValorDom();
         _pintarFinGarResumenDom();
         _pintarFinCostoChipDom();
@@ -6628,6 +6666,7 @@ window.OT2C = (function(){
       if (seq !== _finSaldoSeq) return;
       var lista = res.filter(function(j){ return j && j.ok && j.leido && !j.otro_cliente; });
       S.fin_saldo = _o2mFinSaldoCombinar(lista);
+      _o2mFinFacturaSync();
       _pintarFinSaldoDom();
       refrescarAnclas();
       _o2mFinAvisarDocumentos(lista);
@@ -6678,6 +6717,135 @@ window.OT2C = (function(){
       c('desp', 'Despacho', dg.despacho ? clp(dg.despacho) : '—', dg.despacho ? 'lo cobra la OT' : 'no trae despacho') +
       '</div>';
   }
+  /* ── 🧾 FACTURA DE LA OT (2026-10-12) ─────────────────────────────────────────────────────────────────────────
+     Daniel: «se va ingresando una factura, identifica si hay un servicio… allí se alimenta lo que le cobré a mi
+     cliente; aquí lo que me cobra mi proveedor; eso se resta y da el margen en pesos y en porcentaje». Con facturas
+     que traen servicio o despacho, el cobro de la OT ES la suma de lo que toma de cada una (cada fila arranca en su
+     saldo; se puede bajar; subirla por sobre el saldo pide la autorización de Daniel). Sin facturas con líneas
+     (cotización, garantía, sin documento) el paso sigue como siempre. El servidor recibe el reparto exacto
+     (finanzas.docs_tomas) y lo valida contra el saldo de cada factura. */
+  function _o2mFinFacturaDocs(){
+    var s = S.fin_saldo; if (!s || !s.docs) return [];
+    return s.docs.filter(function(d){ return !d.omitido; });
+  }
+  function _o2mFinFacturaActiva(){
+    if (esInterno() || S.fin_garantia || S.fin_aut) return false;
+    return _o2mFinFacturaDocs().some(function(d){
+      return (d.servicio && d.servicio.hay_lineas) || (d.despacho && d.despacho.hay_lineas);
+    });
+  }
+  function _o2mFinFacturaSync(){
+    S.fin_tomas = S.fin_tomas || {};
+    var vivas = {};
+    _o2mFinFacturaDocs().forEach(function(d){
+      var k = (d.clave || []).join('|'); vivas[k] = 1;
+      if (!S.fin_tomas[k]) S.fin_tomas[k] = {
+        servicio: (d.servicio && d.servicio.hay_lineas) ? Math.max(0, d.servicio.saldo) : 0,
+        despacho: (d.despacho && d.despacho.hay_lineas) ? Math.max(0, d.despacho.saldo) : 0};
+    });
+    Object.keys(S.fin_tomas).forEach(function(k){ if (!vivas[k]) delete S.fin_tomas[k]; });
+    _o2mFinFacturaAplicar();
+    _pintarFinFacturaDom();
+  }
+  /* Lleva la suma de las filas a los montos de siempre (S.fin_zz_monto y el despacho): así la vista previa, el
+     margen, la regla del 10 % y crear() usan exactamente lo que se ve. El «original» es el saldo de las facturas:
+     tomar todo el saldo no es un cambio a mano. */
+  function _o2mFinFacturaAplicar(){
+    var sec = document.getElementById('o2mSec-finanzas');
+    var act = _o2mFinFacturaActiva();
+    if (sec){ sec.classList.toggle('o2m-fac-on', act); sec.classList.toggle('o2m-fac-sa', !!window.OT2C_ES_SUPERADMIN); }
+    if (!act) return;
+    var tS = 0, tD = 0, bS = 0, bD = 0, hayS = false, hayD = false, sku = null;
+    _o2mFinFacturaDocs().forEach(function(d){
+      var t = S.fin_tomas[(d.clave || []).join('|')] || {servicio: 0, despacho: 0};
+      if (d.servicio && d.servicio.hay_lineas){
+        hayS = true; tS += t.servicio || 0; bS += Math.max(0, d.servicio.saldo);
+        if (!sku && (d.servicio.lineas || []).length) sku = d.servicio.lineas[0].sku;
+      }
+      if (d.despacho && d.despacho.hay_lineas){ hayD = true; tD += t.despacho || 0; bD += Math.max(0, d.despacho.saldo); }
+    });
+    if (hayS){
+      S.fin_zz_monto = tS; S.fin_zz_monto_original = bS;
+      if (!S.fin_zz_codigo) S.fin_zz_codigo = sku || null;
+      if (S.fin_valor_origen !== 'zz' && tS === bS) S.fin_valor_origen = 'zz';
+      if (tS !== bS && S.fin_valor_origen !== 'manual') S.fin_valor_origen = 'manual';
+    }
+    if (hayD){
+      if (!S.fin_zz_envio) S.fin_zz_envio = {sku: 'ZZENVIO', monto: null};
+      S.fin_zz_envio.monto = tD; S.fin_zz_envio_original = bD;
+    }
+  }
+  function _o2mFinFacturaExcedida(){
+    return _o2mFinFacturaDocs().some(function(d){
+      var t = S.fin_tomas[(d.clave || []).join('|')] || {};
+      return (d.servicio && d.servicio.hay_lineas && (t.servicio || 0) > Math.max(0, d.servicio.saldo)) ||
+             (d.despacho && d.despacho.hay_lineas && (t.despacho || 0) > Math.max(0, d.despacho.saldo));
+    });
+  }
+  /* Lo que viaja a crear(): el reparto exacto por factura (clave canónica + montos). */
+  function _o2mFinFacturaPayload(){
+    if (!_o2mFinFacturaActiva()) return null;
+    return _o2mFinFacturaDocs().map(function(d){
+      var t = S.fin_tomas[(d.clave || []).join('|')] || {servicio: 0, despacho: 0};
+      return {clave: d.clave, tido: d.tido, nudo: d.nudo, servicio: t.servicio || 0, despacho: t.despacho || 0};
+    });
+  }
+  function _pintarFinFacturaDom(){
+    var c = document.getElementById('o2mFinFactura'); if (!c) return;
+    _o2mFinFacturaAplicar();
+    if (!_o2mFinFacturaActiva()){ c.innerHTML = ''; return; }
+    var filas = '';
+    _o2mFinFacturaDocs().forEach(function(d){
+      var k = (d.clave || []).join('|'), t = S.fin_tomas[k] || {servicio: 0, despacho: 0}, alguna = false;
+      ['servicio', 'despacho'].forEach(function(cat){
+        var x = d[cat]; if (!x || !x.hay_lineas) return;
+        alguna = true;
+        var sal = Math.max(0, x.saldo), v = t[cat] || 0, exc = v > sal;
+        filas += '<div class="o2m-fac-r' + (exc ? ' exc' : '') + '" data-fr="' + esc(k) + '|' + cat + '">' +
+          '<div class="tx"><b>' + esc(d.titulo) + '</b><span class="cat">' + (cat === 'servicio' ? 'Instalación o servicio' : 'Despacho') + '</span>' +
+          '<small>Total ' + _o2mPesos(x.total) + (x.usado ? ' · ya usado por otras OT ' + _o2mPesos(x.usado) : '') +
+          ' · <b>saldo ' + _o2mPesos(sal) + '</b></small></div>' +
+          '<div class="o2m-money sm"><span class="pre">$</span><input type="text" inputmode="numeric" aria-label="Lo que esta OT toma de ' + esc(d.titulo) + '" ' +
+          'data-k="' + esc(k) + '" data-cat="' + cat + '" value="' + esc(_o2mFormatearMiles(v)) + '" oninput="OT2C.setFinToma(this)"></div>' +
+          '<div class="err">' + (exc ? _o2mFinFacturaErrTxt(v - sal) : '') + '</div></div>';
+      });
+      if (!alguna) filas += '<div class="o2m-fac-r vacia"><div class="tx"><b>' + esc(d.titulo) +
+        '</b><small>Sin líneas de servicio ni despacho: no respalda el cobro de la OT.</small></div></div>';
+    });
+    c.innerHTML = '<div class="o2m-fac">' +
+      '<div class="o2m-fac-h"><span><i class="bi bi-receipt"></i> Le cobras al cliente</span><small>Cada factura arranca en su saldo. Puedes bajarlo; subirlo pide autorización.</small></div>' +
+      filas +
+      '<button type="button" class="o2m-saldotxt-add" onclick="OT2C.abrirAgregarDocExtra()"><i class="bi bi-plus-lg"></i> Agregar factura (N° o RUT)</button>' +
+      '<div class="o2m-fac-tot"><span>Cobro al cliente</span><b id="o2mFinFacturaTot">' + _o2mPesos(_o2mFinCobroTotal()) + '</b></div>' +
+      '</div>';
+  }
+  function _o2mFinFacturaErrTxt(exceso){
+    // Si el total cabe en el saldo de las facturas, no hay nada que autorizar: hay que mover el monto a otra factura.
+    if (!_o2mFinSaldoExcesos().length)
+      return 'Pasa del saldo de esta factura por ' + _o2mPesos(exceso) + ': bájalo y tómalo de otra factura del reparto.';
+    return 'Pasa del saldo por ' + _o2mPesos(exceso) + '. <button type="button" class="lnk" onclick="OT2C.saldoAccion(\'autorizar\')">Pedir autorización a Daniel</button>';
+  }
+  /* Al escribir en una fila: se actualizan los montos, el total, el aviso de la fila, la regla del 10 % y el margen
+     SIN repintar las filas (el casillero no pierde el cursor). */
+  function setFinToma(el){
+    var k = el.getAttribute('data-k'), cat = el.getAttribute('data-cat');
+    var dig = _o2mLimpiarNumero(el.value), v = dig ? parseInt(dig, 10) : 0;
+    var antes = el.value, resto = antes.length - (el.selectionStart || 0);
+    S.fin_tomas[k] = S.fin_tomas[k] || {servicio: 0, despacho: 0};
+    S.fin_tomas[k][cat] = v;
+    el.value = _o2mFormatearMiles(dig);
+    try { var pos = Math.max(0, el.value.length - resto); el.setSelectionRange(pos, pos); } catch(_e){}
+    _o2mFinFacturaAplicar();
+    var d = _o2mFinFacturaDocs().filter(function(x){ return (x.clave || []).join('|') === k; })[0];
+    var fila = el.closest ? el.closest('.o2m-fac-r') : null;
+    if (d && fila){
+      var sal = Math.max(0, (d[cat] || {}).saldo || 0), exc = v > sal;
+      fila.classList.toggle('exc', exc);
+      var e = fila.querySelector('.err'); if (e) e.innerHTML = exc ? _o2mFinFacturaErrTxt(v - sal) : '';
+    }
+    var tot = document.getElementById('o2mFinFacturaTot'); if (tot) tot.textContent = _o2mPesos(_o2mFinCobroTotal());
+    _pintarFinValorDom(); _pintarFinMargenDom(); _o2mFinEstadosDom(); refrescarAnclas();
+  }
   function _o2mFinSaldoCombinar(lista){
     var cobro = {};
     lista.forEach(function(s){ if (_O2M_SAL_COBRO.indexOf(s.clave[0]) >= 0) cobro[s.clave.join('|')] = 1; });
@@ -6719,6 +6887,7 @@ window.OT2C = (function(){
     var conSer = 0, conDes = 0, usados = 0;
     s.docs.forEach(function(d){ if (d.servicio.hay_lineas) conSer++; if (d.despacho.hay_lineas) conDes++; if ((d.usos||[]).length) usados++; });
     _pintarFinSaldoTxtDom();
+    _o2mFinFacturaAplicar();
     var html = '<div class="o2m-saldo"><div class="o2m-saldo-h"><span><b>'+s.docs.length+'</b> documento'+(s.docs.length===1?'':'s')+'</span>'+
       '<span><b>'+conSer+'</b> con instalación o servicio</span><span><b>'+conDes+'</b> con despacho</span>'+
       '<span><b>'+usados+'</b> usado'+(usados===1?'':'s')+' en otras OT</span></div>';
@@ -6755,6 +6924,18 @@ window.OT2C = (function(){
   /* Las cuatro salidas del asistente (nunca un callejón sin salida). */
   function saldoAccion(que){
     var s = S.fin_saldo, ex = _o2mFinSaldoExcesos();
+    if (que === 'tomar' && _o2mFinFacturaActiva()){
+      // 🧾 2026-10-12: en la factura de la OT cada fila vuelve a su saldo (nunca un total suelto que descuadre las filas).
+      _o2mFinFacturaDocs().forEach(function(d){
+        var k = (d.clave || []).join('|'); S.fin_tomas[k] = S.fin_tomas[k] || {servicio: 0, despacho: 0};
+        ['servicio', 'despacho'].forEach(function(cat){
+          var x = d[cat]; if (x && x.hay_lineas && S.fin_tomas[k][cat] > Math.max(0, x.saldo)) S.fin_tomas[k][cat] = Math.max(0, x.saldo);
+        });
+      });
+      _pintarFinFacturaDom(); _pintarFinSaldoDom(); _pintarFinValorDom(); _pintarFinMargenDom(); _o2mFinEstadosDom(); refrescarAnclas();
+      if (window.ilusToast) ilusToast('Cada factura quedó en su saldo.', {type:'success'});
+      return;
+    }
     if (que === 'tomar'){
       if (s && s.servicio.hay && S.fin_zz_monto != null && S.fin_zz_monto > s.servicio.saldo && s.servicio.saldo > 0){
         setFinZZ(S.fin_zz_codigo, s.servicio.saldo);   // el número sigue saliendo del documento: no pide motivo
@@ -7326,6 +7507,7 @@ window.OT2C = (function(){
     });
     _pintarDocExtraDom();
     _o2mEqZZCargar();
+    if (!esInterno() && S.fin_centro) _o2mFinCargarZZ();   // 🧾 2026-10-12: la factura nueva entra a la cuenta
     if (difiere && window.ilusToast){
       ilusToast('\u26a0 El RUT de ese documento ('+esc(rutDoc)+') no coincide con el del cliente de esta OT.',
         {type:'warning', duration:6000});
@@ -7344,7 +7526,10 @@ window.OT2C = (function(){
       ilusToast('Ese documento ya está agregado.', {type:'warning'});
     }
   }
-  function quitarDocExtra(i){ S.doc_extra.splice(i,1); _pintarDocExtraDom(); }
+  function quitarDocExtra(i){
+    S.doc_extra.splice(i,1); _pintarDocExtraDom();
+    if (!esInterno() && S.fin_centro) _o2mFinCargarZZ();   // 🧾 2026-10-12: sale de la cuenta
+  }
   function _pintarDocExtraDom(){
     var c = document.getElementById('o2mDocExtra'); if (!c) return;
     var rutCliente = (S.cliente && S.cliente.rut) || '';
@@ -8287,7 +8472,9 @@ window.OT2C = (function(){
       filas += fila('sub', 'Técnico o proveedor', me.tecnico != null ? $f(me.tecnico) : '—');
       if ((me.despacho || 0) > 0 || co.despacho > 0) filas += fila('sub', 'Despacho', me.despacho != null ? $f(me.despacho) : '—');
       var colorQ = q.total < 0 ? '#991b1b' : '#166534';
-      filas += '<div class="fila total"><span>'+(r.cobra ? 'Margen' : 'Resultado en caja (cobro $0 − costo)')+'</span>'+
+      // 🧾 2026-10-12 (Daniel: «compacto… sacando información sobrecargada»): el margen va UNA vez, en una franja
+      // destacada con pesos y porcentaje (antes se repetía en la fila y en dos cajas grandes de abajo).
+      filas += '<div class="fila total margen'+(q.total < 0 ? ' neg' : '')+'"><span>'+(r.cobra ? 'Margen' : 'Resultado en caja (cobro $0 − costo)')+'</span>'+
         '<b style="color:'+colorQ+'">'+$f(q.total)+(r.cobra && q.pct != null ? ' · '+pct(q.pct) : '')+'</b></div>';
       if (r.cobra && (co.despacho > 0 || (me.despacho || 0) > 0)){
         filas += fila('sub', (neg === 'instalación' ? 'La instalación ' : 'El servicio ') + (q.servicio < 0 ? 'se comió' : 'dejó'),
@@ -8297,13 +8484,6 @@ window.OT2C = (function(){
     }
     if (r.valorizado.monto != null) filas += fila('ref', 'Valorizado (referencia, no se suma)', $f(r.valorizado.monto));
     if (filas) html += '<div class="o2m-fin-desglose">'+filas+'</div>';
-    if (q.mostrar && r.cobra){
-      var color = q.total < 0 ? '#991b1b' : '#166534', bg = q.total < 0 ? '#fef2f2' : '#f0fdf4';
-      html += '<div class="o2m-res">'+
-        '<div class="b" style="background:'+bg+'"><span class="k">Margen ($)</span><span class="v" style="color:'+color+'">'+$f(q.total)+'</span></div>'+
-        '<div class="b" style="background:'+bg+'"><span class="k">Margen (%)</span><span class="v" style="color:'+color+'">'+pct(q.pct)+'</span></div>'+
-        '</div>';
-    }
     if (r.avisos.length){
       html += '<ul class="o2m-fin-avisos">'+r.avisos.map(function(a){ return '<li>'+esc(a)+'</li>'; }).join('')+'</ul>';
     }
@@ -9784,6 +9964,9 @@ window.OT2C = (function(){
       // es exactamente lo que se manda. SIN respaldos: si la persona no puso un monto, no viaja ninguno (ni la
       // cotización ni el estimado), y un 0 escrito viaja como 0.
       Object.assign(body.finanzas, _o2mFinMontosEnvio());
+      // 🧾 2026-10-12: el reparto exacto por factura (el servidor lo valida contra el saldo de cada una).
+      var _tomas = _o2mFinFacturaPayload();
+      if (_tomas) body.finanzas.docs_tomas = _tomas;
       // proveedor_tipo/nombre se derivan solos del técnico LÍDER ya elegido
       // en el paso Técnicos -- no hace falta preguntarlo dos veces (mismo
       // dato, dos lugares). Si no hay líder todavía, queda sin declarar.
@@ -10268,6 +10451,7 @@ window.OT2C = (function(){
           eqAgregarDoc:_o2mEqAgregarDocumento,
           comboAbrir:comboAbrir, comboFiltrar:comboFiltrar, comboElegir:comboElegir,
           abrirAgregarDocExtra:abrirAgregarDocExtra, quitarDocExtra:quitarDocExtra, setAnexoCampo:setAnexoCampo,
+          setFinToma:setFinToma,
           _o2mAnexoPintarRutEstado:_o2mAnexoPintarRutEstado, anexoVerPdfPreview:anexoVerPdfPreview,
           setCpCampo:setCpCampo, elegirContacto:elegirContacto, setCpDireccionTexto:setCpDireccionTexto,
           _o2mFormatearRutSiValido:_o2mFormatearRutSiValido,
