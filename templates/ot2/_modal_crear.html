@@ -535,15 +535,15 @@
 .o2m-fac-h{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 10px;margin-bottom:4px}
 .o2m-fac-h span{font-weight:900;color:#0a0a0a;font-size:.88rem}
 .o2m-fac-h span i{color:#dc2626}
-.o2m-fac-h small{font-size:.74rem;color:#64748b}
+.o2m-fac-h small{font-size:.78rem;color:#64748b}
 .o2m-fac-r{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:4px 12px;align-items:center;padding:8px 0;border-top:1px solid #f1f5f9}
 .o2m-fac-r .tx{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;min-width:0}
 .o2m-fac-r .tx b{color:#0a0a0a;font-size:.86rem}
-.o2m-fac-r .cat{font-size:.74rem;font-weight:800;color:#475569;background:#f1f5f9;border-radius:99px;padding:1px 8px}
-.o2m-fac-r .tx small{flex:1 1 100%;font-size:.74rem;color:#64748b;line-height:1.35}
-.o2m-fac-r .tx small b{font-size:.74rem;color:#166534}
+.o2m-fac-r .cat{font-size:.76rem;font-weight:800;color:#475569;background:#f1f5f9;border-radius:99px;padding:1px 8px}
+.o2m-fac-r .tx small{flex:1 1 100%;font-size:.78rem;color:#64748b;line-height:1.4}
+.o2m-fac-r .tx small b{font-size:.78rem;color:#166534}
 .o2m-fac-r .o2m-money input{text-align:right;font-variant-numeric:tabular-nums}
-.o2m-fac-r .err{grid-column:1/-1;font-size:.76rem;font-weight:700;color:#991b1b}
+.o2m-fac-r .err{grid-column:1/-1;font-size:.78rem;font-weight:700;color:#991b1b}
 .o2m-fac-r .err:empty{display:none}
 .o2m-fac-r .err .lnk{border:0;background:none;padding:0;color:#dc2626;font-weight:900;text-decoration:underline;cursor:pointer}
 .o2m-fac-r.exc{background:#fef2f2;border-radius:8px;padding-left:8px;padding-right:8px}
@@ -552,6 +552,49 @@
 .o2m-fac-tot{display:flex;justify-content:space-between;align-items:baseline;border-top:2px solid #0a0a0a;margin-top:6px;padding-top:8px;
   font-weight:900;color:#0a0a0a}
 .o2m-fac-tot b{font-size:1.1rem;font-variant-numeric:tabular-nums}
+/* 🗓️ 2026-10-12 fecha y productos de cada documento en Random + documento observado */
+.o2m-fac-doc{display:flex;flex-wrap:wrap;gap:4px 12px;padding:0 0 8px;font-size:.78rem;color:#64748b}
+.o2m-fac-doc span{display:inline-flex;align-items:center;gap:4px}
+.o2m-fac-doc .bien{color:#166534}
+.o2m-fac-doc .mal{color:#991b1b;font-weight:800}
+.o2m-obs{margin-top:10px;border:1px solid #fecaca;background:#fef2f2;border-radius:12px;padding:10px 12px;color:#7f1d1d}
+.o2m-obs-h{display:flex;align-items:center;gap:7px;font-size:.88rem}
+.o2m-obs-h i{color:#dc2626;font-size:1.05rem}
+.o2m-obs ul{margin:6px 0 8px;padding-left:20px;font-size:.8rem;line-height:1.45}
+.o2m-obs .fl{color:#7f1d1d}
+.o2m-obs textarea{background:#fff;border-color:#fecaca}
+.o2m-obs textarea:focus{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.15)}
+.o2m-obs-cnt{font-size:.78rem;font-weight:700;margin-top:4px}
+.o2m-obs-pie{display:flex;gap:6px;align-items:flex-start;margin-top:6px;font-size:.78rem;color:#7f1d1d}
+/* 🧭 2026-10-12 Camino al margen */
+.o2m-guia{margin:0 0 12px}
+.o2m-guia-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px}
+.o2m-guia-h b{font-size:.86rem;font-weight:900;color:#0a0a0a}
+.o2m-guia-h span{font-size:.78rem;font-weight:800;color:#64748b}
+.o2m-guia ol{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}
+.o2m-guia li{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:5px;padding:8px 8px 9px;border-radius:10px;
+  background:#f9fafb;border:1px solid #f1f5f9;min-width:0}
+.o2m-guia li .n{width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
+  font-size:.74rem;font-weight:900;background:#fff;border:2px solid #d1d5db;color:#6b7280}
+.o2m-guia li .tx{display:flex;flex-direction:column;gap:1px;min-width:0}
+.o2m-guia li .tx b{font-size:.8rem;font-weight:900;color:#0a0a0a;line-height:1.25}
+.o2m-guia li .tx small{font-size:.76rem;color:#4b5563;line-height:1.35;overflow-wrap:anywhere}
+.o2m-guia li .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.o2m-guia li.ok{background:#f0fdf4;border-color:#bbf7d0}
+.o2m-guia li.ok .n{background:#16a34a;border-color:#16a34a;color:#fff}
+.o2m-guia li.arg{background:#fff8e1;border-color:#fde68a}
+.o2m-guia li.arg .n{background:#f59e0b;border-color:#f59e0b;color:#fff}
+.o2m-guia li.aviso{background:#fff8e1;border-color:#fde68a}
+.o2m-guia li.aviso .n{border-color:#f59e0b;color:#b45309}
+.o2m-guia li.aut{background:#fef2f2;border-color:#fecaca}
+.o2m-guia li.aut .n{background:#dc2626;border-color:#dc2626;color:#fff;animation:o2mGuiaPulso 1.6s ease-out infinite}
+.o2m-guia li.aut .tx small{color:#991b1b;font-weight:700}
+.o2m-guia li.falta .n{border-color:#dc2626;color:#dc2626}
+@keyframes o2mGuiaPulso{0%{box-shadow:0 0 0 0 rgba(220,38,38,.45)}70%{box-shadow:0 0 0 7px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
+@media (prefers-reduced-motion:reduce){.o2m-guia li.aut .n{animation:none}}
+@media (max-width:900px){.o2m-guia ol{grid-template-columns:repeat(2,minmax(0,1fr))}.o2m-guia li:last-child{grid-column:1/-1}
+  .o2m-guia li{flex-direction:row;align-items:flex-start;gap:8px}}
+@media (max-width:420px){.o2m-guia ol{grid-template-columns:1fr}}
 @media (max-width:768px){
   .o2m-fac-r{grid-template-columns:1fr}
   .o2m-fac-r .o2m-money input{min-height:44px;font-size:16px}
@@ -1422,6 +1465,9 @@ window.OT2C = (function(){
          fin_zz_envio_original:null, fin_zz_envio_motivo_manual:'',
          // 🧾 2026-10-12: lo que esta OT toma de CADA factura {clave: {servicio, despacho}} (la «factura de la OT»).
          fin_tomas:{},
+         // 🗓️ 2026-10-12: argumento para Daniel cuando el documento está observado (más de 3 meses o productos sin
+         // saldo en Random). Queda guardado en la OT (clasificación) y en la solicitud de autorización.
+         fin_obs_argumento:'',
          // Aviso (no bloqueante) cuando el documento elegido trae la línea
          // de servicio (ZZINSTALACION/ZZMANTENCION) pero su RUT no coincide
          // con el del cliente de la OT -- mismo criterio que "Documentos
@@ -1768,6 +1814,8 @@ window.OT2C = (function(){
         // 🧾 2026-10-12: en la factura de la OT, una fila sobre su saldo con el total dentro del saldo se corrige moviendo
         // el monto (no hay nada que autorizar).
         if (_o2mFinFacturaActiva() && _o2mFinFacturaExcedida() && !_o2mFinSaldoExcesos().length) return false;
+        // 🗓️ 2026-10-12: documento observado (más de 3 meses o productos sin saldo en Random) → argumento para Daniel.
+        if (_o2mFinObsFalta()) return false;
         // 🔒 FIX 2026-09-21 (Daniel, confirmado explícito "obligatorio
         // siempre"): costo_proveedor/costo_despacho pasan de opcionales a
         // obligatorios -- mismo criterio que ya rige "Esta OT vale" para
@@ -5669,6 +5717,7 @@ window.OT2C = (function(){
         : 'Le cobras *';
       valorHtml =
         '<div id="o2mFinFactura"></div>'+
+        '<div id="o2mFinObs"></div>'+
         '<div id="o2mFinFuentes" class="o2m-legado"></div>'+
         '<div class="o2m-valor-hero o2m-legado"><label class="fl" for="o2mFinValorInput">'+_lblValor+'</label>'+
           '<div class="o2m-money"><span class="pre">$</span>'+
@@ -5768,6 +5817,7 @@ window.OT2C = (function(){
         ? '<p class="d">Toda OT sale valorizada, se cobre o no: así cada centro de costo sabe cuánto trabajo le atribuimos.</p>'
         : '<p class="d">Cuánto le cobras al cliente, cuánto te cobra el técnico y cuánto queda. En garantía no se cobra: '+
           'puedes anotar cuánto vale, solo como referencia.</p>')+
+      (interno ? '' : '<div id="o2mFinGuia"></div>')+
       _o2mFpasoHtml('centro', 1, '¿A qué centro de costo se atribuye?', centroHtml,
         'Si el costo no es de Servicio Técnico, cárgalo a Logística, Comercial o Marketing: así el informe no se lo atribuye al área equivocada.')+
       (!centroElegido
@@ -5807,6 +5857,8 @@ window.OT2C = (function(){
       }
     }
     _o2mFinEstadosDom();
+    _pintarFinObsDom();
+    _pintarFinGuiaDom();
   }
   function setFinCentro(v){ S.fin_centro = v; S._finCentroAuto = false; repintarSeccion('finanzas'); refrescarAnclas(); }
   /* Sub-paso 3 como dos tarjetas: 'doc' = Sí, con documento · 'gar' = No,
@@ -6377,6 +6429,7 @@ window.OT2C = (function(){
         // señalador mandaba al usuario al sub-paso 3, donde no había nada
         // que llenar.
         if (_o2mFinEnvioEsManual() && !(S.fin_zz_envio_motivo_manual||'').trim()) return {cls:'falta', txt:'Falta el motivo del transporte'};
+        if (_o2mFinObsFalta()) return {cls:'falta', txt:'Falta el argumento para Daniel'};
         return {cls:'listo', txt:'Listo'};
       case 'cobro':
         if (S.fin_garantia){
@@ -6668,6 +6721,8 @@ window.OT2C = (function(){
       S.fin_saldo = _o2mFinSaldoCombinar(lista);
       _o2mFinFacturaSync();
       _pintarFinSaldoDom();
+      _pintarFinObsDom();
+      _pintarFinGuiaDom();
       refrescarAnclas();
       _o2mFinAvisarDocumentos(lista);
     });
@@ -6811,6 +6866,7 @@ window.OT2C = (function(){
       });
       if (!alguna) filas += '<div class="o2m-fac-r vacia"><div class="tx"><b>' + esc(d.titulo) +
         '</b><small>Sin líneas de servicio ni despacho: no respalda el cobro de la OT.</small></div></div>';
+      filas += _o2mFinDocInfoHtml(d);
     });
     c.innerHTML = '<div class="o2m-fac">' +
       '<div class="o2m-fac-h"><span><i class="bi bi-receipt"></i> Le cobras al cliente</span><small>Cada factura arranca en su saldo. Puedes bajarlo; subirlo pide autorización.</small></div>' +
@@ -6818,6 +6874,157 @@ window.OT2C = (function(){
       '<button type="button" class="o2m-saldotxt-add" onclick="OT2C.abrirAgregarDocExtra()"><i class="bi bi-plus-lg"></i> Agregar factura (N° o RUT)</button>' +
       '<div class="o2m-fac-tot"><span>Cobro al cliente</span><b id="o2mFinFacturaTot">' + _o2mPesos(_o2mFinCobroTotal()) + '</b></div>' +
       '</div>';
+    _pintarFinObsDom();
+    _pintarFinGuiaDom();
+  }
+  /* ── 🗓️ DOCUMENTO OBSERVADO (2026-10-12) ──────────────────────────────────────────────────────────────────────
+     Daniel: «si tiene más de tres meses de antigüedad… deberá pedir autorización y declarar un argumento persistente
+     para que la OT quede guardada con ese antecedente y esa clasificación»; «si tiene productos, deberían tener
+     saldo». El servidor lee en Random (solo lectura) la fecha y el saldo de los productos de cada documento
+     (GET /ot/api/saldo-servicio → doc) y lo vuelve a revisar al crear (DOC_OBSERVADO). Lo autoriza Daniel a distancia;
+     el superadministrador que crea la OT lo autoriza al crearla. */
+  function _o2mFinObservados(){
+    if (esInterno() || S.fin_garantia || S.fin_aut) return [];
+    return _o2mFinFacturaDocs().filter(function(d){ return d.doc && d.doc.observaciones && d.doc.observaciones.length; });
+  }
+  function _o2mFinObsFalta(){
+    return _o2mFinObservados().length > 0 && (S.fin_obs_argumento || '').trim().length < 30;
+  }
+  function _o2mFinObsCntHtml(){
+    var n = (S.fin_obs_argumento || '').trim().length;
+    return '<span style="color:' + (n >= 30 ? '#15803d' : '#b45309') + '">' + n + ' de 30 caracteres como mínimo' + (n >= 30 ? ' ✓' : '') + '</span>';
+  }
+  function _o2mFinDocInfoHtml(d){
+    var di = d && d.doc; if (!di || !di.leido) return '';
+    var obs = di.observaciones || [], cods = {};
+    obs.forEach(function(o){ cods[o.codigo] = o; });
+    var p = di.productos || {total: 0, con_saldo: 0};
+    var partes = [];
+    if (di.fecha) partes.push('<span class="' + (cods.antiguo ? 'mal' : '') + '"><i class="bi bi-calendar3"></i>Emitida ' + esc(di.fecha) +
+      (cods.antiguo ? ' · hace ' + cods.antiguo.dias + ' días (más de 3 meses)' : '') + '</span>');
+    if (p.total) partes.push('<span class="' + (cods.productos_sin_saldo ? 'mal' : 'bien') + '"><i class="bi bi-box-seam"></i>' +
+      (cods.productos_sin_saldo ? 'Sus productos ya no tienen saldo en Random'
+                                : p.con_saldo + ' de ' + p.total + ' producto' + (p.total === 1 ? '' : 's') + ' con saldo en Random') + '</span>');
+    if (!partes.length) return '';
+    return '<div class="o2m-fac-doc' + (obs.length ? ' obs' : '') + '">' + partes.join('') + '</div>';
+  }
+  function _pintarFinObsDom(){
+    var c = document.getElementById('o2mFinObs'); if (!c) return;
+    var obs = _o2mFinObservados();
+    if (!obs.length){ c.innerHTML = ''; return; }
+    var ta = document.getElementById('o2mObsArg');
+    if (ta && document.activeElement === ta){   // escribiendo: no se repinta (no pierde el cursor)
+      var cnt = document.getElementById('o2mObsCnt'); if (cnt) cnt.innerHTML = _o2mFinObsCntHtml();
+      return;
+    }
+    var sa = !!window.OT2C_ES_SUPERADMIN;
+    c.innerHTML = '<div class="o2m-obs" role="region" aria-label="Autorización de Daniel">' +
+      '<div class="o2m-obs-h"><i class="bi bi-shield-lock-fill"></i><b>' +
+      (obs.length === 1 ? 'Este documento necesita' : 'Estos documentos necesitan') + ' la autorización de Daniel</b></div>' +
+      '<ul>' + obs.map(function(d){
+        return d.doc.observaciones.map(function(o){ return '<li>' + esc(o.texto) + '</li>'; }).join('');
+      }).join('') + '</ul>' +
+      '<label class="fl" for="o2mObsArg">Argumento para Daniel * <span class="text-muted" style="font-weight:400">(mínimo 30 caracteres · queda guardado en la OT)</span></label>' +
+      '<textarea id="o2mObsArg" class="form-control" rows="2" maxlength="1000" ' +
+      'placeholder="Por qué esta OT se hace con este documento. Ej: el cliente pidió instalar tres meses después de la compra por obras en su gimnasio…" ' +
+      'oninput="OT2C.setFinObsArgumento(this.value)">' + esc(S.fin_obs_argumento || '') + '</textarea>' +
+      '<div id="o2mObsCnt" class="o2m-obs-cnt">' + _o2mFinObsCntHtml() + '</div>' +
+      '<div class="o2m-obs-pie"><i class="bi bi-info-circle"></i>' + (sa
+        ? 'Eres superadministrador: al crear la OT la autorizas tú y queda registrada con tu nombre y tu argumento.'
+        : 'Al crear, se le pide a Daniel. La OT nace cuando él la apruebe, con este argumento y esta clasificación.') + '</div>' +
+      '</div>';
+  }
+  function setFinObsArgumento(v){
+    S.fin_obs_argumento = v;
+    var cnt = document.getElementById('o2mObsCnt'); if (cnt) cnt.innerHTML = _o2mFinObsCntHtml();
+    _pintarFinGuiaDom(); _o2mFinEstadosDom(); refrescarAnclas();
+  }
+  /* El servidor encontró una observación que el asistente no tenía a la vista (Random respondió distinto): se pide el
+     argumento en ese momento y sale la solicitud a Daniel. Nunca un callejón sin salida. */
+  function _o2mFinObsErrorCrear(j, body, esSA, sig, origSig){
+    var txt = (j.observaciones || []).map(function(d){
+      return (d.observaciones || []).map(function(o){ return o.texto; }).join(' ');
+    }).join(' ');
+    var seguir = function(arg){
+      S.fin_obs_argumento = arg;
+      return pedirAutorizacionCrear(body, esSA, sig, origSig, {tipo: 'documento_observado', argumento: arg});
+    };
+    var previo = (S.fin_obs_argumento || '').trim();
+    if (previo.length >= 30) return seguir(previo);
+    if (typeof window.ilusPrompt !== 'function'){
+      var e = document.getElementById('o2mErr');
+      if (e) e.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>' + esc(j.error || txt) + '</div>';
+      return;
+    }
+    window.ilusPrompt({title: 'Autorización de Daniel', message: txt || 'Este documento necesita la autorización de Daniel.',
+      placeholder: 'Argumento para Daniel (mínimo 30 caracteres)…', multiline: true, required: true,
+      okLabel: esSA ? 'Autorizar y crear' : 'Pedir autorización', cancelLabel: 'Volver'}).then(function(v){
+      v = (v || '').trim();
+      if (!v) return;
+      if (v.length < 30){
+        if (window.ilusToast) ilusToast('El argumento necesita al menos 30 caracteres: es lo que Daniel va a leer.', {type: 'warning'});
+        return;
+      }
+      seguir(v);
+    });
+  }
+  /* ── 🧭 CAMINO AL MARGEN (2026-10-12) ──────────────────────────────────────────────────────────────────────────
+     Daniel: «ese paso a paso que me indica lo que debo ir haciendo para llegar al camino del margen, identificando
+     saldo y costos». Cinco pasos en el orden en que se resuelven, con semáforo: documento → saldo de la factura →
+     antigüedad y productos → cobro y costo → margen. Solo informa: los candados son los de siempre. */
+  function _o2mFinGuiaPasos(){
+    var docs = _o2mFinDocsTodos(), s = S.fin_saldo, pasos = [];
+    var hayDoc = docs.length > 0;
+    pasos.push(hayDoc
+      ? {t: 'Documento', e: 'ok', d: docs.slice(0, 2).map(function(x){ return x.tido + ' ' + String(x.nudo).replace(/^0+/, ''); }).join(', ') + (docs.length > 2 ? ' +' + (docs.length - 2) : '')}
+      : {t: 'Documento', e: 'falta', d: 'Asocia la factura, boleta o nota de venta'});
+    if (!hayDoc) pasos.push({t: 'Saldo de la factura', e: 'espera', d: 'Aparece al asociar el documento'});
+    else if (!s) pasos.push({t: 'Saldo de la factura', e: 'espera', d: 'Leyendo Random…'});
+    else if (!_o2mFinFacturaActiva()) pasos.push({t: 'Saldo de la factura', e: 'aviso', d: 'No trae instalación, mantención ni despacho'});
+    else {
+      var sal = _o2mFinSaldoFacturas(), ex = _o2mFinSaldoExcesos();
+      if (ex.length) pasos.push({t: 'Saldo de la factura', e: 'aut', d: 'Cobras más que el saldo: autorización'});
+      else if (_o2mFinFacturaExcedida()) pasos.push({t: 'Saldo de la factura', e: 'falta', d: 'Una factura pasa su saldo: mueve el monto'});
+      else if (sal != null && sal <= 0) pasos.push({t: 'Saldo de la factura', e: 'aut', d: 'Sin saldo: ya lo usó otra OT'});
+      else pasos.push({t: 'Saldo de la factura', e: 'ok', d: 'Quedan ' + _o2mPesos(sal || 0)});
+    }
+    var obs = _o2mFinObservados();
+    if (!hayDoc || !s) pasos.push({t: 'Antigüedad y productos', e: 'espera', d: 'Se revisan en Random'});
+    else if (obs.length){
+      var cods = {};
+      obs.forEach(function(d){ d.doc.observaciones.forEach(function(o){ cods[o.codigo] = 1; }); });
+      var q = [cods.antiguo ? 'más de 3 meses' : '', cods.productos_sin_saldo ? 'productos sin saldo' : ''].filter(Boolean).join(' · ');
+      pasos.push(_o2mFinObsFalta() ? {t: 'Antigüedad y productos', e: 'aut', d: q + ': falta el argumento'}
+                                   : {t: 'Antigüedad y productos', e: 'arg', d: q + ': con argumento para Daniel'});
+    } else pasos.push({t: 'Antigüedad y productos', e: 'ok', d: 'Menos de 3 meses · productos con saldo'});
+    var cobro = S.fin_zz_monto, costoTxt = String(S.fin_costo_proveedor == null ? '' : S.fin_costo_proveedor).trim();
+    var pagas = (parseInt(_o2mLimpiarNumero(costoTxt), 10) || 0) + (parseInt(_o2mLimpiarNumero(S.fin_costo_despacho), 10) || 0);
+    if (cobro == null || cobro <= 0) pasos.push({t: 'Cobro y costo', e: 'falta', d: 'Falta lo que le cobras'});
+    else if (costoTxt === '') pasos.push({t: 'Cobro y costo', e: 'falta', d: 'Falta lo que le pagas al proveedor'});
+    else pasos.push({t: 'Cobro y costo', e: 'ok', d: 'Cobras ' + _o2mPesos(_o2mFinCobroTotal()) + ' · pagas ' + _o2mPesos(pagas)});
+    var r = null;
+    try { r = (typeof window.ilusOtFinanzas === 'function') ? _o2mFinVistaPrevia() : null; } catch(_e){ r = null; }
+    if (r && r.queda && r.queda.mostrar && pasos[3].e === 'ok'){
+      var qt = r.queda.total, qp = r.queda.pct;
+      pasos.push({t: 'Margen', e: qt < 0 ? 'aut' : (qp != null && qp < 15 ? 'aviso' : 'ok'),
+                  d: (qt < 0 ? '−' : '') + _o2mPesos(Math.abs(qt)) + (qp != null ? ' · ' + qp.toFixed(1).replace('.', ',') + ' %' : '')});
+    } else pasos.push({t: 'Margen', e: 'espera', d: 'Aparece con el cobro y el costo'});
+    return pasos;
+  }
+  function _pintarFinGuiaDom(){
+    var c = document.getElementById('o2mFinGuia'); if (!c) return;
+    if (esInterno() || S.fin_garantia || S.fin_aut || !S.fin_centro){ c.innerHTML = ''; return; }
+    var ICO = {ok: 'bi-check-lg', falta: 'bi-dot', espera: 'bi-hourglass-split', aviso: 'bi-exclamation', aut: 'bi-shield-lock-fill', arg: 'bi-shield-check'};
+    var EST = {ok: 'Listo', falta: 'Pendiente', espera: 'En espera', aviso: 'Revisa', aut: 'Autorización de Daniel', arg: 'Con argumento'};
+    var pasos = _o2mFinGuiaPasos();
+    var listos = pasos.filter(function(x){ return x.e === 'ok' || x.e === 'arg'; }).length;
+    c.innerHTML = '<div class="o2m-guia">' +
+      '<div class="o2m-guia-h"><b>Camino al margen</b><span>' + listos + ' de ' + pasos.length + ' listos</span></div>' +
+      '<ol aria-label="Camino al margen">' + pasos.map(function(x, i){
+        return '<li class="' + x.e + '"><span class="n" aria-hidden="true">' +
+          (x.e === 'ok' ? '<i class="bi bi-check-lg"></i>' : (x.e === 'falta' || x.e === 'espera' ? (i + 1) : '<i class="bi ' + ICO[x.e] + '"></i>')) +
+          '</span><span class="tx"><b>' + esc(x.t) + '</b><small>' + esc(x.d) + '</small><em class="sr">' + EST[x.e] + '</em></span></li>';
+      }).join('') + '</ol></div>';
   }
   function _o2mFinFacturaErrTxt(exceso){
     // Si el total cabe en el saldo de las facturas, no hay nada que autorizar: hay que mover el monto a otra factura.
@@ -8490,6 +8697,7 @@ window.OT2C = (function(){
     c.innerHTML = html;
     _pintarFinSaldoTxtDom();
     _o2mFinEstadosDom();
+    _pintarFinGuiaDom();
   }
   // Secuencia (no un simple booleano): si el usuario sale y vuelve a
   // "Equipos" y cambia algo mientras la consulta anterior seguía viajando,
@@ -9850,7 +10058,17 @@ window.OT2C = (function(){
       body: JSON.stringify(cuerpo) })
       .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
       .then(function(res){
-        if (!res.j.ok){ return falla(res.j.error || 'No se pudo pedir la autorización.'); }
+        if (!res.j.ok){
+          // 🗓️ 2026-10-12: Random ya no observa el documento (el servidor lo revisó de nuevo): se crea normal, sin trabar.
+          if (opts.tipo === 'documento_observado' && res.j.error_codigo === 'NO_APLICA'){
+            _o2mFinObservados().forEach(function(d){ d.doc.observaciones = []; });
+            sig.disabled = false; sig.innerHTML = origSig;
+            _pintarFinObsDom(); _pintarFinGuiaDom();
+            if (window.ilusToast) ilusToast('Random ya no observa el documento: la OT se crea normalmente.', {type:'info'});
+            return crear();
+          }
+          return falla(res.j.error || 'No se pudo pedir la autorización.');
+        }
         if (!esSA){
           if (window.ilusToast) ilusToast('Se pidió autorización a Daniel. La OT se crea cuando la apruebe.', {type:'success', duration:7000});
           sig.disabled = false; sig.innerHTML = origSig;
@@ -10046,9 +10264,18 @@ window.OT2C = (function(){
     // la autorización de Daniel y la OT nace cuando él la aprueba (por este mismo asistente, con lo que pusiste acá).
     var _esSA = !!window.OT2C_ES_SUPERADMIN;
     // 🧮 2026-10-08: «Pedir autorización a Daniel» por cobrar más que el saldo de la línea (tipo exceder_saldo).
+    var _obsDocs = _o2mFinObservados();
     if (S._saldoAut && !esInterno()){
       var _sa = S._saldoAut; S._saldoAut = null;
-      return pedirAutorizacionCrear(body, _esSA, sig, _origSig, {tipo: 'exceder_saldo', argumento: _sa.argumento});
+      // 🗓️ 2026-10-12: si además el documento está observado, la MISMA solicitud lo lleva (el servidor le agrega las
+      // observaciones y la aprobación de Daniel las cubre: una sola autorización por OT).
+      var _argSa = _sa.argumento + (_obsDocs.length && (S.fin_obs_argumento || '').trim()
+        ? ' · Sobre el documento: ' + S.fin_obs_argumento.trim() : '');
+      return pedirAutorizacionCrear(body, _esSA, sig, _origSig, {tipo: 'exceder_saldo', argumento: _argSa});
+    }
+    // 🗓️ 2026-10-12: documento de más de 3 meses o con productos sin saldo en Random → autorización de Daniel.
+    if (!esInterno() && !S.fin_garantia && !S.fin_aut && _obsDocs.length){
+      return pedirAutorizacionCrear(body, _esSA, sig, _origSig, {tipo: 'documento_observado', argumento: (S.fin_obs_argumento || '').trim()});
     }
     if (!esInterno() && (S.fin_aut || (S.fin_garantia && !_esSA))){
       return pedirAutorizacionCrear(body, _esSA, sig, _origSig);
@@ -10068,6 +10295,7 @@ window.OT2C = (function(){
           // markup) desde que se quitó el paso "Revisar" -- siempre visible,
           // ya no hace falta navegar a ningún ancla para mostrarlo.
           if (res.j.codigo === 'ZZ_SALDO_CONSUMIDO'){ _o2mFinSaldoErrorCrear(res.j); return; }
+          if (res.j.codigo === 'DOC_OBSERVADO'){ _o2mFinCargarSaldo(); _o2mFinObsErrorCrear(res.j, body, _esSA, sig, _origSig); return; }
           if (e) e.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
             esc(res.j.error || 'No se pudo crear la orden.')+'</div>';
           return;
@@ -10452,6 +10680,7 @@ window.OT2C = (function(){
           comboAbrir:comboAbrir, comboFiltrar:comboFiltrar, comboElegir:comboElegir,
           abrirAgregarDocExtra:abrirAgregarDocExtra, quitarDocExtra:quitarDocExtra, setAnexoCampo:setAnexoCampo,
           setFinToma:setFinToma,
+          setFinObsArgumento:setFinObsArgumento,
           _o2mAnexoPintarRutEstado:_o2mAnexoPintarRutEstado, anexoVerPdfPreview:anexoVerPdfPreview,
           setCpCampo:setCpCampo, elegirContacto:elegirContacto, setCpDireccionTexto:setCpDireccionTexto,
           _o2mFormatearRutSiValido:_o2mFormatearRutSiValido,

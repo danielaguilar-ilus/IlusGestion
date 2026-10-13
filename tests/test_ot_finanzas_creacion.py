@@ -688,7 +688,7 @@ class TestVistaPreviaAsistente(unittest.TestCase):
                      'function _o2mFinEnvioEsManual(){ if (!S.fin_zz_envio || S.fin_zz_envio.monto == null) return false;' +
                      '  return S.fin_zz_envio_original == null || S.fin_zz_envio.monto !== S.fin_zz_envio_original; }' +
                      'function _o2mFinEstadosDom(){}' +
-                     'function _o2mFinSaldoFacturas(){ return null; } function _pintarFinSaldoTxtDom(){}' +
+                     'function _o2mFinSaldoFacturas(){ return null; } function _pintarFinSaldoTxtDom(){} function _pintarFinGuiaDom(){}' +
                      'function _o2mFinAjusteGrande(){ return true; }' + BLOQUE +
                      '_pintarFinMargenDom(); var r = _o2mFinVistaPrevia();' +
                      'return [r.clase, r.cobre.total, r.queda.total, r.valorizado.monto, nodos.o2mFinMargen.innerHTML,' +

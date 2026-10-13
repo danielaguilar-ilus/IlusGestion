@@ -33,8 +33,11 @@
   var ICONOS = { pendiente: 'bi-hourglass-split', aprobada: 'bi-check-lg', rechazada: 'bi-x-lg', anulada: 'bi-slash-circle' };
   var ENTIDAD = { ot: 'Orden de trabajo', ticket: 'Ticket', cotizacion: 'Cotización' };
 
-  /* Una solicitud que CREA la OT al aprobarse: 'crear_sin_documento' y 'exceder_saldo' cuando todavía no hay OT (2026-10-08). */
-  function creaOt(a) { return a.tipo === 'crear_sin_documento' || (a.tipo === 'exceder_saldo' && !a.visita_id); }
+  /* Una solicitud que CREA la OT al aprobarse: 'crear_sin_documento', 'documento_observado' (2026-10-12) y 'exceder_saldo'
+     cuando todavía no hay OT (2026-10-08). */
+  function creaOt(a) {
+    return a.tipo === 'crear_sin_documento' || a.tipo === 'documento_observado' || (a.tipo === 'exceder_saldo' && !a.visita_id);
+  }
   function tarjeta(a, completa) {
     var titulo = a.tipo_txt + (a.motivo_txt ? ' · ' + a.motivo_txt : '');
     var destino = a.visita_id
@@ -54,6 +57,14 @@
       var sp = a.payload.saldo_pedido;
       h += '<div class="pp-arg"><small>Quiere cobrar por encima del saldo</small>' +
         [sp.servicio ? 'Servicio ' + clp(sp.servicio) : '', sp.despacho ? 'Despacho ' + clp(sp.despacho) : ''].filter(Boolean).join(' · ') + '</div>';
+    }
+    /* 🗓️ 2026-10-12: documento observado (más de 3 meses o productos sin saldo en Random). Lo calculó el servidor al
+       pedirla: es exactamente lo que se autoriza (si aparece otra observación, hay que volver a pedir). */
+    if (a.payload && a.payload._observaciones_doc && a.payload._observaciones_doc.length) {
+      h += '<div class="pp-arg pp-perdida"><small>Documento observado: lo que autorizas</small>' +
+        a.payload._observaciones_doc.map(function (d) {
+          return (d.observaciones || []).map(function (o) { return esc(o.texto); }).join('<br>');
+        }).join('<br>') + '</div>';
     }
     /* 📒 2026-10-11: cerrar con pérdida: la cuenta de la OT al pedirla (se autoriza hasta esa pérdida). */
     if (a.tipo === 'cerrar_con_perdida' && a.payload && a.payload.perdida) {
@@ -90,8 +101,15 @@
   function queSeCreara(a) {
     var p = a.payload; if (!p || typeof p !== 'object') return '';
     var f = p.finanzas || {};
+    /* 2026-10-12: el tipo con su nombre legible y la fecha en día/mes/año (REGLA #6: nunca ISO crudo). */
+    var TIPOS = { levantamiento: 'Levantamiento', instalacion: 'Instalación', preventiva: 'Mantención preventiva',
+      correctiva: 'Mantención correctiva', visita_tecnica: 'Visita técnica', inspeccion: 'Inspección', garantia: 'Garantía',
+      cambio_equipo: 'Cambio de equipo', desinstalacion: 'Desinstalación', capacitacion: 'Capacitación' };
+    var fecha = String(p.fecha_programada || '');
+    var m = fecha.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) fecha = m[3] + '/' + m[2] + '/' + m[1];
     var filas = [
-      ['Tipo de trabajo', p.tipo_ot], ['Título', p.titulo], ['Fecha programada', p.fecha_programada],
+      ['Tipo de trabajo', TIPOS[p.tipo_ot] || p.tipo_ot], ['Título', p.titulo], ['Fecha programada', fecha],
       ['Equipos', (p.equipos || []).length ? (p.equipos || []).length + ' equipo(s)' : ''],
       ['Técnicos', (p.tecnico_user_ids || []).length ? (p.tecnico_user_ids || []).length + ' técnico(s)' : ''],
       ['Se le cobra', f.zz_monto != null ? clp(f.zz_monto) : (a.motivo ? '$0 (' + (a.motivo_txt || a.motivo) + ')' : '')],

@@ -514,6 +514,7 @@ Object.keys(CASOS).forEach(function(k){
     function _o2mFinEnvioEsManual(){ return false; }
     function _o2mFinFacturaActiva(){ return false; } function _o2mFinFacturaExcedida(){ return false; }
     function _o2mFinSaldoExcesos(){ return []; } function _o2mFinAjusteGrande(){ return true; }
+        function _o2mFinObsFalta(){ return false; }   // 🗓️ 2026-10-12: documento observado (se prueba aparte)
     ` + GATE + `
     return gate();`);
   out[k] = f(CASOS[k][0], INTERNA.indexOf(k) >= 0);

@@ -1582,6 +1582,15 @@
 .otd-sinsaldo.vigente > .bi{color:#dc2626}
 .otd-sinsaldo.resuelta{background:#f3f4f6;border:1px solid #e5e7eb;color:#374151}
 .otd-sinsaldo.resuelta > .bi{color:#6b7280}
+/* 🏷️ 2026-10-12: cómo nació la OT (solo superadmin), mismo formato que el aviso de factura sin saldo. */
+.otd-clasif{display:flex;gap:10px;align-items:flex-start;border-radius:12px;padding:10px 14px;margin:0 0 12px;font-size:.86rem;border:1px solid transparent}
+.otd-clasif > .bi{font-size:1.1rem;flex-shrink:0;margin-top:1px}
+.otd-clasif.verde{background:#f0fdf4;border-color:#bbf7d0;color:#14532d}
+.otd-clasif.ambar{background:#fff8e1;border-color:#fde68a;color:#78350f}
+.otd-clasif.rojo{background:#fef2f2;border-color:#fecaca;color:#7f1d1d}
+.otd-clasif.azul{background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a}
+.otd-clasif.gris{background:#f3f4f6;border-color:#e5e7eb;color:#374151}
+.otd-clasif a{color:inherit;font-weight:800;text-decoration:underline}
 .otd-tabs{display:flex;gap:4px;margin-bottom:14px;padding:5px;
   background:#f3f4f6;border:1px solid var(--line);border-radius:12px;
   overflow-x:auto}
@@ -3552,6 +3561,23 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       {% for x in fac_alerta.vigentes + fac_alerta.resueltas %}
       <span>{{ x.texto }} Detectado el {{ x.detectada_el }}{% if x.detectada_por %} ({{ x.detectada_por }}){% endif %}{% if x.resuelta_el %} · corregido el {{ x.resuelta_el }}{% endif %}{% if x.veces > 1 %} · ocurrió {{ x.veces }} veces{% endif %}.</span>
       {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+  {#- 🏷️ 2026-10-12 (Daniel: «la OT quede guardada con ese antecedente y esa clasificación»): cómo nació la OT, con el
+      argumento y quién lo autorizó. Solo superadmin (el servidor no la entrega a nadie más; nunca a un técnico). -#}
+  {% if fin_clasif and fin_clasif.texto and not es_tecnico %}
+  <div class="otd-clasif {{ fin_clasif.nivel or 'gris' }}" role="note">
+    <i class="bi bi-tag-fill"></i>
+    <div class="otd-sinsaldo-tx">
+      <b>Cómo nació esta OT: {{ fin_clasif.texto }}</b>
+      {% if fin_clasif.otros %}<span>También: {{ fin_clasif.otros | join('; ') }}.</span>{% endif %}
+      {% for d in (fin_clasif.observaciones or []) %}{% for o in (d.observaciones or []) %}<span>{{ o.texto }}</span>{% endfor %}{% endfor %}
+      {% if fin_clasif.argumento and not fin_clasif.derivada %}<span><b>Argumento:</b> {{ fin_clasif.argumento }}</span>{% endif %}
+      {% if fin_clasif.motivo_manual and fin_clasif.motivo_manual != fin_clasif.argumento %}<span><b>Motivo del cobro a mano:</b> {{ fin_clasif.motivo_manual }}</span>{% endif %}
+      {% if fin_clasif.autorizado_por %}<span>Autorizó {{ fin_clasif.autorizado_por }}{% if fin_clasif.autorizado_at %} el {{ fin_clasif.autorizado_at }}{% endif %}{% if fin_clasif.pedido_por %} · la pidió {{ fin_clasif.pedido_por }}{% endif %}{% if fin_clasif.autorizacion_id %} · <a href="/ot/autorizaciones/{{ fin_clasif.autorizacion_id }}">solicitud N° {{ fin_clasif.autorizacion_id }}</a>{% endif %}</span>{% endif %}
+      {% if fin_clasif.derivada %}<span>Calculada con lo que la OT ya tiene: se creó antes del 12-10-2026, cuando todavía no se guardaba.</span>
+      {% elif fin_clasif.registrado_at %}<span>Registrada al crear la OT, el {{ fin_clasif.registrado_at }}{% if fin_clasif.registrado_por %} ({{ fin_clasif.registrado_por }}){% endif %}.</span>{% endif %}
     </div>
   </div>
   {% endif %}

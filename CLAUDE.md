@@ -973,6 +973,19 @@ de la sesión, nunca del navegador):
 
 ---
 
+## 🧾 REGLA #30 — Crear una OT: la factura de la OT, el documento observado y la clasificación (no negociable)
+
+**Pedido explícito de Daniel (2026-10-12):** «cuánto cobré, cuánto me va a cobrar el proveedor y cuánto es mi margen… cambiar el saldo a mano mientras el saldo lo permita», «si tiene más de tres meses de antigüedad… deberá pedir autorización y declarar un argumento persistente para que la OT quede guardada con ese antecedente y esa clasificación», «si tiene productos, deberían tener saldo» y «debemos guardar las clasificaciones, cómo se están trabajando las OT».
+
+- **Factura de la OT (paso Costos del asistente):** una fila por factura con su saldo; cada fila arranca en su saldo y se puede bajar. **El cobro es siempre la suma de las filas.** Una fila sobre su saldo: si el total cabe, se mueve a otra factura; si no, autorización `exceder_saldo`. El reparto viaja como `finanzas.docs_tomas` y el servidor lo valida contra el saldo de cada factura (`ot_saldo_servicio.validar_tomas`, `ZZ_TOMA_SUPERA_FACTURA`). **Regla del 10 %:** un cobro editado a mano que mueve el margen más de 10 puntos respecto del saldo de las facturas pide argumento (`ajuste_margen`, `FINANZAS_AJUSTE_SIN_ARGUMENTO`). La tabla grande de líneas y qué OT usa cada factura: solo superadmin.
+- **Documento observado:** al crear desde «Nueva OT» (`revisar_documento=True`, SOLO ese núcleo: las OT históricas, retroactivas y el plan anual no), cada documento de Random se revisa en solo lectura (`_ot_doc_observar`): **emitido hace más de 3 meses** (hora Chile) o **todos sus productos sin saldo en Random** (ya despachados o anulados). Si pasa, no se crea sin la autorización `documento_observado` (argumento ≥ 30 caracteres; la aprueba Daniel a distancia o la declara el superadmin que crea). La solicitud guarda las observaciones **calculadas en el servidor** (`_observaciones_doc`) y la aprobación cubre exactamente esas (`_ot_doc_obs_autorizada`); si aparece otra, se vuelve a pedir. Una nota de venta cuya factura va en la misma OT no se observa. Si además se cobra sobre el saldo, la misma solicitud `exceder_saldo` lleva las observaciones (una autorización por OT). Interruptor (solo con permiso de Daniel): `OT_DOC_OBSERVADO=0`.
+- **Clasificación persistente:** al crear, la OT guarda cómo nació (`mant_visitas.fin_clasif` + `fin_clasif_json`, `_ot_fin_clasif_guardar`): factura con saldo, nota de venta/cotización/guía (falta factura), $0 (garantía, regalía, arriendo/leasing), sin documento autorizada, documento observado autorizado, cobro sobre el saldo autorizado, ajuste a mano con argumento, interna. Con el argumento, quién autorizó y cuándo (hora Chile). En la bitácora general queda solo la constancia de la autorización (`documento_observado_autorizado`), no la clasificación. Las OT anteriores se calculan con lo que ya tienen y lo dicen («calculada»): nunca se inventa un antecedente.
+- **Quién la ve:** solo el superadministrador, en la ficha, la tabla de OT, el Excel de OT (columna + hoja «Clasificación») y Facturación de proveedor. Nunca un técnico (REGLA #26: el dato se quita en el servidor).
+- **Camino al margen:** el paso Costos muestra 5 pasos con semáforo (documento → saldo de la factura → antigüedad y productos → cobro y costo → margen). Solo informa: los candados son los del servidor.
+- Pruebas: `tests/test_ot_documento_observado.py`, `tests/test_ot_costos_asistente.py`.
+
+---
+
 ## 🎨 REGLA #27 — Las skills de diseño externas (Impeccable, UI/UX Pro Max, SkillUI, Playwright) se SOMETEN a las reglas del proyecto
 
 **Pedido explícito de Daniel (2026-10-09): «la UI/UX debe someterse a las reglas del proyecto».**
@@ -988,5 +1001,5 @@ Cualquier skill, plugin o herramienta externa de diseño que se instale propone,
 
 ---
 
-_Última actualización: 2026-10-09_
+_Última actualización: 2026-10-12_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

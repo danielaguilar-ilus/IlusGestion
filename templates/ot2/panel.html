@@ -157,6 +157,17 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
 .ot2-sinsaldo.vigente{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
 .ot2-sinsaldo.vigente i{color:#dc2626}
 .ot2-sinsaldo.resuelta{background:#f3f4f6;color:#4b5563;border:1px solid #e5e7eb}
+/* 🏷️ 2026-10-12: cómo nació la OT (solo superadmin). Semáforo: verde factura con saldo · ámbar nota de venta o ajuste
+   a mano · rojo autorizada por Daniel (sin documento, documento observado, sobre el saldo) · azul $0 · gris interna. */
+.ot2-clasif{display:inline-flex;align-items:center;gap:5px;margin-top:6px;margin-right:4px;font-size:max(.7rem,11px);font-weight:700;
+  border-radius:8px;padding:2px 8px;line-height:1.35;max-width:100%;border:1px solid transparent}
+.ot2-clasif i{font-size:.72rem}
+.ot2-clasif.verde{background:#f0fdf4;color:#166534;border-color:#bbf7d0}
+.ot2-clasif.ambar{background:#fff8e1;color:#92400e;border-color:#fde68a}
+.ot2-clasif.rojo{background:#fee2e2;color:#991b1b;border-color:#fecaca}
+.ot2-clasif.azul{background:#dbeafe;color:#1e40af;border-color:#bfdbfe}
+.ot2-clasif.gris{background:#f3f4f6;color:#4b5563;border-color:#e5e7eb}
+.ot2-clasif .calc{font-weight:600;opacity:.75}
 .ot2-meta span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 .ot2-meta i{color:#9ca3af;font-size:.72rem}
 .ot2-meta .doc{color:#1d4ed8}
@@ -1003,6 +1014,15 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                     <i class="bi bi-{{ 'exclamation-octagon-fill' if _fa.estado == 'vigente' else 'clock-history' }}"></i>
                     {% if _fa.estado == 'vigente' %}<b>{{ 'Saldo insuficiente' if (_fa_l and _fa_l[0].tipo == 'saldo_insuficiente') else 'Factura sin saldo' }}</b> · {{ _fa.docs | join(', ') }}
                     {% else %}<b>Tuvo factura sin saldo</b> · {{ _fa.docs | join(', ') }} · resuelto {{ (_fa_l[-1].resuelta_el if _fa_l else '') }}{% endif %}
+                  </div>
+                  {% endif %}
+                  {#- 🏷️ 2026-10-12 (Daniel: «debemos guardar las clasificaciones, cómo se están trabajando las OT»):
+                      cómo nació la OT. El servidor solo la entrega al superadministrador (nunca a un técnico). -#}
+                  {% if f.fin_clasif and f.fin_clasif.texto %}
+                  {% set _fc = f.fin_clasif %}
+                  <div class="ot2-clasif {{ _fc.nivel or 'gris' }}" role="note"
+                       title="Cómo nació la OT: {{ _fc.texto }}{% if _fc.otros %} · también: {{ _fc.otros | join('; ') }}{% endif %}{% if _fc.argumento and not _fc.derivada %} · argumento: {{ _fc.argumento }}{% endif %}{% if _fc.autorizado_por %} · autorizó {{ _fc.autorizado_por }}{% endif %}{% if _fc.derivada %} · calculada (OT anterior al 12-10-2026){% endif %}">
+                    <i class="bi bi-tag-fill"></i>{{ _fc.texto }}{% if _fc.otros %} <span class="calc">+{{ _fc.otros | length }}</span>{% endif %}
                   </div>
                   {% endif %}
                 </div>

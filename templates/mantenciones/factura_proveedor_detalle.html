@@ -518,6 +518,12 @@
               {% for x in it.fac_alerta.vigentes %}<div class="fpd-eq-marca vigente"><i class="bi bi-flag-fill"></i> Marcada «factura sin saldo» el {{ x.detectada_el }}{% if x.detectada_por %} ({{ x.detectada_por }}){% endif %}{% if x.veces > 1 %} · {{ x.veces }} veces{% endif %}</div>{% endfor %}
               {% for x in it.fac_alerta.resueltas %}<div class="fpd-eq-marca"><i class="bi bi-clock-history"></i> Tuvo factura sin saldo ({{ x.titulo }}): detectada el {{ x.detectada_el }}, corregida el {{ x.resuelta_el }}</div>{% endfor %}
               {% endif %}
+              {#- 🏷️ 2026-10-12: cómo nació la OT (clasificación persistente). El servidor solo la entrega al superadmin. -#}
+              {% if it.fin_clasif and it.fin_clasif.texto %}
+              <div class="fpd-eq-marca fpd-clasif-{{ it.fin_clasif.nivel or 'gris' }}"><i class="bi bi-tag-fill"></i> Cómo nació la OT: <b>{{ it.fin_clasif.texto }}</b>
+                {%- if it.fin_clasif.autorizado_por %} · autorizó {{ it.fin_clasif.autorizado_por }}{% endif %}
+                {%- if it.fin_clasif.derivada %} · calculada (OT anterior al 12-10-2026){% endif %}</div>
+              {% endif %}
             </div>
             {% endif %}
           </div></td>
@@ -1556,6 +1562,8 @@ async function fpdCopiarSolicitud(){
 .fpd-eq-pend{font-size:.72rem;font-weight:800;color:#92400e;text-decoration:none}
 .fpd-eq-marca{flex:1 1 100%;font-size:.74rem;font-weight:700;color:#4b5563;display:flex;gap:5px;align-items:center}
 .fpd-eq-marca.vigente{color:#991b1b}
+.fpd-eq-marca.fpd-clasif-rojo{color:#991b1b}.fpd-eq-marca.fpd-clasif-ambar{color:#92400e}
+.fpd-eq-marca.fpd-clasif-verde{color:#166534}.fpd-eq-marca.fpd-clasif-azul{color:#1e40af}
 .fpd-eq-msg{flex:1 1 100%;font-size:.74rem;color:#7f1d1d;line-height:1.4}
 .fpd-eq-ok .fpd-eq-sem{background:var(--green-50);color:#166534}
 .fpd-eq-exento .fpd-eq-sem{background:var(--blue-50);color:#1e40af}

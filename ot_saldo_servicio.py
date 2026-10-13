@@ -686,3 +686,167 @@ def aviso_documento(clave, titulo, servicio, despacho, usos, familia, leido=True
         avisos.append({"nivel": "ambar" if via_nv else "info", "texto": txt})
     alerta = sem["nivel"] == "rojo" or (es_nv and bool(cobros))
     return {"semaforo": sem, "avisos": avisos, "alerta": alerta}
+
+
+# ── 🗓️ 2026-10-12 DOCUMENTO OBSERVADO (Daniel: «si tiene más de tres meses de antigüedad… deberá pedir autorización y
+# declarar un argumento persistente para que la OT quede guardada con ese antecedente y esa clasificación»; «si tiene
+# productos, deberían tener saldo») ─────────────────────────────────────────────────────────────────────────────────
+MESES_ANTIGUEDAD = 3
+OBSERVACION_TXT = {
+    "antiguo": "Documento de más de 3 meses",
+    "productos_sin_saldo": "Productos sin saldo en Random",
+}
+
+
+def fecha_doc(x):
+    """La fecha de emisión de un documento como date. Acepta date/datetime, 'dd/mm/aaaa', 'aaaa-mm-dd' y el ISO con
+    hora. Lo que no se entiende → None (nunca inventa una fecha)."""
+    import datetime as _dt
+    if x is None:
+        return None
+    if isinstance(x, _dt.datetime):
+        return x.date()
+    if isinstance(x, _dt.date):
+        return x
+    t = str(x).strip()
+    if not t:
+        return None
+    for fmt, largo in (("%d/%m/%Y", 10), ("%Y-%m-%d", 10), ("%d-%m-%Y", 10)):
+        try:
+            return _dt.datetime.strptime(t[:largo], fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def restar_meses(d, meses):
+    """La misma fecha `meses` meses antes (el 31 pasa al último día del mes si no existe)."""
+    import calendar
+    import datetime as _dt
+    m = d.month - meses
+    a = d.year
+    while m <= 0:
+        m += 12
+        a -= 1
+    return _dt.date(a, m, min(d.day, calendar.monthrange(a, m)[1]))
+
+
+def productos_con_saldo(lineas):
+    """Los productos del documento (líneas que no son ZZ ni descuento, con cantidad) y cuántos tienen saldo en Random
+    (saldo = contable − despachado − externo − notas de crédito, ya calculado por el lector del ERP)."""
+    total, con, sin = 0, 0, []
+    for ln in (lineas or []):
+        sku = str(ln.get("sku") or "").strip().upper()
+        if not sku or sku.startswith("ZZ") or sku == "DE" or ln.get("es_zz") or ln.get("es_descuento"):
+            continue
+        try:
+            cant = float(ln.get("cantidad") or 0)
+            sal = float(ln.get("saldo") or 0)
+        except (TypeError, ValueError):
+            continue
+        if cant <= 0:
+            continue
+        total += 1
+        if sal > 0:
+            con += 1
+        else:
+            sin.append(sku)
+    return {"total": total, "con_saldo": con, "sin_saldo": sin}
+
+
+def observar_documento(titulo, fecha, hoy, lineas, meses=MESES_ANTIGUEDAD):
+    """Lo que hay que autorizar de un documento al CREAR la OT. Devuelve [{codigo, titulo, texto, ...}]:
+      · 'antiguo': emitido hace más de `meses` meses respecto de hoy (hora Chile, la pasa el llamador).
+      · 'productos_sin_saldo': trae productos y NINGUNO tiene saldo en Random (ya se despacharon o se anularon con
+        nota de crédito): el documento ya se consumió.
+    Sin fecha legible o sin productos, esa regla no observa nada (no se inventa)."""
+    out = []
+    f = fecha_doc(fecha)
+    if f and hoy and f < restar_meses(hoy, meses):
+        dias = (hoy - f).days
+        out.append({"codigo": "antiguo", "titulo": OBSERVACION_TXT["antiguo"], "fecha": f.strftime("%d/%m/%Y"),
+                    "dias": dias,
+                    "texto": "%s es del %s (hace %d días): tiene más de %d meses." % (titulo, f.strftime("%d/%m/%Y"),
+                                                                                      dias, meses)})
+    ps = productos_con_saldo(lineas)
+    if ps["total"] and not ps["con_saldo"]:
+        out.append({"codigo": "productos_sin_saldo", "titulo": OBSERVACION_TXT["productos_sin_saldo"],
+                    "productos": ps["total"],
+                    "texto": "%s trae %s y %s sin saldo en Random: ya se %s." % (
+                        titulo, "1 producto" if ps["total"] == 1 else "%d productos" % ps["total"],
+                        "está" if ps["total"] == 1 else "todos están",
+                        "despachó o anuló" if ps["total"] == 1 else "despacharon o anularon")})
+    return out
+
+
+def texto_observaciones(obs):
+    """Una línea legible con todas las observaciones (para el aviso, la bitácora y la solicitud a Daniel)."""
+    return " ".join(o.get("texto") or "" for o in (obs or []) if o.get("texto")).strip()
+
+
+# ── 🏷️ 2026-10-12 CLASIFICACIÓN de la OT (Daniel: «debemos guardar las clasificaciones, cómo se están trabajando las
+# OT»). Se calcula al crear y se guarda en la OT; solo la ve el superadministrador (ficha, tabla y Excel). ───────────
+CLASIF_TXT = {
+    "interna": "Trabajo interno",
+    "garantia": "$0 · garantía",
+    "regalia": "$0 · regalía",
+    "arriendo_leasing": "$0 · arriendo o leasing",
+    "sin_documento": "Sin documento · autorizada",
+    "documento_antiguo": "Documento de más de 3 meses · autorizada",
+    "productos_sin_saldo": "Productos sin saldo en Random · autorizada",
+    "saldo_excedido": "Cobro sobre el saldo · autorizado",
+    "nota_venta": "Nota de venta · falta factura",
+    "cotizacion": "Cotización · falta factura",
+    "otro_documento": "Guía u otro documento · falta factura",
+    "ajuste_manual": "Cobro ajustado a mano · con argumento",
+    "factura": "Factura con saldo",
+}
+CLASIF_NIVEL = {
+    "interna": "gris", "garantia": "azul", "regalia": "azul", "arriendo_leasing": "azul",
+    "sin_documento": "rojo", "documento_antiguo": "rojo", "productos_sin_saldo": "rojo", "saldo_excedido": "rojo",
+    "nota_venta": "ambar", "cotizacion": "ambar", "otro_documento": "ambar", "ajuste_manual": "ambar", "factura": "verde",
+}
+# El orden manda: la primera que aplica es la clasificación principal (lo más delicado primero).
+CLASIF_ORDEN = ("interna", "garantia", "regalia", "arriendo_leasing", "sin_documento", "documento_antiguo",
+                "productos_sin_saldo", "saldo_excedido", "nota_venta", "cotizacion", "otro_documento", "ajuste_manual",
+                "factura")
+COTIZACIONES = ("COV", "COT")
+
+
+def clasificar_ot(es_interna=False, cero_motivo=None, tidos=(), sin_documento=False, observaciones=(),
+                  saldo_excedido=False, ajuste_manual=False):
+    """{codigo, codigos, texto, nivel}: cómo se está trabajando la OT. `tidos`: tipos de los documentos de Random
+    asociados; `observaciones`: las de observar_documento (autorizadas); `saldo_excedido`: se cobró sobre el saldo
+    con autorización; `ajuste_manual`: el cobro se editó a mano con argumento."""
+    cods = set()
+    if es_interna:
+        cods.add("interna")
+    if cero_motivo in ("garantia", "regalia", "arriendo_leasing"):
+        cods.add(cero_motivo)
+    ts = [str(t or "").strip().upper() for t in (tidos or []) if str(t or "").strip()]
+    if sin_documento and not ts and not cero_motivo and not es_interna:
+        cods.add("sin_documento")
+    for o in (observaciones or []):
+        c = o.get("codigo") if isinstance(o, dict) else o
+        if c == "antiguo":
+            cods.add("documento_antiguo")
+        elif c == "productos_sin_saldo":
+            cods.add("productos_sin_saldo")
+    if saldo_excedido:
+        cods.add("saldo_excedido")
+    if ts and not any(t in DOCS_COBRO for t in ts):
+        if all(t in COTIZACIONES for t in ts):
+            cods.add("cotizacion")
+        elif any(t in NOTAS_VENTA for t in ts):
+            cods.add("nota_venta")
+        else:
+            cods.add("otro_documento")   # guía de despacho (GDV) u otro: tampoco es la factura
+    if ajuste_manual:
+        cods.add("ajuste_manual")
+    if any(t in DOCS_COBRO for t in ts):
+        cods.add("factura")
+    orden = [c for c in CLASIF_ORDEN if c in cods]
+    if not orden:
+        return {"codigo": None, "codigos": [], "texto": "", "otros": [], "nivel": "gris"}
+    return {"codigo": orden[0], "codigos": orden, "texto": CLASIF_TXT[orden[0]],
+            "otros": [CLASIF_TXT[c] for c in orden[1:]], "nivel": CLASIF_NIVEL[orden[0]]}

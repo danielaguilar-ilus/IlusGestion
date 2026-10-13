@@ -87946,6 +87946,7 @@ def _ot2_panel_extras(filas):
     for f in filas:
         f["n_equipos"], f["docs"], f["rep_abiertos"], f["rep_instalar"] = 0, [], 0, 0
         f["fac_alerta"] = None
+        f["fin_clasif"] = None
     ids = [int(f["id"]) for f in filas if f.get("id")]
     if not ids:
         return
@@ -87956,6 +87957,14 @@ def _ot2_panel_extras(filas):
         for vid, a in _fac_alertas_de(ids).items():
             if vid in por_id:
                 por_id[vid]["fac_alerta"] = a
+    # 🏷️ 2026-10-12 (Daniel: «ficha, tabla de OT y Excel, solo superadmin»): cómo nació cada OT.
+    if not _es_rol_tecnico() and _ot_aut_es_superadmin():
+        try:
+            for vid, c in _ot_fin_clasif_lote(ids).items():
+                if vid in por_id:
+                    por_id[vid]["fin_clasif"] = c
+        except Exception as e:
+            print(f"[ot2_panel_extras] clasificación: {type(e).__name__}", flush=True)
     ph = ",".join(["%s"] * len(ids))
     try:
         for r in (mysql_fetchall(
@@ -89325,6 +89334,23 @@ def _ensure_ot_valor_origen_col():
             print("[ensure_ot_valor_origen] +valor_origen", flush=True)
     except Exception as e:
         print(f"[ensure_ot_valor_origen] valor_origen: {e}", flush=True)
+
+
+def _ensure_ot_fin_clasif_cols():
+    """🏷️ 2026-10-12 `mant_visitas.fin_clasif` + `fin_clasif_json` — cómo nació la OT (clasificación persistente con
+    su antecedente: argumento, quién autorizó y cuándo). Ver _ot_fin_clasif_guardar. SIEMPRE, incluso con
+    ILUS_SKIP_MIGRATIONS=1. Una cláusula por sentencia (REGLA #18): ya aplicada, _ddl_ya_aplicado la salta sin lock."""
+    for _col, _ddl in (("fin_clasif", "ALTER TABLE mant_visitas ADD COLUMN fin_clasif VARCHAR(30) NULL"),
+                       ("fin_clasif_json", "ALTER TABLE mant_visitas ADD COLUMN fin_clasif_json MEDIUMTEXT NULL")):
+        try:
+            _r = mysql_fetchone(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas' AND COLUMN_NAME=%s", (_col,))
+            if not _r:
+                mysql_execute(_ddl)
+                print(f"[ensure_ot_fin_clasif] +{_col}", flush=True)
+        except Exception as e:
+            print(f"[ensure_ot_fin_clasif] {_col}: {e}", flush=True)
 
 
 def _ensure_maquina_origen_ot_col():
@@ -91060,9 +91086,16 @@ def ot2_detalle(vid):
         fac_alerta = None if _es_rol_tecnico() else _fac_alertas_de([vid]).get(int(vid))
     except Exception:
         fac_alerta = None
+    # 🏷️ 2026-10-12: cómo nació la OT (solo superadmin; nunca un técnico, REGLA #26).
+    try:
+        fin_clasif = (_ot_fin_clasif_lote([vid]).get(int(vid))
+                      if (not _es_rol_tecnico() and _ot_aut_es_superadmin()) else None)
+    except Exception:
+        fin_clasif = None
     return render_template(
         "ot2/detalle.html",
         fac_alerta=fac_alerta,
+        fin_clasif=fin_clasif,
         puerta_cierre=puerta_cierre,
         v=v, ruta=ruta, equipos=equipos, hitos=hitos, kpis=kpis, firmas=firmas,
         factura_prov=factura_prov, factura_prov_aplica=factura_prov_aplica,
@@ -93936,11 +93969,14 @@ _OT_DOCS_COBRO = ("FCV", "FCE", "BLV", "BLE")
 # hoy se llamaba cortesía/sin costo; "arriendo o leasing" = el servicio va incluido en el arriendo.
 _OT_COBRO_CERO_MOTIVOS = {"garantia": "Garantía", "regalia": "Regalía", "arriendo_leasing": "Arriendo o leasing"}
 _OT_COBRO_CERO_MODALIDAD = {"garantia": "garantia", "regalia": "sin_costo", "arriendo_leasing": "sin_costo"}
-_OT_AUT_TIPOS = ("crear_sin_documento", "cobro_cero", "cerrar_sin_documento", "exceder_saldo", "cerrar_con_perdida")
+_OT_AUT_TIPOS = ("crear_sin_documento", "cobro_cero", "cerrar_sin_documento", "exceder_saldo", "cerrar_con_perdida",
+                 "documento_observado")
 _OT_AUT_TIPO_TXT = {"crear_sin_documento": "Crear OT sin documento", "cobro_cero": "Cobrar $0",
                     "cerrar_sin_documento": "Cerrar OT sin documento",
                     "exceder_saldo": "Cobrar más que el saldo del documento",
-                    "cerrar_con_perdida": "Cerrar OT con pérdida"}
+                    "cerrar_con_perdida": "Cerrar OT con pérdida",
+                    # 🗓️ 2026-10-12: documento de más de 3 meses o con sus productos sin saldo en Random.
+                    "documento_observado": "Crear OT con documento observado"}
 _OT_AUT_ESTADO_TXT = {"pendiente": "Esperando a Daniel", "aprobada": "Autorizada", "rechazada": "Rechazada",
                       "anulada": "Anulada"}
 _OT_AUT_ARGUMENTO_MIN = 30
@@ -94597,7 +94633,7 @@ def _ensure_mant_ot_autorizaciones():
                 id                     INT AUTO_INCREMENT PRIMARY KEY,
                 entidad                ENUM('ot','ticket','cotizacion') NOT NULL DEFAULT 'ot',
                 entidad_id             INT NULL,
-                tipo                   ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento','exceder_saldo','cerrar_con_perdida') NOT NULL,
+                tipo                   ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento','exceder_saldo','cerrar_con_perdida','documento_observado') NOT NULL,
                 visita_id              INT NULL,
                 cliente_id             INT NULL,
                 payload_json           MEDIUMTEXT NULL,
@@ -94623,10 +94659,11 @@ def _ensure_mant_ot_autorizaciones():
         print(f"[ensure_ot_autorizaciones] {e}", flush=True)
     # 🧮 2026-10-08: nuevo tipo «exceder_saldo» (cobrar más que el saldo de la línea del documento, con argumento).
     # 📒 2026-10-11: nuevo tipo «cerrar_con_perdida» (Daniel: «si la factura va a pérdida, eso iría autorizado por mí»).
+    # 🗓️ 2026-10-12: nuevo tipo «documento_observado» (documento de más de 3 meses o productos sin saldo en Random).
     # UNA sola sentencia define la columna (REGLA #18: nunca dos migraciones con valores distintos); cada valor nuevo
     # se agrega AL FINAL y _ddl_ya_aplicado salta la sentencia si ya están todos.
     try:
-        mysql_execute("ALTER TABLE mant_ot_autorizaciones MODIFY tipo ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento','exceder_saldo','cerrar_con_perdida') NOT NULL")
+        mysql_execute("ALTER TABLE mant_ot_autorizaciones MODIFY tipo ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento','exceder_saldo','cerrar_con_perdida','documento_observado') NOT NULL")
     except Exception as e:
         print(f"[ensure_ot_autorizaciones] tipo cerrar_con_perdida: {e}", flush=True)
 
@@ -95041,7 +95078,7 @@ def ot_aut_api_crear():
     visita_id, cliente_id, payload_json = None, None, None
     # 🧮 2026-10-08: «exceder_saldo» sin OT todavía (el asistente de crear) viaja como el 'crear_sin_documento':
     # con el payload completo; con OT (ficha / modal de cierre) lleva visita_id y lo que se quiere cobrar.
-    if tipo == "crear_sin_documento" or (tipo == "exceder_saldo" and not d.get("visita_id")):
+    if tipo in ("crear_sin_documento", "documento_observado") or (tipo == "exceder_saldo" and not d.get("visita_id")):
         payload = d.get("payload")
         if not isinstance(payload, dict) or not payload:
             return jsonify({"ok": False, "error": "Falta lo que se iba a crear (payload del asistente).",
@@ -95057,6 +95094,22 @@ def ot_aut_api_crear():
             centro = (str((payload.get("finanzas") or {}).get("centro_costo") or "").strip().lower()) or None
         payload = dict(payload)
         payload["_autorizacion_argumento"] = argumento
+        # 🗓️ 2026-10-12: lo que Daniel ve antes de aprobar — el documento observado (más de 3 meses o productos sin
+        # saldo en Random), calculado ACÁ en el servidor (nunca lo que mande el navegador). Su aprobación cubre esas
+        # observaciones (ver _ot_doc_obs_autorizada).
+        payload.pop("_observaciones_doc", None)
+        if tipo in ("exceder_saldo", "documento_observado") and _OT_DOC_OBS_ACTIVO:
+            try:
+                _obs_p = _ot_doc_observaciones(_ot_payload_docs(payload))
+            except Exception as _e_ob:
+                print(f"[ot-aut] observaciones: {type(_e_ob).__name__}", flush=True)
+                _obs_p = []
+            if _obs_p:
+                payload["_observaciones_doc"] = _obs_p
+            elif tipo == "documento_observado":
+                return jsonify({"ok": False, "error": "Ese documento no necesita autorización: tiene menos de 3 meses y "
+                                "sus productos tienen saldo en Random. Crea la OT normalmente.",
+                                "error_codigo": "NO_APLICA"}), 400
         if motivo:
             payload.setdefault("finanzas", {})
             if isinstance(payload["finanzas"], dict):
@@ -95276,7 +95329,7 @@ def ot_aut_api_aprobar(aid):
                     comentario=comentario)
     constancia = f"Autorizada por {nombre} el {chile_fmt_filter(ahora)}: {a.get('argumento') or ''}"
 
-    if tipo == "crear_sin_documento" or (tipo == "exceder_saldo" and not a.get("visita_id")):
+    if tipo in ("crear_sin_documento", "documento_observado") or (tipo == "exceder_saldo" and not a.get("visita_id")):
         try:
             payload = json.loads(a.get("payload_json") or "{}")
         except Exception:
@@ -95323,7 +95376,9 @@ def ot_aut_api_aprobar(aid):
             print(f"[ot-aut] asociar OT {vid_nuevo} a {aid}: {type(e).__name__}", flush=True)
         try:
             _mant_log("visita", vid_nuevo, "creada_con_autorizacion",
-                      ("Sin documento de Random" if tipo == "crear_sin_documento" else "Cobro por encima del saldo del documento")
+                      ("Sin documento de Random" if tipo == "crear_sin_documento" else
+                       ("Documento observado (más de 3 meses o productos sin saldo en Random)" if tipo == "documento_observado"
+                        else "Cobro por encima del saldo del documento"))
                       + f" · {constancia} · pedida por {a.get('solicitado_por_nombre') or '?'} "
                       f"(autorización N° {aid})" + (f" · comentario: {comentario}" if comentario else ""))
         except Exception:
@@ -104911,7 +104966,7 @@ def _ot_fin_reparto_creacion(campos, cobertura):
 
 
 def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=None,
-                                     exigir_costo_prov_desp=False, modalidad_forzada=None):
+                                     exigir_costo_prov_desp=False, modalidad_forzada=None, revisar_documento=False):
     """Valida y normaliza el bloque 'finanzas' de una OT nueva -- MISMA
     lógica que ot2_api_crear exige desde 2026-09-09/2026-09-15 (Daniel:
     "los documentos y las finanzas deben ser requisito indispensable...
@@ -105297,6 +105352,7 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
     _fin_docs_validados = []   # 🔏 2026-10-07: lo que el ERP confirmó (lectura), para la puerta
     _fin_docs_aporte = []      # 🧮 2026-10-08: reparto de lo cobrado entre los documentos (ver más abajo)
     _fin_ajuste_evaluado = False   # ⚖️ 2026-10-12: la regla del 10 % corrió (si no, el motivo se exige como antes)
+    _fin_doc_obs, _fin_doc_obs_aut = [], None   # 🗓️ 2026-10-12: documento observado (y la autorización que lo cubre)
     if not es_interna and not _fin_cero and (_fin_tido and _fin_nudo or _docs_extra_norm):
         _topes = _ot_zz_topes_reales(_fin_tido, _fin_nudo, _docs_extra_norm, cliente_rut)
         _fin_docs_validados = [{"origen": "erp", "tipo": _dv["tido"], "numero": _dv["nudo"], "validado": True}
@@ -105389,6 +105445,23 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
         _fin_docs_aporte = [
             {"tido": _dd["tido"], "nudo": _dd["nudo"], "servicio": _rr["servicio"], "despacho": _rr["despacho"]}
             for _dd, _rr in zip(_docs_t, _rep)]
+        # 🗓️ 2026-10-12 DOCUMENTO OBSERVADO (Daniel: «más allá de tres meses… deberá pedir autorización y declarar un
+        # argumento persistente»; «si tiene productos, deberían tener saldo»). Solo el asistente «Nueva OT»
+        # (revisar_documento=True). Va DESPUÉS del saldo: si además se cobra sobre el saldo, esa solicitud ya le
+        # muestra a Daniel estas observaciones y su aprobación las cubre (una sola autorización por OT).
+        if revisar_documento and _OT_DOC_OBS_ACTIVO and _docs_t:
+            _fin_doc_obs = _ot_doc_observaciones([(_dd["tido"], _dd["nudo"]) for _dd in _docs_t])
+            if _fin_doc_obs:
+                _fin_doc_obs_aut = _ot_doc_obs_autorizada(_fin_aut_id, cliente_rut, _fin_doc_obs)
+                if not _fin_doc_obs_aut:
+                    _e = _ferr("Este documento necesita la autorización de Daniel: "
+                               + " ".join(_saldo.texto_observaciones(_o["observaciones"]) for _o in _fin_doc_obs)
+                               + " Escribe el argumento y pide la autorización (queda guardado en la OT).",
+                               "DOC_OBSERVADO")
+                    _e["http"] = 409
+                    _e["extra"] = {"observaciones": _fin_doc_obs, "accion": "pedir_autorizacion",
+                                   "tipo_autorizacion": "documento_observado"}
+                    return _e, None
     if (not es_interna and _fin_motivo_diferido and not _fin_ajuste_evaluado and not _fin_zz_motivo_manual):
         return _ferr("Explica en qué te basas para ese valor (lo editaste a mano).", "FINANZAS_SUPUESTO_SIN_MOTIVO"), None
 
@@ -105550,6 +105623,9 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
         "documentos_validados": _fin_docs_validados,
         "docs_aporte": _fin_docs_aporte,
         "documentos_body": (_fin.get("documentos") if isinstance(_fin.get("documentos"), list) else None),
+        # 🗓️ 2026-10-12: el documento observado autorizado (para la clasificación y la bitácora de la OT).
+        "doc_observaciones": _fin_doc_obs,
+        "doc_obs_autorizacion": _fin_doc_obs_aut,
     }
     return None, campos
 
@@ -106076,7 +106152,9 @@ def _ot2_crear_core(d, autorizacion=None):
         # 🔒 2026-09-21: costo_proveedor/costo_despacho obligatorios -- SOLO
         # acá, ver el comentario en _ot_validar_normalizar_finanzas. El
         # wizard de OT 2.0 (_modal_crear.html) ya pide los dos campos.
-        exigir_costo_prov_desp=True)
+        exigir_costo_prov_desp=True,
+        # 🗓️ 2026-10-12: documento de más de 3 meses o con productos sin saldo en Random → autorización de Daniel.
+        revisar_documento=True)
     if _fin_err:
         return _ot2_err(_fin_err["error"], _fin_err["error_codigo"], http=_fin_err.get("http", 400),
                         **(_fin_err.get("extra") or {}))
@@ -106241,6 +106319,11 @@ def _ot2_crear_core(d, autorizacion=None):
         # 🔏 2026-10-07 — constancia de la puerta (autorización consumida, $0 declarado por superadmin, etc.).
         if _puerta is not None:
             _ot_puerta_aplicar(cur, vid, _puerta, fin_argumento=_fin_campos.get("cobro_cero_argumento"))
+        # 🏷️ 2026-10-12 — cómo nace la OT (clasificación persistente, con su antecedente). Si falla, la OT se crea igual.
+        try:
+            _ot_fin_clasif_guardar(cur, vid, _fin_campos, es_interna, autorizacion)
+        except Exception as _e_cl:
+            print(f"[ot-clasif] guardar {vid}: {type(_e_cl).__name__}: {_e_cl}", flush=True)
 
         # El solape autorizado a mano queda registrado con nombre y apellido.
         if _choque_forzado_txt:
@@ -111272,6 +111355,11 @@ def ot2_reporte_xlsx():
                "Cobertura", "Estado facturación",
                "Documentos (todos los declarados)", "Creada por", "Creada", "Cerrada",
                "Observaciones (revisar)"]
+    # 🏷️ 2026-10-12 (Daniel: «ficha, tabla de OT y Excel, solo superadmin»): cómo nació cada OT, antes de
+    # «Observaciones» (que sigue siendo la última columna).
+    _xl_sa = (not _es_rol_tecnico()) and _ot_aut_es_superadmin()
+    if _xl_sa:
+        headers.insert(len(headers) - 1, "Clasificación (cómo nació)")
     NCOLS = len(headers)
     # Columnas por NOMBRE (no por número fijo): agregar una columna no corre los formatos.
     _COLS_CLP = {headers.index(h) + 1 for h in (
@@ -111318,6 +111406,12 @@ def ot2_reporte_xlsx():
     # 🔏 2026-10-07: todos los documentos declarados de cada OT (una consulta por lote).
     _docs_xl = _ot_docs_texto_lote([x.get("id") for x in rows])
     _fins = _ot_fin_lote(rows)
+    _clasif_xl, por_clasif = {}, {}
+    if _xl_sa:
+        try:
+            _clasif_xl = _ot_fin_clasif_lote([x.get("id") for x in rows])
+        except Exception as _e_cx:
+            print(f"[ot2_reporte_xlsx] clasificación: {type(_e_cx).__name__}", flush=True)
     r = 3
     for f in rows:
         estado = (f.get("estado") or "").lower()
@@ -111430,6 +111524,23 @@ def ot2_reporte_xlsx():
             f.get("created_by") or "", _dt_cl(f.get("created_at")),
             _dt_cl(f.get("cerrada_at")), " · ".join(obs),
         ]
+        if _xl_sa:
+            _cx = _clasif_xl.get(int(f["id"])) or {}
+            _cx_txt = (_cx.get("texto") or "") + ((" (también: " + "; ".join(_cx.get("otros") or []) + ")")
+                                                 if _cx.get("otros") else "")
+            if _cx.get("argumento") and not _cx.get("derivada"):
+                _cx_txt += " · Argumento: " + str(_cx.get("argumento"))[:300]
+            if _cx.get("autorizado_por"):
+                _cx_txt += " · Autorizó: " + str(_cx.get("autorizado_por"))
+            if _cx.get("derivada") and _cx.get("texto"):
+                _cx_txt += " · (calculada: OT anterior al 12-10-2026)"
+            vals.insert(len(vals) - 1, _cx_txt)
+            _kx = _cx.get("texto") or "Sin clasificar"
+            _ax = por_clasif.setdefault(_kx, {"n": 0, "cobre": 0.0, "me_cobraron": 0.0, "queda": 0.0})
+            _ax["n"] += 1
+            _ax["cobre"] += float(_cobre or 0) if _fin["cobra"] else 0.0
+            _ax["me_cobraron"] += float(_fin["me_cobraron"]["total"] or 0) if _tiene_finanzas else 0.0
+            _ax["queda"] += float(margen or 0) if (margen is not None and _fin["cobra"]) else 0.0
 
         bg = LGRAY if r % 2 == 0 else "FFFFFF"
         for ci, val in enumerate(vals, 1):
@@ -111525,6 +111636,8 @@ def ot2_reporte_xlsx():
 
     widths = [15, 12, 30, 13, 15, 34, 30, 18, 11, 16, 14, 22, 10, 15, 8, 15,
               9, 9, 16, 16, 13, 14, 13, 14, 14, 14, 14, 14, 11, 14, 26, 17, 16, 16, 16, 16, 40]
+    if _xl_sa and len(widths) == NCOLS - 1:
+        widths.insert(len(widths) - 1, 46)   # 🏷️ 2026-10-12: «Clasificación (cómo nació)», antes de Observaciones
     for ci, w in enumerate(widths[:NCOLS], 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
     ws.freeze_panes = "C3"
@@ -111742,6 +111855,31 @@ def ot2_reporte_xlsx():
                 cv.font = Font(size=10, bold=True, color="DC2626")
     ws4.column_dimensions["A"].width = 38
     ws4.column_dimensions["B"].width = 46
+
+    # ── Hoja «Clasificación» (solo superadmin) ── 🏷️ 2026-10-12 (Daniel: «debemos guardar las clasificaciones, cómo
+    # se están trabajando las OT»): cuántas OT nacen de cada forma y su plata (misma cuenta de la hoja OT).
+    if _xl_sa and por_clasif:
+        ws5 = wb.create_sheet("Clasificación")
+        _h5 = ["Cómo nació la OT", "N° OT", "Cobré", "Me cobraron", "Queda (margen)"]
+        for ci, h in enumerate(_h5, 1):
+            _hdr(ws5.cell(row=1, column=ci), h)
+        _r5 = 2
+        for _k5, _v5 in sorted(por_clasif.items(), key=lambda kv: (-kv[1]["n"], kv[0])):
+            for ci, val in enumerate([_k5, _v5["n"], _v5["cobre"], _v5["me_cobraron"], _v5["queda"]], 1):
+                c5 = ws5.cell(row=_r5, column=ci, value=val)
+                c5.font = Font(size=10, bold=(ci == 1))
+                c5.border = border
+                if ci >= 3:
+                    c5.number_format = '"$"#,##0'
+                    if ci == 5 and isinstance(val, (int, float)) and val < 0:
+                        c5.font = Font(size=10, bold=True, color="DC2626")
+            _r5 += 1
+        ws5.cell(row=_r5 + 1, column=1, value=("Las OT creadas desde el 12-10-2026 guardan su clasificación al nacer, con el "
+                                               "argumento y quién la autorizó. Las anteriores se calculan con lo que ya tienen."
+                                               )).font = Font(size=9, italic=True, color="6B7280")
+        for ci, w in enumerate([46, 10, 16, 16, 16], 1):
+            ws5.column_dimensions[get_column_letter(ci)].width = w
+        ws5.freeze_panes = "A2"
 
     buf = BytesIO()
     wb.save(buf)
@@ -112219,6 +112357,235 @@ def _ot_saldo_autorizado_hasta(vid=None, aut_id=None, cliente_rut=None):
     return out
 
 
+# ── 🗓️ 2026-10-12 DOCUMENTO OBSERVADO (Daniel: «si tiene más de tres meses de antigüedad… deberá pedir autorización y
+# declarar un argumento persistente para que la OT quede guardada con ese antecedente y esa clasificación»; «si tiene
+# productos, deberían tener saldo»; lo autoriza Daniel a distancia, o lo declara el superadministrador que crea la OT).
+# Solo el asistente «Nueva OT» lo revisa (tiene el botón para pedir la autorización); las OT históricas o retroactivas
+# son viejas por definición. Interruptor (solo con permiso de Daniel): OT_DOC_OBSERVADO=0.
+_OT_DOC_OBS_ACTIVO = (os.environ.get("OT_DOC_OBSERVADO", "1").strip().lower() not in ("0", "false", "no", "off"))
+_OT_AUT_TIPOS_CREAN = ("crear_sin_documento", "exceder_saldo", "documento_observado")
+
+
+def _ot_doc_observar(tido, nudo):
+    """Lo que hay que autorizar de UN documento al crear la OT: emitido hace más de 3 meses (hora Chile) o con TODOS sus
+    productos sin saldo en Random. Solo lectura del ERP (REGLA #4.1) desde la caché del lector. Devuelve {leido, titulo,
+    fecha, productos: {total, con_saldo}, observaciones: [...]}. Si Random no responde: leido=False, sin observaciones
+    (el servidor no inventa; el saldo de servicio ya corta por su cuenta cuando no hay lectura)."""
+    tu, nu = _ot_doc_real_a_usuario(tido, nudo)
+    titulo = f"{tu} {nu}".strip()
+    vacio = {"leido": False, "titulo": titulo, "fecha": None, "productos": {"total": 0, "con_saldo": 0},
+             "observaciones": []}
+    try:
+        hdr, lineas = _mant_erp_doc_cached(tido, nudo)
+    except Exception as e:
+        print(f"[ot-doc-obs] {titulo}: {type(e).__name__}", flush=True)
+        return vacio
+    if not hdr or not lineas:
+        return vacio
+    ps = _saldo.productos_con_saldo(lineas)
+    f = _saldo.fecha_doc(hdr.get("fecha"))
+    return {"leido": True, "titulo": titulo, "fecha": f.strftime("%d/%m/%Y") if f else None,
+            "productos": {"total": ps["total"], "con_saldo": ps["con_saldo"]},
+            "observaciones": _saldo.observar_documento(titulo, hdr.get("fecha"), _now_chile().date(), lineas)}
+
+
+def _ot_doc_observaciones(docs):
+    """Las observaciones de los documentos de una OT [(tido, nudo)]: solo los que tienen algo, como
+    [{tido, nudo, clave, titulo, fecha, observaciones}]. Una nota de venta cuya factura también va en la OT no se
+    observa (es el mismo cobro: cuenta la factura, igual que el saldo)."""
+    docs = [(t, n) for t, n in (docs or []) if t and n]
+    claves = [_saldo.clave_doc(t, n) for t, n in docs]
+    cobro = {k for k in claves if k[0] in _saldo.DOCS_COBRO}
+    out, vistos = [], set()
+    for (t, n), k in zip(docs, claves):
+        if not k[0] or not k[1] or k in vistos:
+            continue
+        vistos.add(k)
+        if k[0] in _saldo.NOTAS_VENTA and cobro:
+            try:
+                if {_saldo.clave_doc(*x) for x in _ot_saldo_familia(t, n)} & cobro:
+                    continue
+            except Exception:
+                pass
+        o = _ot_doc_observar(t, n)
+        if o["observaciones"]:
+            out.append({"tido": t, "nudo": n, "clave": list(k), "titulo": o["titulo"], "fecha": o["fecha"],
+                        "observaciones": o["observaciones"]})
+    return out
+
+
+def _ot_payload_docs(payload):
+    """Los documentos de Random que trae el body del asistente (principal + extras), como [(tido, nudo)]."""
+    fin = (payload or {}).get("finanzas") if isinstance(payload, dict) else None
+    fin = fin if isinstance(fin, dict) else {}
+    out = []
+    if (fin.get("factura_tido") or "").strip() and (fin.get("factura_nudo") or "").strip():
+        out.append((str(fin["factura_tido"]).strip().upper()[:10], str(fin["factura_nudo"]).strip()[:30]))
+    for x in (fin.get("documentos_extra") or [])[:20]:
+        if isinstance(x, dict) and (x.get("tido") or "").strip() and (x.get("nudo") or "").strip():
+            out.append((str(x["tido"]).strip().upper()[:10], str(x["nudo"]).strip()[:30]))
+    return out
+
+
+def _ot_doc_obs_autorizada(aut_id, cliente_rut, obs):
+    """La autorización de CREACIÓN aprobada que cubre estas observaciones, o None. Vale una 'documento_observado' o una
+    'exceder_saldo' (sin OT todavía y no usada, pedida por quien la usa o resuelta por el superadmin que aprueba, del
+    mismo cliente) cuya solicitud ya le mostraba a Daniel CADA observación (documento + regla). Si aparece una que
+    Daniel no vio, no la cubre: se vuelve a pedir."""
+    if not aut_id:
+        return None
+    try:
+        f = mysql_fetchone(
+            "SELECT id, tipo, payload_json, visita_id, visita_creada_id, solicitado_por_user_id, solicitado_por_nombre, "
+            "       cliente_id, argumento, resuelto_por_nombre, resuelto_at "
+            "  FROM mant_ot_autorizaciones WHERE id=%s AND tipo IN ('documento_observado','exceder_saldo') "
+            "   AND estado='aprobada'", (int(aut_id),))
+    except Exception as e:
+        print(f"[ot-doc-obs] autorización {aut_id}: {type(e).__name__}", flush=True)
+        return None
+    if not f or f.get("visita_creada_id") or f.get("visita_id"):
+        return None
+    _uid_au, _n_au = _ot_aut_usuario()
+    if not (_ot_aut_es_superadmin() or (_uid_au is not None and f.get("solicitado_por_user_id") is not None
+                                        and int(f["solicitado_por_user_id"]) == int(_uid_au))):
+        return None
+    if cliente_rut and f.get("cliente_id"):
+        _ra = (mysql_fetchone("SELECT rut FROM mant_clientes WHERE id=%s", (f["cliente_id"],)) or {}).get("rut")
+        if not _ra or (re.sub(r"[^0-9Kk]", "", str(_ra)).upper().lstrip("0")
+                       != re.sub(r"[^0-9Kk]", "", str(cliente_rut)).upper().lstrip("0")):
+            return None
+    try:
+        p = json.loads(f.get("payload_json") or "{}") or {}
+    except Exception:
+        p = {}
+    vistas = {(tuple(_saldo.clave_doc(d.get("tido"), d.get("nudo"))), o.get("codigo"))
+              for d in (p.get("_observaciones_doc") or []) if isinstance(d, dict)
+              for o in (d.get("observaciones") or []) if isinstance(o, dict)}
+    pedidas = {(tuple(_saldo.clave_doc(d.get("tido"), d.get("nudo"))), o.get("codigo"))
+               for d in (obs or []) for o in (d.get("observaciones") or [])}
+    return f if pedidas and pedidas <= vistas else None
+
+
+def _ot_fin_clasif_guardar(cur, vid, campos, es_interna, autorizacion=None):
+    """🏷️ 2026-10-12 (Daniel: «debemos guardar las clasificaciones, cómo se están trabajando las OT»). Guarda en la OT
+    (fin_clasif + fin_clasif_json) cómo nació: con factura y saldo, nota de venta, $0, sin documento autorizada,
+    documento observado autorizado, cobro sobre el saldo autorizado o ajustado a mano. Con el argumento, quién lo
+    autorizó y cuándo. Se escribe UNA vez, al crear (es el antecedente). Dato financiero: solo superadmin (REGLA #26)."""
+    campos = campos or {}
+    aut = autorizacion or {}
+    obs_aut = campos.get("doc_obs_autorizacion") or {}
+    tidos = [str(x.get("tipo") or "").strip().upper() for x in (campos.get("documentos_validados") or [])
+             if str(x.get("tipo") or "").strip()]
+    if not tidos and campos.get("factura_tido"):
+        tidos = [str(campos["factura_tido"]).strip().upper()]
+    obs = campos.get("doc_observaciones") or []
+    c = _saldo.clasificar_ot(
+        es_interna=es_interna, cero_motivo=campos.get("cobro_cero_motivo"), tidos=tidos,
+        sin_documento=(aut.get("tipo") == "crear_sin_documento"),
+        observaciones=[o for d in obs for o in (d.get("observaciones") or [])],
+        saldo_excedido=("exceder_saldo" in (aut.get("tipo"), obs_aut.get("tipo"))),
+        ajuste_manual=bool(campos.get("valor_origen") == "manual" and (campos.get("zz_motivo_manual") or "").strip()))
+    if not c.get("codigo"):
+        return None
+    a_ref = obs_aut or aut
+    _res_at = a_ref.get("resuelto_at")
+    det = dict(c, observaciones=obs, documentos=tidos,
+               argumento=(a_ref.get("argumento") or campos.get("cobro_cero_argumento") or None),
+               motivo_manual=(campos.get("zz_motivo_manual") or None),
+               autorizacion_id=a_ref.get("id"), autorizado_por=a_ref.get("resuelto_por_nombre"),
+               pedido_por=a_ref.get("solicitado_por_nombre"),
+               autorizado_at=(chile_fmt_filter(_res_at) if hasattr(_res_at, "strftime") else (str(_res_at) if _res_at else None)),
+               registrado_por=current_username() or "sistema",
+               registrado_at=chile_fmt_filter(datetime.utcnow()))
+    cur.execute("UPDATE mant_visitas SET fin_clasif=%s, fin_clasif_json=%s WHERE id=%s",
+                (c["codigo"], json.dumps(det, ensure_ascii=False, default=str)[:60000], vid))
+    # La clasificación vive en la OT (solo superadmin la ve). En la bitácora general queda SOLO la constancia de la
+    # autorización (igual que las demás autorizaciones de Daniel): la clasificación no se expone a todo el equipo.
+    if obs:
+        cur.execute("INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) VALUES ('visita',%s,%s,%s,%s)",
+                    (vid, "documento_observado_autorizado",
+                     ("Documento observado: " + " ".join(_saldo.texto_observaciones(d.get("observaciones")) for d in obs)
+                      + (f" · Autorizado por {a_ref.get('resuelto_por_nombre')}" if a_ref.get("resuelto_por_nombre") else "")
+                      + (f" ({det['autorizado_at']})" if det.get("autorizado_at") else "")
+                      + (f" · argumento: {a_ref.get('argumento')}" if a_ref.get("argumento") else "")
+                      + (f" · autorización N° {a_ref.get('id')}" if a_ref.get("id") else ""))[:4000],
+                     current_username() or "sistema"))
+    return c
+
+
+def _ot_fin_clasif_lote(ids):
+    """{vid: clasificación} para mostrar (el llamador decide quién la ve: solo superadmin). La guardada al crear manda;
+    una OT anterior al 12-oct-2026 se CALCULA con lo que ya tiene (cliente, documentos, autorizaciones aprobadas y $0)
+    y lo dice (derivada=True): nunca se inventa un antecedente que la OT no tiene."""
+    ids = sorted({int(x) for x in (ids or []) if x})
+    out = {}
+    if not ids:
+        return out
+    ph = ",".join(["%s"] * len(ids))
+    try:
+        filas = mysql_fetchall(
+            f"SELECT id, cliente_id, modalidad_cobro, factura_tido, valor_origen, zz_motivo_manual, fin_clasif_json "
+            f"  FROM mant_visitas WHERE id IN ({ph})", tuple(ids)) or []
+    except Exception:
+        try:
+            filas = mysql_fetchall(
+                f"SELECT id, cliente_id, modalidad_cobro, factura_tido, valor_origen, zz_motivo_manual "
+                f"  FROM mant_visitas WHERE id IN ({ph})", tuple(ids)) or []
+        except Exception as e:
+            print(f"[ot-clasif] lote: {type(e).__name__}", flush=True)
+            return out
+    tidos, auts = {}, {}
+    try:
+        for r in (mysql_fetchall(
+                f"SELECT visita_id, erp_tido FROM mant_visita_documentos WHERE visita_id IN ({ph}) AND origen='erp' "
+                f"   AND reemplazado_por_id IS NULL AND COALESCE(erp_tido,'')<>''", tuple(ids)) or []):
+            tidos.setdefault(int(r["visita_id"]), []).append(str(r["erp_tido"]).strip().upper())
+    except Exception as e:
+        print(f"[ot-clasif] documentos: {type(e).__name__}", flush=True)
+    try:
+        for r in (mysql_fetchall(
+                f"SELECT visita_id, visita_creada_id, tipo, motivo FROM mant_ot_autorizaciones "
+                f" WHERE estado='aprobada' AND (visita_id IN ({ph}) OR visita_creada_id IN ({ph}))",
+                tuple(ids) + tuple(ids)) or []):
+            v = r.get("visita_creada_id") or r.get("visita_id")
+            if v:
+                auts.setdefault(int(v), []).append(r)
+    except Exception as e:
+        print(f"[ot-clasif] autorizaciones: {type(e).__name__}", flush=True)
+    for f in filas:
+        vid = int(f["id"])
+        js = f.get("fin_clasif_json")
+        if js:
+            try:
+                d = json.loads(js)
+                if isinstance(d, dict) and d.get("codigo"):
+                    d["derivada"] = False
+                    out[vid] = d
+                    continue
+            except Exception:
+                pass
+        a = auts.get(vid) or []
+        tipos_a = {x.get("tipo") for x in a}
+        cero = next((x.get("motivo") for x in a if x.get("tipo") == "cobro_cero" and x.get("motivo")), None)
+        mod = (f.get("modalidad_cobro") or "").strip().lower()
+        if not cero and mod == "garantia":
+            cero = "garantia"
+        ts = tidos.get(vid) or ([str(f["factura_tido"]).strip().upper()] if f.get("factura_tido") else [])
+        sin_costo = not cero and mod == "sin_costo"
+        c = _saldo.clasificar_ot(
+            es_interna=not f.get("cliente_id"), cero_motivo=cero or ("regalia" if sin_costo else None), tidos=ts,
+            sin_documento=bool(f.get("cliente_id")) and not ts and not cero and not sin_costo,
+            saldo_excedido="exceder_saldo" in tipos_a,
+            ajuste_manual=bool(f.get("valor_origen") == "manual" and (f.get("zz_motivo_manual") or "").strip()))
+        if c.get("codigo") == "sin_documento" and "crear_sin_documento" not in tipos_a:
+            c["texto"] = "Sin documento"
+        if c.get("codigo") == "regalia" and sin_costo:
+            c["texto"] = "$0 · regalía o arriendo"
+        c["derivada"] = True
+        out[vid] = c
+    return out
+
+
 def _ot_saldo_reservar(docs):
     """🧮 CARRERA DEL SALDO (revisión 2026-10-08): dos personas que ligan la MISMA factura a la vez pasaban las dos el
     control (cada una leía el saldo antes de que la otra escribiera). Se serializa con un GET_LOCK de MySQL por
@@ -112431,7 +112798,14 @@ def ot_api_saldo_servicio_doc(tido, nudo):
     except Exception as e:
         print(f"[ot-saldo] doc {tido} {nudo}: {type(e).__name__}: {e}", flush=True)
         return jsonify({"ok": False, "error": "No pudimos calcular el saldo de ese documento."}), 500
-    return jsonify({"ok": True, **s, "aviso": _ot_saldo_aviso(s), "puede_autorizar": _ot_aut_es_superadmin()})
+    # 🗓️ 2026-10-12: fecha, productos con saldo en Random y lo que habría que autorizar al crear (documento observado).
+    try:
+        _doc_obs = _ot_doc_observar(tido, nudo) if _OT_DOC_OBS_ACTIVO else None
+    except Exception as _e_do:
+        print(f"[ot-saldo] observar {tido} {nudo}: {type(_e_do).__name__}", flush=True)
+        _doc_obs = None
+    return jsonify({"ok": True, **s, "aviso": _ot_saldo_aviso(s), "puede_autorizar": _ot_aut_es_superadmin(),
+                    "doc": _doc_obs})
 
 
 @app.route("/ot/api/<int:vid>/saldo-servicio", methods=["GET"])
@@ -131958,6 +132332,19 @@ def _mfp_agregar_alertas(filas):
             x = a["resueltas"][-1]
             d.setdefault("avisos_fila", []).append({"n": "ambar", "t": "Tuvo factura sin saldo (" + (x.get("titulo") or "")
                                                     + "), corregido el " + (x.get("resuelta_el") or "") + "."})
+    # 🏷️ 2026-10-12 (Daniel: «todo conectado hasta con el módulo de facturación… de proveedores»): cómo nació cada OT
+    # (clasificación persistente). Solo superadmin, igual que en la tabla de OT y su Excel.
+    try:
+        if _ot_aut_es_superadmin():
+            cl = _ot_fin_clasif_lote([d.get("id") for d in filas])
+            for d in filas:
+                c = cl.get(int(d.get("id") or 0))
+                d["fin_clasif"] = c
+                if c and c.get("nivel") == "rojo" and not c.get("derivada"):
+                    d.setdefault("avisos_fila", []).append(
+                        {"n": "ambar", "t": "Nació con autorización de Daniel: " + (c.get("texto") or "") + "."})
+    except Exception as e:
+        print(f"[mfp] clasificación: {type(e).__name__}", flush=True)
     return filas
 
 
@@ -157628,6 +158015,13 @@ try:
         _ensure_ot_valor_origen_col()
 except Exception as _ensure_vo_err:
     print(f"[ILUS][WARN] _ensure_ot_valor_origen_col: {_ensure_vo_err}", flush=True)
+
+# 🏷️ Clasificación de la OT (cómo nació, con su antecedente), Daniel 2026-10-12 — SIEMPRE.
+try:
+    with app.app_context():
+        _ensure_ot_fin_clasif_cols()
+except Exception as _ensure_cl_err:
+    print(f"[ILUS][WARN] _ensure_ot_fin_clasif_cols: {_ensure_cl_err}", flush=True)
 
 # Correcciones de finanzas de una OT (solo superadmin, registro que nunca se modifica), Daniel 2026-10-07 —
 # SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.

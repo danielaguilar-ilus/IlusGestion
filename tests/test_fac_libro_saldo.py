@@ -521,8 +521,9 @@ class TestCableado(unittest.TestCase):
 class TestPerdidaEnElCierre(unittest.TestCase):
     def test_tipo_nuevo_en_la_misma_tabla_y_una_sola_sentencia(self):
         app = _leer("app.py")
-        self.assertIn('"cerrar_con_perdida")', app.split("_OT_AUT_TIPOS = ", 1)[1].split("\n", 1)[0])
-        self.assertIn("'exceder_saldo','cerrar_con_perdida') NOT NULL", app)
+        # 🗓️ 2026-10-12: después se agregó «documento_observado» al final (mismo tuple y misma sentencia).
+        self.assertIn('"cerrar_con_perdida"', app.split("_OT_AUT_TIPOS = ", 1)[1].split(")", 1)[0])
+        self.assertIn("'exceder_saldo','cerrar_con_perdida','documento_observado') NOT NULL", app)
         self.assertNotIn("MODIFY tipo ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento','exceder_saldo') NOT NULL", app)
 
     def test_candado_despues_del_costo_del_proveedor_y_antes_del_anexo(self):
