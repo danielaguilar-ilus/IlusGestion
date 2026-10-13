@@ -254,6 +254,45 @@ class TestClasificacionCalculada(unittest.TestCase):
         self.assertEqual(r[6]["codigo"], "arriendo_leasing")
 
 
+class TestPrecargaDelLote(unittest.TestCase):
+    """⚖️ El lote de Facturación lee en paralelo sus facturas de Random antes de calcular el equilibrio (con la caché
+    fría casi todo decía «Sin verificar con Random»), con tope de tiempo: lo lento queda «sin verificar»."""
+
+    def test_lee_en_paralelo_con_tope_de_tiempo(self):
+        import contextlib
+        import threading
+        import time as _t
+        cache, lock = {}, threading.Lock()
+
+        def cached(t, n):
+            _t.sleep(2 if n.endswith("999") else 0.05)   # una factura que Random no entrega a tiempo
+            cache["%s|%s" % (t, n)] = (_t.time(), {"x": 1}, [{"sku": "X"}])
+
+        class AppFalsa:
+            def app_context(self):
+                return contextlib.nullcontext()
+        amb = {"time": _t, "mysql_fetchall": lambda sql, p=None: [{"visita_id": 1}, {"visita_id": 2}],
+               "_ot_saldo_docs_de_ot": lambda vid: [("FCV", "11001"), ("FCV", "999")] if vid == 1 else [("FCV", "11002")],
+               "_saldo": S, "_ot_saldo_real": lambda k: (k[0], k[1]), "_MANT_ERP_DOC_CACHE_LOCK": lock,
+               "_MANT_ERP_DOC_CACHE": cache, "_MANT_ERP_DOC_CACHE_TTL": 300, "_OT_SALDO_FAM_CACHE": {},
+               "app": AppFalsa(), "_mant_erp_doc_cached": cached, "_ot_saldo_familia": lambda t, n: set(),
+               "print": lambda *a, **k: None}
+        f = _exec("_mfp_precalentar_erp", amb)
+        t0 = _t.time()
+        self.assertEqual(f(19, presupuesto=0.6), 2)          # las dos rápidas; la lenta no traba la página
+        self.assertLess(_t.time() - t0, 1.5)
+
+    def test_pantalla_y_excel_precargan_antes_de_armar_las_filas(self):
+        for nombre in ("mant_factura_proveedor_detalle", "mant_factura_proveedor_excel"):
+            f = _fuente(nombre)
+            self.assertLess(f.index("_mfp_precalentar_erp(fid)"), f.index("items = _mfp_items(fid)"))
+
+    def test_garantia_sin_autorizar_no_dice_sin_documento(self):
+        h = _leer("templates/mantenciones/factura_proveedor_detalle.html")
+        self.assertIn("{% if eq.code == 'SIN_AUTORIZACION_CERO' %}{% set eq_lbl = ('shield-exclamation', '$0 sin autorizar: se paga igual') %}", h)
+        self.assertIn('if eq.get("code") == "SIN_AUTORIZACION_CERO":', _fuente("_mfp_eq_texto"))
+
+
 # ───────────────────────── asistente (funciones reales en Node) ─────────────────────────
 def _js_funcion(nombre):
     i = H.index("function %s(" % nombre)

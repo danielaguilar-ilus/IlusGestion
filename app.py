@@ -132356,6 +132356,63 @@ def _mfp_agregar_alertas(filas):
     return filas
 
 
+def _mfp_precalentar_erp(fid, presupuesto=3.0):
+    """⚖️ 2026-10-12 (noche antes de la auditoría): la ficha del lote calcula el punto de equilibrio SOLO con la caché
+    (para no ponerse lenta), y con la caché fría casi todas las filas decían «Sin verificar con Random». Antes de
+    armar la página (y el Excel) se leen EN PARALELO los documentos de Random de las OT del lote y su familia nota de
+    venta ↔ factura (solo lectura, REGLA #4.1), con un tope de tiempo: lo que no alcance a llegar queda «sin verificar»
+    como antes, nunca se inventa. Devuelve cuántos documentos quedaron leídos."""
+    import concurrent.futures as _cf
+    t0 = time.time()
+    try:
+        vids = [int(r["visita_id"]) for r in (mysql_fetchall(
+            "SELECT visita_id FROM mant_factura_proveedor_items WHERE factura_proveedor_id=%s", (fid,)) or [])
+            if r.get("visita_id")]
+    except Exception as e:
+        print(f"[facprov] precalentar {fid}: {type(e).__name__}", flush=True)
+        return 0
+    pend, vistos = [], set()
+    for vid in vids[:80]:
+        try:
+            docs = _ot_saldo_docs_de_ot(vid)
+        except Exception:
+            docs = []
+        for t, n in docs:
+            k = _saldo.clave_doc(t, n)
+            if not k[0] or not k[1] or k in vistos:
+                continue
+            vistos.add(k)
+            t_r, n_r = _ot_saldo_real(k)
+            with _MANT_ERP_DOC_CACHE_LOCK:
+                hit = _MANT_ERP_DOC_CACHE.get(f"{t_r}|{n_r}")
+            caliente = bool(hit and (time.time() - hit[0]) < _MANT_ERP_DOC_CACHE_TTL and hit[1] and hit[2])
+            if caliente and k in _OT_SALDO_FAM_CACHE:
+                continue
+            pend.append((t, n, t_r, n_r))
+    if not pend:
+        return 0
+
+    def _leer(item):
+        t, n, t_r, n_r = item
+        with app.app_context():
+            _mant_erp_doc_cached(t_r, n_r)
+            try:
+                _ot_saldo_familia(t, n)
+            except Exception:
+                pass
+        return item
+
+    ex = _cf.ThreadPoolExecutor(max_workers=6)
+    try:
+        futs = [ex.submit(_leer, it) for it in pend[:60]]
+        hechos, _faltan = _cf.wait(futs, timeout=max(0.5, presupuesto - (time.time() - t0)))
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
+    if _faltan:
+        print(f"[facprov] precalentar {fid}: {len(hechos)}/{len(futs)} documentos en {time.time() - t0:.2f}s", flush=True)
+    return len(hechos)
+
+
 def _mfp_cobro_respaldado(it):
     """⚖️ 2026-10-12: lo que una OT del lote cobra con RESPALDO de su factura de Random. Con la factura leída: el cobro
     efectivo del punto de equilibrio (lo declarado menos el saldo que ya usaron otras OT). Sin documento: $0 (no hay
@@ -133389,6 +133446,8 @@ def _mfp_eq_texto(eq):
     lbl = {"ok": "Dentro del equilibrio", "exento": "$0 autorizado", "autorizada": "Pérdida autorizada por Daniel",
            "sobre_equilibrio": "SOBRE EL EQUILIBRIO", "sin_documento": "Sin documento (se paga igual)",
            "sin_verificar": "Sin verificar con Random"}.get(eq.get("estado"), eq.get("estado") or "")
+    if eq.get("code") == "SIN_AUTORIZACION_CERO":   # 2026-10-12: garantía/regalía sin su $0 autorizado (igual que la pantalla)
+        lbl = "$0 sin autorizar (se paga igual)"
     docs = "; ".join(d.get("titulo") or "" for d in (eq.get("documentos") or []))
     return lbl + (" · " + docs if docs else "") + ((" · " + eq["mensaje"]) if eq.get("mensaje") and eq.get("estado") != "ok" else "")
 
@@ -133593,6 +133652,7 @@ def mant_factura_proveedor_detalle(fid):
     factura = dict(factura)
     factura["monto_total"] = float(factura.get("monto_total") or 0)
     _t_items = time.time()
+    _mfp_precalentar_erp(fid)   # ⚖️ 2026-10-12: equilibrio verificado con Random (no «sin verificar» por caché fría)
     items = _mfp_items(fid)
     # 🔎 2026-10-12 (auditoría Impeccable, rendimiento): cada OT ahora calcula su saldo y punto de equilibrio. Antes de
     # optimizar esa cuenta (es la promesa de pago de Daniel: no se toca a ciegas) se mide con lotes reales.
@@ -133992,6 +134052,7 @@ def mant_factura_proveedor_excel(fid):
         return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
     f = dict(f)
     f["monto_total"] = float(f.get("monto_total") or 0)
+    _mfp_precalentar_erp(fid)   # ⚖️ 2026-10-12: mismo equilibrio verificado que la pantalla del lote
     items = _mfp_items(fid)
     canon, canon_rut, _canon_id = _mfp_proveedor_canon(f, items, fid)
     prov_nombre = canon or (f.get("proveedor_nombre") or "").strip()

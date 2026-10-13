@@ -494,6 +494,8 @@
             {% set eq_lbl = {'ok': ('check-circle-fill', 'Dentro del equilibrio'), 'exento': ('shield-check', '$0 autorizado'),
                              'autorizada': ('patch-check-fill', 'Pérdida autorizada'), 'sobre_equilibrio': ('exclamation-octagon-fill', 'Sobre el equilibrio'),
                              'sin_documento': ('file-earmark-x', 'Sin documento: se paga igual'), 'sin_verificar': ('cloud-slash', 'Sin verificar con Random')}.get(eq.estado, ('dot', eq.estado)) %}
+            {#- 2026-10-12: una garantía o regalía sin su $0 autorizado no es «sin documento»: se dice lo que es. -#}
+            {% if eq.code == 'SIN_AUTORIZACION_CERO' %}{% set eq_lbl = ('shield-exclamation', '$0 sin autorizar: se paga igual') %}{% endif %}
             <div class="fpd-eq fpd-eq-{{ eq.estado }}">
               <span class="fpd-eq-sem"><i class="bi bi-{{ eq_lbl[0] }}"></i> {{ eq_lbl[1] }}</span>
               <span class="fpd-eq-doc"><i class="bi bi-receipt"></i> Factura del cliente:
@@ -1872,33 +1874,33 @@ a.fp-anx:hover{filter:brightness(.95);text-decoration:none}
 @media (min-width:769px){ .fpd-tabla td.m,.fpd-tabla th.m{padding-left:8px} .fpd-tabla .fp-nom{min-width:112px} }
 @container fpdtabla (max-width: 900px){
   .fpd-tabla-card .table-responsive{overflow:visible}
-  .fp-tabla thead{display:none}
-  .fp-tabla tbody tr,.fp-tabla tfoot tr{display:block;border:1px solid var(--gray-200);border-radius:12px;padding:8px 0;margin-bottom:10px;background:#fff}
-  .fp-tabla tbody tr.fpd-row-warn{border-left:4px solid var(--amber-500)}
-  .fp-tabla tbody tr.fpd-row-warn td:first-child{border-left:0}
-  .fp-tabla tbody td,.fp-tabla tfoot td{display:block;border:0;padding:4px 12px;text-align:left;border-radius:0!important}
-  .fp-tabla tbody tr:not(.fpd-obs-row){border-radius:12px 12px 0 0;margin-bottom:0;border-bottom:0}
-  .fp-tabla tbody tr.fpd-obs-row{border-radius:0 0 12px 12px;border-top:1px dashed var(--gray-200);background:#fafbfc;padding:6px 0}
-  .fp-tabla tbody tr.fpd-obs-row td{position:static;top:auto;border:0;background:transparent}
-  .fp-tabla tbody tr.fpd-obs-row.fpd-row-warn td{border-left:0}
-  .fpd-obs{flex-direction:column;gap:4px}
-  .fpd-obs-txt{flex:0 0 auto} /* en columna, el flex-basis de 320px sería ALTO, no ancho */
-  .fpd-obs-meta{white-space:normal}
-  .fp-tabla th.m,.fp-tabla td.m{text-align:left;white-space:normal}
-  .fp-tabla tbody td[data-label]::before,.fp-tabla tfoot td[data-label]::before{content:attr(data-label);display:block;font-size:max(.7rem,11px);font-weight:900;
+  .fp-tabla thead{display:none}
+  .fp-tabla tbody tr,.fp-tabla tfoot tr{display:block;border:1px solid var(--gray-200);border-radius:12px;padding:8px 0;margin-bottom:10px;background:#fff}
+  .fp-tabla tbody tr.fpd-row-warn{border-left:4px solid var(--amber-500)}
+  .fp-tabla tbody tr.fpd-row-warn td:first-child{border-left:0}
+  .fp-tabla tbody td,.fp-tabla tfoot td{display:block;border:0;padding:4px 12px;text-align:left;border-radius:0!important}
+  .fp-tabla tbody tr:not(.fpd-obs-row){border-radius:12px 12px 0 0;margin-bottom:0;border-bottom:0}
+  .fp-tabla tbody tr.fpd-obs-row{border-radius:0 0 12px 12px;border-top:1px dashed var(--gray-200);background:#fafbfc;padding:6px 0}
+  .fp-tabla tbody tr.fpd-obs-row td{position:static;top:auto;border:0;background:transparent}
+  .fp-tabla tbody tr.fpd-obs-row.fpd-row-warn td{border-left:0}
+  .fpd-obs{flex-direction:column;gap:4px}
+  .fpd-obs-txt{flex:0 0 auto} /* en columna, el flex-basis de 320px sería ALTO, no ancho */
+  .fpd-obs-meta{white-space:normal}
+  .fp-tabla th.m,.fp-tabla td.m{text-align:left;white-space:normal}
+  .fp-tabla tbody td[data-label]::before,.fp-tabla tfoot td[data-label]::before{content:attr(data-label);display:block;font-size:max(.7rem,11px);font-weight:900;
     text-transform:uppercase;letter-spacing:.04em;color:#64748b;margin-bottom:1px}
-  .fp-tabla tfoot tr{background:var(--ilus-black-900);border-color:var(--ilus-black-900)}
-  .fp-tabla tfoot td[data-label]::before{color:rgba(255,255,255,.55)}
-  .fp-tabla tfoot td:empty{display:none}
-  .fp-nom{min-width:0}
-  .fp-mstack{min-width:170px}
-  .fp-mstack .fp-mt,.fp-mstack .fp-sub{text-align:left}
-  .fp-mstack .fp-mt{font-size:1rem}
-  .fp-tabla tbody tr,.fp-tabla tfoot tr{padding:10px 0;margin-bottom:12px}
-  .fp-tabla tbody td,.fp-tabla tfoot td{padding:5px 16px}
-  .fp-tabla tbody tr.fpd-obs-row{padding:8px 0}
-  .fpd-acc{padding-top:8px}
-  .fpd-acc .btn{width:100%}
+  .fp-tabla tfoot tr{background:var(--ilus-black-900);border-color:var(--ilus-black-900)}
+  .fp-tabla tfoot td[data-label]::before{color:rgba(255,255,255,.55)}
+  .fp-tabla tfoot td:empty{display:none}
+  .fp-nom{min-width:0}
+  .fp-mstack{min-width:170px}
+  .fp-mstack .fp-mt,.fp-mstack .fp-sub{text-align:left}
+  .fp-mstack .fp-mt{font-size:1rem}
+  .fp-tabla tbody tr,.fp-tabla tfoot tr{padding:10px 0;margin-bottom:12px}
+  .fp-tabla tbody td,.fp-tabla tfoot td{padding:5px 16px}
+  .fp-tabla tbody tr.fpd-obs-row{padding:8px 0}
+  .fpd-acc{padding-top:8px}
+  .fpd-acc .btn{width:100%}
   .fpd-acc-txt{display:inline;margin-left:6px}
   .fp-tabla td.m .fp-sub.fpd-respaldo,.fp-tabla td.m .fpd-pie-warn{max-width:none;margin-left:0}
 }
