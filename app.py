@@ -87934,6 +87934,44 @@ def _ot2_fila_modal_lean(f):
     }
 
 
+def _ot2_cal_no_laborales(anio, mes, hoy):
+    """🗓️ 2026-10-14 (Daniel: «mejorar el calendario de las OT considerando los días feriados o no laborales en
+    Chile»). Feriados legales del mes visible (cl_feriados: la MISMA fuente que Retiros y el planificador de
+    mantenciones) y cuenta de días hábiles (lunes a viernes que no son feriado). Devuelve {feriados: {iso: nombre},
+    lista: [{dia, dow, nombre, pasado, finde}], habiles, habiles_restantes (solo el mes en curso), proximo: {...}}.
+    Nunca rompe el calendario: si el módulo falla, no marca nada."""
+    import calendar as _cm
+    import datetime as _dt2
+    try:
+        from cl_feriados import feriados_chile as _fer_cl
+        fer = dict(_fer_cl(anio) or {})
+        pool = dict(_fer_cl(hoy.year) or {})
+        pool.update(_fer_cl(hoy.year + 1) or {})
+    except Exception as e:
+        print(f"[ot2-cal] feriados: {type(e).__name__}", flush=True)
+        fer, pool = {}, {}
+    lista, habiles, restantes = [], 0, 0
+    for d in range(1, _cm.monthrange(anio, mes)[1] + 1):
+        f = _dt2.date(anio, mes, d)
+        nombre = fer.get(f.isoformat())
+        if nombre:
+            lista.append({"dia": d, "dow": _OT2_DOW_ES[f.weekday()][:3], "nombre": nombre, "pasado": f < hoy,
+                          "finde": f.weekday() >= 5})
+        elif f.weekday() < 5:
+            habiles += 1
+            if f >= hoy:
+                restantes += 1
+    proximo = None
+    for iso in sorted(pool):
+        f = _dt2.date.fromisoformat(iso)
+        if f >= hoy:
+            proximo = {"fecha": f.strftime("%d/%m"), "dow": _OT2_DOW_ES[f.weekday()], "nombre": pool[iso],
+                       "dias": (f - hoy).days}
+            break
+    return {"feriados": fer, "lista": lista, "habiles": habiles,
+            "habiles_restantes": restantes if (anio, mes) == (hoy.year, hoy.month) else None, "proximo": proximo}
+
+
 def _ot2_panel_extras(filas):
     """📋 2026-09-26 (Daniel, viendo la tabla de OT: "necesita más
     información... vuélvela más inteligente"). Datos de la página visible
@@ -88140,6 +88178,7 @@ def ot2_panel():
     conteo_reales = conteo_automaticas = total_paginas = total_filtrado = 0
     kanban_cols = []
     cal_semanas, cal_mes_label, cal_mes_ant, cal_mes_sig, cal_mes_actual = [], "", "", "", ""
+    cal_no_laborales, cal_ot_no_laboral = None, []   # 🗓️ 2026-10-14: feriados y fines de semana del mes visible
     equipo_hoy = []
     es_mes_actual = False
     # Panel lateral del calendario (2026-08-26, fusión con el calendario
@@ -88410,11 +88449,25 @@ def ot2_panel():
                     d += _dt.timedelta(days=1)
 
             primer_dow = primer_dia.weekday()  # 0=lunes
+            # 🗓️ 2026-10-14 (Daniel): feriados de Chile y fines de semana, marcados en cada día; las OT agendadas en un
+            # día no laboral se avisan (ILUS no opera sábado ni domingo).
+            cal_no_laborales = _ot2_cal_no_laborales(cal_anio, cal_mes_num, hoy)
+            _feriados_mes = cal_no_laborales["feriados"]
             celdas = [None] * primer_dow
             for d in range(1, ultimo_dia_num + 1):
                 dia_filas = por_dia.get(d, [])
+                _f_d = _dt.date(cal_anio, cal_mes_num, d)
+                _fer_d = _feriados_mes.get(_f_d.isoformat())
+                if dia_filas and (_fer_d or _f_d.weekday() >= 5):
+                    cal_ot_no_laboral.append({"dia": d, "dow": _OT2_DOW_ES[_f_d.weekday()][:3], "n": len(dia_filas),
+                                              "feriado": _fer_d})
                 celdas.append({
                     "num": d,
+                    "dow": _OT2_DOW_ES[_f_d.weekday()][:3],
+                    "feriado": _fer_d,
+                    "finde": _f_d.weekday() >= 5,
+                    "pasado": _f_d < hoy,
+                    "n": len(dia_filas),
                     "es_hoy": (hoy.year == cal_anio and hoy.month == cal_mes_num and hoy.day == d),
                     "filas": dia_filas[:_OT2_CAL_CAP_DIA],
                     "recortado": max(0, len(dia_filas) - _OT2_CAL_CAP_DIA),
@@ -88561,6 +88614,8 @@ def ot2_panel():
         cal_semanas=cal_semanas, cal_mes_label=cal_mes_label,
         cal_mes_ant=cal_mes_ant, cal_mes_sig=cal_mes_sig, cal_mes_actual=cal_mes_actual,
         cal_dow=("L", "M", "M", "J", "V", "S", "D"),
+        cal_no_laborales=cal_no_laborales, cal_ot_no_laboral=cal_ot_no_laboral,
+        cal_mes_hoy=(hoy.strftime("%Y-%m") if hoy else ""),
         equipo_hoy=equipo_hoy, es_mes_actual=es_mes_actual,
         resumen_hoy=resumen_hoy, proximas=proximas, cal_leyenda=cal_leyenda,
     )

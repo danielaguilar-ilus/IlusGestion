@@ -40,22 +40,57 @@ FERIADOS_OFICIALES = {
     },
 }
 
-# Feriados de fecha FIJA (fallback para años sin lista oficial).
+# Feriados de fecha FIJA (fallback para años sin lista oficial). San Pedro y San Pablo, Encuentro de Dos Mundos e
+# Iglesias Evangélicas NO van acá: se trasladan según la ley (ver _trasladables).
 _FIJOS = [
     ((1, 1),  "Año Nuevo"),
     ((5, 1),  "Día del Trabajo"),
     ((5, 21), "Día de las Glorias Navales"),
-    ((6, 29), "San Pedro y San Pablo"),
     ((7, 16), "Virgen del Carmen"),
     ((8, 15), "Asunción de la Virgen"),
     ((9, 18), "Fiestas Patrias"),
     ((9, 19), "Día de las Glorias del Ejército"),
-    ((10, 12), "Encuentro de Dos Mundos"),
-    ((10, 31), "Día de las Iglesias Evangélicas"),
     ((11, 1),  "Día de Todos los Santos"),
     ((12, 8),  "Inmaculada Concepción"),
     ((12, 25), "Navidad"),
 ]
+
+# Día Nacional de los Pueblos Indígenas = solsticio de invierno (hora de Chile). Tabla de los próximos años (el
+# solsticio cae el 20 o el 21); fuera de la tabla se usa el 21. Revisar en feriados.cl al cargar el año oficial.
+_PUEBLOS_INDIGENAS = {2027: 21, 2028: 20, 2029: 20, 2030: 21, 2031: 21, 2032: 20}
+
+
+def _lunes_ley_19668(d):
+    """Ley 19.668 (San Pedro y San Pablo, Encuentro de Dos Mundos): si cae martes, miércoles o jueves se traslada al
+    lunes de esa semana; si cae viernes, al lunes siguiente; sábado, domingo o lunes se queda."""
+    wd = d.weekday()   # 0 = lunes
+    if wd in (1, 2, 3):
+        return d - timedelta(days=wd)
+    if wd == 4:
+        return d + timedelta(days=3)
+    return d
+
+
+def _trasladables(year):
+    """Los feriados que la ley mueve de día, para años sin lista oficial."""
+    out = {}
+    out[_lunes_ley_19668(date(year, 6, 29)).isoformat()] = "San Pedro y San Pablo"
+    out[_lunes_ley_19668(date(year, 10, 12)).isoformat()] = "Encuentro de Dos Mundos"
+    # Ley 20.299: Iglesias Evangélicas (31-oct): si cae martes pasa al viernes anterior; si cae miércoles, al viernes
+    # siguiente.
+    d = date(year, 10, 31)
+    if d.weekday() == 1:
+        d = d - timedelta(days=4)
+    elif d.weekday() == 2:
+        d = d + timedelta(days=2)
+    out[d.isoformat()] = "Día de las Iglesias Evangélicas"
+    out[date(year, 6, _PUEBLOS_INDIGENAS.get(year, 21)).isoformat()] = "Día de los Pueblos Indígenas"
+    # Ley 20.983: el 17 de septiembre es feriado si cae lunes, y el 20 si cae viernes.
+    if date(year, 9, 17).weekday() == 0:
+        out[date(year, 9, 17).isoformat()] = "Fiestas Patrias"
+    if date(year, 9, 20).weekday() == 4:
+        out[date(year, 9, 20).isoformat()] = "Fiestas Patrias"
+    return out
 
 
 def _pascua(year):
@@ -74,11 +109,18 @@ def _pascua(year):
 @lru_cache(maxsize=16)
 def feriados_chile(year):
     """dict {'YYYY-MM-DD': 'Nombre'} de feriados de Chile para `year`.
-    Oficial si está en FERIADOS_OFICIALES; si no, fallback fijos + Semana Santa."""
+    Oficial si está en FERIADOS_OFICIALES; si no, fallback: fijos + Semana Santa + los que la ley traslada
+    (2026-10-14: antes el fallback dejaba San Pedro y San Pablo / Encuentro de Dos Mundos en su fecha original y no
+    tenía Pueblos Indígenas). Feriados extraordinarios por ley especial (elecciones, puentes) no se adivinan: se cargan
+    en FERIADOS_OFICIALES cuando se publican."""
     year = int(year)
     if year in FERIADOS_OFICIALES:
         return dict(FERIADOS_OFICIALES[year])
     out = {f"{year:04d}-{m:02d}-{d:02d}": nombre for (m, d), nombre in _FIJOS}
+    try:
+        out.update(_trasladables(year))
+    except Exception:
+        pass
     try:
         p = _pascua(year)
         out[(p - timedelta(days=2)).isoformat()] = "Viernes Santo"

@@ -1003,5 +1003,15 @@ Cualquier skill, plugin o herramienta externa de diseño que se instale propone,
 
 ---
 
-_Última actualización: 2026-10-12_
+## 🗓️ REGLA #31 — Feriados de Chile: una sola fuente (`cl_feriados.py`), y todo calendario marca los días no laborales
+
+**Pedido de Daniel (2026-10-14): «mejorar el calendario de las Órdenes de trabajo considerando los días feriados o no laborales en Chile y que tenga una hermosa vista responsiva».**
+
+- **Una sola fuente:** `cl_feriados.feriados_chile(año)` (la usan Retiros, el planificador de mantenciones y el calendario de OT). Nunca una lista de feriados propia en otro módulo. Cada año se carga la lista oficial en `FERIADOS_OFICIALES` (feriados.cl); sin ella, el cálculo aplica los traslados de ley (San Pedro y San Pablo y Encuentro de Dos Mundos al lunes, Iglesias Evangélicas, Pueblos Indígenas, 17 y 20 de septiembre). Un feriado por ley especial (elecciones, puentes) no se adivina: se agrega a la lista oficial cuando se publica.
+- **Calendario de OT** (`/ot/?vista=calendario`, `_ot2_cal_no_laborales` + `templates/ot2/panel.html`): cada día marca feriado (con su nombre) o fin de semana, cuenta días hábiles del mes y los que quedan, muestra el próximo feriado y **avisa las OT agendadas en un día no laboral** (ILUS no opera sábado ni domingo). Solo informa: no bloquea agendar.
+- **Celular (REGLA #3):** la grilla queda compacta con puntos de color y debajo va una **agenda por día** con los nombres completos (REGLA #15); los filtros se pliegan detrás de un botón «Filtros» (no se quitaron, REGLA #4.2); el modal del día es pantalla completa. Pruebas: `tests/test_ot_calendario_feriados.py`.
+
+---
+
+_Última actualización: 2026-10-14_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

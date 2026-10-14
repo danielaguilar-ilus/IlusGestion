@@ -273,14 +273,63 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
 .ot2-dia.off{background:transparent;border-color:transparent}
 .ot2-dia .d{font-size:.72rem;font-weight:800;color:#6b7280}
 .ot2-dia.hoy .d{color:var(--ilus-red,#dc2626)}
-.ot2-ch{display:block;font-size:.66rem;font-weight:700;padding:3px 6px;border-radius:5px;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:none}
+/* 2026-10-14 (REGLA #15): el nombre del cliente ya no se corta a 14 letras: dos líneas y el resto en el título. */
+.ot2-ch{display:block;white-space:normal;font-size:.66rem;font-weight:700;line-height:1.25;padding:3px 6px;
+  border-radius:5px;text-decoration:none}
+.ot2-ch .tx{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.ot2-ch .nu{font-weight:900}
 .ot2-ch.f-pend{background:var(--ot-pend-bg);color:#1d4ed8}
 .ot2-ch.f-ejec{background:var(--ot-ejec-bg);color:#991b1b}
 .ot2-ch.f-comp{background:var(--ot-comp-bg);color:#166534}
 .ot2-ch.f-cerr{background:var(--ot-cerr-bg);color:#374151}
 .ot2-ch.f-cancel{background:var(--ot-ejec-bg);color:#991b1b;text-decoration:line-through}
-.ot2-mas{font-size:.6rem;font-weight:800;color:#9ca3af;padding:0 2px}
+.ot2-mas{font-size:.62rem;font-weight:800;color:#6b7280;padding:0 2px}
+
+/* 🗓️ 2026-10-14 (Daniel: «considerando los días feriados o no laborales en Chile y que tenga una hermosa vista
+   responsiva»). Feriado = rojo suave con su nombre; fin de semana = gris (ILUS no opera sábado ni domingo); una OT
+   en un día no laboral lleva el triángulo ámbar. */
+.ot2-dia{cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.ot2-dia.off{cursor:default}
+.ot2-dia:not(.off):hover{border-color:#c7cbd1;box-shadow:0 4px 12px rgba(10,10,10,.06)}
+.ot2-dia:focus-visible{outline:3px solid var(--ilus-red,#dc2626);outline-offset:2px}
+.ot2-dia-h{display:flex;align-items:center;gap:4px;min-height:18px}
+.ot2-dia-n{display:none}
+.ot2-nolab{color:#b45309;font-size:.72rem;margin-left:auto}
+.ot2-dia.finde{background:#f3f4f6}
+.ot2-dia.finde .d{color:#9ca3af}
+.ot2-dia.feriado{background:#fef2f2;border-color:#fecaca}
+.ot2-dia.feriado .d{color:#991b1b}
+.ot2-dia.feriado.hoy,.ot2-dia.finde.hoy{border-color:var(--ilus-red,#dc2626)}
+.ot2-dia.pasado:not(.feriado):not(.finde){background:#fcfcfd}
+.ot2-fer{display:flex;align-items:flex-start;gap:4px;font-size:.62rem;font-weight:800;color:#991b1b;line-height:1.2;
+  overflow-wrap:anywhere;min-width:0}
+.ot2-fer i{font-size:.6rem;margin-top:1px}
+.ot2-dow div.fin{color:#c0c4cc}
+.ot2-cal-sub{text-align:center;font-size:.76rem;font-weight:700;color:#6b7280;margin:-6px 0 12px}
+.ot2-cal-sub b{color:#0a0a0a}
+.ot2-cal-hoy{font-size:.74rem;font-weight:800;border:1px solid var(--ot-line);border-radius:9999px;padding:5px 12px;
+  min-height:32px;display:inline-flex;align-items:center;gap:5px;color:#0a0a0a;text-decoration:none;background:#fff}
+.ot2-cal-hoy:hover{border-color:#0a0a0a;color:#0a0a0a}
+/* Columna lateral: feriados del mes */
+.ot2-hab{font-size:.8rem;color:#374151;margin-bottom:10px}
+.ot2-hab b{font-weight:900;color:#0a0a0a}
+.ot2-fer-i{display:flex;gap:10px;align-items:baseline;padding:7px 0;border-top:1px solid #f3f4f6;font-size:.8rem;
+  font-weight:700;color:#0a0a0a}
+.ot2-fer-i:first-of-type{border-top:0}
+.ot2-fer-i .dt{flex:none;min-width:52px;font-weight:900;color:#991b1b;font-variant-numeric:tabular-nums}
+.ot2-fer-i small{display:block;font-weight:600;color:#6b7280}
+.ot2-fer-i.pasado{opacity:.6}
+.ot2-fer-prox{margin-top:10px;font-size:.76rem;color:#374151;background:#f9fafb;border:1px solid #f1f5f9;
+  border-radius:9px;padding:8px 10px}
+.ot2-fer-alerta{margin-top:10px;font-size:.76rem;color:#78350f;background:#fff8e1;border:1px solid #fde68a;
+  border-radius:9px;padding:8px 10px;line-height:1.45}
+.ot2-fer-alerta i{color:#b45309}
+.ot2-leg-sw{display:inline-block;width:12px;height:12px;border-radius:3px;flex:none;margin-top:2px}
+.ot2-leg-sw.fer{background:#fef2f2;border:1px solid #fecaca}
+.ot2-leg-sw.fin{background:#f3f4f6;border:1px solid #e5e7eb}
+/* Agenda del mes: solo en celular (la grilla de 7 columnas no alcanza para leer nombres) */
+.ot2-agenda{display:none}
+.ot2-filtros-btn{display:none}
 
 /* ── Calendario + panel lateral (2026-08-26, fusión de calendarios:
    Daniel, "que los dos calendarios sean uno y bien potente"). La grilla
@@ -320,8 +369,8 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
 .ot2-nx:last-of-type{padding-bottom:2px}
 .ot2-nx .ot2-dotf{margin-top:5px}
 .ot2-nx .bd{flex:1;min-width:0}
-.ot2-nx .cl{display:block;font-size:.8rem;font-weight:800;color:#0a0a0a;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .14s}
+.ot2-nx .cl{display:block;font-size:.8rem;font-weight:800;color:#0a0a0a;overflow-wrap:break-word;
+  white-space:normal;line-height:1.3;transition:color .14s}
 .ot2-nx:hover .cl{color:var(--ilus-red,#dc2626)}
 .ot2-nx .mt{display:block;font-size:.7rem;color:#6b7280;margin-top:1px}
 .ot2-nx .nu{font-size:.68rem;font-weight:900;color:#9ca3af;
@@ -405,6 +454,72 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   .ot2-pie{justify-content:center}
   .ot2-dia{min-height:64px}
   .ot2-ch{font-size:0;padding:0;width:7px;height:7px;border-radius:50%;display:inline-block}
+  /* 🗓️ 2026-10-14: celular. Grilla compacta (número, puntos de color, feriado) + agenda del mes debajo. */
+  .ot2-cal{padding:8px;border-radius:12px}
+  .ot2-dow,.ot2-sem{gap:3px;margin-bottom:3px}
+  .ot2-dow div{font-size:.62rem;padding:2px 0}
+  .ot2-dia{min-height:54px;padding:5px 3px 4px;border-radius:8px;gap:3px;flex-direction:row;flex-wrap:wrap;
+    justify-content:center;align-content:flex-start}
+  .ot2-dia-h,.ot2-fer,.ot2-mas{flex-basis:100%;text-align:center}
+  .ot2-dia-h{width:100%;justify-content:center;position:relative}
+  .ot2-dia .d{font-size:.8rem}
+  .ot2-dia.hoy .d{background:var(--ilus-red,#dc2626);color:#fff;border-radius:9999px;min-width:22px;height:22px;
+    display:inline-flex;align-items:center;justify-content:center}
+  .ot2-nolab{position:absolute;top:-3px;right:0;font-size:.58rem;margin:0}
+  .ot2-fer{justify-content:center}
+  .ot2-fer span{display:none}
+  .ot2-dia .ot2-ch{width:8px;height:8px;margin:0 1px}
+  .ot2-dia .ot2-ch .tx{display:none}
+  .ot2-dia .ot2-ch.f-pend{background:var(--ot-pend,#3b82f6)} .ot2-dia .ot2-ch.f-ejec{background:var(--ot-ejec,#dc2626)}
+  .ot2-dia .ot2-ch.f-comp{background:var(--ot-comp,#16a34a)} .ot2-dia .ot2-ch.f-cerr{background:#6b7280}
+  .ot2-dia .ot2-ch.f-cancel{background:#fca5a5}
+  .ot2-mas{font-size:.6rem;padding:0;line-height:1}
+  .ot2-mas .t{display:none}
+  .ot2-cal-mes{min-width:0;font-size:1rem}
+  .ot2-cal-nav{gap:10px;flex-wrap:wrap}
+  .ot2-agenda{display:block;margin-top:12px;background:#fff;border:1px solid var(--ot-line);border-radius:12px;padding:12px}
+  .ot2-ag-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+  .ot2-ag-h b{font-size:.9rem;font-weight:900}
+  .ot2-ag-h small{font-size:.72rem;color:#6b7280;font-weight:600}
+  .ot2-ag-dia{display:flex;gap:10px;padding:10px 0;border-top:1px solid #f3f4f6}
+  .ot2-ag-dia:first-of-type{border-top:0}
+  .ot2-ag-fecha{flex:none;width:42px;text-align:center;line-height:1.1}
+  .ot2-ag-fecha .dw{display:block;font-size:.62rem;font-weight:800;text-transform:uppercase;color:#6b7280}
+  .ot2-ag-fecha .nm{display:block;font-size:1.25rem;font-weight:900;color:#0a0a0a}
+  .ot2-ag-dia.hoy .ot2-ag-fecha .nm{color:var(--ilus-red,#dc2626)}
+  .ot2-ag-dia.finde .ot2-ag-fecha .nm{color:#9ca3af}
+  .ot2-ag-dia.feriado .ot2-ag-fecha .nm{color:#991b1b}
+  .ot2-ag-cont{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+  .ot2-ag-fer{font-size:.74rem;font-weight:800;color:#991b1b;background:#fef2f2;border:1px solid #fecaca;
+    border-radius:8px;padding:5px 8px}
+  .ot2-ag-fer.fin{color:#4b5563;background:#f3f4f6;border-color:#e5e7eb}
+  .ot2-ag-fer.alerta{color:#78350f;background:#fff8e1;border-color:#fde68a}
+  .ot2-ag-ot{display:flex;flex-direction:column;gap:2px;min-height:44px;padding:8px 10px;border-radius:9px;
+    border:1px solid #eaecf0;border-left:4px solid #6b7280;text-decoration:none;color:#0a0a0a;background:#fff}
+  .ot2-ag-ot:active{background:#f9fafb}
+  .ot2-ag-ot.f-pend{border-left-color:#3b82f6} .ot2-ag-ot.f-ejec{border-left-color:#dc2626}
+  .ot2-ag-ot.f-comp{border-left-color:#16a34a} .ot2-ag-ot.f-cerr{border-left-color:#4b5563}
+  .ot2-ag-ot.f-cancel{border-left-color:#dc2626;opacity:.7}
+  .ot2-ag-ot .top{display:flex;justify-content:space-between;gap:8px;font-size:.78rem}
+  .ot2-ag-ot .top b{font-weight:900;font-variant-numeric:tabular-nums}
+  .ot2-ag-ot .es{font-size:.68rem;font-weight:800;color:#6b7280;text-align:right}
+  .ot2-ag-ot .cl{font-size:.84rem;font-weight:800;line-height:1.3;overflow-wrap:anywhere}
+  .ot2-ag-ot .mt{font-size:.72rem;color:#6b7280;line-height:1.35}
+  .ot2-ag-vacio{font-size:.8rem;color:#9ca3af;font-weight:600;padding:6px 0}
+  .ot2-agenda:not(.ver-pasado) .ot2-ag-dia.pasado{display:none}
+  .ot2-ag-pasado{width:100%;min-height:44px;border:1px dashed #d1d5db;background:#fff;border-radius:9px;
+    font-size:.78rem;font-weight:800;color:#374151;margin-bottom:6px}
+  .ot2-agenda.ver-pasado .ot2-ag-pasado{display:none}
+  /* Filtros plegables: el calendario (y la tabla) ya no quedan dos pantallas más abajo */
+  .ot2-filtros-btn{display:flex;align-items:center;gap:8px;width:100%;min-height:44px;margin-bottom:10px;
+    background:#fff;border:1px solid var(--ot-line);border-radius:11px;padding:8px 14px;font-weight:800;
+    font-size:.88rem;color:#0a0a0a}
+  .ot2-filtros-btn .n{background:var(--ilus-red,#dc2626);color:#fff;border-radius:9999px;font-size:.72rem;
+    min-width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;padding:0 6px}
+  .ot2-filtros-btn .cv{margin-left:auto;transition:transform .2s}
+  .ot2-filtros-btn[aria-expanded="true"] .cv{transform:rotate(180deg)}
+  #ot2Bar:not(.abierto) > :not(.ot2-search):not(input[type="hidden"]){display:none}
+  .ot2-nx .cl{white-space:normal}
   .ot2-col{flex-basis:250px;width:250px}
 }
 
@@ -771,7 +886,16 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   </div>
 
   {# ── Origen + buscador ───────────────────────────────────────────── #}
-  <form method="get" class="ot2-bar">
+  {# 2026-10-14 (Daniel: «está fallando un poco en la parte responsiva»): en celular los filtros se pliegan detrás
+     de este botón (el buscador queda a la vista). En escritorio el botón no aparece y todo sigue igual. #}
+  {% set _n_filtros = (1 if f_tipo else 0) + (1 if f_tec else 0) + (1 if f_interna else 0) + (1 if f_anexo else 0)
+                      + (1 if f_pago else 0) + (1 if origen == 'automaticas' else 0) %}
+  <button type="button" class="ot2-filtros-btn" aria-expanded="false" aria-controls="ot2Bar"
+          onclick="var b=document.getElementById('ot2Bar');var a=b.classList.toggle('abierto');this.setAttribute('aria-expanded',a?'true':'false')">
+    <i class="bi bi-sliders"></i> Filtros{% if _n_filtros %} <span class="n">{{ _n_filtros }}</span>{% endif %}
+    <i class="bi bi-chevron-down cv"></i>
+  </button>
+  <form method="get" class="ot2-bar" id="ot2Bar">
     <input type="hidden" name="vista" value="{{ vista }}">
     {% if fase %}<input type="hidden" name="fase" value="{{ fase }}">{% endif %}
     {% if vista == 'calendario' and cal_mes_actual %}<input type="hidden" name="mes" value="{{ cal_mes_actual }}">{% endif %}
@@ -1221,9 +1345,18 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     <a class="ot2-cal-b" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, mes=cal_mes_ant) }}" aria-label="Mes anterior"><i class="bi bi-chevron-left"></i></a>
     <span class="ot2-cal-mes">{{ cal_mes_label }}</span>
     <a class="ot2-cal-b" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, mes=cal_mes_sig) }}" aria-label="Mes siguiente"><i class="bi bi-chevron-right"></i></a>
+    {% if not es_mes_actual and cal_mes_hoy %}
+    <a class="ot2-cal-hoy" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, mes=cal_mes_hoy) }}"><i class="bi bi-calendar-check"></i>Hoy</a>
+    {% endif %}
   </div>
+  {% if cal_no_laborales %}
+  <div class="ot2-cal-sub"><b>{{ cal_no_laborales.habiles }}</b> días hábiles
+    {%- if cal_no_laborales.lista %} · <b>{{ cal_no_laborales.lista | length }}</b> feriado{{ 's' if cal_no_laborales.lista | length != 1 }}{% endif %}
+    {%- if cal_ot_no_laboral %} · <span style="color:#b45309"><i class="bi bi-exclamation-triangle-fill"></i> {{ cal_ot_no_laboral | length }} día{{ 's' if cal_ot_no_laboral | length != 1 }} con OT no laboral</span>{% endif %}
+  </div>
+  {% endif %}
   <div class="ot2-cal" data-mes="{{ cal_mes_actual }}">
-    <div class="ot2-dow">{% for d in cal_dow %}<div>{{ d }}</div>{% endfor %}</div>
+    <div class="ot2-dow">{% for d in cal_dow %}<div class="{{ 'fin' if loop.index0 >= 5 }}">{{ d }}</div>{% endfor %}</div>
     {% for semana in cal_semanas %}
     <div class="ot2-sem">
       {% for celda in semana %}
@@ -1239,11 +1372,20 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
            la celda (celda.filas) -- el modal ya no depende de leer los
            chips ya renderizados, así que deja de perder las que sobran
            del tope. Ver _ot2_fila_modal_lean() en app.py. #}
-        <div class="ot2-dia {{ 'hoy' if celda.es_hoy }}" style="cursor:pointer"
+        {#- 🗓️ 2026-10-14: feriado (rojo suave + nombre), fin de semana (gris) y aviso si hay OT en un día no laboral. -#}
+        <div class="ot2-dia{{ ' hoy' if celda.es_hoy }}{{ ' feriado' if celda.feriado }}{{ ' finde' if celda.finde and not celda.feriado }}{{ ' pasado' if celda.pasado and not celda.es_hoy }}"
+             role="button" tabindex="0"
              onclick="OT2D.abrir(this)"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();OT2D.abrir(this)}"
+             aria-label="{{ celda.dow }} {{ celda.num }}{% if celda.feriado %}, feriado: {{ celda.feriado }}{% elif celda.finde %}, fin de semana{% endif %}{% if celda.n %}, {{ celda.n }} OT{% endif %}"
              data-dia="{{ celda.num }}" data-total="{{ celda.filas_modal|length }}"
+             data-feriado="{{ celda.feriado or '' }}" data-finde="{{ '1' if celda.finde }}"
              data-full='{{ celda.filas_modal | tojson }}'>
-          <span class="d">{{ celda.num }}</span>
+          <div class="ot2-dia-h">
+            <span class="d">{{ celda.num }}</span>
+            {% if celda.n and (celda.feriado or celda.finde) %}<i class="bi bi-exclamation-triangle-fill ot2-nolab" title="Hay OT agendadas en un día no laboral"></i>{% endif %}
+          </div>
+          {% if celda.feriado %}<div class="ot2-fer" title="Feriado: {{ celda.feriado }}"><i class="bi bi-flag-fill"></i><span>{{ celda.feriado }}</span></div>{% endif %}
           {% for f in celda.filas %}
           <span class="ot2-ch f-{{ f.estado_fase or 'cancel' }}"
                 data-ot="{% if f.numero_ot %}OT-{{ f.numero_prefijo }}-{{ f.numero_sufijo }}{% else %}VS-{{ f.id }}{% endif %}"
@@ -1254,17 +1396,50 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                 data-ini="{{ f.tecnico_ini or '' }}"
                 data-av="{{ f.n_completas }}/{{ f.n_tareas }} · {{ f.check_pct }}%"
                 data-sub="{{ f.estado_sub or '' }}"
-                data-url="{{ url_for('ot2_detalle', vid=f.id) }}">
-            {% if f.numero_ot %}{{ f.numero_sufijo }}{% else %}VS-{{ f.id }}{% endif %} · {{ (f.razon_social or 'Interno')[:14] }}
+                data-url="{{ url_for('ot2_detalle', vid=f.id) }}"
+                title="{% if f.numero_ot %}OT-{{ f.numero_prefijo }}-{{ f.numero_sufijo }}{% else %}VS-{{ f.id }}{% endif %} · {{ f.razon_social or 'Trabajo interno' }} · {{ f.tecnico_nombre or 'Sin asignar' }} · {{ f.estado_label }}">
+            <span class="tx"><span class="nu">{% if f.numero_ot %}{{ f.numero_sufijo }}{% else %}VS-{{ f.id }}{% endif %}</span> · {{ f.razon_social or 'Trabajo interno' }}</span>
           </span>
           {% endfor %}
-          {% if celda.recortado %}<div class="ot2-mas">+{{ celda.recortado }} más</div>{% endif %}
+          {% if celda.recortado %}<div class="ot2-mas">+{{ celda.recortado }}<span class="t"> más</span></div>{% endif %}
         </div>
         {% else %}<div class="ot2-dia off"></div>{% endif %}
       {% endfor %}
     </div>
     {% endfor %}
   </div>
+  {#- 🗓️ 2026-10-14: agenda del mes, SOLO en celular (la grilla de 7 columnas no alcanza para leer nombres). Mismas
+      OT que el modal del día (filas_modal); los feriados del mes aparecen aunque no tengan OT. En el mes en curso los
+      días ya pasados se esconden tras un botón. -#}
+  {% set _ag = namespace(pasados=0, hay=0) %}
+  {% for semana in cal_semanas %}{% for celda in semana %}{% if celda and (celda.n or celda.feriado) %}
+    {% set _ag.hay = _ag.hay + 1 %}{% if celda.pasado and es_mes_actual %}{% set _ag.pasados = _ag.pasados + 1 %}{% endif %}
+  {% endif %}{% endfor %}{% endfor %}
+  <section class="ot2-agenda" aria-label="Agenda de {{ cal_mes_label }}">
+    <div class="ot2-ag-h"><b>Agenda de {{ cal_mes_label }}</b><small>Toca una OT para abrirla</small></div>
+    {% if _ag.pasados %}
+    <button type="button" class="ot2-ag-pasado" onclick="this.closest('.ot2-agenda').classList.add('ver-pasado')">
+      <i class="bi bi-clock-history me-1"></i>Ver días anteriores ({{ _ag.pasados }})</button>
+    {% endif %}
+    {% for semana in cal_semanas %}{% for celda in semana %}{% if celda and (celda.n or celda.feriado) %}
+    <div class="ot2-ag-dia{{ ' hoy' if celda.es_hoy }}{{ ' feriado' if celda.feriado }}{{ ' finde' if celda.finde and not celda.feriado }}{{ ' pasado' if celda.pasado and es_mes_actual }}">
+      <div class="ot2-ag-fecha"><span class="dw">{{ 'Hoy' if celda.es_hoy else celda.dow }}</span><span class="nm">{{ celda.num }}</span></div>
+      <div class="ot2-ag-cont">
+        {% if celda.feriado %}<div class="ot2-ag-fer"><i class="bi bi-flag-fill me-1"></i>Feriado · {{ celda.feriado }}</div>
+        {% elif celda.finde %}<div class="ot2-ag-fer fin"><i class="bi bi-moon-stars me-1"></i>Fin de semana · no laboral</div>{% endif %}
+        {% if celda.n and (celda.feriado or celda.finde) %}<div class="ot2-ag-fer alerta"><i class="bi bi-exclamation-triangle-fill me-1"></i>OT en día no laboral: confirma con el cliente y el técnico.</div>{% endif %}
+        {% for d in celda.filas_modal %}
+        <a class="ot2-ag-ot f-{{ d.fase }}" href="{{ d.url }}">
+          <span class="top"><b>{{ d.ot }}</b><span class="es">{{ d.estado }}</span></span>
+          <span class="cl">{{ d.cli }}</span>
+          <span class="mt">{{ d.tipo }}{% if d.hora %} · {{ d.hora }} h{% endif %} · {{ d.tec }}</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}{% endfor %}{% endfor %}
+    {% if not _ag.hay %}<div class="ot2-ag-vacio"><i class="bi bi-calendar-x me-1"></i>Sin OT agendadas este mes.</div>{% endif %}
+  </section>
   </div>{# /ot2-cal-main #}
 
   {# ── Panel lateral: lo bueno del calendario viejo, en lenguaje OT 2.0 ── #}
@@ -1281,6 +1456,30 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
         <div class="ot2-sd-kpi k-e"><div class="n">{{ resumen_hoy.ejec }}</div><div class="l">En ejecución</div></div>
         <div class="ot2-sd-kpi k-c"><div class="n">{{ resumen_hoy.comp }}</div><div class="l">Completadas</div></div>
       </div>
+    </div>
+    {% endif %}
+
+    {# 🗓️ 2026-10-14: feriados y días no laborales del mes visible (cl_feriados, la misma fuente que Retiros). #}
+    {% if cal_no_laborales %}
+    <div class="ot2-sc">
+      <div class="ot2-sc-tit"><i class="bi bi-flag-fill"></i>Feriados y días no laborales</div>
+      <div class="ot2-hab"><b>{{ cal_no_laborales.habiles }}</b> días hábiles en {{ cal_mes_label | lower }}
+        {%- if cal_no_laborales.habiles_restantes is not none %} · quedan <b>{{ cal_no_laborales.habiles_restantes }}</b> desde hoy{% endif %}.</div>
+      {% for fr in cal_no_laborales.lista %}
+      <div class="ot2-fer-i{{ ' pasado' if fr.pasado }}"><span class="dt">{{ fr.dow }} {{ fr.dia }}</span>
+        <span>{{ fr.nombre }}{% if fr.finde %}<small>cae en fin de semana</small>{% endif %}</span></div>
+      {% else %}
+      <div class="ot2-nx-vacio"><i class="bi bi-check2-circle me-1"></i>Sin feriados este mes</div>
+      {% endfor %}
+      {% if cal_no_laborales.proximo %}
+      <div class="ot2-fer-prox"><i class="bi bi-calendar-event me-1"></i>Próximo feriado: <b>{{ cal_no_laborales.proximo.dow }} {{ cal_no_laborales.proximo.fecha }}</b> · {{ cal_no_laborales.proximo.nombre }}
+        {%- if cal_no_laborales.proximo.dias == 0 %} (hoy){% elif cal_no_laborales.proximo.dias == 1 %} (mañana){% else %} (en {{ cal_no_laborales.proximo.dias }} días){% endif %}</div>
+      {% endif %}
+      {% if cal_ot_no_laboral %}
+      <div class="ot2-fer-alerta"><i class="bi bi-exclamation-triangle-fill me-1"></i>OT agendadas en días no laborales:
+        {% for x in cal_ot_no_laboral %}<b>{{ x.dow }} {{ x.dia }}</b> ({{ x.n }} OT{% if x.feriado %}, {{ x.feriado }}{% endif %}){{ ', ' if not loop.last else '.' }}{% endfor %}
+        Confirma que el cliente y el técnico estén de acuerdo.</div>
+      {% endif %}
     </div>
     {% endif %}
 
@@ -1308,6 +1507,8 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     <div class="ot2-sc">
       <div class="ot2-sc-tit"><i class="bi bi-palette-fill"></i>Colores del calendario</div>
       <div class="ot2-leg">
+        <div class="ot2-leg-i"><span class="ot2-leg-sw fer"></span><span><span>Feriado</span><small>con su nombre en el día</small></span></div>
+        <div class="ot2-leg-i"><span class="ot2-leg-sw fin"></span><span><span>Fin de semana</span><small>no laboral</small></span></div>
         {% for l in cal_leyenda %}
         <div class="ot2-leg-i {{ 'cancel' if l.clave == 'cancel' }}">
           <span class="ot2-dotf f-{{ l.clave }}"></span>
@@ -1351,7 +1552,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
    indicándome qué es la OT... no es que lo va a abrir directo, porque
    quiero ver quién es la OT, quién es el técnico asignado". #}
 <div class="modal fade" id="ot2ModalDia" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered modal-lg">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-fullscreen-sm-down">
     <div class="modal-content" style="border:0;border-radius:15px;overflow:hidden">
       <div style="background:linear-gradient(135deg,#1a1a1a,#0a0a0a 60%);color:#fff;
                   padding:16px 22px;display:flex;align-items:center;gap:13px;
@@ -1364,7 +1565,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
         <button type="button" style="margin-left:auto;background:transparent;border:0;
                 color:rgba(255,255,255,.7);font-size:1.4rem" data-bs-dismiss="modal">&times;</button>
       </div>
-      <div style="padding:16px 20px;max-height:62vh;overflow-y:auto" id="ot2DiaBody"></div>
+      <div class="o2d-body" style="padding:16px 20px;max-height:62vh;overflow-y:auto" id="ot2DiaBody"></div>
     </div>
   </div>
 </div>
@@ -1377,6 +1578,15 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
    viejo no tenía: ticket de origen, prioridad, salud/SLA, interno/
    externo. Arriba, mini-KPIs del día (como el drill-down viejo). */
 .o2d-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+/* 🗓️ 2026-10-14: el día no laboral se dice arriba del modal; en celular el modal ocupa la pantalla (REGLA #3). */
+.o2d-nolab{display:flex;gap:8px;align-items:flex-start;border-radius:10px;padding:9px 12px;margin-bottom:12px;
+  font-size:.8rem;font-weight:700;background:#fef2f2;border:1px solid #fecaca;color:#7f1d1d}
+.o2d-nolab.fin{background:#f3f4f6;border-color:#e5e7eb;color:#374151}
+@media (max-width:575.98px){
+  #ot2ModalDia .modal-content{border-radius:0 !important}
+  #ot2ModalDia .o2d-body{max-height:none !important;flex:1;padding:14px !important}
+  .o2d-kpis{grid-template-columns:repeat(2,1fr)}
+}
 .o2d-kpi{background:#fafbfc;border:1px solid #eaecf0;border-radius:9px;padding:9px 10px;text-align:center}
 .o2d-kpi .n{font-size:1.35rem;font-weight:900;line-height:1;color:#0a0a0a;font-variant-numeric:tabular-nums}
 .o2d-kpi .l{font-size:.58rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;margin-top:3px}
@@ -1435,6 +1645,13 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   /* En pantalla chica la fila se queda con lo esencial: el color del
      borde ya dice la fase y el detalle expandido trae el estado entero. */
   .o2d-row .es, .o2d-row .pl{display:none}
+  /* 2026-10-14 (REGLA #15): en celular el N° de OT va arriba y el cliente completo debajo (antes se cortaba). */
+  .o2d-row{flex-wrap:wrap;row-gap:2px;padding-top:10px;padding-bottom:10px}
+  .o2d-row .nu{order:0;font-size:.8rem;flex:1 1 auto}
+  .o2d-row .tc{order:1;width:28px;height:28px;font-size:.66rem}
+  .o2d-row .cv{order:2}
+  .o2d-row .bd{order:3;flex:1 1 100%}
+  .o2d-row .cl,.o2d-row .mt{white-space:normal;overflow:visible;text-overflow:clip}
 }
 </style>
 
@@ -1479,7 +1696,11 @@ window.OT2D = (function(){
   function abrir(celda){
     var filas;
     try { filas = JSON.parse(celda.dataset.full || '[]'); } catch(e) { filas = []; }
-    if (!filas.length) return;                       // día vacío: no molesta
+    var feriado = celda.dataset.feriado || '', finde = celda.dataset.finde === '1';
+    if (!filas.length){                              // día vacío: solo informa si es feriado
+      if (feriado && window.ilusToast) ilusToast('Feriado: ' + feriado + ' · sin OT agendadas', {type: 'info'});
+      return;
+    }
     var dia = parseInt(celda.dataset.dia, 10) || 0;
     var total = filas.length;
 
@@ -1504,10 +1725,17 @@ window.OT2D = (function(){
 
     document.getElementById('ot2DiaTit').textContent = tit;
     document.getElementById('ot2DiaSub').textContent =
+      (feriado ? 'Feriado · ' + feriado + ' · ' : (finde ? 'Fin de semana · ' : '')) +
       total + (total === 1 ? ' orden agendada' : ' órdenes agendadas') +
       (nTecs ? ' · ' + nTecs + (nTecs === 1 ? ' técnico' : ' técnicos') + ' en terreno' : '');
 
-    var html = '<div class="o2d-kpis">'+
+    // 🗓️ 2026-10-14: día no laboral (feriado de Chile o fin de semana) con OT agendadas.
+    var html = '';
+    if (feriado || finde) {
+      html += '<div class="o2d-nolab' + (feriado ? '' : ' fin') + '"><i class="bi bi-' + (feriado ? 'flag-fill' : 'moon-stars') + '"></i><span>' +
+        (feriado ? 'Feriado: ' + esc(feriado) : 'Fin de semana') + '. Es un día no laboral: confirma que la visita esté acordada con el cliente y el técnico.</span></div>';
+    }
+    html += '<div class="o2d-kpis">'+
       '<div class="o2d-kpi"><div class="n">'+total+'</div><div class="l">Órdenes</div></div>'+
       '<div class="o2d-kpi k-e"><div class="n">'+nEjec+'</div><div class="l">En ejecución</div></div>'+
       '<div class="o2d-kpi k-c"><div class="n">'+nComp+'</div><div class="l">Completadas</div></div>'+
