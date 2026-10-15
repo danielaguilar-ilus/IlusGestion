@@ -195,12 +195,16 @@
           aparece si YA hay solicitudes) -- este es el punto de entrada para
           crear la primera. El ticket mismo es el agrupador, sin OT ni
           equipo formal de por medio. -#}
+      {#- 🔒 2026-10-14: un técnico veía el botón pero el servidor siempre le respondía 403 (pedir
+          desde un ticket es de gestión; el técnico pide desde su OT). Se dibuja solo para quien puede. -#}
+      {% if not es_tecnico %}
       <div class="tk-card">
         <h6><i class="bi bi-tools"></i>Repuesto directo del ticket</h6>
         <p class="text-muted small mb-2">Sin pasar por una OT: queda enganchado a este mismo ticket.</p>
         <button type="button" class="btn btn-sm fw-bold w-100" style="border:1.5px solid #0a0a0a;color:#0a0a0a" onclick="TKREP.abrir()">
           <i class="bi bi-tools me-1"></i>Solicitar repuesto</button>
       </div>
+      {% endif %}
       <div class="tk-card" id="cardNotas" style="display:none;">
         <h6><i class="bi bi-lock"></i>Notas internas</h6>
         <div id="txtNotas" style="font-size:.87rem;color:#374151;white-space:pre-wrap;line-height:1.5;"></div>

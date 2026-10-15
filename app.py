@@ -67664,11 +67664,28 @@ def mant_api_incidencias_list():
                     fotos_por_inc.setdefault(f["incidencia_id"], f["gcs_key"])
                 else:
                     videos_por_inc.setdefault(f["incidencia_id"], f["gcs_key"])
+    # 2026-10-14 (Daniel: "creé una solicitud desde la bodega de incidencias y
+    # no pasó nada"): la tabla mostraba «Sí · sin stock» con un carrito aunque
+    # la solicitud nunca se hubiera enviado. Se cuenta cuántas solicitudes de
+    # repuesto existen de verdad para cada incidencia de la página.
+    sol_por_inc = {}
+    try:
+        _ids_pag = [r["id"] for r in rows]
+        if _ids_pag:
+            for s in (mysql_fetchall(
+                    "SELECT incidencia_id, COUNT(*) AS n, "
+                    "       SUM(CASE WHEN estado IN ('solicitado','validado','pedido','recibido') THEN 1 ELSE 0 END) AS abiertas "
+                    "  FROM mant_ot_repuesto_solicitudes WHERE incidencia_id IN (" + ",".join(["%s"] * len(_ids_pag)) + ") "
+                    " GROUP BY incidencia_id", tuple(_ids_pag)) or []):
+                sol_por_inc[s["incidencia_id"]] = (int(s.get("n") or 0), int(s.get("abiertas") or 0))
+    except Exception as _e_sol:
+        print(f"[incidencias] conteo solicitudes: {_e_sol}", flush=True)
     for r in rows:
         gk = fotos_por_inc.get(r["id"])
         vk = videos_por_inc.get(r["id"])
         r["foto_principal"] = ("/f/" + gk) if gk else None
         r["video_principal"] = ("/f/" + vk) if (not gk and vk) else None
+        r["n_solicitudes"], r["n_solicitudes_abiertas"] = sol_por_inc.get(r["id"], (0, 0))
 
     # Comparativa UA/Ubicación vs CheckWMS SOLO de la página visible (Daniel
     # 2026-09-26: "no llames una vez por fila... limita a la página"). El
@@ -69407,7 +69424,13 @@ def mant_api_incidencia_solicitar_repuestos(iid):
         if primer_stock is None:
             primer_stock = rid
         fisico = float(li.get("stock_cantidad") or 0)
-        otras = _otrep_stock_comprometido(rid, excluir_sol_id=sid)
+        # 2026-10-14: las solicitudes ya están guardadas en este punto. Si el cálculo del aviso
+        # fallara, el usuario veía un error y al reintentar se duplicaban: el aviso no tumba nada.
+        try:
+            otras = _otrep_stock_comprometido(rid, excluir_sol_id=sid)
+        except Exception as _e_comp:
+            print(f"[inc_gr] stock comprometido rid={rid}: {_e_comp}", flush=True)
+            continue
         disponible = fisico - otras - li["cantidad"]
         if disponible < 0:
             hay_todo = False
@@ -99489,9 +99512,13 @@ def _otrep_resolver_ticket_si_corresponde(ticket_id, user):
         # No pisar los estados AUTOMÁTICOS del ciclo de vida de la OT (si el
         # ticket ya se convirtió en una OT en curso, esa OT manda su estado,
         # no este cierre por repuestos -- ver TK_ESTADOS_AUTOMATICOS).
+        # 🔧 2026-10-14 (revisión de los caminos de repuestos): SOLO se cierra solo un
+        # ticket AGRUPADOR de repuestos (tipo spare_parts*). Una solicitud pedida desde el
+        # ticket de un cliente (soporte, mantención…) usa ESE ticket como agrupador: anularla
+        # dejaba el ticket del cliente «Resuelto» con el problema todavía abierto.
         cambio = mysql_execute_returning_rowcount(
             "UPDATE tk_tickets SET estado='resolved', cerrado_at=NOW(), cerrado_por=%s "
-            " WHERE id=%s AND estado NOT IN ('closed','resolved','cancelado',"
+            " WHERE id=%s AND tipo LIKE 'spare_parts%%' AND estado NOT IN ('closed','resolved','cancelado',"
             "                                'ot_generated','ot_in_progress','ot_pending_approval')",
             (user, ticket_id))
         if cambio:

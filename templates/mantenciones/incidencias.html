@@ -39,6 +39,15 @@
   @media (prefers-reduced-motion:reduce){.inc-hbtn{transition:none}.inc-hbtn:hover{transform:none}}
   @media (max-width:576px){.inc-hacc{width:100%}.inc-hacc>*{flex:1 1 calc(50% - 10px)}.inc-hacc .inc-hbtn{width:100%;justify-content:flex-start}
     .inc-hbtn .tx small{display:none}}
+
+  /* 2026-10-14: aviso fijo en el pie con los repuestos que faltan por pedir */
+  .igr-pend-foot{background:#fff8e1;color:#92400e;border:1.5px solid #f59e0b;font-weight:800;margin-right:auto;min-height:44px;animation:igrPendPulso 2s ease-in-out infinite}
+  .igr-pend-foot:hover{background:#fde68a;color:#78350f}
+  @keyframes igrPendPulso{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,.45)}50%{box-shadow:0 0 0 6px rgba(245,158,11,0)}}
+  @media (prefers-reduced-motion:reduce){ .igr-pend-foot{animation:none} }
+  @media (max-width:768px){ .igr-pend-foot{width:100%;margin-right:0;order:-1} }
+  .rm-pill.azul{background:#dbeafe;color:#1e40af}
+  .rm-pill.rojo{background:#fee2e2;color:#991b1b}
 </style>
 {% endblock %}
 {% block content %}
@@ -546,7 +555,7 @@
             {#- Repuesto asociado a la incidencia (el primero de bodega que se pide queda asociado
                 solo; acá se ve y se puede quitar o volver a sumar a la lista). -#}
             <div id="incRepEstadoStock" class="inc-rep-estado" hidden></div>
-            <div class="d-flex align-items-center flex-wrap gap-2 mt-2" id="incRepSeleccionadoBox" style="display:none">
+            <div class="align-items-center flex-wrap gap-2 mt-2" id="incRepSeleccionadoBox" style="display:none">
               <small class="text-muted">Repuesto asociado:</small>
               <span class="badge text-bg-light border" style="white-space:normal;text-align:left" id="incRepSeleccionadoTxt"></span>
               <button type="button" class="btn btn-sm btn-outline-secondary" id="incBtnQuitarRepSel">
@@ -600,6 +609,10 @@
         <button type="button" class="btn btn-outline-danger me-auto" id="incBtnEliminar" style="display:none">
           <i class="bi bi-trash me-1"></i>Eliminar</button>
         {% endif %}
+        {#- 2026-10-14 (Daniel: "creé una solicitud y no pasó nada"): mientras haya repuestos en la
+            lista sin enviar, el pie lo dice siempre y lleva directo al botón que envía. -#}
+        <button type="button" class="btn igr-pend-foot" id="igrPendFoot" hidden>
+          <i class="bi bi-exclamation-circle-fill me-1"></i><span id="igrPendFootTxt">Repuestos sin pedir</span></button>
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-ilus" id="incBtnGuardar">
           <i class="bi bi-check2-circle me-1"></i>Guardar incidencia</button>
@@ -1525,9 +1538,15 @@
   // palabras qué significa, con el color del semáforo.
   function incRepCelda(r){
     if(r.req_repuesto === 'si'){
-      if(r.stock_repuesto === 'hay') return '<span class="rm-pill verde" style="margin-top:0"><i class="bi bi-box-seam"></i>Sí · en stock</span>';
-      if(r.stock_repuesto === 'no_hay') return '<span class="rm-pill ambar" style="margin-top:0"><i class="bi bi-cart-plus"></i>Sí · sin stock</span>';
-      return '<span class="rm-pill ambar" style="margin-top:0"><i class="bi bi-tools"></i>Sí</span>';
+      // 2026-10-14 (Daniel: "creé una solicitud y no pasó nada"): «Sí · sin stock» con un carrito
+      // parecía un pedido hecho. Ahora la celda dice si la solicitud se envió de verdad.
+      var nSol = Number(r.n_solicitudes || 0), nAb = Number(r.n_solicitudes_abiertas || 0);
+      var pedida = nSol > 0
+        ? '<span class="rm-pill ' + (nAb ? 'azul' : 'verde') + '" style="margin-top:4px"><i class="bi bi-send-check"></i>' + (nAb ? 'Solicitado · ' + nAb + ' en curso' : 'Solicitud cerrada') + '</span>'
+        : '<span class="rm-pill rojo" style="margin-top:4px" title="Se marcó que requiere repuesto, pero todavía no se envió ninguna solicitud"><i class="bi bi-exclamation-circle-fill"></i>Sin solicitar</span>';
+      if(r.stock_repuesto === 'hay') return '<span class="rm-pill verde" style="margin-top:0"><i class="bi bi-box-seam"></i>Sí · en stock</span>' + pedida;
+      if(r.stock_repuesto === 'no_hay') return '<span class="rm-pill ambar" style="margin-top:0"><i class="bi bi-box-seam"></i>Sí · sin stock</span>' + pedida;
+      return '<span class="rm-pill ambar" style="margin-top:0"><i class="bi bi-tools"></i>Sí</span>' + pedida;
     }
     if(r.req_repuesto === 'no') return '<span class="rm-sub">No requiere</span>';
     return '<span class="rm-sub">—</span>';
@@ -3373,6 +3392,17 @@
   }
 
   document.getElementById('incBtnGuardar').addEventListener('click', function(){
+    // 2026-10-14: "Guardar incidencia" NO envía los repuestos de la lista. Si hay alguno sin
+    // pedir, se pregunta antes: enviarlos ahora o volver (nunca se pierden en silencio).
+    var nPend = igrPendientes();
+    if(nPend){
+      ilusConfirm({title: 'Tienes repuestos sin pedir',
+        message: 'La lista tiene ' + igrPlural(nPend, 'repuesto', 'repuestos') + ' que todavía NO se solicitaron.',
+        sub: 'Guardar la incidencia no los pide. Envía la solicitud ahora, o vuelve y usa «Vaciar lista» si no los necesitas.',
+        okLabel: 'Enviar la solicitud', cancelLabel: 'Volver'})
+        .then(function(ok){ if(ok) igrEnviar(); else igrIrAlEnvio(); });
+      return;
+    }
     incGuardarIncidencia(function(){ incModal().hide(); });
   });
 
@@ -3978,7 +4008,7 @@
     var provId = $('igrNxProv').value ? Number($('igrNxProv').value) : null;
     if(!igrAgregarManual(nombre, ($('igrNxCodigo').value || '').trim(), cant, provId)) return;
     $('igrNxNombre').value = ''; $('igrNxCodigo').value = ''; $('igrNxCant').value = 1;
-    ilusToast('+ ' + nombre + ' (nuevo, se propone)', {type:'success'});
+    ilusToast('+ ' + nombre + ' agregado a la lista · falta «Enviar solicitud» abajo', {type:'success'});
     igrPintarLista();
     $('igrNxNombre').focus();
   }
@@ -4203,6 +4233,7 @@
     }).join('');
   }
   function igrPintarBtn(){
+    igrPintarPendiente();
     var b = $('igrEnviar');
     if(!b) return;
     var n = _igr.lineas.length;
@@ -4245,14 +4276,16 @@
     if(_igr.enviando) return;
     var err = $('igrErr');
     err.textContent = '';
+    // Un nombre escrito en «Sí, pero no existe» sin apretar «Agregar» también se pide.
+    if(!_igr.lineas.length && _igr.modo === 'noexiste' && ($('igrNxNombre').value || '').trim().length >= 3) igrProponerAgregar();
     var ls = _igr.lineas;
-    if(!ls.length){ err.textContent = 'Agrega al menos un repuesto a la lista.'; return; }
+    if(!ls.length){ igrError('Agrega al menos un repuesto a la lista.'); igrIrALaTarjeta(); return; }
     for(var i = 0; i < ls.length; i++){
-      if(!isFinite(ls[i].cantidad) || ls[i].cantidad <= 0){ err.textContent = 'La cantidad de «' + ls[i].nombre + '» tiene que ser mayor que cero.'; return; }
+      if(!isFinite(ls[i].cantidad) || ls[i].cantidad <= 0){ igrError('La cantidad de «' + ls[i].nombre + '» tiene que ser mayor que cero.'); return; }
     }
     var motivo = ($('igrMotivo').value || '').trim();
-    if(motivo.length < 10){ err.textContent = 'Cuenta por qué hace falta (mínimo 10 caracteres).'; marcarError($('igrMotivo')); return; }
-    if(!_igr.ev){ err.textContent = 'Sin evidencia no hay solicitud: sube una foto o un video del repuesto.'; return; }
+    if(motivo.length < 10){ igrError('Cuenta por qué hace falta (mínimo 10 caracteres).', $('igrMotivo')); return; }
+    if(!_igr.ev){ igrError('Sin evidencia no hay solicitud: sube una foto o un video del repuesto.', $('igrEvCamBtn')); return; }
     var id = $('incId').value;
     // Incidencia todavía sin guardar: se guarda sola (con su misma validación) y sigue el envío.
     if(!id){ incGuardarYLuego(function(){ igrEnviar(); }); return; }
@@ -4270,14 +4303,20 @@
     fd.append('motivo', motivo);
     fd.append('responsable', $('igrResp').value || '');
     _igr.enviando = true; igrPintarBtn();
+    igrPintarPendiente();
     incComprimir(_igr.ev).then(function(f){
       fd.append('evidencia', f);
       return fetch('/mantenciones/api/incidencias/' + id + '/solicitar-repuestos', {method: 'POST', credentials: 'same-origin', body: fd});
     })
-      .then(function(r){ return r.json(); })
+      // Una respuesta que no es JSON (archivo muy pesado, servidor caído) se explica en palabras.
+      .then(function(r){ return r.text().then(function(t){
+        try { return JSON.parse(t); }
+        catch(x){ return {ok: false, error: r.status === 413 ? 'La foto o el video pesa demasiado: elige uno más liviano y vuelve a enviar.'
+                                                            : 'El servidor no respondió bien (código ' + r.status + '). La solicitud NO se envió: vuelve a intentarlo.'}; }
+      }); })
       .then(function(d){
         _igr.enviando = false;
-        if(!d.ok){ igrPintarBtn(); err.textContent = d.error || 'No se pudo enviar la solicitud.'; return; }
+        if(!d.ok){ igrPintarBtn(); igrPintarPendiente(); igrError(d.error || 'No se pudo enviar la solicitud.'); return; }
         // Los campos que alimentan la tabla (el servidor ya los dejó así; el formulario se pone igual
         // para que "Guardar incidencia" no los pise con valores viejos).
         if(d.legacy){
@@ -4299,7 +4338,7 @@
         incCargarEvidencia();   // vuelve a traer la ficha: historial, bitácora y semáforo
         cargar();               // la columna Repuesto de la tabla
       })
-      .catch(function(e){ _igr.enviando = false; igrPintarBtn(); err.textContent = 'Error de red: ' + e.message; });
+      .catch(function(e){ _igr.enviando = false; igrPintarBtn(); igrPintarPendiente(); igrError('Sin conexión: la solicitud NO se envió. Revisa tu internet y vuelve a enviar.'); });
   }
   function igrPintarOk(d){
     var box = $('igrOk');
@@ -4364,6 +4403,7 @@
   }
   // Al abrir el modal de cero (alta o edición) la tarjeta vuelve a su estado inicial.
   function igrReset(){
+    _igr.cerrarOk = false;
     _igr.modo = null; _igr.modoElegido = false;
     _igr.lineas = []; _igr.motivoTocado = false; _igr.enviando = false;
     _igr.modelo = undefined; _igr.modeloSku = null;
@@ -4377,6 +4417,35 @@
     igrPintarHist();
     igrPintarTodo();
   }
+  // 2026-10-14: lo que está en la lista (o escrito en «nuevo» sin agregar) y todavía no se envió.
+  function igrPendientes(){
+    var n = _igr.lineas.length;
+    if(!n && _igr.modo === 'noexiste' && ($('igrNxNombre').value || '').trim().length >= 3) n = 1;
+    return n;
+  }
+  function igrPintarPendiente(){
+    var b = $('igrPendFoot');
+    if(!b) return;
+    var n = igrPendientes();
+    b.hidden = !n || _igr.enviando;
+    var t = $('igrPendFootTxt');
+    if(t) t.textContent = n ? (igrPlural(n, 'repuesto', 'repuestos') + ' sin pedir · Enviar') : '';
+  }
+  function igrIrAlEnvio(){
+    if(_igr.modo === 'no' || _igr.modo === null) igrElegirModo(_igr.lineas.some(function(l){ return !l.bodega; }) ? 'noexiste' : 'existe');
+    var e = $('igrEnvio');
+    if(e && !e.hidden){ try { e.scrollIntoView({behavior: 'smooth', block: 'start'}); } catch(x){} }
+    else { var p = $('igrPane'); if(p) try { p.scrollIntoView({behavior: 'smooth', block: 'start'}); } catch(x){} }
+    var bt = $('igrEnviar');
+    if(bt){ bt.classList.remove('igr-flash'); void bt.offsetWidth; bt.classList.add('igr-flash'); }
+  }
+  function igrError(msg, campo){
+    var err = $('igrErr');
+    if(err) err.textContent = msg;
+    ilusToast(msg, {type: 'warning'});
+    if(campo) marcarError(campo);
+    try { (campo || err).scrollIntoView({behavior: 'smooth', block: 'center'}); } catch(x){}
+  }
   // El botón "Solicitar repuesto" de la tarjeta 2 y el del menú de la tabla llevan a esta tarjeta.
   function igrIrALaTarjeta(){
     if(_igr.modo === null) igrElegirModo('existe');
@@ -4388,6 +4457,21 @@
 
   document.querySelectorAll('#igrDecide .igr-op').forEach(function(b){
     b.addEventListener('click', function(){ igrElegirModo(b.dataset.modo); });
+  });
+  $('igrPendFoot').addEventListener('click', igrIrAlEnvio);
+  $('igrNxNombre').addEventListener('input', igrPintarPendiente);
+  // 2026-10-14: cerrar (Cancelar, Esc o clic afuera) con repuestos sin pedir ya no los bota en silencio.
+  document.getElementById('incModal').addEventListener('hide.bs.modal', function(ev){
+    if(_igr.cerrarOk || _igr.enviando || !igrPendientes()) return;
+    ev.preventDefault();
+    ilusConfirm({title: '¿Cerrar sin pedir los repuestos?',
+      message: 'La lista tiene ' + igrPlural(igrPendientes(), 'repuesto', 'repuestos') + ' que todavía NO se solicitaron.',
+      sub: 'Si cierras, esa lista se pierde. Para pedirlos usa «Enviar solicitud».',
+      okLabel: 'Cerrar y perder la lista', cancelLabel: 'Volver a la solicitud', danger: true})
+      .then(function(ok){
+        if(ok){ _igr.cerrarOk = true; incModal().hide(); }
+        else igrIrAlEnvio();
+      });
   });
   $('igrNxAgregar').addEventListener('click', igrProponerAgregar);
   ['igrNxNombre', 'igrNxCodigo', 'igrNxCant'].forEach(function(i){
@@ -4439,7 +4523,8 @@
     var box = document.getElementById('incRepSeleccionadoBox');
     var txt = document.getElementById('incRepSeleccionadoTxt');
     txt.textContent = (it.sku ? (it.sku + ' — ') : '') + (it.descripcion || ('Repuesto #'+it.id));
-    box.style.display = '';
+    // 2026-10-14: la clase d-flex (!important) impedía ocultarlo; ahora el flex va en línea.
+    box.style.display = 'flex';
   }
 
   function incRepSelLimpiar(){
