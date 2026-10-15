@@ -89,4 +89,5 @@
   .ck-c .v{font-size:1.7rem}
   .ck-head{align-items:flex-start;flex-direction:column;gap:10px}
   .ck-per{width:100%;overflow-x:auto;padding-bottom:2px}
+  .ck-p{min-height:44px;padding:8px 14px}  /* 2026-10-15: objetivo táctil (REGLA #3) */
 }

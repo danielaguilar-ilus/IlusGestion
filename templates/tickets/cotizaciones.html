@@ -29,7 +29,10 @@
       </button>
     </div>
   </div>
-  <div class="d-flex gap-2">
+  {# 2026-10-15 (Daniel, viendo Cotizaciones con su jefe en un iPhone: "no se veían bien
+     los botones en lo responsivo"): en celular «Crear Cotización» va primero y a ancho
+     completo, los otros dos en dos columnas (ver .tk-hero-acc en tickets_cotizaciones.css). #}
+  <div class="d-flex gap-2 tk-hero-acc">
     {# 2026-07-23 (Daniel: "antes de crear la cotización, sacar el botón de
        histórico y colocarle un botón de clasificación"). El histórico
        (177 cotizaciones de Triple A, tk_cotizaciones_historico) NO se
@@ -215,35 +218,39 @@
                también trae su propio botón "Abrir en pestaña nueva". El
                "ver" (HTML instantáneo) va al iframe; el "pdf" real (Playwright)
                queda para el botón Descargar. #}
-            <a class="tk-row-btn-pdf" href="/tickets/cotizaciones/{{ c.id }}/ver" target="_blank" rel="noopener"
+            {# 2026-10-15: en celular (≤ 768 px) esta fila de iconos se reemplaza por UN botón
+               principal según el estado + «Más» con todas las demás acciones por su nombre
+               (cotAccMovilInit en tickets_cotizaciones.js). Los botones de acá siguen siendo
+               los que actúan: el menú solo los «toca». Ninguno se quita (REGLA #4.2). #}
+            <a class="tk-row-btn-pdf" data-acc="pdf" data-lbl="Ver PDF" data-ico="bi-file-earmark-pdf-fill" href="/tickets/cotizaciones/{{ c.id }}/ver" target="_blank" rel="noopener"
                onclick="openPdf('/tickets/cotizaciones/{{ c.id }}/ver', {downloadUrl: '/tickets/cotizaciones/{{ c.id }}/pdf?descargar=1', title: 'Cotización de Servicio Técnico'}); return false;"
                title="Ver / descargar el PDF de la cotización"><i class="bi bi-file-earmark-pdf-fill"></i></a>
-            <button type="button" class="tk-row-btn-send" title="Enviar por correo"
+            <button type="button" class="tk-row-btn-send" data-acc="enviar" data-lbl="Enviar por correo" data-ico="bi-envelope-fill" title="Enviar por correo"
                     onclick="cotAbrirEnviar({{ c.id }})"><i class="bi bi-envelope-fill"></i></button>
             {% if permissions.superadmin %}
             {% if c.estado != 'approved' %}
-            <button type="button" class="tk-row-btn-ok" title="Aprobar cotización"
+            <button type="button" class="tk-row-btn-ok" data-acc="aprobar" data-lbl="Aprobar" data-ico="bi-check-circle-fill" title="Aprobar cotización"
                     onclick="cotCambiarEstado({{ c.id }}, 'approved', this)"><i class="bi bi-check-circle-fill"></i></button>
             {% endif %}
             {% if c.estado not in ['rejected'] %}
-            <button type="button" class="tk-row-btn-no" title="Rechazar cotización"
+            <button type="button" class="tk-row-btn-no" data-acc="rechazar" data-lbl="Rechazar" data-ico="bi-x-circle" title="Rechazar cotización"
                     onclick="cotCambiarEstado({{ c.id }}, 'rejected', this)"><i class="bi bi-x-circle"></i></button>
             {% endif %}
-            <button type="button" class="tk-row-btn-del" title="Eliminar cotización"
+            <button type="button" class="tk-row-btn-del" data-acc="eliminar" data-lbl="Eliminar cotización" data-ico="bi-trash" title="Eliminar cotización"
                     onclick="cotEliminar({{ c.id }}, '{{ (c.numero_cotizacion or ('#' ~ c.id))|e }}')"><i class="bi bi-trash"></i></button>
-            <button type="button" class="tk-row-btn-calc"
+            <button type="button" class="tk-row-btn-calc" data-acc="recotizar" data-lbl="Recotizar con tarifas vigentes" data-ico="bi-arrow-repeat"
                     title="Recotizar con las tarifas, clasificación y regla de ruta vigentes"
                     onclick="cotRecalcular({{ c.id }}, '{{ (c.numero_cotizacion or ('#' ~ c.id))|e }}', this)">
               <i class="bi bi-arrow-repeat"></i>
             </button>
             {# Detalle de cálculo: estricto superadmin (Daniel lo pidió así). #}
-            <a class="tk-row-btn-calc" href="/tickets/cotizaciones/{{ c.id }}/detalle-calculo" target="_blank" rel="noopener"
+            <a class="tk-row-btn-calc" data-acc="calculo" data-lbl="Detalle de cálculo" data-ico="bi-calculator-fill" href="/tickets/cotizaciones/{{ c.id }}/detalle-calculo" target="_blank" rel="noopener"
                title="Ver detalle de cálculo (horas-hombre, técnicos, zona) — solo superadmin">
               <i class="bi bi-calculator-fill"></i>
             </a>
             {% endif %}
             {% if permissions.superadmin or permissions.admin %}
-            <button type="button" class="tk-row-btn-audit" title="Ver historial (quién hizo qué y cuándo)"
+            <button type="button" class="tk-row-btn-audit" data-acc="historial" data-lbl="Historial" data-ico="bi-clock-history" title="Ver historial (quién hizo qué y cuándo)"
                     onclick="cotVerHistorial({{ c.id }}, '{{ (c.numero_cotizacion or ('#' ~ c.id))|e }}')">
               <i class="bi bi-clock-history"></i>
             </button>
@@ -253,6 +260,20 @@
         {% endfor %}
       </tbody>
     </table>
+  </div>
+  {# 2026-10-15 (REGLA #4.3): pie de paginación, lo pinta cotPaginar(). #}
+  <div class="cot-foot" id="cotPie"></div>
+</div>
+{# 2026-10-15: hoja «Más acciones» del celular (una sola, se llena con la fila tocada). #}
+<div id="cotAccSheet" class="cot-sheet" hidden>
+  <div class="cot-sheet-fondo" onclick="cotAccCerrar()"></div>
+  <div class="cot-sheet-panel" role="dialog" aria-modal="true" aria-labelledby="cotAccTitulo">
+    <div class="cot-sheet-head">
+      <div><b id="cotAccTitulo"></b><small id="cotAccSub"></small></div>
+      <button type="button" class="cot-sheet-x" onclick="cotAccCerrar()" aria-label="Cerrar"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <div class="cot-sheet-lista" id="cotAccLista"></div>
+    <div class="cot-sheet-peligro" id="cotAccPeligro"></div>
   </div>
 </div>
 {% else %}
@@ -557,6 +578,10 @@
                 style="background:#fff;color:#0a0a0a;border:1.5px solid #0a0a0a;border-radius:9px;padding:9px 16px;"
                 onclick="cotWizAbrirManual()">
           <i class="bi bi-pencil-square me-1"></i>Ingresar manual</button>
+        {# 2026-10-15 (REGLA #14): en celular la tabla pasa a tarjetas y su encabezado (donde
+           vive el «marcar/desmarcar todos» del Plan) se oculta: este botón hace lo mismo. #}
+        <button type="button" id="btnCotWizTogPlanTodosM" class="btn btn-sm fw-bold cot-wiz-plan-todos-m" hidden
+                onclick="cotWizTogPlanTodos()"><i class="bi bi-check-all me-1"></i>Plan: marcar/desmarcar todos</button>
         <span class="text-muted" id="cotWizPaso2Hint" style="font-size:.74rem;">Trae los productos de un documento del ERP y clasifícalos aquí mismo</span>
       </div>
       <div id="cotWizEquiposFichaPanel" style="display:none;margin:0 0 4px;"></div>
@@ -595,15 +620,16 @@
       </div>
         </div>
       </div>
-      {# Footer ÚNICO del wizard (2026-07-24, Daniel: "sin botón Atrás,
-         solo Cancelar y Crear Cotización" -- un solo scroll, un solo
-         gate final). Vive fuera de la Sección 5 pero dentro de
-         #cotWizPaso2, mismo criterio que el footer del Paso 1 original. #}
-      <div class="cot-clasif-foot" style="justify-content:flex-end;gap:8px;">
-        <button type="button" class="btn btn-sm" style="background:#f3f4f6;color:#374151;font-weight:700;border-radius:9px;padding:8px 18px;" onclick="cotWizCerrar()">Cancelar</button>
-        <button type="button" id="btnCotWizCrear" class="btn btn-sm fw-bold" style="background:#dc2626;color:#fff;border-radius:9px;padding:8px 20px;">
-          <i class="bi bi-save me-1"></i>Crear Cotización</button>
-      </div>
+    </div>
+    {# Footer ÚNICO del wizard (2026-07-24, Daniel: "sin botón Atrás,
+       solo Cancelar y Crear Cotización" -- un solo scroll, un solo
+       gate final). 2026-10-15: sale de #cotWizPaso2 y queda como hijo
+       directo del panel que hace scroll, para quedar FIJO abajo en
+       celular (.cot-wiz-foot, con el área segura del iPhone). #}
+    <div class="cot-clasif-foot cot-wiz-foot" style="justify-content:flex-end;gap:8px;">
+      <button type="button" class="btn btn-sm" style="background:#f3f4f6;color:#374151;font-weight:700;border-radius:9px;padding:8px 18px;" onclick="cotWizCerrar()">Cancelar</button>
+      <button type="button" id="btnCotWizCrear" class="btn btn-sm fw-bold" style="background:#dc2626;color:#fff;border-radius:9px;padding:8px 20px;">
+        <i class="bi bi-save me-1"></i>Crear Cotización</button>
     </div>
   </div>
 </div>

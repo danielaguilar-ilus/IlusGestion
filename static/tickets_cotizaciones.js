@@ -1379,12 +1379,13 @@ async function cotWizRender(){
     // esto solo evita que choque con el 403 sin entender por qué.
     const garantiaBloqueada = !!(it._pmGarantiaPreexistente && !window.PUEDE_DESCUENTO_GARANTIA);
     return '<tr>' +
+      // 2026-10-15: data-label / c-* arman la tarjeta del celular (tickets_cotizaciones.css).
       '<td class="cot-rev-sku">' + _cotEsc(it.sku) + '</td>' +
       '<td class="cot-rev-nombre" title="' + _cotEsc(it.nombre) + '">' + _cotEsc(it.nombre) + '</td>' +
-      '<td><input type="number" min="0" step="1" class="cot-rev-cant" value="' + _cotEsc(it.qty) + '" onchange="cotWizCantidad(' + i + ', this.value)"></td>' +
-      '<td><select class="cot-rev-select' + (it.clase_producto ? '' : ' sin-clasificar') + '" data-i="' + i + '" onchange="cotWizClase(' + i + ', this)">' +
+      '<td class="c-cant" data-label="Cantidad"><input type="number" min="0" step="1" class="cot-rev-cant" value="' + _cotEsc(it.qty) + '" onchange="cotWizCantidad(' + i + ', this.value)"></td>' +
+      '<td class="c-clase" data-label="Característica"><select class="cot-rev-select' + (it.clase_producto ? '' : ' sin-clasificar') + '" data-i="' + i + '" onchange="cotWizClase(' + i + ', this)">' +
         '<option value="">Sin clasificar</option>' + opts + '</select></td>' +
-      '<td class="cot-wiz-pu-cell"><input type="number" min="0" step="1" class="cot-rev-pu-input' + (accesorio ? ' accesorio-bloqueado' : '') + '" data-i="' + i + '" '
+      '<td class="cot-wiz-pu-cell" data-label="Precio base por unidad"><input type="number" min="0" step="1" class="cot-rev-pu-input' + (accesorio ? ' accesorio-bloqueado' : '') + '" data-i="' + i + '" '
         + (accesorio ? 'value="0" disabled readonly title="Accesorio no cobrable: queda en la OT para foto y observación"'
           : garantiaBloqueada ? ('value="0" disabled readonly title="Descuento por garantía (100%) -- solo un superadministrador puede modificarlo."')
           // 2026-08-20: restaura el precio_manual ya escrito -- sin esto,
@@ -1397,13 +1398,13 @@ async function cotWizRender(){
         + '<div class="cot-ruta-desglose' + (accesorio ? ' no-cobrable' : '') + '" data-ruta-i="' + i + '">'
           + (accesorio ? '<i class="bi bi-lock-fill"></i> $0 · no cobrable'
              : garantiaBloqueada ? '<i class="bi bi-lock-fill" style="color:#dc2626"></i> $0 · garantía (solo superadmin)' : '') + '</div></td>' +
-      '<td class="cot-wiz-tot-cell"><span class="cot-rev-precio cero">…</span></td>' +
+      '<td class="cot-wiz-tot-cell" data-label="Total con ruta"><span class="cot-rev-precio cero">…</span></td>' +
       // PLAN (2026-09-01): escudo clickeable SOLO si el ítem viene de un
       // equipo real de la ficha (maquina_id) -- mismo criterio/colores que
       // eqTogPlan en templates/ot2/_modal_crear.html. Filas sin equipo real
       // (documento ERP, bodega, manual) muestran un guion, nunca un ícono
       // deshabilitado que parezca roto.
-      '<td class="cot-rev-plan-cell">' + (it.maquina_id != null
+      '<td class="cot-rev-plan-cell" data-label="Plan">' + (it.maquina_id != null
         ? '<button type="button" class="cot-rev-plan-btn' + (it.aplica_mantencion ? ' on' : '') + '" ' +
           'title="' + (it.aplica_mantencion ? 'Quitar del plan de mantención de este cliente' : 'Agregar al plan de mantención de este cliente') + '" ' +
           'onclick="cotWizTogPlan(' + i + ')"><i class="bi ' + (it.aplica_mantencion ? 'bi-shield-check' : 'bi-shield-slash') + '"></i></button>'
@@ -1414,7 +1415,7 @@ async function cotWizRender(){
       // aviso "Faltan N por clasificar" (más abajo, antes de crear) sigue
       // bloqueando el guardado, así que ahora SÍ obliga a clasificar
       // (aunque sea como Accesorio) en vez de borrar la línea entera.
-      '<td>' + (window.PUEDE_ELIMINAR_ITEM_COTIZ
+      '<td class="c-quitar">' + (window.PUEDE_ELIMINAR_ITEM_COTIZ
         ? '<button type="button" class="cot-wiz-quitar" title="Quitar ítem" onclick="cotWizQuitar(' + i + ')"><i class="bi bi-x-lg"></i></button>'
         : '<span class="text-muted" style="font-size:.75rem" title="Solo el superadministrador puede quitar productos de una cotización -- clasifícalo (o decláralo Accesorio) en vez de borrarlo"><i class="bi bi-lock-fill"></i></span>') + '</td>' +
     '</tr>';
@@ -1429,7 +1430,11 @@ async function cotWizRender(){
   // muestra si hay al menos un ítem con equipo real (maquina_id); nunca
   // toca las filas sin equipo detrás.
   const btnTodos = document.getElementById('btnCotWizTogPlanTodos');
-  if (btnTodos) btnTodos.style.display = _WIZ.items.some(function(it){ return it.maquina_id != null; }) ? '' : 'none';
+  const _hayEquipos = _WIZ.items.some(function(it){ return it.maquina_id != null; });
+  if (btnTodos) btnTodos.style.display = _hayEquipos ? '' : 'none';
+  // 2026-10-15: el mismo toggle, visible en celular (el encabezado de la tabla se oculta).
+  const btnTodosM = document.getElementById('btnCotWizTogPlanTodosM');
+  if (btnTodosM) btnTodosM.hidden = !_hayEquipos;
 }
 // PLAN (2026-09-01): toggle individual -- mismo endpoint/patrón que
 // eqTogPlan (templates/ot2/_modal_crear.html): edita aplica_mantencion en
@@ -2344,15 +2349,140 @@ async function cotUfChipRefrescar(){
 })();
 
 // Filtro client-side (número/empresa/RUT + estado). Barato para LIMIT 100.
+// 2026-10-15 (REGLA #4.3): además pagina. Filtrar o limpiar el filtro vuelve a la página 1
+// y recalcula el pie («Mostrando A–B de N»).
+const _cotPag = { pag: 1, per: 20 };
+try { const _pp = parseInt(localStorage.getItem('cotPorPagina') || '', 10); if ([10, 20, 50, 100].indexOf(_pp) >= 0) _cotPag.per = _pp; } catch(e){}
 function cotFiltrarLista(){
-  const q = (document.getElementById('cotFiltroTexto').value || '').toLowerCase().trim();
-  const est = document.getElementById('cotFiltroEstado').value || '';
+  const inpQ = document.getElementById('cotFiltroTexto'), selE = document.getElementById('cotFiltroEstado');
+  const q = ((inpQ && inpQ.value) || '').toLowerCase().trim();
+  const est = (selE && selE.value) || '';
   document.querySelectorAll('.cot-row').forEach(function(row){
     const okTxt = !q || (row.dataset.num||'').includes(q) || (row.dataset.emp||'').includes(q);
     const okEst = !est || row.dataset.estado === est;
-    row.style.display = (okTxt && okEst) ? '' : 'none';
+    row.dataset.ok = (okTxt && okEst) ? '1' : '0';
+  });
+  _cotPag.pag = 1;
+  cotPaginar();
+}
+function cotPaginar(){
+  const pie = document.getElementById('cotPie');
+  const filas = Array.prototype.slice.call(document.querySelectorAll('.cot-row'));
+  const vis = filas.filter(function(r){ return r.dataset.ok !== '0'; });
+  const tot = vis.length, per = _cotPag.per;
+  const pgs = Math.max(1, Math.ceil(tot / per));
+  if (_cotPag.pag > pgs) _cotPag.pag = pgs;
+  const a = (_cotPag.pag - 1) * per, b = Math.min(tot, a + per);
+  filas.forEach(function(r){ r.style.display = 'none'; });
+  vis.slice(a, b).forEach(function(r){ r.style.display = ''; });
+  if (!pie) return;
+  const opts = [10, 20, 50, 100].map(function(n){ return '<option value="' + n + '"' + (per === n ? ' selected' : '') + '>' + n + ' por página</option>'; }).join('');
+  pie.innerHTML = '<div class="cot-foot-n"><i class="bi bi-collection"></i>' +
+      (tot ? 'Mostrando <strong>' + (a + 1) + '–' + b + '</strong> de <strong>' + tot + '</strong>' : 'Sin resultados con este filtro') + '</div>' +
+    '<div class="cot-foot-ctrl"><select class="cot-foot-sel" aria-label="Cotizaciones por página" onchange="cotPorPagina(this.value)">' + opts + '</select>' +
+      '<button type="button" class="cot-foot-btn" onclick="cotPagina(-1)"' + (_cotPag.pag <= 1 ? ' disabled' : '') + '><i class="bi bi-chevron-left"></i>Anterior</button>' +
+      '<span>Página ' + _cotPag.pag + ' de ' + pgs + '</span>' +
+      '<button type="button" class="cot-foot-btn" onclick="cotPagina(1)"' + (_cotPag.pag >= pgs ? ' disabled' : '') + '>Siguiente<i class="bi bi-chevron-right"></i></button></div>';
+}
+function cotPagina(d){
+  _cotPag.pag = Math.max(1, _cotPag.pag + d);
+  cotPaginar();
+  const t = document.querySelector('.ilus-card .ilus-card-header');
+  if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function cotPorPagina(v){
+  const n = parseInt(v, 10);
+  if ([10, 20, 50, 100].indexOf(n) < 0) return;
+  _cotPag.per = n; _cotPag.pag = 1;
+  try { localStorage.setItem('cotPorPagina', String(n)); } catch(e){}
+  cotPaginar();
+}
+
+// ── Celular (2026-10-15, Daniel: "hay muchos botones... no se veían bien los botones en
+//    lo responsivo"): UN botón principal por cotización según su estado + «Más» con todas
+//    las demás acciones por su nombre. Las acciones son los MISMOS botones de la fila (que
+//    en celular quedan ocultos): el menú los «toca», no repite su lógica. Eliminar va
+//    aparte, en rojo, y sigue pidiendo confirmación (cotEliminar → ilusConfirm). ──
+const _COT_PRIM = { draft: ['enviar'], sent: ['aprobar', 'pdf'], approved: ['pdf'], rejected: ['pdf'] };
+function _cotAcciones(row){
+  const td = row.querySelector('td[data-label="Acciones"]');
+  return td ? Array.prototype.slice.call(td.querySelectorAll(':scope > [data-acc]')) : [];
+}
+function _cotPrincipal(row, accs){
+  const pref = (_COT_PRIM[row.dataset.estado] || ['pdf']).concat(['pdf', 'enviar']);
+  for (let i = 0; i < pref.length; i++){
+    const b = accs.find(function(x){ return x.dataset.acc === pref[i]; });
+    if (b) return b;
+  }
+  return accs[0] || null;
+}
+function cotAccMovilInit(){
+  document.querySelectorAll('.cot-row').forEach(function(row){
+    const td = row.querySelector('td[data-label="Acciones"]');
+    if (!td || td.querySelector('.cot-acc-m')) return;
+    const accs = _cotAcciones(row);
+    if (!accs.length) return;
+    const prim = _cotPrincipal(row, accs);
+    const box = document.createElement('div');
+    box.className = 'cot-acc-m';
+    const b1 = document.createElement('button');
+    b1.type = 'button';
+    b1.className = 'cot-acc-prim p-' + prim.dataset.acc;
+    b1.innerHTML = '<i class="bi ' + (prim.dataset.ico || 'bi-lightning-charge') + '"></i>' + _cotEsc(prim.dataset.lbl || '');
+    b1.addEventListener('click', function(ev){ ev.stopPropagation(); prim.click(); });
+    box.appendChild(b1);
+    if (accs.length > 1){
+      const b2 = document.createElement('button');
+      b2.type = 'button';
+      b2.className = 'cot-acc-mas';
+      b2.setAttribute('aria-label', 'Más acciones de esta cotización');
+      b2.innerHTML = '<i class="bi bi-three-dots"></i>Más';
+      b2.addEventListener('click', function(ev){ ev.stopPropagation(); cotAccAbrir(row); });
+      box.appendChild(b2);
+    }
+    td.appendChild(box);
   });
 }
+function cotAccAbrir(row){
+  const sh = document.getElementById('cotAccSheet');
+  if (!sh) return;
+  const accs = _cotAcciones(row);
+  const prim = _cotPrincipal(row, accs);
+  const num = (row.querySelector('.tk-num') || {}).textContent || '';
+  const cli = (row.querySelector('td[data-label="Cliente"]') || {}).textContent || '';
+  document.getElementById('cotAccTitulo').textContent = 'Cotización ' + num.trim();
+  document.getElementById('cotAccSub').textContent = cli.trim();
+  const item = function(b){
+    const it = document.createElement('button');
+    it.type = 'button';
+    it.className = 'cot-sheet-it a-' + b.dataset.acc;
+    it.innerHTML = '<i class="bi ' + (b.dataset.ico || 'bi-dot') + '"></i><span>' + _cotEsc(b.dataset.lbl || '') + '</span>';
+    // Síncrono: un enlace que abre otra pestaña (Detalle de cálculo) necesita el toque real.
+    it.addEventListener('click', function(){ cotAccCerrar(); b.click(); });
+    return it;
+  };
+  const lista = document.getElementById('cotAccLista'), peligro = document.getElementById('cotAccPeligro');
+  lista.innerHTML = ''; peligro.innerHTML = '';
+  accs.forEach(function(b){
+    if (b === prim) return;
+    (b.dataset.acc === 'eliminar' ? peligro : lista).appendChild(item(b));
+  });
+  sh.hidden = false;
+  document.body.style.overflow = 'hidden';
+  const x = sh.querySelector('.cot-sheet-x'); if (x) x.focus();
+}
+function cotAccCerrar(){
+  const sh = document.getElementById('cotAccSheet');
+  if (!sh || sh.hidden) return;
+  sh.hidden = true;
+  document.body.style.overflow = '';
+}
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape') cotAccCerrar(); });
+document.addEventListener('DOMContentLoaded', function(){
+  if (!document.querySelector('.cot-row')) return;
+  cotAccMovilInit();
+  cotFiltrarLista();
+});
 
 // ── Aprobar / Rechazar (superadmin) ──
 async function cotCambiarEstado(cid, estado, btn){
