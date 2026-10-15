@@ -6316,6 +6316,9 @@ def _csrf_is_exempt(path: str) -> bool:
     # autentica el enlace). El editor de preguntas y demás rutas de /retiros/encuesta/ siguen con CSRF.
     if re.fullmatch(r"/retiros/encuesta/[0-9a-z]{1,12}-[0-9a-f]{24}", path or ""):
         return True
+    # Firma de recepción por WhatsApp (2026-10-15): SOLO /retiros/firmar/<token> (quien recibe, sin sesión; token aleatorio de un uso).
+    if re.fullmatch(r"/retiros/firmar/[A-Za-z0-9_-]{24,64}", path or ""):
+        return True
     for pref in _CSRF_EXEMPT_PREFIXES:
         if path.startswith(pref):
             return True

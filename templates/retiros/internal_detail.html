@@ -2473,6 +2473,57 @@ window.RETIROS_DETAIL_DATA = {
 </div>
 {% endif %}
 
+{# ════════ FIRMA POR WHATSAPP (Daniel 2026-10-14/15): primero el celular; se abre el WhatsApp del colaborador con el enlace listo ════════ #}
+{% if req.status in ['retirada', 'cerrada', 'agenda_confirmada', 'en_preparacion'] and not firma and retiros_vista_previa is defined and retiros_vista_previa() %}
+{% set _fw_tel = req.pickup_person_phone or req.contact_phone or '' %}
+<div class="modal fade" id="modalFirmaWsp" tabindex="-1" aria-labelledby="fwTitulo">
+  <div class="modal-dialog modal-dialog-centered modal-fullscreen-sm-down">
+    <div class="modal-content rtm">
+      <div class="modal-header rtm-head">
+        <span class="rtm-head-ico fw-ico" aria-hidden="true"><i class="bi bi-whatsapp"></i></span>
+        <div class="rtm-head-t">
+          <h5 class="modal-title" id="fwTitulo">Firma de recepción</h5>
+          <small>{{ req.code }} · {{ req.customer_name or 'Cliente' }}</small>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body rtm-body">
+        <section class="rtm-card" id="fwPaso1">
+          <div class="rtm-card-h">
+            <span class="rtm-n">1</span>
+            <div><strong>¿A qué celular le enviamos el enlace?</strong><small>Le llega por WhatsApp a quien recibe: firma desde su teléfono y queda guardado en el retiro.</small></div>
+          </div>
+          <div class="rtm-campo">
+            <label for="fwTel">Celular con WhatsApp <span class="rtm-req">*</span></label>
+            <input id="fwTel" type="tel" inputmode="tel" autocomplete="tel" class="form-control" maxlength="20" value="{{ _fw_tel }}" placeholder="+56 9 1234 5678">
+          </div>
+          <button type="button" class="btn fw-btn" id="fwEnviar"><i class="bi bi-whatsapp me-1"></i>Enviar por WhatsApp</button>
+        </section>
+        <section class="rtm-card" id="fwPaso2" hidden>
+          <div class="rtm-card-h">
+            <span class="rtm-n is-ok" aria-hidden="true"><i class="bi bi-check-lg"></i></span>
+            <div><strong>Enlace listo para <span id="fwTelTxt"></span></strong><small>Toca «Abrir WhatsApp» y aprieta Enviar en tu WhatsApp. Vence el <span id="fwVence"></span>.</small></div>
+          </div>
+          <div class="fw-acciones">
+            <a class="btn fw-btn" id="fwAbrir" href="#" target="_blank" rel="noopener"><i class="bi bi-whatsapp me-1"></i>Abrir WhatsApp</a>
+            <button type="button" class="btn rtm-cancelar" id="fwCopiar"><i class="bi bi-link-45deg me-1"></i>Copiar enlace</button>
+          </div>
+          <div class="fw-espera" id="fwEspera"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span> Esperando la firma… esta ficha se actualiza sola cuando firme.</div>
+        </section>
+        <div class="rtm-nota">
+          <i class="bi bi-person-check" aria-hidden="true"></i>
+          {% if req.status in ['retirada', 'cerrada'] %}
+          <span>¿Está contigo? <button type="button" class="fw-link" id="fwAqui">Firmar aquí en este equipo</button></span>
+          {% else %}
+          <span>Si está contigo, puede firmar al entregar, en «Marcar como retirado».</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {# ════════ REGISTRAR FIRMA DE RECEPCIÓN con el retiro ya cerrado y sin firma (excepción deliberada al solo-lectura) ════════ #}
 {% if req.status in ['retirada', 'cerrada'] and not firma and retiros_vista_previa is defined and retiros_vista_previa() %}
 <div class="modal fade" id="modalFirma" tabindex="-1">

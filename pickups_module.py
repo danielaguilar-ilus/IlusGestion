@@ -7038,22 +7038,29 @@ def register_pickup_routes(app, ctx):
     @require_permission("retiros")
     def pickup_firma_recepcion(rid):
         """Guarda la firma de recepción (JSON: nombre, rut, relacion, conformidad, observaciones, firma = data URL PNG)."""
-        if not _vista_previa_ok():          # vista previa: por ahora solo Daniel registra firmas
+        if not _vista_previa_ok():          # vista previa: superadmin o el permiso ret_encuesta_firma
             return jsonify({"ok": False, "error": "La firma de recepción todavía no está habilitada."}), 403
-        import json as _json_fm
         req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
         if not req:
             return jsonify({"ok": False, "error": "No encontramos ese retiro."}), 404
+        _u_fr = getattr(g, "user", None) or {}
+        cuerpo, st = _firma_registrar(rid, req, request.get_json(silent=True) or {}, _u_fr.get("id"),
+                                      (_u_fr.get("nombre") or "")[:190] or None)
+        return jsonify(cuerpo), st
+
+    def _firma_registrar(rid, req, d, por_id, por_nombre, via=""):
+        """Núcleo ÚNICO de la firma de recepción (en la ficha o por el enlace de WhatsApp, 2026-10-15): mismas validaciones, mismo hash, una
+        firma por retiro que nunca se pisa. Devuelve (dict, status http). `via` se agrega a la bitácora (ej. « · por WhatsApp»)."""
+        import json as _json_fm
         estado = str(req.get("status") or "")
         if estado not in _FIRMA_ESTADOS_OK:
-            return jsonify({"ok": False, "error": "La recepción se firma al entregar el pedido: el retiro tiene que estar en preparación, "
-                                                   "con la cita confirmada o ya retirado."}), 409
+            return {"ok": False, "error": "La recepción se firma al entregar el pedido: el retiro tiene que estar en preparación, "
+                                                   "con la cita confirmada o ya retirado."}, 409
         if not _firma_tabla():
-            return jsonify({"ok": False, "error": "No pudimos guardar la firma ahora. Reintenta en un momento."}), 503
+            return {"ok": False, "error": "No pudimos guardar la firma ahora. Reintenta en un momento."}, 503
         if _firma_row(rid):
-            return jsonify({"ok": False, "error": "Este retiro ya tiene su recepción firmada; una firma no se reemplaza.",
-                            "code": "FIRMA_YA_REGISTRADA"}), 409
-        d = request.get_json(silent=True) or {}
+            return {"ok": False, "error": "Este retiro ya tiene su recepción firmada; una firma no se reemplaza.",
+                            "code": "FIRMA_YA_REGISTRADA"}, 409
         if not isinstance(d, dict):
             d = {}
 
@@ -7061,20 +7068,20 @@ def register_pickup_routes(app, ctx):
             return re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", re.sub(r"\s+", " ", str(v or ""))).strip()[:mx + 1]
         nombre = _txt(d.get("nombre"), _rfi.MAX_NOMBRE)
         if len(nombre) < 2 or len(nombre) > _rfi.MAX_NOMBRE:
-            return jsonify({"ok": False, "error": "Escribe el nombre de quien recibe."}), 400
+            return {"ok": False, "error": "Escribe el nombre de quien recibe."}, 400
         rut = _rfi.rut_normalizado(d.get("rut"))
         if not rut:
-            return jsonify({"ok": False, "error": "El RUT no es válido: revisa el número y el dígito verificador."}), 400
+            return {"ok": False, "error": "El RUT no es válido: revisa el número y el dígito verificador."}, 400
         relacion = str(d.get("relacion") or "").strip().lower()
         if relacion not in _rfi.RELACIONES:
-            return jsonify({"ok": False, "error": "Indica la relación de quien recibe con el cliente."}), 400
+            return {"ok": False, "error": "Indica la relación de quien recibe con el cliente."}, 400
         obs = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", str(d.get("observaciones") or "")).strip()
         if len(obs) > _rfi.MAX_OBS:
-            return jsonify({"ok": False, "error": f"Las observaciones admiten hasta {_rfi.MAX_OBS} caracteres."}), 400
+            return {"ok": False, "error": f"Las observaciones admiten hasta {_rfi.MAX_OBS} caracteres."}, 400
         conforme = d.get("conformidad") in (True, 1, "1", "true", "on")
         crudo, err_png = _rfi.validar_firma_png(d.get("firma"))
         if crudo is None:
-            return jsonify({"ok": False, "error": err_png}), 400
+            return {"ok": False, "error": err_png}, 400
         try:
             productos = _rfi.productos_snapshot((_pickup_lineas_consolidadas(rid) or {}).get("lineas") or [])
         except Exception as _e_fp:
@@ -7083,22 +7090,21 @@ def register_pickup_routes(app, ctx):
         fecha = datetime.utcnow().replace(microsecond=0)
         h = _rfi.hash_contenido(rid, req.get("code"), nombre, rut, relacion, conforme, obs, fecha.strftime("%Y-%m-%dT%H:%M:%SZ"),
                                 productos, _rfi.sha_bytes(crudo))
-        u = getattr(g, "user", None) or {}
         try:
             mysql_execute(
                 "INSERT INTO pickup_firmas (request_id, firmante_nombre, firmante_rut, relacion, conformidad, observaciones, firma_png, "
                 "productos_json, hash_sha256, creado_en, creado_por_user_id, creado_por_nombre) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (rid, nombre, rut, relacion, 1 if conforme else 0, obs or None, d.get("firma"),
-                 _json_fm.dumps(productos, ensure_ascii=False), h, fecha, u.get("id"), (u.get("nombre") or "")[:190] or None))
+                 _json_fm.dumps(productos, ensure_ascii=False), h, fecha, por_id, por_nombre))
         except Exception as _e_fi:
             if _firma_row(rid):          # otra pestaña ganó la carrera (UNIQUE request_id)
-                return jsonify({"ok": False, "error": "Este retiro ya tiene su recepción firmada; una firma no se reemplaza.",
-                                "code": "FIRMA_YA_REGISTRADA"}), 409
+                return {"ok": False, "error": "Este retiro ya tiene su recepción firmada; una firma no se reemplaza.",
+                                "code": "FIRMA_YA_REGISTRADA"}, 409
             print(f"[retiros-firma] insertar rid={rid}: {type(_e_fi).__name__}", flush=True)
-            return jsonify({"ok": False, "error": "No pudimos guardar la firma. Reintenta."}), 500
+            return {"ok": False, "error": "No pudimos guardar la firma. Reintenta."}, 500
         log_event(rid, "firma_recepcion", estado, estado,
                   f"Recepción firmada por {nombre} (RUT {_rfi.rut_formateado(rut)}) · {_rfi.RELACIONES[relacion]} · "
-                  f"{'recibió conforme' if conforme else 'recibió con observaciones'} · código {h[:12]}."
+                  f"{'recibió conforme' if conforme else 'recibió con observaciones'} · código {h[:12]}{via}."
                   + (f" Observaciones: «{obs}»" if obs else ""), "interno")
         # El cierre automático por expedición en Check deja «quién retiró» vacío: se completa con el firmante. SOLO rellena: nunca pisa lo
         # que una persona ya anotó.
@@ -7117,7 +7123,7 @@ def register_pickup_routes(app, ctx):
         if estado in ("retirada", "cerrada"):
             _enviar_comprobante_async(rid, req)       # ya estaba cerrado: el «retiro completado» ya salió, el comprobante va aparte
             enviado = os.environ.get("RETIROS_FIRMA_CORREO", "") == "1"     # apagado por defecto: solo guarda y deja la bitácora
-        return jsonify({"ok": True, "comprobante_enviado": enviado, "hash": h[:12], "url": _comprobante_url(rid)})
+        return {"ok": True, "comprobante_enviado": enviado, "hash": h[:12], "url": _comprobante_url(rid)}, 200
 
     @app.route("/retiros/comprobante/<token>", methods=["GET"])
     def pickup_comprobante_publico(token):
@@ -7139,6 +7145,207 @@ def register_pickup_routes(app, ctx):
         return _resp(render_template("retiros/comprobante_firma.html", no_disponible=False, f=v, code=req.get("code") or "",
                                      cliente=req.get("customer_name") or "", razon=_rfi.RAZON_SOCIAL, rut_empresa=_rfi.RUT_EMPRESA,
                                      marca=_rfi.MARCA))
+
+    # ══════════════════════════════════════════════════════════════════
+    #  FIRMA DE RECEPCIÓN POR WHATSAPP (Daniel 2026-10-14/15). Ver docstring de cada ruta. Solo vista previa (superadmin o ret_encuesta_firma).
+    # ══════════════════════════════════════════════════════════════════
+    _FENL = {"tabla": False}
+    _FENL_HORAS = 48
+    _FENL_LIM = {}               # ip -> [instantes] (POST públicos: tope por conexión)
+
+    def _fenl_ahora():
+        return datetime.utcnow().replace(microsecond=0)
+
+    def _fenl_tabla():
+        """CREATE TABLE IF NOT EXISTS al primer uso (REGLA #18: barato si ya existe)."""
+        if _FENL["tabla"]:
+            return True
+        try:
+            mysql_execute(
+                "CREATE TABLE IF NOT EXISTS pickup_firma_enlaces ("
+                "id INT AUTO_INCREMENT PRIMARY KEY, request_id INT NOT NULL, token_hash CHAR(64) NOT NULL, telefono VARCHAR(20) NOT NULL, "
+                "creado_en DATETIME NOT NULL, vence_en DATETIME NOT NULL, creado_por_user_id INT NULL, creado_por_nombre VARCHAR(190) NULL, "
+                "usado_en DATETIME NULL, UNIQUE KEY uq_pickup_firma_enl_tok (token_hash), KEY ix_pickup_firma_enl_req (request_id, usado_en)"
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+            _FENL["tabla"] = True
+        except Exception as _e_fe:
+            print(f"[retiros-firma-wsp] tabla: {type(_e_fe).__name__}", flush=True)
+        return _FENL["tabla"]
+
+    def _fenl_tel(v):
+        """Celular chileno → '569XXXXXXXX' (lo que pide wa.me), o None."""
+        dig = re.sub(r"\D", "", str(v or ""))
+        if dig.startswith("00"):
+            dig = dig[2:]
+        if len(dig) == 9 and dig.startswith("9"):
+            dig = "56" + dig
+        return dig if (len(dig) == 11 and dig.startswith("569")) else None
+
+    def _fenl_tel_txt(dig):
+        return f"+{dig[:2]} {dig[2]} {dig[3:7]} {dig[7:]}" if dig and len(dig) == 11 else str(dig or "")
+
+    def _fenl_hash(token):
+        import hashlib as _hl_fe
+        return _hl_fe.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+    def _fenl_vigente(rid):
+        try:
+            return mysql_fetchone("SELECT * FROM pickup_firma_enlaces WHERE request_id=%s AND usado_en IS NULL AND vence_en > %s "
+                                  "ORDER BY id DESC LIMIT 1", (rid, _fenl_ahora()))
+        except Exception:
+            return None            # sin tabla todavía = sin enlace
+
+    def _fenl_de_token(token):
+        if not re.fullmatch(r"[A-Za-z0-9_-]{24,64}", str(token or "")):
+            return None
+        try:
+            return mysql_fetchone("SELECT * FROM pickup_firma_enlaces WHERE token_hash=%s LIMIT 1", (_fenl_hash(token),))
+        except Exception:
+            return None
+
+    def _fenl_dt(v):
+        if isinstance(v, str):
+            try:
+                v = datetime.strptime(v[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                return None
+        return v if isinstance(v, datetime) else None
+
+    def _fenl_vista(e):
+        if not e:
+            return None
+        return {"telefono": _fenl_tel_txt(e.get("telefono")), "creado": _utc_a_chile_txt(_fenl_dt(e.get("creado_en"))),
+                "vence": _utc_a_chile_txt(_fenl_dt(e.get("vence_en"))), "por": e.get("creado_por_nombre") or ""}
+
+    @app.route("/retiros/<int:rid>/firma/enlace", methods=["POST"])
+    @require_permission("retiros")
+    def pickup_firma_enlace(rid):
+        """Crea el enlace de firma para WhatsApp. NO envía nada: devuelve el wa.me para que el colaborador lo envíe desde su WhatsApp."""
+        if not _vista_previa_ok():
+            return jsonify({"ok": False, "error": "La firma de recepción todavía no está habilitada."}), 403
+        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,))
+        if not req:
+            return jsonify({"ok": False, "error": "No encontramos ese retiro."}), 404
+        if str(req.get("status") or "") not in _FIRMA_ESTADOS_OK:
+            return jsonify({"ok": False, "error": "La firma se pide al entregar: el retiro tiene que estar con la cita confirmada, "
+                                                   "en preparación o ya retirado."}), 409
+        if _firma_row(rid):
+            return jsonify({"ok": False, "error": "Este retiro ya tiene su recepción firmada.", "code": "FIRMA_YA_REGISTRADA"}), 409
+        d = request.get_json(silent=True) or {}
+        tel = _fenl_tel(d.get("telefono") if isinstance(d, dict) else "")
+        if not tel:
+            return jsonify({"ok": False, "error": "Escribe un celular chileno válido: +56 9 1234 5678."}), 400
+        if not _fenl_tabla():
+            return jsonify({"ok": False, "error": "No pudimos crear el enlace ahora. Reintenta en un momento."}), 503
+        ahora = _fenl_ahora()
+        vence = ahora + timedelta(hours=_FENL_HORAS)
+        token = secrets.token_urlsafe(24)
+        u = getattr(g, "user", None) or {}
+        try:
+            # un solo enlace vigente por retiro: el anterior deja de servir
+            mysql_execute("UPDATE pickup_firma_enlaces SET vence_en=%s WHERE request_id=%s AND usado_en IS NULL AND vence_en > %s",
+                          (ahora, rid, ahora))
+            mysql_execute("INSERT INTO pickup_firma_enlaces (request_id, token_hash, telefono, creado_en, vence_en, creado_por_user_id, "
+                          "creado_por_nombre) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                          (rid, _fenl_hash(token), tel, ahora, vence, u.get("id"), (u.get("nombre") or "")[:190] or None))
+        except Exception as _e_fi:
+            print(f"[retiros-firma-wsp] crear rid={rid}: {type(_e_fi).__name__}", flush=True)
+            return jsonify({"ok": False, "error": "No pudimos crear el enlace. Reintenta."}), 500
+        url = _public_base_url().rstrip("/") + "/retiros/firmar/" + token
+        vence_txt = _utc_a_chile_txt(vence)
+        _pref = ctx.get("_brand_wa_prefix")
+        try:
+            pref = _pref("Firma de recepción") if callable(_pref) else ""
+        except Exception:
+            pref = ""
+        if not isinstance(pref, str) or not pref.strip():
+            pref = "🔧 ILUS · Firma de recepción\n\n"
+        msg = (pref + f"Hola, para dejar constancia de la entrega de tu retiro {req.get('code') or ''}, firma aquí desde tu celular:\n{url}\n\n"
+               f"El enlace vence el {vence_txt}.\n— ILUS Fitness")
+        from urllib.parse import quote as _q_fe
+        wa = f"https://wa.me/{tel}?text={_q_fe(msg)}"
+        log_event(rid, "firma_enlace", req.get("status"), req.get("status"),
+                  f"Enlace de firma por WhatsApp para {_fenl_tel_txt(tel)} (lo envía {(u.get('nombre') or 'ILUS')} desde su WhatsApp) · "
+                  f"vence el {vence_txt}.", "interno")
+        return jsonify({"ok": True, "wa_url": wa, "url": url, "telefono": _fenl_tel_txt(tel), "vence": vence_txt, "mensaje": msg})
+
+    @app.route("/retiros/<int:rid>/firma/estado", methods=["GET"])
+    @require_permission("retiros")
+    def pickup_firma_estado(rid):
+        """¿Ya firmó? (la ficha lo consulta mientras espera la firma por WhatsApp). Solo lectura."""
+        if not _vista_previa_ok():
+            return jsonify({"ok": False, "error": "La firma de recepción todavía no está habilitada."}), 403
+        return jsonify({"ok": True, "firmada": bool(_firma_row(rid)), "enlace": _fenl_vista(_fenl_vigente(rid))})
+
+    def _fenl_limite(ip):
+        """Tope de POST públicos por conexión: 20 por hora (el formulario de firma es una superficie expuesta, REGLA #22)."""
+        import time as _t_fl
+        ahora = _t_fl.time()
+        lista = [x for x in _FENL_LIM.get(ip or "?", []) if ahora - x < 3600]
+        if len(lista) >= 20:
+            _FENL_LIM[ip or "?"] = lista
+            return False
+        lista.append(ahora)
+        _FENL_LIM[ip or "?"] = lista
+        if len(_FENL_LIM) > 5000:
+            _FENL_LIM.clear()
+        return True
+
+    @app.route("/retiros/firmar/<token>", methods=["GET", "POST"])
+    def pickup_firmar_publico(token):
+        """Página PÚBLICA de firma (sin login). El enlace es de UN uso, vence en 48 h y solo sirve para ESE retiro."""
+        from flask import make_response
+
+        def _resp(cuerpo, estado=200, es_json=False):
+            r = make_response(jsonify(cuerpo) if es_json else cuerpo, estado)
+            r.headers["Cache-Control"] = "no-store"
+            r.headers["X-Robots-Tag"] = "noindex, nofollow"
+            r.headers["Referrer-Policy"] = "no-referrer"
+            return r
+        es_post = request.method == "POST"
+        if es_post and not _fenl_limite(request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()):
+            return _resp({"ok": False, "error": "Demasiados intentos. Espera un momento y vuelve a intentarlo."}, 429, True)
+        e = _fenl_de_token(token)
+        req = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (e["request_id"],)) if e else None
+        motivo = None
+        if not e or not req:
+            motivo = "no_valido"
+        elif _firma_row(req["id"]):
+            motivo = "ya_firmado"
+        elif e.get("usado_en"):
+            motivo = "usado"
+        elif (_fenl_dt(e.get("vence_en")) or _fenl_ahora()) <= _fenl_ahora():
+            motivo = "vencido"
+        elif str(req.get("status") or "") not in _FIRMA_ESTADOS_OK:
+            motivo = "no_valido"
+        if motivo:
+            if es_post:
+                txt = {"ya_firmado": "Este retiro ya tiene su firma de recepción. ¡Gracias!",
+                       "vencido": "Este enlace venció. Pídele uno nuevo a ILUS Fitness."}.get(motivo, "Este enlace ya no está disponible.")
+                return _resp({"ok": False, "error": txt, "code": motivo}, 410, True)
+            return _resp(render_template("retiros/firmar_publico.html", motivo=motivo, code=(req or {}).get("code") or ""),
+                         200 if motivo == "ya_firmado" else 410)
+        if es_post:
+            if (request.content_length or 0) > 600 * 1024:
+                return _resp({"ok": False, "error": "La firma es demasiado grande. Límpiala y vuelve a firmar."}, 413, True)
+            d = request.get_json(silent=True) or {}
+            cuerpo, st = _firma_registrar(req["id"], req, d, None, "Firma remota por WhatsApp", via=" · firmado por WhatsApp")
+            if st == 200:
+                try:
+                    mysql_execute("UPDATE pickup_firma_enlaces SET usado_en=%s WHERE id=%s AND usado_en IS NULL", (_fenl_ahora(), e["id"]))
+                except Exception as _e_us:
+                    print(f"[retiros-firma-wsp] usado rid={req['id']}: {type(_e_us).__name__}", flush=True)
+                cuerpo = {"ok": True}          # al público no se le devuelve el hash ni la URL del comprobante
+            return _resp(cuerpo, st, True)
+        try:
+            productos = _rfi.productos_snapshot((_pickup_lineas_consolidadas(req["id"]) or {}).get("lineas") or [])
+        except Exception:
+            productos = []
+        return _resp(render_template("retiros/firmar_publico.html", motivo=None, code=req.get("code") or "",
+                                     productos=productos, unidades=_rfi.total_unidades(productos),
+                                     nombre=req.get("pickup_person_name") or "", rut=req.get("pickup_person_rut") or "",
+                                     vence=_utc_a_chile_txt(_fenl_dt(e.get("vence_en"))), relaciones=_rfi.RELACIONES,
+                                     razon=_rfi.RAZON_SOCIAL, rut_empresa=_rfi.RUT_EMPRESA))
 
     def _pickup_generar_checklist(rid):
         """Checklist de picking por producto, desde las líneas consolidadas del retiro. Lo usan el botón «Enviar a preparación» y el

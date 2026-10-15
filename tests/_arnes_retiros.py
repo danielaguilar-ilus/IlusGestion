@@ -74,6 +74,7 @@ class BDFalsa:
         self.snapshot_viejo = False  # True: la lectura «¿hay un cambio pedido por el cliente?» sigue viendo el mundo de hace un minuto
         self.plantillas = {}        # (estado, canal) -> {'asunto','cuerpo'}: plantillas de Retiros de comm_templates (la BD de plantillas)
         self.firmas = {}            # request_id -> fila de pickup_firmas (una por retiro: UNIQUE)
+        self.enlaces = []           # filas de pickup_firma_enlaces (firma por WhatsApp, 2026-10-15)
         self.al_leer = []           # [(regex, funcion)]: tras la PRIMERA lectura que coincide, corre la función (alguien cambia algo justo después)
         self.desviaciones = []      # filas de pickup_desviaciones («¿Qué pasó?»: no vino, reagendar, cancelar, incidencia)
         self.config = None          # fila de pickup_settings (None = la configuración por defecto del módulo)
@@ -296,6 +297,16 @@ class BDFalsa:
             self.consultas.append((s, params))
             f = self.firmas.get(int(params[0]))
             return dict(f) if f else None
+        if low.startswith("select * from pickup_firma_enlaces where request_id=%s and usado_en is null and vence_en > %s"):
+            self.consultas.append((s, params))
+            vig = [e for e in self.enlaces if e["request_id"] == int(params[0]) and not e.get("usado_en") and e["vence_en"] > params[1]]
+            return dict(vig[-1]) if vig else None
+        if low.startswith("select * from pickup_firma_enlaces where token_hash=%s"):
+            self.consultas.append((s, params))
+            for e in self.enlaces:
+                if e["token_hash"] == params[0]:
+                    return dict(e)
+            return None
         m_lg = re.match(r"^select id from `pickup_logs` where request_id=%s and action='(\w+)' limit 1$", low)
         if m_lg:
             # «¿ya hay una entrada de bitácora de esta acción?» (comprobante enviado / no enviado)
@@ -351,6 +362,26 @@ class BDFalsa:
                 if not fila.get("retirado_por_rut"):
                     fila["retirado_por_rut"] = rut
                 return 1
+            return 0
+        if low.startswith("create table if not exists pickup_firma_enlaces"):
+            return 0
+        if low.startswith("insert into pickup_firma_enlaces"):
+            cols = [c.strip() for c in s[s.index("(") + 1:s.index(")")].split(",")]
+            fila = dict(zip(cols, params))
+            fila.update(id=len(self.enlaces) + 1, usado_en=None)
+            self.enlaces.append(fila)
+            return 1
+        if low.startswith("update pickup_firma_enlaces set vence_en=%s where request_id=%s and usado_en is null and vence_en > %s"):
+            n = 0
+            for e in self.enlaces:
+                if e["request_id"] == int(params[1]) and not e.get("usado_en") and e["vence_en"] > params[2]:
+                    e["vence_en"] = params[0]; n += 1
+            return n
+        if low.startswith("update pickup_firma_enlaces set usado_en=%s where id=%s and usado_en is null"):
+            for e in self.enlaces:
+                if e["id"] == int(params[1]) and not e.get("usado_en"):
+                    e["usado_en"] = params[0]
+                    return 1
             return 0
         if low.startswith("insert into pickup_check_snapshots"):
             rid, payload, huella = params

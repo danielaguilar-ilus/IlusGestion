@@ -144,14 +144,82 @@
     }, true);
   }
 
+  // ── Flujo C (Daniel 2026-10-14/15): firma por WhatsApp. Primero el celular → se abre el WhatsApp del colaborador con el enlace listo.
+  //    El sistema no envía nada solo. Mientras el enlace está vigente, la ficha consulta cada 10 s y se recarga cuando la persona firma.
+  var espera = null;
+  function telValido(v) { var d = String(v || '').replace(/\D/g, ''); if (d.indexOf('00') === 0) d = d.slice(2); if (d.length === 9 && d[0] === '9') d = '56' + d; return d.length === 11 && d.indexOf('569') === 0; }
+  function esperarFirma() {
+    if (espera) return;
+    espera = setInterval(async function () {
+      try {
+        var r = await fetch('/retiros/' + rid() + '/firma/estado', { headers: { 'Accept': 'application/json' } });
+        var d = await r.json();
+        if (d && d.firmada) {
+          clearInterval(espera); espera = null;
+          toast('✓ Firmaron la recepción por WhatsApp', 'success');
+          setTimeout(function () { window.location.reload(); }, 900);
+        }
+      } catch (e) { /* sin red: reintenta en la siguiente vuelta */ }
+    }, 10000);
+  }
+  function mostrarEnlace(e) {
+    var caja = $('frmEnlace'); if (!caja || !e) return;
+    caja.hidden = false;
+    caja.innerHTML = '<i class="bi bi-whatsapp"></i> <span>Enlace enviado a <b></b> · esperando la firma (vence el <span class="v"></span>).</span>';
+    caja.querySelector('b').textContent = e.telefono || '';
+    caja.querySelector('.v').textContent = e.vence || '';
+  }
+  function enlazarFirmaWsp() {
+    var abrir = $('frmAbrir'), modal = $('modalFirmaWsp');
+    if (!abrir || !modal) return false;
+    abrir.addEventListener('click', function () { if (window.bootstrap) window.bootstrap.Modal.getOrCreateInstance(modal).show(); });
+    modal.addEventListener('shown.bs.modal', function () { var t = $('fwTel'); if (t && !$('fwPaso1').hidden) t.focus(); });
+    var enviar = $('fwEnviar');
+    enviar.addEventListener('click', async function () {
+      var tel = ($('fwTel').value || '').trim();
+      if (!telValido(tel)) { toast('Escribe un celular chileno válido: +56 9 1234 5678.', 'warning'); $('fwTel').focus(); return; }
+      enviar.disabled = true;
+      try {
+        var r = await fetch('/retiros/' + rid() + '/firma/enlace', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': (document.querySelector('meta[name="csrf-token"]') || {}).content || '' },
+          body: JSON.stringify({ telefono: tel }) });
+        var d = {}; try { d = await r.json(); } catch (e) {}
+        if (!r.ok || !d.ok) { toast(d.error || 'No pudimos crear el enlace. Reintenta.', 'error'); enviar.disabled = false; return; }
+        $('fwTelTxt').textContent = d.telefono; $('fwVence').textContent = d.vence;
+        var a = $('fwAbrir'); a.href = d.wa_url; a.dataset.url = d.url;
+        $('fwPaso1').hidden = true; $('fwPaso2').hidden = false;
+        mostrarEnlace({ telefono: d.telefono, vence: d.vence });
+        esperarFirma();
+      } catch (e) { toast('Sin conexión: no se creó el enlace.', 'error'); }
+      enviar.disabled = false;
+    });
+    var copiar = $('fwCopiar');
+    if (copiar) copiar.addEventListener('click', async function () {
+      var u = $('fwAbrir').dataset.url || '';
+      try { await navigator.clipboard.writeText(u); toast('✓ Enlace copiado', 'success'); } catch (e) { toast(u, 'info'); }
+    });
+    var aqui = $('fwAqui'), mf = $('modalFirma');
+    if (aqui && mf) aqui.addEventListener('click', function () {
+      window.bootstrap.Modal.getOrCreateInstance(modal).hide();
+      setTimeout(function () { window.bootstrap.Modal.getOrCreateInstance(mf).show(); }, 350);
+    });
+    // al abrir la ficha: si ya hay un enlace vigente, se muestra y se espera la firma
+    fetch('/retiros/' + rid() + '/firma/estado', { headers: { 'Accept': 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d && d.ok && d.enlace && !d.firmada) { mostrarEnlace(d.enlace); esperarFirma(); } })
+      .catch(function () {});
+    return true;
+  }
+
   // ── Flujo B: retiro cerrado y sin firma ──
   function enlazarModalFirma() {
     var abrir = $('frmAbrir'), modal = $('modalFirma'), guardar = $('frmGuardar');
-    if (!abrir || !modal) return;
-    abrir.addEventListener('click', function () {
+    if (modal) modal.addEventListener('shown.bs.modal', function () { iniciarLienzo(); });
+    if (enlazarFirmaWsp()) abrir = null;          // la tarjeta abre primero el paso del celular (desde ahí, «Firmar aquí»)
+    if (!modal) return;
+    if (abrir) abrir.addEventListener('click', function () {
       if (window.bootstrap) window.bootstrap.Modal.getOrCreateInstance(modal).show();
     });
-    modal.addEventListener('shown.bs.modal', function () { iniciarLienzo(); });
     if (guardar) guardar.addEventListener('click', async function () {
       var f = datosFirma();
       if (f.error) { toast(f.error, 'warning'); return; }

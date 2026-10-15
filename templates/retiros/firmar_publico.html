@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+{# ILUS Fitness · Retiros · Firma de recepción por WhatsApp — página PÚBLICA (sin login ni base.html), pensada para el celular.
+   Daniel 2026-10-14/15: «escribiendo un número de teléfono para que firme y quede guardado en el sistema». El enlace es de UN uso y vence en 48 h;
+   el servidor (pickup_firmar_publico → _firma_registrar) valida igual que la firma en la ficha. Jinja escapa todo por defecto. #}
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>{% if motivo %}Firma de recepción{% else %}Firma de recepción · {{ code }}{% endif %} — ILUS Fitness</title>
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='favicon.png') }}">
+  <style>
+    :root{--red:#dc2626;--black:#0a0a0a;--ok:#16a34a;--okbg:#dcfce7;--blue:#2563eb;--warn:#f59e0b;--warnbg:#fff8e1;--gris:#6b7280;--bg:#f3f4f6;--line:#e5e7eb}
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:#111827;font-family:Inter,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.5;-webkit-text-size-adjust:100%}
+    .bar{background:var(--black);color:#fff;padding:10px 16px;padding-top:calc(10px + env(safe-area-inset-top,0px));display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .bar img{height:26px;display:block}
+    .bar span{font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;color:#fca5a5}
+    .hoja{max-width:640px;margin:16px auto;padding:0 16px calc(32px + env(safe-area-inset-bottom,0px))}
+    .card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:14px}
+    .paso{display:flex;gap:12px;align-items:flex-start;margin-bottom:10px}
+    .num{flex:none;width:32px;height:32px;border-radius:50%;background:var(--warn);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+    .num.ok{background:var(--ok)}
+    h1{font-size:1.25rem;margin:0 0 4px}
+    h2{font-size:1.02rem;margin:0}
+    .sub{color:var(--gris);font-size:.9rem;margin:0}
+    .prod{list-style:none;margin:0;padding:0}
+    .prod li{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line);font-size:.95rem}
+    .prod li:last-child{border-bottom:0}
+    .prod b{white-space:nowrap}
+    .doc{font-size:.75rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--gris);margin:10px 0 2px}
+    label{display:block;font-weight:700;font-size:.9rem;margin:12px 0 4px}
+    input[type=text],select,textarea{width:100%;font-family:inherit;font-size:16px;padding:12px;border:1px solid #d1d5db;border-radius:12px;background:#fff;color:#111827}
+    input:focus,select:focus,textarea:focus{outline:3px solid #bfdbfe;border-color:var(--blue)}
+    .conf{display:flex;gap:10px;align-items:center;font-weight:700;margin:14px 0 4px;min-height:44px}
+    .conf input{width:22px;height:22px}
+    .lienzo{position:relative;border:2px dashed #9ca3af;border-radius:14px;background:#fff;touch-action:none}
+    .lienzo canvas{display:block;width:100%;height:200px;border-radius:12px}
+    .guia{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#9ca3af;font-weight:700;pointer-events:none}
+    .fila{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+    .btn{min-height:48px;padding:0 20px;border:0;border-radius:12px;font-weight:800;font-size:1rem;cursor:pointer}
+    .btn-sec{background:#fff;border:1px solid #d1d5db;color:#374151}
+    .btn-pri{background:var(--blue);color:#fff;width:100%;margin-top:14px}
+    .btn-pri:disabled{opacity:.6}
+    .err{display:none;margin-top:12px;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid var(--red);color:#7f1d1d;border-radius:12px;padding:10px 14px;font-weight:600}
+    .ok-final{text-align:center;padding:24px 16px}
+    .ok-final .circ{width:64px;height:64px;border-radius:50%;background:var(--ok);color:#fff;font-size:36px;font-weight:800;display:flex;align-items:center;justify-content:center;margin:0 auto 12px}
+    .priv{font-size:.74rem;color:var(--gris);line-height:1.45;margin:12px 0 0}
+    .pie{text-align:center;color:var(--gris);font-size:.78rem;margin-top:18px}
+  </style>
+</head>
+<body>
+  <div class="bar"><img src="{{ url_for('static', filename='logo_ilus_fitness_blanco.png') }}" alt="ILUS Fitness"><span>Firma de recepción</span></div>
+  <main class="hoja">
+  {% if motivo %}
+    <section class="card ok-final">
+      {% if motivo == 'ya_firmado' %}
+        <div class="circ">✓</div>
+        <h1>Este retiro ya está firmado</h1>
+        <p class="sub">La recepción{% if code %} del retiro {{ code }}{% endif %} ya quedó registrada. ¡Gracias por retirar en ILUS Fitness!</p>
+      {% elif motivo == 'vencido' %}
+        <h1>Este enlace venció</h1>
+        <p class="sub">Pídele uno nuevo a quien te atendió en ILUS Fitness, o escríbenos a <a href="mailto:soportetec@sphs.cl">soportetec@sphs.cl</a>.</p>
+      {% else %}
+        <h1>Este enlace no está disponible</h1>
+        <p class="sub">Puede que ya se haya usado o que no sea válido. Si necesitas ayuda, escríbenos a <a href="mailto:soportetec@sphs.cl">soportetec@sphs.cl</a>.</p>
+      {% endif %}
+    </section>
+  {% else %}
+    <div id="formulario">
+      <section class="card">
+        <h1>Firma la recepción de tu retiro</h1>
+        <p class="sub">Retiro <b>{{ code }}</b> · son 3 pasos y no toma más de un minuto. El enlace vence el {{ vence }}.</p>
+      </section>
+
+      <section class="card">
+        <div class="paso"><span class="num">1</span><div><h2>Revisa lo que recibes</h2><p class="sub">{{ unidades }} unidad{{ 'es' if unidades != '1' else '' }} en total.</p></div></div>
+        {% if productos %}
+          {% for g in productos %}
+            {% if productos|length > 1 %}<div class="doc">{{ g.doc }}</div>{% endif %}
+            <ul class="prod">
+              {% for l in g.lineas %}<li><span>{{ l.descripcion or l.sku }}</span><b>× {{ l.cantidad }}</b></li>{% endfor %}
+            </ul>
+          {% endfor %}
+        {% else %}
+          <p class="sub">El detalle de productos lo tiene quien te atiende en bodega.</p>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <div class="paso"><span class="num">2</span><div><h2>Tus datos</h2><p class="sub">Quién recibe el pedido.</p></div></div>
+        <label for="fNombre">Nombre y apellido *</label>
+        <input id="fNombre" type="text" maxlength="190" autocomplete="name" value="{{ nombre }}">
+        <label for="fRut">RUT *</label>
+        <input id="fRut" type="text" maxlength="14" autocomplete="off" inputmode="text" placeholder="12.345.678-9" value="{{ rut }}">
+        <label for="fRel">¿Quién recibe? *</label>
+        <select id="fRel">{% for k, v in relaciones.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select>
+        <label class="conf"><input type="checkbox" id="fConf" checked> Recibí conforme</label>
+        <label for="fObs">Observaciones (opcional)</label>
+        <textarea id="fObs" rows="2" maxlength="500" placeholder="Ej: una caja venía con el empaque dañado"></textarea>
+      </section>
+
+      <section class="card">
+        <div class="paso"><span class="num">3</span><div><h2>Firma con el dedo</h2><p class="sub">Dentro del recuadro.</p></div></div>
+        <div class="lienzo"><canvas id="fCanvas" aria-label="Recuadro para firmar"></canvas><div class="guia" id="fGuia">Firma aquí</div></div>
+        <div class="fila"><button type="button" class="btn btn-sec" id="fLimpiar">Limpiar firma</button></div>
+        <button type="button" class="btn btn-pri" id="fEnviar">Firmar y enviar</button>
+        <div class="err" id="fErr" role="alert"></div>
+        <p class="priv">Tus datos (nombre, RUT y firma) se usan solo como comprobante de la entrega de este retiro. Responsable: {{ razon }}, RUT {{ rut_empresa }}.
+          Puedes ejercer tus derechos (Ley 21.719) escribiendo a soportetec@sphs.cl.</p>
+      </section>
+    </div>
+    <section class="card ok-final" id="listo" hidden>
+      <div class="circ">✓</div>
+      <h1>¡Listo! Tu firma quedó registrada</h1>
+      <p class="sub">Gracias por retirar en ILUS Fitness. Ya puedes cerrar esta página.</p>
+    </section>
+  {% endif %}
+    <p class="pie">ILUS Fitness · Consultas: soportetec@sphs.cl</p>
+  </main>
+{% if not motivo %}
+  <script src="{{ url_for('static', filename='ilus_firma.js') }}"></script>
+  <script>
+  (function () {
+    'use strict';
+    function $(id) { return document.getElementById(id); }
+    function limpio(v) { return String(v || '').replace(/[^0-9kK]/g, '').toUpperCase(); }
+    function rutValido(v) {
+      var l = limpio(v);
+      if (l.length < 7 || l.length > 9 || !/^\d+$/.test(l.slice(0, -1))) return false;
+      var c = l.slice(0, -1), dv = l.slice(-1), s = 0, m = 2;
+      if (parseInt(c, 10) < 1000000) return false;
+      for (var i = c.length - 1; i >= 0; i--) { s += parseInt(c[i], 10) * m; m = m === 7 ? 2 : m + 1; }
+      var r = 11 - (s % 11);
+      return (r === 11 ? '0' : (r === 10 ? 'K' : String(r))) === dv;
+    }
+    function formato(v) { var l = limpio(v); return l.length < 2 ? l : l.slice(0, -1).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + '-' + l.slice(-1); }
+    function error(t) { var e = $('fErr'); e.textContent = t; e.style.display = t ? 'block' : 'none'; if (t) e.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    var firma = window.IlusFirma.crear($('fCanvas'), { color: '#0a0a0a', grosor: 3.2, guia: 'fGuia', onCambio: function () { error(''); } });
+    $('fLimpiar').addEventListener('click', function () { firma.limpiar(); });
+    $('fRut').addEventListener('blur', function () { if (this.value) this.value = formato(this.value); });
+    $('fEnviar').addEventListener('click', async function () {
+      var nombre = $('fNombre').value.trim(), rut = $('fRut').value;
+      if (nombre.length < 2) { error('Escribe tu nombre y apellido.'); $('fNombre').focus(); return; }
+      if (!rutValido(rut)) { error('El RUT no es válido: revisa el número y el dígito verificador.'); $('fRut').focus(); return; }
+      if (!firma.firmado()) { error('Falta tu firma en el recuadro.'); return; }
+      var b = this; b.disabled = true; b.textContent = 'Enviando…'; error('');
+      try {
+        var r = await fetch(window.location.pathname, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'omit',
+          body: JSON.stringify({ nombre: nombre, rut: formato(rut), relacion: $('fRel').value, conformidad: $('fConf').checked,
+                                 observaciones: $('fObs').value.trim(), firma: firma.aDataUrl() }) });
+        var d = {}; try { d = await r.json(); } catch (e) {}
+        if (r.ok && d.ok) { $('formulario').hidden = true; $('listo').hidden = false; window.scrollTo(0, 0); return; }
+        error(d.error || 'No pudimos guardar tu firma. Intenta de nuevo.');
+      } catch (e) { error('Sin conexión: revisa tu internet e intenta de nuevo.'); }
+      b.disabled = false; b.textContent = 'Firmar y enviar';
+    });
+  })();
+  </script>
+{% endif %}
+</body>
+</html>

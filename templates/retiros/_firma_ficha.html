@@ -17,11 +17,16 @@
   </div>
   <a class="frm-link" href="{{ firma.url }}" target="_blank" rel="noopener"><i class="bi bi-file-earmark-check"></i> Ver comprobante</a>
 </div>
-{% elif req.status in ['retirada', 'cerrada'] %}
-<div class="frm-card is-vacia" id="frmCard">
+{% elif req.status in ['retirada', 'cerrada', 'agenda_confirmada', 'en_preparacion'] %}
+<div class="frm-card is-vacia" id="frmCard" data-rid="{{ req.id|int }}">
   <div class="frm-card-cab"><span class="frm-circ"><i class="bi bi-pen"></i></span>
-    <div><strong>Sin firma de recepción</strong><small>El retiro se cerró sin que quedara la firma de quien recibió.</small></div>
+    {% if req.status in ['retirada', 'cerrada'] %}
+    <div><strong>Sin firma de recepción</strong><small>El retiro se cerró sin que quedara la firma de quien recibió. Pídesela por WhatsApp.</small></div>
+    {% else %}
+    <div><strong>Firma de recepción</strong><small>Pídela por WhatsApp a quien retira, o fírmala al entregar en «Marcar como retirado».</small></div>
+    {% endif %}
   </div>
-  <button type="button" class="frm-btn" id="frmAbrir"><i class="bi bi-pen-fill"></i> Registrar firma de recepción</button>
+  <div class="frm-enlace" id="frmEnlace" hidden></div>
+  <button type="button" class="frm-btn" id="frmAbrir"><i class="bi bi-whatsapp"></i> Registrar firma de recepción</button>
 </div>
 {% endif %}
