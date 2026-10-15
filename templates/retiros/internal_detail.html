@@ -384,6 +384,19 @@
   </div>
 </section>
 
+{# Daniel 2026-10-15: «hay comentarios que dejan los clientes y no los veo por ningún lado». Texto completo, sin cortar (REGLA #15). #}
+{% set _notas = retiro_notas(req) if retiro_notas is defined else [] %}
+{% if _notas %}
+<section class="rd-notas" aria-label="Notas del retiro">
+  {% for n in _notas %}
+  <div class="rd-nota">
+    <i class="bi {{ n.ico }}" aria-hidden="true"></i>
+    <div class="rd-nota-t"><span class="rd-nota-k">{{ n.titulo }}</span><p>{{ n.texto }}</p></div>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
 <div class="pipe-wrap">
   <div class="pipe-wrap-title"><i class="bi bi-diagram-3 me-1" style="color:var(--ilus-red,#e60000)"></i>Estado del retiro · los mismos 5 pasos que ve el cliente · toca uno para ir a su sección</div>
 
@@ -401,6 +414,7 @@
     <i class="bi bi-arrow-left-right"></i>
     <div class="pp-banner-txt">
       <strong>El cliente pidió cambiar su cita:</strong> ahora quiere el {{ _contraprop_cliente.date | chile_fmt('%d/%m/%Y') }} {{ _contraprop_cliente.time_from|hm }}–{{ _contraprop_cliente.time_to|hm }}.
+      {% if _contraprop_cliente.message %}<div class="pp-banner-sub pp-coment"><i class="bi bi-chat-quote-fill"></i> Su comentario: “{{ _contraprop_cliente.message }}”</div>{% endif %}
       <div class="pp-banner-sub">Tenía confirmado el {{ req.confirmed_date | chile_fmt('%d/%m/%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}, que sigue vigente hasta que le respondas. No lo envíes a preparación todavía.</div>
     </div>
     <button type="button" class="pp-banner-btn" onclick="document.getElementById('paso-5').scrollIntoView({behavior:'smooth',block:'center'})">
@@ -433,6 +447,7 @@
     <i class="bi bi-arrow-left-right"></i>
     <div class="pp-banner-txt">
       <strong>El cliente contrapropuso otra fecha:</strong> {{ _contraprop_cliente.date | chile_fmt('%d/%m/%Y') }} {{ _contraprop_cliente.time_from|hm }}–{{ _contraprop_cliente.time_to|hm }}.
+      {% if _contraprop_cliente.message %}<div class="pp-banner-sub pp-coment"><i class="bi bi-chat-quote-fill"></i> Su comentario: “{{ _contraprop_cliente.message }}”</div>{% endif %}
       <div class="pp-banner-sub">Revisa y responde más abajo (aceptar con 1 click o re-proponer).</div>
     </div>
     <button type="button" class="pp-banner-btn" onclick="document.getElementById('paso-5').scrollIntoView({behavior:'smooth',block:'center'})">
@@ -1540,7 +1555,8 @@
        espera del viejo Paso 5 (recordatorio/llamar) y la card de
        contrapropuesta (misma card verde, NO se duplica). Solo existe en
        el DOM mientras _step4_done && !_step5_done. #}
-    {% if (_step4_done and not _step5_done) or _cambio_pedido %}
+    {% set _counter_sin_prop = (_contraprop_cliente is not none and not _step4_done and not _step5_done) %}
+    {% if (_step4_done and not _step5_done) or _cambio_pedido or _counter_sin_prop %}
     <section class="step-section is-complete" id="paso-esperando">
       <div class="step-header">
         <div class="step-circle-wrap" style="display:none"></div>
@@ -1550,6 +1566,9 @@
           <p class="step-sub">
             Tenía confirmado el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m/%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}</strong> y ahora pide otra hora. Acepta su fecha nueva con un clic, o usa <strong>Re-proponer</strong> para ofrecerle otra.
           </p>
+          {% elif _counter_sin_prop %}
+          <h5>El cliente pidió otra fecha — te toca responder</h5>
+          <p class="step-sub">Acepta su fecha con un clic, o elige otra en la agenda y propónsela.</p>
           {% else %}
           <h5>Esperando respuesta del cliente</h5>
           <p class="step-sub">
@@ -1557,7 +1576,7 @@
           </p>
           {% endif %}
         </div>
-        {% if _cambio_pedido %}
+        {% if _cambio_pedido or _counter_sin_prop %}
         <span class="step-badge-warn"><i class="bi bi-arrow-left-right"></i>Responder</span>
         {% else %}
         <span class="step-badge-warn"><i class="bi bi-hourglass-split"></i>En espera</span>
@@ -1576,6 +1595,8 @@
             <i class="bi bi-arrow-repeat me-1"></i>Re-proponer
           </button>
         </div>
+        {% elif _counter_sin_prop %}
+        {# sin propuesta de ILUS: no hay resumen que mostrar; abajo va la contrapropuesta para aceptarla #}
         {% else %}
         <div class="smart-hint is-success" id="iwStep4Summary">
           <i class="bi bi-send-check"></i>
@@ -1602,7 +1623,7 @@
             <strong>El cliente contrapropuso:</strong>
             <strong>{{ _contraprop_cliente.date | chile_fmt('%d/%m/%Y') }} {{ _contraprop_cliente.time_from|hm }}–{{ _contraprop_cliente.time_to|hm }}</strong>
             {% if _contraprop_cliente.message %}
-            <div class="small mt-1" style="opacity:.85">“{{ _contraprop_cliente.message }}”</div>
+            <div class="mt-1" style="font-weight:600;color:#14532d"><i class="bi bi-chat-quote-fill me-1"></i>Su comentario: “{{ _contraprop_cliente.message }}”</div>
             {% endif %}
             <div class="small mt-1" style="opacity:.85">
               Acepta con 1 click para confirmar el retiro, o usa <strong>Re-proponer</strong> para enviar otra fecha.

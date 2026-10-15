@@ -4365,8 +4365,9 @@ def register_pickup_routes(app, ctx):
                             f"Nueva solicitud de retiro {_code_bg}",
                             (f"Cliente: {req_bg.get('customer_name') or '?'}. "
                              f"Documento: {_doc_bg or '—'}. "
-                             f"Fecha pedida: {str(req_bg.get('requested_date') or '—')} "
-                             f"{_tf_bg}-{_tt_bg}."),
+                             f"Fecha pedida: {_fmt_fecha_cl(req_bg.get('requested_date')) or '—'} "
+                             f"{_tf_bg}-{_tt_bg}."
+                             + (f" Nota del cliente: «{_nota_cliente_corta(req_bg)}»" if _nota_cliente_corta(req_bg) else "")),
                             rid_bg, _code_bg,
                             prioridad="alta", tipo="retiro_nuevo",
                         )
@@ -5110,7 +5111,10 @@ def register_pickup_routes(app, ctx):
                     _est_nuevo = old if old == "agenda_confirmada" else "en_revision"
                     if _est_nuevo != old:
                         mysql_execute(f"UPDATE `{REQ}` SET status=%s WHERE id=%s", (_est_nuevo, req["id"]))
-                    log_event(req["id"], "cliente_contrapropuso", old, _est_nuevo, f"{_fmt_fecha_cl(date)} {tf}-{tt}", "cliente", req["contact_name"])
+                    _cm_txt = " ".join(str(request.form.get("counter_message", "") or "").split())[:1000]
+                    log_event(req["id"], "cliente_contrapropuso", old, _est_nuevo,
+                              f"{_fmt_fecha_cl(date)} {tf}-{tt}" + (f" · Comentario del cliente: «{_cm_txt}»" if _cm_txt else ""),
+                              "cliente", req["contact_name"])
                     try:
                         print(f"[pickup_tracking] COUNTER OK req_id={req['id']} fecha={date} {tf}-{tt}", flush=True)
                     except Exception: pass
@@ -5123,6 +5127,7 @@ def register_pickup_routes(app, ctx):
                              f"El cliente contrapropuso {_fmt_fecha_cl(date)} {_td_to_hhmm(tf)}-{_td_to_hhmm(tt)}. "
                              + (f"Su cita confirmada del {_fmt_fecha_cl(req.get('confirmed_date'))} sigue "
                                 f"vigente hasta que respondas. " if req.get("confirmed_date") else "")
+                             + (f"Comentario del cliente: «{_cm_txt[:400]}». " if _cm_txt else "")
                              + "Acepta la contrapropuesta o envía una nueva fecha."),
                             req["id"], req.get("code") or "?",
                             prioridad="alta", tipo="retiro_respuesta",
@@ -6413,7 +6418,7 @@ def register_pickup_routes(app, ctx):
             items.append({
                 "cat": cat, "icon": icon, "tono": tono, "actor": actor,
                 "accion": verbo, "objetivo": objetivo, "tag": tag, "tag_tono": tag_tono,
-                "detalle": _act_corta(detalle, 400), "fecha": l.get("created_at"),
+                "detalle": _act_corta(detalle, 1200), "fecha": l.get("created_at"),       # 2026-10-15: antes 400 cortaba lo que escribió el cliente
             })
         # Correos del retiro (email_log no guarda request_id: se identifican
         # por el código RET en el asunto, desde la creación del retiro).
@@ -6814,6 +6819,44 @@ def register_pickup_routes(app, ctx):
         """¿El usuario de la sesión ve la encuesta y la firma? Superadmin o el permiso ret_encuesta_firma (Roles → Retiros; ver retiros_encuesta)."""
         return _en_vista_previa(getattr(g, "user", None), getattr(g, "permissions", None) or {})
 
+    def _retiro_notas(req):
+        """Daniel 2026-10-15: lo que el cliente escribió en «¿Algo más que debamos saber?» (o la nota del equipo en un retiro interno)
+        no se veía en la ficha. Devuelve [{'titulo','texto','ico'}] con el texto COMPLETO; la declaración de tercero no se repite
+        (la ficha ya la muestra)."""
+        texto = str((req or {}).get("observations") or "")
+        if not texto.strip():
+            return []
+        i = texto.find("[DECLARACIÓN AUTORIZACIÓN TERCERO")
+        if i >= 0:
+            texto = texto[:i]
+        wa = []
+        lineas = []
+        for ln in texto.splitlines():
+            if ln.strip().startswith("WhatsApp informado:"):
+                wa.append(ln.strip())
+            else:
+                lineas.append(ln)
+        cuerpo = "\n".join(lineas).strip()
+        interno = ((req or {}).get("request_source") or "web") == "backoffice"
+        out = []
+        if cuerpo:
+            out.append({"titulo": "Nota del equipo (retiro interno)" if interno else "Lo que escribió el cliente",
+                        "texto": cuerpo, "ico": "bi-sticky-fill" if interno else "bi-chat-quote-fill"})
+        for w in wa:
+            out.append({"titulo": "WhatsApp informado por el cliente", "texto": w.split(":", 1)[1].strip(), "ico": "bi-whatsapp"})
+        return out
+
+    def _nota_cliente_corta(req, n=300):
+        notas = [x for x in _retiro_notas(req) if x["titulo"] == "Lo que escribió el cliente"]
+        if not notas:
+            return ""
+        t = " ".join(notas[0]["texto"].split())
+        return t if len(t) <= n else t[:n - 1].rstrip() + "…"
+
+    try:
+        app.jinja_env.globals["retiro_notas"] = _retiro_notas
+    except Exception as _e_rn:
+        print(f"[retiro-notas] {_e_rn}", flush=True)
     try:
         app.jinja_env.globals["retiros_vista_previa"] = _vista_previa_ok
     except Exception as _e_vp:
@@ -7055,7 +7098,8 @@ def register_pickup_routes(app, ctx):
             return jsonify({"ok": False, "error": "No pudimos guardar la firma. Reintenta."}), 500
         log_event(rid, "firma_recepcion", estado, estado,
                   f"Recepción firmada por {nombre} (RUT {_rfi.rut_formateado(rut)}) · {_rfi.RELACIONES[relacion]} · "
-                  f"{'recibió conforme' if conforme else 'recibió con observaciones'} · código {h[:12]}.", "interno")
+                  f"{'recibió conforme' if conforme else 'recibió con observaciones'} · código {h[:12]}."
+                  + (f" Observaciones: «{obs}»" if obs else ""), "interno")
         # El cierre automático por expedición en Check deja «quién retiró» vacío: se completa con el firmante. SOLO rellena: nunca pisa lo
         # que una persona ya anotó.
         try:
