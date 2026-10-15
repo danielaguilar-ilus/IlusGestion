@@ -2613,7 +2613,8 @@ def register_pickup_routes(app, ctx):
             + _html_nt.escape(_nota_cierre, quote=True)
             + '</td></tr></table>'
         ) if _nota_cierre else ""
-        # Encuesta de satisfacción (enganche listo 2026-10-07; APAGADA hasta que Daniel autorice: «no generes ninguna notificación a ningún cliente»). Solo en el correo «retiro completado»: un botón a la
+        # Encuesta de satisfacción (enganche 2026-10-07; ACTIVA desde 2026-10-14 con el «sí» de Daniel: «tira la encuesta por el correo de retirado; allí el
+        # cliente tomará la opción de hacerla o no»; RETIROS_ENCUESTA_ACTIVA en deploy.yml). Solo en el correo «retiro completado»: un botón a la
         # encuesta del retiro (enlace propio con token, no el del seguimiento). Si la encuesta está apagada o el retiro aún no está
         # retirado, `invitar` devuelve None y no se agrega nada. Una plantilla de la BD puede ubicarla con {{encuesta}}.
         _enc_inv = None
@@ -4021,7 +4022,7 @@ def register_pickup_routes(app, ctx):
                     else:
                         _decl_text = (
                             f"\n[DECLARACIÓN AUTORIZACIÓN TERCERO · "
-                            f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]\n"
+                            f"{_now_chile().strftime('%d/%m/%Y %H:%M')}]\n"
                             f"El documento está a nombre de {data.get('customer_name','')} "
                             f"(RUT {data.get('customer_rut','')}). "
                             f"Quien retira es {data.get('pickup_person_name','')} "
@@ -5109,7 +5110,7 @@ def register_pickup_routes(app, ctx):
                     _est_nuevo = old if old == "agenda_confirmada" else "en_revision"
                     if _est_nuevo != old:
                         mysql_execute(f"UPDATE `{REQ}` SET status=%s WHERE id=%s", (_est_nuevo, req["id"]))
-                    log_event(req["id"], "cliente_contrapropuso", old, _est_nuevo, f"{date} {tf}-{tt}", "cliente", req["contact_name"])
+                    log_event(req["id"], "cliente_contrapropuso", old, _est_nuevo, f"{_fmt_fecha_cl(date)} {tf}-{tt}", "cliente", req["contact_name"])
                     try:
                         print(f"[pickup_tracking] COUNTER OK req_id={req['id']} fecha={date} {tf}-{tt}", flush=True)
                     except Exception: pass
@@ -5247,7 +5248,7 @@ def register_pickup_routes(app, ctx):
                 pass
         req_safe["prep_total"] = prep_total
         req_safe["prep_hechos"] = prep_hechos
-        # Encuesta de satisfacción (apagada hasta que Daniel autorice): con el retiro ya retirado, el seguimiento ofrece responderla (mismo enlace del
+        # Encuesta de satisfacción (activa desde 2026-10-14, autorizada por Daniel): con el retiro ya retirado, el seguimiento ofrece responderla (mismo enlace del
         # correo «retiro completado»). Apagada o sin retirar → None y la página no muestra nada.
         encuesta_url = None
         if (req.get("status") or "") in ("retirada", "cerrada"):
@@ -6217,7 +6218,7 @@ def register_pickup_routes(app, ctx):
 
         if _prop["email_enviado"]:
             _msg_final = (f"Retiro {code} creado — propuesta enviada al cliente "
-                          f"({date} {tf}-{tt}). Queda esperando que acepte o contraproponga.")
+                          f"({_fmt_fecha_cl(date)} {tf}-{tt}). Queda esperando que acepte o contraproponga.")
         else:
             _msg_final = (f"Retiro {code} creado, pero el correo con la propuesta NO se pudo "
                           f"enviar al cliente. Revisa el email o la llave de correo de Retiros.")
@@ -6667,9 +6668,10 @@ def register_pickup_routes(app, ctx):
             return redirect(url_for("pickup_dashboard"))
 
     # ── RESPONSABLE OBLIGATORIO (Daniel 2026-10-02): «para avanzar debe declarar el responsable, y para agendar o liberar el calendario» ──
-    # Un retiro sin responsable no avanza (confirmar facturas/productos, cambiar de estado) ni ocupa o libera un bloque del calendario
+    # Un retiro sin responsable no avanza (cambiar de estado) ni ocupa o libera un bloque del calendario
     # (proponer fecha, aceptar la del cliente, marcarla aceptada, reagendar, rechazar o cerrar) hasta que alguien toque «Me hago cargo».
     # Los retiros ya terminados no lo necesitan. RETIROS_EXIGE_RESPONSABLE=0 la apaga. La guía (retiros_guia.py) la refleja en pantalla.
+    # Desde el 2026-10-14 facturas y productos (paso 1) se confirman ANTES de «Me hago cargo» (Daniel: el responsable va debajo de los productos).
     _MSG_SIN_RESPONSABLE = _rg.MSG_SIN_RESPONSABLE
 
     def _exige_responsable_activo():
@@ -6809,8 +6811,8 @@ def register_pickup_routes(app, ctx):
     _FIRMA_ESTADO = {"tabla": False}
 
     def _vista_previa_ok():
-        """¿El usuario de la sesión ve la encuesta y la firma? Por ahora solo Daniel (RETIROS_VISTA_PREVIA_USUARIOS; ver retiros_encuesta)."""
-        return _en_vista_previa(getattr(g, "user", None))
+        """¿El usuario de la sesión ve la encuesta y la firma? Superadmin o el permiso ret_encuesta_firma (Roles → Retiros; ver retiros_encuesta)."""
+        return _en_vista_previa(getattr(g, "user", None), getattr(g, "permissions", None) or {})
 
     try:
         app.jinja_env.globals["retiros_vista_previa"] = _vista_previa_ok
@@ -10722,7 +10724,7 @@ def register_pickup_routes(app, ctx):
             )
         elif solo_con_saldo and n_con_saldo == 1:
             hint = (
-                "Solo hay 1 documento con saldo pendiente. Asócialo y avanza al paso siguiente."
+                "Solo hay 1 documento con saldo pendiente. Asócialo y revisa sus productos."
             )
 
         _payload_saldo = {
@@ -11498,7 +11500,7 @@ def register_pickup_routes(app, ctx):
             "field": field,
             "value": new_norm or "",
             "changed": True,
-            "saved_at": _now_chile().strftime("%d-%m-%Y %H:%M"),
+            "saved_at": _now_chile().strftime("%d/%m/%Y %H:%M"),           # REGLA #6: día/mes/año (2026-10-14)
         })
 
     # ══════════════════════════════════════════════════════════════════
@@ -11621,13 +11623,14 @@ def register_pickup_routes(app, ctx):
 
         def _fmt_date(d):
             if not d: return ""
-            try: return d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)[:10]
+            # REGLA #6 (Daniel 2026-10-14): día/mes/año también en el Excel
+            try: return d.strftime("%d/%m/%Y") if hasattr(d, "strftime") else str(d)[:10]
             except Exception: return str(d)[:10]
 
         def _fmt_dt(d):
+            # created_at / closed_at se guardan en UTC (NOW()): se muestran en hora Chile, como «Generado» (revisión 2026-10-14)
             if not d: return ""
-            try: return d.strftime("%Y-%m-%d %H:%M") if hasattr(d, "strftime") else str(d)[:16]
-            except Exception: return str(d)[:16]
+            return _utc_a_chile_txt(d) or str(d)[:16]
 
         for ri, r in enumerate(rows, 2):
             doc_principal = f"{(r.get('document_type') or '').upper()} {r.get('document_number') or ''}".strip()
@@ -11685,7 +11688,7 @@ def register_pickup_routes(app, ctx):
             ("Solo pendientes", "Sí" if solo_pendientes else "No"),
             ("Total retiros", len(rows)),
             ("Generado por", g.user["nombre"] if getattr(g, "user", None) else "sistema"),
-            ("Generado", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            ("Generado", _now_chile().strftime("%d/%m/%Y %H:%M")),          # hora Chile (antes UTC del servidor)
         ]
         for ri, (k, v) in enumerate(filt_rows, 2):
             ws2.cell(ri, 1, k)
@@ -11786,7 +11789,8 @@ def register_pickup_routes(app, ctx):
         ws = wb.active
         ws.title = "KPIs"
         ws.cell(1, 1, "ILUS · Informe de Retiros").font = Font(bold=True, size=15, color="DC2626")
-        ws.cell(2, 1, f"Período: {desde} → {hasta}").font = Font(size=11, color="6B7280")
+        _dmy = lambda _s: f"{_s[8:10]}/{_s[5:7]}/{_s[0:4]}"          # desde/hasta ya validados como AAAA-MM-DD (REGLA #6)
+        ws.cell(2, 1, f"Período: {_dmy(desde)} → {_dmy(hasta)}").font = Font(size=11, color="6B7280")
         _ri = 4
         def _sec(titulo):
             nonlocal _ri
@@ -11841,13 +11845,14 @@ def register_pickup_routes(app, ctx):
             ws2.cell(ri, 5, r.get("request_source") or "web")
             ws2.cell(ri, 6, r.get("responsable_nombre") or "")
             ws2.cell(ri, 7, r.get("retirado_por_nombre") or "")
-            ws2.cell(ri, 8, str(r.get("confirmed_date") or ""))
+            _cd = r.get("confirmed_date")
+            ws2.cell(ri, 8, _cd.strftime("%d/%m/%Y") if hasattr(_cd, "strftime") else (f"{str(_cd)[8:10]}/{str(_cd)[5:7]}/{str(_cd)[0:4]}" if _cd else ""))
             ws2.cell(ri, 9, _td_to_hhmm(r.get("confirmed_time_from")) if r.get("confirmed_time_from") else "")
             ws2.cell(ri, 10, float(r.get("kg") or 0))
             ws2.cell(ri, 11, float(r.get("total_volume_m3") or 0))
             ws2.cell(ri, 12, int(r.get("total_packages") or 0))
-            ws2.cell(ri, 13, str(r.get("created_at") or "")[:16])
-            ws2.cell(ri, 14, str(r.get("closed_at") or "")[:16])
+            ws2.cell(ri, 13, _utc_a_chile_txt(r.get("created_at")) or str(r.get("created_at") or "")[:16])      # hora Chile
+            ws2.cell(ri, 14, _utc_a_chile_txt(r.get("closed_at")) or str(r.get("closed_at") or "")[:16])
         for col, w in zip("ABCDEFGHIJKLMN", (12, 28, 18, 18, 12, 20, 20, 14, 8, 8, 8, 8, 16, 16)):
             ws2.column_dimensions[col].width = w
         ws2.freeze_panes = "A2"
@@ -11903,7 +11908,7 @@ def register_pickup_routes(app, ctx):
                 log_event(rid, "agenda_reprogramada", req.get("status"), "propuesta_enviada",
                           f"Cita confirmada {_fmt_fecha_cl(_conf_prev)} {_td_to_hhmm(req.get('confirmed_time_from') or '')}-"
                           f"{_td_to_hhmm(req.get('confirmed_time_to') or '')} queda sin efecto; "
-                          f"nueva propuesta {date} {tf}-{tt}", "interno")
+                          f"nueva propuesta {_fmt_fecha_cl(date)} {tf}-{tt}", "interno")
             except Exception:
                 pass
             try:
@@ -11937,7 +11942,7 @@ def register_pickup_routes(app, ctx):
             (date, tf, tt, rid)
         )
         log_event(rid, "propuesta_enviada", req.get("status"), "propuesta_enviada",
-                  f"{date} {tf}-{tt}", "interno")
+                  f"{_fmt_fecha_cl(date)} {tf}-{tt}", "interno")
 
         fresh = mysql_fetchone(f"SELECT * FROM `{REQ}` WHERE id=%s", (rid,)) or req
         try:
@@ -11974,7 +11979,7 @@ def register_pickup_routes(app, ctx):
             try:
                 log_event(rid, "propuesta_email_no_enviado", "propuesta_enviada",
                           "propuesta_enviada",
-                          f"Propuesta {date} {tf}-{tt} registrada pero el correo al cliente NO salió "
+                          f"Propuesta {_fmt_fecha_cl(date)} {tf}-{tt} registrada pero el correo al cliente NO salió "
                           f"(destinatarios={n_destinatarios}). Revisar llave de correo de Retiros o "
                           f"el email del cliente.", "interno")
             except Exception:
@@ -12051,7 +12056,7 @@ def register_pickup_routes(app, ctx):
             ) or {}
             if int(_ndoc.get("n") or 0) <= 0:
                 return _resp_err("Antes de proponer fecha, asocia al menos un "
-                                 "documento del cliente en el Paso 2 (cargar factura/boleta).")
+                                 "documento del cliente en el paso 1 (Facturas y productos).")
             try:
                 mysql_execute(
                     f"UPDATE `{REQ}` SET doc_validation_status='ok', "
@@ -12121,7 +12126,7 @@ def register_pickup_routes(app, ctx):
         )
         if not ok_slot:
             log_event(rid, "propuesta_bloqueada", req["status"], req["status"],
-                      f"Intento de proponer {date} {tf}-{tt}: {motivo}", "interno")
+                      f"Intento de proponer {_fmt_fecha_cl(date)} {tf}-{tt}: {motivo}", "interno")
             return _resp_err(f"Slot no disponible: {motivo}", status=409)
 
         # ── Daniel 2026-06-15: la propuesta DEBE poder notificarse al cliente.
@@ -12132,7 +12137,7 @@ def register_pickup_routes(app, ctx):
         if not _get_pickup_all_emails(req):
             return _resp_err(
                 "Este retiro no tiene un correo de cliente válido. Agrega el email "
-                "del cliente (paso 2) antes de enviar la propuesta — el cliente lo "
+                "del cliente (en «Editar datos») antes de enviar la propuesta — el cliente lo "
                 "necesita para aceptar o contraproponer.",
                 status=409,
             )
@@ -12191,13 +12196,13 @@ def register_pickup_routes(app, ctx):
                 log_event(rid, "auto_confirmada_coincidencia", req.get("status") or "",
                           "agenda_confirmada",
                           f"El operador coincidió con la {_origen_match} "
-                          f"({date} {tf}-{tt}) → confirmado directo, sin re-confirmación.",
+                          f"({_fmt_fecha_cl(date)} {tf}-{tt}) → confirmado directo, sin re-confirmación.",
                           "interno")
                 # Aviso interno al equipo: se confirmó una cita
                 try:
                     _notificar_equipo_retiros(
                         f"✅ Retiro {req.get('code') or '?'} CONFIRMADO",
-                        f"{req.get('customer_name') or 'Cliente'} — cita {date} {tf}-{tt} "
+                        f"{req.get('customer_name') or 'Cliente'} — cita {_fmt_fecha_cl(date)} {tf}-{tt} "
                         f"(el operador aceptó la fecha que pidió el cliente).",
                         rid, req.get("code") or "?",
                         prioridad="media", tipo="retiro_confirmado", send_email=False)
@@ -12431,7 +12436,7 @@ def register_pickup_routes(app, ctx):
 
         log_event(
             rid, "ilus_acepto_contrapropuesta", req["status"], "agenda_confirmada",
-            f"{str(proposal['date'])[:10]} {_td_to_hhmm(proposal['time_from'])}-{_td_to_hhmm(proposal['time_to'])}",
+            f"{_fmt_fecha_cl(proposal['date'])} {_td_to_hhmm(proposal['time_from'])}-{_td_to_hhmm(proposal['time_to'])}",
             "interno",
         )
 
@@ -12466,7 +12471,7 @@ def register_pickup_routes(app, ctx):
         })
 
     # ══════════════════════════════════════════════════════════════════
-    #  GUÍA DE 6 PASOS + PREPARACIÓN POR CHECK (Daniel 2026-10-02)
+    #  GUÍA DE 5 PASOS + PREPARACIÓN POR CHECK (Daniel 2026-10-02; 5 pasos desde 2026-10-14)
     #  "Que los pasos estén enumerados, los objetos bordeados en rojo y que
     #  te diga exactamente qué hace falta... y que el sistema identifique con
     #  Check si está preparado y lo cambie automáticamente."
@@ -12571,7 +12576,7 @@ def register_pickup_routes(app, ctx):
             return True
 
     def _guia_datos(rid, req):
-        """Arma la guía de 6 pasos (retiros_guia.evaluar) con lo que hay en la BD. Solo lectura."""
+        """Arma la guía de 5 pasos (retiros_guia.evaluar) con lo que hay en la BD. Solo lectura."""
         f_docs, f_prod, _docs_min, lineas = _guia_firmas(rid)
         try:
             docs = mysql_fetchall(
@@ -12622,10 +12627,12 @@ def register_pickup_routes(app, ctx):
         # Lo que se va a confirmar, a la vista y COMPLETO (REGLA #15: nada recortado): documento, cliente, RUT y saldo.
         def _saldo_txt(v):
             return "con saldo" if v == 1 else ("SIN saldo" if v == 0 else "saldo sin verificar")
-        g_["pasos"][0]["detalle"] = [
+        # Paso 1 = facturas y productos (una tarjeta, dos confirmaciones): cada confirmación lleva su propio detalle.
+        _sub_fac, _sub_prod = g_["pasos"][0]["sub"]["facturas"], g_["pasos"][0]["sub"]["productos"]
+        _sub_fac["detalle"] = [
             d["rotulo"] + (f" · {d['cliente']}" if d["cliente"] else "") + (f" · RUT {d['rut']}" if d.get("rut") else "")
             + f" · {_saldo_txt(d.get('con_saldo'))}" for d in docs_ui]
-        g_["pasos"][0]["total"] = len(docs_ui)
+        _sub_fac["total"] = len(docs_ui)
 
         def _cant(v):
             try:
@@ -12633,11 +12640,15 @@ def register_pickup_routes(app, ctx):
             except (TypeError, ValueError):
                 return "?"
             return str(int(v)) if v.is_integer() else str(v)
-        g_["pasos"][2]["detalle"] = [
+        _sub_prod["detalle"] = [
             f"{_cant(l.get('cantidad'))} × {(l.get('descripcion') or l.get('sku') or 'Producto')}"
             + (f" (SKU {l.get('sku')})" if l.get("sku") else "") + (" · sin saldo" if l.get("marcada_sin_saldo") else "")
             for l in lineas]
-        g_["pasos"][2]["total"] = len(lineas)
+        _sub_prod["total"] = len(lineas)
+        # Lo que la guía muestra del paso 1 es lo de la confirmación que toca (facturas mientras no estén hechas, después productos)
+        _manda = _sub_fac if _sub_fac["estado"] != "hecho" else _sub_prod
+        g_["pasos"][0]["detalle"], g_["pasos"][0]["total"] = _manda.get("detalle") or [], _manda.get("total") or 0
+        g_["pasos"][0]["n_docs"] = len(docs_ui)
         g_["firma_docs"], g_["firma_prod"] = f_docs, f_prod
         g_["docs"] = docs_ui            # un semáforo por factura o boleta en el encabezado de la guía (retiros con varios documentos)
         g_["status"] = st
@@ -12667,24 +12678,25 @@ def register_pickup_routes(app, ctx):
             return jsonify({"ok": False, "error": "Retiro no encontrado."}), 404
         if (req.get("status") or "") in ("rechazada", "cerrada", "retirada", "fallida"):
             return jsonify({"ok": False, "error": "Este retiro ya terminó: no hay nada que confirmar."}), 409
-        if _sin_responsable(req):             # Daniel 2026-10-02: para avanzar hay que declarar el responsable
-            return jsonify({"ok": False, "error": _MSG_SIN_RESPONSABLE, "code": "SIN_RESPONSABLE"}), 409
+        # Daniel 2026-10-14: el responsable va DEBAJO de los productos (paso 2): facturas y productos se confirman antes de «Me hago cargo».
+        # El responsable se sigue exigiendo para agendar y cambiar de estado (REGLA #21).
         u = getattr(g, "user", None) or {}
         quien = (u.get("nombre") or u.get("username") or "").strip()[:190]
         if not quien:
             return jsonify({"ok": False, "error": "No pudimos identificar tu usuario. Vuelve a iniciar sesión."}), 400
         body = request.get_json(silent=True) or {}
         datos = _guia_datos(rid, req)
-        p1, p3 = datos["pasos"][0], datos["pasos"][2]
-        idx = 0 if que == "docs" else 2
-        paso = datos["pasos"][idx]
+        sub_clave = "facturas" if que == "docs" else "productos"
+        paso = datos["pasos"][0]["sub"][sub_clave]         # paso 1: facturas y productos (dos confirmaciones)
         tipo_ok = "confirmar_docs" if que == "docs" else "confirmar_productos"
         if (paso.get("accion") or {}).get("tipo") != tipo_ok:
             if paso["estado"] == "hecho":
                 return jsonify({"ok": True, "ya": True, **datos})
-            return jsonify({"ok": False, "error": "Primero agrega la factura o boleta del cliente."}), 409
+            # Lo que la guía dice que falta (ej. «la factura no trae productos»); si no dice nada, lo de siempre
+            falta = next((str(f) for f in (paso.get("faltan") or []) if f), "") if que != "docs" else ""
+            return jsonify({"ok": False, "error": falta or "Primero agrega la factura o boleta del cliente."}), 409
         if (paso.get("accion") or {}).get("deshabilitada"):
-            return jsonify({"ok": False, "error": (paso.get("accion") or {}).get("motivo") or "Primero confirma las facturas (paso 1)."}), 409
+            return jsonify({"ok": False, "error": (paso.get("accion") or {}).get("motivo") or "Primero confirma las facturas."}), 409
         # Lo confirmado es EXACTAMENTE lo que la persona vio: si la lista cambió mientras tanto, se pide revisar de nuevo.
         visto = body.get("firma")
         actual = datos["firma_docs"] if que == "docs" else datos["firma_prod"]
@@ -12704,7 +12716,7 @@ def register_pickup_routes(app, ctx):
                   f"firma={firma} · {texto}"[:900], "interno", quien)
         # log_event no avisa si falla: se comprueba que la marca quedó guardada antes de decir «listo».
         despues = _guia_datos(rid, req)
-        if despues["pasos"][idx]["estado"] != "hecho":
+        if despues["pasos"][0]["sub"][sub_clave]["estado"] != "hecho":
             return jsonify({"ok": False, "error": "No se pudo guardar la confirmación. Reintenta."}), 500
         return jsonify({"ok": True, **despues})
 
@@ -14479,7 +14491,7 @@ def register_pickup_routes(app, ctx):
 
         log_event(
             rid, "aceptada_manual", req.get("status"), "agenda_confirmada",
-            f"{actor} marcó la propuesta ({str(proposal['date'])[:10]} "
+            f"{actor} marcó la propuesta ({_fmt_fecha_cl(proposal['date'])} "
             f"{_td_to_hhmm(proposal['time_from'])}-{_td_to_hhmm(proposal['time_to'])}) como aceptada "
             f"por el cliente SIN que este hiciera click en el correo. Motivo: {motivo}",
             "interno", actor,
@@ -15347,7 +15359,7 @@ def register_pickup_routes(app, ctx):
                     msg += f" Se descartaron {skipped} franja(s) con formato inválido."
                 flash(msg, "danger")
             else:
-                flash(f"✅ {inserted} franja(s) bloqueadas para {fecha}.", "success")
+                flash(f"✅ {inserted} franja(s) bloqueadas para {_fmt_fecha_cl(fecha)}.", "success")
                 # El calendario público lo ve al instante (sin esperar los 30 s de caché).
                 try: _DISPO_CACHE["payload"] = None
                 except Exception: pass

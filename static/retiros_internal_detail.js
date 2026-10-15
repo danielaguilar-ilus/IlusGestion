@@ -1,3 +1,7 @@
+// Fecha LOCAL (hora Chile del navegador) en AAAA-MM-DD. toISOString() da la de UTC: después de las 21:00 corría un día (revisión 2026-10-14).
+function _isoLocalRi(d){
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
 // Asegura class js-reveal en body para fade-in suave
 if ('IntersectionObserver' in window){
   document.body.classList.add('js-reveal');
@@ -349,7 +353,7 @@ async function cargarSaldoCliente(rid){
       hintEl.style.display = 'flex';
       hintEl.className = 'smart-hint is-warn';
     } else if (d.resumen && d.resumen.con_saldo === 1){
-      hintMsg.innerHTML = `Solo hay <strong>1 documento con saldo</strong> pendiente — lo más probable es que sea ese. Asócialo y avanza al paso 3.`;
+      hintMsg.innerHTML = `Solo hay <strong>1 documento con saldo</strong> pendiente — lo más probable es que sea ese. Asócialo y revisa sus productos aquí mismo, más abajo.`;
       hintEl.style.display = 'flex';
       hintEl.className = 'smart-hint';
     } else {
@@ -1834,7 +1838,7 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
     }
   }
   function _setDateBounds(){
-    const max = new Date(Date.now() + 31*24*3600*1000).toISOString().slice(0,10);
+    const max = _isoLocalRi(new Date(Date.now() + 31*24*3600*1000));
     DATE_IN.max = max;
   }
   DATE_IN.addEventListener('change', () => _loadDia(DATE_IN.value));
@@ -1855,7 +1859,7 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
     _syncMonth();
   });
   document.getElementById('icdCalToday').addEventListener('click', () => {
-    const tomorrow = new Date(Date.now() + 24*3600*1000).toISOString().slice(0,10);
+    const tomorrow = _isoLocalRi(new Date(Date.now() + 24*3600*1000));
     DATE_IN.value = tomorrow;
     _loadDia(tomorrow);
     _syncMonth();
@@ -1864,7 +1868,7 @@ function _refrescarEstadoPasos(ndocs, ncons, requestState, nOtroRut){
     if (DATE_IN.value) _loadDia(DATE_IN.value);
   });
   _setDateBounds();
-  const initial = DATE_IN.value || (new Date(Date.now() + 24*3600*1000)).toISOString().slice(0,10);
+  const initial = DATE_IN.value || _isoLocalRi(new Date(Date.now() + 24*3600*1000));
   DATE_IN.value = initial;
   _loadDia(initial);
 
@@ -1959,7 +1963,7 @@ function _refreshSuggestedDays(){
     chips.innerHTML = sugeridos.map(s => {
       const [yy, mm, dd] = s.fecha.split('-');
       const label = `${dd}/${mm}`;
-      return `<button type="button" class="iw-suggest-chip" data-fecha="${s.fecha}" title="${s.fecha} — ${s.libres} bloques libres">
+      return `<button type="button" class="iw-suggest-chip" data-fecha="${s.fecha}" title="${dd}/${mm}/${yy} — ${s.libres} bloques libres">
         <i class="bi bi-calendar-event"></i>${label}
         <span class="iw-suggest-libres">${s.libres} libres</span>
       </button>`;
@@ -1995,7 +1999,7 @@ function _mountProposeCalendar(){
       dateInp.value = cardData.reqDate;
     } else {
       const today = new Date();
-      dateInp.value = today.toISOString().slice(0,10);
+      dateInp.value = _isoLocalRi(today);
     }
   }
   // Detectamos rango pedido por cliente (si la card está renderizada)

@@ -97,10 +97,14 @@ def test_solo_la_pagina_publica_de_la_encuesta_queda_sin_csrf(ruta, exenta):
 
 def test_el_deploy_no_enciende_nada_sin_autorizacion_de_daniel():
     # Daniel 2026-10-07: «no generes ninguna notificación a ningún cliente hasta que te autorice, sobre todo con la encuesta».
-    # La encuesta sigue apagada (RETIROS_ENCUESTA_ACTIVA) y la expedición en modo sombra (RETIROS_RETIRO_AUTO) por defecto.
+    # 2026-10-14: Daniel autorizó la encuesta («sí, tira la encuesta por el correo de retirado; allí el cliente tomará la opción de hacerla
+    # o no»): va DENTRO del correo «Retiro completado», nada más. El comprobante de firma por correo sigue apagado.
     raiz = os.path.dirname(_TESTS)
     with open(os.path.join(raiz, ".github", "workflows", "deploy.yml"), encoding="utf-8") as f:
         y = f.read()
-    assert "RETIROS_ENCUESTA_ACTIVA" not in y and "RETIROS_FIRMA_CORREO" not in y
+    assert "RETIROS_FIRMA_CORREO" not in y
+    assert 'append_env RETIROS_ENCUESTA_ACTIVA       "1"' in y
+    assert y.count("RETIROS_ENCUESTA_ACTIVA") == 2          # la limpieza del grep + el único append_env (sin duplicados)
+    assert "RETIROS_VISTA_PREVIA_USUARIOS" not in y          # abrir la vista previa al equipo es otro «sí» de Daniel (Roles → Retiros)
     # 2026-10-08: Daniel autorizó explícitamente el cierre automático por expedición (activo). Solo ese.
     assert 'append_env RETIROS_RETIRO_AUTO           "activo"' in y

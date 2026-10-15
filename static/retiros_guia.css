@@ -189,7 +189,7 @@
 .gp-bar-prog .gp-prog-bar{flex:1 1 140px;max-width:340px}
 .gp-bar-av{color:#fbbf24;font-weight:800}
 .gp-chips{list-style:none;margin:0;padding:6px 14px 8px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-@media (min-width:1200px){.gp-chips{grid-template-columns:repeat(6,minmax(0,1fr))}}
+@media (min-width:1200px){.gp-chips{grid-template-columns:repeat(5,minmax(0,1fr))}}
 @media (min-width:1200px) and (max-width:1399px){      /* notebook: los 6 pasos en una sola fila (la barra fija ocupaba ~330px) */
   .gp-chip{gap:6px;padding:5px 8px;min-height:46px}
   .gp-chip-n{width:28px;height:28px;font-size:.92rem}
@@ -395,7 +395,7 @@
 .gp-ring b{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:1.2rem;font-weight:900;letter-spacing:-.02em;color:#fff}
 .gp-ring b small{margin-left:1px;font-size:.78rem;font-weight:700;color:#9ca3af}
 .gp-ring.is-lleno{filter:drop-shadow(0 0 10px rgba(34,197,94,.65))}
-.gp-track{flex:1 1 440px;min-width:0;list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(6,minmax(0,1fr))}
+.gp-track{flex:1 1 440px;min-width:0;list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr))}
 .gp-n{position:relative;min-width:0}
 .gp-n::before{content:"";position:absolute;top:17px;right:50%;width:100%;height:4px;border-radius:2px;background:rgba(255,255,255,.18)}
 .gp-n:first-child::before{display:none}
@@ -622,3 +622,50 @@
   .ck-dm-datos{grid-template-columns:max-content minmax(0,1fr)}
 }
 }
+
+/* ═══ Daniel 2026-10-14 · «alertar siempre, pero no tan intenso» — «el botón déjalo colorido, pero no necesariamente rojo» ═══
+   Semáforo de la guía y de las tarjetas: ámbar suave = te toca · azul = esperando a otro · verde = hecho · gris = aún no toca.
+   Botones de acción en azul. El rojo queda solo para errores reales (y en suave). Va al final: pisa las reglas rojas de arriba. */
+@keyframes gpPulsoSuave{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,.45)}50%{box-shadow:0 0 0 7px rgba(245,158,11,0)}}
+.gp{background:repeating-linear-gradient(135deg,rgba(255,255,255,.025) 0 2px,transparent 2px 10px),#0a0a0a}
+.gp-sig{border:2px solid #f59e0b;background:#fffbeb}
+.gp-sig-k{color:#92400e}
+.gp-paso.is-actual{border-color:#f59e0b;border-left-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.14)}
+.gp-paso.is-actual .gp-circ{background:#f59e0b;border-color:#f59e0b;color:#1f2937;animation:gpPulsoSuave 2.4s ease-in-out infinite}
+.gp-badge.b-actual{background:#fff8e1;color:#92400e;border-color:#fcd34d}
+.gp-btn{border-color:#2563eb;background:#2563eb;color:#fff}
+.gp-btn:hover:not(:disabled){filter:none;background:#1d4ed8;border-color:#1d4ed8}
+.gp-btn.sec{background:#fff;color:#0a0a0a;border-color:#d1d5db}
+.gp-btn.verde{background:#15803d;border-color:#15803d}
+.step-section.gp-roja{outline:2px solid #f59e0b;outline-offset:4px;box-shadow:0 0 0 6px rgba(245,158,11,.10)}
+.step-section.gp-ambar{outline:2px solid #93c5fd;outline-offset:4px;box-shadow:none}
+.gp-tag{background:#fff8e1;color:#78350f;border:1px solid #fde68a;border-left:5px solid #f59e0b;font-size:1rem;font-weight:600}
+.gp-tag b{color:#92400e}
+.gp-tag.is-espera{background:#eff6ff;color:#1e3a8a;border-color:#bfdbfe;border-left-color:#3b82f6}
+.gp-tag.is-espera b{color:#1e40af}
+.gp-tag .gp-btn{background:#2563eb;color:#fff;border-color:#2563eb}
+.gp-tag-mail{background:rgba(15,23,42,.06);color:inherit}
+.gp-btn-roja{outline:3px solid #fbbf24 !important;outline-offset:3px;animation:none}
+.gp-chip.is-actual{border-color:#f59e0b;background:#2a2110}
+.gp-chip.is-actual .gp-chip-n{background:#f59e0b;border-color:#f59e0b;color:#1f2937}
+.gp-chip.is-actual small{color:#fcd34d}
+.gp-n.is-actual .gp-nc{background:#f59e0b;border-color:#f59e0b;color:#1f2937;animation:gpPulsoSuave 2.4s ease-in-out infinite}
+.gp-n.is-actual .gp-nt small{color:#fcd34d}
+.gp-strip{border-left-color:#f59e0b;background:linear-gradient(90deg,#fffbeb,#fff 70%)}
+.gp-strip-ico{background:#f59e0b;color:#1f2937;animation:none}
+.gp-strip-k{color:#92400e}
+.gp-strip.is-espera{border-left-color:#3b82f6;background:linear-gradient(90deg,#eff6ff,#fff 70%)}
+.gp-strip.is-espera .gp-strip-ico{background:#3b82f6;color:#fff}
+.gp-strip.is-espera .gp-strip-k{color:#1e40af}
+/* El salto desde la guía deja la tarjeta DEBAJO de la guía fija (escritorio): --gp-alto lo mide retiros_guia.js */
+@media (min-width:992px){
+  .step-section,.step-subsection,#paso-1,#rdActividad,#tabDocsAsociados,.pd-doc,.pd-row,#tabDocsAsociados tr{scroll-margin-top:calc(var(--gp-alto, 210px) + 16px)}
+}
+@media (prefers-reduced-motion:reduce){.gp-n.is-actual .gp-nc,.gp-paso.is-actual .gp-circ{animation:none}}
+
+/* (2026-10-14, cont.) Círculo del paso en la tarjeta: ámbar = te toca, azul = esperando; sin doble borde ni brillo rojo */
+.step-section.gp-e-actual .step-circle{background:#f59e0b !important;border-color:#f59e0b !important;color:#1f2937 !important;box-shadow:0 0 0 4px rgba(245,158,11,.18) !important}
+.step-section.gp-e-espera .step-circle{background:#3b82f6 !important;border-color:#3b82f6 !important;color:#fff !important;box-shadow:0 0 0 4px rgba(59,130,246,.15) !important}
+.step-section.gp-e-pendiente .step-circle,.step-section.gp-e-bloqueado .step-circle{box-shadow:none !important}
+.step-section.gp-roja{outline:none;box-shadow:0 0 0 3px rgba(245,158,11,.22)}
+.step-section.gp-ambar{outline:none;box-shadow:0 0 0 3px rgba(59,130,246,.18)}

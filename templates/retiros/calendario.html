@@ -326,22 +326,27 @@
   display:grid;grid-template-columns:1fr 1fr;gap:8px;flex-shrink:0;
 }
 
-/* Acciones principales (botones grandes touch-friendly 44px) */
+/* Acciones del panel lateral: barra SERIA (Daniel 2026-10-14: «está colorida, me gusta, pero
+   está muy exagerada… dejarlo con una barra seria»). Todas de contorno (borde gris, texto negro);
+   el color queda solo como detalle del ícono, y a lo más UNA acción va rellena en negro
+   (.agi-act-primary, la decide agiRenderDrawer). Mismos botones, mismo orden y mismas funciones
+   que antes; 46 px de alto (REGLA #3: mínimo 44). */
 .agi-act-btn{
-  display:inline-flex;align-items:center;justify-content:center;gap:6px;
-  padding:11px 12px;border-radius:10px;font-weight:800;font-size:.85rem;
-  text-decoration:none;cursor:pointer;border:none;
-  transition:all .15s;min-height:46px;
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  padding:10px 12px;border-radius:10px;font-weight:700;font-size:.85rem;
+  text-decoration:none;cursor:pointer;
+  background:#fff;color:var(--ilus-ink);border:1px solid #d1d5db;
+  transition:background .15s,border-color .15s;min-height:46px;
 }
-.agi-act-btn:active{transform:scale(.96);}
-.agi-act-call{background:#16a34a;color:#fff;}
-.agi-act-call:hover{background:#15803d;color:#fff;}
-.agi-act-mail{background:#3b82f6;color:#fff;}
-.agi-act-mail:hover{background:#2563eb;color:#fff;}
-.agi-act-move{background:var(--ilus-red);color:#fff;grid-column:span 2;}
-.agi-act-move:hover{background:var(--ilus-red-d);color:#fff;}
-.agi-act-ficha{background:#fff;color:var(--ilus-ink);border:1px solid #cbd5e1;grid-column:span 2;}
-.agi-act-ficha:hover{background:#f9fafb;color:var(--ilus-ink);}
+.agi-act-btn .bi{font-size:1rem;color:#4b5563;}
+.agi-act-btn:hover{background:#f9fafb;border-color:#9ca3af;color:var(--ilus-ink);}
+.agi-act-btn:focus-visible{outline:2px solid var(--ilus-ink);outline-offset:2px;}
+.agi-act-btn:active{transform:scale(.98);}
+.agi-act-btn[disabled]:hover{background:#fff;border-color:#d1d5db;}
+.agi-act-call .bi{color:#16a34a;}
+.agi-act-mail .bi{color:#2563eb;}
+.agi-act-move{grid-column:span 2;}
+.agi-act-ficha{grid-column:span 2;}
 
 .agi-sect{padding:14px 22px;border-bottom:1px solid #f3f4f6;}
 .agi-sect h6{
@@ -534,13 +539,15 @@
   .agi-filter-search input{min-height:44px;}
 }
 
-/* ── Botones extra del drawer (acciones rápidas) ────────────────────── */
-.agi-act-accept{background:#16a34a;color:#fff;grid-column:span 2;}
-.agi-act-accept:hover{background:#15803d;color:#fff;}
-.agi-act-prep{background:#f59e0b;color:#fff;}
-.agi-act-prep:hover{background:#d97706;color:#fff;}
-.agi-act-done{background:#0f172a;color:#fff;}
-.agi-act-done:hover{background:#1e293b;color:#fff;}
+/* ── Botones extra del drawer (acciones rápidas): también de contorno ── */
+.agi-act-accept{grid-column:span 2;}
+.agi-act-accept .bi{color:#16a34a;}
+.agi-act-prep .bi{color:#d97706;}
+.agi-act-done .bi{color:#15803d;}
+/* La única acción principal: rellena en negro ILUS (va después para ganarle a los íconos de color) */
+.agi-act-btn.agi-act-primary{background:var(--ilus-ink);color:#fff;border-color:var(--ilus-ink);}
+.agi-act-btn.agi-act-primary .bi{color:#fff;}
+.agi-act-btn.agi-act-primary:hover{background:#262626;border-color:#262626;color:#fff;}
 
 /* iOS safe-area */
 @supports(padding:max(0px)){
@@ -979,6 +986,30 @@ const _AGI_IS_MOBILE = () => window.matchMedia('(max-width: 767.98px)').matches;
 function agiFmt(d){
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
+// Fecha para la PERSONA (REGLA #6; Daniel 2026-10-14: «día, mes, año, hora, si es que lleva hora»).
+// Es solo el TEXTO que se ve: los datos (data-*, fetch, comparaciones) siguen en AAAA-MM-DD (agiFmt).
+//   agiFechaCL('2026-10-30')                   → '30/10/2026'
+//   agiFechaCL('2026-10-30', '16:30')          → '30/10/2026 16:30'
+//   agiFechaCL('2026-10-30', '16:30', '17:00') → '30/10/2026 16:30–17:00'
+// Acepta un Date, 'AAAA-MM-DD' o 'DD-MM-AAAA' / 'DD/MM/AAAA'. Ojo: no es para marcas de tiempo del
+// servidor (created_at viene en UTC): esas van con chile_fmt. Un formato desconocido se muestra tal cual.
+function agiFechaCL(fecha, desde, hasta){
+  let dd, mm, aa;
+  if (fecha instanceof Date){
+    if (isNaN(fecha)) return '';
+    dd = fecha.getDate(); mm = fecha.getMonth() + 1; aa = fecha.getFullYear();
+  } else {
+    const s = String(fecha == null ? '' : fecha).trim();
+    let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (m){ aa = m[1]; mm = m[2]; dd = m[3]; }
+    else if ((m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/))){ dd = m[1]; mm = m[2]; aa = m[3]; }
+    else return s;
+  }
+  const p2 = n => String(n).padStart(2, '0');
+  const hm = t => { const x = String(t == null ? '' : t).trim().match(/^(\d{1,2}):(\d{2})/); return x ? p2(x[1]) + ':' + x[2] : ''; };
+  const h1 = hm(desde), h2 = hm(hasta);
+  return `${p2(dd)}/${p2(mm)}/${aa}` + (h1 ? ' ' + h1 + (h2 ? '–' + h2 : '') : '');
+}
 // ¿Es día hábil? Usa settings.work_days (ISO: 1=Lun … 7=Dom) + holidays (csv)
 // que la API ya entrega. Nota: los feriados legales de Chile se validan en
 // backend pero NO vienen en settings.holidays — aquí solo pintamos los
@@ -1118,10 +1149,9 @@ function agiRenderWeek(){
   document.getElementById('agi-cap-badge').textContent =
     `${cfg.max_picks_slot} retiros · ${cfg.max_kg_slot} kg · ${cfg.max_m3_slot} m³`;
 
-  // Etiqueta rango
-  const fmt = d => d.toLocaleDateString('es-CL', { day:'numeric', month:'short' });
+  // Etiqueta rango (día/mes/año, REGLA #6)
   document.getElementById('agiRangeLabel').textContent =
-    `${fmt(_agiRangeFrom)} → ${fmt(_agiRangeTo)} ${_agiRangeFrom.getFullYear()}`;
+    `${agiFechaCL(_agiRangeFrom)} → ${agiFechaCL(_agiRangeTo)}`;
 
   // Headers (precomputamos info de día hábil/feriado para reusar en los slots)
   const today = agiFmt(new Date());
@@ -1139,7 +1169,7 @@ function agiRenderWeek(){
     const isToday = fecha === today;
     const _inf = (_agiData.dias_info || {})[fecha] || null;
     const barColor = dia.ocupacion_pct >= 80 ? '#dc2626' : dia.ocupacion_pct >= 50 ? '#f59e0b' : '#16a34a';
-    html += `<div class="agi-week-head${isToday?' today':''}${!w.habil?' nohabil':''}" data-fecha="${fecha}">
+    html += `<div class="agi-week-head${isToday?' today':''}${!w.habil?' nohabil':''}" data-fecha="${fecha}" title="${agiFechaCL(d)}">
       <div style="font-size:.65rem">${dayNames[i]}</div>
       <div class="agi-day">${d.getDate()}</div>
       ${!w.habil
@@ -1341,7 +1371,8 @@ function agiProximoTic(){
   }
   box.classList.remove('vacio'); box.dataset.pickId = act.p.id;
   const dos = n => String(n).padStart(2, '0');
-  who.textContent = `${act.p.code || ''} · ${act.p.customer_name || '—'} · ${act.p.time_from}–${act.p.time_to || ''}`;
+  // La fecha con su hora va junta (nowrap): que «15:00–15:30» no se parta en dos líneas.
+  who.innerHTML = `${agiEsc(act.p.code || '')} · ${agiEsc(act.p.customer_name || '—')} · <span style="white-space:nowrap">${agiEsc(agiFechaCL(act.p.fecha, act.p.time_from, act.p.time_to))}</span>`;
   if (act.ini <= now){
     box.classList.add('encurso');
     const s = Math.floor((act.fin - now) / 1000);
@@ -1365,7 +1396,7 @@ function agiHoyPintar(){
   if (n) n.textContent = items.length ? `${items.length} ${items.length === 1 ? 'retiro' : 'retiros'}` : '';
   if (!items.length){
     const sig = _agiProx.find(x => x.ini > now);
-    const sigTxt = sig ? `<br><b>Próximo:</b> ${agiEsc(sig.ini.toLocaleDateString('es-CL', { weekday:'long', day:'numeric', month:'short' }))} · ${agiEsc(sig.p.time_from)}` : '';
+    const sigTxt = sig ? `<br><b>Próximo:</b> ${agiEsc(sig.ini.toLocaleDateString('es-CL', { weekday:'long' }))} <span style="white-space:nowrap">${agiEsc(agiFechaCL(sig.p.fecha, sig.p.time_from))}</span>` : '';
     cont.innerHTML = `<div class="agi-hoy-vacio"><i class="bi bi-cup-hot" style="font-size:1.3rem;display:block;margin-bottom:4px"></i>Sin retiros pendientes hoy${sigTxt}</div>`;
     return;
   }
@@ -1476,7 +1507,7 @@ function agiRenderList(){
       <div class="agi-list-day-head${isToday?' today':''}">
         <div>
           <div class="agi-list-day-name">${dayNames[dayIdx]}${isToday?' · HOY':''}${nohabilTag}</div>
-          <div class="agi-list-day-num">${d.getDate()} ${d.toLocaleDateString('es-CL',{month:'short'})}</div>
+          <div class="agi-list-day-num">${agiFechaCL(d)}</div>
         </div>
         <div class="agi-list-day-stats">
           <div><b>${total}</b> retiro${total!==1?'s':''}</div>
@@ -1633,8 +1664,8 @@ function agiAbrirMover(payload){
     `<b>${agiEsc(payload.code)} · ${agiEsc(payload.cliente)}</b>
      <div style="margin-top:6px;font-size:.85rem">
        <i class="bi bi-arrow-right me-1"></i>
-       De <b>${agiEsc(payload.fechaOrig)} ${agiEsc(payload.tfOrig)}–${agiEsc(payload.ttOrig)}</b>
-       a <b style="color:#16a34a">${agiEsc(payload.fechaDest)} ${agiEsc(payload.tfDest)}–${agiEsc(payload.ttDest)}</b>
+       De <b>${agiEsc(agiFechaCL(payload.fechaOrig, payload.tfOrig, payload.ttOrig) || '—')}</b>
+       a <b style="color:#16a34a">${agiEsc(agiFechaCL(payload.fechaDest, payload.tfDest, payload.ttDest) || '—')}</b>
      </div>`;
   // Advertencia ámbar de capacidad (solo viene desde drag&drop)
   const capWarnEl = document.getElementById('agi-mover-capwarn');
@@ -1648,11 +1679,13 @@ function agiAbrirMover(payload){
   new bootstrap.Modal(document.getElementById('agiModalMover')).show();
 }
 
+// «jueves 30/10/2026»: el día de la semana ayuda a leerla; la fecha va en día/mes/año (REGLA #6).
 function agiFormatDateBonita(yyyy_mm_dd){
   try {
     const d = new Date(yyyy_mm_dd + 'T00:00:00');
-    return d.toLocaleDateString('es-CL', { weekday:'long', day:'numeric', month:'long' });
-  } catch(_){ return yyyy_mm_dd; }
+    if (isNaN(d)) return agiFechaCL(yyyy_mm_dd);
+    return d.toLocaleDateString('es-CL', { weekday:'long' }) + ' ' + agiFechaCL(yyyy_mm_dd);
+  } catch(_){ return agiFechaCL(yyyy_mm_dd); }
 }
 
 async function agiConfirmarMover(){
@@ -1857,19 +1890,19 @@ function agiRenderDrawer(d){
   if (d.requested_date){
     html += `<div class="agi-fechas-line">
       <span class="agi-fechas-tag" style="background:var(--kd-req)">Solicitado</span>
-      <span class="agi-fechas-val">${agiEsc(d.requested_date)} · ${agiEsc(d.requested_time_from||'')}–${agiEsc(d.requested_time_to||'')}</span>
+      <span class="agi-fechas-val">${agiEsc(agiFechaCL(d.requested_date, d.requested_time_from, d.requested_time_to))}</span>
     </div>`;
   }
   if (d.proposed_date){
     html += `<div class="agi-fechas-line">
       <span class="agi-fechas-tag" style="background:var(--kd-prop)">Propuesto ILUS</span>
-      <span class="agi-fechas-val">${agiEsc(d.proposed_date)} · ${agiEsc(d.proposed_time_from||'')}–${agiEsc(d.proposed_time_to||'')}</span>
+      <span class="agi-fechas-val">${agiEsc(agiFechaCL(d.proposed_date, d.proposed_time_from, d.proposed_time_to))}</span>
     </div>`;
   }
   if (d.confirmed_date){
     html += `<div class="agi-fechas-line">
       <span class="agi-fechas-tag" style="background:var(--kd-conf)">Confirmado</span>
-      <span class="agi-fechas-val" style="color:#166534">${agiEsc(d.confirmed_date)} · ${agiEsc(d.confirmed_time_from||'')}–${agiEsc(d.confirmed_time_to||'')}</span>
+      <span class="agi-fechas-val" style="color:#166534">${agiEsc(agiFechaCL(d.confirmed_date, d.confirmed_time_from, d.confirmed_time_to))}</span>
     </div>`;
   }
   html += '</div></div>';
@@ -1971,13 +2004,15 @@ function agiRenderDrawer(d){
   if (d.proposals && d.proposals.length){
     html += '<div class="agi-sect">';
     html += '<h6><i class="bi bi-arrow-left-right"></i>Historial de propuestas</h6>';
+    // Estado en español (antes salía «PENDING», «ACCEPTED»…); mismas palabras que la ficha completa.
+    const propLbl = { pending:'Pendiente', accepted:'Aceptada', declined:'Rechazada', expired:'Vencida', superseded:'Reemplazada' };
     for (const p of d.proposals.slice(0, 4)){
       const colorBg = p.status === 'accepted' ? '#f0fdf4' : p.status === 'declined' ? '#fef2f2' : '#fff8e6';
       const proposedBy = p.proposed_by === 'internal' || p.proposed_by === 'operacion' ? 'ILUS →' : 'Cliente →';
       html += `<div style="background:${colorBg};border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:.78rem">
         <b>${proposedBy}</b>
-        <span style="float:right;text-transform:uppercase;font-weight:800;font-size:.65rem;color:#6b7280">${agiEsc(p.status)}</span>
-        <div style="margin-top:3px">${agiEsc(p.date)} · ${agiEsc(p.time_from)}–${agiEsc(p.time_to)}</div>
+        <span style="float:right;text-transform:uppercase;font-weight:800;font-size:.65rem;color:#6b7280">${agiEsc(propLbl[String(p.status || '').toLowerCase()] || p.status || '')}</span>
+        <div style="margin-top:3px">${agiEsc(agiFechaCL(p.date, p.time_from, p.time_to))}</div>
         ${p.message ? `<div style="font-size:.74rem;color:#374151;margin-top:3px;font-style:italic">${agiEsc(p.message)}</div>` : ''}
       </div>`;
     }
@@ -2022,9 +2057,12 @@ function agiRenderDrawer(d){
   const pendCounter = (d.proposals || []).find(p =>
     String(p.status || '').toLowerCase() === 'pending' &&
     !['internal', 'operacion'].includes(String(p.proposed_by || '').toLowerCase()));
+  // Barra seria (2026-10-14): a lo más UNA acción rellena en negro. Si el cliente contrapropuso,
+  // es «Aceptar contrapropuesta»; si no, «Ver ficha completa». Las demás van de contorno.
+  const primAceptar = !!(pendCounter && !isClosed);
   if (pendCounter && !isClosed){
-    actHtml += `<button class="agi-act-btn agi-act-accept"
-        title="Aceptar ${agiEsc(pendCounter.date||'')} ${agiEsc(pendCounter.time_from||'')}–${agiEsc(pendCounter.time_to||'')}"
+    actHtml += `<button class="agi-act-btn agi-act-accept agi-act-primary"
+        title="Aceptar ${agiEsc(agiFechaCL(pendCounter.date, pendCounter.time_from, pendCounter.time_to))}"
         onclick="agiAceptarContrapropuesta(${d.id}, this)">
       <i class="bi bi-check2-circle"></i>Aceptar contrapropuesta
     </button>`;
@@ -2051,7 +2089,7 @@ function agiRenderDrawer(d){
       <i class="bi bi-calendar-plus"></i>Reagendar / Proponer otra fecha
     </button>`;
   }
-  actHtml += `<a href="/retiros/${d.id}" class="agi-act-btn agi-act-ficha">
+  actHtml += `<a href="/retiros/${d.id}" class="agi-act-btn agi-act-ficha${primAceptar ? '' : ' agi-act-primary'}">
     <i class="bi bi-arrow-up-right-square"></i>Ver ficha completa
   </a>`;
   document.getElementById('agi-d-actions').innerHTML = actHtml;

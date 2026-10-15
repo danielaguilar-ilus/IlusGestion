@@ -27,7 +27,7 @@ class PermisoHorariosRetiros(unittest.TestCase):
 
     def test_chip_en_la_matriz_de_roles(self):
         app = _leer("app.py")
-        self.assertIn('"acciones":["ver","gestionar","monitor","marketing","horarios"]', app)
+        self.assertIn('"acciones":["ver","gestionar","monitor","marketing","horarios","encuesta_firma"]', app)
         self.assertRegex(app, r'"horarios":\s+\{"label": "Horarios y alertas')
 
     def test_los_cinco_endpoints_aceptan_admin_o_el_permiso(self):

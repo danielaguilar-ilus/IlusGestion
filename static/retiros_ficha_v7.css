@@ -143,3 +143,13 @@
 .cb-nota.is-aviso{padding:8px 12px;border:2px solid #f59e0b;border-radius:10px;background:#fffbeb;color:#78350f}
 .cb-nota.is-aviso .bi{color:#b45309}
 .rm-solicitada{white-space:normal}
+
+/* ═══ Daniel 2026-10-14 · «alertar siempre, pero no tan intenso»: la tarjeta que toca va en ámbar suave (no rosado), la que espera en azul,
+   y los avisos de error en rojo suave (fondo claro + borde izquierdo), no en bloques rojos ═══ */
+.rd-flow .step-section.gp-e-actual{border-color:#fcd34d;background:#fffdf5}
+.rd-flow .step-section.gp-e-espera{border-color:#bfdbfe;background:#f8fbff}
+.rd-flow .gp-e-actual .step-circle-label{color:#b45309}
+.rd-flow .gp-e-espera .step-circle-label{color:#1d4ed8}
+.fv8-alerta{border:1px solid #fecaca;border-left:5px solid #dc2626;background:#fef2f2}
+.pd-doc.has-problema{border-color:#fecaca}
+.rd-flow .pd-row.t-rojo{background:#fef2f2;box-shadow:inset 3px 0 0 #dc2626}

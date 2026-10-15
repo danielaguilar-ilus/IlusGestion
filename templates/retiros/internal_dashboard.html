@@ -14,6 +14,11 @@
     {% if permissions.admin or permissions.ret_horarios %}
     <button class="btn btn-sm btn-ilus" data-bs-toggle="modal" data-bs-target="#settingsModal"><i class="bi bi-gear me-1"></i>Horarios y alertas</button>
     {% endif %}
+    {# Daniel 2026-10-14: «el endpoint de la encuesta lo vamos a tener dentro del monitor, en un botón arriba… visto solamente por un superadministrador,
+       controlable por el front». Lo ve quien tenga superadmin o el permiso Roles → Retiros → «Encuesta y firma de recepción». #}
+    {% if retiros_vista_previa is defined and retiros_vista_previa() %}
+    <a href="{{ url_for('retiros_encuesta_resultados') }}" class="btn btn-sm btn-outline-light" title="Resultados de la encuesta de satisfacción (por ahora solo superadministrador)"><i class="bi bi-emoji-smile me-1"></i>Encuestas</a>
+    {% endif %}
   </div>
 </div>
 
@@ -1729,7 +1734,7 @@ select.nri-field-locked{pointer-events:none}
       <div class="ilus-card p-3 mb-2" style="border-left:4px solid var(--ilus-red)">
         <div class="d-flex justify-content-between flex-wrap gap-2">
           <div>
-            <div class="fw-bold">{{ r.requested_date | chile_fmt('%d-%m-%Y') }} · {{ r.requested_time_from|hm }}-{{ r.requested_time_to|hm }}</div>
+            <div class="fw-bold">{{ r.requested_date | chile_fmt('%d/%m/%Y') }} · {{ r.requested_time_from|hm }}–{{ r.requested_time_to|hm }}</div>
             <div>{{ r.customer_name }}</div>
             <div class="small text-muted">{{ r.code }} · {{ r.document_type|upper }} {{ r.document_number }} · Retira: {{ r.pickup_person_name }}</div>
           </div>
@@ -1780,7 +1785,7 @@ select.nri-field-locked{pointer-events:none}
              Estado/Carga, lo que se necesita para decidir de un vistazo. #}
           <td class="desktop-only" data-label="Documento">{% if r.document_number %}{{ r.document_type|upper }} {{ r.document_number }}{% else %}<span class="text-muted fst-italic">Sin factura</span>{% endif %}</td>
           <td class="desktop-only" data-label="Responsable">{% if r.responsable_nombre %}<i class="bi bi-person-check me-1 text-success"></i>{{ r.responsable_nombre }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
-          <td data-label="Fecha solicitada">{{ r.requested_date | chile_fmt('%d-%m-%Y') }}<div class="small text-muted">{{ r.requested_time_from|hm }}-{{ r.requested_time_to|hm }}</div></td>
+          <td data-label="Fecha solicitada">{{ r.requested_date | chile_fmt('%d/%m/%Y') }}<div class="small text-muted">{{ r.requested_time_from|hm }}–{{ r.requested_time_to|hm }}</div></td>
           <td data-label="Estado"><span class="badge bg-{{ b.color }}">{{ b.label }}</span></td>
           <td class="desktop-only" data-label="Calidad">
             <div class="progress" style="height:7px"><div class="progress-bar bg-{{ 'success' if r.information_quality_score>=80 else ('warning' if r.information_quality_score>=60 else 'danger') }}" style="width:{{ r.information_quality_score }}%"></div></div>
@@ -3073,22 +3078,36 @@ async function eliminarSolicitudDesdeMonitor(btnOrRid, code, cliente){
   window.descargarInformeKpis = async function(){
     const hoy = new Date();
     const d1 = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
-    const iso = dt => dt.toISOString().slice(0,10);
+    // REGLA #6 (Daniel 2026-10-14): la persona ve y escribe día/mes/año; la URL del informe sigue en AAAA-MM-DD.
+    const dos = n => (n < 10 ? '0' : '') + n;
+    const iso = dt => dt.getFullYear() + '-' + dos(dt.getMonth() + 1) + '-' + dos(dt.getDate());   // fecha local, no UTC
+    const cl = dt => dos(dt.getDate()) + '/' + dos(dt.getMonth() + 1) + '/' + dt.getFullYear();
+    // Acepta dd/mm/aaaa (también con guiones) o aaaa-mm-dd; cualquier otra cosa → null (se usa el valor por defecto).
+    const aIso = txt => {
+      const t = String(txt || '').trim();
+      let m = t.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+      if (m) {                       // la fecha tiene que existir (no 31/09 ni 10/14): si no, se usa el valor por defecto
+        const f = new Date(+m[3], +m[2] - 1, +m[1]);
+        if (f.getFullYear() !== +m[3] || f.getMonth() !== +m[2] - 1 || f.getDate() !== +m[1]) return null;
+        return m[3] + '-' + dos(+m[2]) + '-' + dos(+m[1]);
+      }
+      m = t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      return m ? t : null;
+    };
     const desde = await ilusPrompt({
       title: 'Informe de retiros',
-      message: '¿Desde qué fecha? (YYYY-MM-DD)',
-      placeholder: iso(d1), defaultValue: iso(d1),
+      message: '¿Desde qué fecha? (día/mes/año)',
+      placeholder: cl(d1), defaultValue: cl(d1),
     });
     if (desde === null) return;
     const hasta = await ilusPrompt({
       title: 'Informe de retiros',
-      message: '¿Hasta qué fecha? (YYYY-MM-DD)',
-      placeholder: iso(hoy), defaultValue: iso(hoy),
+      message: '¿Hasta qué fecha? (día/mes/año)',
+      placeholder: cl(hoy), defaultValue: cl(hoy),
     });
     if (hasta === null) return;
-    const rx = /^\d{4}-\d{2}-\d{2}$/;
-    const f1 = rx.test((desde||'').trim()) ? desde.trim() : iso(d1);
-    const f2 = rx.test((hasta||'').trim()) ? hasta.trim() : iso(hoy);
+    const f1 = aIso(desde) || iso(d1);
+    const f2 = aIso(hasta) || iso(hoy);
     ilusToast('Generando informe…', { type: 'info' });
     window.location = '/retiros/informe.xlsx?desde=' + f1 + '&hasta=' + f2;
   };

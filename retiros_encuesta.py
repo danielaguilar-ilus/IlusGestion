@@ -53,12 +53,22 @@ RUTA_BASE = "/retiros/encuesta"
 VISTA_PREVIA_POR_DEFECTO = "daniel.aguilar@sphs.cl"
 
 
-def usuario_en_vista_previa(usuario):
-    """Encuesta y firma de recepción en VISTA PREVIA (Daniel 2026-10-09: «de momento, los cambios de la encuesta y la firma los vea yo nada
-    más»). Solo los usuarios de RETIROS_VISTA_PREVIA_USUARIOS (usernames separados por coma; en este proyecto el username es el correo;
-    «*» = todo el equipo). Por defecto, solo Daniel. No toca lo que ve el cliente: eso sigue bajo RETIROS_ENCUESTA_ACTIVA / RETIROS_FIRMA_CORREO."""
+def usuario_en_vista_previa(usuario, permisos=None):
+    """Encuesta y firma de recepción en VISTA PREVIA. Daniel 2026-10-14: «solamente una vista al superadministrador… podemos activarlo por el
+    front más adelante. Déjalo como rol» → la ve quien tenga el rol superadmin o el permiso `ret_encuesta_firma` (Roles → Retiros → «Encuesta y
+    firma de recepción», apagado en todos los roles). Se mantiene RETIROS_VISTA_PREVIA_USUARIOS (usernames separados por coma; «*» = todos)
+    como lista extra. No toca lo que ve el cliente: eso va por RETIROS_ENCUESTA_ACTIVA (encendida 2026-10-14 con el «sí» de Daniel: el enlace
+    va en el correo «Retiro completado») y RETIROS_FIRMA_CORREO (apagada)."""
     if not usuario:
         return False
+    if permisos is None:
+        try:
+            from flask import g as _g, has_app_context
+            permisos = (getattr(_g, "permissions", None) or {}) if has_app_context() else {}
+        except Exception:
+            permisos = {}
+    if (permisos or {}).get("superadmin") or (permisos or {}).get("ret_encuesta_firma") or str(usuario.get("role") or "") == "superadmin":
+        return True
     lista = os.environ.get("RETIROS_VISTA_PREVIA_USUARIOS") or VISTA_PREVIA_POR_DEFECTO
     permitidos = {x.strip().lower() for x in lista.split(",") if x.strip()}
     if "*" in permitidos:
@@ -163,6 +173,39 @@ _VERDADERO = {"1", "true", "yes", "on", "si", "sí"}
 def encuesta_activa():
     """Interruptor de lanzamiento. Apagado por defecto: nadie fuera del personal puede abrir la encuesta."""
     return (os.environ.get("RETIROS_ENCUESTA_ACTIVA") or "").strip().lower() in _VERDADERO
+
+
+def encuesta_desde():
+    """Desde cuándo un retiro cerrado puede recibir la encuesta (UTC sin zona, como closed_at). Daniel la autorizó el 2026-10-14 para el
+    correo «Retiro completado»: los retiros cerrados ANTES no la reciben de rebote al abrir su seguimiento (REGLA #22). Se cambia con
+    RETIROS_ENCUESTA_DESDE=AAAA-MM-DD (día Chile)."""
+    txt = (os.environ.get("RETIROS_ENCUESTA_DESDE") or "2026-10-14").strip()
+    try:
+        d = datetime.strptime(txt[:10], "%Y-%m-%d")
+    except ValueError:
+        d = datetime(2026, 10, 14)
+    try:
+        from zoneinfo import ZoneInfo
+        return d.replace(tzinfo=ZoneInfo("America/Santiago")).astimezone(timezone.utc).replace(tzinfo=None)
+    except Exception:
+        return d + timedelta(hours=3)
+
+
+def retiro_elegible(fila, desde=None):
+    """¿Este retiro puede recibir / responder la encuesta? Solo si el cliente REALMENTE se lo llevó y se cerró desde la activación:
+    «retirada», o «cerrada» con quién retiró (una «cerrada» sin eso es un duplicado, spam o un cliente que nunca vino: la guía y el correo
+    ya la tratan así). Sin fecha de cierre, no."""
+    if not fila:
+        return False
+    st = fila.get("status")
+    if st == "retirada":
+        entregado = True
+    elif st == "cerrada":
+        entregado = bool(str(fila.get("retirado_por_nombre") or "").strip())
+    else:
+        return False
+    cerrado = _a_dt(fila.get("closed_at"))
+    return bool(entregado and cerrado and cerrado >= (desde or encuesta_desde()))
 
 
 def _ahora():
@@ -489,7 +532,7 @@ def register_encuesta_routes(app, ctx):
         return getattr(g, "permissions", None) or {}
 
     def _vista_previa():
-        return usuario_en_vista_previa(getattr(g, "user", None))
+        return usuario_en_vista_previa(getattr(g, "user", None), _perms())
 
     def _es_personal():
         u = getattr(g, "user", None)
@@ -597,7 +640,7 @@ def register_encuesta_routes(app, ctx):
         rid = _id_de_token(token)
         if rid is None:
             return None
-        fila = mysql_fetchone(f"SELECT id, status, public_token, closed_at FROM `{REQ}` WHERE id=%s LIMIT 1", (rid,))
+        fila = mysql_fetchone(f"SELECT id, status, public_token, closed_at, retirado_por_nombre FROM `{REQ}` WHERE id=%s LIMIT 1", (rid,))
         if not fila or not fila.get("public_token"):
             return None
         esperado = generar_token(_secreto(), fila["id"], fila["public_token"])
@@ -635,8 +678,8 @@ def register_encuesta_routes(app, ctx):
         y NO escribe nada. No envía nada por sí mismo. Después de enviar, el que envía llama marcar_enviada()."""
         if not encuesta_activa():
             return None
-        fila = mysql_fetchone(f"SELECT id, status, public_token, closed_at FROM `{REQ}` WHERE id=%s LIMIT 1", (request_id,))
-        if not fila or fila.get("status") not in ("retirada", "cerrada"):
+        fila = mysql_fetchone(f"SELECT id, status, public_token, closed_at, retirado_por_nombre FROM `{REQ}` WHERE id=%s LIMIT 1", (request_id,))
+        if not retiro_elegible(fila):             # solo retiros entregados de verdad y cerrados desde la activación
             return None
         token = generar_token(_secreto(), fila["id"], fila["public_token"])
         inv = _obtener_o_crear_invitacion(fila["id"], token, fila.get("closed_at")) if token else None
@@ -875,7 +918,7 @@ def register_encuesta_routes(app, ctx):
     def retiros_encuesta_ficha(rid):
         if not _vista_previa():      # vista previa: solo Daniel (RETIROS_VISTA_PREVIA_USUARIOS)
             return _json({"ok": False, "error": "No disponible."}, 404)
-        fila = mysql_fetchone(f"SELECT id, status, public_token, closed_at FROM `{REQ}` WHERE id=%s LIMIT 1", (rid,))
+        fila = mysql_fetchone(f"SELECT id, status, public_token, closed_at, retirado_por_nombre FROM `{REQ}` WHERE id=%s LIMIT 1", (rid,))
         if not fila:
             return _json({"ok": False, "error": "Retiro no encontrado."}, 404)
         ruta = ruta_para(fila["id"], fila.get("public_token") or "")
@@ -930,7 +973,7 @@ def register_encuesta_routes(app, ctx):
         retiro = _retiro_de_token(token)
         if not retiro:
             return _no_disponible()
-        elegible = retiro.get("status") in ("retirada", "cerrada")
+        elegible = retiro_elegible(retiro)
         if not personal and not elegible:
             return _no_disponible()
         # El personal NUNCA guarda con el token de un cliente real (taparía su respuesta): siempre vista previa.

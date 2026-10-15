@@ -83,6 +83,12 @@ def registrar(env, **datos):
     return r.status_code, r.get_json()
 
 
+def paso(g, clave):
+    """El paso de la guía por su clave (2026-10-14: la guía pasó de 6 a 5 pasos; no depender del índice)."""
+    (p,) = [p for p in g["pasos"] if p["clave"] == clave]
+    return p
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  Catálogo y reglas (puras)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -165,19 +171,21 @@ class TestGuia:
 
     def test_con_la_cita_vigente_sigue_enviar_a_preparacion(self):
         g = rg.evaluar(dict(self.BASE))
-        assert g["pasos"][4]["accion"]["tipo"] == "preparacion"
+        prep = paso(g, "preparacion")
+        assert prep["n"] == 4 and prep["accion"]["tipo"] == "preparacion" and g["siguiente"] == 4
 
     def test_con_la_cita_vencida_pregunta_que_paso_y_no_ofrece_el_correo(self):
         g = rg.evaluar(dict(self.BASE, cita_vencida=True, cita_txt="07/10/2026 09:00"))
-        p5 = g["pasos"][4]
-        assert p5["accion"]["tipo"] == "que_paso" and p5["correo"] is False and "07/10/2026 09:00" in p5["faltan"][0]
+        prep = paso(g, "preparacion")
+        assert prep["accion"]["tipo"] == "que_paso" and prep["correo"] is False and "07/10/2026 09:00" in prep["faltan"][0]
 
     @pytest.mark.parametrize("preparado", [True, False])
     def test_en_preparacion_con_la_cita_vencida_pregunta_en_el_paso_que_toca(self, preparado):
         # Revisión técnica 2026-10-09: con el picking sin terminar, el «¿Qué pasó?» quedaba en un paso que no era el siguiente
         g = rg.evaluar(dict(self.BASE, status="en_preparacion", cita_vencida=True, preparado=preparado, picking_total=3, picking_hechos=1))
-        assert g["pasos"][4]["accion"]["tipo"] == "que_paso" and g["siguiente"] == 5
-        assert g["pasos"][5]["accion"]["tipo"] == "retirar"            # «Marcar como RETIRADO» sigue a mano
+        prep = paso(g, "preparacion")
+        assert prep["accion"]["tipo"] == "que_paso" and g["siguiente"] == prep["n"] == 4
+        assert paso(g, "entrega")["accion"]["tipo"] == "retirar"        # «Marcar como RETIRADO» sigue a mano
 
     def test_rechazada_ya_no_dice_que_el_cliente_rechazo(self):
         g = rg.evaluar(dict(self.BASE, status="rechazada"))
@@ -187,6 +195,8 @@ class TestGuia:
         js = open(os.path.join(RAIZ, "static", "retiros_guia.js"), encoding="utf-8").read()
         i = js.index("function ajustarPorCheck()")
         cuerpo = js[i:js.index("function retirarDesdeCheck()", i)]
+        # 2026-10-14 (5 pasos): p5/p6 conservan el nombre viejo pero se buscan por clave (p5 = preparación, p6 = entrega)
+        assert "p5 = pasoDe('preparacion')" in cuerpo and "p6 = pasoDe('entrega')" in cuerpo
         assert "p5.accion.tipo === 'que_paso'" in cuerpo and "p6.correo = false" in cuerpo
 
     def test_el_js_de_la_guia_abre_el_modal(self):

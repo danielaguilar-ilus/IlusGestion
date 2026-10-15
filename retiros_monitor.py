@@ -15,6 +15,11 @@ import unicodedata
 from datetime import date, datetime, timedelta
 
 DIAS_CORTOS = ("lun", "mar", "mié", "jue", "vie", "sáb", "dom")
+# REGLA #6 (Daniel 2026-10-14: «necesito que sea día, mes, año, hora»): todo texto de fecha que ve una persona
+# va como dd/mm/aaaa [HH:MM], nunca con guiones (29-10-2026) ni ISO (2026-10-29). Los valores de lógica (m_fecha_iso,
+# m_req_iso, data-*) siguen en ISO.
+FMT_FECHA = "%d/%m/%Y"
+FMT_FECHA_HORA = "%d/%m/%Y %H:%M"
 
 POR_RESPONDER = ("solicitud_recibida", "en_revision", "informacion_incompleta")
 ESPERA_CLIENTE = ("propuesta_enviada", "esperando_cliente")
@@ -183,7 +188,7 @@ def proxima_apertura(ahora, feriados=(), cob=None):
 
 
 def fmt_cuando(dt, hoy):
-    """«hoy 14:00», «mañana 08:00», «ayer 22:41», «lun 12-10 08:00»."""
+    """«hoy 14:00», «mañana 08:00», «ayer 22:41», «lun 12/10/2026 08:00»."""
     if not dt:
         return ""
     hhmm = dt.strftime("%H:%M")
@@ -194,7 +199,7 @@ def fmt_cuando(dt, hoy):
         return f"mañana {hhmm}"
     if delta == -1:
         return f"ayer {hhmm}"
-    return f"{DIAS_CORTOS[dt.weekday()]} {dt.strftime('%d-%m')} {hhmm}"
+    return f"{DIAS_CORTOS[dt.weekday()]} {dt.strftime(FMT_FECHA)} {hhmm}"
 
 
 def dur_habil(seg):
@@ -304,7 +309,7 @@ def fmt_plazo(plazo, hoy):
         return f"las {hhmm}"
     if plazo.date() == hoy + timedelta(days=1):
         return f"mañana {hhmm}"
-    return f"el {DIAS_CORTOS[plazo.weekday()]} {plazo.strftime('%d-%m')} {hhmm}"
+    return f"el {DIAS_CORTOS[plazo.weekday()]} {plazo.strftime(FMT_FECHA)} {hhmm}"
 
 
 def _alerta(st, dias, ini_min, ahora_min, horas_espera, sla_ambar, sla_rojo):
@@ -348,7 +353,7 @@ def _timeline(logs, estados, utc_a_chile):
             continue
         cuando = utc_a_chile(lg.get("created_at"))
         salida.append({
-            "cuando": cuando.strftime("%d-%m-%Y %H:%M") if cuando else "",
+            "cuando": cuando.strftime(FMT_FECHA_HORA) if cuando else "",
             "txt": txt,
             "quien": lg.get("actor_name") or "",
         })
@@ -443,14 +448,14 @@ def enriquecer_filas(rows, *, hoy, ahora, horas_habiles=None, utc_a_chile, td_hh
         r["m_grupo"], r["m_grupo_lbl"], r["m_grupo_ico"] = g["key"], g["label"], g.get("icon", "")
         r["m_estado_idx"] = orden_estado.get(st, 99)
         r["m_origen"] = origen
-        r["m_creado_txt"] = creado.strftime("%d-%m-%Y %H:%M") if creado else ""
-        r["m_creado_full"] = creado.strftime("%d/%m/%Y %H:%M") if creado else ""      # día/mes/año hora:minuto (hora Chile) junto al «hace X»
+        r["m_creado_txt"] = creado.strftime(FMT_FECHA_HORA) if creado else ""
+        r["m_creado_full"] = creado.strftime(FMT_FECHA_HORA) if creado else ""      # día/mes/año hora:minuto (hora Chile) junto al «hace X»
         r["m_creado_ts"] = int((creado - datetime(1970, 1, 1)).total_seconds()) if creado else 0
         r["m_hace"] = hace(ahora - creado) if creado else ""
         r["m_fecha_tipo"] = tipo or ""
         r["m_fecha"] = fch
         r["m_fecha_iso"] = fch.isoformat() if fch else ""
-        r["m_fecha_txt"] = f"{DIAS_CORTOS[fch.weekday()]} {fch.strftime('%d-%m-%Y')}" if fch else ""
+        r["m_fecha_txt"] = f"{DIAS_CORTOS[fch.weekday()]} {fch.strftime(FMT_FECHA)}" if fch else ""
         r["m_desde"], r["m_hasta"] = desde, hasta
         r["m_dias"] = dias
         r["m_rel_txt"], r["m_rel_nivel"] = rel_txt, rel_nivel
@@ -503,7 +508,7 @@ def enriquecer_filas(rows, *, hoy, ahora, horas_habiles=None, utc_a_chile, td_hh
             "Documento": (f"{str(r.get('document_type') or '').upper()} {r.get('document_number')}".strip()
                           if r.get("document_number") else ""),
             "Quién retira": r.get("pickup_person_name") or "", "RUT quien retira": r.get("pickup_person_rut") or "",
-            "Responsable": resp, "Fecha de retiro": fch.strftime("%d-%m-%Y") if fch else "",
+            "Responsable": resp, "Fecha de retiro": fch.strftime(FMT_FECHA) if fch else "",
             "Horario": f"{desde}-{hasta}" if desde and hasta else "", "Bultos": bultos, "Peso kg": round(kg, 1),
             "Peso volumétrico": round(pv, 1), "Volumen m3": round(m3, 3), "Semáforo": al_txt,
             "Responder antes de": reloj["plazo_txt"] if reloj else "",
@@ -581,7 +586,7 @@ def barras_semana(por_fecha, lunes, hoy, alto=34):
         barras.append({
             "fecha": d.isoformat(), "dia": DIAS_CORTOS[i], "n": n, "hoy": d == hoy, "futuro": d > hoy,
             "h": max(3, round(alto * n / maximo)) if n else 3, "x": i * 16,
-            "tit": f"{DIAS_CORTOS[i]} {d.strftime('%d-%m')}: {plural(n, 'retiro', 'retiros')}",
+            "tit": f"{DIAS_CORTOS[i]} {d.strftime(FMT_FECHA)}: {plural(n, 'retiro', 'retiros')}",
         })
     return barras
 

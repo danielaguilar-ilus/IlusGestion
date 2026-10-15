@@ -116,11 +116,12 @@
   .paso2-head-actions{display:flex;flex-direction:column;align-items:flex-end;gap:8px;flex-shrink:0;margin-top:14px}
   .btn-asociar-compact{
     display:inline-flex;align-items:center;gap:8px;
-    background:var(--ilus-red);color:#fff;border:none;border-radius:50px;
+    background:#2563eb;color:#fff;border:none;border-radius:50px;
     padding:9px 16px 9px 14px;font-size:.84rem;font-weight:800;cursor:pointer;
-    box-shadow:0 4px 14px rgba(220,38,38,.30);transition:all .15s ease;
+    box-shadow:0 4px 14px rgba(37,99,235,.25);transition:all .15s ease;
   }
-  .btn-asociar-compact:hover{background:#b91c1c;transform:translateY(-1px);box-shadow:0 6px 18px rgba(220,38,38,.38);color:#fff}
+  /* Daniel 2026-10-14: «el botón déjalo colorido, pero no necesariamente rojo» → azul */
+  .btn-asociar-compact:hover{background:#1d4ed8;transform:translateY(-1px);box-shadow:0 6px 18px rgba(37,99,235,.32);color:#fff}
   .btn-asociar-compact .erp-chip{
     display:inline-flex;align-items:center;gap:3px;
     background:rgba(255,255,255,.22);color:#fff;border-radius:50px;
@@ -318,7 +319,7 @@
 
   <div class="rh-datos">
     <div class="rh-d d-fec"><i class="bi bi-calendar-event"></i><div class="in">
-      <span class="v">{% if _hf %}{{ _hf | chile_fmt('%a %d/%m') }}{% else %}—{% endif %}</span>
+      <span class="v">{% if _hf %}{{ _hf | chile_fmt('%a %d/%m/%Y') }}{% else %}—{% endif %}</span>
       <span class="k">{{ _hflbl }}</span></div></div>
     <div class="rh-d d-hor"><i class="bi bi-clock"></i><div class="in">
       <span class="v">{% if _htf %}{{ _htf|hm }}{% if _htt %} – {{ _htt|hm }}{% endif %}{% else %}—{% endif %}</span>
@@ -393,14 +394,14 @@
   {% if req.status in ['retirada','cerrada'] %}
   <div class="pp-banner pp-done">
     <i class="bi bi-check-circle-fill"></i>
-    <div class="pp-banner-txt"><strong>{% if req.status == 'retirada' %}Retiro completado{% else %}Retiro cerrado{% endif %}.</strong> Confirmado el {{ req.confirmed_date | chile_fmt('%d-%m-%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}.</div>
+    <div class="pp-banner-txt"><strong>{% if req.status == 'retirada' %}Retiro completado{% else %}Retiro cerrado{% endif %}.</strong> Confirmado el {{ req.confirmed_date | chile_fmt('%d/%m/%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}.</div>
   </div>
   {% elif _cambio_pedido %}
   <div class="pp-banner pp-counter">
     <i class="bi bi-arrow-left-right"></i>
     <div class="pp-banner-txt">
-      <strong>El cliente pidió cambiar su cita:</strong> ahora quiere el {{ _contraprop_cliente.date | chile_fmt('%d-%m-%Y') }} {{ _contraprop_cliente.time_from|hm }}–{{ _contraprop_cliente.time_to|hm }}.
-      <div class="pp-banner-sub">Tenía confirmado el {{ req.confirmed_date | chile_fmt('%d-%m-%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}, que sigue vigente hasta que le respondas. No lo envíes a preparación todavía.</div>
+      <strong>El cliente pidió cambiar su cita:</strong> ahora quiere el {{ _contraprop_cliente.date | chile_fmt('%d/%m/%Y') }} {{ _contraprop_cliente.time_from|hm }}–{{ _contraprop_cliente.time_to|hm }}.
+      <div class="pp-banner-sub">Tenía confirmado el {{ req.confirmed_date | chile_fmt('%d/%m/%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}, que sigue vigente hasta que le respondas. No lo envíes a preparación todavía.</div>
     </div>
     <button type="button" class="pp-banner-btn" onclick="document.getElementById('paso-5').scrollIntoView({behavior:'smooth',block:'center'})">
       <i class="bi bi-eye me-1"></i>Ver y responder
@@ -411,8 +412,8 @@
     <div class="pp-banner pp-manual">
       <i class="bi bi-person-check-fill"></i>
       <div class="pp-banner-txt">
-        <strong>Marcado como aceptado manualmente</strong> por {{ req.manual_accept_por }}, {{ req.manual_accept_en | chile_fmt('%d-%m-%Y %H:%M') }}.
-        <div class="pp-banner-sub">El cliente no confirmó por correo — motivo declarado: "{{ req.manual_accept_motivo }}". Agenda: {{ req.confirmed_date | chile_fmt('%d-%m-%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}.</div>
+        <strong>Marcado como aceptado manualmente</strong> por {{ req.manual_accept_por }}, {{ req.manual_accept_en | chile_fmt('%d/%m/%Y %H:%M') }}.
+        <div class="pp-banner-sub">El cliente no confirmó por correo — motivo declarado: "{{ req.manual_accept_motivo }}". Agenda: {{ req.confirmed_date | chile_fmt('%d/%m/%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}.</div>
       </div>
     </div>
     {% else %}
@@ -423,7 +424,7 @@
         {% if _cf and _cf.tipo == 'ilus' %}<strong>ILUS aceptó la fecha que pidió el cliente</strong> ({{ _cf.quien or 'ILUS' }}{% if _cf.ts %}, {{ _cf.ts | chile_fmt('%H:%M') }}{% endif %}). El cliente recibió la confirmación por correo.
         {% elif _cf and _cf.tipo == 'cliente' %}<strong>El cliente confirmó</strong> la propuesta por correo{% if _cf.ts %} ({{ _cf.ts | chile_fmt('%H:%M') }}){% endif %}.
         {% else %}<strong>Cita confirmada.</strong>{% endif %}
-        Agenda: {{ req.confirmed_date | chile_fmt('%d-%m-%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}.
+        Agenda: {{ req.confirmed_date | chile_fmt('%d/%m/%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}.
       </div>
     </div>
     {% endif %}
@@ -431,7 +432,7 @@
   <div class="pp-banner pp-counter">
     <i class="bi bi-arrow-left-right"></i>
     <div class="pp-banner-txt">
-      <strong>El cliente contrapropuso otra fecha:</strong> {{ _contraprop_cliente.date }} {{ _contraprop_cliente.time_from|hm }}–{{ _contraprop_cliente.time_to|hm }}.
+      <strong>El cliente contrapropuso otra fecha:</strong> {{ _contraprop_cliente.date | chile_fmt('%d/%m/%Y') }} {{ _contraprop_cliente.time_from|hm }}–{{ _contraprop_cliente.time_to|hm }}.
       <div class="pp-banner-sub">Revisa y responde más abajo (aceptar con 1 click o re-proponer).</div>
     </div>
     <button type="button" class="pp-banner-btn" onclick="document.getElementById('paso-5').scrollIntoView({behavior:'smooth',block:'center'})">
@@ -442,7 +443,7 @@
   <div class="pp-banner pp-waiting">
     <i class="bi bi-hourglass-split"></i>
     <div class="pp-banner-txt">
-      <strong>Esperando que el cliente acepte</strong> la propuesta enviada para el {{ req.proposed_date | chile_fmt('%d-%m-%Y') }} {{ req.proposed_time_from|hm }}–{{ req.proposed_time_to|hm }}.
+      <strong>Esperando que el cliente acepte</strong> la propuesta enviada para el {{ req.proposed_date | chile_fmt('%d/%m/%Y') }} {{ req.proposed_time_from|hm }}–{{ req.proposed_time_to|hm }}.
       <div class="pp-banner-sub">Nadie ha confirmado todavía — no asumas que se entregó.</div>
     </div>
     <button type="button" class="pp-banner-btn" onclick="marcarAceptadaManual(this)">
@@ -466,14 +467,14 @@
     <div class="trk-step is-{{ h.estado }}{% if _cambio_pedido and h.n == 2 %} is-cambio{% endif %}" role="listitem" onclick="document.getElementById('{{ _ancla }}').scrollIntoView({behavior:'smooth',block:'center'})">
       <div class="trk-circle"><span class="trk-emoji">{{ h.emoji }}</span>{% if h.estado == 'done' %}<span class="trk-tick"><i class="bi bi-check-lg"></i></span>{% endif %}</div>
       <div class="trk-label">{{ h.label }}</div>
-      <div class="trk-time">{% if h.ts %}{{ h.ts | chile_fmt('%H:%M') }}<small>{{ h.ts | chile_fmt('%a %d/%m') }}</small>{% else %}<span class="trk-pend">Pendiente</span>{% endif %}</div>
+      <div class="trk-time">{% if h.ts %}{{ h.ts | chile_fmt('%H:%M') }}<small>{{ h.ts | chile_fmt('%a %d/%m/%Y') }}</small>{% else %}<span class="trk-pend">Pendiente</span>{% endif %}</div>
       <div class="trk-det">
         {% if h.n == 0 %}
           <div>Llegó por <strong>{{ 'retiro interno' if h.nota == 'Retiro interno' else 'el formulario web' }}</strong></div>
           {% if _hdecl %}<div>{{ _hdecl }}</div>{% endif %}
         {% elif h.n == 1 %}
           {% for e in h.eventos %}
-          <div>{{ e.quien }} {{ e.texto }} <strong>{{ e.fecha | chile_fmt('%a %d/%m') }} {{ e.tf|hm }}</strong>{% if e.ts %} · {{ e.ts | chile_fmt('%H:%M') }}{% endif %}</div>
+          <div>{{ e.quien }} {{ e.texto }} <strong>{{ e.fecha | chile_fmt('%a %d/%m/%Y') }} {{ e.tf|hm }}</strong>{% if e.ts %} · {{ e.ts | chile_fmt('%H:%M') }}{% endif %}</div>
           {% else %}
           <div>Aún no le propones fecha</div>
           {% endfor %}
@@ -483,7 +484,7 @@
           {% endif %}
           {% if h.conf %}
             <div>{% if h.conf.tipo == 'cliente' %}Confirmó <strong>el cliente</strong>{% elif h.conf.tipo == 'ilus' %}Aceptó <strong>{{ h.conf.quien or 'ILUS' }}</strong> (fecha que pidió el cliente){% elif h.conf.tipo == 'manual' %}Marcada a mano por <strong>{{ h.conf.quien or 'ILUS' }}</strong>{% else %}Confirmada por <strong>{{ h.conf.quien or 'ILUS' }}</strong>{% endif %}</div>
-            <div><strong>{{ h.cita.fecha | chile_fmt('%a %d/%m') }} {{ h.cita.tf|hm }}–{{ h.cita.tt|hm }}</strong></div>
+            <div><strong>{{ h.cita.fecha | chile_fmt('%a %d/%m/%Y') }} {{ h.cita.tf|hm }}–{{ h.cita.tt|hm }}</strong></div>
           {% elif _step4_done %}
             <div>Esperando que el cliente acepte</div>
           {% else %}
@@ -496,7 +497,7 @@
           {% if h.quien %}<div>Lo envió {{ h.quien }}</div>{% endif %}
         {% else %}
           {% if h.estado == 'done' %}<div>Retiró <strong>{{ h.quien or 'el cliente' }}</strong></div>
-          {% elif h.cita %}<div>Lo esperamos <strong>{{ h.cita.fecha | chile_fmt('%a %d/%m') }} {{ h.cita.tf|hm }}</strong></div>{% else %}<div>Sin fecha todavía</div>{% endif %}
+          {% elif h.cita %}<div>Lo esperamos <strong>{{ h.cita.fecha | chile_fmt('%a %d/%m/%Y') }} {{ h.cita.tf|hm }}</strong></div>{% else %}<div>Sin fecha todavía</div>{% endif %}
         {% endif %}
       </div>
     </div>
@@ -543,13 +544,13 @@
       <span class="pipe-step-num">Paso 4</span>
       <div class="pipe-circle"><span class="pipe-emoji">📅</span></div>
       <div class="pipe-label">Propuesta</div>
-      <div class="pipe-sub">{% if req.proposed_date %}{{ req.proposed_date | chile_fmt('%d-%m-%Y') }}{% elif 4 == _pipe_active %}Por proponer{% else %}—{% endif %}</div>
+      <div class="pipe-sub">{% if req.proposed_date %}{{ req.proposed_date | chile_fmt('%d/%m/%Y') }}{% elif 4 == _pipe_active %}Por proponer{% else %}—{% endif %}</div>
     </div>
     <div class="pipe-step {% if 5 < _pipe_active %}done{% elif 5 == _pipe_active and _pipe_fail %}fail{% elif 5 == _pipe_active %}active{% endif %}" onclick="document.getElementById('paso-5').scrollIntoView({behavior:'smooth',block:'center'})">
       <span class="pipe-step-num">Paso 5</span>
       <div class="pipe-circle"><span class="pipe-emoji">✅</span></div>
       <div class="pipe-label">Confirmada</div>
-      <div class="pipe-sub">{% if _cambio_pedido %}⚠ Pidió cambio{% elif req.confirmed_date %}{{ req.confirmed_date | chile_fmt('%d-%m-%Y') }}{% elif req.status == 'rechazada' %}✗ Rechazada{% elif 5 == _pipe_active %}Esperando cliente{% else %}—{% endif %}</div>
+      <div class="pipe-sub">{% if _cambio_pedido %}⚠ Pidió cambio{% elif req.confirmed_date %}{{ req.confirmed_date | chile_fmt('%d/%m/%Y') }}{% elif req.status == 'rechazada' %}✗ Rechazada{% elif 5 == _pipe_active %}Esperando cliente{% else %}—{% endif %}</div>
     </div>
     <div class="pipe-step {% if 6 < _pipe_active %}done{% elif 6 == _pipe_active and _pipe_fail %}fail{% elif 6 == _pipe_active %}active{% endif %}">
       <span class="pipe-step-num">Paso 6</span>
@@ -607,15 +608,15 @@
     <section class="step-section {% if _paso2_collapsed %}is-collapsed{% endif %} {% if _paso2_is_warn %}is-warn{% elif _n_docs_inicial > 0 %}is-complete{% endif %}" id="paso-2" data-step="2">
       <div class="step-header">
         <div class="step-circle-wrap">
-          <span class="step-circle-label">Facturas</span>
+          <span class="step-circle-label">Facturas y productos</span>
           <div class="step-circle">
             <span class="step-num-text">1</span>
             <span class="step-check"><i class="bi bi-check-lg"></i></span>
           </div>
         </div>
         <div class="step-titles">
-          <h5>¿Esta es la factura o boleta que viene a retirar?</h5>
-          <p class="step-sub">Asocia los documentos que vienen a retirar. Solo mostramos los que tienen <strong>saldo pendiente</strong> en ERP — los ya despachados quedan ocultos.</p>
+          <h5>¿Qué viene a retirar el cliente?</h5>
+          <p class="step-sub">Primero la factura o boleta (solo las que tienen <strong>saldo pendiente</strong> en el ERP); debajo, los productos y cantidades que se lleva.</p>
           {# Daniel 2026-09-16: resumen corto de estado, semáforo ámbar/verde según saldo y RUTs pendientes de revisar #}
           <p class="step-sub-status {% if _paso2_is_warn %}is-warn{% elif _n_docs_inicial > 0 %}is-ok{% endif %}" id="paso2StatusLine">
             {% if _n_docs_inicial == 0 %}Aún no hay documentos asociados.
@@ -770,7 +771,7 @@
                         {%- if d.fecha_emision is string -%}
                           {{ d.fecha_emision }}
                         {%- else -%}
-                          {{ d.fecha_emision | chile_fmt('%d-%m-%Y') }}
+                          {{ d.fecha_emision | chile_fmt('%d/%m/%Y') }}
                         {%- endif -%}
                       {%- else -%}—{%- endif -%}
                     </td>
@@ -882,9 +883,96 @@
     </div>
         {% endif %}
       </div>
+      {# ═════════ 6 · PASO · CARGA (peso/volumen/tiempo — strip único) ═════════ #}
+      {% set _paso3_collapsed = false %}{# ficha v3: abierto si hay documentos #}
+      {# Daniel 2026-10-14: «juntar una sola tarjeta que indique las facturas y los productos» → los productos viven dentro de la tarjeta 1,
+         debajo de las facturas (el id #paso-3 se mantiene: el JS lo usa). #}
+      <div class="step-subsection {% if _cubic_ok %}is-complete{% elif _n_docs_inicial == 0 %}is-blocked{% endif %}" id="paso-3">
+        <div class="step-header step-subheader">
+          <div class="step-titles">
+            <h5><i class="bi bi-box-seam" aria-hidden="true"></i>Productos a retirar</h5>
+            <p class="step-sub">Lo que el cliente se lleva. Marca cada producto y su cantidad — <strong>nunca puede ser más de lo que compró</strong>.</p>
+          </div>
+          {% if _cubic_ok %}<span class="step-badge-ok"><i class="bi bi-check-circle"></i>Cubicaje OK</span>{% endif %}
+        </div>
+        <p class="step-collapsed-line" id="paso3CollapsedLine">
+          <i class="bi bi-speedometer2"></i>⚖️ {{ "%.1f"|format(req.peso_real_kg|float) }} kg · {{ "%.3f"|format(req.total_volume_m3|float) }} m³ · {{ req.tiempo_estimado_min or '—' }} min
+        </p>
+        <div class="step-content">
+          <div class="carga-strip" id="cargaStrip">
+            <div class="carga-cell">
+              <div class="lbl"><i class="bi bi-archive me-1"></i>Documentos</div>
+              <div class="val accent" id="cargaNDocs">{{ _n_docs_inicial }}</div>
+            </div>
+            <div class="carga-cell">
+              <div class="lbl"><i class="bi bi-box-seam me-1"></i>Peso real (ERP)</div>
+              <div class="val" id="cargaPeso">{{ "%.1f"|format(req.peso_real_kg|float) }} kg</div>
+            </div>
+            <div class="carga-cell">
+              <div class="lbl"><i class="bi bi-bounding-box me-1"></i>Volumen</div>
+              <div class="val" id="cargaVol">{{ "%.3f"|format(req.total_volume_m3|float) }} m³</div>
+            </div>
+            <div class="carga-cell">
+              <div class="lbl"><i class="bi bi-stopwatch me-1"></i>Tiempo est.</div>
+              <div class="val" id="cargaTiempo">{{ req.tiempo_estimado_min or '—' }} min</div>
+            </div>
+          </div>
+
+          {# ═════════════════════════════════════════════════════════════
+             PRODUCTOS A RETIRAR — con diagnóstico (ficha v4, 2026-09-23)
+             Daniel: "lo que más quiero vender es qué productos van a retirar
+             y cuánto pesa... que me muestre si está comprometido, cuánto hay
+             de stock, si puedo avanzar o no, si está entregado con saldo o
+             no". Reemplaza la tabla plana de antes Y el botón "Productos" de
+             la tabla de documentos (ese modal aparte ya no existe — esta
+             tabla ES el editor: marcar/desmarcar línea a línea, con su saldo,
+             guía de despacho y stock por bodega, sin salir de la ficha).
+             Todo lo pinta refrescarProductosDiag() (retiros_internal_detail.js)
+             vía GET /retiros/<rid>/productos-erp — carga diferida, no frena
+             el resto de la ficha; si el ERP no responde, lo dice (nunca
+             inventa "sin guías").
+             ═════════════════════════════════════════════════════════════ #}
+          <div id="prodDiagWrap" style="margin-top:22px">
+            <div id="prodDiagBanner" class="prod-diag-banner is-loading">
+              <i class="bi bi-hourglass-split"></i>
+              <div class="pdb-txt">
+                <strong>Verificando en el ERP…</strong>
+                <span>Saldo, stock y guía de despacho de cada producto.</span>
+              </div>
+            </div>
+            <div id="prodDiagBody"></div>
+          </div>
+
+          {# Daniel 2026-09-22 — pedido explícito: NO ocultar el estimado que
+             declaró el cliente al pedir el retiro (total_weight_kg), aunque
+             casi no se recalcule — solo dejar clara la diferencia con el peso
+             real recalculado desde ERP al asociar documentos (pickups_module.py
+             ~líneas 5014-5019) para que no parezcan un dato duplicado. #}
+          {% if req.total_weight_kg %}
+          <div class="rid-hint-muted" style="margin-top:10px">
+            <i class="bi bi-info-circle"></i>
+            Estimado que declaró el cliente al pedir el retiro: <strong>{{ req.total_weight_kg }} kg</strong>{% if req.total_volumetric_weight %} / {{ req.total_volumetric_weight }} kg vol.{% endif %}
+            — se usa solo como respaldo si el ERP aún no calcula el peso real de arriba.
+          </div>
+          {% endif %}
+
+          {# Hint inteligente sobre peso (>100kg) #}
+          <div id="hintPeso" class="smart-hint is-warn" style="display:none;margin-top:14px">
+            <i class="bi bi-truck"></i>
+            <div><strong>Carga pesada.</strong> Más de 100 kg en este retiro — considera reservar 2 horas en vez de 1, y avisar al cliente que traiga vehículo apropiado.</div>
+          </div>
+
+          {# Hint cuando no hay docs todavía #}
+          {# Siempre en el DOM: el JS lo oculta/muestra al agregar o quitar facturas #}
+          <div class="smart-hint" id="paso3HintSinDocs" style="margin-top:14px{% if _n_docs_inicial > 0 %};display:none{% endif %}">
+            <i class="bi bi-arrow-up-circle"></i>
+            <div>Asocia al menos <strong>1 documento con saldo</strong> en esta misma tarjeta, más arriba, para que se calculen estos totales automáticamente.</div>
+          </div>
+        </div>
+      </div>
     </section>
 
-    {# ═════════ PASO 2 · RESPONSABLE (Daniel 2026-10-02) ═════════
+    {# ═════════ PASO 2 · RESPONSABLE (Daniel 2026-10-02; desde 2026-10-14 va debajo de facturas y productos) ═════════
        "Responsable de quien se hace cargo... automático: la persona que
        gestiona ya tiene sus credenciales, solo solicita la confirmación".
        El nombre sale de la sesión en el servidor (POST /retiros/<rid>/tomar);
@@ -916,99 +1004,6 @@
         {% else %}
         <span class="step-badge-warn"><i class="bi bi-exclamation-triangle-fill"></i>Sin responsable</span>
         {% endif %}
-      </div>
-    </section>
-
-    {# ═════════ 6 · PASO · CARGA (peso/volumen/tiempo — strip único) ═════════ #}
-    {% set _paso3_collapsed = false %}{# ficha v3: abierto si hay documentos #}
-    <section class="step-section {% if _paso3_collapsed %}is-collapsed{% endif %} {% if _cubic_ok %}is-complete{% elif _n_docs_inicial == 0 %}is-blocked{% endif %}" id="paso-3" data-step="3">
-      <div class="step-header">
-        <div class="step-circle-wrap">
-          <span class="step-circle-label">Productos</span>
-          <div class="step-circle">
-            <span class="step-num-text">3</span>
-            <span class="step-check"><i class="bi bi-check-lg"></i></span>
-          </div>
-        </div>
-        <div class="step-titles">
-          <h5>Productos a retirar</h5>
-          <p class="step-sub">Lo que el cliente se lleva. Marca cada producto y su cantidad — <strong>nunca puede ser más de lo que compró</strong>.</p>
-        </div>
-        {% if _cubic_ok %}<span class="step-badge-ok"><i class="bi bi-check-circle"></i>Cubicaje OK</span>{% endif %}
-      </div>
-      <p class="step-collapsed-line" id="paso3CollapsedLine">
-        <i class="bi bi-speedometer2"></i>⚖️ {{ "%.1f"|format(req.peso_real_kg|float) }} kg · {{ "%.3f"|format(req.total_volume_m3|float) }} m³ · {{ req.tiempo_estimado_min or '—' }} min
-      </p>
-      <div class="step-content">
-        <div class="carga-strip" id="cargaStrip">
-          <div class="carga-cell">
-            <div class="lbl"><i class="bi bi-archive me-1"></i>Documentos</div>
-            <div class="val accent" id="cargaNDocs">{{ _n_docs_inicial }}</div>
-          </div>
-          <div class="carga-cell">
-            <div class="lbl"><i class="bi bi-box-seam me-1"></i>Peso real (ERP)</div>
-            <div class="val" id="cargaPeso">{{ "%.1f"|format(req.peso_real_kg|float) }} kg</div>
-          </div>
-          <div class="carga-cell">
-            <div class="lbl"><i class="bi bi-bounding-box me-1"></i>Volumen</div>
-            <div class="val" id="cargaVol">{{ "%.3f"|format(req.total_volume_m3|float) }} m³</div>
-          </div>
-          <div class="carga-cell">
-            <div class="lbl"><i class="bi bi-stopwatch me-1"></i>Tiempo est.</div>
-            <div class="val" id="cargaTiempo">{{ req.tiempo_estimado_min or '—' }} min</div>
-          </div>
-        </div>
-
-        {# ═════════════════════════════════════════════════════════════
-           PRODUCTOS A RETIRAR — con diagnóstico (ficha v4, 2026-09-23)
-           Daniel: "lo que más quiero vender es qué productos van a retirar
-           y cuánto pesa... que me muestre si está comprometido, cuánto hay
-           de stock, si puedo avanzar o no, si está entregado con saldo o
-           no". Reemplaza la tabla plana de antes Y el botón "Productos" de
-           la tabla de documentos (ese modal aparte ya no existe — esta
-           tabla ES el editor: marcar/desmarcar línea a línea, con su saldo,
-           guía de despacho y stock por bodega, sin salir de la ficha).
-           Todo lo pinta refrescarProductosDiag() (retiros_internal_detail.js)
-           vía GET /retiros/<rid>/productos-erp — carga diferida, no frena
-           el resto de la ficha; si el ERP no responde, lo dice (nunca
-           inventa "sin guías").
-           ═════════════════════════════════════════════════════════════ #}
-        <div id="prodDiagWrap" style="margin-top:22px">
-          <div id="prodDiagBanner" class="prod-diag-banner is-loading">
-            <i class="bi bi-hourglass-split"></i>
-            <div class="pdb-txt">
-              <strong>Verificando en el ERP…</strong>
-              <span>Saldo, stock y guía de despacho de cada producto.</span>
-            </div>
-          </div>
-          <div id="prodDiagBody"></div>
-        </div>
-
-        {# Daniel 2026-09-22 — pedido explícito: NO ocultar el estimado que
-           declaró el cliente al pedir el retiro (total_weight_kg), aunque
-           casi no se recalcule — solo dejar clara la diferencia con el peso
-           real recalculado desde ERP al asociar documentos (pickups_module.py
-           ~líneas 5014-5019) para que no parezcan un dato duplicado. #}
-        {% if req.total_weight_kg %}
-        <div class="rid-hint-muted" style="margin-top:10px">
-          <i class="bi bi-info-circle"></i>
-          Estimado que declaró el cliente al pedir el retiro: <strong>{{ req.total_weight_kg }} kg</strong>{% if req.total_volumetric_weight %} / {{ req.total_volumetric_weight }} kg vol.{% endif %}
-          — se usa solo como respaldo si el ERP aún no calcula el peso real de arriba.
-        </div>
-        {% endif %}
-
-        {# Hint inteligente sobre peso (>100kg) #}
-        <div id="hintPeso" class="smart-hint is-warn" style="display:none;margin-top:14px">
-          <i class="bi bi-truck"></i>
-          <div><strong>Carga pesada.</strong> Más de 100 kg en este retiro — considera reservar 2 horas en vez de 1, y avisar al cliente que traiga vehículo apropiado.</div>
-        </div>
-
-        {# Hint cuando no hay docs todavía #}
-        {# Siempre en el DOM: el JS lo oculta/muestra al agregar o quitar facturas #}
-        <div class="smart-hint" id="paso3HintSinDocs" style="margin-top:14px{% if _n_docs_inicial > 0 %};display:none{% endif %}">
-          <i class="bi bi-arrow-up-circle"></i>
-          <div>Asocia al menos <strong>1 documento con saldo</strong> en el paso anterior para que se calculen estos totales automáticamente.</div>
-        </div>
       </div>
     </section>
 
@@ -1048,21 +1043,21 @@
         <div class="step-circle-wrap">
           <span class="step-circle-label">Agenda</span>
           <div class="step-circle">
-            <span class="step-num-text">4</span>
+            <span class="step-num-text">3</span>
             <span class="step-check"><i class="bi bi-check-lg"></i></span>
           </div>
         </div>
         <div class="step-titles">
           {% if _cambio_pedido %}
           <h5>El cliente pidió otra fecha</h5>
-          <p class="step-sub">Tenía confirmado el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m') }} a las {{ req.confirmed_time_from|hm }}</strong> y ahora pide el <strong>{{ _contraprop_cliente.date | chile_fmt('%A %d/%m') }} a las {{ _contraprop_cliente.time_from|hm }}</strong>. Respóndele más abajo.</p>
+          <p class="step-sub">Tenía confirmado el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m/%Y') }} a las {{ req.confirmed_time_from|hm }}</strong> y ahora pide el <strong>{{ _contraprop_cliente.date | chile_fmt('%A %d/%m/%Y') }} a las {{ _contraprop_cliente.time_from|hm }}</strong>. Respóndele más abajo.</p>
           {% elif _step5_done %}
           {% set _cfa = hitos[2].conf if hitos else none %}
           <h5>{% if _cfa and _cfa.tipo == 'cliente' %}Fecha confirmada por el cliente{% elif _cfa and _cfa.tipo == 'ilus' %}Fecha confirmada · la aceptó ILUS{% else %}Fecha confirmada{% endif %}</h5>
-          <p class="step-sub">{% if _cfa and _cfa.tipo == 'cliente' %}El cliente aceptó venir{% elif _cfa and _cfa.tipo == 'ilus' %}{{ _cfa.quien or 'ILUS' }} aceptó la hora que pidió el cliente: viene{% elif _cfa and _cfa.tipo == 'manual' %}{{ _cfa.quien or 'ILUS' }} la marcó a mano: viene{% else %}Viene{% endif %} el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m') }}</strong> de <strong>{{ req.confirmed_time_from|hm }} a {{ req.confirmed_time_to|hm }}</strong>. La agenda queda bloqueada para que nadie la cambie por error.</p>
+          <p class="step-sub">{% if _cfa and _cfa.tipo == 'cliente' %}El cliente aceptó venir{% elif _cfa and _cfa.tipo == 'ilus' %}{{ _cfa.quien or 'ILUS' }} aceptó la hora que pidió el cliente: viene{% elif _cfa and _cfa.tipo == 'manual' %}{{ _cfa.quien or 'ILUS' }} la marcó a mano: viene{% else %}Viene{% endif %} el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m/%Y') }}</strong> de <strong>{{ req.confirmed_time_from|hm }} a {{ req.confirmed_time_to|hm }}</strong>. La agenda queda bloqueada para que nadie la cambie por error.</p>
           {% elif _step4_done %}
           <h5>Fecha propuesta al cliente</h5>
-          <p class="step-sub">Le propusimos el <strong>{{ req.proposed_date | chile_fmt('%A %d/%m') }}</strong> de <strong>{{ req.proposed_time_from|hm }} a {{ req.proposed_time_to|hm }}</strong>. Estamos esperando que responda por correo.</p>
+          <p class="step-sub">Le propusimos el <strong>{{ req.proposed_date | chile_fmt('%A %d/%m/%Y') }}</strong> de <strong>{{ req.proposed_time_from|hm }} a {{ req.proposed_time_to|hm }}</strong>. Estamos esperando que responda por correo.</p>
           {% else %}
           <h5>Elige el día y la hora del retiro</h5>
           <p class="step-sub">Toca un día y un bloque libre del calendario. Al cliente le llega un correo para que acepte o proponga otro horario.</p>
@@ -1071,14 +1066,14 @@
         {% if _cambio_pedido %}
           <span class="step-badge-warn"><i class="bi bi-arrow-left-right"></i>Pidió cambio</span>
         {% elif _step5_done %}
-          <span class="step-badge-ok"><i class="bi bi-lock-fill"></i>{{ req.confirmed_date | chile_fmt('%d-%m-%Y') }} {{ req.confirmed_time_from|hm }}</span>
+          <span class="step-badge-ok"><i class="bi bi-lock-fill"></i>{{ req.confirmed_date | chile_fmt('%d/%m/%Y') }} {{ req.confirmed_time_from|hm }}</span>
         {% elif _step4_done %}
-          <span class="step-badge-warn"><i class="bi bi-hourglass-split"></i>{{ req.proposed_date | chile_fmt('%d-%m-%Y') }} {{ req.proposed_time_from|hm }}</span>
+          <span class="step-badge-warn"><i class="bi bi-hourglass-split"></i>{{ req.proposed_date | chile_fmt('%d/%m/%Y') }} {{ req.proposed_time_from|hm }}</span>
         {% endif %}
       </div>
       <p class="step-collapsed-line">
         {% if _step4_done %}
-          <i class="bi bi-calendar2-check"></i>📅 Propuesta enviada: {{ req.proposed_date | chile_fmt('%d-%m-%Y') }} {{ req.proposed_time_from|hm }}
+          <i class="bi bi-calendar2-check"></i>📅 Propuesta enviada: {{ req.proposed_date | chile_fmt('%d/%m/%Y') }} {{ req.proposed_time_from|hm }}
           <a href="#" class="scl-action" onclick="event.preventDefault(); var b=document.getElementById('iwShowReproposeBtn'); if(b) b.click();">Re-proponer</a>
         {% elif _n_docs_inicial == 0 %}
           <i class="bi bi-calendar2-x"></i>📅 Pendiente — asocia documentos primero
@@ -1138,7 +1133,7 @@
         <div class="smart-hint is-warn" id="paso4HintBloqueo"
              {% if _n_docs_inicial > 0 %}style="display:none"{% endif %}>
           <i class="bi bi-shield-exclamation"></i>
-          <div><strong>Necesitas asociar al menos 1 documento</strong> en el paso "Documentos" antes de proponer fecha.</div>
+          <div><strong>Necesitas asociar al menos 1 documento</strong> en el paso 1 (Facturas y productos) antes de proponer fecha.</div>
         </div>
         <div class="smart-hint is-warn" id="paso4HintSinSaldo"
              {% if not (_n_docs_inicial > 0 and _n_docs_con_saldo_inicial == 0 and not _step4_done) %}style="display:none"{% endif %}>
@@ -1184,7 +1179,7 @@
             <span class="icd-lock-ico"><i class="bi bi-lock-fill"></i></span>
             <div class="icd-lock-txt">
               <strong data-lock-title>Agenda bloqueada</strong>
-              <span data-lock-locked>{% if _cambio_pedido %}El cliente pidió cambiar su cita a las {{ _contraprop_cliente.time_from|hm }}. Acepta su fecha más abajo; desbloquea solo si quieres ofrecerle otra hora.{% elif _step5_done %}La cita ya está confirmada: {{ req.confirmed_date | chile_fmt('%A %d/%m') }} a las {{ req.confirmed_time_from|hm }}. Así nadie le cambia la cita por error ni le llega otro correo.{% else %}Ya le propusimos el {{ req.proposed_date | chile_fmt('%A %d/%m') }} a las {{ req.proposed_time_from|hm }} y estamos esperando su respuesta. Así no le llega otro correo por error.{% endif %}</span>
+              <span data-lock-locked>{% if _cambio_pedido %}El cliente pidió cambiar su cita a las {{ _contraprop_cliente.time_from|hm }}. Acepta su fecha más abajo; desbloquea solo si quieres ofrecerle otra hora.{% elif _step5_done %}La cita ya está confirmada: {{ req.confirmed_date | chile_fmt('%A %d/%m/%Y') }} a las {{ req.confirmed_time_from|hm }}. Así nadie le cambia la cita por error ni le llega otro correo.{% else %}Ya le propusimos el {{ req.proposed_date | chile_fmt('%A %d/%m/%Y') }} a las {{ req.proposed_time_from|hm }} y estamos esperando su respuesta. Así no le llega otro correo por error.{% endif %}</span>
               <span data-lock-open style="display:none">Toca un bloque libre para mover el retiro. Antes de mandar nada te vamos a preguntar.</span>
             </div>
             <button type="button" class="icd-lock-btn" id="icdLockBtn" onclick="_icdToggleLock()">
@@ -1369,7 +1364,7 @@
                 <div class="iw-client-card-body">
                   <div class="iw-client-card-label">El cliente pidió</div>
                   <div class="iw-client-card-time">
-                    <strong>{{ req.requested_date | chile_fmt('%A %d/%m') }}</strong>
+                    <strong>{{ req.requested_date | chile_fmt('%A %d/%m/%Y') }}</strong>
                     entre <strong>{{ _req_tf }}</strong> y <strong>{{ _req_tt }}</strong>
                   </div>
                   <div class="iw-client-card-sub">
@@ -1553,12 +1548,12 @@
           {% if _cambio_pedido %}
           <h5>El cliente pidió cambiar la fecha — te toca responder</h5>
           <p class="step-sub">
-            Tenía confirmado el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}</strong> y ahora pide otra hora. Acepta su fecha nueva con un clic, o usa <strong>Re-proponer</strong> para ofrecerle otra.
+            Tenía confirmado el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m/%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}</strong> y ahora pide otra hora. Acepta su fecha nueva con un clic, o usa <strong>Re-proponer</strong> para ofrecerle otra.
           </p>
           {% else %}
           <h5>Esperando respuesta del cliente</h5>
           <p class="step-sub">
-            Propuesta enviada el <strong>{{ req.proposed_date | chile_fmt('%d-%m-%Y') }} {{ req.proposed_time_from|hm }}–{{ req.proposed_time_to|hm }}</strong>. Esperando que el cliente acepte, contraproponga o cancele.
+            Propuesta enviada el <strong>{{ req.proposed_date | chile_fmt('%d/%m/%Y') }} {{ req.proposed_time_from|hm }}–{{ req.proposed_time_to|hm }}</strong>. Esperando que el cliente acepte, contraproponga o cancele.
           </p>
           {% endif %}
         </div>
@@ -1574,7 +1569,7 @@
           <i class="bi bi-calendar-check"></i>
           <div>
             <strong>Cita vigente:</strong>
-            <strong>{{ req.confirmed_date | chile_fmt('%d-%m-%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}</strong>.
+            <strong>{{ req.confirmed_date | chile_fmt('%d/%m/%Y') }} {{ req.confirmed_time_from|hm }}–{{ req.confirmed_time_to|hm }}</strong>.
             <div class="small mt-1" style="opacity:.85">Sigue vigente hasta que respondas. Si aceptas lo que pide el cliente, esta cita se reemplaza y le llega un correo de confirmación.</div>
           </div>
           <button type="button" class="btn btn-sm btn-outline-dark ms-2" id="iwShowReproposeBtn" style="flex-shrink:0">
@@ -1586,7 +1581,7 @@
           <i class="bi bi-send-check"></i>
           <div>
             <strong>Propuesta enviada</strong> al cliente para
-            <strong>{{ req.proposed_date | chile_fmt('%d-%m-%Y') }} {{ req.proposed_time_from|hm }}–{{ req.proposed_time_to|hm }}</strong>.
+            <strong>{{ req.proposed_date | chile_fmt('%d/%m/%Y') }} {{ req.proposed_time_from|hm }}–{{ req.proposed_time_to|hm }}</strong>.
             <div class="small mt-1" style="opacity:.85">El cliente la verá en su email y podrá aceptar, contraproponer o cancelar.</div>
           </div>
           <button type="button" class="btn btn-sm btn-outline-dark ms-2" id="iwShowReproposeBtn" style="flex-shrink:0">
@@ -1605,7 +1600,7 @@
           <i class="bi bi-person-raised-hand" style="color:#16a34a"></i>
           <div style="flex:1">
             <strong>El cliente contrapropuso:</strong>
-            <strong>{{ _contraprop_cliente.date }} {{ _contraprop_cliente.time_from|hm }}–{{ _contraprop_cliente.time_to|hm }}</strong>
+            <strong>{{ _contraprop_cliente.date | chile_fmt('%d/%m/%Y') }} {{ _contraprop_cliente.time_from|hm }}–{{ _contraprop_cliente.time_to|hm }}</strong>
             {% if _contraprop_cliente.message %}
             <div class="small mt-1" style="opacity:.85">“{{ _contraprop_cliente.message }}”</div>
             {% endif %}
@@ -1651,9 +1646,9 @@
     <section class="step-section is-complete {% if _paso9_collapsed %}is-collapsed{% endif %}" id="paso-confirmacion" data-step="5">
       <div class="step-header">
         <div class="step-circle-wrap">
-          <span class="step-circle-label">Preparación</span>
+          <span class="step-circle-label">Preparación y entrega</span>
           <div class="step-circle">
-            <span class="step-num-text">5</span>
+            <span class="step-num-text">4</span>
             <span class="step-check"><i class="bi bi-check-lg"></i></span>
           </div>
         </div>
@@ -1704,7 +1699,7 @@
           <div class="cierre-next is-red">
             <div class="cierre-next-k"><i class="bi bi-exclamation-octagon-fill"></i>Primero responde al cliente</div>
             <h6 class="cierre-next-t">El cliente pidió cambiar la fecha</h6>
-            <p class="cierre-next-p">Pide el <strong>{{ _contraprop_cliente.date | chile_fmt('%A %d/%m') }}</strong> de <strong>{{ _contraprop_cliente.time_from|hm }} a {{ _contraprop_cliente.time_to|hm }}</strong>. Si lo envías a preparación ahora, su pedido de cambio se pierde y le llega un correo con la hora vieja.</p>
+            <p class="cierre-next-p">Pide el <strong>{{ _contraprop_cliente.date | chile_fmt('%A %d/%m/%Y') }}</strong> de <strong>{{ _contraprop_cliente.time_from|hm }} a {{ _contraprop_cliente.time_to|hm }}</strong>. Si lo envías a preparación ahora, su pedido de cambio se pierde y le llega un correo con la hora vieja.</p>
             <button type="button" class="cierre-next-btn is-red" onclick="document.getElementById('paso-esperando').scrollIntoView({behavior:'smooth',block:'center'})">
               <i class="bi bi-arrow-up-circle-fill"></i><span>Ir a responderle</span>
             </button>
@@ -1718,7 +1713,7 @@
             <h6 class="cierre-next-t">Entregar el pedido al cliente</h6>
             <ol class="cierre-next-steps">
               <li><span>1</span>Bodega junta los productos y los marca en la lista de abajo.</li>
-              <li><span>2</span>El cliente llega el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m') }}</strong> a las <strong>{{ req.confirmed_time_from|hm }}</strong> y se lo lleva.</li>
+              <li><span>2</span>El cliente llega el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m/%Y') }}</strong> a las <strong>{{ req.confirmed_time_from|hm }}</strong> y se lo lleva.</li>
               <li><span>3</span>Tocas <strong>Marcar como RETIRADO</strong> y anotas quién lo retiró.</li>
             </ol>
             <button type="button" class="cierre-next-btn is-green" onclick="abrirModalRetirar()">
@@ -1735,7 +1730,7 @@
           <div class="cierre-next">
             <div class="cierre-next-k"><i class="bi bi-signpost-2-fill"></i>Siguiente paso</div>
             <h6 class="cierre-next-t">Enviar el pedido a preparación</h6>
-            <p class="cierre-next-p">El cliente viene el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m') }}</strong> a las <strong>{{ req.confirmed_time_from|hm }}</strong>. Al tocar el botón pasa esto:</p>
+            <p class="cierre-next-p">El cliente viene el <strong>{{ req.confirmed_date | chile_fmt('%A %d/%m/%Y') }}</strong> a las <strong>{{ req.confirmed_time_from|hm }}</strong>. Al tocar el botón pasa esto:</p>
             <ol class="cierre-next-steps">
               <li><span>1</span>Bodega recibe la <strong>lista de productos</strong> para juntar el pedido.</li>
               <li><span>2</span>Al cliente le llega un <strong>correo</strong> avisando que su pedido se está preparando.</li>
@@ -2354,7 +2349,7 @@ window.RETIROS_DETAIL_DATA = {
               {% endif %}
               {% if req.created_by_user_name %}
               <div class="ficha-sub" style="margin-top:6px;border-top:1px dashed #e5e7eb;padding-top:6px">
-                <i class="bi bi-flag"></i> Creado por <strong>{{ req.created_by_user_name }}</strong>{% if req.created_at %}, {{ req.created_at | chile_fmt('%d-%m-%Y %H:%M') }}{% endif %}
+                <i class="bi bi-flag"></i> Creado por <strong>{{ req.created_by_user_name }}</strong>{% if req.created_at %}, {{ req.created_at | chile_fmt('%d/%m/%Y %H:%M') }}{% endif %}
               </div>
               {% endif %}
             </div>
@@ -2380,50 +2375,76 @@ window.RETIROS_DETAIL_DATA = {
    2026-10-05: también con la cita confirmada. Si bodega termina y despacha en Check antes de que alguien envíe el retiro a preparación,
    no había cómo marcarlo entregado sin mandarle al cliente el aviso «estamos preparando» con el pedido ya entregado. #}
 {% if req.status in ['en_preparacion', 'agenda_confirmada'] %}
-<div class="modal fade" id="modalRetirar" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content border-0 shadow">
-      <div class="modal-header" style="background:#16a34a;color:#fff">
-        <h5 class="modal-title"><i class="bi bi-check-circle me-2"></i>Marcar como retirado</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+{# Modal «Marcar como retirado» — rehecho 2026-10-14 (Daniel: «ese modal… está pésimo, mejorémoslo»; «la foto, la evidencia es opcional»).
+   Mismos campos y la misma acción (/status → retirada). Nombre y RUT se piden UNA vez: la firma (vista previa, por rol) los toma de aquí. #}
+<div class="modal fade" id="modalRetirar" tabindex="-1" aria-labelledby="rtmTitulo">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content rtm">
+      <div class="modal-header rtm-head">
+        <span class="rtm-head-ico" aria-hidden="true"><i class="bi bi-box-arrow-right"></i></span>
+        <div class="rtm-head-t">
+          <h5 class="modal-title" id="rtmTitulo">Marcar como retirado</h5>
+          <small>{{ req.code }} · {{ req.customer_name or 'Cliente' }}</small>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
       </div>
-      <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" enctype="multipart/form-data">
-              <input type="hidden" name="estado_visto" value="{{ req.status }}">
-        <div class="modal-body">
+      <form method="post" action="{{ url_for('pickup_update_status', rid=req.id) }}" enctype="multipart/form-data" class="rtm-form">
+        <input type="hidden" name="estado_visto" value="{{ req.status }}">
+        <div class="modal-body rtm-body">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="status" value="retirada">
-          <div id="retWmsWarn" class="alert alert-warning py-2 px-3 small" style="display:none">
-            <i class="bi bi-exclamation-triangle me-1"></i>
-            <span id="retWmsWarnTxt"></span> — puedes cerrar igual, pero quedará registrado.
+          <div id="retWmsWarn" class="rtm-aviso is-ambar" style="display:none">
+            <i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i>
+            <span><span id="retWmsWarnTxt"></span> — puedes cerrar igual, pero quedará registrado.</span>
           </div>
-          <div class="mb-3">
-            <label class="form-label small fw-bold">¿Quién retiró el pedido? *</label>
-            <input name="retirado_por" class="form-control" maxlength="190" required
-                   value="{{ req.pickup_person_name or '' }}" placeholder="Nombre de quien retira">
-          </div>
-          <div class="mb-3">
-            <label class="form-label small fw-bold">RUT (opcional)</label>
-            <input name="retirado_por_rut" class="form-control" maxlength="30"
-                   value="{{ req.pickup_person_rut or '' }}" placeholder="12.345.678-9">
-          </div>
+
+          <section class="rtm-card">
+            <div class="rtm-card-h">
+              <span class="rtm-n">1</span>
+              <div><strong>¿Quién se lo llevó?</strong><small>Queda en la ficha como respaldo de la entrega.</small></div>
+            </div>
+            <div class="rtm-grid">
+              <div class="rtm-campo">
+                <label for="rtmNombre">Nombre <span class="rtm-req">*</span></label>
+                <input id="rtmNombre" name="retirado_por" class="form-control" maxlength="190" required autocomplete="off"
+                       value="{{ req.pickup_person_name or '' }}" placeholder="Nombre y apellido">
+              </div>
+              <div class="rtm-campo">
+                <label for="rtmRut">RUT <small>(opcional)</small></label>
+                <input id="rtmRut" name="retirado_por_rut" class="form-control" maxlength="30" autocomplete="off"
+                       value="{{ req.pickup_person_rut or '' }}" placeholder="12.345.678-9">
+              </div>
+            </div>
+          </section>
+
           {% if firma %}
-          <div class="alert alert-success py-2 px-3 small"><i class="bi bi-patch-check-fill me-1"></i>La recepción ya está <strong>firmada</strong> por {{ firma.nombre }} ({{ firma.rut_fmt }}).</div>
-          {% else %}
-          {% if retiros_vista_previa is defined and retiros_vista_previa() %}{% include 'retiros/_firma_bloque.html' %}{% endif %}
+          <div class="rtm-aviso is-verde"><i class="bi bi-patch-check-fill" aria-hidden="true"></i><span>La recepción ya está <strong>firmada</strong> por {{ firma.nombre }} ({{ firma.rut_fmt }}).</span></div>
+          {% elif retiros_vista_previa is defined and retiros_vista_previa() %}{# firma: solo superadmin o Roles → Retiros «Encuesta y firma» #}
+          <section class="rtm-card rtm-card-firma frm-en-retiro">
+            {% include 'retiros/_firma_bloque.html' %}
+          </section>
           {% endif %}
-          <div class="mb-1">
-            <label class="form-label small fw-bold">📸 Foto de evidencia (opcional)</label>
-            <input name="evidencia_foto" type="file" class="form-control" accept="image/*" capture="environment">
-            <div class="form-text">Ej: el pedido cargado en el vehículo o la persona retirando. Queda en los adjuntos del retiro.</div>
+
+          <section class="rtm-card">
+            <div class="rtm-card-h">
+              <span class="rtm-n is-opc" aria-hidden="true"><i class="bi bi-camera"></i></span>
+              <div><strong>Foto de la entrega <span class="rtm-opc">opcional</span></strong><small>Por ejemplo, el pedido cargado en el vehículo. Queda en los adjuntos del retiro.</small></div>
+            </div>
+            <label class="rtm-foto" id="rtmFoto">
+              <input name="evidencia_foto" type="file" accept="image/*" capture="environment"
+                     onchange="var l=this.closest('.rtm-foto'),t=l.querySelector('.rtm-foto-t');l.classList.toggle('is-lista',!!this.files.length);t.textContent=this.files.length?('Foto lista: '+this.files[0].name):'Tomar o elegir una foto';">
+              <i class="bi bi-camera" aria-hidden="true"></i><span class="rtm-foto-t">Tomar o elegir una foto</span>
+            </label>
+          </section>
+
+          <div class="rtm-nota">
+            <i class="bi bi-envelope" aria-hidden="true"></i>
+            <span>Al confirmar se <strong>cierra el retiro</strong> y al cliente le llega el correo «Retiro completado».{% if req.status == 'agenda_confirmada' %} Como no pasó por «En preparación», no le llega el aviso «estamos preparando».{% endif %} Si no estás seguro, toca Cancelar.</span>
           </div>
-          {% if req.status == 'agenda_confirmada' %}
-          <div class="alert alert-info py-2 px-3 small mb-2"><i class="bi bi-info-circle me-1"></i>Este retiro no pasó por «En preparación»: al cliente <strong>no</strong> le llega el aviso «estamos preparando», solo el de retiro completado.</div>
-          {% endif %}
-          <div class="alert alert-warning py-2 px-3 small mt-2 mb-0"><i class="bi bi-envelope-fill me-1"></i><strong>Esto le envía un correo al cliente:</strong> cierra el proceso y le llega «retiro completado». Si no estás seguro, <strong>Cancelar</strong> o Esc para volver.</div>
         </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-          <button type="submit" class="btn btn-success fw-bold"><i class="bi bi-check-circle me-1"></i>Confirmar retiro</button>
+        <div class="modal-footer rtm-foot">
+          <button type="button" class="btn rtm-cancelar" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn rtm-ok"><i class="bi bi-check-circle-fill me-1"></i>Confirmar retiro</button>
         </div>
       </form>
     </div>

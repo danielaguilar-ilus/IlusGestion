@@ -234,6 +234,11 @@ class TestHorarioDeCobertura(unittest.TestCase):
         self.assertEqual(rm.dur_resta(2 * 3600 + 40 * 60), "2 h 40 min")
         self.assertEqual(rm.fmt_cuando(datetime(2026, 9, 28, 22, 41), date(2026, 9, 29)), "ayer 22:41")
 
+    def test_fechas_dia_mes_anio_con_barras_nunca_con_guiones(self):
+        # Daniel 2026-10-14 (REGLA #6): «necesito que sea día, mes, año, hora». Nada de «12-10» ni «2026-10-12».
+        self.assertEqual(rm.fmt_cuando(datetime(2026, 10, 12, 8, 0), date(2026, 10, 9)), "lun 12/10/2026 08:00")
+        self.assertEqual(rm.fmt_plazo(datetime(2026, 10, 12, 8, 0), date(2026, 10, 9)), "el lun 12/10/2026 08:00")
+
     def test_llego_de_noche_no_dice_cero_dice_cuando_parte(self):
         t = rm.textos_reloj(0, 4 * 3600, False, "22:41", "mañana 08:00", "mañana 12:00")
         self.assertTrue(t["pausa0"])
@@ -318,7 +323,7 @@ class TestEnriquecer(unittest.TestCase):
 
     def test_fecha_texto_con_dia_de_la_semana_en_formato_chileno(self):
         f = _enriquecer([_fila()])[0]                    # 2026-10-01 es jueves
-        self.assertEqual(f["m_fecha_txt"], "jue 01-10-2026")
+        self.assertEqual(f["m_fecha_txt"], "jue 01/10/2026")
         self.assertEqual((f["m_desde"], f["m_hasta"]), ("09:00", "09:30"))
         self.assertEqual(f["m_dias"], 2)
         self.assertEqual((f["m_rel_txt"], f["m_rel_nivel"]), ("En 2 días", "verde"))
@@ -432,7 +437,7 @@ class TestEnriquecer(unittest.TestCase):
     def test_origen_y_hace(self):
         f = _enriquecer([_fila()])[0]
         self.assertEqual(f["m_origen"], "Web")
-        self.assertEqual(f["m_creado_txt"], "29-09-2026 15:00")
+        self.assertEqual(f["m_creado_txt"], "29/09/2026 15:00")
         self.assertEqual(f["m_hace"], "hace un momento")
         self.assertEqual(_enriquecer([_fila(request_source="backoffice")])[0]["m_origen"], "Interno")
 
@@ -440,7 +445,7 @@ class TestEnriquecer(unittest.TestCase):
         c = _enriquecer([_fila()])[0]["m_csv"]
         self.assertEqual(c["Solicitud"], "RET-ABC123")
         self.assertEqual(c["Documento"], "FACTURA 1234")
-        self.assertEqual(c["Fecha de retiro"], "01-10-2026")
+        self.assertEqual(c["Fecha de retiro"], "01/10/2026")
         self.assertEqual(c["Horario"], "09:00-09:30")
         self.assertEqual(c["Canal"], "Web")
         self.assertEqual(c["Responder antes de"], "las 19:00")   # el plazo del reloj de respuesta (columna Tiempo); aquí el reloj de prueba es corrido
@@ -460,7 +465,7 @@ class TestEnriquecer(unittest.TestCase):
         tl = _enriquecer([_fila()], logs=logs)[0]["m_timeline"]
         self.assertEqual([e["txt"] for e in tl],
                          ["Estado: En revisión", "Propuesta enviada al cliente", "Documento validado", "Solicitud creada"])
-        self.assertEqual(tl[0]["cuando"], "29-09-2026 13:00")   # 16:00 UTC → 13:00 Chile (con el desfase de prueba)
+        self.assertEqual(tl[0]["cuando"], "29/09/2026 13:00")   # 16:00 UTC → 13:00 Chile (con el desfase de prueba)
         self.assertEqual(tl[0]["quien"], "Samantha")
 
     def test_sin_historial(self):
@@ -478,7 +483,7 @@ class TestDatosDelDetalle(unittest.TestCase):
         self.assertEqual((c["RUT cliente"], c["RUT quien retira"]), ("<12.345.678-5>", "<9.876.543-3>"))
         self.assertEqual((c["Quién retira"], c["Documento"], c["Bultos"], c["Peso kg"]),
                          ("Pedro Soto", "FACTURA 1234", 3, 12.6))
-        self.assertEqual((c["Canal"], c["Creada"], c["Etapa"]), ("Web", "29-09-2026 15:00", "Por revisar"))
+        self.assertEqual((c["Canal"], c["Creada"], c["Etapa"]), ("Web", "29/09/2026 15:00", "Por revisar"))
         self.assertEqual((x["rel"], x["min"], x["por"], x["sp"], x["dv"]), ("Chofer", 25, "Samantha", False, "Por validar"))
         # nada de lo que ya está en "csv" se repite en "x"
         self.assertEqual(sorted(x), ["dv", "min", "por", "ptel", "rel", "sp", "tl"])
@@ -558,8 +563,8 @@ class TestTarjetasKpi(unittest.TestCase):
         self.assertEqual([x["futuro"] for x in b], [False, False, True, True, True, True, True])
         self.assertEqual(max(x["h"] for x in b), 34)
         self.assertTrue(all(x["h"] >= 3 for x in b))
-        self.assertEqual(b[1]["tit"], "mar 29-09: 4 retiros")
-        self.assertEqual(b[4]["tit"], "vie 02-10: 1 retiro")
+        self.assertEqual(b[1]["tit"], "mar 29/09/2026: 4 retiros")
+        self.assertEqual(b[4]["tit"], "vie 02/10/2026: 1 retiro")
 
     def test_barras_sin_datos_no_dividen_por_cero(self):
         b = rm.barras_semana({}, date(2026, 9, 28), HOY)
@@ -591,7 +596,7 @@ class TestPlazoSla(unittest.TestCase):
     def test_salta_fin_de_semana_y_feriado(self):
         p = rm.plazo_sla(datetime(2026, 10, 2, 17, 0), 4.0, self._hh, {"2026-10-05"})   # viernes 17:00
         self.assertEqual(p, datetime(2026, 10, 6, 12, 0))
-        self.assertEqual(rm.fmt_plazo(p, date(2026, 10, 2)), "el mar 06-10 12:00")
+        self.assertEqual(rm.fmt_plazo(p, date(2026, 10, 2)), "el mar 06/10/2026 12:00")
 
     def test_la_fila_trae_el_reloj(self):
         # Horario de COBERTURA real (lun-vie 08:00-17:00, colación 13:00-14:00 que no corre), no el 09-18 del Centro de control

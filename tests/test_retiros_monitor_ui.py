@@ -352,7 +352,7 @@ class TestPlantillaTarjetas(unittest.TestCase):
         html = self._render()
         self.assertEqual(len(re.findall(r"<rect ", html)), 7)
         self.assertIn('class="hoy"', html)
-        self.assertIn("mar 29-09: 2 retiros", html)
+        self.assertIn("mar 29/09/2026: 2 retiros", html)
 
     def test_sin_datos_de_comparacion_no_revienta(self):
         html = self._render(kx={})
@@ -440,7 +440,7 @@ class TestPlantillaTabla(unittest.TestCase):
         html = self._render(_filas(1))
         self.assertIn("RUT 12.345.678-5", html)
         self.assertIn("9.876.543-3", html)
-        self.assertIn("jue 01-10-2026", html)
+        self.assertIn("jue 01/10/2026", html)
         self.assertIn("09:00–09:30", html)
         self.assertIn("1 bulto<", html)
         self.assertIn("Peso por confirmar", html)

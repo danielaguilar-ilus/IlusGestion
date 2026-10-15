@@ -89,6 +89,17 @@
   function num(v){ var n = Number(v); return isFinite(n) ? n : 0; }
   function fmtKg(v){ return (Math.round(num(v) * 100) / 100).toLocaleString('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 2 }); }
   function fmtCLP(v){ return Math.round(num(v)).toLocaleString('es-CL'); }
+  /* REGLA #6 (Daniel 2026-10-14: «necesito que sea día, mes, año, hora»): las fechas que llegan del ERP o del
+     servidor como 2026-10-30, 2026-10-30T16:30 o 30-10-2026 se MUESTRAN como 30/10/2026 [16:30]. Solo texto:
+     el valor original (fecha_iso, meta, payloads) no se toca. Lo que no se reconoce se muestra tal cual. */
+  function fechaVista(v){
+    var t = String(v == null ? '' : v).trim();
+    var m = t.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
+    if (m) return m[3] + '/' + m[2] + '/' + m[1] + (m[4] && (m[4] !== '00' || m[5] !== '00') ? ' ' + m[4] + ':' + m[5] : '');
+    m = t.match(/^(\d{2})-(\d{2})-(\d{4})(.*)$/);
+    if (m) return m[1] + '/' + m[2] + '/' + m[3] + m[4];
+    return t;
+  }
 
   /* fetch que SIEMPRE devuelve algo legible. Si el servidor responde HTML
      (sesión expirada → página de login) r.json() falla: lo traducimos a un
@@ -486,7 +497,7 @@
       return '<div class="nri-doc-card" data-key="' + esc(k) + '">' +
         '<div class="nri-doc-num">' + esc(e.tido) + ' ' + esc(e.nudo_display) + '<small>' + esc(NRI_TIDO_LABEL[e.tido] || '') + '</small></div>' +
         '<div class="nri-doc-meta">' +
-          '<span class="ddate">' + esc(h.fecha || m.fecha || '') + (rut ? ' · RUT ' + esc(rut) : '') + '</span>' +
+          '<span class="ddate">' + esc(fechaVista(h.fecha || m.fecha || '')) + (rut ? ' · RUT ' + esc(rut) : '') + '</span>' +
           '<span class="dcli">' + esc(nombre || 'Cliente no informado por ERP') + '</span>' +
           '<span class="dlin">' + r.seleccionadas + ' de ' + r.total + ' línea' + (r.total === 1 ? '' : 's') + ' seleccionada' + (r.seleccionadas === 1 ? '' : 's') + ' · ' + r.conSaldo + ' con saldo · ' + fmtKg(r.kg) + ' kg estimados</span>' +
         '</div>' +
@@ -591,7 +602,7 @@
       return '<div class="nri-doc-card is-sug' + (ya ? ' is-already' : '') + '" data-key="' + esc(k) + '">' +
         '<div class="nri-doc-num">' + esc(doc.tido_display) + ' ' + esc(doc.nudo_display) + '<small>' + esc(NRI_TIDO_LABEL[doc.tido_display] || '') + '</small></div>' +
         '<div class="nri-doc-meta">' +
-          '<span class="ddate">' + esc(doc.fecha || '') + (doc.rut ? ' · RUT ' + esc(rutDesdeCuerpoErp(doc.rut) || doc.rut) : '') + '</span>' +
+          '<span class="ddate">' + esc(fechaVista(doc.fecha || '')) + (doc.rut ? ' · RUT ' + esc(rutDesdeCuerpoErp(doc.rut) || doc.rut) : '') + '</span>' +
           '<span class="dcli">' + esc(doc.razon_social || 'Cliente no informado por ERP') + '</span>' +
           '<span class="dlin">' + (doc.n_lineas || 0) + ' línea' + (doc.n_lineas === 1 ? '' : 's') + ' · $' + fmtCLP(doc.valor_total) + '</span>' +
         '</div>' +
@@ -977,7 +988,7 @@
         '<input type="checkbox" class="form-check-input nri-rutdoc-chk" data-idx="' + i + '"' + (marcado ? ' checked' : '') + (lock ? ' data-lock="1"' : '') + '>' +
         '<div class="nri-doc-num">' + esc(doc.tido_display) + ' ' + esc(doc.nudo_display) + '<small>' + esc(NRI_TIDO_LABEL[doc.tido_display] || '') + '</small></div>' +
         '<div class="nri-doc-meta">' +
-          '<span class="ddate">' + esc(doc.fecha || '') + '</span>' +
+          '<span class="ddate">' + esc(fechaVista(doc.fecha || '')) + '</span>' +
           '<span class="dcli">' + esc(doc.cliente || '') + '</span>' +
           '<span class="dlin">' + (doc.n_lineas || 0) + ' línea' + (doc.n_lineas === 1 ? '' : 's') + ' · $' + fmtCLP(doc.total) + '</span>' +
         '</div>' +
@@ -1501,7 +1512,7 @@
         txt: cab + ': ' + L.map(function(x){ return x.code + (x.status_label ? ' (' + x.status_label + ')' : ''); }).join(', '),
         html: avisoHtml('bi-arrow-repeat', '<strong>' + esc(cab) + '</strong>: ' + L.map(function(x){
           return (x.url ? '<a href="' + esc(x.url) + '" target="_blank" rel="noopener">' + esc(x.code) + '</a>' : esc(x.code)) +
-            (x.status_label ? ' (' + esc(x.status_label) + ')' : '') + (x.fecha ? ' · ' + esc(x.fecha) : '') + ' · <a href="' + esc(x.url || '#') + '" target="_blank" rel="noopener">ver</a>';
+            (x.status_label ? ' (' + esc(x.status_label) + ')' : '') + (x.fecha ? ' · ' + esc(fechaVista(x.fecha)) : '') + ' · <a href="' + esc(x.url || '#') + '" target="_blank" rel="noopener">ver</a>';
         }).join(' &nbsp;|&nbsp; ') + '. Revisa que no sea el mismo antes de crear otro.', []),
       });
     }

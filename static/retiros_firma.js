@@ -49,9 +49,26 @@
     });
     var rutEl = $('frmRut');
     if (rutEl) rutEl.addEventListener('blur', function () { if (rutEl.value) rutEl.value = rutFormato(rutEl.value); estado(); });
+    enlazarConQuienRetira();
     estado();
   }
   function firmado() { return !!firma && firma.firmado(); }
+  // Dentro de «Marcar como retirado» la firma toma nombre y RUT de «¿Quién se lo llevó?» (Daniel 2026-10-14: no pedirlos dos veces).
+  function enlazarConQuienRetira() {
+    var n = $('rtmNombre'), r = $('rtmRut'), fn = $('frmNombre'), fr = $('frmRut');
+    if (!n || !fn || !fn.closest('.frm-en-retiro')) return;
+    var copiar = function () {
+      fn.value = n.value;
+      if (r && fr) fr.value = r.value;
+      estado();
+    };
+    n.addEventListener('input', copiar);
+    if (r) {
+      r.addEventListener('input', copiar);
+      r.addEventListener('blur', function () { if (r.value && rutValido(r.value)) r.value = rutFormato(r.value); copiar(); });
+    }
+    copiar();
+  }
 
   // semáforo: rojo = falta la firma · ámbar = firmó pero faltan datos · verde = lista
   function estado() {
@@ -68,8 +85,16 @@
 
   function datosFirma() {
     var nombre = ($('frmNombre').value || '').trim();
-    if (nombre.length < 2) return { error: 'Escribe el nombre de quien recibe.' };
-    if (!rutValido($('frmRut').value)) return { error: 'El RUT no es válido: revisa el número y el dígito verificador.' };
+    // En el modal «Marcar como retirado» los campos de la firma van ocultos (se copian de «¿Quién se lo llevó?»): el aviso apunta al visible.
+    var enModal = $('rtmRut') && $('frmRut') && $('frmRut').offsetParent === null;
+    if (nombre.length < 2) {
+      if (enModal) { try { $('rtmNombre').focus(); } catch (e) {} return { error: 'Escribe el nombre de quien recibe en «¿Quién se lo llevó?».' }; }
+      return { error: 'Escribe el nombre de quien recibe.' };
+    }
+    if (!rutValido($('frmRut').value)) {
+      if (enModal) { try { $('rtmRut').focus(); } catch (e) {} return { error: 'Para guardar la firma escribe el RUT de quien recibe en «¿Quién se lo llevó?» (con la firma es obligatorio).' }; }
+      return { error: 'El RUT no es válido: revisa el número y el dígito verificador.' };
+    }
     if (!firmado()) return { error: 'Falta la firma en el recuadro.' };
     return { datos: {
       nombre: nombre, rut: rutFormato($('frmRut').value), relacion: $('frmRelacion').value,

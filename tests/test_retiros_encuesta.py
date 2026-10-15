@@ -62,14 +62,17 @@ class BDFalsa:
         self.con = sqlite3.connect(":memory:", check_same_thread=False)
         self.con.row_factory = sqlite3.Row
         self.con.execute("CREATE TABLE pickup_requests (id INTEGER PRIMARY KEY, code TEXT, status TEXT, "
-                         "public_token TEXT, closed_at TEXT)")
+                         "public_token TEXT, closed_at TEXT, retirado_por_nombre TEXT)")
         self.ddl = []
         self.escrituras = []
 
-    def retiro(self, rid=1, status="retirada", public_token=None, closed_at=None):
-        self.con.execute("INSERT OR REPLACE INTO pickup_requests VALUES (?,?,?,?,?)",
+    def retiro(self, rid=1, status="retirada", public_token=None, closed_at=None, retirado_por=None):
+        # 2026-10-14: la encuesta exige que el retiro se haya cerrado (closed_at) y entregado de verdad; por defecto, cerrado 2 h antes de T0.
+        if closed_at is None and status in ("retirada", "cerrada"):
+            closed_at = T0 - timedelta(hours=2)
+        self.con.execute("INSERT OR REPLACE INTO pickup_requests VALUES (?,?,?,?,?,?)",
                          (rid, f"RET-T{rid:05d}", status, public_token or f"pub-token-largo-{rid}",
-                          closed_at.isoformat(sep=" ") if closed_at else None))
+                          closed_at.isoformat(sep=" ") if closed_at else None, retirado_por))
 
     def fetchall(self, sql, params=()):
         cur = self.con.execute(_a_sqlite(sql), tuple(_param(p) for p in params))
@@ -125,6 +128,8 @@ def _require_permission(perm):
 
 def construir(monkeypatch, con_rowcount=True, vista_previa="*"):
     monkeypatch.delenv("RETIROS_ENCUESTA_ACTIVA", raising=False)
+    # T0 es 06-10-2026: estas pruebas son del funcionamiento, así que la fecha de activación (14-10-2026) no las corta; tiene pruebas propias.
+    monkeypatch.setenv("RETIROS_ENCUESTA_DESDE", "2026-01-01")
     # Vista previa (2026-10-09: por ahora solo Daniel ve la encuesta): estas pruebas son del funcionamiento, así que todo el equipo la ve;
     # el candado «solo Daniel» tiene sus propias pruebas al final del archivo.
     if vista_previa is None:
@@ -889,3 +894,41 @@ class TestSoloDanielPorAhora:
     def test_sin_sesion_nunca(self, monkeypatch):
         monkeypatch.setenv("RETIROS_VISTA_PREVIA_USUARIOS", "*")
         assert enc.usuario_en_vista_previa(None) is False
+
+
+# ── 2026-10-14: la encuesta solo para retiros entregados de verdad y cerrados desde la activación (revisión adversarial) ──────────
+class TestSoloRetirosEntregadosDesdeLaActivacion:
+    def test_retiro_elegible_puro(self, monkeypatch):
+        monkeypatch.delenv("RETIROS_ENCUESTA_DESDE", raising=False)
+        desde = enc.encuesta_desde()
+        assert desde == datetime(2026, 10, 14, 3, 0)                       # 14/10/2026 00:00 hora Chile (UTC-3)
+        despues = desde + timedelta(hours=5)
+        assert enc.retiro_elegible({"status": "retirada", "closed_at": despues})
+        assert enc.retiro_elegible({"status": "cerrada", "closed_at": despues, "retirado_por_nombre": "Ana Pérez"})
+        assert not enc.retiro_elegible({"status": "cerrada", "closed_at": despues, "retirado_por_nombre": "  "})   # duplicado/spam/no vino
+        assert not enc.retiro_elegible({"status": "retirada", "closed_at": desde - timedelta(minutes=1)})          # antes de activarla
+        assert not enc.retiro_elegible({"status": "retirada", "closed_at": None})
+        assert not enc.retiro_elegible({"status": "en_preparacion", "closed_at": despues})
+        assert not enc.retiro_elegible(None)
+
+    def test_cerrada_sin_quien_retiro_no_recibe_ni_puede_responder(self, monkeypatch):
+        e = construir(monkeypatch)
+        e.activar(); e.anonimo()
+        e.db.retiro(3, status="cerrada")
+        assert e.app.extensions["retiros_encuesta"]["invitar"](3) is None
+        assert e.client.get(f"/retiros/encuesta/{e.token(3)}").status_code == 404
+        e.db.retiro(4, status="cerrada", retirado_por="Ana Pérez")
+        assert e.app.extensions["retiros_encuesta"]["invitar"](4) is not None
+
+    def test_retiros_cerrados_antes_de_la_activacion_no_la_reciben_de_rebote(self, monkeypatch):
+        e = construir(monkeypatch)
+        monkeypatch.setenv("RETIROS_ENCUESTA_DESDE", "2026-10-14")
+        e.activar(); e.anonimo()
+        e.db.retiro(5, status="retirada", closed_at=datetime(2026, 10, 1, 15, 0))
+        assert e.app.extensions["retiros_encuesta"]["invitar"](5) is None
+        assert e.client.get(f"/retiros/encuesta/{e.token(5)}").status_code == 404
+        try:                                   # la tabla se crea recién con la primera invitación: si no existe, tampoco se escribió nada
+            filas = e.db.fetchall("SELECT * FROM pickup_encuesta_invitaciones WHERE request_id=5")
+        except Exception:
+            filas = []
+        assert filas == []

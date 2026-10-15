@@ -11,11 +11,11 @@
   </div>
 
   <div class="frm-grid">
-    <div class="frm-campo">
+    <div class="frm-campo frm-campo-dup">
       <label for="frmNombre">Nombre de quien recibe *</label>
       <input id="frmNombre" type="text" maxlength="190" autocomplete="off" value="{{ req.pickup_person_name or '' }}" placeholder="Nombre y apellido">
     </div>
-    <div class="frm-campo">
+    <div class="frm-campo frm-campo-dup">
       <label for="frmRut">RUT *</label>
       <input id="frmRut" type="text" maxlength="14" inputmode="text" autocomplete="off" value="{{ req.pickup_person_rut or '' }}" placeholder="12.345.678-9">
     </div>

@@ -2090,6 +2090,9 @@
     #paso-2 > .step-header > .step-titles{flex:1 1 0;min-width:0}
     #paso-2 .paso2-head-actions{order:3;flex:1 1 100%;margin-top:4px}
     .rid-divider-lbl{white-space:normal;text-align:center}
+    /* 2026-10-14: con la etiqueta «Preparación y entrega» el sello de estado del paso 4 se salía 6 px a 390 px: baja de línea */
+    #paso-confirmacion > .step-header{flex-wrap:wrap}
+    #paso-confirmacion > .step-header > .step-titles{flex:1 1 0;min-width:0}
   }
   @media (prefers-reduced-motion:reduce){.rh-hero.rh-wait .rh-sello .ico{animation:none}}
 
@@ -2594,3 +2597,89 @@
     .rd-cerrado-banner{padding:14px;gap:10px}
     .rd-cerrado-banner > i{font-size:1.35rem}
   }
+
+/* ═══ Daniel 2026-10-14 · «alertar siempre, pero no tan intenso» — avisos de productos en suave ═══
+   El diagnóstico de productos deja de ser una franja de color sólido: fondo claro, borde de color a la izquierda y texto oscuro. */
+.prod-diag-banner{color:#111827;border:1px solid #e5e7eb;border-left-width:5px}
+.prod-diag-banner.is-ok{background:#f0fdf4;border-color:#bbf7d0;border-left-color:#16a34a;color:#14532d}
+.prod-diag-banner.is-revisar{background:#fff8e1;border-color:#fde68a;border-left-color:#f59e0b;color:#78350f}
+.prod-diag-banner.is-bloqueado{background:#fef2f2;border-color:#fecaca;border-left-color:#dc2626;color:#7f1d1d}
+.prod-diag-banner.is-loading,.prod-diag-banner.is-vacio{background:#f3f4f6;border-color:#e5e7eb;border-left-color:#9ca3af;color:#374151}
+.prod-diag-banner.is-ok > i{color:#16a34a}
+.prod-diag-banner.is-revisar > i{color:#d97706}
+.prod-diag-banner.is-bloqueado > i{color:#dc2626}
+.prod-diag-banner .pdb-txt strong{font-size:1.05rem;font-weight:800}
+.prod-diag-banner .pdb-refresh{background:rgba(15,23,42,.06);color:inherit}
+.prod-diag-banner .pdb-refresh:hover{background:rgba(15,23,42,.12)}
+.prod-diag-banner .pdb-erp-caido{background:rgba(15,23,42,.06)}
+.prod-diag-banner .pd-chip{background:#fff;border:1px solid #e5e7eb;color:#374151}
+.prod-diag-banner .pd-chip.t-ok{border-color:#bbf7d0;color:#166534}
+.prod-diag-banner .pd-chip.t-rojo{border-color:#fecaca;color:#991b1b}
+.prod-diag-banner .pd-chip.t-ambar{border-color:#fde68a;color:#92400e}
+
+/* Tarjeta 1 = facturas Y productos (Daniel 2026-10-14: «juntar una sola tarjeta»): los productos van debajo, separados por una línea */
+.step-subsection{margin-top:22px;padding-top:20px;border-top:1px dashed #d1d5db}
+.step-subsection .step-subheader{margin-bottom:10px}
+.step-subsection .step-subheader h5{display:flex;align-items:center;gap:8px;font-size:1.08rem;font-weight:800;margin:0}
+.step-subsection .step-subheader h5 i{color:#6b7280}
+.step-subsection.is-blocked{opacity:.6}
+
+/* (2026-10-14, cont.) La etiqueta de una fila con problema («Ya salió: no entregar») en rojo suave, no en bloque rojo */
+.pd-badge.t-rojo{background:#fee2e2;color:#991b1b;box-shadow:inset 0 0 0 1px #fecaca}
+
+/* ═══ Modal «Marcar como retirado» (Daniel 2026-10-14: «está pésimo, mejorémoslo»): tarjetas numeradas como el resto de la ficha, sin campos
+   repetidos, foto opcional, un solo aviso de lo que pasa al confirmar. Más ancho en computador; pantalla completa en celular (REGLA #3). ═══ */
+.rtm{border:0;border-radius:18px;overflow:hidden;box-shadow:0 24px 60px -20px rgba(10,10,10,.45)}
+.rtm-head{display:flex;align-items:center;gap:12px;padding:16px 20px;background:#0a0a0a;color:#fff;border-bottom:3px solid #16a34a}
+.rtm-head-ico{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:42px;height:42px;border-radius:12px;background:#16a34a;color:#fff;font-size:1.25rem}
+.rtm-head-t{flex:1 1 auto;min-width:0}
+.rtm-head-t .modal-title{margin:0;font-weight:800;font-size:1.15rem;color:#fff}
+.rtm-head-t small{display:block;color:rgba(255,255,255,.7);font-size:.86rem;overflow-wrap:anywhere}
+.rtm-head .btn-close{filter:invert(1) grayscale(1) brightness(2);width:44px;height:44px;background-size:14px;opacity:.85}
+.rtm-body{display:grid;gap:14px;padding:18px 20px;background:#f8fafc}
+.rtm-card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px 16px}
+.rtm-card-h{display:flex;gap:12px;align-items:flex-start;margin-bottom:12px}
+.rtm-card-h strong{display:block;font-size:1rem;font-weight:800;color:#0a0a0a}
+.rtm-card-h small{display:block;color:#6b7280;font-size:.86rem}
+.rtm-n{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:30px;height:30px;border-radius:50%;background:#0a0a0a;color:#fff;font-weight:800;font-size:.9rem}
+.rtm-n.is-opc{background:#f3f4f6;color:#374151;font-size:1rem}
+.rtm-opc{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:99px;background:#f3f4f6;color:#6b7280;font-size:.72rem;font-weight:700;vertical-align:middle}
+.rtm-grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:12px}
+.rtm-campo label{display:block;margin-bottom:4px;font-size:.84rem;font-weight:700;color:#111827}
+.rtm-campo label small{font-weight:500;color:#6b7280}
+.rtm-campo .form-control{min-height:46px;border-radius:10px}
+.rtm-req{color:#b45309}
+.rtm-foto{position:relative;display:flex;align-items:center;justify-content:center;gap:10px;min-height:56px;padding:10px 14px;border:1.5px dashed #cbd5e1;border-radius:12px;background:#f8fafc;color:#334155;font-weight:700;cursor:pointer;text-align:center;overflow-wrap:anywhere}
+.rtm-foto.is-lista{border-style:solid;border-color:#86efac;background:#f0fdf4;color:#166534}
+.rtm-foto:hover{border-color:#2563eb;color:#1d4ed8;background:#eff6ff}
+.rtm-foto input[type=file]{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.rtm-body > *{min-width:0}
+.rtm-body{overflow-x:hidden}
+/* Revisión 2026-10-14: el <form> envuelve cuerpo y pie dentro de .modal-dialog-scrollable; sin esto el cuerpo no hacía scroll y «Confirmar
+   retiro» (y la firma) quedaban fuera de la pantalla. El form se vuelve columna flex: el cuerpo se desplaza y el pie queda siempre a la vista. */
+#modalRetirar .rtm-form{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;overflow:hidden}
+#modalRetirar .rtm-body{overflow-y:auto;min-height:0;flex:1 1 auto}
+#modalRetirar .rtm-foot{flex-shrink:0}
+.rtm-foto i{font-size:1.2rem}
+.rtm-aviso{display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border-radius:12px;font-size:.9rem;border:1px solid #e5e7eb;border-left-width:5px}
+.rtm-aviso.is-ambar{background:#fff8e1;border-color:#fde68a;border-left-color:#f59e0b;color:#78350f}
+.rtm-aviso.is-verde{background:#f0fdf4;border-color:#bbf7d0;border-left-color:#16a34a;color:#14532d}
+.rtm-nota{display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border-radius:12px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;font-size:.9rem}
+.rtm-foot{display:flex;gap:10px;justify-content:flex-end;padding:12px 20px;background:#fff;border-top:1px solid #e5e7eb}
+.rtm-cancelar{min-height:48px;padding:0 18px;border:1.5px solid #d1d5db;border-radius:12px;background:#fff;color:#0a0a0a;font-weight:700}
+.rtm-ok{min-height:48px;padding:0 22px;border:0;border-radius:12px;background:#16a34a;color:#fff;font-weight:800}
+.rtm-ok:hover{background:#15803d;color:#fff}
+/* La firma dentro del modal: sin repetir nombre y RUT (los toma de «¿Quién se lo llevó?»), sin doble marco */
+.frm-en-retiro .frm-campo-dup{display:none}
+.rtm-card-firma .frm-bloque{margin:0;border:0;padding:0;background:transparent;box-shadow:none}
+@media (max-width:575.98px){
+  .rtm-grid{grid-template-columns:minmax(0,1fr)}
+  .rtm-body{padding:14px}
+  .rtm-foot{position:sticky;bottom:0;padding-bottom:calc(12px + env(safe-area-inset-bottom, 0px))}
+  .rtm-foot .btn{flex:1 1 0}
+}
+
+/* Daniel 2026-10-14: «el botón déjalo colorido, pero no necesariamente rojo». «Proponer fecha y hora al cliente» usa el mismo azul de la
+   guía (el rojo queda para errores reales). Solo este botón: el resto de .submit-btn-internal no cambia. */
+#btnAbrirProponerFecha.submit-btn-internal{background:linear-gradient(180deg,#2563eb 0%,#1d4ed8 100%);box-shadow:0 10px 22px rgba(37,99,235,.25),inset 0 1px 0 rgba(255,255,255,.18)}
+#btnAbrirProponerFecha.submit-btn-internal:hover{background:linear-gradient(180deg,#1d4ed8 0%,#1e40af 100%);box-shadow:0 16px 30px rgba(37,99,235,.32),inset 0 1px 0 rgba(255,255,255,.18)}

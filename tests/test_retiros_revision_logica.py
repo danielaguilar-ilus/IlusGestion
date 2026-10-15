@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Revisión adversarial de la Guía de 6 pasos y de la preparación por Check (Retiros, 2026-10-02).
+"""Revisión adversarial de la Guía de pasos y de la preparación por Check (Retiros, 2026-10-02).
+
+La guía nació con 6 pasos y desde el 2026-10-14 tiene 5 (Daniel: facturas y productos en una sola tarjeta, el responsable
+debajo): 1 «Facturas y productos» (clave 'documentos', con dos confirmaciones en `sub`: 'facturas' y 'productos'),
+2 «Responsable», 3 «Agenda», 4 «Preparación», 5 «Entrega». Las pruebas buscan cada paso por su CLAVE (helper `paso`),
+no por su posición, para que no dependan del orden de la tarjeta.
 
 Dos tipos de prueba en este archivo:
 
@@ -92,6 +97,28 @@ def _estados(gu):
     return [p["estado"] for p in gu["pasos"]]
 
 
+def paso(gu, clave):
+    """El paso de la guía con esa clave ('documentos', 'responsable', 'agenda', 'preparacion', 'entrega')."""
+    for p in gu["pasos"]:
+        if p["clave"] == clave:
+            return p
+    raise AssertionError(f"la guía no trae el paso «{clave}»: {[p.get('clave') for p in gu['pasos']]}")
+
+
+def sub(gu, que):
+    """Una de las dos confirmaciones del paso 1 (Facturas y productos): 'facturas' o 'productos'."""
+    return paso(gu, "documentos")["sub"][que]
+
+
+def _confirmaciones(gu):
+    """(paso 1, facturas, productos, responsable): lo que antes eran los pasos 1, 3 y 2 de la guía de 6."""
+    return (paso(gu, "documentos")["estado"], sub(gu, "facturas")["estado"], sub(gu, "productos")["estado"],
+            paso(gu, "responsable")["estado"])
+
+
+_TODO_CONFIRMADO = ("hecho", "hecho", "hecho", "hecho")
+
+
 def _sin_mensajes(test, esp):
     """Nada le escribió a nadie: ni correo, ni WhatsApp (la campana interna se cuenta aparte)."""
     A.esperar_hilos_de_aviso()
@@ -122,14 +149,18 @@ class GuardiaClienteReal(unittest.TestCase):
                                    responsable_user_id=7, responsable_nombre="Milagros", **kw)
         return app, db, ctx, esp
 
-    def test_retiro_avanzado_deja_1_y_3_hechos_y_no_pide_confirmar_nada(self):
+    def test_retiro_avanzado_deja_facturas_y_productos_hechos_y_no_pide_confirmar_nada(self):
         app, db, ctx, esp = self._real()
         gu = _guia(app)
-        self.assertEqual(_estados(gu)[:4], ["hecho", "hecho", "hecho", "hecho"])
-        self.assertEqual(gu["pasos"][4]["estado"], "espera")
+        self.assertEqual(_confirmaciones(gu), _TODO_CONFIRMADO)
+        self.assertEqual(paso(gu, "agenda")["estado"], "hecho")
+        self.assertEqual(paso(gu, "preparacion")["estado"], "espera")
         for p in gu["pasos"]:
             self.assertNotIn((p.get("accion") or {}).get("tipo"), ("confirmar_docs", "confirmar_productos"),
                              f"paso {p['n']} pide una confirmación retroactiva")
+        for que in ("facturas", "productos"):
+            self.assertNotIn((sub(gu, que).get("accion") or {}).get("tipo"), ("confirmar_docs", "confirmar_productos"),
+                             f"la confirmación de {que} se pide retroactiva")
 
     def test_abrir_la_guia_no_escribe_nada_ni_manda_nada(self):
         app, db, ctx, esp = self._real()
@@ -251,15 +282,63 @@ class GuardiaConfirmar(unittest.TestCase):
     def test_flujo_completo_pasa_de_rojo_a_verde(self):
         app, db, ctx, esp = _nuevo("solicitud_recibida", responsable_user_id=7, responsable_nombre="Sam")
         c = app.test_client()
-        self.assertEqual(_estados(_guia(app))[:3], ["actual", "hecho", "pendiente"])
+        gu = _guia(app)
+        # (paso 1, facturas, productos, responsable): primero las facturas; productos espera a que se confirmen
+        self.assertEqual(_confirmaciones(gu), ("actual", "actual", "pendiente", "hecho"))
+        self.assertEqual(paso(gu, "documentos")["accion"]["tipo"], "confirmar_docs")
+        self.assertEqual(gu["siguiente"], 1)
         c.post("/retiros/1/confirmar-docs")
-        self.assertEqual(_estados(_guia(app))[:3], ["hecho", "hecho", "actual"])
+        gu = _guia(app)
+        self.assertEqual(_confirmaciones(gu), ("actual", "hecho", "actual", "hecho"))
+        self.assertEqual(paso(gu, "documentos")["accion"]["tipo"], "confirmar_productos")   # el paso 1 pasa a la de productos
+        self.assertEqual(gu["siguiente"], 1)
         c.post("/retiros/1/confirmar-productos")
         gu = _guia(app)
-        self.assertEqual(_estados(gu)[:4], ["hecho", "hecho", "hecho", "actual"])
-        self.assertEqual(gu["siguiente"], 4)
-        self.assertEqual(gu["pasos"][3]["accion"]["tipo"], "proponer")
-        self.assertTrue(gu["pasos"][3]["correo"], "proponer fecha le escribe al cliente: tiene que avisarlo")
+        self.assertEqual(_confirmaciones(gu), _TODO_CONFIRMADO)
+        agenda = paso(gu, "agenda")
+        self.assertEqual(agenda["estado"], "actual")
+        self.assertEqual(gu["siguiente"], agenda["n"])
+        self.assertEqual(gu["siguiente"], 3)
+        self.assertEqual(agenda["accion"]["tipo"], "proponer")
+        self.assertTrue(agenda["correo"], "proponer fecha le escribe al cliente: tiene que avisarlo")
+
+    def test_confirmar_sin_responsable_funciona_y_no_escribe_al_cliente_pero_agendar_sigue_frenado(self):
+        """Daniel 2026-10-14: el responsable va DEBAJO de facturas y productos. Confirmar ya no exige responsable (solo deja el
+        registro, nadie recibe nada); agendar sí lo sigue exigiendo (REGLA #21: proponer fecha ocupa el calendario)."""
+        app, db, ctx, esp = _nuevo("solicitud_recibida", responsable_user_id=None, responsable_nombre=None)
+        c = app.test_client()
+        gu = _guia(app)
+        self.assertTrue(gu["sin_responsable"])
+        self.assertEqual(gu["siguiente"], 1, "sin responsable la ficha parte en el paso 1 (facturas y productos)")
+        self.assertEqual(paso(gu, "responsable")["estado"], "pendiente")
+        self.assertFalse(paso(gu, "responsable")["accion"].get("deshabilitada"), "«Me hago cargo» tiene que poder tocarse")
+        self.assertFalse(paso(gu, "documentos")["accion"].get("deshabilitada"), "confirmar facturas quedó bloqueado sin responsable")
+        for ruta in ("confirmar-docs", "confirmar-productos"):
+            r = c.post(f"/retiros/1/{ruta}")
+            self.assertEqual(r.status_code, 200, r.data)
+            self.assertNotEqual(r.get_json().get("code"), "SIN_RESPONSABLE")
+        self.assertEqual(len(db.logs_de(1, "docs_confirmadas")), 1)
+        self.assertEqual(len(db.logs_de(1, "productos_confirmados")), 1)
+        self.assertEqual(len(db.escrituras), 2, "confirmar escribió algo más que sus dos registros")
+        self.assertEqual(db.solicitudes[1]["status"], "solicitud_recibida")     # no cambia el estado
+        _sin_mensajes(self, esp)
+        gu = _guia(app)
+        self.assertEqual(paso(gu, "documentos")["estado"], "hecho")
+        self.assertEqual(paso(gu, "responsable")["estado"], "actual")
+        self.assertEqual(gu["siguiente"], 2)
+        for clave in ("agenda", "preparacion", "entrega"):
+            a = paso(gu, clave).get("accion")
+            if a:
+                self.assertTrue(a.get("deshabilitada"), f"{clave} se puede tocar sin responsable")
+                self.assertEqual(a.get("motivo"), rg.MSG_SIN_RESPONSABLE)
+        # Agendar sin responsable: 409 y nada escrito
+        db.reiniciar_registro()
+        r = c.post("/retiros/1/proposal", json={"date": "2026-10-08", "time_from": "10:00", "time_to": "10:30"})
+        self.assertEqual(r.status_code, 409, r.data)
+        self.assertEqual(r.get_json().get("error"), rg.MSG_SIN_RESPONSABLE)
+        self.assertEqual(db.escrituras, [])
+        self.assertEqual(db.propuestas, [])
+        _sin_mensajes(self, esp)
 
 
 class GuardiaHuella(unittest.TestCase):
@@ -270,13 +349,13 @@ class GuardiaHuella(unittest.TestCase):
         c = app.test_client()
         c.post("/retiros/1/confirmar-docs")
         c.post("/retiros/1/confirmar-productos")
-        self.assertEqual(_estados(_guia(app))[:3], ["hecho", "hecho", "hecho"])
+        self.assertEqual(_confirmaciones(_guia(app)), _TODO_CONFIRMADO)
         return app, db
 
     def test_refrescar_la_guia_muchas_veces_no_invalida_nada(self):
         app, db = self._confirmado()
         for _ in range(5):
-            self.assertEqual(_estados(_guia(app))[:3], ["hecho", "hecho", "hecho"])
+            self.assertEqual(_confirmaciones(_guia(app)), _TODO_CONFIRMADO)
 
     def test_un_refresco_del_erp_que_toca_saldo_o_snapshot_no_invalida(self):
         import json
@@ -286,7 +365,7 @@ class GuardiaHuella(unittest.TestCase):
         snap = json.loads(d["erp_snapshot"])
         snap["hdr"] = {"neto": 12345, "fecha": "2026-10-01"}  # cambia lo que NO son líneas
         d["erp_snapshot"] = json.dumps(snap)
-        self.assertEqual(_estados(_guia(app))[:3], ["hecho", "hecho", "hecho"])
+        self.assertEqual(_confirmaciones(_guia(app)), _TODO_CONFIRMADO)
 
     def test_cambiar_una_cantidad_si_pide_confirmar_de_nuevo(self):
         import json
@@ -296,16 +375,24 @@ class GuardiaHuella(unittest.TestCase):
         snap["lineas"][1]["cantidad"] = 3
         d["erp_snapshot"] = json.dumps(snap)
         gu = _guia(app)
-        self.assertEqual(gu["pasos"][0]["estado"], "hecho")
-        self.assertEqual(gu["pasos"][2]["estado"], "actual")
-        self.assertIn("cambiaron", gu["pasos"][2]["faltan"][0])
+        self.assertEqual(sub(gu, "facturas")["estado"], "hecho")       # las facturas siguen confirmadas
+        self.assertEqual(sub(gu, "productos")["estado"], "actual")      # los productos se piden de nuevo
+        self.assertIn("cambiaron", sub(gu, "productos")["faltan"][0])
+        p1 = paso(gu, "documentos")                                     # y la tarjeta del paso 1 lo muestra
+        self.assertEqual(p1["estado"], "actual")
+        self.assertIn("cambiaron", p1["faltan"][0])
+        self.assertEqual(p1["accion"]["tipo"], "confirmar_productos")
 
     def test_agregar_un_documento_si_pide_confirmar_de_nuevo(self):
         app, db = self._confirmado()
         db.agregar_doc(1, "FCV", "0000011225")
         gu = _guia(app)
-        self.assertEqual(gu["pasos"][0]["estado"], "actual")
-        self.assertIn("cambió", gu["pasos"][0]["faltan"][0])
+        self.assertEqual(sub(gu, "facturas")["estado"], "actual")
+        self.assertIn("cambió", sub(gu, "facturas")["faltan"][0])
+        p1 = paso(gu, "documentos")
+        self.assertEqual(p1["estado"], "actual")
+        self.assertIn("cambió", p1["faltan"][0])
+        self.assertEqual(p1["accion"]["tipo"], "confirmar_docs")
 
     def test_la_seleccion_granular_con_las_mismas_lineas_no_cambia_la_huella(self):
         """Guardar «Selección de líneas» sin cambiar nada (todas incluidas, misma cantidad) no invalida."""
@@ -317,7 +404,7 @@ class GuardiaHuella(unittest.TestCase):
                                   "peso_unit_kg": 0, "vol_unit_m3": 0, "peso_total_kg": 0, "vol_total_m3": 0,
                                   "peso_vol_unit_kg": 0, "peso_vol_total_kg": 0, "marcada_sin_saldo": 0,
                                   "motivo_sin_saldo": None, "sin_saldo_por": None, "sin_saldo_en": None})
-        self.assertEqual(_estados(_guia(app))[:3], ["hecho", "hecho", "hecho"])
+        self.assertEqual(_confirmaciones(_guia(app)), _TODO_CONFIRMADO)
 
 
 class GuardiaGuiaPura(unittest.TestCase):
@@ -342,7 +429,9 @@ class GuardiaGuiaPura(unittest.TestCase):
                                                            "retirada", "cerrada"))}
             gu = rg.evaluar(c)
             ctx_txt = f"{c}"
-            self.assertEqual([p["n"] for p in gu["pasos"]], [1, 2, 3, 4, 5, 6], ctx_txt)
+            self.assertEqual([p["n"] for p in gu["pasos"]], [1, 2, 3, 4, 5], ctx_txt)
+            self.assertEqual([p["clave"] for p in gu["pasos"]],
+                             ["documentos", "responsable", "agenda", "preparacion", "entrega"], ctx_txt)
             for p in gu["pasos"]:
                 self.assertIn(p["estado"], ("hecho", "actual", "espera", "pendiente", "bloqueado"), ctx_txt)
                 if p["estado"] == "hecho":
@@ -350,11 +439,29 @@ class GuardiaGuiaPura(unittest.TestCase):
                     self.assertIsNone(p["accion"] if st not in ("rechazada", "fallida") else None, ctx_txt)
                 if p["estado"] == "actual":
                     self.assertTrue(p["faltan"], f"paso {p['n']} en rojo sin decir qué falta · {ctx_txt}")
+            # Paso 1 = dos confirmaciones (facturas, productos): mismas reglas que un paso, y la tarjeta muestra la que toca
+            p1, fac, prod = paso(gu, "documentos"), sub(gu, "facturas"), sub(gu, "productos")
+            for nombre, sp in (("facturas", fac), ("productos", prod)):
+                self.assertIn(sp["estado"], ("hecho", "actual", "espera", "pendiente", "bloqueado"), ctx_txt)
+                if sp["estado"] == "hecho":
+                    self.assertEqual(sp["faltan"], [], f"{nombre} · {ctx_txt}")
+                    self.assertIsNone(sp["accion"], f"{nombre} hecho con acción (confirmación retroactiva) · {ctx_txt}")
+                if sp["estado"] == "actual":
+                    self.assertTrue(sp["faltan"], f"{nombre} en rojo sin decir qué falta · {ctx_txt}")
+            self.assertEqual(p1["estado"] == "hecho", fac["estado"] == "hecho" and prod["estado"] == "hecho", ctx_txt)
+            if p1["estado"] != "hecho":
+                manda = fac if fac["estado"] != "hecho" else prod      # primero las facturas, después los productos
+                self.assertEqual((p1["estado"], p1["faltan"], p1["accion"]),
+                                 (manda["estado"], manda["faltan"], manda["accion"]), ctx_txt)
             if st in ("rechazada", "fallida") or (st == "cerrada" and not evid):
                 self.assertIsNone(gu["siguiente"], ctx_txt)
                 self.assertTrue(gu["terminal"], ctx_txt)
-                self.assertNotEqual(gu["pasos"][5]["estado"], "hecho", ctx_txt)    # nunca «retiro completado» falso
-                self.assertNotEqual(gu["pasos"][5]["resumen"], "Retiro completado", ctx_txt)
+                entrega = paso(gu, "entrega")
+                self.assertNotEqual(entrega["estado"], "hecho", ctx_txt)    # nunca «retiro completado» falso
+                self.assertNotEqual(entrega["resumen"], "Retiro completado", ctx_txt)
+                for nombre, sp in (("facturas", fac), ("productos", prod)):   # tampoco queda viva una confirmación
+                    if sp["estado"] != "hecho":
+                        self.assertIsNone(sp["accion"], f"{nombre} · {ctx_txt}")
             else:
                 self.assertIsNone(gu["terminal"], ctx_txt)
                 pend = [p for p in gu["pasos"] if p["estado"] != "hecho"]
@@ -362,12 +469,24 @@ class GuardiaGuiaPura(unittest.TestCase):
                 # Responsable obligatorio (Daniel 2026-10-02): se frena SOLO un retiro en curso, sin responsable y con la regla encendida
                 self.assertEqual(gu["sin_responsable"], bool(exige and not resp and not retirado), ctx_txt)
                 if gu["sin_responsable"]:
-                    self.assertEqual(gu["siguiente"], 2, ctx_txt)
-                    self.assertEqual(gu["pasos"][1]["estado"], "actual", ctx_txt)
+                    # Daniel 2026-10-14: facturas y productos (paso 1) se confirman sin responsable; después toca «Me hago cargo»
+                    p1_listo = p1["estado"] == "hecho"
+                    resp_p = paso(gu, "responsable")
+                    self.assertEqual(gu["siguiente"], 2 if p1_listo else 1, ctx_txt)
+                    self.assertEqual(resp_p["estado"], "actual" if p1_listo else "pendiente", ctx_txt)
+                    self.assertEqual(resp_p["accion"]["tipo"], "tomar", ctx_txt)
+                    self.assertFalse(resp_p["accion"].get("deshabilitada"), f"«Me hago cargo» bloqueado · {ctx_txt}")
                     for p in gu["pasos"]:
                         a = p.get("accion")
-                        if a and a["tipo"] != "tomar":
+                        if not a:
+                            continue
+                        if p["clave"] in ("agenda", "preparacion", "entrega"):
                             self.assertTrue(a.get("deshabilitada"), f"paso {p['n']} sin bloquear · {ctx_txt}")
+                            self.assertEqual(a.get("motivo"), rg.MSG_SIN_RESPONSABLE, ctx_txt)
+                        else:      # paso 1 y paso 2: el responsable no los frena
+                            self.assertNotEqual(a.get("motivo"), rg.MSG_SIN_RESPONSABLE, f"paso {p['n']} · {ctx_txt}")
+                    for sp in (fac, prod):
+                        self.assertNotEqual((sp.get("accion") or {}).get("motivo"), rg.MSG_SIN_RESPONSABLE, ctx_txt)
                 else:
                     # «siguiente» = primer paso pendiente que NO sea secundario (el responsable de un retiro en curso es un
                     # aviso, no lo operativo); si solo quedan secundarios, el primero de ellos
@@ -377,9 +496,9 @@ class GuardiaGuiaPura(unittest.TestCase):
                     for p in gu["pasos"]:
                         if p.get("secundario"):      # solo con la regla apagada: el responsable de un retiro ya en curso es un aviso
                             self.assertEqual((p["n"], p["estado"], c["adelantado"], exige), (2, "pendiente", True, False), ctx_txt)
-            # nunca aparece «hecho» un paso posterior a uno que no está listo, salvo 1/2/3 que son independientes
-            if gu["pasos"][4]["estado"] == "hecho" and st not in ("retirada", "cerrada"):
-                self.assertEqual(gu["pasos"][3]["estado"], "hecho", ctx_txt)
+            # nunca aparece «hecho» un paso posterior a uno que no está listo, salvo 1/2 que son independientes
+            if paso(gu, "preparacion")["estado"] == "hecho" and st not in ("retirada", "cerrada"):
+                self.assertEqual(paso(gu, "agenda")["estado"], "hecho", ctx_txt)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -392,60 +511,68 @@ class RegresionGuiaContradiceLaFicha(unittest.TestCase):
         'pending' proposed_by='cliente'). La ficha dice «responder la contrapropuesta del cliente»
         (internal_detail.html:246) pero la guía solo mira la contrapropuesta cuando YA hay cita
         (_guia_datos: `if cita and st not in ...`), así que dice «Esperar la respuesta del cliente» en
-        ÁMBAR: le dice al operador que espere algo que ya llegó."""
+        ÁMBAR: le dice al operador que espere algo que ya llegó. (Paso «Agenda»: era el 4 en la guía de 6, hoy es el 3.)"""
         app, db, ctx, esp = _nuevo("en_revision", proposed_date="2026-10-06", responsable_user_id=7,
                                    responsable_nombre="Sam")
         db.propuestas.append({"id": 1, "request_id": 1, "status": "pending", "proposed_by": "cliente"})
         gu = _guia(app)
-        p4 = gu["pasos"][3]
-        self.assertEqual(p4["estado"], "actual", f"quedó en {p4['estado']}: {p4['faltan']}")
-        self.assertNotIn("Esperar la respuesta", " ".join(p4["faltan"]))
-        self.assertIn("cliente", " ".join(p4["faltan"]).lower())
-        self.assertEqual(p4["ancla"], "#paso-esperando")
-        self.assertTrue(p4["correo"])
+        agenda = paso(gu, "agenda")
+        self.assertEqual(agenda["estado"], "actual", f"quedó en {agenda['estado']}: {agenda['faltan']}")
+        self.assertNotIn("Esperar la respuesta", " ".join(agenda["faltan"]))
+        self.assertIn("cliente", " ".join(agenda["faltan"]).lower())
+        self.assertEqual(agenda["ancla"], "#paso-esperando")
+        self.assertTrue(agenda["correo"])
+        self.assertEqual(gu["siguiente"], agenda["n"])
 
     def test_correo_en_extra_emails_cuenta_como_destino_de_la_propuesta(self):
         """HALLAZGO 2. `correo_ok` mira solo contact_email, pero el envío real usa contact_email +
         extra_emails (_get_pickup_all_emails). Con contact_email vacío/inválido y un extra válido la guía
-        pone el paso 4 en «bloqueado» y el JS lo trata como bloqueo DURO (sin «Hacerlo igual»): se le quita
-        al operador una acción que sí funciona (REGLA #4.2)."""
+        ponía el paso de Agenda (el 4 en la guía de 6, hoy el 3) en «bloqueado» y el JS lo trata como bloqueo DURO (sin
+        «Hacerlo igual»): se le quita al operador una acción que sí funciona (REGLA #4.2)."""
         app, db, ctx, esp = _nuevo("solicitud_recibida", contact_email="", extra_emails="compras@cliente.cl",
                                    responsable_user_id=7, responsable_nombre="Sam")
         c = app.test_client()
         c.post("/retiros/1/confirmar-docs")
         c.post("/retiros/1/confirmar-productos")
-        p4 = _guia(app)["pasos"][3]
-        self.assertNotEqual(p4["estado"], "bloqueado", p4["faltan"])
-        self.assertFalse(p4["bloquea"])
+        agenda = paso(_guia(app), "agenda")
+        self.assertNotEqual(agenda["estado"], "bloqueado", agenda["faltan"])
+        self.assertFalse(agenda["bloquea"])
+        self.assertEqual((agenda["accion"] or {}).get("tipo"), "proponer")
+        self.assertFalse((agenda["accion"] or {}).get("deshabilitada"), "proponer quedó bloqueado con un correo válido en extra_emails")
 
     def test_cerrada_sin_haber_sido_retirada_no_dice_que_el_cliente_se_llevo_el_pedido(self):
         """HALLAZGO 3. 'cerrada' también se usa para cerrar duplicados/spam que NUNCA se retiraron
-        (pickup_update_status:6405 lo dice). Antes la guía marcaba los 6 pasos «hecho» con «Retiro completado»
+        (pickup_update_status:6405 lo dice). Antes la guía marcaba todos los pasos «hecho» con «Retiro completado»
         y el JS decía «El cliente ya se llevó su pedido». Ahora: terminal honesto y sin preparación/entrega «hechas»."""
         app, db, ctx, esp = _nuevo("cerrada")   # sin cita, sin evento de retiro
         gu = _guia(app)
         self.assertEqual(gu["terminal"], "Este retiro se cerró sin que el cliente lo retirara.")
         self.assertIsNone(gu["siguiente"])
-        self.assertNotEqual(gu["pasos"][5]["resumen"], "Retiro completado")
-        self.assertNotEqual(gu["pasos"][5]["estado"], "hecho")
-        self.assertNotEqual(gu["pasos"][4]["estado"], "hecho")
-        self.assertNotEqual(gu["pasos"][4]["resumen"], "Pedido preparado")
+        self.assertNotEqual(paso(gu, "entrega")["resumen"], "Retiro completado")
+        self.assertNotEqual(paso(gu, "entrega")["estado"], "hecho")
+        self.assertNotEqual(paso(gu, "preparacion")["estado"], "hecho")
+        self.assertNotEqual(paso(gu, "preparacion")["resumen"], "Pedido preparado")
 
     def test_cerrada_sin_retiro_ni_cita_no_dice_cita_confirmada(self):
-        """BUG ABIERTO (revisión, residual del hallazgo 3) — retiros_guia.py:75: `cita = bool(c.get("cita")) or st in
-        ("en_preparacion", "retirada", "cerrada")` fuerza cita=True también en una «cerrada» SIN evidencia de retiro.
-        Un duplicado cerrado que nunca tuvo cita muestra el paso 4 «hecho · Cita confirmada»: dato falso, mismo
-        problema que el paso 6. Arreglo: excluir «cerrada» sin evidencia de esa lista (o usar `not terminal`).
-        Cuando se arregle, esta prueba dará «unexpected success»: quitar @expectedFailure."""
+        """Residual del hallazgo 3 (ya corregido) — retiros_guia.py: `cita = bool(c.get("cita")) or st in
+        ("en_preparacion", "retirada", "cerrada")` forzaba cita=True también en una «cerrada» SIN evidencia de retiro.
+        Un duplicado cerrado que nunca tuvo cita mostraba el paso de Agenda (el 4 en la guía de 6, hoy el 3)
+        «hecho · Cita confirmada»: dato falso, mismo problema que el paso de Entrega. Arreglo: «cerrada» solo cuenta
+        como cita si no es terminal."""
         app, db, ctx, esp = _nuevo("cerrada")   # sin cita, sin evento de retiro
-        self.assertNotEqual(_guia(app)["pasos"][3]["resumen"], "Cita confirmada")
+        agenda = paso(_guia(app), "agenda")
+        self.assertNotEqual(agenda["resumen"], "Cita confirmada")
+        self.assertNotEqual(agenda["estado"], "hecho")
 
     def test_cerrada_con_evidencia_de_retiro_si_es_retiro_completado(self):
         app, db, ctx, esp = _nuevo("cerrada", confirmed_date="2026-10-03", responsable_nombre="Sam",
                                    retirado_por_nombre="Juan Pérez")
         gu = _guia(app)
         self.assertIsNone(gu["terminal"])
-        self.assertEqual(_estados(gu), ["hecho"] * 6)
+        self.assertEqual(_estados(gu), ["hecho"] * 5)
+        self.assertEqual(_confirmaciones(gu), _TODO_CONFIRMADO)
+        self.assertEqual(paso(gu, "entrega")["resumen"], "Retiro completado")
+        self.assertIsNone(gu["siguiente"])
 
     def test_retiro_en_preparacion_sin_responsable_antes_era_un_aviso_ahora_se_frena(self):
         """HALLAZGO 4 (2026-10-02, antes de la regla del responsable). En preparación la ficha decía «Siguiente: entregar al
@@ -455,14 +582,19 @@ class RegresionGuiaContradiceLaFicha(unittest.TestCase):
         app, db, ctx, esp = _nuevo("en_preparacion", confirmed_date="2026-10-03", proposed_date="2026-10-03",
                                    responsable_user_id=None, responsable_nombre=None)
         gu = _guia(app)
-        self.assertEqual(gu["siguiente"], 2)
+        n_resp = paso(gu, "responsable")["n"]
+        self.assertEqual(n_resp, 2)
+        # el paso 1 (facturas y productos) ya venía en curso: lo primero es el responsable
+        self.assertEqual(paso(gu, "documentos")["estado"], "hecho")
+        self.assertEqual(gu["siguiente"], n_resp)
+        self.assertEqual(paso(gu, "responsable")["estado"], "actual")
         self.assertTrue(gu["sin_responsable"])
         os.environ["RETIROS_EXIGE_RESPONSABLE"] = "0"
         try:
             gu = _guia(app)
         finally:
             os.environ.pop("RETIROS_EXIGE_RESPONSABLE", None)
-        self.assertNotEqual(gu["siguiente"], 2, "con la regla apagada el cartel principal no manda a asignar responsable en pleno picking")
+        self.assertNotEqual(gu["siguiente"], n_resp, "con la regla apagada el cartel principal no manda a asignar responsable en pleno picking")
         self.assertFalse(gu["sin_responsable"])
 
 

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Backend de la Guía de 6 pasos de Retiros y de la preparación detectada por Check.
+"""Backend de la Guía de 5 pasos de Retiros y de la preparación detectada por Check.
+
+Desde el 2026-10-14 (Daniel) la guía tiene 5 pasos: 1 «Facturas y productos» (una tarjeta con DOS confirmaciones:
+sub['facturas'] y sub['productos']), 2 Responsable, 3 Agenda, 4 Preparación, 5 Entrega. Las pruebas buscan cada paso
+por su CLAVE (paso(g, 'agenda')), no por su posición. Facturas y productos se confirman SIN responsable; el responsable
+se sigue exigiendo para agendar y cambiar de estado (REGLA #21).
 
 Registra las rutas REALES (pickups_module.register_pickup_routes) sobre un Flask de mentira, con una
 BD en memoria (tests/_arnes_retiros.py + tests/_arnes_retiros_guia.py). No toca MySQL, Check, el ERP
@@ -121,8 +126,20 @@ def guia(env, rid=RID):
     return r.get_json()
 
 
-def paso(g, n):
-    return g["pasos"][n - 1]
+CLAVES = ("documentos", "responsable", "agenda", "preparacion", "entrega")     # los 5 pasos, en orden
+
+
+def paso(g, clave):
+    """El paso de la guía con esa clave ('documentos', 'responsable', 'agenda', 'preparacion', 'entrega')."""
+    for p in g["pasos"]:
+        if p["clave"] == clave:
+            return p
+    raise AssertionError(f"la guía no trae el paso «{clave}»: {[p.get('clave') for p in g['pasos']]}")
+
+
+def sub(g, cual):
+    """Una de las dos confirmaciones del paso 1 «Facturas y productos»: 'facturas' o 'productos'."""
+    return paso(g, "documentos")["sub"][cual]
 
 
 def destinos_de_correo(env):
@@ -183,11 +200,14 @@ class TestGuiaGET:
         g = r.get_json()
         assert r.status_code == 200 and g["ok"] is True
         assert r.headers["Cache-Control"] == "no-store"
-        assert [p["n"] for p in g["pasos"]] == [1, 2, 3, 4, 5, 6]
+        assert [p["n"] for p in g["pasos"]] == [1, 2, 3, 4, 5]
+        assert [p["clave"] for p in g["pasos"]] == list(CLAVES)
         assert g["siguiente"] == 1 and g["terminal"] is None
-        assert paso(g, 1)["estado"] == "actual" and "factura o boleta" in paso(g, 1)["faltan"][0]
-        assert paso(g, 3)["estado"] == "bloqueado"
-        assert paso(g, 4)["estado"] == "bloqueado"
+        p1 = paso(g, "documentos")
+        assert p1["estado"] == "actual" and "factura o boleta" in p1["faltan"][0]
+        assert sub(g, "facturas")["estado"] == "actual" and p1["n_docs"] == 0
+        assert sub(g, "productos")["estado"] == "bloqueado"            # sin documento no hay de dónde sacar los productos
+        assert paso(g, "agenda")["estado"] == "bloqueado"
         assert g["rid"] == RID and g["codigo"] == f"RET-T{RID:05d}"
         assert_sin_escrituras(env)
         assert_nada_al_cliente(env)
@@ -195,15 +215,19 @@ class TestGuiaGET:
     def test_con_documento_sin_confirmar_muestra_que_se_va_a_confirmar(self, env):
         retiro(env)
         g = guia(env)
-        p1, p3 = paso(g, 1), paso(g, 3)
+        p1, fac, prod = paso(g, "documentos"), sub(g, "facturas"), sub(g, "productos")
         assert p1["estado"] == "actual" and p1["accion"]["tipo"] == "confirmar_docs"
+        assert fac["estado"] == "actual" and fac["accion"]["tipo"] == "confirmar_docs"
         # Documento · cliente · RUT · saldo: COMPLETO, es lo que la persona confirma (REGLA #15)
-        assert p1["detalle"] == ["BLV 0000023732 · Gerd Müller · RUT 11.111.111-1 · con saldo"]
-        assert p1["total"] == 1
-        assert p3["estado"] == "pendiente" and p3["accion"]["deshabilitada"] is True
-        assert p3["detalle"] == ["1 × Set Discos 2,5 - 5 kg (SKU DISCO25)", "2 × Mancuerna hexagonal 10 kg (SKU MANC10)"]
-        assert p3["total"] == 2
-        assert paso(g, 2)["estado"] == "hecho" and "A cargo de Samantha Blacio" in paso(g, 2)["resumen"]
+        assert fac["detalle"] == ["BLV 0000023732 · Gerd Müller · RUT 11.111.111-1 · con saldo"]
+        assert fac["total"] == 1
+        # el paso muestra lo de la confirmación que toca (facturas, mientras no estén confirmadas)
+        assert p1["detalle"] == fac["detalle"] and p1["total"] == 1 and p1["n_docs"] == 1
+        assert prod["estado"] == "pendiente" and prod["accion"]["deshabilitada"] is True
+        assert prod["detalle"] == ["1 × Set Discos 2,5 - 5 kg (SKU DISCO25)", "2 × Mancuerna hexagonal 10 kg (SKU MANC10)"]
+        assert prod["total"] == 2
+        p2 = paso(g, "responsable")
+        assert p2["estado"] == "hecho" and "A cargo de Samantha Blacio" in p2["resumen"]
         assert g["siguiente"] == 1 and g["sin_responsable"] is False
         # el navegador recibe las huellas de lo que está viendo (para que «Confirmo» confirme EXACTAMENTE eso)
         assert re.fullmatch(r"[0-9a-f]{12}", g["firma_docs"]) and re.fullmatch(r"[0-9a-f]{12}", g["firma_prod"])
@@ -214,15 +238,18 @@ class TestGuiaGET:
         retiro(env)
         env.db.docs[0]["cliente_rut"] = ""
         env.db.docs[0]["con_saldo"] = None
-        assert paso(guia(env), 1)["detalle"] == ["BLV 0000023732 · Gerd Müller · saldo sin verificar"]
+        g = guia(env)
+        assert sub(g, "facturas")["detalle"] == ["BLV 0000023732 · Gerd Müller · saldo sin verificar"]
+        assert paso(g, "documentos")["detalle"] == ["BLV 0000023732 · Gerd Müller · saldo sin verificar"]
 
     def test_detalle_completo_sin_recortes_con_muchos_documentos_y_productos(self, env):
         retiro(env, docs=tuple(f"00000{i:05d}" for i in range(10)))
         env.db.docs[0]["erp_snapshot"] = json.dumps({"lineas": [
             {"sku": f"SKU{i:02d}", "descripcion_erp": f"Producto {i}", "cantidad": 1} for i in range(15)]})
         g = guia(env)
-        assert len(paso(g, 1)["detalle"]) == 10 and paso(g, 1)["total"] == 10
-        assert len(paso(g, 3)["detalle"]) >= 15 and paso(g, 3)["total"] >= 15
+        assert len(sub(g, "facturas")["detalle"]) == 10 and sub(g, "facturas")["total"] == 10
+        assert len(paso(g, "documentos")["detalle"]) == 10 and paso(g, "documentos")["n_docs"] == 10
+        assert len(sub(g, "productos")["detalle"]) >= 15 and sub(g, "productos")["total"] >= 15
 
     def test_la_guia_no_incluye_datos_de_otro_retiro(self, env):
         """Dos retiros con documentos, clientes, RUT y productos distintos: cada guía solo trae lo suyo, y lo
@@ -244,7 +271,7 @@ class TestGuiaGET:
             assert ajeno not in g2, f"la guía del retiro 2 trae «{ajeno}», que es del retiro 1"
         # confirmar el 2 no da por confirmado el 1
         env.cli.post("/retiros/2/confirmar-docs")
-        assert paso(guia(env, 1), 1)["estado"] == "actual" and paso(guia(env, 2), 1)["estado"] == "hecho"
+        assert sub(guia(env, 1), "facturas")["estado"] == "actual" and sub(guia(env, 2), "facturas")["estado"] == "hecho"
         # y la preparación de uno no consulta los documentos del otro
         env.db.solicitudes[1]["status"] = "en_preparacion"
         env.esp.check.respuestas["*"] = None
@@ -254,68 +281,74 @@ class TestGuiaGET:
     def test_cada_paso_dice_que_falta_antes_de_el(self, env):
         retiro(env, responsable_user_id=None, responsable_nombre=None)
         previos = guia(env)["previos"]
+        assert set(previos) == {"1", "2", "3", "4", "5"}
         assert previos["1"] == []
-        assert [n for n, _ in previos["3"]] == [1, 2]
-        assert [n for n, _ in previos["4"]] == [1, 2, 3]
-        assert [n for n, _ in previos["6"]] == [1, 2, 3, 4, 5]
-        assert all(textos for _, textos in previos["6"])
+        assert [n for n, _ in previos["3"]] == [1, 2]            # agenda: antes facturas y productos + responsable
+        assert [n for n, _ in previos["4"]] == [1, 2, 3]         # preparación
+        assert [n for n, _ in previos["5"]] == [1, 2, 3, 4]      # entrega
+        assert all(textos for _, textos in previos["5"])
 
     def test_retiro_avanzado_da_por_confirmados_facturas_y_productos(self, env):
         retiro(env, status="agenda_confirmada", confirmed_date="2026-10-05",
                responsable_user_id=7, responsable_nombre="Samantha Blacio")
         g = guia(env)
-        assert [paso(g, n)["estado"] for n in (1, 2, 3, 4)] == ["hecho"] * 4
-        p5 = paso(g, 5)
-        assert p5["estado"] == "actual" and p5["accion"]["tipo"] == "preparacion" and p5["correo"] is True
-        assert g["siguiente"] == 5
+        assert [paso(g, k)["estado"] for k in ("documentos", "responsable", "agenda")] == ["hecho"] * 3
+        assert sub(g, "facturas")["estado"] == sub(g, "productos")["estado"] == "hecho"
+        pp = paso(g, "preparacion")
+        assert pp["estado"] == "actual" and pp["accion"]["tipo"] == "preparacion" and pp["correo"] is True
+        assert g["siguiente"] == pp["n"] == 4
         assert_sin_escrituras(env)
 
     def test_propuesta_enviada_espera_al_cliente(self, env):
         retiro(env, status="propuesta_enviada", proposed_date="2026-10-06")
-        p4 = paso(guia(env), 4)
-        assert p4["estado"] == "espera" and "Esperar la respuesta del cliente" in p4["faltan"][0]
+        pa = paso(guia(env), "agenda")
+        assert pa["estado"] == "espera" and "Esperar la respuesta del cliente" in pa["faltan"][0]
 
     def test_cliente_pide_cambiar_la_cita_bloquea_la_preparacion(self, env):
         retiro(env, status="agenda_confirmada", confirmed_date="2026-10-05")
         env.db.propuestas.append({"id": 5, "request_id": RID, "status": "pending", "proposed_by": "cliente"})
         g = guia(env)
-        assert paso(g, 4)["estado"] == "actual" and "otra fecha" in paso(g, 4)["faltan"][0]
-        assert paso(g, 4)["ancla"] == "#paso-esperando"
-        assert paso(g, 5)["estado"] == "bloqueado"
+        pa = paso(g, "agenda")
+        assert pa["estado"] == "actual" and "otra fecha" in pa["faltan"][0]
+        assert pa["ancla"] == "#paso-esperando"
+        assert paso(g, "preparacion")["estado"] == "bloqueado"
+        assert "(paso 3)" in paso(g, "preparacion")["faltan"][0]          # el cambio de fecha se responde en la Agenda (paso 3)
 
     def test_contrapropuesta_del_cliente_antes_de_haber_cita_le_toca_a_ILUS(self, env):
         """Cliente respondió a la PRIMERA propuesta con otra fecha: ya no dice «espera» (ámbar): le toca a ILUS."""
         retiro(env, status="en_revision", proposed_date="2026-10-06", responsable_user_id=7,
                responsable_nombre="Sam")
         env.db.propuestas.append({"id": 5, "request_id": RID, "status": "pending", "proposed_by": "cliente"})
-        p4 = paso(guia(env), 4)
-        assert p4["estado"] == "actual" and p4["ancla"] == "#paso-esperando"
-        assert "Esperar la respuesta" not in " ".join(p4["faltan"]) and p4["correo"] is True
+        pa = paso(guia(env), "agenda")
+        assert pa["estado"] == "actual" and pa["ancla"] == "#paso-esperando"
+        assert "Esperar la respuesta" not in " ".join(pa["faltan"]) and pa["correo"] is True
 
     def test_correo_invalido_ya_no_bloquea_solo_avisa(self, env):
         """El envío real usa contacto + extras (+ SMS/WhatsApp): un correo malo es un aviso blando, no un bloqueo."""
         retiro(env, contact_email="no-es-un-correo", responsable_user_id=7, responsable_nombre="Sam")
         env.cli.post(f"/retiros/{RID}/confirmar-docs")
         env.cli.post(f"/retiros/{RID}/confirmar-productos")
-        p4 = paso(guia(env), 4)
-        assert p4["estado"] == "actual" and p4["bloquea"] is False
-        assert any("correo válido" in a for a in p4["avisos"])
+        pa = paso(guia(env), "agenda")
+        assert pa["estado"] == "actual" and pa["bloquea"] is False
+        assert any("correo válido" in a for a in pa["avisos"])
 
     def test_un_correo_extra_valido_cuenta_como_destino(self, env):
         retiro(env, contact_email="", extra_emails="compras@cliente.cl", responsable_user_id=7,
                responsable_nombre="Sam")
         env.cli.post(f"/retiros/{RID}/confirmar-docs")
         env.cli.post(f"/retiros/{RID}/confirmar-productos")
-        p4 = paso(guia(env), 4)
-        assert p4["estado"] == "actual" and not any("correo válido" in a for a in p4["avisos"])
+        pa = paso(guia(env), "agenda")
+        assert pa["estado"] == "actual" and not any("correo válido" in a for a in pa["avisos"])
 
     def test_en_preparacion_muestra_el_avance_de_bodega(self, env):
         retiro_en_preparacion(env)
         env.db.picking[0]["picked"] = 1
         g = guia(env)
-        assert paso(g, 5)["estado"] == "espera" and "Van 1 de 2" in paso(g, 5)["faltan"][0]
-        assert paso(g, 6)["estado"] == "pendiente"
-        assert g["siguiente"] == 5
+        pp = paso(g, "preparacion")
+        assert pp["estado"] == "espera" and "Van 1 de 2" in pp["faltan"][0]
+        assert paso(g, "entrega")["estado"] == "pendiente"
+        assert "(paso 4)" in paso(g, "entrega")["faltan"][0]           # la entrega espera a la Preparación (paso 4)
+        assert g["siguiente"] == pp["n"] == 4
 
     def test_en_preparacion_con_pedido_listo_habilita_la_entrega(self, env):
         """Preparado = evento picking_completo posterior al paso a preparación Y la lista de bodega completa."""
@@ -324,8 +357,8 @@ class TestGuiaGET:
             it["picked"] = 1
         env.db.agregar_log(RID, "picking_completo", new_status="en_preparacion")
         g = guia(env)
-        assert paso(g, 5)["estado"] == "hecho"
-        assert paso(g, 6)["estado"] == "actual" and paso(g, 6)["accion"]["tipo"] == "retirar"
+        assert paso(g, "preparacion")["estado"] == "hecho"
+        assert paso(g, "entrega")["estado"] == "actual" and paso(g, "entrega")["accion"]["tipo"] == "retirar"
 
     def test_lista_de_picking_completa_sin_evento_ya_no_cuenta_como_preparado(self, env):
         """Cambio intencional: «preparado» ya no sale solo de los ítems marcados; hace falta el evento
@@ -333,7 +366,7 @@ class TestGuiaGET:
         retiro_en_preparacion(env)
         for it in env.db.picking:
             it["picked"] = 1
-        assert paso(guia(env), 5)["estado"] == "espera"
+        assert paso(guia(env), "preparacion")["estado"] == "espera"
 
     def test_evento_de_picking_completo_pero_lista_incompleta_no_cuenta(self, env):
         """Si bodega desmarca un ítem después de terminar, deja de estar «listo»."""
@@ -341,31 +374,37 @@ class TestGuiaGET:
         env.db.agregar_log(RID, "picking_completo", new_status="en_preparacion")
         env.db.picking[0]["picked"] = 1          # el otro ítem sigue sin marcar
         g = guia(env)
-        assert paso(g, 5)["estado"] == "espera" and paso(g, 6)["estado"] == "pendiente"
+        assert paso(g, "preparacion")["estado"] == "espera" and paso(g, "entrega")["estado"] == "pendiente"
 
     def test_retiro_en_curso_sin_responsable_se_frena_y_pide_hacerse_cargo_primero(self, env):
-        """Daniel 2026-10-02: «para avanzar debe declarar el responsable, y para agendar o liberar el calendario»."""
+        """Daniel 2026-10-02: «para avanzar debe declarar el responsable, y para agendar o liberar el calendario».
+        Con el paso 1 ya hecho (retiro en curso), lo que toca es «Me hago cargo» (paso 2) y lo demás queda bloqueado."""
         retiro(env, status="agenda_confirmada", confirmed_date="2026-10-05", responsable_user_id=None, responsable_nombre=None)
         g = guia(env)
-        p2 = paso(g, 2)
+        assert paso(g, "documentos")["estado"] == "hecho"
+        p2 = paso(g, "responsable")
         assert p2["estado"] == "actual" and p2["secundario"] is False and p2["accion"]["tipo"] == "tomar"
+        assert not p2["accion"].get("deshabilitada")
         assert g["siguiente"] == 2 and g["sin_responsable"] is True
-        p5 = paso(g, 5)
-        assert p5["accion"]["tipo"] == "preparacion" and p5["accion"]["deshabilitada"] is True
-        assert "Sin responsable no se avanza" in p5["accion"]["motivo"]
+        pp = paso(g, "preparacion")
+        assert pp["accion"]["tipo"] == "preparacion" and pp["accion"]["deshabilitada"] is True
+        assert "Sin responsable no se avanza" in pp["accion"]["motivo"]
 
     def test_con_la_regla_apagada_vuelve_a_ser_solo_un_aviso(self, env, monkeypatch):
         monkeypatch.setenv("RETIROS_EXIGE_RESPONSABLE", "0")
         retiro(env, status="agenda_confirmada", confirmed_date="2026-10-05", responsable_user_id=None, responsable_nombre=None)
         g = guia(env)
-        p2 = paso(g, 2)
+        p2 = paso(g, "responsable")
         assert p2["estado"] == "pendiente" and p2["secundario"] is True and p2["accion"]["tipo"] == "tomar"
-        assert g["siguiente"] == 5 and g["sin_responsable"] is False          # lo operativo, no «asignar responsable»
+        # lo operativo (Preparación, paso 4), no «asignar responsable»
+        assert g["siguiente"] == paso(g, "preparacion")["n"] == 4 and g["sin_responsable"] is False
+        assert not paso(g, "preparacion")["accion"].get("deshabilitada")
 
     def test_retiro_ya_en_curso_sin_marca_confirmo_lo_dice_con_honestidad(self, env):
         retiro(env, status="agenda_confirmada", confirmed_date="2026-10-05")
         g = guia(env)
-        assert "sin marca" in paso(g, 1)["resumen"] and "sin marca" in paso(g, 3)["resumen"]
+        assert "sin marca" in sub(g, "facturas")["resumen"] and "sin marca" in sub(g, "productos")["resumen"]
+        assert "sin marca" in paso(g, "documentos")["resumen"]
 
     @pytest.mark.parametrize("estado,frase", [("rechazada", "rechazó"), ("fallida", "no se concretó")])
     def test_retiro_terminal_negativo(self, env, estado, frase):
@@ -373,6 +412,7 @@ class TestGuiaGET:
         g = guia(env)
         assert frase in g["terminal"] and g["siguiente"] is None
         assert all(p["estado"] != "actual" for p in g["pasos"])
+        assert all(s["estado"] != "actual" and not s["accion"] for s in paso(g, "documentos")["sub"].values())
 
     @pytest.mark.parametrize("estado", ["retirada", "cerrada"])
     def test_retiro_completado(self, env, estado):
@@ -380,22 +420,23 @@ class TestGuiaGET:
         env.db.agregar_log(RID, "estado_actualizado", new_status="retirada")     # evidencia de que sí se retiró
         g = guia(env)
         assert g["terminal"] is None and g["siguiente"] is None
-        assert [p["estado"] for p in g["pasos"]] == ["hecho"] * 6
+        assert [p["estado"] for p in g["pasos"]] == ["hecho"] * 5
 
     def test_cerrada_con_quien_retiro_tambien_es_retiro_completado(self, env):
         retiro(env, status="cerrada", confirmed_date="2026-10-05", responsable_user_id=7,
                responsable_nombre="Sam", retirado_por_nombre="Juan Pérez")
         g = guia(env)
-        assert g["terminal"] is None and [p["estado"] for p in g["pasos"]] == ["hecho"] * 6
+        assert g["terminal"] is None and [p["estado"] for p in g["pasos"]] == ["hecho"] * 5
 
     def test_cerrada_sin_evidencia_no_dice_que_el_cliente_se_llevo_el_pedido(self, env):
-        """'cerrada' también cierra duplicados/spam que nunca se retiraron: terminal honesto, sin 6 pasos «hecho»."""
+        """'cerrada' también cierra duplicados/spam que nunca se retiraron: terminal honesto, sin 5 pasos «hecho»."""
         retiro(env, status="cerrada", confirmed_date="2026-10-05", responsable_user_id=7, responsable_nombre="Sam")
         g = guia(env)
         assert g["terminal"] == "Este retiro se cerró sin que el cliente lo retirara."
         assert g["siguiente"] is None
-        assert paso(g, 5)["estado"] != "hecho" and paso(g, 6)["estado"] != "hecho"
-        assert paso(g, 6)["resumen"] != "Retiro completado" and paso(g, 5)["resumen"] != "Pedido preparado"
+        pp, pe = paso(g, "preparacion"), paso(g, "entrega")
+        assert pp["estado"] != "hecho" and pe["estado"] != "hecho"
+        assert pe["resumen"] != "Retiro completado" and pp["resumen"] != "Pedido preparado"
         assert all(p["estado"] != "actual" for p in g["pasos"])
 
     def test_si_la_bd_falla_responde_500_amigable_sin_detalles_internos(self, env):
@@ -413,13 +454,13 @@ class TestGuiaGET:
         for d in env.db.docs:
             d.pop("motivo_otro_rut")
         g = guia(env)
-        assert paso(g, 1)["estado"] == "actual"
+        assert paso(g, "documentos")["estado"] == "actual" and sub(g, "facturas")["estado"] == "actual"
 
     def test_aviso_de_documento_sin_saldo_y_de_otro_rut(self, env):
         retiro(env)
         env.db.docs[0]["con_saldo"] = 0
         env.db.docs[0]["motivo_otro_rut"] = "Lo retira la empresa"
-        avisos = paso(guia(env), 1)["avisos"]
+        avisos = paso(guia(env), "documentos")["avisos"]
         assert any("sin saldo" in a for a in avisos) and any("otro RUT" in a for a in avisos)
 
 
@@ -436,7 +477,12 @@ class TestConfirmar:
         r = env.cli.post(f"/retiros/{RID}/confirmar-docs")
         d = r.get_json()
         assert r.status_code == 200 and d["ok"] is True
-        assert paso(d, 1)["estado"] == "hecho" and "por Samantha Blacio" in paso(d, 1)["resumen"]
+        fac = sub(d, "facturas")
+        assert fac["estado"] == "hecho" and "por Samantha Blacio" in fac["resumen"]
+        # el paso 1 sigue abierto: ahora toca confirmar los productos (misma tarjeta), y muestra esa lista
+        p1 = paso(d, "documentos")
+        assert p1["estado"] == "actual" and p1["accion"]["tipo"] == "confirmar_productos"
+        assert not p1["accion"].get("deshabilitada") and p1["detalle"] == sub(d, "productos")["detalle"]
         # UNA sola escritura en toda la BD: el evento (nada de UPDATE al retiro ni a otras tablas)
         assert len(env.db.escrituras) == 1 and len(env.db.inserts_en_logs()) == 1
         ev = env.db.eventos(RID, "docs_confirmadas")
@@ -456,7 +502,8 @@ class TestConfirmar:
         r = env.cli.post(f"/retiros/{RID}/confirmar-productos")
         d = r.get_json()
         assert r.status_code == 200 and d["ok"] is True
-        assert paso(d, 3)["estado"] == "hecho" and "2 productos confirmados" in paso(d, 3)["resumen"]
+        assert sub(d, "productos")["estado"] == "hecho" and "2 productos confirmados" in sub(d, "productos")["resumen"]
+        assert paso(d, "documentos")["estado"] == "hecho"           # con las dos confirmaciones, el paso 1 queda hecho
         assert len(env.db.escrituras) == 1 and len(env.db.inserts_en_logs()) == 1
         ev = env.db.eventos(RID, "productos_confirmados")
         assert len(ev) == 1 and re.match(
@@ -518,7 +565,7 @@ class TestConfirmar:
         assert r.status_code == 200
         ev = env.db.eventos(RID, "docs_confirmadas")[0]
         assert f"firma={vista} " in ev["notes"]
-        assert paso(guia(env), 1)["estado"] == "hecho"      # la huella guardada es la vigente
+        assert sub(guia(env), "facturas")["estado"] == "hecho"      # la huella guardada es la vigente
 
     @pytest.mark.parametrize("ruta,campo", [("confirmar-docs", "firma_docs"), ("confirmar-productos", "firma_prod")])
     def test_firma_desactualizada_es_409_y_no_escribe(self, env, ruta, campo):
@@ -540,7 +587,7 @@ class TestConfirmar:
         r = env.cli.post(f"/retiros/{RID}/confirmar-docs", json={"firma": vista})
         assert r.status_code == 409
         assert_sin_escrituras(env)
-        assert paso(guia(env), 1)["estado"] == "actual"                    # sigue sin confirmar
+        assert sub(guia(env), "facturas")["estado"] == "actual"            # sigue sin confirmar
 
     def test_confirmar_con_la_firma_vigente_funciona_para_docs_y_productos(self, env):
         retiro(env)
@@ -561,28 +608,32 @@ class TestConfirmar:
         env.cli.post(f"/retiros/{RID}/confirmar-docs")
         env.cli.post(f"/retiros/{RID}/confirmar-productos")
         g = guia(env)
-        assert paso(g, 1)["estado"] == "hecho" and paso(g, 3)["estado"] == "hecho"
+        assert sub(g, "facturas")["estado"] == "hecho" and sub(g, "productos")["estado"] == "hecho"
+        assert paso(g, "documentos")["estado"] == "hecho"
 
         env.db.agregar_doc(RID, numero=DOC_B, snapshot={"lineas": [
             {"sku": "BANCA1", "descripcion_erp": "Banca plana", "cantidad": 1}]})
         g = guia(env)
-        assert paso(g, 1)["estado"] == "actual" and "cambió" in paso(g, 1)["faltan"][0]
-        assert paso(g, 3)["estado"] == "pendiente" and paso(g, 3)["accion"]["deshabilitada"] is True
+        assert sub(g, "facturas")["estado"] == "actual" and "cambió" in sub(g, "facturas")["faltan"][0]
+        assert paso(g, "documentos")["estado"] == "actual" and "cambió" in paso(g, "documentos")["faltan"][0]
+        assert sub(g, "productos")["estado"] == "pendiente" and sub(g, "productos")["accion"]["deshabilitada"] is True
 
         env.cli.post(f"/retiros/{RID}/confirmar-docs")
         g = guia(env)
-        assert paso(g, 1)["estado"] == "hecho"
-        assert paso(g, 3)["estado"] == "actual" and "cambiaron" in paso(g, 3)["faltan"][0]
+        assert sub(g, "facturas")["estado"] == "hecho"
+        assert sub(g, "productos")["estado"] == "actual" and "cambiaron" in sub(g, "productos")["faltan"][0]
+        assert paso(g, "documentos")["estado"] == "actual" and "cambiaron" in paso(g, "documentos")["faltan"][0]
 
         env.cli.post(f"/retiros/{RID}/confirmar-productos")
-        assert paso(guia(env), 3)["estado"] == "hecho"
+        g = guia(env)
+        assert sub(g, "productos")["estado"] == "hecho" and paso(g, "documentos")["estado"] == "hecho"
         assert_nada_al_cliente(env)
 
     def test_si_se_quita_un_documento_tambien_se_invalida(self, env):
         retiro(env, docs=(DOC_A, DOC_B))
         env.cli.post(f"/retiros/{RID}/confirmar-docs")
         env.db.docs.pop()
-        assert paso(guia(env), 1)["estado"] == "actual"
+        assert sub(guia(env), "facturas")["estado"] == "actual"
 
     def test_si_cambia_una_cantidad_solo_se_invalidan_los_productos(self, env):
         retiro(env)
@@ -592,8 +643,9 @@ class TestConfirmar:
         snap["lineas"][1]["cantidad"] = 5
         env.db.docs[0]["erp_snapshot"] = json.dumps(snap)
         g = guia(env)
-        assert paso(g, 1)["estado"] == "hecho"
-        assert paso(g, 3)["estado"] == "actual" and "cambiaron" in paso(g, 3)["faltan"][0]
+        assert sub(g, "facturas")["estado"] == "hecho"
+        assert sub(g, "productos")["estado"] == "actual" and "cambiaron" in sub(g, "productos")["faltan"][0]
+        assert paso(g, "documentos")["estado"] == "actual"
 
     def test_la_ultima_confirmacion_manda(self, env):
         """Dos confirmaciones del mismo tipo: vale la más reciente (la guía lee ORDER BY id DESC)."""
@@ -601,19 +653,27 @@ class TestConfirmar:
         env.cli.post(f"/retiros/{RID}/confirmar-docs")
         env.db.agregar_doc(RID, numero=DOC_B)
         env.cli.post(f"/retiros/{RID}/confirmar-docs")
-        assert paso(guia(env), 1)["estado"] == "hecho"
+        assert sub(guia(env), "facturas")["estado"] == "hecho"
         assert len(env.db.eventos(RID, "docs_confirmadas")) == 2
 
-    def test_flujo_completo_de_los_tres_primeros_pasos_sin_un_solo_mensaje(self, env):
+    def test_flujo_completo_de_los_dos_primeros_pasos_sin_un_solo_mensaje(self, env):
+        """Daniel 2026-10-14: el responsable va DEBAJO de los productos. Facturas y productos se confirman primero (sin responsable)
+        y después «Me hago cargo»; recién ahí se puede agendar."""
         retiro(env, responsable_user_id=None, responsable_nombre=None)
-        for ruta in ("tomar", "confirmar-docs", "confirmar-productos"):       # primero el responsable: sin él no se avanza
+        for ruta in ("confirmar-docs", "confirmar-productos"):
             r = env.cli.post(f"/retiros/{RID}/{ruta}")
             assert r.status_code == 200 and r.get_json()["ok"] is True, ruta
         g = guia(env)
-        assert [paso(g, n)["estado"] for n in (1, 2, 3)] == ["hecho"] * 3
-        p4 = paso(g, 4)
-        assert p4["estado"] == "actual" and p4["accion"]["tipo"] == "proponer"
-        assert g["siguiente"] == 4
+        assert paso(g, "documentos")["estado"] == "hecho"
+        assert paso(g, "responsable")["estado"] == "actual" and g["siguiente"] == 2 and g["sin_responsable"] is True
+        assert paso(g, "agenda")["accion"]["deshabilitada"] is True                   # sin responsable no se agenda
+        r = env.cli.post(f"/retiros/{RID}/tomar")
+        assert r.status_code == 200 and r.get_json()["ok"] is True
+        g = guia(env)
+        assert [paso(g, k)["estado"] for k in ("documentos", "responsable")] == ["hecho"] * 2
+        pa = paso(g, "agenda")
+        assert pa["estado"] == "actual" and pa["accion"]["tipo"] == "proponer" and not pa["accion"].get("deshabilitada")
+        assert g["siguiente"] == pa["n"] == 3 and g["sin_responsable"] is False
         # lo único escrito: 3 eventos del equipo + el UPDATE del responsable; el estado no se movió
         assert {e["action"] for e in env.db.logs} == {"docs_confirmadas", "productos_confirmados", "responsable_asignado"}
         assert env.db.solicitudes[RID]["status"] == "solicitud_recibida"
@@ -643,7 +703,7 @@ class TestConfirmar:
         assert r.status_code == 500 and d["ok"] is False and "No se pudo guardar" in d["error"]
         assert "deadlock" not in r.get_data(as_text=True)
         assert env.db.eventos(RID, "docs_confirmadas") == []
-        assert paso(guia(env), 1)["estado"] == "actual"
+        assert sub(guia(env), "facturas")["estado"] == "actual"
         assert_nada_al_cliente(env)
 
 
@@ -699,19 +759,54 @@ class TestResponsableObligatorio:
         return retiro(env, status=status, responsable_user_id=None, responsable_nombre=None, **kw)
 
     @pytest.mark.parametrize("ruta", ["confirmar-docs", "confirmar-productos"])
-    def test_confirmar_pide_antes_el_responsable(self, env, ruta):
+    def test_confirmar_no_pide_responsable_y_no_le_escribe_al_cliente(self, env, ruta):
+        """Daniel 2026-10-14: el responsable va DEBAJO de los productos. Facturas y productos (paso 1) se confirman antes de
+        «Me hago cargo»: confirmar sin responsable funciona, deja solo la marca del equipo y no le escribe a nadie."""
         self._sin_resp(env)
+        if ruta == "confirmar-productos":
+            assert env.cli.post(f"/retiros/{RID}/confirmar-docs").status_code == 200
+        env.db.reiniciar_registro()
         r = env.cli.post(f"/retiros/{RID}/{ruta}")
-        assert r.status_code == 409 and self.MSG in r.get_json()["error"] and r.get_json()["code"] == "SIN_RESPONSABLE"
+        d = r.get_json()
+        assert r.status_code == 200 and d["ok"] is True and d.get("code") != "SIN_RESPONSABLE"
+        cual = "facturas" if ruta == "confirmar-docs" else "productos"
+        assert sub(d, cual)["estado"] == "hecho"
+        # una sola escritura: la marca en la bitácora. No asigna responsable ni mueve el estado.
+        assert len(env.db.escrituras) == 1 and len(env.db.inserts_en_logs()) == 1
+        fila = env.db.solicitudes[RID]
+        assert fila["status"] == "solicitud_recibida"
+        assert fila["responsable_user_id"] is None and fila["responsable_nombre"] is None
+        assert d["sin_responsable"] is True
+        assert_nada_al_cliente(env)
+        assert env.esp.mant_notif.call_count == 0
+
+    def test_confirmar_el_paso_1_no_destraba_la_agenda_sin_responsable(self, env):
+        """Con facturas y productos confirmados, agendar (proponer fecha) sigue exigiendo el responsable (REGLA #21)."""
+        self._sin_resp(env)
+        assert env.cli.post(f"/retiros/{RID}/confirmar-docs").status_code == 200
+        assert env.cli.post(f"/retiros/{RID}/confirmar-productos").status_code == 200
+        env.db.reiniciar_registro()
+        r = env.cli.post(f"/retiros/{RID}/proposal", json={"date": "2026-10-08", "time_from": "10:00", "time_to": "10:30"})
+        assert r.status_code == 409 and self.MSG in r.get_json()["error"]
         assert_sin_escrituras(env)
         assert_nada_al_cliente(env)
 
     def test_hacerse_cargo_destraba_todo(self, env):
         self._sin_resp(env)
-        assert env.cli.post(f"/retiros/{RID}/confirmar-docs").status_code == 409
-        assert env.cli.post(f"/retiros/{RID}/tomar").status_code == 200
         assert env.cli.post(f"/retiros/{RID}/confirmar-docs").status_code == 200
         assert env.cli.post(f"/retiros/{RID}/confirmar-productos").status_code == 200
+        r = env.cli.post(f"/retiros/{RID}/proposal", json={"date": "2026-10-08", "time_from": "10:00", "time_to": "10:30"})
+        assert r.status_code == 409 and self.MSG in r.get_json()["error"]                # sin responsable: no se agenda
+        g = guia(env)
+        assert g["sin_responsable"] is True and paso(g, "agenda")["accion"]["deshabilitada"] is True
+        assert env.cli.post(f"/retiros/{RID}/tomar").status_code == 200
+        g = guia(env)
+        assert g["sin_responsable"] is False
+        pa = paso(g, "agenda")
+        assert pa["accion"]["tipo"] == "proponer" and not pa["accion"].get("deshabilitada")
+        # ya no queda nada bloqueado por el responsable
+        assert all(self.MSG not in ((p.get("accion") or {}).get("motivo") or "") for p in g["pasos"])
+        assert_nada_al_cliente(env)
 
     def test_proponer_fecha_ocupa_el_calendario_y_exige_responsable(self, env):
         self._sin_resp(env, docs=(DOC_A,))
@@ -794,9 +889,10 @@ class TestResponsableObligatorio:
         import datetime as dt
         self._sin_resp(env, status="agenda_confirmada", confirmed_date="2026-10-05", created_at=dt.datetime(2026, 9, 30, 15, 0))
         g = guia(env)
-        assert g["sin_responsable"] is False and g["siguiente"] == 5
-        assert paso(g, 2)["estado"] == "pendiente" and paso(g, 2)["secundario"] is True       # aviso, no bloqueo
-        assert not paso(g, 5)["accion"].get("deshabilitada")
+        assert g["sin_responsable"] is False and g["siguiente"] == paso(g, "preparacion")["n"] == 4
+        p2 = paso(g, "responsable")
+        assert p2["estado"] == "pendiente" and p2["secundario"] is True       # aviso, no bloqueo
+        assert not paso(g, "preparacion")["accion"].get("deshabilitada")
         r = env.cli.post(f"/retiros/{RID}/status", data={"status": "retirada", "retirado_por": "Gerd Müller"})
         assert r.status_code == 302 and env.db.solicitudes[RID]["status"] == "retirada"
 
@@ -814,17 +910,46 @@ class TestResponsableObligatorio:
         assert guia(env)["sin_responsable"] is False
 
     def test_la_regla_se_puede_apagar_por_entorno(self, env, monkeypatch):
+        """Confirmar el paso 1 ya no pide responsable; lo que la regla gobierna es agendar y cambiar de estado: con el
+        interruptor apagado, un retiro sin responsable avanza de estado y la guía no bloquea nada."""
         monkeypatch.setenv("RETIROS_EXIGE_RESPONSABLE", "0")
-        self._sin_resp(env)
-        assert env.cli.post(f"/retiros/{RID}/confirmar-docs").status_code == 200
+        self._sin_resp(env, status="agenda_confirmada", confirmed_date="2026-10-08")
+        g = guia(env)
+        assert g["sin_responsable"] is False and not paso(g, "preparacion")["accion"].get("deshabilitada")
+        r = env.cli.post(f"/retiros/{RID}/status", data={"status": "en_preparacion"})
+        assert r.status_code == 302 and env.db.solicitudes[RID]["status"] == "en_preparacion"
 
-    def test_la_guia_dice_que_hay_que_hacerse_cargo_y_bloquea_el_resto(self, env):
+    def test_la_guia_parte_por_facturas_y_productos_y_bloquea_lo_que_agenda(self, env):
+        """Sin responsable, la ficha parte en el paso 1 (facturas y productos, habilitado); «Me hago cargo» queda disponible
+        (pendiente) y lo que agenda o mueve el retiro (pasos 3 a 5) queda bloqueado con el motivo a la vista."""
         self._sin_resp(env)
         env.db.reiniciar_registro()
         g = guia(env)
+        assert g["sin_responsable"] is True and g["siguiente"] == 1
+        p1 = paso(g, "documentos")
+        assert p1["estado"] == "actual" and p1["accion"]["tipo"] == "confirmar_docs"
+        assert not p1["accion"].get("deshabilitada")                                  # se confirma sin responsable
+        p2 = paso(g, "responsable")
+        assert p2["estado"] == "pendiente" and p2["accion"]["tipo"] == "tomar" and not p2["accion"].get("deshabilitada")
+        pa = paso(g, "agenda")
+        assert pa["accion"]["tipo"] == "proponer" and pa["accion"]["deshabilitada"] is True
+        assert self.MSG in pa["accion"]["motivo"]
+        for clave in ("agenda", "preparacion", "entrega"):
+            acc = paso(g, clave).get("accion")
+            assert not acc or acc.get("deshabilitada") is True, clave
+        assert_sin_escrituras(env)
+
+    def test_con_el_paso_1_hecho_lo_que_sigue_es_hacerse_cargo(self, env):
+        self._sin_resp(env)
+        env.cli.post(f"/retiros/{RID}/confirmar-docs")
+        env.cli.post(f"/retiros/{RID}/confirmar-productos")
+        env.db.reiniciar_registro()
+        g = guia(env)
+        assert paso(g, "documentos")["estado"] == "hecho"
         assert g["sin_responsable"] is True and g["siguiente"] == 2
-        assert paso(g, 2)["estado"] == "actual" and paso(g, 2)["accion"]["tipo"] == "tomar"
-        assert paso(g, 1)["accion"]["deshabilitada"] is True and self.MSG in paso(g, 1)["accion"]["motivo"]
+        p2 = paso(g, "responsable")
+        assert p2["estado"] == "actual" and p2["accion"]["tipo"] == "tomar" and not p2["accion"].get("deshabilitada")
+        assert paso(g, "agenda")["accion"]["deshabilitada"] is True
         assert_sin_escrituras(env)
 
 
@@ -868,7 +993,7 @@ class TestCheckPreparacion:
         assert env.db.solicitudes[RID]["status"] == "en_preparacion"
         # La guía y la línea de tiempo coinciden
         g = guia(env)
-        assert paso(g, 5)["estado"] == "hecho" and paso(g, 6)["estado"] == "actual"
+        assert paso(g, "preparacion")["estado"] == "hecho" and paso(g, "entrega")["estado"] == "actual"
 
     def test_el_aviso_va_solo_al_equipo_interno_nunca_al_cliente(self, env):
         retiro_en_preparacion(env)
@@ -1134,7 +1259,7 @@ class TestCheckPreparacion:
         logs_recientes_primero = sorted(env.db.logs, key=lambda x: -x["id"])
         hitos = pm.pickup_hitos(env.db.solicitudes[RID], [], logs_recientes_primero)
         assert hitos[3]["preparado"] is False             # la línea de tiempo dice NO preparado
-        assert paso(guia(env), 5)["estado"] == "espera"   # y la guía coincide
+        assert paso(guia(env), "preparacion")["estado"] == "espera"   # y la guía coincide
 
     # ── candados de seguridad del marcado automático ──────────────────────
     def test_doble_lectura_la_primera_no_aplica_la_segunda_si(self, env, monkeypatch):
@@ -1409,11 +1534,19 @@ def _bloque_whitelist_check():
     return m.group(1)
 
 
+def _inicio_bloque(src):
+    """Posición del encabezado «GUÍA DE N PASOS + PREPARACIÓN POR CHECK» (la guía pasó de 6 a 5 pasos el 2026-10-14:
+    se acepta cualquier N para que el candado no dependa del número escrito en el comentario)."""
+    m = re.search(r"GUÍA DE \d+ PASOS \+ PREPARACIÓN POR CHECK", src)
+    assert m, "no se encontró el encabezado «GUÍA DE N PASOS + PREPARACIÓN POR CHECK» en pickups_module.py"
+    return m.start()
+
+
 def _bloque_nuevo():
-    """Desde «GUÍA DE 6 PASOS + PREPARACIÓN POR CHECK» hasta «MARCAR PROPUESTA COMO ACEPTADA MANUALMENTE»:
+    """Desde «GUÍA DE N PASOS + PREPARACIÓN POR CHECK» hasta «MARCAR PROPUESTA COMO ACEPTADA MANUALMENTE»:
     guía, confirmaciones, Check, diagnóstico y «Me hago cargo»."""
     src = _leer("pickups_module.py")
-    i = src.index("GUÍA DE 6 PASOS + PREPARACIÓN POR CHECK")
+    i = _inicio_bloque(src)
     j = src.index("MARCAR PROPUESTA COMO ACEPTADA MANUALMENTE", i)
     return src[i:j]
 
@@ -1469,7 +1602,7 @@ class TestCandadosDeCodigo:
         que un f-string puede interpolar son los nombres de tabla LOG/REQ/PROP. Nada de .format ni de `%`."""
         import ast
         src = _leer("pickups_module.py")
-        i = src.index("GUÍA DE 6 PASOS + PREPARACIÓN POR CHECK")
+        i = _inicio_bloque(src)
         j = src.index("MARCAR PROPUESTA COMO ACEPTADA MANUALMENTE", i)
         desde, hasta = src[:i].count("\n") + 1, src[:j].count("\n") + 1
         n_consultas = 0
@@ -1502,13 +1635,15 @@ class TestIntegracionConLaFicha:
                 resp = env.app.view_functions["pickup_detail"](RID)
         return resp, rt
 
-    def test_la_ficha_recibe_la_guia_de_6_pasos(self, env):
+    def test_la_ficha_recibe_la_guia_de_5_pasos(self, env):
         retiro(env)
         env.db.reiniciar_registro()
         resp, rt = self._abrir_ficha(env)
         assert resp == "ok" and rt.called
         g = rt.call_args.kwargs["guia"]
-        assert [p["n"] for p in g["pasos"]] == [1, 2, 3, 4, 5, 6] and g["siguiente"] == 1
+        assert [p["n"] for p in g["pasos"]] == [1, 2, 3, 4, 5] and g["siguiente"] == 1
+        assert [p["clave"] for p in g["pasos"]] == list(CLAVES)
+        assert set(paso(g, "documentos")["sub"]) == {"facturas", "productos"}
         json.dumps(g)                      # va a la plantilla con |tojson: tiene que ser serializable
         assert_sin_escrituras(env)         # abrir la ficha no escribe nada
         assert_nada_al_cliente(env)

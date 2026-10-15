@@ -4780,6 +4780,10 @@ PERMS_KEYS = (
     # este flag solo puede SUMAR acceso. Se enciende por rol (Roles → Retiros) o por
     # persona (Permisos individuales).
     "ret_horarios",
+    # ret_encuesta_firma — Encuesta de satisfacción y firma de recepción de Retiros (VISTA PREVIA). Daniel 2026-10-14: «la encuesta y la
+    # firma de momento son opcionales… solamente una vista al superadministrador… podemos activarlo por el front más adelante. Déjalo como
+    # rol». Apagado en todos los roles (el superadmin lo tiene siempre); se enciende en Roles → Retiros. No le escribe a ningún cliente.
+    "ret_encuesta_firma",
     # tk_* — flags del módulo Tickets (aditivo 2026-07-12). El gate
     # _tickets_required sigue aceptando "mantenciones" también, así que
     # estos flags solo pueden SUMAR acceso, nunca quitarlo.
@@ -5095,6 +5099,7 @@ def _build_perms_from_matrix(role):
     )
     base["retiros"]        = bool(ret.get("ver"))
     base["ret_horarios"]   = bool(ret.get("horarios"))
+    base["ret_encuesta_firma"] = bool(ret.get("encuesta_firma"))
     base["mantenciones"]   = bool(man.get("ver"))
     # Crear OT de trabajo interno sin cliente (aditivo 2026-08-26). Ver el
     # comentario de "mant_ot_interna" en PERMS_KEYS: el gate real deja pasar
@@ -13909,7 +13914,7 @@ PERMISSIONS_MATRIX = {
                                    "reagendar", "reasignar_tecnico",
                                    "ot2_tecnico", "taller"]},
     "retiros":        {"label":"Retiros",        "icon":"bi-box-arrow-up-right",
-                       "acciones":["ver","gestionar","monitor","marketing","horarios"]},
+                       "acciones":["ver","gestionar","monitor","marketing","horarios","encuesta_firma"]},
     "transporte":     {"label":"Transporte",     "icon":"bi-truck",
                        "acciones":["ver","cubicador","asignar","manifiestos","couriers",
                                    "eliminar","cambiar_estado"]},
@@ -14020,6 +14025,8 @@ PERMISSIONS_META = {
         "marketing": {"label": "Marketing de retiros","tipo": "submodulo", "icon": "bi-megaphone"},
         # Aditivo 2026-09-30: ver "ret_horarios" en PERMS_KEYS.
         "horarios":  {"label": "Horarios y alertas (feriados, cierres, responsables)", "tipo": "bloqueo", "icon": "bi-gear"},
+        # Aditivo 2026-10-14: ver "ret_encuesta_firma" en PERMS_KEYS (vista previa; no le escribe al cliente).
+        "encuesta_firma": {"label": "Encuesta y firma de recepción (vista previa)", "tipo": "bloqueo", "icon": "bi-pen"},
     },
     "transporte": {
         "ver":         {"label": "Monitor transporte","tipo": "submodulo", "icon": "bi-truck"},

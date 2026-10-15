@@ -1,5 +1,5 @@
 /* Guía del retiro (Daniel 2026-10-02) — ver templates/retiros/_guia.html y retiros_guia.py.
-   Dibuja los 6 pasos con lo hecho, lo que te toca (en ROJO) y lo que falta; marca en rojo las
+   Dibuja los 5 pasos (desde 2026-10-14) con lo hecho, lo que te toca (en ÁMBAR) y lo que falta; marca en rojo las
    tarjetas y botones pendientes de la ficha; avisa EXACTAMENTE qué falta antes de enviar algo que
    le escribe al cliente; muestra lo que Check (bodega) dice de la preparación.
    Seguridad: «Confirmo» solo deja un registro interno; nada de aquí escribe al cliente. Check solo se consulta. */
@@ -21,12 +21,14 @@
   var AVISO_ABIERTO = false;
   var ULTIMO_DIBUJO = '';
 
-  var CARDS = { 1: '#paso-2', 2: '#paso-resp', 3: '#paso-3', 4: '#paso-4', 5: '#paso-confirmacion', 6: '#paso-confirmacion' };
-  var BTNS = { 2: '#btnTomarRetiro', 4: '#btnAbrirProponerFecha', 5: '#formEnviarPreparacion .cierre-next-btn', 6: '.cierre-next-btn.is-green' };
+  // Daniel 2026-10-14: 5 pasos en el orden de la ficha — 1 Facturas y productos (una tarjeta), 2 Responsable, 3 Agenda, 4 Preparación,
+  // 5 Entrega. Cada paso se reconoce por su CLAVE (no por su número): si el orden vuelve a cambiar, esto no se rompe.
+  var CARDS = { documentos: '#paso-2', responsable: '#paso-resp', agenda: '#paso-4', preparacion: '#paso-confirmacion', entrega: '#paso-confirmacion' };
+  var BTNS = { responsable: '#btnTomarRetiro', agenda: '#btnAbrirProponerFecha', preparacion: '#formEnviarPreparacion .cierre-next-btn', entrega: '.cierre-next-btn.is-green' };
   var GUARDS = [
-    { sel: '#btnAbrirProponerFecha', n: 4 },
-    { sel: '#formEnviarPreparacion .cierre-next-btn', n: 5 },
-    { sel: '.cierre-next-btn.is-green', n: 6 }
+    { sel: '#btnAbrirProponerFecha', clave: 'agenda' },
+    { sel: '#formEnviarPreparacion .cierre-next-btn', clave: 'preparacion' },
+    { sel: '.cierre-next-btn.is-green', clave: 'entrega' }
   ];
   var ESTADO_TXT = {
     hecho: ['b-hecho', 'bi-check-circle-fill', 'Hecho'],
@@ -46,6 +48,17 @@
   function $(sel, root) { return (root || document).querySelector(sel); }
   function toast(msg, tipo) { if (typeof window.ilusToast === 'function') window.ilusToast(msg, { type: tipo || 'info' }); }
   function visible(el) { return !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length)); }
+  function pasoDe(clave) {
+    for (var i = 0; i < ((G && G.pasos) || []).length; i++) { if (G.pasos[i].clave === clave) return G.pasos[i]; }
+    return null;
+  }
+  function nDe(clave) { var p = pasoDe(clave); return p ? p.n : 0; }
+  // ¿El retiro ya tiene facturas o boletas? (el paso 1 informa cuántas aunque muestre el detalle de los productos)
+  function nDocs() {
+    var p = pasoDe('documentos');
+    if (!p) return 0;
+    return p.n_docs != null ? p.n_docs : ((p.detalle || []).length);
+  }
 
   // ── Qué falta antes de un paso ──────────────────────────────────────────
   function faltantesAntes(n) {
@@ -57,12 +70,12 @@
   }
   function anclaDe(p) {
     if (p.ancla && $(p.ancla)) return p.ancla;
-    return CARDS[p.n] || p.ancla;
+    return CARDS[p.clave] || p.ancla;
   }
   function irA(sel, resaltar) {
     var el = $(sel);
     if (!el) return false;
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });   // respeta scroll-margin-top = alto de la guía fija (--gp-alto)
     if (resaltar !== false) {
       el.classList.remove('gp-resalta'); void el.offsetWidth; el.classList.add('gp-resalta');
       setTimeout(function () { el.classList.remove('gp-resalta'); }, 1800);
@@ -130,9 +143,9 @@
   }
   // Sin responsable declarado no se avanza: aviso DURO (sin «continuar de todos modos») que lleva directo a «Me hago cargo»
   function avisoResponsable(n) {
-    var p2 = G.pasos[1];
-    avisoFalta(n, [{ n: 2, titulo: p2.titulo, texto: (p2.faltan && p2.faltan[0]) || 'Declara quién se hace cargo de este retiro.', estado: 'actual' }], true, true)
-      .then(function (r) { if (r === 'ir') irAlPaso(2, false); });
+    var pr = pasoDe('responsable');
+    avisoFalta(n, [{ n: pr.n, titulo: pr.titulo, texto: (pr.faltan && pr.faltan[0]) || 'Declara quién se hace cargo de este retiro.', estado: 'actual' }], true, true)
+      .then(function (r) { if (r === 'ir') irAlPaso(pr.n, false); });
   }
   function guardar(n, hacer) {
     var p = G.pasos[n - 1];
@@ -152,18 +165,20 @@
       var b = ev.target.closest(g.sel);
       if (!b) continue;
       if (b.dataset.gpOk === '1') return;
+      var gn = nDe(g.clave);
+      if (!gn) return;
       if (G.sin_responsable) {            // Daniel 2026-10-02: «para avanzar debe declarar el responsable, y para agendar o liberar el calendario»
         ev.preventDefault();
         ev.stopImmediatePropagation();
-        avisoResponsable(g.n);
+        avisoResponsable(gn);
         return;
       }
-      var p = G.pasos[g.n - 1];
-      var ant = faltantesAntes(g.n);
+      var p = G.pasos[gn - 1];
+      var ant = faltantesAntes(gn);
       if (!ant.length && !(p.bloquea && p.faltan.length)) return;
       ev.preventDefault();
       ev.stopImmediatePropagation();
-      guardar(g.n, function () {
+      guardar(gn, function () {
         b.dataset.gpOk = '1';
         b.click();
         setTimeout(function () { delete b.dataset.gpOk; }, 800);
@@ -173,8 +188,8 @@
   }, true);
 
   // ── Dibujo ───────────────────────────────────────────────────────────────
-  // La barra es corta a propósito (como la cabecera del modal «Nuevo retiro interno»): progreso, los 6 pasos y
-  // el siguiente. El detalle de cada paso vive en SU tarjeta de la ficha, bordeada en rojo si te toca.
+  // La barra es corta a propósito (como la cabecera del modal «Nuevo retiro interno»): progreso, los 5 pasos y
+  // el siguiente. El detalle de cada paso vive en SU tarjeta de la ficha, marcada (en ámbar, sin estridencias) si te toca.
   function botones(p) {
     if (!p.accion) return '';
     var a = p.accion;
@@ -596,7 +611,7 @@
   }
   // Retiro completado: solo el registro de bodega (quién y cuándo), sin conexión en vivo ni botones
   function registroCheckHtml() {
-    if (!G.pasos[0].detalle || !G.pasos[0].detalle.length || G.terminal) return '';
+    if (!nDocs() || G.terminal) return '';
     var guardado = ACT && ACT.desde_registro;
     return '<div class="gp-check ck is-ok" data-gp-noclick="1"><div class="ck-head"><div class="ck-tit"><span class="ck-ico"><i class="bi bi-box-seam-fill"></i></span>' +
       '<div><b>Check · Bodega</b><small>Registro de la preparación de este retiro</small></div></div>' +
@@ -606,7 +621,7 @@
   function checkHtml() {
     if (esRetirado()) return registroCheckHtml();
     if (STATUS !== 'agenda_confirmada' && STATUS !== 'en_preparacion') return '';
-    if (!G.pasos[0].detalle || !G.pasos[0].detalle.length) return '';
+    if (!nDocs()) return '';
     var cx = CHECK && CHECK.conexion ? CHECK.conexion.estado : '';
     var ev = (CHECK && CHECK.evaluacion) || {};
     var tono = (cx === 'sin_conexion' || cx === 'sin_credenciales') ? 'mal' : (ev.listo ? 'ok' : (CHECK ? 'en' : 'neutro'));
@@ -673,8 +688,8 @@
   }
   // ── Check ya lo terminó pero el retiro sigue en «Cita confirmada» ───────────────────────────────────────────
   // Daniel 2026-10-05 (retiro real): «si Check se completó, ¿por qué no avisó que está preparado? Además falta marcar como entregado el pedido».
-  // El servidor no le habla a Check al armar la guía, así que aquí se corrige lo que se ve: el paso 5 queda «preparado según Check» y lo que
-  // toca es el 6, «Marcar como RETIRADO». Nunca se empuja «Enviar a preparación»: al cliente le llegaría «estamos preparando» con el pedido
+  // El servidor no le habla a Check al armar la guía, así que aquí se corrige lo que se ve: «Preparación» queda «preparado según Check» y lo
+  // que toca es «Entrega»: «Marcar como RETIRADO». Nunca se empuja «Enviar a preparación»: al cliente le llegaría «estamos preparando» con el pedido
   // ya preparado o entregado. Se reaplica en cada render (la guía del servidor se vuelve a leer cada minuto).
   function ajustarPorCheck() {
     var ev = CHECK && CHECK.evaluacion;
@@ -682,8 +697,8 @@
     var desp = !!(activo && (ev.despachadas || 0) > 0);
     window.RETIROS_CHECK_LISTO = activo ? { despachado: desp } : null;      // lo lee _confirmarEnviarPreparacion (retiros_internal_detail.js)
     document.body.classList.toggle('gp-check-listo', activo);
-    if (!activo || G.pasos[4].estado === 'hecho') return;
-    var p5 = G.pasos[4], p6 = G.pasos[5];
+    var p5 = pasoDe('preparacion'), p6 = pasoDe('entrega');          // nombres viejos: p5 = preparación, p6 = entrega
+    if (!activo || !p5 || !p6 || p5.estado === 'hecho') return;
     var vencida = !!(p5.accion && p5.accion.tipo === 'que_paso');    // la cita ya pasó (servidor): se pregunta qué pasó, sin empujar un correo
     p5.estado = 'hecho'; p5.resumen = desp ? 'Check: preparado y despachado' : 'Check: pedido preparado';
     p5.faltan = []; p5.avisos = []; p5.accion = null; p5.correo = false; p5.bloquea = false;
@@ -696,14 +711,14 @@
       p6.correo = false;
       p6.faltan = ['Check ya preparó el pedido y la cita ya pasó. Registra qué pasó: si el cliente retiró, márcalo como RETIRADO; si no vino, reagenda o ciérralo.'];
       p6.accion = { tipo: 'que_paso', texto: '¿Qué pasó?' };
-      G.siguiente = 6;
+      G.siguiente = p6.n;
       return;
     }
-    if (!G.sin_responsable) G.siguiente = 6;
+    if (!G.sin_responsable) G.siguiente = p6.n;
   }
   // «Marcar como RETIRADO» desde el panel de Check (el mismo modal de siempre: quién retiró + RUT + foto)
   function retirarDesdeCheck() {
-    if (G.sin_responsable) { avisoResponsable(6); return; }
+    if (G.sin_responsable) { avisoResponsable(nDe('entrega')); return; }
     if (typeof window.abrirModalRetirar === 'function' && document.getElementById('modalRetirar')) window.abrirModalRetirar();
     else toast('No pude abrir la ventana de «Marcar como retirado». Actualiza la página (F5) e inténtalo de nuevo.', 'warning');
   }
@@ -744,7 +759,9 @@
       var card = $(anclaDe(p));
       if (!card || usadas[card.id]) return;
       // En la tarjeta compartida (preparación y entrega) manda el primer paso que no esté hecho.
-      if (p.n === 6 && G.pasos[4].estado !== 'hecho') return;
+      if (p.clave === 'entrega' && (pasoDe('preparacion') || {}).estado !== 'hecho') return;
+      // …y si la preparación ya está hecha, la tarjeta es de la entrega (si no, quedaba verde justo cuando toca «Marcar como RETIRADO»).
+      if (p.clave === 'preparacion' && p.estado === 'hecho' && (pasoDe('entrega') || {}).estado !== 'hecho') return;
       usadas[card.id] = true;
       card.classList.add('gp-e-' + p.estado);
       if (p.estado !== 'actual' && p.estado !== 'espera') return;
@@ -757,8 +774,8 @@
         (bloq ? ' <em class="gp-tag-mail"><i class="bi bi-lock-fill"></i> ' + esc(p.accion.motivo) + '</em>' : '') + '</span>' +
         (acc ? '<button type="button" class="gp-btn" data-gp-acc="' + p.n + '"><i class="bi bi-patch-check-fill"></i>' + esc(p.accion.texto) + '</button>' : '');
       card.insertBefore(tag, card.firstChild);
-      if (p.estado === 'actual' && BTNS[p.n]) {
-        var b = $(BTNS[p.n]);
+      if (p.estado === 'actual' && BTNS[p.clave]) {
+        var b = $(BTNS[p.clave]);
         if (b && visible(b)) b.classList.add('gp-btn-roja');
       }
     });
@@ -797,12 +814,12 @@
     if (a.tipo === 'confirmar_productos') return postear('confirmar-productos', btn, G.firma_prod, '✓ Productos confirmados. Queda registrado quién y cuándo. No se envía nada al cliente.');
     if (a.tipo === 'tomar') {
       var t = $('#btnTomarRetiro');
-      if (!t) { irAlPaso(2, false); return; }
+      if (!t) { irAlPaso(nDe('responsable'), false); return; }
       irA('#paso-resp');
       if (typeof window.tomarRetiro === 'function') window.tomarRetiro(t);
       return;
     }
-    var real = BTNS[n] && $(BTNS[n]);
+    var real = BTNS[p.clave] && $(BTNS[p.clave]);
     var activar = function (ancla) {
       if (!irA(ancla)) { irAlPaso(n, false); return; }
       if (real && visible(real)) real.click();
@@ -867,8 +884,9 @@
   // ── Enter = ir al siguiente pendiente, por prioridad de tarjeta ─────────────────────────────────────────
   // Daniel 2026-10-02: «si algo está mal y le das Enter, que te lleve a donde falta el detalle, por orden de prioridad de
   // tarjeta». La lista sale de la guía (pasos en rojo) y de lo que se ve en pantalla (productos con problema, facturas sin
-  // saldo o de otro RUT, el RUT que no coincide); va de la tarjeta 1 a la 6 y cada Enter pasa al siguiente (Mayús+Enter vuelve al
-  // anterior). Con varios documentos, cada pendiente dice de CUÁL es. Sin responsable declarado solo hay un pendiente: «Me hago cargo».
+  // saldo o de otro RUT, el RUT que no coincide); va de la tarjeta 1 a la 5 y cada Enter pasa al siguiente (Mayús+Enter vuelve al
+  // anterior). Con varios documentos, cada pendiente dice de CUÁL es. Sin responsable declarado: facturas y productos primero, después
+  // «Me hago cargo» (Daniel 2026-10-14: el responsable va debajo de los productos).
   var PEND_I = -1, PEND_EL = null;
   var VENTANAS = '.modal.show,.ilus-overlay,.ilus-sheet-overlay,.rba-modal.is-open,#opChatPanel.open,[aria-modal="true"]:not([aria-hidden="true"])';
   function hayVentanaAbierta() {      // una ventana propia abierta: el Enter es suyo, no de la guía
@@ -885,43 +903,39 @@
     var out = [];
     if (G.terminal) return out;
     function poner(n, nivel, texto, el) { if (el) out.push({ n: n, nivel: nivel, texto: texto, el: el }); }
-    if (G.sin_responsable) {          // lo demás está bloqueado hasta que alguien se haga cargo
-      var tomar0 = $('#btnTomarRetiro'), card0 = $(CARDS[2]);
-      poner(2, 'rojo', (G.pasos[1].faltan && G.pasos[1].faltan[0]) || G.pasos[1].titulo, visible(tomar0) ? tomar0 : card0);
-      return out;
-    }
     G.pasos.forEach(function (p) {
       var card = $(anclaDe(p));
-      var boton = card ? $('.gp-tag [data-gp-acc]', card) : null;       // el «Confirmo» de la franja roja
-      if (p.n === 1) {
-        if (p.estado === 'actual') {
+      var boton = card ? $('.gp-tag [data-gp-acc]', card) : null;       // el «Confirmo» de la franja del paso
+      if (p.clave === 'documentos') {
+        var sub = p.sub || {};
+        var fac = sub.facturas || {}, prod = sub.productos || {};
+        if (fac.estado === 'actual') {
           var abrir = $('.btn-asociar-compact');
-          var hayDocs = G.pasos[0].detalle && G.pasos[0].detalle.length;
-          poner(1, 'rojo', p.faltan[0] || p.titulo, hayDocs ? (boton || card) : (visible(abrir) ? abrir : card));
+          poner(p.n, 'rojo', (fac.faltan && fac.faltan[0]) || p.titulo, nDocs() ? (boton || card) : (visible(abrir) ? abrir : card));
         }
         var alertaRut = $('.fv8-alerta');
-        if (alertaRut && visible(alertaRut)) poner(1, 'rojo', textoDe($('strong', alertaRut)) || 'El RUT del documento no coincide con el de quien retira.', alertaRut);
+        if (alertaRut && visible(alertaRut)) poner(p.n, 'rojo', textoDe($('strong', alertaRut)) || 'El RUT del documento no coincide con el de quien retira.', alertaRut);
         [].forEach.call(document.querySelectorAll('#tabDocsAsociados tbody tr[data-doc-id]'), function (tr) {
           var sinSaldo = $('.td-pill-warn', tr), otroRut = $('.otro-rut-badge', tr);
           if (sinSaldo || otroRut) {
-            poner(1, 'ambar', 'Revisar ' + textoDe($('.td-pill-dark', tr)) + ' ' + textoDe($('td.mono', tr)) + ': ' + (sinSaldo ? textoDe(sinSaldo).toLowerCase() : 'es de otro RUT'), tr);
+            poner(p.n, 'ambar', 'Revisar ' + textoDe($('.td-pill-dark', tr)) + ' ' + textoDe($('td.mono', tr)) + ': ' + (sinSaldo ? textoDe(sinSaldo).toLowerCase() : 'es de otro RUT'), tr);
           }
         });
-      } else if (p.n === 2) {
-        if (p.estado === 'actual' || (p.estado === 'pendiente' && p.secundario)) {
-          var tomar = $('#btnTomarRetiro');
-          poner(2, p.estado === 'actual' ? 'rojo' : 'ambar', p.faltan[0] || p.titulo, visible(tomar) ? tomar : card);
-        }
-      } else if (p.n === 3) {
         [].forEach.call(document.querySelectorAll('#paso-3 .pd-row.t-rojo'), function (row) {
-          poner(3, 'rojo', docDeFila(row) + 'Producto con problema: ' + textoDe($('.pd-nombre', row)) + ' — ' + textoDe($('.pd-badge', row)), row);
+          poner(p.n, 'rojo', docDeFila(row) + 'Producto con problema: ' + textoDe($('.pd-nombre', row)) + ' — ' + textoDe($('.pd-badge', row)), row);
         });
         [].forEach.call(document.querySelectorAll('#paso-3 .pd-row.t-ambar'), function (row) {
-          poner(3, 'ambar', docDeFila(row) + 'Revisar: ' + textoDe($('.pd-nombre', row)) + ' — ' + textoDe($('.pd-badge', row)), row);
+          poner(p.n, 'ambar', docDeFila(row) + 'Revisar: ' + textoDe($('.pd-nombre', row)) + ' — ' + textoDe($('.pd-badge', row)), row);
         });
-        if (p.estado === 'actual') poner(3, 'rojo', p.faltan[0] || p.titulo, boton || card);
-      } else if (p.estado === 'actual') {
-        var bt = BTNS[p.n] ? $(BTNS[p.n]) : null;
+        if (fac.estado === 'hecho' && prod.estado === 'actual') poner(p.n, 'rojo', (prod.faltan && prod.faltan[0]) || p.titulo, boton || $('#paso-3') || card);
+      } else if (p.clave === 'responsable') {
+        if (p.estado === 'actual' || (p.estado === 'pendiente' && (p.secundario || G.sin_responsable))) {
+          var tomar = $('#btnTomarRetiro');
+          poner(p.n, p.estado === 'actual' ? 'rojo' : 'ambar', p.faltan[0] || p.titulo, visible(tomar) ? tomar : card);
+        }
+      } else if (p.estado === 'actual' && !(G.sin_responsable && p.n > nDe('responsable'))) {
+        // sin responsable, lo que viene después de «Me hago cargo» está bloqueado: Enter no lleva ahí
+        var bt = BTNS[p.clave] ? $(BTNS[p.clave]) : null;
         poner(p.n, 'rojo', p.faltan[0] || p.titulo, visible(bt) ? bt : card);
       }
     });
@@ -979,11 +993,11 @@
   // Retiro completado: la tarjeta de preparación sigue mostrando lo que Check informó (OT, quién, cuándo), guardado en ILUS (Daniel 2026-10-06)
   function esRetirado() { return STATUS === 'retirada' || STATUS === 'cerrada'; }
   function relevanteActividad() {
-    if (esRetirado()) return !!(G.pasos[0].detalle && G.pasos[0].detalle.length && !G.terminal);
+    if (esRetirado()) return !!(nDocs() && !G.terminal);
     return relevanteCheck();
   }
   function relevanteCheck() {
-    return (STATUS === 'agenda_confirmada' || STATUS === 'en_preparacion') && G.pasos[0].detalle && G.pasos[0].detalle.length && !G.terminal;
+    return (STATUS === 'agenda_confirmada' || STATUS === 'en_preparacion') && !!nDocs() && !G.terminal;
   }
   function msgCheckCaido() {
     return { evaluacion: { frase: 'No pudimos consultar Check ahora. Usa la lista manual de abajo.', etapas: [] }, documentos: [],
@@ -1048,7 +1062,7 @@
           if (typeof window._wmsCargar === 'function') { try { window._wmsCargar(); } catch (e) { /* la lista se actualiza al recargar */ } }
         }
         render(); decorar();
-        if (d && d.ok && (d.aplicado_ahora || (d.preparado && STATUS === 'en_preparacion' && G.pasos[4].estado !== 'hecho'))) refrescar();
+        if (d && d.ok && (d.aplicado_ahora || (d.preparado && STATUS === 'en_preparacion' && (pasoDe('preparacion') || {}).estado !== 'hecho'))) refrescar();
       })
       .catch(function () {
         clearTimeout(corte);
@@ -1072,7 +1086,7 @@
     return p;
   };
 
-  // Barra fija compacta (Daniel: «no quiero tanto scroll»): al bajar por la ficha solo quedan a la vista el progreso y los 6 pasos
+  // Barra fija compacta (Daniel: «no quiero tanto scroll»): al bajar por la ficha solo quedan a la vista el progreso y los 5 pasos
   // (el «siguiente paso» completo, con su botón, se ve al subir). Solo en escritorio, donde la barra es fija.
   try {
     if ('IntersectionObserver' in window && panel.parentNode) {
@@ -1087,6 +1101,18 @@
       }).observe(sentinela);
     }
   } catch (e) { /* sin barra compacta: todo sigue funcionando igual */ }
+
+  // Daniel 2026-10-14: «presiono agregar factura o boleta y queda justo atravesado en el botón en lugar de dejarlo considerando la parte del
+  // tracking». La guía queda fija arriba en escritorio: su alto real va a --gp-alto y las tarjetas lo usan como scroll-margin-top.
+  try {
+    var _altoGuia = function () {
+      var alto = window.matchMedia('(min-width:992px)').matches ? Math.ceil(panel.getBoundingClientRect().height) : 0;
+      document.documentElement.style.setProperty('--gp-alto', alto + 'px');
+    };
+    _altoGuia();
+    if ('ResizeObserver' in window) new ResizeObserver(_altoGuia).observe(panel);
+    window.addEventListener('resize', _altoGuia);
+  } catch (e) { /* sin la medida: el salto usa el margen por defecto del CSS */ }
 
   // Sin bucles: render() solo escribe dentro del panel (y su dibujo se compara antes de tocar el DOM)
   try {
