@@ -908,6 +908,9 @@ const _PD_VEREDICTO = {
   revisar:   { cls: 'is-revisar',   ico: 'bi-exclamation-triangle-fill' },
   bloqueado: { cls: 'is-bloqueado', ico: 'bi-x-octagon-fill' },
   vacio:     { cls: 'is-vacio',     ico: 'bi-inbox' },
+  // Retiro terminado (Daniel 2026-10-15): la tarjeta queda congelada en lo que pasó, sin alarma
+  entregado: { cls: 'is-ok',        ico: 'bi-check-circle-fill' },
+  cerrado:   { cls: 'is-vacio',     ico: 'bi-lock-fill' },
 };
 let _pdUltimoMotivo = '';   // reusar motivo entre líneas del mismo lote (mismo patrón que el tka)
 let _pdSaveTimers = {};     // debounce de guardado, uno por documento
@@ -928,6 +931,7 @@ async function refrescarProductosDiag(){
     const vc = _PD_VEREDICTO[v.estado] || _PD_VEREDICTO.vacio;
     const c = d.contadores || {};
     const chips = [
+      c.entregados   ? `<span class="pd-chip t-ok">${c.entregados} entregado${c.entregados===1?'':'s'}</span>` : '',
       c.listos       ? `<span class="pd-chip t-ok">${c.listos} listo${c.listos===1?'':'s'}</span>` : '',
       c.bloqueados   ? `<span class="pd-chip t-rojo">${c.bloqueados} con problema${c.bloqueados===1?'':'s'}</span>` : '',
       c.revisar      ? `<span class="pd-chip t-ambar">${c.revisar} para revisar</span>` : '',
@@ -950,7 +954,7 @@ async function refrescarProductosDiag(){
       return;
     }
     body.innerHTML = docs.map(doc => _pdRenderDoc(doc)).join('')
-      + _pdRenderTotales(d.totales || {}, c);
+      + _pdRenderTotales(d.totales || {}, c, v.estado);
   } catch(e){
     banner.className = 'prod-diag-banner is-bloqueado';
     banner.innerHTML = `<i class="bi bi-wifi-off"></i>
@@ -1069,11 +1073,13 @@ const _PD_ICO = {
   ok: 'bi-check-lg', revisar: 'bi-exclamation-triangle-fill', autorizado: 'bi-shield-check',
   sin_saldo: 'bi-x-lg', excede_saldo: 'bi-x-lg', sin_stock: 'bi-x-lg', stock_insuf: 'bi-x-lg',
   entregado: 'bi-check2-circle', no_incluido: 'bi-dash-circle',
+  entregado_retiro: 'bi-check2-circle', salio_antes: 'bi-clock-history', sin_entrega: 'bi-dash-circle',
 };
 
-function _pdRenderTotales(tot, c){
+function _pdRenderTotales(tot, c, estado){
+  const verbo = estado === 'entregado' ? 'Se retiraron' : 'Se retiran';     // retiro ya entregado (2026-10-15)
   return `<div class="pd-totales">
-    <span>Se retiran <b>${_fmtNum(tot.unidades, 0)} unidades</b> de este retiro</span>
+    <span>${verbo} <b>${_fmtNum(tot.unidades, 0)} unidades</b> de este retiro</span>
     <span><b>${_fmtNum(tot.peso_total_kg, 1)} kg</b><small>peso real</small></span>
     <span><b>${_fmtNum(tot.vol_total_m3, 3)} m³</b><small>volumen</small></span>
     <span><b>${_fmtNum(tot.peso_vol_total_kg, 1)} kg</b><small>peso volumétrico</small></span>

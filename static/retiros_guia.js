@@ -253,7 +253,9 @@
   function estadoDoc(d) {
     var clave = claveDoc(d.rotulo), nivel = 'neutro', mal = [], aviso = [], info = [];
     function subir(n) { if (ORDEN_NIVEL[n] > ORDEN_NIVEL[nivel]) nivel = n; }
-    if (d.con_saldo === 1) { subir('ok'); info.push('con saldo'); }
+    var entregado = STATUS === 'retirada' || (STATUS === 'cerrada' && !(G && G.terminal));   // cerrada sin entrega: la guía trae terminal
+    if (entregado) { subir('ok'); info.push('entregado'); }        // 2026-10-15: el saldo lo consumió esta misma entrega
+    else if (d.con_saldo === 1) { subir('ok'); info.push('con saldo'); }
     else if (d.con_saldo === 0) { subir('aviso'); aviso.push('sin saldo'); }
     else info.push('saldo sin verificar');
     if (d.otro_rut) { subir('aviso'); aviso.push('otro RUT'); }

@@ -9559,6 +9559,9 @@ def register_pickup_routes(app, ctx):
                 "SELECT id, document_type, document_number, erp_snapshot, has_seleccion_lineas "
                 "FROM pickup_request_docs WHERE request_id=%s ORDER BY id ASC", (rid,)) or []
         consolidado = _pickup_lineas_consolidadas(rid)
+        # Retiro TERMINADO (Daniel 2026-10-15, retiro 105): el saldo del ERP ya lo consumió la guía de ESTE retiro, así que compararlo con lo
+        # que «se va a retirar» daba «Ya salió: no entregar» en rojo con el pedido entregado. La tarjeta se congela en lo que pasó.
+        _term = _prod_estado_terminado(rid)
         # Pesos/volúmenes de lo que SE RETIRA, ya multiplicados por la cantidad
         pesos = {}
         for c in consolidado.get("lineas") or []:
@@ -9596,7 +9599,7 @@ def register_pickup_routes(app, ctx):
                     })
         out_docs = []
         cont = {"listos": 0, "bloqueados": 0, "revisar": 0, "ya_entregados": 0, "sin_ficha": 0,
-                "no_incluidos": 0, "unidades": 0.0}
+                "no_incluidos": 0, "unidades": 0.0, "entregados": 0}
         erp_caido = False
         for d in docs:
             tipo = (d.get("document_type") or "").upper()
@@ -9679,6 +9682,8 @@ def register_pickup_routes(app, ctx):
                             avisos.append("No se pudo verificar en el ERP")
                         if avisos:
                             estado, texto, tono = "revisar", "Revisar antes de entregar", "ambar"
+                if _term:
+                    estado, texto, tono, avisos = _prod_linea_terminada(_term, incluida, a_retirar, saldo, le.get("consumos") or [])
                 # contadores
                 if estado == "ok":
                     cont["listos"] += 1
@@ -9688,6 +9693,8 @@ def register_pickup_routes(app, ctx):
                     cont["revisar"] += 1
                 elif estado == "entregado":
                     cont["ya_entregados"] += 1
+                elif estado == "entregado_retiro":
+                    cont["entregados"] += 1
                 else:
                     cont["no_incluidos"] += 1
                 if incluida and a_retirar > 0:
@@ -9727,6 +9734,8 @@ def register_pickup_routes(app, ctx):
         if not docs:
             veredicto = {"estado": "vacio", "titulo": "Falta la factura o boleta",
                          "detalle": "Agrega el documento del ERP para ver qué se retira."}
+        elif _term:
+            veredicto = _prod_veredicto_terminado(_term, cont, out_docs)
         elif cont["bloqueados"]:
             veredicto = {"estado": "bloqueado", "titulo": "No se puede entregar todavía",
                          "detalle": f"{cont['bloqueados']} producto{'s' if cont['bloqueados'] != 1 else ''} con problema: revisa las filas en rojo."}
@@ -9749,6 +9758,71 @@ def register_pickup_routes(app, ctx):
                         "vol_total_m3": tot.get("vol_total_m3") or 0.0,
                         "peso_vol_total_kg": tot.get("peso_vol_total_kg") or 0.0},
         }
+
+    def _prod_estado_terminado(rid):
+        """None si el retiro sigue abierto. Si terminó: {'entregado': bool, 'creado': date Chile}. «Entregado» = retirada, o cerrada con
+        evidencia de retiro (quién retiró o un paso por «retirada»; misma regla que la guía). Rechazada, fallida o cerrada sin evidencia = sin entrega."""
+        try:
+            r = mysql_fetchone(f"SELECT id, status, created_at, retirado_por_nombre FROM `{REQ}` WHERE id=%s", (rid,))
+        except Exception:
+            return None
+        st = str((r or {}).get("status") or "")
+        if st not in ("retirada", "cerrada", "rechazada", "fallida"):
+            return None
+        entregado = st == "retirada" or (st == "cerrada" and _guia_evidencia_retiro(rid, r))
+        creado = None
+        try:
+            c = r.get("created_at")
+            if isinstance(c, str):
+                c = datetime.strptime(c[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
+            if isinstance(c, datetime):
+                from zoneinfo import ZoneInfo as _ZI_pt
+                creado = (c if c.tzinfo else c.replace(tzinfo=timezone.utc)).astimezone(_ZI_pt("America/Santiago")).date()
+        except Exception:
+            creado = None
+        return {"entregado": bool(entregado), "creado": creado}
+
+    def _prod_fecha_consumo(c):
+        """Fecha de una guía/boleta del ERP ('dd/mm/aaaa') → date, o None."""
+        try:
+            return datetime.strptime(str(c.get("fecha") or "")[:10], "%d/%m/%Y").date()
+        except Exception:
+            return None
+
+    def _prod_linea_terminada(term, incluida, a_retirar, saldo, consumos):
+        """Estado CONGELADO de una línea de un retiro terminado: (estado, texto, tono, avisos). Nunca rojo ni «Entregar igual…»."""
+        if not incluida or a_retirar <= 0:
+            return "no_incluido", "No se retiró", "gris", []
+        if not term["entregado"]:
+            return "sin_entrega", "No se entregó (retiro cerrado)", "gris", []
+        fechas = [f for f in (_prod_fecha_consumo(c) for c in consumos) if f]
+        creado = term.get("creado")
+        if creado and fechas and saldo is not None and saldo <= 0 and all(f < creado for f in fechas):
+            # el saldo se consumió ANTES de que existiera este retiro: no fue esta entrega
+            return "salio_antes", "Ya había salido antes de este retiro", "gris", []
+        avisos = []
+        if saldo is not None and saldo > 0 and not [f for f in fechas if not creado or f >= creado]:
+            avisos.append("El ERP todavía no registra la guía de despacho de esta entrega.")
+        return "entregado_retiro", "Entregado en este retiro", "ok", avisos
+
+    def _prod_veredicto_terminado(term, cont, out_docs):
+        if not term["entregado"]:
+            return {"estado": "cerrado", "titulo": "Retiro cerrado sin entrega",
+                    "detalle": "Este retiro se cerró sin entregar productos: no queda nada por revisar."}
+        n, u = cont.get("entregados") or 0, cont.get("unidades") or 0
+        creado = term.get("creado")
+        guias = []
+        for d in out_docs:
+            for c in d.get("consumos") or []:
+                f = _prod_fecha_consumo(c)
+                txt = f"{c.get('label') or ''} {c.get('numero') or ''} · {c.get('fecha') or ''}".strip()
+                if (not creado or (f and f >= creado)) and txt not in guias:
+                    guias.append(txt)
+        if not n:
+            return {"estado": "entregado", "titulo": "Retiro completado", "detalle": "El cliente ya retiró su pedido."}
+        detalle = (f"{_fmt_num(u)} unidad{'es' if u != 1 else ''} de {n} producto{'s' if n != 1 else ''} entregada{'s' if u != 1 else ''} "
+                   f"en este retiro" + (f" · {', '.join(guias[:3])}" if guias else "") + ".")
+        return {"estado": "entregado", "titulo": "Retiro completado", "detalle": detalle}
 
     def _fmt_num(v):
         try:
