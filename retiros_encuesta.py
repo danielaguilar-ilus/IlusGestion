@@ -1026,4 +1026,12 @@ def register_encuesta_routes(app, ctx):
                                errores={"_general": "No pudimos guardar tus respuestas. Inténtalo de nuevo en un momento."},
                                accion=accion, datos_form=request.form)
             return redirect(accion, code=303)
-        return _pagina("retiros/encuesta_publica.html", vista_previa=vista_previa, preguntas=preguntas, accion=accion)
+        # Estrellas del seguimiento (2026-10-15): /retiros/encuesta/<token>?atencion=N llega con la atención en bodega ya marcada.
+        # Solo PRE-marca: no se guarda nada hasta que el cliente confirma la encuesta con el aviso de privacidad.
+        prefill = {}
+        _est = (request.args.get("atencion") or "").strip()
+        if _est in ("1", "2", "3", "4", "5"):
+            for _p in preguntas:
+                if _p.get("clave") == "atencion_bodega" and _p.get("tipo") == "estrellas":
+                    prefill[f"p_{_p['id']}"] = _est
+        return _pagina("retiros/encuesta_publica.html", vista_previa=vista_previa, preguntas=preguntas, accion=accion, datos_form=prefill)

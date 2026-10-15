@@ -405,9 +405,15 @@
         s.addEventListener('click', () => {
           chosen = idx + 1;
           stars.forEach((s2, i) => s2.classList.toggle('on', i < chosen));
+          // 2026-10-15 (Daniel: «eso se guarda también en los retiros»): con la encuesta disponible, la estrella lleva a la encuesta con la
+          // atención YA marcada; el cliente confirma ahí (aviso de privacidad, Ley 21.719) y queda guardada en el retiro.
+          const enc = wrap.dataset.encuesta || '';
+          if (enc) {
+            if (fb) fb.innerHTML = `Gracias por tu ${chosen} ★ <small style="display:block;margin-top:4px;color:#9ca3af">Te llevamos a la encuesta para guardarla (menos de 1 minuto)…</small>`;
+            setTimeout(() => { window.location.href = enc + (enc.indexOf('?') >= 0 ? '&' : '?') + 'atencion=' + chosen; }, 700);
+            return;
+          }
           if (fb) fb.innerHTML = `Gracias por tu ${chosen} ★ <small style="display:block;margin-top:4px;color:#9ca3af">Tu valoración nos ayuda a mejorar</small>`;
-          // Persistencia futura: POST a /retiros/seguimiento/<token>/rating
-          // Por ahora se queda en UI (sin BD) — Daniel decide si quiere persistir.
         });
       });
     }

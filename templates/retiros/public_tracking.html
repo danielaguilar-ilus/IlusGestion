@@ -475,7 +475,7 @@
         <div class="rating-card">
           <div class="eyebrow">¿Cómo estuvo la atención?</div>
           <h4>Tu feedback nos ayuda a mejorar</h4>
-          <div class="stars" id="ratingStars">
+          <div class="stars" id="ratingStars"{% if encuesta_url %} data-encuesta="{{ encuesta_url }}"{% endif %}>
             {% for i in range(5) %}
             <button type="button" class="star" data-rating="{{ i+1 }}" title="{{ i+1 }} estrella(s)">★</button>
             {% endfor %}
