@@ -59674,7 +59674,8 @@ def init_mantenciones_tables():
                 "       'retiro_confirmado','retiro_mensaje','retiro_preparacion',"
                 "       'retiro_listo','retiro_cerrado',"
                 "       'retiro_propuesta','retiro_expedido','retiro_desfase','retiro_cierre',"
-                "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida') DEFAULT 'otro'",
+                "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida',"
+                "       'repuesto_plazo','ia_alerta_proactiva') DEFAULT 'otro'",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_destino_no_leida "
                 "  (destino_user_id, leida_at, archivada_at)",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_visita (visita_id)",
@@ -68981,6 +68982,7 @@ def mant_api_incidencia_solicitar_repuesto(iid):
             pass
         return jsonify({"ok": False, "error": (e_ev or "No se pudo subir la evidencia")
                         + ", así que la solicitud NO se guardó. Revisa la conexión e intenta de nuevo."}), 502
+    _otrep_nombres_alt_guardar([(sol_id, _otrep_nombres_alt(request.form.get("nombres_alt")))])
     _otrep_evento(sol_id, "creada", user, None, "solicitado",
                   f"Desde la incidencia #{iid} · {cantidad:g} × {nombre}")
 
@@ -69290,6 +69292,7 @@ def mant_api_incidencia_solicitar_repuestos(iid):
                 pass
         return jsonify({"ok": False, "error": (e_ev or "No se pudo subir la evidencia")
                         + ", así que la solicitud NO se guardó. Revisa la conexión e intenta de nuevo."}), 502
+    _otrep_nombres_alt_guardar([(_s, _l.get("nombres_alt")) for _s, _l in zip(sol_ids, lineas_ok)])
     for _sid_ev, _li_ev in zip(sol_ids, lineas_ok):
         _otrep_evento(_sid_ev, "creada", user, None, "solicitado",
                       f"Desde la incidencia #{iid} · {float(_li_ev.get('cantidad') or 0):g} × "
@@ -97471,7 +97474,11 @@ _OTREP_STOCK_SOLO_GESTION_PROV = ("proveedor", "proveedor_id", "proveedor_contac
 _OTREP_SOL_SOLO_GESTION_PROV = ("proveedor_id", "proveedor_nombre", "proveedor_contacto",
                                 "proveedor_telefono", "proveedor_email", "proveedor_canal",
                                 "oc_numero", "nota_gestion", "compra_id",
-                                "compra_ticket_id", "compra_numero_ticket")
+                                "compra_ticket_id", "compra_numero_ticket",
+                                # 🔒 2026-10-15 (revisión Fase B): la nota de «se reparó / no
+                                # correspondía» es la misma nota de gestión (suele nombrar al
+                                # proveedor) y el camino dice si hubo compra. Solo gestión.
+                                "resolucion_nota", "camino")
 _OTREP_STOCK_NO_EXTERNO = ("proveedor", "proveedor_id", "ubicacion_codigo", "cantidad",
                            "comprometido", "disponible", "por_llegar",
                            # 🔒 2026-09-26: los campos nuevos del buscador del modal
@@ -97481,6 +97488,7 @@ _OTREP_STOCK_NO_EXTERNO = ("proveedor", "proveedor_id", "ubicacion_codigo", "can
                            "proveedor_contacto", "proveedor_telefono", "proveedor_email",
                            "proveedor_canal", "semaforo", "marca_id", "stock_minimo")
 _OTREP_SOL_NO_EXTERNO = ("nota_gestion", "oc_numero", "proveedor_nombre", "proveedor_id",
+                         "resolucion_nota", "camino",  # 🔒 2026-10-15, ver arriba
                          # 🔒 2026-09-25 (Fase 2): mismos 3 campos nuevos de contacto del
                          # proveedor que _OTREP_SQL_SOL agrega para la vista agrupada
                          # "Por proveedor" -- un técnico externo no debe verlos tampoco.
@@ -98634,7 +98642,14 @@ def _otrep_resp_asegurar():
         return True
     ok = True
     for ddl in ("ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN responsable VARCHAR(190) NULL",
-                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN plazo_avisado_etapa VARCHAR(20) NULL"):
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN plazo_avisado_etapa VARCHAR(20) NULL",
+                # 2026-10-14 (Daniel: "levantar una solicitud de repuesto, no necesariamente crear el
+                # repuesto, indicando los posibles nombres o descripción"): otros nombres con que se
+                # conoce lo pedido, el camino elegido al gestionarla y cómo se resolvió.
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN nombres_alt TEXT NULL",
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN camino VARCHAR(12) NULL",
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN resolucion VARCHAR(24) NULL",
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN resolucion_nota TEXT NULL"):
         try:
             mysql_execute(ddl)
         except Exception as e:
@@ -98651,8 +98666,114 @@ def _otrep_resp_asegurar():
     except Exception as e:
         ok = False
         print(f"[otrep] config: {e}", flush=True)
+    try:
+        # Nombres con que piden un repuesto de bodega (aprendidos de las solicitudes): el
+        # buscador los usa para encontrarlo la próxima vez aunque lo escriban distinto.
+        mysql_execute("""CREATE TABLE IF NOT EXISTS mant_repuestos_stock_alias (
+            id            INT AUTO_INCREMENT PRIMARY KEY,
+            repuesto_id   INT NOT NULL,
+            alias         VARCHAR(200) NOT NULL,
+            alias_norm    VARCHAR(200) NOT NULL,
+            solicitud_id  INT NULL,
+            created_by    VARCHAR(190) NULL,
+            created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_rep_alias (repuesto_id, alias_norm),
+            INDEX idx_rep_alias_norm (alias_norm)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
+    except Exception as e:
+        ok = False
+        print(f"[otrep] alias: {e}", flush=True)
     _OTREP_RESP_OK["listo"] = ok
     return ok
+
+
+# ══ 2026-10-14 · Solicitud sin crear el repuesto ══
+# Daniel: "quiero poder levantar una solicitud de repuesto, no necesariamente crear el
+# repuesto, indicando los posibles nombres o descripción… sin buscar crear el repuesto,
+# pero siempre levantando la solicitud para que pueda ser tomada por un ticket, o
+# gestionando una OT, o siendo consumido por un producto de la bodega de repuesto."
+# Tres caminos al gestionarla (columna `camino`): bodega (consumir un repuesto real),
+# ticket (pedirlo por compra, aunque todavía no exista en bodega) u ot (lo resuelve una
+# OT: instalación o reparación). La instalación de un repuesto SIEMPRE va por una OT.
+_OTREP_CAMINOS = ("bodega", "ticket", "ot")
+_OTREP_RESOLUCIONES = {
+    "repuesto_instalado": "Se instaló el repuesto",
+    "reparado": "Se reparó sin repuesto",
+    "no_corresponde": "No correspondía",
+}
+
+
+def _otrep_nombres_alt(valor):
+    """Lista limpia (sin repetidos, máx. 8, 120 caracteres c/u) de los otros nombres con
+    que se conoce lo pedido. Acepta lista, JSON o texto separado por saltos de línea o ;."""
+    if valor is None:
+        return []
+    if isinstance(valor, str):
+        t = valor.strip()
+        if not t:
+            return []
+        if t.startswith("["):
+            try:
+                valor = json.loads(t)
+            except Exception:
+                valor = re.split(r"[\n;]+", t)
+        else:
+            valor = re.split(r"[\n;]+", t)
+    if not isinstance(valor, (list, tuple)):
+        return []
+    out, vistos = [], set()
+    for x in valor:
+        n = re.sub(r"\s+", " ", str(x or "")).strip()[:120]
+        k = _otrep_norm_desc(n)
+        if len(n) < 2 or not k or k in vistos:
+            continue
+        vistos.add(k)
+        out.append(n)
+        if len(out) >= 8:
+            break
+    return out
+
+
+def _otrep_nombres_alt_guardar(pares):
+    """pares: [(solicitud_id, lista)]. Guarda los otros nombres de cada solicitud recién
+    creada (no tumba la creación si falla: es un dato de apoyo)."""
+    if not any(lst for _sid, lst in pares):
+        return
+    _otrep_resp_asegurar()
+    for sid, lst in pares:
+        if not sid or not lst:
+            continue
+        try:
+            mysql_execute("UPDATE mant_ot_repuesto_solicitudes SET nombres_alt=%s WHERE id=%s",
+                          (json.dumps(lst, ensure_ascii=False), sid))
+        except Exception as e:
+            print(f"[otrep] nombres_alt sid={sid}: {e}", flush=True)
+
+
+def _otrep_alias_aprender(repuesto_id, nombres, solicitud_id=None, user=None):
+    """Cuando una solicitud queda asociada a un repuesto real de bodega, los nombres con
+    que la pidieron pasan a ser nombres del repuesto (el buscador los encuentra la próxima
+    vez). Nunca repite la descripción oficial ni un alias ya guardado."""
+    if not repuesto_id or not nombres:
+        return 0
+    if not _otrep_resp_asegurar():
+        return 0
+    try:
+        r = mysql_fetchone("SELECT descripcion FROM mant_repuestos_stock WHERE id=%s", (repuesto_id,)) or {}
+        base = _otrep_norm_desc(r.get("descripcion") or "")
+        n = 0
+        for nom in nombres:
+            k = _otrep_norm_desc(nom)
+            if not k or k == base:
+                continue
+            mysql_execute(
+                "INSERT IGNORE INTO mant_repuestos_stock_alias (repuesto_id, alias, alias_norm, solicitud_id, created_by) "
+                "VALUES (%s,%s,%s,%s,%s)", (repuesto_id, str(nom)[:200], k[:200], solicitud_id, user))
+            n += 1
+        return n
+    except Exception as e:
+        print(f"[otrep] alias rid={repuesto_id}: {e}", flush=True)
+        return 0
 
 
 def _otrep_cfg():
@@ -98745,15 +98866,16 @@ def _otrep_etapa_y_plazo(s):
     est = s.get("estado")
     out = {"etapa": "cerrada", "etapa_label": _OTREP_ETAPA_LABEL["cerrada"], "siguiente": None, "plazo": None}
     if not s.get("abierta") or est in ("instalado", "rechazado"):
-        out["siguiente"] = ("Anulada" if est == "rechazado" else
-                            ("En bodega (stock libre)" if (s.get("es_reposicion") or s.get("solicitud_padre_id")) else "Instalada"))
+        out["siguiente"] = (_OTREP_RESOLUCIONES.get(s.get("resolucion")) if (est == "rechazado" and s.get("resolucion") in ("reparado", "no_corresponde")) else
+                            ("Anulada" if est == "rechazado" else
+                             ("En bodega (stock libre)" if (s.get("es_reposicion") or s.get("solicitud_padre_id")) else "Instalada")))
         return out
     ahora = _otrep_a_chile(datetime.utcnow())
     desde, objetivo, etapa = None, None, None
     if est == "solicitado":
         etapa, desde = "gestionar", s.get("created_at")
         objetivo = _OTREP_PLAZO_H["gestionar_fs"] if s.get("prioridad_fs") else _OTREP_PLAZO_H["gestionar"]
-        sig = "Gestionar: asociar o crear el repuesto y elegir el camino"
+        sig = "Gestionar: elegir el camino (consumir de bodega, pedir por ticket o resolver con una OT)"
     elif est == "pedido" or (est == "validado" and s.get("compra_id")):
         etapa, desde = "compra", s.get("pedido_at") or s.get("validado_at")
         sig = "Esperar al proveedor y recibir en bodega"
@@ -98764,7 +98886,12 @@ def _otrep_etapa_y_plazo(s):
                      else "Generar la OT de instalación"))
     else:  # validado sin compra
         disp = s.get("stock_disponible")
-        if disp is not None and disp >= 0:
+        if s.get("camino") == "ot" and not s.get("repuesto_stock_id"):
+            # 2026-10-14: la resuelve una OT (instalación o reparación) sin pasar por bodega.
+            etapa, desde, objetivo = "ot", s.get("validado_at"), _OTREP_PLAZO_H["ot"]
+            sig = ("Resolver en la OT " + str(s.get("ot_generada_numero") or s.get("ot_generada_id")) if s.get("ot_generada_id")
+                   else "Generar o asociar la OT que lo resuelve")
+        elif disp is not None and disp >= 0:
             etapa, desde, objetivo = "ot", s.get("validado_at"), _OTREP_PLAZO_H["ot"]
             sig = ("Instalar en la OT " + str(s.get("ot_generada_numero") or s.get("ot_generada_id")) if s.get("ot_generada_id")
                    else "Hay stock: generar la OT de instalación")
@@ -98920,6 +99047,16 @@ def _otrep_fila(s, para_ot=False):
     # ETA dd/mm' con link"). Solo tiene sentido si compra_id está seteado.
     s["compra_estado_label"] = (_OTREP_COMPRA_ESTADO_LABEL.get(s.get("compra_estado"))
                                  if s.get("compra_id") else None)
+    # 2026-10-14: otros nombres de lo pedido (JSON → lista) y cómo se resolvió.
+    try:
+        _na = s.get("nombres_alt")
+        s["nombres_alt"] = json.loads(_na) if isinstance(_na, str) and _na.strip() else (_na if isinstance(_na, list) else [])
+    except Exception:
+        s["nombres_alt"] = []
+    if s.get("resolucion"):
+        s["resolucion_label"] = _OTREP_RESOLUCIONES.get(s["resolucion"], s["resolucion"])
+        if s.get("estado") == "rechazado" and s["resolucion"] in ("reparado", "no_corresponde"):
+            s["estado_label"] = "Cerrada · " + s["resolucion_label"].lower()
     # 🚦 2026-10-04: etapa visible + plazo con semáforo + responsable efectivo.
     try:
         s.update(_otrep_etapa_y_plazo(s))
@@ -99851,6 +99988,10 @@ def ot2_api_repuestos_bodega_buscar():
                      "          JOIN cat_productos pq ON pq.id=smq.producto_id "
                      "         WHERE smq.repuesto_id=rs.id AND (pq.nombre LIKE %s OR pq.sku LIKE %s))"]
             params += [like_p, like_p, like_p, like_p, like_p, like_p]
+            # 2026-10-14: también por los otros nombres con que lo pidieron antes.
+            if _otrep_resp_asegurar():
+                texto.append("EXISTS (SELECT 1 FROM mant_repuestos_stock_alias ral WHERE ral.repuesto_id=rs.id AND ral.alias LIKE %s)")
+                params.append(like_p)
             if not es_externo and not oculta_prov:
                 texto.append("pv.nombre LIKE %s")
                 params.append(like_p)
@@ -100073,6 +100214,7 @@ def ot2_api_equipo_solicitar_repuesto(vid, mid):
             pass
         return _ot2_err((e_ev or "No se pudo subir la evidencia") + ", así que la solicitud NO se "
                         "guardó. Revisa la conexión e intenta de nuevo.", "EVIDENCIA_NO_SUBIO", http=502)
+    _otrep_nombres_alt_guardar([(sol_id, _otrep_nombres_alt(request.form.get("nombres_alt")))])
     _otrep_evento(sol_id, "creada", user, None, "solicitado",
                   f"Desde la OT {v.get('numero_ot') or ('#' + str(vid))} · {float(cantidad or 0):g} × {nombre}")
 
@@ -100281,11 +100423,13 @@ def _otrep_validar_lineas_lote(lineas_in, stock_por_id):
                 "origen": origen, "repuesto_stock_id": sid, "nombre": nombre[:400], "sku": sku,
                 "cantidad": cantidad, "proveedor_id": stock.get("proveedor_id"),
                 "stock_cantidad": float(stock.get("cantidad") or 0),
+                "nombres_alt": _otrep_nombres_alt(li.get("nombres_alt")),
             })
         else:
             lineas_ok.append({
                 "origen": origen, "repuesto_stock_id": None, "nombre": nombre[:400], "sku": sku,
                 "cantidad": cantidad, "proveedor_id": None, "stock_cantidad": None,
+                "nombres_alt": _otrep_nombres_alt(li.get("nombres_alt")),
             })
     return lineas_ok, None
 
@@ -100438,6 +100582,7 @@ def ot2_api_equipo_solicitar_repuestos(vid, mid):
         return _ot2_err((e_ev or "No se pudo subir la evidencia") + ", así que las solicitudes NO se "
                         "guardaron. Revisa la conexión e intenta de nuevo.", "EVIDENCIA_NO_SUBIO",
                         http=502)
+    _otrep_nombres_alt_guardar([(_s, _l.get("nombres_alt")) for _s, _l in zip(sol_ids, lineas_ok)])
     for _sid_ev, _li_ev in zip(sol_ids, lineas_ok):
         _otrep_evento(_sid_ev, "creada", user, None, "solicitado",
                       f"Desde la OT {v.get('numero_ot') or ('#' + str(vid))} · "
@@ -101065,6 +101210,10 @@ def _otrep_listar_agrupado(vista, where_sql, params):
         # el grupo la mostraba de nuevo, invitando a comprarla dos veces.
         pendientes = [s for s in sols if s.get("estado") in ("solicitado", "validado", "pedido")
                       and not s.get("compra_id")
+                      # 2026-10-15 (revisión Fase B): la que se resuelve con una OT sin repuesto
+                      # de bodega no se compra (es una reparación o se instala en la OT).
+                      and not (s.get("camino") == "ot" and not s.get("repuesto_stock_id")
+                               and s.get("estado") == "validado")
                       and (not s.get("repuesto_stock_id")
                            or (s.get("stock_disponible") is not None and s["stock_disponible"] < 0)
                            or s.get("estado") == "pedido")]
@@ -101495,12 +101644,35 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
     sets, params = ["estado=%s"], [nuevo]
     stock = None
     prov = None
-    if nuevo == "validado":
-        rid = str(d.get("repuesto_stock_id") or s.get("repuesto_stock_id") or "").strip()
-        if not rid.isdigit():
+    _camino = str(d.get("camino") or "").strip().lower()
+    if _camino not in _OTREP_CAMINOS:
+        _camino = None
+    _resp_ok = _otrep_resp_asegurar() if (_camino or nuevo in ("instalado", "solicitado")) else False
+    if nuevo == "validado" and _camino:
+        sets.append("camino=%s"); params.append(_camino)
+    rid = str(d.get("repuesto_stock_id") or s.get("repuesto_stock_id") or "").strip() if nuevo == "validado" else ""
+    if nuevo == "validado" and not rid.isdigit():
+        # 2026-10-14 (Daniel: "sin buscar crear el repuesto, pero siempre levantando la
+        # solicitud para que pueda ser tomada por un ticket o gestionando una OT"): sin
+        # repuesto en bodega se valida igual si se elige pedirla por ticket o resolverla
+        # con una OT. El repuesto se registra en bodega recién cuando exista de verdad.
+        if _camino not in ("ticket", "ot"):
             return False, 400, {"ok": False, "error":
-                            "Para validar hay que asociar la solicitud a un repuesto REAL de la Bodega "
-                            "(uno existente, o créalo primero con su ubicación)."}
+                            "Elige cómo se gestiona: consumir un repuesto de la bodega, pedirlo por ticket "
+                            "(compra) o resolverlo con una OT."}
+        sets += ["validado_por=%s", "validado_at=NOW()"]
+        params += [user]
+        if _camino == "ticket":
+            _prov_sr = str(d.get("proveedor_id") or s.get("proveedor_id") or "").strip()
+            if not _es_rol_tecnico():
+                if not _prov_sr.isdigit():
+                    return False, 400, {"ok": False, "error":
+                                    "Elige a qué proveedor se le pide: sin él no puede entrar al lote de compra."}
+                if not mysql_fetchone("SELECT id FROM mant_proveedores_repuesto WHERE id=%s", (int(_prov_sr),)):
+                    return False, 400, {"ok": False, "error": "Ese proveedor no existe."}
+            if _prov_sr.isdigit():
+                sets.append("proveedor_id=%s"); params.append(int(_prov_sr))
+    if nuevo == "validado" and rid.isdigit():
         stock = mysql_fetchone(
             "SELECT id, sku, descripcion, cantidad, proveedor_id, costo_unitario FROM mant_repuestos_stock "
             " WHERE id=%s AND COALESCE(activo,1)=1", (int(rid),))
@@ -101560,6 +101732,10 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
         sets.append("recibido_at=NOW()")
     if nuevo == "instalado":
         sets += ["instalado_at=NOW()", "resuelto_por=%s"]; params.append(user)
+        if _resp_ok:
+            # 🔒 2026-10-15 (revisión Fase B): instalado = se instaló el repuesto, siempre
+            # (una resolución vieja de antes de reabrir no puede sobrevivir).
+            sets += ["resolucion='repuesto_instalado'", "resolucion_nota=NULL"]
     if nuevo == "rechazado":
         if len(nota) < 5:
             return False, 400, {"ok": False, "error": "Di por qué se rechaza (queda en la solicitud y en el ticket)."}
@@ -101576,6 +101752,10 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
         # aplica -- mismo motivo que 'rechazado' arriba para cantidad_recibida.
         sets += ["resuelto_por=NULL", "validado_at=NULL", "validado_por=NULL",
                  "pedido_at=NULL", "recibido_at=NULL", "instalado_at=NULL", "cantidad_recibida=0"]
+        if _resp_ok:
+            # 🔒 2026-10-15 (revisión Fase B): reabrir borra «cómo se resolvió» y el camino
+            # elegido: la ficha no puede mostrar un cierre que ya no existe.
+            sets += ["resolucion=NULL", "resolucion_nota=NULL", "camino=NULL"]
     if nota:
         # 🔒 FIX 2026-09-20 (revisión): esto REEMPLAZABA nota_gestion en cada
         # transición -- validar con una nota y después rechazar borraba la
@@ -101821,6 +102001,13 @@ def _otrep_cambiar_estado(sid, nuevo, user, datos):
                       f"proveedor {prov['nombre']}" if prov else "",
                       f"OC {d.get('oc_numero')}" if nuevo == "pedido" and d.get("oc_numero") else "",
                       nota[:200] if nota else "") if x))
+    if nuevo == "validado" and stock:
+        # 2026-10-14: lo que escribieron al pedirlo pasa a ser nombre del repuesto de bodega.
+        try:
+            _noms = [s.get("repuesto_nombre") or ""] + _otrep_nombres_alt(s.get("nombres_alt"))
+            _otrep_alias_aprender(stock["id"], _noms, solicitud_id=sid, user=user)
+        except Exception as _e_al:
+            print(f"[otrep] aprender alias sid={sid}: {_e_al}", flush=True)
     return True, 200, {"ok": True, "estado": nuevo, "estado_label": label, "aviso": aviso,
                     "siguientes": list(_OTREP_TRANSICIONES.get(nuevo, ()))}
 
@@ -101858,18 +102045,27 @@ def repstock_solicitud_ot_estado(sid):
     s_antes = mysql_fetchone("SELECT compra_id FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
     compra_id_antes = (s_antes or {}).get("compra_id")
     ok, http, payload = _otrep_cambiar_estado(sid, nuevo, user, d)
-    if ok and compra_id_antes:
-        try:
-            if nuevo in ("rechazado", "solicitado"):
-                mysql_execute(
-                    "UPDATE mant_ot_repuesto_solicitudes SET compra_id=NULL "
-                    " WHERE id=%s AND compra_id=%s", (sid, compra_id_antes))
-                _otrep_compra_sincronizar(compra_id_antes, user)
-            elif nuevo in ("recibido", "instalado"):
-                _otrep_compra_sincronizar(compra_id_antes, user)
-        except Exception as e:
-            print(f"[otrep] estado->compra sync sid={sid} compra={compra_id_antes}: {e}", flush=True)
+    if ok:
+        _otrep_compra_tras_estado(sid, compra_id_antes, nuevo, user)
     return jsonify(payload), http
+
+
+def _otrep_compra_tras_estado(sid, compra_id_antes, nuevo, user):
+    """Refleja en su Compra un cambio de estado hecho fuera de Compras (revisión Fase 5,
+    MEDIA #6): rechazar/reabrir la suelta y resincroniza; recibir/instalar resincroniza.
+    2026-10-15 (revisión Fase B): helper común de /estado y /resolver."""
+    if not compra_id_antes:
+        return
+    try:
+        if nuevo in ("rechazado", "solicitado"):
+            mysql_execute(
+                "UPDATE mant_ot_repuesto_solicitudes SET compra_id=NULL "
+                " WHERE id=%s AND compra_id=%s", (sid, compra_id_antes))
+            _otrep_compra_sincronizar(compra_id_antes, user)
+        elif nuevo in ("recibido", "instalado"):
+            _otrep_compra_sincronizar(compra_id_antes, user)
+    except Exception as e:
+        print(f"[otrep] estado->compra sync sid={sid} compra={compra_id_antes}: {e}", flush=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -101962,6 +102158,8 @@ def _otrep_compra_elegible(s):
        Compra nueva sin repetir la transición (ya está en 'pedido')."""
     estado = s.get("estado")
     if estado == "validado":
+        if s.get("camino") == "ot" and not s.get("repuesto_stock_id"):
+            return False  # 2026-10-15: se resuelve con una OT, no se compra
         disp = s.get("stock_disponible")
         return disp is None or disp < 0
     if estado == "pedido" and not s.get("compra_id"):
@@ -103645,6 +103843,262 @@ def repstock_solicitud_crear_repuesto(sid):
                     "aviso": None if ok else (payload or {}).get("error")})
 
 
+def _otrep_ot_por_numero(ref):
+    """Busca una OT por su NÚMERO (OT-2026-00264, «2026-264» o solo «264»), nunca por el id
+    interno (revisión Fase B 2026-10-15: «97» encontraba el id 97 = OT-2026-00002; ver la
+    memoria ot_id_interno_vs_numero_ot). Devuelve (fila, error)."""
+    ref = re.sub(r"\s+", "", str(ref or "")).upper()
+    m = re.match(r"^(?:OT-?)?(\d{4})-0*(\d{1,6})$", ref)
+    if m:
+        cands = mysql_fetchall("SELECT id, numero_ot, cliente_id, estado FROM mant_visitas WHERE numero_ot=%s LIMIT 2",
+                               (f"OT-{m.group(1)}-{int(m.group(2)):05d}",)) or []
+    else:
+        m2 = re.match(r"^(?:OT-?)?0*(\d{1,6})$", ref)
+        if not m2:
+            return None, "Escribe el número de la OT (por ejemplo OT-2026-00264)."
+        cands = mysql_fetchall("SELECT id, numero_ot, cliente_id, estado FROM mant_visitas WHERE numero_ot LIKE %s "
+                               " ORDER BY id DESC LIMIT 3", (f"OT-%-{int(m2.group(1)):05d}",)) or []
+        if len(cands) > 1:
+            _anio = f"OT-{_now_chile().year}-"
+            del_anio = [c for c in cands if str(c.get("numero_ot") or "").startswith(_anio)]
+            if len(del_anio) != 1:
+                return None, "Hay más de una OT con ese número en distintos años: escríbelo completo (OT-AAAA-NNNNN)."
+            cands = del_anio
+    if not cands:
+        return None, "No encontramos esa OT. Revisa el número."
+    return cands[0], None
+
+
+@app.route("/repuestos/api/solicitudes-ot/<int:sid>/asociar-ot", methods=["POST"])
+@_otrep_generar_ot_required
+def repstock_solicitud_asociar_ot(sid):
+    """2026-10-14 (Daniel: "poder asociarle alguna orden de trabajo si es necesario, si es
+    que hay reparaciones"): la solicitud la resuelve una OT que YA existe (reparación o
+    instalación). Queda como su OT y, si estaba por gestionar, se valida con camino «OT»
+    (sin exigir crear el repuesto). Solo gestión con permiso de OT.
+
+    🔒 2026-10-15 (revisión Fase B): la OT se busca SOLO por su número (nunca por el id
+    interno); con `solo_ver` devuelve la OT encontrada sin escribir (el navegador la muestra
+    y pide confirmación); y se valida ANTES de asociar, con el repuesto y el proveedor que se
+    hayan elegido: si la validación falla, no se escribe nada."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Asociar una OT a la solicitud lo hace gestión."}), 403
+    _otrep_resp_asegurar()
+    d = request.get_json(silent=True) or {}
+    ref = str(d.get("ot") or "").strip()[:40]
+    if not ref:
+        return jsonify({"ok": False, "error": "Escribe el número de la OT (por ejemplo OT-2026-00264)."}), 400
+    s = mysql_fetchone("SELECT id, estado, cliente_id, ot_generada_id FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+    if not s:
+        return jsonify({"ok": False, "error": "Solicitud no encontrada."}), 404
+    if s.get("estado") not in ("solicitado", "validado", "pedido", "recibido"):
+        return jsonify({"ok": False, "error": "Esta solicitud ya está cerrada."}), 409
+    if s.get("ot_generada_id"):
+        return jsonify({"ok": False, "error": "Esta solicitud ya tiene una OT que la resuelve."}), 409
+    v, err = _otrep_ot_por_numero(ref)
+    if not v:
+        return jsonify({"ok": False, "error": err}), 404
+    if (v.get("estado") or "") in ("cancelada", "anulada"):
+        return jsonify({"ok": False, "error": "Esa OT está anulada: elige otra."}), 409
+    if s.get("cliente_id") and v.get("cliente_id") and int(s["cliente_id"]) != int(v["cliente_id"]):
+        return jsonify({"ok": False, "error": "Esa OT es de otro cliente: la solicitud no se puede asociar a ella."}), 409
+    if d.get("solo_ver"):
+        _cli = None
+        if v.get("cliente_id"):
+            _c = mysql_fetchone("SELECT razon_social FROM mant_clientes WHERE id=%s", (v["cliente_id"],))
+            _cli = (_c or {}).get("razon_social")
+        _est = str(v.get("estado") or "")
+        return jsonify({"ok": True, "solo_ver": True, "visita_id": v["id"], "numero_ot": v.get("numero_ot"),
+                        "cliente_nombre": _cli,
+                        "estado": _OT_REG_ESTADO_TXT.get(_est, _est.replace("_", " ").capitalize())})
+    user = current_username()
+    if s.get("estado") == "solicitado":
+        datos = {"camino": "ot"}
+        for k in ("repuesto_stock_id", "proveedor_id"):
+            if str(d.get(k) or "").strip().isdigit():
+                datos[k] = str(d.get(k)).strip()
+        ok, http, payload = _otrep_cambiar_estado(sid, "validado", user, datos)
+        if not ok:
+            return jsonify(payload), http
+    n = mysql_execute_returning_rowcount(
+        "UPDATE mant_ot_repuesto_solicitudes SET ot_generada_id=%s, camino=COALESCE(camino,'ot') "
+        " WHERE id=%s AND ot_generada_id IS NULL AND estado IN ('validado','pedido','recibido')", (v["id"], sid))
+    if not n:
+        return jsonify({"ok": False, "error": "Otra persona acaba de cambiar esta solicitud: recarga la lista."}), 409
+    _otrep_evento(sid, "ot", user, None, None, f"Asociada a la OT {v.get('numero_ot') or ('#' + str(v['id']))}")
+    return jsonify({"ok": True, "visita_id": v["id"], "numero_ot": v.get("numero_ot")})
+
+
+@app.route("/repuestos/api/solicitudes-ot/<int:sid>/desasociar-ot", methods=["POST"])
+@_otrep_generar_ot_required
+def repstock_solicitud_desasociar_ot(sid):
+    """2026-10-15 (revisión Fase B): quitar la OT que se le asoció por error, con motivo en
+    la bitácora. Solo mientras la solicitud no avanzó más allá de validada (ya pedida,
+    recibida o instalada, la OT es parte de su historia y no se toca)."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Esto lo hace gestión."}), 403
+    d = request.get_json(silent=True) or {}
+    motivo = str(d.get("motivo") or "").strip()[:500]
+    if len(motivo) < 5:
+        return jsonify({"ok": False, "error": "Cuenta por qué se quita la OT (queda en la bitácora)."}), 400
+    s = mysql_fetchone(
+        "SELECT s.id, s.estado, s.ot_generada_id, v.numero_ot FROM mant_ot_repuesto_solicitudes s "
+        "  LEFT JOIN mant_visitas v ON v.id=s.ot_generada_id WHERE s.id=%s", (sid,))
+    if not s or not s.get("ot_generada_id"):
+        return jsonify({"ok": False, "error": "Esta solicitud no tiene una OT asociada."}), 404
+    if s.get("estado") not in ("solicitado", "validado"):
+        return jsonify({"ok": False, "error": "La solicitud ya avanzó con esa OT: no se puede quitar."}), 409
+    n = mysql_execute_returning_rowcount(
+        "UPDATE mant_ot_repuesto_solicitudes SET ot_generada_id=NULL "
+        " WHERE id=%s AND ot_generada_id=%s AND estado IN ('solicitado','validado')", (sid, s["ot_generada_id"]))
+    if not n:
+        return jsonify({"ok": False, "error": "Otra persona acaba de cambiar esta solicitud: recarga la lista."}), 409
+    _otrep_evento(sid, "ot", current_username(), None, None,
+                  f"Se quitó la OT {s.get('numero_ot') or ('#' + str(s['ot_generada_id']))}: {motivo}")
+    return jsonify({"ok": True})
+
+
+@app.route("/repuestos/api/solicitudes-ot/<int:sid>/asociar-repuesto", methods=["POST"])
+@_otrep_gestion_required
+def repstock_solicitud_asociar_repuesto(sid):
+    """2026-10-15 (revisión Fase B): una solicitud que se validó SIN repuesto de bodega
+    (pedida por ticket o resuelta con una OT) se asocia después al repuesto real, por
+    ejemplo cuando llega la compra. Si ya llegaron unidades (recibida, o entregas parciales
+    de su Compra), su entrada a bodega se registra ahora, en la misma transacción: lo que
+    llegó físicamente queda en el inventario. Aprende los otros nombres. Solo gestión."""
+    if _es_rol_tecnico() or _oculta_proveedores():
+        return jsonify({"ok": False, "error": "Esto lo hace gestión."}), 403
+    d = request.get_json(silent=True) or {}
+    rid = str(d.get("repuesto_stock_id") or "").strip()
+    if not rid.isdigit():
+        return jsonify({"ok": False, "error": "Elige el repuesto de bodega."}), 400
+    s = mysql_fetchone("SELECT * FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+    if not s:
+        return jsonify({"ok": False, "error": "Solicitud no encontrada."}), 404
+    if s.get("repuesto_stock_id"):
+        return jsonify({"ok": False, "error": "Esta solicitud ya tiene su repuesto de bodega."}), 409
+    if s.get("estado") not in ("validado", "pedido", "recibido"):
+        return jsonify({"ok": False, "error": "Para una solicitud por gestionar usa «Gestionar»."}), 409
+    stock = mysql_fetchone("SELECT id, sku, descripcion, ubicacion_id FROM mant_repuestos_stock "
+                           " WHERE id=%s AND COALESCE(activo,1)=1", (int(rid),))
+    if not stock:
+        return jsonify({"ok": False, "error": "Ese repuesto de bodega no existe o está inactivo."}), 400
+    llego = float(s.get("cantidad_recibida") or 0)
+    if s.get("estado") == "recibido" and llego <= 0:
+        llego = float(s.get("cantidad") or 0)
+    if llego > 0 and not stock.get("ubicacion_id"):
+        return jsonify({"ok": False, "error":
+                        "Ese repuesto todavía no tiene ubicación: escanéala en Bodega (editar el repuesto) "
+                        "y vuelve a asociarlo, así lo que llegó entra al inventario."}), 400
+    user = current_username() or "sistema"
+    aviso = None
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE mant_ot_repuesto_solicitudes SET repuesto_stock_id=%s, repuesto_sku=%s "
+                        " WHERE id=%s AND repuesto_stock_id IS NULL AND estado=%s",
+                        (stock["id"], stock.get("sku"), sid, s.get("estado")))
+            if cur.rowcount != 1:
+                conn.rollback()
+                return jsonify({"ok": False, "error": "Otra persona acaba de cambiar esta solicitud: recarga la lista."}), 409
+            if llego > 0:
+                mov = _repstock_mover(
+                    stock["id"], llego, "entrada", "recepcion_proveedor",
+                    solicitud_id=sid, visita_id=s.get("visita_id"), cliente_id=s.get("cliente_id"),
+                    nota=(f"Solicitud #{sid} ({s.get('repuesto_nombre')}) asociada al repuesto después de "
+                          f"recibirla: entran {llego:g}."), usuario=user, cur=cur)
+                aviso = (mov or {}).get("aviso")
+        conn.commit()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"[otrep] asociar-repuesto sid={sid}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo asociar el repuesto."}), 500
+    _otrep_evento(sid, "repuesto", user, None, None,
+                  f"Asociada a {stock.get('sku') or ''} — {stock.get('descripcion') or ''}"
+                  + (f" · entraron {llego:g} a bodega" if llego > 0 else ""))
+    try:
+        _otrep_alias_aprender(stock["id"], [s.get("repuesto_nombre") or ""] + _otrep_nombres_alt(s.get("nombres_alt")),
+                              solicitud_id=sid, user=user)
+    except Exception:
+        pass
+    return jsonify({"ok": True, "sku": stock.get("sku"), "entrada": llego, "aviso": aviso})
+
+
+@app.route("/repuestos/api/solicitudes-ot/<int:sid>/resolver", methods=["POST"])
+@_otrep_gestion_required
+def repstock_solicitud_resolver(sid):
+    """2026-10-14 (Daniel: "la ficha de por qué se gestionó, si era un repuesto, si fue que
+    se reparó"): cierra una solicitud abierta que NO necesitó repuesto (se reparó) o que no
+    correspondía, con su motivo. Por dentro usa el mismo cierre que «Anular» (libera lo
+    comprometido, avisa al ticket) y guarda la resolución para que la ficha lo diga."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Cerrar una solicitud lo hace gestión."}), 403
+    _otrep_resp_asegurar()
+    d = request.get_json(silent=True) or {}
+    res = str(d.get("resolucion") or "").strip()
+    nota = str(d.get("nota") or "").strip()[:2000]
+    if res not in ("reparado", "no_corresponde"):
+        return jsonify({"ok": False, "error": "Elige cómo se resolvió."}), 400
+    if len(nota) < 10:
+        return jsonify({"ok": False, "error": "Cuenta qué se hizo (mínimo 10 caracteres): queda en la ficha."}), 400
+    label = _OTREP_RESOLUCIONES[res]
+    user = current_username()
+    _antes = mysql_fetchone("SELECT compra_id FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+    ok, http, payload = _otrep_cambiar_estado(sid, "rechazado", user, {"nota": f"{label}: {nota}"})
+    if not ok:
+        return jsonify(payload), http
+    # 🔒 2026-10-15 (revisión Fase B): igual que «Anular» desde /estado, la suelta de su Compra.
+    _otrep_compra_tras_estado(sid, (_antes or {}).get("compra_id"), "rechazado", user)
+    try:
+        mysql_execute("UPDATE mant_ot_repuesto_solicitudes SET resolucion=%s, resolucion_nota=%s WHERE id=%s",
+                      (res, nota, sid))
+    except Exception as e:
+        print(f"[otrep] resolver sid={sid}: {e}", flush=True)
+    return jsonify({"ok": True, "resolucion": res, "resolucion_label": label})
+
+
+@app.route("/repuestos/api/stock/<int:rid>/solicitudes", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def repstock_stock_solicitudes(rid):
+    """2026-10-14 (Daniel: "esos productos nunca se van a borrar para tener trazabilidad…
+    con saldo cero y algún historial"): todas las solicitudes que pidieron o consumieron
+    este repuesto de bodega (también las cerradas) y los nombres con que lo piden."""
+    _otrep_resp_asegurar()
+    filas = []
+    try:
+        for r in (mysql_fetchall(
+                "SELECT s.id, s.estado, s.cantidad, s.created_at, s.instalado_at, s.resolucion, s.camino, "
+                "       s.visita_id, s.ot_generada_id, s.incidencia_id, s.ticket_id, s.es_reposicion, "
+                "       c.razon_social AS cliente_nombre, v.numero_ot, vg.numero_ot AS ot_generada_numero, t.numero_ticket "
+                "  FROM mant_ot_repuesto_solicitudes s "
+                "  LEFT JOIN mant_clientes c ON c.id=s.cliente_id "
+                "  LEFT JOIN mant_visitas v ON v.id=s.visita_id "
+                "  LEFT JOIN mant_visitas vg ON vg.id=s.ot_generada_id "
+                "  LEFT JOIN tk_tickets t ON t.id=s.ticket_id "
+                " WHERE s.repuesto_stock_id=%s ORDER BY s.id DESC LIMIT 200", (rid,)) or []):
+            r = dict(r)
+            r["cantidad"] = float(r["cantidad"]) if r.get("cantidad") is not None else None
+            r["estado_label"] = _OTREP_ESTADO_LABEL.get(r.get("estado"), r.get("estado"))
+            if r.get("resolucion"):
+                r["resolucion_label"] = _OTREP_RESOLUCIONES.get(r["resolucion"], r["resolucion"])
+            for k in ("created_at", "instalado_at"):
+                r[k] = chile_fmt_filter(r[k]) if r.get(k) else None
+            filas.append(r)
+    except Exception as e:
+        print(f"[otrep] historial rid={rid}: {e}", flush=True)
+    alias = []
+    try:
+        alias = [a["alias"] for a in (mysql_fetchall(
+            "SELECT alias FROM mant_repuestos_stock_alias WHERE repuesto_id=%s ORDER BY id", (rid,)) or [])]
+    except Exception:
+        pass
+    return jsonify({"ok": True, "solicitudes": filas, "alias": alias})
+
+
 def _otrep_puede_tickets():
     """Gate para el origen Ticket (Fase 2, 2026-09-21). Base: MISMA lógica
     que `_tickets_required` en tickets_module.py (perms mantenciones/
@@ -103757,6 +104211,7 @@ def repstock_ticket_solicitar_repuesto(tid):
             pass
         return jsonify({"ok": False, "error": (e_ev or "No se pudo subir la evidencia")
                         + ", así que la solicitud NO se guardó. Revisa la conexión e intenta de nuevo."}), 502
+    _otrep_nombres_alt_guardar([(sol_id, _otrep_nombres_alt(request.form.get("nombres_alt")))])
     _otrep_evento(sol_id, "creada", user, None, "solicitado",
                   f"Desde el ticket #{tid} · {cantidad:g} × {nombre}")
 
@@ -104143,7 +104598,8 @@ def repstock_solicitud_manual():
         limpios.append({"stock": stock, "incidencia": incidencia, "nombre": nombre[:400],
                          "sku": (sku or "")[:120] or None,
                          "cantidad": cantidad, "proveedor_id": proveedor_id,
-                         "guardar_prov": guardar_prov})
+                         "guardar_prov": guardar_prov,
+                         "nombres_alt": _otrep_nombres_alt(it.get("nombres_alt"))})
 
     # Adjunto opcional (spec: "motivo/nota + adjunto opcional") -- se valida
     # ANTES de insertar nada: si el archivo viene mal, no queda una
@@ -104282,6 +104738,7 @@ def repstock_solicitud_manual():
             avisos.append("El adjunto no se pudo subir a " + str(fallos_ev) + " de las solicitudes creadas.")
 
     # 🕓 2026-10-04: bitácora de cada solicitud desde que nace.
+    _otrep_nombres_alt_guardar([(_s, _it.get("nombres_alt")) for _s, _it in zip(creados, limpios)])
     for sol_id, it in zip(creados, limpios):
         _otrep_evento(sol_id, "creada", user, None,
                       "validado" if (it["stock"] or it.get("incidencia")) else "solicitado",
@@ -104506,7 +104963,10 @@ def repstock_solicitud_ot_preparar_ot(sid):
     return jsonify({
         "ok": True,
         "origen": s["contexto"],
-        "titulo": (f"Instalar {s.get('repuesto_nombre') or 'repuesto'} (solicitud #{sid})")[:200],
+        # 2026-10-14: si la resuelve una OT sin repuesto de bodega puede ser una reparación.
+        "titulo": ((f"Resolver: {s.get('repuesto_nombre') or 'repuesto'} (solicitud #{sid})")
+                   if (s.get("camino") == "ot" and not s.get("repuesto_stock_id"))
+                   else f"Instalar {s.get('repuesto_nombre') or 'repuesto'} (solicitud #{sid})")[:200],
         "descripcion": s.get("motivo") or "",
         "tipo_sugerido": "correctiva",
         "ticket_id": s.get("ticket_id"),
@@ -119677,7 +120137,11 @@ def _ensure_mant_notif_tipo_ot_firmada_cliente():
     2026-10-09 (revisión de «desviaciones»): + retiro_propuesta / retiro_expedido / retiro_desfase / retiro_cierre / retiro_anulado (ya se
     usaban y fallaban en silencio: el aviso de expedición en Check, el de desfase, la propuesta de ILUS, el cierre y la anulación nunca
     llegaban a la campana) + retiro_desviacion / retiro_cita_vencida (nuevos). También al final. La guardia _ddl_ya_aplicado salta el
-    MODIFY cuando ya están todos (REGLA #18). tests/test_retiros_09oct_desviaciones.py vigila que todo tipo usado esté en el ENUM."""
+    MODIFY cuando ya están todos (REGLA #18). tests/test_retiros_09oct_desviaciones.py vigila que todo tipo usado esté en el ENUM.
+
+    2026-10-15 (revisión de solicitudes de repuesto): + repuesto_plazo (aviso de solicitud de repuesto
+    fuera de plazo) e ia_alerta_proactiva (resumen diario de IA al superadmin). Los dos ya se usaban y el
+    INSERT fallaba en silencio. Al final, como los anteriores. tests/test_solicitud_sin_repuesto.py lo vigila."""
     try:
         mysql_execute(
             "ALTER TABLE mant_notificaciones MODIFY COLUMN tipo "
@@ -119693,7 +120157,8 @@ def _ensure_mant_notif_tipo_ot_firmada_cliente():
             "       'retiro_confirmado','retiro_mensaje','retiro_preparacion',"
             "       'retiro_listo','retiro_cerrado',"
             "       'retiro_propuesta','retiro_expedido','retiro_desfase','retiro_cierre',"
-            "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida') DEFAULT 'otro'"
+            "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida',"
+            "       'repuesto_plazo','ia_alerta_proactiva') DEFAULT 'otro'"
         )
     except Exception as e:
         print(f"[ensure] mant_notificaciones.tipo (+ot_firmada_cliente): {e}", flush=True)

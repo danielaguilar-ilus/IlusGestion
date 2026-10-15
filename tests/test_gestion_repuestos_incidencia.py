@@ -80,7 +80,7 @@ class TestEmparejarExtras(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        amb = _cargar(["_inc_gr_emparejar_extras", "_otrep_validar_lineas_lote"])
+        amb = _cargar(["_inc_gr_emparejar_extras", "_otrep_validar_lineas_lote", "_otrep_nombres_alt", "_otrep_norm_desc"])
         cls.emparejar = staticmethod(amb["_inc_gr_emparejar_extras"])
         cls.validar = staticmethod(amb["_otrep_validar_lineas_lote"])
 

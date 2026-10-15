@@ -426,6 +426,10 @@
                 <input type="text" id="igrNxNombre" class="form-control" maxlength="400" autocomplete="off"
                        placeholder="Nombre completo, ej: Perno DR Bolt M8x20">
               </div>
+              <div class="igr-f igr-f-full">
+                <label for="igrNxAlt">Otros nombres con que se conoce <span class="text-muted fw-normal">(opcional · sepáralos con ;)</span></label>
+                <input type="text" id="igrNxAlt" class="form-control" maxlength="600" autocomplete="off" placeholder="Ej: correa de transmisión; banda motriz; belt 2540">
+              </div>
               <div class="igr-f">
                 <label for="igrNxCodigo">Código o SKU del fabricante</label>
                 <input type="text" id="igrNxCodigo" class="form-control" maxlength="120" autocomplete="off" placeholder="Opcional">
@@ -3989,13 +3993,13 @@
     var l = $('igrLista');
     if(nuevos && l && !l.hidden) l.scrollIntoView({behavior:'smooth', block:'nearest'});
   }
-  function igrAgregarManual(nombre, codigo, cantidad, provId){
+  function igrAgregarManual(nombre, codigo, cantidad, provId, alt){
     var clave = nombre.toLowerCase() + '|' + (codigo || '').toLowerCase();
     var igual = _igr.lineas.filter(function(l){ return !l.bodega && (l.nombre.toLowerCase() + '|' + (l.sku || '').toLowerCase()) === clave; })[0];
     if(igual){ igual.cantidad = Math.round((igual.cantidad + cantidad) * 100) / 100; if(provId && !igual.provId){ igual.provId = provId; igual.provNombre = igrProvNombre(provId); } return true; }
     if(_igr.lineas.length >= IGR_MAX_LINEAS){ igrAvisoMaximo(); return false; }
     _igr.seq++;
-    _igr.lineas.push({k: 'm' + _igr.seq, bodega: false, id: null, nombre: nombre, sku: codigo || '', marca: '', foto: '', cantidad: cantidad,
+    _igr.lineas.push({k: 'm' + _igr.seq, bodega: false, id: null, nombre: nombre, sku: codigo || '', marca: '', foto: '', cantidad: cantidad, alt: alt || '',
                       provId: provId || null, provOrig: null, provNombre: provId ? igrProvNombre(provId) : '', disponible: null,
                       compat: false, recordarProv: false, recordarCompat: false, editProv: false});
     return true;
@@ -4006,8 +4010,8 @@
     var cant = parseFloat(String($('igrNxCant').value || '').replace(',', '.'));
     if(!isFinite(cant) || cant <= 0){ marcarError($('igrNxCant')); ilusToast('La cantidad tiene que ser mayor que cero', {type:'warning'}); return; }
     var provId = $('igrNxProv').value ? Number($('igrNxProv').value) : null;
-    if(!igrAgregarManual(nombre, ($('igrNxCodigo').value || '').trim(), cant, provId)) return;
-    $('igrNxNombre').value = ''; $('igrNxCodigo').value = ''; $('igrNxCant').value = 1;
+    if(!igrAgregarManual(nombre, ($('igrNxCodigo').value || '').trim(), cant, provId, ($('igrNxAlt').value || '').trim())) return;
+    $('igrNxNombre').value = ''; $('igrNxCodigo').value = ''; $('igrNxAlt').value = ''; $('igrNxCant').value = 1;
     ilusToast('+ ' + nombre + ' agregado a la lista · falta «Enviar solicitud» abajo', {type:'success'});
     igrPintarLista();
     $('igrNxNombre').focus();
@@ -4028,7 +4032,8 @@
   }
 
   function igrChipLinea(l){
-    if(!l.bodega) return '<span class="igr-chip nuevo"><i class="bi bi-patch-plus-fill"></i>Nuevo · no existe en la bodega</span>';
+    if(!l.bodega) return '<span class="igr-chip nuevo"><i class="bi bi-patch-plus-fill"></i>Nuevo · no existe en la bodega</span>'
+                       + (l.alt ? '<span class="igr-chip"><i class="bi bi-tags"></i>También: ' + igrEsc(l.alt) + '</span>' : '');
     if(l.disponible == null) return '';
     var falta = l.cantidad - l.disponible;
     if(l.disponible > 0 && falta <= 0){
@@ -4293,6 +4298,7 @@
       return {
         origen: l.bodega ? (l.compat ? 'compatible' : 'bodega') : 'manual',
         repuesto_stock_id: l.id || '', repuesto_nombre: l.nombre, repuesto_sku: l.sku || '', cantidad: l.cantidad,
+        nombres_alt: l.alt || '',
         proveedor_id: IGR_OCULTA_PROV ? '' : (l.provId || ''),
         guardar_proveedor: !IGR_OCULTA_PROV && !!(l.bodega && l.recordarProv && !l.provOrig && l.provId),
         marcar_compatible: !!(l.bodega && l.recordarCompat)
@@ -4409,7 +4415,7 @@
     _igr.modelo = undefined; _igr.modeloSku = null;
     igrQuitarEv();
     incFichaCache = null;
-    ['igrMotivo', 'igrNxNombre', 'igrNxCodigo'].forEach(function(i){ var e = $(i); if(e) e.value = ''; });
+    ['igrMotivo', 'igrNxNombre', 'igrNxCodigo', 'igrNxAlt'].forEach(function(i){ var e = $(i); if(e) e.value = ''; });
     $('igrNxCant').value = 1; $('igrNxProv').value = '';
     $('igrErr').textContent = '';
     $('igrOk').hidden = true; $('igrOk').innerHTML = '';
@@ -4611,7 +4617,7 @@
       // 🛠️ 2026-09-30: además queda en la lista de la solicitud (cantidad 1, con el proveedor elegido).
       igrAgregarBodega({id: d.id, sku: d.sku, descripcion: d.descripcion, disponible: 0,
                         proveedor_id: proveedorId ? Number(proveedorId) : null, proveedor: provNombreNuevo}, 1);
-      ilusToast('✓ Repuesto '+d.sku+' creado y agregado a la solicitud', {type:'success'});
+      ilusToast('✓ Repuesto '+d.sku+' creado y agregado a la lista · falta «Enviar solicitud» abajo', {type:'success'});
     }).catch(function(){ btn.disabled = false; ilusToast('No se pudo conectar con el servidor', {type:'error'}); });
   });
 
@@ -4625,7 +4631,7 @@
     var sel = _incRepDetalleSel;
     if (!sel || !sel.id){ ilusToast('Todavía no hay un repuesto asociado.', {type:'warning'}); return; }
     if (_igr.modo === 'no') igrElegirModo('existe');
-    if (igrAgregarBodega(sel, 1)) ilusToast('+ ' + (sel.descripcion || 'Repuesto') + ' sumado a la solicitud', {type:'success'});
+    if (igrAgregarBodega(sel, 1)) ilusToast('+ ' + (sel.descripcion || 'Repuesto') + ' agregado a la lista · falta «Enviar solicitud» abajo', {type:'success'});
     var l = $('igrLista');
     if (l && !l.hidden) l.scrollIntoView({behavior: 'smooth', block: 'nearest'});
   });

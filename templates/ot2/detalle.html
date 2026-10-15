@@ -17074,6 +17074,10 @@ async function levdEliminar(iid){
               <label class="form-label fw-semibold small mb-1">Nombre del repuesto <span class="text-danger">*</span></label>
               <input type="text" id="otrep_nombre" class="form-control" placeholder="Ej: Pad de leg extension, rodamiento 6203, correa..."
                      autocomplete="off" oninput="otrepSelManual()">
+              {#- 2026-10-14 (Daniel: "indicando las posibles nombres o descripción del repuesto"). -#}
+              <label class="form-label fw-semibold small mb-1 mt-2" for="otrep_alt">Otros nombres con que se conoce <span class="text-muted fw-normal">(opcional · sepáralos con ;)</span></label>
+              <input type="text" id="otrep_alt" class="form-control" maxlength="600" autocomplete="off"
+                     placeholder="Ej: correa de transmisión; banda motriz; belt 2540" oninput="otrepSelManual()">
               <small class="text-muted d-block" style="font-size:.7rem">No está en la bodega todavía: queda <b>por validar</b> y bodega lo crea o lo asocia a uno existente.</small>
               <button type="button" class="otrep-link" onclick="otrepTab('docs')"><i class="bi bi-file-earmark-pdf"></i>¿No sabes el nombre exacto? Revisa el Manual del equipo</button>
             </div>
@@ -17684,8 +17688,9 @@ function otrepSelManual(){
   var nom = (document.getElementById('otrep_nombre').value || '').trim();
   document.querySelectorAll('.otrep-opc-it[data-id]').forEach(function(b){ b.classList.remove('on'); });
   if (_otrepBuscador) _otrepBuscador.setSeleccion(null);
+  var alt = document.getElementById('otrep_alt') ? (document.getElementById('otrep_alt').value || '').trim() : '';
   _otrep.sel = nom ? { stock_id: null, nombre: nom, origen: (_otrep.modo === 'repuesto' ? 'manual' : _otrep.modo),
-                        sku: null, disponible: null, comprometido: null, con_stock: null } : null;
+                        sku: null, disponible: null, comprometido: null, con_stock: null, nombres_alt: alt } : null;
   otrepRefrescar();
 }
 
@@ -17717,6 +17722,7 @@ function otrepAgregarALaLista(){
     _otrep.lista.push({
       stock_id: sel.stock_id, nombre: sel.nombre, sku: sel.sku || null, origen: sel.origen,
       cantidad: cant, disponible: sel.disponible, comprometido: sel.comprometido, con_stock: sel.con_stock,
+      nombres_alt: sel.nombres_alt || '',
     });
   }
   ilusToast('✓ Agregado: ' + sel.nombre, {type:'success'});
@@ -17726,6 +17732,7 @@ function otrepAgregarALaLista(){
   document.querySelectorAll('.otrep-opc-it[data-id]').forEach(function(b){ b.classList.remove('on'); });
   if (_otrepBuscador) _otrepBuscador.setSeleccion(null);
   document.getElementById('otrep_nombre').value = '';
+  if (document.getElementById('otrep_alt')) document.getElementById('otrep_alt').value = '';
   document.getElementById('otrep_add_cantidad').value = '1';
   otrepPintarLista();
   otrepRefrescar();
@@ -18021,7 +18028,8 @@ async function otrepEnviarLote(){
   var fd = new FormData();
   fd.append('lineas', JSON.stringify(_otrep.lista.map(function(it){
     return { origen: it.origen, repuesto_stock_id: it.stock_id || undefined,
-             repuesto_nombre: it.nombre, repuesto_sku: it.sku || undefined, cantidad: it.cantidad };
+             repuesto_nombre: it.nombre, repuesto_sku: it.sku || undefined, cantidad: it.cantidad,
+             nombres_alt: it.nombres_alt || undefined };
   })));
   fd.append('motivo', document.getElementById('otrep_motivo').value || '');
   fd.append('dejar_fuera_servicio', document.getElementById('otrep_fs').checked ? '1' : '0');

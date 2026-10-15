@@ -626,6 +626,8 @@
           <small class="text-muted d-block mb-1">No está en la bodega: escribe el nombre y bodega lo valida.</small>
           <input type="text" id="tkRepNombreManual" class="form-control" maxlength="400"
                  placeholder="Nombre del repuesto (manual)" oninput="TKREP.refrescar()">
+          <label class="form-label small mb-1 mt-2" for="tkRepAlt">Otros nombres con que se conoce <span class="text-muted fw-normal">(opcional · sepáralos con ;)</span></label>
+          <input type="text" id="tkRepAlt" class="form-control" maxlength="600" autocomplete="off" placeholder="Ej: correa de transmisión; banda motriz; belt 2540">
         </div>
         <label class="form-label fw-semibold small mb-1 mt-3">Cantidad <span class="text-danger">*</span></label>
         <input type="number" id="tkRepCantidad" class="form-control" style="max-width:140px" min="0.5" step="0.5" value="1">
@@ -852,6 +854,7 @@ var TKREP = (function(){
     if (!fEv){ err.textContent = 'Sin evidencia no hay solicitud: sube al menos una foto o un video.'; return; }
     var fd = new FormData();
     if (sel) fd.append('repuesto_stock_id', sel.id); else fd.append('repuesto_nombre', nombreManual);
+    fd.append('nombres_alt', (document.getElementById('tkRepAlt').value || '').trim());
     fd.append('cantidad', cantidad);
     fd.append('motivo', motivo);
     fd.append('evidencia', fEv);

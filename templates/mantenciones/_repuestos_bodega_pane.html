@@ -291,6 +291,23 @@
 .rb-sol-foto.on{border-color:#16a34a;box-shadow:0 0 0 3px #dcfce7}
 .rb-sol-foto img{width:100%;height:100%;object-fit:cover}
 .rb-sol-falta{margin-top:8px;font-size:.84rem;color:#991b1b;font-weight:700;display:flex;gap:6px;align-items:center}
+
+/* 2026-10-14: historial de solicitudes del repuesto */
+.rb-hist-sol{margin-top:12px;border:1.5px solid #e5e7eb;border-radius:14px;padding:12px 14px;background:#fff}
+.rb-hist-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px}
+.rb-hist-h i{color:#dc2626}
+.rb-hist-n{background:#0a0a0a;color:#fff;border-radius:50px;padding:1px 9px;font-size:.75rem;font-weight:800}
+.rb-hist-h .btn{margin-left:auto}
+.rb-hist-alias{font-size:.84rem;color:#374151;background:#f9fafb;border-radius:10px;padding:6px 10px;margin-bottom:8px}
+.rb-hist-list{display:flex;flex-direction:column;gap:4px;max-height:260px;overflow:auto}
+.rb-hist-it{display:grid;grid-template-columns:auto auto auto minmax(0,1fr) auto;gap:8px;align-items:center;font-size:.84rem;padding:6px 8px;border-radius:10px;background:#f9fafb}
+.rb-hist-id{font-weight:900}
+.rb-hist-est{border-radius:50px;padding:1px 9px;font-weight:800;font-size:.74rem;background:#e5e7eb;color:#374151;white-space:nowrap}
+.rb-hist-est.e-instalado{background:#dcfce7;color:#166534}.rb-hist-est.e-rechazado{background:#f3f4f6;color:#6b7280}
+.rb-hist-est.e-solicitado{background:#fff8e1;color:#92400e}.rb-hist-est.e-validado,.rb-hist-est.e-pedido,.rb-hist-est.e-recibido{background:#dbeafe;color:#1e40af}
+.rb-hist-who{min-width:0;overflow-wrap:anywhere}
+.rb-hist-f{color:#6b7280;white-space:nowrap}
+@media (max-width:768px){ .rb-hist-it{grid-template-columns:auto auto minmax(0,1fr)} .rb-hist-f,.rb-hist-q{grid-column:span 1} .rb-hist-h .btn{margin-left:0;width:100%;min-height:44px} }
 </style>
 
 <form method="get" class="rb-filtros">
@@ -853,6 +870,12 @@
             referencias clickeables construida hoy mismo, más completa que
             un timeline simple -- convertirla sería un paso atrás, no lo
             que se pidió (REGLA #4.2). -#}
+        {#- 2026-10-14 (Daniel: "esos productos nunca se van a borrar para tener trazabilidad…
+            van a quedar con saldo cero y algún historial"): todo lo que se pidió o consumió de
+            este repuesto (también lo cerrado) y los otros nombres con que lo piden. Solo gestión. -#}
+        {% if not oculta_proveedores %}
+        <div id="rbHistSol" class="rb-hist-sol" hidden></div>
+        {% endif %}
         <div id="rbTrazabilidad" style="display:none;margin-top:4px">
           <div id="rbTrazTimeline" class="ilus-tl"></div>
         </div>
@@ -1800,6 +1823,7 @@ async function rbAbrirNuevo(mantenerContexto, opts){
   rbRenderFotos();
   rbSetAvatarPrincipal(null);   // repuesto nuevo: nunca hay fotos todavia
   document.getElementById('rbTrazabilidad').style.display = 'none';
+  const _hs = document.getElementById('rbHistSol'); if (_hs){ _hs.hidden = true; _hs.innerHTML = ''; }
   // 🔧 FIX 2026-09-02 (caso Lenin, ver comentario grande arriba de
   // RB_DRAFT_KEY): solo se ofrece recuperar en una apertura FRESCA del
   // modal (mantenerContexto=false) -- el flujo interno "Guardar y crear
@@ -1931,8 +1955,61 @@ function rbAbrirEditar(r, modelos, fotos){
   } else {
     document.getElementById('rbTrazabilidad').style.display = 'none';
   }
+  rbHistSolCargar(r);
   RB_MODAL.show();
 }
+
+/* 2026-10-14: historial de solicitudes del repuesto (también cerradas) + reposición. */
+async function rbHistSolCargar(r){
+  const box = document.getElementById('rbHistSol');
+  if (!box) return;
+  box.hidden = true; box.innerHTML = '';
+  if (!r || !r.id) return;
+  let j = {};
+  try {
+    const resp = await fetch('/repuestos/api/stock/' + r.id + '/solicitudes', { credentials: 'same-origin' });
+    j = await resp.json();
+  } catch(e){ return; }
+  if (!j.ok || document.getElementById('rbId').value !== String(r.id)) return;
+  const sols = j.solicitudes || [], alias = j.alias || [];
+  const reponer = (typeof rsmAbrirReposicion === 'function')
+    ? '<button type="button" class="btn btn-sm btn-danger fw-bold" style="min-height:40px" onclick="rbSolicitarReposicion()"><i class="bi bi-send-plus me-1"></i>Solicitar reposición</button>' : '';
+  box.innerHTML = '<div class="rb-hist-h"><i class="bi bi-inboxes"></i><b>Solicitudes de este repuesto</b>'
+    + '<span class="rb-hist-n">' + sols.length + '</span>' + reponer + '</div>'
+    + (alias.length ? '<div class="rb-hist-alias"><i class="bi bi-tags me-1"></i>También lo piden como: ' + alias.map(escHtmlRb).join(' · ') + '</div>' : '')
+    + (sols.length ? '<div class="rb-hist-list">' + sols.slice(0, 30).map(function(x){
+        const ot = x.ot_generada_numero || x.numero_ot;
+        return '<div class="rb-hist-it"><span class="rb-hist-id">#' + x.id + '</span>'
+          + '<span class="rb-hist-est e-' + escHtmlRb(x.estado || '') + '">' + escHtmlRb(x.resolucion_label || x.estado_label || x.estado || '') + '</span>'
+          + '<span class="rb-hist-q">× ' + escHtmlRb(String(x.cantidad == null ? '' : x.cantidad)) + '</span>'
+          + '<span class="rb-hist-who">' + escHtmlRb(x.es_reposicion ? 'Reposición de stock' : (x.cliente_nombre || '—'))
+          + (ot ? ' · ' + escHtmlRb(ot) : '') + (x.numero_ticket ? ' · ' + escHtmlRb(x.numero_ticket) : '') + '</span>'
+          + '<span class="rb-hist-f">' + escHtmlRb(x.created_at || '') + '</span></div>';
+      }).join('') + '</div>' + (sols.length > 30 ? '<div class="small text-muted mt-1">y ' + (sols.length - 30) + ' más en Repuestos → Solicitudes.</div>' : '')
+      : '<div class="small text-muted">Todavía nadie lo ha pedido.</div>');
+  box.hidden = false;
+}
+function rbSolicitarReposicion(){
+  const id = document.getElementById('rbId').value;
+  if (!id || typeof rsmAbrirReposicion !== 'function') return;
+  const it = { id: Number(id), sku: document.getElementById('rbSku').value || null,
+               descripcion: document.getElementById('rbDescripcion').value || '',
+               proveedor_id: (document.getElementById('rbProveedor') || {}).value ? Number(document.getElementById('rbProveedor').value) : null };
+  if (RB_DIRTY){
+    // 2026-10-15 (revisión Fase B): con cambios guardados (foto, modelos…) el modal recarga
+    // la página al cerrarse; la reposición se abre después de la recarga, con este repuesto.
+    try { sessionStorage.setItem('rbReponerTras', JSON.stringify(it)); } catch(e){}
+    RB_MODAL.hide();
+    return;
+  }
+  RB_MODAL.hide();
+  setTimeout(function(){ rsmAbrirReposicion(it); }, 350);
+}
+window.addEventListener('load', function(){
+  let it = null;
+  try { it = JSON.parse(sessionStorage.getItem('rbReponerTras') || 'null'); sessionStorage.removeItem('rbReponerTras'); } catch(e){}
+  if (it && typeof rsmAbrirReposicion === 'function') setTimeout(function(){ rsmAbrirReposicion(it); }, 400);
+});
 
 // 🧾 2026-09-26 (Fase 3 -- kardex, Daniel: "Sí, es la base"): muestra el
 // campo "motivo del ajuste" en cuanto la cantidad de un repuesto YA

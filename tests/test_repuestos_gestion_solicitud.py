@@ -26,7 +26,7 @@ APP_PY = os.path.join(RAIZ, "app.py")
 
 _FUNCIONES = ("_otrep_filtros_query", "_otrep_cambiar_estado", "repstock_crear")
 _CONSTANTES = ("_OTREP_TRANSICIONES", "_OTREP_TRANSICIONES_GESTION", "_OTREP_ESTADO_LABEL",
-               "_OTREP_ESTADOS", "_OTREP_ABIERTOS")
+               "_OTREP_ESTADOS", "_OTREP_ABIERTOS", "_OTREP_CAMINOS")
 _NODOS = {}
 
 
@@ -153,7 +153,10 @@ class TestValidarYRecibir(unittest.TestCase):
 
         f = _cargar("_otrep_cambiar_estado", {
             "mysql_fetchone": fetchone, "_es_rol_tecnico": lambda *a, **k: tecnico,
-            "mysql_execute": no_escribir, "get_db": no_escribir, "mysql_fetchall": lambda *a, **k: []})
+            "mysql_execute": no_escribir, "get_db": no_escribir, "mysql_fetchall": lambda *a, **k: [],
+            # 2026-10-14: camino de la solicitud y nombres aprendidos (columnas perezosas)
+            "_otrep_resp_asegurar": lambda: True, "_otrep_nombres_alt": lambda v: [],
+            "_otrep_alias_aprender": lambda *a, **k: 0})
         try:
             return f(sol["id"], datos.get("estado"), "Juan Pablo", datos)
         except RuntimeError:
@@ -248,6 +251,7 @@ class TestCrearPorLlegar(unittest.TestCase):
         f = _cargar("repstock_crear", {
             "request": _Req(json=body), "jsonify": lambda d: d,
             "_oculta_proveedores": lambda: tecnico, "_otrep_puede_gestion": lambda: gestion,
+            "_es_tecnico_elevado": lambda *a, **k: False,   # 2026-10-05: regla nueva del alta (otra sesión)
             "mysql_fetchone": fetchone, "get_mysql": lambda: conn,
             "_repstock_next_sku": lambda marca, c: "REP-GEN-0001",
             "_repstock_dim_float": lambda v: None, "_repstock_bultos_int": lambda v: None,
@@ -273,18 +277,20 @@ class TestCrearPorLlegar(unittest.TestCase):
         self.assertIn("proveedor", r["error"].lower())
 
     def test_tecnico_no_puede_crear_por_llegar(self):
-        r, code, _ = self._crear({"por_llegar": True, "descripcion": "Pantalla X1", "proveedor_id": 3,
+        # 2026-10-05: un técnico declara la marca (no ve proveedores); con ella se llega al candado de ubicación.
+        r, code, _ = self._crear({"por_llegar": True, "descripcion": "Pantalla X1", "proveedor_id": 3, "marca_id": 1,
                                   "cantidad": 0, "stock_minimo": 0}, tecnico=True)
         self.assertEqual(code, 400)
         self.assertIn("ubicación", r["error"])
 
     def test_alta_normal_sigue_exigiendo_ubicacion(self):
-        r, code, _ = self._crear({"descripcion": "Correa", "cantidad": 1, "stock_minimo": 0})
+        # 2026-10-05: el alta exige además marca o proveedor; se manda uno para probar la ubicación.
+        r, code, _ = self._crear({"descripcion": "Correa", "cantidad": 1, "stock_minimo": 0, "proveedor_id": 3})
         self.assertEqual(code, 400)
         self.assertIn("ubicación", r["error"])
 
     def test_alta_normal_con_ubicacion(self):
-        r, code, conn = self._crear({"descripcion": "Correa", "cantidad": 1, "stock_minimo": 0, "ubicacion_id": 7})
+        r, code, conn = self._crear({"descripcion": "Correa", "cantidad": 1, "stock_minimo": 0, "ubicacion_id": 7, "proveedor_id": 3})
         self.assertEqual(code, 200, r)
         self.assertIsNotNone(self._insert(conn))
 

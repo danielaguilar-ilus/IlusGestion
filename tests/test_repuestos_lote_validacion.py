@@ -34,11 +34,12 @@ def _cargar_validador():
     ambito aislado. Funcion pura: no necesita ningun otro simbolo de
     app.py (no toca BD, Flask ni globals del modulo)."""
     arbol = ast.parse(_leer(APP_PY))
-    ambito = {}
+    ambito = {"json": __import__("json"), "re": __import__("re")}
     for nodo in arbol.body:
-        if isinstance(nodo, ast.FunctionDef) and nodo.name == "_otrep_validar_lineas_lote":
+        # 2026-10-14: las líneas traen "otros nombres" (_otrep_nombres_alt, que usa _otrep_norm_desc).
+        if isinstance(nodo, ast.FunctionDef) and nodo.name in ("_otrep_validar_lineas_lote",
+                                                                "_otrep_nombres_alt", "_otrep_norm_desc"):
             exec(compile(ast.Module(body=[nodo], type_ignores=[]), "<app>", "exec"), ambito)
-            break
     assert "_otrep_validar_lineas_lote" in ambito, (
         "no se encontro _otrep_validar_lineas_lote en app.py")
     return ambito["_otrep_validar_lineas_lote"]

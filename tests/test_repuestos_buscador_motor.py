@@ -105,6 +105,9 @@ def _cargar_motor(gestion=True, externo=False, tecnico=False):
     # al externo Y a cualquier tecnico (`tecnico=True`: interno o elevado).
     ambito["_oculta_proveedores"] = lambda user=None: bool(externo or tecnico)
     ambito["print"] = lambda *a, **k: None
+    # 2026-10-14: el buscador también mira los "otros nombres" aprendidos (tabla de alias),
+    # solo si existe; en la prueba no existe.
+    ambito["_otrep_resp_asegurar"] = lambda: False
     return ambito, doble
 
 

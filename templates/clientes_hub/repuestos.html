@@ -935,7 +935,7 @@
             <div class="gs-circ-wrap"><span class="gs-circ-lbl">Paso 1</span><div class="gs-circ"><span class="num">1</span><i class="bi bi-check-lg chk"></i></div></div>
             <div class="gs-tits">
               <div class="gs-tit">¿Tenemos este repuesto?</div>
-              <div class="gs-sub">Búscalo en la bodega. Si existe, el sistema te dice si alcanza el stock; si no existe, se crea aquí con su ficha completa.</div>
+              <div class="gs-sub">Búscalo en la bodega. Si existe y hay stock, se consume. Si no existe, <b>no hace falta crearlo</b>: elige «Pedir por ticket» o «Resolver con una OT» en el paso 2 (se registra en bodega cuando llegue).</div>
               <div class="gs-estado" id="gsEstado1"></div>
             </div>
           </div>
@@ -1048,6 +1048,16 @@
             <label class="gs-opt" id="gsCamPedir"><input type="radio" name="gsCamino" value="pedir" onchange="gsPintar()">
               <span class="gs-opt-ico"><i class="bi bi-ticket-perforated-fill"></i></span>
               <span class="gs-opt-txt"><strong>Pedir al proveedor por ticket</strong><small id="gsCamPedirTxt">Entra al ticket de compra; al llegar se reparte entre instalar y bodega</small></span><span class="gs-opt-radio"></span></label>
+            {#- 2026-10-14 (Daniel: "gestionando una OT… poder asociarle alguna orden de trabajo si es
+                necesario, si es que hay reparaciones"): la resuelve una OT, sin pasar por bodega. -#}
+            <label class="gs-opt" id="gsCamOt"><input type="radio" name="gsCamino" value="ot" onchange="gsPintar()">
+              <span class="gs-opt-ico"><i class="bi bi-clipboard2-pulse-fill"></i></span>
+              <span class="gs-opt-txt"><strong>Resolverla con una OT</strong><small>Reparación o instalación: la gestiona una OT, nueva o una que ya existe</small></span><span class="gs-opt-radio"></span></label>
+          </div>
+          <div class="gs-ot-sub" id="gsOtSub" hidden>
+            <label class="gs-opt-mini"><input type="radio" name="gsOtModo" value="nueva" checked onchange="gsPintar()"> Generar una OT nueva</label>
+            <label class="gs-opt-mini"><input type="radio" name="gsOtModo" value="existe" onchange="gsPintar()"> Asociar una OT que ya existe</label>
+            <input type="text" id="gsOtNumero" class="form-control mt-2" placeholder="Número de la OT, ej: OT-2026-00264" autocomplete="off" oninput="gsPintar()" hidden>
           </div>
           <div class="gs-ruta" id="gsRuta"></div>
         </div>
@@ -1206,6 +1216,25 @@
     .rsg-para{grid-template-columns:1fr 1fr}
     .gs-footer .btn-link{width:100%;text-align:left}
   }
+
+  /* 2026-10-14: tercer camino (OT) y otros nombres de la solicitud */
+  .gs-ot-sub{margin-top:10px;padding:10px 12px;border:1.5px dashed #93c5fd;border-radius:12px;background:#eff6ff}
+  .gs-opt-mini{display:inline-flex;align-items:center;gap:6px;margin-right:16px;font-weight:700;font-size:.9rem;min-height:36px;cursor:pointer}
+  .rsg-alt{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:.84rem;color:#374151}
+  .rsg-alt button{border:1px solid #d1d5db;background:#fff;border-radius:50px;padding:2px 10px;font-size:.8rem;font-weight:700;min-height:30px}
+  .rsg-alt button:hover{border-color:#dc2626;color:#991b1b}
+  @media (max-width:768px){ .gs-opt-mini{display:flex;margin-right:0} }
+
+  /* 2026-10-14: ficha de la solicitud — otros nombres, camino, resolución y acciones */
+  .rst-alt{display:block;color:#6b7280;font-size:.76rem}
+  .rsf-blk{display:flex;gap:8px;align-items:flex-start;margin-top:10px;padding:9px 12px;border-radius:12px;background:#fff;border:1px solid #e5e7eb;font-size:.9rem}
+  .rsf-blk i{color:#6b7280;margin-top:2px}
+  .rsf-blk.ok{background:#f0fdf4;border-color:#bbf7d0}.rsf-blk.ok i{color:#16a34a}
+  .rsf-acc{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px;padding:10px 12px;border:1.5px dashed #d1d5db;border-radius:12px;background:#fafafa}
+  .rsf-acc-t{width:100%;font-size:.72rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#6b7280}
+  .rsf-acc-sub{width:100%;font-size:.84rem;color:#374151}
+  .rsf-acc-sub:empty{display:none}
+  @media (max-width:768px){ .rsf-acc .rst-btn{flex:1 1 100%;justify-content:center;min-height:44px} }
   @media (prefers-reduced-motion:reduce){ .gs-step,.gs-opt,.gs-add{transition:none} .gs-step.is-complete .gs-circ::after{animation:none} }
 </style>
 
@@ -1289,6 +1318,8 @@
               <div class="rsm-manual">
                 <div class="full"><label class="form-label small fw-bold mb-1">Nombre del repuesto <span class="text-danger">*</span></label>
                   <input type="text" id="rsmManualNombre" class="form-control" placeholder="Ej: Rodamiento 6203, pad de leg extension…" autocomplete="off"></div>
+                <div class="full"><label class="form-label small fw-bold mb-1" for="rsmManualAlt">Otros nombres con que se conoce <span class="text-muted fw-normal">(opcional · sepáralos con ;)</span></label>
+                  <input type="text" id="rsmManualAlt" class="form-control" maxlength="600" placeholder="Ej: correa de transmisión; banda motriz; belt 2540" autocomplete="off"></div>
                 <div><label class="form-label small fw-bold mb-1">SKU / código <span class="text-muted fw-normal">(opcional)</span></label>
                   <input type="text" id="rsmManualSku" class="form-control" placeholder="Si lo conoces" autocomplete="off"></div>
                 <div><label class="form-label small fw-bold mb-1">Cantidad</label>
@@ -2270,7 +2301,9 @@ function rsFilaHtml(s){
     '<td class="rst-c0">' + sel + '<i class="bi bi-chevron-right rst-chev"></i></td>' +
     '<td><b class="rst-num">#' + s.id + '</b>' + origen + '<small class="rst-hace">' + rsEsc(s.created_at ? String(s.created_at).slice(0, 10) : '') + (s.dias_transcurridos != null ? ' · ' + rsFmt(s.dias_transcurridos) + ' d' : '') + '</small></td>' +
     '<td>' + cliente + (equipo ? '<small>' + rsEsc(equipo) + '</small>' : '') + (s.prioridad_fs ? '<span class="rst-pill rojo fuerte"><i class="bi bi-exclamation-octagon-fill"></i>Fuera de servicio</span>' : '') + '</td>' +
-    '<td><b>' + rsEsc(s.repuesto_nombre || '') + ' × ' + rsFmt(s.cantidad) + '</b>' + (s.stock_sku ? '<small>' + rsEsc(s.stock_sku) + '</small>' : '') + stock + (!(s.n_fotos > 0) && s.abierta ? '<span class="rst-pill ambar"><i class="bi bi-camera"></i>Sin foto</span>' : '') + '</td>' +
+    '<td><b>' + rsEsc(s.repuesto_nombre || '') + ' × ' + rsFmt(s.cantidad) + '</b>' +
+      ((s.nombres_alt || []).length ? '<small class="rst-alt"><i class="bi bi-tags"></i>También: ' + rsEsc(s.nombres_alt.join(' · ')) + '</small>' : '') +
+      (s.stock_sku ? '<small>' + rsEsc(s.stock_sku) + '</small>' : '') + stock + (!(s.n_fotos > 0) && s.abierta ? '<span class="rst-pill ambar"><i class="bi bi-camera"></i>Sin foto</span>' : '') + '</td>' +
     '<td><span class="rst-etapa ' + (_RST_ETAPA_CLS[et] || 'gris') + '">' + rsEsc(s.etapa_label || '') + '</span><small class="rst-sig">' + rsEsc(s.siguiente || '') + '</small></td>' +
     '<td>' + plazo + '</td>' +
     '<td>' + resp + '</td>' +
@@ -2402,12 +2435,116 @@ function rsFichaPintar(sid){
   const p = s.plazo;
   body.innerHTML = (p ? '<div class="rst-plazo ' + p.color + ' mb-2"><span class="rst-dot ' + p.color + '"></span><b>' + rsEsc(p.texto) + '</b>' +
       '<div class="rst-bar"><span style="width:' + Math.min(100, Math.round((p.pct || 0) * 100)) + '%"></span></div><small>' + (p.dias ? 'Llega ' : 'Vence ') + rsEsc(p.vence || '') + '</small></div>' : '') +
-    '<div class="rs-card ' + (_RS_EST_CLS[s.estado] || 'sol') + (s.prioridad_fs ? ' prio-fs' : '') + '">' + rsCardInner(s) + '</div>';
+    '<div class="rs-card ' + (_RS_EST_CLS[s.estado] || 'sol') + (s.prioridad_fs ? ' prio-fs' : '') + '">' + rsCardInner(s) + '</div>' +
+    rsFichaExtraHtml(s);
   body.querySelectorAll('[onclick]').forEach(function(el){
     const code = el.getAttribute('onclick') || '';
     if (_RS_FICHA_ABRE_OTRA.test(code)) el.setAttribute('onclick', 'rsFichaYLuego(function(){ ' + code + ' })');
   });
   return true;
+}
+/* 2026-10-14 (Daniel: "la ficha de por qué se gestionó, si era un repuesto, si fue que se
+   reparó, y poder asociarle alguna orden de trabajo si es necesario"). */
+function rsFichaExtraHtml(s){
+  let h = '';
+  if ((s.nombres_alt || []).length) h += '<div class="rsf-blk"><i class="bi bi-tags"></i><span><b>También se conoce como:</b> ' + rsEsc(s.nombres_alt.join(' · ')) + '</span></div>';
+  const camino = { bodega: 'Consumir de la bodega', ticket: 'Pedido por ticket (compra)', ot: 'Resolver con una OT' }[s.camino];
+  if (camino) h += '<div class="rsf-blk"><i class="bi bi-signpost-split"></i><span><b>Camino elegido:</b> ' + rsEsc(camino) +
+    (s.ot_generada_id ? ' · OT <a href="/ot/' + s.ot_generada_id + '" target="_blank" rel="noopener">' + rsEsc(s.ot_generada_numero || ('#' + s.ot_generada_id)) + '</a>' : '') + '</span></div>';
+  if (s.resolucion_label) h += '<div class="rsf-blk ok"><i class="bi bi-flag-fill"></i><span><b>Cómo se resolvió:</b> ' + rsEsc(s.resolucion_label) +
+    (s.resolucion_nota ? ' · «' + rsEsc(s.resolucion_nota) + '»' : '') + '</span></div>';
+  // 2026-10-15 (revisión Fase B): validada sin repuesto de bodega → se asocia después (al
+  // llegar la compra, lo que llegó entra al inventario); una OT asociada por error se quita.
+  if (s.abierta && _rs.puedePedir && !s.repuesto_stock_id && ['validado', 'pedido', 'recibido'].indexOf(s.estado) >= 0){
+    h += '<div class="rsf-acc"><span class="rsf-acc-t">Repuesto de bodega</span>' +
+      '<span class="rsf-acc-sub">' + (s.estado === 'validado'
+        ? 'Se gestiona sin repuesto de bodega. Cuando exista, asócialo para que quede en su historial.'
+        : 'Asócialo al repuesto de bodega: lo que ya llegó entra al inventario.') + '</span>' +
+      '<button type="button" class="rst-btn azul" onclick="rsAsociarRepuestoAbrir(' + s.id + ')"><i class="bi bi-box-seam"></i>Asociar repuesto de bodega</button></div>';
+  }
+  if (s.abierta && _rs.puedePedir && s.ot_generada_id && ['solicitado', 'validado'].indexOf(s.estado) >= 0){
+    h += '<div class="rsf-acc"><span class="rsf-acc-t">OT asociada</span>' +
+      '<button type="button" class="rst-btn" onclick="rsDesasociarOT(' + s.id + ')"><i class="bi bi-x-circle"></i>Quitar la OT ' + rsEsc(s.ot_generada_numero || '') + '</button></div>';
+  }
+  if (s.abierta && _rs.puedePedir){
+    h += '<div class="rsf-acc"><span class="rsf-acc-t">Resolver sin repuesto de bodega</span>' +
+      (!s.ot_generada_id ? '<button type="button" class="rst-btn azul" onclick="rsAsociarOT(' + s.id + ')"><i class="bi bi-link-45deg"></i>Asociar una OT existente</button>' : '') +
+      '<button type="button" class="rst-btn" onclick="rsResolver(' + s.id + ', \'reparado\')"><i class="bi bi-wrench-adjustable"></i>Se reparó sin repuesto</button>' +
+      '<button type="button" class="rst-btn" onclick="rsResolver(' + s.id + ', \'no_corresponde\')"><i class="bi bi-slash-circle"></i>No correspondía</button></div>';
+  }
+  return h;
+}
+async function rsAsociarOT(sid){
+  const num = await ilusPrompt({ title: 'Asociar una OT', message: '¿Qué OT resuelve esta solicitud?',
+    sub: 'Una reparación o instalación que ya existe. Debe ser del mismo cliente.', placeholder: 'Ej: OT-2026-00264', required: true });
+  if (!num) return;
+  const j = await rsAsociarOTPost(sid, String(num).trim(), {});
+  if (!j.ok){ if (j.error) ilusToast(j.error, { type: 'error' }); return; }
+  ilusToast('✓ Asociada a la OT ' + (j.numero_ot || num), { type: 'success' });
+  await rsCargar();
+}
+/* 2026-10-15 (revisión Fase B): primero se busca la OT por su NÚMERO y se muestra (número,
+   cliente, estado) para confirmar; recién entonces se asocia. `extra` lleva el repuesto y el
+   proveedor elegidos en «Gestionar». Devuelve {ok, numero_ot} o {ok:false, error}. */
+async function rsAsociarOTPost(sid, num, extra){
+  const url = '/repuestos/api/solicitudes-ot/' + sid + '/asociar-ot';
+  const post = async function(body){
+    try {
+      const r = await fetch(url, { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      return await r.json();
+    } catch(e){ return { ok: false, error: 'Sin conexión.' }; }
+  };
+  const v = await post({ ot: num, solo_ver: true });
+  if (!v.ok) return v;
+  const ok = await ilusConfirm({ title: 'Asociar a ' + (v.numero_ot || num),
+    message: '¿Esta es la OT que resuelve la solicitud #' + sid + '?',
+    sub: (v.cliente_nombre ? 'Cliente: ' + v.cliente_nombre + ' · ' : '') + 'Estado: ' + (v.estado || '—'),
+    okLabel: 'Sí, asociar', cancelLabel: 'No, revisar' });
+  if (!ok) return { ok: false };
+  return await post(Object.assign({ ot: v.numero_ot || num }, extra || {}));
+}
+async function rsDesasociarOT(sid){
+  const s = rsBuscarSolicitud(sid) || {};
+  const motivo = await ilusPrompt({ title: 'Quitar la OT ' + (s.ot_generada_numero || ''),
+    message: '¿Por qué se quita? Queda en la bitácora de la solicitud.', placeholder: 'Ej: se asoció a la OT equivocada', required: true });
+  if (!motivo) return;
+  let j = {};
+  try {
+    const r = await fetch('/repuestos/api/solicitudes-ot/' + sid + '/desasociar-ot', { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ motivo: String(motivo).trim() }) });
+    j = await r.json();
+  } catch(e){ j = { ok: false, error: 'Sin conexión.' }; }
+  if (!j.ok){ ilusToast(j.error || 'No se pudo quitar la OT.', { type: 'error' }); return; }
+  ilusToast('✓ Se quitó la OT de la solicitud', { type: 'success' });
+  await rsCargar();
+}
+/* 2026-10-15 (revisión Fase B): «Gestionar» en modo «solo asociar el repuesto» para una
+   solicitud ya validada, pedida o recibida sin repuesto de bodega (paso 1 nada más). */
+async function rsAsociarRepuestoAbrir(sid){
+  const s = rsBuscarSolicitud(sid);
+  if (!s) return;
+  const f = document.getElementById('rsModalFicha');
+  if (f && f.classList.contains('show')) bootstrap.Modal.getOrCreateInstance(f).hide();
+  await rsValAbrir(s, 'asociar');
+}
+async function rsResolver(sid, tipo){
+  const t = tipo === 'reparado'
+    ? { title: 'Se reparó sin repuesto', message: '¿Qué se hizo? Queda en la ficha de la solicitud.', placeholder: 'Ej: se ajustó la correa y se limpió el sensor; quedó operativa' }
+    : { title: 'No correspondía', message: '¿Por qué no correspondía? Queda en la ficha de la solicitud.', placeholder: 'Ej: el repuesto estaba bien; la falla era de configuración' };
+  const nota = await ilusPrompt({ title: t.title, message: t.message, placeholder: t.placeholder, required: true,
+    sub: 'Cierra la solicitud: lo comprometido en bodega se libera y queda en el historial.' });
+  if (!nota) return;
+  if (String(nota).trim().length < 10){ ilusToast('Cuenta un poco más (mínimo 10 caracteres).', { type: 'warning' }); return; }
+  let j = {};
+  try {
+    const r = await fetch('/repuestos/api/solicitudes-ot/' + sid + '/resolver', { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resolucion: tipo, nota: String(nota).trim() }) });
+    j = await r.json();
+  } catch(e){ j = { ok: false, error: 'Sin conexión.' }; }
+  if (!j.ok){ ilusToast(j.error || 'No se pudo cerrar la solicitud.', { type: 'error' }); return; }
+  ilusToast('✓ Solicitud cerrada: ' + (j.resolucion_label || ''), { type: 'success' });
+  await rsCargar();
 }
 function rsFichaAbrir(sid){
   _rs.fichaSid = sid;
@@ -3243,6 +3380,8 @@ function rsGestCtxHtml(s){
   const fotos = parseInt(s.n_fotos || 0, 10);
   return '<span class="rsg-chip"><i class="bi bi-diagram-2"></i>' + rsEsc(origen) + (ref ? ' · ' + rsEsc(ref) : '') + '</span>' +
     '<span style="font-size:1.05rem"><b>' + rsEsc(s.repuesto_nombre || 'Repuesto sin nombre') + '</b> × ' + rsFmt(s.cantidad || 1) + '</span>' +
+    ((s.nombres_alt || []).length ? '<span class="rsg-alt"><i class="bi bi-tags"></i>También: ' + s.nombres_alt.map(function(n){
+        return '<button type="button" onclick="gsEl(\'rsValQ\').value=this.dataset.n;rsValBuscar(this.dataset.n)" data-n="' + rsEsc(n) + '" title="Buscar este nombre en la bodega">' + rsEsc(n) + '</button>'; }).join('') + '</span>' : '') +
     (s.dejo_fuera_servicio ? '<span class="rsg-chip" style="background:#dc2626"><i class="bi bi-exclamation-octagon-fill"></i>Equipo fuera de servicio</span>' : '') +
     (s.motivo ? '<span>«' + rsEsc(s.motivo) + '»</span>' : '') +
     (fotos > 0 ? '<span style="color:#166534;font-weight:700"><i class="bi bi-camera-fill"></i> ' + fotos + ' foto' + (fotos === 1 ? '' : 's') + '</span>'
@@ -3275,34 +3414,57 @@ function gsDisp(it){
 }
 function gsPintar(){
   const s = rsBuscarSolicitud(_rs.valSid) || {};
+  const soloAsociar = _rs.valModo === 'asociar';
+  gsEl('rsGestPaso2').hidden = soloAsociar; gsEl('rsGestPaso3').hidden = soloAsociar;
+  gsEl('rsNuToggle').hidden = soloAsociar;
+  if (soloAsociar){
+    const it0 = _rs.selItem || null, p1a = gsEl('rsGestPaso1');
+    p1a.classList.remove('is-complete', 'is-warn');
+    if (it0) p1a.classList.add('is-complete');
+    gsEl('gsEstado1').innerHTML = it0
+      ? '<i class="bi bi-check-circle-fill"></i><span>' + rsEsc(it0.descripcion) + ' (' + rsEsc(it0.sku || '') + ')' +
+        (s.estado === 'recibido' || parseFloat(s.cantidad_recibida || 0) > 0 ? ' · lo que ya llegó entra a su stock' : '') + '</span>'
+      : '<i class="bi bi-x-circle-fill"></i><span>Falta: elegir el repuesto de la lista (si no existe, créalo en Bodega con su ubicación)</span>';
+    gsEl('gsProgresoTxt').textContent = (it0 ? 1 : 0) + ' de 1 paso listo';
+    gsEl('gsProgresoBar').style.width = it0 ? '100%' : '0%';
+    gsEl('rsValBtn').disabled = !it0;
+    gsEl('gsBtnTxt').textContent = it0 ? 'Asociar este repuesto' : 'Elige el repuesto';
+    return;
+  }
   const cant = parseFloat(s.cantidad || 1) || 1;
   const it = _rs.selItem || null;
   const disp = gsDisp(it);
   const nuevoAbierto = !gsEl('rsNuBox').hidden;
   const consumirOK = !!it && disp >= cant;
 
-  // Paso 2: qué caminos se pueden tomar
+  // Paso 2: qué caminos se pueden tomar. 2026-10-14 (Daniel: "sin buscar crear el repuesto,
+  // pero siempre levantando la solicitud"): pedir por ticket y resolver con una OT ya NO
+  // exigen tener el repuesto en bodega; consumir sí (es stock real).
   const rCons = document.querySelector('input[name="gsCamino"][value="consumir"]');
   const rPed = document.querySelector('input[name="gsCamino"][value="pedir"]');
-  rCons.disabled = !consumirOK; rPed.disabled = !it;
+  const rOt = document.querySelector('input[name="gsCamino"][value="ot"]');
+  rCons.disabled = !consumirOK; rPed.disabled = false; rOt.disabled = false;
   if (!consumirOK && rCons.checked) rCons.checked = false;
-  if (!it && rPed.checked) rPed.checked = false;
-  if (it && !_gs.autoCam && !rCons.checked && !rPed.checked){
+  if (it && !_gs.autoCam && !rCons.checked && !rPed.checked && !rOt.checked){
     (consumirOK ? rCons : rPed).checked = true;
     _gs.autoCam = true;
   }
   gsEl('gsCamConsumir').classList.toggle('is-dis', !consumirOK);
-  gsEl('gsCamPedir').classList.toggle('is-dis', !it);
   gsEl('gsCamConsumir').classList.toggle('is-sug', consumirOK);
   gsEl('gsCamPedir').classList.toggle('is-sug', !!it && !consumirOK);
-  gsEl('gsCamConsumirTxt').textContent = !it ? 'Primero elige el repuesto (paso 1)'
+  gsEl('gsCamConsumirTxt').textContent = !it ? 'Solo si el repuesto está en la bodega con stock (paso 1)'
     : (consumirOK ? 'Hay ' + rsFmt(disp) + ' disponibles: se reservan ' + rsFmt(cant) + ' y se genera la OT de instalación'
                   : 'No alcanza: hay ' + rsFmt(Math.max(disp, 0)) + ' disponibles y se necesitan ' + rsFmt(cant));
-  gsEl('gsCamPedirTxt').textContent = 'Entra al ticket de compra de su proveedor; al llegar se reparte entre instalar y guardar en bodega';
+  gsEl('gsCamPedirTxt').textContent = it ? 'Entra al ticket de compra de su proveedor; al llegar se reparte entre instalar y guardar en bodega'
+    : 'Se pide aunque todavía no esté en la bodega: al llegar, se asocia al repuesto (desde la ficha) y entra a su stock';
   document.querySelectorAll('#rsModalValidar .gs-opt').forEach(function(l){
     const i = l.querySelector('input'); l.classList.toggle('is-on', !!(i && i.checked));
   });
-  const camino = rCons.checked ? 'consumir' : (rPed.checked ? 'pedir' : '');
+  const camino = rCons.checked ? 'consumir' : (rPed.checked ? 'pedir' : (rOt.checked ? 'ot' : ''));
+  const otModo = (document.querySelector('input[name="gsOtModo"]:checked') || {}).value || 'nueva';
+  gsEl('gsOtSub').hidden = camino !== 'ot';
+  gsEl('gsOtNumero').hidden = !(camino === 'ot' && otModo === 'existe');
+  const otNum = (gsEl('gsOtNumero').value || '').trim();
 
   // Paso 1
   const p1 = gsEl('rsGestPaso1'), e1 = gsEl('gsEstado1');
@@ -3312,6 +3474,10 @@ function gsPintar(){
     e1.innerHTML = '<i class="bi bi-check-circle-fill"></i><span>' + rsEsc(it.descripcion) + ' (' + rsEsc(it.sku || '') + ') · ' +
       (consumirOK ? 'hay ' + rsFmt(disp) + ' disponibles: alcanza'
                   : (disp > 0 ? 'hay ' + rsFmt(disp) + ' de ' + rsFmt(cant) + ': falta pedir' : 'sin stock: hay que pedirlo')) + '</span>';
+  } else if (camino === 'pedir' || camino === 'ot'){
+    p1.classList.add('is-warn');
+    e1.innerHTML = '<i class="bi bi-info-circle-fill"></i><span>Sin repuesto de bodega: se gestiona igual con el nombre pedido' +
+      ((s.nombres_alt || []).length ? ' (y sus otros nombres)' : '') + '. Cuando exista, se asocia desde la ficha y queda en su historial.</span>';
   } else {
     e1.innerHTML = '<i class="bi bi-x-circle-fill"></i><span>' + (nuevoAbierto
       ? 'Falta: completar la ficha del repuesto nuevo y crearlo'
@@ -3320,19 +3486,25 @@ function gsPintar(){
   // Paso 2
   const p2 = gsEl('rsGestPaso2'), e2 = gsEl('gsEstado2');
   p2.classList.remove('is-complete', 'is-warn');
-  p2.classList.toggle('is-off', !it);
-  if (camino){
+  p2.classList.toggle('is-off', false);
+  if (camino === 'ot'){
+    p2.classList.add(otModo === 'existe' && !otNum ? 'is-warn' : 'is-complete');
+    e2.innerHTML = '<i class="bi bi-check-circle-fill"></i><span>' + (otModo === 'existe'
+      ? (otNum ? 'Se asocia a la OT ' + rsEsc(otNum) : 'Escribe el número de la OT que la resuelve') : 'Se genera una OT nueva que la resuelve') + '</span>';
+  } else if (camino){
     p2.classList.add(camino === 'pedir' && consumirOK ? 'is-warn' : 'is-complete');
     e2.innerHTML = '<i class="bi bi-check-circle-fill"></i><span>' + (camino === 'consumir' ? 'Se consume de bodega'
       : (consumirOK ? 'Se pedirá aunque hay stock suficiente: revisa que sea lo que quieres' : 'Se pide al proveedor por ticket')) + '</span>';
   } else {
-    e2.innerHTML = it ? '<i class="bi bi-x-circle-fill"></i><span>Falta: elegir el camino</span>' : '';
+    e2.innerHTML = '<i class="bi bi-x-circle-fill"></i><span>Falta: elegir el camino</span>';
   }
   const pasosRuta = camino === 'consumir'
     ? [['bi-box-seam-fill', 'Reservar en bodega', rsFmt(cant) + ' de ' + rsFmt(disp)], ['bi-clipboard2-plus', 'OT de instalación', 'se abre al confirmar'], ['bi-tools', 'Instalado', 'el técnico lo marca en la OT']]
     : (camino === 'pedir'
-      ? [['bi-ticket-perforated-fill', 'Ticket de compra', 'al proveedor elegido'], ['bi-truck', 'Recibir', 'se escanea su ubicación'], ['bi-diagram-2', 'Repartir', 'instalar / guardar en bodega'], ['bi-clipboard2-plus', 'OT de instalación', 'consume lo que se instala']]
-      : []);
+      ? [['bi-ticket-perforated-fill', 'Ticket de compra', 'al proveedor elegido'], ['bi-truck', 'Recibir', it ? 'se escanea su ubicación' : 'se asocia al repuesto y entra a bodega'], ['bi-diagram-2', 'Repartir', 'instalar / guardar en bodega'], ['bi-clipboard2-plus', 'OT de instalación', 'consume lo que se instala']]
+      : (camino === 'ot'
+        ? [['bi-clipboard2-pulse-fill', otModo === 'existe' ? 'OT existente' : 'OT nueva', otModo === 'existe' ? (otNum || 'escribe su número') : 'se abre al confirmar'], ['bi-tools', 'Reparar o instalar', 'lo hace el técnico en la OT'], ['bi-check2-circle', 'Cerrada', 'instalado o «se reparó sin repuesto»']]
+        : []));
   gsEl('gsRuta').innerHTML = pasosRuta.map(function(p, i){
     return '<div class="gs-r' + (i === 0 ? ' ya' : '') + '"><i class="bi ' + p[0] + '"></i><div><b>' + (i + 1) + '. ' + p[1] + '</b>' + rsEsc(p[2]) + '</div></div>';
   }).join('');
@@ -3340,7 +3512,10 @@ function gsPintar(){
   const prov = gsEl('rsGestProv').value;
   const p3 = gsEl('rsGestPaso3'), e3 = gsEl('gsEstado3');
   p3.classList.remove('is-complete', 'is-warn');
+  const provNecesario = camino !== 'ot';
+  p3.classList.toggle('is-off', !provNecesario);
   if (prov){ p3.classList.add('is-complete'); e3.innerHTML = '<i class="bi bi-check-circle-fill"></i><span>' + rsEsc((gsEl('rsGestProv').selectedOptions[0] || {}).text || '') + '</span>'; }
+  else if (!provNecesario){ p3.classList.add('is-complete'); e3.innerHTML = '<i class="bi bi-check-circle-fill"></i><span>No hace falta para resolverla con una OT (opcional)</span>'; }
   else e3.innerHTML = '<i class="bi bi-x-circle-fill"></i><span>Falta: elegir el proveedor</span>';
   gsEl('rsGestProvHint').textContent = camino === 'pedir' ? 'El ticket de compra se arma con este proveedor.' : 'Queda registrado como proveedor del repuesto.';
   // Progreso + botón
@@ -3349,9 +3524,12 @@ function gsPintar(){
   gsEl('gsProgresoBar').style.width = Math.round(listos / 3 * 100) + '%';
   gsEl('gsProgresoAvisos').textContent = s.dejo_fuera_servicio ? '· equipo fuera de servicio: prioridad' : '';
   const btn = gsEl('rsValBtn');
-  btn.disabled = !(it && camino && prov);
-  gsEl('gsBtnTxt').textContent = !it ? 'Elige o crea el repuesto' : (!camino ? 'Elige el camino' : (!prov ? 'Elige el proveedor'
-    : (camino === 'consumir' ? 'Reservar y generar OT de instalación' : 'Validar y armar el ticket de compra')));
+  const listoCamino = camino === 'consumir' ? (!!it && !!prov) : (camino === 'pedir' ? !!prov : (camino === 'ot' ? (otModo !== 'existe' || !!otNum) : false));
+  btn.disabled = !listoCamino;
+  gsEl('gsBtnTxt').textContent = !camino ? 'Elige el camino (paso 2)' : (camino !== 'ot' && !prov ? 'Elige el proveedor'
+    : (camino === 'consumir' ? 'Reservar y generar OT de instalación'
+      : (camino === 'pedir' ? 'Validar y armar el ticket de compra'
+        : (otModo === 'existe' ? (otNum ? 'Asociar a ' + otNum : 'Escribe el número de la OT') : 'Validar y generar la OT'))));
   if (nuevoAbierto) gsPintarNuevo();
 }
 function gsDot(id, est){ const d = gsEl(id); if (d) d.className = 'gs-dot' + (est ? ' ' + est : ''); }
@@ -3374,8 +3552,9 @@ function gsPintarNuevo(){
   gsEl('rsNuBtn').classList.toggle('is-pending', !listo);
   return { okId: okId, eq: eq, okEq: okEq, listo: listo, desc: desc, min: min, prov: prov };
 }
-async function rsValAbrir(s){
+async function rsValAbrir(s, modo){
   _rs.valSid = s.id; _rs.sel = null; _rs.selItem = null; _rs.selProv = null;
+  _rs.valModo = modo || null;
   _gs = { erp: null, modelo: null, foto: null, autoCam: false };
   gsEl('rsValTitulo').textContent = '#' + s.id + ' · ' + (s.repuesto_nombre || '') + (s.numero_ot ? ' · ' + s.numero_ot : '');
   gsEl('rsValErr').textContent = '';
@@ -3385,6 +3564,8 @@ async function rsValAbrir(s){
     ? '<i class="bi bi-stars me-1"></i>Primero aparecen los repuestos <b>compatibles con el equipo</b>' + (s.maquina_nombre ? ' (' + rsEsc(s.maquina_nombre) + ')' : '') + '.'
     : 'Revisa si ya existe antes de crear uno nuevo, para no duplicarlo.';
   document.querySelectorAll('input[name="gsCamino"],input[name="gsEq"]').forEach(function(r){ r.checked = false; });
+  const _otN = document.querySelector('input[name="gsOtModo"][value="nueva"]'); if (_otN) _otN.checked = true;
+  gsEl('gsOtNumero').value = '';
   // Formulario de repuesto nuevo, limpio
   ['rsNuDesc', 'gsNuFab', 'rsNuCosto', 'gsErpQ', 'gsModeloQ'].forEach(function(id){ gsEl(id).value = ''; });
   gsEl('gsNuMin').value = '1'; gsEl('gsNuMarca').value = ''; gsEl('gsNuFoto').value = '';
@@ -3666,16 +3847,52 @@ async function gsAbrirCompra(sid, provId){
   rcmAbrir({ proveedor_id: provId, proveedor_nombre: p.nombre || '' }, [s2]);
 }
 async function rsValConfirmar(){
+  if (_rs.valModo === 'asociar'){
+    if (!_rs.sel){ gsEl('rsValErr').textContent = 'Elige el repuesto de la lista.'; return; }
+    let ja = {};
+    try {
+      const r = await fetch('/repuestos/api/solicitudes-ot/' + _rs.valSid + '/asociar-repuesto', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ repuesto_stock_id: _rs.sel }) });
+      ja = await r.json();
+    } catch(e){ ja = { ok: false, error: 'Sin conexión.' }; }
+    if (!ja.ok){ gsEl('rsValErr').textContent = ja.error || 'No se pudo asociar el repuesto.'; return; }
+    bootstrap.Modal.getOrCreateInstance(gsEl('rsModalValidar')).hide();
+    ilusToast('✓ Asociada a ' + (ja.sku || 'el repuesto') + (ja.entrada > 0 ? ' · entraron ' + rsFmt(ja.entrada) + ' a bodega' : ''), { type: 'success' });
+    if (ja.aviso) ilusAlert({ title: 'Repuesto asociado', message: ja.aviso, type: 'warning' });
+    await rsCargar();
+    return;
+  }
   const prov = gsEl('rsGestProv').value;
   const camino = (document.querySelector('input[name="gsCamino"]:checked') || {}).value || '';
-  if (!_rs.sel){ gsEl('rsValErr').textContent = 'Elige o crea el repuesto (paso 1).'; return; }
+  const otModo = (document.querySelector('input[name="gsOtModo"]:checked') || {}).value || 'nueva';
+  const otNum = (gsEl('gsOtNumero').value || '').trim();
   if (!camino){ gsEl('rsValErr').textContent = 'Elige el camino (paso 2).'; return; }
-  if (!prov){ gsEl('rsValErr').textContent = 'Elige el proveedor (paso 3).'; return; }
+  if (camino === 'consumir' && !_rs.sel){ gsEl('rsValErr').textContent = 'Para consumir de bodega elige el repuesto (paso 1).'; return; }
+  if (camino !== 'ot' && !prov){ gsEl('rsValErr').textContent = 'Elige el proveedor (paso 3).'; return; }
+  if (camino === 'ot' && otModo === 'existe' && !otNum){ gsEl('rsValErr').textContent = 'Escribe el número de la OT que la resuelve.'; return; }
   const sid = _rs.valSid;
-  const ok = await rsPostEstado(sid, { estado: 'validado', repuesto_stock_id: _rs.sel, proveedor_id: prov });
+  // 2026-10-14: el camino viaja al servidor (bodega | ticket | ot); sin repuesto de bodega
+  // también se valida si se pide por ticket o lo resuelve una OT.
+  if (camino === 'ot' && otModo === 'existe'){
+    // 2026-10-15 (revisión Fase B): con vista previa de la OT y llevando el repuesto y el
+    // proveedor elegidos (el servidor valida primero; si falla no asocia nada).
+    const extra = {};
+    if (_rs.sel) extra.repuesto_stock_id = _rs.sel;
+    if (prov) extra.proveedor_id = prov;
+    const j = await rsAsociarOTPost(sid, otNum, extra);
+    if (!j.ok){ if (j.error) gsEl('rsValErr').textContent = j.error; return; }
+    bootstrap.Modal.getOrCreateInstance(gsEl('rsModalValidar')).hide();
+    ilusToast('✓ Asociada a la OT ' + (j.numero_ot || otNum), { type: 'success' });
+    await rsCargar();
+    return;
+  }
+  const body = { estado: 'validado', camino: { consumir: 'bodega', pedir: 'ticket', ot: 'ot' }[camino] };
+  if (_rs.sel) body.repuesto_stock_id = _rs.sel;
+  if (prov) body.proveedor_id = prov;
+  const ok = await rsPostEstado(sid, body);
   if (!ok) return;
   bootstrap.Modal.getOrCreateInstance(gsEl('rsModalValidar')).hide();
-  if (camino === 'consumir'){
+  if (camino === 'consumir' || camino === 'ot'){
     if (typeof rsGenerarOT === 'function' && _rs.puedeGenerarOT) rsGenerarOT(sid);
   } else {
     gsAbrirCompra(sid, parseInt(prov, 10));
@@ -4324,6 +4541,15 @@ function rsmAbrir(){
   rsmRenderItems();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('rsmModal')).show();
 }
+/* 2026-10-14: desde la ficha del repuesto en Bodega → «Solicitar reposición» abre esta
+   misma ventana como reposición de stock propio, con el repuesto ya en la lista. */
+function rsmAbrirReposicion(it){
+  repTab('solicitudes');
+  rsmAbrir();
+  document.getElementById('rsmReposicion').checked = true;
+  rsmToggleReposicion();
+  if (it && it.id) rsmAgregarBodega(it, 1);
+}
 function rsmToggleReposicion(){
   _rsm.es_reposicion = document.getElementById('rsmReposicion').checked;
   document.getElementById('rsmClienteWrap').style.display = _rsm.es_reposicion ? 'none' : '';
@@ -4569,8 +4795,10 @@ function rsmAgregarManual(){
   const sku = (document.getElementById('rsmManualSku').value || '').trim() || null;
   const prov = parseInt(document.getElementById('rsmManualProv').value, 10);
   _rsm.items.push(rsmNuevoItem({ repuesto_nombre: nombre, repuesto_sku: sku, cantidad: cantidad, origen: 'manual',
-                                  proveedor_id: isFinite(prov) ? prov : null }));
+                                  proveedor_id: isFinite(prov) ? prov : null,
+                                  nombres_alt: (document.getElementById('rsmManualAlt').value || '').trim() }));
   document.getElementById('rsmManualNombre').value = '';
+  document.getElementById('rsmManualAlt').value = '';
   document.getElementById('rsmManualSku').value = '';
   document.getElementById('rsmManualCantidad').value = '1';
   document.getElementById('rsmManualProv').value = '';
@@ -4859,7 +5087,8 @@ async function rsmEnviar(){
              repuesto_sku: it.repuesto_sku, cantidad: it.cantidad,
              // 🧠 2026-09-26: proveedor por línea + "guardar en el repuesto".
              proveedor_id: it.proveedor_id || null,
-             guardar_proveedor_en_repuesto: !!(it.origen === 'bodega' && it.guardar_proveedor && it.proveedor_id) };
+             guardar_proveedor_en_repuesto: !!(it.origen === 'bodega' && it.guardar_proveedor && it.proveedor_id),
+             nombres_alt: it.nombres_alt || undefined };
   });
   // 🔒 FIX 2026-09-25: segundo candado -- si es reposición, NUNCA se manda
   // maquina_id (el backend lo rechazaría igual, pero mejor no ni intentarlo).

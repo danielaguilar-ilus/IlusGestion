@@ -346,6 +346,7 @@ class TestBodegaBuscar(unittest.TestCase):
         amb["_otrep_puede_gestion"] = lambda: not externo
         amb["_es_tecnico_externo"] = lambda user=None: externo
         amb["_oculta_proveedores"] = lambda user=None: bool(externo or tecnico)
+        amb["_otrep_resp_asegurar"] = lambda: False   # 2026-10-14: sin tabla de nombres aprendidos en la prueba
         amb["print"] = lambda *a, **k: None
         amb["request"] = _Request(**args)
         return amb["ot2_api_repuestos_bodega_buscar"](), doble
