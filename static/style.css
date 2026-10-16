@@ -912,6 +912,20 @@ body {
 .page-header .btn-white:hover {
   color: #0f172a;
 }
+/* FIX 2026-10-16 (Daniel, Bodega de Incidencias: "me hace falta el detalle de
+   Excel"): ".page-header a { color: #fff }" también pintaba de blanco las opciones
+   de los menús desplegables del encabezado, que tienen fondo blanco — el menú de
+   «Descargar Excel» se abría como una caja vacía. Las opciones de un menú usan el
+   color de Bootstrap (y su versión oscura si el menú es .dropdown-menu-dark). */
+.page-header .dropdown-menu a,
+.page-header .dropdown-menu .dropdown-item {
+  color: var(--bs-dropdown-link-color, #212529);
+}
+.page-header .dropdown-menu a:hover,
+.page-header .dropdown-menu .dropdown-item:hover,
+.page-header .dropdown-menu .dropdown-item:focus {
+  color: var(--bs-dropdown-link-hover-color, #1e2125);
+}
 .page-header .btn-outline-secondary,
 .page-header .btn-outline-light {
   border-color: #475569; color: #e2e8f0; background: transparent;
