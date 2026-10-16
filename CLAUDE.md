@@ -890,6 +890,7 @@ de la sesión, nunca del navegador):
 - **Horario de cobertura** (lunes a viernes hábiles 08:00–17:00, colación 13:00–14:00, hora Chile; variables `RETIROS_COBERTURA_DESDE/_HASTA/_COLACION_DESDE/_COLACION_HASTA`): `/retiros/api/cobertura` + `static/retiros_cobertura.js` avisan **antes** de gestionar un retiro a mano fuera de horario (calendario, Kanban, ficha). Es solo un aviso: no bloquea. El envío automático de la REGLA #20 respeta ese mismo horario.
 - El Monitor muestra «Solicitada dd/mm/aaaa hh:mm · hace X» y lee `peso_real_kg`/`peso_vol_kg` (los que se completan), no `total_weight_kg` del formulario (bulto de relleno en 0).
 - **Formulario público = superficie expuesta (revisión de seguridad 2026-10-12, Daniel: «no quiero errores o exposiciones a mi app»).** Toda ruta interna de Retiros pide `require_permission("retiros")`, **nunca `"view"`** (lo tiene cualquiera con Etiquetas/Mantenciones/Transporte, técnicos incluidos; hay prueba). `/retiros/solicitar`: 10 envíos/h y 30/día por conexión, POST > 64 KB → 413, fecha solo AAAA-MM-DD, tope de 3/día por **buzón real** (`correo_canonico`), CORS solo `ilusfitness.com` e `ilus-fitness.myshopify.com` (+ `null` para revisar el HTML local), alarma interna de volumen (`RETIROS_ALERTA_SOLICITUDES_HORA`, 12; nunca al cliente). Anti-bot **sin terceros** por la Ley 21.719 (Daniel): agregar Turnstile u otro servicio externo exige actualizar el aviso de privacidad y su «sí». Excel con datos del formulario: un texto con «=» va como texto, nunca como fórmula. Pruebas: `tests/test_retiros_12oct_seguridad_formulario.py`.
+- **Capacidad del bloque = AVISO, no candado (Daniel 2026-10-16, RET-XQHPMT: 10,53 m³ en un bloque de 5 m³ y Juan no podía agendar: «tu trabajo es alertar, no trabar»).** Peso y volumen sobre el tope del bloque (`_validar_disponibilidad_slot`) no bloquean en ningún camino: vuelven como aviso «Pedido grande o bloque sobrecargado… Coordina con bodega» (ámbar, en la ficha y el calendario) y quedan en la bitácora (`capacidad_excedida`). Solo frenan los choques reales de agenda: bloque lleno por cantidad de retiros, colación, bloqueos, feriados y capacidad del día. Pruebas: `tests/test_retiros_16oct_capacidad_aviso.py`.
 - **El reloj del SLA («Sin responder») corre en el MISMO horario de cobertura** (`_cc_ventanas()` → `mon.ventanas`; servidor y navegador iguales). Nunca un contador «00:00:00»: fuera de horario dice cuándo parte el reloj.
 
 ---
@@ -1022,5 +1023,5 @@ Cualquier skill, plugin o herramienta externa de diseño que se instale propone,
 
 ---
 
-_Última actualización: 2026-10-15_
+_Última actualización: 2026-10-16_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_
