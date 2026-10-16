@@ -1712,7 +1712,7 @@ async function agiConfirmarMover(){
     if (r.ok && d.ok){
       bootstrap.Modal.getInstance(document.getElementById('agiModalMover')).hide();
       agiCerrarDrawer();
-      ilusToast('✓ Propuesta enviada al cliente', { type:'success' });
+      ilusToast(/Pedido grande o bloque sobrecargado/.test(d.message || '') ? ('⚠ ' + d.message) : '✓ Propuesta enviada al cliente', { type: /Pedido grande o bloque sobrecargado/.test(d.message || '') ? 'warning' : 'success', duration: /Pedido grande/.test(d.message || '') ? 7000 : undefined });  // 2026-10-16: alertar, no trabar
       agiCargar(true);  // refrescar sin parpadear
     } else {
       ilusToast(d.error || 'No se pudo enviar la propuesta', { type:'error' });
@@ -1794,7 +1794,7 @@ async function agiConfirmarMoverMobile(){
     if (r.ok && d.ok){
       bootstrap.Modal.getInstance(document.getElementById('agiModalPickerMobile')).hide();
       agiCerrarDrawer();
-      ilusToast('✓ Propuesta enviada al cliente', { type:'success' });
+      ilusToast(/Pedido grande o bloque sobrecargado/.test(d.message || '') ? ('⚠ ' + d.message) : '✓ Propuesta enviada al cliente', { type: /Pedido grande o bloque sobrecargado/.test(d.message || '') ? 'warning' : 'success', duration: /Pedido grande/.test(d.message || '') ? 7000 : undefined });  // 2026-10-16: alertar, no trabar
       agiCargar(true);
     } else {
       ilusToast(d.error || 'No se pudo enviar la propuesta', { type:'error' });

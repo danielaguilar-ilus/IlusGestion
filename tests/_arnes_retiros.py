@@ -156,6 +156,8 @@ class BDFalsa:
         if low.startswith("select") and "from pickup_request_docs" in low and "where request_id=%s" in low:
             rid = int(params[0])
             filas = [dict(d) for d in self.docs if d["request_id"] == rid]
+            if low.startswith("select count(*) as n from pickup_request_docs"):
+                return [{"n": len(filas)}]
             # Las columnas que el SELECT pide (así una columna inexistente falla como en MySQL).
             m = re.match(r"select (.*?) from pickup_request_docs", s, re.I)
             cols = [c.strip() for c in m.group(1).split(",")]

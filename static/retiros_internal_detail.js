@@ -2490,8 +2490,11 @@ async function enviarPropuestaWizard(){
     const _msgTxt = d.message || (_emailOk
       ? 'Propuesta enviada. El cliente recibió el correo.'
       : 'Propuesta registrada, pero el correo al cliente no salió. Revisa la llave de correo de Retiros.');
-    if (fb) fb.innerHTML = `<div class="smart-hint ${_emailOk ? 'is-success' : 'is-warn'}" style="margin:0"><i class="bi bi-${_emailOk ? 'check-circle' : 'exclamation-triangle'}"></i><div>${_esc(_msgTxt)}</div></div>`;
-    ilusToast((_emailOk ? '✓ ' : '⚠ ') + _msgTxt, { type: _emailOk ? 'success' : 'warning' });
+    // 2026-10-16 («alertar, no trabar»): un pedido grande o un bloque sobrecargado se agenda igual, pero el aviso se ve en ámbar y más tiempo
+    const _capAviso = /Pedido grande o bloque sobrecargado/.test(_msgTxt);
+    const _tono = (_emailOk && !_capAviso) ? 'success' : 'warning';
+    if (fb) fb.innerHTML = `<div class="smart-hint ${_tono === 'success' ? 'is-success' : 'is-warn'}" style="margin:0"><i class="bi bi-${_tono === 'success' ? 'check-circle' : 'exclamation-triangle'}"></i><div>${_esc(_msgTxt)}</div></div>`;
+    ilusToast((_tono === 'success' ? '✓ ' : '⚠ ') + _msgTxt, { type: _tono, duration: _capAviso ? 7000 : undefined });
     // 2026-09-14: el form vive dentro de #modalProponerFecha — cerrarlo tras
     // un envío exitoso (registrado en ERP, salga o no el correo) para que el
     // operador no se quede mirando el modal mientras la página recarga
@@ -2501,7 +2504,7 @@ async function enviarPropuestaWizard(){
       const _modalPFInst = _modalPF && window.bootstrap ? bootstrap.Modal.getInstance(_modalPF) : null;
       if (_modalPFInst) _modalPFInst.hide();
     } catch(_){}
-    setTimeout(() => { window.location.reload(); }, _emailOk ? 1200 : 2800);
+    setTimeout(() => { window.location.reload(); }, _capAviso ? 5000 : (_emailOk ? 1200 : 2800));
   } catch(err){
     if (fb) fb.innerHTML = `<div class="smart-hint is-danger" style="margin:0"><i class="bi bi-x-circle"></i><div>Error de red: ${_esc(err.message)}</div></div>`;
     ilusToast('Error de red: ' + err.message, { type:'error' });

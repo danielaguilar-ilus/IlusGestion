@@ -2098,10 +2098,13 @@ def register_pickup_routes(app, ctx):
 
         if picks_now + 1 > max_picks_slot:
             return False, f"Slot lleno: {picks_now} retiros (máximo {max_picks_slot})."
+        # «Alertar, no trabar» (Daniel 2026-10-16, RET-XQHPMT: 10,53 m³ en un bloque de 5 m³): peso y volumen sobre el tope del bloque NO
+        # bloquean; vuelven como AVISO (ok=True con texto) para que quien agenda lo vea y quede en la bitácora.
+        _aviso_cap = []
         if kg_now + float(extra_kg or 0) > max_kg_slot:
-            return False, f"Capacidad de peso excedida: {kg_now:.1f}+{float(extra_kg or 0):.1f} kg > {max_kg_slot:.0f} kg."
+            _aviso_cap.append(f"Pedido grande o bloque sobrecargado: peso {kg_now:.1f}+{float(extra_kg or 0):.1f} kg de {max_kg_slot:.0f} kg.")
         if m3_now + float(extra_m3 or 0) > max_m3_slot:
-            return False, f"Capacidad de volumen excedida: {m3_now:.2f}+{float(extra_m3 or 0):.2f} m³ > {max_m3_slot:.2f} m³."
+            _aviso_cap.append(f"Pedido grande o bloque sobrecargado: volumen {m3_now:.2f}+{float(extra_m3 or 0):.2f} m³ de {max_m3_slot:.2f} m³.")
 
         # 5) Capacidad diaria
         day_params = [date_str, date_str]
@@ -2125,7 +2128,7 @@ def register_pickup_routes(app, ctx):
         if picks_day + 1 > max_picks_day:
             return False, f"Día completo: {picks_day} retiros (máximo diario {max_picks_day})."
 
-        return True, ""
+        return True, " ".join(_aviso_cap)
 
     # ── CALENDARIO (.ics + links Google/Outlook) — Daniel 2026-06-17 ─────
     #  El cliente (y el equipo) puede AGENDAR el retiro en su calendario desde
@@ -4810,11 +4813,8 @@ def register_pickup_routes(app, ctx):
                             # 2b. Re-validar capacidad bajo el lock
                             if picks_now + 1 > max_picks_slot:
                                 confirm_motivo = f"Slot lleno por otro retiro: {picks_now} de {max_picks_slot}."
-                            elif kg_now + extra_kg > max_kg_slot:
-                                confirm_motivo = f"Capacidad de peso excedida: {kg_now:.1f}+{extra_kg:.1f} > {max_kg_slot:.0f} kg."
-                            elif m3_now + extra_m3 > max_m3_slot:
-                                confirm_motivo = f"Capacidad de volumen excedida: {m3_now:.2f}+{extra_m3:.2f} > {max_m3_slot:.2f} m³."
                             else:
+                                # peso/volumen sobre el tope: aviso, no freno (2026-10-16, «alertar, no trabar»)
                                 # 2c. UPDATE atómico dentro de la transacción
                                 cur_tx.execute(
                                     f"""UPDATE `{REQ}`
@@ -12453,6 +12453,11 @@ def register_pickup_routes(app, ctx):
             log_event(rid, "propuesta_bloqueada", req["status"], req["status"],
                       f"Intento de proponer {_fmt_fecha_cl(date)} {tf}-{tt}: {motivo}", "interno")
             return _resp_err(f"Slot no disponible: {motivo}", status=409)
+        _aviso_capacidad = motivo or ""            # ok con aviso: pedido grande o bloque sobrecargado (no frena)
+        if _aviso_capacidad:
+            log_event(rid, "capacidad_excedida", req["status"], req["status"],
+                      f"Agendado sobre la capacidad del bloque {_fmt_fecha_cl(date)} {tf}-{tt}: {_aviso_capacidad} "
+                      f"Coordina con bodega.", "interno")
 
         # ── Daniel 2026-06-15: la propuesta DEBE poder notificarse al cliente.
         #    El ping-pong con el cliente arranca con este correo, así que si el
@@ -12560,6 +12565,8 @@ def register_pickup_routes(app, ctx):
                 pass
             _ac_msg = ("Coincidiste con la fecha que pidió el cliente: el retiro quedó "
                        "CONFIRMADO directo (no se le pidió confirmar de nuevo).")
+            if _aviso_capacidad:
+                _ac_msg += f" Ojo: {_aviso_capacidad} Coordina con bodega."
             if is_ajax:
                 return jsonify({"ok": True, "auto_confirmado": True, "message": _ac_msg,
                                 "email_enviado": bool(_sent_ac),
@@ -12584,6 +12591,8 @@ def register_pickup_routes(app, ctx):
                 _ok_msg = ("Propuesta registrada y visible en el seguimiento del cliente, "
                            "pero el correo NO se pudo enviar ahora. Revisa la llave de correo "
                            "de Retiros o el email del cliente.")
+            if _aviso_capacidad:
+                _ok_msg += f" Ojo: {_aviso_capacidad} Coordina con bodega."
             return jsonify({
                 "ok": True,
                 "message": _ok_msg,
