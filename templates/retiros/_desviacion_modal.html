@@ -136,7 +136,10 @@
 
   function tiposVisibles() {
     var t = [];
-    if (D.puede_retirar) t.push({ clave: 'retiro', titulo: 'Sí retiró', icono: 'bi-bag-check', color: 'verde', ayuda: 'El cliente se llevó el pedido: falta marcarlo como RETIRADO.' });
+    // 2026-10-16 (Daniel, Inversiones Fit Paradise SpA): también si el cliente se adelantó y no hay cita confirmada (se pide el motivo)
+    if (D.puede_retirar) t.push({ clave: 'retiro', titulo: 'Sí retiró', icono: 'bi-bag-check', color: 'verde',
+      ayuda: D.retiro_adelantado ? 'El cliente se adelantó y ya se llevó el pedido, sin cita confirmada: márcalo como RETIRADO (te pedimos el motivo).'
+                                 : 'El cliente se llevó el pedido: falta marcarlo como RETIRADO.' });
     D.catalogo.tipos.forEach(function (x) {
       if (x.clave === 'no_vino' && !D.vencida) return;      // «No vino» solo cuando la cita ya pasó
       t.push(x);
@@ -260,6 +263,12 @@
     if (!listo() || ocupado) return;
     if (S.tipo === 'retiro') {
       var m0 = modal(); if (m0) m0.hide();
+      if (D.sin_responsable) {                      // REGLA #21: sin responsable no se cierra; se lleva a «Me hago cargo»
+        toast('Primero toca «Me hago cargo»: sin responsable no se puede marcar como retirado.', 'warning');
+        var bt = document.getElementById('btnTomarRetiro');
+        if (bt) setTimeout(function () { bt.scrollIntoView({ behavior: 'smooth', block: 'center' }); bt.focus(); }, 350);
+        return;
+      }
       setTimeout(function () {
         if (typeof window.abrirModalRetirar === 'function' && document.getElementById('modalRetirar')) window.abrirModalRetirar();
         else toast('Abre «Marcar como RETIRADO» en el paso de entrega.', 'warning');

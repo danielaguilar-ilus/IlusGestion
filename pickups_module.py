@@ -6855,6 +6855,7 @@ def register_pickup_routes(app, ctx):
 
     try:
         app.jinja_env.globals["retiro_notas"] = _retiro_notas
+        app.jinja_env.globals["retiro_motivos_adelantado"] = lambda: list(_rdv.MOTIVOS_ADELANTADO)
     except Exception as _e_rn:
         print(f"[retiro-notas] {_e_rn}", flush=True)
     try:
@@ -7439,15 +7440,29 @@ def register_pickup_routes(app, ctx):
             flash(_MSG_SIN_RESPONSABLE, "warning")
             return redirect(url_for("pickup_detail", rid=rid))
 
+        # ── RETIRO ADELANTADO (Daniel 2026-10-16, Inversiones Fit Paradise SpA: «me están llegando clientes adelantados… necesito gestionarlos
+        # como retirados»). Solo desde el modal «Marcar como retirado» (adelantado=1) y con un motivo de la lista: queda en la bitácora.
+        _adelantado = None
+        if new_status == "retirada" and old_status != new_status and (request.form.get("adelantado") or "").strip() == "1":
+            _adelantado, _err_adel = _rdv.validar_adelantado(old_status, request.form.get("adelantado_motivo"),
+                                                             request.form.get("adelantado_detalle"))
+            if _err_adel:
+                if _es_fetch():
+                    return jsonify({"ok": False, "error": _err_adel, "code": "ADELANTADO_SIN_MOTIVO"}), 409
+                flash(_err_adel, "warning")
+                return redirect(url_for("pickup_detail", rid=rid))
+
         # ── GUARDA DE SECUENCIA (Daniel 2026-06-19) ────────────────────────────
         # No se puede pasar a PREPARACIÓN ni marcar RETIRADO sin una cita
         # confirmada. Evita cierres accidentales por drag-drop del monitor o el
         # <select> genérico (antes se podía saltar directo a 'retirada').
+        # Excepción (2026-10-16): el retiro ADELANTADO con su motivo (arriba).
         if new_status in ("en_preparacion", "retirada") \
                 and not req.get("confirmed_date") \
-                and old_status not in ("agenda_confirmada", "en_preparacion"):
+                and old_status not in ("agenda_confirmada", "en_preparacion") \
+                and not _adelantado:
             flash("Antes de preparar o marcar como retirado, el retiro debe tener "
-                  "una cita confirmada.", "warning")
+                  "una cita confirmada. Si el cliente ya se llevó el pedido, usa «¿Qué pasó?» → «Sí retiró».", "warning")
             return redirect(url_for("pickup_detail", rid=rid))
 
         # ── GUARDA DE CAMBIO PEDIDO (Daniel 2026-10-02, RET-VQJ58N) ───────────
@@ -7489,6 +7504,10 @@ def register_pickup_routes(app, ctx):
             _notas_log = (f"Reabierto por {_quien_r} (superadmin), de «{PICKUP_STATUS.get(old_status, old_status)}» a "
                           f"«{PICKUP_STATUS.get(new_status, new_status)}». Motivo: {notes.strip()}. Sin aviso al cliente.")[:900]
         log_event(rid, "estado_actualizado", old_status, new_status, _notas_log, "interno")
+        if _adelantado:
+            _quien_a = ((getattr(g, "user", None) or {}).get("nombre") or "un usuario").strip()
+            log_event(rid, "retiro_adelantado", old_status, new_status,
+                      _rdv.texto_bitacora_adelantado(_adelantado, PICKUP_STATUS.get(old_status, old_status), _quien_a), "interno")
         if new_status in ("retirada", "cerrada") and old_status != new_status:
             try:
                 _check_snap_desde_cache(rid)         # lo que Check informó queda guardado antes de cerrar
@@ -15077,7 +15096,8 @@ def register_pickup_routes(app, ctx):
             "ok": True, "catalogo": _rdv.catalogo(), "estado": st, "estado_txt": PICKUP_STATUS.get(st, st),
             "terminado": st in _rdv.TERMINADOS, "tiene_cita": _tiene_cita(req), "cita": _cita_txt(req) or "",
             "vencida": _rdv.cita_vencida(req, _ahora_chile()), "en_preparacion": st == "en_preparacion",
-            "puede_retirar": st in ("agenda_confirmada", "en_preparacion"),
+            "puede_retirar": st in _rdv.ESTADOS_ABIERTOS,            # 2026-10-16: también el cliente adelantado (sin cita)
+            "retiro_adelantado": _rdv.retiro_adelantado(st),
             "bodega_emails": _bodega_emails(), "correo_cliente": correo_cliente,
             "sin_responsable": bool(_sin_responsable(req)), "registradas": _desv_registradas(rid)})
         resp.headers["Cache-Control"] = "no-store"

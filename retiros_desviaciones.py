@@ -97,6 +97,17 @@ DETALLE_MAX = 800
 DETALLE_MIN_OTRO = 5
 MARGEN_VENCIDA_MIN = 30
 
+# «Sí retiró» con el cliente ADELANTADO (Daniel 2026-10-16, retiro de Inversiones Fit Paradise SpA: «me están llegando clientes adelantados…
+# necesito gestionarlos como retirados, ya que el proceso de retiro fue más rápido que la gestión de la página»). El cliente se llevó el pedido
+# ANTES de tener la cita confirmada: se marca RETIRADO desde cualquier estado abierto, con un motivo de esta lista (obligatorio) y queda en la
+# bitácora quién, cuándo y por qué. Con la cita confirmada o en preparación es el cierre normal (sin motivo).
+MOTIVOS_ADELANTADO = [
+    ("llego_antes", "El cliente llegó a retirar antes de que se agendara la cita"),
+    ("coordinado_fuera", "Se coordinó por teléfono, WhatsApp o correo y no se registró en la página"),
+    ("bodega_entrego", "Bodega lo entregó antes de que se gestionara en la página"),
+    ("otro", "Otro motivo"),
+]
+
 
 def catalogo():
     """Lo que necesita la pantalla para armar el formulario (orden incluido)."""
@@ -155,6 +166,38 @@ def validar(datos, estado, tiene_cita=False, cita_vencida=False):
         "estado_nuevo": ACCIONES[accion]["estado"], "avisar_cliente": avisar_cliente,
         "avisar_bodega": bool(d.get("avisar_bodega")),
     }, None
+
+
+def retiro_adelantado(estado):
+    """¿Marcar RETIRADO en este estado es un retiro adelantado (abierto, sin pasar por la cita confirmada)?"""
+    return estado in ESTADOS_ABIERTOS and estado not in ESTADOS_CON_CITA
+
+
+def validar_adelantado(estado, motivo, detalle=""):
+    """Retiro adelantado: (normalizado, None) o (None, «mensaje para la persona»). normalizado = {motivo, motivo_texto, detalle}."""
+    if estado in TERMINADOS:
+        return None, "El retiro ya está terminado: queda en solo lectura."
+    if not retiro_adelantado(estado):
+        return None, "Este retiro tiene la cita confirmada: márcalo como retirado de la forma normal."
+    motivo = str(motivo or "").strip()
+    texto = next((x for c, x in MOTIVOS_ADELANTADO if c == motivo), "")
+    if not texto:
+        return None, "Elige por qué el cliente retiró sin cita confirmada. No se cambió nada."
+    det = _limpio(detalle, DETALLE_MAX)
+    if motivo == "otro" and len(det) < DETALLE_MIN_OTRO:
+        return None, "Con «Otro motivo», escribe en el detalle qué pasó. No se cambió nada."
+    return {"motivo": motivo, "motivo_texto": texto, "detalle": det}, None
+
+
+def texto_bitacora_adelantado(n, estado_antes="", quien=""):
+    """«Retiro adelantado: el cliente se llevó el pedido sin cita confirmada (estaba «En revisión») · <motivo> · Detalle: … · Decidió: …»"""
+    partes = ["Retiro adelantado: el cliente se llevó el pedido sin cita confirmada" + (f" (estaba «{estado_antes}»)" if estado_antes else ""),
+              n["motivo_texto"]]
+    if n.get("detalle"):
+        partes.append("Detalle: " + n["detalle"])
+    if quien:
+        partes.append("Decidió: " + quien)
+    return " · ".join(partes)[:900]
 
 
 def _a_fecha(v):

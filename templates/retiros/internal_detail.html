@@ -2395,7 +2395,10 @@ window.RETIROS_DETAIL_DATA = {
 {# ════════ MARCAR RETIRADO con EVIDENCIA + CHECK WMS (Daniel 2026-06-20) ════════
    2026-10-05: también con la cita confirmada. Si bodega termina y despacha en Check antes de que alguien envíe el retiro a preparación,
    no había cómo marcarlo entregado sin mandarle al cliente el aviso «estamos preparando» con el pedido ya entregado. #}
-{% if req.status in ['en_preparacion', 'agenda_confirmada'] %}
+{# 2026-10-16 (Daniel, Inversiones Fit Paradise SpA): también en un retiro abierto SIN cita confirmada — el cliente se adelantó. Se llega
+   desde «¿Qué pasó?» → «Sí retiró» y pide el motivo (adelantado=1; /status lo valida y lo deja en la bitácora). #}
+{% set _rtm_adel = req.status in ['solicitud_recibida', 'en_revision', 'informacion_incompleta', 'esperando_cliente', 'propuesta_enviada', 'reagendada'] %}
+{% if req.status in ['en_preparacion', 'agenda_confirmada'] or _rtm_adel %}
 {# Modal «Marcar como retirado» — rehecho 2026-10-14 (Daniel: «ese modal… está pésimo, mejorémoslo»; «la foto, la evidencia es opcional»).
    Mismos campos y la misma acción (/status → retirada). Nombre y RUT se piden UNA vez: la firma (vista previa, por rol) los toma de aquí. #}
 <div class="modal fade" id="modalRetirar" tabindex="-1" aria-labelledby="rtmTitulo">
@@ -2419,6 +2422,31 @@ window.RETIROS_DETAIL_DATA = {
             <span><span id="retWmsWarnTxt"></span> — puedes cerrar igual, pero quedará registrado.</span>
           </div>
 
+          {% if _rtm_adel %}
+          <input type="hidden" name="adelantado" value="1">
+          <section class="rtm-card is-adelantado">
+            <div class="rtm-card-h">
+              <span class="rtm-n is-ambar" aria-hidden="true"><i class="bi bi-lightning-charge-fill"></i></span>
+              <div><strong>El cliente se adelantó</strong><small>Este retiro aún no tiene la cita confirmada. Cuéntanos por qué se entregó así: queda en la bitácora con tu nombre.</small></div>
+            </div>
+            <div class="rtm-grid">
+              <div class="rtm-campo">
+                <label for="rtmAdelMotivo">Motivo <span class="rtm-req">*</span></label>
+                <select id="rtmAdelMotivo" name="adelantado_motivo" class="form-select" required
+                        onchange="var d=document.getElementById('rtmAdelDet');if(d){d.required=(this.value==='otro');}">
+                  <option value="">Elige el motivo…</option>
+                  {% for _c, _t in retiro_motivos_adelantado() %}<option value="{{ _c }}">{{ _t }}</option>{% endfor %}
+                </select>
+              </div>
+              <div class="rtm-campo">
+                <label for="rtmAdelDet">Detalle <small>(obligatorio con «Otro motivo»)</small></label>
+                <textarea id="rtmAdelDet" name="adelantado_detalle" class="form-control" rows="2" maxlength="800"
+                          placeholder="Ej.: llegó en la mañana con su factura y bodega le entregó."></textarea>
+              </div>
+            </div>
+          </section>
+          {% endif %}
+
           <section class="rtm-card">
             <div class="rtm-card-h">
               <span class="rtm-n">1</span>
@@ -2440,7 +2468,7 @@ window.RETIROS_DETAIL_DATA = {
 
           {% if firma %}
           <div class="rtm-aviso is-verde"><i class="bi bi-patch-check-fill" aria-hidden="true"></i><span>La recepción ya está <strong>firmada</strong> por {{ firma.nombre }} ({{ firma.rut_fmt }}).</span></div>
-          {% elif retiros_vista_previa is defined and retiros_vista_previa() %}{# firma: solo superadmin o Roles → Retiros «Encuesta y firma» #}
+          {% elif not _rtm_adel and retiros_vista_previa is defined and retiros_vista_previa() %}{# firma: solo superadmin o Roles → Retiros «Encuesta y firma»; adelantado: después, con «Registrar firma» #}
           <section class="rtm-card rtm-card-firma frm-en-retiro">
             {% include 'retiros/_firma_bloque.html' %}
           </section>
@@ -2460,7 +2488,7 @@ window.RETIROS_DETAIL_DATA = {
 
           <div class="rtm-nota">
             <i class="bi bi-envelope" aria-hidden="true"></i>
-            <span>Al confirmar se <strong>cierra el retiro</strong> y al cliente le llega el correo «Retiro completado».{% if req.status == 'agenda_confirmada' %} Como no pasó por «En preparación», no le llega el aviso «estamos preparando».{% endif %} Si no estás seguro, toca Cancelar.</span>
+            <span>Al confirmar se <strong>cierra el retiro</strong> y al cliente le llega el correo «Retiro completado».{% if _rtm_adel %} Como se adelantó, no le llega ningún otro aviso (ni fecha ni «estamos preparando»).{% elif req.status == 'agenda_confirmada' %} Como no pasó por «En preparación», no le llega el aviso «estamos preparando».{% endif %} Si no estás seguro, toca Cancelar.</span>
           </div>
         </div>
         <div class="modal-footer rtm-foot">

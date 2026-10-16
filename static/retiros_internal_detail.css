@@ -2713,3 +2713,8 @@
 .rba-bod-res-t span{color:#92400e;font-weight:600}
 .rba-bod-res-l{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .ln-bod-varias{display:block;width:100%;font-size:.74rem;font-weight:700;color:#92400e;margin-bottom:2px}
+
+/* «Marcar como retirado» con el cliente adelantado (2026-10-16): motivo obligatorio, en ámbar (avisa, no asusta) */
+.rtm-card.is-adelantado{border-color:#fde68a;border-left:4px solid #f59e0b;background:#fffdf5}
+.rtm-n.is-ambar{background:#f59e0b;color:#fff;font-size:1rem}
+.rtm-card.is-adelantado textarea{font-family:inherit;min-height:44px}
