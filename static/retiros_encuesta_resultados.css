@@ -1,57 +1,103 @@
-/* ILUS Fitness · Retiros — Resultados de la encuesta de satisfacción (vista interna). Prefijo .encr-* */
-.encr{--verde:#16a34a;--verde-bg:#dcfce7;--ambar:#f59e0b;--ambar-bg:#fff8e1;--rojo:#dc2626;--rojo-bg:#fee2e2;--linea:#e5e7eb;--muted:#6b7280;max-width:1180px}
+/* ILUS Fitness · Retiros — «La voz de nuestros clientes»: resultados de la encuesta de satisfacción (vista interna). Prefijo .encr-*
+   2026-10-16 (Daniel: «más corazón… algo más Claude y Daniel»): portada negra con la nota general, cifras en tarjetas, semáforo suave
+   (verde / ámbar; el rojo solo en barras de 1–2 estrellas) y los comentarios como voces de clientes. Paleta ILUS (REGLA #2). */
+.encr{--rojo-ilus:#dc2626;--negro:#0a0a0a;--verde:#16a34a;--verde-bg:#dcfce7;--ambar:#f59e0b;--ambar-bg:#fff8e1;--rojo:#ef4444;--rojo-bg:#fee2e2;
+  --azul:#3b82f6;--azul-bg:#dbeafe;--linea:#e5e7eb;--muted:#6b7280;--crema:#fffaf5;max-width:1180px}
 .encr *{box-sizing:border-box}
-.encr-estado{display:flex;gap:14px;align-items:flex-start;border-radius:16px;padding:16px 18px;margin-bottom:14px;border:2px solid}
-.encr-estado>i{font-size:1.6rem;line-height:1;margin-top:2px}
-.encr-estado strong{display:block;font-size:1.12rem;font-weight:900;letter-spacing:-.01em;margin-bottom:3px}
-.encr-estado span{display:block;font-size:.9rem;line-height:1.5}
-.encr-estado-off{background:var(--ambar-bg);border-color:var(--ambar);color:#7c4a03}
-.encr-estado-on{background:var(--verde-bg);border-color:var(--verde);color:#14532d;align-items:center}
-.encr-estado-n{margin-top:6px}
+
+/* ── Portada ───────────────────────────────────────────────────────────── */
+.encr-hero{position:relative;overflow:hidden;display:grid;grid-template-columns:1fr;gap:22px;align-items:center;
+  background:radial-gradient(120% 140% at 100% 0%,rgba(220,38,38,.38) 0%,rgba(220,38,38,0) 55%),linear-gradient(135deg,#0a0a0a 0%,#171717 100%);
+  color:#fff;border-radius:22px;padding:28px 30px;margin-bottom:16px;box-shadow:0 18px 40px -22px rgba(10,10,10,.65)}
+.encr-hero.con-nota{grid-template-columns:minmax(0,1fr) auto}
+.encr-hero::after{content:"♥";position:absolute;right:-18px;bottom:-62px;font-size:15rem;line-height:1;color:rgba(255,255,255,.04);pointer-events:none}
+.encr-hero-izq{min-width:0;position:relative;z-index:1}
+.encr-pill{display:inline-flex;align-items:center;gap:8px;border-radius:99px;padding:6px 14px;font-size:.8rem;font-weight:800;letter-spacing:.01em;line-height:1.3}
+.encr-pill.is-on{background:rgba(22,163,74,.16);color:#bbf7d0;border:1px solid rgba(74,222,128,.45)}
+.encr-pill.is-off{background:rgba(245,158,11,.16);color:#fde68a;border:1px solid rgba(251,191,36,.5)}
+.encr-dot{width:9px;height:9px;border-radius:50%;background:#4ade80;box-shadow:0 0 0 0 rgba(74,222,128,.7);animation:encrPulso 2s infinite}
+@keyframes encrPulso{0%{box-shadow:0 0 0 0 rgba(74,222,128,.6)}70%{box-shadow:0 0 0 9px rgba(74,222,128,0)}100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}}
+@media (prefers-reduced-motion:reduce){.encr-dot{animation:none}}
+.encr-hero-t{font-size:1.75rem;font-weight:900;letter-spacing:-.02em;line-height:1.15;margin:14px 0 8px;color:#fff;text-wrap:balance}
+.encr-hero-p{margin:0;max-width:62ch;color:#d4d4d8;font-size:.98rem;line-height:1.55}
+.encr-hero-nota-off{margin:10px 0 0;max-width:68ch;color:#fde68a;font-size:.86rem;line-height:1.5}
+.encr-hero-nota{position:relative;z-index:1;text-align:center;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
+  border-radius:20px;padding:18px 26px;min-width:220px}
+.encr-hero-num{font-size:3.6rem;font-weight:900;line-height:1;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+.encr-hero-num small{font-size:1.2rem;font-weight:700;color:#a1a1aa;margin-left:2px;letter-spacing:0}
+.encr-estrellas{position:relative;display:inline-block;font-size:1.6rem;letter-spacing:3px;line-height:1.2;color:rgba(255,255,255,.18);margin-top:6px}
+.encr-estrellas::before{content:"★★★★★";position:absolute;left:0;top:0;width:var(--pct,0%);overflow:hidden;white-space:nowrap;color:#fbbf24}
+.encr-hero-cap{font-size:.76rem;color:#a1a1aa;margin-top:6px;font-weight:600}
+
+/* ── Avisos ────────────────────────────────────────────────────────────── */
 .encr-demo{background:#eef2ff;border:2px dashed #6366f1;color:#312e81;border-radius:14px;padding:12px 16px;margin-bottom:14px;font-size:.92rem}
 .encr-error{background:var(--rojo-bg);border-color:var(--rojo);color:#7f1d1d}
 .encr-aviso{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:.88rem}
 
-.encr-card{background:#fff;border:1px solid var(--linea);border-radius:18px;padding:20px;margin-bottom:14px;box-shadow:0 4px 8px -2px rgba(15,23,42,.06),0 12px 24px -10px rgba(15,23,42,.08)}
-.encr-h{font-size:1.02rem;font-weight:900;letter-spacing:-.01em;margin:0;line-height:1.35}
-.encr-h small{font-weight:600;color:var(--muted);font-size:.8em}
+/* ── Tarjetas base ─────────────────────────────────────────────────────── */
+.encr-card{background:#fff;border:1px solid var(--linea);border-radius:18px;padding:20px;margin-bottom:14px;
+  box-shadow:0 4px 8px -2px rgba(15,23,42,.06),0 12px 24px -10px rgba(15,23,42,.08)}
+.encr-h{font-size:1.02rem;font-weight:800;letter-spacing:-.01em;margin:0;line-height:1.35}
+.encr-seccion{display:flex;align-items:center;gap:8px;font-size:1.08rem;font-weight:900;letter-spacing:-.01em;margin:22px 0 12px;color:var(--negro)}
+.encr-seccion i{color:var(--rojo-ilus)}
+.encr-seccion small{font-weight:600;color:var(--muted);font-size:.8em}
+.encr-voces .encr-seccion{margin-top:0}
 .encr-arch{display:inline-block;font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;background:#e5e7eb;color:#4b5563;border-radius:99px;padding:2px 8px;vertical-align:middle;margin-left:6px}
-.encr-nota{margin:12px 0 0;font-size:.8rem;color:var(--muted);line-height:1.5}
-.encr-vacio{text-align:center;padding:36px 20px}
-.encr-vacio-ico{font-size:2.4rem;color:#9ca3af}
-.encr-vacio h5{font-weight:900;margin:8px 0}
-.encr-vacio p{max-width:560px;margin:0 auto;color:var(--muted)}
+.encr-nota{margin:0;font-size:.8rem;color:var(--muted);line-height:1.5}
+.encr-vacio{text-align:center;padding:40px 20px;background:linear-gradient(180deg,var(--crema),#fff 70%)}
+.encr-vacio-ico{display:inline-flex;align-items:center;justify-content:center;width:68px;height:68px;border-radius:50%;background:#fee2e2;color:var(--rojo-ilus);font-size:2rem}
+.encr-vacio h5{font-weight:900;margin:12px 0 8px}
+.encr-vacio p{max-width:600px;margin:0 auto;color:var(--muted);line-height:1.55}
 
-.encr-kpi{background:#fff;border:1px solid var(--linea);border-left:6px solid #111827;border-radius:16px;padding:14px 18px;margin-bottom:14px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
-.encr-kpi-l{font-size:.76rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
-.encr-kpi-n{font-size:2.4rem;font-weight:900;line-height:1.1;letter-spacing:-.03em;color:#0a0a0a}
+/* ── Cifras ────────────────────────────────────────────────────────────── */
+.encr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:4px}
+.encr-stat{background:#fff;border:1px solid var(--linea);border-radius:18px;padding:16px 18px;box-shadow:0 4px 8px -2px rgba(15,23,42,.05)}
+.encr-stat-ico{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:12px;font-size:1.1rem;margin-bottom:10px}
+.encr-stat-ico.is-rojo{background:#fee2e2;color:var(--rojo-ilus)}
+.encr-stat-ico.is-azul{background:var(--azul-bg);color:#1d4ed8}
+.encr-stat-ico.is-verde{background:var(--verde-bg);color:#15803d}
+.encr-stat-ico.is-ambar{background:var(--ambar-bg);color:#b45309}
+.encr-kpi-l{font-size:.74rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.encr-kpi-n,.encr-stat-n{font-size:2.3rem;font-weight:900;line-height:1.1;letter-spacing:-.03em;color:var(--negro);font-variant-numeric:tabular-nums}
+.encr-stat-n small{font-size:1.1rem;font-weight:800;margin-left:1px}
 .encr-kpi-s{font-size:.82rem;color:var(--muted)}
 
-/* tarjetas por pregunta con semáforo */
-.encr-tarjetas{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px;margin-bottom:0}
+/* ── Pregunta por pregunta (semáforo suave) ───────────────────────────── */
+.encr-tarjetas{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px}
 .encr-tarjetas>.encr-card{margin-bottom:0}
-.encr-pregunta{border-left:6px solid #9ca3af}
-.encr-pregunta.sem-verde{border-left-color:var(--verde);background:linear-gradient(180deg,#f0fdf4,#fff 55%)}
-.encr-pregunta.sem-ambar{border-left-color:var(--ambar);background:linear-gradient(180deg,#fffbeb,#fff 55%)}
-.encr-pregunta.sem-rojo{border-left-color:var(--rojo);background:linear-gradient(180deg,#fef2f2,#fff 55%)}
-.encr-pregunta-top{display:flex;justify-content:space-between;align-items:flex-start;gap:14px}
-.encr-pregunta .encr-kpi-n{font-size:2.6rem;flex-shrink:0}
-.sem-n-verde{color:#15803d !important}.sem-n-ambar{color:#b45309 !important}.sem-n-rojo{color:#b91c1c !important}
-.sem-bg-verde{background:var(--verde)}.sem-bg-ambar{background:var(--ambar)}.sem-bg-rojo{background:var(--rojo)}.sem-bg-gris{background:#9ca3af}
+.encr-pregunta{border-top:5px solid #9ca3af}
+.encr-pregunta.sem-verde{border-top-color:var(--verde)}
+.encr-pregunta.sem-ambar{border-top-color:var(--ambar)}
+.encr-pregunta.sem-rojo{border-top-color:var(--ambar)}
+.encr-pregunta-top{display:flex;align-items:flex-start;gap:12px;margin-bottom:6px}
+.encr-pregunta-txt{flex:1;min-width:0}
+.encr-num{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;font-weight:900;color:#fff;background:#9ca3af}
+.sem-c-verde{background:var(--verde)}.sem-c-ambar{background:var(--ambar)}.sem-c-rojo{background:#f97316}
+.encr-chip{display:inline-block;margin-top:6px;font-size:.72rem;font-weight:800;letter-spacing:.03em;text-transform:uppercase;border-radius:99px;padding:3px 10px}
+.sem-chip-verde{background:var(--verde-bg);color:#166534}
+.sem-chip-ambar{background:var(--ambar-bg);color:#92400e}
+.sem-chip-rojo{background:#ffedd5;color:#9a3412}
+.sem-chip-gris{background:#f3f4f6;color:#4b5563}
+.encr-pregunta .encr-kpi-n{font-size:2.5rem;flex-shrink:0}
+.sem-n-verde{color:#15803d !important}.sem-n-ambar{color:#b45309 !important}.sem-n-rojo{color:#c2410c !important}
+.sem-bg-verde{background:var(--verde)}.sem-bg-ambar{background:var(--ambar)}.sem-bg-rojo{background:#f87171}.sem-bg-gris{background:#9ca3af}
 .encr-barras{margin-top:14px;display:grid;gap:8px}
 .encr-barra{display:grid;grid-template-columns:minmax(80px,36%) 1fr 84px;gap:10px;align-items:center;font-size:.86rem}
-.encr-barra-l{font-weight:600;line-height:1.3;overflow-wrap:anywhere}
-.encr-barra-bar{display:block;height:12px;border-radius:99px;background:var(--linea);overflow:hidden}
+.encr-barra-l{font-weight:700;line-height:1.3;overflow-wrap:anywhere}
+.encr-star{color:#f59e0b;font-size:.8rem}
+.encr-barra-bar{display:block;height:12px;border-radius:99px;background:#f3f4f6;overflow:hidden}
 .encr-barra-bar span{display:block;height:100%;border-radius:99px}
-.encr-barra-v{font-weight:800;white-space:nowrap;text-align:right}
+.encr-barra-v{font-weight:800;white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
 .encr-barra-v small{color:var(--muted);font-weight:600}
-.encr>.encr-card{margin-top:14px}
 
-/* comentarios (tarjetas: fluyen en celular, 2 columnas en pantalla ancha) */
-.encr-coms{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
-.encr-com{border:1px solid var(--linea);border-radius:14px;padding:12px 14px;background:#fafafa}
-.encr-com-meta{font-size:.78rem;color:var(--muted)}
-.encr-com-txt{margin:6px 0 0;font-size:.92rem;line-height:1.5;overflow-wrap:anywhere}
+/* ── Lo que escribieron (voces de clientes) ────────────────────────────── */
+.encr-voces{margin-top:22px;background:linear-gradient(180deg,var(--crema),#fff 120px)}
+.encr-coms{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.encr-com{position:relative;border:1px solid #f1e7dd;border-radius:16px;padding:16px 16px 12px 46px;background:#fff}
+.encr-com-q{position:absolute;left:12px;top:2px;font-family:Georgia,"Times New Roman",serif;font-size:3.2rem;line-height:1;color:var(--rojo-ilus);opacity:.85}
+.encr-com-txt{margin:0;font-family:Georgia,"Times New Roman",serif;font-size:1rem;line-height:1.55;color:#1f2937;overflow-wrap:anywhere}
+.encr-com-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px;font-size:.78rem;color:var(--muted)}
+.encr-com-code{font-weight:800;color:var(--negro);background:#f3f4f6;border-radius:8px;padding:2px 8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem}
 
 /* pie de tabla (patrón Etiquetas, REGLA #4.3) */
 .encr-pie{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid var(--linea)}
@@ -62,14 +108,33 @@
 .encr-pie-nav .btn{min-height:40px;display:inline-flex;align-items:center}
 .encr-pie-pag{font-size:.86rem;font-weight:700}
 
+/* ── Privacidad y firma ────────────────────────────────────────────────── */
+.encr-privacidad{display:flex;gap:12px;align-items:flex-start;background:#fafafa;box-shadow:none}
+.encr-privacidad>i{font-size:1.3rem;color:#374151;margin-top:1px}
+.encr-firma{text-align:center;font-size:.84rem;color:var(--muted);padding:6px 0 18px}
+.encr-firma b{color:var(--negro)}
+.encr-firma-corazon{color:var(--rojo-ilus);font-size:1rem;margin-right:4px}
+.encr-firma-chispa{color:#d97757;margin:0 4px 0 3px}
+
+@media(max-width:1000px){
+  .encr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
 @media(max-width:900px){
   .encr-coms{grid-template-columns:1fr}
   .encr-tarjetas{grid-template-columns:1fr}
+  .encr-hero.con-nota{grid-template-columns:1fr}
+  .encr-hero-nota{justify-self:start}
 }
 @media(max-width:560px){
+  .encr-hero{padding:22px 18px;border-radius:18px}
+  .encr-hero-t{font-size:1.4rem}
+  .encr-hero-nota{justify-self:stretch}
   .encr-card{padding:16px 14px}
+  .encr-stat{padding:14px}
+  .encr-kpi-n,.encr-stat-n{font-size:1.9rem}
   .encr-pie{flex-direction:column;align-items:stretch}
   .encr-pie-nav{justify-content:space-between}
   .encr-barra{grid-template-columns:1fr 84px;gap:4px 10px}
   .encr-barra-l{grid-column:1 / -1}
+  .encr-com{padding-left:40px}
 }

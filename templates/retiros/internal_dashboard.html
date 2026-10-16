@@ -17,7 +17,8 @@
     {# Daniel 2026-10-14: «el endpoint de la encuesta lo vamos a tener dentro del monitor, en un botón arriba… visto solamente por un superadministrador,
        controlable por el front». Lo ve quien tenga superadmin o el permiso Roles → Retiros → «Encuesta y firma de recepción». #}
     {% if retiros_vista_previa is defined and retiros_vista_previa() %}
-    <a href="{{ url_for('retiros_encuesta_resultados') }}" class="btn btn-sm btn-outline-light" title="Resultados de la encuesta de satisfacción (por ahora solo superadministrador)"><i class="bi bi-emoji-smile me-1"></i>Encuestas</a>
+    {# 2026-10-16 (Daniel: «déjame un botón que yo pueda acceder… al módulo de encuesta»): más visible, blanco con corazón rojo #}
+    <a href="{{ url_for('retiros_encuesta_resultados') }}" class="btn btn-sm btn-light fw-bold" title="La voz de nuestros clientes: resultados de la encuesta de satisfacción (solo superadministrador o rol con el permiso)"><i class="bi bi-heart-fill me-1" style="color:var(--ilus-red)"></i>Encuesta de clientes</a>
     {% endif %}
   </div>
 </div>

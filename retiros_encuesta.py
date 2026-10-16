@@ -441,6 +441,23 @@ def armar_resultados(preguntas, filas):
     return tarjetas
 
 
+def resumen_general(tarjetas, n_resp=0, n_inv=0):
+    """Portada de los resultados: nota promedio de las preguntas con estrellas (ponderada por respuestas), % de clientes
+    contentos (4 o 5 estrellas) y tasa de respuesta. Nunca inventa: sin datos, cada cifra queda en None («–»)."""
+    est = [t for t in (tarjetas or []) if t.get("tipo") == "estrellas" and t.get("n") and t.get("prom") is not None]
+    n_est = sum(int(t["n"]) for t in est)
+    prom = round(sum(float(t["prom"]) * int(t["n"]) for t in est) / n_est, 2) if n_est else None
+    contentos = sum(int(b["c"]) for t in est for b in t.get("barras", []) if str(b.get("etiqueta")) in ("4", "5"))
+    return {
+        "prom": prom,
+        "prom_txt": f"{prom:.1f}".replace(".", ",") if prom is not None else "–",
+        "estrellas_pct": round(100.0 * prom / 5) if prom is not None else 0,
+        "color": _sem_escala(prom),
+        "contentos_pct": round(100.0 * contentos / n_est) if n_est else None,
+        "tasa_pct": round(100.0 * n_resp / n_inv) if n_inv else None,
+    }
+
+
 _COMENTARIOS_EJEMPLO = [
     "Todo muy ordenado. Llegué a la hora y en cinco minutos ya estaba cargando mi pedido.",
     "El equipo de bodega fue muy amable, me ayudaron a subir las cajas al auto.",
@@ -789,6 +806,7 @@ def register_encuesta_routes(app, ctx):
         lista = [{"code": c.get("code") or "", "pregunta": c.get("pregunta") or "", "texto": c.get("texto") or "",
                   "cuando": _fmt_fecha(c.get("creado_en"))} for c in comentarios]
         return _pagina("retiros/encuesta_resultados.html", tarjetas=tarjetas, comentarios=lista, demo=demo,
+                       resumen=resumen_general(tarjetas, n_resp, n_inv),
                        activa=encuesta_activa(), error_datos=error_datos, elegibles=elegibles, n_resp=n_resp,
                        n_inv=n_inv, pocos=0 < n_resp < MIN_RESPUESTAS_CONFIABLES, hay_datos=n_resp > 0,
                        pagina=pagina, paginas=paginas, por_pagina=por_pagina, total_coment=total_coment,

@@ -145,6 +145,9 @@ def construir(monkeypatch, con_rowcount=True, vista_previa="*"):
     app.jinja_loader = ChoiceLoader([DictLoader({"base.html": STUB_BASE}),
                                      FileSystemLoader(os.path.join(RAIZ, "templates"))])
 
+    # El Monitor de Retiros vive en pickups_module (en producción siempre está): aquí basta su nombre para «Volver al Monitor»
+    app.add_url_rule("/retiros", "pickup_dashboard", lambda: "monitor")
+
     @app.before_request
     def _usuario():
         g.user = dict(sesion["user"]) if sesion["user"] else None
@@ -662,6 +665,33 @@ def test_datos_de_ejemplo_no_guardan_respuestas_y_se_rotulan(entorno):
     assert entorno.db.contar("pickup_encuesta_respuestas") == 0 and entorno.db.contar("pickup_encuesta_invitaciones") == 0
     ps = [enc._fila_a_pregunta(f) for f in entorno.preguntas()]
     assert enc.datos_de_ejemplo(ps)[0] == enc.datos_de_ejemplo(ps)[0]     # misma semilla, mismos datos
+
+
+def test_portada_con_nota_general_cifras_y_firma(entorno):
+    # 2026-10-16 (Daniel: «más corazón… algo más Claude y Daniel»): portada con la nota promedio, cifras y la firma
+    sembrar(entorno)
+    entorno.activar()
+    _responder(entorno, 3, estrellas="5", opcion="listo", comentario="Excelente atención", desde=100)
+    _responder(entorno, 1, estrellas="2", opcion="espera_larga", desde=200)
+    entorno.admin()
+    html = entorno.client.get("/retiros/encuesta").get_data(as_text=True)
+    assert "La voz de nuestros clientes" in html and 'class="encr-hero-num"' in html and "<small>/5</small>" in html
+    assert "Tasa de respuesta" in html and "Clientes contentos" in html and "75<small>%</small>" in html   # 6 de 8 estrellas son 4–5
+    assert "Hecho con cariño por <b>Daniel Aguilar</b> y <b>Claude</b>" in html and "Volver al Monitor" in html
+    vacio = construir(entorno.monkeypatch)
+    vacio.admin()
+    h2 = vacio.client.get("/retiros/encuesta").get_data(as_text=True)
+    assert "encr-hero-num" not in h2 and "Todavía no hay respuestas" in h2      # sin respuestas no se inventa una nota
+
+
+def test_resumen_general_pondera_y_no_inventa():
+    est = lambda n, prom, d: {"tipo": "estrellas", "n": n, "prom": prom,
+                              "barras": [{"etiqueta": str(i), "c": d.get(i, 0)} for i in range(5, 0, -1)]}
+    r = enc.resumen_general([est(3, 5.0, {5: 3}), est(1, 2.0, {2: 1}), {"tipo": "opcion", "n": 4, "prom": None, "barras": []}], 4, 8)
+    assert r["prom"] == 4.25 and r["prom_txt"] == "4,2" and r["contentos_pct"] == 75 and r["tasa_pct"] == 50
+    assert r["estrellas_pct"] == 85
+    vacio = enc.resumen_general([], 0, 0)
+    assert vacio["prom"] is None and vacio["prom_txt"] == "–" and vacio["contentos_pct"] is None and vacio["tasa_pct"] is None
 
 
 def test_armar_resultados_y_semaforos():

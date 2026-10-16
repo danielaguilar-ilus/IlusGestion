@@ -138,6 +138,8 @@ class TestVistaPreviaComoRol:
         i = _pos(html, "url_for('retiros_encuesta_resultados')")
         bloque = html[html.rfind("{% if", 0, i):i]
         assert "retiros_vista_previa()" in bloque
+        boton = html[i:html.index("</a>", i)]
+        assert "btn-light" in boton and "bi-heart-fill" in boton and "Encuesta de clientes" in boton   # 2026-10-16: más visible
 
     def test_el_dato_de_la_encuesta_en_la_ficha_solo_en_vista_previa(self):
         i = _pos(FICHA, "_encuesta_ficha.html")
