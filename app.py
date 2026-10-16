@@ -121391,11 +121391,14 @@ def mant_ot_declarar_cobertura(vid):
                         "error": "Indica si la garantía aplica o no."}), 400
     motivo = (d.get("motivo") or "").strip()
     if len(motivo) < 10:
+        # 2026-10-16 (OT-2026-00276): al QUITAR la garantía el texto pedía explicar «por qué va por garantía».
         return jsonify({
             "ok": False,
-            "error": ("Explica por qué esta visita va por garantía "
-                      "(mínimo 10 caracteres). Queda registrado con tu "
-                      "usuario para respaldar que no se cobró."),
+            "error": (("Explica por qué esta visita va por garantía "
+                       "(mínimo 10 caracteres). Queda registrado con tu "
+                       "usuario para respaldar que no se cobró.") if gar else
+                      ("Explica por qué esta visita vuelve a cobrarse "
+                       "(mínimo 10 caracteres). Queda registrado con tu usuario.")),
             "error_codigo": "COBERTURA_MOTIVO_REQUERIDO",
         }), 400
 

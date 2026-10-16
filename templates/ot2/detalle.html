@@ -8141,8 +8141,13 @@ window.otdFinModalCerrar = function(){
                No dependen de que falte algo: son la puerta para cambiar de
                opinión con la información que aparece al final. #}
             {% if not _es_int and puede_cobertura %}
+            {# 🔧 2026-10-16 (OT-2026-00276, Aarón no podía cerrarla): la garantía también puede venir marcada SOLO en
+               `cubierto_por` (modalidad «pagado»). El motor de finanzas (_ot_cobertura) la lee como garantía, pero este
+               botón miraba solo la modalidad y ofrecía «declarar como garantía» en vez de «Quitar»: callejón sin salida
+               (REGLA #24). Ahora basta con cualquiera de los dos. #}
+            {% set _cub_gar = (v.cubierto_por or '')|lower == 'garantia' %}
             <div class="otf-acciones">
-              {% if _mod_cobro in ('garantia', 'sin_costo') %}
+              {% if _mod_cobro in ('garantia', 'sin_costo') or _cub_gar %}
               <button type="button" class="otf-acc doc" id="otfQuitarGarBtn"
                       onclick="OT2F.quitarGarantia()">
                 <i class="bi bi-arrow-counterclockwise"></i> Quitar cobertura y asociar documento
@@ -8157,7 +8162,7 @@ window.otdFinModalCerrar = function(){
                 <i class="bi bi-cash-coin"></i> Gestionar costos y margen
               </a>
             </div>
-            {% if _mod_cobro not in ('garantia','sin_costo') and v.factura_nudo %}
+            {% if _mod_cobro not in ('garantia','sin_costo') and not _cub_gar and v.factura_nudo %}
             <div class="small mt-1" style="color:#6b7280">
               Si la declaras como garantía, el documento {{ v.factura_tido or 'FCV' }}
               N° {{ v.factura_nudo }} quedará anulado en la OT.
