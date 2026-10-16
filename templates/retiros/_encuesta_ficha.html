@@ -1,40 +1,67 @@
 {# ════════════════════════════════════════════════════════════════════════
-   ILUS Fitness · Retiros — BLOQUE «Encuesta de satisfacción» para la ficha interna del retiro.
+   ILUS Fitness · Retiros — BLOQUE «Encuesta de satisfacción» para la ficha interna del retiro (vista previa: superadmin o rol).
    Autocontenido: estilos, marcado y script propios. Necesita solo `req.id` en el contexto.
-   Uso (UNA línea en internal_detail.html, donde Daniel quiera el bloque):
-        {% include "retiros/_encuesta_ficha.html" %}
-   Solo LECTURA: muestra el enlace de la encuesta (copiar) y su estado (no enviada / respondida + resultado).
-   NO envía nada y NO agrega nada al correo del cliente mientras RETIROS_ENCUESTA_ACTIVA esté apagada.
+   Uso (UNA línea en internal_detail.html):  {% include "retiros/_encuesta_ficha.html" %}
+   2026-10-16 (Daniel: «mejora esa vista y activemos esta herramienta solo cuando se envíe el correo de retirado o cuando cambie esa
+   condición»): dos pasos con la misma regla del servidor (retiros_encuesta.estado_encuesta) — 1) el correo «Retiro completado» con la
+   encuesta salió, 2) el cliente respondió — y sus respuestas con estrellas. El enlace solo se muestra con la encuesta ACTIVA.
+   Solo LECTURA: no envía nada.
    ════════════════════════════════════════════════════════════════════════ #}
 <style>
   .encf{background:#fff;border:1px solid #e5e7eb;border-left:6px solid #9ca3af;border-radius:16px;padding:16px 18px;margin:14px 0;box-shadow:0 4px 8px -2px rgba(15,23,42,.06)}
   .encf.is-resp{border-left-color:#16a34a;background:linear-gradient(180deg,#f0fdf4,#fff 60%)}
-  .encf.is-env{border-left-color:#f59e0b}
-  .encf-top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-  .encf-top h6{margin:0;font-weight:900;font-size:1rem}
-  .encf-chip{font-size:.74rem;font-weight:800;border-radius:99px;padding:4px 11px;background:#f3f4f6;color:#374151}
+  .encf.is-act{border-left-color:#f59e0b;background:linear-gradient(180deg,#fffbeb,#fff 60%)}
+  .encf-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .encf-ico{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:12px;background:#fee2e2;color:#dc2626;font-size:1.05rem}
+  .encf-tit{flex:1 1 200px;min-width:0}
+  .encf-tit h6{margin:0;font-weight:900;font-size:1rem}
+  .encf-tit small{display:block;color:#6b7280;font-size:.78rem;line-height:1.35}
+  .encf-chip{font-size:.74rem;font-weight:800;border-radius:99px;padding:5px 12px;background:#f3f4f6;color:#374151;white-space:nowrap}
   .encf.is-resp .encf-chip{background:#dcfce7;color:#14532d}
-  .encf.is-env .encf-chip{background:#fff8e1;color:#7c4a03}
-  .encf-nota{margin:8px 0 0;font-size:.8rem;color:#6b7280;line-height:1.5}
+  .encf.is-act .encf-chip{background:#fff8e1;color:#7c4a03}
+  .encf-pasos{list-style:none;margin:14px 0 0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .encf-paso{display:flex;gap:10px;align-items:flex-start;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px;background:#fff;min-width:0}
+  .encf-paso b{display:block;font-size:.86rem;font-weight:800;line-height:1.3}
+  .encf-paso small{display:block;font-size:.78rem;color:#6b7280;line-height:1.4;overflow-wrap:anywhere}
+  .encf-circ{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;background:#e5e7eb;color:#6b7280;font-weight:900;font-size:.82rem}
+  .encf-paso.is-ok .encf-circ{background:#16a34a;color:#fff}
+  .encf-paso.is-esp .encf-circ{background:#f59e0b;color:#fff;box-shadow:0 0 0 0 rgba(245,158,11,.55);animation:encfPulso 2s infinite}
+  @keyframes encfPulso{0%{box-shadow:0 0 0 0 rgba(245,158,11,.5)}70%{box-shadow:0 0 0 8px rgba(245,158,11,0)}100%{box-shadow:0 0 0 0 rgba(245,158,11,0)}}
+  @media (prefers-reduced-motion:reduce){.encf-paso.is-esp .encf-circ{animation:none}}
+  .encf-res{margin:14px 0 0;padding:0;list-style:none;display:grid;gap:8px}
+  .encf-res li{display:flex;justify-content:space-between;align-items:center;gap:12px;border:1px solid #e5e7eb;border-radius:12px;padding:9px 12px;background:#fff;font-size:.88rem}
+  .encf-res li span{min-width:0;overflow-wrap:anywhere}
+  .encf-res li b{font-weight:800;white-space:nowrap}
+  .encf-res .encf-est{color:#f59e0b;letter-spacing:1px;margin-right:6px}
+  .encf-res .encf-est i{color:#e5e7eb}
+  .encf-res li.txt{display:block;background:#fffaf5;border-color:#f1e7dd}
+  .encf-res li.txt span{display:block;color:#6b7280;font-size:.78rem;margin-bottom:3px}
+  .encf-res li.txt q{font-family:Georgia,"Times New Roman",serif;font-size:.95rem;color:#1f2937;quotes:"“" "”"}
   .encf-link{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
   .encf-link input{flex:1 1 240px;min-width:0;min-height:44px;border:2px solid #e5e7eb;border-radius:10px;padding:8px 12px;font-size:16px;background:#f9fafb;color:#374151}
   .encf-link .btn{min-height:44px;font-weight:700}
-  .encf-res{margin:12px 0 0;padding:0;list-style:none;display:grid;gap:6px;font-size:.9rem}
-  .encf-res li{display:flex;justify-content:space-between;gap:12px;border-bottom:1px dashed #e5e7eb;padding-bottom:6px}
-  .encf-res li.txt{display:block}
-  .encf-res b{font-weight:800}
+  .encf-nota{margin:10px 0 0;font-size:.8rem;color:#6b7280;line-height:1.5}
+  @media(max-width:560px){.encf-pasos{grid-template-columns:1fr}}
 </style>
 <section class="encf" id="encfBloque" data-rid="{{ req.id }}" data-url="/retiros/encuesta/ficha/{{ req.id }}" aria-label="Encuesta de satisfacción">
   <div class="encf-top">
-    <h6><i class="bi bi-emoji-smile me-1" style="color:#dc2626"></i>Encuesta de satisfacción</h6>
+    <span class="encf-ico" aria-hidden="true"><i class="bi bi-heart-fill"></i></span>
+    <div class="encf-tit">
+      <h6>Encuesta de satisfacción</h6>
+      <small>Se activa sola cuando sale el correo «Retiro completado»</small>
+    </div>
     <span class="encf-chip" id="encfEstado">Cargando…</span>
   </div>
+  <ol class="encf-pasos" id="encfPasos" hidden>
+    <li class="encf-paso" id="encfP1"><span class="encf-circ">1</span><div><b>Correo «Retiro completado»</b><small id="encfP1Txt"></small></div></li>
+    <li class="encf-paso" id="encfP2"><span class="encf-circ">2</span><div><b>Respuesta del cliente</b><small id="encfP2Txt"></small></div></li>
+  </ol>
+  <ul class="encf-res" id="encfRes" hidden></ul>
   <div class="encf-link" id="encfLink" hidden>
     <input type="text" id="encfUrl" readonly aria-label="Enlace de la encuesta de este retiro">
     <button type="button" class="btn btn-sm btn-outline-dark" id="encfCopiar"><i class="bi bi-clipboard me-1"></i>Copiar enlace</button>
     <a class="btn btn-sm btn-outline-dark" href="/retiros/encuesta/vista-previa" target="_blank" rel="noopener"><i class="bi bi-eye me-1"></i>Vista previa</a>
   </div>
-  <ul class="encf-res" id="encfRes" hidden></ul>
   <p class="encf-nota" id="encfNota"></p>
 </section>
 <script>
@@ -42,30 +69,64 @@
   var b = document.getElementById('encfBloque');
   if (!b) return;
   var $ = function (id) { return document.getElementById(id); };
+  function paso(id, clase, txt) {
+    var li = $(id); li.classList.remove('is-ok', 'is-esp'); if (clase) li.classList.add(clase);
+    $(id + 'Txt').textContent = txt;
+  }
   fetch(b.getAttribute('data-url'), { headers: { 'Accept': 'application/json' } })
     .then(function (r) { return r.json(); })
     .then(function (j) {
       if (!j.ok) { $('encfEstado').textContent = 'No disponible'; return; }
+      var e = j.estado;
       $('encfEstado').textContent = j.estado_txt;
-      if (j.estado === 'respondida') b.classList.add('is-resp');
-      if (j.estado === 'enviada') b.classList.add('is-env');
+      if (e === 'respondida') b.classList.add('is-resp');
+      if (e === 'activa') b.classList.add('is-act');
+      $('encfPasos').hidden = false;
+      var nota = '';
+      if (e === 'activa') {
+        paso('encfP1', 'is-ok', 'Enviado el ' + j.enviada);
+        paso('encfP2', 'is-esp', 'Esperando' + (j.vence ? ' · el enlace vence el ' + j.vence : ''));
+        nota = 'El cliente puede responder desde el correo o desde su página de seguimiento. Si el retiro se reabre, la encuesta se apaga.';
+      } else if (e === 'respondida') {
+        paso('encfP1', 'is-ok', j.enviada ? 'Enviado el ' + j.enviada : 'Enviado');
+        paso('encfP2', 'is-ok', 'Respondió el ' + j.respondida);
+      } else if (e === 'vencida') {
+        paso('encfP1', 'is-ok', 'Enviado el ' + j.enviada);
+        paso('encfP2', '', 'Venció el ' + j.vence + ' sin respuesta');
+      } else if (e === 'sin_correo') {
+        paso('encfP1', '', 'No salió para este retiro');
+        paso('encfP2', '', 'No disponible');
+        nota = 'La encuesta se activa sola cuando sale el correo «Retiro completado» de este retiro. Mientras tanto el cliente no la ve.';
+      } else if (e === 'no_aplica') {
+        $('encfPasos').hidden = true;
+        nota = 'Este retiro no quedó retirado (se reabrió o se cerró sin entrega): no lleva encuesta.';
+      } else if (e === 'apagada') {
+        $('encfPasos').hidden = true;
+        nota = 'La encuesta está apagada para todos los retiros.';
+      }
+      $('encfNota').textContent = nota;
       if (j.url) { $('encfUrl').value = j.url; $('encfLink').hidden = false; }
-      var nota = [];
-      if (!j.activa) nota.push('La encuesta aún NO está lanzada: ningún cliente la ha recibido y este enlace no funciona para ellos. Solo tú (personal) puedes abrirlo, en vista previa.');
-      else if (!j.elegible) nota.push('El retiro todavía no está retirado: el enlace funcionará cuando se complete.');
-      nota.push('El enlace no se envía solo: aquí solo se muestra.');
-      if (j.vence) nota.push('Vence el ' + j.vence + '.');
-      if (j.respondida) nota.unshift('Respondida el ' + j.respondida + '.');
-      $('encfNota').textContent = nota.join(' ');
       if (j.respuestas && j.respuestas.length) {
         var ul = $('encfRes'); ul.hidden = false; ul.textContent = '';
         j.respuestas.forEach(function (r) {
           var li = document.createElement('li');
-          if (r.texto) li.className = 'txt';
           var a = document.createElement('span'); a.textContent = r.pregunta;
-          var v = document.createElement('b'); v.textContent = r.valor;
-          if (r.texto) { a.style.display = 'block'; a.style.color = '#6b7280'; }
-          li.appendChild(a); li.appendChild(v); ul.appendChild(li);
+          li.appendChild(a);
+          if (r.texto) {
+            li.className = 'txt';
+            var q = document.createElement('q'); q.textContent = r.valor; li.appendChild(q);
+          } else {
+            var v = document.createElement('b');
+            if (r.estrellas) {
+              var est = document.createElement('span'); est.className = 'encf-est'; est.setAttribute('aria-hidden', 'true');
+              est.textContent = '★'.repeat(r.estrellas);
+              var gris = document.createElement('i'); gris.textContent = '★'.repeat(5 - r.estrellas); est.appendChild(gris);
+              v.appendChild(est);
+            }
+            v.appendChild(document.createTextNode(r.valor));
+            li.appendChild(v);
+          }
+          ul.appendChild(li);
         });
       }
     })

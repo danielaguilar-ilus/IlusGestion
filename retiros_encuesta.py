@@ -75,6 +75,7 @@ def usuario_en_vista_previa(usuario, permisos=None):
         return True
     return any(str(usuario.get(k) or "").strip().lower() in permitidos for k in ("username", "email"))
 DIAS_VIGENCIA_ENLACE = 30          # el enlace de una invitación vence a los 30 días de creada
+TOLERANCIA_ENVIO_MIN = 10          # reloj de la app vs. NOW() de la base: el correo sale DESPUÉS del cierre, con este margen
 MESES_CONSERVACION = 24            # luego las respuestas se anonimizan (ver purgar_vencidas)
 MAX_TEXTO = 1000                   # largo máximo de una respuesta de texto libre
 MAX_PREGUNTAS_RECOMENDADO = 4      # más de esto baja la tasa de respuesta (aviso en el editor, no es un tope)
@@ -206,6 +207,45 @@ def retiro_elegible(fila, desde=None):
         return False
     cerrado = _a_dt(fila.get("closed_at"))
     return bool(entregado and cerrado and cerrado >= (desde or encuesta_desde()))
+
+
+# Estados de la encuesta de UN retiro (los usa la página pública, el seguimiento y la ficha: una sola regla)
+ESTADOS_ENCUESTA = {
+    "apagada": "Encuesta apagada",
+    "no_aplica": "No aplica",
+    "sin_correo": "No activa",
+    "vencida": "Vencida",
+    "respondida": "Respondida",
+    "activa": "Activa · esperando respuesta",
+}
+
+
+def estado_encuesta(fila, inv, activa=True, ahora=None, desde=None):
+    """¿En qué está la encuesta de este retiro? (Daniel 2026-10-16: «activemos esta herramienta solo cuando se envíe el correo de
+    retirado o cuando cambie esa condición»). Orden:
+      apagada    → el interruptor general está apagado.
+      no_aplica  → el retiro no está retirado (o se reabrió, o se cerró sin entrega): la encuesta no corre.
+      sin_correo → el correo «Retiro completado» con la encuesta no salió para el cierre vigente (nunca, o salió en un cierre
+                   anterior y el retiro se reabrió y volvió a cerrar sin correo).
+      respondida → el cliente ya respondió.
+      vencida    → pasó la vigencia del enlace.
+      activa     → el cliente puede responder."""
+    if not activa:
+        return "apagada"
+    if not retiro_elegible(fila, desde):
+        return "no_aplica"
+    enviada = _a_dt((inv or {}).get("enviada_en"))
+    if not enviada:
+        return "sin_correo"
+    cerrado = _a_dt((fila or {}).get("closed_at"))
+    if cerrado and enviada < cerrado - timedelta(minutes=TOLERANCIA_ENVIO_MIN):
+        return "sin_correo"
+    if inv.get("respondida_en"):
+        return "respondida"
+    vence = _a_dt(inv.get("vence_en"))
+    if vence and vence < (ahora or _ahora()):
+        return "vencida"
+    return "activa"
 
 
 def _ahora():
@@ -705,8 +745,23 @@ def register_encuesta_routes(app, ctx):
         return {"ruta": f"{RUTA_BASE}/{token}", "token": token, "vence": _a_dt(inv.get("vence_en"))}
 
     def marcar_enviada(request_id):
-        return _ejecutar("UPDATE pickup_encuesta_invitaciones SET enviada_en=%s WHERE request_id=%s "
-                         "AND enviada_en IS NULL", (_ahora(), request_id))
+        # 2026-10-16: si el retiro se reabrió y se volvió a cerrar, el nuevo correo «Retiro completado» vuelve a activar la encuesta
+        return _ejecutar(f"UPDATE pickup_encuesta_invitaciones SET enviada_en=%s WHERE request_id=%s "
+                         f"AND (enviada_en IS NULL OR enviada_en < (SELECT closed_at FROM `{REQ}` WHERE id=%s))",
+                         (_ahora(), request_id, request_id))
+
+    def estado_de(request_id):
+        """Para el seguimiento: {'estado', 'ruta'} SIN crear ni escribir nada. La ruta solo viene si la encuesta está activa."""
+        fila = mysql_fetchone(f"SELECT id, status, public_token, closed_at, retirado_por_nombre FROM `{REQ}` WHERE id=%s LIMIT 1",
+                              (request_id,))
+        if not fila:
+            return {"estado": "no_aplica", "ruta": None}
+        inv = None
+        if encuesta_activa() and retiro_elegible(fila):
+            _asegurar_esquema()
+            inv = _invitacion_de(fila["id"])
+        est = estado_encuesta(fila, inv, activa=encuesta_activa())
+        return {"estado": est, "ruta": ruta_para(fila["id"], fila.get("public_token") or "") if est == "activa" else None}
 
     def token_para(request_id, public_token):
         return generar_token(_secreto(), request_id, public_token)
@@ -717,7 +772,7 @@ def register_encuesta_routes(app, ctx):
 
     app.extensions["retiros_encuesta"] = {
         "activa": encuesta_activa, "token_para": token_para, "ruta_para": ruta_para, "invitar": invitar,
-        "marcar_enviada": marcar_enviada,
+        "marcar_enviada": marcar_enviada, "estado_de": estado_de,
         "purgar": lambda dry_run=True, ahora=None: purgar_vencidas(mysql_execute, mysql_fetchall, ahora=ahora,
                                                                    dry_run=dry_run)}
 
@@ -768,7 +823,8 @@ def register_encuesta_routes(app, ctx):
                 comentarios = ej_coment[(pagina - 1) * por_pagina: pagina * por_pagina]
             else:
                 tot = mysql_fetchone(
-                    "SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN respondida_en IS NOT NULL THEN 1 ELSE 0 END),0) "
+                    "SELECT COALESCE(SUM(CASE WHEN enviada_en IS NOT NULL OR respondida_en IS NOT NULL THEN 1 ELSE 0 END),0) "
+                    "AS total, COALESCE(SUM(CASE WHEN respondida_en IS NOT NULL THEN 1 ELSE 0 END),0) "
                     "AS resp FROM pickup_encuesta_invitaciones") or {}
                 n_inv, n_resp = int(tot.get("total") or 0), int(tot.get("resp") or 0)
                 filas = mysql_fetchall(
@@ -941,17 +997,21 @@ def register_encuesta_routes(app, ctx):
             return _json({"ok": False, "error": "Retiro no encontrado."}, 404)
         ruta = ruta_para(fila["id"], fila.get("public_token") or "")
         base = (_base_publica() if callable(_base_publica) else "") or request.url_root.rstrip("/")
-        out = {"ok": True, "activa": encuesta_activa(), "estado": "sin_invitacion",
-               "estado_txt": "No enviada", "url": (base.rstrip("/") + ruta) if ruta else "",
-               "elegible": fila.get("status") in ("retirada", "cerrada"), "status": fila.get("status"),
-               "vence": "", "respuestas": []}
+        out = {"ok": True, "activa": encuesta_activa(), "estado": "sin_correo", "estado_txt": ESTADOS_ENCUESTA["sin_correo"],
+               "url": "", "elegible": retiro_elegible(fila), "status": fila.get("status"),
+               "enviada": "", "vence": "", "respondida": "", "respuestas": []}
         try:
             _asegurar_esquema()
             inv = _invitacion_de(fila["id"])
+            est = estado_encuesta(fila, inv, activa=encuesta_activa())
+            out["estado"], out["estado_txt"] = est, ESTADOS_ENCUESTA[est]
+            if est == "activa" and ruta:
+                out["url"] = base.rstrip("/") + ruta
             if inv:
                 out["vence"] = _fmt_fecha(inv.get("vence_en"))
+                if inv.get("enviada_en") and est != "sin_correo":
+                    out["enviada"] = _fmt_fecha(inv.get("enviada_en"))
                 if inv.get("respondida_en"):
-                    out["estado"], out["estado_txt"] = "respondida", "Respondida"
                     out["respondida"] = _fmt_fecha(inv.get("respondida_en"))
                     filas = mysql_fetchall(
                         "SELECT p.texto AS texto, p.tipo AS tipo, p.opciones AS opciones, r.valor_num AS valor_num, "
@@ -959,7 +1019,9 @@ def register_encuesta_routes(app, ctx):
                         "JOIN pickup_encuesta_preguntas p ON p.id=r.pregunta_id WHERE r.invitacion_id=%s "
                         "ORDER BY p.orden, p.id", (inv["id"],)) or []
                     for f in filas:
+                        estrellas = None
                         if f["tipo"] == "estrellas":
+                            estrellas = int(f["valor_num"] or 0)
                             legible = f"{f['valor_num']} de 5"
                         elif f["tipo"] == "si_no":
                             legible = "Sí" if int(f["valor_num"]) == 1 else "No"
@@ -971,11 +1033,8 @@ def register_encuesta_routes(app, ctx):
                             legible = ops.get(f["valor_texto"], f["valor_texto"])
                         else:
                             legible = f["valor_texto"] or "(texto borrado por conservación)"
-                        out["respuestas"].append({"pregunta": f["texto"], "valor": legible, "texto": f["tipo"] == "texto"})
-                elif inv.get("enviada_en"):
-                    out["estado"], out["estado_txt"] = "enviada", "Enviada, sin responder"
-                else:
-                    out["estado"], out["estado_txt"] = "creada", "Invitación creada, no enviada"
+                        out["respuestas"].append({"pregunta": f["texto"], "valor": legible, "texto": f["tipo"] == "texto",
+                                                  "estrellas": estrellas})
         except Exception as e:
             print(f"[ILUS][ENCUESTA] ficha: {type(e).__name__}", flush=True)
             out["estado_txt"] = "No se pudo leer el estado"
@@ -999,19 +1058,21 @@ def register_encuesta_routes(app, ctx):
         accion = url_for("retiros_encuesta_publica", token=token)
         inv = None
         if not vista_previa:
+            # 2026-10-16 (Daniel): solo con el correo «Retiro completado» enviado para el cierre vigente; abrir el enlace ya no crea nada
             try:
-                inv = _obtener_o_crear_invitacion(retiro["id"], token, retiro.get("closed_at"))
+                _asegurar_esquema()
+                inv = _invitacion_de(retiro["id"])
             except Exception as e:
                 print(f"[ILUS][ENCUESTA] invitación: {type(e).__name__}", flush=True)
                 return _no_disponible()
-            if not inv:
+            if not inv or inv.get("token_hash") != _hash_token(token):
                 return _no_disponible()
-            if inv.get("respondida_en"):
+            est = estado_encuesta(retiro, inv, activa=activa)
+            if est == "respondida":
                 if request.method == "POST":
                     return redirect(accion, code=303)
                 return _pagina("retiros/encuesta_gracias.html", ya_respondida=True)
-            vence = _a_dt(inv.get("vence_en"))
-            if vence and vence < _ahora():
+            if est != "activa":
                 return _no_disponible()
         preguntas = _preguntas_vigentes(solo_activas=True)
         if not preguntas and not vista_previa:

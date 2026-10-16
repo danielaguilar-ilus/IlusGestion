@@ -470,8 +470,9 @@
            repetido"): con el retiro confirmado mostraba la misma dirección y
            mapa que la tarjeta "Bodega de retiro" de la columna lateral. #}
 
-        {# ──────── RATING — solo si ya retirado ──────── #}
-        {% if req.status == 'retirada' %}
+        {# ──────── RATING — solo con la encuesta ACTIVA para este retiro (2026-10-16, Daniel: «activemos esta herramienta solo cuando se envíe el
+             correo de retirado o cuando cambie esa condición»): retirado + correo «Retiro completado» enviado. Ya respondida → solo el gracias. #}
+        {% if encuesta_url and req.status == 'retirada' %}
         <div class="rating-card">
           <div class="eyebrow">¿Cómo estuvo la atención?</div>
           <h4>Tu feedback nos ayuda a mejorar</h4>
@@ -487,6 +488,12 @@
             <i class="bi bi-chat-heart-fill"></i>Responder la encuesta · 3 preguntas
           </a>
           {% endif %}
+        </div>
+        {% elif encuesta_estado == 'respondida' %}
+        <div class="rating-card">
+          <div class="eyebrow">¡Gracias por tu opinión!</div>
+          <h4>Ya recibimos tu encuesta</h4>
+          <div class="small" style="color:#9ca3af">Nos ayuda a tener tu pedido listo a tiempo la próxima vez.</div>
         </div>
         {% elif req.status == 'cerrada' and encuesta_url %}
         <div class="rating-card">

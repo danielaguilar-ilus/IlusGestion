@@ -166,8 +166,22 @@ def construir(monkeypatch, con_rowcount=True, vista_previa="*"):
         pass
     e = E()
     e.app, e.db, e.esp, e.sesion, e.client, e.monkeypatch = app, db, esp, sesion, app.test_client(), monkeypatch
-    e.token = lambda rid=1: app.extensions["retiros_encuesta"]["token_para"](
+    e.token_sin_correo = lambda rid=1: app.extensions["retiros_encuesta"]["token_para"](
         rid, db.fetchone("SELECT public_token FROM pickup_requests WHERE id=%s", (rid,))["public_token"])
+
+    def _enviar(rid=1):
+        """Lo que hace el correo «Retiro completado» (pickups_module): crea la invitación y, enviado el correo, la marca."""
+        ext = app.extensions["retiros_encuesta"]
+        if ext["invitar"](rid):
+            ext["marcar_enviada"](rid)
+
+    def _token(rid=1):
+        # 2026-10-16 (Daniel: la encuesta solo se activa cuando sale el correo de retirado): un cliente solo tiene el enlace porque le
+        # llegó ese correo, así que con la encuesta encendida se simula el envío antes de darle el enlace.
+        if enc.encuesta_activa():
+            _enviar(rid)
+        return e.token_sin_correo(rid)
+    e.enviar, e.token = _enviar, _token
     e.personal = lambda: sesion.update(user={"id": 7, "nombre": "Sam"}, permissions={"retiros": True})
     e.admin = lambda: sesion.update(user={"id": 1, "nombre": "Daniel"}, permissions={"retiros": True, "admin": True})
     e.anonimo = lambda: sesion.update(user=None, permissions={})
@@ -297,8 +311,8 @@ def test_personal_con_token_real_activa_tampoco_guarda(entorno):
     """Si el personal abre el enlace de un cliente y lo envía, NO se guarda: taparía la respuesta real del cliente."""
     entorno.activar()
     entorno.personal()
-    entorno.client.get(f"/retiros/encuesta/{entorno.token()}")
-    r = entorno.client.post(f"/retiros/encuesta/{entorno.token()}", data=form_ok(entorno))
+    entorno.client.get(f"/retiros/encuesta/{entorno.token_sin_correo()}")
+    r = entorno.client.post(f"/retiros/encuesta/{entorno.token_sin_correo()}", data=form_ok(entorno))
     assert r.status_code == 200 and "VISTA PREVIA" in r.get_data(as_text=True)
     assert entorno.db.contar("pickup_encuesta_respuestas") == 0 and entorno.db.contar("pickup_encuesta_invitaciones") == 0
 
@@ -349,14 +363,81 @@ def test_lanzada_token_de_otro_retiro_o_adulterado_404(entorno):
 
 def test_una_invitacion_por_retiro_y_vence_a_los_30_dias(entorno):
     entorno.activar()
-    t = entorno.token()
+    t = entorno.token()                                                   # el correo «Retiro completado» crea y marca la invitación
     entorno.client.get(f"/retiros/encuesta/{t}")
     entorno.client.get(f"/retiros/encuesta/{t}")
     inv = entorno.db.fetchall("SELECT * FROM pickup_encuesta_invitaciones")
     assert len(inv) == 1
     assert inv[0]["request_id"] == 1 and inv[0]["token_hash"] == enc._hash_token(t)
     assert enc._a_dt(inv[0]["vence_en"]) - enc._a_dt(inv[0]["creada_en"]) == timedelta(days=enc.DIAS_VIGENCIA_ENLACE)
-    assert inv[0]["enviada_en"] is None and inv[0]["respondida_en"] is None
+    assert inv[0]["enviada_en"] is not None and inv[0]["respondida_en"] is None
+
+
+# ── 2026-10-16 (Daniel: «activemos esta herramienta solo cuando se envíe el correo de retirado o cuando cambie esa condición») ──
+def test_sin_el_correo_de_retirado_el_enlace_no_abre_ni_crea_nada(entorno):
+    sembrar(entorno)
+    entorno.activar()
+    t = entorno.token_sin_correo()
+    assert entorno.client.get(f"/retiros/encuesta/{t}").status_code == 404
+    assert entorno.client.post(f"/retiros/encuesta/{t}", data=form_ok(entorno)).status_code == 404
+    assert entorno.db.contar("pickup_encuesta_invitaciones") == 0 and entorno.db.contar("pickup_encuesta_respuestas") == 0
+    entorno.app.extensions["retiros_encuesta"]["invitar"](1)               # se armó el correo pero NO salió (falló el envío)
+    assert entorno.client.get(f"/retiros/encuesta/{t}").status_code == 404
+    entorno.app.extensions["retiros_encuesta"]["marcar_enviada"](1)        # salió: ahora sí
+    assert entorno.client.get(f"/retiros/encuesta/{t}").status_code == 200
+
+
+def test_reabierto_se_apaga_y_vuelve_solo_con_un_correo_nuevo(entorno):
+    sembrar(entorno)
+    entorno.activar()
+    t = entorno.token()
+    assert entorno.client.get(f"/retiros/encuesta/{t}").status_code == 200
+    entorno.db.retiro(1, status="en_preparacion")                         # alguien lo reabrió
+    assert entorno.client.get(f"/retiros/encuesta/{t}").status_code == 404
+    entorno.db.retiro(1, status="retirada", closed_at=T0 + timedelta(hours=3))   # se vuelve a cerrar, sin correo nuevo
+    assert entorno.client.get(f"/retiros/encuesta/{t}").status_code == 404
+    enc_ahora = T0 + timedelta(hours=3, minutes=1)
+    entorno.monkeypatch.setattr(enc, "_ahora", lambda: enc_ahora)
+    assert entorno.app.extensions["retiros_encuesta"]["marcar_enviada"](1) == 1   # sale el correo «Retiro completado» de nuevo
+    assert entorno.client.get(f"/retiros/encuesta/{t}").status_code == 200
+
+
+def test_estado_encuesta_regla_pura():
+    fila = {"status": "retirada", "closed_at": T0, "retirado_por_nombre": ""}
+    inv = {"enviada_en": T0 + timedelta(minutes=1), "respondida_en": None, "vence_en": T0 + timedelta(days=30)}
+    d = T0 - timedelta(days=1)
+    assert enc.estado_encuesta(fila, inv, activa=False, ahora=T0, desde=d) == "apagada"
+    assert enc.estado_encuesta(dict(fila, status="en_preparacion"), inv, ahora=T0, desde=d) == "no_aplica"
+    assert enc.estado_encuesta(dict(fila, status="cerrada"), inv, ahora=T0, desde=d) == "no_aplica"      # cerrada sin entrega
+    assert enc.estado_encuesta(fila, None, ahora=T0, desde=d) == "sin_correo"
+    assert enc.estado_encuesta(fila, dict(inv, enviada_en=None), ahora=T0, desde=d) == "sin_correo"
+    assert enc.estado_encuesta(fila, dict(inv, enviada_en=T0 - timedelta(days=2)), ahora=T0, desde=d) == "sin_correo"   # cierre anterior
+    assert enc.estado_encuesta(fila, dict(inv, enviada_en=T0 - timedelta(minutes=5)), ahora=T0, desde=d) == "activa"    # margen de reloj
+    assert enc.estado_encuesta(fila, inv, ahora=T0, desde=d) == "activa"
+    assert enc.estado_encuesta(fila, dict(inv, respondida_en=T0), ahora=T0, desde=d) == "respondida"
+    assert enc.estado_encuesta(fila, inv, ahora=T0 + timedelta(days=31), desde=d) == "vencida"
+
+
+def test_seguimiento_solo_muestra_la_encuesta_activa_y_no_escribe(entorno):
+    ext = entorno.app.extensions["retiros_encuesta"]
+    assert ext["estado_de"](1) == {"estado": "apagada", "ruta": None}
+    entorno.activar()
+    assert ext["estado_de"](1) == {"estado": "sin_correo", "ruta": None}
+    assert entorno.db.contar("pickup_encuesta_invitaciones") == 0                   # mirar el seguimiento no crea invitaciones
+    entorno.enviar(1)
+    assert ext["estado_de"](1) == {"estado": "activa", "ruta": f"/retiros/encuesta/{entorno.token_sin_correo()}"}
+    entorno.db.retiro(1, status="agenda_confirmada")
+    assert ext["estado_de"](1)["ruta"] is None
+
+
+def test_la_pagina_de_seguimiento_muestra_estrellas_solo_con_la_encuesta_activa():
+    html = open(os.path.join(RAIZ, "templates", "retiros", "public_tracking.html"), encoding="utf-8").read()
+    assert "{% if encuesta_url and req.status == 'retirada' %}" in html and "{% elif encuesta_estado == 'respondida' %}" in html
+    i = html.index('id="ratingStars"')
+    assert "{% if encuesta_url and req.status == 'retirada' %}" in html[html.rfind("{% if", 0, i) - 5:i]
+    src = open(os.path.join(RAIZ, "pickups_module.py"), encoding="utf-8").read()
+    j = src.index("encuesta_url, encuesta_estado = None, \"\"")
+    assert '_enc["estado_de"](req["id"])' in src[j:j + 900] and '_enc["invitar"]' not in src[j:j + 900]
 
 
 def test_invitacion_vencida_404(entorno):
@@ -713,12 +794,14 @@ def test_armar_resultados_y_semaforos():
 # ═════════════════════════════════════════════════════════════════════
 #  5. FICHA DEL RETIRO: enlace + estado (solo lectura)
 # ═════════════════════════════════════════════════════════════════════
-def test_ficha_muestra_enlace_y_estado_sin_crear_invitacion(entorno):
+def test_ficha_muestra_estado_sin_crear_invitacion(entorno):
     entorno.personal()
     j = entorno.client.get("/retiros/encuesta/ficha/1").get_json()
-    assert j["ok"] and j["estado"] == "sin_invitacion" and j["estado_txt"] == "No enviada" and j["activa"] is False
-    assert j["url"].endswith(f"/retiros/encuesta/{entorno.token()}") and j["url"].startswith("http")
-    assert j["elegible"] is True and j["respuestas"] == []
+    assert j["ok"] and j["estado"] == "apagada" and j["estado_txt"] == "Encuesta apagada" and j["activa"] is False
+    assert j["url"] == "" and j["elegible"] is True and j["respuestas"] == []      # el enlace solo con la encuesta ACTIVA
+    entorno.activar()
+    j = entorno.client.get("/retiros/encuesta/ficha/1").get_json()
+    assert j["estado"] == "sin_correo" and j["estado_txt"] == "No activa" and j["url"] == ""
     assert entorno.db.contar("pickup_encuesta_invitaciones") == 0         # solo mirar: no escribe
     assert entorno.client.get("/retiros/encuesta/ficha/999").status_code == 404
 
@@ -729,19 +812,23 @@ def test_ficha_respondida_muestra_el_resultado(entorno):
     _responder(entorno, 1, estrellas="4", opcion="espera_corta", comentario="muy bien", desde=1)
     entorno.personal()
     j = entorno.client.get("/retiros/encuesta/ficha/1").get_json()
-    assert j["estado"] == "respondida" and j["estado_txt"] == "Respondida" and j["respondida"]
+    assert j["estado"] == "respondida" and j["estado_txt"] == "Respondida" and j["respondida"] and j["enviada"]
     legibles = {r["pregunta"]: r["valor"] for r in j["respuestas"]}
     assert legibles["¿Tu pedido estaba listo cuando llegaste?"] == "Tuve que esperar menos de 10 minutos"
-    assert "4 de 5" in legibles.values()
+    assert "4 de 5" in legibles.values() and 4 in [r["estrellas"] for r in j["respuestas"]]
+    assert j["url"] == ""                                                   # respondida: ya no se ofrece el enlace
 
 
-def test_ficha_estados_creada_y_enviada(entorno):
+def test_ficha_estados_sin_correo_activa_y_reabierto(entorno):
     entorno.activar()
-    entorno.client.get(f"/retiros/encuesta/{entorno.token()}")           # se crea la invitación (aún sin enviar)
+    entorno.app.extensions["retiros_encuesta"]["invitar"](1)              # se armó el correo, aún no sale
     entorno.personal()
-    assert entorno.client.get("/retiros/encuesta/ficha/1").get_json()["estado"] == "creada"
+    assert entorno.client.get("/retiros/encuesta/ficha/1").get_json()["estado"] == "sin_correo"
     entorno.app.extensions["retiros_encuesta"]["marcar_enviada"](1)
-    assert entorno.client.get("/retiros/encuesta/ficha/1").get_json()["estado"] == "enviada"
+    j = entorno.client.get("/retiros/encuesta/ficha/1").get_json()
+    assert j["estado"] == "activa" and j["enviada"] and j["vence"] and j["url"].endswith(f"/retiros/encuesta/{entorno.token_sin_correo()}")
+    entorno.db.retiro(1, status="en_preparacion")                         # reabierto: se apaga
+    assert entorno.client.get("/retiros/encuesta/ficha/1").get_json()["estado"] == "no_aplica"
 
 
 def test_include_de_la_ficha_se_renderiza_con_solo_req_id(entorno):
@@ -799,7 +886,7 @@ def test_enganche_invitar_apagado_no_escribe_y_encendido_solo_crea_la_invitacion
     entorno.db.retiro(2, status="en_preparacion")
     assert ext["invitar"](2) is None                                       # aún no retirado
     inv = ext["invitar"](1)
-    assert inv["ruta"] == f"/retiros/encuesta/{entorno.token()}" and inv["token"] == entorno.token()
+    assert inv["ruta"] == f"/retiros/encuesta/{entorno.token_sin_correo()}" and inv["token"] == entorno.token_sin_correo()
     assert inv["vence"] == T0 + timedelta(days=30)
     fila = entorno.db.fetchone("SELECT * FROM pickup_encuesta_invitaciones")
     assert fila["enviada_en"] is None                                      # el que envíe lo marca después

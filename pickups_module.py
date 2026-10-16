@@ -5254,17 +5254,19 @@ def register_pickup_routes(app, ctx):
         req_safe["prep_total"] = prep_total
         req_safe["prep_hechos"] = prep_hechos
         # Encuesta de satisfacción (activa desde 2026-10-14, autorizada por Daniel): con el retiro ya retirado, el seguimiento ofrece responderla (mismo enlace del
-        # correo «retiro completado»). Apagada o sin retirar → None y la página no muestra nada.
-        encuesta_url = None
+        # correo «retiro completado»). 2026-10-16 (Daniel: «activemos esta herramienta solo cuando se envíe el correo de retirado o cuando cambie esa
+        # condición»): solo si ese correo SALIÓ para el cierre vigente; el seguimiento ya no crea la invitación. Sin eso → None y no se muestra nada.
+        encuesta_url, encuesta_estado = None, ""
         if (req.get("status") or "") in ("retirada", "cerrada"):
             try:
                 _enc = (getattr(app, "extensions", {}) or {}).get("retiros_encuesta")
-                _inv = _enc["invitar"](req["id"]) if _enc else None
-                encuesta_url = _inv["ruta"] if _inv and _inv.get("ruta") else None
+                _est = _enc["estado_de"](req["id"]) if _enc and _enc.get("estado_de") else None
+                encuesta_estado = (_est or {}).get("estado") or ""
+                encuesta_url = (_est or {}).get("ruta") or None
             except Exception as _e_enc:
                 print(f"[retiros-encuesta] seguimiento rid={req.get('id')}: {type(_e_enc).__name__}", flush=True)
         _tracking_html = render_template("retiros/public_tracking.html",
-                               encuesta_url=encuesta_url,
+                               encuesta_url=encuesta_url, encuesta_estado=encuesta_estado,
                                req=req_safe, packages=packages, proposals=proposals,
                                logs=logs, attachments=attachments,
                                docs_asociados=docs_asociados,
