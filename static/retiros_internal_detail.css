@@ -2692,3 +2692,24 @@
 .rd-nota-k{display:block;font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#92400e;margin-bottom:2px}
 .rd-nota-t p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:.95rem;line-height:1.5}
 .pp-banner-sub.pp-coment{font-weight:600;opacity:1}
+
+/* Daniel 2026-10-16 (logística): en qué bodega de Check está cada producto, dentro del modal «Agregar factura o boleta». Solo informa. */
+.rba-line .ln-bod{display:flex;flex-wrap:wrap;gap:4px 6px;margin-top:6px;font-weight:500}
+.ln-bod-chip{display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px 4px;padding:2px 9px;border-radius:14px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;font-size:.76rem;line-height:1.5;max-width:100%;overflow-wrap:break-word}
+/* celular: la descripción (nombre + bodegas) usa todo el ancho de la columna de contenido, no la del checkbox (antes salía letra por letra) */
+@media(max-width:600px){.rba-line .ln-desc{grid-column:2;min-width:0}}
+.ln-bod-chip i{color:#2563eb}
+.ln-bod-chip small{color:#475569;font-size:.72rem}
+.ln-bod-gris{display:inline-flex;align-items:center;gap:4px;color:#6b7280;font-size:.76rem}
+.ln-bod-cargando{display:inline-flex;align-items:center;gap:6px;color:#6b7280;font-size:.74rem}
+.ln-bod-edad{color:#9ca3af;font-size:.7rem;align-self:center}
+
+/* Resumen de bodegas del documento (Daniel 2026-10-16: «un resumen de las múltiples bodegas dónde está… para decidir una fecha») */
+.rba-bod-resumen{border:1px solid #bfdbfe;border-left:4px solid #3b82f6;background:#f8fbff;border-radius:12px;padding:10px 12px;margin:0 0 10px}
+.rba-bod-resumen.is-varias{border-color:#fde68a;border-left-color:#f59e0b;background:#fffbeb}
+.rba-bod-res-t{font-size:.86rem;color:#1f2937;margin-bottom:6px;overflow-wrap:break-word}
+.rba-bod-res-t i{color:#3b82f6}
+.rba-bod-resumen.is-varias .rba-bod-res-t i{color:#b45309}
+.rba-bod-res-t span{color:#92400e;font-weight:600}
+.rba-bod-res-l{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.ln-bod-varias{display:block;width:100%;font-size:.74rem;font-weight:700;color:#92400e;margin-bottom:2px}

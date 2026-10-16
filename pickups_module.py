@@ -9776,6 +9776,33 @@ def register_pickup_routes(app, ctx):
             _PROD_ERP_CACHE.clear()
         return data
 
+    @app.route("/retiros/api/check-bodegas", methods=["GET"])
+    @require_permission("retiros")
+    def pickup_check_bodegas():
+        """¿En qué bodega de Check está cada producto? (Daniel 2026-10-16, pedido de logística). SOLO LECTURA: reporte de stock de Check ya
+        cacheado en app.py (_checkwms_stock_rows, 1 h). ?skus=A,B,C (hasta 80)."""
+        import time as _t_cb
+        import retiros_check as _rck_cb
+        skus = [x.strip().upper() for x in (request.args.get("skus") or "").split(",") if x.strip()][:80]
+        if not skus:
+            return jsonify({"ok": True, "bodegas": {}, "edad_min": None})
+        _filas_fn = ctx.get("_checkwms_stock_rows")
+        try:
+            filas = _filas_fn() if callable(_filas_fn) else None
+        except Exception as _e_cb:
+            print(f"[retiros-check-bodegas] {type(_e_cb).__name__}", flush=True)
+            filas = None
+        if filas is None:
+            return jsonify({"ok": False, "error": "Check no respondió. Intenta de nuevo en un minuto."}), 503
+        edad = None
+        try:
+            _cache = ctx.get("_CHECKWMS_STOCK") or {}
+            if _cache.get("ts"):
+                edad = max(int((_t_cb.time() - float(_cache["ts"])) // 60), 0)
+        except Exception:
+            edad = None
+        return jsonify({"ok": True, "bodegas": _rck_cb.bodegas_por_sku(filas, skus), "edad_min": edad})
+
     @app.route("/retiros/<int:rid>/productos-erp", methods=["GET"])
     @require_permission("retiros")   # antes «view»: lo tenía cualquiera con Etiquetas/Mantenciones/Transporte (revisión 2026-10-12)
     def pickup_productos_erp(rid):

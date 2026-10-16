@@ -2865,6 +2865,62 @@ async function rbaBuscarPorDoc(){
     _rbaStopLoadingMsg();
   }
 }
+// ── ¿En qué bodega de Check está cada producto? (Daniel 2026-10-16, pedido de logística: «hay productos en bodegas externas;
+//    si puedo identificar las bodegas podría decidir si aceptar la fecha o correrla»). Solo informa: no cambia la selección.
+async function _rbaCargarBodegas(raiz){
+  const cajas = [].slice.call((raiz || document).querySelectorAll('[data-bod-sku]'));
+  if (!cajas.length) return;
+  const skus = Array.from(new Set(cajas.map(c => c.dataset.bodSku).filter(Boolean)));
+  cajas.forEach(c => { c.innerHTML = '<span class="ln-bod-cargando"><span class="spinner-border spinner-border-sm"></span> Buscando la bodega en Check…</span>'; });
+  let d = null;
+  try {
+    const r = await fetch('/retiros/api/check-bodegas?skus=' + encodeURIComponent(skus.join(',')), { headers: { 'Accept': 'application/json' } });
+    d = await r.json();
+  } catch (e) { d = null; }
+  const fmt = (n) => (Math.round((parseFloat(n) || 0) * 10) / 10).toLocaleString('es-CL');
+  // Resumen del documento arriba de la lista (Daniel 2026-10-16: «si el producto está en múltiples ubicaciones, hazme un resumen de las
+  // múltiples bodegas dónde está… para la toma de decisiones al decidir una fecha»): por bodega, cuántos productos y unidades, y cuántos
+  // productos Check no tiene. Solo informa.
+  const previo = raiz && raiz.querySelector(':scope > .rba-bod-resumen');
+  if (previo) previo.remove();
+  if (raiz && d && d.ok){
+    const porBodega = {}; let sinStock = 0;
+    skus.forEach(sk => {
+      const lista = (d.bodegas || {})[sk] || [];
+      if (!lista.length) sinStock += 1;
+      lista.forEach(b => {
+        const r = porBodega[b.bodega] || (porBodega[b.bodega] = { prods: 0, u: 0 });
+        r.prods += 1; r.u += parseFloat(b.fisico) || 0;
+      });
+    });
+    const nombres = Object.keys(porBodega).sort((x, y) => porBodega[y].prods - porBodega[x].prods || porBodega[y].u - porBodega[x].u);
+    const caja = document.createElement('div');
+    caja.className = 'rba-bod-resumen' + (nombres.length > 1 ? ' is-varias' : '');
+    caja.innerHTML = '<div class="rba-bod-res-t"><i class="bi bi-geo-alt-fill"></i> <b>¿Dónde está este pedido según Check?</b>'
+      + (nombres.length > 1 ? ' <span>Está repartido en ' + nombres.length + ' bodegas: revísalo antes de comprometer la fecha.</span>' : '')
+      + '</div><div class="rba-bod-res-l">'
+      + nombres.map(n => '<span class="ln-bod-chip"><b>' + _esc(n) + '</b> · ' + porBodega[n].prods + ' producto'
+        + (porBodega[n].prods === 1 ? '' : 's') + ' · ' + fmt(porBodega[n].u) + ' u.</span>').join('')
+      + (sinStock ? '<span class="ln-bod-gris"><i class="bi bi-exclamation-circle"></i> ' + sinStock + ' producto' + (sinStock === 1 ? '' : 's')
+        + ' sin stock en Check</span>' : '')
+      + (d.edad_min != null ? '<span class="ln-bod-edad">Check · hace ' + d.edad_min + ' min</span>' : '') + '</div>';
+    raiz.insertBefore(caja, raiz.firstChild);
+  }
+  cajas.forEach(c => {
+    if (!d || !d.ok){ c.innerHTML = '<span class="ln-bod-gris"><i class="bi bi-wifi-off"></i> Check no respondió: bodega sin verificar</span>'; return; }
+    const lista = (d.bodegas || {})[c.dataset.bodSku] || [];
+    if (!lista.length){ c.innerHTML = '<span class="ln-bod-gris"><i class="bi bi-geo-alt"></i> Sin stock en Check</span>'; return; }
+    const total = lista.reduce((t, b) => t + (parseFloat(b.fisico) || 0), 0);
+    c.innerHTML = (lista.length > 1 ? '<span class="ln-bod-varias">En ' + lista.length + ' bodegas · ' + fmt(total) + ' u. en total</span>' : '')
+      + lista.map(b => {
+      const ubi = (b.ubicaciones || []).join(', ') + (b.mas_ubicaciones ? ' +' + b.mas_ubicaciones : '');
+      const tip = b.bodega + ': ' + fmt(b.fisico) + ' físico · ' + fmt(b.disponible) + ' disponible' + (ubi ? ' · ' + ubi : '');
+      return '<span class="ln-bod-chip" title="' + _esc(tip) + '"><i class="bi bi-geo-alt-fill"></i><b>' + _esc(b.bodega) + '</b> · '
+        + fmt(b.fisico) + ' u.' + (ubi ? ' <small>' + _esc(ubi) + '</small>' : '') + '</span>';
+    }).join('');
+  });
+}
+
 function rbaRenderDocLineas(lineas, fetchMs){
   const cont = document.getElementById('rbaDocResult');
   const h = _RBA.loaded.docHeader || {};
@@ -2926,6 +2982,7 @@ function rbaRenderDocLineas(lineas, fetchMs){
       <div class="ln-desc">
         ${_esc(nom)}
         ${isZero ? '<span class="rba-line-tag-zero" title="Esta línea ya fue rebajada del sistema (ya entregada). Puedes marcarla igualmente si necesitas, pero por defecto no se asocia."><i class="bi bi-check-circle-fill"></i> entregado</span>' : ''}
+        ${sku ? `<div class="ln-bod" data-bod-sku="${_esc(sku)}"></div>` : ''}
       </div>
       <div class="ln-qty">
         <span>${qty} u.</span>
@@ -2937,6 +2994,7 @@ function rbaRenderDocLineas(lineas, fetchMs){
   });
   html += '</div>';
   cont.innerHTML = html;
+  _rbaCargarBodegas(cont);          // 2026-10-16: en qué bodega de Check está cada producto
   // Daniel 2026-05-24: auto-poblar _RBA.selDoc con las líneas pre-marcadas
   // (las que tienen saldo) para que el contador y "Asociar al retiro"
   // funcionen sin requerir click manual del operador.
@@ -3336,6 +3394,7 @@ async function rbaToggleDocCli(idx){
         <div class="ln-desc">
           ${_esc(nom)}
           ${isZero ? '<span class="rba-line-tag-zero" title="Esta línea ya fue rebajada del sistema (entregada). Puedes marcarla igualmente si necesitas."><i class="bi bi-check-circle-fill"></i> entregado</span>' : ''}
+          ${sku ? `<div class="ln-bod" data-bod-sku="${_esc(sku)}"></div>` : ''}
         </div>
         <div class="ln-qty">
           <span>${qty} u.</span>
@@ -3347,6 +3406,7 @@ async function rbaToggleDocCli(idx){
     });
     body.innerHTML = html;
     body.dataset.loaded = '1';
+    _rbaCargarBodegas(body);        // 2026-10-16: en qué bodega de Check está cada producto
     // Auto-poblar _RBA.selCli con las líneas pre-marcadas
     // silent=true para evitar avalancha de toasts en docs con saldo cero
     setTimeout(() => {

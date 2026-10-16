@@ -213,3 +213,43 @@ def _vacio(estado, frase, n_docs):
     return {"estado": estado, "listo": False, "listo_auto": False, "pedidas": 0, "faltan": 0, "etapas": [],
             "pickeadas": 0, "despachadas": 0, "iniciada": False, "iniciada_auto": False,
             "frase": frase, "alerta": "", "documentos_con_datos": 0, "documentos": n_docs}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+#  ¿EN QUÉ BODEGA DE CHECK ESTÁ CADA PRODUCTO? (Daniel 2026-10-16, pedido de logística: «hay productos que tengo en bodegas
+#  externas; si puedo identificar las bodegas podría decidir si aceptar la fecha o correrla»). Pura: recibe las filas de
+#  GetReporteStock ya leídas (codigo, bodega, ubicacion, ua, stFisico, disponible) y las agrupa por SKU y bodega.
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+def bodegas_por_sku(filas, skus, max_ubicaciones=3):
+    """{SKU: [{'bodega','fisico','disponible','ubicaciones','uas'}]} solo con stock físico > 0, la bodega con más unidades primero.
+    Un SKU pedido que Check no tiene en ninguna bodega queda con lista vacía (el modal dice «sin stock en Check»)."""
+    buscados = {str(s or "").strip().upper() for s in (skus or []) if str(s or "").strip()}
+    out = {s: {} for s in buscados}
+    for f in filas or []:
+        if not isinstance(f, dict):
+            continue
+        sku = str(f.get("codigo") or "").strip().upper()
+        if sku not in out:
+            continue
+        fis = _num(f.get("stFisico"))
+        if fis is None or fis <= 0:
+            continue
+        disp = _num(f.get("disponible"))
+        bod = " ".join(str(f.get("bodega") or "").split()) or "Sin bodega"
+        b = out[sku].setdefault(bod, {"bodega": bod, "fisico": 0.0, "disponible": 0.0, "ubicaciones": [], "uas": 0})
+        b["fisico"] += fis
+        b["disponible"] += max(disp or 0.0, 0.0)
+        b["uas"] += 1
+        ubi = " ".join(str(f.get("ubicacion") or "").split())
+        if ubi and ubi not in b["ubicaciones"]:
+            b["ubicaciones"].append(ubi)
+    res = {}
+    for sku, bods in out.items():
+        lista = sorted(bods.values(), key=lambda x: (-x["fisico"], x["bodega"]))
+        for b in lista:
+            b["mas_ubicaciones"] = max(len(b["ubicaciones"]) - max_ubicaciones, 0)
+            b["ubicaciones"] = b["ubicaciones"][:max_ubicaciones]
+            b["fisico"] = round(b["fisico"], 2)
+            b["disponible"] = round(b["disponible"], 2)
+        res[sku] = lista
+    return res
