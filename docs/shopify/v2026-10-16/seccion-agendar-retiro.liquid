@@ -1,0 +1,198 @@
+<!-- ILUS Fitness · «Agenda tu retiro» · versión 2026-10-12 (hasta 5 documentos + anticipación en horas hábiles). -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ 'ilus-retiro.css' | asset_url }}">
+
+<div id="ilus-rf">
+  <div class="irf-head">
+    <p class="irf-kicker">ILUS Fitness · Retiro en bodega</p>
+    <h2 class="irf-title">AGENDA TU RETIRO</h2>
+    <p class="irf-lead">Confirmaremos la fecha por correo en menos de 24 horas.</p>
+    <div class="irf-prog" id="irfProg"><div class="irf-prog-bar"><span id="irfProgBar"></span></div><span id="irfProgTxt">0 de 4 pasos listos</span></div>
+  </div>
+  <div class="irf-body">
+    <form id="irfForm" novalidate>
+      <div class="irf-hp" aria-hidden="true">
+        <label for="irf_hp">No completes este campo</label>
+        <input type="text" id="irf_hp" name="hp_ilus_extra" tabindex="-1" autocomplete="off" value="">
+      </div>
+      <!-- PASO 1 -->
+      <section class="irf-step" data-paso="1">
+        <div class="irf-step-h">
+          <div class="irf-circle"><b>1</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+          <div><h3 class="irf-step-t">¿Qué vienes a retirar?</h3>
+          <p class="irf-step-s">Presenta el documento de tu compra para identificar tus productos en el sistema.</p></div>
+        </div>
+        <div class="irf-grid">
+          <div class="irf-c5">
+            <label class="irf-lbl" for="irf_tipo">Tipo de documento <span class="irf-req">*</span></label>
+            <select class="irf-in" id="irf_tipo" name="document_type">
+              <option value="pedido">Pedido web (ilusfitness.com)</option>
+              <option value="factura">Factura electrónica</option>
+              <option value="boleta">Boleta electrónica</option>
+            </select>
+            <p class="irf-help">¿Compraste en la tienda online? Deja «Pedido web».</p>
+          </div>
+          <div class="irf-c7">
+            <label class="irf-lbl" for="irf_num">N° del documento <span class="irf-req">*</span></label>
+            <input class="irf-in" id="irf_num" name="document_number" maxlength="60" inputmode="numeric" placeholder="Ej: 1136" autocomplete="off">
+            <p class="irf-help" id="irf_num_help">Está en el correo de confirmación de tu pedido (ej: #1136 → escribe 1136).</p>
+          </div>
+        </div>
+        <div class="irf-docs-extra" id="irf_docs_extra"></div>
+        <div class="irf-docadd-row">
+          <button type="button" class="irf-btn" id="irf_docadd">+ Agregar documento</button>
+          <p class="irf-help" id="irf_docadd_help">¿Vienes a retirar más de una compra? Agrega hasta 5 documentos en esta misma solicitud.</p>
+        </div>
+      </section>
+      <!-- PASO 2 -->
+      <section class="irf-step" data-paso="2">
+        <div class="irf-step-h">
+          <div class="irf-circle"><b>2</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+          <div><h3 class="irf-step-t">¿Quién es el cliente?</h3>
+          <p class="irf-step-s">La persona o empresa a nombre de quien está la compra. A este correo llegan la confirmación y el seguimiento.</p></div>
+        </div>
+        <div class="irf-grid">
+          <div class="irf-c7">
+            <label class="irf-lbl" for="irf_nombre">Nombre completo o razón social <span class="irf-req">*</span></label>
+            <input class="irf-in" id="irf_nombre" name="customer_name" maxlength="160" placeholder="Ej: María González Soto" autocomplete="name">
+          </div>
+          <div class="irf-c5">
+            <label class="irf-lbl" for="irf_rut">RUT <span class="irf-req">*</span></label>
+            <input class="irf-in" id="irf_rut" name="customer_rut" maxlength="12" placeholder="Ej: 12.345.678-9" autocomplete="off">
+            <p class="irf-err" id="irf_rut_err" hidden>RUT inválido: revisa el dígito verificador.</p>
+          </div>
+          <div class="irf-c7">
+            <label class="irf-lbl" for="irf_email">Correo <span class="irf-req">*</span></label>
+            <input class="irf-in" id="irf_email" name="contact_email" type="email" maxlength="180" placeholder="Ej: tu@correo.cl" autocomplete="email">
+            <p class="irf-err" id="irf_email_err" hidden>Correo inválido (ej: tu@correo.cl).</p>
+            <button type="button" class="irf-sug" id="irf_email_sug" hidden></button>
+          </div>
+          <div class="irf-c5">
+            <label class="irf-lbl" for="irf_tel">Celular <span class="irf-req">*</span></label>
+            <input class="irf-in" id="irf_tel" name="contact_phone" type="tel" maxlength="16" placeholder="9 1234 5678" autocomplete="tel">
+            <p class="irf-help">9 dígitos. El +56 se agrega solo.</p>
+            <p class="irf-err" id="irf_tel_err" hidden>Celular inválido: debe ser 9 XXXX XXXX.</p>
+          </div>
+        </div>
+      </section>
+      <!-- PASO 3 (opcional) -->
+      <section class="irf-step is-opt" data-paso="3">
+        <div class="irf-step-h">
+          <div class="irf-circle"><b>3</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+          <div><h3 class="irf-step-t">¿Quién viene a retirar? <span class="irf-tag">Opcional</span></h3>
+          <p class="irf-step-s">Si no marcas nada, entendemos que vienes tú. Márcalo solo si viene otra persona en tu nombre.</p></div>
+        </div>
+        <label class="irf-toggle" for="irf_auth">
+          <input type="checkbox" id="irf_auth">
+          <span><strong>Sí, viene otra persona en mi nombre</strong><small>Te pediremos su nombre, RUT y celular.</small></span>
+        </label>
+        <div class="irf-auth" id="irf_auth_box" hidden>
+          <div class="irf-grid">
+            <div class="irf-c6">
+              <label class="irf-lbl" for="irf_pnom">Nombre de quien retira <span class="irf-req">*</span></label>
+              <input class="irf-in" id="irf_pnom" name="pickup_person_name" maxlength="160" placeholder="Como aparece en su cédula">
+            </div>
+            <div class="irf-c6">
+              <label class="irf-lbl" for="irf_prut">RUT de quien retira <span class="irf-req">*</span></label>
+              <input class="irf-in" id="irf_prut" name="pickup_person_rut" maxlength="12" placeholder="Ej: 11.111.111-1" autocomplete="off">
+              <p class="irf-err" id="irf_prut_err" hidden>RUT inválido: revisa el dígito verificador.</p>
+            </div>
+            <div class="irf-c6">
+              <label class="irf-lbl" for="irf_ptel">Celular de quien retira</label>
+              <input class="irf-in" id="irf_ptel" name="pickup_person_phone" type="tel" maxlength="16" placeholder="9 8765 4321">
+              <p class="irf-err" id="irf_ptel_err" hidden>Celular inválido: debe ser 9 XXXX XXXX.</p>
+            </div>
+            <div class="irf-c6">
+              <label class="irf-lbl" for="irf_prel">Relación con el cliente</label>
+              <select class="irf-in" id="irf_prel" name="pickup_person_relation">
+                <option value="chofer">Chofer</option>
+                <option value="transporte">Transporte externo</option>
+                <option value="familiar">Familiar autorizado</option>
+                <option value="comprador">Comprador</option>
+                <option value="autorizado">Persona autorizada</option>
+                <option value="otro">Otro</option>
+              </select>
+            </div>
+          </div>
+          <div class="irf-decl" id="irf_decl" hidden>
+            La compra está a nombre de <strong id="irf_decl_cli">—</strong> y retira <strong id="irf_decl_ter">—</strong>.
+            <label class="irf-check"><input type="checkbox" id="irf_decl_ok" name="acepta_tercero" value="1">
+            <span>Confirmo que el cliente autoriza a esta persona a retirar en su nombre.</span></label>
+          </div>
+        </div>
+      </section>
+      <!-- PASO 4 -->
+      <section class="irf-step" data-paso="4" id="irf_paso4">
+        <div class="irf-step-h">
+          <div class="irf-circle"><b>4</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+          <div><h3 class="irf-step-t">¿Cuándo vienes?</h3>
+          <p class="irf-step-s">Elige el día y tu hora de llegada. Bloques de 30 min, lunes a viernes. Necesitamos al menos <span id="irf_antic">48</span> horas hábiles para preparar tu pedido (no cuentan fines de semana ni feriados).</p></div>
+        </div>
+        <div class="irf-avisos" id="irf_avisos" hidden></div>
+        <div class="irf-when">
+          <div>
+            <div class="irf-cal" id="irf_cal">
+              <div class="irf-cal-h">
+                <button type="button" class="irf-nav" id="irf_prev" aria-label="Mes anterior">‹</button>
+                <span class="irf-cal-m" id="irf_mes">Cargando agenda…</span>
+                <button type="button" class="irf-nav" id="irf_next" aria-label="Mes siguiente">›</button>
+              </div>
+              <div class="irf-wk" aria-hidden="true"><span>Lu</span><span>Ma</span><span>Mi</span><span>Ju</span><span>Vi</span><span>Sá</span><span>Do</span></div>
+              <div class="irf-days" id="irf_days"></div>
+              <div class="irf-legend"><span><i style="background:#16a34a"></i>Libre</span><span><i style="background:#f59e0b"></i>Medio</span><span><i style="background:#dc2626"></i>Casi lleno</span><span><i style="background:#d1d5db"></i>No disponible</span></div>
+            </div>
+            <div id="irf_cal_err" hidden>
+              <div class="irf-note is-bad">No pudimos cargar la agenda. Revisa tu conexión.</div>
+              <button type="button" class="irf-retry" id="irf_retry">Reintentar</button>
+            </div>
+          </div>
+          <div class="irf-slots">
+            <p class="irf-slots-t">Tu hora de llegada <span class="irf-req">*</span></p>
+            <div id="irf_slots"><div class="irf-note">Elige primero un día en el calendario.</div></div>
+            <div class="irf-sum" id="irf_sum">Aún no eliges día y hora.</div>
+          </div>
+        </div>
+      </section>
+      <!-- PASO 5 (opcional) -->
+      <section class="irf-step is-opt" data-paso="5">
+        <div class="irf-step-h">
+          <div class="irf-circle"><b>5</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+          <div><h3 class="irf-step-t" id="irf_obs_t">¿Algo más que debamos saber? <span class="irf-tag">Opcional</span></h3>
+          <p class="irf-step-s">Vehículo en que vienes, productos delicados, instrucciones especiales.</p></div>
+        </div>
+        <textarea class="irf-in" id="irf_obs" aria-labelledby="irf_obs_t" name="observations" maxlength="4000" rows="3" placeholder="Ej: Voy en camioneta. Prefiero después de las 15:00."></textarea>
+      </section>
+      <label class="irf-terms" id="irf_terms_box" for="irf_terms">
+        <input type="checkbox" id="irf_terms" name="accept_terms" value="on">
+        <span><strong>Declaración de responsabilidad <span class="irf-req">*</span></strong>
+        <small>Confirmo que los datos son correctos y que la persona indicada está autorizada para retirar los productos.</small></span>
+      </label>
+      <div class="irf-alert" id="irf_alert" role="alert" hidden></div>
+      <button type="submit" class="irf-send" id="irf_send">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M15.6.4a.6.6 0 0 0-.6-.1L.8 5.9a.6.6 0 0 0 0 1.1l5.6 2.5 2.5 5.6a.6.6 0 0 0 1.1 0L15.7 1a.6.6 0 0 0-.1-.6zM6.7 8.4 3 6.8l9.4-3.8zm.9.9 5.4-5.4-3.8 9.4z"/></svg>
+        <span id="irf_send_txt">Enviar solicitud de retiro</span>
+      </button>
+      <p class="irf-priv">Tus datos solo se usan para gestionar este retiro y no se comparten con terceros. Por seguridad registramos la dirección IP desde la que se envía la solicitud.</p>
+    </form>
+    <div class="irf-ok" id="irf_ok" hidden tabindex="-1">
+      <div class="irf-ok-ic"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+      <h3>¡Recibimos tu solicitud!</h3>
+      <div>Tu código de retiro</div>
+      <div class="irf-code" id="irf_code">RET-XXXXXX</div>
+      <p id="irf_ok_txt">Te enviamos un correo con el enlace de seguimiento. Te confirmaremos la fecha en menos de 24 horas.</p>
+      <p><strong>Aún no es una reserva:</strong> espera nuestra confirmación antes de venir.</p>
+      <div class="irf-ok-btns">
+        <a class="irf-btn is-red" id="irf_track" href="#" target="_blank" rel="noopener">Ver mi seguimiento</a>
+        <button type="button" class="irf-btn" id="irf_copy">Copiar código</button>
+      </div>
+    </div>
+    <div class="irf-bodega" id="irf_bodega" hidden>
+      <div><b id="irf_bod_nom">Bodega ILUS</b><span id="irf_bod_dir"></span></div>
+      <a id="irf_bod_map" href="#" target="_blank" rel="noopener">Abrir en mapa</a>
+    </div>
+  </div>
+</div>
+
+<script src="{{ 'ilus-retiro.js' | asset_url }}" defer></script>
