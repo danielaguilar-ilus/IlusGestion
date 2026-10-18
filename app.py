@@ -106027,6 +106027,12 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
         _fin_zzc = _OT2_LINEA_ZZ.get(tipo_ot)
     if _fin_cero:
         _fin_estado_fact = "no_aplica"
+    elif es_interna and _fin_nudo and (_fin_tido or "").upper() == "NVI":
+        # 🧾 2026-10-17: OT interna con nota de venta interna (la empresa se
+        # vende a sí misma, ej. NVI 687 del evento): la NVI queda solo como
+        # trazabilidad y no hay a quién facturarle. Antes quedaba
+        # «con_nota_venta» porque esta condición iba después.
+        _fin_estado_fact = "no_aplica"
     elif _fin_nudo and (_fin_tido or "").upper() in ("NVV", "NVI"):
         _fin_estado_fact = "con_nota_venta"
     elif _fin_nudo:
@@ -106555,6 +106561,17 @@ def _ot2_crear_core(d, autorizacion=None):
                 _tm_plantilla_id = int(_tm.get("plantilla_id")) if _tm.get("plantilla_id") else None
             except (TypeError, ValueError):
                 _tm_plantilla_id = None
+            # 🧩 2026-10-17 (checklist heredado): una fila puede llevar VARIAS
+            # plantillas (base + bloque del sistema + condicional), en orden.
+            _tm_pids = []
+            if isinstance(_tm.get("plantilla_ids"), list):
+                for _x in _tm.get("plantilla_ids")[:4]:
+                    try:
+                        _xi = int(_x)
+                    except (TypeError, ValueError):
+                        continue
+                    if _xi > 0 and _xi not in _tm_pids:
+                        _tm_pids.append(_xi)
             tareas_manuales.append({
                 "titulo": _tm_titulo,
                 "descripcion": (_tm.get("descripcion") or "").strip()[:2000] or None,
@@ -106567,7 +106584,38 @@ def _ot2_crear_core(d, autorizacion=None):
                 # (ver _ensure_visita_tarea_item_manual_cols) para poder
                 # mostrarlo en la tarjeta, igual que el SKU de un equipo real.
                 "sku": (_tm.get("sku") or "").strip()[:60] or None,
+                "plantilla_ids": _tm_pids,
+                "checklist_auto": bool(_tm.get("checklist_auto")),
             })
+
+    # 🧩 2026-10-17 (Daniel, NVI 687): checklist HEREDADO. Una fila marcada
+    # «automática» no confía en lo que mandó el navegador: el servidor vuelve a
+    # resolver base + bloque del sistema (producto o clase) + condicional. Una
+    # fila que la persona cambió a mano se respeta, pero solo con plantillas
+    # válidas para este tipo (activas, con ítems, misma categoría).
+    _chk_condicionales = set()
+    if any(_t.get("plantilla_ids") or _t.get("checklist_auto") for _t in tareas_manuales):
+        _chk_auto = [_t for _t in tareas_manuales if _t.get("checklist_auto") and _t.get("sku")]
+        if _chk_auto:
+            try:
+                _chk_res = _chk_herencia_resolver([_t["sku"] for _t in _chk_auto], tipo_ot)
+            except Exception as _e_chk:
+                print(f"[ot2_crear] checklist heredado: {_e_chk}", flush=True)
+                _chk_res = {"activo": False}
+            if _chk_res.get("activo"):
+                for _t in _chk_auto:
+                    _h = (_chk_res.get("skus") or {}).get(_t["sku"])
+                    if not _h:
+                        continue
+                    if _h.get("sistema") or not _t.get("plantilla_ids"):
+                        _t["plantilla_ids"] = [b["id"] for b in (_h.get("base"), _h.get("sistema"),
+                                                                 _h.get("condicional")) if b]
+        _chk_validas = _chk_plantillas_validas(
+            {_i for _t in tareas_manuales for _i in (_t.get("plantilla_ids") or [])}, tipo_ot)
+        for _t in tareas_manuales:
+            if _t.get("plantilla_ids"):
+                _t["plantilla_ids"] = [_i for _i in _t["plantilla_ids"] if _i in _chk_validas]
+        _chk_condicionales = _chk_condicional_ids(tipo_ot)
 
     if not equipos and not plantilla_suelta and not tareas_manuales:
         return _ot2_err(
@@ -107009,13 +107057,20 @@ def _ot2_crear_core(d, autorizacion=None):
             # ficha, con maquina_id=NULL (trabajo interno no tiene ficha).
             # La tarea-título de arriba queda como encabezado/ancla legible
             # ("SD45HEP — Selectorized..."), y estos ítems son el detalle.
-            if _tm.get("plantilla_id"):
+            # 🧩 2026-10-17: base + bloque + condicional (en ese orden), o la
+            # plantilla única de siempre. Los ítems del bloque CONDICIONAL nacen
+            # no obligatorios: «se abre solo si la base marca observación».
+            _tm_ids = list(_tm.get("plantilla_ids") or [])
+            if not _tm_ids and _tm.get("plantilla_id"):
+                _tm_ids = [_tm["plantilla_id"]]
+            for _tm_pid in _tm_ids:
+                _tm_cond = _tm_pid in _chk_condicionales
                 cur.execute(
                     "SELECT titulo, descripcion, tipo_respuesta, obligatoria, "
                     "       requiere_foto, unidad, rango_min, rango_max, "
                     "       opciones_lista_json, target_field "
                     "  FROM mant_tarea_plantilla_items "
-                    " WHERE plantilla_id=%s ORDER BY orden, id", (_tm["plantilla_id"],))
+                    " WHERE plantilla_id=%s ORDER BY orden, id", (_tm_pid,))
                 for it in cur.fetchall():
                     orden += 1
                     cur.execute(
@@ -107027,10 +107082,11 @@ def _ot2_crear_core(d, autorizacion=None):
                         "   item_manual_id) "
                         "VALUES (%s,%s,%s,%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,"
                         "        'pendiente',%s,%s)",
-                        (vid, _tm["plantilla_id"], orden, (it.get("titulo") or "")[:300],
+                        (vid, _tm_pid, orden, (it.get("titulo") or "")[:300],
                          it.get("descripcion"), tarea_tipo,
                          it.get("tipo_respuesta") or "check", it.get("target_field"),
-                         it.get("obligatoria") or 0, it.get("requiere_foto") or 0,
+                         0 if _tm_cond else (it.get("obligatoria") or 0),
+                         it.get("requiere_foto") or 0,
                          it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
                          it.get("opciones_lista_json"), current_username(), _tm_idx))
                     n_tareas += 1
@@ -122621,9 +122677,16 @@ def mant_visita_checklist_get(vid):
                 "tareas": [],
             })
         grupos[grupo_idx[key]]["tareas"].append(t)
+    # 🧩 2026-10-17: un bloque CONDICIONAL del checklist heredado («Estructura y
+    # tapiz») se pinta plegado. Solo si sus ítems nacieron no obligatorios (así
+    # se copian desde la herencia): la misma plantilla puesta a mano no cambia.
+    _cond_ids = _chk_condicional_ids()
     for grp in grupos:
         grp["total"] = len(grp["tareas"])
         grp["completas"] = sum(1 for x in grp["tareas"] if x.get("completada"))
+        grp["condicional"] = bool(
+            grp["plantilla_id"] in _cond_ids
+            and not any(x.get("obligatoria") for x in grp["tareas"]))
 
     por_maquina = {}
     for grp in grupos:
@@ -152295,6 +152358,417 @@ def _ensure_plantillas_estandar_seed():
     return creadas
 
 
+# ══════════════════════════════════════════════════════════════════════
+# 🧩 CHECKLIST HEREDADO POR SISTEMA (Daniel, 2026-10-17, NVI 687 — evento
+# de Felipe Fierro): «si tengo un selector de peso, buscarle el selector de
+# peso; si tengo una trotadora, no le puedo buscar la piola sino revisarle la
+# cinta… esos son los detalles que quiero ir heredando de las plantillas».
+#
+# Decisiones de Daniel (17-oct): checklist de cada equipo = BASE del trabajo
+# + UN BLOQUE del sistema del equipo (≤8 ítems cada uno, «amigable»);
+# «Estructura y tapiz» es CONDICIONAL (se abre solo si la base marca una
+# observación; sus ítems nacen no obligatorios). El bloque sale de la CLASE
+# del catálogo (cat_clases_producto) y un PRODUCTO puede tener su excepción
+# (la clase es por línea de producto/cobro, no por mecanismo: «Glute
+# Builder» mezcla máquinas de discos con una de selector). Accesorios
+# (clase repetible) van por línea con conteo; máquinas, una tarjeta por
+# unidad (eso lo arma el asistente).
+#
+# Una sola tabla, mant_checklist_herencia, con vínculo por ID (no por nombre
+# idéntico como _plantilla_por_clasificacion_sku: renombrar ya no corta nada):
+#   ambito='tipo'     clave=<tipo_ot>   rol='base' | 'condicional'
+#   ambito='clase'    clave=<slug>      rol='sistema'
+#   ambito='producto' clave=<sku>       rol='sistema'   (excepción, gana)
+# ══════════════════════════════════════════════════════════════════════
+
+# Bloques nuevos (≤8 ítems). El de selector de peso y el condicional ya
+# existían desde la NVI 552 («Detalle carga, cables y movimiento» y
+# «Detalle estructura y tapiz»): se reutilizan, no se duplican.
+# Ítem: (orden, titulo, descripcion, tipo_respuesta, obligatoria, requiere_foto,
+#        unidad, rango_min, rango_max, opciones_json)
+_CHK_BLOQUES_SEED = [
+    ("Control de Calidad — Detalle carga de discos",
+     "Bloque de sistema. Máquinas de carga de discos (plate loaded): brazos, "
+     "pivotes, porta discos, topes y seguros.",
+     [
+         (1, "Brazos, pivotes y rodamientos", "Sin juego lateral, sin ruido ni trabas en todo el recorrido", "verificacion", 1, 0, None, None, None, None),
+         (2, "Porta discos y fundas", "Tubos rectos, fundas o bujes presentes, sin óxido", "verificacion", 1, 1, None, None, None, None),
+         (3, "Topes de inicio y fin", "Gomas presentes; el brazo no golpea metal con metal", "verificacion", 1, 0, None, None, None, None),
+         (4, "Seguros y traba de seguridad", "Traba de inicio/fin y palanca de seguridad funcionan (hack, péndulo, prensa)", "verificacion", 1, 0, None, None, None, None),
+         (5, "Ajuste de rango y pines", "Todas las posiciones calzan; pines presentes con cordel", "verificacion", 1, 0, None, None, None, None),
+         (6, "Plataforma, apoyos y empuñaduras", "Antideslizante sin desgaste; grips firmes", "verificacion", 1, 0, None, None, None, None),
+         (7, "Recorrido completo y simétrico", "Ambos lados en equipos duales o independientes", "sino", 1, 0, None, None, None, None),
+         (8, "Observación de carga de discos", "", "texto", 0, 0, None, None, None, None),
+     ]),
+    ("Control de Calidad — Detalle poleas ajustables",
+     "Bloque de sistema. Dual cable / dual pulley: cables, poleas giratorias, "
+     "carros de altura, stacks y accesorios.",
+     [
+         (1, "Cable de acero: hebras rotas o deshilache", "CRÍTICO de seguridad. Recorrer todo el largo, ambos lados.", "verificacion", 1, 1, None, None, None, None),
+         (2, "Terminales, prensas y mosquetones", "Sin deslizamiento ni deformación; mosquetones cierran", "verificacion", 1, 0, None, None, None, None),
+         (3, "Poleas giratorias", "Giro libre y rotación completa, sin trizaduras", "verificacion", 1, 0, None, None, None, None),
+         (4, "Carros de altura y su pin", "Deslizan y el pin traba en cada posición", "verificacion", 1, 0, None, None, None, None),
+         (5, "Stacks: placas, pin selector y topes", "Placas completas en ambos lados; pin con cordel; topes sin quiebre", "verificacion", 1, 1, None, None, None, None),
+         (6, "Accesorios incluidos", "Empuñaduras, barra, cuerda, tobillera: contar contra la ficha", "verificacion", 1, 0, None, None, None, None),
+         (7, "Recorrido completo sin roce", "Ambos lados", "sino", 1, 0, None, None, None, None),
+         (8, "Observación de poleas", "", "texto", 0, 0, None, None, None, None),
+     ]),
+    ("Control de Calidad — Detalle bancos y ajustes",
+     "Bloque de sistema. Bancos planos, ajustables y olímpicos.",
+     [
+         (1, "Respaldo: traba en todas las posiciones", "Recorrer cada posición", "verificacion", 1, 0, None, None, None, None),
+         (2, "Asiento: ajuste y traba", "", "verificacion", 1, 0, None, None, None, None),
+         (3, "Pines, perillas y escalera de ajuste", "Presentes y sin deformación", "verificacion", 1, 0, None, None, None, None),
+         (4, "Apoya piernas y rodillos (si tiene)", "Firmes, espuma sin rotura. N/A si no tiene.", "verificacion", 1, 0, None, None, None, None),
+         (5, "Ruedas de transporte y manilla", "Giran y la manilla está firme", "verificacion", 1, 0, None, None, None, None),
+         (6, "Estabilidad", "No cojea; niveladores o tacos firmes", "verificacion", 1, 0, None, None, None, None),
+         (7, "Tapiz de respaldo y asiento", "Cortes, rasgados o manchas", "verificacion", 1, 1, None, None, None, None),
+         (8, "Observación del banco", "", "texto", 0, 0, None, None, None, None),
+     ]),
+    ("Control de Calidad — Detalle cargas libres (por línea)",
+     "Bloque de sistema. Mancuernas, discos y su rack: se revisa la LÍNEA completa "
+     "y se cuenta contra el documento.",
+     [
+         (1, "Cantidad contada", "Compárala con la cantidad del documento (está en la tarjeta)", "numero", 1, 0, "un.", None, None, None),
+         (2, "¿Coincide con el documento?", "Si no coincide, detalla en la observación qué falta", "sino", 1, 0, None, None, None, None),
+         (3, "Foto del lote completo", "Todas las piezas a la vista", "foto", 1, 1, None, None, None, None),
+         (4, "Recubrimiento sin grietas ni desprendimiento", "Goma, uretano o cromado", "verificacion", 1, 0, None, None, None, None),
+         (5, "Cabezales y aros firmes", "Mancuernas sin cabezal suelto; discos con aro sin deformación", "verificacion", 1, 0, None, None, None, None),
+         (6, "Peso legible en cada pieza", "", "verificacion", 1, 0, None, None, None, None),
+         (7, "Rack o soporte (si viene)", "Bandejas o soportes completos y estables. N/A si no viene.", "verificacion", 0, 0, None, None, None, None),
+         (8, "Observación de la línea", "Faltantes o piezas dañadas, con cantidad", "texto", 0, 0, None, None, None, None),
+     ]),
+    ("Control de Calidad — Detalle trotadora (cinta y motor)",
+     "Bloque de sistema. Trotadoras: cinta, tabla, motor, seguridad y consola. "
+     "A una trotadora no se le busca piola: se le revisa la cinta.",
+     [
+         (1, "Cinta: alineación", "Centrada sobre los rodillos", "verificacion", 1, 0, None, None, None, None),
+         (2, "Cinta: tensión y desgaste", "No patina; sin cortes ni bordes deshilachados", "verificacion", 1, 1, None, None, None, None),
+         (3, "Tabla y rodillos", "Sin ruido ni golpeteo", "verificacion", 1, 0, None, None, None, None),
+         (4, "Motor: arranque y ruido", "Probar a distintas velocidades", "verificacion", 1, 0, None, None, None, None),
+         (5, "Parada de emergencia y llave magnética", "CRÍTICO de seguridad", "verificacion", 1, 0, None, None, None, None),
+         (6, "Inclinación: sube y baja completa", "N/A si no tiene inclinación", "verificacion", 1, 0, None, None, None, None),
+         (7, "Consola, botones y pulso", "", "verificacion", 1, 0, None, None, None, None),
+         (8, "Cable de poder y enchufe", "Sin cortes ni aplastamiento", "verificacion", 1, 0, None, None, None, None),
+     ]),
+    ("Control de Calidad — Detalle bicicleta (transmisión y consola)",
+     "Bloque de sistema. Bicicletas y elípticas: transmisión, resistencia, "
+     "ajustes y consola.",
+     [
+         (1, "Pedales y bielas firmes", "Sin juego ni ruido", "verificacion", 1, 0, None, None, None, None),
+         (2, "Correa o transmisión", "Sin ruido ni salto", "verificacion", 1, 0, None, None, None, None),
+         (3, "Resistencia en todos los niveles", "Sube y baja completa", "verificacion", 1, 0, None, None, None, None),
+         (4, "Sillín y poste: ajuste y traba", "", "verificacion", 1, 0, None, None, None, None),
+         (5, "Manubrio y su ajuste", "", "verificacion", 1, 0, None, None, None, None),
+         (6, "Consola y lectura de pulso", "", "verificacion", 1, 0, None, None, None, None),
+         (7, "Estabilidad y niveladores", "", "verificacion", 1, 0, None, None, None, None),
+         (8, "Observación de la bicicleta", "", "texto", 0, 0, None, None, None, None),
+     ]),
+    ("Control de Calidad — Detalle rack y soportes",
+     "Bloque de sistema. Racks y jaulas: estructura apernada, soportes de barra "
+     "y brazos de seguridad.",
+     [
+         (1, "Estructura y uniones apernadas", "Sin pernos faltantes ni sueltos", "verificacion", 1, 0, None, None, None, None),
+         (2, "Soportes de barra con protector", "J-hooks firmes y con su protector", "verificacion", 1, 0, None, None, None, None),
+         (3, "Brazos de seguridad: traban en cada altura", "CRÍTICO de seguridad", "verificacion", 1, 1, None, None, None, None),
+         (4, "Pines y perillas presentes", "", "verificacion", 1, 0, None, None, None, None),
+         (5, "Barra de dominadas y anclajes", "N/A si no tiene", "verificacion", 1, 0, None, None, None, None),
+         (6, "Porta discos y accesorios del rack", "N/A si no tiene", "verificacion", 1, 0, None, None, None, None),
+         (7, "Anclaje a piso y estabilidad", "", "verificacion", 1, 0, None, None, None, None),
+         (8, "Observación del rack", "", "texto", 0, 0, None, None, None, None),
+     ]),
+]
+
+_CHK_BASE_CONTROL_CALIDAD = "Control de Calidad — Registro por equipo (bodega)"
+_CHK_COND_CONTROL_CALIDAD = "Control de Calidad — Detalle estructura y tapiz"
+_CHK_SELECTOR = "Control de Calidad — Detalle carga, cables y movimiento"
+
+# Clase del catálogo → bloque de sistema (semilla para control_calidad). Solo
+# se siembra si el tipo todavía no tiene NINGUNA regla: después manda la tabla.
+_CHK_HERENCIA_CLASES_SEED = {
+    "selectorizador_pesos":      _CHK_SELECTOR,
+    "selectorizador_pesos_4est": _CHK_SELECTOR,
+    "dual_cable_lite":           "Control de Calidad — Detalle poleas ajustables",
+    "dual_cable_cross":          "Control de Calidad — Detalle poleas ajustables",
+    "dual_pulley_drax":          "Control de Calidad — Detalle poleas ajustables",
+    "booty_builder_p":           "Control de Calidad — Detalle carga de discos",
+    "bancos_plano_ajustable":    "Control de Calidad — Detalle bancos y ajustes",
+    "bancos_olimpicos":          "Control de Calidad — Detalle bancos y ajustes",
+    "rack_accesorios":           "Control de Calidad — Detalle cargas libres (por línea)",
+    "accesorio":                 "Control de Calidad — Detalle cargas libres (por línea)",
+    "rack_basico":               "Control de Calidad — Detalle rack y soportes",
+    "rack_intermedio":           "Control de Calidad — Detalle rack y soportes",
+    "rack_avanzados":            "Control de Calidad — Detalle rack y soportes",
+    "rack_pro":                  "Control de Calidad — Detalle rack y soportes",
+    "trotadora":                 "Control de Calidad — Detalle trotadora (cinta y motor)",
+    "bicicleta":                 "Control de Calidad — Detalle bicicleta (transmisión y consola)",
+}
+
+
+def _ensure_checklist_herencia():
+    """Tabla mant_checklist_herencia + bloques nuevos + semilla de control de
+    calidad. Barata cuando ya está aplicada (REGLA #18): CREATE TABLE IF NOT
+    EXISTS pasa por la guarda de mysql_execute, cada bloque se busca por nombre
+    antes de insertar (nunca pisa una edición) y la semilla de reglas solo
+    corre si el tipo aún no tiene ninguna regla."""
+    out = {"bloques": [], "reglas": 0}
+    try:
+        mysql_execute(
+            "CREATE TABLE IF NOT EXISTS mant_checklist_herencia ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  ambito VARCHAR(12) NOT NULL,"
+            "  clave VARCHAR(100) NOT NULL,"
+            "  tipo_ot VARCHAR(40) NOT NULL,"
+            "  rol VARCHAR(12) NOT NULL,"
+            "  plantilla_id INT NOT NULL,"
+            "  actualizado_por VARCHAR(100) NULL,"
+            "  actualizado_en DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,"
+            "  UNIQUE KEY uq_chk_herencia (ambito, clave, tipo_ot, rol),"
+            "  KEY ix_chk_herencia_tipo (tipo_ot, rol)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+    except Exception as e:
+        print(f"[ensure_checklist_herencia] tabla: {e}", flush=True)
+        return out
+    for nombre, desc, items in _CHK_BLOQUES_SEED:
+        try:
+            if mysql_fetchone("SELECT id FROM mant_tarea_plantillas WHERE nombre=%s LIMIT 1", (nombre,)):
+                continue
+            conn = get_mysql()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT IGNORE INTO mant_tarea_plantillas "
+                        "(nombre, descripcion, tipo_visita, familia_checklist, familia_activo, "
+                        " categoria_admin, activa, es_sistema, created_by) "
+                        "VALUES (%s,%s,'inspeccion','control_calidad','todas','trabajo_interno',1,1,'seed')",
+                        (nombre, desc))
+                    pid = cur.lastrowid
+                    if pid:
+                        for (orden, titulo, desc_it, tipo_r, oblig, req_foto,
+                             unidad, rmin, rmax, opciones_json) in items:
+                            cur.execute(
+                                "INSERT INTO mant_tarea_plantilla_items "
+                                "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, "
+                                " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json) "
+                                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                                (pid, orden, titulo, desc_it, tipo_r, oblig, req_foto,
+                                 unidad, rmin, rmax, opciones_json))
+                conn.commit()
+                if pid:
+                    out["bloques"].append(nombre)
+                    print(f"[ensure_checklist_herencia] bloque creado: {nombre}", flush=True)
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"[ensure_checklist_herencia] bloque '{nombre}': {e}", flush=True)
+    try:
+        ya = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_checklist_herencia WHERE tipo_ot='control_calidad'")
+        if ya and int(ya.get("n") or 0):
+            return out
+        nombres = {_CHK_BASE_CONTROL_CALIDAD, _CHK_COND_CONTROL_CALIDAD} | set(_CHK_HERENCIA_CLASES_SEED.values())
+        ph = ",".join(["%s"] * len(nombres))
+        ids = {r["nombre"]: int(r["id"]) for r in (mysql_fetchall(
+            f"SELECT id, nombre FROM mant_tarea_plantillas WHERE nombre IN ({ph})",
+            tuple(sorted(nombres))) or [])}
+        filas = []
+        if ids.get(_CHK_BASE_CONTROL_CALIDAD):
+            filas.append(("tipo", "control_calidad", "base", ids[_CHK_BASE_CONTROL_CALIDAD]))
+        if ids.get(_CHK_COND_CONTROL_CALIDAD):
+            filas.append(("tipo", "control_calidad", "condicional", ids[_CHK_COND_CONTROL_CALIDAD]))
+        for slug, nombre in _CHK_HERENCIA_CLASES_SEED.items():
+            if ids.get(nombre):
+                filas.append(("clase", slug, "sistema", ids[nombre]))
+        for amb, clave, rol, pid in filas:
+            mysql_execute(
+                "INSERT IGNORE INTO mant_checklist_herencia "
+                "(ambito, clave, tipo_ot, rol, plantilla_id, actualizado_por) "
+                "VALUES (%s,%s,'control_calidad',%s,%s,'seed')", (amb, clave, rol, pid))
+        out["reglas"] = len(filas)
+    except Exception as e:
+        print(f"[ensure_checklist_herencia] semilla de reglas: {e}", flush=True)
+    return out
+
+
+def _chk_herencia_armar(skus, clases, reglas):
+    """PURA (sin BD, probada en tests/test_ot_checklist_herencia.py). Arma el
+    checklist heredado de cada SKU: base y condicional del tipo de trabajo, y
+    el bloque de sistema del PRODUCTO (excepción) o, si no tiene, de su CLASE.
+
+    skus:   lista de SKU tal como vienen del documento.
+    clases: {sku: {"clase": slug, "clase_nombre": str, "repetible": bool|None}}
+            (lo que devuelve _inc_clasificacion_skus_batch).
+    reglas: filas de mant_checklist_herencia del tipo, con el nombre de la plantilla.
+    """
+    base = cond = None
+    por_clase, por_producto = {}, {}
+    for r in reglas or []:
+        try:
+            info = {"id": int(r["plantilla_id"]), "nombre": r.get("nombre") or ""}
+        except (KeyError, TypeError, ValueError):
+            continue
+        amb, rol = r.get("ambito"), r.get("rol")
+        clave = (r.get("clave") or "").strip()
+        if amb == "tipo" and rol == "base":
+            base = info
+        elif amb == "tipo" and rol == "condicional":
+            cond = info
+        elif amb == "clase" and rol == "sistema" and clave:
+            por_clase[clave.lower()] = info
+        elif amb == "producto" and rol == "sistema" and clave:
+            por_producto[clave.upper()] = info
+    clases_u = {(k or "").strip().upper(): v for k, v in (clases or {}).items()}
+    bloques = {}
+    for b in list(por_clase.values()) + list(por_producto.values()):
+        bloques[b["id"]] = b
+    por_sku = {}
+    for sku in skus or []:
+        k = (sku or "").strip()
+        if not k or k in por_sku:
+            continue
+        c = clases_u.get(k.upper()) or {}
+        slug = (c.get("clase") or "").strip().lower() or None
+        sistema = None
+        if k.upper() in por_producto:
+            sistema = dict(por_producto[k.upper()], origen="producto")
+        elif slug and slug in por_clase:
+            sistema = dict(por_clase[slug], origen="clase")
+        por_sku[k] = {
+            "sku": k, "clase": slug, "clase_nombre": c.get("clase_nombre"),
+            "repetible": c.get("repetible"), "base": base, "sistema": sistema,
+            "condicional": cond,
+            "sistema_clase": dict(por_clase[slug], origen="clase") if slug and slug in por_clase else None,
+        }
+    return {
+        "activo": base is not None,
+        "base": base, "condicional": cond,
+        "bloques_sistema": sorted(bloques.values(), key=lambda b: b["nombre"].lower()),
+        "skus": por_sku,
+    }
+
+
+def _chk_herencia_reglas(tipo_ot):
+    """Reglas del tipo con plantilla ACTIVA y con ítems (una vacía no sirve de
+    checklist). [] si la tabla no existe o falla."""
+    try:
+        return mysql_fetchall(
+            "SELECT h.ambito, h.clave, h.rol, h.plantilla_id, p.nombre "
+            "  FROM mant_checklist_herencia h "
+            "  JOIN mant_tarea_plantillas p ON p.id = h.plantilla_id "
+            "   AND COALESCE(p.activa, 1) = 1 "
+            " WHERE h.tipo_ot = %s "
+            "   AND EXISTS (SELECT 1 FROM mant_tarea_plantilla_items i WHERE i.plantilla_id = p.id)",
+            ((tipo_ot or "").strip().lower(),)) or []
+    except Exception as e:
+        print(f"[chk_herencia] reglas tipo={tipo_ot!r}: {e}", flush=True)
+        return []
+
+
+def _chk_herencia_resolver(skus, tipo_ot):
+    """Checklist heredado de cada SKU para un tipo de OT (ver _chk_herencia_armar).
+    {'activo': False, ...} si el tipo no usa herencia o falta la tabla: el
+    caller sigue con su comportamiento de siempre."""
+    skus = [x for x in dict.fromkeys(str(s or "").strip() for s in (skus or [])) if x][:200]
+    reglas = _chk_herencia_reglas(tipo_ot)
+    clases = _inc_clasificacion_skus_batch(skus) if (skus and reglas) else {}
+    return _chk_herencia_armar(skus, clases, reglas)
+
+
+def _chk_plantillas_validas(ids, tipo_ot):
+    """Subconjunto de `ids` que sirve como checklist de este tipo de OT: activa,
+    con ítems y de la MISMA categoría (un checklist interno nunca cae en la OT de
+    un cliente, ni al revés)."""
+    ids = sorted({int(i) for i in (ids or []) if str(i).isdigit() and int(i) > 0})
+    if not ids:
+        return set()
+    cat = _categoria_admin_para_tipo(tipo_ot)
+    ph = ",".join(["%s"] * len(ids))
+    sql = (f"SELECT p.id FROM mant_tarea_plantillas p WHERE p.id IN ({ph}) "
+           "   AND COALESCE(p.activa, 1) = 1 "
+           "   AND EXISTS (SELECT 1 FROM mant_tarea_plantilla_items i WHERE i.plantilla_id = p.id)")
+    params = list(ids)
+    if cat:
+        sql += " AND (p.categoria_admin = %s OR p.categoria_admin IS NULL)"
+        params.append(cat)
+    try:
+        return {int(r["id"]) for r in (mysql_fetchall(sql, tuple(params)) or [])}
+    except Exception as e:
+        print(f"[chk_herencia] validar plantillas {ids}: {e}", flush=True)
+        return set()
+
+
+def _chk_condicional_ids(tipo_ot=None):
+    """IDs de los bloques CONDICIONALES (se copian no obligatorios y la ficha
+    los muestra plegados). Sin tipo: los de todos los tipos."""
+    try:
+        if tipo_ot:
+            rows = mysql_fetchall(
+                "SELECT plantilla_id FROM mant_checklist_herencia WHERE rol='condicional' AND tipo_ot=%s",
+                ((tipo_ot or "").strip().lower(),))
+        else:
+            rows = mysql_fetchall(
+                "SELECT DISTINCT plantilla_id FROM mant_checklist_herencia WHERE rol='condicional'")
+        return {int(r["plantilla_id"]) for r in (rows or [])}
+    except Exception:
+        return set()
+
+
+@app.route("/ot/api/checklist-heredado", methods=["GET"])
+@_mant_required
+def ot2_api_checklist_heredado():
+    """Checklist heredado por SKU para el asistente (solo lectura)."""
+    tipo = (request.args.get("tipo") or "").strip().lower()[:40]
+    skus = (request.args.get("skus") or "").split(",")
+    return jsonify(dict(_chk_herencia_resolver(skus, tipo), ok=True))
+
+
+@app.route("/ot/api/checklist-heredado/producto", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot2_api_checklist_heredado_producto():
+    """Excepción por PRODUCTO: «este producto usa este bloque», aunque su clase
+    diga otro (o no tenga clase). plantilla_id vacío = vuelve a lo de su clase.
+    Queda quién y cuándo (actualizado_por/en) y la bitácora."""
+    d = request.get_json(silent=True) or {}
+    sku = (d.get("sku") or "").strip()[:100]
+    tipo = (d.get("tipo") or "").strip().lower()[:40]
+    try:
+        pid = int(d.get("plantilla_id") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    if not sku or not tipo:
+        return jsonify({"ok": False, "error": "Falta el producto o el tipo de trabajo."}), 400
+    actual = _chk_herencia_resolver([sku], tipo)
+    if not actual.get("activo"):
+        return jsonify({"ok": False, "error": "Este tipo de trabajo no usa checklist heredado."}), 400
+    quien = current_username() or "sistema"
+    if pid:
+        if pid not in {b["id"] for b in actual.get("bloques_sistema") or []}:
+            return jsonify({"ok": False, "error": "Ese checklist no es un bloque de sistema."}), 400
+        nombre = next(b["nombre"] for b in actual["bloques_sistema"] if b["id"] == pid)
+        try:
+            _mant_log("catalogo", 0, "checklist_excepcion_producto",
+                      f"SKU {sku}: en «{tipo}» usará el bloque «{nombre}» ({quien}).")
+        except Exception:
+            pass
+        mysql_execute(
+            "INSERT INTO mant_checklist_herencia "
+            "(ambito, clave, tipo_ot, rol, plantilla_id, actualizado_por) "
+            "VALUES ('producto', %s, %s, 'sistema', %s, %s) "
+            "ON DUPLICATE KEY UPDATE plantilla_id=VALUES(plantilla_id), "
+            "actualizado_por=VALUES(actualizado_por)", (sku, tipo, pid, quien))
+    else:
+        try:
+            _mant_log("catalogo", 0, "checklist_excepcion_producto",
+                      f"SKU {sku}: en «{tipo}» vuelve al bloque de su clase ({quien}).")
+        except Exception:
+            pass
+        mysql_execute(
+            "DELETE FROM mant_checklist_herencia "
+            " WHERE ambito='producto' AND clave=%s AND tipo_ot=%s AND rol='sistema'", (sku, tipo))
+    return jsonify(dict(_chk_herencia_resolver([sku], tipo), ok=True))
+
+
 def _ensure_plantillas_nombre_sin_prefijo():
     """Quita el prefijo "<Categoría> · " del nombre de las plantillas de
     clasificación (Daniel 2026-08-13: "elimina de las plantillas todos los
@@ -158991,6 +159465,17 @@ try:
               f"{_plant_matriz_creadas}", flush=True)
 except Exception as _ensure_matriz_err:
     print(f"[ILUS][WARN] _ensure_plantillas_matriz_clases: {_ensure_matriz_err}", flush=True)
+
+# 🧩 2026-10-17: checklist heredado por sistema (bloques + mant_checklist_herencia).
+# Barato si ya está aplicado (REGLA #18). Va después de la semilla de plantillas
+# estándar: reutiliza las de control de calidad de la NVI 552.
+try:
+    with app.app_context():
+        _chk_her = _ensure_checklist_herencia()
+    if _chk_her.get("bloques") or _chk_her.get("reglas"):
+        print(f"[ILUS] Checklist heredado: {_chk_her}", flush=True)
+except Exception as _ensure_chk_her_err:
+    print(f"[ILUS][WARN] _ensure_checklist_herencia: {_ensure_chk_her_err}", flush=True)
 
 # CRÍTICO: nombres de plantilla sin el prefijo "<Categoría> · " (Daniel
 # 2026-08-13) — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. Corre después

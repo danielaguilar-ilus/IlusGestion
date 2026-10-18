@@ -2214,6 +2214,19 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   background-size:400% 100%;animation:otdShim 1.5s ease infinite}
 @keyframes otdShim{0%{background-position:100% 0}100%{background-position:-100% 0}}
 .otd-chk-plant{margin-bottom:12px}
+/* 🧩 2026-10-17 — bloque CONDICIONAL del checklist heredado (Estructura y
+   tapiz): plegado; se abre si la revisión de este equipo marcó observación. */
+.otd-chk-cond{border:1px dashed #d1d5db;border-radius:12px;margin:0 0 12px;background:#fafafa}
+.otd-chk-cond>summary{list-style:none;cursor:pointer;padding:10px 14px;min-height:44px;display:flex;
+  flex-wrap:wrap;align-items:center;gap:2px 8px;font-weight:600;font-size:.9rem;color:#374151}
+.otd-chk-cond>summary::-webkit-details-marker{display:none}
+.otd-chk-cond>summary .bi{transition:transform .15s}
+.otd-chk-cond[open]>summary .bi{transform:rotate(90deg)}
+.otd-chk-cond>summary .nm{flex:1 1 0;min-width:0;font-weight:600}
+.otd-chk-cond>summary span{flex-basis:100%;font-weight:400;font-size:.8rem;color:#6b7280}
+.otd-chk-cond.alerta>summary span{color:#92400e}
+.otd-chk-cond>.otd-chk-plant{margin:0 10px 10px}
+@media (prefers-reduced-motion:reduce){.otd-chk-cond>summary .bi{transition:none}}
 .otd-chk-plant-nm{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;
   color:#9ca3af;font-weight:800;margin-bottom:6px;display:flex;align-items:center;gap:8px}
 .otd-chk-plant-nm .pg{font-size:.68rem;color:#6b7280;font-weight:700;text-transform:none;
@@ -12373,6 +12386,33 @@ window.otdActivarCorreccion = async function(){
 };
 const OTD_CURRENT_UID = {{ (current_user.id if current_user else 0) | tojson }};
 
+// 🧩 2026-10-17 (checklist heredado, Daniel: «Estructura y tapiz se abre solo
+// si la base marca observación»). La base de ESTE equipo marcó algo si una
+// verificación quedó en alerta/falla, «¿Faltan piezas…?» quedó en Sí o el
+// resultado no es «Apto».
+function otdChkBaseMarcoObs(grupos, g){
+  return grupos.some(o => o !== g && (o.tareas || []).some(t => {
+    const vj = t.valor_json || {};
+    if (t.tipo_respuesta === 'verificacion') return vj.valor === 'alerta' || vj.valor === 'falla';
+    if (t.tipo_respuesta === 'sino') return vj.valor === 'si' && /falta/i.test(t.titulo || '');
+    if (t.tipo_respuesta === 'lista'){
+      const op = String(vj.opcion || '').toLowerCase();
+      return op.startsWith('no apto') || op.startsWith('apto con');
+    }
+    return false;
+  }));
+}
+function otdChkCondEnvolver(g, grupos, html){
+  const marco = otdChkBaseMarcoObs(grupos, g);
+  const abrir = marco || g.completas > 0;
+  const aviso = marco
+    ? 'La revisión de este equipo marcó una observación: detállala aquí.'
+    : 'Opcional · ábrelo solo si la revisión marcó una observación.';
+  return `<details class="otd-chk-cond${marco ? ' alerta' : ''}"${abrir ? ' open' : ''}>
+    <summary><i class="bi bi-chevron-right" aria-hidden="true"></i><b class="nm">${otdEsc(g.plantilla_nombre)}</b>
+      <span>${aviso}</span></summary>
+    ${html}</details>`;
+}
 let OTD_CHK_DATA = null;      // plantillas_por_maquina, tal como llega del backend
 let OTD_CHK_LOADED = false;
 let OTD_CHK_LOADING = false;
@@ -12527,7 +12567,7 @@ function otdRenderChecklistEquipo(mid){
     // el CSS). Es solo la primera sin completar en el orden de siempre --
     // no cambia el orden ni inventa una regla de bloqueo nueva.
     const idxSiguiente = g.tareas.findIndex(t => !t.completada);
-    return `
+    const _html = `
     <div class="otd-chk-plant">
       <div class="otd-chk-plant-nm"><i class="bi bi-list-check"></i> ${otdEsc(g.plantilla_nombre)}
         <span class="pg">${g.completas}/${g.total}</span></div>
@@ -12540,6 +12580,7 @@ function otdRenderChecklistEquipo(mid){
       </div>
       ${g.tareas.map((t, i) => otdChkTareaHtml(t, i + 1, i === idxSiguiente)).join('')}
     </div>`;
+    return g.condicional ? otdChkCondEnvolver(g, grupos, _html) : _html;
   }).join('');
   // Actualiza los resúmenes de la cabecera del equipo (n_ok/n_tareas,
   // obligatorias) con el dato fresco del checklist recién cargado --

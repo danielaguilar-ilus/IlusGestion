@@ -1158,6 +1158,37 @@
 .o2m-day-ghost .g1{font-size:0.9rem;font-weight:700;color:#9ca3af;margin-top:4px}
 .o2m-day-ghost .g2{font-size:0.8rem;color:#c4c9d0;margin-top:2px}
 .o2m-day-ghost .g-btn{pointer-events:auto;margin-top:8px}
+
+/* 🧩 2026-10-17 — checklist heredado (base + bloque del sistema) en la tabla
+   de productos de trabajo interno. Nombres completos (REGLA #15). */
+.o2m-her{display:flex;flex-direction:column;gap:4px;min-width:280px}
+.o2m-her select{width:100%}
+.o2m-her-nota{font-size:.8rem;color:#374151;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;
+  padding:8px 12px;margin-bottom:8px;line-height:1.45}
+.o2m-her-nota i{color:#16a34a;margin-right:4px}
+.o2m-her-org{font-size:.74rem;color:#6b7280;overflow-wrap:anywhere}
+.o2m-her-warn{color:#92400e;background:#fff8e1;border-radius:6px;padding:2px 6px;display:inline-block}
+.o2m-her-rec{font-size:.74rem;min-height:32px;align-self:flex-start}
+.o2m-her-u{font-size:.74rem;color:#6b7280;white-space:nowrap}
+/* En celular la tabla de productos se lee como tarjetas: código y nombre
+   arriba, cantidad y checklist debajo a todo el ancho, la × en la esquina.
+   Antes la columna Checklist quedaba fuera de la pantalla (scroll lateral). */
+@media (max-width:576px){
+  #o2mTareasList table, #o2mTareasList tbody, #o2mTareasList tr, #o2mTareasList td{display:block;width:100%}
+  #o2mTareasList thead{display:none}
+  #o2mTareasList table{min-width:0 !important}
+  #o2mTareasList .table-responsive{overflow:visible}
+  #o2mTareasList tr{position:relative;border:1px solid #e5e7eb;border-radius:12px;background:#fff;
+    padding:10px 12px;margin-bottom:8px}
+  #o2mTareasList td:first-child, #o2mTareasList td:nth-child(2){padding-right:36px}
+  #o2mTareasList td{border:0;padding:2px 0}
+  #o2mTareasList td:first-child{font-size:.72rem;color:#6b7280}
+  #o2mTareasList td:nth-child(2){font-weight:600;color:#111827}
+  #o2mTareasList td:last-child{position:absolute;top:6px;right:6px;width:auto}
+  #o2mTareasList td:last-child .btn{min-width:36px;min-height:36px}
+  #o2mTareasList .o2m-her{min-width:0;margin-top:4px}
+  #o2mTareasList tbody tr td[colspan]{position:static;text-align:center}
+}
 </style>
 
 <div class="modal fade o2m" id="ot2ModalCrear" tabindex="-1" aria-hidden="true">
@@ -5137,7 +5168,7 @@ window.OT2C = (function(){
         'Sin productos ni tareas agregadas todavía.</td></tr></tbody></table></div>';
       return;
     }
-    c.innerHTML =
+    c.innerHTML = _o2mChkNota() +
       '<div class="table-responsive"><table class="table table-sm align-middle mb-0" style="font-size:.82rem">'+
       '<thead><tr><th>Código</th><th>Descripción</th><th style="width:90px">Cant.</th>'+
       '<th style="min-width:170px">Checklist</th><th style="width:36px"></th></tr></thead><tbody>' +
@@ -5146,13 +5177,17 @@ window.OT2C = (function(){
         return '<tr>'+
           '<td class="text-monospace">'+esc(tm.sku || '—')+'</td>'+
           '<td>'+esc(tm.titulo)+'</td>'+
-          '<td><input type="number" class="form-control form-control-sm" inputmode="numeric" '+
-          'style="width:70px;font-size:16px" min="1" step="1" value="'+cant+'" '+
-          'title="Cantidad" aria-label="Cantidad" onchange="OT2C.setCantidadTareaManual('+i+',this.value)"></td>'+
-          '<td><select class="form-select form-select-sm" style="font-size:16px" '+
-          'onchange="OT2C.setPlantillaTareaManual('+i+',this.value)">'+
-          opsPlantilla.replace('value="'+(tm.plantilla_id||'')+'"', 'value="'+(tm.plantilla_id||'')+'" selected')+
-          '</select></td>'+
+          (tm.chk && !tm.chk_por_linea
+            ? '<td><span class="o2m-her-u" title="Una tarjeta por unidad">1 un.</span></td>'
+            : '<td><input type="number" class="form-control form-control-sm" inputmode="numeric" '+
+              'style="width:70px;font-size:16px" min="1" step="1" value="'+cant+'" '+
+              'title="Cantidad" aria-label="Cantidad" onchange="OT2C.setCantidadTareaManual('+i+',this.value)"></td>')+
+          (tm.chk
+            ? '<td>'+_o2mChkCelda(tm, i)+'</td>'
+            : '<td><select class="form-select form-select-sm" style="font-size:16px" '+
+              'onchange="OT2C.setPlantillaTareaManual('+i+',this.value)">'+
+              opsPlantilla.replace('value="'+(tm.plantilla_id||'')+'"', 'value="'+(tm.plantilla_id||'')+'" selected')+
+              '</select></td>')+
           '<td><button type="button" class="btn btn-sm btn-link text-danger p-1" onclick="OT2C.quitarTareaManual('+i+')" '+
           'style="min-height:32px" title="Quitar"><i class="bi bi-x-lg"></i></button></td>'+
         '</tr>';
@@ -5186,19 +5221,7 @@ window.OT2C = (function(){
         if (header && header.tido && header.nudo){
           S.doc_origen = {tido: header.tido, nudo: header.nudo};
         }
-        (items||[]).forEach(function(it){
-          if (!it || !it.sku) return;
-          var _qty = parseInt(it.qty, 10); if (!_qty || _qty < 1) _qty = 1;
-          var yaExiste = S.tareas_manuales.some(function(tm){ return tm.sku === it.sku; });
-          if (yaExiste) return;
-          S.tareas_manuales.push({
-            sku: it.sku, titulo: it.nombre || it.sku,
-            descripcion: '', cantidad: _qty, plantilla_id: null
-          });
-        });
-        pintarTareasManuales();
-        repintarSeccion('equipos');
-        refrescarAnclas();
+        _o2mAgregarItemsHeredando(items, true);
       }
     });
   }
@@ -5208,18 +5231,172 @@ window.OT2C = (function(){
   // a la tabla de productos -- antes había que buscarlas otra vez a mano
   // en el catálogo aunque ya vinieran en el documento recién elegido.
   function _o2mAgregarProductosDeDoc(items){
+    _o2mAgregarItemsHeredando(items, false);
+  }
+  // 🧩 2026-10-17 (Daniel, NVI 687 — evento de Felipe Fierro: «si tengo un
+  // selector de peso, buscarle el selector de peso; si tengo una trotadora,
+  // revisarle la cinta… esos son los detalles que quiero ir heredando»).
+  // Si el tipo de trabajo usa checklist HEREDADO (hoy: Control de calidad),
+  // cada producto trae solo su checklist = base + bloque de su sistema (por
+  // su clase del catálogo o por la excepción guardada del producto) + el
+  // condicional «Estructura y tapiz». Máquinas: una tarjeta por unidad.
+  // Accesorios (clase repetible: discos, mancuernas): una por línea, con la
+  // cantidad del documento para contar. El mismo producto en dos líneas del
+  // documento SUMA sus cantidades (antes la segunda línea se perdía).
+  // Si el tipo no usa herencia o la consulta falla: igual que siempre.
+  var _o2mChk = { bloques: [] };
+  function _o2mChkNombre(b){
+    // Nombre corto para la pantalla (la plantilla no se renombra): sin el prefijo
+    // «Control de Calidad — » ni «Detalle », con mayúscula inicial.
+    if (!b) return '';
+    var n = String(b.nombre || '').replace(/^Control de Calidad — /, '').replace(/^Detalle /, '');
+    return n.charAt(0).toUpperCase() + n.slice(1);
+  }
+  function _o2mChkIds(tm){
+    return [tm.chk_base, tm.chk_sistema, tm.chk_cond]
+      .filter(function(b){ return b && b.id; }).map(function(b){ return b.id; });
+  }
+  function _o2mAgregarItemsHeredando(items, repintarEquipos){
+    var orden = [], porSku = {};
     (items||[]).forEach(function(it){
       if (!it || !it.sku) return;
-      var _qty = parseInt(it.qty, 10); if (!_qty || _qty < 1) _qty = 1;
-      var yaExiste = S.tareas_manuales.some(function(tm){ return tm.sku === it.sku; });
-      if (yaExiste) return;
-      S.tareas_manuales.push({
-        sku: it.sku, titulo: it.nombre || it.sku,
-        descripcion: '', cantidad: _qty, plantilla_id: null
+      var q = parseInt(it.qty, 10); if (!q || q < 1) q = 1;
+      if (S.tareas_manuales.some(function(tm){ return tm.sku === it.sku; })) return;
+      if (!porSku[it.sku]){
+        porSku[it.sku] = {sku: it.sku, nombre: it.nombre || it.sku, qty: 0};
+        orden.push(it.sku);
+      }
+      porSku[it.sku].qty += q;
+    });
+    var lista = orden.map(function(k){ return porSku[k]; });
+    function listo(){
+      pintarTareasManuales();
+      if (repintarEquipos) repintarSeccion('equipos');
+      refrescarAnclas();
+    }
+    function comoSiempre(){
+      lista.forEach(function(it){
+        S.tareas_manuales.push({sku: it.sku, titulo: it.nombre, descripcion: '',
+                                cantidad: it.qty, plantilla_id: null});
       });
+      listo();
+    }
+    if (!lista.length){ listo(); return; }
+    fetch('/ot/api/checklist-heredado?tipo=' + encodeURIComponent(S.tipo || '') +
+          '&skus=' + encodeURIComponent(orden.join(',')), {credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if (!j || !j.ok || !j.activo){ comoSiempre(); return; }
+        _o2mChk.bloques = j.bloques_sistema || [];
+        lista.forEach(function(it){
+          var h = (j.skus || {})[it.sku] || {};
+          var porLinea = h.repetible === true;
+          var n = porLinea ? 1 : it.qty;
+          for (var u = 1; u <= n; u++){
+            var tm = {
+              sku: it.sku,
+              titulo: it.nombre + (!porLinea && it.qty > 1 ? ' (' + u + ' de ' + it.qty + ')' : ''),
+              descripcion: porLinea ? ('Cantidad según el documento: ' + it.qty) : '',
+              cantidad: porLinea ? it.qty : 1,
+              plantilla_id: null,
+              checklist_auto: true,
+              chk: true, chk_por_linea: porLinea,
+              chk_clase: h.clase_nombre || null,
+              chk_base: h.base || j.base || null,
+              chk_sistema: h.sistema || null,
+              chk_sistema_heredado: h.sistema || null,
+              chk_cond: h.condicional || j.condicional || null
+            };
+            tm.plantilla_ids = _o2mChkIds(tm);
+            S.tareas_manuales.push(tm);
+          }
+        });
+        listo();
+      })
+      .catch(function(){ comoSiempre(); });
+  }
+  function _o2mChkNota(){
+    var t = S.tareas_manuales.find(function(x){ return x.chk && x.chk_base; });
+    if (!t) return '';
+    return '<div class="o2m-her-nota"><i class="bi bi-diagram-3"></i> Cada producto trae su checklist: ' +
+      '<b>' + esc(_o2mChkNombre(t.chk_base)) + '</b> + el bloque de su sistema (según su clase del catálogo).' +
+      (t.chk_cond ? ' <b>' + esc(_o2mChkNombre(t.chk_cond)) + '</b> se abre solo si la revisión marca una observación.' : '') +
+      ' Máquinas: una tarjeta por unidad. Discos y mancuernas: una por línea, para contar.</div>';
+  }
+  function _o2mChkCelda(tm, i){
+    var sel = tm.chk_sistema ? tm.chk_sistema.id : '';
+    var opts = '<option value="">— Solo la base —</option>' +
+      (_o2mChk.bloques || []).map(function(b){
+        return '<option value="' + b.id + '"' + (b.id === sel ? ' selected' : '') + '>' +
+               esc(_o2mChkNombre(b)) + '</option>';
+      }).join('');
+    var origen;
+    if (!tm.chk_sistema){
+      origen = '<span class="o2m-her-warn"><i class="bi bi-exclamation-triangle-fill"></i> ' +
+        (tm.chk_clase ? 'Su clase «' + esc(tm.chk_clase) + '» no tiene bloque' : 'Sin clase en el catálogo') +
+        ': elige el bloque.</span>';
+    } else if (tm.chk_sistema.origen === 'producto'){
+      origen = 'Guardado para este producto';
+    } else if (tm.chk_sistema.origen === 'clase'){
+      origen = 'Según su clase: ' + esc(tm.chk_clase || '');
+    } else {
+      origen = 'Elegido a mano en esta OT';
+    }
+    var recordar = tm.sku && tm.chk_sistema && tm.chk_sistema.origen === 'manual';
+    return '<div class="o2m-her">' +
+      '<select class="form-select form-select-sm" style="font-size:16px" aria-label="Bloque del sistema" ' +
+      'onchange="OT2C.setBloqueTareaManual(' + i + ',this.value)">' + opts + '</select>' +
+      '<div class="o2m-her-org">' + origen + '</div>' +
+      (recordar ? '<button type="button" class="btn btn-sm btn-outline-secondary o2m-her-rec" ' +
+                  'onclick="OT2C.recordarBloqueProducto(' + i + ')"><i class="bi bi-bookmark-check"></i> ' +
+                  'Recordar para este producto</button>' : '') +
+    '</div>';
+  }
+  // Cambiar el bloque de una fila lo cambia en TODAS las unidades del mismo producto.
+  function setBloqueTareaManual(i, v){
+    var tm = S.tareas_manuales[i]; if (!tm) return;
+    var id = v ? parseInt(v, 10) : null;
+    var b = id ? (_o2mChk.bloques || []).find(function(x){ return x.id === id; }) : null;
+    var her = tm.chk_sistema_heredado;
+    S.tareas_manuales.forEach(function(t){
+      if (!t.chk || t.sku !== tm.sku) return;
+      if (her && b && her.id === b.id){
+        t.chk_sistema = her; t.checklist_auto = true;
+      } else {
+        t.chk_sistema = b ? {id: b.id, nombre: b.nombre, origen: 'manual'} : null;
+        t.checklist_auto = false;
+      }
+      t.plantilla_ids = _o2mChkIds(t);
     });
     pintarTareasManuales();
-    refrescarAnclas();
+  }
+  function recordarBloqueProducto(i){
+    var tm = S.tareas_manuales[i]; if (!tm || !tm.chk_sistema) return;
+    var nombreProd = String(tm.titulo || tm.sku).replace(/ \(\d+ de \d+\)$/, '');
+    fetch('/ot/api/checklist-heredado/producto', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({sku: tm.sku, tipo: S.tipo, plantilla_id: tm.chk_sistema.id})
+    }).then(function(r){ return r.json(); })
+      .then(function(j){
+        if (!j || !j.ok){
+          if (window.ilusToast) ilusToast((j && j.error) || 'No se pudo guardar.', {type:'error'});
+          return;
+        }
+        var h = (j.skus || {})[tm.sku] || {};
+        S.tareas_manuales.forEach(function(t){
+          if (!t.chk || t.sku !== tm.sku) return;
+          if (h.sistema){ t.chk_sistema = h.sistema; t.chk_sistema_heredado = h.sistema; }
+          t.checklist_auto = true;
+          t.plantilla_ids = _o2mChkIds(t);
+        });
+        pintarTareasManuales();
+        if (window.ilusToast) ilusToast('«' + nombreProd + '» usará «' + _o2mChkNombre(h.sistema || tm.chk_sistema) +
+          '» en las próximas revisiones.', {type:'success', duration:6000});
+      })
+      .catch(function(){
+        if (window.ilusToast) ilusToast('No se pudo guardar. Revisa tu conexión.', {type:'error'});
+      });
   }
   // 🆕 2026-08-31 (Daniel: "si son varias tareas... instalar pizarra me va
   // a tener que pedir cuántas cantidades para repetirlo, y una vez que lo
@@ -10691,6 +10868,7 @@ window.OT2C = (function(){
           _o2mTMSetCampo:_o2mTMSetCampo, _o2mTMGuardar:_o2mTMGuardar,
           quitarTareaManual:quitarTareaManual, setCantidadTareaManual:setCantidadTareaManual,
           setPlantillaTareaManual:setPlantillaTareaManual,
+          setBloqueTareaManual:setBloqueTareaManual, recordarBloqueProducto:recordarBloqueProducto,
           bodegaFotoAdd:bodegaFotoAdd, bodegaFotoQuitar:bodegaFotoQuitar,
           adjuntosAgregar:adjuntosAgregar, adjuntosQuitar:adjuntosQuitar,
           setPlantillaInterno:setPlantillaInterno, setCostoInterno:setCostoInterno,
