@@ -12397,7 +12397,7 @@ function otdChkBaseMarcoObs(grupos, g){
     if (t.tipo_respuesta === 'sino') return vj.valor === 'si' && /falta/i.test(t.titulo || '');
     if (t.tipo_respuesta === 'lista'){
       const op = String(vj.opcion || '').toLowerCase();
-      return op.startsWith('no apto') || op.startsWith('apto con');
+      return op.startsWith('no apto') || op.startsWith('apto con') || op.startsWith('pendiente');
     }
     return false;
   }));

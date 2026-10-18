@@ -106602,8 +106602,10 @@ def _ot2_crear_core(d, autorizacion=None):
                 # (ver _ensure_visita_tarea_item_manual_cols) para poder
                 # mostrarlo en la tarjeta, igual que el SKU de un equipo real.
                 "sku": (_tm.get("sku") or "").strip()[:60] or None,
-                "plantilla_ids": _tm_pids,
-                "checklist_auto": bool(_tm.get("checklist_auto")),
+                "plantilla_ids": [] if _tm.get("no_llego") else _tm_pids,
+                "checklist_auto": bool(_tm.get("checklist_auto")) and not _tm.get("no_llego"),
+                # 📦 2026-10-18 (Daniel: «marcar No llegó»): faltante declarado al crear la OT.
+                "no_llego": bool(_tm.get("no_llego")),
             })
 
     # 🧩 2026-10-17 (Daniel, NVI 687): checklist HEREDADO. Una fila marcada
@@ -107060,14 +107062,23 @@ def _ot2_crear_core(d, autorizacion=None):
         # _ensure_visita_tarea_item_manual_cols().
         for _tm_idx, _tm in enumerate(tareas_manuales, start=1):
             orden += 1
+            _tm_tit, _tm_desc, _tm_obl = _tm["titulo"], _tm["descripcion"], 1
+            if _tm.get("no_llego"):
+                # 📦 2026-10-18: el producto no llegó. Queda en la OT como faltante declarado (con quién y cuándo),
+                # sin checklist y sin bloquear el cierre.
+                _tm_tit = (_tm["titulo"] + " — NO LLEGÓ")[:300]
+                _tm_desc = (f"Faltante declarado al crear la OT por {current_username() or 'sistema'} "
+                            f"el {_now_chile().strftime('%d/%m/%Y %H:%M')}."
+                            + (f" {_tm['descripcion']}" if _tm.get("descripcion") else ""))[:2000]
+                _tm_obl = 0
             cur.execute(
                 "INSERT INTO mant_visita_tareas "
                 "  (visita_id, orden, titulo, descripcion, tipo, cantidad, "
                 "   tipo_respuesta, obligatoria, estado_trabajo, created_by, "
                 "   item_manual_id, item_manual_sku) "
-                "VALUES (%s,%s,%s,%s,%s,%s,'check',1,'pendiente',%s,%s,%s)",
-                (vid, orden, _tm["titulo"], _tm["descripcion"], tarea_tipo,
-                 _tm["cantidad"], current_username(), _tm_idx, _tm.get("sku")))
+                "VALUES (%s,%s,%s,%s,%s,%s,'check',%s,'pendiente',%s,%s,%s)",
+                (vid, orden, _tm_tit, _tm_desc, tarea_tipo,
+                 _tm["cantidad"], _tm_obl, current_username(), _tm_idx, _tm.get("sku")))
             n_tareas += 1
             # 🆕 2026-08-31: si este producto/tarea trae su PROPIA plantilla
             # (columna "Checklist" del Paso 5), se copian sus ítems tal cual
@@ -152399,128 +152410,187 @@ def _ensure_plantillas_estandar_seed():
 #   ambito='producto' clave=<sku>       rol='sistema'   (excepción, gana)
 # ══════════════════════════════════════════════════════════════════════
 
-# Bloques nuevos (≤8 ítems). El de selector de peso y el condicional ya
-# existían desde la NVI 552 («Detalle carga, cables y movimiento» y
-# «Detalle estructura y tapiz»): se reutilizan, no se duplican.
-# Ítem: (orden, titulo, descripcion, tipo_respuesta, obligatoria, requiere_foto,
-#        unidad, rango_min, rango_max, opciones_json)
+# 🧩 2026-10-18 — Bloques «Revisión — …»: propuesta del técnico senior (agente ilus-plantillas-senior) APROBADA
+# por Daniel («sí, constrúyelos»; «enfócate en cada máquina con corazón y de ahí vamos afinando»). Son plantillas
+# NUEVAS: las de la NVI 552 («Control de Calidad — …») no se tocan (REGLA #4.2). Base: solo la foto general es
+# obligatoria (cada ítem de foto admite varias fotos) y el N° de serie va con su ítem inteligente (`serie`: ficha,
+# a mano o «No aplica» en discos y mancuernas). Todo ítem se puede marcar «Esta tarea no aplica» con motivo.
+# Ítem: (orden, titulo, descripcion, tipo_respuesta, obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones)
+_CHK_RESULTADO_OPCIONES = ('["Apto", "Apto con observaciones", "No apto - requiere reparaci\\u00f3n", '
+                           '"No apto - dar de baja", "Pendiente de diagn\\u00f3stico"]')
 _CHK_BLOQUES_SEED = [
-    ("Control de Calidad — Detalle carga de discos",
-     "Bloque de sistema. Máquinas de carga de discos (plate loaded): brazos, "
-     "pivotes, porta discos, topes y seguros.",
+    ("Revisión — Registro por equipo",
+     "BASE de la revisión: va en TODO equipo. Fotos, N° de serie, estado visual, faltantes, resultado y observación.",
      [
-         (1, "Brazos, pivotes y rodamientos", "Sin juego lateral, sin ruido ni trabas en todo el recorrido", "verificacion", 1, 0, None, None, None, None),
-         (2, "Porta discos y fundas", "Tubos rectos, fundas o bujes presentes, sin óxido", "verificacion", 1, 1, None, None, None, None),
-         (3, "Topes de inicio y fin", "Gomas presentes; el brazo no golpea metal con metal", "verificacion", 1, 0, None, None, None, None),
-         (4, "Seguros y traba de seguridad", "Traba de inicio/fin y palanca de seguridad funcionan (hack, péndulo, prensa)", "verificacion", 1, 0, None, None, None, None),
-         (5, "Ajuste de rango y pines", "Todas las posiciones calzan; pines presentes con cordel", "verificacion", 1, 0, None, None, None, None),
-         (6, "Plataforma, apoyos y empuñaduras", "Antideslizante sin desgaste; grips firmes", "verificacion", 1, 0, None, None, None, None),
-         (7, "Recorrido completo y simétrico", "Ambos lados en equipos duales o independientes", "sino", 1, 0, None, None, None, None),
+         (1, "Foto general del equipo", "Plano completo, equipo entero. En una línea de discos o mancuernas, todo el lote a la vista. Puedes subir varias.", "foto", 1, 1, None, None, None, None),
+         (2, "Foto de estructura y tapiz", "Bastidor, pintura, asiento y respaldo. En discos y mancuernas, el lote desde otro ángulo.", "foto", 0, 1, None, None, None, None),
+         (3, "Foto del mecanismo o del daño", "Stack y cable, brazos y cuernos, o el lote. Si encontraste algo, la foto va aquí.", "foto", 0, 1, None, None, None, None),
+         (4, "N° de serie", "Léelo de la placa del equipo. En discos, mancuernas y accesorios sin placa: «No aplica».", "serie", 1, 0, None, None, None, None),
+         (5, "Estado general visual", "Aprobado: sin golpes, óxido, tapiz roto ni piezas sueltas. Alerta: detalle menor (rayón, mancha, perno flojo, corte en el tapiz) y se abre «Estructura y tapiz». Falla: daño que impide usarlo o es un riesgo (fisura, deformación, pieza rota).", "verificacion", 1, 0, None, None, None, None),
+         (6, "¿Faltan piezas o accesorios?", "Compara con lo que salió al evento y con la ficha del modelo. Si falta algo, detállalo en la observación: queda como responsabilidad declarada.", "sino", 1, 0, None, None, None, None),
+         (7, "Resultado del control", "Define si el equipo se libera, se repara o se retiene.", "lista", 1, 0, None, None, None, _CHK_RESULTADO_OPCIONES),
+         (8, "Observación del equipo", "Por cada Alerta o Falla: qué es y dónde. Si no hay novedad, escribe «sin novedad».", "texto", 1, 0, None, None, None, None),
+     ]),
+    ("Revisión — Estructura y tapiz",
+     "CONDICIONAL: se abre solo si la revisión del equipo marcó una observación. Sus ítems no son obligatorios.",
+     [
+         (1, "Bastidor y soldaduras", "Sin fisuras, deformación ni golpes. Mira las soldaduras y los puntos de pivote.", "verificacion", 1, 1, None, None, None, None),
+         (2, "Pintura y recubrimiento", "Rayones, descascarado, óxido (ojo con la humedad del evento) y cromado sin picaduras.", "verificacion", 1, 1, None, None, None, None),
+         (3, "Tornillería completa y con apriete", "Sin pernos ni tapas faltantes ni sueltos.", "verificacion", 1, 0, None, None, None, None),
+         (4, "Niveladores, tacos o topes de goma", "Presentes, firmes y sin pérdida de goma.", "verificacion", 1, 0, None, None, None, None),
+         (5, "Tapiz y costuras", "Cortes, rasgados, manchas y costuras abiertas en asiento, respaldo y apoyos.", "verificacion", 1, 1, None, None, None, None),
+         (6, "Espuma y fijación de asientos", "Sin hundimiento; anclajes firmes.", "verificacion", 1, 0, None, None, None, None),
+         (7, "Seguridad: bordes, tapas y pictogramas", "Sin bordes cortantes; advertencias legibles.", "verificacion", 1, 0, None, None, None, None),
+         (8, "Observación de estructura y tapiz", "", "texto", 0, 0, None, None, None, None),
+     ]),
+    ("Revisión — Selector de peso",
+     "Bloque de sistema: máquinas con stack de placas y pin selector (piola o correa, poleas, pivotes y bujes, pads).",
+     [
+         (1, "Cable (piola) o correa de transmisión", "CRÍTICO. Recórrelo entero con el stack arriba y abajo. Cable desnudo: sin hebras rotas ni óxido. Con forro (Optimal): sin cortes, abultamientos ni torceduras. Falla = no se usa.", "verificacion", 1, 1, None, None, None, None),
+         (2, "Terminales, prensas y conexión al stack", "CRÍTICO. Casquillos sin deslizamiento ni deformación; el extremo asegurado; el cable no roza la estructura.", "verificacion", 1, 0, None, None, None, None),
+         (3, "Poleas, rodamientos, pivotes y bujes", "Giran libres, sin ruido, sin juego lateral ni trizaduras; palancas y articulaciones sin trabas.", "verificacion", 1, 0, None, None, None, None),
+         (4, "Stack de placas y barras guía", "Placas completas según el modelo (cuéntalas) y deslizan sin trabarse. Barras guía lisas, sin óxido ni rayas.", "verificacion", 1, 1, None, None, None, None),
+         (5, "Pin selector y topes de goma", "Pin presente con su cordel y entra en todas las placas; topes sin quiebre.", "verificacion", 1, 0, None, None, None, None),
+         (6, "Ajustes y pads", "Asiento, respaldo, manerales y rodillos: cada ajuste recorre todas sus posiciones y TRABA; pads y tapiz sin cortes. En los Gymleco de pie, plataforma de pies firme y sin grietas.", "verificacion", 1, 0, None, None, None, None),
+         (7, "Recorrido completo, en vacío y con carga media", "Pin a mitad del stack: sin ruido ni roce, retorno suave, sin golpe de placas. En duales, ambos lados parejos; en equipos de 2 funciones (extensión/curl), prueba las dos.", "verificacion", 1, 0, None, None, None, None),
+         (8, "Observación del selector", "", "texto", 0, 0, None, None, None, None),
+     ]),
+    ("Revisión — Carga de discos",
+     "Bloque de sistema: máquinas de carga de discos (plate loaded): seguros, brazos o carro, cuernos y topes.",
+     [
+         (1, "Seguros y trabas de seguridad", "CRÍTICO. Pines de liberación rápida, traba o palanca de fin de recorrido: presentes, encajan, sueltan sin forzar y sostienen con carga (hack, péndulo, prensa).", "verificacion", 1, 1, None, None, None, None),
+         (2, "Brazos, pivotes y rodamientos (o carro y riel)", "Sin juego lateral, ruido ni trabas en todo el recorrido. En la hack: el carro corre por el riel sin saltos; rodillos y bujes sin desgaste.", "verificacion", 1, 0, None, None, None, None),
+         (3, "Cuernos porta discos y soportes de bandas", "Rectos, sin óxido ni golpes, firmes (no giran). Soportes de bandas presentes si el modelo los tiene.", "verificacion", 1, 0, None, None, None, None),
+         (4, "Topes de inicio y fin", "Gomas presentes; el brazo no golpea metal con metal.", "verificacion", 1, 0, None, None, None, None),
+         (5, "Ajustes: respaldo, hombreras, plataforma y rodillos", "Cada posición calza y traba; pines presentes con su cordel.", "verificacion", 1, 0, None, None, None, None),
+         (6, "Plataforma, apoyos y empuñaduras", "Antideslizante sin desgaste; espuma sin rotura; grips firmes.", "verificacion", 1, 0, None, None, None, None),
+         (7, "Recorrido con carga liviana", "Con un disco de 5 a 10 kg por cuerno (nunca más): recorrido completo sin roce ni golpe seco; vuelve solo.", "verificacion", 1, 0, None, None, None, None),
          (8, "Observación de carga de discos", "", "texto", 0, 0, None, None, None, None),
      ]),
-    ("Control de Calidad — Detalle poleas ajustables",
-     "Bloque de sistema. Dual cable / dual pulley: cables, poleas giratorias, "
-     "carros de altura, stacks y accesorios.",
+    ("Revisión — Poleas ajustables",
+     "Bloque de sistema: dual cable y dual pulley (cables, poleas giratorias, brazos y carros de altura, dos stacks).",
      [
-         (1, "Cable de acero: hebras rotas o deshilache", "CRÍTICO de seguridad. Recorrer todo el largo, ambos lados.", "verificacion", 1, 1, None, None, None, None),
-         (2, "Terminales, prensas y mosquetones", "Sin deslizamiento ni deformación; mosquetones cierran", "verificacion", 1, 0, None, None, None, None),
-         (3, "Poleas giratorias", "Giro libre y rotación completa, sin trizaduras", "verificacion", 1, 0, None, None, None, None),
-         (4, "Carros de altura y su pin", "Deslizan y el pin traba en cada posición", "verificacion", 1, 0, None, None, None, None),
-         (5, "Stacks: placas, pin selector y topes", "Placas completas en ambos lados; pin con cordel; topes sin quiebre", "verificacion", 1, 1, None, None, None, None),
-         (6, "Accesorios incluidos", "Empuñaduras, barra, cuerda, tobillera: contar contra la ficha", "verificacion", 1, 0, None, None, None, None),
-         (7, "Recorrido completo sin roce", "Ambos lados", "sino", 1, 0, None, None, None, None),
+         (1, "Cable de acero, ambos lados", "CRÍTICO. Recórrelo entero con el cable estirado. Desnudo: sin hebras rotas. Con forro: sin cortes ni torceduras.", "verificacion", 1, 1, None, None, None, None),
+         (2, "Terminales, prensas y mosquetones", "Sin deslizamiento ni deformación; los mosquetones cierran.", "verificacion", 1, 0, None, None, None, None),
+         (3, "Poleas giratorias", "Giro libre y rotación completa, sin trizaduras.", "verificacion", 1, 0, None, None, None, None),
+         (4, "Brazos y carros de altura: ajuste y traba", "CRÍTICO. Recorre todas las posiciones; el pin o la palanca traba en cada una y no cae al cargar.", "verificacion", 1, 0, None, None, None, None),
+         (5, "Stacks: placas, guías, pin selector y topes", "Placas completas en ambos stacks; guías lisas; pin con cordel; topes sin quiebre.", "verificacion", 1, 1, None, None, None, None),
+         (6, "Accesorios que llegaron", "Agarres, barra, cuerda, tobillera, barra de dominadas: goma firme, costuras sanas, mosquetón que cierra.", "verificacion", 0, 0, None, None, None, None),
+         (7, "Recorrido completo, ambos lados", "Con carga media: sin ruido ni roce.", "verificacion", 1, 0, None, None, None, None),
          (8, "Observación de poleas", "", "texto", 0, 0, None, None, None, None),
      ]),
-    ("Control de Calidad — Detalle bancos y ajustes",
-     "Bloque de sistema. Bancos planos, ajustables y olímpicos.",
+    ("Revisión — Bancos y ajustes",
+     "Bloque de sistema: bancos planos, ajustables y olímpicos.",
      [
-         (1, "Respaldo: traba en todas las posiciones", "Recorrer cada posición", "verificacion", 1, 0, None, None, None, None),
-         (2, "Asiento: ajuste y traba", "", "verificacion", 1, 0, None, None, None, None),
-         (3, "Pines, perillas y escalera de ajuste", "Presentes y sin deformación", "verificacion", 1, 0, None, None, None, None),
-         (4, "Apoya piernas y rodillos (si tiene)", "Firmes, espuma sin rotura. N/A si no tiene.", "verificacion", 1, 0, None, None, None, None),
-         (5, "Ruedas de transporte y manilla", "Giran y la manilla está firme", "verificacion", 1, 0, None, None, None, None),
-         (6, "Estabilidad", "No cojea; niveladores o tacos firmes", "verificacion", 1, 0, None, None, None, None),
-         (7, "Tapiz de respaldo y asiento", "Cortes, rasgados o manchas", "verificacion", 1, 1, None, None, None, None),
+         (1, "Estabilidad", "No cojea ni se mueve al apoyar peso; topes o niveladores firmes.", "verificacion", 1, 0, None, None, None, None),
+         (2, "Respaldo: ajuste y traba", "Recorre cada posición; el pin o la palanca traba y no cede con peso.", "verificacion", 0, 0, None, None, None, None),
+         (3, "Asiento: ajuste y traba", "Si el modelo lo tiene.", "verificacion", 0, 0, None, None, None, None),
+         (4, "Pines, perillas y cremallera de ajuste", "Presentes y sin deformación.", "verificacion", 0, 0, None, None, None, None),
+         (5, "Apoya piernas y rodillos", "Firmes, espuma sin rotura. Si no tiene, «no aplica».", "verificacion", 0, 0, None, None, None, None),
+         (6, "Ruedas de transporte y manilla", "Giran y la manilla está firme.", "verificacion", 0, 0, None, None, None, None),
+         (7, "Soportes de barra (banco olímpico)", "Firmes, con sus protectores y sin juego.", "verificacion", 0, 0, None, None, None, None),
          (8, "Observación del banco", "", "texto", 0, 0, None, None, None, None),
      ]),
-    ("Control de Calidad — Detalle cargas libres (por línea)",
-     "Bloque de sistema. Mancuernas, discos y su rack: se revisa la LÍNEA completa "
-     "y se cuenta contra el documento.",
+    ("Revisión — Cargas libres (por línea)",
+     "Bloque de sistema: mancuernas, discos y su rack. Se revisa la LÍNEA completa y se cuentan las piezas.",
      [
-         (1, "Cantidad contada", "Compárala con la cantidad del documento (está en la tarjeta)", "numero", 1, 0, "un.", None, None, None),
-         (2, "¿Coincide con el documento?", "Si no coincide, detalla en la observación qué falta", "sino", 1, 0, None, None, None, None),
-         (3, "Foto del lote completo", "Todas las piezas a la vista", "foto", 1, 1, None, None, None, None),
-         (4, "Recubrimiento sin grietas ni desprendimiento", "Goma, uretano o cromado", "verificacion", 1, 0, None, None, None, None),
-         (5, "Cabezales y aros firmes", "Mancuernas sin cabezal suelto; discos con aro sin deformación", "verificacion", 1, 0, None, None, None, None),
-         (6, "Peso legible en cada pieza", "", "verificacion", 1, 0, None, None, None, None),
-         (7, "Rack o soporte (si viene)", "Bandejas o soportes completos y estables. N/A si no viene.", "verificacion", 0, 0, None, None, None, None),
-         (8, "Observación de la línea", "Faltantes o piezas dañadas, con cantidad", "texto", 0, 0, None, None, None, None),
+         (1, "Cantidad contada (piezas)", "Cuenta PIEZAS: una línea de «pares» tiene el doble (3 pares = 6 discos). El set de mancuernas 2,5 a 25 kg trae 10 pares = 20 mancuernas.", "numero", 1, 0, "piezas", None, None, None),
+         (2, "¿Coincide con el documento?", "Si no coincide, detalla qué falta en la observación.", "sino", 1, 0, None, None, None, None),
+         (3, "Foto de piezas dañadas (si hay)", "La foto del lote ya va en la foto general; aquí, el detalle de lo dañado.", "foto", 0, 1, None, None, None, None),
+         (4, "Recubrimiento sin grietas ni desprendimiento", "Cromado, uretano o goma: sin grietas, cortes, burbujas ni desprendimiento; disco plano y borde sin astilladuras.", "verificacion", 1, 0, None, None, None, None),
+         (5, "Cabezales, anillos y tuercas firmes", "Mancuernas: cabezas sin juego, tuercas firmes, mango que no gira. Discos: anillo central sin holgura; agujero de 50 mm sin deformar.", "verificacion", 1, 0, None, None, None, None),
+         (6, "Peso legible en cada pieza", "Grabado o relieve legible; ninguna pieza sin marca.", "verificacion", 1, 0, None, None, None, None),
+         (7, "Rack o soporte (si viene)", "Soportes con goma, bandejas completas, estable y sin óxido. Si no viene, «no aplica».", "verificacion", 0, 0, None, None, None, None),
+         (8, "Observación de la línea", "Faltantes o piezas dañadas, con cantidad.", "texto", 0, 0, None, None, None, None),
      ]),
-    ("Control de Calidad — Detalle trotadora (cinta y motor)",
-     "Bloque de sistema. Trotadoras: cinta, tabla, motor, seguridad y consola. "
-     "A una trotadora no se le busca piola: se le revisa la cinta.",
+    ("Revisión — Trotadora (cinta y motor)",
+     "Bloque de sistema: trotadoras. A una trotadora no se le busca piola: se le revisa la cinta y el motor.",
      [
-         (1, "Cinta: alineación", "Centrada sobre los rodillos", "verificacion", 1, 0, None, None, None, None),
-         (2, "Cinta: tensión y desgaste", "No patina; sin cortes ni bordes deshilachados", "verificacion", 1, 1, None, None, None, None),
-         (3, "Tabla y rodillos", "Sin ruido ni golpeteo", "verificacion", 1, 0, None, None, None, None),
-         (4, "Motor: arranque y ruido", "Probar a distintas velocidades", "verificacion", 1, 0, None, None, None, None),
-         (5, "Parada de emergencia y llave magnética", "CRÍTICO de seguridad", "verificacion", 1, 0, None, None, None, None),
-         (6, "Inclinación: sube y baja completa", "N/A si no tiene inclinación", "verificacion", 1, 0, None, None, None, None),
-         (7, "Consola, botones y pulso", "", "verificacion", 1, 0, None, None, None, None),
-         (8, "Cable de poder y enchufe", "Sin cortes ni aplastamiento", "verificacion", 1, 0, None, None, None, None),
+         (1, "Parada de emergencia y llave magnética", "CRÍTICO. Al sacar la llave o tocar emergencia, la cinta se detiene al instante.", "verificacion", 1, 0, None, None, None, None),
+         (2, "Cable de poder y enchufe", "Sin cortes, aplastamiento ni enchufe suelto.", "verificacion", 1, 0, None, None, None, None),
+         (3, "Cinta: alineación", "Centrada sobre los rodillos; no se corre al caminar.", "verificacion", 1, 0, None, None, None, None),
+         (4, "Cinta: tensión y desgaste", "No patina al caminar encima; sin cortes ni bordes deshilachados.", "verificacion", 1, 1, None, None, None, None),
+         (5, "Tabla y rodillos", "Sin ruido ni golpeteo.", "verificacion", 1, 0, None, None, None, None),
+         (6, "Motor: arranque y ruido", "Prueba a distintas velocidades: arranca suave, sin olor ni ruido raro.", "verificacion", 1, 0, None, None, None, None),
+         (7, "Inclinación", "Sube y baja completa. Si no tiene, «no aplica».", "verificacion", 0, 0, None, None, None, None),
+         (8, "Consola, botones y pulso", "", "verificacion", 1, 0, None, None, None, None),
      ]),
-    ("Control de Calidad — Detalle bicicleta (transmisión y consola)",
-     "Bloque de sistema. Bicicletas y elípticas: transmisión, resistencia, "
-     "ajustes y consola.",
+    ("Revisión — Bicicleta (transmisión y consola)",
+     "Bloque de sistema: bicicletas y elípticas.",
      [
-         (1, "Pedales y bielas firmes", "Sin juego ni ruido", "verificacion", 1, 0, None, None, None, None),
-         (2, "Correa o transmisión", "Sin ruido ni salto", "verificacion", 1, 0, None, None, None, None),
-         (3, "Resistencia en todos los niveles", "Sube y baja completa", "verificacion", 1, 0, None, None, None, None),
-         (4, "Sillín y poste: ajuste y traba", "", "verificacion", 1, 0, None, None, None, None),
-         (5, "Manubrio y su ajuste", "", "verificacion", 1, 0, None, None, None, None),
+         (1, "Freno de parada del volante", "CRÍTICO en spinning: al presionar, el volante se detiene. Si no tiene (vertical o reclinada), «no aplica».", "verificacion", 0, 0, None, None, None, None),
+         (2, "Pedales y bielas firmes", "Sin juego ni ruido.", "verificacion", 1, 0, None, None, None, None),
+         (3, "Correa o transmisión", "Sin ruido ni salto.", "verificacion", 1, 0, None, None, None, None),
+         (4, "Resistencia en todos los niveles", "Sube y baja completa.", "verificacion", 1, 0, None, None, None, None),
+         (5, "Sillín, poste y manubrio: ajuste y traba", "", "verificacion", 1, 0, None, None, None, None),
          (6, "Consola y lectura de pulso", "", "verificacion", 1, 0, None, None, None, None),
          (7, "Estabilidad y niveladores", "", "verificacion", 1, 0, None, None, None, None),
          (8, "Observación de la bicicleta", "", "texto", 0, 0, None, None, None, None),
      ]),
-    ("Control de Calidad — Detalle rack y soportes",
-     "Bloque de sistema. Racks y jaulas: estructura apernada, soportes de barra "
-     "y brazos de seguridad.",
+    ("Revisión — Rack y soportes",
+     "Bloque de sistema: racks y jaulas.",
      [
-         (1, "Estructura y uniones apernadas", "Sin pernos faltantes ni sueltos", "verificacion", 1, 0, None, None, None, None),
-         (2, "Soportes de barra con protector", "J-hooks firmes y con su protector", "verificacion", 1, 0, None, None, None, None),
-         (3, "Brazos de seguridad: traban en cada altura", "CRÍTICO de seguridad", "verificacion", 1, 1, None, None, None, None),
+         (1, "Brazos de seguridad: traban en cada altura", "CRÍTICO de seguridad.", "verificacion", 1, 1, None, None, None, None),
+         (2, "Estructura y uniones apernadas", "Sin pernos faltantes ni sueltos.", "verificacion", 1, 0, None, None, None, None),
+         (3, "Soportes de barra con protector", "J-hooks firmes y con su protector.", "verificacion", 1, 0, None, None, None, None),
          (4, "Pines y perillas presentes", "", "verificacion", 1, 0, None, None, None, None),
-         (5, "Barra de dominadas y anclajes", "N/A si no tiene", "verificacion", 1, 0, None, None, None, None),
-         (6, "Porta discos y accesorios del rack", "N/A si no tiene", "verificacion", 1, 0, None, None, None, None),
-         (7, "Anclaje a piso y estabilidad", "", "verificacion", 1, 0, None, None, None, None),
-         (8, "Observación del rack", "", "texto", 0, 0, None, None, None, None),
+         (5, "Accesorios del rack", "Barra de dominadas y porta discos firmes. Si no tiene, «no aplica».", "verificacion", 0, 0, None, None, None, None),
+         (6, "Anclaje a piso y estabilidad", "", "verificacion", 1, 0, None, None, None, None),
+         (7, "Observación del rack", "", "texto", 0, 0, None, None, None, None),
      ]),
 ]
 
-_CHK_BASE_CONTROL_CALIDAD = "Control de Calidad — Registro por equipo (bodega)"
-_CHK_COND_CONTROL_CALIDAD = "Control de Calidad — Detalle estructura y tapiz"
-_CHK_SELECTOR = "Control de Calidad — Detalle carga, cables y movimiento"
+_CHK_BASE_CONTROL_CALIDAD = "Revisión — Registro por equipo"
+_CHK_COND_CONTROL_CALIDAD = "Revisión — Estructura y tapiz"
+_CHK_SELECTOR = "Revisión — Selector de peso"
 
-# Clase del catálogo → bloque de sistema (semilla para control_calidad). Solo
-# se siembra si el tipo todavía no tiene NINGUNA regla: después manda la tabla.
+# Clase del catálogo → bloque de sistema. Se siembra por tipo de trabajo solo si ese tipo todavía no tiene NINGUNA
+# regla: después manda la tabla.
 _CHK_HERENCIA_CLASES_SEED = {
     "selectorizador_pesos":      _CHK_SELECTOR,
     "selectorizador_pesos_4est": _CHK_SELECTOR,
-    "dual_cable_lite":           "Control de Calidad — Detalle poleas ajustables",
-    "dual_cable_cross":          "Control de Calidad — Detalle poleas ajustables",
-    "dual_pulley_drax":          "Control de Calidad — Detalle poleas ajustables",
-    "booty_builder_p":           "Control de Calidad — Detalle carga de discos",
-    "bancos_plano_ajustable":    "Control de Calidad — Detalle bancos y ajustes",
-    "bancos_olimpicos":          "Control de Calidad — Detalle bancos y ajustes",
-    "rack_accesorios":           "Control de Calidad — Detalle cargas libres (por línea)",
-    "accesorio":                 "Control de Calidad — Detalle cargas libres (por línea)",
-    "rack_basico":               "Control de Calidad — Detalle rack y soportes",
-    "rack_intermedio":           "Control de Calidad — Detalle rack y soportes",
-    "rack_avanzados":            "Control de Calidad — Detalle rack y soportes",
-    "rack_pro":                  "Control de Calidad — Detalle rack y soportes",
-    "trotadora":                 "Control de Calidad — Detalle trotadora (cinta y motor)",
-    "bicicleta":                 "Control de Calidad — Detalle bicicleta (transmisión y consola)",
+    "dual_cable_lite":           "Revisión — Poleas ajustables",
+    "dual_cable_cross":          "Revisión — Poleas ajustables",
+    "dual_pulley_drax":          "Revisión — Poleas ajustables",
+    "booty_builder_p":           "Revisión — Carga de discos",
+    "bancos_plano_ajustable":    "Revisión — Bancos y ajustes",
+    "bancos_olimpicos":          "Revisión — Bancos y ajustes",
+    "rack_accesorios":           "Revisión — Cargas libres (por línea)",
+    "accesorio":                 "Revisión — Cargas libres (por línea)",
+    "rack_basico":               "Revisión — Rack y soportes",
+    "rack_intermedio":           "Revisión — Rack y soportes",
+    "rack_avanzados":            "Revisión — Rack y soportes",
+    "rack_pro":                  "Revisión — Rack y soportes",
+    "trotadora":                 "Revisión — Trotadora (cinta y motor)",
+    "bicicleta":                 "Revisión — Bicicleta (transmisión y consola)",
 }
+
+# Excepciones por producto CONFIRMADAS (técnico senior con fuentes + Daniel, 18-oct): la clase es por línea de
+# producto, no por mecanismo.
+_CHK_HERENCIA_PRODUCTOS_SEED = {
+    "SPKB":     _CHK_SELECTOR,                    # Selectorized Pendulum Kick Back (Glute Builder con stack)
+    "350":      _CHK_SELECTOR,                    # Gymleco 350 Biceps Curl 300 Series (stack 60 kg)
+    "334":      _CHK_SELECTOR,                    # Gymleco 334 Side Lateral Standing 300 Series (stack 80 kg)
+    "326":      _CHK_SELECTOR,                    # Gymleco 326 Standing Pec Fly / Wide Chest (stack 100 kg)
+    "ABDUS074": "Revisión — Carga de discos",     # 3D Multi Abductor (Daniel confirmó con la foto: discos)
+}
+
+
+def _chk_tipos_herencia():
+    """Tipos de trabajo que usan el checklist heredado: Control de calidad y los tipos internos «Revisión de
+    equipos» (Daniel lo creó el 18-oct; se busca por nombre o clave porque la clave la genera el CRUD)."""
+    tipos = ["control_calidad"]
+    try:
+        for r in (mysql_fetchall(
+                "SELECT clave FROM mant_tipos_interno "
+                " WHERE LOWER(nombre) LIKE %s OR LOWER(clave) LIKE %s",
+                ("revisi%n de equipo%", "revision%equipo%")) or []):
+            c = (r.get("clave") or "").strip().lower()
+            if c and c not in tipos:
+                tipos.append(c)
+    except Exception as e:
+        print(f"[chk_herencia] tipos «Revisión de equipos»: {e}", flush=True)
+    return tipos
 
 
 def _ensure_checklist_herencia():
@@ -152580,29 +152650,34 @@ def _ensure_checklist_herencia():
         except Exception as e:
             print(f"[ensure_checklist_herencia] bloque '{nombre}': {e}", flush=True)
     try:
-        ya = mysql_fetchone(
-            "SELECT COUNT(*) AS n FROM mant_checklist_herencia WHERE tipo_ot='control_calidad'")
-        if ya and int(ya.get("n") or 0):
-            return out
-        nombres = {_CHK_BASE_CONTROL_CALIDAD, _CHK_COND_CONTROL_CALIDAD} | set(_CHK_HERENCIA_CLASES_SEED.values())
+        nombres = ({_CHK_BASE_CONTROL_CALIDAD, _CHK_COND_CONTROL_CALIDAD} | set(_CHK_HERENCIA_CLASES_SEED.values())
+                   | set(_CHK_HERENCIA_PRODUCTOS_SEED.values()))
         ph = ",".join(["%s"] * len(nombres))
         ids = {r["nombre"]: int(r["id"]) for r in (mysql_fetchall(
-            f"SELECT id, nombre FROM mant_tarea_plantillas WHERE nombre IN ({ph})",
+            f"SELECT id, nombre FROM mant_tarea_plantillas WHERE nombre IN ({ph}) AND categoria_admin='trabajo_interno'",
             tuple(sorted(nombres))) or [])}
-        filas = []
-        if ids.get(_CHK_BASE_CONTROL_CALIDAD):
-            filas.append(("tipo", "control_calidad", "base", ids[_CHK_BASE_CONTROL_CALIDAD]))
-        if ids.get(_CHK_COND_CONTROL_CALIDAD):
-            filas.append(("tipo", "control_calidad", "condicional", ids[_CHK_COND_CONTROL_CALIDAD]))
-        for slug, nombre in _CHK_HERENCIA_CLASES_SEED.items():
-            if ids.get(nombre):
-                filas.append(("clase", slug, "sistema", ids[nombre]))
-        for amb, clave, rol, pid in filas:
-            mysql_execute(
-                "INSERT IGNORE INTO mant_checklist_herencia "
-                "(ambito, clave, tipo_ot, rol, plantilla_id, actualizado_por) "
-                "VALUES (%s,%s,'control_calidad',%s,%s,'seed')", (amb, clave, rol, pid))
-        out["reglas"] = len(filas)
+        for tipo in _chk_tipos_herencia():
+            ya = mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM mant_checklist_herencia WHERE tipo_ot=%s", (tipo,))
+            if ya and int(ya.get("n") or 0):
+                continue
+            filas = []
+            if ids.get(_CHK_BASE_CONTROL_CALIDAD):
+                filas.append(("tipo", tipo, "base", ids[_CHK_BASE_CONTROL_CALIDAD]))
+            if ids.get(_CHK_COND_CONTROL_CALIDAD):
+                filas.append(("tipo", tipo, "condicional", ids[_CHK_COND_CONTROL_CALIDAD]))
+            for slug, nombre in _CHK_HERENCIA_CLASES_SEED.items():
+                if ids.get(nombre):
+                    filas.append(("clase", slug, "sistema", ids[nombre]))
+            for sku, nombre in _CHK_HERENCIA_PRODUCTOS_SEED.items():
+                if ids.get(nombre):
+                    filas.append(("producto", sku, "sistema", ids[nombre]))
+            for amb, clave, rol, pid in filas:
+                mysql_execute(
+                    "INSERT IGNORE INTO mant_checklist_herencia "
+                    "(ambito, clave, tipo_ot, rol, plantilla_id, actualizado_por) "
+                    "VALUES (%s,%s,%s,%s,%s,'seed')", (amb, clave, tipo, rol, pid))
+            out["reglas"] += len(filas)
     except Exception as e:
         print(f"[ensure_checklist_herencia] semilla de reglas: {e}", flush=True)
     return out
@@ -152737,7 +152812,56 @@ def ot2_api_checklist_heredado():
     """Checklist heredado por SKU para el asistente (solo lectura)."""
     tipo = (request.args.get("tipo") or "").strip().lower()[:40]
     skus = (request.args.get("skus") or "").split(",")
-    return jsonify(dict(_chk_herencia_resolver(skus, tipo), ok=True))
+    r = _chk_herencia_resolver(skus, tipo)
+    clases = []
+    if r.get("activo"):
+        try:
+            clases = [{"slug": c["slug"], "nombre": c["nombre"]} for c in (mysql_fetchall(
+                "SELECT slug, nombre FROM cat_clases_producto WHERE activo=1 ORDER BY orden, nombre") or [])]
+        except Exception:
+            clases = []
+    return jsonify(dict(r, ok=True, clases_catalogo=clases))
+
+
+@app.route("/ot/api/checklist-heredado/clasificar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot2_api_checklist_heredado_clasificar():
+    """🏷️ 2026-10-18 (Daniel: «que se rija por la clasificación de productos»): un producto SIN clase se
+    clasifica en el catálogo desde la revisión, y su checklist sale de esa clase. Mismos candados que
+    ot2_api_producto_clasificar: solo llena el hueco (nunca pisa una clase existente), el producto debe estar en el
+    catálogo y queda firmado (updated_by + bitácora)."""
+    d = request.get_json(silent=True) or {}
+    sku = (d.get("sku") or "").strip()[:100]
+    slug = (d.get("clase") or "").strip()[:60]
+    tipo = (d.get("tipo") or "").strip().lower()[:40]
+    if not sku or not slug:
+        return jsonify({"ok": False, "error": "Falta el producto o la clase."}), 400
+    try:
+        clase = mysql_fetchone(
+            "SELECT slug, nombre FROM cat_clases_producto WHERE slug=%s AND activo=1 LIMIT 1", (slug,))
+        if not clase:
+            return jsonify({"ok": False, "error": "Esa clase no existe en el catálogo."}), 400
+        prod = mysql_fetchone(
+            "SELECT sku, COALESCE(TRIM(clase_producto),'') AS clase FROM cat_productos WHERE sku=%s LIMIT 1", (sku,))
+        if not prod:
+            return jsonify({"ok": False, "guardado": False, "motivo": "sku_fuera_de_catalogo",
+                            "error": "Este producto no está en el catálogo: elige el bloque y usa «Recordar para este producto»."}), 200
+        if prod["clase"]:
+            return jsonify(dict(_chk_herencia_resolver([sku], tipo), ok=True, guardado=False, motivo="ya_clasificado"))
+        mysql_execute(
+            "UPDATE cat_productos SET clase_producto=%s, updated_by=%s "
+            " WHERE sku=%s AND COALESCE(TRIM(clase_producto),'')=''",
+            (clase["slug"], current_username() or "sistema", sku))
+    except Exception as e:
+        print(f"[chk_herencia_clasificar] sku={sku!r}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo clasificar el producto."}), 500
+    try:
+        _mant_log("catalogo", 0, "clasificado_desde_ot",
+                  f"SKU {sku} quedó clasificado como «{clase['nombre']}» desde una revisión ({current_username() or 'sistema'}).")
+    except Exception:
+        pass
+    return jsonify(dict(_chk_herencia_resolver([sku], tipo), ok=True, guardado=True, clase=clase["nombre"]))
 
 
 @app.route("/ot/api/checklist-heredado/producto", methods=["POST"])

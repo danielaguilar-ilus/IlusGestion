@@ -155,7 +155,7 @@ class TestBloques(unittest.TestCase):
     def test_nombres_unicos_de_control_de_calidad(self):
         nombres = [b[0] for b in self.k["_CHK_BLOQUES_SEED"]]
         self.assertEqual(len(nombres), len(set(nombres)))
-        self.assertTrue(all(n.startswith("Control de Calidad — ") for n in nombres))
+        self.assertTrue(all(n.startswith("Revisión — ") for n in nombres))
 
     def test_a_la_trotadora_se_le_revisa_la_cinta_no_la_piola(self):
         trot = next(b for b in self.k["_CHK_BLOQUES_SEED"] if "trotadora" in b[0].lower())
@@ -172,19 +172,94 @@ class TestBloques(unittest.TestCase):
         for slug in self.k["_CHK_HERENCIA_CLASES_SEED"]:
             self.assertTrue(f'"{slug}"' in cat or f"'{slug}'" in cat, slug)
 
-    def test_reusa_las_plantillas_de_la_nvi_552(self):
-        app = _leer("app.py")
+    def test_bloques_revision_nuevos_sin_tocar_los_de_la_nvi_552(self):   # REGLA #4.2
+        nombres = [b[0] for b in self.k["_CHK_BLOQUES_SEED"]]
+        self.assertTrue(all(n.startswith("Revisión — ") for n in nombres))
         for n in (self.k["_CHK_BASE_CONTROL_CALIDAD"], self.k["_CHK_COND_CONTROL_CALIDAD"], self.k["_CHK_SELECTOR"]):
-            self.assertIn(f'("{n}", "inspeccion",', app)
+            self.assertIn(n, nombres)
+        self.assertIn('("Control de Calidad — Registro por equipo (bodega)", "inspeccion",', _leer("app.py"))
+
+    def test_base_foto_general_obligatoria_y_serie_inteligente(self):
+        base = next(b for b in self.k["_CHK_BLOQUES_SEED"] if b[0] == self.k["_CHK_BASE_CONTROL_CALIDAD"])[2]
+        fotos = [it for it in base if it[3] == "foto"]
+        self.assertEqual([it[4] for it in fotos], [1, 0, 0])          # solo la general es obligatoria
+        serie = [it for it in base if it[3] == "serie"]
+        self.assertEqual(len(serie), 1)
+        self.assertEqual(serie[0][4], 1)
+        resultado = next(it for it in base if it[3] == "lista")
+        self.assertIn("Pendiente de diagn", resultado[9])
+
+    def test_selector_revisa_piola_pivotes_bujes_y_pads(self):           # Daniel: «las piolas, los pads, los bujes»
+        sel = next(b for b in self.k["_CHK_BLOQUES_SEED"] if b[0] == self.k["_CHK_SELECTOR"])[2]
+        textos = " ".join((it[1] + " " + (it[2] or "")).lower() for it in sel)
+        for palabra in ("piola", "bujes", "pivotes", "pads", "crítico"):
+            self.assertIn(palabra, textos)
+
+    def test_excepciones_confirmadas(self):
+        prod = self.k["_CHK_HERENCIA_PRODUCTOS_SEED"]
+        for sku in ("SPKB", "350", "334", "326"):
+            self.assertEqual(prod[sku], self.k["_CHK_SELECTOR"])
+        self.assertEqual(prod["ABDUS074"], "Revisión — Carga de discos")
+        nombres = {b[0] for b in self.k["_CHK_BLOQUES_SEED"]}
+        self.assertTrue(set(prod.values()) <= nombres)
 
     def test_semilla_barata_y_sin_pisar_ediciones(self):   # REGLA #18
         f = _fuente("_ensure_checklist_herencia")
         self.assertIn("CREATE TABLE IF NOT EXISTS mant_checklist_herencia", f)
         self.assertIn("UNIQUE KEY uq_chk_herencia (ambito, clave, tipo_ot, rol)", f)
         self.assertIn("SELECT id FROM mant_tarea_plantillas WHERE nombre=%s LIMIT 1", f)
-        self.assertIn("WHERE tipo_ot='control_calidad'", f)
+        self.assertIn("for tipo in _chk_tipos_herencia():", f)
+        self.assertIn("SELECT COUNT(*) AS n FROM mant_checklist_herencia WHERE tipo_ot=%s", f)
         self.assertIn("INSERT IGNORE INTO mant_checklist_herencia", f)
         self.assertIn("_chk_her = _ensure_checklist_herencia()", _leer("app.py"))
+
+
+class TestTiposConHerencia(unittest.TestCase):
+    def test_control_de_calidad_y_revision_de_equipos(self):
+        consultas = []
+
+        def fetchall(sql, params=None):
+            consultas.append(params)
+            return [{"clave": "revision_de_equipos"}]
+        f = _exec("_chk_tipos_herencia", {"mysql_fetchall": fetchall, "print": lambda *a, **k: None})
+        self.assertEqual(f(), ["control_calidad", "revision_de_equipos"])
+        self.assertIn("revisi%n de equipo%", consultas[0])
+
+
+class TestClasificarDesdeLaRevision(unittest.TestCase):
+    def _llamar(self, prod):
+        escrito = []
+        armar = _exec("_chk_herencia_armar", {})
+        amb = {
+            "request": _Req({"sku": "350", "clase": "selectorizador_pesos", "tipo": "control_calidad"}),
+            "jsonify": lambda d: d, "current_username": lambda: "daniel", "print": lambda *a, **k: None,
+            "mysql_fetchone": lambda sql, params=None: ({"slug": "selectorizador_pesos", "nombre": "Selectorizador de pesos"}
+                                                        if "cat_clases_producto" in sql else prod),
+            "mysql_execute": lambda sql, params=None: escrito.append((" ".join(sql.split()), params)),
+            "_mant_log": lambda *a: None,
+            "_chk_herencia_resolver": lambda skus, tipo: armar(skus, NVI_687, REGLAS),
+        }
+        r = _exec("ot2_api_checklist_heredado_clasificar", amb)()
+        return (r[0] if isinstance(r, tuple) else r), escrito
+
+    def test_llena_el_hueco_y_firma(self):
+        r, escrito = self._llamar({"sku": "350", "clase": ""})
+        self.assertTrue(r["guardado"])
+        self.assertIn("COALESCE(TRIM(clase_producto),'')=''", escrito[0][0])
+        self.assertEqual(escrito[0][1], ("selectorizador_pesos", "daniel", "350"))
+
+    def test_nunca_pisa_una_clase(self):
+        r, escrito = self._llamar({"sku": "350", "clase": "booty_builder_p"})
+        self.assertFalse(r["guardado"])
+        self.assertEqual(escrito, [])
+
+    def test_fuera_del_catalogo_no_escribe(self):
+        r, escrito = self._llamar(None)
+        self.assertEqual(r["motivo"], "sku_fuera_de_catalogo")
+        self.assertEqual(escrito, [])
+
+    def test_decoradores(self):
+        self.assertIn("_no_tecnico", _decoradores("ot2_api_checklist_heredado_clasificar"))
 
 
 class _Req:
@@ -254,6 +329,12 @@ class TestCrearOT(unittest.TestCase):
         self.assertIn("_categoria_admin_para_tipo(tipo_ot)", f)
         self.assertIn("COALESCE(p.activa, 1) = 1", f)
 
+    def test_no_llego_queda_como_faltante_declarado(self):
+        self.assertIn('"no_llego": bool(_tm.get("no_llego")),', self.f)
+        self.assertIn('_tm_tit = (_tm["titulo"] + " — NO LLEGÓ")[:300]', self.f)
+        self.assertIn("_tm_obl = 0", self.f)
+        self.assertIn('"plantilla_ids": [] if _tm.get("no_llego") else _tm_pids,', self.f)
+
     def test_ot_interna_con_su_nvi_no_se_factura(self):
         app = _leer("app.py")
         i = app.index('elif es_interna and _fin_nudo and (_fin_tido or "").upper() == "NVI":')
@@ -272,6 +353,13 @@ class TestPantallas(unittest.TestCase):
         self.assertIn("function comoSiempre()", M)                          # sin herencia: igual que antes
         self.assertIn("Recordar para este producto", M)
         self.assertIn("setBloqueTareaManual:setBloqueTareaManual, recordarBloqueProducto:recordarBloqueProducto", M)
+
+    def test_tabla_como_mantencion(self):   # REGLA #14 + «No llegó» + clasificar
+        self.assertIn("function toggleLlegoTodos()", M)
+        self.assertIn("var algunoSin = filas.some(function(t){ return t.no_llego; });", M)
+        self.assertIn("'/ot/api/checklist-heredado/clasificar'", M)
+        self.assertIn("No llegó · queda en la OT como faltante declarado", M)
+        self.assertIn("setLlegoTareaManual:setLlegoTareaManual, toggleLlegoTodos:toggleLlegoTodos,", M)
 
     def test_asistente_sin_popups_nativos(self):   # REGLA #1
         i = M.index("function _o2mAgregarItemsHeredando(")

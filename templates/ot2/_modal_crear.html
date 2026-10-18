@@ -1222,6 +1222,13 @@
 .o2m-her-warn{color:#92400e;background:#fff8e1;border-radius:6px;padding:2px 6px;display:inline-block}
 .o2m-her-rec{font-size:.74rem;min-height:32px;align-self:flex-start}
 .o2m-her-u{font-size:.74rem;color:#6b7280;white-space:nowrap}
+/* 📦 2026-10-18 (Daniel: «que esta tabla sea parecida a la de mantenciones… si la escojo toda»). */
+.o2m-her-barra{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.o2m-her-cont{font-size:.84rem;color:#374151}
+.o2m-her-falta{color:#92400e;font-weight:700}
+.o2m-her-llego{display:inline-flex;align-items:center;gap:6px;min-height:44px;cursor:pointer;margin:0;font-size:.78rem;color:#374151}
+.o2m-her-llego input{width:20px;height:20px;accent-color:#16a34a;cursor:pointer}
+tr.o2m-her-nollego > td{background:#fffbeb}
 /* En celular la tabla de productos se lee como tarjetas: código y nombre
    arriba, cantidad y checklist debajo a todo el ancho, la × en la esquina.
    Antes la columna Checklist quedaba fuera de la pantalla (scroll lateral). */
@@ -1232,12 +1239,13 @@
   #o2mTareasList .table-responsive{overflow:visible}
   #o2mTareasList tr{position:relative;border:1px solid #e5e7eb;border-radius:12px;background:#fff;
     padding:10px 12px;margin-bottom:8px}
-  #o2mTareasList td:first-child, #o2mTareasList td:nth-child(2){padding-right:36px}
+  #o2mTareasList td.c-cod, #o2mTareasList td.c-desc{padding-right:36px}
   #o2mTareasList td{border:0;padding:2px 0}
-  #o2mTareasList td:first-child{font-size:.72rem;color:#6b7280}
-  #o2mTareasList td:nth-child(2){font-weight:600;color:#111827}
-  #o2mTareasList td:last-child{position:absolute;top:6px;right:6px;width:auto}
-  #o2mTareasList td:last-child .btn{min-width:36px;min-height:36px}
+  #o2mTareasList td.c-cod{font-size:.72rem;color:#6b7280}
+  #o2mTareasList td.c-desc{font-weight:600;color:#111827}
+  #o2mTareasList td.c-x{position:absolute;top:6px;right:6px;width:auto}
+  #o2mTareasList td.c-x .btn{min-width:36px;min-height:36px}
+  #o2mTareasList td.c-llego:empty{display:none}
   #o2mTareasList .o2m-her{min-width:0;margin-top:4px}
   #o2mTareasList tbody tr td[colspan]{position:static;text-align:center}
 }
@@ -5342,27 +5350,48 @@ window.OT2C = (function(){
         'Sin productos ni tareas agregadas todavía.</td></tr></tbody></table></div>';
       return;
     }
-    c.innerHTML = _o2mChkNota() +
+    // 📦 2026-10-18 (Daniel: «que esta tabla sea parecida a la de mantenciones… si la escojo toda»): con
+    // checklist heredado, cada fila dice si el producto LLEGÓ (casilla) y hay un «marcar/desmarcar todos»
+    // (REGLA #14) con contador. Desmarcada = «No llegó»: queda en la OT como faltante declarado.
+    var hayChk = S.tareas_manuales.some(function(t){ return t.chk; });
+    var nChk = S.tareas_manuales.filter(function(t){ return t.chk; }).length;
+    var nLlego = S.tareas_manuales.filter(function(t){ return t.chk && !t.no_llego; }).length;
+    var barra = hayChk
+      ? '<div class="o2m-her-barra">'+
+          '<button type="button" class="btn btn-sm btn-outline-secondary" style="min-height:40px" onclick="OT2C.toggleLlegoTodos()">'+
+          '<i class="bi bi-check-all me-1"></i>Marcar/desmarcar todos</button>'+
+          '<span class="o2m-her-cont"><b>'+nLlego+'</b> de '+nChk+' llegaron'+
+          ((nChk - nLlego) ? ' · <span class="o2m-her-falta">'+(nChk - nLlego)+((nChk - nLlego) === 1 ? ' no llegó' : ' no llegaron')+'</span>' : '')+'</span>'+
+        '</div>'
+      : '';
+    c.innerHTML = _o2mChkNota() + barra +
       '<div class="table-responsive"><table class="table table-sm align-middle mb-0" style="font-size:.82rem">'+
-      '<thead><tr><th>Código</th><th>Descripción</th><th style="width:90px">Cant.</th>'+
+      '<thead><tr>'+(hayChk ? '<th style="width:70px">Llegó</th>' : '')+
+      '<th>Código</th><th>Descripción</th><th style="width:90px">Cant.</th>'+
       '<th style="min-width:170px">Checklist</th><th style="width:36px"></th></tr></thead><tbody>' +
       S.tareas_manuales.map(function(tm,i){
         var cant = parseInt(tm.cantidad, 10); if (!cant || cant < 1) cant = 1;
-        return '<tr>'+
-          '<td class="text-monospace">'+esc(tm.sku || '—')+'</td>'+
-          '<td>'+esc(tm.titulo)+'</td>'+
+        var celdaLlego = !hayChk ? '' : (tm.chk
+          ? '<td class="c-llego"><label class="o2m-her-llego"><input type="checkbox" '+(tm.no_llego ? '' : 'checked')+
+            ' onchange="OT2C.setLlegoTareaManual('+i+',this.checked)" aria-label="¿Llegó '+esc(tm.titulo)+'?">'+
+            '<span>Llegó</span></label></td>'
+          : '<td class="c-llego"></td>');
+        return '<tr'+(tm.no_llego ? ' class="o2m-her-nollego"' : '')+'>'+
+          celdaLlego+
+          '<td class="c-cod text-monospace">'+esc(tm.sku || '—')+'</td>'+
+          '<td class="c-desc">'+esc(tm.titulo)+'</td>'+
           (tm.chk && !tm.chk_por_linea
-            ? '<td><span class="o2m-her-u" title="Una tarjeta por unidad">1 un.</span></td>'
-            : '<td><input type="number" class="form-control form-control-sm" inputmode="numeric" '+
+            ? '<td class="c-cant"><span class="o2m-her-u" title="Una tarjeta por unidad">1 un.</span></td>'
+            : '<td class="c-cant"><input type="number" class="form-control form-control-sm" inputmode="numeric" '+
               'style="width:70px;font-size:16px" min="1" step="1" value="'+cant+'" '+
               'title="Cantidad" aria-label="Cantidad" onchange="OT2C.setCantidadTareaManual('+i+',this.value)"></td>')+
           (tm.chk
-            ? '<td>'+_o2mChkCelda(tm, i)+'</td>'
-            : '<td><select class="form-select form-select-sm" style="font-size:16px" '+
+            ? '<td class="c-chk">'+_o2mChkCelda(tm, i)+'</td>'
+            : '<td class="c-chk"><select class="form-select form-select-sm" style="font-size:16px" '+
               'onchange="OT2C.setPlantillaTareaManual('+i+',this.value)">'+
               opsPlantilla.replace('value="'+(tm.plantilla_id||'')+'"', 'value="'+(tm.plantilla_id||'')+'" selected')+
               '</select></td>')+
-          '<td><button type="button" class="btn btn-sm btn-link text-danger p-1" onclick="OT2C.quitarTareaManual('+i+')" '+
+          '<td class="c-x"><button type="button" class="btn btn-sm btn-link text-danger p-1" onclick="OT2C.quitarTareaManual('+i+')" '+
           'style="min-height:32px" title="Quitar"><i class="bi bi-x-lg"></i></button></td>'+
         '</tr>';
       }).join('') + '</tbody></table></div>';
@@ -5423,7 +5452,7 @@ window.OT2C = (function(){
     // Nombre corto para la pantalla (la plantilla no se renombra): sin el prefijo
     // «Control de Calidad — » ni «Detalle », con mayúscula inicial.
     if (!b) return '';
-    var n = String(b.nombre || '').replace(/^Control de Calidad — /, '').replace(/^Detalle /, '');
+    var n = String(b.nombre || '').replace(/^Control de Calidad — /, '').replace(/^Revisión — /, '').replace(/^Detalle /, '');
     return n.charAt(0).toUpperCase() + n.slice(1);
   }
   function _o2mChkIds(tm){
@@ -5462,6 +5491,7 @@ window.OT2C = (function(){
       .then(function(j){
         if (!j || !j.ok || !j.activo){ comoSiempre(); return; }
         _o2mChk.bloques = j.bloques_sistema || [];
+        _o2mChk.clases = j.clases_catalogo || [];
         lista.forEach(function(it){
           var h = (j.skus || {})[it.sku] || {};
           var porLinea = h.repetible === true;
@@ -5498,7 +5528,17 @@ window.OT2C = (function(){
       ' Máquinas: una tarjeta por unidad. Discos y mancuernas: una por línea, para contar.</div>';
   }
   function _o2mChkCelda(tm, i){
+    if (tm.no_llego){
+      return '<div class="o2m-her"><span class="o2m-her-warn"><i class="bi bi-box-seam"></i> '+
+        'No llegó · queda en la OT como faltante declarado</span></div>';
+    }
     var sel = tm.chk_sistema ? tm.chk_sistema.id : '';
+    var clasSel = (!tm.chk_clase && tm.sku && (_o2mChk.clases || []).length)
+      ? '<select class="form-select form-select-sm" style="font-size:16px" aria-label="Clasificar en el catálogo" '+
+        'onchange="OT2C.clasificarProductoChk('+i+',this.value)"><option value="">Clasificar en el catálogo…</option>'+
+        _o2mChk.clases.map(function(c){ return '<option value="'+esc(c.slug)+'">'+esc(c.nombre)+'</option>'; }).join('')+
+        '</select>'
+      : '';
     var opts = '<option value="">— Solo la base —</option>' +
       (_o2mChk.bloques || []).map(function(b){
         return '<option value="' + b.id + '"' + (b.id === sel ? ' selected' : '') + '>' +
@@ -5507,8 +5547,9 @@ window.OT2C = (function(){
     var origen;
     if (!tm.chk_sistema){
       origen = '<span class="o2m-her-warn"><i class="bi bi-exclamation-triangle-fill"></i> ' +
-        (tm.chk_clase ? 'Su clase «' + esc(tm.chk_clase) + '» no tiene bloque' : 'Sin clase en el catálogo') +
-        ': elige el bloque.</span>';
+        (tm.chk_clase ? 'Su clase «' + esc(tm.chk_clase) + '» no tiene bloque: elige el bloque.'
+                      : 'Sin clase en el catálogo: clasifícalo (queda guardado) o elige el bloque.') +
+        '</span>';
     } else if (tm.chk_sistema.origen === 'producto'){
       origen = 'Guardado para este producto';
     } else if (tm.chk_sistema.origen === 'clase'){
@@ -5517,7 +5558,7 @@ window.OT2C = (function(){
       origen = 'Elegido a mano en esta OT';
     }
     var recordar = tm.sku && tm.chk_sistema && tm.chk_sistema.origen === 'manual';
-    return '<div class="o2m-her">' +
+    return '<div class="o2m-her">' + clasSel +
       '<select class="form-select form-select-sm" style="font-size:16px" aria-label="Bloque del sistema" ' +
       'onchange="OT2C.setBloqueTareaManual(' + i + ',this.value)">' + opts + '</select>' +
       '<div class="o2m-her-org">' + origen + '</div>' +
@@ -5525,6 +5566,53 @@ window.OT2C = (function(){
                   'onclick="OT2C.recordarBloqueProducto(' + i + ')"><i class="bi bi-bookmark-check"></i> ' +
                   'Recordar para este producto</button>' : '') +
     '</div>';
+  }
+  function setLlegoTareaManual(i, llego){
+    var tm = S.tareas_manuales[i]; if (!tm) return;
+    tm.no_llego = !llego;
+    pintarTareasManuales();
+  }
+  // REGLA #14: si alguno no está marcado como «llegó», marca todos; si ya están todos, los desmarca todos.
+  function toggleLlegoTodos(){
+    var filas = S.tareas_manuales.filter(function(t){ return t.chk; });
+    var algunoSin = filas.some(function(t){ return t.no_llego; });
+    filas.forEach(function(t){ t.no_llego = !algunoSin; });
+    pintarTareasManuales();
+  }
+  // 🏷️ 2026-10-18 (Daniel: «que se rija por la clasificación de productos»): un producto sin clase se clasifica en
+  // el catálogo desde acá (nunca pisa una clase existente) y su checklist sale de esa clase.
+  function clasificarProductoChk(i, slug){
+    var tm = S.tareas_manuales[i]; if (!tm || !slug) return;
+    var nombreProd = String(tm.titulo || tm.sku).replace(/ \(\d+ de \d+\)$/, '');
+    fetch('/ot/api/checklist-heredado/clasificar', {
+      method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({sku: tm.sku, clase: slug, tipo: S.tipo})
+    }).then(function(r){ return r.json(); })
+      .then(function(j){
+        if (!j || !j.ok){
+          if (window.ilusToast) ilusToast((j && j.error) || 'No se pudo clasificar el producto.', {type:'error'});
+          pintarTareasManuales();
+          return;
+        }
+        if (j.guardado === false && j.motivo === 'sku_fuera_de_catalogo'){
+          if (window.ilusToast) ilusToast(j.error, {type:'warning', duration:7000});
+          pintarTareasManuales();
+          return;
+        }
+        var h = (j.skus || {})[tm.sku] || {};
+        S.tareas_manuales.forEach(function(t){
+          if (!t.chk || t.sku !== tm.sku) return;
+          t.chk_clase = h.clase_nombre || t.chk_clase;
+          if (h.sistema){ t.chk_sistema = h.sistema; t.chk_sistema_heredado = h.sistema; t.checklist_auto = true; }
+          t.plantilla_ids = _o2mChkIds(t);
+        });
+        pintarTareasManuales();
+        if (window.ilusToast) ilusToast('«' + nombreProd + '» quedó clasificado como «' + (h.clase_nombre || j.clase || '') +
+          '» en el catálogo.', {type:'success', duration:6000});
+      })
+      .catch(function(){
+        if (window.ilusToast) ilusToast('No se pudo clasificar. Revisa tu conexión.', {type:'error'});
+      });
   }
   // Cambiar el bloque de una fila lo cambia en TODAS las unidades del mismo producto.
   function setBloqueTareaManual(i, v){
@@ -11061,6 +11149,8 @@ window.OT2C = (function(){
           quitarTareaManual:quitarTareaManual, setCantidadTareaManual:setCantidadTareaManual,
           setPlantillaTareaManual:setPlantillaTareaManual,
           setBloqueTareaManual:setBloqueTareaManual, recordarBloqueProducto:recordarBloqueProducto,
+          setLlegoTareaManual:setLlegoTareaManual, toggleLlegoTodos:toggleLlegoTodos,
+          clasificarProductoChk:clasificarProductoChk,
           bodegaFotoAdd:bodegaFotoAdd, bodegaFotoQuitar:bodegaFotoQuitar,
           adjuntosAgregar:adjuntosAgregar, adjuntosQuitar:adjuntosQuitar,
           setPlantillaInterno:setPlantillaInterno, setCostoInterno:setCostoInterno,
