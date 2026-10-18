@@ -86920,6 +86920,19 @@ def mant_visita_update(vid):
                 "error": "Esta OT ya está cerrada — no se puede cambiar su fecha/hora.",
                 "error_codigo": "OT_CERRADA",
             }), 400
+    # 📅 2026-10-18 (Daniel): reagendar a un domingo tampoco se puede.
+    if str(d.get("fecha_programada") or "").strip():
+        try:
+            import datetime as _dt_dom
+            _f_dom = _dt_dom.datetime.strptime(str(d.get("fecha_programada")).strip()[:10], "%Y-%m-%d").date()
+        except ValueError:
+            _f_dom = None
+        if _f_dom and _f_dom.weekday() == 6:
+            return jsonify({
+                "ok": False,
+                "error": "Los domingos no se agendan órdenes de trabajo. Elige otro día.",
+                "error_codigo": "DOMINGO_BLOQUEADO",
+            }), 400
     # 2026-07-15 (agendador tipo clínica, Tickets §2.6): "fecha_fin" habilita
     # reprogramar el término de una OT multi-día desde el mini-formulario
     # inline del popover (antes solo se podía fijar al CREAR la OT).
@@ -106327,6 +106340,11 @@ def _ot2_crear_core(d, autorizacion=None):
         avisos.append(f"Termina después de las {_OT2_JORNADA_FIN}: es jornada extendida.")
     if hora_ini and hora_fin and hora_ini < _OT2_COLACION_FIN and hora_fin > _OT2_COLACION_INI:
         avisos.append(f"Cruza la colación ({_OT2_COLACION_INI}–{_OT2_COLACION_FIN}).")
+    # 📅 2026-10-18 (Daniel: «al menos el domingo no se agenda, ¡bloquéalo del
+    # calendario!»): el domingo BLOQUEA; el sábado sigue siendo solo un aviso.
+    if _f.weekday() == 6:
+        return _ot2_err("Los domingos no se agendan órdenes de trabajo. Elige otro día.",
+                        "DOMINGO_BLOQUEADO")
     if _f.weekday() >= 5:
         avisos.append("Cae en fin de semana, cuando no hay operación.")
     # 🆔 2026-09-02 — ver `cliente_sin_rut` arriba. Se avisa acá, junto al
