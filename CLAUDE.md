@@ -932,6 +932,7 @@ de la sesión, nunca del navegador):
 - **Trazabilidad siempre:** quién pidió, quién autorizó o rechazó, cuándo (hora Chile) y el argumento completo, visible donde se vea el documento. Nada se borra; se registra.
 - **Gestión documental transparente:** todos los documentos de una OT viven en `mant_visita_documentos` (multidocumento); ninguno se sobrescribe; aparecen en la ficha, el recorrido, las bandejas, el Excel y el informe/PDF (al cliente solo tipo y número, nunca montos internos ni proveedores).
 - Una puerta única (`_ot_puerta_documento`) cubre todos los caminos que crean o cierran OT. Todo camino NUEVO pasa por ella. El interruptor del candado solo lo cambia superadmin.
+- **Reafirmado por Daniel (2026-10-18):** «los tickets, las cotizaciones, las órdenes de trabajo siempre tienen que manejar un documento. Así sea garantía, así sea lo que sea… a menos que sea un código escrito a mano y la persona deberá argumentar, con ese argumento persistente en la base de datos: por qué autorizó, quién y cuándo… deberá ser obligatorio, a menos que sea un trabajo interno». Es decir: **la garantía también lleva el documento de la venta**; **todo producto o código escrito a mano** (no traído de un documento) exige argumento guardado en la base con quién, cuándo y por qué; el único exento es el **trabajo interno**. Auditoría de cumplimiento por módulo en curso (18-oct): si un camino de Tickets, Cotizaciones u OT no cumple, se cierra con la MISMA puerta y la MISMA tabla de autorizaciones, nunca con un mecanismo paralelo.
 
 ---
 
