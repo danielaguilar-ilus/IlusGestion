@@ -903,6 +903,17 @@
 /* 📎 2026-09-27 (revisión en vivo: "un cuadrito, con un más" -- mosaico
    dentro de la MISMA tarjeta de Detalle, no un paso propio). */
 .o2m-adj-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+/* 📎 2026-10-18 (Daniel: «los archivos para el técnico… hacerlo más bonito,
+   se ve muy simple»): tarjeta para agregar (tocar o arrastrar) en vez del «+». */
+.o2m-adj-drop{flex-basis:100%;display:flex;align-items:center;gap:12px;border:1.5px dashed #bfdbfe;border-radius:12px;
+  background:#f8fbff;padding:12px 14px;min-height:64px;cursor:pointer;margin:0;transition:border-color .15s,background .15s}
+.o2m-adj-drop:hover,.o2m-adj-drop.on,.o2m-adj-drop:focus-visible{border-color:#2563eb;background:#eff6ff;outline:none}
+.o2m-adj-drop .ic{flex:0 0 42px;height:42px;border-radius:11px;background:#dbeafe;color:#2563eb;display:flex;
+  align-items:center;justify-content:center;font-size:1.25rem}
+.o2m-adj-drop .tx{display:flex;flex-direction:column;min-width:0}
+.o2m-adj-drop .tx b{font-size:.92rem;color:#0a0a0a}
+.o2m-adj-drop .tx small{font-size:.76rem;color:#6b7280;line-height:1.3}
+@media (prefers-reduced-motion:reduce){.o2m-adj-drop{transition:none}}
 .o2m-adj-mini{position:relative;width:64px;height:64px;border-radius:10px;overflow:hidden;
   border:1.5px solid #e5e7eb;background:#f3f4f6;display:grid;place-items:center;color:#6b7280;font-size:1.3rem}
 .o2m-adj-mini img{width:100%;height:100%;object-fit:cover;display:block}
@@ -5652,8 +5663,13 @@ window.OT2C = (function(){
         '<button type="button" class="o2m-adj-x" onclick="OT2C.adjuntosQuitar('+i+')" title="Quitar"><i class="bi bi-x-lg"></i></button>'+
       '</div>';
     }).join('') +
-      '<label class="o2m-adj-mini o2m-adj-mas" title="Agregar foto, video o documento">'+
-        '<i class="bi bi-plus-lg"></i>'+
+      '<label class="o2m-adj-drop" tabindex="0" role="button" aria-label="Agregar fotos, videos o documentos para el técnico" '+
+        'onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();this.querySelector(\'input\').click();}" '+
+        'ondragover="event.preventDefault();this.classList.add(\'on\')" ondragleave="this.classList.remove(\'on\')" '+
+        'ondrop="event.preventDefault();this.classList.remove(\'on\');OT2C.adjuntosAgregar(event.dataTransfer.files)">'+
+        '<span class="ic"><i class="bi bi-cloud-arrow-up"></i></span>'+
+        '<span class="tx"><b>'+(S.adjuntos.length ? 'Agregar más archivos' : 'Agregar fotos, videos o documentos')+'</b>'+
+        '<small>Toca para elegir o arrastra aquí · imágenes, video, PDF, Word o Excel</small></span>'+
         '<input type="file" multiple accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx" '+
         'onchange="OT2C.adjuntosAgregar(this.files); this.value=\'\';" hidden>'+
       '</label>'+
