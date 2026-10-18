@@ -1094,6 +1094,10 @@
 .o2m-cal-day.pasado{opacity:.4;cursor:not-allowed;background:#f8f9fa}
 .o2m-cal-day.pasado:hover{transform:none;border-color:var(--o2m-line);background:#f8f9fa}
 .o2m-cal-day.pasado .num{color:#9ca3af}
+/* 📅 2026-10-18 (Daniel): el domingo no se agenda — se ve, pero no se toca. */
+.o2m-cal-day.domingo{opacity:.45;cursor:not-allowed;background:repeating-linear-gradient(135deg,#f8f9fa,#f8f9fa 6px,#eef0f2 6px,#eef0f2 12px)}
+.o2m-cal-day.domingo:hover{transform:none;border-color:var(--o2m-line)}
+.o2m-cal-day.domingo .num{color:#9ca3af}
 
 /* ── Col B: línea de tiempo del día -- esqueleto de .tkday-* original,
    bordes/radios/línea armonizados con la Col A (var(--o2m-line), radius
@@ -2830,6 +2834,8 @@ window.OT2C = (function(){
       var clases = ['o2m-cal-day'];
       var esPasado = fecha < hoyStr;              // no se agenda hacia atrás
       if (esPasado) clases.push('pasado');
+      var esDomingo = (dow === 0);                // 📅 2026-10-18: el domingo no se agenda
+      if (esDomingo && !esPasado) clases.push('domingo');
       if (dow===0 || dow===6) clases.push('finde');
       if (fecha===hoyStr) clases.push('hoy');
       if (fecha===fechaProg) clases.push('sel');
@@ -2845,12 +2851,13 @@ window.OT2C = (function(){
       // historial del mes) pero deja de ser accionable: sin onclick, sin
       // foco de teclado y anunciado como no disponible.
       html += '<div class="'+clases.join(' ')+'"'+
-        (esPasado
-          ? ' aria-disabled="true"'
+        ((esPasado || esDomingo)
+          ? ' aria-disabled="true" title="'+(esDomingo && !esPasado ? 'Los domingos no se agendan' : 'Fecha pasada')+'"'
           : ' onclick="OT2C.o2mCalClicDia(\''+fecha+'\')"'+
             ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();OT2C.o2mCalClicDia(\''+fecha+'\');}"'+
             ' role="button" tabindex="0"')+
         ' aria-label="'+esc(fecha+' — '+(esPasado ? 'fecha pasada, no se puede agendar' :
+            esDomingo ? 'domingo, no se agenda' :
             (visitas.length ? (visitas.length+' OT agendada(s)') : 'sin OTs agendadas')))+'">'+
         '<span class="num">'+dia+'</span>'+
         (visitas.length ? '<span class="cnt '+cntCls+'">'+visitas.length+'</span>' : '')+
@@ -2863,12 +2870,22 @@ window.OT2C = (function(){
   // setea #o2mFecha y dispara su 'change' para que setFecha() reaccione
   // exactamente igual que si el usuario hubiera tipeado la fecha (mismo
   // truco que tkotCalClicDia en el modal de Tickets).
+  function _o2mEsDomingo(fecha){
+    var p = String(fecha || '').split('-').map(function(x){ return parseInt(x, 10); });
+    if (p.length < 3 || !p[0] || !p[1] || !p[2]) return false;
+    return new Date(p[0], p[1]-1, p[2]).getDay() === 0;
+  }
   function o2mCalClicDia(fecha){
     // Guardia real, no solo cosmética: las celdas pasadas ya se dibujan sin
     // onclick, pero esta función también se llama desde o2mCalInit() (que
     // arranca en "hoy") y es parte de la API pública del modal.
     if (fecha < _o2mHoyStr()){
       if (window.ilusToast) ilusToast('No se puede agendar en el pasado.', {type:'warning'});
+      return;
+    }
+    // 📅 2026-10-18 (Daniel: «al menos el domingo no se agenda»).
+    if (_o2mEsDomingo(fecha)){
+      if (window.ilusToast) ilusToast('Los domingos no se agendan órdenes de trabajo. Elige otro día.', {type:'warning'});
       return;
     }
     var fp = document.getElementById('o2mFecha');
@@ -3645,6 +3662,7 @@ window.OT2C = (function(){
     var d = new Date(p[0], p[1]-1, p[2]);
     for (var i=0; i<=maxDias; i++){
       var f = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      if (d.getDay() === 0){ d.setDate(d.getDate()+1); continue; }   // 📅 el domingo no se agenda
       await _o2mDayAsegurarMesCache(d.getFullYear(), d.getMonth()+1);
       var hora = _o2mDayCalcularHueco(f, durMin, tecnicoIds);
       if (hora) return {fecha:f, hora:hora};
@@ -9514,6 +9532,13 @@ window.OT2C = (function(){
     S.anexo.fecha_termino = S.fecha || '';
   }
   function setFecha(v){
+    // 📅 2026-10-18 (Daniel): una fecha escrita a mano que cae domingo se rechaza.
+    if (v && _o2mEsDomingo(v)){
+      if (window.ilusToast) ilusToast('Los domingos no se agendan órdenes de trabajo. Elige otro día.', {type:'warning'});
+      var _fpd = document.getElementById('o2mFecha');
+      if (_fpd) _fpd.value = S.fecha || '';
+      return;
+    }
     S.fecha = v; avisosAgenda(); refrescarAnclas();
     _o2mAnexoSincronizarFechas();
     // Mini-calendario del paso Agenda: sigue la fecha del input, tipeada a
