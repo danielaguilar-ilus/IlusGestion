@@ -295,6 +295,43 @@
 .o2m-op .ic{font-size:1.53rem;color:var(--ilus-red,#dc2626);display:block;margin-bottom:6px}
 .o2m-op .n{font-weight:800;font-size:1.03rem;color:#0a0a0a;display:block}
 .o2m-op .l{font-size:0.85rem;color:#6b7280;line-height:1.35;display:block;margin-top:3px}
+/* ✏️ 2026-10-18 (Daniel: «lo creé y no se edita?»): lápiz para editar un
+   tipo de trabajo interno sin salir del asistente. */
+.o2m-op-wrap{position:relative;display:flex}
+.o2m-op-wrap>.o2m-op{flex:1;width:100%}
+.o2m-op-edit{position:absolute;top:8px;right:8px;width:40px;height:40px;border-radius:10px;
+  border:1px solid #e5e7eb;background:#fff;color:#6b7280;display:flex;align-items:center;justify-content:center}
+.o2m-op-edit:hover,.o2m-op-edit:focus-visible{color:var(--ilus-red,#dc2626);border-color:#fca5a5}
+/* Galería de íconos del formulario de trabajo interno. */
+.o2m-ico-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(42px,1fr));gap:6px;
+  max-height:190px;overflow:auto;padding:2px}
+.o2m-ico-grid button{height:42px;border:1.5px solid #e5e7eb;border-radius:9px;background:#fff;
+  color:#374151;font-size:1.2rem;display:flex;align-items:center;justify-content:center}
+.o2m-ico-grid button.on{border-color:var(--ilus-red,#dc2626);background:#fee2e2;color:var(--ilus-red,#dc2626)}
+/* 📄 2026-10-18 (Daniel: «que sea más bonito el botón… se ve muy simple»):
+   las acciones del trabajo interno son tarjetas con ícono y explicación. */
+.o2m-acc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}
+.o2m-acc{display:flex;align-items:center;gap:12px;text-align:left;border:1.5px solid #e5e7eb;border-radius:12px;
+  background:#fff;padding:12px 14px;min-height:64px;transition:border-color .15s,box-shadow .15s,transform .15s}
+.o2m-acc:hover,.o2m-acc:focus-visible{border-color:#93c5fd;box-shadow:0 6px 18px rgba(37,99,235,.10);transform:translateY(-1px)}
+.o2m-acc .ic{flex:0 0 42px;height:42px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:1.2rem}
+.o2m-acc.doc{border-color:#bfdbfe;background:#f8fbff}
+.o2m-acc.doc .ic{background:#dbeafe;color:#2563eb}
+.o2m-acc.bus .ic{background:#f3f4f6;color:#374151}
+.o2m-acc.man .ic{background:#dcfce7;color:#16a34a}
+.o2m-acc .tx{display:flex;flex-direction:column;min-width:0}
+.o2m-acc .tx b{font-size:.93rem;color:#0a0a0a}
+.o2m-acc .tx small{font-size:.77rem;color:#6b7280;line-height:1.3}
+@media (prefers-reduced-motion:reduce){.o2m-acc{transition:none}.o2m-acc:hover{transform:none}}
+/* 📝 2026-10-18 (Daniel: «en la parte 2… que siempre figure como importancia»):
+   el motivo va destacado; si vino heredado (tipo de trabajo o ticket) se dice. */
+.o2m-motivo{border:1.5px solid #fecaca;border-left:4px solid var(--ilus-red,#dc2626);border-radius:12px;
+  background:#fffafa;padding:12px 14px;margin-top:4px}
+.o2m-motivo .fl{font-weight:800;color:#0a0a0a}
+.o2m-motivo .imp{font-size:.72rem;font-weight:700;color:var(--ilus-red,#dc2626);text-transform:uppercase;
+  letter-spacing:.04em;margin-left:6px}
+.o2m-her-mot{display:inline-flex;align-items:center;gap:6px;font-size:.76rem;color:#1e3a8a;background:#dbeafe;
+  border-radius:999px;padding:3px 10px;margin-bottom:8px}
 
 .o2m-lista{border:1px solid #eaecf0;border-radius:10px;max-height:250px;overflow-y:auto}
 /* 🎨 2026-08-31/09-01 (Daniel: "ponle color a esa tabla, util pero
@@ -2188,8 +2225,15 @@ window.OT2C = (function(){
       // también porque el Paso 1 ya se marca "completo" (círculo verde) en
       // cuanto se elige un tipo, así que la tarjeta debía verse igual de
       // resuelta, no como una selección roja "a medio confirmar".
-      return '<button type="button" class="o2m-op '+(sel?'sel-ok':'')+'" onclick="OT2C.setTipo('+TIPOS.indexOf(t)+')">'+
+      var card = '<button type="button" class="o2m-op '+(sel?'sel-ok':'')+'" onclick="OT2C.setTipo('+TIPOS.indexOf(t)+')">'+
         '<i class="bi '+t.i+' ic"></i><span class="n">'+t.n+'</span><span class="l">'+t.l+'</span></button>';
+      // ✏️ 2026-10-18: editar el tipo (nombre, descripción, ícono) acá mismo.
+      if (t.id && OT2_PUEDE_TIPO_INTERNO && S.origen === 'interno'){
+        return '<div class="o2m-op-wrap">'+card+
+          '<button type="button" class="o2m-op-edit" title="Editar «'+esc(t.n)+'»" aria-label="Editar '+esc(t.n)+'" '+
+          'onclick="OT2C.abrirNuevoTipoInterno('+t.id+')"><i class="bi bi-pencil"></i></button></div>';
+      }
+      return card;
     }).join('') : '<div class="text-muted small" style="grid-column:1/-1">Sin resultados para "'+esc(S._tipoFiltro)+'".</div>';
     // 2026-08-31 (Daniel: "un recuadro donde te diga agregar trabajo
     // interno... refléjalo en la gestión de roles"): tarjeta MÁS al final
@@ -2222,9 +2266,32 @@ window.OT2C = (function(){
      solo nombre/descripción/ícono. La plantilla se asigna después, a
      mano, desde /mantenciones/plantillas (mismo endpoint, campo
      plantilla_id opcional -- no se pierde nada, solo se difiere). */
-  function abrirNuevoTipoInterno(){
+  // ✏️ 2026-10-18 (Daniel, creando «Revisión de Equipos»: «tiene que poder
+  // ofrecer una variedad de logos» y «lo creé y no se edita?»): el mismo
+  // formulario CREA o EDITA (tid = id del tipo; PUT del CRUD de siempre, la
+  // clave no cambia), el ícono se elige de una galería (o se escribe otro) y
+  // la descripción es de varias líneas para verla completa.
+  var _O2M_ICONOS = ['bi-gear','bi-tools','bi-wrench-adjustable','bi-hammer','bi-screwdriver','bi-nut',
+    'bi-clipboard2-check','bi-clipboard2-pulse','bi-clipboard-data','bi-list-check','bi-check2-square',
+    'bi-patch-check','bi-shield-check','bi-search','bi-eye','bi-box-seam','bi-boxes','bi-box-arrow-in-down',
+    'bi-box-arrow-up','bi-truck','bi-building','bi-house-gear','bi-mortarboard','bi-person-gear','bi-people',
+    'bi-camera','bi-images','bi-speedometer2','bi-activity','bi-heart-pulse','bi-lightning-charge','bi-cpu',
+    'bi-plug','bi-recycle','bi-arrow-repeat','bi-arrow-left-right','bi-calendar-check','bi-stopwatch',
+    'bi-bicycle','bi-person-walking','bi-trophy','bi-flag','bi-exclamation-triangle','bi-bandaid','bi-tag',
+    'bi-upc-scan','bi-qr-code-scan','bi-rulers','bi-thermometer-half','bi-star'];
+  var _o2mNtEditId = null;
+  function _o2mNtIcono(ic){
+    var inp = document.getElementById('o2mNtIcono'); if (inp) inp.value = ic;
+    document.querySelectorAll('#o2mNtIconos button').forEach(function(b){
+      b.classList.toggle('on', b.getAttribute('data-ic') === ic);
+    });
+  }
+  function abrirNuevoTipoInterno(tid){
     var old = document.getElementById('o2mNuevoTipoOv');
     if (old) old.remove();
+    var edit = tid ? TIPOS.find(function(t){ return t.id === tid; }) : null;
+    _o2mNtEditId = edit ? edit.id : null;
+    var icActual = (edit && edit.i) || 'bi-gear';
     var ov = document.createElement('div');
     ov.id = 'o2mNuevoTipoOv';
     ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(10,10,10,.6);'+
@@ -2234,26 +2301,37 @@ window.OT2C = (function(){
       'box-shadow:0 20px 60px rgba(0,0,0,.4);overflow:hidden">'+
         '<div style="background:#0a0a0a;padding:14px 18px;display:flex;align-items:center;'+
         'justify-content:space-between;border-bottom:3px solid var(--ilus-red,#dc2626)">'+
-          '<b style="color:#fff;font-size:1rem"><i class="bi bi-plus-circle me-2" style="color:var(--ilus-red,#dc2626)"></i>'+
-          'Nuevo trabajo interno</b>'+
+          '<b style="color:#fff;font-size:1rem"><i class="bi '+(edit ? 'bi-pencil' : 'bi-plus-circle')+' me-2" style="color:var(--ilus-red,#dc2626)"></i>'+
+          (edit ? 'Editar trabajo interno' : 'Nuevo trabajo interno')+'</b>'+
           '<button type="button" onclick="document.getElementById(\'o2mNuevoTipoOv\').remove()" '+
           'style="background:none;border:0;color:#fff;font-size:1.3rem;cursor:pointer;line-height:1">&times;</button>'+
         '</div>'+
         '<div style="padding:18px">'+
           '<label class="fl">Nombre *</label>'+
-          '<input class="form-control mb-3" id="o2mNtNombre" maxlength="120" placeholder="Ej: Inventario de bodega" autofocus>'+
+          '<input class="form-control mb-3" id="o2mNtNombre" maxlength="120" placeholder="Ej: Inventario de bodega" '+
+          'value="'+esc(edit ? edit.n : '')+'" autofocus>'+
           '<label class="fl">Descripción (opcional)</label>'+
-          '<input class="form-control mb-3" id="o2mNtDesc" maxlength="255" placeholder="Ej: Conteo físico de stock">'+
-          '<label class="fl">Ícono (opcional)</label>'+
-          '<input class="form-control mb-2" id="o2mNtIcono" maxlength="60" placeholder="bi-gear" value="bi-gear">'+
+          '<textarea class="form-control mb-1" id="o2mNtDesc" maxlength="255" rows="3" '+
+          'placeholder="Ej: Conteo físico de stock" oninput="document.getElementById(\'o2mNtDescN\').textContent=this.value.length">'+
+          esc(edit ? (edit.l || '') : '')+'</textarea>'+
+          '<small class="text-muted d-block mb-3 text-end" style="font-size:.72rem">'+
+          '<span id="o2mNtDescN">'+((edit && edit.l) ? edit.l.length : 0)+'</span>/255</small>'+
+          '<label class="fl">Ícono</label>'+
+          '<div class="o2m-ico-grid mb-2" id="o2mNtIconos" role="group" aria-label="Elige un ícono">'+
+          _O2M_ICONOS.map(function(ic){
+            return '<button type="button" data-ic="'+ic+'" class="'+(ic === icActual ? 'on' : '')+'" '+
+                   'title="'+ic+'" aria-label="'+ic+'" onclick="OT2C._o2mNtIcono(\''+ic+'\')"><i class="bi '+ic+'"></i></button>';
+          }).join('')+'</div>'+
+          '<input class="form-control form-control-sm mb-2" id="o2mNtIcono" maxlength="60" value="'+esc(icActual)+'" '+
+          'aria-label="Otro ícono (nombre de Bootstrap Icons)" oninput="OT2C._o2mNtIcono(this.value.trim())">'+
           '<small class="text-muted d-block mb-3" style="font-size:.72rem">'+
-          '<i class="bi bi-info-circle me-1"></i>Nombre de un ícono de Bootstrap Icons (ej: bi-box-seam, bi-mortarboard). '+
-          'Sin plantilla de checklist por ahora — se asigna después, a mano, desde Mantenciones → Plantillas.</small>'+
+          '<i class="bi bi-info-circle me-1"></i>Toca un ícono o escribe otro nombre de Bootstrap Icons. '+
+          'La plantilla de checklist se asigna desde Mantenciones → Plantillas.</small>'+
           '<div id="o2mNtErr" class="text-danger small mb-2" style="display:none"></div>'+
           '<div class="d-flex gap-2 justify-content-end">'+
             '<button type="button" class="btn btn-outline-secondary" onclick="document.getElementById(\'o2mNuevoTipoOv\').remove()">Cancelar</button>'+
             '<button type="button" class="btn btn-danger fw-bold" id="o2mNtGuardar" onclick="OT2C._o2mNtGuardar()">'+
-            '<i class="bi bi-check-lg me-1"></i>Crear</button>'+
+            '<i class="bi bi-check-lg me-1"></i>'+(edit ? 'Guardar' : 'Crear')+'</button>'+
           '</div>'+
         '</div>'+
       '</div>';
@@ -2272,13 +2350,41 @@ window.OT2C = (function(){
       err.textContent = 'Falta el nombre.'; err.style.display = 'block'; return;
     }
     var btn = document.getElementById('o2mNtGuardar');
-    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';
+    var editId = _o2mNtEditId;
+    var desc = (document.getElementById('o2mNtDesc').value || '').trim();
+    var icono = (document.getElementById('o2mNtIcono').value || '').trim() || 'bi-gear';
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>' + (editId ? 'Guardando…' : 'Creando…');
+    if (editId){
+      fetch('/mantenciones/api/tipos-interno/' + editId, {
+        method:'PUT', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({nombre: nombre, descripcion: desc, icono: icono})
+      }).then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+        .then(function(res){
+          if (!res.ok || !res.j || !res.j.ok){
+            err.textContent = (res.j && res.j.error) || 'No se pudo guardar el tipo.';
+            err.style.display = 'block';
+            btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Guardar';
+            return;
+          }
+          var t = TIPOS.find(function(x){ return x.id === editId; });
+          if (t){ t.n = nombre; t.l = desc; t.i = icono; }
+          var ov = document.getElementById('o2mNuevoTipoOv'); if (ov) ov.remove();
+          pintarTipoGrid();
+          if (window.ilusToast) ilusToast('✓ «' + nombre + '» guardado', {type:'success'});
+        })
+        .catch(function(){
+          err.textContent = 'Error de conexión.'; err.style.display = 'block';
+          btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Guardar';
+        });
+      return;
+    }
     fetch('/mantenciones/api/tipos-interno', {
       method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
         nombre: nombre,
-        descripcion: document.getElementById('o2mNtDesc').value || '',
-        icono: (document.getElementById('o2mNtIcono').value || '').trim() || 'bi-gear',
+        descripcion: desc,
+        icono: icono,
       })
     }).then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
       .then(function(res){
@@ -2329,6 +2435,20 @@ window.OT2C = (function(){
   // el título sigue siendo opcional (se sigue autogenerando si se deja
   // vacío, eso Daniel no lo pidió cambiar).
   var O2M_DESC_MIN = 25;
+  // 📝 2026-10-18 (Daniel: «que ese motivo sea heredable… y editable también
+  // en los motivos de los tickets»): el motivo se precarga con la descripción
+  // del tipo de trabajo interno o con la del ticket de origen. Solo llena un
+  // motivo vacío o el que se había heredado antes (nunca pisa lo que la
+  // persona escribió) y siempre se puede editar.
+  function _o2mHeredarMotivo(texto, origen){
+    texto = String(texto || '').trim();
+    if (!texto) return;
+    var actual = String(S.descripcion || '').trim();
+    var previo = S._motivoHeredado ? S._motivoHeredado.texto : null;
+    if (actual && actual !== previo) return;
+    S.descripcion = texto;
+    S._motivoHeredado = {texto: texto, origen: origen};
+  }
   function pintarDetalle(b){
     var descLen = (S.descripcion||'').trim().length;
     var descOk = descLen >= O2M_DESC_MIN;
@@ -2344,7 +2464,11 @@ window.OT2C = (function(){
       '<label class="fl">Título</label>'+
       '<input class="form-control mb-3" id="o2mTit" value="'+esc(S.titulo)+'" maxlength="200" '+
       'placeholder="Ej: Instalación sala de musculación" oninput="OT2C.setTitulo(this.value)">'+
-      '<label class="fl">Motivo *</label>'+
+      '<div class="o2m-motivo">'+
+      '<label class="fl" for="o2mDesc">Motivo *<span class="imp">lo más importante de la OT</span></label>'+
+      ((S._motivoHeredado && String(S.descripcion||'').trim() === S._motivoHeredado.texto)
+        ? '<div class="o2m-her-mot"><i class="bi bi-diagram-3"></i>Heredado '+esc(S._motivoHeredado.origen)+' · puedes editarlo</div>'
+        : '')+
       '<textarea class="form-control'+(descLen>0 && !descOk?' is-invalid':(descOk?' is-valid':''))+'" '+
       'id="o2mDesc" rows="4" maxlength="2000" minlength="'+O2M_DESC_MIN+'" '+
       'placeholder="Qué va a hacer el técnico y por qué: ej. garantía, revisión post-instalación, qué se espera, qué llevar, con quién coordinar…" '+
@@ -2353,6 +2477,7 @@ window.OT2C = (function(){
       (descOk ? '<i class="bi bi-check-circle-fill me-1"></i>'+descLen+' caracteres'
               : descLen+' / '+O2M_DESC_MIN+' caracteres mínimos')+
       '</small>'+
+      '</div>'+
       // 📎 2026-09-27 (Daniel, corrigiendo en vivo: "dentro del paso 3
       // podemos agregar imágenes y video... sin crear un paso 4. Algo bien
       // interactivo, con un cuadrito, con un más"). Vive DENTRO de esta
@@ -4953,6 +5078,30 @@ window.OT2C = (function(){
      se guarda como {titulo, descripcion} -- el backend las crea como
      tareas SIN plantilla (mant_visita_tareas.plantilla_id queda NULL, tal
      como ya preveía su propio comentario "NULL si tarea manual"). */
+  // 📄 2026-10-18: documento asociado (cualquier trabajo interno) y tarjetas de acción.
+  function _o2mDocBadgeHtml(){
+    return (S.doc_origen && S.doc_origen.tido && S.doc_origen.nudo)
+      ? '<div class="o2m-aviso mb-3" style="background:#dcfce7;border-color:#86efac;color:#166534">'+
+        '<i class="bi bi-check-circle-fill me-1"></i>Documento: <b>'+esc(S.doc_origen.tido)+' '+esc(S.doc_origen.nudo)+'</b>'+
+        ' <button type="button" class="btn btn-sm btn-link p-0 ms-2" onclick="OT2C.setNotaVentaInterna(\'\')">quitar</button>'+
+        '</div>'
+      : '';
+  }
+  function _o2mAccionesTrabajoHtml(){
+    var tieneDoc = !!(S.doc_origen && S.doc_origen.nudo);
+    function tarjeta(fn, ic, cls, titulo, sub){
+      return '<button type="button" class="o2m-acc '+cls+'" onclick="OT2C.'+fn+'()">'+
+        '<span class="ic"><i class="bi '+ic+'"></i></span>'+
+        '<span class="tx"><b>'+titulo+'</b><small>'+sub+'</small></span></button>';
+    }
+    return '<div class="o2m-acc-grid mb-3">'+
+      tarjeta('abrirBusquedaDocInterno', 'bi-file-earmark-text', 'doc',
+              tieneDoc ? 'Cambiar documento' : 'Agregar documento',
+              'NVI, factura o boleta: trae todos sus productos de una vez')+
+      tarjeta('abrirProductoCatalogo', 'bi-search', 'bus', 'Buscar ítem', 'Por producto, documento o RUT del cliente')+
+      tarjeta('abrirTareaManualModal', 'bi-plus-circle', 'man', 'Agregar manual', 'Un producto o una tarea escrita a mano')+
+    '</div>';
+  }
   function pintarTrabajoInterno(b){
     // 🔗 2026-08-31 (Daniel: "un botón de agregar documento del ERP, y entre
     // eso va a estar la nota de venta interna" -- confirmó tipos BLV/NVI/
@@ -4972,28 +5121,24 @@ window.OT2C = (function(){
     // documento se asocia SOLO por "Buscar ítem" (pestaña Documento). El
     // badge de "Documento: X ya asociado" se mantiene -- sigue siendo
     // información útil una vez que existe.
-    var _docBadgeHtml = (S.doc_origen && S.doc_origen.tido && S.doc_origen.nudo)
-      ? '<div class="o2m-aviso mb-3" style="background:#dcfce7;border-color:#86efac;color:#166534">'+
-        '<i class="bi bi-check-circle-fill me-1"></i>Documento: <b>'+esc(S.doc_origen.tido)+' '+esc(S.doc_origen.nudo)+'</b>'+
-        ' <button type="button" class="btn btn-sm btn-link p-0 ms-2" onclick="OT2C.setNotaVentaInterna(\'\')">quitar</button>'+
-        '</div>'
-      : '';
+    var _docBadgeHtml = _o2mDocBadgeHtml();
+    // 📄 2026-10-18 (Daniel, «Revisión de Equipos» del evento de Felipe Fierro:
+    // «me tienes que dar esa opción, una NVI… o una factura o boleta; con
+    // esto revisaríamos los equipos de una vez»): botón propio «Agregar
+    // documento» (mismo buscador del ERP, solo lectura) que trae TODAS sus
+    // líneas a la tabla, y el aviso del documento asociado para cualquier
+    // trabajo interno (antes solo en Capacitación).
     b.innerHTML = '<h6 class="t">Productos y tareas</h6>'+
-      '<p class="d">Busca el ítem por producto, documento o RUT del cliente, o agrégalo a mano. '+
-      'El checklist se asigna por fila en la tabla.</p>'+
-      (S.tipo === 'capacitacion' ? _docBadgeHtml : '')+
+      '<p class="d">Agrega el documento (NVI, factura o boleta) para traer todos sus productos de una vez, '+
+      'o busca el ítem por producto o RUT, o agrégalo a mano. El checklist se asigna por fila en la tabla.</p>'+
+      _docBadgeHtml+
       // 🎨 2026-08-31 (Daniel: "el botón es muy grande, gigante... más a
       // su aire [tono suave]... el botón rojo de buscar ítem, poco más
       // pequeño... no tan rojo"): "Buscar ítem" pasa de gigante/w-100/
       // rojo-vivo a chico, outline suave, lupita a color -- deja de
       // dominar visualmente el paso. "Agregar tarea manual" queda piola
       // (link chico con ícono) al lado, abre su propio modal (ver abajo).
-      '<div class="o2m-item-actions mb-2 d-flex gap-2 flex-wrap align-items-center">'+
-      '<button type="button" class="btn btn-outline-danger btn-sm" onclick="OT2C.abrirProductoCatalogo()">'+
-      '<i class="bi bi-search me-1" style="color:var(--ilus-red,#dc2626)"></i>Buscar ítem</button>'+
-      '<button type="button" class="btn btn-link btn-sm p-0" onclick="OT2C.abrirTareaManualModal()">'+
-      '<i class="bi bi-plus-circle me-1" style="color:#16a34a"></i>Agregar manual</button>'+
-      '</div>'+
+      _o2mAccionesTrabajoHtml()+
       '<div class="o2m-lista mb-3" id="o2mTareasList"></div>'+
       _htmlCostoInterno();
     pintarTareasManuales();
@@ -5104,7 +5249,7 @@ window.OT2C = (function(){
         if (!j || !j.ok || !Array.isArray(j.tipos) || !j.tipos.length) return;
         var nuevos = j.tipos.map(function(t){
           return {v:t.clave, n:t.nombre, i:t.icono||'bi-gear', l:t.descripcion||'',
-                  interno:true, plantilla_id_sugerida: t.plantilla_id || null};
+                  interno:true, plantilla_id_sugerida: t.plantilla_id || null, id: t.id || null};
         });
         var idx0 = TIPOS.findIndex(function(t){ return t.interno; });
         var cantViejos = TIPOS.filter(function(t){ return t.interno; }).length;
@@ -5430,11 +5575,8 @@ window.OT2C = (function(){
       // solo dejaras la tabla y eliminaras el resto") -- el checklist se
       // asigna por fila en la tabla, no con un selector global.
       '<label class="fl">Productos/equipos a los que aplica el checklist (opcional)</label>'+
-      '<div class="o2m-item-actions mb-2 d-flex gap-2 flex-wrap align-items-center">'+
-      '<button type="button" class="btn btn-outline-danger btn-sm" onclick="OT2C.abrirProductoCatalogo()">'+
-      '<i class="bi bi-search me-1" style="color:var(--ilus-red,#dc2626)"></i>Buscar ítem</button>'+
-      '<button type="button" class="btn btn-link btn-sm p-0" onclick="OT2C.abrirTareaManualModal()">'+
-      '<i class="bi bi-plus-circle me-1" style="color:#16a34a"></i>Agregar manual</button></div>'+
+      _o2mDocBadgeHtml()+
+      _o2mAccionesTrabajoHtml()+
       '<div class="o2m-lista mb-3" id="o2mTareasList"></div>'+
       /* 🔴 2026-09-03 — acá vivían "¿Qué se hizo?" y "Fotos de evidencia",
          los dos obligatorios. Daniel: "aún no se ha hecho, eso va en el
@@ -9087,6 +9229,10 @@ window.OT2C = (function(){
     // que usa la ficha del ticket) -- así la OT queda vinculada al ticket
     // de origen sin inventar una columna nueva.
     S.ticket_id = sel.id;
+    // 📝 2026-10-18: hereda título (si está vacío) y motivo del ticket (editable).
+    if (!String(S.titulo || '').trim() && (t.titulo || t.asunto)) S.titulo = (t.titulo || t.asunto);
+    _o2mHeredarMotivo(t.descripcion, 'del ticket ' + (t.numero_ticket || ('#' + sel.id)));
+    repintarSeccion('detalle');
     var header = {
       tido: null, nudo: null,
       cliente: t.empresa || '',
@@ -9242,6 +9388,8 @@ window.OT2C = (function(){
     if (t.v === 'capacitacion' && !S.hini && !S.hfin){
       S.hini = '09:00'; S.hfin = '13:00';
     }
+    // 📝 2026-10-18: el motivo hereda la descripción del tipo interno (editable).
+    if (t.interno && t.l) _o2mHeredarMotivo(t.l, 'del tipo «' + t.n + '»');
     // Elegir tipo puede cambiar qué pide "Cliente" (aparece/desaparece) y
     // qué muestra "Equipos" (bodega/producto-o-tarea/normal) -- se
     // reconstruye el formulario completo para no dejar secciones a medio
@@ -10641,6 +10789,9 @@ window.OT2C = (function(){
         }
         if (t.titulo || t.asunto) opts.titulo = (t.titulo || t.asunto);
         abrir(opts);
+        // 📝 2026-10-18: el motivo hereda la descripción del ticket (editable).
+        _o2mHeredarMotivo(t.descripcion, 'del ticket ' + (t.numero_ticket || ('#' + _tid)));
+        repintarSeccion('detalle');
         // 📒 2026-10-11: la OT hereda la factura del ticket (ver _o2mHeredarDocsTicket).
         _o2mHeredarDocsTicket(j && j.documentos, t.numero_ticket);
       })
@@ -10672,7 +10823,7 @@ window.OT2C = (function(){
           setOrigen:setOrigen, setTipo:setTipo,
           setAcc:setAcc, setAccesoTexto:setAccesoTexto, setTitulo:setTitulo, setDescripcion:setDescripcion,
           setNotaVentaInterna:setNotaVentaInterna, abrirBusquedaDocInterno:abrirBusquedaDocInterno,
-          abrirNuevoTipoInterno:abrirNuevoTipoInterno, _o2mNtGuardar:_o2mNtGuardar,
+          abrirNuevoTipoInterno:abrirNuevoTipoInterno, _o2mNtGuardar:_o2mNtGuardar, _o2mNtIcono:_o2mNtIcono,
           setFecha:setFecha, setHora:setHora, setBodegaObs:setBodegaObs,
           tecTog:tecTog, eqTog:eqTog, eqPlant:eqPlant, eqTogTodos:eqTogTodos, eqTogPlan:eqTogPlan,
           eqModo:eqModo,
