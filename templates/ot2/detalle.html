@@ -2345,6 +2345,24 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
    ver .is-next arriba. Relleno sólido a propósito: tiene que ganarle el
    ojo a los demás chips de contorno suave. */
 .otd-chk-item .ch.next{background:var(--ilus-red,#dc2626);color:#fff}
+/* 🧾 2026-10-18 — revisión esencial: lo que pide la revisión, «alertar sin gritar» (ámbar = te toca; rojo solo el
+   error real, «Apto» con una Falla). */
+.otd-chk-item .ch.hall{background:#fff8e1;color:#92400e}
+.otd-chk-item .ch.err{background:#fee2e2;color:#b91c1c}
+.otd-chk-item .ch.disp{background:#f3f4f6;color:#6b7280}
+.otd-chk-item.is-disp{opacity:.62}
+.otd-chk-resbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px;padding:10px 12px;
+  border:1px solid #e5e7eb;border-radius:12px;background:#fff}
+.otd-chk-resbar .lbl{flex-basis:100%;font-size:.78rem;font-weight:700;color:#374151}
+.otd-chk-resbar .lbl b{color:#0a0a0a}
+.otd-chk-resbar button{min-height:44px;padding:8px 14px;border-radius:10px;border:1px solid #d1d5db;background:#fff;
+  font-size:.85rem;font-weight:700;color:#111827;display:inline-flex;align-items:center;gap:6px}
+.otd-chk-resbar button.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.otd-chk-resbar button:disabled{opacity:.55}
+.otd-chk-nollego{display:flex;gap:8px;align-items:flex-start;margin:0 0 12px;padding:10px 12px;border-radius:12px;
+  background:#fff8e1;border:1px solid #fcd34d;color:#92400e;font-size:.85rem}
+.otd-chk-nollego b{color:#78350f}
+@media (max-width:575.98px){.otd-chk-resbar button{flex:1 1 calc(50% - 8px);justify-content:center}}
 /* Sello de autoría — la trazabilidad que Daniel pide ver en la tarea */
 .otd-chk-item .sello{grid-column:2;display:inline-flex;align-items:center;gap:5px;
   margin-top:7px;font-size:.66rem;font-weight:700;color:#475569;background:#f1f5f9;
@@ -12437,17 +12455,171 @@ const OTD_CURRENT_UID = {{ (current_user.id if current_user else 0) | tojson }};
 // si la base marca observación»). La base de ESTE equipo marcó algo si una
 // verificación quedó en alerta/falla, «¿Faltan piezas…?» quedó en Sí o el
 // resultado no es «Apto».
+// ✂️ 2026-10-18 (revisión esencial): con las opciones nuevas (Reparar, Dar de baja, Fuera de servicio…) la regla
+// pasa a «cualquier Resultado distinto de Apto y de No llegó» (un producto que no llegó no se revisa).
 function otdChkBaseMarcoObs(grupos, g){
   return grupos.some(o => o !== g && (o.tareas || []).some(t => {
-    const vj = t.valor_json || {};
+    const vj = otdChkVj(t);
+    if (vj.na) return false;
     if (t.tipo_respuesta === 'verificacion') return vj.valor === 'alerta' || vj.valor === 'falla';
     if (t.tipo_respuesta === 'sino') return vj.valor === 'si' && /falta/i.test(t.titulo || '');
-    if (t.tipo_respuesta === 'lista'){
-      const op = String(vj.opcion || '').toLowerCase();
-      return op.startsWith('no apto') || op.startsWith('apto con') || op.startsWith('pendiente');
+    if (otdChkEsResultado(t)){
+      const op = otdChkNorm(vj.opcion);
+      return !!op && op !== 'apto' && op !== 'no llego';
     }
     return false;
   }));
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   🧾 2026-10-18 — EXIGENCIAS DE LA REVISIÓN (Etapa 2, revisión esencial).
+   Daniel: «que si conseguimos una falla, sea porque el técnico no la quiso identificar».
+   ESPEJO EXACTO de _chk_revision_evaluar (app.py): la firma y el cierre los decide el servidor con esa función;
+   esta copia solo existe para que el técnico vea lo mismo en el momento, sin recargar. Si cambias una, cambia la
+   otra (tests/test_ot_revision_esencial.py corre las dos con los mismos casos).
+     · «No llegó» (producto de trabajo interno): solo se exige la observación (el argumento).
+     · Foto si hay hallazgo: Alerta/Falla, o un Resultado distinto de Apto y No llegó, piden una foto en esa tarea.
+     · «Apto» o «Apto con observaciones» con un ítem en Falla del mismo equipo: pendiente hasta cambiarlo.
+   ══════════════════════════════════════════════════════════════════════ */
+function otdChkNorm(s){
+  return String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().split(/\s+/).filter(Boolean).join(' ');
+}
+function otdChkVj(t){
+  let vj = t ? t.valor_json : null;
+  if (typeof vj === 'string'){ try { vj = JSON.parse(vj); } catch(e){ vj = {}; } }
+  return (vj && typeof vj === 'object' && !Array.isArray(vj)) ? vj : {};
+}
+function otdChkOpciones(t){
+  let ops = [];
+  try {
+    ops = Array.isArray(t.opciones_lista_json) ? t.opciones_lista_json : JSON.parse(t.opciones_lista_json || '[]');
+  } catch(e){ ops = []; }
+  return Array.isArray(ops) ? ops.filter(o => typeof o === 'string').map(otdChkNorm) : [];
+}
+function otdChkEsResultado(t){
+  if (String((t && t.tipo_respuesta) || '').trim().toLowerCase() !== 'lista') return false;
+  const ops = otdChkOpciones(t);
+  return ops.includes('apto') && ops.includes('apto con observaciones');
+}
+function otdChkOpcion(t){
+  const vj = otdChkVj(t);
+  return vj.na ? '' : otdChkNorm(vj.opcion);
+}
+function otdChkValorVerif(t){
+  const vj = otdChkVj(t);
+  if (vj.na || String((t && t.tipo_respuesta) || '').trim().toLowerCase() !== 'verificacion') return '';
+  return String(vj.valor || '').trim().toLowerCase();
+}
+function otdChkGrupoClave(t){
+  if (t.maquina_id) return 'm' + t.maquina_id;
+  if (t.item_manual_id) return 'i' + t.item_manual_id;
+  return 'x0';
+}
+function otdChkEvaluar(tareas){
+  const grupos = {};
+  (tareas || []).forEach(t => { const k = otdChkGrupoClave(t); (grupos[k] = grupos[k] || []).push(t); });
+  const noLlego = [], porTarea = {};
+  Object.keys(grupos).forEach(k => {
+    const ts = grupos[k];
+    const opciones = {};
+    ts.forEach(t => {
+      if (String(t.tipo_respuesta || '').trim().toLowerCase() === 'lista') opciones[t.id] = otdChkOpcion(t);
+    });
+    const esNoLlego = k[0] === 'i' && Object.keys(opciones).some(id => opciones[id] === 'no llego');
+    if (esNoLlego) noLlego.push(Number(k.slice(1)));
+    const hayFalla = ts.some(t => otdChkValorVerif(t) === 'falla');
+    const textos = ts.filter(t => String(t.tipo_respuesta || '').trim().toLowerCase() === 'texto');
+    let argumento = textos.filter(t => !!Number(t.obligatoria)).map(t => t.id);
+    if (!argumento.length){
+      const obs = textos.filter(t => otdChkNorm(t.titulo).startsWith('observacion'));
+      argumento = obs.length ? [obs[0].id] : [];
+    }
+    ts.forEach(t => {
+      const tr = String(t.tipo_respuesta || '').trim().toLowerCase();
+      let exig = !!Number(t.obligatoria), hecha = !!t.completada, motivo = null, disp = false;
+      if (esNoLlego){
+        if (argumento.includes(t.id)){ exig = true; motivo = hecha ? null : 'argumento'; }
+        else if (tr === 'lista' && opciones[t.id] === 'no llego'){ /* el propio «No llegó» queda como está */ }
+        else if (exig){ exig = false; disp = true; }
+      } else {
+        const vj = otdChkVj(t);
+        const nFotos = (t.n_fotos != null) ? Number(t.n_fotos) : (t.fotos || []).length;
+        const fsh = (t.foto_si_hallazgo === true || Number(t.foto_si_hallazgo) > 0);
+        if (fsh && !vj.na && !nFotos){
+          const op = opciones[t.id];
+          const hallazgo = (tr === 'verificacion' && ['alerta', 'falla'].includes(otdChkValorVerif(t))) ||
+                           (tr === 'lista' && !['', 'apto', 'no llego'].includes(op));
+          if (hallazgo){ exig = true; hecha = false; motivo = 'foto_hallazgo'; }
+        }
+        if (hayFalla && otdChkEsResultado(t) && ['apto', 'apto con observaciones'].includes(opciones[t.id])){
+          exig = true; hecha = false; motivo = 'incoherente';
+        }
+      }
+      if (exig && !hecha && motivo === null) motivo = 'obligatoria';
+      porTarea[t.id] = { exigible: exig, hecha: exig ? hecha : !!t.completada,
+                         motivo: (exig && !hecha) ? motivo : null, dispensada: disp };
+    });
+  });
+  return { no_llego: noLlego, por_tarea: porTarea };
+}
+function otdChkExig(t){ return t._ev ? t._ev.exigible : !!t.obligatoria; }
+function otdChkHecha(t){ return t._ev ? t._ev.hecha : !!t.completada; }
+function otdChkHermanas(mid, t){
+  const out = [];
+  (OTD_CHK_DATA && OTD_CHK_DATA[String(mid)] || []).forEach(g =>
+    (g.tareas || []).forEach(x => { if (x !== t && x.id !== t.id) out.push(x); }));
+  return out;
+}
+
+/* Daniel (18-10): «arriba debe tener las opciones para dar de baja, para poner fuera de servicio, para decir que el
+   producto no está». Atajos que ESCRIBEN el Resultado del control (una sola fuente de verdad, nunca un segundo
+   campo): el mismo guardado que el selector de la tarea, con su candado y su regla dura. */
+function otdChkBarraResultado(res, noLlego){
+  if (!res) return '';
+  let opciones = [];
+  try { opciones = JSON.parse(res.opciones_lista_json || '[]'); } catch(e){ opciones = []; }
+  const interno = !!(res.item_manual_id && !res.maquina_id);
+  const quiero = ['dar de baja', 'fuera de servicio'].concat(interno ? ['no llego'] : []);
+  const atajos = (Array.isArray(opciones) ? opciones : []).filter(o => quiero.includes(otdChkNorm(o)));
+  const actual = otdChkOpcion(res);
+  const bloq = otdChkEstaBloqueada(res);
+  const ICO = {'dar de baja': 'trash3', 'fuera de servicio': 'slash-circle', 'no llego': 'box-seam'};
+  const aviso = noLlego
+    ? `<div class="otd-chk-nollego" role="status"><i class="bi bi-box-seam" aria-hidden="true"></i>
+         <span><b>No llegó</b> · solo se exige el argumento: escribe en «Observación del equipo» cuándo se esperaba y a
+         quién se preguntó. Si el producto aparece, cambia el resultado y vuelve a pedirse todo.</span></div>`
+    : '';
+  if (!atajos.length) return aviso;
+  return aviso + `<div class="otd-chk-resbar">
+      <span class="lbl">Resultado del equipo: <b>${actual ? otdEsc(otdChkVj(res).opcion || '') : 'sin decidir'}</b></span>
+      ${atajos.map(o => {
+        const n = otdChkNorm(o);
+        return `<button type="button" class="${actual === n ? 'on' : ''}" ${bloq ? 'disabled' : ''}
+                  data-op="${otdEsc(o)}" onclick="otdChkResultadoRapido(${res.id}, this.dataset.op)">
+                  <i class="bi bi-${ICO[n] || 'flag'}" aria-hidden="true"></i>${otdEsc(o)}</button>`;
+      }).join('')}
+    </div>`;
+}
+async function otdChkResultadoRapido(tid, opcion){
+  const found = otdChkFindTarea(tid);
+  if (!found) return;
+  const n = otdChkNorm(opcion);
+  if (otdChkOpcion(found.t) === n) return;
+  const SUB = {
+    'no llego': 'De este producto solo se exigirá la observación con el argumento (cuándo se esperaba, a quién se preguntó). No se pide foto.',
+    'dar de baja': 'No se repara (fisura, deformación, daño total). Después sube la foto del daño en «Resultado del control».',
+    'fuera de servicio': 'Hay una falla que impide usarlo y aún no hay arreglo ni decisión. Después sube la foto del daño.',
+  };
+  const ok = await ilusConfirm({
+    title: `Resultado: ${opcion}`,
+    message: found.t.titulo ? `Se guarda en «${found.t.titulo}».` : 'Se guarda como resultado del equipo.',
+    sub: SUB[n] || '',
+    okLabel: 'Guardar resultado', cancelLabel: 'Cancelar',
+    type: n === 'dar de baja' ? 'warning' : 'question',
+  });
+  if (!ok) return;
+  await otdChkGuardar(tid, opcion);
 }
 function otdChkCondEnvolver(g, grupos, html){
   const marco = otdChkBaseMarcoObs(grupos, g);
@@ -12598,15 +12770,22 @@ function otdRenderChecklistEquipo(mid){
     mount.innerHTML = '<div class="otd-chk-fallback">Sin checklist asignado a este equipo.</div>';
     return;
   }
+  // 🧾 2026-10-18: exigencias de la revisión (espejo de _chk_revision_evaluar): «No llegó», foto del hallazgo y
+  // «Apto» con Falla. Cada tarea lleva su resultado en t._ev para los contadores, los chips y la foto.
+  const _todas = [];
+  grupos.forEach(g => (g.tareas || []).forEach(t => _todas.push(t)));
+  const _ev = otdChkEvaluar(_todas);
+  _todas.forEach(t => { t._ev = _ev.por_tarea[t.id] || null; });
+  const _resultado = _todas.find(t => otdChkEsResultado(t)) || null;
   // 🆕 2026-09-03 — barra SEGMENTADA (una barrita por tarea) copiada de la
   // pantalla clásica que Daniel puso al lado: "hay un semáforo, está bien
   // hecho eso". Una barra continua dice el porcentaje; ésta dice además
   // CUÁNTAS tareas son y cuáles faltan, que es lo que el técnico mira.
-  mount.innerHTML = grupos.map(g => {
-    const oblT = g.tareas.filter(t => t.obligatoria).length;
-    const oblO = g.tareas.filter(t => t.obligatoria && t.completada).length;
+  mount.innerHTML = otdChkBarraResultado(_resultado, _ev.no_llego.length > 0) + grupos.map(g => {
+    const oblT = g.tareas.filter(t => otdChkExig(t)).length;
+    const oblO = g.tareas.filter(t => otdChkExig(t) && otdChkHecha(t)).length;
     const segs = g.tareas.map(t =>
-      `<i class="${t.completada ? 'ok' : (t.obligatoria ? 'obl' : '')}"></i>`).join('');
+      `<i class="${(otdChkExig(t) ? otdChkHecha(t) : t.completada) ? 'ok' : (otdChkExig(t) ? 'obl' : '')}"></i>`).join('');
     const cerrado = oblT > 0 && oblO >= oblT;
     // 🔴 2026-09-08 (Daniel: "ya pasaste al paso uno, ahora fotos del
     // equipo -- eso es lo que necesito"): la PRÓXIMA tarea sin responder
@@ -12635,7 +12814,7 @@ function otdRenderChecklistEquipo(mid){
   let nTot = 0, nOk = 0, oblTot = 0, oblOk = 0;
   grupos.forEach(g => g.tareas.forEach(t => {
     nTot++; if (t.completada) nOk++;
-    if (t.obligatoria){ oblTot++; if (t.completada) oblOk++; }
+    if (otdChkExig(t)){ oblTot++; if (otdChkHecha(t)) oblOk++; }   // 🧾 2026-10-18
   }));
   const elChk = document.getElementById(`otdWkChk-${mid}`);
   if (elChk) elChk.textContent = `${nOk}/${nTot} tareas`;
@@ -13674,18 +13853,22 @@ function otdChkFotoBtnHtml(t){
   // `requiere_foto` (pensado para "texto/número que además pide foto de
   // respaldo"), sino también de `t.tipo === 'foto'`.
   const exigeFoto = !!(t.requiere_foto || (t.tipo_respuesta || '').toLowerCase() === 'foto');
+  // 📸 2026-10-18 «foto solo si hay hallazgo»: el botón aparece cuando la tarea quedó en Alerta/Falla (o el Resultado
+  // no es Apto ni No llegó) y, si ya tiene fotos, para agregar otra. Sin hallazgo no se pide ni se muestra.
+  const _pideHallazgo = !!(t._ev && t._ev.motivo === 'foto_hallazgo');
+  const _fshConFotos = !!((t.foto_si_hallazgo === true || Number(t.foto_si_hallazgo) > 0) && t.fotos && t.fotos.length);
   if (otdBloqueadaPorCierre()){
-    if (exigeFoto && !(t.fotos && t.fotos.length)){
+    if ((exigeFoto || _pideHallazgo) && !(t.fotos && t.fotos.length)){
       return `<span class="otd-chk-sinfoto" title="La tarea exigía evidencia fotográfica y la OT se cerró sin ella">
                 <i class="bi bi-camera-video-off"></i> Cerró sin la foto exigida</span>`;
     }
     return '';
   }
-  if (!exigeFoto) return '';
+  if (!exigeFoto && !_pideHallazgo && !_fshConFotos) return '';
   const need = !(t.fotos && t.fotos.length);
   return `<button type="button" class="otd-chk-fotobtn${need ? ' need' : ''}"
             onclick="otdChkAbrirFoto(${t.id}, ${t.maquina_id})">
-            <i class="bi bi-camera-fill"></i> ${need ? 'Falta foto' : 'Agregar otra'}</button>
+            <i class="bi bi-camera-fill"></i> ${need ? (_pideHallazgo ? 'Falta foto del hallazgo' : 'Falta foto') : 'Agregar otra'}</button>
           <input type="file" id="otdChkFotoInp-${t.id}" accept="image/*" capture="environment"
                  style="display:none" onchange="otdChkSubirFoto(this, ${t.id})">`;
 }
@@ -14095,7 +14278,14 @@ function otdChkTareaHtml(t, nro, esSiguiente){
   if (!t.completada && esSiguiente){
     chips.push('<span class="ch next"><i class="bi bi-arrow-right-circle-fill"></i> Paso actual</span>');
   }
-  if (t.obligatoria) chips.push('<span class="ch obl">Obligatoria</span>');
+  // 🧾 2026-10-18 (revisión esencial): la exigencia viene de otdChkEvaluar (t._ev), no solo de la plantilla.
+  const _evT = t._ev || null;
+  const _exig = otdChkExig(t);
+  if (_evT && _evT.dispensada) chips.push('<span class="ch disp">No se exige · no llegó</span>');
+  else if (_exig && (t.obligatoria || (_evT && _evT.motivo === 'argumento'))) chips.push('<span class="ch obl">Obligatoria</span>');
+  if (_evT && _evT.motivo === 'argumento') chips.push('<span class="ch hall">Escribe el argumento de «No llegó»</span>');
+  if (_evT && _evT.motivo === 'foto_hallazgo') chips.push('<span class="ch hall"><i class="bi bi-camera-fill" aria-hidden="true"></i> Falta la foto del hallazgo</span>');
+  if (_evT && _evT.motivo === 'incoherente') chips.push('<span class="ch err">Con una Falla no vale «Apto»</span>');
   if (CH_TIPO[tipo]) chips.push(`<span class="ch tipo">${CH_TIPO[tipo]}</span>`);
   // 🔴 FIX 2026-09-09: mismo desacople que otdChkFotoBtnHtml -- una tarea
   // tipo_respuesta='foto' exige foto aunque requiere_foto haya quedado en
@@ -14113,12 +14303,14 @@ function otdChkTareaHtml(t, nro, esSiguiente){
       `${t.completada_por ? otdEsc(t.completada_por) : 'Respondida'}` +
       `${t.completada_at ? ' · ' + otdChkCuando(t.completada_at) : ''}</div>`
     : '';
-  const clase = t.completada ? ' is-ok'
-    : ((esSiguiente ? ' is-next' : '') + (t.obligatoria ? ' is-obl' : ''));
+  // 🧾 2026-10-18: «lista» = respondida y sin nada pendiente (una Falla sin su foto todavía no está lista).
+  const _lista = _exig ? otdChkHecha(t) : !!t.completada;
+  const clase = _lista ? ' is-ok'
+    : ((esSiguiente ? ' is-next' : '') + (_exig ? ' is-obl' : ''));
 
-  return `<div class="otd-chk-item${clase}${bloqueada ? ' is-locked' : ''}" id="otdChkItem-${t.id}">
+  return `<div class="otd-chk-item${clase}${bloqueada ? ' is-locked' : ''}${(_evT && _evT.dispensada) ? ' is-disp' : ''}" id="otdChkItem-${t.id}">
     <span class="nm">${String(nro || 0).padStart(2, '0')}</span>
-    <span class="tk"><i class="bi bi-${t.completada ? 'check-lg' : (t.obligatoria ? 'exclamation-lg' : 'dash-lg')}"></i></span>
+    <span class="tk"><i class="bi bi-${_lista ? 'check-lg' : (_exig ? 'exclamation-lg' : 'dash-lg')}"></i></span>
     <div class="hd"><b>${otdEsc(t.titulo || '')}</b>${oblBadge}</div>
     ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
     ${t.descripcion ? `<div class="desc">${otdEsc(t.descripcion)}</div>` : ''}
@@ -14713,6 +14905,32 @@ async function otdChkGuardar(tid, valorCrudo){
     ilusToast('Esta tarea exige una foto — adjúntala para poder cerrarla', {type:'warning'});
     return;
   }
+  // 🧾 2026-10-18 — REGLA DURA del Resultado (la misma que aplica el servidor, _chk_resultado_rechazo): con un ítem
+  // en Falla del mismo equipo no vale «Apto» ni «Apto con observaciones»; con una Alerta, «Apto» pide confirmar.
+  if (!_valorVacio && tipo === 'lista' && otdChkEsResultado(t)){
+    const _op = otdChkNorm(valor);
+    const _herm = otdChkHermanas(mid, t);
+    const _fallas = _herm.filter(h => otdChkValorVerif(h) === 'falla');
+    if ((_op === 'apto' || _op === 'apto con observaciones') && _fallas.length){
+      await ilusAlert({
+        title: `Con una Falla no vale «${valor}»`,
+        message: `Este equipo tiene ${_fallas.length === 1 ? 'un ítem' : _fallas.length + ' ítems'} en Falla: ${_fallas[0].titulo || ''}.`,
+        sub: 'Elige Reparar, Dar de baja, Fuera de servicio o Pendiente de diagnóstico. Si la falla se resolvió en el acto, cambia ese ítem primero.',
+        type: 'warning',
+      });
+      return;
+    }
+    if (_op === 'apto' && _herm.some(h => otdChkValorVerif(h) === 'alerta')){
+      const _seguir = await ilusConfirm({
+        title: '¿«Apto» con una Alerta?',
+        message: 'Este equipo tiene un ítem en Alerta.',
+        sub: 'Si sigue usable con ese detalle menor, corresponde «Apto con observaciones».',
+        okLabel: 'Sí, queda Apto', cancelLabel: 'Volver a elegir',
+        type: 'warning',
+      });
+      if (!_seguir) return;
+    }
+  }
   if (!await otdChkTomarLock(tid)) return;
   try {
     const r = await otdFetch(`/mantenciones/api/visitas/${OTD_VID}/tareas/${tid}/respuesta`, {
@@ -14721,6 +14939,13 @@ async function otdChkGuardar(tid, valorCrudo){
     });
     const res = await otdRespuestaAfirmativa(r);
     const d = res.d || {};
+    if (r.status === 409 && d.error_codigo === 'RESULTADO_CON_FALLA'){
+      // 🧾 2026-10-18: el servidor aplicó la regla dura (otro técnico pudo marcar una Falla mientras tanto).
+      await ilusAlert({ title: 'Resultado no guardado', message: d.error || 'Con un ítem en Falla no vale «Apto».',
+                        type: 'warning' });
+      await otdChkRecargar(true);
+      return;
+    }
     if (r.status === 409){
       ilusToast('Otro técnico respondió esta tarea — actualizando…', {type:'warning'});
       await otdChkRecargar(true);

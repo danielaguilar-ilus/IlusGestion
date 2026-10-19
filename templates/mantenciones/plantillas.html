@@ -1361,6 +1361,7 @@ async function copiarItemsDesde(){
       titulo: it.titulo || '', descripcion: it.descripcion || '',
       tipo_respuesta: it.tipo_respuesta || 'check',
       obligatoria: !!it.obligatoria, requiere_foto: !!it.requiere_foto,
+      foto_si_hallazgo: !!it.foto_si_hallazgo,   // 📸 2026-10-18
       unidad: it.unidad || '', rango_min: it.rango_min, rango_max: it.rango_max,
       opciones_lista: it.opciones_lista || [], target_field: it.target_field || '',
     }));
@@ -1601,6 +1602,13 @@ function renderItems(){
                    onchange="actualizarItem(${idx}, 'requiere_foto', this.checked)">
             <label class="form-check-label small" for="foto-${idx}">Requiere foto adjunta</label>
           </div>
+          ${(it.tipo_respuesta === 'verificacion' || it.tipo_respuesta === 'lista') ? `
+          <div class="form-check form-check-inline" title="Daniel 18-10-2026: «con que tome una foto yo tengo». La foto se pide solo si la respuesta es Alerta o Falla (en una lista, cualquier opción distinta de Apto y de No llegó).">
+            <input class="form-check-input" type="checkbox" id="fsh-${idx}"
+                   ${it.foto_si_hallazgo?'checked':''}
+                   onchange="actualizarItem(${idx}, 'foto_si_hallazgo', this.checked)">
+            <label class="form-check-label small" for="fsh-${idx}">Foto solo si hay hallazgo</label>
+          </div>` : ''}
         </div>
       </div>`;
   }).join('');
@@ -1662,6 +1670,8 @@ async function guardarPlantilla(){
       tipo_respuesta: it.tipo_respuesta,
       obligatoria: !!it.obligatoria,
       requiere_foto: !!it.requiere_foto,
+      // 📸 2026-10-18: solo tiene sentido en verificación y lista (ver _chk_revision_evaluar en app.py).
+      foto_si_hallazgo: !!it.foto_si_hallazgo && (it.tipo_respuesta === 'verificacion' || it.tipo_respuesta === 'lista'),
       unidad: it.unidad || null,
       rango_min: it.rango_min,
       rango_max: it.rango_max,

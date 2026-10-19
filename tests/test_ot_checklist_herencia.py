@@ -150,7 +150,7 @@ class TestBloques(unittest.TestCase):
             self.assertEqual([it[0] for it in items], list(range(1, len(items) + 1)), nombre)
             for it in items:
                 self.assertIn(it[3], validos, (nombre, it[1]))
-                self.assertEqual(len(it), 10)
+                self.assertEqual(len(it), 11)   # ✂️ 2026-10-18: + foto_si_hallazgo (versión esencial)
 
     def test_nombres_unicos_de_control_de_calidad(self):
         nombres = [b[0] for b in self.k["_CHK_BLOQUES_SEED"]]
@@ -182,7 +182,8 @@ class TestBloques(unittest.TestCase):
     def test_base_foto_general_obligatoria_y_serie_inteligente(self):
         base = next(b for b in self.k["_CHK_BLOQUES_SEED"] if b[0] == self.k["_CHK_BASE_CONTROL_CALIDAD"])[2]
         fotos = [it for it in base if it[3] == "foto"]
-        self.assertEqual([it[4] for it in fotos], [1, 0, 0])          # solo la general es obligatoria
+        # ✂️ 2026-10-18 (versión esencial, Daniel: «con que tome una foto yo tengo»): UNA sola foto, la general.
+        self.assertEqual([(it[1], it[4]) for it in fotos], [("Foto general del equipo", 1)])
         serie = [it for it in base if it[3] == "serie"]
         self.assertEqual(len(serie), 1)
         self.assertEqual(serie[0][4], 1)
@@ -190,8 +191,9 @@ class TestBloques(unittest.TestCase):
         self.assertIn("Pendiente de diagn", resultado[9])
 
     def test_selector_revisa_piola_pivotes_bujes_y_pads(self):           # Daniel: «las piolas, los pads, los bujes»
-        sel = next(b for b in self.k["_CHK_BLOQUES_SEED"] if b[0] == self.k["_CHK_SELECTOR"])[2]
-        textos = " ".join((it[1] + " " + (it[2] or "")).lower() for it in sel)
+        bloque = next(b for b in self.k["_CHK_BLOQUES_SEED"] if b[0] == self.k["_CHK_SELECTOR"])
+        # ✂️ 2026-10-18: en la versión esencial los pads van en «Ajustes y traba» y en los repuestos sugeridos.
+        textos = bloque[1].lower() + " " + " ".join((it[1] + " " + (it[2] or "")).lower() for it in bloque[2])
         for palabra in ("piola", "bujes", "pivotes", "pads", "crítico"):
             self.assertIn(palabra, textos)
 
@@ -371,7 +373,9 @@ class TestPantallas(unittest.TestCase):
 
     def test_ficha_pliega_el_condicional(self):
         self.assertIn("return g.condicional ? otdChkCondEnvolver(g, grupos, _html) : _html;", D)
-        self.assertIn("op.startsWith('no apto') || op.startsWith('apto con')", D)
+        # ✂️ 2026-10-18: con las opciones nuevas, cualquier Resultado distinto de Apto y de No llegó abre el bloque
+        # (el detalle y la prueba con node están en tests/test_ot_revision_esencial.py).
+        self.assertIn("return !!op && op !== 'apto' && op !== 'no llego';", D)
         f = _fuente("mant_visita_checklist_get")
         self.assertIn('grp["condicional"] = bool(', f)
         self.assertIn('not any(x.get("obligatoria") for x in grp["tareas"])', f)
