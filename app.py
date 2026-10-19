@@ -63,6 +63,7 @@ import erp_engine
 import transporte_tarifas as _ttar  # motor de tarifas réplica EXACTA de la macro SPHS
 import usuarios_perfil as _uperf  # datos personales del usuario: fecha de nacimiento y dirección validada con Google
 import ot_saldo_servicio as _saldo  # saldo por línea de servicio de cada documento (módulo puro con pruebas)
+import ot_correos_tecnicos as _otc  # correos a técnicos (asignada/reagendada/cancelada/quitada/agenda): lógica pura con pruebas
 import fedex_labels as _fxlabels    # parser puro de etiquetas FedEx (testeable)
 _ERP = erp_engine.init_engine(
     base_url=ERP_CONFIG.get("api_url", "https://lab.random.cl/ilus"),
@@ -6279,6 +6280,9 @@ _CSRF_EXEMPT_PATHS: set = {
     # búsqueda pública de un retiro por código + correo (POST, 2026-09-25):
     # solo consulta, no cambia nada, y el cliente no tiene sesión
     "/retiros/buscar",
+    # cron del recordatorio de agenda a técnicos (2026-10-19): sin sesión, autentica por X-Cron-Token (ILUS_CRON_TOKEN).
+    # Ruta EXACTA (no el prefijo /mantenciones/cron/): no abre ninguna otra ruta a POST sin CSRF.
+    "/mantenciones/cron/agenda-tecnicos",
 }
 # Prefijos exentos: cubren rutas dinámicas (token o id variable).
 _CSRF_EXEMPT_PREFIXES: tuple = (
@@ -9550,6 +9554,10 @@ _MODULOS_KILLSWITCH_VALIDOS = (
     "general",
     "tickets",
     "catalogo",
+    # 2026-10-19 (Daniel: «separa los interruptores para encender solo el de técnicos»): llave PROPIA de los correos
+    # automáticos a técnicos (OT asignada / reagendada / cancelada / quitada / agenda de mañana). El correo al CLIENTE
+    # sigue con la llave «mantenciones». Nace ENCENDIDA (ver _ensure_ot_tecnicos_killswitch).
+    "ot_tecnicos",
 )
 
 _KILLSWITCH_CACHE = {"data": None, "ts": 0}
@@ -9683,7 +9691,7 @@ def _email_ultimo_bloqueo():
 
 _KS_MODULO_TXT = {"mantenciones": "Mantenciones", "general": "General", "transporte": "Transporte",
                   "retiros": "Retiros", "comunicacion_interna": "Comunicación interna", "tickets": "Tickets",
-                  "catalogo": "Catálogo"}
+                  "catalogo": "Catálogo", "ot_tecnicos": "Correos a técnicos (OT)"}
 
 
 def _email_motivo_bloqueo_txt(tipo, modulo):
@@ -39084,6 +39092,14 @@ def tr_cron_simpliroute_poll():
             res["libro_facturas"] = _fac_libro_barrido(max_s=min(40, max(5, 240 - (time.time() - _t_peticion))))
         except Exception as _e_fl:
             print(f"[cron-simpliroute] libro de facturas: {_e_fl}", flush=True)
+    # 📧 Recordatorio a técnicos (Daniel 2026-10-19): desde las 17:00 (hora Chile) de un día hábil, cada técnico recibe por correo
+    # su agenda del siguiente día hábil (llave propia 'ot_tecnicos'). Fuera de esa ventana vuelve al instante sin consultar
+    # nada. Idempotente (UNIQUE técnico+día). Si falla no afecta al polling.
+    if not dry:
+        try:
+            res["agenda_tecnicos"] = _ot_tec_barrido_agenda()
+        except Exception as _e_at:
+            print(f"[cron-simpliroute] agenda técnicos: {_e_at}", flush=True)
     return jsonify(res), (200 if res.get("ok") else 502)
 
 
@@ -52481,6 +52497,25 @@ def _comm_demo_replacements() -> dict:
         "tipo_mantencion":    "Preventiva trimestral",
         "maquina":            "Trotadora ILUS Pro 9000",
         "link_ot":            "https://ilusfitness.com/ot/demo",
+        # Avisos a técnicos de una OT (2026-10-19): valores de muestra para el envío de prueba del editor
+        "nombre_tecnico":     "Pedro Pérez",
+        "tecnicos":           "Pedro Pérez",
+        "fecha_antes":        fecha_demo,
+        "horario_antes":      "09:00 – 11:00",
+        "fecha_ahora":        fecha_demo,
+        "horario_ahora":      "14:00 – 16:00",
+        "antes_ahora_html":   _otc.bloque_antes_ahora(f"{fecha_demo} · 09:00 – 11:00", f"{fecha_demo} · 14:00 – 16:00"),
+        "notas_html":         _otc.fila_notas("Instalar una trotadora en el mall y dejarla probada."),
+        "motivo_html":        _otc.fila_motivo("El cliente pidió cambiar el horario."),
+        "dia":                fecha_demo,
+        "cuando":             "de mañana",
+        "n_ot":               "1",
+        "n_ot_txt":           "1 orden de trabajo",
+        "agenda_html":        _otc.agenda_html([{"id": 0, "numero_ot": "OT-DEMO-2026-001", "cliente": "Gimnasio Demo",
+                                                 "tipo_label": "Instalación", "hora_inicio": "10:00", "hora_fin": "12:00",
+                                                 "direccion": "Av. Demo 123, Las Condes",
+                                                 "equipos": ["Trotadora ILUS Pro 9000"]}], "https://ilusfitness.com"),
+        "link_agenda":        "https://ilusfitness.com/ot/",
         # Retiro
         "code":               "RET-DEMO-7788",
         "cliente":            "Juan Daniel Aguilar Tejera",
@@ -53904,6 +53939,7 @@ def comm_killswitch_get():
         "general":              "General",
         "tickets":              "Tickets",
         "catalogo":             "Catálogo",
+        "ot_tecnicos":          "Correos a técnicos (OT)",
     }
     modulos = []
     for mod in _MODULOS_KILLSWITCH_VALIDOS:
@@ -54194,6 +54230,7 @@ _COMM_HIST_MODULO_LABELS = {
     "general":                 "General",
     "tickets":                 "Tickets",
     "catalogo":                "Catálogo",
+    "ot_tecnicos":             "Correos a técnicos (OT)",     # 2026-10-19
     "prueba_manual":           "Pruebas manuales (antiguas)",
 }
 _COMM_HIST_PROVEEDOR_LABELS = {
@@ -74210,6 +74247,9 @@ def mant_visita_multi(cid):
         conn.commit()
         _mant_log("cliente", cid, "visita_multi_creada",
                   f"Visita {vid}: {len(rows)} equipos, tipo {tipo_visita}, fecha {fecha_prog}")
+        # 📧 2026-10-19: los técnicos de la visita reciben «OT asignada» (llave propia 'ot_tecnicos'; best-effort).
+        try: _mant_ot_email_tecnico_creacion(vid)
+        except Exception as _e_emt: print(f"[visita-multi email-tecnico] {_e_emt}", flush=True)
         return jsonify({
             "ok": True,
             "visita_id": vid,
@@ -74379,12 +74419,15 @@ def mant_visita_tecnico_quitar(vid, vt_id):
     if not row:
         return jsonify({"ok": False, "error": "Registro no encontrado"}), 404
     try:
+        _tec_antes = _ot_tec_antes(vid)      # 📧 2026-10-19: foto previa para avisarle al técnico que ya no la tiene
         mysql_execute(
             "DELETE FROM mant_visita_tecnicos WHERE id=%s AND visita_id=%s",
             (vt_id, vid)
         )
         _mant_log("visita", vid, "tecnico_quitado",
                   f"Técnico colaborador (vt_id={vt_id}) removido por {current_username()}")
+        try: _ot_tec_correo(vid, _tec_antes)      # «desasignada» (llave propia 'ot_tecnicos'; best-effort)
+        except Exception as _e_tc: print(f"[tecnico-quitar correo] {_e_tc}", flush=True)
         return jsonify({"ok": True})
     except Exception as e:
         print(f"[mant_visita_tecnico_quitar] vid={vid} vt_id={vt_id}: {e}", flush=True)
@@ -74454,6 +74497,7 @@ def mant_visita_tecnico_agregar(vid):
         }), 409
 
     try:
+        _tec_antes = _ot_tec_antes(vid)      # 📧 2026-10-19: foto previa para avisarle al técnico que se suma
         conn = get_db()
         with conn.cursor() as cur:
             cur.execute(
@@ -74465,6 +74509,8 @@ def mant_visita_tecnico_agregar(vid):
         conn.commit()
         _mant_log("visita", vid, "tecnico_agregado",
                   f"Técnico colaborador agregado: {u['nombre']} (uid={tuid}) por {current_username()}")
+        try: _ot_tec_correo(vid, _tec_antes)      # «asignada» al colaborador (llave propia 'ot_tecnicos'; best-effort)
+        except Exception as _e_tc: print(f"[tecnico-agregar correo] {_e_tc}", flush=True)
         return jsonify({"ok": True, "vt_id": vt_id, "nombre": u["nombre"]})
     except Exception as e:
         print(f"[mant_visita_tecnico_agregar] vid={vid} tuid={tuid}: {e}", flush=True)
@@ -86372,6 +86418,11 @@ def _mant_visita_crear_core(d):
             except Exception as _e_nai: print(f"[crear-ot notif] {_e_nai}", flush=True)
             try: _notificar_ot_asignada(vid)
             except Exception as _e_naw: print(f"[crear-ot wa] {_e_naw}", flush=True)
+            # 📧 2026-10-19 (Daniel: «avisarle a los técnicos por un mail con plantillas»): este camino (calendario
+            # rápido de Mantenciones, trabajo interno) nunca mandó el correo; ahora el técnico lo recibe, por la llave
+            # PROPIA 'ot_tecnicos'. Después del commit, best-effort. El correo al cliente NO se toca.
+            try: _mant_ot_email_tecnico_creacion(vid)
+            except Exception as _e_emt: print(f"[crear-ot email-tecnico] {_e_emt}", flush=True)
         # 2026-05-22 (OT 2026-00004 Vitacura) — Opcionalmente acepta
         # maquina_ids y plantilla_id en el mismo POST para que el
         # ejecutivo no tenga que aplicar plantilla en un segundo paso
@@ -87057,6 +87108,13 @@ def mant_visita_update(vid):
     # prioridad al motivo del $0; sin esto la OT seguía «Garantía, cobré $0» aunque volviera a cobrarse).
     if gar_aplica_upd is False and "modalidad_cobro" in d and (d.get("modalidad_cobro") or "") != "garantia":
         sets += ["cobro_cero_motivo=NULL", "cobro_cero_autorizacion_id=NULL", "cobro_cero_argumento=NULL"]
+    # 📧 2026-10-19 (Daniel: «cuando agendemos una orden de trabajo, avisarle a los técnicos por un mail»): foto de lo que
+    # el técnico sabe ANTES de guardar (fecha, horario, estado y quién la tiene), para avisar después, con la OT ya
+    # guardada, solo lo que de verdad cambió: asignada / reagendada / cancelada / ya no la tienes. Si el PUT no toca
+    # ninguno de esos campos no se hace nada (ni una consulta).
+    _tec_avisar = any(k in d for k in ("fecha_programada", "fecha_fin", "hora_inicio", "hora_fin",
+                                       "tecnico_user_id", "estado"))
+    _tec_antes = _ot_tec_antes(vid) if _tec_avisar else None
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
@@ -87120,6 +87178,13 @@ def mant_visita_update(vid):
                 except Exception as _e_naw: print(f"[upd-ot wa] {_e_naw}", flush=True)
         except Exception as _e_chk:
             print(f"[upd-ot check tecnico] {_e_chk}", flush=True)
+        # 📧 2026-10-19: correos a los técnicos por lo que cambió (llave propia 'ot_tecnicos'; ya con la OT guardada;
+        # best-effort: un fallo de correo nunca deshace ni frena el guardado).
+        if _tec_avisar:
+            try:
+                _ot_tec_correo(vid, _tec_antes, motivo=(d.get("motivo_cambio") or ""))
+            except Exception as _e_tc:
+                print(f"[upd-ot correo-tecnico] {_e_tc}", flush=True)
         resp = {"ok": True}
         if warn_mod_upd:
             resp["warning"] = warn_mod_upd
@@ -128000,6 +128065,8 @@ def _mant_ot_creacion_variables(vid):
         "direccion": dir_full,
         "tipo_mantencion": _TIPO_OT_LABEL.get((v.get("tipo") or "").lower(), v.get("tipo") or "Visita"),
         "maquina": maquina_str,
+        # 2026-10-19: ESTE es el diccionario del correo al CLIENTE (visita_agendada) y no cambia ni una letra. El aviso al
+        # TÉCNICO arma su propio link a la ficha nueva (/ot/<id>) en ot_correos_tecnicos.construir_variables.
         "link_ot": f"{_public_base_url()}/mantenciones/ot/{int(vid)}",
     }
     return v, variables
@@ -128067,47 +128134,551 @@ def _mant_ot_email_cliente_creacion(vid):
 
 
 def _mant_ot_email_tecnico_creacion(vid):
-    """Correo al TÉCNICO apenas se le asigna la OT (plantilla 'ot_asignada',
-    ya sembrada, hasta ahora huérfana -- nadie la leía). Distinto en
-    contenido del correo al cliente: acá importa la dirección/equipo/
-    link para IR a trabajar, no una confirmación de servicio. Best-effort:
-    nunca lanza."""
+    """Correo al TÉCNICO apenas se le asigna la OT (plantilla 'ot_asignada').
+
+    2026-10-19 (Daniel: «activemos los mails hacia los técnicos»): ahora delega en el punto único de avisos a técnicos
+    (_ot_tec_correo, más abajo): llave de paso PROPIA ('ot_tecnicos', separada de la del cliente), link a la ficha NUEVA
+    (/ot/<id>), todos los técnicos de la OT (no solo el principal), sin repetidos y con constancia en la bitácora.
+    Se conserva el nombre porque lo llaman la creación del asistente (_ot2_crear_core) y la de levantamientos/tickets.
+    Best-effort: nunca lanza."""
     try:
-        v, variables = _mant_ot_creacion_variables(vid)
-        if not v:
-            return
-        destinos = _mant_get_tecnico_emails(vid)
-        if not destinos:
-            return
-        tpl = None
-        try:
-            tpl = _render_comm_template("ot_asignada", "email", variables, modulo="mantenciones")
-        except Exception as _e_tpl:
-            print(f"[ot-email-tecnico] plantilla no disponible vid={vid}: {_e_tpl}", flush=True)
-        if tpl:
-            asunto, cuerpo = tpl
-            asunto = (asunto or "").strip() or f"Nueva OT asignada — {variables['ot']}"
-        else:
-            asunto = f"Nueva OT asignada — {variables['ot']}"
-            cuerpo = (
-                f"<p style=\"margin:0 0 16px;font-size:15px;color:#dc2626;font-weight:700\">Hola {variables['tecnico']}</p>"
-                f"<p style=\"margin:0 0 14px;font-size:14px;color:#444;line-height:1.65\">Se te asignó una nueva orden de trabajo. Revisa los detalles abajo.</p>"
-                f"<table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"background:#f5f5f7;border-left:4px solid #f59e0b;border-radius:4px;padding:14px 18px;margin:18px 0\">"
-                f"<tr><td style=\"padding:5px 0;font-size:13px;color:#555\"><strong style=\"color:#222\">OT:</strong>&nbsp; <span style=\"color:#dc2626;font-weight:700\">{variables['ot']}</span></td></tr>"
-                f"<tr><td style=\"padding:5px 0;font-size:13px;color:#555\"><strong style=\"color:#222\">Cliente:</strong>&nbsp; {variables['cliente']}</td></tr>"
-                f"<tr><td style=\"padding:5px 0;font-size:13px;color:#555\"><strong style=\"color:#222\">Tipo:</strong>&nbsp; {variables['tipo_mantencion']}</td></tr>"
-                f"<tr><td style=\"padding:5px 0;font-size:13px;color:#555\"><strong style=\"color:#222\">Fecha visita:</strong>&nbsp; {variables['fecha']} · {variables['horario']}</td></tr>"
-                f"<tr><td style=\"padding:5px 0;font-size:13px;color:#555\"><strong style=\"color:#222\">Equipo:</strong>&nbsp; {variables['maquina']}</td></tr>"
-                f"</table>"
-                f"<p style=\"margin:14px 0 0;font-size:13px\"><a href=\"{variables['link_ot']}\" style=\"background:#dc2626;color:#fff;padding:10px 22px;border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block\">Ver orden de trabajo</a></p>"
-            )
-        html = _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {variables['ot']}")
-        res = _mant_send_email_multi(v.get("cliente_id"), asunto, html,
-                                     evento="ot_asignada", emails=destinos)
-        if res["enviados"]:
-            _mant_log("visita", vid, "email_creacion_tecnico", f"a {', '.join(res['enviados'])} — OT {variables['ot']}")
+        _ot_tec_correo(vid, antes=None)
     except Exception as e:
         print(f"[ot-email-tecnico-creacion] vid={vid}: {e}", flush=True)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  CORREOS A TÉCNICOS DE UNA OT (Daniel, 19-oct-2026)
+#
+#  «Cuando agendemos una orden de trabajo, tenemos que avisarle a los técnicos por un mail con plantillas, todo bien
+#  estructuradito.» Al técnico le llega correo: (1) al asignarle una OT, (2) al cambiar fecha/horario de una OT suya o
+#  cancelarla, (3) recordatorio a las 17:00 del día hábil anterior con su agenda, (4) al quitarle una OT.
+#
+#  · La lógica pura (a quién se avisa, variables, HTML, fechas del recordatorio) vive en ot_correos_tecnicos.py, con
+#    pruebas. Acá están las lecturas/escrituras de la base y el envío.
+#  · LLAVE PROPIA: todo sale por modulo='ot_tecnicos' (Comunicaciones → Llave de paso). El correo al CLIENTE sigue con
+#    'mantenciones' y no cambia. Respeta además el interruptor global de correos.
+#  · Plantillas editables en Comunicaciones → Servicio Técnico (comm_templates, módulo 'mantenciones'): ot_asignada,
+#    ot_reagendada_tecnico, ot_cancelada_tecnico, ot_desasignada_tecnico, agenda_tecnico_manana. Se siembran SOLO si no
+#    existen. Una plantilla apagada en el editor no se envía.
+#  · CONFIDENCIALIDAD (REGLAS #19 y #26): ningún correo lleva montos, costos, proveedores, OC ni autorizaciones.
+#  · Patrón de uso en cada camino que cambia una OT:
+#        antes = _ot_tec_antes(vid)        # foto previa (False si no se pudo: entonces no se avisa nada)
+#        ...cambia la OT y se hace commit...
+#        _ot_tec_correo(vid, antes)        # compara y avisa; para una OT recién creada: antes=None
+#    Nunca rompe la operación (todo va en try/except) y se llama DESPUÉS del commit.
+# ══════════════════════════════════════════════════════════════════════
+
+def _ot_tec_llave_cerrada():
+    """True si el interruptor global de correos o la llave 'ot_tecnicos' están cerrados."""
+    try:
+        return (not comm_is_enabled("email")) or _modulo_canal_bloqueado(_otc.MODULO_LLAVE, "email")
+    except Exception:
+        return False
+
+
+def _ensure_ot_tec_tablas():
+    """Dos tablas baratas (REGLA #18: CREATE TABLE IF NOT EXISTS, sin locks en el arranque):
+    · mant_ot_tec_avisos: un renglón por aviso enviado; la clave única impide el mismo aviso por el mismo cambio dos veces.
+    · mant_ot_tec_agenda: un renglón por técnico y día de agenda ya avisado (UNIQUE tecnico+fecha) — el recordatorio de
+      las 17:00 es idempotente aunque el trabajo corra cada 10 minutos. El renglón '*' marca el día como completado."""
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_ot_tec_avisos (
+                id        BIGINT AUTO_INCREMENT PRIMARY KEY,
+                visita_id INT NOT NULL,
+                email     VARCHAR(190) NOT NULL,
+                evento    VARCHAR(30) NOT NULL,
+                huella    CHAR(40) NOT NULL,
+                ventana   INT NOT NULL,
+                creado_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_ot_tec_aviso (visita_id, email, evento, huella, ventana),
+                KEY idx_ot_tec_aviso_vid (visita_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_ot_tec_agenda (
+                id            INT AUTO_INCREMENT PRIMARY KEY,
+                tecnico_email VARCHAR(190) NOT NULL,
+                fecha_agenda  DATE NOT NULL,
+                n_ot          INT NOT NULL DEFAULT 0,
+                creado_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_ot_tec_agenda (tecnico_email, fecha_agenda)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_ot_tec_tablas] {e}", flush=True)
+
+
+def _ensure_ot_tecnicos_killswitch():
+    """La llave 'ot_tecnicos' nace ENCENDIDA (Daniel lo pidió encendido). INSERT IGNORE: si la fila ya existe — porque
+    Daniel la apagó desde /comunicaciones — NO se toca; solo fija el valor inicial la primera vez en cada base."""
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS comm_killswitch (
+                modulo               VARCHAR(50) NOT NULL,
+                email_bloqueado      TINYINT(1) DEFAULT 0,
+                whatsapp_bloqueado   TINYINT(1) DEFAULT 0,
+                sms_bloqueado        TINYINT(1) DEFAULT 0,
+                motivo               TEXT,
+                actualizado_por      VARCHAR(190),
+                actualizado_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+                                     ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (modulo)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        mysql_execute(
+            "INSERT IGNORE INTO comm_killswitch "
+            "(modulo, email_bloqueado, whatsapp_bloqueado, sms_bloqueado, motivo, actualizado_por) "
+            "VALUES ('ot_tecnicos', 0, 0, 0, %s, 'sistema')",
+            ("Correos a técnicos de una OT — nace encendida (pedido de Daniel, 19-oct-2026)",))
+    except Exception as e:
+        print(f"[ensure_ot_tecnicos_killswitch] no se pudo sembrar: {e}", flush=True)
+
+
+def _ensure_comm_template_ot_tecnicos():
+    """Siembra las plantillas de los correos a técnicos AUNQUE ILUS_SKIP_MIGRATIONS=1. Solo si NO existen (nunca pisa
+    lo que Daniel editó). Caso aparte, 'ot_asignada' (ya existía): si en la base sigue siendo EXACTAMENTE la semilla
+    original —nadie la editó—, se actualiza a la versión con Dirección y «Qué hay que hacer», que el técnico necesita
+    para ir; si Daniel la tocó, queda como está."""
+    try:
+        sembradas = 0
+        for slug in _otc.SEMILLAS_NUEVAS:
+            existe = mysql_fetchone(
+                "SELECT id FROM comm_templates WHERE modulo=%s AND estado=%s AND canal='email' LIMIT 1",
+                (_otc.MODULO_PLANTILLAS, slug))
+            if existe:
+                continue
+            asunto, cuerpo = _otc.SEMILLAS[slug]
+            mysql_execute(
+                "INSERT IGNORE INTO comm_templates (modulo, estado, canal, asunto, cuerpo) VALUES (%s,%s,'email',%s,%s)",
+                (_otc.MODULO_PLANTILLAS, slug, asunto, cuerpo))
+            sembradas += 1
+        fila = mysql_fetchone(
+            "SELECT id, asunto, cuerpo FROM comm_templates WHERE modulo=%s AND estado='ot_asignada' AND canal='email' LIMIT 1",
+            (_otc.MODULO_PLANTILLAS,))
+        if fila:
+            a1, c1 = _mantenciones_tpl_seed()["ot_asignada"]
+            _n = lambda s: (s or "").replace("\r\n", "\n").strip()
+            if _n(fila.get("asunto")) == _n(a1) and _n(fila.get("cuerpo")) == _n(c1):
+                a2, c2 = _otc.SEMILLAS["ot_asignada"]
+                mysql_execute(
+                    "UPDATE comm_templates SET asunto=%s, cuerpo=%s, updated_by=%s WHERE id=%s AND cuerpo=%s",
+                    (a2, c2, "sistema", fila["id"], fila.get("cuerpo")))
+                print("[ensure_comm_tpl] 'ot_asignada' (semilla original sin editar) pasó a la versión con dirección",
+                      flush=True)
+        if sembradas:
+            print(f"[ensure_comm_tpl] {sembradas} plantilla(s) de avisos a técnicos sembradas", flush=True)
+        return sembradas
+    except Exception as e:
+        print(f"[ensure_comm_tpl] no se pudo sembrar avisos a técnicos: {e}", flush=True)
+        return 0
+
+
+# ── Lecturas (todas en bloque: nada de una consulta por OT) ───────────────────────────────────────────────────────
+
+def _ot_tec_ids(vids):
+    ids = []
+    for v in (vids or []):
+        try:
+            ids.append(int(v))
+        except (TypeError, ValueError):
+            continue
+    return sorted(set(ids))
+
+
+def _ot_tec_destinatarios_bulk(vids):
+    """{vid: {correo: nombre}} de los técnicos de cada OT. Cubre todas las vías de asignación (como
+    _mant_get_tecnico_emails, pero SUMANDO a los colaboradores de mant_visita_tecnicos con cuenta, que esa función no
+    miraba): principal y colaboradores con cuenta (app_users.username es el correo), técnicos del catálogo legacy y el
+    correo de contacto del técnico EXTERNO. Cada vía en su try/except: si una falla, las demás siguen."""
+    ids = _ot_tec_ids(vids)
+    out = {i: {} for i in ids}
+    if not ids:
+        return out
+    ph = ",".join(["%s"] * len(ids))
+    par = tuple(ids)
+
+    def _add(vid, email, nombre):
+        e = (email or "").strip().lower()
+        if vid in out and e and "@" in e and 6 <= len(e) <= 180:
+            out[vid].setdefault(e, (nombre or "").strip() or e.split("@")[0])
+
+    uids = {}                                  # uid -> [vid]
+    for sql in (
+        f"SELECT v.id AS vid, u.id AS uid, u.username AS email, COALESCE(NULLIF(u.nombre,''), u.username) AS nombre "
+        f"  FROM mant_visitas v JOIN `{AUTH_TABLE}` u ON u.id=v.tecnico_user_id "
+        f" WHERE v.id IN ({ph}) AND u.active=1",
+        f"SELECT vt.visita_id AS vid, u.id AS uid, u.username AS email, COALESCE(NULLIF(u.nombre,''), u.username) AS nombre "
+        # Colaboradores = filas de mant_visita_tecnicos que NO son 'lider'. La OT del asistente copia al principal
+        # a esa tabla con rol 'lider'; «Reasignar» solo cambia mant_visitas.tecnico_user_id y deja esa copia atrás.
+        # Si se contara, el técnico anterior seguiría "en la OT": no se le avisaría que ya no la tiene y seguiría
+        # recibiendo su agenda. El principal vigente ya sale de la consulta de arriba.
+        f"  FROM mant_visita_tecnicos vt JOIN `{AUTH_TABLE}` u ON u.id=vt.tecnico_user_id "
+        f" WHERE vt.visita_id IN ({ph}) AND COALESCE(vt.rol,'') <> 'lider' AND u.active=1",
+    ):
+        try:
+            for r in (mysql_fetchall(sql, par) or []):
+                _add(int(r["vid"]), r.get("email"), r.get("nombre"))
+                uids.setdefault(int(r["uid"]), set()).add(int(r["vid"]))
+        except Exception as e:
+            print(f"[ot-tec-dest:cuenta] {type(e).__name__}: {e}", flush=True)
+    try:        # catálogo legacy (mant_tecnicos): sin cuenta, solo correo directo
+        for r in (mysql_fetchall(
+            "SELECT vt.visita_id AS vid, t.email AS email, t.nombre AS nombre FROM mant_visita_tecnicos vt "
+            f"JOIN mant_tecnicos t ON t.id=vt.tecnico_id WHERE vt.visita_id IN ({ph})", par) or []):
+            _add(int(r["vid"]), r.get("email"), r.get("nombre"))
+    except Exception as e:
+        print(f"[ot-tec-dest:legacy] {type(e).__name__}: {e}", flush=True)
+    # Técnico EXTERNO: su correo real de contacto puede ser distinto del de su cuenta (se SUMA, no reemplaza).
+    # Solo se leen user_id, razón social y correo de contacto (nada de datos de pago ni de la ficha comercial).
+    if uids:
+        ph_u = ",".join(["%s"] * len(uids))
+        for sql_ext in (
+            # ficha del proveedor ligada directo a la cuenta (columna user_id)
+            "SELECT te.user_id AS uid, te.contacto_email AS email, te.razon_social AS nombre "
+            f"FROM mant_tecnicos_externos te WHERE te.user_id IN ({ph_u})",
+            # empresa a la que pertenece la cuenta (tabla mant_tecnico_externo_usuarios, un técnico = una empresa)
+            "SELECT teu.user_id AS uid, tee.contacto_email AS email, tee.razon_social AS nombre "
+            "FROM mant_tecnico_externo_usuarios teu JOIN mant_tecnicos_externos tee ON tee.id = teu.tecnico_externo_id "
+            f"WHERE teu.user_id IN ({ph_u})",
+        ):
+            try:
+                for r in (mysql_fetchall(sql_ext, tuple(uids)) or []):
+                    for vid in uids.get(int(r["uid"]), ()):
+                        _add(vid, r.get("email"), r.get("nombre"))
+            except Exception as e:
+                print(f"[ot-tec-dest:externo-user] {type(e).__name__}: {e}", flush=True)
+    try:        # externos sin cuenta, cruzados por nombre (misma regla que el Anexo de Servicios)
+        for r in (mysql_fetchall(
+            "SELECT v.id AS vid, te.contacto_email AS email, te.razon_social AS nombre FROM mant_visitas v "
+            "JOIN mant_tecnicos_externos te ON te.user_id IS NULL "
+            "  AND LOWER(TRIM(COALESCE(te.razon_social,''))) = LOWER(TRIM(COALESCE(v.tecnico,''))) "
+            f"WHERE v.id IN ({ph}) AND TRIM(COALESCE(v.tecnico,'')) <> ''", par) or []):
+            _add(int(r["vid"]), r.get("email"), r.get("nombre"))
+    except Exception as e:
+        print(f"[ot-tec-dest:externo-nombre] {type(e).__name__}: {e}", flush=True)
+    return out
+
+
+def _ot_tec_filas(vids):
+    """{vid: datos para el correo} de varias OT en UNA consulta. Sin ninguna columna de plata."""
+    ids = _ot_tec_ids(vids)
+    if not ids:
+        return {}
+    ph = ",".join(["%s"] * len(ids))
+    cols = ("v.id, v.numero_ot, v.descripcion, v.tipo, v.estado, v.fecha_programada, v.fecha_fin, v.hora_inicio, "
+            "v.hora_fin, c.razon_social, NULLIF(TRIM(v.direccion_visita),'') AS dir_visita, "
+            "{comuna_v} AS comuna_visita, c.direccion AS cli_dir, c.comuna AS cli_comuna")
+    base = f" FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id IN ({ph})"
+    try:
+        rows = mysql_fetchall("SELECT " + cols.format(comuna_v="NULLIF(TRIM(v.direccion_comuna),'')") + base, tuple(ids)) or []
+    except Exception:       # base sin la columna direccion_comuna (migración antigua)
+        rows = mysql_fetchall("SELECT " + cols.format(comuna_v="NULL") + base, tuple(ids)) or []
+    out = {}
+    for r in rows:
+        partes = [p for p in ((r.get("dir_visita") or r.get("cli_dir") or "").strip(),
+                              (r.get("comuna_visita") or r.get("cli_comuna") or "").strip()) if p]
+        if len(partes) == 2 and partes[1].lower() in partes[0].lower():
+            partes = partes[:1]                       # la dirección de Google ya trae la comuna
+        tipo = (r.get("tipo") or "").lower()
+        out[int(r["id"])] = {
+            "id": int(r["id"]), "numero_ot": r.get("numero_ot"), "cliente": r.get("razon_social") or "",
+            "tipo_label": _TIPO_OT_LABEL.get(tipo, r.get("tipo") or "Visita"), "estado": r.get("estado"),
+            "fecha": r.get("fecha_programada"), "fecha_fin": r.get("fecha_fin"),
+            "hora_inicio": r.get("hora_inicio"), "hora_fin": r.get("hora_fin"),
+            "direccion": ", ".join(partes) or "—", "descripcion": r.get("descripcion") or "", "equipos": [],
+        }
+    return out
+
+
+def _ot_tec_equipos_bulk(vids):
+    """{vid: [nombres de equipos]} en una consulta (best-effort: si falla, sin equipos)."""
+    ids = _ot_tec_ids(vids)
+    out = {i: [] for i in ids}
+    if not ids:
+        return out
+    try:
+        ph = ",".join(["%s"] * len(ids))
+        for r in (mysql_fetchall(
+            "SELECT ve.visita_id AS vid, m.nombre AS nombre FROM mant_visita_equipos ve "
+            f"JOIN mant_maquinas m ON m.id = ve.maquina_id WHERE ve.visita_id IN ({ph}) ORDER BY ve.id", tuple(ids)) or []):
+            n = (r.get("nombre") or "").strip()
+            if n:
+                out[int(r["vid"])].append(n)
+    except Exception as e:
+        print(f"[ot-tec-equipos] {type(e).__name__}: {e}", flush=True)
+    return out
+
+
+def _ot_tec_foto(vid):
+    """Foto de la OT tal como la conoce el técnico (estado, fecha, horario, técnicos) o None si no existe."""
+    # La conexión del request es REPEATABLE READ (autocommit=False): si ya hizo una lectura, una OT que otra conexión
+    # acaba de guardar (el UPDATE de la edición va por get_mysql) NO se vería y el aviso saldría con la foto vieja. Se
+    # cierra la lectura anterior para leer lo último comprometido (mismo gotcha de numero_ot/numero_ticket).
+    try:
+        get_db().commit()
+    except Exception:
+        pass
+    r = mysql_fetchone(
+        "SELECT estado, fecha_programada, fecha_fin, hora_inicio, hora_fin FROM mant_visitas WHERE id=%s", (int(vid),))
+    if not r:
+        return None
+    tec = _ot_tec_destinatarios_bulk([vid]).get(int(vid), {})
+    return _otc.foto(r.get("estado"), r.get("fecha_programada"), r.get("fecha_fin"),
+                     r.get("hora_inicio"), r.get("hora_fin"), tec)
+
+
+def _ot_tec_antes(vid):
+    """Foto previa para comparar después del cambio. Devuelve False si no se pudo tomar (entonces no se avisa nada)."""
+    try:
+        return _ot_tec_foto(vid) or False
+    except Exception as e:
+        print(f"[ot-tec-antes] vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return False
+
+
+# ── Envío ────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+def _ot_tec_plantilla_apagada(slug):
+    """True si Daniel apagó esa plantilla en el editor (activo=0): entonces ese aviso no sale."""
+    try:
+        r = mysql_fetchone(
+            "SELECT COALESCE(activo,1) AS activo FROM comm_templates WHERE modulo=%s AND estado=%s AND canal='email' LIMIT 1",
+            (_otc.MODULO_PLANTILLAS, slug))
+        return bool(r) and not int(r.get("activo") or 0)
+    except Exception:
+        return False
+
+
+def _ot_tec_armar(slug, variables):
+    """(asunto, cuerpo) desde la plantilla editable; si no está, desde la semilla del código (mismo contenido)."""
+    tpl = None
+    try:
+        tpl = _render_comm_template(slug, "email", variables, modulo=_otc.MODULO_PLANTILLAS)
+    except Exception as e:
+        print(f"[ot-tec] plantilla {slug} no disponible: {e}", flush=True)
+    if tpl and ((tpl[0] or "").strip() or (tpl[1] or "").strip()):
+        asunto, cuerpo = tpl
+    else:
+        a, c = _otc.SEMILLAS[slug] if slug in _otc.SEMILLAS else ("", "")
+        asunto, cuerpo = _otc.render_simple(a, variables), _otc.render_simple(c, variables)
+    # Las variables vienen escapadas para HTML (las escribe una persona): en el ASUNTO, que es texto plano, se deshace
+    # ("Gimnasio A &amp; B" → "Gimnasio A & B"). El maestro de correo escapa el título por su cuenta.
+    import html as _html_plano
+    asunto = _html_plano.unescape((asunto or "").strip()) or "Aviso de orden de trabajo"
+    return _brand_subject(asunto), cuerpo
+
+
+def _ot_tec_reservar(vid, email, evento, huella):
+    """Reserva «este aviso por este cambio». True = es nuevo, se envía; False = ya salió (o salía en paralelo).
+    Si la tabla no está disponible no se puede garantizar la unicidad: se deja pasar (mejor un aviso de más)."""
+    try:
+        n = mysql_execute_returning_rowcount(
+            "INSERT IGNORE INTO mant_ot_tec_avisos (visita_id, email, evento, huella, ventana) VALUES (%s,%s,%s,%s,%s)",
+            (int(vid), email, evento, huella, _otc.ventana(time.time())))
+        return n == 1
+    except Exception as e:
+        print(f"[ot-tec-reservar] {type(e).__name__}: {e}", flush=True)
+        return True
+
+
+def _ot_tec_liberar(vid, email, evento, huella):
+    """El correo no salió (llave cerrada o falla del proveedor): se libera la reserva para poder reintentar."""
+    try:
+        mysql_execute(
+            "DELETE FROM mant_ot_tec_avisos WHERE visita_id=%s AND email=%s AND evento=%s AND huella=%s",
+            (int(vid), email, evento, huella))
+    except Exception:
+        pass
+
+
+def _ot_tec_enviar(email, asunto, cuerpo, *, evento, subtitulo, ref=None):
+    """Un correo a un técnico, por la llave PROPIA 'ot_tecnicos'. Encola (asincrono): el guardado de la OT no espera
+    al proveedor de correo. Devuelve True si salió o quedó encolado."""
+    html = _comm_render_email_document(asunto, cuerpo, subtitle=subtitulo)
+    return bool(_send_ilus_email(email, asunto, html, evento=evento, modulo=_otc.MODULO_LLAVE,
+                                 asincrono=True, ref=ref))
+
+
+def _ot_tec_correo(vid, antes=None, motivo=""):
+    """PUNTO ÚNICO de los avisos a técnicos por un cambio en una OT. Nunca lanza.
+
+    antes=None  → la OT acaba de nacer: cada técnico recibe «asignada».
+    antes=<foto> → compara con lo de ahora (_otc.decidir_avisos): asignada / reagendada / cancelada / desasignada.
+    antes=False → no se pudo tomar la foto previa: no se avisa nada (preferimos callar a avisar mal).
+    motivo      → texto libre opcional (motivo del cambio); pasa por el filtro de confidencialidad.
+    No avisa si la OT ya está cerrada/completada, ni dos veces el mismo aviso por el mismo cambio.
+    Devuelve {'enviados': [(correo, evento)], 'omitidos': [(correo, evento, por qué)]}."""
+    res = {"enviados": [], "omitidos": []}
+    try:
+        if antes is False:
+            return res
+        despues = _ot_tec_foto(vid)
+        if not despues:
+            return res
+        avisos = _otc.decidir_avisos(antes, despues)
+        if not avisos:
+            return res
+        fila = (_ot_tec_filas([vid]) or {}).get(int(vid))
+        if not fila:
+            return res
+        fila["equipos"] = _ot_tec_equipos_bulk([vid]).get(int(vid), [])
+        numero = fila.get("numero_ot") or f"V-{int(vid):05d}"
+        nombres = list((despues.get("tecnicos") or {}).values())
+        base = _public_base_url()
+        for av in avisos:
+            email, ev = av["email"], av["evento"]
+            slug = _otc.PLANTILLA_DE[ev]
+            if _ot_tec_plantilla_apagada(slug):
+                res["omitidos"].append((email, ev, "plantilla apagada en el editor"))
+                continue
+            h = _otc.huella(ev, email, antes, despues)
+            if not _ot_tec_reservar(vid, email, ev, h):
+                res["omitidos"].append((email, ev, "ya se había enviado"))
+                continue
+            vista = dict(fila)
+            if ev in ("desasignada", "cancelada") and antes:      # lo que el técnico tenía en su calendario
+                vista.update(fecha=antes.get("fecha"), fecha_fin=antes.get("fecha_fin"),
+                             hora_inicio=antes.get("hora_inicio"), hora_fin=antes.get("hora_fin"))
+            # El «Motivo» que escribió quien reagenda explica el cambio de fecha o la cancelación; a quien solo se le asigna o se
+            # le quita la OT no le corresponde (se leería como si el motivo fuera de SU aviso).
+            variables = _otc.construir_variables(
+                vista, nombre_tecnico=av.get("nombre"), tecnicos_nombres=nombres, base_url=base,
+                antes=(antes if ev == "reagendada" else None),
+                motivo=(motivo if ev in ("reagendada", "cancelada") else ""))
+            asunto, cuerpo = _ot_tec_armar(slug, variables)
+            ok = _ot_tec_enviar(email, asunto, cuerpo, evento=_otc.EVENTO_LOG[ev], subtitulo=f"OT {numero}",
+                                ref={"tipo": "OT", "id": int(vid), "codigo": numero})
+            if ok:
+                res["enviados"].append((email, ev))
+                _mant_log("visita", vid, "aviso_tecnico",
+                          f"Correo al técnico {av.get('nombre') or email} ({email}) · {ev.replace('_', ' ')} · {numero}")
+            else:
+                _ot_tec_liberar(vid, email, ev, h)
+                res["omitidos"].append((email, ev, "el correo no salió (llave de paso cerrada o falla del proveedor)"))
+    except Exception as e:
+        print(f"[ot-tec-correo] vid={vid}: {type(e).__name__}: {e}", flush=True)
+    return res
+
+
+# ── Recordatorio de las 17:00: la agenda del siguiente día hábil ─────────────────────────────────────────────────
+
+def _ot_tec_barrido_agenda(dry=False, ahora=None, fecha=None):
+    """Manda a cada técnico con OT activas el siguiente día hábil su agenda (una fila por OT, ordenada por hora).
+    Sale desde las 17:00 (hora Chile) de un día hábil; nunca sábado, domingo ni feriado; el viernes avisa el lunes; antes
+    de un feriado, el siguiente día hábil. Si el técnico no tiene OT ese día, no se le manda nada. Cubre OT de varios días
+    (fecha_programada ≤ día ≤ fecha_fin). Idempotente: UNIQUE(técnico, día) — corre cada 10 min colgado de
+    simpliroute-poll y solo avisa una vez. dry=True: solo muestra qué mandaría (con fecha=AAAA-MM-DD ignora la hora).
+    Nunca lanza."""
+    res = {"ok": True, "dry": bool(dry), "enviados": [], "pendientes": [], "omitidos": []}
+    try:
+        from cl_feriados import es_dia_habil as _es_habil
+        ahora = ahora or _now_chile()
+        objetivo = _otc.a_fecha(fecha) if (dry and fecha) else _otc.dia_agenda_a_avisar(ahora, _es_habil)
+        res["ahora"] = ahora.strftime("%d/%m/%Y %H:%M")
+        if not objetivo:
+            res["motivo"] = ("fuera de ventana: solo sale desde las 17:00 de un día hábil "
+                             "(nunca sábado, domingo ni feriado)")
+            return res
+        res["agenda_de"] = objetivo.strftime("%d/%m/%Y")
+        if not dry:
+            if _ot_tec_llave_cerrada():
+                res["motivo"] = "llave de paso «Correos a técnicos» (o el interruptor general) cerrada"
+                res["bloqueado"] = True
+                return res
+            if _ot_tec_plantilla_apagada(_otc.PLANTILLA_AGENDA):
+                res["motivo"] = "la plantilla «agenda_tecnico_manana» está apagada en el editor"
+                return res
+            if mysql_fetchone("SELECT id FROM mant_ot_tec_agenda WHERE tecnico_email='*' AND fecha_agenda=%s LIMIT 1",
+                              (objetivo,)):
+                res["motivo"] = "la agenda de ese día ya se envió completa"
+                return res
+        excl = sorted(_otc.ESTADOS_SIN_AGENDA)
+        ph_e = ",".join(["%s"] * len(excl))
+        filas = mysql_fetchall(
+            "SELECT v.id FROM mant_visitas v "
+            " WHERE v.fecha_programada BETWEEN DATE_SUB(%s, INTERVAL 60 DAY) AND %s "
+            "   AND GREATEST(v.fecha_programada, COALESCE(v.fecha_fin, v.fecha_programada)) >= %s "
+            f"  AND COALESCE(v.estado,'') NOT IN ({ph_e})",
+            (objetivo, objetivo, objetivo) + tuple(excl)) or []
+        ids = [int(r["id"]) for r in filas]
+        tecs = _ot_tec_destinatarios_bulk(ids)
+        info = _ot_tec_filas(ids)
+        equipos = _ot_tec_equipos_bulk(ids)
+        por_tec = {}
+        for vid in ids:
+            f = info.get(vid)
+            if not f:
+                continue
+            f["equipos"] = equipos.get(vid, [])
+            for email, nombre in (tecs.get(vid) or {}).items():
+                d = por_tec.setdefault(email, {"nombre": nombre, "items": []})
+                d["items"].append(f)
+        base = _public_base_url()
+        for email in sorted(por_tec):
+            d = por_tec[email]
+            items = d["items"]
+            nums = [i.get("numero_ot") or f"V-{int(i['id']):05d}" for i in _otc.ordenar_agenda(items)]
+            if dry:
+                res["enviados"].append({"tecnico": email, "nombre": d["nombre"], "n_ot": len(items), "ots": nums})
+                continue
+            try:
+                n = mysql_execute_returning_rowcount(
+                    "INSERT IGNORE INTO mant_ot_tec_agenda (tecnico_email, fecha_agenda, n_ot) VALUES (%s,%s,%s)",
+                    (email, objetivo, len(items)))
+            except Exception as e:
+                print(f"[ot-tec-agenda] reserva {email}: {type(e).__name__}: {e}", flush=True)
+                res["pendientes"].append(email)
+                continue
+            if n != 1:
+                res["omitidos"].append({"tecnico": email, "motivo": "ya se le envió esa agenda"})
+                continue
+            variables = _otc.construir_variables_agenda(items, objetivo=objetivo, hoy=ahora.date(),
+                                                        nombre_tecnico=d["nombre"], base_url=base)
+            asunto, cuerpo = _ot_tec_armar(_otc.PLANTILLA_AGENDA, variables)
+            ok = _ot_tec_enviar(email, asunto, cuerpo, evento=_otc.EVENTO_LOG_AGENDA,
+                                subtitulo=f"Agenda {_otc.dia_txt(objetivo)}")
+            if ok:
+                res["enviados"].append({"tecnico": email, "n_ot": len(items), "ots": nums})
+                for it in items:
+                    _mant_log("visita", it["id"], "aviso_tecnico",
+                              f"Recordatorio de agenda del {_otc.dia_txt(objetivo)}: correo a {d['nombre']} ({email})")
+            else:
+                try:
+                    mysql_execute("DELETE FROM mant_ot_tec_agenda WHERE tecnico_email=%s AND fecha_agenda=%s",
+                                  (email, objetivo))
+                except Exception:
+                    pass
+                res["pendientes"].append(email)
+        if not dry and not res["pendientes"]:
+            try:
+                mysql_execute("INSERT IGNORE INTO mant_ot_tec_agenda (tecnico_email, fecha_agenda, n_ot) VALUES ('*',%s,%s)",
+                              (objetivo, len(res["enviados"])))
+            except Exception:
+                pass
+    except Exception as e:
+        res["ok"] = False
+        res["error"] = type(e).__name__
+        print(f"[ot-tec-agenda] {type(e).__name__}: {e}", flush=True)
+    return res
+
+
+@app.route("/mantenciones/cron/agenda-tecnicos", methods=["GET", "POST"])
+def mant_cron_agenda_tecnicos():
+    """Recordatorio de las 17:00 con la agenda de cada técnico (también lo dispara simpliroute-poll cada 10 min).
+    Token por header X-Cron-Token (= ILUS_CRON_TOKEN); sin token configurado solo acepta localhost.
+    ?dry=1 solo muestra qué mandaría (con &fecha=AAAA-MM-DD ve la agenda de ese día aunque no sean las 17:00)."""
+    tok = _cron_extract_token()
+    esperado = ((os.environ.get("ILUS_CRON_TOKEN") or "").strip()
+                or (os.environ.get("FEDEX_CRON_TOKEN") or "").strip())
+    if esperado:
+        if not tok or not secrets.compare_digest(tok.encode("utf-8"), esperado.encode("utf-8")):
+            return jsonify({"error": "forbidden"}), 403
+    elif request.remote_addr not in ("127.0.0.1", "::1", "localhost"):
+        return jsonify({"error": "forbidden"}), 403
+    dry = (request.args.get("dry") or "") in ("1", "true", "yes")
+    return jsonify(_ot_tec_barrido_agenda(dry=dry, fecha=(request.args.get("fecha") or "").strip() or None))
 
 
 # ── PROPUESTA DE PLAN DE MANTENCIÓN POR EMAIL (2026-06-11) ────────────
@@ -159838,6 +160409,17 @@ try:
         _ensure_tickets_killswitch_cerrado()  # Daniel 2026-07-11: llave de tickets nace CERRADA
 except Exception as _ensure_ed_err:
     print(f"[ILUS][WARN] siembra editor comunicaciones: {_ensure_ed_err}", flush=True)
+
+# Correos a técnicos de una OT (Daniel 2026-10-19) — SIEMPRE, incluso skip-migrations: dos tablas nuevas (avisos enviados y
+# agenda ya avisada), la llave de paso 'ot_tecnicos' (nace ENCENDIDA, una sola vez) y las plantillas editables
+# (solo si no existen). Va DESPUÉS de _ensure_comm_template_mantenciones: 'ot_asignada' ya tiene que estar sembrada.
+try:
+    with app.app_context():
+        _ensure_ot_tec_tablas()
+        _ensure_ot_tecnicos_killswitch()
+        _ensure_comm_template_ot_tecnicos()
+except Exception as _ensure_ottec_err:
+    print(f"[ILUS][WARN] correos a técnicos (tablas/llave/plantillas): {_ensure_ottec_err}", flush=True)
 
 # ZZ Envío saldo persistente (2026-07-22, Daniel) — SIEMPRE, incluso
 # skip-migrations: tabla nueva, no depende de init_transporte_tables.
