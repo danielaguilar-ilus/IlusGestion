@@ -40247,6 +40247,300 @@ def tr_dashboard_export_xlsx():
                       mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+@app.route("/transporte/manifiestos/reporte-semanal.xlsx")
+@_tr_required
+def tr_manifiestos_reporte_semanal_xlsx():
+    """Excel semanal de despachos para gestión (2026-10-19, Daniel/Alison:
+    "reporte semanal de los despachos con el detalle, cobro, factura,
+    producto... para indicadores de gestión").
+
+    Querystring: desde / hasta (AAAA-MM-DD, sobre la FECHA DEL MANIFIESTO) y
+    courier opcional. Sin fechas = última semana cerrada (lunes a domingo).
+    Solo lectura de tablas ILUS. Todo número va como NÚMERO real (no texto)
+    para que Excel sume y pivotee directo. 3 hojas: Resumen, Despachos (una
+    fila por factura/boleta del manifiesto) y Productos (una fila por
+    producto de cada despacho). Es información financiera interna:
+    @_tr_required ya deja afuera a los técnicos (REGLA #26).
+    """
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+    except Exception:
+        flash("Falta la librería openpyxl para generar el Excel.", "danger")
+        return redirect(url_for("tr_manifiestos"))
+    import re as _re_rs
+    from datetime import datetime as _dt_rs, timedelta as _td_rs
+    from io import BytesIO
+    from flask import send_file
+
+    _ILLEGAL = _re_rs.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+    def _x(v):
+        return _ILLEGAL.sub("", v) if isinstance(v, str) else v
+
+    def _fecha(s):
+        try:
+            return _dt_rs.strptime((s or "").strip(), "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    hoy = _now_chile().date()
+    desde = _fecha(request.args.get("desde"))
+    hasta = _fecha(request.args.get("hasta"))
+    if not (desde and hasta):
+        lunes_esta = hoy - _td_rs(days=hoy.weekday())
+        desde = lunes_esta - _td_rs(days=7)
+        hasta = lunes_esta - _td_rs(days=1)
+    if desde > hasta:
+        desde, hasta = hasta, desde
+    if (hasta - desde).days > 366:
+        desde = hasta - _td_rs(days=366)
+    courier = (request.args.get("courier") or "").strip()
+
+    MAX_FILAS = 5000
+    params = [desde, hasta]
+    filtro_courier = ""
+    if courier:
+        filtro_courier = " AND m.courier = %s"
+        params.append(courier)
+    params.append(MAX_FILAS + 1)
+    filas = mysql_fetchall(f"""
+        SELECT mi.id AS item_id, mi.estado_entrega, mi.tracking_number,
+               mi.master_tracking_number,
+               m.id AS manifest_id, m.correlativo, m.fecha AS fecha_manifiesto,
+               m.courier, m.estado AS estado_manifiesto,
+               c.tido, c.nudo, c.cliente_nombre, c.cliente_rut, c.comuna,
+               c.region, c.direccion, c.fecha_emision, c.clasificacion,
+               COALESCE(c.n_bultos, 1)          AS n_bultos,
+               COALESCE(c.peso_real, 0)         AS peso_real,
+               COALESCE(c.peso_vol, 0)          AS peso_vol,
+               COALESCE(c.peso_predominante, 0) AS peso_predominante,
+               COALESCE(c.volumen_m3, 0)        AS volumen_m3,
+               c.valor_bruto,
+               c.zz_envio                       AS zz_envio_raw,
+               COALESCE(c.costo_courier, 0)     AS costo_courier,
+               c.autorizado_por, c.motivo_envio,
+               COALESCE(c.es_garantia, 0)       AS es_garantia,
+               c.productos_json,
+               (SELECT MIN(e.ts_utc) FROM transport_tracking_events e
+                 WHERE e.commitment_id = mi.commitment_id
+                   AND e.estado = 'Entregado a transporte') AS en_courier_at,
+               (SELECT MAX(e.ts_utc) FROM transport_tracking_events e
+                 WHERE e.commitment_id = mi.commitment_id
+                   AND e.estado = 'Entregado') AS entregado_at
+          FROM transport_manifest_items mi
+          JOIN transport_manifests m   ON m.id = mi.manifest_id
+          JOIN transport_commitments c ON c.id = mi.commitment_id
+         WHERE m.fecha BETWEEN %s AND %s
+           AND (m.eliminado = 0 OR m.eliminado IS NULL){filtro_courier}
+         ORDER BY m.fecha, m.id, mi.orden, mi.id
+         LIMIT %s
+    """, tuple(params)) or []
+    truncado = len(filas) > MAX_FILAS
+    if truncado:
+        filas = filas[:MAX_FILAS]
+
+    def _num(v):
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    despachos = []
+    for r in filas:
+        cobrado = _num(r.get("zz_envio_raw"))
+        costo = _num(r.get("costo_courier")) or 0.0
+        margen = (cobrado - costo) if (cobrado is not None and costo > 0) else None
+        margen_pct = (margen / cobrado * 100.0) if (margen is not None and cobrado) else None
+        en_c, ent = r.get("en_courier_at"), r.get("entregado_at")
+        dias = None
+        if en_c and ent:
+            try:
+                dias = round((ent - en_c).total_seconds() / 86400.0, 1)
+            except Exception:
+                dias = None
+        r["_cobrado"], r["_costo"], r["_margen"], r["_margen_pct"] = cobrado, costo, margen, margen_pct
+        r["_dias"] = dias
+        r["_doc"] = _doc_label(r.get("tido"), r.get("nudo"))
+        despachos.append(r)
+
+    wb = openpyxl.Workbook()
+    HDR_FILL = PatternFill("solid", fgColor="0A0A0A")   # REGLA #2
+    HDR_FONT = Font(color="FFFFFF", bold=True)
+
+    def _hdr(ws, headers, row=1):
+        for ci, h in enumerate(headers, 1):
+            cell = ws.cell(row, ci, h)
+            cell.font = HDR_FONT
+            cell.fill = HDR_FILL
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        ws.freeze_panes = ws.cell(row + 1, 1)
+
+    def _fmt(ws, cols_money=(), cols_dec=(), cols_date=()):
+        for col in cols_money:
+            for c in ws[get_column_letter(col)][1:]:
+                c.number_format = "#,##0"
+        for col in cols_dec:
+            for c in ws[get_column_letter(col)][1:]:
+                c.number_format = "#,##0.0"
+        for col in cols_date:
+            for c in ws[get_column_letter(col)][1:]:
+                c.number_format = "dd/mm/yyyy"
+
+    def _ts(v):
+        return chile_fmt_filter(v) if v else None
+
+    # ── Hoja Despachos ────────────────────────────────────────────────
+    ws_d = wb.active
+    ws_d.title = "Despachos"
+    h_d = ["Manifiesto", "Fecha manifiesto", "Courier", "Estado manifiesto",
+           "Documento", "Fecha emisión doc.", "Cliente", "RUT", "Comuna", "Región",
+           "Dirección", "Ramo", "Bultos", "Peso real kg", "Peso volumétrico kg",
+           "Peso a cobrar kg", "Volumen m3", "Valor documento", "Cobrado (ZZ envío)",
+           "Costo courier", "Margen $", "Margen %", "Sin precio (no cobra flete)",
+           "Garantía", "Autorizado por", "Motivo envío", "Estado entrega",
+           "N° tracking", "Entregado a transporte", "Entregado", "Días en tránsito",
+           "Cant. productos"]
+    _hdr(ws_d, h_d)
+    for r in despachos:
+        try:
+            _prods = [p for p in (json.loads(r.get("productos_json") or "[]") or [])
+                      if isinstance(p, dict) and str(p.get("koprct") or "").strip()
+                      and not str(p.get("koprct")).strip().upper().startswith("ZZ")]
+        except Exception:
+            _prods = []
+        ws_d.append([
+            _x(r.get("correlativo")), r.get("fecha_manifiesto"), _x(r.get("courier")),
+            _x(r.get("estado_manifiesto")), _x(r["_doc"]), r.get("fecha_emision"),
+            _x(r.get("cliente_nombre")), _x(r.get("cliente_rut")), _x(r.get("comuna")),
+            _x(r.get("region")), _x(r.get("direccion")), _x(r.get("clasificacion")),
+            int(r.get("n_bultos") or 1), _num(r.get("peso_real")), _num(r.get("peso_vol")),
+            _num(r.get("peso_predominante")), _num(r.get("volumen_m3")),
+            _num(r.get("valor_bruto")), r["_cobrado"], r["_costo"] or None,
+            r["_margen"], (round(r["_margen_pct"], 1) if r["_margen_pct"] is not None else None),
+            "Sí" if r["_cobrado"] is None else "No",
+            "Sí" if r.get("es_garantia") else "No",
+            _x(r.get("autorizado_por")), _x(r.get("motivo_envio")),
+            _x(r.get("estado_entrega")),
+            _x(r.get("master_tracking_number") or r.get("tracking_number")),
+            _ts(r.get("en_courier_at")), _ts(r.get("entregado_at")), r["_dias"],
+            int(sum(float(p.get("cantidad") or 0) for p in _prods)),
+        ])
+    _fmt(ws_d, cols_money=(18, 19, 20, 21), cols_dec=(14, 15, 16, 17, 22), cols_date=(2, 6))
+    for i, w in enumerate([16, 13, 20, 16, 16, 13, 34, 14, 18, 20, 40, 12, 8, 11, 12, 12,
+                           10, 14, 14, 13, 12, 10, 14, 10, 18, 30, 20, 20, 17, 17, 10, 10], 1):
+        ws_d.column_dimensions[get_column_letter(i)].width = w
+    ws_d.auto_filter.ref = ws_d.dimensions
+
+    # ── Hoja Productos ────────────────────────────────────────────────
+    ws_p = wb.create_sheet("Productos")
+    h_p = ["Manifiesto", "Fecha manifiesto", "Courier", "Documento", "Cliente", "Comuna",
+           "Estado entrega", "SKU", "Producto", "Cantidad", "Cant. despachada ERP",
+           "Saldo ERP"]
+    _hdr(ws_p, h_p)
+    for r in despachos:
+        try:
+            lista = json.loads(r.get("productos_json") or "[]") or []
+        except Exception:
+            lista = []
+        for p in lista:
+            if not isinstance(p, dict):
+                continue
+            sku = str(p.get("koprct") or "").strip()
+            if not sku or sku.upper().startswith("ZZ"):
+                continue
+            cant = _num(p.get("cantidad")) or 0.0
+            saldo = _num(p.get("saldo"))
+            ws_p.append([
+                _x(r.get("correlativo")), r.get("fecha_manifiesto"), _x(r.get("courier")),
+                _x(r["_doc"]), _x(r.get("cliente_nombre")), _x(r.get("comuna")),
+                _x(r.get("estado_entrega")), _x(sku), _x(str(p.get("nokopr") or "")),
+                cant, (max(cant - saldo, 0.0) if saldo is not None else None), saldo,
+            ])
+    _fmt(ws_p, cols_dec=(10, 11, 12), cols_date=(2,))
+    for i, w in enumerate([16, 13, 20, 16, 34, 18, 20, 16, 50, 10, 12, 10], 1):
+        ws_p.column_dimensions[get_column_letter(i)].width = w
+    ws_p.auto_filter.ref = ws_p.dimensions
+
+    # ── Hoja Resumen (primera) ────────────────────────────────────────
+    ws_r = wb.create_sheet("Resumen", 0)
+    ws_r.append(["Reporte semanal de despachos — Transporte ILUS Fitness"])
+    ws_r["A1"].font = Font(bold=True, size=14)
+    ws_r.append([f"Manifiestos con fecha del {desde.strftime('%d/%m/%Y')} al {hasta.strftime('%d/%m/%Y')}"
+                 + (f" · Courier: {courier}" if courier else "")])
+    ws_r.append([f"Generado: {_now_chile().strftime('%d/%m/%Y %H:%M')} · por {current_username()}"])
+    if truncado:
+        ws_r.append([f"⚠ El detalle se topó en {MAX_FILAS} filas — acota el rango de fechas."])
+        ws_r[f"A{ws_r.max_row}"].font = Font(color="B45309", bold=True)
+    ws_r.append([])
+    n_total = len(despachos)
+    n_entreg = sum(1 for r in despachos if r.get("estado_entrega") == "Entregado")
+    n_prob = sum(1 for r in despachos if r.get("estado_entrega") in ("Problema", "Entrega fallida", "Devolución"))
+    cobrado_t = sum(r["_cobrado"] or 0 for r in despachos)
+    costo_t = sum(r["_costo"] or 0 for r in despachos)
+    con_margen = [r for r in despachos if r["_margen"] is not None]
+    margen_t = sum(r["_margen"] for r in con_margen)
+    cobrado_cm = sum(r["_cobrado"] for r in con_margen)
+    dias_l = [r["_dias"] for r in despachos if r["_dias"] is not None]
+    _hdr(ws_r, ["Indicador", "Valor", "Nota"], row=ws_r.max_row + 1)
+    filas_res = [
+        ("Manifiestos", len({r["manifest_id"] for r in despachos}), ""),
+        ("Documentos despachados", n_total, ""),
+        ("Bultos", sum(int(r.get("n_bultos") or 1) for r in despachos), ""),
+        ("Peso a cobrar (kg)", round(sum(_num(r.get("peso_predominante")) or 0 for r in despachos), 1), ""),
+        ("Total cobrado (ZZ envío)", cobrado_t, "Solo documentos con flete cobrado"),
+        ("Total costo courier", costo_t, ""),
+        ("Margen $ (solo con cobro y costo)", margen_t, f"{len(con_margen)} de {n_total} documentos"),
+        ("Margen % sobre cobrado", round(margen_t / cobrado_cm * 100, 1) if cobrado_cm else None, ""),
+        ("Documentos sin precio (no cobran flete)", sum(1 for r in despachos if r["_cobrado"] is None), "No suman al margen"),
+        ("Documentos con pérdida", sum(1 for r in con_margen if r["_margen"] < 0), ""),
+        ("Entregados", n_entreg, ""),
+        ("Tasa de entrega %", round(n_entreg / n_total * 100, 1) if n_total else None, ""),
+        ("Con problema / fallida / devolución", n_prob, ""),
+        ("Días promedio en tránsito", round(sum(dias_l) / len(dias_l), 1) if dias_l else None,
+         f"{len(dias_l)} entregas con ambas fechas"),
+    ]
+    for f in filas_res:
+        ws_r.append(list(f))
+    ws_r.append([])
+    ini = ws_r.max_row + 1
+    _hdr(ws_r, ["Por courier", "Documentos", "Bultos", "Kg a cobrar", "Cobrado", "Costo",
+                "Entregados", "Con problema"], row=ini)
+    por_c = {}
+    for r in despachos:
+        d = por_c.setdefault(r.get("courier") or "(sin courier)",
+                             {"n": 0, "b": 0, "kg": 0.0, "cob": 0.0, "cos": 0.0, "e": 0, "p": 0})
+        d["n"] += 1
+        d["b"] += int(r.get("n_bultos") or 1)
+        d["kg"] += _num(r.get("peso_predominante")) or 0
+        d["cob"] += r["_cobrado"] or 0
+        d["cos"] += r["_costo"] or 0
+        d["e"] += 1 if r.get("estado_entrega") == "Entregado" else 0
+        d["p"] += 1 if r.get("estado_entrega") in ("Problema", "Entrega fallida", "Devolución") else 0
+    for nom, d in sorted(por_c.items()):
+        ws_r.append([nom, d["n"], d["b"], round(d["kg"], 1), d["cob"], d["cos"], d["e"], d["p"]])
+    ws_r.freeze_panes = None
+    for row in ws_r.iter_rows(min_row=1, max_row=ws_r.max_row):
+        for c in row:
+            if isinstance(c.value, float) or (isinstance(c.value, int) and c.column in (2, 5, 6)):
+                c.number_format = "#,##0.0" if isinstance(c.value, float) else "#,##0"
+    for col, w in (("A", 40), ("B", 16), ("C", 38), ("D", 14), ("E", 14), ("F", 14), ("G", 12), ("H", 14)):
+        ws_r.column_dimensions[col].width = w
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    nombre = f"reporte_semanal_despachos_{desde.isoformat()}_a_{hasta.isoformat()}.xlsx"
+    try:
+        _tr_log("manifest", 0, "reporte_semanal_excel",
+                f"{desde} a {hasta} · {n_total} documentos" + (f" · {courier}" if courier else ""))
+    except Exception:
+        pass
+    return send_file(buf, as_attachment=True, download_name=nombre,
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
 @app.route("/transporte/monitor")
 @_tr_required
 def tr_monitor_live():
