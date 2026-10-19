@@ -1591,6 +1591,27 @@
 .otd-clasif.azul{background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a}
 .otd-clasif.gris{background:#f3f4f6;border-color:#e5e7eb;color:#374151}
 .otd-clasif a{color:inherit;font-weight:800;text-decoration:underline}
+/* 🧾 2026-10-18: productos incluidos sin saldo en su documento (solo equipo interno, REGLA #26). Nombres completos
+   (REGLA #15): nada truncado; en celular cada producto es una tarjeta a todo el ancho. */
+.otd-sinsal{border:1px solid #e2e8f0;border-left:4px solid #64748b;border-radius:12px;background:#f8fafc;
+  padding:10px 14px;margin:0 0 12px;color:#0f172a}
+.otd-sinsal-hd{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.88rem}
+.otd-sinsal-hd > .bi{color:#475569;font-size:1.05rem}
+.otd-sinsal-int{margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:.72rem;font-weight:800;
+  color:#334155;background:#e2e8f0;border-radius:999px;padding:3px 10px}
+.otd-sinsal-list{list-style:none;margin:8px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px}
+.otd-sinsal-it{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:9px 11px;display:flex;
+  flex-direction:column;gap:5px;min-width:0}
+.otd-sinsal-prod b{display:block;font-size:.86rem;overflow-wrap:anywhere}
+.otd-sinsal-prod span{display:block;font-size:.76rem;color:#64748b;overflow-wrap:anywhere}
+.otd-sinsal-fila{display:flex;flex-direction:column;gap:1px;font-size:.8rem;line-height:1.4;overflow-wrap:anywhere}
+.otd-sinsal-fila .lbl{font-size:.68rem;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.03em}
+.otd-sinsal-quien{font-size:.74rem;color:#475569;border-top:1px dashed #e2e8f0;padding-top:5px}
+@media (max-width:576px){
+  .otd-sinsal{padding:10px 12px}
+  .otd-sinsal-list{grid-template-columns:1fr}
+  .otd-sinsal-int{margin-left:0}
+}
 .otd-tabs{display:flex;gap:4px;margin-bottom:14px;padding:5px;
   background:#f3f4f6;border:1px solid var(--line);border-radius:12px;
   overflow-x:auto}
@@ -3593,6 +3614,32 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       {% elif fin_clasif.registrado_at %}<span>Registrada al crear la OT, el {{ fin_clasif.registrado_at }}{% if fin_clasif.registrado_por %} ({{ fin_clasif.registrado_por }}){% endif %}.</span>{% endif %}
     </div>
   </div>
+  {% endif %}
+  {#- 🧾 2026-10-18 (Daniel: «que quede persistente en los datos de la orden de trabajo, pero que no lo evidencie a los
+      clientes ni a los técnicos… quién lo hizo, cuándo, por qué y el argumento»). Productos que se incluyeron aunque su
+      documento ya no tenía saldo. Solo equipo interno: el servidor no la entrega a un técnico (REGLA #26) y no va en
+      el PDF, el informe ni los correos. -#}
+  {% if sin_saldo and not es_tecnico %}
+  <section class="otd-sinsal" aria-label="Productos incluidos sin saldo en el documento">
+    <div class="otd-sinsal-hd">
+      <i class="bi bi-box-seam"></i>
+      <b>Productos incluidos sin saldo en el documento</b>
+      <span class="otd-sinsal-int"><i class="bi bi-lock-fill"></i> Solo equipo interno</span>
+    </div>
+    <ul class="otd-sinsal-list">
+      {% for s in sin_saldo %}
+      <li class="otd-sinsal-it">
+        <div class="otd-sinsal-prod">
+          <b>{{ s.descripcion or s.sku }}</b>
+          <span>SKU {{ s.sku }}{% if s.doc_tido %} · {{ s.doc_tido }} {{ s.doc_nudo }}{% endif %}{% if s.cantidad is not none %} · Cantidad {{ s.cantidad }}{% endif %}</span>
+        </div>
+        <div class="otd-sinsal-fila"><span class="lbl">Por qué no tenía saldo</span><span>{{ s.causa or '—' }}</span></div>
+        <div class="otd-sinsal-fila"><span class="lbl">Argumento</span><span>{{ s.argumento or 'Sin argumento escrito.' }}</span></div>
+        <div class="otd-sinsal-quien"><i class="bi bi-person-check"></i> Lo declaró {{ s.declarado_por or 'sistema' }}{% if s.declarado_en %} el {{ s.declarado_en | chile_fmt }}{% endif %}</div>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
   {% endif %}
   <div class="otd-tabs" id="otdTabs">
     <button type="button" class="otd-tab on" data-tab="info">

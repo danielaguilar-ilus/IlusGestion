@@ -91196,10 +91196,20 @@ def ot2_detalle(vid):
                       if (not _es_rol_tecnico() and _ot_aut_es_superadmin()) else None)
     except Exception:
         fin_clasif = None
+    # 🧾 2026-10-18 (Daniel: «que quede persistente… pero que no lo evidencie a los clientes ni a los técnicos»):
+    # productos incluidos sin saldo en su documento. A un técnico NO viaja nada (REGLA #26: el dato se quita aquí).
+    sin_saldo = []
+    if not _es_rol_tecnico():
+        try:
+            sin_saldo = _ot_sin_saldo_de(vid)
+        except Exception as _e_ss:
+            print(f"[ot2_detalle] sin saldo vid={vid}: {type(_e_ss).__name__}", flush=True)
+            sin_saldo = []
     return render_template(
         "ot2/detalle.html",
         fac_alerta=fac_alerta,
         fin_clasif=fin_clasif,
+        sin_saldo=sin_saldo,
         puerta_cierre=puerta_cierre,
         v=v, ruta=ruta, equipos=equipos, hitos=hitos, kpis=kpis, firmas=firmas,
         factura_prov=factura_prov, factura_prov_aplica=factura_prov_aplica,
@@ -106674,6 +106684,23 @@ def _ot2_crear_core(d, autorizacion=None):
                 "Alguno de los equipos no pertenece a este cliente.",
                 "EQUIPO_AJENO")
 
+    # ── 5.c PRODUCTOS INCLUIDOS SIN SALDO (2026-10-18) ─────────────────
+    # Daniel: «que quede persistente en los datos de la orden de trabajo, pero que no lo evidencie a los clientes ni
+    # a los técnicos… quién lo hizo, cuándo, por qué y el argumento». Solo se guardan los SKU que QUEDAN en la OT:
+    # las filas incluidas (el asistente ya no manda las desmarcadas) y los SKU de las máquinas de la OT.
+    _sin_saldo = []
+    if isinstance(d.get("sin_saldo"), list) and d.get("sin_saldo"):
+        _skus_ot = {(_t.get("sku") or "").strip() for _t in tareas_manuales if _t.get("sku")}
+        if equipos:
+            try:
+                _mids_ss = sorted({e["maquina_id"] for e in equipos})
+                _ph_ss = ",".join(["%s"] * len(_mids_ss))
+                _skus_ot |= {(r.get("sku") or "").strip() for r in (mysql_fetchall(
+                    f"SELECT sku FROM mant_maquinas WHERE id IN ({_ph_ss})", tuple(_mids_ss)) or [])}
+            except Exception as _e_ss_sku:
+                print(f"[ot2_crear] sin saldo: SKU de equipos: {_e_ss_sku}", flush=True)
+        _sin_saldo = _ot_sin_saldo_normalizar(d.get("sin_saldo"), _skus_ot)
+
     # ── 6. TÉCNICOS ────────────────────────────────────────────────────
     tec_ids = []
     for t in (d.get("tecnico_user_ids") or []):
@@ -107131,6 +107158,41 @@ def _ot2_crear_core(d, autorizacion=None):
             conn.rollback()
             return _ot2_err(
                 "El checklist elegido no tiene tareas.", "CHECKLIST_VACIO")
+
+        # 🧾 2026-10-18 — productos incluidos SIN saldo en su documento: en la MISMA transacción, con quién y cuándo.
+        # Un SAVEPOINT aísla este registro: si la tabla fallara, se deshace solo esto (nunca a medias), la OT se crea
+        # igual y quien la creó recibe el aviso. La bitácora usa una acción FUERA de la lista blanca de técnicos.
+        if _sin_saldo:
+            # Quien lo declaró es quien armó la OT: si nace de una autorización aprobada, quien la pidió (igual que
+            # created_by más arriba).
+            _quien_ss = ((autorizacion or {}).get("solicitado_por_nombre") or current_username() or "sistema")
+            try:
+                cur.execute("SAVEPOINT ot_sin_saldo")
+                for _ss in _sin_saldo:
+                    cur.execute(
+                        "INSERT INTO mant_ot_sin_saldo "
+                        "  (visita_id, sku, descripcion, doc_tido, doc_nudo, cantidad, saldo_doc, "
+                        "   causa, argumento, declarado_por) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (vid, _ss["sku"], _ss["descripcion"], _ss["doc_tido"], _ss["doc_nudo"],
+                         _ss["cantidad"], _ss["saldo_doc"], _ss["causa"], _ss["argumento"], _quien_ss))
+                cur.execute(
+                    "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) "
+                    "VALUES ('visita',%s,'sin_saldo_declarado',%s,%s)",
+                    (vid,
+                     ("Incluido(s) sin saldo en su documento: " + "; ".join(
+                         f"{_ss['sku']}" + (f" ({_ss['doc_tido']} {_ss['doc_nudo']})" if _ss["doc_tido"] else "")
+                         + (f" — argumento: {_ss['argumento']}" if _ss["argumento"] else "")
+                         for _ss in _sin_saldo))[:4000],
+                     _quien_ss))
+            except Exception as _e_ss:
+                try:
+                    cur.execute("ROLLBACK TO SAVEPOINT ot_sin_saldo")
+                except Exception:
+                    pass
+                print(f"[ot2_crear] sin saldo vid={vid}: {type(_e_ss).__name__}: {_e_ss}", flush=True)
+                avisos.append("La OT se creó, pero no se pudo guardar el registro de productos sin saldo. "
+                              "Avísale a gestión.")
 
         # 📄 UNIFICAR EL MULTIDOCUMENTO (2026-09-05). Daniel: "deben ser
         # multidocumento, no vi que la OT fuera multidocumento" -- y tenía
@@ -152911,6 +152973,209 @@ def ot2_api_checklist_heredado_producto():
     return jsonify(dict(_chk_herencia_resolver([sku], tipo), ok=True))
 
 
+# ══════════════════════════════════════════════════════════════════════
+# 🧾 2026-10-18 — PRODUCTOS INCLUIDOS SIN SALDO EN SU DOCUMENTO
+# Daniel: «que quede persistente en los datos de la orden de trabajo, pero que no lo evidencie a los clientes ni a
+# los técnicos… quién lo hizo, cuándo, por qué y el argumento». El buscador del ERP (_tka_modal.html, modo
+# 'seleccionar') ya pedía el motivo al incluir una línea sin saldo (marcada_sin_saldo + motivo_sin_saldo), pero el
+# asistente de crear OT lo descartaba. Ahora viaja en `sin_saldo` y _ot2_crear_core lo guarda en la MISMA
+# transacción de la OT. Solo equipo interno: la ficha lo recibe solo si el usuario no es técnico (REGLA #26) y la
+# bitácora usa una acción fuera de la lista blanca de técnicos (_ot_actividad_para_tecnico). Nunca va al cliente.
+# ══════════════════════════════════════════════════════════════════════
+_OT_SIN_SALDO_MAX = 100
+_OT_SIN_SALDO_ARG_MAX = 500
+
+
+def _ensure_ot_sin_saldo():
+    """Tabla mant_ot_sin_saldo. Barata cuando ya está aplicada (REGLA #18): un solo CREATE TABLE IF NOT EXISTS
+    que la guarda de mysql_execute salta sin pedir lock si la tabla ya existe."""
+    try:
+        mysql_execute(
+            "CREATE TABLE IF NOT EXISTS mant_ot_sin_saldo ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  visita_id INT NOT NULL,"
+            "  sku VARCHAR(60) NOT NULL,"
+            "  descripcion VARCHAR(300) NULL,"
+            "  doc_tido VARCHAR(10) NULL,"
+            "  doc_nudo VARCHAR(30) NULL,"
+            "  cantidad DECIMAL(12,2) NULL,"
+            "  saldo_doc DECIMAL(12,2) NULL,"
+            "  causa VARCHAR(300) NULL,"
+            "  argumento TEXT NULL,"
+            "  declarado_por VARCHAR(190) NULL,"
+            "  declarado_en DATETIME DEFAULT CURRENT_TIMESTAMP,"
+            "  KEY ix_ot_sin_saldo_visita (visita_id)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+        return True
+    except Exception as e:
+        print(f"[ensure_ot_sin_saldo] {e}", flush=True)
+        return False
+
+
+def _ot_sin_saldo_num(v, defecto=None):
+    try:
+        n = float(str(v).replace(",", "."))
+    except (TypeError, ValueError):
+        return defecto
+    if n != n or n < 0 or n > 1e9:   # NaN, negativos o absurdos: no es un dato
+        return defecto
+    return round(n, 2)
+
+
+def _ot_sin_saldo_normalizar(items, skus_ot):
+    """PURA (sin BD, probada en tests/test_ot_revision_v3.py). Lo que mandó el asistente en `sin_saldo`, listo para
+    guardar: solo productos que QUEDAN en la OT (`skus_ot`: filas incluidas + SKU de las máquinas de la OT), sin
+    repetir (SKU + documento), a lo más _OT_SIN_SALDO_MAX filas y el argumento hasta _OT_SIN_SALDO_ARG_MAX
+    caracteres. La CAUSA la escribe el servidor (no se confía en el navegador): el ERP ya rebajó esa línea."""
+    skus = {str(s or "").strip().upper() for s in (skus_ot or []) if str(s or "").strip()}
+    out, vistos = [], set()
+    if not isinstance(items, list) or not skus:
+        return out
+    for it in items[:_OT_SIN_SALDO_MAX]:
+        if not isinstance(it, dict):
+            continue
+        sku = str(it.get("sku") or "").strip()[:60]
+        if not sku or sku.upper() not in skus:
+            continue
+        tido = str(it.get("tido") or it.get("doc_tido") or "").strip().upper()[:10] or None
+        nudo = str(it.get("nudo") or it.get("doc_nudo") or "").strip()[:30] or None
+        clave = (sku.upper(), tido or "", (nudo or "").lstrip("0"))
+        if clave in vistos:
+            continue
+        vistos.add(clave)
+        saldo = _ot_sin_saldo_num(it.get("saldo"), 0.0)
+        doc_txt = f"{tido} {nudo}" if (tido and nudo) else "su documento"
+        _saldo_txt = str(int(saldo)) if float(saldo).is_integer() else str(saldo)
+        out.append({
+            "sku": sku,
+            "descripcion": (str(it.get("nombre") or it.get("descripcion") or "").strip()[:300] or None),
+            "doc_tido": tido, "doc_nudo": nudo,
+            "cantidad": _ot_sin_saldo_num(it.get("cantidad", it.get("qty"))),
+            "saldo_doc": saldo,
+            "causa": (f"Saldo {_saldo_txt} en {doc_txt}: el ERP ya rebajó esta línea "
+                      "(tiene guía o entrega registrada).")[:300],
+            "argumento": str(it.get("motivo") or it.get("motivo_sin_saldo") or it.get("argumento") or "")
+                         .strip()[:_OT_SIN_SALDO_ARG_MAX],
+        })
+    return out
+
+
+def _ot_sin_saldo_de(vid):
+    """Productos incluidos sin saldo de UNA OT, para la ficha. Solo se llama si el usuario NO es técnico."""
+    filas = mysql_fetchall(
+        "SELECT sku, descripcion, doc_tido, doc_nudo, cantidad, saldo_doc, causa, argumento, "
+        "       declarado_por, declarado_en "
+        "  FROM mant_ot_sin_saldo WHERE visita_id=%s ORDER BY id", (vid,)) or []
+    out = []
+    for f in filas:
+        f = dict(f)
+        for k in ("cantidad", "saldo_doc"):
+            n = _ot_sin_saldo_num(f.get(k))
+            f[k] = (int(n) if n is not None and float(n).is_integer() else n)
+        out.append(f)
+    return out
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 📸 2026-10-18 — INSTALACIONES: FOTO DE ENTREGA OBLIGATORIA
+# Daniel: «hay sección de instalaciones que siempre va y se lleva todo. Así sea un accesorio, debe haber foto para
+# demostrar que quedó entregado». Ajuste de UNA SOLA VEZ: a cada plantilla de instalación ACTIVA que no tenga ningún
+# ítem de foto obligatorio se le agrega AL FINAL «Foto de entrega» (foto, obligatoria). Nada se borra ni se reordena
+# (REGLA #4.2). Marca persistente en mant_logs (entidad='sistema'), el mismo patrón de marca de agua que ya usan
+# _ensure_flujo_levantamiento_modificado_log y _ensure_plantillas_autorrelleno: con la marca puesta, cada arranque
+# hace UNA consulta por índice (entidad, entidad_id) y nada más (REGLA #18). Una plantilla de instalación que se
+# cree después sin foto obligatoria la decide quien la crea: este ajuste no la vuelve a tocar.
+# ══════════════════════════════════════════════════════════════════════
+_FOTO_ENTREGA_MARCA = "foto_entrega_instalacion_aplicada"
+_FOTO_ENTREGA_TITULO = "Foto de entrega"
+_FOTO_ENTREGA_DESC = "El equipo instalado o el accesorio entregado en su lugar, a la vista."
+
+
+def _foto_entrega_a_ajustar(plantillas, items):
+    """PURA (probada en tests/test_ot_revision_v3.py). Qué plantillas reciben «Foto de entrega» y en qué orden.
+
+    plantillas: [{id, nombre, categoria_admin, activa}]
+    items:      [{plantilla_id, titulo, tipo_respuesta, obligatoria, orden}]
+    Devuelve [{"id", "nombre", "orden"}] solo de las de instalación ACTIVAS sin ningún ítem foto obligatorio
+    (tipo 'foto' + obligatoria) y que todavía no tienen un ítem «Foto de entrega». `orden` = el más alto + 1."""
+    por_pid = {}
+    for it in items or []:
+        try:
+            pid = int(it.get("plantilla_id"))
+        except (TypeError, ValueError):
+            continue
+        por_pid.setdefault(pid, []).append(it)
+    titulo_n = _FOTO_ENTREGA_TITULO.strip().lower()
+    out = []
+    for p in plantillas or []:
+        try:
+            pid = int(p.get("id"))
+        except (TypeError, ValueError):
+            continue
+        if (p.get("categoria_admin") or "").strip().lower() != "instalacion":
+            continue
+        if p.get("activa") is not None and str(p.get("activa")) not in ("1", "True", "true"):
+            continue
+        its = por_pid.get(pid, [])
+        if any((it.get("tipo_respuesta") or "").strip().lower() == "foto"
+               and str(it.get("obligatoria") or 0) in ("1", "True", "true") for it in its):
+            continue
+        if any((it.get("titulo") or "").strip().lower() == titulo_n for it in its):
+            continue
+        orden = max([int(it.get("orden") or 0) for it in its] + [0]) + 1
+        out.append({"id": pid, "nombre": p.get("nombre") or "", "orden": orden})
+    return out
+
+
+def _ensure_foto_entrega_instalacion():
+    """Aplica _foto_entrega_a_ajustar UNA sola vez (ver el bloque de arriba). Nunca lanza."""
+    out = {"ya": False, "plantillas": []}
+    try:
+        _ensure_mant_logs_entidad_varchar()
+        if mysql_fetchone(
+                "SELECT id FROM mant_logs WHERE entidad=%s AND entidad_id=%s AND accion=%s LIMIT 1",
+                ("sistema", 0, _FOTO_ENTREGA_MARCA)):
+            out["ya"] = True
+            return out
+        plantillas = mysql_fetchall(
+            "SELECT id, nombre, categoria_admin, COALESCE(activa, 1) AS activa "
+            "  FROM mant_tarea_plantillas WHERE categoria_admin=%s", ("instalacion",)) or []
+        ids = sorted({int(p["id"]) for p in plantillas})
+        items = []
+        if ids:
+            ph = ",".join(["%s"] * len(ids))
+            items = mysql_fetchall(
+                f"SELECT plantilla_id, titulo, tipo_respuesta, obligatoria, orden "
+                f"  FROM mant_tarea_plantilla_items WHERE plantilla_id IN ({ph})", tuple(ids)) or []
+        fallas = 0
+        for p in _foto_entrega_a_ajustar(plantillas, items):
+            try:
+                mysql_execute(
+                    "INSERT INTO mant_tarea_plantilla_items "
+                    "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, obligatoria, requiere_foto) "
+                    "VALUES (%s,%s,%s,%s,'foto',1,1)",
+                    (p["id"], p["orden"], _FOTO_ENTREGA_TITULO, _FOTO_ENTREGA_DESC))
+                out["plantillas"].append(p["nombre"])
+                _mant_log("plantilla", p["id"], "foto_entrega_agregada",
+                          f"Se agregó al final «{_FOTO_ENTREGA_TITULO}» (foto, obligatoria) a la plantilla de "
+                          f"instalación «{p['nombre']}», que no tenía ninguna foto obligatoria. Daniel 18-10-2026: "
+                          "«así sea un accesorio, debe haber foto para demostrar que quedó entregado».")
+            except Exception as e_it:
+                fallas += 1
+                print(f"[ensure_foto_entrega] plantilla {p.get('id')}: {e_it}", flush=True)
+        if fallas:
+            return out   # sin marca: el próximo arranque reintenta (lo ya agregado queda con su foto obligatoria)
+        mysql_execute(
+            "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) VALUES (%s,%s,%s,%s,%s)",
+            ("sistema", 0, _FOTO_ENTREGA_MARCA,
+             (f"«{_FOTO_ENTREGA_TITULO}» obligatoria agregada a {len(out['plantillas'])} plantilla(s) de instalación: "
+              + (", ".join(out["plantillas"]) or "ninguna (todas ya tenían foto obligatoria)") + ".")[:4000],
+             "sistema"))
+    except Exception as e:
+        print(f"[ensure_foto_entrega] {e}", flush=True)
+    return out
+
+
 def _ensure_plantillas_nombre_sin_prefijo():
     """Quita el prefijo "<Categoría> · " del nombre de las plantillas de
     clasificación (Daniel 2026-08-13: "elimina de las plantillas todos los
@@ -159722,6 +159987,23 @@ try:
         print(f"[ILUS] Inteligencia: migraciones aplicadas: {_faltaron_intel}", flush=True)
 except Exception as _ensure_intel_err:
     print(f"[ILUS][WARN] _ensure_mant_intel_tables: {_ensure_intel_err}", flush=True)
+
+# 🧾 2026-10-18: productos incluidos sin saldo en su documento (solo equipo interno). Barato si ya existe (REGLA #18).
+try:
+    with app.app_context():
+        _ensure_ot_sin_saldo()
+except Exception as _ensure_sin_saldo_err:
+    print(f"[ILUS][WARN] _ensure_ot_sin_saldo: {_ensure_sin_saldo_err}", flush=True)
+
+# 📸 2026-10-18: «Foto de entrega» obligatoria en las plantillas de instalación sin foto obligatoria. UNA sola vez
+# (marca en mant_logs); va después del autorrelleno y la matriz para que la foto quede al final de esas plantillas.
+try:
+    with app.app_context():
+        _foto_ent = _ensure_foto_entrega_instalacion()
+    if _foto_ent.get("plantillas"):
+        print(f"[ILUS] Foto de entrega agregada a: {_foto_ent['plantillas']}", flush=True)
+except Exception as _ensure_foto_ent_err:
+    print(f"[ILUS][WARN] _ensure_foto_entrega_instalacion: {_ensure_foto_ent_err}", flush=True)
 
 # email_log.estado debe aceptar 'bloqueado' SIEMPRE (incluso skip-migrations):
 # sin esto, los envíos frenados por la llave de paso no dejaban rastro en el log.

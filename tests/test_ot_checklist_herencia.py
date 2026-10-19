@@ -354,12 +354,14 @@ class TestPantallas(unittest.TestCase):
         self.assertIn("Recordar para este producto", M)
         self.assertIn("setBloqueTareaManual:setBloqueTareaManual, recordarBloqueProducto:recordarBloqueProducto", M)
 
-    def test_tabla_como_mantencion(self):   # REGLA #14 + «No llegó» + clasificar
-        self.assertIn("function toggleLlegoTodos()", M)
-        self.assertIn("var algunoSin = filas.some(function(t){ return t.no_llego; });", M)
+    def test_tabla_como_mantencion(self):   # REGLA #14 + incluir en la revisión + clasificar
+        # 🧾 2026-10-18 (Daniel): la casilla «Llegó / No llegó» se REEMPLAZÓ por «incluir en la revisión» (el faltante
+        # se declara en la revisión de cada producto). El detalle está en tests/test_ot_revision_v3.py.
+        self.assertIn("function toggleIncluirTodos()", M)
+        self.assertIn("var algunoFuera = S.tareas_manuales.some(function(t){ return !_o2mTmIncluida(t); });", M)
         self.assertIn("'/ot/api/checklist-heredado/clasificar'", M)
-        self.assertIn("No llegó · queda en la OT como faltante declarado", M)
-        self.assertIn("setLlegoTareaManual:setLlegoTareaManual, toggleLlegoTodos:toggleLlegoTodos,", M)
+        self.assertNotIn("No llegó · queda en la OT como faltante declarado", M)
+        self.assertIn("setIncluirTareaManual:setIncluirTareaManual, toggleIncluirTodos:toggleIncluirTodos,", M)
 
     def test_asistente_sin_popups_nativos(self):   # REGLA #1
         i = M.index("function _o2mAgregarItemsHeredando(")
