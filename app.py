@@ -68753,6 +68753,43 @@ def _inc_log(iid, accion, campo=None, antes=None, despues=None):
         print(f"[_inc_log] {_e}", flush=True)
 
 
+def _inc_foto_guardar(iid, f, tipo, usuario):
+    """Sube UN archivo YA validado (tipo 'foto'|'video') a la evidencia de la incidencia: GCS +
+    mant_incidencia_fotos con su `orden` + bitácora. Devuelve (True, gcs_key) o (False, mensaje).
+    🧰 2026-10-18 (Etapa 3): extraído TAL CUAL de mant_api_incidencia_foto_subir para que «Informar incidencia»
+    desde la revisión de una OT guarde las fotos exactamente igual que la ficha de Incidencias."""
+    try:
+        res = _uploader_upload(f, folder="incidencias",
+                                resource_type=("video" if tipo == "video" else "image"))
+    except Exception as _e:
+        print(f"[inc_foto_subir] iid={iid}: {_e}", flush=True)
+        return False, "No se pudo subir el archivo."
+    key = res.get("public_id")
+    if not key:
+        return False, "Subida sin resultado válido."
+    # El `orden` se calcula con un SELECT APARTE y se inserta como literal (MySQL 1093, ver el comentario de
+    # mant_api_incidencia_foto_subir). El reintento cubre la carrera de dos subidas contra UNIQUE(incidencia_id, orden).
+    _last = None
+    for _intento in range(5):
+        try:
+            _fila = mysql_fetchone(
+                "SELECT COALESCE(MAX(orden),0)+1 AS prox FROM mant_incidencia_fotos "
+                " WHERE incidencia_id=%s", (iid,)) or {}
+            _orden = int(_fila.get("prox") or 1) + _intento
+            mysql_execute(
+                "INSERT INTO mant_incidencia_fotos (incidencia_id, gcs_key, orden, tipo, created_by) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                (iid, key, _orden, tipo, usuario))
+            break
+        except Exception as _e:
+            _last = _e
+    else:
+        print(f"[inc_foto_subir] no se pudo registrar iid={iid}: {_last}", flush=True)
+        return False, "No se pudo registrar el archivo."
+    _inc_log(iid, "foto_agregada" if tipo == "foto" else "video_agregado", "fotos", None, key)
+    return True, key
+
+
 @app.route("/mantenciones/api/incidencias/<int:iid>/fotos", methods=["POST"])
 @_mant_required
 @_no_tecnico_salvo_taller
@@ -68779,42 +68816,11 @@ def mant_api_incidencia_foto_subir(iid):
         return jsonify({"ok": False,
                         "error": (f"Máximo {INC_MAX_FOTOS} fotos por incidencia." if tipo == "foto"
                                   else f"Máximo {INC_MAX_VIDEOS} video por incidencia.")}), 400
-    try:
-        res = _uploader_upload(f, folder="incidencias",
-                                resource_type=("video" if tipo == "video" else "image"))
-    except Exception as _e:
-        print(f"[inc_foto_subir] iid={iid}: {_e}", flush=True)
-        return jsonify({"ok": False, "error": "No se pudo subir el archivo."}), 500
-    key = res.get("public_id")
-    if not key:
-        return jsonify({"ok": False, "error": "Subida sin resultado válido."}), 500
-    # El `orden` se calcula con un SELECT APARTE y se inserta como literal.
-    # NO se puede usar una subconsulta sobre la MISMA tabla dentro del
-    # INSERT: MySQL lo rechaza con el error 1093 ("You can't specify target
-    # table ... for update in FROM clause") -- verificado en producción
-    # 2026-08-03 contra los logs de Cloud Run. El reintento cubre la carrera
-    # de dos subidas simultáneas chocando contra UNIQUE(incidencia_id, orden).
-    # `orden` sigue siendo único por incidencia sin importar el tipo (fotos
-    # y video comparten la misma numeración).
-    _last = None
-    for _intento in range(5):
-        try:
-            _fila = mysql_fetchone(
-                "SELECT COALESCE(MAX(orden),0)+1 AS prox FROM mant_incidencia_fotos "
-                " WHERE incidencia_id=%s", (iid,)) or {}
-            _orden = int(_fila.get("prox") or 1) + _intento
-            mysql_execute(
-                "INSERT INTO mant_incidencia_fotos (incidencia_id, gcs_key, orden, tipo, created_by) "
-                "VALUES (%s,%s,%s,%s,%s)",
-                (iid, key, _orden, tipo, current_username()))
-            break
-        except Exception as _e:
-            _last = _e
-    else:
-        print(f"[inc_foto_subir] no se pudo registrar iid={iid}: {_last}", flush=True)
-        return jsonify({"ok": False, "error": "No se pudo registrar el archivo."}), 500
-    _inc_log(iid, "foto_agregada" if tipo == "foto" else "video_agregado", "fotos", None, key)
-    return jsonify({"ok": True, "url": "/f/" + key, "tipo": tipo})
+    # 🧰 2026-10-18: mismo comportamiento, ahora en _inc_foto_guardar (lo reusa «Informar incidencia» desde la OT).
+    _ok_f, _r_f = _inc_foto_guardar(iid, f, tipo, current_username())
+    if not _ok_f:
+        return jsonify({"ok": False, "error": _r_f}), 500
+    return jsonify({"ok": True, "url": "/f/" + _r_f, "tipo": tipo})
 
 
 @app.route("/mantenciones/api/incidencias/<int:iid>/fotos/<int:fid>", methods=["DELETE"])
@@ -90156,6 +90162,7 @@ def ot2_detalle(vid):
     # (uno por OT) para enlazarlo en la tarjeta.
     rep_ticket = None
     rep_total_abiertas = 0
+    _rep_sols = []   # 🧰 2026-10-18: también se reparten a los productos de trabajo interno (más abajo)
     try:
         _rep_sols = _otrep_listar("s.visita_id=%s", (vid,), limit=200, con_evidencias=False, para_ot=True)
         _rep_por_eq = {}
@@ -90268,7 +90275,7 @@ def ot2_detalle(vid):
         try:
             _tareas_sin_maquina = mysql_fetchall(
                 "SELECT id, item_manual_id, item_manual_sku, plantilla_id, titulo, "
-                "       completada, obligatoria "
+                "       completada, obligatoria, cantidad "
                 "  FROM mant_visita_tareas "
                 " WHERE visita_id=%s AND maquina_id IS NULL",
                 (vid,)
@@ -90280,7 +90287,7 @@ def ot2_detalle(vid):
         for t in _tareas_sin_maquina:
             _mid = t.get("item_manual_id") or 0
             _grp = _grupos_interno.setdefault(_mid, {
-                "titulo": None, "sku": None, "n": 0, "ok": 0, "obl": 0, "obl_ok": 0,
+                "titulo": None, "sku": None, "n": 0, "ok": 0, "obl": 0, "obl_ok": 0, "cantidad": 1,
             })
             _grp["n"] += 1
             if t.get("completada"):
@@ -90296,6 +90303,7 @@ def ot2_detalle(vid):
             if not t.get("plantilla_id") and not _grp["titulo"]:
                 _grp["titulo"] = t.get("titulo")
                 _grp["sku"] = t.get("item_manual_sku")
+                _grp["cantidad"] = t.get("cantidad") or 1   # 🧰 2026-10-18: tope de «Informar incidencia»
         for _mid, _grp in _grupos_interno.items():
             _n, _ok = _grp["n"], _grp["ok"]
             _obl, _obl_ok = _grp["obl"], _grp["obl_ok"]
@@ -90319,6 +90327,7 @@ def ot2_detalle(vid):
                 "serie_no_aplica_motivo": "Trabajo interno -- sin ficha de equipo.",
                 "serie_sugerida": None,
                 "plantillas": [],
+                "cantidad_doc": _grp.get("cantidad") or 1,
                 # 🔴 CRÍTICO (igual que mant_ot_ejecutar): este `id` es un
                 # item_manual_id, NUNCA un mant_maquinas.id real -- las
                 # acciones que operan sobre la ficha real (diagnóstico,
@@ -90331,6 +90340,16 @@ def ot2_detalle(vid):
             })
         if _grupos_interno:
             equipos.sort(key=lambda e: (e.get("id") != 0, e.get("nombre") or ""))
+        # 🧰 2026-10-18 (Etapa 3): las solicitudes de repuesto de cada PRODUCTO (item_manual_id, maquina_id NULL)
+        # se muestran en su tarjeta, igual que las de un equipo de ficha.
+        _rep_por_im = {}
+        for _s in _rep_sols:
+            if _s.get("item_manual_id") and not _s.get("maquina_id"):
+                _rep_por_im.setdefault(int(_s["item_manual_id"]), []).append(_s)
+        for e in equipos:
+            if e.get("_interno"):
+                e["rep_solicitudes"] = _rep_por_im.get(int(e.get("id") or 0), [])
+                e["rep_abiertas"] = sum(1 for _s in e["rep_solicitudes"] if _s.get("abierta"))
 
     # Lista de plantillas activas para el selector de "cambiar plantilla"
     # -- SIN filtrar por tipo/clasificación (Daniel, 2026-08-28: "de
@@ -91223,8 +91242,22 @@ def ot2_detalle(vid):
         except Exception as _e_ss:
             print(f"[ot2_detalle] sin saldo vid={vid}: {type(_e_ss).__name__}", flush=True)
             sin_saldo = []
+    # 🧾 2026-10-18 (Etapa 3, Daniel: «generar un reporte para enviar a logística de lo que se está recibiendo y lo
+    # que no»): resumen del acta de recepción para la tarjeta de la ficha. Solo gestión (las rutas del acta llevan
+    # @_no_tecnico); a un técnico no viaja nada de esto.
+    acta = None
+    if not _es_rol_tecnico() and _ot_acta_aplica(v):
+        try:
+            _ad = _ot_acta_datos(vid)
+            if _ad:
+                acta = {"n": _ad["n"], "totales": _ad["totales"], "documentos": _ad["documentos"],
+                        "revisores": _ad["revisores"], "destinatarios": _acta_destinatarios_config()}
+        except Exception as _e_acta:
+            print(f"[ot2_detalle] acta vid={vid}: {type(_e_acta).__name__}", flush=True)
+            acta = None
     return render_template(
         "ot2/detalle.html",
+        acta=acta,
         fac_alerta=fac_alerta,
         fin_clasif=fin_clasif,
         sin_saldo=sin_saldo,
@@ -98415,16 +98448,20 @@ def _otrep_posibles_compatibles(modelo, excluir_ids):
     return out
 
 
-def _otrep_manuales_de_modelos(modelos, vid, mid):
+def _otrep_manuales_de_modelos(modelos, vid, mid, base=None):
     """Manuales del Catálogo de TODOS los modelos del equipo, el principal
     primero y por `orden`: los de cat_producto_manuales ('multi', hasta 5 por
     producto) y el manual_pdf_key legado ('legado'). Cada uno trae la URL
     PROPIA de la OT (acotada a OT y equipo), nunca /catalogo/api. 🔒 JAMÁS
     sale gcs_key ni uploaded_by: la clave de almacenamiento no viaja al
-    navegador."""
+    navegador.
+
+    🧰 2026-10-18 (Etapa 3): `base` = prefijo de la URL. Por defecto el del equipo de ficha
+    (/ot/<vid>/equipo/<mid>); un producto de la revisión usa /ot/<vid>/producto/<item_manual_id>."""
     ids = [x["id"] for x in (modelos or [])]
     if not ids:
         return []
+    base = base or f"/ot/{vid}/equipo/{mid}"
     ph = ",".join(["%s"] * len(ids))
     pos = {pid: i for i, pid in enumerate(ids)}
     por_id = {x["id"]: x for x in modelos}
@@ -98450,14 +98487,14 @@ def _otrep_manuales_de_modelos(modelos, vid, mid):
         filas.append((pos[r["producto_id"]], 0, r.get("orden") or 0, r["id"], {
             "id": r["id"], "tipo": "multi", "nombre": r.get("nombre_archivo") or "Manual.pdf",
             "size_kb": r.get("size_kb"), "producto_id": r["producto_id"],
-            "url": f"/ot/{vid}/equipo/{mid}/manual/{r['id']}"}))
+            "url": f"{base}/manual/{r['id']}"}))
     for r in legado:
         if (r["id"], r.get("manual_pdf_key")) in claves:
             continue  # el mismo archivo ya salió como manual 'multi'
         filas.append((pos[r["id"]], 1, 0, r["id"], {
             "id": r["id"], "tipo": "legado", "nombre": r.get("manual_pdf_nombre") or "Manual.pdf",
             "size_kb": r.get("manual_pdf_size_kb"), "producto_id": r["id"],
-            "url": f"/ot/{vid}/equipo/{mid}/manual-legado/{r['id']}"}))
+            "url": f"{base}/manual-legado/{r['id']}"}))
     filas.sort(key=lambda f: f[:4])
     out = []
     for _p, _t, _o, _i, it in filas:
@@ -99798,7 +99835,7 @@ def ot2_api_equipo_repuestos_opciones(vid, mid):
     })
 
 
-def _otrep_servir_manual(vid, mid, manual_id=None, producto_id=None):
+def _otrep_servir_manual(vid, mid, manual_id=None, producto_id=None, interno=False):
     """Entrega el PDF de un manual del Catálogo DENTRO de la OT (inline, solo
     para ver). 2026-10-01 (Daniel): "en la OT el manual se puede SOLO VER".
 
@@ -99808,8 +99845,11 @@ def _otrep_servir_manual(vid, mid, manual_id=None, producto_id=None):
     OT; (2) _otrep_cargar_ot_y_equipo valida OT <-> equipo <-> cliente; (3) el
     manual debe pertenecer a uno de los modelos de ESE equipo, si no, 404.
     Se abre en una pestaña nueva, así que los errores son una página amable
-    (nunca JSON crudo) y NADA interno se le cuenta al usuario (REGLA #4)."""
-    v, m, err = _otrep_cargar_ot_y_equipo(vid, mid)
+    (nunca JSON crudo) y NADA interno se le cuenta al usuario (REGLA #4).
+
+    🧰 2026-10-18 (Etapa 3): interno=True → `mid` es el item_manual_id de un PRODUCTO de la revisión
+    (_otrep_cargar_ot_y_producto: OT interna + producto de ESA OT); el resto de los candados es el mismo."""
+    v, m, err = (_otrep_cargar_ot_y_producto(vid, mid) if interno else _otrep_cargar_ot_y_equipo(vid, mid))
     if err:
         try:
             http = int(err[1])
@@ -117353,6 +117393,9 @@ def mant_plantilla_detalle(pid):
             "activa": bool(plant.get("activa")),
             "es_sistema": bool(plant.get("es_sistema")),
             "aplica_plan_mantencion": bool(plant.get("aplica_plan_mantencion", 1)),
+            # 🧰 2026-10-18 (Etapa 3): nombres de pieza que la OT ofrece de un toque al pedir repuestos.
+            "repuestos_sugeridos": _rsug_normalizar(plant.get("repuestos_sugeridos_json") or ""),
+            "repuestos_sugeridos_disponible": _rsug_ok(),
             "created_by": plant.get("created_by") or "",
             "created_at": str(plant["created_at"])[:16] if plant.get("created_at") else "",
             "de_clasificacion": _tarifa["de_clasificacion"],
@@ -117443,6 +117486,10 @@ def mant_plantilla_crear():
                 (nombre, desc, tv, tiempo, fam_chk, fam_act, cat_admin, aplica_plan, current_username())
             )
             pid = cur.lastrowid
+            # 🧰 2026-10-18 (Etapa 3): repuestos sugeridos (solo nombres de pieza), si el editor los manda.
+            if "repuestos_sugeridos" in d and _rsug_ok():
+                cur.execute("UPDATE mant_tarea_plantillas SET repuestos_sugeridos_json=%s WHERE id=%s",
+                            (json.dumps(_rsug_normalizar(d.get("repuestos_sugeridos")), ensure_ascii=False), pid))
             for it in items_norm:
                 _c, _p, _v = _fsh_ins(_fsh_ok(), it)   # 📸 2026-10-18
                 cur.execute(
@@ -117537,6 +117584,13 @@ def mant_plantilla_actualizar(pid):
                 "WHERE id=%s",
                 (nombre, desc, tv, tiempo, activa, fam_chk, fam_act, cat_admin, aplica_plan, pid)
             )
+            # 🧰 2026-10-18 (Etapa 3): repuestos sugeridos. Solo si el editor los manda (un cliente viejo que no
+            # conoce el campo no los borra).
+            _rsug_nuevos = None
+            if "repuestos_sugeridos" in d and _rsug_ok():
+                _rsug_nuevos = _rsug_normalizar(d.get("repuestos_sugeridos"))
+                cur.execute("UPDATE mant_tarea_plantillas SET repuestos_sugeridos_json=%s WHERE id=%s",
+                            (json.dumps(_rsug_nuevos, ensure_ascii=False), pid))
             cur.execute("DELETE FROM mant_tarea_plantilla_items WHERE plantilla_id=%s", (pid,))
             for it in items_norm:
                 _c, _p, _v = _fsh_ins(_fsh_ok(), it)   # 📸 2026-10-18: «Foto solo si hay hallazgo»
@@ -117551,7 +117605,9 @@ def mant_plantilla_actualizar(pid):
                 )
         conn.commit()
         try:
-            _mant_log("plantilla", pid, "actualizada", f"{nombre} ({len(items_norm)} items)")
+            _mant_log("plantilla", pid, "actualizada", f"{nombre} ({len(items_norm)} items)"
+                      + (f" · repuestos sugeridos: {' · '.join(_rsug_nuevos) or 'ninguno'}"
+                         if _rsug_nuevos is not None else ""))
         except Exception: pass
 
         # 🆕 2026-08-28 (Daniel): "si edito una plantilla, las OT nuevas o
@@ -122864,6 +122920,11 @@ def mant_visita_checklist_get(vid):
         grp["condicional"] = bool(
             grp["plantilla_id"] in _cond_ids
             and not any(x.get("obligatoria") for x in grp["tareas"]))
+    # 🧰 2026-10-18 (Etapa 3): repuestos sugeridos de cada bloque (solo NOMBRES de pieza: sin proveedor ni costo,
+    # REGLA #19/#26). Una consulta para toda la OT.
+    _rsug = _rsug_de_plantillas({grp["plantilla_id"] for grp in grupos if grp["plantilla_id"]})
+    for grp in grupos:
+        grp["repuestos_sugeridos"] = _rsug.get(grp["plantilla_id"]) or []
 
     por_maquina = {}
     for grp in grupos:
@@ -131811,6 +131872,23 @@ def mant_reglas_guardar():
         return jsonify({"error": "Sin cambios"}), 400
     user = current_username()
     actualizadas = 0
+    # 🧾 2026-10-18 (Etapa 3): «Correos del acta de recepción» acepta SOLO correos internos (@sphs.cl o
+    # @ilusfitness.com). Se valida ANTES de guardar nada: el acta jamás puede quedar configurada hacia un cliente.
+    for _cl_acta in list(cambios.keys()):
+        if str(_cl_acta).strip().lower() == _ACTA_EMAILS_REGLA:
+            _ok_c, _mal_c = _acta_correos_normalizar(cambios[_cl_acta])
+            if _mal_c:
+                return jsonify({"error": "Correos del acta de recepción: solo correos internos (@sphs.cl o "
+                                         "@ilusfitness.com). No se puede usar: " + ", ".join(_mal_c[:3]),
+                                "error_codigo": "CORREO_NO_INTERNO", "clave": _cl_acta}), 400
+            if len(_ok_c) > _ACTA_MAX_DEST:
+                return jsonify({"error": f"Correos del acta de recepción: como máximo {_ACTA_MAX_DEST}.",
+                                "error_codigo": "DEMASIADOS_DESTINATARIOS", "clave": _cl_acta}), 400
+            if len(", ".join(_ok_c)) > 500:   # mant_reglas_negocio.valor es VARCHAR(500)
+                return jsonify({"error": "Correos del acta de recepción: la lista es demasiado larga (máximo 500 "
+                                         "caracteres). Quita alguno.",
+                                "error_codigo": "LISTA_DEMASIADO_LARGA", "clave": _cl_acta}), 400
+            cambios[_cl_acta] = ", ".join(_ok_c)
     try:
         for clave, valor in cambios.items():
             # 🔏 2026-10-07 (atajo del mapa): apagar el candado de documento al cerrar la OT es decisión de Daniel.
@@ -153878,6 +153956,1224 @@ def _ensure_foto_entrega_instalacion():
     return out
 
 
+# ══════════════════════════════════════════════════════════════════════
+# 🧰 2026-10-18 — REVISIÓN DE EQUIPOS, ETAPA 3: acciones arriba de cada producto, repuestos sugeridos y acta.
+# Daniel: «arriba debe tener las opciones para dar de baja, para poner fuera de servicio, para decir que el producto no
+# está, para solicitar repuestos, solicitar piolas si es selectora de peso, solicitar cintas si es trotadora…
+# inteligentemente por las plantillas» y «generar un reporte para enviar a logística de lo que se está recibiendo y lo
+# que no, de la nota de venta, para que ellos puedan hacer la recepción y la gestión documental».
+#
+# (1) REPUESTOS SUGERIDOS POR BLOQUE: columna repuestos_sugeridos_json en mant_tarea_plantillas (lista de NOMBRES de
+#     pieza, editable en /mantenciones/plantillas). Se siembra UNA sola vez para los bloques «Revisión — …» con la
+#     lista de la propuesta del técnico senior, solo si están vacíos (marca en mant_logs: barata con la marca puesta,
+#     REGLA #18). Solo nombres: nunca proveedor, costo ni código de compra (REGLA #19/#26).
+# (2) PRODUCTOS DE TRABAJO INTERNO en el flujo de repuestos de la OT: las rutas de siempre exigen un equipo de ficha
+#     (mant_maquinas) de un cliente; un producto de la revisión no lo tiene. Rutas hermanas /producto/<item_manual_id>
+#     con los MISMOS ayudantes (validación de líneas, evidencia, ticket por OT, bitácora), sin tocar las de cliente. La
+#     solicitud queda con visita_id + item_manual_id (columna nueva) y maquina_id NULL.
+# (3) INCIDENCIA desde el producto: el mismo registro de la bodega de Incidencias (mant_incidencias + sus fotos), con
+#     la OT y el documento escritos en la observación.
+# (4) ACTA DE RECEPCIÓN (PDF y Excel) y su envío SOLO a correos internos (@sphs.cl / @ilusfitness.com).
+# ══════════════════════════════════════════════════════════════════════
+_RSUG_MARCA = "repuestos_sugeridos_sembrados"
+_RSUG_MAX = 20
+_RSUG_LARGO = 80
+_RSUG_ESTADO = {"ok": False, "revisado_en": 0.0}
+# Lista de la propuesta (outputs/propuesta_esencial_revision_completa.md), sin el número del ítem al que apunta.
+_CHK_REPUESTOS_SUGERIDOS_SEED = {
+    "Revisión — Estructura y tapiz": [
+        "Kit de pernos y tuercas", "Pintura de retoque", "Tapiz (vinilo) de asiento o respaldo",
+        "Espuma de asiento o respaldo", "Tapa plástica de tubo", "Nivelador o taco de goma"],
+    "Revisión — Selector de peso": [
+        "Piola (cable de acero) o correa de transmisión", "Polea con rodamiento", "Buje o rodamiento de pivote",
+        "Pin selector con cordel", "Tope de goma del stack", "Pad de asiento, respaldo o rodillo"],
+    "Revisión — Carga de discos": [
+        "Pin de seguro (liberación rápida) con cordel", "Rodamiento o buje de pivote", "Tope de goma de recorrido",
+        "Cuerno porta discos o su tapa", "Empuñadura (grip)", "Lámina antideslizante de plataforma"],
+    "Revisión — Poleas ajustables": [
+        "Cable de acero (piola)", "Mosquetón", "Agarre (manilla) o cuerda", "Pin o palanca de traba de altura",
+        "Polea giratoria con rodamiento", "Pin selector"],
+    "Revisión — Bancos y ajustes": [
+        "Nivelador o taco de goma", "Protector (goma) del soporte de barra", "Pin o perilla de ajuste",
+        "Rodillo apoya piernas", "Ruedas de transporte"],
+    "Revisión — Cargas libres (por línea)": [
+        "Tuerca o tapa de cabezal de mancuerna", "Bandeja del rack de mancuernas", "Goma o taco de apoyo del rack",
+        "Nivelador del rack"],
+    "Revisión — Trotadora (cinta y motor)": [
+        "Llave magnética de emergencia", "Cinta (banda)", "Tabla (deck)", "Rodillo delantero o trasero",
+        "Motor de tracción", "Tarjeta controladora"],
+    "Revisión — Bicicleta (transmisión y consola)": [
+        "Pastilla o zapata de freno", "Pedales (par)", "Biela", "Pomo o pin de ajuste de sillín o manubrio",
+        "Correa de transmisión", "Consola"],
+    "Revisión — Rack y soportes": [
+        "Brazo de seguridad", "Pin de seguridad", "Kit de pernos y tuercas", "Taco o tapa de pata",
+        "J-hook con protector", "Porta discos (cuerno)"],
+}
+
+
+def _rsug_normalizar(lista):
+    """PURA (probada en tests/test_ot_revision_acta.py). NOMBRES de pieza listos para guardar: texto sin espacios de
+    más, sin vacíos ni repetidos (sin importar mayúsculas ni tildes), cada uno hasta _RSUG_LARGO caracteres y a lo más
+    _RSUG_MAX. Acepta una lista, un JSON de lista o un texto separado por «;» o saltos de línea (la coma NO separa:
+    «Pad de asiento, respaldo o rodillo» es un solo nombre). Un texto con «$» se descarta: aquí nunca va un costo."""
+    if isinstance(lista, str):
+        txt = lista.strip()
+        if txt.startswith("["):
+            try:
+                lista = json.loads(txt)
+            except Exception:
+                lista = re.split(r"[;\n]", txt)
+        else:
+            lista = re.split(r"[;\n]", txt)
+    if not isinstance(lista, (list, tuple)):
+        return []
+    out, vistos = [], set()
+    for x in lista:
+        if not isinstance(x, str):
+            continue
+        s = " ".join(x.split()).strip(" ·•-")[:_RSUG_LARGO].strip()
+        if len(s) < 2 or "$" in s:
+            continue
+        k = _chk_txt_norm(s)
+        if k in vistos:
+            continue
+        vistos.add(k)
+        out.append(s)
+        if len(out) >= _RSUG_MAX:
+            break
+    return out
+
+
+def _rsug_a_sembrar(filas, seed=None):
+    """PURA. De los bloques de la base [{id, nombre, repuestos_sugeridos_json}], los que reciben la lista de la
+    propuesta: solo los que están en la semilla y todavía no tienen NINGÚN repuesto sugerido (nunca pisa una lista
+    que alguien ya editó). Devuelve [{"id", "nombre", "lista"}]."""
+    seed = _CHK_REPUESTOS_SUGERIDOS_SEED if seed is None else seed
+    out = []
+    for f in filas or []:
+        nombre = (f.get("nombre") or "").strip()
+        if nombre not in seed:
+            continue
+        if _rsug_normalizar(f.get("repuestos_sugeridos_json") or ""):
+            continue
+        try:
+            pid = int(f.get("id"))
+        except (TypeError, ValueError):
+            continue
+        out.append({"id": pid, "nombre": nombre, "lista": _rsug_normalizar(seed[nombre])})
+    return out
+
+
+def _ensure_repuestos_sugeridos_col():
+    """Columna repuestos_sugeridos_json en mant_tarea_plantillas. Barata si ya existe: una consulta a
+    information_schema y ningún DDL (REGLA #18). Devuelve True si la columna quedó."""
+    try:
+        fila = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM information_schema.COLUMNS "
+            " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_tarea_plantillas' "
+            "   AND COLUMN_NAME='repuestos_sugeridos_json'") or {}
+        if not int(fila.get("n") or 0):
+            mysql_execute(
+                "ALTER TABLE mant_tarea_plantillas ADD COLUMN repuestos_sugeridos_json TEXT NULL "
+                "COMMENT 'Nombres de pieza sugeridos para pedir desde la OT (sin proveedor ni costo). 2026-10-18'")
+            print("[ensure_repuestos_sugeridos] +repuestos_sugeridos_json", flush=True)
+        ok = True
+    except Exception as e:
+        print(f"[ensure_repuestos_sugeridos] {e}", flush=True)
+        ok = False
+    _RSUG_ESTADO["ok"] = bool(ok)
+    _RSUG_ESTADO["revisado_en"] = time.time()
+    return bool(ok)
+
+
+def _rsug_ok():
+    """¿Existe la columna? Se recuerda por proceso; si quedó en False, se vuelve a mirar a lo más cada 5 minutos."""
+    if _RSUG_ESTADO["ok"]:
+        return True
+    if time.time() - _RSUG_ESTADO["revisado_en"] < 300:
+        return False
+    return _ensure_repuestos_sugeridos_col()
+
+
+def _ensure_repuestos_sugeridos_seed():
+    """Siembra _CHK_REPUESTOS_SUGERIDOS_SEED UNA sola vez (marca en mant_logs) en los bloques que siguen vacíos.
+    Nunca lanza. Con la marca puesta es una consulta (REGLA #18)."""
+    out = {"ya": False, "sembrados": []}
+    try:
+        if not _rsug_ok():
+            return out
+        _ensure_mant_logs_entidad_varchar()
+        if mysql_fetchone(
+                "SELECT id FROM mant_logs WHERE entidad=%s AND entidad_id=%s AND accion=%s LIMIT 1",
+                ("sistema", 0, _RSUG_MARCA)):
+            out["ya"] = True
+            return out
+        nombres = sorted(_CHK_REPUESTOS_SUGERIDOS_SEED)
+        ph = ",".join(["%s"] * len(nombres))
+        filas = mysql_fetchall(
+            f"SELECT id, nombre, repuestos_sugeridos_json FROM mant_tarea_plantillas "
+            f" WHERE nombre IN ({ph}) AND categoria_admin='trabajo_interno'", tuple(nombres)) or []
+        if not filas:
+            return out   # los bloques todavía no existen (su siembra falló o no corrió): sin marca, se reintenta
+        fallas = 0
+        for p in _rsug_a_sembrar(filas):
+            try:
+                n = mysql_execute_returning_rowcount(
+                    "UPDATE mant_tarea_plantillas SET repuestos_sugeridos_json=%s WHERE id=%s "
+                    "   AND (repuestos_sugeridos_json IS NULL OR TRIM(repuestos_sugeridos_json) IN ('','[]'))",
+                    (json.dumps(p["lista"], ensure_ascii=False), p["id"]))
+                if n:
+                    out["sembrados"].append(p["nombre"])
+                    _mant_log("plantilla", p["id"], "repuestos_sugeridos_sembrados",
+                              f"«{p['nombre']}»: repuestos sugeridos de la propuesta ({len(p['lista'])}): "
+                              + " · ".join(p["lista"]))
+            except Exception as e_p:
+                fallas += 1
+                print(f"[ensure_repuestos_sugeridos] '{p['nombre']}': {e_p}", flush=True)
+        if fallas:
+            return out   # sin marca: el próximo arranque reintenta
+        mysql_execute(
+            "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) VALUES (%s,%s,%s,%s,%s)",
+            ("sistema", 0, _RSUG_MARCA,
+             (f"Repuestos sugeridos sembrados en {len(out['sembrados'])} bloque(s)"
+              + (f": {', '.join(out['sembrados'])}" if out["sembrados"] else "") + ".")[:4000],
+             "sistema"))
+    except Exception as e:
+        print(f"[ensure_repuestos_sugeridos_seed] {e}", flush=True)
+    return out
+
+
+def _rsug_de_plantillas(pids):
+    """{plantilla_id: [nombres]} de las plantillas pedidas. {} si la columna no existe o la consulta falla."""
+    ids = sorted({int(p) for p in (pids or []) if str(p or "").strip().isdigit() and int(p) > 0})
+    if not ids or not _rsug_ok():
+        return {}
+    try:
+        ph = ",".join(["%s"] * len(ids))
+        filas = mysql_fetchall(
+            f"SELECT id, repuestos_sugeridos_json FROM mant_tarea_plantillas WHERE id IN ({ph})", tuple(ids)) or []
+    except Exception as e:
+        print(f"[rsug_de_plantillas] {e}", flush=True)
+        return {}
+    return {int(f["id"]): _rsug_normalizar(f.get("repuestos_sugeridos_json") or "") for f in filas}
+
+
+def _rsug_unir(listas):
+    """PURA. Une varias listas de sugeridos en orden, sin repetir."""
+    return _rsug_normalizar([x for lst in (listas or []) for x in (lst or [])])
+
+
+def _otrep_sugeridos_de_producto(vid, imid):
+    """Repuestos sugeridos de UN producto de la revisión: los de sus bloques, en el orden en que la OT los tiene
+    (bloque del sistema primero, luego «Estructura y tapiz»). [] si no hay."""
+    try:
+        filas = mysql_fetchall(
+            "SELECT plantilla_id, MIN(orden) AS o FROM mant_visita_tareas "
+            " WHERE visita_id=%s AND maquina_id IS NULL AND item_manual_id=%s AND plantilla_id IS NOT NULL "
+            " GROUP BY plantilla_id ORDER BY o", (vid, imid)) or []
+    except Exception as e:
+        print(f"[otrep_sugeridos] vid={vid} imid={imid}: {e}", flush=True)
+        return []
+    pids = [int(f["plantilla_id"]) for f in filas if f.get("plantilla_id")]
+    por_pid = _rsug_de_plantillas(pids)
+    return _rsug_unir([por_pid.get(p) for p in pids])
+
+
+# ───────────────────────── (2) productos de trabajo interno en el flujo de repuestos ─────────────────────────
+_OTREP_IM_ESTADO = {"ok": False, "revisado_en": 0.0}
+_OTPROD_ESTADOS_FIN = ("cerrada", "completada", "cancelada", "anulada")
+_OTPROD_NO_LLEGO_SUFIJO = "— NO LLEGÓ"
+
+
+def _ensure_otrep_item_manual_col():
+    """Columna item_manual_id (+ índice) en mant_ot_repuesto_solicitudes: a qué PRODUCTO de trabajo interno de la OT
+    pertenece la solicitud. Barata si ya existe (una consulta, REGLA #18; una sentencia = una cláusula)."""
+    try:
+        fila = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM information_schema.COLUMNS "
+            " WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_ot_repuesto_solicitudes' "
+            "   AND COLUMN_NAME='item_manual_id'") or {}
+        if not int(fila.get("n") or 0):
+            mysql_execute(
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN item_manual_id INT NULL "
+                "COMMENT 'Producto de trabajo interno de la OT (mant_visita_tareas.item_manual_id). 2026-10-18'")
+            mysql_execute(
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD INDEX idx_otrep_item_manual (visita_id, item_manual_id)")
+            print("[ensure_otrep_item_manual] +item_manual_id", flush=True)
+        ok = True
+    except Exception as e:
+        print(f"[ensure_otrep_item_manual] {e}", flush=True)
+        ok = False
+    _OTREP_IM_ESTADO["ok"] = bool(ok)
+    _OTREP_IM_ESTADO["revisado_en"] = time.time()
+    return bool(ok)
+
+
+def _otrep_im_ok():
+    if _OTREP_IM_ESTADO["ok"]:
+        return True
+    if time.time() - _OTREP_IM_ESTADO["revisado_en"] < 300:
+        return False
+    return _ensure_otrep_item_manual_col()
+
+
+def _otrep_nombre_producto(titulo):
+    """PURA. Nombre del producto desde la tarea-ancla (sin el «— NO LLEGÓ» que se le pega al crear la OT)."""
+    t = " ".join(str(titulo or "").split())
+    if t.upper().endswith(_OTPROD_NO_LLEGO_SUFIJO.upper()):
+        t = t[: -len(_OTPROD_NO_LLEGO_SUFIJO)].strip()
+    return t
+
+
+def _otrep_cargar_ot_y_producto(vid, imid):
+    """OT de trabajo interno + uno de SUS productos (item_manual_id), con los candados equivalentes a
+    _otrep_cargar_ot_y_equipo: la OT existe y NO es de cliente (una OT de cliente pide por la ficha del equipo), y el
+    producto está en ESTA OT. Devuelve (v, p, None) o (None, None, respuesta_error)."""
+    v = mysql_fetchone(
+        "SELECT id, numero_ot, cliente_id, tipo, estado FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return None, None, _ot2_err("No encontramos esa orden de trabajo.", "OT_NO_EXISTE", http=404)
+    if v.get("cliente_id"):
+        return None, None, _ot2_err("Esta OT es de un cliente: pide el repuesto desde el equipo de su ficha.",
+                                    "OT_CON_CLIENTE", http=403)
+    try:
+        imid = int(imid)
+    except (TypeError, ValueError):
+        imid = 0
+    fila = None
+    if imid > 0:
+        fila = mysql_fetchone(
+            "SELECT titulo, item_manual_sku, cantidad, plantilla_id FROM mant_visita_tareas "
+            " WHERE visita_id=%s AND maquina_id IS NULL AND item_manual_id=%s "
+            " ORDER BY (plantilla_id IS NULL) DESC, id LIMIT 1", (vid, imid))
+    if not fila:
+        return None, None, _ot2_err("Ese producto no está en esta OT.", "PRODUCTO_NO_EN_OT", http=403)
+    nombre = (_otrep_nombre_producto(fila.get("titulo")) if not fila.get("plantilla_id") else "") or f"Producto #{imid}"
+    try:
+        cant = int(fila.get("cantidad") or 1) if not fila.get("plantilla_id") else 1
+    except (TypeError, ValueError):
+        cant = 1
+    p = {"id": imid, "nombre": nombre, "sku": (fila.get("item_manual_sku") or "").strip() or None,
+         "serie": None, "marca": None, "cantidad": max(1, cant), "interno": True}
+    return v, p, None
+
+
+def _otrep_docs_titulos(vid):
+    """«NVI 687», «FCV 11439»… de la OT (solo número: nunca montos). [] si falla."""
+    try:
+        return [d["titulo"] for d in (_ot_docs_listar(vid) or [])
+                if d.get("origen") == "erp" and (d.get("titulo") or "").strip()]
+    except Exception as e:
+        print(f"[otrep_docs_titulos] vid={vid}: {type(e).__name__}", flush=True)
+        return []
+
+
+def _otrep_contexto_producto(v, p, docs):
+    """PURA. Lo que acompaña al diagnóstico para bodega y el proveedor: producto, SKU, OT y documento."""
+    partes = [f"Producto: {p.get('nombre') or ''}" + (f" (SKU {p['sku']})" if p.get("sku") else "")]
+    partes.append(v.get("numero_ot") or f"OT #{v.get('id')}")
+    if docs:
+        partes.append("Documento " + ", ".join(docs[:5]))
+    return " · ".join(partes)
+
+
+@app.route("/ot/api/<int:vid>/producto/<int:imid>/repuestos-opciones", methods=["GET"])
+@_mant_required
+@_ot_can_configurar
+def ot2_api_producto_repuestos_opciones(vid, imid):
+    """Como ot2_api_equipo_repuestos_opciones, para un PRODUCTO de trabajo interno: compatibles del modelo (por su SKU
+    del catálogo), posibles, piolas, manuales (URL propia /ot/<vid>/producto/<imid>/manual/…), las solicitudes ya
+    hechas para este producto y los REPUESTOS SUGERIDOS de sus bloques (solo nombres de pieza)."""
+    v, p, err = _otrep_cargar_ot_y_producto(vid, imid)
+    if err:
+        return err
+    modelos = _otrep_modelos_de_maquina({"sku": p.get("sku"), "nombre": p.get("nombre")})
+    prod = modelos[0] if modelos else None
+    compatibles, piolas, posibles = [], [], []
+    if modelos:
+        ids_modelo = [x["id"] for x in modelos]
+        try:
+            rows = mysql_fetchall(
+                _OTREP_SQL_STOCK
+                + " WHERE rs.id IN (SELECT sm.repuesto_id FROM mant_repuestos_stock_modelos sm "
+                  "                 WHERE sm.producto_id IN (" + ",".join(["%s"] * len(ids_modelo)) + ")) "
+                  "   AND COALESCE(rs.activo,1)=1 "
+                  " ORDER BY rs.descripcion LIMIT 100",
+                tuple(ids_modelo)) or []
+            compatibles = [_otrep_fmt_stock(r, para_ot=True) for r in rows]
+            _otrep_marcar_modelos_origen(compatibles, modelos)
+        except Exception as e:
+            print(f"[otrep] compatibles producto imid={imid}: {e}", flush=True)
+        try:
+            posibles = _otrep_posibles_compatibles(prod, {c["id"] for c in compatibles})
+        except Exception as e:
+            print(f"[otrep] posibles producto imid={imid}: {e}", flush=True)
+        piolas = _otrep_piolas_de_modelo(prod["id"])
+    manuales = _otrep_manuales_de_modelos(modelos, vid, imid, base=f"/ot/{vid}/producto/{imid}")
+    solicitudes = []
+    if _otrep_im_ok():
+        try:
+            solicitudes = _otrep_listar("s.visita_id=%s AND s.maquina_id IS NULL AND s.item_manual_id=%s",
+                                        (vid, imid), limit=50, para_ot=True)
+        except Exception as e:
+            print(f"[otrep] solicitudes producto imid={imid}: {e}", flush=True)
+    return jsonify({
+        "ok": True,
+        "equipo": {"id": p["id"], "nombre": p.get("nombre"), "sku": p.get("sku"), "serie": None, "marca": None,
+                   "estado_capturado": None, "interno": True},
+        "modelo": ({"id": prod["id"], "sku": prod.get("sku"), "nombre": prod.get("nombre"), "via": prod.get("via")}
+                   if prod else None),
+        "modelos": [{"id": x["id"], "sku": x.get("sku"), "nombre": x.get("nombre"), "via": x.get("via")}
+                    for x in modelos],
+        "compatibles": compatibles, "posibles": posibles, "manuales": manuales, "piolas": piolas,
+        "solicitudes": solicitudes,
+        "repuestos_sugeridos": _otrep_sugeridos_de_producto(vid, imid),
+        "limites": {"foto_mb": _OTREP_MAX_FOTO // (1024 * 1024), "video_mb": _OTREP_MAX_VIDEO // (1024 * 1024)},
+    })
+
+
+def _otrep_ticket_anotar_producto(tid, vid, p, lineas, sol_ids, motivo, n_fotos, n_videos, numero_ot, user):
+    """Como _otrep_ticket_anotar_lote, para un PRODUCTO de trabajo interno: el producto va al ticket SIN maquina_id
+    (no es un equipo de ficha) y UNA nota con todo el lote. Best-effort: nunca lanza."""
+    try:
+        ya = mysql_fetchone(
+            "SELECT id FROM tk_ticket_equipos WHERE ticket_id=%s AND maquina_id IS NULL "
+            "   AND COALESCE(sku,'')=COALESCE(%s,'') AND COALESCE(nombre,'')=COALESCE(%s,'') LIMIT 1",
+            (tid, (p.get("sku") or "")[:100] or None, (p.get("nombre") or "")[:300] or None))
+        if not ya:
+            mysql_execute(
+                "INSERT INTO tk_ticket_equipos (ticket_id, nombre, sku, cantidad, notas) VALUES (%s,%s,%s,%s,%s)",
+                (tid, (p.get("nombre") or "")[:300] or None, (p.get("sku") or "")[:100] or None,
+                 max(1, int(p.get("cantidad") or 1)), f"Repuestos solicitados desde {numero_ot} (revisión)"[:500]))
+    except Exception as e:
+        print(f"[otrep] tk_ticket_equipos producto tid={tid}: {e}", flush=True)
+    try:
+        detalle = "\n".join(f"  · #{sid} {li['nombre']} × {li['cantidad']:g}" for li, sid in zip(lineas, sol_ids))
+        txt = (f"Solicitud de repuestos (lote de {len(lineas)}):\n{detalle}"
+               + f"\nProducto de la revisión: {p.get('nombre') or ''}" + (f" (SKU {p['sku']})" if p.get("sku") else "")
+               + f"\nDiagnóstico: {motivo}"
+               + f"\nEvidencia: {n_fotos} foto(s), {n_videos} video(s).")
+        mysql_execute(
+            "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno) "
+            "VALUES (%s,'comentario',%s,%s,%s,1)",
+            (tid, txt, json.dumps({"solicitud_repuesto_ids": sol_ids, "visita_id": vid, "item_manual_id": p["id"]},
+                                  ensure_ascii=False), user))
+    except Exception as e:
+        print(f"[otrep] tk_mensajes producto tid={tid}: {e}", flush=True)
+
+
+@app.route("/ot/api/<int:vid>/producto/<int:imid>/solicitar-repuestos", methods=["POST"])
+@_mant_required
+@_ot_can_configurar
+def ot2_api_producto_solicitar_repuestos(vid, imid):
+    """Levanta VARIOS repuestos de un PRODUCTO de la revisión en un solo envío. Mismo contrato que
+    ot2_api_equipo_solicitar_repuestos (lineas JSON, motivo ≥10, evidencia obligatoria, lote en UNA transacción,
+    ticket por OT), con estas diferencias: no hay equipo de ficha que dejar fuera de servicio (eso es el Resultado del
+    control del producto) y el diagnóstico lleva el producto, la OT y el documento para bodega y el proveedor."""
+    v, p, err = _otrep_cargar_ot_y_producto(vid, imid)
+    if err:
+        return err
+    if (v.get("estado") or "").strip().lower() in _OTPROD_ESTADOS_FIN:
+        return _ot2_err("La OT ya está cerrada: pide el repuesto desde Repuestos → Solicitar repuesto.",
+                        "OT_CERRADA", http=409)
+    fd = request.form
+    user = current_username() or "sistema"
+    motivo = (fd.get("motivo") or "").strip()
+    if len(motivo) < 10:
+        return _ot2_err("Cuenta qué tiene malo el producto y por qué hacen falta los repuestos (mínimo 10 "
+                        "caracteres): ese diagnóstico es el que leen bodega y el proveedor.", "MOTIVO_REQUERIDO")
+    raw = (fd.get("lineas") or "").strip()
+    if not raw:
+        return _ot2_err("No llegó ninguna línea de repuesto.", "LINEAS_REQUERIDAS")
+    try:
+        lineas_in = json.loads(raw)
+    except Exception:
+        return _ot2_err("El listado de repuestos llegó con un formato inválido.", "LINEAS_INVALIDAS")
+    if not isinstance(lineas_in, list) or not lineas_in:
+        return _ot2_err("Agrega al menos un repuesto a la lista.", "LINEAS_REQUERIDAS")
+    if len(lineas_in) > 30:
+        return _ot2_err("Como máximo 30 repuestos por lote: divide el levantamiento en dos envíos.", "LINEAS_EXCESO")
+    if any(not isinstance(li, dict) for li in lineas_in):
+        return _ot2_err("Una de las líneas llegó con un formato inválido.", "LINEA_INVALIDA")
+    ids_stock = {int(str(li.get("repuesto_stock_id") or "").strip())
+                 for li in lineas_in if str(li.get("repuesto_stock_id") or "").strip().isdigit()}
+    stock_por_id = {}
+    if ids_stock:
+        ph = ",".join(["%s"] * len(ids_stock))
+        rows = mysql_fetchall(
+            f"SELECT id, sku, descripcion, cantidad, proveedor_id FROM mant_repuestos_stock "
+            f" WHERE id IN ({ph}) AND COALESCE(activo,1)=1", tuple(ids_stock)) or []
+        stock_por_id = {r["id"]: r for r in rows}
+    lineas_ok, err_li = _otrep_validar_lineas_lote(lineas_in, stock_por_id)
+    if err_li:
+        return _ot2_err(err_li[0], err_li[1])
+    if not lineas_ok:
+        return _ot2_err("Agrega al menos un repuesto a la lista.", "LINEAS_REQUERIDAS")
+    f, tipo, e_arch = _otrep_primer_archivo()
+    if e_arch:
+        return _ot2_err(e_arch, "EVIDENCIA_INVALIDA")
+    if not f:
+        return _ot2_err("Sin evidencia no hay solicitud: toma al menos una foto o un video de lo que está malo.",
+                        "EVIDENCIA_REQUERIDA")
+    if not _gcs_ready():
+        return _ot2_err("El almacenamiento de fotos no está disponible en este momento. Intenta de nuevo en un "
+                        "minuto.", "STORAGE_OFF", http=503)
+    numero_ot = v.get("numero_ot") or f"OT #{vid}"
+    docs = _otrep_docs_titulos(vid)
+    motivo_full = (motivo + "\n— " + _otrep_contexto_producto(v, p, docs))[:5000]
+    import uuid as _uuid_otprod
+    lote_id = _uuid_otprod.uuid4().hex
+    sol_ids = []
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            for li in lineas_ok:
+                sol_ids.append(_otrep_crear_fila_solicitud(
+                    vid, None, None, li["nombre"], li["sku"], li["origen"], li["cantidad"], motivo_full, False,
+                    user, repuesto_stock_id=li["repuesto_stock_id"], proveedor_id=li["proveedor_id"],
+                    lote_id=lote_id, cur=cur))
+            if _otrep_im_ok():
+                ph = ",".join(["%s"] * len(sol_ids))
+                cur.execute(f"UPDATE mant_ot_repuesto_solicitudes SET item_manual_id=%s WHERE id IN ({ph})",
+                            tuple([p["id"]] + sol_ids))
+        conn.commit()
+    except Exception as e:
+        print(f"[otrep] INSERT lote producto vid={vid} imid={imid}: {e}", flush=True)
+        try:
+            conn.rollback()
+        except Exception as e_rb:
+            print(f"[otrep][CRITICO] rollback lote producto FALLÓ vid={vid} lote_id={lote_id}: {e_rb}", flush=True)
+        return _ot2_err("No pudimos guardar las solicitudes.", "ERROR_INTERNO", http=500)
+    info = {}
+    ok_ev, e_ev = _otrep_subir_evidencia_generica(
+        "ot", f"v{vid}_i{p['id']}_lote{lote_id[:8]}", f, tipo, user, sol_ids[0], info_out=info)
+    if not ok_ev:
+        for sid in sol_ids:
+            try:
+                mysql_execute("DELETE FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+            except Exception:
+                pass
+        return _ot2_err((e_ev or "No se pudo subir la evidencia") + ", así que las solicitudes NO se guardaron. "
+                        "Revisa la conexión e intenta de nuevo.", "EVIDENCIA_NO_SUBIO", http=502)
+    _otrep_nombres_alt_guardar([(_s, _l.get("nombres_alt")) for _s, _l in zip(sol_ids, lineas_ok)])
+    for _sid_ev, _li_ev in zip(sol_ids, lineas_ok):
+        _otrep_evento(_sid_ev, "creada", user, None, "solicitado",
+                      f"Desde la {numero_ot} (revisión, producto {p.get('nombre')}) · "
+                      f"{float(_li_ev.get('cantidad') or 0):g} × {_li_ev.get('nombre')} (lote de {len(sol_ids)})")
+    fallos_copia = 0
+    for sid in sol_ids[1:]:
+        if not info:
+            fallos_copia = len(sol_ids) - 1
+            break
+        try:
+            mysql_execute(
+                "INSERT INTO mant_ot_repuesto_evidencias "
+                "(solicitud_id, tipo, url, public_id, archivo_nombre, size_kb, subido_por) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (sid, tipo, info.get("url"), info.get("public_id"), info.get("archivo_nombre"),
+                 info.get("size_kb"), user))
+            mysql_execute(
+                "UPDATE mant_ot_repuesto_solicitudes SET "
+                + ("n_fotos=n_fotos+1" if tipo == "foto" else "n_videos=n_videos+1") + " WHERE id=%s", (sid,))
+        except Exception as e:
+            fallos_copia += 1
+            print(f"[otrep] evidencia compartida producto sol={sid}: {e}", flush=True)
+    tid, numero_ticket, creado = _otrep_ticket_para_ot(vid, v, user)
+    if tid:
+        try:
+            ph = ",".join(["%s"] * len(sol_ids))
+            mysql_execute(f"UPDATE mant_ot_repuesto_solicitudes SET ticket_id=%s WHERE id IN ({ph})",
+                          tuple([tid] + sol_ids))
+        except Exception as e:
+            print(f"[otrep] ticket_id lote producto sol={sol_ids}: {e}", flush=True)
+        _otrep_ticket_anotar_producto(tid, vid, p, lineas_ok, sol_ids, motivo_full,
+                                      1 if tipo == "foto" else 0, 1 if tipo == "video" else 0, numero_ot, user)
+    try:
+        resumen = ", ".join(f"{li['nombre']} × {li['cantidad']:g}" for li in lineas_ok)
+        _mant_log("visita", vid, "repuesto_solicitado",
+                  f"Lote {lote_id[:8]} ({len(lineas_ok)} repuestos): {resumen} · producto {p.get('nombre')}"
+                  + (f" (SKU {p['sku']})" if p.get("sku") else "") + f" · {motivo[:200]}"
+                  + (f" · ticket {numero_ticket}" if numero_ticket else ""))
+    except Exception:
+        pass
+    avisos = []
+    if not tid:
+        avisos.append("Las solicitudes quedaron guardadas, pero no se pudo crear el ticket de seguimiento. Gestión "
+                      "puede crearlo desde Repuestos → Solicitudes desde OT.")
+    if fallos_copia:
+        avisos.append(f"La evidencia se guardó en la primera solicitud, pero no se pudo copiar a {fallos_copia} de "
+                      "las otras.")
+    try:
+        es_externo = _es_tecnico_externo()
+    except Exception:
+        es_externo = False
+    resultado = []
+    for li, sid in zip(lineas_ok, sol_ids):
+        item = {"solicitud_id": sid, "repuesto_nombre": li["nombre"], "cantidad": li["cantidad"],
+                "origen": li["origen"], "repuesto_stock_id": li["repuesto_stock_id"]}
+        if li["repuesto_stock_id"] and li["stock_cantidad"] is not None:
+            try:
+                otras = _otrep_stock_comprometido(li["repuesto_stock_id"], excluir_sol_id=sid)
+                disponible = li["stock_cantidad"] - otras - li["cantidad"]
+                item["stock_disponible"] = disponible
+                if disponible < 0:
+                    avisos.append(_otrep_aviso_sobrecompromiso(
+                        es_externo, li["sku"] or li["nombre"], otras + li["cantidad"], li["stock_cantidad"],
+                        disponible))
+            except Exception as e:
+                print(f"[otrep] comprometido producto sol={sid}: {e}", flush=True)
+        if es_externo:
+            item.pop("repuesto_stock_id", None)
+            item.pop("stock_disponible", None)
+        resultado.append(item)
+    return jsonify({"ok": True, "lote_id": lote_id, "ticket_id": tid, "numero_ticket": numero_ticket,
+                    "ticket_creado": creado, "fuera_servicio": False, "solicitudes": resultado,
+                    "avisos": avisos or None})
+
+
+@app.route("/ot/api/<int:vid>/producto/<int:imid>/evidencia", methods=["POST"])
+@_mant_required
+@_ot_can_configurar
+def ot2_api_producto_evidencia(vid, imid):
+    """Un archivo más de evidencia para un LOTE (`lote_id`) o una solicitud (`solicitud_id`) de un producto de la
+    revisión. Uno por request, por el techo de tamaño. Solo solicitudes de ESTA OT y de ESTE producto."""
+    v, p, err = _otrep_cargar_ot_y_producto(vid, imid)
+    if err:
+        return err
+    user = current_username() or "sistema"
+    f, tipo, e_arch = _otrep_primer_archivo()
+    if e_arch:
+        return _ot2_err(e_arch, "EVIDENCIA_INVALIDA")
+    if not f:
+        return _ot2_err("No llegó ningún archivo.", "EVIDENCIA_REQUERIDA")
+    if not _gcs_ready():
+        return _ot2_err("El almacenamiento de fotos no está disponible en este momento.", "STORAGE_OFF", http=503)
+    lote_txt = (request.form.get("lote_id") or "").strip()[:40]
+    sid_txt = str(request.form.get("solicitud_id") or "").strip()
+    filtro_im = " AND item_manual_id=%s" if _otrep_im_ok() else ""
+    par_im = (p["id"],) if filtro_im else ()
+    if lote_txt:
+        sols = mysql_fetchall(
+            "SELECT id FROM mant_ot_repuesto_solicitudes WHERE lote_id=%s AND visita_id=%s AND maquina_id IS NULL"
+            + filtro_im + " ORDER BY id", (lote_txt, vid) + par_im) or []
+    elif sid_txt.isdigit():
+        sols = mysql_fetchall(
+            "SELECT id FROM mant_ot_repuesto_solicitudes WHERE id=%s AND visita_id=%s AND maquina_id IS NULL"
+            + filtro_im, (int(sid_txt), vid) + par_im) or []
+    else:
+        return _ot2_err("Falta a qué pertenece la evidencia.", "CONTEXTO_REQUERIDO")
+    if not sols:
+        return _ot2_err("Esa solicitud no es de este producto.", "SOLICITUD_NO_EXISTE", http=404)
+    info = {}
+    ok, e_ev = _otrep_subir_evidencia_generica(
+        "ot", f"v{vid}_i{p['id']}_" + (f"lote{lote_txt[:8]}" if lote_txt else f"rep{sols[0]['id']}"),
+        f, tipo, user, sols[0]["id"], info_out=info)
+    if not ok:
+        return _ot2_err(e_ev or "No se pudo subir la evidencia.", "EVIDENCIA_NO_SUBIO", http=502)
+    fallos = 0
+    for s in sols[1:]:
+        try:
+            mysql_execute(
+                "INSERT INTO mant_ot_repuesto_evidencias "
+                "(solicitud_id, tipo, url, public_id, archivo_nombre, size_kb, subido_por) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (s["id"], tipo, info.get("url"), info.get("public_id"), info.get("archivo_nombre"),
+                 info.get("size_kb"), user))
+            mysql_execute(
+                "UPDATE mant_ot_repuesto_solicitudes SET "
+                + ("n_fotos=n_fotos+1" if tipo == "foto" else "n_videos=n_videos+1") + " WHERE id=%s", (s["id"],))
+        except Exception as e:
+            fallos += 1
+            print(f"[otrep] evidencia producto extra sol={s['id']}: {e}", flush=True)
+    return jsonify({"ok": True, "tipo": tipo,
+                    "aviso": (f"El archivo se guardó en la primera solicitud del lote, pero no se pudo copiar a "
+                              f"{fallos} de las otras.") if fallos else None})
+
+
+@app.route("/ot/<int:vid>/producto/<int:imid>/manual/<int:manual_id>", methods=["GET"])
+@_mant_required
+@_ot_can_view
+def ot2_producto_manual_ver(vid, imid, manual_id):
+    """Manual (cat_producto_manuales) de uno de los modelos del PRODUCTO de la revisión, inline (solo ver)."""
+    return _otrep_servir_manual(vid, imid, manual_id=manual_id, interno=True)
+
+
+@app.route("/ot/<int:vid>/producto/<int:imid>/manual-legado/<int:producto_id>", methods=["GET"])
+@_mant_required
+@_ot_can_view
+def ot2_producto_manual_legado_ver(vid, imid, producto_id):
+    """Manual legado (cat_productos.manual_pdf_key) de uno de los modelos del producto, inline (solo ver)."""
+    return _otrep_servir_manual(vid, imid, producto_id=producto_id, interno=True)
+
+
+# ───────────────────────── (3) incidencia desde el producto de la revisión ─────────────────────────
+_OTPROD_INC_MOTIVO_MIN = 10
+
+
+@app.route("/ot/api/<int:vid>/producto/<int:imid>/incidencia", methods=["POST"])
+@_mant_required
+@_ot_can_configurar
+def ot2_api_producto_incidencia(vid, imid):
+    """«Informar incidencia» desde la tarjeta del producto: crea el MISMO registro de la bodega de Incidencias
+    (mant_incidencias, por SKU) con sus fotos (mant_incidencia_fotos, hasta INC_MAX_FOTOS fotos y INC_MAX_VIDEOS
+    video, mismo validador _otrep_clasificar_archivo). La OT y el documento quedan escritos en la observación.
+
+    Por qué una ruta propia: las de Incidencias son de gestión (@_no_tecnico_salvo_taller) y el técnico que hace la
+    revisión es quien ve el daño. Aquí solo puede informar la incidencia de un producto de ESTA OT (candado de
+    _otrep_cargar_ot_y_producto) y no ve nada más del módulo (la respuesta trae solo el número)."""
+    v, p, err = _otrep_cargar_ot_y_producto(vid, imid)
+    if err:
+        return err
+    if (v.get("estado") or "").strip().lower() in _OTPROD_ESTADOS_FIN:
+        return _ot2_err("La OT ya está cerrada: informa la incidencia desde la bodega de Incidencias.", "OT_CERRADA",
+                        http=409)
+    fd = request.form
+    user = current_username() or "sistema"
+    motivo = " ".join((fd.get("motivo") or "").split())[:200]
+    if len(motivo) < _OTPROD_INC_MOTIVO_MIN:
+        return _ot2_err(f"Cuenta qué le pasa al producto (mínimo {_OTPROD_INC_MOTIVO_MIN} caracteres).",
+                        "MOTIVO_REQUERIDO")
+    detalle = (fd.get("detalle") or "").strip()[:2000]
+    try:
+        cantidad = int(float(str(fd.get("cantidad") or "1").replace(",", ".")))
+    except (TypeError, ValueError):
+        cantidad = 0
+    if cantidad < 1 or cantidad > max(1, int(p.get("cantidad") or 1)):
+        return _ot2_err(f"La cantidad afectada va de 1 a {max(1, int(p.get('cantidad') or 1))} (la del documento).",
+                        "CANTIDAD_INVALIDA")
+    archivos = [x for x in (request.files.getlist("fotos") or []) if x and x.filename]
+    if not archivos:
+        return _ot2_err("Sube al menos una foto del daño: es la evidencia de la incidencia.", "EVIDENCIA_REQUERIDA")
+    clasificados, n_f, n_v = [], 0, 0
+    for a in archivos:
+        t_a, e_a = _otrep_clasificar_archivo(a)
+        if e_a:
+            return _ot2_err(e_a, "EVIDENCIA_INVALIDA")
+        n_f += 1 if t_a == "foto" else 0
+        n_v += 1 if t_a == "video" else 0
+        clasificados.append((a, t_a))
+    if n_f < 1:
+        return _ot2_err("Sube al menos una FOTO del daño (el video acompaña, no reemplaza).", "EVIDENCIA_REQUERIDA")
+    if n_f > INC_MAX_FOTOS or n_v > INC_MAX_VIDEOS:
+        return _ot2_err(f"Como máximo {INC_MAX_FOTOS} fotos y {INC_MAX_VIDEOS} video por incidencia.",
+                        "EVIDENCIA_EXCESO")
+    if not _gcs_ready():
+        return _ot2_err("El almacenamiento de fotos no está disponible en este momento. Intenta de nuevo en un "
+                        "minuto.", "STORAGE_OFF", http=503)
+    numero_ot = v.get("numero_ot") or f"OT #{vid}"
+    docs = _otrep_docs_titulos(vid)
+    observacion = (f"Informada desde la {numero_ot} (revisión de equipos) por {user} el "
+                   f"{_now_chile().strftime('%d/%m/%Y %H:%M')}"
+                   + (f" · Documento {', '.join(docs[:5])}" if docs else "") + "."
+                   + (f"\n{detalle}" if detalle else ""))
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_incidencias (sku, descripcion, cantidad, motivo, observacion, created_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s)",
+                (p.get("sku"), (p.get("nombre") or "")[:400], cantidad, _sentence_case(motivo) or motivo,
+                 observacion, user))
+            iid = int(cur.lastrowid)
+        db.commit()
+    except Exception as e:
+        print(f"[otprod_incidencia] INSERT vid={vid} imid={imid}: {e}", flush=True)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return _ot2_err("No pudimos guardar la incidencia.", "ERROR_INTERNO", http=500)
+    _inc_log(iid, "creada", "sku", None, p.get("sku") or "(sin SKU)")
+    subidas, fallidas = 0, 0
+    for a, t_a in clasificados:
+        ok_f, _r = _inc_foto_guardar(iid, a, t_a, user)
+        if ok_f:
+            subidas += 1
+        else:
+            fallidas += 1
+    try:
+        _mant_log("visita", vid, "incidencia_informada",
+                  f"Incidencia #{iid} · {p.get('nombre')}" + (f" (SKU {p['sku']})" if p.get("sku") else "")
+                  + f" × {cantidad} · {motivo} · {subidas} archivo(s)")
+    except Exception:
+        pass
+    aviso = None
+    if fallidas:
+        aviso = (f"La incidencia quedó registrada, pero {fallidas} archivo(s) no se pudieron subir: gestión puede "
+                 "agregarlos desde la bodega de Incidencias.")
+    return jsonify({"ok": True, "incidencia_id": iid, "archivos": subidas, "aviso": aviso})
+
+
+# ───────────────────────── (4) ACTA DE RECEPCIÓN ─────────────────────────
+_ACTA_RESULTADOS = ("Apto", "Apto con observaciones", "Reparar", "Dar de baja", "Fuera de servicio", "No llegó",
+                    "Pendiente de diagnóstico", "Sin resultado")
+# Semáforo (REGLA #2 / #15): verde se libera, ámbar hay que hacer algo, rojo sale de circulación, gris no está.
+_ACTA_SEMAFORO = {
+    "Apto": "verde", "Apto con observaciones": "ambar", "Reparar": "ambar", "Dar de baja": "rojo",
+    "Fuera de servicio": "rojo", "No llegó": "gris", "Pendiente de diagnóstico": "azul", "Sin resultado": "gris",
+}
+_ACTA_DOMINIOS_INTERNOS = ("sphs.cl", "ilusfitness.com")
+_ACTA_EMAILS_REGLA = "ot_acta_recepcion_emails"
+_ACTA_MAX_DEST = 10
+_ACTA_RX_CORREO = re.compile(r"^[a-z0-9._%+\-]+@[a-z0-9.\-]+$")
+
+
+def _acta_resultado_canon(opcion):
+    """PURA. La opción guardada → su nombre de _ACTA_RESULTADOS (sin importar tildes ni mayúsculas). Las opciones de
+    la versión larga se acercan a la esencial («No apto - requiere reparación» → «Reparar»)."""
+    n = _chk_txt_norm(opcion)
+    if not n:
+        return ""
+    for r in _ACTA_RESULTADOS:
+        if _chk_txt_norm(r) == n:
+            return r
+    if "repar" in n:
+        return "Reparar"
+    if "baja" in n:
+        return "Dar de baja"
+    if "fuera de servicio" in n or "no apto" in n:
+        return "Fuera de servicio"
+    if "pendiente" in n or "diagnostic" in n:
+        return "Pendiente de diagnóstico"
+    if "no lleg" in n:
+        return "No llegó"
+    return str(opcion).strip()
+
+
+def _acta_armar(tareas, fotos_por_tarea=None):
+    """PURA (probada en tests/test_ot_revision_acta.py). El acta de UNA revisión, producto por producto.
+
+    tareas: filas de mant_visita_tareas de productos de trabajo interno (maquina_id NULL e item_manual_id), con id,
+            item_manual_id, item_manual_sku, plantilla_id, titulo, descripcion, cantidad, tipo_respuesta,
+            opciones_lista_json, valor_json, completada_at, completada_por.
+    fotos_por_tarea: {tarea_id: [url, ...]} (la primera de la «Foto general» va de miniatura).
+    Devuelve {"productos": [...], "totales": [{"resultado", "n", "semaforo"}], "n": int,
+              "revisores": [nombres], "ultima_revision": datetime|None}.
+    Sin plata, sin proveedores y sin el bloque «sin saldo»: solo lo que se recibió y lo que no."""
+    fotos_por_tarea = fotos_por_tarea or {}
+    grupos = {}
+    for t in tareas or []:
+        try:
+            im = int(t.get("item_manual_id") or 0)
+        except (TypeError, ValueError):
+            im = 0
+        if im <= 0 or t.get("maquina_id"):
+            continue
+        grupos.setdefault(im, []).append(t)
+    productos, revisores, ultima = [], [], None
+    for im in sorted(grupos):
+        ts = grupos[im]
+        ancla = next((t for t in ts if not t.get("plantilla_id")), None) or {}
+        titulo_ancla = " ".join(str(ancla.get("titulo") or "").split())
+        no_llego_crear = titulo_ancla.upper().endswith(_OTPROD_NO_LLEGO_SUFIJO.upper())
+        nombre = _otrep_nombre_producto(titulo_ancla) or f"Producto #{im}"
+        try:
+            cantidad = int(ancla.get("cantidad") or 1)
+        except (TypeError, ValueError):
+            cantidad = 1
+        res_t = next((t for t in ts if _chk_es_resultado(t)), None)
+        opcion = ""
+        if res_t is not None:
+            vj = _tarea_vj(res_t)
+            if not vj.get("na"):
+                opcion = str(vj.get("opcion") or "").strip()
+        resultado = _acta_resultado_canon(opcion) or ("No llegó" if no_llego_crear else "Sin resultado")
+        textos = [t for t in ts if (t.get("tipo_respuesta") or "").strip().lower() == "texto"]
+        obs_t = next((t for t in textos if _chk_txt_norm(t.get("titulo")).startswith("observacion")), None) or (
+            textos[0] if textos else None)
+        observacion = str(_tarea_vj(obs_t).get("texto") or "").strip() if obs_t else ""
+        if not observacion and no_llego_crear:
+            observacion = " ".join(str(ancla.get("descripcion") or "").split())
+        falta_t = next((t for t in ts if (t.get("tipo_respuesta") or "").strip().lower() == "sino"
+                        and "falta" in _chk_txt_norm(t.get("titulo"))), None)
+        faltan = str(_tarea_vj(falta_t).get("valor") or "").strip().lower() if falta_t else ""
+        cont_t = next((t for t in ts if (t.get("tipo_respuesta") or "").strip().lower() == "numero"
+                       and "contad" in _chk_txt_norm(t.get("titulo"))), None)
+        contadas = _tarea_vj(cont_t).get("numero") if cont_t else None
+        partes = []
+        if resultado == "No llegó":
+            partes.append(f"No llegó ({cantidad} de {cantidad})")
+        else:
+            if faltan == "si":
+                partes.append("Faltan piezas o accesorios (detalle en la observación)")
+            elif faltan == "no":
+                partes.append("Completo")
+            if contadas is not None:
+                try:
+                    c = float(contadas)
+                    c_txt = str(int(c)) if c.is_integer() else str(c)
+                    partes.append(f"Contadas {c_txt} pieza(s)")
+                except (TypeError, ValueError):
+                    pass
+        foto_t = next((t for t in ts if (t.get("tipo_respuesta") or "").strip().lower() == "foto"
+                       and fotos_por_tarea.get(t.get("id"))), None)
+        foto = (fotos_por_tarea.get(foto_t.get("id")) or [None])[0] if foto_t else None
+        if not foto:
+            foto = next((fotos_por_tarea[t.get("id")][0] for t in ts if fotos_por_tarea.get(t.get("id"))), None)
+        quien_t = res_t if (res_t is not None and res_t.get("completada_por")) else None
+        if quien_t is None:
+            hechas = [t for t in ts if t.get("completada_por") and t.get("completada_at")]
+            quien_t = max(hechas, key=lambda t: t.get("completada_at")) if hechas else None
+        revisado_por = (quien_t or {}).get("completada_por") or ""
+        revisado_en = (quien_t or {}).get("completada_at")
+        if revisado_por and revisado_por not in revisores:
+            revisores.append(revisado_por)
+        if revisado_en and (ultima is None or revisado_en > ultima):
+            ultima = revisado_en
+        productos.append({
+            "item_manual_id": im, "sku": (ancla.get("item_manual_sku") or "").strip() or None, "nombre": nombre,
+            "cantidad": cantidad, "resultado": resultado, "semaforo": _ACTA_SEMAFORO.get(resultado, "gris"),
+            "observacion": observacion, "faltantes": " · ".join(partes), "foto": foto,
+            "revisado_por": revisado_por, "revisado_en": revisado_en,
+        })
+    cuenta = {}
+    for pr in productos:
+        cuenta[pr["resultado"]] = cuenta.get(pr["resultado"], 0) + 1
+    orden = list(_ACTA_RESULTADOS) + sorted(k for k in cuenta if k not in _ACTA_RESULTADOS)
+    totales = [{"resultado": r, "n": cuenta[r], "semaforo": _ACTA_SEMAFORO.get(r, "gris")} for r in orden if cuenta.get(r)]
+    return {"productos": productos, "totales": totales, "n": len(productos), "revisores": revisores,
+            "ultima_revision": ultima}
+
+
+def _ot_acta_aplica(v):
+    """El acta es de las OT de trabajo interno de REVISIÓN (los tipos con checklist heredado), nunca de un cliente."""
+    if not v or v.get("cliente_id"):
+        return False
+    try:
+        return (v.get("tipo") or "").strip().lower() in set(_chk_tipos_herencia())
+    except Exception:
+        return False
+
+
+def _ot_acta_datos(vid):
+    """Todo lo del acta de UNA OT, o None si no aplica. Solo lectura."""
+    v = mysql_fetchone(
+        "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.cliente_id, v.titulo, v.fecha_programada, v.created_at, "
+        "       v.cerrada_at, COALESCE(u.nombre, u.username) AS tecnico_nombre "
+        "  FROM mant_visitas v LEFT JOIN app_users u ON u.id = v.tecnico_user_id WHERE v.id=%s", (vid,))
+    if not v or not _ot_acta_aplica(v):
+        return None
+    v = dict(v)
+    tareas = mysql_fetchall(
+        "SELECT id, maquina_id, item_manual_id, item_manual_sku, plantilla_id, orden, titulo, descripcion, cantidad, "
+        "       tipo_respuesta, opciones_lista_json, valor_json, completada, completada_at, completada_por "
+        "  FROM mant_visita_tareas WHERE visita_id=%s AND maquina_id IS NULL AND item_manual_id IS NOT NULL "
+        " ORDER BY item_manual_id, orden, id", (vid,)) or []
+    fotos = {}
+    try:
+        try:
+            filas_f = mysql_fetchall(
+                "SELECT tarea_id, cloudinary_url, archivo_path FROM mant_visita_fotos "
+                " WHERE visita_id=%s AND tarea_id IS NOT NULL ORDER BY COALESCE(es_principal,0) DESC, id", (vid,)) or []
+        except Exception:
+            filas_f = mysql_fetchall(
+                "SELECT tarea_id, cloudinary_url, archivo_path FROM mant_visita_fotos "
+                " WHERE visita_id=%s AND tarea_id IS NOT NULL ORDER BY id", (vid,)) or []
+        for f in filas_f:
+            url = f.get("cloudinary_url") or (f"/static/{f['archivo_path']}" if f.get("archivo_path") else "")
+            if url:
+                fotos.setdefault(f["tarea_id"], []).append(url)
+    except Exception as e:
+        print(f"[acta] fotos vid={vid}: {type(e).__name__}", flush=True)
+    tipo_nombre = None
+    try:
+        fila_t = mysql_fetchone("SELECT nombre FROM mant_tipos_interno WHERE clave=%s LIMIT 1", (v.get("tipo"),))
+        tipo_nombre = (fila_t or {}).get("nombre")
+    except Exception:
+        tipo_nombre = None
+    datos = _acta_armar([dict(t) for t in tareas], fotos)
+    datos.update({
+        "ot": v, "numero_ot": v.get("numero_ot") or f"OT #{vid}",
+        "tipo_nombre": tipo_nombre or ("Control de calidad" if (v.get("tipo") or "") == "control_calidad"
+                                       else "Revisión de equipos"),
+        "documentos": _otrep_docs_titulos(vid), "generado_en": _now_chile(),
+    })
+    return datos
+
+
+def _acta_correos_normalizar(entrada):
+    """PURA (probada). → (validos, rechazados). Separa por «,», «;», espacios o saltos de línea y pasa a minúsculas.
+    Válido = forma de correo y dominio EXACTAMENTE uno de _ACTA_DOMINIOS_INTERNOS: ni subdominios
+    («x@mail.sphs.cl»), ni parecidos («x@sphs.cl.com», «x@evilsphs.cl»). Sin repetir. El acta es interna: jamás va a
+    un cliente (REGLA #22)."""
+    if isinstance(entrada, (list, tuple)):
+        partes = [str(x or "") for x in entrada]
+    else:
+        partes = re.split(r"[\s,;]+", str(entrada or ""))
+    validos, rechazados = [], []
+    for x in partes:
+        c = x.strip().strip("<>").lower()
+        if not c:
+            continue
+        dominio = c.rsplit("@", 1)[-1] if "@" in c else ""
+        if _ACTA_RX_CORREO.match(c) and dominio in _ACTA_DOMINIOS_INTERNOS and ".." not in c:
+            if c not in validos:
+                validos.append(c)
+        elif c not in rechazados:
+            rechazados.append(c)
+    return validos, rechazados
+
+
+def _acta_destinatarios_config():
+    """Correos internos configurados en «Correos del acta de recepción» (Configuración de servicio técnico)."""
+    try:
+        return _acta_correos_normalizar((_reglas_cargar() or {}).get(_ACTA_EMAILS_REGLA) or "")[0]
+    except Exception:
+        return []
+
+
+def _ensure_acta_recepcion_regla():
+    """Regla «Correos del acta de recepción» en mant_reglas_negocio, VACÍA por defecto (nadie recibe nada hasta que
+    gestión la llene). INSERT IGNORE: barato y nunca pisa lo configurado."""
+    try:
+        mysql_execute(
+            "INSERT IGNORE INTO mant_reglas_negocio "
+            "(clave, valor, tipo_dato, categoria, label, descripcion, unidad, orden) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (_ACTA_EMAILS_REGLA, "", "string", "acta", "Correos del acta de recepción",
+             "Solo correos internos (@sphs.cl o @ilusfitness.com), separados por coma. Reciben el acta de la "
+             "revisión de equipos cuando gestión toca «Enviar a logística».", "", 10))
+        return True
+    except Exception as e:
+        print(f"[ensure_acta_recepcion_regla] {e}", flush=True)
+        return False
+
+
+def _acta_fecha(dt, fmt="%d/%m/%Y %H:%M"):
+    """Fecha en hora Chile (REGLA #6) para el acta; '' si no hay."""
+    if not dt:
+        return ""
+    try:
+        return chile_fmt_filter(dt, fmt) or ""   # naive = UTC (como guarda MySQL); aware = se convierte
+    except Exception:
+        return str(dt)[:16]
+
+
+def _acta_html(datos, embebido=True):
+    """HTML del acta (templates/ot2/acta_recepcion_pdf.html). Con embebido=True las fotos van como data-URI."""
+    cache = {}
+    filas = []
+    for pr in datos.get("productos") or []:
+        pr = dict(pr)
+        if embebido and pr.get("foto"):
+            pr["foto"] = _img_a_data_uri(pr["foto"], cache)
+        pr["revisado_en_txt"] = _acta_fecha(pr.get("revisado_en"))
+        filas.append(pr)
+    return render_template(
+        "ot2/acta_recepcion_pdf.html", d=datos, productos=filas, marca=ILUS_BRAND,
+        generado_txt=_acta_fecha(datos.get("generado_en")),
+        ultima_txt=_acta_fecha(datos.get("ultima_revision")))
+
+
+def _acta_pdf_bytes(datos):
+    """PDF del acta con el motor de siempre (_pw_pdf). Devuelve (bytes|None, html)."""
+    html = _acta_html(datos, embebido=True)
+    try:
+        pdf = _pw_pdf(
+            html, page_format="Letter", margin={"top": "12mm", "bottom": "14mm", "left": "10mm", "right": "10mm"},
+            wait_fn="document.images.length === 0 || [...document.images].every(i=>i.complete)",
+            wait_timeout=5000, action_timeout=60000)
+        return pdf, html
+    except PDFEngineUnavailable:
+        print("[acta] Playwright no disponible → HTML imprimible", flush=True)
+    except Exception as e:
+        print(f"[acta] pdf: {type(e).__name__}: {e}", flush=True)
+    return None, html
+
+
+def _acta_xl_celda(ws, fila, col, valor):
+    """Escribe una celda; un texto que empieza con «=», «+», «-» o «@» va como TEXTO, nunca como fórmula."""
+    c = ws.cell(row=fila, column=col, value=valor)
+    if isinstance(valor, str) and valor[:1] in ("=", "+", "-", "@"):
+        c.data_type = "s"
+    return c
+
+
+def _acta_xlsx_bytes(datos):
+    """Excel del acta (openpyxl): encabezado, totales por resultado y una fila por producto."""
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Acta de recepción"
+    negro, rojo = "0A0A0A", "DC2626"
+    ws.cell(row=1, column=1, value=f"{ILUS_BRAND} · Acta de recepción de la revisión").font = Font(
+        bold=True, size=14, color=rojo)
+    info = [
+        ("OT", datos.get("numero_ot")), ("Tipo de trabajo", datos.get("tipo_nombre")),
+        ("Documento", ", ".join(datos.get("documentos") or []) or "—"),
+        ("Revisó", ", ".join(datos.get("revisores") or []) or (datos.get("ot") or {}).get("tecnico_nombre") or "—"),
+        ("Última revisión", _acta_fecha(datos.get("ultima_revision")) or "—"),
+        ("Generada", _acta_fecha(datos.get("generado_en"))),
+    ]
+    fila = 3
+    for k, val in info:
+        ws.cell(row=fila, column=1, value=k).font = Font(bold=True)
+        _acta_xl_celda(ws, fila, 2, val)
+        fila += 1
+    fila += 1
+    ws.cell(row=fila, column=1, value="Totales por resultado").font = Font(bold=True, color=rojo)
+    fila += 1
+    for t in datos.get("totales") or []:
+        ws.cell(row=fila, column=1, value=t["resultado"])
+        ws.cell(row=fila, column=2, value=t["n"])
+        fila += 1
+    ws.cell(row=fila, column=1, value="Total de productos").font = Font(bold=True)
+    ws.cell(row=fila, column=2, value=datos.get("n") or 0).font = Font(bold=True)
+    fila += 2
+    cab = ["N°", "SKU", "Producto", "Cant. documento", "Resultado", "Observación", "Faltantes", "Revisó",
+           "Fecha de revisión"]
+    for i, h in enumerate(cab, start=1):
+        c = ws.cell(row=fila, column=i, value=h)
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor=negro)
+        c.alignment = Alignment(vertical="center", wrap_text=True)
+    fila += 1
+    for n, pr in enumerate(datos.get("productos") or [], start=1):
+        valores = [n, pr.get("sku") or "", pr.get("nombre") or "", pr.get("cantidad"), pr.get("resultado"),
+                   pr.get("observacion") or "", pr.get("faltantes") or "", pr.get("revisado_por") or "",
+                   _acta_fecha(pr.get("revisado_en"))]
+        for i, val in enumerate(valores, start=1):
+            c = _acta_xl_celda(ws, fila, i, val)
+            c.alignment = Alignment(vertical="top", wrap_text=True)
+        fila += 1
+    for col, ancho in zip("ABCDEFGHI", (6, 16, 46, 14, 22, 50, 34, 22, 18)):
+        ws.column_dimensions[col].width = ancho
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _acta_nombre_archivo(datos, ext):
+    num = str(datos.get("numero_ot") or "").strip()
+    num = re.sub(r"[^A-Za-z0-9_-]", "", re.sub(r"^OT[-_]?", "", num, flags=re.IGNORECASE)) or "OT"
+    return f"Acta-recepcion-OT-{num}.{ext}"
+
+
+@app.route("/ot/<int:vid>/acta-recepcion.pdf", methods=["GET"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot2_acta_recepcion_pdf(vid):
+    """Acta de recepción de la revisión (PDF) para logística. Gestión (no técnicos). Si el motor de PDF no está, se
+    entrega el mismo documento imprimible (nunca un error)."""
+    datos = _ot_acta_datos(vid)
+    if not datos:
+        return _friendly_error_page("Acta no disponible",
+                                    "El acta de recepción es de las OT internas de revisión de equipos.", 404)
+    pdf, html = _acta_pdf_bytes(datos)
+    if not pdf:
+        return html
+    return send_file(io.BytesIO(pdf), mimetype="application/pdf",
+                     as_attachment=(request.args.get("descargar") == "1"),
+                     download_name=_acta_nombre_archivo(datos, "pdf"))
+
+
+@app.route("/ot/<int:vid>/acta-recepcion.xlsx", methods=["GET"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot2_acta_recepcion_xlsx(vid):
+    """Acta de recepción de la revisión (Excel). Gestión (no técnicos)."""
+    datos = _ot_acta_datos(vid)
+    if not datos:
+        return _friendly_error_page("Acta no disponible",
+                                    "El acta de recepción es de las OT internas de revisión de equipos.", 404)
+    return send_file(io.BytesIO(_acta_xlsx_bytes(datos)),
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                     as_attachment=True, download_name=_acta_nombre_archivo(datos, "xlsx"))
+
+
+@app.route("/ot/api/<int:vid>/acta-recepcion/enviar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot2_api_acta_recepcion_enviar(vid):
+    """«Enviar a logística»: el acta (PDF + Excel adjuntos) SOLO a correos internos: los de «Correos del acta de
+    recepción» (Configuración) más uno escrito a mano, también interno. Cualquier otro dominio se rechaza ANTES de
+    enviar nada (REGLA #22: jamás a un cliente). Sale por _send_ilus_email (SMTP, REGLA #13), que respeta el
+    interruptor general y la llave del módulo y deja cada envío en el Historial de Comunicaciones (ref OT). Queda en
+    la bitácora quién envió, cuándo y a quién."""
+    datos = _ot_acta_datos(vid)
+    if not datos:
+        return _ot2_err("El acta de recepción es de las OT internas de revisión de equipos.", "ACTA_NO_APLICA",
+                        http=404)
+    d = request.get_json(silent=True) or {}
+    extra_ok, extra_mal = _acta_correos_normalizar(d.get("extra") or "")
+    if extra_mal:
+        return _ot2_err("Solo correos internos (@sphs.cl o @ilusfitness.com): " + ", ".join(extra_mal[:3])
+                        + " no se puede usar. El acta nunca va a un cliente.", "CORREO_NO_INTERNO")
+    destinos = []
+    for c in _acta_destinatarios_config() + extra_ok:
+        if c not in destinos:
+            destinos.append(c)
+    if not destinos:
+        return _ot2_err("No hay a quién enviarla: agrega los correos en Configuración → «Correos del acta de "
+                        "recepción» o escribe uno interno.", "SIN_DESTINATARIOS")
+    if len(destinos) > _ACTA_MAX_DEST:
+        return _ot2_err(f"Como máximo {_ACTA_MAX_DEST} destinatarios por envío.", "DEMASIADOS_DESTINATARIOS")
+    if not comm_is_enabled("email"):
+        return _ot2_err("El envío de correos está apagado (interruptor general de Comunicaciones): no salió nada.",
+                        "CORREO_APAGADO", http=409)
+    user = current_username() or "sistema"
+    numero_ot = datos.get("numero_ot")
+    adjuntos = []
+    pdf, _html = _acta_pdf_bytes(datos)
+    if pdf:
+        adjuntos.append((_acta_nombre_archivo(datos, "pdf"), pdf, "application/pdf"))
+    try:
+        adjuntos.append((_acta_nombre_archivo(datos, "xlsx"), _acta_xlsx_bytes(datos),
+                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+    except Exception as e:
+        print(f"[acta] xlsx para correo vid={vid}: {type(e).__name__}", flush=True)
+    if not adjuntos:
+        return _ot2_err("No se pudo generar el acta. Intenta de nuevo en un minuto.", "ACTA_SIN_ARCHIVO", http=502)
+    resumen = " · ".join(f"{t['resultado']}: {t['n']}" for t in datos.get("totales") or []) or "sin productos"
+    html = _ilus_email_master({
+        "subject": _brand_subject(f"Acta de recepción {numero_ot}"),
+        "preheader": f"Revisión de equipos {numero_ot}: {resumen}",
+        "status_label": "Acta de recepción",
+        "title": f"Acta de recepción · {numero_ot}",
+        "subtitle": f"{datos.get('tipo_nombre')} · uso interno de logística",
+        "message": ("Adjuntamos el acta de la revisión: lo que se recibió y lo que no, producto por producto, para la "
+                    "recepción y la gestión documental."),
+        "detail_rows_html": _ilus_email_rows([
+            ("OT", numero_ot),
+            ("Documento", ", ".join(datos.get("documentos") or []) or "—"),
+            ("Productos", str(datos.get("n") or 0)),
+            ("Resultado", resumen),
+            ("Revisó", ", ".join(datos.get("revisores") or []) or "—"),
+            ("Enviada por", user),
+        ]),
+        "primary_cta_url": f"{_public_base_url()}/ot/{vid}",
+        "primary_cta_label": "Ver la OT",
+        "closing_message": "Documento interno de ILUS Fitness: no reenviar a clientes.",
+    })
+    enviados, fallidos = [], []
+    for to in destinos:
+        try:
+            ok = _send_ilus_email(to, _brand_subject(f"Acta de recepción {numero_ot}"), html,
+                                  evento="ot_acta_recepcion", modulo="mantenciones",
+                                  ref={"tipo": "OT", "id": vid, "codigo": numero_ot}, attachments=adjuntos)
+        except Exception as e:
+            print(f"[acta] envío vid={vid}: {type(e).__name__}", flush=True)
+            ok = False
+        (enviados if ok else fallidos).append(to)
+    try:
+        _mant_log("visita", vid, "acta_recepcion_enviada",
+                  f"Acta de recepción enviada por {user} el {_now_chile().strftime('%d/%m/%Y %H:%M')} a "
+                  + (", ".join(enviados) or "nadie")
+                  + (f"; no salió a: {', '.join(fallidos)}" if fallidos else "")
+                  + f" · {resumen} · adjuntos: {', '.join(a[0] for a in adjuntos)}")
+    except Exception:
+        pass
+    if not enviados:
+        return jsonify({"ok": False, "enviados": [], "fallidos": fallidos, "error_codigo": "NO_SALIO",
+                        "error": "No salió ningún correo (puede estar cerrada la llave de Mantenciones). Revisa "
+                                 "Comunicaciones → Historial."}), 502
+    return jsonify({"ok": True, "enviados": enviados, "fallidos": fallidos, "pdf": bool(pdf)})
+
+
 def _ensure_plantillas_nombre_sin_prefijo():
     """Quita el prefijo "<Categoría> · " del nombre de las plantillas de
     clasificación (Daniel 2026-08-13: "elimina de las plantillas todos los
@@ -160724,6 +162020,20 @@ try:
         print(f"[ILUS] Foto de entrega agregada a: {_foto_ent['plantillas']}", flush=True)
 except Exception as _ensure_foto_ent_err:
     print(f"[ILUS][WARN] _ensure_foto_entrega_instalacion: {_ensure_foto_ent_err}", flush=True)
+
+# 🧰 2026-10-18 (Etapa 3 de la revisión): repuestos sugeridos por bloque (columna + semilla UNA sola vez), producto
+# de trabajo interno en las solicitudes de repuesto y la regla «Correos del acta de recepción» (vacía). Baratas
+# cuando ya están aplicadas (REGLA #18): una consulta a information_schema o un INSERT IGNORE.
+try:
+    with app.app_context():
+        _ensure_repuestos_sugeridos_col()
+        _rsug_seed = _ensure_repuestos_sugeridos_seed()
+        _ensure_otrep_item_manual_col()
+        _ensure_acta_recepcion_regla()
+    if _rsug_seed.get("sembrados"):
+        print(f"[ILUS] Repuestos sugeridos sembrados: {_rsug_seed['sembrados']}", flush=True)
+except Exception as _ensure_etapa3_err:
+    print(f"[ILUS][WARN] revisión etapa 3 (repuestos sugeridos / acta): {_ensure_etapa3_err}", flush=True)
 
 # email_log.estado debe aceptar 'bloqueado' SIEMPRE (incluso skip-migrations):
 # sin esto, los envíos frenados por la llave de paso no dejaban rastro en el log.

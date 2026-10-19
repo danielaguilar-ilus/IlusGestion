@@ -1612,6 +1612,38 @@
   .otd-sinsal-list{grid-template-columns:1fr}
   .otd-sinsal-int{margin-left:0}
 }
+/* 🧾 2026-10-18 (Etapa 3): acta de recepción para logística (solo gestión). Lenguaje Retiros: tarjeta, semáforo de
+   resultados y botones de 44px; en el celular los botones van a todo el ancho (REGLA #3). */
+.otd-acta{border:1px solid #e5e7eb;border-left:4px solid #dc2626;border-radius:12px;background:#fff;
+  padding:12px 14px;margin:0 0 12px;color:#0a0a0a}
+.otd-acta-hd{display:flex;gap:10px;align-items:flex-start}
+.otd-acta-hd .ic{flex:none;width:36px;height:36px;border-radius:10px;background:#fee2e2;color:#dc2626;
+  display:flex;align-items:center;justify-content:center;font-size:1.1rem}
+.otd-acta-hd .tx b{display:block;font-size:.92rem}
+.otd-acta-hd .tx span{display:block;font-size:.8rem;color:#4b5563;overflow-wrap:anywhere}
+.otd-acta-tot{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.otd-acta-tot .t{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:4px 11px;font-size:.78rem;
+  font-weight:700;border:1px solid #d1d5db;background:#f3f4f6;color:#374151}
+.otd-acta-tot .t b{font-size:.9rem}
+.otd-acta-tot .t.total{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.otd-acta-tot .t.verde{background:#dcfce7;border-color:#86efac;color:#166534}
+.otd-acta-tot .t.ambar{background:#fff8e1;border-color:#fcd34d;color:#92400e}
+.otd-acta-tot .t.rojo{background:#fee2e2;border-color:#fca5a5;color:#991b1b}
+.otd-acta-tot .t.azul{background:#dbeafe;border-color:#93c5fd;color:#1e40af}
+.otd-acta-btns{display:flex;flex-wrap:wrap;gap:8px}
+.otd-acta-btn{min-height:44px;display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:8px 14px;
+  border-radius:10px;border:1px solid #d1d5db;background:#fff;color:#111827;font-size:.85rem;font-weight:700;
+  text-decoration:none;cursor:pointer}
+.otd-acta-btn:hover{border-color:#0a0a0a;color:#0a0a0a}
+.otd-acta-btn.pri{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.otd-acta-btn.pri:hover{background:#dc2626;border-color:#dc2626;color:#fff}
+.otd-acta-btn:disabled{opacity:.55;cursor:default}
+.otd-acta-dest{display:block;margin-top:8px;font-size:.76rem;color:#4b5563;overflow-wrap:anywhere}
+.otd-acta-dest.vacio{color:#92400e}
+@media (max-width:576px){
+  .otd-acta{padding:10px 12px}
+  .otd-acta-btn{flex:1 1 100%}
+}
 .otd-tabs{display:flex;gap:4px;margin-bottom:14px;padding:5px;
   background:#f3f4f6;border:1px solid var(--line);border-radius:12px;
   overflow-x:auto}
@@ -2363,6 +2395,24 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   background:#fff8e1;border:1px solid #fcd34d;color:#92400e;font-size:.85rem}
 .otd-chk-nollego b{color:#78350f}
 @media (max-width:575.98px){.otd-chk-resbar button{flex:1 1 calc(50% - 8px);justify-content:center}}
+/* 🧰 2026-10-18 (Etapa 3): acciones del PRODUCTO de la revisión (solicitar repuesto, informar incidencia) y sus
+   repuestos sugeridos por el checklist como chips de un toque. Mismo lenguaje que .otd-chk-resbar. */
+.otd-prod-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px;padding:10px 12px;
+  border:1px solid #e5e7eb;border-radius:12px;background:#fafafa}
+.otd-prod-bar > .lbl{flex-basis:100%;font-size:.78rem;font-weight:700;color:#374151}
+.otd-prod-btn{min-height:44px;padding:8px 14px;border-radius:10px;border:1px solid #d1d5db;background:#fff;
+  font-size:.85rem;font-weight:700;color:#111827;display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.otd-prod-btn.rep i{color:#2563eb}
+.otd-prod-btn.inc i{color:#d97706}
+.otd-prod-btn:hover{border-color:#0a0a0a}
+.otd-prod-sug{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.otd-prod-sug .lbl{flex-basis:100%;font-size:.74rem;color:#4b5563}
+.otd-prod-chip{min-height:44px;padding:6px 12px;border-radius:999px;border:1px dashed #93c5fd;background:#eff6ff;
+  color:#1e40af;font-size:.8rem;font-weight:700;display:inline-flex;align-items:center;gap:5px;cursor:pointer;
+  text-align:left;overflow-wrap:anywhere}
+.otd-prod-chip:hover{background:#dbeafe;border-style:solid}
+@media (max-width:575.98px){.otd-prod-btn{flex:1 1 calc(50% - 8px);justify-content:center}
+  .otd-prod-chip{flex:1 1 100%}}
 /* Sello de autoría — la trazabilidad que Daniel pide ver en la tarea */
 .otd-chk-item .sello{grid-column:2;display:inline-flex;align-items:center;gap:5px;
   margin-top:7px;font-size:.66rem;font-weight:700;color:#475569;background:#f1f5f9;
@@ -3657,6 +3707,40 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       </li>
       {% endfor %}
     </ul>
+  </section>
+  {% endif %}
+  {#- 🧾 2026-10-18 (Etapa 3, Daniel: «generar un reporte para enviar a logística de lo que se está recibiendo y lo que
+      no, de la nota de venta, para que ellos puedan hacer la recepción y la gestión documental»). Solo OT internas de
+      revisión y solo gestión: el servidor no arma `acta` para un técnico y sus rutas llevan @_no_tecnico. El envío
+      va SOLO a correos internos (REGLA #22). -#}
+  {% if acta and not es_tecnico %}
+  <section class="otd-acta" aria-label="Acta de recepción para logística">
+    <div class="otd-acta-hd">
+      <span class="ic"><i class="bi bi-clipboard2-check-fill" aria-hidden="true"></i></span>
+      <div class="tx"><b>Acta de recepción para logística</b>
+        <span>Lo que se recibió y lo que no{% if acta.documentos %} de {{ acta.documentos | join(', ') }}{% endif %},
+          producto por producto, con su resultado, observación, faltantes y la foto general. Se actualiza al
+          recargar la página.</span></div>
+    </div>
+    <div class="otd-acta-tot">
+      <span class="t total"><b>{{ acta.n }}</b> producto{{ 's' if acta.n != 1 }}</span>
+      {% for t in acta.totales %}<span class="t {{ t.semaforo }}"><b>{{ t.n }}</b> {{ t.resultado }}</span>{% endfor %}
+    </div>
+    <div class="otd-acta-btns">
+      <a class="otd-acta-btn" href="/ot/{{ v.id }}/acta-recepcion.pdf" target="_blank" rel="noopener">
+        <i class="bi bi-file-earmark-pdf-fill" aria-hidden="true" style="color:#dc2626"></i> Acta de recepción (PDF)</a>
+      <a class="otd-acta-btn" href="/ot/{{ v.id }}/acta-recepcion.xlsx">
+        <i class="bi bi-file-earmark-excel-fill" aria-hidden="true" style="color:#16a34a"></i> Acta de recepción (Excel)</a>
+      <button type="button" class="otd-acta-btn pri" id="otdActaBtnEnviar" onclick="otdActaEnviar()">
+        <i class="bi bi-send-fill" aria-hidden="true"></i> Enviar a logística</button>
+    </div>
+    {% if acta.destinatarios %}
+    <small class="otd-acta-dest"><i class="bi bi-envelope" aria-hidden="true"></i> Se envía a: {{ acta.destinatarios | join(', ') }}
+      (Configuración → «Correos del acta de recepción»). Solo correos internos.</small>
+    {% else %}
+    <small class="otd-acta-dest vacio"><i class="bi bi-info-circle" aria-hidden="true"></i> Aún no hay correos en
+      Configuración → «Correos del acta de recepción»: al enviar puedes escribir uno interno (@sphs.cl o @ilusfitness.com).</small>
+    {% endif %}
   </section>
   {% endif %}
   <div class="otd-tabs" id="otdTabs">
@@ -5228,7 +5312,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               <span class="th" data-eqfoto="{{ e.id }}" data-ficha-url=""><i class="bi bi-image"></i></span>
             {% endif %}
             <div class="nm">
-              <b>{{ e.nombre or ('Equipo #' ~ e.id) }}{% if not e._interno and e.rep_abiertas %} <i class="bi bi-tools otd-rep-ico" title="Con repuesto solicitado"></i>{% endif %}</b>
+              <b>{{ e.nombre or ('Equipo #' ~ e.id) }}{% if e.rep_abiertas %} <i class="bi bi-tools otd-rep-ico" title="Con repuesto solicitado"></i>{% endif %}</b>
               <small id="otdWkSum-{{ e.id }}">{% if e.serie %}S/N {{ e.serie }} · {% endif %}{{ e.n_obl_ok }}/{{ e.n_obl }} obligatorias</small>
             </div>
             <span class="sel {{ e.sello_cls }}">{{ e.sello }}</span>
@@ -5402,6 +5486,24 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                 </div>
                 {% endfor %}
               </div>
+            </div>
+            {% endif %}
+            {#- 🧰 2026-10-18 (Etapa 3): las solicitudes de repuesto de un PRODUCTO de la revisión (item_manual_id),
+                con su estado y su ticket, igual que las de un equipo de ficha (otdRepRefrescar('i' + id) las repinta
+                sin recargar). Las acciones de este producto viven en la barra de arriba del checklist. -#}
+            {% if e._interno %}
+            <div class="otd-rep-lista" id="otdRepLista-i{{ e.id }}"{% if not e.rep_solicitudes %} style="display:none"{% endif %}>
+              {% for s in e.rep_solicitudes or [] %}
+              <div class="otd-rep-it {{ 'abierta' if s.abierta else 'cerrada' }}">
+                <i class="bi bi-tools"></i>
+                <div class="inf">
+                  <b>{{ s.repuesto_nombre }} × {{ '%g' | format(s.cantidad or 1) }}</b>
+                  <small>{{ s.estado_label }}{% if s.stock_sku %} · {{ s.stock_sku }}{% endif %}{% if s.numero_ticket %} · <a href="/tickets/{{ s.ticket_id }}" target="_blank" rel="noopener">{{ s.numero_ticket }}</a>{% endif %} · {{ s.created_at }}{% if s.solicitado_por %} · {{ s.solicitado_por }}{% endif %}</small>
+                  <small class="mot">{{ s.motivo }}</small>
+                </div>
+                <span class="est {{ s.estado }}">{{ (s.estado_label or s.estado or '').split(' · ')[0] }}</span>
+              </div>
+              {% endfor %}
             </div>
             {% endif %}
 
@@ -12450,6 +12552,10 @@ window.otdActivarCorreccion = async function(){
   ilusToast('Corrección activada — queda registrada', {type:'warning'});
 };
 const OTD_CURRENT_UID = {{ (current_user.id if current_user else 0) | tojson }};
+// 🧰 2026-10-18 (Etapa 3): quién ve las acciones del producto (mismo candado que «Fuera de lo normal» de un equipo).
+const OTD_PUEDE_PRODUCTO = {{ 'true' if ((puede_ejecutar or puede_configurar) and not ot_solo_lectura) else 'false' }};
+// 🧾 2026-10-18: correos internos configurados para el acta (solo llega a gestión: a un técnico, lista vacía).
+const OTD_ACTA_DEST = {{ ((acta.destinatarios if acta else []) or []) | tojson }};
 
 // 🧩 2026-10-17 (checklist heredado, Daniel: «Estructura y tapiz se abre solo
 // si la base marca observación»). La base de ESTE equipo marcó algo si una
@@ -12619,7 +12725,127 @@ async function otdChkResultadoRapido(tid, opcion){
     type: n === 'dar de baja' ? 'warning' : 'question',
   });
   if (!ok) return;
-  await otdChkGuardar(tid, opcion);
+  const d = await otdChkGuardar(tid, opcion);
+  // 🧰 2026-10-18 (Etapa 3): «pide el argumento en la Observación» — se lleva al técnico al campo si falta.
+  if (d) otdChkPedirArgumento(found.mid, n);
+}
+
+/* 🧰 2026-10-18 (Etapa 3) — Daniel: «arriba debe tener las opciones para dar de baja, para poner fuera de servicio,
+   para decir que el producto no está, para solicitar repuestos, solicitar piolas si es selectora de peso, solicitar
+   cintas si es trotadora… inteligentemente por las plantillas». Para un PRODUCTO de trabajo interno de la revisión:
+   «Solicitar repuesto» (el MISMO modal de la OT, rutas /producto/<id>) con los repuestos sugeridos de SUS bloques
+   como chips de un toque, e «Informar incidencia» (la bodega de Incidencias). Dar de baja / Fuera de servicio /
+   No llegó siguen en la barra del Resultado: una sola fuente de verdad. */
+function otdChkSugeridos(grupos){
+  const out = [], vistos = new Set();
+  (grupos || []).forEach(g => (g.repuestos_sugeridos || []).forEach(n => {
+    const k = otdChkNorm(n);
+    if (!k || vistos.has(k)) return;
+    vistos.add(k); out.push(n);
+  }));
+  return out;
+}
+function otdChkBarraProducto(mid, grupos, res){
+  if (!res || !OTD_PUEDE_PRODUCTO || !(res.item_manual_id && !res.maquina_id)) return '';
+  if (otdChkEstaBloqueada(res) && otdBloqueadaPorCierre()) return '';
+  const imid = Number(res.item_manual_id);
+  const sug = otdChkSugeridos(grupos);
+  const chips = sug.length
+    ? `<div class="otd-prod-sug"><span class="lbl">Repuestos sugeridos por su checklist · un toque y queda en la lista:</span>
+        ${sug.map(n => `<button type="button" class="otd-prod-chip" data-n="${otdEsc(n)}"
+            onclick="otdProdRepuesto(${imid}, this.dataset.n)"><i class="bi bi-plus-lg" aria-hidden="true"></i>${otdEsc(n)}</button>`).join('')}
+      </div>`
+    : '';
+  return `<div class="otd-prod-bar" role="group" aria-label="Acciones del producto">
+      <span class="lbl">Fuera de lo normal · si todo está bien, sigue con el checklist</span>
+      <button type="button" class="otd-prod-btn rep" onclick="otdProdRepuesto(${imid})">
+        <i class="bi bi-tools" aria-hidden="true"></i> Solicitar repuesto</button>
+      <button type="button" class="otd-prod-btn inc" onclick="otdProdIncidencia(${imid})">
+        <i class="bi bi-exclamation-diamond" aria-hidden="true"></i> Informar incidencia</button>
+      ${chips}
+    </div>`;
+}
+async function otdProdRepuesto(imid, sugerido){
+  if (typeof window.otdRepAbrir !== 'function'){
+    ilusToast('No puedes pedir repuestos en esta OT.', {type:'warning'});
+    return;
+  }
+  await window.otdRepAbrir('i' + Number(imid), 'repuesto');
+  if (sugerido && typeof window.otrepUsarSugerido === 'function') window.otrepUsarSugerido(sugerido);
+}
+function otdProdIncidencia(imid){
+  if (typeof window.otdIncAbrir !== 'function'){
+    ilusToast('No puedes informar incidencias en esta OT.', {type:'warning'});
+    return;
+  }
+  window.otdIncAbrir(Number(imid));
+}
+/* Después de Dar de baja / Fuera de servicio / No llegó: si la «Observación del equipo» de ESE producto está
+   vacía, se lleva al técnico ahí (es el argumento que exigen la firma y el cierre). */
+function otdChkPedirArgumento(mid, n){
+  if (!['no llego', 'dar de baja', 'fuera de servicio'].includes(n)) return;
+  let obs = null;
+  ((OTD_CHK_DATA && OTD_CHK_DATA[String(mid)]) || []).forEach(g => (g.tareas || []).forEach(t => {
+    if (!obs && String(t.tipo_respuesta || '').toLowerCase() === 'texto' && otdChkNorm(t.titulo).startsWith('observacion')) obs = t;
+  }));
+  if (!obs) return;
+  const txt = String((obs.valor_json && obs.valor_json.texto) || '').trim();
+  if (obs.completada && txt) return;
+  setTimeout(() => {
+    const el = document.getElementById('otdChkVal-' + obs.id);
+    if (!el) return;
+    el.scrollIntoView({behavior: 'smooth', block: 'center'});
+    try { el.focus({preventScroll: true}); } catch(e){ el.focus(); }
+  }, 250);
+  ilusToast('Escribe el argumento en «' + (obs.titulo || 'Observación del equipo') + '»: '
+    + (n === 'no llego' ? 'cuándo se esperaba y a quién se preguntó.' : 'qué tiene y por qué.'), {type: 'warning', duration: 6000});
+}
+
+/* 🧾 2026-10-18 (Etapa 3): «Enviar a logística». El servidor manda (solo dominios internos, interruptor de correo,
+   bitácora e historial); aquí solo se pregunta a quién más, con un único campo (REGLA #8: ilusPrompt). */
+const _OTD_ACTA_DOMINIO = /^[^@\s]+@(sphs\.cl|ilusfitness\.com)$/i;
+async function otdActaEnviar(){
+  const lista = OTD_ACTA_DEST.length ? OTD_ACTA_DEST.join(', ') : 'nadie todavía (no hay correos en Configuración)';
+  const extra = await ilusPrompt({
+    title: 'Enviar el acta a logística',
+    message: 'Se enviará a: ' + lista + '.',
+    sub: 'Si quieres sumar otro correo, escríbelo (solo @sphs.cl o @ilusfitness.com). Déjalo vacío para enviar solo a los de Configuración. El acta nunca va a un cliente.',
+    placeholder: 'nombre@sphs.cl', inputType: 'email', required: false,
+    okLabel: 'Enviar acta', cancelLabel: 'Cancelar', type: 'question',
+  });
+  if (extra === null) return;
+  const otro = String(extra || '').trim();
+  if (otro && !_OTD_ACTA_DOMINIO.test(otro)){
+    await ilusAlert({title: 'Correo no permitido', message: 'Solo correos internos: @sphs.cl o @ilusfitness.com.', type: 'warning'});
+    return;
+  }
+  if (!otro && !OTD_ACTA_DEST.length){
+    await ilusAlert({title: 'Falta a quién enviarla', message: 'Escribe un correo interno o agrégalos en Configuración → «Correos del acta de recepción».', type: 'warning'});
+    return;
+  }
+  const btn = document.getElementById('otdActaBtnEnviar');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`/ot/api/${OTD_VID}/acta-recepcion/enviar`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+      body: JSON.stringify({extra: otro}),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok){
+      await ilusAlert({title: 'El acta no se envió', message: d.error || 'No se pudo enviar. Intenta de nuevo.', type: 'warning'});
+      return;
+    }
+    if (d.fallidos && d.fallidos.length){
+      await ilusAlert({title: 'Acta enviada en parte', message: 'Salió a: ' + d.enviados.join(', ') + '. No salió a: ' + d.fallidos.join(', ') + '.', type: 'warning'});
+    } else {
+      ilusToast('✓ Acta enviada a ' + d.enviados.join(', '), {type: 'success'});
+    }
+  } catch(e){
+    ilusToast('Sin conexión: el acta no se envió.', {type: 'error'});
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 function otdChkCondEnvolver(g, grupos, html){
   const marco = otdChkBaseMarcoObs(grupos, g);
@@ -12781,7 +13007,9 @@ function otdRenderChecklistEquipo(mid){
   // pantalla clásica que Daniel puso al lado: "hay un semáforo, está bien
   // hecho eso". Una barra continua dice el porcentaje; ésta dice además
   // CUÁNTAS tareas son y cuáles faltan, que es lo que el técnico mira.
-  mount.innerHTML = otdChkBarraResultado(_resultado, _ev.no_llego.length > 0) + grupos.map(g => {
+  // 🧰 2026-10-18 (Etapa 3): debajo del Resultado, las acciones del producto (repuesto, incidencia, sugeridos).
+  mount.innerHTML = otdChkBarraResultado(_resultado, _ev.no_llego.length > 0)
+    + otdChkBarraProducto(mid, grupos, _resultado) + grupos.map(g => {
     const oblT = g.tareas.filter(t => otdChkExig(t)).length;
     const oblO = g.tareas.filter(t => otdChkExig(t) && otdChkHecha(t)).length;
     const segs = g.tareas.map(t =>
@@ -17287,8 +17515,15 @@ async function levdEliminar(iid){
 #modalRepSol .otrep-link{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:4px 0;border:0;
   background:none;color:#dc2626;font-size:.78rem;font-weight:800;font-family:inherit;cursor:pointer;text-align:left}
 #modalRepSol .otrep-link:hover{text-decoration:underline}
+/* 🧰 2026-10-18 (Etapa 3): chips de repuestos sugeridos del producto (toques de 44px, nombre completo). */
+#modalRepSol .otrep-sug-chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 12px}
+#modalRepSol .otrep-sug-chip{min-height:44px;padding:6px 12px;border-radius:999px;border:1px dashed #93c5fd;
+  background:#eff6ff;color:#1e40af;font-size:.8rem;font-weight:700;display:inline-flex;align-items:center;gap:5px;
+  cursor:pointer;text-align:left;overflow-wrap:anywhere}
+#modalRepSol .otrep-sug-chip.on{background:#dcfce7;border:1px solid #86efac;color:#166534}
 @media (max-width:640px){
   #modalRepSol #otrepTabs{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  #modalRepSol .otrep-sug-chip{flex:1 1 100%}
   #modalRepSol #otrepTabs .otrep-tab{min-height:44px;white-space:normal;line-height:1.2;text-align:center;
     display:flex;align-items:center;justify-content:center;gap:4px;border-radius:12px;padding:6px 8px}
   /* Las tarjetas de repuesto (compatibles, posibles, piolas) llevan icono 44px + nombre + pastilla
@@ -17354,6 +17589,14 @@ async function levdEliminar(iid){
               </div>
               <label class="form-label fw-semibold small mb-1">Medida de la cinta <span class="text-muted fw-normal" style="font-size:.7rem">(opcional)</span></label>
               <input type="text" id="otrep_medida" class="form-control mb-2" maxlength="80" placeholder="Ej: 3000 × 510 mm" autocomplete="off">
+            </div>
+            {#- 🧰 2026-10-18 (Etapa 3, Daniel: «solicitar piolas si es selectora de peso, solicitar cintas si es
+                trotadora… inteligentemente por las plantillas»). En un PRODUCTO de la revisión: los repuestos
+                sugeridos por SU checklist; un toque y quedan en la lista (escritos a mano, por validar: bodega los
+                asocia). Solo nombres de pieza, nunca proveedor ni costo. -#}
+            <div id="otrepSugWrap" style="display:none">
+              <div class="otrep-sec"><i class="bi bi-stars"></i>Sugeridos por el checklist de este producto</div>
+              <div class="otrep-sug-chips" id="otrepSugChips"></div>
             </div>
             <div class="otrep-tabs" id="otrepTabs">
               <button type="button" class="otrep-tab on" data-tab="compat" onclick="otrepTab('compat')">Compatibles <span id="otrepNCompat">(0)</span></button>
@@ -17597,6 +17840,89 @@ async function levdEliminar(iid){
   </div>
 </div>
 
+{#- 🧰 2026-10-18 (Etapa 3) — «Informar incidencia» desde un PRODUCTO de la revisión. Crea el MISMO registro de la
+    bodega de Incidencias (por SKU, con hasta 5 fotos y 1 video), con la OT y el documento en la observación. Lenguaje
+    Retiros: pasos con círculo rojo→verde (REGLA #15), toques de 44px y pantalla completa en el celular (REGLA #3). -#}
+<div class="modal fade" id="modalIncProd" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-fullscreen-sm-down">
+    <div class="modal-content" style="border-radius:14px">
+      <div class="modal-header py-2" style="background:#0a0a0a;color:#fff">
+        <h6 class="modal-title fw-bold">
+          <i class="bi bi-exclamation-diamond-fill me-2" style="color:#f59e0b"></i>Informar incidencia
+          <small class="d-block fw-normal" id="otincProducto" style="font-size:.72rem;opacity:.8"></small>
+        </h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body pt-2">
+        <div class="alert py-2 px-3 mb-3" style="background:#fff8e1;border:1px solid #fde68a;color:#92400e;font-size:.78rem;border-radius:10px">
+          <i class="bi bi-info-circle-fill me-1"></i>Queda en la bodega de Incidencias con esta OT y su documento. Gestión la valida y decide si se repara, se pide repuesto o se da de baja.
+        </div>
+        <section class="levd-step" id="otincStep1">
+          <div class="levd-step-header">
+            <div class="levd-step-circle"><span class="levd-step-num">1</span><i class="bi bi-check-lg levd-step-check"></i></div>
+            <div class="levd-step-title">¿Qué le pasa?</div>
+            <div class="levd-step-sub">obligatorio</div>
+          </div>
+          <div class="levd-step-body">
+            <div class="d-flex flex-wrap gap-2 mb-2" id="otincChips">
+              <button type="button" class="btn btn-sm btn-outline-secondary" style="min-height:44px" onclick="otincMotivo(this)">Llegó con golpes o abolladuras</button>
+              <button type="button" class="btn btn-sm btn-outline-secondary" style="min-height:44px" onclick="otincMotivo(this)">Llegó incompleto: faltan piezas</button>
+              <button type="button" class="btn btn-sm btn-outline-secondary" style="min-height:44px" onclick="otincMotivo(this)">No funciona al probarlo</button>
+              <button type="button" class="btn btn-sm btn-outline-secondary" style="min-height:44px" onclick="otincMotivo(this)">Tapiz o pintura dañados</button>
+              <button type="button" class="btn btn-sm btn-outline-secondary" style="min-height:44px" onclick="otincMotivo(this)">Óxido o corrosión</button>
+            </div>
+            <input type="text" id="otinc_motivo" class="form-control" maxlength="200" autocomplete="off"
+                   placeholder="Motivo (mínimo 10 caracteres)" oninput="otincRefrescar()">
+            <label class="form-label fw-semibold small mb-1 mt-2" for="otinc_detalle">Detalle <span class="text-muted fw-normal">(opcional)</span></label>
+            <textarea id="otinc_detalle" class="form-control" rows="2" maxlength="2000"
+                      placeholder="Dónde está el daño, qué pieza falta, qué se probó…"></textarea>
+          </div>
+        </section>
+        <section class="levd-step is-complete" id="otincStep2">
+          <div class="levd-step-header">
+            <div class="levd-step-circle"><span class="levd-step-num">2</span><i class="bi bi-check-lg levd-step-check"></i></div>
+            <div class="levd-step-title">¿Cuántas unidades?</div>
+            <div class="levd-step-sub" id="otincCantSub">de la cantidad del documento</div>
+          </div>
+          <div class="levd-step-body">
+            <input type="number" id="otinc_cantidad" class="form-control" style="max-width:140px" inputmode="numeric"
+                   min="1" step="1" value="1" oninput="otincRefrescar()">
+          </div>
+        </section>
+        <section class="levd-step" id="otincStep3">
+          <div class="levd-step-header">
+            <div class="levd-step-circle"><span class="levd-step-num">3</span><i class="bi bi-check-lg levd-step-check"></i></div>
+            <div class="levd-step-title">Fotos del daño</div>
+            <div class="levd-step-sub">mínimo 1 foto · hasta 5 y un video</div>
+          </div>
+          <div class="levd-step-body">
+            <div class="d-flex gap-2 flex-wrap">
+              <button type="button" class="btn btn-sm fw-bold" style="background:#dc2626;color:#fff;min-height:44px"
+                      onclick="document.getElementById('otincFotoIn').click()"><i class="bi bi-camera-fill me-1"></i>Tomar foto</button>
+              <button type="button" class="btn btn-sm btn-dark fw-bold" style="min-height:44px"
+                      onclick="document.getElementById('otincVideoIn').click()"><i class="bi bi-camera-video-fill me-1"></i>Grabar video</button>
+              <button type="button" class="btn btn-sm btn-outline-secondary fw-bold" style="min-height:44px"
+                      onclick="document.getElementById('otincGalIn').click()"><i class="bi bi-images me-1"></i>Galería</button>
+            </div>
+            <input type="file" id="otincFotoIn" accept="image/*" capture="environment" multiple style="display:none" onchange="otincAgregarArchivos(this)">
+            <input type="file" id="otincVideoIn" accept="video/*" capture="environment" style="display:none" onchange="otincAgregarArchivos(this)">
+            <input type="file" id="otincGalIn" accept="image/*,video/*" multiple style="display:none" onchange="otincAgregarArchivos(this)">
+            <div class="otrep-ev" id="otincEv"></div>
+          </div>
+        </section>
+        <div class="text-danger small mt-2" id="otincErr" style="min-height:18px" role="alert"></div>
+      </div>
+      <div class="modal-footer py-2" style="border-top:1px solid #f3f4f6">
+        <button type="button" class="btn btn-outline-secondary" style="min-height:44px" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn fw-bold px-4" id="otincBtn" disabled
+                style="background:#0a0a0a;color:#fff;min-height:46px" onclick="otincEnviar()">
+          <i class="bi bi-send-fill me-1"></i><span id="otincBtnLbl">Informar incidencia</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {#- 🧭 2026-10-01: funciones de lo NUEVO del modal (modelo + equivalentes, posibles
     compatibles, Manual del equipo). Script aparte: usa _otrep/otdEsc/_otrepJson del
     script de abajo, pero solo al EJECUTARSE (nada corre al cargar la página). -#}
@@ -17730,7 +18056,7 @@ async function otrepConfirmarCompat(repId, btn){
 }
 
 async function otrepRecargarOpciones(mid){
-  const r = await fetch('/ot/api/' + OTD_VID + '/equipo/' + mid + '/repuestos-opciones', {credentials:'same-origin', cache:'no-store', headers: _OTREP_HDR});
+  const r = await fetch(_otrepBase(mid) + '/repuestos-opciones', {credentials:'same-origin', cache:'no-store', headers: _OTREP_HDR});
   const j = await _otrepJson(r);
   if (!j.ok || _otrep.mid !== mid) return;
   _otrep.opciones = j;
@@ -17746,8 +18072,43 @@ async function otrepRecargarOpciones(mid){
 const _OTREP_EQ_NOMBRE = {};
 {% for e in equipos if not e._interno %}_OTREP_EQ_NOMBRE[{{ e.id }}] = {{ ((e.nombre or ('Equipo #' ~ e.id)) ~ ((' · S/N ' ~ e.serie) if e.serie else '')) | tojson }};
 {% endfor %}
+{#- 🧰 2026-10-18 (Etapa 3): los PRODUCTOS de trabajo interno de la revisión usan la clave 'i' + item_manual_id (no
+    son equipos de ficha: un número suelto podría ser la ficha de otro cliente). -#}
+{% for e in equipos if e._interno %}_OTREP_EQ_NOMBRE['i{{ e.id }}'] = {{ ((e.nombre or ('Producto #' ~ e.id)) ~ ((' · SKU ' ~ e.sku) if e.sku else '')) | tojson }};
+{% endfor %}
 const _OTREP_MAX_FOTO = 8 * 1024 * 1024, _OTREP_MAX_VIDEO = 28 * 1024 * 1024;
 const _OTREP_HDR = {'X-Requested-With': 'XMLHttpRequest'};
+/* 🧰 2026-10-18 (Etapa 3): el mismo modal sirve a un PRODUCTO de trabajo interno de la revisión. Su clave es
+   'i' + item_manual_id y sus rutas viven en /ot/api/<vid>/producto/<id> (no tiene ficha de equipo). */
+function _otrepEsProducto(mid){ return typeof mid === 'string' && /^i\d+$/.test(mid); }
+function _otrepBase(mid){
+  return _otrepEsProducto(mid) ? ('/ot/api/' + OTD_VID + '/producto/' + mid.slice(1))
+                               : ('/ot/api/' + OTD_VID + '/equipo/' + mid);
+}
+function otrepPintarSugeridos(lista){
+  var wrap = document.getElementById('otrepSugWrap'), cont = document.getElementById('otrepSugChips');
+  if (!wrap || !cont) return;
+  lista = (lista || []).filter(Boolean);
+  wrap.style.display = lista.length ? '' : 'none';
+  cont.innerHTML = lista.map(function(n){
+    return '<button type="button" class="otrep-sug-chip" data-n="' + otdEsc(n) + '" onclick="otrepUsarSugerido(this.dataset.n, this)">' +
+      '<i class="bi bi-plus-lg" aria-hidden="true"></i>' + otdEsc(n) + '</button>';
+  }).join('');
+}
+/* Un toque = una línea «escrita a mano · por validar» con cantidad 1 en la lista (bodega la asocia). */
+window.otrepUsarSugerido = function(nombre, btn){
+  nombre = String(nombre || '').trim();
+  if (!nombre || _otrep.modo !== 'repuesto') return;
+  var ya = _otrep.lista.some(function(x){ return !x.stock_id && String(x.nombre).toLowerCase() === nombre.toLowerCase(); });
+  if (ya){ ilusToast('«' + nombre + '» ya está en la lista.', {type:'info'}); return; }
+  _otrep.sel = { stock_id: null, nombre: nombre, origen: 'manual', sku: null, disponible: null,
+                 comprometido: null, con_stock: null, nombres_alt: '' };
+  document.getElementById('otrep_add_cantidad').value = '1';
+  otrepAgregarALaLista();
+  var b = btn || Array.prototype.find.call(document.querySelectorAll('#otrepSugChips .otrep-sug-chip'),
+    function(x){ return x.dataset.n === nombre; });
+  if (b) b.classList.add('on');
+};
 {#- 🧾 Fase 1 -- levantamiento de VARIOS repuestos (2026-09-25, Daniel: "un
     técnico vaya a un gimnasio, levante cierta cantidad de repuestos
     necesarios"; evidencia y diagnóstico POR EQUIPO, varios repuestos sin
@@ -17771,6 +18132,21 @@ function otrepBuscadorPreparar(mid, equipo){
   if (!mount || !window.RepBuscador){
     // Sin motor (script no cargó): se muestra el buscador por texto de la Fase 1.
     var leg = document.getElementById('otrepBodegaLegacy'); if (leg) leg.classList.remove('d-none');
+    return;
+  }
+  // 🧰 2026-10-18 (Etapa 3): un PRODUCTO de la revisión no es un equipo de ficha: el contexto del buscador es su
+  // MODELO del catálogo (se fija al llegar las opciones), nunca un maquina_id.
+  if (_otrepEsProducto(mid)){
+    if (!_otrepBuscador){
+      _otrepBuscador = RepBuscador.crear({
+        mount: mount, ctx: 'ot', modo: 'seleccion', compatPorDefecto: false,
+        mostrarProveedor: !(_OTREP_ES_EXTERNO || _OTREP_OCULTA_PROV), headers: _OTREP_HDR,
+        onResultados: function(items){ _otrep._bodega = items; },
+        onSeleccionar: function(it, card){ _otrep._bodega = _otrepBuscador.getItems(); otrepSelStock(it.id, 'bodega', card); }
+      });
+    } else {
+      _otrepBuscador.limpiar();
+    }
     return;
   }
   var eq = { id: mid, nombre: (equipo && equipo.nombre) || _OTREP_EQ_NOMBRE[mid] || ('Equipo #' + mid), sku: (equipo && equipo.sku) || null };
@@ -17830,6 +18206,11 @@ window.otdRepAbrir = async function(mid, modo, tabInicial){
   document.getElementById('otrepPiolaNuevaWrap').style.display = 'none';
   document.getElementById('otrepPiolasLista').innerHTML = '';
   document.getElementById('otrepFsWrap').style.display = (_otrep.modo === 'piola') ? 'none' : '';
+  // 🧰 2026-10-18: un producto de la revisión no se deja «fuera de servicio» aquí: eso es su Resultado del control.
+  var _esProd = _otrepEsProducto(mid);
+  var _st4 = document.getElementById('otrepStep4');
+  if (_st4) _st4.style.display = _esProd ? 'none' : '';
+  if (_esProd) document.getElementById('otrepFsWrap').style.display = 'none';
   document.getElementById('otrepFsYa').style.display = 'none';
   document.getElementById('otrep_fs').checked = false;
   document.getElementById('otrepFsMotivo').style.display = 'none';
@@ -17852,6 +18233,7 @@ window.otdRepAbrir = async function(mid, modo, tabInicial){
   document.getElementById('otrepErr').textContent = '';
   document.getElementById('otrepCompatLista').innerHTML = '<div class="otrep-opc-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Buscando repuestos compatibles con este modelo…</div>';
   otrepReiniciarExtras();
+  otrepPintarSugeridos([]);
   otrepTab(_otrep.modo === 'repuesto' ? 'compat' : 'manual');
   if (_otrep.modo !== 'repuesto') otrepSelManual();
   otrepRefrescar();
@@ -17861,13 +18243,16 @@ window.otdRepAbrir = async function(mid, modo, tabInicial){
   }
   bootstrap.Modal.getOrCreateInstance(document.getElementById('modalRepSol')).show();
   try {
-    const r = await fetch('/ot/api/' + OTD_VID + '/equipo/' + mid + '/repuestos-opciones', {credentials:'same-origin', cache:'no-store', headers: _OTREP_HDR});
+    const r = await fetch(_otrepBase(mid) + '/repuestos-opciones', {credentials:'same-origin', cache:'no-store', headers: _OTREP_HDR});
     const j = await _otrepJson(r);
     if (!j.ok) throw new Error(j.error || 'No se pudo cargar');
     if (_otrep.mid !== mid) return;
     _otrep.opciones = j;
     // El SKU del equipo alimenta el chip "Compatibles con <equipo>" del motor.
-    if (_otrepBuscador && j.equipo) _otrepBuscador.setEquipo({ id: mid, nombre: _OTREP_EQ_NOMBRE[mid] || j.equipo.nombre || ('Equipo #' + mid), sku: j.equipo.sku || null });
+    if (_otrepEsProducto(mid)){
+      if (_otrepBuscador && j.modelo) _otrepBuscador.setModeloBase({ id: j.modelo.id, sku: j.modelo.sku, nombre: j.modelo.nombre }, false);
+      otrepPintarSugeridos(j.repuestos_sugeridos || []);
+    } else if (_otrepBuscador && j.equipo) _otrepBuscador.setEquipo({ id: mid, nombre: _OTREP_EQ_NOMBRE[mid] || j.equipo.nombre || ('Equipo #' + mid), sku: j.equipo.sku || null });
     var comp = j.compatibles || [];
     // Un equipo que YA está fuera de servicio no vuelve a preguntarlo.
     if (j.equipo && j.equipo.estado_capturado === 'fuera_servicio'){
@@ -18241,7 +18626,7 @@ async function _otrepSubirExtra(mid, a, solicitudId, contexto){
   fd.append('evidencia', a.file, a.file.name || (a.tipo === 'video' ? 'video.mp4' : 'foto.jpg'));
   if (solicitudId) fd.append('solicitud_id', solicitudId);
   if (contexto) fd.append('contexto', contexto);
-  const r = await fetch('/ot/api/' + OTD_VID + '/equipo/' + mid + '/evidencia', {method:'POST', body: fd, credentials:'same-origin', headers: _OTREP_HDR});
+  const r = await fetch(_otrepBase(mid) + '/evidencia', {method:'POST', body: fd, credentials:'same-origin', headers: _OTREP_HDR});
   const j = await _otrepJson(r);
   return j.ok;
 }
@@ -18252,7 +18637,7 @@ async function _otrepSubirExtraLote(mid, a, loteId){
   var fd = new FormData();
   fd.append('evidencia', a.file, a.file.name || (a.tipo === 'video' ? 'video.mp4' : 'foto.jpg'));
   if (loteId) fd.append('lote_id', loteId);
-  const r = await fetch('/ot/api/' + OTD_VID + '/equipo/' + mid + '/evidencia', {method:'POST', body: fd, credentials:'same-origin', headers: _OTREP_HDR});
+  const r = await fetch(_otrepBase(mid) + '/evidencia', {method:'POST', body: fd, credentials:'same-origin', headers: _OTREP_HDR});
   const j = await _otrepJson(r);
   return j.ok;
 }
@@ -18363,7 +18748,7 @@ async function otrepEnviarLote(){
   btn.disabled = true; lbl.textContent = 'Subiendo evidencia 1 de ' + pend.length + '…';
   var mid = _otrep.mid;
   try {
-    const r = await fetch('/ot/api/' + OTD_VID + '/equipo/' + mid + '/solicitar-repuestos', {method:'POST', body: fd, credentials:'same-origin', headers: _OTREP_HDR});
+    const r = await fetch(_otrepBase(mid) + '/solicitar-repuestos', {method:'POST', body: fd, credentials:'same-origin', headers: _OTREP_HDR});
     const j = await _otrepJson(r);
     if (!j.ok){ err.textContent = j.error || 'No se pudo enviar. Intenta de nuevo.'; return; }
     primero.subido = true;
@@ -18391,7 +18776,8 @@ async function otrepEnviarLote(){
     _otrepLiberar(_otrep.archivos); _otrep.archivos = []; _otrep.lista = [];
     if (j.fuera_servicio){ setTimeout(function(){ location.reload(); }, 900); return; }
     otdRepRefrescar(mid);
-    try { otdFotosCargar(mid, true); } catch(_e){}
+    // 🧰 2026-10-18: la evidencia de un producto de la revisión vive en la solicitud (no hay galería de equipo).
+    if (!_otrepEsProducto(mid)){ try { otdFotosCargar(mid, true); } catch(_e){} }
   } catch(e){
     err.textContent = 'Error de conexión: ' + e.message;
   } finally {
@@ -18406,7 +18792,12 @@ async function otdRepRefrescar(mid){
     const r = await fetch('/ot/api/' + OTD_VID + '/repuestos', {credentials:'same-origin', cache:'no-store', headers: _OTREP_HDR});
     const j = await _otrepJson(r);
     var todas = j.solicitudes || [];
-    var sols = todas.filter(function(s){ return Number(s.maquina_id) === Number(mid); });
+    // 🧰 2026-10-18: un producto de la revisión ('i' + id) filtra por item_manual_id (sin máquina).
+    var _esProdR = _otrepEsProducto(mid);
+    var _midDom = _esProdR ? String(mid).slice(1) : mid;
+    var sols = todas.filter(function(s){
+      return _esProdR ? (!s.maquina_id && Number(s.item_manual_id) === Number(_midDom)) : Number(s.maquina_id) === Number(mid);
+    });
     var cont = document.getElementById('otdRepLista-' + mid);
     if (cont){
       cont.style.display = sols.length ? '' : 'none';
@@ -18434,7 +18825,7 @@ async function otdRepRefrescar(mid){
       }
     }
     // Icono en el resumen colapsado del equipo + resumen a nivel OT.
-    var sum = document.querySelector('.otd-wk-item[data-mid="' + mid + '"] summary .nm b');
+    var sum = document.querySelector('.otd-wk-item[data-mid="' + _midDom + '"] summary .nm b');
     if (sum && abiertas && !sum.querySelector('.otd-rep-ico')){
       sum.insertAdjacentHTML('beforeend', ' <i class="bi bi-tools otd-rep-ico" title="Con repuesto solicitado"></i>');
     }
@@ -18595,8 +18986,93 @@ async function otbajaEnviar(){
     _otbaja.enviando = false; lbl.textContent = 'Dar de baja'; otbajaRefrescar();
   }
 }
+/* 🧰 2026-10-18 (Etapa 3) — «Informar incidencia» de un PRODUCTO de la revisión → bodega de Incidencias.
+   Mismo manejo de archivos que el modal de repuestos (compresión de fotos, tope de video). El servidor valida todo
+   (POST /ot/api/<vid>/producto/<id>/incidencia). */
+const _OTINC_MAX_FOTOS = 5, _OTINC_MAX_VIDEOS = 1;
+const _OTINC_PROD = {};
+{% for e in equipos if e._interno %}_OTINC_PROD[{{ e.id }}] = {{ {'nombre': (e.nombre or ('Producto #' ~ e.id)), 'sku': e.sku, 'cantidad': (e.cantidad_doc or 1)} | tojson }};
+{% endfor %}
+var _otinc = { imid: null, max: 1, archivos: [], enviando: false };
+window.otdIncAbrir = function(imid){
+  _otrepLiberar(_otinc.archivos);
+  var p = _OTINC_PROD[imid] || { nombre: 'Producto #' + imid, sku: null, cantidad: 1 };
+  _otinc = { imid: Number(imid), max: Math.max(1, parseInt(p.cantidad, 10) || 1), archivos: [], enviando: false };
+  document.getElementById('otincProducto').textContent = p.nombre + (p.sku ? ' · SKU ' + p.sku : '');
+  document.getElementById('otinc_motivo').value = '';
+  document.getElementById('otinc_detalle').value = '';
+  var c = document.getElementById('otinc_cantidad');
+  c.value = '1'; c.max = String(_otinc.max);
+  document.getElementById('otincCantSub').textContent = 'de ' + _otinc.max + ' en el documento';
+  document.getElementById('otincEv').innerHTML = '';
+  document.getElementById('otincErr').textContent = '';
+  otincRefrescar();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalIncProd')).show();
+};
+function otincMotivo(btn){
+  var i = document.getElementById('otinc_motivo');
+  i.value = btn.textContent.trim();
+  otincRefrescar();
+}
+async function otincAgregarArchivos(input){
+  var nuevos = await _otrepPrepararArchivos(input);
+  var todos = _otinc.archivos.concat(nuevos);
+  var nf = todos.filter(function(a){ return a.tipo === 'foto'; }).length;
+  var nv = todos.filter(function(a){ return a.tipo === 'video'; }).length;
+  if (nf > _OTINC_MAX_FOTOS || nv > _OTINC_MAX_VIDEOS){
+    ilusToast('Como máximo ' + _OTINC_MAX_FOTOS + ' fotos y ' + _OTINC_MAX_VIDEOS + ' video por incidencia.', {type:'warning'});
+    _otrepLiberar(nuevos);
+    return;
+  }
+  _otinc.archivos = todos;
+  otrepPintarEv('otincEv', _otinc.archivos, 'otincQuitar');
+  otincRefrescar();
+}
+function otincQuitar(i){
+  var a = _otinc.archivos.splice(i, 1)[0];
+  if (a) URL.revokeObjectURL(a.url);
+  otrepPintarEv('otincEv', _otinc.archivos, 'otincQuitar');
+  otincRefrescar();
+}
+function otincRefrescar(){
+  var mot = (document.getElementById('otinc_motivo').value || '').trim();
+  var cant = parseInt(document.getElementById('otinc_cantidad').value, 10);
+  var p1 = mot.length >= 10;
+  var p2 = isFinite(cant) && cant >= 1 && cant <= _otinc.max;
+  var p3 = _otinc.archivos.some(function(a){ return a.tipo === 'foto'; });
+  _otrepStep('otincStep1', p1); _otrepStep('otincStep2', p2); _otrepStep('otincStep3', p3);
+  document.getElementById('otincBtn').disabled = !(p1 && p2 && p3) || _otinc.enviando;
+}
+async function otincEnviar(){
+  if (_otinc.enviando) return;
+  var err = document.getElementById('otincErr'); err.textContent = '';
+  var fd = new FormData();
+  fd.append('motivo', (document.getElementById('otinc_motivo').value || '').trim());
+  fd.append('detalle', (document.getElementById('otinc_detalle').value || '').trim());
+  fd.append('cantidad', document.getElementById('otinc_cantidad').value || '1');
+  _otinc.archivos.forEach(function(a){ fd.append('fotos', a.file, a.file.name || (a.tipo === 'video' ? 'video.mp4' : 'foto.jpg')); });
+  _otinc.enviando = true;
+  var lbl = document.getElementById('otincBtnLbl');
+  document.getElementById('otincBtn').disabled = true; lbl.textContent = 'Enviando…';
+  try {
+    const r = await fetch('/ot/api/' + OTD_VID + '/producto/' + _otinc.imid + '/incidencia', {method:'POST', body: fd, credentials:'same-origin', headers: _OTREP_HDR});
+    const j = await _otrepJson(r);
+    if (!j.ok){ err.textContent = j.error || 'No se pudo informar. Intenta de nuevo.'; return; }
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalIncProd')).hide();
+    var msg = '✓ Incidencia N° ' + j.incidencia_id + ' informada a la bodega de Incidencias';
+    if (j.aviso) await ilusAlert({title: 'Incidencia informada', message: msg + '. ' + j.aviso, type: 'warning'});
+    else ilusToast(msg, {type:'success'});
+    _otrepLiberar(_otinc.archivos); _otinc.archivos = [];
+  } catch(e){
+    err.textContent = 'Error de conexión: ' + e.message;
+  } finally {
+    _otinc.enviando = false; lbl.textContent = 'Informar incidencia'; otincRefrescar();
+  }
+}
 // Cancelar/cerrar libera las previsualizaciones (objectURL) para no filtrar memoria.
 document.addEventListener('DOMContentLoaded', function(){
+  var m3 = document.getElementById('modalIncProd');
+  if (m3) m3.addEventListener('hidden.bs.modal', function(){ if (!_otinc.enviando){ _otrepLiberar(_otinc.archivos); _otinc.archivos = []; } });
   var m1 = document.getElementById('modalRepSol'), m2 = document.getElementById('modalBajaEq');
   if (m1) m1.addEventListener('hidden.bs.modal', function(){ if (!_otrep.enviando){ _otrepLiberar(_otrep.archivos); _otrep.archivos = []; } });
   if (m2) m2.addEventListener('hidden.bs.modal', function(){ if (!_otbaja.enviando){ _otrepLiberar(_otbaja.archivos); _otbaja.archivos = []; } });

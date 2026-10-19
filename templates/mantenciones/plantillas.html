@@ -223,6 +223,14 @@
   .pti-plant b{color:#0f172a}
   .pti-acciones{display:flex;gap:6px;margin-top:auto;padding-top:6px}
   .pti-acciones .btn{min-height:38px;flex:1}
+  /* 🧰 2026-10-18 (Etapa 3): repuestos sugeridos de la plantilla (chips con su × de 44px, nombres completos). */
+  .pl-rsug-chips{display:flex;flex-wrap:wrap;gap:6px}
+  .pl-rsug-chip{display:inline-flex;align-items:center;gap:2px;border:1px solid #bfdbfe;background:#eff6ff;color:#1e40af;
+    border-radius:999px;padding:0 2px 0 12px;font-size:.8rem;font-weight:600;min-height:44px;max-width:100%}
+  .pl-rsug-chip span{overflow-wrap:anywhere}
+  .pl-rsug-chip button{border:0;background:none;color:#dc2626;min-width:44px;min-height:44px;border-radius:999px}
+  .pl-rsug-chip button:hover{background:#fee2e2}
+  .pl-rsug-vacio{font-size:.78rem;color:#6b7280}
 </style>
 
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -581,6 +589,22 @@
               Informativo por ahora: ayuda a identificar qué se cotiza como mantención
               y qué se atiende como OT puntual. Suele ir apagado en pisos/accesorios.
             </div>
+            {#- 🧰 2026-10-18 (Etapa 3, Daniel: «solicitar piolas si es selectora de peso, solicitar cintas si es
+                trotadora… inteligentemente por las plantillas»). Repuestos sugeridos de este checklist: en la OT
+                salen como chips de un toque al pedir repuestos de un producto que lo usa. Solo el NOMBRE de la
+                pieza: nunca proveedor, costo ni código de compra (REGLA #19/#26). -#}
+            <div class="mt-3" id="ePRsugWrap">
+              <label class="form-label small fw-semibold mb-1" for="ePRsugIn"><i class="bi bi-tools me-1"></i>Repuestos sugeridos</label>
+              <div class="small text-muted mb-2" style="font-size:.72rem">En la OT aparecen como chips de un toque al pedir
+                repuestos de un producto con este checklist. Solo el nombre de la pieza: sin proveedor, costo ni código de compra.</div>
+              <div class="pl-rsug-chips" id="ePRsugChips"></div>
+              <div class="d-flex gap-2 mt-2">
+                <input type="text" id="ePRsugIn" class="form-control form-control-sm" maxlength="80" autocomplete="off"
+                       placeholder="Ej: Pin selector con cordel" onkeydown="if(event.key==='Enter'){event.preventDefault();rsugAgregar();}">
+                <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" style="min-height:44px" onclick="rsugAgregar()">
+                  <i class="bi bi-plus-lg me-1"></i>Agregar</button>
+              </div>
+            </div>
             <div class="small text-muted mt-2" id="ePEsSistemaNota" style="display:none">
               <i class="bi bi-shield-lock me-1"></i>Plantilla del sistema: no se puede borrar, solo desactivar.
             </div>
@@ -804,6 +828,33 @@ let _plantillas = [];
 let _plSelected = new Set();
 let _editId = null;
 let _items = [];
+// 🧰 2026-10-18 (Etapa 3): repuestos sugeridos de la plantilla abierta (solo nombres de pieza).
+let _rsug = [];
+const _RSUG_MAX = 20, _RSUG_LARGO = 80;
+function rsugNorm(s){ return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().split(/\s+/).filter(Boolean).join(' '); }
+function rsugPintar(){
+  const cont = document.getElementById('ePRsugChips');
+  if (!cont) return;
+  cont.innerHTML = _rsug.length
+    ? _rsug.map((n, i) => `<span class="pl-rsug-chip"><span>${escHtml(n)}</span>
+        <button type="button" title="Quitar" aria-label="Quitar ${escHtml(n)}" onclick="rsugQuitar(${i})"><i class="bi bi-x-lg"></i></button></span>`).join('')
+    : '<span class="pl-rsug-vacio">Sin repuestos sugeridos todavía.</span>';
+}
+function rsugAgregar(){
+  const inp = document.getElementById('ePRsugIn');
+  const v = String(inp.value || '').split(/\s+/).join(' ').trim().slice(0, _RSUG_LARGO);
+  if (v.length < 2){ inp.focus(); return; }
+  if (v.includes('$')){
+    ilusToast('Solo el nombre de la pieza: aquí no va el costo.', {type:'warning'});
+    return;
+  }
+  if (_rsug.some(x => rsugNorm(x) === rsugNorm(v))){ ilusToast('Ya está en la lista.', {type:'info'}); return; }
+  if (_rsug.length >= _RSUG_MAX){ ilusToast('Como máximo ' + _RSUG_MAX + ' repuestos sugeridos.', {type:'warning'}); return; }
+  _rsug.push(v);
+  inp.value = '';
+  rsugPintar();
+}
+function rsugQuitar(i){ _rsug.splice(i, 1); rsugPintar(); }
 let _searchTimer = null;
 let _modal = null;
 
@@ -1230,6 +1281,7 @@ function abrirEditor(pid){
   document.getElementById('ePActiva').checked = true;
   document.getElementById('ePAplicaPlan').checked = true;
   document.getElementById('ePEsSistemaNota').style.display = 'none';
+  _rsug = []; rsugPintar();   // 🧰 2026-10-18
   document.getElementById('addTitulo').value = '';
   renderCategoriaCards('');
   renderItems();
@@ -1276,6 +1328,8 @@ async function cargarDetalle(pid){
     document.getElementById('ePActiva').checked = p.activa !== false;
     document.getElementById('ePAplicaPlan').checked = p.aplica_plan_mantencion !== false;
     document.getElementById('ePEsSistemaNota').style.display = p.es_sistema ? '' : 'none';
+    _rsug = Array.isArray(p.repuestos_sugeridos) ? p.repuestos_sugeridos.slice() : [];   // 🧰 2026-10-18
+    rsugPintar();
     // 29-08-2026: bug real encontrado en vivo -- renderCategoriaCards() solo
     // pinta la tarjeta activa, nunca sincronizaba el input oculto con el dato
     // del servidor (solo se llenaba al hacer click). Con la regla del Paso 1
@@ -1653,6 +1707,9 @@ async function guardarPlantilla(){
       alert(`El item #${i+1} es tipo Lista pero no tiene opciones`); return;
     }
   }
+  // 🧰 2026-10-18 (Etapa 3): un repuesto sugerido escrito y sin tocar «Agregar» no se pierde al guardar.
+  const _rsugPend = document.getElementById('ePRsugIn');
+  if (_rsugPend && String(_rsugPend.value || '').trim()) rsugAgregar();
   const body = {
     nombre,
     descripcion: document.getElementById('ePDesc').value.trim(),
@@ -1663,6 +1720,7 @@ async function guardarPlantilla(){
     categoria_admin: categoriaAdmin || null,
     activa: document.getElementById('ePActiva').checked,
     aplica_plan_mantencion: document.getElementById('ePAplicaPlan').checked,
+    repuestos_sugeridos: _rsug.slice(),   // 🧰 2026-10-18: solo nombres de pieza
     items: _items.map((it, idx) => ({
       orden: idx + 1,
       titulo: it.titulo.trim(),

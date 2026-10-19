@@ -1,0 +1,127 @@
+<!doctype html>
+{#- 🧾 2026-10-18 (Etapa 3 de la revisión de equipos). Daniel: «generar un reporte para enviar a logística de lo que se
+    está recibiendo y lo que no, de la nota de venta, para que ellos puedan hacer la recepción y la gestión documental».
+    Acta de UNA OT interna de revisión: documento, quién revisó y cuándo (hora Chile), totales por resultado y, por
+    producto, SKU, nombre COMPLETO (REGLA #15), cantidad del documento, resultado (semáforo), observación, faltantes y la
+    miniatura de la foto general. Sin plata, sin proveedores y sin el bloque «sin saldo» (REGLA #19/#26). Lo arma
+    _acta_html (app.py) y lo imprime _pw_pdf; si el motor no está, este mismo HTML se puede imprimir desde el navegador. -#}
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Acta de recepción · {{ d.numero_ot }} · {{ marca }}</title>
+<style>
+  @page { size: Letter; margin: 12mm 10mm 14mm; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Segoe UI', Arial, Helvetica, sans-serif; color: #0a0a0a; font-size: 10.5px; margin: 0;
+         background: #ffffff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .hoja { max-width: 196mm; margin: 0 auto; padding: 4mm 0; }
+  .hd { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+        border-bottom: 3px solid #dc2626; padding-bottom: 8px; margin-bottom: 10px; }
+  .hd .marca { font-weight: 900; font-size: 18px; letter-spacing: -.02em; }
+  .hd .marca span { color: #dc2626; }
+  .hd h1 { margin: 3px 0 0; font-size: 15px; font-weight: 800; }
+  .hd .sub { color: #6b7280; font-size: 10px; margin-top: 2px; }
+  .hd .num { text-align: right; font-size: 10px; color: #374151; white-space: nowrap; }
+  .hd .num b { display: block; font-size: 16px; color: #dc2626; }
+  .info { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 14px; background: #f9fafb;
+          border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; }
+  .info .k { font-size: 8.5px; text-transform: uppercase; letter-spacing: .05em; color: #6b7280; font-weight: 700; }
+  .info .v { font-weight: 700; overflow-wrap: anywhere; }
+  .tot { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .chip { display: inline-flex; gap: 5px; align-items: center; border-radius: 999px; padding: 4px 10px;
+          font-weight: 700; border: 1px solid; white-space: nowrap; }
+  .chip b { font-size: 12px; }
+  .verde { background: #dcfce7; color: #166534; border-color: #86efac; }
+  .ambar { background: #fff8e1; color: #92400e; border-color: #fcd34d; }
+  .rojo  { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+  .gris  { background: #f3f4f6; color: #374151; border-color: #d1d5db; }
+  .azul  { background: #dbeafe; color: #1e40af; border-color: #93c5fd; }
+  .total { background: #0a0a0a; color: #ffffff; border-color: #0a0a0a; }
+  table { width: 100%; border-collapse: collapse; }
+  thead { display: table-header-group; }
+  thead th { background: #0a0a0a; color: #ffffff; font-size: 8.5px; text-transform: uppercase; letter-spacing: .04em;
+             padding: 6px; text-align: left; }
+  tbody td { border-bottom: 1px solid #e5e7eb; padding: 6px; vertical-align: top; }
+  tbody tr { page-break-inside: avoid; break-inside: avoid; }
+  .n { color: #6b7280; font-weight: 700; width: 18px; }
+  .th img { width: 62px; height: 62px; object-fit: cover; border-radius: 6px; border: 1px solid #e5e7eb; display: block; }
+  .th .sin { width: 62px; height: 62px; border-radius: 6px; background: #f3f4f6; display: flex; align-items: center;
+             justify-content: center; color: #9ca3af; font-size: 8px; text-align: center; padding: 3px; }
+  .prod b { display: block; font-size: 10.5px; overflow-wrap: anywhere; }
+  .prod small { color: #6b7280; }
+  .cant { text-align: center; font-weight: 800; }
+  .obs { overflow-wrap: anywhere; }
+  .rev small { display: block; color: #6b7280; }
+  .firmas { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 30px; page-break-inside: avoid; }
+  .firmas div { border-top: 1px solid #0a0a0a; padding-top: 4px; font-size: 9px; color: #374151; text-align: center; }
+  .pie { margin-top: 14px; font-size: 8.5px; color: #6b7280; border-top: 1px solid #e5e7eb; padding-top: 6px; }
+  .vacio { padding: 20px; text-align: center; color: #6b7280; border: 1px dashed #d1d5db; border-radius: 8px; }
+  @media screen and (max-width: 720px) {
+    .hoja { padding: 12px 16px; }
+    .info { grid-template-columns: 1fr 1fr; }
+    table, thead, tbody, tr, td { display: block; width: 100%; }
+    thead { display: none; }
+    tbody tr { border: 1px solid #e5e7eb; border-radius: 10px; margin-bottom: 10px; padding: 6px; }
+    tbody td { border: 0; padding: 3px 4px; }
+  }
+</style>
+</head>
+<body>
+<div class="hoja">
+  <div class="hd">
+    <div>
+      <div class="marca">ILUS <span>Fitness</span></div>
+      <h1>Acta de recepción · Revisión de equipos</h1>
+      <div class="sub">Lo que se recibió y lo que no, producto por producto. Para la recepción y la gestión documental de logística.</div>
+    </div>
+    <div class="num">Orden de trabajo<b>{{ d.numero_ot }}</b>{{ d.tipo_nombre }}</div>
+  </div>
+
+  <div class="info">
+    <div><div class="k">Documento</div><div class="v">{{ (d.documentos or []) | join(', ') or '—' }}</div></div>
+    <div><div class="k">Revisó</div><div class="v">{{ (d.revisores or []) | join(', ') or (d.ot.tecnico_nombre or '—') }}</div></div>
+    <div><div class="k">Última revisión</div><div class="v">{{ ultima_txt or '—' }}</div></div>
+    <div><div class="k">Estado de la OT</div><div class="v">{{ (d.ot.estado or '—') | replace('_', ' ') | capitalize }}</div></div>
+    <div><div class="k">Productos</div><div class="v">{{ d.n }}</div></div>
+    <div><div class="k">Generada</div><div class="v">{{ generado_txt }} (hora Chile)</div></div>
+  </div>
+
+  <div class="tot">
+    <span class="chip total"><b>{{ d.n }}</b> producto{{ 's' if d.n != 1 }}</span>
+    {% for t in d.totales %}<span class="chip {{ t.semaforo }}"><b>{{ t.n }}</b> {{ t.resultado }}</span>{% endfor %}
+  </div>
+
+  {% if productos %}
+  <table>
+    <thead>
+      <tr><th>N°</th><th>Foto</th><th>Producto</th><th>Cant. documento</th><th>Resultado</th><th>Observación</th>
+          <th>Faltantes</th><th>Revisó</th></tr>
+    </thead>
+    <tbody>
+      {% for p in productos %}
+      <tr>
+        <td class="n">{{ loop.index }}</td>
+        <td class="th">{% if p.foto %}<img src="{{ p.foto }}" alt="Foto general de {{ p.nombre }}">{% else %}<div class="sin">Sin foto</div>{% endif %}</td>
+        <td class="prod"><b>{{ p.nombre }}</b>{% if p.sku %}<small>SKU {{ p.sku }}</small>{% endif %}</td>
+        <td class="cant">{{ p.cantidad }}</td>
+        <td class="res"><span class="chip {{ p.semaforo }}">{{ p.resultado }}</span></td>
+        <td class="obs">{{ p.observacion or '—' }}</td>
+        <td class="obs">{{ p.faltantes or '—' }}</td>
+        <td class="rev">{{ p.revisado_por or '—' }}{% if p.revisado_en_txt %}<small>{{ p.revisado_en_txt }}</small>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="vacio">Esta OT todavía no tiene productos en la revisión.</div>
+  {% endif %}
+
+  <div class="firmas">
+    <div>Entrega · Servicio técnico</div>
+    <div>Recibe · Logística</div>
+  </div>
+  <div class="pie">{{ marca }} · Documento interno para logística: recepción y gestión documental. Sin montos ni datos de proveedores. Las fechas están en hora Chile.</div>
+</div>
+</body>
+</html>
