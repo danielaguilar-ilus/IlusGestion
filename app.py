@@ -81843,6 +81843,14 @@ def _ot_validar_cierre(vid):
             f"Faltan {total - done} por marcar."
         )
 
+    # R1c — 🧾 2026-10-18 revisión esencial (fuente única _ot_chk_revision_pendientes): productos de trabajo interno
+    # (con «No llegó» solo se exige el argumento), fotos del hallazgo y «Apto» con una Falla.
+    _rev = _ot_chk_revision_pendientes(vid, excluir_maquinas)
+    if _rev["faltantes"]:
+        razones.append("Revisión incompleta: " + "; ".join(_rev["faltantes"][:5])
+                       + (f" y {len(_rev['faltantes']) - 5} producto(s) más" if len(_rev["faltantes"]) > 5 else "")
+                       + ".")
+
     # R1b — Revisión de equipos para levantamientos (2026-06-12 Daniel)
     # Para OT tipo levantamiento, cada equipo en plan (aplica_mantencion=1)
     # debe tener una entrada en mant_visita_equipos (verificado / con_cambios /
@@ -86853,15 +86861,17 @@ def _mant_visita_crear_core(d):
                                         sufijo += f" (S/N: {m_row['serie']})"
                                     titulo = f"{it['titulo']} — {sufijo}"[:300]
                                     tr = it.get("tipo_respuesta") or "check"
+                                    # 📸 2026-10-18: copia foto_si_hallazgo (ver _fsh_ok).
+                                    _c, _p, _v = _fsh_ins(_fsh_ok(), it)
                                     cur2.execute(
                                         "INSERT INTO mant_visita_tareas "
                                         "(visita_id, plantilla_id, orden, titulo, "
                                         " descripcion, tipo, maquina_id, tipo_respuesta, "
                                         " obligatoria, requiere_foto, unidad, rango_min, "
                                         " rango_max, opciones_lista_json, estado_trabajo, "
-                                        " created_by) "
+                                        " created_by" + _c + ") "
                                         "VALUES (%s,%s,%s,%s,%s,'otro',%s,%s,%s,%s,"
-                                        "        %s,%s,%s,%s,'pendiente',%s)",
+                                        "        %s,%s,%s,%s,'pendiente',%s" + _p + ")",
                                         (vid, plant_id_inicial, orden, titulo,
                                          it.get("descripcion"), mid, tr,
                                          it.get("obligatoria") or 0,
@@ -86869,7 +86879,7 @@ def _mant_visita_crear_core(d):
                                          it.get("unidad"), it.get("rango_min"),
                                          it.get("rango_max"),
                                          it.get("opciones_lista_json"),
-                                         current_username())
+                                         current_username()) + _v
                                     )
                                     n_tareas_creadas += 1
                         conn2.commit()
@@ -90899,6 +90909,9 @@ def ot2_detalle(vid):
     # `and not equipos`: igual que mant_ot_ejecutar, JAMÁS se mezcla un
     # equipo real con uno sintético en la misma lista -- un item_manual_id
     # podría coincidir numéricamente con un mant_maquinas.id real.
+    # 🧾 2026-10-18: exigencias de la revisión (fuente única con la firma): «No llegó» dispensa las obligatorias del
+    # producto salvo el argumento; foto del hallazgo y «Apto» con Falla quedan pendientes.
+    _rev_detalle = _ot_chk_revision_pendientes(vid)
     if not v.get("cliente_id") and not equipos:
         try:
             _tareas_sin_maquina = mysql_fetchall(
@@ -90920,9 +90933,10 @@ def ot2_detalle(vid):
             _grp["n"] += 1
             if t.get("completada"):
                 _grp["ok"] += 1
-            if t.get("obligatoria"):
+            _ev_t = _rev_detalle["por_tarea"].get(t.get("id")) if t.get("item_manual_id") else None
+            if (_ev_t["exigible"] if _ev_t else t.get("obligatoria")):
                 _grp["obl"] += 1
-                if t.get("completada"):
+                if (_ev_t["hecha"] if _ev_t else t.get("completada")):
                     _grp["obl_ok"] += 1
             # La tarea-ancla (la que NO vino de copiar una plantilla) trae
             # el título/SKU reales del producto -- mismo criterio que
@@ -91138,6 +91152,10 @@ def ot2_detalle(vid):
         "SELECT COUNT(*) AS n FROM mant_visita_fotos WHERE visita_id=%s", (vid,)) or {}
     _obl = int(_tar.get("obl") or 0)
     _obl_ok = int(_tar.get("obl_ok") or 0)
+    # 🧾 2026-10-18: + lo que exige la revisión (productos internos, fotos del hallazgo, «Apto» con Falla) con la
+    # MISMA fuente que la firma, para que el botón «Firmar como técnico» diga lo mismo que el servidor.
+    _obl += int((_rev_detalle.get("kpi_delta") or {}).get("obl") or 0)
+    _obl_ok += int((_rev_detalle.get("kpi_delta") or {}).get("obl_ok") or 0)
     kpis = {
         "equipos": len(equipos),
         "tareas": int(_tar.get("n") or 0),
@@ -91844,10 +91862,20 @@ def ot2_detalle(vid):
                       if (not _es_rol_tecnico() and _ot_aut_es_superadmin()) else None)
     except Exception:
         fin_clasif = None
+    # 🧾 2026-10-18 (Daniel: «que quede persistente… pero que no lo evidencie a los clientes ni a los técnicos»):
+    # productos incluidos sin saldo en su documento. A un técnico NO viaja nada (REGLA #26: el dato se quita aquí).
+    sin_saldo = []
+    if not _es_rol_tecnico():
+        try:
+            sin_saldo = _ot_sin_saldo_de(vid)
+        except Exception as _e_ss:
+            print(f"[ot2_detalle] sin saldo vid={vid}: {type(_e_ss).__name__}", flush=True)
+            sin_saldo = []
     return render_template(
         "ot2/detalle.html",
         fac_alerta=fac_alerta,
         fin_clasif=fin_clasif,
+        sin_saldo=sin_saldo,
         puerta_cierre=puerta_cierre,
         v=v, ruta=ruta, equipos=equipos, hitos=hitos, kpis=kpis, firmas=firmas,
         factura_prov=factura_prov, factura_prov_aplica=factura_prov_aplica,
@@ -107329,6 +107357,23 @@ def _ot2_crear_core(d, autorizacion=None):
                 "Alguno de los equipos no pertenece a este cliente.",
                 "EQUIPO_AJENO")
 
+    # ── 5.c PRODUCTOS INCLUIDOS SIN SALDO (2026-10-18) ─────────────────
+    # Daniel: «que quede persistente en los datos de la orden de trabajo, pero que no lo evidencie a los clientes ni
+    # a los técnicos… quién lo hizo, cuándo, por qué y el argumento». Solo se guardan los SKU que QUEDAN en la OT:
+    # las filas incluidas (el asistente ya no manda las desmarcadas) y los SKU de las máquinas de la OT.
+    _sin_saldo = []
+    if isinstance(d.get("sin_saldo"), list) and d.get("sin_saldo"):
+        _skus_ot = {(_t.get("sku") or "").strip() for _t in tareas_manuales if _t.get("sku")}
+        if equipos:
+            try:
+                _mids_ss = sorted({e["maquina_id"] for e in equipos})
+                _ph_ss = ",".join(["%s"] * len(_mids_ss))
+                _skus_ot |= {(r.get("sku") or "").strip() for r in (mysql_fetchall(
+                    f"SELECT sku FROM mant_maquinas WHERE id IN ({_ph_ss})", tuple(_mids_ss)) or [])}
+            except Exception as _e_ss_sku:
+                print(f"[ot2_crear] sin saldo: SKU de equipos: {_e_ss_sku}", flush=True)
+        _sin_saldo = _ot_sin_saldo_normalizar(d.get("sin_saldo"), _skus_ot)
+
     # ── 6. TÉCNICOS ────────────────────────────────────────────────────
     tec_ids = []
     for t in (d.get("tecnico_user_ids") or []):
@@ -107676,7 +107721,7 @@ def _ot2_crear_core(d, autorizacion=None):
             cur.execute(
                 "SELECT titulo, descripcion, tipo_respuesta, obligatoria, "
                 "       requiere_foto, unidad, rango_min, rango_max, "
-                "       opciones_lista_json, target_field "
+                "       opciones_lista_json, target_field" + _fsh_col() + " "
                 "  FROM mant_tarea_plantilla_items "
                 " WHERE plantilla_id=%s ORDER BY orden, id", (pid,))
             # get_mysql() usa DictCursor -> las filas son dicts, no tuplas.
@@ -107684,20 +107729,21 @@ def _ot2_crear_core(d, autorizacion=None):
             _items = cur.fetchall()
             for it in _items:
                 orden += 1
+                _c, _p, _v = _fsh_ins(_fsh_ok(), it)   # 📸 2026-10-18
                 cur.execute(
                     "INSERT INTO mant_visita_tareas "
                     "  (visita_id, plantilla_id, orden, titulo, descripcion, tipo, "
                     "   maquina_id, tipo_respuesta, target_field, obligatoria, "
                     "   requiere_foto, unidad, rango_min, rango_max, "
-                    "   opciones_lista_json, estado_trabajo, created_by) "
+                    "   opciones_lista_json, estado_trabajo, created_by" + _c + ") "
                     "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-                    "        'pendiente',%s)",
+                    "        'pendiente',%s" + _p + ")",
                     (vid, pid, orden, (it.get("titulo") or "")[:300],
                      it.get("descripcion"), tarea_tipo, mid,
                      it.get("tipo_respuesta") or "check", it.get("target_field"),
                      it.get("obligatoria") or 0, it.get("requiere_foto") or 0,
                      it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
-                     it.get("opciones_lista_json"), current_username()))
+                     it.get("opciones_lista_json"), current_username()) + _v)
                 n_tareas += 1
 
         # Tareas MANUALES (sin plantilla, plantilla_id queda NULL): productos
@@ -107752,27 +107798,29 @@ def _ot2_crear_core(d, autorizacion=None):
                 cur.execute(
                     "SELECT titulo, descripcion, tipo_respuesta, obligatoria, "
                     "       requiere_foto, unidad, rango_min, rango_max, "
-                    "       opciones_lista_json, target_field "
+                    "       opciones_lista_json, target_field" + _fsh_col() + " "
                     "  FROM mant_tarea_plantilla_items "
                     " WHERE plantilla_id=%s ORDER BY orden, id", (_tm_pid,))
                 for it in cur.fetchall():
                     orden += 1
+                    # 📸 2026-10-18: el bloque condicional también lleva su foto si hay hallazgo.
+                    _c, _p, _v = _fsh_ins(_fsh_ok(), it)
                     cur.execute(
                         "INSERT INTO mant_visita_tareas "
                         "  (visita_id, plantilla_id, orden, titulo, descripcion, tipo, "
                         "   maquina_id, tipo_respuesta, target_field, obligatoria, "
                         "   requiere_foto, unidad, rango_min, rango_max, "
                         "   opciones_lista_json, estado_trabajo, created_by, "
-                        "   item_manual_id) "
+                        "   item_manual_id" + _c + ") "
                         "VALUES (%s,%s,%s,%s,%s,%s,NULL,%s,%s,%s,%s,%s,%s,%s,%s,"
-                        "        'pendiente',%s,%s)",
+                        "        'pendiente',%s,%s" + _p + ")",
                         (vid, _tm_pid, orden, (it.get("titulo") or "")[:300],
                          it.get("descripcion"), tarea_tipo,
                          it.get("tipo_respuesta") or "check", it.get("target_field"),
                          0 if _tm_cond else (it.get("obligatoria") or 0),
                          it.get("requiere_foto") or 0,
                          it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
-                         it.get("opciones_lista_json"), current_username(), _tm_idx))
+                         it.get("opciones_lista_json"), current_username(), _tm_idx) + _v)
                     n_tareas += 1
 
         # Una OT sin tareas no se puede ejecutar ni cerrar: mejor no nacer.
@@ -107786,6 +107834,41 @@ def _ot2_crear_core(d, autorizacion=None):
             conn.rollback()
             return _ot2_err(
                 "El checklist elegido no tiene tareas.", "CHECKLIST_VACIO")
+
+        # 🧾 2026-10-18 — productos incluidos SIN saldo en su documento: en la MISMA transacción, con quién y cuándo.
+        # Un SAVEPOINT aísla este registro: si la tabla fallara, se deshace solo esto (nunca a medias), la OT se crea
+        # igual y quien la creó recibe el aviso. La bitácora usa una acción FUERA de la lista blanca de técnicos.
+        if _sin_saldo:
+            # Quien lo declaró es quien armó la OT: si nace de una autorización aprobada, quien la pidió (igual que
+            # created_by más arriba).
+            _quien_ss = ((autorizacion or {}).get("solicitado_por_nombre") or current_username() or "sistema")
+            try:
+                cur.execute("SAVEPOINT ot_sin_saldo")
+                for _ss in _sin_saldo:
+                    cur.execute(
+                        "INSERT INTO mant_ot_sin_saldo "
+                        "  (visita_id, sku, descripcion, doc_tido, doc_nudo, cantidad, saldo_doc, "
+                        "   causa, argumento, declarado_por) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (vid, _ss["sku"], _ss["descripcion"], _ss["doc_tido"], _ss["doc_nudo"],
+                         _ss["cantidad"], _ss["saldo_doc"], _ss["causa"], _ss["argumento"], _quien_ss))
+                cur.execute(
+                    "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) "
+                    "VALUES ('visita',%s,'sin_saldo_declarado',%s,%s)",
+                    (vid,
+                     ("Incluido(s) sin saldo en su documento: " + "; ".join(
+                         f"{_ss['sku']}" + (f" ({_ss['doc_tido']} {_ss['doc_nudo']})" if _ss["doc_tido"] else "")
+                         + (f" — argumento: {_ss['argumento']}" if _ss["argumento"] else "")
+                         for _ss in _sin_saldo))[:4000],
+                     _quien_ss))
+            except Exception as _e_ss:
+                try:
+                    cur.execute("ROLLBACK TO SAVEPOINT ot_sin_saldo")
+                except Exception:
+                    pass
+                print(f"[ot2_crear] sin saldo vid={vid}: {type(_e_ss).__name__}: {_e_ss}", flush=True)
+                avisos.append("La OT se creó, pero no se pudo guardar el registro de productos sin saldo. "
+                              "Avísale a gestión.")
 
         # 📄 UNIFICAR EL MULTIDOCUMENTO (2026-09-05). Daniel: "deben ser
         # multidocumento, no vi que la OT fuera multidocumento" -- y tenía
@@ -108300,7 +108383,7 @@ def _ot2_equipo_insertar(cur, v, vid, maquina_id, plantilla_id):
     cur.execute(
         "SELECT titulo, descripcion, tipo_respuesta, obligatoria, "
         "       requiere_foto, unidad, rango_min, rango_max, "
-        "       opciones_lista_json, target_field "
+        "       opciones_lista_json, target_field" + _fsh_col() + " "
         "  FROM mant_tarea_plantilla_items "
         " WHERE plantilla_id=%s ORDER BY orden, id", (plantilla_id,))
     items = cur.fetchall()
@@ -108316,20 +108399,21 @@ def _ot2_equipo_insertar(cur, v, vid, maquina_id, plantilla_id):
     n_tareas = 0
     for it in items:
         orden += 1
+        _c, _p, _v = _fsh_ins(_fsh_ok(), it)   # 📸 2026-10-18
         cur.execute(
             "INSERT INTO mant_visita_tareas "
             "  (visita_id, plantilla_id, orden, titulo, descripcion, tipo, "
             "   maquina_id, tipo_respuesta, target_field, obligatoria, "
             "   requiere_foto, unidad, rango_min, rango_max, "
-            "   opciones_lista_json, estado_trabajo, created_by) "
+            "   opciones_lista_json, estado_trabajo, created_by" + _c + ") "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-            "        'pendiente',%s)",
+            "        'pendiente',%s" + _p + ")",
             (vid, plantilla_id, orden, (it.get("titulo") or "")[:300],
              it.get("descripcion"), tarea_tipo, maquina_id,
              it.get("tipo_respuesta") or "check", it.get("target_field"),
              it.get("obligatoria") or 0, it.get("requiere_foto") or 0,
              it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
-             it.get("opciones_lista_json"), current_username()))
+             it.get("opciones_lista_json"), current_username()) + _v)
         n_tareas += 1
     return {
         "maquina_nombre": maq.get("nombre"),
@@ -116581,7 +116665,7 @@ _OT_FICHA_CAMPOS_DIRECTOS = {
 }
 
 
-def _grupo_ot_sin_editar(vid, mid, pid):
+def _grupo_ot_sin_editar(vid, mid, pid, item_manual_id=None):
     """¿El grupo (equipo x plantilla) de esta OT NO tiene ninguna respuesta
     guardada todavía? True = seguro reemplazar sus tareas sin perder nada
     (ni una respuesta, ni una foto -- una tarea con foto subida siempre
@@ -116593,10 +116677,19 @@ def _grupo_ot_sin_editar(vid, mid, pid):
     ya están guardadas". Es el mismo criterio en los dos lugares que lo
     usan: re-sincronizar al guardar la plantilla, y reasignar la plantilla
     de un equipo a mano."""
-    if mid is None:
+    # 🧩 2026-10-18: un PRODUCTO de trabajo interno (maquina_id NULL) es su propio grupo por item_manual_id. Antes
+    # se miraban juntas TODAS las tareas sin máquina de esa plantilla: en una revisión con 19 productos que comparten
+    # «Revisión — Registro por equipo», editar la plantilla borraba las 19 copias y dejaba UNA sin producto.
+    if mid is None and item_manual_id:
         row = mysql_fetchone(
             "SELECT COUNT(*) AS n FROM mant_visita_tareas "
-            " WHERE visita_id=%s AND plantilla_id=%s AND maquina_id IS NULL "
+            " WHERE visita_id=%s AND plantilla_id=%s AND maquina_id IS NULL AND item_manual_id=%s "
+            "   AND (completada=1 OR valor_json IS NOT NULL)",
+            (vid, pid, item_manual_id))
+    elif mid is None:
+        row = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_visita_tareas "
+            " WHERE visita_id=%s AND plantilla_id=%s AND maquina_id IS NULL AND item_manual_id IS NULL "
             "   AND (completada=1 OR valor_json IS NOT NULL)",
             (vid, pid))
     else:
@@ -116608,7 +116701,7 @@ def _grupo_ot_sin_editar(vid, mid, pid):
     return int((row or {}).get("n") or 0) == 0
 
 
-def _sincronizar_grupo_desde_plantilla(vid, mid, pid_destino, pid_actual=None):
+def _sincronizar_grupo_desde_plantilla(vid, mid, pid_destino, pid_actual=None, item_manual_id=None):
     """Reemplaza las tareas de un grupo (equipo x plantilla) de una OT por
     las que HOY tiene `pid_destino` -- mismo INSERT que ot2_api_crear usa al
     nacer la OT, para no tener una segunda receta que diverja con el
@@ -116629,9 +116722,19 @@ def _sincronizar_grupo_desde_plantilla(vid, mid, pid_destino, pid_actual=None):
         with conn.cursor() as cur:
             v = mysql_fetchone("SELECT tipo FROM mant_visitas WHERE id=%s", (vid,)) or {}
             tarea_tipo = v.get("tipo") or "preventiva"
-            if mid is None:
+            # 🧩 2026-10-18: un producto de trabajo interno se re-sincroniza SOLO (por item_manual_id) y conserva su
+            # item_manual_id; si su plantilla es el bloque CONDICIONAL del checklist heredado, sus ítems siguen
+            # naciendo no obligatorios, igual que al crear la OT (_ot2_crear_core).
+            _cond_imid = bool(mid is None and item_manual_id and pid_destino in _chk_condicional_ids())
+            if mid is None and item_manual_id:
                 cur.execute(
-                    "DELETE FROM mant_visita_tareas WHERE visita_id=%s AND plantilla_id=%s AND maquina_id IS NULL",
+                    "DELETE FROM mant_visita_tareas WHERE visita_id=%s AND plantilla_id=%s "
+                    "   AND maquina_id IS NULL AND item_manual_id=%s",
+                    (vid, pid_actual, item_manual_id))
+            elif mid is None:
+                cur.execute(
+                    "DELETE FROM mant_visita_tareas WHERE visita_id=%s AND plantilla_id=%s "
+                    "   AND maquina_id IS NULL AND item_manual_id IS NULL",
                     (vid, pid_actual))
             else:
                 cur.execute(
@@ -116640,7 +116743,7 @@ def _sincronizar_grupo_desde_plantilla(vid, mid, pid_destino, pid_actual=None):
             cur.execute(
                 "SELECT titulo, descripcion, tipo_respuesta, obligatoria, "
                 "       requiere_foto, unidad, rango_min, rango_max, "
-                "       opciones_lista_json, target_field "
+                "       opciones_lista_json, target_field" + _fsh_col() + " "
                 "  FROM mant_tarea_plantilla_items "
                 " WHERE plantilla_id=%s ORDER BY orden, id", (pid_destino,))
             items = cur.fetchall()
@@ -116649,20 +116752,25 @@ def _sincronizar_grupo_desde_plantilla(vid, mid, pid_destino, pid_actual=None):
             n = 0
             for it in items:
                 orden += 1
+                _c, _p, _v = _fsh_ins(_fsh_ok(), it)   # 📸 2026-10-18
+                if mid is None and item_manual_id:
+                    _c += ", item_manual_id"
+                    _p += ",%s"
+                    _v += (item_manual_id,)
                 cur.execute(
                     "INSERT INTO mant_visita_tareas "
                     "  (visita_id, plantilla_id, orden, titulo, descripcion, tipo, "
                     "   maquina_id, tipo_respuesta, target_field, obligatoria, "
                     "   requiere_foto, unidad, rango_min, rango_max, "
-                    "   opciones_lista_json, estado_trabajo, created_by) "
+                    "   opciones_lista_json, estado_trabajo, created_by" + _c + ") "
                     "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-                    "        'pendiente',%s)",
+                    "        'pendiente',%s" + _p + ")",
                     (vid, pid_destino, orden, (it.get("titulo") or "")[:300],
                      it.get("descripcion"), tarea_tipo, mid,
                      it.get("tipo_respuesta") or "check", it.get("target_field"),
-                     it.get("obligatoria") or 0, it.get("requiere_foto") or 0,
+                     0 if _cond_imid else (it.get("obligatoria") or 0), it.get("requiere_foto") or 0,
                      it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
-                     it.get("opciones_lista_json"), current_username()))
+                     it.get("opciones_lista_json"), current_username()) + _v)
                 n += 1
         conn.commit()
         return n
@@ -116708,6 +116816,8 @@ def _validar_item_plantilla(d):
         "tipo_respuesta": tipo,
         "obligatoria":  1 if d.get("obligatoria") else 0,
         "requiere_foto":1 if d.get("requiere_foto") else 0,
+        # 📸 2026-10-18: «Foto solo si hay hallazgo» (ver _fsh_ok).
+        "foto_si_hallazgo": 1 if d.get("foto_si_hallazgo") else 0,
         "unidad":       (d.get("unidad") or "").strip()[:30] or None,
         "rango_min":    rmin,
         "rango_max":    rmax,
@@ -117888,6 +117998,7 @@ def mant_plantilla_detalle(pid):
             "tipo_respuesta": it.get("tipo_respuesta") or "check",
             "obligatoria": bool(it.get("obligatoria")),
             "requiere_foto": bool(it.get("requiere_foto")),
+            "foto_si_hallazgo": bool(it.get("foto_si_hallazgo")),   # 📸 2026-10-18
             "unidad": it.get("unidad") or "",
             "rango_min": float(it["rango_min"]) if it.get("rango_min") is not None else None,
             "rango_max": float(it["rango_max"]) if it.get("rango_max") is not None else None,
@@ -117999,14 +118110,15 @@ def mant_plantilla_crear():
             )
             pid = cur.lastrowid
             for it in items_norm:
+                _c, _p, _v = _fsh_ins(_fsh_ok(), it)   # 📸 2026-10-18
                 cur.execute(
                     "INSERT INTO mant_tarea_plantilla_items "
                     "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, "
-                    " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json, target_field) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json, target_field"
+                    + _c + ") VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s" + _p + ")",
                     (pid, it["orden"], it["titulo"], it["descripcion"], it["tipo_respuesta"],
                      it["obligatoria"], it["requiere_foto"], it["unidad"],
-                     it["rango_min"], it["rango_max"], it["opciones_lista_json"], it.get("target_field"))
+                     it["rango_min"], it["rango_max"], it["opciones_lista_json"], it.get("target_field")) + _v
                 )
         conn.commit()
         try:
@@ -118093,14 +118205,15 @@ def mant_plantilla_actualizar(pid):
             )
             cur.execute("DELETE FROM mant_tarea_plantilla_items WHERE plantilla_id=%s", (pid,))
             for it in items_norm:
+                _c, _p, _v = _fsh_ins(_fsh_ok(), it)   # 📸 2026-10-18: «Foto solo si hay hallazgo»
                 cur.execute(
                     "INSERT INTO mant_tarea_plantilla_items "
                     "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, "
-                    " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json, target_field) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json, target_field"
+                    + _c + ") VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s" + _p + ")",
                     (pid, it["orden"], it["titulo"], it["descripcion"], it["tipo_respuesta"],
                      it["obligatoria"], it["requiere_foto"], it["unidad"],
-                     it["rango_min"], it["rango_max"], it["opciones_lista_json"], it.get("target_field"))
+                     it["rango_min"], it["rango_max"], it["opciones_lista_json"], it.get("target_field")) + _v
                 )
         conn.commit()
         try:
@@ -118120,7 +118233,7 @@ def mant_plantilla_actualizar(pid):
         _sync_n_tareas = 0
         try:
             _grupos = mysql_fetchall(
-                "SELECT DISTINCT visita_id, maquina_id FROM mant_visita_tareas "
+                "SELECT DISTINCT visita_id, maquina_id, item_manual_id FROM mant_visita_tareas "
                 " WHERE plantilla_id=%s", (pid,)) or []
             # Techo de seguridad: una plantilla muy usada (ej. la
             # mantención preventiva estándar) podría tener miles de OT
@@ -118132,11 +118245,13 @@ def mant_plantilla_actualizar(pid):
             # UnboundLocalError (ya pasó en producción, 2026-09-01).
             for _g in _grupos[:500]:
                 _vid_g, _mid_g = _g.get("visita_id"), _g.get("maquina_id")
+                # 🧩 2026-10-18: el producto de trabajo interno se sincroniza por separado (ver _grupo_ot_sin_editar).
+                _imid_g = _g.get("item_manual_id") if _mid_g is None else None
                 if not _vid_g:
                     continue
-                if not _grupo_ot_sin_editar(_vid_g, _mid_g, pid):
+                if not _grupo_ot_sin_editar(_vid_g, _mid_g, pid, item_manual_id=_imid_g):
                     continue
-                _n = _sincronizar_grupo_desde_plantilla(_vid_g, _mid_g, pid)
+                _n = _sincronizar_grupo_desde_plantilla(_vid_g, _mid_g, pid, item_manual_id=_imid_g)
                 _sync_n_grupos += 1
                 _sync_n_tareas += _n
             if len(_grupos) > 500:
@@ -118351,18 +118466,19 @@ def mant_visita_aplicar_plantilla(vid):
                             or "capturar gps" in ttl or "captura ubicaci" in ttl
                             or "danos tu ubicaci" in ttl):
                             tr = "gps"
+                    _c, _p, _v = _fsh_ins(_fsh_ok(), it)   # 📸 2026-10-18
                     cur.execute(
                         "INSERT INTO mant_visita_tareas "
                         "(visita_id, plantilla_id, orden, titulo, descripcion, tipo, "
                         " maquina_id, tipo_respuesta, target_field, obligatoria, requiere_foto, "
                         " unidad, rango_min, rango_max, opciones_lista_json, "
-                        " estado_trabajo, created_by) "
-                        "VALUES (%s,%s,%s,%s,%s,'otro',%s,%s,%s,%s,%s,%s,%s,%s,%s,'pendiente',%s)",
+                        " estado_trabajo, created_by" + _c + ") "
+                        "VALUES (%s,%s,%s,%s,%s,'otro',%s,%s,%s,%s,%s,%s,%s,%s,%s,'pendiente',%s" + _p + ")",
                         (vid, pid, next_orden, titulo[:300], it.get("descripcion"),
                          mid, tr, it.get("target_field"),
                          it.get("obligatoria") or 0, it.get("requiere_foto") or 0,
                          it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
-                         it.get("opciones_lista_json"), current_username())
+                         it.get("opciones_lista_json"), current_username()) + _v
                     )
                     n_creadas += 1
         conn.commit()
@@ -119878,10 +119994,13 @@ def mant_ot_firmar_revision(vid):
             " ORDER BY nombre",
             (vid, *excluir_maquinas) if excluir_maquinas else (vid,)
         ) or []
-        if faltan_rows:
+        # 🧾 2026-10-18 — revisión esencial, FUENTE ÚNICA _ot_chk_revision_pendientes: productos de trabajo interno
+        # (con «No llegó» solo se exige el argumento), fotos del hallazgo y «Apto» con una Falla.
+        _rev = _ot_chk_revision_pendientes(vid, excluir_maquinas)
+        if faltan_rows or _rev["faltantes"]:
             faltantes = [f"{r['nombre']}: {int(r['n'])} tarea(s) obligatoria(s) sin cubrir"
-                         for r in faltan_rows]
-            total_pend = sum(int(r["n"]) for r in faltan_rows)
+                         for r in faltan_rows] + _rev["faltantes"]
+            total_pend = sum(int(r["n"]) for r in faltan_rows) + len(_rev["pendientes"])
             return jsonify({
                 "ok": False,
                 "error": (f"No puedes firmar esta OT todavía: quedan {total_pend} "
@@ -122609,7 +122728,10 @@ def mant_visita_tarea_respuesta(vid, tid):
     # Leer la tarea para conocer su tipo + version + lock-holder
     tar = mysql_fetchone(
         "SELECT id, titulo, tipo_respuesta, obligatoria, rango_min, rango_max, valor_json, "
-        "       version, locked_by_user_id, locked_at, maquina_id, target_field "
+        "       version, locked_by_user_id, locked_at, maquina_id, target_field, "
+        # 🧾 2026-10-18: item_manual_id + opciones para la regla dura del Resultado; foto_si_hallazgo para avisar.
+        "       item_manual_id, opciones_lista_json, "
+        + ("foto_si_hallazgo " if _fsh_ok() else "0 AS foto_si_hallazgo ") +
         "  FROM mant_visita_tareas WHERE id=%s AND visita_id=%s",
         (tid, vid)
     )
@@ -122840,11 +122962,35 @@ def mant_visita_tarea_respuesta(vid, tid):
         if v not in ("aprobado", "alerta", "falla"):
             return jsonify({"ok": False, "error": "Valor inválido"}), 400
         valor_norm = {"valor": v}
+        # 🧾 2026-10-18 (revisión esencial): avisa —sin trabar— lo que esta respuesta deja pendiente.
+        if v in ("alerta", "falla"):
+            _avisos = []
+            if int(tar.get("foto_si_hallazgo") or 0):
+                _avisos.append(f"Marcaste {v.capitalize()}: sube la foto del hallazgo en esta tarea.")
+            if v == "falla" and any(
+                    _chk_es_resultado(h) and _chk_opcion(h) in (_CHK_RES_APTO, _CHK_RES_APTO_OBS)
+                    for h in _chk_hermanas(vid, tar)):
+                _avisos.append("El resultado de este equipo dice «Apto»: con una Falla debes cambiarlo "
+                               "(Reparar, Dar de baja, Fuera de servicio o Pendiente de diagnóstico).")
+            if _avisos:
+                error = " ".join(_avisos)
     elif tipo == "lista":
         v = str(valor or "").strip()[:200]
         if not v:
             return jsonify({"ok": False, "error": "Seleccioná una opción"}), 400
         valor_norm = {"opcion": v}
+        # 🧾 2026-10-18 — REGLA DURA del Resultado (Daniel: «que si conseguimos una falla, sea porque el técnico no la
+        # quiso identificar»): con un ítem en Falla del mismo equipo, «Apto» y «Apto con observaciones» se rechazan;
+        # con una Alerta, «Apto» se guarda con aviso.
+        if _chk_es_resultado(tar):
+            _rech, _aviso = _chk_resultado_rechazo(v, _chk_hermanas(vid, tar))
+            if _rech:
+                return jsonify({"ok": False, "error_codigo": "RESULTADO_CON_FALLA", "error": _rech}), 409
+            if _aviso:
+                error = _aviso
+            elif (int(tar.get("foto_si_hallazgo") or 0)
+                  and _chk_txt_norm(v) not in (_CHK_RES_APTO, _CHK_RES_NO_LLEGO)):
+                error = f"«{v}»: sube la foto del daño en esta tarea."
     elif tipo == "fecha_hora":
         v = str(valor or "").strip()[:30]
         valor_norm = {"fecha": v or None}
@@ -123289,6 +123435,8 @@ def mant_visita_checklist_get(vid):
         "       t.unidad, t.rango_min, t.rango_max, t.opciones_lista_json, "
         "       t.completada, t.completada_at, t.observaciones, t.valor_json, "
         "       t.version, t.locked_by_user_id, t.locked_at, "
+        # 📸 2026-10-18: la ficha pide la foto del hallazgo (otdChkEvaluar). Sin la columna, 0.
+        "       " + ("t.foto_si_hallazgo" if _fsh_ok() else "0 AS foto_si_hallazgo") + ", "
         "       COALESCE(p.nombre, 'Tareas manuales') AS plantilla_nombre "
         "  FROM mant_visita_tareas t "
         "  LEFT JOIN mant_tarea_plantillas p ON p.id = t.plantilla_id "
@@ -125736,15 +125884,19 @@ def mant_ot_puede_firmar(vid):
             " ORDER BY nombre",
             (vid, *excluir_maquinas) if excluir_maquinas else (vid,)
         ) or []
-        if faltan_rows:
+        # 🧾 2026-10-18 — misma fuente única que la firma (_ot_chk_revision_pendientes).
+        _rev = _ot_chk_revision_pendientes(vid, excluir_maquinas)
+        if faltan_rows or _rev["faltantes"]:
+            _p0 = _rev["pendientes"][0] if _rev["pendientes"] else {}
             return jsonify({
                 "ok": True, "puede_firmar": False,
                 "error_codigo": "TAREAS_PENDIENTES",
                 "titulo": "Quedan tareas obligatorias",
                 "detalle": "Complétalas o justifica el equipo para poder firmar.",
                 "faltantes": [f"{r['nombre']}: {int(r['n'])} tarea(s) sin completar"
-                              for r in faltan_rows],
-                "primer_equipo_id": faltan_rows[0].get("maquina_id"),
+                              for r in faltan_rows] + _rev["faltantes"],
+                "primer_equipo_id": (faltan_rows[0].get("maquina_id") if faltan_rows
+                                     else (_p0.get("maquina_id") or _p0.get("item_manual_id"))),
             })
 
         _razones = _ot_validar_diagnostico_y_fotos(vid, excluir_maquinas)
@@ -146553,14 +146705,15 @@ def _ot_aplicar_plantilla_a_equipos(visita_id, tarea_tipo, plantilla_id, mq_ids)
                     if m_row and m_row.get("serie"):
                         sufijo += f" (S/N: {m_row['serie']})"
                     titulo_full = f"{it['titulo']} — {sufijo}"[:300]
+                    _c, _p, _v = _fsh_ins(_fsh_ok(), it)   # 📸 2026-10-18
                     cur2.execute(
                         "INSERT INTO mant_visita_tareas "
                         "(visita_id, orden, titulo, descripcion, tipo, "
                         " maquina_id, plantilla_id, tipo_respuesta, target_field, "
                         " obligatoria, requiere_foto, unidad, rango_min, rango_max, "
-                        " opciones_lista_json, estado_trabajo, created_by) "
+                        " opciones_lista_json, estado_trabajo, created_by" + _c + ") "
                         "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-                        "        %s,%s,%s,%s,%s,'pendiente',%s)",
+                        "        %s,%s,%s,%s,%s,'pendiente',%s" + _p + ")",
                         (visita_id, next_orden, titulo_full,
                          it.get("descripcion"), tarea_tipo, mq_id, plantilla_id,
                          it.get("tipo_respuesta") or "check",
@@ -146571,7 +146724,7 @@ def _ot_aplicar_plantilla_a_equipos(visita_id, tarea_tipo, plantilla_id, mq_ids)
                          it.get("obligatoria") or 0,
                          it.get("requiere_foto") or 0,
                          it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
-                         it.get("opciones_lista_json"), current_username())
+                         it.get("opciones_lista_json"), current_username()) + _v
                     )
                     n_added += 1
         conn2.commit()
@@ -146608,20 +146761,21 @@ def _ot_aplicar_plantilla_a_equipo_sin_ficha(visita_id, tarea_tipo, plantilla_id
             for it in items_plant:
                 next_orden += 1
                 titulo_full = f"{it['titulo']} — {sufijo}"[:300]
+                _c, _p, _v = _fsh_ins(_fsh_ok(), it)   # 📸 2026-10-18
                 cur3.execute(
                     "INSERT INTO mant_visita_tareas "
                     "(visita_id, orden, titulo, descripcion, tipo, "
                     " maquina_id, plantilla_id, tipo_respuesta, target_field, "
                     " obligatoria, requiere_foto, unidad, rango_min, rango_max, "
-                    " opciones_lista_json, estado_trabajo, created_by) "
+                    " opciones_lista_json, estado_trabajo, created_by" + _c + ") "
                     "VALUES (%s,%s,%s,%s,%s,NULL,%s,%s,%s,%s,"
-                    "        %s,%s,%s,%s,%s,'pendiente',%s)",
+                    "        %s,%s,%s,%s,%s,'pendiente',%s" + _p + ")",
                     (visita_id, next_orden, titulo_full,
                      it.get("descripcion"), tarea_tipo, plantilla_id,
                      it.get("tipo_respuesta") or "check", it.get("target_field"),
                      it.get("obligatoria") or 0, it.get("requiere_foto") or 0,
                      it.get("unidad"), it.get("rango_min"), it.get("rango_max"),
-                     it.get("opciones_lista_json"), current_username())
+                     it.get("opciones_lista_json"), current_username()) + _v
                 )
                 n_added += 1
         conn3.commit()
@@ -153082,9 +153236,12 @@ def _ensure_plantillas_estandar_seed():
 # obligatoria (cada ítem de foto admite varias fotos) y el N° de serie va con su ítem inteligente (`serie`: ficha,
 # a mano o «No aplica» en discos y mancuernas). Todo ítem se puede marcar «Esta tarea no aplica» con motivo.
 # Ítem: (orden, titulo, descripcion, tipo_respuesta, obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones)
-_CHK_RESULTADO_OPCIONES = ('["Apto", "Apto con observaciones", "No apto - requiere reparaci\\u00f3n", '
-                           '"No apto - dar de baja", "Pendiente de diagn\\u00f3stico"]')
-_CHK_BLOQUES_SEED = [
+# ✂️ 2026-10-18: esta es la versión LARGA que quedó sembrada en producción. Ya NO se siembra: se conserva tal cual como
+# «anterior» para que _ensure_bloques_revision_esencial reconozca un bloque que nadie editó y lo lleve a la versión
+# esencial (_CHK_BLOQUES_SEED, más abajo). No editar: cambiarla haría que la migración deje de reconocer los bloques.
+_CHK_RESULTADO_OPCIONES_ANTERIOR = ('["Apto", "Apto con observaciones", "No apto - requiere reparaci\\u00f3n", '
+                                    '"No apto - dar de baja", "Pendiente de diagn\\u00f3stico"]')
+_CHK_BLOQUES_SEED_ANTERIOR = [
     ("Revisión — Registro por equipo",
      "BASE de la revisión: va en TODO equipo. Fotos, N° de serie, estado visual, faltantes, resultado y observación.",
      [
@@ -153094,7 +153251,7 @@ _CHK_BLOQUES_SEED = [
          (4, "N° de serie", "Léelo de la placa del equipo. En discos, mancuernas y accesorios sin placa: «No aplica».", "serie", 1, 0, None, None, None, None),
          (5, "Estado general visual", "Aprobado: sin golpes, óxido, tapiz roto ni piezas sueltas. Alerta: detalle menor (rayón, mancha, perno flojo, corte en el tapiz) y se abre «Estructura y tapiz». Falla: daño que impide usarlo o es un riesgo (fisura, deformación, pieza rota).", "verificacion", 1, 0, None, None, None, None),
          (6, "¿Faltan piezas o accesorios?", "Compara con lo que salió al evento y con la ficha del modelo. Si falta algo, detállalo en la observación: queda como responsabilidad declarada.", "sino", 1, 0, None, None, None, None),
-         (7, "Resultado del control", "Define si el equipo se libera, se repara o se retiene.", "lista", 1, 0, None, None, None, _CHK_RESULTADO_OPCIONES),
+         (7, "Resultado del control", "Define si el equipo se libera, se repara o se retiene.", "lista", 1, 0, None, None, None, _CHK_RESULTADO_OPCIONES_ANTERIOR),
          (8, "Observación del equipo", "Por cada Alerta o Falla: qué es y dónde. Si no hay novedad, escribe «sin novedad».", "texto", 1, 0, None, None, None, None),
      ]),
     ("Revisión — Estructura y tapiz",
@@ -153206,6 +153363,133 @@ _CHK_BLOQUES_SEED = [
      ]),
 ]
 
+
+# ══════════════════════════════════════════════════════════════════════
+# ✂️ 2026-10-18 — VERSIÓN ESENCIAL de los 10 bloques «Revisión — …» (Etapa 2).
+# Daniel probó en terreno: «encuentro que hay bastantes tareas… es foto por foto por foto… ideal que con que tome
+# una foto yo tengo y las otras las vas alimentando del lado… muy largo. Dejémoslo esencial. Pero que si conseguimos
+# una falla, sea porque el técnico no la quiso identificar». Propuesta del técnico senior (agente
+# ilus-plantillas-senior, outputs/propuesta_esencial_revision_completa.md), con las decisiones por defecto de
+# outputs/propuesta_esencial_revision.md:
+#   · 1 sola foto obligatoria por equipo (la general). Las fotos de detalle se piden SOLO si el técnico marca
+#     Alerta o Falla (columna foto_si_hallazgo); en el Resultado, con cualquier opción distinta de Apto y No llegó.
+#   · «Estado visual» y «Resultado» se fusionan: el resultado se decide al final de la tarjeta.
+#   · Con un ítem en Falla no vale «Apto» ni «Apto con observaciones» (el servidor lo rechaza); con una Alerta, la
+#     ficha avisa al elegir «Apto» (no bloquea).
+#   · Observación del equipo: obligatoria SIEMPRE («sin novedad» si todo está bien). Con «No llegó» es el argumento
+#     y es lo único que se exige de ese producto.
+# Los repuestos sugeridos de cada bloque van en su descripción (no hay campo propio todavía).
+# Ítem: (orden, titulo, descripcion, tipo_respuesta, obligatoria, requiere_foto, unidad, rango_min, rango_max,
+#        opciones, foto_si_hallazgo)
+# ══════════════════════════════════════════════════════════════════════
+_CHK_RESULTADO_OPCIONES = ('["Apto", "Apto con observaciones", "Reparar", "Dar de baja", "Fuera de servicio", '
+                           '"No lleg\\u00f3", "Pendiente de diagn\\u00f3stico"]')
+_CHK_BLOQUES_SEED = [
+    ("Revisión — Registro por equipo",
+     "BASE de la revisión: va en TODO equipo. Una sola foto obligatoria (la general), N° de serie, faltantes, "
+     "resultado y observación. Las fotos de detalle se piden solo si marcas Alerta o Falla.",
+     [
+         (1, "Foto general del equipo", "Plano completo, equipo entero. En discos o mancuernas, todo el lote a la vista. Puedes subir varias. Es la única foto obligatoria: con ella das fe del estado visual. Si el resultado es «No llegó», no se pide.", "foto", 1, 1, None, None, None, None, 0),
+         (2, "N° de serie", "Léelo de la placa del equipo. En discos, mancuernas y accesorios sin placa: «No aplica».", "serie", 1, 0, None, None, None, None, 0),
+         (3, "¿Faltan piezas o accesorios?", "Compara con la ficha del modelo y con lo que salió. Sí = falta algo: detállalo en la observación (queda como responsabilidad declarada tuya). No = el equipo está completo.", "sino", 1, 0, None, None, None, None, 0),
+         (4, "Resultado del control", "Decídelo al final, con el bloque del sistema ya revisado. Apto: sin golpes, óxido ni tapiz roto, y todo el bloque en Aprobado. Apto con observaciones: usable tal cual, con detalles menores (Alerta) que no afectan seguridad ni función. Reparar: la falla tiene arreglo definido (cambio de pieza o ajuste). Dar de baja: no se repara (fisura, deformación, daño total). Fuera de servicio: hay una falla que impide usarlo (riesgo) y aún no hay arreglo ni decisión. No llegó: no está en bodega (argumento obligatorio, sin foto). Pendiente de diagnóstico: no pude probarlo (sin energía, falta una pieza); explica por qué. Con un ítem en Falla no vale Apto ni Apto con observaciones; con una Alerta, «Apto» te pide confirmar. Con cualquier opción distinta de Apto y de No llegó, adjunta la foto del daño.", "lista", 1, 0, None, None, None, _CHK_RESULTADO_OPCIONES, 1),
+         (5, "Observación del equipo", "Por cada Alerta o Falla: qué es, dónde y en qué ítem. Con «No llegó»: argumento (cuándo se esperaba, a quién se preguntó). En líneas de accesorios: siempre di si vino completo o qué faltó. Si todo está bien: «sin novedad».", "texto", 1, 0, None, None, None, None, 0),
+     ]),
+    ("Revisión — Estructura y tapiz",
+     "CONDICIONAL: se abre solo si la revisión del equipo marcó algo (resultado distinto de Apto, faltan piezas, "
+     "Alerta o Falla). Sus ítems no son obligatorios. Repuestos sugeridos: kit de pernos y tuercas (1) · pintura de "
+     "retoque (2) · tapiz (vinilo) de asiento o respaldo (3) · espuma de asiento o respaldo (3) · tapa plástica de "
+     "tubo (4) · nivelador o taco de goma (4).",
+     [
+         (1, "CRÍTICO · Bastidor, soldaduras y pernos", "Aprobado: sin fisuras, deformación ni golpes, y sin pernos faltantes o sueltos. Alerta: golpe superficial o perno suelto que se aprieta en el acto. Falla: fisura, soldadura abierta, pieza doblada o perno faltante en una unión de carga.", "verificacion", 1, 0, None, None, None, None, 1),
+         (2, "Pintura, óxido y cromado", "Aprobado: sin óxido ni descascarado. Alerta: rayones o picaduras menores (ojo con la humedad del evento). Falla: óxido que ya corroe el metal.", "verificacion", 1, 0, None, None, None, None, 1),
+         (3, "Tapiz, costuras y espuma", "Aprobado: sin cortes, manchas ni costuras abiertas, y la espuma no se hunde. Alerta: mancha o corte menor. Falla: tapiz abierto, espuma hundida o anclaje del asiento suelto.", "verificacion", 1, 0, None, None, None, None, 1),
+         (4, "Niveladores, tapas y bordes", "Aprobado: niveladores o tacos de goma firmes, tapas plásticas puestas, sin bordes cortantes. Alerta: una tapa o taco gastado. Falla: falta un nivelador o hay un borde que corta.", "verificacion", 1, 0, None, None, None, None, 1),
+     ]),
+    ("Revisión — Selector de peso",
+     "Bloque de sistema: máquinas con stack de placas y pin selector (piola o correa, poleas, pivotes y bujes, pads). "
+     "Repuestos sugeridos: piola (cable de acero) o correa de transmisión (1) · polea con rodamiento (2) · buje o "
+     "rodamiento de pivote (2) · pin selector con cordel (3) · tope de goma del stack (3) · pad de asiento, respaldo "
+     "o rodillo.",
+     [
+         (1, "CRÍTICO · Piola o correa y terminales", "Recórrela entera con el stack arriba y abajo. Aprobado: cable desnudo sin hebras rotas ni óxido; con forro (Optimal) sin cortes, abultamientos ni torceduras; casquillos firmes, sin deslizarse; la piola no roza la estructura. Alerta: óxido superficial o roce leve. Falla: hebra rota, forro cortado o casquillo corrido. Con Falla, el equipo no se usa.", "verificacion", 1, 0, None, None, None, None, 1),
+         (2, "Poleas, pivotes y bujes", "Aprobado: giran libres, sin ruido, sin juego lateral ni trizaduras; las palancas no se traban. Alerta: ruido leve o juego mínimo. Falla: polea trizada, que no gira o con juego marcado.", "verificacion", 1, 0, None, None, None, None, 0),
+         (3, "Stack, barras guía y pin selector", "Aprobado: placas completas según el modelo (cuéntalas) y deslizan sin trabarse; barras guía lisas, sin óxido; pin con cordel que entra en todas las placas; topes de goma enteros. Alerta: barra con óxido o tope gastado. Falla: falta una placa o el pin, o el stack se traba.", "verificacion", 1, 0, None, None, None, None, 1),
+         (4, "Ajustes y traba", "Asiento, respaldo, manerales y rodillos: cada posición calza y TRABA con carga. Aprobado: todas las posiciones traban. Falla: una posición no traba o cede. En los Gymleco de pie, plataforma de pies firme y sin grietas.", "verificacion", 1, 0, None, None, None, None, 0),
+         (5, "Recorrido completo, en vacío y con carga media", "Pin a mitad del stack. Aprobado: sin ruido ni roce, retorno suave, sin golpe de placas. En duales, ambos lados parejos; en equipos de 2 funciones, prueba las dos.", "verificacion", 1, 0, None, None, None, None, 0),
+     ]),
+    ("Revisión — Carga de discos",
+     "Bloque de sistema: máquinas de carga de discos (plate loaded): seguros, brazos o carro, cuernos y topes. "
+     "Repuestos sugeridos: pin de seguro (liberación rápida) con cordel (1) · rodamiento o buje de pivote (2) · tope "
+     "de goma de recorrido (3) · cuerno porta discos o su tapa (3) · empuñadura (grip) (4) · lámina antideslizante "
+     "de plataforma (4).",
+     [
+         (1, "CRÍTICO · Seguros, pines y trabas", "Pines de liberación rápida, traba o palanca de fin de recorrido (hack, péndulo, prensa). Aprobado: presentes, encajan, sueltan sin forzar y sostienen con carga. Falla: falta el pin o la traba, o no sostiene.", "verificacion", 1, 0, None, None, None, None, 1),
+         (2, "Brazos, pivotes, rodamientos y carro", "Aprobado: sin juego lateral, ruido ni trabas en todo el recorrido. En la hack, el carro corre por el riel sin saltos y los rodillos están sin desgaste. Falla: se traba, tiene juego marcado o el carro salta.", "verificacion", 1, 0, None, None, None, None, 0),
+         (3, "Cuernos, topes y soportes de banda", "Aprobado: cuernos rectos, sin óxido ni golpes y firmes (no giran); topes de goma presentes (el brazo no golpea metal con metal); soportes de banda presentes si el modelo los trae. Falla: cuerno doblado o suelto, o tope faltante.", "verificacion", 1, 0, None, None, None, None, 1),
+         (4, "Ajustes y apoyos", "Respaldo, hombreras, plataforma, rodillos y grips. Aprobado: cada posición calza y traba, pines con su cordel, plataforma antideslizante sin desgaste, grips firmes. Falla: una posición no traba o un grip está suelto.", "verificacion", 1, 0, None, None, None, None, 1),
+         (5, "Recorrido con carga liviana", "Con un disco de 5 a 10 kg por cuerno (nunca más). Aprobado: recorrido completo sin roce ni golpe seco, y vuelve solo.", "verificacion", 1, 0, None, None, None, None, 0),
+     ]),
+    ("Revisión — Poleas ajustables",
+     "Bloque de sistema: dual cable y dual pulley (cables, poleas giratorias, brazos y carros de altura, dos stacks). "
+     "Repuestos sugeridos: cable de acero (piola) (1) · mosquetón (1) · agarre (manilla) o cuerda (1) · pin o palanca "
+     "de traba de altura (2) · polea giratoria con rodamiento (3) · pin selector (4).",
+     [
+         (1, "CRÍTICO · Cable, terminales, mosquetones y agarres (ambos lados)", "Recórrelo de la polea a la mano con el cable estirado. Aprobado: sin hebras rotas (con forro, sin cortes ni torceduras); terminales sin deslizamiento; mosquetones que cierran; agarres con goma firme y costuras sanas. Falla: hebra rota, mosquetón que no cierra o costura abierta.", "verificacion", 1, 0, None, None, None, None, 1),
+         (2, "CRÍTICO · Brazos y carros de altura: ajuste y traba", "Recorre todas las posiciones. Aprobado: el pin o la palanca traba en cada una y no cae al cargar. Falla: una posición no traba.", "verificacion", 1, 0, None, None, None, None, 1),
+         (3, "Poleas giratorias", "Aprobado: giro libre y rotación completa, sin trizaduras ni juego. Falla: polea trizada, dura o que no rota.", "verificacion", 1, 0, None, None, None, None, 0),
+         (4, "Stacks: placas, guías, pin selector y topes", "Placas completas en AMBOS stacks, guías lisas, pin con cordel, topes sin quiebre. Falla: placa o pin faltante, o el stack se traba.", "verificacion", 1, 0, None, None, None, None, 1),
+         (5, "Recorrido completo, ambos lados", "Con carga media. Aprobado: sin ruido ni roce; los dos lados parejos.", "verificacion", 1, 0, None, None, None, None, 0),
+     ]),
+    ("Revisión — Bancos y ajustes",
+     "Bloque de sistema: bancos planos, ajustables y olímpicos. Repuestos sugeridos: nivelador o taco de goma (1) · "
+     "protector (goma) del soporte de barra (1) · pin o perilla de ajuste (2) · rodillo apoya piernas (3) · ruedas de "
+     "transporte (3).",
+     [
+         (1, "CRÍTICO · Estabilidad y soportes de barra", "Apoya peso y empuja. Aprobado: no cojea ni se mueve, niveladores firmes y, en banco olímpico, soportes de barra firmes, con protector y sin juego. Falla: cojea, o un soporte está suelto o roto.", "verificacion", 1, 0, None, None, None, None, 1),
+         (2, "CRÍTICO · Respaldo y asiento: ajuste y traba", "Recorre cada posición. Aprobado: el pin, palanca o cremallera traba en todas y no cede con peso; pines y perillas presentes. Falla: no traba o cede.", "verificacion", 1, 0, None, None, None, None, 1),
+         (3, "Apoya piernas, ruedas y manilla (si los tiene)", "Aprobado: rodillos firmes con espuma sana; ruedas giran; manilla firme. Si el banco no los tiene, «no aplica» con motivo.", "verificacion", 0, 0, None, None, None, None, 1),
+     ]),
+    ("Revisión — Cargas libres (por línea)",
+     "Bloque de sistema: mancuernas, discos y su rack. Se revisa la LÍNEA completa y se cuentan las piezas. Repuestos "
+     "sugeridos: tuerca o tapa de cabezal de mancuerna (2) · bandeja del rack de mancuernas (3) · goma o taco de "
+     "apoyo del rack (3) · nivelador del rack (3).",
+     [
+         (1, "Cantidad contada (piezas)", "Cuenta PIEZAS: 3 pares = 6 discos; el set 2,5 a 25 kg = 10 pares = 20 mancuernas. Compárala con la cantidad del documento. Si no coincide, en la base marca «Faltan piezas = Sí» y escribe cuánto y de qué peso.", "numero", 1, 0, "piezas", None, None, None, 0),
+         (2, "Estado de las piezas", "Cromado, uretano o goma sin grietas, cortes, burbujas ni desprendimiento; disco plano, borde sin astilladuras; mancuernas con cabezas sin juego, tuercas firmes y mango que no gira; discos con el anillo central sin holgura. Falla: pieza agrietada, con cabezal suelto o anillo holgado.", "verificacion", 1, 0, None, None, None, None, 1),
+         (3, "Rack o soporte (solo si viene)", "Aprobado: soportes con goma, bandejas completas, estable y sin óxido. Si la línea no es rack, no lo marques.", "verificacion", 0, 0, None, None, None, None, 1),
+     ]),
+    ("Revisión — Trotadora (cinta y motor)",
+     "Bloque de sistema: trotadoras; se les revisa la cinta y el motor. Repuestos sugeridos: llave magnética de "
+     "emergencia (1) · cinta (banda) (3) · tabla (deck) (3) · rodillo delantero o trasero (4) · motor de tracción (4) "
+     "· tarjeta controladora (4 o 5).",
+     [
+         (1, "CRÍTICO · Parada de emergencia y llave magnética", "Con la cinta andando, saca la llave y toca la parada de emergencia. Aprobado: la cinta se detiene sin seguir rodando. Falla: sigue girando, o hay que forzar la llave.", "verificacion", 1, 0, None, None, None, None, 0),
+         (2, "CRÍTICO · Cable de poder, enchufe y olor", "Aprobado: cable sin cortes ni aplastamiento, enchufe firme y sin quemaduras, sin olor a quemado. Falla: cable dañado o enchufe quemado.", "verificacion", 1, 0, None, None, None, None, 1),
+         (3, "Cinta y tabla", "Camina encima. Aprobado: la cinta queda centrada y no se corre, no patina, sin cortes ni bordes deshilachados; la tabla sin surcos marcados ni golpeteo. Alerta: se corre un poco o desgaste leve. Falla: cinta cortada o patina.", "verificacion", 1, 0, None, None, None, None, 1),
+         (4, "Motor, rodillos y arranque", "Prueba a distintas velocidades. Aprobado: arranca suave, sin olor, sin ruido raro ni golpeteo de rodillos. Falla: tironea, huele o hace ruido metálico.", "verificacion", 1, 0, None, None, None, None, 0),
+         (5, "Consola, inclinación y pulso", "Aprobado: la consola enciende, los botones responden, la inclinación sube y baja completa (si tiene) y el pulso lee.", "verificacion", 1, 0, None, None, None, None, 1),
+     ]),
+    ("Revisión — Bicicleta (transmisión y consola)",
+     "Bloque de sistema: bicicletas y elípticas. Repuestos sugeridos: pastilla o zapata de freno (1) · pedales (par) "
+     "(2) · biela (2) · pomo o pin de ajuste de sillín/manubrio (2) · correa de transmisión (3) · consola (4).",
+     [
+         (1, "CRÍTICO · Freno de parada del volante", "En spinning: al presionar, el volante se detiene. Falla: sigue girando. Si es vertical, reclinada o elíptica y no tiene, «no aplica» con motivo.", "verificacion", 1, 0, None, None, None, None, 0),
+         (2, "Pedales, bielas, sillín y manubrio: firmeza y traba", "Muévelos con la mano. Aprobado: sin juego ni ruido, el poste y el manubrio traban en cada altura, el equipo no cojea. Falla: pedal o biela suelta, o el poste desliza.", "verificacion", 1, 0, None, None, None, None, 1),
+         (3, "Correa o transmisión y resistencia", "Pedalea y sube y baja todos los niveles. Aprobado: sin ruido ni salto, y la resistencia cambia en todos los niveles.", "verificacion", 1, 0, None, None, None, None, 0),
+         (4, "Consola y pulso", "Aprobado: enciende, las lecturas aparecen, el pulso lee.", "verificacion", 1, 0, None, None, None, None, 1),
+     ]),
+    ("Revisión — Rack y soportes",
+     "Bloque de sistema: racks y jaulas. Repuestos sugeridos: brazo de seguridad (1) · pin de seguridad (1) · kit de "
+     "pernos y tuercas (2) · taco o tapa de pata (2) · J-hook con protector (3) · porta discos (cuerno) (4).",
+     [
+         (1, "CRÍTICO · Brazos de seguridad y pines: traban en cada altura", "Prueba cada altura. Aprobado: el brazo y su pin traban y no ceden al empujar con la mano. Falla: una altura no traba, pin faltante o deformado.", "verificacion", 1, 0, None, None, None, None, 1),
+         (2, "CRÍTICO · Estructura, uniones y anclaje", "Aprobado: sin pernos faltantes ni sueltos, sin fisuras en soldaduras, no se mueve al empujarlo; placa base y agujeros de anclaje sin deformar. En bodega no hay piso fijo: el anclaje se juzga por la placa base.", "verificacion", 1, 0, None, None, None, None, 1),
+         (3, "Soportes de barra (J-hooks) con protector", "Aprobado: firmes y con su protector. Falla: protector gastado hasta el metal o soporte con juego.", "verificacion", 1, 0, None, None, None, None, 1),
+         (4, "Accesorios del rack", "Barra de dominadas y porta discos firmes. Si no tiene, «no aplica».", "verificacion", 0, 0, None, None, None, None, 1),
+     ]),
+]
+
 _CHK_BASE_CONTROL_CALIDAD = "Revisión — Registro por equipo"
 _CHK_COND_CONTROL_CALIDAD = "Revisión — Estructura y tapiz"
 _CHK_SELECTOR = "Revisión — Selector de peso"
@@ -153283,6 +153567,9 @@ def _ensure_checklist_herencia():
     except Exception as e:
         print(f"[ensure_checklist_herencia] tabla: {e}", flush=True)
         return out
+    # 📸 2026-10-18: la versión esencial siembra foto_si_hallazgo; si la columna aún no existe en esta instancia, el
+    # bloque se siembra igual sin ella (nunca queda sin checklist).
+    _fsh = _ensure_foto_si_hallazgo_cols()
     for nombre, desc, items in _CHK_BLOQUES_SEED:
         try:
             if mysql_fetchone("SELECT id FROM mant_tarea_plantillas WHERE nombre=%s LIMIT 1", (nombre,)):
@@ -153299,14 +153586,15 @@ def _ensure_checklist_herencia():
                     pid = cur.lastrowid
                     if pid:
                         for (orden, titulo, desc_it, tipo_r, oblig, req_foto,
-                             unidad, rmin, rmax, opciones_json) in items:
+                             unidad, rmin, rmax, opciones_json, fsh_it) in items:
+                            _c, _p, _v = _fsh_ins(_fsh, {"foto_si_hallazgo": fsh_it})
                             cur.execute(
                                 "INSERT INTO mant_tarea_plantilla_items "
                                 "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, "
-                                " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json) "
-                                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                                " obligatoria, requiere_foto, unidad, rango_min, rango_max, opciones_lista_json"
+                                + _c + ") VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s" + _p + ")",
                                 (pid, orden, titulo, desc_it, tipo_r, oblig, req_foto,
-                                 unidad, rmin, rmax, opciones_json))
+                                 unidad, rmin, rmax, opciones_json) + _v)
                 conn.commit()
                 if pid:
                     out["bloques"].append(nombre)
@@ -153347,6 +153635,482 @@ def _ensure_checklist_herencia():
     except Exception as e:
         print(f"[ensure_checklist_herencia] semilla de reglas: {e}", flush=True)
     return out
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 📸 2026-10-18 — «FOTO SOLO SI HAY HALLAZGO» (foto_si_hallazgo), Etapa 2 de la revisión esencial.
+# Daniel: «con que tome una foto yo tengo y las otras las vas alimentando del lado». Columna TINYINT en
+# mant_tarea_plantilla_items (se edita en /mantenciones/plantillas) y su COPIA en mant_visita_tareas (al crear la OT
+# o agregar/cambiar un checklist). Un ítem verificación con foto_si_hallazgo=1 respondido Alerta o Falla, o el
+# Resultado (lista) con foto_si_hallazgo=1 respondido con algo distinto de Apto y de No llegó, EXIGE al menos una
+# foto en esa tarea: la ficha lo pide al marcar y el servidor lo cuenta como pendiente en la firma y el cierre.
+#
+# Las columnas se aseguran SIEMPRE al arrancar (una sentencia = una cláusula, solo si faltan: REGLA #18). Si el
+# ALTER no alcanzara a correr en una instancia, _fsh_ok() devuelve False y TODO sigue como antes (las copias no
+# llevan la columna y nada la exige): una OT nunca deja de crearse por esto.
+# ══════════════════════════════════════════════════════════════════════
+_FSH_ESTADO = {"ok": False, "revisado_en": 0.0}
+
+
+def _ensure_foto_si_hallazgo_cols():
+    """Columna foto_si_hallazgo en mant_tarea_plantilla_items y en mant_visita_tareas. Barata si ya existen: una
+    consulta a information_schema y ningún DDL (REGLA #18). Devuelve True si las dos quedaron."""
+    try:
+        existentes = {
+            (r.get("TABLE_NAME"), r.get("COLUMN_NAME")) for r in (mysql_fetchall(
+                "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS "
+                " WHERE TABLE_SCHEMA=DATABASE() AND COLUMN_NAME='foto_si_hallazgo' "
+                "   AND TABLE_NAME IN ('mant_tarea_plantilla_items','mant_visita_tareas')") or [])}
+        for tabla in ("mant_tarea_plantilla_items", "mant_visita_tareas"):
+            if (tabla, "foto_si_hallazgo") in existentes:
+                continue
+            mysql_execute(
+                f"ALTER TABLE {tabla} ADD COLUMN foto_si_hallazgo TINYINT(1) NOT NULL DEFAULT 0 "
+                "COMMENT 'Foto exigida solo si el item queda en Alerta/Falla (o Resultado distinto de Apto y No "
+                "llego). 2026-10-18'")
+            existentes.add((tabla, "foto_si_hallazgo"))
+            print(f"[ensure_foto_si_hallazgo] +foto_si_hallazgo en {tabla}", flush=True)
+        ok = all((t, "foto_si_hallazgo") in existentes
+                 for t in ("mant_tarea_plantilla_items", "mant_visita_tareas"))
+    except Exception as e:
+        print(f"[ensure_foto_si_hallazgo] {e}", flush=True)
+        ok = False
+    _FSH_ESTADO["ok"] = bool(ok)
+    _FSH_ESTADO["revisado_en"] = time.time()
+    return bool(ok)
+
+
+def _fsh_ok():
+    """¿Las dos columnas foto_si_hallazgo existen? Se recuerda por proceso; si quedó en False, se vuelve a mirar a lo
+    más cada 5 minutos (una consulta barata), nunca en cada petición."""
+    if _FSH_ESTADO["ok"]:
+        return True
+    if time.time() - _FSH_ESTADO["revisado_en"] < 300:
+        return False
+    return _ensure_foto_si_hallazgo_cols()
+
+
+def _fsh_ins(fsh, it):
+    """Piezas del INSERT de una tarea copiada de plantilla: (columna, marcador, valores). Vacías si la columna aún no
+    existe en esta instancia (ver _fsh_ok)."""
+    if not fsh:
+        return "", "", ()
+    try:
+        v = 1 if int((it or {}).get("foto_si_hallazgo") or 0) else 0
+    except (TypeError, ValueError):
+        v = 0
+    return ", foto_si_hallazgo", ",%s", (v,)
+
+
+def _fsh_col(alias=""):
+    """«, foto_si_hallazgo» para el SELECT de ítems de plantilla que se copian, o vacío (ver _fsh_ok)."""
+    return f", {alias}foto_si_hallazgo" if _fsh_ok() else ""
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 🔁 MIGRACIÓN de producción a la versión esencial (2026-10-18). Los 10 bloques «Revisión — …» ya están sembrados en
+# producción con la versión LARGA (_CHK_BLOQUES_SEED_ANTERIOR). Para cada bloque, SOLO si sus ítems actuales son
+# exactamente los de la versión anterior (mismos títulos en el mismo orden: nadie los editó), se reemplazan por la
+# versión esencial en UNA transacción, con la bitácora ANTES (REGLA #5) y releyendo los ítems con FOR UPDATE dentro de
+# la transacción (si otra instancia o una persona los cambió entre medio, no se toca). Un bloque editado a mano NO se
+# toca y queda constancia en mant_logs. Las OT ya creadas conservan su copia (mant_visita_tareas). Marca persistente
+# en mant_logs: con la marca puesta, cada arranque hace UNA consulta (REGLA #18).
+# ══════════════════════════════════════════════════════════════════════
+_CHK_ESENCIAL_MARCA = "revision_esencial_aplicada"
+
+
+def _chk_titulos(items):
+    return [str(it[1] if isinstance(it, (tuple, list)) else (it.get("titulo") or "")).strip() for it in (items or [])]
+
+
+def _chk_esencial_plan(bloques_bd, items_bd, anterior=None, esencial=None):
+    """PURA (probada en tests/test_ot_revision_esencial.py). Qué hacer con cada bloque «Revisión — …» de la base.
+
+    bloques_bd: [{id, nombre, descripcion}] · items_bd: [{plantilla_id, id, orden, titulo}]
+    Devuelve [{"id", "nombre", "accion", "desc_nueva"}] con accion:
+      'migrar'  → sus títulos (en orden) son EXACTAMENTE los de la versión anterior: nadie lo editó.
+      'ya'      → ya tiene la versión esencial.
+      'editado' → alguien lo cambió a mano: no se toca.
+    desc_nueva: la descripción esencial, solo si la actual sigue siendo la del seed anterior (si no, None)."""
+    anterior = _CHK_BLOQUES_SEED_ANTERIOR if anterior is None else anterior
+    esencial = _CHK_BLOQUES_SEED if esencial is None else esencial
+    ant = {b[0]: b for b in anterior}
+    ese = {b[0]: b for b in esencial}
+    por_pid = {}
+    for it in items_bd or []:
+        try:
+            por_pid.setdefault(int(it.get("plantilla_id")), []).append(it)
+        except (TypeError, ValueError):
+            continue
+    out = []
+    for b in bloques_bd or []:
+        nombre = b.get("nombre") or ""
+        if nombre not in ant or nombre not in ese:
+            continue
+        try:
+            pid = int(b.get("id"))
+        except (TypeError, ValueError):
+            continue
+        its = sorted(por_pid.get(pid, []), key=lambda x: (int(x.get("orden") or 0), int(x.get("id") or 0)))
+        actuales = _chk_titulos(its)
+        if actuales == _chk_titulos(ant[nombre][2]):
+            accion = "migrar"
+        elif actuales == _chk_titulos(ese[nombre][2]):
+            accion = "ya"
+        else:
+            accion = "editado"
+        desc_nueva = None
+        if accion == "migrar" and (b.get("descripcion") or "").strip() == (ant[nombre][1] or "").strip():
+            desc_nueva = ese[nombre][1]
+        out.append({"id": pid, "nombre": nombre, "accion": accion, "desc_nueva": desc_nueva})
+    return out
+
+
+def _ensure_bloques_revision_esencial():
+    """Aplica _chk_esencial_plan UNA sola vez (ver el bloque de arriba). Nunca lanza."""
+    out = {"ya": False, "migrados": [], "editados": [], "sin_cambio": []}
+    try:
+        if not _fsh_ok():
+            return out   # sin la columna nueva no se migra: el próximo arranque reintenta
+        _ensure_mant_logs_entidad_varchar()
+        if mysql_fetchone(
+                "SELECT id FROM mant_logs WHERE entidad=%s AND entidad_id=%s AND accion=%s LIMIT 1",
+                ("sistema", 0, _CHK_ESENCIAL_MARCA)):
+            out["ya"] = True
+            return out
+        nombres = sorted({b[0] for b in _CHK_BLOQUES_SEED_ANTERIOR})
+        ph = ",".join(["%s"] * len(nombres))
+        bloques = mysql_fetchall(
+            f"SELECT id, nombre, descripcion FROM mant_tarea_plantillas "
+            f" WHERE nombre IN ({ph}) AND categoria_admin='trabajo_interno'", tuple(nombres)) or []
+        ids = sorted({int(b["id"]) for b in bloques})
+        items = []
+        if ids:
+            ph_i = ",".join(["%s"] * len(ids))
+            items = mysql_fetchall(
+                f"SELECT plantilla_id, id, orden, titulo FROM mant_tarea_plantilla_items "
+                f" WHERE plantilla_id IN ({ph_i})", tuple(ids)) or []
+        ese = {b[0]: b for b in _CHK_BLOQUES_SEED}
+        ant = {b[0]: b for b in _CHK_BLOQUES_SEED_ANTERIOR}
+        fallas = 0
+        for p in _chk_esencial_plan(bloques, items):
+            if p["accion"] == "ya":
+                out["sin_cambio"].append(p["nombre"])
+                continue
+            if p["accion"] == "editado":
+                out["editados"].append(p["nombre"])
+                _mant_log("plantilla", p["id"], "revision_esencial_omitida",
+                          f"«{p['nombre']}» no se llevó a la versión esencial: sus ítems ya no son los de la versión "
+                          "sembrada el 18-10-2026 (alguien los editó a mano). Se conserva tal cual (REGLA #4.2).")
+                continue
+            conn = get_mysql()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT titulo FROM mant_tarea_plantilla_items WHERE plantilla_id=%s "
+                        " ORDER BY orden, id FOR UPDATE", (p["id"],))
+                    if _chk_titulos(cur.fetchall() or []) != _chk_titulos(ant[p["nombre"]][2]):
+                        conn.rollback()   # cambió entre medio (otra instancia u otra persona): no se toca
+                        continue
+                    nuevos = ese[p["nombre"]][2]
+                    cur.execute(
+                        "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) "
+                        "VALUES (%s,%s,%s,%s,%s)",
+                        ("plantilla", p["id"], "revision_esencial",
+                         (f"«{p['nombre']}» pasa a la versión ESENCIAL ({len(_chk_titulos(ant[p['nombre']][2]))} → "
+                          f"{len(nuevos)} ítems; 1 sola foto obligatoria por equipo y foto de detalle solo si hay "
+                          "hallazgo). Daniel 18-10-2026: «muy largo… dejémoslo esencial». Ítems anteriores: "
+                          + " | ".join(_chk_titulos(ant[p["nombre"]][2])))[:4000],
+                         "sistema"))
+                    cur.execute("DELETE FROM mant_tarea_plantilla_items WHERE plantilla_id=%s", (p["id"],))
+                    for (orden, titulo, desc_it, tipo_r, oblig, req_foto,
+                         unidad, rmin, rmax, opciones_json, fsh) in nuevos:
+                        cur.execute(
+                            "INSERT INTO mant_tarea_plantilla_items "
+                            "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, obligatoria, requiere_foto, "
+                            " unidad, rango_min, rango_max, opciones_lista_json, foto_si_hallazgo) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                            (p["id"], orden, titulo, desc_it, tipo_r, oblig, req_foto,
+                             unidad, rmin, rmax, opciones_json, fsh))
+                    if p.get("desc_nueva"):
+                        cur.execute("UPDATE mant_tarea_plantillas SET descripcion=%s WHERE id=%s",
+                                    (p["desc_nueva"], p["id"]))
+                conn.commit()
+                out["migrados"].append(p["nombre"])
+            except Exception as e_b:
+                fallas += 1
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                print(f"[ensure_revision_esencial] '{p['nombre']}': {e_b}", flush=True)
+            finally:
+                conn.close()
+        if fallas:
+            return out   # sin marca: el próximo arranque reintenta (lo ya migrado queda como 'ya')
+        mysql_execute(
+            "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) VALUES (%s,%s,%s,%s,%s)",
+            ("sistema", 0, _CHK_ESENCIAL_MARCA,
+             (f"Revisión esencial: {len(out['migrados'])} bloque(s) migrados"
+              + (f" ({', '.join(out['migrados'])})" if out["migrados"] else "")
+              + (f"; editados a mano y conservados: {', '.join(out['editados'])}" if out["editados"] else "")
+              + ".")[:4000],
+             "sistema"))
+    except Exception as e:
+        print(f"[ensure_revision_esencial] {e}", flush=True)
+    return out
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 🧾 2026-10-18 — EXIGENCIAS DE LA REVISIÓN (una sola fuente de verdad para firma, cierre, ficha y cabecera).
+# Daniel: «que si conseguimos una falla, sea porque el técnico no la quiso identificar» y «arriba debe tener las
+# opciones para dar de baja, para poner fuera de servicio, para decir que el producto no está».
+#   · «No llegó» (Resultado de un producto de trabajo interno): las tareas obligatorias de ESE producto dejan de
+#     bloquear, salvo la Observación del equipo (el argumento). Cambiar el resultado vuelve a exigir todo.
+#   · Foto si hay hallazgo (ver foto_si_hallazgo arriba): pendiente hasta que la tarea tenga al menos una foto.
+#   · Regla dura: un Resultado «Apto» o «Apto con observaciones» con un ítem en Falla en el MISMO equipo queda
+#     pendiente («incoherente») hasta que se cambie (el servidor además rechaza guardarlo así).
+# _chk_revision_evaluar es PURA y tiene su espejo en templates/ot2/detalle.html (otdChkEvaluar): si cambias una,
+# cambia la otra y sus pruebas (tests/test_ot_revision_esencial.py las compara con los mismos casos).
+# ══════════════════════════════════════════════════════════════════════
+_CHK_RES_APTO = "apto"
+_CHK_RES_APTO_OBS = "apto con observaciones"
+_CHK_RES_NO_LLEGO = "no llego"
+
+
+def _chk_txt_norm(s):
+    """minúsculas, sin tildes y con espacios simples («No llegó» → «no llego»)."""
+    s = unicodedata.normalize("NFD", str(s or ""))
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    return " ".join(s.lower().split())
+
+
+def _chk_opciones(t):
+    raw = (t or {}).get("opciones_lista_json")
+    if isinstance(raw, list):
+        ops = raw
+    else:
+        try:
+            ops = json.loads(raw) if raw else []
+        except Exception:
+            ops = []
+    return [_chk_txt_norm(o) for o in ops if isinstance(o, str)] if isinstance(ops, list) else []
+
+
+def _chk_es_resultado(t):
+    """El «Resultado del control» de la revisión: una lista que ofrece «Apto» y «Apto con observaciones» (sirve para
+    la versión esencial, la larga y la de la NVI 552)."""
+    if ((t or {}).get("tipo_respuesta") or "").strip().lower() != "lista":
+        return False
+    ops = _chk_opciones(t)
+    return _CHK_RES_APTO in ops and _CHK_RES_APTO_OBS in ops
+
+
+def _chk_opcion(t):
+    vj = _tarea_vj(t)
+    if vj.get("na"):
+        return ""
+    return _chk_txt_norm(vj.get("opcion"))
+
+
+def _chk_valor_verif(t):
+    vj = _tarea_vj(t)
+    if vj.get("na") or ((t or {}).get("tipo_respuesta") or "").strip().lower() != "verificacion":
+        return ""
+    return str(vj.get("valor") or "").strip().lower()
+
+
+def _chk_grupo_clave(t):
+    if t.get("maquina_id"):
+        return ("m", int(t["maquina_id"]))
+    if t.get("item_manual_id"):
+        return ("i", int(t["item_manual_id"]))
+    return ("x", 0)
+
+
+def _chk_revision_evaluar(tareas):
+    """PURA. Exigencias de cada tarea de una OT.
+
+    tareas: dicts con id, maquina_id, item_manual_id, tipo_respuesta, titulo, obligatoria, completada,
+            foto_si_hallazgo, opciones_lista_json, valor_json (dict o str) y n_fotos (o fotos: lista).
+    Devuelve {"no_llego": {item_manual_id, ...},
+              "por_tarea": {id: {"exigible": bool, "hecha": bool, "motivo": None|'obligatoria'|'foto_hallazgo'|
+                                 'incoherente'|'argumento', "dispensada": bool}}}
+    exigible = cuenta para firmar y cerrar; hecha = ya no falta nada. Una tarea exigible y no hecha es un pendiente."""
+    grupos = {}
+    for t in tareas or []:
+        grupos.setdefault(_chk_grupo_clave(t), []).append(t)
+    no_llego, por_tarea = set(), {}
+    for clave, ts in grupos.items():
+        opciones = {t.get("id"): _chk_opcion(t) for t in ts
+                    if (t.get("tipo_respuesta") or "").strip().lower() == "lista"}
+        es_no_llego = clave[0] == "i" and any(op == _CHK_RES_NO_LLEGO for op in opciones.values())
+        if es_no_llego:
+            no_llego.add(clave[1])
+        hay_falla = any(_chk_valor_verif(t) == "falla" for t in ts)
+        textos = [t for t in ts if (t.get("tipo_respuesta") or "").strip().lower() == "texto"]
+        argumento = {t.get("id") for t in textos if t.get("obligatoria")}
+        if not argumento:
+            obs = [t for t in textos if _chk_txt_norm(t.get("titulo")).startswith("observacion")]
+            argumento = {obs[0].get("id")} if obs else set()
+        for t in ts:
+            tid = t.get("id")
+            tr = (t.get("tipo_respuesta") or "").strip().lower()
+            exig = bool(t.get("obligatoria"))
+            hecha = bool(t.get("completada"))
+            motivo, disp = None, False
+            if es_no_llego:
+                if tid in argumento:
+                    exig, motivo = True, ("argumento" if not hecha else None)
+                elif tr == "lista" and opciones.get(tid) == _CHK_RES_NO_LLEGO:
+                    pass   # el propio «No llegó»: queda como está
+                elif exig:
+                    exig, disp = False, True
+            else:
+                vj = _tarea_vj(t)
+                n_fotos = t.get("n_fotos")
+                if n_fotos is None:
+                    n_fotos = len(t.get("fotos") or [])
+                try:
+                    fsh = int(t.get("foto_si_hallazgo") or 0)
+                except (TypeError, ValueError):
+                    fsh = 0
+                if fsh and not vj.get("na") and not int(n_fotos or 0):
+                    hallazgo = (tr == "verificacion" and _chk_valor_verif(t) in ("alerta", "falla")) or (
+                        tr == "lista" and opciones.get(tid) not in ("", _CHK_RES_APTO, _CHK_RES_NO_LLEGO))
+                    if hallazgo:
+                        exig, hecha, motivo = True, False, "foto_hallazgo"
+                if (hay_falla and _chk_es_resultado(t)
+                        and opciones.get(tid) in (_CHK_RES_APTO, _CHK_RES_APTO_OBS)):
+                    exig, hecha, motivo = True, False, "incoherente"
+            if exig and not hecha and motivo is None:
+                motivo = "obligatoria"
+            por_tarea[tid] = {"exigible": exig, "hecha": bool(hecha) if exig else bool(t.get("completada")),
+                              "motivo": motivo if exig and not hecha else None, "dispensada": disp}
+    return {"no_llego": no_llego, "por_tarea": por_tarea}
+
+
+def _chk_resultado_rechazo(opcion, hermanas):
+    """PURA. Regla dura al GUARDAR el Resultado: con un ítem en Falla del mismo equipo, «Apto» y «Apto con
+    observaciones» se rechazan (devuelve el mensaje); con una Alerta, «Apto» solo avisa (devuelve (None, aviso))."""
+    op = _chk_txt_norm(opcion)
+    if op not in (_CHK_RES_APTO, _CHK_RES_APTO_OBS):
+        return None, None
+    fallas = [h.get("titulo") or "" for h in (hermanas or []) if _chk_valor_verif(h) == "falla"]
+    if fallas:
+        return (f"Con un ítem en Falla no vale «{opcion}»: {fallas[0]}"
+                + (f" y {len(fallas) - 1} más" if len(fallas) > 1 else "")
+                + ". Elige Reparar, Dar de baja, Fuera de servicio o Pendiente de diagnóstico."), None
+    if op == _CHK_RES_APTO and any(_chk_valor_verif(h) == "alerta" for h in (hermanas or [])):
+        return None, "Ojo: este equipo tiene un ítem en Alerta. Si sigue usable con ese detalle, va «Apto con observaciones»."
+    return None, None
+
+
+_CHK_MOTIVO_TXT = {
+    "obligatoria": "tarea(s) obligatoria(s) sin completar",
+    "foto_hallazgo": "foto(s) del hallazgo sin subir",
+    "incoherente": "resultado «Apto» con un ítem en Falla",
+    "argumento": "falta el argumento de «No llegó» en la observación",
+}
+
+
+def _ot_chk_revision_pendientes(vid, excluir_maquinas=None):
+    """ÚNICA función que usan los candados de firma y cierre, la ficha y la cabecera para lo nuevo de la revisión
+    (ver _chk_revision_evaluar). Considera las tareas de PRODUCTOS de trabajo interno (maquina_id NULL con
+    item_manual_id: sus tarjetas se dibujan, ver ot2_detalle) y, de los equipos con ficha, solo lo que agrega la
+    revisión (foto del hallazgo e incoherencia: sus obligatorias ya las cuentan los candados de siempre). Respeta los
+    equipos excluidos del cierre (saltado/falla_detectada) y los de baja, igual que _ot_tarea_no_trabajable_sql.
+
+    Devuelve {"no_llego": set, "por_tarea": {...}, "pendientes": [...], "internas_obl": n, "internas_obl_ok": n,
+              "kpi_delta": {"obl": n, "obl_ok": n}, "faltantes": [texto por producto]}.
+    FAIL-OPEN (mismo criterio que R3): si la consulta falla, no inventa pendientes."""
+    vacio = {"no_llego": set(), "por_tarea": {}, "pendientes": [], "internas_obl": 0, "internas_obl_ok": 0,
+             "kpi_delta": {"obl": 0, "obl_ok": 0}, "faltantes": []}
+    try:
+        excl = {int(m) for m in (excluir_maquinas if excluir_maquinas is not None
+                                 else _ot_maquinas_excluidas_cierre(vid))}
+        fsh_sel = "t.foto_si_hallazgo" if _fsh_ok() else "0 AS foto_si_hallazgo"
+        filas = mysql_fetchall(
+            "SELECT t.id, t.maquina_id, t.item_manual_id, t.plantilla_id, t.titulo, t.tipo_respuesta, "
+            "       t.obligatoria, t.completada, t.opciones_lista_json, t.valor_json, " + fsh_sel + ", "
+            "       (SELECT COUNT(*) FROM mant_visita_fotos f WHERE f.tarea_id = t.id) AS n_fotos, "
+            "       m.nombre AS maquina_nombre "
+            "  FROM mant_visita_tareas t "
+            "  LEFT JOIN mant_maquinas m ON m.id = t.maquina_id "
+            " WHERE t.visita_id=%s "
+            "   AND ((t.maquina_id IS NULL AND t.item_manual_id IS NOT NULL) "
+            "        OR (t.maquina_id IS NOT NULL AND m.id IS NOT NULL AND COALESCE(m.estado,'activo') <> 'baja'))",
+            (vid,)) or []
+    except Exception as e:
+        print(f"[chk_revision_pendientes] vid={vid}: {e}", flush=True)
+        return vacio
+    filas = [dict(f) for f in filas if not (f.get("maquina_id") and int(f["maquina_id"]) in excl)]
+    ev = _chk_revision_evaluar(filas)
+    out = dict(vacio, no_llego=ev["no_llego"], por_tarea=ev["por_tarea"], pendientes=[], faltantes=[])
+    nombres = {}
+    for f in filas:
+        if not f.get("maquina_id") and not f.get("plantilla_id"):
+            nombres.setdefault(("i", int(f["item_manual_id"])), f.get("titulo"))
+    por_producto = {}
+    obl = obl_ok = d_obl = d_ok = 0
+    for f in filas:
+        e = ev["por_tarea"].get(f.get("id")) or {}
+        interna = not f.get("maquina_id")
+        if interna:
+            if e.get("exigible"):
+                obl += 1
+                if e.get("hecha"):
+                    obl_ok += 1
+        elif e.get("motivo") in ("foto_hallazgo", "incoherente"):
+            # equipo con ficha: la obligatoria ya la cuentan los candados de siempre; aquí solo el ajuste.
+            if f.get("obligatoria"):
+                if f.get("completada"):
+                    d_ok -= 1
+            else:
+                d_obl += 1
+        if not (e.get("exigible") and not e.get("hecha")):
+            continue
+        if not interna and e.get("motivo") not in ("foto_hallazgo", "incoherente"):
+            continue
+        clave = _chk_grupo_clave(f)
+        nombre = (f.get("maquina_nombre") or f"Equipo #{f.get('maquina_id')}") if not interna else (
+            nombres.get(clave) or f"Producto #{clave[1]}")
+        out["pendientes"].append({"tarea_id": f.get("id"), "titulo": f.get("titulo"), "producto": nombre,
+                                  "maquina_id": f.get("maquina_id"), "item_manual_id": f.get("item_manual_id"),
+                                  "motivo": e.get("motivo")})
+        por_producto.setdefault(nombre, {}).setdefault(e.get("motivo"), 0)
+        por_producto[nombre][e.get("motivo")] += 1
+    out["internas_obl"], out["internas_obl_ok"] = obl, obl_ok
+    out["kpi_delta"] = {"obl": obl + d_obl, "obl_ok": obl_ok + d_ok}
+    out["faltantes"] = [
+        f"{nombre}: " + " · ".join(f"{n} {_CHK_MOTIVO_TXT.get(m, m)}" if m != "argumento" else _CHK_MOTIVO_TXT[m]
+                                   for m, n in sorted(motivos.items()))
+        for nombre, motivos in por_producto.items()]
+    return out
+
+
+def _chk_hermanas(vid, tar):
+    """Las OTRAS tareas del mismo equipo (maquina_id) o del mismo producto de trabajo interno (item_manual_id) que
+    `tar`. Para la regla dura del Resultado. [] si falla (nunca traba una respuesta por un problema de consulta)."""
+    try:
+        if tar.get("maquina_id"):
+            return mysql_fetchall(
+                "SELECT id, titulo, tipo_respuesta, valor_json, opciones_lista_json FROM mant_visita_tareas "
+                " WHERE visita_id=%s AND maquina_id=%s AND id<>%s", (vid, tar["maquina_id"], tar["id"])) or []
+        if tar.get("item_manual_id"):
+            return mysql_fetchall(
+                "SELECT id, titulo, tipo_respuesta, valor_json, opciones_lista_json FROM mant_visita_tareas "
+                " WHERE visita_id=%s AND maquina_id IS NULL AND item_manual_id=%s AND id<>%s",
+                (vid, tar["item_manual_id"], tar["id"])) or []
+    except Exception as e:
+        print(f"[chk_hermanas] vid={vid} tid={tar.get('id')}: {e}", flush=True)
+    return []
+
+
+def _ot_items_manuales_no_llego(vid):
+    """Productos de trabajo interno (item_manual_id) cuyo Resultado es «No llegó». Fuente única: la misma
+    evaluación que usan los candados (_ot_chk_revision_pendientes)."""
+    return set(_ot_chk_revision_pendientes(vid).get("no_llego") or set())
 
 
 def _chk_herencia_armar(skus, clases, reglas):
@@ -153575,6 +154339,209 @@ def ot2_api_checklist_heredado_producto():
             "DELETE FROM mant_checklist_herencia "
             " WHERE ambito='producto' AND clave=%s AND tipo_ot=%s AND rol='sistema'", (sku, tipo))
     return jsonify(dict(_chk_herencia_resolver([sku], tipo), ok=True))
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 🧾 2026-10-18 — PRODUCTOS INCLUIDOS SIN SALDO EN SU DOCUMENTO
+# Daniel: «que quede persistente en los datos de la orden de trabajo, pero que no lo evidencie a los clientes ni a
+# los técnicos… quién lo hizo, cuándo, por qué y el argumento». El buscador del ERP (_tka_modal.html, modo
+# 'seleccionar') ya pedía el motivo al incluir una línea sin saldo (marcada_sin_saldo + motivo_sin_saldo), pero el
+# asistente de crear OT lo descartaba. Ahora viaja en `sin_saldo` y _ot2_crear_core lo guarda en la MISMA
+# transacción de la OT. Solo equipo interno: la ficha lo recibe solo si el usuario no es técnico (REGLA #26) y la
+# bitácora usa una acción fuera de la lista blanca de técnicos (_ot_actividad_para_tecnico). Nunca va al cliente.
+# ══════════════════════════════════════════════════════════════════════
+_OT_SIN_SALDO_MAX = 100
+_OT_SIN_SALDO_ARG_MAX = 500
+
+
+def _ensure_ot_sin_saldo():
+    """Tabla mant_ot_sin_saldo. Barata cuando ya está aplicada (REGLA #18): un solo CREATE TABLE IF NOT EXISTS
+    que la guarda de mysql_execute salta sin pedir lock si la tabla ya existe."""
+    try:
+        mysql_execute(
+            "CREATE TABLE IF NOT EXISTS mant_ot_sin_saldo ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  visita_id INT NOT NULL,"
+            "  sku VARCHAR(60) NOT NULL,"
+            "  descripcion VARCHAR(300) NULL,"
+            "  doc_tido VARCHAR(10) NULL,"
+            "  doc_nudo VARCHAR(30) NULL,"
+            "  cantidad DECIMAL(12,2) NULL,"
+            "  saldo_doc DECIMAL(12,2) NULL,"
+            "  causa VARCHAR(300) NULL,"
+            "  argumento TEXT NULL,"
+            "  declarado_por VARCHAR(190) NULL,"
+            "  declarado_en DATETIME DEFAULT CURRENT_TIMESTAMP,"
+            "  KEY ix_ot_sin_saldo_visita (visita_id)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+        return True
+    except Exception as e:
+        print(f"[ensure_ot_sin_saldo] {e}", flush=True)
+        return False
+
+
+def _ot_sin_saldo_num(v, defecto=None):
+    try:
+        n = float(str(v).replace(",", "."))
+    except (TypeError, ValueError):
+        return defecto
+    if n != n or n < 0 or n > 1e9:   # NaN, negativos o absurdos: no es un dato
+        return defecto
+    return round(n, 2)
+
+
+def _ot_sin_saldo_normalizar(items, skus_ot):
+    """PURA (sin BD, probada en tests/test_ot_revision_v3.py). Lo que mandó el asistente en `sin_saldo`, listo para
+    guardar: solo productos que QUEDAN en la OT (`skus_ot`: filas incluidas + SKU de las máquinas de la OT), sin
+    repetir (SKU + documento), a lo más _OT_SIN_SALDO_MAX filas y el argumento hasta _OT_SIN_SALDO_ARG_MAX
+    caracteres. La CAUSA la escribe el servidor (no se confía en el navegador): el ERP ya rebajó esa línea."""
+    skus = {str(s or "").strip().upper() for s in (skus_ot or []) if str(s or "").strip()}
+    out, vistos = [], set()
+    if not isinstance(items, list) or not skus:
+        return out
+    for it in items[:_OT_SIN_SALDO_MAX]:
+        if not isinstance(it, dict):
+            continue
+        sku = str(it.get("sku") or "").strip()[:60]
+        if not sku or sku.upper() not in skus:
+            continue
+        tido = str(it.get("tido") or it.get("doc_tido") or "").strip().upper()[:10] or None
+        nudo = str(it.get("nudo") or it.get("doc_nudo") or "").strip()[:30] or None
+        clave = (sku.upper(), tido or "", (nudo or "").lstrip("0"))
+        if clave in vistos:
+            continue
+        vistos.add(clave)
+        saldo = _ot_sin_saldo_num(it.get("saldo"), 0.0)
+        doc_txt = f"{tido} {nudo}" if (tido and nudo) else "su documento"
+        _saldo_txt = str(int(saldo)) if float(saldo).is_integer() else str(saldo)
+        out.append({
+            "sku": sku,
+            "descripcion": (str(it.get("nombre") or it.get("descripcion") or "").strip()[:300] or None),
+            "doc_tido": tido, "doc_nudo": nudo,
+            "cantidad": _ot_sin_saldo_num(it.get("cantidad", it.get("qty"))),
+            "saldo_doc": saldo,
+            "causa": (f"Saldo {_saldo_txt} en {doc_txt}: el ERP ya rebajó esta línea "
+                      "(tiene guía o entrega registrada).")[:300],
+            "argumento": str(it.get("motivo") or it.get("motivo_sin_saldo") or it.get("argumento") or "")
+                         .strip()[:_OT_SIN_SALDO_ARG_MAX],
+        })
+    return out
+
+
+def _ot_sin_saldo_de(vid):
+    """Productos incluidos sin saldo de UNA OT, para la ficha. Solo se llama si el usuario NO es técnico."""
+    filas = mysql_fetchall(
+        "SELECT sku, descripcion, doc_tido, doc_nudo, cantidad, saldo_doc, causa, argumento, "
+        "       declarado_por, declarado_en "
+        "  FROM mant_ot_sin_saldo WHERE visita_id=%s ORDER BY id", (vid,)) or []
+    out = []
+    for f in filas:
+        f = dict(f)
+        for k in ("cantidad", "saldo_doc"):
+            n = _ot_sin_saldo_num(f.get(k))
+            f[k] = (int(n) if n is not None and float(n).is_integer() else n)
+        out.append(f)
+    return out
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 📸 2026-10-18 — INSTALACIONES: FOTO DE ENTREGA OBLIGATORIA
+# Daniel: «hay sección de instalaciones que siempre va y se lleva todo. Así sea un accesorio, debe haber foto para
+# demostrar que quedó entregado». Ajuste de UNA SOLA VEZ: a cada plantilla de instalación ACTIVA que no tenga ningún
+# ítem de foto obligatorio se le agrega AL FINAL «Foto de entrega» (foto, obligatoria). Nada se borra ni se reordena
+# (REGLA #4.2). Marca persistente en mant_logs (entidad='sistema'), el mismo patrón de marca de agua que ya usan
+# _ensure_flujo_levantamiento_modificado_log y _ensure_plantillas_autorrelleno: con la marca puesta, cada arranque
+# hace UNA consulta por índice (entidad, entidad_id) y nada más (REGLA #18). Una plantilla de instalación que se
+# cree después sin foto obligatoria la decide quien la crea: este ajuste no la vuelve a tocar.
+# ══════════════════════════════════════════════════════════════════════
+_FOTO_ENTREGA_MARCA = "foto_entrega_instalacion_aplicada"
+_FOTO_ENTREGA_TITULO = "Foto de entrega"
+_FOTO_ENTREGA_DESC = "El equipo instalado o el accesorio entregado en su lugar, a la vista."
+
+
+def _foto_entrega_a_ajustar(plantillas, items):
+    """PURA (probada en tests/test_ot_revision_v3.py). Qué plantillas reciben «Foto de entrega» y en qué orden.
+
+    plantillas: [{id, nombre, categoria_admin, activa}]
+    items:      [{plantilla_id, titulo, tipo_respuesta, obligatoria, orden}]
+    Devuelve [{"id", "nombre", "orden"}] solo de las de instalación ACTIVAS sin ningún ítem foto obligatorio
+    (tipo 'foto' + obligatoria) y que todavía no tienen un ítem «Foto de entrega». `orden` = el más alto + 1."""
+    por_pid = {}
+    for it in items or []:
+        try:
+            pid = int(it.get("plantilla_id"))
+        except (TypeError, ValueError):
+            continue
+        por_pid.setdefault(pid, []).append(it)
+    titulo_n = _FOTO_ENTREGA_TITULO.strip().lower()
+    out = []
+    for p in plantillas or []:
+        try:
+            pid = int(p.get("id"))
+        except (TypeError, ValueError):
+            continue
+        if (p.get("categoria_admin") or "").strip().lower() != "instalacion":
+            continue
+        if p.get("activa") is not None and str(p.get("activa")) not in ("1", "True", "true"):
+            continue
+        its = por_pid.get(pid, [])
+        if any((it.get("tipo_respuesta") or "").strip().lower() == "foto"
+               and str(it.get("obligatoria") or 0) in ("1", "True", "true") for it in its):
+            continue
+        if any((it.get("titulo") or "").strip().lower() == titulo_n for it in its):
+            continue
+        orden = max([int(it.get("orden") or 0) for it in its] + [0]) + 1
+        out.append({"id": pid, "nombre": p.get("nombre") or "", "orden": orden})
+    return out
+
+
+def _ensure_foto_entrega_instalacion():
+    """Aplica _foto_entrega_a_ajustar UNA sola vez (ver el bloque de arriba). Nunca lanza."""
+    out = {"ya": False, "plantillas": []}
+    try:
+        _ensure_mant_logs_entidad_varchar()
+        if mysql_fetchone(
+                "SELECT id FROM mant_logs WHERE entidad=%s AND entidad_id=%s AND accion=%s LIMIT 1",
+                ("sistema", 0, _FOTO_ENTREGA_MARCA)):
+            out["ya"] = True
+            return out
+        plantillas = mysql_fetchall(
+            "SELECT id, nombre, categoria_admin, COALESCE(activa, 1) AS activa "
+            "  FROM mant_tarea_plantillas WHERE categoria_admin=%s", ("instalacion",)) or []
+        ids = sorted({int(p["id"]) for p in plantillas})
+        items = []
+        if ids:
+            ph = ",".join(["%s"] * len(ids))
+            items = mysql_fetchall(
+                f"SELECT plantilla_id, titulo, tipo_respuesta, obligatoria, orden "
+                f"  FROM mant_tarea_plantilla_items WHERE plantilla_id IN ({ph})", tuple(ids)) or []
+        fallas = 0
+        for p in _foto_entrega_a_ajustar(plantillas, items):
+            try:
+                mysql_execute(
+                    "INSERT INTO mant_tarea_plantilla_items "
+                    "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, obligatoria, requiere_foto) "
+                    "VALUES (%s,%s,%s,%s,'foto',1,1)",
+                    (p["id"], p["orden"], _FOTO_ENTREGA_TITULO, _FOTO_ENTREGA_DESC))
+                out["plantillas"].append(p["nombre"])
+                _mant_log("plantilla", p["id"], "foto_entrega_agregada",
+                          f"Se agregó al final «{_FOTO_ENTREGA_TITULO}» (foto, obligatoria) a la plantilla de "
+                          f"instalación «{p['nombre']}», que no tenía ninguna foto obligatoria. Daniel 18-10-2026: "
+                          "«así sea un accesorio, debe haber foto para demostrar que quedó entregado».")
+            except Exception as e_it:
+                fallas += 1
+                print(f"[ensure_foto_entrega] plantilla {p.get('id')}: {e_it}", flush=True)
+        if fallas:
+            return out   # sin marca: el próximo arranque reintenta (lo ya agregado queda con su foto obligatoria)
+        mysql_execute(
+            "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) VALUES (%s,%s,%s,%s,%s)",
+            ("sistema", 0, _FOTO_ENTREGA_MARCA,
+             (f"«{_FOTO_ENTREGA_TITULO}» obligatoria agregada a {len(out['plantillas'])} plantilla(s) de instalación: "
+              + (", ".join(out["plantillas"]) or "ninguna (todas ya tenían foto obligatoria)") + ".")[:4000],
+             "sistema"))
+    except Exception as e:
+        print(f"[ensure_foto_entrega] {e}", flush=True)
+    return out
 
 
 def _ensure_plantillas_nombre_sin_prefijo():
@@ -160274,6 +161241,14 @@ try:
 except Exception as _ensure_matriz_err:
     print(f"[ILUS][WARN] _ensure_plantillas_matriz_clases: {_ensure_matriz_err}", flush=True)
 
+# 📸 2026-10-18: columna foto_si_hallazgo (plantillas y su copia en la OT) — SIEMPRE, antes de sembrar los bloques.
+# Barata si ya existe: una consulta a information_schema (REGLA #18).
+try:
+    with app.app_context():
+        _ensure_foto_si_hallazgo_cols()
+except Exception as _ensure_fsh_err:
+    print(f"[ILUS][WARN] _ensure_foto_si_hallazgo_cols: {_ensure_fsh_err}", flush=True)
+
 # 🧩 2026-10-17: checklist heredado por sistema (bloques + mant_checklist_herencia).
 # Barato si ya está aplicado (REGLA #18). Va después de la semilla de plantillas
 # estándar: reutiliza las de control de calidad de la NVI 552.
@@ -160284,6 +161259,16 @@ try:
         print(f"[ILUS] Checklist heredado: {_chk_her}", flush=True)
 except Exception as _ensure_chk_her_err:
     print(f"[ILUS][WARN] _ensure_checklist_herencia: {_ensure_chk_her_err}", flush=True)
+
+# ✂️ 2026-10-18: los 10 bloques «Revisión — …» a la versión ESENCIAL, solo los que nadie editó. UNA sola vez (marca en
+# mant_logs); con la marca puesta es una consulta (REGLA #18).
+try:
+    with app.app_context():
+        _rev_es = _ensure_bloques_revision_esencial()
+    if _rev_es.get("migrados") or _rev_es.get("editados"):
+        print(f"[ILUS] Revisión esencial: {_rev_es}", flush=True)
+except Exception as _ensure_rev_es_err:
+    print(f"[ILUS][WARN] _ensure_bloques_revision_esencial: {_ensure_rev_es_err}", flush=True)
 
 # CRÍTICO: nombres de plantilla sin el prefijo "<Categoría> · " (Daniel
 # 2026-08-13) — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1. Corre después
@@ -160388,6 +161373,23 @@ try:
         print(f"[ILUS] Inteligencia: migraciones aplicadas: {_faltaron_intel}", flush=True)
 except Exception as _ensure_intel_err:
     print(f"[ILUS][WARN] _ensure_mant_intel_tables: {_ensure_intel_err}", flush=True)
+
+# 🧾 2026-10-18: productos incluidos sin saldo en su documento (solo equipo interno). Barato si ya existe (REGLA #18).
+try:
+    with app.app_context():
+        _ensure_ot_sin_saldo()
+except Exception as _ensure_sin_saldo_err:
+    print(f"[ILUS][WARN] _ensure_ot_sin_saldo: {_ensure_sin_saldo_err}", flush=True)
+
+# 📸 2026-10-18: «Foto de entrega» obligatoria en las plantillas de instalación sin foto obligatoria. UNA sola vez
+# (marca en mant_logs); va después del autorrelleno y la matriz para que la foto quede al final de esas plantillas.
+try:
+    with app.app_context():
+        _foto_ent = _ensure_foto_entrega_instalacion()
+    if _foto_ent.get("plantillas"):
+        print(f"[ILUS] Foto de entrega agregada a: {_foto_ent['plantillas']}", flush=True)
+except Exception as _ensure_foto_ent_err:
+    print(f"[ILUS][WARN] _ensure_foto_entrega_instalacion: {_ensure_foto_ent_err}", flush=True)
 
 # email_log.estado debe aceptar 'bloqueado' SIEMPRE (incluso skip-migrations):
 # sin esto, los envíos frenados por la llave de paso no dejaban rastro en el log.

@@ -310,19 +310,31 @@
 .o2m-ico-grid button.on{border-color:var(--ilus-red,#dc2626);background:#fee2e2;color:var(--ilus-red,#dc2626)}
 /* 📄 2026-10-18 (Daniel: «que sea más bonito el botón… se ve muy simple»):
    las acciones del trabajo interno son tarjetas con ícono y explicación. */
-.o2m-acc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}
-.o2m-acc{display:flex;align-items:center;gap:12px;text-align:left;border:1.5px solid #e5e7eb;border-radius:12px;
-  background:#fff;padding:12px 14px;min-height:64px;transition:border-color .15s,box-shadow .15s,transform .15s}
+/* 🧾 2026-10-18 (Daniel: «tengo dos dedos nada más… necesito que se vea con suficiente espacio… achica los objetos
+   de los botones»): las mismas tres tarjetas, más bajas (ícono 34px, 8px de relleno), para que la tabla tenga aire.
+   Siguen midiendo más de 44px de alto (REGLA #3). */
+.o2m-acc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}
+.o2m-acc{display:flex;align-items:center;gap:10px;text-align:left;border:1.5px solid #e5e7eb;border-radius:11px;
+  background:#fff;padding:8px 12px;min-height:52px;transition:border-color .15s,box-shadow .15s,transform .15s}
 .o2m-acc:hover,.o2m-acc:focus-visible{border-color:#93c5fd;box-shadow:0 6px 18px rgba(37,99,235,.10);transform:translateY(-1px)}
-.o2m-acc .ic{flex:0 0 42px;height:42px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:1.2rem}
+.o2m-acc .ic{flex:0 0 34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:1.05rem}
 .o2m-acc.doc{border-color:#bfdbfe;background:#f8fbff}
 .o2m-acc.doc .ic{background:#dbeafe;color:#2563eb}
 .o2m-acc.bus .ic{background:#f3f4f6;color:#374151}
 .o2m-acc.man .ic{background:#dcfce7;color:#16a34a}
 .o2m-acc .tx{display:flex;flex-direction:column;min-width:0}
-.o2m-acc .tx b{font-size:.93rem;color:#0a0a0a}
-.o2m-acc .tx small{font-size:.77rem;color:#6b7280;line-height:1.3}
+.o2m-acc .tx b{font-size:.88rem;color:#0a0a0a}
+.o2m-acc .tx small{font-size:.73rem;color:#6b7280;line-height:1.25}
 @media (prefers-reduced-motion:reduce){.o2m-acc{transition:none}.o2m-acc:hover{transform:none}}
+/* En celular las tres van en una fila: ícono arriba y el nombre debajo (la explicación queda en el title). */
+@media (max-width:640px){
+  .o2m-acc-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+  .o2m-acc{flex-direction:column;justify-content:center;gap:4px;padding:8px 4px;min-height:60px;text-align:center}
+  .o2m-acc .ic{flex:0 0 auto;width:30px;height:30px;font-size:.95rem}
+  .o2m-acc .tx{align-items:center}
+  .o2m-acc .tx b{font-size:.76rem;line-height:1.2}
+  .o2m-acc .tx small{display:none}
+}
 /* 📝 2026-10-18 (Daniel: «en la parte 2… que siempre figure como importancia»):
    el motivo va destacado; si vino heredado (tipo de trabajo o ticket) se dice. */
 .o2m-motivo{border:1.5px solid #fecaca;border-left:4px solid var(--ilus-red,#dc2626);border-radius:12px;
@@ -1222,32 +1234,72 @@
 .o2m-her-warn{color:#92400e;background:#fff8e1;border-radius:6px;padding:2px 6px;display:inline-block}
 .o2m-her-rec{font-size:.74rem;min-height:32px;align-self:flex-start}
 .o2m-her-u{font-size:.74rem;color:#6b7280;white-space:nowrap}
-/* 📦 2026-10-18 (Daniel: «que esta tabla sea parecida a la de mantenciones… si la escojo toda»). */
-.o2m-her-barra{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
-.o2m-her-cont{font-size:.84rem;color:#374151}
-.o2m-her-falta{color:#92400e;font-weight:700}
-.o2m-her-llego{display:inline-flex;align-items:center;gap:6px;min-height:44px;cursor:pointer;margin:0;font-size:.78rem;color:#374151}
-.o2m-her-llego input{width:20px;height:20px;accent-color:#16a34a;cursor:pointer}
-tr.o2m-her-nollego > td{background:#fffbeb}
-/* En celular la tabla de productos se lee como tarjetas: código y nombre
-   arriba, cantidad y checklist debajo a todo el ancho, la × en la esquina.
-   Antes la columna Checklist quedaba fuera de la pantalla (scroll lateral). */
-@media (max-width:576px){
-  #o2mTareasList table, #o2mTareasList tbody, #o2mTareasList tr, #o2mTareasList td{display:block;width:100%}
-  #o2mTareasList thead{display:none}
-  #o2mTareasList table{min-width:0 !important}
-  #o2mTareasList .table-responsive{overflow:visible}
-  #o2mTareasList tr{position:relative;border:1px solid #e5e7eb;border-radius:12px;background:#fff;
-    padding:10px 12px;margin-bottom:8px}
-  #o2mTareasList td.c-cod, #o2mTareasList td.c-desc{padding-right:36px}
-  #o2mTareasList td{border:0;padding:2px 0}
-  #o2mTareasList td.c-cod{font-size:.72rem;color:#6b7280}
-  #o2mTareasList td.c-desc{font-weight:600;color:#111827}
-  #o2mTareasList td.c-x{position:absolute;top:6px;right:6px;width:auto}
-  #o2mTareasList td.c-x .btn{min-width:36px;min-height:36px}
-  #o2mTareasList td.c-llego:empty{display:none}
-  #o2mTareasList .o2m-her{min-width:0;margin-top:4px}
-  #o2mTareasList tbody tr td[colspan]{position:static;text-align:center}
+/* 🧾 2026-10-18 — Paso 5 del trabajo interno = LA MISMA TABLA de las OT de cliente (.o2m-eq-*: barra, modos,
+   casilla roja, borde verde, documento, cantidad con badge). Daniel: «en todas las órdenes de trabajo debería
+   predominar esta tabla». Alto natural: ya no es una caja de 250px con scroll propio. */
+#o2mTareasList.o2m-lista{max-height:none;overflow:visible;border:0;border-radius:0}
+.o2m-rv-wrap{overflow-x:auto}
+.o2m-rv-table td.chk{width:52px;padding:2px 4px}
+.o2m-rv-chkbtn{width:44px;height:44px;border:0;background:transparent;padding:0;border-radius:10px;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.o2m-rv-chkbtn:focus-visible{outline:2px solid #2563eb;outline-offset:1px}
+.o2m-rv-chkbtn .o2m-chk{width:22px;height:22px}
+.o2m-rv-table tbody tr.adv{background:#fffbeb}
+.o2m-rv-table tbody tr.adv td:first-child{box-shadow:inset 3px 0 0 #f59e0b}
+.o2m-rv-table tbody tr.o2m-rv-excl{background:#fafafa}
+.o2m-rv-table tbody tr.o2m-rv-excl > td:not(.chk){opacity:.5}
+.o2m-rv-table th.doc, .o2m-rv-table td.doc{width:90px}
+.o2m-rv-table td.cant{padding-left:4px;padding-right:4px}
+.o2m-rv-table td.prod{min-width:180px}
+.o2m-rv-table td.prod .nm{overflow-wrap:anywhere}
+.o2m-rv-table td.prod .sku{overflow-wrap:anywhere}
+.o2m-rv-table td.clase{min-width:150px}
+.o2m-rv-table td.chkl{min-width:220px}
+.o2m-rv-table .o2m-her{min-width:0}
+.o2m-rv-table select{min-width:0;width:100%}
+.o2m-rv-table td.x{width:44px;padding:2px}
+.o2m-rv-clase{display:inline-flex;align-items:center;gap:5px;font-size:.78rem;font-weight:700;color:#166534;
+  background:#f0fdf4;border:1px solid #bbf7d0;border-radius:999px;padding:2px 9px;line-height:1.3}
+.o2m-rv-clase.sin{color:#92400e;background:#fff8e1;border-color:#fde68a}
+.o2m-rv-clase-sel{margin-top:5px;width:100%;min-width:0;font-size:.82rem}
+.o2m-rv-sinsaldo{display:inline-flex;align-items:center;gap:4px;font-size:.72rem;font-weight:700;color:#475569;
+  background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:999px;padding:1px 8px;margin-top:4px;cursor:help}
+.o2m-rv-cant{width:60px;font-size:16px;min-height:40px;text-align:center}
+.o2m-rv-table .o2m-cant-multi{white-space:nowrap}
+.o2m-rv-x{min-width:40px;min-height:40px}
+.o2m-rv-hint-nota{margin:0;border:0;border-top:1px solid #f1f5f9;border-radius:0}
+/* Celular y tablet (hasta 900px): cada fila es una tarjeta legible. La casilla tiene su PROPIA columna a la izquierda
+   (nunca encima de texto o chips), toques de 44px y sin scroll lateral. */
+@media (max-width:900px){
+  #o2mTareasList .o2m-eq-toolbar{flex-direction:column;align-items:stretch;gap:8px}
+  #o2mTareasList .o2m-rv-expl{display:none}   /* en celular basta el contador: la tabla manda */
+  #o2mTareasList .o2m-eq-btn-todos{width:100%}
+  #o2mTareasList .o2m-rv-wrap{overflow:visible}
+  #o2mTareasList .o2m-rv-table{min-width:0 !important;display:block;width:100%}
+  #o2mTareasList .o2m-rv-table tbody{display:block;width:100%;padding:6px}
+  #o2mTareasList .o2m-rv-table thead{display:none}
+  #o2mTareasList .o2m-rv-table tr{display:grid;grid-template-columns:46px minmax(0,1fr) auto;column-gap:6px;row-gap:4px;
+    position:relative;border:1px solid #e5e7eb;border-radius:12px;background:#fff;padding:8px 8px 10px 2px;margin:0 0 8px}
+  #o2mTareasList .o2m-rv-table tr.ok{border-left:4px solid #16a34a}
+  #o2mTareasList .o2m-rv-table tr.adv{border-left:4px solid #f59e0b}
+  #o2mTareasList .o2m-rv-table tbody tr td{display:block;grid-column:2 / -1;border:0;padding:0;width:auto;
+    text-align:left;box-shadow:none !important;min-width:0}
+  /* Riel izquierdo: la casilla arriba y la × debajo, cada una con su propio espacio; el texto usa todo el ancho.
+     Arriba a la derecha, documento y cantidad en la misma línea. */
+  #o2mTareasList .o2m-rv-table td.chk{grid-column:1;grid-row:1;align-self:start}
+  #o2mTareasList .o2m-rv-table td.x{grid-column:1;grid-row:2 / span 3;align-self:start}
+  #o2mTareasList .o2m-rv-table td.doc{grid-column:2;grid-row:1;align-self:center}
+  #o2mTareasList .o2m-rv-table td.cant{grid-column:3;grid-row:1;display:flex;align-items:center;gap:6px;justify-self:end}
+  #o2mTareasList .o2m-rv-table td.cant::before{content:'Cant.';font-size:.72rem;font-weight:700;color:#6b7280}
+  #o2mTareasList .o2m-rv-table td.prod{grid-row:2}
+  #o2mTareasList .o2m-rv-table td.clase{grid-row:3}
+  #o2mTareasList .o2m-rv-table td.clase.solo-dato{display:none}   /* la clase ya va en gris bajo el nombre */
+  #o2mTareasList .o2m-rv-table td.chkl{grid-row:4}
+  #o2mTareasList .o2m-rv-table td.doc .muted{display:none}
+  #o2mTareasList .o2m-rv-table tbody tr td[colspan]{grid-column:1 / -1;text-align:center;padding:12px 0}
+  #o2mTareasList .o2m-her{min-width:0}
+  #o2mTareasList .o2m-rv-x{min-width:44px;min-height:44px}
+  #o2mTareasList .o2m-rv-clase-sel{font-size:16px;min-height:40px}   /* iOS no hace zoom con 16px */
 }
 </style>
 
@@ -1488,6 +1540,12 @@ window.OT2C = (function(){
          // con productos del catálogo o tareas sueltas (sin plantilla) en
          // vez de un checklist único.
          tareas_manuales:[],
+         // 🧾 2026-10-18 (Daniel: «elegir el plan, elegir todo»): modo de la tabla del trabajo interno, igual que
+         // los chips de la tabla de cliente -- 'todo' (todo el documento incluido) o 'mano' (parte sin nada).
+         tm_modo:'todo',
+         // 🧾 2026-10-18 (Daniel: «que quede persistente… quién lo hizo, cuándo, por qué y el argumento»): líneas
+         // incluidas SIN saldo en su documento (el buscador pide el motivo). Viajan en crear() como `sin_saldo`.
+         sin_saldo:[],
          // 26-08-2026: Trabajo de bodega -- observación + fotos.
          bodega_obs:'', bodega_fotos:[],
          // 📎 2026-09-27 (Daniel: "poder agregar datos adjuntos... como
@@ -1820,10 +1878,11 @@ window.OT2C = (function(){
         // verdad al ejecutar. Ahora basta con QUÉ se va a intervenir (ítem
         // de catálogo o manual); el checklist se elige por fila en la
         // misma tabla.
+        // 🧾 2026-10-18: cuentan solo las filas INCLUIDAS (las desmarcadas se ven, pero no se envían).
         if (S.tipo === 'revision_interna')
-          return S.tareas_manuales.length > 0;
+          return _o2mTareasIncluidas().length > 0;
         if (esInterno())
-          return S.tareas_manuales.length > 0;
+          return _o2mTareasIncluidas().length > 0;
         return S.equipos.length > 0 && S.equipos.every(function(e){ return !!e.plantilla_id; });
       // 2026-08-29: separado de 'equipos' -- ver comentario en pasos().
       case 'acceso':
@@ -4784,7 +4843,11 @@ window.OT2C = (function(){
             // El NOMBRE manda; SKU y serie van debajo, más chicos.
             '<td><span class="nm">'+esc(m.nombre || m.modelo || ('Equipo '+m.id))+'</span>'+
               (m.sku ? '<span class="sku">SKU '+esc(m.sku)+'</span>' : '')+
-              (m.serie ? '<span class="sku">S/N '+esc(m.serie)+'</span>' : '')+'</td>'+
+              (m.serie ? '<span class="sku">S/N '+esc(m.serie)+'</span>' : '')+
+              // 🧾 2026-10-18: la línea se incluyó sin saldo en su documento (el motivo queda en la OT, solo interno).
+              (_o2mSinSaldoDeSku(m.sku).length ? '<span class="o2m-rv-sinsaldo" title="'+
+                esc('Motivo: ' + (_o2mSinSaldoDeSku(m.sku)[0].motivo || '—'))+'"><i class="bi bi-journal-text"></i>'+
+                'Sin saldo · motivo registrado</span>' : '')+'</td>'+
             // 2026-09-06 (Daniel: "los productos que se repiten en cantidad
             // va a ser un tema, la persona va a tener que revisar bien qué
             // se repite... para no tener errores humanos"). Una cantidad
@@ -5158,7 +5221,8 @@ window.OT2C = (function(){
   function _o2mAccionesTrabajoHtml(){
     var tieneDoc = !!(S.doc_origen && S.doc_origen.nudo);
     function tarjeta(fn, ic, cls, titulo, sub){
-      return '<button type="button" class="o2m-acc '+cls+'" onclick="OT2C.'+fn+'()">'+
+      // 🧾 2026-10-18: en celular la explicación se oculta (tarjetas compactas): queda en el title.
+      return '<button type="button" class="o2m-acc '+cls+'" title="'+esc(sub)+'" onclick="OT2C.'+fn+'()">'+
         '<span class="ic"><i class="bi '+ic+'"></i></span>'+
         '<span class="tx"><b>'+titulo+'</b><small>'+sub+'</small></span></button>';
     }
@@ -5334,67 +5398,180 @@ window.OT2C = (function(){
   // libre con todo mezclado -- mismo formato que pidió por imagen.
   // 🔧 FIX 2026-08-31 (Daniel: "quiero ver el paso cinco con la propuesta
   // de la tabla, aunque sea vacía"): la tabla ya NO se esconde detrás de
-  // un texto -- los encabezados (Código/Descripción/Cant./Checklist)
-  // siempre están visibles, con una fila de aviso adentro cuando no hay
-  // nada todavía, para que se entienda de entrada qué se va a llenar.
+  // un texto -- los encabezados siempre están visibles, con una fila de
+  // aviso adentro cuando no hay nada todavía.
+  // 🧾 2026-10-18 — LA MISMA TABLA QUE LAS OT DE CLIENTE. Daniel (con capturas): «cópiate de la imagen… donde sale
+  // el plan, donde se ven las cantidades, donde están los selectores de peso, el documento… en todas las órdenes de
+  // trabajo debería predominar esta tabla», «tengo dos dedos nada más… necesito que se vea con suficiente espacio»,
+  // «elegir el plan, elegir todo». Se reutiliza el markup y el CSS de pintarListaEquipos (.o2m-eq-card,
+  // .o2m-eq-toolbar, .o2m-eq-modos, .o2m-eq-table, .o2m-chk, .o2m-eq-doc, .o2m-cant-multi, .o2m-eq-sug):
+  //   casilla · DOCUMENTO · PRODUCTO · CANT. · CLASE · CHECKLIST.
+  // La casilla = INCLUIR EN LA REVISIÓN (decisión de Daniel). Reemplaza la casilla «Llegó / No llegó»: el faltante se
+  // declara en la revisión de cada producto (ítem «¿Faltan piezas o accesorios?» de la base). Una fila desmarcada se
+  // sigue viendo, atenuada, y NO se envía al crear la OT.
+  function _o2mTmIncluida(tm){ return !!tm && !tm.excluida; }
+  function _o2mTareasIncluidas(){ return (S.tareas_manuales || []).filter(_o2mTmIncluida); }
+  function _o2mTmNombre(tm){
+    // El nombre manda (completo, REGLA #15). En las máquinas por unidad el «(1 de 2)» lo dice la columna Cant.
+    if (tm.nombre_base) return tm.nombre_base;
+    return String(tm.titulo || tm.sku || '');
+  }
+  // Documento de la fila: el de su línea (NVI 687, FCV 11522…). Si el mismo producto vino en varios documentos,
+  // se muestra el primero y cuántos más (todos en el title).
+  function _o2mTmDocHtml(tm){
+    var docs = (tm.docs || []).filter(Boolean);
+    if (!docs.length) return '<span class="muted">—</span>';
+    return '<span class="o2m-eq-doc" title="' + esc(docs.join(' · ')) + '">' + esc(docs[0]) + '</span>' +
+      (docs.length > 1 ? ' <small class="text-muted">+' + (docs.length - 1) + '</small>' : '');
+  }
+  function _o2mTmCantHtml(tm, i, nombre){
+    var cant = parseInt(tm.cantidad, 10); if (!cant || cant < 1) cant = 1;
+    if (tm.chk && !tm.chk_por_linea){
+      // Máquina: una fila (una tarjeta para el técnico) por unidad, con el badge ámbar de la tabla de cliente.
+      return (tm.unidades > 1)
+        ? '<span class="o2m-cant-multi" title="Una tarjeta por unidad: esta es la ' + tm.unidad + ' de ' +
+          tm.unidades + '">' + tm.unidad + ' de ' + tm.unidades + '</span>'
+        : '1';
+    }
+    // Accesorio por línea (discos, mancuernas) o tarea suelta: su cantidad, editable.
+    return '<input type="number" class="form-control form-control-sm o2m-rv-cant" inputmode="numeric" min="1" step="1" ' +
+      'value="' + cant + '" aria-label="Cantidad de ' + esc(nombre) + '" ' +
+      'onchange="OT2C.setCantidadTareaManual(' + i + ',this.value)">';
+  }
+  function _o2mTmClaseHtml(tm, i){
+    if (!tm.chk) return '<span class="muted">—</span>';
+    if (tm.chk_clase){
+      return '<span class="o2m-rv-clase" title="Clase del catálogo"><i class="bi bi-shield-check"></i>' +
+        esc(tm.chk_clase) + '</span>';
+    }
+    // 🏷️ Sin clase: se clasifica desde aquí (nunca pisa una clase existente) y su checklist sale de esa clase.
+    return '<span class="o2m-rv-clase sin"><i class="bi bi-shield-slash"></i>Sin clase</span>' +
+      ((tm.sku && (_o2mChk.clases || []).length)
+        ? '<select class="form-select form-select-sm o2m-rv-clase-sel" aria-label="Clasificar ' + esc(_o2mTmNombre(tm)) +
+          ' en el catálogo" onchange="OT2C.clasificarProductoChk(' + i + ',this.value)">' +
+          '<option value="">Elegir su clase…</option>' +
+          _o2mChk.clases.map(function(c){ return '<option value="' + esc(c.slug) + '">' + esc(c.nombre) + '</option>'; }).join('') +
+          '</select>'
+        : '');
+  }
+  function _o2mFilaTareaHTML(tm, i, ctx){
+    var incl = _o2mTmIncluida(tm);
+    var nombre = _o2mTmNombre(tm);
+    var cls = !incl ? 'o2m-rv-excl' : ((tm.chk && !tm.chk_sistema) ? 'adv' : 'ok');
+    var ss = _o2mSinSaldoDeSku(tm.sku);
+    var chkl;
+    if (!incl){
+      chkl = '<span class="muted"><i class="bi bi-lock-fill me-1"></i>inclúyelo para elegir su checklist</span>';
+    } else if (tm.chk){
+      chkl = _o2mChkCelda(tm, i);
+    } else {
+      chkl = '<select class="form-select form-select-sm" style="font-size:16px" aria-label="Checklist de ' + esc(nombre) + '" ' +
+        'onchange="OT2C.setPlantillaTareaManual(' + i + ',this.value)">' +
+        ctx.opsPlantilla.replace('value="' + (tm.plantilla_id || '') + '"', 'value="' + (tm.plantilla_id || '') + '" selected') +
+        '</select>';
+    }
+    return '<tr class="' + cls + '">' +
+      '<td class="chk"><button type="button" class="o2m-rv-chkbtn" role="checkbox" aria-checked="' + (incl ? 'true' : 'false') + '" ' +
+        'aria-label="Incluir ' + esc(nombre) + ' en la revisión" title="' + (incl ? 'Incluido: toca para dejarlo fuera' : 'Fuera: toca para incluirlo') + '" ' +
+        'onclick="OT2C.setIncluirTareaManual(' + i + ',' + (incl ? 'false' : 'true') + ')">' +
+        '<span class="o2m-chk' + (incl ? ' on' : '') + '">' + (incl ? '<i class="bi bi-check-lg" style="color:#fff"></i>' : '') + '</span>' +
+      '</button></td>' +
+      '<td class="doc">' + _o2mTmDocHtml(tm) + '</td>' +
+      // El nombre completo manda; SKU y clase del catálogo van debajo, en gris, en una sola línea (más filas a la vista).
+      '<td class="prod"><span class="nm">' + esc(nombre) + '</span>' +
+        ((tm.sku || (tm.chk && tm.chk_clase))
+          ? '<span class="sku">' + (tm.sku ? 'SKU ' + esc(tm.sku) : '') +
+            (tm.sku && tm.chk && tm.chk_clase ? ' · ' : '') + (tm.chk && tm.chk_clase ? esc(tm.chk_clase) : '') + '</span>'
+          : '') +
+        (ss.length ? '<span class="o2m-rv-sinsaldo" title="' + esc('Motivo: ' + (ss[0].motivo || '—')) + '">' +
+          '<i class="bi bi-journal-text"></i>Sin saldo · motivo registrado</span>' : '') +
+      '</td>' +
+      '<td class="cant">' + _o2mTmCantHtml(tm, i, nombre) + '</td>' +
+      (ctx.hayChk ? '<td class="clase' + (!tm.chk || tm.chk_clase ? ' solo-dato' : '') + '">' + _o2mTmClaseHtml(tm, i) + '</td>' : '') +
+      '<td class="chkl">' + chkl + '</td>' +
+      '<td class="x"><button type="button" class="btn btn-sm btn-link text-danger p-1 o2m-rv-x" ' +
+        'onclick="OT2C.quitarTareaManual(' + i + ')" title="Quitar de la tabla" aria-label="Quitar ' + esc(nombre) + ' de la tabla">' +
+        '<i class="bi bi-x-lg"></i></button></td>' +
+    '</tr>';
+  }
+  function _o2mTmModosHtml(hayDoc, total){
+    var chip = function(modo, ico, txt, sub, titulo){
+      var on = (S.tm_modo === modo);
+      return '<button type="button" class="o2m-eq-modo' + (on ? ' on' : '') + '" aria-pressed="' + (on ? 'true' : 'false') + '" ' +
+        'title="' + esc(titulo) + '" onclick="OT2C.setModoTareas(\'' + modo + '\')">' +
+        '<i class="bi bi-' + ico + '"></i><span><b>' + txt + '</b>' + (sub ? '<small>' + sub + '</small>' : '') + '</span></button>';
+    };
+    return chip('todo', 'grid-3x3-gap', hayDoc ? 'Todo el documento' : 'Todos', total + (total === 1 ? ' producto' : ' productos'),
+                'Incluye todas las filas en la revisión') +
+           chip('mano', 'hand-index', 'Elijo a mano', 'parte sin nada marcado',
+                'Deja todas las filas fuera para marcar a mano solo las que se revisan');
+  }
   function pintarTareasManuales(){
     var c = document.getElementById('o2mTareasList'); if(!c) return;
     var opsPlantilla = '<option value="">— Sin checklist —</option>' +
       (cachePlantInterno||[]).map(function(p){ return '<option value="'+p.id+'">'+esc(p.nombre)+'</option>'; }).join('');
-    if (!S.tareas_manuales.length){
-      c.innerHTML =
-        '<div class="table-responsive"><table class="table table-sm align-middle mb-0" style="font-size:.82rem">'+
-        '<thead><tr><th>Código</th><th>Descripción</th><th style="width:90px">Cant.</th>'+
-        '<th style="min-width:170px">Checklist</th><th style="width:36px"></th></tr></thead>'+
-        '<tbody><tr><td colspan="5" class="text-muted small text-center py-3">'+
-        'Sin productos ni tareas agregadas todavía.</td></tr></tbody></table></div>';
+    var lista = S.tareas_manuales || [];
+    var hayChk = lista.some(function(t){ return t.chk; });
+    var cabecera = '<thead><tr><th class="chk"><span class="visually-hidden">Incluir</span></th><th class="doc">Documento</th>' +
+      '<th>Producto</th><th class="cant">Cant.</th>' + (hayChk ? '<th class="clase">Clase</th>' : '') +
+      '<th class="chkl">Checklist</th><th class="x"><span class="visually-hidden">Quitar</span></th></tr></thead>';
+    if (!lista.length){
+      c.innerHTML = '<div class="o2m-eq-card"><div class="o2m-rv-wrap"><table class="o2m-eq-table o2m-rv-table">' + cabecera +
+        '<tbody><tr><td colspan="' + (hayChk ? 7 : 6) + '" class="text-muted small text-center py-3">' +
+        'Sin productos ni tareas agregadas todavía. Agrega el documento, busca el ítem o agrégalo a mano.</td></tr></tbody>' +
+        '</table></div></div>';
       return;
     }
-    // 📦 2026-10-18 (Daniel: «que esta tabla sea parecida a la de mantenciones… si la escojo toda»): con
-    // checklist heredado, cada fila dice si el producto LLEGÓ (casilla) y hay un «marcar/desmarcar todos»
-    // (REGLA #14) con contador. Desmarcada = «No llegó»: queda en la OT como faltante declarado.
-    var hayChk = S.tareas_manuales.some(function(t){ return t.chk; });
-    var nChk = S.tareas_manuales.filter(function(t){ return t.chk; }).length;
-    var nLlego = S.tareas_manuales.filter(function(t){ return t.chk && !t.no_llego; }).length;
-    var barra = hayChk
-      ? '<div class="o2m-her-barra">'+
-          '<button type="button" class="btn btn-sm btn-outline-secondary" style="min-height:40px" onclick="OT2C.toggleLlegoTodos()">'+
-          '<i class="bi bi-check-all me-1"></i>Marcar/desmarcar todos</button>'+
-          '<span class="o2m-her-cont"><b>'+nLlego+'</b> de '+nChk+' llegaron'+
-          ((nChk - nLlego) ? ' · <span class="o2m-her-falta">'+(nChk - nLlego)+((nChk - nLlego) === 1 ? ' no llegó' : ' no llegaron')+'</span>' : '')+'</span>'+
-        '</div>'
-      : '';
-    c.innerHTML = _o2mChkNota() + barra +
-      '<div class="table-responsive"><table class="table table-sm align-middle mb-0" style="font-size:.82rem">'+
-      '<thead><tr>'+(hayChk ? '<th style="width:70px">Llegó</th>' : '')+
-      '<th>Código</th><th>Descripción</th><th style="width:90px">Cant.</th>'+
-      '<th style="min-width:170px">Checklist</th><th style="width:36px"></th></tr></thead><tbody>' +
-      S.tareas_manuales.map(function(tm,i){
-        var cant = parseInt(tm.cantidad, 10); if (!cant || cant < 1) cant = 1;
-        var celdaLlego = !hayChk ? '' : (tm.chk
-          ? '<td class="c-llego"><label class="o2m-her-llego"><input type="checkbox" '+(tm.no_llego ? '' : 'checked')+
-            ' onchange="OT2C.setLlegoTareaManual('+i+',this.checked)" aria-label="¿Llegó '+esc(tm.titulo)+'?">'+
-            '<span>Llegó</span></label></td>'
-          : '<td class="c-llego"></td>');
-        return '<tr'+(tm.no_llego ? ' class="o2m-her-nollego"' : '')+'>'+
-          celdaLlego+
-          '<td class="c-cod text-monospace">'+esc(tm.sku || '—')+'</td>'+
-          '<td class="c-desc">'+esc(tm.titulo)+'</td>'+
-          (tm.chk && !tm.chk_por_linea
-            ? '<td class="c-cant"><span class="o2m-her-u" title="Una tarjeta por unidad">1 un.</span></td>'
-            : '<td class="c-cant"><input type="number" class="form-control form-control-sm" inputmode="numeric" '+
-              'style="width:70px;font-size:16px" min="1" step="1" value="'+cant+'" '+
-              'title="Cantidad" aria-label="Cantidad" onchange="OT2C.setCantidadTareaManual('+i+',this.value)"></td>')+
-          (tm.chk
-            ? '<td class="c-chk">'+_o2mChkCelda(tm, i)+'</td>'
-            : '<td class="c-chk"><select class="form-select form-select-sm" style="font-size:16px" '+
-              'onchange="OT2C.setPlantillaTareaManual('+i+',this.value)">'+
-              opsPlantilla.replace('value="'+(tm.plantilla_id||'')+'"', 'value="'+(tm.plantilla_id||'')+'" selected')+
-              '</select></td>')+
-          '<td class="c-x"><button type="button" class="btn btn-sm btn-link text-danger p-1" onclick="OT2C.quitarTareaManual('+i+')" '+
-          'style="min-height:32px" title="Quitar"><i class="bi bi-x-lg"></i></button></td>'+
-        '</tr>';
-      }).join('') + '</tbody></table></div>';
+    var nIncl = lista.filter(_o2mTmIncluida).length;
+    var todos = nIncl === lista.length;
+    var hayDoc = lista.some(function(t){ return (t.docs || []).length; });
+    var nSinClase = lista.filter(function(t){ return _o2mTmIncluida(t) && t.chk && !t.chk_clase; }).length;
+    var ctx = {hayChk: hayChk, opsPlantilla: opsPlantilla};
+    c.innerHTML =
+      '<div class="o2m-eq-card o2m-rv-card">' +
+        '<div class="o2m-eq-toolbar">' +
+          '<div class="o2m-eq-toolbar-txt"><span class="o2m-rv-expl"><i class="bi bi-info-circle me-1"></i>' +
+            (hayDoc ? 'Productos del documento' : 'Productos y tareas de esta OT') +
+            '. Marca los que entran a la revisión — cada uno trae su checklist. </span>' +
+            '<b class="o2m-rv-cont">' + nIncl + ' de ' + lista.length + ' incluidos</b></div>' +
+          // REGLA #14: un solo toggle (si falta alguno, marca todos; si están todos, los desmarca).
+          '<button type="button" class="btn btn-sm btn-outline-dark o2m-eq-btn-todos" style="min-height:44px" ' +
+            'onclick="OT2C.toggleIncluirTodos()">' +
+            (todos ? '<i class="bi bi-square me-1"></i>Desmarcar todos' : '<i class="bi bi-check2-square me-1"></i>Marcar todos') +
+          '</button>' +
+          '<div class="o2m-eq-modos">' + _o2mTmModosHtml(hayDoc, lista.length) +
+            (nSinClase ? '<span class="o2m-eq-modo-aviso">' + nSinClase + (nSinClase === 1 ? ' producto sin clase' : ' productos sin clase') +
+              ': clasifícalo o elige su bloque</span>' : '') +
+          '</div>' +
+        '</div>' +
+        '<div class="o2m-rv-wrap"><table class="o2m-eq-table o2m-rv-table">' + cabecera + '<tbody>' +
+          lista.map(function(tm, i){ return _o2mFilaTareaHTML(tm, i, ctx); }).join('') +
+        '</tbody></table></div>' +
+        (hayChk ? _o2mChkNota() : '') +
+      '</div>';
+  }
+  // Marca o desmarca UNA fila sin repintar: la usan la casilla de la fila, «Marcar/Desmarcar todos» y los modos
+  // (REGLA #14: el «todos» pasa fila por fila por el mismo camino que la casilla individual).
+  function _o2mTmMarcar(i, incluir){
+    var tm = S.tareas_manuales[i]; if (!tm) return;
+    tm.excluida = !incluir;
+  }
+  function setIncluirTareaManual(i, incluir){
+    _o2mTmMarcar(i, !!incluir);
+    pintarTareasManuales(); refrescarAnclas();
+  }
+  function toggleIncluirTodos(){
+    var algunoFuera = S.tareas_manuales.some(function(t){ return !_o2mTmIncluida(t); });
+    S.tareas_manuales.forEach(function(t, i){ _o2mTmMarcar(i, algunoFuera); });
+    pintarTareasManuales(); refrescarAnclas();
+  }
+  // «Todo el documento» incluye todas las filas; «Elijo a mano» parte sin ninguna (las filas no se pierden: siguen
+  // a la vista con su checklist, solo quedan fuera hasta que se marquen).
+  function setModoTareas(modo){
+    if (modo !== 'todo' && modo !== 'mano') return;
+    S.tm_modo = modo;
+    S.tareas_manuales.forEach(function(t, i){ _o2mTmMarcar(i, modo === 'todo'); });
+    pintarTareasManuales(); refrescarAnclas();
   }
   function setCantidadTareaManual(i, v){
     var n = parseInt(v, 10);
@@ -5459,17 +5636,52 @@ window.OT2C = (function(){
     return [tm.chk_base, tm.chk_sistema, tm.chk_cond]
       .filter(function(b){ return b && b.id; }).map(function(b){ return b.id; });
   }
+  // 🧾 2026-10-18 (Daniel: «que quede persistente en los datos de la orden de trabajo, pero que no lo evidencie a los
+  // clientes ni a los técnicos… quién lo hizo, cuándo, por qué y el argumento»). El buscador del ERP entrega por línea
+  // marcada_sin_saldo + motivo_sin_saldo (el motivo ya lo pide al incluir una línea sin saldo) y el asistente lo
+  // descartaba. Se junta aquí (sin repetir producto + documento) y viaja en crear() como `sin_saldo`; el servidor
+  // guarda solo los productos que quedan en la OT.
+  function _o2mCapturarSinSaldo(items, header){
+    if (!Array.isArray(S.sin_saldo)) S.sin_saldo = [];
+    (items || []).forEach(function(it){
+      if (!it || !it.sku || !it.marcada_sin_saldo) return;
+      var tido = it.tido || it.doc_tido || (header && header.tido) || '';
+      var nudo = it.nudo || it.doc_nudo || (header && header.nudo) || '';
+      // Misma línea = mismo producto + mismo documento («NVI 0687» y «NVI 687» son el mismo papel).
+      var k = _o2mSkuNorm(it.sku) + '|' + _o2mDocOrigenNorm(tido) + '|' + _o2mDocOrigenNorm(nudo).replace(/^0+/, '');
+      var fila = {_k: k, sku: it.sku, nombre: it.nombre || it.sku, tido: tido || null, nudo: nudo || null,
+                  qty: _o2mQtyDeItem(it), saldo: (it.saldo != null && isFinite(parseFloat(it.saldo))) ? parseFloat(it.saldo) : 0,
+                  motivo: String(it.motivo_sin_saldo || '').trim()};
+      var ya = S.sin_saldo.find(function(x){ return x._k === k; });
+      if (ya) Object.assign(ya, fila); else S.sin_saldo.push(fila);
+    });
+  }
+  function _o2mSinSaldoDeSku(sku){
+    if (!sku) return [];
+    var k = _o2mSkuNorm(sku);
+    return (S.sin_saldo || []).filter(function(x){ return _o2mSkuNorm(x.sku) === k; });
+  }
+  function _o2mSinSaldoPayload(){
+    return (S.sin_saldo || []).map(function(x){
+      return {sku: x.sku, nombre: x.nombre, tido: x.tido, nudo: x.nudo, cantidad: x.qty, saldo: x.saldo, motivo: x.motivo};
+    });
+  }
   function _o2mAgregarItemsHeredando(items, repintarEquipos){
+    _o2mCapturarSinSaldo(items);
     var orden = [], porSku = {};
     (items||[]).forEach(function(it){
       if (!it || !it.sku) return;
-      var q = parseInt(it.qty, 10); if (!q || q < 1) q = 1;
+      // 🧾 2026-10-18: misma cantidad que la tabla de cliente (_o2mQtyDeItem: la del documento). Una NVI que ya salió
+      // al evento viene con saldo 0 y el buscador la dejaba en 1: la revisión perdía unidades.
+      var q = Math.round(_o2mQtyDeItem(it)); if (!q || q < 1) q = 1;
       if (S.tareas_manuales.some(function(tm){ return tm.sku === it.sku; })) return;
+      var doc = (it.tido && it.nudo) ? (it.tido + ' ' + it.nudo) : '';
       if (!porSku[it.sku]){
-        porSku[it.sku] = {sku: it.sku, nombre: it.nombre || it.sku, qty: 0};
+        porSku[it.sku] = {sku: it.sku, nombre: it.nombre || it.sku, qty: 0, docs: []};
         orden.push(it.sku);
       }
       porSku[it.sku].qty += q;
+      if (doc && porSku[it.sku].docs.indexOf(doc) < 0) porSku[it.sku].docs.push(doc);
     });
     var lista = orden.map(function(k){ return porSku[k]; });
     function listo(){
@@ -5479,8 +5691,8 @@ window.OT2C = (function(){
     }
     function comoSiempre(){
       lista.forEach(function(it){
-        S.tareas_manuales.push({sku: it.sku, titulo: it.nombre, descripcion: '',
-                                cantidad: it.qty, plantilla_id: null});
+        S.tareas_manuales.push({sku: it.sku, titulo: it.nombre, nombre_base: it.nombre, docs: it.docs, descripcion: '',
+                                cantidad: it.qty, plantilla_id: null, excluida: S.tm_modo === 'mano'});
       });
       listo();
     }
@@ -5500,6 +5712,8 @@ window.OT2C = (function(){
             var tm = {
               sku: it.sku,
               titulo: it.nombre + (!porLinea && it.qty > 1 ? ' (' + u + ' de ' + it.qty + ')' : ''),
+              nombre_base: it.nombre, docs: it.docs,
+              unidad: porLinea ? null : u, unidades: porLinea ? null : it.qty,
               descripcion: porLinea ? ('Cantidad según el documento: ' + it.qty) : '',
               cantidad: porLinea ? it.qty : 1,
               plantilla_id: null,
@@ -5509,7 +5723,9 @@ window.OT2C = (function(){
               chk_base: h.base || j.base || null,
               chk_sistema: h.sistema || null,
               chk_sistema_heredado: h.sistema || null,
-              chk_cond: h.condicional || j.condicional || null
+              chk_cond: h.condicional || j.condicional || null,
+              // En «Elijo a mano» lo que llega nuevo también parte fuera, para marcarlo a mano.
+              excluida: S.tm_modo === 'mano'
             };
             tm.plantilla_ids = _o2mChkIds(tm);
             S.tareas_manuales.push(tm);
@@ -5522,23 +5738,16 @@ window.OT2C = (function(){
   function _o2mChkNota(){
     var t = S.tareas_manuales.find(function(x){ return x.chk && x.chk_base; });
     if (!t) return '';
-    return '<div class="o2m-her-nota"><i class="bi bi-diagram-3"></i> Cada producto trae su checklist: ' +
+    return '<div class="o2m-her-nota o2m-rv-hint-nota"><i class="bi bi-diagram-3"></i> Cada producto trae su checklist: ' +
       '<b>' + esc(_o2mChkNombre(t.chk_base)) + '</b> + el bloque de su sistema (según su clase del catálogo).' +
       (t.chk_cond ? ' <b>' + esc(_o2mChkNombre(t.chk_cond)) + '</b> se abre solo si la revisión marca una observación.' : '') +
-      ' Máquinas: una tarjeta por unidad. Discos y mancuernas: una por línea, para contar.</div>';
+      ' Máquinas: una tarjeta por unidad. Discos y mancuernas: una por línea, para contar. ' +
+      'Si algo no llegó, se declara en la revisión de ese producto.</div>';
   }
+  // Columna CHECKLIST de una fila con checklist heredado: el bloque de su sistema y de dónde salió, con el mismo
+  // aviso de la tabla de cliente («✨ Sugerida automáticamente»). La clasificación vive ahora en la columna CLASE.
   function _o2mChkCelda(tm, i){
-    if (tm.no_llego){
-      return '<div class="o2m-her"><span class="o2m-her-warn"><i class="bi bi-box-seam"></i> '+
-        'No llegó · queda en la OT como faltante declarado</span></div>';
-    }
     var sel = tm.chk_sistema ? tm.chk_sistema.id : '';
-    var clasSel = (!tm.chk_clase && tm.sku && (_o2mChk.clases || []).length)
-      ? '<select class="form-select form-select-sm" style="font-size:16px" aria-label="Clasificar en el catálogo" '+
-        'onchange="OT2C.clasificarProductoChk('+i+',this.value)"><option value="">Clasificar en el catálogo…</option>'+
-        _o2mChk.clases.map(function(c){ return '<option value="'+esc(c.slug)+'">'+esc(c.nombre)+'</option>'; }).join('')+
-        '</select>'
-      : '';
     var opts = '<option value="">— Solo la base —</option>' +
       (_o2mChk.bloques || []).map(function(b){
         return '<option value="' + b.id + '"' + (b.id === sel ? ' selected' : '') + '>' +
@@ -5551,33 +5760,21 @@ window.OT2C = (function(){
                       : 'Sin clase en el catálogo: clasifícalo (queda guardado) o elige el bloque.') +
         '</span>';
     } else if (tm.chk_sistema.origen === 'producto'){
-      origen = 'Guardado para este producto';
+      origen = '<small class="o2m-eq-sug"><i class="bi bi-bookmark-check me-1"></i>Guardada para este producto.</small>';
     } else if (tm.chk_sistema.origen === 'clase'){
-      origen = 'Según su clase: ' + esc(tm.chk_clase || '');
+      origen = '<small class="o2m-eq-sug"><i class="bi bi-magic me-1"></i>Sugerida automáticamente según su clase.</small>';
     } else {
-      origen = 'Elegido a mano en esta OT';
+      origen = '<small class="o2m-eq-sug"><i class="bi bi-hand-index me-1"></i>Elegida a mano.</small>';
     }
     var recordar = tm.sku && tm.chk_sistema && tm.chk_sistema.origen === 'manual';
-    return '<div class="o2m-her">' + clasSel +
-      '<select class="form-select form-select-sm" style="font-size:16px" aria-label="Bloque del sistema" ' +
+    return '<div class="o2m-her">' +
+      '<select class="form-select form-select-sm" style="font-size:16px" aria-label="Bloque del sistema de ' + esc(_o2mTmNombre(tm)) + '" ' +
       'onchange="OT2C.setBloqueTareaManual(' + i + ',this.value)">' + opts + '</select>' +
       '<div class="o2m-her-org">' + origen + '</div>' +
       (recordar ? '<button type="button" class="btn btn-sm btn-outline-secondary o2m-her-rec" ' +
                   'onclick="OT2C.recordarBloqueProducto(' + i + ')"><i class="bi bi-bookmark-check"></i> ' +
                   'Recordar para este producto</button>' : '') +
     '</div>';
-  }
-  function setLlegoTareaManual(i, llego){
-    var tm = S.tareas_manuales[i]; if (!tm) return;
-    tm.no_llego = !llego;
-    pintarTareasManuales();
-  }
-  // REGLA #14: si alguno no está marcado como «llegó», marca todos; si ya están todos, los desmarca todos.
-  function toggleLlegoTodos(){
-    var filas = S.tareas_manuales.filter(function(t){ return t.chk; });
-    var algunoSin = filas.some(function(t){ return t.no_llego; });
-    filas.forEach(function(t){ t.no_llego = !algunoSin; });
-    pintarTareasManuales();
   }
   // 🏷️ 2026-10-18 (Daniel: «que se rija por la clasificación de productos»): un producto sin clase se clasifica en
   // el catálogo desde acá (nunca pisa una clase existente) y su checklist sale de esa clase.
@@ -7969,6 +8166,8 @@ window.OT2C = (function(){
        RUT el header guarda solo el ultimo documento expandido, asi que con
        varias facturas a la vez el header miente. Las lineas si traen el
        suyo. */
+    // 🧾 2026-10-18: las líneas incluidas sin saldo (con su motivo) también quedan registradas en la OT.
+    _o2mCapturarSinSaldo(lineas, header);
     var nuevas = [], docs = {}, _enEsteLote = {};
     lineas.forEach(function(it){
       var tido = it.tido || (header && header.tido) || null;
@@ -9409,6 +9608,10 @@ window.OT2C = (function(){
                 tido: it.tido || null, nudo: it.nudo || null,
                 fecha: it.fecha || header.fecha || null};
       }) : [];
+    // 🧾 2026-10-18 (Daniel: «que quede persistente… quién lo hizo, cuándo, por qué y el argumento»): las líneas que
+    // se incluyeron SIN saldo, con el motivo que pidió el buscador. Es el origen de la OT: parte de cero.
+    S.sin_saldo = [];
+    _o2mCapturarSinSaldo(items, header);
 
     // 2026-08-30 (Daniel: "la dirección del documento, eso ya lo
     // teníamos... hay que repararlo"): la fuente (documento/cotización/
@@ -10331,6 +10534,7 @@ window.OT2C = (function(){
       S.doc_lineas = [];
       S.doc_lineas_fuente = false;
       S.doc_origen = null;
+      S.sin_saldo = [];   // 🧾 2026-10-18: los motivos «sin saldo» eran de los documentos del cliente anterior
       altaAutoFaltantesCtx = null;
       preseleccionEqCliente = null;
       if (_habiaDocs && window.ilusToast){
@@ -10572,6 +10776,8 @@ window.OT2C = (function(){
     // 26-08-2026: Capacitación/Control de calidad -> productos/tareas
     // sueltas. Trabajo de bodega -> UNA tarea con la observación completa.
     // Mismo mecanismo del backend (tareas_manuales, plantilla_id NULL).
+    // 🧾 2026-10-18 (Daniel: casilla = incluir en la revisión): solo viajan las filas INCLUIDAS; las desmarcadas se
+    // quedan en la pantalla y no entran a la OT.
     if (esInterno()){
       if (S.tipo === 'revision_interna'){
         var obs = (S.bodega_obs||'').trim();
@@ -10579,12 +10785,15 @@ window.OT2C = (function(){
         // "tabla maravillosa" pedida por Daniel) se suma ADEMÁS de la
         // tarea de observación de siempre -- no la reemplaza, así una OT
         // vieja sin productos sigue funcionando exactamente igual.
-        body.tareas_manuales = S.tareas_manuales.slice();
+        body.tareas_manuales = _o2mTareasIncluidas();
         if (obs) body.tareas_manuales.push({titulo:'Trabajo de bodega', descripcion:obs});
       } else {
-        body.tareas_manuales = S.tareas_manuales.slice();
+        body.tareas_manuales = _o2mTareasIncluidas();
       }
     }
+    // 🧾 2026-10-18: productos incluidos sin saldo en su documento, con su motivo (el servidor guarda solo los que
+    // quedan en la OT, con quién y cuándo; nunca se muestra al cliente ni a un técnico).
+    if ((S.sin_saldo || []).length) body.sin_saldo = _o2mSinSaldoPayload();
     // Trazabilidad del origen "Factura o boleta" / nota de venta interna
     // de Capacitación: reusa el mismo campo que ya existe para el Paso de
     // Finanzas (factura_tido/factura_nudo, ot2_api_crear) -- no se inventa
@@ -11149,7 +11358,7 @@ window.OT2C = (function(){
           quitarTareaManual:quitarTareaManual, setCantidadTareaManual:setCantidadTareaManual,
           setPlantillaTareaManual:setPlantillaTareaManual,
           setBloqueTareaManual:setBloqueTareaManual, recordarBloqueProducto:recordarBloqueProducto,
-          setLlegoTareaManual:setLlegoTareaManual, toggleLlegoTodos:toggleLlegoTodos,
+          setIncluirTareaManual:setIncluirTareaManual, toggleIncluirTodos:toggleIncluirTodos, setModoTareas:setModoTareas,
           clasificarProductoChk:clasificarProductoChk,
           bodegaFotoAdd:bodegaFotoAdd, bodegaFotoQuitar:bodegaFotoQuitar,
           adjuntosAgregar:adjuntosAgregar, adjuntosQuitar:adjuntosQuitar,
