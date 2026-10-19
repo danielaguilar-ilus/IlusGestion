@@ -92455,6 +92455,13 @@ def ot2_api_centro_costo(vid):
         "       ('cerrada','cancelada','anulada')",
         (centro, vid))
     if not _n:
+        # 🔧 2026-10-19 (OT-2026-00276): MySQL cuenta 0 filas cuando el valor NO cambió. Elegir el mismo centro
+        # de costo que ya tenía la OT respondía «la OT se cerró», falso. Solo es conflicto si de verdad se cerró.
+        _v2 = mysql_fetchone("SELECT estado, centro_costo FROM mant_visitas WHERE id=%s", (vid,)) or {}
+        if ((_v2.get("estado") or "") not in ("cerrada", "cancelada", "anulada")
+                and (_v2.get("centro_costo") or "").strip().lower() == centro):
+            return jsonify({"ok": True, "centro_costo": centro,
+                            "label": dict(_OT2_CENTROS_COSTO).get(centro, centro), "sin_cambio": True})
         return jsonify({
             "ok": False,
             "error": "La OT se cerro mientras declarabas el centro de costo. "
