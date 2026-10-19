@@ -62625,6 +62625,13 @@ def _rut_canon(raw):
     '9918126' (sin DV) → '9918126-5'. None si no es un RUT válido. Resuelve lo que _rut_cuerpo no puede: un
     RUT de cuerpo de 7 dígitos guardado sin guion ('99181265') se confunde con un cuerpo de 8."""
     ok, res = validar_rut(raw or "")
+    if not ok:
+        # Ceros adelante que dejan el cuerpo con 9 dígitos ('076123456-0', visto en documentos del ERP): se prueba
+        # sin ellos. Sin esto, la misma persona quedaba como otro cliente y se le creaba una ficha duplicada.
+        _crudo = str(raw or "").strip()
+        _sin_ceros = re.sub(r"^[0.\s]+", "", _crudo)
+        if _sin_ceros and _sin_ceros != _crudo:
+            ok, res = validar_rut(_sin_ceros)
     if not ok or not res or len(res) < 2:
         return None
     cuerpo, dv = res[:-1].lstrip("0"), res[-1].upper()
@@ -62633,14 +62640,76 @@ def _rut_canon(raw):
     return f"{cuerpo}-{dv}"
 
 
-def _instalaciones_auditar(desde=None):
+def _agrupar_instalaciones(tickets, ventas, fichas):
+    """Agrupa por RUT canónico a los clientes que entraron por instalación y NO tienen ficha, juntando sus dos
+    fuentes: los tickets de instalación (con RUT) y las ventas con instalación del ERP. `fichas` = {llave_rut: id}.
+    Devuelve (grupos, tickets_sin_rut). No toca la base: la usan la auditoría y las pruebas."""
+    grupos, sin_rut = {}, []
+
+    def _grupo(rut):
+        kc, kb = _rut_canon(rut), _rut_cuerpo(rut)
+        # Una ficha antigua puede guardar el RUT sin DV ('72498100'): se compara por las dos llaves.
+        if (kc and kc in fichas) or (kb and kb in fichas):
+            return None
+        k = kc or kb
+        if not k:
+            return None
+        return grupos.setdefault(k, {"key": k, "rut": rut, "empresa": "", "email": "", "telefono": "", "direccion": "",
+                                     "comuna": "", "contacto": "", "tickets": [], "facturas": []})
+
+    def _tomar(g_, pares, solo_vacios=False):
+        for campo, v_ in pares:
+            v_ = (v_ or "").strip()
+            if v_ and v_.lower() not in _NOMBRES_RELLENO and not (solo_vacios and g_.get(campo)):
+                g_[campo] = v_
+
+    def _fecha(v_, utc=False):
+        if not v_:
+            return ""
+        if utc:
+            return chile_fmt_filter(v_, "%d/%m/%Y")
+        return v_.strftime("%d/%m/%Y") if hasattr(v_, "strftime") else str(v_)[:10]
+
+    for t in tickets:
+        if not (t.get("rut") or "").strip():
+            sin_rut.append({"id": t.get("id"), "ticket": t.get("numero_ticket"), "empresa": t.get("empresa"),
+                            "estado": t.get("estado"), "fecha": _fecha(t.get("created_at"), utc=True)})
+            continue
+        g_ = _grupo(t["rut"])
+        if g_ is None:
+            continue
+        # El dato más reciente (último ticket) manda sobre los anteriores, si no viene vacío.
+        _tomar(g_, (("empresa", t.get("empresa")), ("email", t.get("email")), ("telefono", t.get("phone")),
+                    ("direccion", t.get("direccion")), ("comuna", t.get("comuna_nombre")),
+                    ("contacto", t.get("nombre_contacto"))))
+        g_["tickets"].append({"numero": t.get("numero_ticket"), "estado": t.get("estado"),
+                              "fecha": _fecha(t.get("created_at"), utc=True)})
+    for v_ in ventas:
+        g_ = _grupo(v_.get("cliente_rut"))
+        if g_ is None:
+            continue
+        # El ticket trae al contacto real; la factura solo completa lo que falte.
+        _tomar(g_, (("empresa", v_.get("cliente_nombre")), ("email", v_.get("email")), ("telefono", v_.get("telefono")),
+                    ("direccion", v_.get("direccion")), ("comuna", v_.get("comuna"))), solo_vacios=True)
+        doc = _doc_origen_key(v_.get("tido"), v_.get("nudo"))
+        if all(f_["doc"] != doc for f_ in g_["facturas"]):
+            g_["facturas"].append({"doc": doc, "fecha": _fecha(v_.get("fecha_emision"))})
+    for g_ in grupos.values():
+        g_["fuente"] = " y ".join(x for x, hay in (("ticket", g_["tickets"]), ("factura del ERP", g_["facturas"])) if hay)
+    return list(grupos.values()), sin_rut
+
+
+def _instalaciones_auditar(desde=None, completo=False):
     """SOLO LECTURA. Dónde se puede estar perdiendo un cliente que entra por instalación:
-      a) tickets de instalación cuyo RUT no tiene ficha de cliente (agrupados por RUT),
-      b) tickets de instalación sin RUT (no se puede crear ficha),
+      a) clientes de instalación sin ficha, por sus DOS fuentes: tickets de instalación y ventas con instalación
+         del ERP (ZZINSTALACION, aunque no tengan ticket ni OT), agrupados por RUT,
+      b) tickets de instalación sin RUT (la vigilancia les busca el RUT en su factura),
       c) OT de instalación sin cliente,
       d) clientes con OT de instalación que NO están clasificados como «Instalación» y no tienen contrato.
-    `desde` (date) limita (a) y (b) a tickets creados desde esa fecha. Daniel 2026-10-04: «los clientes que
-    se agregan por instalación son la pepita de oro, tener en orden todos esos clientes»."""
+    `desde` (date) limita (a) y (b) a tickets creados y ventas emitidas desde esa fecha. Con `completo`, suma los
+    controles de salud del proceso (_salud_controles_extra). Daniel 2026-10-04: «los clientes que se agregan por
+    instalación son la pepita de oro»; 2026-10-19: «debe estar muy robusto para establecer las mantenciones como
+    área de negocio de la empresa»."""
     out = {"tickets_sin_ficha": [], "tickets_sin_rut": [], "ot_instalacion_sin_cliente": [], "mal_clasificados": [],
            "fichas_sin_equipos": []}
     try:
@@ -62658,35 +62727,16 @@ def _instalaciones_auditar(desde=None):
             if k:
                 fichas[k] = r["id"]
     try:
-        grupos = {}
         sql = ("SELECT id, numero_ticket, rut, empresa, email, phone, direccion, comuna_nombre, nombre_contacto, estado, created_at "
                "  FROM tk_tickets WHERE tipo='install' AND estado<>'cancelado' ")
         params = ()
         if desde:
             sql += " AND created_at >= %s "
             params = (desde,)
-        for t in (mysql_fetchall(sql + " ORDER BY id", params) or []):
-            if not (t.get("rut") or "").strip():
-                out["tickets_sin_rut"].append({"ticket": t["numero_ticket"], "empresa": t.get("empresa"), "estado": t["estado"]})
-                continue
-            kc, kb = _rut_canon(t["rut"]), _rut_cuerpo(t["rut"])
-            # Una ficha antigua puede guardar el RUT sin DV ('72498100'): se compara por las dos llaves.
-            if (kc and kc in fichas) or (kb and kb in fichas):
-                continue
-            k = kc or kb
-            if not k:
-                continue
-            g_ = grupos.setdefault(k, {"key": k, "rut": t["rut"], "empresa": "", "email": "", "telefono": "", "direccion": "",
-                                       "comuna": "", "contacto": "", "tickets": []})
-            # El dato más reciente (último ticket) manda sobre los anteriores, si no viene vacío.
-            for campo, col in (("empresa", "empresa"), ("email", "email"), ("telefono", "phone"), ("direccion", "direccion"),
-                               ("comuna", "comuna_nombre"), ("contacto", "nombre_contacto")):
-                v_ = (t.get(col) or "").strip()
-                if v_ and v_.lower() not in _NOMBRES_RELLENO:
-                    g_[campo] = v_
-            g_["tickets"].append({"numero": t["numero_ticket"], "estado": t["estado"],
-                                  "fecha": chile_fmt_filter(t["created_at"], "%d/%m/%Y") if t.get("created_at") else ""})
-        for g_ in grupos.values():
+        tickets = [dict(t) for t in (mysql_fetchall(sql + " ORDER BY id", params) or [])]
+        ventas = _ventas_instalacion_erp(desde.date() if isinstance(desde, datetime) else desde)
+        grupos, out["tickets_sin_rut"] = _agrupar_instalaciones(tickets, ventas, fichas)
+        for g_ in grupos:
             ok, res = validar_rut(g_["rut"])
             g_["rut_normalizado"] = res if ok else ""
             g_["rut_error"] = "" if ok else str(res)
@@ -62697,9 +62747,9 @@ def _instalaciones_auditar(desde=None):
             if ok and cuerpo_num < 1000000:
                 g_["rut_error"] = "RUT de relleno, no parece real"
                 g_["rut_normalizado"] = ""
-        out["tickets_sin_ficha"] = sorted(grupos.values(), key=lambda x: (x["empresa"] or "").lower())
+        out["tickets_sin_ficha"] = sorted(grupos, key=lambda x: (x["empresa"] or "").lower())
     except Exception as e:
-        print(f"[auditoria instalaciones] tickets: {e}", flush=True)
+        print(f"[auditoria instalaciones] tickets y ventas: {e}", flush=True)
     try:
         for v in (mysql_fetchall(
                 "SELECT id, numero_ot, titulo, estado, created_by, created_at FROM mant_visitas "
@@ -62722,8 +62772,258 @@ def _instalaciones_auditar(desde=None):
                                             "tipo_cliente": c["tipo_cliente"], "ot": c.get("ot")})
     except Exception as e:
         print(f"[auditoria instalaciones] mal clasificados: {e}", flush=True)
+    if completo:
+        out.update(_salud_controles_extra())
     return out
 
+
+# ══════════════════════════════════════════════════════════════════
+# SALUD DEL PROCESO (Daniel 2026-10-19: «estamos creando los clientes para proponer esto: debe estar muy robusto
+# para establecer las mantenciones como área de negocio de la empresa»). Cada punto donde un cliente de
+# instalación se puede caer antes de ofrecerle mantención queda contado en el panel de administradores.
+# SOLO LECTURA salvo lo que dice cada función. Nada de esto le escribe a un cliente.
+# ══════════════════════════════════════════════════════════════════
+_SALUD_OT_DESDE = "2026-09-02"      # desde ese día la OT de instalación pasa sola sus equipos a la ficha
+_CONTRATO_MONTO_MIN = 1000          # un monto mensual menor no es real en pesos (suele ser UF o un error)
+_RUT_FACTURA_INTENTOS = {}          # ticket_id -> último intento (por instancia): no se relee el ERP en cada corrida
+
+
+def _salud_kv_get(clave):
+    """Valor guardado del panel de salud (en mant_plan_config, que _plan_config ignora si no es del plan)."""
+    try:
+        r = mysql_fetchone("SELECT valor FROM mant_plan_config WHERE clave=%s", (clave,))
+        return json.loads(r["valor"]) if r and r.get("valor") else None
+    except Exception:
+        return None
+
+
+def _salud_kv_set(clave, valor):
+    try:
+        _ensure_mant_plan_config()
+        mysql_execute("INSERT INTO mant_plan_config (clave, valor, updated_by) VALUES (%s,%s,'sistema') "
+                      "ON DUPLICATE KEY UPDATE valor=VALUES(valor), updated_by=VALUES(updated_by)",
+                      (clave, json.dumps(valor, ensure_ascii=False, default=str)))
+    except Exception as e:
+        print(f"[salud kv] {clave}: {e}", flush=True)
+
+
+def _ot_sin_equipos_filtrar(ots, con_doc, con_ot=()):
+    """Las OT de instalación cerradas cuyo documento no dejó NINGÚN equipo en la ficha de su cliente.
+    `con_doc` = {(cliente_id, 'TIDO NUDO')} de los equipos que sí están en las fichas; `con_ot` = OT que ya dieron
+    de alta equipos (mant_maquinas.origen_ot_id). No toca la base."""
+    out = []
+    for o in ots:
+        nudo = re.sub(r"[^0-9]", "", str(o.get("nudo") or ""))
+        if not (o.get("tido") and nudo):
+            continue
+        doc = _doc_origen_key(o["tido"], nudo)
+        if (o["cliente_id"], doc) in con_doc or o["id"] in con_ot:
+            continue
+        out.append({"vid": o["id"], "numero_ot": o.get("numero_ot"), "cliente_id": o["cliente_id"],
+                    "razon_social": o.get("razon_social"), "doc": doc, "estado": o.get("estado")})
+    return out
+
+
+def _contrato_monto_valido(valor):
+    """El monto mensual de un contrato, en pesos. Obligatorio al subir un contrato (Daniel 2026-10-19), para que el
+    ingreso de mantención se pueda medir. Devuelve (monto, mensaje_de_error)."""
+    try:
+        m = float(str(valor if valor is not None else "").strip() or 0)
+    except ValueError:
+        return None, "Escribe el monto mensual del contrato en pesos, solo con números (por ejemplo, 250000)."
+    if m <= 0:
+        return None, "Escribe el monto mensual del contrato en pesos. Sin el monto no se puede medir el ingreso de mantención."
+    if m < _CONTRATO_MONTO_MIN:
+        return None, f"El monto mensual ({m:g}) parece estar en UF. Escríbelo en pesos chilenos."
+    return m, None
+
+
+def _rut_desde_documentos(docs, leer=None):
+    """El RUT del cliente según sus documentos de venta en el ERP (solo lectura, REGLA #4.1). `docs` =
+    [(tido, nudo, …)]; `leer(tido, nudo)` → (header, lineas). Devuelve (rut_canónico, 'TIDO NUDO', nombre) del
+    primer documento con un RUT válido, o (None, None, None)."""
+    for d_ in docs:
+        try:
+            header, _lineas = (leer or _mant_erp_doc_cached)(d_[0], d_[1])
+        except Exception:
+            header = None
+        rut = _rut_canon((header or {}).get("cliente_rut") or "")
+        if rut:
+            return rut, _doc_origen_key(d_[0], d_[1]), ((header or {}).get("cliente_nombre") or "").strip()
+    return None, None, None
+
+
+def _tickets_rut_desde_factura(max_n=10, ids=None):
+    """Un ticket de instalación sin RUT toma el RUT de su factura en el ERP y lo guarda, con constancia en su hilo:
+    así su cliente recibe ficha y la conversación queda asociada a él (Daniel 2026-10-19). Solo llena un RUT
+    vacío, nunca pisa uno escrito. Lee el ERP a lo más `max_n` veces por llamada. Devuelve el resumen."""
+    res = {"resueltos": 0, "sin_documento": 0, "sin_rut_en_erp": 0, "detalle": []}
+    sql = ("SELECT id, numero_ticket, empresa, numero_documento FROM tk_tickets "
+           " WHERE tipo='install' AND estado<>'cancelado' AND (rut IS NULL OR TRIM(rut)='') ")
+    params = ()
+    if ids:
+        sql += f" AND id IN ({','.join(['%s'] * len(ids))}) "
+        params = tuple(ids)
+    try:
+        filas = [dict(r) for r in (mysql_fetchall(sql + " ORDER BY id DESC LIMIT 300", params) or [])]
+    except Exception as e:
+        print(f"[rut desde factura] {e}", flush=True)
+        return res
+    ahora, leidos = time.time(), 0
+    for t in filas:
+        if leidos >= max_n:
+            break
+        if not ids and ahora - _RUT_FACTURA_INTENTOS.get(t["id"], 0) < 86400:
+            continue
+        _RUT_FACTURA_INTENTOS[t["id"]] = ahora
+        docs = _docs_de_tickets([t])
+        if not docs:
+            res["sin_documento"] += 1
+            continue
+        leidos += 1
+        rut, doc, nombre = _rut_desde_documentos(docs)
+        if not rut:
+            res["sin_rut_en_erp"] += 1
+            continue
+        try:
+            n = mysql_execute_returning_rowcount(
+                "UPDATE tk_tickets SET rut=%s, empresa=COALESCE(NULLIF(TRIM(empresa),''), %s) "
+                " WHERE id=%s AND (rut IS NULL OR TRIM(rut)='')", (rut, (nombre or None) and nombre[:150], t["id"]))
+        except Exception as e:
+            print(f"[rut desde factura] ticket {t['id']}: {e}", flush=True)
+            continue
+        if n:
+            res["resueltos"] += 1
+            res["detalle"].append({"ticket": t.get("numero_ticket"), "rut": rut, "doc": doc})
+            try:
+                mysql_execute("INSERT INTO tk_mensajes (ticket_id, tipo, contenido, usuario, es_interno) "
+                              "VALUES (%s,'comentario',%s,'sistema',1)",
+                              (t["id"], f"RUT del cliente tomado de su documento {doc} en el ERP: {rut}. "
+                                        f"Así este ticket queda asociado a su ficha de cliente."))
+            except Exception:
+                pass
+    return res
+
+
+def _tarifas_por_cliente(ids):
+    """Precio de UNA mantención por cliente con las tarifas del cotizador (mano de obra; sin ruta ni repuestos) y
+    los equipos del plan sin tarifa, que se cotizarían en $0. Devuelve ({cid: {precio, sin_tarifa, equipos,
+    skus_sin_tarifa}}, {sku: clase}). SOLO LECTURA. La usan Cobertura, la tarjeta del prospecto y el panel de salud."""
+    out, clase_de = {}, {}
+    ids = [int(i) for i in ids if i]
+    if not ids:
+        return out, clase_de
+    ph = ",".join(["%s"] * len(ids))
+    equipos = {}
+    for r in (mysql_fetchall(
+            f"SELECT cliente_id, UPPER(TRIM(sku)) AS sku, COUNT(*) AS n FROM mant_maquinas "
+            f" WHERE cliente_id IN ({ph}) AND estado='activo' AND COALESCE(aplica_mantencion,1)=1 "
+            f" GROUP BY cliente_id, UPPER(TRIM(sku))", tuple(ids)) or []):
+        equipos.setdefault(r["cliente_id"], []).append((r["sku"] or "", int(r["n"] or 0)))
+    skus = sorted({sku for lst in equipos.values() for sku, _n in lst if sku})
+    if skus:
+        ph2 = ",".join(["%s"] * len(skus))
+        for r in (mysql_fetchall(f"SELECT UPPER(TRIM(sku)) AS sku, clase_producto FROM cat_productos "
+                                 f" WHERE UPPER(TRIM(sku)) IN ({ph2})", tuple(skus)) or []):
+            if r.get("clase_producto"):
+                clase_de[r["sku"]] = r["clase_producto"]
+    _calc = globals().get("_tk_cotiz_calcular_item")
+    _cfgf = globals().get("_tk_cotiz_pricing_config")
+    _tarb = globals().get("_cat_tarifas_clases_batch")
+    cfg_p, tarifas = None, {}
+    try:
+        cfg_p = _cfgf() if _cfgf else None
+        tarifas = (_tarb(sorted(set(clase_de.values())), "mantencion") or {}) if _tarb else {}
+    except Exception as e:
+        print(f"[tarifas por cliente] {e}", flush=True)
+    for cid_, lst in equipos.items():
+        tot, sin, skus_sin = 0.0, 0, {}
+        for sku, n in lst:
+            clase = clase_de.get(sku)
+            r = None
+            if _calc and cfg_p is not None and clase:
+                try:
+                    r = _calc(clase, "mantencion", n, None, cfg_p, tarifa=tarifas.get(clase))
+                except Exception:
+                    r = None
+            if r and r.get("total") is not None:
+                tot += float(r["total"] or 0)
+            else:
+                sin += n
+                skus_sin[sku] = skus_sin.get(sku, 0) + n
+        out[cid_] = {"precio": tot, "sin_tarifa": sin, "equipos": sum(n for _s, n in lst), "skus_sin_tarifa": skus_sin}
+    return out, clase_de
+
+
+def _salud_controles_extra():
+    """SOLO LECTURA. Los demás puntos donde un cliente de instalación se puede caer antes de ofrecerle mantención:
+    OT cerradas cuyos equipos no llegaron a la ficha, prospectos sin teléfono ni correo, equipos sin tarifa (se
+    cotizarían en $0), contratos sin monto y la última revisión de la vigilancia."""
+    out = {"ot_sin_equipos": [], "prospectos_sin_contacto": [], "equipos_sin_tarifa": [], "contratos_sin_monto": [],
+           "vigilancia": _salud_kv_get("salud_vigilancia")}
+    try:
+        revisadas = {int(x) for x in (_salud_kv_get("salud_ot_sin_productos") or [])}
+        ots = [dict(r) for r in (mysql_fetchall(
+            "SELECT v.id, v.numero_ot, v.cliente_id, c.razon_social, v.estado, "
+            "       COALESCE(NULLIF(TRIM(v.documento_erp_tido),''), v.factura_tido) AS tido, "
+            "       COALESCE(NULLIF(TRIM(v.documento_erp_nudo),''), v.factura_nudo) AS nudo "
+            "  FROM mant_visitas v JOIN mant_clientes c ON c.id=v.cliente_id "
+            " WHERE v.tipo='instalacion' AND v.estado IN ('completada','cerrada') AND v.created_at >= %s "
+            " ORDER BY v.id DESC LIMIT 300", (_SALUD_OT_DESDE,)) or [])]
+        ots = [o for o in ots if o["id"] not in revisadas]
+        if ots:
+            cids = sorted({o["cliente_id"] for o in ots})
+            ph = ",".join(["%s"] * len(cids))
+            con_doc, con_ot = set(), set()
+            for r in (mysql_fetchall(
+                    f"SELECT DISTINCT cliente_id, doc_origen, origen_ot_id FROM mant_maquinas WHERE cliente_id IN ({ph}) "
+                    f"   AND ((doc_origen IS NOT NULL AND doc_origen<>'') OR origen_ot_id IS NOT NULL)", tuple(cids)) or []):
+                if r.get("doc_origen"):
+                    con_doc.add((r["cliente_id"], _doc_origen_normalizar(r["doc_origen"])))
+                if r.get("origen_ot_id"):
+                    con_ot.add(int(r["origen_ot_id"]))
+            out["ot_sin_equipos"] = _ot_sin_equipos_filtrar(ots, con_doc, con_ot)
+    except Exception as e:
+        print(f"[salud] ot sin equipos: {e}", flush=True)
+    pros = []
+    try:
+        for r in (mysql_fetchall(
+                "SELECT c.id, c.razon_social, c.contacto_tel, c.tel_empresa, c.contacto2_tel, c.contacto_email, "
+                "       c.email_empresa, c.contacto2_email "
+                "  FROM mant_clientes c "
+                " WHERE c.estado<>'inactivo' AND (c.tipo_cliente='instalacion' OR c.estado='prospecto') "
+                "   AND NOT EXISTS (SELECT 1 FROM mant_contratos ct WHERE ct.cliente_id=c.id "
+                "                    AND ct.nombre<>'Contenedor de documentos' AND ct.estado IN ('vigente','por_vencer','indefinido')) "
+                " ORDER BY c.razon_social") or []):
+            pros.append(r["id"])
+            if not any((r.get(k) or "").strip() for k in ("contacto_tel", "tel_empresa", "contacto2_tel", "contacto_email",
+                                                          "email_empresa", "contacto2_email")):
+                out["prospectos_sin_contacto"].append({"id": r["id"], "razon_social": r["razon_social"]})
+    except Exception as e:
+        print(f"[salud] prospectos: {e}", flush=True)
+    try:
+        tar, clase_de = _tarifas_por_cliente(pros)
+        agg = {}
+        for _cid, t in tar.items():
+            for sku, n in t["skus_sin_tarifa"].items():
+                a_ = agg.setdefault(sku, {"sku": sku, "clase": clase_de.get(sku) or "", "equipos": 0, "clientes": 0})
+                a_["equipos"] += n
+                a_["clientes"] += 1
+        out["equipos_sin_tarifa"] = sorted(agg.values(), key=lambda x: (-x["equipos"], x["sku"]))
+    except Exception as e:
+        print(f"[salud] tarifas: {e}", flush=True)
+    try:
+        out["contratos_sin_monto"] = [
+            {"id": r["id"], "cliente_id": r["cliente_id"], "razon_social": r["razon_social"], "nombre": r.get("nombre") or "",
+             "monto_mensual": float(r.get("monto_mensual") or 0)}
+            for r in (mysql_fetchall(
+                "SELECT ct.id, ct.cliente_id, c.razon_social, ct.nombre, ct.monto_mensual FROM mant_contratos ct "
+                "  JOIN mant_clientes c ON c.id=ct.cliente_id "
+                " WHERE ct.nombre<>'Contenedor de documentos' AND ct.estado IN ('vigente','por_vencer','indefinido') "
+                "   AND COALESCE(ct.monto_mensual,0) < %s ORDER BY c.razon_social", (_CONTRATO_MONTO_MIN,)) or [])]
+    except Exception as e:
+        print(f"[salud] contratos sin monto: {e}", flush=True)
+    return out
 
 def _ficha_instalacion_desde_grupo(g_, quien):
     """Crea (o encuentra) la ficha de un cliente que entró por instalación. (id, 'creada'|'ya_existia'|motivo_de_fallo)."""
@@ -62759,7 +63059,10 @@ def _ficha_instalacion_desde_grupo(g_, quien):
         return None, "no se pudo crear"
     try:
         nums = ", ".join(t["numero"] for t in g_.get("tickets", [])[:6])
-        _mant_log("cliente", cid, "creado", f"Ficha creada desde tickets de instalación ({nums}) · queda como prospecto de instalación · por {quien}")
+        facs = ", ".join(f_["doc"] for f_ in g_.get("facturas", [])[:6])
+        origen = " y ".join(x for x in ((f"tickets de instalación ({nums})" if nums else ""),
+                                        (f"ventas con instalación del ERP ({facs})" if facs else "")) if x)
+        _mant_log("cliente", cid, "creado", f"Ficha creada desde {origen or 'una instalación'} · queda como prospecto de instalación · por {quien}")
     except Exception:
         pass
     return cid, "creada"
@@ -62810,7 +63113,36 @@ def _docs_de_tickets(tickets):
     return docs
 
 
-def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets_cache=None):
+def _ventas_instalacion_erp(desde=None):
+    """SOLO LECTURA. Ventas con instalación (línea ZZINSTALACION) que el Monitor de Transporte ya trajo del ERP
+    (transport_commitments): la fuente de verdad de «quién compró con instalación», tenga o no ticket u OT
+    (Daniel 2026-10-19). `desde` (date) limita a documentos emitidos desde esa fecha. Si falla devuelve []."""
+    sql = ("SELECT tido, nudo, fecha_emision, cliente_nombre, cliente_rut, comuna, direccion, telefono, email "
+           "  FROM transport_commitments "
+           " WHERE (UPPER(COALESCE(zz_skus,'')) LIKE %s OR clasificacion='instalacion') "
+           "   AND cliente_rut IS NOT NULL AND cliente_rut<>'' ")
+    params = ["%ZZINSTALACION%"]
+    if desde:
+        sql += " AND fecha_emision >= %s "
+        params.append(desde)
+    try:
+        return [dict(r) for r in (mysql_fetchall(sql + " ORDER BY fecha_emision, id", tuple(params)) or [])]
+    except Exception as e:
+        print(f"[ventas instalacion erp] {e}", flush=True)
+        return []
+
+
+def _ventas_instalacion_erp_de_rut(rut, cache=None):
+    """Las ventas con instalación del ERP de un cliente, por RUT canónico o por cuerpo."""
+    llaves = {k for k in (_rut_canon(rut), _rut_cuerpo(rut)) if k}
+    if not llaves:
+        return []
+    filas = cache if cache is not None else _ventas_instalacion_erp()
+    return [v for v in filas if v.get("cliente_rut")
+            and (_rut_canon(v["cliente_rut"]) in llaves or _rut_cuerpo(v["cliente_rut"]) in llaves)]
+
+
+def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets_cache=None, erp_cache=None):
     """Carga en la ficha los PRODUCTOS que el cliente compró con instalación, desde la factura del ERP (solo
     lectura), con su fecha de emisión (doc_fecha) para programar las mantenciones. Una fila por unidad (cada
     máquina con su serie), sin servicios ZZ, idempotente por documento (_asignados_por_sku, mismo candado que
@@ -62822,6 +63154,14 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
             return False, {"error": "Cliente no encontrado"}
         tickets = _tickets_instalacion_del_cliente(cli.get("rut"), tickets_cache)
         docs = _docs_de_tickets(tickets) if tickets else []
+        # Las ventas con instalación del ERP también traen los productos, aunque no tengan ticket (Daniel 2026-10-19).
+        _vistos = {(d_[0], d_[1]) for d_ in docs}
+        for v_ in _ventas_instalacion_erp_de_rut(cli.get("rut"), erp_cache):
+            tido_ = (v_.get("tido") or "").strip().upper()
+            nudo_ = re.sub(r"[^0-9]", "", str(v_.get("nudo") or "")).lstrip("0")
+            if tido_ in _TIDOS_VENTA and nudo_ and (tido_, nudo_) not in _vistos:
+                _vistos.add((tido_, nudo_))
+                docs.append((tido_, nudo_, v_.get("fecha_emision"), {}))
         candidatos, omitidos, docs_info = [], [], []
         leidos = []
         for tido, nudo, fecha_reg, t in docs:
@@ -62958,7 +63298,8 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
                             "  fecha_instalacion, estado, notas, aplica_mantencion, created_by) "
                             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'activo',%s,%s,%s)",
                             (cid, c["sku"][:100], c["nombre"], serie, cant_fila, c["doc_key"], c["doc_fecha"], c["fecha_inst"],
-                             f"Alta desde la instalación (ticket {c['ticket']})"
+                             (f"Alta desde la instalación (ticket {c['ticket']})" if c.get("ticket")
+                              else f"Alta desde la venta con instalación {c.get('doc_key') or ''}".strip())
                              + (f" · lote de {cant_fila} unidades" if repetible else ""), aplica, quien))
                         mid = (mysql_fetchone("SELECT LAST_INSERT_ID() AS id") or {}).get("id")
                         break
@@ -62976,7 +63317,8 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
                     creados.append(mid)
                     try:
                         _mant_log("maquina", mid, "creada_desde_instalacion",
-                                  f"Alta desde el ticket de instalación {c['ticket']} · "
+                                  (f"Alta desde el ticket de instalación {c['ticket']} · " if c.get("ticket")
+                                   else "Alta desde la venta con instalación · ")
                                   + (f"documento {c['doc_key']}" if c["doc_key"] else "equipos declarados en el ticket")
                                   + (f" · emitido {str(c['doc_fecha'])[:10]}" if c["doc_fecha"] else ""))
                     except Exception:
@@ -62998,17 +63340,25 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
 def _instalaciones_asegurar_fichas(desde=None, max_n=30):
     """Vigilancia: toda instalación nueva (ticket) deja su ficha de cliente. Corre colgada del cron de cada 10 min.
     Solo mira tickets desde `desde` (lo anterior se repara a mano con vista previa). No envía nada a nadie."""
-    res = {"creadas": 0, "ya_existian": 0, "fallidas": []}
+    res = {"creadas": 0, "ya_existian": 0, "fallidas": [], "rut_desde_factura": 0}
     if (os.environ.get("INSTALACIONES_FICHA_AUTO", "1") or "1").strip().lower() in ("0", "false", "no"):
         res["apagado"] = True
         return res
+    # Primero, a los tickets de instalación sin RUT se les busca el RUT en su factura (Daniel 2026-10-19).
+    try:
+        res["rut_desde_factura"] = _tickets_rut_desde_factura(max_n=10)["resueltos"]
+    except Exception as e:
+        print(f"[vigilancia instalaciones] rut desde factura: {e}", flush=True)
+    erp_cache = None
     for g_ in _instalaciones_auditar(desde=desde)["tickets_sin_ficha"][:max_n]:
         try:
             cid, estado = _ficha_instalacion_desde_grupo(g_, "sistema")
             if estado == "creada":
                 res["creadas"] += 1
                 try:
-                    _ficha_equipos_desde_instalacion(cid, confirmar=True, usuario="sistema")
+                    if erp_cache is None:
+                        erp_cache = _ventas_instalacion_erp()
+                    _ficha_equipos_desde_instalacion(cid, confirmar=True, usuario="sistema", erp_cache=erp_cache)
                 except Exception as _e_eq:
                     print(f"[vigilancia instalaciones] equipos cid={cid}: {_e_eq}", flush=True)
             elif estado == "ya_existia":
@@ -63017,6 +63367,9 @@ def _instalaciones_asegurar_fichas(desde=None, max_n=30):
                 res["fallidas"].append(f"{g_.get('empresa')}: {estado}")
         except Exception as e:
             res["fallidas"].append(f"{g_.get('empresa')}: {str(e)[:80]}")
+    # Queda la constancia de cada revisión: el panel de salud muestra cuándo corrió y qué hizo.
+    _salud_kv_set("salud_vigilancia", {"at": datetime.utcnow().isoformat(timespec="seconds"), "creadas": res["creadas"],
+                                       "rut_desde_factura": res["rut_desde_factura"], "fallidas": res["fallidas"][:10]})
     return res
 
 
@@ -63026,8 +63379,14 @@ def _instalaciones_asegurar_fichas(desde=None, max_n=30):
 def mant_instalaciones_auditoria():
     if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
         return jsonify({"ok": False, "error": "Solo un administrador puede ver esto."}), 403
-    a = _instalaciones_auditar()
-    return jsonify({"ok": True, **a, "resumen": {k: len(v) for k, v in a.items()}})
+    a = _instalaciones_auditar(completo=True)
+    vig = a.get("vigilancia") or {}
+    if vig.get("at"):
+        try:
+            vig["at_chile"] = chile_fmt_filter(datetime.fromisoformat(vig["at"]), "%d/%m/%Y %H:%M")
+        except Exception:
+            pass
+    return jsonify({"ok": True, **a, "resumen": {k: len(v) for k, v in a.items() if isinstance(v, list)}})
 
 
 @app.route("/mantenciones/api/instalaciones/crear-fichas", methods=["POST"])
@@ -63134,10 +63493,11 @@ def mant_instalaciones_equipos():
     cache = mysql_fetchall(
         "SELECT id, numero_ticket, rut, estado, numero_documento, cerrado_at, created_at "
         "  FROM tk_tickets WHERE tipo='install' AND estado<>'cancelado'") or []
+    erp_cache = _ventas_instalacion_erp()
     out = []
     for cid in ids:
         ok, data = _ficha_equipos_desde_instalacion(cid, confirmar=bool(d.get("confirmar")),
-                                                   usuario=current_username(), tickets_cache=cache)
+                                                   usuario=current_username(), tickets_cache=cache, erp_cache=erp_cache)
         out.append({"id": cid, "ok": ok, **data})
     return jsonify({"ok": True, "resultados": out})
 
@@ -63164,6 +63524,55 @@ def mant_instalaciones_reclasificar():
             except Exception:
                 pass
     return jsonify({"ok": True, "reclasificados": n})
+
+
+@app.route("/mantenciones/api/instalaciones/rut-desde-factura", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_instalaciones_rut_desde_factura():
+    """Busca en su factura del ERP (solo lectura) el RUT de los tickets de instalación indicados que no lo tienen,
+    y lo guarda. Body: {ids: [..]} (hasta 30 por llamada)."""
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo un administrador puede hacer esto."}), 403
+    d = request.get_json(silent=True) or {}
+    ids = [int(x) for x in (d.get("ids") or [])[:30] if str(x).isdigit()]
+    if not ids:
+        return jsonify({"ok": False, "error": "No indicaste tickets."}), 400
+    # Cada ticket resuelto deja su constancia en su propio hilo (_tickets_rut_desde_factura).
+    return jsonify({"ok": True, **_tickets_rut_desde_factura(max_n=30, ids=ids)})
+
+
+@app.route("/mantenciones/api/instalaciones/ot-equipos", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_instalaciones_ot_equipos():
+    """Panel de salud: pasa a la ficha los equipos del documento de una OT de instalación cerrada (el MISMO núcleo
+    del cierre, idempotente por documento). Body: {vid, accion: 'vista'|'pasar'|'revisada'}. 'revisada' deja de
+    mostrar una OT cuyo documento no trae productos para la ficha (por ejemplo, solo el servicio)."""
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo un administrador puede hacer esto."}), 403
+    d = request.get_json(silent=True) or {}
+    try:
+        vid = int(d.get("vid") or 0)
+    except (TypeError, ValueError):
+        vid = 0
+    accion = (d.get("accion") or "vista").strip().lower()
+    if not vid or accion not in ("vista", "pasar", "revisada"):
+        return jsonify({"ok": False, "error": "Indica la OT y qué hacer."}), 400
+    if accion == "revisada":
+        rev = [int(x) for x in (_salud_kv_get("salud_ot_sin_productos") or []) if str(x).isdigit()]
+        if vid not in rev:
+            _salud_kv_set("salud_ot_sin_productos", (rev + [vid])[-500:])
+        try:
+            _mant_log("visita", vid, "salud_ot_revisada",
+                      f"OT revisada en el panel de salud: su documento no trae productos para la ficha · por {current_username()}")
+        except Exception:
+            pass
+        return jsonify({"ok": True, "mensaje": "OT marcada como revisada."})
+    ok, data = _ot_equipos_desde_doc_core(vid, confirmar=(accion == "pasar"), usuario=current_username())
+    if not ok:
+        return jsonify({"ok": False, "codigo": data.get("codigo"), "error": data.get("error") or "No se pudo procesar."}), 400
+    return jsonify({"ok": True, **data})
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -63245,47 +63654,11 @@ def _cobertura_datos():
         f"SELECT cliente_id, COUNT(*) AS n FROM mant_visitas WHERE cliente_id IN ({ph}) AND estado='programada' "
         f"   AND fecha_programada BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 90 DAY) GROUP BY cliente_id",
         tuple(ids)) or [])}
-    equipos = {}
-    for r in (mysql_fetchall(
-            f"SELECT cliente_id, UPPER(TRIM(sku)) AS sku, COUNT(*) AS n FROM mant_maquinas "
-            f" WHERE cliente_id IN ({ph}) AND estado='activo' AND COALESCE(aplica_mantencion,1)=1 "
-            f" GROUP BY cliente_id, UPPER(TRIM(sku))", tuple(ids)) or []):
-        equipos.setdefault(r["cliente_id"], []).append((r["sku"] or "", int(r["n"] or 0)))
     # Precio de UNA mantención por cliente con las tarifas del cotizador (mano de obra; sin ruta ni repuestos).
-    skus = sorted({sku for lst in equipos.values() for sku, _n in lst if sku})
-    clase_de = {}
-    if skus:
-        ph2 = ",".join(["%s"] * len(skus))
-        for r in (mysql_fetchall(f"SELECT UPPER(TRIM(sku)) AS sku, clase_producto FROM cat_productos "
-                                 f" WHERE UPPER(TRIM(sku)) IN ({ph2})", tuple(skus)) or []):
-            if r.get("clase_producto"):
-                clase_de[r["sku"]] = r["clase_producto"]
-    _calc = globals().get("_tk_cotiz_calcular_item")
-    _cfgf = globals().get("_tk_cotiz_pricing_config")
-    _tarb = globals().get("_cat_tarifas_clases_batch")
-    cfg_p, tarifas = None, {}
-    try:
-        cfg_p = _cfgf() if _cfgf else None
-        tarifas = (_tarb(sorted(set(clase_de.values())), "mantencion") or {}) if _tarb else {}
-    except Exception as e:
-        print(f"[cobertura] tarifas: {e}", flush=True)
-    precio_cli, sin_tarifa_cli = {}, {}
-    for cid_, lst in equipos.items():
-        tot, sin = 0.0, 0
-        for sku, n in lst:
-            clase = clase_de.get(sku)
-            r = None
-            if _calc and cfg_p is not None and clase:
-                try:
-                    r = _calc(clase, "mantencion", n, None, cfg_p, tarifa=tarifas.get(clase))
-                except Exception:
-                    r = None
-            if r and r.get("total") is not None:
-                tot += float(r["total"] or 0)
-            else:
-                sin += n
-        precio_cli[cid_] = tot
-        sin_tarifa_cli[cid_] = sin
+    tar, _clase_de = _tarifas_por_cliente(ids)
+    precio_cli = {k: v["precio"] for k, v in tar.items()}
+    sin_tarifa_cli = {k: v["sin_tarifa"] for k, v in tar.items()}
+    equipos_cli = {k: v["equipos"] for k, v in tar.items()}
     plan_cfg = _plan_config()
     try:
         vis_plan = max(1, int(float(plan_cfg.get("visitas_anio") or 4)))
@@ -63297,7 +63670,7 @@ def _cobertura_datos():
         desc_base = 0.0
     prospectos = [c["id"] for c in clientes if c["id"] not in contratos
                   and (c.get("tipo_cliente") == "instalacion" or c.get("estado") == "prospecto")]
-    pinfo = _prospecto_info(prospectos) if prospectos else {}
+    pinfo = _prospecto_info(prospectos, con_faltan=False) if prospectos else {}
     zonas, comunas, filas = {}, {}, []
     for c in clientes:
         z, n, la, lo = _zona_de(c.get("comuna"))
@@ -63305,7 +63678,7 @@ def _cobertura_datos():
         es_pros = c["id"] in pinfo
         if not (con or es_pros):
             continue                     # solo clientes con contrato o prospectos de mantención
-        neq = sum(n_ for _s, n_ in equipos.get(c["id"], []))
+        neq = equipos_cli.get(c["id"], 0)
         precio = precio_cli.get(c["id"], 0.0)
         pl = (pinfo.get(c["id"]) or {}).get("plan") or {}
         vis_mes = (12 / freq[c["id"]] / 12) if (con and freq.get(c["id"])) else vis_plan / 12
@@ -63909,10 +64282,12 @@ def mant_clientes():
             "inst_pendientes": len(_pend),
             "inst_sin_contactar": sum(1 for c in _pend if c["pr"]["etapa"] == "por_ofrecer"),
             "inst_vencidos": sum(1 for c in _pend if c["pr"].get("vencida")),
+            "inst_listos": sum(1 for c in _pend if c["pr"].get("listo")),
         }
     except Exception as _e_pr:
         print(f"[clientes] prospectos: {_e_pr}", flush=True)
-        _inst_stats = {"inst_pendientes": 0, "inst_sin_contactar": 0, "inst_vencidos": 0, "inst_vencida_1a": 0}
+        _inst_stats = {"inst_pendientes": 0, "inst_sin_contactar": 0, "inst_vencidos": 0, "inst_vencida_1a": 0,
+                       "inst_listos": 0}
 
     # Stats globales (sin filtros)
     gs = mysql_fetchone("""
@@ -70931,6 +71306,19 @@ def _prospecto_accion(o, cot=None, contrato_fecha=None):
               + (f" por {o['ofrecida_por']}" if o.get("ofrecida_por") else "") + ".")
 
 
+def _prospecto_faltan(contacto, equipos, sin_tarifa):
+    """Lo que le falta a una ficha para ofrecerle y cotizarle mantención (Daniel 2026-10-19: «Ficha lista para
+    cotizar»): cómo contactarlo, sus equipos y la tarifa de cada equipo del plan. Lista vacía = lista."""
+    f = []
+    if not contacto:
+        f.append({"key": "contacto", "texto": "teléfono o correo"})
+    if not equipos:
+        f.append({"key": "equipos", "texto": "sus equipos"})
+    elif sin_tarifa:
+        f.append({"key": "tarifa", "texto": f"la tarifa de {sin_tarifa} equipo{'s' if sin_tarifa != 1 else ''}"})
+    return f
+
+
 def _sumar_meses(d, meses):
     """Suma meses a una fecha sin pasarse del último día del mes (31-ene + 1 mes = 28/29-feb)."""
     import calendar as _cal
@@ -71031,7 +71419,7 @@ def _tickets_de_cliente(rut, limit=8):
              "url": f"/tickets/{r['id']}"} for r in rows]
 
 
-def _prospecto_info(ids):
+def _prospecto_info(ids, con_faltan=True):
     """{cliente_id: {etapa, etapa_label, nota, proxima_gestion, vencida,
     ofrecida_at, ofrecida_por, origen_ot, origen_tipo, origen_fecha}}.
     Tolerante: si la tabla o una columna falta, devuelve lo que pueda."""
@@ -71215,6 +71603,23 @@ def _prospecto_info(ids):
             o["accion"] = _prospecto_accion(o, cots.get(i), contratos.get(i))
         except Exception as e:
             print(f"[prospecto_info] accion {i}: {e}", flush=True)
+    # ¿Lista para cotizar? Contacto, equipos y tarifa de cada equipo del plan (Daniel 2026-10-19).
+    if con_faltan:
+        try:
+            contacto = {r["id"]: any((r.get(k) or "").strip() for k in ("contacto_tel", "tel_empresa", "contacto2_tel",
+                                                                        "contacto_email", "email_empresa", "contacto2_email"))
+                        for r in (mysql_fetchall(
+                            f"SELECT id, contacto_tel, tel_empresa, contacto2_tel, contacto_email, email_empresa, contacto2_email "
+                            f"  FROM mant_clientes WHERE id IN ({ph})", tuple(ids)) or [])}
+            tar, _clase_de = _tarifas_por_cliente(ids)
+            for i, o in out.items():
+                t_ = tar.get(i) or {}
+                o["faltan"] = _prospecto_faltan(contacto.get(i, False), o.get("equipos_plan") or t_.get("equipos") or 0,
+                                                t_.get("sin_tarifa") or 0)
+                o["listo"] = not o["faltan"]
+                o["precio_mantencion"] = round(t_.get("precio") or 0)
+        except Exception as e:
+            print(f"[prospecto_info] faltan: {e}", flush=True)
     return out
 
 
@@ -71867,14 +72272,21 @@ def _prospecto_ticket_oferta(cid, quien):
             f"Qué ofrecemos:\n{puntos}")
     if anterior:
         desc += f"\n\nOferta anterior: {anterior.get('numero_ticket') or '#' + str(anterior['id'])} (cerrada)."
+    # La venta que originó la relación (la factura de la instalación) viaja con el ticket (REGLA #24).
+    try:
+        doc_inst = (mysql_fetchone(
+            "SELECT doc_origen FROM mant_maquinas WHERE cliente_id=%s AND doc_origen IS NOT NULL AND doc_origen<>'' "
+            " ORDER BY doc_fecha IS NULL, doc_fecha, id LIMIT 1", (cid,)) or {}).get("doc_origen")
+    except Exception:
+        doc_inst = None
     hoy = datetime.now()
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO tk_tickets (origen, estado, tipo, prioridad, titulo, descripcion, rut, empresa, nombre_contacto, "
-                "  email, phone, direccion, comuna_nombre, asignado_a, fecha_limite, created_by) "
-                "VALUES ('backoffice','open','maintenance','media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "  email, phone, direccion, comuna_nombre, asignado_a, fecha_limite, created_by, numero_documento) "
+                "VALUES ('backoffice','open','maintenance','media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (f"Oferta de plan de mantención — {cli.get('razon_social')}"[:300], desc,
                  (cli.get("rut") or "")[:12] or None, (cli.get("razon_social") or "")[:150],
                  (cli.get("contacto_nombre") or "")[:150] or None,
@@ -71882,7 +72294,7 @@ def _prospecto_ticket_oferta(cid, quien):
                  (cli.get("contacto_tel") or cli.get("tel_empresa") or "")[:20] or None,
                  (cli.get("direccion") or "")[:255] or None, (cli.get("comuna") or "")[:120] or None,
                  (quien or "")[:190] if quien and quien != "sistema" else None,
-                 (hoy.date() + timedelta(days=5)), quien or "sistema"))
+                 (hoy.date() + timedelta(days=5)), quien or "sistema", doc_inst or None))
             tid = cur.lastrowid
             cur.execute("UPDATE tk_tickets SET numero_ticket = CONCAT('TK-', %s, '-', LPAD(id,5,'0')) WHERE id=%s",
                         (hoy.year, tid))
@@ -72173,7 +72585,7 @@ def prospecto_propuesta_publica(token):
         items = [dict(r) for r in (mysql_fetchall(
             "SELECT descripcion, cantidad, total FROM tk_cotizacion_items WHERE cotizacion_id=%s ORDER BY id",
             (cot_visible["id"],)) or [])]
-    info = (_prospecto_info([cid]) or {}).get(cid) or {}
+    info = (_prospecto_info([cid], con_faltan=False) or {}).get(cid) or {}
     return render_template("mantenciones/propuesta_publica.html", invalido=False, token=tok, cliente=cli, v=variables,
                            calc=c, plan=info.get("plan"), equipos=_plan_equipos(cid), fila=fila, cot=cot_visible,
                            items=items, incluye=[l_.strip() for l_ in (cfg.get("incluye") or "").splitlines() if l_.strip()],
@@ -76397,6 +76809,10 @@ def mant_contrato_subir(cid):
     d = request.form
     if not f or not f.filename:
         return jsonify({"error": "Sin archivo"}), 400
+    # Monto mensual obligatorio y en pesos (Daniel 2026-10-19): sin él no se mide el ingreso de mantención.
+    _monto_ok, _monto_err = _contrato_monto_valido(d.get("monto_mensual"))
+    if _monto_err:
+        return jsonify({"error": _monto_err, "error_codigo": "MONTO_MENSUAL_OBLIGATORIO"}), 400
 
     # Validación PDF-only
     ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
@@ -77162,6 +77578,12 @@ def mant_contrato_update(ctid):
     d = request.get_json(silent=True) or {}
     allowed = ["nombre","fecha_inicio","fecha_vencimiento","es_indefinido",
                "monto_mensual","monto_anual","frecuencia_meses","notas","estado"]
+    if "monto_mensual" in d:
+        # Mismo criterio que al subir: en pesos y mayor que cero (lo usa el panel de salud para completar montos).
+        _m, _err = _contrato_monto_valido(d.get("monto_mensual"))
+        if _err:
+            return jsonify({"ok": False, "error": _err}), 400
+        d["monto_mensual"] = _m
     sets = [f"{f}=%s" for f in allowed if f in d]
     vals = [d[f] for f in allowed if f in d]
     if not sets:

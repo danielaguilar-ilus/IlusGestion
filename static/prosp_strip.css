@@ -1,9 +1,10 @@
 /* ══════════════════════════════════════════════════════════════════
    Franja del prospecto (tarjeta de Clientes y ficha). Movido desde
    templates/mantenciones/clientes.html (2026-10-05) para compartirlo con
-   la ficha. Semáforo del paso que toca: rojo = te toca a ti, ámbar =
-   esperando al cliente, azul = pidió que lo llamen, verde = cerrar con
-   el contrato (REGLA #15, lenguaje de Retiros).
+   la ficha. Colores (Daniel 2026-10-14, «alertar siempre, pero no tan
+   intenso»): ámbar = te toca, azul = esperando al cliente, verde = hecho,
+   botones de acción azules. El rojo queda solo para errores reales
+   (REGLA #15, lenguaje de Retiros; el rojo ILUS sigue siendo la marca).
    ══════════════════════════════════════════════════════════════════ */
 .cc2-prosp{display:flex;flex-direction:column;gap:4px;margin:8px 14px 0;padding:8px 10px;
   background:#fffbeb;border:1px solid #fde68a;border-radius:10px;font-size:.78rem;line-height:1.35}
@@ -11,49 +12,52 @@
 .cc2-prosp-etapa{font-weight:800;color:#92400e}
 .cc2-prosp-ofrecida{color:#1d4ed8}.cc2-prosp-aceptada{color:#15803d}.cc2-prosp-rechazada{color:#6b7280}
 .cc2-prosp-txt{color:#6b7280}
-.cc2-prosp-vencida{color:#dc2626;font-weight:700}
+.cc2-prosp-vencida{color:#b45309;font-weight:700}
 .pconv-chip{color:#1d4ed8;text-decoration:none;font-weight:700}.pconv-chip:hover{text-decoration:underline}
-.pconv-chip.nl{color:#b91c1c}.pconv-chip.cerrada{color:#6b7280}
+.pconv-chip.nl{color:#b45309}.pconv-chip.cerrada{color:#6b7280}
 .phist{color:#6b7280;text-decoration:none;font-weight:600}.phist:hover{text-decoration:underline;color:#374151}
 .pmant{font-weight:700}.pmant.vencida{color:#b91c1c}.pmant.proxima{color:#b45309}.pmant.futura{color:#15803d}
+.plisto{color:#15803d;font-weight:700}
 .ptmini{display:flex;align-items:center;flex-wrap:wrap;gap:0;margin-bottom:4px}
 .ptmini .pm{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:.68rem;font-weight:800;background:#e5e7eb;color:#6b7280;flex:0 0 auto}
 .ptmini .pm.hecho{background:#16a34a;color:#fff}
-.ptmini .pm.actual{background:#dc2626;color:#fff;animation:ptpulse 1.6s infinite}
+.ptmini .pm.actual{background:#f59e0b;color:#fff;animation:ptpulse 1.6s infinite}
 .ptmini .pm.fallido{background:#374151;color:#fff}
 .ptmini .pl{width:14px;height:3px;background:#e5e7eb;flex:0 0 auto}.ptmini .pl.on{background:#16a34a}
 .ptmini .pt{margin-left:10px;font-size:.76rem;font-weight:700;color:#0f766e}
-@keyframes ptpulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,.5)}70%{box-shadow:0 0 0 7px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
+@keyframes ptpulse{0%{box-shadow:0 0 0 0 rgba(245,158,11,.5)}70%{box-shadow:0 0 0 7px rgba(245,158,11,0)}100%{box-shadow:0 0 0 0 rgba(245,158,11,0)}}
 
-/* El paso que toca */
-.pnext{margin-top:6px;padding:9px 10px;border-radius:10px;background:#fff;border:1px solid #e5e7eb;border-left:4px solid #dc2626;
+/* Lo que le falta para cotizar: ámbar suave, con enlaces para completarlo */
+.pfalta{display:flex;gap:8px;align-items:flex-start;margin-top:4px;padding:7px 9px;border-radius:9px;
+  background:#fff8e1;border:1px solid #fde68a;color:#92400e;font-size:.76rem}
+.pfalta > i{color:#f59e0b;font-size:.95rem;line-height:1.2;flex:0 0 auto}
+.pfalta a{color:#2563eb;font-weight:700;text-decoration:none}.pfalta a:hover{text-decoration:underline}
+
+/* El paso que toca: ámbar; esperando al cliente: azul */
+.pnext{margin-top:6px;padding:9px 10px;border-radius:10px;background:#fff8e1;border:1px solid #fde68a;border-left:4px solid #f59e0b;
   display:flex;flex-direction:column;gap:7px;animation:pnextIn .35s ease}
 .pnext-tit{display:flex;gap:8px;align-items:flex-start}
-.pnext-tit .pnext-ico{color:#dc2626;font-size:1.05rem;line-height:1.1;flex:0 0 auto}
+.pnext-tit .pnext-ico{color:#d97706;font-size:1.05rem;line-height:1.1;flex:0 0 auto}
 .pnext-tit > div > b{display:block;font-size:.83rem;color:#111827}
 .pnext-tit > div > span{display:block;font-size:.74rem;color:#6b7280}
-.pnext-respuesta,.pnext-aceptacion{border-left-color:#f59e0b}
-.pnext-respuesta .pnext-tit .pnext-ico,.pnext-aceptacion .pnext-tit .pnext-ico{color:#f59e0b}
-.pnext-llamar{border-left-color:#3b82f6}.pnext-llamar .pnext-tit .pnext-ico{color:#3b82f6}
-.pnext-contrato{border-left-color:#16a34a}.pnext-contrato .pnext-tit .pnext-ico{color:#16a34a}
+.pnext-respuesta,.pnext-aceptacion{background:#eff6ff;border-color:#bfdbfe;border-left-color:#3b82f6}
+.pnext-respuesta .pnext-tit .pnext-ico,.pnext-aceptacion .pnext-tit .pnext-ico{color:#3b82f6}
 
 .cc2-prosp-acts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .cc2-prosp-acts .pa{display:inline-flex;align-items:center;gap:5px;padding:6px 10px;min-height:36px;border:1px solid #d1d5db;
   background:#fff;border-radius:8px;font-size:.76rem;font-weight:700;color:#374151;text-decoration:none;cursor:pointer;
   transition:background .15s,border-color .15s,color .15s,transform .15s}
-.cc2-prosp-acts .pa:hover{border-color:#0d9488;color:#0f766e;transform:translateY(-1px)}
+.cc2-prosp-acts .pa:hover{border-color:#2563eb;color:#1d4ed8;transform:translateY(-1px)}
 .cc2-prosp-acts .pa:disabled{opacity:.6;cursor:wait;transform:none}
 .cc2-prosp-acts .pa-wa{background:#dcfce7;border-color:#86efac;color:#166534}
 .cc2-prosp-acts .pa-cot{background:#0d9488;border-color:#0d9488;color:#fff}
 .cc2-prosp-acts .pa-cot:hover{background:#0f766e;color:#fff}
-.cc2-prosp-acts .pa-main{background:#dc2626;border-color:#dc2626;color:#fff}
-.cc2-prosp-acts .pa-main:hover{background:#b91c1c;border-color:#b91c1c;color:#fff}
-.pnext-contrato .cc2-prosp-acts .pa-main{background:#16a34a;border-color:#16a34a}
-.pnext-contrato .cc2-prosp-acts .pa-main:hover{background:#15803d;border-color:#15803d}
+.cc2-prosp-acts .pa-main{background:#2563eb;border-color:#2563eb;color:#fff}
+.cc2-prosp-acts .pa-main:hover{background:#1d4ed8;border-color:#1d4ed8;color:#fff}
 .cc2-prosp-acts .pa-si{background:#dcfce7;border-color:#86efac;color:#166534}
 .cc2-prosp-acts .pa-si:hover{background:#bbf7d0;border-color:#16a34a;color:#14532d}
 .cc2-prosp-acts .pa-no{color:#6b7280}
-.cc2-prosp-acts .pa-no:hover{border-color:#dc2626;color:#b91c1c}
+.cc2-prosp-acts .pa-no:hover{border-color:#9ca3af;color:#374151}
 .cc2-prosp-acts .pa-mini{min-width:36px;justify-content:center;padding:6px 8px}
 .pinsist{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;font-size:.72rem;color:#6b7280;font-weight:700}
 

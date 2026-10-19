@@ -411,162 +411,9 @@
 {% include "mantenciones/_reporte_excel_modal.html" %}
 
 {% if permissions.admin or permissions.superadmin %}
-{# ══ REPARAR INSTALACIONES: que ningún cliente que entra por instalación se pierda ══ #}
-<div id="repInstAviso" class="inst-alerta" style="background:#fef2f2;border-color:#fecaca" hidden>
-  <i class="bi bi-shield-exclamation" style="color:#dc2626"></i>
-  <div>
-    <b id="repInstTitulo" style="color:#991b1b"></b>
-    <span id="repInstSub" style="color:#b91c1c"></span>
-  </div>
-  <button type="button" class="btn btn-sm" style="background:#dc2626;border-color:#dc2626;color:#fff;font-weight:800;min-height:38px" onclick="abrirRepararInst()">
-    <i class="bi bi-wrench-adjustable me-1"></i>Revisar y reparar</button>
-</div>
-<div class="modal fade" id="modalRepInst" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
-    <div class="modal-content">
-      <div class="modal-header" style="background:#0a0a0a;color:#fff">
-        <h5 class="modal-title fw-bold"><i class="bi bi-shield-check me-2"></i>Clientes que entran por instalación — ponerlos en orden</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body" id="repInstCuerpo"></div>
-      <div class="modal-footer justify-content-between">
-        <div class="small text-muted" id="repInstSel"></div>
-        <div><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
-          <button class="btn btn-ilus fw-bold" id="repInstCrear" onclick="crearFichasInst(this)" disabled><i class="bi bi-person-plus-fill me-1"></i>Crear fichas elegidas</button></div>
-      </div>
-    </div>
-  </div>
-</div>
-<script>
-let _repInst = null, _repInstModal = null, _repInstPag = 1, _repSel = new Set();
-const _repEsc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-(async function(){
-  try {
-    const r = await fetch('/mantenciones/api/instalaciones/auditoria'); const d = await r.json();
-    if (!d.ok) return;
-    _repInst = d;
-    const nF = d.tickets_sin_ficha.length, nC = d.mal_clasificados.length, nO = d.ot_instalacion_sin_cliente.length;
-    const nE = (d.fichas_sin_equipos || []).length;
-    if (!(nF || nC || nO || nE)) return;
-    document.getElementById('repInstTitulo').textContent = 'Hay clientes de instalación que se están perdiendo o mal clasificados';
-    document.getElementById('repInstSub').textContent = [nF ? nF + ' con tickets de instalación y SIN ficha' : '', nC ? nC + ' con OT de instalación mal clasificados' : '', nO ? nO + ' OT de instalación sin cliente' : '', nE ? nE + ' fichas de instalación sin sus productos' : ''].filter(Boolean).join(' · ') + '.';
-    document.getElementById('repInstAviso').hidden = false;
-  } catch(e){}
-})();
-function abrirRepararInst(){
-  if (!_repInstModal) _repInstModal = new bootstrap.Modal(document.getElementById('modalRepInst'));
-  _repInstPag = 1;
-  _repSel = new Set(_repInst.tickets_sin_ficha.filter(g => !g.rut_error).map(g => g.key));   // por defecto TODOS los válidos
-  pintarRepInst(); _repInstModal.show();
-}
-function pintarRepInst(){
-  const d = _repInst, cont = document.getElementById('repInstCuerpo'), PER = 15;
-  const sf = d.tickets_sin_ficha, totalPag = Math.max(1, Math.ceil(sf.length / PER));
-  if (_repInstPag > totalPag) _repInstPag = totalPag;
-  const filas = sf.slice((_repInstPag - 1) * PER, _repInstPag * PER);
-  const estTxt = tks => { const m = {}; tks.forEach(t => m[t.estado] = (m[t.estado] || 0) + 1); return Object.entries(m).map(([k, v]) => v + ' ' + k).join(', '); };
-  let h = '';
-  const sinEq = d.fichas_sin_equipos || [];
-  if (sinEq.length) {
-    h += '<div class="p-3 mb-3 rounded" style="background:#eff6ff;border:1px solid #bfdbfe"><div class="d-flex justify-content-between align-items-center flex-wrap gap-2">' +
-      '<div><b>' + sinEq.length + ' fichas de instalación todavía no tienen sus productos</b>' +
-      '<div class="small text-muted">Se cargan desde la factura de su instalación (con su fecha de emisión, para programar las mantenciones). ' +
-      'Si la factura no está en el ERP, se usan los equipos del ticket. No se duplica nada.</div>' +
-      '<div class="small mt-1" id="repEqProgreso"></div></div>' +
-      '<button class="btn btn-sm btn-primary fw-bold" onclick="cargarEquiposInst(this)"><i class="bi bi-box-seam me-1"></i>Cargar productos desde sus facturas</button></div></div>';
-  }
-  if (d.mal_clasificados.length) {
-    h += '<div class="p-3 mb-3 rounded" style="background:#f0fdfa;border:1px solid #99f6e4"><div class="d-flex justify-content-between align-items-center flex-wrap gap-2">' +
-      '<div><b>' + d.mal_clasificados.length + ' clientes ya tuvieron una OT de instalación pero figuran como otro tipo</b><div class="small text-muted">' +
-      d.mal_clasificados.map(c => _repEsc(c.razon_social)).join(' · ') + '</div><div class="small text-muted">Solo cambia el tipo a «Instalación»; no toca su estado ni a quien ya tiene contrato.</div></div>' +
-      '<button class="btn btn-sm btn-outline-dark fw-bold" onclick="reclasificarInst(this)"><i class="bi bi-tag-fill me-1"></i>Marcarlos como Instalación</button></div></div>';
-  }
-  if (sf.length) {
-    h += '<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2"><b>' + sf.length + ' RUT con tickets de instalación y sin ficha de cliente</b>' +
-      '<button class="btn btn-sm btn-outline-secondary" onclick="toggleTodoInst()"><i class="bi bi-check-all me-1"></i>Seleccionar/deseleccionar todo</button></div>' +
-      '<div class="table-responsive"><table class="table table-sm align-middle" style="font-size:.82rem"><thead><tr><th></th><th>Cliente</th><th>RUT</th><th>Tickets</th><th>Contacto</th></tr></thead><tbody>' +
-      filas.map(g => '<tr><td><input type="checkbox" class="form-check-input repInstChk" value="' + _repEsc(g.key) + '"' + (g.rut_error ? ' disabled' : (_repSel.has(g.key) ? ' checked' : '')) + ' onchange="marcarRepInst(this)"></td>' +
-        '<td><b>' + _repEsc(g.empresa || g.contacto || '(sin nombre)') + '</b><div class="text-muted">' + _repEsc([g.direccion, g.comuna].filter(Boolean).join(', ')) + '</div></td>' +
-        '<td class="font-monospace">' + _repEsc(g.rut_error ? g.rut : g.rut_normalizado) + (g.rut_error ? '<div class="text-danger">' + _repEsc(g.rut_error) + '</div>' : (g.dv_agregado ? '<div class="text-muted">se agregó el dígito verificador</div>' : '')) + '</td>' +
-        '<td>' + g.tickets.length + ' · ' + _repEsc(estTxt(g.tickets)) + '<div class="text-muted">' + _repEsc(g.tickets.slice(0, 4).map(t => t.numero).join(', ')) + '</div></td>' +
-        '<td>' + _repEsc(g.contacto) + '<div class="text-muted">' + _repEsc([g.telefono, g.email].filter(Boolean).join(' · ')) + '</div></td></tr>').join('') +
-      '</tbody></table></div>' +
-      '<div class="d-flex justify-content-between align-items-center"><span class="small text-muted">Mostrando ' + ((_repInstPag - 1) * PER + 1) + '–' + Math.min(_repInstPag * PER, sf.length) + ' de ' + sf.length + '</span>' +
-      '<div class="btn-group btn-group-sm"><button class="btn btn-outline-secondary" ' + (_repInstPag <= 1 ? 'disabled' : '') + ' onclick="_repInstPag--;pintarRepInst()">Anterior</button>' +
-      '<button class="btn btn-outline-secondary" disabled>Página ' + _repInstPag + ' de ' + totalPag + '</button>' +
-      '<button class="btn btn-outline-secondary" ' + (_repInstPag >= totalPag ? 'disabled' : '') + ' onclick="_repInstPag++;pintarRepInst()">Siguiente</button></div></div>';
-  }
-  if (d.ot_instalacion_sin_cliente.length) {
-    h += '<div class="alert alert-warning small mt-3 mb-0">' + d.ot_instalacion_sin_cliente.length + ' OT de instalación no tienen cliente: ' +
-      d.ot_instalacion_sin_cliente.map(o => _repEsc(o.numero_ot)).join(', ') + '. Asígnales un cliente desde la OT.</div>';
-  }
-  cont.innerHTML = h || '<div class="text-center text-muted py-4">Todo en orden ✓</div>';
-  contarRepInst();
-}
-function marcarRepInst(el){ if (el.checked) _repSel.add(el.value); else _repSel.delete(el.value); contarRepInst(); }
-function contarRepInst(){
-  const n = _repSel.size;
-  document.getElementById('repInstCrear').disabled = !n;
-  document.getElementById('repInstSel').textContent = n ? n + ' ficha(s) elegida(s) en total' : '';
-}
-function toggleTodoInst(){
-  const validos = _repInst.tickets_sin_ficha.filter(g => !g.rut_error).map(g => g.key);
-  const todos = validos.every(k => _repSel.has(k));
-  _repSel = new Set(todos ? [] : validos);
-  document.querySelectorAll('.repInstChk:not(:disabled)').forEach(c => c.checked = _repSel.has(c.value));
-  contarRepInst();
-}
-async function crearFichasInst(btn){
-  const keys = [..._repSel];
-  if (!keys.length) return;
-  const ok = await ilusConfirm({ title: 'Crear fichas', message: 'Se crearán ' + keys.length + ' ficha(s) como prospecto de instalación, para ofrecerles mantención.',
-    sub: 'Quedan en el listado con su seguimiento; no se envía ningún mensaje.', okLabel: 'Crear', cancelLabel: 'Cancelar' });
-  if (!ok) return;
-  btn.disabled = true;
-  try {
-    const r = await fetch('/mantenciones/api/instalaciones/crear-fichas', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({keys})});
-    const d = await r.json();
-    if (!d.ok) { ilusToast(d.error || 'No se pudo crear', {type:'error'}); return; }
-    await ilusAlert({ title: 'Fichas creadas', type: d.fallidas.length ? 'warning' : 'success',
-      message: d.creadas + ' creada(s) · ' + d.ya_existian + ' ya existían' + (d.fallidas.length ? ' · ' + d.fallidas.length + ' con problema: ' + d.fallidas.slice(0, 5).join('; ') : '') });
-    location.reload();
-  } catch(e){ ilusToast('Error de red', {type:'error'}); btn.disabled = false; }
-}
-async function cargarEquiposInst(btn){
-  const ids = (_repInst.fichas_sin_equipos || []).map(c => c.id);
-  if (!ids.length) return;
-  const ok = await ilusConfirm({ title: 'Cargar productos', message: 'Se cargarán los productos de ' + ids.length + ' ficha(s) desde sus facturas de instalación.',
-    sub: 'Cada máquina queda con su serie y la fecha de emisión de la factura. No se envía ningún mensaje.', okLabel: 'Cargar', cancelLabel: 'Cancelar' });
-  if (!ok) return;
-  btn.disabled = true;
-  const prog = document.getElementById('repEqProgreso');
-  let creados = 0, sinNada = 0, errores = 0;
-  for (let i = 0; i < ids.length; i += 5){
-    prog.textContent = 'Cargando… ' + Math.min(i + 5, ids.length) + ' de ' + ids.length + ' fichas · ' + creados + ' equipos creados';
-    try {
-      const r = await fetch('/mantenciones/api/instalaciones/equipos', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ids: ids.slice(i, i + 5), confirmar: true})});
-      const d = await r.json();
-      (d.resultados || []).forEach(x => { creados += (x.creados || 0); if (!x.creados) sinNada++; if ((x.errores || []).length || !x.ok) errores++; });
-    } catch(e){ errores++; }
-  }
-  await ilusAlert({ title: 'Productos cargados', type: errores ? 'warning' : 'success',
-    message: creados + ' equipo(s) creados en las fichas · ' + sinNada + ' ficha(s) sin productos que cargar' + (errores ? ' · ' + errores + ' con algún problema' : '') });
-  location.reload();
-}
-async function reclasificarInst(btn){
-  const ok = await ilusConfirm({ title: 'Marcar como Instalación', message: 'Se cambiará el tipo de ' + _repInst.mal_clasificados.length + ' cliente(s) a «Instalación».',
-    sub: 'No cambia su estado ni toca a quien ya tiene contrato.', okLabel: 'Marcar', cancelLabel: 'Cancelar' });
-  if (!ok) return;
-  btn.disabled = true;
-  try {
-    const r = await fetch('/mantenciones/api/instalaciones/reclasificar', {method:'POST'}); const d = await r.json();
-    if (!d.ok) { ilusToast(d.error || 'No se pudo', {type:'error'}); btn.disabled = false; return; }
-    ilusToast('✓ ' + d.reclasificados + ' cliente(s) marcados como Instalación', {type:'success'});
-    setTimeout(() => location.reload(), 900);
-  } catch(e){ ilusToast('Error de red', {type:'error'}); btn.disabled = false; }
-}
-</script>
+{# ══ SALUD DEL PROCESO (antes «Revisar y reparar»): que ningún cliente que entra por instalación se pierda.
+   Daniel 2026-10-19: «debe estar muy robusto para establecer las mantenciones como área de negocio». ══ #}
+{% include "mantenciones/_salud_proceso.html" %}
 {% endif %}
 
 
@@ -1215,7 +1062,7 @@ async function limpiarHuerfanos(){
   <i class="bi bi-megaphone-fill"></i>
   <div>
     <b>{{ global_stats.inst_pendientes }} cliente{{ '' if global_stats.inst_pendientes == 1 else 's' }} de instalación esperan que les ofrezcamos mantención</b>
-    <span>{{ global_stats.inst_sin_contactar }} sin contactar aún{% if global_stats.inst_vencida_1a %} · <b style="display:inline">{{ global_stats.inst_vencida_1a }} con la 1ª mantención ya vencida según su factura</b>{% endif %}{% if global_stats.inst_vencidos %} · {{ global_stats.inst_vencidos }} con seguimiento vencido{% endif %}.
+    <span>{{ global_stats.inst_sin_contactar }} sin contactar aún · <b style="display:inline">{{ global_stats.inst_listos or 0 }} listos para cotizar</b> (con contacto, equipos y tarifa){% if global_stats.inst_vencida_1a %} · <b style="display:inline">{{ global_stats.inst_vencida_1a }} con la 1ª mantención ya vencida según su factura</b>{% endif %}{% if global_stats.inst_vencidos %} · {{ global_stats.inst_vencidos }} con seguimiento vencido{% endif %}.
       Contáctalos, ofrece el plan de mantención con descuento y gestiona su contrato.</span>
   </div>
   <button type="button" class="btn btn-sm" onclick="aplicarKpiFiltro('instalacion')">
@@ -1261,6 +1108,7 @@ async function limpiarHuerfanos(){
     <div>
       <div class="kpi-lbl">Por ofrecer mantención</div>
       <div class="kpi-num">{{ global_stats.inst_pendientes or 0 }}</div>
+      <div class="kpi-lbl" style="text-transform:none;letter-spacing:0;color:#15803d" title="Con contacto, equipos y tarifa: se les puede cotizar hoy">{{ global_stats.inst_listos or 0 }} listos para cotizar</div>
     </div>
   </div>
   <div class="kpi-card kpi-clickable {% if filtros.contrato == 'con' %}active{% endif %}"
