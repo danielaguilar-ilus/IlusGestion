@@ -88416,6 +88416,12 @@ def _ot2_recorrido(f):
     cuando}], texto, avisos: [...], cancelada}. `cuando` va en hora Chile
     (REGLA #6). La ficha sigue con su propio cálculo; queda propuesto que
     pase a usar este mismo helper.
+
+    2026-10-19: `avisos` trae solo «Falta información» / «Falta repuesto». El
+    anexo (por firmar, sin anexo) NO va acá: el chip de «Cliente y trabajo»,
+    que ya existía, lo dice igual y la fila lo mostraba dos veces con dos
+    textos distintos («Anexo 225 · borrador» y «Anexo 225 por firmar»). El
+    semáforo de la fila (_ot2_tabla_semaforo) sigue mirando el anexo.
     """
     estado = f.get("estado")
     fase = f.get("estado_fase")
@@ -88483,13 +88489,8 @@ def _ot2_recorrido(f):
     else:
         texto = f.get("estado_label") or ""
 
+    # Avisos en ámbar junto a la etapa. El anexo no se repite acá (2026-10-19): ya es un chip en «Cliente y trabajo».
     avisos = []
-    if fase in ("pend", "ejec"):
-        anexo_num, anexo_est = f.get("anexo_numero"), (f.get("anexo_estado") or "")
-        if anexo_num and anexo_est != "firmado":
-            avisos.append(f"Anexo {anexo_num} por firmar")
-        elif not anexo_num and f.get("tecnico_tipo") == "externo":
-            avisos.append("Sin anexo")
     if estado == "pendiente_info" and not texto.startswith("Falta información"):
         avisos.append("Falta información")
     if estado == "pendiente_repuesto" and not texto.startswith("Falta repuesto"):
@@ -112500,6 +112501,17 @@ def _ot2_filtros_export(args):
             desc.append(f"desde {_desde.strftime('%d/%m/%Y')}")
         else:
             desc.append(f"hasta {_hasta.strftime('%d/%m/%Y')}")
+
+    # 📅 2026-10-19: el filtro rápido de agenda de la vista Tabla (Atrasadas, Hoy, Mañana, Esta semana, Próximas,
+    # Sin fecha) también acota el Excel -- antes, con «Hoy» activo en pantalla, el reporte bajaba TODO. Misma lista
+    # blanca y mismo SQL parametrizado que el panel (_ot2_agenda_where), con la fecha de hoy en hora Chile (REGLA #6).
+    f_agenda = (args.get("agenda") or "").strip().lower()
+    if f_agenda in _OT2_AGENDA_CLAVES:
+        _ag_sql, _ag_params = _ot2_agenda_where(f_agenda, _now_chile().date())
+        if _ag_sql:
+            where.append(_ag_sql)
+            params += list(_ag_params)
+            desc.append("agenda " + dict(_OT2_AGENDA_OPTS).get(f_agenda, f_agenda).lower())
 
     sql = " WHERE " + " AND ".join(where) if where else ""
     role_sql, role_params = _mant_calendario_role_where()

@@ -146,10 +146,14 @@ class TestRecorrido(unittest.TestCase):
         self.assertEqual(r["texto"], "Cancelada")
 
     def test_avisos_anexo_y_falta_info(self):
+        # 2026-10-19: el anexo NO se repite en los avisos: el chip de «Cliente y trabajo» (que ya existía) lo dice
+        # igual, y la fila lo mostraba dos veces con textos distintos. El semáforo de la fila sí lo sigue mirando.
         r = _rec(_f(tecnico_tipo="externo"))
-        self.assertEqual(r["avisos"], ["Sin anexo"])
+        self.assertEqual(r["avisos"], [])
         r = _rec(_f(tecnico_tipo="externo", anexo_numero=218, anexo_estado="enviado"))
-        self.assertEqual(r["avisos"], ["Anexo 218 por firmar"])
+        self.assertEqual(r["avisos"], [])
+        self.assertNotIn("anexo", repr(r).lower())
+        self.assertEqual(_sem(_f(tecnico_tipo="externo", anexo_numero=218, anexo_estado="enviado")), "ambar")
         r = _rec(_f(tecnico_tipo="externo", anexo_numero=220, anexo_estado="firmado"))
         self.assertEqual(r["avisos"], [])
         r = _rec(_f(estado="pendiente_repuesto", estado_fase="comp", estado_label="Falta repuesto",
@@ -256,6 +260,30 @@ class TestAgendaWhere(unittest.TestCase):
         self.assertIn("_ot2_tabla_semaforo(f)", enr)
         self.assertIn('chile_fmt_filter(dt, "%H:%M")', enr)        # REGLA #6: «En sitio desde» en hora Chile
         self.assertIn('chile_fmt_filter(dt, "%d/%m")', enr)
+
+    def test_el_excel_respeta_el_filtro_de_agenda(self):
+        """2026-10-19: con «Hoy» activo en pantalla, el Reporte Excel bajaba todo. _ot2_filtros_export (cuyo propio
+        docstring exige sumar acá cada filtro nuevo del panel) ahora aplica la misma lista blanca y el mismo SQL."""
+        import datetime as _dt
+        hoy = dt.date(2026, 10, 14)
+        amb = _cargar(
+            ["_ot2_filtros_export", "_ot2_agenda_where"],
+            ["_OT2_AGENDA_OPTS", "_OT2_AGENDA_CLAVES", "_OT2_FASES", "_OT2_ESTADO_META"],
+            extra={"datetime": _dt.datetime, "_now_chile": lambda: _dt.datetime(2026, 10, 14, 10, 0),
+                   "_mant_calendario_role_where": lambda: (" AND 1=1", []), "_ot_tipos_todos": lambda: {},
+                   "_TIPO_OT_LABEL": {}, "_OT2_FASE_LABELS": {}, "_OT2_CENTROS_COSTO": (), "print": lambda *a, **k: None},
+        )
+        amb["_OT2_FASE_A_ESTADOS"] = {c: [k for k, v in amb["_OT2_ESTADO_META"].items() if v[3] == c]
+                                      for c in amb["_OT2_FASES"]}
+        sql, params, desc, _ = amb["_ot2_filtros_export"]({"agenda": "hoy"})
+        self.assertIn("(v.fecha_programada <= %s AND %s <= COALESCE(v.fecha_fin, v.fecha_programada))", sql)
+        self.assertEqual(params[-2:], [hoy, hoy])
+        self.assertIn("agenda hoy", desc)
+        self.assertNotIn("CURDATE", sql)
+        sql, params, desc, _ = amb["_ot2_filtros_export"]({"agenda": "zzz"})   # fuera de la lista blanca: nada
+        self.assertNotIn("fecha_programada", sql)
+        self.assertEqual(desc, [])
+        self.assertEqual(sql.count("%s"), len(params))
 
 
 class TestPlantilla(unittest.TestCase):

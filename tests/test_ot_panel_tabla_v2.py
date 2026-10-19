@@ -78,6 +78,33 @@ class TestZonasNuevas(unittest.TestCase):
         self.assertIn("{% if q or fase or f_tipo or f_tec or f_interna or f_anexo or f_pago or f_agenda %}", H)
         self.assertIn("· agenda <b>{{ agenda_opts | selectattr('0','equalto',f_agenda)", H)
         self.assertIn("+ (1 if f_agenda else 0) %}", H)
+        # 2026-10-19: el Reporte Excel también lleva el filtro de agenda (antes con «Hoy» activo bajaba todo).
+        self.assertIn("&interna={{ f_interna or '' }}&agenda={{ f_agenda or '' }}\"", H)
+        # En celular la tira avisa que hay más chips a la derecha y conserva el ícono de calendario como título.
+        i = H.index("@media (max-width:640px){\n  .o2t-agenda{")
+        tira = H[i:H.index("}\n", H.index(".o2t-agenda-t span", i)) + 2]
+        self.assertIn("mask-image:linear-gradient(to right,#000 calc(100% - 40px),transparent)", tira)
+        self.assertIn("padding:0 40px 4px 0", tira)
+        self.assertIn(".o2t-agenda-t span{display:none}", tira)
+        self.assertNotIn(".o2t-agenda-t{display:none}", H)
+        self.assertIn('<i class="bi bi-calendar2-week" aria-hidden="true"></i><span>Agenda</span>', TABLA)
+
+    def test_recorrido_con_etiquetas_en_escritorio_angosto(self):
+        """2026-10-19: entre 881 y 1400px de contenedor (notebooks de 1280 a 1680px con menú lateral) las etiquetas
+        de los puntos se escondían. Ahora el recorrido va en dos filas de 3 pasos y nada se oculta."""
+        i = H.index("@container o2t (min-width:881px) and (max-width:1400px){")
+        angosto = H[i:H.index("\n}\n", i)]
+        self.assertIn(".o2t-rec{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))", angosto)
+        self.assertIn(".o2t-rec-p:nth-child(4)::before{display:none}", angosto)
+        self.assertNotIn("clip:rect(0 0 0 0)", CSS_V2)            # ninguna etiqueta del recorrido se esconde
+        self.assertNotIn(".o2t-rec-l{position:absolute", CSS_V2)
+
+    def test_el_subtexto_no_se_repite_con_el_recorrido(self):
+        """2026-10-19: «En sitio desde 10:05» salía en el subtexto de la pastilla Y en la etapa del recorrido."""
+        self.assertIn("and not (_rec and _rec.texto) %}", TABLA)
+        self.assertLess(TABLA.index("{% set _rec = f.recorrido %}"), TABLA.index('<div class="ot2-estsub">{{ f.estado_sub }}</div>'))
+        # El anexo es UN chip en «Cliente y trabajo»; la etapa no lo repite como aviso (ver _ot2_recorrido).
+        self.assertEqual(TABLA.count(">Sin anexo</span>"), 1)
 
     def test_celular_la_casilla_tiene_su_columna(self):   # Daniel: «un check que está arriba de un anexo»
         self.assertIn(".ot2-tabla-wrap{container:o2t / inline-size}", H)
@@ -88,7 +115,12 @@ class TestZonasNuevas(unittest.TestCase):
         self.assertIn(".ot2-tabla td.ot2-seltd{grid-area:sel;position:static;width:44px;height:44px", celular)
         self.assertIn(".ot2-tabla td.ot2-go{display:none}", celular)
         self.assertIn(".ot2-tabla tbody tr.ot2-det{display:none}", celular)
-        self.assertNotIn("position:absolute", celular)
+        # 2026-10-19: lo único en position:absolute es la zona de toque (::after) del chip que se abre; ningún control.
+        for m in re.finditer(r"([^\n{}]*)\{[^}]*position:absolute", celular):
+            self.assertIn("summary::after", m.group(1), m.group(0))
+        # Toques de 44px (REGLA #3): el summary (21px de chip) completa su zona con ::after; los chips crecen a ~28px.
+        self.assertIn(".o2t-more summary::after{content:\"\";position:absolute;left:0;right:0;top:-9px;bottom:-9px}", celular)
+        self.assertIn(".o2t-chips .o2t-chip,.o2t-chips .ot2-sinsaldo,.o2t-chips .ot2-clasif{padding:5px 10px;font-size:.76rem}", celular)
         # La casilla en position:absolute (y el padding-right de la celda vecina) ya no existen en ninguna parte.
         self.assertNotIn("td.ot2-seltd{position:absolute", H)
         self.assertNotIn("td.ot2-seltd + td{padding-right", H)
