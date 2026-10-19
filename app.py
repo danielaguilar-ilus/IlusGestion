@@ -88094,6 +88094,11 @@ _OT2_SELECT_FILAS = (
     "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
     "       COALESCE(tar.n_completas, 0) AS n_completas, "
     "       v.hora_real_inicio, v.cerrada_at, v.firma_tecnico_at, "
+    # 🧭 2026-10-18 (Daniel, viendo la tabla: «en el avance, podría ser fiel al tracking… saber si lo firmó el
+    # técnico, si está pendiente, todo eso»): las MISMAS columnas del recorrido de la ficha (_OT2_HITOS) para que la
+    # tabla pinte la etapa real sin una consulta por fila (REGLA #18). modalidad_cobro acompaña a cliente_id para que
+    # _ot_es_interna() decida igual que en la ficha (interna = sin hito «Cliente»).
+    "       v.created_at, v.firma_cliente_at, v.firma_supervisor_at, v.modalidad_cobro, "
     # 🏷️ 2026-09-21 (Daniel: "en la tabla de las OT, en chiquitito, poné
     # el N° de anexo y las facturas asociadas... por trazabilidad" -- tras
     # la noche de OT-218/211/213 con números quemados y anexos huérfanos).
@@ -88206,10 +88211,12 @@ def _ot2_enriquecer_fila(f, hoy):
     # Subtítulo del sello de estado -- SIEMPRE un dato real, nunca
     # fabricado. Cae a la fecha programada si no hay timestamp más
     # específico para ese estado.
+    # 🕐 2026-10-18 (REGLA #6): hora_real_inicio / cerrada_at / firma_tecnico_at se guardan con NOW() (UTC). Con
+    # strftime directo, «En sitio desde» salía corrido ~3 h y la fecha podía saltar de día. Hora Chile siempre.
     def _hhmm(dt):
-        return dt.strftime("%H:%M") if dt and hasattr(dt, "strftime") else None
+        return chile_fmt_filter(dt, "%H:%M") if dt and hasattr(dt, "strftime") else None
     def _ddmm(dt):
-        return dt.strftime("%d/%m") if dt and hasattr(dt, "strftime") else None
+        return chile_fmt_filter(dt, "%d/%m") if dt and hasattr(dt, "strftime") else None
     hri, cerr_at, ftec_at = f.get("hora_real_inicio"), f.get("cerrada_at"), f.get("firma_tecnico_at")
     if estado in ("en_curso", "en_ejecucion") and _hhmm(hri):
         f["estado_sub"] = f"En sitio desde {_hhmm(hri)}"
@@ -88318,6 +88325,16 @@ def _ot2_enriquecer_fila(f, hoy):
 
     _ot2_calcular_salud(f, hoy)
 
+    # 🧭 2026-10-18 (Daniel: «en el avance, podría ser fiel al tracking… saber si lo firmó el técnico, si está
+    # pendiente, todo eso»): etapa real del recorrido + semáforo de la fila. Solo datos operativos: nunca plata ni
+    # nombres de quien firmó (REGLA #26). Si algo falla, la fila se muestra igual sin recorrido (nunca se inventa).
+    try:
+        _ot2_recorrido(f)
+    except Exception as _e_rec:
+        print(f"[ot2_recorrido] id={f.get('id')}: {type(_e_rec).__name__}", flush=True)
+        f["recorrido"] = None
+    _ot2_tabla_semaforo(f)
+
     # 🔒 2026-10-08 (REGLA #26): el N° y el estado de la factura del proveedor son cuentas de la empresa: un técnico
     # (interno, elevado o externo) no los recibe en ninguna de las 4 vistas del panel.
     if _es_rol_tecnico():
@@ -88359,6 +88376,201 @@ def _ot2_calcular_salud(f, hoy):
     else:
         f["salud_label"], f["salud_class"], f["salud_icon"] = None, None, None
     f["salud"] = clave
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  🧭 2026-10-18 — Tabla de OT: recorrido, semáforo y filtro de agenda
+#
+#  Daniel (dueño, viendo la tabla en vivo): «necesito que mejores esa tabla.
+#  Es muy, muy simple. Tiene información, pero está como desordenado…».
+#  Y sobre la columna Avance: «podría ser fiel al tracking, ¿me entiendes?
+#  Saber si lo firmó el técnico, si está pendiente, todo eso». Y: «a veces
+#  filtrar por agenda».
+#
+#  Tres ayudas puras (sin consultas): el recorrido sale de las columnas que
+#  _OT2_SELECT_FILAS ya trae (REGLA #18: ninguna consulta por fila), el
+#  semáforo usa solo datos operativos (nunca fac_alerta ni fin_clasif, así
+#  un técnico y gestión ven la misma urgencia, REGLA #26) y el filtro de
+#  agenda se traduce a SQL parametrizado con la fecha de HOY en hora Chile
+#  (REGLA #6: nunca CURDATE(), que en Cloud Run es UTC).
+# ═══════════════════════════════════════════════════════════════════
+# Etiqueta corta de cada hito para la tabla (la ficha usa la larga de _OT2_HITOS).
+_OT2_REC_CORTO = {
+    "creada": "Creada", "ejecutando": "Ejecución", "f_tecnico": "Técnico",
+    "f_cliente": "Cliente", "aprobada": "Aprobada", "cerrada": "Cerrada",
+}
+_OT2_ESTADOS_TE_TOCA = ("firmada_tecnico", "pendiente_aprobacion", "pendiente_info", "pendiente_repuesto")
+
+
+def _ot2_recorrido(f):
+    """Etapa REAL del recorrido de una OT para la tabla del panel.
+
+    Misma lógica que la ficha (ot2_detalle, sobre _OT2_HITOS): se salta el hito
+    «Cliente» en un trabajo interno (_ot_es_interna), se marcan como hechos por
+    inferencia los hitos anteriores al último con fecha real (no se firma el
+    técnico sin haber ejecutado antes) y el hito «actual» es el que sigue al
+    último hecho. Nunca se inventa una fecha: un hito inferido queda sin
+    `cuando`. Nunca nombres de quien firmó (REGLA #26).
+
+    Deja f["recorrido"] = {hitos: [{clave, corto, hecho, inferido, actual,
+    cuando}], texto, avisos: [...], cancelada}. `cuando` va en hora Chile
+    (REGLA #6). La ficha sigue con su propio cálculo; queda propuesto que
+    pase a usar este mismo helper.
+    """
+    estado = f.get("estado")
+    fase = f.get("estado_fase")
+    cancelada = estado in ("cancelada", "anulada")
+    es_interna = _ot_es_interna(f)
+    hitos = []
+    for clave, label, _icono, col, _color in _OT2_HITOS:
+        if clave == "f_cliente" and es_interna:
+            continue          # trabajo interno: no hay cliente que firme
+        ts = f.get(col)
+        ts_ok = bool(ts) and hasattr(ts, "strftime")
+        hitos.append({
+            "clave": clave, "corto": _OT2_REC_CORTO.get(clave, label),
+            "hecho": ts_ok, "inferido": False, "actual": False,
+            "cuando": chile_fmt_filter(ts, "%d/%m") if ts_ok else "",
+        })
+    por_clave = {h["clave"]: h for h in hitos}
+    # El estado «cerrada» es definitivo aunque falte cerrada_at (OT viejas): se marca hecho, sin fecha inventada.
+    if estado == "cerrada" and not por_clave["cerrada"]["hecho"]:
+        por_clave["cerrada"]["hecho"], por_clave["cerrada"]["inferido"] = True, True
+    idx_ultimo = -1
+    for i, h in enumerate(hitos):
+        if h["hecho"]:
+            idx_ultimo = i
+    for i, h in enumerate(hitos):
+        if not h["hecho"] and i < idx_ultimo:
+            h["hecho"], h["inferido"] = True, True
+    if not cancelada:
+        if idx_ultimo < 0:
+            hitos[0]["actual"] = True
+        elif idx_ultimo < len(hitos) - 1:
+            hitos[idx_ultimo + 1]["actual"] = True
+
+    def _fecha(clave):
+        h = por_clave.get(clave)
+        return (h or {}).get("cuando") or ""
+
+    def _con(txt, fecha):
+        return f"{txt} {fecha}" if fecha else txt
+
+    # Texto de la etapa: la firma es evidencia y manda sobre el estado fino.
+    hri = f.get("hora_real_inicio")
+    en_sitio = chile_fmt_filter(hri, "%H:%M") if (hri and hasattr(hri, "strftime")) else ""
+    if cancelada:
+        texto = f.get("estado_label") or "Cancelada"
+    elif por_clave["cerrada"]["hecho"]:
+        texto = _con("Cerrada el", _fecha("cerrada")) if _fecha("cerrada") else "Cerrada"
+    elif por_clave["aprobada"]["hecho"] and not por_clave["aprobada"]["inferido"]:
+        texto = _con("Aprobada", _fecha("aprobada")) + " · falta cerrar"
+    elif "f_cliente" in por_clave and por_clave["f_cliente"]["hecho"] and not por_clave["f_cliente"]["inferido"]:
+        texto = _con("Firmó el cliente", _fecha("f_cliente")) + " · por aprobar"
+    elif por_clave["f_tecnico"]["hecho"] and not por_clave["f_tecnico"]["inferido"]:
+        texto = _con("Firmó el técnico", _fecha("f_tecnico")) + (
+            " · por aprobar" if es_interna else " · falta firma del cliente")
+    elif f.get("estado_en_vivo"):
+        texto = f"En sitio desde {en_sitio}" if en_sitio else "En ejecución"
+    elif f.get("check_done") and fase in ("ejec", "comp"):
+        texto = "Checklist listo · falta firma del técnico"
+    elif estado == "completada":
+        texto = "Completada · falta cerrar"
+    elif fase == "comp":
+        texto = f.get("estado_label") or "Completada"
+    elif fase == "pend":
+        texto = "Por ejecutar"
+    else:
+        texto = f.get("estado_label") or ""
+
+    avisos = []
+    if fase in ("pend", "ejec"):
+        anexo_num, anexo_est = f.get("anexo_numero"), (f.get("anexo_estado") or "")
+        if anexo_num and anexo_est != "firmado":
+            avisos.append(f"Anexo {anexo_num} por firmar")
+        elif not anexo_num and f.get("tecnico_tipo") == "externo":
+            avisos.append("Sin anexo")
+    if estado == "pendiente_info" and not texto.startswith("Falta información"):
+        avisos.append("Falta información")
+    if estado == "pendiente_repuesto" and not texto.startswith("Falta repuesto"):
+        avisos.append("Falta repuesto")
+
+    f["recorrido"] = {"hitos": hitos, "texto": texto, "avisos": avisos, "cancelada": cancelada}
+    return f["recorrido"]
+
+
+def _ot2_tabla_semaforo(f):
+    """Semáforo de la fila (franja + punto): la PRIMERA condición que se cumple gana.
+
+    gris = cancelada/anulada · rojo = atrasada · vivo = en ejecución ahora (rojo que pulsa) ·
+    ámbar = hoy, te toca (firmada técnico / por aprobar / falta info / falta repuesto), externo sin
+    anexo, anexo sin firmar o sin checklist en fase pendiente/ejecución · azul = programada · verde = lo demás.
+    El rojo queda solo para atraso y ejecución en vivo (memoria «alertar sin gritar»). Solo datos operativos:
+    nunca fac_alerta ni fin_clasif (REGLA #26: técnico y gestión ven la misma urgencia).
+    Deja f["tabla_semaforo"] (clase) y f["tabla_semaforo_txt"] (texto para lectores de pantalla y title).
+    """
+    fase = f.get("estado_fase")
+    estado = f.get("estado")
+    rel = f.get("agenda_rel_class")
+    if fase is None:
+        clase, txt = "gris", f.get("estado_label") or "Cancelada"
+    elif rel == "mal":
+        clase, txt = "rojo", f.get("agenda_rel") or "Atrasada"
+    elif f.get("estado_en_vivo"):
+        clase, txt = "vivo", "En ejecución ahora"
+    elif rel == "hoy":
+        clase, txt = "ambar", f.get("agenda_rel") or "Hoy"
+    elif estado in _OT2_ESTADOS_TE_TOCA:
+        clase, txt = "ambar", f"Te toca: {f.get('estado_label') or estado}"
+    elif fase in ("pend", "ejec") and f.get("tecnico_tipo") == "externo" and not f.get("anexo_numero"):
+        clase, txt = "ambar", "Técnico externo sin anexo"
+    elif fase in ("pend", "ejec") and f.get("anexo_numero") and (f.get("anexo_estado") or "") != "firmado":
+        clase, txt = "ambar", f"Anexo {f.get('anexo_numero')} por firmar"
+    elif fase in ("pend", "ejec") and not (f.get("n_tareas") or 0):
+        clase, txt = "ambar", "Sin checklist"
+    elif fase == "pend":
+        clase, txt = "azul", f.get("estado_label") or "Programada"
+    else:
+        clase, txt = "verde", f.get("estado_label") or "Completada"
+    f["tabla_semaforo"], f["tabla_semaforo_txt"] = clase, txt
+    return clase
+
+
+# Filtro rápido de agenda de la vista Tabla (Daniel 2026-10-18: «a veces filtrar por agenda»). Lista blanca: la clave
+# viaja por URL y se MAPEA a SQL fijo con parámetros (REGLA #4); cualquier otra cosa queda vacía.
+_OT2_AGENDA_OPTS = (
+    ("atrasadas", "Atrasadas"), ("hoy", "Hoy"), ("manana", "Mañana"),
+    ("semana", "Esta semana"), ("proximas", "Próximas"), ("sin_fecha", "Sin fecha"),
+)
+_OT2_AGENDA_CLAVES = tuple(k for k, _ in _OT2_AGENDA_OPTS)
+
+
+def _ot2_agenda_where(clave, hoy):
+    """Devuelve (sql, params) para la clave de agenda, con `hoy` = fecha en hora Chile (nunca CURDATE()).
+
+    atrasadas = pendiente o en ejecución, fecha pasada y sin fecha_fin vigente (lo mismo que el chip «Atrasada» de la
+    fila) · hoy / mañana = el día cae dentro de fecha_programada..fecha_fin · semana = se cruza con lunes–domingo
+    actual · próximas = fecha_programada después de hoy · sin_fecha = sin fecha_programada.
+    Clave desconocida -> ("", []).
+    """
+    import datetime as _dt
+    if clave not in _OT2_AGENDA_CLAVES or hoy is None:
+        return "", []
+    if clave == "atrasadas":
+        estados = list(_OT2_FASE_A_ESTADOS["pend"]) + list(_OT2_FASE_A_ESTADOS["ejec"])
+        ph = ",".join(["%s"] * len(estados))
+        return (f"(v.estado IN ({ph}) AND v.fecha_programada < %s "
+                f" AND (v.fecha_fin IS NULL OR v.fecha_fin < %s))", estados + [hoy, hoy])
+    if clave in ("hoy", "manana"):
+        dia = hoy if clave == "hoy" else hoy + _dt.timedelta(days=1)
+        return ("(v.fecha_programada <= %s AND %s <= COALESCE(v.fecha_fin, v.fecha_programada))", [dia, dia])
+    if clave == "semana":
+        lunes = hoy - _dt.timedelta(days=hoy.weekday())
+        domingo = lunes + _dt.timedelta(days=6)
+        return ("(v.fecha_programada <= %s AND COALESCE(v.fecha_fin, v.fecha_programada) >= %s)", [domingo, lunes])
+    if clave == "proximas":
+        return "v.fecha_programada > %s", [hoy]
+    return "v.fecha_programada IS NULL", []
 
 
 def _ot2_fila_modal_lean(f):
@@ -88624,6 +88836,12 @@ def ot2_panel():
     # El permiso vive en el backend, no solo en el <select> del template.
     if f_pago and not _facprov_puede():
         f_pago = ""
+    # 📅 2026-10-18 (Daniel: «a veces filtrar por agenda»): chips Atrasadas · Hoy · Mañana · Esta semana · Próximas ·
+    # Sin fecha, solo en la vista Tabla. Va por URL y se aplica en el SERVIDOR (entra al COUNT, al LIMIT y a los KPI)
+    # para que la paginación cuente bien (REGLA #4.3). Lista blanca: fuera de ella queda vacío.
+    f_agenda = (request.args.get("agenda") or "").strip().lower()
+    if f_agenda not in _OT2_AGENDA_CLAVES or vista != "tabla":
+        f_agenda = ""
 
     # Orden por columna (Daniel: "siempre ordenado por el número de OT,
     # pero si yo quiero ordenar por cliente, por tipo, por estado, lo
@@ -88735,6 +88953,12 @@ def ot2_panel():
         elif f_pago == "pagada":
             extra_where_q.append(_fpi_en)
             extra_params_q.append("pagada")
+    if f_agenda:
+        # 📅 2026-10-18: la fecha de HOY en hora Chile (REGLA #6), nunca CURDATE() (UTC en Cloud Run).
+        _ag_sql, _ag_params = _ot2_agenda_where(f_agenda, _now_chile().date())
+        if _ag_sql:
+            extra_where_q.append(_ag_sql)
+            extra_params_q.extend(_ag_params)
     where_extra_sql_q = (" AND " + " AND ".join(extra_where_q)) if extra_where_q else ""
 
     extra_where, extra_params = list(extra_where_q), list(extra_params_q)
@@ -89081,6 +89305,7 @@ def ot2_panel():
         kanban_cols=kanban_cols,
         orden=orden, dir=dir_.lower(), f_tipo=f_tipo, f_tec=f_tec,
         f_interna=f_interna, f_anexo=f_anexo, f_pago=f_pago,
+        f_agenda=f_agenda, agenda_opts=_OT2_AGENDA_OPTS,   # 📅 2026-10-18: filtro rápido de agenda (vista Tabla)
         tipos_opts=tipos_opts, tecnicos_opts=tecnicos_opts,
         cal_semanas=cal_semanas, cal_mes_label=cal_mes_label,
         cal_mes_ant=cal_mes_ant, cal_mes_sig=cal_mes_sig, cal_mes_actual=cal_mes_actual,

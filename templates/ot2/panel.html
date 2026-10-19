@@ -101,7 +101,7 @@
 .ot2-tabla-wrap{background:#fff;border:1px solid var(--ot-line);border-radius:11px;
   overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.04)}
 .ot2-scroll{overflow-x:auto}
-.ot2-tabla{width:100%;border-collapse:collapse;min-width:900px}
+.ot2-tabla{width:100%;border-collapse:collapse}  /* 2026-10-18: sin min-width (ver TABLA v2 abajo) */
 .ot2-tabla thead th{background:#0a0a0a;color:#fff;font-size:.68rem;font-weight:800;
   letter-spacing:.09em;text-transform:uppercase;text-align:left;padding:12px 14px;white-space:nowrap}
 .ot2-th{display:inline-flex;align-items:center;gap:6px;color:rgba(255,255,255,.72);
@@ -191,7 +191,8 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
 .ot2-tabla td.ot2-go{width:36px;padding:0 10px 0 0;text-align:right}
 .ot2-go a{display:inline-grid;place-items:center;width:32px;height:32px;border-radius:8px;
   color:#c0c4cc;text-decoration:none;transition:background .14s,color .14s,transform .14s}
-.ot2-tabla tbody tr:hover .ot2-go a{color:#fff;background:var(--ilus-red,#dc2626);transform:translateX(2px)}
+/* 2026-10-18: al pasar el mouse la flecha va en NEGRO (antes rojo): el rojo queda para atraso y ejecución en vivo. */
+.ot2-tabla tbody tr:hover .ot2-go a{color:#fff;background:#0a0a0a;transform:translateX(2px)}
 .ot2-go a:focus-visible{outline:2px solid var(--ilus-red,#dc2626);outline-offset:2px}
 
 /* 2026-08-28 (Daniel): "no me gusta ese efecto del hover del mouse,
@@ -535,7 +536,13 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
    se esconde el <thead>, cada <td> pasa a su propia línea con el
    nombre de columna como etiqueta (`data-label`, puesto en el HTML de
    abajo), y toda la fila -- ya clickeable entera -- queda dentro de una
-   sola tarjeta compacta, sin scroll lateral. */
+   sola tarjeta compacta, sin scroll lateral.
+   2026-10-18 (Daniel, viendo la tabla en su teléfono: «estoy viendo un
+   check que está arriba de un anexo»): este bloque queda SOLO como
+   respaldo para navegadores sin container queries (@supports not). En los
+   demás manda el bloque «TABLA v2 · celular y tablet» de más abajo, donde
+   la casilla ocupa su propio lugar y nunca tapa un chip. */
+@supports not (container-type:inline-size){
 @media (max-width:760px){
   .ot2-scroll{overflow-x:visible}
   .ot2-tabla{min-width:0}
@@ -560,6 +567,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   .ot2-ag{align-items:flex-end}
   .ot2-ag .r{align-self:flex-end}
   .ot2-det{display:none !important}   /* el detalle expandido no aporta en celular; ya está todo en la tarjeta */
+}
 }
 
 /* ══════════════ SELECCIÓN + ELIMINAR EN LOTE (solo superadmin) ══════════════
@@ -689,14 +697,11 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
 .ot2-lote-btn.del:hover{background:#b91c1c}
 .ot2-lote-btn.del:disabled{opacity:.45;cursor:not-allowed;transform:none}
 @media (max-width:760px){
-  /* En celular la tabla ya es una pila de tarjetas: el check se ancla
-     arriba a la derecha de cada tarjeta, y la celda del N° OT deja
-     espacio para que el número no quede debajo. */
-  .ot2-tabla tbody tr{position:relative}
-  .ot2-tabla td.ot2-seltd{position:absolute;top:2px;right:4px;width:48px;height:48px;
-    padding:0;border:0 !important;min-height:0;justify-content:center;z-index:2}
-  .ot2-tabla td.ot2-seltd::before{display:none}
-  .ot2-tabla td.ot2-seltd + td{padding-right:58px}
+  /* 2026-10-18: acá vivía la casilla en position:absolute arriba a la
+     derecha de cada tarjeta (+ padding-right en la celda vecina). Era la
+     causa de lo que Daniel vio en su teléfono: «un check que está arriba
+     de un anexo». Se quita: en la tabla v2 la casilla tiene su propia
+     columna de la grilla (ver «TABLA v2 · celular y tablet»). */
   /* Revisión 2026-09-16: por debajo del overlay oscuro del menú lateral
      (.sidebar-overlay, mobile.css, también z-index 1040) -- si no, la
      barra de borrado seguía visible y tocable sobre el menú abierto. */
@@ -709,6 +714,181 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   .ot2-lote-it .es{grid-column:2;justify-self:start}
   .ot2-lote-foot{padding-bottom:calc(14px + env(safe-area-inset-bottom,0px))}
   .ot2-lote-foot .ot2-lote-btn{flex:1 1 auto;justify-content:center}
+}
+
+/* ══════════════ TABLA v2 (2026-10-18) ══════════════
+   Daniel (dueño, viendo la tabla en vivo): «necesito que mejores esa tabla.
+   Es muy, muy simple. Tiene información, pero está como desordenado… no sé
+   por qué no me gusta cómo se ve». Y: «en el avance, podría ser fiel al
+   tracking… saber si lo firmó el técnico, si está pendiente, todo eso»;
+   «a veces filtrar por agenda»; y desde su teléfono: «estoy viendo un check
+   que está arriba de un anexo».
+   Qué cambia (presentación; nada se quita, REGLA #4.2):
+   · UN solo estilo de chip (.o2t-chip) con la paleta de apoyo (REGLA #2).
+   · Cada celda trae una sola cosa: N° OT (número + semáforo + prioridad),
+     Cliente y trabajo (nombre completo + título + chips de trazabilidad),
+     Tipo, Estado y avance (pastilla + recorrido real + barra), Agenda,
+     Técnico. Todo alineado arriba (vertical-align:top).
+   · Semáforo por fila (franja de 4px + punto): rojo SOLO para atraso y
+     ejecución en vivo; ámbar = te toca; azul = programada; verde = listo;
+     gris = cancelada (memoria «alertar sin gritar»).
+   · Lenguaje de Retiros (REGLA #15): tarjetas, semáforo, nombres completos. */
+.ot2-tabla-wrap{container:o2t / inline-size}
+.ot2-tabla td{vertical-align:top;padding:12px 10px}
+/* Franja de 4px = semáforo de la fila (la fase sigue coloreando pastilla, barra y detalle vía --c). */
+tr.o2t-s-gris{--o2t-sem:#9ca3af} tr.o2t-s-rojo{--o2t-sem:#dc2626} tr.o2t-s-vivo{--o2t-sem:#dc2626}
+tr.o2t-s-ambar{--o2t-sem:#f59e0b} tr.o2t-s-azul{--o2t-sem:#3b82f6} tr.o2t-s-verde{--o2t-sem:#16a34a}
+.ot2-tabla tbody tr[class*="o2t-s-"] td:first-child{border-left-color:var(--o2t-sem)}
+.o2t-sem{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--o2t-sem,#9ca3af);
+  flex:none;margin-top:5px;box-shadow:0 0 0 2px #fff}
+tr.o2t-s-vivo .o2t-sem{animation:ot2pulse 1.8s ease-out infinite}
+.o2t-numw{display:flex;align-items:flex-start;gap:7px}
+.o2t-num-td .o2t-chip{white-space:nowrap;overflow-wrap:normal}   /* «Urgente» / «Alta» nunca partidos en dos líneas */
+/* Anchos de columna (encabezados). La tabla es width:100% sin min-width: el sobrante va al cliente. */
+.ot2-tabla th.o2t-w-ot{width:7%} .ot2-tabla th.o2t-w-cli{width:30%} .ot2-tabla th.o2t-w-tipo{width:9%}
+.ot2-tabla th.o2t-w-est{width:24%} .ot2-tabla th.o2t-w-ag{width:12%} .ot2-tabla th.o2t-w-tec{width:16%}
+.ot2-tabla thead th.ot2-goth{width:40px} .ot2-tabla td.ot2-go{width:40px}
+/* El ícono de orden solo en la columna activa y al pasar el mouse (menos ruido en el encabezado). */
+.ot2-tabla thead .ot2-th i{opacity:0;transition:opacity .14s}
+.ot2-tabla thead .ot2-th:hover i{opacity:.9}
+.ot2-tabla thead .ot2-th.act i{opacity:1}
+/* Chip único: .72rem, radio 6px, borde 1px, colores de apoyo (REGLA #2). */
+.o2t-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px;align-items:flex-start}
+.o2t-chip{display:inline-flex;align-items:center;gap:4px;font-size:.72rem;font-weight:700;line-height:1.3;
+  border-radius:6px;padding:2px 8px;border:1px solid #e5e7eb;background:#f3f4f6;color:#4b5563;
+  overflow-wrap:anywhere;max-width:100%}
+.o2t-chip i{font-size:.72rem;flex:none;opacity:.8}
+.o2t-chip.gris{background:#f3f4f6;color:#4b5563;border-color:#e5e7eb}
+.o2t-chip.azul{background:#dbeafe;color:#1e40af;border-color:#bfdbfe}
+.o2t-chip.verde{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.o2t-chip.ambar{background:#fff8e1;color:#92400e;border-color:#fde68a}
+.o2t-chip.rojo{background:#fee2e2;color:#991b1b;border-color:#fecaca}
+/* Los dos avisos que ya existían se alinean al chip único sin cambiar su texto ni su clase (hay prueba). */
+.o2t-chips .ot2-sinsaldo,.o2t-chips .ot2-clasif{margin-top:0;margin-right:0;font-size:.72rem;border-radius:6px;padding:2px 8px}
+/* «+N» abre la lista completa sin salir de la fila (en celular el title no se puede leer). */
+.o2t-more{display:inline-block;max-width:100%}
+.o2t-more summary{list-style:none;cursor:pointer}
+.o2t-more summary::-webkit-details-marker{display:none}
+.o2t-more summary .o2t-chip,.o2t-more summary.o2t-chip{text-decoration:underline dotted;text-underline-offset:2px}
+.o2t-more[open] summary .o2t-chip,.o2t-more[open] summary.o2t-chip{text-decoration:none}
+.o2t-more-list{margin:5px 0 0;padding:7px 10px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;
+  font-size:.74rem;color:#374151;line-height:1.45;overflow-wrap:anywhere}
+.o2t-more-list b{color:#0a0a0a}
+.o2t-more-list .it{display:block}
+/* Cliente y trabajo: nombre COMPLETO (REGLA #15), sin max-width ni puntos suspensivos. */
+.o2t-cli{font-weight:800;font-size:.9rem;color:#0a0a0a;line-height:1.3;overflow-wrap:anywhere}
+.o2t-cliw .ot2-tit{margin-top:2px}
+/* Tipo: ícono gris, texto tal cual (sin mayúsculas forzadas). */
+.o2t-tipo{display:inline-flex;align-items:flex-start;gap:6px;font-size:.78rem;font-weight:700;color:#374151;line-height:1.3}
+.o2t-tipo i{color:#9ca3af;font-size:.85rem;flex:none;margin-top:1px}
+/* Estado y avance: pastilla (sin cambios) + recorrido real + barra (sin cambios). */
+.ot2-tabla .ot2-estsub{white-space:normal}
+.o2t-rec{display:flex;list-style:none;margin:9px 0 0;padding:0;max-width:360px}
+.o2t-rec-p{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;text-align:center;
+  position:relative;gap:3px}
+.o2t-rec-p::before{content:"";position:absolute;top:6px;left:-50%;right:50%;height:2px;background:#e5e7eb}
+.o2t-rec-p:first-child::before{display:none}
+.o2t-rec-p.hecho::before{background:#16a34a}
+.o2t-rec-dot{width:14px;height:14px;border-radius:50%;background:#fff;border:2px solid #d1d5db;position:relative;
+  z-index:1;box-sizing:border-box;display:grid;place-items:center;color:#fff;font-size:.56rem;font-weight:900;line-height:1}
+.o2t-rec-p.hecho .o2t-rec-dot{background:#16a34a;border-color:#16a34a}
+.o2t-rec-p.hecho .o2t-rec-dot::after{content:"✓"}
+.o2t-rec-p.hecho.inferido .o2t-rec-dot{background:#86efac;border-color:#16a34a;color:#166534}
+.o2t-rec-p.actual .o2t-rec-dot{border-color:#0a0a0a;animation:o2trec 2s ease-out infinite}
+.o2t-rec-p.cancel .o2t-rec-dot,.o2t-rec-p.cancel.hecho .o2t-rec-dot{background:#f3f4f6;border-color:#d1d5db;color:#9ca3af}
+.o2t-rec-p.cancel::before{background:#e5e7eb}
+@keyframes o2trec{0%{box-shadow:0 0 0 0 rgba(10,10,10,.35)}70%{box-shadow:0 0 0 6px rgba(10,10,10,0)}100%{box-shadow:0 0 0 0 rgba(10,10,10,0)}}
+.o2t-rec-l{font-size:.58rem;font-weight:800;color:#9ca3af;letter-spacing:.02em;line-height:1.1}
+.o2t-rec-p.hecho .o2t-rec-l{color:#166534}
+.o2t-rec-p.actual .o2t-rec-l{color:#0a0a0a}
+.o2t-rec-p.cancel .o2t-rec-l{color:#9ca3af;text-decoration:line-through}
+.o2t-rec-f{font-size:.56rem;font-weight:700;color:#6b7280;font-variant-numeric:tabular-nums;line-height:1;min-height:.56rem}
+.o2t-rec-txt{font-size:.74rem;font-weight:700;color:#374151;margin-top:6px;line-height:1.3}
+.o2t-rec-txt i{color:#9ca3af;margin-right:3px}
+tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
+.o2t-eta-td .o2t-chips{margin-top:5px}
+.o2t-eta-td .ot2-prog{margin-top:8px;min-width:0;max-width:360px}
+/* Agenda: lo mismo de hoy; el chip relativo pasa al chip único (hoy ámbar, pronto azul, lejos gris, atraso rojo). */
+.o2t-rel{align-self:flex-start;display:inline-flex;align-items:center;gap:4px;font-size:.72rem;font-weight:700;
+  border-radius:6px;padding:2px 8px;border:1px solid #e5e7eb;line-height:1.3}
+.o2t-rel.hoy{background:#fff8e1;color:#92400e;border-color:#fde68a}
+.o2t-rel.pronto{background:#dbeafe;color:#1e40af;border-color:#bfdbfe}
+.o2t-rel.lejos{background:#f3f4f6;color:#4b5563;border-color:#e5e7eb}
+.o2t-rel.mal{background:#fee2e2;color:#991b1b;border-color:#fecaca}
+.o2t-sinfecha{font-size:.8rem;font-weight:700;color:#9ca3af}
+/* Técnico: avatar gris (sin anillo rojo), nombre completo; «Sin asignar» en ámbar (te toca asignar). */
+.o2t-tec-td .ot2-tec{display:grid;grid-template-columns:30px minmax(0,1fr);gap:3px 8px;align-items:start;white-space:normal}
+.o2t-tec-td .ot2-tec .o2t-av{grid-row:1 / span 2}
+.o2t-tec-td .ot2-tec .nom{font-weight:700;color:#0a0a0a;overflow-wrap:break-word;line-height:1.3;font-size:.84rem}
+.o2t-tec-td .ot2-tec .ot2-tec-tipo{justify-self:start}
+.o2t-av{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#f3f4f6;color:#374151;
+  font-size:.66rem;font-weight:800;flex:none;border:1px solid #e5e7eb}
+.o2t-av.sin{background:#fff;color:#d1d5db;border:1.5px dashed #d1d5db}
+.o2t-sin{color:#92400e;font-weight:700}
+
+/* ── Filtro rápido de agenda (Daniel: «a veces filtrar por agenda») ── */
+.o2t-agenda{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:-4px 0 12px}
+.o2t-agenda-t{display:inline-flex;align-items:center;gap:6px;font-size:.72rem;font-weight:800;text-transform:uppercase;
+  letter-spacing:.06em;color:#6b7280;margin-right:4px}
+.o2t-agchip{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:8px 14px;border-radius:9999px;
+  background:#fff;border:1.5px solid #e5e7eb;color:#374151;font-weight:800;font-size:.82rem;text-decoration:none;
+  transition:border-color .16s,background .16s,color .16s;white-space:nowrap}
+.o2t-agchip:hover{border-color:#c7cbd1;color:#0a0a0a}
+.o2t-agchip.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.o2t-agchip.on i{font-size:.7rem}
+.o2t-agchip:focus-visible{outline:3px solid #0a0a0a;outline-offset:2px}
+.o2t-vacio-btn{margin-top:14px;min-height:44px}
+
+/* Escritorio angosto (contenedor entre 881 y 1200px, p. ej. 1280px con menú lateral): los puntos del recorrido
+   van más juntos; la etiqueta de cada punto se esconde (queda en el title y en la línea de texto de abajo) y la
+   fecha se mantiene. En pantallas anchas y en celular (tarjeta a todo el ancho) las etiquetas se ven. */
+@container o2t (min-width:881px) and (max-width:1200px){
+  .o2t-rec-l{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .o2t-rec{max-width:260px}
+  .o2t-rec-f{margin-top:1px}
+}
+
+/* ── TABLA v2 · celular y tablet (contenedor de hasta 880px) ──
+   Un solo corte que cubre también la tablet con menú lateral (entre 761 y
+   1150px la tabla antes scrolleaba horizontal). Cada fila es una tarjeta en
+   GRILLA: la casilla tiene SU columna (44px) y nunca queda encima de texto
+   ni de un chip (Daniel: «estoy viendo un check que está arriba de un
+   anexo»). Toques de 44px o más, sin scroll de página, nombres completos. */
+@container o2t (max-width:880px){
+  .ot2-scroll{overflow-x:visible}
+  .ot2-tabla thead{display:none}
+  .ot2-tabla,.ot2-tabla tbody{display:block;width:100%}
+  .ot2-tabla tbody{padding:0 10px 4px;box-sizing:border-box}
+  .ot2-selmobile{display:flex;align-items:center;gap:8px;margin:12px 10px 0;padding:6px 10px 6px 2px;
+    font-size:.82rem;font-weight:700;color:#374151}
+  .ot2-tabla tbody tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) 0;
+    grid-template-areas:"num tipo sel" "cli cli cli" "eta eta eta" "ag tec tec";
+    width:100%;margin:10px 0;box-sizing:border-box;border:1px solid var(--ot-line);
+    border-left:4px solid var(--o2t-sem,var(--c));border-radius:12px;padding:4px 0 6px;min-height:44px;background:#fff}
+  .ot2-tabla tbody tr.o2t-con-sel{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 44px}
+  .ot2-tabla tbody tr.ot2-det{display:none}
+  .ot2-tabla td{display:block;min-width:0;padding:8px 12px;border:0;font-size:.86rem;min-height:0}
+  .ot2-tabla td:first-child{border-left:0}
+  .ot2-tabla td::before{content:none}
+  .ot2-tabla td.ot2-seltd{grid-area:sel;position:static;width:44px;height:44px;padding:0;margin:2px 2px 0 0;
+    display:flex;align-items:center;justify-content:center;justify-self:end}
+  .o2t-num-td{grid-area:num}
+  .o2t-tipo-td{grid-area:tipo;justify-self:end;text-align:right;padding-top:12px}
+  .o2t-tipo-td .o2t-tipo{text-align:left}
+  .o2t-cli-td{grid-area:cli;padding-top:2px}
+  .o2t-eta-td{grid-area:eta;border-top:1px dashed #eef0f2}
+  .o2t-ag-td{grid-area:ag;border-top:1px dashed #eef0f2}
+  .o2t-tec-td{grid-area:tec;border-top:1px dashed #eef0f2}
+  .ot2-tabla td.o2t-ag-td::before,.ot2-tabla td.o2t-tec-td::before{content:attr(data-label);display:block;font-size:.6rem;
+    font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;margin-bottom:4px}
+  .ot2-tabla td.ot2-go{display:none}
+  .o2t-rec,.o2t-eta-td .ot2-prog{max-width:none}
+  .ot2-ag{white-space:normal}
+}
+/* La tira de chips de agenda vive fuera del contenedor: en pantalla chica scrollea horizontal por sí sola. */
+@media (max-width:640px){
+  .o2t-agenda{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;scrollbar-width:thin}
+  .o2t-agenda-t{display:none}
 }
 </style>
 
@@ -867,20 +1047,20 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   {% set vista_lista = 'tabla' %}
   <div class="ot2-kpis">
     <a class="ot2-kpi k-pend {{ 'on' if fase=='pend' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, fase=None if fase=='pend' else 'pend') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, agenda=f_agenda or None, fase=None if fase=='pend' else 'pend') }}">
       <span class="num">{{ kpis.pend }}</span><span class="lbl">Pendientes</span>
     </a>
     <a class="ot2-kpi k-ejec {{ 'on' if fase=='ejec' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, fase=None if fase=='ejec' else 'ejec') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, agenda=f_agenda or None, fase=None if fase=='ejec' else 'ejec') }}">
       <span class="num">{{ kpis.ejec }}</span>
       <span class="lbl">{% if kpis.ejec %}<span class="ot2-dot"></span>{% endif %}En ejecución</span>
     </a>
     <a class="ot2-kpi k-comp {{ 'on' if fase=='comp' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, fase=None if fase=='comp' else 'comp') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, agenda=f_agenda or None, fase=None if fase=='comp' else 'comp') }}">
       <span class="num">{{ kpis.comp }}</span><span class="lbl">Completadas</span>
     </a>
     <a class="ot2-kpi k-cerr {{ 'on' if fase=='cerr' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, fase=None if fase=='cerr' else 'cerr') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, agenda=f_agenda or None, fase=None if fase=='cerr' else 'cerr') }}">
       <span class="num">{{ kpis.cerr }}</span><span class="lbl">Cerradas</span>
     </a>
   </div>
@@ -889,7 +1069,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   {# 2026-10-14 (Daniel: «está fallando un poco en la parte responsiva»): en celular los filtros se pliegan detrás
      de este botón (el buscador queda a la vista). En escritorio el botón no aparece y todo sigue igual. #}
   {% set _n_filtros = (1 if f_tipo else 0) + (1 if f_tec else 0) + (1 if f_interna else 0) + (1 if f_anexo else 0)
-                      + (1 if f_pago else 0) + (1 if origen == 'automaticas' else 0) %}
+                      + (1 if f_pago else 0) + (1 if origen == 'automaticas' else 0) + (1 if f_agenda else 0) %}
   <button type="button" class="ot2-filtros-btn" aria-expanded="false" aria-controls="ot2Bar"
           onclick="var b=document.getElementById('ot2Bar');var a=b.classList.toggle('abierto');this.setAttribute('aria-expanded',a?'true':'false')">
     <i class="bi bi-sliders"></i> Filtros{% if _n_filtros %} <span class="n">{{ _n_filtros }}</span>{% endif %}
@@ -900,6 +1080,8 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     {% if fase %}<input type="hidden" name="fase" value="{{ fase }}">{% endif %}
     {% if vista == 'calendario' and cal_mes_actual %}<input type="hidden" name="mes" value="{{ cal_mes_actual }}">{% endif %}
     <input type="hidden" name="origen" value="{{ origen }}">
+    {# 📅 2026-10-18: el filtro rápido de agenda viaja con el formulario para no perderse al buscar #}
+    {% if f_agenda %}<input type="hidden" name="agenda" value="{{ f_agenda }}">{% endif %}
 
     <a class="ot2-chip {{ 'on' if origen == 'reales' }}"
        href="{{ url_for('ot2_panel', origen='reales', vista=vista, q=q or None) }}">
@@ -979,7 +1161,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     <button class="btn btn-dark btn-sm px-3" style="min-height:44px" type="submit">
       <i class="bi bi-funnel me-1"></i>Buscar
     </button>
-    {% if q or fase or f_tipo or f_tec or f_interna or f_anexo or f_pago %}
+    {% if q or fase or f_tipo or f_tec or f_interna or f_anexo or f_pago or f_agenda %}
     <a class="btn btn-outline-secondary btn-sm px-3" style="min-height:44px"
        href="{{ url_for('ot2_panel', origen=origen, vista=vista) }}">
       <i class="bi bi-x-lg me-1"></i>Limpiar
@@ -987,16 +1169,16 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     {% endif %}
   </form>
 
-  {% if q or fase or f_tipo or f_tec or f_interna or f_anexo or f_pago %}
+  {% if q or fase or f_tipo or f_tec or f_interna or f_anexo or f_pago or f_agenda %}
   <p class="ot2-nota">
     <i class="bi bi-info-circle-fill text-primary"></i>
-    {{ total_filtrado }} resultado(s){% if q %} para "<b>{{ q }}</b>"{% endif %}{% if fase %} en <b>{{ {'pend':'Pendientes','ejec':'En ejecución','comp':'Completadas','cerr':'Cerradas'}[fase] }}</b>{% endif %}{% if f_tipo %} · tipo <b>{{ tipos_opts | selectattr('0','equalto',f_tipo) | map(attribute='1') | first | default(f_tipo) }}</b>{% endif %}{% if f_tec %} · técnico <b>{{ tecnicos_opts | selectattr('0','equalto',f_tec) | map(attribute='1') | first | default('—') }}</b>{% endif %}{% if f_interna == '1' %} · <b>solo trabajo interno</b>{% elif f_interna == '0' %} · <b>solo de cliente</b>{% endif %}{% if f_anexo %} · anexo <b>{{ {'sin_anexo':'sin anexo','borrador':'en borrador','enviado':'enviado','visto':'visto, sin firmar','firmado':'firmado'}[f_anexo] }}</b>{% endif %}{% if f_pago %} · pago a proveedor <b>{{ {'sin_costo':'sin costo declarado','por_facturar':'por facturar','facturada':'facturada, sin pagar','pagada':'pagada'}[f_pago] }}</b>{% endif %}
+    {{ total_filtrado }} resultado(s){% if q %} para "<b>{{ q }}</b>"{% endif %}{% if fase %} en <b>{{ {'pend':'Pendientes','ejec':'En ejecución','comp':'Completadas','cerr':'Cerradas'}[fase] }}</b>{% endif %}{% if f_tipo %} · tipo <b>{{ tipos_opts | selectattr('0','equalto',f_tipo) | map(attribute='1') | first | default(f_tipo) }}</b>{% endif %}{% if f_tec %} · técnico <b>{{ tecnicos_opts | selectattr('0','equalto',f_tec) | map(attribute='1') | first | default('—') }}</b>{% endif %}{% if f_interna == '1' %} · <b>solo trabajo interno</b>{% elif f_interna == '0' %} · <b>solo de cliente</b>{% endif %}{% if f_anexo %} · anexo <b>{{ {'sin_anexo':'sin anexo','borrador':'en borrador','enviado':'enviado','visto':'visto, sin firmar','firmado':'firmado'}[f_anexo] }}</b>{% endif %}{% if f_pago %} · pago a proveedor <b>{{ {'sin_costo':'sin costo declarado','por_facturar':'por facturar','facturada':'facturada, sin pagar','pagada':'pagada'}[f_pago] }}</b>{% endif %}{% if f_agenda %} · agenda <b>{{ agenda_opts | selectattr('0','equalto',f_agenda) | map(attribute='1') | first | default(f_agenda) }}</b>{% endif %}
   </p>
   {% endif %}
 
   {# ── Selector de vista ───────────────────────────────────────────── #}
   <nav class="ot2-vistas" aria-label="Tipo de vista">
-    <a class="ot2-v {{ 'on' if vista=='tabla' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tabla', q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None) }}">
+    <a class="ot2-v {{ 'on' if vista=='tabla' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tabla', q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, agenda=f_agenda or None) }}">
       <i class="bi bi-table"></i><span>Tabla</span></a>
     {# 2026-08-20 (Daniel): la vista "Tarjetas" se quitó a pedido suyo --
        "cuando lo cambio a tabla y tarjeta no hace nada". Y era cierto: el
@@ -1012,31 +1194,50 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
 
   {# ══════════════════ TABLA ══════════════════ #}
   {% if vista == 'tabla' %}
+    {# 📅 2026-10-18 (Daniel: «a veces filtrar por agenda»): filtro rápido, solo en Tabla y debajo de las pestañas.
+       Va por URL y se aplica en el servidor (COUNT, LIMIT y KPI cuentan dentro del día elegido, REGLA #4.3). Tocar el
+       chip activo lo quita y la tabla se recarga. Se suma a las fechas desde/hasta que ya existen en el reporte. #}
+    <nav class="o2t-agenda" aria-label="Filtro rápido de agenda">
+      <span class="o2t-agenda-t"><i class="bi bi-calendar2-week"></i>Agenda</span>
+      {% for _ak, _al in agenda_opts %}
+      <a class="o2t-agchip {{ 'on' if f_agenda == _ak }}"
+         {% if f_agenda == _ak %}aria-current="true" title="Quitar el filtro «{{ _al }}»"{% endif %}
+         href="{{ url_for('ot2_panel', origen=origen, vista='tabla', q=q or None, fase=fase or None, tipo=f_tipo or None,
+                          tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None,
+                          per_page=per_page, orden=orden, dir=dir, agenda=(None if f_agenda == _ak else _ak)) }}">
+        {% if f_agenda == _ak %}<i class="bi bi-check-lg"></i>{% endif %}{{ _al }}</a>
+      {% endfor %}
+    </nav>
     {% if filas %}
     {# 2026-09-16: NO se puede usar `puede_lote` acá -- ese {% set %} vive
        más abajo, dentro del <thead>, y todavía no existe en este punto del
        template (Jinja lo trata como Undefined/falso y el bloque entero se
-       saltaba en silencio, verificado en vivo). Misma condición inline. #}
-    {% if permissions and (permissions.superadmin or permissions.mant_eliminar) %}
-    <div class="ot2-selmobile" id="ot2SelMobile">
-      <label class="ot2-chk"><input type="checkbox" id="ot2SelAllMobile" autocomplete="off" aria-label="Seleccionar/deseleccionar todo"></label>
-      <span>Seleccionar todo</span>
-    </div>
-    {% endif %}
+       saltaba en silencio, verificado en vivo). Misma condición inline.
+       2026-10-18: el bloque «Seleccionar todo» de celular se mueve DENTRO de
+       .ot2-tabla-wrap (mismo id, mismo JS) porque ahora el corte a tarjetas
+       lo decide el ancho del contenedor (@container o2t), no la pantalla. #}
     <div class="ot2-tabla-wrap">
+      {% if permissions and (permissions.superadmin or permissions.mant_eliminar) %}
+      <div class="ot2-selmobile" id="ot2SelMobile">
+        <label class="ot2-chk"><input type="checkbox" id="ot2SelAllMobile" autocomplete="off" aria-label="Seleccionar/deseleccionar todo"></label>
+        <span>Seleccionar todo</span>
+      </div>
+      {% endif %}
       <div class="ot2-scroll">
         <table class="ot2-tabla">
           {# Encabezados ordenables. Un clic ordena; volver a hacer clic en
              la misma columna invierte el sentido. El orden por defecto
-             sigue siendo el N° de OT descendente, como pidió Daniel. #}
-          {% macro th(col, label) %}
+             sigue siendo el N° de OT descendente, como pidió Daniel.
+             2026-10-18: `cls` (opcional) fija el ancho de la columna. #}
+          {% macro th(col, label, cls='') %}
             {% set act = (orden == col) %}
             {% set nueva_dir = 'asc' if (act and dir == 'desc') else ('desc' if act else 'desc') %}
-            <th>
+            <th class="{{ cls }}">
               <a class="ot2-th {{ 'act' if act }}"
                  href="{{ url_for('ot2_panel', origen=origen, vista=vista, q=q or None,
                                   fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None,
                                   interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None,
+                                  agenda=f_agenda or None,
                                   per_page=per_page, orden=col,
                                   dir=('asc' if act and dir=='desc' else 'desc')) }}">
                 {{ label }}
@@ -1060,14 +1261,18 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                 </label>
               </th>
               {% endif %}
-              {{ th('ot','N° OT') }}{{ th('cliente','Cliente') }}{{ th('tipo','Tipo') }}
-              {{ th('estado','Estado') }}{{ th('tecnico','Técnico') }}{{ th('fecha','Agenda') }}
-              <th>Avance</th><th class="ot2-goth" aria-label="Abrir"></th>
+              {# 2026-10-18: seis columnas, cada una con UNA cosa. «Avance» ya no es columna aparte: la barra sigue,
+                 dentro de «Estado y avance», junto al recorrido real de la OT (REGLA #4.2: nada se quita). #}
+              {{ th('ot','N° OT','o2t-w-ot') }}{{ th('cliente','Cliente y trabajo','o2t-w-cli') }}{{ th('tipo','Tipo','o2t-w-tipo') }}
+              {{ th('estado','Estado y avance','o2t-w-est') }}{{ th('fecha','Agenda','o2t-w-ag') }}{{ th('tecnico','Técnico','o2t-w-tec') }}
+              <th class="ot2-goth" aria-label="Abrir"></th>
             </tr>
           </thead>
           <tbody>
             {% for f in filas %}
-            <tr class="f-{{ f.estado_fase or 'cancel' }}" onclick="location.href='{{ url_for('ot2_detalle', vid=f.id) }}'">
+            {#- 🚦 2026-10-18: semáforo de la fila (tabla_semaforo, calculado en el servidor con datos operativos; nunca
+                plata, así técnico y gestión ven la misma urgencia). La fase sigue en f-* para pastilla, barra y detalle. -#}
+            <tr class="f-{{ f.estado_fase or 'cancel' }} o2t-s-{{ f.tabla_semaforo or 'gris' }}{{ ' o2t-con-sel' if puede_lote }}" onclick="location.href='{{ url_for('ot2_detalle', vid=f.id) }}'">
               {% if puede_lote %}
               {# La fila entera navega a la ficha (onclick del <tr>): la celda
                  y el input cortan la propagación para que marcar no abra la OT. #}
@@ -1081,78 +1286,119 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                 </label>
               </td>
               {% endif %}
-              <td data-label="N° OT">
-                <span class="ot2-num">
-                  {% if f.numero_ot %}{{ f.numero_sufijo }}<small>OT-{{ f.numero_prefijo }}</small>
-                  {% else %}VS-{{ '%05d'|format(f.id) }}<small>Automática</small>{% endif %}
-                </span>
-                {% if f.numero_ticket %}<span class="ot2-tk" title="Ticket de origen"><i class="bi bi-ticket-perforated-fill"></i>{{ f.numero_ticket }}</span>{% endif %}
-                {#- 🏷️ 2026-09-21 (Daniel: "en la tabla de las OT, en
-                    chiquitito, poné el N° de anexo y las facturas
-                    asociadas... por trazabilidad" -- tras la noche de
-                    OT-218/211/213 con números quemados y anexos huérfanos:
-                    con esto a la vista, un caso así se nota de inmediato
-                    sin tener que ir a buscarlo). Solo se pinta si hay dato
-                    -- no se satura la fila con "sin anexo" en cada OT. -#}
-                {#- 📋 2026-09-26 (Daniel: "que salga el anexo"): el chip ahora dice
-                    en palabras si está firmado o no, no solo un reloj de arena.
-                    Y si la OT es de un técnico EXTERNO y todavía no tiene anexo,
-                    se avisa en ámbar -- el anexo firmado es condición para que el
-                    externo trabaje. En internas no se pinta nada (no satura). -#}
-                {% if f.anexo_numero %}
-                <span class="ot2-anx {{ 'ok' if f.anexo_estado == 'firmado' else 'warn' }}"
-                      title="Anexo de servicios N° {{ f.anexo_numero }} · {{ f.anexo_estado | capitalize }}">
-                  <i class="bi bi-{{ 'patch-check-fill' if f.anexo_estado == 'firmado' else 'hourglass-split' }}"></i>Anexo {{ f.anexo_numero }} · {{ 'firmado' if f.anexo_estado == 'firmado' else ('borrador' if f.anexo_estado == 'borrador' else 'por firmar') }}</span>
-                {% elif f.tecnico_tipo == 'externo' and f.estado_fase in ('pend','ejec') %}
-                <span class="ot2-anx warn" title="Técnico externo sin anexo de servicios"><i class="bi bi-exclamation-triangle-fill"></i>Sin anexo</span>
-                {% endif %}
-                {% if f.fac_numero or f.fac_estado %}
-                <span class="ot2-fac {{ 'ok' if f.fac_estado == 'pagada' else 'warn' }}"
-                      title="Factura de proveedor {{ f.fac_numero or '(sin N°)' }} · {{ f.fac_estado | capitalize }}">
-                  <i class="bi bi-receipt"></i>{{ f.fac_numero or 's/n' }}</span>
+              {#- ── N° OT: número + semáforo + prioridad (si es urgente o alta). ─────────────────────────────── -#}
+              <td data-label="N° OT" class="o2t-num-td">
+                <div class="o2t-numw">
+                  <span class="o2t-sem" role="img" aria-label="{{ f.tabla_semaforo_txt or '' }}" title="{{ f.tabla_semaforo_txt or '' }}"></span>
+                  <span class="ot2-num">
+                    {% if f.numero_ot %}{{ f.numero_sufijo }}<small>OT-{{ f.numero_prefijo }}</small>
+                    {% else %}VS-{{ '%05d'|format(f.id) }}<small>Automática</small>{% endif %}
+                  </span>
+                </div>
+                {#- La prioridad ya venía en la fila (solo se veía en el detalle oculto): ahora a la vista cuando pesa. -#}
+                {% if f.prioridad_class in ('pr-urgente','pr-alta') %}
+                <div class="o2t-chips"><span class="o2t-chip {{ 'rojo' if f.prioridad_class == 'pr-urgente' else 'ambar' }}" title="Prioridad {{ f.prioridad_label }}"><i class="bi {{ f.prioridad_icon }}"></i>{{ f.prioridad_label }}</span></div>
                 {% endif %}
               </td>
-              {#- 📋 2026-09-26 (Daniel: "necesita más información"): bajo el
-                  cliente va QUÉ se hace (título), DÓNDE (comuna), cuántos
-                  equipos y con qué documento se respalda. Nombres completos,
-                  nunca cortados (REGLA #15). -#}
-              <td data-label="Cliente">
-                <div class="ot2-cliw">
-                  <div class="ot2-cli">{{ f.razon_social or 'Trabajo interno' }}</div>
+              {#- ── Cliente y trabajo: nombre COMPLETO (REGLA #15), título y UNA fila de chips de trazabilidad en orden
+                  fijo: comuna · equipos · documentos · ticket · anexo · factura de proveedor · saldo · clasificación.
+                  Cada chip conserva su {% if %} de siempre (lo que el servidor no entrega a un técnico sigue sin
+                  llegar, REGLA #26). Nada se oculta ni se limita en cantidad. -#}
+              <td data-label="Cliente y trabajo" class="o2t-cli-td">
+                <div class="o2t-cliw">
+                  <div class="o2t-cli">{{ f.razon_social or 'Trabajo interno' }}</div>
                   {% if f.titulo %}<div class="ot2-tit">{{ f.titulo }}</div>{% endif %}
-                  {% if f.visita_comuna or f.n_equipos or f.docs %}
-                  <div class="ot2-meta">
-                    {% if f.visita_comuna %}<span><i class="bi bi-geo-alt-fill"></i>{{ f.visita_comuna }}</span>{% endif %}
-                    {% if f.n_equipos %}<span><i class="bi bi-hdd-stack-fill"></i>{{ f.n_equipos }} equipo{{ 's' if f.n_equipos != 1 }}</span>{% endif %}
-                    {% if f.docs %}<span class="doc" title="{{ f.docs | join(' · ') }}"><i class="bi bi-file-earmark-text-fill"></i>{{ f.docs[0] }}{% if f.docs|length > 1 %} +{{ f.docs|length - 1 }}{% endif %}</span>{% endif %}
+                  <div class="o2t-chips">
+                    {#- 📋 2026-09-26 (Daniel: "necesita más información"): DÓNDE (comuna), cuántos equipos y con qué
+                        documento se respalda. -#}
+                    {% if f.visita_comuna %}<span class="o2t-chip gris"><i class="bi bi-geo-alt-fill"></i>{{ f.visita_comuna }}</span>{% endif %}
+                    {% if f.n_equipos %}<span class="o2t-chip gris"><i class="bi bi-hdd-stack-fill"></i>{{ f.n_equipos }} equipo{{ 's' if f.n_equipos != 1 }}</span>{% endif %}
+                    {% if f.docs %}
+                      {% if f.docs|length > 1 %}
+                      {#- «+N» abre la lista completa dentro de la fila (antes solo estaba en el title, ilegible en celular). -#}
+                      <details class="o2t-more" onclick="event.stopPropagation()">
+                        <summary class="o2t-chip azul" title="{{ f.docs | join(' · ') }}"><i class="bi bi-file-earmark-text-fill"></i>{{ f.docs[0] }} +{{ f.docs|length - 1 }}</summary>
+                        <div class="o2t-more-list"><b>Documentos de la OT</b>{% for _d in f.docs %}<span class="it">{{ _d }}</span>{% endfor %}</div>
+                      </details>
+                      {% else %}
+                      <span class="o2t-chip azul" title="Documento que respalda la OT"><i class="bi bi-file-earmark-text-fill"></i>{{ f.docs[0] }}</span>
+                      {% endif %}
+                    {% endif %}
+                    {% if f.numero_ticket %}<span class="o2t-chip gris" title="Ticket de origen"><i class="bi bi-ticket-perforated-fill"></i>{{ f.numero_ticket }}</span>{% endif %}
+                    {#- 🏷️ 2026-09-21 (Daniel: "en la tabla de las OT, en
+                        chiquitito, poné el N° de anexo y las facturas
+                        asociadas... por trazabilidad" -- tras la noche de
+                        OT-218/211/213 con números quemados y anexos huérfanos:
+                        con esto a la vista, un caso así se nota de inmediato
+                        sin tener que ir a buscarlo). Solo se pinta si hay dato
+                        -- no se satura la fila con "sin anexo" en cada OT. -#}
+                    {#- 📋 2026-09-26 (Daniel: "que salga el anexo"): el chip ahora dice
+                        en palabras si está firmado o no, no solo un reloj de arena.
+                        Y si la OT es de un técnico EXTERNO y todavía no tiene anexo,
+                        se avisa en ámbar -- el anexo firmado es condición para que el
+                        externo trabaje. En internas no se pinta nada (no satura). -#}
+                    {% if f.anexo_numero %}
+                    <span class="o2t-chip {{ 'verde' if f.anexo_estado == 'firmado' else 'ambar' }}"
+                          title="Anexo de servicios N° {{ f.anexo_numero }} · {{ f.anexo_estado | capitalize }}">
+                      <i class="bi bi-{{ 'patch-check-fill' if f.anexo_estado == 'firmado' else 'hourglass-split' }}"></i>Anexo {{ f.anexo_numero }} · {{ 'firmado' if f.anexo_estado == 'firmado' else ('borrador' if f.anexo_estado == 'borrador' else 'por firmar') }}</span>
+                    {% elif f.tecnico_tipo == 'externo' and f.estado_fase in ('pend','ejec') %}
+                    <span class="o2t-chip ambar" title="Técnico externo sin anexo de servicios"><i class="bi bi-exclamation-triangle-fill"></i>Sin anexo</span>
+                    {% endif %}
+                    {#- Factura DEL PROVEEDOR: el servidor la deja en blanco para técnicos (REGLA #26). -#}
+                    {% if f.fac_numero or f.fac_estado %}
+                    <span class="o2t-chip {{ 'verde' if f.fac_estado == 'pagada' else 'ambar' }}"
+                          title="Factura de proveedor {{ f.fac_numero or '(sin N°)' }} · {{ f.fac_estado | capitalize }}">
+                      <i class="bi bi-receipt"></i>Factura proveedor {{ f.fac_numero or 's/n' }} · {{ 'pagada' if f.fac_estado == 'pagada' else 'pendiente' }}</span>
+                    {% endif %}
+                    {#- 🚩 2026-10-12 (Daniel: «avisar hasta en la tabla que se despachó sin saldo… persistente»): la
+                        factura de esta OT ya estaba consumida por otra. Roja mientras siga así; gris cuando se corrigió,
+                        pero NUNCA desaparece. No llega a un técnico (se quita en el servidor, REGLA #26). -#}
+                    {% if f.fac_alerta %}
+                    {% set _fa = f.fac_alerta %}
+                    {% set _fa_l = _fa.vigentes if _fa.estado == 'vigente' else _fa.resueltas %}
+                    <div class="ot2-sinsaldo {{ _fa.estado }}" role="note"
+                         title="{% for x in _fa.vigentes + _fa.resueltas %}{{ x.texto }}{% if x.resuelta_el %} · resuelto el {{ x.resuelta_el }}{% endif %} · detectado el {{ x.detectada_el }}{% if x.detectada_por %} ({{ x.detectada_por }}){% endif %}{{ ' | ' if not loop.last }}{% endfor %}">
+                      <i class="bi bi-{{ 'exclamation-octagon-fill' if _fa.estado == 'vigente' else 'clock-history' }}"></i>
+                      {% if _fa.estado == 'vigente' %}<b>{{ 'Saldo insuficiente' if (_fa_l and _fa_l[0].tipo == 'saldo_insuficiente') else 'Factura sin saldo' }}</b> · {{ _fa.docs | join(', ') }}
+                      {% else %}<b>Tuvo factura sin saldo</b> · {{ _fa.docs | join(', ') }} · resuelto {{ (_fa_l[-1].resuelta_el if _fa_l else '') }}{% endif %}
+                    </div>
+                    {% endif %}
+                    {#- 🏷️ 2026-10-12 (Daniel: «debemos guardar las clasificaciones, cómo se están trabajando las OT»):
+                        cómo nació la OT. El servidor solo la entrega al superadministrador (nunca a un técnico).
+                        2026-10-18: los «otros», el argumento y quién autorizó se leen dentro de la fila (<details>),
+                        no solo en el title. -#}
+                    {% if f.fin_clasif and f.fin_clasif.texto %}
+                    {% set _fc = f.fin_clasif %}
+                    {% set _fc_title %}Cómo nació la OT: {{ _fc.texto }}{% if _fc.otros %} · también: {{ _fc.otros | join('; ') }}{% endif %}{% if _fc.argumento and not _fc.derivada %} · argumento: {{ _fc.argumento }}{% endif %}{% if _fc.autorizado_por %} · autorizó {{ _fc.autorizado_por }}{% endif %}{% if _fc.derivada %} · calculada (OT anterior al 12-10-2026){% endif %}{% endset %}
+                    {% if _fc.otros or (_fc.argumento and not _fc.derivada) or _fc.autorizado_por or _fc.derivada %}
+                    <details class="o2t-more" onclick="event.stopPropagation()">
+                      <summary class="ot2-clasif {{ _fc.nivel or 'gris' }}" role="note" title="{{ _fc_title }}">
+                        <i class="bi bi-tag-fill"></i>{{ _fc.texto }}{% if _fc.otros %} <span class="calc">+{{ _fc.otros | length }}</span>{% endif %}</summary>
+                      <div class="o2t-more-list"><b>Cómo nació la OT</b>
+                        <span class="it">{{ _fc.texto }}</span>
+                        {% for _o in _fc.otros or [] %}<span class="it">También: {{ _o }}</span>{% endfor %}
+                        {% if _fc.argumento and not _fc.derivada %}<span class="it">Argumento: {{ _fc.argumento }}</span>{% endif %}
+                        {% if _fc.autorizado_por %}<span class="it">Autorizó: {{ _fc.autorizado_por }}</span>{% endif %}
+                        {% if _fc.derivada %}<span class="it">Calculada (OT anterior al 12-10-2026)</span>{% endif %}
+                      </div>
+                    </details>
+                    {% else %}
+                    <div class="ot2-clasif {{ _fc.nivel or 'gris' }}" role="note" title="{{ _fc_title }}">
+                      <i class="bi bi-tag-fill"></i>{{ _fc.texto }}
+                    </div>
+                    {% endif %}
+                    {% endif %}
                   </div>
-                  {% endif %}
-                  {#- 🚩 2026-10-12 (Daniel: «avisar hasta en la tabla que se despachó sin saldo… persistente»): la
-                      factura de esta OT ya estaba consumida por otra. Roja mientras siga así; gris cuando se corrigió,
-                      pero NUNCA desaparece. No llega a un técnico (se quita en el servidor, REGLA #26). -#}
-                  {% if f.fac_alerta %}
-                  {% set _fa = f.fac_alerta %}
-                  {% set _fa_l = _fa.vigentes if _fa.estado == 'vigente' else _fa.resueltas %}
-                  <div class="ot2-sinsaldo {{ _fa.estado }}" role="note"
-                       title="{% for x in _fa.vigentes + _fa.resueltas %}{{ x.texto }}{% if x.resuelta_el %} · resuelto el {{ x.resuelta_el }}{% endif %} · detectado el {{ x.detectada_el }}{% if x.detectada_por %} ({{ x.detectada_por }}){% endif %}{{ ' | ' if not loop.last }}{% endfor %}">
-                    <i class="bi bi-{{ 'exclamation-octagon-fill' if _fa.estado == 'vigente' else 'clock-history' }}"></i>
-                    {% if _fa.estado == 'vigente' %}<b>{{ 'Saldo insuficiente' if (_fa_l and _fa_l[0].tipo == 'saldo_insuficiente') else 'Factura sin saldo' }}</b> · {{ _fa.docs | join(', ') }}
-                    {% else %}<b>Tuvo factura sin saldo</b> · {{ _fa.docs | join(', ') }} · resuelto {{ (_fa_l[-1].resuelta_el if _fa_l else '') }}{% endif %}
-                  </div>
-                  {% endif %}
-                  {#- 🏷️ 2026-10-12 (Daniel: «debemos guardar las clasificaciones, cómo se están trabajando las OT»):
-                      cómo nació la OT. El servidor solo la entrega al superadministrador (nunca a un técnico). -#}
-                  {% if f.fin_clasif and f.fin_clasif.texto %}
-                  {% set _fc = f.fin_clasif %}
-                  <div class="ot2-clasif {{ _fc.nivel or 'gris' }}" role="note"
-                       title="Cómo nació la OT: {{ _fc.texto }}{% if _fc.otros %} · también: {{ _fc.otros | join('; ') }}{% endif %}{% if _fc.argumento and not _fc.derivada %} · argumento: {{ _fc.argumento }}{% endif %}{% if _fc.autorizado_por %} · autorizó {{ _fc.autorizado_por }}{% endif %}{% if _fc.derivada %} · calculada (OT anterior al 12-10-2026){% endif %}">
-                    <i class="bi bi-tag-fill"></i>{{ _fc.texto }}{% if _fc.otros %} <span class="calc">+{{ _fc.otros | length }}</span>{% endif %}
-                  </div>
-                  {% endif %}
                 </div>
               </td>
-              <td data-label="Tipo"><span class="ot2-tipo"><i class="bi {{ f.tipo_icon }}"></i>{{ f.tipo_label }}</span></td>
-              <td data-label="Estado">
+              {#- ── Tipo: ícono gris y el texto tal cual (sin mayúsculas forzadas). ─────────────────────────────── -#}
+              <td data-label="Tipo" class="o2t-tipo-td"><span class="o2t-tipo"><i class="bi {{ f.tipo_icon }}"></i><span>{{ f.tipo_label }}</span></span></td>
+              {#- ── Estado y avance (Daniel 2026-10-18: «podría ser fiel al tracking… saber si lo firmó el técnico, si
+                  está pendiente, todo eso»): pastilla de estado y su subtexto (sin cambios), el RECORRIDO real de la OT
+                  (creada → ejecución → firma técnico → firma cliente → aprobada → cerrada; sin «Cliente» en internas),
+                  la etapa en palabras, los avisos (anexo por firmar, sin anexo, falta info/repuesto) y la barra de
+                  tareas con los repuestos, que se conservan (REGLA #4.2). Sin nombres de quien firmó (REGLA #26). -#}
+              <td data-label="Estado y avance" class="o2t-eta-td">
                 <span class="ot2-est">
                   {% if f.estado_en_vivo %}<span class="ot2-dot"></span>{% else %}<i class="bi {{ f.estado_icon }}"></i>{% endif %}
                   {{ f.estado_label }}
@@ -1160,27 +1406,26 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                 {% if f.estado_sub and not f.estado_sub.startswith('Programada') %}
                 <div class="ot2-estsub">{{ f.estado_sub }}</div>
                 {% endif %}
-              </td>
-              <td data-label="Técnico">
-                <div class="ot2-tec">
-                  {% if f.tecnico_ini %}<span class="ot2-av">{{ f.tecnico_ini }}</span>
-                  {% else %}<span class="ot2-av sin"><i class="bi bi-person"></i></span>{% endif %}
-                  <span>{{ f.tecnico_nombre or 'Sin asignar' }}</span>
-                  {% if f.tecnico_tipo %}<span class="ot2-tec-tipo {{ f.tecnico_tipo }}">{{ 'Ext' if f.tecnico_tipo == 'externo' else 'Int' }}</span>{% endif %}
+                {% set _rec = f.recorrido %}
+                {% if _rec and _rec.hitos %}
+                <ol class="o2t-rec" aria-label="Recorrido de la OT">
+                  {% for h in _rec.hitos %}
+                  <li class="o2t-rec-p{{ ' hecho' if h.hecho }}{{ ' inferido' if h.inferido }}{{ ' actual' if h.actual }}{{ ' cancel' if _rec.cancelada }}"
+                      title="{{ h.corto }}{% if h.cuando %} · {{ h.cuando }}{% elif h.hecho and h.inferido %} · sin fecha registrada{% elif h.actual %} · etapa actual{% else %} · pendiente{% endif %}">
+                    <span class="o2t-rec-dot" aria-hidden="true"></span>
+                    <span class="o2t-rec-l">{{ h.corto }}</span>
+                    <span class="o2t-rec-f">{{ h.cuando or '' }}</span>
+                  </li>
+                  {% endfor %}
+                </ol>
+                <div class="o2t-rec-txt"><i class="bi bi-signpost-2-fill"></i>{{ _rec.texto }}</div>
+                {% if _rec.avisos %}
+                <div class="o2t-chips">
+                  {% for _a in _rec.avisos %}<span class="o2t-chip ambar"><i class="bi bi-exclamation-triangle-fill"></i>{{ _a }}</span>{% endfor %}
                 </div>
-              </td>
-              {#- 📅 2026-09-26 (Daniel: "no veo para cuándo está agendado"):
-                  día de la semana + fecha, horario y cuánto falta / cuánto
-                  se atrasó, en semáforo. -#}
-              <td data-label="Agenda">
-                <div class="ot2-ag">
-                  <div class="d">{% if f.agenda_dow %}<small>{{ f.agenda_dow }}</small> {% endif %}{{ f.fecha_dia }}{% if f.agenda_hasta %} <small>→ {{ f.agenda_hasta }}</small>{% endif %}</div>
-                  {% if f.agenda_horario %}<div class="h"><i class="bi bi-clock"></i>{{ f.agenda_horario }}</div>{% endif %}
-                  {% if f.agenda_rel %}<span class="r {{ f.agenda_rel_class }}">{{ f.agenda_rel }}</span>{% endif %}
-                </div>
-              </td>
-              <td data-label="Avance">
-                <div class="ot2-prog">
+                {% endif %}
+                {% endif %}
+                <div class="ot2-prog" title="Tareas del checklist completadas">
                   <span class="bar"><i style="width:{{ f.check_pct }}%"></i></span>
                   <span class="pc">{{ f.n_completas }}/{{ f.n_tareas }}</span>
                 </div>
@@ -1190,6 +1435,32 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                   {% if f.rep_instalar %}<span class="in" title="Repuestos que se instalan en esta OT"><i class="bi bi-box-seam-fill"></i>{{ f.rep_instalar }} a instalar</span>{% endif %}
                 </div>
                 {% endif %}
+              </td>
+              {#- 📅 2026-09-26 (Daniel: "no veo para cuándo está agendado"):
+                  día de la semana + fecha, horario y cuánto falta / cuánto
+                  se atrasó, en semáforo. 2026-10-18: el relativo pasa al chip
+                  único (hoy ámbar, pronto azul, lejos gris, atraso rojo) y sin
+                  fecha se dice «Sin fecha» en gris. -#}
+              <td data-label="Agenda" class="o2t-ag-td">
+                <div class="ot2-ag">
+                  {% if f.fecha_dia and f.fecha_dia != '—' %}
+                  <div class="d">{% if f.agenda_dow %}<small>{{ f.agenda_dow }}</small> {% endif %}{{ f.fecha_dia }}{% if f.agenda_hasta %} <small>→ {{ f.agenda_hasta }}</small>{% endif %}</div>
+                  {% else %}
+                  <div class="d"><span class="o2t-sinfecha"><i class="bi bi-calendar2-x"></i> Sin fecha</span></div>
+                  {% endif %}
+                  {% if f.agenda_horario %}<div class="h"><i class="bi bi-clock"></i>{{ f.agenda_horario }}</div>{% endif %}
+                  {% if f.agenda_rel %}<span class="o2t-rel {{ f.agenda_rel_class }}">{{ f.agenda_rel }}</span>{% endif %}
+                </div>
+              </td>
+              {#- ── Técnico: avatar gris, nombre completo, Int/Ext (sin cambios); «Sin asignar» en ámbar. ──────────── -#}
+              <td data-label="Técnico" class="o2t-tec-td">
+                <div class="ot2-tec">
+                  {% if f.tecnico_ini %}<span class="o2t-av">{{ f.tecnico_ini }}</span>
+                  {% else %}<span class="o2t-av sin"><i class="bi bi-person"></i></span>{% endif %}
+                  {% if f.tecnico_nombre %}<span class="nom">{{ f.tecnico_nombre }}</span>
+                  {% else %}<span class="nom o2t-sin">Sin asignar</span>{% endif %}
+                  {% if f.tecnico_tipo %}<span class="ot2-tec-tipo {{ f.tecnico_tipo }}">{{ 'Ext' if f.tecnico_tipo == 'externo' else 'Int' }}</span>{% endif %}
+                </div>
               </td>
               {#- 2026-09-26 (Daniel: "tal vez sacar el botón de abrir porque
                   está toda la fila seleccionable"): el botón negro "Abrir"
@@ -1204,7 +1475,8 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
                en su propia pastilla de color, como la tabla de Etiquetas
                (Daniel: "lo quiero más colorido"). #}
             <tr class="ot2-det f-{{ f.estado_fase or 'cancel' }}">
-              <td colspan="{{ 9 if puede_lote else 8 }}">
+              {# 2026-10-18: 7 columnas (+1 con la casilla) -- Avance se fusionó en «Estado y avance». #}
+              <td colspan="{{ 8 if puede_lote else 7 }}">
                 <div class="ot2-det-in">
                   <span class="dp dp-trab"><i class="bi bi-card-text"></i>
                     <b>{{ f.titulo or 'Sin título' }}</b></span>
@@ -1242,16 +1514,16 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
           {# 🔧 2026-09-14: los links del pie llevaban solo q/fase -- al pasar
              de página se perdían tipo/técnico/interna/anexo/pago y el orden,
              y la página 2 salía sin filtro (REGLA #4.3). Ahora viajan todos. #}
-          <a class="{{ 'on' if opt == per_page }}" href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=opt, page=1, q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, orden=orden, dir=dir) }}">{{ opt }}</a>
+          <a class="{{ 'on' if opt == per_page }}" href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=opt, page=1, q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, agenda=f_agenda or None, orden=orden, dir=dir) }}">{{ opt }}</a>
           {% endfor %}
         </div>
         <div class="ot2-nav">
           <a class="ot2-nb {{ 'off' if page <= 1 }}"
-             href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page-1, q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, orden=orden, dir=dir) if page > 1 else '#' }}">
+             href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page-1, q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, agenda=f_agenda or None, orden=orden, dir=dir) if page > 1 else '#' }}">
             <i class="bi bi-chevron-left"></i> Anterior</a>
           <span style="font-weight:800">Página <b>{{ page }}</b> de {{ total_paginas }}</span>
           <a class="ot2-nb {{ 'off' if page >= total_paginas }}"
-             href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page+1, q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, orden=orden, dir=dir) if page < total_paginas else '#' }}">
+             href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page+1, q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, agenda=f_agenda or None, orden=orden, dir=dir) if page < total_paginas else '#' }}">
             Siguiente <i class="bi bi-chevron-right"></i></a>
         </div>
       </footer>
@@ -1259,8 +1531,13 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
     {% else %}
     <div class="ot2-tabla-wrap"><div class="ot2-vacio">
       <i class="bi bi-inbox"></i>
-      {% if q or fase %}
-      <h5>Sin resultados para este filtro</h5><p>Prueba con otro texto o quita el filtro.</p>
+      {#- 2026-10-18: antes solo miraba q/fase -- filtrando por tipo, técnico, anexo, pago o agenda sin resultados decía
+          «Ninguna orden creada por personas todavía». Ahora cualquier filtro activo avisa y ofrece Limpiar. -#}
+      {% if q or fase or f_tipo or f_tec or f_interna or f_anexo or f_pago or f_agenda %}
+      <h5>No hay OT con estos filtros</h5><p>Prueba con otro texto o quita algún filtro.</p>
+      <a class="btn btn-outline-secondary btn-sm px-3 o2t-vacio-btn" href="{{ url_for('ot2_panel', origen=origen, vista=vista) }}">
+        <i class="bi bi-x-lg me-1"></i>Limpiar filtros
+      </a>
       {% else %}
       <h5>{% if origen == 'reales' %}Ninguna orden creada por personas todavía{% else %}Ninguna automática todavía{% endif %}</h5>
       <p>Usa «Generar OT» para crear la primera.</p>
