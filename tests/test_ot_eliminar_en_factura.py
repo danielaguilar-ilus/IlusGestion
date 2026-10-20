@@ -60,6 +60,10 @@ def _nucleo(fac=FACTURA):
                                                "fecha_programada": None, "levantamiento_id": None},
         "_mant_visita_factura_proveedor": lambda vid: fac,
         "_ot_levantamiento_de": lambda vid: None,
+        # El núcleo libera el libro de saldo de facturas (2026-10-11) y, desde el 19-oct, toma la foto para avisarle al técnico:
+        # ninguno de los dos es lo que se prueba aquí. Sin estos dobles el núcleo fallaba con NameError.
+        "_ot_tec_snapshot_borrado": lambda vid, v_info: None,
+        "_ot_tec_correo_borrada": lambda vid, snap: None,
         # 2026-10-19: una instalación con desinstalación vigente no se borra; esta OT no tiene desinstalaciones.
         "_evt": ot_eventos, "_ot_hijas_de": lambda vid, cur=None, estricto=False: [],
         "_fac_libro_marcar": lambda vid: None,   # el libro de saldo de facturas (REGLA #28) se avisa al borrar una OT

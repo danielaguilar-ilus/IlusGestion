@@ -587,8 +587,6 @@ const TPL_ESTADOS_RETIROS = [
 const TPL_ESTADOS_MANTENCIONES = [
   { key:'visita_agendada',      label:'Visita agendada',        icon:'bi-calendar-check',   grupo:'mantencion',
     color:'#dc2626', desc:'Aviso al cliente cuando se agenda visita técnica' },
-  { key:'ot_asignada',          label:'OT asignada a técnico',  icon:'bi-person-check',     grupo:'mantencion',
-    color:'#f59e0b', desc:'Cuando se asigna una orden de trabajo a un técnico' },
   { key:'recordatorio_visita',  label:'Recordatorio visita',    icon:'bi-bell',             grupo:'mantencion',
     color:'#fb923c', desc:'Recordatorio 24h antes de la visita programada' },
   { key:'ot_completada',        label:'OT completada',          icon:'bi-check-circle-fill',grupo:'mantencion',
@@ -622,6 +620,20 @@ const TPL_ESTADOS_MANTENCIONES = [
   // acompaña un documento contractual.
   { key:'anexo_nueva_ot',      label:'Anexo de servicios al proveedor', icon:'bi-file-earmark-check', grupo:'anexo',
     color:'#dc2626', desc:'Aviso de OT nueva + link para que el proveedor firme el Anexo de Servicios' },
+  // 📧 2026-10-19 (Daniel: «activemos por el front y por comunicaciones los mails hacia los técnicos… con plantillas,
+  // todo bien estructuradito»). Los avisos AL TÉCNICO de una OT, juntos en su propio grupo (la OT asignada ya existía y
+  // pasó acá, con las demás). Salen por la llave de paso «Correos a técnicos (OT)»; el correo al cliente sigue con la
+  // de «Servicio Técnico». Variables: ver TPL_VARS.ot_tecnico. Nunca llevan montos ni proveedores.
+  { key:'ot_asignada',          label:'OT asignada a técnico',  icon:'bi-person-check',     grupo:'ot_tecnico',
+    color:'#f59e0b', desc:'Al técnico, cuando se le asigna una orden de trabajo (se crea con él o lo reasignan)' },
+  { key:'ot_reagendada_tecnico', label:'OT reagendada (al técnico)', icon:'bi-calendar2-week', grupo:'ot_tecnico',
+    color:'#0ea5e9', desc:'Al técnico, cuando cambia la fecha u horario de una OT suya (muestra ANTES → AHORA)' },
+  { key:'ot_cancelada_tecnico', label:'OT cancelada (al técnico)', icon:'bi-x-circle',       grupo:'ot_tecnico',
+    color:'#dc2626', desc:'Al técnico, cuando se cancela o anula una OT suya: ya no necesita ir' },
+  { key:'ot_desasignada_tecnico', label:'OT quitada al técnico', icon:'bi-person-dash',    grupo:'ot_tecnico',
+    color:'#6b7280', desc:'Al técnico anterior, cuando le quitan una OT (se asignó a otra persona o se reorganizó el equipo)' },
+  { key:'agenda_tecnico_manana', label:'Agenda del técnico (17:00)', icon:'bi-alarm',      grupo:'ot_tecnico',
+    color:'#16a34a', desc:'Recordatorio automático entre las 17:00 y las 21:00 del día hábil anterior, con las OT del técnico (el viernes avisa el lunes, y también un sábado o feriado que tenga OT; el correo nunca sale en sábado, domingo ni feriado)' },
 ];
 
 // 2026-10-04 (Daniel: «crear las plantillas separadas del resto, llámala gestión de prospectos de mantención,
@@ -775,6 +787,35 @@ const TPL_VARS = {
     { v:'{{tipo_mantencion}}',  label:'Tipo de mantención' },
     { v:'{{maquina}}',          label:'Equipo / Máquina' },
     { v:'{{link_ot}}',          label:'Link a la OT' },
+  ],
+  // 📧 2026-10-19: variables REALES de los avisos al técnico (ot_correos_tecnicos.py → construir_variables /
+  // construir_variables_agenda). Ninguna lleva montos, costos ni proveedores (REGLAS #19 y #26). Los *_html ya vienen
+  // armados (filas / bloques con el diseño ILUS): se pegan tal cual.
+  ot_tecnico: [
+    { v:'{{nombre_tecnico}}',    label:'Nombre del técnico que recibe el correo' },
+    { v:'{{tecnico}}',           label:'Igual que {{nombre_tecnico}} (plantillas anteriores)' },
+    { v:'{{ot}}',                label:'N° Orden de trabajo' },
+    { v:'{{cliente}}',           label:'Cliente (o «Trabajo interno»)' },
+    { v:'{{tipo_mantencion}}',   label:'Tipo de orden de trabajo' },
+    { v:'{{fecha}}',             label:'Fecha (o rango si dura varios días)' },
+    { v:'{{horario}}',           label:'Horario' },
+    { v:'{{direccion}}',         label:'Dirección del trabajo (no se adelanta a un proveedor externo con el Anexo sin firmar)' },
+    { v:'{{maquina}}',           label:'Equipos de la OT' },
+    { v:'{{tecnicos}}',          label:'Los técnicos (personas) de la OT; nunca la empresa proveedora' },
+    { v:'{{link_ot}}',           label:'Link a la ficha de la OT' },
+    { v:'{{notas_html}}',        label:'Fila «Qué hay que hacer» (si la OT la tiene; sin montos ni proveedores)' },
+    { v:'{{motivo_html}}',       label:'Fila «Motivo» (si se indicó)' },
+    { v:'{{antes_ahora_html}}',  label:'Bloque ANTES → AHORA (solo «OT reagendada»)' },
+    { v:'{{fecha_antes}}',       label:'Fecha anterior (solo «OT reagendada»)' },
+    { v:'{{horario_antes}}',     label:'Horario anterior (solo «OT reagendada»)' },
+    { v:'{{fecha_ahora}}',       label:'Fecha nueva (solo «OT reagendada»)' },
+    { v:'{{horario_ahora}}',     label:'Horario nuevo (solo «OT reagendada»)' },
+    { v:'{{dia}}',               label:'Día(s) de la agenda, ej. lunes 19/10/2026 o «sábado 24/10/2026 y lunes 26/10/2026» (solo «Agenda»)' },
+    { v:'{{cuando}}',            label:'«de mañana» / «del lunes» / «del sábado al lunes» (solo «Agenda»)' },
+    { v:'{{n_ot}}',              label:'Cantidad de OT de la agenda (solo «Agenda»)' },
+    { v:'{{n_ot_txt}}',          label:'«3 órdenes de trabajo» (solo «Agenda»)' },
+    { v:'{{agenda_html}}',       label:'Una fila por OT, ordenada por hora; con un encabezado por día si abarca varios (solo «Agenda»)' },
+    { v:'{{link_agenda}}',       label:'Link a la lista de OT (solo «Agenda»)' },
   ],
   // Variables REALES que arma ot2_api_anexo_enviar (_variables_anexo). Si
   // esta lista y esa se separan, Daniel inserta un campo que nunca se
@@ -1135,6 +1176,9 @@ const KS_MODULOS_LABELS = {
   general:              { label:'General',              icon:'bi-folder' },
   tickets:              { label:'Tickets',              icon:'bi-ticket-perforated' },
   catalogo:             { label:'Catálogo',             icon:'bi-box-seam' },
+  // 2026-10-19 (Daniel): llave propia de los correos automáticos a técnicos de una OT (asignada, reagendada,
+  // cancelada, quitada y agenda de mañana). Aparte de «Servicio Técnico», que sigue siendo la del correo al cliente.
+  ot_tecnicos:          { label:'Correos a técnicos (OT)', icon:'bi-person-badge' },
 };
 const KS_CANAL_LABELS = {
   email:    'Email',
@@ -1446,6 +1490,7 @@ const GRUPO_LABELS = {
   retiro:     { label:'Retiros',              icon:'bi-box-arrow-up' },
   mantencion: { label:'Servicio Técnico',     icon:'bi-wrench-adjustable' },
   anexo:      { label:'Anexo de servicios',   icon:'bi-file-earmark-check' },
+  ot_tecnico: { label:'Avisos al técnico (OT)', icon:'bi-person-badge' },
   prospecto:  { label:'Oferta de mantención', icon:'bi-megaphone-fill' },
   interna:    { label:'Comunicación interna', icon:'bi-people' },
   general:    { label:'General',              icon:'bi-megaphone' },
