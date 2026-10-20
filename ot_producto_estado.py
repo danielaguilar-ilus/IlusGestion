@@ -459,7 +459,7 @@ def sugeridos_para(listas_de_plantilla, sistema):
 # así el equipo deja de bloquear la firma y el cierre. Además cada una queda en mant_ot_producto_estado (quién, cuándo,
 # motivo, foto) con maquina_id, para poder CONSULTAR después qué equipos quedaron pendientes por falta de stock.
 #
-# 📌 PARA EL TRABAJO QUE VIENE (rama de eventos madre/hija; NO se construye aquí): los equipos con estado 'falta_stock' son
+# 📌 HECHO el 2026-10-20 en «¿Qué pasó?» de la OT (ot_que_paso.py + app.py::_qp_aplicar; NO se construye aquí): los equipos con estado 'falta_stock' son
 # la base de «cerrar lo hecho + OT hija pendiente sin fecha, misma factura» y de los avisos a gestión y bodega. El dato ya
 # está listo: app.py::_otpe_pendientes_falta_stock(vid=None) devuelve, por equipo, visita, equipo, SKU, cantidad, quién y
 # cuándo, y GET /ot/api/<vid>/pendientes-falta-stock lo entrega a gestión.

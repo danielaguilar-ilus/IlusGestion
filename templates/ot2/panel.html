@@ -2118,7 +2118,7 @@ window.OT2D = (function(){
           (d.ticket ? item('bi-ticket-perforated-fill', 'Ticket de origen',
             '<span class="ot2-tk"><i class="bi bi-ticket-perforated-fill"></i>'+esc(d.ticket)+'</span>', false) : '')+
           (d.evento ? item('bi-calendar-event', 'Evento', (d.evento_id ? '<a href="/ot/eventos/'+esc(d.evento_id)+'" style="color:inherit;font-weight:800">'+esc(d.evento)+'</a>' : esc(d.evento)), false) : '')+
-          (d.rel ? item('bi-box-arrow-up', 'Desinstalación', esc(d.rel), false) : '')+
+          (d.rel ? item('bi-box-arrow-up', (/^Pendiente/.test(d.rel) ? 'Pendiente' : 'Desinstalación'), esc(d.rel), false) : '')+
           (d.dir ? item('bi-geo-alt-fill', 'Dirección', esc(d.dir), true) : '')+
           (d.titulo ? item('bi-card-text', 'Título / Motivo', esc(d.titulo), true) : '')+
         '</div>'+

@@ -1,0 +1,38 @@
+{#- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+    🧭 ILUS Fitness · OT — «¿QUÉ PASÓ?» (Daniel 2026-10-20, caso Aurum Fit Girls Spa OT-2026-00171: 2 accesorios no llegaron por falta
+    de stock y la OT no se podía completar: «así como planteamos en Retiros… ¿pasó algo?»).
+    Franja de la ficha + el modal (static/ot_que_paso.js y .css). Servidor: GET/POST /ot/api/<id>/que-paso. Reglas puras: ot_que_paso.py.
+    Contexto `que_paso` (lo arma _qp_contexto_ficha): puede, madre (si esta OT es una pendiente), pendientes (OT hijas pendientes),
+    n_registros. Sin plata, sin documentos, sin saldo: lo ven también los técnicos (REGLAS #19 y #26).
+    ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════ -#}
+{% if que_paso and (que_paso.puede or que_paso.n_registros or que_paso.madre or que_paso.pendientes) %}
+<div class="qp-entrada{{ ' qp-pendiente' if que_paso.madre else (' qp-tranquila' if not que_paso.puede else '') }}" id="qpEntrada" role="region" aria-label="¿Qué pasó con esta orden?">
+  <div class="qp-entrada-txt"><i class="bi {{ 'bi-hourglass-split' if que_paso.madre else 'bi-signpost-split' }}" aria-hidden="true"></i>
+    <span>
+      {% if que_paso.madre %}
+        Esta orden quedó pendiente por falta de stock de
+        {% if que_paso.madre.url %}<a href="{{ que_paso.madre.url }}"><b>{{ que_paso.madre.numero_ot }}</b></a>{% else %}<b>{{ que_paso.madre.numero_ot }}</b>{% endif %}
+        <small>{% if que_paso.sin_fecha %}Sin fecha hasta que llegue el stock: cuando llegue, la gestión la reagenda y le asigna técnico. No se cobra de nuevo: el documento es el de la orden de origen.
+          {% else %}Tiene el mismo documento que la orden de origen: no se cobra de nuevo.{% endif %}</small>
+      {% elif que_paso.puede %}
+        ¿Algo no salió como estaba previsto?
+        <small>Faltó stock, no se pudo hacer el trabajo… Queda registrado quién decidió, cuándo y por qué. Al cliente no se le avisa nada.</small>
+      {% else %}
+        Lo que pasó con esta orden
+        <small>{{ que_paso.n_registros }} registro{{ '' if que_paso.n_registros == 1 else 's' }} de «¿Qué pasó?».</small>
+      {% endif %}
+      {% if que_paso.pendientes %}
+      <span class="qp-chips">
+        {% for p in que_paso.pendientes %}
+          {% if p.url %}<a class="ev-chip ambar" href="{{ p.url }}"><i class="bi bi-hourglass-split"></i>{{ p.chip }}{% if p.sin_fecha %} · sin fecha{% endif %}</a>
+          {% else %}<span class="ev-chip ambar"><i class="bi bi-hourglass-split"></i>{{ p.chip }}{% if p.sin_fecha %} · sin fecha{% endif %}</span>{% endif %}
+        {% endfor %}
+      </span>
+      {% endif %}
+    </span>
+  </div>
+  <button type="button" class="qp-entrada-btn{{ '' if que_paso.puede else ' sec' }}" data-qp-abrir=""><i class="bi bi-question-circle"></i>{{ '¿Qué pasó?' if que_paso.puede else 'Ver lo registrado' }}</button>
+</div>
+<script>window.OTD_QP_CFG = { vid: {{ v.id }} };</script>
+<script defer src="{{ url_for('static', filename='ot_que_paso.js') }}"></script>
+{% endif %}
