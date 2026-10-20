@@ -775,6 +775,8 @@ body {
 .sg-items .sidebar-link.active,
 .sg-subitems .sidebar-link.active { color: #fff; }
 .sg-items .sg-subitems .sidebar-link { padding-left: 46px; }
+/* 2026-10-19: el chevron de un subgrupo (p. ej. Configuracion) cae en la misma columna que el de los grupos (padding derecho 12 px) */
+.sg-items .sg-subtoggle { padding-right: 12px; }
 
 /* — Footer usuario — compacto — */
 .sidebar-footer {
@@ -804,9 +806,9 @@ body {
   font-size: .8rem;
   font-weight: 700;
   line-height: 1.15;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* 2026-10-19: con el menu mas angosto el nombre baja a 2 lineas en vez de cortarse con puntos suspensivos */
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .sidebar-user-role {
   color: #94a3b8;

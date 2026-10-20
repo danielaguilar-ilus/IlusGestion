@@ -997,7 +997,7 @@
       <div class="sidebar-user-avatar">{{ current_user.nombre[0].upper() }}</div>
       {% endif %}
       <div class="sidebar-user-info">
-        <div class="sidebar-user-name">{{ current_user.nombre }}</div>
+        <div class="sidebar-user-name" title="{{ current_user.nombre }}">{{ current_user.nombre }}</div>
         <div class="sidebar-user-role">{{ role_label }}</div>
       </div>
       <i class="bi bi-gear ms-auto" style="color:#94a3b8;font-size:.95rem;opacity:.7"></i>
