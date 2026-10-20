@@ -107576,14 +107576,32 @@ def _ot2_crear_core(d, autorizacion=None):
                     _h = (_chk_res.get("skus") or {}).get(_t["sku"])
                     if not _h:
                         continue
-                    if _h.get("sistema") or not _t.get("plantilla_ids"):
+                    # 🎛️ 2026-10-19 (Daniel: «necesito que se controle por el front, tú solo
+                    # debes mostrar las opciones»): lo que la persona ve y elige en la fila es
+                    # EXACTAMENTE lo que recibe el técnico. El servidor solo completa una fila
+                    # que llegó SIN plantillas (navegador antiguo); nunca reemplaza una elección.
+                    if not _t.get("plantilla_ids"):
                         _t["plantilla_ids"] = [b["id"] for b in (_h.get("base"), _h.get("sistema"),
                                                                  _h.get("condicional")) if b]
         _chk_validas = _chk_plantillas_validas(
             {_i for _t in tareas_manuales for _i in (_t.get("plantilla_ids") or [])}, tipo_ot)
+        # 🔎 2026-10-19 (Daniel, NVI 687: «me trae los de LU… ninguna se está
+        # asignando… tiene que haber un respeto en la trazabilidad operacional»):
+        # una plantilla que el asistente mostró y el servidor no puede usar ya no
+        # se descarta en silencio — vuelve como aviso con el nombre del producto.
+        _chk_descartadas = []
         for _t in tareas_manuales:
             if _t.get("plantilla_ids"):
+                _fuera = [_i for _i in _t["plantilla_ids"] if _i not in _chk_validas]
+                if _fuera:
+                    _chk_descartadas.append((_t.get("titulo") or _t.get("sku") or "", _fuera))
                 _t["plantilla_ids"] = [_i for _i in _t["plantilla_ids"] if _i in _chk_validas]
+        if _chk_descartadas:
+            print(f"[ot2_crear] checklist: plantillas descartadas {_chk_descartadas[:10]}", flush=True)
+            for _tit, _fuera in _chk_descartadas[:5]:
+                avisos.append(
+                    f"«{_tit}»: {len(_fuera)} plantilla(s) del checklist no se aplicaron "
+                    f"(inactivas, sin tareas o de otra categoría). Revísalas en Plantillas.")
         _chk_condicionales = _chk_condicional_ids(tipo_ot)
 
     if not equipos and not plantilla_suelta and not tareas_manuales:
@@ -153741,8 +153759,15 @@ def _chk_plantillas_validas(ids, tipo_ot):
            "   AND EXISTS (SELECT 1 FROM mant_tarea_plantilla_items i WHERE i.plantilla_id = p.id)")
     params = list(ids)
     if cat:
-        sql += " AND (p.categoria_admin = %s OR p.categoria_admin IS NULL)"
+        # 🔎 2026-10-19 (Daniel, NVI 687): una plantilla que el MAPA del checklist
+        # heredado asigna a este tipo (regla en mant_checklist_herencia) vale aunque
+        # su categoría haya cambiado al editarla (ej. las «(LU)» de Lenin): el
+        # asistente la muestra desde ese mapa y la OT debe recibir exactamente eso.
+        sql += (" AND (p.categoria_admin = %s OR p.categoria_admin IS NULL"
+                "      OR EXISTS (SELECT 1 FROM mant_checklist_herencia h"
+                "                  WHERE h.plantilla_id = p.id AND h.tipo_ot = %s))")
         params.append(cat)
+        params.append((tipo_ot or "").strip().lower())
     try:
         return {int(r["id"]) for r in (mysql_fetchall(sql, tuple(params)) or [])}
     except Exception as e:
