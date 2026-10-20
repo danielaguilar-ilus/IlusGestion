@@ -39085,6 +39085,21 @@ def tr_cron_simpliroute_poll():
             res["prospectos_oferta"] = _prospectos_oferta_barrido()
         except Exception as _e_po:
             print(f"[cron-simpliroute] prospectos oferta: {_e_po}", flush=True)
+    # 📧 Recordatorio a técnicos (Daniel 2026-10-19): entre las 17:00 y las 21:00 (hora Chile) de un día hábil, cada técnico recibe
+    # por correo su agenda del siguiente día hábil (llave propia 'ot_tecnicos'). Fuera de esa ventana vuelve al instante sin
+    # consultar nada. Idempotente (UNIQUE técnico+día, «reservado» → «enviado»). Revisión: va ANTES del libro de facturas (que
+    # puede usar ~40 s) y con su propio tope de tiempo, para que un ciclo lento no lo deje sin correr; el JSON de este trabajo
+    # lleva solo un resumen (el detalle con correos de técnicos y N° de OT se ve en su ruta propia, con token). Si falla no
+    # afecta al polling.
+    if not dry and time.time() - _t_peticion < 220:
+        try:
+            _ag = _ot_tec_barrido_agenda(max_s=min(60, max(5, 270 - (time.time() - _t_peticion))))
+            res["agenda_tecnicos"] = {
+                "agenda_de": _ag.get("agenda_de"), "motivo": _ag.get("motivo"), "bloqueado": _ag.get("bloqueado"),
+                "cortado": _ag.get("cortado"), "ok": _ag.get("ok"),
+                "enviados": len(_ag.get("enviados") or []), "pendientes": len(_ag.get("pendientes") or [])}
+        except Exception as _e_at:
+            print(f"[cron-simpliroute] agenda técnicos: {_e_at}", flush=True)
     # 📒 Libro de saldo de facturas (Daniel 2026-10-11, auditoría): carga inicial y revisión continua por tramos, con
     # tope de tiempo (la petición tiene 300 s). Mismo criterio: si falla no afecta al polling.
     if not dry and time.time() - _t_peticion < 200:
@@ -39092,14 +39107,6 @@ def tr_cron_simpliroute_poll():
             res["libro_facturas"] = _fac_libro_barrido(max_s=min(40, max(5, 240 - (time.time() - _t_peticion))))
         except Exception as _e_fl:
             print(f"[cron-simpliroute] libro de facturas: {_e_fl}", flush=True)
-    # 📧 Recordatorio a técnicos (Daniel 2026-10-19): desde las 17:00 (hora Chile) de un día hábil, cada técnico recibe por correo
-    # su agenda del siguiente día hábil (llave propia 'ot_tecnicos'). Fuera de esa ventana vuelve al instante sin consultar
-    # nada. Idempotente (UNIQUE técnico+día). Si falla no afecta al polling.
-    if not dry:
-        try:
-            res["agenda_tecnicos"] = _ot_tec_barrido_agenda()
-        except Exception as _e_at:
-            print(f"[cron-simpliroute] agenda técnicos: {_e_at}", flush=True)
     return jsonify(res), (200 if res.get("ok") else 502)
 
 
@@ -75911,6 +75918,10 @@ def mant_maquina_solicitar_cambio(mid):
         conn.commit()
         _mant_log("maquina", mid, "solicitud_cambio",
                   f"{cant_afectada} unidad(es), {tipo_visita}, fecha {fecha_prog}, motivo: {motivo[:80]}")
+        # 📧 2026-10-19 (revisión): esta OT nace «programada» con el técnico solo como texto (sin cuenta). Si ese nombre es
+        # una empresa externa con ficha, se le avisa por la llave PROPIA 'ot_tecnicos'; si no resuelve a nadie, no sale nada.
+        try: _mant_ot_email_tecnico_creacion(vid)
+        except Exception as _e_emt: print(f"[solicitud-cambio email-tecnico] {_e_emt}", flush=True)
         return jsonify({
             "ok": True,
             "visita_id": vid,
@@ -86418,11 +86429,14 @@ def _mant_visita_crear_core(d):
             except Exception as _e_nai: print(f"[crear-ot notif] {_e_nai}", flush=True)
             try: _notificar_ot_asignada(vid)
             except Exception as _e_naw: print(f"[crear-ot wa] {_e_naw}", flush=True)
-            # 📧 2026-10-19 (Daniel: «avisarle a los técnicos por un mail con plantillas»): este camino (calendario
-            # rápido de Mantenciones, trabajo interno) nunca mandó el correo; ahora el técnico lo recibe, por la llave
-            # PROPIA 'ot_tecnicos'. Después del commit, best-effort. El correo al cliente NO se toca.
-            try: _mant_ot_email_tecnico_creacion(vid)
-            except Exception as _e_emt: print(f"[crear-ot email-tecnico] {_e_emt}", flush=True)
+        # 📧 2026-10-19 (Daniel: «avisarle a los técnicos por un mail con plantillas»): este camino (calendario
+        # rápido de Mantenciones, trabajo interno) nunca mandó el correo; ahora el técnico lo recibe, por la llave
+        # PROPIA 'ot_tecnicos'. Después del commit, best-effort. El correo al cliente NO se toca.
+        # Revisión: ya no depende de `tecnico_user_id`. Este núcleo exige un técnico, pero el modal clásico lo manda a
+        # veces solo como texto (el nombre de una empresa externa): `_ot_tec_destinatarios_bulk` lo resuelve y, si no hay
+        # a quién avisar, no sale nada.
+        try: _mant_ot_email_tecnico_creacion(vid)
+        except Exception as _e_emt: print(f"[crear-ot email-tecnico] {_e_emt}", flush=True)
         # 2026-05-22 (OT 2026-00004 Vitacura) — Opcionalmente acepta
         # maquina_ids y plantilla_id en el mismo POST para que el
         # ejecutivo no tenga que aplicar plantilla en un segundo paso
@@ -87113,7 +87127,7 @@ def mant_visita_update(vid):
     # guardada, solo lo que de verdad cambió: asignada / reagendada / cancelada / ya no la tienes. Si el PUT no toca
     # ninguno de esos campos no se hace nada (ni una consulta).
     _tec_avisar = any(k in d for k in ("fecha_programada", "fecha_fin", "hora_inicio", "hora_fin",
-                                       "tecnico_user_id", "estado"))
+                                       "tecnico_user_id", "tecnico", "estado"))
     _tec_antes = _ot_tec_antes(vid) if _tec_avisar else None
     conn = get_mysql()
     try:
@@ -87284,7 +87298,7 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=
     # Capturar info ANTES de borrar: para el log y para encontrar el
     # levantamiento asociado.
     v_info = mysql_fetchone(
-        "SELECT cliente_id, numero_ot, titulo, fecha_programada, levantamiento_id "
+        "SELECT cliente_id, numero_ot, titulo, fecha_programada, levantamiento_id, estado, fecha_fin "
         "  FROM mant_visitas WHERE id=%s", (vid,)
     )
     if not v_info:
@@ -87324,6 +87338,12 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=
     # sentidos; se calcula ANTES del DELETE porque el sentido reverse depende
     # de mant_levantamientos.visita_id, que no se toca al borrar la visita.
     _lev_id_del = _ot_levantamiento_de(vid)
+    # 📧 2026-10-19 (revisión): lo que hace falta para avisarle «cancelada» al técnico que ya conocía esta OT; se junta ANTES
+    # de borrar (después la fila no existe). None si no hay a quién avisar. Nunca lanza.
+    try:
+        _tec_snap = _ot_tec_snapshot_borrado(vid, v_info)
+    except Exception:       # el aviso es un extra: nada de esto puede impedir el borrado
+        _tec_snap = None
     _conn_propia = conn is None
     if _conn_propia:
         conn = get_mysql()
@@ -87379,6 +87399,8 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=
                       f"{numero_ot} eliminada por {current_username() or '?'}")
         _mant_log("visita", vid, "eliminada", _detalle)
         _mant_log("cliente", v_info.get("cliente_id"), "visita_eliminada", f"{numero_ot}")
+        if _tec_snap:      # ya con la OT borrada y los logs escritos; llave propia 'ot_tecnicos'; nunca lanza
+            _ot_tec_correo_borrada(vid, _tec_snap)
         return {
             "ok": True,
             "numero_ot": numero_ot,
@@ -127825,11 +127847,16 @@ def mant_visita_enviar_email(vid):
 
     # Daniel (2026-06-14): el correo de mantención va al cliente Y a los técnicos
     # asignados. Solo cuando NO hay override manual de destinatario.
+    # 2026-10-19 (revisión adversarial): los técnicos ya NO van dentro del envío del cliente. Ese correo sale por la llave
+    # 'mantenciones' y su respaldo en HTML trae «Costo estimado» y los repuestos con su costo: un técnico nunca recibe plata
+    # (REGLAS #19 y #26) y apagar «Correos a técnicos (OT)» tenía que frenarlos también. Cada técnico recibe su copia más
+    # abajo, por la llave PROPIA 'ot_tecnicos' y sin montos.
+    destinos_tec = []
     if not destino_override:
         _dest_lower = {x.lower() for x in destinos}
         for _te in _mant_get_tecnico_emails(vid):
             if _te not in _dest_lower:
-                destinos.append(_te)
+                destinos_tec.append(_te)
                 _dest_lower.add(_te)
 
     # Cargar técnicos asignados
@@ -127946,6 +127973,22 @@ def mant_visita_enviar_email(vid):
     res = _mant_send_email_multi(v["cliente_id"], asunto, html,
                                  evento="visita_agendada", emails=destinos)
 
+    # Copia para los técnicos: el mismo aviso, SIN el costo ni los repuestos del respaldo en HTML (con la plantilla editable no
+    # hay montos: sus variables no los incluyen) y con un saludo que no es para el cliente. Llave propia 'ot_tecnicos'.
+    tec_enviados = []
+    if destinos_tec:
+        body_tec = body if tpl else _otc.cuerpo_sin_montos(body, quitar=(costo_html, reps_html), saludo=saludo)
+        for _te in destinos_tec:
+            try:
+                if _ot_tec_enviar(_te, asunto, body_tec, evento="visita_agendada", subtitulo=f"OT {ot}",
+                                  ref={"tipo": "OT", "id": int(vid), "codigo": ot}):
+                    tec_enviados.append(_te)
+            except Exception as _e_te:
+                print(f"[visita-email] copia al técnico: {type(_e_te).__name__}: {_e_te}", flush=True)
+        if tec_enviados:
+            _mant_log("visita", vid, "aviso_tecnico",
+                      f"Copia del correo de visita agendada (sin montos) a {', '.join(tec_enviados)} — OT {ot}")
+
     if res["enviados"]:
         _mant_log("visita", vid, "email_enviado",
                   f"a {', '.join(res['enviados'])} — OT {ot}")
@@ -127953,6 +127996,7 @@ def mant_visita_enviar_email(vid):
         return jsonify({"ok": True,
                         "destinatario": res["enviados"][0],
                         "enviados": res["enviados"],
+                        "tecnicos_enviados": tec_enviados,
                         "bloqueados": res["bloqueados"],
                         "fallidos": res["fallidos"]})
     if res["bloqueados"]:
@@ -128196,16 +128240,24 @@ def _ensure_ot_tec_tablas():
                 KEY idx_ot_tec_aviso_vid (visita_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
+        # `enviado`: 0 = reservado (alguien está armando y mandando ese correo), 1 = ya salió. Si la corrida se corta (tope de
+        # 300 s de Cloud Run, caída) con la reserva en 0, pasados AGENDA_RESERVA_MIN minutos otra corrida la retoma; antes
+        # el técnico quedaba marcado como «enviado» sin que el correo hubiera salido y se quedaba sin agenda ese día.
         mysql_execute("""
             CREATE TABLE IF NOT EXISTS mant_ot_tec_agenda (
                 id            INT AUTO_INCREMENT PRIMARY KEY,
                 tecnico_email VARCHAR(190) NOT NULL,
                 fecha_agenda  DATE NOT NULL,
                 n_ot          INT NOT NULL DEFAULT 0,
+                enviado       TINYINT(1) NOT NULL DEFAULT 1,
                 creado_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE KEY uq_ot_tec_agenda (tecnico_email, fecha_agenda)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
+        # Una base que ya creó la tabla sin la columna (la versión anterior de esta misma rama) la recibe aquí. Una sola
+        # cláusula: la guardia de DDL la salta sin pedir lock cuando ya existe (REGLA #18). Las filas antiguas cuentan como
+        # enviadas (DEFAULT 1); las nuevas siempre declaran su valor.
+        mysql_execute("ALTER TABLE mant_ot_tec_agenda ADD COLUMN enviado TINYINT(1) NOT NULL DEFAULT 1")
     except Exception as e:
         print(f"[ensure_ot_tec_tablas] {e}", flush=True)
 
@@ -128287,22 +128339,29 @@ def _ot_tec_ids(vids):
     return sorted(set(ids))
 
 
-def _ot_tec_destinatarios_bulk(vids):
+def _ot_tec_destinatarios_bulk(vids, con_fichas=False):
     """{vid: {correo: nombre}} de los técnicos de cada OT. Cubre todas las vías de asignación (como
     _mant_get_tecnico_emails, pero SUMANDO a los colaboradores de mant_visita_tecnicos con cuenta, que esa función no
     miraba): principal y colaboradores con cuenta (app_users.username es el correo), técnicos del catálogo legacy y el
-    correo de contacto del técnico EXTERNO. Cada vía en su try/except: si una falla, las demás siguen."""
+    correo de contacto del técnico EXTERNO. Cada vía en su try/except: si una falla, las demás siguen.
+
+    con_fichas=True devuelve (resultado, {vid: {correos}}) con los correos que salen de la FICHA de una empresa externa
+    (su contacto_email; el nombre es la razón social). Sirven para avisar, pero ese nombre es el de un proveedor y no se le
+    muestra a otro técnico (REGLA #19: «ni siquiera pueden ver mis proveedores»)."""
     ids = _ot_tec_ids(vids)
     out = {i: {} for i in ids}
+    fichas = {i: set() for i in ids}
     if not ids:
-        return out
+        return (out, fichas) if con_fichas else out
     ph = ",".join(["%s"] * len(ids))
     par = tuple(ids)
 
-    def _add(vid, email, nombre):
+    def _add(vid, email, nombre, ficha=False):
         e = (email or "").strip().lower()
-        if vid in out and e and "@" in e and 6 <= len(e) <= 180:
-            out[vid].setdefault(e, (nombre or "").strip() or e.split("@")[0])
+        if vid in out and e and "@" in e and 6 <= len(e) <= 180 and e not in out[vid]:
+            out[vid][e] = (nombre or "").strip() or e.split("@")[0]
+            if ficha:
+                fichas[vid].add(e)
 
     uids = {}                                  # uid -> [vid]
     for sql in (
@@ -128346,19 +128405,22 @@ def _ot_tec_destinatarios_bulk(vids):
             try:
                 for r in (mysql_fetchall(sql_ext, tuple(uids)) or []):
                     for vid in uids.get(int(r["uid"]), ()):
-                        _add(vid, r.get("email"), r.get("nombre"))
+                        _add(vid, r.get("email"), r.get("nombre"), ficha=True)
             except Exception as e:
                 print(f"[ot-tec-dest:externo-user] {type(e).__name__}: {e}", flush=True)
     try:        # externos sin cuenta, cruzados por nombre (misma regla que el Anexo de Servicios)
+        # 2026-10-19 (revisión): SOLO si la OT no tiene técnico principal con cuenta. «Reasignar» cambia tecnico_user_id y
+        # deja el texto `tecnico` con el nombre anterior; sin esta condición la empresa externa anterior seguía "en la OT":
+        # nunca recibía «ya no está a tu cargo» y seguía recibiendo reagendada, cancelada y su agenda de las 17:00.
         for r in (mysql_fetchall(
             "SELECT v.id AS vid, te.contacto_email AS email, te.razon_social AS nombre FROM mant_visitas v "
             "JOIN mant_tecnicos_externos te ON te.user_id IS NULL "
             "  AND LOWER(TRIM(COALESCE(te.razon_social,''))) = LOWER(TRIM(COALESCE(v.tecnico,''))) "
-            f"WHERE v.id IN ({ph}) AND TRIM(COALESCE(v.tecnico,'')) <> ''", par) or []):
-            _add(int(r["vid"]), r.get("email"), r.get("nombre"))
+            f"WHERE v.id IN ({ph}) AND v.tecnico_user_id IS NULL AND TRIM(COALESCE(v.tecnico,'')) <> ''", par) or []):
+            _add(int(r["vid"]), r.get("email"), r.get("nombre"), ficha=True)
     except Exception as e:
         print(f"[ot-tec-dest:externo-nombre] {type(e).__name__}: {e}", flush=True)
-    return out
+    return (out, fichas) if con_fichas else out
 
 
 def _ot_tec_filas(vids):
@@ -128393,26 +128455,42 @@ def _ot_tec_filas(vids):
 
 
 def _ot_tec_equipos_bulk(vids):
-    """{vid: [nombres de equipos]} en una consulta (best-effort: si falla, sin equipos)."""
+    """{vid: [nombres de equipos]} en dos consultas (best-effort: si una falla, sigue la otra). Las OT del asistente guardan
+    sus equipos en mant_visita_equipos; las del calendario rápido, en las tareas (mant_visita_tareas.maquina_id) y salían
+    con «Equipos: —» (revisión 2026-10-19): se suman las dos, sin repetir un equipo que esté en ambas."""
     ids = _ot_tec_ids(vids)
     out = {i: [] for i in ids}
     if not ids:
         return out
-    try:
-        ph = ",".join(["%s"] * len(ids))
-        for r in (mysql_fetchall(
-            "SELECT ve.visita_id AS vid, m.nombre AS nombre FROM mant_visita_equipos ve "
-            f"JOIN mant_maquinas m ON m.id = ve.maquina_id WHERE ve.visita_id IN ({ph}) ORDER BY ve.id", tuple(ids)) or []):
-            n = (r.get("nombre") or "").strip()
-            if n:
-                out[int(r["vid"])].append(n)
-    except Exception as e:
-        print(f"[ot-tec-equipos] {type(e).__name__}: {e}", flush=True)
+    ph = ",".join(["%s"] * len(ids))
+    de_equipos = {i: set() for i in ids}
+    for sql, desde_tareas in (
+        ("SELECT ve.visita_id AS vid, m.nombre AS nombre FROM mant_visita_equipos ve "
+         f"JOIN mant_maquinas m ON m.id = ve.maquina_id WHERE ve.visita_id IN ({ph}) ORDER BY ve.id", False),
+        ("SELECT t.visita_id AS vid, m.nombre AS nombre FROM mant_visita_tareas t "
+         f"JOIN mant_maquinas m ON m.id = t.maquina_id WHERE t.visita_id IN ({ph}) ORDER BY t.id", True),
+    ):
+        try:
+            for r in (mysql_fetchall(sql, tuple(ids)) or []):
+                n = (r.get("nombre") or "").strip()
+                v = int(r["vid"])
+                if not n:
+                    continue
+                if desde_tareas:
+                    if n not in de_equipos[v] and n not in out[v]:
+                        out[v].append(n)
+                else:
+                    out[v].append(n)
+                    de_equipos[v].add(n)
+        except Exception as e:
+            print(f"[ot-tec-equipos] {type(e).__name__}: {e}", flush=True)
     return out
 
 
-def _ot_tec_foto(vid):
-    """Foto de la OT tal como la conoce el técnico (estado, fecha, horario, técnicos) o None si no existe."""
+def _ot_tec_foto(vid, con_fichas=False):
+    """Foto de la OT tal como la conoce el técnico (estado, fecha, horario, técnicos) o None si no existe.
+    con_fichas=True agrega la clave «fichas»: los correos que vienen de la ficha de una empresa externa (ver
+    _ot_tec_destinatarios_bulk). Esa clave no participa de la comparación antes/después."""
     # La conexión del request es REPEATABLE READ (autocommit=False): si ya hizo una lectura, una OT que otra conexión
     # acaba de guardar (el UPDATE de la edición va por get_mysql) NO se vería y el aviso saldría con la foto vieja. Se
     # cierra la lectura anterior para leer lo último comprometido (mismo gotcha de numero_ot/numero_ticket).
@@ -128424,9 +128502,16 @@ def _ot_tec_foto(vid):
         "SELECT estado, fecha_programada, fecha_fin, hora_inicio, hora_fin FROM mant_visitas WHERE id=%s", (int(vid),))
     if not r:
         return None
-    tec = _ot_tec_destinatarios_bulk([vid]).get(int(vid), {})
-    return _otc.foto(r.get("estado"), r.get("fecha_programada"), r.get("fecha_fin"),
-                     r.get("hora_inicio"), r.get("hora_fin"), tec)
+    if con_fichas:
+        dest, fichas = _ot_tec_destinatarios_bulk([vid], con_fichas=True)
+        tec = dest.get(int(vid), {})
+    else:
+        tec = _ot_tec_destinatarios_bulk([vid]).get(int(vid), {})
+    f = _otc.foto(r.get("estado"), r.get("fecha_programada"), r.get("fecha_fin"),
+                  r.get("hora_inicio"), r.get("hora_fin"), tec)
+    if con_fichas:
+        f["fichas"] = sorted(fichas.get(int(vid), ()))
+    return f
 
 
 def _ot_tec_antes(vid):
@@ -128472,11 +128557,19 @@ def _ot_tec_armar(slug, variables):
 
 def _ot_tec_reservar(vid, email, evento, huella):
     """Reserva «este aviso por este cambio». True = es nuevo, se envía; False = ya salió (o salía en paralelo).
-    Si la tabla no está disponible no se puede garantizar la unicidad: se deja pasar (mejor un aviso de más)."""
+    Si la tabla no está disponible no se puede garantizar la unicidad: se deja pasar (mejor un aviso de más).
+
+    «El último gana» (revisión 2026-10-19): antes de reservar se borran las reservas de OTRO aviso para este mismo técnico y esta
+    OT en la misma cubeta de tiempo. Así dos peticiones idénticas (doble clic) siguen chocando entre sí, pero un cambio que
+    se repite DESPUÉS de uno distinto (fecha X→Y, Y→X, X→Y; agregar, quitar y volver a agregar un colaborador) vuelve a avisar y
+    el técnico queda con el correo que dice cómo está la OT ahora."""
     try:
+        ventana = _otc.ventana(time.time())
+        mysql_execute("DELETE FROM mant_ot_tec_avisos WHERE visita_id=%s AND email=%s AND ventana=%s AND huella<>%s",
+                      (int(vid), email, ventana, huella))
         n = mysql_execute_returning_rowcount(
             "INSERT IGNORE INTO mant_ot_tec_avisos (visita_id, email, evento, huella, ventana) VALUES (%s,%s,%s,%s,%s)",
-            (int(vid), email, evento, huella, _otc.ventana(time.time())))
+            (int(vid), email, evento, huella, ventana))
         return n == 1
     except Exception as e:
         print(f"[ot-tec-reservar] {type(e).__name__}: {e}", flush=True)
@@ -128501,6 +128594,61 @@ def _ot_tec_enviar(email, asunto, cuerpo, *, evento, subtitulo, ref=None):
                                  asincrono=True, ref=ref))
 
 
+def _ot_tec_oculta_detalle(vid):
+    """True si el Anexo de Servicios del proveedor externo aún bloquea esta OT: la app no le deja verla hasta que firme
+    (`_anexo_bloquea_ot`, única fuente de verdad), así que el correo tampoco le adelanta la dirección ni «Qué hay que
+    hacer». Revisión 2026-10-19; decisión de negocio por confirmar con Daniel — para volver atrás basta devolver False
+    aquí. Ante un error no se oculta (igual que el candado de la app: fail-open, nadie se queda sin su aviso)."""
+    try:
+        return bool(_anexo_bloquea_ot(int(vid)))
+    except Exception:
+        return False
+
+
+def _ot_tec_despachar(vid, avisos, antes, despues, fila, motivo, res, fichas=(), link_lista=False):
+    """Arma y envía cada aviso ya decidido (`_otc.decidir_avisos`). Lo comparten el cambio de una OT (`_ot_tec_correo`) y
+    el borrado definitivo (`_ot_tec_correo_borrada`). `link_lista`: la OT ya no existe, el botón lleva a la lista de OT."""
+    numero = fila.get("numero_ot") or f"V-{int(vid):05d}"
+    en_fichas = set(fichas or ())
+    # {{tecnicos}}: solo PERSONAS. El nombre que sale de la ficha de una empresa externa es el de un proveedor y un técnico
+    # no puede verlo (REGLA #19); la empresa igual recibe su aviso, saludada por su propio nombre.
+    nombres = [n for e, n in (despues.get("tecnicos") or {}).items() if e not in en_fichas]
+    base = _public_base_url()
+    oculto = _ot_tec_oculta_detalle(vid)
+    for av in avisos:
+        email, ev = av["email"], av["evento"]
+        slug = _otc.PLANTILLA_DE[ev]
+        if _ot_tec_plantilla_apagada(slug):
+            res["omitidos"].append((email, ev, "plantilla apagada en el editor"))
+            continue
+        h = _otc.huella(ev, email, antes, despues)
+        if not _ot_tec_reservar(vid, email, ev, h):
+            res["omitidos"].append((email, ev, "ya se había enviado"))
+            continue
+        vista = dict(fila)
+        if ev in ("desasignada", "cancelada") and antes:      # lo que el técnico tenía en su calendario
+            vista.update(fecha=antes.get("fecha"), fecha_fin=antes.get("fecha_fin"),
+                         hora_inicio=antes.get("hora_inicio"), hora_fin=antes.get("hora_fin"))
+        # El «Motivo» que escribió quien reagenda explica el cambio de fecha o la cancelación; a quien solo se le asigna o se
+        # le quita la OT no le corresponde (se leería como si el motivo fuera de SU aviso).
+        variables = _otc.construir_variables(
+            vista, nombre_tecnico=av.get("nombre"), tecnicos_nombres=nombres, base_url=base,
+            antes=(antes if ev == "reagendada" else None),
+            motivo=(motivo if ev in ("reagendada", "cancelada") else ""), ocultar_detalle=oculto)
+        if link_lista:
+            variables["link_ot"] = _otc.esc(f"{base.rstrip('/')}/ot/")
+        asunto, cuerpo = _ot_tec_armar(slug, variables)
+        ok = _ot_tec_enviar(email, asunto, cuerpo, evento=_otc.EVENTO_LOG[ev], subtitulo=f"OT {numero}",
+                            ref={"tipo": "OT", "id": int(vid), "codigo": numero})
+        if ok:
+            res["enviados"].append((email, ev))
+            _mant_log("visita", vid, "aviso_tecnico",
+                      f"Correo al técnico {av.get('nombre') or email} ({email}) · {ev.replace('_', ' ')} · {numero}")
+        else:
+            _ot_tec_liberar(vid, email, ev, h)
+            res["omitidos"].append((email, ev, "el correo no salió (llave de paso cerrada o falla del proveedor)"))
+
+
 def _ot_tec_correo(vid, antes=None, motivo=""):
     """PUNTO ÚNICO de los avisos a técnicos por un cambio en una OT. Nunca lanza.
 
@@ -128514,7 +128662,7 @@ def _ot_tec_correo(vid, antes=None, motivo=""):
     try:
         if antes is False:
             return res
-        despues = _ot_tec_foto(vid)
+        despues = _ot_tec_foto(vid, con_fichas=True)
         if not despues:
             return res
         avisos = _otc.decidir_avisos(antes, despues)
@@ -128524,64 +128672,128 @@ def _ot_tec_correo(vid, antes=None, motivo=""):
         if not fila:
             return res
         fila["equipos"] = _ot_tec_equipos_bulk([vid]).get(int(vid), [])
-        numero = fila.get("numero_ot") or f"V-{int(vid):05d}"
-        nombres = list((despues.get("tecnicos") or {}).values())
-        base = _public_base_url()
-        for av in avisos:
-            email, ev = av["email"], av["evento"]
-            slug = _otc.PLANTILLA_DE[ev]
-            if _ot_tec_plantilla_apagada(slug):
-                res["omitidos"].append((email, ev, "plantilla apagada en el editor"))
-                continue
-            h = _otc.huella(ev, email, antes, despues)
-            if not _ot_tec_reservar(vid, email, ev, h):
-                res["omitidos"].append((email, ev, "ya se había enviado"))
-                continue
-            vista = dict(fila)
-            if ev in ("desasignada", "cancelada") and antes:      # lo que el técnico tenía en su calendario
-                vista.update(fecha=antes.get("fecha"), fecha_fin=antes.get("fecha_fin"),
-                             hora_inicio=antes.get("hora_inicio"), hora_fin=antes.get("hora_fin"))
-            # El «Motivo» que escribió quien reagenda explica el cambio de fecha o la cancelación; a quien solo se le asigna o se
-            # le quita la OT no le corresponde (se leería como si el motivo fuera de SU aviso).
-            variables = _otc.construir_variables(
-                vista, nombre_tecnico=av.get("nombre"), tecnicos_nombres=nombres, base_url=base,
-                antes=(antes if ev == "reagendada" else None),
-                motivo=(motivo if ev in ("reagendada", "cancelada") else ""))
-            asunto, cuerpo = _ot_tec_armar(slug, variables)
-            ok = _ot_tec_enviar(email, asunto, cuerpo, evento=_otc.EVENTO_LOG[ev], subtitulo=f"OT {numero}",
-                                ref={"tipo": "OT", "id": int(vid), "codigo": numero})
-            if ok:
-                res["enviados"].append((email, ev))
-                _mant_log("visita", vid, "aviso_tecnico",
-                          f"Correo al técnico {av.get('nombre') or email} ({email}) · {ev.replace('_', ' ')} · {numero}")
-            else:
-                _ot_tec_liberar(vid, email, ev, h)
-                res["omitidos"].append((email, ev, "el correo no salió (llave de paso cerrada o falla del proveedor)"))
+        _ot_tec_despachar(vid, avisos, antes, despues, fila, motivo, res, fichas=despues.get("fichas"))
     except Exception as e:
         print(f"[ot-tec-correo] vid={vid}: {type(e).__name__}: {e}", flush=True)
     return res
 
 
+def _ot_tec_snapshot_borrado(vid, v_info):
+    """Antes del borrado definitivo de una OT: junta lo necesario para avisar «cancelada» DESPUÉS de borrarla (la fila ya no
+    existirá). Revisión 2026-10-19: borrar una OT ya anunciada dejaba al técnico con un correo cuyo botón llevaba a una página que no
+    existe. Solo avisa si la OT todavía estaba por hacerse (`_otc.avisa_eliminacion`) y solo a quienes YA habían recibido
+    «asignada» o «reagendada» (mant_ot_tec_avisos): una OT de antes de los avisos, o de prueba que nunca salió, no genera un
+    «cancelada» sobre algo que el técnico jamás supo. None = no hay a quién avisar. Nunca lanza."""
+    try:
+        if not _otc.avisa_eliminacion(v_info.get("estado"), v_info.get("fecha_programada"), v_info.get("fecha_fin"),
+                                      _now_chile().date()):
+            return None
+        informados = {str(r.get("email") or "").strip().lower() for r in (mysql_fetchall(
+            "SELECT DISTINCT email FROM mant_ot_tec_avisos WHERE visita_id=%s AND evento IN ('asignada','reagendada')",
+            (int(vid),)) or [])}
+        informados.discard("")
+        if not informados:
+            return None
+        antes = _ot_tec_foto(vid, con_fichas=True)
+        if not antes:
+            return None
+        fichas = antes.pop("fichas", [])
+        antes["tecnicos"] = {e: n for e, n in (antes.get("tecnicos") or {}).items() if e in informados}
+        if not antes["tecnicos"]:
+            return None
+        fila = (_ot_tec_filas([vid]) or {}).get(int(vid))
+        if not fila:
+            return None
+        fila["equipos"] = _ot_tec_equipos_bulk([vid]).get(int(vid), [])
+        return {"antes": antes, "fila": fila, "fichas": fichas}
+    except Exception as e:
+        print(f"[ot-tec-snapshot-borrado] vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return None
+
+
+def _ot_tec_correo_borrada(vid, snap):
+    """«Cancelada» a los técnicos de una OT que acaba de borrarse (ver _ot_tec_snapshot_borrado). Nunca lanza."""
+    res = {"enviados": [], "omitidos": []}
+    try:
+        if not snap:
+            return res
+        antes = snap["antes"]
+        despues = dict(antes, estado="cancelada")
+        avisos = _otc.decidir_avisos(antes, despues)
+        if avisos:
+            _ot_tec_despachar(vid, avisos, antes, despues, snap["fila"], "La orden de trabajo se eliminó del sistema.", res,
+                              fichas=snap.get("fichas"), link_lista=True)
+    except Exception as e:
+        print(f"[ot-tec-correo-borrada] vid={vid}: {type(e).__name__}: {e}", flush=True)
+    return res
+
+
 # ── Recordatorio de las 17:00: la agenda del siguiente día hábil ─────────────────────────────────────────────────
 
-def _ot_tec_barrido_agenda(dry=False, ahora=None, fecha=None):
+def _ot_tec_agenda_reservar(email, objetivo, n):
+    """Reserva «este técnico, este día» antes de armar el correo. Devuelve 'mia' (esta corrida lo envía), 'ya' (ya salió) o
+    'curso' (otra corrida lo está enviando ahora: no se marca el día como completo y se revisa en el siguiente ciclo).
+    Una reserva que quedó sin confirmar (la corrida se cortó) se retoma pasados AGENDA_RESERVA_MIN minutos. Puede lanzar."""
+    if mysql_execute_returning_rowcount(
+            "INSERT IGNORE INTO mant_ot_tec_agenda (tecnico_email, fecha_agenda, n_ot, enviado) VALUES (%s,%s,%s,0)",
+            (email, objetivo, n)) == 1:
+        return "mia"
+    if mysql_execute_returning_rowcount(
+            "UPDATE mant_ot_tec_agenda SET creado_at=NOW(), n_ot=%s WHERE tecnico_email=%s AND fecha_agenda=%s "
+            "AND enviado=0 AND creado_at < DATE_SUB(NOW(), INTERVAL %s MINUTE)",
+            (n, email, objetivo, _otc.AGENDA_RESERVA_MIN)) == 1:
+        return "mia"
+    fila = mysql_fetchone("SELECT enviado FROM mant_ot_tec_agenda WHERE tecnico_email=%s AND fecha_agenda=%s",
+                          (email, objetivo))
+    return "ya" if (fila and int(fila.get("enviado") or 0)) else "curso"
+
+
+def _ot_tec_log_agenda(filas):
+    """Una línea de bitácora por cada OT incluida en una agenda enviada, en UN solo INSERT (REGLA #18: nada de un INSERT con
+    su commit por fila). filas: [(vid, detalle)]. Best-effort: la bitácora nunca frena el recordatorio."""
+    if not filas:
+        return
+    try:
+        usuario = current_username()
+        params = []
+        for vid, detalle in filas:
+            params.extend(("visita", int(vid), "aviso_tecnico", detalle, usuario))
+        mysql_execute("INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) VALUES "
+                      + ",".join(["(%s,%s,%s,%s,%s)"] * len(filas)), tuple(params))
+    except Exception as e:
+        print(f"[ot-tec-agenda] bitácora: {type(e).__name__}", flush=True)
+
+
+def _ot_tec_barrido_agenda(dry=False, ahora=None, fecha=None, max_s=None):
     """Manda a cada técnico con OT activas el siguiente día hábil su agenda (una fila por OT, ordenada por hora).
-    Sale desde las 17:00 (hora Chile) de un día hábil; nunca sábado, domingo ni feriado; el viernes avisa el lunes; antes
-    de un feriado, el siguiente día hábil. Si el técnico no tiene OT ese día, no se le manda nada. Cubre OT de varios días
-    (fecha_programada ≤ día ≤ fecha_fin). Idempotente: UNIQUE(técnico, día) — corre cada 10 min colgado de
-    simpliroute-poll y solo avisa una vez. dry=True: solo muestra qué mandaría (con fecha=AAAA-MM-DD ignora la hora).
+    Sale entre las 17:00 y las 21:00 (hora Chile) de un día hábil; nunca sábado, domingo ni feriado; el viernes avisa el
+    lunes; antes de un feriado, el siguiente día hábil. Si el técnico no tiene OT ese día, no se le manda nada. Cubre OT de
+    varios días (fecha_programada ≤ día ≤ fecha_fin). Revisión del 19-oct: las OT agendadas en un día no hábil intermedio (sábado,
+    domingo, feriado) también se avisan, en el MISMO correo y bajo su propio encabezado de día.
+    Idempotente: UNIQUE(técnico, día) con «reservado» → «enviado» — corre cada 10 min colgado de simpliroute-poll y avisa una
+    sola vez; una reserva que se quedó a medias se retoma. dry=True: solo muestra qué mandaría (con fecha=AAAA-MM-DD ignora la
+    hora). max_s: tope de tiempo (la petición de Cloud Scheduler tiene 300 s); lo que no alcanza queda para el siguiente ciclo.
     Nunca lanza."""
     res = {"ok": True, "dry": bool(dry), "enviados": [], "pendientes": [], "omitidos": []}
+    t0 = time.time()
+    log_filas = []
     try:
         from cl_feriados import es_dia_habil as _es_habil
         ahora = ahora or _now_chile()
-        objetivo = _otc.a_fecha(fecha) if (dry and fecha) else _otc.dia_agenda_a_avisar(ahora, _es_habil)
+        if dry and fecha:
+            _f = _otc.a_fecha(fecha)
+            dias = [_f] if _f else []
+        else:
+            dias = _otc.dias_agenda_a_avisar(ahora, _es_habil)
         res["ahora"] = ahora.strftime("%d/%m/%Y %H:%M")
-        if not objetivo:
-            res["motivo"] = ("fuera de ventana: solo sale desde las 17:00 de un día hábil "
+        if not dias:
+            res["motivo"] = ("fuera de ventana: solo sale entre las 17:00 y las 21:00 de un día hábil "
                              "(nunca sábado, domingo ni feriado)")
             return res
+        objetivo = dias[-1]
         res["agenda_de"] = objetivo.strftime("%d/%m/%Y")
+        if len(dias) > 1:
+            res["dias"] = [d.strftime("%d/%m/%Y") for d in dias]
         if not dry:
             if _ot_tec_llave_cerrada():
                 res["motivo"] = "llave de paso «Correos a técnicos» (o el interruptor general) cerrada"
@@ -128601,7 +128813,7 @@ def _ot_tec_barrido_agenda(dry=False, ahora=None, fecha=None):
             " WHERE v.fecha_programada BETWEEN DATE_SUB(%s, INTERVAL 60 DAY) AND %s "
             "   AND GREATEST(v.fecha_programada, COALESCE(v.fecha_fin, v.fecha_programada)) >= %s "
             f"  AND COALESCE(v.estado,'') NOT IN ({ph_e})",
-            (objetivo, objetivo, objetivo) + tuple(excl)) or []
+            (dias[0], objetivo, dias[0]) + tuple(excl)) or []
         ids = [int(r["id"]) for r in filas]
         tecs = _ot_tec_destinatarios_bulk(ids)
         info = _ot_tec_filas(ids)
@@ -128609,9 +128821,10 @@ def _ot_tec_barrido_agenda(dry=False, ahora=None, fecha=None):
         por_tec = {}
         for vid in ids:
             f = info.get(vid)
-            if not f:
+            if not f or not tecs.get(vid):
                 continue
             f["equipos"] = equipos.get(vid, [])
+            f["oculta_detalle"] = _ot_tec_oculta_detalle(vid)      # Anexo sin firmar: sin dirección en el correo
             for email, nombre in (tecs.get(vid) or {}).items():
                 d = por_tec.setdefault(email, {"nombre": nombre, "items": []})
                 d["items"].append(f)
@@ -128623,27 +128836,41 @@ def _ot_tec_barrido_agenda(dry=False, ahora=None, fecha=None):
             if dry:
                 res["enviados"].append({"tecnico": email, "nombre": d["nombre"], "n_ot": len(items), "ots": nums})
                 continue
+            if max_s and time.time() - t0 > max_s:       # sin tiempo: el resto sale en el siguiente ciclo (cada 10 min)
+                res["cortado"] = True
+                break
             try:
-                n = mysql_execute_returning_rowcount(
-                    "INSERT IGNORE INTO mant_ot_tec_agenda (tecnico_email, fecha_agenda, n_ot) VALUES (%s,%s,%s)",
-                    (email, objetivo, len(items)))
+                estado_reserva = _ot_tec_agenda_reservar(email, objetivo, len(items))
             except Exception as e:
-                print(f"[ot-tec-agenda] reserva {email}: {type(e).__name__}: {e}", flush=True)
+                print(f"[ot-tec-agenda] reserva: {type(e).__name__}: {e}", flush=True)     # sin el correo del técnico
                 res["pendientes"].append(email)
                 continue
-            if n != 1:
+            if estado_reserva == "ya":
                 res["omitidos"].append({"tecnico": email, "motivo": "ya se le envió esa agenda"})
                 continue
-            variables = _otc.construir_variables_agenda(items, objetivo=objetivo, hoy=ahora.date(),
-                                                        nombre_tecnico=d["nombre"], base_url=base)
-            asunto, cuerpo = _ot_tec_armar(_otc.PLANTILLA_AGENDA, variables)
-            ok = _ot_tec_enviar(email, asunto, cuerpo, evento=_otc.EVENTO_LOG_AGENDA,
-                                subtitulo=f"Agenda {_otc.dia_txt(objetivo)}")
+            if estado_reserva == "curso":
+                res["pendientes"].append(email)            # otra corrida la está enviando: se vuelve a mirar en 10 min
+                continue
+            ok = False
+            try:
+                variables = _otc.construir_variables_agenda(items, objetivo=objetivo, hoy=ahora.date(),
+                                                            nombre_tecnico=d["nombre"], base_url=base, dias=dias)
+                asunto, cuerpo = _ot_tec_armar(_otc.PLANTILLA_AGENDA, variables)
+                ok = _ot_tec_enviar(email, asunto, cuerpo, evento=_otc.EVENTO_LOG_AGENDA,
+                                    subtitulo=f"Agenda {_otc.dia_txt(objetivo)}")
+            except Exception as e:
+                print(f"[ot-tec-agenda] armado/envío: {type(e).__name__}: {e}", flush=True)
             if ok:
+                try:
+                    mysql_execute("UPDATE mant_ot_tec_agenda SET enviado=1 WHERE tecnico_email=%s AND fecha_agenda=%s",
+                                  (email, objetivo))
+                except Exception as e:
+                    # Peor caso: la reserva sigue en 0 y se retoma en AGENDA_RESERVA_MIN min (un correo repetido, nunca uno perdido).
+                    print(f"[ot-tec-agenda] no se pudo confirmar el envío: {type(e).__name__}", flush=True)
                 res["enviados"].append({"tecnico": email, "n_ot": len(items), "ots": nums})
-                for it in items:
-                    _mant_log("visita", it["id"], "aviso_tecnico",
-                              f"Recordatorio de agenda del {_otc.dia_txt(objetivo)}: correo a {d['nombre']} ({email})")
+                dia_txt = _otc.dia_txt(objetivo)
+                log_filas.extend((it["id"], f"Recordatorio de agenda ({dia_txt}): correo a {d['nombre']} ({email})")
+                                 for it in items)
             else:
                 try:
                     mysql_execute("DELETE FROM mant_ot_tec_agenda WHERE tecnico_email=%s AND fecha_agenda=%s",
@@ -128651,16 +128878,18 @@ def _ot_tec_barrido_agenda(dry=False, ahora=None, fecha=None):
                 except Exception:
                     pass
                 res["pendientes"].append(email)
-        if not dry and not res["pendientes"]:
+        if not dry and not res["pendientes"] and not res.get("cortado"):
             try:
-                mysql_execute("INSERT IGNORE INTO mant_ot_tec_agenda (tecnico_email, fecha_agenda, n_ot) VALUES ('*',%s,%s)",
-                              (objetivo, len(res["enviados"])))
+                mysql_execute("INSERT IGNORE INTO mant_ot_tec_agenda (tecnico_email, fecha_agenda, n_ot, enviado) "
+                              "VALUES ('*',%s,%s,1)", (objetivo, len(res["enviados"])))
             except Exception:
                 pass
     except Exception as e:
         res["ok"] = False
         res["error"] = type(e).__name__
         print(f"[ot-tec-agenda] {type(e).__name__}: {e}", flush=True)
+    finally:
+        _ot_tec_log_agenda(log_filas)
     return res
 
 

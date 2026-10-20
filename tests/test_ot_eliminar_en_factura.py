@@ -59,6 +59,10 @@ def _nucleo(fac=FACTURA):
                                                "fecha_programada": None, "levantamiento_id": None},
         "_mant_visita_factura_proveedor": lambda vid: fac,
         "_ot_levantamiento_de": lambda vid: None,
+        # El núcleo libera el libro de saldo de facturas (2026-10-11) y, desde el 19-oct, toma la foto para avisarle al técnico:
+        # ninguno de los dos es lo que se prueba aquí. Sin estos dobles el núcleo fallaba con NameError.
+        "_fac_libro_marcar": lambda vid: None, "_ot_tec_snapshot_borrado": lambda vid, v_info: None,
+        "_ot_tec_correo_borrada": lambda vid, snap: None,
         "get_mysql": lambda: conn, "current_username": lambda: "aaron",
         "_mant_log": lambda *a, **k: logs.append(a),
     })

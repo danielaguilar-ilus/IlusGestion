@@ -44,6 +44,14 @@ ESTADOS_TERMINADOS = frozenset({"cerrada", "completada", "firmada_tecnico", "pen
 ESTADOS_SIN_AGENDA = ESTADOS_CANCELADOS | ESTADOS_TERMINADOS
 
 HORA_AGENDA = 17                # el recordatorio sale desde las 17:00 (hora Chile) del día hábil anterior
+HORA_AGENDA_TOPE = 21           # 2026-10-19 (revisión): ...y solo hasta las 21:00. Si la llave se abre o el trabajo se retoma de
+                                # noche, la agenda de mañana no sale a las 23:30.
+AGENDA_RESERVA_MIN = 15         # un técnico "reservado" que no llegó a "enviado" en este tiempo se retoma (el trabajo se cortó)
+# OT ya visitadas que esperan algo para cerrarse: siguen en la agenda (la visita puede repetirse) pero con su estado a la vista.
+ESTADOS_ESPERA = {"pendiente_info": "Falta información", "pendiente_repuesto": "Falta repuesto"}
+# Mientras el Anexo de Servicios del proveedor externo no esté firmado, la app no le deja ver la OT (_anexo_bloquea_ot): el correo
+# tampoco le adelanta dónde ni qué hay que hacer.
+OCULTO_ANEXO = "Se informa al firmar el Anexo de Servicios"
 DIAS_ES = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
 
 # Variables que documenta el editor de Comunicaciones (static/comunicaciones_index.js → TPL_VARS.ot_tecnico).
@@ -52,7 +60,7 @@ VARIABLES_DOC = (
     ("cliente", "Cliente (o «Trabajo interno»)"),
     ("nombre_tecnico", "Nombre del técnico que recibe el correo"),
     ("tecnico", "Igual que nombre_tecnico"),
-    ("tecnicos", "Todos los técnicos de la OT"),
+    ("tecnicos", "Los técnicos (personas) de la OT; nunca la empresa proveedora"),
     ("tipo_mantencion", "Tipo de orden de trabajo"),
     ("fecha", "Fecha (o rango de fechas) de la OT"),
     ("horario", "Horario"),
@@ -66,11 +74,11 @@ VARIABLES_DOC = (
     ("fecha_ahora", "Fecha nueva (solo reagendada)"),
     ("horario_ahora", "Horario nuevo (solo reagendada)"),
     ("antes_ahora_html", "Bloque ANTES → AHORA (solo reagendada)"),
-    ("dia", "Día de la agenda, ej. lunes 19/10/2026 (solo agenda)"),
-    ("cuando", "«de mañana» o «del lunes» (solo agenda)"),
+    ("dia", "Día(s) de la agenda, ej. lunes 19/10/2026 o «sábado 24/10/2026 y lunes 26/10/2026» (solo agenda)"),
+    ("cuando", "«de mañana», «del lunes» o «del sábado al lunes» (solo agenda)"),
     ("n_ot", "Cantidad de OT de la agenda (solo agenda)"),
     ("n_ot_txt", "«1 orden de trabajo» / «3 órdenes de trabajo» (solo agenda)"),
-    ("agenda_html", "Una fila por OT, ordenada por hora (solo agenda)"),
+    ("agenda_html", "Una fila por OT, ordenada por hora; con un encabezado por día si abarca varios (solo agenda)"),
     ("link_agenda", "Link a la lista de OT (solo agenda)"),
 )
 
@@ -135,12 +143,32 @@ def esc(v):
 
 
 # ── Confidencialidad ─────────────────────────────────────────────────────────────────────────────────────────────
-_RE_PLATA = re.compile(
-    r"(\$|\bclp\b|\bpesos?\b|\bcost[oa]s?\b|\bcobr\w*|\bprecio\w*|\bmonto\w*|\bmargen\w*|\bfactur\w*|\bproveedor\w*"
-    r"|\bboleta\w*|\boc\b|\bo\.c\.|orden de compra|\bneto\b|\biva\b|\bpresupuesto\w*|\bcotiz\w*"
-    r"|\bpag(?:o|os|ar|ado|ada|ó)\b|\bautorizaci(?:ón|on|ones)\b|\bvalorizad\w*)",
-    re.I,
+# 2026-10-19 (revisión adversarial): ESTA es la única lista del módulo y cubre, como mínimo, todo lo que ya veda la campana del
+# técnico (`_NOTIF_TEC_RE_VEDADO` en app.py: la prueba lo comprueba término a término). Antes dejaba pasar deuda, saldo, valor,
+# tarifa, abono, descuento, transferencia, «se paga contra entrega», «50 lucas», montos escritos sin «$»... A propósito se
+# sobre-filtra: perder una línea de instrucciones es barato; que un técnico lea una deuda del cliente no lo es (REGLAS #19 y #26).
+# Fuera a propósito (se leerían como instrucciones normales): «ingreso» (acceso por portería) y «estimado» («tiempo estimado»).
+_FRAGMENTOS_PLATA = (
+    r"\$", r"€",
+    r"\bclp\b", r"\busd\b", r"\buf\b", r"\bpesos?\b", r"\bd[oó]lar\w*", r"\bplata\b", r"\bdinero\b",
+    r"\bcost(?:o|os|ó|a|as|ear|eo|ar|ará|aría|e|an|aron)\b", r"\bcuest(?:a|an)\b",
+    r"\bprecio\w*", r"\bmonto\w*", r"valor\w*", r"\btarif\w*", r"\bdescuent\w*", r"\brecargo\w*",
+    r"\bhonorario\w*", r"\bsueldo\w*", r"\bcuotas?\b", r"\bdesembols\w*",
+    r"\bcobr\w*", r"\bpag(?!in)\w*", r"\bsald(?:o|os|ar|ado|ada|ó)\b", r"\bdeud\w*", r"\bmoros\w*",
+    r"\babon(?:o|os|ar|ado|ada|ó)\b", r"\banticipo\w*", r"\btransfer(?:encia|encias|ir|ido|ida|ió)\b",
+    r"\bcr[eé]dito\w*", r"\bd[eé]bito\w*", r"\bcheque\w*", r"\bcontra\s+entrega\b",
+    r"\bmargen\w*", r"\bgananc\w*", r"\bp[eé]rdid\w*", r"\butilidad\w*", r"\bingresos\b",
+    r"\bpresupuest\w*", r"\bcotiz\w*", r"factur\w*", r"\bboleta\w*", r"\bnota\s+de\s+(?:venta|cr[eé]dito|d[eé]bito)\b",
+    r"\b(?:fcv|fce|fcc|blv|nvv|nvi|ncv|ncc|ocv|occ)\b",
+    r"proveedor\w*", r"\boc\b", r"\bo\.c\.", r"\bo/c\b", r"\borden(?:es)?\s+de\s+compra\b", r"\bneto\b", r"\biva\b",
+    r"autoriz\w*", r"finanz\w*",
+    # montos sin «$»: 120.000 · 2,500 · 85 mil · 50 lucas · 3 palos · 2 millones
+    r"\b\d{1,3}(?:[.,]\d{3})+\b",
+    r"\b\d[\d.,]*\s*(?:mil|lucas?|lukas?|palos?|millon\w*)\b",
+    r"\b(?:un|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|veinte|treinta|cuarenta|cincuenta|cien|ciento|medio)\s+"
+    r"(?:mil|lucas?|lukas?|palos?|millon\w*)\b",
 )
+_RE_PLATA = re.compile("(" + "|".join(_FRAGMENTOS_PLATA) + ")", re.I)
 
 
 def hay_plata(texto):
@@ -232,11 +260,19 @@ def decidir_avisos(antes, despues):
 
 
 def huella(evento, email, antes, despues):
-    """Identifica «este aviso por este cambio» (idempotencia: el mismo aviso no sale dos veces)."""
+    """Identifica «este aviso por este cambio» (idempotencia: el mismo aviso no sale dos veces).
+
+    2026-10-19 (revisión adversarial): la clave mira SIEMPRE cómo estaba la OT antes y cómo quedó después (estado, fecha,
+    horario y la lista de técnicos). Antes, «asignada», «desasignada» y «cancelada» solo miraban el estado final y la
+    cubeta de un minuto: A (asignada) → B (A pierde la OT) → de vuelta a A en el mismo minuto daba la MISMA clave que la
+    creación y el «asignada» final se descartaba como «ya enviado»: A se quedaba con «ya no está a tu cargo» teniéndola.
+    Dos peticiones idénticas a la vez (doble clic) siguen chocando entre sí, que es lo que se quiere."""
     def _k(f):
-        f = f or {}
-        return "|".join(str(f.get(k, "")) for k in ("estado", "fecha", "fecha_fin", "hora_inicio", "hora_fin"))
-    base = f"{evento}|{str(email).lower()}|{_k(antes) if evento == 'reagendada' else ''}|{_k(despues)}"
+        if not f:
+            return "-"
+        tec = ",".join(sorted(str(e).lower() for e in (f.get("tecnicos") or {})))
+        return "|".join(str(f.get(k, "")) for k in ("estado", "fecha", "fecha_fin", "hora_inicio", "hora_fin")) + "|" + tec
+    base = f"{evento}|{str(email).lower()}|{_k(antes)}|{_k(despues)}"
     return hashlib.sha1(base.encode("utf-8")).hexdigest()
 
 
@@ -285,9 +321,11 @@ def equipos_txt(nombres, tope=8):
     return ", ".join(nombres)
 
 
-def construir_variables(ot, *, nombre_tecnico="", tecnicos_nombres=None, base_url="", antes=None, motivo=""):
+def construir_variables(ot, *, nombre_tecnico="", tecnicos_nombres=None, base_url="", antes=None, motivo="",
+                        ocultar_detalle=False):
     """Variables de los correos de evento. `ot`: id, numero_ot, cliente, tipo_label, fecha, fecha_fin, hora_inicio,
     hora_fin, direccion, equipos (lista de nombres), descripcion. `antes`: foto previa (para «reagendada»).
+    `ocultar_detalle`: el Anexo de Servicios del proveedor aún no está firmado → sin dirección ni «Qué hay que hacer».
     Todo va ESCAPADO (lo escribe una persona: razón social, dirección…); los *_html ya vienen armados."""
     numero = ot.get("numero_ot") or f"V-{int(ot.get('id') or 0):05d}"
     fecha_t = rango_txt(ot.get("fecha"), ot.get("fecha_fin"))
@@ -302,10 +340,10 @@ def construir_variables(ot, *, nombre_tecnico="", tecnicos_nombres=None, base_ur
         "tipo_mantencion": esc(ot.get("tipo_label") or "Visita"),
         "fecha": esc(fecha_t),
         "horario": esc(horario_t),
-        "direccion": esc(ot.get("direccion") or "—"),
+        "direccion": esc(OCULTO_ANEXO if ocultar_detalle else (ot.get("direccion") or "—")),
         "maquina": esc(equipos_txt(ot.get("equipos"))),
         "link_ot": esc(f"{(base_url or '').rstrip('/')}/ot/{int(ot.get('id') or 0)}"),
-        "notas_html": fila_notas(ot.get("descripcion")),
+        "notas_html": "" if ocultar_detalle else fila_notas(ot.get("descripcion")),
         "motivo_html": fila_motivo(motivo),
         "fecha_antes": "", "horario_antes": "", "fecha_ahora": esc(fecha_t), "horario_ahora": esc(horario_t),
         "antes_ahora_html": "",
@@ -324,48 +362,101 @@ def ordenar_agenda(items):
     return sorted(items or [], key=lambda i: (hhmm(i.get("hora_inicio")) or "99:99", str(i.get("numero_ot") or "")))
 
 
-def agenda_html(items, base_url=""):
-    """Una fila por OT: hora a la izquierda; N° de OT, cliente, tipo, dirección y equipos a la derecha."""
+def _fila_agenda(it, base):
+    """Una OT de la agenda: hora a la izquierda; N° de OT, cliente, tipo, dirección y equipos a la derecha."""
+    numero = it.get("numero_ot") or f"V-{int(it.get('id') or 0):05d}"
+    hi, hf = hhmm(it.get("hora_inicio")), hhmm(it.get("hora_fin"))
+    hora_html = (esc(hi) + (f'<br><span style="font-weight:500;color:#6b7280">{esc(hf)}</span>' if hf else "")) \
+        if hi else '<span style="font-weight:500;color:#6b7280">Sin hora</span>'
+    ff, fi = a_fecha(it.get("fecha_fin")), a_fecha(it.get("fecha"))
+    varios = (f'<br><span style="color:#6b7280">Varios días: {esc(rango_txt(fi, ff))}</span>'
+              if (fi and ff and ff > fi) else "")
+    # Una OT que ya se visitó y espera información o un repuesto sigue en la agenda (la visita puede repetirse), pero
+    # con su estado a la vista para que no se lea como una visita normal.
+    espera = ESTADOS_ESPERA.get(str(it.get("estado") or "").strip().lower())
+    estado_html = f'<br><span style="color:#b45309;font-weight:700">Estado: {esc(espera)}</span>' if espera else ""
+    direccion = OCULTO_ANEXO if it.get("oculta_detalle") else (it.get("direccion") or "—")
+    return (
+        '<table cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 10px">'
+        '<tr>'
+        '<td width="86" style="background:#fee2e2;border-left:4px solid #dc2626;padding:12px 10px;vertical-align:top;'
+        f'font-size:13px;font-weight:800;color:#991b1b;text-align:center;white-space:nowrap">{hora_html}</td>'
+        '<td style="background:#f5f5f7;padding:12px 14px;vertical-align:top;font-size:13px;color:#555;line-height:1.55">'
+        f'<a href="{esc(base)}/ot/{int(it.get("id") or 0)}" style="color:#dc2626;font-weight:800;text-decoration:none">'
+        f'{esc(numero)}</a> &middot; <strong style="color:#222">{esc(it.get("cliente") or "Trabajo interno")}</strong><br>'
+        f'{esc(it.get("tipo_label") or "Visita")}<br>'
+        f'{esc(direccion)}<br>'
+        f'<span style="color:#6b7280">Equipos:</span> {esc(equipos_txt(it.get("equipos")))}{varios}{estado_html}'
+        '</td></tr></table>')
+
+
+def agrupar_por_dia(items, dias):
+    """[(fecha, [OT])] solo de los días que tienen OT. Cada OT va UNA vez, en el primer día de `dias` que cubre
+    (fecha_programada ≤ día ≤ fecha_fin): una instalación de sábado a martes no se repite en tres encabezados."""
+    dias = [d for d in (a_fecha(x) for x in (dias or [])) if d]
+    grupos = {d: [] for d in dias}
+    for it in (items or []):
+        ini = a_fecha(it.get("fecha"))
+        fin = a_fecha(it.get("fecha_fin")) or ini
+        if ini and fin and fin < ini:
+            fin = ini
+        destino = next((d for d in dias if ini is None or (ini <= d <= fin)), None)
+        if destino is None and dias:
+            destino = dias[-1]
+        if destino is not None:
+            grupos[destino].append(it)
+    return [(d, grupos[d]) for d in dias if grupos[d]]
+
+
+def agenda_html(items, base_url="", dias=None):
+    """Una fila por OT (ver _fila_agenda), ordenadas por hora. Con `dias` (varios días de agenda en un mismo correo) las
+    agrupa bajo un encabezado por día, p. ej. «sábado 24/10/2026»."""
     base = (base_url or "").rstrip("/")
-    filas = []
-    for it in ordenar_agenda(items):
-        numero = it.get("numero_ot") or f"V-{int(it.get('id') or 0):05d}"
-        hi, hf = hhmm(it.get("hora_inicio")), hhmm(it.get("hora_fin"))
-        hora_html = (esc(hi) + (f'<br><span style="font-weight:500;color:#6b7280">{esc(hf)}</span>' if hf else "")) \
-            if hi else '<span style="font-weight:500;color:#6b7280">Sin hora</span>'
-        ff, fi = a_fecha(it.get("fecha_fin")), a_fecha(it.get("fecha"))
-        varios = (f'<br><span style="color:#6b7280">Varios días: {esc(rango_txt(fi, ff))}</span>'
-                  if (fi and ff and ff > fi) else "")
-        filas.append(
-            '<table cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 10px">'
-            '<tr>'
-            '<td width="86" style="background:#fee2e2;border-left:4px solid #dc2626;padding:12px 10px;vertical-align:top;'
-            f'font-size:13px;font-weight:800;color:#991b1b;text-align:center;white-space:nowrap">{hora_html}</td>'
-            '<td style="background:#f5f5f7;padding:12px 14px;vertical-align:top;font-size:13px;color:#555;line-height:1.55">'
-            f'<a href="{esc(base)}/ot/{int(it.get("id") or 0)}" style="color:#dc2626;font-weight:800;text-decoration:none">'
-            f'{esc(numero)}</a> &middot; <strong style="color:#222">{esc(it.get("cliente") or "Trabajo interno")}</strong><br>'
-            f'{esc(it.get("tipo_label") or "Visita")}<br>'
-            f'{esc(it.get("direccion") or "—")}<br>'
-            f'<span style="color:#6b7280">Equipos:</span> {esc(equipos_txt(it.get("equipos")))}{varios}'
-            '</td></tr></table>')
-    return "".join(filas)
+    if dias is None:
+        return "".join(_fila_agenda(it, base) for it in ordenar_agenda(items))
+    partes = []
+    for d, grupo in agrupar_por_dia(items, dias):
+        partes.append('<p style="margin:16px 0 8px;font-size:12px;font-weight:800;letter-spacing:.06em;'
+                      f'color:#991b1b;text-transform:uppercase">{esc(dia_txt(d))}</p>')
+        partes.extend(_fila_agenda(it, base) for it in ordenar_agenda(grupo))
+    return "".join(partes)
 
 
 def n_ot_txt(n):
     return "1 orden de trabajo" if n == 1 else f"{n} órdenes de trabajo"
 
 
-def construir_variables_agenda(items, *, objetivo, hoy, nombre_tecnico="", base_url=""):
+def _lista_es(xs):
+    xs = [x for x in xs if x]
+    return xs[0] if len(xs) == 1 else (", ".join(xs[:-1]) + " y " + xs[-1] if xs else "")
+
+
+def construir_variables_agenda(items, *, objetivo, hoy, nombre_tecnico="", base_url="", dias=None):
+    """Variables del correo de la agenda. `objetivo`: el día hábil de la agenda. `dias`: todos los días que cubre este correo
+    (de mañana hasta el siguiente día hábil: el viernes son sábado, domingo y lunes; antes de un feriado también el feriado).
+    Con OT en UN solo día el correo es el de siempre («de mañana» / «del lunes»); con OT en varios días las agrupa bajo un
+    encabezado por día, y `dia`/`cuando` pasan a decir «sábado 24/10/2026 y lunes 26/10/2026» / «del sábado al lunes»."""
     n = len(items or [])
     objetivo, hoy = a_fecha(objetivo), a_fecha(hoy)
-    cuando = "de mañana" if (objetivo and hoy and (objetivo - hoy).days == 1) \
-        else f"del {DIAS_ES[objetivo.weekday()]}" if objetivo else "de mañana"
+    grupos = agrupar_por_dia(items, dias if dias else ([objetivo] if objetivo else []))
     nombre = (nombre_tecnico or "").strip() or "equipo"
+    if len(grupos) > 1:
+        primero, ultimo = grupos[0][0], grupos[-1][0]
+        cuando = f"del {DIAS_ES[primero.weekday()]} al {DIAS_ES[ultimo.weekday()]}"
+        dia = _lista_es([dia_txt(d) for d, _g in grupos])
+        fecha = f"{fecha_txt(primero)} al {fecha_txt(ultimo)}"
+        agenda = agenda_html(items, base_url, dias=[d for d, _g in grupos])
+    else:
+        d0 = grupos[0][0] if grupos else objetivo
+        cuando = "de mañana" if (d0 and hoy and (d0 - hoy).days == 1) \
+            else f"del {DIAS_ES[d0.weekday()]}" if d0 else "de mañana"
+        dia, fecha = dia_txt(d0), fecha_txt(d0)
+        agenda = agenda_html(items, base_url)
     return {
         "nombre_tecnico": esc(nombre), "tecnico": esc(nombre),
-        "dia": esc(dia_txt(objetivo)), "fecha": esc(fecha_txt(objetivo)), "cuando": esc(cuando),
+        "dia": esc(dia), "fecha": esc(fecha), "cuando": esc(cuando),
         "n_ot": str(n), "n_ot_txt": esc(n_ot_txt(n)),
-        "agenda_html": agenda_html(items, base_url),
+        "agenda_html": agenda,
         "link_agenda": esc(f"{(base_url or '').rstrip('/')}/ot/"),
     }
 
@@ -381,16 +472,58 @@ def siguiente_dia_habil(d, es_habil):
     return None
 
 
-def dia_agenda_a_avisar(ahora, es_habil, hora=HORA_AGENDA):
-    """Fecha de la agenda que hay que avisar AHORA (o None). `ahora`: datetime en hora Chile.
-    Solo si HOY es día hábil y ya pasaron las 17:00: nunca sale sábado, domingo ni feriado. El viernes avisa la agenda
-    del lunes; antes de un feriado, la del siguiente día hábil."""
+def dia_agenda_a_avisar(ahora, es_habil, hora=HORA_AGENDA, tope=HORA_AGENDA_TOPE):
+    """Fecha de la agenda (el siguiente día hábil) que hay que avisar AHORA (o None). `ahora`: datetime en hora Chile.
+    Solo si HOY es día hábil y es entre las 17:00 y las 21:00: nunca sale sábado, domingo, feriado ni de noche.
+    El viernes avisa la agenda del lunes; antes de un feriado, la del siguiente día hábil."""
     hoy = ahora.date()
     if not es_habil(hoy):
         return None
-    if (ahora.hour, ahora.minute) < (hora, 0):
+    if (ahora.hour, ahora.minute) < (hora, 0) or ahora.hour >= tope:
         return None
     return siguiente_dia_habil(hoy, es_habil)
+
+
+def dias_agenda_a_avisar(ahora, es_habil, hora=HORA_AGENDA, tope=HORA_AGENDA_TOPE):
+    """Todos los días que cubre el recordatorio de AHORA: desde mañana hasta el siguiente día hábil, inclusive (lista vacía
+    si no toca avisar). Lunes a jueves es solo mañana; el viernes son sábado, domingo y lunes; antes de un feriado también
+    el feriado. 2026-10-19 (revisión): antes solo se miraba el siguiente día hábil, así que una instalación agendada en
+    sábado o en un feriado (se permite, con aviso) nunca aparecía en ninguna agenda."""
+    ultimo = dia_agenda_a_avisar(ahora, es_habil, hora, tope)
+    if not ultimo:
+        return []
+    out, d = [], ahora.date() + _dt.timedelta(days=1)
+    while d <= ultimo:
+        out.append(d)
+        d += _dt.timedelta(days=1)
+    return out
+
+
+def avisa_eliminacion(estado, fecha, fecha_fin, hoy):
+    """¿Borrar esta OT merece un «cancelada» al técnico? Solo si todavía estaba por hacerse: ni cancelada/anulada (ya se le
+    dijo), ni terminada (el trabajo ya se hizo) ni con la fecha ya pasada. Sin fecha (por confirmar) sí avisa."""
+    est = str(estado or "").strip().lower()
+    if est in ESTADOS_CANCELADOS or est in ESTADOS_TERMINADOS:
+        return False
+    ini = a_fecha(fecha)
+    fin = a_fecha(fecha_fin) or ini
+    h = a_fecha(hoy)
+    if ini and h and max(ini, fin or ini) < h:
+        return False
+    return True
+
+
+def cuerpo_sin_montos(body, *, quitar=(), saludo=None, saludo_nuevo="Hola equipo"):
+    """El correo que se armó para el CLIENTE, listo para un técnico: sin los trozos que llevan montos (costo estimado,
+    repuestos con su costo) y con un saludo que no es el del cliente. Revisión 2026-10-19: «Enviar email» de la visita le
+    mandaba a cada técnico la misma copia del cliente, con plata en el respaldo en HTML (REGLAS #19 y #26)."""
+    out = body or ""
+    for trozo in (quitar or ()):
+        if trozo:
+            out = out.replace(trozo, "")
+    if saludo:
+        out = out.replace(saludo, saludo_nuevo, 1)
+    return out
 
 
 def texto_sin_marcas(html_text):
@@ -455,8 +588,8 @@ SEMILLAS = {
     "ot_desasignada_tecnico": (
         "OT {{ot}} ya no está a tu cargo",
         _saludo("#6b7280")
-        + _p("La orden de trabajo de abajo <strong>se asignó a otra persona</strong>. Ya no la tienes a tu cargo y "
-             "puedes liberar ese horario.")
+        + _p("Ya <strong>no figuras como técnico</strong> de la orden de trabajo de abajo (se reasignó o se reorganizó el "
+             "equipo). Ya no la tienes a tu cargo y puedes liberar ese horario.")
         + _tabla("#6b7280", _FILAS_OT + _f("Estaba agendada para", "{{fecha}} · {{horario}}") + "{{motivo_html}}")
         + _boton("Ver orden de trabajo")),
     "agenda_tecnico_manana": (
