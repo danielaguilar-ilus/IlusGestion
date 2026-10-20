@@ -62,6 +62,7 @@ def _nucleo(fac=FACTURA):
         "_ot_levantamiento_de": lambda vid: None,
         # 2026-10-19: una instalación con desinstalación vigente no se borra; esta OT no tiene desinstalaciones.
         "_evt": ot_eventos, "_ot_hijas_de": lambda vid, cur=None, estricto=False: [],
+        "_fac_libro_marcar": lambda vid: None,   # el libro de saldo de facturas (REGLA #28) se avisa al borrar una OT
         "get_mysql": lambda: conn, "current_username": lambda: "aaron",
         "_mant_log": lambda *a, **k: logs.append(a),
     })
