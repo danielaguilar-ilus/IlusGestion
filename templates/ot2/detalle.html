@@ -864,8 +864,8 @@
    estados, y también para firmar y cerrar la OT como aprobador" — y al
    confirmarlo: "eso también es necesario para poder empezar a usar ese
    menú"). Mismo patrón .tx-bottom que ya usa la pantalla de ejecución
-   (static/mantenciones_ot_ejecutar.css ~1010), incluido el left:250px que
-   la despega del sidebar en escritorio y el safe-area-inset del notch. */
+   (static/mantenciones_ot_ejecutar.css ~1010), incluido el left:var(--sidebar-w) (antes 250px a mano; 2026-10-19
+   el menú lateral bajó a 212px) que la despega del sidebar en escritorio y el safe-area-inset del notch. */
 /* 🔉 2026-09-02 (Daniel, viendo la primera versión: "muy grande y feo, por
    favor más sutil"). Era una franja blanca de borde a borde con un botón
    verde gigante en degradado -- competía con el contenido en vez de estar
@@ -878,7 +878,7 @@
   border-top:1px solid rgba(0,0,0,.07);padding:8px 16px;
   padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));
   display:flex;gap:8px;align-items:center;justify-content:flex-end}
-@media (min-width:992px){.otd-bottom{left:250px}}
+@media (min-width:992px){.otd-bottom{left:var(--sidebar-w,212px)}}
 {#- 🔀 2026-09-20: "Ver PDF" + "Anexo de fotos" comparten una fila 50/50
     (flex:1 1 0 -- reparto exacto sin depender del ancho del texto) para
     que el footer quepa en menos filas. En desktop (.otd-bottom en fila,
@@ -2090,7 +2090,7 @@
   padding:11px 16px;
   background:#92400e;color:#fff;font-size:.82rem;line-height:1.4;
   box-shadow:0 -6px 18px rgba(0,0,0,.25)}
-@media (min-width:992px){.otd-outbox{left:250px}}
+@media (min-width:992px){.otd-outbox{left:var(--sidebar-w,212px)}}
 @media (max-width:640px){.otd-outbox{bottom:74px}}
 /* Sin barra de acciones abajo, el banner vuelve al piso (y respeta el
    notch del iPhone, que en ese caso sí le toca a él). */

@@ -194,7 +194,7 @@ body {
      Además forzamos que NO sea el contenedor con scroll: solo .sidebar-nav
      scrollea, así .sidebar-footer queda PEGADO al fondo siempre. */
   .sidebar {
-    width: min(280px, 85vw) !important;
+    width: min(272px, 84vw) !important;   /* 2026-10-19: antes 280px */
     z-index: 1050;
     box-shadow: 4px 0 20px rgba(0,0,0,.3);
     height: 100dvh !important;
@@ -207,6 +207,10 @@ body {
     z-index: 1040;
     backdrop-filter: blur(2px);
   }
+
+  /* 2026-10-19: en 768 px exactos (iPad vertical) el menú NO es cajón (el corte es 767): vuelve a su ancho normal,
+     si no, tapaba 60-70 px del contenido. */
+  @media (min-width: 768px) { .sidebar { width: var(--sidebar-w) !important; } }
 
   /* Logo área y footer no se encogen (queda fijo arriba/abajo del drawer) */
   .sidebar-logo-area,
@@ -229,7 +233,7 @@ body {
      inferior de Safari (URL bar + flecha atrás + refresh). */
   .sidebar-footer {
     padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)) !important;
-    background: var(--ilus-black);  /* opaco para que no se vea contenido detrás al scrollear */
+    background: #0a0a0a;  /* opaco para que no se vea contenido detrás al scrollear; mismo negro del menú (2026-10-19) */
     position: relative;
     z-index: 2;
   }

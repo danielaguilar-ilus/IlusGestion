@@ -332,8 +332,8 @@
 .cli-footer{
   position:fixed;
   bottom:0;left:0;right:0;
-  /* Respetar el sidebar (250px) y safe-area-inset-bottom para iPhones */
-  margin-left:var(--sidebar-w, 250px);
+  /* Respetar el sidebar (212px desde 2026-10-19) y safe-area-inset-bottom para iPhones */
+  margin-left:var(--sidebar-w, 212px);
   background:#fff;border-top:1px solid #e5e7eb;border-radius:0;
   padding:10px 22px;margin-top:0;
   box-shadow:0 -2px 10px rgba(0,0,0,.06);
@@ -402,11 +402,14 @@
             title="Descargar Excel de clientes: RUT, dirección, contrato (condición y tipo) + hoja de productos por RUT — para cruzar con Finanzas">
       <i class="bi bi-file-earmark-excel me-1"></i>Reporte Excel
     </button>
-    {# 2026-07-12 (Daniel): "se esta perdiendo" el dropdown del header --
-       Plan Anual / Radar / Agente·Reglas se mueven al MENU lateral, dentro
-       del grupo expandible "Clientes" (templates/base.html), no aqui. #}
+    {# 2026-07-12 (Daniel): "se esta perdiendo" el dropdown del header -- Plan Anual / Radar / Agente·Reglas se movieron al
+       menú lateral (grupo «Clientes»).
+       2026-10-19 (Daniel: «déjalos dentro del módulo de cliente en botón»): el menú ya no tiene ese grupo (Clientes es un enlace
+       directo) y los tres vuelven acá como botones, justo debajo de esta cabecera, con los mismos permisos que tenían. #}
   </div>
 </div>
+
+{% include "mantenciones/_clientes_botones.html" %}
 
 {% include "mantenciones/_reporte_excel_modal.html" %}
 
