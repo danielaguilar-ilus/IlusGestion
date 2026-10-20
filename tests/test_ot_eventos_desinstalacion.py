@@ -1323,7 +1323,8 @@ class TestChecklistSugeridoYElegido(unittest.TestCase):
         self.assertEqual((r["numero_ot"], r["fecha_txt"], r["cobro"]), ("OT-2026-00351", "26/11/2026", "cubierta"))
         d = cap["d"]
         self.assertEqual(d["equipos"], [{"maquina_id": 4, "plantilla_id": 77}, {"maquina_id": 7, "plantilla_id": 50}])
-        self.assertEqual(d["tareas_manuales"][0]["plantilla_id"], 50)
+        # REGLA #32 (merge con main, 20-oct): al producto manual de la instalación NO se le agrega un checklist por detrás.
+        self.assertIsNone(d["tareas_manuales"][0]["plantilla_id"])
         self.assertEqual((d["tecnico_user_ids"], d["tecnico_lider_id"]), ([3, 8], 3))
         self.assertEqual(d["tipo_ot"], "desinstalacion")
         self.assertEqual(d["_desinst_cobro"], "cubierta")

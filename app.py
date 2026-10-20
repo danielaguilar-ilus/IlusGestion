@@ -110893,7 +110893,10 @@ def _ot_crear_desinstalacion(madre_vid, datos, usuario=None, autorizacion=None, 
                                  "Plantillas antes de programar la desinstalación."}
             equipos.append({"maquina_id": e["maquina_id"], "plantilla_id": pid})
         _fuera_m = set(dd.get("manuales_fuera") or [])
-        manuales = [dict(x, plantilla_id=fallback) for i, x in enumerate(her["manuales"]) if i not in _fuera_m]
+        # 🎛️ REGLA #32 (2026-10-20, merge con main): los productos manuales de la instalación pasan a la hija TAL CUAL los
+        # tuvo ella (una tarea simple, sin checklist): ni el asistente ni el modal los muestran con un checklist, así que el servidor
+        # NO les agrega «Desinstalación y embalaje» por detrás. Quien quiera un checklist para ellos lo elige en la ficha.
+        manuales = [dict(x, plantilla_id=None) for i, x in enumerate(her["manuales"]) if i not in _fuera_m]
         if not equipos and not manuales:
             return {"ok": False, "codigo": "SIN_EQUIPOS",
                     "error": "Elige al menos un equipo o producto de la instalación para desinstalar."}
