@@ -977,6 +977,16 @@ class TestCandadosPorTexto(unittest.TestCase):
         self.assertIn("con_internos=not (es_tec or para_asistente)", lista)
         self.assertIn("if not es_tec:\n            cols += \" OR e.doc_ref LIKE %s\"", lista, "el técnico no busca por documento")
 
+    def test_la_hija_muestra_el_ticket_de_la_instalacion_solo_a_gestion_y_no_lo_hereda(self):
+        # Crítica 25: la desinstalación NO hereda el ticket (la OT mueve sus estados); la ficha lo muestra como enlace
+        # informativo y SOLO a gestión (`con_montos`): un técnico no lo recibe.
+        ctx = F.fuente_funcion("_ot_desinst_contexto")
+        self.assertEqual(ctx.count("FROM tk_tickets WHERE visita_id=%s"), 1)
+        antes = ctx[:ctx.index("FROM tk_tickets WHERE visita_id=%s")]
+        self.assertIn("if con_montos:", antes[-500:], "solo gestión recibe el ticket de la instalación")
+        self.assertIn('"evento_id", "ticket_id"', F.fuente_funcion("_ot2_crear_core"),
+                      "la hija descarta el ticket del body")
+
     def test_las_pantallas_de_eventos_vuelven_al_panel_si_falta_la_plantilla(self):
         self.assertIn("TemplateNotFound", F.fuente_funcion("ot_pagina_eventos"))
         self.assertIn("TemplateNotFound", F.fuente_funcion("ot_pagina_evento_detalle"))

@@ -110828,6 +110828,17 @@ def _ot_desinst_contexto(vid, fila=None, con_montos=False):
             out["madre"] = {"id": madre["id"], "numero_ot": num, "url": f"/ot/{madre['id']}",
                             "fecha": _evt.fmt_fecha(madre.get("fecha_programada")), "estado": madre.get("estado")}
             out["chip"] = f"Desinstalación de {num}"
+            # 🧩 2026-10-19 (crítica 25): la desinstalación NO hereda el ticket (la OT mueve sus estados), pero la ficha
+            # muestra el de la instalación como enlace informativo. Solo gestión (`con_montos`): un técnico no lo recibe.
+            if con_montos:
+                try:
+                    _tk_m = mysql_fetchone("SELECT id, numero_ticket FROM tk_tickets WHERE visita_id=%s ORDER BY id LIMIT 1",
+                                           (int(madre["id"]),))
+                    if _tk_m:
+                        out["madre"]["ticket"] = {"id": _tk_m["id"], "numero": _tk_m.get("numero_ticket"),
+                                                  "url": "/tickets/%s" % _tk_m["id"]}
+                except Exception as _e_tkm:
+                    print("[desinst] ticket de la instalación %s: %s" % (madre["id"], type(_e_tkm).__name__), flush=True)
     elif es_madre:
         hijas = _ot_hijas_de(vid)
         est = _evt.estado_desinstalacion(f, hijas, hoy)
