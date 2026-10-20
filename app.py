@@ -88057,6 +88057,7 @@ def mant_visita_update(vid):
     _tec_antes = _ot_tec_antes(vid) if _tec_avisar else None
     _estado_nuevo_dm = (str(d.get("estado") or "")).strip().lower()
     _cascada_hija = None
+    _tec_antes_hija = None
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
@@ -88078,6 +88079,9 @@ def mant_visita_update(vid):
                                         "puede_incluir_desinstalacion": _err_c["codigo"] == "OT_CON_DESINSTALACION"}), 409
                     if _acc_c == "con_hija":
                         _cascada_hija = _evt.hijas_vigentes(_hijas_c)[0]
+                        # 📧 2026-10-20: lo que el técnico de la DESINSTALACIÓN sabe antes de que se cancele en cascada (su
+                        # calendario guarda ese evento): después del commit se le avisa «cancelada» con su .ics CANCEL.
+                        _tec_antes_hija = _ot_tec_antes(int(_cascada_hija["id"]))
             cur.execute(f"UPDATE mant_visitas SET {','.join(sets)} WHERE id=%s",
                         vals + [vid])
             if _cascada_hija:
@@ -88103,6 +88107,15 @@ def mant_visita_update(vid):
                 _fac_libro_marcar(int(_cascada_hija["id"]))
             except Exception as _e_cas:
                 print(f"[upd-ot] cascada desinstalación vid={vid}: {type(_e_cas).__name__}", flush=True)
+            # 📧 2026-10-20: «cancelada» al técnico de la desinstalación (y .ics CANCEL, que la borra de su calendario). Compara
+            # la foto de antes con la de ahora: si la hija no era cancelable (ya trabajada o firmada) el estado no cambió y
+            # no se avisa nada. Best-effort: un fallo de correo jamás deshace la cancelación.
+            if _tec_antes_hija:
+                try:
+                    _ot_tec_correo(int(_cascada_hija["id"]), _tec_antes_hija,
+                                   motivo="Se canceló junto con su instalación.")
+                except Exception as _e_tch:
+                    print(f"[upd-ot] correo al técnico de la desinstalación vid={vid}: {type(_e_tch).__name__}", flush=True)
         if _sal_put_reanota:   # 2026-10-08: lo que esta OT aporta desde cada documento, para que las demás lo vean
             try:
                 _ot_saldo_reanotar_aportes(vid)

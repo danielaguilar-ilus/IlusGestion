@@ -929,6 +929,22 @@ class TestCableado(unittest.TestCase):
             self.assertIn(campo, s[i_antes - 600:i_antes])
         self.assertIn("motivo_cambio", s[i_aviso:i_aviso + 200])
 
+    def test_la_cascada_de_cancelar_la_instalacion_avisa_al_tecnico_de_la_desinstalacion(self):
+        """Cancelar una instalación cancela en cascada su desinstalación (hija) con un UPDATE directo: sin este aviso el técnico de
+        la hija conservaba el evento en su calendario (2026-10-20). Foto ANTES del UPDATE, aviso DESPUÉS del commit, best-effort."""
+        s = _fuente("mant_visita_update")
+        i_foto = s.index('_tec_antes_hija = _ot_tec_antes(int(_cascada_hija["id"]))')
+        i_upd = s.index("UPDATE mant_visitas SET estado=%s WHERE id=%s AND estado IN", i_foto)
+        i_commit = s.index("conn.commit()", i_upd)
+        i_aviso = s.index('_ot_tec_correo(int(_cascada_hija["id"]), _tec_antes_hija', i_commit)
+        self.assertLess(i_foto, i_upd)
+        self.assertLess(i_upd, i_commit)
+        self.assertLess(i_commit, i_aviso)
+        self.assertIn("if _tec_antes_hija:", s[i_aviso - 200:i_aviso])
+        self.assertIn("try", s[i_aviso - 160:i_aviso])
+        self.assertIn("except Exception", s[i_aviso:i_aviso + 400])
+        self.assertIn("_tec_antes_hija = None", s[:i_foto])      # si no hay hija, no hay foto ni aviso
+
     def test_agregar_y_quitar_colaborador(self):
         q, a = _fuente("mant_visita_tecnico_quitar"), _fuente("mant_visita_tecnico_agregar")
         self.assertLess(q.index("_ot_tec_antes(vid)"), q.index("DELETE FROM mant_visita_tecnicos"))
