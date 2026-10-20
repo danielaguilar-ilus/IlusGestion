@@ -40247,6 +40247,300 @@ def tr_dashboard_export_xlsx():
                       mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+@app.route("/transporte/manifiestos/reporte-semanal.xlsx")
+@_tr_required
+def tr_manifiestos_reporte_semanal_xlsx():
+    """Excel semanal de despachos para gestión (2026-10-19, Daniel/Alison:
+    "reporte semanal de los despachos con el detalle, cobro, factura,
+    producto... para indicadores de gestión").
+
+    Querystring: desde / hasta (AAAA-MM-DD, sobre la FECHA DEL MANIFIESTO) y
+    courier opcional. Sin fechas = última semana cerrada (lunes a domingo).
+    Solo lectura de tablas ILUS. Todo número va como NÚMERO real (no texto)
+    para que Excel sume y pivotee directo. 3 hojas: Resumen, Despachos (una
+    fila por factura/boleta del manifiesto) y Productos (una fila por
+    producto de cada despacho). Es información financiera interna:
+    @_tr_required ya deja afuera a los técnicos (REGLA #26).
+    """
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+    except Exception:
+        flash("Falta la librería openpyxl para generar el Excel.", "danger")
+        return redirect(url_for("tr_manifiestos"))
+    import re as _re_rs
+    from datetime import datetime as _dt_rs, timedelta as _td_rs
+    from io import BytesIO
+    from flask import send_file
+
+    _ILLEGAL = _re_rs.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+    def _x(v):
+        return _ILLEGAL.sub("", v) if isinstance(v, str) else v
+
+    def _fecha(s):
+        try:
+            return _dt_rs.strptime((s or "").strip(), "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    hoy = _now_chile().date()
+    desde = _fecha(request.args.get("desde"))
+    hasta = _fecha(request.args.get("hasta"))
+    if not (desde and hasta):
+        lunes_esta = hoy - _td_rs(days=hoy.weekday())
+        desde = lunes_esta - _td_rs(days=7)
+        hasta = lunes_esta - _td_rs(days=1)
+    if desde > hasta:
+        desde, hasta = hasta, desde
+    if (hasta - desde).days > 366:
+        desde = hasta - _td_rs(days=366)
+    courier = (request.args.get("courier") or "").strip()
+
+    MAX_FILAS = 5000
+    params = [desde, hasta]
+    filtro_courier = ""
+    if courier:
+        filtro_courier = " AND m.courier = %s"
+        params.append(courier)
+    params.append(MAX_FILAS + 1)
+    filas = mysql_fetchall(f"""
+        SELECT mi.id AS item_id, mi.estado_entrega, mi.tracking_number,
+               mi.master_tracking_number,
+               m.id AS manifest_id, m.correlativo, m.fecha AS fecha_manifiesto,
+               m.courier, m.estado AS estado_manifiesto,
+               c.tido, c.nudo, c.cliente_nombre, c.cliente_rut, c.comuna,
+               c.region, c.direccion, c.fecha_emision, c.clasificacion,
+               COALESCE(c.n_bultos, 1)          AS n_bultos,
+               COALESCE(c.peso_real, 0)         AS peso_real,
+               COALESCE(c.peso_vol, 0)          AS peso_vol,
+               COALESCE(c.peso_predominante, 0) AS peso_predominante,
+               COALESCE(c.volumen_m3, 0)        AS volumen_m3,
+               c.valor_bruto,
+               c.zz_envio                       AS zz_envio_raw,
+               COALESCE(c.costo_courier, 0)     AS costo_courier,
+               c.autorizado_por, c.motivo_envio,
+               COALESCE(c.es_garantia, 0)       AS es_garantia,
+               c.productos_json,
+               (SELECT MIN(e.ts_utc) FROM transport_tracking_events e
+                 WHERE e.commitment_id = mi.commitment_id
+                   AND e.estado = 'Entregado a transporte') AS en_courier_at,
+               (SELECT MAX(e.ts_utc) FROM transport_tracking_events e
+                 WHERE e.commitment_id = mi.commitment_id
+                   AND e.estado = 'Entregado') AS entregado_at
+          FROM transport_manifest_items mi
+          JOIN transport_manifests m   ON m.id = mi.manifest_id
+          JOIN transport_commitments c ON c.id = mi.commitment_id
+         WHERE m.fecha BETWEEN %s AND %s
+           AND (m.eliminado = 0 OR m.eliminado IS NULL){filtro_courier}
+         ORDER BY m.fecha, m.id, mi.orden, mi.id
+         LIMIT %s
+    """, tuple(params)) or []
+    truncado = len(filas) > MAX_FILAS
+    if truncado:
+        filas = filas[:MAX_FILAS]
+
+    def _num(v):
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    despachos = []
+    for r in filas:
+        cobrado = _num(r.get("zz_envio_raw"))
+        costo = _num(r.get("costo_courier")) or 0.0
+        margen = (cobrado - costo) if (cobrado is not None and costo > 0) else None
+        margen_pct = (margen / cobrado * 100.0) if (margen is not None and cobrado) else None
+        en_c, ent = r.get("en_courier_at"), r.get("entregado_at")
+        dias = None
+        if en_c and ent:
+            try:
+                dias = round((ent - en_c).total_seconds() / 86400.0, 1)
+            except Exception:
+                dias = None
+        r["_cobrado"], r["_costo"], r["_margen"], r["_margen_pct"] = cobrado, costo, margen, margen_pct
+        r["_dias"] = dias
+        r["_doc"] = _doc_label(r.get("tido"), r.get("nudo"))
+        despachos.append(r)
+
+    wb = openpyxl.Workbook()
+    HDR_FILL = PatternFill("solid", fgColor="0A0A0A")   # REGLA #2
+    HDR_FONT = Font(color="FFFFFF", bold=True)
+
+    def _hdr(ws, headers, row=1):
+        for ci, h in enumerate(headers, 1):
+            cell = ws.cell(row, ci, h)
+            cell.font = HDR_FONT
+            cell.fill = HDR_FILL
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        ws.freeze_panes = ws.cell(row + 1, 1)
+
+    def _fmt(ws, cols_money=(), cols_dec=(), cols_date=()):
+        for col in cols_money:
+            for c in ws[get_column_letter(col)][1:]:
+                c.number_format = "#,##0"
+        for col in cols_dec:
+            for c in ws[get_column_letter(col)][1:]:
+                c.number_format = "#,##0.0"
+        for col in cols_date:
+            for c in ws[get_column_letter(col)][1:]:
+                c.number_format = "dd/mm/yyyy"
+
+    def _ts(v):
+        return chile_fmt_filter(v) if v else None
+
+    # ── Hoja Despachos ────────────────────────────────────────────────
+    ws_d = wb.active
+    ws_d.title = "Despachos"
+    h_d = ["Manifiesto", "Fecha manifiesto", "Courier", "Estado manifiesto",
+           "Documento", "Fecha emisión doc.", "Cliente", "RUT", "Comuna", "Región",
+           "Dirección", "Ramo", "Bultos", "Peso real kg", "Peso volumétrico kg",
+           "Peso a cobrar kg", "Volumen m3", "Valor documento", "Cobrado (ZZ envío)",
+           "Costo courier", "Margen $", "Margen %", "Sin precio (no cobra flete)",
+           "Garantía", "Autorizado por", "Motivo envío", "Estado entrega",
+           "N° tracking", "Entregado a transporte", "Entregado", "Días en tránsito",
+           "Cant. productos"]
+    _hdr(ws_d, h_d)
+    for r in despachos:
+        try:
+            _prods = [p for p in (json.loads(r.get("productos_json") or "[]") or [])
+                      if isinstance(p, dict) and str(p.get("koprct") or "").strip()
+                      and not str(p.get("koprct")).strip().upper().startswith("ZZ")]
+        except Exception:
+            _prods = []
+        ws_d.append([
+            _x(r.get("correlativo")), r.get("fecha_manifiesto"), _x(r.get("courier")),
+            _x(r.get("estado_manifiesto")), _x(r["_doc"]), r.get("fecha_emision"),
+            _x(r.get("cliente_nombre")), _x(r.get("cliente_rut")), _x(r.get("comuna")),
+            _x(r.get("region")), _x(r.get("direccion")), _x(r.get("clasificacion")),
+            int(r.get("n_bultos") or 1), _num(r.get("peso_real")), _num(r.get("peso_vol")),
+            _num(r.get("peso_predominante")), _num(r.get("volumen_m3")),
+            _num(r.get("valor_bruto")), r["_cobrado"], r["_costo"] or None,
+            r["_margen"], (round(r["_margen_pct"], 1) if r["_margen_pct"] is not None else None),
+            "Sí" if r["_cobrado"] is None else "No",
+            "Sí" if r.get("es_garantia") else "No",
+            _x(r.get("autorizado_por")), _x(r.get("motivo_envio")),
+            _x(r.get("estado_entrega")),
+            _x(r.get("master_tracking_number") or r.get("tracking_number")),
+            _ts(r.get("en_courier_at")), _ts(r.get("entregado_at")), r["_dias"],
+            int(sum(float(p.get("cantidad") or 0) for p in _prods)),
+        ])
+    _fmt(ws_d, cols_money=(18, 19, 20, 21), cols_dec=(14, 15, 16, 17, 22), cols_date=(2, 6))
+    for i, w in enumerate([16, 13, 20, 16, 16, 13, 34, 14, 18, 20, 40, 12, 8, 11, 12, 12,
+                           10, 14, 14, 13, 12, 10, 14, 10, 18, 30, 20, 20, 17, 17, 10, 10], 1):
+        ws_d.column_dimensions[get_column_letter(i)].width = w
+    ws_d.auto_filter.ref = ws_d.dimensions
+
+    # ── Hoja Productos ────────────────────────────────────────────────
+    ws_p = wb.create_sheet("Productos")
+    h_p = ["Manifiesto", "Fecha manifiesto", "Courier", "Documento", "Cliente", "Comuna",
+           "Estado entrega", "SKU", "Producto", "Cantidad", "Cant. despachada ERP",
+           "Saldo ERP"]
+    _hdr(ws_p, h_p)
+    for r in despachos:
+        try:
+            lista = json.loads(r.get("productos_json") or "[]") or []
+        except Exception:
+            lista = []
+        for p in lista:
+            if not isinstance(p, dict):
+                continue
+            sku = str(p.get("koprct") or "").strip()
+            if not sku or sku.upper().startswith("ZZ"):
+                continue
+            cant = _num(p.get("cantidad")) or 0.0
+            saldo = _num(p.get("saldo"))
+            ws_p.append([
+                _x(r.get("correlativo")), r.get("fecha_manifiesto"), _x(r.get("courier")),
+                _x(r["_doc"]), _x(r.get("cliente_nombre")), _x(r.get("comuna")),
+                _x(r.get("estado_entrega")), _x(sku), _x(str(p.get("nokopr") or "")),
+                cant, (max(cant - saldo, 0.0) if saldo is not None else None), saldo,
+            ])
+    _fmt(ws_p, cols_dec=(10, 11, 12), cols_date=(2,))
+    for i, w in enumerate([16, 13, 20, 16, 34, 18, 20, 16, 50, 10, 12, 10], 1):
+        ws_p.column_dimensions[get_column_letter(i)].width = w
+    ws_p.auto_filter.ref = ws_p.dimensions
+
+    # ── Hoja Resumen (primera) ────────────────────────────────────────
+    ws_r = wb.create_sheet("Resumen", 0)
+    ws_r.append(["Reporte semanal de despachos — Transporte ILUS Fitness"])
+    ws_r["A1"].font = Font(bold=True, size=14)
+    ws_r.append([f"Manifiestos con fecha del {desde.strftime('%d/%m/%Y')} al {hasta.strftime('%d/%m/%Y')}"
+                 + (f" · Courier: {courier}" if courier else "")])
+    ws_r.append([f"Generado: {_now_chile().strftime('%d/%m/%Y %H:%M')} · por {current_username()}"])
+    if truncado:
+        ws_r.append([f"⚠ El detalle se topó en {MAX_FILAS} filas — acota el rango de fechas."])
+        ws_r[f"A{ws_r.max_row}"].font = Font(color="B45309", bold=True)
+    ws_r.append([])
+    n_total = len(despachos)
+    n_entreg = sum(1 for r in despachos if r.get("estado_entrega") == "Entregado")
+    n_prob = sum(1 for r in despachos if r.get("estado_entrega") in ("Problema", "Entrega fallida", "Devolución"))
+    cobrado_t = sum(r["_cobrado"] or 0 for r in despachos)
+    costo_t = sum(r["_costo"] or 0 for r in despachos)
+    con_margen = [r for r in despachos if r["_margen"] is not None]
+    margen_t = sum(r["_margen"] for r in con_margen)
+    cobrado_cm = sum(r["_cobrado"] for r in con_margen)
+    dias_l = [r["_dias"] for r in despachos if r["_dias"] is not None]
+    _hdr(ws_r, ["Indicador", "Valor", "Nota"], row=ws_r.max_row + 1)
+    filas_res = [
+        ("Manifiestos", len({r["manifest_id"] for r in despachos}), ""),
+        ("Documentos despachados", n_total, ""),
+        ("Bultos", sum(int(r.get("n_bultos") or 1) for r in despachos), ""),
+        ("Peso a cobrar (kg)", round(sum(_num(r.get("peso_predominante")) or 0 for r in despachos), 1), ""),
+        ("Total cobrado (ZZ envío)", cobrado_t, "Solo documentos con flete cobrado"),
+        ("Total costo courier", costo_t, ""),
+        ("Margen $ (solo con cobro y costo)", margen_t, f"{len(con_margen)} de {n_total} documentos"),
+        ("Margen % sobre cobrado", round(margen_t / cobrado_cm * 100, 1) if cobrado_cm else None, ""),
+        ("Documentos sin precio (no cobran flete)", sum(1 for r in despachos if r["_cobrado"] is None), "No suman al margen"),
+        ("Documentos con pérdida", sum(1 for r in con_margen if r["_margen"] < 0), ""),
+        ("Entregados", n_entreg, ""),
+        ("Tasa de entrega %", round(n_entreg / n_total * 100, 1) if n_total else None, ""),
+        ("Con problema / fallida / devolución", n_prob, ""),
+        ("Días promedio en tránsito", round(sum(dias_l) / len(dias_l), 1) if dias_l else None,
+         f"{len(dias_l)} entregas con ambas fechas"),
+    ]
+    for f in filas_res:
+        ws_r.append(list(f))
+    ws_r.append([])
+    ini = ws_r.max_row + 1
+    _hdr(ws_r, ["Por courier", "Documentos", "Bultos", "Kg a cobrar", "Cobrado", "Costo",
+                "Entregados", "Con problema"], row=ini)
+    por_c = {}
+    for r in despachos:
+        d = por_c.setdefault(r.get("courier") or "(sin courier)",
+                             {"n": 0, "b": 0, "kg": 0.0, "cob": 0.0, "cos": 0.0, "e": 0, "p": 0})
+        d["n"] += 1
+        d["b"] += int(r.get("n_bultos") or 1)
+        d["kg"] += _num(r.get("peso_predominante")) or 0
+        d["cob"] += r["_cobrado"] or 0
+        d["cos"] += r["_costo"] or 0
+        d["e"] += 1 if r.get("estado_entrega") == "Entregado" else 0
+        d["p"] += 1 if r.get("estado_entrega") in ("Problema", "Entrega fallida", "Devolución") else 0
+    for nom, d in sorted(por_c.items()):
+        ws_r.append([nom, d["n"], d["b"], round(d["kg"], 1), d["cob"], d["cos"], d["e"], d["p"]])
+    ws_r.freeze_panes = None
+    for row in ws_r.iter_rows(min_row=1, max_row=ws_r.max_row):
+        for c in row:
+            if isinstance(c.value, float) or (isinstance(c.value, int) and c.column in (2, 5, 6)):
+                c.number_format = "#,##0.0" if isinstance(c.value, float) else "#,##0"
+    for col, w in (("A", 40), ("B", 16), ("C", 38), ("D", 14), ("E", 14), ("F", 14), ("G", 12), ("H", 14)):
+        ws_r.column_dimensions[col].width = w
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    nombre = f"reporte_semanal_despachos_{desde.isoformat()}_a_{hasta.isoformat()}.xlsx"
+    try:
+        _tr_log("manifest", 0, "reporte_semanal_excel",
+                f"{desde} a {hasta} · {n_total} documentos" + (f" · {courier}" if courier else ""))
+    except Exception:
+        pass
+    return send_file(buf, as_attachment=True, download_name=nombre,
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
 @app.route("/transporte/monitor")
 @_tr_required
 def tr_monitor_live():
@@ -62625,6 +62919,13 @@ def _rut_canon(raw):
     '9918126' (sin DV) → '9918126-5'. None si no es un RUT válido. Resuelve lo que _rut_cuerpo no puede: un
     RUT de cuerpo de 7 dígitos guardado sin guion ('99181265') se confunde con un cuerpo de 8."""
     ok, res = validar_rut(raw or "")
+    if not ok:
+        # Ceros adelante que dejan el cuerpo con 9 dígitos ('076123456-0', visto en documentos del ERP): se prueba
+        # sin ellos. Sin esto, la misma persona quedaba como otro cliente y se le creaba una ficha duplicada.
+        _crudo = str(raw or "").strip()
+        _sin_ceros = re.sub(r"^[0.\s]+", "", _crudo)
+        if _sin_ceros and _sin_ceros != _crudo:
+            ok, res = validar_rut(_sin_ceros)
     if not ok or not res or len(res) < 2:
         return None
     cuerpo, dv = res[:-1].lstrip("0"), res[-1].upper()
@@ -62633,14 +62934,76 @@ def _rut_canon(raw):
     return f"{cuerpo}-{dv}"
 
 
-def _instalaciones_auditar(desde=None):
+def _agrupar_instalaciones(tickets, ventas, fichas):
+    """Agrupa por RUT canónico a los clientes que entraron por instalación y NO tienen ficha, juntando sus dos
+    fuentes: los tickets de instalación (con RUT) y las ventas con instalación del ERP. `fichas` = {llave_rut: id}.
+    Devuelve (grupos, tickets_sin_rut). No toca la base: la usan la auditoría y las pruebas."""
+    grupos, sin_rut = {}, []
+
+    def _grupo(rut):
+        kc, kb = _rut_canon(rut), _rut_cuerpo(rut)
+        # Una ficha antigua puede guardar el RUT sin DV ('72498100'): se compara por las dos llaves.
+        if (kc and kc in fichas) or (kb and kb in fichas):
+            return None
+        k = kc or kb
+        if not k:
+            return None
+        return grupos.setdefault(k, {"key": k, "rut": rut, "empresa": "", "email": "", "telefono": "", "direccion": "",
+                                     "comuna": "", "contacto": "", "tickets": [], "facturas": []})
+
+    def _tomar(g_, pares, solo_vacios=False):
+        for campo, v_ in pares:
+            v_ = (v_ or "").strip()
+            if v_ and v_.lower() not in _NOMBRES_RELLENO and not (solo_vacios and g_.get(campo)):
+                g_[campo] = v_
+
+    def _fecha(v_, utc=False):
+        if not v_:
+            return ""
+        if utc:
+            return chile_fmt_filter(v_, "%d/%m/%Y")
+        return v_.strftime("%d/%m/%Y") if hasattr(v_, "strftime") else str(v_)[:10]
+
+    for t in tickets:
+        if not (t.get("rut") or "").strip():
+            sin_rut.append({"id": t.get("id"), "ticket": t.get("numero_ticket"), "empresa": t.get("empresa"),
+                            "estado": t.get("estado"), "fecha": _fecha(t.get("created_at"), utc=True)})
+            continue
+        g_ = _grupo(t["rut"])
+        if g_ is None:
+            continue
+        # El dato más reciente (último ticket) manda sobre los anteriores, si no viene vacío.
+        _tomar(g_, (("empresa", t.get("empresa")), ("email", t.get("email")), ("telefono", t.get("phone")),
+                    ("direccion", t.get("direccion")), ("comuna", t.get("comuna_nombre")),
+                    ("contacto", t.get("nombre_contacto"))))
+        g_["tickets"].append({"numero": t.get("numero_ticket"), "estado": t.get("estado"),
+                              "fecha": _fecha(t.get("created_at"), utc=True)})
+    for v_ in ventas:
+        g_ = _grupo(v_.get("cliente_rut"))
+        if g_ is None:
+            continue
+        # El ticket trae al contacto real; la factura solo completa lo que falte.
+        _tomar(g_, (("empresa", v_.get("cliente_nombre")), ("email", v_.get("email")), ("telefono", v_.get("telefono")),
+                    ("direccion", v_.get("direccion")), ("comuna", v_.get("comuna"))), solo_vacios=True)
+        doc = _doc_origen_key(v_.get("tido"), v_.get("nudo"))
+        if all(f_["doc"] != doc for f_ in g_["facturas"]):
+            g_["facturas"].append({"doc": doc, "fecha": _fecha(v_.get("fecha_emision"))})
+    for g_ in grupos.values():
+        g_["fuente"] = " y ".join(x for x, hay in (("ticket", g_["tickets"]), ("factura del ERP", g_["facturas"])) if hay)
+    return list(grupos.values()), sin_rut
+
+
+def _instalaciones_auditar(desde=None, completo=False):
     """SOLO LECTURA. Dónde se puede estar perdiendo un cliente que entra por instalación:
-      a) tickets de instalación cuyo RUT no tiene ficha de cliente (agrupados por RUT),
-      b) tickets de instalación sin RUT (no se puede crear ficha),
+      a) clientes de instalación sin ficha, por sus DOS fuentes: tickets de instalación y ventas con instalación
+         del ERP (ZZINSTALACION, aunque no tengan ticket ni OT), agrupados por RUT,
+      b) tickets de instalación sin RUT (la vigilancia les busca el RUT en su factura),
       c) OT de instalación sin cliente,
       d) clientes con OT de instalación que NO están clasificados como «Instalación» y no tienen contrato.
-    `desde` (date) limita (a) y (b) a tickets creados desde esa fecha. Daniel 2026-10-04: «los clientes que
-    se agregan por instalación son la pepita de oro, tener en orden todos esos clientes»."""
+    `desde` (date) limita (a) y (b) a tickets creados y ventas emitidas desde esa fecha. Con `completo`, suma los
+    controles de salud del proceso (_salud_controles_extra). Daniel 2026-10-04: «los clientes que se agregan por
+    instalación son la pepita de oro»; 2026-10-19: «debe estar muy robusto para establecer las mantenciones como
+    área de negocio de la empresa»."""
     out = {"tickets_sin_ficha": [], "tickets_sin_rut": [], "ot_instalacion_sin_cliente": [], "mal_clasificados": [],
            "fichas_sin_equipos": []}
     try:
@@ -62658,35 +63021,16 @@ def _instalaciones_auditar(desde=None):
             if k:
                 fichas[k] = r["id"]
     try:
-        grupos = {}
         sql = ("SELECT id, numero_ticket, rut, empresa, email, phone, direccion, comuna_nombre, nombre_contacto, estado, created_at "
                "  FROM tk_tickets WHERE tipo='install' AND estado<>'cancelado' ")
         params = ()
         if desde:
             sql += " AND created_at >= %s "
             params = (desde,)
-        for t in (mysql_fetchall(sql + " ORDER BY id", params) or []):
-            if not (t.get("rut") or "").strip():
-                out["tickets_sin_rut"].append({"ticket": t["numero_ticket"], "empresa": t.get("empresa"), "estado": t["estado"]})
-                continue
-            kc, kb = _rut_canon(t["rut"]), _rut_cuerpo(t["rut"])
-            # Una ficha antigua puede guardar el RUT sin DV ('72498100'): se compara por las dos llaves.
-            if (kc and kc in fichas) or (kb and kb in fichas):
-                continue
-            k = kc or kb
-            if not k:
-                continue
-            g_ = grupos.setdefault(k, {"key": k, "rut": t["rut"], "empresa": "", "email": "", "telefono": "", "direccion": "",
-                                       "comuna": "", "contacto": "", "tickets": []})
-            # El dato más reciente (último ticket) manda sobre los anteriores, si no viene vacío.
-            for campo, col in (("empresa", "empresa"), ("email", "email"), ("telefono", "phone"), ("direccion", "direccion"),
-                               ("comuna", "comuna_nombre"), ("contacto", "nombre_contacto")):
-                v_ = (t.get(col) or "").strip()
-                if v_ and v_.lower() not in _NOMBRES_RELLENO:
-                    g_[campo] = v_
-            g_["tickets"].append({"numero": t["numero_ticket"], "estado": t["estado"],
-                                  "fecha": chile_fmt_filter(t["created_at"], "%d/%m/%Y") if t.get("created_at") else ""})
-        for g_ in grupos.values():
+        tickets = [dict(t) for t in (mysql_fetchall(sql + " ORDER BY id", params) or [])]
+        ventas = _ventas_instalacion_erp(desde.date() if isinstance(desde, datetime) else desde)
+        grupos, out["tickets_sin_rut"] = _agrupar_instalaciones(tickets, ventas, fichas)
+        for g_ in grupos:
             ok, res = validar_rut(g_["rut"])
             g_["rut_normalizado"] = res if ok else ""
             g_["rut_error"] = "" if ok else str(res)
@@ -62697,9 +63041,9 @@ def _instalaciones_auditar(desde=None):
             if ok and cuerpo_num < 1000000:
                 g_["rut_error"] = "RUT de relleno, no parece real"
                 g_["rut_normalizado"] = ""
-        out["tickets_sin_ficha"] = sorted(grupos.values(), key=lambda x: (x["empresa"] or "").lower())
+        out["tickets_sin_ficha"] = sorted(grupos, key=lambda x: (x["empresa"] or "").lower())
     except Exception as e:
-        print(f"[auditoria instalaciones] tickets: {e}", flush=True)
+        print(f"[auditoria instalaciones] tickets y ventas: {e}", flush=True)
     try:
         for v in (mysql_fetchall(
                 "SELECT id, numero_ot, titulo, estado, created_by, created_at FROM mant_visitas "
@@ -62722,8 +63066,258 @@ def _instalaciones_auditar(desde=None):
                                             "tipo_cliente": c["tipo_cliente"], "ot": c.get("ot")})
     except Exception as e:
         print(f"[auditoria instalaciones] mal clasificados: {e}", flush=True)
+    if completo:
+        out.update(_salud_controles_extra())
     return out
 
+
+# ══════════════════════════════════════════════════════════════════
+# SALUD DEL PROCESO (Daniel 2026-10-19: «estamos creando los clientes para proponer esto: debe estar muy robusto
+# para establecer las mantenciones como área de negocio de la empresa»). Cada punto donde un cliente de
+# instalación se puede caer antes de ofrecerle mantención queda contado en el panel de administradores.
+# SOLO LECTURA salvo lo que dice cada función. Nada de esto le escribe a un cliente.
+# ══════════════════════════════════════════════════════════════════
+_SALUD_OT_DESDE = "2026-09-02"      # desde ese día la OT de instalación pasa sola sus equipos a la ficha
+_CONTRATO_MONTO_MIN = 1000          # un monto mensual menor no es real en pesos (suele ser UF o un error)
+_RUT_FACTURA_INTENTOS = {}          # ticket_id -> último intento (por instancia): no se relee el ERP en cada corrida
+
+
+def _salud_kv_get(clave):
+    """Valor guardado del panel de salud (en mant_plan_config, que _plan_config ignora si no es del plan)."""
+    try:
+        r = mysql_fetchone("SELECT valor FROM mant_plan_config WHERE clave=%s", (clave,))
+        return json.loads(r["valor"]) if r and r.get("valor") else None
+    except Exception:
+        return None
+
+
+def _salud_kv_set(clave, valor):
+    try:
+        _ensure_mant_plan_config()
+        mysql_execute("INSERT INTO mant_plan_config (clave, valor, updated_by) VALUES (%s,%s,'sistema') "
+                      "ON DUPLICATE KEY UPDATE valor=VALUES(valor), updated_by=VALUES(updated_by)",
+                      (clave, json.dumps(valor, ensure_ascii=False, default=str)))
+    except Exception as e:
+        print(f"[salud kv] {clave}: {e}", flush=True)
+
+
+def _ot_sin_equipos_filtrar(ots, con_doc, con_ot=()):
+    """Las OT de instalación cerradas cuyo documento no dejó NINGÚN equipo en la ficha de su cliente.
+    `con_doc` = {(cliente_id, 'TIDO NUDO')} de los equipos que sí están en las fichas; `con_ot` = OT que ya dieron
+    de alta equipos (mant_maquinas.origen_ot_id). No toca la base."""
+    out = []
+    for o in ots:
+        nudo = re.sub(r"[^0-9]", "", str(o.get("nudo") or ""))
+        if not (o.get("tido") and nudo):
+            continue
+        doc = _doc_origen_key(o["tido"], nudo)
+        if (o["cliente_id"], doc) in con_doc or o["id"] in con_ot:
+            continue
+        out.append({"vid": o["id"], "numero_ot": o.get("numero_ot"), "cliente_id": o["cliente_id"],
+                    "razon_social": o.get("razon_social"), "doc": doc, "estado": o.get("estado")})
+    return out
+
+
+def _contrato_monto_valido(valor):
+    """El monto mensual de un contrato, en pesos. Obligatorio al subir un contrato (Daniel 2026-10-19), para que el
+    ingreso de mantención se pueda medir. Devuelve (monto, mensaje_de_error)."""
+    try:
+        m = float(str(valor if valor is not None else "").strip() or 0)
+    except ValueError:
+        return None, "Escribe el monto mensual del contrato en pesos, solo con números (por ejemplo, 250000)."
+    if m <= 0:
+        return None, "Escribe el monto mensual del contrato en pesos. Sin el monto no se puede medir el ingreso de mantención."
+    if m < _CONTRATO_MONTO_MIN:
+        return None, f"El monto mensual ({m:g}) parece estar en UF. Escríbelo en pesos chilenos."
+    return m, None
+
+
+def _rut_desde_documentos(docs, leer=None):
+    """El RUT del cliente según sus documentos de venta en el ERP (solo lectura, REGLA #4.1). `docs` =
+    [(tido, nudo, …)]; `leer(tido, nudo)` → (header, lineas). Devuelve (rut_canónico, 'TIDO NUDO', nombre) del
+    primer documento con un RUT válido, o (None, None, None)."""
+    for d_ in docs:
+        try:
+            header, _lineas = (leer or _mant_erp_doc_cached)(d_[0], d_[1])
+        except Exception:
+            header = None
+        rut = _rut_canon((header or {}).get("cliente_rut") or "")
+        if rut:
+            return rut, _doc_origen_key(d_[0], d_[1]), ((header or {}).get("cliente_nombre") or "").strip()
+    return None, None, None
+
+
+def _tickets_rut_desde_factura(max_n=10, ids=None):
+    """Un ticket de instalación sin RUT toma el RUT de su factura en el ERP y lo guarda, con constancia en su hilo:
+    así su cliente recibe ficha y la conversación queda asociada a él (Daniel 2026-10-19). Solo llena un RUT
+    vacío, nunca pisa uno escrito. Lee el ERP a lo más `max_n` veces por llamada. Devuelve el resumen."""
+    res = {"resueltos": 0, "sin_documento": 0, "sin_rut_en_erp": 0, "detalle": []}
+    sql = ("SELECT id, numero_ticket, empresa, numero_documento FROM tk_tickets "
+           " WHERE tipo='install' AND estado<>'cancelado' AND (rut IS NULL OR TRIM(rut)='') ")
+    params = ()
+    if ids:
+        sql += f" AND id IN ({','.join(['%s'] * len(ids))}) "
+        params = tuple(ids)
+    try:
+        filas = [dict(r) for r in (mysql_fetchall(sql + " ORDER BY id DESC LIMIT 300", params) or [])]
+    except Exception as e:
+        print(f"[rut desde factura] {e}", flush=True)
+        return res
+    ahora, leidos = time.time(), 0
+    for t in filas:
+        if leidos >= max_n:
+            break
+        if not ids and ahora - _RUT_FACTURA_INTENTOS.get(t["id"], 0) < 86400:
+            continue
+        _RUT_FACTURA_INTENTOS[t["id"]] = ahora
+        docs = _docs_de_tickets([t])
+        if not docs:
+            res["sin_documento"] += 1
+            continue
+        leidos += 1
+        rut, doc, nombre = _rut_desde_documentos(docs)
+        if not rut:
+            res["sin_rut_en_erp"] += 1
+            continue
+        try:
+            n = mysql_execute_returning_rowcount(
+                "UPDATE tk_tickets SET rut=%s, empresa=COALESCE(NULLIF(TRIM(empresa),''), %s) "
+                " WHERE id=%s AND (rut IS NULL OR TRIM(rut)='')", (rut, (nombre or None) and nombre[:150], t["id"]))
+        except Exception as e:
+            print(f"[rut desde factura] ticket {t['id']}: {e}", flush=True)
+            continue
+        if n:
+            res["resueltos"] += 1
+            res["detalle"].append({"ticket": t.get("numero_ticket"), "rut": rut, "doc": doc})
+            try:
+                mysql_execute("INSERT INTO tk_mensajes (ticket_id, tipo, contenido, usuario, es_interno) "
+                              "VALUES (%s,'comentario',%s,'sistema',1)",
+                              (t["id"], f"RUT del cliente tomado de su documento {doc} en el ERP: {rut}. "
+                                        f"Así este ticket queda asociado a su ficha de cliente."))
+            except Exception:
+                pass
+    return res
+
+
+def _tarifas_por_cliente(ids):
+    """Precio de UNA mantención por cliente con las tarifas del cotizador (mano de obra; sin ruta ni repuestos) y
+    los equipos del plan sin tarifa, que se cotizarían en $0. Devuelve ({cid: {precio, sin_tarifa, equipos,
+    skus_sin_tarifa}}, {sku: clase}). SOLO LECTURA. La usan Cobertura, la tarjeta del prospecto y el panel de salud."""
+    out, clase_de = {}, {}
+    ids = [int(i) for i in ids if i]
+    if not ids:
+        return out, clase_de
+    ph = ",".join(["%s"] * len(ids))
+    equipos = {}
+    for r in (mysql_fetchall(
+            f"SELECT cliente_id, UPPER(TRIM(sku)) AS sku, COUNT(*) AS n FROM mant_maquinas "
+            f" WHERE cliente_id IN ({ph}) AND estado='activo' AND COALESCE(aplica_mantencion,1)=1 "
+            f" GROUP BY cliente_id, UPPER(TRIM(sku))", tuple(ids)) or []):
+        equipos.setdefault(r["cliente_id"], []).append((r["sku"] or "", int(r["n"] or 0)))
+    skus = sorted({sku for lst in equipos.values() for sku, _n in lst if sku})
+    if skus:
+        ph2 = ",".join(["%s"] * len(skus))
+        for r in (mysql_fetchall(f"SELECT UPPER(TRIM(sku)) AS sku, clase_producto FROM cat_productos "
+                                 f" WHERE UPPER(TRIM(sku)) IN ({ph2})", tuple(skus)) or []):
+            if r.get("clase_producto"):
+                clase_de[r["sku"]] = r["clase_producto"]
+    _calc = globals().get("_tk_cotiz_calcular_item")
+    _cfgf = globals().get("_tk_cotiz_pricing_config")
+    _tarb = globals().get("_cat_tarifas_clases_batch")
+    cfg_p, tarifas = None, {}
+    try:
+        cfg_p = _cfgf() if _cfgf else None
+        tarifas = (_tarb(sorted(set(clase_de.values())), "mantencion") or {}) if _tarb else {}
+    except Exception as e:
+        print(f"[tarifas por cliente] {e}", flush=True)
+    for cid_, lst in equipos.items():
+        tot, sin, skus_sin = 0.0, 0, {}
+        for sku, n in lst:
+            clase = clase_de.get(sku)
+            r = None
+            if _calc and cfg_p is not None and clase:
+                try:
+                    r = _calc(clase, "mantencion", n, None, cfg_p, tarifa=tarifas.get(clase))
+                except Exception:
+                    r = None
+            if r and r.get("total") is not None:
+                tot += float(r["total"] or 0)
+            else:
+                sin += n
+                skus_sin[sku] = skus_sin.get(sku, 0) + n
+        out[cid_] = {"precio": tot, "sin_tarifa": sin, "equipos": sum(n for _s, n in lst), "skus_sin_tarifa": skus_sin}
+    return out, clase_de
+
+
+def _salud_controles_extra():
+    """SOLO LECTURA. Los demás puntos donde un cliente de instalación se puede caer antes de ofrecerle mantención:
+    OT cerradas cuyos equipos no llegaron a la ficha, prospectos sin teléfono ni correo, equipos sin tarifa (se
+    cotizarían en $0), contratos sin monto y la última revisión de la vigilancia."""
+    out = {"ot_sin_equipos": [], "prospectos_sin_contacto": [], "equipos_sin_tarifa": [], "contratos_sin_monto": [],
+           "vigilancia": _salud_kv_get("salud_vigilancia")}
+    try:
+        revisadas = {int(x) for x in (_salud_kv_get("salud_ot_sin_productos") or [])}
+        ots = [dict(r) for r in (mysql_fetchall(
+            "SELECT v.id, v.numero_ot, v.cliente_id, c.razon_social, v.estado, "
+            "       COALESCE(NULLIF(TRIM(v.documento_erp_tido),''), v.factura_tido) AS tido, "
+            "       COALESCE(NULLIF(TRIM(v.documento_erp_nudo),''), v.factura_nudo) AS nudo "
+            "  FROM mant_visitas v JOIN mant_clientes c ON c.id=v.cliente_id "
+            " WHERE v.tipo='instalacion' AND v.estado IN ('completada','cerrada') AND v.created_at >= %s "
+            " ORDER BY v.id DESC LIMIT 300", (_SALUD_OT_DESDE,)) or [])]
+        ots = [o for o in ots if o["id"] not in revisadas]
+        if ots:
+            cids = sorted({o["cliente_id"] for o in ots})
+            ph = ",".join(["%s"] * len(cids))
+            con_doc, con_ot = set(), set()
+            for r in (mysql_fetchall(
+                    f"SELECT DISTINCT cliente_id, doc_origen, origen_ot_id FROM mant_maquinas WHERE cliente_id IN ({ph}) "
+                    f"   AND ((doc_origen IS NOT NULL AND doc_origen<>'') OR origen_ot_id IS NOT NULL)", tuple(cids)) or []):
+                if r.get("doc_origen"):
+                    con_doc.add((r["cliente_id"], _doc_origen_normalizar(r["doc_origen"])))
+                if r.get("origen_ot_id"):
+                    con_ot.add(int(r["origen_ot_id"]))
+            out["ot_sin_equipos"] = _ot_sin_equipos_filtrar(ots, con_doc, con_ot)
+    except Exception as e:
+        print(f"[salud] ot sin equipos: {e}", flush=True)
+    pros = []
+    try:
+        for r in (mysql_fetchall(
+                "SELECT c.id, c.razon_social, c.contacto_tel, c.tel_empresa, c.contacto2_tel, c.contacto_email, "
+                "       c.email_empresa, c.contacto2_email "
+                "  FROM mant_clientes c "
+                " WHERE c.estado<>'inactivo' AND (c.tipo_cliente='instalacion' OR c.estado='prospecto') "
+                "   AND NOT EXISTS (SELECT 1 FROM mant_contratos ct WHERE ct.cliente_id=c.id "
+                "                    AND ct.nombre<>'Contenedor de documentos' AND ct.estado IN ('vigente','por_vencer','indefinido')) "
+                " ORDER BY c.razon_social") or []):
+            pros.append(r["id"])
+            if not any((r.get(k) or "").strip() for k in ("contacto_tel", "tel_empresa", "contacto2_tel", "contacto_email",
+                                                          "email_empresa", "contacto2_email")):
+                out["prospectos_sin_contacto"].append({"id": r["id"], "razon_social": r["razon_social"]})
+    except Exception as e:
+        print(f"[salud] prospectos: {e}", flush=True)
+    try:
+        tar, clase_de = _tarifas_por_cliente(pros)
+        agg = {}
+        for _cid, t in tar.items():
+            for sku, n in t["skus_sin_tarifa"].items():
+                a_ = agg.setdefault(sku, {"sku": sku, "clase": clase_de.get(sku) or "", "equipos": 0, "clientes": 0})
+                a_["equipos"] += n
+                a_["clientes"] += 1
+        out["equipos_sin_tarifa"] = sorted(agg.values(), key=lambda x: (-x["equipos"], x["sku"]))
+    except Exception as e:
+        print(f"[salud] tarifas: {e}", flush=True)
+    try:
+        out["contratos_sin_monto"] = [
+            {"id": r["id"], "cliente_id": r["cliente_id"], "razon_social": r["razon_social"], "nombre": r.get("nombre") or "",
+             "monto_mensual": float(r.get("monto_mensual") or 0)}
+            for r in (mysql_fetchall(
+                "SELECT ct.id, ct.cliente_id, c.razon_social, ct.nombre, ct.monto_mensual FROM mant_contratos ct "
+                "  JOIN mant_clientes c ON c.id=ct.cliente_id "
+                " WHERE ct.nombre<>'Contenedor de documentos' AND ct.estado IN ('vigente','por_vencer','indefinido') "
+                "   AND COALESCE(ct.monto_mensual,0) < %s ORDER BY c.razon_social", (_CONTRATO_MONTO_MIN,)) or [])]
+    except Exception as e:
+        print(f"[salud] contratos sin monto: {e}", flush=True)
+    return out
 
 def _ficha_instalacion_desde_grupo(g_, quien):
     """Crea (o encuentra) la ficha de un cliente que entró por instalación. (id, 'creada'|'ya_existia'|motivo_de_fallo)."""
@@ -62759,7 +63353,10 @@ def _ficha_instalacion_desde_grupo(g_, quien):
         return None, "no se pudo crear"
     try:
         nums = ", ".join(t["numero"] for t in g_.get("tickets", [])[:6])
-        _mant_log("cliente", cid, "creado", f"Ficha creada desde tickets de instalación ({nums}) · queda como prospecto de instalación · por {quien}")
+        facs = ", ".join(f_["doc"] for f_ in g_.get("facturas", [])[:6])
+        origen = " y ".join(x for x in ((f"tickets de instalación ({nums})" if nums else ""),
+                                        (f"ventas con instalación del ERP ({facs})" if facs else "")) if x)
+        _mant_log("cliente", cid, "creado", f"Ficha creada desde {origen or 'una instalación'} · queda como prospecto de instalación · por {quien}")
     except Exception:
         pass
     return cid, "creada"
@@ -62810,7 +63407,36 @@ def _docs_de_tickets(tickets):
     return docs
 
 
-def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets_cache=None):
+def _ventas_instalacion_erp(desde=None):
+    """SOLO LECTURA. Ventas con instalación (línea ZZINSTALACION) que el Monitor de Transporte ya trajo del ERP
+    (transport_commitments): la fuente de verdad de «quién compró con instalación», tenga o no ticket u OT
+    (Daniel 2026-10-19). `desde` (date) limita a documentos emitidos desde esa fecha. Si falla devuelve []."""
+    sql = ("SELECT tido, nudo, fecha_emision, cliente_nombre, cliente_rut, comuna, direccion, telefono, email "
+           "  FROM transport_commitments "
+           " WHERE (UPPER(COALESCE(zz_skus,'')) LIKE %s OR clasificacion='instalacion') "
+           "   AND cliente_rut IS NOT NULL AND cliente_rut<>'' ")
+    params = ["%ZZINSTALACION%"]
+    if desde:
+        sql += " AND fecha_emision >= %s "
+        params.append(desde)
+    try:
+        return [dict(r) for r in (mysql_fetchall(sql + " ORDER BY fecha_emision, id", tuple(params)) or [])]
+    except Exception as e:
+        print(f"[ventas instalacion erp] {e}", flush=True)
+        return []
+
+
+def _ventas_instalacion_erp_de_rut(rut, cache=None):
+    """Las ventas con instalación del ERP de un cliente, por RUT canónico o por cuerpo."""
+    llaves = {k for k in (_rut_canon(rut), _rut_cuerpo(rut)) if k}
+    if not llaves:
+        return []
+    filas = cache if cache is not None else _ventas_instalacion_erp()
+    return [v for v in filas if v.get("cliente_rut")
+            and (_rut_canon(v["cliente_rut"]) in llaves or _rut_cuerpo(v["cliente_rut"]) in llaves)]
+
+
+def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets_cache=None, erp_cache=None):
     """Carga en la ficha los PRODUCTOS que el cliente compró con instalación, desde la factura del ERP (solo
     lectura), con su fecha de emisión (doc_fecha) para programar las mantenciones. Una fila por unidad (cada
     máquina con su serie), sin servicios ZZ, idempotente por documento (_asignados_por_sku, mismo candado que
@@ -62822,6 +63448,14 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
             return False, {"error": "Cliente no encontrado"}
         tickets = _tickets_instalacion_del_cliente(cli.get("rut"), tickets_cache)
         docs = _docs_de_tickets(tickets) if tickets else []
+        # Las ventas con instalación del ERP también traen los productos, aunque no tengan ticket (Daniel 2026-10-19).
+        _vistos = {(d_[0], d_[1]) for d_ in docs}
+        for v_ in _ventas_instalacion_erp_de_rut(cli.get("rut"), erp_cache):
+            tido_ = (v_.get("tido") or "").strip().upper()
+            nudo_ = re.sub(r"[^0-9]", "", str(v_.get("nudo") or "")).lstrip("0")
+            if tido_ in _TIDOS_VENTA and nudo_ and (tido_, nudo_) not in _vistos:
+                _vistos.add((tido_, nudo_))
+                docs.append((tido_, nudo_, v_.get("fecha_emision"), {}))
         candidatos, omitidos, docs_info = [], [], []
         leidos = []
         for tido, nudo, fecha_reg, t in docs:
@@ -62958,7 +63592,8 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
                             "  fecha_instalacion, estado, notas, aplica_mantencion, created_by) "
                             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'activo',%s,%s,%s)",
                             (cid, c["sku"][:100], c["nombre"], serie, cant_fila, c["doc_key"], c["doc_fecha"], c["fecha_inst"],
-                             f"Alta desde la instalación (ticket {c['ticket']})"
+                             (f"Alta desde la instalación (ticket {c['ticket']})" if c.get("ticket")
+                              else f"Alta desde la venta con instalación {c.get('doc_key') or ''}".strip())
                              + (f" · lote de {cant_fila} unidades" if repetible else ""), aplica, quien))
                         mid = (mysql_fetchone("SELECT LAST_INSERT_ID() AS id") or {}).get("id")
                         break
@@ -62976,7 +63611,8 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
                     creados.append(mid)
                     try:
                         _mant_log("maquina", mid, "creada_desde_instalacion",
-                                  f"Alta desde el ticket de instalación {c['ticket']} · "
+                                  (f"Alta desde el ticket de instalación {c['ticket']} · " if c.get("ticket")
+                                   else "Alta desde la venta con instalación · ")
                                   + (f"documento {c['doc_key']}" if c["doc_key"] else "equipos declarados en el ticket")
                                   + (f" · emitido {str(c['doc_fecha'])[:10]}" if c["doc_fecha"] else ""))
                     except Exception:
@@ -62998,17 +63634,25 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
 def _instalaciones_asegurar_fichas(desde=None, max_n=30):
     """Vigilancia: toda instalación nueva (ticket) deja su ficha de cliente. Corre colgada del cron de cada 10 min.
     Solo mira tickets desde `desde` (lo anterior se repara a mano con vista previa). No envía nada a nadie."""
-    res = {"creadas": 0, "ya_existian": 0, "fallidas": []}
+    res = {"creadas": 0, "ya_existian": 0, "fallidas": [], "rut_desde_factura": 0}
     if (os.environ.get("INSTALACIONES_FICHA_AUTO", "1") or "1").strip().lower() in ("0", "false", "no"):
         res["apagado"] = True
         return res
+    # Primero, a los tickets de instalación sin RUT se les busca el RUT en su factura (Daniel 2026-10-19).
+    try:
+        res["rut_desde_factura"] = _tickets_rut_desde_factura(max_n=10)["resueltos"]
+    except Exception as e:
+        print(f"[vigilancia instalaciones] rut desde factura: {e}", flush=True)
+    erp_cache = None
     for g_ in _instalaciones_auditar(desde=desde)["tickets_sin_ficha"][:max_n]:
         try:
             cid, estado = _ficha_instalacion_desde_grupo(g_, "sistema")
             if estado == "creada":
                 res["creadas"] += 1
                 try:
-                    _ficha_equipos_desde_instalacion(cid, confirmar=True, usuario="sistema")
+                    if erp_cache is None:
+                        erp_cache = _ventas_instalacion_erp()
+                    _ficha_equipos_desde_instalacion(cid, confirmar=True, usuario="sistema", erp_cache=erp_cache)
                 except Exception as _e_eq:
                     print(f"[vigilancia instalaciones] equipos cid={cid}: {_e_eq}", flush=True)
             elif estado == "ya_existia":
@@ -63017,6 +63661,9 @@ def _instalaciones_asegurar_fichas(desde=None, max_n=30):
                 res["fallidas"].append(f"{g_.get('empresa')}: {estado}")
         except Exception as e:
             res["fallidas"].append(f"{g_.get('empresa')}: {str(e)[:80]}")
+    # Queda la constancia de cada revisión: el panel de salud muestra cuándo corrió y qué hizo.
+    _salud_kv_set("salud_vigilancia", {"at": datetime.utcnow().isoformat(timespec="seconds"), "creadas": res["creadas"],
+                                       "rut_desde_factura": res["rut_desde_factura"], "fallidas": res["fallidas"][:10]})
     return res
 
 
@@ -63026,8 +63673,14 @@ def _instalaciones_asegurar_fichas(desde=None, max_n=30):
 def mant_instalaciones_auditoria():
     if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
         return jsonify({"ok": False, "error": "Solo un administrador puede ver esto."}), 403
-    a = _instalaciones_auditar()
-    return jsonify({"ok": True, **a, "resumen": {k: len(v) for k, v in a.items()}})
+    a = _instalaciones_auditar(completo=True)
+    vig = a.get("vigilancia") or {}
+    if vig.get("at"):
+        try:
+            vig["at_chile"] = chile_fmt_filter(datetime.fromisoformat(vig["at"]), "%d/%m/%Y %H:%M")
+        except Exception:
+            pass
+    return jsonify({"ok": True, **a, "resumen": {k: len(v) for k, v in a.items() if isinstance(v, list)}})
 
 
 @app.route("/mantenciones/api/instalaciones/crear-fichas", methods=["POST"])
@@ -63134,10 +63787,11 @@ def mant_instalaciones_equipos():
     cache = mysql_fetchall(
         "SELECT id, numero_ticket, rut, estado, numero_documento, cerrado_at, created_at "
         "  FROM tk_tickets WHERE tipo='install' AND estado<>'cancelado'") or []
+    erp_cache = _ventas_instalacion_erp()
     out = []
     for cid in ids:
         ok, data = _ficha_equipos_desde_instalacion(cid, confirmar=bool(d.get("confirmar")),
-                                                   usuario=current_username(), tickets_cache=cache)
+                                                   usuario=current_username(), tickets_cache=cache, erp_cache=erp_cache)
         out.append({"id": cid, "ok": ok, **data})
     return jsonify({"ok": True, "resultados": out})
 
@@ -63164,6 +63818,55 @@ def mant_instalaciones_reclasificar():
             except Exception:
                 pass
     return jsonify({"ok": True, "reclasificados": n})
+
+
+@app.route("/mantenciones/api/instalaciones/rut-desde-factura", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_instalaciones_rut_desde_factura():
+    """Busca en su factura del ERP (solo lectura) el RUT de los tickets de instalación indicados que no lo tienen,
+    y lo guarda. Body: {ids: [..]} (hasta 30 por llamada)."""
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo un administrador puede hacer esto."}), 403
+    d = request.get_json(silent=True) or {}
+    ids = [int(x) for x in (d.get("ids") or [])[:30] if str(x).isdigit()]
+    if not ids:
+        return jsonify({"ok": False, "error": "No indicaste tickets."}), 400
+    # Cada ticket resuelto deja su constancia en su propio hilo (_tickets_rut_desde_factura).
+    return jsonify({"ok": True, **_tickets_rut_desde_factura(max_n=30, ids=ids)})
+
+
+@app.route("/mantenciones/api/instalaciones/ot-equipos", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_instalaciones_ot_equipos():
+    """Panel de salud: pasa a la ficha los equipos del documento de una OT de instalación cerrada (el MISMO núcleo
+    del cierre, idempotente por documento). Body: {vid, accion: 'vista'|'pasar'|'revisada'}. 'revisada' deja de
+    mostrar una OT cuyo documento no trae productos para la ficha (por ejemplo, solo el servicio)."""
+    if not (g.permissions.get("admin") or g.permissions.get("superadmin")):
+        return jsonify({"ok": False, "error": "Solo un administrador puede hacer esto."}), 403
+    d = request.get_json(silent=True) or {}
+    try:
+        vid = int(d.get("vid") or 0)
+    except (TypeError, ValueError):
+        vid = 0
+    accion = (d.get("accion") or "vista").strip().lower()
+    if not vid or accion not in ("vista", "pasar", "revisada"):
+        return jsonify({"ok": False, "error": "Indica la OT y qué hacer."}), 400
+    if accion == "revisada":
+        rev = [int(x) for x in (_salud_kv_get("salud_ot_sin_productos") or []) if str(x).isdigit()]
+        if vid not in rev:
+            _salud_kv_set("salud_ot_sin_productos", (rev + [vid])[-500:])
+        try:
+            _mant_log("visita", vid, "salud_ot_revisada",
+                      f"OT revisada en el panel de salud: su documento no trae productos para la ficha · por {current_username()}")
+        except Exception:
+            pass
+        return jsonify({"ok": True, "mensaje": "OT marcada como revisada."})
+    ok, data = _ot_equipos_desde_doc_core(vid, confirmar=(accion == "pasar"), usuario=current_username())
+    if not ok:
+        return jsonify({"ok": False, "codigo": data.get("codigo"), "error": data.get("error") or "No se pudo procesar."}), 400
+    return jsonify({"ok": True, **data})
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -63245,47 +63948,11 @@ def _cobertura_datos():
         f"SELECT cliente_id, COUNT(*) AS n FROM mant_visitas WHERE cliente_id IN ({ph}) AND estado='programada' "
         f"   AND fecha_programada BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 90 DAY) GROUP BY cliente_id",
         tuple(ids)) or [])}
-    equipos = {}
-    for r in (mysql_fetchall(
-            f"SELECT cliente_id, UPPER(TRIM(sku)) AS sku, COUNT(*) AS n FROM mant_maquinas "
-            f" WHERE cliente_id IN ({ph}) AND estado='activo' AND COALESCE(aplica_mantencion,1)=1 "
-            f" GROUP BY cliente_id, UPPER(TRIM(sku))", tuple(ids)) or []):
-        equipos.setdefault(r["cliente_id"], []).append((r["sku"] or "", int(r["n"] or 0)))
     # Precio de UNA mantención por cliente con las tarifas del cotizador (mano de obra; sin ruta ni repuestos).
-    skus = sorted({sku for lst in equipos.values() for sku, _n in lst if sku})
-    clase_de = {}
-    if skus:
-        ph2 = ",".join(["%s"] * len(skus))
-        for r in (mysql_fetchall(f"SELECT UPPER(TRIM(sku)) AS sku, clase_producto FROM cat_productos "
-                                 f" WHERE UPPER(TRIM(sku)) IN ({ph2})", tuple(skus)) or []):
-            if r.get("clase_producto"):
-                clase_de[r["sku"]] = r["clase_producto"]
-    _calc = globals().get("_tk_cotiz_calcular_item")
-    _cfgf = globals().get("_tk_cotiz_pricing_config")
-    _tarb = globals().get("_cat_tarifas_clases_batch")
-    cfg_p, tarifas = None, {}
-    try:
-        cfg_p = _cfgf() if _cfgf else None
-        tarifas = (_tarb(sorted(set(clase_de.values())), "mantencion") or {}) if _tarb else {}
-    except Exception as e:
-        print(f"[cobertura] tarifas: {e}", flush=True)
-    precio_cli, sin_tarifa_cli = {}, {}
-    for cid_, lst in equipos.items():
-        tot, sin = 0.0, 0
-        for sku, n in lst:
-            clase = clase_de.get(sku)
-            r = None
-            if _calc and cfg_p is not None and clase:
-                try:
-                    r = _calc(clase, "mantencion", n, None, cfg_p, tarifa=tarifas.get(clase))
-                except Exception:
-                    r = None
-            if r and r.get("total") is not None:
-                tot += float(r["total"] or 0)
-            else:
-                sin += n
-        precio_cli[cid_] = tot
-        sin_tarifa_cli[cid_] = sin
+    tar, _clase_de = _tarifas_por_cliente(ids)
+    precio_cli = {k: v["precio"] for k, v in tar.items()}
+    sin_tarifa_cli = {k: v["sin_tarifa"] for k, v in tar.items()}
+    equipos_cli = {k: v["equipos"] for k, v in tar.items()}
     plan_cfg = _plan_config()
     try:
         vis_plan = max(1, int(float(plan_cfg.get("visitas_anio") or 4)))
@@ -63297,7 +63964,7 @@ def _cobertura_datos():
         desc_base = 0.0
     prospectos = [c["id"] for c in clientes if c["id"] not in contratos
                   and (c.get("tipo_cliente") == "instalacion" or c.get("estado") == "prospecto")]
-    pinfo = _prospecto_info(prospectos) if prospectos else {}
+    pinfo = _prospecto_info(prospectos, con_faltan=False) if prospectos else {}
     zonas, comunas, filas = {}, {}, []
     for c in clientes:
         z, n, la, lo = _zona_de(c.get("comuna"))
@@ -63305,7 +63972,7 @@ def _cobertura_datos():
         es_pros = c["id"] in pinfo
         if not (con or es_pros):
             continue                     # solo clientes con contrato o prospectos de mantención
-        neq = sum(n_ for _s, n_ in equipos.get(c["id"], []))
+        neq = equipos_cli.get(c["id"], 0)
         precio = precio_cli.get(c["id"], 0.0)
         pl = (pinfo.get(c["id"]) or {}).get("plan") or {}
         vis_mes = (12 / freq[c["id"]] / 12) if (con and freq.get(c["id"])) else vis_plan / 12
@@ -63909,10 +64576,12 @@ def mant_clientes():
             "inst_pendientes": len(_pend),
             "inst_sin_contactar": sum(1 for c in _pend if c["pr"]["etapa"] == "por_ofrecer"),
             "inst_vencidos": sum(1 for c in _pend if c["pr"].get("vencida")),
+            "inst_listos": sum(1 for c in _pend if c["pr"].get("listo")),
         }
     except Exception as _e_pr:
         print(f"[clientes] prospectos: {_e_pr}", flush=True)
-        _inst_stats = {"inst_pendientes": 0, "inst_sin_contactar": 0, "inst_vencidos": 0, "inst_vencida_1a": 0}
+        _inst_stats = {"inst_pendientes": 0, "inst_sin_contactar": 0, "inst_vencidos": 0, "inst_vencida_1a": 0,
+                       "inst_listos": 0}
 
     # Stats globales (sin filtros)
     gs = mysql_fetchone("""
@@ -70937,6 +71606,19 @@ def _prospecto_accion(o, cot=None, contrato_fecha=None):
               + (f" por {o['ofrecida_por']}" if o.get("ofrecida_por") else "") + ".")
 
 
+def _prospecto_faltan(contacto, equipos, sin_tarifa):
+    """Lo que le falta a una ficha para ofrecerle y cotizarle mantención (Daniel 2026-10-19: «Ficha lista para
+    cotizar»): cómo contactarlo, sus equipos y la tarifa de cada equipo del plan. Lista vacía = lista."""
+    f = []
+    if not contacto:
+        f.append({"key": "contacto", "texto": "teléfono o correo"})
+    if not equipos:
+        f.append({"key": "equipos", "texto": "sus equipos"})
+    elif sin_tarifa:
+        f.append({"key": "tarifa", "texto": f"la tarifa de {sin_tarifa} equipo{'s' if sin_tarifa != 1 else ''}"})
+    return f
+
+
 def _sumar_meses(d, meses):
     """Suma meses a una fecha sin pasarse del último día del mes (31-ene + 1 mes = 28/29-feb)."""
     import calendar as _cal
@@ -71037,7 +71719,7 @@ def _tickets_de_cliente(rut, limit=8):
              "url": f"/tickets/{r['id']}"} for r in rows]
 
 
-def _prospecto_info(ids):
+def _prospecto_info(ids, con_faltan=True):
     """{cliente_id: {etapa, etapa_label, nota, proxima_gestion, vencida,
     ofrecida_at, ofrecida_por, origen_ot, origen_tipo, origen_fecha}}.
     Tolerante: si la tabla o una columna falta, devuelve lo que pueda."""
@@ -71221,6 +71903,23 @@ def _prospecto_info(ids):
             o["accion"] = _prospecto_accion(o, cots.get(i), contratos.get(i))
         except Exception as e:
             print(f"[prospecto_info] accion {i}: {e}", flush=True)
+    # ¿Lista para cotizar? Contacto, equipos y tarifa de cada equipo del plan (Daniel 2026-10-19).
+    if con_faltan:
+        try:
+            contacto = {r["id"]: any((r.get(k) or "").strip() for k in ("contacto_tel", "tel_empresa", "contacto2_tel",
+                                                                        "contacto_email", "email_empresa", "contacto2_email"))
+                        for r in (mysql_fetchall(
+                            f"SELECT id, contacto_tel, tel_empresa, contacto2_tel, contacto_email, email_empresa, contacto2_email "
+                            f"  FROM mant_clientes WHERE id IN ({ph})", tuple(ids)) or [])}
+            tar, _clase_de = _tarifas_por_cliente(ids)
+            for i, o in out.items():
+                t_ = tar.get(i) or {}
+                o["faltan"] = _prospecto_faltan(contacto.get(i, False), o.get("equipos_plan") or t_.get("equipos") or 0,
+                                                t_.get("sin_tarifa") or 0)
+                o["listo"] = not o["faltan"]
+                o["precio_mantencion"] = round(t_.get("precio") or 0)
+        except Exception as e:
+            print(f"[prospecto_info] faltan: {e}", flush=True)
     return out
 
 
@@ -71873,14 +72572,21 @@ def _prospecto_ticket_oferta(cid, quien):
             f"Qué ofrecemos:\n{puntos}")
     if anterior:
         desc += f"\n\nOferta anterior: {anterior.get('numero_ticket') or '#' + str(anterior['id'])} (cerrada)."
+    # La venta que originó la relación (la factura de la instalación) viaja con el ticket (REGLA #24).
+    try:
+        doc_inst = (mysql_fetchone(
+            "SELECT doc_origen FROM mant_maquinas WHERE cliente_id=%s AND doc_origen IS NOT NULL AND doc_origen<>'' "
+            " ORDER BY doc_fecha IS NULL, doc_fecha, id LIMIT 1", (cid,)) or {}).get("doc_origen")
+    except Exception:
+        doc_inst = None
     hoy = datetime.now()
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO tk_tickets (origen, estado, tipo, prioridad, titulo, descripcion, rut, empresa, nombre_contacto, "
-                "  email, phone, direccion, comuna_nombre, asignado_a, fecha_limite, created_by) "
-                "VALUES ('backoffice','open','maintenance','media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "  email, phone, direccion, comuna_nombre, asignado_a, fecha_limite, created_by, numero_documento) "
+                "VALUES ('backoffice','open','maintenance','media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (f"Oferta de plan de mantención — {cli.get('razon_social')}"[:300], desc,
                  (cli.get("rut") or "")[:12] or None, (cli.get("razon_social") or "")[:150],
                  (cli.get("contacto_nombre") or "")[:150] or None,
@@ -71888,7 +72594,7 @@ def _prospecto_ticket_oferta(cid, quien):
                  (cli.get("contacto_tel") or cli.get("tel_empresa") or "")[:20] or None,
                  (cli.get("direccion") or "")[:255] or None, (cli.get("comuna") or "")[:120] or None,
                  (quien or "")[:190] if quien and quien != "sistema" else None,
-                 (hoy.date() + timedelta(days=5)), quien or "sistema"))
+                 (hoy.date() + timedelta(days=5)), quien or "sistema", doc_inst or None))
             tid = cur.lastrowid
             cur.execute("UPDATE tk_tickets SET numero_ticket = CONCAT('TK-', %s, '-', LPAD(id,5,'0')) WHERE id=%s",
                         (hoy.year, tid))
@@ -72179,7 +72885,7 @@ def prospecto_propuesta_publica(token):
         items = [dict(r) for r in (mysql_fetchall(
             "SELECT descripcion, cantidad, total FROM tk_cotizacion_items WHERE cotizacion_id=%s ORDER BY id",
             (cot_visible["id"],)) or [])]
-    info = (_prospecto_info([cid]) or {}).get(cid) or {}
+    info = (_prospecto_info([cid], con_faltan=False) or {}).get(cid) or {}
     return render_template("mantenciones/propuesta_publica.html", invalido=False, token=tok, cliente=cli, v=variables,
                            calc=c, plan=info.get("plan"), equipos=_plan_equipos(cid), fila=fila, cot=cot_visible,
                            items=items, incluye=[l_.strip() for l_ in (cfg.get("incluye") or "").splitlines() if l_.strip()],
@@ -76403,6 +77109,10 @@ def mant_contrato_subir(cid):
     d = request.form
     if not f or not f.filename:
         return jsonify({"error": "Sin archivo"}), 400
+    # Monto mensual obligatorio y en pesos (Daniel 2026-10-19): sin él no se mide el ingreso de mantención.
+    _monto_ok, _monto_err = _contrato_monto_valido(d.get("monto_mensual"))
+    if _monto_err:
+        return jsonify({"error": _monto_err, "error_codigo": "MONTO_MENSUAL_OBLIGATORIO"}), 400
 
     # Validación PDF-only
     ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
@@ -77168,6 +77878,12 @@ def mant_contrato_update(ctid):
     d = request.get_json(silent=True) or {}
     allowed = ["nombre","fecha_inicio","fecha_vencimiento","es_indefinido",
                "monto_mensual","monto_anual","frecuencia_meses","notas","estado"]
+    if "monto_mensual" in d:
+        # Mismo criterio que al subir: en pesos y mayor que cero (lo usa el panel de salud para completar montos).
+        _m, _err = _contrato_monto_valido(d.get("monto_mensual"))
+        if _err:
+            return jsonify({"ok": False, "error": _err}), 400
+        d["monto_mensual"] = _m
     sets = [f"{f}=%s" for f in allowed if f in d]
     vals = [d[f] for f in allowed if f in d]
     if not sets:
@@ -87688,6 +88404,11 @@ _OT2_SELECT_FILAS = (
     "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
     "       COALESCE(tar.n_completas, 0) AS n_completas, "
     "       v.hora_real_inicio, v.cerrada_at, v.firma_tecnico_at, "
+    # 🧭 2026-10-18 (Daniel, viendo la tabla: «en el avance, podría ser fiel al tracking… saber si lo firmó el
+    # técnico, si está pendiente, todo eso»): las MISMAS columnas del recorrido de la ficha (_OT2_HITOS) para que la
+    # tabla pinte la etapa real sin una consulta por fila (REGLA #18). modalidad_cobro acompaña a cliente_id para que
+    # _ot_es_interna() decida igual que en la ficha (interna = sin hito «Cliente»).
+    "       v.created_at, v.firma_cliente_at, v.firma_supervisor_at, v.modalidad_cobro, "
     # 🏷️ 2026-09-21 (Daniel: "en la tabla de las OT, en chiquitito, poné
     # el N° de anexo y las facturas asociadas... por trazabilidad" -- tras
     # la noche de OT-218/211/213 con números quemados y anexos huérfanos).
@@ -87800,10 +88521,12 @@ def _ot2_enriquecer_fila(f, hoy):
     # Subtítulo del sello de estado -- SIEMPRE un dato real, nunca
     # fabricado. Cae a la fecha programada si no hay timestamp más
     # específico para ese estado.
+    # 🕐 2026-10-18 (REGLA #6): hora_real_inicio / cerrada_at / firma_tecnico_at se guardan con NOW() (UTC). Con
+    # strftime directo, «En sitio desde» salía corrido ~3 h y la fecha podía saltar de día. Hora Chile siempre.
     def _hhmm(dt):
-        return dt.strftime("%H:%M") if dt and hasattr(dt, "strftime") else None
+        return chile_fmt_filter(dt, "%H:%M") if dt and hasattr(dt, "strftime") else None
     def _ddmm(dt):
-        return dt.strftime("%d/%m") if dt and hasattr(dt, "strftime") else None
+        return chile_fmt_filter(dt, "%d/%m") if dt and hasattr(dt, "strftime") else None
     hri, cerr_at, ftec_at = f.get("hora_real_inicio"), f.get("cerrada_at"), f.get("firma_tecnico_at")
     if estado in ("en_curso", "en_ejecucion") and _hhmm(hri):
         f["estado_sub"] = f"En sitio desde {_hhmm(hri)}"
@@ -87912,6 +88635,16 @@ def _ot2_enriquecer_fila(f, hoy):
 
     _ot2_calcular_salud(f, hoy)
 
+    # 🧭 2026-10-18 (Daniel: «en el avance, podría ser fiel al tracking… saber si lo firmó el técnico, si está
+    # pendiente, todo eso»): etapa real del recorrido + semáforo de la fila. Solo datos operativos: nunca plata ni
+    # nombres de quien firmó (REGLA #26). Si algo falla, la fila se muestra igual sin recorrido (nunca se inventa).
+    try:
+        _ot2_recorrido(f)
+    except Exception as _e_rec:
+        print(f"[ot2_recorrido] id={f.get('id')}: {type(_e_rec).__name__}", flush=True)
+        f["recorrido"] = None
+    _ot2_tabla_semaforo(f)
+
     # 🔒 2026-10-08 (REGLA #26): el N° y el estado de la factura del proveedor son cuentas de la empresa: un técnico
     # (interno, elevado o externo) no los recibe en ninguna de las 4 vistas del panel.
     if _es_rol_tecnico():
@@ -87953,6 +88686,202 @@ def _ot2_calcular_salud(f, hoy):
     else:
         f["salud_label"], f["salud_class"], f["salud_icon"] = None, None, None
     f["salud"] = clave
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  🧭 2026-10-18 — Tabla de OT: recorrido, semáforo y filtro de agenda
+#
+#  Daniel (dueño, viendo la tabla en vivo): «necesito que mejores esa tabla.
+#  Es muy, muy simple. Tiene información, pero está como desordenado…».
+#  Y sobre la columna Avance: «podría ser fiel al tracking, ¿me entiendes?
+#  Saber si lo firmó el técnico, si está pendiente, todo eso». Y: «a veces
+#  filtrar por agenda».
+#
+#  Tres ayudas puras (sin consultas): el recorrido sale de las columnas que
+#  _OT2_SELECT_FILAS ya trae (REGLA #18: ninguna consulta por fila), el
+#  semáforo usa solo datos operativos (nunca fac_alerta ni fin_clasif, así
+#  un técnico y gestión ven la misma urgencia, REGLA #26) y el filtro de
+#  agenda se traduce a SQL parametrizado con la fecha de HOY en hora Chile
+#  (REGLA #6: nunca CURDATE(), que en Cloud Run es UTC).
+# ═══════════════════════════════════════════════════════════════════
+# Etiqueta corta de cada hito para la tabla (la ficha usa la larga de _OT2_HITOS).
+_OT2_REC_CORTO = {
+    "creada": "Creada", "ejecutando": "Ejecución", "f_tecnico": "Técnico",
+    "f_cliente": "Cliente", "aprobada": "Aprobada", "cerrada": "Cerrada",
+}
+_OT2_ESTADOS_TE_TOCA = ("firmada_tecnico", "pendiente_aprobacion", "pendiente_info", "pendiente_repuesto")
+
+
+def _ot2_recorrido(f):
+    """Etapa REAL del recorrido de una OT para la tabla del panel.
+
+    Misma lógica que la ficha (ot2_detalle, sobre _OT2_HITOS): se salta el hito
+    «Cliente» en un trabajo interno (_ot_es_interna), se marcan como hechos por
+    inferencia los hitos anteriores al último con fecha real (no se firma el
+    técnico sin haber ejecutado antes) y el hito «actual» es el que sigue al
+    último hecho. Nunca se inventa una fecha: un hito inferido queda sin
+    `cuando`. Nunca nombres de quien firmó (REGLA #26).
+
+    Deja f["recorrido"] = {hitos: [{clave, corto, hecho, inferido, actual,
+    cuando}], texto, avisos: [...], cancelada}. `cuando` va en hora Chile
+    (REGLA #6). La ficha sigue con su propio cálculo; queda propuesto que
+    pase a usar este mismo helper.
+
+    2026-10-19: `avisos` trae solo «Falta información» / «Falta repuesto». El
+    anexo (por firmar, sin anexo) NO va acá: el chip de «Cliente y trabajo»,
+    que ya existía, lo dice igual y la fila lo mostraba dos veces con dos
+    textos distintos («Anexo 225 · borrador» y «Anexo 225 por firmar»). El
+    semáforo de la fila (_ot2_tabla_semaforo) sigue mirando el anexo.
+    """
+    estado = f.get("estado")
+    fase = f.get("estado_fase")
+    cancelada = estado in ("cancelada", "anulada")
+    es_interna = _ot_es_interna(f)
+    hitos = []
+    for clave, label, _icono, col, _color in _OT2_HITOS:
+        if clave == "f_cliente" and es_interna:
+            continue          # trabajo interno: no hay cliente que firme
+        ts = f.get(col)
+        ts_ok = bool(ts) and hasattr(ts, "strftime")
+        hitos.append({
+            "clave": clave, "corto": _OT2_REC_CORTO.get(clave, label),
+            "hecho": ts_ok, "inferido": False, "actual": False,
+            "cuando": chile_fmt_filter(ts, "%d/%m") if ts_ok else "",
+        })
+    por_clave = {h["clave"]: h for h in hitos}
+    # El estado «cerrada» es definitivo aunque falte cerrada_at (OT viejas): se marca hecho, sin fecha inventada.
+    if estado == "cerrada" and not por_clave["cerrada"]["hecho"]:
+        por_clave["cerrada"]["hecho"], por_clave["cerrada"]["inferido"] = True, True
+    idx_ultimo = -1
+    for i, h in enumerate(hitos):
+        if h["hecho"]:
+            idx_ultimo = i
+    for i, h in enumerate(hitos):
+        if not h["hecho"] and i < idx_ultimo:
+            h["hecho"], h["inferido"] = True, True
+    if not cancelada:
+        if idx_ultimo < 0:
+            hitos[0]["actual"] = True
+        elif idx_ultimo < len(hitos) - 1:
+            hitos[idx_ultimo + 1]["actual"] = True
+
+    def _fecha(clave):
+        h = por_clave.get(clave)
+        return (h or {}).get("cuando") or ""
+
+    def _con(txt, fecha):
+        return f"{txt} {fecha}" if fecha else txt
+
+    # Texto de la etapa: la firma es evidencia y manda sobre el estado fino.
+    hri = f.get("hora_real_inicio")
+    en_sitio = chile_fmt_filter(hri, "%H:%M") if (hri and hasattr(hri, "strftime")) else ""
+    if cancelada:
+        texto = f.get("estado_label") or "Cancelada"
+    elif por_clave["cerrada"]["hecho"]:
+        texto = _con("Cerrada el", _fecha("cerrada")) if _fecha("cerrada") else "Cerrada"
+    elif por_clave["aprobada"]["hecho"] and not por_clave["aprobada"]["inferido"]:
+        texto = _con("Aprobada", _fecha("aprobada")) + " · falta cerrar"
+    elif "f_cliente" in por_clave and por_clave["f_cliente"]["hecho"] and not por_clave["f_cliente"]["inferido"]:
+        texto = _con("Firmó el cliente", _fecha("f_cliente")) + " · por aprobar"
+    elif por_clave["f_tecnico"]["hecho"] and not por_clave["f_tecnico"]["inferido"]:
+        texto = _con("Firmó el técnico", _fecha("f_tecnico")) + (
+            " · por aprobar" if es_interna else " · falta firma del cliente")
+    elif f.get("estado_en_vivo"):
+        texto = f"En sitio desde {en_sitio}" if en_sitio else "En ejecución"
+    elif f.get("check_done") and fase in ("ejec", "comp"):
+        texto = "Checklist listo · falta firma del técnico"
+    elif estado == "completada":
+        texto = "Completada · falta cerrar"
+    elif fase == "comp":
+        texto = f.get("estado_label") or "Completada"
+    elif fase == "pend":
+        texto = "Por ejecutar"
+    else:
+        texto = f.get("estado_label") or ""
+
+    # Avisos en ámbar junto a la etapa. El anexo no se repite acá (2026-10-19): ya es un chip en «Cliente y trabajo».
+    avisos = []
+    if estado == "pendiente_info" and not texto.startswith("Falta información"):
+        avisos.append("Falta información")
+    if estado == "pendiente_repuesto" and not texto.startswith("Falta repuesto"):
+        avisos.append("Falta repuesto")
+
+    f["recorrido"] = {"hitos": hitos, "texto": texto, "avisos": avisos, "cancelada": cancelada}
+    return f["recorrido"]
+
+
+def _ot2_tabla_semaforo(f):
+    """Semáforo de la fila (franja + punto): la PRIMERA condición que se cumple gana.
+
+    gris = cancelada/anulada · rojo = atrasada · vivo = en ejecución ahora (rojo que pulsa) ·
+    ámbar = hoy, te toca (firmada técnico / por aprobar / falta info / falta repuesto), externo sin
+    anexo, anexo sin firmar o sin checklist en fase pendiente/ejecución · azul = programada · verde = lo demás.
+    El rojo queda solo para atraso y ejecución en vivo (memoria «alertar sin gritar»). Solo datos operativos:
+    nunca fac_alerta ni fin_clasif (REGLA #26: técnico y gestión ven la misma urgencia).
+    Deja f["tabla_semaforo"] (clase) y f["tabla_semaforo_txt"] (texto para lectores de pantalla y title).
+    """
+    fase = f.get("estado_fase")
+    estado = f.get("estado")
+    rel = f.get("agenda_rel_class")
+    if fase is None:
+        clase, txt = "gris", f.get("estado_label") or "Cancelada"
+    elif rel == "mal":
+        clase, txt = "rojo", f.get("agenda_rel") or "Atrasada"
+    elif f.get("estado_en_vivo"):
+        clase, txt = "vivo", "En ejecución ahora"
+    elif rel == "hoy":
+        clase, txt = "ambar", f.get("agenda_rel") or "Hoy"
+    elif estado in _OT2_ESTADOS_TE_TOCA:
+        clase, txt = "ambar", f"Te toca: {f.get('estado_label') or estado}"
+    elif fase in ("pend", "ejec") and f.get("tecnico_tipo") == "externo" and not f.get("anexo_numero"):
+        clase, txt = "ambar", "Técnico externo sin anexo"
+    elif fase in ("pend", "ejec") and f.get("anexo_numero") and (f.get("anexo_estado") or "") != "firmado":
+        clase, txt = "ambar", f"Anexo {f.get('anexo_numero')} por firmar"
+    elif fase in ("pend", "ejec") and not (f.get("n_tareas") or 0):
+        clase, txt = "ambar", "Sin checklist"
+    elif fase == "pend":
+        clase, txt = "azul", f.get("estado_label") or "Programada"
+    else:
+        clase, txt = "verde", f.get("estado_label") or "Completada"
+    f["tabla_semaforo"], f["tabla_semaforo_txt"] = clase, txt
+    return clase
+
+
+# Filtro rápido de agenda de la vista Tabla (Daniel 2026-10-18: «a veces filtrar por agenda»). Lista blanca: la clave
+# viaja por URL y se MAPEA a SQL fijo con parámetros (REGLA #4); cualquier otra cosa queda vacía.
+_OT2_AGENDA_OPTS = (
+    ("atrasadas", "Atrasadas"), ("hoy", "Hoy"), ("manana", "Mañana"),
+    ("semana", "Esta semana"), ("proximas", "Próximas"), ("sin_fecha", "Sin fecha"),
+)
+_OT2_AGENDA_CLAVES = tuple(k for k, _ in _OT2_AGENDA_OPTS)
+
+
+def _ot2_agenda_where(clave, hoy):
+    """Devuelve (sql, params) para la clave de agenda, con `hoy` = fecha en hora Chile (nunca CURDATE()).
+
+    atrasadas = pendiente o en ejecución, fecha pasada y sin fecha_fin vigente (lo mismo que el chip «Atrasada» de la
+    fila) · hoy / mañana = el día cae dentro de fecha_programada..fecha_fin · semana = se cruza con lunes–domingo
+    actual · próximas = fecha_programada después de hoy · sin_fecha = sin fecha_programada.
+    Clave desconocida -> ("", []).
+    """
+    import datetime as _dt
+    if clave not in _OT2_AGENDA_CLAVES or hoy is None:
+        return "", []
+    if clave == "atrasadas":
+        estados = list(_OT2_FASE_A_ESTADOS["pend"]) + list(_OT2_FASE_A_ESTADOS["ejec"])
+        ph = ",".join(["%s"] * len(estados))
+        return (f"(v.estado IN ({ph}) AND v.fecha_programada < %s "
+                f" AND (v.fecha_fin IS NULL OR v.fecha_fin < %s))", estados + [hoy, hoy])
+    if clave in ("hoy", "manana"):
+        dia = hoy if clave == "hoy" else hoy + _dt.timedelta(days=1)
+        return ("(v.fecha_programada <= %s AND %s <= COALESCE(v.fecha_fin, v.fecha_programada))", [dia, dia])
+    if clave == "semana":
+        lunes = hoy - _dt.timedelta(days=hoy.weekday())
+        domingo = lunes + _dt.timedelta(days=6)
+        return ("(v.fecha_programada <= %s AND COALESCE(v.fecha_fin, v.fecha_programada) >= %s)", [domingo, lunes])
+    if clave == "proximas":
+        return "v.fecha_programada > %s", [hoy]
+    return "v.fecha_programada IS NULL", []
 
 
 def _ot2_fila_modal_lean(f):
@@ -88218,6 +89147,12 @@ def ot2_panel():
     # El permiso vive en el backend, no solo en el <select> del template.
     if f_pago and not _facprov_puede():
         f_pago = ""
+    # 📅 2026-10-18 (Daniel: «a veces filtrar por agenda»): chips Atrasadas · Hoy · Mañana · Esta semana · Próximas ·
+    # Sin fecha, solo en la vista Tabla. Va por URL y se aplica en el SERVIDOR (entra al COUNT, al LIMIT y a los KPI)
+    # para que la paginación cuente bien (REGLA #4.3). Lista blanca: fuera de ella queda vacío.
+    f_agenda = (request.args.get("agenda") or "").strip().lower()
+    if f_agenda not in _OT2_AGENDA_CLAVES or vista != "tabla":
+        f_agenda = ""
 
     # Orden por columna (Daniel: "siempre ordenado por el número de OT,
     # pero si yo quiero ordenar por cliente, por tipo, por estado, lo
@@ -88329,6 +89264,12 @@ def ot2_panel():
         elif f_pago == "pagada":
             extra_where_q.append(_fpi_en)
             extra_params_q.append("pagada")
+    if f_agenda:
+        # 📅 2026-10-18: la fecha de HOY en hora Chile (REGLA #6), nunca CURDATE() (UTC en Cloud Run).
+        _ag_sql, _ag_params = _ot2_agenda_where(f_agenda, _now_chile().date())
+        if _ag_sql:
+            extra_where_q.append(_ag_sql)
+            extra_params_q.extend(_ag_params)
     where_extra_sql_q = (" AND " + " AND ".join(extra_where_q)) if extra_where_q else ""
 
     extra_where, extra_params = list(extra_where_q), list(extra_params_q)
@@ -88675,6 +89616,7 @@ def ot2_panel():
         kanban_cols=kanban_cols,
         orden=orden, dir=dir_.lower(), f_tipo=f_tipo, f_tec=f_tec,
         f_interna=f_interna, f_anexo=f_anexo, f_pago=f_pago,
+        f_agenda=f_agenda, agenda_opts=_OT2_AGENDA_OPTS,   # 📅 2026-10-18: filtro rápido de agenda (vista Tabla)
         tipos_opts=tipos_opts, tecnicos_opts=tecnicos_opts,
         cal_semanas=cal_semanas, cal_mes_label=cal_mes_label,
         cal_mes_ant=cal_mes_ant, cal_mes_sig=cal_mes_sig, cal_mes_actual=cal_mes_actual,
@@ -92096,6 +93038,13 @@ def ot2_api_centro_costo(vid):
         "       ('cerrada','cancelada','anulada')",
         (centro, vid))
     if not _n:
+        # 🔧 2026-10-19 (OT-2026-00276): MySQL cuenta 0 filas cuando el valor NO cambió. Elegir el mismo centro
+        # de costo que ya tenía la OT respondía «la OT se cerró», falso. Solo es conflicto si de verdad se cerró.
+        _v2 = mysql_fetchone("SELECT estado, centro_costo FROM mant_visitas WHERE id=%s", (vid,)) or {}
+        if ((_v2.get("estado") or "") not in ("cerrada", "cancelada", "anulada")
+                and (_v2.get("centro_costo") or "").strip().lower() == centro):
+            return jsonify({"ok": True, "centro_costo": centro,
+                            "label": dict(_OT2_CENTROS_COSTO).get(centro, centro), "sin_cambio": True})
         return jsonify({
             "ok": False,
             "error": "La OT se cerro mientras declarabas el centro de costo. "
@@ -106697,14 +107646,32 @@ def _ot2_crear_core(d, autorizacion=None):
                     _h = (_chk_res.get("skus") or {}).get(_t["sku"])
                     if not _h:
                         continue
-                    if _h.get("sistema") or not _t.get("plantilla_ids"):
+                    # 🎛️ 2026-10-19 (Daniel: «necesito que se controle por el front, tú solo
+                    # debes mostrar las opciones»): lo que la persona ve y elige en la fila es
+                    # EXACTAMENTE lo que recibe el técnico. El servidor solo completa una fila
+                    # que llegó SIN plantillas (navegador antiguo); nunca reemplaza una elección.
+                    if not _t.get("plantilla_ids"):
                         _t["plantilla_ids"] = [b["id"] for b in (_h.get("base"), _h.get("sistema"),
                                                                  _h.get("condicional")) if b]
         _chk_validas = _chk_plantillas_validas(
             {_i for _t in tareas_manuales for _i in (_t.get("plantilla_ids") or [])}, tipo_ot)
+        # 🔎 2026-10-19 (Daniel, NVI 687: «me trae los de LU… ninguna se está
+        # asignando… tiene que haber un respeto en la trazabilidad operacional»):
+        # una plantilla que el asistente mostró y el servidor no puede usar ya no
+        # se descarta en silencio — vuelve como aviso con el nombre del producto.
+        _chk_descartadas = []
         for _t in tareas_manuales:
             if _t.get("plantilla_ids"):
+                _fuera = [_i for _i in _t["plantilla_ids"] if _i not in _chk_validas]
+                if _fuera:
+                    _chk_descartadas.append((_t.get("titulo") or _t.get("sku") or "", _fuera))
                 _t["plantilla_ids"] = [_i for _i in _t["plantilla_ids"] if _i in _chk_validas]
+        if _chk_descartadas:
+            print(f"[ot2_crear] checklist: plantillas descartadas {_chk_descartadas[:10]}", flush=True)
+            for _tit, _fuera in _chk_descartadas[:5]:
+                avisos.append(
+                    f"«{_tit}»: {len(_fuera)} plantilla(s) del checklist no se aplicaron "
+                    f"(inactivas, sin tareas o de otra categoría). Revísalas en Plantillas.")
         _chk_condicionales = _chk_condicional_ids(tipo_ot)
 
     if not equipos and not plantilla_suelta and not tareas_manuales:
@@ -111972,6 +112939,17 @@ def _ot2_filtros_export(args):
             desc.append(f"desde {_desde.strftime('%d/%m/%Y')}")
         else:
             desc.append(f"hasta {_hasta.strftime('%d/%m/%Y')}")
+
+    # 📅 2026-10-19: el filtro rápido de agenda de la vista Tabla (Atrasadas, Hoy, Mañana, Esta semana, Próximas,
+    # Sin fecha) también acota el Excel -- antes, con «Hoy» activo en pantalla, el reporte bajaba TODO. Misma lista
+    # blanca y mismo SQL parametrizado que el panel (_ot2_agenda_where), con la fecha de hoy en hora Chile (REGLA #6).
+    f_agenda = (args.get("agenda") or "").strip().lower()
+    if f_agenda in _OT2_AGENDA_CLAVES:
+        _ag_sql, _ag_params = _ot2_agenda_where(f_agenda, _now_chile().date())
+        if _ag_sql:
+            where.append(_ag_sql)
+            params += list(_ag_params)
+            desc.append("agenda " + dict(_OT2_AGENDA_OPTS).get(f_agenda, f_agenda).lower())
 
     sql = " WHERE " + " AND ".join(where) if where else ""
     role_sql, role_params = _mant_calendario_role_where()
@@ -153682,8 +154660,15 @@ def _chk_plantillas_validas(ids, tipo_ot):
            "   AND EXISTS (SELECT 1 FROM mant_tarea_plantilla_items i WHERE i.plantilla_id = p.id)")
     params = list(ids)
     if cat:
-        sql += " AND (p.categoria_admin = %s OR p.categoria_admin IS NULL)"
+        # 🔎 2026-10-19 (Daniel, NVI 687): una plantilla que el MAPA del checklist
+        # heredado asigna a este tipo (regla en mant_checklist_herencia) vale aunque
+        # su categoría haya cambiado al editarla (ej. las «(LU)» de Lenin): el
+        # asistente la muestra desde ese mapa y la OT debe recibir exactamente eso.
+        sql += (" AND (p.categoria_admin = %s OR p.categoria_admin IS NULL"
+                "      OR EXISTS (SELECT 1 FROM mant_checklist_herencia h"
+                "                  WHERE h.plantilla_id = p.id AND h.tipo_ot = %s))")
         params.append(cat)
+        params.append((tipo_ot or "").strip().lower())
     try:
         return {int(r["id"]) for r in (mysql_fetchall(sql, tuple(params)) or [])}
     except Exception as e:

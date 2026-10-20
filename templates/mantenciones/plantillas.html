@@ -231,6 +231,50 @@
   .pl-rsug-chip button{border:0;background:none;color:#dc2626;min-width:44px;min-height:44px;border-radius:999px}
   .pl-rsug-chip button:hover{background:#fee2e2}
   .pl-rsug-vacio{font-size:.78rem;color:#6b7280}
+
+  /* ── 2026-10-19 (Daniel: «el visor del editor de plantilla se ve bien pequeño… Lenin tiene un equipo pequeño»).
+     En un notebook el modal-xl de Bootstrap baja a 800 px de ancho y ~600 px de alto: el Paso 1 y el panel de
+     agregar se comían casi todo y la lista de ítems quedaba en una franja. Ahora el editor usa TODA la pantalla
+     (en celular ya era pantalla completa por mobile.css), el Paso 1 se pliega en una línea al abrir una plantilla
+     existente y el panel fijo de arriba ocupa menos alto. No se quitó ningún control (REGLA #4.2). ── */
+  @media (min-width:768px){
+    #modalEditorPlantilla .modal-dialog{max-width:min(1500px, calc(100vw - 24px));margin:12px auto;
+                                        height:calc(100dvh - 24px)}
+    #modalEditorPlantilla .modal-content{height:100%;max-height:100%}
+    #modalEditorPlantilla .modal-header{padding:10px 18px}
+    #modalEditorPlantilla .modal-footer{padding:8px 18px}
+  }
+  @media (min-width:1200px){
+    /* Copiar ítems y Nuevo ítem en la misma fila: el panel fijo pierde un tercio de su alto. */
+    #modalEditorPlantilla .pl-sticky-tools{display:flex;flex-wrap:wrap;column-gap:18px;align-items:flex-end}
+    #modalEditorPlantilla .pl-copy-panel{flex:0 1 420px;min-width:300px;border-bottom:0;margin-bottom:0;
+                                          padding-right:18px;border-right:1px dashed #e5e7eb}
+    #modalEditorPlantilla .pl-add-panel{flex:1 1 560px}
+    #modalEditorPlantilla .pl-sel-toolbar{flex:1 1 100%}
+  }
+  @media (max-height:820px) and (min-width:768px){
+    /* «Copiar ítems desde…» en una sola fila (etiqueta al lado del selector). La letra NO se achica: el 31-08
+       se agrandó a propósito para este mismo computador. Solo se recortan márgenes y el relleno de cada ítem. */
+    #modalEditorPlantilla .pl-copy-panel{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    #modalEditorPlantilla .pl-copy-panel > label{margin:0 !important;white-space:nowrap}
+    #modalEditorPlantilla .pl-copy-panel > .d-flex{flex:1 1 300px}
+    #modalEditorPlantilla .it-card{padding:10px 14px;margin-bottom:8px}
+    #modalEditorPlantilla .it-card .it-head{margin-bottom:6px}
+    #modalEditorPlantilla .pl-copy-panel{padding-bottom:8px;margin-bottom:8px}
+    #modalEditorPlantilla .pl-add-panel{padding-bottom:8px}
+    #modalEditorPlantilla .pl-sel-toolbar{margin-bottom:8px;padding:5px 10px}
+    #modalEditorPlantilla .pl-step-header{padding:8px 14px}
+    #modalEditorPlantilla .modal-body{padding:12px 14px}
+  }
+  /* Paso 1 plegable: con la plantilla ya completa queda una línea de resumen y «Mostrar». */
+  .pl-step1-resumen{display:none;font-size:.85rem;color:#374151;font-weight:600;min-width:0;
+                    overflow-wrap:anywhere}
+  .pl-step1-toggle{flex-shrink:0;min-height:36px;margin-left:8px}
+  @media (max-width:575.98px){ .pl-step1-toggle{margin-left:auto} }
+  #plStep1.is-plegado .pl-step-body{display:none}
+  #plStep1.is-plegado .pl-step-header{border-bottom:0;border-radius:12px}
+  #plStep1.is-plegado .pl-step1-resumen{display:block;flex:1 1 auto}
+  #plStep1.is-plegado .pl-step-sub{display:none}
 </style>
 
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -362,9 +406,14 @@
           <div class="pl-step-header">
             <div class="pl-step-circle"><span class="pl-step-num">1</span><span class="pl-step-check"><i class="bi bi-check-lg"></i></span></div>
             <div class="pl-step-title">Info básica</div>
+            <div class="pl-step1-resumen" id="plStep1Resumen"></div>
             <div class="pl-step-sub">Cómo se llama y dónde vive</div>
+            <button type="button" class="btn btn-sm btn-outline-secondary pl-step1-toggle" id="plStep1Toggle"
+                    onclick="plegarPaso1()" aria-expanded="true" aria-controls="plStep1Body">
+              <i class="bi bi-chevron-up me-1"></i>Ocultar
+            </button>
           </div>
-          <div class="pl-step-body">
+          <div class="pl-step-body" id="plStep1Body">
             <div class="row g-2">
               <div class="col-12 col-md-6">
                 <label class="form-label small fw-semibold">Nombre <span class="pl-req">*</span></label>
@@ -1286,6 +1335,7 @@ function abrirEditor(pid){
   renderCategoriaCards('');
   renderItems();
   poblarCopyDesdeSelect();
+  plegarPaso1(false);   // una plantilla nueva parte con la Info básica a la vista
   if (!_modal) _modal = new bootstrap.Modal(document.getElementById('modalEditorPlantilla'));
   _modal.show();
   if (pid){
@@ -1341,7 +1391,29 @@ async function cargarDetalle(pid){
     renderItems();
     aplicarTarifaSugerida(p.de_clasificacion, p.tarifa_sugerida_min);
     refrescarPasos();
+    // 2026-10-19: una plantilla existente y con su Info básica completa abre plegada en una línea, para que
+    // el espacio quede para los ítems (lo que se edita casi siempre). Si falta algo, queda abierta.
+    plegarPaso1(!!PL_STEP_RULES[1]());
   } catch(e){ alert('Error: '+e.message); }
+}
+
+// Pliega (true), despliega (false) o alterna (sin argumento) el Paso 1 «Info básica» del editor.
+function plegarPaso1(plegar){
+  const sec = document.getElementById('plStep1');
+  const btn = document.getElementById('plStep1Toggle');
+  if (!sec || !btn) return;
+  if (plegar === undefined) plegar = !sec.classList.contains('is-plegado');
+  if (plegar){
+    const nom = document.getElementById('ePNombre').value.trim() || 'Sin nombre';
+    const cat = document.querySelector('#ePCategoriaCards .pl-cat-card.active span');
+    const min = document.getElementById('ePTiempo').value.trim();
+    document.getElementById('plStep1Resumen').textContent =
+      [nom, cat ? cat.textContent.trim() : '', min ? (min + ' min') : ''].filter(Boolean).join(' · ');
+  }
+  sec.classList.toggle('is-plegado', !!plegar);
+  btn.setAttribute('aria-expanded', plegar ? 'false' : 'true');
+  btn.innerHTML = plegar ? '<i class="bi bi-chevron-down me-1"></i>Mostrar'
+                         : '<i class="bi bi-chevron-up me-1"></i>Ocultar';
 }
 
 // ── Checklist rojo/verde del propio editor (mismo patrón que

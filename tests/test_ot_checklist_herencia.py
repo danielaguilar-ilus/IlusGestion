@@ -331,6 +331,21 @@ class TestCrearOT(unittest.TestCase):
         self.assertIn("_categoria_admin_para_tipo(tipo_ot)", f)
         self.assertIn("COALESCE(p.activa, 1) = 1", f)
 
+    def test_lo_que_mapea_el_tipo_vale_aunque_cambie_su_categoria(self):
+        # 2026-10-19 (Daniel, NVI 687): las «(LU)» que el asistente muestra desde el mapa deben llegar a la OT.
+        f = _fuente("_chk_plantillas_validas")
+        self.assertIn("SELECT 1 FROM mant_checklist_herencia h", f)
+        self.assertIn("h.plantilla_id = p.id AND h.tipo_ot = %s", f)
+
+    def test_el_servidor_no_reemplaza_lo_que_eligio_la_persona(self):
+        # 2026-10-19 (Daniel: «que se controle por el front, tú solo debes mostrar las opciones»).
+        self.assertIn('if not _t.get("plantilla_ids"):\n                        _t["plantilla_ids"] = [b["id"]', self.f)
+        self.assertNotIn('if _h.get("sistema") or not _t.get("plantilla_ids"):', self.f)
+
+    def test_una_plantilla_descartada_vuelve_como_aviso(self):
+        self.assertIn("_chk_descartadas.append(", self.f)
+        self.assertIn("plantilla(s) del checklist no se aplicaron", self.f)
+
     def test_no_llego_queda_como_faltante_declarado(self):
         self.assertIn('"no_llego": bool(_tm.get("no_llego")),', self.f)
         self.assertIn('_tm_tit = (_tm["titulo"] + " — NO LLEGÓ")[:300]', self.f)

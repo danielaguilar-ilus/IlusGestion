@@ -490,7 +490,7 @@ time,
   --ilus-black:  #111111;
   --ilus-gray:   #f2f2f2;
   --ilus-border: #e0e0e0;
-  --sidebar-w:   250px;
+  --sidebar-w:   212px;   /* 2026-10-19: antes 250 (Daniel: «está muy grande») */
   --topbar-h:    90px;
 }
 
@@ -532,14 +532,21 @@ body {
 
 /* ══════════════════════════════════════════════════════════════
    SIDEBAR LATERAL
+   2026-10-19 (Daniel: «hace mucho tiempo estaba bastante atractivo, hoy está hecho un desastre… tenerlo contraído siempre y
+   pequeño, está muy grande»): 212 px de ancho (antes 250), logo y filas más bajos, una sola familia de filas (enlace directo,
+   grupo y subgrupo comparten medidas, íconos y chevron) y acordeón real (ver el script justo después del <nav> en base.html).
+   Paleta ILUS (REGLA #2): rojo #dc2626 sobre negro #0a0a0a. Los toques en celular siguen en 44 px (REGLA #3).
 ══════════════════════════════════════════════════════════════ */
 .sidebar {
+  --sb-red:    #dc2626;
+  --sb-txt:    #c7cad1;
+  --sb-txt-2:  #aeb3bc;
   position: fixed;
   top: 0; left: 0;
   width: var(--sidebar-w);
   height: 100vh;
-  background: var(--ilus-black);
-  border-right: 3px solid var(--ilus-red);
+  background: #0a0a0a;
+  border-right: 3px solid var(--sb-red);
   display: flex;
   flex-direction: column;
   z-index: 1000;
@@ -547,10 +554,9 @@ body {
   overflow-x: hidden;
 }
 
-/* — Logo area — */
+/* — Logo area — compacto: la marca se recorta a su caja real (la imagen trae mucho aire alrededor) — */
 .sidebar-logo-area {
-  /* 2026-06-14 (Daniel): menos padding-left para anclar el logo a la izquierda */
-  padding: 24px 18px 20px 10px;
+  padding: 12px 14px 10px;
   border-bottom: 1px solid rgba(255,255,255,.07);
   flex-shrink: 0;
 }
@@ -558,43 +564,51 @@ body {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 12px;
+  gap: 8px;
   text-decoration: none;
 }
 .sidebar-logo-img {
   display: block;
-  /* width:auto (no estirar al 100%) → el logo respeta su tamaño y queda a la izquierda */
   width: auto;
-  max-width: 172px;
+  max-width: 132px;
   height: auto;
   object-fit: contain;
-  filter: drop-shadow(0 2px 8px rgba(0,0,0,.55));
   transition: opacity .15s;
 }
 .sidebar-logo-img:hover { opacity: .88; }
+/* Con imagen: la caja mide lo que mide la marca (~110×38 px) y el resto del PNG queda recortado. */
+.sidebar-brand.sidebar-brand-img { display: block; position: relative; height: 46px; overflow: hidden; }
+.sidebar-brand-img .sidebar-logo-img { position: absolute; left: -36px; top: -34px; width: 191px; max-width: none; height: auto; }
 
 /* SVG fallback (sin logo) */
+.sidebar-brand svg { width: 34px; height: 40px; flex-shrink: 0; }
 .sidebar-brand-name {
   color: #fff;
-  font-size: 44px;
+  font-size: 30px;
   font-weight: 900;
   letter-spacing: .5px;
   line-height: 1;
 }
 .sidebar-brand-tag {
   color: #888;
-  font-size: 13px;
+  font-size: 10px;
   letter-spacing: 2px;
   text-transform: uppercase;
-  margin-top: 4px;
+  margin-top: 3px;
 }
 
 /* — Navegacion — */
 .sidebar-nav {
-  flex: 1;
-  padding: 14px 0 6px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 4px 0 8px;
   overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #2e2e2e transparent;
 }
+.sidebar-nav::-webkit-scrollbar { width: 6px; }
+.sidebar-nav::-webkit-scrollbar-thumb { background: #2e2e2e; border-radius: 3px; }
 .sidebar-section-label {
   color: #666;
   font-size: .62rem;
@@ -610,57 +624,77 @@ body {
   font-size: .7rem;
   opacity: .7;
 }
-.sidebar-link {
+
+/* Una sola familia de filas: enlace directo (.sidebar-link), grupo (.sg-toggle) y subgrupo (.sg-subtoggle). */
+.sidebar-link,
+.sg-toggle,
+.sg-subtoggle {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 9px 18px 9px 18px;
-  color: #d4d4d4;
-  text-decoration: none;
-  font-size: .875rem;
-  font-weight: 500;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 12px 6px 11px;
+  margin: 0;
+  background: none;
+  border: 0;
   border-left: 3px solid transparent;
-  transition: background .12s, color .12s, border-color .12s;
+  border-radius: 0;
+  color: var(--sb-txt);
+  font-size: .86rem;
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background .14s, color .14s, border-color .14s;
 }
-.sidebar-link:hover {
-  background: rgba(255,255,255,.06);
-  color: #fff;
-  border-left-color: rgba(204,0,0,.5);
+.sidebar-link > span,
+.sg-subtoggle > span { min-width: 0; overflow-wrap: anywhere; }
+.sidebar-link i,
+.sg-toggle > i:first-child,
+.sg-subtoggle > i.sg-subico {
+  flex: 0 0 18px;
+  width: 18px;
+  font-size: 1rem;
+  line-height: 1;
+  text-align: center;
+  opacity: .82;
+  color: inherit;
 }
+.sidebar-link:hover,
+.sg-toggle:hover,
+.sg-subtoggle:hover { background: rgba(255,255,255,.06); color: #fff; }
+.sidebar-link:focus-visible,
+.sg-toggle:focus-visible,
+.sg-subtoggle:focus-visible { outline: 2px solid rgba(220,38,38,.75); outline-offset: -2px; }
 .sidebar-link.active {
-  background: rgba(204,0,0,.14);
+  background: rgba(220,38,38,.16);
   color: #fff;
   font-weight: 600;
-  border-left-color: var(--ilus-red);
+  border-left-color: var(--sb-red);
 }
-.sidebar-link i { font-size: 1rem; flex-shrink: 0; }
+.sidebar-link.active i { color: #f87171; opacity: 1; }
 
-/* ── Sidebar Accordion Groups ─────────────────────────────── */
-.sg-toggle {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  padding: 10px 16px 10px 14px;
-  background: none;
-  border: none;
-  border-left: 3px solid transparent;
-  color: #c0c0c0;
-  font-size: .72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 1.2px;
-  cursor: pointer;
-  text-align: left;
-  transition: color .14s, background .14s, border-color .14s;
-  margin-top: 2px;
+/* ── Acordeón: grupos (.sg-toggle) y subgrupos (.sg-subtoggle) ──────────── */
+.sg-toggle,
+.sg-subtoggle { font-weight: 600; color: #e4e6ea; }
+.sg-toggle.sg-open,
+.sg-subtoggle.sg-open { color: #fff; background: rgba(255,255,255,.05); }
+.sg-toggle.sg-open > i:first-child,
+.sg-subtoggle.sg-open > i.sg-subico { color: #f87171; opacity: 1; }
+.sg-chevron {
+  flex: 0 0 auto !important;
+  width: auto !important;
+  margin-left: auto;
+  font-size: .66rem !important;
+  opacity: .55 !important;
+  transition: transform .2s;
 }
-.sg-toggle i { font-size: .88rem; opacity: .85; flex-shrink: 0; color: inherit; }
-.sg-toggle:hover { color: #fff; background: rgba(255,255,255,.07); border-left-color: rgba(204,0,0,.4); }
-.sg-toggle.sg-open { color: #fff; background: rgba(204,0,0,.1); border-left-color: var(--ilus-red); }
-.sg-toggle.sg-open i { opacity: 1; }
-.sg-chevron { margin-left: auto; font-size: .68rem !important; opacity: .6 !important; transition: transform .2s; }
-.sg-toggle.sg-open .sg-chevron { transform: rotate(90deg); opacity: 1 !important; }
+.sg-toggle.sg-open .sg-chevron,
+.sg-subtoggle.sg-open .sg-chevron { transform: rotate(90deg); opacity: 1 !important; }
 
 /* Separador visual entre grupos del sidebar */
 .sg-separator {
@@ -672,89 +706,114 @@ body {
 /* Encabezado de sección que agrupa varios grupos del sidebar
    (Servicio Técnico / Logística / Catálogo). Etiqueta sutil, no un banner. */
 .sg-section-label {
-  color: rgba(255,255,255,.4);
+  color: rgba(255,255,255,.48);
   font-size: .6rem;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 1.6px;
-  padding: 14px 16px 4px 14px;
-  margin-top: 4px;
+  letter-spacing: 1.5px;
+  padding: 12px 14px 3px;
+  margin: 0;
   user-select: none;
   pointer-events: none;
 }
+.sidebar-nav > .sg-section-label:first-child { padding-top: 6px; }
 
-/* Sección Ajustes — estilo especial */
+/* Sección Ajustes — abajo, más apagada */
+.sidebar-ajustes-bottom { flex-shrink: 0; padding-bottom: 2px; }
 .sg-toggle.sg-ajustes { color: #94a3b8; }
 .sg-toggle.sg-ajustes i { color: #94a3b8; }
-.sg-toggle.sg-ajustes:hover { color: #fff; background: rgba(148,163,184,.1); border-left-color: #94a3b8; }
-.sg-toggle.sg-ajustes.sg-open { color: #e2e8f0; background: rgba(148,163,184,.1); border-left-color: #64748b; }
+.sg-toggle.sg-ajustes:hover { color: #fff; background: rgba(148,163,184,.1); }
+.sg-toggle.sg-ajustes.sg-open { color: #e2e8f0; background: rgba(148,163,184,.1); }
+.sg-toggle.sg-ajustes.sg-open > i:first-child { color: #e2e8f0; }
 
-.sg-items {
+/* Contenido de un grupo / subgrupo: arranca cerrado; el alto lo maneja el script del acordeón (max-height en línea).
+   Cerrado también queda `visibility:hidden` (con la misma demora de la animación): sus enlaces no entran al Tab ni al lector de pantalla. */
+.sg-items,
+.sg-subitems {
+  position: relative;
   overflow: hidden;
   max-height: 0;
-  transition: max-height .24s ease;
+  visibility: hidden;
+  transition: max-height .24s ease, visibility 0s linear .24s;
 }
-.sg-items.sg-open { max-height: 900px; }
-
-/* ── Sub-grupo anidado (2026-07-29, Daniel: "el menú de Transporte y
-   Servicio Técnico está muy largo") — un segundo nivel de acordeón DENTRO
-   de un .sg-items, para agrupar los ítems menos usados ("Configuración"
-   en Transporte, "Taller" en Servicio Técnico) sin agregarlos como más
-   links planos. Es independiente del acordeón principal (.sg-toggle):
-   no cierra los demás grupos al abrirse, solo expande/colapsa su propio
-   contenido -- por eso usa su propia clase y su propio JS, ver base.html. ── */
-.sg-subtoggle {
-  display: flex; align-items: center; gap: 9px; width: 100%;
-  padding: 8px 18px 8px 30px; background: none; border: none;
-  border-left: 3px solid transparent; color: #9a9a9a;
-  font-size: .78rem; font-weight: 600; cursor: pointer; text-align: left;
-  transition: color .14s, background .14s, border-color .14s;
+.sg-items.sg-open,
+.sg-subitems.sg-open {
+  visibility: visible;
+  transition: max-height .24s ease, visibility 0s;
 }
-.sg-subtoggle i.sg-subico { font-size: .85rem; opacity: .8; flex-shrink: 0; color: inherit; }
-.sg-subtoggle:hover { color: #fff; background: rgba(255,255,255,.05); }
-.sg-subtoggle.sg-open { color: #e2e8f0; }
-.sg-subtoggle .sg-chevron { margin-left: auto; font-size: .62rem !important; opacity: .55 !important; transition: transform .2s; }
-.sg-subtoggle.sg-open .sg-chevron { transform: rotate(90deg); opacity: 1 !important; }
-.sg-subitems { overflow: hidden; max-height: 0; transition: max-height .22s ease; }
-.sg-subitems.sg-open { max-height: 400px; }
-.sg-subitems .sidebar-link { padding-left: 30px; font-size: .82rem; }
+.sg-items > :last-child,
+.sg-subitems > :last-child { margin-bottom: 4px; }
+/* Guía vertical que une los hijos con su grupo */
+.sg-items::before,
+.sg-subitems::before {
+  content: "";
+  position: absolute;
+  left: 22px; top: 2px; bottom: 6px;
+  width: 1px;
+  background: rgba(255,255,255,.1);
+  pointer-events: none;
+}
+.sg-items .sg-subitems::before { left: 44px; }
 
-/* — Footer usuario — */
+/* Hijos: más pequeños y sangrados bajo el texto de su grupo */
+.sg-items .sidebar-link,
+.sg-subitems .sidebar-link,
+.sg-items .sg-subtoggle {
+  min-height: 36px;
+  padding: 6px 4px 6px 30px;
+  gap: 8px;
+  font-size: .83rem;
+  color: var(--sb-txt-2);
+}
+.sg-items .sidebar-link i,
+.sg-subitems .sidebar-link i,
+.sg-items .sg-subtoggle > i.sg-subico { flex-basis: 16px; width: 16px; font-size: .92rem; opacity: .75; }
+.sg-items .sg-subtoggle { font-weight: 500; }
+.sg-items .sidebar-link:hover,
+.sg-subitems .sidebar-link:hover,
+.sg-items .sg-subtoggle:hover { color: #fff; }
+.sg-items .sidebar-link.active,
+.sg-subitems .sidebar-link.active { color: #fff; }
+.sg-items .sg-subitems .sidebar-link { padding-left: 46px; }
+/* 2026-10-19: el chevron de un subgrupo (p. ej. Configuracion) cae en la misma columna que el de los grupos (padding derecho 12 px) */
+.sg-items .sg-subtoggle { padding-right: 12px; }
+
+/* — Footer usuario — compacto — */
 .sidebar-footer {
-  padding: 14px 16px 16px;
+  padding: 8px 10px 9px;
   border-top: 1px solid rgba(255,255,255,.07);
   flex-shrink: 0;
 }
 .sidebar-user {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
+  padding: 3px 4px;
 }
 .sidebar-user-avatar {
-  width: 36px; height: 36px;
-  background: var(--ilus-red);
+  width: 30px; height: 30px;
+  background: var(--sb-red);
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   color: #fff;
   font-weight: 900;
-  font-size: 1rem;
+  font-size: .85rem;
   flex-shrink: 0;
 }
 .sidebar-user-info { min-width: 0; flex: 1; }
 .sidebar-user-name {
   color: #fff;
-  font-size: .82rem;
+  font-size: .8rem;
   font-weight: 700;
   line-height: 1.15;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* 2026-10-19: con el menu mas angosto el nombre baja a 2 lineas en vez de cortarse con puntos suspensivos */
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .sidebar-user-role {
   color: #94a3b8;
-  font-size: .66rem;
-  text-transform: uppercase;
-  letter-spacing: .6px;
+  font-size: .7rem;
+  line-height: 1.2;
 }
 
 /* ── Ajustes link arriba del footer ─── */
@@ -773,30 +832,53 @@ body {
   text-decoration: none;
   transition: color .14s, background .14s;
 }
+.sidebar-logout-form { margin: 6px 0 0; }
 .btn-sidebar-logout {
   display: block;
   width: 100%;
   background: rgba(255,255,255,.05);
   border: 1px solid rgba(255,255,255,.1);
   color: #bbb;
-  padding: 7px 12px;
+  padding: 5px 10px;
   border-radius: 6px;
-  font-size: .82rem;
+  font-size: .78rem;
   font-weight: 600;
   cursor: pointer;
   text-align: left;
   transition: background .12s, color .12s, border-color .12s;
 }
 .btn-sidebar-logout:hover {
-  background: rgba(204,0,0,.18);
-  border-color: var(--ilus-red);
+  background: rgba(220,38,38,.18);
+  border-color: var(--sb-red);
   color: #fff;
 }
 .sidebar-sync-note {
-  margin-top: 8px;
-  color: #555;
-  font-size: .67rem;
+  margin-top: 3px;
+  color: #6b7280;
+  font-size: .62rem;
   letter-spacing: .3px;
+}
+
+/* Celular (drawer ☰): toques de 44 px y texto un punto más grande (REGLA #3) */
+@media (max-width: 767px) {
+  .sidebar-link,
+  .sg-toggle,
+  .sg-subtoggle { min-height: 44px; font-size: .92rem; }
+  .sg-items .sidebar-link,
+  .sg-subitems .sidebar-link,
+  .sg-items .sg-subtoggle { min-height: 44px; font-size: .9rem; padding-left: 40px; }
+  .sg-items .sg-subitems .sidebar-link { padding-left: 56px; }
+  .sg-items::before,
+  .sg-subitems::before { left: 25px; }
+  .sg-items .sg-subitems::before { left: 48px; }
+  .sg-section-label { font-size: .64rem; padding-top: 14px; }
+  .sidebar-user { min-height: 44px; }
+  .sidebar-user-avatar { width: 36px; height: 36px; font-size: 1rem; }
+  .sidebar-user-name { font-size: .86rem; }
+  .btn-sidebar-logout { font-size: .86rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sg-items, .sg-subitems, .sg-items.sg-open, .sg-subitems.sg-open, .sg-chevron { transition: none; }
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -1707,7 +1789,7 @@ input[type="password"]::-ms-clear { display: none !important; width: 0 !importan
    TABLET  (768px – 991px)
 ══════════════════════════════════════════════════════════════ */
 @media (min-width: 768px) and (max-width: 991px) {
-  :root { --sidebar-w: 220px; }
+  :root { --sidebar-w: 200px; }   /* 2026-10-19: antes 220 */
   .main-wrapper { padding: 0 16px 40px; }
   .page-header  { margin: 0 -16px 18px; padding: 16px 16px 14px; }
   .photos-grid  { grid-template-columns: repeat(3, 1fr); }
