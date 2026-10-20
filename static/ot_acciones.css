@@ -96,6 +96,39 @@
 .oa-grid .oa-btn.wide{grid-column:1/-1}
 @media(min-width:720px){.oa-grid{grid-template-columns:repeat(4,1fr)}.oa-grid .oa-btn.wide{grid-column:auto}}
 
+/* ───── 2026-10-20 (Daniel: «los botones no me gustaron… no tan grandes, al menos así se ven en mi computadora… ergonómico y
+   bonito, esto lo vamos casi a vender»). CELULAR: siguen cómodos para el dedo (≥44 px) pero más proporcionados.
+   COMPUTADOR (≥768 px): una barra compacta en una línea: «Pedir repuesto» como botón principal de 40 px y las
+   desviaciones como chips con ícono de 38 px; la explicación de cada una queda en el tooltip (title). ───── */
+@media(max-width:767.98px){
+  .otd-acc .oa-primary{min-height:50px;font-size:16.5px;border-radius:13px}
+  .otd-acc .oa-grid .oa-btn{min-height:48px;font-size:14.5px;border-radius:12px}
+  .otd-acc .oa-grid .oa-btn i{font-size:18px}
+  .otd-acc .oa-grid .oa-btn small{font-size:12px}
+}
+@media(min-width:768px){
+  .otd-acc{flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px 10px;margin:8px 0 2px}
+  .otd-acc > .oa-trk, .otd-acc > .oa-draft, .otd-acc > .oa-fsb, .otd-acc > .oa-note{flex:1 1 100%}
+  .otd-acc .oa-primary{width:auto;flex:none;min-height:40px;padding:0 16px 0 14px;font-size:14.5px;font-weight:700;border-radius:10px;
+    letter-spacing:.01em;gap:7px;box-shadow:0 2px 6px rgba(37,99,235,.25)}
+  .otd-acc .oa-primary i{font-size:16px}
+  .otd-acc .oa-primary .oa-eqn{display:none}
+  @keyframes oaPulseD{0%,100%{box-shadow:0 2px 6px rgba(37,99,235,.25),0 0 0 0 rgba(37,99,235,.30)}
+    50%{box-shadow:0 2px 6px rgba(37,99,235,.25),0 0 0 6px rgba(37,99,235,0)}}
+  .otd-acc .oa-primary{animation-name:oaPulseD}
+  .otd-acc .oa-lbl{flex:none;margin:0 0 0 6px;padding-left:12px;border-left:1px solid var(--oa-line);font-size:10.5px;letter-spacing:.1em}
+  .otd-acc .oa-grid{display:flex;flex-wrap:wrap;gap:6px;flex:1 1 auto}
+  .otd-acc .oa-grid .oa-btn{min-height:38px;padding:0 12px;font-size:13.5px;font-weight:600;border-radius:999px;justify-content:center;gap:6px;
+    background:#fff;color:#1f2937;border:1px solid var(--oa-line2);box-shadow:none;transition:background .15s,border-color .15s,color .15s}
+  .otd-acc .oa-grid .oa-btn:hover{background:var(--oa-blue-bg);border-color:var(--oa-blue-bd);color:var(--oa-blue-d)}
+  .otd-acc .oa-grid .oa-btn i{font-size:15px;color:var(--oa-blue)}
+  .otd-acc .oa-grid .oa-btn small{display:none}
+  .otd-acc .oa-grid .oa-btn[data-f="fs"] i{color:var(--oa-red)}
+  .otd-acc .oa-grid .oa-btn[data-f="baja"] i{color:#27272a}
+  .otd-acc .oa-grid .oa-btn[data-f="nollego"] i, .otd-acc .oa-grid .oa-btn[data-f="noesta"] i{color:#b45309}
+}
+@media(min-width:768px) and (prefers-reduced-motion:reduce){.otd-acc .oa-primary{animation:none}}
+
 /* avisos de estado (siempre arriba, sin abrir la tarjeta) */
 .oa-stbar{display:flex;flex-wrap:wrap;gap:6px}
 .oa-st{display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:3px 11px;border-radius:999px;

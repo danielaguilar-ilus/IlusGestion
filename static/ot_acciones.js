@@ -242,7 +242,7 @@
     if (g.length) {
       out.push('<div class="oa-lbl"><i class="bi bi-exclamation-diamond-fill"></i> Fuera de lo normal</div><div class="oa-grid">' +
         g.map(function (x, i) {
-          return '<button type="button" class="oa-btn line' + (g.length % 2 === 1 && i === g.length - 1 ? ' wide' : '') + '" data-a="abrir" data-f="' + x[0] + '" data-key="' + esc(key) + '">' +
+          return '<button type="button" class="oa-btn line' + (g.length % 2 === 1 && i === g.length - 1 ? ' wide' : '') + '" data-a="abrir" data-f="' + x[0] + '" data-key="' + esc(key) + '" title="' + esc(x[3]) + '">' +
             '<i class="bi bi-' + x[1] + '"></i><span>' + esc(x[2]) + '<small>' + esc(x[3]) + '</small></span></button>';
         }).join('') + '</div>');
     }

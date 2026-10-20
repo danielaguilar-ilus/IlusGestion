@@ -10030,7 +10030,7 @@ def register_pickup_routes(app, ctx):
                         if avisos:
                             estado, texto, tono = "revisar", "Revisar antes de entregar", "ambar"
                 if _term:
-                    estado, texto, tono, avisos = _prod_linea_terminada(_term, incluida, a_retirar, saldo, le.get("consumos") or [])
+                    estado, texto, tono, avisos = _prod_linea_terminada(_term, incluida, a_retirar, saldo, le.get("consumos") or [], st)
                 # contadores
                 if estado == "ok":
                     cont["listos"] += 1
@@ -10042,6 +10042,9 @@ def register_pickup_routes(app, ctx):
                     cont["ya_entregados"] += 1
                 elif estado == "entregado_retiro":
                     cont["entregados"] += 1
+                    cont["u_entregadas"] = cont.get("u_entregadas", 0.0) + a_retirar
+                elif estado in ("no_consta", "falta_guia"):
+                    cont[estado] = cont.get(estado, 0) + 1          # retiro terminado sin evidencia en el ERP (2026-10-20)
                 else:
                     cont["no_incluidos"] += 1
                 if incluida and a_retirar > 0:
@@ -10136,8 +10139,12 @@ def register_pickup_routes(app, ctx):
         except Exception:
             return None
 
-    def _prod_linea_terminada(term, incluida, a_retirar, saldo, consumos):
-        """Estado CONGELADO de una línea de un retiro terminado: (estado, texto, tono, avisos). Nunca rojo ni «Entregar igual…»."""
+    def _prod_linea_terminada(term, incluida, a_retirar, saldo, consumos, stock=None):
+        """Estado CONGELADO de una línea de un retiro terminado: (estado, texto, tono, avisos). Nunca rojo ni «Entregar igual…».
+        2026-10-20 (Daniel, retiro de Ivo Simunovic: un producto con 0 físico, saldo 1 y sin guía salía «Entregado en este retiro»):
+        «Entregado» solo con EVIDENCIA del ERP — una guía/boleta de este retiro, o el saldo ya consumido. Sin guía:
+          · con stock en la bodega (o sin poder verlo) → «Retirado · falta la guía del ERP» (ámbar: hay que hacer la guía);
+          · sin stock suficiente en la bodega → «No consta la entrega» (ámbar: confirmar con bodega si de verdad se entregó)."""
         if not incluida or a_retirar <= 0:
             return "no_incluido", "No se retiró", "gris", []
         if not term["entregado"]:
@@ -10147,10 +10154,18 @@ def register_pickup_routes(app, ctx):
         if creado and fechas and saldo is not None and saldo <= 0 and all(f < creado for f in fechas):
             # el saldo se consumió ANTES de que existiera este retiro: no fue esta entrega
             return "salio_antes", "Ya había salido antes de este retiro", "gris", []
-        avisos = []
-        if saldo is not None and saldo > 0 and not [f for f in fechas if not creado or f >= creado]:
-            avisos.append("El ERP todavía no registra la guía de despacho de esta entrega.")
-        return "entregado_retiro", "Entregado en este retiro", "ok", avisos
+        con_guia = bool([f for f in fechas if not creado or f >= creado])
+        if con_guia or (saldo is not None and saldo <= 0):
+            return "entregado_retiro", "Entregado en este retiro", "ok", []
+        if saldo is None:
+            return "falta_guia", "Retirado · sin verificar en el ERP", "ambar", ["No se pudo leer el ERP: no se sabe si ya tiene su guía de despacho."]
+        fisico = stock.get("fisico") if isinstance(stock, dict) else None
+        if fisico is not None and float(fisico) + 1e-9 < float(a_retirar):
+            return ("no_consta", "No consta la entrega", "ambar",
+                    [f"El ERP no registra la salida (sin guía de despacho) y la bodega tiene {_fmt_num(fisico)} físico para "
+                     f"{_fmt_num(a_retirar)} a retirar. Confirma con bodega si se entregó: si no, el cliente sigue esperando este producto."])
+        return ("falta_guia", "Retirado · falta la guía del ERP", "ambar",
+                ["El retiro se marcó como retirado, pero el ERP todavía no registra la guía de despacho de este producto."])
 
     def _prod_veredicto_terminado(term, cont, out_docs):
         if not term["entregado"]:
@@ -10165,11 +10180,25 @@ def register_pickup_routes(app, ctx):
                 txt = f"{c.get('label') or ''} {c.get('numero') or ''} · {c.get('fecha') or ''}".strip()
                 if (not creado or (f and f >= creado)) and txt not in guias:
                     guias.append(txt)
-        if not n:
+        u = cont.get("u_entregadas", u)
+        no_consta, falta_guia = cont.get("no_consta") or 0, cont.get("falta_guia") or 0
+        # 2026-10-20: lo que no tiene evidencia en el ERP no se cuenta como entregado; se dice y se pide revisar
+        pendientes = []
+        if no_consta:
+            pendientes.append(f"{no_consta} producto{'s' if no_consta != 1 else ''} sin guía de despacho ni stock en bodega: "
+                              f"confirma con bodega si se entregó")
+        if falta_guia:
+            pendientes.append(f"{falta_guia} producto{'s' if falta_guia != 1 else ''} todavía sin guía de despacho en el ERP")
+        if not n and not pendientes:
             return {"estado": "entregado", "titulo": "Retiro completado", "detalle": "El cliente ya retiró su pedido."}
-        detalle = (f"{_fmt_num(u)} unidad{'es' if u != 1 else ''} de {n} producto{'s' if n != 1 else ''} entregada{'s' if u != 1 else ''} "
-                   f"en este retiro" + (f" · {', '.join(guias[:3])}" if guias else "") + ".")
-        return {"estado": "entregado", "titulo": "Retiro completado", "detalle": detalle}
+        partes = []
+        if n:
+            partes.append(f"{_fmt_num(u)} unidad{'es' if u != 1 else ''} de {n} producto{'s' if n != 1 else ''} entregada{'s' if u != 1 else ''} "
+                          f"en este retiro" + (f" · {', '.join(guias[:3])}" if guias else ""))
+        partes += pendientes
+        if no_consta:
+            return {"estado": "entregado_revisar", "titulo": "Retiro completado · revisa lo entregado", "detalle": ". ".join(partes) + "."}
+        return {"estado": "entregado", "titulo": "Retiro completado", "detalle": ". ".join(partes) + "."}
 
     def _fmt_num(v):
         try:
