@@ -58,9 +58,67 @@
               title="Revisa en el transportista si alguna visita quedó sin chofer en un día ya vencido">
         <i class="bi bi-calendar-x"></i> Visitas sin planificar
       </button>
+      {# Reporte semanal en Excel (2026-10-19, Daniel/Alison): despachos con
+         cobro, factura y producto para indicadores de gestión. Reusa
+         .btn-monitor; no compite con "Nuevo manifiesto". #}
+      <button type="button" class="btn-monitor" id="btnReporteSemanal"
+              data-bs-toggle="modal" data-bs-target="#repSemModal"
+              title="Descarga un Excel con los despachos de la semana: cobro, costo, factura y productos">
+        <i class="bi bi-file-earmark-excel"></i> Reporte semanal
+      </button>
       <button class="btn-nuevo-man" data-bs-toggle="modal" data-bs-target="#newManModal">
         <i class="bi bi-plus-circle-fill"></i> Nuevo manifiesto
       </button>
+    </div>
+  </div>
+
+  <div class="modal fade" id="repSemModal" tabindex="-1" aria-labelledby="repSemTitulo" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content" style="border-radius:14px">
+        <div class="modal-header">
+          <h5 class="modal-title fw-bold" id="repSemTitulo">
+            <i class="bi bi-file-earmark-excel text-success me-1"></i> Reporte semanal de despachos
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small mb-3">
+            Excel con 3 hojas: <strong>Resumen</strong> (indicadores), <strong>Despachos</strong>
+            (una fila por factura o boleta: cobro, costo, margen, estado, tracking) y
+            <strong>Productos</strong> (una fila por producto). Filtra por la fecha del manifiesto.
+          </p>
+          <div class="d-flex flex-wrap gap-2 mb-3">
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-rep-rango="pasada">Semana pasada</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-rep-rango="actual">Esta semana</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-rep-rango="30">Últimos 30 días</button>
+          </div>
+          <div class="row g-2">
+            <div class="col-6">
+              <label class="form-label small fw-bold" for="repSemDesde">Desde</label>
+              <input type="date" class="form-control" id="repSemDesde">
+            </div>
+            <div class="col-6">
+              <label class="form-label small fw-bold" for="repSemHasta">Hasta</label>
+              <input type="date" class="form-control" id="repSemHasta">
+            </div>
+            <div class="col-12">
+              <label class="form-label small fw-bold" for="repSemCourier">Courier (opcional)</label>
+              <select class="form-select" id="repSemCourier">
+                <option value="">Todos los couriers</option>
+                {% for _c in couriers %}
+                <option value="{{ _c }}">{{ _c }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary fw-bold" data-bs-dismiss="modal" style="border-radius:10px">Cancelar</button>
+          <a class="btn btn-success fw-bold" id="repSemDescargar" href="#" style="border-radius:10px">
+            <i class="bi bi-download me-1"></i> Descargar Excel
+          </a>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -680,6 +738,45 @@
 <script defer src="{{ url_for('static', filename='transporte_etiquetas_modal.js') }}"></script>
 <script defer src="{{ url_for('static', filename='transporte_manifiestos.js') }}"></script>
 <script defer src="{{ url_for('static', filename='transporte_visitas_congeladas.js') }}"></script>
+<script>
+/* Reporte semanal Excel (2026-10-19): arma el enlace de descarga con el
+   rango elegido. Por defecto, la semana pasada (lunes a domingo). */
+(function(){
+  function iso(d){ return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+  function lunes(d){ var x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - ((x.getDay()+6)%7)); return x; }
+  function sumar(d, n){ var x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate()+n); return x; }
+  function rango(tipo){
+    var hoy = new Date(), l = lunes(hoy);
+    if (tipo === 'actual') return [l, hoy];
+    if (tipo === '30') return [sumar(hoy, -30), hoy];
+    return [sumar(l, -7), sumar(l, -1)];
+  }
+  function poner(tipo){
+    var r = rango(tipo);
+    document.getElementById('repSemDesde').value = iso(r[0]);
+    document.getElementById('repSemHasta').value = iso(r[1]);
+    enlace();
+  }
+  function enlace(){
+    var d = document.getElementById('repSemDesde').value, h = document.getElementById('repSemHasta').value,
+        c = document.getElementById('repSemCourier').value;
+    var a = document.getElementById('repSemDescargar');
+    if (!a) return;
+    var qs = 'desde=' + encodeURIComponent(d) + '&hasta=' + encodeURIComponent(h) + (c ? '&courier=' + encodeURIComponent(c) : '');
+    a.href = "{{ url_for('tr_manifiestos_reporte_semanal_xlsx') }}?" + qs;
+  }
+  document.addEventListener('DOMContentLoaded', function(){
+    if (!document.getElementById('repSemModal')) return;
+    document.querySelectorAll('[data-rep-rango]').forEach(function(b){
+      b.addEventListener('click', function(){ poner(b.getAttribute('data-rep-rango')); });
+    });
+    ['repSemDesde','repSemHasta','repSemCourier'].forEach(function(id){
+      document.getElementById(id).addEventListener('change', enlace);
+    });
+    poner('pasada');
+  });
+})();
+</script>
 
 {% if is_superadmin %}
 {# ── REVISAR FINANZAS: barrido del histórico financiero (2026-08-05) ──────

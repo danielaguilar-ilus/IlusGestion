@@ -531,6 +531,187 @@ def texto_sin_marcas(html_text):
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html_text or "")).strip()
 
 
+# ── Archivo de calendario (.ics) adjunto al correo del técnico ──────────────────────────────────────────────────
+# Daniel (decisión recomendada y aceptada, 20-oct-2026): el correo de «asignada» y «reagendada» lleva un .ics (METHOD:REQUEST)
+# y el de «cancelada» y «desasignada» otro con METHOD:CANCEL; así la OT queda en el calendario del técnico y se actualiza o
+# se borra sola. Lógica PURA (sin Flask ni base): el envío vive en app.py (`_ot_tec_despachar`).
+#
+#  · UID ESTABLE por OT (`ot-{numero}@ilusfitness.com`, igual que `_build_ot_ics` de Tickets): reenviar ACTUALIZA el evento
+#    en vez de duplicarlo, y el CANCEL lo borra.
+#  · SEQUENCE creciente: segundos desde 2026-01-01 UTC (sin guardar nada en la base: cada correo posterior tiene un número
+#    mayor, así un reagendar siempre gana sobre el anterior y el CANCEL sobre ambos).
+#  · Horas: la OT está en hora de Chile (America/Santiago); se convierten a UTC con sufijo Z (cambio de horario de verano
+#    incluido, lo resuelve zoneinfo). Sin hora definida: evento de día completo.
+#  · CONFIDENCIALIDAD (REGLAS #19 y #26): el texto libre de una persona (qué hay que hacer, motivo) pasa por
+#    `limpiar_texto_tecnico`; nunca hay montos, costos, proveedores ni OC. Con el Anexo de Servicios sin firmar
+#    (`ocultar_detalle`) no lleva dirección ni «qué hay que hacer», igual que el correo.
+SEQ_EPOCH = 1767225600                  # 2026-01-01T00:00:00Z
+ICS_DOMINIO = "ilusfitness.com"
+ICS_MAX_DIAS = 60                       # tope de ocurrencias de una OT de varios días con hora
+ICS_METODO = {"asignada": "REQUEST", "reagendada": "REQUEST", "cancelada": "CANCEL", "desasignada": "CANCEL"}
+ICS_ALARMA = "-PT2H"                    # aviso 2 horas antes (solo en REQUEST y solo si hay hora)
+_TZ_CHILE = "America/Santiago"
+
+
+def secuencia_desde(ts):
+    """SEQUENCE a partir de la hora del envío (epoch en segundos). Siempre creciente; nunca negativa."""
+    try:
+        return max(0, int(float(ts)) - SEQ_EPOCH)
+    except (TypeError, ValueError):
+        return 0
+
+
+def ics_uid(numero):
+    """Identificador estable del evento de una OT (mismo patrón que Tickets)."""
+    limpio = re.sub(r"[^A-Za-z0-9._-]", "", str(numero or ""))
+    return f"ot-{limpio}@{ICS_DOMINIO}"
+
+
+def ics_nombre_archivo(numero):
+    limpio = re.sub(r"[^A-Za-z0-9._-]", "_", str(numero or "")) or "OT"
+    return f"OT_{limpio}.ics"
+
+
+def ics_escapar(v):
+    """Escape de un valor TEXT (RFC 5545 §3.3.11): \\ ; , y saltos de línea."""
+    s = "" if v is None else str(v)
+    return (s.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+            .replace("\r\n", "\\n").replace("\n", "\\n").replace("\r", "\\n"))
+
+
+def _param(v):
+    """Valor de parámetro entre comillas (CN): sin comillas, dos puntos ni saltos que rompan la línea."""
+    s = re.sub(r'["\r\n;:]', " ", str(v or "")).strip()
+    return f'"{s}"' if s else ""
+
+
+def ics_plegar(linea):
+    """Pliega una línea a máx. 75 octetos UTF-8 (continuación: CRLF + un espacio), sin partir un carácter."""
+    b = linea.encode("utf-8")
+    if len(b) <= 75:
+        return linea
+    partes, actual, largo = [], "", 0
+    limite = 75
+    for ch in linea:
+        n = len(ch.encode("utf-8"))
+        if largo + n > limite:
+            partes.append(actual)
+            actual, largo, limite = ch, n, 74          # las continuaciones llevan 1 octeto de espacio inicial
+        else:
+            actual += ch
+            largo += n
+    partes.append(actual)
+    return "\r\n ".join(partes)
+
+
+def _utc_z(d, hm):
+    """date + 'HH:MM' en hora de Chile → 'YYYYMMDDTHHMMSSZ' (UTC)."""
+    from zoneinfo import ZoneInfo
+    h, m = int(hm[:2]), int(hm[3:5])
+    local = _dt.datetime(d.year, d.month, d.day, h, m, tzinfo=ZoneInfo(_TZ_CHILE))
+    return local.astimezone(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _fin_hm(hi, hf):
+    """Hora de término: la indicada si es posterior al inicio; si no (o falta), una hora después."""
+    if hf and hf > hi:
+        return hf
+    h, m = int(hi[:2]), int(hi[3:5])
+    tot = min(h * 60 + m + 60, 23 * 60 + 59)
+    return f"{tot // 60:02d}:{tot % 60:02d}"
+
+
+def _lineas_fecha(ini, fin, hi, hf):
+    """DTSTART/DTEND (+ RDATE si dura varios días con hora). ini/fin: date; hi/hf: 'HH:MM' o ''."""
+    if not hi:                                                          # día completo (DTEND exclusivo)
+        sig = (fin or ini) + _dt.timedelta(days=1)
+        return [f"DTSTART;VALUE=DATE:{ini.strftime('%Y%m%d')}", f"DTEND;VALUE=DATE:{sig.strftime('%Y%m%d')}"], False
+    hf = _fin_hm(hi, hf)
+    out = [f"DTSTART:{_utc_z(ini, hi)}", f"DTEND:{_utc_z(ini, hf)}"]
+    if fin and fin > ini:                                               # mismo horario cada día del rango
+        dias, d = [], ini + _dt.timedelta(days=1)
+        while d <= fin and len(dias) < ICS_MAX_DIAS - 1:
+            dias.append(_utc_z(d, hi))
+            d += _dt.timedelta(days=1)
+        if dias:
+            out.append("RDATE:" + ",".join(dias))
+    return out, True
+
+
+def ics_evento(ot, evento, *, correo, nombre="", ts, base_url="", organizador="soportetec@sphs.cl",
+               ocultar_detalle=False, link_lista=False, motivo=""):
+    """Bytes del .ics de UNA OT para UN técnico, o None si no se puede armar (evento desconocido o OT sin fecha).
+
+    ot: id, numero_ot, cliente, tipo_label, fecha, fecha_fin, hora_inicio, hora_fin, direccion, equipos, descripcion.
+        Para «cancelada» y «desasignada» pasar la fecha/hora que el técnico tenía en su calendario (la que se borra).
+    evento: asignada | reagendada → METHOD:REQUEST · cancelada | desasignada → METHOD:CANCEL.
+    ts: epoch en segundos del envío (SEQUENCE y DTSTAMP). link_lista: la OT ya no existe (link a la lista de OT)."""
+    metodo = ICS_METODO.get(evento)
+    ini = a_fecha(ot.get("fecha"))
+    if not metodo or not ini:
+        return None
+    fin = a_fecha(ot.get("fecha_fin"))
+    if fin and fin < ini:
+        fin = ini
+    hi, hf = hhmm(ot.get("hora_inicio")), hhmm(ot.get("hora_fin"))
+    try:
+        fechas, con_hora = _lineas_fecha(ini, fin, hi, hf)
+    except Exception:                                   # sin base de zonas horarias: sin archivo (el correo sale igual)
+        return None
+    numero = ot.get("numero_ot") or f"V-{int(ot.get('id') or 0):05d}"
+    cliente = (ot.get("cliente") or "").strip() or "Trabajo interno"
+    tipo = (ot.get("tipo_label") or "").strip()
+    etiqueta = str(numero) if str(numero).upper().startswith("OT") else f"OT {numero}"      # «OT-2026-00005» ya dice OT
+    titulo = f"{etiqueta} — {cliente}" + (f" ({tipo})" if tipo else "")
+    base = (base_url or "").rstrip("/")
+    link = f"{base}/ot/" if link_lista else f"{base}/ot/{int(ot.get('id') or 0)}"
+    cancela = metodo == "CANCEL"
+
+    desc = [f"Orden de trabajo {numero}.", f"Cliente: {cliente}."]
+    if tipo:
+        desc.append(f"Tipo: {tipo}.")
+    equipos = equipos_txt(ot.get("equipos"))
+    if equipos != "—":
+        desc.append(f"Equipos: {equipos}.")
+    if cancela:
+        desc.append("Esta orden de trabajo ya no está en tu agenda.")
+        m = limpiar_texto_tecnico(motivo, 200)
+        if m:
+            desc.append(f"Motivo: {m}.")
+    elif not ocultar_detalle:
+        q = limpiar_texto_tecnico(ot.get("descripcion"))
+        if q:
+            desc.append(f"Qué hay que hacer: {q}")
+        if evento == "reagendada":
+            m = limpiar_texto_tecnico(motivo, 200)
+            if m:
+                desc.append(f"Motivo del cambio: {m}.")
+    desc.append(f"Ficha: {link}")
+
+    direccion = "" if ocultar_detalle else (ot.get("direccion") or "").strip()
+    if direccion in ("—", "-"):
+        direccion = ""
+
+    stamp = _dt.datetime.fromtimestamp(float(ts), _dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    org = f"ORGANIZER;CN={_param('ILUS Fitness')}:mailto:{organizador}"
+    att = ("ATTENDEE;" + (f"CN={_param(nombre)};" if _param(nombre) else "")
+           + f"CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=FALSE:mailto:{correo}")
+    L = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//ILUS Fitness//Ordenes de trabajo//ES",
+         "CALSCALE:GREGORIAN", f"METHOD:{metodo}", "BEGIN:VEVENT",
+         f"UID:{ics_uid(numero)}", f"DTSTAMP:{stamp}", f"SEQUENCE:{secuencia_desde(ts)}"]
+    L += fechas
+    L += [f"SUMMARY:{ics_escapar(titulo)}"]
+    if direccion:
+        L.append(f"LOCATION:{ics_escapar(direccion)}")
+    L += [f"DESCRIPTION:{ics_escapar(chr(10).join(desc))}", f"URL:{link}", org, att,
+          f"STATUS:{'CANCELLED' if cancela else 'CONFIRMED'}", "TRANSP:OPAQUE"]
+    if not cancela and con_hora:                        # sin hora no hay "2 h antes" que avisar
+        L += ["BEGIN:VALARM", f"TRIGGER:{ICS_ALARMA}", "ACTION:DISPLAY",
+              f"DESCRIPTION:{ics_escapar('Recordatorio ' + etiqueta)}", "END:VALARM"]
+    L += ["END:VEVENT", "END:VCALENDAR"]
+    return ("\r\n".join(ics_plegar(x) for x in L) + "\r\n").encode("utf-8")
+
+
 # ── Cuerpos de correo (sembrados en comm_templates SOLO si no existen; también sirven de respaldo) ────────────
 def _p(texto):
     return f'<p style="margin:0 0 14px;font-size:14px;color:#444;line-height:1.65">{texto}</p>'
@@ -566,7 +747,8 @@ SEMILLAS = {
     # Solo reemplaza a la anterior si NADIE la había editado (ver _ensure_comm_template_ot_tecnicos en app.py).
     "ot_asignada": (
         "Nueva OT asignada — {{ot}}",
-        _saludo() + _p("Se te asignó una nueva orden de trabajo. Revisa los detalles y agéndala en tu calendario.")
+        _saludo() + _p("Se te asignó una nueva orden de trabajo. Revisa los detalles y abre el archivo adjunto: "
+                                  "la orden de trabajo queda en tu calendario.")
         + _tabla("#f59e0b", _f("OT", "{{ot}}", True) + _f("Cliente", "{{cliente}}") + _f("Tipo", "{{tipo_mantencion}}")
                  + _f("Fecha", "<strong>{{fecha}}</strong> · {{horario}}") + _f("Dirección", "{{direccion}}")
                  + _f("Equipos", "{{maquina}}") + "{{notas_html}}")
@@ -575,21 +757,23 @@ SEMILLAS = {
         "OT {{ot}} reagendada — ahora {{fecha_ahora}}",
         _saludo("#0ea5e9")
         + _p("Cambió la <strong>fecha u horario</strong> de una orden de trabajo que tienes asignada. "
-             "<strong>Actualiza tu agenda.</strong>")
+             "<strong>Abre el archivo adjunto</strong> y tu calendario se actualiza solo.")
         + "{{antes_ahora_html}}"
         + _tabla("#0ea5e9", _FILAS_OT + "{{motivo_html}}{{notas_html}}")
         + _boton()),
     "ot_cancelada_tecnico": (
         "OT {{ot}} cancelada — no necesitas ir",
         _saludo("#dc2626")
-        + _p("La siguiente orden de trabajo <strong>fue cancelada</strong>. Ya no tienes que realizarla.")
+        + _p("La siguiente orden de trabajo <strong>fue cancelada</strong>. Ya no tienes que realizarla. "
+             "Abre el archivo adjunto y el evento se borra de tu calendario.")
         + _tabla("#dc2626", _FILAS_OT + _f("Estaba agendada para", "{{fecha}} · {{horario}}") + "{{motivo_html}}")
         + _boton("Ver orden de trabajo")),
     "ot_desasignada_tecnico": (
         "OT {{ot}} ya no está a tu cargo",
         _saludo("#6b7280")
         + _p("Ya <strong>no figuras como técnico</strong> de la orden de trabajo de abajo (se reasignó o se reorganizó el "
-             "equipo). Ya no la tienes a tu cargo y puedes liberar ese horario.")
+             "equipo). Ya no la tienes a tu cargo y puedes liberar ese horario: "
+             "abre el archivo adjunto y el evento se borra de tu calendario.")
         + _tabla("#6b7280", _FILAS_OT + _f("Estaba agendada para", "{{fecha}} · {{horario}}") + "{{motivo_html}}")
         + _boton("Ver orden de trabajo")),
     "agenda_tecnico_manana": (

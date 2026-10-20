@@ -49,7 +49,9 @@ def _arbol():
 
 def _cargar_helpers():
     _, arbol = _arbol()
-    amb = {"print": lambda *a, **k: None, "re": re}
+    import ot_saldo_servicio as _sv
+    # 2026-10-19: _OT_DOCS_NOTA_VENTA se arma con _saldo.PREFIJOS_NOTA_VENTA (una sola lista de prefijos para todo el saldo).
+    amb = {"print": lambda *a, **k: None, "re": re, "_saldo": _sv}
     quiero_f = ("_ot_doc_tipo_txt", "_ot_doc_categoria", "_ot_doc_real_a_usuario", "_ot_docs_para_informe",
                 "_ot_docs_texto_lote")
     quiero_c = ("_OT_TIDO_TXT", "_OT_DOCS_COBRO", "_OT_DOCS_NOTA_VENTA")

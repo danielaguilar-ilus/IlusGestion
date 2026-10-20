@@ -223,6 +223,58 @@
   .pti-plant b{color:#0f172a}
   .pti-acciones{display:flex;gap:6px;margin-top:auto;padding-top:6px}
   .pti-acciones .btn{min-height:38px;flex:1}
+  /* 🧰 2026-10-18 (Etapa 3): repuestos sugeridos de la plantilla (chips con su × de 44px, nombres completos). */
+  .pl-rsug-chips{display:flex;flex-wrap:wrap;gap:6px}
+  .pl-rsug-chip{display:inline-flex;align-items:center;gap:2px;border:1px solid #bfdbfe;background:#eff6ff;color:#1e40af;
+    border-radius:999px;padding:0 2px 0 12px;font-size:.8rem;font-weight:600;min-height:44px;max-width:100%}
+  .pl-rsug-chip span{overflow-wrap:anywhere}
+  .pl-rsug-chip button{border:0;background:none;color:#dc2626;min-width:44px;min-height:44px;border-radius:999px}
+  .pl-rsug-chip button:hover{background:#fee2e2}
+  .pl-rsug-vacio{font-size:.78rem;color:#6b7280}
+
+  /* ── 2026-10-19 (Daniel: «el visor del editor de plantilla se ve bien pequeño… Lenin tiene un equipo pequeño»).
+     En un notebook el modal-xl de Bootstrap baja a 800 px de ancho y ~600 px de alto: el Paso 1 y el panel de
+     agregar se comían casi todo y la lista de ítems quedaba en una franja. Ahora el editor usa TODA la pantalla
+     (en celular ya era pantalla completa por mobile.css), el Paso 1 se pliega en una línea al abrir una plantilla
+     existente y el panel fijo de arriba ocupa menos alto. No se quitó ningún control (REGLA #4.2). ── */
+  @media (min-width:768px){
+    #modalEditorPlantilla .modal-dialog{max-width:min(1500px, calc(100vw - 24px));margin:12px auto;
+                                        height:calc(100dvh - 24px)}
+    #modalEditorPlantilla .modal-content{height:100%;max-height:100%}
+    #modalEditorPlantilla .modal-header{padding:10px 18px}
+    #modalEditorPlantilla .modal-footer{padding:8px 18px}
+  }
+  @media (min-width:1200px){
+    /* Copiar ítems y Nuevo ítem en la misma fila: el panel fijo pierde un tercio de su alto. */
+    #modalEditorPlantilla .pl-sticky-tools{display:flex;flex-wrap:wrap;column-gap:18px;align-items:flex-end}
+    #modalEditorPlantilla .pl-copy-panel{flex:0 1 420px;min-width:300px;border-bottom:0;margin-bottom:0;
+                                          padding-right:18px;border-right:1px dashed #e5e7eb}
+    #modalEditorPlantilla .pl-add-panel{flex:1 1 560px}
+    #modalEditorPlantilla .pl-sel-toolbar{flex:1 1 100%}
+  }
+  @media (max-height:820px) and (min-width:768px){
+    /* «Copiar ítems desde…» en una sola fila (etiqueta al lado del selector). La letra NO se achica: el 31-08
+       se agrandó a propósito para este mismo computador. Solo se recortan márgenes y el relleno de cada ítem. */
+    #modalEditorPlantilla .pl-copy-panel{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    #modalEditorPlantilla .pl-copy-panel > label{margin:0 !important;white-space:nowrap}
+    #modalEditorPlantilla .pl-copy-panel > .d-flex{flex:1 1 300px}
+    #modalEditorPlantilla .it-card{padding:10px 14px;margin-bottom:8px}
+    #modalEditorPlantilla .it-card .it-head{margin-bottom:6px}
+    #modalEditorPlantilla .pl-copy-panel{padding-bottom:8px;margin-bottom:8px}
+    #modalEditorPlantilla .pl-add-panel{padding-bottom:8px}
+    #modalEditorPlantilla .pl-sel-toolbar{margin-bottom:8px;padding:5px 10px}
+    #modalEditorPlantilla .pl-step-header{padding:8px 14px}
+    #modalEditorPlantilla .modal-body{padding:12px 14px}
+  }
+  /* Paso 1 plegable: con la plantilla ya completa queda una línea de resumen y «Mostrar». */
+  .pl-step1-resumen{display:none;font-size:.85rem;color:#374151;font-weight:600;min-width:0;
+                    overflow-wrap:anywhere}
+  .pl-step1-toggle{flex-shrink:0;min-height:36px;margin-left:8px}
+  @media (max-width:575.98px){ .pl-step1-toggle{margin-left:auto} }
+  #plStep1.is-plegado .pl-step-body{display:none}
+  #plStep1.is-plegado .pl-step-header{border-bottom:0;border-radius:12px}
+  #plStep1.is-plegado .pl-step1-resumen{display:block;flex:1 1 auto}
+  #plStep1.is-plegado .pl-step-sub{display:none}
 </style>
 
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -253,6 +305,10 @@
       <i class="bi bi-clipboard2-check me-1"></i>Tipos de trabajo interno
     </button>
     {% endif %}
+    {#- 🎛️ 2026-10-20 (REGLA #32): lo que el sistema PROPONE cambiar en las plantillas existentes. Nada se aplica solo. -#}
+    <button type="button" class="btn btn-sm btn-outline-primary fw-bold" onclick="abrirPropuestas()" id="btnPropuestas">
+      <i class="bi bi-lightbulb me-1"></i>Propuestas del sistema<span id="propBadge" hidden></span>
+    </button>
     <button class="btn btn-sm btn-ilus fw-bold" onclick="abrirEditor(null)">
       <i class="bi bi-plus-circle me-1"></i>Nueva plantilla
     </button>
@@ -340,6 +396,56 @@
 {# ═══════════════════════════════════════════════════════
    MODAL: EDITOR DE PLANTILLA (form-builder)
    ═══════════════════════════════════════════════════════ #}
+{#- 🎛️ 2026-10-20 (REGLA #32 — Daniel: «como es regla estricta del proyecto, no debes imponer o gestionar más checklists, sino los
+    que impone el usuario»): PROPUESTAS DEL SISTEMA. Antes, en cada arranque el sistema llevaba los bloques «Revisión — …» a la versión
+    esencial y agregaba «Foto de entrega» a las plantillas de instalación POR DETRÁS. Ahora es una propuesta: aquí ves la plantilla
+    actual junto a la propuesta y DECIDES. «Crear como plantilla nueva» (recomendado) deja la actual intacta; «Reemplazar el contenido»
+    es solo de gestión, pide confirmación, queda en la bitácora y nunca aplica a las plantillas «(LU)» de Lenin. REGLA #15: nombres
+    completos, nada truncado; REGLA #1: confirmaciones con ilusConfirm. -#}
+<style>
+.prop-card{background:#fff;border:1.5px solid #e5e7eb;border-left:5px solid #f59e0b;border-radius:14px;padding:14px 14px 12px;margin-bottom:12px;box-shadow:0 1px 2px rgba(16,24,40,.05)}
+.prop-card.editada{border-left-color:#dc2626}
+.prop-h{display:flex;gap:10px;align-items:flex-start}
+.prop-ic{width:36px;height:36px;border-radius:50%;background:#fff8e1;color:#b45309;border:2px solid #f59e0b;display:grid;place-items:center;flex:none}
+.prop-h b{font-size:1.02rem;display:block;line-height:1.2}
+.prop-n{font-size:.88rem;color:#374151;overflow-wrap:anywhere}
+.prop-exp{margin:8px 0;font-size:.86rem;color:#4b5563}
+.prop-chg{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}
+.prop-chg .lbl{font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#6b7280}
+.prop-chip{display:inline-flex;gap:4px;align-items:center;padding:3px 9px;border-radius:999px;font-size:.78rem;font-weight:700;overflow-wrap:anywhere}
+.prop-chip.add{background:#dcfce7;color:#166534;border:1px solid #86efac}
+.prop-chip.del{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
+.prop-adv{display:flex;gap:8px;align-items:flex-start;padding:8px 10px;border-radius:10px;background:#fff8e1;border:1px solid #fcd34d;color:#92400e;font-size:.82rem;margin:8px 0}
+.prop-card details{margin:8px 0}
+.prop-card summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:700;font-size:.86rem;color:#1d4ed8}
+.prop-cmp{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:767.98px){.prop-cmp{grid-template-columns:1fr}}
+.prop-cmp h6{font-size:.78rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;margin:0 0 6px}
+.prop-cmp ol{margin:0;padding-left:1.2rem;font-size:.82rem}
+.prop-cmp li{margin-bottom:4px;overflow-wrap:anywhere}
+.prop-cmp li small{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;background:#f3f4f6;color:#4b5563;font-weight:700;font-size:.66rem}
+.prop-cmp li.nuevo{background:#f0fdf4;border-radius:6px;padding:1px 4px}
+.prop-act{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.prop-act .btn{min-height:46px;font-weight:700}
+.prop-no{font-size:.78rem;color:#6b7280;margin-top:6px}
+#propBadge{background:#dc2626;color:#fff;border-radius:999px;font-size:.68rem;padding:1px 7px;margin-left:4px}
+</style>
+<div class="modal fade" id="modalPropuestas" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
+    <div class="modal-content" style="border-radius:14px">
+      <div class="modal-header py-2" style="background:#0a0a0a;color:#fff">
+        <h6 class="modal-title fw-bold"><i class="bi bi-lightbulb-fill me-2" style="color:#f59e0b"></i>Propuestas del sistema</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar" style="width:44px;height:44px"></button>
+      </div>
+      <div class="modal-body" style="background:#f4f4f5">
+        <p class="small text-muted mb-3">El sistema <b>sugiere</b>; tú <b>decides</b>. Ninguna plantilla cambia sola: aquí ves la actual junto a la propuesta.
+          Lo más seguro es <b>crear una plantilla nueva</b> (la actual queda intacta). Las OT ya creadas conservan su copia.</p>
+        <div id="propLista"><div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>Calculando propuestas…</div></div>
+      </div>
+      <div class="modal-footer py-2"><button type="button" class="btn btn-outline-secondary" style="min-height:44px" data-bs-dismiss="modal">Cerrar</button></div>
+    </div>
+  </div>
+</div>
 <div class="modal fade" id="modalEditorPlantilla" tabindex="-1" data-bs-backdrop="static">
   <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
     <div class="modal-content">
@@ -354,9 +460,14 @@
           <div class="pl-step-header">
             <div class="pl-step-circle"><span class="pl-step-num">1</span><span class="pl-step-check"><i class="bi bi-check-lg"></i></span></div>
             <div class="pl-step-title">Info básica</div>
+            <div class="pl-step1-resumen" id="plStep1Resumen"></div>
             <div class="pl-step-sub">Cómo se llama y dónde vive</div>
+            <button type="button" class="btn btn-sm btn-outline-secondary pl-step1-toggle" id="plStep1Toggle"
+                    onclick="plegarPaso1()" aria-expanded="true" aria-controls="plStep1Body">
+              <i class="bi bi-chevron-up me-1"></i>Ocultar
+            </button>
           </div>
-          <div class="pl-step-body">
+          <div class="pl-step-body" id="plStep1Body">
             <div class="row g-2">
               <div class="col-12 col-md-6">
                 <label class="form-label small fw-semibold">Nombre <span class="pl-req">*</span></label>
@@ -581,6 +692,22 @@
               Informativo por ahora: ayuda a identificar qué se cotiza como mantención
               y qué se atiende como OT puntual. Suele ir apagado en pisos/accesorios.
             </div>
+            {#- 🧰 2026-10-18 (Etapa 3, Daniel: «solicitar piolas si es selectora de peso, solicitar cintas si es
+                trotadora… inteligentemente por las plantillas»). Repuestos sugeridos de este checklist: en la OT
+                salen como chips de un toque al pedir repuestos de un producto que lo usa. Solo el NOMBRE de la
+                pieza: nunca proveedor, costo ni código de compra (REGLA #19/#26). -#}
+            <div class="mt-3" id="ePRsugWrap">
+              <label class="form-label small fw-semibold mb-1" for="ePRsugIn"><i class="bi bi-tools me-1"></i>Repuestos sugeridos</label>
+              <div class="small text-muted mb-2" style="font-size:.72rem">En la OT aparecen como chips de un toque al pedir
+                repuestos de un producto con este checklist. Solo el nombre de la pieza: sin proveedor, costo ni código de compra.</div>
+              <div class="pl-rsug-chips" id="ePRsugChips"></div>
+              <div class="d-flex gap-2 mt-2">
+                <input type="text" id="ePRsugIn" class="form-control form-control-sm" maxlength="80" autocomplete="off"
+                       placeholder="Ej: Pin selector con cordel" onkeydown="if(event.key==='Enter'){event.preventDefault();rsugAgregar();}">
+                <button type="button" class="btn btn-sm btn-outline-secondary text-nowrap" style="min-height:44px" onclick="rsugAgregar()">
+                  <i class="bi bi-plus-lg me-1"></i>Agregar</button>
+              </div>
+            </div>
             <div class="small text-muted mt-2" id="ePEsSistemaNota" style="display:none">
               <i class="bi bi-shield-lock me-1"></i>Plantilla del sistema: no se puede borrar, solo desactivar.
             </div>
@@ -804,6 +931,33 @@ let _plantillas = [];
 let _plSelected = new Set();
 let _editId = null;
 let _items = [];
+// 🧰 2026-10-18 (Etapa 3): repuestos sugeridos de la plantilla abierta (solo nombres de pieza).
+let _rsug = [];
+const _RSUG_MAX = 20, _RSUG_LARGO = 80;
+function rsugNorm(s){ return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().split(/\s+/).filter(Boolean).join(' '); }
+function rsugPintar(){
+  const cont = document.getElementById('ePRsugChips');
+  if (!cont) return;
+  cont.innerHTML = _rsug.length
+    ? _rsug.map((n, i) => `<span class="pl-rsug-chip"><span>${escHtml(n)}</span>
+        <button type="button" title="Quitar" aria-label="Quitar ${escHtml(n)}" onclick="rsugQuitar(${i})"><i class="bi bi-x-lg"></i></button></span>`).join('')
+    : '<span class="pl-rsug-vacio">Sin repuestos sugeridos todavía.</span>';
+}
+function rsugAgregar(){
+  const inp = document.getElementById('ePRsugIn');
+  const v = String(inp.value || '').split(/\s+/).join(' ').trim().slice(0, _RSUG_LARGO);
+  if (v.length < 2){ inp.focus(); return; }
+  if (v.includes('$')){
+    ilusToast('Solo el nombre de la pieza: aquí no va el costo.', {type:'warning'});
+    return;
+  }
+  if (_rsug.some(x => rsugNorm(x) === rsugNorm(v))){ ilusToast('Ya está en la lista.', {type:'info'}); return; }
+  if (_rsug.length >= _RSUG_MAX){ ilusToast('Como máximo ' + _RSUG_MAX + ' repuestos sugeridos.', {type:'warning'}); return; }
+  _rsug.push(v);
+  inp.value = '';
+  rsugPintar();
+}
+function rsugQuitar(i){ _rsug.splice(i, 1); rsugPintar(); }
 let _searchTimer = null;
 let _modal = null;
 
@@ -1230,10 +1384,12 @@ function abrirEditor(pid){
   document.getElementById('ePActiva').checked = true;
   document.getElementById('ePAplicaPlan').checked = true;
   document.getElementById('ePEsSistemaNota').style.display = 'none';
+  _rsug = []; rsugPintar();   // 🧰 2026-10-18
   document.getElementById('addTitulo').value = '';
   renderCategoriaCards('');
   renderItems();
   poblarCopyDesdeSelect();
+  plegarPaso1(false);   // una plantilla nueva parte con la Info básica a la vista
   if (!_modal) _modal = new bootstrap.Modal(document.getElementById('modalEditorPlantilla'));
   _modal.show();
   if (pid){
@@ -1276,6 +1432,8 @@ async function cargarDetalle(pid){
     document.getElementById('ePActiva').checked = p.activa !== false;
     document.getElementById('ePAplicaPlan').checked = p.aplica_plan_mantencion !== false;
     document.getElementById('ePEsSistemaNota').style.display = p.es_sistema ? '' : 'none';
+    _rsug = Array.isArray(p.repuestos_sugeridos) ? p.repuestos_sugeridos.slice() : [];   // 🧰 2026-10-18
+    rsugPintar();
     // 29-08-2026: bug real encontrado en vivo -- renderCategoriaCards() solo
     // pinta la tarjeta activa, nunca sincronizaba el input oculto con el dato
     // del servidor (solo se llenaba al hacer click). Con la regla del Paso 1
@@ -1287,7 +1445,29 @@ async function cargarDetalle(pid){
     renderItems();
     aplicarTarifaSugerida(p.de_clasificacion, p.tarifa_sugerida_min);
     refrescarPasos();
+    // 2026-10-19: una plantilla existente y con su Info básica completa abre plegada en una línea, para que
+    // el espacio quede para los ítems (lo que se edita casi siempre). Si falta algo, queda abierta.
+    plegarPaso1(!!PL_STEP_RULES[1]());
   } catch(e){ alert('Error: '+e.message); }
+}
+
+// Pliega (true), despliega (false) o alterna (sin argumento) el Paso 1 «Info básica» del editor.
+function plegarPaso1(plegar){
+  const sec = document.getElementById('plStep1');
+  const btn = document.getElementById('plStep1Toggle');
+  if (!sec || !btn) return;
+  if (plegar === undefined) plegar = !sec.classList.contains('is-plegado');
+  if (plegar){
+    const nom = document.getElementById('ePNombre').value.trim() || 'Sin nombre';
+    const cat = document.querySelector('#ePCategoriaCards .pl-cat-card.active span');
+    const min = document.getElementById('ePTiempo').value.trim();
+    document.getElementById('plStep1Resumen').textContent =
+      [nom, cat ? cat.textContent.trim() : '', min ? (min + ' min') : ''].filter(Boolean).join(' · ');
+  }
+  sec.classList.toggle('is-plegado', !!plegar);
+  btn.setAttribute('aria-expanded', plegar ? 'false' : 'true');
+  btn.innerHTML = plegar ? '<i class="bi bi-chevron-down me-1"></i>Mostrar'
+                         : '<i class="bi bi-chevron-up me-1"></i>Ocultar';
 }
 
 // ── Checklist rojo/verde del propio editor (mismo patrón que
@@ -1361,6 +1541,7 @@ async function copiarItemsDesde(){
       titulo: it.titulo || '', descripcion: it.descripcion || '',
       tipo_respuesta: it.tipo_respuesta || 'check',
       obligatoria: !!it.obligatoria, requiere_foto: !!it.requiere_foto,
+      foto_si_hallazgo: !!it.foto_si_hallazgo,   // 📸 2026-10-18
       unidad: it.unidad || '', rango_min: it.rango_min, rango_max: it.rango_max,
       opciones_lista: it.opciones_lista || [], target_field: it.target_field || '',
     }));
@@ -1601,6 +1782,13 @@ function renderItems(){
                    onchange="actualizarItem(${idx}, 'requiere_foto', this.checked)">
             <label class="form-check-label small" for="foto-${idx}">Requiere foto adjunta</label>
           </div>
+          ${(it.tipo_respuesta === 'verificacion' || it.tipo_respuesta === 'lista') ? `
+          <div class="form-check form-check-inline" title="Daniel 18-10-2026: «con que tome una foto yo tengo». La foto se pide solo si la respuesta es Alerta o Falla (en una lista, cualquier opción distinta de Apto y de No llegó).">
+            <input class="form-check-input" type="checkbox" id="fsh-${idx}"
+                   ${it.foto_si_hallazgo?'checked':''}
+                   onchange="actualizarItem(${idx}, 'foto_si_hallazgo', this.checked)">
+            <label class="form-check-label small" for="fsh-${idx}">Foto solo si hay hallazgo</label>
+          </div>` : ''}
         </div>
       </div>`;
   }).join('');
@@ -1645,6 +1833,9 @@ async function guardarPlantilla(){
       alert(`El item #${i+1} es tipo Lista pero no tiene opciones`); return;
     }
   }
+  // 🧰 2026-10-18 (Etapa 3): un repuesto sugerido escrito y sin tocar «Agregar» no se pierde al guardar.
+  const _rsugPend = document.getElementById('ePRsugIn');
+  if (_rsugPend && String(_rsugPend.value || '').trim()) rsugAgregar();
   const body = {
     nombre,
     descripcion: document.getElementById('ePDesc').value.trim(),
@@ -1655,6 +1846,7 @@ async function guardarPlantilla(){
     categoria_admin: categoriaAdmin || null,
     activa: document.getElementById('ePActiva').checked,
     aplica_plan_mantencion: document.getElementById('ePAplicaPlan').checked,
+    repuestos_sugeridos: _rsug.slice(),   // 🧰 2026-10-18: solo nombres de pieza
     items: _items.map((it, idx) => ({
       orden: idx + 1,
       titulo: it.titulo.trim(),
@@ -1662,6 +1854,8 @@ async function guardarPlantilla(){
       tipo_respuesta: it.tipo_respuesta,
       obligatoria: !!it.obligatoria,
       requiere_foto: !!it.requiere_foto,
+      // 📸 2026-10-18: solo tiene sentido en verificación y lista (ver _chk_revision_evaluar en app.py).
+      foto_si_hallazgo: !!it.foto_si_hallazgo && (it.tipo_respuesta === 'verificacion' || it.tipo_respuesta === 'lista'),
       unidad: it.unidad || null,
       rango_min: it.rango_min,
       rango_max: it.rango_max,
@@ -1955,5 +2149,95 @@ async function ptiDesactivar(){
 // escHtml (helper anti-XSS) ya está definido más arriba en este mismo
 // <script> (línea ~869) -- se reusa tal cual para pintar nombres/
 // descripciones que vienen de la BD, no se redeclara acá.
+/* ═══ 🎛️ 2026-10-20 (REGLA #32) — PROPUESTAS DEL SISTEMA. El servidor calcula y aplica; aquí solo se muestra y se decide. ═══ */
+let _PROP = [];
+let _PROP_PUEDE = false;
+function propItemHtml(it, nuevo){
+  const ins = [];
+  if (it.obligatoria) ins.push('obligatoria');
+  if (it.requiere_foto) ins.push('foto');
+  else if (it.foto_si_hallazgo) ins.push('foto si hay hallazgo');
+  return '<li' + (nuevo ? ' class="nuevo"' : '') + '>' + escHtml(it.titulo) + ins.map(x => '<small>' + escHtml(x) + '</small>').join('') + '</li>';
+}
+function propRender(){
+  const cont = document.getElementById('propLista');
+  if (!_PROP.length){
+    cont.innerHTML = '<div class="text-center py-4"><i class="bi bi-check-circle-fill" style="color:#16a34a;font-size:2rem"></i><div class="fw-bold mt-2">No hay nada que proponer</div>' +
+      '<div class="small text-muted">Tus plantillas ya están como las dejaste.</div></div>';
+    return;
+  }
+  cont.innerHTML = _PROP.map((p, i) => {
+    const tit = new Set(p.actual.map(x => x.titulo));
+    return '<div class="prop-card' + (p.estado === 'editada' ? ' editada' : '') + '"><div class="prop-h"><span class="prop-ic"><i class="bi bi-lightbulb-fill"></i></span>' +
+      '<div><b>' + escHtml(p.titulo) + '</b><div class="prop-n">' + escHtml(p.nombre) + '</div></div></div>' +
+      '<div class="prop-exp">' + escHtml(p.explicacion) + '</div>' +
+      (p.agregan.length ? '<div class="prop-chg"><span class="lbl">Agregaría</span>' + p.agregan.map(t => '<span class="prop-chip add"><i class="bi bi-plus-lg"></i>' + escHtml(t) + '</span>').join('') + '</div>' : '') +
+      (p.quitan.length ? '<div class="prop-chg"><span class="lbl">Quitaría</span>' + p.quitan.map(t => '<span class="prop-chip del"><i class="bi bi-dash-lg"></i>' + escHtml(t) + '</span>').join('') + '</div>' : '') +
+      (p.advertencia ? '<div class="prop-adv"><i class="bi bi-exclamation-triangle-fill"></i><span>' + escHtml(p.advertencia) + '</span></div>' : '') +
+      '<details><summary><i class="bi bi-columns-gap me-2"></i>Ver la plantilla actual y la propuesta, lado a lado</summary><div class="prop-cmp">' +
+      '<div><h6>Actual (' + p.actual.length + ' ítems)</h6><ol>' + p.actual.map(it => propItemHtml(it, false)).join('') + '</ol></div>' +
+      '<div><h6>Propuesta (' + p.propuesta.length + ' ítems)</h6><ol>' + p.propuesta.map(it => propItemHtml(it, !tit.has(it.titulo))).join('') + '</ol></div></div></details>' +
+      '<div class="prop-act"><button type="button" class="btn btn-ilus" onclick="propAplicar(' + i + ', \'nueva\')"><i class="bi bi-files me-1"></i>Crear como plantilla nueva <small class="ms-1 fw-normal">(recomendado)</small></button>' +
+      '<button type="button" class="btn btn-outline-danger"' + (p.puede_reemplazar ? '' : ' disabled aria-disabled="true"') + ' onclick="propAplicar(' + i + ', \'reemplazar\')"><i class="bi bi-arrow-repeat me-1"></i>Reemplazar el contenido</button></div>' +
+      (p.puede_reemplazar ? '' : '<div class="prop-no"><i class="bi bi-info-circle me-1"></i>' + escHtml(p.motivo_no_reemplazo || 'No se puede reemplazar el contenido.') + '</div>') + '</div>';
+  }).join('');
+}
+async function propCargar(silencioso){
+  try {
+    const r = await fetch('/mantenciones/api/plantillas/propuestas', {credentials: 'same-origin', cache: 'no-store'});
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'error');
+    _PROP = j.propuestas || []; _PROP_PUEDE = !!j.puede_reemplazar;
+  } catch(e){
+    _PROP = [];
+    if (!silencioso){
+      document.getElementById('propLista').innerHTML = '<div class="alert alert-warning mb-0">No se pudieron calcular las propuestas. Intenta de nuevo en un momento.</div>';
+      return;
+    }
+  }
+  const b = document.getElementById('propBadge');
+  if (b){ b.hidden = !_PROP.length; b.textContent = String(_PROP.length); }
+  if (!silencioso) propRender();
+}
+function abrirPropuestas(){
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPropuestas')).show();
+  document.getElementById('propLista').innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>Calculando propuestas…</div>';
+  propCargar(false);
+}
+async function propAplicar(i, modo){
+  const p = _PROP[i];
+  if (!p) return;
+  const nueva = modo === 'nueva';
+  const ok = await ilusConfirm(nueva ? {
+    title: 'Crear plantilla nueva',
+    message: 'Se crea una copia de «' + p.nombre + '» con «' + p.titulo + '».',
+    sub: 'La plantilla actual no se toca. Las OT ya creadas conservan su copia.',
+    okLabel: 'Crear plantilla nueva', cancelLabel: 'Cancelar', type: 'question'
+  } : {
+    title: 'Reemplazar el contenido',
+    message: 'Vas a reemplazar el contenido de «' + p.nombre + '» con «' + p.titulo + '».',
+    sub: 'Las OT que se creen desde ahora usarán la propuesta. Las ya creadas conservan su copia. Queda en la bitácora con tu nombre.',
+    okLabel: 'Sí, reemplazar', cancelLabel: 'No, dejarla', danger: true
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch('/mantenciones/api/plantillas/propuestas/aplicar', {
+      method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+      body: JSON.stringify({tipo: p.tipo, plantilla_id: p.plantilla_id, modo: modo, huella: p.huella})
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok){
+      await ilusAlert({title: 'No se aplicó', message: (j && j.error) || 'No se pudo aplicar la propuesta.', type: 'warning'});
+      await propCargar(false);
+      return;
+    }
+    ilusToast(nueva ? '✓ Plantilla nueva creada: «' + (j.nombre || '') + '»' : '✓ Contenido reemplazado', {type: 'success'});
+    await propCargar(false);
+    if (typeof cargarPlantillas === 'function') cargarPlantillas();
+  } catch(e){
+    ilusToast('Error de conexión: no se aplicó nada.', {type: 'error'});
+  }
+}
+document.addEventListener('DOMContentLoaded', () => { propCargar(true); });
 </script>
 {% endblock %}

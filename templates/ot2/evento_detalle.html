@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Evento · ILUS Fitness{% endblock %}
+
+{#
+  🧩 2026-10-20 (Daniel, 19-oct). Un evento por dentro: su avance por fase (instalación → desinstalación → revisión), el
+  recorrido de cada instalación con su desinstalación, una línea por día y la tabla de sus OT (paginada, REGLA #4.3).
+  «Agregar OT al evento» abre el asistente de crear OT ya con el evento elegido; «Asociar OT existentes» suma OT que ya
+  estaban creadas (casillas con marcar/desmarcar todo, REGLA #14). Sin montos: es avance, no plata (REGLA #26).
+  Datos: GET /ot/api/eventos/<id>, GET …/candidatas, POST …/asociar.
+#}
+
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_evento.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-calendar-event me-2"></i>Evento</h4>
+    <div class="sub">Avance de las órdenes de trabajo agrupadas en este evento.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('ot_pagina_eventos') }}" class="btn btn-sm btn-outline-secondary" style="min-height:44px;display:inline-flex;align-items:center"><i class="bi bi-arrow-left me-1"></i>Volver a los eventos</a>
+  </div>
+</div>
+
+<div class="ev" id="evRaiz" data-modo="detalle" data-id="{{ evento_id }}" data-tecnico="{{ '1' if es_tecnico else '0' }}">
+  <div class="ev-vacio">Cargando el evento…</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='ot_evento_form.js') }}"></script>
+<script src="{{ url_for('static', filename='ot_eventos.js') }}"></script>
+{% endblock %}

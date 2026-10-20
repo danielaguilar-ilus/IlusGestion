@@ -171,11 +171,15 @@ class TestCableadoServidor(unittest.TestCase):
         self.assertIn("revisar_documento=False", v)
         self.assertIn('"DOC_OBSERVADO"', v)
         self.assertIn("if revisar_documento and _OT_DOC_OBS_ACTIVO and _docs_t:", v)
-        self.assertIn("revisar_documento=True", _fuente("_ot2_crear_core"))
-        self.assertEqual(len(re.findall(r"^\s+revisar_documento=True\)", APP, re.M)), 1)   # una sola llamada: ni histórica, ni retroactiva, ni plan anual
+        # 🧩 2026-10-19: el asistente sigue revisando el documento, salvo en la desinstalación (documentos heredados de la
+        # instalación: una nota de venta ya entregada daría «productos sin saldo»). Sigue siendo UNA sola llamada.
+        self.assertIn("revisar_documento=(not es_hija)", _fuente("_ot2_crear_core"))
+        self.assertEqual(len(re.findall(r"^\s+revisar_documento=\(not es_hija\),", APP, re.M)), 1)   # una sola llamada: ni histórica, ni retroactiva, ni plan anual
+        self.assertEqual(len(re.findall(r"^\s+revisar_documento=True\)", APP, re.M)), 0)
 
     def test_el_tipo_nuevo_existe_en_la_tabla(self):
-        self.assertEqual(APP.count("'cerrar_con_perdida','documento_observado') NOT NULL"), 2)   # CREATE + ALTER
+        # CREATE + ALTER (2026-10-19: «desinstalacion_cubierta» se agregó al final del mismo ENUM)
+        self.assertEqual(APP.count("'cerrar_con_perdida','documento_observado','desinstalacion_cubierta') NOT NULL"), 2)
         self.assertIn('"documento_observado")', APP)
 
     def test_la_solicitud_calcula_las_observaciones_en_el_servidor(self):
@@ -283,7 +287,7 @@ class TestFotoDelLibroParaMostrar(unittest.TestCase):
     def test_solo_para_mostrar_con_cache_fria(self):
         f = _fuente("_fac_leer_capacidad")
         self.assertIn("return _fac_capacidad_persistida(tido, nudo)", f)
-        self.assertIn("else _fac_familia_persistida(k))", _fuente("_fac_equilibrio_ot"))
+        self.assertIn("else _fac_familia_persistida(k))", _fuente("_fac_equilibrio_ot_solo"))
         self.assertNotIn("_mfp_precalentar_erp", APP)   # nada de hilos contra Random en la ficha del lote
 
     def test_garantia_sin_autorizar_no_dice_sin_documento(self):

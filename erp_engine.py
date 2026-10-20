@@ -276,6 +276,8 @@ REGION_NOMBRES: dict[str, str] = {
 TIDO_NUDO_MAP: dict[str, tuple[str, Callable[[str], str]]] = {
     "VD":  ("NVV", lambda n: "VD"  + str(n).zfill(8)),
     "WEB": ("NVV", lambda n: "WEB" + str(n).zfill(7)),
+    # 2026-10-19: «BD» TOLERANTE (misma lista que ot_saldo_servicio.PREFIJOS_NOTA_VENTA; NO confirmado contra Random).
+    "BD":  ("NVV", lambda n: "BD"  + str(n).zfill(8)),
 }
 
 

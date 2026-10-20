@@ -61,6 +61,23 @@ CASOS = [
     dict(zz_monto=1, zz_codigo="ZZRETIRO", valor_origen="zz", costo=200000, costo_proveedor=1000),
     dict(costo=90000, valor_origen="estimado", costo_proveedor=1000),
     dict(tipo="revision_interna", cliente_id=9, zz_monto=10000, valor_origen="zz", costo_proveedor=5000),
+    # 2026-10-19: desinstalación CUBIERTA por su instalación (madre). Se deduce de la relación madre/hija, nunca de valor_origen.
+    dict(tipo="desinstalacion", ot_relacion="desinstalacion", ot_madre_id=7, madre_valida=1, costo_proveedor=30000),
+    dict(tipo="desinstalacion", ot_relacion="desinstalacion", ot_madre_id=7, madre_valida=1, costo_proveedor=0,
+         costo_despacho=5000),
+    dict(tipo="desinstalacion", ot_relacion="desinstalacion", ot_madre_id=7, madre_valida=1),
+    dict(tipo="desinstalacion", ot_relacion="desinstalacion", ot_madre_id=7, madre_valida=0, costo_proveedor=30000),
+    dict(tipo="desinstalacion", ot_relacion="desinstalacion", ot_madre_id=7, madre_valida=1, zz_monto=50000,
+         valor_origen="zz", costo_proveedor=30000),
+    dict(tipo="desinstalacion", ot_relacion=None, ot_madre_id=None, madre_valida=1, costo_proveedor=30000),
+    dict(tipo="desinstalacion", ot_relacion="desinstalacion", ot_madre_id=None, madre_valida=1, costo_proveedor=30000),
+    dict(tipo="desinstalacion", ot_relacion="desinstalacion", ot_madre_id=7, madre_valida=1, valor_origen="cubierta",
+         costo_proveedor=30000),
+    dict(tipo="instalacion", ot_relacion="desinstalacion", ot_madre_id=7, madre_valida=1, costo_proveedor=30000),
+    dict(tipo="desinstalacion", ot_relacion="desinstalacion", ot_madre_id=7, madre_valida=1, modalidad_cobro="garantia",
+         costo_proveedor=30000),
+    dict(tipo="desinstalacion", ot_relacion="desinstalacion", ot_madre_id=7, madre_valida=1, zz_monto=0,
+         zz_envio_monto=0, costo_proveedor=30000),
 ]
 CAMPOS = ("cobertura", "cobra", "clase", "label", "a_pagar_proveedor", "avisos", "precio_anotado")
 

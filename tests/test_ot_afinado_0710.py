@@ -175,6 +175,9 @@ class TestSinCiclos(unittest.TestCase):
         for codigo, (tipo, _txt) in acciones.items():
             if tipo in ("esperar_autorizacion", "actualizar_anexo", "ver_ot"):
                 continue                      # solo informan o llevan a la solicitud
+            if tipo == "abrir_ot_madre":      # 2026-10-19: lleva a la OT de la instalación (MADRE_SIN_FACTURA); es un enlace del motor
+                self.assertIn("a.tipo === 'abrir_ot_madre'", js, codigo)
+                continue
             if tipo == "pedir_autorizacion":
                 self.assertEqual(mapa[tipo], "pedirCierre", codigo)
                 continue

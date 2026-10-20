@@ -6,6 +6,8 @@
    acciones viven en static/prosp_strip.js. Nada sale al cliente solo.
    La usan la tarjeta de Clientes y la ficha (en_ficha=True), y el
    endpoint /prospecto/tarjeta para refrescarla tras cada acción.
+   Colores (Daniel 2026-10-14): ámbar = te toca, azul = esperando al
+   cliente, botones azules; el rojo solo para errores reales.
 ══════════════════════════════════════════════════════════════════ #}
 
 {% macro _contacto(c, pr, plan_cfg, tel, en_ficha, grande) %}
@@ -70,6 +72,19 @@
   <a class="cc2-prosp-txt phist" href="{{ url_for('mant_ficha', cid=c.id) }}#prospConv" onclick="event.stopPropagation()"
      title="Tickets anteriores de este RUT (instalación, reparación…): no se mezclan con la oferta">
     <i class="bi bi-clock-history me-1"></i>Historial: {{ pr.tickets_n }} {{ 'conversación anterior' if pr.tickets_n == 1 else 'conversaciones anteriores' }}{% if pr.tickets_no_leidos %} · {{ pr.tickets_no_leidos }} sin leer{% endif %}</a>
+  {% endif %}
+  {# ¿Lista para cotizar? (Daniel 2026-10-19). Avisa qué falta y lleva a completarlo; no traba ningún paso. #}
+  {% if ac.key and ac.key not in ('contrato', 'listo') %}
+  {% if pr.faltan %}
+  <div class="pfalta" onclick="event.stopPropagation()">
+    <i class="bi bi-clipboard-check"></i>
+    <div><b>Para cotizar le falta:</b>
+      {% for f in pr.faltan %}{% if f.key == 'tarifa' %}<a href="/catalogo/clases" target="_blank" title="Las tarifas se definen por clase de producto en el Catálogo">{{ f.texto }}</a>{% elif en_ficha %}<a href="javascript:void(0)" onclick="{{ 'abrirEditarCliente()' if f.key == 'contacto' else 'switchTab(\'equipos\')' }}">{{ f.texto }}</a>{% else %}<a href="{{ url_for('mant_ficha', cid=c.id) }}?accion={{ f.key }}">{{ f.texto }}</a>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}
+    </div>
+  </div>
+  {% elif pr.listo %}
+  <span class="cc2-prosp-txt plisto"><i class="bi bi-check-circle-fill me-1"></i>Lista para cotizar{% if pr.precio_mantencion %} · una mantención ≈ ${{ '{:,.0f}'.format(pr.precio_mantencion).replace(',', '.') }}{% endif %}</span>
+  {% endif %}
   {% endif %}
   {% if ac.key and ac.key != 'listo' %}
   <div class="pnext pnext-{{ ac.key }}" onclick="event.stopPropagation()">

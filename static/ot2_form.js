@@ -1760,15 +1760,24 @@ async function o2fdayCancelarOT(vid){
   });
   if(!ok) return;
   try{
-    const r = await fetch('/mantenciones/api/visitas/' + vid, {
-      method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ estado: 'cancelada' }),
-    });
-    const d = await r.json().catch(function(){ return {}; });
-    if(r.ok && d.ok !== false){
+    // 2026-10-20: una instalación con su desinstalación agendada pide «¿cancelar las dos?» (OTCancelar, static/ot_cancelar.js).
+    let d, okPut;
+    if(window.OTCancelar){
+      const rr = await window.OTCancelar.enviar(vid, { estado: 'cancelada' });
+      if(rr.cancelado) return;
+      d = rr.d; okPut = rr.ok;
+    } else {
+      const r = await fetch('/mantenciones/api/visitas/' + vid, {
+        method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ estado: 'cancelada' }),
+      });
+      d = await r.json().catch(function(){ return {}; });
+      okPut = r.ok && d.ok !== false;
+    }
+    if(okPut){
       ilusToast(numero + ' cancelada', {type:'success'});
       o2fdayCerrarDetalle();
       await _tkdayRecargarMes();
-    } else {
+    } else if(!(window.OTCancelar && window.OTCancelar.avisarError(d))){
       ilusToast(d.error || 'No se pudo cancelar la OT', {type:'error'});
     }
   }catch(e){

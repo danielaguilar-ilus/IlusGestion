@@ -158,7 +158,13 @@
           '<div class="cli">' + esc(u.cliente || '') + (f.estado_txt ? ' · ' + esc(f.estado_txt) : '') + (f.fecha ? ' · ' + esc(f.fecha) : '') + '</div></div>' +
           '<div class="toma">' + (u.servicio ? '<span class="sf-chip ser">Servicio ' + clp(u.servicio) + '</span>' : '') +
           (u.despacho ? '<span class="sf-chip des">Despacho ' + clp(u.despacho) + '</span>' : '') + '</div>' +
-          '<div>' + cuentaOt(f) + (perdida ? ' <span class="sf-pill excedida"><i class="bi bi-shield-exclamation"></i>Pérdida: cierra solo con autorización de Daniel</span>' : '') + '</div></div>';
+          '<div>' + cuentaOt(f) + (perdida ? ' <span class="sf-pill excedida"><i class="bi bi-shield-exclamation"></i>Pérdida: cierra solo con autorización de Daniel</span>' : '') + '</div>' +
+          /* 🧩 2026-10-20: la desinstalación cubierta aparece BAJO la OT de la instalación con $0: el auditor va a preguntar. */
+          (u.desinstalaciones || []).map(function (x) {
+            return '<div class="sf-desinst"><i class="bi bi-box-arrow-up"></i> <a class="ot" href="' + esc(x.url || ('/ot/' + x.vid)) + '">' + esc(x.numero_ot || ('OT ' + x.vid)) + '</a>' +
+              ' · ' + esc(x.relacion || 'Desinstalación cubierta por la instalación') + ' · <b>' + clp(x.servicio || 0) + '</b>' + ((x.despacho || 0) ? ' + despacho ' + clp(x.despacho) : '') +
+              (x.estado ? ' · ' + esc(String(x.estado).replace(/_/g, ' ')) : '') + '</div>';
+          }).join('') + '</div>';
       }).join('') + '</div>';
     }
     h += '</div>';

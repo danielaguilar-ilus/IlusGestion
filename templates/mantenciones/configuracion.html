@@ -90,6 +90,9 @@
   </div>
 </div>
 
+{# 2026-10-19: Plan Anual / Radar / Agente · Reglas salieron del menú lateral y viven como botones del módulo Clientes. #}
+{% include "mantenciones/_clientes_botones.html" %}
+
 <div class="ag-banner">
   <i class="bi bi-cpu ag-bicon"></i>
   <div>
@@ -219,8 +222,10 @@ const CAT_META = {
   texto:      {icon:'📝', label:'Texto'},
   terreno:    {icon:'📍', label:'Terreno (GPS y tiempos)'},
   anexo:      {icon:'⚖️', label:'Anexo de servicios (proveedores)'},
+  // 🧾 2026-10-18 (Etapa 3): «Correos del acta de recepción» (solo internos; el servidor rechaza otros dominios).
+  acta:       {icon:'📦', label:'Acta de recepción (logística)'},
 };
-const CAT_ORDER = ['frecuencia','precio','descuento','alerta','politica','anexo','terreno','texto'];
+const CAT_ORDER = ['frecuencia','precio','descuento','alerta','politica','anexo','terreno','acta','texto'];
 
 let _reglas = [];                 // [{clave,valor,tipo_dato,...}]
 const _original = {};             // clave -> valor original (string)
@@ -408,6 +413,10 @@ async function guardar(){
       return;
     }
     const d = await r.json();
+    // 🧾 2026-10-18: el servidor normaliza los correos del acta (minúsculas, separados por coma): se muestra lo guardado.
+    if (r.ok && d.ok && cambios.ot_acta_recepcion_emails != null){
+      setTimeout(cargar, 300);
+    }
     if (!r.ok || !d.ok){
       ilusToast('Error: ' + esc(d && d.error || 'no se pudo guardar'), {type:'error'});
       if (btn) btn.disabled = false;

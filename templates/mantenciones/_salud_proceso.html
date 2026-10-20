@@ -1,0 +1,351 @@
+{# ══════════════════════════════════════════════════════════════════
+   SALUD DEL PROCESO — clientes de instalación (solo administradores).
+   Daniel 2026-10-19: «estamos creando los clientes para proponer esto:
+   debe estar muy robusto para establecer las mantenciones como área de
+   negocio». Antes «Revisar y reparar» (2026-10-04): todo lo que hacía
+   sigue aquí, más los controles nuevos. Cada punto donde un cliente de
+   instalación se puede caer antes de ofrecerle mantención, contado y con
+   su acción. Nada de esto le escribe a un cliente.
+   Datos: GET /mantenciones/api/instalaciones/auditoria (app.py,
+   _instalaciones_auditar(completo=True)). Colores: ámbar = por revisar,
+   verde = en orden, botones azules (REGLA #15 y feedback 2026-10-14).
+══════════════════════════════════════════════════════════════════ #}
+<div id="repInstAviso" class="sal-aviso" hidden>
+  <i class="bi bi-clipboard2-pulse"></i>
+  <div>
+    <b id="repInstTitulo"></b>
+    <span id="repInstSub"></span>
+  </div>
+  <button type="button" class="btn btn-sm" onclick="abrirRepararInst()">
+    <i class="bi bi-clipboard2-pulse me-1"></i>Ver salud del proceso</button>
+</div>
+<div class="modal fade" id="modalRepInst" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff">
+        <div>
+          <h5 class="modal-title fw-bold mb-0"><i class="bi bi-clipboard2-pulse me-2"></i>Salud del proceso — clientes de instalación</h5>
+          <div class="small" style="color:#d1d5db" id="salVigilancia"></div>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="repInstCuerpo"></div>
+      <div class="modal-footer justify-content-between">
+        <div class="small text-muted" id="repInstSel"></div>
+        <div><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+          <button class="btn btn-primary fw-bold" id="repInstCrear" onclick="crearFichasInst(this)" disabled><i class="bi bi-person-plus-fill me-1"></i>Crear fichas elegidas</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+<style>
+.sal-aviso{display:flex;gap:11px;align-items:center;margin-bottom:14px;padding:12px 14px;background:#fff8e1;border:1px solid #fde68a;border-radius:12px}
+.sal-aviso > i{color:#f59e0b;font-size:1.25rem;flex:0 0 auto}
+.sal-aviso > div{flex:1;min-width:0;line-height:1.4}
+.sal-aviso b{display:block;font-size:.88rem;color:#92400e;font-weight:800}
+.sal-aviso span{display:block;font-size:.78rem;color:#92400e}
+.sal-aviso .btn{flex:0 0 auto;background:#2563eb;border-color:#2563eb;color:#fff;font-weight:800;min-height:38px}
+.sal-aviso .btn:hover{background:#1d4ed8;border-color:#1d4ed8;color:#fff}
+@media (max-width:640px){ .sal-aviso{flex-wrap:wrap} .sal-aviso .btn{width:100%;min-height:44px} }
+.sal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(205px,1fr));gap:8px;margin-bottom:14px}
+.sal-chk{display:flex;gap:9px;align-items:flex-start;padding:9px 10px;border-radius:10px;border:1px solid #e5e7eb;background:#fff;
+  text-align:left;cursor:pointer;transition:transform .15s,box-shadow .15s}
+.sal-chk:hover{transform:translateY(-1px);box-shadow:0 6px 14px rgba(0,0,0,.06)}
+.sal-chk .sal-n{min-width:30px;height:30px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:.82rem;flex:0 0 auto;background:#dcfce7;color:#15803d}
+.sal-chk.pend{background:#fff8e1;border-color:#fde68a}.sal-chk.pend .sal-n{background:#f59e0b;color:#fff}
+.sal-chk b{display:block;font-size:.8rem;line-height:1.25;color:#111827}
+.sal-chk small{display:block;font-size:.7rem;color:#6b7280;line-height:1.3}
+.sal-sec{border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin-bottom:12px;background:#fff}
+.sal-sec.pend{border-left:4px solid #f59e0b}.sal-sec.ok{border-left:4px solid #16a34a}
+.sal-sec h6{font-weight:800;font-size:.9rem;margin:0 0 2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sal-sec .sal-desc{font-size:.78rem;color:#6b7280;margin-bottom:8px}
+.sal-sec table{font-size:.8rem}
+.sal-pie{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-top:6px}
+.sal-tag{font-size:.68rem;font-weight:800;border-radius:99px;padding:2px 8px;background:#eff6ff;color:#1d4ed8;white-space:nowrap}
+.sal-tag.erp{background:#f5f3ff;color:#6d28d9}
+.sal-chips{display:flex;flex-wrap:wrap;gap:6px}
+.sal-chips a{font-size:.76rem;border:1px solid #e5e7eb;border-radius:99px;padding:3px 10px;color:#1d4ed8;text-decoration:none;background:#fff}
+.sal-chips a:hover{border-color:#2563eb}
+.sal-monto{max-width:150px}
+</style>
+<script>
+let _repInst = null, _repInstModal = null, _repSel = new Set(), _salPag = {};
+const _repEsc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// Los controles, en el orden del camino del cliente: entra → queda bien clasificado → con sus equipos → se le puede
+// contactar y cotizar → su contrato se mide.
+const SAL_CHECKS = [
+  {k:'tickets_sin_ficha', t:'Ventas con instalación sin ficha', s:'Tickets y facturas del ERP con instalación cuyo RUT no tiene ficha.'},
+  {k:'tickets_sin_rut', t:'Tickets de instalación sin RUT', s:'Se les busca el RUT en su factura para crear su ficha.'},
+  {k:'ot_instalacion_sin_cliente', t:'OT de instalación sin cliente', s:'Se asigna el cliente desde la OT.'},
+  {k:'mal_clasificados', t:'Clientes mal clasificados', s:'Tuvieron una OT de instalación y figuran como otro tipo.'},
+  {k:'fichas_sin_equipos', t:'Fichas sin productos', s:'Se cargan desde la factura de su instalación.'},
+  {k:'ot_sin_equipos', t:'OT cerradas sin sus equipos', s:'La OT cerró y sus equipos no están en la ficha.'},
+  {k:'prospectos_sin_contacto', t:'Sin teléfono ni correo', s:'No se les puede ofrecer la mantención.'},
+  {k:'equipos_sin_tarifa', t:'Equipos sin tarifa', s:'Se cotizarían en $0.'},
+  {k:'contratos_sin_monto', t:'Contratos sin monto', s:'Sin el monto mensual en pesos no se mide el ingreso.'},
+];
+const _salN = k => ((_repInst && _repInst[k]) || []).length;
+(async function(){
+  try {
+    const r = await fetch('/mantenciones/api/instalaciones/auditoria'); const d = await r.json();
+    if (!d.ok) return;
+    _repInst = d;
+    const pend = SAL_CHECKS.filter(c => _salN(c.k));
+    if (!pend.length) return;
+    document.getElementById('repInstTitulo').textContent = 'Salud del proceso de instalaciones: ' + pend.length + ' punto' + (pend.length === 1 ? '' : 's') + ' por revisar';
+    document.getElementById('repInstSub').textContent = pend.map(c => _salN(c.k) + ' · ' + c.t.toLowerCase()).join(' — ') + '.';
+    document.getElementById('repInstAviso').hidden = false;
+  } catch(e){}
+})();
+function abrirRepararInst(){
+  if (!_repInst) return;
+  if (!_repInstModal) _repInstModal = new bootstrap.Modal(document.getElementById('modalRepInst'));
+  _repSel = new Set(_repInst.tickets_sin_ficha.filter(g => !g.rut_error).map(g => g.key));   // por defecto TODOS los válidos
+  _salPag = {};
+  const v = _repInst.vigilancia || {};
+  document.getElementById('salVigilancia').textContent = v.at_chile
+    ? 'Revisión automática cada 10 minutos · última: ' + v.at_chile + ' · ' + (v.creadas || 0) + ' ficha(s) creadas · ' + (v.rut_desde_factura || 0) + ' RUT tomados de facturas'
+    : 'La revisión automática corre cada 10 minutos (su registro empieza con esta versión).';
+  pintarRepInst(); _repInstModal.show();
+}
+function pintarRepInst(){
+  const cont = document.getElementById('repInstCuerpo');
+  let h = '<div class="sal-grid">' + SAL_CHECKS.map(c => {
+    const n = _salN(c.k);
+    return '<button type="button" class="sal-chk ' + (n ? 'pend' : '') + '" onclick="document.getElementById(\'sal-' + c.k + '\').scrollIntoView({behavior:\'smooth\',block:\'start\'})">' +
+      '<span class="sal-n">' + (n ? n : '<i class="bi bi-check-lg"></i>') + '</span><span><b>' + _repEsc(c.t) + '</b><small>' + (n ? _repEsc(c.s) : 'En orden') + '</small></span></button>';
+  }).join('') + '</div>';
+  h += SAL_CHECKS.map(c => '<div class="sal-sec ' + (_salN(c.k) ? 'pend' : 'ok') + '" id="sal-' + c.k + '"></div>').join('');
+  cont.innerHTML = h;
+  SAL_CHECKS.forEach(c => pintarSalSec(c.k));
+  contarRepInst();
+}
+// Paginación de cada lista (REGLA #4.3): solo se repinta su sección.
+function _salPagina(k, arr, per){
+  const tot = Math.max(1, Math.ceil(arr.length / per));
+  const p = Math.min(Math.max(1, _salPag[k] || 1), tot); _salPag[k] = p;
+  return {filas: arr.slice((p - 1) * per, p * per), p, tot, desde: arr.length ? (p - 1) * per + 1 : 0, hasta: Math.min(p * per, arr.length)};
+}
+function _salPie(k, pg, n){
+  if (pg.tot <= 1) return '';
+  return '<div class="sal-pie"><span class="small text-muted">Mostrando ' + pg.desde + '–' + pg.hasta + ' de ' + n + '</span>' +
+    '<div class="btn-group btn-group-sm"><button class="btn btn-outline-secondary" ' + (pg.p <= 1 ? 'disabled' : '') + ' onclick="_salPag[\'' + k + '\']--;pintarSalSec(\'' + k + '\')">Anterior</button>' +
+    '<button class="btn btn-outline-secondary" disabled>Página ' + pg.p + ' de ' + pg.tot + '</button>' +
+    '<button class="btn btn-outline-secondary" ' + (pg.p >= pg.tot ? 'disabled' : '') + ' onclick="_salPag[\'' + k + '\']++;pintarSalSec(\'' + k + '\')">Siguiente</button></div></div>';
+}
+function _salCab(c, n, extra){
+  return '<h6>' + (n ? '<span class="sal-tag" style="background:#fff8e1;color:#92400e">' + n + ' por revisar</span>' : '<span class="sal-tag" style="background:#dcfce7;color:#15803d"><i class="bi bi-check-lg"></i> En orden</span>') +
+    _repEsc(c.t) + (extra || '') + '</h6>';
+}
+function pintarSalSec(k){
+  const el = document.getElementById('sal-' + k); if (!el) return;
+  const c = SAL_CHECKS.find(x => x.k === k), arr = _repInst[k] || [], n = arr.length;
+  el.className = 'sal-sec ' + (n ? 'pend' : 'ok');
+  let h = '';
+  if (k === 'tickets_sin_ficha'){
+    h = _salCab(c, n, n ? ' <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="toggleTodoInst()"><i class="bi bi-check-all me-1"></i>Seleccionar/deseleccionar todo</button>' : '') +
+      '<div class="sal-desc">Cada venta con instalación (ticket o factura del ERP con ZZINSTALACION) debe tener su ficha. Las nuevas se crean solas; estas son las que quedaron atrás. Se crean como prospecto de instalación y no se le envía nada a nadie.</div>';
+    if (n){
+      const pg = _salPagina(k, arr, 15);
+      h += '<div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th></th><th>Cliente</th><th>RUT</th><th>De dónde viene</th><th>Contacto</th></tr></thead><tbody>' +
+        pg.filas.map(g => '<tr><td><input type="checkbox" class="form-check-input repInstChk" value="' + _repEsc(g.key) + '"' + (g.rut_error ? ' disabled' : (_repSel.has(g.key) ? ' checked' : '')) + ' onchange="marcarRepInst(this)"></td>' +
+          '<td><b>' + _repEsc(g.empresa || g.contacto || '(sin nombre)') + '</b><div class="text-muted">' + _repEsc([g.direccion, g.comuna].filter(Boolean).join(', ')) + '</div></td>' +
+          '<td class="font-monospace">' + _repEsc(g.rut_error ? g.rut : g.rut_normalizado) + (g.rut_error ? '<div class="text-danger">' + _repEsc(g.rut_error) + '</div>' : (g.dv_agregado ? '<div class="text-muted">se agregó el dígito verificador</div>' : '')) + '</td>' +
+          '<td>' + (g.tickets.length ? '<span class="sal-tag">Ticket</span> <span class="text-muted">' + _repEsc(g.tickets.slice(0, 3).map(t => t.numero).join(', ')) + '</span><br>' : '') +
+            (g.facturas.length ? '<span class="sal-tag erp">Factura del ERP</span> <span class="text-muted">' + _repEsc(g.facturas.slice(0, 3).map(f => f.doc + (f.fecha ? ' (' + f.fecha + ')' : '')).join(', ')) + '</span>' : '') + '</td>' +
+          '<td>' + _repEsc(g.contacto) + '<div class="text-muted">' + _repEsc([g.telefono, g.email].filter(Boolean).join(' · ')) + '</div></td></tr>').join('') +
+        '</tbody></table></div>' + _salPie(k, pg, n);
+    }
+  } else if (k === 'tickets_sin_rut'){
+    h = _salCab(c, n, n ? ' <button class="btn btn-sm btn-primary ms-auto" onclick="salRutDesdeFactura(this)"><i class="bi bi-search me-1"></i>Buscar el RUT en sus facturas</button>' : '') +
+      '<div class="sal-desc">Sin RUT no se puede crear la ficha. La revisión automática toma el RUT de la factura del ticket en el ERP (solo lectura) y lo guarda en el ticket, con una nota. Los que no tienen factura se completan a mano en el ticket.</div>';
+    if (n){
+      const pg = _salPagina(k, arr, 15);
+      h += '<div class="sal-chips">' + pg.filas.map(t => '<a href="/tickets/' + t.id + '" target="_blank">' + _repEsc(t.ticket) + ' · ' + _repEsc(t.empresa || 'sin nombre') + (t.fecha ? ' · ' + _repEsc(t.fecha) : '') + '</a>').join('') + '</div>' +
+        '<div class="small mt-1" id="salRutProg"></div>' + _salPie(k, pg, n);
+    }
+  } else if (k === 'ot_instalacion_sin_cliente'){
+    h = _salCab(c, n) + '<div class="sal-desc">Una OT de instalación sin cliente no deja ficha. Asígnale el cliente desde la OT.</div>' +
+      (n ? '<div class="sal-chips">' + arr.map(o => '<a href="/ot/' + o.visita_id + '" target="_blank">' + _repEsc(o.numero_ot || ('OT #' + o.visita_id)) + '</a>').join('') + '</div>' : '');
+  } else if (k === 'mal_clasificados'){
+    h = _salCab(c, n, n ? ' <button class="btn btn-sm btn-outline-dark ms-auto" onclick="reclasificarInst(this)"><i class="bi bi-tag-fill me-1"></i>Marcarlos como Instalación</button>' : '') +
+      '<div class="sal-desc">Solo cambia el tipo a «Instalación»; no toca su estado ni a quien ya tiene contrato.</div>' +
+      (n ? '<div class="small text-muted">' + arr.map(x => _repEsc(x.razon_social)).join(' · ') + '</div>' : '');
+  } else if (k === 'fichas_sin_equipos'){
+    h = _salCab(c, n, n ? ' <button class="btn btn-sm btn-primary ms-auto" onclick="cargarEquiposInst(this)"><i class="bi bi-box-seam me-1"></i>Cargar productos desde sus facturas</button>' : '') +
+      '<div class="sal-desc">Se cargan desde la factura de su instalación (ticket o venta del ERP), con su fecha de emisión para programar las mantenciones. Si la factura no está en el ERP, se usan los equipos del ticket. No se duplica nada.</div>' +
+      '<div class="small" id="repEqProgreso"></div>' +
+      (n ? (function(){ const pg = _salPagina(k, arr, 30); return '<div class="sal-chips">' + pg.filas.map(x => '<a href="/servicio-tecnico/clientes/' + x.id + '?accion=equipos" target="_blank">' + _repEsc(x.razon_social) + '</a>').join('') + '</div>' + _salPie(k, pg, n); })() : '');
+  } else if (k === 'ot_sin_equipos'){
+    h = _salCab(c, n) + '<div class="sal-desc">Desde el 02/09 la OT de instalación pasa sola sus equipos a la ficha al cerrar. Estas cerraron y su documento no dejó equipos en la ficha. «Pasar equipos» muestra primero qué se crearía; si el documento solo trae el servicio, se marca como revisada.</div>';
+    if (n){
+      const pg = _salPagina(k, arr, 15);
+      h += '<div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>OT</th><th>Cliente</th><th>Documento</th><th></th></tr></thead><tbody>' +
+        pg.filas.map(o => '<tr id="salOt' + o.vid + '"><td><a href="/ot/' + o.vid + '" target="_blank" class="fw-bold">' + _repEsc(o.numero_ot || ('#' + o.vid)) + '</a></td>' +
+          '<td>' + _repEsc(o.razon_social) + '</td><td class="font-monospace">' + _repEsc(o.doc) + '</td>' +
+          '<td class="text-end"><button class="btn btn-sm btn-primary" onclick="salOtEquipos(' + o.vid + ', this)"><i class="bi bi-box-arrow-in-down me-1"></i>Pasar equipos</button></td></tr>').join('') +
+        '</tbody></table></div>' + _salPie(k, pg, n);
+    }
+  } else if (k === 'prospectos_sin_contacto'){
+    h = _salCab(c, n) + '<div class="sal-desc">Sin teléfono ni correo no se les puede ofrecer el plan. Al tocar uno se abre su ficha para completarlo.</div>';
+    if (n){
+      const pg = _salPagina(k, arr, 30);
+      h += '<div class="sal-chips">' + pg.filas.map(x => '<a href="/servicio-tecnico/clientes/' + x.id + '?accion=contacto" target="_blank">' + _repEsc(x.razon_social) + '</a>').join('') + '</div>' + _salPie(k, pg, n);
+    }
+  } else if (k === 'equipos_sin_tarifa'){
+    h = _salCab(c, n, n ? ' <a class="btn btn-sm btn-primary ms-auto" href="/catalogo/clases" target="_blank"><i class="bi bi-tags-fill me-1"></i>Definir tarifas por clase</a>' : '') +
+      '<div class="sal-desc">Equipos de clientes sin contrato que no tienen tarifa de mantención: se cotizarían en $0. La tarifa vive en la clase del producto (Catálogo → Clases); si el producto no tiene clase, se asigna en el Catálogo.</div>';
+    if (n){
+      const pg = _salPagina(k, arr, 15);
+      h += '<div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>SKU</th><th>Clase</th><th class="text-end">Equipos</th><th class="text-end">Clientes</th></tr></thead><tbody>' +
+        pg.filas.map(x => '<tr><td class="font-monospace"><a href="/catalogo?q=' + encodeURIComponent(x.sku) + '" target="_blank">' + _repEsc(x.sku) + '</a></td>' +
+          '<td>' + (x.clase ? _repEsc(x.clase) : '<span class="text-muted">sin clase en el Catálogo</span>') + '</td><td class="text-end">' + x.equipos + '</td><td class="text-end">' + x.clientes + '</td></tr>').join('') +
+        '</tbody></table></div>' + _salPie(k, pg, n);
+    }
+  } else if (k === 'contratos_sin_monto'){
+    h = _salCab(c, n) + '<div class="sal-desc">El monto mensual en pesos es obligatorio desde ahora al subir un contrato. Estos quedaron en $0 o con un monto que parece UF: escríbelo aquí.</div>';
+    if (n){
+      const pg = _salPagina(k, arr, 15);
+      h += '<div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>Cliente</th><th>Contrato</th><th class="text-end">Hoy</th><th>Monto mensual en pesos</th></tr></thead><tbody>' +
+        pg.filas.map(x => '<tr id="salCt' + x.id + '"><td><a href="/servicio-tecnico/clientes/' + x.cliente_id + '" target="_blank" class="fw-bold">' + _repEsc(x.razon_social) + '</a></td>' +
+          '<td>' + _repEsc(x.nombre) + '</td><td class="text-end">$' + Math.round(x.monto_mensual || 0).toLocaleString('es-CL') + '</td>' +
+          '<td><div class="d-flex gap-2"><input type="number" class="form-control form-control-sm sal-monto" id="salMonto' + x.id + '" min="1000" step="1000" placeholder="Ej: 250000">' +
+          '<button class="btn btn-sm btn-primary" onclick="salGuardarMonto(' + x.id + ', this)">Guardar</button></div></td></tr>').join('') +
+        '</tbody></table></div>' + _salPie(k, pg, n);
+    }
+  }
+  el.innerHTML = h;
+}
+function marcarRepInst(el){ if (el.checked) _repSel.add(el.value); else _repSel.delete(el.value); contarRepInst(); }
+function contarRepInst(){
+  const n = _repSel.size;
+  document.getElementById('repInstCrear').disabled = !n;
+  document.getElementById('repInstSel').textContent = n ? n + ' ficha(s) elegida(s) en total' : '';
+}
+function toggleTodoInst(){
+  const validos = _repInst.tickets_sin_ficha.filter(g => !g.rut_error).map(g => g.key);
+  const todos = validos.every(k => _repSel.has(k));
+  _repSel = new Set(todos ? [] : validos);
+  document.querySelectorAll('.repInstChk:not(:disabled)').forEach(c => c.checked = _repSel.has(c.value));
+  contarRepInst();
+}
+async function crearFichasInst(btn){
+  const keys = [..._repSel];
+  if (!keys.length) return;
+  const ok = await ilusConfirm({ title: 'Crear fichas', message: 'Se crearán ' + keys.length + ' ficha(s) como prospecto de instalación, para ofrecerles mantención.',
+    sub: 'Quedan en el listado con su seguimiento; no se envía ningún mensaje. Después carga sus productos desde «Fichas sin productos».', okLabel: 'Crear', cancelLabel: 'Cancelar' });
+  if (!ok) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch('/mantenciones/api/instalaciones/crear-fichas', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({keys})});
+    const d = await r.json();
+    if (!d.ok) { ilusToast(d.error || 'No se pudo crear', {type:'error'}); btn.disabled = false; return; }
+    await ilusAlert({ title: 'Fichas creadas', type: d.fallidas.length ? 'warning' : 'success',
+      message: d.creadas + ' creada(s) · ' + d.ya_existian + ' ya existían' + (d.fallidas.length ? ' · ' + d.fallidas.length + ' con problema: ' + d.fallidas.slice(0, 5).join('; ') : '') });
+    location.reload();
+  } catch(e){ ilusToast('Error de red', {type:'error'}); btn.disabled = false; }
+}
+async function cargarEquiposInst(btn){
+  const ids = (_repInst.fichas_sin_equipos || []).map(c => c.id);
+  if (!ids.length) return;
+  const ok = await ilusConfirm({ title: 'Cargar productos', message: 'Se cargarán los productos de ' + ids.length + ' ficha(s) desde sus facturas de instalación.',
+    sub: 'Cada máquina queda con su serie y la fecha de emisión de la factura. No se envía ningún mensaje.', okLabel: 'Cargar', cancelLabel: 'Cancelar' });
+  if (!ok) return;
+  btn.disabled = true;
+  const prog = document.getElementById('repEqProgreso');
+  let creados = 0, sinNada = 0, errores = 0;
+  for (let i = 0; i < ids.length; i += 5){
+    prog.textContent = 'Cargando… ' + Math.min(i + 5, ids.length) + ' de ' + ids.length + ' fichas · ' + creados + ' equipos creados';
+    try {
+      const r = await fetch('/mantenciones/api/instalaciones/equipos', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ids: ids.slice(i, i + 5), confirmar: true})});
+      const d = await r.json();
+      (d.resultados || []).forEach(x => { creados += (x.creados || 0); if (!x.creados) sinNada++; if ((x.errores || []).length || !x.ok) errores++; });
+    } catch(e){ errores++; }
+  }
+  await ilusAlert({ title: 'Productos cargados', type: errores ? 'warning' : 'success',
+    message: creados + ' equipo(s) creados en las fichas · ' + sinNada + ' ficha(s) sin productos que cargar' + (errores ? ' · ' + errores + ' con algún problema' : '') });
+  location.reload();
+}
+async function reclasificarInst(btn){
+  const ok = await ilusConfirm({ title: 'Marcar como Instalación', message: 'Se cambiará el tipo de ' + _repInst.mal_clasificados.length + ' cliente(s) a «Instalación».',
+    sub: 'No cambia su estado ni toca a quien ya tiene contrato.', okLabel: 'Marcar', cancelLabel: 'Cancelar' });
+  if (!ok) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch('/mantenciones/api/instalaciones/reclasificar', {method:'POST'}); const d = await r.json();
+    if (!d.ok) { ilusToast(d.error || 'No se pudo', {type:'error'}); btn.disabled = false; return; }
+    ilusToast('✓ ' + d.reclasificados + ' cliente(s) marcados como Instalación', {type:'success'});
+    setTimeout(() => location.reload(), 900);
+  } catch(e){ ilusToast('Error de red', {type:'error'}); btn.disabled = false; }
+}
+async function salRutDesdeFactura(btn){
+  const ids = (_repInst.tickets_sin_rut || []).map(t => t.id).filter(Boolean);
+  if (!ids.length) return;
+  const ok = await ilusConfirm({ title: 'Buscar el RUT en sus facturas', message: 'Se buscará en el ERP (solo lectura) la factura de ' + ids.length + ' ticket(s) sin RUT.',
+    sub: 'El RUT encontrado se guarda en el ticket con una nota; nunca se pisa un RUT escrito. No se envía ningún mensaje.', okLabel: 'Buscar', cancelLabel: 'Cancelar' });
+  if (!ok) return;
+  btn.disabled = true;
+  const prog = document.getElementById('salRutProg');
+  let res = 0, sinDoc = 0, sinRut = 0;
+  for (let i = 0; i < ids.length; i += 30){
+    if (prog) prog.textContent = 'Buscando… ' + Math.min(i + 30, ids.length) + ' de ' + ids.length + ' tickets · ' + res + ' con RUT encontrado';
+    try {
+      const r = await fetch('/mantenciones/api/instalaciones/rut-desde-factura', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ids: ids.slice(i, i + 30)})});
+      const d = await r.json();
+      if (d.ok){ res += d.resueltos || 0; sinDoc += d.sin_documento || 0; sinRut += d.sin_rut_en_erp || 0; }
+    } catch(e){}
+  }
+  await ilusAlert({ title: 'RUT desde las facturas', type: res ? 'success' : 'info',
+    message: res + ' ticket(s) tomaron su RUT de la factura · ' + sinDoc + ' sin documento en el ticket · ' + sinRut + ' sin RUT en el ERP.',
+    sub: res ? 'Sus fichas aparecen ahora en «Ventas con instalación sin ficha» (o se crean solas si son recientes).' : '' });
+  location.reload();
+}
+async function salOtEquipos(vid, btn){
+  btn.disabled = true;
+  const post = async (accion) => { const r = await fetch('/mantenciones/api/instalaciones/ot-equipos', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({vid, accion})}); return r.json(); };
+  try {
+    const d = await post('vista');
+    if (!d.ok){ ilusToast(d.error || 'No se pudo revisar la OT.', {type:'error'}); return; }
+    const cands = d.candidatos || [];
+    if (!cands.length){
+      const ok = await ilusConfirm({ title: 'Sin equipos que pasar', message: 'El documento ' + (d.documento || '') + ' no trae productos nuevos para la ficha (puede ser solo el servicio, o ya están).',
+        sub: '¿La marcas como revisada para que no vuelva a aparecer?', okLabel: 'Marcar revisada', cancelLabel: 'Cancelar' });
+      if (!ok) return;
+      const d2 = await post('revisada');
+      if (d2.ok){ ilusToast('✓ OT marcada como revisada', {type:'success'}); _salQuitar('ot_sin_equipos', x => x.vid === vid); }
+      return;
+    }
+    const lista = cands.map(c => '• ' + _repEsc(c.nombre) + ' × ' + c.cantidad).join('<br>');
+    const ok = await ilusConfirm({ title: 'Pasar equipos a la ficha', message: 'Se crearán ' + (d.total_a_crear || cands.length) + ' equipo(s) desde ' + (d.documento || 'su documento') + ':',
+      sub: lista, subHtml: true, okLabel: 'Pasar equipos', cancelLabel: 'Cancelar' });
+    if (!ok) return;
+    const d2 = await post('pasar');
+    if (!d2.ok){ ilusToast(d2.error || 'No se pudieron pasar los equipos.', {type:'error'}); return; }
+    ilusToast('✓ ' + (d2.creados || 0) + ' equipo(s) pasaron a la ficha', {type:'success'});
+    _salQuitar('ot_sin_equipos', x => x.vid === vid);
+  } catch(e){ ilusToast('Error de red', {type:'error'}); }
+  finally { btn.disabled = false; }
+}
+async function salGuardarMonto(ctid, btn){
+  const inp = document.getElementById('salMonto' + ctid);
+  const v = parseFloat(inp.value || '0');
+  if (!(v >= 1000)){ ilusToast(v > 0 ? 'Ese monto parece estar en UF: escríbelo en pesos.' : 'Escribe el monto mensual en pesos.', {type:'warning'}); inp.focus(); return; }
+  btn.disabled = true;
+  try {
+    const r = await fetch('/mantenciones/api/contratos/' + ctid, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({monto_mensual: v})});
+    const d = await r.json();
+    if (!r.ok || d.ok === false || d.error){ ilusToast(d.error || 'No se pudo guardar el monto.', {type:'error'}); return; }
+    ilusToast('✓ Monto guardado: $' + Math.round(v).toLocaleString('es-CL') + ' al mes', {type:'success'});
+    _salQuitar('contratos_sin_monto', x => x.id === ctid);
+  } catch(e){ ilusToast('Error de red', {type:'error'}); }
+  finally { btn.disabled = false; }
+}
+// Saca un ítem resuelto de su lista y repinta su sección y el resumen de arriba.
+function _salQuitar(k, fn){
+  _repInst[k] = (_repInst[k] || []).filter(x => !fn(x));
+  pintarRepInst();
+  const el = document.getElementById('sal-' + k); if (el) el.scrollIntoView({block:'start'});
+}
+</script>

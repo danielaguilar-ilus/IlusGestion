@@ -2155,13 +2155,23 @@ function _diaCardHtml(v){
 // Helper: PUT a la visita + refresca el día y el calendario de fondo.
 async function _diaPut(vid, payload, okMsg){
   try{
-    const r = await fetch(`/mantenciones/api/visitas/${vid}`, {
-      method:'PUT', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(payload),
-    });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok || !d.ok){
-      ilusToast('No se pudo: ' + (d.error || 'error'), {type:'error'});
+    // 2026-10-20: cancelar una instalación con su desinstalación agendada pide «¿cancelar las dos?» y los errores de la unión
+    // instalación ↔ desinstalación traen el enlace a la otra orden (static/ot_cancelar.js).
+    let d, okPut;
+    if (window.OTCancelar){
+      const rr = await window.OTCancelar.enviar(vid, payload);
+      if (rr.cancelado) return false;
+      d = rr.d; okPut = rr.ok;
+    } else {
+      const r = await fetch(`/mantenciones/api/visitas/${vid}`, {
+        method:'PUT', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(payload),
+      });
+      d = await r.json().catch(() => ({}));
+      okPut = r.ok && d.ok;
+    }
+    if (!okPut){
+      if (!(window.OTCancelar && window.OTCancelar.avisarError(d))) ilusToast('No se pudo: ' + (d.error || 'error'), {type:'error'});
       return false;
     }
     ilusToast(okMsg || 'Listo', {type:'success'});

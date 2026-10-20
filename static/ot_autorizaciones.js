@@ -52,6 +52,10 @@
       '<div><dt>Centro de costo</dt><dd>' + esc(CENTROS[a.centro_costo] || a.centro_costo || 'Sin definir') + '</dd></div>' +
       '<div><dt>Valorizado sugerido</dt><dd>' + clp(a.valorizado_clp) + '</dd></div></dl>' +
       '<div class="pp-arg"><small>Argumento (completo)</small>' + esc(a.argumento) + '</div>';
+    /* 🧩 2026-10-20: si la solicitud trae una desinstalación, quien autoriza lo lee: al aprobar se crean las dos órdenes. */
+    if (a.incluye_desinstalacion) {
+      h += '<div class="pp-arg" style="border-left-color:#1d4ed8;background:#eff6ff"><small>Incluye</small><i class="bi bi-box-arrow-up me-1"></i>' + esc(a.incluye_desinstalacion) + '</div>';
+    }
     /* 2026-10-08: cobrar más que el saldo de la línea del documento: qué se quiere cobrar. */
     if (a.tipo === 'exceder_saldo' && a.payload && a.payload.saldo_pedido) {
       var sp = a.payload.saldo_pedido;
@@ -129,7 +133,18 @@
       if (!ok) return;
       return api('/ot/api/autorizaciones/' + id + '/aprobar', {}).then(function (r) {
         if (!r.ok) { toast(r.j.error || 'No se pudo autorizar.', 'error'); return; }
-        toast(r.j.numero_ot ? 'Autorizada. Se creó ' + r.j.numero_ot + '.' : 'Autorizada y registrada.', 'success');
+        var d = r.j.desinstalacion;   /* 2026-10-20 (revisión): lo que pasó con la desinstalación que venía en la solicitud */
+        var base = r.j.numero_ot ? 'Autorizada. Se creó ' + r.j.numero_ot + '.' : 'Autorizada y registrada.';
+        if (d && d.ok && d.numero_ot) base += ' Desinstalación ' + d.numero_ot + ' agendada' + (d.fecha_txt ? ' el ' + d.fecha_txt : '') + '.';
+        else if (d && d.ok && d.pendiente) base += ' Quedó anotada la desinstalación prevista' + (d.fecha_txt ? ' para el ' + d.fecha_txt : '') + ': falta agendarla.';
+        toast(base, 'success');
+        if (d && d.ok === false) {
+          /* La instalación quedó creada pero la desinstalación no se pudo agendar: no es un aviso efímero, se lee completo. */
+          var msg = 'La instalación quedó creada, pero la desinstalación no se pudo agendar: ' + (d.error || 'error desconocido') +
+            ' Se le avisó a quien la pidió; prográmala desde la ficha de la instalación («Programar desinstalación»).';
+          if (window.ilusAlert) return window.ilusAlert({ title: 'La desinstalación no se agendó', message: msg, type: 'warning' }).then(function () { despues(); });
+          toast(msg, 'warning');
+        }
         despues();
       });
     });

@@ -4087,6 +4087,21 @@ async function subirContrato() {
     return;
   }
 
+  // Monto mensual obligatorio y en pesos (Daniel 2026-10-19): sin él no se mide el ingreso de
+  // mantención. Espejo de _contrato_monto_valido (app.py), que también lo exige en el servidor.
+  const _montoCt = parseFloat(document.getElementById('ct_monto_mensual').value || '0');
+  if (!(_montoCt >= 1000)) {
+    await ilusAlert({
+      title: 'Falta el monto mensual',
+      message: _montoCt > 0 ? 'El monto parece estar en UF. Escríbelo en pesos chilenos.'
+                            : 'Escribe el monto mensual del contrato en pesos.',
+      sub: 'Es obligatorio: con él se mide el ingreso de mantención.',
+      type: 'warning',
+    });
+    document.getElementById('ct_monto_mensual').focus();
+    return;
+  }
+
   // Activar guard + UI feedback
   _subirContratoEnCurso = true;
   if (btn) {

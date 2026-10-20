@@ -728,6 +728,31 @@ def _empaques_equivalentes(cantidad_piezas, linea_snapshot):
     return (qty / uxv) if uxv > 1 else qty
 
 
+def stock_para_cliente(fisico, cantidad):
+    """Lo que el CORREO le dice al cliente del stock de un producto (Daniel 2026-10-20: «transmite la verdad… que no hay nomás»).
+    `fisico` = stock físico de la bodega de la línea según el ERP (None = no se pudo verificar). → (clave, texto):
+      ok       «✓ En stock»        hay al menos lo que retira
+      parcial  «Hay N de M»        hay algo, pero menos de lo que retira
+      sin      «✕ Sin stock»       no hay
+      ?        «Por confirmar»     no se pudo verificar: nunca se afirma stock sin verlo"""
+    try:
+        cant = float(cantidad or 0)
+    except (TypeError, ValueError):
+        cant = 0.0
+    if fisico is None:
+        return "?", "Por confirmar"
+    try:
+        f = float(fisico)
+    except (TypeError, ValueError):
+        return "?", "Por confirmar"
+    if f <= 0:
+        return "sin", "✕ Sin stock"
+    if cant > 0 and f + 1e-9 < cant:
+        _n = lambda v: str(int(v)) if float(v) == int(v) else f"{v:.2f}".replace(".", ",")
+        return "parcial", f"Hay {_n(f)} de {_n(cant)}"
+    return "ok", "✓ En stock"
+
+
 def register_pickup_routes(app, ctx):
     mysql_fetchone = ctx["mysql_fetchone"]
     mysql_fetchall = ctx["mysql_fetchall"]
@@ -2289,10 +2314,10 @@ def register_pickup_routes(app, ctx):
     def _pickup_productos_html(req):
         """Tabla HTML con los productos del retiro para el correo (Daniel
         2026-06-17: 'información completa del producto'). Cada línea muestra
-        producto + SKU + cantidad + indicador de STOCK (✓ en stock / ⚠ sin
-        saldo ERP, usando el flag marcada_sin_saldo ya persistido — NO consulta
-        el ERP en el hilo de envío). Vacío si el retiro aún no tiene productos.
-        Best-effort: '' ante cualquier error (nunca rompe el correo)."""
+        producto + SKU + cantidad + STOCK. 2026-10-20 (Daniel, correo de Ivo: «transmite la verdad… que no hay nomás»): el stock es
+        el físico REAL de la bodega de la línea según el ERP (el mismo de la ficha, `_pickup_productos_diagnostico`, solo lectura con
+        caché de 5 min) → En stock / Sin stock / Hay N de M / Por confirmar (`stock_para_cliente`). Antes decía «✓ en stock» sin mirar.
+        Vacío si el retiro aún no tiene productos. Best-effort: '' ante cualquier error (nunca rompe el correo)."""
         try:
             import html as _h
             rid = req.get("id")
@@ -2302,6 +2327,26 @@ def register_pickup_routes(app, ctx):
             lineas = data.get("lineas") or []
             if not lineas:
                 return ""
+            # Stock físico por (documento, SKU) y por SKU, del mismo diagnóstico que ve la ficha. ERP caído → None → «Por confirmar».
+            _fis_doc, _fis_sku = {}, {}
+            try:
+                _diag = _pickup_productos_diagnostico(int(rid)) or {}
+                for _d in _diag.get("docs") or []:
+                    for _l in _d.get("lineas") or []:
+                        _st = _l.get("stock")
+                        _f = _st.get("fisico") if isinstance(_st, dict) else None
+                        _k = (_l.get("sku") or "").strip().upper()
+                        _fis_doc[(_d.get("doc_id"), _k)] = _f
+                        _fis_sku.setdefault(_k, _f)
+            except Exception as _e_st:
+                print(f"[pickup-productos-html] stock rid={rid}: {type(_e_st).__name__}", flush=True)
+            _estilo = {
+                "ok": "background:#dcfce7;color:#14532d;border:1px solid #86efac",
+                "parcial": "background:#fff8e1;color:#92400e;border:1px solid #fcd34d",
+                "sin": "background:#fee2e2;color:#991b1b;border:1px solid #fca5a5",
+                "?": "background:#f3f4f6;color:#4b5563;border:1px solid #d1d5db",
+            }
+            _hay_falta = False
             MAX = 12
             filas = []
             for ln in lineas[:MAX]:
@@ -2312,14 +2357,13 @@ def register_pickup_routes(app, ctx):
                     qty_str = str(int(qty)) if float(qty) == int(float(qty)) else f"{float(qty):.2f}"
                 except Exception:
                     qty_str = str(qty)
-                if bool(ln.get("marcada_sin_saldo")):
-                    badge = ('<span style="display:inline-block;background:#fff8e1;color:#92400e;'
-                             'border:1px solid #fcd34d;border-radius:50px;font-size:10px;font-weight:800;'
-                             'padding:2px 8px">⚠ sin saldo ERP</span>')
-                else:
-                    badge = ('<span style="display:inline-block;background:#dcfce7;color:#14532d;'
-                             'border:1px solid #86efac;border-radius:50px;font-size:10px;font-weight:800;'
-                             'padding:2px 8px">✓ en stock</span>')
+                _k = sku.upper()
+                _fis = _fis_doc.get((ln.get("doc_id"), _k), _fis_sku.get(_k)) if (_fis_doc or _fis_sku) else None
+                _clave, _txt = stock_para_cliente(_fis, qty)
+                if _clave in ("sin", "parcial"):
+                    _hay_falta = True
+                badge = (f'<span style="display:inline-block;{_estilo[_clave]};border-radius:50px;font-size:10px;font-weight:800;'
+                         f'padding:2px 8px;white-space:nowrap">{_h.escape(_txt)}</span>')
                 filas.append(
                     '<tr>'
                     f'<td style="padding:8px 10px;border-bottom:1px solid #f0f0f0;font-size:13px;color:#0a0a0a">{_h.escape(desc)}'
@@ -2333,6 +2377,10 @@ def register_pickup_routes(app, ctx):
             if len(lineas) > MAX:
                 extra = ('<tr><td colspan="3" style="padding:8px 10px;font-size:12px;'
                          f'color:#6b7280;text-align:center">… y {len(lineas) - MAX} producto(s) más</td></tr>')
+            if _hay_falta:
+                extra += ('<tr><td colspan="3" style="padding:10px;font-size:12px;color:#92400e;background:#fff8e1;line-height:1.5">'
+                          'Te lo decimos con transparencia: los productos marcados «Sin stock» (o con menos unidades de las que retiras) '
+                          'hoy no están disponibles en nuestra bodega.</td></tr>')
             return (
                 '<table cellpadding="0" cellspacing="0" width="100%" '
                 'style="background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;margin:0 0 18px;overflow:hidden">'
@@ -9982,7 +10030,7 @@ def register_pickup_routes(app, ctx):
                         if avisos:
                             estado, texto, tono = "revisar", "Revisar antes de entregar", "ambar"
                 if _term:
-                    estado, texto, tono, avisos = _prod_linea_terminada(_term, incluida, a_retirar, saldo, le.get("consumos") or [])
+                    estado, texto, tono, avisos = _prod_linea_terminada(_term, incluida, a_retirar, saldo, le.get("consumos") or [], st)
                 # contadores
                 if estado == "ok":
                     cont["listos"] += 1
@@ -9994,6 +10042,9 @@ def register_pickup_routes(app, ctx):
                     cont["ya_entregados"] += 1
                 elif estado == "entregado_retiro":
                     cont["entregados"] += 1
+                    cont["u_entregadas"] = cont.get("u_entregadas", 0.0) + a_retirar
+                elif estado in ("no_consta", "falta_guia"):
+                    cont[estado] = cont.get(estado, 0) + 1          # retiro terminado sin evidencia en el ERP (2026-10-20)
                 else:
                     cont["no_incluidos"] += 1
                 if incluida and a_retirar > 0:
@@ -10088,8 +10139,12 @@ def register_pickup_routes(app, ctx):
         except Exception:
             return None
 
-    def _prod_linea_terminada(term, incluida, a_retirar, saldo, consumos):
-        """Estado CONGELADO de una línea de un retiro terminado: (estado, texto, tono, avisos). Nunca rojo ni «Entregar igual…»."""
+    def _prod_linea_terminada(term, incluida, a_retirar, saldo, consumos, stock=None):
+        """Estado CONGELADO de una línea de un retiro terminado: (estado, texto, tono, avisos). Nunca rojo ni «Entregar igual…».
+        2026-10-20 (Daniel, retiro de Ivo Simunovic: un producto con 0 físico, saldo 1 y sin guía salía «Entregado en este retiro»):
+        «Entregado» solo con EVIDENCIA del ERP — una guía/boleta de este retiro, o el saldo ya consumido. Sin guía:
+          · con stock en la bodega (o sin poder verlo) → «Retirado · falta la guía del ERP» (ámbar: hay que hacer la guía);
+          · sin stock suficiente en la bodega → «No consta la entrega» (ámbar: confirmar con bodega si de verdad se entregó)."""
         if not incluida or a_retirar <= 0:
             return "no_incluido", "No se retiró", "gris", []
         if not term["entregado"]:
@@ -10099,10 +10154,18 @@ def register_pickup_routes(app, ctx):
         if creado and fechas and saldo is not None and saldo <= 0 and all(f < creado for f in fechas):
             # el saldo se consumió ANTES de que existiera este retiro: no fue esta entrega
             return "salio_antes", "Ya había salido antes de este retiro", "gris", []
-        avisos = []
-        if saldo is not None and saldo > 0 and not [f for f in fechas if not creado or f >= creado]:
-            avisos.append("El ERP todavía no registra la guía de despacho de esta entrega.")
-        return "entregado_retiro", "Entregado en este retiro", "ok", avisos
+        con_guia = bool([f for f in fechas if not creado or f >= creado])
+        if con_guia or (saldo is not None and saldo <= 0):
+            return "entregado_retiro", "Entregado en este retiro", "ok", []
+        if saldo is None:
+            return "falta_guia", "Retirado · sin verificar en el ERP", "ambar", ["No se pudo leer el ERP: no se sabe si ya tiene su guía de despacho."]
+        fisico = stock.get("fisico") if isinstance(stock, dict) else None
+        if fisico is not None and float(fisico) + 1e-9 < float(a_retirar):
+            return ("no_consta", "No consta la entrega", "ambar",
+                    [f"El ERP no registra la salida (sin guía de despacho) y la bodega tiene {_fmt_num(fisico)} físico para "
+                     f"{_fmt_num(a_retirar)} a retirar. Confirma con bodega si se entregó: si no, el cliente sigue esperando este producto."])
+        return ("falta_guia", "Retirado · falta la guía del ERP", "ambar",
+                ["El retiro se marcó como retirado, pero el ERP todavía no registra la guía de despacho de este producto."])
 
     def _prod_veredicto_terminado(term, cont, out_docs):
         if not term["entregado"]:
@@ -10117,11 +10180,25 @@ def register_pickup_routes(app, ctx):
                 txt = f"{c.get('label') or ''} {c.get('numero') or ''} · {c.get('fecha') or ''}".strip()
                 if (not creado or (f and f >= creado)) and txt not in guias:
                     guias.append(txt)
-        if not n:
+        u = cont.get("u_entregadas", u)
+        no_consta, falta_guia = cont.get("no_consta") or 0, cont.get("falta_guia") or 0
+        # 2026-10-20: lo que no tiene evidencia en el ERP no se cuenta como entregado; se dice y se pide revisar
+        pendientes = []
+        if no_consta:
+            pendientes.append(f"{no_consta} producto{'s' if no_consta != 1 else ''} sin guía de despacho ni stock en bodega: "
+                              f"confirma con bodega si se entregó")
+        if falta_guia:
+            pendientes.append(f"{falta_guia} producto{'s' if falta_guia != 1 else ''} todavía sin guía de despacho en el ERP")
+        if not n and not pendientes:
             return {"estado": "entregado", "titulo": "Retiro completado", "detalle": "El cliente ya retiró su pedido."}
-        detalle = (f"{_fmt_num(u)} unidad{'es' if u != 1 else ''} de {n} producto{'s' if n != 1 else ''} entregada{'s' if u != 1 else ''} "
-                   f"en este retiro" + (f" · {', '.join(guias[:3])}" if guias else "") + ".")
-        return {"estado": "entregado", "titulo": "Retiro completado", "detalle": detalle}
+        partes = []
+        if n:
+            partes.append(f"{_fmt_num(u)} unidad{'es' if u != 1 else ''} de {n} producto{'s' if n != 1 else ''} entregada{'s' if u != 1 else ''} "
+                          f"en este retiro" + (f" · {', '.join(guias[:3])}" if guias else ""))
+        partes += pendientes
+        if no_consta:
+            return {"estado": "entregado_revisar", "titulo": "Retiro completado · revisa lo entregado", "detalle": ". ".join(partes) + "."}
+        return {"estado": "entregado", "titulo": "Retiro completado", "detalle": ". ".join(partes) + "."}
 
     def _fmt_num(v):
         try:

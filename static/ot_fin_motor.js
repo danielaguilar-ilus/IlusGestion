@@ -27,7 +27,7 @@
      recorrido.interna / panorama.interna. Con eso el motor NO ofrece agregar documento, declarar cobro/$0 ni pedir
      autorización: antes la barra «Modificar» se los ofrecía igual y el servidor respondía «no necesita autorización». */
   var TXT_INTERNA = 'Trabajo interno: no necesita documento ni autorización.';
-  var SOLO_CLIENTE = { ligarDoc: 1, pedirCero: 1, pedirCierre: 1, declararCobro: 1, resolverSaldo: 1, resolverSaldoOt: 1 };
+  var SOLO_CLIENTE = { ligarDoc: 1, pedirCero: 1, quitarCero: 1, pedirCierre: 1, declararCobro: 1, resolverSaldo: 1, resolverSaldoOt: 1 };
   function esInterna(inst) {
     return !!(inst && ((inst.rec && inst.rec.interna) || (inst.pan && inst.pan.interna)));
   }
@@ -290,6 +290,8 @@
     var m = { ligar_factura: 'ligarDoc', pedir_autorizacion: 'pedirCierre', pedir_aut_perdida: 'pedirPerdida', declarar_cobro: 'declararCobro',
       declarar_centro: 'enfocarCentro', declarar_costo_proveedor: 'corregirProv', resolver_saldo: 'resolverSaldo' }[a.tipo];
     if (a.tipo === 'esperar_autorizacion') return '<a class="fm-btn fm-btn-pri" href="' + esc(a.url || '/ot/autorizaciones') + '">Ver la solicitud</a>';
+    /* 2026-10-19: la desinstalación cubierta cierra cuando su instalación ya tiene la factura o boleta: el botón lleva a ESA OT. */
+    if (a.tipo === 'abrir_ot_madre') return a.url ? '<a class="fm-btn fm-btn-pri" href="' + esc(a.url) + '">Abrir la instalación' + (a.madre_numero ? ' ' + esc(a.madre_numero) : '') + '</a>' : '<span class="fm-help">' + esc(a.label || '') + '</span>';
     if (a.tipo === 'actualizar_anexo') return '<span class="fm-help">' + esc(a.label || '') + '</span>';
     if (!m) return a.label ? '<span class="fm-help">' + esc(a.label) + '</span>' : '';
     return boton(m, a.label || 'Resolver', 'bi-arrow-right-circle', 'fm-btn-pri');
@@ -648,6 +650,14 @@
       h += boton('pedirCierre', p.superadmin ? 'Autorizar sin documento' : 'Pedir autorización a ' + CAMPANA_DAN, 'bi-shield-lock') +
         '<span class="fm-help fm-help-ancho">OT cerrada (evidencia): solo se regulariza el documento y la plata; el estado, las firmas y las fechas no se tocan.</span>';
     } else if (p.puede_editar) {
+      /* 2026-10-19 (OT-2026-00276, Aarón no podía cerrarla): si la OT está leída como $0 (garantía, regalía…), la
+         salida para volver a cobrarla vive AQUÍ, donde se mira la plata. Antes solo existía más abajo en el modal y
+         solo si la modalidad decía garantía (no si la marcaba `cubierto_por`). */
+      var cobAct = ((inst.rec && inst.rec.fin) || {}).cobertura;
+      if (['garantia', 'sin_costo', 'regalia', 'arriendo_leasing'].indexOf(cobAct) >= 0) {
+        h += boton('quitarCero', cobAct === 'garantia' ? 'Sí se cobra: quitar la garantía' : 'Sí se cobra: quitar el $0',
+          'bi-arrow-counterclockwise', 'fm-btn-pri');
+      }
       h += boton('pedirCero', 'No se cobra: declarar $0', 'bi-shield-check') +
         boton('corregirProv', 'Corregir lo que cobró el proveedor', 'bi-pencil-square') +
         boton('pedirCierre', p.superadmin ? 'Autorizar cierre sin documento' : 'Pedir autorización a ' + CAMPANA_DAN, 'bi-shield-lock');
@@ -932,6 +942,30 @@
     });
   }
 
+  /* «Sí se cobra»: deshace un $0 (garantía, regalía…) con motivo, por el camino de siempre (/cobertura, que deja la
+     constancia en la bitácora y limpia el $0). No toca estado ni firmas. Después, el cierre pide lo cobrado con su
+     documento como cualquier OT que se cobra. */
+  function quitarCero(inst) {
+    if (esInterna(inst)) { toast(TXT_INTERNA, 'info'); return Promise.resolve(); }
+    return dialogo({
+      titulo: 'Esta OT sí se cobra',
+      intro: 'La OT deja de estar en garantía (o en $0) y vuelve a cobrarse. Para cerrarla va a necesitar lo cobrado ' +
+        'con su documento de Random. Queda registrado con tu nombre y el motivo.',
+      ok: 'Quitar la garantía',
+      campos: [
+        { k: 'motivo', label: 'Por qué vuelve a cobrarse', tipo: 'area', req: true, min: 10,
+          placeholder: 'Ej: el servicio se cobró en la factura del cliente; no corresponde garantía' }
+      ]
+    }).then(function (v) {
+      if (!v) return;
+      return api('/mantenciones/api/visitas/' + inst.vid + '/cobertura', { method: 'POST', body: { garantia_aplica: false, motivo: v.motivo } })
+        .then(function (r) {
+          if (r.ok) return despuesDeEscribir(inst, 'Listo: la OT vuelve a cobrarse.');
+          toast((r.j && r.j.error) || 'No se pudo quitar la garantía.', 'error');
+        });
+    });
+  }
+
   function guardarCentro(inst, valor, btn) {
     if (!valor) return;
     if (btn) { btn.classList.add('pulsa'); }
@@ -992,6 +1026,7 @@
     ligarDoc: function (inst) { return ligarDoc(inst); },
     corregirProv: function (inst) { return corregirProv(inst); },
     pedirCero: function (inst) { return pedirAutorizacion(inst, 'cobro_cero'); },
+    quitarCero: function (inst) { return quitarCero(inst); },
     pedirCierre: function (inst) { return pedirAutorizacion(inst, 'cerrar_sin_documento'); },
     pedirPerdida: function (inst) { return pedirPerdida(inst); },
     irFinanzas: function (inst) { return irFinanzas(inst); },

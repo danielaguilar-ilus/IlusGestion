@@ -375,7 +375,7 @@ class TestConfidencialidad(unittest.TestCase):
 FUNCS_CORREO = ("_ot_tec_llave_cerrada", "_ot_tec_reservar", "_ot_tec_liberar", "_ot_tec_armar", "_ot_tec_enviar",
                 "_ot_tec_correo", "_ot_tec_barrido_agenda", "_ot_tec_antes", "_ot_tec_plantilla_apagada",
                 "_ot_tec_despachar", "_ot_tec_oculta_detalle", "_ot_tec_agenda_reservar", "_ot_tec_log_agenda",
-                "_ot_tec_snapshot_borrado", "_ot_tec_correo_borrada")
+                "_ot_tec_snapshot_borrado", "_ot_tec_correo_borrada", "_ot_tec_ics")
 FUNCS_LLAVE = ("_comm_killswitch_invalidar", "_comm_killswitch_estado", "_modulo_canal_bloqueado", "_mant_send_email_multi")
 
 
@@ -407,6 +407,7 @@ class Mundo:
                "_mant_log": lambda ent, eid, acc, det="": self.logs.append((ent, eid, acc, det)),
                "_ot_tec_foto": self._foto, "_anexo_bloquea_ot": lambda vid: self.anexo.get(int(vid)),
                "current_username": lambda: None,
+               "_get_brand_cfg": lambda: {"reply_to": "soportetec@sphs.cl"},
                "_ot_tec_filas": lambda vids: {int(v): dict(self.filas[int(v)]) for v in vids if int(v) in self.filas},
                "_ot_tec_equipos_bulk": lambda vids: {int(v): list(self.equipos.get(int(v), [])) for v in vids},
                "_ot_tec_destinatarios_bulk": lambda vids: {int(v): dict(self.tecs.get(int(v), {})) for v in vids},
@@ -507,7 +508,9 @@ class Mundo:
         if self.falla_envio:
             return False
         self.t += self.avance_por_envio
-        self.outbox.append({"to": to, "asunto": asunto, "html": html, "evento": evento, "modulo": modulo, "ref": ref})
+        self.outbox.append({"to": to, "asunto": asunto, "html": html, "evento": evento, "modulo": modulo, "ref": ref,
+                            "adjuntos": kw.get("attachments"), "encolar_adjuntos": kw.get("encolar_adjuntos"),
+                            "asincrono": asincrono})
         return True
 
     # ── armado del mundo ──

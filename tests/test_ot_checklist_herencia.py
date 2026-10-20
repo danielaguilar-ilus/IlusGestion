@@ -150,7 +150,7 @@ class TestBloques(unittest.TestCase):
             self.assertEqual([it[0] for it in items], list(range(1, len(items) + 1)), nombre)
             for it in items:
                 self.assertIn(it[3], validos, (nombre, it[1]))
-                self.assertEqual(len(it), 10)
+                self.assertEqual(len(it), 11)   # ✂️ 2026-10-18: + foto_si_hallazgo (versión esencial)
 
     def test_nombres_unicos_de_control_de_calidad(self):
         nombres = [b[0] for b in self.k["_CHK_BLOQUES_SEED"]]
@@ -182,7 +182,8 @@ class TestBloques(unittest.TestCase):
     def test_base_foto_general_obligatoria_y_serie_inteligente(self):
         base = next(b for b in self.k["_CHK_BLOQUES_SEED"] if b[0] == self.k["_CHK_BASE_CONTROL_CALIDAD"])[2]
         fotos = [it for it in base if it[3] == "foto"]
-        self.assertEqual([it[4] for it in fotos], [1, 0, 0])          # solo la general es obligatoria
+        # ✂️ 2026-10-18 (versión esencial, Daniel: «con que tome una foto yo tengo»): UNA sola foto, la general.
+        self.assertEqual([(it[1], it[4]) for it in fotos], [("Foto general del equipo", 1)])
         serie = [it for it in base if it[3] == "serie"]
         self.assertEqual(len(serie), 1)
         self.assertEqual(serie[0][4], 1)
@@ -190,8 +191,9 @@ class TestBloques(unittest.TestCase):
         self.assertIn("Pendiente de diagn", resultado[9])
 
     def test_selector_revisa_piola_pivotes_bujes_y_pads(self):           # Daniel: «las piolas, los pads, los bujes»
-        sel = next(b for b in self.k["_CHK_BLOQUES_SEED"] if b[0] == self.k["_CHK_SELECTOR"])[2]
-        textos = " ".join((it[1] + " " + (it[2] or "")).lower() for it in sel)
+        bloque = next(b for b in self.k["_CHK_BLOQUES_SEED"] if b[0] == self.k["_CHK_SELECTOR"])
+        # ✂️ 2026-10-18: en la versión esencial los pads van en «Ajustes y traba» y en los repuestos sugeridos.
+        textos = bloque[1].lower() + " " + " ".join((it[1] + " " + (it[2] or "")).lower() for it in bloque[2])
         for palabra in ("piola", "bujes", "pivotes", "pads", "crítico"):
             self.assertIn(palabra, textos)
 
@@ -329,6 +331,29 @@ class TestCrearOT(unittest.TestCase):
         self.assertIn("_categoria_admin_para_tipo(tipo_ot)", f)
         self.assertIn("COALESCE(p.activa, 1) = 1", f)
 
+    def test_lo_que_mapea_el_tipo_vale_aunque_cambie_su_categoria(self):
+        # 2026-10-19 (Daniel, NVI 687): las «(LU)» que el asistente muestra desde el mapa deben llegar a la OT.
+        f = _fuente("_chk_plantillas_validas")
+        self.assertIn("SELECT 1 FROM mant_checklist_herencia h", f)
+        self.assertIn("h.plantilla_id = p.id AND h.tipo_ot = %s", f)
+
+    def test_el_servidor_no_reemplaza_lo_que_eligio_la_persona(self):
+        # 2026-10-19 (Daniel: «que se controle por el front, tú solo debes mostrar las opciones»).
+        self.assertNotIn('if _h.get("sistema") or not _t.get("plantilla_ids"):', self.f)
+        # 2026-10-20 (REGLA #32): el servidor no completa filas vacías y una pestaña vieja que manda
+        # base + bloque + condicional queda solo con lo que la fila mostraba.
+        self.assertNotIn('_t["plantilla_ids"] = [b["id"] for b in (_h.get("base"), _h.get("sistema"),', self.f)
+        self.assertIn('_ocultas = {b["id"] for b in (_h.get("base"), _h.get("condicional")) if b}', self.f)
+        self.assertIn('_t["plantilla_ids"] = _vistas or _ids[:1]', self.f)
+
+    def test_el_asistente_manda_solo_la_plantilla_de_la_fila(self):
+        self.assertIn("var b = tm.chk_sistema || tm.chk_base;", M)
+        self.assertNotIn("[tm.chk_base, tm.chk_sistema, tm.chk_cond]", M)
+
+    def test_una_plantilla_descartada_vuelve_como_aviso(self):
+        self.assertIn("_chk_descartadas.append(", self.f)
+        self.assertIn("plantilla(s) del checklist no se aplicaron", self.f)
+
     def test_no_llego_queda_como_faltante_declarado(self):
         self.assertIn('"no_llego": bool(_tm.get("no_llego")),', self.f)
         self.assertIn('_tm_tit = (_tm["titulo"] + " — NO LLEGÓ")[:300]', self.f)
@@ -354,12 +379,14 @@ class TestPantallas(unittest.TestCase):
         self.assertIn("Recordar para este producto", M)
         self.assertIn("setBloqueTareaManual:setBloqueTareaManual, recordarBloqueProducto:recordarBloqueProducto", M)
 
-    def test_tabla_como_mantencion(self):   # REGLA #14 + «No llegó» + clasificar
-        self.assertIn("function toggleLlegoTodos()", M)
-        self.assertIn("var algunoSin = filas.some(function(t){ return t.no_llego; });", M)
+    def test_tabla_como_mantencion(self):   # REGLA #14 + incluir en la revisión + clasificar
+        # 🧾 2026-10-18 (Daniel): la casilla «Llegó / No llegó» se REEMPLAZÓ por «incluir en la revisión» (el faltante
+        # se declara en la revisión de cada producto). El detalle está en tests/test_ot_revision_v3.py.
+        self.assertIn("function toggleIncluirTodos()", M)
+        self.assertIn("var algunoFuera = S.tareas_manuales.some(function(t){ return !_o2mTmIncluida(t); });", M)
         self.assertIn("'/ot/api/checklist-heredado/clasificar'", M)
-        self.assertIn("No llegó · queda en la OT como faltante declarado", M)
-        self.assertIn("setLlegoTareaManual:setLlegoTareaManual, toggleLlegoTodos:toggleLlegoTodos,", M)
+        self.assertNotIn("No llegó · queda en la OT como faltante declarado", M)
+        self.assertIn("setIncluirTareaManual:setIncluirTareaManual, toggleIncluirTodos:toggleIncluirTodos,", M)
 
     def test_asistente_sin_popups_nativos(self):   # REGLA #1
         i = M.index("function _o2mAgregarItemsHeredando(")
@@ -369,7 +396,9 @@ class TestPantallas(unittest.TestCase):
 
     def test_ficha_pliega_el_condicional(self):
         self.assertIn("return g.condicional ? otdChkCondEnvolver(g, grupos, _html) : _html;", D)
-        self.assertIn("op.startsWith('no apto') || op.startsWith('apto con')", D)
+        # ✂️ 2026-10-18: con las opciones nuevas, cualquier Resultado distinto de Apto y de No llegó abre el bloque
+        # (el detalle y la prueba con node están en tests/test_ot_revision_esencial.py).
+        self.assertIn("return !!op && op !== 'apto' && op !== 'no llego';", D)
         f = _fuente("mant_visita_checklist_get")
         self.assertIn('grp["condicional"] = bool(', f)
         self.assertIn('not any(x.get("obligatoria") for x in grp["tareas"])', f)
