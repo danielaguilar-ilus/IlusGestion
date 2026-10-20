@@ -364,13 +364,56 @@ class TestFotoEntregaPura(unittest.TestCase):
 class _BD:
     """Base de mentira para _ensure_foto_entrega_instalacion: plantillas, ítems y mant_logs."""
 
-    def __init__(self):
+    def __init__(self, candado=True):
         self.items = [dict(x) for x in ITEMS]
         self.logs, self.lecturas = [], []
+        self.candado = candado            # lo que responde GET_LOCK
+        self.candados = []                # GET_LOCK / RELEASE_LOCK pedidos, en orden
+        self.cerradas = 0
+        self.marca_oculta_al_pool = False  # el pool lee una foto vieja (no ve la marca recién escrita)
+
+    # 🔒 2026-10-19: conexión dedicada (get_mysql) donde vive el candado entre workers.
+    def conexion(self):
+        bd = self
+
+        class _Cur:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def execute(self, sql, params=None):
+                self._sql, self._params = sql, params
+                if "GET_LOCK" in sql:
+                    bd.candados.append(("get", params[0]))
+                elif "RELEASE_LOCK" in sql:
+                    bd.candados.append(("release", params[0]))
+
+            def fetchone(self):
+                if "GET_LOCK" in self._sql and "RELEASE" not in self._sql:
+                    return {"l": 1 if bd.candado else 0}
+                if "FROM mant_logs" in self._sql:
+                    p = self._params
+                    return next(({"id": 1} for l in bd.logs if (l[0], l[1], l[2]) == (p[0], p[1], p[2])), None)
+                return {"r": 1}
+
+        class _Conn:
+            def cursor(self):
+                return _Cur()
+
+            def commit(self):
+                pass
+
+            def close(self):
+                bd.cerradas += 1
+        return _Conn()
 
     def fetchone(self, sql, params=None):
         self.lecturas.append(sql)
         if "FROM mant_logs" in sql:
+            if self.marca_oculta_al_pool:
+                return None
             return next(({"id": 1} for l in self.logs
                          if (l[0], l[1], l[2]) == (params[0], params[1], params[2])), None)
         return None
@@ -385,10 +428,17 @@ class _BD:
 
     def execute(self, sql, params=None):
         if sql.startswith("INSERT INTO mant_tarea_plantilla_items"):
+            # NOT EXISTS por título (🔒 2026-10-19): nunca dos «Foto de entrega» en la misma plantilla
+            if "WHERE NOT EXISTS" in sql and any(
+                    i["plantilla_id"] == params[4] and i["titulo"].strip().lower() == params[5].lower()
+                    for i in self.items):
+                return 0
             self.items.append({"plantilla_id": params[0], "orden": params[1], "titulo": params[2],
                                "tipo_respuesta": "foto", "obligatoria": 1})
+            return 1
         elif sql.startswith("INSERT INTO mant_logs"):
             self.logs.append(params)
+        return 1
 
 
 class TestFotoEntregaUnaSolaVez(unittest.TestCase):
@@ -399,9 +449,51 @@ class TestFotoEntregaUnaSolaVez(unittest.TestCase):
             "_FOTO_ENTREGA_DESC": "El equipo instalado o el accesorio entregado en su lugar, a la vista.",
             "_ensure_mant_logs_entidad_varchar": lambda: None,
             "mysql_fetchone": bd.fetchone, "mysql_fetchall": bd.fetchall, "mysql_execute": bd.execute,
+            "mysql_execute_returning_rowcount": bd.execute, "get_mysql": bd.conexion,
+            "_FOTO_ENTREGA_LOCK": "ilus_foto_entrega_instalacion",
             "_mant_log": lambda *a: bd.logs.append(a), "print": lambda *a, **k: None,
         })
         return _exec("_ensure_foto_entrega_instalacion", amb)
+
+    def test_candado_entre_workers(self):
+        """🔒 2026-10-19 (revisión de la Etapa 1): gunicorn arranca 2 workers sin --preload. Con el candado tomado por
+        otro, no se escribe nada ni se pone la marca; con el candado, se relee la marca en la conexión del candado
+        (el pool puede traer una foto vieja) y se suelta siempre."""
+        bd = _BD(candado=False)
+        r = self._ensure(bd)()
+        self.assertEqual((r["plantillas"], len(bd.logs)), ([], 0))
+        self.assertFalse(any(i["titulo"] == "Foto de entrega" for i in bd.items))
+        self.assertEqual(bd.candados, [("get", "ilus_foto_entrega_instalacion")])   # no lo tenía: no lo suelta
+        self.assertEqual(bd.cerradas, 1)
+        # el otro worker ya la aplicó: el pool no ve la marca, la conexión del candado sí → no duplica
+        bd = _BD()
+        self._ensure(bd)()
+        n_fotos = sum(1 for i in bd.items if i["titulo"] == "Foto de entrega")
+        bd.marca_oculta_al_pool = True
+        bd.candados.clear()
+        r2 = self._ensure(bd)()
+        self.assertTrue(r2["ya"])
+        self.assertEqual(sum(1 for i in bd.items if i["titulo"] == "Foto de entrega"), n_fotos)
+        self.assertEqual(bd.candados, [("get", "ilus_foto_entrega_instalacion"),
+                                       ("release", "ilus_foto_entrega_instalacion")])
+
+    def test_insert_con_not_exists_por_titulo(self):
+        bd = _BD()
+        bd.items.append({"plantilla_id": 5, "titulo": "Foto de entrega", "tipo_respuesta": "foto",
+                         "obligatoria": 0, "orden": 1})
+        # el pool lee una foto vieja (no ve esa «Foto de entrega»), así que la pura la propone: el NOT EXISTS del
+        # INSERT no la repite ni la registra
+        _fa = bd.fetchall
+        bd.fetchall = lambda sql, params=None: [
+            i for i in _fa(sql, params)
+            if not (i.get("plantilla_id") == 5 and i.get("titulo") == "Foto de entrega")]
+        r = self._ensure(bd)()
+        self.assertEqual(r["plantillas"], ["Accesorios"])
+        self.assertEqual(sum(1 for i in bd.items if i["plantilla_id"] == 5 and i["titulo"] == "Foto de entrega"), 1)
+        f = _fuente("_ensure_foto_entrega_instalacion")
+        self.assertIn("SELECT GET_LOCK(%s, 10) AS l", f)
+        self.assertIn("SELECT RELEASE_LOCK(%s) AS r", f)
+        self.assertIn("WHERE NOT EXISTS (SELECT 1 FROM mant_tarea_plantilla_items", f)
 
     def test_idempotente_con_marca(self):
         bd = _BD()

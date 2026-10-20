@@ -1862,7 +1862,7 @@
          excepción lleva una marca lateral y, dentro de la celda Tarea, el
          N° de equipo (para cruzar con las tarjetas) y las banderas
          "obligatoria sin completar" / "foto exigida sin registrar". #}
-      <tr class="{% if t.exc %}exc{% if t.resultado_clase != 'err' and not (t.obligatoria and not t.hecha) %} warn-only{% endif %}{% endif %}">
+      <tr class="{% if t.exc %}exc{% if t.resultado_clase != 'err' and not (t.obligatoria and not t.hecha) and not t.rev_pendiente %} warn-only{% endif %}{% endif %}">
         <td class="num">{{ t.num or loop.index }}</td>
         <td>
           {{ t.titulo }}
@@ -1870,6 +1870,9 @@
           {% if t.equipo_saltado %}<span class="chk-flag mute">Equipo no revisado</span>{% endif %}
           {% if t.obligatoria and not t.hecha and not t.equipo_saltado %}<span class="chk-flag err">Obligatoria · sin completar</span>{% endif %}
           {% if t.sin_foto_exigida and not t.equipo_saltado %}<span class="chk-flag warn">Foto exigida · sin registrar</span>{% endif %}
+          {# 🧾 2026-10-19: lo que decide la revisión (misma fuente que la firma y el cierre, ver rev_eval). #}
+          {% if t.no_se_exige %}<span class="chk-flag mute">No se exige · no llegó</span>{% endif %}
+          {% if t.rev_pendiente and not t.equipo_saltado %}<span class="chk-flag err">{{ t.rev_pendiente }}</span>{% endif %}
         </td>
         <td><span class="pill-tipo {{ t.tipo_respuesta or 'check' }}">{{ (t.tipo_respuesta or 'check')|replace('_',' ') }}</span></td>
         <td>
@@ -2077,7 +2080,7 @@
          excepción lleva una marca lateral y, dentro de la celda Tarea, el
          N° de equipo (para cruzar con las tarjetas) y las banderas
          "obligatoria sin completar" / "foto exigida sin registrar". #}
-      <tr class="{% if t.exc %}exc{% if t.resultado_clase != 'err' and not (t.obligatoria and not t.hecha) %} warn-only{% endif %}{% endif %}">
+      <tr class="{% if t.exc %}exc{% if t.resultado_clase != 'err' and not (t.obligatoria and not t.hecha) and not t.rev_pendiente %} warn-only{% endif %}{% endif %}">
         <td class="num">{{ t.num or loop.index }}</td>
         <td>
           {{ t.titulo }}
@@ -2085,6 +2088,9 @@
           {% if t.equipo_saltado %}<span class="chk-flag mute">Equipo no revisado</span>{% endif %}
           {% if t.obligatoria and not t.hecha and not t.equipo_saltado %}<span class="chk-flag err">Obligatoria · sin completar</span>{% endif %}
           {% if t.sin_foto_exigida and not t.equipo_saltado %}<span class="chk-flag warn">Foto exigida · sin registrar</span>{% endif %}
+          {# 🧾 2026-10-19: lo que decide la revisión (misma fuente que la firma y el cierre, ver rev_eval). #}
+          {% if t.no_se_exige %}<span class="chk-flag mute">No se exige · no llegó</span>{% endif %}
+          {% if t.rev_pendiente and not t.equipo_saltado %}<span class="chk-flag err">{{ t.rev_pendiente }}</span>{% endif %}
         </td>
         <td><span class="pill-tipo {{ t.tipo_respuesta or 'check' }}">{{ (t.tipo_respuesta or 'check')|replace('_',' ') }}</span></td>
         <td>

@@ -492,6 +492,21 @@ CASOS = {
 }
 
 
+def _con_resultado_na(filas, tid):
+    for f in filas:
+        if f["id"] == tid:
+            f["valor_json"] = {"na": True, "na_motivo": "no corresponde revisarlo"}
+            f["completada"] = 1
+    return filas
+
+
+# 🧾 2026-10-19 (revisión de la Etapa 2): un Resultado en «No aplica» no es un resultado.
+CASOS["resultado_na_con_falla"] = _con_resultado_na(
+    _producto(obs="sin novedad, todo ok", falla=True, fotos_verif=1), 14)
+CASOS["resultado_na_equipo_con_ficha"] = _con_resultado_na(
+    _producto(obs="sin novedad, todo ok", mid=56, base=40), 44)
+
+
 class TestReglaPura(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -543,6 +558,13 @@ class TestReglaPura(unittest.TestCase):
 
     def test_no_aplica_no_pide_foto(self):
         self.assertEqual(self._pend("na")[0], {})
+
+    def test_resultado_en_no_aplica_queda_pendiente(self):
+        """🧾 2026-10-19: el N/A del Resultado saltaba la regla dura y la foto del daño, y la tarea quedaba hecha."""
+        pend, _ = self._pend("resultado_na_con_falla")
+        self.assertEqual(pend.get(14), "resultado_na")
+        pend, _ = self._pend("resultado_na_equipo_con_ficha")
+        self.assertEqual(pend.get(44), "resultado_na")
 
 
 @unittest.skipUnless(HAY_NODE, "node no está instalado")
@@ -615,6 +637,19 @@ class TestFichaJS(unittest.TestCase):
         self.assertIn("await ilusConfirm({", g)
         self.assertIn("d.error_codigo === 'RESULTADO_CON_FALLA'", g)
 
+    def test_no_llego_no_pide_foto_en_la_ficha(self):
+        """🧾 2026-10-19 (revisión de la Etapa 2): con «No llegó», la Foto general salía como «Paso actual» con
+        «Necesita foto» y «Falta foto» al lado de «No se exige · no llegó»."""
+        r = _js_funcion("otdRenderChecklistEquipo", D)
+        self.assertIn("if (t._ev && t._ev.dispensada) return false;", r)
+        self.assertIn("return !_noLlegoP && !t.completada;", r)
+        self.assertNotIn("g.tareas.findIndex(t => !t.completada)", r)
+        tarea = _js_funcion("otdChkTareaHtml", D)
+        self.assertIn("if ((t.requiere_foto || tipo === 'foto') && !(_evT && _evT.dispensada)){", tarea)
+        self.assertIn("if (esSiguiente && !(otdChkExig(t) ? otdChkHecha(t) : t.completada)){", tarea)
+        foto = _js_funcion("otdChkFotoBtnHtml", D)
+        self.assertIn("const need = !_disp && !(t.fotos && t.fotos.length);", foto)
+
     def test_sin_popups_nativos(self):   # REGLA #1
         for n in ("otdChkEvaluar", "otdChkBarraResultado", "otdChkResultadoRapido", "otdChkGuardar",
                   "otdChkBaseMarcoObs", "otdChkHermanas"):
@@ -650,6 +685,18 @@ class TestReglaDuraServidor(unittest.TestCase):
         herm = [{"titulo": "Freno", "tipo_respuesta": "verificacion",
                  "valor_json": {"na": True, "valor_previo": {"valor": "falla"}}}]
         self.assertEqual(self.rech("Apto", herm), (None, None))
+
+    def test_el_resultado_no_admite_no_aplica(self):
+        """🧾 2026-10-19 (revisión de la Etapa 2): «No aplica» en el Resultado no pasaba por la regla dura."""
+        f = _fuente("mant_visita_tarea_respuesta")
+        self.assertIn('if tipo == "lista" and _chk_es_resultado(tar):', f)
+        self.assertIn('"error_codigo": "RESULTADO_SIN_NA"', f)
+        self.assertLess(f.index("RESULTADO_SIN_NA"), f.index("_na_ok = True"))
+        self.assertLess(f.index('if d.get("na") and tipo in'), f.index("RESULTADO_SIN_NA"))
+        # la ficha tampoco ofrece el botón en el Resultado
+        na = _js_funcion("otdChkNoAplicaHtml", D)
+        self.assertIn("if (otdChkEsResultado(t)) return '';", na)
+        self.assertIn("Elige un resultado: «No aplica» no vale aquí", _js_funcion("otdChkTareaHtml", D))
 
     def test_el_endpoint_rechaza_antes_de_guardar(self):
         f = _fuente("mant_visita_tarea_respuesta")
@@ -705,6 +752,14 @@ class TestCandadosFuenteUnica(unittest.TestCase):
         self.assertEqual(r["kpi_delta"], {"obl": 0, "obl_ok": -2})
         self.assertEqual(self._pendientes(filas, excl=(55,))["_ot_chk_revision_pendientes"](1)["pendientes"], [])
 
+    def test_resultado_en_no_aplica_en_los_candados(self):
+        r = self._pendientes(CASOS["resultado_na_con_falla"])["_ot_chk_revision_pendientes"](1)
+        self.assertIn((14, "resultado_na"), [(p["tarea_id"], p["motivo"]) for p in r["pendientes"]])
+        self.assertTrue(any("«No aplica»" in x for x in r["faltantes"]))
+        filas = [dict(f, maquina_nombre="Optimal Chest Press") for f in CASOS["resultado_na_equipo_con_ficha"]]
+        r = self._pendientes(filas)["_ot_chk_revision_pendientes"](1)
+        self.assertEqual([p["motivo"] for p in r["pendientes"]], ["resultado_na"])   # en un equipo: solo el ajuste
+
     def test_si_la_consulta_falla_no_inventa_pendientes(self):
         amb = self._pendientes([])
 
@@ -713,6 +768,84 @@ class TestCandadosFuenteUnica(unittest.TestCase):
         amb["mysql_fetchall"] = falla
         r = amb["_ot_chk_revision_pendientes"](1)
         self.assertEqual((r["pendientes"], r["faltantes"]), ([], []))
+
+
+@unittest.skipUnless(HAY_NODE, "node no está instalado")
+class TestFotoNoLlegoEnNode(unittest.TestCase):
+    def test_boton_neutro_sin_need(self):
+        previo = ("function otdBloqueadaPorCierre(){ return false; }\n")
+        fuente = previo + _js_funcion("otdChkFotoBtnHtml", D)
+        out = _node(fuente + "\n"
+                    "const disp = {id: 1, maquina_id: null, tipo_respuesta: 'foto', requiere_foto: 1, fotos: [],"
+                    " _ev: {exigible: false, hecha: false, motivo: null, dispensada: true}};\n"
+                    "const norm = Object.assign({}, disp, {_ev: {exigible: true, hecha: false, motivo: 'obligatoria',"
+                    " dispensada: false}});\n"
+                    "const a = otdChkFotoBtnHtml(disp), b = otdChkFotoBtnHtml(norm);\n"
+                    "console.log(JSON.stringify([a.includes(' need'), a.includes('Falta foto'), a.includes('Agregar foto'),"
+                    " b.includes(' need'), b.includes('Falta foto')]));")
+        self.assertEqual(out, [False, False, True, True, True])
+
+
+# ═══════════════════════════════ 7) PDF probatorio = misma fuente que firma y cierre ═══════════════════════════════
+_PDF_CONSTS = ("_OT_PDF_REVISION", "_OT_PDF_RAZON_SALTADO", "_OT_PDF_ESTADO_CAPTURADO", "_OT_PDF_CAUSA_RAIZ",
+               "_OT_PDF_TIPO_FOTO", "_OT_PDF_REV_MOTIVO")
+
+
+def _pdf_amb():
+    amb = _cargar(_PURAS + ("_tarea_es_hallazgo", "_ot_pdf_probatorio"), _CONSTS + _PDF_CONSTS)
+    amb.update({"chile_fmt_filter": lambda v, fmt=None: str(v), "_ot_pdf_ident_cuenta": lambda *a: "",
+                "mysql_fetchone": lambda *a, **k: None, "_ot_tipo_label_efectivo": lambda *a: "Control de calidad",
+                "_formato_rut_chile": lambda r: r, "_ot_pdf_hhmm": lambda v: "", "_ot_pdf_anexo_max": lambda: 12,
+                "ILUS_BRAND": "ILUS Fitness", "ILUS_LEGAL": "x", "ILUS_RUT": "x",
+                "_tarea_es_seguridad": lambda *a: False})
+    return amb
+
+
+def _pdf_filas(tareas):
+    return [{"id": t["id"], "titulo": t["titulo"], "tiene_foto": bool(t.get("n_fotos")), "resultado_clase": None}
+            for t in tareas]
+
+
+class TestPdfProbatorio(unittest.TestCase):
+    """🧾 2026-10-19 (revisión de la Etapa 2, Daniel: la OT es evidencia): el PDF no puede decir «obligatoria sin
+    completar» de lo que la firma y el cierre ya no exigen («No llegó»), y nombra los pendientes de la revisión."""
+
+    def _pdf(self, tareas, con_eval=True):
+        amb = _pdf_amb()
+        tareas = copy.deepcopy(tareas)
+        for t in tareas:
+            if t["tipo_respuesta"] == "foto":
+                t["requiere_foto"] = 1
+        ev = amb["_chk_revision_evaluar"](tareas) if con_eval else None
+        return amb["_ot_pdf_probatorio"]({}, [], tareas, _pdf_filas(tareas), [], rev_eval=ev)
+
+    def test_no_llego_no_suma_obligatorias_ni_fotos(self):
+        prod = _producto(res="No llegó", obs="Se esperaba el 17, preguntado a bodega")
+        sin = self._pdf(prod, con_eval=False)
+        self.assertEqual(sin["tareas_oblig_pend_n"], 4)          # lo que decía antes (contradecía al cierre)
+        con = self._pdf(prod)
+        self.assertEqual(con["tareas_oblig_pend_n"], 0)
+        self.assertEqual(con["tareas_sin_foto_n"], 0)
+        self.assertFalse([h for h in con["hallazgos"] if h["cat"] == "Tarea obligatoria sin completar"])
+        disp = {f["id"] for f in con["tareas_chk"] if f["no_se_exige"]}
+        self.assertTrue({10, 11, 12, 13} <= disp)
+        self.assertFalse({14, 15} & disp)          # el propio «No llegó» y la observación (el argumento)
+
+    def test_pendientes_de_la_revision_con_nombre_propio(self):
+        r = self._pdf(_producto(res="Reparar", obs="Piola con hebra rota", falla=True))
+        cats = [h["cat"] for h in r["hallazgos"]]
+        self.assertEqual(cats.count("Foto del hallazgo sin registrar"), 2)
+        r = self._pdf(_producto(res="Apto", obs="sin novedad, todo ok", falla=True, fotos_verif=1))
+        self.assertIn("Resultado «Apto» con un ítem en Falla", [h["cat"] for h in r["hallazgos"]])
+
+    def test_el_contexto_pasa_la_fuente_unica(self):
+        f = _fuente("_ot_pdf_context")
+        self.assertIn("_rev_pdf = _ot_chk_revision_pendientes(vid)", f)
+        self.assertIn("rep_por_maquina=rep_por_maquina, rev_eval=_rev_pdf))", f)
+        self.assertIn('"       t.item_manual_id, "', f)
+        tpl = _leer("templates/mantenciones/ot_pdf.html")
+        self.assertEqual(tpl.count("No se exige · no llegó"), 2)
+        self.assertEqual(tpl.count("{{ t.rev_pendiente }}"), 2)
 
 
 if __name__ == "__main__":

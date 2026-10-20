@@ -91258,6 +91258,8 @@ def ot2_detalle(vid):
     return render_template(
         "ot2/detalle.html",
         acta=acta,
+        # 🔒 2026-10-19: «Informar incidencia» solo para quien pasa el candado del módulo de Incidencias.
+        puede_incidencia=_puede_informar_incidencia(),
         fac_alerta=fac_alerta,
         fin_clasif=fin_clasif,
         sin_saldo=sin_saldo,
@@ -122236,6 +122238,14 @@ def mant_visita_tarea_respuesta(vid, tid):
         if len(_na_motivo) < 10:
             return jsonify({"ok": False, "error_codigo": "NA_SIN_MOTIVO",
                             "error": "Explica por qué no aplica (mínimo 10 caracteres)."}), 400
+        # 🧾 2026-10-19 (revisión de la Etapa 2, Daniel: «que si conseguimos una falla, sea porque el técnico no la
+        # quiso identificar»): el «Resultado del control» NO admite «No aplica». Era una puerta para saltarse la
+        # regla dura (Apto con una Falla) y la foto del daño: el N/A no pasaba por _chk_resultado_rechazo y la tarea
+        # quedaba «hecha». Lo que no se puede decidir tiene su opción: «No llegó» o «Pendiente de diagnóstico».
+        if tipo == "lista" and _chk_es_resultado(tar):
+            return jsonify({"ok": False, "error_codigo": "RESULTADO_SIN_NA",
+                            "error": "El resultado del equipo no admite «No aplica»: si no está, elige «No llegó»; "
+                                     "si no lo pudiste probar, «Pendiente de diagnóstico»."}), 409
         _prev = _tarea_vj(tar)
         if (_tarea_es_seguridad(tar.get("titulo")) or _tarea_es_hallazgo(tar))                 and not _is_supervisor_user():
             return jsonify({"ok": False, "error_codigo": "NA_REQUIERE_SUPERVISOR",
@@ -123123,7 +123133,7 @@ def _ot_pdf_hhmm(v):
 
 
 def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_cliente=None,
-                       usuarios=None, anexo_completo=False, rep_por_maquina=None):
+                       usuarios=None, anexo_completo=False, rep_por_maquina=None, rev_eval=None):
     """Capa PROBATORIA del PDF de la OT.
 
     `usuarios`: {username_en_minúscula: {"id":…, "nombre":…}} resuelto por
@@ -123165,6 +123175,14 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
     función siga siendo pura transformación (sin Flask ni MySQL, tal como
     dice el párrafo de arriba) y el harness Playwright la pueda seguir
     probando aislada.
+
+    `rev_eval` (🧾 2026-10-19, revisión de la Etapa 2 — Daniel: la OT es evidencia): lo que devuelve
+    _ot_chk_revision_pendientes, YA consultado por `_ot_pdf_context` (misma razón que rep_por_maquina: esta función no
+    consulta). Es la MISMA fuente que usan la firma y el cierre, para que el PDF no contradiga lo que dejó cerrar:
+      · producto de trabajo interno «No llegó»: sus tareas dispensadas salen «No se exige · no llegó» (no como
+        obligatoria sin completar ni foto exigida sin registrar) y no suman en los contadores;
+      · foto del hallazgo pendiente, «Apto» con una Falla y Resultado en «No aplica» salen como hallazgo propio.
+    None = comportamiento de siempre.
     """
     visita = visita or {}
     equipos = equipos or []
@@ -123361,6 +123379,7 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
 
     # ── 2) Filas del checklist: campos probatorios + orden por tarjeta ──
     t_por_id = {t.get("id"): t for t in tareas}
+    _rev_por_tarea = (rev_eval or {}).get("por_tarea") or {}
     for fila in tareas_chk:
         t = t_por_id.get(fila.get("id")) or {}
         mid = t.get("maquina_id")
@@ -123369,6 +123388,23 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
         fila["requiere_foto"] = bool(t.get("requiere_foto"))
         fila["hecha"] = _hecha(t)
         fila["sin_foto_exigida"] = bool(t.get("requiere_foto")) and not fila.get("tiene_foto")
+        # 🧾 2026-10-19: la exigencia de la revisión (ver `rev_eval` en el docstring). Para un producto de trabajo
+        # interno manda la evaluación completa; para un equipo con ficha solo se agrega lo nuevo (foto del hallazgo,
+        # incoherencia, Resultado en «No aplica»): sus obligatorias las sigue contando el criterio de siempre.
+        _evp = _rev_por_tarea.get(fila.get("id")) or _rev_por_tarea.get(t.get("id"))
+        fila["no_se_exige"] = False
+        fila["rev_pendiente"] = ""
+        if _evp:
+            _mot = _evp.get("motivo")
+            if not mid and t.get("item_manual_id"):
+                fila["obligatoria"] = bool(_evp.get("exigible"))
+                if fila["obligatoria"]:
+                    fila["hecha"] = bool(_evp.get("hecha"))
+                if _evp.get("dispensada"):
+                    fila["no_se_exige"] = True
+                    fila["sin_foto_exigida"] = False
+            if _mot in _OT_PDF_REV_MOTIVO:
+                fila["rev_pendiente"] = _OT_PDF_REV_MOTIVO[_mot]
         fila["completada_por"] = (t.get("completada_por") or "").strip()
         # Solo se imprime en la fila cuando la completó ALGUIEN DISTINTO del
         # técnico que firma (equipos de 2-3 técnicos): repetir 900 veces el
@@ -123398,6 +123434,7 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
             fila.get("resultado_clase") in ("warn", "err")
             or fila["sin_foto_exigida"]
             or (fila["obligatoria"] and not fila["hecha"])
+            or bool(fila["rev_pendiente"])
         ) and not fila["equipo_saltado"]
     # Orden: tarjeta 1..N (tareas sin equipo al final). sorted() es estable,
     # así que dentro de cada equipo se conserva plantilla/orden/id del SQL.
@@ -123470,7 +123507,10 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
         elif fila.get("resultado_clase") == "warn":
             hallazgos.append({"sev": "warn", "cat": "Resultado con alerta", "ref": ref,
                               "detalle": f"Resultado: {fila.get('resultado_str')}"})
-        if fila.get("obligatoria") and not fila.get("hecha"):
+        if fila.get("rev_pendiente"):
+            # 🧾 2026-10-19: lo que la revisión exige con nombre propio (no como «obligatoria» genérica).
+            hallazgos.append({"sev": "err", "cat": fila["rev_pendiente"], "ref": ref, "detalle": ""})
+        elif fila.get("obligatoria") and not fila.get("hecha"):
             hallazgos.append({"sev": "err", "cat": "Tarea obligatoria sin completar", "ref": ref, "detalle": ""})
         if fila.get("sin_foto_exigida"):
             hallazgos.append({"sev": "warn", "cat": "Foto exigida sin registrar", "ref": ref, "detalle": ""})
@@ -123639,6 +123679,15 @@ def _ot_pdf_probatorio(visita, equipos, tareas, tareas_chk, fotos, firmante_clie
         "rep_resumen":           rep_resumen,
     }
 
+
+# 🧾 2026-10-19: cómo se nombra en el PDF cada pendiente de la revisión (motivo de _chk_revision_evaluar). La
+# obligatoria genérica sigue siendo «Tarea obligatoria sin completar».
+_OT_PDF_REV_MOTIVO = {
+    "foto_hallazgo": "Foto del hallazgo sin registrar",
+    "incoherente": "Resultado «Apto» con un ítem en Falla",
+    "resultado_na": "Resultado del equipo en «No aplica»",
+    "argumento": "Falta el argumento de «No llegó»",
+}
 
 _OT_PDF_ANEXO_MAX_DEFECTO = 12
 
@@ -123832,6 +123881,8 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
     # ── Tareas (checklist técnico detallado) ─────────────────────────
     tareas = mysql_fetchall(
         "SELECT t.id, t.maquina_id, t.plantilla_id, t.orden, t.titulo, "
+        # 🧾 2026-10-19: item_manual_id para que el PDF reconozca los productos de trabajo interno (rev_eval).
+        "       t.item_manual_id, "
         "       t.tipo, t.tipo_respuesta, t.obligatoria, t.requiere_foto, "
         "       t.unidad, t.rango_min, t.rango_max, "
         "       t.completada, t.completada_at, t.observaciones, "
@@ -124508,10 +124559,12 @@ def _ot_pdf_context(vid, embed_images=False, anexo_completo=False, publico=False
                             "id": _r.get("id"), "nombre": _r.get("nombre")}
         except Exception as _e_usr:
             print(f"[_ot_pdf_context][usuarios_pdf] vid={vid}: {_e_usr}", flush=True)
+        # 🧾 2026-10-19: la MISMA evaluación que usan la firma y el cierre (fail-open: vacía si la consulta falla).
+        _rev_pdf = _ot_chk_revision_pendientes(vid)
         ctx.update(_ot_pdf_probatorio(
             visita, equipos, tareas, tareas_chk, fotos, ctx.get("firmante_cliente"),
             usuarios=_usuarios_pdf, anexo_completo=anexo_completo,
-            rep_por_maquina=rep_por_maquina))
+            rep_por_maquina=rep_por_maquina, rev_eval=_rev_pdf))
     except Exception as _e_prob:
         # OJO: si esto se dispara, el PDF sale SIN anexo fotografico, sin
         # hallazgos y sin conteos -- se ve bien pero es evidencia incompleta.
@@ -153395,6 +153448,11 @@ def _chk_revision_evaluar(tareas):
                 if (hay_falla and _chk_es_resultado(t)
                         and opciones.get(tid) in (_CHK_RES_APTO, _CHK_RES_APTO_OBS)):
                     exig, hecha, motivo = True, False, "incoherente"
+                # 🧾 2026-10-19: un Resultado en «No aplica» (respuesta guardada antes del candado del servidor) no
+                # es un resultado: queda pendiente hasta que se elija una opción (si no, saltaba la regla dura y la
+                # foto del daño, y el acta lo mostraba «Sin resultado»).
+                if _chk_es_resultado(t) and vj.get("na"):
+                    exig, hecha, motivo = True, False, "resultado_na"
             if exig and not hecha and motivo is None:
                 motivo = "obligatoria"
             por_tarea[tid] = {"exigible": exig, "hecha": bool(hecha) if exig else bool(t.get("completada")),
@@ -153423,6 +153481,7 @@ _CHK_MOTIVO_TXT = {
     "foto_hallazgo": "foto(s) del hallazgo sin subir",
     "incoherente": "resultado «Apto» con un ítem en Falla",
     "argumento": "falta el argumento de «No llegó» en la observación",
+    "resultado_na": "resultado del equipo en «No aplica» (elige una opción)",
 }
 
 
@@ -153473,7 +153532,7 @@ def _ot_chk_revision_pendientes(vid, excluir_maquinas=None):
                 obl += 1
                 if e.get("hecha"):
                     obl_ok += 1
-        elif e.get("motivo") in ("foto_hallazgo", "incoherente"):
+        elif e.get("motivo") in ("foto_hallazgo", "incoherente", "resultado_na"):
             # equipo con ficha: la obligatoria ya la cuentan los candados de siempre; aquí solo el ajuste.
             if f.get("obligatoria"):
                 if f.get("completada"):
@@ -153482,7 +153541,7 @@ def _ot_chk_revision_pendientes(vid, excluir_maquinas=None):
                 d_obl += 1
         if not (e.get("exigible") and not e.get("hecha")):
             continue
-        if not interna and e.get("motivo") not in ("foto_hallazgo", "incoherente"):
+        if not interna and e.get("motivo") not in ("foto_hallazgo", "incoherente", "resultado_na"):
             continue
         clave = _chk_grupo_clave(f)
         nombre = (f.get("maquina_nombre") or f"Equipo #{f.get('maquina_id')}") if not interna else (
@@ -153869,6 +153928,10 @@ def _ot_sin_saldo_de(vid):
 _FOTO_ENTREGA_MARCA = "foto_entrega_instalacion_aplicada"
 _FOTO_ENTREGA_TITULO = "Foto de entrega"
 _FOTO_ENTREGA_DESC = "El equipo instalado o el accesorio entregado en su lugar, a la vista."
+# 🔒 2026-10-19 (revisión de la Etapa 1): gunicorn arranca 2 workers sin --preload y los dos corren este ajuste a la
+# vez. Sin candado, los dos leían «sin marca» y cada uno agregaba su «Foto de entrega» (dos fotos obligatorias por
+# equipo en cada OT de instalación). Mismo patrón que el seed de Incidencias (GET_LOCK compartido entre procesos).
+_FOTO_ENTREGA_LOCK = "ilus_foto_entrega_instalacion"
 
 
 def _foto_entrega_a_ajustar(plantillas, items):
@@ -153908,8 +153971,15 @@ def _foto_entrega_a_ajustar(plantillas, items):
 
 
 def _ensure_foto_entrega_instalacion():
-    """Aplica _foto_entrega_a_ajustar UNA sola vez (ver el bloque de arriba). Nunca lanza."""
+    """Aplica _foto_entrega_a_ajustar UNA sola vez (ver el bloque de arriba). Nunca lanza.
+
+    Barata con la marca puesta (una consulta). Sin marca, se serializa entre workers con GET_LOCK en una conexión
+    dedicada (get_mysql: el candado vive mientras viva esa sesión), relee la marca CON el candado tomado (la lectura
+    del pool puede venir de una foto vieja) y cada INSERT lleva además su NOT EXISTS por título: aunque algo falle a
+    medias y el próximo arranque reintente, una plantilla nunca queda con dos «Foto de entrega»."""
     out = {"ya": False, "plantillas": []}
+    _lk = None
+    _tomado = False
     try:
         _ensure_mant_logs_entidad_varchar()
         if mysql_fetchone(
@@ -153917,6 +153987,21 @@ def _ensure_foto_entrega_instalacion():
                 ("sistema", 0, _FOTO_ENTREGA_MARCA)):
             out["ya"] = True
             return out
+        _lk = get_mysql()
+        with _lk.cursor() as cur:
+            cur.execute("SELECT GET_LOCK(%s, 10) AS l", (_FOTO_ENTREGA_LOCK,))
+            _tomado = bool((cur.fetchone() or {}).get("l"))
+        _lk.commit()
+        if not _tomado:
+            # Otro worker lo está aplicando (o MySQL no dio el candado): sin marca, el próximo arranque lo revisa.
+            print("[ensure_foto_entrega] sin candado: lo aplica otro proceso", flush=True)
+            return out
+        with _lk.cursor() as cur:
+            cur.execute("SELECT id FROM mant_logs WHERE entidad=%s AND entidad_id=%s AND accion=%s LIMIT 1",
+                        ("sistema", 0, _FOTO_ENTREGA_MARCA))
+            if cur.fetchone():
+                out["ya"] = True
+                return out
         plantillas = mysql_fetchall(
             "SELECT id, nombre, categoria_admin, COALESCE(activa, 1) AS activa "
             "  FROM mant_tarea_plantillas WHERE categoria_admin=%s", ("instalacion",)) or []
@@ -153930,11 +154015,15 @@ def _ensure_foto_entrega_instalacion():
         fallas = 0
         for p in _foto_entrega_a_ajustar(plantillas, items):
             try:
-                mysql_execute(
+                _n = mysql_execute_returning_rowcount(
                     "INSERT INTO mant_tarea_plantilla_items "
                     "(plantilla_id, orden, titulo, descripcion, tipo_respuesta, obligatoria, requiere_foto) "
-                    "VALUES (%s,%s,%s,%s,'foto',1,1)",
-                    (p["id"], p["orden"], _FOTO_ENTREGA_TITULO, _FOTO_ENTREGA_DESC))
+                    "SELECT %s,%s,%s,%s,'foto',1,1 FROM DUAL "
+                    " WHERE NOT EXISTS (SELECT 1 FROM mant_tarea_plantilla_items "
+                    "                    WHERE plantilla_id=%s AND LOWER(TRIM(titulo))=LOWER(%s))",
+                    (p["id"], p["orden"], _FOTO_ENTREGA_TITULO, _FOTO_ENTREGA_DESC, p["id"], _FOTO_ENTREGA_TITULO))
+                if not _n:
+                    continue   # ya la tenía (la agregó otro proceso): nada que registrar
                 out["plantillas"].append(p["nombre"])
                 _mant_log("plantilla", p["id"], "foto_entrega_agregada",
                           f"Se agregó al final «{_FOTO_ENTREGA_TITULO}» (foto, obligatoria) a la plantilla de "
@@ -153953,6 +154042,19 @@ def _ensure_foto_entrega_instalacion():
              "sistema"))
     except Exception as e:
         print(f"[ensure_foto_entrega] {e}", flush=True)
+    finally:
+        if _lk is not None:
+            try:
+                if _tomado:
+                    with _lk.cursor() as cur:
+                        cur.execute("SELECT RELEASE_LOCK(%s) AS r", (_FOTO_ENTREGA_LOCK,))
+                        cur.fetchone()
+            except Exception:
+                pass
+            try:
+                _lk.close()   # cerrar la sesión también suelta el candado
+            except Exception:
+                pass
     return out
 
 
@@ -154610,6 +154712,22 @@ def ot2_producto_manual_legado_ver(vid, imid, producto_id):
 _OTPROD_INC_MOTIVO_MIN = 10
 
 
+def _puede_informar_incidencia():
+    """🔒 2026-10-19 (revisión de la Etapa 3): el MISMO candado de toda la bodega de Incidencias
+    (@_no_tecnico_salvo_taller, Daniel 2026-09-23): gestión siempre; de la familia técnico, solo un rol ELEVADO
+    (_es_tecnico_elevado, ej. Técnico Ejecutivo) con el permiso «taller» (mant_taller) concedido en /admin/roles. El
+    técnico de campo común (rol exacto 'tecnico') y el técnico externo (proveedor) NUNCA: la ruta de la OT no reabre lo
+    que el módulo dejó cerrado a propósito. Lo usan la ruta (403) y la ficha (el botón no aparece)."""
+    try:
+        if not _es_rol_tecnico():
+            return True
+        if _es_tecnico_externo():
+            return False
+        return _es_tecnico_elevado() and bool((getattr(g, "permissions", {}) or {}).get("mant_taller"))
+    except Exception:
+        return False
+
+
 @app.route("/ot/api/<int:vid>/producto/<int:imid>/incidencia", methods=["POST"])
 @_mant_required
 @_ot_can_configurar
@@ -154620,7 +154738,13 @@ def ot2_api_producto_incidencia(vid, imid):
 
     Por qué una ruta propia: las de Incidencias son de gestión (@_no_tecnico_salvo_taller) y el técnico que hace la
     revisión es quien ve el daño. Aquí solo puede informar la incidencia de un producto de ESTA OT (candado de
-    _otrep_cargar_ot_y_producto) y no ve nada más del módulo (la respuesta trae solo el número)."""
+    _otrep_cargar_ot_y_producto) y no ve nada más del módulo (la respuesta trae solo el número).
+
+    🔒 2026-10-19: quién puede informar = el mismo candado del módulo (_puede_informar_incidencia): un técnico de campo
+    común o un externo recibe 403 y le pide a gestión (o a un técnico de taller) que la informe."""
+    if not _puede_informar_incidencia():
+        return _ot2_err("Informar incidencias es de gestión o del taller. Deja el resultado del producto y cuéntale "
+                        "a tu supervisor lo que encontraste.", "SIN_PERMISO_INCIDENCIA", http=403)
     v, p, err = _otrep_cargar_ot_y_producto(vid, imid)
     if err:
         return err

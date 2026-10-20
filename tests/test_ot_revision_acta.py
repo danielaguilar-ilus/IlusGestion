@@ -116,7 +116,7 @@ class TestBarraDelProducto(unittest.TestCase):
     def test_la_barra_del_producto_se_dibuja_bajo_el_resultado(self):
         r = _js_funcion("otdRenderChecklistEquipo", D)
         self.assertIn("otdChkBarraResultado(_resultado, _ev.no_llego.length > 0)", r)
-        self.assertIn("+ otdChkBarraProducto(mid, grupos, _resultado) + grupos.map(g => {", r)
+        self.assertIn("+ otdChkBarraProducto(mid, grupos, _resultado, _ev.no_llego.length > 0) + grupos.map(g => {", r)
         b = _js_funcion("otdChkBarraProducto", D)
         self.assertIn("Solicitar repuesto", b)
         self.assertIn("Informar incidencia", b)
@@ -142,11 +142,12 @@ class TestBarraDelProducto(unittest.TestCase):
 @unittest.skipUnless(HAY_NODE, "node no está instalado")
 class TestBarraEnNode(unittest.TestCase):
     # otdEsc se reemplaza por uno equivalente: su regex /'/g confunde al extractor de funciones (_js_funcion).
-    PREVIO = ("const OTD_VID = 77; let OTD_PUEDE_PRODUCTO = true;\n"
+    PREVIO = ("const OTD_VID = 77; let OTD_PUEDE_PRODUCTO = true; let OTD_PUEDE_INCIDENCIA = true;\n"
               "function otdEsc(s){ return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')"
               ".replace(/>/g, '&gt;').replace(/\"/g, '&quot;'); }\n"
               "function otdChkEstaBloqueada(){ return false; } function otdBloqueadaPorCierre(){ return false; }\n")
-    FUNCS = ("otdChkNorm", "otdChkSugeridos", "otdChkBarraProducto")
+    FUNCS = ("otdChkNorm", "otdChkVj", "otdChkOpciones", "otdChkEsResultado", "otdChkBaseMarcoObs",
+             "otdChkSugeridos", "otdChkBarraProducto")
 
     def _js(self, cuerpo):
         fuente = self.PREVIO + "\n".join(_js_funcion(n, D) for n in self.FUNCS)
@@ -166,6 +167,37 @@ class TestBarraEnNode(unittest.TestCase):
         self.assertIn("otdProdIncidencia(3)", out["h"])
         self.assertEqual(out["n"], 3)                                     # 3 sugeridos distintos (sin duplicar)
         self.assertIn("Piola (cable de acero) o correa de transmisión", out["h"])   # nombre COMPLETO (REGLA #15)
+
+    def test_condicional_cerrado_y_no_llego_sin_chips(self):
+        """✂️ 2026-10-19 (revisión de la Etapa 3): solo los sugeridos de los bloques que aplican. El condicional
+        («Estructura y tapiz») aporta los suyos solo abierto; un producto «No llegó» no muestra chips."""
+        base = {"tareas": [{"id": 1, "tipo_respuesta": "lista", "titulo": "Resultado del control",
+                            "opciones_lista_json": json.dumps(["Apto", "Apto con observaciones", "Reparar"]),
+                            "valor_json": {"opcion": "Apto"}}], "repuestos_sugeridos": []}
+        sist = {"tareas": [], "repuestos_sugeridos": ["Polea con rodamiento", "Pin selector con cordel"]}
+        cond = {"tareas": [], "condicional": True, "completas": 0,
+                "repuestos_sugeridos": ["Kit de pernos y tuercas", "Pintura de retoque"]}
+        res = {"id": 1, "item_manual_id": 3, "maquina_id": None}
+        reparar = json.loads(json.dumps(base))
+        reparar["tareas"][0]["valor_json"] = {"opcion": "Reparar"}
+        out = self._js(
+            "const n = h => (h.match(/otd-prod-chip/g) || []).length;\n"
+            "const G = " + json.dumps({"cerrado": [base, sist, cond], "abierto": [reparar, sist, cond]},
+                                      ensure_ascii=False) + ";\n"
+            "const R = " + json.dumps(res) + ";\n"
+            "console.log(JSON.stringify({cerrado: n(otdChkBarraProducto(3, G.cerrado, R)),"
+            " abierto: n(otdChkBarraProducto(3, G.abierto, R)),"
+            " no_llego: n(otdChkBarraProducto(3, G.abierto, R, true)),"
+            " pintura: otdChkBarraProducto(3, G.cerrado, R).includes('Pintura de retoque')}));")
+        self.assertEqual(out, {"cerrado": 2, "abierto": 4, "no_llego": 0, "pintura": False})
+
+    def test_informar_incidencia_solo_con_el_candado_del_modulo(self):
+        """🔒 2026-10-19: sin OTD_PUEDE_INCIDENCIA (técnico de campo común o externo) no hay botón de incidencia."""
+        res = {"id": 1, "item_manual_id": 3, "maquina_id": None}
+        out = self._js("OTD_PUEDE_INCIDENCIA = false;\n"
+                       "const h = otdChkBarraProducto(3, [], " + json.dumps(res) + ");\n"
+                       "console.log(JSON.stringify([h.includes('Solicitar repuesto'), h.includes('otdProdIncidencia')]));")
+        self.assertEqual(out, [True, False])
 
     def test_no_aparece_en_equipos_de_ficha_ni_sin_permiso_ni_sin_resultado(self):
         out = self._js(
@@ -428,6 +460,39 @@ class TestProductoEnElFlujoDeRepuestos(unittest.TestCase):
 
 
 class TestIncidenciaDesdeElProducto(unittest.TestCase):
+    def test_mismo_candado_que_el_modulo_de_incidencias(self):
+        """🔒 2026-10-19 (revisión de la Etapa 3): técnico de campo común y externo → 403; técnico ELEVADO solo con el
+        permiso «taller» (mant_taller); gestión siempre. Igual que @_no_tecnico_salvo_taller (Daniel 2026-09-23)."""
+        f = _fuente("ot2_api_producto_incidencia")
+        self.assertIn("if not _puede_informar_incidencia():", f)
+        self.assertIn('"SIN_PERMISO_INCIDENCIA", http=403)', f)
+        self.assertLess(f.index("_puede_informar_incidencia()"), f.index("INSERT INTO mant_incidencias"))
+        self.assertIn("puede_incidencia=_puede_informar_incidencia(),", _fuente("ot2_detalle"))
+        self.assertIn("const OTD_PUEDE_INCIDENCIA = {{ 'true' if (puede_incidencia and", D)
+
+        class _G:
+            permissions = {}
+        g = _G()
+        rol = {"r": "tecnico"}
+
+        def familia(r):
+            return "tecnico" if (r or "").startswith("tecnico") else (r or "")
+        amb = {"g": g,
+               "_es_rol_tecnico": lambda: familia(rol["r"]) == "tecnico",
+               "_es_tecnico_externo": lambda: rol["r"].startswith("tecnico_externo"),
+               "_es_tecnico_elevado": lambda: (familia(rol["r"]) == "tecnico" and rol["r"] != "tecnico"
+                                               and not rol["r"].startswith("tecnico_externo"))}
+        puede = _exec("_puede_informar_incidencia", amb)
+        casos = []
+        for r, taller in (("tecnico", True), ("tecnico_externo", True), ("tecnico_ejecutivo", False),
+                          ("tecnico_ejecutivo", True), ("supervisor", False), ("admin", False)):
+            rol["r"] = r
+            g.permissions = {"mant_taller": taller}
+            casos.append((r, taller, puede()))
+        self.assertEqual(casos, [("tecnico", True, False), ("tecnico_externo", True, False),
+                                 ("tecnico_ejecutivo", False, False), ("tecnico_ejecutivo", True, True),
+                                 ("supervisor", False, True), ("admin", False, True)])
+
     def test_mismo_registro_de_incidencias(self):
         f = _fuente("ot2_api_producto_incidencia")
         self.assertIn("INSERT INTO mant_incidencias (sku, descripcion, cantidad, motivo, observacion, created_by)", f)

@@ -2405,14 +2405,20 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
 .otd-prod-btn.rep i{color:#2563eb}
 .otd-prod-btn.inc i{color:#d97706}
 .otd-prod-btn:hover{border-color:#0a0a0a}
-.otd-prod-sug{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-.otd-prod-sug .lbl{flex-basis:100%;font-size:.74rem;color:#4b5563}
+.otd-prod-sug{flex-basis:100%}
+.otd-prod-sug > summary{list-style:none;cursor:pointer;min-height:44px;display:flex;flex-wrap:wrap;align-items:center;
+  gap:4px 6px;font-size:.8rem;font-weight:700;color:#1e40af}
+.otd-prod-sug > summary::-webkit-details-marker{display:none}
+.otd-prod-sug > summary > i{transition:transform .15s}
+.otd-prod-sug[open] > summary > i{transform:rotate(90deg)}
+.otd-prod-sug .lbl{font-size:.74rem;font-weight:400;color:#4b5563}
+.otd-prod-sug-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding-top:4px}
 .otd-prod-chip{min-height:44px;padding:6px 12px;border-radius:999px;border:1px dashed #93c5fd;background:#eff6ff;
   color:#1e40af;font-size:.8rem;font-weight:700;display:inline-flex;align-items:center;gap:5px;cursor:pointer;
   text-align:left;overflow-wrap:anywhere}
 .otd-prod-chip:hover{background:#dbeafe;border-style:solid}
 @media (max-width:575.98px){.otd-prod-btn{flex:1 1 calc(50% - 8px);justify-content:center}
-  .otd-prod-chip{flex:1 1 100%}}
+  .otd-prod-chip{flex:1 1 calc(50% - 6px)}}
 /* Sello de autoría — la trazabilidad que Daniel pide ver en la tarea */
 .otd-chk-item .sello{grid-column:2;display:inline-flex;align-items:center;gap:5px;
   margin-top:7px;font-size:.66rem;font-weight:700;color:#475569;background:#f1f5f9;
@@ -12554,6 +12560,9 @@ window.otdActivarCorreccion = async function(){
 const OTD_CURRENT_UID = {{ (current_user.id if current_user else 0) | tojson }};
 // 🧰 2026-10-18 (Etapa 3): quién ve las acciones del producto (mismo candado que «Fuera de lo normal» de un equipo).
 const OTD_PUEDE_PRODUCTO = {{ 'true' if ((puede_ejecutar or puede_configurar) and not ot_solo_lectura) else 'false' }};
+// 🔒 2026-10-19: «Informar incidencia» = mismo candado del módulo de Incidencias (_puede_informar_incidencia): el
+// técnico de campo común y el externo no ven el botón (y el servidor responde 403).
+const OTD_PUEDE_INCIDENCIA = {{ 'true' if (puede_incidencia and (puede_ejecutar or puede_configurar) and not ot_solo_lectura) else 'false' }};
 // 🧾 2026-10-18: correos internos configurados para el acta (solo llega a gestión: a un técnico, lista vacía).
 const OTD_ACTA_DEST = {{ ((acta.destinatarios if acta else []) or []) | tojson }};
 
@@ -12661,6 +12670,8 @@ function otdChkEvaluar(tareas){
         if (hayFalla && otdChkEsResultado(t) && ['apto', 'apto con observaciones'].includes(opciones[t.id])){
           exig = true; hecha = false; motivo = 'incoherente';
         }
+        // 🧾 2026-10-19: un Resultado en «No aplica» no es un resultado (espejo de _chk_revision_evaluar).
+        if (otdChkEsResultado(t) && vj.na){ exig = true; hecha = false; motivo = 'resultado_na'; }
       }
       if (exig && !hecha && motivo === null) motivo = 'obligatoria';
       porTarea[t.id] = { exigible: exig, hecha: exig ? hecha : !!t.completada,
@@ -12736,32 +12747,47 @@ async function otdChkResultadoRapido(tid, opcion){
    «Solicitar repuesto» (el MISMO modal de la OT, rutas /producto/<id>) con los repuestos sugeridos de SUS bloques
    como chips de un toque, e «Informar incidencia» (la bodega de Incidencias). Dar de baja / Fuera de servicio /
    No llegó siguen en la barra del Resultado: una sola fuente de verdad. */
+// ✂️ 2026-10-19 (revisión de la Etapa 3, Daniel: «muy largo… dejémoslo esencial»): solo los sugeridos de los bloques
+// que APLICAN. El condicional («Estructura y tapiz») aporta los suyos solo cuando está abierto (misma regla que
+// otdChkCondEnvolver: la base marcó una observación o ya tiene algo respondido). Antes salían 12 chips en el selector
+// de peso aunque el bloque de estructura estuviera cerrado.
 function otdChkSugeridos(grupos){
   const out = [], vistos = new Set();
-  (grupos || []).forEach(g => (g.repuestos_sugeridos || []).forEach(n => {
-    const k = otdChkNorm(n);
-    if (!k || vistos.has(k)) return;
-    vistos.add(k); out.push(n);
-  }));
+  (grupos || []).forEach(g => {
+    if (g.condicional && !(otdChkBaseMarcoObs(grupos, g) || Number(g.completas) > 0)) return;
+    (g.repuestos_sugeridos || []).forEach(n => {
+      const k = otdChkNorm(n);
+      if (!k || vistos.has(k)) return;
+      vistos.add(k); out.push(n);
+    });
+  });
   return out;
 }
-function otdChkBarraProducto(mid, grupos, res){
+function otdChkBarraProducto(mid, grupos, res, noLlego){
   if (!res || !OTD_PUEDE_PRODUCTO || !(res.item_manual_id && !res.maquina_id)) return '';
   if (otdChkEstaBloqueada(res) && otdBloqueadaPorCierre()) return '';
   const imid = Number(res.item_manual_id);
-  const sug = otdChkSugeridos(grupos);
+  // Un producto que no llegó no se repara: sin chips de repuesto (el botón queda por si hace falta igual).
+  const sug = noLlego ? [] : otdChkSugeridos(grupos);
+  // Plegados en celular (una fila por chip llenaba la pantalla antes del checklist); abiertos en escritorio.
+  const abrir = (typeof window !== 'undefined' && window.matchMedia)
+    ? window.matchMedia('(min-width: 768px)').matches : true;
   const chips = sug.length
-    ? `<div class="otd-prod-sug"><span class="lbl">Repuestos sugeridos por su checklist · un toque y queda en la lista:</span>
+    ? `<details class="otd-prod-sug"${abrir ? ' open' : ''}>
+        <summary><i class="bi bi-chevron-right" aria-hidden="true"></i>Repuestos sugeridos por su checklist (${sug.length})
+          <span class="lbl">· un toque y queda en la lista</span></summary>
+        <div class="otd-prod-sug-chips">
         ${sug.map(n => `<button type="button" class="otd-prod-chip" data-n="${otdEsc(n)}"
             onclick="otdProdRepuesto(${imid}, this.dataset.n)"><i class="bi bi-plus-lg" aria-hidden="true"></i>${otdEsc(n)}</button>`).join('')}
-      </div>`
+        </div>
+      </details>`
     : '';
   return `<div class="otd-prod-bar" role="group" aria-label="Acciones del producto">
       <span class="lbl">Fuera de lo normal · si todo está bien, sigue con el checklist</span>
       <button type="button" class="otd-prod-btn rep" onclick="otdProdRepuesto(${imid})">
         <i class="bi bi-tools" aria-hidden="true"></i> Solicitar repuesto</button>
-      <button type="button" class="otd-prod-btn inc" onclick="otdProdIncidencia(${imid})">
-        <i class="bi bi-exclamation-diamond" aria-hidden="true"></i> Informar incidencia</button>
+      ${OTD_PUEDE_INCIDENCIA ? `<button type="button" class="otd-prod-btn inc" onclick="otdProdIncidencia(${imid})">
+        <i class="bi bi-exclamation-diamond" aria-hidden="true"></i> Informar incidencia</button>` : ''}
       ${chips}
     </div>`;
 }
@@ -13009,7 +13035,7 @@ function otdRenderChecklistEquipo(mid){
   // CUÁNTAS tareas son y cuáles faltan, que es lo que el técnico mira.
   // 🧰 2026-10-18 (Etapa 3): debajo del Resultado, las acciones del producto (repuesto, incidencia, sugeridos).
   mount.innerHTML = otdChkBarraResultado(_resultado, _ev.no_llego.length > 0)
-    + otdChkBarraProducto(mid, grupos, _resultado) + grupos.map(g => {
+    + otdChkBarraProducto(mid, grupos, _resultado, _ev.no_llego.length > 0) + grupos.map(g => {
     const oblT = g.tareas.filter(t => otdChkExig(t)).length;
     const oblO = g.tareas.filter(t => otdChkExig(t) && otdChkHecha(t)).length;
     const segs = g.tareas.map(t =>
@@ -13020,7 +13046,15 @@ function otdRenderChecklistEquipo(mid){
     // de esta plantilla, para pintarla como "estás aquí" (ver .is-next en
     // el CSS). Es solo la primera sin completar en el orden de siempre --
     // no cambia el orden ni inventa una regla de bloqueo nueva.
-    const idxSiguiente = g.tareas.findIndex(t => !t.completada);
+    // 🧾 2026-10-19 (revisión de la Etapa 2): el «paso actual» es lo que de verdad falta. Una tarea dispensada por
+    // «No llegó» nunca lo es (antes la Foto general salía como paso actual con «Falta foto» al lado de «No se exige»);
+    // con el producto «No llegó» solo puede serlo lo exigible pendiente (la observación con el argumento).
+    const _noLlegoP = _ev.no_llego.length > 0;
+    const idxSiguiente = g.tareas.findIndex(t => {
+      if (t._ev && t._ev.dispensada) return false;
+      if (otdChkExig(t)) return !otdChkHecha(t);
+      return !_noLlegoP && !t.completada;
+    });
     const _html = `
     <div class="otd-chk-plant">
       <div class="otd-chk-plant-nm"><i class="bi bi-list-check"></i> ${otdEsc(g.plantilla_nombre)}
@@ -14086,17 +14120,20 @@ function otdChkFotoBtnHtml(t){
   const _pideHallazgo = !!(t._ev && t._ev.motivo === 'foto_hallazgo');
   const _fshConFotos = !!((t.foto_si_hallazgo === true || Number(t.foto_si_hallazgo) > 0) && t.fotos && t.fotos.length);
   if (otdBloqueadaPorCierre()){
-    if ((exigeFoto || _pideHallazgo) && !(t.fotos && t.fotos.length)){
+    if ((exigeFoto || _pideHallazgo) && !(t._ev && t._ev.dispensada) && !(t.fotos && t.fotos.length)){
       return `<span class="otd-chk-sinfoto" title="La tarea exigía evidencia fotográfica y la OT se cerró sin ella">
                 <i class="bi bi-camera-video-off"></i> Cerró sin la foto exigida</span>`;
     }
     return '';
   }
   if (!exigeFoto && !_pideHallazgo && !_fshConFotos) return '';
-  const need = !(t.fotos && t.fotos.length);
+  // 🧾 2026-10-19: tarea dispensada por «No llegó»: la foto ya no se exige; queda solo un «Agregar foto» neutro.
+  const _disp = !!(t._ev && t._ev.dispensada);
+  const need = !_disp && !(t.fotos && t.fotos.length);
   return `<button type="button" class="otd-chk-fotobtn${need ? ' need' : ''}"
             onclick="otdChkAbrirFoto(${t.id}, ${t.maquina_id})">
-            <i class="bi bi-camera-fill"></i> ${need ? (_pideHallazgo ? 'Falta foto del hallazgo' : 'Falta foto') : 'Agregar otra'}</button>
+            <i class="bi bi-camera-fill"></i> ${need ? (_pideHallazgo ? 'Falta foto del hallazgo' : 'Falta foto')
+              : ((t.fotos && t.fotos.length) ? 'Agregar otra' : 'Agregar foto')}</button>
           <input type="file" id="otdChkFotoInp-${t.id}" accept="image/*" capture="environment"
                  style="display:none" onchange="otdChkSubirFoto(this, ${t.id})">`;
 }
@@ -14503,7 +14540,7 @@ function otdChkTareaHtml(t, nro, esSiguiente){
   // 🔴 2026-09-08 (Daniel: "ya pasaste al paso uno... eso es lo que
   // necesito"): el chip va PRIMERO a propósito -- es lo primero que el
   // ojo debe encontrar en la tarea, antes que "Obligatoria" o el tipo.
-  if (!t.completada && esSiguiente){
+  if (esSiguiente && !(otdChkExig(t) ? otdChkHecha(t) : t.completada)){
     chips.push('<span class="ch next"><i class="bi bi-arrow-right-circle-fill"></i> Paso actual</span>');
   }
   // 🧾 2026-10-18 (revisión esencial): la exigencia viene de otdChkEvaluar (t._ev), no solo de la plantilla.
@@ -14514,11 +14551,13 @@ function otdChkTareaHtml(t, nro, esSiguiente){
   if (_evT && _evT.motivo === 'argumento') chips.push('<span class="ch hall">Escribe el argumento de «No llegó»</span>');
   if (_evT && _evT.motivo === 'foto_hallazgo') chips.push('<span class="ch hall"><i class="bi bi-camera-fill" aria-hidden="true"></i> Falta la foto del hallazgo</span>');
   if (_evT && _evT.motivo === 'incoherente') chips.push('<span class="ch err">Con una Falla no vale «Apto»</span>');
+  if (_evT && _evT.motivo === 'resultado_na') chips.push('<span class="ch err">Elige un resultado: «No aplica» no vale aquí</span>');
   if (CH_TIPO[tipo]) chips.push(`<span class="ch tipo">${CH_TIPO[tipo]}</span>`);
   // 🔴 FIX 2026-09-09: mismo desacople que otdChkFotoBtnHtml -- una tarea
   // tipo_respuesta='foto' exige foto aunque requiere_foto haya quedado en
   // 0 en la plantilla.
-  if (t.requiere_foto || tipo === 'foto'){
+  // 🧾 2026-10-19: una tarea dispensada por «No llegó» no pide foto (ni «Necesita foto» ni botón rojo).
+  if ((t.requiere_foto || tipo === 'foto') && !(_evT && _evT.dispensada)){
     const conFoto = !!(t.fotos && t.fotos.length);
     chips.push(`<span class="ch foto${conFoto ? ' ok' : ''}">` +
                (conFoto ? 'Foto lista' : 'Necesita foto') + '</span>');
@@ -14567,6 +14606,9 @@ function otdChkNoAplicaHtml(t, tipo, bloqueada){
       <span class="text-muted">— ${otdEsc(vj.na_por || '')}</span></div>`;
   }
   if (bloqueada) return '';
+  // 🧾 2026-10-19: el «Resultado del control» no admite «No aplica» (el servidor responde 409 RESULTADO_SIN_NA):
+  // lo que no se puede decidir va como «No llegó» o «Pendiente de diagnóstico».
+  if (otdChkEsResultado(t)) return '';
   return `<button type="button" class="btn btn-link btn-sm p-0 mt-1" style="min-height:44px"
     onclick="otdChkNoAplica(${t.id})">Esta tarea no aplica a este trabajo</button>`;
 }

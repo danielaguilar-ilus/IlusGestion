@@ -1301,6 +1301,17 @@
   #o2mTareasList .o2m-rv-x{min-width:44px;min-height:44px}
   #o2mTareasList .o2m-rv-clase-sel{font-size:16px;min-height:40px}   /* iOS no hace zoom con 16px */
 }
+/* 🧾 2026-10-19 (revisión de la Etapa 1, REGLA #15): en celular el select del CHECKLIST cortaba el nombre del bloque
+   («Cargas libres (por líne», «Bicicleta (transmisión y co…»): la tarjeta recibe ~277px a 390px. Ahí la celda usa
+   TODO el ancho de la tarjeta (también la columna de la casilla, que la × deja libre en esa fila) y arriba del
+   select va el nombre completo del bloque elegido, en texto que sí se parte en líneas. */
+.o2m-her-nm{display:none}
+@media (max-width:576px){
+  #o2mTareasList .o2m-rv-table td.x{grid-row:2 / span 2}
+  #o2mTareasList .o2m-rv-table td.chkl{grid-column:1 / -1;padding-left:8px}
+  #o2mTareasList .o2m-her-nm{display:block;font-size:.8rem;color:#111827;line-height:1.35;overflow-wrap:anywhere}
+  #o2mTareasList .o2m-her-nm b{font-weight:700}
+}
 </style>
 
 <div class="modal fade o2m" id="ot2ModalCrear" tabindex="-1" aria-hidden="true">
@@ -5767,7 +5778,11 @@ window.OT2C = (function(){
       origen = '<small class="o2m-eq-sug"><i class="bi bi-hand-index me-1"></i>Elegida a mano.</small>';
     }
     var recordar = tm.sku && tm.chk_sistema && tm.chk_sistema.origen === 'manual';
+    // 🧾 2026-10-19: el nombre COMPLETO del bloque elegido (en celular el select lo corta; ver .o2m-her-nm).
+    var _bSel = (_o2mChk.bloques || []).filter(function(b){ return b.id === sel; })[0];
+    var nmSel = _bSel ? _o2mChkNombre(_bSel) : (tm.chk_sistema ? _o2mChkNombre(tm.chk_sistema) : 'Solo la base');
     return '<div class="o2m-her">' +
+      '<div class="o2m-her-nm" aria-hidden="true">Bloque: <b>' + esc(nmSel) + '</b></div>' +
       '<select class="form-select form-select-sm" style="font-size:16px" aria-label="Bloque del sistema de ' + esc(_o2mTmNombre(tm)) + '" ' +
       'onchange="OT2C.setBloqueTareaManual(' + i + ',this.value)">' + opts + '</select>' +
       '<div class="o2m-her-org">' + origen + '</div>' +
