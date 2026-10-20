@@ -715,8 +715,8 @@ async function tkRepuestosOT(){
         '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
           '<span style="font-size:.6rem;font-weight:900;letter-spacing:.05em;text-transform:uppercase;border-radius:999px;padding:2px 8px;background:' + c[0] + ';color:' + c[1] + '">' + esc(String(s.estado_label || s.estado).split(' · ')[0]) + '</span>' +
           '<b>' + (s.origen === 'piola' ? '<i class="bi bi-link-45deg"></i> ' : (s.origen === 'cinta' ? '<i class="bi bi-arrow-left-right"></i> ' : '')) + esc(s.repuesto_nombre) + ' × ' + fmt(s.cantidad) + '</b>' +
-          (s.piola_metros ? '<span style="color:#a16207;font-weight:800">' + fmt(s.piola_metros) + ' m de piola</span>' : '') +
-          (s.medida ? '<span style="color:#a16207;font-weight:800">' + esc(s.medida) + '</span>' : '') +
+          (s.piola_metros && !(s.datos_filas || []).length ? '<span style="color:#a16207;font-weight:800">' + fmt(s.piola_metros) + ' m de piola</span>' : '') +
+          (s.medida && !(s.datos_filas || []).length ? '<span style="color:#a16207;font-weight:800">' + esc(s.medida) + '</span>' : '') +
           origenTxt +
           '<small style="margin-left:auto;color:#6b7280">' + esc(s.created_at || '') + (s.solicitado_por ? ' · ' + esc(s.solicitado_por) : '') + '</small>' +
         '</div>' +
@@ -726,6 +726,12 @@ async function tkRepuestosOT(){
           (s.stock_sku ? 'bodega <b>' + esc(s.stock_sku) + '</b>' : '<span style="color:#b45309;font-weight:700">sin repuesto de bodega asociado</span>') +
           (s.proveedor_nombre ? ' · proveedor ' + esc(s.proveedor_nombre) : '') + (s.oc_numero ? ' · OC ' + esc(s.oc_numero) : '') + '</div>' +
         '<div style="color:#1f2937;margin-top:4px;white-space:pre-wrap"><i class="bi bi-stethoscope me-1" style="color:#dc2626"></i>' + esc(s.motivo || '') + '</div>' +
+        // 📏 2026-10-20: las medidas de la pieza (quien compra necesita medidas y todo) y el camino del diagnóstico del técnico
+        ((s.datos_filas || []).length ? '<div style="margin-top:5px;border:1px solid ' + (s.datos && s.datos.medido_con === 'no_pude' ? '#fcd34d;background:#fff8e1' : '#bfdbfe;background:#f7faff') + ';border-radius:8px;padding:6px 9px">' +
+          '<div style="font-size:.62rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:#1e40af"><i class="bi bi-rulers"></i> Medidas' + (s.datos_pieza ? ' · ' + esc(s.datos_pieza) : '') + '</div>' +
+          '<div style="display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin-top:4px">' + s.datos_filas.map(function(f){ return '<span style="color:#475569">' + esc(f[0]) + '</span><b>' + esc(f[1]) + '</b>'; }).join('') + '</div>' +
+          ((s.datos && (s.datos.avisos || []).length) ? '<div style="margin-top:4px;color:#92400e;font-weight:700"><i class="bi bi-exclamation-triangle-fill"></i> ' + esc(s.datos.avisos.join(' · ')) + '</div>' : '') + '</div>' : '') +
+        (s.diagnostico_txt ? '<div style="color:#1e3a8a;margin-top:4px"><i class="bi bi-clipboard2-pulse"></i> <b>Diagnóstico guiado:</b> ' + esc(s.diagnostico_txt) + '</div>' : '') +
         (evs ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' + evs + '</div>' : '') +
         (s.nota_gestion ? '<div style="margin-top:6px;color:#475569;font-size:.74rem"><i class="bi bi-chat-left-text me-1"></i>' + esc(s.nota_gestion) + '</div>' : '') +
       '</div>';

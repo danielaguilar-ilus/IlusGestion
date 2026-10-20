@@ -63,6 +63,7 @@ import erp_engine
 import transporte_tarifas as _ttar  # motor de tarifas réplica EXACTA de la macro SPHS
 import usuarios_perfil as _uperf  # datos personales del usuario: fecha de nacimiento y dirección validada con Google
 import ot_saldo_servicio as _saldo  # saldo por línea de servicio de cada documento (módulo puro con pruebas)
+import ot_piezas_medidas as _pm    # 2026-10-20: fichas de medidas por pieza, validación, aprendizaje del modelo y árbol «¿Qué le pasa?» (módulo puro con pruebas)
 import ot_producto_estado as _pe    # acciones por producto de una OT interna (No se puede usar / No tiene arreglo / No llegó) y repuestos sugeridos por defecto (módulo puro con pruebas)
 import fedex_labels as _fxlabels    # parser puro de etiquetas FedEx (testeable)
 _ERP = erp_engine.init_engine(
@@ -92251,7 +92252,8 @@ def ot2_detalle(vid):
     for e in equipos:
         e["acc_sol"] = [
             {"id": s.get("id"), "nombre": s.get("repuesto_nombre"), "cant": s.get("cantidad"), "estado": s.get("estado"),
-             "label": s.get("estado_label"), "abierta": bool(s.get("abierta")), "seg": s.get("seguimiento")}
+             "label": s.get("estado_label"), "abierta": bool(s.get("abierta")), "seg": s.get("seguimiento"),
+             "medida": s.get("datos_txt") or s.get("medida") or ""}
             for s in (e.get("rep_solicitudes") or [])]
     # 🧰 2026-10-20 — UN solo JSON para la barra de acciones de TODAS las tarjetas (static/ot_acciones.js). Nada de HTML ni de
     # modales repetidos por producto: la ficha de hoy llega a 19 productos × 9 tareas y no puede pesar más por la barra.
@@ -100221,6 +100223,27 @@ def _otrep_fila(s, para_ot=False):
         s["nombres_alt"] = json.loads(_na) if isinstance(_na, str) and _na.strip() else (_na if isinstance(_na, list) else [])
     except Exception:
         s["nombres_alt"] = []
+    # 📏 2026-10-20: las medidas de la pieza y el camino del «¿Qué le pasa?» (JSON → dato legible para bodega, gestión y el técnico que
+    # las ingresó). Solo datos físicos: nunca un proveedor ni un costo (REGLA #19 y #26).
+    s["datos"], s["datos_txt"], s["datos_filas"], s["diagnostico"], s["diagnostico_txt"] = None, "", [], None, ""
+    try:
+        _dj = s.pop("datos_json", None)
+        _dd = json.loads(_dj) if isinstance(_dj, str) and _dj.strip() else None
+        if isinstance(_dd, dict) and _dd.get("ficha") in _pm.FICHAS:
+            s["datos"] = _dd
+            s["datos_txt"] = _pm.resumen(_dd)
+            s["datos_filas"] = [list(x) for x in _pm.filas(_dd)]
+            s["datos_pieza"] = _pm.FICHAS[_dd["ficha"]]["titulo"]
+    except Exception:
+        s["datos"], s["datos_txt"], s["datos_filas"] = None, "", []
+    try:
+        _gj = s.pop("diagnostico_json", None)
+        _gd = json.loads(_gj) if isinstance(_gj, str) and _gj.strip() else None
+        if isinstance(_gd, dict) and _gd.get("camino"):
+            s["diagnostico"] = _gd
+            s["diagnostico_txt"] = _pm.diagnostico_txt(_gd)
+    except Exception:
+        s["diagnostico"], s["diagnostico_txt"] = None, ""
     if s.get("resolucion"):
         s["resolucion_label"] = _OTREP_RESOLUCIONES.get(s["resolucion"], s["resolucion"])
         if s.get("estado") == "rechazado" and s["resolucion"] in ("reparado", "no_corresponde"):
@@ -100566,7 +100589,7 @@ def _otrep_ticket_anotar(tid, m, sol, numero_ot, user):
 
 
 def _otrep_ticket_anotar_lote(tid, vid, m, lineas, sol_ids, motivo, dejo_fs, n_fotos, n_videos,
-                               numero_ot, user):
+                               numero_ot, user, diag=None):
     """Como _otrep_ticket_anotar, pero para un LOTE de varias solicitudes del
     MISMO equipo (Fase 1, 2026-09-25 -- Daniel: "varios repuestos sin
     repetir la foto ni el diagnóstico"): UNA sola nota en el ticket que
@@ -100587,12 +100610,15 @@ def _otrep_ticket_anotar_lote(tid, vid, m, lineas, sol_ids, motivo, dejo_fs, n_f
     except Exception as e:
         print(f"[otrep] tk_ticket_equipos lote tid={tid}: {e}", flush=True)
     try:
+        # 📏 2026-10-20: cada pieza lleva sus medidas en la nota (quien compra lee el ticket y necesita medidas y todo).
         detalle_lineas = "\n".join(
-            f"  · #{sid} {li['nombre']} × {li['cantidad']:g}" for li, sid in zip(lineas, sol_ids))
+            f"  · #{sid} {li['nombre']} × {li['cantidad']:g}" + (f" — {_otrep_med_txt(li)}" if _otrep_med_txt(li) else "")
+            for li, sid in zip(lineas, sol_ids))
         txt = (f"Solicitud de repuestos (lote de {len(lineas)}):\n{detalle_lineas}"
                + f"\nEquipo: {m.get('nombre') or ''}"
                + (f" (S/N {m['serie']})" if m.get("serie") else "")
                + f"\nDiagnóstico: {motivo}"
+               + (f"\nCómo lo diagnosticó el técnico: {_pm.diagnostico_txt(diag)}" if diag else "")
                + ("\nEl equipo quedó FUERA DE SERVICIO." if dejo_fs else
                   "\nEl equipo sigue operativo, con alerta.")
                + f"\nEvidencia: {n_fotos} foto(s), {n_videos} video(s).")
@@ -100921,6 +100947,10 @@ def ot2_api_equipo_repuestos_opciones(vid, mid):
         "piolas": piolas,
         "solicitudes": solicitudes,
         "repuestos_sugeridos": _otrep_sugeridos_de_equipo(v, m),
+        # 📏 2026-10-20: fichas de medidas de las piezas de este equipo, el árbol «¿Qué le pasa?» y las medidas ya aprobadas del modelo.
+        "sistema": _otrep_sistema_de_equipo(v, m),
+        "medidas": _otrep_med_front("e", _otrep_sistema_de_equipo(v, m), _otrep_sugeridos_de_equipo(v, m), compatibles, posibles,
+                                    modelos, m.get("sku")),
         "limites": {"foto_mb": _OTREP_MAX_FOTO // (1024 * 1024),
                     "video_mb": _OTREP_MAX_VIDEO // (1024 * 1024)},
     })
@@ -101521,6 +101551,339 @@ def ot2_api_equipo_solicitar_repuesto(vid, mid):
     })
 
 
+# ═══════════════════════════════════════════════════════════════════════
+#  📏 2026-10-20 — MEDIDAS POR PIEZA y diagnóstico guiado «¿Qué le pasa?»
+#  Daniel: «en las solicitudes hay que grabar datos: si es una piola, cuánto mide; si se rompió la cinta de trotadora, el ancho y el
+#  largo… imagínate que eres un técnico que no sabes nada y te va a llegar una solicitud: necesitas saber medidas y todo».
+#  La lógica (fichas, rangos, resumen, aprendizaje, árbol) vive en ot_piezas_medidas.py (puro, con pruebas). Aquí: la columna por
+#  línea, la validación en el servidor, el guardado y el aprendizaje del modelo (SUGERIDO, jamás escrito solo: REGLA #32).
+#  REGLA #19 y #26: solo datos físicos; nada de proveedores ni costos.
+# ═══════════════════════════════════════════════════════════════════════
+_OTREP_MED_ESTADO = {"ok": False, "revisado_en": 0.0}
+
+
+def _ensure_otrep_medidas():
+    """Columnas `datos_json` (medidas por línea) y `diagnostico_json` (el camino del «¿Qué le pasa?») en
+    mant_ot_repuesto_solicitudes y la tabla `cat_medidas_terreno` (medidas en terreno por modelo, para que gestión las apruebe).
+    Barata cuando ya está todo aplicado (REGLA #18): una consulta a information_schema; una sentencia = una cláusula."""
+    try:
+        cols = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() "
+            "   AND TABLE_NAME='mant_ot_repuesto_solicitudes' AND COLUMN_NAME IN ('datos_json','diagnostico_json')") or [])}
+        if "datos_json" not in cols:
+            mysql_execute("ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN datos_json TEXT NULL "
+                          "COMMENT 'Medidas de la pieza pedida (ot_piezas_medidas). 2026-10-20'")
+        if "diagnostico_json" not in cols:
+            mysql_execute("ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN diagnostico_json TEXT NULL "
+                          "COMMENT 'Camino del «Que le pasa» que recorrió el tecnico. 2026-10-20'")
+        mysql_execute(
+            "CREATE TABLE IF NOT EXISTS cat_medidas_terreno ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  modelo_key VARCHAR(80) NOT NULL COMMENT 'p:<cat_productos.id> o s:<SKU>',"
+            "  producto_id INT NULL,"
+            "  modelo_sku VARCHAR(120) NULL,"
+            "  modelo_nombre VARCHAR(300) NULL,"
+            "  ficha VARCHAR(4) NOT NULL,"
+            "  pieza VARCHAR(160) NULL,"
+            "  datos_json TEXT NOT NULL COMMENT 'solo los datos que identifican la medida',"
+            "  resumen VARCHAR(400) NULL,"
+            "  n_pedidos INT NOT NULL DEFAULT 1,"
+            "  lotes_json TEXT NULL,"
+            "  solicitudes_json TEXT NULL,"
+            "  estado VARCHAR(12) NOT NULL DEFAULT 'observada' COMMENT 'observada | sugerida | aprobada | descartada',"
+            "  primera_en DATETIME DEFAULT CURRENT_TIMESTAMP,"
+            "  ultima_en DATETIME DEFAULT CURRENT_TIMESTAMP,"
+            "  decidido_por VARCHAR(190) NULL,"
+            "  decidido_en DATETIME NULL,"
+            "  nota VARCHAR(400) NULL,"
+            "  KEY ix_cmt_modelo (modelo_key, ficha),"
+            "  KEY ix_cmt_estado (estado, ultima_en)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+        ok = True
+    except Exception as e:
+        print(f"[ensure_otrep_medidas] {e}", flush=True)
+        ok = False
+    _OTREP_MED_ESTADO["ok"] = bool(ok)
+    _OTREP_MED_ESTADO["revisado_en"] = time.time()
+    return bool(ok)
+
+
+def _otrep_med_ok():
+    """¿Existen las columnas y la tabla de medidas? Se recuerda por proceso; si no, se mira de nuevo a lo más cada 5 minutos."""
+    if _OTREP_MED_ESTADO["ok"]:
+        return True
+    if time.time() - _OTREP_MED_ESTADO["revisado_en"] < 300:
+        return False
+    return _ensure_otrep_medidas()
+
+
+def _otrep_med_aplicar(lineas):
+    """Valida las medidas que vienen en cada línea ya normalizada por _otrep_validar_lineas_lote y deja en la línea: `datos` (las
+    medidas limpias o None), `medida` (resumen de hasta 80 letras para la columna de siempre), `piola_metros` y `avisos_med`
+    (rangos fuera de lo normal: AVISAN, no bloquean). Devuelve None, o (mensaje, código) de la primera línea inválida: un valor
+    imposible o una pieza CLAVE sin medidas y sin la salida «No pude medir»."""
+    for idx, li in enumerate(lineas, start=1):
+        li["datos"], li["medida"], li["piola_metros"], li["avisos_med"] = None, None, None, []
+        raw = li.get("datos_raw") if isinstance(li.get("datos_raw"), dict) else None
+        fid = str(li.get("ficha") or (raw or {}).get("ficha") or "").strip()
+        if not fid:
+            continue
+        if fid not in _pm.FICHAS:
+            return (f"La línea #{idx} trae una ficha de medidas que no existe.", "FICHA_INVALIDA")
+        entrada = dict(raw or {})
+        entrada["ficha"] = fid
+        limpio, err = _pm.normalizar_datos(fid, entrada)
+        if err:
+            return (f"{li.get('nombre') or 'La línea #' + str(idx)}: {err[0]}", err[1])
+        if not limpio["campos"] and limpio["medido_con"] != "no_pude":
+            continue                                     # una pieza opcional sin ningún dato: no se guarda ruido
+        li["datos"] = limpio
+        li["medida"] = _pm.resumen_corto(limpio)
+        li["piola_metros"] = _pm.piola_metros(limpio)
+        li["avisos_med"] = list(limpio.get("avisos") or [])
+    return None
+
+
+def _otrep_diag_de_form(fd):
+    """El camino del «¿Qué le pasa?» que manda el teléfono (JSON en `diagnostico`), limpio. None si no viene o no sirve."""
+    try:
+        raw = (fd.get("diagnostico") or "").strip()
+        if not raw or len(raw) > 6000:
+            return None
+        return _pm.normalizar_diagnostico(json.loads(raw))
+    except Exception:
+        return None
+
+
+def _otrep_med_guardar(cur, sol_ids, lineas, diag):
+    """Guarda, dentro de la misma transacción del lote, las medidas de cada línea (datos_json) y el camino recorrido
+    (diagnostico_json). Si la columna todavía no existe, el pedido igual se guarda con el resumen en `medida`."""
+    if not _otrep_med_ok():
+        return False
+    dj = json.dumps(diag, ensure_ascii=False) if diag else None
+    for sid, li in zip(sol_ids, lineas):
+        dat = li.get("datos")
+        if not dat and not dj:
+            continue
+        cur.execute("UPDATE mant_ot_repuesto_solicitudes SET datos_json=%s, diagnostico_json=%s WHERE id=%s",
+                    (json.dumps(dat, ensure_ascii=False) if dat else None, dj, sid))
+    return True
+
+
+def _otrep_med_txt(li):
+    """Medidas de una línea en una frase completa (no recortada), para la nota del ticket. '' si no hay."""
+    d = li.get("datos") if isinstance(li, dict) else None
+    return _pm.resumen(d) if d else ""
+
+
+def _otrep_med_avisos(lineas):
+    """Avisos de medidas fuera de lo normal, escritos para el técnico («Piola: …»). No bloquean nada."""
+    out = []
+    for li in lineas:
+        for a in li.get("avisos_med") or []:
+            out.append(f"{li.get('nombre')}: {a}")
+    return out
+
+
+def _med_aprender_lote(m, lineas, sol_ids, lote_id, vid):
+    """Lo medido en terreno ALIMENTA el catálogo del modelo (Daniel, 20-oct): tras 2 medidas iguales del mismo modelo (de pedidos
+    distintos) queda «sugerida» en `cat_medidas_terreno` y gestión la aprueba. Nada se escribe solo en el catálogo. Solo cuentan las
+    medidas hechas con huincha en terreno. Nunca lanza: es un dato de apoyo."""
+    try:
+        if not _otrep_med_ok() or not any(li.get("datos") for li in lineas):
+            return
+        modelos = _otrep_modelos_de_maquina({"sku": m.get("sku"), "nombre": m.get("nombre")})
+        sku = (m.get("sku") or "").strip()
+        if modelos:
+            clave, pid, msku, mnom = f"p:{modelos[0]['id']}", modelos[0]["id"], modelos[0].get("sku"), modelos[0].get("nombre")
+        elif sku:
+            clave, pid, msku, mnom = "s:" + sku.upper()[:70], None, sku, m.get("nombre")
+        else:
+            return
+        for li, sid in zip(lineas, sol_ids):
+            dat = li.get("datos")
+            if not dat or dat.get("medido_con") != "huincha":
+                continue
+            filas = mysql_fetchall(
+                "SELECT id, datos_json, n_pedidos, estado, lotes_json, solicitudes_json FROM cat_medidas_terreno "
+                " WHERE modelo_key=%s AND ficha=%s ORDER BY id LIMIT 60", (clave, dat["ficha"])) or []
+            cands = []
+            for f in filas:
+                try:
+                    cands.append({"id": f["id"], "datos": json.loads(f.get("datos_json") or "{}"), "n_pedidos": f.get("n_pedidos"),
+                                  "estado": f.get("estado"), "lotes": json.loads(f.get("lotes_json") or "[]")})
+                except Exception:
+                    continue
+            r = _pm.aprender(cands, dat["ficha"], dat["campos"], lote_id)
+            if r["accion"] == "nueva":
+                mysql_execute(
+                    "INSERT INTO cat_medidas_terreno (modelo_key, producto_id, modelo_sku, modelo_nombre, ficha, pieza, datos_json, resumen, "
+                    " n_pedidos, lotes_json, solicitudes_json, estado) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,1,%s,%s,'observada')",
+                    (clave, pid, (msku or "")[:120] or None, (mnom or "")[:300] or None, dat["ficha"], li["nombre"][:160],
+                     json.dumps(_pm.campos_de_aprendizaje(dat["ficha"], dat["campos"]), ensure_ascii=False),
+                     _pm.resumen(dat)[:400], json.dumps(r["lotes"]), json.dumps([sid])))
+            elif r["accion"] == "sumar":
+                prev = next((c for c in filas if c["id"] == r["id"]), {})
+                try:
+                    sols = json.loads(prev.get("solicitudes_json") or "[]")
+                except Exception:
+                    sols = []
+                sols = (sols + [int(sid)])[-30:]
+                mysql_execute(
+                    "UPDATE cat_medidas_terreno SET n_pedidos=%s, estado=%s, lotes_json=%s, solicitudes_json=%s, ultima_en=NOW() WHERE id=%s",
+                    (r["n"], r["estado"] or prev.get("estado") or "observada", json.dumps(r["lotes"]), json.dumps(sols), r["id"]))
+    except Exception as e:
+        print(f"[med_aprender] vid={vid}: {type(e).__name__}: {e}", flush=True)
+
+
+def _med_modelo_aprobadas(modelos, sku=""):
+    """Medidas del modelo que gestión ya APROBÓ: {ficha: [{id, campos, resumen, n}]}. Sirven de ayuda en la ficha («Según el catálogo:
+    … ¿coincide con lo que mediste?»); nunca reemplazan la medida real. {} si no hay o falla."""
+    try:
+        if not _otrep_med_ok():
+            return {}
+        claves = [f"p:{x['id']}" for x in (modelos or [])] + (["s:" + (sku or "").strip().upper()[:70]] if (sku or "").strip() else [])
+        if not claves:
+            return {}
+        ph = ",".join(["%s"] * len(claves))
+        filas = mysql_fetchall(
+            f"SELECT id, ficha, datos_json, resumen, n_pedidos FROM cat_medidas_terreno WHERE modelo_key IN ({ph}) "
+            f"  AND estado='aprobada' ORDER BY ficha, n_pedidos DESC, id LIMIT 60", tuple(claves)) or []
+        out = {}
+        for f in filas:
+            try:
+                out.setdefault(f["ficha"], []).append({"id": f["id"], "campos": json.loads(f.get("datos_json") or "{}"),
+                                                       "resumen": f.get("resumen") or "", "n": int(f.get("n_pedidos") or 1)})
+            except Exception:
+                continue
+        return out
+    except Exception as e:
+        print(f"[med_modelo] {type(e).__name__}: {e}", flush=True)
+        return {}
+
+
+def _otrep_med_front(kind, sistema, sugeridos, compatibles, posibles, modelos, sku=""):
+    """Lo que el teléfono necesita para las medidas y el «¿Qué le pasa?» (fichas de las piezas de este equipo, árbol y las medidas ya
+    aprobadas del modelo). A cada repuesto compatible le pone su `ficha`. Nunca proveedores ni costos."""
+    extra = set()
+    for it in list(compatibles or []) + list(posibles or []):
+        try:
+            it["ficha"] = _pm.ficha_para(it.get("descripcion"))
+            extra.add(it["ficha"])
+        except Exception:
+            continue
+    out = _pm.para_front(sistema, kind, nombres_piezas=sugeridos or [], fichas_extra=extra)
+    out["modelo"] = _med_modelo_aprobadas(modelos, sku)
+    return out
+
+
+# ── 📏 Medidas en terreno por aprobar (solo gestión; nunca un técnico) ──
+# Daniel (20-oct): lo medido en terreno alimenta el catálogo del modelo. Después de 2 medidas iguales del mismo modelo (de pedidos
+# distintos) queda «sugerida»; gestión la aprueba o la descarta aquí. Nada se escribe solo (REGLA #32). Paginada en el servidor
+# (REGLA #4.3).
+_MED_ESTADOS = ("sugerida", "observada", "aprobada", "descartada")
+
+
+@app.route("/repuestos/api/medidas-terreno", methods=["GET"])
+@_otrep_manual_required
+def repstock_medidas_terreno_listar():
+    """Medidas en terreno por modelo. ?estado=sugerida|observada|aprobada|descartada|todas · ?q= · ?pagina= · ?size="""
+    vacio = {"ok": True, "filas": [], "total": 0, "pagina": 1, "paginas": 1, "size": 50, "conteo": {}}
+    if not _otrep_med_ok():
+        return jsonify(vacio)
+    estado = (request.args.get("estado") or "sugerida").strip().lower()
+    if estado not in _MED_ESTADOS + ("todas",):
+        estado = "sugerida"
+    q = (request.args.get("q") or "").strip()[:80]
+    try:
+        size = min(200, max(10, int(request.args.get("size") or 50)))
+        pagina = max(1, int(request.args.get("pagina") or 1))
+    except (TypeError, ValueError):
+        size, pagina = 50, 1
+    donde, params = ["1=1"], []
+    if estado != "todas":
+        donde.append("estado=%s")
+        params.append(estado)
+    if q:
+        donde.append("(modelo_nombre LIKE %s OR modelo_sku LIKE %s OR pieza LIKE %s OR resumen LIKE %s)")
+        params += [f"%{q}%"] * 4
+    try:
+        total = int((mysql_fetchone("SELECT COUNT(*) AS n FROM cat_medidas_terreno WHERE " + " AND ".join(donde), tuple(params)) or {}).get("n") or 0)
+        paginas = max(1, -(-total // size))
+        pagina = min(pagina, paginas)
+        rows = mysql_fetchall(
+            "SELECT id, modelo_key, modelo_sku, modelo_nombre, ficha, pieza, datos_json, resumen, n_pedidos, estado, ultima_en, "
+            "       decidido_por, decidido_en, nota FROM cat_medidas_terreno WHERE " + " AND ".join(donde)
+            + " ORDER BY (estado='sugerida') DESC, ultima_en DESC, id DESC LIMIT %s OFFSET %s",
+            tuple(params) + (size, (pagina - 1) * size)) or []
+        conteo = {r["estado"]: int(r["n"]) for r in (mysql_fetchall(
+            "SELECT estado, COUNT(*) AS n FROM cat_medidas_terreno GROUP BY estado") or [])}
+        claves = sorted({r["modelo_key"] for r in rows})
+        aprobadas = {}
+        if claves:
+            ph = ",".join(["%s"] * len(claves))
+            for a in (mysql_fetchall(
+                    f"SELECT modelo_key, ficha, resumen FROM cat_medidas_terreno WHERE estado='aprobada' AND modelo_key IN ({ph}) "
+                    f"ORDER BY id LIMIT 200", tuple(claves)) or []):
+                aprobadas.setdefault((a["modelo_key"], a["ficha"]), []).append(a.get("resumen") or "")
+    except Exception as e:
+        print(f"[med_terreno] listar: {type(e).__name__}: {e}", flush=True)
+        return jsonify(vacio)
+    filas = []
+    for r in rows:
+        try:
+            campos = json.loads(r.get("datos_json") or "{}")
+        except Exception:
+            campos = {}
+        ficha = _pm.FICHAS.get(r["ficha"]) or {}
+        filas.append({
+            "id": r["id"], "modelo": r.get("modelo_nombre") or r.get("modelo_sku") or "", "modelo_sku": r.get("modelo_sku") or "",
+            "ficha": r["ficha"], "pieza": r.get("pieza") or ficha.get("titulo") or "", "titulo": ficha.get("titulo") or "",
+            "resumen": r.get("resumen") or "", "filas": [list(x) for x in _pm.filas({"ficha": r["ficha"], "campos": campos})],
+            "n_pedidos": int(r.get("n_pedidos") or 1), "estado": r["estado"],
+            "ultima": chile_fmt_filter(r["ultima_en"]) if r.get("ultima_en") else None,
+            "decidido_por": r.get("decidido_por"), "decidido": chile_fmt_filter(r["decidido_en"]) if r.get("decidido_en") else None,
+            "nota": r.get("nota"), "aprobadas_del_modelo": [x for x in aprobadas.get((r["modelo_key"], r["ficha"]), []) if x][:4],
+        })
+    return jsonify({"ok": True, "filas": filas, "total": total, "pagina": pagina, "paginas": paginas, "size": size, "conteo": conteo})
+
+
+@app.route("/repuestos/api/medidas-terreno/<int:mid>/decidir", methods=["POST"])
+@_otrep_manual_required
+def repstock_medidas_terreno_decidir(mid):
+    """Gestión decide sobre una medida en terreno: aprobar (pasa a ser «medida del modelo» y se ofrece a los técnicos como ayuda),
+    descartar (no se vuelve a ofrecer) o reabrir (vuelve a «sugerida»). Queda quién, cuándo y la nota."""
+    if not _otrep_med_ok():
+        return jsonify({"ok": False, "error": "Las medidas en terreno todavía no están disponibles."}), 503
+    d = request.get_json(silent=True) or {}
+    accion = str(d.get("accion") or "").strip().lower()
+    nuevo = {"aprobar": "aprobada", "descartar": "descartada", "reabrir": "sugerida"}.get(accion)
+    if not nuevo:
+        return jsonify({"ok": False, "error": "Esa acción no existe."}), 400
+    nota = " ".join(str(d.get("nota") or "").split())[:400] or None
+    if accion == "descartar" and not nota:
+        return jsonify({"ok": False, "error": "Cuenta por qué se descarta (queda escrito con tu nombre)."}), 400
+    fila = mysql_fetchone("SELECT id, estado, modelo_nombre, ficha, resumen FROM cat_medidas_terreno WHERE id=%s", (mid,))
+    if not fila:
+        return jsonify({"ok": False, "error": "Esa medida no existe."}), 404
+    if fila["estado"] == nuevo:
+        return jsonify({"ok": True, "estado": nuevo})
+    user = current_username() or "sistema"
+    try:
+        if accion == "reabrir":
+            mysql_execute("UPDATE cat_medidas_terreno SET estado='sugerida', decidido_por=%s, decidido_en=NOW(), nota=%s WHERE id=%s",
+                          (user, nota, mid))
+        else:
+            mysql_execute("UPDATE cat_medidas_terreno SET estado=%s, decidido_por=%s, decidido_en=NOW(), nota=%s WHERE id=%s",
+                          (nuevo, user, nota, mid))
+        _mant_log("medida_terreno", mid, f"medida_{nuevo}",
+                  f"{fila.get('modelo_nombre') or ''} · {fila.get('resumen') or fila.get('ficha')} · por {user}" + (f" · {nota}" if nota else ""))
+    except Exception as e:
+        print(f"[med_terreno] decidir {mid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar la decisión."}), 500
+    return jsonify({"ok": True, "estado": nuevo})
+
+
 def _otrep_validar_lineas_lote(lineas_in, stock_por_id):
     """Valida y normaliza las líneas de un lote de solicitud de repuestos
     (Fase 1, 2026-09-25): cantidad > 0 (hasta 9999, mismo rango que el
@@ -101581,27 +101944,38 @@ def _otrep_validar_lineas_lote(lineas_in, stock_por_id):
         if not nombre:
             return None, (f"La línea #{idx} no dice qué repuesto es: elige uno de la bodega o "
                           "escribe su nombre.", "REPUESTO_REQUERIDO")
+        # 📏 2026-10-20 (Daniel: «en las solicitudes hay que grabar datos: si es una piola, cuánto mide…»): las medidas viajan POR LÍNEA
+        # (`datos`), junto con la ficha de la pieza y la referencia de la línea en el teléfono (`ref`, para devolverle a cada una su
+        # número de solicitud y su foto). Aquí solo se TRANSPORTAN (esta función es pura y la usan otros módulos); las valida
+        # _otrep_med_aplicar. Una línea con medidas NUNCA se fusiona con otra: dos piolas de medidas distintas son dos piezas.
+        datos_raw = li.get("datos") if isinstance(li.get("datos"), dict) else None
+        ficha_raw = str(li.get("ficha") or (datos_raw or {}).get("ficha") or "").strip()[:4] or None
+        ref = "".join(ch for ch in str(li.get("ref") or "") if ch.isalnum() or ch in "-_")[:40] or None
+        con_med = bool(datos_raw or ficha_raw)
         if stock:
             sid = stock["id"]
-            if sid in por_stock_id:
+            if sid in por_stock_id and not con_med:
                 nueva_cantidad = lineas_ok[por_stock_id[sid]]["cantidad"] + cantidad
                 if not math.isfinite(nueva_cantidad) or nueva_cantidad > 9999:
                     return None, (f"La línea #{idx} repite un repuesto ya en el lote y la suma de "
                                   "cantidades supera 9999.", "CANTIDAD_INVALIDA")
                 lineas_ok[por_stock_id[sid]]["cantidad"] = nueva_cantidad
                 continue
-            por_stock_id[sid] = len(lineas_ok)
+            if sid not in por_stock_id and not con_med:
+                por_stock_id[sid] = len(lineas_ok)
             lineas_ok.append({
                 "origen": origen, "repuesto_stock_id": sid, "nombre": nombre[:400], "sku": sku,
                 "cantidad": cantidad, "proveedor_id": stock.get("proveedor_id"),
                 "stock_cantidad": float(stock.get("cantidad") or 0),
                 "nombres_alt": _otrep_nombres_alt(li.get("nombres_alt")),
+                "datos_raw": datos_raw, "ficha": ficha_raw, "ref": ref,
             })
         else:
             lineas_ok.append({
                 "origen": origen, "repuesto_stock_id": None, "nombre": nombre[:400], "sku": sku,
                 "cantidad": cantidad, "proveedor_id": None, "stock_cantidad": None,
                 "nombres_alt": _otrep_nombres_alt(li.get("nombres_alt")),
+                "datos_raw": datos_raw, "ficha": ficha_raw, "ref": ref,
             })
     return lineas_ok, None
 
@@ -101690,6 +102064,12 @@ def ot2_api_equipo_solicitar_repuestos(vid, mid):
         return _ot2_err(err_li[0], err_li[1])
     if not lineas_ok:
         return _ot2_err("Agrega al menos un repuesto a la lista.", "LINEAS_REQUERIDAS")
+    # 📏 2026-10-20: medidas por pieza (ot_piezas_medidas) y camino del «¿Qué le pasa?». Un valor imposible o una pieza clave sin medidas
+    # y sin «No pude medir» se rechaza ANTES de escribir nada; lo fuera de lo normal solo avisa.
+    err_med = _otrep_med_aplicar(lineas_ok)
+    if err_med:
+        return _ot2_err(err_med[0], err_med[1])
+    diag = _otrep_diag_de_form(fd)
 
     dejar_fs = (fd.get("dejar_fuera_servicio") or "").strip().lower() in ("1", "true", "on")
 
@@ -101727,8 +102107,9 @@ def ot2_api_equipo_solicitar_repuestos(vid, mid):
                     vid, mid, v.get("cliente_id"), li["nombre"], li["sku"], li["origen"],
                     li["cantidad"], motivo, dejar_fs, user,
                     repuesto_stock_id=li["repuesto_stock_id"], proveedor_id=li["proveedor_id"],
-                    lote_id=lote_id, cur=cur)
+                    lote_id=lote_id, cur=cur, medida=li.get("medida"), piola_metros=li.get("piola_metros"))
                 sol_ids.append(sid)
+            _otrep_med_guardar(cur, sol_ids, lineas_ok, diag)           # 📏 medidas por línea y camino recorrido
         conn.commit()
     except Exception as e:
         print(f"[otrep] INSERT lote vid={vid} mid={mid}: {e}", flush=True)
@@ -101822,7 +102203,7 @@ def ot2_api_equipo_solicitar_repuestos(vid, mid):
             print(f"[otrep] ticket_id lote sol={sol_ids}: {e}", flush=True)
         _otrep_ticket_anotar_lote(tid, vid, m, lineas_ok, sol_ids, motivo, dejar_fs,
                                    1 if tipo == "foto" else 0, 1 if tipo == "video" else 0,
-                                   v.get("numero_ot") or f"OT #{vid}", user)
+                                   v.get("numero_ot") or f"OT #{vid}", user, diag=diag)
         if dejar_fs:
             try:
                 mysql_execute("UPDATE tk_tickets SET prioridad='urgente' WHERE id=%s", (tid,))
@@ -101867,7 +102248,8 @@ def ot2_api_equipo_solicitar_repuestos(vid, mid):
     resultado = []
     for li, sid in zip(lineas_ok, sol_ids):
         item = {"solicitud_id": sid, "repuesto_nombre": li["nombre"], "cantidad": li["cantidad"],
-                "origen": li["origen"], "repuesto_stock_id": li["repuesto_stock_id"]}
+                "origen": li["origen"], "repuesto_stock_id": li["repuesto_stock_id"],
+                "ref": li.get("ref"), "medida": li.get("medida")}
         if li["repuesto_stock_id"] and li["stock_cantidad"] is not None:
             fisico = li["stock_cantidad"]
             otras = _otrep_stock_comprometido(li["repuesto_stock_id"], excluir_sol_id=sid)
@@ -101883,6 +102265,8 @@ def ot2_api_equipo_solicitar_repuestos(vid, mid):
             item.pop("stock_disponible", None)
         resultado.append(item)
 
+    avisos.extend(_otrep_med_avisos(lineas_ok))                  # 📏 medidas fuera de lo normal: avisan, no bloquean
+    _med_aprender_lote(m, lineas_ok, sol_ids, lote_id, vid)      # 📏 el modelo aprende de lo medido (sugerida; gestión aprueba)
     return jsonify({
         "ok": True, "lote_id": lote_id, "ticket_id": tid, "numero_ticket": numero_ticket,
         "ticket_creado": creado, "fuera_servicio": bool(dejar_fs and fs_ok),
@@ -155447,13 +155831,16 @@ def _rsug_sistema_de_producto(tipo_ot, sku, nombre, herencia=None, clases=None):
             sistema = info.get("sistema") or info.get("sistema_clase") or {}
             s = _pe.sistema_de_bloque(sistema.get("nombre"))
             if s:
-                return s
+                return _pe.refinar_sistema(s, nombre)          # 2026-10-20: una elíptica comparte el bloque «Bicicleta»: aquí se afina
             if clases is None:
                 clases = _inc_clasificacion_skus_batch([sku])
             slug = (((clases or {}).get(sku) or {}).get("clase") or info.get("clase") or "").strip().lower()
-            s = _pe.sistema_de_bloque(_CHK_HERENCIA_PRODUCTOS_SEED.get(sku.upper()) or _CHK_HERENCIA_CLASES_SEED.get(slug))
+            s = _pe.sistema_de_clase(slug)                      # 2026-10-20: clases «eliptica» / «remo» cuando existan en el catálogo
             if s:
                 return s
+            s = _pe.sistema_de_bloque(_CHK_HERENCIA_PRODUCTOS_SEED.get(sku.upper()) or _CHK_HERENCIA_CLASES_SEED.get(slug))
+            if s:
+                return _pe.refinar_sistema(s, nombre)
     except Exception as e:
         print(f"[rsug] sistema sku={sku!r}: {type(e).__name__}", flush=True)
     return _pe.sistema_por_nombre(nombre)
@@ -155511,6 +155898,9 @@ def _rsug_de_productos(vid, tipo_ot, productos):
 def _otrep_sugeridos_de_producto(vid, imid):
     """Repuestos sugeridos de UN producto de la revisión (ver _rsug_de_productos). [] si no hay."""
     try:
+        memo = g.setdefault("_otrep_sug_prod_memo", {})          # 2026-10-20: una sola vez por pedido (la ruta lo pide dos veces)
+        if (vid, imid) in memo:
+            return memo[(vid, imid)]
         v = mysql_fetchone("SELECT tipo FROM mant_visitas WHERE id=%s", (vid,)) or {}
         fila = mysql_fetchone(
             "SELECT titulo, item_manual_sku FROM mant_visita_tareas "
@@ -155518,7 +155908,8 @@ def _otrep_sugeridos_de_producto(vid, imid):
             " ORDER BY (plantilla_id IS NULL) DESC, id LIMIT 1", (vid, imid)) or {}
         prod = {"id": imid, "sku": (fila.get("item_manual_sku") or "").strip(),
                 "nombre": _otrep_nombre_producto(fila.get("titulo"))}
-        return (_rsug_de_productos(vid, (v.get("tipo") or "").strip().lower(), [prod]).get(int(imid)) or ([], ""))[0]
+        memo[(vid, imid)] = (_rsug_de_productos(vid, (v.get("tipo") or "").strip().lower(), [prod]).get(int(imid)) or ([], ""))[0]
+        return memo[(vid, imid)]
     except Exception as e:
         print(f"[otrep_sugeridos] vid={vid} imid={imid}: {type(e).__name__}", flush=True)
         return []
@@ -155673,11 +156064,15 @@ def ot2_api_producto_repuestos_opciones(vid, imid):
         "compatibles": compatibles, "posibles": posibles, "manuales": manuales, "piolas": piolas,
         "solicitudes": solicitudes,
         "repuestos_sugeridos": _otrep_sugeridos_de_producto(vid, imid),
+        # 📏 2026-10-20: fichas de medidas, árbol «¿Qué le pasa?» y medidas aprobadas del modelo (ver el equipo de ficha).
+        "sistema": _otrep_sistema_de_producto(v, p),
+        "medidas": _otrep_med_front("i", _otrep_sistema_de_producto(v, p), _otrep_sugeridos_de_producto(vid, imid), compatibles, posibles,
+                                    modelos, p.get("sku")),
         "limites": {"foto_mb": _OTREP_MAX_FOTO // (1024 * 1024), "video_mb": _OTREP_MAX_VIDEO // (1024 * 1024)},
     })
 
 
-def _otrep_ticket_anotar_producto(tid, vid, p, lineas, sol_ids, motivo, n_fotos, n_videos, numero_ot, user):
+def _otrep_ticket_anotar_producto(tid, vid, p, lineas, sol_ids, motivo, n_fotos, n_videos, numero_ot, user, diag=None):
     """Como _otrep_ticket_anotar_lote, para un PRODUCTO de trabajo interno: el producto va al ticket SIN maquina_id
     (no es un equipo de ficha) y UNA nota con todo el lote. Best-effort: nunca lanza."""
     try:
@@ -155693,10 +156088,12 @@ def _otrep_ticket_anotar_producto(tid, vid, p, lineas, sol_ids, motivo, n_fotos,
     except Exception as e:
         print(f"[otrep] tk_ticket_equipos producto tid={tid}: {e}", flush=True)
     try:
-        detalle = "\n".join(f"  · #{sid} {li['nombre']} × {li['cantidad']:g}" for li, sid in zip(lineas, sol_ids))
+        detalle = "\n".join(f"  · #{sid} {li['nombre']} × {li['cantidad']:g}" + (f" — {_otrep_med_txt(li)}" if _otrep_med_txt(li) else "")
+                            for li, sid in zip(lineas, sol_ids))
         txt = (f"Solicitud de repuestos (lote de {len(lineas)}):\n{detalle}"
                + f"\nProducto de la revisión: {p.get('nombre') or ''}" + (f" (SKU {p['sku']})" if p.get("sku") else "")
                + f"\nDiagnóstico: {motivo}"
+               + (f"\nCómo lo diagnosticó el técnico: {_pm.diagnostico_txt(diag)}" if diag else "")
                + f"\nEvidencia: {n_fotos} foto(s), {n_videos} video(s).")
         mysql_execute(
             "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno) "
@@ -155754,6 +156151,10 @@ def ot2_api_producto_solicitar_repuestos(vid, imid):
         return _ot2_err(err_li[0], err_li[1])
     if not lineas_ok:
         return _ot2_err("Agrega al menos un repuesto a la lista.", "LINEAS_REQUERIDAS")
+    err_med = _otrep_med_aplicar(lineas_ok)                       # 📏 medidas por pieza (ver el equipo de ficha)
+    if err_med:
+        return _ot2_err(err_med[0], err_med[1])
+    diag = _otrep_diag_de_form(fd)
     f, tipo, e_arch = _otrep_primer_archivo()
     if e_arch:
         return _ot2_err(e_arch, "EVIDENCIA_INVALIDA")
@@ -155780,11 +156181,12 @@ def ot2_api_producto_solicitar_repuestos(vid, imid):
                 sol_ids.append(_otrep_crear_fila_solicitud(
                     vid, None, None, li["nombre"], li["sku"], li["origen"], li["cantidad"], motivo_full, False,
                     user, repuesto_stock_id=li["repuesto_stock_id"], proveedor_id=li["proveedor_id"],
-                    lote_id=lote_id, cur=cur))
+                    lote_id=lote_id, cur=cur, medida=li.get("medida"), piola_metros=li.get("piola_metros")))
             if _otrep_im_ok():
                 ph = ",".join(["%s"] * len(sol_ids))
                 cur.execute(f"UPDATE mant_ot_repuesto_solicitudes SET item_manual_id=%s WHERE id IN ({ph})",
                             tuple([p["id"]] + sol_ids))
+            _otrep_med_guardar(cur, sol_ids, lineas_ok, diag)           # 📏 medidas por línea y camino recorrido
         conn.commit()
     except Exception as e:
         print(f"[otrep] INSERT lote producto vid={vid} imid={imid}: {e}", flush=True)
@@ -155836,7 +156238,7 @@ def ot2_api_producto_solicitar_repuestos(vid, imid):
         except Exception as e:
             print(f"[otrep] ticket_id lote producto sol={sol_ids}: {e}", flush=True)
         _otrep_ticket_anotar_producto(tid, vid, p, lineas_ok, sol_ids, motivo_full,
-                                      1 if tipo == "foto" else 0, 1 if tipo == "video" else 0, numero_ot, user)
+                                      1 if tipo == "foto" else 0, 1 if tipo == "video" else 0, numero_ot, user, diag=diag)
     try:
         resumen = ", ".join(f"{li['nombre']} × {li['cantidad']:g}" for li in lineas_ok)
         _mant_log("visita", vid, "repuesto_solicitado",
@@ -155859,7 +156261,8 @@ def ot2_api_producto_solicitar_repuestos(vid, imid):
     resultado = []
     for li, sid in zip(lineas_ok, sol_ids):
         item = {"solicitud_id": sid, "repuesto_nombre": li["nombre"], "cantidad": li["cantidad"],
-                "origen": li["origen"], "repuesto_stock_id": li["repuesto_stock_id"]}
+                "origen": li["origen"], "repuesto_stock_id": li["repuesto_stock_id"],
+                "ref": li.get("ref"), "medida": li.get("medida")}
         if li["repuesto_stock_id"] and li["stock_cantidad"] is not None:
             try:
                 otras = _otrep_stock_comprometido(li["repuesto_stock_id"], excluir_sol_id=sid)
@@ -155875,6 +156278,8 @@ def ot2_api_producto_solicitar_repuestos(vid, imid):
             item.pop("repuesto_stock_id", None)
             item.pop("stock_disponible", None)
         resultado.append(item)
+    avisos.extend(_otrep_med_avisos(lineas_ok))                  # 📏 medidas fuera de lo normal: avisan, no bloquean
+    _med_aprender_lote(p, lineas_ok, sol_ids, lote_id, vid)      # 📏 el modelo aprende de lo medido (sugerida; gestión aprueba)
     return jsonify({"ok": True, "lote_id": lote_id, "ticket_id": tid, "numero_ticket": numero_ticket,
                     "ticket_creado": creado, "fuera_servicio": False, "solicitudes": resultado,
                     "avisos": avisos or None})
@@ -156605,11 +157010,37 @@ def ot2_api_pendientes_falta_stock(vid):
     return jsonify({"ok": True, "pendientes": _otpe_pendientes_falta_stock(vid)})
 
 
+def _otrep_sistema_de_equipo(v, m):
+    """Sistema ('selector_peso', 'trotadora', 'eliptica'…) de un EQUIPO de cliente, o None. Una sola vez por pedido (se recuerda en g)."""
+    try:
+        clave = ("eq", (v.get("tipo") or "").strip().lower(), m.get("sku"), m.get("nombre"))
+        memo = g.setdefault("_otrep_sis_memo", {})
+        if clave not in memo:
+            memo[clave] = _rsug_sistema_de_producto(clave[1], m.get("sku"), m.get("nombre"))
+        return memo[clave]
+    except Exception as e:
+        print(f"[otrep_sistema] equipo: {type(e).__name__}", flush=True)
+        return None
+
+
+def _otrep_sistema_de_producto(v, p):
+    """Sistema de un PRODUCTO de la revisión (misma regla que el equipo de cliente), o None."""
+    try:
+        clave = ("pr", (v.get("tipo") or "").strip().lower(), p.get("sku"), p.get("nombre"))
+        memo = g.setdefault("_otrep_sis_memo", {})
+        if clave not in memo:
+            memo[clave] = _rsug_sistema_de_producto(clave[1], p.get("sku"), p.get("nombre"))
+        return memo[clave]
+    except Exception as e:
+        print(f"[otrep_sistema] producto: {type(e).__name__}", flush=True)
+        return None
+
+
 def _otrep_sugeridos_de_equipo(v, m):
     """Repuestos sugeridos por defecto de un EQUIPO de cliente según su sistema (REGLA #32: el sistema sugiere, la persona
     decide; solo nombres de pieza, nunca proveedor ni costo). [] si no se sabe."""
     try:
-        sistema = _rsug_sistema_de_producto((v.get("tipo") or "").strip().lower(), m.get("sku"), m.get("nombre"))
+        sistema = _otrep_sistema_de_equipo(v, m)
         return _pe.sugeridos_para([], sistema)[0]
     except Exception as e:
         print(f"[otrep_sugeridos] equipo: {type(e).__name__}", flush=True)
@@ -164051,6 +164482,7 @@ try:
         _ensure_otrep_item_manual_col()
         _ensure_acta_recepcion_regla()
         _ensure_ot_producto_estado()
+        _ensure_otrep_medidas()           # 📏 2026-10-20: columnas de medidas por línea y catálogo de medidas en terreno (barato si ya están)
 except Exception as _ensure_etapa3_err:
     print(f"[ILUS][WARN] revisión etapa 3 (repuestos sugeridos / acta / acciones por producto): {_ensure_etapa3_err}", flush=True)
 
