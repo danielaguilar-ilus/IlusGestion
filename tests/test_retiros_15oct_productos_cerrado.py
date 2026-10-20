@@ -28,8 +28,8 @@ CREADO_UTC = dt.datetime(2026, 10, 13, 15, 0)      # 13/10/2026 12:00 hora Chile
 class ERPFalso:
     """Responde las 4 consultas de _prod_erp_doc (SOLO LECTURA). `guia` = fecha de la guía que consumió la línea (o None)."""
 
-    def __init__(self, saldo=0.0, guia=dt.date(2026, 10, 14)):
-        self.saldo, self.guia = saldo, guia
+    def __init__(self, saldo=0.0, guia=dt.date(2026, 10, 14), fisico=11):
+        self.saldo, self.guia, self.fisico = saldo, guia, fisico
 
     def __call__(self, sql, params=(), max_rows=None):
         s = " ".join(sql.split())
@@ -42,7 +42,7 @@ class ERPFalso:
             return ([{"origen_linea": 1, "tido": "GDV", "nudo": "0000033758", "sku": "DISCO25", "cantidad": 2,
                       "fecha": self.guia, "estado": ""}] if self.guia else [])
         if "FROM MAEST" in s:
-            return [{"sku": "DISCO25", "bodega": "02", "fisico": 11, "devengado": 0, "comprometido": 0}]
+            return [{"sku": "DISCO25", "bodega": "02", "fisico": self.fisico, "devengado": 0, "comprometido": 0}]
         return []
 
 
@@ -93,11 +93,32 @@ class TestRetiroEntregado:
         _d, l = diag(env)
         assert (l["estado"], l["tono"]) == ("salio_antes", "gris") and l["estado_txt"] == "Ya había salido antes de este retiro"
 
-    def test_sin_guia_todavia_queda_entregado_con_un_aviso_neutro(self, monkeypatch):
-        env = armar(monkeypatch, "retirada", ERPFalso(saldo=2, guia=None))
+    # 2026-10-20 (Daniel, retiro de Ivo Simunovic: Kettlebell con 0 físico, saldo 1 y sin guía salía «Entregado en este retiro»):
+    # «Entregado» solo con evidencia del ERP; sin guía se dice y se pide revisar.
+    def test_sin_guia_con_stock_queda_retirado_pero_falta_la_guia(self, monkeypatch):
+        env = armar(monkeypatch, "retirada", ERPFalso(saldo=2, guia=None, fisico=11))
+        d, l = diag(env)
+        assert (l["estado"], l["estado_txt"], l["tono"]) == ("falta_guia", "Retirado · falta la guía del ERP", "ambar")
+        assert "todavía no registra la guía de despacho" in l["avisos"][0]
+        assert d["veredicto"]["estado"] == "entregado" and "todavía sin guía de despacho" in d["veredicto"]["detalle"]
+        assert d["contadores"]["entregados"] == 0 and d["contadores"]["falta_guia"] == 1
+        sin_mensajes(env)
+
+    def test_sin_guia_y_sin_stock_no_consta_la_entrega(self, monkeypatch):
+        env = armar(monkeypatch, "retirada", ERPFalso(saldo=2, guia=None, fisico=0), retirado_por_nombre="Ivo")
+        d, l = diag(env)
+        assert (l["estado"], l["estado_txt"], l["tono"]) == ("no_consta", "No consta la entrega", "ambar")
+        assert "Confirma con bodega si se entregó" in l["avisos"][0] and "0 físico para 2 a retirar" in l["avisos"][0]
+        v = d["veredicto"]
+        assert v["estado"] == "entregado_revisar" and v["titulo"] == "Retiro completado · revisa lo entregado"
+        assert "sin guía de despacho ni stock en bodega" in v["detalle"]
+        assert d["contadores"]["entregados"] == 0 and d["contadores"]["no_consta"] == 1 and d["contadores"]["bloqueados"] == 0
+        sin_mensajes(env)
+
+    def test_con_guia_aunque_hoy_no_quede_stock_sigue_entregado(self, monkeypatch):
+        env = armar(monkeypatch, "retirada", ERPFalso(saldo=0, guia=dt.date(2026, 10, 14), fisico=0))
         _d, l = diag(env)
-        assert l["estado"] == "entregado_retiro" and l["tono"] == "ok"
-        assert l["avisos"] == ["El ERP todavía no registra la guía de despacho de esta entrega."]
+        assert (l["estado"], l["tono"]) == ("entregado_retiro", "ok") and l["avisos"] == []
 
 
 class TestRetiroCerradoSinEntrega:
@@ -128,7 +149,8 @@ class TestFicha:
     def test_el_js_conoce_los_estados_congelados(self):
         with open(os.path.join(os.path.dirname(_TESTS), "static", "retiros_internal_detail.js"), encoding="utf-8") as f:
             js = f.read()
-        for k in ("entregado: { cls: 'is-ok'", "cerrado:   { cls: 'is-vacio'", "entregado_retiro: 'bi-check2-circle'", "c.entregados"):
+        for k in ("entregado: { cls: 'is-ok'", "cerrado:   { cls: 'is-vacio'", "entregado_retiro: 'bi-check2-circle'", "c.entregados",
+                  "entregado_revisar: { cls: 'is-revisar'", "no_consta: 'bi-question-circle'", "c.no_consta", "c.falta_guia"):
             assert k in js
         with open(os.path.join(os.path.dirname(_TESTS), "static", "retiros_guia.js"), encoding="utf-8") as f:
             assert "STATUS === 'retirada' || (STATUS === 'cerrada' && !(G && G.terminal))" in f.read()
