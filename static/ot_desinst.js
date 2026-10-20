@@ -83,7 +83,7 @@
       info: info, fecha: '', hini: '09:00', hfin: '13:00', tec_modo: tm.length ? 'mismos' : 'otros', tecnicos: [], lider: null,
       tecM: tm, liderM: info.lider_madre || tm[0] || null, tecCatalogo: null,
       costo: tm.length ? costoAuto : '', costoAuto: !!tm.length, costoDesp: '', nota: '', cobro: null, argumento: '', cobraS: '', cobraD: '',
-      fuera: {}, plant: {}, plantillas: null, argAut: '', forzar: false, enviando: false, error: '', choque: null
+      fuera: {}, manFuera: {}, plant: {}, plantillas: null, argAut: '', forzar: false, enviando: false, error: '', choque: null
     };
   }
   function tecEfectivos() { return S.tec_modo === 'mismos' ? S.tecM.slice() : S.tecnicos.slice(); }
@@ -97,7 +97,11 @@
   function hayExterno() { return tecEfectivos().some(function (id) { var t = tecObj(id); return !!(t && t.es_externo); }); }
   function equiposIncluidos() { return (S.info.equipos || []).filter(function (e) { return !S.fuera[e.maquina_id]; }); }
   function plantEleg(e) { return S.plant[e.maquina_id] || e.plantilla_sugerida_id || null; }
-  function remanente() { return S.info.remanente || { servicio: 0, despacho: 0, leido: false, elige: false }; }
+  function remanente() { return S.info.remanente || { servicio: 0, despacho: 0, leido: false, completo: true, elige: false }; }
+  /* 2026-10-20 (revisión): una instalación que no se cobra (garantía, regalía, arriendo) no cubre a su desinstalación, y con
+     Random sin responder (lectura incompleta) no se agenda a ciegas: el servidor lo exige, acá se le dice a la persona. */
+  function madreCobra() { return S.info.madre_cobra !== false; }
+  function lecturaIncompleta() { return remanente().completo === false; }
   function requiereAut() { return !!(S.info.contexto && S.info.contexto.requiere_autorizacion) && (remanente().elige ? S.cobro !== 'cobra' : true); }
 
   function abrirProgramar() {
@@ -157,6 +161,8 @@
     if (!tecEfectivos().length || !liderEfectivo()) return false;
     if (String(S.costo == null ? '' : S.costo).trim() === '') return false;
     var r = remanente();
+    if (lecturaIncompleta()) return false;
+    if (!madreCobra() && !(r.elige && S.cobro === 'cobra')) return false;
     if (r.elige) {
       if (!S.cobro) return false;
       if (S.cobro === 'cobra' && !((num(S.cobraS) || 0) + (num(S.cobraD) || 0) > 0)) return false;
@@ -202,21 +208,31 @@
       '<div class="ev-ayuda" style="margin-top:6px">Es obligatorio para poder pagarle al proveedor sin equivocarnos. ' + (ext ? 'Es un técnico externo: se le manda el anexo de servicios.' : '') + '</div></div>';
 
     var cobroHtml = '';
-    if (r.elige) {
+    var sinCobroTxt = '<div class="ev-aviso rojo" style="margin:10px 0"><i class="bi bi-shield-lock-fill"></i><span><b>Esta instalación no se cobra</b> (garantía, regalía, arriendo o sin costo): ' +
+      'su desinstalación no puede quedar cubierta por ella, porque ese $0 se autorizó solo para la instalación. ' +
+      (r.elige ? 'Si la nota de venta trae una línea de desinstalación, elige «La cobra la desinstalación». ' : '') +
+      'Si no, créala como una OT de desinstalación aparte, con su propio documento o su propia autorización de $0.</span></div>';
+    if (lecturaIncompleta()) {
+      cobroHtml = '<div class="ev-aviso rojo" style="margin:10px 0"><i class="bi bi-cloud-slash-fill"></i><span><b>No pudimos leer el saldo de la nota de venta en Random.</b> ' +
+        'Por seguridad la desinstalación no se agenda a ciegas (podría cobrarse dos veces la misma línea). Espera unos segundos y reintenta.</span>' +
+        '<button type="button" class="ev-mini-btn" data-reintentar="1" style="margin-left:8px">Reintentar</button></div>';
+    } else if (r.elige) {
       cobroHtml = '<div class="o2m-di-sub ' + (S.cobro ? 'ok' : 'falta') + '"><h6><span class="pt"></span>¿Quién cobra la desinstalación?</h6>' +
         '<p class="ev-ayuda" style="margin:0 0 10px">A la nota de venta le queda saldo sin usar después de la instalación: <b>' + clp(r.servicio) + '</b>' +
         (r.despacho > 0 ? ' de servicio y <b>' + clp(r.despacho) + '</b> de despacho' : '') + '. Elige cómo se trata; nunca se cobra dos veces la misma línea.</p>' +
         '<div class="o2m-di-cobro">' +
         '<button type="button" class="o2m-di-op' + (S.cobro === 'cobra' ? ' sel' : '') + '" data-cobro="cobra" aria-pressed="' + (S.cobro === 'cobra') + '"><i class="bi bi-receipt-cutoff ic"></i><span class="n">La cobra la desinstalación</span><span class="l">Toma ese saldo de la nota de venta como su propio cobro</span></button>' +
-        '<button type="button" class="o2m-di-op' + (S.cobro === 'cubierta' ? ' sel' : '') + '" data-cobro="cubierta" aria-pressed="' + (S.cobro === 'cubierta') + '"><i class="bi bi-link-45deg ic"></i><span class="n">Cubierta por la instalación</span><span class="l">No cobra aparte: el saldo queda libre para otras órdenes</span></button></div>' +
+        (madreCobra() ? '<button type="button" class="o2m-di-op' + (S.cobro === 'cubierta' ? ' sel' : '') + '" data-cobro="cubierta" aria-pressed="' + (S.cobro === 'cubierta') + '"><i class="bi bi-link-45deg ic"></i><span class="n">Cubierta por la instalación</span><span class="l">No cobra aparte: el saldo queda libre para otras órdenes</span></button>' : '') + '</div>' +
+        (madreCobra() ? '' : sinCobroTxt) +
         (S.cobro === 'cobra' ? '<div class="o2m-di-fila dos" style="margin-top:10px"><div><label for="dsCobS">Servicio (máx. ' + clp(r.servicio) + ')</label><input id="dsCobS" inputmode="numeric" value="' + esc(miles(S.cobraS)) + '" data-monto="cobraS"></div>' +
           '<div><label for="dsCobD">Despacho (máx. ' + clp(r.despacho) + ')</label><input id="dsCobD" inputmode="numeric" value="' + esc(miles(S.cobraD)) + '" data-monto="cobraD"></div></div>' : '') +
         (S.cobro === 'cubierta' ? '<div style="margin-top:10px"><label class="ev-lbl" for="dsArg">Por qué queda saldo sin usar (mínimo 30 caracteres) *</label>' +
           '<textarea class="ev-in" id="dsArg" maxlength="1000" data-txt="argumento" placeholder="Ej: el cliente acordó que la desinstalación va incluida en el precio de la instalación">' + esc(S.argumento) + '</textarea>' +
           '<div class="ev-ayuda" id="dsArgN">' + (S.argumento || '').trim().length + ' / 30 caracteres mínimos. Queda guardado con tu nombre.</div></div>' : '') + '</div>';
+    } else if (!madreCobra()) {
+      cobroHtml = sinCobroTxt;
     } else {
-      cobroHtml = '<div class="ev-ayuda" style="margin:10px 0"><i class="bi bi-receipt me-1"></i>Cubierta por la instalación: no consume saldo aparte' +
-        (r.leido ? '' : ' (no se pudo leer el saldo de la nota de venta; el servidor lo vuelve a revisar al crear)') + '.</div>';
+      cobroHtml = '<div class="ev-ayuda" style="margin:10px 0"><i class="bi bi-receipt me-1"></i>Cubierta por la instalación: no consume saldo aparte.</div>';
     }
 
     var eqs = S.info.equipos || [], plants = S.plantillas || [];
@@ -238,9 +254,18 @@
             (on ? sel : '<small>No se desinstala en esta orden</small>') + '</span></label>';
         }).join('') + '</div>';
     }
-    var manuales = (S.info.manuales || []).length
-      ? '<div class="ev-ayuda" style="margin-top:8px"><i class="bi bi-box-seam me-1"></i>Además se desinstalan los productos manuales de la instalación: ' +
-        S.info.manuales.map(function (m) { return esc(m.titulo) + (m.cantidad ? ' ×' + m.cantidad : ''); }).join(', ') + '.</div>' : '';
+    /* 2026-10-20 (revisión): antes los productos manuales de la instalación se sumaban a la desinstalación sin poder quitarlos
+       (el modal solo los nombraba). Ahora cada uno se ve y se puede dejar fuera: lo que se ve y se elige es lo que se crea. */
+    var mans = S.info.manuales || [];
+    var manuales = mans.length
+      ? '<div class="o2m-di-sub ok"><h6><span class="pt"></span>Productos manuales de la instalación</h6>' +
+        '<p class="ev-ayuda" style="margin:0 0 6px">Estos productos se cargaron a mano en la instalación. Deja marcados los que también se desinstalan.</p>' +
+        (mans.length > 1 ? '<button type="button" class="o2m-di-atajo" data-mantodo="1" style="margin-bottom:6px"><i class="bi bi-check-all"></i>Seleccionar/deseleccionar todo</button>' : '') +
+        mans.map(function (m, i) {
+          return '<label class="o2m-di-eq"><input type="checkbox" data-man="' + i + '"' + (S.manFuera[i] ? '' : ' checked') + '><span class="d"><b>' + esc(m.titulo) +
+            (m.cantidad ? ' ×' + m.cantidad : '') + '</b>' + (m.sku ? '<small>SKU ' + esc(m.sku) + '</small>' : '') +
+            (S.manFuera[i] ? '<small>No se desinstala en esta orden</small>' : '') + '</span></label>';
+        }).join('') + '</div>' : '';
 
     var autHtml = '';
     if (requiereAut()) {
@@ -358,6 +383,17 @@
     q('[data-eqplant]').forEach(function (s) {
       s.addEventListener('change', function () { S.plant[parseInt(s.getAttribute('data-eqplant'), 10)] = s.value ? parseInt(s.value, 10) : null; refrescarBoton(); });
     });
+    q('[data-man]').forEach(function (c) {
+      c.addEventListener('change', function () { var i = parseInt(c.getAttribute('data-man'), 10); S.manFuera[i] = !c.checked; pintar(); });
+    });
+    q('[data-mantodo]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var ms = S.info.manuales || [], algunaFuera = ms.some(function (_m, i) { return S.manFuera[i]; });
+        ms.forEach(function (_m, i) { S.manFuera[i] = algunaFuera ? false : true; });
+        pintar();
+      });
+    });
+    q('[data-reintentar]').forEach(function (b) { b.addEventListener('click', function () { abrirProgramar(); }); });
     q('[data-forzar]').forEach(function (b) { b.addEventListener('click', function () { S.forzar = true; S.error = ''; guardar(); }); });
     var g = document.getElementById('dsGuardar');
     if (g) g.addEventListener('click', guardar);
@@ -376,6 +412,8 @@
       if (S.cobro === 'cobra') { o.cobra_servicio = num(S.cobraS) || 0; o.cobra_despacho = num(S.cobraD) || 0; }
     }
     if ((S.info.equipos || []).length) o.equipos = equiposIncluidos().map(function (e) { return { maquina_id: e.maquina_id, plantilla_id: plantEleg(e) }; });
+    var mf = []; (S.info.manuales || []).forEach(function (_m, i) { if (S.manFuera[i]) mf.push(i); });
+    if (mf.length) o.manuales_fuera = mf;
     if (requiereAut()) o.argumento = (S.argAut || '').trim();
     if (S.forzar) o.forzar_choque = true;
     return o;

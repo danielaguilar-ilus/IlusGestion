@@ -41,6 +41,7 @@
     var lugar = { direccion: (ev && ev.direccion) || '', lat: ev ? ev.lat : null, lng: ev ? ev.lng : null,
       place_id: (ev && ev.place_id) || '', comuna: (ev && ev.comuna) || '', region: (ev && ev.region) || '' };
     var cliente = (ev && ev.cliente_id) ? { id: ev.cliente_id, nombre: ev.cliente } : (opts.cliente || null);
+    var clienteOriginal = cliente;   /* 2026-10-20: se puede quitar (un evento puede juntar OT de varios clientes) y volver a poner */
     var cancelado = !!(ev && ev.estado_db === 'cancelado');
 
     var ov = document.createElement('div');
@@ -54,22 +55,28 @@
         '<div class="ev-ov-h"><b><i class="bi bi-calendar-event"></i>' + (ev ? 'Editar evento' : 'Crear evento') + '</b>' +
           '<button type="button" class="ev-ov-x" aria-label="Cerrar" data-x>&times;</button></div>' +
         '<div class="ev-ov-b">' +
-          '<div class="full"><label class="ev-lbl" for="evfNombre">Nombre del evento *</label>' +
+          /* 2026-10-20 (REGLA #15, formato Retiros): tarjetas con semáforo (verde = listo, ámbar = falta) en vez de un formulario plano. */
+          '<div class="full o2m-di-sub falta" id="evfCNombre" style="margin-top:0"><h6><span class="pt"></span>1 · ¿Qué evento es?</h6>' +
+            '<label class="ev-lbl" for="evfNombre">Nombre del evento *</label>' +
             '<input class="ev-in" id="evfNombre" maxlength="160" autocomplete="off" placeholder="Ej: Mall Plaza Egaña · Fitness Week" value="' + esc(ev ? ev.nombre : '') + '">' +
             '<div class="ev-ayuda">Un evento agrupa las OT de un mismo lugar y fechas (por ejemplo, la instalación y la desinstalación de un mall).</div></div>' +
-          '<div class="full"><label class="ev-lbl" for="evfLugar">Lugar</label>' +
+          '<div class="full o2m-di-sub falta" id="evfCLugar" style="margin-top:0"><h6><span class="pt"></span>2 · ¿Dónde es?</h6>' +
+            '<label class="ev-lbl" for="evfLugar">Lugar</label>' +
             '<input class="ev-in" id="evfLugar" maxlength="400" autocomplete="off" placeholder="Empieza a escribir y elige la sugerencia" value="' + esc(lugar.direccion) + '">' +
-            '<div class="ev-ayuda" id="evfLugarEst"></div></div>' +
-          '<div class="full"><label class="ev-lbl" for="evfDetalle">Edificio, local u oficina</label>' +
+            '<div class="ev-ayuda" id="evfLugarEst"></div>' +
+            '<label class="ev-lbl" for="evfDetalle" style="margin-top:10px">Edificio, local u oficina</label>' +
             '<input class="ev-in" id="evfDetalle" maxlength="200" autocomplete="off" placeholder="Ej: Local 12, segundo piso" value="' + esc(ev ? ev.detalle : '') + '"></div>' +
-          '<div><label class="ev-lbl" for="evfIni">Fecha de inicio</label><input class="ev-in" type="date" id="evfIni" value="' + esc(ev ? ev.fecha_ini_iso : '') + '"></div>' +
-          '<div><label class="ev-lbl" for="evfFin">Fecha de término</label><input class="ev-in" type="date" id="evfFin" value="' + esc(ev ? ev.fecha_fin_iso : '') + '"></div>' +
-          '<div class="full"><label class="ev-lbl" for="evfDoc">Documento de referencia (opcional)</label>' +
+          '<div class="full o2m-di-sub falta" id="evfCFechas" style="margin-top:0"><h6><span class="pt"></span>3 · ¿Cuándo?</h6>' +
+            '<div class="o2m-di-fila dos"><div><label class="ev-lbl" for="evfIni">Fecha de inicio</label><input class="ev-in" type="date" id="evfIni" value="' + esc(ev ? ev.fecha_ini_iso : '') + '"></div>' +
+            '<div><label class="ev-lbl" for="evfFin">Fecha de término</label><input class="ev-in" type="date" id="evfFin" value="' + esc(ev ? ev.fecha_fin_iso : '') + '"></div></div>' +
+            '<div class="ev-ayuda" id="evfFechasEst"></div></div>' +
+          '<div class="full o2m-di-sub ok" id="evfCExtra" style="margin-top:0;border-color:#e5e7eb;background:#fff"><h6><span class="pt" style="background:#9ca3af"></span>4 · Para encontrarlo después (opcional)</h6>' +
+            '<label class="ev-lbl" for="evfDoc">Documento de referencia</label>' +
             '<input class="ev-in" id="evfDoc" maxlength="80" autocomplete="off" placeholder="Ej: BD10961" value="' + esc(ev ? (ev.doc_ref || '') : '') + '">' +
-            '<div class="ev-ayuda">Solo sirve para encontrar las OT del evento. No cuenta como documento de ninguna OT.</div></div>' +
-          '<div class="full"><label class="ev-lbl" for="evfNotas">Notas (opcional)</label>' +
-            '<textarea class="ev-in" id="evfNotas" maxlength="1000" placeholder="Lo que el equipo debe saber de este evento">' + esc(ev ? (ev.notas || '') : '') + '</textarea></div>' +
-          (cliente ? '<div class="full ev-ayuda"><i class="bi bi-building me-1"></i>Cliente: <b>' + esc(cliente.nombre || ('#' + cliente.id)) + '</b></div>' : '') +
+            '<div class="ev-ayuda">Solo sirve para encontrar las OT del evento. No cuenta como documento de ninguna OT.</div>' +
+            '<label class="ev-lbl" for="evfNotas" style="margin-top:10px">Notas</label>' +
+            '<textarea class="ev-in" id="evfNotas" maxlength="1000" placeholder="Lo que el equipo debe saber de este evento">' + esc(ev ? (ev.notas || '') : '') + '</textarea>' +
+            '<div id="evfCliente" class="ev-ayuda" style="margin-top:10px"></div></div>' +
           '<div class="full" id="evfErr"></div>' +
         '</div>' +
         '<div class="ev-ov-f">' +
@@ -94,8 +101,47 @@
         : (($('evfLugar').value || '').trim()
           ? '<span style="color:#b45309"><i class="bi bi-exclamation-triangle me-1"></i>Elige una sugerencia para confirmar la ubicación (sin esto el técnico no tiene punto exacto).</span>'
           : '');
+      semaforo();
     }
     pintarLugar();
+
+    /* Cliente del evento: opcional y editable. Se sugiere el de la OT que se está creando, pero la persona decide. */
+    function pintarCliente() {
+      var c = $('evfCliente');
+      if (!c) return;
+      if (cliente) {
+        c.innerHTML = '<i class="bi bi-building me-1"></i>Cliente del evento: <b>' + esc(cliente.nombre || ('#' + cliente.id)) + '</b> ' +
+          '<button type="button" class="ev-mini-btn" data-quitar-cli style="margin-left:6px">Quitar cliente</button>' +
+          '<div>Opcional. Quítalo si el evento junta órdenes de varios clientes.</div>';
+      } else if (clienteOriginal) {
+        c.innerHTML = '<i class="bi bi-building me-1"></i>El evento no tiene cliente. ' +
+          '<button type="button" class="ev-mini-btn" data-poner-cli style="margin-left:6px">Usar ' + esc(clienteOriginal.nombre || ('#' + clienteOriginal.id)) + '</button>';
+      } else {
+        c.innerHTML = '';
+      }
+      var q = c.querySelector('[data-quitar-cli]'), p = c.querySelector('[data-poner-cli]');
+      if (q) q.addEventListener('click', function () { cliente = null; pintarCliente(); });
+      if (p) p.addEventListener('click', function () { cliente = clienteOriginal; pintarCliente(); });
+    }
+    /* Semáforo de las tarjetas: verde = listo, ámbar = falta algo (no bloquea más que el nombre, igual que el servidor). */
+    function semaforo() {
+      var nom = ($('evfNombre').value || '').trim().length >= 3;
+      var lug = ($('evfLugar').value || '').trim();
+      var ini = $('evfIni').value, fin = $('evfFin').value;
+      var fechasMal = !!(ini && fin && fin < ini);
+      function marca(id, ok, mal) { var e = $(id); if (e) e.className = 'full o2m-di-sub ' + (mal ? 'mal' : (ok ? 'ok' : 'falta')); }
+      marca('evfCNombre', nom, false);
+      marca('evfCLugar', lug && lugar.lat != null && lugar.lng != null, false);
+      marca('evfCFechas', !!(ini || fin) && !fechasMal, fechasMal);
+      var fe = $('evfFechasEst');
+      if (fe) fe.innerHTML = fechasMal ? '<span style="color:#b91c1c"><i class="bi bi-exclamation-octagon-fill me-1"></i>La fecha de término no puede ser anterior a la de inicio.</span>'
+        : ((!ini && !fin) ? 'Sin fechas queda como «Sin fechas»: se puede completar después.' : (ini && !fin ? 'Sin fecha de término: el evento se cierra cuando todas sus órdenes estén cerradas.' : ''));
+    }
+    pintarCliente();
+    ['evfNombre', 'evfLugar', 'evfIni', 'evfFin'].forEach(function (id) {
+      var e = $(id); if (e) { e.addEventListener('input', semaforo); e.addEventListener('change', semaforo); }
+    });
+    semaforo();
 
     ov.addEventListener('click', function (e) { if (e.target === ov) cerrar(); });
     ov.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.stopPropagation(); cerrar(); } });

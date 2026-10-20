@@ -102,8 +102,9 @@ class TestFechas(unittest.TestCase):
         self.assertIn("domingo", p["motivo"])
         # un día hábil se propone tal cual
         self.assertEqual(E.proponer_fecha_desinstalacion({"fecha_fin": "2026-11-26"}, madre(), {})["fecha"], D(2026, 11, 26))
-        # sin evento: el día de la instalación
-        self.assertEqual(E.proponer_fecha_desinstalacion(None, madre(fecha_fin=None), {})["fecha"], D(2026, 10, 26))
+        # sin evento: el siguiente día hábil DESPUÉS de la instalación (2026-10-20: antes proponía el mismo día y la propuesta
+        # podía quedar bloqueada por el mismo sistema; ver tests/test_ot_eventos_revision_20oct.py)
+        self.assertEqual(E.proponer_fecha_desinstalacion(None, madre(fecha_fin=None), {})["fecha"], D(2026, 10, 27))
 
     def test_dias_habiles(self):
         self.assertEqual(E.restar_habiles(D(2026, 11, 2), 2, {}), D(2026, 10, 29))   # lunes - 2 hábiles = jueves
@@ -527,6 +528,9 @@ def _amb_puerta(fa):
     amb["_ot_hijas_de"] = lambda mid, cur=None, estricto=False: [dict(h) for h in fa.hijas_por_madre.get(int(mid), [])]
     amb["_ot_puerta_docs_de"] = lambda vid: [dict(d) for d in fa.docs.get(int(vid), [])]
     amb["_ot_aut_aprobada"] = lambda aid: bool(aid) and int(aid) in fa.auts
+    # 2026-10-20: la única autorización que reemplaza el documento es la 'crear_sin_documento' de ESA instalación (la función real
+    # se prueba con una base de mentira en tests/test_ot_eventos_revision_20oct.py): acá `auts` = las que cumplen eso.
+    amb["_ot_madre_aut_incluia"] = lambda m: bool((m or {}).get("desinstalacion_aut_id")) and int(m["desinstalacion_aut_id"]) in fa.auts
     return amb
 
 
@@ -1065,7 +1069,7 @@ class TestCandadosPorTexto(unittest.TestCase):
         self.assertIn("_fam_ap = _fac_familia_de(visita_id)", crear)
         self.assertIn('visita_id = int(_fam_ap["madre_id"])', crear)
         info = F.fuente_funcion("_fac_perdida_de_ot")
-        self.assertIn("fam = _fac_familia_de(vid)", info)
+        self.assertIn("fam = None if _sin_familia else _fac_familia_de(vid)", info)
         self.assertIn("ancla = int(fam[\"madre_id\"]) if fam else int(vid)", info)
 
     def test_ficha_y_cabecera_no_dicen_sin_documento_en_la_cubierta(self):
@@ -1262,7 +1266,9 @@ class TestChecklistSugeridoYElegido(unittest.TestCase):
         self.assertEqual(a["_ot_desinst_normalizar"]({"lleva": True, "equipos": [{"maquina_id": "x"}]})[0]["codigo"], "EQUIPO_INVALIDO")
         self.assertEqual(a["_ot_desinst_normalizar"]({"lleva": True, "equipos": [{"maquina_id": 1, "plantilla_id": "abc"}]})[0]["codigo"],
                          "PLANTILLA_INVALIDA")
-        self.assertEqual(a["_ot_desinst_normalizar"]({"lleva": True})[1]["equipos"], [])
+        # 2026-10-20: «no vino» (None = todos con el checklist sugerido) ya no se confunde con una lista vacía
+        self.assertIsNone(a["_ot_desinst_normalizar"]({"lleva": True})[1]["equipos"])
+        self.assertEqual(a["_ot_desinst_normalizar"]({"lleva": True, "equipos": []})[1]["equipos"], [])
 
     def test_la_sugerencia_dice_de_donde_sale_el_checklist(self):
         a = F.cargar(["_ot_desinst_sugerir_checklists"], extra={"print": lambda *x, **k: None})

@@ -303,3 +303,6 @@ a.o2t-chip{text-decoration:none}a.o2t-chip:hover{filter:brightness(.96);text-dec
   /* Calendario compacto de celular: la desinstalación es un rombo para distinguirla del punto de una instalación. */
   .ot2-dia .ot2-ch.rel{border-radius:2px;transform:rotate(45deg);width:7px;height:7px}
 }
+
+/* 2026-10-20 (REGLA #3, revision): en celular los enlaces a una OT median 20-21 px: area tactil minima de 44 px. */
+@media (max-width:640px){.ev-link,.ev-tabla .ot,.ev-par-ot b a,.ev-card h3 a{display:inline-flex;align-items:center;min-height:44px}}

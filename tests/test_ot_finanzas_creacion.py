@@ -689,7 +689,10 @@ class TestVistaPreviaAsistente(unittest.TestCase):
                      '  return S.fin_zz_envio_original == null || S.fin_zz_envio.monto !== S.fin_zz_envio_original; }' +
                      'function _o2mFinEstadosDom(){}' +
                      'function _o2mFinSaldoFacturas(){ return null; } function _pintarFinSaldoTxtDom(){} function _pintarFinGuiaDom(){}' +
-                     'function _o2mFinAjusteGrande(){ return true; }' + BLOQUE +
+                     'function _o2mFinAjusteGrande(){ return true; }' +
+                     // 2026-10-20: el margen de la FAMILIA (instalación + desinstalación) vive en otro bloque del asistente
+                     // (_o2mDiFamiliaHtml, commit 212fb133); acá no hay desinstalación, así que no aporta nada a la vista previa.
+                     'function _o2mDiFamiliaHtml(){ return ""; }' + BLOQUE +
                      '_pintarFinMargenDom(); var r = _o2mFinVistaPrevia();' +
                      'return [r.clase, r.cobre.total, r.queda.total, r.valorizado.monto, nodos.o2mFinMargen.innerHTML,' +
                      ' _o2mFinMontoServicio(), _o2mFinPideMotivo()];');

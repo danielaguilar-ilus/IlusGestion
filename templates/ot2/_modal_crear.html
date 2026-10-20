@@ -11507,6 +11507,8 @@ window.OT2C = (function(){
       cliente_id: S.cliente ? S.cliente.id : null, fecha_programada: S.fecha, hora_fin: S.hfin, evento_id: S.evento_id || null,
       documentos: _o2mFinDocsTodos().map(function(x){ return {tipo:x.tido, numero:x.nudo}; }),
       pedido_madre: {servicio: S.fin_garantia ? 0 : (Number(S.fin_zz_monto) || 0), despacho: S.fin_garantia ? 0 : envio},
+      /* 2026-10-20: una instalación en garantía, regalía o arriendo ($0 autorizado solo para ella) no cubre a su desinstalación. */
+      madre_sin_cobro: !!S.fin_garantia,
       equipos: _diEqIncluidos().map(function(e){ var m = _diEqInfo(e.maquina_id); return {maquina_id:e.maquina_id, sku:(m && m.sku) || null}; }),
       desinstalacion: _diPayload()
     };
@@ -11760,13 +11762,14 @@ window.OT2C = (function(){
     if (d.lleva !== 'si' || !p){ el.innerHTML = ''; return; }
     var rem = p.remanente || {servicio:0, despacho:0, leido:false};
     var elige = !!(p.elige_cobro || p.pregunta === 'cobro');
-    var sig = JSON.stringify([elige, d.cobro, rem.servicio, rem.despacho, p.cobro_txt]);
+    var madreCobra = p.madre_cobra !== false;   /* 2026-10-20: sin cobro en la instalación no existe la opción «cubierta» */
+    var sig = JSON.stringify([elige, d.cobro, rem.servicio, rem.despacho, p.cobro_txt, madreCobra]);
     if (el.getAttribute('data-sig') === sig && el.innerHTML) return;   // no se repinta mientras la persona escribe
     el.setAttribute('data-sig', sig);
     if (!elige){
+      /* La lectura incompleta de Random y la instalación que no se cobra llegan como bloqueo del previo (aviso rojo arriba). */
       el.innerHTML = p.valido || p.cobro ? '<div class="o2m-di-sub ok"><h6><span class="pt"></span>Cobro</h6><div class="d" style="font-size:.88rem;margin:0">'+
-        '<i class="bi bi-receipt me-1"></i>'+_diEsc(p.cobro_txt || 'Cubierta por esta instalación: no consume saldo aparte')+'</div>'+
-        (rem.leido === false ? '<div class="ev-ayuda" style="margin-top:6px">No se pudo leer el saldo de la nota de venta en Random: el servidor lo vuelve a revisar al crear.</div>' : '')+'</div>' : '';
+        '<i class="bi bi-receipt me-1"></i>'+_diEsc(p.cobro_txt || 'Cubierta por esta instalación: no consume saldo aparte')+'</div></div>' : '';
       return;
     }
     var okc = d.cobro === 'cobra' ? ((_diNum(d.cobra_servicio) || 0) + (_diNum(d.cobra_despacho) || 0) > 0)
@@ -11778,8 +11781,9 @@ window.OT2C = (function(){
       '<div class="o2m-di-cobro">'+
         '<button type="button" class="o2m-di-op'+(d.cobro==='cobra'?' sel':'')+'" aria-pressed="'+(d.cobro==='cobra')+'" onclick="OT2C.diCobro(\'cobra\')">'+
           '<i class="bi bi-receipt-cutoff ic"></i><span class="n">La cobra la desinstalación</span><span class="l">Toma ese saldo de la nota de venta como su propio cobro</span></button>'+
-        '<button type="button" class="o2m-di-op'+(d.cobro==='cubierta'?' sel':'')+'" aria-pressed="'+(d.cobro==='cubierta')+'" onclick="OT2C.diCobro(\'cubierta\')">'+
-          '<i class="bi bi-link-45deg ic"></i><span class="n">Cubierta por la instalación</span><span class="l">No cobra aparte: el saldo queda libre para otras órdenes</span></button></div>'+
+        (madreCobra ? '<button type="button" class="o2m-di-op'+(d.cobro==='cubierta'?' sel':'')+'" aria-pressed="'+(d.cobro==='cubierta')+'" onclick="OT2C.diCobro(\'cubierta\')">'+
+          '<i class="bi bi-link-45deg ic"></i><span class="n">Cubierta por la instalación</span><span class="l">No cobra aparte: el saldo queda libre para otras órdenes</span></button>' : '')+'</div>'+
+      (madreCobra ? '' : '<div class="o2m-di-av rojo"><i class="bi bi-shield-lock-fill"></i><span><b>Esta instalación no se cobra</b> (garantía, regalía o arriendo): su desinstalación no puede quedar cubierta por ella. Elige «La cobra la desinstalación» o créala después como una OT aparte.</span></div>')+
       (d.cobro === 'cobra'
         ? '<div class="o2m-di-fila dos" style="margin-top:10px"><div><label for="o2mDiCobS">Servicio (máx. '+_diClp(rem.servicio)+')</label>'+
           '<input id="o2mDiCobS" inputmode="numeric" autocomplete="off" value="'+_diEsc(_o2mFormatearMiles(d.cobra_servicio))+'" oninput="OT2C.diMonto(\'cobra_servicio\',this)"></div>'+
@@ -11813,10 +11817,10 @@ window.OT2C = (function(){
               opts.map(function(x){ return '<option value="'+x.id+'"'+(x.id===pe?' selected':'')+'>'+_diEsc(x.nombre)+'</option>'; }).join('')+'</select>'+
               '<small class="sel-name">Checklist elegido: <b>'+_diEsc((opts.filter(function(x){ return x.id===pe; })[0] || {}).nombre || '')+'</b></small>'
           : (sug && sug.plantilla_nombre ? '<small>Checklist: '+_diEsc(sug.plantilla_nombre)+'</small>' : '<small style="color:#92400e">Sin checklist configurado para desinstalaciones</small>');
-        return '<div class="o2m-di-eq"><input type="checkbox" '+(on?'checked':'')+' aria-label="Desinstalar '+_diEsc(_diEqNombre(mid))+'" onchange="OT2C.diEqTog('+mid+')">'+
+        return '<label class="o2m-di-eq"><input type="checkbox" '+(on?'checked':'')+' aria-label="Desinstalar '+_diEsc(_diEqNombre(mid))+'" onchange="OT2C.diEqTog('+mid+')">'+
           '<span class="d"><b>'+_diEsc(_diEqNombre(mid))+'</b>'+
           ((m && (m.serie || m.sku)) ? '<small>'+(m.sku ? 'SKU ' + _diEsc(m.sku) : '')+(m.serie ? ' · Serie ' + _diEsc(m.serie) : '')+'</small>' : '')+
-          (on ? sel : '<small>No se desinstala en esta orden</small>')+'</span></div>';
+          (on ? sel : '<small>No se desinstala en esta orden</small>')+'</span></label>';
       }).join('')+'</div>';
   }
   function _diRegNota(el){

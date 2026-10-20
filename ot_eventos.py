@@ -102,6 +102,16 @@ def hora_txt(h):
     return "" if m is None else "%02d:%02d" % (m // 60, m % 60)
 
 
+def min_txt(m):
+    """Minutos desde medianoche → 'HH:MM' (2026-10-20: el mensaje «…después de que termine la instalación ()» salía con la
+    hora vacía porque se le pasaban minutos enteros a hora_txt, que espera 'HH:MM')."""
+    try:
+        m = int(m)
+    except (TypeError, ValueError):
+        return ""
+    return "%02d:%02d" % (m // 60, m % 60)
+
+
 def _fer_set(feriados):
     """Acepta dict {iso: nombre}, set/list de iso o de date → {iso: nombre|''}."""
     out = {}
@@ -161,8 +171,17 @@ def vigente(estado):
     return str(estado or "").strip().lower() not in ESTADOS_FUERA
 
 
-def sin_empezar(estado):
-    return str(estado or "").strip().lower() in ESTADOS_SIN_EMPEZAR
+def sin_empezar(estado, fila=None):
+    """¿La OT todavía no se empezó? Por su estado y, si se pasa la `fila`, también porque nadie la trabajó: 'pendiente_info'
+    se usa DESPUÉS de la firma del técnico (fase «comp»), así que una OT ya ejecutada y firmada con ese estado NO está sin
+    empezar (revisión 2026-10-20: la cascada de cancelar cancelaba una desinstalación hecha y firmada; la OT es evidencia)."""
+    if str(estado or "").strip().lower() not in ESTADOS_SIN_EMPEZAR:
+        return False
+    if fila:
+        for k in ("firma_tecnico_at", "hora_real_inicio", "fecha_realizada"):
+            if fila.get(k):
+                return False
+    return True
 
 
 # ───────────────────────── fechas de la desinstalación ─────────────────────────
@@ -228,10 +247,10 @@ def evaluar_fecha_desinstalacion(fecha, hora_ini, hora_fin, madre, feriados=None
                 return {"ok": False, "bloqueo": {
                     "codigo": "DESINST_ANTES_DE_INSTALACION",
                     "mensaje": "El mismo día, la desinstalación tiene que empezar después de que termine la "
-                               "instalación (%s)." % hora_txt(ref_hora)}, "avisos": avisos}
+                               "instalación (%s)." % min_txt(ref_hora)}, "avisos": avisos}
             if hi is None:
                 avisos.append("Define la hora de inicio: el mismo día tiene que ser después de que termine la "
-                              "instalación (%s)." % hora_txt(ref_hora))
+                              "instalación (%s)." % min_txt(ref_hora))
     if f.weekday() == 5:
         avisos.append("Cae en sábado, cuando no hay operación normal.")
     nombre_fer = _fer_set(feriados).get(f.isoformat())
@@ -247,20 +266,24 @@ def evaluar_fecha_desinstalacion(fecha, hora_ini, hora_fin, madre, feriados=None
 
 
 def proponer_fecha_desinstalacion(evento=None, madre=None, feriados=None, hoy=None):
-    """Fecha propuesta para la desinstalación: el fin del evento si lo hay; si no, el día siguiente al de la
-    instalación. Si cae en domingo o feriado se propone el siguiente día hábil (crítica 16). Devuelve
-    {fecha: date|None, motivo: texto|None}."""
-    base = parse_fecha((evento or {}).get("fecha_fin"))
-    origen = "fin del evento"
-    if base is None:
-        ref, _h = fecha_referencia_madre(madre)
-        if ref is not None:
-            base, origen = ref, "día de la instalación"
+    """Fecha propuesta para la desinstalación. 2026-10-20 (revisión): la propuesta NUNCA puede quedar bloqueada por el
+    mismo sistema. Es la MAYOR entre el fin del evento (si lo hay) y el SIGUIENTE día hábil después de la instalación
+    (su fecha_fin / hora_fin, o la fecha real si ya se hizo): así no propone el mismo día de la instalación (que bloquea si
+    la instalación termina a las 13:00 y la desinstalación parte a las 09:00) ni un fin de evento anterior a la instalación.
+    Si cae en domingo o feriado se propone el siguiente día hábil (crítica 16). Devuelve {fecha: date|None, motivo}."""
+    fin_ev = parse_fecha((evento or {}).get("fecha_fin"))
+    ref, _h = fecha_referencia_madre(madre)
+    sig_madre = siguiente_habil(ref, feriados, incluir_hoy=False) if ref is not None else None
+    base, origen = None, None
+    if fin_ev is not None and (sig_madre is None or fin_ev >= sig_madre):
+        base, origen = fin_ev, "fin del evento"
+    elif sig_madre is not None:
+        base, origen = sig_madre, "día hábil siguiente a la instalación"
     if base is None:
         return {"fecha": None, "motivo": None}
     hoy = parse_fecha(hoy)
     if hoy and base < hoy:
-        base = hoy
+        base, origen = hoy, "hoy"
     if es_habil(base, feriados):
         return {"fecha": base, "motivo": "Propuesta: %s." % origen}
     sig = siguiente_habil(base, feriados, incluir_hoy=False)
@@ -269,6 +292,19 @@ def proponer_fecha_desinstalacion(evento=None, madre=None, feriados=None, hoy=No
 
 
 # ───────────────────────── ¿es «cubierta»? ─────────────────────────
+def madre_cobra(madre):
+    """¿La instalación SE COBRA al cliente? (revisión 2026-10-20, REGLA #24: «un $0 aprobado vale solo para LA OT para la que
+    se pidió»). Una instalación en garantía, regalía, arriendo/leasing o de modalidad sin costo / interna NO cobra: su
+    desinstalación no puede quedar «cubierta» por ella (sería un segundo $0 que Daniel nunca autorizó, sin candado de
+    pérdida) y pasa por la puerta normal con su propio documento o su propio $0. Misma regla que `_ot_cobertura` de app.py;
+    una clave que no viene se trata como la del caso normal ('pagado', sin motivo de $0)."""
+    m = madre or {}
+    mod = str(m.get("modalidad_cobro") or "pagado").strip().lower()
+    cub = str(m.get("cubierto_por") or "").strip().lower()
+    cero = str(m.get("cobro_cero_motivo") or "").strip()
+    return mod == "pagado" and cub != "garantia" and not cero
+
+
 def madre_valida_para_cubrir(madre, cliente_hija, tiene_doc_real, aut_aprobada=False):
     """¿Esta fila puede ser la MADRE de una desinstalación cubierta? Cuenta lo que dice la crítica adversarial:
       · instalación, sin madre propia (no hay cadenas), no cancelada ni anulada, del MISMO cliente;
@@ -288,6 +324,9 @@ def madre_valida_para_cubrir(madre, cliente_hija, tiene_doc_real, aut_aprobada=F
         return False, "La OT madre es de otro cliente."
     if not m.get("desinstalacion_prevista"):
         return False, "La instalación no tiene una desinstalación prevista."
+    if not madre_cobra(m):
+        return False, ("La instalación no se cobra (garantía, regalía, arriendo o sin costo): su desinstalación no puede "
+                       "quedar cubierta por ella y necesita su propio documento o su propia autorización de $0.")
     if not (tiene_doc_real or aut_aprobada):
         return False, ("La instalación no tiene un documento de Random (nota de venta, factura o boleta) que respalde "
                        "la desinstalación.")
@@ -345,8 +384,11 @@ def puede_programar_desinstalacion(madre, hijas):
 
 def necesita_autorizacion_prevista(declarada_en_asistente, madre_en_evento_con_fin):
     """Declarar `desinstalacion_prevista` DESPUÉS de crear la madre pide la autorización 'desinstalacion_cubierta'
-    (argumento ≥ 30), salvo que se haya respondido «Sí» en el asistente o que la madre esté en un evento con fecha
-    de fin (el evento ya dice que se desarma). Crítica 4: así una instalación vieja no sirve de paraguas."""
+    (argumento ≥ 30), salvo que se haya respondido «Sí» en el asistente o que la madre HAYA NACIDO en el asistente dentro
+    de un evento que ya tenía fecha de fin (el evento ya dice que se desarma). Crítica 4: así una instalación vieja no sirve
+    de paraguas. 2026-10-20 (revisión): `madre_en_evento_con_fin` NO es «hoy está en un evento con fecha de fin» (eso se
+    arma a mano: crear el evento, asignarle cualquier instalación o ponerle la fecha después): es la marca
+    `evento_fin_al_crear` que solo escribe el servidor al crear la OT (ver `_ot_madre_evento_fin` en app.py)."""
     return not (declarada_en_asistente or madre_en_evento_con_fin)
 
 
@@ -388,7 +430,7 @@ def guardia_cancelar_madre(hijas, incluir_desinstalacion=False):
         return "sola", None
     h = hv[0]
     num = h.get("numero_ot") or "OT #%s" % h.get("id")
-    if not sin_empezar(h.get("estado")):
+    if not sin_empezar(h.get("estado"), h):
         return None, {"codigo": "DESINST_EN_CURSO",
                       "mensaje": "La desinstalación %s ya empezó (%s): no se puede cancelar la instalación." % (
                           num, h.get("estado") or "—")}
@@ -399,19 +441,28 @@ def guardia_cancelar_madre(hijas, incluir_desinstalacion=False):
                              "cancelar las dos." % num, "hija_id": h.get("id"), "hija_numero": num}
 
 
-def guardia_reagendar_madre(nueva_fecha, nueva_fecha_fin, hijas):
-    """Reagendar la madre a una fecha POSTERIOR a la de su hija: 409 «Reagenda primero la desinstalación OT-…»."""
+def guardia_reagendar_madre(nueva_fecha, nueva_fecha_fin, hijas, nueva_hora_fin=None):
+    """Reagendar la madre a una fecha POSTERIOR a la de su hija: 409 «Reagenda primero la desinstalación OT-…». Si queda el
+    MISMO día, compara las horas (revisión 2026-10-20): la instalación no puede terminar después de que empieza la
+    desinstalación (crítica 16 pedía horas, no solo fechas)."""
     hv = hijas_vigentes(hijas)
     if not hv:
         return None
     h = hv[0]
+    num = h.get("numero_ot") or "OT #%s" % h.get("id")
     fh = parse_fecha(h.get("fecha_programada"))
     f_nueva = parse_fecha(nueva_fecha_fin) or parse_fecha(nueva_fecha)
     if fh and f_nueva and f_nueva > fh:
         return {"codigo": "REAGENDAR_DESINSTALACION_PRIMERO",
-                "mensaje": "Reagenda primero la desinstalación %s: quedaría antes que la instalación." % (
-                    h.get("numero_ot") or "OT #%s" % h.get("id")),
+                "mensaje": "Reagenda primero la desinstalación %s: quedaría antes que la instalación." % num,
                 "hija_id": h.get("id")}
+    if fh and f_nueva and f_nueva == fh:
+        hi_h, hf_m = hora_min(h.get("hora_inicio")), hora_min(nueva_hora_fin)
+        if hi_h is not None and hf_m is not None and hf_m > hi_h:
+            return {"codigo": "REAGENDAR_DESINSTALACION_PRIMERO",
+                    "mensaje": "Reagenda primero la desinstalación %s: el mismo día empieza a las %s y la instalación "
+                               "terminaría a las %s." % (num, min_txt(hi_h), min_txt(hf_m)),
+                    "hija_id": h.get("id")}
     return None
 
 
@@ -477,7 +528,7 @@ def estado_desinstalacion(madre, hijas, hoy=None):
         base = {"fecha": fh.isoformat() if fh else None, "hija_id": h.get("id"), "hija_numero": num}
         if str(h.get("estado") or "").lower() == ESTADO_CERRADA:
             return dict(base, codigo="hecha", nivel="verde", texto="Desinstalación %s hecha" % num)
-        if fh and hoy and fh < hoy and sin_empezar(h.get("estado")):
+        if fh and hoy and fh < hoy and sin_empezar(h.get("estado"), h):
             return dict(base, codigo="vencida", nivel="rojo",
                         texto="Desinstalación %s vencida (era el %s)" % (num, fmt_fecha(fh)))
         return dict(base, codigo="agendada", nivel="azul",
@@ -558,6 +609,13 @@ def estado_evento(ev, ots=None, hoy=None):
         if av["pendientes_total"] > 0 or av["desinst_pendientes"] > 0:
             return "por_cerrar", "Por cerrar"
         return "terminado", "Terminado"
+    if fi and not ff and hoy > fi:
+        # Un evento con solo fecha de inicio (revisión 2026-10-20) no se queda «En curso» para siempre: cuando todo su
+        # trabajo está cerrado pasa a «Terminado»; mientras quede algo, sigue en curso. No se inventa una fecha de término.
+        av = avance_evento(ots or [], hoy)
+        if av["total"] and av["pendientes_total"] == 0 and av["desinst_pendientes"] == 0:
+            return "terminado", "Terminado"
+        return "en_curso", "En curso (sin fecha de término)"
     return "en_curso", "En curso"
 
 
@@ -592,7 +650,9 @@ def avance_evento(ots, hoy=None):
     """Avance de un evento con sus OT (filas con tipo, estado, ot_relacion, ot_madre_id, desinstalacion_prevista,
     fecha_programada, id, numero_ot). Sin montos (REGLA #26). Devuelve:
       {por_fase: {fase: {total, cerradas, por_cerrar, en_curso, pendientes}}, total, cerradas, pct,
-       pendientes_total, desinst_pendientes, desinst_vencidas, proxima_fecha, pares: [...]}
+       pendientes_total, desinst_pendientes (sin agendar + agendadas + vencidas: para el estado y el semáforo),
+       desinst_sin_agendar (solo instalaciones SIN hija vigente: lo que dice «sin agendar»), desinst_vencidas,
+       proxima_fecha, pares: [...]}
     Las canceladas/anuladas no cuentan. `pares` une cada instalación con su desinstalación (hija vigente) o con la
     prevista sin agendar."""
     hoy = parse_fecha(hoy)
@@ -611,7 +671,7 @@ def avance_evento(ots, hoy=None):
     for o in vivos:
         if o.get("ot_madre_id"):
             por_madre.setdefault(int(o["ot_madre_id"]), []).append(o)
-    pares, desinst_pend, desinst_venc = [], 0, 0
+    pares, desinst_pend, desinst_venc, desinst_sin_ag = [], 0, 0, 0
     for o in vivos:
         if fase_de_ot(o) != "instalacion":
             continue
@@ -625,6 +685,10 @@ def avance_evento(ots, hoy=None):
             desinst_pend += 1
         if est["codigo"] == "vencida":
             desinst_venc += 1
+        # «Sin agendar» = instalación con desinstalación prevista y SIN hija vigente. Antes la pantalla mostraba
+        # `desinst_pendientes` con ese rótulo y una desinstalación ya agendada aparecía como «sin agendar».
+        if est["codigo"] in ("sin_agendar", "vencida") and not hijas:
+            desinst_sin_ag += 1
     pend_total = sum(1 for o in vivos if bucket_estado(o.get("estado")) != "cerrada")
     prox = None
     for o in vivos:
@@ -636,6 +700,7 @@ def avance_evento(ots, hoy=None):
     return {"por_fase": por_fase, "total": total, "cerradas": cerradas,
             "pct": int(round(cerradas * 100.0 / total)) if total else 0,
             "pendientes_total": pend_total, "desinst_pendientes": desinst_pend, "desinst_vencidas": desinst_venc,
+            "desinst_sin_agendar": desinst_sin_ag,
             "proxima_fecha": prox.isoformat() if prox else None, "pares": pares}
 
 
@@ -716,7 +781,8 @@ def aviso_barrido(madre, hijas, evento=None, hoy=None, feriados=None, dias_antes
       · 'por_agendar' — faltan ≤ N días hábiles para la desinstalación prevista y todavía no hay hija;
       · 'vencida' — la fecha prevista ya pasó sin hija;
       · 'evento_terminado' — el evento terminó y esta instalación sigue sin desinstalar;
-      · 'hija_sin_madre_ejecutada' — llegó el día de la hija y la instalación (madre) no se ejecutó.
+      · 'hija_sin_madre_ejecutada' — llegó el día de la hija y la instalación (madre) no se ejecutó;
+      · 'desinst_vencida' — la hija pasó su fecha sin hacerse y la instalación sí se ejecutó.
     Una instalación cancelada/anulada, o con la desinstalación ya hecha/agendada con tiempo, no avisa."""
     m = madre or {}
     hoy = parse_fecha(hoy)
@@ -727,12 +793,17 @@ def aviso_barrido(madre, hijas, evento=None, hoy=None, feriados=None, dias_antes
     if hv:
         h = hv[0]
         fh = parse_fecha(h.get("fecha_programada"))
-        if (fh and fh <= hoy and sin_empezar(h.get("estado"))
+        if (fh and fh <= hoy and sin_empezar(h.get("estado"), h)
                 and bucket_estado(m.get("estado")) in ("pendiente", "en_curso")):
             return {"codigo": "hija_sin_madre_ejecutada", "nivel": "ambar",
                     "titulo": "La desinstalación toca y la instalación no se ejecutó",
                     "texto": "La desinstalación %s es para hoy o antes, pero la instalación %s sigue sin hacerse." % (
                         h.get("numero_ot") or "OT #%s" % h.get("id"), num_m)}
+        # Revisión 2026-10-20: la desinstalación pasó su fecha sin hacerse y la instalación SÍ se ejecutó: antes no avisaba.
+        if fh and fh < hoy and sin_empezar(h.get("estado"), h):
+            return {"codigo": "desinst_vencida", "nivel": "rojo", "titulo": "La desinstalación quedó vencida",
+                    "texto": "La desinstalación %s era para el %s y todavía no se hizo (la instalación %s ya se ejecutó)." % (
+                        h.get("numero_ot") or "OT #%s" % h.get("id"), fmt_fecha(fh), num_m)}
         return None
     prevista = parse_fecha(m.get("desinstalacion_prevista"))
     if prevista is None:

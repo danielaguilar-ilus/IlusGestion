@@ -88,7 +88,9 @@
       }
       var avisos = '';
       if (e.desinst_vencidas) avisos += '<span class="ev-chip rojo"><i class="bi bi-exclamation-triangle-fill"></i>' + e.desinst_vencidas + ' desinstalación' + (e.desinst_vencidas === 1 ? '' : 'es') + ' vencida' + (e.desinst_vencidas === 1 ? '' : 's') + '</span> ';
-      if (e.desinst_pendientes) avisos += '<span class="ev-chip ambar"><i class="bi bi-hourglass-split"></i>' + e.desinst_pendientes + ' desinstalación' + (e.desinst_pendientes === 1 ? '' : 'es') + ' sin agendar</span>';
+      /* 2026-10-20 (revisión): «sin agendar» usa el contador propio (instalaciones SIN hija vigente); `desinst_pendientes` incluye
+         las ya agendadas y solo sirve para el estado y el semáforo. */
+      if (e.desinst_sin_agendar) avisos += '<span class="ev-chip ambar"><i class="bi bi-hourglass-split"></i>' + e.desinst_sin_agendar + ' desinstalación' + (e.desinst_sin_agendar === 1 ? '' : 'es') + ' sin agendar</span>';
       if (avisos) h += '<div class="ev-sub" style="display:flex;flex-wrap:wrap;gap:6px">' + avisos + '</div>';
       h += '<div class="ev-acc"><a class="ev-btn pri" href="' + esc(e.url) + '"><i class="bi bi-eye"></i>Abrir</a>';
       if (enGestion) {
@@ -124,6 +126,14 @@
       if (f) f.addEventListener('submit', function (ev) { ev.preventDefault(); st.q = (document.getElementById('evQ').value || '').trim(); st.page = 1; cargar(); });
       var l = document.getElementById('evLimpiar');
       if (l) l.addEventListener('click', function () { st.q = ''; st.page = 1; cargar(); });
+      /* 2026-10-20 (REGLA #4.3, punto 4): si se borra el texto (con la «x» del buscador o a mano) la lista se recarga: antes se
+         quedaba con el resultado de la búsqueda anterior hasta tocar «Buscar». */
+      var inq = document.getElementById('evQ');
+      if (inq) {
+        var alVaciar = function () { if ((inq.value || '').trim() === '' && st.q !== '') { st.q = ''; st.page = 1; cargar(); } };
+        inq.addEventListener('input', alVaciar);
+        inq.addEventListener('search', alVaciar);
+      }
       Array.prototype.forEach.call(raiz.querySelectorAll('[data-pp]'), function (b) {
         b.addEventListener('click', function () { st.porPag = parseInt(b.getAttribute('data-pp'), 10); st.page = 1; cargar(); });
       });
@@ -220,7 +230,7 @@
         '<a class="ev-btn" href="/ot/?evento=' + e.id + '"><i class="bi bi-table"></i>Ver en la tabla de OT</a></div></div>';
 
       if (av.desinst_vencidas) h += '<div class="ev-aviso rojo"><i class="bi bi-exclamation-triangle-fill"></i><span><b>' + av.desinst_vencidas + ' desinstalación' + (av.desinst_vencidas === 1 ? '' : 'es') + ' vencida' + (av.desinst_vencidas === 1 ? '' : 's') + '</b>: la fecha ya pasó y la OT no se ha hecho.</span></div>';
-      if (av.desinst_pendientes) h += '<div class="ev-aviso"><i class="bi bi-hourglass-split"></i><span><b>' + av.desinst_pendientes + ' instalación' + (av.desinst_pendientes === 1 ? '' : 'es') + '</b> con la desinstalación sin agendar. Ábrela y usa «Programar desinstalación».</span></div>';
+      if (av.desinst_sin_agendar) h += '<div class="ev-aviso"><i class="bi bi-hourglass-split"></i><span><b>' + av.desinst_sin_agendar + ' instalación' + (av.desinst_sin_agendar === 1 ? '' : 'es') + '</b> con la desinstalación sin agendar. Ábrela y usa «Programar desinstalación».</span></div>';
 
       h += '<div class="ev-kpis"><div class="ev-kpi"><div class="n">' + (av.pct || 0) + '<small>%</small></div><div class="l">Avance del evento</div>' +
         '<div class="ev-barrita"><i style="width:' + (av.pct || 0) + '%"></i></div><div class="s">' + (av.cerradas || 0) + ' de ' + (av.total || 0) + ' cerradas' + (av.proxima_fecha ? ' · próxima ' + esc(bonita(av.proxima_fecha)) : '') + '</div></div>' +
@@ -301,6 +311,13 @@
         var sec = document.getElementById('evAsoc');
         var f = document.getElementById('evAsocForm');
         if (f) f.addEventListener('submit', function (e) { e.preventDefault(); s.q = (document.getElementById('evAsocQ').value || '').trim(); s.page = 1; cargarCand(); });
+        /* 2026-10-20 (REGLA #4.3, punto 4): al borrar el texto se vuelven a pedir las sugeridas. */
+        var inAsoc = document.getElementById('evAsocQ');
+        if (inAsoc) {
+          var alVaciarAsoc = function () { if ((inAsoc.value || '').trim() === '' && s.q !== '') { s.q = ''; s.page = 1; cargarCand(); } };
+          inAsoc.addEventListener('input', alVaciarAsoc);
+          inAsoc.addEventListener('search', alVaciarAsoc);
+        }
         Array.prototype.forEach.call(sec.querySelectorAll('input[type=checkbox][data-id]'), function (c) {
           c.addEventListener('change', function () { s.sel[c.getAttribute('data-id')] = c.checked; pintarLista(); });
         });
