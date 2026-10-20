@@ -22,6 +22,7 @@ import tempfile
 import types
 import unittest
 
+import ot_eventos
 import ot_saldo_servicio
 from tests.test_incidencias_bajas import _codigo_y_arbol
 
@@ -29,7 +30,7 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 FUNCS = ("ot2_api_finanzas", "_ot2_err", "_ot_fin_rep_de", "_ot_fin_base", "_ot_fin_rep_liviano",
          "_ot_finanzas", "_ot_cobertura", "_ot_es_interna", "_ot_fin_num", "_ot_fin_clp")
-CONSTS = ("_OT_FIN_SQL_CONTRATO_REAL", "_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_ORIGENES_COBRO_RESPALDO", "_OT_FIN_FUENTE_COBRO", "_OT_FIN_ZZ_NO_SERVICIO",
+CONSTS = ("_OT_FIN_SQL_CONTRATO_REAL", "_OT_FIN_SQL_MADRE_VALIDA", "_OT_FIN_SQL_MADRE_COLS", "_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_ORIGENES_COBRO_RESPALDO", "_OT_FIN_FUENTE_COBRO", "_OT_FIN_ZZ_NO_SERVICIO",
           "_OT_FIN_COBERTURA_TXT", "_OT_FIN_UMBRAL_BAJO", "_OT_FIN_BASE_CAMPOS", "_OT_FIN_BASE_MONTOS",
           "_OT_FIN_VALORIZADO_FUENTES", "_OT2_LINEA_ZZ", "_OT2_VALOR_ORIGENES", "_OT2_VALOR_ORIGENES_CON_MOTIVO")
 
@@ -96,6 +97,8 @@ def _llamar(cuerpo, fila=None):
         "_ot_cobro_cero_desde_peticion": lambda vid, d, origen="": (None, None),
         # 2026-10-08 (saldo por línea de servicio): estas pruebas no tienen documentos; el candado se prueba en
         # tests/test_ot_saldo_servicio.py.
+        # 2026-10-19 (desinstalación cubierta): la guardia de la hija lee la fila básica y sus documentos de cobro.
+        "_evt": ot_eventos, "_ot_fila_basica": lambda vid: dict(fila), "_ot_puerta_docs_de": lambda vid: [],
         "_saldo": ot_saldo_servicio, "_ot_saldo_docs_de_ot": lambda vid: [], "_ot_saldo_chequear": lambda *a, **k: None,
         "_ot_saldo_autorizado_hasta": lambda *a, **k: {}, "_ot_saldo_error_json": lambda e, vid=None: (dict(e), 409),
         "_ot_saldo_reanotar_aportes": lambda vid, docs=None: None,
@@ -376,6 +379,8 @@ def _llamar_vivo(cuerpo, fila=None, saldo_err=None):
         "_ot_cobro_cero_desde_peticion": lambda vid, d, origen="": (None, None),
         # 2026-10-08 (saldo por línea de servicio): sin documentos no hay saldo que mirar; con `saldo_err` el candado
         # rechaza (tests/test_ot_saldo_servicio.py).
+        # 2026-10-19 (desinstalación cubierta): la guardia de la hija lee la fila básica y sus documentos de cobro.
+        "_evt": ot_eventos, "_ot_fila_basica": lambda vid: dict(fila), "_ot_puerta_docs_de": lambda vid: [],
         "_saldo": ot_saldo_servicio,
         "_ot_saldo_docs_de_ot": lambda vid: ([("FCV", "11439")] if saldo_err else []),
         "_ot_saldo_chequear": lambda *a, **k: (dict(saldo_err) if saldo_err else None),

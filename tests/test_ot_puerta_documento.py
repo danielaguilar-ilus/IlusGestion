@@ -36,7 +36,9 @@ def _arbol():
 def _cargar():
     """Namespace con la puerta y stubs de BD: `docs_bd[vid]`, `auts_bd[vid]`, `contrato_real_bd[vid|cid]`."""
     _, arbol = _arbol()
-    amb = {"print": lambda *a, **k: None, "re": re}
+    import ot_saldo_servicio as _sv
+    # 2026-10-19: _OT_DOCS_NOTA_VENTA se arma con _saldo.PREFIJOS_NOTA_VENTA (una sola lista de prefijos para todo el saldo).
+    amb = {"print": lambda *a, **k: None, "re": re, "_saldo": _sv}
     for nodo in arbol.body:
         if isinstance(nodo, ast.Assign) and len(nodo.targets) == 1 and isinstance(nodo.targets[0], ast.Name) \
                 and nodo.targets[0].id in CONSTS:
@@ -51,6 +53,9 @@ def _cargar():
     amb["_ot_puerta_docs_de"] = lambda vid: [dict({"origen": "erp"}, **x) for x in amb["docs_bd"].get(vid, [])]
     amb["_ot_puerta_autorizaciones_de"] = lambda vid: list(amb["auts_bd"].get(vid, []))
     amb["_ot_fin_contrato_real_de"] = lambda vids: {int(v): bool(amb["contrato_real_bd"].get(int(v))) for v in vids}
+    # 2026-10-19: la vía de la desinstalación cubierta (madre/hija) tiene sus propias pruebas en test_ot_eventos_desinstalacion.py;
+    # aquí no hay desinstalaciones: la puerta sigue su camino de siempre.
+    amb["_ot_puerta_via_cubierta"] = lambda v, momento, madre=None: None
     amb["_ot_puerta_contrato_real"] = lambda cid, ctid=None: bool(amb["contrato_real_bd"].get(cid) or amb["contrato_real_bd"].get(ctid))
     amb["_ot_resolver_doc_erp"] = lambda t, n, r=None: (None, None, False, None)
     amb["mysql_fetchone"] = lambda *a, **k: None

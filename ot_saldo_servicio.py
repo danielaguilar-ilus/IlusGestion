@@ -18,7 +18,13 @@ Reglas del modelo:
 
 CATEGORIAS = ("servicio", "despacho")
 ESTADOS_OT_FUERA = ("cancelada", "anulada")
-NOTAS_VENTA = ("NVV", "NVI", "VD", "WEB")
+# 🔤 Prefijos con que Random guarda las notas de venta: TIDO=NVV y el NUDO lleva el canal incrustado ('VD00010667' = 10
+# caracteres). UNA sola lista para todo el saldo (2026-10-19). «BD» se agregó de forma TOLERANTE para la NV 10961 de
+# Sponge Solution: NO se confirmó contra Random (sin acceso desde esa máquina). Si el NUDO real no lleva prefijo, no
+# cambia nada; si lo lleva, la clave canónica y las variantes de búsqueda ya lo entienden.
+# tests/test_ot_eventos_desinstalacion.py falla si aparece una tupla ('VD', 'WEB') suelta en los módulos del saldo.
+PREFIJOS_NOTA_VENTA = ("VD", "WEB", "BD")
+NOTAS_VENTA = ("NVV", "NVI") + PREFIJOS_NOTA_VENTA
 DOCS_COBRO = ("FCV", "FCE", "BLV", "BLE")
 ARGUMENTO_MIN = 30   # igual que _OT_AUT_ARGUMENTO_MIN: lo que lee Daniel para autorizar
 CATEGORIA_TXT = {"servicio": "instalación o servicio", "despacho": "despacho"}
@@ -42,10 +48,12 @@ def clave_doc(tido, nudo):
     'VD'+'10667' son la misma: ('VD', '10667'). Vacía → ('', '')."""
     t = (str(tido or "")).strip().upper()
     n = (str(nudo or "")).strip().upper()
-    if t == "NVV" and n.startswith("VD"):
-        t, n = "VD", n[2:]
-    elif t == "NVV" and n.startswith("WEB"):
-        t, n = "WEB", n[3:]
+    if t == "NVV":
+        for pref in PREFIJOS_NOTA_VENTA:
+            # El prefijo solo cuenta si lo que sigue son dígitos (un NUDO como 'BDX1' no es de esa serie).
+            if n.startswith(pref) and n[len(pref):].isdigit():
+                t, n = pref, n[len(pref):]
+                break
     if not n:
         return (t, "")
     return (t, n.lstrip("0") or "0")
@@ -64,7 +72,7 @@ def variantes_sql(clave):
             out.append((a, b))
     _add(t, n)
     _add(t, n.zfill(10))
-    if t in ("VD", "WEB"):
+    if t in PREFIJOS_NOTA_VENTA:
         _add("NVV", t + n.zfill(8))
         _add("NVV", t + n.zfill(10 - len(t)))
         _add("NVV", t + n)
@@ -583,6 +591,49 @@ def equilibrio_pago(pago, cobre, reduccion=0, autorizada=0, exento=False):
             "ok": r["ok"], "falta_autorizar": r["falta_autorizar"]}
 
 
+def equilibrio_familia(miembros, evaluado_vid, pago_evaluado, autorizada=0, exento=False):
+    """🧩 2026-10-19 (REGLAS #28 y #29 con la desinstalación): la instalación (madre) y su desinstalación (hija) son UNA
+    cuenta. El cobro de la madre (nota de venta) paga el trabajo de las dos; la hija cubierta no cobra nada aparte, así
+    que evaluarla sola siempre saldría «pérdida». Se evalúa la FAMILIA:
+      · cobro de la familia = cobro efectivo de cada miembro (cobre − reducción por saldo de su factura): el de la madre
+        más el cobro propio de las hijas (si alguna cobra su propia línea);
+      · pago de la familia = lo que se evalúa pagar (`pago_evaluado`, del miembro `evaluado_vid`) más lo que ya tienen
+        comprometido los demás miembros (`pago_comprometido`: el monto en su lote, o el costo declarado si no hay lote);
+      · autorización = la mayor de pérdida aprobada en cualquier miembro (`autorizada`, la calcula quien llama).
+    El ORDEN en que se paga no cambia el resultado: los totales de la familia son los mismos.
+    `miembros`: [{vid, cobre, reduccion, pago_comprometido}] (todos los vigentes, el evaluado incluido; su
+    pago_comprometido se ignora y manda `pago_evaluado`). Devuelve el mismo dict que equilibrio_pago + `familia`."""
+    cobre = red = 0
+    otros = 0
+    for m in (miembros or []):
+        cobre += _entero(m.get("cobre"))
+        red += _entero(m.get("reduccion"))
+        try:
+            es_evaluado = int(m.get("vid")) == int(evaluado_vid)
+        except (TypeError, ValueError):
+            es_evaluado = False
+        if not es_evaluado:
+            otros += _entero(m.get("pago_comprometido"))
+    pago = _entero(pago_evaluado) + otros
+    # El cobro efectivo de la familia es la suma de los cobros efectivos de cada miembro (cada uno con su reducción).
+    efectivo = sum(max(0, _entero(m.get("cobre")) - _entero(m.get("reduccion"))) for m in (miembros or []))
+    if exento:
+        return {"pago": pago, "cobre": cobre, "cobro_efectivo": efectivo, "reduccion": red, "exceso": 0, "ok": True,
+                "falta_autorizar": 0, "familia": True, "pago_otros": otros}
+    r = perdida_cierre(efectivo, pago, autorizada)
+    return {"pago": pago, "cobre": cobre, "cobro_efectivo": efectivo, "reduccion": red, "exceso": r["perdida"],
+            "ok": r["ok"], "falta_autorizar": r["falta_autorizar"], "familia": True, "pago_otros": otros}
+
+
+def perdida_familia(cobre_madre, costos, autorizada=0):
+    """Pérdida AL CERRAR de la instalación con su desinstalación: lo que cobra la madre menos el técnico y el despacho de
+    la madre Y de las hijas vigentes (una hija creada después de cerrar la madre también cuenta: crítica 10).
+    `costos`: [{tecnico, despacho}] de todos los miembros. Mismo criterio que perdida_de_cuenta (los repuestos aparte)."""
+    tecnico = sum(_entero(c.get("tecnico")) for c in (costos or []))
+    despacho = sum(_entero(c.get("despacho")) for c in (costos or []))
+    return perdida_de_cuenta(cobre_madre, tecnico, despacho, autorizada)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
 #  🚦 AVISO AL ELEGIR UN DOCUMENTO (Daniel, 12-oct-2026)
 #  «La OT le debe avisar al usuario, ya que si no sabe puede duplicar el servicio con un documento con el saldo ya
@@ -792,6 +843,10 @@ CLASIF_TXT = {
     "regalia": "$0 · regalía",
     "arriendo_leasing": "$0 · arriendo o leasing",
     "contrato": "Mantención de contrato · $0",
+    # 🧩 2026-10-19 (Daniel: la desinstalación es una OT propia UNIDA a la instalación): no consume saldo aparte ni
+    # pide el $0 de Daniel porque la cubre la instalación (nota de venta en la madre). Se DEDUCE de ot_relacion /
+    # ot_madre_id, nunca de valor_origen. El texto lleva el N° de la madre en el detalle (madre_numero).
+    "cubierta": "Desinstalación cubierta por la instalación",
     "sin_documento": "Sin documento · autorizada",
     "documento_antiguo": "Documento de más de 3 meses · autorizada",
     "productos_sin_saldo": "Productos sin saldo en Random · autorizada",
@@ -804,21 +859,24 @@ CLASIF_TXT = {
 }
 CLASIF_NIVEL = {
     "interna": "gris", "garantia": "azul", "regalia": "azul", "arriendo_leasing": "azul", "contrato": "azul",
+    "cubierta": "azul",
     "sin_documento": "rojo", "documento_antiguo": "rojo", "productos_sin_saldo": "rojo", "saldo_excedido": "rojo",
     "nota_venta": "ambar", "cotizacion": "ambar", "otro_documento": "ambar", "ajuste_manual": "ambar", "factura": "verde",
 }
 # El orden manda: la primera que aplica es la clasificación principal (lo más delicado primero).
-CLASIF_ORDEN = ("interna", "garantia", "regalia", "arriendo_leasing", "contrato", "sin_documento", "documento_antiguo",
+CLASIF_ORDEN = ("interna", "garantia", "regalia", "arriendo_leasing", "contrato", "cubierta", "sin_documento",
+                "documento_antiguo",
                 "productos_sin_saldo", "saldo_excedido", "nota_venta", "cotizacion", "otro_documento", "ajuste_manual",
                 "factura")
 COTIZACIONES = ("COV", "COT")
 
 
 def clasificar_ot(es_interna=False, cero_motivo=None, tidos=(), sin_documento=False, observaciones=(),
-                  saldo_excedido=False, ajuste_manual=False, contrato=False):
+                  saldo_excedido=False, ajuste_manual=False, contrato=False, cubierta=False):
     """{codigo, codigos, texto, nivel}: cómo se está trabajando la OT. `tidos`: tipos de los documentos de Random
     asociados; `observaciones`: las de observar_documento (autorizadas); `saldo_excedido`: se cobró sobre el saldo
-    con autorización; `ajuste_manual`: el cobro se editó a mano con argumento."""
+    con autorización; `ajuste_manual`: el cobro se editó a mano con argumento; `cubierta`: la OT es la desinstalación
+    de una instalación y la cubre ella (sin cobro propio)."""
     cods = set()
     if es_interna:
         cods.add("interna")
@@ -826,8 +884,10 @@ def clasificar_ot(es_interna=False, cero_motivo=None, tidos=(), sin_documento=Fa
         cods.add(cero_motivo)
     if contrato:
         cods.add("contrato")   # preventiva de un contrato real: la paga el contrato (misma regla que _ot_cobertura)
+    if cubierta:
+        cods.add("cubierta")   # 2026-10-19: desinstalación cubierta por su instalación (madre)
     ts = [str(t or "").strip().upper() for t in (tidos or []) if str(t or "").strip()]
-    if sin_documento and not ts and not cero_motivo and not es_interna and not contrato:
+    if sin_documento and not ts and not cero_motivo and not es_interna and not contrato and not cubierta:
         cods.add("sin_documento")
     for o in (observaciones or []):
         c = o.get("codigo") if isinstance(o, dict) else o

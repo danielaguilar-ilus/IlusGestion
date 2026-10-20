@@ -9,7 +9,8 @@
 
    Uso: ilusOtFinanzas(v, rep) con v = {modalidad_cobro, cubierto_por, tipo, cliente_id, contrato_real, costo,
    zz_monto, zz_codigo, zz_envio_monto, valor_origen, costo_proveedor, costo_despacho, proveedor_tipo,
-   valorizado_clp, valorizado_fuente, cobro_cero_motivo} y rep = {costo, n_sin_costo, por_origen} (repuestos instalados) o null. */
+   valorizado_clp, valorizado_fuente, cobro_cero_motivo, ot_madre_id, ot_relacion, madre_valida} y
+   rep = {costo, n_sin_costo, por_origen} (repuestos instalados) o null. */
 (function(global){
   'use strict';
   var ORIGENES_NO_COBRO = ['estimado', 'interno'];
@@ -26,7 +27,9 @@
     regalia: 'Regalía: no se le cobra',
     arriendo_leasing: 'Arriendo o leasing: incluido en el arriendo',
     interno: 'Trabajo interno: no se le cobra',
-    contrato: 'Mantención de contrato: se paga con el contrato'
+    contrato: 'Mantención de contrato: se paga con el contrato',
+    /* 2026-10-19: desinstalación cubierta por la nota de venta de su instalación (espejo de _ot_cobertura) */
+    cubierta: 'Desinstalación cubierta por la instalación: se cobra en la instalación'
   };
   var UMBRAL_BAJO = 10;
 
@@ -56,6 +59,10 @@
       if (cero === 'arriendo_leasing') return 'arriendo_leasing';
       return 'sin_costo';
     }
+    /* 2026-10-19: DESINSTALACIÓN CUBIERTA. Se deduce de la relación madre/hija (nunca de valor_origen) y de la bandera
+       madre_valida que calcula el servidor; si la hija cobra una línea propia (zz > 0) va por el camino normal. */
+    if (tipo === 'desinstalacion' && low(v.ot_relacion) === 'desinstalacion' && v.ot_madre_id && v.madre_valida &&
+        !((num(v.zz_monto) || 0) > 0) && !((num(v.zz_envio_monto) || 0) > 0)) return 'cubierta';
     if (v.contrato_real && tipo === 'preventiva'){
       var zz = num(v.zz_monto) || 0, origen = low(v.valor_origen);
       if (!(zz > 0 && (origen === 'zz' || origen === 'doc_total'))) return 'contrato';

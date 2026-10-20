@@ -7,6 +7,7 @@ Correr con:  py -m unittest tests.test_ot_eliminar_en_factura
 import ast
 import unittest
 
+import ot_eventos
 from tests.test_incidencias_bajas import _codigo_y_arbol
 
 FACTURA = {"id": 8, "numero_documento": None, "proveedor_nombre": "Daniel Aguilar Prueba", "estado_pago": "pagada"}
@@ -59,6 +60,8 @@ def _nucleo(fac=FACTURA):
                                                "fecha_programada": None, "levantamiento_id": None},
         "_mant_visita_factura_proveedor": lambda vid: fac,
         "_ot_levantamiento_de": lambda vid: None,
+        # 2026-10-19: una instalación con desinstalación vigente no se borra; esta OT no tiene desinstalaciones.
+        "_evt": ot_eventos, "_ot_hijas_de": lambda vid, cur=None, estricto=False: [],
         "get_mysql": lambda: conn, "current_username": lambda: "aaron",
         "_mant_log": lambda *a, **k: logs.append(a),
     })

@@ -74,6 +74,9 @@ def _amb_recorrido():
     amb["_ot_aut_json"] = lambda a: a
     amb["_es_rol_tecnico"] = lambda: False
     amb["_ot_panorama_docs"] = lambda vid, v: []
+    # 2026-10-19 (desinstalación): el recorrido trae la cuenta de la familia; estas OT no tienen desinstalaciones.
+    amb["_ot_familia_resumen"] = lambda vid: None
+    amb["_fac_familia_de"] = lambda vid: None
     amb["_ot_puede_finanzas_cierre"] = lambda *a, **k: True
     amb["_ot_puede_regularizar"] = lambda *a, **k: True
     amb["g"] = types.SimpleNamespace(user={})

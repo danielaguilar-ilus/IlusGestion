@@ -290,6 +290,8 @@
     var m = { ligar_factura: 'ligarDoc', pedir_autorizacion: 'pedirCierre', pedir_aut_perdida: 'pedirPerdida', declarar_cobro: 'declararCobro',
       declarar_centro: 'enfocarCentro', declarar_costo_proveedor: 'corregirProv', resolver_saldo: 'resolverSaldo' }[a.tipo];
     if (a.tipo === 'esperar_autorizacion') return '<a class="fm-btn fm-btn-pri" href="' + esc(a.url || '/ot/autorizaciones') + '">Ver la solicitud</a>';
+    /* 2026-10-19: la desinstalación cubierta cierra cuando su instalación ya tiene la factura o boleta: el botón lleva a ESA OT. */
+    if (a.tipo === 'abrir_ot_madre') return a.url ? '<a class="fm-btn fm-btn-pri" href="' + esc(a.url) + '">Abrir la instalación' + (a.madre_numero ? ' ' + esc(a.madre_numero) : '') + '</a>' : '<span class="fm-help">' + esc(a.label || '') + '</span>';
     if (a.tipo === 'actualizar_anexo') return '<span class="fm-help">' + esc(a.label || '') + '</span>';
     if (!m) return a.label ? '<span class="fm-help">' + esc(a.label) + '</span>' : '';
     return boton(m, a.label || 'Resolver', 'bi-arrow-right-circle', 'fm-btn-pri');

@@ -63,6 +63,7 @@ import erp_engine
 import transporte_tarifas as _ttar  # motor de tarifas réplica EXACTA de la macro SPHS
 import usuarios_perfil as _uperf  # datos personales del usuario: fecha de nacimiento y dirección validada con Google
 import ot_saldo_servicio as _saldo  # saldo por línea de servicio de cada documento (módulo puro con pruebas)
+import ot_eventos as _evt  # eventos y OT de desinstalación (madre e hija): reglas puras con pruebas (2026-10-19)
 import fedex_labels as _fxlabels    # parser puro de etiquetas FedEx (testeable)
 _ERP = erp_engine.init_engine(
     base_url=ERP_CONFIG.get("api_url", "https://lab.random.cl/ilus"),
@@ -15912,6 +15913,9 @@ TIPOS_DOC_CUBICADOR = [
 _ERP_TIDO_NUDO_MAP = {
     "VD":  ("NVV", lambda n: "VD"  + str(n).zfill(8)),
     "WEB": ("NVV", lambda n: "WEB" + str(n).zfill(7)),
+    # 2026-10-19: «BD» TOLERANTE (NV 10961 de Sponge Solution): mismo patrón de 10 caracteres que VD. NO confirmado contra
+    # Random (sin acceso desde esa máquina); si la serie no existe, nunca se usa. Lista única: ot_saldo_servicio.PREFIJOS_NOTA_VENTA.
+    "BD":  ("NVV", lambda n: "BD"  + str(n).zfill(8)),
 }
 
 
@@ -29628,6 +29632,9 @@ def _mantenciones_cron_run_once(slot_str=""):
             "WHERE v.estado='programada' "
             "  AND v.fecha_programada BETWEEN (CURDATE() + INTERVAL 3 DAY) "
             "                            AND (CURDATE() + INTERVAL 7 DAY) "
+            # 🧩 2026-10-19 (REGLA #22 + crítica 18): la desinstalación NO le escribe al cliente hasta que Daniel responda
+            # si quiere un aviso para ella (hoy MANT_RECORDATORIOS_EMAIL_ENABLED está apagada).
+            "  AND v.ot_madre_id IS NULL "
             "  AND v.recordatorio_visita_enviado_at IS NULL"
         ) or []
         for r in rows:
@@ -39084,6 +39091,13 @@ def tr_cron_simpliroute_poll():
             res["libro_facturas"] = _fac_libro_barrido(max_s=min(40, max(5, 240 - (time.time() - _t_peticion))))
         except Exception as _e_fl:
             print(f"[cron-simpliroute] libro de facturas: {_e_fl}", flush=True)
+    # 🧩 Desinstalaciones pendientes (Daniel 2026-10-19, «que no se olvide»): aviso por la campana, una vez por día por OT.
+    # Solo informa (nunca al cliente). Mismo criterio: si falla no afecta al polling.
+    if not dry and time.time() - _t_peticion < 220:
+        try:
+            res["desinstalaciones"] = _desinst_barrido()
+        except Exception as _e_ds:
+            print(f"[cron-simpliroute] desinstalaciones: {_e_ds}", flush=True)
     return jsonify(res), (200 if res.get("ok") else 502)
 
 
@@ -54920,6 +54934,9 @@ _ACT_TEC_PERMITIDAS = frozenset({
     "repuesto_solicitado", "repuesto_solicitud_estado", "repuesto_solicitud_cantidad",
     "repuesto_solicitud_repartida", "repuesto_ot_generada", "repuesto_ot_lote_generada",
     "equipo_fuera_de_servicio", "equipo_dado_de_baja", "equipos_alta_desde_documento",
+    # 🧩 2026-10-19: eventos y OT de desinstalación. Los detalles de estas acciones NUNCA llevan montos, ni documentos,
+    # ni la palabra «cubierta» (REGLA #26): solo qué evento y qué OT se unió con cuál.
+    "evento_asignado", "evento_quitado", "desinstalacion_programada", "creada_como_desinstalacion",
 })
 # Se muestran con su etiqueta, pero sin el detalle (la ruta o el documento pueden delatar plata).
 _ACT_TEC_SIN_DETALLE = frozenset({"edicion_post_firma", "anexo_enviado", "anexo_reenviado",
@@ -71803,6 +71820,9 @@ def _prospectos_oferta_barrido(max_n=15, dry=False):
             "  FROM mant_clientes c "
             "  JOIN mant_visitas v ON v.cliente_id=c.id AND v.tipo='instalacion' "
             "                     AND v.estado IN ('cerrada','completada') "
+            # 🧩 2026-10-19 (REGLA #22, crítica 17): una instalación con desinstalación prevista o agendada (un evento, un
+            # mall) es temporal: no se le ofrece mantención al cliente hasta que Daniel decida qué hacer con esos casos.
+            "                     AND v.desinstalacion_prevista IS NULL AND v.ot_madre_id IS NULL "
             "  LEFT JOIN mant_prospecto_seguimiento s ON s.cliente_id=c.id "
             " WHERE c.tipo_cliente='instalacion' AND c.estado<>'inactivo' "
             "   AND NOT EXISTS (SELECT 1 FROM mant_contratos ct WHERE ct.cliente_id=c.id "
@@ -84596,6 +84616,9 @@ _OT_FIN_COBERTURA_TXT = {
     "arriendo_leasing": "Arriendo o leasing: incluido en el arriendo",
     "interno": "Trabajo interno: no se le cobra",
     "contrato": "Mantención de contrato: se paga con el contrato",
+    # 🧩 2026-10-19 (Daniel): la desinstalación es una OT propia UNIDA a su instalación; la cubre la nota de venta de la
+    # instalación (no consume saldo aparte). Espejo en static/ot_finanzas.js.
+    "cubierta": "Desinstalación cubierta por la instalación: se cobra en la instalación",
 }
 _OT_FIN_UMBRAL_BAJO = 10   # % -- mismo umbral que ya conoce Daniel ("Margen bajo, menos de 10 %")
 # ¿La OT es una mantención cubierta por un contrato REAL del cliente? (para el SELECT de quien use _ot_finanzas,
@@ -84615,6 +84638,40 @@ def _ot_fin_sql_contrato_real(alias="v"):
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", alias or ""):
         raise ValueError("alias inválido")
     return _OT_FIN_SQL_CONTRATO_REAL.replace("v.cliente_id", f"{alias}.cliente_id").replace("v.contrato_id", f"{alias}.contrato_id")
+
+
+# 🧩 2026-10-19 — ¿la fila es la HIJA de una instalación válida para cubrirla? (bandera `madre_valida`, calculada en SQL
+# como `contrato_real`, para evitar una consulta por fila). La madre tiene que ser: instalación, sin madre propia (no hay
+# cadenas), no cancelada ni anulada, del MISMO cliente, con desinstalación prevista, y con un DOCUMENTO DE RANDOM de verdad
+# (nota de venta, factura o boleta; origen erp, es_cobro=1, vigente y NO heredado de otra OT) -- o, como única excepción, la
+# autorización aprobada que ya incluía la desinstalación (`desinstalacion_aut_id`). Los tipos están escritos a mano a
+# propósito (esta constante vive antes que _OT_DOCS_*): tests/test_ot_eventos_desinstalacion.py los compara con ot_saldo.
+# La cubierta se DEDUCE de ot_relacion / ot_madre_id, NUNCA de valor_origen.
+_OT_FIN_SQL_MADRE_VALIDA = (
+    "(v.ot_relacion='desinstalacion' AND v.ot_madre_id IS NOT NULL AND EXISTS ("
+    " SELECT 1 FROM mant_visitas mad WHERE mad.id=v.ot_madre_id AND mad.tipo='instalacion' AND mad.ot_madre_id IS NULL"
+    "  AND mad.estado NOT IN ('cancelada','anulada') AND mad.cliente_id=v.cliente_id"
+    "  AND mad.desinstalacion_prevista IS NOT NULL"
+    "  AND (EXISTS (SELECT 1 FROM mant_visita_documentos mdd WHERE mdd.visita_id=mad.id AND mdd.origen='erp'"
+    "       AND mdd.es_cobro=1 AND mdd.reemplazado_por_id IS NULL AND mdd.heredado_de_visita_id IS NULL"
+    "       AND UPPER(COALESCE(mdd.erp_tido,'')) IN ('FCV','FCE','BLV','BLE','NVV','NVI','VD','WEB','BD'))"
+    "   OR EXISTS (SELECT 1 FROM mant_ot_autorizaciones mau WHERE mau.id=mad.desinstalacion_aut_id"
+    "       AND mau.estado='aprobada'))))")
+
+
+# Las tres columnas que necesita _ot_cobertura para reconocer una desinstalación cubierta, para pegar a continuación de
+# `... AS contrato_real` en un SELECT donde mant_visitas es `v` (en un SELECT v.* no hace falta: solo la bandera).
+_OT_FIN_SQL_MADRE_COLS = ("v.ot_madre_id, v.ot_relacion, " + _OT_FIN_SQL_MADRE_VALIDA + " AS madre_valida")
+
+
+def _ot_fin_sql_madre_valida(alias="v"):
+    """_OT_FIN_SQL_MADRE_VALIDA para un SELECT donde mant_visitas tiene otro alias (alias fijo de código)."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", alias or ""):
+        raise ValueError("alias inválido")
+    if alias == "v":
+        return _OT_FIN_SQL_MADRE_VALIDA
+    return (_OT_FIN_SQL_MADRE_VALIDA.replace("v.ot_relacion", f"{alias}.ot_relacion")
+            .replace("v.ot_madre_id", f"{alias}.ot_madre_id").replace("v.cliente_id", f"{alias}.cliente_id"))
 
 
 def _ot_cobertura(v):
@@ -84639,6 +84696,18 @@ def _ot_cobertura(v):
         if cero == "arriendo_leasing":
             return "arriendo_leasing"
         return "sin_costo"
+    # 🧩 2026-10-19 DESINSTALACIÓN CUBIERTA (Daniel: la desinstalación es una OT propia UNIDA a su instalación y se cubre
+    # con la nota de venta de la instalación: no consume saldo aparte ni pide el $0 de Daniel). Se DEDUCE de la relación
+    # madre/hija -- jamás de valor_origen (crítica adversarial, punto 1: esa columna viaja desde el navegador). Exige que
+    # la fila traiga `madre_valida` (bandera calculada en SQL por _ot_fin_cols_sql / _ot_fin_banderas_de: la madre es una
+    # instalación vigente del mismo cliente, con desinstalación prevista y un documento real de Random); sin esa bandera
+    # NO es cubierta (falla cerrado: la OT pide su documento como cualquier otra). Si la hija cobra una línea propia de
+    # desinstalación (zz > 0) va por el camino normal ('cobra'). Espejo en static/ot_finanzas.js.
+    if (tipo == "desinstalacion" and (v.get("ot_relacion") or "").strip().lower() == "desinstalacion"
+            and v.get("ot_madre_id") and v.get("madre_valida")
+            and not (_ot_fin_num(v.get("zz_monto")) or 0) > 0
+            and not (_ot_fin_num(v.get("zz_envio_monto")) or 0) > 0):
+        return "cubierta"
     if v.get("contrato_real") and tipo == "preventiva":
         zz = _ot_fin_num(v.get("zz_monto")) or 0
         origen = (v.get("valor_origen") or "").strip().lower()
@@ -84826,7 +84895,10 @@ _OT_FIN_BASE_CAMPOS = ("modalidad_cobro", "cubierto_por", "tipo", "cliente_id", 
                        "zz_monto", "zz_codigo", "zz_envio_monto", "valor_origen", "costo_proveedor",
                        "costo_despacho", "proveedor_tipo", "valorizado_clp", "valorizado_fuente",
                        "cobro_cero_motivo",   # 2026-10-07: regalía / arriendo-leasing
-                       "zz_motivo_manual")    # 2026-10-08: respaldo de un cobro 'manual'/'supuesto' sin línea
+                       "zz_motivo_manual",    # 2026-10-08: respaldo de un cobro 'manual'/'supuesto' sin línea
+                       # 🧩 2026-10-19: desinstalación cubierta (ver _ot_cobertura). Son la relación madre/hija y la
+                       # bandera calculada en SQL: NUNCA viajan desde el navegador hacia el servidor para decidir nada.
+                       "ot_madre_id", "ot_relacion", "madre_valida")
 _OT_FIN_BASE_MONTOS = ("costo", "zz_monto", "zz_envio_monto", "costo_proveedor", "costo_despacho",
                        "valorizado_clp")
 # De dónde puede salir un valorizado (columna valorizado_fuente, VARCHAR(20)). Lo que no esté en la lista se
@@ -84847,8 +84919,13 @@ def _ot_fin_base(v):
         x = v.get(k)
         if k in _OT_FIN_BASE_MONTOS:
             x = _ot_fin_num(x)
-        elif k == "contrato_real":
+        elif k in ("contrato_real", "madre_valida"):
             x = 1 if x else 0
+        elif k == "ot_madre_id":
+            try:
+                x = int(x) if x else None
+            except (TypeError, ValueError):
+                x = None
         elif k == "cliente_id":
             try:
                 x = int(x) if x is not None else None
@@ -84957,11 +85034,13 @@ def _ot_fin_costo_espejo_sync(vid, cobre_antes, costo_antes, quien="sistema", do
 # ═══════════════════════════════════════════════════════════════════════════
 _OT_FIN_COLS = ("modalidad_cobro", "cubierto_por", "tipo", "cliente_id", "contrato_id", "costo", "zz_monto", "cobro_cero_motivo",
                 "zz_codigo", "zz_envio_monto", "valor_origen", "costo_proveedor", "costo_despacho",
-                "proveedor_tipo", "valorizado_clp", "valorizado_fuente", "zz_motivo_manual")
+                "proveedor_tipo", "valorizado_clp", "valorizado_fuente", "zz_motivo_manual",
+                "ot_madre_id", "ot_relacion")   # 2026-10-19: desinstalación cubierta (ver _ot_cobertura)
 # Rótulo corto de la cobertura para chips y columnas (el largo es _OT_FIN_COBERTURA_TXT).
 _OT_FIN_COBERTURA_CORTA = {"cobra": "Se cobra", "garantia": "Garantía", "sin_costo": "Cortesía",
                            "regalia": "Regalía", "arriendo_leasing": "Arriendo/leasing",   # 2026-10-07
-                           "interno": "Trabajo interno", "contrato": "Contrato"}
+                           "interno": "Trabajo interno", "contrato": "Contrato",
+                           "cubierta": "Cubierta"}   # 2026-10-19: desinstalación cubierta por su instalación
 # En el resultado de VARIAS OT (un cliente, un técnico) el trabajo interno y la mantención de contrato van
 # aparte: el interno no es negocio con nadie y el contrato se paga con el contrato, no OT por OT (Daniel
 # 2026-10-07). Contarlos adentro mostraría una "pérdida" que no existe.
@@ -84974,11 +85053,14 @@ def _ot_fin_cols_sql(alias="v"):
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", alias or ""):
         raise ValueError("alias inválido")
     return (", ".join(f"{alias}.{c}" for c in _OT_FIN_COLS) + ", "
-            + _ot_fin_sql_contrato_real(alias) + " AS contrato_real")
+            + _ot_fin_sql_contrato_real(alias) + " AS contrato_real, "
+            + _ot_fin_sql_madre_valida(alias) + " AS madre_valida")
 
 
-def _ot_fin_contrato_real_de(vids):
-    """{vid: bool} con la bandera de contrato real, para filas que se leyeron con SELECT * (una sola consulta)."""
+def _ot_fin_contrato_real_de(vids, con_madre=False):
+    """{vid: bool} con la bandera de contrato real, para filas que se leyeron con SELECT * (una sola consulta).
+    `con_madre`=True (2026-10-19): la MISMA consulta trae además la bandera de desinstalación cubierta y devuelve
+    {vid: (contrato_real, madre_valida)}."""
     try:
         ids = sorted({int(x) for x in vids if x})
     except (TypeError, ValueError):
@@ -84987,11 +85069,15 @@ def _ot_fin_contrato_real_de(vids):
         return {}
     try:
         rows = mysql_fetchall(
-            "SELECT v.id, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real FROM mant_visitas v "
+            "SELECT v.id, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real"
+            + ((", " + _OT_FIN_SQL_MADRE_VALIDA + " AS madre_valida") if con_madre else "") +
+            " FROM mant_visitas v "
             " WHERE v.id IN (" + ",".join(["%s"] * len(ids)) + ")", tuple(ids)) or []
     except Exception as e:
         print(f"[ot-fin] contrato_real n={len(ids)}: {type(e).__name__}", flush=True)
         return {}
+    if con_madre:
+        return {int(r["id"]): (bool(r.get("contrato_real")), bool(r.get("madre_valida"))) for r in rows}
     return {int(r["id"]): bool(r.get("contrato_real")) for r in rows}
 
 
@@ -85008,13 +85094,22 @@ def _ot_fin_lote(rows, repuestos=True):
         return {}
     ids = [i for i, _ in filas]
     reps = _ot_repuestos_desglose(ids) if repuestos else {}
-    cr = _ot_fin_contrato_real_de(ids) if any("contrato_real" not in r for _, r in filas) else {}
+    # 🧩 2026-10-19: la bandera de «madre válida» solo hace falta en una fila que es hija (ot_relacion), y viaja en la
+    # MISMA consulta de la bandera de contrato: el lote sigue siendo una sola consulta extra.
+    def _falta_madre(r):
+        return (str(r.get("ot_relacion") or "").strip().lower() == "desinstalacion" and "madre_valida" not in r)
+    cr = (_ot_fin_contrato_real_de(ids, con_madre=True)
+          if any(("contrato_real" not in r) or _falta_madre(r) for _, r in filas) else {})
     out = {}
     for vid, r in filas:
         v = r
-        if "contrato_real" not in r:
+        if "contrato_real" not in r or _falta_madre(r):
             v = dict(r)
-            v["contrato_real"] = cr.get(vid, False)
+            _par = cr.get(vid, (False, False))
+            if "contrato_real" not in r:
+                v["contrato_real"] = _par[0]
+            if _falta_madre(r):
+                v["madre_valida"] = _par[1]
         out[vid] = _ot_finanzas(v, reps.get(vid))
     return out
 
@@ -86307,7 +86402,8 @@ _OT_TIPOS_SIN_GARANTIA = ()
 # las guarda con TIDO=NVV pero el NUDO lleva el canal de origen incrustado
 # como prefijo (erp_engine.TIDO_NUDO_MAP) -- "NVV" + un número plano nunca
 # las va a encontrar.
-_OT_DOCS_NOTA_VENTA = ("NVV", "NVI", "VD", "WEB")
+# 2026-10-19: los prefijos de las notas de venta (VD, WEB y el tolerante BD) viven en UNA constante (ot_saldo_servicio).
+_OT_DOCS_NOTA_VENTA = ("NVV", "NVI") + tuple(_saldo.PREFIJOS_NOTA_VENTA)
 _OT_DOCS_CIERRE = ("FCV", "FCE", "BLV", "BLE") + _OT_DOCS_NOTA_VENTA
 
 
@@ -87309,8 +87405,15 @@ def mant_visita_update(vid):
     #    documento («Agregar documento»), que valida y deja constancia: el texto libre no cuenta como factura.
     if "tipo" in d or "factura_tido" in d or "factura_nudo" in d:
         _fila_g = mysql_fetchone(
-            "SELECT tipo, cliente_id, factura_tido, factura_nudo, factura_asociada_por, factura_rut_ok "
+            "SELECT tipo, cliente_id, factura_tido, factura_nudo, factura_asociada_por, factura_rut_ok, "
+            "       ot_madre_id, desinstalacion_prevista "
             "  FROM mant_visitas WHERE id=%s", (vid,)) or {}
+        # 🧩 2026-10-19 (crítica 24): el tipo de una desinstalación, de una instalación con desinstalación agendada o con
+        # una desinstalación prevista no se cambia editando el campo (la unión madre/hija y el cobro cubierto dependen de él).
+        if "tipo" in d and (d.get("tipo") or "").strip().lower() != (_fila_g.get("tipo") or "").strip().lower():
+            _g_tipo = _evt.guardia_cambio_tipo(_fila_g, _ot_hijas_de(vid))
+            if _g_tipo:
+                return jsonify({"ok": False, "error_codigo": _g_tipo["codigo"], "error": _g_tipo["mensaje"]}), 409
         if ("tipo" in d and (d.get("tipo") or "").strip().lower() == "preventiva" and _fila_g.get("cliente_id")
                 and (_fila_g.get("tipo") or "").strip().lower() != "preventiva" and not _ot_aut_es_superadmin()):
             return jsonify({
@@ -87365,6 +87468,40 @@ def mant_visita_update(vid):
                 "error": "Los domingos no se agendan órdenes de trabajo. Elige otro día.",
                 "error_codigo": "DOMINGO_BLOQUEADO",
             }), 400
+    # 🧩 2026-10-19 — GUARDIAS DE LA INSTALACIÓN Y SU DESINSTALACIÓN (madre e hija):
+    #  · reagendar la HIJA antes que la madre → 409 DESINST_ANTES_DE_INSTALACION;
+    #  · reagendar la MADRE a una fecha posterior a la de su hija → 409 «Reagenda primero la desinstalación OT-…»;
+    #  · declarar un cobro en una hija que no tiene documento de cobro propio → 409 HIJA_CUBIERTA_SIN_COBRO
+    #    (la hija cubierta no cobra aparte: si la nota de venta trae una línea propia, se agrega con «Agregar documento»).
+    # (Cancelar la madre con su hija se resuelve más abajo, dentro de la transacción y con la madre bloqueada.)
+    _quiere_fechas_dm = any(k in d for k in ("fecha_programada", "fecha_fin", "hora_inicio", "hora_fin"))
+    _quiere_cobro_dm = any(d.get(k) not in (None, "", 0) for k in ("zz_monto", "zz_envio_monto") if k in d)
+    if _quiere_fechas_dm or _quiere_cobro_dm:
+        _fila_dm = _ot_fila_basica(vid)
+        _es_hija_dm = bool(_fila_dm and _fila_dm.get("ot_madre_id")
+                           and (_fila_dm.get("ot_relacion") or "") == _evt.REL_DESINSTALACION)
+        if _fila_dm and _quiere_fechas_dm:
+            _n_f = d.get("fecha_programada") if "fecha_programada" in d else _fila_dm.get("fecha_programada")
+            _n_ff = d.get("fecha_fin") if "fecha_fin" in d else _fila_dm.get("fecha_fin")
+            _n_hi = d.get("hora_inicio") if "hora_inicio" in d else _fila_dm.get("hora_inicio")
+            _n_hf = d.get("hora_fin") if "hora_fin" in d else _fila_dm.get("hora_fin")
+            if _es_hija_dm and _n_f:
+                _m_dm = _ot_fila_basica(_fila_dm["ot_madre_id"])
+                if _m_dm and _evt.vigente(_fila_dm.get("estado")):
+                    _ev_dm = _evt.evaluar_fecha_desinstalacion(_n_f, _n_hi, _n_hf, _m_dm, _feriados_cl(_n_f))
+                    if not _ev_dm["ok"] and _ev_dm["bloqueo"]["codigo"] == "DESINST_ANTES_DE_INSTALACION":
+                        return jsonify({"ok": False, "error_codigo": "DESINST_ANTES_DE_INSTALACION",
+                                        "error": _ev_dm["bloqueo"]["mensaje"]}), 409
+            elif (_fila_dm.get("tipo") or "").lower() == _evt.TIPO_MADRE and _n_f:
+                _g_re = _evt.guardia_reagendar_madre(_n_f, _n_ff, _ot_hijas_de(vid))
+                if _g_re:
+                    return jsonify({"ok": False, "error_codigo": _g_re["codigo"], "error": _g_re["mensaje"],
+                                    "hija_id": _g_re.get("hija_id")}), 409
+        if _fila_dm and _quiere_cobro_dm and _es_hija_dm:
+            if not [x for x in _ot_puerta_docs_de(vid) if x.get("es_cobro", True)]:
+                return jsonify({"ok": False, "error_codigo": "HIJA_CUBIERTA_SIN_COBRO",
+                                "error": "Esta desinstalación se cubre con su instalación y no cobra aparte. Si la nota de "
+                                         "venta trae una línea de desinstalación, agrégala con «Agregar documento»."}), 409
     # 2026-07-15 (agendador tipo clínica, Tickets §2.6): "fecha_fin" habilita
     # reprogramar el término de una OT multi-día desde el mini-formulario
     # inline del popover (antes solo se podía fijar al CREAR la OT).
@@ -87489,12 +87626,46 @@ def mant_visita_update(vid):
     # prioridad al motivo del $0; sin esto la OT seguía «Garantía, cobré $0» aunque volviera a cobrarse).
     if gar_aplica_upd is False and "modalidad_cobro" in d and (d.get("modalidad_cobro") or "") != "garantia":
         sets += ["cobro_cero_motivo=NULL", "cobro_cero_autorizacion_id=NULL", "cobro_cero_argumento=NULL"]
+    _estado_nuevo_dm = (str(d.get("estado") or "")).strip().lower()
+    _cascada_hija = None
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
+            # 🧩 2026-10-19 — CANCELAR O ANULAR UNA INSTALACIÓN que tiene su desinstalación (madre/hija). Con la madre
+            # BLOQUEADA (FOR UPDATE: nadie crea otra hija mientras tanto, crítica 31): hija sin empezar → 409
+            # OT_CON_DESINSTALACION salvo `incluir_desinstalacion=1` (se cancelan las dos en esta transacción); hija ya
+            # empezada → 409 con su número. Cancelar solo la hija es libre: la instalación vuelve a «desinstalación sin agendar».
+            if _estado_nuevo_dm in ("cancelada", "anulada"):
+                cur.execute("SELECT id, tipo, ot_madre_id FROM mant_visitas WHERE id=%s FOR UPDATE", (vid,))
+                _fc = cur.fetchone() or {}
+                if (_fc.get("tipo") or "").lower() == _evt.TIPO_MADRE and not _fc.get("ot_madre_id"):
+                    _hijas_c = _ot_hijas_de(vid, cur=cur)
+                    _acc_c, _err_c = _evt.guardia_cancelar_madre(
+                        _hijas_c, str(d.get("incluir_desinstalacion") or "").strip().lower() in ("1", "true", "si", "sí"))
+                    if _err_c:
+                        conn.rollback()
+                        return jsonify({"ok": False, "error_codigo": _err_c["codigo"], "error": _err_c["mensaje"],
+                                        "hija_id": _err_c.get("hija_id"), "hija_numero": _err_c.get("hija_numero"),
+                                        "puede_incluir_desinstalacion": _err_c["codigo"] == "OT_CON_DESINSTALACION"}), 409
+                    if _acc_c == "con_hija":
+                        _cascada_hija = _evt.hijas_vigentes(_hijas_c)[0]
             cur.execute(f"UPDATE mant_visitas SET {','.join(sets)} WHERE id=%s",
                         vals + [vid])
+            if _cascada_hija:
+                cur.execute("UPDATE mant_visitas SET estado=%s WHERE id=%s AND estado IN "
+                            "('programada','creada','asignada','reagendada','pendiente_info')",
+                            (_estado_nuevo_dm, int(_cascada_hija["id"])))
         conn.commit()
+        if _cascada_hija:
+            try:
+                _num_h = _cascada_hija.get("numero_ot") or f"OT #{_cascada_hija['id']}"
+                _mant_log("visita", int(_cascada_hija["id"]), "actualizada",
+                          f"estado: {_cascada_hija.get('estado')} → {_estado_nuevo_dm} · se canceló junto con su instalación")
+                _mant_log("visita", vid, "actualizada",
+                          f"Se canceló junto con su desinstalación {_num_h} (por {current_username() or '?'})")
+                _fac_libro_marcar(int(_cascada_hija["id"]))
+            except Exception as _e_cas:
+                print(f"[upd-ot] cascada desinstalación vid={vid}: {type(_e_cas).__name__}", flush=True)
         if _sal_put_reanota:   # 2026-10-08: lo que esta OT aporta desde cada documento, para que las demás lo vean
             try:
                 _ot_saldo_reanotar_aportes(vid)
@@ -87662,6 +87833,16 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=
         }
 
     numero_ot = v_info.get("numero_ot") or f"V-{vid}"
+    # 🧩 2026-10-19 — una INSTALACIÓN con una desinstalación vigente (no cancelada ni anulada) no se borra: se elimina o
+    # se cancela primero la desinstalación. Fail-CLOSED: si no se puede leer, no se borra.
+    try:
+        _g_madre = _evt.guardia_borrar_madre(_ot_hijas_de(vid, estricto=True))
+    except Exception:
+        return {"ok": False, "error_codigo": "DESINSTALACION_NO_VERIFICABLE", "numero_ot": numero_ot,
+                "error": f"No se pudo verificar si la {numero_ot} tiene una desinstalación. Inténtalo de nuevo; no se eliminó."}
+    if _g_madre:
+        return {"ok": False, "error_codigo": _g_madre["codigo"], "error": _g_madre["mensaje"], "numero_ot": numero_ot,
+                "hija_id": _g_madre.get("hija_id")}
     # 💸 Candado de factura de proveedor -- ver _mant_visita_factura_proveedor.
     # Revisión 2026-09-16: si no se pudo verificar (error de BD), se trata
     # como bloqueo -- fail-CLOSED, nunca se borra sin saber si está
@@ -87723,6 +87904,12 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=
                 cur.execute("UPDATE mant_repuestos SET visita_id=NULL WHERE visita_id=%s", (vid,))
             except Exception as _e_rep:
                 print(f"[visita_del] desvincular repuestos falló: {_e_rep}", flush=True)
+            # 🧩 2026-10-19: una desinstalación CANCELADA que colgaba de esta instalación no queda apuntando a una madre
+            # que ya no existe (las vigentes ya frenaron el borrado arriba).
+            try:
+                cur.execute("UPDATE mant_visitas SET ot_madre_id=NULL, ot_relacion=NULL WHERE ot_madre_id=%s", (vid,))
+            except Exception as _e_madre:
+                print(f"[visita_del] soltar hijas canceladas falló: {_e_madre}", flush=True)
             if _fac and quitar_de_factura:
                 # 🧹 2026-10-07 (Daniel: "quiero que Aaron pueda borrar sin problemas" -- OT de prueba que quedaron en una
                 # factura de proveedor, incluso pagada): quien tiene permiso de eliminar OT puede borrarla; la línea sale de la
@@ -88625,6 +88812,9 @@ def _ot2_fila_modal_lean(f):
         "hora": f.get("hora_hhmm") or "",
         "dir": " · ".join(dir_partes),
         "url": url_for("ot2_detalle", vid=f["id"]),
+        # 🧩 2026-10-19: evento y unión instalación ↔ desinstalación (sin montos; ver _ot2_panel_evento_chips).
+        "evento": f.get("evento_nombre") or "", "evento_id": f.get("evento_id"),
+        "rel": ((f.get("rel") or {}).get("chip") or ""), "rel_nivel": ((f.get("rel") or {}).get("nivel") or ""),
     }
 
 
@@ -88729,6 +88919,54 @@ def _ot2_panel_extras(filas):
                 por_id[int(og)]["rep_instalar"] += 1
     except Exception as e:
         print(f"[ot2_panel_extras] repuestos: {type(e).__name__}", flush=True)
+
+
+def _ot2_panel_evento_chips(filas):
+    """🧩 2026-10-19 — el evento y la unión instalación ↔ desinstalación de cada fila del panel (tabla, tarjetas, kanban y
+    calendario), en DOS consultas por lote (nunca una por fila) y sin tocar _OT2_SELECT_FILAS. Deja en cada fila:
+    `evento_id`, `evento_nombre` y `rel` = {tipo: 'hija'|'madre'|None, chip, nivel (gris|azul|ambar|rojo), madre_id,
+    madre_numero, hija_id, hija_numero, hija_fecha, prevista, codigo}. Lo ve cualquier rol (REGLA #26: sin montos, sin
+    documentos, sin la palabra «cubierta»). Si algo falla, las filas quedan sin chips (nunca rompe el panel)."""
+    for f in filas:
+        f["evento_id"], f["evento_nombre"], f["rel"] = None, None, None
+    ids = [int(f["id"]) for f in filas if f.get("id")]
+    if not ids:
+        return
+    por_id = {int(f["id"]): f for f in filas}
+    ph = ",".join(["%s"] * len(ids))
+    hoy = _now_chile().date()
+    try:
+        base = {int(r["id"]): dict(r) for r in (mysql_fetchall(
+            "SELECT v.id, v.tipo, v.estado, v.evento_id, e.nombre AS evento_nombre, v.ot_madre_id, v.ot_relacion, "
+            "       v.desinstalacion_prevista, mm.numero_ot AS madre_numero "
+            "  FROM mant_visitas v LEFT JOIN mant_eventos e ON e.id = v.evento_id "
+            "  LEFT JOIN mant_visitas mm ON mm.id = v.ot_madre_id "
+            f" WHERE v.id IN ({ph})", tuple(ids)) or [])}
+        hijas_por = _ot_hijas_vigentes_lote([i for i, b in base.items()
+                                             if (b.get("tipo") or "") == _evt.TIPO_MADRE and not b.get("ot_madre_id")])
+    except Exception as e:
+        print(f"[ot2_panel] chips de evento: {type(e).__name__}", flush=True)
+        return
+    for vid, b in base.items():
+        f = por_id.get(vid)
+        if f is None:
+            continue
+        f["evento_id"], f["evento_nombre"] = b.get("evento_id"), b.get("evento_nombre")
+        if b.get("ot_madre_id") and (b.get("ot_relacion") or "") == _evt.REL_DESINSTALACION:
+            f["rel"] = {"tipo": "hija", "chip": "Desinstalación de " + (b.get("madre_numero") or "su instalación"),
+                        "nivel": "azul", "madre_id": b.get("ot_madre_id"), "madre_numero": b.get("madre_numero"),
+                        "codigo": "hija"}
+        elif (b.get("tipo") or "") == _evt.TIPO_MADRE:
+            hijas = hijas_por.get(vid, [])
+            est = _evt.estado_desinstalacion(b, hijas, hoy)
+            if est["codigo"] != "ninguna":
+                chip = est["texto"]
+                if est["codigo"] == "agendada" and est.get("hija_numero"):
+                    chip = "Desinstala %s · %s" % (est["hija_numero"], _evt.fmt_fecha_corta(est.get("fecha")))
+                f["rel"] = {"tipo": "madre", "chip": chip, "nivel": est["nivel"], "codigo": est["codigo"],
+                            "hija_id": est.get("hija_id"), "hija_numero": est.get("hija_numero"),
+                            "hija_fecha": _evt.fmt_fecha(est.get("fecha")) if est.get("hija_id") else "",
+                            "prevista": _evt.fmt_fecha(b.get("desinstalacion_prevista")) if b.get("desinstalacion_prevista") else ""}
 
 
 @app.route("/ot/")
@@ -88853,6 +89091,12 @@ def ot2_panel():
     f_agenda = (request.args.get("agenda") or "").strip().lower()
     if f_agenda not in _OT2_AGENDA_CLAVES or vista != "tabla":
         f_agenda = ""
+    # 🧩 2026-10-19 (Daniel: clasificar las OT por EVENTO): filtro por evento. Lista blanca: solo un id numérico (la clave
+    # viaja por URL; nunca entra al SQL sin parámetro). Entra al COUNT, al LIMIT, a los KPI y a las cuatro vistas.
+    try:
+        f_evento = int(request.args.get("evento") or 0) or 0
+    except (TypeError, ValueError):
+        f_evento = 0
 
     # Orden por columna (Daniel: "siempre ordenado por el número de OT,
     # pero si yo quiero ordenar por cliente, por tipo, por estado, lo
@@ -88970,6 +89214,9 @@ def ot2_panel():
         if _ag_sql:
             extra_where_q.append(_ag_sql)
             extra_params_q.extend(_ag_params)
+    if f_evento:
+        extra_where_q.append("v.evento_id = %s")
+        extra_params_q.append(f_evento)
     where_extra_sql_q = (" AND " + " AND ".join(extra_where_q)) if extra_where_q else ""
 
     extra_where, extra_params = list(extra_where_q), list(extra_params_q)
@@ -89080,6 +89327,7 @@ def ot2_panel():
             for f in filas:
                 _ot2_enriquecer_fila(f, hoy)
             _ot2_panel_extras(filas)
+            _ot2_panel_evento_chips(filas)   # 🧩 2026-10-19: evento + unión instalación ↔ desinstalación
 
         elif vista == "kanban":
             _where_solo_q = f" WHERE {where_origen} {where_extra_sql_q} "
@@ -89091,6 +89339,7 @@ def ot2_panel():
             filas_kanban = [dict(f) for f in filas_kanban]
             for f in filas_kanban:
                 _ot2_enriquecer_fila(f, hoy)
+            _ot2_panel_evento_chips(filas_kanban)   # 🧩 2026-10-19
             for clave in _OT2_FASES:
                 en_fase = [f for f in filas_kanban if f.get("estado_fase") == clave]
                 mostradas = en_fase[:_OT2_KANBAN_CAP_COL]
@@ -89129,6 +89378,7 @@ def ot2_panel():
             filas_cal = [dict(f) for f in filas_cal]
             for f in filas_cal:
                 _ot2_enriquecer_fila(f, hoy)
+            _ot2_panel_evento_chips(filas_cal)   # 🧩 2026-10-19
 
             # 🔴 FIX 2026-09-23 (Daniel, viendo el calendario en vivo con
             # OT-2026-00234: "está para varios días pero solo marca uno en
@@ -89261,6 +89511,7 @@ def ot2_panel():
             proximas = [dict(f) for f in filas_prox]
             for f in proximas:
                 _ot2_enriquecer_fila(f, hoy)
+            _ot2_panel_evento_chips(proximas)   # 🧩 2026-10-19
 
             # Leyenda de colores: las 4 fases + cancelada, con sus estados
             # finos como subtítulo (la misma agrupación de _OT2_ESTADO_META
@@ -89304,9 +89555,31 @@ def ot2_panel():
                 " ORDER BY n") or []) if r.get("n")]
     except Exception as e:
         print(f"[ot2_panel] opciones de filtro: {e}", flush=True)
+    # 🧩 2026-10-19: opciones del filtro «Evento» (los no cancelados más recientes; el elegido siempre se incluye, aunque
+    # esté cancelado, para no dejar el filtro huérfano). Un técnico solo ve los eventos con OT suyas.
+    eventos_opts = []
+    try:
+        _filtro_ev_sql, _filtro_ev_par = "", []
+        if _es_rol_tecnico():
+            _ids_ev_tec, _ = _evento_ids_del_tecnico()
+            if _ids_ev_tec:
+                _filtro_ev_sql = " AND e.id IN (" + ",".join(["%s"] * len(_ids_ev_tec)) + ")"
+                _filtro_ev_par = sorted(_ids_ev_tec)
+            else:
+                _filtro_ev_sql = " AND 1=0"
+        eventos_opts = [
+            {"id": r["id"], "nombre": r["nombre"], "fechas": _evt.rango_evento_txt(r), "estado": r.get("estado") or "activo"}
+            for r in (mysql_fetchall(
+                "SELECT e.id, e.nombre, e.fecha_ini, e.fecha_fin, e.estado FROM mant_eventos e "
+                " WHERE (e.estado='activo' OR e.id=%s)" + _filtro_ev_sql +
+                " ORDER BY COALESCE(e.fecha_ini, e.created_at) DESC, e.id DESC LIMIT 300",
+                tuple([f_evento or 0] + _filtro_ev_par)) or [])]
+    except Exception as e:
+        print(f"[ot2_panel] eventos para el filtro: {type(e).__name__}", flush=True)
 
     return render_template(
         "ot2/panel.html",
+        f_evento=f_evento, eventos_opts=eventos_opts,   # 🧩 2026-10-19: filtro y chips de evento
         es_superadmin_ot=_ot_aut_es_superadmin(),   # 🔒 2026-10-11: botones Regularizar / Saldo de facturas / Autorizaciones
         filas=filas, origen=origen, vista=vista, kpis=kpis,
         conteo_reales=conteo_reales, conteo_automaticas=conteo_automaticas,
@@ -89570,6 +89843,16 @@ def ot2_api_eliminar_lote():
             etiquetas[int(f["id"])] = _ot2_lote_numero(f.get("numero_ot"), int(f["id"]))
     except Exception as e:
         print(f"[ot2_lote] etiquetas: {type(e).__name__}: {e}", flush=True)
+
+    # 🧩 2026-10-19: una instalación con su desinstalación vigente no se borra (MADRE_CON_DESINSTALACION): en el lote se
+    # borran PRIMERO las desinstalaciones (hijas) y después el resto, así elegir las dos juntas funciona.
+    try:
+        _hijas_lote = {int(r["id"]) for r in (mysql_fetchall(
+            f"SELECT id FROM mant_visitas WHERE id IN ({_ph}) AND ot_madre_id IS NOT NULL", tuple(ids)) or [])}
+        if _hijas_lote:
+            ids = [i for i in ids if i in _hijas_lote] + [i for i in ids if i not in _hijas_lote]
+    except Exception as e:
+        print(f"[ot2_lote] orden madre/hija: {type(e).__name__}: {e}", flush=True)
 
     username = _u.get("username") or current_username() or "?"
     actor_desc = f"eliminada en lote por {username}"
@@ -90115,6 +90398,69 @@ def _ensure_ot_fin_clasif_cols():
             print(f"[ensure_ot_fin_clasif] {_col}: {e}", flush=True)
 
 
+def _ensure_ot_eventos_cols():
+    """🗓️ 2026-10-19 EVENTOS + OT de DESINSTALACIÓN (madre e hija). SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+
+    Daniel: «al momento de crear la orden de trabajo, si se selecciona instalación con desinstalación, el usuario tendrá
+    que agendar en otra hija cuando se va a hacer la desinstalación». Y clasificar las OT por EVENTO.
+
+      · mant_eventos — la «carpeta» (nombre, lugar, fechas) que agrupa OT. Sin FK y NUNCA se hace DELETE: un evento se
+        cancela (estado 'cancelado', con quién/cuándo/por qué). «En curso» y «Terminado» se CALCULAN con las fechas y sus OT.
+      · mant_visitas.evento_id / ot_madre_id / ot_relacion / desinstalacion_prevista / desinstalacion_aut_id. NINGUNA de
+        estas columnas entra en `allowed` del PUT de la visita: solo las escriben las funciones del servidor
+        (ot_madre_id jamás se lee del body: crítica adversarial, punto 7). `desinstalacion_aut_id` = la autorización
+        aprobada (desinstalacion_cubierta, o la solicitud de crear que ya incluía la desinstalación) que respalda que la
+        hija vaya cubierta cuando la madre no tiene un documento de Random.
+      · mant_visita_documentos.heredado_de_visita_id — documento ESPEJADO de la madre en la hija: se ve en la ficha pero
+        no consume saldo, ni entra al libro, ni lo cuenta la puerta (crítica adversarial, punto 6).
+
+    REGLA #18: UNA cláusula por sentencia (así _ddl_ya_aplicado las salta sin pedir lock cuando ya están aplicadas)."""
+    sentencias = [
+        """CREATE TABLE IF NOT EXISTS mant_eventos (
+               id            INT AUTO_INCREMENT PRIMARY KEY,
+               nombre        VARCHAR(160) NOT NULL,
+               cliente_id    INT NULL,
+               direccion     VARCHAR(400) NULL,
+               detalle       VARCHAR(200) NULL,
+               lat           DECIMAL(10,7) NULL,
+               lng           DECIMAL(10,7) NULL,
+               place_id      VARCHAR(200) NULL,
+               comuna        VARCHAR(100) NULL,
+               region        VARCHAR(100) NULL,
+               fecha_ini     DATE NULL,
+               fecha_fin     DATE NULL,
+               estado        VARCHAR(20) NOT NULL DEFAULT 'activo',
+               doc_ref       VARCHAR(60) NULL,
+               notas         TEXT NULL,
+               cancelado_por VARCHAR(190) NULL,
+               cancelado_at  DATETIME NULL,
+               cancelado_motivo VARCHAR(500) NULL,
+               created_by    VARCHAR(190) NULL,
+               created_by_user_id INT NULL,
+               created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+               updated_by    VARCHAR(190) NULL,
+               updated_at    DATETIME NULL,
+               INDEX idx_ev_estado_ini (estado, fecha_ini),
+               INDEX idx_ev_cliente (cliente_id)
+           ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+        "ALTER TABLE mant_visitas ADD COLUMN evento_id INT NULL",
+        "ALTER TABLE mant_visitas ADD COLUMN ot_madre_id INT NULL",
+        "ALTER TABLE mant_visitas ADD COLUMN ot_relacion VARCHAR(20) NULL",
+        "ALTER TABLE mant_visitas ADD COLUMN desinstalacion_prevista DATE NULL",
+        "ALTER TABLE mant_visitas ADD COLUMN desinstalacion_aut_id INT NULL",
+        "ALTER TABLE mant_visitas ADD INDEX idx_v_evento_fecha (evento_id, fecha_programada)",
+        "ALTER TABLE mant_visitas ADD INDEX idx_v_madre_rel (ot_madre_id, ot_relacion)",
+        "ALTER TABLE mant_visita_documentos ADD COLUMN heredado_de_visita_id INT NULL",
+        "ALTER TABLE mant_visita_documentos ADD INDEX idx_vd_heredado (heredado_de_visita_id)",
+    ]
+    for _sql in sentencias:
+        try:
+            mysql_execute(_sql)
+        except Exception as e:
+            if "Duplicate column" not in str(e) and "Duplicate key name" not in str(e):
+                print(f"[ensure_ot_eventos] {' '.join(_sql.split())[:70]}: {e}", flush=True)
+
+
 def _ensure_maquina_origen_ot_col():
     """`mant_maquinas.origen_ot_id` — de qué OT nació la ficha del equipo.
 
@@ -90257,6 +90603,11 @@ def _ot2_finanzas_estado(v):
                           else "motivo/contrato que cubre esta visita")
     elif _cob_fin == "sin_costo":
         pass   # cortesía: no se le cobra -> ni documento ni monto que declarar (2026-10-07)
+    elif _cob_fin == "cubierta":
+        # 🧩 2026-10-19: desinstalación cubierta por su instalación (la nota de venta vive en la madre): ni documento
+        # ni monto propios que declarar. Lo único que sigue pidiéndose es el centro de costo (arriba) y, al cerrar,
+        # lo que cobró el técnico (SIN_COSTO_PROVEEDOR).
+        pass
     else:
         tiene_doc = bool((v.get("factura_nudo") or "").strip())
         if not tiene_doc:
@@ -90533,6 +90884,8 @@ def ot2_detalle(vid):
         # REAL del cliente? (el "Contenedor de documentos" no cuenta). Sin este dato la cuenta no puede
         # reconocer la cobertura 'contrato'. valorizado_clp/valorizado_fuente ya vienen en v.*.
         "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real, "
+        # 🧩 2026-10-19: ¿es la hija de una instalación que la cubre? (ot_madre_id / ot_relacion ya vienen en v.*)
+        "       " + _OT_FIN_SQL_MADRE_VALIDA + " AS madre_valida, "
         "       COALESCE(au.nombre, au.username) AS tecnico_nombre "
         "  FROM mant_visitas v "
         "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
@@ -91242,10 +91595,20 @@ def ot2_detalle(vid):
                        or (v.get("cubierto_por") or "").lower() == "garantia")
     _doc_nudo_hdr = (v.get("documento_erp_nudo") or v.get("factura_nudo") or "").strip()
     _doc_tido_hdr = (v.get("documento_erp_tido") or v.get("factura_tido") or "").strip()
+    try:
+        _cob_hdr = _ot_cobertura(v)
+    except Exception:
+        _cob_hdr = "cobra"
     if _es_interna_ot:
         _doc_label, _doc_tipo = "Trabajo interno", "interna"
     elif _es_garantia_ot:
         _doc_label, _doc_tipo = "Garantía", "garantia"
+    elif _cob_hdr == "cubierta":
+        # 🧩 2026-10-19: la desinstalación no lleva documento propio (lo respalda su instalación): sin esto el encabezado
+        # decía «Sin documento» en rojo.
+        _m_hdr = (_ot_fila_basica(v.get("ot_madre_id")) or {}) if v.get("ot_madre_id") else {}
+        _doc_label = "Cubierta por " + (_m_hdr.get("numero_ot") or "su instalación")
+        _doc_tipo = "cubierta"
     elif _doc_nudo_hdr:
         _doc_label = f"{_doc_tido_hdr or 'DOC'} {_doc_nudo_hdr}"
         _doc_tipo = "documento"
@@ -91871,8 +92234,21 @@ def ot2_detalle(vid):
         except Exception as _e_ss:
             print(f"[ot2_detalle] sin saldo vid={vid}: {type(_e_ss).__name__}", flush=True)
             sin_saldo = []
+    # 🧩 2026-10-19: la unión instalación ↔ desinstalación y el evento de la OT, para la cabecera, «Datos de la OT» y el botón
+    # «Programar desinstalación». Lo ven también los técnicos (REGLA #26): sin montos, sin documentos, sin doc_ref ni notas
+    # del evento, y el enlace a la instalación solo si pueden verla (si no, va como texto).
+    try:
+        desinst = _ot_desinst_contexto(vid, con_montos=not _es_rol_tecnico())
+        if desinst and _es_rol_tecnico() and desinst.get("madre") and not _ot_visible_para_rol(desinst["madre"]["id"]):
+            desinst["madre"]["url"] = None
+        if desinst and _es_rol_tecnico() and (desinst.get("hija") or {}).get("id") and not _ot_visible_para_rol(desinst["hija"]["id"]):
+            desinst["hija"]["url"] = None
+    except Exception as _e_di:
+        print(f"[ot2_detalle] desinstalación vid={vid}: {type(_e_di).__name__}", flush=True)
+        desinst = None
     return render_template(
         "ot2/detalle.html",
+        desinst=desinst,
         fac_alerta=fac_alerta,
         fin_clasif=fin_clasif,
         sin_saldo=sin_saldo,
@@ -92798,7 +93174,8 @@ _OT_FIN_SELECT = ("SELECT v.id, v.numero_ot, v.estado, v.tipo, v.cliente_id, v.z
                   "       v.costo_proveedor, v.costo_despacho, v.centro_costo, v.modalidad_cobro, v.cubierto_por, "
                   # 2026-10-07: lo demás que necesita la cuenta única (_ot_finanzas) y el valorizado.
                   "       v.costo, v.zz_codigo, v.valor_origen, v.proveedor_tipo, v.valorizado_clp, "
-                  "       v.valorizado_fuente, v.zz_motivo_manual, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
+                  "       v.valorizado_fuente, v.zz_motivo_manual, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real, "
+                  "       " + _OT_FIN_SQL_MADRE_COLS + " "
                   "  FROM mant_visitas v WHERE v.id=%s")
 
 
@@ -93063,6 +93440,7 @@ def ot2_finanzas_dudosas():
         "       v.cubierto_por, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, v.zz_motivo_manual, "
         # 2026-10-07: la cuenta única necesita saber si es mantención de un contrato real.
         "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real, "
+        "       " + _OT_FIN_SQL_MADRE_COLS + ", "
         "       c.razon_social AS cliente "
         "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
         " WHERE LOWER(COALESCE(v.estado,'')) IN ('completada','cerrada') "
@@ -93119,7 +93497,7 @@ _OT_FIN_CMP_COLS = (
     "v.id, v.numero_ot, v.estado, v.tipo, v.cliente_id, v.contrato_id, v.created_at, v.fecha_programada, "
     "v.costo, v.zz_monto, v.zz_codigo, v.zz_envio_monto, v.valor_origen, v.costo_proveedor, v.costo_despacho, "
     "v.modalidad_cobro, v.cubierto_por, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, v.zz_motivo_manual, "
-    "c.razon_social AS cliente, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real")
+    "c.razon_social AS cliente, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real, " + _OT_FIN_SQL_MADRE_COLS)
 
 
 def _ot_fin_cmp_cargar(limite=6000):
@@ -93324,7 +93702,8 @@ def ot2_api_finanzas(vid):
         # cierre (_OT_FIN_SQL_CONTRATO_REAL). Sin ella, _ot2_finanzas_estado cae a su criterio de respaldo
         # (cubierto_por='contrato') y el "completa" del GET podía decir otra cosa que el candado y la tarjeta.
         # Con valor_origen, zz_codigo y cliente_id (ya estaban) la cobertura sale igual en los tres lugares.
-        "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
+        "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real, "
+        "       " + _OT_FIN_SQL_MADRE_COLS + " "   # 🧩 2026-10-19: desinstalación cubierta
         "  FROM mant_visitas v WHERE v.id=%s", (vid,))
     if not v:
         return jsonify({"ok": False, "error": "No encontramos esa orden."}), 404
@@ -93415,6 +93794,17 @@ def ot2_api_finanzas(vid):
         zz_envio_monto = _monto_opt(d.get("zz_envio_monto")) if "zz_envio_monto" in d else None
     except (TypeError, ValueError):
         return _ot2_err("El monto del despacho no es válido.", "ZZ_ENVIO_INVALIDO")
+
+    # 🧩 2026-10-19 (crítica 5): una desinstalación (OT hija) SIN documento de cobro propio no declara un cobro aparte: la cubre
+    # la nota de venta de su instalación. Si la nota trae una línea propia de desinstalación, se agrega con «Agregar
+    # documento» (queda con su saldo controlado) y recién ahí puede declarar su cobro.
+    if (zz_monto or 0) > 0 or (zz_envio_monto or 0) > 0:
+        _f_hij = _ot_fila_basica(vid)
+        if (_f_hij and _f_hij.get("ot_madre_id") and (_f_hij.get("ot_relacion") or "") == _evt.REL_DESINSTALACION
+                and not [x for x in _ot_puerta_docs_de(vid) if x.get("es_cobro", True)]):
+            return _ot2_err("Esta desinstalación se cubre con su instalación y no cobra aparte. Si la nota de venta trae una "
+                            "línea de desinstalación, agrégala con «Agregar documento».",
+                            "HIJA_CUBIERTA_SIN_COBRO", http=409)
 
     # El "por qué" de un monto declarado a mano (instalación parcial,
     # concesión comercial, despacho absorbido...). No se exige: obligar a
@@ -93802,7 +94192,8 @@ def ot2_api_finanzas(vid):
             "SELECT v.centro_costo, v.modalidad_cobro, v.garantia_motivo, v.factura_tido, v.factura_nudo, "
             "       v.zz_monto, v.zz_envio_monto, v.cubierto_por, v.tipo, v.costo, v.cliente_id, v.zz_codigo, "
             "       v.valor_origen, v.costo_proveedor, v.costo_despacho, v.proveedor_tipo, v.valorizado_clp, "
-            "       v.valorizado_fuente, v.zz_motivo_manual, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
+            "       v.valorizado_fuente, v.zz_motivo_manual, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real, "
+            "       " + _OT_FIN_SQL_MADRE_COLS + " "
             "  FROM mant_visitas v WHERE v.id=%s", (vid,))
     except Exception as _e_vf:
         print(f"[ot2_finanzas] relectura vid={vid}: {type(_e_vf).__name__}", flush=True)
@@ -93918,7 +94309,8 @@ def ot2_api_finanzas(vid):
         "       v.cubierto_por, v.tipo, v.costo, v.cliente_id, v.valorizado_clp, "
         # 2026-10-07 (integración): mismas columnas de cobertura que la relectura, para que el respaldo
         # tampoco diga otra cosa que el candado.
-        "       v.zz_codigo, v.valor_origen, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
+        "       v.zz_codigo, v.valor_origen, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real, "
+        "       " + _OT_FIN_SQL_MADRE_COLS + " "
         "  FROM mant_visitas v WHERE v.id=%s", (vid,)) or {}
     ok, faltan = _ot2_finanzas_estado(v2)
     # 💰 2026-10-07 — la cuenta única recién guardada, para que la tarjeta repinte con lo que de verdad quedó
@@ -94194,7 +94586,7 @@ def ot2_api_finanzas_lineas_zz(vid):
         # 🐛 2026-09-25: "NVV 10667" no existe tal cual -- las notas de
         # venta de ILUS viven en Random como VD/WEB (ver _ot_resolver_doc_erp).
         if not header and tido == "NVV":
-            for _t_alt in ("VD", "WEB"):
+            for _t_alt in _saldo.PREFIJOS_NOTA_VENTA:
                 header, lineas = _mant_erp_doc_cached(_t_alt, nudo)
                 if header:
                     tido = _t_alt
@@ -94616,6 +95008,8 @@ def _ot_docs_listar(vid):
                 "monto": float(f["monto"]) if f.get("monto") is not None else None,
                 "rut": f.get("rut") or "", "rut_ok": f.get("rut_ok"),
                 "emitido_el": str(f["emitido_el"])[:10] if f.get("emitido_el") else None,
+                # 🧩 2026-10-19: copia espejada de la instalación (solo referencia; no cobra ni consume saldo).
+                "heredado": bool(f.get("heredado_de_visita_id")), "heredado_de": f.get("heredado_de_visita_id"),
             })
 
     # El principal legacy (solo en mant_visitas) se muestra igual.
@@ -94757,13 +95151,16 @@ _OT_DOCS_COBRO = ("FCV", "FCE", "BLV", "BLE")
 _OT_COBRO_CERO_MOTIVOS = {"garantia": "Garantía", "regalia": "Regalía", "arriendo_leasing": "Arriendo o leasing"}
 _OT_COBRO_CERO_MODALIDAD = {"garantia": "garantia", "regalia": "sin_costo", "arriendo_leasing": "sin_costo"}
 _OT_AUT_TIPOS = ("crear_sin_documento", "cobro_cero", "cerrar_sin_documento", "exceder_saldo", "cerrar_con_perdida",
-                 "documento_observado")
+                 "documento_observado", "desinstalacion_cubierta")
 _OT_AUT_TIPO_TXT = {"crear_sin_documento": "Crear OT sin documento", "cobro_cero": "Cobrar $0",
                     "cerrar_sin_documento": "Cerrar OT sin documento",
                     "exceder_saldo": "Cobrar más que el saldo del documento",
                     "cerrar_con_perdida": "Cerrar OT con pérdida",
                     # 🗓️ 2026-10-12: documento de más de 3 meses o con sus productos sin saldo en Random.
-                    "documento_observado": "Crear OT con documento observado"}
+                    "documento_observado": "Crear OT con documento observado",
+                    # 🧩 2026-10-19 (crítica adversarial, punto 4): declarar DESPUÉS de crear la instalación que se
+                    # desinstala (y que esa desinstalación va cubierta, sin cobro propio) pide el argumento de Daniel.
+                    "desinstalacion_cubierta": "Desinstalación cubierta por la instalación"}
 _OT_AUT_ESTADO_TXT = {"pendiente": "Esperando a Daniel", "aprobada": "Autorizada", "rechazada": "Rechazada",
                       "anulada": "Anulada"}
 _OT_AUT_ARGUMENTO_MIN = 30
@@ -94835,7 +95232,9 @@ def _ot_puerta_docs_de(vid):
     try:
         for r in (mysql_fetchall(
                 "SELECT erp_tido, erp_nudo, es_cobro, es_principal FROM mant_visita_documentos "
-                " WHERE visita_id=%s AND origen='erp' AND COALESCE(erp_nudo,'')<>'' ORDER BY es_principal DESC, id",
+                " WHERE visita_id=%s AND origen='erp' AND COALESCE(erp_nudo,'')<>'' "
+                "   AND heredado_de_visita_id IS NULL "   # 🧩 2026-10-19: lo espejado de la madre no es SU documento
+                " ORDER BY es_principal DESC, id",
                 (vid,)) or []):
             t = (r.get("erp_tido") or "").strip().upper()
             n = (r.get("erp_nudo") or "").strip()
@@ -94876,6 +95275,7 @@ def _ot_puerta_docs_lote(vids):
         for r in (mysql_fetchall(
                 "SELECT visita_id, erp_tido, erp_nudo, es_cobro, es_principal FROM mant_visita_documentos "
                 f" WHERE visita_id IN ({ph}) AND origen='erp' AND COALESCE(erp_nudo,'')<>'' "
+                "   AND heredado_de_visita_id IS NULL "   # 🧩 2026-10-19
                 " ORDER BY visita_id, es_principal DESC, id", tuple(ids)) or []):
             t = (r.get("erp_tido") or "").strip().upper()
             n = (r.get("erp_nudo") or "").strip()
@@ -95048,7 +95448,161 @@ def _ot_puerta_aut_crear_valida(aut, cliente_id):
         return False
 
 
-def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_declara=None):
+_OT_FILA_BASICA_COLS = ("id, numero_ot, tipo, estado, cliente_id, ot_madre_id, ot_relacion, desinstalacion_prevista, "
+                        "desinstalacion_aut_id, evento_id, zz_monto, zz_envio_monto, fecha_programada, fecha_fin, "
+                        "fecha_realizada, hora_inicio, hora_fin, created_at, created_by, created_by_user_id")
+
+
+def _ot_fila_basica(vid):
+    """La fila mínima de una OT para las reglas de madre/hija, SIEMPRE releída de la base (nunca del body: crítica
+    adversarial, punto 7). Lectura simple; las escrituras que necesitan bloquear la madre (crear la hija, cancelar)
+    hacen su propio SELECT ... FOR UPDATE dentro de su transacción."""
+    try:
+        vid = int(vid)
+    except (TypeError, ValueError):
+        return None
+    try:
+        r = mysql_fetchone("SELECT " + _OT_FILA_BASICA_COLS + " FROM mant_visitas WHERE id=%s", (vid,))
+        return dict(r) if r else None
+    except Exception as e:
+        print(f"[ot-madre] fila {vid}: {type(e).__name__}", flush=True)
+        return None
+
+
+def _ot_hijas_de(madre_id, cur=None, estricto=False):
+    """Las OT hijas (desinstalaciones) de una instalación, todas, la más antigua primero. Con `cur` va dentro de la
+    transacción del llamador. `estricto`=True: una lectura que falla SE PROPAGA (los candados de plata no pueden tomar un
+    error por «no tiene hijas»)."""
+    sql = ("SELECT id, numero_ot, estado, fecha_programada, fecha_fin, hora_inicio, hora_fin, tecnico_user_id, cliente_id "
+           "  FROM mant_visitas WHERE ot_madre_id=%s AND ot_relacion='desinstalacion' ORDER BY id")
+    try:
+        if cur is not None:
+            cur.execute(sql, (int(madre_id),))
+            return [dict(r) for r in (cur.fetchall() or [])]
+        return [dict(r) for r in (mysql_fetchall(sql, (int(madre_id),)) or [])]
+    except Exception as e:
+        print(f"[ot-madre] hijas de {madre_id}: {type(e).__name__}", flush=True)
+        if estricto:
+            raise
+        return []
+
+
+def _ot_hijas_vigentes_lote(madre_ids):
+    """{madre_id: [hijas vigentes]} para un lote de instalaciones, en UNA consulta (nunca una por OT). Vigente = no
+    cancelada ni anulada (las cerradas cuentan)."""
+    try:
+        ids = sorted({int(x) for x in (madre_ids or []) if x})
+    except (TypeError, ValueError):
+        return {}
+    if not ids:
+        return {}
+    out = {}
+    try:
+        ph = ",".join(["%s"] * len(ids))
+        for r in (mysql_fetchall(
+                "SELECT id, numero_ot, estado, ot_madre_id, fecha_programada, fecha_fin, hora_inicio, hora_fin, "
+                "       tecnico_user_id FROM mant_visitas WHERE ot_madre_id IN (" + ph + ") "
+                " AND ot_relacion='desinstalacion' AND estado NOT IN ('cancelada','anulada') ORDER BY id",
+                tuple(ids)) or []):
+            out.setdefault(int(r["ot_madre_id"]), []).append(dict(r))
+    except Exception as e:
+        print(f"[ot-madre] hijas lote n={len(ids)}: {type(e).__name__}", flush=True)
+    return out
+
+
+def _ot_madre_tiene_doc_real(madre_id):
+    """¿La instalación tiene un documento de Random DE VERDAD (nota de venta, factura o boleta; origen erp, es_cobro=1,
+    vigente, no heredado)? Mismo criterio que la bandera SQL _OT_FIN_SQL_MADRE_VALIDA."""
+    try:
+        docs = _ot_puerta_docs_de(madre_id)
+    except Exception:
+        return False
+    tidos = {d["tido"] for d in docs if d.get("es_cobro", True)}
+    return bool(tidos & set(_saldo.NOTAS_VENTA + _saldo.DOCS_COBRO))
+
+
+def _ot_madre_tiene_factura(madre_id):
+    """¿La instalación ya tiene su factura o boleta validada (la desinstalación cubierta cierra con ella)?"""
+    try:
+        docs = _ot_puerta_docs_de(madre_id)
+    except Exception:
+        return False
+    return any(d.get("es_cobro", True) and d["tido"] in _OT_DOCS_COBRO for d in docs)
+
+
+def _ot_aut_aprobada(aid):
+    if not aid:
+        return False
+    try:
+        return bool(mysql_fetchone("SELECT 1 AS x FROM mant_ot_autorizaciones WHERE id=%s AND estado='aprobada'",
+                                   (int(aid),)))
+    except Exception:
+        return False
+
+
+def _ot_cubierta_madre_check(madre, cliente_id_hija):
+    """(ok, motivo): ¿esta fila (releída por el servidor) sirve de MADRE de una desinstalación cubierta? Las reglas están
+    en ot_eventos.madre_valida_para_cubrir; acá solo se leen los dos hechos que piden la base: el documento de Random y
+    la autorización aprobada que ya incluía la desinstalación."""
+    if not madre:
+        return False, "No se encontró la instalación."
+    return _evt.madre_valida_para_cubrir(
+        madre, cliente_id_hija, _ot_madre_tiene_doc_real(madre["id"]),
+        _ot_aut_aprobada(madre.get("desinstalacion_aut_id")))
+
+
+def _ot_puerta_via_cubierta(v, momento, madre=None):
+    """🧩 2026-10-19 — la vía 'cubierta_madre' de la puerta: la desinstalación (OT hija) la cubre la nota de venta de su
+    instalación. Devuelve el veredicto de la puerta (ok o no) SOLO si la OT ES una hija cubierta válida; None si la
+    puerta debe seguir con su camino normal.
+
+    · Al CREAR, `madre` lo pasa SOLO el servidor (`_ot2_crear_core(..., madre=fila)`): nunca sale de un body. En lo demás
+      se relee todo por v['id'] (la puerta jamás lee ot_madre_id del dict `v`: varios llamadores lo arman desde el body).
+    · Exige que la madre tenga un documento REAL de Random (o la autorización aprobada que ya incluía la desinstalación),
+      que sea la única hija vigente (las cerradas cuentan; las canceladas no) y que la hija no cobre una línea propia.
+    · Al CERRAR exige además que la madre tenga FACTURA o BOLETA validada: «madre cerrada» no basta (pudo cerrar por
+      cerrar_sin_documento o cobro_cero). Si no la tiene: falta 'madre_factura' (MADRE_SIN_FACTURA)."""
+    v = v or {}
+    try:
+        if madre is None:
+            vid = v.get("id")
+            if not vid:
+                return None
+            h = _ot_fila_basica(vid)
+            if not h:
+                return None
+            if ((h.get("tipo") or "").strip().lower() != _evt.TIPO_HIJA
+                    or (h.get("ot_relacion") or "").strip().lower() != _evt.REL_DESINSTALACION
+                    or not h.get("ot_madre_id")):
+                return None
+            if _saldo._entero(h.get("zz_monto")) > 0 or _saldo._entero(h.get("zz_envio_monto")) > 0:
+                return None   # cobra su propia línea de desinstalación: camino normal
+            madre = _ot_fila_basica(h["ot_madre_id"])
+            cliente_hija = h.get("cliente_id")
+            vigentes = _evt.hijas_vigentes(_ot_hijas_de(h["ot_madre_id"]))
+            if not vigentes or int(vigentes[0]["id"]) != int(vid):
+                return None   # una sola hija vigente: las demás no son «cubiertas»
+        else:
+            cliente_hija = v.get("cliente_id")
+        ok, _motivo = _ot_cubierta_madre_check(madre, cliente_hija)
+        if not ok:
+            return None
+        num = madre.get("numero_ot") or f"V-{int(madre['id']):05d}"
+        base = {"via": "cubierta_madre", "madre_id": int(madre["id"]), "madre_numero": num}
+        if momento == "cerrar" and not _ot_madre_tiene_factura(madre["id"]):
+            return dict(base, ok=False, via=None, code="DOC_REQUERIDO", falta="madre_factura",
+                        accion="abrir_ot_madre", nota_venta=False, documentos_ok=[],
+                        mensaje=(f"Esta desinstalación se cubre con la instalación {num}, que todavía no tiene su factura "
+                                 "o boleta. Agrégala en la instalación (o pide la autorización de Daniel para cerrar "
+                                 "esta OT sin documento)."))
+        return dict(base, ok=True, code=None, falta=None, accion=None, mensaje="", nota_venta=False,
+                    documentos_ok=[], docs_ya_guardados=True)
+    except Exception as e:
+        print(f"[ot-puerta] cubierta_madre: {type(e).__name__}: {e}", flush=True)
+        return None
+
+
+def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_declara=None, madre=None):
     """★ LA PUERTA. ¿Esta OT (fila o payload de una por crear) tiene con qué existir / cerrarse?
 
     v: dict con cliente_id, tipo, modalidad_cobro, cubierto_por y, si existe, id. Opcionales:
@@ -95119,6 +95673,13 @@ def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_decla
                   else _ot_puerta_contrato_real(v.get("cliente_id"), v.get("contrato_id")))
         if cr:
             return _ok("contrato_real")
+
+    # 3b) 🧩 2026-10-19 — DESINSTALACIÓN CUBIERTA: la hija de una instalación con documento real de Random. Al crear,
+    #     `madre` solo lo pasa el servidor; en lo demás la puerta relee la relación por v['id'] (nunca del dict `v`).
+    if tipo == "desinstalacion" or madre is not None:
+        _cub = _ot_puerta_via_cubierta(v, momento, madre=madre)
+        if _cub is not None:
+            return _cub
 
     # 4) Documentos del ERP. Los validados (tabla puente, validador de finanzas, asociar-factura) cuentan; los que
     #    vienen como texto del body se confirman contra el ERP (lectura). Una cotización interna basta para
@@ -95352,9 +95913,12 @@ _OT_CIERRE_ACCIONES = {
     "DOC_REQUERIDO":               ("pedir_autorizacion", "Agregar un documento o pedir autorización a Daniel"),
     "ZZ_SALDO_CONSUMIDO":          ("resolver_saldo", "Resolver el saldo: tomar solo lo que queda, agregar otra factura, pasar a garantía o pedir autorización"),
     "CIERRE_CON_PERDIDA":          ("pedir_aut_perdida", "Pedir a Daniel la autorización para cerrar con pérdida (con argumento)"),
+    # 🧩 2026-10-19: la desinstalación cubierta cierra solo cuando su instalación (madre) ya tiene la factura o boleta.
+    "MADRE_SIN_FACTURA":           ("abrir_ot_madre", "Abrir la OT de la instalación y agregar la factura o boleta"),
 }
 _OT_PUERTA_FALTA_A_CODIGO = {"factura": "FALTA_FACTURA", "autorizacion_cobro_cero": "COBRO_CERO_SIN_AUTORIZACION",
-                             "documento": "SIN_FACTURA"}
+                             "documento": "SIN_FACTURA",
+                             "madre_factura": "MADRE_SIN_FACTURA"}   # 2026-10-19: la instalación aún no tiene factura/boleta
 
 
 def _ot_cierre_accion(code, vid=None, aid=None):
@@ -95379,8 +95943,13 @@ def _ot_cierre_rechazo(p, vid, autorizaciones=None):
     else:
         code = _OT_PUERTA_FALTA_A_CODIGO.get((p or {}).get("falta") or "", "SIN_FACTURA")
         msg = (p or {}).get("mensaje") or _OT_PUERTA_MSG
+    _accion_c = _ot_cierre_accion(code, vid, aid=(pend or {}).get("id"))
+    if code == "MADRE_SIN_FACTURA" and (p or {}).get("madre_id"):
+        # 🧩 2026-10-19: la acción lleva a la OT DE LA INSTALACIÓN (ahí se agrega la factura o boleta), no a esta.
+        _accion_c = dict(_accion_c, url=f"/ot/{int(p['madre_id'])}", madre_id=int(p["madre_id"]),
+                         madre_numero=p.get("madre_numero"))
     return jsonify({"ok": False, "error": msg, "error_codigo": code, "codigo": code, "falta": (p or {}).get("falta"),
-                    "accion": _ot_cierre_accion(code, vid, aid=(pend or {}).get("id")),
+                    "accion": _accion_c,
                     "puede_pedir_autorizacion": code != "AUTORIZACION_PENDIENTE",
                     "autorizacion_id": (pend or {}).get("id"), "visita_id": vid}), 409
 
@@ -95420,7 +95989,7 @@ def _ensure_mant_ot_autorizaciones():
                 id                     INT AUTO_INCREMENT PRIMARY KEY,
                 entidad                ENUM('ot','ticket','cotizacion') NOT NULL DEFAULT 'ot',
                 entidad_id             INT NULL,
-                tipo                   ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento','exceder_saldo','cerrar_con_perdida','documento_observado') NOT NULL,
+                tipo                   ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento','exceder_saldo','cerrar_con_perdida','documento_observado','desinstalacion_cubierta') NOT NULL,
                 visita_id              INT NULL,
                 cliente_id             INT NULL,
                 payload_json           MEDIUMTEXT NULL,
@@ -95449,8 +96018,10 @@ def _ensure_mant_ot_autorizaciones():
     # 🗓️ 2026-10-12: nuevo tipo «documento_observado» (documento de más de 3 meses o productos sin saldo en Random).
     # UNA sola sentencia define la columna (REGLA #18: nunca dos migraciones con valores distintos); cada valor nuevo
     # se agrega AL FINAL y _ddl_ya_aplicado salta la sentencia si ya están todos.
+    # 🧩 2026-10-19: nuevo tipo «desinstalacion_cubierta» (declarar, después de crear la instalación, que se desinstala y
+    # que esa desinstalación va cubierta por ella: pide el argumento de Daniel; REGLA #24).
     try:
-        mysql_execute("ALTER TABLE mant_ot_autorizaciones MODIFY tipo ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento','exceder_saldo','cerrar_con_perdida','documento_observado') NOT NULL")
+        mysql_execute("ALTER TABLE mant_ot_autorizaciones MODIFY tipo ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento','exceder_saldo','cerrar_con_perdida','documento_observado','desinstalacion_cubierta') NOT NULL")
     except Exception as e:
         print(f"[ensure_ot_autorizaciones] tipo cerrar_con_perdida: {e}", flush=True)
 
@@ -95516,6 +96087,7 @@ def _ot_aut_json(r):
         "resuelto_por_nombre": r.get("resuelto_por_nombre"), "resuelto_at": res_at,
         "comentario": r.get("comentario") or "", "visita_creada_id": r.get("visita_creada_id"),
         "payload": payload, "constancia": constancia,
+        "incluye_desinstalacion": _ot_aut_incluye_desinstalacion(r),   # 🧩 2026-10-19
         "url": f"/ot/autorizaciones/{r.get('id')}",
     }
 
@@ -95540,7 +96112,26 @@ def _ot_aut_resumen(a, numero_ot=None, cliente=None):
         partes.append(str(numero_ot))
     if cliente:
         partes.append(str(cliente))
+    inc = _ot_aut_incluye_desinstalacion(a)
+    if inc:
+        partes.append(inc)   # 🧩 2026-10-19: lo que ve Daniel: «Incluye desinstalación dd/mm»
     return " · ".join(partes)
+
+
+def _ot_aut_incluye_desinstalacion(a):
+    """«Incluye desinstalación dd/mm» si la solicitud (payload_json) trae una desinstalación agendada o prevista: es la
+    única excepción para que una instalación SIN documento de Random cubra su desinstalación (crítica 2) y Daniel tiene
+    que verla al autorizar. Vacío si no."""
+    try:
+        pj = json.loads((a or {}).get("payload_json") or "{}") or {}
+    except Exception:
+        return ""
+    dd = pj.get("desinstalacion") if isinstance(pj, dict) else None
+    if not isinstance(dd, dict):
+        return ""
+    if dd.get("lleva") not in (True, 1, "1", "true", "si", "sí", "por_definir"):
+        return ""
+    return _evt.resumen_instalacion_con_desinstalacion(dd.get("fecha") or dd.get("fecha_programada"))
 
 
 def _ot_aut_notificar_superadmins(a):
@@ -95921,6 +96512,17 @@ def ot_aut_api_crear():
         if not cliente_id:
             return jsonify({"ok": False, "error": "Una OT interna sin cliente no necesita autorización.",
                             "error_codigo": "NO_APLICA"}), 400
+        if tipo == "cerrar_con_perdida":
+            # 🧩 2026-10-19: la pérdida de una desinstalación es la de la FAMILIA y se pide sobre la INSTALACIÓN (ahí la lee
+            # el cierre y el pago al proveedor): el payload lista a todos los miembros. Falla cerrado si no se puede leer.
+            try:
+                _fam_ap = _fac_familia_de(visita_id)
+            except Exception as _e_fa:
+                print(f"[ot-aut] familia {visita_id}: {type(_e_fa).__name__}", flush=True)
+                return jsonify({"ok": False, "error": "No pudimos revisar la desinstalación de esta OT. Reintenta en unos segundos.",
+                                "error_codigo": "REVISION_NO_DISPONIBLE"}), 503
+            if _fam_ap and int(_fam_ap["madre_id"]) != int(visita_id):
+                visita_id = int(_fam_ap["madre_id"])
         if tipo == "exceder_saldo":
             sp = d.get("saldo_pedido") if isinstance(d.get("saldo_pedido"), dict) else {}
             pedido_sp = {c: max(0, _saldo._entero(sp.get(c))) for c in _saldo.CATEGORIAS}
@@ -95945,10 +96547,24 @@ def ot_aut_api_crear():
                 return jsonify({"ok": False, "error": "Esta OT no va a pérdida: no necesita esta autorización.",
                                 "error_codigo": "NO_APLICA"}), 400
             _pl = {"perdida": _per, "cobre": _fp["cobre"], "me_cobraron": _fp["me_cobraron"]}
+            if _fp.get("familia"):
+                # 🧩 2026-10-19: la cuenta es la de la instalación CON su(s) desinstalación(es): se dice cuáles.
+                _pl["incluye"] = _fp.get("incluye_txt")
+                _pl["familia"] = [{"numero_ot": m.get("numero_ot"), "rol": m.get("rol"), "cobre": m.get("cobre"),
+                                   "tecnico": m.get("tecnico"), "despacho": m.get("despacho")} for m in _fp["familia"]]
             if _saldo._entero(_eq.get("exceso")) >= _saldo._entero(_fp.get("perdida")) and _eq.get("exceso"):
                 _pl.update(pago_proveedor=_eq.get("pago"), cobro_efectivo=_eq.get("cobro_efectivo"),
                            saldo_usado_por_otras=_eq.get("reduccion"))
             payload_json = json.dumps(_pl, ensure_ascii=False)
+        if tipo == "desinstalacion_cubierta":
+            # 🧩 2026-10-19: declarar, después de crear la instalación, que se desinstala (y que va cubierta por ella). El
+            # payload lleva lo que se iba a agendar: al aprobarla se crea la desinstalación (ver ot_aut_api_aprobar).
+            _mrow = _ot_fila_basica(visita_id)
+            _ok_dc, _mot_dc = _evt.puede_programar_desinstalacion(_mrow, _ot_hijas_de(visita_id))
+            if not _ok_dc:
+                return jsonify({"ok": False, "error": _mot_dc, "error_codigo": "NO_APLICA"}), 409
+            _pl_dc = d.get("payload") if isinstance(d.get("payload"), dict) else {}
+            payload_json = json.dumps(_pl_dc, ensure_ascii=False, default=str)[:200000]
     uid, nombre = _ot_aut_usuario()
     # Sin duplicar una pendiente igual.
     try:
@@ -96215,6 +96831,21 @@ def ot_aut_api_aprobar(aid):
                           f"{a.get('solicitado_por_nombre') or '?'} (autorización N° {aid})"
                           + (f" · comentario: {comentario}" if comentario else ""))[:4000],
                          current_username() or "sistema"))
+        elif tipo == "desinstalacion_cubierta":
+            # 🧩 2026-10-19: Daniel autorizó que la instalación se desinstale después y que esa desinstalación vaya cubierta
+            # por ella: queda la desinstalación prevista y la autorización que la respalda (`desinstalacion_aut_id`).
+            try:
+                _pdc = json.loads(a.get("payload_json") or "{}") or {}
+            except Exception:
+                _pdc = {}
+            _f_dc = (_pdc.get("prevista") or (_pdc.get("desinstalacion") or {}).get("fecha"))
+            _ot_desinst_aplicar_autorizacion(cur, vid, aid, _f_dc)
+            cur.execute("INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) VALUES ('visita',%s,%s,%s,%s)",
+                        (vid, "desinstalacion_cubierta_autorizada",
+                         (f"Desinstalación cubierta por la instalación · {constancia} · pedida por "
+                          f"{a.get('solicitado_por_nombre') or '?'} (autorización N° {aid})"
+                          + (f" · comentario: {comentario}" if comentario else ""))[:4000],
+                         current_username() or "sistema"))
         else:   # cerrar_sin_documento
             cur.execute("INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) VALUES ('visita',%s,%s,%s,%s)",
                         (vid, "cierre_sin_documento_autorizado",
@@ -96235,7 +96866,31 @@ def ot_aut_api_aprobar(aid):
         except Exception:
             pass
     _ot_aut_notificar_solicitante(aprobada)
-    return jsonify({"ok": True, "estado": "aprobada", "visita_id": vid, "autorizacion": _ot_aut_json(_ot_aut_fila(aid))})
+    _resp_dc = {}
+    if tipo == "desinstalacion_cubierta":
+        # Con la desinstalación ya declarada y respaldada, si la solicitud traía lo que se iba a agendar, se crea la OT hija.
+        try:
+            _bloque_dc = (json.loads(a.get("payload_json") or "{}") or {}).get("desinstalacion")
+        except Exception:
+            _bloque_dc = None
+        if isinstance(_bloque_dc, dict) and _bloque_dc:
+            _r_dc = _ot_crear_desinstalacion(vid, dict(_bloque_dc, lleva="si"), autorizacion=aprobada,
+                                             creado_por=a.get("solicitado_por_nombre"))
+            _resp_dc["desinstalacion"] = _r_dc
+            if not _r_dc.get("ok"):
+                try:
+                    _mant_log("visita", vid, "desinstalacion_no_agendada",
+                              f"Daniel autorizó la desinstalación, pero no se pudo agendar: {_r_dc.get('error') or _r_dc.get('codigo')}")
+                    if a.get("solicitado_por_user_id"):
+                        _mant_notificar(int(a["solicitado_por_user_id"]), "otro", "La desinstalación autorizada no se pudo agendar",
+                                        f"Daniel la autorizó, pero no se pudo agendar: {_r_dc.get('error') or ''} "
+                                        "Prográmala de nuevo desde la ficha de la instalación."[:1500],
+                                        url_accion=f"/ot/{vid}", prioridad="alta", visita_id=vid)
+                        _mant_notif_cache_invalidar(int(a["solicitado_por_user_id"]))
+                except Exception as _e_dcn:
+                    print(f"[ot-aut] aviso desinstalación fallida: {_e_dcn}", flush=True)
+    return jsonify(dict({"ok": True, "estado": "aprobada", "visita_id": vid,
+                         "autorizacion": _ot_aut_json(_ot_aut_fila(aid))}, **_resp_dc))
 
 
 @app.route("/ot/api/autorizaciones/<int:aid>/rechazar", methods=["POST"])
@@ -96315,6 +96970,9 @@ _OT_REG_FALTA_TXT = {
     "documento": "Sin documento ni $0 autorizado",
     "factura": "Falta factura (solo nota de venta)",
     "autorizacion_cobro_cero": "$0 sin autorización de Daniel",
+    # 🧩 2026-10-19: la desinstalación cubierta por su instalación no es «sin documento»: lo que falta es la factura o boleta
+    # de la INSTALACIÓN (donde se regulariza). Se muestra como «Cubierta por OT-…».
+    "madre_factura": "Cubierta por su instalación: falta la factura de la instalación",
 }
 
 
@@ -96401,7 +97059,8 @@ def ot_api_regularizar():
             "       v.created_by, v.created_by_user_id, v.created_at, v.modalidad_cobro, v.cubierto_por, v.contrato_id, "
             "       v.estado_facturacion, v.centro_costo, v.cobro_cero_motivo, v.cobro_cero_autorizacion_id, "
             "       v.cobro_cero_argumento, v.factura_tido, v.factura_nudo, "
-            "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
+            "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real, "
+            "       " + _OT_FIN_SQL_MADRE_COLS + " "   # 🧩 2026-10-19: la desinstalación cubierta no pide documento propio
             "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
             " WHERE " + " AND ".join(where) +
             " ORDER BY v.fecha_programada DESC, v.id DESC LIMIT 6000", tuple(params)) or []
@@ -96444,6 +97103,7 @@ def ot_api_regularizar():
             "cobertura": _ot_cobertura(r), "modalidad_cobro": r.get("modalidad_cobro"),
             "centro_costo": r.get("centro_costo"),
             "falta": falta, "falta_txt": _OT_REG_FALTA_TXT.get(falta, falta), "mensaje": p.get("mensaje") or "",
+            "madre_id": p.get("madre_id"), "madre_numero": p.get("madre_numero"),   # 🧩 2026-10-19
             "documentos": [{"tido": x["tido"], "nudo": x["nudo"]} for x in r["documentos"]],
             "cerrada": r.get("estado") == "cerrada",
             "solicitud_pendiente": ({"id": ps["id"], "tipo": ps["tipo"], "solicitado_por": ps.get("solicitado_por_nombre"),
@@ -96549,6 +97209,10 @@ def ot_api_recorrido(vid):
         p1 = {"estado": "hecho", "texto": fin["cobertura_txt"] + " (el contrato es el documento)"}
     elif cob == "interno":
         p1 = {"estado": "no_aplica", "texto": fin["cobertura_txt"]}
+    elif cob == "cubierta":
+        # 🧩 2026-10-19: la desinstalación va cubierta por la nota de venta de su instalación.
+        p1 = {"estado": "hecho", "texto": fin["cobertura_txt"] + (
+            f" ({p_cerrar.get('madre_numero')})" if p_cerrar.get("madre_numero") else "")}
     else:
         if aut_cero:
             p1 = {"estado": "hecho", "texto": f"$0 · {fin['cobertura_txt']} · {_const(aut_cero)}"}
@@ -96563,6 +97227,13 @@ def ot_api_recorrido(vid):
         p2 = {"estado": "hecho", "texto": ", ".join(f"{x['tido']} {x['nudo']}" for x in docs_val)}
     elif nv:
         p2 = {"estado": "falta", "texto": "Falta factura: " + ", ".join(f"{x['tido']} {x['nudo']}" for x in docs_val)}
+    elif cob == "cubierta":
+        # 🧩 2026-10-19: el documento vive en la instalación; la desinstalación cierra cuando esa tiene factura o boleta.
+        _num_m = p_cerrar.get("madre_numero") or "la instalación"
+        if p_cerrar.get("ok"):
+            p2 = {"estado": "no_aplica", "texto": f"El documento es el de la instalación {_num_m}"}
+        else:
+            p2 = {"estado": "falta", "texto": p_cerrar.get("mensaje") or f"La instalación {_num_m} aún no tiene factura o boleta"}
     elif cob in ("contrato", "interno") or aut_cero or aut_cerrar:
         p2 = {"estado": "no_aplica", "texto": ("Sin documento de Random · " + _const(aut_cerrar or aut_cero))
               if (aut_cerrar or aut_cero) else "No necesita documento"}
@@ -96570,7 +97241,10 @@ def ot_api_recorrido(vid):
         p2 = {"estado": "falta", "texto": "Sin documento validado del ERP"}
     # ③ Cobré
     c = fin["cobre"]
-    if cob != "cobra":
+    if cob == "cubierta":
+        p3 = {"estado": "no_aplica", "texto": "Se cobra en la instalación" + (
+            f" {p_cerrar.get('madre_numero')}" if p_cerrar.get("madre_numero") else "") + ": esta OT no cobra aparte"}
+    elif cob != "cobra":
         p3 = {"estado": "no_aplica", "texto": "$0 (no se cobra)"}
     elif c["hay"] and c["total"] > 0:
         p3 = {"estado": "hecho", "texto": f"Servicio {_ot_fin_clp(c['servicio'])} + despacho {_ot_fin_clp(c['despacho'])} = {_ot_fin_clp(c['total'])}"}
@@ -96612,9 +97286,10 @@ def ot_api_recorrido(vid):
     # 📒 2026-10-11 (Daniel: «te va a indicar si la factura va a pérdida y eso iría autorizado por mí»): una OT que se
     # cobra y va a pérdida cierra solo con la autorización 'cerrar_con_perdida'. El paso 6 lo dice ANTES de firmar.
     perdida = None
-    if cob == "cobra" and not interna and fin["cobre"].get("hay") and not fin["me_cobraron"].get("falta_tecnico"):
+    if cob in ("cobra", "cubierta") and not interna and fin["cobre"].get("hay") and not fin["me_cobraron"].get("falta_tecnico"):
         try:
-            perdida = _fac_perdida_info(vid, fin)
+            # 🧩 2026-10-19: con desinstalación, la pérdida es la de la familia (anclada en la instalación).
+            perdida = _fac_perdida_de_ot(vid) if _fac_familia_de(vid) else _fac_perdida_info(vid, fin)
             if not _fac_perdida_aplica(p_cerrar.get("via"), perdida):
                 perdida = None   # cierre autorizado sin documento y sin cobro: el servidor tampoco la exige
         except Exception as _e_rp:
@@ -96658,6 +97333,8 @@ def ot_api_recorrido(vid):
         "estado_facturacion": v.get("estado_facturacion"), "falta_factura": nv and not cobro_doc,
         "superadmin": _ot_aut_es_superadmin(), "motivos": [{"v": k, "n": n} for k, n in _OT_COBRO_CERO_MOTIVOS.items()],
         "perdida": perdida,
+        # 🧩 2026-10-19: la cuenta CONJUNTA de la instalación y su desinstalación (None si la OT no tiene familia).
+        "familia": _ot_familia_resumen(vid),
     })
 
 
@@ -96675,7 +97352,8 @@ def ot_api_recorrido(vid):
 _OT_TIDO_TXT = {"FCV": "Factura", "FCE": "Factura exenta", "BLV": "Boleta", "BLE": "Boleta electrónica",
                 "NVV": "Nota de venta", "NVI": "Nota de venta interna", "VD": "Nota de venta",
                 "WEB": "Nota de venta web", "GDV": "Guía de despacho", "COV": "Cotización del ERP"}
-_OT_DOC_CUENTA_TXT = {"servicio": "Cobro del servicio", "despacho": "Cobro del despacho",
+_OT_DOC_CUENTA_TXT = {"heredado": "Heredado de la instalación: se cobra allá, aquí es referencia",
+                      "servicio": "Cobro del servicio", "despacho": "Cobro del despacho",
                       "nota_venta": "Nota de venta: promesa de cobro, falta la factura",
                       "cotizacion": "Cotización: solo referencia",
                       "referencia_garantia": "Referencia de la garantía: no se cobra",
@@ -96749,7 +97427,9 @@ def _ot_panorama_docs(vid, v):
                 "etiqueta": f.get("etiqueta") or "", "asociado_por": f.get("asociado_por") or "",
                 "asociado_at": chile_fmt_filter(f["created_at"]) if f.get("created_at") else "",
                 "fecha": _ot_fecha_txt(f.get("emitido_el")),
-                "reemplazado_por_id": f.get("reemplazado_por_id"), "cuenta": f.get("cuenta") or ""}
+                "reemplazado_por_id": f.get("reemplazado_por_id"), "cuenta": f.get("cuenta") or "",
+                # 🧩 2026-10-19: copia espejada de la instalación (la desinstalación cubierta la ve como referencia).
+                "heredado": bool(f.get("heredado_de_visita_id")), "heredado_de": f.get("heredado_de_visita_id")}
         if f.get("origen") == "cotizacion":
             base.update({"origen": "cotizacion", "categoria": "cotizacion", "tipo_txt": "Cotización",
                          "titulo": f.get("numero_cotizacion") or f"Cotización {f.get('cotizacion_id')}",
@@ -96766,7 +97446,9 @@ def _ot_panorama_docs(vid, v):
                       else ("distinto" if rut_ok in (0, False) else "sin_verificar")))
         cat = _ot_doc_categoria(tu)
         cuenta = base["cuenta"]
-        if not cuenta:
+        if base["heredado"]:
+            cuenta = "heredado"
+        elif not cuenta:
             if cat == "nota_venta":
                 cuenta = "nota_venta"
             elif not base["es_cobro"]:
@@ -96840,6 +97522,8 @@ def ot_api_panorama(vid):
     leidos = 0
     for d in docs:
         d["lineas"] = None
+        if d.get("heredado"):
+            continue   # 🧩 2026-10-19: el espejo de la instalación no lee líneas del ERP ni suma servicios
         if d.get("origen") != "erp" or d.get("categoria") == "otro" and d.get("tido") in ("GDV", "COV"):
             continue
         if leidos >= _OT_PANORAMA_MAX_LECTURAS_ERP:
@@ -96850,6 +97534,9 @@ def ot_api_panorama(vid):
     cont = {"facturas": 0, "notas_venta": 0, "notas_venta_dadas_de_baja": 0, "cotizaciones": 0, "servicios": 0,
             "despachos": 0, "otros": 0, "total": len(docs)}
     for d in docs:
+        if d.get("heredado"):
+            cont["heredados"] = cont.get("heredados", 0) + 1   # 🧩 2026-10-19: aparte; no cuenta como factura ni nota
+            continue
         if d["categoria"] == "cobro":
             cont["facturas"] += 1
         elif d["categoria"] == "nota_venta":
@@ -97236,7 +97923,7 @@ def _ot_resolver_doc_erp(tipo, numero, cli_rut=None):
     el número existe en más de una serie se prefiere la del RUT del cliente
     de la OT (un número suelto puede repetirse entre series).
     REGLA #4.1: solo lectura, vía _erp_doc_lookup."""
-    candidatos = [tipo] + (["VD", "WEB"] if tipo == "NVV" else [])
+    candidatos = [tipo] + (list(_saldo.PREFIJOS_NOTA_VENTA) if tipo == "NVV" else [])
     encontrados, respondio, ultimo_err = [], False, None
     for t in candidatos:
         doc, _fuente, _resp, _err = _erp_doc_lookup(t, numero)
@@ -97358,9 +98045,12 @@ def ot2_api_documentos_agregar(vid):
     else:
         _tipo_real, _numero_real = tipo, numero
 
+    # 🧩 2026-10-19: el documento ESPEJADO de la instalación (heredado_de_visita_id) NO cuenta como «ya asociado»: la
+    # desinstalación cubierta lo ve como referencia, y si la nota de venta trae una línea propia de desinstalación
+    # («Agregar documento» es justo la salida que le da el 409 HIJA_CUBIERTA_SIN_COBRO), el documento propio lo reemplaza.
     _ya = mysql_fetchone(
         "SELECT id FROM mant_visita_documentos "
-        " WHERE visita_id=%s AND erp_tido=%s AND erp_nudo=%s",
+        " WHERE visita_id=%s AND erp_tido=%s AND erp_nudo=%s AND heredado_de_visita_id IS NULL",
         (vid, _tipo_real, _numero_real[:30]))
     # El principal puede estar guardado en la forma de la app ("VD" +
     # "10666") o en la real ("NVV" + "VD00010666"): se comparan las dos,
@@ -97418,7 +98108,7 @@ def ot2_api_documentos_agregar(vid):
         try:
             for _r_e in (mysql_fetchall(
                     "SELECT erp_tido, erp_nudo FROM mant_visita_documentos "
-                    " WHERE visita_id=%s AND origen='erp'", (vid,)) or []):
+                    " WHERE visita_id=%s AND origen='erp' AND heredado_de_visita_id IS NULL", (vid,)) or []):
                 _par_e = _ot_doc_real_a_usuario(_r_e.get("erp_tido"), _r_e.get("erp_nudo"))
                 if _par_e not in _existentes:
                     _existentes.append(_par_e)
@@ -97490,6 +98180,14 @@ def ot2_api_documentos_agregar(vid):
     # 🐛 2026-09-10: la fecha pasa por _erp_fecha_a_date (ver su docstring).
     # Antes iba `str(doc.get("fecha"))[:10]` y una fecha chilena del ERP
     # ('26/06/2026') hacía que MySQL rechazara el INSERT completo con un 500.
+    try:   # 🧩 2026-10-19: el documento propio de la desinstalación reemplaza a su copia espejada (solo una copia derivada)
+        if mysql_execute_returning_rowcount(
+                "DELETE FROM mant_visita_documentos WHERE visita_id=%s AND erp_tido=%s AND erp_nudo=%s "
+                " AND heredado_de_visita_id IS NOT NULL", (vid, _tipo_real, _numero_real[:30])):
+            _mant_log("visita", vid, "documento_heredado_reemplazado",
+                      f"{tipo} {numero}: la copia heredada de la instalación se reemplaza por el documento propio")
+    except Exception as _e_mir:
+        print(f"[ot_docs] retirar espejo vid={vid}: {type(_e_mir).__name__}", flush=True)
     try:
         mysql_execute(
             "INSERT INTO mant_visita_documentos "
@@ -97658,10 +98356,16 @@ def ot2_api_documentos_quitar(vid, did):
     """
     f = mysql_fetchone(
         "SELECT id, es_principal, origen, erp_tido, erp_nudo, cotizacion_id, "
-        "       zz_serv_monto, zz_envio_monto, reemplazado_por_id "
+        "       zz_serv_monto, zz_envio_monto, reemplazado_por_id, heredado_de_visita_id "
         "  FROM mant_visita_documentos WHERE id=%s AND visita_id=%s", (did, vid))
     if not f:
         return jsonify({"ok": False, "error": "Documento no encontrado en esta OT."}), 404
+    if f.get("heredado_de_visita_id"):
+        # 🧩 2026-10-19: copia espejada de la instalación (solo referencia): se corrige en la instalación, no acá.
+        return jsonify({
+            "ok": False, "error_codigo": "DOC_HEREDADO",
+            "error": "Ese documento es el de la instalación: aquí se ve solo como referencia. Para cambiarlo, hazlo "
+                     "en la OT de la instalación."}), 409
     if f.get("reemplazado_por_id"):
         # 🔒 2026-10-08: «nada se pisa, nada se borra»: la nota de venta dada de baja por la factura es evidencia.
         return jsonify({
@@ -106214,7 +106918,8 @@ def _ot_fin_reparto_creacion(campos, cobertura):
 
 
 def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=None,
-                                     exigir_costo_prov_desp=False, modalidad_forzada=None, revisar_documento=False):
+                                     exigir_costo_prov_desp=False, modalidad_forzada=None, revisar_documento=False,
+                                     reserva_hija=None):
     """Valida y normaliza el bloque 'finanzas' de una OT nueva -- MISMA
     lógica que ot2_api_crear exige desde 2026-09-09/2026-09-15 (Daniel:
     "los documentos y las finanzas deben ser requisito indispensable...
@@ -106269,10 +106974,15 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
     siempre None: `costo` ya no se escribe al crear. `fin_dict` acepta valorizado_clp/valorizado_fuente
     opcionales ("Valorizar (opcional)"). `modalidad_forzada`: la modalidad con que el caller va a guardar
     la OT si no es la que se deduce acá (Levantamiento/Ticket, ver _mant_lev_crear_ot_core).
-    """
+
+    🧩 2026-10-19 `reserva_hija` ({servicio, despacho}): lo que la DESINSTALACIÓN de esta instalación va a cobrar de la misma
+    nota de venta cuando trae una línea propia. Se descuenta del saldo disponible ANTES de la regla del 10 % (si no, dejar
+    espacio para la hija se leería como «cambiaste a mano el cobro») y entra al candado de saldo junto con lo que cobra
+    esta OT (madre e hija se validan juntas)."""
     def _ferr(msg, cod):
         return {"error": msg, "error_codigo": cod}
 
+    _reserva = {c: _saldo._entero((reserva_hija or {}).get(c)) for c in _saldo.CATEGORIAS}
     _fin = fin_dict or {}
     if not isinstance(_fin, dict):
         _fin = {}
@@ -106631,7 +107341,9 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
         # autorización 'exceder_saldo' aprobada (autorizacion_id) se permite hasta lo que Daniel autorizó.
         _sal_err = _ot_saldo_chequear(
             [(_dv["tido"], _dv["nudo"]) for _dv in (_topes.get("documentos") or [])],
-            {"servicio": _fin_zzm, "despacho": _fin_zz_envio_m}, excluir_vid=None, cliente_rut=cliente_rut,
+            {"servicio": (None if (_fin_zzm is None and not _reserva["servicio"]) else _saldo._entero(_fin_zzm) + _reserva["servicio"]),
+             "despacho": (None if (_fin_zz_envio_m is None and not _reserva["despacho"]) else _saldo._entero(_fin_zz_envio_m) + _reserva["despacho"])},
+            excluir_vid=None, cliente_rut=cliente_rut,
             autorizado_hasta=_ot_saldo_autorizado_hasta(aut_id=_fin_aut_id, cliente_rut=cliente_rut))
         if _sal_err:
             return dict(_sal_err, http=409,
@@ -106677,8 +107389,10 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
             # ⚖️ 2026-10-12: un cobro editado a mano sobre estos documentos que mueve el margen más de 10 puntos
             # respecto de lo que dicen (su saldo) necesita el argumento de quien lo escribe.
             if _fin_motivo_diferido and not _fin_zz_motivo_manual:
-                _aj = _saldo.ajuste_margen(sum(_saldo._entero(c.get("servicio")) + _saldo._entero(c.get("despacho"))
-                                               for c in _caps_saldo),
+                # 🧩 2026-10-19: la reserva de la desinstalación se descuenta de lo que "dicen las facturas" ANTES de medir
+                # cuánto se movió el margen: dejar espacio para la hija no es un cambio a mano de esta OT.
+                _aj = _saldo.ajuste_margen(max(0, sum(_saldo._entero(c.get("servicio")) + _saldo._entero(c.get("despacho"))
+                                                      for c in _caps_saldo) - _reserva["servicio"] - _reserva["despacho"]),
                                            _saldo._entero(_fin_zzm) + _saldo._entero(_fin_zz_envio_m))
                 if _aj["pide_argumento"]:
                     return _ferr(
@@ -106880,6 +107594,8 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
         # 🗓️ 2026-10-12: el documento observado autorizado (para la clasificación y la bitácora de la OT).
         "doc_observaciones": _fin_doc_obs,
         "doc_obs_autorizacion": _fin_doc_obs_aut,
+        # 🧩 2026-10-19: esta instalación dejó espacio en su nota de venta para la línea de su desinstalación.
+        "reserva_hija": bool(_reserva["servicio"] or _reserva["despacho"]),
     }
     return None, campos
 
@@ -106913,7 +107629,7 @@ def ot2_api_crear():
     return _ot2_crear_core(request.get_json(silent=True) or {})
 
 
-def _ot2_crear_core(d, autorizacion=None):
+def _ot2_crear_core(d, autorizacion=None, madre=None):
     """Núcleo de creación de OT 2.0 (ver ot2_api_crear). `d` = body del asistente; `autorizacion` = fila de
     mant_ot_autorizaciones aprobada cuando la OT nace desde una solicitud (d['autorizacion_id'] también la trae).
 
@@ -106921,8 +107637,28 @@ def _ot2_crear_core(d, autorizacion=None):
     la OT no se empieza a crear a medias. La escritura completa vive en
     UNA transacción — o queda todo, o no queda nada (incluido el
     correlativo, que se devuelve solo con el rollback).
+
+    🧩 2026-10-19 — `madre`: la fila (releída por el servidor) de la INSTALACIÓN de la que nace esta OT como su
+    DESINSTALACIÓN (hija). Es un PARÁMETRO de la función, jamás una clave de `d`: un `ot_madre_id` que llegue en el body de
+    /ot/api/crear se ignora. Solo la llama `_ot_crear_desinstalacion`. Con `madre` la OT hereda cliente, contraparte,
+    dirección, acceso, centro de costo y evento de la instalación; no manda correo al cliente (REGLA #22); no hereda el
+    ticket ni el «forzar choque». Sin `madre`, un bloque `d['desinstalacion']` en una INSTALACIÓN crea además la hija
+    (así la aprobación remota de Daniel también la crea) y la respuesta trae `desinstalacion: {ok, numero_ot, fecha | error}`.
     """
     d = d or {}
+    es_hija = madre is not None
+    if es_hija:
+        # Lo que NUNCA viene del body en una hija: la relación, el evento (es el de la madre), el ticket (la OT mueve los
+        # estados del ticket) ni un nuevo bloque de desinstalación (no hay cadenas).
+        d = dict(d)
+        for _k_prohibida in ("ot_madre_id", "ot_relacion", "desinstalacion", "evento_id", "ticket_id", "autorizacion_id"):
+            d.pop(_k_prohibida, None)
+        d["tipo_ot"] = _evt.TIPO_HIJA
+        autorizacion = None
+    else:
+        d = dict(d)
+        for _k_prohibida in ("ot_madre_id", "ot_relacion", "_desinst_cobro", "_desinst_argumento", "_creado_por"):
+            d.pop(_k_prohibida, None)   # llaves solo del servidor: si vinieran en el body, se descartan
     if autorizacion and not (d.get("finanzas") or {}).get("autorizacion_id"):
         d = dict(d)
         d["finanzas"] = dict(d.get("finanzas") or {})
@@ -106978,6 +107714,8 @@ def _ot2_crear_core(d, autorizacion=None):
     except (TypeError, ValueError):
         return _ot2_err("El cliente indicado no es válido.", "CLIENTE_INVALIDO")
 
+    if es_hija:
+        cliente_id = int(madre["cliente_id"])   # la desinstalación es del MISMO cliente que su instalación
     if not es_interna and not cliente_id:
         return _ot2_err("Esta orden necesita un cliente asignado.", "CLIENTE_REQUERIDO")
     if es_interna:
@@ -107030,6 +107768,17 @@ def _ot2_crear_core(d, autorizacion=None):
                         "DOMINGO_BLOQUEADO")
     if _f.weekday() >= 5:
         avisos.append("Cae en fin de semana, cuando no hay operación.")
+    # 🧩 2026-10-19 (REGLA #31): la desinstalación no puede ir antes que su instalación (el mismo día, después de que
+    # termine) y avisa si cae en feriado.
+    if es_hija:
+        _ev_h = _evt.evaluar_fecha_desinstalacion(fecha_prog, hora_ini, hora_fin, madre, _feriados_cl(fecha_prog),
+                                                  _evento_fila(madre.get("evento_id")) if madre.get("evento_id") else None)
+        if not _ev_h["ok"]:
+            return _ot2_err(_ev_h["bloqueo"]["mensaje"], _ev_h["bloqueo"]["codigo"],
+                            http=409 if _ev_h["bloqueo"]["codigo"] == "DESINST_ANTES_DE_INSTALACION" else 400)
+        for _a_h in _ev_h["avisos"]:
+            if _a_h not in avisos:
+                avisos.append(_a_h)
     # 🆔 2026-09-02 — ver `cliente_sin_rut` arriba. Se avisa acá, junto al
     # resto, para que salga en el mismo lugar donde el wizard ya muestra
     # los avisos de jornada.
@@ -107044,7 +107793,7 @@ def _ot2_crear_core(d, autorizacion=None):
     acc = d.get("acceso") or {}
     acc_asc = acc.get("ascensor")
     acc_est = acc.get("estacionamiento")
-    if not es_interna:
+    if not es_interna and not es_hija:   # la desinstalación hereda el acceso de su instalación tal como esté
         if acc_asc is None or acc_est is None:
             return _ot2_err(
                 "Falta responder si el lugar tiene ascensor y estacionamiento.",
@@ -107174,7 +107923,7 @@ def _ot2_crear_core(d, autorizacion=None):
     # Un descubrimiento sin equipos es lo NORMAL, no un error.
     if descubrimiento:
         equipos = []
-    elif not equipos and not es_interna:
+    elif not equipos and not es_interna and not (es_hija and d.get("tareas_manuales")):
         return _ot2_err(
             "Agrega al menos un equipo a la orden.", "SIN_EQUIPOS")
 
@@ -107466,15 +108215,58 @@ def _ot2_crear_core(d, autorizacion=None):
     # comportamiento de ESTE endpoint no cambia ni un bit: mismos códigos
     # de error, mismo orden de validación, mismo INSERT final -- solo
     # cambia de dónde salen las variables.
-    _fin_err, _fin_campos = _ot_validar_normalizar_finanzas(
-        d.get("finanzas"), tipo_ot, es_interna,
-        cliente_rut=(_cli.get("rut") if cliente_id and _cli else None),
-        # 🔒 2026-09-21: costo_proveedor/costo_despacho obligatorios -- SOLO
-        # acá, ver el comentario en _ot_validar_normalizar_finanzas. El
-        # wizard de OT 2.0 (_modal_crear.html) ya pide los dos campos.
-        exigir_costo_prov_desp=True,
-        # 🗓️ 2026-10-12: documento de más de 3 meses o con productos sin saldo en Random → autorización de Daniel.
-        revisar_documento=True)
+    # ── 7.a 🧩 EVENTO + DESINSTALACIÓN (2026-10-19) ───────────────────────
+    # El evento se valida ANTES de crear nada (existe y está activo). El bloque `desinstalacion` se normaliza acá para que
+    # la reserva de saldo de la hija entre al control de la madre (regla del 10 % y candado de saldo): madre e hija se
+    # validan JUNTAS, nunca la madre se crea y la hija falla después con ZZ_SALDO (crítica 5).
+    _dd_norm, _evento_row, _reserva_hija, _evento_id_final = None, None, None, None
+    if es_hija:
+        _evento_id_final = int(madre["evento_id"]) if madre.get("evento_id") else None
+    else:
+        _ev_raw = d.get("evento_id")
+        if _ev_raw not in (None, "", 0, "0"):
+            try:
+                _ev_id_in = int(_ev_raw)
+            except (TypeError, ValueError):
+                return _ot2_err("El evento indicado no es válido.", "EVENTO_INVALIDO")
+            _evento_row, _ev_err = _evento_para_asignar(_ev_id_in)
+            if _ev_err:
+                return _ot2_err(_ev_err["mensaje"], _ev_err["codigo"], http=(404 if _ev_err["codigo"] == "EVENTO_NO_EXISTE" else 409))
+            _evento_id_final = _ev_id_in
+        _dd_raw = d.get("desinstalacion")
+        if isinstance(_dd_raw, dict) and _dd_raw:
+            _e_dd, _dd_norm = _ot_desinst_normalizar(_dd_raw)
+            if _e_dd:
+                return _ot2_err(_e_dd["mensaje"], _e_dd["codigo"])
+            if _dd_norm["lleva"] != "no" and (tipo_ot != _evt.TIPO_MADRE or es_interna):
+                return _ot2_err("Solo una instalación de cliente se desinstala después.", "DESINST_TIPO")
+            if _dd_norm["lleva"] == "si" and _dd_norm.get("cobro") == _evt.COBRO_PROPIO:
+                _reserva_hija = {"servicio": _saldo._entero(_dd_norm.get("cobra_servicio")),
+                                 "despacho": _saldo._entero(_dd_norm.get("cobra_despacho"))}
+        # (crítica 15e) «No» en una instalación dentro de un evento con fecha de fin pide confirmación: que no se olvide.
+        _dd_confirma_no = bool(isinstance(_dd_raw, dict) and _dd_raw.get("confirmo_no"))
+        if (tipo_ot == _evt.TIPO_MADRE and not es_interna and _evento_row and _evt.parse_fecha(_evento_row.get("fecha_fin"))
+                and (not _dd_norm or _dd_norm["lleva"] == "no") and not autorizacion and not _dd_confirma_no):
+            return _ot2_err(
+                "Esta instalación está en el evento «%s», que termina el %s. ¿De verdad no se desinstala después? "
+                "Confírmalo para seguir." % (_evento_row.get("nombre"), _evt.fmt_fecha(_evento_row.get("fecha_fin"))),
+                "DESINST_CONFIRMAR_NO", http=409, evento_id=_evento_row.get("id"))
+    if es_hija and d.get("_desinst_cobro") == _evt.COBRO_CUBIERTA:
+        # La hija cubierta NO pasa por _ot_validar_normalizar_finanzas: no lleva documento ni cobro propios.
+        _fin_err, _fin_campos = _ot_fin_campos_cubierta(d.get("finanzas"), madre)
+    else:
+        _fin_err, _fin_campos = _ot_validar_normalizar_finanzas(
+            d.get("finanzas"), tipo_ot, es_interna,
+            cliente_rut=(_cli.get("rut") if cliente_id and _cli else None),
+            # 🔒 2026-09-21: costo_proveedor/costo_despacho obligatorios -- SOLO
+            # acá, ver el comentario en _ot_validar_normalizar_finanzas. El
+            # wizard de OT 2.0 (_modal_crear.html) ya pide los dos campos.
+            exigir_costo_prov_desp=True,
+            # 🗓️ 2026-10-12: documento de más de 3 meses o con productos sin saldo en Random → autorización de Daniel.
+            # 🧩 2026-10-19: NO sobre los documentos heredados (una nota de venta ya entregada daría «productos sin
+            # saldo» y pediría la autorización): ni en la hija que cobra su línea.
+            revisar_documento=(not es_hija),
+            reserva_hija=_reserva_hija)
     if _fin_err:
         return _ot2_err(_fin_err["error"], _fin_err["error_codigo"], http=_fin_err.get("http", 400),
                         **(_fin_err.get("extra") or {}))
@@ -107483,8 +108275,11 @@ def _ot2_crear_core(d, autorizacion=None):
     # o autorización 'crear_sin_documento' aprobada. Lo demás → 409 DOC_REQUERIDO «Pedir autorización».
     _puerta = None
     if not es_interna:
+        # 🧩 2026-10-19: la hija CUBIERTA pasa por la vía 'cubierta_madre' (la madre la pasa solo el servidor); la que cobra su
+        # línea propia pasa por la puerta normal con el documento de la nota de venta.
         _puerta = _ot_puerta_documento(_ot_puerta_payload_desde_campos(
-            _fin_campos, cliente_id, tipo_ot, cliente_rut=(_cli.get("rut") if cliente_id and _cli else None)), "crear")
+            _fin_campos, cliente_id, tipo_ot, cliente_rut=(_cli.get("rut") if cliente_id and _cli else None)), "crear",
+            madre=(madre if (es_hija and _fin_campos.get("cobertura") == "cubierta") else None))
         if not _puerta["ok"]:
             return _ot_puerta_respuesta(_puerta)
         _puerta["docs_ya_guardados"] = True   # este núcleo espeja factura_*/documentos_extra más abajo
@@ -107492,6 +108287,53 @@ def _ot2_crear_core(d, autorizacion=None):
                                       for _x in (_fin_campos.get("documentos_validados") or [])}
                                      | {((_fin_campos.get("factura_tido") or "").strip().upper(),
                                          str(_fin_campos.get("factura_nudo") or "").lstrip("0"))})
+
+    # ── 7.c 🧩 La DESINSTALACIÓN que se agenda junto con la instalación: se valida ENTERA antes de crear nada ──
+    # (fecha y horas, técnico, costo, saldo remanente de la nota de venta y la elección cubierta/cobra). Si algo de esto
+    # falla, NO se crea ni la instalación: el error vuelve al asistente (crítica 5). Lo único que puede fallar después
+    # es una carrera (el técnico se ocupó, el saldo lo tomó otra OT): ahí la instalación queda creada y se avisa.
+    _dd_info = None
+    if _dd_norm and _dd_norm["lleva"] in ("si", "por_definir") and not es_hija:
+        _docs_dd = [(_x.get("tipo"), _x.get("numero")) for _x in (_fin_campos.get("documentos_validados") or [])
+                    if _x.get("tipo") and _x.get("numero")]
+        if not _docs_dd and _fin_campos.get("factura_tido") and _fin_campos.get("factura_nudo"):
+            _docs_dd = [(_fin_campos["factura_tido"], _fin_campos["factura_nudo"])]
+        _tipos_reales = set(_saldo.NOTAS_VENTA + _saldo.DOCS_COBRO)
+        _tiene_doc_real = any(_saldo.clave_doc(t, n)[0] in _tipos_reales for (t, n) in _docs_dd)
+        _aut_incluye = bool(autorizacion and (_puerta or {}).get("via") == "autorizacion_crear")
+        if (_dd_norm["lleva"] == "si" and _dd_norm.get("cobro") != _evt.COBRO_PROPIO
+                and not (_tiene_doc_real or _aut_incluye)):
+            return _ot2_err(
+                "La desinstalación solo va cubierta si la instalación tiene una nota de venta, factura o boleta de Random "
+                "(o una autorización de Daniel que la incluya). Agrega el documento o pide la autorización con la "
+                "desinstalación dentro.", "DESINST_SIN_DOCUMENTO_MADRE", http=409)
+        _madre_virtual = {"tipo": tipo_ot, "estado": "programada", "cliente_id": cliente_id, "ot_madre_id": None,
+                          "fecha_programada": fecha_prog, "fecha_fin": None, "fecha_realizada": None, "hora_fin": hora_fin,
+                          "desinstalacion_prevista": _dd_norm.get("fecha") or fecha_prog}
+        _e_dd2, _dd_info = _ot_desinst_validar_previo(
+            _dd_norm, _madre_virtual, _docs_dd,
+            {"servicio": _fin_campos.get("zz_monto"), "despacho": _fin_campos.get("zz_envio_monto")},
+            cliente_rut=(_cli.get("rut") if cliente_id and _cli else None), evento=_evento_row)
+        if _e_dd2:
+            return _ot2_err(_e_dd2["mensaje"], _e_dd2["codigo"],
+                            http=(409 if _e_dd2["codigo"] in ("ZZ_SALDO_CONSUMIDO", "DESINST_ANTES_DE_INSTALACION") else 400))
+        for _a_dd in (_dd_info.get("avisos") or []):
+            avisos.append("Desinstalación: " + _a_dd)
+        if _dd_norm["lleva"] == "si":
+            try:
+                _adv_dd = _validar_disponibilidad_visita(_dd_norm["tecnico_lider_id"], _evt.parse_fecha(_dd_norm["fecha"]),
+                                                         _dd_norm["hora_inicio"], _dd_norm["hora_fin"])
+            except Exception as _e_dd_disp:
+                print(f"[ot2_crear] choque de la desinstalación: {_e_dd_disp}", flush=True)
+                _adv_dd = {}
+            _ch_dd = (_adv_dd or {}).get("choque")
+            if _ch_dd:
+                _es_sa_dd = (((getattr(g, "user", None) or {}).get("role") or "").lower() == "superadmin")
+                if not (_es_sa_dd and _dd_norm.get("forzar_choque") and not autorizacion):
+                    return _ot2_err(
+                        "{} ya tiene trabajo agendado el día de la desinstalación en ese horario. Elige otra fecha u "
+                        "otro técnico.".format(_ch_dd.get("tecnico_nombre") or "El técnico"),
+                        "CHOQUE_HORARIO", http=409, choque=_ch_dd, puede_forzar=_es_sa_dd, en_desinstalacion=True)
     _fin_centro = _fin_campos["centro_costo"]
     _fin_valor_origen = _fin_campos["valor_origen"]
     _fin_gar = _fin_campos["garantia_aplica"]
@@ -107574,6 +108416,31 @@ def _ot2_crear_core(d, autorizacion=None):
 
         numero_ot = _next_ot_number_atomic(conn)
 
+        # 🧩 2026-10-19 — la DESINSTALACIÓN bloquea y relee a su instalación DENTRO de la transacción (SELECT ... FOR
+        # UPDATE): así, mientras se crea la hija, nadie cancela la madre ni crea una segunda hija (crítica 31), y las
+        # reglas (instalación vigente del mismo cliente, sin madre propia, UNA sola hija vigente, con desinstalación
+        # prevista) se verifican con lo que hay de verdad en la base, no con lo que leyó quien llamó.
+        _num_madre = None
+        _madre_lock = None
+        if es_hija:
+            cur.execute("SELECT id, numero_ot, tipo, estado, cliente_id, ot_madre_id, desinstalacion_prevista, "
+                        "       desinstalacion_aut_id, evento_id FROM mant_visitas WHERE id=%s FOR UPDATE", (int(madre["id"]),))
+            _madre_lock = cur.fetchone()
+            _num_madre = (_madre_lock or {}).get("numero_ot") or f"V-{int(madre['id']):05d}"
+            _hijas_lock = _ot_hijas_de(int(madre["id"]), cur=cur)
+            _ok_pm, _mot_pm = _evt.puede_programar_desinstalacion(_madre_lock, _hijas_lock)
+            if not _madre_lock or not _ok_pm or int(_madre_lock.get("cliente_id") or 0) != int(cliente_id or -1):
+                conn.rollback()
+                return _ot2_err(_mot_pm or "La instalación cambió mientras se agendaba su desinstalación: revísala.",
+                                "DESINST_NO_PERMITIDA", http=409)
+            if _fin_campos.get("cobertura") == "cubierta" and not _madre_lock.get("desinstalacion_prevista"):
+                conn.rollback()
+                return _ot2_err("La instalación no tiene una desinstalación prevista: declárala primero.",
+                                "DESINST_SIN_PREVISTA", http=409)
+            _evento_id_final = int(_madre_lock["evento_id"]) if _madre_lock.get("evento_id") else None
+            if not titulo:
+                titulo = f"{numero_ot} · Desinstalación de {_num_madre}"[:200]
+
         # Título automático (campo vacío): "N° · Cliente" en vez de solo
         # tipo+fecha -- Daniel, 28-08-2026 ("se vería más elegante"). Recién
         # acá se conoce numero_ot real. Trabajo interno no tiene cliente
@@ -107636,9 +108503,41 @@ def _ot2_crear_core(d, autorizacion=None):
              # en «mis OT» y en Regularizar); la aprobación de Daniel queda en mant_ot_autorizaciones y mant_logs.
              ((autorizacion or {}).get("solicitado_por_nombre") or current_username())))
         vid = cur.lastrowid
+        # 🧩 2026-10-19 — evento, relación madre/hija y desinstalación prevista: SOLO las escribe el servidor, acá (ninguna de
+        # estas columnas entra en `allowed` del PUT de la visita).
+        _sets_x, _vals_x = [], []
+        if _evento_id_final:
+            _sets_x.append("evento_id=%s")
+            _vals_x.append(int(_evento_id_final))
+        if es_hija:
+            _sets_x += ["ot_madre_id=%s", "ot_relacion=%s"]
+            _vals_x += [int(madre["id"]), _evt.REL_DESINSTALACION]
+            if d.get("_creado_por"):   # aprobación remota: la hija queda a nombre de quien la pidió
+                _sets_x.append("created_by=%s")
+                _vals_x.append(str(d["_creado_por"])[:190])
+        elif _dd_norm and _dd_norm["lleva"] in ("si", "por_definir") and _dd_norm.get("fecha"):
+            _sets_x.append("desinstalacion_prevista=%s")
+            _vals_x.append(_evt.parse_fecha(_dd_norm["fecha"]))
+            if (_puerta or {}).get("via") == "autorizacion_crear" and (autorizacion or {}).get("id"):
+                # La solicitud de Daniel ya incluía la desinstalación («Incluye desinstalación dd/mm»): respalda la cubierta.
+                _sets_x.append("desinstalacion_aut_id=%s")
+                _vals_x.append(int(autorizacion["id"]))
+        if _sets_x:
+            cur.execute("UPDATE mant_visitas SET " + ", ".join(_sets_x) + " WHERE id=%s", tuple(_vals_x) + (vid,))
+        if es_hija:
+            # La instalación recuerda para cuándo es su desinstalación (si venía "por definir" o ya tenía otra, no se pisa).
+            cur.execute("UPDATE mant_visitas SET desinstalacion_prevista=COALESCE(desinstalacion_prevista, %s) WHERE id=%s",
+                        (_f, int(madre["id"])))
         # 🔏 2026-10-07 — constancia de la puerta (autorización consumida, $0 declarado por superadmin, etc.).
         if _puerta is not None:
             _ot_puerta_aplicar(cur, vid, _puerta, fin_argumento=_fin_campos.get("cobro_cero_argumento"))
+        # 🧩 Los documentos de la instalación, ESPEJADOS en la desinstalación cubierta (es_cobro=0, sin ZZ): se ven en su
+        # ficha pero no consumen saldo ni entran al libro.
+        if es_hija and _fin_campos.get("cobertura") == "cubierta":
+            try:
+                _ot_espejar_docs_en_hija(cur, vid, int(madre["id"]), _num_madre or "la instalación")
+            except Exception as _e_esp:
+                print(f"[ot2_crear] espejo de documentos hija vid={vid}: {type(_e_esp).__name__}: {_e_esp}", flush=True)
         # 🏷️ 2026-10-12 — cómo nace la OT (clasificación persistente, con su antecedente). Si falla, la OT se crea igual.
         try:
             _ot_fin_clasif_guardar(cur, vid, _fin_campos, es_interna, autorizacion)
@@ -108014,6 +108913,23 @@ def _ot2_crear_core(d, autorizacion=None):
                   f"{numero_ot} · {tipo_ot} · {n_tareas} tareas")
     except Exception as e:
         print(f"[ot2_crear] log: {e}", flush=True)
+    # 🧩 2026-10-19 — constancia de la unión madre/hija y del evento (los detalles NUNCA llevan montos ni documentos: un
+    # técnico los ve en la bitácora, ver _ACT_TEC_PERMITIDAS).
+    try:
+        if es_hija:
+            _mant_log("visita", vid, "creada_como_desinstalacion", f"Desinstalación de {_num_madre}")
+            _mant_log("visita", int(madre["id"]), "desinstalacion_programada",
+                      f"{numero_ot} · {_evt.fmt_fecha(_f)}")
+            _fac_libro_marcar(vid)   # 📒 REGLA #28: si la hija cobra su línea, el libro la anota ahora (no espera al barrido)
+        else:
+            if _evento_id_final and _evento_row:
+                _mant_log("visita", vid, "evento_asignado", f"Evento: {_evento_row.get('nombre')}")
+            if _dd_norm and _dd_norm["lleva"] in ("si", "por_definir") and _dd_norm.get("fecha"):
+                _mant_log("visita", vid, "desinstalacion_prevista",
+                          f"Desinstalación prevista para el {_evt.fmt_fecha(_dd_norm['fecha'])}"
+                          + (" (agendada junto con la instalación)" if _dd_norm["lleva"] == "si" else " (técnico o fecha por definir)"))
+    except Exception as e:
+        print(f"[ot2_crear] log desinstalación: {e}", flush=True)
 
     # ═════════════════════════════════════════════════════════════════
     # ANEXO AUTOMÁTICO PARA PROVEEDOR EXTERNO (2026-09-08)
@@ -108281,7 +109197,9 @@ def _ot2_crear_core(d, autorizacion=None):
     # cliente activo o con contrato tampoco: ahí manda la persona.
     # Tampoco degrada: una OT de levantamiento no baja a 'prospecto' un
     # cliente que ya estaba clasificado.
-    if cliente_id and tipo_ot:
+    # 🧩 2026-10-19 (crítica 17): la desinstalación NO ajusta el tipo de cliente ('desinstalacion' se leería como
+    # 'mantencion' y degradaría a un cliente de instalación en el seguimiento de prospectos).
+    if cliente_id and tipo_ot and not es_hija:
         _tc = _tipo_cliente_por_motivo(tipo_ot)
         if _tc in ("instalacion", "mantencion"):
             try:
@@ -108315,11 +109233,13 @@ def _ot2_crear_core(d, autorizacion=None):
         # quedó comprometida en la transacción de arriba.
         try: _mant_ot_email_tecnico_creacion(vid)
         except Exception as _e_emt: print(f"[ot2_crear] email-tecnico: {_e_emt}", flush=True)
-    if not es_interna:
+    # 🧩 2026-10-19 (REGLA #22): la desinstalación NO le escribe al cliente (ni el correo de creación ni el recordatorio del
+    # cron: ver _mant_recordatorios y la exclusión de ot_madre_id). El técnico sí recibe lo suyo por el camino normal.
+    if not es_interna and not es_hija:
         try: _mant_ot_email_cliente_creacion(vid)
         except Exception as _e_emc: print(f"[ot2_crear] email-cliente: {_e_emc}", flush=True)
 
-    return jsonify({
+    _resp_ok = {
         "ok": True, "visita_id": vid, "numero_ot": numero_ot,
         # 🔴 FIX 2026-09-08 (Daniel: "cuando presiono crear la orden de
         # trabajo, me lleva a las órdenes de trabajo antigua"). Apuntaba a
@@ -108328,7 +109248,42 @@ def _ot2_crear_core(d, autorizacion=None):
         # en OT 2.0; tiene que aterrizar en OT 2.0.
         "ot_url": url_for("ot2_detalle", vid=vid),
         "n_tareas": n_tareas, "avisos": avisos,
-    })
+    }
+    if es_hija:
+        _resp_ok["madre_id"], _resp_ok["madre_numero"] = int(madre["id"]), _num_madre
+    # 🧩 2026-10-19 — la instalación creó su DESINSTALACIÓN: se agenda ahora, en el mismo servidor (así la aprobación
+    # remota de Daniel también la crea). Si falla solo la hija, la instalación queda creada con su desinstalación prevista y
+    # el aviso dice por qué (en una aprobación remota, además, se le avisa por la campana a quien la pidió: crítica 13).
+    if not es_hija and _dd_norm and _dd_norm["lleva"] != "no":
+        if _dd_norm["lleva"] == "por_definir":
+            _resp_ok["desinstalacion"] = {"ok": True, "pendiente": True, "fecha": _dd_norm.get("fecha"),
+                                          "fecha_txt": _evt.fmt_fecha(_dd_norm.get("fecha")),
+                                          "mensaje": "Quedó anotada la desinstalación prevista: falta agendarla."}
+        else:
+            _r_dd = _ot_crear_desinstalacion(
+                vid, dict(_dd_norm, lleva="si"), autorizacion=autorizacion,
+                creado_por=((autorizacion or {}).get("solicitado_por_nombre") or None))
+            _resp_ok["desinstalacion"] = _r_dd
+            if _r_dd.get("ok"):
+                avisos.append("Desinstalación %s agendada el %s." % (_r_dd.get("numero_ot"), _r_dd.get("fecha_txt")))
+            else:
+                avisos.append("La instalación quedó creada; la desinstalación no se pudo agendar: %s. Prográmala desde la ficha."
+                              % (_r_dd.get("error") or "error desconocido"))
+                try:
+                    _mant_log("visita", vid, "desinstalacion_no_agendada",
+                              f"No se pudo agendar la desinstalación del {_evt.fmt_fecha(_dd_norm.get('fecha'))}: "
+                              f"{_r_dd.get('error') or _r_dd.get('codigo')}")
+                    _uid_sol = (autorizacion or {}).get("solicitado_por_user_id")
+                    if _uid_sol:
+                        _mant_notificar(int(_uid_sol), "otro", f"{numero_ot}: la desinstalación no se pudo agendar",
+                                        (f"La instalación se creó, pero su desinstalación del "
+                                         f"{_evt.fmt_fecha(_dd_norm.get('fecha'))} no: {_r_dd.get('error') or ''} "
+                                         "Prográmala desde la ficha de la OT.")[:1500],
+                                        url_accion=f"/ot/{vid}", prioridad="alta", visita_id=vid)
+                        _mant_notif_cache_invalidar(int(_uid_sol))
+                except Exception as _e_nd:
+                    print(f"[ot2_crear] aviso desinstalación fallida: {_e_nd}", flush=True)
+    return jsonify(_resp_ok)
 
 
 class _OT2EquipoError(Exception):
@@ -108422,6 +109377,21 @@ def _ot2_equipo_insertar(cur, v, vid, maquina_id, plantilla_id):
     }
 
 
+def _ot_hija_maquinas_permitidas(vid):
+    """🧩 2026-10-19 (spec §2): a una desinstalación (OT hija) solo se le agregan equipos de SU instalación. None si la OT no
+    es una desinstalación (sin restricción); si lo es, el set de maquina_id que tienen tareas en la instalación."""
+    f = _ot_fila_basica(vid)
+    if not f or not f.get("ot_madre_id") or (f.get("ot_relacion") or "") != _evt.REL_DESINSTALACION:
+        return None
+    try:
+        return {int(r["maquina_id"]) for r in (mysql_fetchall(
+            "SELECT DISTINCT maquina_id FROM mant_visita_tareas WHERE visita_id=%s AND maquina_id IS NOT NULL",
+            (int(f["ot_madre_id"]),)) or [])}
+    except Exception as e:
+        print(f"[desinst] equipos de la instalación: {type(e).__name__}", flush=True)
+        return set()
+
+
 @app.route("/ot/api/<int:vid>/equipos", methods=["POST"])
 @_mant_required
 def ot2_api_agregar_equipo(vid):
@@ -108475,6 +109445,10 @@ def ot2_api_agregar_equipo(vid):
     except (TypeError, ValueError):
         return _ot2_err(
             "Elige el checklist para este equipo.", "PLANTILLA_REQUERIDA")
+    _perm_h = _ot_hija_maquinas_permitidas(vid)   # 🧩 2026-10-19: la desinstalación solo desinstala lo de su instalación
+    if _perm_h is not None and maquina_id not in _perm_h:
+        return _ot2_err("Esta OT es la desinstalación de una instalación: solo se le agregan equipos de esa instalación.",
+                        "EQUIPO_NO_ES_DE_LA_INSTALACION", http=409)
 
     conn = get_db()
     try:
@@ -108578,6 +109552,16 @@ def ot2_api_agregar_equipos_masivo(vid):
             "SIN_EQUIPOS_VALIDOS")
 
     agregados, fallidos = [], []
+    _perm_hm = _ot_hija_maquinas_permitidas(vid)   # 🧩 2026-10-19: solo equipos de la instalación en una desinstalación
+    if _perm_hm is not None:
+        _ok_ped = []
+        for _mid, _pid in pedidos:
+            if _mid in _perm_hm:
+                _ok_ped.append((_mid, _pid))
+            else:
+                fallidos.append({"maquina_id": _mid,
+                                 "error": "No es un equipo de la instalación de esta desinstalación."})
+        pedidos = _ok_ped
     conn = get_db()
     try:
         for mid, pid in pedidos:
@@ -108620,6 +109604,1678 @@ def ot2_api_agregar_equipos_masivo(vid):
         "ok": bool(agregados), "agregados": agregados, "fallidos": fallidos,
         "n_ok": len(agregados), "n_error": len(fallidos),
     })
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  🧩 2026-10-19 — EVENTOS Y OT DE DESINSTALACIÓN (madre e hija)
+#
+#  Daniel (dueño): «al momento de crear la orden de trabajo, si se selecciona instalación con desinstalación, el usuario
+#  tendrá que agendar en otra hija cuando se va a hacer la desinstalación para que quede de una vez agendado… literalmente
+#  cuadradito… que lo calendarice y deje agendado todo para que el técnico sepa». Caso real: la nota de venta 10961 de
+#  Sponge Solution trae una ILUS Alpha Home Treadmill: instalación el 26-27/10 en un mall y desinstalación un mes después.
+#
+#  DECISIONES DE DANIEL: la desinstalación es una OT PROPIA (su correlativo) UNIDA a la instalación («Desinstalación de
+#  OT-…»), hereda la MISMA nota de venta, y va «cubierta por la instalación» (no consume saldo, sin autorización de $0)
+#  salvo que la nota de venta traiga una línea propia de desinstalación. EVENTO = carpeta (nombre, lugar, fechas) que agrupa
+#  OT; se elige o se crea en el asistente.
+#
+#  CRÍTICA ADVERSARIAL (19-oct) aplicada:
+#   1. 'cubierta' se DEDUCE de ot_relacion / ot_madre_id, jamás de valor_origen (no se tocó _OT2_VALOR_ORIGENES ni
+#      _OT_SALDO_ORIGENES_NO_DOC).
+#   2. La madre debe tener un documento REAL de Random (nota de venta / factura / boleta, origen erp, es_cobro=1) o la
+#      autorización aprobada que ya incluía la desinstalación.
+#   3. Hija vigente = estado NOT IN (cancelada, anulada): las cerradas cuentan.
+#   4. Declarar la desinstalación DESPUÉS de crear la instalación pide la autorización 'desinstalacion_cubierta' (≥ 30
+#      caracteres), salvo que el evento de la madre tenga fecha de fin.
+#   5. La línea propia de desinstalación NO se detecta por texto: el servidor calcula el saldo de servicio que queda y la
+#      persona elige («cubierta» o «se cobra»).
+#   6. Documentos espejados con heredado_de_visita_id: excluidos del saldo, del libro y de la puerta.
+#   7. ot_madre_id nunca se lee del body: lo pasa el servidor (`madre=`).
+#  La lógica pura vive en ot_eventos.py (con pruebas); acá están las lecturas, las escrituras y las rutas.
+# ═══════════════════════════════════════════════════════════════════════════
+_DESINST_CAMPOS_CONTRAPARTE = ("contacto_nombre", "contacto_cargo", "contacto_tel", "contacto_email", "contacto_rut",
+                               "contacto_origen", "direccion_visita", "direccion_detalle", "direccion_lat",
+                               "direccion_lng", "direccion_place_id", "direccion_comuna", "direccion_region")
+
+
+def _feriados_cl(*fechas):
+    """{iso: nombre} de los feriados de Chile de los años de esas fechas (y el siguiente). Fuente única: cl_feriados
+    (REGLA #31). Nunca rompe: si el módulo falla, {} (el domingo igual se bloquea)."""
+    anios = set()
+    for f in fechas:
+        d = _evt.parse_fecha(f)
+        if d:
+            anios.update({d.year, d.year + 1})
+    if not anios:
+        anios = {_now_chile().year, _now_chile().year + 1}
+    out = {}
+    try:
+        from cl_feriados import feriados_chile as _fer
+        for a in sorted(anios):
+            out.update(_fer(a) or {})
+    except Exception as e:
+        print(f"[desinst] feriados: {type(e).__name__}", flush=True)
+    return out
+
+
+def _evento_fila(eid):
+    """La fila de un evento o None."""
+    try:
+        eid = int(eid)
+    except (TypeError, ValueError):
+        return None
+    try:
+        r = mysql_fetchone("SELECT * FROM mant_eventos WHERE id=%s", (eid,))
+        return dict(r) if r else None
+    except Exception as e:
+        print(f"[evento] fila {eid}: {type(e).__name__}", flush=True)
+        return None
+
+
+def _evento_para_asignar(eid):
+    """(fila, error): el evento tiene que existir y estar activo para asignarle una OT (crítica 20)."""
+    r = _evento_fila(eid)
+    if not r:
+        return None, {"codigo": "EVENTO_NO_EXISTE", "mensaje": "Ese evento no existe."}
+    if str(r.get("estado") or "activo") != "activo":
+        return None, {"codigo": "EVENTO_CANCELADO", "mensaje": "Ese evento está cancelado: no se le asignan OT."}
+    return r, None
+
+
+def _ot_fin_campos_cubierta(fin_dict, madre, exigir_costo_prov_desp=True):
+    """🧩 Función hermana de _ot_validar_normalizar_finanzas para la desinstalación CUBIERTA (no se toca la otra).
+    Devuelve (error|None, campos) con EXACTAMENTE las mismas claves que ella (más madre_id / madre_numero para la
+    clasificación): el INSERT del núcleo y _ot_fin_clasif_guardar desempacan ~30 claves, y una que falte sería un KeyError
+    después de tomar el correlativo (tests/test_ot_eventos_desinstalacion.py compara las dos listas de claves).
+    La hija NO lleva documento ni cobro propios (los respalda la instalación): factura_* vacíos, zz_* vacíos,
+    valor_origen NULL, estado_facturacion 'no_aplica', modalidad 'pagado' y cubierto_por 'cliente' (el default de la
+    columna es 'contrato', que _ot2_finanzas_estado leería como contrato y pediría un motivo). Sí lleva su centro de costo
+    (el de la instalación) y lo que le cobra el técnico (obligatorio; 0 si es propio) y el despacho (opcional)."""
+    def _ferr(msg, cod):
+        return {"error": msg, "error_codigo": cod}
+
+    fin = fin_dict if isinstance(fin_dict, dict) else {}
+    centro = (str(madre.get("centro_costo") or "").strip().lower()
+              or str(fin.get("centro_costo") or "").strip().lower()) or None
+    if centro and centro not in [c for c, _ in _OT2_CENTROS_COSTO]:
+        return _ferr("Ese centro de costo no existe.", "CENTRO_INVALIDO"), None
+    if not centro:
+        return _ferr("La instalación no tiene centro de costo: declárale uno antes de programar su desinstalación.",
+                     "FINANZAS_SIN_CENTRO_COSTO"), None
+
+    def _costo(raw):
+        if raw is None or str(raw).strip() == "":
+            return None
+        return max(0.0, float(raw))
+    try:
+        costo_prov = _costo(fin.get("costo_proveedor"))
+    except (TypeError, ValueError):
+        return _ferr("El costo del proveedor no es válido.", "COSTO_PROVEEDOR_INVALIDO"), None
+    try:
+        costo_desp = _costo(fin.get("costo_despacho"))
+    except (TypeError, ValueError):
+        return _ferr("El costo de despacho no es válido.", "COSTO_DESPACHO_INVALIDO"), None
+    if exigir_costo_prov_desp and costo_prov is None:
+        return _ferr("Indica cuánto le pagamos al técnico o proveedor por la desinstalación (0 si es técnico propio): "
+                     "así el margen de la instalación y su desinstalación no queda con un vacío sin decidir.",
+                     "FINANZAS_SIN_COSTO_PROVEEDOR"), None
+    prov_tipo = (str(fin.get("proveedor_tipo") or "").strip().lower())
+    prov_tipo = prov_tipo if prov_tipo in ("interno", "externo") else None
+    prov_nombre = (str(fin.get("proveedor_nombre") or "").strip()[:200]) or None
+    campos = {
+        "centro_costo": centro,
+        "valor_origen": None,            # JAMÁS 'cubierta': esa columna llega del navegador (crítica 1)
+        "garantia_aplica": False,
+        "garantia_motivo": None,
+        "factura_tido": None,
+        "factura_nudo": None,
+        "zz_codigo": None,
+        "zz_monto": None,
+        "zz_envio_monto": None,
+        "zz_envio_codigo": None,
+        "zz_motivo_manual": None,
+        "zz_envio_motivo_manual": None,
+        "costo_interno": None,
+        "costo_proveedor": costo_prov,
+        "costo_despacho": costo_desp,
+        "documentos_extra_json": None,
+        "documentos_extra_norm": [],
+        "proveedor_tipo": prov_tipo,
+        "proveedor_nombre": prov_nombre,
+        "estado_facturacion": "no_aplica",
+        "finanzas_declarada": True,
+        "costo_cliente": None,
+        "modalidad_cobro": "pagado",
+        "cubierto_por": "cliente",
+        "valorizado_clp": None,
+        "valorizado_fuente": None,
+        "cobertura": "cubierta",
+        "cobro_cero_motivo": None,
+        "cobro_cero_argumento": None,
+        "autorizacion_id": None,
+        "documentos_validados": [],
+        "docs_aporte": [],
+        "documentos_body": None,
+        "doc_observaciones": [],
+        "doc_obs_autorizacion": None,
+        "reserva_hija": False,           # misma forma que _ot_validar_normalizar_finanzas (la hija no reserva nada)
+        # Solo para la clasificación persistente («Desinstalación cubierta por OT-…»):
+        "madre_id": int(madre["id"]),
+        "madre_numero": madre.get("numero_ot") or f"V-{int(madre['id']):05d}",
+    }
+    return None, campos
+
+
+def _ot_espejar_docs_en_hija(cur, hija_vid, madre_vid, madre_numero):
+    """Copia, como FILAS ESPEJADAS (es_cobro=0, es_principal=0, ZZ nulos, etiqueta «Heredado de OT-…», con
+    heredado_de_visita_id), los documentos de Random de la madre en la hija: se ven en su ficha pero no consumen saldo,
+    ni entran al libro, ni los cuenta la puerta (crítica 6). Idempotente: no repite un documento ya espejado. Devuelve
+    cuántos agregó. Dentro de la transacción de quien llama (`cur`)."""
+    cur.execute(
+        "SELECT erp_tido, erp_nudo, rut FROM mant_visita_documentos WHERE visita_id=%s AND origen='erp' "
+        "   AND es_cobro=1 AND reemplazado_por_id IS NULL AND heredado_de_visita_id IS NULL "
+        "   AND COALESCE(erp_nudo,'')<>'' ORDER BY es_principal DESC, id", (int(madre_vid),))
+    docs = [dict(r) for r in (cur.fetchall() or [])]
+    # Lo que la desinstalación ya tiene: documentos PROPIOS (si la nota trae su línea de desinstalación) y espejos previos.
+    cur.execute(
+        "SELECT id, erp_tido, erp_nudo, heredado_de_visita_id, reemplazado_por_id FROM mant_visita_documentos "
+        " WHERE visita_id=%s AND origen='erp'", (int(hija_vid),))
+    filas_h = [dict(r) for r in (cur.fetchall() or [])]
+
+    def _clave(r):
+        return ((r.get("erp_tido") or "").upper(), str(r.get("erp_nudo") or "").lstrip("0"))
+    propios = {_clave(r) for r in filas_h if not r.get("heredado_de_visita_id")}
+    espejos = {_clave(r): r for r in filas_h if r.get("heredado_de_visita_id") and int(r["heredado_de_visita_id"]) == int(madre_vid)}
+    vigentes_madre = {_clave(d) for d in docs}
+    n = 0
+    # Las copias VIGENTES (espejo o documento propio de la desinstalación que la instalación también tiene): a una de ellas
+    # apuntan las copias viejas que quedan dadas de baja.
+    ids_vigentes = [r["id"] for k, r in espejos.items()
+                    if k in vigentes_madre and not r.get("reemplazado_por_id") and r.get("id")]
+    ids_vigentes += [r["id"] for r in filas_h
+                     if not r.get("heredado_de_visita_id") and _clave(r) in vigentes_madre
+                     and not r.get("reemplazado_por_id") and r.get("id")]
+    for d in docs:
+        k = _clave(d)
+        if k in propios or k in espejos:
+            continue
+        cur.execute(
+            "INSERT INTO mant_visita_documentos (visita_id, origen, es_cobro, es_principal, erp_tido, erp_nudo, rut, "
+            " etiqueta, asociado_por, heredado_de_visita_id) VALUES (%s,'erp',0,0,%s,%s,%s,%s,%s,%s)",
+            (int(hija_vid), d.get("erp_tido"), d.get("erp_nudo"), d.get("rut"),
+             f"Heredado de {madre_numero}"[:200], current_username() or "sistema", int(madre_vid)))
+        nuevo = getattr(cur, "lastrowid", None)
+        if nuevo:
+            ids_vigentes.append(nuevo)
+        espejos[k] = {"id": nuevo, "reemplazado_por_id": None}
+        n += 1
+    # Un espejo que la instalación ya no tiene (la nota de venta que una factura reemplazó) queda dado de baja por la copia
+    # vigente, igual que en la instalación: nada se borra, y el documento ya no figura como vigente.
+    destino = ids_vigentes[0] if ids_vigentes else None
+    if destino:
+        for k, r in espejos.items():
+            if k not in vigentes_madre and not r.get("reemplazado_por_id") and r.get("id"):
+                cur.execute("UPDATE mant_visita_documentos SET reemplazado_por_id=%s WHERE id=%s AND reemplazado_por_id IS NULL",
+                            (int(destino), int(r["id"])))
+    return n
+
+
+def _ot_resincronizar_espejo(madre_vid):
+    """Cuando la instalación agrega o reemplaza un documento (nota de venta → factura), el espejo de su desinstalación
+    queda viejo: se vuelve a espejar (crítica 6). Best-effort: nunca rompe la petición de la madre."""
+    try:
+        hijas = _evt.hijas_vigentes(_ot_hijas_de(madre_vid))
+        if not hijas:
+            return 0
+        madre = _ot_fila_basica(madre_vid) or {}
+        num = madre.get("numero_ot") or f"V-{int(madre_vid):05d}"
+        conn = get_mysql()
+        total = 0
+        try:
+            with conn.cursor() as cur:
+                for h in hijas:
+                    total += _ot_espejar_docs_en_hija(cur, h["id"], madre_vid, num)
+            conn.commit()
+        finally:
+            conn.close()
+        return total
+    except Exception as e:
+        print(f"[desinst] re-espejo madre={madre_vid}: {type(e).__name__}: {e}", flush=True)
+        return 0
+
+
+def _ot_plantilla_desinstalacion_fallback():
+    """La plantilla «Desinstalación y embalaje» (familia_checklist='desinstalacion'), SOLO para la hija. NO es un respaldo
+    de _ot2_plantilla_estandar (eso cambiaría lo que reciben las desinstalaciones creadas a mano: REGLA #4.2)."""
+    try:
+        r = mysql_fetchone(
+            "SELECT p.id, COUNT(i.id) AS n FROM mant_tarea_plantillas p "
+            "  JOIN mant_tarea_plantilla_items i ON i.plantilla_id = p.id "
+            " WHERE p.familia_checklist = 'desinstalacion' AND COALESCE(p.activa, 1) = 1 "
+            " GROUP BY p.id ORDER BY COALESCE(p.es_sistema, 0) DESC, n DESC, p.id ASC LIMIT 1")
+        return int(r["id"]) if r else None
+    except Exception as e:
+        print(f"[desinst] plantilla de desinstalación: {type(e).__name__}", flush=True)
+        return None
+
+
+def _ot_plantilla_para_hija(sku, fallback_id):
+    """El checklist de un equipo de la desinstalación: el resolvedor nuevo «base + bloque del sistema por clasificación»
+    (commit 45dbebaa) para el tipo 'desinstalacion' si hay reglas cargadas (bloque de la clase/producto, o la base); si no
+    da nada, «Desinstalación y embalaje»."""
+    try:
+        h = _chk_herencia_resolver([sku], "desinstalacion") if (sku or "").strip() else {"activo": False}
+        if h.get("activo"):
+            e = (h.get("skus") or {}).get((sku or "").strip()) or {}
+            elegido = e.get("sistema") or e.get("base")
+            if elegido and elegido.get("id"):
+                return int(elegido["id"])
+    except Exception as ex:
+        print(f"[desinst] checklist heredado {sku!r}: {type(ex).__name__}", flush=True)
+    return fallback_id
+
+
+def _ot_desinst_sugerir_checklists(items):
+    """🧩 2026-10-19 (Daniel: «el sistema SUGIERE, la persona DECIDE»): el checklist que la desinstalación le pondría a cada
+    equipo, para MOSTRÁRSELO antes de crear (lo que se ve y se elige es exactamente lo que se crea). `items`: [(maquina_id,
+    sku)]. Devuelve [{maquina_id, sku, plantilla_id, plantilla_nombre, origen}] con origen 'clasificacion' (bloque del
+    producto o de su clase) | 'respaldo' («Desinstalación y embalaje») | 'sin_checklist' (no hay ninguno configurado)."""
+    fallback = _ot_plantilla_desinstalacion_fallback()
+    out = []
+    for mid, sku in items:
+        pid = _ot_plantilla_para_hija(sku, fallback)
+        out.append({"maquina_id": mid, "sku": (sku or None), "plantilla_id": pid, "plantilla_nombre": None,
+                    "origen": ("sin_checklist" if not pid else ("respaldo" if pid == fallback else "clasificacion"))})
+    ids = sorted({o["plantilla_id"] for o in out if o["plantilla_id"]})
+    if ids:
+        try:
+            nombres = {int(r["id"]): r.get("nombre") for r in (mysql_fetchall(
+                "SELECT id, nombre FROM mant_tarea_plantillas WHERE id IN (" + ",".join(["%s"] * len(ids)) + ")",
+                tuple(ids)) or [])}
+        except Exception as e:
+            print(f"[desinst] nombres de checklist: {type(e).__name__}", flush=True)
+            nombres = {}
+        for o in out:
+            o["plantilla_nombre"] = nombres.get(o["plantilla_id"])
+    return out
+
+
+# ── Datos que la hija hereda de la instalación ──────────────────────────────────────────────────────────────────
+def _ot_madre_datos_heredables(madre_vid):
+    """Todo lo que la desinstalación hereda de su instalación, releído de la base: contraparte y dirección (Places),
+    acceso, centro de costo, evento, equipos (los maquina_id de sus tareas) y sus tareas manuales. None si la OT no existe."""
+    m = mysql_fetchone("SELECT * FROM mant_visitas WHERE id=%s", (int(madre_vid),))
+    if not m:
+        return None
+    m = dict(m)
+    maq = [int(r["maquina_id"]) for r in (mysql_fetchall(
+        "SELECT DISTINCT maquina_id FROM mant_visita_tareas WHERE visita_id=%s AND maquina_id IS NOT NULL ORDER BY maquina_id",
+        (int(madre_vid),)) or [])]
+    skus = {}
+    if maq:
+        for r in (mysql_fetchall("SELECT id, sku FROM mant_maquinas WHERE id IN (" + ",".join(["%s"] * len(maq)) + ")",
+                                 tuple(maq)) or []):
+            skus[int(r["id"])] = (r.get("sku") or "").strip()
+    manuales = []
+    for r in (mysql_fetchall(
+            "SELECT titulo, descripcion, cantidad, item_manual_sku FROM mant_visita_tareas "
+            " WHERE visita_id=%s AND maquina_id IS NULL AND item_manual_id IS NOT NULL AND plantilla_id IS NULL "
+            " ORDER BY item_manual_id, id", (int(madre_vid),)) or []):
+        t = (r.get("titulo") or "").replace(" — NO LLEGÓ", "").strip()
+        if t:
+            manuales.append({"titulo": t[:300], "cantidad": int(r.get("cantidad") or 1),
+                             "sku": (r.get("item_manual_sku") or "").strip()[:60] or None})
+    return {"fila": m, "maquinas": maq, "skus": skus, "manuales": manuales}
+
+
+def _ot_desinst_remanente_saldo(docs, pedido_madre=None, cliente_rut=None, excluir_vid=None):
+    """El saldo de SERVICIO y de DESPACHO que le queda a los documentos de la instalación DESPUÉS de lo que ella toma
+    (crítica 5). El servidor lo calcula; la persona elige si la desinstalación lo cobra o queda cubierta.
+    `docs`: [(tido, nudo)]; `pedido_madre`: lo que la instalación va a tomar si todavía no existe ({servicio, despacho}).
+    Devuelve {servicio, despacho, leido, por_doc}. Solo lectura de Random (REGLA #4.1)."""
+    out = {"servicio": 0, "despacho": 0, "leido": False, "por_doc": []}
+    docs = [(t, n) for (t, n) in (docs or []) if t and n]
+    if not docs:
+        return out
+    try:
+        s = _ot_saldo_de_docs(docs, excluir_vid=excluir_vid, cliente_rut=cliente_rut)
+    except Exception as e:
+        print(f"[desinst] saldo remanente: {type(e).__name__}", flush=True)
+        return out
+    comb = s.get("combinado") or {}
+    out["leido"] = any(bool(i.get("leido")) for i in (s.get("por_doc") or []))
+    out["por_doc"] = [{"titulo": i.get("titulo"), "leido": bool(i.get("leido")),
+                       "servicio": (i.get("servicio") or {}).get("saldo", 0),
+                       "despacho": (i.get("despacho") or {}).get("saldo", 0)} for i in (s.get("por_doc") or [])]
+    ped = pedido_madre or {}
+    for c in _saldo.CATEGORIAS:
+        sal = _saldo._entero((comb.get(c) or {}).get("saldo"))
+        out[c] = max(0, sal - _saldo._entero(ped.get(c)))
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  EVENTOS — la «carpeta» que agrupa OT
+# ═══════════════════════════════════════════════════════════════════════════
+def _eventos_ots(eid, solo_vids=None):
+    """Las OT de un evento con lo mínimo para el avance (sin montos: REGLA #26). `solo_vids`: un técnico ve solo las suyas."""
+    sql = ("SELECT v.id, v.numero_ot, v.tipo, v.estado, v.ot_madre_id, v.ot_relacion, v.desinstalacion_prevista, "
+           "       v.fecha_programada, v.fecha_fin, v.hora_inicio, v.hora_fin, v.cliente_id, c.razon_social AS cliente, "
+           "       COALESCE(au.nombre, au.username) AS tecnico "
+           "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+           "  LEFT JOIN app_users au ON au.id = v.tecnico_user_id WHERE v.evento_id=%s")
+    params = [int(eid)]
+    if solo_vids is not None:
+        ids = sorted({int(x) for x in solo_vids})
+        if not ids:
+            return []
+        sql += " AND v.id IN (" + ",".join(["%s"] * len(ids)) + ")"
+        params += ids
+    sql += " ORDER BY v.fecha_programada, v.id"
+    try:
+        return [dict(r) for r in (mysql_fetchall(sql, tuple(params)) or [])]
+    except Exception as e:
+        print(f"[evento] ots {eid}: {type(e).__name__}", flush=True)
+        return []
+
+
+def _evento_json(r, ots=None, hoy=None, con_internos=True):
+    """Un evento listo para la pantalla (fechas dd/mm/aaaa, REGLA #6). `con_internos`=False (técnico u OT interna de bodega
+    que solo elige el evento): sin doc_ref ni notas."""
+    hoy = hoy or _now_chile().date()
+    ots = ots if ots is not None else []
+    cod, txt = _evt.estado_evento(r, ots, hoy)
+    sem, sem_txt = _evt.semaforo_evento(r, ots, hoy)
+    av = _evt.avance_evento(ots, hoy)
+    lugar = " · ".join(x for x in (r.get("direccion"), r.get("detalle")) if x)
+    out = {
+        "id": r["id"], "nombre": r.get("nombre") or "", "cliente_id": r.get("cliente_id"),
+        "lugar": lugar, "direccion": r.get("direccion"), "detalle": r.get("detalle"),
+        "comuna": r.get("comuna"), "region": r.get("region"),
+        "lat": (float(r["lat"]) if r.get("lat") is not None else None),
+        "lng": (float(r["lng"]) if r.get("lng") is not None else None), "place_id": r.get("place_id"),
+        "fecha_ini": _evt.fmt_fecha(r.get("fecha_ini")), "fecha_fin": _evt.fmt_fecha(r.get("fecha_fin")),
+        "fecha_ini_iso": (_evt.parse_fecha(r.get("fecha_ini")).isoformat() if _evt.parse_fecha(r.get("fecha_ini")) else None),
+        "fecha_fin_iso": (_evt.parse_fecha(r.get("fecha_fin")).isoformat() if _evt.parse_fecha(r.get("fecha_fin")) else None),
+        "fechas_txt": _evt.rango_evento_txt(r),
+        "estado_db": r.get("estado") or "activo", "estado": cod, "estado_txt": txt,
+        "semaforo": sem, "semaforo_txt": sem_txt,
+        "n_ots": av["total"], "cerradas": av["cerradas"], "pct": av["pct"],
+        "por_fase": {k: v for k, v in av["por_fase"].items()},
+        "desinst_pendientes": av["desinst_pendientes"], "desinst_vencidas": av["desinst_vencidas"],
+        "proxima_fecha": _evt.fmt_fecha(av["proxima_fecha"]) if av["proxima_fecha"] else "",
+        "url": f"/ot/eventos/{r['id']}",
+    }
+    if con_internos:
+        out["doc_ref"] = r.get("doc_ref")
+        out["notas"] = r.get("notas")
+        out["cancelado_por"] = r.get("cancelado_por")
+        out["cancelado_motivo"] = r.get("cancelado_motivo")
+        out["creado_por"] = r.get("created_by")
+    return out
+
+
+def _evento_ids_del_tecnico():
+    """Los ids de los eventos con al menos una OT del técnico en sesión, y los ids de esas OT (solo ve esas)."""
+    where, params = _mant_calendario_role_where()
+    try:
+        rows = mysql_fetchall(
+            "SELECT v.id, v.evento_id FROM mant_visitas v WHERE v.evento_id IS NOT NULL" + where, tuple(params)) or []
+    except Exception as e:
+        print(f"[evento] ids del técnico: {type(e).__name__}", flush=True)
+        return set(), {}
+    por_evento = {}
+    for r in rows:
+        por_evento.setdefault(int(r["evento_id"]), set()).add(int(r["id"]))
+    return set(por_evento), por_evento
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  DESINSTALACIÓN — crear la OT hija
+# ═══════════════════════════════════════════════════════════════════════════
+def _ot_desinst_normalizar(datos):
+    """Lee el bloque `desinstalacion` que manda el asistente / la ficha y lo deja limpio. Devuelve (error|None, dict).
+    Campos: lleva ('si'|'no'|'por_definir'), fecha, hora_inicio, hora_fin, tecnico_user_ids, tecnico_lider_id,
+    costo_proveedor, costo_despacho, proveedor_tipo, proveedor_nombre, nota, cobro ('cubierta'|'cobra'), argumento_cubierta,
+    cobra_servicio, cobra_despacho, zz_codigo, forzar_choque. `lleva` verdadero booleano = 'si'."""
+    d = datos if isinstance(datos, dict) else {}
+    lleva_raw = d.get("lleva")
+    if lleva_raw in (True, 1, "1", "true", "si", "sí", "yes"):
+        lleva = "si"
+    elif lleva_raw in ("por_definir", "pendiente", "definir"):
+        lleva = "por_definir"
+    else:
+        lleva = "no"
+    tec = []
+    for t in (d.get("tecnico_user_ids") or d.get("tecnicos") or []):
+        try:
+            tec.append(int(t))
+        except (TypeError, ValueError):
+            continue
+    tec = sorted(set(tec))
+    try:
+        lider = int(d.get("tecnico_lider_id") or d.get("lider") or 0) or None
+    except (TypeError, ValueError):
+        lider = None
+    if lider and lider not in tec:
+        tec.append(lider)
+
+    def _num(k):
+        v = d.get(k)
+        if v is None or str(v).strip() == "":
+            return None
+        try:
+            return max(0.0, float(v))
+        except (TypeError, ValueError):
+            raise ValueError(k)
+    try:
+        cobra_serv, cobra_desp = _num("cobra_servicio"), _num("cobra_despacho")
+        costo_prov, costo_desp = _num("costo_proveedor"), _num("costo_despacho")
+    except ValueError as e:
+        return {"codigo": "MONTO_INVALIDO", "mensaje": "Uno de los montos de la desinstalación no es válido."}, None
+    # 🧩 2026-10-19 (Daniel: «el sistema SUGIERE y la persona DECIDE»): los equipos de la instalación que se desinstalan y el
+    # checklist de cada uno. Si no vienen, se desinstalan todos con el checklist que el sistema SUGIRIÓ (y que la pantalla mostró).
+    equipos, vistos_eq = [], set()
+    for e in (d.get("equipos") or []):
+        if not isinstance(e, dict):
+            continue
+        try:
+            mid = int(e.get("maquina_id"))
+        except (TypeError, ValueError):
+            return {"codigo": "EQUIPO_INVALIDO", "mensaje": "Uno de los equipos de la desinstalación no es válido."}, None
+        try:
+            pid = int(e.get("plantilla_id")) if e.get("plantilla_id") not in (None, "", 0, "0") else None
+        except (TypeError, ValueError):
+            return {"codigo": "PLANTILLA_INVALIDA",
+                    "mensaje": "Uno de los checklists elegidos para la desinstalación no es válido."}, None
+        if mid in vistos_eq:
+            continue
+        vistos_eq.add(mid)
+        equipos.append({"maquina_id": mid, "plantilla_id": pid})
+    cobro = (str(d.get("cobro") or "").strip().lower()) or None
+    out = {
+        "lleva": lleva, "fecha": (str(d.get("fecha") or d.get("fecha_programada") or "").strip()[:10] or None),
+        "hora_inicio": (str(d.get("hora_inicio") or d.get("hini") or "").strip()[:5] or None),
+        "hora_fin": (str(d.get("hora_fin") or d.get("hfin") or "").strip()[:5] or None),
+        "tecnico_user_ids": tec, "tecnico_lider_id": lider,
+        "costo_proveedor": costo_prov, "costo_despacho": costo_desp,
+        "proveedor_tipo": (str(d.get("proveedor_tipo") or "").strip().lower() or None),
+        "proveedor_nombre": (str(d.get("proveedor_nombre") or "").strip()[:200] or None),
+        "nota": (str(d.get("nota") or "").strip()[:1500] or None),
+        "cobro": cobro, "argumento_cubierta": (str(d.get("argumento_cubierta") or "").strip()[:1000] or None),
+        "cobra_servicio": cobra_serv, "cobra_despacho": cobra_desp,
+        "zz_codigo": (str(d.get("zz_codigo") or "").strip().upper()[:30] or None),
+        "forzar_choque": bool(d.get("forzar_choque")),
+        "equipos": equipos,
+    }
+    return None, out
+
+
+def _ot_desinst_validar_previo(dd, madre_fila, docs_madre, pedido_madre=None, cliente_rut=None, excluir_vid=None,
+                              feriados=None, evento=None, remanente=None):
+    """Todo lo que se puede validar de la desinstalación ANTES de tocar la base (bloque 7.a del asistente y la ruta de
+    «Programar desinstalación»). Devuelve (error|None, info): info trae `avisos` y `remanente` (saldo que queda)."""
+    if dd["lleva"] == "no":
+        return None, {"avisos": [], "remanente": None}
+    fer = feriados if feriados is not None else _feriados_cl(dd.get("fecha"), madre_fila.get("fecha_programada"))
+    if dd["lleva"] == "por_definir":
+        if not dd.get("fecha"):
+            return {"codigo": "DESINST_FECHA_REQUERIDA",
+                    "mensaje": "Pon una fecha estimada para la desinstalación (después se puede cambiar)."}, None
+        f = _evt.parse_fecha(dd["fecha"])
+        if not f:
+            return {"codigo": "FECHA_INVALIDA", "mensaje": "La fecha estimada de la desinstalación no es válida."}, None
+        ref, _h = _evt.fecha_referencia_madre(madre_fila)
+        if ref and f < ref:
+            return {"codigo": "DESINST_ANTES_DE_INSTALACION",
+                    "mensaje": "La desinstalación no puede ir antes de la instalación (%s)." % _evt.fmt_fecha(ref)}, None
+        return None, {"avisos": [], "remanente": None}
+    # lleva == 'si': fecha, horas, técnico, costo, cobro.
+    ev = _evt.evaluar_fecha_desinstalacion(dd.get("fecha"), dd.get("hora_inicio"), dd.get("hora_fin"), madre_fila,
+                                           fer, evento)
+    if not ev["ok"]:
+        return ev["bloqueo"], None
+    if not dd["tecnico_user_ids"] or not dd["tecnico_lider_id"]:
+        return {"codigo": "TECNICO_OBLIGATORIO",
+                "mensaje": "La desinstalación necesita un técnico responsable (elige al menos uno)."}, None
+    e_emp = _ot_validar_tecnicos_una_empresa(dd["tecnico_user_ids"])
+    if e_emp:
+        return {"codigo": "TECNICOS_EMPRESAS_MEZCLADAS", "mensaje": e_emp}, None
+    # Tope de OT sin contrato (hoy apagado): si la instalación todavía no existe, la hija es la SEGUNDA OT de la operación.
+    e_tope = _ot_validar_tope_ot_sin_contrato(dd["tecnico_user_ids"], extra=(1 if not madre_fila.get("id") else 0))
+    if e_tope:
+        return {"codigo": "PROVEEDOR_TOPE_SIN_CONTRATO", "mensaje": e_tope}, None
+    if dd.get("costo_proveedor") is None:
+        return {"codigo": "FINANZAS_SIN_COSTO_PROVEEDOR",
+                "mensaje": "Indica cuánto le pagamos al técnico o proveedor por la desinstalación (0 si es técnico propio)."}, None
+    rem = remanente if remanente is not None else _ot_desinst_remanente_saldo(docs_madre, pedido_madre, cliente_rut, excluir_vid)
+    err, cobro = _evt.validar_cobro_desinstalacion(
+        dd.get("cobro"), rem["servicio"] if rem["leido"] else 0, rem["despacho"] if rem["leido"] else 0,
+        dd.get("argumento_cubierta"))
+    if err:
+        return err, None
+    dd["cobro"] = cobro
+    if cobro == _evt.COBRO_PROPIO:
+        cs, cd = _saldo._entero(dd.get("cobra_servicio")), _saldo._entero(dd.get("cobra_despacho"))
+        if cs <= 0 and cd <= 0:
+            return {"codigo": "COBRO_REQUERIDO",
+                    "mensaje": "Indica cuánto cobra la desinstalación de su línea en la nota de venta."}, None
+        if cs > rem["servicio"] or cd > rem["despacho"]:
+            return {"codigo": "ZZ_SALDO_CONSUMIDO",
+                    "mensaje": "Lo que cobra la desinstalación (%s servicio, %s despacho) supera el saldo que queda en la "
+                               "nota de venta (%s y %s)." % (_saldo.clp(cs), _saldo.clp(cd), _saldo.clp(rem["servicio"]),
+                                                              _saldo.clp(rem["despacho"]))}, None
+    return None, {"avisos": ev["avisos"], "remanente": rem}
+
+
+def _ot_crear_desinstalacion(madre_vid, datos, usuario=None, autorizacion=None, creado_por=None):
+    """★ Crea la OT HIJA (desinstalación) de la instalación `madre_vid`. ÚNICA puerta para que una OT nazca con madre:
+    llama a _ot2_crear_core(d, madre=fila) -- `madre` es un parámetro de la función, nunca una clave de `d`
+    (un ot_madre_id que llegue en el body de /ot/api/crear se ignora).
+
+    `datos`: el bloque `desinstalacion` (ver _ot_desinst_normalizar). `autorizacion`: la fila aprobada con la que se creó
+    la instalación (aprobación remota): la hija queda a nombre de quien la pidió y NO hereda forzar_choque. Devuelve
+    {ok, visita_id, numero_ot, fecha, avisos, ot_url} o {ok: False, codigo, error}. Nunca lanza."""
+    try:
+        err, dd = _ot_desinst_normalizar(datos)
+        if err:
+            return {"ok": False, "codigo": err["codigo"], "error": err["mensaje"]}
+        if dd["lleva"] != "si":
+            return {"ok": False, "codigo": "DESINST_NO_SOLICITADA", "error": "No se pidió programar la desinstalación."}
+        her = _ot_madre_datos_heredables(madre_vid)
+        if not her:
+            return {"ok": False, "codigo": "OT_NO_EXISTE", "error": "No encontramos la instalación."}
+        m = her["fila"]
+        ok_p, motivo_p = _evt.puede_programar_desinstalacion(m, _ot_hijas_de(madre_vid))
+        if not ok_p:
+            return {"ok": False, "codigo": "DESINST_NO_PERMITIDA", "error": motivo_p}
+        if not her["maquinas"] and not her["manuales"]:
+            return {"ok": False, "codigo": "SIN_EQUIPOS",
+                    "error": "La instalación no tiene equipos que desinstalar."}
+        fallback = _ot_plantilla_desinstalacion_fallback()
+        # 🧩 Daniel (19-oct): el sistema SUGIERE el checklist de cada equipo y la persona DECIDE. Si `dd.equipos` viene, manda
+        # lo elegido (solo equipos de la instalación; un checklist vacío toma el sugerido); si no, todos los equipos de la
+        # instalación con el checklist sugerido (el mismo que le mostró la pantalla). Nada se agrega por detrás.
+        sugeridas = {mid: _ot_plantilla_para_hija(her["skus"].get(mid), fallback) for mid in her["maquinas"]}
+        elegidos = dd.get("equipos") or [{"maquina_id": mid, "plantilla_id": None} for mid in her["maquinas"]]
+        if [e for e in elegidos if e["maquina_id"] not in sugeridas]:
+            return {"ok": False, "codigo": "EQUIPO_NO_ES_DE_LA_INSTALACION",
+                    "error": "Uno de los equipos elegidos no es de la instalación: una desinstalación solo desinstala lo que se instaló."}
+        validas = _chk_plantillas_validas({e["plantilla_id"] for e in elegidos if e.get("plantilla_id")}, _evt.TIPO_HIJA)
+        equipos = []
+        for e in elegidos:
+            pid = e.get("plantilla_id")
+            if pid and pid not in validas:
+                return {"ok": False, "codigo": "PLANTILLA_INVALIDA",
+                        "error": "Ese checklist no sirve para una desinstalación (está inactivo, vacío o es de otra categoría)."}
+            pid = pid or sugeridas.get(e["maquina_id"])
+            if not pid:
+                return {"ok": False, "codigo": "PLANTILLA_NO_CONFIGURADA",
+                        "error": "No hay un checklist de desinstalación configurado. Crea «Desinstalación y embalaje» en "
+                                 "Plantillas antes de programar la desinstalación."}
+            equipos.append({"maquina_id": e["maquina_id"], "plantilla_id": pid})
+        manuales = [dict(x, plantilla_id=fallback) for x in her["manuales"]]
+        num_m = m.get("numero_ot") or f"V-{int(madre_vid):05d}"
+        # Finanzas: cubierta (solo lo que cobra el técnico) o con su línea propia de la nota de venta.
+        fin = {"costo_proveedor": dd["costo_proveedor"], "costo_despacho": dd["costo_despacho"],
+               "proveedor_tipo": dd["proveedor_tipo"], "proveedor_nombre": dd["proveedor_nombre"],
+               "centro_costo": m.get("centro_costo")}
+        if dd["cobro"] == _evt.COBRO_PROPIO:
+            docs_m = _ot_saldo_docs_de_ot(madre_vid)
+            if not docs_m:
+                return {"ok": False, "codigo": "SIN_DOCUMENTO", "error": "La instalación no tiene documentos de cobro."}
+            fin.update({"factura_tido": docs_m[0][0], "factura_nudo": docs_m[0][1],
+                        "documentos_extra": [{"tido": t, "nudo": n} for (t, n) in docs_m[1:]],
+                        "zz_monto": _saldo._entero(dd["cobra_servicio"]),
+                        "zz_envio_monto": (_saldo._entero(dd["cobra_despacho"]) or None),
+                        "zz_codigo": dd.get("zz_codigo") or "ZZINSTALACION",
+                        "zz_envio_codigo": ("ZZENVIO" if _saldo._entero(dd["cobra_despacho"]) else None),
+                        "valor_origen": "zz"})
+        contra = {k: m.get(k) for k in _DESINST_CAMPOS_CONTRAPARTE}
+        d_hija = {
+            "tipo_ot": _evt.TIPO_HIJA, "cliente_id": m.get("cliente_id"),
+            "fecha_programada": dd["fecha"], "hora_inicio": dd["hora_inicio"], "hora_fin": dd["hora_fin"],
+            "acceso": {"ascensor": (None if m.get("acceso_ascensor") is None else bool(m.get("acceso_ascensor"))),
+                       "estacionamiento": (None if m.get("acceso_estacionamiento") is None else bool(m.get("acceso_estacionamiento"))),
+                       "piso": m.get("acceso_piso"), "notas": m.get("acceso_notas")},
+            "contraparte": {"nombre": contra["contacto_nombre"], "cargo": contra["contacto_cargo"], "tel": contra["contacto_tel"],
+                            "email": contra["contacto_email"], "rut": contra["contacto_rut"], "origen": contra["contacto_origen"],
+                            "direccion": contra["direccion_visita"], "detalle": contra["direccion_detalle"],
+                            "lat": contra["direccion_lat"], "lng": contra["direccion_lng"],
+                            "place_id": contra["direccion_place_id"], "comuna": contra["direccion_comuna"],
+                            "region": contra["direccion_region"]},
+            "equipos": equipos, "tareas_manuales": manuales,
+            "tecnico_user_ids": dd["tecnico_user_ids"], "tecnico_lider_id": dd["tecnico_lider_id"],
+            "titulo": "", "descripcion": (f"Desinstalación de {num_m}." + (f" {dd['nota']}" if dd.get("nota") else ""))[:2000],
+            "finanzas": fin, "_desinst_cobro": dd["cobro"], "_desinst_argumento": dd.get("argumento_cubierta"),
+            # Una aprobación remota NO hereda el «forzar choque» de nadie; una creación normal solo lo trae si lo pidió
+            # la propia desinstalación (y el núcleo exige además ser superadministrador).
+            "forzar_choque": (False if autorizacion else bool(dd.get("forzar_choque"))),
+        }
+        if creado_por:
+            d_hija["_creado_por"] = creado_por
+        r = _ot2_crear_core(d_hija, madre=m)
+        resp, http = (r if isinstance(r, tuple) else (r, 200))
+        try:
+            cuerpo = resp.get_json(silent=True) or {}
+        except Exception:
+            cuerpo = {}
+        if http != 200 or not cuerpo.get("ok"):
+            return {"ok": False, "codigo": cuerpo.get("codigo") or "ERROR_INTERNO",
+                    "error": cuerpo.get("error") or "No se pudo agendar la desinstalación.", "http": http}
+        return {"ok": True, "visita_id": cuerpo.get("visita_id"), "numero_ot": cuerpo.get("numero_ot"),
+                "fecha": dd["fecha"], "fecha_txt": _evt.fmt_fecha(dd["fecha"]), "avisos": cuerpo.get("avisos") or [],
+                "ot_url": cuerpo.get("ot_url"), "cobro": dd["cobro"]}
+    except Exception as e:
+        print(f"[desinst] crear hija de {madre_vid}: {type(e).__name__}: {e}", flush=True)
+        return {"ok": False, "codigo": "ERROR_INTERNO", "error": "No pudimos agendar la desinstalación. Ya quedó registrado el detalle."}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  EVENTOS — rutas (JSON bajo /ot/api/eventos; las pantallas /ot/eventos las dibuja el frente)
+#  Permisos: ver = cualquiera con Mantenciones (un técnico ve SOLO los eventos con OT suyas, y solo esas OT, sin doc_ref ni
+#  notas: REGLA #26); crear / editar / cancelar / asociar OT = gestión (@_no_tecnico). Sin montos en ninguna respuesta.
+# ═══════════════════════════════════════════════════════════════════════════
+_EVT_FILTROS = ("activos", "proximos", "terminados", "cancelados", "todos")
+
+
+def _evt_filtro_ok(codigo_estado, filtro):
+    """¿Un evento con este estado calculado entra en el chip de la lista?"""
+    if filtro == "todos":
+        return True
+    if filtro == "cancelados":
+        return codigo_estado == "cancelado"
+    if filtro == "terminados":
+        return codigo_estado == "terminado"
+    if filtro == "proximos":
+        return codigo_estado == "proximo"
+    return codigo_estado in ("en_curso", "por_cerrar", "sin_fechas")   # activos
+
+
+def _evt_ots_de_muchos(eids, solo_vids_por_evento=None):
+    """{evento_id: [OT]} para varios eventos con UNA consulta por tramo (nunca una por evento)."""
+    out = {int(e): [] for e in eids}
+    ids = sorted(out)
+    for i in range(0, len(ids), 400):
+        trozo = ids[i:i + 400]
+        try:
+            for r in (mysql_fetchall(
+                    "SELECT v.id, v.evento_id, v.numero_ot, v.tipo, v.estado, v.ot_madre_id, v.ot_relacion, "
+                    "       v.desinstalacion_prevista, v.fecha_programada, v.fecha_fin, v.cliente_id "
+                    "  FROM mant_visitas v WHERE v.evento_id IN (" + ",".join(["%s"] * len(trozo)) + ")",
+                    tuple(trozo)) or []):
+                eid = int(r["evento_id"])
+                if solo_vids_por_evento is not None and int(r["id"]) not in solo_vids_por_evento.get(eid, set()):
+                    continue
+                out[eid].append(dict(r))
+        except Exception as e:
+            print(f"[evento] ots de muchos: {type(e).__name__}", flush=True)
+    return out
+
+
+@app.route("/ot/api/eventos", methods=["GET"])
+@_mant_required
+def ot_api_eventos_listar():
+    """Lista de eventos, paginada (REGLA #4.3: 20 por página por defecto). Params: q (nombre, lugar, cliente; el documento de
+    referencia solo lo busca la gestión), estado (activos|proximos|terminados|cancelados|todos), page, per_page,
+    para=asistente (los eventos ACTIVOS que se pueden elegir al crear una OT: quien puede crear OT, incluida la OT interna
+    de bodega de un técnico habilitado, los ve sin doc_ref ni notas).
+    Devuelve {ok, eventos: [...], total, page, per_page, pages, desde, hasta, conteos: {...}, puede_crear}."""
+    es_tec = _es_rol_tecnico()
+    para_asistente = (request.args.get("para") or "").strip().lower() == "asistente"
+    if para_asistente and es_tec and not _puede_crear_ot_interna():
+        return jsonify({"ok": False, "error": "No tienes permiso para esto.", "error_codigo": "SIN_PERMISO"}), 403
+    q = (request.args.get("q") or "").strip()[:120]
+    filtro = (request.args.get("estado") or ("activos" if para_asistente else "activos")).strip().lower()
+    if filtro not in _EVT_FILTROS:
+        filtro = "activos"
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+        per_page = min(100, max(1, int(request.args.get("per_page") or 20)))
+    except (TypeError, ValueError):
+        page, per_page = 1, 20
+    hoy = _now_chile().date()
+    solo_vids = None
+    ids_tec = None
+    if es_tec and not para_asistente:
+        ids_tec, solo_vids = _evento_ids_del_tecnico()
+        if not ids_tec:
+            return jsonify({"ok": True, "eventos": [], "total": 0, "page": 1, "per_page": per_page, "pages": 1, "desde": 0,
+                            "hasta": 0, "conteos": {k: 0 for k in _EVT_FILTROS}, "puede_crear": False})
+    where, params = ["1=1"], []
+    if q:
+        like = f"%{q}%"
+        cols = "(e.nombre LIKE %s OR e.direccion LIKE %s OR e.comuna LIKE %s OR c.razon_social LIKE %s"
+        params += [like, like, like, like]
+        if not es_tec:
+            cols += " OR e.doc_ref LIKE %s"
+            params.append(like)
+        where.append(cols + ")")
+    if ids_tec is not None:
+        where.append("e.id IN (" + ",".join(["%s"] * len(ids_tec)) + ")")
+        params += sorted(ids_tec)
+    try:
+        filas = mysql_fetchall(
+            "SELECT e.*, c.razon_social AS cliente FROM mant_eventos e LEFT JOIN mant_clientes c ON c.id=e.cliente_id "
+            " WHERE " + " AND ".join(where) + " ORDER BY COALESCE(e.fecha_ini, e.created_at) DESC, e.id DESC LIMIT 2000",
+            tuple(params)) or []
+    except Exception as e:
+        print(f"[evento] listar: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo leer la lista de eventos."}), 500
+    ots_por = _evt_ots_de_muchos([r["id"] for r in filas], solo_vids)
+    todos = []
+    conteos = {k: 0 for k in _EVT_FILTROS}
+    for r in filas:
+        r = dict(r)
+        ots = ots_por.get(int(r["id"]), [])
+        cod, _t = _evt.estado_evento(r, ots, hoy)
+        conteos["todos"] += 1
+        for k in ("activos", "proximos", "terminados", "cancelados"):
+            if _evt_filtro_ok(cod, k):
+                conteos[k] += 1
+        if para_asistente and cod in ("cancelado", "terminado"):
+            continue
+        if _evt_filtro_ok(cod, "activos" if para_asistente else filtro):
+            todos.append((r, ots))
+    total = len(todos)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = min(page, pages)
+    ini = (page - 1) * per_page
+    items = []
+    for r, ots in todos[ini:ini + per_page]:
+        j = _evento_json(r, ots, hoy, con_internos=not (es_tec or para_asistente))
+        j["cliente"] = r.get("cliente") or ""
+        items.append(j)
+    return jsonify({"ok": True, "eventos": items, "total": total, "page": page, "per_page": per_page, "pages": pages,
+                    "desde": (ini + 1) if total else 0, "hasta": min(ini + per_page, total), "conteos": conteos,
+                    "estado": filtro, "puede_crear": not es_tec})
+
+
+@app.route("/ot/api/eventos/<int:eid>", methods=["GET"])
+@_mant_required
+def ot_api_evento_detalle(eid):
+    """El evento con su avance por fase, una línea por día y sus OT (paginadas, 25 por página). Sin montos. Un técnico solo
+    recibe las OT suyas y ningún dato interno del evento (doc_ref, notas). Params: page, per_page."""
+    r = _evento_fila(eid)
+    if not r:
+        return jsonify({"ok": False, "error": "Ese evento no existe.", "error_codigo": "EVENTO_NO_EXISTE"}), 404
+    es_tec = _es_rol_tecnico()
+    solo = None
+    if es_tec:
+        ids_tec, por_ev = _evento_ids_del_tecnico()
+        if int(eid) not in ids_tec:
+            return jsonify({"ok": False, "error": "No tienes OT en este evento.", "error_codigo": "SIN_PERMISO"}), 403
+        solo = por_ev.get(int(eid), set())
+    ots = _eventos_ots(eid, solo_vids=solo)
+    hoy = _now_chile().date()
+    ev = _evento_json(r, ots, hoy, con_internos=not es_tec)
+    av = _evt.avance_evento(ots, hoy)
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+        per_page = min(100, max(1, int(request.args.get("per_page") or 25)))
+    except (TypeError, ValueError):
+        page, per_page = 1, 25
+    num_por_id = {int(o["id"]): o.get("numero_ot") for o in ots}
+
+    def _ot_fila(o):
+        est = o.get("estado") or ""
+        meta = _OT2_ESTADO_META.get(est)
+        fase = _evt.fase_de_ot(o)
+        hija_de = num_por_id.get(int(o["ot_madre_id"])) if o.get("ot_madre_id") else None
+        return {"id": o["id"], "numero_ot": o.get("numero_ot") or f"V-{int(o['id']):05d}", "url": f"/ot/{o['id']}",
+                "cliente": o.get("cliente") or "Trabajo interno", "tipo": o.get("tipo"),
+                "tipo_label": _TIPO_OT_LABEL.get(o.get("tipo"), (o.get("tipo") or "").replace("_", " ").title()),
+                "fase": fase, "fase_txt": _evt.FASE_TXT.get(fase, fase), "estado": est,
+                "estado_label": meta[0] if meta else est.replace("_", " ").title(),
+                "bucket": _evt.bucket_estado(est), "fecha": _evt.fmt_fecha(o.get("fecha_programada")),
+                "fecha_iso": (_evt.parse_fecha(o.get("fecha_programada")).isoformat() if _evt.parse_fecha(o.get("fecha_programada")) else None),
+                "hora": _evt.hora_txt(o.get("hora_inicio")), "tecnico": o.get("tecnico") or "",
+                "madre_id": o.get("ot_madre_id"), "madre_numero": hija_de,
+                "desinstalacion_prevista": _evt.fmt_fecha(o.get("desinstalacion_prevista")) if o.get("desinstalacion_prevista") else ""}
+    total = len(ots)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = min(page, pages)
+    pagina = [_ot_fila(o) for o in ots[(page - 1) * per_page:page * per_page]]
+    pares = []
+    for p in av["pares"]:
+        m, h = p["madre"], p["hija"]
+        pares.append({"madre": {"id": m["id"], "numero_ot": m.get("numero_ot"), "fecha": _evt.fmt_fecha(m.get("fecha_programada")),
+                                "estado": m.get("estado"), "cliente": m.get("cliente")},
+                      "hija": ({"id": h["id"], "numero_ot": h.get("numero_ot"), "fecha": _evt.fmt_fecha(h.get("fecha_programada")),
+                                "estado": h.get("estado")} if h else None),
+                      "estado": p["estado"]})
+    dias = []
+    for iso, lst in sorted(_evt.cuadro_por_dia(ots).items()):
+        dias.append({"fecha": _evt.fmt_fecha(iso), "fecha_iso": iso, "dow": _evt.dia_semana(iso),
+                     "ots": [{"id": x["id"], "numero_ot": x["numero_ot"], "fase": x["fase"], "estado": x["estado"]} for x in lst]})
+    return jsonify({"ok": True, "evento": ev, "avance": {k: v for k, v in av.items() if k != "pares"}, "pares": pares,
+                    "dias": dias, "ots": pagina, "total": total, "page": page, "per_page": per_page, "pages": pages,
+                    "desde": ((page - 1) * per_page + 1) if total else 0, "hasta": min(page * per_page, total),
+                    "puede_editar": not es_tec})
+
+
+@app.route("/ot/api/eventos", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot_api_evento_crear():
+    """Crea un evento (nombre, lugar con Google Places, fechas opcionales). Body: ver ot_eventos.normalizar_evento."""
+    err, campos = _evt.normalizar_evento(request.get_json(silent=True) or {})
+    if err:
+        return jsonify({"ok": False, "error": err["mensaje"], "error_codigo": err["codigo"]}), 400
+    if campos["cliente_id"]:
+        if not mysql_fetchone("SELECT 1 AS x FROM mant_clientes WHERE id=%s", (campos["cliente_id"],)):
+            return jsonify({"ok": False, "error": "No encontramos ese cliente.", "error_codigo": "CLIENTE_NO_EXISTE"}), 404
+    uid, nombre = _ot_aut_usuario()
+    # Un evento con el mismo nombre y las mismas fechas ya activo no se duplica (doble clic): se devuelve el existente.
+    try:
+        igual = mysql_fetchone(
+            "SELECT * FROM mant_eventos WHERE estado='activo' AND LOWER(nombre)=LOWER(%s) AND fecha_ini<=>%s AND fecha_fin<=>%s "
+            " ORDER BY id DESC LIMIT 1", (campos["nombre"], campos["fecha_ini"], campos["fecha_fin"]))
+    except Exception:
+        igual = None
+    if igual:
+        return jsonify({"ok": True, "ya_existia": True, "evento": _evento_json(dict(igual), [], _now_chile().date())}), 200
+    try:
+        eid = _mysql_insertar(
+            "INSERT INTO mant_eventos (nombre, cliente_id, direccion, detalle, lat, lng, place_id, comuna, region, fecha_ini, "
+            " fecha_fin, doc_ref, notas, created_by, created_by_user_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (campos["nombre"], campos["cliente_id"], campos["direccion"], campos["detalle"], campos["lat"], campos["lng"],
+             campos["place_id"], campos["comuna"], campos["region"], campos["fecha_ini"], campos["fecha_fin"],
+             campos["doc_ref"], campos["notas"], nombre, uid))
+    except Exception as e:
+        print(f"[evento] crear: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo crear el evento.", "error_codigo": "ERROR_INTERNO"}), 500
+    _mant_log("evento", eid, "creado", f"{campos['nombre']} · {_evt.rango_evento_txt(campos)}"
+              + (f" · {campos['direccion']}" if campos.get("direccion") else ""))
+    return jsonify({"ok": True, "evento": _evento_json(_evento_fila(eid) or {"id": eid, **campos}, [], _now_chile().date())}), 201
+
+
+@app.route("/ot/api/eventos/<int:eid>", methods=["PUT"])
+@_mant_required
+@_no_tecnico
+def ot_api_evento_editar(eid):
+    """Edita un evento, lo cancela o lo reactiva. Nunca se borra (REGLA #5). Body: los campos de crear, y/o
+    {cancelar: true, motivo (≥10)} (solo si no tiene OT activas: vigentes sin cerrar) o {reactivar: true}."""
+    r = _evento_fila(eid)
+    if not r:
+        return jsonify({"ok": False, "error": "Ese evento no existe.", "error_codigo": "EVENTO_NO_EXISTE"}), 404
+    d = request.get_json(silent=True) or {}
+    uid, nombre = _ot_aut_usuario()
+    if d.get("cancelar"):
+        motivo = (str(d.get("motivo") or "").strip())[:500]
+        if len(motivo) < _evt.MOTIVO_MIN:
+            return jsonify({"ok": False, "error": f"Explica por qué se cancela el evento (mínimo {_evt.MOTIVO_MIN} caracteres).",
+                            "error_codigo": "MOTIVO_REQUERIDO"}), 400
+        activas = [o for o in _eventos_ots(eid) if _evt.vigente(o.get("estado")) and _evt.bucket_estado(o.get("estado")) != "cerrada"]
+        if activas:
+            return jsonify({"ok": False, "error_codigo": "EVENTO_CON_OT_ACTIVAS",
+                            "error": "El evento tiene %d OT sin cerrar (%s). Cierra, cancela o quítale esas OT primero." % (
+                                len(activas), ", ".join(str(o.get("numero_ot")) for o in activas[:5])),
+                            "ots": [o.get("numero_ot") for o in activas[:20]]}), 409
+        mysql_execute("UPDATE mant_eventos SET estado='cancelado', cancelado_por=%s, cancelado_at=%s, cancelado_motivo=%s, "
+                      " updated_by=%s, updated_at=%s WHERE id=%s AND estado='activo'",
+                      (nombre, datetime.utcnow(), motivo, nombre, datetime.utcnow(), eid))
+        _mant_log("evento", eid, "cancelado", f"{r.get('nombre')} · por {nombre} · motivo: {motivo}")
+        return jsonify({"ok": True, "evento": _evento_json(_evento_fila(eid), [], _now_chile().date())})
+    if d.get("reactivar"):
+        mysql_execute("UPDATE mant_eventos SET estado='activo', cancelado_por=NULL, cancelado_at=NULL, cancelado_motivo=NULL, "
+                      " updated_by=%s, updated_at=%s WHERE id=%s", (nombre, datetime.utcnow(), eid))
+        _mant_log("evento", eid, "reactivado", f"{r.get('nombre')} · por {nombre}")
+        return jsonify({"ok": True, "evento": _evento_json(_evento_fila(eid), _eventos_ots(eid), _now_chile().date())})
+    cuerpo = {k: (d[k] if k in d else r.get(k if k != "detalle" else "detalle")) for k in
+              ("nombre", "cliente_id", "direccion", "detalle", "lat", "lng", "place_id", "comuna", "region",
+               "fecha_ini", "fecha_fin", "doc_ref", "notas")}
+    err, campos = _evt.normalizar_evento(cuerpo)
+    if err:
+        return jsonify({"ok": False, "error": err["mensaje"], "error_codigo": err["codigo"]}), 400
+    antes = {k: r.get(k) for k in campos}
+    try:
+        mysql_execute(
+            "UPDATE mant_eventos SET nombre=%s, cliente_id=%s, direccion=%s, detalle=%s, lat=%s, lng=%s, place_id=%s, comuna=%s, "
+            " region=%s, fecha_ini=%s, fecha_fin=%s, doc_ref=%s, notas=%s, updated_by=%s, updated_at=%s WHERE id=%s",
+            (campos["nombre"], campos["cliente_id"], campos["direccion"], campos["detalle"], campos["lat"], campos["lng"],
+             campos["place_id"], campos["comuna"], campos["region"], campos["fecha_ini"], campos["fecha_fin"],
+             campos["doc_ref"], campos["notas"], nombre, datetime.utcnow(), eid))
+    except Exception as e:
+        print(f"[evento] editar {eid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar el evento.", "error_codigo": "ERROR_INTERNO"}), 500
+    cambios = [k for k in campos if str(antes.get(k) or "") != str(campos.get(k) or "")]
+    _mant_log("evento", eid, "editado", f"{campos['nombre']} · por {nombre} · cambió: {', '.join(cambios) or 'nada'}")
+    return jsonify({"ok": True, "evento": _evento_json(_evento_fila(eid), _eventos_ots(eid), _now_chile().date())})
+
+
+def _evento_asignar_a_ot(vid, evento_id, quien=None):
+    """Asigna (o quita con None) el evento de UNA OT y de sus desinstalaciones (el evento de la hija es el de la madre).
+    Devuelve (ok, error|None, n_movidas). Nunca a una OT cancelada/anulada. Con constancia en la bitácora de cada una."""
+    f = _ot_fila_basica(vid)
+    if not f:
+        return False, {"codigo": "OT_NO_EXISTE", "mensaje": "Esa OT no existe."}, 0
+    g_h = _evt.guardia_evento_de_hija(f)
+    if g_h:
+        return False, g_h, 0
+    if not _evt.vigente(f.get("estado")):
+        return False, {"codigo": "OT_CANCELADA", "mensaje": "Esa OT está cancelada o anulada."}, 0
+    ev = None
+    if evento_id:
+        ev, e = _evento_para_asignar(evento_id)
+        if e:
+            return False, e, 0
+    ids = [int(vid)] + [int(h["id"]) for h in _evt.hijas_vigentes(_ot_hijas_de(vid))]
+    ph = ",".join(["%s"] * len(ids))
+    mysql_execute(f"UPDATE mant_visitas SET evento_id=%s WHERE id IN ({ph})", (int(evento_id) if evento_id else None,) + tuple(ids))
+    for i in ids:
+        if evento_id:
+            _mant_log("visita", i, "evento_asignado", f"Evento: {ev.get('nombre')}")
+        else:
+            _mant_log("visita", i, "evento_quitado", "Se quitó del evento")
+    return True, None, len(ids)
+
+
+@app.route("/ot/api/<int:vid>/evento", methods=["POST"])
+@_mant_required
+def ot_api_ot_evento(vid):
+    """Asigna o quita el evento de una OT. Body: {evento_id: n | null}. Gestión: cualquier OT. Un técnico habilitado para
+    crear OT interna (bodega) solo asigna eventos EXISTENTES a una OT interna suya. La desinstalación (hija) sigue al evento
+    de su instalación: asignarle uno directo responde 409 EVENTO_DE_LA_MADRE."""
+    f = _ot_fila_basica(vid)
+    if not f:
+        return jsonify({"ok": False, "error": "Esa OT no existe.", "error_codigo": "OT_NO_EXISTE"}), 404
+    if _es_rol_tecnico():
+        uid, _n = _ot_aut_usuario()
+        if not (_puede_crear_ot_interna() and not f.get("cliente_id")
+                and (f.get("created_by_user_id") == uid or _puede_ot_accion(vid, "ejecutar"))):
+            return jsonify({"ok": False, "error": "No tienes permiso para cambiar el evento de esta OT.",
+                            "error_codigo": "SIN_PERMISO"}), 403
+    elif not _puede_ot_accion(vid, "metadata"):
+        return jsonify({"ok": False, "error": "No tienes permiso para editar esta OT.", "error_codigo": "SIN_PERMISO"}), 403
+    d = request.get_json(silent=True) or {}
+    raw = d.get("evento_id")
+    try:
+        eid = int(raw) if raw not in (None, "", 0, "0") else None
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "El evento indicado no es válido.", "error_codigo": "EVENTO_INVALIDO"}), 400
+    ok, err, n = _evento_asignar_a_ot(vid, eid)
+    if not ok:
+        return (jsonify({"ok": False, "error": err["mensaje"], "error_codigo": err["codigo"]}),
+                409 if err["codigo"] in ("EVENTO_DE_LA_MADRE", "EVENTO_CANCELADO", "OT_CANCELADA") else 404)
+    ev = _evento_fila(eid) if eid else None
+    return jsonify({"ok": True, "evento_id": eid, "evento_nombre": (ev or {}).get("nombre"), "movidas": n})
+
+
+@app.route("/ot/api/eventos/<int:eid>/candidatas", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_api_evento_candidatas(eid):
+    """«Asociar OT existentes» al evento (las OT que ya existían antes del evento, p. ej. la revisión interna NVI 687):
+    búsqueda por N° de OT, cliente o documento; sugiere primero las que tienen el documento de referencia (doc_ref) del
+    evento. Excluye las que ya están en él, las desinstalaciones (siguen a su instalación) y las canceladas. Paginada."""
+    r = _evento_fila(eid)
+    if not r:
+        return jsonify({"ok": False, "error": "Ese evento no existe.", "error_codigo": "EVENTO_NO_EXISTE"}), 404
+    q = (request.args.get("q") or "").strip()[:120]
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+        per_page = min(100, max(1, int(request.args.get("per_page") or 20)))
+    except (TypeError, ValueError):
+        page, per_page = 1, 20
+    where = ["v.ot_madre_id IS NULL", "v.estado NOT IN ('cancelada','anulada')", "(v.evento_id IS NULL OR v.evento_id<>%s)",
+             "v.numero_ot IS NOT NULL"]
+    params = [int(eid)]
+    ref = (r.get("doc_ref") or "").strip()
+    if q:
+        like = f"%{q}%"
+        where.append("(v.numero_ot LIKE %s OR c.razon_social LIKE %s OR EXISTS (SELECT 1 FROM mant_visita_documentos md "
+                     "WHERE md.visita_id=v.id AND md.origen='erp' AND CONCAT(COALESCE(md.erp_tido,''),' ',TRIM(LEADING '0' "
+                     "FROM COALESCE(md.erp_nudo,''))) LIKE %s) OR CONCAT(COALESCE(v.factura_tido,''),' ',COALESCE(v.factura_nudo,'')) LIKE %s)")
+        params += [like, like, like, like]
+    elif not ref and not r.get("cliente_id") and not r.get("fecha_ini"):
+        return jsonify({"ok": True, "ots": [], "total": 0, "page": 1, "per_page": per_page, "pages": 1, "desde": 0, "hasta": 0,
+                        "mensaje": "Escribe un N° de OT, un cliente o un documento para buscar."})
+    elif not q:
+        sug = []
+        if ref:
+            sug.append("EXISTS (SELECT 1 FROM mant_visita_documentos md WHERE md.visita_id=v.id AND md.origen='erp' "
+                       "AND REPLACE(CONCAT(COALESCE(md.erp_tido,''),COALESCE(md.erp_nudo,'')),' ','') LIKE %s)")
+            params.append(f"%{ref.replace(' ', '')}%")
+        if r.get("cliente_id"):
+            sug.append("v.cliente_id=%s")
+            params.append(int(r["cliente_id"]))
+        if r.get("fecha_ini") and r.get("fecha_fin"):
+            sug.append("v.fecha_programada BETWEEN %s AND %s")
+            params += [r["fecha_ini"], r["fecha_fin"]]
+        where.append("(" + " OR ".join(sug) + ")" if sug else "1=0")
+    try:
+        filas = mysql_fetchall(
+            "SELECT v.id, v.numero_ot, v.tipo, v.estado, v.fecha_programada, v.cliente_id, v.evento_id, "
+            "       c.razon_social AS cliente, "
+            "       (SELECT GROUP_CONCAT(CONCAT(COALESCE(md.erp_tido,''),' ',TRIM(LEADING '0' FROM COALESCE(md.erp_nudo,''))) "
+            "               SEPARATOR ', ') FROM mant_visita_documentos md WHERE md.visita_id=v.id AND md.origen='erp' "
+            "                AND md.heredado_de_visita_id IS NULL AND COALESCE(md.erp_nudo,'')<>'') AS docs "
+            "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id WHERE " + " AND ".join(where) +
+            " ORDER BY v.id DESC LIMIT 600", tuple(params)) or []
+    except Exception as e:
+        print(f"[evento] candidatas {eid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo buscar."}), 500
+    puntuadas = []
+    for f in filas:
+        f = dict(f)
+        pts = _evt.sugerir_ot_para_evento({"docs": [x for x in (f.get("docs") or "").split(", ") if x],
+                                           "cliente_id": f.get("cliente_id"), "fecha_programada": f.get("fecha_programada")}, r)
+        puntuadas.append((pts, f))
+    puntuadas.sort(key=lambda x: (-x[0], -int(x[1]["id"])))
+    total = len(puntuadas)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = min(page, pages)
+    out = []
+    for pts, f in puntuadas[(page - 1) * per_page:page * per_page]:
+        out.append({"id": f["id"], "numero_ot": f["numero_ot"], "url": f"/ot/{f['id']}", "cliente": f.get("cliente") or "Trabajo interno",
+                    "tipo": f.get("tipo"), "tipo_label": _TIPO_OT_LABEL.get(f.get("tipo"), (f.get("tipo") or "").replace("_", " ").title()),
+                    "estado": f.get("estado"), "fecha": _evt.fmt_fecha(f.get("fecha_programada")), "documentos": f.get("docs") or "",
+                    "sugerida": pts >= 2, "puntaje": pts, "evento_actual_id": f.get("evento_id")})
+    return jsonify({"ok": True, "ots": out, "total": total, "page": page, "per_page": per_page, "pages": pages,
+                    "desde": ((page - 1) * per_page + 1) if total else 0, "hasta": min(page * per_page, total)})
+
+
+@app.route("/ot/api/eventos/<int:eid>/asociar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot_api_evento_asociar(eid):
+    """Asocia varias OT existentes al evento. Body: {vids: [..]} (máx. 200). Las desinstalaciones no se asocian solas (siguen
+    a su instalación). Devuelve {asociadas: [..], omitidas: [{id, motivo}]}."""
+    ev, e = _evento_para_asignar(eid)
+    if e:
+        return jsonify({"ok": False, "error": e["mensaje"], "error_codigo": e["codigo"]}), (404 if e["codigo"] == "EVENTO_NO_EXISTE" else 409)
+    d = request.get_json(silent=True) or {}
+    vids = []
+    for x in (d.get("vids") or [])[:200]:
+        try:
+            vids.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    vids = list(dict.fromkeys(vids))
+    if not vids:
+        return jsonify({"ok": False, "error": "No elegiste ninguna OT.", "error_codigo": "SIN_OT"}), 400
+    asociadas, omitidas = [], []
+    for v in vids:
+        if not _puede_ot_accion(v, "metadata"):
+            omitidas.append({"id": v, "motivo": "No tienes permiso para editar esta OT."})
+            continue
+        ok, err, _n = _evento_asignar_a_ot(v, eid)
+        if ok:
+            asociadas.append(v)
+        else:
+            omitidas.append({"id": v, "motivo": err["mensaje"], "error_codigo": err["codigo"]})
+    _mant_log("evento", eid, "ots_asociadas", f"{len(asociadas)} OT asociadas por {current_username() or '?'}"
+              + (f" · {len(omitidas)} omitidas" if omitidas else ""))
+    return jsonify({"ok": bool(asociadas), "asociadas": asociadas, "omitidas": omitidas,
+                    "evento": _evento_json(_evento_fila(eid), _eventos_ots(eid), _now_chile().date())})
+
+
+def _desinst_destinatarios(madre):
+    """A quién se le avisa de una desinstalación pendiente: quien creó la instalación (si es una persona de gestión) y los
+    superadministradores. Ids únicos."""
+    ids = []
+    uid = madre.get("created_by_user_id")
+    if uid:
+        ids.append(int(uid))
+    for sa in _ot_aut_superadmins():
+        if sa.get("id") and int(sa["id"]) not in ids:
+            ids.append(int(sa["id"]))
+    return ids
+
+
+def _desinst_notificar(madre, aviso, dedup_horas=20):
+    """Campana (tipo 'otro', ya existente en el ENUM) con el aviso de una desinstalación pendiente, UNA vez por día por OT
+    (si ya hubo una igual en las últimas `dedup_horas`, aunque la hayan leído, no se repite: el barrido corre cada 10 min).
+    Devuelve cuántas campanas sonaron. Nunca al cliente (REGLA #22)."""
+    num = madre.get("numero_ot") or f"V-{int(madre['id']):05d}"
+    titulo = f"{aviso['titulo']} · {num}"[:200]
+    try:
+        if mysql_fetchone("SELECT 1 AS x FROM mant_notificaciones WHERE visita_id=%s AND titulo=%s "
+                          " AND created_at >= (UTC_TIMESTAMP() - INTERVAL %s HOUR) LIMIT 1",
+                          (int(madre["id"]), titulo, int(dedup_horas))):
+            return 0
+    except Exception as e:
+        print(f"[desinst] dedup aviso: {type(e).__name__}", flush=True)
+    n = 0
+    for uid in _desinst_destinatarios(madre):
+        try:
+            _mant_notificar(uid, "otro", titulo, aviso["texto"][:1500], url_accion=f"/ot/{int(madre['id'])}",
+                            prioridad=("alta" if aviso.get("nivel") == "rojo" else "media"),
+                            cliente_id=madre.get("cliente_id"), visita_id=int(madre["id"]))
+            _mant_notif_cache_invalidar(uid)
+            n += 1
+        except Exception as e:
+            print(f"[desinst] campana a {uid}: {type(e).__name__}", flush=True)
+    return n
+
+
+def _desinst_barrido(max_s=25, max_ots=400):
+    """🧩 2026-10-19 (crítica 15, «que no se olvide»): el barrido diario de las desinstalaciones, colgado del trabajo de Cloud
+    Scheduler `simpliroute-poll` (cada 10 min; el aviso sale una vez por día por OT). Avisa por la campana a quien creó la
+    instalación y a los superadministradores:
+      · faltan ≤ 2 días hábiles para la desinstalación prevista y no hay OT hija ('por_agendar');
+      · la fecha prevista ya pasó sin hija ('vencida');
+      · el evento terminó y la instalación sigue sin desinstalar;
+      · llegó el día de la desinstalación y la instalación no se ejecutó.
+    Solo informa: no cambia nada de la OT ni escribe al cliente. Devuelve {revisadas, avisos}."""
+    t0 = time.time()
+    hoy = _now_chile().date()
+    out = {"revisadas": 0, "avisos": 0}
+    try:
+        filas = mysql_fetchall(
+            "SELECT v.id, v.numero_ot, v.estado, v.tipo, v.cliente_id, v.evento_id, v.desinstalacion_prevista, "
+            "       v.created_by_user_id, v.fecha_programada, v.fecha_fin, v.hora_fin "
+            "  FROM mant_visitas v WHERE v.tipo='instalacion' AND v.ot_madre_id IS NULL "
+            "   AND v.estado NOT IN ('cancelada','anulada') "
+            "   AND (v.desinstalacion_prevista IS NOT NULL OR EXISTS (SELECT 1 FROM mant_visitas h WHERE h.ot_madre_id=v.id "
+            "        AND h.ot_relacion='desinstalacion' AND h.estado NOT IN ('cancelada','anulada'))) "
+            " ORDER BY v.id DESC LIMIT %s", (int(max_ots),)) or []
+    except Exception as e:
+        print(f"[desinst] barrido: {type(e).__name__}: {e}", flush=True)
+        return dict(out, error=True)
+    filas = [dict(f) for f in filas]
+    if not filas:
+        return out
+    hijas_por = _ot_hijas_vigentes_lote([f["id"] for f in filas])
+    eventos = {}
+    for eid in {f["evento_id"] for f in filas if f.get("evento_id")}:
+        eventos[int(eid)] = _evento_fila(eid)
+    fer = _feriados_cl(hoy)
+    for f in filas:
+        if time.time() - t0 > max_s:
+            break
+        out["revisadas"] += 1
+        # Una instalación ya CERRADA con su desinstalación hecha no avisa; sin hija sigue avisando (hay que desinstalar).
+        av = _evt.aviso_barrido(f, hijas_por.get(int(f["id"]), []), eventos.get(int(f["evento_id"])) if f.get("evento_id") else None,
+                                hoy, fer)
+        if av:
+            out["avisos"] += _desinst_notificar(f, av)
+    return out
+
+
+def _ot_visible_para_rol(vid):
+    """¿La OT está entre las que el rol de la sesión puede ver? (mismo filtro que el calendario y el panel: un técnico solo
+    ve las suyas)."""
+    try:
+        w, p = _mant_calendario_role_where()
+        return bool(mysql_fetchone("SELECT 1 AS x FROM mant_visitas v WHERE v.id=%s" + w, (int(vid), *p)))
+    except Exception:
+        return False
+
+
+def _ot_desinst_contexto(vid, fila=None, con_montos=False):
+    """El estado de la unión madre/hija de UNA OT, listo para la ficha, el panel y la API (REGLA #26: lo ven también los
+    técnicos, así que NUNCA lleva montos, documentos ni la palabra «cubierta»; `con_montos` agrega lo que solo ve la
+    gestión: saldo remanente, si exige autorización, documento real). Devuelve None si la OT no existe."""
+    f = fila or _ot_fila_basica(vid)
+    if not f:
+        return None
+    hoy = _now_chile().date()
+    es_hija = bool(f.get("ot_madre_id")) and (f.get("ot_relacion") or "").strip().lower() == _evt.REL_DESINSTALACION
+    es_madre = (f.get("tipo") or "").strip().lower() == _evt.TIPO_MADRE and not es_hija
+    out = {"vid": int(f["id"]), "es_hija": es_hija, "es_madre": es_madre, "evento": None}
+    if f.get("evento_id"):
+        ev = _evento_fila(f["evento_id"])
+        if ev:
+            out["evento"] = {"id": ev["id"], "nombre": ev.get("nombre"), "lugar": " · ".join(
+                x for x in (ev.get("direccion"), ev.get("detalle")) if x), "fechas_txt": _evt.rango_evento_txt(ev),
+                "estado_db": ev.get("estado") or "activo", "url": f"/ot/eventos/{ev['id']}"}
+    if es_hija:
+        madre = _ot_fila_basica(f["ot_madre_id"])
+        if madre:
+            num = madre.get("numero_ot") or f"V-{int(madre['id']):05d}"
+            out["madre"] = {"id": madre["id"], "numero_ot": num, "url": f"/ot/{madre['id']}",
+                            "fecha": _evt.fmt_fecha(madre.get("fecha_programada")), "estado": madre.get("estado")}
+            out["chip"] = f"Desinstalación de {num}"
+    elif es_madre:
+        hijas = _ot_hijas_de(vid)
+        est = _evt.estado_desinstalacion(f, hijas, hoy)
+        vig = _evt.hijas_vigentes(hijas)
+        ok_p, motivo_p = _evt.puede_programar_desinstalacion(f, hijas)
+        out["estado"] = est
+        out["prevista"] = _evt.fmt_fecha(f.get("desinstalacion_prevista")) if f.get("desinstalacion_prevista") else ""
+        out["prevista_iso"] = (_evt.parse_fecha(f.get("desinstalacion_prevista")).isoformat() if f.get("desinstalacion_prevista") else None)
+        out["hija"] = ({"id": vig[0]["id"], "numero_ot": vig[0].get("numero_ot"), "url": f"/ot/{vig[0]['id']}",
+                        "fecha": _evt.fmt_fecha(vig[0].get("fecha_programada")), "estado": vig[0].get("estado")} if vig else None)
+        out["puede_programar"] = bool(ok_p)
+        out["motivo_no_programar"] = None if ok_p else motivo_p
+        out["aviso_cierre"] = _evt.aviso_cierre_madre(f, hijas)
+        out["chip"] = est.get("texto") or ""
+        if con_montos and ok_p:
+            ev_fin = bool(out["evento"] and _evt.parse_fecha((_evento_fila(f["evento_id"]) or {}).get("fecha_fin")))
+            out["requiere_autorizacion"] = (not f.get("desinstalacion_prevista")
+                                            and _evt.necesita_autorizacion_prevista(False, ev_fin)
+                                            and not _ot_aut_aprobada(f.get("desinstalacion_aut_id")))
+            out["tiene_documento_real"] = _ot_madre_tiene_doc_real(vid)
+    return out
+
+
+def _ot_desinst_autorizar(vid, madre, argumento, payload=None):
+    """Declarar la desinstalación DESPUÉS de crear la instalación pide la autorización 'desinstalacion_cubierta' (argumento
+    ≥ 30; crítica 4 y REGLA #24: la misma tabla que las demás autorizaciones, nunca un mecanismo paralelo). Si quien
+    declara es superadministrador queda registrada como aprobada a su nombre; si no, se crea la solicitud para Daniel.
+    Devuelve (autorizacion_id_aprobada | None, solicitud_pendiente_id | None, error | None)."""
+    arg = (str(argumento or "").strip())[:1000]
+    if len(arg) < _evt.ARGUMENTO_MIN:
+        return None, None, {"codigo": "ARGUMENTO_CORTO",
+                            "mensaje": f"Explica por qué esta desinstalación va cubierta por la instalación (mínimo "
+                                       f"{_evt.ARGUMENTO_MIN} caracteres): es lo que Daniel va a leer."}
+    uid, nombre = _ot_aut_usuario()
+    payload_json = json.dumps(payload or {}, ensure_ascii=False, default=str)
+    if _ot_aut_es_superadmin():
+        aid = _ot_aut_insertar(None, {
+            "tipo": "desinstalacion_cubierta", "visita_id": int(vid), "cliente_id": madre.get("cliente_id"),
+            "payload_json": payload_json, "argumento": arg, "solicitado_por_user_id": uid, "solicitado_por_nombre": nombre,
+            "estado": "aprobada", "resuelto_por_user_id": uid, "resuelto_por_nombre": nombre, "resuelto_at": datetime.utcnow(),
+            "comentario": "Declarado por el superadministrador"})
+        _mant_log("visita", int(vid), "desinstalacion_cubierta_autorizada",
+                  f"Autorizada por {nombre} (superadministrador, autorización N° {aid}) · argumento: {arg[:600]}")
+        return aid, None, None
+    try:
+        ya = mysql_fetchone("SELECT id FROM mant_ot_autorizaciones WHERE visita_id=%s AND tipo='desinstalacion_cubierta' "
+                            " AND estado='pendiente' ORDER BY id DESC LIMIT 1", (int(vid),))
+    except Exception:
+        ya = None
+    if ya:
+        return None, int(ya["id"]), None
+    aid = _ot_aut_insertar(None, {
+        "tipo": "desinstalacion_cubierta", "visita_id": int(vid), "cliente_id": madre.get("cliente_id"),
+        "payload_json": payload_json, "argumento": arg, "solicitado_por_user_id": uid, "solicitado_por_nombre": nombre,
+        "estado": "pendiente"})
+    a = _ot_aut_fila(aid) or {"id": aid, "tipo": "desinstalacion_cubierta", "visita_id": int(vid),
+                              "argumento": arg, "solicitado_por_nombre": nombre, "payload_json": payload_json}
+    _mant_log("visita", int(vid), "autorizacion_solicitada",
+              f"{_OT_AUT_TIPO_TXT['desinstalacion_cubierta']} (N° {aid}) pedida a Daniel por {nombre} · argumento: {arg[:600]}")
+    _ot_aut_notificar_superadmins(a)
+    return None, int(aid), None
+
+
+def _ot_desinst_aplicar_autorizacion(cur, vid, aid, fecha_prevista):
+    """Deja la instalación con su desinstalación prevista y la autorización que la respalda (`desinstalacion_aut_id`)."""
+    cur.execute("UPDATE mant_visitas SET desinstalacion_aut_id=%s, "
+                " desinstalacion_prevista=COALESCE(desinstalacion_prevista, %s) WHERE id=%s",
+                (int(aid), _evt.parse_fecha(fecha_prevista), int(vid)))
+
+
+@app.route("/ot/api/desinstalacion/previo", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot_api_desinstalacion_previo():
+    """🧩 2026-10-19 — el paso «Desinstalación» del asistente pregunta ANTES de crear: «¿cómo queda esto?». NO escribe nada.
+    Devuelve lo MISMO que el servidor va a exigir al crear (Daniel: lo que se ve y se elige es exactamente lo que se crea):
+    fecha sugerida y feriados, saldo de servicio y despacho que queda en las notas de venta DESPUÉS de lo que toma la
+    instalación, si hay que elegir entre «cubierta por la instalación» y «se cobra su línea», choque del técnico, avisos
+    y el primer bloqueo si lo hay. La pregunta de cubierta/cobra NO es un error: viene en `pregunta`.
+    Body: {cliente_id, fecha_programada, hora_fin?, evento_id?, documentos: [{tipo, numero}], pedido_madre: {servicio,
+    despacho}, desinstalacion: {lleva, fecha, hora_inicio, hora_fin, tecnico_user_ids, tecnico_lider_id, costo_proveedor,
+    costo_despacho, cobro?, argumento_cubierta?, cobra_servicio?, cobra_despacho?}}. Lleva montos (saldo): solo gestión."""
+    d = request.get_json(silent=True) or {}
+    try:
+        cliente_id = int(d.get("cliente_id") or 0) or None
+    except (TypeError, ValueError):
+        cliente_id = None
+    cli_rut = None
+    if cliente_id:
+        cli_rut = (mysql_fetchone("SELECT rut FROM mant_clientes WHERE id=%s", (cliente_id,)) or {}).get("rut")
+    e_n, dd = _ot_desinst_normalizar(d.get("desinstalacion") if isinstance(d.get("desinstalacion"), dict) else {})
+    if e_n:
+        return jsonify({"ok": False, "error": e_n["mensaje"], "error_codigo": e_n["codigo"]}), 400
+    fecha_madre = (str(d.get("fecha_programada") or "").strip())[:10] or None
+    hora_fin_madre = (str(d.get("hora_fin") or "").strip())[:5] or None
+    ev = _evento_fila(d.get("evento_id")) if d.get("evento_id") not in (None, "", 0, "0") else None
+    docs = []
+    for x in (d.get("documentos") or [])[:10]:
+        if not isinstance(x, dict):
+            continue
+        t = (str(x.get("tipo") or x.get("tido") or "").strip().upper())[:5]
+        n = re.sub(r"[^0-9A-Za-z]", "", str(x.get("numero") or x.get("nudo") or ""))
+        if t and n:
+            docs.append((t, n))
+    ped = d.get("pedido_madre") if isinstance(d.get("pedido_madre"), dict) else {}
+    pedido = {c: max(0, _saldo._entero(ped.get(c))) for c in _saldo.CATEGORIAS}
+    madre_virtual = {"tipo": _evt.TIPO_MADRE, "estado": "programada", "cliente_id": cliente_id, "ot_madre_id": None,
+                     "fecha_programada": fecha_madre, "fecha_fin": None, "fecha_realizada": None,
+                     "hora_fin": hora_fin_madre, "desinstalacion_prevista": dd.get("fecha") or fecha_madre}
+    fer = _feriados_cl(dd.get("fecha"), fecha_madre, (ev or {}).get("fecha_fin"))
+    prop = _evt.proponer_fecha_desinstalacion(ev, madre_virtual, fer, _now_chile().date())
+    tipos_reales = set(_saldo.NOTAS_VENTA + _saldo.DOCS_COBRO)
+    tiene_doc = any(_saldo.clave_doc(t, n)[0] in tipos_reales for (t, n) in docs)
+    out = {"ok": True, "valido": True, "lleva": dd["lleva"], "bloqueo": None, "pregunta": None, "avisos": [],
+           "choque": None, "tiene_documento_real": tiene_doc, "feriados": dict(fer),
+           "fecha_sugerida": prop["fecha"].isoformat() if prop.get("fecha") else None,
+           "fecha_sugerida_txt": _evt.fmt_fecha(prop.get("fecha")) if prop.get("fecha") else "",
+           "fecha_sugerida_motivo": prop.get("motivo"), "remanente": None, "elige_cobro": False, "cobro": None,
+           "cobro_txt": "", "sin_documento_madre": False, "checklists_sugeridos": []}
+    if dd["lleva"] == "no":
+        return jsonify(out)
+    # El checklist que el sistema SUGIERE para cada equipo (lo que se ve y se elige es lo que se crea): equipos [{maquina_id, sku}].
+    eq_in = []
+    for e in (d.get("equipos") or [])[:60]:
+        if isinstance(e, dict):
+            try:
+                eq_in.append((int(e.get("maquina_id")), (str(e.get("sku") or "").strip() or None)))
+            except (TypeError, ValueError):
+                continue
+    out["checklists_sugeridos"] = _ot_desinst_sugerir_checklists(eq_in) if eq_in else []
+    rem = None
+    if dd["lleva"] == "si":
+        rem = _ot_desinst_remanente_saldo(docs, pedido, cli_rut)
+        out["remanente"] = {"servicio": rem["servicio"], "despacho": rem["despacho"], "leido": rem["leido"],
+                            "documentos": rem["por_doc"]}
+        out["elige_cobro"] = bool(rem["leido"] and (rem["servicio"] > 0 or rem["despacho"] > 0))
+    err, _info = _ot_desinst_validar_previo(dd, madre_virtual, docs, pedido, cli_rut, None, feriados=fer, evento=ev,
+                                            remanente=rem)
+    if err and err["codigo"] == "COBRO_REQUERIDO" and not dd.get("cobro"):
+        out["pregunta"] = "cobro"   # no es un error: es la pregunta del paso (cubierta o se cobra su línea)
+        err = None
+    ev_f = _evt.evaluar_fecha_desinstalacion(dd.get("fecha"), dd.get("hora_inicio"), dd.get("hora_fin"), madre_virtual,
+                                             fer, ev) if dd.get("fecha") else None
+    out["avisos"] = list((ev_f or {}).get("avisos") or [])
+    if err:
+        out["valido"] = False
+        out["bloqueo"] = {"codigo": err["codigo"], "mensaje": err["mensaje"]}
+        return jsonify(out)
+    if out["pregunta"]:
+        out["valido"] = False
+        return jsonify(out)
+    out["cobro"] = dd.get("cobro")
+    out["cobro_txt"] = ("Se cobra su línea de desinstalación" if dd.get("cobro") == _evt.COBRO_PROPIO
+                        else "Cubierta por esta instalación: no consume saldo aparte")
+    if dd["lleva"] == "si":
+        out["sin_documento_madre"] = (dd.get("cobro") != _evt.COBRO_PROPIO and not tiene_doc)
+        if dd.get("tecnico_lider_id") and dd.get("fecha"):
+            try:
+                adv = _validar_disponibilidad_visita(dd["tecnico_lider_id"], _evt.parse_fecha(dd["fecha"]),
+                                                     dd["hora_inicio"], dd["hora_fin"])
+            except Exception as e_ch:
+                print(f"[desinst] previo choque: {type(e_ch).__name__}", flush=True)
+                adv = {}
+            ch = (adv or {}).get("choque")
+            if ch:
+                out["choque"] = dict(ch, puede_forzar=_ot_aut_es_superadmin())
+    return jsonify(out)
+
+
+@app.route("/ot/api/<int:vid>/desinstalacion", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_api_desinstalacion_info(vid):
+    """Lo que el modal «Programar desinstalación» necesita de una instalación: si se puede, la fecha sugerida (fin del
+    evento o día siguiente a la instalación; si cae en domingo o feriado, el siguiente día hábil), el saldo que queda en su
+    nota de venta (la persona elige si la desinstalación lo cobra o queda cubierta), si pide autorización, sus técnicos y
+    equipos. Lleva montos: solo gestión."""
+    f = _ot_fila_basica(vid)
+    if not f:
+        return jsonify({"ok": False, "error": "Esa OT no existe.", "error_codigo": "OT_NO_EXISTE"}), 404
+    ctx = _ot_desinst_contexto(vid, f, con_montos=True)
+    out = {"ok": True, "contexto": ctx}
+    if ctx.get("es_madre") and ctx.get("puede_programar"):
+        ev = _evento_fila(f["evento_id"]) if f.get("evento_id") else None
+        fer = _feriados_cl(f.get("fecha_programada"), f.get("fecha_fin"), (ev or {}).get("fecha_fin"))
+        prop = _evt.proponer_fecha_desinstalacion(ev, f, fer, _now_chile().date())
+        out["fecha_sugerida"] = prop["fecha"].isoformat() if prop.get("fecha") else None
+        out["fecha_sugerida_txt"] = _evt.fmt_fecha(prop.get("fecha")) if prop.get("fecha") else ""
+        out["fecha_sugerida_motivo"] = prop.get("motivo")
+        cli_rut = (mysql_fetchone("SELECT rut FROM mant_clientes WHERE id=%s", (f.get("cliente_id"),)) or {}).get("rut")
+        rem = _ot_desinst_remanente_saldo(_ot_saldo_docs_de_ot(vid), None, cli_rut)
+        out["remanente"] = {"servicio": rem["servicio"], "despacho": rem["despacho"], "leido": rem["leido"],
+                            "documentos": rem["por_doc"],
+                            "elige": bool(rem["leido"] and (rem["servicio"] > 0 or rem["despacho"] > 0))}
+        tec = [dict(r) for r in (mysql_fetchall(
+            "SELECT vt.tecnico_user_id AS id, vt.rol, COALESCE(au.nombre, au.username) AS nombre "
+            "  FROM mant_visita_tecnicos vt LEFT JOIN app_users au ON au.id=vt.tecnico_user_id "
+            " WHERE vt.visita_id=%s AND vt.tecnico_user_id IS NOT NULL ORDER BY (vt.rol='lider') DESC, vt.id", (vid,)) or [])]
+        out["tecnicos_madre"] = tec
+        out["lider_madre"] = next((t["id"] for t in tec if t.get("rol") == "lider"), (tec[0]["id"] if tec else None))
+        her = _ot_madre_datos_heredables(vid) or {}
+        out["equipos_n"] = len(her.get("maquinas") or []) + len(her.get("manuales") or [])
+        # 🧩 Daniel (19-oct): se MUESTRA lo que se va a crear y la persona decide. Equipos de la instalación con el checklist
+        # que el sistema SUGIERE para cada uno (la persona puede cambiarlo o dejar un equipo fuera enviando `equipos`).
+        maq_ids = list(her.get("maquinas") or [])
+        info_m = {}
+        if maq_ids:
+            try:
+                for r in (mysql_fetchall(
+                        "SELECT id, sku, nombre, marca, modelo, serie FROM mant_maquinas WHERE id IN ("
+                        + ",".join(["%s"] * len(maq_ids)) + ")", tuple(maq_ids)) or []):
+                    info_m[int(r["id"])] = dict(r)
+            except Exception as e_m:
+                print(f"[desinst] equipos de la instalación: {type(e_m).__name__}", flush=True)
+        out["equipos"] = [
+            {"maquina_id": s["maquina_id"], "sku": s["sku"], "nombre": (info_m.get(s["maquina_id"]) or {}).get("nombre"),
+             "marca": (info_m.get(s["maquina_id"]) or {}).get("marca"), "modelo": (info_m.get(s["maquina_id"]) or {}).get("modelo"),
+             "serie": (info_m.get(s["maquina_id"]) or {}).get("serie"), "plantilla_sugerida_id": s["plantilla_id"],
+             "plantilla_sugerida_nombre": s["plantilla_nombre"], "origen": s["origen"]}
+            for s in _ot_desinst_sugerir_checklists([(mid, (her.get("skus") or {}).get(mid)) for mid in maq_ids])]
+        out["manuales"] = [{"titulo": x.get("titulo"), "cantidad": x.get("cantidad"), "sku": x.get("sku")}
+                           for x in (her.get("manuales") or [])]
+        mf = her.get("fila") or {}
+        try:
+            docs_h = [{"titulo": " ".join(_ot_doc_real_a_usuario(d_["tido"], d_["nudo"])).strip()}
+                      for d_ in _ot_puerta_docs_de(vid) if d_.get("es_cobro", True)]
+        except Exception:
+            docs_h = []
+        out["hereda"] = {
+            "lugar": " · ".join(x for x in (mf.get("direccion_visita"), mf.get("direccion_detalle")) if x),
+            "contacto": {"nombre": mf.get("contacto_nombre"), "tel": mf.get("contacto_tel")},
+            "acceso": {"ascensor": mf.get("acceso_ascensor"), "estacionamiento": mf.get("acceso_estacionamiento"),
+                       "piso": mf.get("acceso_piso"), "notas": mf.get("acceso_notas")},
+            "centro_costo": mf.get("centro_costo"), "evento": ctx.get("evento"), "documentos": docs_h}
+        out["feriados"] = {k: v for k, v in fer.items()}
+    return jsonify(out)
+
+
+@app.route("/ot/api/<int:vid>/desinstalacion", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot_api_desinstalacion_programar(vid):
+    """«Programar desinstalación» DESPUÉS de crear la instalación (la OT hija con su correlativo, unida a ella). Body: el bloque
+    de la desinstalación (fecha, hora_inicio, hora_fin, tecnico_user_ids, tecnico_lider_id, costo_proveedor, costo_despacho,
+    nota, cobro 'cubierta'|'cobra', argumento_cubierta si queda saldo sin usar, cobra_servicio/cobra_despacho si cobra su
+    línea) + `argumento` (≥ 30) cuando declarar la desinstalación pide la autorización de Daniel.
+    · Instalación sin desinstalación prevista: declararla pide autorización 'desinstalacion_cubierta' (Daniel), salvo que la
+      instalación esté en un evento con fecha de fin. Superadmin: queda registrada a su nombre; el resto: 202 y se crea
+      la solicitud (al aprobarla se crea la desinstalación).
+    · La hija nace en la misma fecha de la madre o después; el domingo bloquea; sábado y feriado avisan."""
+    if not _puede_ot_accion(vid, "metadata"):
+        return jsonify({"ok": False, "error": "No tienes permiso para editar esta OT.", "error_codigo": "SIN_PERMISO"}), 403
+    d = request.get_json(silent=True) or {}
+    madre = mysql_fetchone("SELECT * FROM mant_visitas WHERE id=%s", (vid,))
+    if not madre:
+        return jsonify({"ok": False, "error": "Esa OT no existe.", "error_codigo": "OT_NO_EXISTE"}), 404
+    madre = dict(madre)
+    ok_p, motivo_p = _evt.puede_programar_desinstalacion(madre, _ot_hijas_de(vid))
+    if not ok_p:
+        return jsonify({"ok": False, "error": motivo_p, "error_codigo": "DESINST_NO_PERMITIDA"}), 409
+    bloque = d.get("desinstalacion") if isinstance(d.get("desinstalacion"), dict) else d
+    e_n, dd = _ot_desinst_normalizar(bloque)
+    if e_n:
+        return jsonify({"ok": False, "error": e_n["mensaje"], "error_codigo": e_n["codigo"]}), 400
+    dd["lleva"] = "si"
+    ev = _evento_fila(madre["evento_id"]) if madre.get("evento_id") else None
+    cli_rut = (mysql_fetchone("SELECT rut FROM mant_clientes WHERE id=%s", (madre.get("cliente_id"),)) or {}).get("rut")
+    docs_m = _ot_saldo_docs_de_ot(vid)
+    e_v, info = _ot_desinst_validar_previo(dd, madre, docs_m, None, cli_rut, None, evento=ev)
+    if e_v:
+        return (jsonify({"ok": False, "error": e_v["mensaje"], "error_codigo": e_v["codigo"]}),
+                409 if e_v["codigo"] in ("ZZ_SALDO_CONSUMIDO", "DESINST_ANTES_DE_INSTALACION", "COBRO_REQUERIDO") else 400)
+    try:
+        adv = _validar_disponibilidad_visita(dd["tecnico_lider_id"], _evt.parse_fecha(dd["fecha"]), dd["hora_inicio"], dd["hora_fin"])
+    except Exception:
+        adv = {}
+    ch = (adv or {}).get("choque")
+    es_sa = _ot_aut_es_superadmin()
+    if ch and not (es_sa and dd.get("forzar_choque")):
+        return jsonify({"ok": False, "error_codigo": "CHOQUE_HORARIO", "choque": ch, "puede_forzar": es_sa,
+                        "error": "{} ya tiene trabajo agendado ese día en ese horario. Elige otra fecha u otro técnico.".format(
+                            ch.get("tecnico_nombre") or "El técnico")}), 409
+    avisos = list(info.get("avisos") or [])
+    # La declaración de la desinstalación: ¿hace falta la autorización de Daniel? (solo si va cubierta y la instalación
+    # todavía no la tenía prevista).
+    if dd["cobro"] == _evt.COBRO_CUBIERTA:
+        tiene_doc = _ot_madre_tiene_doc_real(vid)
+        aut_ok = _ot_aut_aprobada(madre.get("desinstalacion_aut_id"))
+        ev_fin = bool(ev and _evt.parse_fecha(ev.get("fecha_fin")))
+        if not madre.get("desinstalacion_prevista") and _evt.necesita_autorizacion_prevista(False, ev_fin) and not aut_ok:
+            aid, pend, e_a = _ot_desinst_autorizar(vid, madre, d.get("argumento"), {"desinstalacion": dict(dd, lleva="si"),
+                                                                                    "prevista": dd["fecha"]})
+            if e_a:
+                return jsonify({"ok": False, "error": e_a["mensaje"], "error_codigo": e_a["codigo"],
+                                "requiere_autorizacion": True}), 400
+            if pend:
+                return jsonify({"ok": True, "pendiente_autorizacion": True, "autorizacion_id": pend,
+                                "mensaje": "Se pidió autorización a Daniel. Cuando la apruebe, la desinstalación se agenda sola.",
+                                "url": f"/ot/autorizaciones/{pend}"}), 202
+            conn = get_mysql()
+            try:
+                with conn.cursor() as cur:
+                    _ot_desinst_aplicar_autorizacion(cur, vid, aid, dd["fecha"])
+                conn.commit()
+            finally:
+                conn.close()
+            aut_ok = True
+            madre = dict(mysql_fetchone("SELECT * FROM mant_visitas WHERE id=%s", (vid,)))
+        elif not madre.get("desinstalacion_prevista"):
+            # El evento de la instalación ya termina en una fecha: la desinstalación se declara sin autorización.
+            mysql_execute("UPDATE mant_visitas SET desinstalacion_prevista=%s WHERE id=%s AND desinstalacion_prevista IS NULL",
+                          (_evt.parse_fecha(dd["fecha"]), vid))
+            madre["desinstalacion_prevista"] = _evt.parse_fecha(dd["fecha"])
+        if not (tiene_doc or aut_ok):
+            return jsonify({"ok": False, "error_codigo": "DESINST_SIN_DOCUMENTO_MADRE",
+                            "error": "La desinstalación solo va cubierta si la instalación tiene una nota de venta, factura o "
+                                     "boleta de Random. Agrégale el documento o pide la autorización de Daniel."}), 409
+    res = _ot_crear_desinstalacion(vid, dd, creado_por=None)
+    if not res.get("ok"):
+        return jsonify({"ok": False, "error": res.get("error"), "error_codigo": res.get("codigo")}), (res.get("http") or 409)
+    res["avisos"] = avisos + list(res.get("avisos") or [])
+    return jsonify({"ok": True, "desinstalacion": res, "contexto": _ot_desinst_contexto(vid, con_montos=True)}), 201
+
+
+@app.route("/ot/api/<int:vid>/desinstalacion-prevista", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot_api_desinstalacion_prevista(vid):
+    """Declara, cambia o QUITA la desinstalación prevista de una instalación (sin agendarla todavía: «técnico o fecha por
+    definir»). Body: {fecha: 'aaaa-mm-dd' | null, argumento?, motivo?}.
+    · fecha nueva sin prevista antes: pide la autorización 'desinstalacion_cubierta' (argumento ≥ 30), salvo evento con fecha
+      de fin (misma regla que «Programar desinstalación»).
+    · cambiar la fecha estando sin agendar: libre. Con la desinstalación ya agendada: se reagenda esa OT.
+    · fecha null (quitar, p. ej. el mall compra la trotadora): exige motivo (≥ 10) y que no haya desinstalación vigente."""
+    if not _puede_ot_accion(vid, "metadata"):
+        return jsonify({"ok": False, "error": "No tienes permiso para editar esta OT.", "error_codigo": "SIN_PERMISO"}), 403
+    madre = _ot_fila_basica(vid)
+    if not madre:
+        return jsonify({"ok": False, "error": "Esa OT no existe.", "error_codigo": "OT_NO_EXISTE"}), 404
+    if (madre.get("tipo") or "").lower() != _evt.TIPO_MADRE or madre.get("ot_madre_id") or not _evt.vigente(madre.get("estado")):
+        return jsonify({"ok": False, "error": "Solo una instalación vigente tiene desinstalación prevista.",
+                        "error_codigo": "DESINST_NO_PERMITIDA"}), 409
+    d = request.get_json(silent=True) or {}
+    hijas = _ot_hijas_de(vid)
+    quien = current_username() or "?"
+    if d.get("fecha") in (None, ""):
+        g_q = _evt.guardia_quitar_prevista(madre, hijas)
+        if g_q:
+            return jsonify({"ok": False, "error": g_q["mensaje"], "error_codigo": g_q["codigo"]}), 409
+        motivo = (str(d.get("motivo") or "").strip())[:500]
+        if len(motivo) < _evt.MOTIVO_MIN:
+            return jsonify({"ok": False, "error": f"Explica por qué ya no se desinstala (mínimo {_evt.MOTIVO_MIN} caracteres).",
+                            "error_codigo": "MOTIVO_REQUERIDO"}), 400
+        if not madre.get("desinstalacion_prevista"):
+            return jsonify({"ok": True, "sin_cambios": True, "contexto": _ot_desinst_contexto(vid, con_montos=True)})
+        mysql_execute("UPDATE mant_visitas SET desinstalacion_prevista=NULL WHERE id=%s", (vid,))
+        _mant_log("visita", vid, "desinstalacion_prevista_quitada",
+                  f"Se quitó la desinstalación prevista ({_evt.fmt_fecha(madre.get('desinstalacion_prevista'))}) · por {quien} · motivo: {motivo}")
+        return jsonify({"ok": True, "contexto": _ot_desinst_contexto(vid, con_montos=True)})
+    f = _evt.parse_fecha(d.get("fecha"))
+    if not f:
+        return jsonify({"ok": False, "error": "La fecha de la desinstalación no es válida.", "error_codigo": "FECHA_INVALIDA"}), 400
+    if _evt.hijas_vigentes(hijas):
+        return jsonify({"ok": False, "error_codigo": "DESINSTALACION_AGENDADA",
+                        "error": "La desinstalación ya está agendada: cambia su fecha reagendando esa OT."}), 409
+    ev = _evento_fila(madre["evento_id"]) if madre.get("evento_id") else None
+    completa = mysql_fetchone("SELECT * FROM mant_visitas WHERE id=%s", (vid,))
+    veredicto = _evt.evaluar_fecha_desinstalacion(f, None, None, dict(completa), _feriados_cl(f), ev)
+    if not veredicto["ok"]:
+        return jsonify({"ok": False, "error": veredicto["bloqueo"]["mensaje"], "error_codigo": veredicto["bloqueo"]["codigo"]}), 400
+    if madre.get("desinstalacion_prevista"):
+        mysql_execute("UPDATE mant_visitas SET desinstalacion_prevista=%s WHERE id=%s", (f, vid))
+        _mant_log("visita", vid, "desinstalacion_prevista",
+                  f"Desinstalación prevista: {_evt.fmt_fecha(madre.get('desinstalacion_prevista'))} → {_evt.fmt_fecha(f)} · por {quien}")
+        return jsonify({"ok": True, "avisos": veredicto["avisos"], "contexto": _ot_desinst_contexto(vid, con_montos=True)})
+    ev_fin = bool(ev and _evt.parse_fecha(ev.get("fecha_fin")))
+    if _evt.necesita_autorizacion_prevista(False, ev_fin) and not _ot_aut_aprobada(madre.get("desinstalacion_aut_id")):
+        aid, pend, e_a = _ot_desinst_autorizar(vid, dict(completa), d.get("argumento"), {"prevista": f.isoformat()})
+        if e_a:
+            return jsonify({"ok": False, "error": e_a["mensaje"], "error_codigo": e_a["codigo"],
+                            "requiere_autorizacion": True}), 400
+        if pend:
+            return jsonify({"ok": True, "pendiente_autorizacion": True, "autorizacion_id": pend,
+                            "mensaje": "Se pidió autorización a Daniel. Cuando la apruebe queda anotada la desinstalación.",
+                            "url": f"/ot/autorizaciones/{pend}"}), 202
+        conn = get_mysql()
+        try:
+            with conn.cursor() as cur:
+                _ot_desinst_aplicar_autorizacion(cur, vid, aid, f)
+            conn.commit()
+        finally:
+            conn.close()
+    else:
+        mysql_execute("UPDATE mant_visitas SET desinstalacion_prevista=%s WHERE id=%s", (f, vid))
+    _mant_log("visita", vid, "desinstalacion_prevista", f"Desinstalación prevista para el {_evt.fmt_fecha(f)} · declarada por {quien}")
+    return jsonify({"ok": True, "avisos": veredicto["avisos"], "contexto": _ot_desinst_contexto(vid, con_montos=True)})
+
+
+@app.route("/ot/eventos")
+@_mant_required
+def ot_pagina_eventos():
+    """Pantalla de eventos (la dibuja el frente: templates/ot2/eventos.html). Mientras no exista la plantilla vuelve al panel."""
+    try:
+        return render_template("ot2/eventos.html", filtros=_EVT_FILTROS, es_tecnico=_es_rol_tecnico())
+    except Exception as e:
+        if "TemplateNotFound" in type(e).__name__:
+            flash("La pantalla de eventos todavía no está disponible.", "info")
+            return redirect(url_for("ot2_panel"))
+        raise
+
+
+@app.route("/ot/eventos/<int:eid>")
+@_mant_required
+def ot_pagina_evento_detalle(eid):
+    """Pantalla de un evento (templates/ot2/evento_detalle.html, del frente). Los datos llegan por /ot/api/eventos/<id>."""
+    if not _evento_fila(eid):
+        flash("Ese evento no existe.", "warning")
+        return redirect(url_for("ot_pagina_eventos"))
+    try:
+        return render_template("ot2/evento_detalle.html", evento_id=eid, es_tecnico=_es_rol_tecnico())
+    except Exception as e:
+        if "TemplateNotFound" in type(e).__name__:
+            flash("La pantalla del evento todavía no está disponible.", "info")
+            return redirect(url_for("ot_pagina_eventos"))
+        raise
+
+
+def _mysql_insertar(sql, params):
+    """INSERT con conexión propia (confirmada) que devuelve el id nuevo. Para las pocas escrituras de una sola fila que no
+    viven dentro de una transacción mayor (p. ej. crear un evento)."""
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            nuevo = cur.lastrowid
+        conn.commit()
+        return nuevo
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -108897,6 +111553,8 @@ _OT_TV_SELECT = (
     # (zz+envío > 0 O costo > 0) contaba un estimado, el $1 de ZZRETIRO o un `costo` con zz en 0 como cobro:
     # el Monitor decía "listo" y el cierre la bloqueaba. Sigue siendo un booleano: ningún monto viaja.
     "       " + _OT_FIN_SQL_COBRE_POSITIVO + " AS _fin_valorizada, "
+    # 🧩 2026-10-19: la bandera de «desinstalación cubierta» (un booleano; ningún monto) para el estado del documento.
+    "       v.ot_madre_id, v.ot_relacion, " + _OT_FIN_SQL_MADRE_VALIDA + " AS madre_valida, "
     "       au.id AS tec_id, COALESCE(au.nombre, au.username) AS tecnico_nombre, "
     "       au.role AS tecnico_role, "
     # 🔴 FIX 2026-08-27 (hallazgo de la verificación): antes esto era solo
@@ -109486,8 +112144,14 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
         _fin_ok, _fin_faltan = _ot2_finanzas_estado(f)
         _es_garantia_tv = ((f.get("modalidad_cobro") or "").lower() == "garantia"
                             or (f.get("cubierto_por") or "").lower() == "garantia")
+        try:
+            _cubierta_tv = _ot_cobertura(f) == "cubierta"
+        except Exception:
+            _cubierta_tv = False
         if _es_garantia_tv:
             _doc_cierre_label = "Garantía"
+        elif _cubierta_tv:
+            _doc_cierre_label = "Cubierta por su instalación"   # 🧩 2026-10-19 (sin monto ni documento)
         elif (f.get("factura_nudo") or "").strip():
             _doc_cierre_label = ((f.get("factura_tido") or "DOC").strip()
                                   + " " + str(f.get("factura_nudo")).strip())
@@ -112596,6 +115260,19 @@ def _ot2_filtros_export(args):
             where.append(_ag_sql)
             params += list(_ag_params)
             desc.append("agenda " + dict(_OT2_AGENDA_OPTS).get(f_agenda, f_agenda).lower())
+    # 🧩 2026-10-19: el filtro por evento también acota el Excel (id numérico, parametrizado).
+    try:
+        _ev_x = int(args.get("evento") or 0) or 0
+    except (TypeError, ValueError):
+        _ev_x = 0
+    if _ev_x:
+        where.append("v.evento_id = %s")
+        params.append(_ev_x)
+        try:
+            _ev_nom = (mysql_fetchone("SELECT nombre FROM mant_eventos WHERE id=%s", (_ev_x,)) or {}).get("nombre")
+        except Exception:
+            _ev_nom = None
+        desc.append("evento " + (_ev_nom or f"#{_ev_x}"))
 
     sql = " WHERE " + " AND ".join(where) if where else ""
     role_sql, role_params = _mant_calendario_role_where()
@@ -112669,6 +115346,13 @@ def ot2_reporte_xlsx():
         "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
         "       au.role AS tecnico_role, te.id AS tecnico_proveedor_id, "
         "       tk.numero_ticket, "
+        # 🧩 2026-10-19: evento y relación madre/hija (columnas «Evento» y «Relación», al final del Excel).
+        "       (SELECT ev.nombre FROM mant_eventos ev WHERE ev.id = v.evento_id) AS evento_nombre, "
+        "       v.desinstalacion_prevista, "
+        "       (SELECT mm.numero_ot FROM mant_visitas mm WHERE mm.id = v.ot_madre_id) AS madre_numero, "
+        "       (SELECT GROUP_CONCAT(hh.numero_ot ORDER BY hh.id SEPARATOR ', ') FROM mant_visitas hh "
+        "         WHERE hh.ot_madre_id = v.id AND hh.ot_relacion = 'desinstalacion' "
+        "           AND hh.estado NOT IN ('cancelada','anulada')) AS hijas_numeros, "
         "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
         "       COALESCE(tar.n_completas, 0) AS n_completas "
         "  FROM mant_visitas v "
@@ -112747,6 +115431,9 @@ def ot2_reporte_xlsx():
     _xl_sa = (not _es_rol_tecnico()) and _ot_aut_es_superadmin()
     if _xl_sa:
         headers.insert(len(headers) - 1, "Clasificación (cómo nació)")
+    _COL_OBS = len(headers)   # «Observaciones (revisar)»: la columna de alertas
+    # 🧩 2026-10-19: «Evento» y «Relación» van AL FINAL, para no correr ninguna columna que ya existía.
+    headers += ["Evento", "Relación (instalación ↔ desinstalación)"]
     NCOLS = len(headers)
     # Columnas por NOMBRE (no por número fijo): agregar una columna no corre los formatos.
     _COLS_CLP = {headers.index(h) + 1 for h in (
@@ -112928,6 +115615,16 @@ def ot2_reporte_xlsx():
             _ax["cobre"] += float(_cobre or 0) if _fin["cobra"] else 0.0
             _ax["me_cobraron"] += float(_fin["me_cobraron"]["total"] or 0) if _tiene_finanzas else 0.0
             _ax["queda"] += float(margen or 0) if (margen is not None and _fin["cobra"]) else 0.0
+        # 🧩 2026-10-19: Evento y Relación (sin montos).
+        if f.get("madre_numero"):
+            _rel_xl = "Desinstalación de " + str(f.get("madre_numero"))
+        elif f.get("hijas_numeros"):
+            _rel_xl = "Desinstalación: " + str(f.get("hijas_numeros"))
+        elif f.get("desinstalacion_prevista"):
+            _rel_xl = "Desinstalación sin agendar (prevista " + _d(f.get("desinstalacion_prevista")) + ")"
+        else:
+            _rel_xl = ""
+        vals += [f.get("evento_nombre") or "", _rel_xl]
 
         bg = LGRAY if r % 2 == 0 else "FFFFFF"
         for ci, val in enumerate(vals, 1):
@@ -112935,13 +115632,13 @@ def ot2_reporte_xlsx():
             cell.font = Font(size=9, bold=(ci == 1))
             cell.alignment = Alignment(
                 horizontal="center" if ci in (1, 2, 13, 14, 15, 16, 17, 18) else "left",
-                vertical="center", wrap_text=(ci in (6, 7, NCOLS)))
+                vertical="center", wrap_text=(ci in (6, 7, _COL_OBS)))
             cell.border = border
             fill = bg
             if ci == 11:      # semáforo por fase, reusando el mapa del panel
                 fill = {"pend": AMBER, "ejec": BLUEL, "comp": GREENL,
                         "cerr": LGRAY}.get(fase, bg)
-            elif ci == NCOLS and obs:
+            elif ci == _COL_OBS and obs:
                 fill = AMBER
             cell.fill = PatternFill("solid", fgColor=fill)
             if ci in _COLS_CLP and val is not None:
@@ -113023,8 +115720,9 @@ def ot2_reporte_xlsx():
 
     widths = [15, 12, 30, 13, 15, 34, 30, 18, 11, 16, 14, 22, 10, 15, 8, 15,
               9, 9, 16, 16, 13, 14, 13, 14, 14, 14, 14, 14, 11, 14, 26, 17, 16, 16, 16, 16, 40]
-    if _xl_sa and len(widths) == NCOLS - 1:
+    if _xl_sa and len(widths) == NCOLS - 3:
         widths.insert(len(widths) - 1, 46)   # 🏷️ 2026-10-12: «Clasificación (cómo nació)», antes de Observaciones
+    widths += [30, 36]   # 🧩 2026-10-19: «Evento» y «Relación», al final
     for ci, w in enumerate(widths[:NCOLS], 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
     ws.freeze_panes = "C3"
@@ -113409,7 +116107,7 @@ _OT_SALDO_USOS_MAX = 60
 def _ot_saldo_real(clave):
     """('VD','10667') → ('NVV','VD00010667'); ('FCV','11439') → ('FCV','0000011439'): la forma de MAEEDO/MAEDDO."""
     t, n = clave
-    if t in ("VD", "WEB"):
+    if t in _saldo.PREFIJOS_NOTA_VENTA:
         return "NVV", t + n.zfill(10 - len(t))
     return t, n.zfill(10)
 
@@ -113504,7 +116202,7 @@ def _ot_saldo_usos(claves, excluir_vid=None, cap=None, solo_vid=None, errores=No
                "       c.razon_social AS cliente "
                "  FROM mant_visita_documentos d JOIN mant_visitas v ON v.id=d.visita_id "
                "  LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
-               " WHERE d.origen='erp' AND d.reemplazado_por_id IS NULL "
+               " WHERE d.origen='erp' AND d.reemplazado_por_id IS NULL AND d.heredado_de_visita_id IS NULL "
                "   AND (d.zz_serv_monto IS NOT NULL OR d.zz_envio_monto IS NOT NULL) "
                "   AND v.estado NOT IN ('cancelada','anulada') "
                "   AND COALESCE(v.modalidad_cobro,'') NOT IN ('garantia','sin_costo') AND v.cobro_cero_motivo IS NULL "
@@ -113535,7 +116233,7 @@ def _ot_saldo_usos(claves, excluir_vid=None, cap=None, solo_vid=None, errores=No
                "       GREATEST(COALESCE(v.zz_envio_monto,0)-" + resid.format(col="x.zz_envio_monto") + ",0) AS res_env "
                "  FROM mant_visita_documentos d JOIN mant_visitas v ON v.id=d.visita_id "
                "  LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
-               " WHERE d.origen='erp' AND d.es_cobro=1 AND d.reemplazado_por_id IS NULL "
+               " WHERE d.origen='erp' AND d.es_cobro=1 AND d.reemplazado_por_id IS NULL AND d.heredado_de_visita_id IS NULL "
                "   AND d.zz_serv_monto IS NULL AND d.zz_envio_monto IS NULL "
                "   AND v.estado NOT IN ('cancelada','anulada') "
                "   AND COALESCE(v.modalidad_cobro,'') NOT IN ('garantia','sin_costo') "
@@ -113667,6 +116365,7 @@ def _ot_saldo_docs_de_ot(vid):
         for r in (mysql_fetchall(
                 "SELECT erp_tido, erp_nudo FROM mant_visita_documentos "
                 " WHERE visita_id=%s AND origen='erp' AND es_cobro=1 AND reemplazado_por_id IS NULL "
+                "   AND heredado_de_visita_id IS NULL "   # 🧩 2026-10-19: lo espejado de la madre no consume saldo
                 "   AND COALESCE(erp_nudo,'')<>'' ORDER BY es_principal DESC, id", (vid,)) or []):
             k = _saldo.clave_doc(r.get("erp_tido"), r.get("erp_nudo"))
             if k not in vistos:
@@ -113872,9 +116571,14 @@ def _ot_fin_clasif_guardar(cur, vid, campos, es_interna, autorizacion=None):
         sin_documento=(aut.get("tipo") == "crear_sin_documento"),
         observaciones=[o for d in obs for o in (d.get("observaciones") or [])],
         saldo_excedido=("exceder_saldo" in (aut.get("tipo"), obs_aut.get("tipo"))),
-        ajuste_manual=bool(campos.get("valor_origen") == "manual" and (campos.get("zz_motivo_manual") or "").strip()))
+        ajuste_manual=bool(campos.get("valor_origen") == "manual" and (campos.get("zz_motivo_manual") or "").strip()
+                           and not campos.get("reserva_hija")),   # la reserva para la hija no es un ajuste a mano
+        cubierta=(campos.get("cobertura") == "cubierta"))   # 🧩 2026-10-19: desinstalación cubierta por su instalación
     if not c.get("codigo"):
         return None
+    if c.get("codigo") == "cubierta" and campos.get("madre_numero"):
+        c["texto"] = f"Desinstalación cubierta por {campos['madre_numero']}"
+        c["madre_id"], c["madre_numero"] = campos.get("madre_id"), campos.get("madre_numero")
     a_ref = obs_aut or aut
     _res_at = a_ref.get("resuelto_at")
     det = dict(c, observaciones=obs, documentos=tidos,
@@ -113928,7 +116632,8 @@ def _ot_fin_clasif_lote(ids):
     try:
         for r in (mysql_fetchall(
                 f"SELECT visita_id, erp_tido FROM mant_visita_documentos WHERE visita_id IN ({ph}) AND origen='erp' "
-                f"   AND reemplazado_por_id IS NULL AND COALESCE(erp_tido,'')<>''", tuple(ids)) or []):
+                f"   AND reemplazado_por_id IS NULL AND heredado_de_visita_id IS NULL "   # 🧩 2026-10-19: sin el espejo de la madre
+                f"   AND COALESCE(erp_tido,'')<>''", tuple(ids)) or []):
             tidos.setdefault(int(r["visita_id"]), []).append(str(r["erp_tido"]).strip().upper())
     except Exception as e:
         print(f"[ot-clasif] documentos: {type(e).__name__}", flush=True)
@@ -113942,6 +116647,17 @@ def _ot_fin_clasif_lote(ids):
                 auts.setdefault(int(v), []).append(r)
     except Exception as e:
         print(f"[ot-clasif] autorizaciones: {type(e).__name__}", flush=True)
+    # 🧩 2026-10-19: el N° de la instalación que cubre a cada desinstalación (una consulta para todas).
+    madres_num = {}
+    try:
+        _mids = sorted({int(f["ot_madre_id"]) for f in filas if f.get("ot_madre_id")})
+        if _mids:
+            for r in (mysql_fetchall(
+                    "SELECT id, numero_ot FROM mant_visitas WHERE id IN (" + ",".join(["%s"] * len(_mids)) + ")",
+                    tuple(_mids)) or []):
+                madres_num[int(r["id"])] = r.get("numero_ot")
+    except Exception as e:
+        print(f"[ot-clasif] madres: {type(e).__name__}", flush=True)
     for f in filas:
         vid = int(f["id"])
         js = f.get("fin_clasif_json")
@@ -113971,11 +116687,18 @@ def _ot_fin_clasif_lote(ids):
             tidos=ts, contrato=(cob == "contrato"),
             sin_documento=(cob == "cobra" and bool(f.get("cliente_id")) and not ts),
             saldo_excedido="exceder_saldo" in tipos_a,
-            ajuste_manual=bool(f.get("valor_origen") == "manual" and (f.get("zz_motivo_manual") or "").strip()))
+            ajuste_manual=bool(f.get("valor_origen") == "manual" and (f.get("zz_motivo_manual") or "").strip()),
+            cubierta=(cob == "cubierta"))   # 🧩 2026-10-19: se deduce de las columnas de madre/hija, no de valor_origen
         if c.get("codigo") == "sin_documento" and "crear_sin_documento" not in tipos_a:
             c["texto"] = "Sin documento"
         if c.get("codigo") == "regalia" and sin_costo:
             c["texto"] = "$0 · cortesía (sin costo)"
+        if c.get("codigo") == "cubierta":
+            c["madre_id"] = f.get("ot_madre_id")
+            _nm = madres_num.get(int(f["ot_madre_id"])) if f.get("ot_madre_id") else None
+            if _nm:
+                c["madre_numero"] = _nm
+                c["texto"] = f"Desinstalación cubierta por {_nm}"
         c["derivada"] = True
         out[vid] = c
     return out
@@ -114479,7 +117202,8 @@ def _fac_huella_ot(vid):
         "       v.zz_monto, v.zz_envio_monto, v.factura_tido, v.factura_nudo, c.razon_social AS cliente, "
         "       (SELECT GROUP_CONCAT(CONCAT_WS(':', d.erp_tido, d.erp_nudo, d.es_cobro, IFNULL(d.reemplazado_por_id,'-'), "
         "               IFNULL(d.zz_serv_monto,'-'), IFNULL(d.zz_envio_monto,'-')) ORDER BY d.id SEPARATOR '|') "
-        "          FROM mant_visita_documentos d WHERE d.visita_id=v.id AND d.origen='erp') AS docs, "
+        "          FROM mant_visita_documentos d WHERE d.visita_id=v.id AND d.origen='erp' "
+        "           AND d.heredado_de_visita_id IS NULL) AS docs, "   # 🧩 2026-10-19: el espejo de la madre no cuenta
         "       (SELECT h.huella FROM ot_fac_huella h WHERE h.visita_id=v.id) AS h_prev "
         "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (int(vid),))
     if not r:
@@ -114658,6 +117382,7 @@ def _fac_aportes_ot(vid, solo_cache=False):
     filas = mysql_fetchall(
         "SELECT erp_tido, erp_nudo, es_cobro, es_principal, reemplazado_por_id, zz_serv_monto, zz_envio_monto "
         "  FROM mant_visita_documentos WHERE visita_id=%s AND origen='erp' AND COALESCE(erp_nudo,'')<>'' "
+        "   AND heredado_de_visita_id IS NULL "   # 🧩 2026-10-19: el documento espejado de la madre no consume saldo
         " ORDER BY es_principal DESC, id", (int(vid),)) or []
     docs = [{"tido": r.get("erp_tido"), "nudo": r.get("erp_nudo"), "es_cobro": int(r.get("es_cobro") or 0),
              "reemplazado": bool(r.get("reemplazado_por_id")),
@@ -114857,6 +117582,29 @@ def _fac_doc_refrescar(tido, nudo, crear=True):
          (datetime.utcnow() if not s.get("capacidad_previa") else previo.get("actualizado_el")),
          datetime.utcnow()))
     return s, est
+
+
+@app.after_request
+def _ot_espejo_tras_escritura(resp):
+    """🧩 2026-10-19 (crítica 6): cuando una INSTALACIÓN agrega o reemplaza un documento (nota de venta → factura), el espejo
+    que su desinstalación tiene de sus documentos queda viejo. Se vuelve a espejar (solo agrega los que faltan: idempotente).
+    Una consulta indexada por escritura de documentos; nunca rompe la respuesta."""
+    try:
+        if request.method not in ("POST", "PUT", "PATCH", "DELETE") or resp.status_code >= 400 or resp.direct_passthrough:
+            return resp
+        p = request.path or ""
+        if not p.startswith(("/ot/", "/mantenciones/", "/servicio-tecnico/")) or not any(
+                x in p for x in ("documento", "asociar-factura", "factura", "regularizar")):
+            return resp
+        vid = (request.view_args or {}).get("vid") or (request.view_args or {}).get("visita_id")
+        if not vid:
+            return resp
+        if mysql_fetchone("SELECT 1 AS x FROM mant_visitas WHERE ot_madre_id=%s AND ot_relacion='desinstalacion' "
+                          " AND estado NOT IN ('cancelada','anulada') LIMIT 1", (int(vid),)):
+            _ot_resincronizar_espejo(int(vid))
+    except Exception as e:
+        print(f"[desinst] espejo tras escritura: {type(e).__name__}", flush=True)
+    return resp
 
 
 @app.after_request
@@ -115067,7 +117815,8 @@ def _fac_finanzas_de_ots(vids, fallos=None):
         ph = ",".join(["%s"] * len(trozo))
         try:
             rows = mysql_fetchall(
-                "SELECT v.*, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real FROM mant_visitas v WHERE v.id IN (" + ph + ")",
+                "SELECT v.*, " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real, "
+                + _OT_FIN_SQL_MADRE_VALIDA + " AS madre_valida FROM mant_visitas v WHERE v.id IN (" + ph + ")",
                 tuple(trozo)) or []
             reps = _ot_repuestos_desglose(trozo)
             for r in rows:
@@ -115125,9 +117874,16 @@ def ot_api_saldo_facturas_doc(tido, nudo):
                         "error": f"No pudimos leer {s.get('titulo') or (tido + ' ' + nudo)} en Random y ninguna OT lo usa: "
                                  "revisa el tipo y el número (o Random no está respondiendo; reintenta en unos minutos)."}), 404
     fins = _fac_finanzas_de_ots([u["vid"] for u in (s.get("usos") or [])])
+    # 🧩 2026-10-19 (crítica 22): la desinstalación que cuelga de una instalación aparece BAJO la factura de su madre, con
+    # $0 de saldo y su relación (el auditor va a preguntar por qué no consume).
+    hijas_por_madre = _ot_hijas_vigentes_lote([u["vid"] for u in (s.get("usos") or [])])
     usos = []
     for u in (s.get("usos") or []):
-        usos.append(dict(u, url=f"/ot/{u['vid']}", fin=fins.get(int(u["vid"]))))
+        usos.append(dict(u, url=f"/ot/{u['vid']}", fin=fins.get(int(u["vid"])),
+                         desinstalaciones=[{"vid": h["id"], "numero_ot": h.get("numero_ot"), "estado": h.get("estado"),
+                                            "url": f"/ot/{h['id']}", "servicio": 0, "despacho": 0,
+                                            "relacion": "Desinstalación cubierta por esta instalación"}
+                                           for h in hijas_por_madre.get(int(u["vid"]), [])]))
     fam = [tuple(x) for x in (s.get("familia") or [])]
     familia = []
     for f in fam:
@@ -115202,6 +117958,7 @@ def ot_api_saldo_facturas_revisar():
 
 
 _FAC_SQL_OT_CON_DOC = ("(EXISTS (SELECT 1 FROM mant_visita_documentos md WHERE md.visita_id=v.id AND md.origen='erp' "
+                       "         AND md.heredado_de_visita_id IS NULL "   # 🧩 2026-10-19: el espejo de la madre no cuenta
                        "         AND COALESCE(md.erp_nudo,'')<>'') OR COALESCE(v.factura_nudo,'')<>'' "
                        # revisión 2: una OT que perdió su documento (garantía retroactiva, documento quitado) sigue en
                        # el barrido mientras el libro la tenga, para que su liberación no dependa de una sola petición.
@@ -115457,6 +118214,29 @@ def ot_saldo_facturas_excel():
         print(f"[fac-libro] excel OT a revisar: {type(e).__name__}", flush=True)
         fallos.append("ot")
     fins = _fac_finanzas_de_ots(sorted(vids_alerta), fallos=fallos)
+    # 🧩 2026-10-19 (crítica 10): una instalación con desinstalación es UNA cuenta. Antes la madre salía con su margen y la
+    # hija se saltaba (no cobra): ahora la madre suma el técnico y el despacho de sus desinstalaciones vigentes (y su
+    # cobro propio, si cobran su línea), y la hija se informa DENTRO de ella.
+    try:
+        _hv_x = _ot_hijas_vigentes_lote(list(fins))
+        _ids_hx = sorted({int(h["id"]) for lst in _hv_x.values() for h in lst})
+        _fins_hx = _fac_finanzas_de_ots(_ids_hx, fallos=fallos) if _ids_hx else {}
+        for _mid_x, _hl_x in _hv_x.items():
+            _f_mx = fins.get(_mid_x)
+            if not _f_mx:
+                continue
+            for _h_x in _hl_x:
+                _f_hx = _fins_hx.get(int(_h_x["id"]))
+                if not _f_hx:
+                    continue
+                _f_mx["cobre"] = (_f_mx.get("cobre") or 0) + (_f_hx.get("cobre") or 0)
+                _f_mx["me_tecnico"] = (_f_mx.get("me_tecnico") or 0) + (_f_hx.get("me_tecnico") or 0)
+                _f_mx["me_despacho"] = (_f_mx.get("me_despacho") or 0) + (_f_hx.get("me_despacho") or 0)
+                _f_mx.setdefault("incluye", []).append(_f_hx.get("numero_ot"))
+                fins.pop(int(_h_x["id"]), None)
+    except Exception as e:
+        print(f"[fac-libro] excel desinstalaciones: {type(e).__name__}", flush=True)
+        fallos.append("desinstalaciones")
     auts = {}
     try:
         ids_l = sorted(fins)
@@ -115499,6 +118279,7 @@ def ot_saldo_facturas_excel():
             que = "Sin autorización: no puede cerrar sin la autorización de Daniel"
         filas.append(["OT a pérdida", f["numero_ot"], f["estado_txt"], pr["perdida"],
                       f"Cobramos {_saldo.clp(f['cobre'])} − técnico y despacho {_saldo.clp(_saldo._entero(f['me_tecnico']) + _saldo._entero(f['me_despacho']))}"
+                      + (f" (incluye la desinstalación {', '.join(str(x) for x in f['incluye'] if x)})" if f.get("incluye") else "")
                       + (f" (repuestos aparte: {_saldo.clp(f['repuestos'])})" if f.get("repuestos") else ""), que])
     if fallos:
         aviso_f = ("LECTURA INCOMPLETA: no se pudieron leer todos los datos al generar este archivo (" + ", ".join(sorted(set(fallos)))
@@ -115547,15 +118328,92 @@ def _fac_perdida_aplica(via, info):
     return not (via == "autorizacion_cerrar" and int(info.get("cobre") or 0) <= 0)
 
 
-def _fac_perdida_info(vid, fin):
+def _fac_familia_de(vid):
+    """🧩 2026-10-19 La FAMILIA de una OT con desinstalación (REGLAS #28 y #29): la instalación (madre) y sus
+    desinstalaciones VIGENTES (no canceladas ni anuladas; las cerradas cuentan). {madre_id, hijas: [filas], ids: [madre,
+    hijas…]}, o None si la OT no es una instalación con desinstalación ni una desinstalación vigente. Una lectura que
+    falla se PROPAGA (nunca «no tiene familia»: eso dejaría pasar una pérdida)."""
+    f = _ot_fila_basica(vid)
+    if not f:
+        return None
+    es_hija = bool(f.get("ot_madre_id")) and (f.get("ot_relacion") or "").strip().lower() == _evt.REL_DESINSTALACION
+    if es_hija and not _evt.vigente(f.get("estado")):
+        return None
+    madre_id = int(f["ot_madre_id"]) if es_hija else int(f["id"])
+    hijas = _evt.hijas_vigentes(_ot_hijas_de(madre_id, estricto=True))
+    if not hijas:
+        return None
+    return {"madre_id": madre_id, "hijas": hijas, "ids": [madre_id] + [int(h["id"]) for h in hijas]}
+
+
+def _fac_familia_cuenta(fam):
+    """La cuenta de los miembros de una familia: UNA consulta para todos y UNA cuenta única por miembro
+    (_ot_fin_lote, con repuestos). Devuelve [{vid, numero_ot, rol, cobertura, cobre, tecnico, despacho, repuestos,
+    falta_tecnico}] con la instalación primero. Sin montos para quien no deba: lo decide el llamador (@_no_tecnico)."""
+    ids = list(fam["ids"])
+    ph = ",".join(["%s"] * len(ids))
+    rows = mysql_fetchall("SELECT v.id, v.numero_ot, " + _ot_fin_cols_sql("v") +
+                          f" FROM mant_visitas v WHERE v.id IN ({ph})", tuple(ids)) or []
+    fins = _ot_fin_lote([dict(r) for r in rows])
+    num = {int(r["id"]): r.get("numero_ot") for r in rows}
+    out = []
+    for i in ids:
+        f = fins.get(int(i))
+        if not f:
+            continue
+        m = f["me_cobraron"]
+        out.append({"vid": int(i), "numero_ot": num.get(int(i)) or f"V-{int(i):05d}",
+                    "rol": "instalacion" if int(i) == int(fam["madre_id"]) else "desinstalacion",
+                    "cobertura": f["cobertura"], "cobra": bool(f["cobra"]),
+                    "cobre": int(round(float(f["cobre"]["total"] or 0))),
+                    "tecnico": _saldo._entero(m.get("tecnico")), "despacho": _saldo._entero(m.get("despacho")),
+                    "repuestos": int(round(float(m.get("repuestos") or 0))),
+                    "falta_tecnico": bool(m.get("falta_tecnico"))})
+    return out
+
+
+def _ot_familia_resumen(vid):
+    """Lo que el frente necesita para mostrar el margen de la FAMILIA (instalación + desinstalación) en vez del de una
+    sola OT (crítica 11: el paso Costos de la madre debe mostrar el margen de la familia). None si la OT no es parte de
+    una. Lleva montos: solo para quien ya los puede ver (las rutas que lo llaman son @_no_tecnico)."""
+    try:
+        fam = _fac_familia_de(vid)
+        if not fam:
+            return None
+        miembros = _fac_familia_cuenta(fam)
+    except Exception as e:
+        print(f"[ot-familia] resumen {vid}: {type(e).__name__}", flush=True)
+        return None
+    cobre = sum(m["cobre"] for m in miembros)
+    me = sum(m["tecnico"] + m["despacho"] + m["repuestos"] for m in miembros)
+    queda = cobre - me
+    pct = round(queda * 100.0 / cobre, 1) if cobre > 0 else None
+    clase = ("gris" if cobre <= 0 else ("rojo" if queda < 0 else ("bajo" if (pct is not None and pct < _OT_FIN_UMBRAL_BAJO) else "ok")))
+    falta = [m["numero_ot"] for m in miembros if m["falta_tecnico"]]
+    return {"madre_id": int(fam["madre_id"]), "miembros": miembros, "cobre": cobre, "me_cobraron": me, "queda": queda,
+            "pct": pct, "clase": clase, "falta_costos": falta,
+            "frase": (f"Instalación con desinstalación: cobré {_ot_fin_clp(cobre)} − me cobraron {_ot_fin_clp(me)} = "
+                      f"{'quedan' if queda >= 0 else 'se pierden'} {_ot_fin_clp(queda)}"
+                      + (f" ({pct:.1f} %)".replace(".", ",") if pct is not None else "") + ".")}
+
+
+def _fac_perdida_info(vid, fin, familia=None):
     """{cobra, completa, cobre, me_cobraron, repuestos, perdida, autorizada, autorizada_por, ok, falta_autorizar,
     pendiente_id} con la cuenta de la OT (`fin` = _ot_finanzas). La pérdida que se autoriza es la del SERVICIO
     (técnico + despacho − cobrado); los repuestos van aparte, como dato (revisión 2026-10-11: contarlos inventaba
     pérdidas). `completa` basta con que haya cobro y el costo del técnico declarado: un despacho sin costo cuenta $0
-    (la pérdida calculada es un mínimo), así no se esquiva el candado dejando ese costo vacío."""
+    (la pérdida calculada es un mínimo), así no se esquiva el candado dejando ese costo vacío.
+    🧩 2026-10-19: `familia` = la cuenta de las DESINSTALACIONES de esta instalación ({cobre, tecnico, despacho, repuestos,
+    miembros}): se SUMAN al cobro y a los costos de la instalación (una sola cuenta: la nota de venta paga las dos)."""
     m = fin["me_cobraron"]
     cobre = int(round(float(fin["cobre"]["total"] or 0)))
     me_t, me_d = m.get("tecnico") or 0, m.get("despacho") or 0
+    rep_extra = 0
+    if familia:
+        cobre += _saldo._entero(familia.get("cobre"))
+        me_t = _saldo._entero(me_t) + _saldo._entero(familia.get("tecnico"))
+        me_d = _saldo._entero(me_d) + _saldo._entero(familia.get("despacho"))
+        rep_extra = _saldo._entero(familia.get("repuestos"))
     autorizada, por, pend = 0, None, None
     try:
         for a in (mysql_fetchall(
@@ -115575,28 +118433,51 @@ def _fac_perdida_info(vid, fin):
     except Exception as e:
         print(f"[ot-perdida] autorizaciones vid={vid}: {type(e).__name__}", flush=True)
     r = _saldo.perdida_de_cuenta(cobre, me_t, me_d, autorizada)
-    return {"cobra": bool(fin.get("cobra")),
-            "completa": bool(fin["cobre"].get("hay")) and not bool(m.get("falta_tecnico")),
-            "cobre": cobre, "me_cobraron": _saldo._entero(me_t) + _saldo._entero(me_d),
-            "repuestos": int(round(float(m.get("repuestos") or 0))), "perdida": r["perdida"], "autorizada": autorizada,
-            "autorizada_por": por, "ok": r["ok"], "falta_autorizar": r["falta_autorizar"], "pendiente_id": pend}
+    out = {"cobra": bool(fin.get("cobra")),
+           "completa": bool(fin["cobre"].get("hay")) and not bool(m.get("falta_tecnico")),
+           "cobre": cobre, "me_cobraron": _saldo._entero(me_t) + _saldo._entero(me_d),
+           "repuestos": int(round(float(m.get("repuestos") or 0))) + rep_extra, "perdida": r["perdida"],
+           "autorizada": autorizada,
+           "autorizada_por": por, "ok": r["ok"], "falta_autorizar": r["falta_autorizar"], "pendiente_id": pend}
+    if familia:
+        # El mensaje del cierre y el payload de la autorización dicen que la cuenta INCLUYE la(s) desinstalación(es).
+        nums = [mm.get("numero_ot") for mm in (familia.get("miembros") or []) if mm.get("rol") == "desinstalacion"]
+        out["familia"] = list(familia.get("miembros") or [])
+        out["ancla_vid"] = int(vid)
+        out["incluye_txt"] = ("incluye la desinstalación " if len(nums) == 1 else "incluye las desinstalaciones ") + ", ".join(
+            str(x) for x in nums if x)
+    return out
 
 
 def _fac_perdida_de_ot(vid):
-    """La pérdida de una OT leída de la base con la MISMA cuenta que su ficha (_ot_finanzas + repuestos instalados)."""
-    v = mysql_fetchone("SELECT v.id, " + _ot_fin_cols_sql("v") + " FROM mant_visitas v WHERE v.id=%s", (int(vid),))
+    """La pérdida de una OT leída de la base con la MISMA cuenta que su ficha (_ot_finanzas + repuestos instalados).
+    🧩 2026-10-19: si la OT es una instalación con desinstalación (o la desinstalación misma), la pérdida es la de la
+    FAMILIA y se ancla en la INSTALACIÓN: cobro de la instalación (más el cobro propio de las desinstalaciones, si cobran su
+    línea) − técnico y despacho de todas. Una desinstalación creada DESPUÉS de cerrar la instalación no se escapa del
+    candado. La autorización 'cerrar_con_perdida' se pide y se lee sobre la instalación (`ancla_vid`). Si no se puede leer,
+    se propaga (quien llama falla CERRADO)."""
+    fam = _fac_familia_de(vid)
+    ancla = int(fam["madre_id"]) if fam else int(vid)
+    v = mysql_fetchone("SELECT v.id, " + _ot_fin_cols_sql("v") + " FROM mant_visitas v WHERE v.id=%s", (ancla,))
     if not v:
         return {"cobra": False, "completa": False, "cobre": 0, "me_cobraron": 0, "perdida": 0, "autorizada": 0,
                 "autorizada_por": None, "ok": True, "falta_autorizar": 0, "pendiente_id": None}
     try:
-        rep = _ot_fin_rep_liviano(_ot_repuestos_desglose([int(vid)]).get(int(vid)))
+        rep = _ot_fin_rep_liviano(_ot_repuestos_desglose([ancla]).get(ancla))
     except Exception:
         rep = None
     fin = _ot_finanzas(dict(v), rep)
     if not fin.get("cobra"):
         return {"cobra": False, "completa": False, "cobre": 0, "me_cobraron": 0, "perdida": 0, "autorizada": 0,
                 "autorizada_por": None, "ok": True, "falta_autorizar": 0, "pendiente_id": None}
-    return _fac_perdida_info(vid, fin)
+    familia = None
+    if fam:
+        miembros = _fac_familia_cuenta(fam)
+        hijas = [m for m in miembros if m["rol"] == "desinstalacion"]
+        familia = {"cobre": sum(m["cobre"] for m in hijas), "tecnico": sum(m["tecnico"] for m in hijas),
+                   "despacho": sum(m["despacho"] for m in hijas), "repuestos": sum(m["repuestos"] for m in hijas),
+                   "miembros": miembros}
+    return _fac_perdida_info(ancla, fin, familia)
 
 
 # ⚖️ 2026-10-12 PUNTO DE EQUILIBRIO AL PAGARLE AL PROVEEDOR (Daniel: «primero evaluamos la factura; si está repetida,
@@ -115620,8 +118501,9 @@ def _fac_pagados_a_proveedor(vids):
         return set()
 
 
-def _fac_equilibrio_ot(vid, pago=None, solo_cache=False):
-    """¿Se le puede pagar al proveedor por esta OT? Evalúa, en este orden: 1) que la OT tenga su documento de Random
+def _fac_equilibrio_ot_solo(vid, pago=None, solo_cache=False):
+    """(Evaluación INDIVIDUAL de una OT; la pública es _fac_equilibrio_ot, que la une con su familia madre/hija.)
+    ¿Se le puede pagar al proveedor por esta OT? Evalúa, en este orden: 1) que la OT tenga su documento de Random
     ingresado (factura, boleta o nota de venta, heredado del ticket, la cotización o puesto en la OT) o su $0
     autorizado; 2) si la factura está REPETIDA en otras OT, cuánto saldo le queda a esta (tienen prioridad las OT que
     ya se le pagaron al proveedor y las anteriores); 3) el punto de equilibrio: lo que se le paga al proveedor
@@ -115773,6 +118655,83 @@ def _fac_equilibrio_ot(vid, pago=None, solo_cache=False):
     if out["pendiente_id"]:
         out["mensaje"] += " Ya está pedida (N° %s): espera su respuesta." % out["pendiente_id"]
     return out
+
+
+def _fac_pago_comprometido(vid, costo_declarado):
+    """Lo que ya tiene comprometido para pagarle al proveedor una OT: el monto de su línea en un lote (pendiente o
+    pagado) o, si no está en ningún lote, el costo que declara (técnico + despacho)."""
+    try:
+        r = mysql_fetchone("SELECT SUM(monto) AS m, COUNT(*) AS n FROM mant_factura_proveedor_items WHERE visita_id=%s",
+                           (int(vid),)) or {}
+        if int(r.get("n") or 0):
+            return _saldo._entero(r.get("m"))
+    except Exception as e:
+        print(f"[facprov-eq] comprometido {vid}: {type(e).__name__}", flush=True)
+    return _saldo._entero(costo_declarado)
+
+
+def _fac_equilibrio_ot(vid, pago=None, solo_cache=False):
+    """⚖️ 2026-10-19 (REGLA #29 con la desinstalación): ¿se le puede pagar al proveedor por esta OT? Si la OT es una
+    instalación con desinstalación, o la desinstalación misma, la cuenta es la de la FAMILIA (una sola nota de venta paga
+    las dos): cobro de la familia (el de la instalación con su reducción por saldo, más el cobro propio de las
+    desinstalaciones) contra el pago de la familia (lo que se evalúa pagar + lo ya comprometido por los demás miembros:
+    su monto en un lote, o su costo declarado). El ORDEN en que se paga no cambia el resultado. La autorización es la
+    mayor 'cerrar_con_perdida' aprobada en cualquiera de los miembros (se pide sobre la instalación). Respeta `solo_cache`.
+    Sin familia es exactamente la evaluación individual de siempre (_fac_equilibrio_ot_solo)."""
+    out = _fac_equilibrio_ot_solo(vid, pago=pago, solo_cache=solo_cache)
+    if out.get("code") == "OT_NO_EXISTE":
+        return out
+    try:
+        fam = _fac_familia_de(vid)
+    except Exception as e:
+        print(f"[facprov-eq] familia {vid}: {type(e).__name__}", flush=True)
+        if solo_cache:
+            return out
+        return dict(out, ok=False, code="LECTURA_INCOMPLETA", estado="sin_verificar",
+                    mensaje="No pudimos revisar la desinstalación de %s. Reintenta en unos segundos." % out.get("numero_ot"))
+    if not fam:
+        return out
+    # Cada miembro con su evaluación individual (cobro, reducción por saldo, autorización). Los demás no cambian su pago.
+    indiv = {int(vid): out}
+    for m in fam["ids"]:
+        if int(m) not in indiv:
+            indiv[int(m)] = _fac_equilibrio_ot_solo(m, pago=None, solo_cache=solo_cache)
+    if any(o.get("estado") == "sin_verificar" or o.get("code") == "LECTURA_INCOMPLETA" for o in indiv.values()):
+        return dict(out, familia=True, estado="sin_verificar",
+                    ok=(True if solo_cache else False), code=(None if solo_cache else "LECTURA_INCOMPLETA"),
+                    mensaje="No pudimos leer en Random la factura de %s: no se puede saber cuánto saldo le queda. "
+                            "Reintenta en unos minutos." % out.get("numero_ot"))
+    # Sin documento en la instalación o $0 sin autorizar: no frena el pago (REGLA #29), igual que la evaluación individual.
+    madre_o = indiv[int(fam["madre_id"])]
+    if madre_o.get("estado") == "sin_documento" or not madre_o.get("cobra", True):
+        return dict(out, familia=True)
+    miembros = []
+    for m in fam["ids"]:
+        o = indiv[int(m)]
+        miembros.append({"vid": int(m), "cobre": o.get("cobre") or 0, "reduccion": o.get("reduccion") or 0,
+                         "pago_comprometido": _fac_pago_comprometido(m, o.get("pago"))})
+    aut = max((_saldo._entero(o.get("autorizada")) for o in indiv.values()), default=0)
+    aut_por = next((o.get("autorizada_por") for o in indiv.values() if _saldo._entero(o.get("autorizada")) == aut and aut), None)
+    pend = next((o.get("pendiente_id") for o in indiv.values() if o.get("pendiente_id")), None)
+    eq = _saldo.equilibrio_familia(miembros, vid, out.get("pago"), aut)
+    num_m = madre_o.get("numero_ot") or "la instalación"
+    res = dict(out, familia=True, ancla_vid=int(fam["madre_id"]), autorizada=aut, autorizada_por=aut_por, pendiente_id=pend,
+               cobro_efectivo=eq["cobro_efectivo"], reduccion=eq["reduccion"], exceso=eq["exceso"],
+               falta_autorizar=eq["falta_autorizar"], pago_familia=eq["pago"], pago_otros=eq["pago_otros"],
+               cobro_familia=eq["cobro_efectivo"], miembros=[{"vid": m["vid"], "numero_ot": indiv[m["vid"]].get("numero_ot")}
+                                                            for m in miembros])
+    if eq["ok"]:
+        res.update(ok=True, code=None, estado=("autorizada" if eq["exceso"] else "ok"),
+                   mensaje=("%s (con su desinstalación) se paga sobre su punto de equilibrio por %s, con la autorización de %s."
+                            % (num_m, _saldo.clp(eq["exceso"]), aut_por or "Daniel")) if eq["exceso"] else "")
+        return res
+    res.update(ok=False, code="SOBRE_EQUILIBRIO", estado="sobre_equilibrio",
+               mensaje="%s con su desinstalación: se le pagaría %s al proveedor entre las dos OT y la nota de venta cobra %s. "
+                       "Se pasa del punto de equilibrio por %s: necesita la autorización de Daniel (se pide sobre la instalación)."
+                       % (num_m, _saldo.clp(eq["pago"]), _saldo.clp(eq["cobro_efectivo"]), _saldo.clp(eq["exceso"])))
+    if pend:
+        res["mensaje"] += " Ya está pedida (N° %s): espera su respuesta." % pend
+    return res
 
 
 _FAC_ALERTA_TIPO_TXT = {"sin_saldo": "Factura sin saldo", "saldo_insuficiente": "Saldo insuficiente"}
@@ -116326,7 +119285,8 @@ def ot2_api_resultado_financiero(vid):
         "       v.modalidad_cobro, v.cliente_id, "
         # 💰 2026-10-07 — lo demás que necesita la cuenta única (_ot_finanzas).
         "       v.zz_codigo, v.valor_origen, v.proveedor_tipo, v.valorizado_clp, v.valorizado_fuente, v.zz_motivo_manual, "
-        "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real "
+        "       " + _OT_FIN_SQL_CONTRATO_REAL + " AS contrato_real, "
+        "       " + _OT_FIN_SQL_MADRE_COLS + " "   # 🧩 2026-10-19: desinstalación cubierta
         "  FROM mant_visitas v WHERE v.id=%s", (vid,))
     if not v:
         return jsonify({"ok": False, "error": "No encontramos esa orden."}), 404
@@ -121644,7 +124604,9 @@ def mant_ot_aprobar_cierre(vid):
         "       v.tipo, v.zz_monto, v.zz_envio_monto, v.costo, c.tipo_cliente AS cliente_tipo, "
         "       v.cubierto_por, v.valor_origen, v.zz_codigo, v.contrato_id, v.proveedor_tipo, "
         "       v.valorizado_clp, v.valorizado_fuente, v.zz_motivo_manual, "
-        "       " + _ot_fin_sql_contrato_real("v") + " AS contrato_real "
+        "       " + _ot_fin_sql_contrato_real("v") + " AS contrato_real, "
+        # 🧩 2026-10-19: desinstalación cubierta (madre/hija) -- la cobertura, la puerta de cierre y la pérdida de la familia
+        "       v.ot_madre_id, v.ot_relacion, v.desinstalacion_prevista, " + _OT_FIN_SQL_MADRE_VALIDA + " AS madre_valida "
         "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
         " WHERE v.id=%s",
         (vid,))
@@ -121682,7 +124644,9 @@ def mant_ot_aprobar_cierre(vid):
     # documento ni cobro (_via_cierre la llena la puerta, más abajo).
     _interna_cierre = _ot_es_interna(v) and not v.get("cliente_id")
     _via_cierre = ""
-    _exenta_doc_cliente = _mod_cobro in ("garantia", "sin_costo") or _cob_cierre == "contrato"
+    # 🧩 2026-10-19: la desinstalación CUBIERTA tampoco pide documento propio (lo respalda la instalación, y la puerta de
+    # cierre exige que la madre tenga su factura o boleta: MADRE_SIN_FACTURA).
+    _exenta_doc_cliente = _mod_cobro in ("garantia", "sin_costo") or _cob_cierre in ("contrato", "cubierta")
     # 'interno' se exime igual que garantia/sin_costo: un trabajo interno de
     # ILUS no se factura a nadie, así que exigirle factura para firmar el
     # cierre lo dejaba trabado (Daniel 2026-08-08).
@@ -121709,7 +124673,7 @@ def mant_ot_aprobar_cierre(vid):
     _docs_cierre = _ot_puerta_docs_de(vid)
     if (_gate_on and not _interna_cierre
             and not _exenta_doc_cliente
-            and _via_cierre not in ("autorizacion_cerrar", "cobro_cero", "contrato_real", "documento")
+            and _via_cierre not in ("autorizacion_cerrar", "cobro_cero", "contrato_real", "documento", "cubierta_madre")
             and not _docs_cierre):
         return jsonify({
             "ok": False,
@@ -121825,7 +124789,10 @@ def mant_ot_aprobar_cierre(vid):
     # la autorización 'cerrar_con_perdida' de Daniel, hasta el monto autorizado. Nunca un callejón sin salida: el
     # rechazo trae la acción (pedir la autorización con argumento) y la cuenta. Mismo interruptor que los demás
     # candados; trabajo interno, garantía, contrato y cierre autorizado sin documento quedan fuera (no se cobran).
-    if _gate_on and not _interna_cierre and _cob_cierre == "cobra":
+    # 🧩 2026-10-19 (crítica 10): una desinstalación CUBIERTA también recalcula la pérdida de la FAMILIA al cerrar (una hija
+    # creada después de cerrar la madre no se escapa del candado): cobro de la instalación − técnico y despacho de la
+    # instalación y de sus desinstalaciones. La autorización se pide sobre la INSTALACIÓN (_fac_perdida_de_ot ya ancla ahí).
+    if _gate_on and not _interna_cierre and _cob_cierre in ("cobra", "cubierta"):
         try:
             _fp_c = _fac_perdida_de_ot(vid)
         except Exception as _e_fp:
@@ -121846,6 +124813,7 @@ def mant_ot_aprobar_cierre(vid):
                             "puede_pedir_autorizacion": True, "visita_id": vid,
                             "error": (f"Esta OT cierra a pérdida: cobramos {_saldo.clp(_fp_c['cobre'])} y el técnico y el "
                                       f"despacho nos cobraron {_saldo.clp(_fp_c['me_cobraron'])}, se pierden {_saldo.clp(_fp_c['perdida'])}"
+                                      + (f" ({_fp_c['incluye_txt']})" if _fp_c.get("incluye_txt") else "")
                                       + (f" (Daniel autorizó hasta {_saldo.clp(_fp_c['autorizada'])})" if _fp_c.get("autorizada") else "")
                                       + ". Para cerrarla pide la autorización de Daniel con un argumento, o revisa el "
                                         "cobro: agrega la factura que falta o corrige lo que cobró el proveedor.")}), 409
@@ -121927,7 +124895,7 @@ def mant_ot_aprobar_cierre(vid):
     _cliente_acepta_nvv = (v.get("cliente_tipo") or "").strip().lower() in ("arriendo", "leasing")
     if (_gate_on and not _interna_cierre and not _cliente_acepta_nvv
             and not _exenta_doc_cliente   # 2026-10-07: + mantención de contrato real (ver SIN_FACTURA)
-            and _via_cierre not in ("autorizacion_cerrar", "cobro_cero", "contrato_real", "documento")
+            and _via_cierre not in ("autorizacion_cerrar", "cobro_cero", "contrato_real", "documento", "cubierta_madre")
             and ((v.get("factura_tido") or "").upper() in _OT_DOCS_NOTA_VENTA)):
         _u_cierre = getattr(g, "user", None) or {}
         _es_superadmin_cierre = (_u_cierre.get("role") or "").lower() == "superadmin"
@@ -122048,7 +125016,22 @@ def mant_ot_aprobar_cierre(vid):
                         "OT cerrada con las 3 firmas y checklist completo", visita_id=vid)
         except Exception as _e_tk_est:
             print(f"[aprobar-cierre] sync estado ticket fallo vid={vid}: {_e_tk_est}", flush=True)
-        return jsonify({"ok": True, "estado": "cerrada"})
+        # 🧩 2026-10-19 (crítica 15b): una instalación que cierra con la desinstalación prevista y sin agendar AVISA (ámbar,
+        # no bloquea) y suena la campana: que no se olvide.
+        _aviso_dc = None
+        try:
+            _fm_dc = _ot_fila_basica(vid)
+            if _fm_dc and (_fm_dc.get("tipo") or "").lower() == _evt.TIPO_MADRE and not _fm_dc.get("ot_madre_id"):
+                _aviso_dc = _evt.aviso_cierre_madre(_fm_dc, _ot_hijas_de(vid))
+                if _aviso_dc:
+                    _desinst_notificar(_fm_dc, {"titulo": "Cerró con la desinstalación sin agendar",
+                                                "texto": _aviso_dc["texto"], "nivel": "ambar"}, dedup_horas=1)
+        except Exception as _e_dc:
+            print(f"[aprobar-cierre] aviso de desinstalación vid={vid}: {type(_e_dc).__name__}", flush=True)
+        _resp_cierre = {"ok": True, "estado": "cerrada"}
+        if _aviso_dc:
+            _resp_cierre["aviso_desinstalacion"] = _aviso_dc["texto"]
+        return jsonify(_resp_cierre)
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -133552,6 +136535,8 @@ _MFP_SELECT_OT = (
     "       (SELECT aq.resuelto_por_nombre FROM mant_ot_autorizaciones aq WHERE aq.id = v.cobro_cero_autorizacion_id) AS cero_aut_por, "
     "       (SELECT aq2.resuelto_at FROM mant_ot_autorizaciones aq2 WHERE aq2.id = v.cobro_cero_autorizacion_id) AS cero_aut_at, "
     "       " + _ot_fin_sql_contrato_real("v") + " AS contrato_real, "
+    # 🧩 2026-10-19: desinstalación cubierta por su instalación (la fila se rotula «Cubierta por OT-…: margen en la madre»).
+    "       " + _OT_FIN_SQL_MADRE_COLS + ", (SELECT mm.numero_ot FROM mant_visitas mm WHERE mm.id = v.ot_madre_id) AS madre_numero, "
     "       v.factura_tido, v.factura_nudo, v.created_by, v.created_at, "
     "       (SELECT tk1.numero_ticket FROM tk_tickets tk1 WHERE tk1.visita_id = v.id ORDER BY tk1.id LIMIT 1) AS ticket_numero, "
     "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
@@ -133772,6 +136757,10 @@ def _mfp_fila_ot(f):
         "falta_tecnico": _falta_tec, "falta_despacho": _falta_desp,
         "listo": (not _no_cerr) and not _falta_tec and not _falta_desp,
         "estado_fila": _estado_fila, "fin_clase": _fin["clase"], "fin_label": _fin["label"], "fin_frase": _fin["frase"],
+        # 🧩 2026-10-19: la desinstalación no cobra aparte; su margen vive en la instalación (la cuenta es de la familia).
+        "cubierta_por": (f.get("madre_numero") or "") if _fin["cobertura"] == "cubierta" else "",
+        "margen_rotulo": (("Cubierta por %s: margen en la instalación" % (f.get("madre_numero") or "la instalación"))
+                          if _fin["cobertura"] == "cubierta" else ""),
         "avisos_fila": _avisos, "cero_motivo": (f.get("cobro_cero_motivo") or "").strip().lower(),
         "cero_aut_por": _aut_por, "cero_aut_at": _aut_at,
         # 2026-09-21: la OT que aún no está cerrada se muestra (ámbar), no se esconde.
@@ -146394,9 +149383,11 @@ _OT_TOPE_SIN_CONTRATO_ACTIVO = os.environ.get(
 ).strip() == "1"
 
 
-def _ot_validar_tope_ot_sin_contrato(tecnico_ids):
+def _ot_validar_tope_ot_sin_contrato(tecnico_ids, extra=0):
     """None si ok, o el mensaje de error si alguna empresa externa entre los
     técnicos elegidos ya superó el tope de OT sin contrato registrado.
+    🧩 2026-10-19: `extra` = cuántas OT MÁS se crean en la misma operación (la instalación y su desinstalación juntas: la
+    hija suma una, crítica 30); el tope se compara contra las existentes + esas.
 
     🔴 REGLA de Daniel, 2026-09-19 (en vivo): "debería ser como un máximo de
     cinco órdenes de trabajo sin previo registro. Si le pasamos más de
@@ -146448,7 +149439,7 @@ def _ot_validar_tope_ot_sin_contrato(tecnico_ids):
             "   AND v.created_at >= %s",
             tuple(sub_uids) * 2 + (_OT_TOPE_SIN_CONTRATO_DESDE,)
         ) or {}
-        n_existentes = int(cnt_row.get("n") or 0)
+        n_existentes = int(cnt_row.get("n") or 0) + max(0, int(extra or 0))
         if n_existentes >= _OT_TOPE_SIN_CONTRATO:
             if emp.get("estado") == "activo":
                 try:
@@ -161058,6 +164049,14 @@ try:
         _ensure_mant_visita_documentos()
 except Exception as _ensure_vdoc_err:
     print(f"[ILUS][WARN] _ensure_mant_visita_documentos: {_ensure_vdoc_err}", flush=True)
+
+# 🗓️ Eventos y OT de desinstalación (madre e hija), Daniel 2026-10-19 — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
+# Va DESPUÉS de mant_visita_documentos (agrega heredado_de_visita_id a esa tabla).
+try:
+    with app.app_context():
+        _ensure_ot_eventos_cols()
+except Exception as _ensure_evt_err:
+    print(f"[ILUS][WARN] _ensure_ot_eventos_cols: {_ensure_evt_err}", flush=True)
 
 # RUT de la contraparte (quien recibe al técnico en sitio),
 # Daniel 2026-08-30 — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.

@@ -523,7 +523,8 @@ class TestPerdidaEnElCierre(unittest.TestCase):
         app = _leer("app.py")
         # 🗓️ 2026-10-12: después se agregó «documento_observado» al final (mismo tuple y misma sentencia).
         self.assertIn('"cerrar_con_perdida"', app.split("_OT_AUT_TIPOS = ", 1)[1].split(")", 1)[0])
-        self.assertIn("'exceder_saldo','cerrar_con_perdida','documento_observado') NOT NULL", app)
+        # 🧩 2026-10-19: y después «desinstalacion_cubierta» (mismo tuple, misma sentencia).
+        self.assertIn("'exceder_saldo','cerrar_con_perdida','documento_observado','desinstalacion_cubierta') NOT NULL", app)
         self.assertNotIn("MODIFY tipo ENUM('crear_sin_documento','cobro_cero','cerrar_sin_documento','exceder_saldo') NOT NULL", app)
 
     def test_candado_despues_del_costo_del_proveedor_y_antes_del_anexo(self):
@@ -532,7 +533,8 @@ class TestPerdidaEnElCierre(unittest.TestCase):
         i_per = f.index('"CIERRE_CON_PERDIDA"')
         self.assertLess(i_prov, i_per)
         self.assertIn("_fac_perdida_de_ot(vid)", f)
-        self.assertIn('_cob_cierre == "cobra"', f[i_prov:i_per + 200])
+        # 🧩 2026-10-19: una desinstalación CUBIERTA recalcula la pérdida de la familia al cerrar (junto con la que se cobra).
+        self.assertIn('_cob_cierre in ("cobra", "cubierta")', f[i_prov:i_per + 200])
         self.assertIn('"accion": _ot_cierre_accion("CIERRE_CON_PERDIDA", vid)', f)
 
     def test_perdida_info_lee_la_autorizacion_mayor(self):

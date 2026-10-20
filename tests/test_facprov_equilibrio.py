@@ -88,7 +88,9 @@ def _motor(fin=None, puerta=None, aportes=None, docs=(("FCV", "0000011439"),), c
         "_fac_pagados_a_proveedor": lambda vids: set(pagados),
         "_saldo": S,
     }
-    return _exec("_fac_equilibrio_ot", amb)
+    # 2026-10-19: la evaluación INDIVIDUAL de una OT es _fac_equilibrio_ot_solo; _fac_equilibrio_ot (la pública) la une con
+    # su familia instalación/desinstalación (tests/test_ot_eventos_desinstalacion.py::TestEquilibrioFamiliaEnApp).
+    return _exec("_fac_equilibrio_ot_solo", amb)
 
 
 OTRA = {"vid": 60, "numero_ot": "OT-2026-00360", "cliente": "Gimnasio de ejemplo", "estado": "cerrada",
