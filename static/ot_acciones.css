@@ -42,6 +42,21 @@
 /* Los sellos nuevos son más largos («Fuera de servicio», «Dado de baja»): en el celular el sello baja a 2 líneas en vez de
    aplastar el nombre del equipo, que tiene que leerse completo (REGLA #15). */
 @media(max-width:575.98px){.otd-wk-item summary .sel{white-space:normal;line-height:1.15;max-width:88px;min-width:0;padding:4px 8px}}
+/* 2026-10-20: en el celular el número, la miniatura, el sello y la flecha dejaban al nombre en ~70 px («Pendul / um»).
+   Grilla: número · foto · NOMBRE (todo el ancho que queda) · flecha; el sello baja bajo el nombre y la barra ocupa la fila
+   completa. Cualquier otro hijo del resumen va a todo el ancho (nunca se esconde nada). */
+@media(max-width:575.98px){
+  .otd-wk-list .otd-wk-item summary{display:grid;grid-template-columns:26px 40px minmax(0,1fr) 16px;column-gap:10px;row-gap:6px;align-items:center}
+  .otd-wk-list .otd-wk-item summary > *{grid-column:1 / -1}
+  .otd-wk-list .otd-wk-item summary > .num{grid-column:1;grid-row:1}
+  .otd-wk-list .otd-wk-item summary > .th{grid-column:2;grid-row:1}
+  .otd-wk-list .otd-wk-item summary > .nm{grid-column:3;grid-row:1}
+  .otd-wk-list .otd-wk-item summary > .chev{grid-column:4;grid-row:1;margin-left:0}
+  .otd-wk-list .otd-wk-item summary > .sel{grid-column:3 / 5;grid-row:2;justify-self:start;max-width:none;white-space:nowrap}
+  .otd-wk-list .otd-wk-item .nm b{overflow-wrap:normal;word-break:normal;hyphens:manual}
+  /* El nombre completo ya está justo arriba, en la tarjeta: en el celular el botón dice solo «Pedir repuesto». */
+  .otd-acc .oa-primary .oa-eqn{display:none}
+}
 .otd-acc{flex:0 0 100%;min-width:0;max-width:100%;order:99;display:flex;flex-direction:column;gap:8px;margin:6px 0 2px;cursor:default;
   font-family:var(--oa-body);-webkit-tap-highlight-color:transparent}
 .otd-acc:empty{display:none}
@@ -72,7 +87,7 @@
 @keyframes oaPulse{
   0%,100%{box-shadow:0 6px 16px rgba(37,99,235,.26),0 0 0 0 rgba(37,99,235,.38)}
   50%{box-shadow:0 6px 16px rgba(37,99,235,.26),0 0 0 9px rgba(37,99,235,0)}}
-.oa-primary .oa-eqn{font-weight:600;opacity:.9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.oa-primary .oa-eqn{font-weight:600;opacity:.9;min-width:0;white-space:normal;overflow-wrap:normal} /* 2026-10-20: nombre completo, nunca cortado con «…» (REGLA #15) */
 .oa-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
 .oa-grid>*{min-width:0}
 .oa-grid .oa-btn{min-height:52px;padding:0 10px;font-size:15.5px;justify-content:flex-start;text-align:left;gap:8px}
@@ -94,25 +109,25 @@
 .oa-dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block}
 .oa-dot.g{background:var(--oa-green)}.oa-dot.a{background:var(--oa-amber)}.oa-dot.x{background:#9ca3af}.oa-dot.r{background:var(--oa-red)}
 
-/* FUERA DE SERVICIO: rojo llamativo (Daniel: es seguridad, tiene que verse desde lejos) */
+/* FUERA DE SERVICIO: se ve claro sin gritar. 2026-10-20 (Daniel: «tiene un color rojo muy fuerte… que fuera más piolita»):
+   fondo rojo muy claro, franja roja a la izquierda e ícono rojo; el texto en rojo oscuro. Baja = gris oscuro suave; No llegó = gris. */
 .oa-fsb{position:relative;display:grid;grid-template-columns:44px 1fr;gap:10px;align-items:center;padding:10px 12px;
-  border-radius:14px;color:#fff;background:linear-gradient(135deg,#dc2626,#b91c1c);border:2px solid #7f1d1d;
-  box-shadow:0 6px 18px rgba(185,28,28,.32);overflow:hidden}
-.oa-fsb::before{content:"";position:absolute;inset:0;background-image:repeating-linear-gradient(135deg,rgba(255,255,255,.08) 0 10px,transparent 10px 20px);pointer-events:none}
+  border-radius:14px;color:#7f1d1d;background:#fef2f2;border:1px solid #fecaca;border-left:5px solid var(--oa-red);
+  box-shadow:0 2px 8px rgba(220,38,38,.10);overflow:hidden}
 .oa-fsb>*{position:relative}
-.oa-fsb .ic{width:44px;height:44px;border-radius:50%;background:#fff;color:var(--oa-red);display:grid;place-items:center;font-size:24px}
-.oa-fsb b{display:block;font:800 21px/1.05 var(--oa-cond);letter-spacing:.06em;text-transform:uppercase}
-.oa-fsb .why{display:block;font:600 14.5px/1.3 var(--oa-body);margin-top:2px;overflow-wrap:anywhere}
-.oa-fsb .since{display:block;font:700 12.5px/1.2 var(--oa-body);margin-top:3px;opacity:.92;letter-spacing:.02em}
-.oa-fsb .risk{display:inline-flex;align-items:center;gap:5px;margin-top:6px;padding:3px 9px;border-radius:999px;background:#fff;
-  color:var(--oa-red-d);font:800 12px/1.1 var(--oa-body);letter-spacing:.06em;text-transform:uppercase}
-.oa-fsb.baja{background:linear-gradient(135deg,#27272a,#0a0a0a);border-color:#000;box-shadow:0 6px 18px rgba(10,10,10,.3)}
-.oa-fsb.baja .ic{color:var(--oa-ink)}
-.oa-fsb.nl{background:linear-gradient(135deg,#6b7280,#4b5563);border-color:#374151;box-shadow:0 6px 18px rgba(75,85,99,.28)}
-.oa-fsb.nl .ic{color:#4b5563}
+.oa-fsb .ic{width:44px;height:44px;border-radius:50%;background:var(--oa-red);color:#fff;display:grid;place-items:center;font-size:22px}
+.oa-fsb b{display:block;font:800 19px/1.05 var(--oa-cond);letter-spacing:.06em;text-transform:uppercase;color:var(--oa-red-d)}
+.oa-fsb .why{display:block;font:600 14.5px/1.3 var(--oa-body);margin-top:2px;overflow-wrap:anywhere;color:#7f1d1d}
+.oa-fsb .since{display:block;font:600 12.5px/1.2 var(--oa-body);margin-top:3px;color:#9f1239;opacity:.85;letter-spacing:.02em}
+.oa-fsb .risk{display:inline-flex;align-items:center;gap:5px;margin-top:6px;padding:3px 9px;border-radius:999px;background:var(--oa-red);
+  color:#fff;font:800 12px/1.1 var(--oa-body);letter-spacing:.06em;text-transform:uppercase}
+.oa-fsb.baja{background:#f4f4f5;border-color:#e4e4e7;border-left-color:#27272a;color:#27272a;box-shadow:0 2px 8px rgba(10,10,10,.08)}
+.oa-fsb.baja .ic{background:#27272a;color:#fff}.oa-fsb.baja b,.oa-fsb.baja .why,.oa-fsb.baja .since{color:#27272a}
+.oa-fsb.nl{background:#f3f4f6;border-color:#e5e7eb;border-left-color:#6b7280;color:#374151;box-shadow:0 2px 8px rgba(75,85,99,.08)}
+.oa-fsb.nl .ic{background:#6b7280;color:#fff}.oa-fsb.nl b,.oa-fsb.nl .why,.oa-fsb.nl .since{color:#374151}
 .oa-fsb .act{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-.oa-fsb .act .oa-btn{min-height:44px;font-size:14.5px;padding:0 14px;background:#fff;color:var(--oa-red-d);border-color:#fff;box-shadow:none}
-.oa-fsb.baja .act .oa-btn,.oa-fsb.nl .act .oa-btn{color:#1f2937}
+.oa-fsb .act .oa-btn{min-height:44px;font-size:14.5px;padding:0 14px;background:#fff;color:var(--oa-red-d);border:1px solid #fecaca;box-shadow:none}
+.oa-fsb.baja .act .oa-btn,.oa-fsb.nl .act .oa-btn{color:#1f2937;border-color:#d1d5db}
 @media(prefers-reduced-motion:no-preference){.oa-fsb:not(.baja):not(.nl) .ic{animation:oaBlink 1.8s ease-in-out infinite}}
 @keyframes oaBlink{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
 

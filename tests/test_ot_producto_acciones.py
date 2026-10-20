@@ -509,8 +509,10 @@ class TestBarraDeAcciones(unittest.TestCase):
         self.assertIn("'Fuera de servicio', 'sign-stop-fill'", ACC_JS)
         self.assertIn("desdeTxt(", ACC_JS)
         self.assertIn("Puede lastimar a alguien", ACC_JS)
-        for css in (".oa-fsb{", "linear-gradient(135deg,#dc2626,#b91c1c)", ".oa-fsb .risk{"):
+        # 2026-10-20 (Daniel: «más piolita»): fondo rojo claro + franja roja, sin el degradado rojo intenso.
+        for css in (".oa-fsb{", "background:#fef2f2", "border-left:5px solid var(--oa-red)", ".oa-fsb .risk{"):
             self.assertIn(css, ACC_CSS, css)
+        self.assertNotIn("linear-gradient(135deg,#dc2626,#b91c1c)", ACC_CSS)
         # la ficha del cliente (lista de equipos) y la ficha del equipo: «FUERA DE SERVICIO · motivo · desde dd/mm hh:mm»
         for tpl in (FICHA, MAQ_FICHA):
             self.assertIn('class="eq-fsb"', tpl)
