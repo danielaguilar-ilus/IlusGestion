@@ -1,0 +1,18 @@
+/* 🚨 2026-10-20 (Daniel): un equipo FUERA DE SERVICIO se ve llamativo, en rojo, con el motivo y desde cuándo: «FUERA DE SERVICIO ·
+   <motivo> · desde dd/mm hh:mm». Es seguridad: tiene que verse desde lejos. Lo usan la lista de equipos de la ficha del cliente
+   (mantenciones/ficha.html), la ficha del equipo (maquina_ficha.html) y, con otro nombre de clase, la tarjeta del equipo en la OT
+   (static/ot_acciones.css → .oa-fsb). Un solo texto y una sola fuente de datos: la parada ABIERTA del equipo (app.py::_fs_info_maquinas). */
+.eq-fsb{display:flex;gap:10px;align-items:flex-start;margin-top:6px;padding:8px 10px;border-radius:12px;color:#fff;
+  background:linear-gradient(135deg,#dc2626,#b91c1c);border:2px solid #7f1d1d;box-shadow:0 4px 12px rgba(185,28,28,.28);max-width:440px;
+  position:relative;overflow:hidden}
+.eq-fsb::before{content:"";position:absolute;inset:0;background-image:repeating-linear-gradient(135deg,rgba(255,255,255,.08) 0 10px,transparent 10px 20px);pointer-events:none}
+.eq-fsb > *{position:relative}
+.eq-fsb > i{font-size:1.5rem;flex:none;margin-top:1px;background:#fff;color:#dc2626;border-radius:50%;width:32px;height:32px;
+  display:grid;place-items:center;font-size:1.05rem}
+.eq-fsb b{display:block;font-weight:800;font-size:.82rem;letter-spacing:.06em;text-transform:uppercase;line-height:1.15}
+.eq-fsb .why{display:block;font-style:normal;font-size:.78rem;font-weight:600;line-height:1.3;overflow-wrap:anywhere;margin-top:2px}
+.eq-fsb .since{display:block;font-style:normal;font-size:.7rem;font-weight:700;opacity:.92;margin-top:2px}
+.eq-fsb .risk{display:inline-flex;align-items:center;gap:4px;margin-top:5px;padding:2px 8px;border-radius:999px;background:#fff;color:#b91c1c;
+  font-style:normal;font-size:.66rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
+.eq-row-fs{background:#fff5f5}
+.eq-row-fs > td:first-child{box-shadow:inset 4px 0 0 #dc2626}

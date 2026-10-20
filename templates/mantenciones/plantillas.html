@@ -305,6 +305,10 @@
       <i class="bi bi-clipboard2-check me-1"></i>Tipos de trabajo interno
     </button>
     {% endif %}
+    {#- 🎛️ 2026-10-20 (REGLA #32): lo que el sistema PROPONE cambiar en las plantillas existentes. Nada se aplica solo. -#}
+    <button type="button" class="btn btn-sm btn-outline-primary fw-bold" onclick="abrirPropuestas()" id="btnPropuestas">
+      <i class="bi bi-lightbulb me-1"></i>Propuestas del sistema<span id="propBadge" hidden></span>
+    </button>
     <button class="btn btn-sm btn-ilus fw-bold" onclick="abrirEditor(null)">
       <i class="bi bi-plus-circle me-1"></i>Nueva plantilla
     </button>
@@ -392,6 +396,56 @@
 {# ═══════════════════════════════════════════════════════
    MODAL: EDITOR DE PLANTILLA (form-builder)
    ═══════════════════════════════════════════════════════ #}
+{#- 🎛️ 2026-10-20 (REGLA #32 — Daniel: «como es regla estricta del proyecto, no debes imponer o gestionar más checklists, sino los
+    que impone el usuario»): PROPUESTAS DEL SISTEMA. Antes, en cada arranque el sistema llevaba los bloques «Revisión — …» a la versión
+    esencial y agregaba «Foto de entrega» a las plantillas de instalación POR DETRÁS. Ahora es una propuesta: aquí ves la plantilla
+    actual junto a la propuesta y DECIDES. «Crear como plantilla nueva» (recomendado) deja la actual intacta; «Reemplazar el contenido»
+    es solo de gestión, pide confirmación, queda en la bitácora y nunca aplica a las plantillas «(LU)» de Lenin. REGLA #15: nombres
+    completos, nada truncado; REGLA #1: confirmaciones con ilusConfirm. -#}
+<style>
+.prop-card{background:#fff;border:1.5px solid #e5e7eb;border-left:5px solid #f59e0b;border-radius:14px;padding:14px 14px 12px;margin-bottom:12px;box-shadow:0 1px 2px rgba(16,24,40,.05)}
+.prop-card.editada{border-left-color:#dc2626}
+.prop-h{display:flex;gap:10px;align-items:flex-start}
+.prop-ic{width:36px;height:36px;border-radius:50%;background:#fff8e1;color:#b45309;border:2px solid #f59e0b;display:grid;place-items:center;flex:none}
+.prop-h b{font-size:1.02rem;display:block;line-height:1.2}
+.prop-n{font-size:.88rem;color:#374151;overflow-wrap:anywhere}
+.prop-exp{margin:8px 0;font-size:.86rem;color:#4b5563}
+.prop-chg{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}
+.prop-chg .lbl{font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#6b7280}
+.prop-chip{display:inline-flex;gap:4px;align-items:center;padding:3px 9px;border-radius:999px;font-size:.78rem;font-weight:700;overflow-wrap:anywhere}
+.prop-chip.add{background:#dcfce7;color:#166534;border:1px solid #86efac}
+.prop-chip.del{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
+.prop-adv{display:flex;gap:8px;align-items:flex-start;padding:8px 10px;border-radius:10px;background:#fff8e1;border:1px solid #fcd34d;color:#92400e;font-size:.82rem;margin:8px 0}
+.prop-card details{margin:8px 0}
+.prop-card summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:700;font-size:.86rem;color:#1d4ed8}
+.prop-cmp{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:767.98px){.prop-cmp{grid-template-columns:1fr}}
+.prop-cmp h6{font-size:.78rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;margin:0 0 6px}
+.prop-cmp ol{margin:0;padding-left:1.2rem;font-size:.82rem}
+.prop-cmp li{margin-bottom:4px;overflow-wrap:anywhere}
+.prop-cmp li small{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;background:#f3f4f6;color:#4b5563;font-weight:700;font-size:.66rem}
+.prop-cmp li.nuevo{background:#f0fdf4;border-radius:6px;padding:1px 4px}
+.prop-act{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.prop-act .btn{min-height:46px;font-weight:700}
+.prop-no{font-size:.78rem;color:#6b7280;margin-top:6px}
+#propBadge{background:#dc2626;color:#fff;border-radius:999px;font-size:.68rem;padding:1px 7px;margin-left:4px}
+</style>
+<div class="modal fade" id="modalPropuestas" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
+    <div class="modal-content" style="border-radius:14px">
+      <div class="modal-header py-2" style="background:#0a0a0a;color:#fff">
+        <h6 class="modal-title fw-bold"><i class="bi bi-lightbulb-fill me-2" style="color:#f59e0b"></i>Propuestas del sistema</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar" style="width:44px;height:44px"></button>
+      </div>
+      <div class="modal-body" style="background:#f4f4f5">
+        <p class="small text-muted mb-3">El sistema <b>sugiere</b>; tú <b>decides</b>. Ninguna plantilla cambia sola: aquí ves la actual junto a la propuesta.
+          Lo más seguro es <b>crear una plantilla nueva</b> (la actual queda intacta). Las OT ya creadas conservan su copia.</p>
+        <div id="propLista"><div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>Calculando propuestas…</div></div>
+      </div>
+      <div class="modal-footer py-2"><button type="button" class="btn btn-outline-secondary" style="min-height:44px" data-bs-dismiss="modal">Cerrar</button></div>
+    </div>
+  </div>
+</div>
 <div class="modal fade" id="modalEditorPlantilla" tabindex="-1" data-bs-backdrop="static">
   <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
     <div class="modal-content">
@@ -2095,5 +2149,95 @@ async function ptiDesactivar(){
 // escHtml (helper anti-XSS) ya está definido más arriba en este mismo
 // <script> (línea ~869) -- se reusa tal cual para pintar nombres/
 // descripciones que vienen de la BD, no se redeclara acá.
+/* ═══ 🎛️ 2026-10-20 (REGLA #32) — PROPUESTAS DEL SISTEMA. El servidor calcula y aplica; aquí solo se muestra y se decide. ═══ */
+let _PROP = [];
+let _PROP_PUEDE = false;
+function propItemHtml(it, nuevo){
+  const ins = [];
+  if (it.obligatoria) ins.push('obligatoria');
+  if (it.requiere_foto) ins.push('foto');
+  else if (it.foto_si_hallazgo) ins.push('foto si hay hallazgo');
+  return '<li' + (nuevo ? ' class="nuevo"' : '') + '>' + escHtml(it.titulo) + ins.map(x => '<small>' + escHtml(x) + '</small>').join('') + '</li>';
+}
+function propRender(){
+  const cont = document.getElementById('propLista');
+  if (!_PROP.length){
+    cont.innerHTML = '<div class="text-center py-4"><i class="bi bi-check-circle-fill" style="color:#16a34a;font-size:2rem"></i><div class="fw-bold mt-2">No hay nada que proponer</div>' +
+      '<div class="small text-muted">Tus plantillas ya están como las dejaste.</div></div>';
+    return;
+  }
+  cont.innerHTML = _PROP.map((p, i) => {
+    const tit = new Set(p.actual.map(x => x.titulo));
+    return '<div class="prop-card' + (p.estado === 'editada' ? ' editada' : '') + '"><div class="prop-h"><span class="prop-ic"><i class="bi bi-lightbulb-fill"></i></span>' +
+      '<div><b>' + escHtml(p.titulo) + '</b><div class="prop-n">' + escHtml(p.nombre) + '</div></div></div>' +
+      '<div class="prop-exp">' + escHtml(p.explicacion) + '</div>' +
+      (p.agregan.length ? '<div class="prop-chg"><span class="lbl">Agregaría</span>' + p.agregan.map(t => '<span class="prop-chip add"><i class="bi bi-plus-lg"></i>' + escHtml(t) + '</span>').join('') + '</div>' : '') +
+      (p.quitan.length ? '<div class="prop-chg"><span class="lbl">Quitaría</span>' + p.quitan.map(t => '<span class="prop-chip del"><i class="bi bi-dash-lg"></i>' + escHtml(t) + '</span>').join('') + '</div>' : '') +
+      (p.advertencia ? '<div class="prop-adv"><i class="bi bi-exclamation-triangle-fill"></i><span>' + escHtml(p.advertencia) + '</span></div>' : '') +
+      '<details><summary><i class="bi bi-columns-gap me-2"></i>Ver la plantilla actual y la propuesta, lado a lado</summary><div class="prop-cmp">' +
+      '<div><h6>Actual (' + p.actual.length + ' ítems)</h6><ol>' + p.actual.map(it => propItemHtml(it, false)).join('') + '</ol></div>' +
+      '<div><h6>Propuesta (' + p.propuesta.length + ' ítems)</h6><ol>' + p.propuesta.map(it => propItemHtml(it, !tit.has(it.titulo))).join('') + '</ol></div></div></details>' +
+      '<div class="prop-act"><button type="button" class="btn btn-ilus" onclick="propAplicar(' + i + ', \'nueva\')"><i class="bi bi-files me-1"></i>Crear como plantilla nueva <small class="ms-1 fw-normal">(recomendado)</small></button>' +
+      '<button type="button" class="btn btn-outline-danger"' + (p.puede_reemplazar ? '' : ' disabled aria-disabled="true"') + ' onclick="propAplicar(' + i + ', \'reemplazar\')"><i class="bi bi-arrow-repeat me-1"></i>Reemplazar el contenido</button></div>' +
+      (p.puede_reemplazar ? '' : '<div class="prop-no"><i class="bi bi-info-circle me-1"></i>' + escHtml(p.motivo_no_reemplazo || 'No se puede reemplazar el contenido.') + '</div>') + '</div>';
+  }).join('');
+}
+async function propCargar(silencioso){
+  try {
+    const r = await fetch('/mantenciones/api/plantillas/propuestas', {credentials: 'same-origin', cache: 'no-store'});
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'error');
+    _PROP = j.propuestas || []; _PROP_PUEDE = !!j.puede_reemplazar;
+  } catch(e){
+    _PROP = [];
+    if (!silencioso){
+      document.getElementById('propLista').innerHTML = '<div class="alert alert-warning mb-0">No se pudieron calcular las propuestas. Intenta de nuevo en un momento.</div>';
+      return;
+    }
+  }
+  const b = document.getElementById('propBadge');
+  if (b){ b.hidden = !_PROP.length; b.textContent = String(_PROP.length); }
+  if (!silencioso) propRender();
+}
+function abrirPropuestas(){
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPropuestas')).show();
+  document.getElementById('propLista').innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>Calculando propuestas…</div>';
+  propCargar(false);
+}
+async function propAplicar(i, modo){
+  const p = _PROP[i];
+  if (!p) return;
+  const nueva = modo === 'nueva';
+  const ok = await ilusConfirm(nueva ? {
+    title: 'Crear plantilla nueva',
+    message: 'Se crea una copia de «' + p.nombre + '» con «' + p.titulo + '».',
+    sub: 'La plantilla actual no se toca. Las OT ya creadas conservan su copia.',
+    okLabel: 'Crear plantilla nueva', cancelLabel: 'Cancelar', type: 'question'
+  } : {
+    title: 'Reemplazar el contenido',
+    message: 'Vas a reemplazar el contenido de «' + p.nombre + '» con «' + p.titulo + '».',
+    sub: 'Las OT que se creen desde ahora usarán la propuesta. Las ya creadas conservan su copia. Queda en la bitácora con tu nombre.',
+    okLabel: 'Sí, reemplazar', cancelLabel: 'No, dejarla', danger: true
+  });
+  if (!ok) return;
+  try {
+    const r = await fetch('/mantenciones/api/plantillas/propuestas/aplicar', {
+      method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+      body: JSON.stringify({tipo: p.tipo, plantilla_id: p.plantilla_id, modo: modo, huella: p.huella})
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok){
+      await ilusAlert({title: 'No se aplicó', message: (j && j.error) || 'No se pudo aplicar la propuesta.', type: 'warning'});
+      await propCargar(false);
+      return;
+    }
+    ilusToast(nueva ? '✓ Plantilla nueva creada: «' + (j.nombre || '') + '»' : '✓ Contenido reemplazado', {type: 'success'});
+    await propCargar(false);
+    if (typeof cargarPlantillas === 'function') cargarPlantillas();
+  } catch(e){
+    ilusToast('Error de conexión: no se aplicó nada.', {type: 'error'});
+  }
+}
+document.addEventListener('DOMContentLoaded', () => { propCargar(true); });
 </script>
 {% endblock %}

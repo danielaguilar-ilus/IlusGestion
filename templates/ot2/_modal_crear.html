@@ -1299,7 +1299,10 @@
   #o2mTareasList .o2m-rv-table tbody tr td[colspan]{grid-column:1 / -1;text-align:center;padding:12px 0}
   #o2mTareasList .o2m-her{min-width:0}
   #o2mTareasList .o2m-rv-x{min-width:44px;min-height:44px}
-  #o2mTareasList .o2m-rv-clase-sel{font-size:16px;min-height:40px}   /* iOS no hace zoom con 16px */
+  #o2mTareasList .o2m-rv-clase-sel{font-size:16px;min-height:44px}   /* iOS no hace zoom con 16px */
+  /* 🧾 2026-10-20 (revisión de la Etapa 1, REGLA #3): toques de 44px también en el selector de CHECKLIST, la
+     cantidad editable y «Recordar para este producto» (medían 34, 40 y 32px). */
+  #o2mTareasList .o2m-rv-table select, #o2mTareasList .o2m-rv-cant, #o2mTareasList .o2m-her-rec{min-height:44px}
 }
 /* 🧾 2026-10-19 (revisión de la Etapa 1, REGLA #15): en celular el select del CHECKLIST cortaba el nombre del bloque
    («Cargas libres (por líne», «Bicicleta (transmisión y co…»): la tarjeta recibe ~277px a 390px. Ahí la celda usa
@@ -5420,6 +5423,8 @@ window.OT2C = (function(){
   // La casilla = INCLUIR EN LA REVISIÓN (decisión de Daniel). Reemplaza la casilla «Llegó / No llegó»: el faltante se
   // declara en la revisión de cada producto (ítem «¿Faltan piezas o accesorios?» de la base). Una fila desmarcada se
   // sigue viendo, atenuada, y NO se envía al crear la OT.
+  // Tope de filas por OT: el mismo que el servidor (_OT2_TAREAS_MANUALES_MAX).
+  var O2M_MAX_FILAS = 150;
   function _o2mTmIncluida(tm){ return !!tm && !tm.excluida; }
   function _o2mTareasIncluidas(){ return (S.tareas_manuales || []).filter(_o2mTmIncluida); }
   function _o2mTmNombre(tm){
@@ -5553,6 +5558,8 @@ window.OT2C = (function(){
           '<div class="o2m-eq-modos">' + _o2mTmModosHtml(hayDoc, lista.length) +
             (nSinClase ? '<span class="o2m-eq-modo-aviso">' + nSinClase + (nSinClase === 1 ? ' producto sin clase' : ' productos sin clase') +
               ': clasifícalo o elige su bloque</span>' : '') +
+            (nIncl > O2M_MAX_FILAS ? '<span class="o2m-eq-modo-aviso">Son ' + nIncl + ' filas incluidas y el máximo por OT es ' +
+              O2M_MAX_FILAS + ': desmarca algunas y crea el resto en otra OT</span>' : '') +
           '</div>' +
         '</div>' +
         '<div class="o2m-rv-wrap"><table class="o2m-eq-table o2m-rv-table">' + cabecera + '<tbody>' +
@@ -5574,6 +5581,9 @@ window.OT2C = (function(){
   function toggleIncluirTodos(){
     var algunoFuera = S.tareas_manuales.some(function(t){ return !_o2mTmIncluida(t); });
     S.tareas_manuales.forEach(function(t, i){ _o2mTmMarcar(i, algunoFuera); });
+    // 🧾 2026-10-20 (revisión de la Etapa 1): el chip de modo sigue a lo que muestra la tabla (antes «Todo el documento»
+    // seguía marcado con 0 de 20 incluidos y, al agregar otro documento, sus filas entraban desmarcadas).
+    S.tm_modo = algunoFuera ? 'todo' : 'mano';
     pintarTareasManuales(); refrescarAnclas();
   }
   // «Todo el documento» incluye todas las filas; «Elijo a mano» parte sin ninguna (las filas no se pierden: siguen
@@ -6036,7 +6046,21 @@ window.OT2C = (function(){
     pintarTareasManuales();
     refrescarAnclas();
   }
-  function quitarTareaManual(i){
+  // 🧾 2026-10-20 (revisión de la Etapa 1): quitar una fila la borra de la tabla (y si era una unidad, volver a agregar el
+  // documento no la repone). Con «dos dedos» un toque desviado quitaba una fila en vez de desmarcarla: ahora pregunta
+  // y recuerda que desmarcar la casilla la deja fuera sin perderla. REGLA #1: ilusConfirm, nunca confirm().
+  async function quitarTareaManual(i){
+    var tm = S.tareas_manuales[i]; if (!tm) return;
+    var ok = true;
+    if (window.ilusConfirm){
+      ok = await ilusConfirm({
+        title: 'Quitar de la tabla',
+        message: '¿Quitar «' + _o2mTmNombre(tm) + '» de esta OT?',
+        sub: 'Si solo quieres dejarlo fuera de la revisión, desmarca su casilla: así no se pierde y lo puedes incluir de nuevo.',
+        okLabel: 'Sí, quitarlo', cancelLabel: 'Mejor no', danger: true,
+      });
+    }
+    if (!ok) return;
     S.tareas_manuales.splice(i,1);
     pintarTareasManuales();
     refrescarAnclas();
@@ -10767,6 +10791,14 @@ window.OT2C = (function(){
 
   function crear(){
     if (!validarTodo()) return;
+    // 🧾 2026-10-20 (revisión de la Etapa 1): el servidor cortaba en silencio las filas sobre el tope; ahora se avisa
+    // aquí (y el servidor responde un error claro si algo se cuela).
+    if (esInterno() && _o2mTareasIncluidas().length > O2M_MAX_FILAS){
+      if (window.ilusAlert) ilusAlert({title: 'Demasiadas filas en una OT',
+        message: 'Incluiste ' + _o2mTareasIncluidas().length + ' filas y el máximo es ' + O2M_MAX_FILAS + '.',
+        sub: 'Desmarca algunas y crea el resto en otra OT.', type: 'warning'});
+      return;
+    }
     var body = {
       tipo_ot: S.tipo, descubrimiento: S.descubrimiento,
       cliente_id: esInterno() ? null : (S.cliente ? S.cliente.id : null),

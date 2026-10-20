@@ -58,7 +58,7 @@ def _cargar(funcs=(), consts=(), amb=None):
 
 _CONSTS = ("_CHK_RESULTADO_OPCIONES_ANTERIOR", "_CHK_BLOQUES_SEED_ANTERIOR", "_CHK_RESULTADO_OPCIONES",
            "_CHK_BLOQUES_SEED", "_CHK_BASE_CONTROL_CALIDAD", "_CHK_COND_CONTROL_CALIDAD", "_CHK_SELECTOR",
-           "_CHK_RES_APTO", "_CHK_RES_APTO_OBS", "_CHK_RES_NO_LLEGO", "_CHK_MOTIVO_TXT", "_CHK_ESENCIAL_MARCA")
+           "_CHK_RES_APTO", "_CHK_RES_APTO_OBS", "_CHK_RES_NO_LLEGO", "_CHK_MOTIVO_TXT")
 _PURAS = ("_tarea_vj", "_chk_txt_norm", "_chk_opciones", "_chk_es_resultado", "_chk_opcion", "_chk_valor_verif",
           "_chk_grupo_clave", "_chk_revision_evaluar", "_chk_resultado_rechazo", "_chk_titulos",
           "_chk_esencial_plan", "_fsh_ins")
@@ -202,193 +202,30 @@ class TestPlanDeMigracion(unittest.TestCase):
         self.assertEqual((p0["accion"], p0["desc_nueva"]), ("migrar", None))   # los ítems sí, el texto suyo no
 
 
-class _Mundo:
-    """Base en memoria con lo justo para _ensure_bloques_revision_esencial."""
+class TestElArranqueNoMigraNada(unittest.TestCase):
+    """🎛️ 2026-10-20 (REGLA #32 — Daniel: «como es regla estricta del proyecto, no debes imponer o gestionar más checklists,
+    sino los que impone el usuario»): la migración de producción a la versión esencial ya NO corre al arrancar. Es una
+    PROPUESTA: la plantilla actual junto a la propuesta, y una persona decide (crear una nueva, recomendado, o reemplazar).
+    Las funciones puras del plan (_chk_esencial_plan) siguen, probadas arriba, porque alimentan la propuesta."""
 
-    def __init__(self, k, editar=None):
-        self.k = k
-        bloques, items = _bd_desde(k["_CHK_BLOQUES_SEED_ANTERIOR"], editar=editar)
-        self.plantillas = {b["id"]: dict(b) for b in bloques}
-        self.items = {}
-        for it in items:
-            self.items.setdefault(it["plantilla_id"], []).append(
-                {"titulo": it["titulo"], "orden": it["orden"], "id": it["id"], "foto_si_hallazgo": 0})
-        self.logs, self.sql, self.consultas = [], [], 0
-
-    # mysql_* del pool
-    def fetchone(self, sql, params=None):
-        self.consultas += 1
-        if "FROM mant_logs" in sql:
-            hay = any(l[0] == "sistema" and l[2] == params[2] for l in self.logs)
-            return {"id": 1} if hay else None
-        raise AssertionError(sql)
-
-    def fetchall(self, sql, params=None):
-        self.consultas += 1
-        if "FROM mant_tarea_plantillas" in sql:
-            return [dict(p) for p in self.plantillas.values() if p["nombre"] in params]
-        if "FROM mant_tarea_plantilla_items" in sql:
-            return [dict(it, plantilla_id=pid) for pid, its in self.items.items() if pid in params for it in its]
-        raise AssertionError(sql)
-
-    def execute(self, sql, params=None):
-        self.consultas += 1
-        if "INSERT INTO mant_logs" in sql:
-            self.logs.append(params[:4] if len(params) > 4 else params)
-            return 1
-        raise AssertionError(sql)
-
-    def mant_log(self, entidad, eid, accion, detalle=""):
-        self.logs.append((entidad, eid, accion, detalle))
-
-    def get_mysql(self):
-        return _Conn(self)
-
-
-class _Conn:
-    def __init__(self, m):
-        self.m = m
-        self.tx_items = copy.deepcopy(m.items)
-        self.tx_plant = copy.deepcopy(m.plantillas)
-        self.tx_logs = []
-        self.res = []
-
-    def cursor(self):
-        return self
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-    def execute(self, sql, params=None):
-        s = " ".join(sql.split())
-        self.m.sql.append(s)
-        if s.startswith("SELECT titulo FROM mant_tarea_plantilla_items") and s.endswith("FOR UPDATE"):
-            self.res = [{"titulo": x["titulo"]} for x in
-                        sorted(self.tx_items.get(params[0], []), key=lambda x: (x["orden"], x["id"]))]
-        elif s.startswith("INSERT INTO mant_logs"):
-            self.tx_logs.append(params[:4])
-        elif s.startswith("DELETE FROM mant_tarea_plantilla_items"):
-            self.tx_items[params[0]] = []
-        elif s.startswith("INSERT INTO mant_tarea_plantilla_items"):
-            self.assertTrue("foto_si_hallazgo" in s)
-            pid = params[0]
-            self.tx_items.setdefault(pid, []).append(
-                {"titulo": params[2], "orden": params[1], "id": 10000 + len(self.tx_items[pid]),
-                 "foto_si_hallazgo": params[11]})
-        elif s.startswith("UPDATE mant_tarea_plantillas SET descripcion"):
-            self.tx_plant[params[1]]["descripcion"] = params[0]
-        else:
-            raise AssertionError(s)
-
-    @staticmethod
-    def assertTrue(x):
-        assert x
-
-    def fetchall(self):
-        return self.res
-
-    def commit(self):
-        self.m.items = self.tx_items
-        self.m.plantillas = self.tx_plant
-        self.m.logs.extend(self.tx_logs)
-
-    def rollback(self):
-        self.tx_items = copy.deepcopy(self.m.items)
-        self.tx_logs = []
-
-    def close(self):
-        pass
-
-
-class TestMigracionEnMemoria(unittest.TestCase):
-    def _correr(self, mundo, fsh=True):
-        amb = _cargar(_PURAS + ("_ensure_bloques_revision_esencial",), _CONSTS)
-        amb.update({
-            "_fsh_ok": lambda: fsh, "_ensure_mant_logs_entidad_varchar": lambda: None,
-            "mysql_fetchone": mundo.fetchone, "mysql_fetchall": mundo.fetchall, "mysql_execute": mundo.execute,
-            "get_mysql": mundo.get_mysql, "_mant_log": mundo.mant_log, "print": lambda *a, **k: None,
-        })
-        return amb["_ensure_bloques_revision_esencial"]()
-
-    def test_migra_lo_no_editado_conserva_lo_editado_y_deja_marca(self):
-        k = _k()
-
-        def editar(lista):
-            lista[0]["titulo"] = "Cable revisado por Jaizer"
-            return lista
-        m = _Mundo(k, editar={"Revisión — Rack y soportes": editar})
-        out = self._correr(m)
-        self.assertEqual(len(out["migrados"]), 9)
-        self.assertEqual(out["editados"], ["Revisión — Rack y soportes"])
-        ese = {b[0]: b for b in k["_CHK_BLOQUES_SEED"]}
-        for pid, p in m.plantillas.items():
-            titulos = [x["titulo"] for x in sorted(m.items[pid], key=lambda x: (x["orden"], x["id"]))]
-            if p["nombre"] == "Revisión — Rack y soportes":
-                self.assertEqual(titulos[0], "Cable revisado por Jaizer")         # NO se tocó
-            else:
-                self.assertEqual(titulos, [it[1] for it in ese[p["nombre"]][2]])
-                self.assertEqual([x["foto_si_hallazgo"] for x in sorted(m.items[pid], key=lambda x: x["orden"])],
-                                 [it[10] for it in ese[p["nombre"]][2]])
-                self.assertEqual(p["descripcion"], ese[p["nombre"]][1])
-        acciones = [l[2] for l in m.logs]
-        self.assertEqual(acciones.count("revision_esencial"), 9)
-        self.assertEqual(acciones.count("revision_esencial_omitida"), 1)
-        self.assertEqual(acciones[-1], "revision_esencial_aplicada")              # la marca, al final
-
-    def test_bitacora_antes_y_todo_en_una_transaccion(self):   # REGLA #5
-        m = _Mundo(_k())
-        self._correr(m)
-        s = m.sql
-        i_log = next(i for i, x in enumerate(s) if x.startswith("INSERT INTO mant_logs"))
-        i_del = next(i for i, x in enumerate(s) if x.startswith("DELETE FROM mant_tarea_plantilla_items"))
-        i_lock = next(i for i, x in enumerate(s) if x.endswith("FOR UPDATE"))
-        self.assertLess(i_lock, i_log)
-        self.assertLess(i_log, i_del)
-
-    def test_idempotente_y_barata_con_la_marca(self):   # REGLA #18
-        m = _Mundo(_k())
-        self._correr(m)
-        antes = copy.deepcopy(m.items)
-        m.consultas, m.sql = 0, []
-        out = self._correr(m)
-        self.assertTrue(out["ya"])
-        self.assertEqual(m.consultas, 1)
-        self.assertEqual(m.sql, [])
-        self.assertEqual(m.items, antes)
-
-    def test_sin_la_columna_no_migra_ni_marca(self):
-        m = _Mundo(_k())
-        out = self._correr(m, fsh=False)
-        self.assertEqual(out["migrados"], [])
-        self.assertEqual(m.logs, [])
-
-    def test_si_cambio_entre_medio_no_se_toca(self):
-        k = _k()
-        m = _Mundo(k)
-        real = m.get_mysql
-
-        antes = copy.deepcopy(m.items)
-
-        def conn_que_ve_un_cambio():   # alguien editó todos los bloques entre el plan y el candado
-            c = real()
-            for pid in c.tx_items:
-                c.tx_items[pid][0]["titulo"] += " (editado por Lenin recién)"
-            return c
-        m.get_mysql = conn_que_ve_un_cambio
-        out = self._correr(m)
-        self.assertEqual(out["migrados"], [])                                   # releyó con FOR UPDATE y no tocó
-        self.assertEqual(m.items, antes)
-
-    def test_corre_al_arrancar_despues_de_la_semilla(self):
+    def test_ya_no_existe_la_migracion_de_arranque(self):
         app = _leer("app.py")
-        i_cols = app.index("        _ensure_foto_si_hallazgo_cols()\nexcept Exception as _ensure_fsh_err:")
-        i_her = app.index("_chk_her = _ensure_checklist_herencia()")
-        i_mig = app.index("_rev_es = _ensure_bloques_revision_esencial()")
-        self.assertLess(i_cols, i_her)
-        self.assertLess(i_her, i_mig)
+        for muerto in ("def _ensure_bloques_revision_esencial", "_ensure_bloques_revision_esencial()", "_CHK_ESENCIAL_MARCA"):
+            self.assertNotIn(muerto, app, muerto)
+
+    def test_la_propuesta_usa_el_plan_y_no_escribe(self):
+        f = _fuente("_prop_construir")
+        self.assertIn("_chk_esencial_plan(", f)
+        self.assertNotIn("INSERT", f)
+        self.assertNotIn("UPDATE", f)
+        self.assertNotIn("DELETE", f)
+
+    def test_reemplazar_es_de_gestion_con_huella_y_nunca_lu(self):
+        f = _fuente("_prop_aplicar")
+        self.assertIn("if not puede_reemplazar_usuario:", f)
+        self.assertIn("if p[\"es_lu\"]:", f)
+        self.assertIn("PLANTILLA_CAMBIO", f)                                   # si cambió entre la vista y el clic, no se toca
+        self.assertLess(f.index("reemplazada_desde_propuesta"), f.index('DELETE FROM mant_tarea_plantilla_items'))   # bitácora ANTES
 
 
 # ═══════════════════════════════ 3) foto_si_hallazgo ═══════════════════════════════
@@ -720,7 +557,9 @@ class TestCandadosFuenteUnica(unittest.TestCase):
         self.assertIn("if faltan_rows or _rev[\"faltantes\"]:", _fuente("mant_ot_firmar_revision"))
         self.assertIn("if faltan_rows or _rev[\"faltantes\"]:", _fuente("mant_ot_puede_firmar"))
         self.assertIn("_ot_chk_revision_pendientes(vid)", _fuente("_ot_items_manuales_no_llego"))
-        self.assertIn("ev = _chk_revision_evaluar(filas)", _fuente("_ot_chk_revision_pendientes"))
+        # 🧰 2026-10-20: además de las respuestas, lee los productos cuyo checklist se dispensa por una ACCIÓN del técnico
+        self.assertIn('ev = _chk_revision_evaluar(filas, {im: f.get("estado") for im, f in _otpe_dispensados(vid).items()})',
+                      _fuente("_ot_chk_revision_pendientes"))
         d = _fuente("ot2_detalle")
         self.assertIn('_ev_t = _rev_detalle["por_tarea"].get(t.get("id")) if t.get("item_manual_id") else None', d)
         self.assertIn('_obl += int((_rev_detalle.get("kpi_delta") or {}).get("obl") or 0)', d)
@@ -728,6 +567,7 @@ class TestCandadosFuenteUnica(unittest.TestCase):
     def _pendientes(self, filas, excl=()):
         amb = _cargar(_PURAS + ("_ot_chk_revision_pendientes", "_ot_items_manuales_no_llego"), _CONSTS)
         amb.update({"_fsh_ok": lambda: True, "_ot_maquinas_excluidas_cierre": lambda vid: set(excl),
+                    "_otpe_dispensados": lambda vid: {},
                     "mysql_fetchall": lambda sql, params=None: [dict(f) for f in filas],
                     "print": lambda *a, **k: None})
         return amb
