@@ -324,16 +324,32 @@ def seguimiento_pedido(estado):
 # Por SISTEMA del producto (el mismo que elige el checklist heredado). Son NOMBRES de pieza para pedir de un toque; el
 # pedido queda «escrito a mano · por validar» y bodega lo asocia. Jamás proveedor ni costo (REGLA #19 y #26). Si una
 # persona llenó «Repuestos sugeridos» en la plantilla del producto, esa lista REEMPLAZA esta (ver sugeridos_para).
+# 2026-10-20 (propuesta del técnico senior aprobada por Daniel): se AGREGAN piezas a cada sistema (nada se quita, REGLA #4.2) y
+# nacen los sistemas «eliptica» y «remo». Cada nombre de pieza tiene su ficha de medidas en ot_piezas_medidas.py (la prueba
+# tests/test_ot_medidas_diagnostico.py falla si una pieza queda sin ficha).
 SUGERIDOS_POR_SISTEMA = {
     "selector_peso": ["Piola (cable de acero)", "Pin selector", "Polea con rodamiento", "Buje o rodamiento de pivote",
-                      "Pad de asiento, respaldo o rodillo"],
-    "carga_discos": ["Pin de seguro", "Rodamiento o buje de pivote", "Tope de goma", "Cuerno porta discos"],
-    "poleas": ["Cable de acero (piola)", "Mosquetón", "Agarre (manilla)", "Pin de altura"],
-    "trotadora": ["Cinta (banda)", "Tabla (deck)", "Motor de tracción", "Consola", "Llave magnética de emergencia"],
-    "bicicleta": ["Correa de transmisión", "Pedales (par)", "Biela", "Consola"],
-    "banco": ["Pin o perilla de ajuste", "Rodillo apoya piernas", "Nivelador o taco de goma"],
-    "rack": ["Brazo de seguridad", "Pin de seguridad", "Kit de pernos y tuercas"],
-    "cargas_libres": ["Tuerca o tapa de cabezal", "Bandeja del rack", "Goma o taco de apoyo"],
+                      "Pad de asiento, respaldo o rodillo", "Tope de goma del stack", "Varilla guía o buje de guía",
+                      "Perilla de ajuste de asiento"],
+    "carga_discos": ["Pin de seguro", "Rodamiento o buje de pivote", "Tope de goma", "Cuerno porta discos",
+                     "Pad de asiento o respaldo"],
+    "poleas": ["Cable de acero (piola)", "Mosquetón", "Agarre (manilla)", "Pin de altura", "Polea con rodamiento"],
+    "trotadora": ["Cinta (banda)", "Tabla (deck)", "Motor de tracción", "Consola", "Llave magnética de emergencia",
+                  "Rodillo (delantero o trasero)", "Correa del motor", "Placa controladora", "Motor de inclinación"],
+    "bicicleta": ["Correa de transmisión", "Pedales (par)", "Biela", "Consola", "Sillín o poste", "Perilla de ajuste"],
+    "eliptica": ["Rodillo o rueda", "Brazo o manija", "Pedales (par)", "Correa de transmisión", "Biela", "Consola"],
+    "remo": ["Cinta o cuerda de tirón", "Asiento o carro", "Rodillos del carro", "Consola"],
+    "banco": ["Pin o perilla de ajuste", "Rodillo apoya piernas", "Nivelador o taco de goma", "Pad de asiento o respaldo"],
+    "rack": ["Brazo de seguridad", "Pin de seguridad", "Kit de pernos y tuercas", "J-hook"],
+    "cargas_libres": ["Tuerca o tapa de cabezal", "Bandeja del rack", "Goma o taco de apoyo", "Collarín",
+                      "Disco o mancuerna faltante"],
+}
+
+# Sistemas que NO tienen bloque de checklist propio (REGLA #32: no se toca ninguna plantilla): se reconocen por la clase del
+# catálogo (cuando exista) o por el nombre. Solo sirven para sugerir piezas y guiar el diagnóstico; nunca para elegir un checklist.
+SISTEMA_DE_CLASE = {
+    "eliptica": "eliptica", "elipticas": "eliptica", "eliptica_pro": "eliptica", "elliptical": "eliptica",
+    "remo": "remo", "remos": "remo", "remadora": "remo", "rower": "remo", "remo_concept": "remo",
 }
 
 # Nombre del bloque «Revisión — …» → sistema. El checklist heredado ya resuelve el bloque de cada SKU (clase del
@@ -350,9 +366,12 @@ SISTEMA_DE_BLOQUE = {
 }
 
 # Último recurso, solo si el producto no tiene clase en el catálogo: se adivina por el nombre y se dice en pantalla.
+# «Remo sentado», «remo bajo»… son máquinas de fuerza con stack (no una remadora): el \bremo\b solo vale si no sigue esa palabra.
 _RX_SISTEMA_NOMBRE = (
     ("trotadora", re.compile(r"trotad|treadmill|caminadora|cinta de correr")),
-    ("bicicleta", re.compile(r"bicicleta|spinning|el[ií]ptica|elliptical|\bbike\b")),
+    ("eliptica", re.compile(r"el[ií]ptic|elliptical|cross ?trainer")),
+    ("remo", re.compile(r"remadora|rowing|\brower\b|concept ?2|\bremo\b(?!\s+(sentado|bajo|alto|con|en|unilateral|horizontal|t\b|plate|selector|de pie))")),
+    ("bicicleta", re.compile(r"bicicleta|spinning|\bbike\b")),
     ("banco", re.compile(r"\bbanco\b|\bbench\b")),
     ("rack", re.compile(r"\brack\b|jaula|power cage|squat stand")),
     ("poleas", re.compile(r"dual (cable|pulley)|polea|cross over|crossover")),
@@ -374,6 +393,23 @@ def sistema_por_nombre(nombre_producto):
         if rx.search(n):
             return sistema
     return None
+
+
+def sistema_de_clase(slug):
+    """Sistema según la CLASE del catálogo cuando esa clase es la de una elíptica o un remo (hoy el catálogo no las trae: queda
+    listo para cuando existan). None si la clase no es de esas."""
+    return SISTEMA_DE_CLASE.get(str(slug or "").strip().lower())
+
+
+def refinar_sistema(sistema, nombre_producto):
+    """El bloque de checklist «Bicicleta (transmisión y consola)» sirve a bicicletas Y elípticas: para SUGERIR piezas y guiar el
+    diagnóstico se afina por el nombre (una elíptica no lleva el mismo diagnóstico que una bicicleta). No cambia ningún
+    checklist. Cualquier otro sistema vuelve igual."""
+    if sistema in (None, "bicicleta"):
+        afinado = sistema_por_nombre(nombre_producto)
+        if afinado in ("eliptica", "remo"):
+            return afinado
+    return sistema
 
 
 def sugeridos_por_defecto(sistema):

@@ -1883,6 +1883,11 @@
 .otd-rep-it .inf b{display:block;font-size:.8rem;color:#0a0a0a;overflow-wrap:anywhere}
 .otd-rep-it .inf small{display:block;font-size:.68rem;color:#6b7280;overflow-wrap:anywhere}
 .otd-rep-it .inf small.mot{color:#374151;margin-top:2px;white-space:pre-wrap}
+/* 📏 2026-10-20: las medidas que declaró el técnico de la pieza (completas, sin cortar) y el camino de su diagnóstico */
+.otd-rep-it .inf .otd-med{display:flex;flex-wrap:wrap;gap:3px 6px;margin-top:4px}
+.otd-rep-it .inf .otd-med span{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;border-radius:999px;padding:1px 8px;font-size:.68rem;font-weight:700;overflow-wrap:anywhere}
+.otd-rep-it .inf .otd-med span.sin{background:#fff8e1;border-color:#fcd34d;color:#92400e}
+.otd-rep-it .inf small.dx{color:#1e3a8a;margin-top:2px}
 .otd-rep-it .inf a{color:#dc2626;font-weight:800;text-decoration:none}
 .otd-rep-it .est{flex:none;font-size:.58rem;font-weight:900;letter-spacing:.05em;text-transform:uppercase;
   border-radius:999px;padding:3px 8px;background:#dbeafe;color:#1d4ed8;white-space:nowrap}
@@ -5555,9 +5560,11 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                 <div class="otd-rep-it {{ 'abierta' if s.abierta else 'cerrada' }}">
                   <i class="bi {{ 'bi-link-45deg' if s.origen == 'piola' else ('bi-arrow-left-right' if s.origen == 'cinta' else 'bi-tools') }}"></i>
                   <div class="inf">
-                    <b>{{ s.repuesto_nombre }} × {{ '%g' | format(s.cantidad or 1) }}{% if s.piola_metros %} · {{ '%g' | format(s.piola_metros) }} m de piola{% endif %}{% if s.medida %} · {{ s.medida }}{% endif %}</b>
+                    <b>{{ s.repuesto_nombre }} × {{ '%g' | format(s.cantidad or 1) }}{% if s.piola_metros and not s.datos_filas %} · {{ '%g' | format(s.piola_metros) }} m de piola{% endif %}{% if s.medida and not s.datos_filas %} · {{ s.medida }}{% endif %}</b>
                     <small>{{ s.estado_label }}{% if s.stock_sku %} · {{ s.stock_sku }}{% endif %}{% if s.numero_ticket %} · <a href="/tickets/{{ s.ticket_id }}" target="_blank" rel="noopener">{{ s.numero_ticket }}</a>{% endif %} · {{ s.created_at }}{% if s.solicitado_por %} · {{ s.solicitado_por }}{% endif %}</small>
                     <small class="mot">{{ s.motivo }}</small>
+                    {% if s.datos_filas %}<div class="otd-med" title="Medidas de la pieza que declaró el técnico">{% for f in s.datos_filas %}<span class="{{ 'sin' if f[1].startswith('No se pudo') else '' }}"><i class="bi bi-rulers"></i> {{ f[0] }}: {{ f[1] }}</span>{% endfor %}</div>{% endif %}
+                    {% if s.diagnostico_txt %}<small class="dx"><i class="bi bi-clipboard2-pulse"></i> {{ s.diagnostico_txt }}</small>{% endif %}
                   </div>
                   <span class="est {{ s.estado }}">{{ s.estado_label.split(' · ')[0] }}</span>
                 </div>
@@ -5577,6 +5584,8 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                   <b>{{ s.repuesto_nombre }} × {{ '%g' | format(s.cantidad or 1) }}</b>
                   <small>{{ s.estado_label }}{% if s.stock_sku %} · {{ s.stock_sku }}{% endif %}{% if s.numero_ticket %} · <a href="/tickets/{{ s.ticket_id }}" target="_blank" rel="noopener">{{ s.numero_ticket }}</a>{% endif %} · {{ s.created_at }}{% if s.solicitado_por %} · {{ s.solicitado_por }}{% endif %}</small>
                   <small class="mot">{{ s.motivo }}</small>
+                  {% if s.datos_filas %}<div class="otd-med" title="Medidas de la pieza que declaró el técnico">{% for f in s.datos_filas %}<span class="{{ 'sin' if f[1].startswith('No se pudo') else '' }}"><i class="bi bi-rulers"></i> {{ f[0] }}: {{ f[1] }}</span>{% endfor %}</div>{% endif %}
+                  {% if s.diagnostico_txt %}<small class="dx"><i class="bi bi-clipboard2-pulse"></i> {{ s.diagnostico_txt }}</small>{% endif %}
                 </div>
                 <span class="est {{ s.estado }}">{{ (s.estado_label or s.estado or '').split(' · ')[0] }}</span>
               </div>
@@ -18796,11 +18805,13 @@ async function otdRepRefrescar(mid){
         var lbl = String(s.estado_label || s.estado).split(' · ')[0];
         return '<div class="otd-rep-it ' + (s.abierta ? 'abierta' : 'cerrada') + '">' +
           '<i class="bi ' + (s.origen === 'piola' ? 'bi-link-45deg' : (s.origen === 'cinta' ? 'bi-arrow-left-right' : 'bi-tools')) + '"></i>' +
-          '<div class="inf"><b>' + otdEsc(s.repuesto_nombre) + ' × ' + _otrepFmt(s.cantidad || 1) + (s.piola_metros ? ' · ' + _otrepFmt(s.piola_metros) + ' m de piola' : '') + (s.medida ? ' · ' + otdEsc(s.medida) : '') + '</b>' +
+          '<div class="inf"><b>' + otdEsc(s.repuesto_nombre) + ' × ' + _otrepFmt(s.cantidad || 1) + (s.piola_metros && !(s.datos_filas || []).length ? ' · ' + _otrepFmt(s.piola_metros) + ' m de piola' : '') + (s.medida && !(s.datos_filas || []).length ? ' · ' + otdEsc(s.medida) : '') + '</b>' +
           '<small>' + otdEsc(s.estado_label || '') + (s.stock_sku ? ' · ' + otdEsc(s.stock_sku) : '') +
           (s.numero_ticket ? ' · <a href="/tickets/' + s.ticket_id + '" target="_blank" rel="noopener">' + otdEsc(s.numero_ticket) + '</a>' : '') +
           ' · ' + otdEsc(s.created_at || '') + (s.solicitado_por ? ' · ' + otdEsc(s.solicitado_por) : '') + '</small>' +
-          '<small class="mot">' + otdEsc(s.motivo || '') + '</small></div>' +
+          '<small class="mot">' + otdEsc(s.motivo || '') + '</small>' +
+          ((s.datos_filas || []).length ? '<div class="otd-med">' + s.datos_filas.map(function(f){ return '<span class="' + (String(f[1]).indexOf('No se pudo') === 0 ? 'sin' : '') + '"><i class="bi bi-rulers"></i> ' + otdEsc(f[0]) + ': ' + otdEsc(f[1]) + '</span>'; }).join('') + '</div>' : '') +
+          (s.diagnostico_txt ? '<small class="dx"><i class="bi bi-clipboard2-pulse"></i> ' + otdEsc(s.diagnostico_txt) + '</small>' : '') + '</div>' +
           '<span class="est ' + otdEsc(s.estado) + '">' + otdEsc(lbl) + '</span></div>';
       }).join('');
     }

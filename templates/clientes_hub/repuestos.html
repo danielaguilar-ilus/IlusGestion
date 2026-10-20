@@ -182,6 +182,16 @@
 .rs-fs{display:inline-flex;align-items:center;gap:4px;margin-top:4px;font-size:.66rem;font-weight:800;color:#991b1b;
   background:#fee2e2;border-radius:999px;padding:2px 8px}
 .rs-piola{display:inline-block;font-size:.72rem;font-weight:800;color:#a16207;background:#fff8e1;border-radius:999px;padding:1px 8px;margin-top:3px}
+/* 📏 2026-10-20: medidas de la pieza que pidió el técnico («necesitas saber medidas y todo») y el camino de su diagnóstico */
+.rs-med{margin-top:8px;border:1.5px solid #bfdbfe;background:#f7faff;border-radius:12px;padding:9px 11px}
+.rs-med.sin{border-color:#fcd34d;background:#fff8e1}
+.rs-med-t{font-size:.7rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:#1e40af;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.rs-med.sin .rs-med-t{color:#92400e}
+.rs-med-l{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:7px 0 0;font-size:.82rem}
+.rs-med-l dt{font-weight:600;color:#475569}
+.rs-med-l dd{margin:0;font-weight:800;color:#111827;overflow-wrap:anywhere}
+.rs-med-av{margin-top:7px;font-size:.76rem;font-weight:700;color:#92400e;display:flex;gap:6px;align-items:flex-start}
+.rs-med-dx{margin-top:7px;font-size:.78rem;color:#1f2937;display:flex;gap:6px;align-items:flex-start}
 .rs-liga{font-size:.72rem;color:#475569;margin-top:5px;display:flex;gap:5px;align-items:flex-start}
 .rs-liga.ok{color:#15803d;font-weight:700}.rs-liga.pend{color:#b45309;font-weight:700}
 {#- 🔒 2026-09-20: aviso cuando el repuesto ya está comprometido por encima
@@ -245,6 +255,25 @@
 .rs-btn.ot-generada{border-color:#d1d5db;color:#374151;text-decoration:none;display:inline-flex;align-items:center}.rs-btn.ot-generada:hover{background:#f3f4f6}
 .rs-pie{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:12px;
   font-size:.78rem;color:#475569}
+.rm-intro{display:flex;gap:12px;align-items:flex-start;background:#f7faff;border:1px solid #bfdbfe;border-radius:14px;padding:12px 14px;margin-bottom:12px;color:#1e3a8a}
+.rm-intro>i{font-size:1.5rem;color:#2563eb}
+.rm-intro b{display:block;font-size:1rem}
+.rm-intro span{font-size:.84rem;color:#475569}
+.rm-filtros{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.rm-n{display:inline-block;min-width:18px;padding:0 6px;margin-left:4px;border-radius:999px;background:#dc2626;color:#fff;font-size:.68rem;font-weight:900;line-height:18px;text-align:center}
+.rm-card{background:#fff;border:1px solid #e5e7eb;border-left:5px solid #f59e0b;border-radius:14px;padding:12px 14px;margin-bottom:10px;box-shadow:0 1px 2px rgba(16,24,40,.05)}
+.rm-card.aprobada{border-left-color:#16a34a}.rm-card.descartada,.rm-card.observada{border-left-color:#9ca3af}
+.rm-h{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.rm-h b{font-size:1rem;overflow-wrap:anywhere}
+.rm-pz{font-size:.84rem;color:#475569;margin-top:2px}
+.rm-res{font-size:1.02rem;font-weight:800;color:#1e3a8a;margin:8px 0 2px;overflow-wrap:anywhere}
+.rm-dl{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:6px 0 0;font-size:.84rem}
+.rm-dl dt{font-weight:600;color:#475569}.rm-dl dd{margin:0;font-weight:800;color:#111827;overflow-wrap:anywhere}
+.rm-meta{font-size:.78rem;color:#6b7280;margin-top:8px;display:flex;flex-wrap:wrap;gap:4px 14px}
+.rm-prev{font-size:.78rem;color:#92400e;background:#fff8e1;border-radius:8px;padding:5px 9px;margin-top:8px}
+.rm-acc{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.rm-b{min-height:44px;padding:0 14px;border-radius:10px;border:1.5px solid #d1d5db;background:#fff;font-weight:700;font-size:.88rem;display:inline-flex;align-items:center;gap:6px}
+.rm-b.ok{background:#16a34a;border-color:#16a34a;color:#fff}.rm-b:hover{filter:brightness(.97)}
 .otrep-opc{display:flex;flex-direction:column;gap:6px}
 .otrep-opc-it{display:flex;align-items:center;gap:10px;border:1.5px solid #e5e7eb;border-radius:11px;padding:8px 10px;
   cursor:pointer;background:#fff;text-align:left;width:100%;font-family:inherit}
@@ -582,6 +611,9 @@
          fuerce la URL o el fetch a mano; esto es solo no ofrecer el botón. #}
       {% if not oculta_proveedores %}
       <button type="button" id="rsVistaCompras" onclick="rsVista('compras')">Compras</button>
+      {# 📏 2026-10-20: medidas en terreno por aprobar (alimentan el catálogo del modelo). Solo gestión: el backend
+         (@_otrep_manual_required) igual lo bloquea para cualquier técnico. #}
+      <button type="button" id="rsVistaMedidas" onclick="rsVista('medidas')">Medidas</button>
       {% endif %}
     </div>
   </div>
@@ -847,6 +879,32 @@
         <button type="button" class="btn btn-sm btn-outline-secondary" id="rcPrev" onclick="rcPag(-1)">Anterior</button>
         <span id="rcPagTxt" class="small"></span>
         <button type="button" class="btn btn-sm btn-outline-secondary" id="rcNext" onclick="rcPag(1)">Siguiente</button>
+      </div>
+    </div>
+  </div>
+
+  {# ── 📏 2026-10-20: «Medidas» -- lo que miden los técnicos en terreno alimenta el catálogo del modelo. Con 2 medidas iguales del
+     mismo modelo queda «sugerida» y gestión la aprueba (nada se escribe solo). Paginada en servidor (REGLA #4.3). ── #}
+  <div id="rsVistaPaneMedidas" class="d-none">
+    <div class="rm-intro"><i class="bi bi-rulers"></i><div><b>Medidas en terreno por aprobar</b>
+      <span>Lo que miden los técnicos alimenta el catálogo de cada modelo. Con 2 medidas iguales del mismo modelo (de pedidos distintos) queda «sugerida». Nada se escribe solo: tú la apruebas y desde ahí se ofrece como ayuda a los técnicos.</span></div></div>
+    <div class="rm-filtros">
+      <select id="rmFEstado" class="form-select" style="max-width:200px" onchange="rmFiltro()" aria-label="Estado">
+        <option value="sugerida" selected>Sugeridas</option><option value="observada">Vistas una vez</option>
+        <option value="aprobada">Aprobadas</option><option value="descartada">Descartadas</option><option value="todas">Todas</option>
+      </select>
+      <input type="search" id="rmQ" class="form-control" style="max-width:280px;font-size:16px" placeholder="Modelo, pieza o medida…" oninput="rmBuscarDeb(this.value)" aria-label="Buscar">
+    </div>
+    <div id="rmLista"><div class="rs-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Cargando medidas…</div></div>
+    <div class="rs-pie" id="rmPie" style="display:none">
+      <span id="rmPieTxt"></span>
+      <div class="d-flex align-items-center gap-2">
+        <select id="rmPageSize" class="form-select form-select-sm" style="width:auto" onchange="rmSetSize(this.value)">
+          <option value="25">25 por página</option><option value="50" selected>50 por página</option><option value="100">100 por página</option>
+        </select>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="rmPrev" onclick="rmPag(-1)">Anterior</button>
+        <span id="rmPagTxt" class="small"></span>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="rmNext" onclick="rmPag(1)">Siguiente</button>
       </div>
     </div>
   </div>
@@ -1227,6 +1285,8 @@
 
   /* 2026-10-14: ficha de la solicitud — otros nombres, camino, resolución y acciones */
   .rst-alt{display:block;color:#6b7280;font-size:.76rem}
+  .rst-med{display:flex;gap:5px;align-items:flex-start;color:#1e40af;font-size:.78rem;font-weight:800;overflow-wrap:anywhere}
+  .rst-med.sin{color:#92400e}
   .rsf-blk{display:flex;gap:8px;align-items:flex-start;margin-top:10px;padding:9px 12px;border-radius:12px;background:#fff;border:1px solid #e5e7eb;font-size:.9rem}
   .rsf-blk i{color:#6b7280;margin-top:2px}
   .rsf-blk.ok{background:#f0fdf4;border-color:#bbf7d0}.rsf-blk.ok i{color:#16a34a}
@@ -2168,13 +2228,118 @@ document.addEventListener('click', function(e){
   const bM = e.target.closest('#rsmClienteLista .otrep-opc-it');
   if (bM){ rsmClienteElegir(parseInt(bM.dataset.id, 10), bM.dataset.nombre || ''); return; }
 });
-function rsVista(v){
+/* ══ 📏 Medidas de la pieza (2026-10-20, Daniel: «imagínate que eres un técnico que no sabes nada y te va a llegar una solicitud:
+   necesitas saber medidas y todo»). Lo que el técnico midió (o por qué no pudo) y el camino de su diagnóstico, completos. ══ */
+function rsMedidasHtml(s){
+  const filas = s.datos_filas || [];
+  if (!filas.length && !s.diagnostico_txt) return '';
+  const sin = !!(s.datos && s.datos.medido_con === 'no_pude');
+  let h = '<div class="rs-med' + (sin ? ' sin' : '') + '">';
+  if (filas.length){
+    h += '<div class="rs-med-t"><i class="bi bi-rulers"></i> Medidas' + (s.datos_pieza ? ' · ' + rsEsc(s.datos_pieza) : '') + '</div>' +
+      '<dl class="rs-med-l">' + filas.map(function(f){ return '<dt>' + rsEsc(f[0]) + '</dt><dd>' + rsEsc(f[1]) + '</dd>'; }).join('') + '</dl>';
+    if (s.datos && (s.datos.avisos || []).length) h += '<div class="rs-med-av"><i class="bi bi-exclamation-triangle-fill"></i><span>' + rsEsc(s.datos.avisos.join(' · ')) + '</span></div>';
+  }
+  if (s.diagnostico_txt) h += '<div class="rs-med-dx"><i class="bi bi-clipboard2-pulse"></i><span><b>Cómo lo diagnosticó el técnico:</b> ' + rsEsc(s.diagnostico_txt) + '</span></div>';
+  return h + '</div>';
+}
+
+/* ══ 📏 Medidas en terreno por aprobar (solo gestión). Con 2 medidas iguales del mismo modelo queda «sugerida»; aquí se aprueba o se
+   descarta. Nada se escribe solo en el catálogo (REGLA #32). Paginada en el servidor (REGLA #4.3). ══ */
+var _rm = { estado: 'sugerida', q: '', pagina: 1, size: 50, paginas: 1, total: 0, conteo: {}, timer: null };
+function rmPintarBoton(){
+  const b = document.getElementById('rsVistaMedidas'); if (!b) return;
+  const n = (_rm.conteo || {}).sugerida || 0;
+  b.innerHTML = 'Medidas' + (n ? '<span class="rm-n" title="Sugeridas por aprobar">' + n + '</span>' : '');
+}
+async function rmContar(){
+  try {
+    const r = await fetch('/repuestos/api/medidas-terreno?estado=sugerida&size=10', { credentials: 'same-origin', cache: 'no-store' });
+    const j = await r.json();
+    if (j.ok){ _rm.conteo = j.conteo || {}; rmPintarBoton(); }
+  } catch(e){ /* el botón queda sin contador */ }
+}
+function rmFiltro(){ _rm.estado = document.getElementById('rmFEstado').value; _rm.pagina = 1; rmCargar(); }
+function rmBuscarDeb(v){ clearTimeout(_rm.timer); _rm.timer = setTimeout(function(){ _rm.q = String(v || '').trim(); _rm.pagina = 1; rmCargar(); }, 350); }
+function rmSetSize(v){ _rm.size = parseInt(v, 10) || 50; _rm.pagina = 1; rmCargar(); }
+function rmPag(d){ const n = _rm.pagina + d; if (n < 1 || n > _rm.paginas) return; _rm.pagina = n; rmCargar(); }
+async function rmCargar(){
+  const cont = document.getElementById('rmLista'); if (!cont) return;
+  cont.innerHTML = '<div class="rs-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Cargando medidas…</div>';
+  let j = {};
+  try {
+    const qs = new URLSearchParams({ estado: _rm.estado, q: _rm.q, pagina: String(_rm.pagina), size: String(_rm.size) });
+    const r = await fetch('/repuestos/api/medidas-terreno?' + qs.toString(), { credentials: 'same-origin', cache: 'no-store' });
+    j = await r.json();
+  } catch(e){ j = { ok: false }; }
+  if (!j.ok){ cont.innerHTML = '<div class="rs-vacio">No se pudieron traer las medidas. Intenta de nuevo.</div>'; return; }
+  _rm.conteo = j.conteo || {}; _rm.pagina = j.pagina; _rm.paginas = j.paginas; _rm.total = j.total; rmPintarBoton();
+  const filas = j.filas || [];
+  cont.innerHTML = filas.length ? filas.map(rmTarjeta).join('') :
+    '<div class="rs-vacio">' + (_rm.estado === 'sugerida' ? 'No hay medidas sugeridas por aprobar. Cuando dos técnicos midan lo mismo del mismo modelo, aparecen aquí.' : 'No hay medidas con este filtro.') + '</div>';
+  const pie = document.getElementById('rmPie');
+  if (pie){
+    pie.style.display = j.total > 0 ? '' : 'none';
+    const desde = j.total ? (j.pagina - 1) * j.size + 1 : 0, hasta = Math.min(j.total, j.pagina * j.size);
+    document.getElementById('rmPieTxt').textContent = 'Mostrando ' + desde + '–' + hasta + ' de ' + j.total;
+    document.getElementById('rmPagTxt').textContent = 'Página ' + j.pagina + ' de ' + j.paginas;
+    document.getElementById('rmPrev').disabled = j.pagina <= 1; document.getElementById('rmNext').disabled = j.pagina >= j.paginas;
+  }
+}
+function rmTarjeta(f){
+  const est = { sugerida: ['Sugerida', 'ambar'], observada: ['Vista una vez', 'gris'], aprobada: ['Aprobada', 'verde'], descartada: ['Descartada', 'gris'] }[f.estado] || ['', 'gris'];
+  let acc = '';
+  if (f.estado === 'sugerida' || f.estado === 'observada'){
+    acc = '<button type="button" class="rm-b ok" onclick="rmDecidir(' + f.id + ',\'aprobar\')"><i class="bi bi-check2-circle"></i> Aprobar como medida del modelo</button>' +
+          '<button type="button" class="rm-b" onclick="rmDecidir(' + f.id + ',\'descartar\')"><i class="bi bi-x-circle"></i> Descartar</button>';
+  } else if (f.estado === 'aprobada'){
+    acc = '<button type="button" class="rm-b" onclick="rmDecidir(' + f.id + ',\'descartar\')">Dejar de ofrecerla</button>';
+  } else {
+    acc = '<button type="button" class="rm-b" onclick="rmDecidir(' + f.id + ',\'reabrir\')">Volver a «sugerida»</button>';
+  }
+  return '<div class="rm-card ' + rsEsc(f.estado) + '"><div class="rm-h"><b>' + rsEsc(f.modelo || 'Modelo sin nombre') + '</b>' +
+      (f.modelo_sku ? '<span class="rst-pill gris">' + rsEsc(f.modelo_sku) + '</span>' : '') + '<span class="rst-pill ' + est[1] + '">' + est[0] + '</span></div>' +
+    '<div class="rm-pz">' + rsEsc(f.titulo || f.pieza) + (f.pieza && f.pieza !== f.titulo ? ' · pedida como «' + rsEsc(f.pieza) + '»' : '') + '</div>' +
+    '<div class="rm-res">' + rsEsc(f.resumen || '') + '</div>' +
+    ((f.filas || []).length ? '<dl class="rm-dl">' + f.filas.map(function(x){ return '<dt>' + rsEsc(x[0]) + '</dt><dd>' + rsEsc(x[1]) + '</dd>'; }).join('') + '</dl>' : '') +
+    '<div class="rm-meta"><span><i class="bi bi-people"></i> ' + f.n_pedidos + (f.n_pedidos === 1 ? ' pedido con esta medida' : ' pedidos con esta medida') + '</span>' +
+      (f.ultima ? '<span><i class="bi bi-clock"></i> última ' + rsEsc(f.ultima) + '</span>' : '') +
+      (f.decidido_por ? '<span><i class="bi bi-person-check"></i> ' + rsEsc(f.decidido_por) + (f.decidido ? ' · ' + rsEsc(f.decidido) : '') + '</span>' : '') + '</div>' +
+    ((f.aprobadas_del_modelo || []).length && f.estado !== 'aprobada' ? '<div class="rm-prev"><i class="bi bi-journal-check"></i> Ya aprobada para este modelo: ' + f.aprobadas_del_modelo.map(rsEsc).join(' · ') + '</div>' : '') +
+    (f.nota ? '<div class="rm-meta"><span><i class="bi bi-chat-left-text"></i> ' + rsEsc(f.nota) + '</span></div>' : '') +
+    '<div class="rm-acc">' + acc + '</div></div>';
+}
+async function rmDecidir(id, accion){
+  let nota = '';
+  if (accion === 'aprobar'){
+    const ok = await ilusConfirm({ title: 'Aprobar la medida', message: 'Pasa a ser la «medida del modelo»: se ofrece como ayuda a los técnicos (siempre la confirman con su huincha).',
+      okLabel: 'Aprobar', cancelLabel: 'Cancelar' });
+    if (!ok) return;
+  } else if (accion === 'descartar'){
+    const t = await ilusPrompt({ title: 'Descartar la medida', message: '¿Por qué no sirve? Queda escrito con tu nombre.', placeholder: 'Ej: es una piola de otro modelo', required: true });
+    if (!t) return;
+    nota = String(t).trim();
+    if (nota.length < 5){ ilusToast('Cuenta un poco más.', { type: 'warning' }); return; }
+  }
+  let j = {};
+  try {
+    const r = await fetch('/repuestos/api/medidas-terreno/' + id + '/decidir', { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accion: accion, nota: nota }) });
+    j = await r.json();
+  } catch(e){ j = { ok: false, error: 'Sin conexión.' }; }
+  if (!j.ok){ ilusToast(j.error || 'No se pudo guardar la decisión.', { type: 'error' }); return; }
+  ilusToast(accion === 'aprobar' ? 'Medida aprobada.' : (accion === 'descartar' ? 'Medida descartada.' : 'Volvió a sugerida.'), { type: 'success' });
+  rmCargar();
+}
+if (document.getElementById('rsVistaMedidas')) { rmContar(); }
+
+function rsVista(v){function rsVista(v){
   _rs.vista = v;
   // 🔒 FIX 2026-09-25: vaciar la fuente que deja de estar activa -- si no,
   // rsBuscarSolicitud() podía encontrar una copia vieja de la MISMA
   // solicitud en la vista que ya no se ve (ver comentario ahí).
-  if (v === 'lista') _rs.grupos = []; else if (v !== 'compras') _rs.pagina = [];
-  ['Lista','Proveedor','Cliente','Compras'].forEach(function(x){
+  if (v === 'lista') _rs.grupos = []; else if (v !== 'compras' && v !== 'medidas') _rs.pagina = [];
+  ['Lista','Proveedor','Cliente','Compras','Medidas'].forEach(function(x){
     const b = document.getElementById('rsVista' + x);
     if (b) b.classList.toggle('on', x.toLowerCase() === v);
   });
@@ -2184,7 +2349,9 @@ function rsVista(v){
   // propio pane y su propia carga (rcCargar), nunca rsCargar/rsCargarAgrupado.
   const pg = document.getElementById('rsVistaPaneGrupos'); if (pg) pg.classList.toggle('d-none', v !== 'proveedor' && v !== 'cliente');
   const pc = document.getElementById('rsVistaPaneCompras'); if (pc) pc.classList.toggle('d-none', v !== 'compras');
+  const pm = document.getElementById('rsVistaPaneMedidas'); if (pm) pm.classList.toggle('d-none', v !== 'medidas');
   if (v === 'compras') { rcCargarProveedoresFiltro(); rcCargar(); }
+  else if (v === 'medidas') rmCargar();
   else rsCargar();
 }
 
@@ -2303,6 +2470,7 @@ function rsFilaHtml(s){
     '<td>' + cliente + (equipo ? '<small>' + rsEsc(equipo) + '</small>' : '') + (s.prioridad_fs ? '<span class="rst-pill rojo fuerte"><i class="bi bi-exclamation-octagon-fill"></i>Fuera de servicio</span>' : '') + '</td>' +
     '<td><b>' + rsEsc(s.repuesto_nombre || '') + ' × ' + rsFmt(s.cantidad) + '</b>' +
       ((s.nombres_alt || []).length ? '<small class="rst-alt"><i class="bi bi-tags"></i>También: ' + rsEsc(s.nombres_alt.join(' · ')) + '</small>' : '') +
+      (s.datos_txt ? '<small class="rst-med' + (s.datos && s.datos.medido_con === 'no_pude' ? ' sin' : '') + '"><i class="bi bi-rulers"></i><span>' + rsEsc(s.datos_txt) + '</span></small>' : '') +
       (s.stock_sku ? '<small>' + rsEsc(s.stock_sku) + '</small>' : '') + stock + (!(s.n_fotos > 0) && s.abierta ? '<span class="rst-pill ambar"><i class="bi bi-camera"></i>Sin foto</span>' : '') + '</td>' +
     '<td><span class="rst-etapa ' + (_RST_ETAPA_CLS[et] || 'gris') + '">' + rsEsc(s.etapa_label || '') + '</span><small class="rst-sig">' + rsEsc(s.siguiente || '') + '</small></td>' +
     '<td>' + plazo + '</td>' +
@@ -3068,8 +3236,8 @@ function rsCardInner(s){
         '<div class="rs-k">Repuesto</div>' +
         '<div class="rs-v"><b>' + (s.origen === 'piola' ? '<i class="bi bi-link-45deg"></i> ' : (s.origen === 'cinta' ? '<i class="bi bi-arrow-left-right"></i> ' : '')) + rsEsc(s.repuesto_nombre) + ' × ' + rsFmt(s.cantidad) +
           (s.abierta && _rs.puedePedir ? ' <button type="button" class="rs-cant-editar" title="Ajustar cantidad" onclick="rsEditarCantidad(' + s.id + ')"><i class="bi bi-pencil-fill"></i></button>' : '') + '</b>' +
-          (s.piola_metros ? '<br><span class="rs-piola">' + rsFmt(s.piola_metros) + ' m de piola</span>' : '') +
-          (s.medida ? '<br><span class="rs-piola">medida ' + rsEsc(s.medida) + '</span>' : '') + liga + rsFaltaHtml(s) + rsFamiliaHtml(s) +
+          (s.piola_metros && !(s.datos_filas || []).length ? '<br><span class="rs-piola">' + rsFmt(s.piola_metros) + ' m de piola</span>' : '') +
+          (s.medida && !(s.datos_filas || []).length ? '<br><span class="rs-piola">medida ' + rsEsc(s.medida) + '</span>' : '') + rsMedidasHtml(s) + liga + rsFaltaHtml(s) + rsFamiliaHtml(s) +
           (s.proveedor_nombre ? '<div class="rs-liga"><i class="bi bi-truck"></i> ' + rsEsc(s.proveedor_nombre) + (s.oc_numero ? ' · OC ' + rsEsc(s.oc_numero) : '') + '</div>' : (s.oc_numero ? '<div class="rs-liga"><i class="bi bi-receipt"></i> OC ' + rsEsc(s.oc_numero) + '</div>' : '')) +
           rsCompraBadge(s) +
           {#- 💰 M3 (revisión Opus 2026-09-26 -- Daniel: "corregir costo de
