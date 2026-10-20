@@ -74,6 +74,11 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='ilus_firma.css') }}">
 {# 🧩 2026-10-20: chips de evento / desinstalación, modal «Programar desinstalación» (static/ot_desinst.js). #}
 <link rel="stylesheet" href="{{ url_for('static', filename='ot_evento.css') }}">
+{#- 🧰 2026-10-20 (Daniel: «algo choro, algo espectacular… esta es nuestra página de orgullo»): barra de acciones de cada
+    equipo/producto y sus flujos a pantalla completa. Todo en archivos estáticos (cacheables) para que la ficha, que llega
+    a ~1 MB con 19 productos, no pese más: aquí solo van un JSON y un <div> vacío por tarjeta. -#}
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_acciones.css') }}">
+<script defer src="{{ url_for('static', filename='ot_acciones.js') }}"></script>
 <style>
 .otd{
   --pend:#3b82f6; --ejec:#dc2626; --comp:#16a34a; --cerr:#4b5563;
@@ -866,8 +871,8 @@
    estados, y también para firmar y cerrar la OT como aprobador" — y al
    confirmarlo: "eso también es necesario para poder empezar a usar ese
    menú"). Mismo patrón .tx-bottom que ya usa la pantalla de ejecución
-   (static/mantenciones_ot_ejecutar.css ~1010), incluido el left:250px que
-   la despega del sidebar en escritorio y el safe-area-inset del notch. */
+   (static/mantenciones_ot_ejecutar.css ~1010), incluido el left:var(--sidebar-w) (antes 250px a mano; 2026-10-19
+   el menú lateral bajó a 212px) que la despega del sidebar en escritorio y el safe-area-inset del notch. */
 /* 🔉 2026-09-02 (Daniel, viendo la primera versión: "muy grande y feo, por
    favor más sutil"). Era una franja blanca de borde a borde con un botón
    verde gigante en degradado -- competía con el contenido en vez de estar
@@ -880,7 +885,7 @@
   border-top:1px solid rgba(0,0,0,.07);padding:8px 16px;
   padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));
   display:flex;gap:8px;align-items:center;justify-content:flex-end}
-@media (min-width:992px){.otd-bottom{left:250px}}
+@media (min-width:992px){.otd-bottom{left:var(--sidebar-w,212px)}}
 {#- 🔀 2026-09-20: "Ver PDF" + "Anexo de fotos" comparten una fila 50/50
     (flex:1 1 0 -- reparto exacto sin depender del ancho del texto) para
     que el footer quepa en menos filas. En desktop (.otd-bottom en fila,
@@ -1614,6 +1619,38 @@
   .otd-sinsal-list{grid-template-columns:1fr}
   .otd-sinsal-int{margin-left:0}
 }
+/* 🧾 2026-10-18 (Etapa 3): acta de recepción para logística (solo gestión). Lenguaje Retiros: tarjeta, semáforo de
+   resultados y botones de 44px; en el celular los botones van a todo el ancho (REGLA #3). */
+.otd-acta{border:1px solid #e5e7eb;border-left:4px solid #dc2626;border-radius:12px;background:#fff;
+  padding:12px 14px;margin:0 0 12px;color:#0a0a0a}
+.otd-acta-hd{display:flex;gap:10px;align-items:flex-start}
+.otd-acta-hd .ic{flex:none;width:36px;height:36px;border-radius:10px;background:#fee2e2;color:#dc2626;
+  display:flex;align-items:center;justify-content:center;font-size:1.1rem}
+.otd-acta-hd .tx b{display:block;font-size:.92rem}
+.otd-acta-hd .tx span{display:block;font-size:.8rem;color:#4b5563;overflow-wrap:anywhere}
+.otd-acta-tot{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.otd-acta-tot .t{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:4px 11px;font-size:.78rem;
+  font-weight:700;border:1px solid #d1d5db;background:#f3f4f6;color:#374151}
+.otd-acta-tot .t b{font-size:.9rem}
+.otd-acta-tot .t.total{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.otd-acta-tot .t.verde{background:#dcfce7;border-color:#86efac;color:#166534}
+.otd-acta-tot .t.ambar{background:#fff8e1;border-color:#fcd34d;color:#92400e}
+.otd-acta-tot .t.rojo{background:#fee2e2;border-color:#fca5a5;color:#991b1b}
+.otd-acta-tot .t.azul{background:#dbeafe;border-color:#93c5fd;color:#1e40af}
+.otd-acta-btns{display:flex;flex-wrap:wrap;gap:8px}
+.otd-acta-btn{min-height:44px;display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:8px 14px;
+  border-radius:10px;border:1px solid #d1d5db;background:#fff;color:#111827;font-size:.85rem;font-weight:700;
+  text-decoration:none;cursor:pointer}
+.otd-acta-btn:hover{border-color:#0a0a0a;color:#0a0a0a}
+.otd-acta-btn.pri{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.otd-acta-btn.pri:hover{background:#dc2626;border-color:#dc2626;color:#fff}
+.otd-acta-btn:disabled{opacity:.55;cursor:default}
+.otd-acta-dest{display:block;margin-top:8px;font-size:.76rem;color:#4b5563;overflow-wrap:anywhere}
+.otd-acta-dest.vacio{color:#92400e}
+@media (max-width:576px){
+  .otd-acta{padding:10px 12px}
+  .otd-acta-btn{flex:1 1 100%}
+}
 .otd-tabs{display:flex;gap:4px;margin-bottom:14px;padding:5px;
   background:#f3f4f6;border:1px solid var(--line);border-radius:12px;
   overflow-x:auto}
@@ -2113,7 +2150,7 @@
   padding:11px 16px;
   background:#92400e;color:#fff;font-size:.82rem;line-height:1.4;
   box-shadow:0 -6px 18px rgba(0,0,0,.25)}
-@media (min-width:992px){.otd-outbox{left:250px}}
+@media (min-width:992px){.otd-outbox{left:var(--sidebar-w,212px)}}
 @media (max-width:640px){.otd-outbox{bottom:74px}}
 /* Sin barra de acciones abajo, el banner vuelve al piso (y respeta el
    notch del iPhone, que en ese caso sí le toca a él). */
@@ -2365,6 +2402,10 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   background:#fff8e1;border:1px solid #fcd34d;color:#92400e;font-size:.85rem}
 .otd-chk-nollego b{color:#78350f}
 @media (max-width:575.98px){.otd-chk-resbar button{flex:1 1 calc(50% - 8px);justify-content:center}}
+/* 🧰 2026-10-20: las acciones del producto y del equipo viven en la barra de static/ot_acciones.css (.otd-acc). Un
+   producto con una acción vigente que cubre todas sus unidades («No se puede usar», «No tiene arreglo», «No llegó») lleva
+   el sello en rojo. */
+.otd-wk-item .sel.eq-fs{background:#b91c1c;color:#fff}
 /* Sello de autoría — la trazabilidad que Daniel pide ver en la tarea */
 .otd-chk-item .sello{grid-column:2;display:inline-flex;align-items:center;gap:5px;
   margin-top:7px;font-size:.66rem;font-weight:700;color:#475569;background:#f1f5f9;
@@ -3684,6 +3725,40 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       </li>
       {% endfor %}
     </ul>
+  </section>
+  {% endif %}
+  {#- 🧾 2026-10-18 (Etapa 3, Daniel: «generar un reporte para enviar a logística de lo que se está recibiendo y lo que
+      no, de la nota de venta, para que ellos puedan hacer la recepción y la gestión documental»). Solo OT internas de
+      revisión y solo gestión: el servidor no arma `acta` para un técnico y sus rutas llevan @_no_tecnico. El envío
+      va SOLO a correos internos (REGLA #22). -#}
+  {% if acta and not es_tecnico %}
+  <section class="otd-acta" aria-label="Acta de recepción para logística">
+    <div class="otd-acta-hd">
+      <span class="ic"><i class="bi bi-clipboard2-check-fill" aria-hidden="true"></i></span>
+      <div class="tx"><b>Acta de recepción para logística</b>
+        <span>Lo que se recibió y lo que no{% if acta.documentos %} de {{ acta.documentos | join(', ') }}{% endif %},
+          producto por producto, con su resultado, observación, faltantes y la foto general. Se actualiza al
+          recargar la página.</span></div>
+    </div>
+    <div class="otd-acta-tot">
+      <span class="t total"><b>{{ acta.n }}</b> producto{{ 's' if acta.n != 1 }}</span>
+      {% for t in acta.totales %}<span class="t {{ t.semaforo }}"><b>{{ t.n }}</b> {{ t.resultado }}</span>{% endfor %}
+    </div>
+    <div class="otd-acta-btns">
+      <a class="otd-acta-btn" href="/ot/{{ v.id }}/acta-recepcion.pdf" target="_blank" rel="noopener">
+        <i class="bi bi-file-earmark-pdf-fill" aria-hidden="true" style="color:#dc2626"></i> Acta de recepción (PDF)</a>
+      <a class="otd-acta-btn" href="/ot/{{ v.id }}/acta-recepcion.xlsx">
+        <i class="bi bi-file-earmark-excel-fill" aria-hidden="true" style="color:#16a34a"></i> Acta de recepción (Excel)</a>
+      <button type="button" class="otd-acta-btn pri" id="otdActaBtnEnviar" onclick="otdActaEnviar()">
+        <i class="bi bi-send-fill" aria-hidden="true"></i> Enviar a logística</button>
+    </div>
+    {% if acta.destinatarios %}
+    <small class="otd-acta-dest"><i class="bi bi-envelope" aria-hidden="true"></i> Se envía a: {{ acta.destinatarios | join(', ') }}
+      (Configuración → «Correos del acta de recepción»). Solo correos internos.</small>
+    {% else %}
+    <small class="otd-acta-dest vacio"><i class="bi bi-info-circle" aria-hidden="true"></i> Aún no hay correos en
+      Configuración → «Correos del acta de recepción»: al enviar puedes escribir uno interno (@sphs.cl o @ilusfitness.com).</small>
+    {% endif %}
   </section>
   {% endif %}
   <div class="otd-tabs" id="otdTabs">
@@ -5304,11 +5379,21 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               <span class="th" data-eqfoto="{{ e.id }}" data-ficha-url=""><i class="bi bi-image"></i></span>
             {% endif %}
             <div class="nm">
-              <b>{{ e.nombre or ('Equipo #' ~ e.id) }}{% if not e._interno and e.rep_abiertas %} <i class="bi bi-tools otd-rep-ico" title="Con repuesto solicitado"></i>{% endif %}</b>
+              <b>{{ e.nombre or ('Equipo #' ~ e.id) }}{% if e.rep_abiertas %} <i class="bi bi-tools otd-rep-ico" title="Con repuesto solicitado"></i>{% endif %}</b>
               <small id="otdWkSum-{{ e.id }}">{% if e.serie %}S/N {{ e.serie }} · {% endif %}{{ e.n_obl_ok }}/{{ e.n_obl }} obligatorias</small>
             </div>
             <span class="sel {{ e.sello_cls }}">{{ e.sello }}</span>
             <i class="bi bi-chevron-right chev"></i>
+            {#- 🧰 2026-10-20 (Daniel: «antes de comenzar los checklist los técnicos tengan la posibilidad de darle de baja,
+                de dejar fuera de servicio, de indicar que no llegó, de solicitar piola o cualquier repuesto» · «antes de cada
+                checklist estaba el menú… Ese menú lo requiero para cada equipo y poder indicar alguna incidencia»): la
+                barra de acciones, SIEMPRE a la vista (también con la tarjeta cerrada) y ANTES del checklist, en CADA
+                equipo y CADA producto. La pinta static/ot_acciones.js con los datos de window.OTD_ACC; el preventDefault
+                evita que un toque entre botones abra o cierre la tarjeta. -#}
+            {% if not (e._interno and not e.id) %}
+            <div class="otd-acc" id="otdAcc-{{ ('i' ~ e.id) if e._interno else ('e' ~ e.id) }}" role="group"
+                 aria-label="Acciones de {{ e.nombre or 'este equipo' }}" onclick="event.preventDefault()"></div>
+            {% endif %}
           </summary>
           <div class="otd-wk-body">
             <div class="otd-wk-kv">
@@ -5478,6 +5563,24 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                 </div>
                 {% endfor %}
               </div>
+            </div>
+            {% endif %}
+            {#- 🧰 2026-10-18 (Etapa 3): las solicitudes de repuesto de un PRODUCTO de la revisión (item_manual_id),
+                con su estado y su ticket, igual que las de un equipo de ficha (otdRepRefrescar('i' + id) las repinta
+                sin recargar). Las acciones de este producto viven en la barra de arriba del checklist. -#}
+            {% if e._interno %}
+            <div class="otd-rep-lista" id="otdRepLista-i{{ e.id }}"{% if not e.rep_solicitudes %} style="display:none"{% endif %}>
+              {% for s in e.rep_solicitudes or [] %}
+              <div class="otd-rep-it {{ 'abierta' if s.abierta else 'cerrada' }}">
+                <i class="bi bi-tools"></i>
+                <div class="inf">
+                  <b>{{ s.repuesto_nombre }} × {{ '%g' | format(s.cantidad or 1) }}</b>
+                  <small>{{ s.estado_label }}{% if s.stock_sku %} · {{ s.stock_sku }}{% endif %}{% if s.numero_ticket %} · <a href="/tickets/{{ s.ticket_id }}" target="_blank" rel="noopener">{{ s.numero_ticket }}</a>{% endif %} · {{ s.created_at }}{% if s.solicitado_por %} · {{ s.solicitado_por }}{% endif %}</small>
+                  <small class="mot">{{ s.motivo }}</small>
+                </div>
+                <span class="est {{ s.estado }}">{{ (s.estado_label or s.estado or '').split(' · ')[0] }}</span>
+              </div>
+              {% endfor %}
             </div>
             {% endif %}
 
@@ -10433,6 +10536,9 @@ window.otdWkRefrescarProgreso = function(){
    tome la urgencia, y sin él el ticket nace inútil. Revertir no lo exige:
    equivocarse al marcar tiene que ser barato de deshacer. */
 window.otdFueraServicio = async function(mid, reactivar){
+  // 🚨 2026-10-20: marcar fuera de servicio pide qué pasa (lista + detalle), una foto y «¿puede lastimar a alguien?»: es
+  // el flujo «No se puede usar» de la barra (static/ot_acciones.js). Volver a operativo sigue siendo una confirmación.
+  if (!reactivar && window.otdAccAbrir && window.OTD_ACC && window.OTD_ACC['e' + mid]) return window.otdAccAbrir('fs', 'e' + mid);
   let motivo = '';
   if (reactivar){
     const ok = await ilusConfirm({
@@ -12526,6 +12632,17 @@ window.otdActivarCorreccion = async function(){
   ilusToast('Corrección activada — queda registrada', {type:'warning'});
 };
 const OTD_CURRENT_UID = {{ (current_user.id if current_user else 0) | tojson }};
+// 🧰 2026-10-18 (Etapa 3): quién ve las acciones del producto (mismo candado que «Fuera de lo normal» de un equipo).
+const OTD_PUEDE_PRODUCTO = {{ 'true' if ((puede_ejecutar or puede_configurar) and not ot_solo_lectura) else 'false' }};
+// 🧰 2026-10-20: datos de la barra de acciones de TODAS las tarjetas (un solo JSON; sin proveedores ni costos, REGLA #19 y #26).
+// «Informar incidencia» lo puede cualquier técnico asignado a ESTA OT (decisión de Daniel, 20-oct-2026): reportar no es
+// gestionar; el técnico NO gana acceso a las pantallas del módulo de Incidencias.
+window.OTD_ACC_CFG = { vid: {{ v.id }}, externo: {{ 'true' if es_tecnico_externo else 'false' }} };
+window.OTD_ACC = {{ (acc_data or {}) | tojson }};
+window.OTD_ACC_LISTAS = {{ (acc_listas or {}) | tojson }};
+window.OTD_PROD_DISPENSA = {{ (prod_dispensa or {}) | tojson }};
+// 🧾 2026-10-18: correos internos configurados para el acta (solo llega a gestión: a un técnico, lista vacía).
+const OTD_ACTA_DEST = {{ ((acta.destinatarios if acta else []) or []) | tojson }};
 
 // 🧩 2026-10-17 (checklist heredado, Daniel: «Estructura y tapiz se abre solo
 // si la base marca observación»). La base de ESTE equipo marcó algo si una
@@ -12592,12 +12709,20 @@ function otdChkGrupoClave(t){
   if (t.item_manual_id) return 'i' + t.item_manual_id;
   return 'x0';
 }
-function otdChkEvaluar(tareas){
+function otdChkEvaluar(tareas, estados){
+  // 🧰 2026-10-20: `estados` = {item_manual_id: estado} de los productos cuyo checklist se dispensa por una ACCIÓN del
+  // técnico («No llegó», «No tiene arreglo», «No se puede usar»): espejo de _chk_revision_evaluar(tareas, estados).
+  estados = estados || ((typeof OTD_PROD_DISPENSA !== 'undefined') ? OTD_PROD_DISPENSA : {});
   const grupos = {};
   (tareas || []).forEach(t => { const k = otdChkGrupoClave(t); (grupos[k] = grupos[k] || []).push(t); });
-  const noLlego = [], porTarea = {};
+  const noLlego = [], porTarea = {}, dispensados = [];
   Object.keys(grupos).forEach(k => {
     const ts = grupos[k];
+    if (k[0] === 'i' && Object.prototype.hasOwnProperty.call(estados, k.slice(1))){
+      dispensados.push(Number(k.slice(1)));
+      ts.forEach(t => { porTarea[t.id] = { exigible: false, hecha: !!t.completada, motivo: null, dispensada: true }; });
+      return;
+    }
     const opciones = {};
     ts.forEach(t => {
       if (String(t.tipo_respuesta || '').trim().toLowerCase() === 'lista') opciones[t.id] = otdChkOpcion(t);
@@ -12631,13 +12756,15 @@ function otdChkEvaluar(tareas){
         if (hayFalla && otdChkEsResultado(t) && ['apto', 'apto con observaciones'].includes(opciones[t.id])){
           exig = true; hecha = false; motivo = 'incoherente';
         }
+        // 🧾 2026-10-19: un Resultado en «No aplica» no es un resultado (espejo de _chk_revision_evaluar).
+        if (otdChkEsResultado(t) && vj.na){ exig = true; hecha = false; motivo = 'resultado_na'; }
       }
       if (exig && !hecha && motivo === null) motivo = 'obligatoria';
       porTarea[t.id] = { exigible: exig, hecha: exig ? hecha : !!t.completada,
                          motivo: (exig && !hecha) ? motivo : null, dispensada: disp };
     });
   });
-  return { no_llego: noLlego, por_tarea: porTarea };
+  return { no_llego: noLlego, por_tarea: porTarea, dispensados: dispensados };
 }
 function otdChkExig(t){ return t._ev ? t._ev.exigible : !!t.obligatoria; }
 function otdChkHecha(t){ return t._ev ? t._ev.hecha : !!t.completada; }
@@ -12695,7 +12822,82 @@ async function otdChkResultadoRapido(tid, opcion){
     type: n === 'dar de baja' ? 'warning' : 'question',
   });
   if (!ok) return;
-  await otdChkGuardar(tid, opcion);
+  const d = await otdChkGuardar(tid, opcion);
+  // 🧰 2026-10-18 (Etapa 3): «pide el argumento en la Observación» — se lleva al técnico al campo si falta.
+  if (d) otdChkPedirArgumento(found.mid, n);
+}
+
+/* 🧰 2026-10-20 — las acciones del PRODUCTO (Pedir repuesto, No se puede usar, No tiene arreglo, No llegó, Informar
+   incidencia) ya no viven dentro del checklist: son la barra .otd-acc de cada tarjeta (static/ot_acciones.js), visible
+   sin abrir nada y sin depender de que la plantilla elegida traiga un «Resultado del control» (las «(LU)» de Lenin no lo
+   traen). Los repuestos sugeridos salen en «Pedir repuesto»: los de la plantilla si una persona los llenó; si no, los de
+   por defecto según el sistema del producto (REGLA #32: el sistema sugiere, la persona decide). */
+/* Después de Dar de baja / Fuera de servicio / No llegó: si la «Observación del equipo» de ESE producto está
+   vacía, se lleva al técnico ahí (es el argumento que exigen la firma y el cierre). */
+function otdChkPedirArgumento(mid, n){
+  if (!['no llego', 'dar de baja', 'fuera de servicio'].includes(n)) return;
+  let obs = null;
+  ((OTD_CHK_DATA && OTD_CHK_DATA[String(mid)]) || []).forEach(g => (g.tareas || []).forEach(t => {
+    if (!obs && String(t.tipo_respuesta || '').toLowerCase() === 'texto' && otdChkNorm(t.titulo).startsWith('observacion')) obs = t;
+  }));
+  if (!obs) return;
+  const txt = String((obs.valor_json && obs.valor_json.texto) || '').trim();
+  if (obs.completada && txt) return;
+  setTimeout(() => {
+    const el = document.getElementById('otdChkVal-' + obs.id);
+    if (!el) return;
+    el.scrollIntoView({behavior: 'smooth', block: 'center'});
+    try { el.focus({preventScroll: true}); } catch(e){ el.focus(); }
+  }, 250);
+  ilusToast('Escribe el argumento en «' + (obs.titulo || 'Observación del equipo') + '»: '
+    + (n === 'no llego' ? 'cuándo se esperaba y a quién se preguntó.' : 'qué tiene y por qué.'), {type: 'warning', duration: 6000});
+}
+
+/* 🧾 2026-10-18 (Etapa 3): «Enviar a logística». El servidor manda (solo dominios internos, interruptor de correo,
+   bitácora e historial); aquí solo se pregunta a quién más, con un único campo (REGLA #8: ilusPrompt). */
+const _OTD_ACTA_DOMINIO = /^[^@\s]+@(sphs\.cl|ilusfitness\.com)$/i;
+async function otdActaEnviar(){
+  const lista = OTD_ACTA_DEST.length ? OTD_ACTA_DEST.join(', ') : 'nadie todavía (no hay correos en Configuración)';
+  const extra = await ilusPrompt({
+    title: 'Enviar el acta a logística',
+    message: 'Se enviará a: ' + lista + '.',
+    sub: 'Si quieres sumar otro correo, escríbelo (solo @sphs.cl o @ilusfitness.com). Déjalo vacío para enviar solo a los de Configuración. El acta nunca va a un cliente.',
+    placeholder: 'nombre@sphs.cl', inputType: 'email', required: false,
+    okLabel: 'Enviar acta', cancelLabel: 'Cancelar', type: 'question',
+  });
+  if (extra === null) return;
+  const otro = String(extra || '').trim();
+  if (otro && !_OTD_ACTA_DOMINIO.test(otro)){
+    await ilusAlert({title: 'Correo no permitido', message: 'Solo correos internos: @sphs.cl o @ilusfitness.com.', type: 'warning'});
+    return;
+  }
+  if (!otro && !OTD_ACTA_DEST.length){
+    await ilusAlert({title: 'Falta a quién enviarla', message: 'Escribe un correo interno o agrégalos en Configuración → «Correos del acta de recepción».', type: 'warning'});
+    return;
+  }
+  const btn = document.getElementById('otdActaBtnEnviar');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`/ot/api/${OTD_VID}/acta-recepcion/enviar`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+      body: JSON.stringify({extra: otro}),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok){
+      await ilusAlert({title: 'El acta no se envió', message: d.error || 'No se pudo enviar. Intenta de nuevo.', type: 'warning'});
+      return;
+    }
+    if (d.fallidos && d.fallidos.length){
+      await ilusAlert({title: 'Acta enviada en parte', message: 'Salió a: ' + d.enviados.join(', ') + '. No salió a: ' + d.fallidos.join(', ') + '.', type: 'warning'});
+    } else {
+      ilusToast('✓ Acta enviada a ' + d.enviados.join(', '), {type: 'success'});
+    }
+  } catch(e){
+    ilusToast('Sin conexión: el acta no se envió.', {type: 'error'});
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 function otdChkCondEnvolver(g, grupos, html){
   const marco = otdChkBaseMarcoObs(grupos, g);
@@ -12857,7 +13059,11 @@ function otdRenderChecklistEquipo(mid){
   // pantalla clásica que Daniel puso al lado: "hay un semáforo, está bien
   // hecho eso". Una barra continua dice el porcentaje; ésta dice además
   // CUÁNTAS tareas son y cuáles faltan, que es lo que el técnico mira.
-  mount.innerHTML = otdChkBarraResultado(_resultado, _ev.no_llego.length > 0) + grupos.map(g => {
+  // 🧰 2026-10-20: las acciones del producto viven en la barra de la tarjeta (ot_acciones.js), no acá. Si el producto ya
+  // tiene una acción vigente (fuera de servicio, baja, no llegó), su aviso está arriba: no se repinta el atajo del Resultado.
+  const _accEst = (window.OTD_ACC && window.OTD_ACC['i' + mid]) ? window.OTD_ACC['i' + mid].est : null;
+  mount.innerHTML = (_accEst ? '' : otdChkBarraResultado(_resultado, _ev.no_llego.length > 0))
+    + grupos.map(g => {
     const oblT = g.tareas.filter(t => otdChkExig(t)).length;
     const oblO = g.tareas.filter(t => otdChkExig(t) && otdChkHecha(t)).length;
     const segs = g.tareas.map(t =>
@@ -12868,7 +13074,15 @@ function otdRenderChecklistEquipo(mid){
     // de esta plantilla, para pintarla como "estás aquí" (ver .is-next en
     // el CSS). Es solo la primera sin completar en el orden de siempre --
     // no cambia el orden ni inventa una regla de bloqueo nueva.
-    const idxSiguiente = g.tareas.findIndex(t => !t.completada);
+    // 🧾 2026-10-19 (revisión de la Etapa 2): el «paso actual» es lo que de verdad falta. Una tarea dispensada por
+    // «No llegó» nunca lo es (antes la Foto general salía como paso actual con «Falta foto» al lado de «No se exige»);
+    // con el producto «No llegó» solo puede serlo lo exigible pendiente (la observación con el argumento).
+    const _noLlegoP = _ev.no_llego.length > 0;
+    const idxSiguiente = g.tareas.findIndex(t => {
+      if (t._ev && t._ev.dispensada) return false;
+      if (otdChkExig(t)) return !otdChkHecha(t);
+      return !_noLlegoP && !t.completada;
+    });
     const _html = `
     <div class="otd-chk-plant">
       <div class="otd-chk-plant-nm"><i class="bi bi-list-check"></i> ${otdEsc(g.plantilla_nombre)}
@@ -13936,17 +14150,20 @@ function otdChkFotoBtnHtml(t){
   const _pideHallazgo = !!(t._ev && t._ev.motivo === 'foto_hallazgo');
   const _fshConFotos = !!((t.foto_si_hallazgo === true || Number(t.foto_si_hallazgo) > 0) && t.fotos && t.fotos.length);
   if (otdBloqueadaPorCierre()){
-    if ((exigeFoto || _pideHallazgo) && !(t.fotos && t.fotos.length)){
+    if ((exigeFoto || _pideHallazgo) && !(t._ev && t._ev.dispensada) && !(t.fotos && t.fotos.length)){
       return `<span class="otd-chk-sinfoto" title="La tarea exigía evidencia fotográfica y la OT se cerró sin ella">
                 <i class="bi bi-camera-video-off"></i> Cerró sin la foto exigida</span>`;
     }
     return '';
   }
   if (!exigeFoto && !_pideHallazgo && !_fshConFotos) return '';
-  const need = !(t.fotos && t.fotos.length);
+  // 🧾 2026-10-19: tarea dispensada por «No llegó»: la foto ya no se exige; queda solo un «Agregar foto» neutro.
+  const _disp = !!(t._ev && t._ev.dispensada);
+  const need = !_disp && !(t.fotos && t.fotos.length);
   return `<button type="button" class="otd-chk-fotobtn${need ? ' need' : ''}"
             onclick="otdChkAbrirFoto(${t.id}, ${t.maquina_id})">
-            <i class="bi bi-camera-fill"></i> ${need ? (_pideHallazgo ? 'Falta foto del hallazgo' : 'Falta foto') : 'Agregar otra'}</button>
+            <i class="bi bi-camera-fill"></i> ${need ? (_pideHallazgo ? 'Falta foto del hallazgo' : 'Falta foto')
+              : ((t.fotos && t.fotos.length) ? 'Agregar otra' : 'Agregar foto')}</button>
           <input type="file" id="otdChkFotoInp-${t.id}" accept="image/*" capture="environment"
                  style="display:none" onchange="otdChkSubirFoto(this, ${t.id})">`;
 }
@@ -14353,7 +14570,7 @@ function otdChkTareaHtml(t, nro, esSiguiente){
   // 🔴 2026-09-08 (Daniel: "ya pasaste al paso uno... eso es lo que
   // necesito"): el chip va PRIMERO a propósito -- es lo primero que el
   // ojo debe encontrar en la tarea, antes que "Obligatoria" o el tipo.
-  if (!t.completada && esSiguiente){
+  if (esSiguiente && !(otdChkExig(t) ? otdChkHecha(t) : t.completada)){
     chips.push('<span class="ch next"><i class="bi bi-arrow-right-circle-fill"></i> Paso actual</span>');
   }
   // 🧾 2026-10-18 (revisión esencial): la exigencia viene de otdChkEvaluar (t._ev), no solo de la plantilla.
@@ -14364,11 +14581,13 @@ function otdChkTareaHtml(t, nro, esSiguiente){
   if (_evT && _evT.motivo === 'argumento') chips.push('<span class="ch hall">Escribe el argumento de «No llegó»</span>');
   if (_evT && _evT.motivo === 'foto_hallazgo') chips.push('<span class="ch hall"><i class="bi bi-camera-fill" aria-hidden="true"></i> Falta la foto del hallazgo</span>');
   if (_evT && _evT.motivo === 'incoherente') chips.push('<span class="ch err">Con una Falla no vale «Apto»</span>');
+  if (_evT && _evT.motivo === 'resultado_na') chips.push('<span class="ch err">Elige un resultado: «No aplica» no vale aquí</span>');
   if (CH_TIPO[tipo]) chips.push(`<span class="ch tipo">${CH_TIPO[tipo]}</span>`);
   // 🔴 FIX 2026-09-09: mismo desacople que otdChkFotoBtnHtml -- una tarea
   // tipo_respuesta='foto' exige foto aunque requiere_foto haya quedado en
   // 0 en la plantilla.
-  if (t.requiere_foto || tipo === 'foto'){
+  // 🧾 2026-10-19: una tarea dispensada por «No llegó» no pide foto (ni «Necesita foto» ni botón rojo).
+  if ((t.requiere_foto || tipo === 'foto') && !(_evT && _evT.dispensada)){
     const conFoto = !!(t.fotos && t.fotos.length);
     chips.push(`<span class="ch foto${conFoto ? ' ok' : ''}">` +
                (conFoto ? 'Foto lista' : 'Necesita foto') + '</span>');
@@ -14417,6 +14636,9 @@ function otdChkNoAplicaHtml(t, tipo, bloqueada){
       <span class="text-muted">— ${otdEsc(vj.na_por || '')}</span></div>`;
   }
   if (bloqueada) return '';
+  // 🧾 2026-10-19: el «Resultado del control» no admite «No aplica» (el servidor responde 409 RESULTADO_SIN_NA):
+  // lo que no se puede decidir va como «No llegó» o «Pendiente de diagnóstico».
+  if (otdChkEsResultado(t)) return '';
   return `<button type="button" class="btn btn-link btn-sm p-0 mt-1" style="min-height:44px"
     onclick="otdChkNoAplica(${t.id})">Esta tarea no aplica a este trabajo</button>`;
 }
@@ -17365,8 +17587,15 @@ async function levdEliminar(iid){
 #modalRepSol .otrep-link{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:4px 0;border:0;
   background:none;color:#dc2626;font-size:.78rem;font-weight:800;font-family:inherit;cursor:pointer;text-align:left}
 #modalRepSol .otrep-link:hover{text-decoration:underline}
+/* 🧰 2026-10-18 (Etapa 3): chips de repuestos sugeridos del producto (toques de 44px, nombre completo). */
+#modalRepSol .otrep-sug-chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 12px}
+#modalRepSol .otrep-sug-chip{min-height:44px;padding:6px 12px;border-radius:999px;border:1px dashed #93c5fd;
+  background:#eff6ff;color:#1e40af;font-size:.8rem;font-weight:700;display:inline-flex;align-items:center;gap:5px;
+  cursor:pointer;text-align:left;overflow-wrap:anywhere}
+#modalRepSol .otrep-sug-chip.on{background:#dcfce7;border:1px solid #86efac;color:#166534}
 @media (max-width:640px){
   #modalRepSol #otrepTabs{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  #modalRepSol .otrep-sug-chip{flex:1 1 100%}
   #modalRepSol #otrepTabs .otrep-tab{min-height:44px;white-space:normal;line-height:1.2;text-align:center;
     display:flex;align-items:center;justify-content:center;gap:4px;border-radius:12px;padding:6px 8px}
   /* Las tarjetas de repuesto (compatibles, posibles, piolas) llevan icono 44px + nombre + pastilla
@@ -17432,6 +17661,14 @@ async function levdEliminar(iid){
               </div>
               <label class="form-label fw-semibold small mb-1">Medida de la cinta <span class="text-muted fw-normal" style="font-size:.7rem">(opcional)</span></label>
               <input type="text" id="otrep_medida" class="form-control mb-2" maxlength="80" placeholder="Ej: 3000 × 510 mm" autocomplete="off">
+            </div>
+            {#- 🧰 2026-10-18 (Etapa 3, Daniel: «solicitar piolas si es selectora de peso, solicitar cintas si es
+                trotadora… inteligentemente por las plantillas»). En un PRODUCTO de la revisión: los repuestos
+                sugeridos por SU checklist; un toque y quedan en la lista (escritos a mano, por validar: bodega los
+                asocia). Solo nombres de pieza, nunca proveedor ni costo. -#}
+            <div id="otrepSugWrap" style="display:none">
+              <div class="otrep-sec"><i class="bi bi-stars"></i>Sugeridos por el checklist de este producto</div>
+              <div class="otrep-sug-chips" id="otrepSugChips"></div>
             </div>
             <div class="otrep-tabs" id="otrepTabs">
               <button type="button" class="otrep-tab on" data-tab="compat" onclick="otrepTab('compat')">Compatibles <span id="otrepNCompat">(0)</span></button>
@@ -17675,6 +17912,8 @@ async function levdEliminar(iid){
   </div>
 </div>
 
+{#- 🧰 2026-10-20: el modal «Informar incidencia» de un producto se reemplazó por el flujo de pantalla completa de la barra
+    de acciones (static/ot_acciones.js), que sirve a productos y a equipos con UN solo contenedor. -#}
 {#- 🧭 2026-10-01: funciones de lo NUEVO del modal (modelo + equivalentes, posibles
     compatibles, Manual del equipo). Script aparte: usa _otrep/otdEsc/_otrepJson del
     script de abajo, pero solo al EJECUTARSE (nada corre al cargar la página). -#}
@@ -17808,7 +18047,7 @@ async function otrepConfirmarCompat(repId, btn){
 }
 
 async function otrepRecargarOpciones(mid){
-  const r = await fetch('/ot/api/' + OTD_VID + '/equipo/' + mid + '/repuestos-opciones', {credentials:'same-origin', cache:'no-store', headers: _OTREP_HDR});
+  const r = await fetch(_otrepBase(mid) + '/repuestos-opciones', {credentials:'same-origin', cache:'no-store', headers: _OTREP_HDR});
   const j = await _otrepJson(r);
   if (!j.ok || _otrep.mid !== mid) return;
   _otrep.opciones = j;
@@ -17824,8 +18063,43 @@ async function otrepRecargarOpciones(mid){
 const _OTREP_EQ_NOMBRE = {};
 {% for e in equipos if not e._interno %}_OTREP_EQ_NOMBRE[{{ e.id }}] = {{ ((e.nombre or ('Equipo #' ~ e.id)) ~ ((' · S/N ' ~ e.serie) if e.serie else '')) | tojson }};
 {% endfor %}
+{#- 🧰 2026-10-18 (Etapa 3): los PRODUCTOS de trabajo interno de la revisión usan la clave 'i' + item_manual_id (no
+    son equipos de ficha: un número suelto podría ser la ficha de otro cliente). -#}
+{% for e in equipos if e._interno %}_OTREP_EQ_NOMBRE['i{{ e.id }}'] = {{ ((e.nombre or ('Producto #' ~ e.id)) ~ ((' · SKU ' ~ e.sku) if e.sku else '')) | tojson }};
+{% endfor %}
 const _OTREP_MAX_FOTO = 8 * 1024 * 1024, _OTREP_MAX_VIDEO = 28 * 1024 * 1024;
 const _OTREP_HDR = {'X-Requested-With': 'XMLHttpRequest'};
+/* 🧰 2026-10-18 (Etapa 3): el mismo modal sirve a un PRODUCTO de trabajo interno de la revisión. Su clave es
+   'i' + item_manual_id y sus rutas viven en /ot/api/<vid>/producto/<id> (no tiene ficha de equipo). */
+function _otrepEsProducto(mid){ return typeof mid === 'string' && /^i\d+$/.test(mid); }
+function _otrepBase(mid){
+  return _otrepEsProducto(mid) ? ('/ot/api/' + OTD_VID + '/producto/' + mid.slice(1))
+                               : ('/ot/api/' + OTD_VID + '/equipo/' + mid);
+}
+function otrepPintarSugeridos(lista){
+  var wrap = document.getElementById('otrepSugWrap'), cont = document.getElementById('otrepSugChips');
+  if (!wrap || !cont) return;
+  lista = (lista || []).filter(Boolean);
+  wrap.style.display = lista.length ? '' : 'none';
+  cont.innerHTML = lista.map(function(n){
+    return '<button type="button" class="otrep-sug-chip" data-n="' + otdEsc(n) + '" onclick="otrepUsarSugerido(this.dataset.n, this)">' +
+      '<i class="bi bi-plus-lg" aria-hidden="true"></i>' + otdEsc(n) + '</button>';
+  }).join('');
+}
+/* Un toque = una línea «escrita a mano · por validar» con cantidad 1 en la lista (bodega la asocia). */
+window.otrepUsarSugerido = function(nombre, btn){
+  nombre = String(nombre || '').trim();
+  if (!nombre || _otrep.modo !== 'repuesto') return;
+  var ya = _otrep.lista.some(function(x){ return !x.stock_id && String(x.nombre).toLowerCase() === nombre.toLowerCase(); });
+  if (ya){ ilusToast('«' + nombre + '» ya está en la lista.', {type:'info'}); return; }
+  _otrep.sel = { stock_id: null, nombre: nombre, origen: 'manual', sku: null, disponible: null,
+                 comprometido: null, con_stock: null, nombres_alt: '' };
+  document.getElementById('otrep_add_cantidad').value = '1';
+  otrepAgregarALaLista();
+  var b = btn || Array.prototype.find.call(document.querySelectorAll('#otrepSugChips .otrep-sug-chip'),
+    function(x){ return x.dataset.n === nombre; });
+  if (b) b.classList.add('on');
+};
 {#- 🧾 Fase 1 -- levantamiento de VARIOS repuestos (2026-09-25, Daniel: "un
     técnico vaya a un gimnasio, levante cierta cantidad de repuestos
     necesarios"; evidencia y diagnóstico POR EQUIPO, varios repuestos sin
@@ -17849,6 +18123,21 @@ function otrepBuscadorPreparar(mid, equipo){
   if (!mount || !window.RepBuscador){
     // Sin motor (script no cargó): se muestra el buscador por texto de la Fase 1.
     var leg = document.getElementById('otrepBodegaLegacy'); if (leg) leg.classList.remove('d-none');
+    return;
+  }
+  // 🧰 2026-10-18 (Etapa 3): un PRODUCTO de la revisión no es un equipo de ficha: el contexto del buscador es su
+  // MODELO del catálogo (se fija al llegar las opciones), nunca un maquina_id.
+  if (_otrepEsProducto(mid)){
+    if (!_otrepBuscador){
+      _otrepBuscador = RepBuscador.crear({
+        mount: mount, ctx: 'ot', modo: 'seleccion', compatPorDefecto: false,
+        mostrarProveedor: !(_OTREP_ES_EXTERNO || _OTREP_OCULTA_PROV), headers: _OTREP_HDR,
+        onResultados: function(items){ _otrep._bodega = items; },
+        onSeleccionar: function(it, card){ _otrep._bodega = _otrepBuscador.getItems(); otrepSelStock(it.id, 'bodega', card); }
+      });
+    } else {
+      _otrepBuscador.limpiar();
+    }
     return;
   }
   var eq = { id: mid, nombre: (equipo && equipo.nombre) || _OTREP_EQ_NOMBRE[mid] || ('Equipo #' + mid), sku: (equipo && equipo.sku) || null };
@@ -17908,6 +18197,11 @@ window.otdRepAbrir = async function(mid, modo, tabInicial){
   document.getElementById('otrepPiolaNuevaWrap').style.display = 'none';
   document.getElementById('otrepPiolasLista').innerHTML = '';
   document.getElementById('otrepFsWrap').style.display = (_otrep.modo === 'piola') ? 'none' : '';
+  // 🧰 2026-10-18: un producto de la revisión no se deja «fuera de servicio» aquí: eso es su Resultado del control.
+  var _esProd = _otrepEsProducto(mid);
+  var _st4 = document.getElementById('otrepStep4');
+  if (_st4) _st4.style.display = _esProd ? 'none' : '';
+  if (_esProd) document.getElementById('otrepFsWrap').style.display = 'none';
   document.getElementById('otrepFsYa').style.display = 'none';
   document.getElementById('otrep_fs').checked = false;
   document.getElementById('otrepFsMotivo').style.display = 'none';
@@ -17930,6 +18224,7 @@ window.otdRepAbrir = async function(mid, modo, tabInicial){
   document.getElementById('otrepErr').textContent = '';
   document.getElementById('otrepCompatLista').innerHTML = '<div class="otrep-opc-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Buscando repuestos compatibles con este modelo…</div>';
   otrepReiniciarExtras();
+  otrepPintarSugeridos([]);
   otrepTab(_otrep.modo === 'repuesto' ? 'compat' : 'manual');
   if (_otrep.modo !== 'repuesto') otrepSelManual();
   otrepRefrescar();
@@ -17939,13 +18234,16 @@ window.otdRepAbrir = async function(mid, modo, tabInicial){
   }
   bootstrap.Modal.getOrCreateInstance(document.getElementById('modalRepSol')).show();
   try {
-    const r = await fetch('/ot/api/' + OTD_VID + '/equipo/' + mid + '/repuestos-opciones', {credentials:'same-origin', cache:'no-store', headers: _OTREP_HDR});
+    const r = await fetch(_otrepBase(mid) + '/repuestos-opciones', {credentials:'same-origin', cache:'no-store', headers: _OTREP_HDR});
     const j = await _otrepJson(r);
     if (!j.ok) throw new Error(j.error || 'No se pudo cargar');
     if (_otrep.mid !== mid) return;
     _otrep.opciones = j;
     // El SKU del equipo alimenta el chip "Compatibles con <equipo>" del motor.
-    if (_otrepBuscador && j.equipo) _otrepBuscador.setEquipo({ id: mid, nombre: _OTREP_EQ_NOMBRE[mid] || j.equipo.nombre || ('Equipo #' + mid), sku: j.equipo.sku || null });
+    if (_otrepEsProducto(mid)){
+      if (_otrepBuscador && j.modelo) _otrepBuscador.setModeloBase({ id: j.modelo.id, sku: j.modelo.sku, nombre: j.modelo.nombre }, false);
+      otrepPintarSugeridos(j.repuestos_sugeridos || []);
+    } else if (_otrepBuscador && j.equipo) _otrepBuscador.setEquipo({ id: mid, nombre: _OTREP_EQ_NOMBRE[mid] || j.equipo.nombre || ('Equipo #' + mid), sku: j.equipo.sku || null });
     var comp = j.compatibles || [];
     // Un equipo que YA está fuera de servicio no vuelve a preguntarlo.
     if (j.equipo && j.equipo.estado_capturado === 'fuera_servicio'){
@@ -18319,7 +18617,7 @@ async function _otrepSubirExtra(mid, a, solicitudId, contexto){
   fd.append('evidencia', a.file, a.file.name || (a.tipo === 'video' ? 'video.mp4' : 'foto.jpg'));
   if (solicitudId) fd.append('solicitud_id', solicitudId);
   if (contexto) fd.append('contexto', contexto);
-  const r = await fetch('/ot/api/' + OTD_VID + '/equipo/' + mid + '/evidencia', {method:'POST', body: fd, credentials:'same-origin', headers: _OTREP_HDR});
+  const r = await fetch(_otrepBase(mid) + '/evidencia', {method:'POST', body: fd, credentials:'same-origin', headers: _OTREP_HDR});
   const j = await _otrepJson(r);
   return j.ok;
 }
@@ -18330,7 +18628,7 @@ async function _otrepSubirExtraLote(mid, a, loteId){
   var fd = new FormData();
   fd.append('evidencia', a.file, a.file.name || (a.tipo === 'video' ? 'video.mp4' : 'foto.jpg'));
   if (loteId) fd.append('lote_id', loteId);
-  const r = await fetch('/ot/api/' + OTD_VID + '/equipo/' + mid + '/evidencia', {method:'POST', body: fd, credentials:'same-origin', headers: _OTREP_HDR});
+  const r = await fetch(_otrepBase(mid) + '/evidencia', {method:'POST', body: fd, credentials:'same-origin', headers: _OTREP_HDR});
   const j = await _otrepJson(r);
   return j.ok;
 }
@@ -18441,7 +18739,7 @@ async function otrepEnviarLote(){
   btn.disabled = true; lbl.textContent = 'Subiendo evidencia 1 de ' + pend.length + '…';
   var mid = _otrep.mid;
   try {
-    const r = await fetch('/ot/api/' + OTD_VID + '/equipo/' + mid + '/solicitar-repuestos', {method:'POST', body: fd, credentials:'same-origin', headers: _OTREP_HDR});
+    const r = await fetch(_otrepBase(mid) + '/solicitar-repuestos', {method:'POST', body: fd, credentials:'same-origin', headers: _OTREP_HDR});
     const j = await _otrepJson(r);
     if (!j.ok){ err.textContent = j.error || 'No se pudo enviar. Intenta de nuevo.'; return; }
     primero.subido = true;
@@ -18469,7 +18767,8 @@ async function otrepEnviarLote(){
     _otrepLiberar(_otrep.archivos); _otrep.archivos = []; _otrep.lista = [];
     if (j.fuera_servicio){ setTimeout(function(){ location.reload(); }, 900); return; }
     otdRepRefrescar(mid);
-    try { otdFotosCargar(mid, true); } catch(_e){}
+    // 🧰 2026-10-18: la evidencia de un producto de la revisión vive en la solicitud (no hay galería de equipo).
+    if (!_otrepEsProducto(mid)){ try { otdFotosCargar(mid, true); } catch(_e){} }
   } catch(e){
     err.textContent = 'Error de conexión: ' + e.message;
   } finally {
@@ -18484,7 +18783,12 @@ async function otdRepRefrescar(mid){
     const r = await fetch('/ot/api/' + OTD_VID + '/repuestos', {credentials:'same-origin', cache:'no-store', headers: _OTREP_HDR});
     const j = await _otrepJson(r);
     var todas = j.solicitudes || [];
-    var sols = todas.filter(function(s){ return Number(s.maquina_id) === Number(mid); });
+    // 🧰 2026-10-18: un producto de la revisión ('i' + id) filtra por item_manual_id (sin máquina).
+    var _esProdR = _otrepEsProducto(mid);
+    var _midDom = _esProdR ? String(mid).slice(1) : mid;
+    var sols = todas.filter(function(s){
+      return _esProdR ? (!s.maquina_id && Number(s.item_manual_id) === Number(_midDom)) : Number(s.maquina_id) === Number(mid);
+    });
     var cont = document.getElementById('otdRepLista-' + mid);
     if (cont){
       cont.style.display = sols.length ? '' : 'none';
@@ -18512,7 +18816,7 @@ async function otdRepRefrescar(mid){
       }
     }
     // Icono en el resumen colapsado del equipo + resumen a nivel OT.
-    var sum = document.querySelector('.otd-wk-item[data-mid="' + mid + '"] summary .nm b');
+    var sum = document.querySelector('.otd-wk-item[data-mid="' + _midDom + '"] summary .nm b');
     if (sum && abiertas && !sum.querySelector('.otd-rep-ico')){
       sum.insertAdjacentHTML('beforeend', ' <i class="bi bi-tools otd-rep-ico" title="Con repuesto solicitado"></i>');
     }
@@ -18608,6 +18912,8 @@ async function otdRepAInstalarRefrescar(){
 
 /* ── Dar de baja ─────────────────────────────────────────────────────── */
 window.otdBajaAbrir = function(mid){
+  // 🚨 2026-10-20: «No tiene arreglo» = foto + motivo de la lista + diagnóstico (flujo de la barra, static/ot_acciones.js).
+  if (window.otdAccAbrir && window.OTD_ACC && window.OTD_ACC['e' + mid]) return window.otdAccAbrir('baja', 'e' + mid);
   _otrepLiberar(_otbaja.archivos);
   _otbaja = { mid: mid, archivos: [], enviando: false };
   document.getElementById('otbajaEquipo').textContent = _OTREP_EQ_NOMBRE[mid] || ('Equipo #' + mid);

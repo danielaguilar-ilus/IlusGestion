@@ -251,6 +251,7 @@ class TestFilaSolicitud(unittest.TestCase):
             "_es_rol_tecnico": lambda user=None: cls.estado["oculta"],
             "_oculta_proveedores": lambda user=None: cls.estado["oculta"],
             "_es_tecnico_externo": lambda user=None: cls.estado["externo"],
+            "_pe": __import__("ot_producto_estado"),                    # seguimiento del pedido en 4 pasos (sin proveedor ni OC)
         }
         cls.amb = _extraer(["_otrep_fila"], extra=extra,
                            constantes=["_OTREP_SOL_SOLO_GESTION", "_OTREP_SOL_SOLO_GESTION_PROV",

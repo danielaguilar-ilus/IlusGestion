@@ -1301,7 +1301,21 @@
   #o2mTareasList .o2m-rv-table tbody tr td[colspan]{grid-column:1 / -1;text-align:center;padding:12px 0}
   #o2mTareasList .o2m-her{min-width:0}
   #o2mTareasList .o2m-rv-x{min-width:44px;min-height:44px}
-  #o2mTareasList .o2m-rv-clase-sel{font-size:16px;min-height:40px}   /* iOS no hace zoom con 16px */
+  #o2mTareasList .o2m-rv-clase-sel{font-size:16px;min-height:44px}   /* iOS no hace zoom con 16px */
+  /* 🧾 2026-10-20 (revisión de la Etapa 1, REGLA #3): toques de 44px también en el selector de CHECKLIST, la
+     cantidad editable y «Recordar para este producto» (medían 34, 40 y 32px). */
+  #o2mTareasList .o2m-rv-table select, #o2mTareasList .o2m-rv-cant, #o2mTareasList .o2m-her-rec{min-height:44px}
+}
+/* 🧾 2026-10-19 (revisión de la Etapa 1, REGLA #15): en celular el select del CHECKLIST cortaba el nombre del bloque
+   («Cargas libres (por líne», «Bicicleta (transmisión y co…»): la tarjeta recibe ~277px a 390px. Ahí la celda usa
+   TODO el ancho de la tarjeta (también la columna de la casilla, que la × deja libre en esa fila) y arriba del
+   select va el nombre completo del bloque elegido, en texto que sí se parte en líneas. */
+.o2m-her-nm{display:none}
+@media (max-width:576px){
+  #o2mTareasList .o2m-rv-table td.x{grid-row:2 / span 2}
+  #o2mTareasList .o2m-rv-table td.chkl{grid-column:1 / -1;padding-left:8px}
+  #o2mTareasList .o2m-her-nm{display:block;font-size:.8rem;color:#111827;line-height:1.35;overflow-wrap:anywhere}
+  #o2mTareasList .o2m-her-nm b{font-weight:700}
 }
 </style>
 
@@ -5438,6 +5452,8 @@ window.OT2C = (function(){
   // La casilla = INCLUIR EN LA REVISIÓN (decisión de Daniel). Reemplaza la casilla «Llegó / No llegó»: el faltante se
   // declara en la revisión de cada producto (ítem «¿Faltan piezas o accesorios?» de la base). Una fila desmarcada se
   // sigue viendo, atenuada, y NO se envía al crear la OT.
+  // Tope de filas por OT: el mismo que el servidor (_OT2_TAREAS_MANUALES_MAX).
+  var O2M_MAX_FILAS = 150;
   function _o2mTmIncluida(tm){ return !!tm && !tm.excluida; }
   function _o2mTareasIncluidas(){ return (S.tareas_manuales || []).filter(_o2mTmIncluida); }
   function _o2mTmNombre(tm){
@@ -5571,6 +5587,8 @@ window.OT2C = (function(){
           '<div class="o2m-eq-modos">' + _o2mTmModosHtml(hayDoc, lista.length) +
             (nSinClase ? '<span class="o2m-eq-modo-aviso">' + nSinClase + (nSinClase === 1 ? ' producto sin clase' : ' productos sin clase') +
               ': clasifícalo o elige su bloque</span>' : '') +
+            (nIncl > O2M_MAX_FILAS ? '<span class="o2m-eq-modo-aviso">Son ' + nIncl + ' filas incluidas y el máximo por OT es ' +
+              O2M_MAX_FILAS + ': desmarca algunas y crea el resto en otra OT</span>' : '') +
           '</div>' +
         '</div>' +
         '<div class="o2m-rv-wrap"><table class="o2m-eq-table o2m-rv-table">' + cabecera + '<tbody>' +
@@ -5592,6 +5610,9 @@ window.OT2C = (function(){
   function toggleIncluirTodos(){
     var algunoFuera = S.tareas_manuales.some(function(t){ return !_o2mTmIncluida(t); });
     S.tareas_manuales.forEach(function(t, i){ _o2mTmMarcar(i, algunoFuera); });
+    // 🧾 2026-10-20 (revisión de la Etapa 1): el chip de modo sigue a lo que muestra la tabla (antes «Todo el documento»
+    // seguía marcado con 0 de 20 incluidos y, al agregar otro documento, sus filas entraban desmarcadas).
+    S.tm_modo = algunoFuera ? 'todo' : 'mano';
     pintarTareasManuales(); refrescarAnclas();
   }
   // «Todo el documento» incluye todas las filas; «Elijo a mano» parte sin ninguna (las filas no se pierden: siguen
@@ -5661,9 +5682,13 @@ window.OT2C = (function(){
     var n = String(b.nombre || '').replace(/^Control de Calidad — /, '').replace(/^Revisión — /, '').replace(/^Detalle /, '');
     return n.charAt(0).toUpperCase() + n.slice(1);
   }
+  // 🎛️ 2026-10-20 (Daniel, OT 328: «que predominen mis checklist… se supone que nosotros elegimos la
+  // plantilla»): se envía SOLO la plantilla que se ve elegida en la fila. Antes se sumaban por detrás la
+  // base («Registro por equipo») y el condicional, que la fila no mostraba. Si no se eligió ninguna
+  // («— Solo la base —»), va la base, que es lo que dice esa opción.
   function _o2mChkIds(tm){
-    return [tm.chk_base, tm.chk_sistema, tm.chk_cond]
-      .filter(function(b){ return b && b.id; }).map(function(b){ return b.id; });
+    var b = tm.chk_sistema || tm.chk_base;
+    return (b && b.id) ? [b.id] : [];
   }
   // 🧾 2026-10-18 (Daniel: «que quede persistente en los datos de la orden de trabajo, pero que no lo evidencie a los
   // clientes ni a los técnicos… quién lo hizo, cuándo, por qué y el argumento»). El buscador del ERP entrega por línea
@@ -5767,11 +5792,11 @@ window.OT2C = (function(){
   function _o2mChkNota(){
     var t = S.tareas_manuales.find(function(x){ return x.chk && x.chk_base; });
     if (!t) return '';
-    return '<div class="o2m-her-nota o2m-rv-hint-nota"><i class="bi bi-diagram-3"></i> Cada producto trae su checklist: ' +
-      '<b>' + esc(_o2mChkNombre(t.chk_base)) + '</b> + el bloque de su sistema (según su clase del catálogo).' +
-      (t.chk_cond ? ' <b>' + esc(_o2mChkNombre(t.chk_cond)) + '</b> se abre solo si la revisión marca una observación.' : '') +
-      ' Máquinas: una tarjeta por unidad. Discos y mancuernas: una por línea, para contar. ' +
-      'Si algo no llegó, se declara en la revisión de ese producto.</div>';
+    // 🎛️ 2026-10-20 (REGLA #32): la nota solo describe lo que la persona ve elegido en cada fila.
+    return '<div class="o2m-her-nota o2m-rv-hint-nota"><i class="bi bi-diagram-3"></i> Cada producto lleva <b>solo la plantilla elegida en su fila</b> ' +
+      '(la sugerida sale de su clase del catálogo; puedes cambiarla). ' +
+      'Máquinas: una tarjeta por unidad. Discos y mancuernas: una por línea, para contar. ' +
+      'Si algo no llegó o no se puede usar, se declara en la ficha, arriba de ese producto.</div>';
   }
   // Columna CHECKLIST de una fila con checklist heredado: el bloque de su sistema y de dónde salió, con el mismo
   // aviso de la tabla de cliente («✨ Sugerida automáticamente»). La clasificación vive ahora en la columna CLASE.
@@ -5796,7 +5821,11 @@ window.OT2C = (function(){
       origen = '<small class="o2m-eq-sug"><i class="bi bi-hand-index me-1"></i>Elegida a mano.</small>';
     }
     var recordar = tm.sku && tm.chk_sistema && tm.chk_sistema.origen === 'manual';
+    // 🧾 2026-10-19: el nombre COMPLETO del bloque elegido (en celular el select lo corta; ver .o2m-her-nm).
+    var _bSel = (_o2mChk.bloques || []).filter(function(b){ return b.id === sel; })[0];
+    var nmSel = _bSel ? _o2mChkNombre(_bSel) : (tm.chk_sistema ? _o2mChkNombre(tm.chk_sistema) : 'Solo la base');
     return '<div class="o2m-her">' +
+      '<div class="o2m-her-nm" aria-hidden="true">Bloque: <b>' + esc(nmSel) + '</b></div>' +
       '<select class="form-select form-select-sm" style="font-size:16px" aria-label="Bloque del sistema de ' + esc(_o2mTmNombre(tm)) + '" ' +
       'onchange="OT2C.setBloqueTareaManual(' + i + ',this.value)">' + opts + '</select>' +
       '<div class="o2m-her-org">' + origen + '</div>' +
@@ -6046,7 +6075,21 @@ window.OT2C = (function(){
     pintarTareasManuales();
     refrescarAnclas();
   }
-  function quitarTareaManual(i){
+  // 🧾 2026-10-20 (revisión de la Etapa 1): quitar una fila la borra de la tabla (y si era una unidad, volver a agregar el
+  // documento no la repone). Con «dos dedos» un toque desviado quitaba una fila en vez de desmarcarla: ahora pregunta
+  // y recuerda que desmarcar la casilla la deja fuera sin perderla. REGLA #1: ilusConfirm, nunca confirm().
+  async function quitarTareaManual(i){
+    var tm = S.tareas_manuales[i]; if (!tm) return;
+    var ok = true;
+    if (window.ilusConfirm){
+      ok = await ilusConfirm({
+        title: 'Quitar de la tabla',
+        message: '¿Quitar «' + _o2mTmNombre(tm) + '» de esta OT?',
+        sub: 'Si solo quieres dejarlo fuera de la revisión, desmarca su casilla: así no se pierde y lo puedes incluir de nuevo.',
+        okLabel: 'Sí, quitarlo', cancelLabel: 'Mejor no', danger: true,
+      });
+    }
+    if (!ok) return;
     S.tareas_manuales.splice(i,1);
     pintarTareasManuales();
     refrescarAnclas();
@@ -10791,6 +10834,14 @@ window.OT2C = (function(){
 
   function crear(){
     if (!validarTodo()) return;
+    // 🧾 2026-10-20 (revisión de la Etapa 1): el servidor cortaba en silencio las filas sobre el tope; ahora se avisa
+    // aquí (y el servidor responde un error claro si algo se cuela).
+    if (esInterno() && _o2mTareasIncluidas().length > O2M_MAX_FILAS){
+      if (window.ilusAlert) ilusAlert({title: 'Demasiadas filas en una OT',
+        message: 'Incluiste ' + _o2mTareasIncluidas().length + ' filas y el máximo es ' + O2M_MAX_FILAS + '.',
+        sub: 'Desmarca algunas y crea el resto en otra OT.', type: 'warning'});
+      return;
+    }
     var body = {
       tipo_ot: S.tipo, descubrimiento: S.descubrimiento,
       cliente_id: esInterno() ? null : (S.cliente ? S.cliente.id : null),

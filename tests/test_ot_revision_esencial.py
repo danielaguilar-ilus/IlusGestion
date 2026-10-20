@@ -58,7 +58,7 @@ def _cargar(funcs=(), consts=(), amb=None):
 
 _CONSTS = ("_CHK_RESULTADO_OPCIONES_ANTERIOR", "_CHK_BLOQUES_SEED_ANTERIOR", "_CHK_RESULTADO_OPCIONES",
            "_CHK_BLOQUES_SEED", "_CHK_BASE_CONTROL_CALIDAD", "_CHK_COND_CONTROL_CALIDAD", "_CHK_SELECTOR",
-           "_CHK_RES_APTO", "_CHK_RES_APTO_OBS", "_CHK_RES_NO_LLEGO", "_CHK_MOTIVO_TXT", "_CHK_ESENCIAL_MARCA")
+           "_CHK_RES_APTO", "_CHK_RES_APTO_OBS", "_CHK_RES_NO_LLEGO", "_CHK_MOTIVO_TXT")
 _PURAS = ("_tarea_vj", "_chk_txt_norm", "_chk_opciones", "_chk_es_resultado", "_chk_opcion", "_chk_valor_verif",
           "_chk_grupo_clave", "_chk_revision_evaluar", "_chk_resultado_rechazo", "_chk_titulos",
           "_chk_esencial_plan", "_fsh_ins")
@@ -202,193 +202,30 @@ class TestPlanDeMigracion(unittest.TestCase):
         self.assertEqual((p0["accion"], p0["desc_nueva"]), ("migrar", None))   # los ítems sí, el texto suyo no
 
 
-class _Mundo:
-    """Base en memoria con lo justo para _ensure_bloques_revision_esencial."""
+class TestElArranqueNoMigraNada(unittest.TestCase):
+    """🎛️ 2026-10-20 (REGLA #32 — Daniel: «como es regla estricta del proyecto, no debes imponer o gestionar más checklists,
+    sino los que impone el usuario»): la migración de producción a la versión esencial ya NO corre al arrancar. Es una
+    PROPUESTA: la plantilla actual junto a la propuesta, y una persona decide (crear una nueva, recomendado, o reemplazar).
+    Las funciones puras del plan (_chk_esencial_plan) siguen, probadas arriba, porque alimentan la propuesta."""
 
-    def __init__(self, k, editar=None):
-        self.k = k
-        bloques, items = _bd_desde(k["_CHK_BLOQUES_SEED_ANTERIOR"], editar=editar)
-        self.plantillas = {b["id"]: dict(b) for b in bloques}
-        self.items = {}
-        for it in items:
-            self.items.setdefault(it["plantilla_id"], []).append(
-                {"titulo": it["titulo"], "orden": it["orden"], "id": it["id"], "foto_si_hallazgo": 0})
-        self.logs, self.sql, self.consultas = [], [], 0
-
-    # mysql_* del pool
-    def fetchone(self, sql, params=None):
-        self.consultas += 1
-        if "FROM mant_logs" in sql:
-            hay = any(l[0] == "sistema" and l[2] == params[2] for l in self.logs)
-            return {"id": 1} if hay else None
-        raise AssertionError(sql)
-
-    def fetchall(self, sql, params=None):
-        self.consultas += 1
-        if "FROM mant_tarea_plantillas" in sql:
-            return [dict(p) for p in self.plantillas.values() if p["nombre"] in params]
-        if "FROM mant_tarea_plantilla_items" in sql:
-            return [dict(it, plantilla_id=pid) for pid, its in self.items.items() if pid in params for it in its]
-        raise AssertionError(sql)
-
-    def execute(self, sql, params=None):
-        self.consultas += 1
-        if "INSERT INTO mant_logs" in sql:
-            self.logs.append(params[:4] if len(params) > 4 else params)
-            return 1
-        raise AssertionError(sql)
-
-    def mant_log(self, entidad, eid, accion, detalle=""):
-        self.logs.append((entidad, eid, accion, detalle))
-
-    def get_mysql(self):
-        return _Conn(self)
-
-
-class _Conn:
-    def __init__(self, m):
-        self.m = m
-        self.tx_items = copy.deepcopy(m.items)
-        self.tx_plant = copy.deepcopy(m.plantillas)
-        self.tx_logs = []
-        self.res = []
-
-    def cursor(self):
-        return self
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-    def execute(self, sql, params=None):
-        s = " ".join(sql.split())
-        self.m.sql.append(s)
-        if s.startswith("SELECT titulo FROM mant_tarea_plantilla_items") and s.endswith("FOR UPDATE"):
-            self.res = [{"titulo": x["titulo"]} for x in
-                        sorted(self.tx_items.get(params[0], []), key=lambda x: (x["orden"], x["id"]))]
-        elif s.startswith("INSERT INTO mant_logs"):
-            self.tx_logs.append(params[:4])
-        elif s.startswith("DELETE FROM mant_tarea_plantilla_items"):
-            self.tx_items[params[0]] = []
-        elif s.startswith("INSERT INTO mant_tarea_plantilla_items"):
-            self.assertTrue("foto_si_hallazgo" in s)
-            pid = params[0]
-            self.tx_items.setdefault(pid, []).append(
-                {"titulo": params[2], "orden": params[1], "id": 10000 + len(self.tx_items[pid]),
-                 "foto_si_hallazgo": params[11]})
-        elif s.startswith("UPDATE mant_tarea_plantillas SET descripcion"):
-            self.tx_plant[params[1]]["descripcion"] = params[0]
-        else:
-            raise AssertionError(s)
-
-    @staticmethod
-    def assertTrue(x):
-        assert x
-
-    def fetchall(self):
-        return self.res
-
-    def commit(self):
-        self.m.items = self.tx_items
-        self.m.plantillas = self.tx_plant
-        self.m.logs.extend(self.tx_logs)
-
-    def rollback(self):
-        self.tx_items = copy.deepcopy(self.m.items)
-        self.tx_logs = []
-
-    def close(self):
-        pass
-
-
-class TestMigracionEnMemoria(unittest.TestCase):
-    def _correr(self, mundo, fsh=True):
-        amb = _cargar(_PURAS + ("_ensure_bloques_revision_esencial",), _CONSTS)
-        amb.update({
-            "_fsh_ok": lambda: fsh, "_ensure_mant_logs_entidad_varchar": lambda: None,
-            "mysql_fetchone": mundo.fetchone, "mysql_fetchall": mundo.fetchall, "mysql_execute": mundo.execute,
-            "get_mysql": mundo.get_mysql, "_mant_log": mundo.mant_log, "print": lambda *a, **k: None,
-        })
-        return amb["_ensure_bloques_revision_esencial"]()
-
-    def test_migra_lo_no_editado_conserva_lo_editado_y_deja_marca(self):
-        k = _k()
-
-        def editar(lista):
-            lista[0]["titulo"] = "Cable revisado por Jaizer"
-            return lista
-        m = _Mundo(k, editar={"Revisión — Rack y soportes": editar})
-        out = self._correr(m)
-        self.assertEqual(len(out["migrados"]), 9)
-        self.assertEqual(out["editados"], ["Revisión — Rack y soportes"])
-        ese = {b[0]: b for b in k["_CHK_BLOQUES_SEED"]}
-        for pid, p in m.plantillas.items():
-            titulos = [x["titulo"] for x in sorted(m.items[pid], key=lambda x: (x["orden"], x["id"]))]
-            if p["nombre"] == "Revisión — Rack y soportes":
-                self.assertEqual(titulos[0], "Cable revisado por Jaizer")         # NO se tocó
-            else:
-                self.assertEqual(titulos, [it[1] for it in ese[p["nombre"]][2]])
-                self.assertEqual([x["foto_si_hallazgo"] for x in sorted(m.items[pid], key=lambda x: x["orden"])],
-                                 [it[10] for it in ese[p["nombre"]][2]])
-                self.assertEqual(p["descripcion"], ese[p["nombre"]][1])
-        acciones = [l[2] for l in m.logs]
-        self.assertEqual(acciones.count("revision_esencial"), 9)
-        self.assertEqual(acciones.count("revision_esencial_omitida"), 1)
-        self.assertEqual(acciones[-1], "revision_esencial_aplicada")              # la marca, al final
-
-    def test_bitacora_antes_y_todo_en_una_transaccion(self):   # REGLA #5
-        m = _Mundo(_k())
-        self._correr(m)
-        s = m.sql
-        i_log = next(i for i, x in enumerate(s) if x.startswith("INSERT INTO mant_logs"))
-        i_del = next(i for i, x in enumerate(s) if x.startswith("DELETE FROM mant_tarea_plantilla_items"))
-        i_lock = next(i for i, x in enumerate(s) if x.endswith("FOR UPDATE"))
-        self.assertLess(i_lock, i_log)
-        self.assertLess(i_log, i_del)
-
-    def test_idempotente_y_barata_con_la_marca(self):   # REGLA #18
-        m = _Mundo(_k())
-        self._correr(m)
-        antes = copy.deepcopy(m.items)
-        m.consultas, m.sql = 0, []
-        out = self._correr(m)
-        self.assertTrue(out["ya"])
-        self.assertEqual(m.consultas, 1)
-        self.assertEqual(m.sql, [])
-        self.assertEqual(m.items, antes)
-
-    def test_sin_la_columna_no_migra_ni_marca(self):
-        m = _Mundo(_k())
-        out = self._correr(m, fsh=False)
-        self.assertEqual(out["migrados"], [])
-        self.assertEqual(m.logs, [])
-
-    def test_si_cambio_entre_medio_no_se_toca(self):
-        k = _k()
-        m = _Mundo(k)
-        real = m.get_mysql
-
-        antes = copy.deepcopy(m.items)
-
-        def conn_que_ve_un_cambio():   # alguien editó todos los bloques entre el plan y el candado
-            c = real()
-            for pid in c.tx_items:
-                c.tx_items[pid][0]["titulo"] += " (editado por Lenin recién)"
-            return c
-        m.get_mysql = conn_que_ve_un_cambio
-        out = self._correr(m)
-        self.assertEqual(out["migrados"], [])                                   # releyó con FOR UPDATE y no tocó
-        self.assertEqual(m.items, antes)
-
-    def test_corre_al_arrancar_despues_de_la_semilla(self):
+    def test_ya_no_existe_la_migracion_de_arranque(self):
         app = _leer("app.py")
-        i_cols = app.index("        _ensure_foto_si_hallazgo_cols()\nexcept Exception as _ensure_fsh_err:")
-        i_her = app.index("_chk_her = _ensure_checklist_herencia()")
-        i_mig = app.index("_rev_es = _ensure_bloques_revision_esencial()")
-        self.assertLess(i_cols, i_her)
-        self.assertLess(i_her, i_mig)
+        for muerto in ("def _ensure_bloques_revision_esencial", "_ensure_bloques_revision_esencial()", "_CHK_ESENCIAL_MARCA"):
+            self.assertNotIn(muerto, app, muerto)
+
+    def test_la_propuesta_usa_el_plan_y_no_escribe(self):
+        f = _fuente("_prop_construir")
+        self.assertIn("_chk_esencial_plan(", f)
+        self.assertNotIn("INSERT", f)
+        self.assertNotIn("UPDATE", f)
+        self.assertNotIn("DELETE", f)
+
+    def test_reemplazar_es_de_gestion_con_huella_y_nunca_lu(self):
+        f = _fuente("_prop_aplicar")
+        self.assertIn("if not puede_reemplazar_usuario:", f)
+        self.assertIn("if p[\"es_lu\"]:", f)
+        self.assertIn("PLANTILLA_CAMBIO", f)                                   # si cambió entre la vista y el clic, no se toca
+        self.assertLess(f.index("reemplazada_desde_propuesta"), f.index('DELETE FROM mant_tarea_plantilla_items'))   # bitácora ANTES
 
 
 # ═══════════════════════════════ 3) foto_si_hallazgo ═══════════════════════════════
@@ -492,6 +329,21 @@ CASOS = {
 }
 
 
+def _con_resultado_na(filas, tid):
+    for f in filas:
+        if f["id"] == tid:
+            f["valor_json"] = {"na": True, "na_motivo": "no corresponde revisarlo"}
+            f["completada"] = 1
+    return filas
+
+
+# 🧾 2026-10-19 (revisión de la Etapa 2): un Resultado en «No aplica» no es un resultado.
+CASOS["resultado_na_con_falla"] = _con_resultado_na(
+    _producto(obs="sin novedad, todo ok", falla=True, fotos_verif=1), 14)
+CASOS["resultado_na_equipo_con_ficha"] = _con_resultado_na(
+    _producto(obs="sin novedad, todo ok", mid=56, base=40), 44)
+
+
 class TestReglaPura(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -543,6 +395,13 @@ class TestReglaPura(unittest.TestCase):
 
     def test_no_aplica_no_pide_foto(self):
         self.assertEqual(self._pend("na")[0], {})
+
+    def test_resultado_en_no_aplica_queda_pendiente(self):
+        """🧾 2026-10-19: el N/A del Resultado saltaba la regla dura y la foto del daño, y la tarea quedaba hecha."""
+        pend, _ = self._pend("resultado_na_con_falla")
+        self.assertEqual(pend.get(14), "resultado_na")
+        pend, _ = self._pend("resultado_na_equipo_con_ficha")
+        self.assertEqual(pend.get(44), "resultado_na")
 
 
 @unittest.skipUnless(HAY_NODE, "node no está instalado")
@@ -615,6 +474,19 @@ class TestFichaJS(unittest.TestCase):
         self.assertIn("await ilusConfirm({", g)
         self.assertIn("d.error_codigo === 'RESULTADO_CON_FALLA'", g)
 
+    def test_no_llego_no_pide_foto_en_la_ficha(self):
+        """🧾 2026-10-19 (revisión de la Etapa 2): con «No llegó», la Foto general salía como «Paso actual» con
+        «Necesita foto» y «Falta foto» al lado de «No se exige · no llegó»."""
+        r = _js_funcion("otdRenderChecklistEquipo", D)
+        self.assertIn("if (t._ev && t._ev.dispensada) return false;", r)
+        self.assertIn("return !_noLlegoP && !t.completada;", r)
+        self.assertNotIn("g.tareas.findIndex(t => !t.completada)", r)
+        tarea = _js_funcion("otdChkTareaHtml", D)
+        self.assertIn("if ((t.requiere_foto || tipo === 'foto') && !(_evT && _evT.dispensada)){", tarea)
+        self.assertIn("if (esSiguiente && !(otdChkExig(t) ? otdChkHecha(t) : t.completada)){", tarea)
+        foto = _js_funcion("otdChkFotoBtnHtml", D)
+        self.assertIn("const need = !_disp && !(t.fotos && t.fotos.length);", foto)
+
     def test_sin_popups_nativos(self):   # REGLA #1
         for n in ("otdChkEvaluar", "otdChkBarraResultado", "otdChkResultadoRapido", "otdChkGuardar",
                   "otdChkBaseMarcoObs", "otdChkHermanas"):
@@ -651,6 +523,18 @@ class TestReglaDuraServidor(unittest.TestCase):
                  "valor_json": {"na": True, "valor_previo": {"valor": "falla"}}}]
         self.assertEqual(self.rech("Apto", herm), (None, None))
 
+    def test_el_resultado_no_admite_no_aplica(self):
+        """🧾 2026-10-19 (revisión de la Etapa 2): «No aplica» en el Resultado no pasaba por la regla dura."""
+        f = _fuente("mant_visita_tarea_respuesta")
+        self.assertIn('if tipo == "lista" and _chk_es_resultado(tar):', f)
+        self.assertIn('"error_codigo": "RESULTADO_SIN_NA"', f)
+        self.assertLess(f.index("RESULTADO_SIN_NA"), f.index("_na_ok = True"))
+        self.assertLess(f.index('if d.get("na") and tipo in'), f.index("RESULTADO_SIN_NA"))
+        # la ficha tampoco ofrece el botón en el Resultado
+        na = _js_funcion("otdChkNoAplicaHtml", D)
+        self.assertIn("if (otdChkEsResultado(t)) return '';", na)
+        self.assertIn("Elige un resultado: «No aplica» no vale aquí", _js_funcion("otdChkTareaHtml", D))
+
     def test_el_endpoint_rechaza_antes_de_guardar(self):
         f = _fuente("mant_visita_tarea_respuesta")
         self.assertIn("_rech, _aviso = _chk_resultado_rechazo(v, _chk_hermanas(vid, tar))", f)
@@ -673,7 +557,9 @@ class TestCandadosFuenteUnica(unittest.TestCase):
         self.assertIn("if faltan_rows or _rev[\"faltantes\"]:", _fuente("mant_ot_firmar_revision"))
         self.assertIn("if faltan_rows or _rev[\"faltantes\"]:", _fuente("mant_ot_puede_firmar"))
         self.assertIn("_ot_chk_revision_pendientes(vid)", _fuente("_ot_items_manuales_no_llego"))
-        self.assertIn("ev = _chk_revision_evaluar(filas)", _fuente("_ot_chk_revision_pendientes"))
+        # 🧰 2026-10-20: además de las respuestas, lee los productos cuyo checklist se dispensa por una ACCIÓN del técnico
+        self.assertIn('ev = _chk_revision_evaluar(filas, {im: f.get("estado") for im, f in _otpe_dispensados(vid).items()})',
+                      _fuente("_ot_chk_revision_pendientes"))
         d = _fuente("ot2_detalle")
         self.assertIn('_ev_t = _rev_detalle["por_tarea"].get(t.get("id")) if t.get("item_manual_id") else None', d)
         self.assertIn('_obl += int((_rev_detalle.get("kpi_delta") or {}).get("obl") or 0)', d)
@@ -681,6 +567,7 @@ class TestCandadosFuenteUnica(unittest.TestCase):
     def _pendientes(self, filas, excl=()):
         amb = _cargar(_PURAS + ("_ot_chk_revision_pendientes", "_ot_items_manuales_no_llego"), _CONSTS)
         amb.update({"_fsh_ok": lambda: True, "_ot_maquinas_excluidas_cierre": lambda vid: set(excl),
+                    "_otpe_dispensados": lambda vid: {},
                     "mysql_fetchall": lambda sql, params=None: [dict(f) for f in filas],
                     "print": lambda *a, **k: None})
         return amb
@@ -705,6 +592,14 @@ class TestCandadosFuenteUnica(unittest.TestCase):
         self.assertEqual(r["kpi_delta"], {"obl": 0, "obl_ok": -2})
         self.assertEqual(self._pendientes(filas, excl=(55,))["_ot_chk_revision_pendientes"](1)["pendientes"], [])
 
+    def test_resultado_en_no_aplica_en_los_candados(self):
+        r = self._pendientes(CASOS["resultado_na_con_falla"])["_ot_chk_revision_pendientes"](1)
+        self.assertIn((14, "resultado_na"), [(p["tarea_id"], p["motivo"]) for p in r["pendientes"]])
+        self.assertTrue(any("«No aplica»" in x for x in r["faltantes"]))
+        filas = [dict(f, maquina_nombre="Optimal Chest Press") for f in CASOS["resultado_na_equipo_con_ficha"]]
+        r = self._pendientes(filas)["_ot_chk_revision_pendientes"](1)
+        self.assertEqual([p["motivo"] for p in r["pendientes"]], ["resultado_na"])   # en un equipo: solo el ajuste
+
     def test_si_la_consulta_falla_no_inventa_pendientes(self):
         amb = self._pendientes([])
 
@@ -713,6 +608,84 @@ class TestCandadosFuenteUnica(unittest.TestCase):
         amb["mysql_fetchall"] = falla
         r = amb["_ot_chk_revision_pendientes"](1)
         self.assertEqual((r["pendientes"], r["faltantes"]), ([], []))
+
+
+@unittest.skipUnless(HAY_NODE, "node no está instalado")
+class TestFotoNoLlegoEnNode(unittest.TestCase):
+    def test_boton_neutro_sin_need(self):
+        previo = ("function otdBloqueadaPorCierre(){ return false; }\n")
+        fuente = previo + _js_funcion("otdChkFotoBtnHtml", D)
+        out = _node(fuente + "\n"
+                    "const disp = {id: 1, maquina_id: null, tipo_respuesta: 'foto', requiere_foto: 1, fotos: [],"
+                    " _ev: {exigible: false, hecha: false, motivo: null, dispensada: true}};\n"
+                    "const norm = Object.assign({}, disp, {_ev: {exigible: true, hecha: false, motivo: 'obligatoria',"
+                    " dispensada: false}});\n"
+                    "const a = otdChkFotoBtnHtml(disp), b = otdChkFotoBtnHtml(norm);\n"
+                    "console.log(JSON.stringify([a.includes(' need'), a.includes('Falta foto'), a.includes('Agregar foto'),"
+                    " b.includes(' need'), b.includes('Falta foto')]));")
+        self.assertEqual(out, [False, False, True, True, True])
+
+
+# ═══════════════════════════════ 7) PDF probatorio = misma fuente que firma y cierre ═══════════════════════════════
+_PDF_CONSTS = ("_OT_PDF_REVISION", "_OT_PDF_RAZON_SALTADO", "_OT_PDF_ESTADO_CAPTURADO", "_OT_PDF_CAUSA_RAIZ",
+               "_OT_PDF_TIPO_FOTO", "_OT_PDF_REV_MOTIVO")
+
+
+def _pdf_amb():
+    amb = _cargar(_PURAS + ("_tarea_es_hallazgo", "_ot_pdf_probatorio"), _CONSTS + _PDF_CONSTS)
+    amb.update({"chile_fmt_filter": lambda v, fmt=None: str(v), "_ot_pdf_ident_cuenta": lambda *a: "",
+                "mysql_fetchone": lambda *a, **k: None, "_ot_tipo_label_efectivo": lambda *a: "Control de calidad",
+                "_formato_rut_chile": lambda r: r, "_ot_pdf_hhmm": lambda v: "", "_ot_pdf_anexo_max": lambda: 12,
+                "ILUS_BRAND": "ILUS Fitness", "ILUS_LEGAL": "x", "ILUS_RUT": "x",
+                "_tarea_es_seguridad": lambda *a: False})
+    return amb
+
+
+def _pdf_filas(tareas):
+    return [{"id": t["id"], "titulo": t["titulo"], "tiene_foto": bool(t.get("n_fotos")), "resultado_clase": None}
+            for t in tareas]
+
+
+class TestPdfProbatorio(unittest.TestCase):
+    """🧾 2026-10-19 (revisión de la Etapa 2, Daniel: la OT es evidencia): el PDF no puede decir «obligatoria sin
+    completar» de lo que la firma y el cierre ya no exigen («No llegó»), y nombra los pendientes de la revisión."""
+
+    def _pdf(self, tareas, con_eval=True):
+        amb = _pdf_amb()
+        tareas = copy.deepcopy(tareas)
+        for t in tareas:
+            if t["tipo_respuesta"] == "foto":
+                t["requiere_foto"] = 1
+        ev = amb["_chk_revision_evaluar"](tareas) if con_eval else None
+        return amb["_ot_pdf_probatorio"]({}, [], tareas, _pdf_filas(tareas), [], rev_eval=ev)
+
+    def test_no_llego_no_suma_obligatorias_ni_fotos(self):
+        prod = _producto(res="No llegó", obs="Se esperaba el 17, preguntado a bodega")
+        sin = self._pdf(prod, con_eval=False)
+        self.assertEqual(sin["tareas_oblig_pend_n"], 4)          # lo que decía antes (contradecía al cierre)
+        con = self._pdf(prod)
+        self.assertEqual(con["tareas_oblig_pend_n"], 0)
+        self.assertEqual(con["tareas_sin_foto_n"], 0)
+        self.assertFalse([h for h in con["hallazgos"] if h["cat"] == "Tarea obligatoria sin completar"])
+        disp = {f["id"] for f in con["tareas_chk"] if f["no_se_exige"]}
+        self.assertTrue({10, 11, 12, 13} <= disp)
+        self.assertFalse({14, 15} & disp)          # el propio «No llegó» y la observación (el argumento)
+
+    def test_pendientes_de_la_revision_con_nombre_propio(self):
+        r = self._pdf(_producto(res="Reparar", obs="Piola con hebra rota", falla=True))
+        cats = [h["cat"] for h in r["hallazgos"]]
+        self.assertEqual(cats.count("Foto del hallazgo sin registrar"), 2)
+        r = self._pdf(_producto(res="Apto", obs="sin novedad, todo ok", falla=True, fotos_verif=1))
+        self.assertIn("Resultado «Apto» con un ítem en Falla", [h["cat"] for h in r["hallazgos"]])
+
+    def test_el_contexto_pasa_la_fuente_unica(self):
+        f = _fuente("_ot_pdf_context")
+        self.assertIn("_rev_pdf = _ot_chk_revision_pendientes(vid)", f)
+        self.assertIn("rep_por_maquina=rep_por_maquina, rev_eval=_rev_pdf))", f)
+        self.assertIn('"       t.item_manual_id, "', f)
+        tpl = _leer("templates/mantenciones/ot_pdf.html")
+        self.assertEqual(tpl.count("No se exige · no llegó"), 2)
+        self.assertEqual(tpl.count("{{ t.rev_pendiente }}"), 2)
 
 
 if __name__ == "__main__":

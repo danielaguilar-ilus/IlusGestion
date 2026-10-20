@@ -3,6 +3,8 @@
 
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='mantenciones_ficha.css') }}">
+{#- 🚨 2026-10-20 (Daniel): «FUERA DE SERVICIO · motivo · desde dd/mm hh:mm» llamativo, en rojo. -#}
+<link rel="stylesheet" href="{{ url_for('static', filename='eq_fuera_servicio.css') }}">
 {# Estilo compartido del modal "Generar OT" (#modalGenerarOT, incluido más
    abajo desde tickets/_modal_generar_ot.html). Va DESPUÉS de
    mantenciones_ficha.css a propósito: el mismo archivo lo carga
@@ -1673,7 +1675,7 @@
               data-serie="{{ m.serie or '' }}"
               data-cantidad="{{ m.cantidad or 1 }}"
               data-name="{{ m.nombre|lower }} {{ (m.sku or '')|lower }} {{ (m.serie or '')|lower }}"
-              {% if _es_baja %}style="display:none;opacity:.55;background:#f8f8f8" class="eq-row-baja"{% endif %}>
+              {% if _es_baja %}style="display:none;opacity:.55;background:#f8f8f8" class="eq-row-baja"{% elif _ec_row == 'fuera_servicio' %}class="eq-row-fs"{% endif %}>
             <td style="text-align:center;vertical-align:middle">
               <input type="checkbox" class="form-check-input eq-row-chk"
                      data-id="{{ m.id }}"
@@ -1824,7 +1826,18 @@
                  resolución del ticket sin salir de acá. #}
               {% if not _es_baja %}
                 {% if _ec_row == 'fuera_servicio' %}
-                <div class="eq-cond fs" title="Marcado fuera de servicio desde una OT"><i class="bi bi-exclamation-octagon-fill"></i>Fuera de servicio</div>
+                {#- 🚨 2026-10-20 (Daniel): aviso LLAMATIVO en rojo con el motivo y desde cuándo (m.fs_info = la parada abierta del
+                    equipo, hora Chile). Sin la parada (dato antiguo) queda «Fuera de servicio» a secas, como antes. -#}
+                <div class="eq-fsb" role="status" title="Marcado fuera de servicio desde una OT">
+                  <i class="bi bi-sign-stop-fill"></i>
+                  <span><b>Fuera de servicio</b>
+                    {% if m.fs_info %}
+                    {% if m.fs_info.motivo %}<em class="why">{{ m.fs_info.motivo }}</em>{% endif %}
+                    {% if m.fs_info.desde %}<em class="since">desde {{ m.fs_info.desde }}{% if m.fs_info.por %} · {{ m.fs_info.por }}{% endif %}</em>{% endif %}
+                    {% if m.fs_info.riesgo %}<em class="risk"><i class="bi bi-exclamation-triangle-fill"></i> Puede lastimar a alguien</em>{% endif %}
+                    {% endif %}
+                  </span>
+                </div>
                 {% elif _ec_row == 'en_reparacion' %}
                 <div class="eq-cond fs"><i class="bi bi-wrench"></i>En reparación</div>
                 {% elif _ec_row == 'advertencia' or (m.rep_pend or 0) > 0 %}

@@ -132,10 +132,12 @@
      UI antes de descargar style.css externo. ~2KB gzip.
   ══════════════════════════════════════════════════════════ #}
   <style>
-    :root{--ilus-red:#CC0000;--ilus-red-dk:#990000;--ilus-black:#111111;--sidebar-w:250px;--topbar-h:calc(90px + env(safe-area-inset-top, 0px))}
+    {# 2026-10-19 (Daniel: «está muy grande… tenerlo contraído siempre y pequeño»): el menú lateral baja de 250 a 212 px.
+       Todo lo que se posiciona junto a él usa var(--sidebar-w): no volver a escribir el ancho a mano. #}
+    :root{--ilus-red:#CC0000;--ilus-red-dk:#990000;--ilus-black:#111111;--sidebar-w:212px;--topbar-h:calc(90px + env(safe-area-inset-top, 0px))}
     *,*::before,*::after{box-sizing:border-box}
     body{font-family:'Segoe UI',Arial,sans-serif;background:#e8e8e8;min-height:100vh;overflow-x:hidden;-webkit-text-size-adjust:100%;margin:0}
-    .sidebar{position:fixed;top:0;left:0;width:var(--sidebar-w);height:100vh;background:var(--ilus-black);border-right:3px solid var(--ilus-red);display:flex;flex-direction:column;z-index:1000;overflow:hidden auto}
+    .sidebar{position:fixed;top:0;left:0;width:var(--sidebar-w);height:100vh;background:#0a0a0a;border-right:3px solid #dc2626;display:flex;flex-direction:column;z-index:1000;overflow:hidden auto}
     .main-wrapper{margin-left:var(--sidebar-w);min-height:100vh;padding:0 24px 50px;background:#e8e8e8}
     .main-wrapper-login{margin-left:0;padding:0;display:flex;flex-direction:row;align-items:stretch;min-height:100vh;background:#0e0e0e}
     .mobile-topbar{display:none}
@@ -509,7 +511,7 @@
 
   {# — Logo — #}
   <div class="sidebar-logo-area">
-    <a href="{{ url_for('index') }}" class="sidebar-brand">
+    <a href="{{ url_for('index') }}" class="sidebar-brand{% if has_logo %} sidebar-brand-img{% endif %}">
       {% if has_logo %}
         <picture>
           <source srcset="{{ url_for('static', filename='Logo.webp') }}" type="image/webp">
@@ -632,35 +634,18 @@
     </a>
     {% endif %}
     {% if not is_tecnico %}
-    {# 2026-07-12 (Daniel): "el radar, el plan, el agente... se esta
-       perdiendo... son necesarios en el menu de clientes" -- Clientes
-       pasa a ser un grupo expandible (como Tickets) con Plan Anual/Radar/
-       Agente-Reglas adentro, en vez de un dropdown en el header de la
-       pagina (ahi no se notaba). #}
-    <button class="sg-toggle" data-sg="clientes">
-      <i class="bi bi-building-check"></i>Clientes
-      <i class="bi bi-chevron-right sg-chevron"></i>
-    </button>
-    <div class="sg-items" id="sg-clientes">
-      <a href="{{ url_for('clientes_hub_list') }}"
-         class="sidebar-link{% if request.endpoint in ['clientes_hub_list','clientes_hub_ficha','mant_clientes','mant_ficha','mant_cliente_nuevo'] %} active{% endif %}">
-        <i class="bi bi-building-check"></i><span>Clientes</span>
-      </a>
-      <a href="{{ url_for('mant_planificador_page') }}"
-         class="sidebar-link{% if request.endpoint == 'mant_planificador_page' %} active{% endif %}">
-        <i class="bi bi-grid-3x3-gap"></i><span>Plan Anual</span>
-      </a>
-      {% if permissions.admin or permissions.superadmin %}
-      <a href="{{ url_for('mant_radar_page') }}"
-         class="sidebar-link{% if request.endpoint == 'mant_radar_page' %} active{% endif %}">
-        <i class="bi bi-radar"></i><span>Radar</span>
-      </a>
-      <a href="{{ url_for('mant_configuracion') }}"
-         class="sidebar-link{% if request.endpoint == 'mant_configuracion' %} active{% endif %}">
-        <i class="bi bi-sliders"></i><span>Agente · Reglas</span>
-      </a>
-      {% endif %}
-    </div>
+    {# 2026-07-12 (Daniel): "el radar, el plan, el agente... se esta perdiendo... son necesarios en el menu de clientes" ->
+       Clientes fue un grupo desplegable con Plan Anual / Radar / Agente-Reglas adentro.
+       2026-10-19 (Daniel: «Parte de clientes a los clientes… el radar y agentes, agentes y reglas, déjalos dentro del módulo de
+       cliente en botón… No lo veo como que aporte mucho. Que se descontraiga y se contraiga como con los clientes»):
+       Clientes pasa a ser un ENLACE DIRECTO. Plan Anual, Radar y Agente · Reglas NO se borran (REGLA #4.2): viven como botones
+       arriba en la página de Clientes (templates/mantenciones/_clientes_botones.html), con los MISMOS permisos de antes
+       (Plan Anual: quien veía el menú; Radar y Agente · Reglas: admin/superadmin). Las rutas no cambian, y desde esas tres
+       páginas el menú sigue marcando «Clientes» como activo. #}
+    <a href="{{ url_for('clientes_hub_list') }}"
+       class="sidebar-link{% if request.endpoint in ['clientes_hub_list','clientes_hub_ficha','mant_clientes','mant_ficha','mant_cliente_nuevo','mant_planificador_page','mant_radar_page','mant_configuracion'] %} active{% endif %}">
+      <i class="bi bi-building-check"></i><span>Clientes</span>
+    </a>
     {% endif %}
     {# 🔴 2026-09-09 (Daniel: "el técnico externo puede ver cotizaciones...
        bloquéalo"). `role != 'tecnico'` es comparación literal -- no
@@ -720,8 +705,7 @@
        no veía el link, y sin link no hay puerta. #}
     {% if not es_tecnico or permissions.mant_ot2_tecnico %}
     <a href="{{ url_for('ot2_panel') }}"
-       class="sidebar-link{% if request.endpoint in ['ot2_panel','ot2_diagnostico','ot_pagina_eventos','ot_pagina_evento_detalle'] %} active{% endif %}"
-       style="display:flex;align-items:center;gap:8px">
+       class="sidebar-link{% if request.endpoint in ['ot2_panel','ot2_diagnostico','ot_pagina_eventos','ot_pagina_evento_detalle'] %} active{% endif %}">
       {# 2026-09-20 (Daniel): "ahora las órdenes de trabajo se llaman Órdenes
          de Trabajo, no 2.0 ni nada, ya es la única que existe". Sin BETA. #}
       <i class="bi bi-clipboard2-pulse-fill"></i><span>Órdenes de Trabajo</span>
@@ -1013,12 +997,12 @@
       <div class="sidebar-user-avatar">{{ current_user.nombre[0].upper() }}</div>
       {% endif %}
       <div class="sidebar-user-info">
-        <div class="sidebar-user-name">{{ current_user.nombre }}</div>
+        <div class="sidebar-user-name" title="{{ current_user.nombre }}">{{ current_user.nombre }}</div>
         <div class="sidebar-user-role">{{ role_label }}</div>
       </div>
       <i class="bi bi-gear ms-auto" style="color:#94a3b8;font-size:.95rem;opacity:.7"></i>
     </a>
-    <form method="post" action="{{ url_for('logout') }}" class="mt-2">
+    <form method="post" action="{{ url_for('logout') }}" class="sidebar-logout-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn-sidebar-logout">
         <i class="bi bi-box-arrow-left me-2"></i>Cerrar sesion
@@ -1032,6 +1016,117 @@
   </div>
 
 </nav>
+
+{# ══════════════════════════════════════════════════════════
+   ACORDEÓN DEL MENÚ LATERAL — 2026-10-19 (Daniel: «cuando algo se despliegue y vas a buscar fuera del despliegue, eso se contraiga…
+   todos los menús, al abrir uno, que se contraiga otro… tenerlo contraído siempre y pequeño»)
+   · Todo arranca CERRADO; solo queda abierto el grupo (y subgrupo) que contiene la página activa.
+   · Abrir un grupo cierra cualquier otro abierto (también los subgrupos de otro grupo).
+   · Clic en un enlace que está FUERA del grupo abierto: ese grupo se cierra.
+   · Ya no se recuerda en localStorage un grupo abierto a mano (lo que manda es la página activa).
+   Va síncrono acá (no en DOMContentLoaded, que espera los scripts defer de la CDN) para que el menú nazca bien armado.
+   Grupos: .sg-toggle (#sg-<k>) y .sg-subtoggle (#sgsub-<k>); el subgrupo dentro de un .sg-items (Transporte › Configuración) es de 2.º nivel. #}
+<script>
+(function () {
+  var sb = document.getElementById('sidebar');
+  if (!sb) return;
+  var reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  // La versión anterior guardaba el grupo abierto: se limpia para que no quede basura (ya no se usa).
+  try {
+    localStorage.removeItem('ilus_sg_open');
+    Object.keys(localStorage).forEach(function (k) { if (k.indexOf('ilus_sgsub_') === 0) localStorage.removeItem(k); });
+  } catch (e0) {}
+
+  var grupos = [].slice.call(sb.querySelectorAll('.sg-toggle, .sg-subtoggle')).map(function (btn) {
+    var box = document.getElementById(btn.dataset.sg ? 'sg-' + btn.dataset.sg : 'sgsub-' + btn.dataset.sgsub);
+    var padre = box && box.parentElement ? box.parentElement.closest('.sg-items') : null;
+    return { btn: btn, box: box, padre: padre };
+  }).filter(function (g) { return g.box; });
+
+  function abierto(g) { return g.btn.classList.contains('sg-open'); }
+  function deCaja(box) { return grupos.filter(function (g) { return g.box === box; })[0] || null; }
+  function cadena(g) { var p = g.padre ? deCaja(g.padre) : null; return p ? [g, p] : [g]; }
+
+  function mostrar(g, instante) {
+    var b = g.box;
+    g.btn.classList.add('sg-open'); g.btn.setAttribute('aria-expanded', 'true');
+    b.classList.add('sg-open');
+    clearTimeout(b._t);
+    if (instante || reduce) { b.style.maxHeight = 'none'; return; }
+    b.style.maxHeight = b.scrollHeight + 'px';
+    b._t = setTimeout(function () { if (b.classList.contains('sg-open')) b.style.maxHeight = 'none'; }, 260);
+  }
+  function ocultar(g, instante) {
+    var b = g.box;
+    g.btn.classList.remove('sg-open'); g.btn.setAttribute('aria-expanded', 'false');
+    b.classList.remove('sg-open');
+    clearTimeout(b._t);
+    if (!instante && !reduce) { b.style.maxHeight = b.scrollHeight + 'px'; void b.offsetHeight; }
+    b.style.maxHeight = '0px';
+  }
+  // Cierra todo lo abierto salvo `conservar` (los subgrupos de un grupo que se cierra se cierran de inmediato).
+  function cerrarOtros(conservar) {
+    grupos.forEach(function (g) {
+      if (conservar.indexOf(g) === -1 && abierto(g)) ocultar(g, !!g.padre);
+    });
+  }
+  function abrir(g, instante) {
+    var cad = cadena(g);
+    cerrarOtros(cad);
+    cad.slice().reverse().forEach(function (x) { if (!abierto(x)) mostrar(x, instante); });
+  }
+  function abrirAnidadoActivo(g) {
+    grupos.forEach(function (x) {
+      if (x.padre === g.box && !abierto(x) && x.box.querySelector('.sidebar-link.active')) mostrar(x, true);
+    });
+  }
+  // Deja a la vista el grupo recién abierto dentro de la zona que scrollea del menú, sin sacar su encabezado.
+  function mostrarEnMenu(g) {
+    var nav = document.getElementById('sidebarNav');
+    if (!nav || !nav.contains(g.btn)) return;
+    var nr = nav.getBoundingClientRect(), br = g.btn.getBoundingClientRect(), xr = g.box.getBoundingClientRect();
+    var sobra = xr.bottom - nr.bottom;
+    if (sobra > 0) nav.scrollTop += Math.min(sobra + 8, Math.max(0, br.top - nr.top - 4));
+  }
+
+  grupos.forEach(function (g) {
+    g.btn.setAttribute('aria-expanded', 'false');
+    g.btn.setAttribute('aria-controls', g.box.id);
+    g.btn.addEventListener('click', function () {
+      if (abierto(g)) {
+        ocultar(g);
+        grupos.forEach(function (x) { if (x.padre === g.box && abierto(x)) ocultar(x, true); });
+      } else {
+        abrir(g);
+        abrirAnidadoActivo(g);
+        setTimeout(function () { mostrarEnMenu(g); }, reduce ? 0 : 240);
+      }
+    });
+  });
+
+  // Clic en un enlace FUERA del grupo abierto: ese grupo se cierra. Uno dentro del grupo no cierra nada.
+  sb.addEventListener('click', function (ev) {
+    var a = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null;
+    if (!a || !sb.contains(a)) return;
+    var caja = a.closest('.sg-subitems, .sg-items');
+    var g = caja ? deCaja(caja) : null;
+    cerrarOtros(g ? cadena(g) : []);
+  });
+
+  // Estado inicial: solo el grupo (y subgrupo) de la página activa, sin animación.
+  var activo = sb.querySelector('.sidebar-link.active');
+  var cajaAct = activo ? activo.closest('.sg-subitems, .sg-items') : null;
+  var gAct = cajaAct ? deCaja(cajaAct) : null;
+  if (gAct) abrir(gAct, true);
+  var nav0 = document.getElementById('sidebarNav');
+  if (activo && nav0 && nav0.contains(activo)) {
+    var nr0 = nav0.getBoundingClientRect(), ar0 = activo.getBoundingClientRect();
+    if (ar0.bottom > nr0.bottom) nav0.scrollTop += ar0.bottom - nr0.bottom + 12;
+    else if (ar0.top < nr0.top) nav0.scrollTop -= nr0.top - ar0.top + 12;
+  }
+})();
+</script>
 {% endif %}
 
 {# ══════════════════════════════════════════════
@@ -1156,112 +1251,7 @@ document.addEventListener('DOMContentLoaded', function(){
     });
   }, 3000);
 
-  // ── Sidebar Accordion ────────────────────────
-  (function () {
-    var toggles = document.querySelectorAll('.sg-toggle');
-    if (!toggles.length) return;
-
-    function openGroup(key) {
-      toggles.forEach(function (btn) {
-        var k   = btn.dataset.sg;
-        var box = document.getElementById('sg-' + k);
-        if (!box) return;
-        var active = (k === key);
-        btn.classList.toggle('sg-open', active);
-        box.classList.toggle('sg-open', active);
-      });
-      try { localStorage.setItem('ilus_sg_open', key); } catch(e) {}
-    }
-
-    toggles.forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var key     = this.dataset.sg;
-        var isOpen  = this.classList.contains('sg-open');
-        if (isOpen) {
-          // cierra todo
-          toggles.forEach(function (b) {
-            b.classList.remove('sg-open');
-            var box = document.getElementById('sg-' + b.dataset.sg);
-            if (box) box.classList.remove('sg-open');
-          });
-          try { localStorage.removeItem('ilus_sg_open'); } catch(e) {}
-        } else {
-          openGroup(key);
-        }
-      });
-    });
-
-    // Auto-abrir la sección que contiene el link activo
-    var activeLink = document.querySelector('.sg-items .sidebar-link.active');
-    if (activeLink) {
-      var box = activeLink.closest('.sg-items');
-      if (box) {
-        var key = box.id.replace('sg-', '');
-        openGroup(key);
-        return;
-      }
-    }
-    // Sin link activo: restaurar del localStorage
-    try {
-      var saved = localStorage.getItem('ilus_sg_open');
-      if (saved) openGroup(saved);
-    } catch(e) {}
-  })();
-
-  // ── Sub-grupos anidados (2026-07-29): "Configuración" en Transporte,
-  // "Taller" en Servicio Técnico. Independiente del acordeón principal de
-  // arriba -- no cierra los demás grupos, solo su propio contenido.
-  (function () {
-    var subtoggles = document.querySelectorAll('.sg-subtoggle');
-    if (!subtoggles.length) return;
-    subtoggles.forEach(function (btn) {
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        var key = this.dataset.sgsub;
-        var box = document.getElementById('sgsub-' + key);
-        if (!box) return;
-        var open = !this.classList.contains('sg-open');
-        this.classList.toggle('sg-open', open);
-        box.classList.toggle('sg-open', open);
-        try { localStorage.setItem('ilus_sgsub_' + key, open ? '1' : ''); } catch(e2) {}
-      });
-    });
-    // Auto-abrir si contiene el link activo, si no restaurar del localStorage
-    subtoggles.forEach(function (btn) {
-      var key = btn.dataset.sgsub;
-      var box = document.getElementById('sgsub-' + key);
-      if (!box) return;
-      var hasActive = box.querySelector('.sidebar-link.active');
-      var wasOpen = false;
-      try { wasOpen = localStorage.getItem('ilus_sgsub_' + key) === '1'; } catch(e3) {}
-      if (hasActive || wasOpen) {
-        btn.classList.add('sg-open');
-        box.classList.add('sg-open');
-      }
-      // 2026-08-25 (Daniel, en vivo: "no quiero que se vaya a etiquetas"):
-      // este subgrupo (Taller/Configuración) vive DENTRO de "Servicio
-      // Técnico", que es solo una etiqueta de sección -- no está anidado
-      // en ningún acordeón principal (.sg-toggle: Etiquetas/Clientes/
-      // Retiros/Transporte/Ajustes). Son dos sistemas de acordeón
-      // independientes (ver el IIFE de arriba). Si el link activo real
-      // está ACÁ (ej. Bodega de Repuestos), el acordeón principal no lo
-      // sabe -- su propio auto-abrir busca dentro de .sg-items, que este
-      // subgrupo no toca -- así que cae a su fallback de localStorage y
-      // puede quedar mostrando la última sección que se abrió a mano
-      // (Etiquetas, en el caso real de Daniel) al mismo tiempo que este
-      // subgrupo correcto también se abre. Con un active confirmado ACÁ,
-      // cerramos el acordeón principal a la fuerza para que no quede la
-      // sensación de estar "adentro" de otro módulo.
-      if (hasActive) {
-        document.querySelectorAll('.sg-toggle').forEach(function (topBtn) {
-          topBtn.classList.remove('sg-open');
-          var topBox = document.getElementById('sg-' + topBtn.dataset.sg);
-          if (topBox) topBox.classList.remove('sg-open');
-        });
-        try { localStorage.removeItem('ilus_sg_open'); } catch(e4) {}
-      }
-    });
-  })();
+  // (El acordeón del menú lateral vive ahora justo después del <nav>, 2026-10-19: abre solo el grupo de la página activa.)
 })();
 });  /* end DOMContentLoaded */
 </script>

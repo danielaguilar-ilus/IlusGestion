@@ -60,7 +60,20 @@ def _js_funcion(nombre, src=M):
 
 
 def _node(js):
-    r = subprocess.run(["node", "-e", js], capture_output=True, text=True, encoding="utf-8")
+    """Corre `js` en node. Un script largo (los casos de la revisión pasan de 30 KB) va por archivo: Windows limita la línea de
+    comandos a ~32 KB y `node -e` fallaba con «el nombre del archivo es demasiado largo»."""
+    if len(js) < 8000:
+        r = subprocess.run(["node", "-e", js], capture_output=True, text=True, encoding="utf-8")
+    else:
+        import os
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as f:
+            f.write(js)
+            ruta = f.name
+        try:
+            r = subprocess.run(["node", ruta], capture_output=True, text=True, encoding="utf-8")
+        finally:
+            os.unlink(ruta)
     if r.returncode != 0:
         raise AssertionError(r.stderr)
     return json.loads(r.stdout.strip().splitlines()[-1])
@@ -119,7 +132,7 @@ class TestTablaComoLaDeCliente(unittest.TestCase):
     def test_la_casilla_llego_se_reemplazo(self):   # decisión de Daniel: el faltante va en la revisión
         for viejo in ("setLlegoTareaManual", "toggleLlegoTodos", "o2m-her-llego", "c-llego", "no_llego"):
             self.assertNotIn(viejo, M)
-        self.assertIn("Si algo no llegó, se declara en la revisión de ese producto.", _js_funcion("_o2mChkNota"))
+        self.assertIn("Si algo no llegó o no se puede usar, se declara en la ficha, arriba de ese producto.", _js_funcion("_o2mChkNota"))
 
     def test_las_desmarcadas_no_se_envian_ni_cuentan(self):
         self.assertIn("function _o2mTmIncluida(tm){ return !!tm && !tm.excluida; }", M)
@@ -361,70 +374,25 @@ class TestFotoEntregaPura(unittest.TestCase):
         self.assertEqual([x["id"] for x in self.f(PLANTILLAS, items)], [5])
 
 
-class _BD:
-    """Base de mentira para _ensure_foto_entrega_instalacion: plantillas, ítems y mant_logs."""
+class TestFotoEntregaYaNoEsAutomatica(unittest.TestCase):
+    """🎛️ 2026-10-20 (REGLA #32 — Daniel: «como es regla estricta del proyecto, no debes imponer o gestionar más checklists,
+    sino los que impone el usuario»): «Foto de entrega» dejó de agregarse sola al arrancar. Ahora es una PROPUESTA
+    (/mantenciones/plantillas → «Propuestas del sistema»): la persona ve la plantilla actual junto a la propuesta y decide
+    «Crear como plantilla nueva» (recomendado) o «Reemplazar el contenido» (gestión, con confirmación, nunca «(LU)»)."""
 
-    def __init__(self):
-        self.items = [dict(x) for x in ITEMS]
-        self.logs, self.lecturas = [], []
+    def test_el_arranque_ya_no_modifica_las_plantillas_de_instalacion(self):
+        app = _leer("app.py")
+        for muerto in ("def _ensure_foto_entrega_instalacion", "_ensure_foto_entrega_instalacion()", "_FOTO_ENTREGA_MARCA",
+                       "_FOTO_ENTREGA_LOCK"):
+            self.assertNotIn(muerto, app, muerto)
 
-    def fetchone(self, sql, params=None):
-        self.lecturas.append(sql)
-        if "FROM mant_logs" in sql:
-            return next(({"id": 1} for l in self.logs
-                         if (l[0], l[1], l[2]) == (params[0], params[1], params[2])), None)
-        return None
-
-    def fetchall(self, sql, params=None):
-        self.lecturas.append(sql)
-        if "FROM mant_tarea_plantillas" in sql:
-            return [p for p in PLANTILLAS if p["categoria_admin"] == params[0]]
-        if "FROM mant_tarea_plantilla_items" in sql:
-            return [i for i in self.items if i["plantilla_id"] in params]
-        return []
-
-    def execute(self, sql, params=None):
-        if sql.startswith("INSERT INTO mant_tarea_plantilla_items"):
-            self.items.append({"plantilla_id": params[0], "orden": params[1], "titulo": params[2],
-                               "tipo_respuesta": "foto", "obligatoria": 1})
-        elif sql.startswith("INSERT INTO mant_logs"):
-            self.logs.append(params)
-
-
-class TestFotoEntregaUnaSolaVez(unittest.TestCase):
-    def _ensure(self, bd):
-        amb, _f = _amb_foto()
-        amb.update({
-            "_FOTO_ENTREGA_MARCA": "foto_entrega_instalacion_aplicada",
-            "_FOTO_ENTREGA_DESC": "El equipo instalado o el accesorio entregado en su lugar, a la vista.",
-            "_ensure_mant_logs_entidad_varchar": lambda: None,
-            "mysql_fetchone": bd.fetchone, "mysql_fetchall": bd.fetchall, "mysql_execute": bd.execute,
-            "_mant_log": lambda *a: bd.logs.append(a), "print": lambda *a, **k: None,
-        })
-        return _exec("_ensure_foto_entrega_instalacion", amb)
-
-    def test_idempotente_con_marca(self):
-        bd = _BD()
-        r1 = self._ensure(bd)()
-        self.assertEqual(r1["plantillas"], ["Accesorios", "Banco"])
-        nuevos = [i for i in bd.items if i["titulo"] == "Foto de entrega"]
-        self.assertEqual([(i["plantilla_id"], i["orden"], i["obligatoria"]) for i in nuevos], [(2, 11, 1), (5, 1, 1)])
-        self.assertTrue(any(l[:3] == ("sistema", 0, "foto_entrega_instalacion_aplicada") for l in bd.logs))
-        self.assertTrue(any(l[2] == "foto_entrega_agregada" for l in bd.logs if l[0] == "plantilla"))
-        # segundo arranque: la marca corta en UNA consulta y no escribe nada
-        antes_items, antes_logs = len(bd.items), len(bd.logs)
-        bd.lecturas.clear()
-        r2 = self._ensure(bd)()
-        self.assertTrue(r2["ya"])
-        self.assertEqual((len(bd.items), len(bd.logs)), (antes_items, antes_logs))
-        self.assertEqual(len(bd.lecturas), 1)
-
-    def test_sin_borrar_ni_reordenar(self):   # REGLA #4.2
-        f = _fuente("_ensure_foto_entrega_instalacion")
-        self.assertNotIn("DELETE", f)
-        self.assertNotIn("UPDATE mant_tarea_plantilla_items", f)
-        self.assertIn("'foto',1,1", f)
-        self.assertIn("_ensure_foto_entrega_instalacion()", _leer("app.py").split("def _ensure_foto_entrega_instalacion")[1])
+    def test_la_pura_sigue_alimentando_la_propuesta(self):
+        f = _fuente("_prop_construir")
+        self.assertIn("_foto_entrega_a_ajustar(", f)
+        self.assertIn('_prop_armar("foto_entrega"', f)
+        self.assertEqual(_decoradores("mant_plantillas_propuestas")[1:], ["_mant_required", "_no_tecnico_externo"])
+        self.assertNotIn("INSERT", f)           # armar la propuesta es solo lectura
+        self.assertNotIn("UPDATE", f)
 
 
 if __name__ == "__main__":

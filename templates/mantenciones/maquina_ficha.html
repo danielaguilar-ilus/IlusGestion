@@ -2,6 +2,8 @@
 {% block title %}{{ equipo.nombre or 'Equipo' }} — Ficha del equipo{% endblock %}
 
 {% block content %}
+{#- 🚨 2026-10-20 (Daniel): aviso llamativo de FUERA DE SERVICIO (motivo + desde cuándo). -#}
+<link rel="stylesheet" href="{{ url_for('static', filename='eq_fuera_servicio.css') }}">
 <style>
 /* ═══════════ Layout ═══════════ */
 .eq-wrap { max-width: 1100px; margin: 0 auto; padding: 12px; }
@@ -511,6 +513,21 @@
       {% endif %}
     </div>
   </div>
+
+  {% if equipo.estado_capturado == 'fuera_servicio' %}
+  {#- 🚨 2026-10-20 (Daniel): «FUERA DE SERVICIO · <motivo> · desde dd/mm hh:mm», en rojo, arriba de todo. `equipo.fs_info` sale de la
+      parada abierta del equipo (hora Chile). -#}
+  <div class="eq-fsb" role="status" style="max-width:none;margin:0 0 14px">
+    <i class="bi bi-sign-stop-fill"></i>
+    <span><b>Fuera de servicio</b>
+      {% if equipo.fs_info %}
+      {% if equipo.fs_info.motivo %}<em class="why">{{ equipo.fs_info.motivo }}</em>{% endif %}
+      {% if equipo.fs_info.desde %}<em class="since">desde {{ equipo.fs_info.desde }}{% if equipo.fs_info.por %} · {{ equipo.fs_info.por }}{% endif %}</em>{% endif %}
+      {% if equipo.fs_info.riesgo %}<em class="risk"><i class="bi bi-exclamation-triangle-fill"></i> Puede lastimar a alguien</em>{% endif %}
+      {% endif %}
+    </span>
+  </div>
+  {% endif %}
 
   {# ═════════ Stats ═════════ #}
   <div class="eq-stats">

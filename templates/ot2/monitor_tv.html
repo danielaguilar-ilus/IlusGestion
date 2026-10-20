@@ -536,6 +536,9 @@
     .rt-lbl.ultimo{transform:translateX(-100%)}
     /* Horas después del fin de jornada (sobre hora) — en rojo claro */
     .rt-lbl.rt-ot{color:#f87171}
+    /* La hora que queda debajo del chip de AHORA se esconde (antes asomaba
+       a medias: "19:0" y un "0" suelto al lado del chip). */
+    .rt-lbl.tapada{visibility:hidden}
     /* Chip rojo con la hora actual, montado sobre la regla — cabeza de
        la línea de AHORA */
     .now-chip{
@@ -721,7 +724,7 @@
        Filas bajas (md/sm): se queda la etiqueta de arriba, en la línea del estado. */
     .p-empresa-fila{display:none;margin-top:4px;max-width:100%;color:#93c5fd;font-weight:800;
       font-size:var(--fs-sub,15px);line-height:1.15;overflow-wrap:anywhere;white-space:normal}
-    #stage.con-empresa{--col-left:420px}
+    #stage.con-empresa{--col-left:440px}
     #stage[data-densidad="xl"] .p-empresa-fila{display:block}
     #stage[data-densidad="xl"] .p-empresa-fila:empty{display:none}
     #stage[data-densidad="xl"] .p-sub .p-empresa{display:none}
@@ -811,6 +814,17 @@
        sola linea entra completa; lo que no cabe se corta limpio al final
        con el overflow del bloque, nunca a media letra (REGLA #15). */
     .tl-bloque.b-compacto .b-horas{font-size:12px;line-height:1.1;-webkit-line-clamp:1}
+    /* 🔧 2026-10-19 (Daniel, captura del lunes 19-10 con Dave, Jaizer, Juan y
+       Lenin con 2 y 3 OT a la vez: "¿Tú crees que eso se ve bien?"). Si ni
+       creciendo la fila el carril alcanza para dos renglones, la burbuja pasa
+       a UNA línea: cliente y detalle de corrido, nunca un renglón montado
+       sobre la burbuja de abajo. */
+    .tl-bloque.b-compacto.b-1linea{flex-direction:row;align-items:center;justify-content:flex-start;gap:7px}
+    .tl-bloque.b-compacto.b-1linea .b-cliente{flex:0 0 auto;max-width:72%}
+    .tl-bloque.b-compacto.b-1linea .b-horas{flex:1 1 0;min-width:0;display:block;
+      white-space:nowrap;text-overflow:ellipsis;-webkit-line-clamp:unset}
+    .tl-bloque.b-1linea.b-narrow .b-horas,
+    .tl-bloque.b-1linea.b-tiny .b-horas{display:none}
 
     /* 🔧 2026-09-03 (Daniel, viendo las dos burbujas de Jaizer lado a lado:
        "¿por qué se ven con información distinta?").
@@ -1588,6 +1602,13 @@
     #stage[data-densidad="sm"] .av-tareas,
     #stage[data-densidad="sm"] .p-dir,
     #stage[data-densidad="sm"] .b-horas{display:none}
+    /* 2026-10-19: la burbuja de un carril compartido tiene su PROPIO alto
+       (la fila creció con sus carriles), así que la densidad chica no le
+       quita el detalle (N° de OT y horario). */
+    #stage[data-densidad="sm"] .tl-bloque.b-compacto .b-horas{display:-webkit-box}
+    #stage[data-densidad="sm"] .tl-bloque.b-compacto.b-1linea .b-horas{display:block}
+    #stage[data-densidad="sm"] .tl-bloque.b-1linea.b-narrow .b-horas,
+    #stage[data-densidad="sm"] .tl-bloque.b-1linea.b-tiny .b-horas{display:none}
     #stage[data-densidad="sm"] .tl-bloque{border-radius:7px;padding:0 9px}
     #stage[data-densidad="sm"] .p-line2{margin-top:1px}
     #stage[data-densidad="sm"] .p-badge{padding:1px 8px}
@@ -2078,6 +2099,9 @@
     $('#kpiAtraBox').classList.toggle('alerta', (r.atrasadas || 0) > 0);
     setTexto($('#kickerTotal'), r.total != null ? r.total : 0);
     setTexto($('#dateBig'), datos.hoy_label || fechaHoyLabel());
+    // 2026-10-19 (captura de Daniel: "LUNES 19 DE OCTU…"): la fecha va
+    // completa; si no cabe se achica la letra, no se corta (REGLA #15).
+    achicarHastaCaber($('#dateBig'), 22);
 
     if (datos.generado_iso){
       const g = new Date(datos.generado_iso);
@@ -2133,20 +2157,70 @@
     return pagina.reduce((acc, g) => acc + Math.max(g.personas.length, 1), 0);
   }
 
+  /* 🔧 2026-10-19 (Daniel, captura real del lunes 19-10: "¿Tú crees que eso
+     se ve bien? Hay que hacer algo"). Dave, Jaizer, Juan y Lenin tenían 2 y
+     3 OT a la misma hora. Los carriles ya las separaban, pero dentro de la
+     MISMA fila de 60 px: cada burbuja quedaba de ~12 px y su segundo renglón
+     se montaba sobre la de abajo. Ahora la fila crece con sus carriles y las
+     filas sin choques (o sin carga) ceden el alto que sobra. */
+  const CARRIL_MIN = 22;       // por debajo de esto ya no se lee a distancia
+  const CARRIL_2LINEAS = 30;   // desde aquí caben cliente + detalle
+  const GAP_CARRIL = 2;
+  const MARGEN_CARRIL = 3;     // aire arriba y abajo dentro de la fila
+
+  function altoParaCarriles(n, alto){
+    return n * alto + (n - 1) * GAP_CARRIL + 2 * MARGEN_CARRIL;
+  }
+
   /* Densidad: mide el alto real disponible y fija --row-h + talla de letra */
   function ajustarDensidad(pagina){
     const stage = $('#stage');
     const main = $('#tvMain');
+    // 🏢 2026-09-30: con técnicos externos que traen empresa, la columna de identidad se ensancha para que
+    // la empresa quepa completa junto al estado (Daniel: "a los externos les figure la empresa").
+    // Va ANTES de medir la pista: cambia el ancho de la columna de horario.
+    stage.classList.toggle('con-empresa', pagina.some(g => (g.personas || []).some(p => p && p.empresa)));
     const filas = Math.max(filasDePagina(pagina), 1);
     const nG = Math.max(pagina.length, 1);
     const disponible = main.clientHeight - PAD_V_MAIN
       - ALTO_RULER - BORDE_CARD - PAD_V_CARD - nG * ALTO_GH;
-    const rowH = Math.max(46, Math.min(112, Math.floor(disponible / filas)));
+
+    // Carriles de cada persona, con el mismo piso de ancho de burbuja que
+    // usa el dibujo (la regla horaria mide lo mismo que la pista de la fila).
+    const pista = $('.ch-ruler', main);
+    const anchoPista = pista ? pista.clientWidth : 0;
+    const minPct = anchoPista > 0
+      ? Math.min(20, OT_MIN_PX_BLOQUE / anchoPista * 100)
+      : (state.minPctBloque || 0);
+    const carriles = [];      // 1 por fila de la página (nota vacía = 1)
+    pagina.forEach(g => {
+      if (!g.personas.length){ carriles.push(1); return; }
+      g.personas.forEach(p => carriles.push(Math.max(1, repartirCarriles(p.bloques || [], minPct) || 1)));
+    });
+    const total = (h, a) => carriles.reduce(
+      (acc, n) => acc + Math.max(h, n > 1 ? altoParaCarriles(n, a) : 0), 0);
+
+    // 1) Carril de dos renglones (cliente + detalle); solo si ni con las
+    //    demás filas al mínimo entra, se achica hacia un renglón.
+    let carril = CARRIL_2LINEAS;
+    while (carril > CARRIL_MIN && total(46, carril) > disponible) carril--;
+    // 2) Con ese carril, la fila base más alta que entra. Si sobra alto,
+    //    los carriles se estiran solos (la fila mide max(base, carriles)).
+    let rowH = Math.max(46, Math.min(112, Math.floor(disponible / filas)));
+    while (rowH > 46 && total(rowH, carril) > disponible) rowH--;
+
+    state.rowH = rowH;
+    let i = 0;
+    pagina.forEach(g => {
+      if (!g.personas.length){ i++; return; }
+      g.personas.forEach(p => {
+        const n = carriles[i++];
+        p.__rowH = n > 1 ? Math.max(rowH, altoParaCarriles(n, carril)) : rowH;
+      });
+    });
+
     stage.style.setProperty('--row-h', rowH + 'px');
     stage.dataset.densidad = rowH >= 88 ? 'xl' : rowH >= 72 ? 'lg' : rowH >= 58 ? 'md' : 'sm';
-    // 🏢 2026-09-30: con técnicos externos que traen empresa, la columna de identidad se ensancha para que
-    // la empresa quepa completa junto al estado (Daniel: "a los externos les figure la empresa").
-    stage.classList.toggle('con-empresa', pagina.some(g => (g.personas || []).some(p => p && p.empresa)));
   }
 
   /* ──────────────── tarjeta-calendario: regla y overlays ──────────────── */
@@ -2373,8 +2447,22 @@
      actualizarBloque (nunca cambia por sí solo entre latidos si el horario
      de la OT no cambió), así que se cachea junto con la densidad para no
      medir de más. */
+  /* Baja la letra de a 1px hasta que el texto entre entero en su caja
+     (piso `piso` px). Para textos de una línea con overflow:hidden. */
+  function achicarHastaCaber(nodo, piso){
+    if (!nodo) return;
+    nodo.style.fontSize = '';
+    let fs = parseFloat(getComputedStyle(nodo).fontSize) || 16;
+    let tope = 40;
+    while (nodo.scrollWidth > nodo.clientWidth + 1 && fs > piso && tope--){
+      fs -= 1;
+      nodo.style.fontSize = fs + 'px';
+    }
+  }
+
   function ajustarTextoBloque(nodo, texto, anchoPct){
-    const clave = texto + '|' + Math.round(anchoPct * 4) + '|' + ($('#stage').dataset.densidad || '');
+    const clave = texto + '|' + Math.round(anchoPct * 4) + '|' + ($('#stage').dataset.densidad || '')
+      + '|' + (nodo.parentNode ? nodo.parentNode.className : '');
     if (nodo.dataset.fit === clave) return;
     nodo.dataset.fit = clave;
     nodo.style.fontSize = '';
@@ -2391,6 +2479,10 @@
     const est = estadoNorm(p.estado, 'disponible');
     const claseBase = 'u-p estado-' + est;
     if (row.className !== claseBase && !row.classList.contains('saliendo')) row.className = claseBase;
+    // Fila más alta solo si sus OT se pisan (ver ajustarDensidad).
+    row.__hFila = p.__rowH || state.rowH || 0;
+    if (p.__rowH && p.__rowH !== state.rowH) row.style.setProperty('--row-h', p.__rowH + 'px');
+    else row.style.removeProperty('--row-h');
 
     const avatarEl = $('.p-avatar', row);
     setTexto(avatarEl, inicialesDe(p));
@@ -2417,6 +2509,12 @@
     const empEl = $('.p-empresa', row);
     setTexto(empEl, p.empresa || '');
     if (empEl) empEl.title = p.empresa ? ('Empresa: ' + p.empresa) : '';
+    // 2026-10-19 (captura: "LOGISTICA Y TRANSPORTES MI…"): nombre completo,
+    // achicando la letra antes que cortarlo.
+    if (empEl && p.empresa){
+      const _k = p.empresa + '|' + ($('#stage').dataset.densidad || '');
+      if (empEl.dataset.fit !== _k){ empEl.dataset.fit = _k; achicarHastaCaber(empEl, 10); }
+    }
     setTexto($('.p-empresa-fila', row), p.empresa || '');
     setTexto($('.p-tipo', row), '');
     setTexto($('.p-cliente', row), '');
@@ -2503,7 +2601,12 @@
     state.minPctBloque = _anchoPista > 0
       ? Math.min(20, OT_MIN_PX_BLOQUE / _anchoPista * 100)
       : 0;
-    repartirCarriles(bloques, state.minPctBloque);
+    const _lanes = repartirCarriles(bloques, state.minPctBloque) || 1;
+    // Alto real de cada carril en esta fila (la fila ya creció en
+    // ajustarDensidad): decide si la burbuja va en dos renglones o en uno.
+    const _hFila = row.__hFila || state.rowH || 60;
+    const _altoCarril = (_hFila - 2 * MARGEN_CARRIL - (_lanes - 1) * GAP_CARRIL) / _lanes;
+    bloques.forEach(b => { b.__laneH = _altoCarril; });
 
     syncList(
       tl,
@@ -2558,6 +2661,7 @@
       b.__lanes = total;
       if (b.__lane == null) b.__lane = 0;
     });
+    return total;
   }
 
   /* Clave estable de un bloque — la usan el sync y el foco del modal */
@@ -2596,17 +2700,22 @@
     // para que el nombre del cliente siga siendo legible a distancia.
     const clase = 'tl-bloque b-' + est
       + (w < 4.5 ? ' b-tiny' : (w < 9 ? ' b-narrow' : ''))
-      + (lanes > 1 ? ' b-compacto' : '');
+      + (lanes > 1 ? ' b-compacto' : '')
+      + (lanes > 1 && (b.__laneH || 0) < CARRIL_2LINEAS ? ' b-1linea' : '');
     if (nodo.className !== clase) nodo.className = clase;
     nodo.style.left = li + '%';
     nodo.style.width = w + '%';
     // Reparto vertical: cada carril ocupa su franja, con un hilo de aire
     // entre medio. Con un solo carril, se deja el alto de siempre.
+    // 2026-10-19: en píxeles sobre el alto de ESTA fila (que ya creció con
+    // sus carriles), no en % de una fila fija -- con 3 carriles el % dejaba
+    // burbujas de 12 px.
     if (lanes > 1){
-      const alto = 78 / lanes;                 // % del alto útil de la fila
-      nodo.style.top    = (11 + lane * (alto + 2)) + '%';
+      const resto = 2 * MARGEN_CARRIL + (lanes - 1) * GAP_CARRIL;
+      const alto = '((var(--row-h) - ' + resto + 'px) / ' + lanes + ')';
+      nodo.style.top    = 'calc(' + MARGEN_CARRIL + 'px + ' + lane + ' * (' + alto + ' + ' + GAP_CARRIL + 'px))';
       nodo.style.bottom = 'auto';
-      nodo.style.height = alto + '%';
+      nodo.style.height = 'calc' + alto;
     } else {
       nodo.style.top = ''; nodo.style.bottom = ''; nodo.style.height = '';
     }
@@ -3502,6 +3611,17 @@
     document.querySelectorAll('.now-chip').forEach(c => {
       c.hidden = !visible;
       if (visible){ c.style.left = left; setTexto(c, hhmm); }
+      // La hora de la regla que queda bajo el chip se esconde entera (antes
+      // asomaba "19:0" y un "0" suelto). `visibility` conserva su medida.
+      const cr = visible ? c.getBoundingClientRect() : null;
+      c.parentNode && c.parentNode.querySelectorAll('.rt-lbl').forEach(l => {
+        let tapa = false;
+        if (cr){
+          const lr = l.getBoundingClientRect();
+          tapa = lr.right > cr.left - 6 && lr.left < cr.right + 6;
+        }
+        l.classList.toggle('tapada', tapa);
+      });
     });
     // Lavado de "lo ya transcurrido": su borde derecho es el ahora
     document.querySelectorAll('.cal-past').forEach(p => {
@@ -3799,7 +3919,8 @@
     // con una talla equivocada para el resto de la sesión.
     if (document.fonts && document.fonts.ready){
       document.fonts.ready.then(() => {
-        document.querySelectorAll('.p-nombre, .b-cliente').forEach(n => { delete n.dataset.fit; });
+        document.querySelectorAll('.p-nombre, .b-cliente, .p-empresa').forEach(n => { delete n.dataset.fit; });
+        achicarHastaCaber($('#dateBig'), 22);
         if (state.datos) renderPagina();
       });
     }
