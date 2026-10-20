@@ -767,7 +767,10 @@
   };
 
   /* ───────────────────────────── flujo: NO LLEGÓ (producto de la revisión) ───────────────────────────── */
-  var QUE_NL = [['no_venia', 'No venía en el despacho'], ['otro_producto', 'Llegó otro producto'], ['incompleto', 'Llegó incompleto']];
+  // 2026-10-20 (revisión del técnico senior): «Llegó incompleto» NO es «No llegó»: el producto SÍ está y se revisa; lo que
+  // falta se pide con «Pedir repuesto» o se avisa con «Informar incidencia». Antes, marcarlo así dejaba sin revisar un
+  // producto que sí llegó (dispensaba su checklist).
+  var QUE_NL = [['no_venia', 'No venía en el despacho'], ['otro_producto', 'Llegó otro producto']];
   var nollego = {
     init: function (s) { s.modo = (s.d.cant || 1) > 1 ? '' : 'todos'; s.cuantos = (s.d.cant || 1) > 1 ? null : 1; s.que = ''; s.quien = ''; s.quienNombre = ''; s.dirty = false; },
     estado: function (s) {
@@ -790,7 +793,8 @@
           (s.modo === 'otro' ? '<div style="margin-top:12px;display:flex;align-items:center;gap:10px"><span class="oa-fld-l" style="margin:0">Faltan</span><span class="oa-qty"><button type="button" data-a="nlmenos" aria-label="Una menos"><i class="bi bi-dash-lg"></i></button><output>' + (s.cuantos || 1) + '</output><button type="button" data-a="nlmas" aria-label="Una más"><i class="bi bi-plus-lg"></i></button></span><b>de ' + cant + '</b></div>' : '') +
           (s.cuantos != null && s.cuantos < cant ? '<div class="oa-note"><i class="bi bi-info-circle"></i><span>Las otras ' + (cant - s.cuantos) + ' sí llegaron: se revisan con el checklist como siempre.</span></div>' : ''));
       }
-      body += sc('oaSc-quepaso', e.okQ, n++, '¿Qué pasó?', '', chipsHTML(QUE_NL, s.que, 'nlque'));
+      body += sc('oaSc-quepaso', e.okQ, n++, '¿Qué pasó?', '', chipsHTML(QUE_NL, s.que, 'nlque') +
+        '<div class="oa-note"><i class="bi bi-info-circle"></i><span>¿Llegó, pero incompleto o dañado? Entonces sí llegó: usa «Pedir repuesto» o «Informar incidencia».</span></div>');
       body += sc('oaSc-quien', e.okW, n++, '¿A quién le preguntaste?', '', chipsHTML(L, s.quien, 'nlquien') +
         (s.quien && s.quien !== 'nadie' ? '<div style="margin-top:12px"><label class="oa-fld-l" for="oaNQ">Nombre <span class="oa-fld-x">(opcional)</span></label><input id="oaNQ" class="oa-inp" data-in="quienNombre" value="' + esc(s.quienNombre) + '" maxlength="80" placeholder="Con quién hablaste"></div>' : ''));
       body += '<div class="oa-sc info"><div class="oa-sc-h"><span class="oa-sc-c"><i class="bi bi-clipboard-check"></i></span><span class="oa-sc-t">Qué pasa después</span></div>' +

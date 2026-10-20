@@ -457,7 +457,8 @@ MOTIVOS_EQUIPO = {
     ESTADO_FALTA_STOCK: (
         ("sin_stock", "No hay stock en bodega"),
         ("pedido_sin_llegar", "Está pedido y todavía no llega"),
-        ("llego_incompleto", "Llegó incompleto o dañado"),
+        # 2026-10-20: «Llegó incompleto o dañado» salió de aquí: si llegó, el equipo está y se revisa (lo que falta va por
+        # «Pedir repuesto» o «Informar incidencia»); marcarlo como «no llegó» lo sacaba de la firma sin revisarlo.
         ("otro", "Otro: lo cuento abajo"),
     ),
     # Las claves son las razones de «No pude revisarlo» (se guardan tal cual en razon_saltado). «dado_de_baja» no va: la baja
