@@ -728,6 +728,31 @@ def _empaques_equivalentes(cantidad_piezas, linea_snapshot):
     return (qty / uxv) if uxv > 1 else qty
 
 
+def stock_para_cliente(fisico, cantidad):
+    """Lo que el CORREO le dice al cliente del stock de un producto (Daniel 2026-10-20: «transmite la verdad… que no hay nomás»).
+    `fisico` = stock físico de la bodega de la línea según el ERP (None = no se pudo verificar). → (clave, texto):
+      ok       «✓ En stock»        hay al menos lo que retira
+      parcial  «Hay N de M»        hay algo, pero menos de lo que retira
+      sin      «✕ Sin stock»       no hay
+      ?        «Por confirmar»     no se pudo verificar: nunca se afirma stock sin verlo"""
+    try:
+        cant = float(cantidad or 0)
+    except (TypeError, ValueError):
+        cant = 0.0
+    if fisico is None:
+        return "?", "Por confirmar"
+    try:
+        f = float(fisico)
+    except (TypeError, ValueError):
+        return "?", "Por confirmar"
+    if f <= 0:
+        return "sin", "✕ Sin stock"
+    if cant > 0 and f + 1e-9 < cant:
+        _n = lambda v: str(int(v)) if float(v) == int(v) else f"{v:.2f}".replace(".", ",")
+        return "parcial", f"Hay {_n(f)} de {_n(cant)}"
+    return "ok", "✓ En stock"
+
+
 def register_pickup_routes(app, ctx):
     mysql_fetchone = ctx["mysql_fetchone"]
     mysql_fetchall = ctx["mysql_fetchall"]
@@ -2289,10 +2314,10 @@ def register_pickup_routes(app, ctx):
     def _pickup_productos_html(req):
         """Tabla HTML con los productos del retiro para el correo (Daniel
         2026-06-17: 'información completa del producto'). Cada línea muestra
-        producto + SKU + cantidad + indicador de STOCK (✓ en stock / ⚠ sin
-        saldo ERP, usando el flag marcada_sin_saldo ya persistido — NO consulta
-        el ERP en el hilo de envío). Vacío si el retiro aún no tiene productos.
-        Best-effort: '' ante cualquier error (nunca rompe el correo)."""
+        producto + SKU + cantidad + STOCK. 2026-10-20 (Daniel, correo de Ivo: «transmite la verdad… que no hay nomás»): el stock es
+        el físico REAL de la bodega de la línea según el ERP (el mismo de la ficha, `_pickup_productos_diagnostico`, solo lectura con
+        caché de 5 min) → En stock / Sin stock / Hay N de M / Por confirmar (`stock_para_cliente`). Antes decía «✓ en stock» sin mirar.
+        Vacío si el retiro aún no tiene productos. Best-effort: '' ante cualquier error (nunca rompe el correo)."""
         try:
             import html as _h
             rid = req.get("id")
@@ -2302,6 +2327,26 @@ def register_pickup_routes(app, ctx):
             lineas = data.get("lineas") or []
             if not lineas:
                 return ""
+            # Stock físico por (documento, SKU) y por SKU, del mismo diagnóstico que ve la ficha. ERP caído → None → «Por confirmar».
+            _fis_doc, _fis_sku = {}, {}
+            try:
+                _diag = _pickup_productos_diagnostico(int(rid)) or {}
+                for _d in _diag.get("docs") or []:
+                    for _l in _d.get("lineas") or []:
+                        _st = _l.get("stock")
+                        _f = _st.get("fisico") if isinstance(_st, dict) else None
+                        _k = (_l.get("sku") or "").strip().upper()
+                        _fis_doc[(_d.get("doc_id"), _k)] = _f
+                        _fis_sku.setdefault(_k, _f)
+            except Exception as _e_st:
+                print(f"[pickup-productos-html] stock rid={rid}: {type(_e_st).__name__}", flush=True)
+            _estilo = {
+                "ok": "background:#dcfce7;color:#14532d;border:1px solid #86efac",
+                "parcial": "background:#fff8e1;color:#92400e;border:1px solid #fcd34d",
+                "sin": "background:#fee2e2;color:#991b1b;border:1px solid #fca5a5",
+                "?": "background:#f3f4f6;color:#4b5563;border:1px solid #d1d5db",
+            }
+            _hay_falta = False
             MAX = 12
             filas = []
             for ln in lineas[:MAX]:
@@ -2312,14 +2357,13 @@ def register_pickup_routes(app, ctx):
                     qty_str = str(int(qty)) if float(qty) == int(float(qty)) else f"{float(qty):.2f}"
                 except Exception:
                     qty_str = str(qty)
-                if bool(ln.get("marcada_sin_saldo")):
-                    badge = ('<span style="display:inline-block;background:#fff8e1;color:#92400e;'
-                             'border:1px solid #fcd34d;border-radius:50px;font-size:10px;font-weight:800;'
-                             'padding:2px 8px">⚠ sin saldo ERP</span>')
-                else:
-                    badge = ('<span style="display:inline-block;background:#dcfce7;color:#14532d;'
-                             'border:1px solid #86efac;border-radius:50px;font-size:10px;font-weight:800;'
-                             'padding:2px 8px">✓ en stock</span>')
+                _k = sku.upper()
+                _fis = _fis_doc.get((ln.get("doc_id"), _k), _fis_sku.get(_k)) if (_fis_doc or _fis_sku) else None
+                _clave, _txt = stock_para_cliente(_fis, qty)
+                if _clave in ("sin", "parcial"):
+                    _hay_falta = True
+                badge = (f'<span style="display:inline-block;{_estilo[_clave]};border-radius:50px;font-size:10px;font-weight:800;'
+                         f'padding:2px 8px;white-space:nowrap">{_h.escape(_txt)}</span>')
                 filas.append(
                     '<tr>'
                     f'<td style="padding:8px 10px;border-bottom:1px solid #f0f0f0;font-size:13px;color:#0a0a0a">{_h.escape(desc)}'
@@ -2333,6 +2377,10 @@ def register_pickup_routes(app, ctx):
             if len(lineas) > MAX:
                 extra = ('<tr><td colspan="3" style="padding:8px 10px;font-size:12px;'
                          f'color:#6b7280;text-align:center">… y {len(lineas) - MAX} producto(s) más</td></tr>')
+            if _hay_falta:
+                extra += ('<tr><td colspan="3" style="padding:10px;font-size:12px;color:#92400e;background:#fff8e1;line-height:1.5">'
+                          'Te lo decimos con transparencia: los productos marcados «Sin stock» (o con menos unidades de las que retiras) '
+                          'hoy no están disponibles en nuestra bodega.</td></tr>')
             return (
                 '<table cellpadding="0" cellspacing="0" width="100%" '
                 'style="background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;margin:0 0 18px;overflow:hidden">'
