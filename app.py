@@ -110375,7 +110375,9 @@ def ot_api_eventos_listar():
                 conteos[k] += 1
         if para_asistente and cod in ("cancelado", "terminado"):
             continue
-        if _evt_filtro_ok(cod, "activos" if para_asistente else filtro):
+        # 🧩 2026-10-20: en el asistente también se elige un evento PRÓXIMO (el mall del 26/10 se crea la semana antes y ahí
+        # se le agregan la instalación y la desinstalación). El chip «Activos» de la lista no lo incluye (tiene el suyo).
+        if (para_asistente and cod == "proximo") or _evt_filtro_ok(cod, "activos" if para_asistente else filtro):
             todos.append((r, ots))
     total = len(todos)
     pages = max(1, (total + per_page - 1) // per_page)

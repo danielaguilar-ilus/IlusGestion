@@ -52,6 +52,10 @@
       '<div><dt>Centro de costo</dt><dd>' + esc(CENTROS[a.centro_costo] || a.centro_costo || 'Sin definir') + '</dd></div>' +
       '<div><dt>Valorizado sugerido</dt><dd>' + clp(a.valorizado_clp) + '</dd></div></dl>' +
       '<div class="pp-arg"><small>Argumento (completo)</small>' + esc(a.argumento) + '</div>';
+    /* 🧩 2026-10-20: si la solicitud trae una desinstalación, quien autoriza lo lee: al aprobar se crean las dos órdenes. */
+    if (a.incluye_desinstalacion) {
+      h += '<div class="pp-arg" style="border-left-color:#1d4ed8;background:#eff6ff"><small>Incluye</small><i class="bi bi-box-arrow-up me-1"></i>' + esc(a.incluye_desinstalacion) + '</div>';
+    }
     /* 2026-10-08: cobrar más que el saldo de la línea del documento: qué se quiere cobrar. */
     if (a.tipo === 'exceder_saldo' && a.payload && a.payload.saldo_pedido) {
       var sp = a.payload.saldo_pedido;

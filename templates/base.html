@@ -720,7 +720,7 @@
        no veía el link, y sin link no hay puerta. #}
     {% if not es_tecnico or permissions.mant_ot2_tecnico %}
     <a href="{{ url_for('ot2_panel') }}"
-       class="sidebar-link{% if request.endpoint in ['ot2_panel','ot2_diagnostico'] %} active{% endif %}"
+       class="sidebar-link{% if request.endpoint in ['ot2_panel','ot2_diagnostico','ot_pagina_eventos','ot_pagina_evento_detalle'] %} active{% endif %}"
        style="display:flex;align-items:center;gap:8px">
       {# 2026-09-20 (Daniel): "ahora las órdenes de trabajo se llaman Órdenes
          de Trabajo, no 2.0 ni nada, ya es la única que existe". Sin BETA. #}

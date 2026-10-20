@@ -1,0 +1,305 @@
+/* 🧩 2026-10-20 — Eventos y desinstalación unida a su instalación (Daniel, 19-oct).
+   Estilos de TODO lo nuevo: el asistente de crear OT (.o2m-ev-*, .o2m-di-*), la ficha (.ev-chip, .ev-rel, .ev-modal),
+   el panel (.ev-pchip) y las dos pantallas de eventos (.ev-*). Formato Retiros (REGLA #15): tarjetas con círculo de
+   semáforo, nombres COMPLETOS (nunca truncados), alertas suaves (ámbar «te toca», azul informa, rojo solo error),
+   celular primero (REGLA #3: botones e inputs de 44 px, 16 px de letra). Paleta REGLA #2 (rojo #dc2626, negro #0a0a0a).
+   Nada de montos ni de la palabra «cubierta» en lo que ve un técnico (REGLA #26): eso lo decide el servidor. */
+
+/* ── Chips (ficha, panel, pantallas) ───────────────────────────────────────────────────────────────────────────── */
+.ev-chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 12px;font-size:.78rem;font-weight:800;
+  line-height:1.25;border:1px solid #e5e7eb;background:#f3f4f6;color:#374151;text-decoration:none;max-width:100%;overflow-wrap:anywhere}
+.ev-chip i{flex:none;font-size:.9rem}
+a.ev-chip:hover{color:inherit;filter:brightness(.97);text-decoration:none}
+.ev-chip.azul{background:#dbeafe;border-color:#bfdbfe;color:#1e40af}
+.ev-chip.ambar{background:#fff8e1;border-color:#fde68a;color:#92400e}
+.ev-chip.rojo{background:#fee2e2;border-color:#fecaca;color:#991b1b}
+.ev-chip.verde{background:#dcfce7;border-color:#bbf7d0;color:#166534}
+.ev-chip.gris{background:#f3f4f6;border-color:#e5e7eb;color:#374151}
+/* Sobre el hero negro de la ficha */
+.ev-rel{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:2px 0 10px}
+.ev-rel .ev-chip{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.3);color:#fff}
+.ev-rel .ev-chip.azul{background:rgba(59,130,246,.28);border-color:rgba(147,197,253,.6)}
+.ev-rel .ev-chip.ambar{background:rgba(245,158,11,.28);border-color:rgba(252,211,77,.7);color:#fff7e0}
+.ev-rel .ev-chip.rojo{background:rgba(220,38,38,.35);border-color:rgba(252,165,165,.7)}
+.ev-rel .ev-chip.verde{background:rgba(22,163,74,.32);border-color:rgba(134,239,172,.6)}
+.ev-rel a.ev-chip:hover{background:rgba(255,255,255,.22);color:#fff}
+.ev-rel .ev-prog{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 16px;border-radius:10px;border:0;
+  background:#fff;color:#0a0a0a;font-weight:900;font-size:.82rem;cursor:pointer}
+.ev-rel .ev-prog:hover{background:#fee2e2}
+.ev-rel .ev-prog:focus-visible{outline:3px solid #fca5a5;outline-offset:2px}
+/* Aviso al cerrar una instalación que dejó la desinstalación sin agendar (ámbar, no bloquea) */
+.ev-aviso{display:flex;gap:9px;align-items:flex-start;border-radius:10px;padding:9px 12px;margin:0 0 10px;font-size:.84rem;
+  line-height:1.4;background:#fff8e1;border:1px solid #fde68a;color:#92400e;overflow-wrap:anywhere}
+.ev-aviso i{margin-top:2px;flex:none}
+.ev-aviso.azul{background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a}
+.ev-aviso.rojo{background:#fef2f2;border-color:#fecaca;color:#7f1d1d}
+/* Filas de «Datos de la OT» */
+.ev-fila-acc{display:inline-flex;flex-wrap:wrap;gap:8px;align-items:center}
+.ev-link{color:var(--ilus-red,#dc2626);font-weight:800;text-decoration:none}
+.ev-link:hover{text-decoration:underline}
+.ev-mini-btn{display:inline-flex;align-items:center;gap:5px;min-height:34px;padding:0 12px;border-radius:9px;border:1px solid #d1d5db;
+  background:#fff;color:#0a0a0a;font-weight:800;font-size:.76rem;cursor:pointer}
+.ev-mini-btn:hover{border-color:#0a0a0a}
+.ev-mini-btn.pri{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+@media (max-width:640px){.ev-mini-btn{min-height:44px;padding:0 14px;font-size:.84rem}.ev-rel .ev-chip{font-size:.8rem}}
+
+/* ── Botones y campos genéricos de las pantallas/modal de eventos ─────────────────────────────────────────────── */
+.ev-btn{min-height:44px;padding:0 16px;border-radius:10px;border:1px solid #d1d5db;background:#fff;color:#0a0a0a;font-weight:800;
+  font-size:.84rem;display:inline-flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;text-decoration:none}
+.ev-btn:hover{border-color:#0a0a0a;color:#0a0a0a}
+.ev-btn.pri{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.ev-btn.ok{background:#16a34a;border-color:#16a34a;color:#fff}
+.ev-btn.mal{background:#fff;border-color:#dc2626;color:#dc2626}
+.ev-btn[disabled]{opacity:.45;pointer-events:none}
+.ev-btn:focus-visible,.ev-chip:focus-visible{outline:3px solid #0a0a0a;outline-offset:2px}
+.ev-lbl{display:block;font-size:.7rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;margin:0 0 4px}
+.ev-in{width:100%;min-height:44px;font-size:16px;border:1px solid #d1d5db;border-radius:10px;padding:8px 12px;background:#fff;color:#111827}
+.ev-in:focus{outline:2px solid #0a0a0a;outline-offset:0;border-color:#0a0a0a}
+textarea.ev-in{min-height:84px;resize:vertical}
+.ev-ayuda{font-size:.76rem;color:#6b7280;margin-top:4px;line-height:1.4}
+.ev-err{background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:9px 12px;font-size:.84rem;color:#7f1d1d;margin-top:10px}
+
+/* ── Formulario «Evento» (ventana apilada: se usa en el asistente y en las pantallas) ─────────────────────────── */
+.ev-ov{position:fixed;inset:0;z-index:100000;background:rgba(10,10,10,.6);display:flex;align-items:center;justify-content:center;padding:3vw}
+.ev-ov-box{background:#fff;border-radius:14px;width:100%;max-width:560px;max-height:94vh;display:flex;flex-direction:column;
+  box-shadow:0 20px 60px rgba(0,0,0,.4);overflow:hidden}
+.ev-ov-h{background:#0a0a0a;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #dc2626}
+.ev-ov-h b{color:#fff;font-size:1rem}
+.ev-ov-h b i{color:#dc2626;margin-right:8px}
+.ev-ov-x{background:none;border:0;color:#fff;font-size:1.5rem;line-height:1;min-width:44px;min-height:44px;cursor:pointer}
+.ev-ov-b{padding:18px;overflow-y:auto;display:grid;gap:14px;grid-template-columns:1fr 1fr}
+.ev-ov-b .full{grid-column:1/-1}
+.ev-ov-f{padding:12px 18px;border-top:1px solid #e5e7eb;display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;background:#fafafa}
+@media (max-width:560px){
+  .ev-ov{padding:0;align-items:stretch}
+  .ev-ov-box{max-width:none;max-height:none;border-radius:0;height:100dvh}
+  .ev-ov-b{grid-template-columns:1fr}
+  .ev-ov-f .ev-btn{flex:1 1 100%}
+}
+
+/* ── Pantallas /ot/eventos y /ot/eventos/<id> ─────────────────────────────────────────────────────────────────── */
+.ev{--rojo:#dc2626;--negro:#0a0a0a;--verde:#16a34a;--ambar:#f59e0b;--gris:#6b7280;--borde:#e5e7eb;min-width:0}
+.ev *{box-sizing:border-box}
+.ev-chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+.ev-fch{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--borde);background:#fff;color:#374151;border-radius:999px;
+  padding:7px 14px;font-size:.82rem;font-weight:800;min-height:44px;cursor:pointer;text-decoration:none}
+.ev-fch b{font-variant-numeric:tabular-nums;color:var(--rojo)}
+.ev-fch.on{background:var(--negro);border-color:var(--negro);color:#fff}.ev-fch.on b{color:#fff}
+.ev-barra{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
+.ev-barra .ev-in{max-width:360px;flex:1 1 220px}
+.ev-lista{display:flex;flex-direction:column;gap:12px}
+.ev-card{position:relative;background:#fff;border:1px solid var(--borde);border-radius:14px;padding:14px 14px 14px 64px;min-width:0}
+.ev-circ{position:absolute;left:14px;top:14px;width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  color:#fff;font-size:1.15rem;background:#9ca3af}
+.ev-card.verde .ev-circ{background:var(--verde)}.ev-card.ambar .ev-circ{background:var(--ambar)}.ev-card.rojo .ev-circ{background:var(--rojo)}
+.ev-card.verde{border-color:#bbf7d0}.ev-card.ambar{border-color:#fde68a;background:#fffdf5}.ev-card.rojo{border-color:#fecaca}
+.ev-card.rojo .ev-circ,.ev-card.ambar .ev-circ{animation:evPulso 1.6s ease 3}
+@keyframes evPulso{0%{box-shadow:0 0 0 0 rgba(245,158,11,.5)}100%{box-shadow:0 0 0 14px rgba(245,158,11,0)}}
+@media (prefers-reduced-motion:reduce){.ev-card .ev-circ{animation:none !important}}
+.ev-card h3{margin:0 0 2px;font-size:1.04rem;font-weight:900;overflow-wrap:anywhere}
+.ev-card h3 a{color:inherit;text-decoration:none}
+.ev-card h3 a:hover{color:var(--rojo)}
+.ev-sub{color:var(--gris);font-size:.82rem;margin-bottom:8px;overflow-wrap:anywhere}
+.ev-est{display:inline-block;font-size:.68rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em;border-radius:999px;padding:3px 10px;
+  margin-left:6px;vertical-align:middle;background:#f3f4f6;color:#374151}
+.ev-est.en_curso{background:#dbeafe;color:#1e40af}.ev-est.por_cerrar{background:#fef3c7;color:#92400e}
+.ev-est.terminado{background:#dcfce7;color:#166534}.ev-est.cancelado{background:#fee2e2;color:#991b1b}
+.ev-est.proximo{background:#ede9fe;color:#5b21b6}
+.ev-fases{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px 14px;margin:8px 0}
+.ev-fase{min-width:0}
+.ev-fase dt{font-size:.66rem;text-transform:uppercase;letter-spacing:.05em;color:var(--gris);font-weight:800}
+.ev-fase dd{margin:0;font-weight:800;font-size:.88rem}
+.ev-barrita{height:6px;border-radius:99px;background:#eef0f3;overflow:hidden;margin-top:4px}
+.ev-barrita i{display:block;height:100%;background:var(--verde);border-radius:99px}
+.ev-datos{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px 14px;margin:8px 0}
+.ev-datos dt{font-size:.66rem;text-transform:uppercase;letter-spacing:.05em;color:var(--gris);font-weight:800}
+.ev-datos dd{margin:0;font-weight:700;font-size:.88rem;overflow-wrap:anywhere}
+.ev-acc{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.ev-acc .ev-btn{flex:1 1 150px}
+.ev-pie{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:14px 2px}
+.ev-pie .t{font-size:.84rem;color:#374151}
+.ev-pp{display:inline-flex;gap:6px;align-items:center;font-size:.8rem;color:#374151}
+.ev-pp a,.ev-pp button{min-width:44px;min-height:44px;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;border:1px solid #d1d5db;
+  background:#fff;color:#0a0a0a;font-weight:800;text-decoration:none;cursor:pointer}
+.ev-pp .on{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+.ev-pp .nav{padding:0 12px}
+.ev-pp button[disabled]{opacity:.4;cursor:not-allowed}
+.ev-vacio,.ev-error{padding:26px 16px;text-align:center;border:2px dashed var(--borde);border-radius:14px;color:var(--gris);font-weight:700}
+.ev-error{border-color:#fecaca;color:#b91c1c;background:#fef2f2}
+@media (max-width:480px){.ev-card{padding:14px 12px 14px 56px}.ev-circ{left:10px;width:34px;height:34px}.ev-btn{flex:1 1 100%}}
+
+/* Detalle de un evento */
+.ev-cab{background:#0a0a0a;color:#fff;border-radius:16px;padding:16px 18px;margin-bottom:14px;border-bottom:3px solid #dc2626}
+.ev-cab h2{margin:0 0 4px;font-size:1.3rem;font-weight:900;overflow-wrap:anywhere}
+.ev-cab .ev-sub{color:#d1d5db;margin:0 0 10px}
+.ev-cab .ev-chip{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.3);color:#fff}
+.ev-cab .ev-chip.ambar{background:rgba(245,158,11,.28);border-color:rgba(252,211,77,.7);color:#fff7e0}
+.ev-cab .ev-chip.rojo{background:rgba(220,38,38,.35);border-color:rgba(252,165,165,.7)}
+.ev-cab .ev-chip.verde{background:rgba(22,163,74,.32);border-color:rgba(134,239,172,.6)}
+.ev-cab .ev-chip.azul{background:rgba(59,130,246,.28);border-color:rgba(147,197,253,.6)}
+.ev-cab-acc{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.ev-cab-acc .ev-btn{background:#fff}
+.ev-cab-acc .ev-btn.rojo{background:#dc2626;border-color:#dc2626;color:#fff}
+.ev-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px}
+.ev-kpi{background:#fff;border:1px solid var(--borde);border-radius:14px;padding:12px 14px}
+.ev-kpi .n{font-size:1.6rem;font-weight:900;font-variant-numeric:tabular-nums;line-height:1}
+.ev-kpi .n small{font-size:.9rem;color:var(--gris);font-weight:800}
+.ev-kpi .l{font-size:.74rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--gris);margin-top:4px}
+.ev-kpi .s{font-size:.78rem;color:#374151;margin-top:5px}
+.ev-sec{background:#fff;border:1px solid var(--borde);border-radius:14px;padding:14px;margin-bottom:14px}
+.ev-sec h4{margin:0 0 10px;font-size:.95rem;font-weight:900;display:flex;align-items:center;gap:8px}
+.ev-sec h4 i{color:var(--rojo)}
+.ev-par{display:grid;grid-template-columns:minmax(0,1fr) 38px minmax(0,1fr);gap:8px;align-items:stretch;margin-bottom:10px}
+.ev-par-ot{border:1px solid var(--borde);border-radius:12px;padding:10px 12px;min-width:0;background:#fafafa}
+.ev-par-ot b{display:block;font-size:.9rem}
+.ev-par-ot a{color:inherit;text-decoration:none}.ev-par-ot a:hover{color:var(--rojo)}
+.ev-par-ot small{display:block;color:var(--gris);font-size:.76rem}
+.ev-par-flecha{display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:1.3rem}
+.ev-par-ot.vacio{border-style:dashed;background:#fff}
+.ev-par-ot.azul{border-color:#bfdbfe;background:#eff6ff}.ev-par-ot.ambar{border-color:#fde68a;background:#fffbeb}
+.ev-par-ot.rojo{border-color:#fecaca;background:#fef2f2}.ev-par-ot.verde{border-color:#bbf7d0;background:#f0fdf4}
+@media (max-width:640px){
+  .ev-par{grid-template-columns:1fr}
+  .ev-par-flecha{transform:rotate(90deg);min-height:24px}
+}
+.ev-dia{display:grid;grid-template-columns:130px minmax(0,1fr);gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9}
+.ev-dia:last-child{border-bottom:0}
+.ev-dia .f{font-weight:900;font-size:.88rem}.ev-dia .f small{display:block;color:var(--gris);font-weight:700;text-transform:capitalize}
+.ev-dia .o{display:flex;flex-wrap:wrap;gap:6px;min-width:0}
+@media (max-width:480px){.ev-dia{grid-template-columns:1fr}}
+.ev-tabla{width:100%;border-collapse:collapse;font-size:.86rem}
+.ev-tabla th{background:#0a0a0a;color:#fff;padding:10px 12px;text-align:left;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+.ev-tabla td{padding:11px 12px;border-bottom:1px solid #f1f5f9;vertical-align:top;overflow-wrap:anywhere}
+.ev-tabla .ot{font-weight:900;color:#0a0a0a;text-decoration:none}.ev-tabla .ot:hover{color:var(--rojo)}
+.ev-tabla small{display:block;color:var(--gris);font-size:.74rem}
+.ev-scroll{overflow-x:auto;border:1px solid var(--borde);border-radius:12px}
+@media (max-width:900px){
+  .ev-tabla thead{display:none}
+  .ev-tabla,.ev-tabla tbody,.ev-tabla tr,.ev-tabla td{display:block;width:100%}
+  .ev-tabla tr{border-bottom:10px solid #f3f4f6;padding:10px 4px}
+  .ev-tabla td{border:0;padding:5px 10px}
+  .ev-tabla td[data-k]::before{content:attr(data-k);display:block;font-size:.66rem;font-weight:800;text-transform:uppercase;color:var(--gris)}
+  .ev-scroll{border:0}
+}
+/* Asociar OT existentes (REGLA #14: marcar/desmarcar todo) */
+.ev-asoc{border:1px solid var(--borde);border-radius:12px;overflow:hidden}
+.ev-asoc-top{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:10px 12px;background:#fafafa;border-bottom:1px solid var(--borde)}
+.ev-asoc-fila{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border-bottom:1px solid #f1f5f9;cursor:pointer;min-height:56px}
+.ev-asoc-fila:last-child{border-bottom:0}
+.ev-asoc-fila input{width:24px;height:24px;flex:none;margin-top:2px;accent-color:#0a0a0a}
+.ev-asoc-fila .d{min-width:0;font-size:.86rem;overflow-wrap:anywhere}
+.ev-asoc-fila .d b{display:block}.ev-asoc-fila .d small{color:var(--gris);display:block}
+.ev-asoc-fila.sug{background:#fffdf5}
+
+/* ── Asistente de crear OT: cuadro de evento (paso Tipo) ──────────────────────────────────────────────────────── */
+.o2m-ev-box{margin-top:18px;border:1.5px solid #e5e7eb;border-radius:12px;padding:14px;background:#fafbfc}
+.o2m-ev-box h6{margin:0 0 2px;font-weight:900;font-size:.95rem}
+.o2m-ev-box .d{font-size:.82rem;color:#6b7280;margin:0 0 10px}
+.o2m-ev-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+.o2m-ev-op{text-align:left;border:1.5px solid #e5e7eb;border-radius:11px;padding:11px 12px;background:#fff;cursor:pointer;min-height:64px;
+  display:block;width:100%;transition:border-color .15s,background .15s}
+.o2m-ev-op:hover{border-color:#c7cbd1}
+.o2m-ev-op.sel{border-color:#16a34a;background:#f0fdf4}
+.o2m-ev-op .n{display:block;font-weight:800;font-size:.9rem;color:#0a0a0a;overflow-wrap:anywhere}
+.o2m-ev-op .l{display:block;font-size:.78rem;color:#6b7280;line-height:1.35;margin-top:2px;overflow-wrap:anywhere}
+.o2m-ev-op .f{display:block;font-size:.76rem;color:#374151;font-weight:700;margin-top:3px}
+.o2m-ev-op.ninguno .n{color:#374151}
+.o2m-ev-op.crear{border-style:dashed;color:#374151;display:flex;align-items:center;gap:8px;font-weight:800}
+.o2m-ev-sel{display:flex;gap:10px;align-items:flex-start;background:#dcfce7;border:1px solid #86efac;color:#166534;border-radius:10px;
+  padding:10px 12px;margin-top:10px;font-size:.88rem;overflow-wrap:anywhere}
+.o2m-ev-sel i.ic{font-size:1.2rem;margin-top:1px}
+.o2m-ev-sel button{margin-left:auto;flex:none;background:#fff;border:1px solid #86efac;color:#166534;border-radius:8px;min-height:44px;padding:0 12px;font-weight:800;font-size:.78rem}
+.o2m-ev-busca{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.o2m-ev-busca input{flex:1 1 200px;min-height:44px;font-size:16px;border:1px solid #d1d5db;border-radius:10px;padding:0 12px}
+.o2m-ev-sug{display:flex;gap:10px;align-items:flex-start;background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;border-radius:10px;padding:10px 12px;
+  margin-bottom:12px;font-size:.84rem;overflow-wrap:anywhere}
+.o2m-ev-sug button{margin-left:auto;flex:none;background:#fff;border:1px solid #93c5fd;color:#1e40af;border-radius:8px;min-height:44px;padding:0 12px;font-weight:800}
+@media (max-width:480px){.o2m-ev-sel,.o2m-ev-sug{flex-direction:column}.o2m-ev-sel button,.o2m-ev-sug button{margin-left:0;width:100%}}
+
+/* ── Asistente: paso «Desinstalación» ─────────────────────────────────────────────────────────────────────────── */
+.o2m-di-pregunta{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:6px}
+.o2m-di-op{border:1.5px solid #e5e7eb;border-radius:12px;padding:14px;background:#fff;cursor:pointer;text-align:left;min-height:76px;display:block;width:100%}
+.o2m-di-op:hover{border-color:#c7cbd1}
+.o2m-di-op .ic{font-size:1.4rem;color:#dc2626;display:block;margin-bottom:4px}
+.o2m-di-op .n{display:block;font-weight:900;font-size:1rem;color:#0a0a0a}
+.o2m-di-op .l{display:block;font-size:.8rem;color:#6b7280;line-height:1.35;margin-top:2px}
+.o2m-di-op.sel{border-color:#16a34a;background:#f0fdf4}.o2m-di-op.sel .ic{color:#16a34a}
+.o2m-di-sub{border:1.5px solid #e5e7eb;border-radius:12px;padding:12px 14px 14px;margin-top:12px;background:#fff;position:relative}
+.o2m-di-sub.ok{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4,#fff 60%)}
+.o2m-di-sub.falta{border-color:#fde68a;background:linear-gradient(180deg,#fffbeb,#fff 60%)}
+.o2m-di-sub.mal{border-color:#fecaca;background:linear-gradient(180deg,#fef2f2,#fff 60%)}
+.o2m-di-sub h6{margin:0 0 8px;font-weight:900;font-size:.9rem;display:flex;align-items:center;gap:8px}
+.o2m-di-sub h6 .pt{width:12px;height:12px;border-radius:50%;background:#f59e0b;flex:none}
+.o2m-di-sub.ok h6 .pt{background:#16a34a}.o2m-di-sub.mal h6 .pt{background:#dc2626}
+.o2m-di-fila{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.o2m-di-fila.dos{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media (max-width:640px){.o2m-di-fila,.o2m-di-fila.dos{grid-template-columns:1fr}}
+.o2m-di-fila label{display:block;font-size:.7rem;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;margin:0 0 4px}
+.o2m-di-fila input,.o2m-di-sub textarea,.o2m-di-sub select{width:100%;min-height:44px;font-size:16px;border:1px solid #d1d5db;border-radius:10px;padding:8px 12px;background:#fff}
+.o2m-di-sub textarea{min-height:76px}
+.o2m-di-atajos{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.o2m-di-atajo{min-height:44px;padding:0 14px;border-radius:999px;border:1px solid #d1d5db;background:#fff;font-weight:800;font-size:.8rem;color:#374151;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px}
+.o2m-di-atajo:hover{border-color:#0a0a0a;color:#0a0a0a}
+.o2m-di-atajo.sug{border-color:#93c5fd;background:#eff6ff;color:#1e40af}
+.o2m-di-av{display:flex;gap:9px;align-items:flex-start;border-radius:10px;padding:9px 12px;margin-top:10px;font-size:.84rem;line-height:1.4;overflow-wrap:anywhere}
+.o2m-di-av i{margin-top:2px;flex:none}
+.o2m-di-av.ambar{background:#fff8e1;border:1px solid #fde68a;color:#92400e}
+.o2m-di-av.rojo{background:#fef2f2;border:1px solid #fecaca;color:#7f1d1d}
+.o2m-di-av.azul{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a}
+.o2m-di-av.verde{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
+.o2m-di-av button{margin-left:auto;flex:none;min-height:44px;padding:0 12px;border-radius:8px;border:1px solid currentColor;background:#fff;font-weight:800;color:inherit}
+.o2m-di-tec{display:flex;flex-wrap:wrap;gap:8px}
+.o2m-di-tchip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:6px 12px;background:#eef2ff;border:1px solid #c7d2fe;color:#312e81;font-weight:800;font-size:.82rem}
+.o2m-di-tchip.lider{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.o2m-di-modo{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:10px}
+.o2m-di-eq{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid #f1f5f9;min-height:56px;cursor:pointer}
+.o2m-di-eq:last-child{border-bottom:0}
+.o2m-di-eq input{width:24px;height:24px;flex:none;margin-top:2px;accent-color:#0a0a0a}
+.o2m-di-eq .d{min-width:0;overflow-wrap:anywhere;font-size:.86rem}
+.o2m-di-eq .d b{display:block}.o2m-di-eq .d small{color:#6b7280;display:block}
+.o2m-di-eq .sel-name{display:none}
+@media (max-width:640px){.o2m-di-eq .sel-name{display:block;margin-top:4px}.o2m-di-eq select{max-width:100%}}
+.o2m-di-cobro{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}
+/* Resumen final: las DOS órdenes que se van a crear */
+.o2m-di-res{margin-top:14px;border:2px solid #0a0a0a;border-radius:14px;padding:14px;background:#fff}
+.o2m-di-res h6{margin:0 0 10px;font-weight:900;font-size:.95rem;display:flex;align-items:center;gap:8px}
+.o2m-di-res h6 i{color:#dc2626}
+.o2m-di-res-g{display:grid;grid-template-columns:minmax(0,1fr) 34px minmax(0,1fr);gap:8px;align-items:stretch}
+.o2m-di-res-ot{border:1px solid #e5e7eb;border-radius:12px;padding:12px;background:#fafafa;min-width:0}
+.o2m-di-res-ot .k{display:block;font-size:.66rem;font-weight:900;text-transform:uppercase;letter-spacing:.07em;color:#dc2626}
+.o2m-di-res-ot b{display:block;font-size:.95rem;margin:2px 0 4px}
+.o2m-di-res-ot div{font-size:.82rem;color:#374151;line-height:1.45;overflow-wrap:anywhere}
+.o2m-di-res-ot.pendiente{border-style:dashed}
+.o2m-di-res-f{display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:1.3rem}
+@media (max-width:640px){.o2m-di-res-g{grid-template-columns:1fr}.o2m-di-res-f{transform:rotate(90deg);min-height:22px}}
+.o2m-di-fam{margin-top:10px;border-top:1px dashed #d1d5db;padding-top:10px;font-size:.84rem}
+.o2m-di-fam .fila{display:flex;justify-content:space-between;gap:10px;padding:2px 0}
+.o2m-di-fam .fila.t{font-weight:900;border-top:1px solid #e5e7eb;margin-top:4px;padding-top:6px}
+.o2m-di-fam .neg{color:#991b1b}.o2m-di-fam .pos{color:#166534}
+
+/* ── Ficha: modal «Programar desinstalación» (Bootstrap) ──────────────────────────────────────────────────────── */
+#otdDesinstModal .modal-content{border:0;border-radius:16px;overflow:hidden}
+#otdDesinstModal .ev-mh{background:linear-gradient(135deg,#1a1a1a,#0a0a0a 60%);color:#fff;padding:16px 20px;display:flex;align-items:center;gap:12px;border-bottom:3px solid #dc2626}
+#otdDesinstModal .ev-mh h5{margin:0;font-weight:900;font-size:1.05rem}
+#otdDesinstModal .ev-mh small{display:block;color:rgba(255,255,255,.7);font-size:.8rem}
+#otdDesinstModal .ev-mh .x{margin-left:auto;background:none;border:0;color:#fff;font-size:1.6rem;min-width:44px;min-height:44px}
+#otdDesinstModal .modal-body{padding:16px 18px;max-height:72vh;overflow-y:auto}
+#otdDesinstModal .modal-footer{padding:12px 18px;gap:8px;flex-wrap:wrap}
+@media (max-width:575.98px){#otdDesinstModal .modal-footer .ev-btn{flex:1 1 100%}}
+
+/* ── Panel de OT: kanban, calendario y agenda (chips pequeños) ───────────────────────────────────────────────── */
+.ev-pcards{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.ev-pchip{display:inline-flex;align-items:flex-start;gap:4px;font-size:.64rem;font-weight:800;line-height:1.25;border-radius:6px;padding:2px 7px;
+  background:#f3f4f6;color:#4b5563;white-space:normal;overflow-wrap:anywhere;max-width:100%}
+.ev-pchip i{flex:none;margin-top:1px}
+.ev-pchip.azul{background:#dbeafe;color:#1e40af}.ev-pchip.ambar{background:#fff8e1;color:#92400e}
+.ev-pchip.rojo{background:#fee2e2;color:#991b1b}.ev-pchip.verde{background:#dcfce7;color:#166534}
+.ot2-ch .ev-ico{font-size:.7rem;margin-right:2px}
+a.o2t-chip{text-decoration:none}a.o2t-chip:hover{filter:brightness(.96);text-decoration:none}
+.ev-ag-rel{font-weight:800}
+.ev-ag-rel.azul{color:#1d4ed8}.ev-ag-rel.ambar{color:#92400e}.ev-ag-rel.rojo{color:#991b1b}.ev-ag-rel.verde{color:#166534}
+@media (max-width:640px){
+  /* Calendario compacto de celular: la desinstalación es un rombo para distinguirla del punto de una instalación. */
+  .ot2-dia .ot2-ch.rel{border-radius:2px;transform:rotate(45deg);width:7px;height:7px}
+}

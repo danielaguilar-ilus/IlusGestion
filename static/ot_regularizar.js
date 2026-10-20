@@ -30,6 +30,11 @@
   }
 
   function docs(it) {
+    /* 🧩 2026-10-20: una desinstalación cubierta no lleva documento propio: la respalda su instalación. Se dice a quién,
+       en vez de "Sin documento", para que nadie le agregue la nota de venta como cobro (se cobraría dos veces). */
+    if (it.madre_id && !it.documentos.length && it.falta === 'madre_factura') {
+      return '<div class="pp-docs"><span class="pp-doc cub">Cubierta por <a href="/ot/' + esc(it.madre_id) + '">' + esc(it.madre_numero || ('OT ' + it.madre_id)) + '</a></span></div>';
+    }
     if (!it.documentos.length) return '<div class="pp-docs"><span class="pp-doc ninguno">Sin documento de Random</span></div>';
     return '<div class="pp-docs">' + it.documentos.map(function (d) {
       var nv = ['NVV', 'NVI', 'VD', 'WEB'].indexOf(d.tido) >= 0;
@@ -39,7 +44,10 @@
   function fila(it) {
     var pend = it.solicitud_pendiente;
     var acc = '<button type="button" class="pp-btn pri" data-lig="' + it.id + '"><i class="bi bi-link-45deg"></i> Agregar documento</button>';
-    if (pend) {
+    if (it.madre_id && it.falta === 'madre_factura') {
+      /* La salida está en la INSTALACIÓN (su factura o boleta), no en esta orden. */
+      acc = '<a class="pp-btn pri" href="/ot/' + esc(it.madre_id) + '"><i class="bi bi-box-arrow-up-right"></i> Abrir la instalación</a>';
+    } else if (pend) {
       acc += '<a class="pp-btn" href="/ot/autorizaciones/' + pend.id + '"><i class="bi bi-hourglass-split"></i> Esperando a Daniel</a>';
     } else {
       acc += '<button type="button" class="pp-btn" data-aut="' + it.id + '|cerrar_sin_documento"><i class="bi bi-shield-lock"></i> ' + (esSA ? 'Autorizar sin documento' : 'Pedir autorización') + '</button>' +

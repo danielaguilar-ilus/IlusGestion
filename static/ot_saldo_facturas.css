@@ -183,3 +183,8 @@
   .sf-fila .acc{justify-content:flex-end;flex-wrap:nowrap}
 }
 @media (max-width:480px){.sf-hero{padding:18px 16px}.sf-hero-t h2{font-size:1.3rem}.sf-doc-h,.sf-doc-b{padding-left:14px;padding-right:14px}}
+
+/* 🧩 2026-10-20: la desinstalación cubierta aparece bajo la OT de la instalación, con $0 y su relación. */
+.sf-desinst{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:.8rem;color:#1e3a8a;background:#eff6ff;
+  border:1px solid #bfdbfe;border-radius:8px;padding:6px 10px;overflow-wrap:anywhere}
+.sf-desinst a.ot{font-size:.84rem;color:#1e3a8a}

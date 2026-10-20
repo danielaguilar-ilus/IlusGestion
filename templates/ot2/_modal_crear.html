@@ -90,6 +90,8 @@
   comentario en completo('equipos')).
   ══════════════════════════════════════════════════════════════════════
 #}
+{# 🧩 2026-10-20: estilos del cuadro de evento y del paso «Desinstalación» (evento + desinstalación unida a su instalación). #}
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_evento.css') }}">
 <style>
 /* Tokens locales del paso "Agenda" (calendario + línea de tiempo, ver más
    abajo junto a pintarAgenda). Declarados sobre .o2m (raíz del modal) en
@@ -1341,6 +1343,8 @@
 {# 💰 2026-10-07: espejo en el navegador de la cuenta única de finanzas (_ot_finanzas de app.py). Lo usa la
    vista previa del paso Costos (_pintarFinMargenDom): el asistente todavía no tiene vid. #}
 <script src="{{ url_for('static', filename='ot_finanzas.js') }}"></script>
+{# 🧩 2026-10-20: formulario «Crear evento» (ventana apilada, la misma pieza de las pantallas de eventos). #}
+<script src="{{ url_for('static', filename='ot_evento_form.js') }}"></script>
 <script>
 // 🔏 2026-10-07: ¿quien crea es superadministrador? (puede «Autorizar y crear» sin esperar a Daniel).
 window.OT2C_ES_SUPERADMIN = {{ 'true' if (permissions and permissions.superadmin) else 'false' }};
@@ -1398,6 +1402,8 @@ window.OT2C = (function(){
   // alguno (ni is_tecnico ni es_tecnico), así que un técnico lo veía activo
   // y el backend lo rechazaba en silencio.
   var O2M_PUEDE_TOGGLE_PLAN = {{ (not es_tecnico or permissions.cat_clasificacion) | tojson }};
+  // 🧩 2026-10-20: el paso «Desinstalación» (cuenta, saldo, costos) y «Crear evento» no existen para un técnico (REGLA #26).
+  var O2M_ES_TECNICO = {{ 'true' if es_tecnico else 'false' }};
   var fase = 'origen';   // 'origen' → pantalla de origen. 'form' → formulario único con scroll.
   // 📮 2026-09-10 (Daniel: "debes avisar que los correos estan bloqueados
   // desde comunicaciones... podrás avanzar, y más adelante que ofrezca
@@ -1678,7 +1684,11 @@ window.OT2C = (function(){
          anexo:{proveedor_nombre:'', proveedor_rut:'', objetivo_servicio:'',
                 fecha_inicio:'', fecha_termino:'', items:[], items_editados:false, productos:[],
                 email_destino:'', telefono:'', enviar_ahora:true, adjuntar_pdf:true},
-         _tipoFiltro:''};
+         _tipoFiltro:'',
+         // 🧩 2026-10-20: evento (carpeta de OT) y desinstalación unida a esta instalación. Ver el bloque «EVENTO + DESINSTALACIÓN».
+         evento_id:null, evento:null, _evFiltro:'', _evPreset:null,
+         desinst:_o2mDiNuevo()};
+    cacheEventos = null; _evCargando = false; _evError = '';
     fase = 'origen';
     anclaActiva = null;
     _o2mStepCompleteTracked = {};
@@ -1812,6 +1822,10 @@ window.OT2C = (function(){
     // sub-pasos (centro de costo + "Esta OT vale", prellenado con horas de
     // agenda × tarifa), sin cobro ni proveedor. Ver pintarFinanzas().
     p.push({k:'finanzas', n:'Costos'});
+    // 🧩 2026-10-20 (Daniel, 19-oct): «¿lleva desinstalación?». Va DESPUÉS de Costos (lo que la instalación toma de la nota de
+    // venta define si queda saldo para cobrar la desinstalación) y ANTES de Anexo, que nunca bloquea. Solo instalaciones de un
+    // cliente, y nunca para un técnico.
+    if (_o2mDiAplica()) p.push({k:'desinst', n:'Desinstalación'});
     // 2026-08-29 (Daniel, insistiendo: "¿dónde y cuándo aparece el anexo de
     // contrato?... hazlo como paso siete... necesito potenciar este
     // formulario"): antes el Anexo solo se podía crear DESPUÉS de crear la
@@ -1992,6 +2006,9 @@ window.OT2C = (function(){
       case 'anexo':
         return !!(S.anexo.proveedor_nombre.trim() && S.anexo.objetivo_servicio.trim() &&
                   (S.fin_garantia || (S.anexo.items||[]).some(function(it){ return it.monto > 0; })));
+      // 🧩 2026-10-20: verde con «No» (confirmado si el evento tiene fecha de término), con «Por definir» + fecha válida, o con
+      // «Sí» + fecha, horario, técnico, costo, cobro (si hay saldo) y checklist por equipo, todo revisado por el servidor.
+      case 'desinst':  return _diCompleto();
       default: return false;
     }
   }
@@ -2070,6 +2087,10 @@ window.OT2C = (function(){
       if (contenido){ try { contenido.inert = bloqueado; } catch(_){} }
       sec.setAttribute('aria-disabled', bloqueado ? 'true' : 'false');
     });
+    // 🧩 2026-10-20: el pie dice «Crear 2 órdenes» y la desinstalación se vuelve a revisar con cualquier cambio de arriba.
+    _o2mDiVigilar();
+    _o2mSigRotular();
+    _o2mDiPieRotular();
   }
   // Alias corto reusado por handlers inline generados en varias funciones.
   function refrescarAnclas(){ pintarAnclas(); }
@@ -2194,6 +2215,7 @@ window.OT2C = (function(){
     var pide = !esInterno() && (S.fin_aut || (S.fin_garantia && !sa));
     var txt = pide ? 'Pedir autorización a Daniel' : ((!esInterno() && S.fin_aut && sa) ? 'Autorizar y crear' : 'Crear orden');
     if (!esInterno() && S.fin_aut && sa) txt = 'Autorizar y crear';
+    if (txt === 'Crear orden' && _o2mDiTieneHija()) txt = 'Crear 2 órdenes';   // 🧩 2026-10-20
     sig.innerHTML = '<i class="bi ' + ((pide || txt === 'Autorizar y crear') ? 'bi-shield-lock' : 'bi-check-lg') + ' me-1"></i>' + txt;
   }
 
@@ -2243,6 +2265,7 @@ window.OT2C = (function(){
       if (p.k==='acceso')   pintarAcceso(b);
       if (p.k==='finanzas') pintarFinanzas(b);
       if (p.k==='anexo')    pintarAnexo(b);
+      if (p.k==='desinst')  pintarDesinst(b);
       } catch(e){
         console.error('[OT2C] pintarFormulario, sección "'+p.k+'":', e);
         b.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
@@ -2271,6 +2294,7 @@ window.OT2C = (function(){
       if (k==='acceso')   pintarAcceso(b);
       if (k==='finanzas') pintarFinanzas(b);
       if (k==='anexo')    pintarAnexo(b);
+      if (k==='desinst')  pintarDesinst(b);
     } catch(e){
       console.error('[OT2C] repintarSeccion, sección "'+k+'":', e);
       b.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
@@ -2319,8 +2343,11 @@ window.OT2C = (function(){
           '<input class="form-control" id="o2mTipoQ" placeholder="Buscar tipo… (ej: instalación, bodega)" '+
           'value="'+esc(S._tipoFiltro)+'" oninput="OT2C.filtrarTipo(this.value)" autocomplete="off"></div>'
         : '')+
-      '<div class="o2m-grid" id="o2mTipoGrid"></div>';
+      '<div class="o2m-grid" id="o2mTipoGrid"></div>'+
+      // 🧩 2026-10-20 (Daniel, 19-oct: «clasificar las OT por EVENTO»): opcional, no bloquea el avance.
+      '<div id="o2mEventoBox"></div>';
     pintarTipoGrid();
+    _pintarEventoDom();
   }
   function pintarTipoGrid(){
     var g = document.getElementById('o2mTipoGrid'); if (!g) return;
@@ -4170,6 +4197,7 @@ window.OT2C = (function(){
     b.innerHTML = '<h6 class="t">¿Quién recibe y dónde?</h6>'+
       '<p class="d">Es lo primero que el técnico necesita saber: a quién buscar y a qué '+
       'dirección llegar. Aparece en su pantalla apenas abre la OT.</p>'+
+      '<div id="o2mCpEvento"></div>'+
       '<div id="o2mCpLista" class="mb-3"></div>'+
       '<div class="row g-3">'+
         '<div class="col-md-7"><label class="fl">Nombre de quien recibe *</label>'+
@@ -4250,6 +4278,7 @@ window.OT2C = (function(){
       '</div>';
     cargarContactosCliente();
     _o2mPintarCpValidacion();
+    _o2mEvSugDir();   // 🧩 2026-10-20: la dirección del evento se SUGIERE con un botón (nunca pisa una confirmada)
     // Places se engancha después de que el input existe en el DOM.
     setTimeout(function(){
       var inp = document.getElementById('o2mCpDir');
@@ -9331,6 +9360,7 @@ window.OT2C = (function(){
     }
     if (r.valorizado.monto != null) filas += fila('ref', 'Valorizado (referencia, no se suma)', $f(r.valorizado.monto));
     if (filas) html += '<div class="o2m-fin-desglose">'+filas+'</div>';
+    html += _o2mDiFamiliaHtml();   // 🧩 2026-10-20: con desinstalación incluida, el margen de la FAMILIA (instalación + desinstalación)
     if (r.avisos.length){
       html += '<ul class="o2m-fin-avisos">'+r.avisos.map(function(a){ return '<li>'+esc(a)+'</li>'; }).join('')+'</ul>';
     }
@@ -10678,6 +10708,16 @@ window.OT2C = (function(){
         // 💰 2026-09-15: en "Costos" se señala el sub-paso exacto que falta
         // (late + scroll + toast con el texto de su estado).
         if (ps[i].k === 'finanzas' && _o2mFinSenalarPendiente()) return false;
+        // 🧩 2026-10-20: «Desinstalación» dice qué falta (responder, revisar, cobro, checklist…).
+        if (ps[i].k === 'desinst'){
+          var _d = S.desinst;
+          var _m = !_d.lleva ? 'Responde si esta instalación se desinstala después.'
+            : (_d.previoPend ? 'Estoy revisando la desinstalación: intenta de nuevo en un segundo.'
+            : ((_d.previo && _d.previo.bloqueo && _d.previo.bloqueo.mensaje) || 'Falta completar la desinstalación (fecha, técnico, costo y checklist de cada equipo).'));
+          if (window.ilusToast) ilusToast(_m, {type:'warning'});
+          senalarPaso('desinst');
+          return false;
+        }
         // 🔒 2026-09-16 (Daniel: "si no se selecciona se lleva a esa parte
         // de la pantalla y se indica que eso es lo que falta"): Técnicos
         // tiene su propio aviso, en rojo, y la tarjeta late para que no
@@ -10738,7 +10778,10 @@ window.OT2C = (function(){
           .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
           .then(function(a){
             if (!a.j.ok) return falla(a.j.error || 'La solicitud quedó pendiente: no se pudo crear la OT.');
-            if (window.ilusToast) ilusToast('✓ '+(a.j.numero_ot||'OT')+' creada con tu autorización', {type:'success'});
+            if (window.ilusToast) ilusToast('✓ '+(a.j.numero_ot||'OT')+' creada con tu autorización'+
+              ((a.j.desinstalacion && a.j.desinstalacion.ok && !a.j.desinstalacion.pendiente) ? ' · desinstalación '+(a.j.desinstalacion.numero_ot||'')+' agendada el '+(a.j.desinstalacion.fecha_txt||'') : ''), {type:'success'});
+            if (a.j.desinstalacion && a.j.desinstalacion.ok === false && window.ilusToast)
+              ilusToast('La instalación quedó creada; la desinstalación no se pudo agendar: '+(a.j.desinstalacion.error||'')+'. Prográmala desde la ficha.', {type:'warning', duration:12000});
             var vid = a.j.visita_id, url = a.j.ot_url;
             if (typeof S.onCreada === 'function') S.onCreada(vid, url); else location.href = url;
           });
@@ -10773,6 +10816,11 @@ window.OT2C = (function(){
       contraparte: esInterno() ? {} : S.contraparte,
       ticket_id: S.ticket_id
     };
+    // 🧩 2026-10-20: el evento y la desinstalación EXACTAMENTE como se ven en pantalla. Viajan también en el payload de
+    // «Pedir autorización a Daniel» (se copia este mismo body): Daniel lee «Incluye desinstalación dd/mm» y, al aprobar, la
+    // hija se crea sola con el solicitante como autor.
+    if (S.evento_id) body.evento_id = S.evento_id;
+    if (_o2mDiAplica() && S.desinst.lleva) body.desinstalacion = _diPayload();
     // 26-08-2026: Capacitación/Control de calidad -> productos/tareas
     // sueltas. Trabajo de bodega -> UNA tarea con la observación completa.
     // Mismo mecanismo del backend (tareas_manuales, plantilla_id NULL).
@@ -10957,13 +11005,48 @@ window.OT2C = (function(){
           // 2026-08-30: #o2mErr vive ahora en el footer fijo del modal (ver
           // markup) desde que se quitó el paso "Revisar" -- siempre visible,
           // ya no hace falta navegar a ningún ancla para mostrarlo.
+          // 🧩 2026-10-20: errores del evento y de la desinstalación (el servidor valida todo el bloque ANTES de crear la
+          // instalación: si algo falla, no se crea ninguna de las dos órdenes).
+          var _cod = res.j.error_codigo || res.j.codigo;
+          if (_cod === 'DESINST_CONFIRMAR_NO'){
+            ilusConfirm({title: 'Esta instalación no se desinstala', message: 'El evento termina y estos equipos quedarían sin desinstalar.',
+              sub: '¿Seguro que no se retiran después?', okLabel: 'Sí, no se desinstala', cancelLabel: 'Volver', type: 'question'})
+              .then(function(ok){ if (!ok) return; S.desinst.lleva = 'no'; S.desinst.confirmo_no = true; crear(); });
+            return;
+          }
+          var _esDes = ['DOMINGO_BLOQUEADO','DESINST_ANTES_DE_INSTALACION','FECHA_REQUERIDA','FECHA_INVALIDA','HORA_INVALIDA','TECNICO_OBLIGATORIO',
+            'TECNICOS_EMPRESAS_MEZCLADAS','PROVEEDOR_TOPE_SIN_CONTRATO','FINANZAS_SIN_COSTO_PROVEEDOR','COBRO_REQUERIDO','ARGUMENTO_CUBIERTA',
+            'SIN_SALDO_PARA_COBRAR','DESINST_SIN_DOCUMENTO_MADRE','DESINST_TIPO','DESINST_FECHA_REQUERIDA','MONTO_INVALIDO','EQUIPO_INVALIDO',
+            'PLANTILLA_INVALIDA','EQUIPO_NO_ES_DE_LA_INSTALACION','PLANTILLA_NO_CONFIGURADA'].indexOf(_cod) >= 0
+            || (_cod === 'CHOQUE_HORARIO' && res.j.en_desinstalacion) || (_cod === 'ZZ_SALDO_CONSUMIDO' && !res.j.acciones && body.desinstalacion);
+          if (_esDes){
+            if (e) e.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+esc(res.j.error || 'No se pudo agendar la desinstalación.')+'</div>';
+            S.desinst.previoKey = ''; S.desinst.previo = null;   // se vuelve a revisar con lo que dice el servidor
+            _diProgramarPrevio(true);
+            senalarPaso('desinst');
+            return;
+          }
+          if (_cod === 'EVENTO_CANCELADO' || _cod === 'EVENTO_NO_EXISTE' || _cod === 'EVENTO_INVALIDO'){
+            if (e) e.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+esc(res.j.error || 'Ese evento ya no se puede usar.')+'</div>';
+            S.evento_id = null; S.evento = null; cacheEventos = null;
+            repintarSeccion('tipo');
+            senalarPaso('tipo');
+            return;
+          }
           if (res.j.codigo === 'ZZ_SALDO_CONSUMIDO'){ _o2mFinSaldoErrorCrear(res.j); return; }
           if (res.j.codigo === 'DOC_OBSERVADO'){ _o2mFinCargarSaldo(); _o2mFinObsErrorCrear(res.j, body, _esSA, sig, _origSig); return; }
           if (e) e.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
             esc(res.j.error || 'No se pudo crear la orden.')+'</div>';
           return;
         }
-        if (window.ilusToast) ilusToast('✓ '+res.j.numero_ot+' creada · '+res.j.n_tareas+' tareas', {type:'success'});
+        // 🧩 2026-10-20: «OT-… creada · desinstalación OT-… agendada el dd/mm/aaaa». Si falla SOLO la hija, la instalación ya
+        // existe: se dice en ámbar con la salida («Prográmala desde la ficha») antes de entrar a la OT.
+        var _des = res.j.desinstalacion || null, _desTxt = '', _desFalla = '';
+        if (_des && _des.ok && _des.pendiente) _desTxt = ' · desinstalación por definir (estimada el ' + (_des.fecha_txt || '') + ')';
+        else if (_des && _des.ok) _desTxt = ' · desinstalación ' + (_des.numero_ot || '') + ' agendada el ' + (_des.fecha_txt || '');
+        else if (_des) _desFalla = _des.error || 'no se pudo agendar';
+        if (window.ilusToast) ilusToast('✓ '+res.j.numero_ot+' creada · '+res.j.n_tareas+' tareas'+_desTxt, {type:'success'});
+        if (res.j.avisos) res.j.avisos = res.j.avisos.filter(function(av){ return !/^Desinstalación OT-/.test(av || ''); });
         // 🔧 FIX 2026-09-04 (Daniel, "podemos pulir eso" -- ticket sin
         // vincular a su OT): el backend arma esta lista hace rato (jornada
         // fuera de horario, cliente sin RUT, etc. -- ver "avisos" en
@@ -10980,7 +11063,16 @@ window.OT2C = (function(){
         // quien crea la OT normalmente NO es el técnico asignado todavía
         // -- ver mant_visita_fotos_subir_inicial (app.py). Si algo falla
         // acá, la OT igual quedó creada: solo se avisa, no se bloquea.
+        var _desFallaMostrada = false;
         function _o2mIrADetalle(){
+          if (_desFalla && !_desFallaMostrada && window.ilusAlert){
+            _desFallaMostrada = true;
+            ilusAlert({title: 'La instalación quedó creada', type: 'warning',
+              message: 'La desinstalación no se pudo agendar: ' + String(_desFalla).replace(/[.\s]+$/, '') + '.',
+              sub: 'Prográmala desde la ficha de la instalación con «Programar desinstalación». No se perdió nada.'})
+              .then(_o2mIrADetalle, _o2mIrADetalle);
+            return;
+          }
           var _seguir = (typeof S.onCreada === 'function')
             ? function(){ S.onCreada(vid, _url); }
             : function(){ location.href = _url; };
@@ -11191,6 +11283,772 @@ window.OT2C = (function(){
     }
   }
 
+  /* ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+     🧩 2026-10-20 — EVENTO + DESINSTALACIÓN UNIDA A SU INSTALACIÓN (Daniel, 19-oct)
+     «Al momento de crear la orden de trabajo, si se selecciona instalación con desinstalación, el usuario tendrá que agendar
+     en otra hija cuando se va a hacer la desinstalación para que quede de una vez agendado… literalmente cuadradito… que lo
+     calendarice y deje agendado todo para que el técnico sepa. Ahí debe ser especialista el menú de crear OT, sobre todo en
+     el consumo.» Y: «que se controle por el front, tú solo debes mostrar las opciones… para todo».
+     REGLA DE ESTE BLOQUE: el sistema SUGIERE (técnico, checklist, fecha) y la persona DECIDE. Lo que se ve y se elige acá es
+     EXACTAMENTE lo que viaja en body.desinstalacion y lo que el servidor crea: ningún dato se agrega por detrás.
+     · Cuadro «¿Es parte de un evento?» dentro del paso Tipo (carpeta que agrupa las OT: GET /ot/api/eventos?para=asistente).
+     · Paso «Desinstalación» (solo instalaciones de un cliente; nunca a un técnico). Va DESPUÉS de Costos a propósito: la
+       pregunta de «cubierta por la instalación / la cobra su línea» depende de lo que la instalación toma de la nota de venta
+       (pedido_madre), y de ahí en adelante no hay saltos hacia atrás. Va ANTES de Anexo (que nunca bloquea).
+     · Todo lo que se puede validar antes de crear lo contesta POST /ot/api/desinstalacion/previo (no escribe nada): saldo de
+       servicio que queda en la nota de venta, feriados, choque del técnico, checklist sugerido por equipo.
+     Sin montos ni la palabra «cubierta» para un técnico: este paso no existe para un técnico (REGLA #26). */
+  var cacheEventos = null, _evCargando = false, _evOculto = false, _evPuedeCrear = false, _evError = '', _evPlantillas = null;
+  var _diSeq = 0, _diTimer = null;
+
+  function _o2mEvCargar(){
+    if (_evCargando) return;
+    _evCargando = true;
+    fetch('/ot/api/eventos?para=asistente&per_page=100', {credentials:'same-origin'})
+      .then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return {http:r.status, j:j}; }); })
+      .then(function(res){
+        _evCargando = false;
+        if (res.http === 403){ _evOculto = true; cacheEventos = []; }
+        else if (res.j && res.j.ok){ cacheEventos = res.j.eventos || []; _evPuedeCrear = !!res.j.puede_crear && !O2M_ES_TECNICO; _evError = ''; }
+        else { cacheEventos = []; _evError = (res.j && res.j.error) || 'No se pudieron leer los eventos.'; }
+        _o2mEvPreset();
+        _pintarEventoDom();
+      })
+      .catch(function(){ _evCargando = false; cacheEventos = []; _evError = 'No hay conexión para leer los eventos.'; _pintarEventoDom(); });
+  }
+  /* «Agregar OT al evento» (/ot/?crear=1&evento=ID) abre el asistente con ese evento ya elegido. Un evento que no sale en la
+     lista (p. ej. uno ya terminado) se lee aparte; uno cancelado nunca se ofrece. */
+  function _o2mEvPreset(){
+    var id = S._evPreset; if (!id) return;
+    S._evPreset = null;
+    var e = (cacheEventos || []).filter(function(x){ return x.id === id; })[0];
+    if (e){ S.evento_id = e.id; S.evento = e; return; }
+    fetch('/ot/api/eventos/' + id + '?per_page=1', {credentials:'same-origin'})
+      .then(function(r){ return r.json().catch(function(){ return null; }); })
+      .then(function(j){
+        if (j && j.ok && j.evento && j.evento.estado_db !== 'cancelado'){
+          cacheEventos = (cacheEventos || []).concat([j.evento]);
+          S.evento_id = j.evento.id; S.evento = j.evento;
+          _pintarEventoDom(); _o2mEvSugDir(); refrescarAnclas();
+        }
+      }).catch(function(){});
+  }
+  function _evFechasTxt(e){ return e.fechas_txt || 'Sin fechas definidas'; }
+  function _pintarEventoDom(){
+    var c = document.getElementById('o2mEventoBox'); if (!c) return;
+    if (_evOculto){ c.innerHTML = ''; return; }
+    var h = '<div class="o2m-ev-box"><h6><i class="bi bi-calendar-event me-1" style="color:var(--ilus-red,#dc2626)"></i>¿Es parte de un evento? '+
+      '<span style="font-weight:700;color:#6b7280">(opcional)</span></h6>'+
+      '<p class="d">Un evento agrupa las OT de un mismo lugar y fechas, por ejemplo la instalación y la desinstalación de un mall. '+
+      'Puedes elegirlo ahora o asociarlo después desde la ficha de la OT. No bloquea nada.</p>';
+    if (cacheEventos === null){
+      c.innerHTML = h + '<div class="d"><span class="spinner-border spinner-border-sm me-2"></span>Cargando eventos…</div></div>';
+      _o2mEvCargar();
+      return;
+    }
+    if (_evError) h += '<div class="o2m-aviso">'+esc(_evError)+'</div>';
+    if (cacheEventos.length > 3){
+      h += '<div class="o2m-ev-busca"><input type="search" id="o2mEvQ" placeholder="Buscar evento por nombre, lugar o cliente…" '+
+        'value="'+esc(S._evFiltro||'')+'" oninput="OT2C.filtrarEvento(this.value)" autocomplete="off" aria-label="Buscar evento"></div>';
+    }
+    h += '<div id="o2mEvGrid"></div><div id="o2mEvSel"></div></div>';
+    c.innerHTML = h;
+    _pintarEventoGrid();
+  }
+  function _pintarEventoGrid(){
+    var g = document.getElementById('o2mEvGrid'), s = document.getElementById('o2mEvSel');
+    if (!g || cacheEventos === null) return;
+    var q = (S._evFiltro || '').trim().toLowerCase();
+    var lista = cacheEventos.filter(function(e){
+      return !q || (String(e.nombre||'') + ' ' + String(e.lugar||'') + ' ' + String(e.cliente||'')).toLowerCase().indexOf(q) >= 0;
+    });
+    var MAX = 12, corte = lista.length > MAX && !q;
+    var vis = corte ? lista.slice(0, MAX) : lista;
+    if (S.evento && !vis.some(function(e){ return e.id === S.evento.id; })) vis = [S.evento].concat(vis);
+    var h = '<div class="o2m-ev-grid">'+
+      '<button type="button" class="o2m-ev-op ninguno'+(!S.evento_id?' sel':'')+'" onclick="OT2C.quitarEvento()">'+
+        '<span class="n">Sin evento</span><span class="l">Esta OT no pertenece a ningún evento</span></button>'+
+      vis.map(function(e){
+        var sel = S.evento_id === e.id;
+        return '<button type="button" class="o2m-ev-op'+(sel?' sel':'')+'" onclick="OT2C.setEvento('+e.id+')" aria-pressed="'+sel+'">'+
+          '<span class="n">'+(sel?'<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>':'')+esc(e.nombre)+'</span>'+
+          (e.lugar ? '<span class="l"><i class="bi bi-geo-alt-fill me-1"></i>'+esc(e.lugar)+'</span>' : '')+
+          '<span class="f"><i class="bi bi-calendar-event me-1"></i>'+esc(_evFechasTxt(e))+'</span></button>';
+      }).join('')+
+      (_evPuedeCrear ? '<button type="button" class="o2m-ev-op crear" onclick="OT2C.crearEvento()"><i class="bi bi-plus-circle" style="font-size:1.2rem"></i>Crear evento</button>' : '')+
+      '</div>';
+    if (!vis.length && q) h += '<div class="d" style="margin-top:8px;color:#6b7280">Ningún evento coincide con «'+esc(S._evFiltro)+'».</div>';
+    if (corte) h += '<div class="d" style="margin-top:8px;color:#6b7280;font-size:.8rem">Mostrando '+MAX+' de '+lista.length+' eventos: usa el buscador para ver los demás.</div>';
+    g.innerHTML = h;
+    if (s){
+      s.innerHTML = S.evento
+        ? '<div class="o2m-ev-sel"><i class="bi bi-check-circle-fill ic"></i><span>Evento elegido: <b>'+esc(S.evento.nombre)+'</b>'+
+          (S.evento.lugar ? ' · '+esc(S.evento.lugar) : '')+' · '+esc(_evFechasTxt(S.evento))+'</span>'+
+          '<button type="button" onclick="OT2C.quitarEvento()">Quitar</button></div>'
+        : '';
+    }
+  }
+  function filtrarEvento(v){ S._evFiltro = v; _pintarEventoGrid(); }
+  function setEvento(id){
+    var e = (cacheEventos || []).filter(function(x){ return x.id === id; })[0];
+    if (!e) return;
+    S.evento_id = e.id; S.evento = e;
+    _pintarEventoGrid(); _o2mEvSugDir(); refrescarAnclas();
+  }
+  function quitarEvento(){
+    S.evento_id = null; S.evento = null;
+    _pintarEventoGrid(); _o2mEvSugDir(); refrescarAnclas();
+  }
+  function crearEvento(){
+    if (!window.OTEventoForm){
+      if (window.ilusToast) ilusToast('El formulario de eventos no está disponible. Recarga la página.', {type:'error'});
+      return;
+    }
+    window.OTEventoForm.abrir({
+      cliente: S.cliente ? {id:S.cliente.id, nombre:S.cliente.nombre} : null,
+      host: document.getElementById('ot2ModalCrear') || document.body,
+      onGuardado: function(ev){
+        if (!ev) return;
+        cacheEventos = (cacheEventos || []).filter(function(x){ return x.id !== ev.id; });
+        cacheEventos.unshift(ev);
+        setEvento(ev.id);
+      }
+    });
+  }
+  /* Contraparte: la dirección del evento se SUGIERE (un botón), nunca pisa una dirección ya confirmada con Google. */
+  function _o2mEvSugDir(){
+    var c = document.getElementById('o2mCpEvento'); if (!c) return;
+    var e = S.evento, cp = S.contraparte;
+    if (!e || e.lat == null || e.lng == null || (cp.lat && cp.lng)){ c.innerHTML = ''; return; }
+    c.innerHTML = '<div class="o2m-ev-sug"><i class="bi bi-calendar-event"></i><span>Esta OT es del evento <b>'+esc(e.nombre)+'</b>. '+
+      '¿El técnico llega a <b>'+esc(e.lugar || e.direccion || '')+'</b>?</span>'+
+      '<button type="button" onclick="OT2C.usarDireccionEvento()">Usar la dirección del evento</button></div>';
+  }
+  function usarDireccionEvento(){
+    var e = S.evento, cp = S.contraparte;
+    if (!e || e.lat == null || e.lng == null) return;
+    cp.direccion = e.direccion || ''; cp.lat = e.lat; cp.lng = e.lng; cp.place_id = e.place_id || '';
+    cp.comuna = e.comuna || ''; cp.region = e.region || ''; cp._direccion_auto = false;
+    if (e.detalle && !(cp.detalle || '').trim()) cp.detalle = e.detalle;
+    repintarSeccion('contraparte'); refrescarAnclas();
+  }
+
+  /* ───────────────────────── Paso «Desinstalación» ───────────────────────── */
+  function _o2mDiNuevo(){
+    return {lleva:null, fecha:'', hini:'09:00', hfin:'13:00', tec_modo:'mismos', tecnicos:[], lider:null,
+            costo_proveedor:'', costo_despacho:'', nota:'', cobro:null, argumento:'', cobra_servicio:'', cobra_despacho:'',
+            eq_fuera:{}, eq_plant:{}, forzar:false, confirmo_no:false, previo:null, previoPend:false, previoKey:'', _costoAuto:false};
+  }
+  function _o2mDiAplica(){ return S.tipo === 'instalacion' && !esInterno() && !O2M_ES_TECNICO && !!S.cliente; }
+  function _diTec(){ var d = S.desinst; return (d.tec_modo === 'mismos' ? (S.tecnicos || []) : (d.tecnicos || [])).slice(); }
+  function _diLider(){ var d = S.desinst; return d.tec_modo === 'mismos' ? (S.lider || null) : (d.lider || null); }
+  function _diTecObj(id){ return (cacheTec || []).filter(function(x){ return x.id === id; })[0] || null; }
+  function _diTecNombre(id){ var t = _diTecObj(id); return t ? t.nombre : ('Técnico #' + id); }
+  function _diHayExterno(){ return _diTec().some(function(id){ var t = _diTecObj(id); return !!(t && t.es_externo); }); }
+  function _diNum(v){ var n = parseInt(_o2mLimpiarNumero(v), 10); return isNaN(n) ? null : n; }
+  function _diClp(n){ return (n < 0 ? '−' : '') + '$' + Math.abs(Math.round(n || 0)).toLocaleString('es-CL'); }
+  function _diEqIncluidos(){ var d = S.desinst; return (S.equipos || []).filter(function(e){ return !d.eq_fuera[e.maquina_id]; }); }
+  function _diEqInfo(mid){ return (cacheEquipos || []).filter(function(m){ return m.id === mid; })[0] || null; }
+  function _diEqNombre(mid){
+    var m = _diEqInfo(mid); if (!m) return 'Equipo #' + mid;
+    return (m.nombre || m.modelo || ('Equipo #' + mid)) + (m.marca ? ' · ' + m.marca : '');
+  }
+  function _diSug(mid){
+    var p = S.desinst.previo; if (!p) return null;
+    return (p.checklists_sugeridos || []).filter(function(x){ return x.maquina_id === mid; })[0] || null;
+  }
+  function _diPlantEleg(mid){
+    var d = S.desinst; if (d.eq_plant[mid]) return d.eq_plant[mid];
+    var s = _diSug(mid); return s && s.plantilla_id ? s.plantilla_id : null;
+  }
+  function _diSumarDias(iso, n){
+    var p = String(iso || '').split('-'); if (p.length < 3) return '';
+    var d = new Date(parseInt(p[0],10), parseInt(p[1],10)-1, parseInt(p[2],10) + n);
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  }
+  function _diSumarMeses(iso, n){
+    var p = String(iso || '').split('-'); if (p.length < 3) return '';
+    var d = new Date(parseInt(p[0],10), parseInt(p[1],10)-1+n, parseInt(p[2],10));
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  }
+  function _diHabil(iso){ return (iso && _o2mEsDomingo(iso)) ? _diSumarDias(iso, 1) : iso; }   // el domingo no se agenda: corre al lunes
+  function _diDOW(iso){
+    var p = String(iso || '').split('-'); if (p.length < 3) return '';
+    return ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'][new Date(parseInt(p[0],10), parseInt(p[1],10)-1, parseInt(p[2],10)).getDay()];
+  }
+  function _diFechaLarga(iso){ return iso ? (_diDOW(iso).replace(/^./, function(c){ return c.toUpperCase(); }) + ' ' + _o2mFechaBonita(iso)) : ''; }
+
+  /* El bloque que viaja (previo y crear): EXACTAMENTE lo que la persona ve y eligió. */
+  function _diPayload(){
+    var d = S.desinst, o = {lleva: d.lleva};
+    if (d.lleva === 'no'){ if (d.confirmo_no) o.confirmo_no = true; return o; }
+    o.fecha = d.fecha || null;
+    if (d.lleva === 'por_definir') return o;
+    o.hora_inicio = d.hini; o.hora_fin = d.hfin;
+    o.tecnico_user_ids = _diTec(); o.tecnico_lider_id = _diLider();
+    var cp = _diNum(d.costo_proveedor), cd = _diNum(d.costo_despacho);
+    if (cp !== null) o.costo_proveedor = cp;
+    if (cd !== null) o.costo_despacho = cd;
+    var lid = _diTecObj(_diLider());
+    if (lid){ o.proveedor_tipo = lid.es_externo ? 'externo' : 'interno'; o.proveedor_nombre = lid.es_externo ? (lid.empresa_nombre || lid.nombre) : ''; }
+    if ((d.nota || '').trim()) o.nota = d.nota.trim();
+    if (d.cobro){
+      o.cobro = d.cobro;
+      if (d.cobro === 'cubierta' && (d.argumento || '').trim()) o.argumento_cubierta = d.argumento.trim();
+      if (d.cobro === 'cobra'){ o.cobra_servicio = _diNum(d.cobra_servicio) || 0; o.cobra_despacho = _diNum(d.cobra_despacho) || 0; }
+    }
+    o.equipos = _diEqIncluidos().map(function(e){ return {maquina_id:e.maquina_id, plantilla_id:_diPlantEleg(e.maquina_id)}; });
+    if (d.forzar) o.forzar_choque = true;
+    return o;
+  }
+  function _diPrevioBody(){
+    var envio = S.fin_zz_envio && S.fin_zz_envio.monto != null ? (Number(S.fin_zz_envio.monto) || 0) : 0;
+    return {
+      cliente_id: S.cliente ? S.cliente.id : null, fecha_programada: S.fecha, hora_fin: S.hfin, evento_id: S.evento_id || null,
+      documentos: _o2mFinDocsTodos().map(function(x){ return {tipo:x.tido, numero:x.nudo}; }),
+      pedido_madre: {servicio: S.fin_garantia ? 0 : (Number(S.fin_zz_monto) || 0), despacho: S.fin_garantia ? 0 : envio},
+      equipos: _diEqIncluidos().map(function(e){ var m = _diEqInfo(e.maquina_id); return {maquina_id:e.maquina_id, sku:(m && m.sku) || null}; }),
+      desinstalacion: _diPayload()
+    };
+  }
+  /* Revisión previa (debounced). NO escribe nada. La respuesta pinta avisos, la pregunta de cobro y el checklist sugerido. */
+  function _diProgramarPrevio(rapido){
+    var d = S.desinst;
+    if (!_o2mDiAplica() || !d.lleva || d.lleva === 'no'){ d.previo = null; d.previoPend = false; d.previoKey = ''; return; }
+    var body = _diPrevioBody(), key = JSON.stringify(body);
+    if (key === d.previoKey && (d.previo || d.previoPend)) return;
+    d.previoKey = key; d.previoPend = true;
+    clearTimeout(_diTimer);
+    _diTimer = setTimeout(function(){ _diPrevio(body, key); }, rapido ? 0 : 450);
+    _diPintarRegiones(['avisos', 'res']);
+  }
+  function _diPrevio(body, key){
+    var mi = ++_diSeq, dRef = S.desinst;
+    fetch('/ot/api/desinstalacion/previo', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
+      .then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return {ok:r.ok, j:j}; }); })
+      .then(function(res){
+        if (mi !== _diSeq || dRef !== S.desinst || key !== dRef.previoKey) return;
+        dRef.previoPend = false;
+        dRef.previo = (res.j && res.j.ok) ? res.j
+          : {ok:false, valido:false, bloqueo:{codigo:'PREVIO', mensaje:(res.j && res.j.error) || 'No se pudo revisar la desinstalación. Reintenta.'}, avisos:[], checklists_sugeridos:[]};
+        _diAplicarSugerencias();
+        _diPintarRegiones(['fecha', 'avisos', 'cobro', 'eq', 'res']);
+        refrescarAnclas();
+      })
+      .catch(function(){
+        if (mi !== _diSeq || dRef !== S.desinst) return;
+        dRef.previoPend = false;
+        dRef.previo = {ok:false, valido:false, bloqueo:{codigo:'RED', mensaje:'No hay conexión para revisar la desinstalación. Reintenta.'}, avisos:[], checklists_sugeridos:[]};
+        _diPintarRegiones(['avisos', 'res']);
+        refrescarAnclas();
+      });
+  }
+  /* Lo que el servidor SUGIERE se deja listo en los casilleros (visibles y editables), sin pisar lo que la persona ya escribió. */
+  function _diAplicarSugerencias(){
+    var d = S.desinst, p = d.previo; if (!p) return;
+    if (d.cobro === 'cobra' && p.remanente){
+      if (d.cobra_servicio === '' ) d.cobra_servicio = p.remanente.servicio || '';
+      if (d.cobra_despacho === '' ) d.cobra_despacho = p.remanente.despacho || '';
+    }
+  }
+  /* Hook de pintarAnclas: cualquier cambio aguas arriba (fecha de la instalación, documentos, montos, equipos, evento)
+     vuelve a revisar la desinstalación. Barato: compara la huella antes de llamar a la red. */
+  function _o2mDiVigilar(){
+    if (fase !== 'form') return;
+    var aplica = _o2mDiAplica(), hay = !!document.getElementById('o2mSec-desinst');
+    if (aplica !== hay){
+      /* El paso aparece o desaparece (cambió el tipo o el cliente): se reconstruye el formulario conservando el scroll. */
+      var body = document.getElementById('o2mBody'), y = body ? body.scrollTop : 0;
+      pintarFormulario();
+      if (body) body.scrollTop = y;
+      return;
+    }
+    if (!aplica) return;
+    var d = S.desinst;
+    if (d.lleva === 'si'){
+      var antes = d.costo_proveedor;
+      _diAutoCosto();
+      var regs = ['tec', 'res'];
+      var ae = document.activeElement;
+      if (antes !== d.costo_proveedor && !(ae && ae.closest && ae.closest('#o2mDiCosto'))) regs.push('costo');
+      _diPintarRegiones(regs);
+    }
+    if (d.lleva && d.lleva !== 'no') _diProgramarPrevio(false);
+  }
+
+  function _diCompleto(){
+    var d = S.desinst, p = d.previo;
+    if (!d.lleva) return false;
+    if (d.lleva === 'no') return true;
+    if (!d.fecha || d.fecha < (S.fecha || '') || _o2mEsDomingo(d.fecha)) return false;
+    if (!p || d.previoPend || !p.valido) return false;
+    if (d.lleva === 'por_definir') return true;
+    if (!d.hini || !d.hfin || d.hini >= d.hfin) return false;
+    if (!_diLider() || !_diTec().length) return false;
+    if (String(d.costo_proveedor == null ? '' : d.costo_proveedor).trim() === '') return false;
+    if (_diEqIncluidos().length === 0) return false;
+    if (_diEqIncluidos().some(function(e){ return !_diPlantEleg(e.maquina_id); })) return false;
+    if (p.choque && !d.forzar) return false;
+    if (p.pregunta === 'cobro' || (p.elige_cobro && !d.cobro)) return false;
+    return true;
+  }
+
+  /* ── Pintado ── */
+  function _diEsc(s){ return esc(s); }
+  function pintarDesinst(b){
+    var d = S.desinst;
+    b.innerHTML = '<h6 class="t">¿Esta instalación se desinstala después?</h6>'+
+      '<p class="d">Si los equipos se retiran más adelante (un mall, un evento, un arriendo), agéndalo ahora: se crea una '+
+      '<b>segunda orden de trabajo</b>, unida a esta instalación, con su propia fecha, técnico y checklist. Así el técnico y el '+
+      'calendario lo saben desde hoy. Tú decides cada dato: el sistema solo sugiere.</p>'+
+      '<div id="o2mDiPreg"></div>'+
+      '<div id="o2mDiFecha"></div><div id="o2mDiAvisos"></div><div id="o2mDiTec"></div><div id="o2mDiCosto"></div>'+
+      '<div id="o2mDiCobro"></div><div id="o2mDiEq"></div><div id="o2mDiNota"></div><div id="o2mDiRes"></div>';
+    _diPintarRegiones(['preg', 'fecha', 'avisos', 'tec', 'costo', 'cobro', 'eq', 'nota', 'res']);
+    if (d.lleva && d.lleva !== 'no') _diProgramarPrevio(true);
+    _diCargarPlantillas();
+  }
+  function _diCargarPlantillas(){
+    if (_evPlantillas !== null) return;
+    _evPlantillas = [];
+    fetch('/mantenciones/api/plantillas?tipo_ot=desinstalacion&activa=1', {credentials:'same-origin'})
+      .then(function(r){ return r.json().catch(function(){ return null; }); })
+      .then(function(j){
+        _evPlantillas = ((j && j.plantillas) || []).filter(function(p){ return (p.items_count || 0) > 0; });
+        _diPintarRegiones(['eq']);
+      }).catch(function(){ _evPlantillas = []; });
+  }
+  function _diPintarRegiones(lista){
+    if (!document.getElementById('o2mDiPreg')) return;
+    var f = {preg:_diRegPreg, fecha:_diRegFecha, avisos:_diRegAvisos, tec:_diRegTec, costo:_diRegCosto, cobro:_diRegCobro,
+             eq:_diRegEq, nota:_diRegNota, res:_diRegRes};
+    lista.forEach(function(k){
+      var el = document.getElementById('o2mDi' + k.charAt(0).toUpperCase() + k.slice(1));
+      if (el && f[k]) { try { f[k](el); } catch(e){ console.error('[OT2C] desinst', k, e); } }
+    });
+  }
+  function _diRegPreg(el){
+    var d = S.desinst;
+    function op(v, ic, n, l){
+      return '<button type="button" class="o2m-di-op'+(d.lleva===v?' sel':'')+'" aria-pressed="'+(d.lleva===v)+'" onclick="OT2C.diLleva(\''+v+'\')">'+
+        '<i class="bi '+ic+' ic"></i><span class="n">'+n+'</span><span class="l">'+l+'</span></button>';
+    }
+    el.innerHTML = '<div class="o2m-di-pregunta">'+
+      op('si','bi-box-arrow-up','Sí, la agendo ahora','Fecha, técnico y checklist de la desinstalación quedan listos')+
+      op('por_definir','bi-hourglass-split','Sí, pero la fecha o el técnico están por definir','Queda anotada la fecha estimada; la orden se programa después')+
+      op('no','bi-x-circle','No se desinstala','Esta instalación queda como trabajo único')+'</div>'+
+      (d.lleva === 'no'
+        ? '<div class="o2m-di-av verde"><i class="bi bi-check-circle-fill"></i><span>Esta instalación <b>no lleva desinstalación</b>. Se crea una sola orden.</span></div>' : '');
+  }
+  function _diAtajos(){
+    var base = S.fecha || '', d = S.desinst, sug = d.previo && d.previo.fecha_sugerida;
+    if (!base) return '';
+    var op = [['En 1 semana', _diSumarDias(base, 7)], ['En 2 semanas', _diSumarDias(base, 14)], ['En 1 mes', _diSumarMeses(base, 1)], ['En 2 meses', _diSumarMeses(base, 2)]];
+    var h = '<div class="o2m-di-atajos" role="group" aria-label="Fechas rápidas">';
+    if (sug) h += '<button type="button" class="o2m-di-atajo sug" onclick="OT2C.diFecha(\''+sug+'\')"><i class="bi bi-stars"></i>Sugerida: '+_o2mFechaBonita(sug)+
+      (d.previo.fecha_sugerida_motivo ? ' · '+_diEsc(String(d.previo.fecha_sugerida_motivo).replace(/^Propuesta:\s*/, '')) : '')+'</button>';
+    op.forEach(function(x){
+      var f = _diHabil(x[1]);
+      h += '<button type="button" class="o2m-di-atajo" onclick="OT2C.diFecha(\''+f+'\')">'+x[0]+' · '+_o2mFechaBonita(f)+'</button>';
+    });
+    return h + '</div>';
+  }
+  function _diRegFecha(el){
+    var d = S.desinst;
+    if (!d.lleva || d.lleva === 'no'){ el.innerHTML = ''; return; }
+    var min = S.fecha || _o2mHoyStr();
+    var porDef = d.lleva === 'por_definir';
+    var ok = !!d.fecha && d.fecha >= (S.fecha || '') && !_o2mEsDomingo(d.fecha);
+    el.innerHTML = '<div class="o2m-di-sub '+(ok?'ok':'falta')+'"><h6><span class="pt"></span>'+(porDef ? 'Fecha estimada' : 'Fecha y horario')+'</h6>'+
+      '<div class="o2m-di-fila'+(porDef?' dos':'')+'">'+
+        '<div><label for="o2mDiFechaIn">'+(porDef ? 'Fecha estimada *' : 'Fecha de la desinstalación *')+'</label>'+
+        '<input type="date" id="o2mDiFechaIn" value="'+_diEsc(d.fecha)+'" min="'+_diEsc(min)+'" onchange="OT2C.diFecha(this.value)"></div>'+
+        (porDef ? '' :
+          '<div><label for="o2mDiHini">Hora de inicio</label><input type="time" id="o2mDiHini" value="'+_diEsc(d.hini)+'" oninput="OT2C.diCampo(\'hini\',this.value)" onchange="OT2C.diCampo(\'hini\',this.value)"></div>'+
+          '<div><label for="o2mDiHfin">Hora de término</label><input type="time" id="o2mDiHfin" value="'+_diEsc(d.hfin)+'" oninput="OT2C.diCampo(\'hfin\',this.value)" onchange="OT2C.diCampo(\'hfin\',this.value)"></div>')+
+      '</div>'+
+      (d.fecha ? '<div class="ev-ayuda" style="margin-top:6px"><i class="bi bi-calendar3 me-1"></i><b>'+_diEsc(_diFechaLarga(d.fecha))+'</b>'+
+        (S.fecha ? ' · la instalación es el '+_o2mFechaBonita(S.fecha) : '')+'</div>' : '')+
+      _diAtajos()+
+      (porDef ? '<div class="ev-ayuda" style="margin-top:8px">Queda anotada en la instalación. La orden de desinstalación se programa después, desde su ficha («Programar desinstalación»), y te avisamos antes de la fecha.</div>'
+              : '<div class="o2m-di-atajos"><button type="button" class="o2m-di-atajo" id="o2mDiHuecoBtn" onclick="OT2C.diBuscarHueco()"><i class="bi bi-search"></i>Buscar hueco libre para el técnico</button></div>')+
+      '</div>';
+  }
+  function _diRegAvisos(el){
+    var d = S.desinst, p = d.previo;
+    if (!d.lleva || d.lleva === 'no'){ el.innerHTML = ''; return; }
+    var h = '';
+    if (d.fecha && S.fecha && d.fecha < S.fecha)
+      h += '<div class="o2m-di-av rojo"><i class="bi bi-exclamation-octagon-fill"></i><span>La desinstalación no puede ir antes de la instalación (<b>'+_o2mFechaBonita(S.fecha)+'</b>).</span></div>';
+    if (d.fecha && _o2mEsDomingo(d.fecha))
+      h += '<div class="o2m-di-av rojo"><i class="bi bi-slash-circle-fill"></i><span>Los domingos no se agendan órdenes de trabajo. Elige otro día.</span></div>';
+    if (d.previoPend) h += '<div class="o2m-di-av azul"><span class="spinner-border spinner-border-sm"></span><span>Revisando fecha, saldo y agenda del técnico…</span></div>';
+    if (p && !d.previoPend){
+      var b = p.bloqueo;
+      if (b && !(b.codigo === 'FECHA_REQUERIDA' && !d.fecha) && !(d.fecha && S.fecha && d.fecha < S.fecha) && !(d.fecha && _o2mEsDomingo(d.fecha)))
+        h += '<div class="o2m-di-av rojo"><i class="bi bi-exclamation-octagon-fill"></i><span>'+_diEsc(b.mensaje)+'</span></div>';
+      (p.avisos || []).forEach(function(a){ h += '<div class="o2m-di-av ambar"><i class="bi bi-exclamation-triangle-fill"></i><span>'+_diEsc(a)+'</span></div>'; });
+      if (p.choque){
+        var c = p.choque;
+        h += '<div class="o2m-di-av rojo"><i class="bi bi-person-exclamation"></i><span><b>'+_diEsc(c.tecnico_nombre || 'El técnico')+'</b> ya tiene trabajo agendado ese día en ese horario'+
+          (c.numero_ot ? ' (' + _diEsc(c.numero_ot) + ')' : '')+'. Elige otra fecha u otro técnico.</span>'+
+          (c.puede_forzar && !d.forzar ? '<button type="button" onclick="OT2C.diForzar()">Agendar igual</button>' : '')+'</div>';
+        if (d.forzar) h += '<div class="o2m-di-av ambar"><i class="bi bi-shield-exclamation"></i><span>Agendarás igual aunque haya choque (solo superadministrador). Queda registrado.</span></div>';
+      }
+      if (p.sin_documento_madre)
+        h += '<div class="o2m-di-av ambar"><i class="bi bi-shield-lock-fill"></i><span>Esta instalación se crea sin documento de Random: la desinstalación va incluida en la autorización que se le pide a Daniel.</span></div>';
+    }
+    el.innerHTML = h;
+  }
+  function _diRegTec(el){
+    var d = S.desinst;
+    if (d.lleva !== 'si'){ el.innerHTML = ''; return; }
+    var mis = (S.tecnicos || []).length > 0;
+    var lista = _diTec(), lid = _diLider();
+    var ok = lista.length > 0 && !!lid;
+    var chips = lista.length ? '<div class="o2m-di-tec" style="margin-top:10px">'+lista.map(function(id){
+      return '<span class="o2m-di-tchip'+(id===lid?' lider':'')+'"><i class="bi bi-person-fill"></i>'+_diEsc(_diTecNombre(id))+(id===lid?' · líder':'')+'</span>';
+    }).join('')+'</div>' : '<div class="o2m-di-av rojo"><i class="bi bi-person-x-fill"></i><span>Elige al menos un técnico: ninguna orden sale sin responsable.</span></div>';
+    el.innerHTML = '<div class="o2m-di-sub '+(ok?'ok':'mal')+'"><h6><span class="pt"></span>Técnicos de la desinstalación</h6>'+
+      '<div class="o2m-di-modo">'+
+        '<button type="button" class="o2m-di-op'+(d.tec_modo==='mismos'?' sel':'')+'" aria-pressed="'+(d.tec_modo==='mismos')+'" onclick="OT2C.diTecModo(\'mismos\')" '+(mis?'':'disabled style="opacity:.5"')+'>'+
+          '<i class="bi bi-people-fill ic"></i><span class="n">Los mismos de la instalación</span><span class="l">Sugerido: quienes ya conocen el lugar</span></button>'+
+        '<button type="button" class="o2m-di-op'+(d.tec_modo==='otros'?' sel':'')+'" aria-pressed="'+(d.tec_modo==='otros')+'" onclick="OT2C.diTecModo(\'otros\')">'+
+          '<i class="bi bi-person-lines-fill ic"></i><span class="n">Elegir otros</span><span class="l">Otro equipo para desarmar y embalar</span></button></div>'+
+      (d.tec_modo === 'otros' ? '<div id="o2mDiTecPicker">'+_diPickerHtml()+'</div>' : '')+
+      chips+'</div>';
+  }
+  function _diPickerHtml(){
+    var d = S.desinst, techs = cacheTec || [];
+    if (!techs.length) return '<div class="d text-muted small">No hay técnicos cargados.</div>';
+    var bloqueada = null;
+    techs.forEach(function(x){ if (d.tecnicos.indexOf(x.id) >= 0 && x.empresa_id) bloqueada = x.empresa_id; });
+    var grupos = [], mapa = {};
+    techs.forEach(function(t){
+      var k = t.empresa_id ? ('emp_' + t.empresa_id) : 'interno';
+      if (!mapa[k]){ mapa[k] = {titulo: t.empresa_id ? (t.empresa_nombre || ('Empresa #' + t.empresa_id)) : 'Internos', items: []}; grupos.push(k); }
+      mapa[k].items.push(t);
+    });
+    return grupos.map(function(k){
+      var g = mapa[k];
+      return '<div style="border:1px solid '+(k==='interno'?'#e5e7eb':'#dbeafe')+';border-radius:10px;padding:.5rem .65rem;margin-bottom:.5rem;background:'+(k==='interno'?'#fafafa':'#f8fafc')+'">'+
+        '<div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:#64748b;margin-bottom:.35rem"><i class="bi '+(k==='interno'?'bi-people-fill':'bi-building-fill')+' me-1"></i>'+_diEsc(g.titulo)+'</div>'+
+        '<div class="o2m-grid" style="margin:0">'+g.items.map(function(t){
+          var sel = d.tecnicos.indexOf(t.id) >= 0, bloq = !sel && bloqueada && t.empresa_id && t.empresa_id !== bloqueada;
+          return '<button type="button" class="o2m-op'+(sel?' sel':'')+(bloq?' disabled':'')+'"'+(bloq?' style="opacity:.45;cursor:not-allowed"':'')+' aria-pressed="'+sel+'" onclick="OT2C.diTecTog('+t.id+')">'+
+            '<span class="n">'+(sel?'<i class="bi bi-check-circle-fill me-1"></i>':'')+_diEsc(t.nombre)+'</span>'+
+            '<span class="l">'+_diEsc(t.especialidad || t.nivel || 'Técnico')+(t.es_externo?' · externo':'')+(d.lider===t.id?' · <b>líder</b>':'')+'</span></button>';
+        }).join('')+'</div></div>';
+    }).join('');
+  }
+  function _diRegCosto(el){
+    var d = S.desinst;
+    if (d.lleva !== 'si'){ el.innerHTML = ''; return; }
+    var ok = String(d.costo_proveedor == null ? '' : d.costo_proveedor).trim() !== '';
+    var ext = _diHayExterno();
+    el.innerHTML = '<div class="o2m-di-sub '+(ok?'ok':'falta')+'"><h6><span class="pt"></span>Cuánto cuesta la desinstalación</h6>'+
+      '<div class="o2m-di-fila dos">'+
+        '<div><label for="o2mDiCosto1">'+(ext ? 'Lo que te cobra el técnico o proveedor *' : 'Lo que cuesta el técnico (0 si es propio) *')+'</label>'+
+        '<input id="o2mDiCosto1" inputmode="numeric" autocomplete="off" placeholder="$ 0" value="'+_diEsc(_o2mFormatearMiles(d.costo_proveedor))+'" oninput="OT2C.diMonto(\'costo_proveedor\',this)"></div>'+
+        '<div><label for="o2mDiCosto2">Despacho (opcional)</label>'+
+        '<input id="o2mDiCosto2" inputmode="numeric" autocomplete="off" placeholder="$ 0" value="'+_diEsc(_o2mFormatearMiles(d.costo_despacho))+'" oninput="OT2C.diMonto(\'costo_despacho\',this)"></div></div>'+
+      '<div class="ev-ayuda" style="margin-top:6px">'+(ext ? 'Es un técnico externo: se le manda el anexo de servicios igual que a la instalación.' : 'Técnico propio: si no hay costo extra, deja $0.')+
+      ' Este dato es obligatorio para poder pagarle al proveedor sin equivocarnos.</div></div>';
+  }
+  function _diRegCobro(el){
+    var d = S.desinst, p = d.previo;
+    if (d.lleva !== 'si' || !p){ el.innerHTML = ''; return; }
+    var rem = p.remanente || {servicio:0, despacho:0, leido:false};
+    var elige = !!(p.elige_cobro || p.pregunta === 'cobro');
+    var sig = JSON.stringify([elige, d.cobro, rem.servicio, rem.despacho, p.cobro_txt]);
+    if (el.getAttribute('data-sig') === sig && el.innerHTML) return;   // no se repinta mientras la persona escribe
+    el.setAttribute('data-sig', sig);
+    if (!elige){
+      el.innerHTML = p.valido || p.cobro ? '<div class="o2m-di-sub ok"><h6><span class="pt"></span>Cobro</h6><div class="d" style="font-size:.88rem;margin:0">'+
+        '<i class="bi bi-receipt me-1"></i>'+_diEsc(p.cobro_txt || 'Cubierta por esta instalación: no consume saldo aparte')+'</div>'+
+        (rem.leido === false ? '<div class="ev-ayuda" style="margin-top:6px">No se pudo leer el saldo de la nota de venta en Random: el servidor lo vuelve a revisar al crear.</div>' : '')+'</div>' : '';
+      return;
+    }
+    var okc = d.cobro === 'cobra' ? ((_diNum(d.cobra_servicio) || 0) + (_diNum(d.cobra_despacho) || 0) > 0)
+            : (d.cobro === 'cubierta' ? (d.argumento || '').trim().length >= 30 : false);
+    el.innerHTML = '<div class="o2m-di-sub '+(okc?'ok':'falta')+'"><h6><span class="pt"></span>¿Quién cobra la desinstalación?</h6>'+
+      '<p class="ev-ayuda" style="margin:0 0 10px">A la nota de venta le queda saldo de servicio sin usar después de la instalación: '+
+      '<b>'+_diClp(rem.servicio)+'</b>'+(rem.despacho > 0 ? ' de servicio y <b>'+_diClp(rem.despacho)+'</b> de despacho' : '')+
+      '. Elige cómo se trata; nunca se cobra dos veces la misma línea.</p>'+
+      '<div class="o2m-di-cobro">'+
+        '<button type="button" class="o2m-di-op'+(d.cobro==='cobra'?' sel':'')+'" aria-pressed="'+(d.cobro==='cobra')+'" onclick="OT2C.diCobro(\'cobra\')">'+
+          '<i class="bi bi-receipt-cutoff ic"></i><span class="n">La cobra la desinstalación</span><span class="l">Toma ese saldo de la nota de venta como su propio cobro</span></button>'+
+        '<button type="button" class="o2m-di-op'+(d.cobro==='cubierta'?' sel':'')+'" aria-pressed="'+(d.cobro==='cubierta')+'" onclick="OT2C.diCobro(\'cubierta\')">'+
+          '<i class="bi bi-link-45deg ic"></i><span class="n">Cubierta por la instalación</span><span class="l">No cobra aparte: el saldo queda libre para otras órdenes</span></button></div>'+
+      (d.cobro === 'cobra'
+        ? '<div class="o2m-di-fila dos" style="margin-top:10px"><div><label for="o2mDiCobS">Servicio (máx. '+_diClp(rem.servicio)+')</label>'+
+          '<input id="o2mDiCobS" inputmode="numeric" autocomplete="off" value="'+_diEsc(_o2mFormatearMiles(d.cobra_servicio))+'" oninput="OT2C.diMonto(\'cobra_servicio\',this)"></div>'+
+          '<div><label for="o2mDiCobD">Despacho (máx. '+_diClp(rem.despacho)+')</label>'+
+          '<input id="o2mDiCobD" inputmode="numeric" autocomplete="off" value="'+_diEsc(_o2mFormatearMiles(d.cobra_despacho))+'" oninput="OT2C.diMonto(\'cobra_despacho\',this)"></div></div>'
+        : '')+
+      (d.cobro === 'cubierta'
+        ? '<div style="margin-top:10px"><label class="ev-lbl" for="o2mDiArg">Por qué queda saldo sin usar (mínimo 30 caracteres) *</label>'+
+          '<textarea id="o2mDiArg" maxlength="1000" placeholder="Ej: el cliente acordó que la desinstalación va incluida en el precio de la instalación" oninput="OT2C.diCampo(\'argumento\',this.value)">'+_diEsc(d.argumento)+'</textarea>'+
+          '<div class="ev-ayuda" id="o2mDiArgN">'+(d.argumento||'').trim().length+' / 30 caracteres mínimos. Queda guardado con tu nombre.</div></div>'
+        : '')+'</div>';
+  }
+  function _diRegEq(el){
+    var d = S.desinst;
+    if (d.lleva !== 'si'){ el.innerHTML = ''; return; }
+    var eqs = S.equipos || [];
+    if (!eqs.length){ el.innerHTML = ''; return; }
+    var inc = _diEqIncluidos();
+    var ok = inc.length > 0 && inc.every(function(e){ return !!_diPlantEleg(e.maquina_id); });
+    var plants = _evPlantillas || [];
+    el.innerHTML = '<div class="o2m-di-sub '+(ok?'ok':'falta')+'"><h6><span class="pt"></span>Equipos que se desinstalan y su checklist</h6>'+
+      '<p class="ev-ayuda" style="margin:0 0 6px">Se muestran los equipos de esta instalación. Deja marcados los que se retiran; el checklist sugerido se puede cambiar.</p>'+
+      (eqs.length > 1 ? '<button type="button" class="o2m-di-atajo" onclick="OT2C.diEqTodo()" style="margin-bottom:6px"><i class="bi bi-check-all"></i>Seleccionar/deseleccionar todo</button>' : '')+
+      eqs.map(function(e){
+        var mid = e.maquina_id, m = _diEqInfo(mid), on = !d.eq_fuera[mid], sug = _diSug(mid), pe = _diPlantEleg(mid);
+        var opts = plants.slice();
+        if (pe && !opts.some(function(x){ return x.id === pe; })) opts.unshift({id:pe, nombre:(sug && sug.plantilla_nombre) || ('Checklist #' + pe)});
+        var sel = opts.length
+          ? '<select aria-label="Checklist de '+_diEsc(_diEqNombre(mid))+'" onchange="OT2C.diEqPlant('+mid+', this.value)" '+(on?'':'disabled')+'>'+
+              (pe ? '' : '<option value="">Elige un checklist…</option>')+
+              opts.map(function(x){ return '<option value="'+x.id+'"'+(x.id===pe?' selected':'')+'>'+_diEsc(x.nombre)+'</option>'; }).join('')+'</select>'+
+              '<small class="sel-name">Checklist elegido: <b>'+_diEsc((opts.filter(function(x){ return x.id===pe; })[0] || {}).nombre || '')+'</b></small>'
+          : (sug && sug.plantilla_nombre ? '<small>Checklist: '+_diEsc(sug.plantilla_nombre)+'</small>' : '<small style="color:#92400e">Sin checklist configurado para desinstalaciones</small>');
+        return '<div class="o2m-di-eq"><input type="checkbox" '+(on?'checked':'')+' aria-label="Desinstalar '+_diEsc(_diEqNombre(mid))+'" onchange="OT2C.diEqTog('+mid+')">'+
+          '<span class="d"><b>'+_diEsc(_diEqNombre(mid))+'</b>'+
+          ((m && (m.serie || m.sku)) ? '<small>'+(m.sku ? 'SKU ' + _diEsc(m.sku) : '')+(m.serie ? ' · Serie ' + _diEsc(m.serie) : '')+'</small>' : '')+
+          (on ? sel : '<small>No se desinstala en esta orden</small>')+'</span></div>';
+      }).join('')+'</div>';
+  }
+  function _diRegNota(el){
+    var d = S.desinst;
+    if (d.lleva !== 'si'){ el.innerHTML = ''; return; }
+    el.innerHTML = '<div class="o2m-di-sub ok" style="border-color:#e5e7eb;background:#fff"><h6><span class="pt" style="background:#9ca3af"></span>Nota para el técnico (opcional)</h6>'+
+      '<textarea id="o2mDiNotaIn" maxlength="1500" placeholder="Ej: desarmar y embalar en las cajas originales; el mall exige salir antes de las 18:00" oninput="OT2C.diCampo(\'nota\',this.value)">'+_diEsc(d.nota)+'</textarea>'+
+      '<div class="ev-ayuda">Se suma a la descripción de la orden de desinstalación.</div></div>';
+  }
+  /* La cuenta de la FAMILIA (instalación + desinstalación): se ve sumada en el paso Costos y acá. Solo gestión. */
+  function _diFamilia(){
+    if (typeof window.ilusOtFinanzas !== 'function') return null;
+    var d = S.desinst; if (d.lleva !== 'si') return null;
+    var r; try { r = _o2mFinVistaPrevia(); } catch(e){ return null; }
+    var cobM = (r.cobre && r.cobre.hay) ? (r.cobre.total || 0) : 0;
+    var cosM = (r.me_cobraron && r.me_cobraron.total != null) ? r.me_cobraron.total : null;
+    var hTec = _diNum(d.costo_proveedor), hDes = _diNum(d.costo_despacho) || 0;
+    var cobH = d.cobro === 'cobra' ? ((_diNum(d.cobra_servicio) || 0) + (_diNum(d.cobra_despacho) || 0)) : 0;
+    if (cosM === null || hTec === null) return {incompleto:true, cobM:cobM, cosM:cosM, hTec:hTec, hDes:hDes, cobH:cobH};
+    var cobro = cobM + cobH, costo = cosM + hTec + hDes, q = cobro - costo;
+    return {incompleto:false, cobM:cobM, cosM:cosM, hTec:hTec, hDes:hDes, cobH:cobH, cobro:cobro, costo:costo, queda:q,
+            pct: cobro > 0 ? (q * 100 / cobro) : null, cobra: !!r.cobra};
+  }
+  function _o2mDiFamiliaHtml(){
+    var f = _diFamilia(); if (!f) return '';
+    if (f.incompleto) return '<div class="o2m-di-fam"><div class="ev-ayuda">Con la desinstalación incluida, el margen de la familia se calcula cuando estén los costos de las dos órdenes.</div></div>';
+    return '<div class="o2m-di-fam"><div class="ev-lbl">Cuenta de la familia (instalación + desinstalación)</div>'+
+      '<div class="fila"><span>Le cobras al cliente</span><b>'+_diClp(f.cobro)+'</b></div>'+
+      (f.cobH > 0 ? '<div class="fila"><span style="color:#6b7280">· la desinstalación cobra su línea</span><span>'+_diClp(f.cobH)+'</span></div>' : '')+
+      '<div class="fila"><span>Te cobran (técnicos y despacho de las dos órdenes)</span><b>'+_diClp(f.costo)+'</b></div>'+
+      '<div class="fila"><span style="color:#6b7280">· instalación</span><span>'+_diClp(f.cosM)+'</span></div>'+
+      '<div class="fila"><span style="color:#6b7280">· desinstalación</span><span>'+_diClp(f.hTec + f.hDes)+'</span></div>'+
+      '<div class="fila t"><span>Margen de la familia</span><b class="'+(f.queda < 0 ? 'neg' : 'pos')+'">'+_diClp(f.queda)+(f.pct != null ? ' · ' + f.pct.toFixed(1).replace('.', ',') + ' %' : '')+'</b></div></div>';
+  }
+  function _o2mDiTieneHija(){ return _o2mDiAplica() && S.desinst.lleva === 'si'; }
+  function _diRegRes(el){
+    var d = S.desinst;
+    if (!d.lleva || d.lleva === 'no'){ el.innerHTML = ''; return; }
+    var inst = _o2mFechaBonita(S.fecha) + (S.hini ? ' · ' + S.hini + '–' + S.hfin : '');
+    var tecM = (S.tecnicos || []).map(_diTecNombre).join(', ') || '—';
+    var nEqM = (S.equipos || []).length;
+    var h = '<div class="o2m-di-res"><h6><i class="bi bi-clipboard2-check-fill"></i>'+(d.lleva === 'si' ? 'Se van a crear 2 órdenes de trabajo' : 'Se crea la instalación y queda anotada la desinstalación')+'</h6><div class="o2m-di-res-g">'+
+      '<div class="o2m-di-res-ot"><span class="k">Orden 1 · Instalación</span><b>'+_diEsc(S.cliente ? S.cliente.nombre : '')+'</b>'+
+        '<div><i class="bi bi-calendar3 me-1"></i>'+_diEsc(inst)+'</div><div><i class="bi bi-people-fill me-1"></i>'+_diEsc(tecM)+'</div>'+
+        '<div><i class="bi bi-hdd-stack me-1"></i>'+nEqM+' equipo'+(nEqM === 1 ? '' : 's')+'</div>'+
+        (S.evento ? '<div><i class="bi bi-calendar-event me-1"></i>'+_diEsc(S.evento.nombre)+'</div>' : '')+'</div>'+
+      '<div class="o2m-di-res-f" aria-hidden="true"><i class="bi bi-arrow-right"></i></div>';
+    if (d.lleva === 'por_definir'){
+      h += '<div class="o2m-di-res-ot pendiente"><span class="k">Desinstalación · por definir</span><b>Estimada para el '+_diEsc(d.fecha ? _o2mFechaBonita(d.fecha) : '—')+'</b>'+
+        '<div>Queda anotada en la instalación. La orden se programa después desde su ficha.</div></div>';
+    } else {
+      var inc = _diEqIncluidos(), tecH = _diTec().map(_diTecNombre).join(', ') || '—';
+      var p = d.previo, cobTxt = p && p.cobro_txt ? p.cobro_txt : (d.cobro === 'cobra' ? 'Se cobra su línea de desinstalación' : (d.cobro === 'cubierta' ? 'Cubierta por esta instalación' : ''));
+      h += '<div class="o2m-di-res-ot"><span class="k">Orden 2 · Desinstalación</span><b>'+_diEsc(S.cliente ? S.cliente.nombre : '')+'</b>'+
+        '<div><i class="bi bi-calendar3 me-1"></i>'+(d.fecha ? _diEsc(_diFechaLarga(d.fecha)) + ' · ' + _diEsc(d.hini) + '–' + _diEsc(d.hfin) : 'Falta la fecha')+'</div>'+
+        '<div><i class="bi bi-people-fill me-1"></i>'+_diEsc(tecH)+'</div>'+
+        '<div><i class="bi bi-hdd-stack me-1"></i>'+inc.length+' de '+nEqM+' equipo'+(nEqM === 1 ? '' : 's')+' con su checklist</div>'+
+        (cobTxt ? '<div><i class="bi bi-receipt me-1"></i>'+_diEsc(cobTxt)+'</div>' : '')+
+        (S.evento ? '<div><i class="bi bi-calendar-event me-1"></i>'+_diEsc(S.evento.nombre)+'</div>' : '')+'</div>';
+    }
+    h += '</div>'+(d.lleva === 'si' ? _o2mDiFamiliaHtml() : '')+
+      '<div class="ev-ayuda" style="margin-top:10px">La desinstalación no le escribe nada al cliente. Al técnico le llega el aviso de su orden como a cualquier OT.</div></div>';
+    el.innerHTML = h;
+  }
+
+  /* ── Acciones (llamadas desde el HTML) ── */
+  function diLleva(v){
+    var d = S.desinst;
+    if (v === 'no'){
+      /* Responder «No» dentro de un evento con fecha de término pide confirmación: es la forma más fácil de perder una desinstalación. */
+      var ev = S.evento;
+      if (ev && ev.fecha_fin_iso && !d.confirmo_no){
+        ilusConfirm({
+          title: 'Esta instalación no se desinstala', message: 'El evento «' + ev.nombre + '» termina el ' + _o2mFechaBonita(ev.fecha_fin_iso) + '.',
+          sub: '¿Seguro que estos equipos no se retiran después? Si se retiran, elige «Sí» y agenda la desinstalación.',
+          okLabel: 'Sí, no se desinstala', cancelLabel: 'Volver', type: 'question'
+        }).then(function(ok){ if (!ok) return; d.lleva = 'no'; d.confirmo_no = true; _diAplicarLleva(); });
+        return;
+      }
+      d.confirmo_no = !!(ev && ev.fecha_fin_iso);
+    }
+    d.lleva = v;
+    if (v !== 'no') d.confirmo_no = false;
+    _diAplicarLleva();
+  }
+  function _diAplicarLleva(){
+    var d = S.desinst;
+    if (d.lleva === 'si') _diAutoCosto();   // técnico propio: $0 sugerido (visible y editable)
+    d.previo = null; d.previoKey = ''; d.previoPend = false;
+    _diPintarRegiones(['preg', 'fecha', 'avisos', 'tec', 'costo', 'cobro', 'eq', 'nota', 'res']);
+    if (d.lleva && d.lleva !== 'no') _diProgramarPrevio(true);
+    refrescarAnclas();
+  }
+  function diFecha(v){
+    var d = S.desinst;
+    if (v && _o2mEsDomingo(v)){
+      if (window.ilusToast) ilusToast('Los domingos no se agendan órdenes de trabajo. Elige otro día.', {type:'warning'});
+      var inp = document.getElementById('o2mDiFechaIn'); if (inp) inp.value = d.fecha || '';
+      return;
+    }
+    d.fecha = v || '';
+    _diPintarRegiones(['fecha', 'avisos', 'res']);
+    _diProgramarPrevio(false);
+    refrescarAnclas();
+  }
+  function diCampo(k, v){
+    var d = S.desinst; d[k] = v;
+    if (k === 'argumento'){
+      var n = document.getElementById('o2mDiArgN'); if (n) n.textContent = (v || '').trim().length + ' / 30 caracteres mínimos. Queda guardado con tu nombre.';
+    }
+    if (k === 'hini' || k === 'hfin'){ _diPintarRegiones(['avisos', 'res']); }
+    _diProgramarPrevio(false);
+    if (k === 'nota' || k === 'argumento') _diPintarRegiones(['res']);
+    refrescarAnclas();
+  }
+  function diMonto(k, el){
+    var antes = el.value, resto = antes.length - (el.selectionStart || 0);
+    var dig = _o2mLimpiarNumero(antes);
+    S.desinst[k] = dig;
+    if (k === 'costo_proveedor') S.desinst._costoAuto = false;
+    var f = _o2mFormatearMiles(dig); el.value = f;
+    try { var pos = Math.max(0, f.length - resto); el.setSelectionRange(pos, pos); } catch(_){}
+    _diProgramarPrevio(false);
+    _diPintarRegiones(['res']);
+    refrescarAnclas();
+  }
+  function diBuscarHueco(){
+    var d = S.desinst, btn = document.getElementById('o2mDiHuecoBtn');
+    var tec = _diTec();
+    if (!tec.length){ if (window.ilusToast) ilusToast('Elige primero el técnico de la desinstalación.', {type:'warning'}); return; }
+    var ini = (d.fecha && d.fecha >= (S.fecha || '')) ? d.fecha : (S.fecha || _o2mHoyStr());
+    if (ini < _o2mHoyStr()) ini = _o2mHoyStr();
+    var a = _o2mDayToMin(d.hini), z = _o2mDayToMin(d.hfin), dur = (a != null && z != null && z > a) ? (z - a) : 240;
+    var orig = btn ? btn.innerHTML : '';
+    if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>Buscando…'; }
+    _o2mDayBuscarHuecoRango(ini, dur, tec, 30).then(function(r){
+      if (btn){ btn.disabled = false; btn.innerHTML = orig; }
+      if (!r){ if (window.ilusToast) ilusToast('No hay huecos libres en los próximos 30 días para ese equipo de técnicos.', {type:'warning'}); return; }
+      d.fecha = r.fecha; d.hini = r.hora; d.hfin = _o2mDayHHMM(_o2mDayToMin(r.hora) + dur);
+      _diPintarRegiones(['fecha', 'avisos', 'res']);
+      _diProgramarPrevio(false);
+      refrescarAnclas();
+    }).catch(function(){
+      if (btn){ btn.disabled = false; btn.innerHTML = orig; }
+      if (window.ilusToast) ilusToast('No se pudo buscar un hueco libre.', {type:'error'});
+    });
+  }
+  function diTecModo(m){
+    var d = S.desinst; if (d.tec_modo === m) return;
+    d.tec_modo = m;
+    if (m === 'otros' && !d.tecnicos.length){ d.tecnicos = []; d.lider = null; }
+    _diAutoCosto();
+    _diPintarRegiones(['tec', 'costo', 'res']);
+    _diProgramarPrevio(false);
+    refrescarAnclas();
+  }
+  function diTecTog(id){
+    var d = S.desinst, i = d.tecnicos.indexOf(id);
+    if (i < 0){
+      var t = _diTecObj(id), bloqueada = null;
+      (cacheTec || []).forEach(function(x){ if (d.tecnicos.indexOf(x.id) >= 0 && x.empresa_id) bloqueada = x.empresa_id; });
+      if (t && t.empresa_id && bloqueada && t.empresa_id !== bloqueada){
+        if (window.ilusToast) ilusToast('No puedes mezclar técnicos externos de dos empresas distintas en la misma OT.', {type:'warning'});
+        return;
+      }
+      d.tecnicos.push(id); if (!d.lider) d.lider = id;
+    } else {
+      d.tecnicos.splice(i, 1); if (d.lider === id) d.lider = d.tecnicos[0] || null;
+    }
+    _diAutoCosto();
+    _diPintarRegiones(['tec', 'costo', 'res']);
+    _diProgramarPrevio(false);
+    refrescarAnclas();
+  }
+  /* El costo sugerido de un técnico PROPIO es $0 (visible y editable). Con un externo se deja vacío para que lo escriba. */
+  function _diAutoCosto(){
+    var d = S.desinst, tec = _diTec();
+    if (!tec.length) return;
+    var vacio = String(d.costo_proveedor == null ? '' : d.costo_proveedor).trim() === '';
+    if (_diHayExterno()){ if (d._costoAuto){ d.costo_proveedor = ''; d._costoAuto = false; } }
+    else if (vacio || d._costoAuto){ d.costo_proveedor = '0'; d._costoAuto = true; }
+  }
+  function diCobro(c){
+    var d = S.desinst; d.cobro = c;
+    if (c === 'cobra' && d.previo && d.previo.remanente){
+      if (d.cobra_servicio === '') d.cobra_servicio = d.previo.remanente.servicio || '';
+      if (d.cobra_despacho === '') d.cobra_despacho = d.previo.remanente.despacho || '';
+    }
+    var el = document.getElementById('o2mDiCobro'); if (el) el.removeAttribute('data-sig');
+    _diPintarRegiones(['cobro', 'res']);
+    _diProgramarPrevio(true);
+    refrescarAnclas();
+  }
+  function diEqTog(mid){
+    var d = S.desinst; d.eq_fuera[mid] = !d.eq_fuera[mid];
+    _diPintarRegiones(['eq', 'res']);
+    _diProgramarPrevio(false);
+    refrescarAnclas();
+  }
+  function diEqTodo(){
+    var d = S.desinst, eqs = S.equipos || [];
+    var algunaFuera = eqs.some(function(e){ return d.eq_fuera[e.maquina_id]; });
+    eqs.forEach(function(e){ d.eq_fuera[e.maquina_id] = algunaFuera ? false : true; });
+    _diPintarRegiones(['eq', 'res']);
+    _diProgramarPrevio(false);
+    refrescarAnclas();
+  }
+  function diEqPlant(mid, pid){
+    var d = S.desinst; d.eq_plant[mid] = pid ? parseInt(pid, 10) : null;
+    _diPintarRegiones(['res']);
+    _diProgramarPrevio(false);
+    refrescarAnclas();
+  }
+  function diForzar(){
+    var d = S.desinst;
+    ilusConfirm({title: 'Agendar igual', message: 'El técnico ya tiene trabajo en ese horario.',
+      sub: 'Solo un superadministrador puede agendar con choque. Queda registrado.', okLabel: 'Sí, agendar igual', cancelLabel: 'Volver', type: 'warning'})
+      .then(function(ok){ if (!ok) return; d.forzar = true; _diPintarRegiones(['avisos']); _diProgramarPrevio(true); refrescarAnclas(); });
+  }
+
+  /* Botón y pista del pie: «Crear 2 órdenes» + «Instalación 26/10 + desinstalación 26/11». */
+  function _o2mDiPieRotular(){
+    var hint = document.getElementById('o2mHint'); if (!hint) return;
+    if (_o2mDiTieneHija() && S.desinst.fecha){
+      hint.textContent = 'Instalación ' + _o2mFechaBonita(S.fecha).slice(0, 5) + ' + desinstalación ' + _o2mFechaBonita(S.desinst.fecha).slice(0, 5);
+    } else if (_o2mDiAplica() && S.desinst.lleva === 'por_definir' && S.desinst.fecha){
+      hint.textContent = 'Instalación ' + _o2mFechaBonita(S.fecha).slice(0, 5) + ' · desinstalación estimada ' + _o2mFechaBonita(S.desinst.fecha).slice(0, 5);
+    } else if (fase === 'form') {
+      hint.textContent = '';
+    }
+  }
+
   /* ── API PÚBLICA — un solo modal para todos los contextos ───────────
      Daniel (19-08-2026): "necesito que sea un modal genérico, para
      ahorrar código, un mismo modal con diferentes opciones, porque eso
@@ -11229,6 +12087,8 @@ window.OT2C = (function(){
     if (opts.titulo)     S.titulo     = opts.titulo;
     if (opts.descripcion) S.descripcion = opts.descripcion;
     if (opts.fecha)      S.fecha      = opts.fecha;
+    // 🧩 2026-10-20: «Agregar OT al evento» (/ot/?crear=1&evento=ID) abre el asistente con ese evento ya elegido.
+    if (opts.evento_id)  S._evPreset  = parseInt(opts.evento_id, 10) || null;
     // 🔧 FASE 3 REPUESTOS (2026-09-21): ver S.equipo_preset_maquina_id en
     // reset() y su consumo en cargarEquipos().
     if (opts.equipo_preset_maquina_id) S.equipo_preset_maquina_id = opts.equipo_preset_maquina_id;
@@ -11323,7 +12183,8 @@ window.OT2C = (function(){
     var _qs = new URLSearchParams(location.search);
     if (_qs.get('crear') === '1'){
       var _tid = parseInt(_qs.get('ticket') || '0', 10);
-      if (_tid) abrirDesdeTicket(_tid); else abrir();
+      var _evq = parseInt(_qs.get('evento') || '0', 10) || null;   // 🧩 2026-10-20
+      if (_tid) abrirDesdeTicket(_tid); else abrir(_evq ? {evento_id:_evq} : undefined);
     }
   });
 
@@ -11383,6 +12244,10 @@ window.OT2C = (function(){
           anexoAgregarItem:anexoAgregarItem, anexoQuitarItem:anexoQuitarItem, anexoRestaurarItems:anexoRestaurarItems,
           o2mCalMes:o2mCalMes, o2mCalHoy:o2mCalHoy, o2mCalClicDia:o2mCalClicDia,
           o2mCalReintentar:o2mCalReintentar, o2mDayPaso:o2mDayPaso,
-          o2mDaySugerirHueco:o2mDaySugerirHueco};
+          o2mDaySugerirHueco:o2mDaySugerirHueco,
+          // 🧩 2026-10-20 evento + desinstalación
+          setEvento:setEvento, quitarEvento:quitarEvento, filtrarEvento:filtrarEvento, crearEvento:crearEvento, usarDireccionEvento:usarDireccionEvento,
+          diLleva:diLleva, diFecha:diFecha, diCampo:diCampo, diMonto:diMonto, diBuscarHueco:diBuscarHueco, diTecModo:diTecModo, diTecTog:diTecTog,
+          diCobro:diCobro, diEqTog:diEqTog, diEqTodo:diEqTodo, diEqPlant:diEqPlant, diForzar:diForzar};
 })();
 </script>

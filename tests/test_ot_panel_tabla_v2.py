@@ -75,11 +75,12 @@ class TestZonasNuevas(unittest.TestCase):
         # El parámetro viaja con TODO: formulario, pie (3), encabezados, KPI (4), pestaña Tabla, nota y Limpiar.
         self.assertIn('{% if f_agenda %}<input type="hidden" name="agenda" value="{{ f_agenda }}">{% endif %}', H)
         self.assertGreaterEqual(H.count("agenda=f_agenda or None"), 9)
-        self.assertIn("{% if q or fase or f_tipo or f_tec or f_interna or f_anexo or f_pago or f_agenda %}", H)
+        # 🧩 2026-10-20: el filtro por evento se suma a la misma condición (Limpiar, nota de resultados y vacío).
+        self.assertIn("{% if q or fase or f_tipo or f_tec or f_interna or f_anexo or f_pago or f_agenda or f_evento %}", H)
         self.assertIn("· agenda <b>{{ agenda_opts | selectattr('0','equalto',f_agenda)", H)
-        self.assertIn("+ (1 if f_agenda else 0) %}", H)
+        self.assertIn("+ (1 if f_agenda else 0) + (1 if f_evento else 0) %}", H)
         # 2026-10-19: el Reporte Excel también lleva el filtro de agenda (antes con «Hoy» activo bajaba todo).
-        self.assertIn("&interna={{ f_interna or '' }}&agenda={{ f_agenda or '' }}\"", H)
+        self.assertIn("&interna={{ f_interna or '' }}&agenda={{ f_agenda or '' }}&evento={{ f_evento or '' }}\"", H)
         # En celular la tira avisa que hay más chips a la derecha y conserva el ícono de calendario como título.
         i = H.index("@media (max-width:640px){\n  .o2t-agenda{")
         tira = H[i:H.index("}\n", H.index(".o2t-agenda-t span", i)) + 2]
