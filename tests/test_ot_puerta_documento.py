@@ -424,7 +424,8 @@ class TestCandadosDeRutas(unittest.TestCase):
 
     def test_interruptor_del_cierre_no_se_salta_con_mayusculas(self):
         src = _src("mant_reglas_guardar")
-        self.assertRegex(src, r'str\(clave\)\.strip\(\)\.lower\(\)\s*==\s*"ot_factura_gate_activo"')
+        # 2026-10-20: la clave se resuelve contra la base (_canon, clave canónica) antes de comparar; vale igual.
+        self.assertRegex(src, r'(str\(clave\)|_canon\.get\(clave,\s*""\))\.strip\(\)\.lower\(\)\s*==\s*"ot_factura_gate_activo"')
 
     def test_put_no_cambia_el_tipo_a_preventiva_ni_el_documento_ligado(self):
         src = _src("mant_visita_update")
