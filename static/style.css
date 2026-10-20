@@ -556,7 +556,8 @@ body {
 
 /* — Logo area — compacto: la marca se recorta a su caja real (la imagen trae mucho aire alrededor) — */
 .sidebar-logo-area {
-  padding: 12px 14px 10px;
+  /* 2026-10-20 (Daniel: «está muy arriba el logo y todo el menú, lo bajaría unos dos dedos… y la raya un dedo de separación») */
+  padding: 40px 14px 26px;
   border-bottom: 1px solid rgba(255,255,255,.07);
   flex-shrink: 0;
 }

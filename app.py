@@ -107627,11 +107627,10 @@ def _ot2_crear_core(d, autorizacion=None):
                 "no_llego": bool(_tm.get("no_llego")),
             })
 
-    # 🧩 2026-10-17 (Daniel, NVI 687): checklist HEREDADO. Una fila marcada
-    # «automática» no confía en lo que mandó el navegador: el servidor vuelve a
-    # resolver base + bloque del sistema (producto o clase) + condicional. Una
-    # fila que la persona cambió a mano se respeta, pero solo con plantillas
-    # válidas para este tipo (activas, con ítems, misma categoría).
+    # 🧩 2026-10-17 (Daniel, NVI 687): checklist HEREDADO. Desde el 20-10 (REGLA #32)
+    # el asistente solo SUGIERE la plantilla según la clase y cada fila lleva
+    # exactamente la que la persona eligió; aquí solo se valida (activa, con ítems,
+    # categoría o mapeada al tipo) y se avisa si alguna no se pudo aplicar.
     _chk_condicionales = set()
     if any(_t.get("plantilla_ids") or _t.get("checklist_auto") for _t in tareas_manuales):
         _chk_auto = [_t for _t in tareas_manuales if _t.get("checklist_auto") and _t.get("sku")]
@@ -107650,9 +107649,16 @@ def _ot2_crear_core(d, autorizacion=None):
                     # debes mostrar las opciones»): lo que la persona ve y elige en la fila es
                     # EXACTAMENTE lo que recibe el técnico. El servidor solo completa una fila
                     # que llegó SIN plantillas (navegador antiguo); nunca reemplaza una elección.
-                    if not _t.get("plantilla_ids"):
-                        _t["plantilla_ids"] = [b["id"] for b in (_h.get("base"), _h.get("sistema"),
-                                                                 _h.get("condicional")) if b]
+                    # 🔒 2026-10-20 (Daniel, OT 328/329, REGLA #32: «no debes imponer o gestionar
+                    # más checklists, sino los que impone el usuario»): el servidor ya NO completa
+                    # nada. Y una pestaña abierta antes del arreglo del asistente todavía manda
+                    # base + bloque + condicional, aunque la fila solo MOSTRABA el bloque: se deja
+                    # solo lo que la persona veía (el bloque; si no había bloque, la base).
+                    _ids = list(_t.get("plantilla_ids") or [])
+                    if len(_ids) > 1:
+                        _ocultas = {b["id"] for b in (_h.get("base"), _h.get("condicional")) if b}
+                        _vistas = [_i for _i in _ids if _i not in _ocultas]
+                        _t["plantilla_ids"] = _vistas or _ids[:1]
         _chk_validas = _chk_plantillas_validas(
             {_i for _t in tareas_manuales for _i in (_t.get("plantilla_ids") or [])}, tipo_ot)
         # 🔎 2026-10-19 (Daniel, NVI 687: «me trae los de LU… ninguna se está

@@ -339,8 +339,16 @@ class TestCrearOT(unittest.TestCase):
 
     def test_el_servidor_no_reemplaza_lo_que_eligio_la_persona(self):
         # 2026-10-19 (Daniel: «que se controle por el front, tú solo debes mostrar las opciones»).
-        self.assertIn('if not _t.get("plantilla_ids"):\n                        _t["plantilla_ids"] = [b["id"]', self.f)
         self.assertNotIn('if _h.get("sistema") or not _t.get("plantilla_ids"):', self.f)
+        # 2026-10-20 (REGLA #32): el servidor no completa filas vacías y una pestaña vieja que manda
+        # base + bloque + condicional queda solo con lo que la fila mostraba.
+        self.assertNotIn('_t["plantilla_ids"] = [b["id"] for b in (_h.get("base"), _h.get("sistema"),', self.f)
+        self.assertIn('_ocultas = {b["id"] for b in (_h.get("base"), _h.get("condicional")) if b}', self.f)
+        self.assertIn('_t["plantilla_ids"] = _vistas or _ids[:1]', self.f)
+
+    def test_el_asistente_manda_solo_la_plantilla_de_la_fila(self):
+        self.assertIn("var b = tm.chk_sistema || tm.chk_base;", M)
+        self.assertNotIn("[tm.chk_base, tm.chk_sistema, tm.chk_cond]", M)
 
     def test_una_plantilla_descartada_vuelve_como_aviso(self):
         self.assertIn("_chk_descartadas.append(", self.f)

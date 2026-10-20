@@ -1027,5 +1027,19 @@ Cualquier skill, plugin o herramienta externa de diseño que se instale propone,
 
 ---
 
-_Última actualización: 2026-10-16_
+## 🎛️ REGLA #32 — Checklists y plantillas: el sistema SUGIERE, el usuario DECIDE (regla estricta, no negociable)
+
+**Pedido explícito de Daniel (2026-10-19 y 2026-10-20, OT 328/329 de la revisión NVI 687):** «necesito que se controle por el front, tú solo debes mostrar las opciones… el usuario es el que decide qué plantilla o checklist… para todo» y «como es regla estricta del proyecto, no debes imponer o gestionar más checklists, sino los que impone el usuario».
+
+Incidente real: el asistente sumaba por detrás «Revisión — Registro por equipo» y «Revisión — Estructura y tapiz» a la plantilla «(LU) …» de Lenin que se veía elegida en cada fila; las OT 328/329 nacieron con ~480 tareas en vez de 7-9 por producto.
+
+- **Lo que se ve elegido en pantalla es EXACTAMENTE lo que recibe el técnico.** Nada se agrega por detrás: ni una «base», ni un «condicional», ni una plantilla estándar que la persona no vio.
+- **El servidor nunca reemplaza ni completa** la elección: solo valida (activa, con ítems, categoría o mapeada al tipo) y, si algo no se puede aplicar, lo devuelve como **aviso visible**, nunca en silencio. Código: `_ot2_crear_core` (bloque «checklist HEREDADO») y `_o2mChkIds` en `templates/ot2/_modal_crear.html`.
+- **Sugerir sí, con su origen a la vista** («Sugerida según su clase», «Guardada para este producto», «Elegida a mano»), y la persona puede cambiarla o quitarla.
+- **Ninguna plantilla se modifica sola** (arranque, migración, semilla, sincronización): cambiar el contenido de una plantilla existente es una acción de una persona en Plantillas, con vista previa y confirmación. Las plantillas «(LU) …» de **Lenin Urbina** jamás se modifican desde el código. Sembrar una plantilla NUEVA solo si no existe por nombre sí está permitido.
+- Aplica a TODO tipo de OT (instalación, mantención, revisión, trabajo interno…) y a todo camino que cree o agregue tareas. Pruebas: `tests/test_ot_checklist_herencia.py`.
+
+---
+
+_Última actualización: 2026-10-20_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

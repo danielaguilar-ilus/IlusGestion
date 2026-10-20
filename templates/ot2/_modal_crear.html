@@ -5643,9 +5643,13 @@ window.OT2C = (function(){
     var n = String(b.nombre || '').replace(/^Control de Calidad — /, '').replace(/^Revisión — /, '').replace(/^Detalle /, '');
     return n.charAt(0).toUpperCase() + n.slice(1);
   }
+  // 🎛️ 2026-10-20 (Daniel, OT 328: «que predominen mis checklist… se supone que nosotros elegimos la
+  // plantilla»): se envía SOLO la plantilla que se ve elegida en la fila. Antes se sumaban por detrás la
+  // base («Registro por equipo») y el condicional, que la fila no mostraba. Si no se eligió ninguna
+  // («— Solo la base —»), va la base, que es lo que dice esa opción.
   function _o2mChkIds(tm){
-    return [tm.chk_base, tm.chk_sistema, tm.chk_cond]
-      .filter(function(b){ return b && b.id; }).map(function(b){ return b.id; });
+    var b = tm.chk_sistema || tm.chk_base;
+    return (b && b.id) ? [b.id] : [];
   }
   // 🧾 2026-10-18 (Daniel: «que quede persistente en los datos de la orden de trabajo, pero que no lo evidencie a los
   // clientes ni a los técnicos… quién lo hizo, cuándo, por qué y el argumento»). El buscador del ERP entrega por línea
@@ -5749,11 +5753,11 @@ window.OT2C = (function(){
   function _o2mChkNota(){
     var t = S.tareas_manuales.find(function(x){ return x.chk && x.chk_base; });
     if (!t) return '';
-    return '<div class="o2m-her-nota o2m-rv-hint-nota"><i class="bi bi-diagram-3"></i> Cada producto trae su checklist: ' +
-      '<b>' + esc(_o2mChkNombre(t.chk_base)) + '</b> + el bloque de su sistema (según su clase del catálogo).' +
-      (t.chk_cond ? ' <b>' + esc(_o2mChkNombre(t.chk_cond)) + '</b> se abre solo si la revisión marca una observación.' : '') +
-      ' Máquinas: una tarjeta por unidad. Discos y mancuernas: una por línea, para contar. ' +
-      'Si algo no llegó, se declara en la revisión de ese producto.</div>';
+    // 🎛️ 2026-10-20 (REGLA #32): la nota solo describe lo que la persona ve elegido en cada fila.
+    return '<div class="o2m-her-nota o2m-rv-hint-nota"><i class="bi bi-diagram-3"></i> Cada producto lleva <b>solo la plantilla elegida en su fila</b> ' +
+      '(la sugerida sale de su clase del catálogo; puedes cambiarla). ' +
+      'Máquinas: una tarjeta por unidad. Discos y mancuernas: una por línea, para contar. ' +
+      'Si algo no llegó o no se puede usar, se declara en la ficha, arriba de ese producto.</div>';
   }
   // Columna CHECKLIST de una fila con checklist heredado: el bloque de su sistema y de dónde salió, con el mismo
   // aviso de la tabla de cliente («✨ Sugerida automáticamente»). La clasificación vive ahora en la columna CLASE.
