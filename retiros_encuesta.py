@@ -812,6 +812,7 @@ def register_encuesta_routes(app, ctx):
         error_datos = False
         preguntas, tarjetas, comentarios, total_coment = [], [], [], 0
         n_resp, n_inv, elegibles = 0, 0, None
+        n_venc, enviadas_desde = 0, ""                 # 2026-10-20: embudo siempre visible (vencidas sin responder, desde cuándo)
         try:
             preguntas = _preguntas_vigentes()
             if demo:
@@ -824,9 +825,12 @@ def register_encuesta_routes(app, ctx):
             else:
                 tot = mysql_fetchone(
                     "SELECT COALESCE(SUM(CASE WHEN enviada_en IS NOT NULL OR respondida_en IS NOT NULL THEN 1 ELSE 0 END),0) "
-                    "AS total, COALESCE(SUM(CASE WHEN respondida_en IS NOT NULL THEN 1 ELSE 0 END),0) "
-                    "AS resp FROM pickup_encuesta_invitaciones") or {}
+                    "AS total, COALESCE(SUM(CASE WHEN respondida_en IS NOT NULL THEN 1 ELSE 0 END),0) AS resp, "
+                    "COALESCE(SUM(CASE WHEN respondida_en IS NULL AND enviada_en IS NOT NULL AND vence_en < %s THEN 1 ELSE 0 END),0) "
+                    "AS venc, MIN(enviada_en) AS desde FROM pickup_encuesta_invitaciones", (_ahora(),)) or {}
                 n_inv, n_resp = int(tot.get("total") or 0), int(tot.get("resp") or 0)
+                n_venc = int(tot.get("venc") or 0)
+                enviadas_desde = _fmt_fecha(tot.get("desde"))[:10] if tot.get("desde") else ""
                 filas = mysql_fetchall(
                     "SELECT p.clave AS clave, r.valor_num AS valor_num, r.valor_texto AS valor_texto, COUNT(*) AS c "
                     "FROM pickup_encuesta_respuestas r JOIN pickup_encuesta_preguntas p ON p.id=r.pregunta_id "
@@ -865,6 +869,7 @@ def register_encuesta_routes(app, ctx):
                        resumen=resumen_general(tarjetas, n_resp, n_inv),
                        activa=encuesta_activa(), error_datos=error_datos, elegibles=elegibles, n_resp=n_resp,
                        n_inv=n_inv, pocos=0 < n_resp < MIN_RESPUESTAS_CONFIABLES, hay_datos=n_resp > 0,
+                       n_venc=n_venc, n_pend=max(n_inv - n_resp - n_venc, 0), enviadas_desde=enviadas_desde,
                        pagina=pagina, paginas=paginas, por_pagina=por_pagina, total_coment=total_coment,
                        desde=desde, hasta=hasta, opciones_pagina=(10, 25, 50, 100), puede_editar=_puede_editar(),
                        n_activas=sum(1 for p in preguntas if p["activa"]))
