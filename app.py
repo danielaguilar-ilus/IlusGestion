@@ -72,6 +72,7 @@ import ot_producto_estado as _pe    # acciones por producto de una OT interna (N
 import ot_anexo_costo as _oac    # 2026-10-20: el costo de la OT y el anexo del proveedor son UN solo valor (módulo puro con pruebas)
 import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién puede serlo, defecto al crear, cambio y avisos suaves): reglas puras con pruebas
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
+import plantillas_serie_gps as _psg  # 2026-10-21 (REGLA #39): N° de serie + GPS estándar en toda plantilla (reglas puras con pruebas)
 import ot_hallazgos as _oh    # 2026-10-21 (REGLA #38): hallazgos de la OT (alerta, «tomar el caso» y OT de seguimiento): reglas puras con pruebas
 import fedex_labels as _fxlabels    # parser puro de etiquetas FedEx (testeable)
 _ERP = erp_engine.init_engine(
@@ -123750,6 +123751,11 @@ def mant_plantilla_crear():
             norm["orden"] = idx + 1
         items_norm.append(norm)
 
+    # 🔢 2026-10-21 (REGLA #39, Daniel: «todas las plantillas al crearse lleven esto por obligación, el número de
+    # serie y el GPS»): toda plantilla NUEVA nace con el objeto N° de serie y el GPS arriba. Si el editor ya los trae,
+    # no se duplican. (Editar una plantilla existente no se toca: eso va por el lote con confirmación.)
+    items_norm, _std_agregados = _psg.completar_items_nueva(items_norm)
+
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
@@ -123781,7 +123787,7 @@ def mant_plantilla_crear():
         try:
             _mant_log("plantilla", pid, "creada", f"{nombre} ({len(items_norm)} items)")
         except Exception: pass
-        return jsonify({"ok": True, "id": pid, "items_count": len(items_norm)})
+        return jsonify({"ok": True, "id": pid, "items_count": len(items_norm), "agregados_estandar": _std_agregados})
     except Exception as _ex:
         conn.rollback()
         _msg = _plantilla_error_nombre_duplicado(_ex, nombre, tv)
@@ -161414,6 +161420,256 @@ def mant_plantillas_propuestas_aplicar():
     if err:
         return jsonify({"ok": False, "error": err[0], "error_codigo": err[2]}), err[1]
     return jsonify(dict(res, ok=True))
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 🔢 2026-10-21 (REGLA #39) — N° DE SERIE + GPS ESTÁNDAR EN TODA PLANTILLA, y una plantilla por cada clasificación.
+# Daniel: «el objeto N° de serie… si no lo tienen, agrégalo a la fuerza para que las plantillas estén estandarizadas.
+# Todas las plantillas al crearse lleven esto por obligación, el número de serie y el GPS» (motivo: etiqueta de
+# respaldo/garantía, saber si despegaron o vulneraron un equipo) y «incluye también las (LU) de Lenin; yo le aviso».
+# Y: «que existan en las plantillas todas las categorías de la clasificación de productos».
+# Cumple la REGLA #32: NADA corre en el arranque. Una PERSONA (gestión, nunca técnicos) ve la lista con vista previa y
+# confirma; las (LU) además exigen superadmin + marca expresa. Las OT ya creadas conservan su copia de las tareas.
+# Lógica pura y probada en plantillas_serie_gps.py (tests/test_plantillas_serie_gps.py).
+# ══════════════════════════════════════════════════════════════════════
+_PSG_ACCION_LABEL = {
+    "convertir_serie": "El ítem de texto «N° de serie» pasa a ser el objeto N° de serie",
+    "agregar_serie": "Agregar el objeto N° de serie",
+    "agregar_gps": "Agregar el objeto GPS",
+}
+
+
+def _psg_leer():
+    """(plantillas, {plantilla_id: [ítems]}). Solo lectura."""
+    plantillas = mysql_fetchall(
+        "SELECT id, nombre, categoria_admin, COALESCE(activa, 1) AS activa FROM mant_tarea_plantillas "
+        " ORDER BY categoria_admin, nombre") or []
+    items = {}
+    for f in mysql_fetchall(
+            "SELECT plantilla_id, id, orden, titulo, tipo_respuesta FROM mant_tarea_plantilla_items "
+            " ORDER BY plantilla_id, orden, id") or []:
+        items.setdefault(int(f["plantilla_id"]), []).append(dict(f))
+    return [dict(p) for p in plantillas], items
+
+
+def _psg_auditar():
+    """Auditoría completa y de SOLO LECTURA: qué plantillas activas no están estándar y qué clases no tienen plantilla."""
+    plantillas, items = _psg_leer()
+    filas, ok = [], 0
+    for p in plantillas:
+        if not int(p.get("activa") or 0):
+            continue
+        its = items.get(int(p["id"]), [])
+        pl = _psg.plan(its)
+        if pl["estado"] == "ok":
+            ok += 1
+            continue
+        cat = str(p.get("categoria_admin") or "").strip().lower()
+        nombre = str(p.get("nombre") or "")
+        bloque = _psg.es_bloque_revision(nombre)
+        filas.append({
+            "id": int(p["id"]), "nombre": nombre, "categoria": cat,
+            "categoria_label": _PLANT_CATEGORIA_LABEL.get(cat, cat or "Sin categoría"),
+            "es_lu": _psg.es_lu(nombre), "bloque_revision": bloque, "n_items": pl["n_items"],
+            "estado": pl["estado"], "acciones": [_PSG_ACCION_LABEL[a] for a in pl["acciones"]],
+            "agregan": pl["agregan"], "convierte": pl["convierte"], "huella": _psg.huella(its),
+            "marcada": not bloque,
+            "aviso": ("Bloque que se usa una vez por producto dentro de una OT interna: un GPS por producto no tiene "
+                      "sentido, por eso viene sin marcar.") if bloque else "",
+        })
+    try:
+        clases = mysql_fetchall("SELECT id, nombre FROM cat_clases_producto WHERE activo=1 ORDER BY orden, nombre") or []
+    except Exception as e:
+        print(f"[serie_gps] clases del catálogo: {type(e).__name__}: {e}", flush=True)
+        clases = []
+    faltan = []
+    for f in _psg.faltantes_por_clase([dict(c) for c in clases], plantillas):
+        faltan.append(dict(f, categoria_label=_PLANT_CATEGORIA_LABEL.get(f["categoria"], f["categoria"]),
+                           marcada=f["categoria"] in _psg.CATEGORIAS_CLASE_POR_DEFECTO))
+    return {
+        "resumen": {"plantillas_activas": ok + len(filas), "ya_estandar": ok, "pendientes": len(filas),
+                    "pendientes_lu": sum(1 for f in filas if f["es_lu"]), "clases": len(clases),
+                    "clases_sin_plantilla": len(faltan)},
+        "filas": filas, "clases_faltantes": faltan, "categorias": _PLANT_CATEGORIA_LABEL,
+    }
+
+
+@app.route("/mantenciones/api/plantillas/serie-gps", methods=["GET"])
+@_mant_required
+@_no_tecnico_externo
+def mant_plantillas_serie_gps():
+    """🔢 REGLA #39: auditoría (solo lectura) del estándar N° de serie + GPS y de las clasificaciones sin plantilla."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Esta pantalla es de gestión."}), 403
+    try:
+        return jsonify(dict(_psg_auditar(), ok=True, puede_lu=_es_superadmin_actual()))
+    except Exception as e:
+        print(f"[serie_gps] auditar: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo revisar las plantillas. Intenta de nuevo."}), 500
+
+
+def _psg_aplicar_una(pid, huella_vista, confirma_lu, es_super, user):
+    """Deja UNA plantilla estándar. Devuelve (estado, mensaje). Del navegador solo se toma el id y la huella de lo que
+    la persona vio; todo lo demás se recalcula aquí. Una transacción por plantilla: si una falla, las otras siguen."""
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, nombre FROM mant_tarea_plantillas WHERE id=%s", (pid,))
+            pl = cur.fetchone()
+            if not pl:
+                return "no_existe", "La plantilla ya no existe."
+            nombre = str(pl.get("nombre") or "")
+            if _psg.es_lu(nombre) and not (es_super and confirma_lu):
+                return "lu_sin_confirmar", "Es una plantilla (LU) de Lenin: solo el superadministrador, con la marca expresa."
+            cur.execute("SELECT id, orden, titulo, tipo_respuesta FROM mant_tarea_plantilla_items "
+                        " WHERE plantilla_id=%s ORDER BY orden, id FOR UPDATE", (pid,))
+            vivos = [dict(r) for r in (cur.fetchall() or [])]
+            if huella_vista and _psg.huella(vivos) != huella_vista:
+                conn.rollback()
+                return "cambio", "La plantilla cambió mientras la mirabas. Recarga la lista."
+            calc = _psg.ordenes_para_aplicar(vivos)
+            if not calc["desplazar"]:
+                conn.rollback()
+                return "ya_estaba", "Ya tenía el estándar."
+            # Bitácora ANTES de tocar nada (REGLA #5), en la misma transacción.
+            cur.execute(
+                "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) VALUES (%s,%s,%s,%s,%s)",
+                ("plantilla", pid, "serie_gps_estandar",
+                 (f"«{nombre}»: {user} aplicó el estándar N° de serie + GPS ("
+                  + "; ".join(_PSG_ACCION_LABEL.get(a, a) for a in _psg.plan(vivos)["acciones"])
+                  + f"). Ítems antes: {len(vivos)}." + (" Plantilla (LU) confirmada por el superadmin." if _psg.es_lu(nombre) else ""))[:4000],
+                 user))
+            if calc["convertir_id"]:
+                cur.execute("UPDATE mant_tarea_plantilla_items SET orden=COALESCE(orden,0)+%s "
+                            " WHERE plantilla_id=%s AND id<>%s", (calc["desplazar"], pid, calc["convertir_id"]))
+                cur.execute("UPDATE mant_tarea_plantilla_items SET tipo_respuesta='serie', obligatoria=1, orden=%s "
+                            " WHERE id=%s AND plantilla_id=%s", (calc["orden_convertido"], calc["convertir_id"], pid))
+            else:
+                cur.execute("UPDATE mant_tarea_plantilla_items SET orden=COALESCE(orden,0)+%s WHERE plantilla_id=%s",
+                            (calc["desplazar"], pid))
+            _prop_insertar_items(cur, pid, calc["nuevos"])
+        conn.commit()
+        return "aplicada", nombre
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"[serie_gps] aplicar {pid}: {type(e).__name__}: {e}", flush=True)
+        return "error", "No se pudo aplicar a esta plantilla."
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/plantillas/serie-gps/aplicar", methods=["POST"])
+@_mant_required
+@_no_tecnico_externo
+def mant_plantillas_serie_gps_aplicar():
+    """🔢 REGLA #39: una PERSONA confirma el lote. Body: {plantillas: [{id, huella}], confirma_lu: bool}."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Esta acción es de gestión."}), 403
+    d = request.get_json(silent=True) or {}
+    pedidas = d.get("plantillas") or []
+    if not isinstance(pedidas, list) or not pedidas:
+        return jsonify({"ok": False, "error": "Marca al menos una plantilla."}), 400
+    if len(pedidas) > 300:
+        return jsonify({"ok": False, "error": "Máximo 300 plantillas por vez."}), 400
+    es_super = _es_superadmin_actual()
+    confirma_lu = bool(d.get("confirma_lu"))
+    user = current_username() or "sistema"
+    res = []
+    for p in pedidas:
+        try:
+            pid = int((p or {}).get("id") or 0)
+        except (TypeError, ValueError):
+            pid = 0
+        if pid <= 0:
+            continue
+        est, msg = _psg_aplicar_una(pid, str((p or {}).get("huella") or "")[:40], confirma_lu, es_super, user)
+        res.append({"id": pid, "estado": est, "mensaje": msg})
+    cuenta = {}
+    for r in res:
+        cuenta[r["estado"]] = cuenta.get(r["estado"], 0) + 1
+    return jsonify({"ok": True, "resultados": res, "cuenta": cuenta})
+
+
+def _psg_crear_clase(clase, categoria, user):
+    """Crea UNA plantilla «en cero» para (clase, categoría) con los dos objetos estándar. (estado, id|mensaje)."""
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_tarea_plantillas "
+                "(nombre, descripcion, tipo_visita, tiempo_estimado_min, familia_checklist, familia_activo, "
+                " categoria_admin, aplica_plan_mantencion, activa, es_sistema, created_by) "
+                "VALUES (%s,%s,%s,NULL,'otro','todas',%s,1,1,0,%s)",
+                (clase[:200],
+                 f"Plantilla creada en cero para la clasificación «{clase}»: ya trae N° de serie y GPS; "
+                 "falta el resto del checklist.",
+                 _psg.TIPO_VISITA_POR_CATEGORIA.get(categoria, "otro"), categoria, user))
+            pid = cur.lastrowid
+            _prop_insertar_items(cur, pid, [_psg.item_serie(1), _psg.item_gps(2)])
+            cur.execute(
+                "INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) VALUES (%s,%s,%s,%s,%s)",
+                ("plantilla", pid, "creada_por_clase",
+                 f"«{clase}» ({categoria}) creada en cero por {user}: clasificación del catálogo sin plantilla.", user))
+        conn.commit()
+        try:   # marca «revisar» para que se vea que está pendiente de llenar (columna opcional)
+            mysql_execute("UPDATE mant_tarea_plantillas SET revisar_tecnico=1 WHERE id=%s AND revisar_tecnico IS NULL", (pid,))
+        except Exception:
+            pass
+        return "creada", pid
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        if "uq_plant_nombre_cat" in str(e) or "1062" in str(e):
+            return "ya_existe", "Ya existe una plantilla con ese nombre en esa categoría."
+        print(f"[serie_gps] crear clase {clase}/{categoria}: {type(e).__name__}: {e}", flush=True)
+        return "error", "No se pudo crear."
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/plantillas/serie-gps/crear-clases", methods=["POST"])
+@_mant_required
+@_no_tecnico_externo
+def mant_plantillas_crear_clases():
+    """🔢 REGLA #39: crea, con la confirmación de una persona, las plantillas que faltan por clasificación del catálogo.
+    Body: {pares: [{clase_id, categoria}]}. El nombre sale SIEMPRE de la base (nunca del navegador)."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Esta acción es de gestión."}), 403
+    d = request.get_json(silent=True) or {}
+    pares = d.get("pares") or []
+    if not isinstance(pares, list) or not pares:
+        return jsonify({"ok": False, "error": "Marca al menos una."}), 400
+    if len(pares) > 400:
+        return jsonify({"ok": False, "error": "Máximo 400 por vez."}), 400
+    try:
+        vigentes = {(f["clase_id"], f["categoria"]): f["clase"] for f in _psg_auditar()["clases_faltantes"]}
+    except Exception as e:
+        print(f"[serie_gps] clases faltantes: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo revisar el catálogo."}), 500
+    user = current_username() or "sistema"
+    res = []
+    for p in pares:
+        try:
+            clave = (int((p or {}).get("clase_id") or 0), str((p or {}).get("categoria") or "").strip().lower())
+        except (TypeError, ValueError):
+            continue
+        clase = vigentes.get(clave)
+        if not clase:
+            res.append({"clase_id": clave[0], "categoria": clave[1], "estado": "no_vigente",
+                        "mensaje": "Ya existe o la clasificación ya no está activa."})
+            continue
+        est, extra = _psg_crear_clase(clase, clave[1], user)
+        res.append({"clase_id": clave[0], "categoria": clave[1], "clase": clase, "estado": est,
+                    "plantilla_id": extra if est == "creada" else None, "mensaje": "" if est == "creada" else extra})
+    cuenta = {}
+    for r in res:
+        cuenta[r["estado"]] = cuenta.get(r["estado"], 0) + 1
+    return jsonify({"ok": True, "resultados": res, "cuenta": cuenta})
 
 
 # ══════════════════════════════════════════════════════════════════════

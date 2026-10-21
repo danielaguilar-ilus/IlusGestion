@@ -309,6 +309,10 @@
     <button type="button" class="btn btn-sm btn-outline-primary fw-bold" onclick="abrirPropuestas()" id="btnPropuestas">
       <i class="bi bi-lightbulb me-1"></i>Propuestas del sistema<span id="propBadge" hidden></span>
     </button>
+    {#- 🔢 2026-10-21 (REGLA #39): estándar N° de serie + GPS en toda plantilla y una plantilla por cada clasificación. Lo aplica una persona. -#}
+    <button type="button" class="btn btn-sm btn-outline-dark fw-bold" onclick="abrirSerieGps()" id="btnSerieGps">
+      <i class="bi bi-upc-scan me-1"></i>Estándar serie + GPS<span id="sgBadge" hidden></span>
+    </button>
     <button class="btn btn-sm btn-ilus fw-bold" onclick="abrirEditor(null)">
       <i class="bi bi-plus-circle me-1"></i>Nueva plantilla
     </button>
@@ -430,6 +434,50 @@
 .prop-no{font-size:.78rem;color:#6b7280;margin-top:6px}
 #propBadge{background:#dc2626;color:#fff;border-radius:999px;font-size:.68rem;padding:1px 7px;margin-left:4px}
 </style>
+<style>
+#sgBadge{background:#dc2626;color:#fff;border-radius:999px;font-size:.68rem;padding:1px 7px;margin-left:4px}
+.sg-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.sg-tab{min-height:44px;border:1.5px solid #d1d5db;background:#fff;border-radius:12px;padding:6px 14px;font-weight:700;font-size:.88rem}
+.sg-tab.active{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+.sg-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.sg-bar .btn,.sg-bar select{min-height:44px}
+.sg-row{display:flex;gap:10px;align-items:flex-start;background:#fff;border:1.5px solid #e5e7eb;border-left:5px solid #f59e0b;border-radius:12px;padding:10px 12px;margin-bottom:8px}
+.sg-row.lu{border-left-color:#dc2626}
+.sg-row input[type=checkbox]{width:22px;height:22px;flex:none;margin-top:2px}
+.sg-row b{display:block;overflow-wrap:anywhere;line-height:1.25}
+.sg-row .sg-sub{font-size:.8rem;color:#4b5563;margin-top:3px}
+.sg-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:999px;font-size:.74rem;font-weight:700;margin:2px 4px 0 0;background:#f3f4f6;color:#374151}
+.sg-chip.add{background:#dcfce7;color:#166534;border:1px solid #86efac}
+.sg-chip.lu{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
+.sg-chip.av{background:#fff8e1;color:#92400e;border:1px solid #fcd34d}
+.sg-pie{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-top:10px;font-size:.84rem}
+.sg-pie .btn,.sg-pie select{min-height:44px}
+</style>
+<div class="modal fade" id="modalSerieGps" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
+    <div class="modal-content" style="border-radius:14px">
+      <div class="modal-header py-2" style="background:#0a0a0a;color:#fff">
+        <h6 class="modal-title fw-bold"><i class="bi bi-upc-scan me-2" style="color:#dc2626"></i>Estándar N° de serie + GPS</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar" style="width:44px;height:44px"></button>
+      </div>
+      <div class="modal-body" style="background:#f4f4f5">
+        <p class="small text-muted mb-3">Toda plantilla lleva el objeto <b>N° de serie</b> y el <b>GPS</b>, arriba. Aquí ves cuáles no los tienen y
+          <b>tú decides</b> a cuáles se los agregas. Las OT ya creadas conservan su copia; las nuevas usan la plantilla actualizada.
+          Todo queda en la bitácora con tu nombre.</p>
+        <div class="sg-tabs" role="tablist">
+          <button type="button" class="sg-tab active" id="sgTabP" onclick="sgTab('p')">Plantillas sin el estándar <span id="sgNP"></span></button>
+          <button type="button" class="sg-tab" id="sgTabC" onclick="sgTab('c')">Clasificaciones sin plantilla <span id="sgNC"></span></button>
+        </div>
+        <div id="sgCuerpo"><div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>Revisando las plantillas…</div></div>
+      </div>
+      <div class="modal-footer py-2 flex-wrap">
+        <span class="small text-muted me-auto" id="sgSel"></span>
+        <button type="button" class="btn btn-outline-secondary" style="min-height:44px" data-bs-dismiss="modal">Cerrar</button>
+        <button type="button" class="btn btn-ilus fw-bold" style="min-height:44px" id="sgAplicar" onclick="sgAplicar()" disabled>Aplicar</button>
+      </div>
+    </div>
+  </div>
+</div>
 <div class="modal fade" id="modalPropuestas" tabindex="-1" data-bs-backdrop="static">
   <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
     <div class="modal-content" style="border-radius:14px">
@@ -1871,8 +1919,13 @@ async function guardarPlantilla(){
     if (!d.ok){ alert('Error: ' + (d.error||'desconocido')); return; }
     if (_modal) _modal.hide();
     if (typeof ilusToast === 'function') ilusToast('✓ Plantilla guardada con '+(d.items_count||0)+' item(s)', {type:'success'});
+    // 🔢 REGLA #39: una plantilla nueva nace con el N° de serie y el GPS; si el servidor los agregó, se le dice a la persona.
+    if (d.agregados_estandar && d.agregados_estandar.length && typeof ilusAlert === 'function'){
+      ilusAlert({title: 'Estándar ILUS agregado', message: 'Toda plantilla nueva lleva el N° de serie y el GPS arriba. Se agregó: ' + d.agregados_estandar.join(' · ') + '.', type: 'info'});
+    }
     cargarPlantillas();
     cargarCoberturaClases();  // la plantilla recién creada puede tapar un hueco
+    if (typeof sgCargar === 'function') sgCargar(true);
   } catch(e){ alert('Error de red: '+e.message); }
 }
 
@@ -2238,6 +2291,156 @@ async function propAplicar(i, modo){
     ilusToast('Error de conexión: no se aplicó nada.', {type: 'error'});
   }
 }
-document.addEventListener('DOMContentLoaded', () => { propCargar(true); });
+/* ═══ 🔢 2026-10-21 (REGLA #39) — ESTÁNDAR N° DE SERIE + GPS y una plantilla por clasificación. El servidor calcula y aplica; aquí se ve y se decide. ═══ */
+let _SG = {data: null, tab: 'p', cat: '', selP: new Set(), selC: new Set(), pag: {p: 1, c: 1}, tam: {p: 25, c: 25}};
+function sgFiltradas(){
+  const d = _SG.data || {};
+  const lista = _SG.tab === 'p' ? (d.filas || []) : (d.clases_faltantes || []);
+  return _SG.cat ? lista.filter(x => (x.categoria || '') === _SG.cat) : lista;
+}
+function sgClave(x){ return _SG.tab === 'p' ? String(x.id) : (x.clase_id + '|' + x.categoria); }
+function sgSet(){ return _SG.tab === 'p' ? _SG.selP : _SG.selC; }
+async function sgCargar(silencioso){
+  try {
+    const r = await fetch('/mantenciones/api/plantillas/serie-gps', {credentials: 'same-origin', cache: 'no-store'});
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'error');
+    _SG.data = j;
+    _SG.selP = new Set((j.filas || []).filter(f => f.marcada).map(f => String(f.id)));
+    _SG.selC = new Set((j.clases_faltantes || []).filter(f => f.marcada).map(f => f.clase_id + '|' + f.categoria));
+  } catch(e){
+    _SG.data = null;
+    if (!silencioso) document.getElementById('sgCuerpo').innerHTML = '<div class="alert alert-warning mb-0">No se pudo revisar. Intenta de nuevo en un momento.</div>';
+    return;
+  }
+  const n = (_SG.data.resumen.pendientes || 0) + (_SG.data.resumen.clases_sin_plantilla || 0);
+  const b = document.getElementById('sgBadge');
+  if (b){ b.hidden = !n; b.textContent = String(n); }
+  if (!silencioso) sgRender();
+}
+function abrirSerieGps(){
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalSerieGps')).show();
+  document.getElementById('sgCuerpo').innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>Revisando las plantillas…</div>';
+  sgCargar(false);
+}
+function sgTab(t){ _SG.tab = t; _SG.cat = ''; sgRender(); }
+function sgCat(v){ _SG.cat = v; _SG.pag[_SG.tab] = 1; sgRender(); }
+function sgTam(v){ _SG.tam[_SG.tab] = parseInt(v, 10) || 25; _SG.pag[_SG.tab] = 1; sgRender(); }
+function sgPag(delta){ _SG.pag[_SG.tab] += delta; sgRender(); }
+function sgToggle(clave, on){ const s = sgSet(); if (on) s.add(clave); else s.delete(clave); sgResumenSel(); }
+function sgToggleTodo(){
+  const lista = sgFiltradas(), s = sgSet();
+  const hayDesmarcada = lista.some(x => !s.has(sgClave(x)));
+  lista.forEach(x => { if (hayDesmarcada) s.add(sgClave(x)); else s.delete(sgClave(x)); });
+  sgRender();
+}
+function sgResumenSel(){
+  const nP = _SG.selP.size, nC = _SG.selC.size;
+  document.getElementById('sgSel').textContent = nP + ' plantilla' + (nP === 1 ? '' : 's') + ' y ' + nC + ' clasificación' + (nC === 1 ? '' : 'es') + ' marcadas';
+  const btn = document.getElementById('sgAplicar');
+  const n = _SG.tab === 'p' ? nP : nC;
+  btn.disabled = !n;
+  btn.textContent = _SG.tab === 'p' ? 'Agregar serie + GPS a ' + nP : 'Crear ' + nC + ' plantilla' + (nC === 1 ? '' : 's');
+}
+function sgRender(){
+  const d = _SG.data;
+  if (!d) return;
+  document.getElementById('sgTabP').classList.toggle('active', _SG.tab === 'p');
+  document.getElementById('sgTabC').classList.toggle('active', _SG.tab === 'c');
+  document.getElementById('sgNP').textContent = '(' + (d.resumen.pendientes || 0) + ')';
+  document.getElementById('sgNC').textContent = '(' + (d.resumen.clases_sin_plantilla || 0) + ')';
+  const lista = sgFiltradas(), s = sgSet(), t = _SG.tab;
+  const tam = _SG.tam[t], paginas = Math.max(1, Math.ceil(lista.length / tam));
+  _SG.pag[t] = Math.min(Math.max(1, _SG.pag[t]), paginas);
+  const ini = (_SG.pag[t] - 1) * tam, pagina = lista.slice(ini, ini + tam);
+  const cats = d.categorias || {};
+  const opcCat = '<option value="">Todas las categorías</option>' + Object.keys(cats).map(k => '<option value="' + escHtml(k) + '"' + (_SG.cat === k ? ' selected' : '') + '>' + escHtml(cats[k]) + '</option>').join('');
+  const intro = t === 'p'
+    ? '<div class="small text-muted mb-2">' + d.resumen.ya_estandar + ' de ' + d.resumen.plantillas_activas + ' plantillas activas ya tienen el estándar. Estas ' + d.resumen.pendientes + ' no' +
+      (d.resumen.pendientes_lu ? ' (' + d.resumen.pendientes_lu + ' son (LU) de Lenin)' : '') + '.</div>'
+    : '<div class="small text-muted mb-2">Clasificaciones activas del catálogo (' + d.resumen.clases + ') que no tienen plantilla en alguna categoría. Se crean <b>en cero</b>, con N° de serie y GPS, y quedan marcadas para llenar.</div>';
+  const filas = pagina.map(x => {
+    const marcada = s.has(sgClave(x));
+    if (t === 'p'){
+      return '<label class="sg-row' + (x.es_lu ? ' lu' : '') + '"><input type="checkbox" ' + (marcada ? 'checked' : '') + ' onchange="sgToggle(\'' + escHtml(sgClave(x)) + '\', this.checked)">' +
+        '<div><b>' + escHtml(x.nombre) + '</b><div class="sg-sub">' + escHtml(x.categoria_label) + ' · ' + x.n_items + ' ítems</div>' +
+        (x.es_lu ? '<span class="sg-chip lu">(LU) de Lenin</span>' : '') +
+        x.acciones.map(a => '<span class="sg-chip add"><i class="bi bi-plus-lg"></i>' + escHtml(a) + '</span>').join('') +
+        (x.aviso ? '<div class="sg-sub"><span class="sg-chip av">' + escHtml(x.aviso) + '</span></div>' : '') + '</div></label>';
+    }
+    return '<label class="sg-row"><input type="checkbox" ' + (marcada ? 'checked' : '') + ' onchange="sgToggle(\'' + escHtml(sgClave(x)) + '\', this.checked)">' +
+      '<div><b>' + escHtml(x.clase) + '</b><div class="sg-sub">Falta en <b>' + escHtml(x.categoria_label) + '</b></div></div></label>';
+  }).join('') || '<div class="text-center py-4"><i class="bi bi-check-circle-fill" style="color:#16a34a;font-size:2rem"></i><div class="fw-bold mt-2">' + (t === 'p' ? 'Todas las plantillas tienen el estándar' : 'Todas las clasificaciones tienen plantilla') + '</div></div>';
+  document.getElementById('sgCuerpo').innerHTML = intro +
+    '<div class="sg-bar"><select class="form-select" style="max-width:240px" onchange="sgCat(this.value)">' + opcCat + '</select>' +
+    '<button type="button" class="btn btn-outline-secondary" onclick="sgToggleTodo()"><i class="bi bi-check-all me-1"></i>Seleccionar/deseleccionar todo</button></div>' +
+    filas +
+    '<div class="sg-pie"><span>Mostrando ' + (lista.length ? ini + 1 : 0) + '–' + (ini + pagina.length) + ' de ' + lista.length + '</span>' +
+    '<span><select class="form-select d-inline-block w-auto" onchange="sgTam(this.value)">' + [10, 25, 50, 100].map(n => '<option value="' + n + '"' + (n === tam ? ' selected' : '') + '>' + n + ' por página</option>').join('') + '</select></span>' +
+    '<span><button type="button" class="btn btn-outline-secondary" ' + (_SG.pag[t] <= 1 ? 'disabled' : '') + ' onclick="sgPag(-1)">Anterior</button> Página ' + _SG.pag[t] + ' de ' + paginas +
+    ' <button type="button" class="btn btn-outline-secondary" ' + (_SG.pag[t] >= paginas ? 'disabled' : '') + ' onclick="sgPag(1)">Siguiente</button></span></div>';
+  sgResumenSel();
+}
+async function sgAplicar(){
+  const d = _SG.data;
+  if (!d) return;
+  const t = _SG.tab;
+  let cuerpo, url, confirmaLu = false;
+  if (t === 'p'){
+    const marcadas = (d.filas || []).filter(f => _SG.selP.has(String(f.id)));
+    if (!marcadas.length) return;
+    const nLu = marcadas.filter(f => f.es_lu).length;
+    const ok = await ilusConfirm({title: 'Agregar N° de serie + GPS',
+      message: 'Se agregará el estándar a ' + marcadas.length + ' plantilla' + (marcadas.length === 1 ? '' : 's') + '.',
+      sub: 'Quedan arriba de cada checklist. Las OT ya creadas conservan su copia. Queda en la bitácora con tu nombre.',
+      okLabel: 'Sí, agregar', cancelLabel: 'Cancelar', type: 'question'});
+    if (!ok) return;
+    if (nLu){
+      if (!d.puede_lu){
+        await ilusAlert({title: 'Plantillas (LU)', message: 'Hay ' + nLu + ' plantillas (LU) de Lenin marcadas. Solo el superadministrador puede incluirlas: desmárcalas o entra con esa cuenta.', type: 'warning'});
+        return;
+      }
+      const ok2 = await ilusConfirm({title: 'Incluye plantillas (LU) de Lenin',
+        message: 'Vas a modificar ' + nLu + ' plantilla' + (nLu === 1 ? '' : 's') + ' (LU) de Lenin Urbina.',
+        sub: '¿Ya le avisaste a Lenin? Solo se agregan el N° de serie y el GPS; no se cambia nada más.',
+        okLabel: 'Sí, ya le avisé', cancelLabel: 'No, dejarlas fuera', danger: true});
+      if (!ok2) return;
+      confirmaLu = true;
+    }
+    url = '/mantenciones/api/plantillas/serie-gps/aplicar';
+    cuerpo = {plantillas: marcadas.map(f => ({id: f.id, huella: f.huella})), confirma_lu: confirmaLu};
+  } else {
+    const marcadas = (d.clases_faltantes || []).filter(f => _SG.selC.has(f.clase_id + '|' + f.categoria));
+    if (!marcadas.length) return;
+    const ok = await ilusConfirm({title: 'Crear plantillas por clasificación',
+      message: 'Se crearán ' + marcadas.length + ' plantilla' + (marcadas.length === 1 ? '' : 's') + ' en cero.',
+      sub: 'Cada una lleva el nombre de la clasificación, N° de serie y GPS, y queda marcada para llenar el resto del checklist.',
+      okLabel: 'Sí, crear', cancelLabel: 'Cancelar', type: 'question'});
+    if (!ok) return;
+    url = '/mantenciones/api/plantillas/serie-gps/crear-clases';
+    cuerpo = {pares: marcadas.map(f => ({clase_id: f.clase_id, categoria: f.categoria}))};
+  }
+  const btn = document.getElementById('sgAplicar');
+  btn.disabled = true;
+  try {
+    const r = await fetch(url, {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'}, body: JSON.stringify(cuerpo)});
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok){
+      await ilusAlert({title: 'No se aplicó', message: (j && j.error) || 'No se pudo aplicar.', type: 'warning'});
+    } else {
+      const c = j.cuenta || {};
+      const hechas = (c.aplicada || 0) + (c.creada || 0);
+      const otras = Object.keys(c).filter(k => k !== 'aplicada' && k !== 'creada').map(k => c[k] + ' ' + k.replace(/_/g, ' ')).join(', ');
+      ilusToast('✓ ' + hechas + ' lista' + (hechas === 1 ? '' : 's') + (otras ? ' · ' + otras : ''), {type: otras ? 'warning' : 'success'});
+    }
+  } catch(e){
+    ilusToast('Error de conexión: revisa antes de repetir.', {type: 'error'});
+  }
+  await sgCargar(false);
+  if (typeof cargarPlantillas === 'function') cargarPlantillas();
+  if (typeof cargarCoberturaClases === 'function') cargarCoberturaClases();
+}
+document.addEventListener('DOMContentLoaded', () => { propCargar(true); sgCargar(true); });
 </script>
 {% endblock %}
