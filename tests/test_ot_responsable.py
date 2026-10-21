@@ -912,6 +912,25 @@ class TestGanchosAlCrearOT(unittest.TestCase):
             src = fuente_funcion(f)
             self.assertIn("_ot_responsable_al_crear", src, f)
 
+    # Cuántas llamadas REALES (no comentarios) a la puerta tiene cada camino. Una función con dos creaciones distintas (la mantención
+    # histórica y su «próxima»; las dos ramas del Agente) necesita UNA llamada por cada una: con que quede una sola, la otra nace sin
+    # responsable. Las dos con INSERT doble (_mant_visita_crear_core, mant_visita_multi) usan una sola: solo corre uno de los dos.
+    GANCHOS_ESPERADOS = {"_ot2_crear_core": 1, "_mant_visita_crear_core": 1, "mant_visita_multi": 1, "mant_maquina_solicitar_cambio": 1,
+                         "mant_visita_historica": 2, "mant_visita_retroactiva": 1, "mant_intel_accion": 2, "_mant_lev_crear_ot_core": 1}
+    LOTES_ESPERADOS = {"mant_planificador_generar_ots": 1, "mant_generar_calendario": 1}
+
+    @staticmethod
+    def _llamadas(src, nombre):
+        codigo = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
+        return len(re.findall(r"(?<![\w.])%s\(" % re.escape(nombre), codigo))
+
+    def test_cada_creacion_distinta_dentro_de_un_camino_llama_a_la_puerta(self):
+        for f, n in self.GANCHOS_ESPERADOS.items():
+            self.assertEqual(self._llamadas(fuente_funcion(f), "_ot_responsable_al_crear"), n,
+                             "%s: una creación se quedaría sin responsable (o se agregó una llamada sin actualizar la prueba)" % f)
+        for f, n in self.LOTES_ESPERADOS.items():
+            self.assertEqual(self._llamadas(fuente_funcion(f), "_ot_responsable_al_crear_lote"), n, f)
+
     def test_las_excepciones_siguen_existiendo(self):
         for f in self.EXCEPCIONES:
             self.assertIn("def %s(" % f, APP, f)
