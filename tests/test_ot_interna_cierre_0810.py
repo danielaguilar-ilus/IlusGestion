@@ -400,7 +400,9 @@ class TestCorreoBloqueadoSeDistingue(unittest.TestCase):
     def test_no_cambia_la_firma_ni_el_retorno_para_los_otros_llamadores(self):
         src = _fuente_de("_send_ilus_email")
         self.assertIn("-> bool:", src)
-        self.assertEqual(len(re.findall(r"return False", src)), 2)   # las dos llaves, igual que antes
+        # Las tres revisiones que frenan sin tocar al proveedor: interruptor general, llave del módulo y (2026-10-20, Control de
+        # correos) el interruptor de ESE correo. El retorno es el mismo `False` de siempre para quien llama.
+        self.assertEqual(len(re.findall(r"return False", src)), 3)
         _, arbol = _codigo_y_arbol()
         f = next(n for n in arbol.body if isinstance(n, ast.FunctionDef) and n.name == "_send_ilus_email")
         self.assertEqual([a.arg for a in f.args.args], ["to_addr", "subject", "html_body"])

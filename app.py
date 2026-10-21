@@ -73050,7 +73050,7 @@ def _prospecto_correo_por_ticket(tid, numero, to_email, tema, cuerpo_html, quien
     _redir = globals().get("_tk_test_redirect")
     to_envio, subject_envio = _redir(to_email, subject) if _redir else (to_email, subject)
     html_final = _comm_render_email_document(subject_envio, cuerpo_html, subtitle="Plan de Mantención · ILUS Fitness")
-    kwargs = {"evento": "prospecto_oferta", "modulo": "tickets", "correo": correo}
+    kwargs = {"evento": "prospecto_oferta", "modulo": "tickets"}
     _rt = globals().get("_tk_reply_to")
     if _rt:
         try:
@@ -73058,7 +73058,7 @@ def _prospecto_correo_por_ticket(tid, numero, to_email, tema, cuerpo_html, quien
         except Exception:
             pass
     try:
-        ok = bool(_send_ilus_email(to_envio, subject_envio, html_final, **kwargs))
+        ok = bool(_send_ilus_email(to_envio, subject_envio, html_final, correo=correo, **kwargs))
     except Exception as e:
         print(f"[prospecto_correo] tid={tid}: {e}", flush=True)
         ok = False
@@ -133368,8 +133368,8 @@ def mant_visita_enviar_email(vid):
     html = _comm_render_email_document(asunto, body, subtitle=f"OT {ot}")
     # Envío UNO POR UNO a cada destinatario (multi-email real, llave de paso
     # y email_log por destinatario).
-    res = _mant_send_email_multi(v["cliente_id"], asunto, html,
-                                 evento="visita_agendada", emails=destinos, correo="ot_visita_agendada_manual")
+    res = _mant_send_email_multi(v["cliente_id"], asunto, html, correo="ot_visita_agendada_manual",
+                                 evento="visita_agendada", emails=destinos)
 
     # Copia para los técnicos: el mismo aviso, SIN el costo ni los repuestos del respaldo en HTML (con la plantilla editable no
     # hay montos: sus variables no los incluyen) y con un saludo que no es para el cliente. Llave propia 'ot_tecnicos'.
@@ -133567,8 +133567,8 @@ def _mant_ot_email_cliente_creacion(vid):
                 f"<p style=\"font-size:13px;color:#6b7280;margin-top:18px\">Si necesitas reagendar o cancelar la visita, responde este correo o comunícate con tu ejecutivo asignado.</p>"
             )
         html = _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {variables['ot']}")
-        res = _mant_send_email_multi(v["cliente_id"], asunto, html,
-                                     evento="visita_agendada", emails=destinos, correo="ot_creada_cliente")
+        res = _mant_send_email_multi(v["cliente_id"], asunto, html, correo="ot_creada_cliente",
+                                     evento="visita_agendada", emails=destinos)
         if res["enviados"]:
             _mant_log("visita", vid, "email_creacion_cliente", f"a {', '.join(res['enviados'])} — OT {variables['ot']}")
     except Exception as e:

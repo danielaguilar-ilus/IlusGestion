@@ -20,6 +20,18 @@ El interruptor de la pantalla SOLO puede APAGAR. Un correo a clientes que hoy es
 (RETIROS_FIRMA_CORREO, MANT_RECORDATORIOS_EMAIL_ENABLED, PROSPECTOS_OFERTA_AUTO…) se muestra «Apagado por configuración» y
 no se puede encender desde la pantalla: encenderlo sigue pasando por la variable y por el «sí» explícito de Daniel (REGLAS #22
 y #23).
+
+CÓMO AGREGAR UN CORREO NUEVO (3 pasos; la prueba de cobertura te dice cuál falta):
+  1. Agrega UNA llamada `_c(...)` a `REGISTRO`, con su clave (`ot_terminada_cliente`, `ot_hallazgo_responsable`…), su nombre
+     completo, el grupo de la pantalla (`modulo_ui`), la llave de paso que ya lo gobierna (`llave` = el `modulo=` con que sale),
+     QUIÉN lo recibe (`destinatario`: cliente · tecnico · responsable_ot · bodega · proveedor_courier · interno · usuario),
+     qué lo dispara y su plantilla (modulo, estado) si el texto es editable en Comunicaciones.
+  2. En el envío, pásale la clave a la puerta única: `_send_ilus_email(..., modulo="mantenciones", correo="ot_terminada_cliente")`
+     (o `correo=` en la función que lo envuelve). NUNCA dentro de `**kwargs` ni de `kwargs_json` de la cola.
+  3. Si lo condiciona una variable de entorno, decláralo en `condiciones` (`_cond(...)`): la pantalla lo muestra como
+     «Apagado por configuración» y no deja encenderlo.
+Un grupo o un destinatario nuevos se suman en `MODULOS_UI` / `DESTINATARIOS` (y su orden). Nada más: la pantalla, el interruptor, la
+vista previa y las cifras salen solas del registro.
 """
 import os
 import re
@@ -56,14 +68,18 @@ MODULOS_UI = (
 )
 MODULOS_UI_CLAVES = tuple(m["clave"] for m in MODULOS_UI)
 
+# QUIÉN recibe el correo (Daniel, 20-oct: «que cada correo quede identificado por quién lo recibe»). La pantalla agrupa por
+# módulo y, dentro de cada módulo, por este valor. Para sumar un destinatario nuevo basta agregarlo aquí y en el orden.
 DESTINATARIOS = {
     "cliente": "Cliente",
     "tecnico": "Técnico",
+    "responsable_ot": "Responsable de la OT",
+    "bodega": "Bodega",
     "proveedor_courier": "Proveedor o courier",
-    "interno": "Interno (equipo ILUS)",
+    "interno": "Equipo ILUS (interno)",
     "usuario": "Usuario del sistema",
 }
-DESTINATARIOS_ORDEN = ("cliente", "tecnico", "proveedor_courier", "interno", "usuario")
+DESTINATARIOS_ORDEN = ("cliente", "tecnico", "responsable_ot", "bodega", "proveedor_courier", "interno", "usuario")
 
 MODOS = {"automatico": "Automático", "manual": "Manual", "mixto": "Automático y manual"}
 TIPOS = ("ilus", "externo", "herramienta")      # ilus = lo envía ILUS · externo = lo envía FedEx/SimpliRoute · herramienta = no se apaga
@@ -382,7 +398,7 @@ REGISTRO = (
        "interno", "En cada gestión del retiro: solicitud nueva, respuesta del cliente, cita vencida, alerta de volumen…",
        modo="automatico", avisa_a="Al responsable del retiro y a la lista de avisos al equipo",
        nota="Las direcciones se editan en Retiros → Equipo y alertas."),
-    _c("ret_aviso_bodega", "Aviso a bodega (¿Qué pasó?)", "retiros", "comunicacion_interna", "interno",
+    _c("ret_aviso_bodega", "Aviso a bodega (¿Qué pasó?)", "retiros", "comunicacion_interna", "bodega",
        "Cuando «¿Qué pasó?» registra una desviación y se marca «Avisar a bodega».", avisa_a="A la lista de correos de bodega"),
 
     # ─────────────────────────────── TRANSPORTE ───────────────────────────────

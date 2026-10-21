@@ -2668,7 +2668,8 @@ def register_logistica_cotizaciones(app, ctx=None):
         enviados, fallidos = [], []
         for dest in buenos:
             try:
-                ok = _send_ilus_email(dest, subject, html_body, modulo="transporte", attachments=adj)
+                ok = _send_ilus_email(dest, subject, html_body, modulo="transporte", attachments=adj,
+                                      correo="tr_cotizacion_envio")
             except Exception as e:
                 print(f"[logistica_cotizaciones] enviar {dest}: {e}", flush=True)
                 ok = False

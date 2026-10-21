@@ -566,7 +566,7 @@ const TPL_ESTADOS_RETIROS = [
   { key:'agenda_confirmada',  label:'Agenda confirmada',      icon:'bi-calendar-check', grupo:'retiro',
     color:'#22c55e', desc:'Cuando ambas partes acuerdan la fecha de retiro' },
   { key:'en_preparacion',     label:'En preparación',         icon:'bi-box-seam',       grupo:'retiro',
-    color:'#0ea5e9', desc:'Aviso 24h antes — bodega ya está preparando' },
+    color:'#0ea5e9', desc:'Cuando el retiro pasa a preparación (a mano, o solo cuando Check informa que bodega empezó a juntar el pedido) — «Estamos preparando tu retiro»' },
   { key:'retirada',           label:'Retirada / Completada',  icon:'bi-check-circle-fill',grupo:'retiro',
     color:'#16a34a', desc:'Confirma al cliente que el retiro se completó' },
   { key:'reagendada',         label:'Reagendada',             icon:'bi-arrow-repeat',   grupo:'retiro',
@@ -582,13 +582,17 @@ const TPL_ESTADOS_RETIROS = [
     color:'#f59e0b', desc:'Cuando faltan datos de documento/contacto/persona autorizada para avanzar' },
   { key:'recordatorio_24h',   label:'Recordatorio 24h antes', icon:'bi-alarm',          grupo:'retiro',
     color:'#fb923c', desc:'Recordatorio automático el día antes de la fecha confirmada' },
+  // 2026-10-20 (Control de correos): 'fallida' SÍ se envía («No pudimos concretar tu retiro»: estado No concretado o «¿Qué pasó?» con
+  // aviso al cliente) pero no figuraba en esta lista: Daniel no podía verla ni editarla desde /comunicaciones.
+  { key:'fallida',            label:'No pudimos concretar tu retiro', icon:'bi-x-octagon', grupo:'retiro',
+    color:'#b91c1c', desc:'Cuando el retiro queda «No concretado» (el cliente no vino ni reagendó) o «¿Qué pasó?» pide avisar al cliente' },
 ];
 
 const TPL_ESTADOS_MANTENCIONES = [
   { key:'visita_agendada',      label:'Visita agendada',        icon:'bi-calendar-check',   grupo:'mantencion',
     color:'#dc2626', desc:'Aviso al cliente cuando se agenda visita técnica' },
   { key:'recordatorio_visita',  label:'Recordatorio visita',    icon:'bi-bell',             grupo:'mantencion',
-    color:'#fb923c', desc:'Recordatorio 24h antes de la visita programada' },
+    color:'#fb923c', desc:'Recordatorio automático de 3 a 7 días antes de la visita programada (hoy apagado por configuración: MANT_RECORDATORIOS_EMAIL_ENABLED)' },
   { key:'ot_completada',        label:'OT completada',          icon:'bi-check-circle-fill',grupo:'mantencion',
     color:'#16a34a', desc:'Cuando se completa la visita y se firma la OT' },
   { key:'visita_proxima',       label:'Visita próxima',         icon:'bi-clock-history',    grupo:'mantencion',

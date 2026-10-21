@@ -11850,11 +11850,9 @@ def register_pickup_routes(app, ctx):
                 # se rija por la LLAVE DE PASO de Retiros (no la de "general", que era
                 # el default y bloqueaba el envío aunque Retiros estuviera abierta).
                 _kw = {"evento": "pickup_created", "modulo": "retiros"}
-                if correo:
-                    _kw["correo"] = correo
                 if attachments:
                     _kw["attachments"] = attachments
-                ok = _send_ilus_email(e, subject, html, **_kw)
+                ok = _send_ilus_email(e, subject, html, correo=correo, **_kw)
                 if ok:
                     sent.append(e)
                 else:

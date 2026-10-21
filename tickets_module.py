@@ -6360,7 +6360,8 @@ def register_tickets_routes(app, ctx):
         enviados, fallidos = [], []
         for dest in buenos:
             try:
-                ok = _send_ilus_email(dest, subject, html_body, modulo="tickets", attachments=_adj)
+                ok = _send_ilus_email(dest, subject, html_body, modulo="tickets", attachments=_adj,
+                                      correo="tk_cotizacion_envio")
             except Exception as _e_send:
                 print(f"[tk_api_cotizacion_enviar] {dest}: {_e_send}", flush=True)
                 ok = False
@@ -7251,6 +7252,20 @@ def register_tickets_routes(app, ctx):
             "cancelada.</div></div>"),
     }
 
+    # Clave de cada aviso del ciclo de vida en el REGISTRO DE CORREOS (comm_correos_registro.py): la que lleva `correo=` hacia la
+    # puerta única de envío, para que Comunicaciones → «Control de correos» apague cada uno por separado (2026-10-20). Debe
+    # tener las mismas claves que _TK_LIFECYCLE_DEFAULTS (hay una prueba que lo exige).
+    _TK_CORREO_DE_SLUG = {
+        "creacion": "tk_creacion",
+        "en_curso": "tk_en_curso",
+        "pendiente": "tk_pendiente",
+        "ot_generada": "tk_ot_generada",
+        "ot_en_curso": "tk_ot_en_curso",
+        "resuelto": "tk_resuelto",
+        "cerrado": "tk_cerrado",
+        "cancelado": "tk_cancelado",
+    }
+
     def _tk_notificar_lifecycle(tid, estado_slug):
         if not _send_ilus_email or estado_slug not in _TK_LIFECYCLE_DEFAULTS:
             return
@@ -7322,7 +7337,7 @@ def register_tickets_routes(app, ctx):
         try:
             enviado = _send_ilus_email(to_envio, subject_envio, html_final,
                                         evento=f"ticket_{estado_slug}", modulo="tickets",
-                                        reply_to=_tk_reply_to())
+                                        reply_to=_tk_reply_to(), correo=_TK_CORREO_DE_SLUG.get(estado_slug))
         except Exception as _e:
             print(f"[tk_notificar_lifecycle] error enviando tid={tid} estado={estado_slug}: {_e}", flush=True)
             enviado = False
@@ -7491,7 +7506,7 @@ def register_tickets_routes(app, ctx):
                           if _comm_render_email_document else cuerpo_html)
             enviado = _send_ilus_email(destino_email, tema, html_final,
                                         evento="ticket_asignacion", modulo="tickets",
-                                        reply_to=_tk_reply_to())
+                                        reply_to=_tk_reply_to(), correo="tk_asignacion")
         except Exception as _e:
             print(f"[tk_notificar_asignacion] error enviando tid={tid}: {_e}", flush=True)
 
@@ -7607,7 +7622,7 @@ def register_tickets_routes(app, ctx):
             kwargs = {"evento": "ticket_respuesta", "modulo": "tickets", "reply_to": _tk_reply_to()}
             if cc_envio:
                 kwargs["cc"] = cc_envio
-            enviado = _send_ilus_email(to_envio, subject_envio, html_final, **kwargs)
+            enviado = _send_ilus_email(to_envio, subject_envio, html_final, correo="tk_respuesta", **kwargs)
         except Exception as _e:
             print(f"[tk_responder_cliente] error enviando tid={tid}: {_e}", flush=True)
             enviado = False
@@ -8275,7 +8290,7 @@ def register_tickets_routes(app, ctx):
             subject = _brand_subject(f"OT {numero} agendada")
             return bool(_send_ilus_email(
                 TK_OT_CONFIRMACION_EMAIL_TEST, subject, html,
-                evento="ot_agendada", modulo="tickets", attachments=attachments))
+                evento="ot_agendada", modulo="tickets", attachments=attachments, correo="tk_ot_agendada"))
         except Exception as exc:
             print(f"[tk-ot-confirmacion] no se pudo enviar correo de OT tid={tid}: {exc}", flush=True)
             return False
@@ -11993,7 +12008,8 @@ def register_tickets_routes(app, ctx):
             _send_ilus_email(destino,
                              "ILUS · La recepción de correos de Tickets está caída",
                              cuerpo_html, modulo="tickets",
-                             evento="tk_mail_recepcion_caida", asincrono=True)
+                             evento="tk_mail_recepcion_caida", asincrono=True,
+                             correo="tk_alerta_recepcion_caida")
         except Exception as _e:
             print(f"[tk_mail_salud] no se pudo enviar la alerta: {_e}", flush=True)
 
