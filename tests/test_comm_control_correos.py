@@ -17,6 +17,9 @@ Qué se prueba aquí (todo con correo de MENTIRA — REGLA #22: jamás un correo
      (409 si otra persona ya lo cambió), auditoría, vista previa con datos de mentira, «Enviarme una prueba» solo a quien está
      conectado, cifras de 30 días, el Historial («Apagado: «Nombre»» y filtro por clave) y las reglas de UI del proyecto
      (sin popups nativos, tabla paginada, marcar todo, nombres completos, 44 px / 16 px en el celular).
+  8. Los avisos que envían FedEx y SimpliRoute (fase 3): su interruptor y el general, sin la llave del módulo, fail-open.
+  9. Un correo cuyo ENVÍO vive en otra rama («Falta de stock: aviso a bodega», `ot_que_paso_bodega`): el catálogo ya lo trae, la
+     puerta lo resuelve por su evento aunque el envío aún no lleve `correo=`, y la regla de cobertura lo acepta tal como llegará.
 
 Sin BD ni Flask: las funciones de app.py se extraen con `ast` (importar app.py exige BD y credenciales) y se ejecutan en un ambiente de
 mentira. Correr con:  py -m unittest tests.test_comm_control_correos
@@ -257,12 +260,102 @@ EXCEPCIONES_SIN_CLAVE = {
 }
 
 
+# Correos cuyo ENVÍO vive en otra rama que todavía no se mezcla: el catálogo ya los trae (así el interruptor existe el día de la
+# mezcla y nada falla) y por eso, mientras esta rama no los envía, no se exige que una llamada use su clave. Cuando el envío llegue
+# aparece solo en el código y TestCobertura lo revisa como a cualquier otro; la entrada puede quitarse de aquí (la prueba pasa con o
+# sin ella). Cada una dice dónde está su envío.
+ENVIO_EN_OTRA_RAMA = {
+    "ot_que_paso_bodega":
+        "«¿Qué pasó?» de la OT (falta de stock → aviso interno a bodega): su envío está en la rama de esa función, aún sin mezclar",
+}
+
+
 def _archivos_de_codigo():
     out = []
     for nombre in sorted(os.listdir(RAIZ)):
         if nombre.endswith(".py") and not nombre.startswith("test_"):
             out.append(nombre)
     return out
+
+
+def _constantes_de(nodo):
+    """Todas las claves constantes que puede tomar `nodo` (str, o IfExp con str en ambas ramas); None si no es constante."""
+    if isinstance(nodo, ast.Constant) and isinstance(nodo.value, str):
+        return [nodo.value]
+    if isinstance(nodo, ast.IfExp):
+        a, b = _constantes_de(nodo.body), _constantes_de(nodo.orelse)
+        return (a + b) if (a is not None and b is not None) else None
+    return None
+
+
+def _clave_por_evento(kw):
+    """La clave que la puerta deduce SOLA cuando una llamada no declara `correo=` pero su `evento=` es una constante que
+    `inferir()` conoce (`_EVENTO_A_CLAVE` del registro). None si no hay evento constante o no hay una sola lectura posible."""
+    ev = kw.get("evento")
+    if isinstance(ev, ast.Constant) and isinstance(ev.value, str):
+        return R.inferir(None, ev.value)
+    return None
+
+
+def _problemas_de_claves(llamadas):
+    """Qué llamadas de envío NO dejan clara su clave: ni `correo=` registrada, ni excepción con razón, ni evento constante que el
+    registro resuelve solo. Cada llamada: (archivo, linea, envoltorio, funcion, params, kw)."""
+    problemas = []
+    for archivo, linea, envoltorio, fn, params, kw in llamadas:
+        donde = f"{archivo}:{linea} {envoltorio}() en {fn}"
+        if "correo" not in kw:
+            if (archivo, fn) in EXCEPCIONES_SIN_CLAVE:
+                continue
+            if _clave_por_evento(kw):
+                continue           # p. ej. el envío de otra rama que aún no pasa correo=: la puerta lo resuelve por su evento
+            problemas.append(f"{donde}: falta correo= (agrégalo; REGLA #33 de CLAUDE.md)")
+            continue
+        valor = kw["correo"]
+        claves = _constantes_de(valor)
+        if claves is not None:
+            for k in claves:
+                if R.por_clave(k) is None:
+                    problemas.append(f"{donde}: la clave {k!r} no está en el registro (comm_correos_registro.py)")
+            continue
+        if isinstance(valor, ast.Name) and valor.id in params:
+            continue                                  # el envoltorio la recibe de quien lo llama
+        if (archivo, fn) in EXCEPCIONES_DINAMICAS:
+            continue
+        problemas.append(f"{donde}: la clave no es una constante ({ast.unparse(valor)}); declárala en EXCEPCIONES_DINAMICAS "
+                         f"con su razón o pásala como constante")
+    return problemas
+
+
+def _problemas_de_llave(llamadas):
+    """Qué llamadas salen por una llave de paso distinta de la que el registro declara para su clave (la explícita `correo=` o la
+    deducida del evento constante)."""
+    problemas = []
+    for archivo, linea, envoltorio, fn, params, kw in llamadas:
+        if "correo" in kw:
+            claves = _constantes_de(kw["correo"])
+        else:
+            deducida = _clave_por_evento(kw)
+            claves = [deducida] if deducida else None
+        if not claves:
+            continue
+        for k in claves:
+            c = R.por_clave(k)
+            if c is None:
+                continue
+            if ENVOLTORIOS[envoltorio] is not None:
+                esperado = ENVOLTORIOS[envoltorio]
+            elif "modulo" in kw and isinstance(kw["modulo"], ast.Constant):
+                esperado = kw["modulo"].value
+            elif "modulo" not in kw and "**" in kw:
+                continue                         # el modulo viaja dentro de un **dict: no se ve en el sitio de la llamada
+            elif "modulo" not in kw:
+                esperado = "general"             # sin modulo= ni evento conocido, la puerta lo manda a «general»
+            else:
+                continue
+            if c["llave"] != esperado:
+                problemas.append(f"{archivo}:{linea} {envoltorio}(): {k} sale por la llave {esperado!r} pero el registro dice "
+                                 f"{c['llave']!r}")
+    return problemas
 
 
 def _llamadas_de_envio():
@@ -293,37 +386,8 @@ class TestCobertura(unittest.TestCase):
         self.assertTrue({"app.py", "pickups_module.py", "tickets_module.py", "catalogo_module.py",
                          "logistica_cotizaciones.py"} <= archivos)
 
-    def _constantes_de(self, nodo):
-        """Todas las claves constantes que puede tomar `nodo` (str, o IfExp con str en ambas ramas); None si no es constante."""
-        if isinstance(nodo, ast.Constant) and isinstance(nodo.value, str):
-            return [nodo.value]
-        if isinstance(nodo, ast.IfExp):
-            a, b = self._constantes_de(nodo.body), self._constantes_de(nodo.orelse)
-            return (a + b) if (a is not None and b is not None) else None
-        return None
-
     def test_toda_llamada_lleva_una_clave_registrada_o_esta_en_las_excepciones(self):
-        problemas = []
-        for archivo, linea, envoltorio, fn, params, kw in self.llamadas:
-            donde = f"{archivo}:{linea} {envoltorio}() en {fn}"
-            if "correo" not in kw:
-                if (archivo, fn) in EXCEPCIONES_SIN_CLAVE:
-                    continue
-                problemas.append(f"{donde}: falta correo= (agrégalo; REGLA #33 de CLAUDE.md)")
-                continue
-            valor = kw["correo"]
-            claves = self._constantes_de(valor)
-            if claves is not None:
-                for k in claves:
-                    if R.por_clave(k) is None:
-                        problemas.append(f"{donde}: la clave {k!r} no está en el registro (comm_correos_registro.py)")
-                continue
-            if isinstance(valor, ast.Name) and valor.id in params:
-                continue                                  # el envoltorio la recibe de quien lo llama
-            if (archivo, fn) in EXCEPCIONES_DINAMICAS:
-                continue
-            problemas.append(f"{donde}: la clave no es una constante ({ast.unparse(valor)}); declárala en EXCEPCIONES_DINAMICAS "
-                             f"con su razón o pásala como constante")
+        problemas = _problemas_de_claves(self.llamadas)
         self.assertEqual(problemas, [], "\n".join(problemas))
 
     def test_las_excepciones_siguen_existiendo(self):
@@ -334,37 +398,17 @@ class TestCobertura(unittest.TestCase):
             self.assertGreater(len(razon), 20)
 
     def test_el_modulo_de_cada_llamada_es_la_llave_del_registro(self):
-        problemas = []
-        for archivo, linea, envoltorio, fn, params, kw in self.llamadas:
-            claves = self._constantes_de(kw["correo"]) if "correo" in kw else None
-            if not claves:
-                continue
-            for k in claves:
-                c = R.por_clave(k)
-                if c is None:
-                    continue
-                if ENVOLTORIOS[envoltorio] is not None:
-                    esperado = ENVOLTORIOS[envoltorio]
-                elif "modulo" in kw and isinstance(kw["modulo"], ast.Constant):
-                    esperado = kw["modulo"].value
-                elif "modulo" not in kw and "**" in kw:
-                    continue                         # el modulo viaja dentro de un **dict: no se ve en el sitio de la llamada
-                elif "modulo" not in kw:
-                    esperado = "general"             # sin modulo= ni evento conocido, la puerta lo manda a «general»
-                else:
-                    continue
-                if c["llave"] != esperado:
-                    problemas.append(f"{archivo}:{linea} {envoltorio}(): {k} sale por la llave {esperado!r} pero el registro dice "
-                                     f"{c['llave']!r}")
+        problemas = _problemas_de_llave(self.llamadas)
         self.assertEqual(problemas, [], "\n".join(problemas))
 
     def test_ninguna_clave_ilus_del_registro_queda_sin_usar(self):
-        """Un correo registrado que nada envía es una tarjeta que miente (se vería un interruptor que no apaga nada)."""
+        """Un correo registrado que nada envía es una tarjeta que miente (se vería un interruptor que no apaga nada).
+        Excepción declarada: los correos de `ENVIO_EN_OTRA_RAMA` (su envío aún no está en esta rama)."""
         fuentes = "\n".join(_leer(a) for a in _archivos_de_codigo() if a != "comm_correos_registro.py")
         inferibles = {"tr_en_preparacion", "tr_despachado", "tr_en_ruta", "tr_entregado", "tr_entrega_fallida"}   # por evento
         for c in R.listar("ilus"):
             k = c["clave"]
-            if k in inferibles:
+            if k in inferibles or k in ENVIO_EN_OTRA_RAMA:
                 continue
             self.assertRegex(fuentes, r'["\']' + re.escape(k) + r'["\']', f"{k}: ninguna llamada de envío usa esta clave")
 
@@ -2244,6 +2288,197 @@ class TestExternosEnLaInterfaz(unittest.TestCase):
     def test_no_muestra_enviados_inventados_y_explica_quien_envia(self):
         self.assertIn("lo envía FedEx o SimpliRoute", self.js)
         self.assertIn("ILUS no los cuenta", self.js)
+
+
+# ════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  9) UN CORREO CUYO ENVÍO VIVE EN OTRA RAMA: «Falta de stock: aviso a bodega» (ot_que_paso_bodega)
+# ════════════════════════════════════════════════════════════════════════════════════════════════════════════
+KB = "ot_que_paso_bodega"
+# El envío TAL COMO LLEGARÁ desde la rama de «¿Qué pasó?» de la OT (sin `correo=`). Lo que importa: con el catálogo ya funciona.
+ENVIO_DE_OTRA_RAMA = '''
+def _ot_que_paso_avisar_bodega(vid, d_b, asunto, html, codigo):
+    return _send_ilus_email(d_b, asunto, html, evento="ot_que_paso_bodega", modulo="comunicacion_interna",
+                            asincrono=True, ref={"tipo": "OT", "id": vid, "codigo": codigo})
+'''
+
+
+def _llamadas_de_un_texto(texto):
+    """Las llamadas de envío de un TEXTO de ejemplo, con el mismo escáner (`FC.llamadas`) y el mismo formato que
+    `_llamadas_de_envio`: así se prueba la regla de cobertura con un envío que todavía no está en el código de esta rama."""
+    rel = "__envio_de_otra_rama__.py"
+    clave_cache = (rel, tuple(sorted(ENVOLTORIOS)))
+    FC._TEXTOS[rel] = texto
+    FC._LLAMADAS.pop(clave_cache, None)
+    try:
+        salida = []
+        for ll in FC.llamadas(rel, set(ENVOLTORIOS)):
+            kw = {n: ast.parse(v.strip(), mode="eval").body for n, v in ll["kw"].items() if n != "**"}
+            salida.append((rel, ll["linea"], ll["nombre"], ll["funcion"], ll["params"], kw))
+        return salida
+    finally:
+        FC._TEXTOS.pop(rel, None)
+        FC._LLAMADAS.pop(clave_cache, None)
+
+
+class TestCorreoDeOtraRama(unittest.TestCase):
+    """«Falta de stock: aviso a bodega» (`ot_que_paso_bodega`): lo envía la función «¿Qué pasó?» de la OT, que vive en otra rama aún
+    sin mezclar. El catálogo ya lo trae para que, el día de la mezcla, el interruptor exista y ninguna prueba falle."""
+
+    def enviar_como_llegara(self, m):
+        return m.amb["_send_ilus_email"]("bodega@ejemplo.cl", "Falta de stock", "<p>x</p>", evento="ot_que_paso_bodega",
+                                         modulo="comunicacion_interna", asincrono=True,
+                                         ref={"tipo": "OT", "id": 7, "codigo": "OT-2026-00007"})
+
+    def test_esta_en_el_registro_como_aviso_interno_a_bodega_dentro_del_grupo_de_las_ot(self):
+        c = R.por_clave(KB)
+        self.assertIsNotNone(c)
+        self.assertEqual((c["tipo"], c["modulo_ui"], c["llave"], c["destinatario"], c["modo"]),
+                         ("ilus", "ot", "comunicacion_interna", "bodega", "automatico"))
+        self.assertEqual(c["nombre"], "Falta de stock: aviso a bodega")
+        self.assertIn("bodega", c["avisa_a"].lower())
+        self.assertIn("nunca al cliente ni al técnico", c["avisa_a"])          # la leyenda de a quién le llega
+        self.assertIsNone(c["plantilla"])                                       # su texto lo arma el código, no el editor
+        self.assertFalse(c["protegido"] or c["sensible"])
+        self.assertIn(KB, R.claves())
+        self.assertIn("comunicacion_interna", _llaves_validas())
+        self.assertEqual(R.validar(_llaves_validas()), [])
+
+    def test_nace_encendido_y_sin_ninguna_condicion_de_configuracion(self):
+        c = R.por_clave(KB)
+        self.assertEqual(c["condiciones"], ())
+        self.assertFalse(c["apagado_en_codigo"])
+        e = R.estado_efectivo(c, environ={})
+        self.assertEqual(e["efectivo"], "sale")
+        self.assertTrue(e["puede_apagar"] and e["puede_encender"])
+
+    def test_el_evento_se_resuelve_a_su_clave_con_o_sin_los_prefijos_del_historial_y_de_la_prueba(self):
+        self.assertEqual(R.inferir("comunicacion_interna", "ot_que_paso_bodega"), KB)
+        self.assertEqual(R.inferir("comunicacion_interna", "retry_ot_que_paso_bodega"), KB)        # «Reenviar» del Historial
+        self.assertEqual(R.inferir("comunicacion_interna", "prueba_ot_que_paso_bodega"), KB)       # «Enviarme una prueba»
+
+    def test_la_puerta_lo_deja_salir_encendido_y_lo_encola_con_su_clave_en_su_columna(self):
+        m = Mundo()
+        self.assertTrue(self.enviar_como_llegara(m))
+        (sql, params), = m.cola
+        self.assertIn("correo_clave", sql)
+        self.assertIn(KB, params)
+        self.assertIn("ref_json", sql)                                          # la referencia a la OT sigue viajando
+        self.assertEqual(m.salieron, [])                                        # no se envió síncrono
+        self.assertIsNone(m.amb["_email_ultimo_bloqueo"]())
+
+    def test_apagado_no_se_encola_y_queda_bloqueado_con_su_clave_y_su_cuerpo(self):
+        m = Mundo(filas={KB: 0})
+        self.assertFalse(self.enviar_como_llegara(m))
+        self.assertEqual(m.cola, [])
+        self.assertEqual(m.salieron, [])
+        self.assertEqual(m.estados_log(), [(KB, "bloqueado")])
+        (args, kw), = m.logs
+        self.assertEqual(kw["metadata"], {"modulo": "comunicacion_interna", "bloqueo": "correo", "correo": KB})
+        self.assertIn("Falta de stock: aviso a bodega", kw["error_msg"])
+        self.assertEqual(kw["html"], "<p>x</p>")
+        self.assertEqual(kw["ref"], {"tipo": "OT", "id": 7, "codigo": "OT-2026-00007"})      # el Historial lo enlaza con su OT
+        r = m.amb["_email_resultado"](False)
+        self.assertEqual((r["causa"], r["correo"]), ("apagado", KB))
+
+    def test_el_interruptor_general_y_la_llave_de_comunicacion_interna_van_antes(self):
+        m = Mundo(global_on=False, filas={KB: 0})
+        self.assertFalse(self.enviar_como_llegara(m))
+        self.assertEqual(m.amb["_email_ultimo_bloqueo"]()["tipo"], "global")
+        self.assertEqual(m.estados_log(), [(KB, "bloqueado")])
+        m = Mundo(llaves_cerradas={"comunicacion_interna"}, filas={KB: 0})
+        self.assertFalse(self.enviar_como_llegara(m))
+        self.assertEqual(m.amb["_email_ultimo_bloqueo"]()["tipo"], "modulo")
+
+    def test_si_se_apaga_mientras_espera_en_la_cola_no_sale(self):
+        m = Mundo()
+        self.assertTrue(self.enviar_como_llegara(m))
+        m.filas[KB] = 0
+        m.amb["_correo_ctrl_invalidar"]()
+        job = {"id": 11, "destinatario": "bodega@ejemplo.cl", "asunto": "Falta de stock", "cuerpo": "<p>x</p>",
+               "evento": "ot_que_paso_bodega", "modulo": "comunicacion_interna", "intentos": 1, "max_intentos": 5,
+               "kwargs_json": None, "correo_clave": KB}
+        m.amb["_email_queue_send_job"](job)
+        self.assertEqual(m.salieron, [])
+        ult = m.logs[-1]
+        self.assertEqual((ult[0][3], ult[1]["correo"]), ("bloqueado", KB))
+        # un job de antes de la columna (otra instancia en pleno deploy) igual se reconoce por su evento
+        job_viejo = {k: v for k, v in job.items() if k != "correo_clave"}
+        m.amb["_email_queue_send_job"](dict(job_viejo, id=12))
+        self.assertEqual(m.salieron, [])
+
+    def test_apagarlo_no_frena_los_otros_avisos_a_bodega(self):
+        m = Mundo(filas={KB: 0})
+        self.assertTrue(m.enviar(modulo="comunicacion_interna", correo="ret_aviso_bodega", evento="retiros_bodega"))
+        self.assertEqual(len(m.salieron), 1)
+
+    def test_la_regla_de_cobertura_acepta_el_envio_tal_como_llegara_y_sigue_vigilando(self):
+        ll = _llamadas_de_un_texto(ENVIO_DE_OTRA_RAMA)
+        self.assertEqual(len(ll), 1, "el escáner debe ver la llamada de ejemplo")
+        self.assertEqual(ll[0][2:4], ("_send_ilus_email", "_ot_que_paso_avisar_bodega"))
+        self.assertNotIn("correo", ll[0][5])                                    # sin correo=: lo resuelve su evento
+        self.assertEqual(_problemas_de_claves(ll), [])
+        self.assertEqual(_problemas_de_llave(ll), [])
+        # un evento que el registro no conoce, sin correo=, SÍ se señala
+        malo = _llamadas_de_un_texto(ENVIO_DE_OTRA_RAMA.replace("ot_que_paso_bodega", "ot_evento_que_nadie_registro"))
+        self.assertEqual(len(_problemas_de_claves(malo)), 1)
+        self.assertIn("falta correo=", _problemas_de_claves(malo)[0])
+        # el evento bueno pero por otra llave de paso: la clave se deduce, la llave no coincide con el registro
+        otra = _llamadas_de_un_texto(ENVIO_DE_OTRA_RAMA.replace('modulo="comunicacion_interna"', 'modulo="retiros"'))
+        self.assertEqual(_problemas_de_claves(otra), [])
+        self.assertEqual(len(_problemas_de_llave(otra)), 1)
+        # con la clave explícita (lo recomendado al mezclar) también pasa
+        explicita = _llamadas_de_un_texto(ENVIO_DE_OTRA_RAMA.replace("asincrono=True,", 'asincrono=True, correo="ot_que_paso_bodega",'))
+        self.assertEqual((_problemas_de_claves(explicita), _problemas_de_llave(explicita)), ([], []))
+
+    def test_la_lista_de_envios_en_otra_rama_solo_trae_correos_del_registro_con_su_razon(self):
+        self.assertIn(KB, ENVIO_EN_OTRA_RAMA)
+        for clave, razon in ENVIO_EN_OTRA_RAMA.items():
+            c = R.por_clave(clave)
+            self.assertIsNotNone(c, clave)
+            self.assertEqual(c["tipo"], "ilus", clave)
+            self.assertGreater(len(razon), 30, clave)
+
+
+class TestCorreoDeOtraRamaEnLaPantalla(_PantallaBase):
+    def test_aparece_en_el_grupo_de_las_ot_para_bodega_con_la_leyenda_y_nace_encendido(self):
+        d = self.listar()
+        c = self.item(KB, d)
+        self.assertEqual((c["modulo_ui"], c["destinatario"], c["destinatario_label"], c["llave"], c["modo"]),
+                         ("ot", "bodega", "Bodega", "comunicacion_interna", "automatico"))
+        self.assertEqual(c["nombre"], "Falta de stock: aviso a bodega")
+        self.assertIn("nunca al cliente ni al técnico", c["avisa_a"])
+        self.assertEqual(c["llave_label"], "Comunicación interna")
+        self.assertEqual(c["estado"]["efectivo"], "sale")
+        self.assertTrue(c["estado"]["switch_activo"] and c["estado"]["puede_apagar"])
+        self.assertIsNone(c["plantilla"])
+        self.assertIn("bodega", {x["destinatario"] for x in d["correos"] if x["modulo_ui"] == "ot"})   # un subgrupo «Para: Bodega»
+        self.assertEqual(d["resumen"]["apagados_usuario"], 0)
+
+    def test_apagarlo_con_motivo_lo_frena_en_la_puerta_y_el_historial_lo_cuenta(self):
+        st, d, _ = self.put(KB, activo=False, motivo="Bodega prefiere avisarse sola", estado_visto="")
+        self.assertEqual(st, 200, d)
+        self.assertEqual((d["correo"]["estado"]["efectivo"], d["correo"]["estado"]["apagado_por"]), ("correo", "Daniel Aguilar"))
+        ok = self.m.enviar(None, modulo="comunicacion_interna", evento="ot_que_paso_bodega", to="bodega@ejemplo.cl")
+        self.assertFalse(ok)
+        self.assertEqual(self.m.enviados_reales, [])
+        ultimo = self.m.bd.log[-1]
+        self.assertEqual((ultimo["estado"], ultimo["correo_clave"]), ("bloqueado", KB))      # el Historial y las cifras lo cuentan por su clave
+        self.assertEqual(ultimo["metadata"]["bloqueo"], "correo")
+
+    def test_la_vista_previa_dice_que_el_texto_esta_en_el_codigo_y_no_envia_nada(self):
+        st, d, _ = self.m.llamar("comm_correos_vista_previa", KB)
+        self.assertEqual(st, 200)
+        self.assertTrue(d["sin_plantilla"])
+        self.assertIn("en el código", d["mensaje"])
+        self.nada_cambio()
+
+    def test_la_prueba_va_solo_a_quien_esta_conectado_nunca_a_bodega(self):
+        st, d, _ = self.m.llamar("comm_correos_prueba", KB, json_body={"to": "bodega@ilusfitness.com"})
+        self.assertEqual((st, d), (200, {"ok": True, "enviado_a": "daniel.aguilar@sphs.cl"}))
+        env, = self.m.enviados_reales
+        self.assertEqual(env["to"], "daniel.aguilar@sphs.cl")
+        self.assertTrue(env["asunto"].startswith("[PRUEBA] "))
+        self.assertEqual(self.m.bd.log[-1]["evento"], "prueba_" + KB)
 
 
 if __name__ == "__main__":

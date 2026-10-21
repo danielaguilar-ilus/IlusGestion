@@ -28,6 +28,8 @@ CÓMO AGREGAR UN CORREO NUEVO (3 pasos; la prueba de cobertura te dice cuál fal
      qué lo dispara y su plantilla (modulo, estado) si el texto es editable en Comunicaciones.
   2. En el envío, pásale la clave a la puerta única: `_send_ilus_email(..., modulo="mantenciones", correo="ot_terminada_cliente")`
      (o `correo=` en la función que lo envuelve). NUNCA dentro de `**kwargs` ni de `kwargs_json` de la cola.
+     Si el envío vive en otra rama que todavía no pasa `correo=`, basta sumar su evento (constante) a `_EVENTO_A_CLAVE`: la puerta
+     resuelve la clave sola y el interruptor ya funciona. Aun así, al mezclar conviene agregar `correo="clave"` en el envío.
   3. Si lo condiciona una variable de entorno, decláralo en `condiciones` (`_cond(...)`): la pantalla lo muestra como
      «Apagado por configuración» y no deja encenderlo.
   4. Si el correo NO lo envía ILUS sino un tercero (FedEx, SimpliRoute), regístralo con `tipo="externo"`: ILUS solo decide si le
@@ -264,6 +266,15 @@ REGISTRO = (
     _c("ot_acta_recepcion", "Acta de recepción a logística (PDF y Excel)", "ot", "mantenciones", "interno",
        "Botón «Enviar a logística» del acta de recepción de una OT interna de revisión de equipos.",
        adjunta="Acta en PDF y Excel", avisa_a="Solo a correos internos (@sphs.cl o @ilusfitness.com)"),
+    # 2026-10-20 («¿Qué pasó?» de la OT, rama aparte que se mezcla después): se registra ANTES de que llegue su envío para que,
+    # al mezclar las ramas, el interruptor ya exista. Lo envía `_send_ilus_email(..., evento="ot_que_paso_bodega",
+    # modulo="comunicacion_interna")`; la puerta resuelve la clave sola por el evento (`_EVENTO_A_CLAVE`) aunque ese envío
+    # todavía no lleve `correo=`.
+    _c("ot_que_paso_bodega", "Falta de stock: aviso a bodega", "ot", "comunicacion_interna", "bodega",
+       "Cuando «¿Qué pasó?» deja una OT con productos pendientes por falta de stock: aviso interno para que bodega lo sepa.",
+       modo="automatico", avisa_a="A los correos de bodega de Retiros → Configuración (nunca al cliente ni al técnico)",
+       nota="Es un aviso interno: no sale a clientes ni a técnicos. Usa los mismos correos de bodega que «Avisar a bodega» de Retiros "
+            "(Retiros → Configuración). Sale por la llave de Comunicación interna."),
     _c("mant_invitacion_tecnico_externo", "Invitación a un técnico externo", "ot", "mantenciones", "proveedor_courier",
        "Botón «Invitar» de la ficha del técnico externo.", avisa_a="Al contacto del proveedor"),
 
@@ -638,6 +649,8 @@ _EVENTO_A_CLAVE = {
     "ot_asignada": "ot_tec_asignada", "ot_reagendada_tecnico": "ot_tec_reagendada",
     "ot_cancelada_tecnico": "ot_tec_cancelada", "ot_desasignada_tecnico": "ot_tec_desasignada",
     "agenda_tecnico_manana": "ot_tec_agenda_manana",
+    # «¿Qué pasó?» de la OT (rama aparte): su envío puede llegar sin `correo=`; con esta línea la puerta igual lo resuelve.
+    "ot_que_paso_bodega": "ot_que_paso_bodega",
     # Prospectos
     "plan_mantencion_oferta": "prospecto_plan_oferta", "prospecto_oferta_1": "prospecto_oferta_auto_1",
     "prospecto_oferta_2": "prospecto_oferta_auto_2",
