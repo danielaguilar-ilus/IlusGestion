@@ -625,6 +625,24 @@
   </div>
   {% endif %}
 
+  {#- 🩺 2026-10-21 (Daniel): «Problemas y reparaciones» de este equipo: cuándo se levantó cada problema y cuándo se reparó. -#}
+  {% if problemas %}
+  {% import 'mantenciones/_problemas.html' as _pb %}
+  {% set _n_ab = problemas | selectattr('abierto') | list | length %}
+  {{ _pb.estilos() }}
+  <section class="pb-card{{ '' if _n_ab else ' limpio' }}" id="hvProblemas" aria-labelledby="hvProbT">
+    <div class="pb-cab">
+      <span class="pb-ic" aria-hidden="true"><i class="bi bi-heart-pulse-fill"></i></span>
+      <div class="pb-tx">
+        <h3 id="hvProbT">Problemas y reparaciones</h3>
+        <small>Cuándo se levantó cada problema y cuándo se reparó. Abiertos primero; resueltos de los últimos 6 meses.</small>
+      </div>
+      <span class="pb-n {{ 'ambar' if _n_ab else 'verde' }}">{% if _n_ab %}<b>{{ _n_ab }}</b>&nbsp;abierto{{ 's' if _n_ab != 1 }}{% else %}Todo resuelto{% endif %}</span>
+    </div>
+    <div style="margin-top:8px">{{ _pb.lista(problemas) }}</div>
+  </section>
+  {% endif %}
+
   {# ═════════ Tabs ═════════ #}
   <div class="eq-tabs">
     <button class="eq-tab active" data-tab="historial" onclick="cambiarTabEq('historial')">

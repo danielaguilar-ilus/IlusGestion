@@ -71835,6 +71835,16 @@ def _mant_ficha_impl(cid):
                     _m["fs_info"] = _fs_cli.get(int(_m["id"]))
             except Exception as _e_fs_cli:
                 print(f"[MANT][ficha] fs_info error: {type(_e_fs_cli).__name__}", flush=True)
+            # 🩺 2026-10-21 (Daniel: «si hay una máquina con un problema, yo tengo que saber cuándo se le levantó el problema, cuándo se
+            # le reparó todo… por la ficha del cliente»): la historia de problemas de cada equipo (paradas, repuestos y, para la gestión,
+            # hallazgos). A un técnico no le viajan los hallazgos (REGLA #38).
+            try:
+                _probs = _maq_problemas([_m["id"] for _m in maquinas], con_hallazgos=not _es_rol_tecnico())
+                for _m in maquinas:
+                    _m["problemas"] = _probs.get(int(_m["id"])) or []
+                    _m["problemas_abiertos"] = sum(1 for _x in _m["problemas"] if _x["abierto"])
+            except Exception as _e_pb:
+                print(f"[MANT][ficha] problemas error: {type(_e_pb).__name__}", flush=True)
         except Exception as _e_rep:
             print(f"[MANT][ficha] repuestos pendientes load error: {_e_rep}", flush=True)
             for _m in maquinas:
@@ -157653,9 +157663,17 @@ def mant_maquina_ficha(mid):
         print(f"[maquina_ficha] fs_info m={mid}: {type(_e_fsi_m).__name__}", flush=True)
         eq["fs_info"] = None
 
+    # 🩺 2026-10-21: «Problemas y reparaciones» del equipo: cuándo se levantó cada problema y cuándo se reparó.
+    try:
+        problemas = _maq_problemas([mid], con_hallazgos=not _es_rol_tecnico()).get(int(mid)) or []
+    except Exception as _e_pb_m:
+        print(f"[maquina_ficha] problemas m={mid}: {type(_e_pb_m).__name__}", flush=True)
+        problemas = []
+
     return render_template(
         "mantenciones/maquina_ficha.html",
         equipo=eq,
+        problemas=problemas,
         ots=ots,
         fotos=fotos,
         eventos=eventos,
@@ -166044,6 +166062,137 @@ def _fs_info_maquinas(mids):
             "desde": chile_fmt_filter(f.get("inicio_at"), "%d/%m %H:%M") if f.get("inicio_at") else "",
             "aprox": bool(f.get("inicio_aprox")),
         }
+    return out
+
+
+def _maq_problemas(mids, con_hallazgos=True, dias=180):
+    """2026-10-21 (Daniel: «Si hay una máquina con un problema, yo tengo que saber cuándo se le levantó el problema, cuándo se le reparó
+    todo. Se tiene que ver por la ficha del cliente»). {maquina_id: [problema]} con lo que ya registra el sistema, sin pedirle nada a nadie:
+      · PARADAS (mant_maquina_paradas): quedó fuera de servicio → volvió a operar.
+      · REPUESTOS (mant_ot_repuesto_solicitudes): se pidió → se instaló (o se rechazó).
+      · HALLAZGOS (mant_ot_hallazgos, REGLA #38; solo gestión: `con_hallazgos`): lo reportó el técnico → se resolvió con su OT de
+        seguimiento o se descartó. No se repiten los de fuera de servicio ni de repuesto (ya están arriba con su fecha exacta).
+    Los abiertos siempre; los resueltos de los últimos `dias`. Hora Chile (REGLA #6). Sin plata ni proveedores (REGLAS #19/#26).
+    Solo lectura; {} si falla (la ficha sigue igual)."""
+    ids = sorted({int(m) for m in (mids or []) if str(m).isdigit()})
+    if not ids:
+        return {}
+    ph = ",".join(["%s"] * len(ids))
+    ahora = datetime.utcnow()
+
+    def cuando(dt):
+        try:
+            return chile_fmt_filter(dt, "%d/%m/%Y %H:%M") if dt else ""
+        except Exception:
+            return ""
+
+    def lapso(a, b):
+        try:
+            d = int(((b or ahora) - a).total_seconds() // 86400)
+        except Exception:
+            return ""
+        return "el mismo día" if d <= 0 else ("1 día" if d == 1 else "%d días" % d)
+
+    crudo = []          # (mid, dict) con las fechas crudas para ordenar
+    ots = set()
+    try:
+        _hv_asegurar()
+        for r in (mysql_fetchall(
+                "SELECT maquina_id, inicio_at, fin_at, inicio_aprox, motivo, abierta_por, cerrada_por, ref_tabla, ref_id, "
+                "       ref_fin_tabla, ref_fin_id FROM mant_maquina_paradas "
+                " WHERE maquina_id IN (" + ph + ") AND (fin_at IS NULL OR fin_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL %s DAY))",
+                tuple(ids) + (int(dias),)) or []):
+            motivo = " ".join(str(r.get("motivo") or "").split())
+            if motivo.startswith(_FS_MARCA_RIESGO):
+                motivo = motivo[len(_FS_MARCA_RIESGO):].lstrip(" ·").strip()
+            ot_ini = r.get("ref_id") if r.get("ref_tabla") == "mant_visitas" else None
+            ot_fin = r.get("ref_fin_id") if r.get("ref_fin_tabla") == "mant_visitas" else None
+            ots.update(x for x in (ot_ini, ot_fin) if x)
+            crudo.append((int(r["maquina_id"]), {
+                "tipo": "parada", "icono": "bi-sign-stop-fill", "color": "rojo",
+                "titulo": "Fuera de servicio" + (": " + motivo if motivo else ""),
+                "ini": r.get("inicio_at"), "fin": r.get("fin_at"), "aprox": bool(r.get("inicio_aprox")),
+                "por": r.get("abierta_por") or "", "fin_por": r.get("cerrada_por") or "", "ot": ot_ini, "ot_fin": ot_fin,
+                "espera": "Sigue detenido"}))
+    except Exception as e:
+        print(f"[problemas] paradas: {type(e).__name__}", flush=True)
+    try:
+        abiertos = ",".join("'%s'" % x for x in _OTREP_ABIERTOS)
+        for r in (mysql_fetchall(
+                "SELECT maquina_id, visita_id, repuesto_nombre, cantidad, origen, estado, created_at, instalado_at, updated_at, "
+                "       solicitado_por FROM mant_ot_repuesto_solicitudes "
+                " WHERE maquina_id IN (" + ph + ") AND (estado IN (" + abiertos + ") "
+                "   OR COALESCE(instalado_at, updated_at) >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL %s DAY))",
+                tuple(ids) + (int(dias),)) or []):
+            abierta = r.get("estado") in _OTREP_ABIERTOS
+            if r.get("visita_id"):
+                ots.add(r["visita_id"])
+            nombre = ("Cambio de piola" if r.get("origen") == "piola" else "Cambio de cinta" if r.get("origen") == "cinta"
+                      else "Repuesto: %s × %g" % (r.get("repuesto_nombre") or "Repuesto", float(r.get("cantidad") or 1)))
+            crudo.append((int(r["maquina_id"]), {
+                "tipo": "repuesto", "icono": "bi-tools", "color": "azul", "titulo": nombre,
+                "ini": r.get("created_at"), "fin": None if abierta else (r.get("instalado_at") or r.get("updated_at")),
+                "aprox": False, "por": r.get("solicitado_por") or "", "fin_por": "", "ot": r.get("visita_id"), "ot_fin": None,
+                "espera": (_OTREP_ESTADO_LABEL.get(r.get("estado")) or r.get("estado") or "").split(" · ")[0],
+                "fin_txt": "Instalado" if r.get("estado") == "instalado" else "Rechazado" if r.get("estado") == "rechazado" else "Cerrado"}))
+    except Exception as e:
+        print(f"[problemas] repuestos: {type(e).__name__}", flush=True)
+    if con_hallazgos and _hall_ok():
+        try:
+            for r in (mysql_fetchall(
+                    "SELECT h.maquina_id, h.visita_id, h.severidad, h.titulo, h.estado, h.detectado_en, h.detectado_por, h.tomado_por, "
+                    "       h.descartado_en, h.descartado_por, h.ot_seguimiento_id, s.estado AS seg_estado, s.cerrada_at AS seg_cerrada "
+                    "  FROM mant_ot_hallazgos h LEFT JOIN mant_visitas s ON s.id = h.ot_seguimiento_id "
+                    " WHERE h.maquina_id IN (" + ph + ") AND h.retirado_en IS NULL AND h.severidad NOT IN ('fuera_servicio','repuesto')",
+                    tuple(ids)) or []):
+                est, _caido = _oh.estado_efectivo(r, "x" if r.get("seg_estado") else None, r.get("seg_estado"))
+                seg_ok = bool(r.get("ot_seguimiento_id")) and not _caido
+                fin = (r.get("descartado_en") if est == "descartado"
+                       else r.get("seg_cerrada") if seg_ok and (r.get("seg_estado") or "") in ("cerrada", "completada") else None)
+                if fin and (ahora - fin).days > dias:
+                    continue
+                ots.update(x for x in (r.get("visita_id"), r.get("ot_seguimiento_id") if seg_ok else None) if x)
+                sev = _oh.sev_info(r.get("severidad"))
+                crudo.append((int(r["maquina_id"]), {
+                    "tipo": "hallazgo", "icono": sev["icono"], "color": sev["color"], "titulo": r.get("titulo") or sev["texto"],
+                    "ini": r.get("detectado_en"), "fin": fin, "aprox": False, "por": r.get("detectado_por") or "",
+                    "fin_por": r.get("descartado_por") or "" if est == "descartado" else "",
+                    "ot": r.get("visita_id"), "ot_fin": r.get("ot_seguimiento_id") if seg_ok else None,
+                    "espera": ("OT de seguimiento en curso" if seg_ok else ("Caso tomado por " + r["tomado_por"]) if est == "tomado"
+                               and r.get("tomado_por") else "Nadie ha tomado el caso"),
+                    "fin_txt": "Descartado" if est == "descartado" else "Resuelto con su OT de seguimiento"}))
+        except Exception as e:
+            print(f"[problemas] hallazgos: {type(e).__name__}", flush=True)
+    num = {}
+    if ots:
+        try:
+            lst = sorted({int(x) for x in ots})
+            for r in (mysql_fetchall("SELECT id, numero_ot FROM mant_visitas WHERE id IN (" + ",".join(["%s"] * len(lst)) + ")",
+                                     tuple(lst)) or []):
+                num[int(r["id"])] = r.get("numero_ot") or "V-%05d" % int(r["id"])
+        except Exception as e:
+            print(f"[problemas] OT: {type(e).__name__}", flush=True)
+    out = {}
+    for mid, d in crudo:
+        if not d.get("ini"):
+            continue
+        abierto = d["fin"] is None
+        ot = int(d["ot"]) if d.get("ot") and int(d["ot"]) in num else None
+        otf = int(d["ot_fin"]) if d.get("ot_fin") and int(d["ot_fin"]) in num else None
+        out.setdefault(mid, []).append({
+            "tipo": d["tipo"], "icono": d["icono"], "color": d["color"], "titulo": d["titulo"], "abierto": abierto,
+            "levantado": cuando(d["ini"]) + (" (aprox.)" if d.get("aprox") else ""), "levantado_por": d["por"],
+            "levantado_ot": {"numero": num[ot], "url": "/ot/%d" % ot} if ot else None,
+            "resuelto": "" if abierto else cuando(d["fin"]), "resuelto_por": d.get("fin_por") or "",
+            "resuelto_ot": {"numero": num[otf], "url": "/ot/%d" % otf} if otf else None,
+            "resuelto_txt": "" if abierto else (d.get("fin_txt") or "Volvió a operar"),
+            "estado_txt": (d["espera"] + " · hace " + lapso(d["ini"], None)) if abierto else ("En " + lapso(d["ini"], d["fin"])),
+            "_ord": (0 if abierto else 1, -(d["ini"].timestamp() if abierto else (d["fin"] or d["ini"]).timestamp())),
+        })
+    for mid in out:
+        out[mid].sort(key=lambda x: x["_ord"])
+        for x in out[mid]:
+            x.pop("_ord", None)
     return out
 
 

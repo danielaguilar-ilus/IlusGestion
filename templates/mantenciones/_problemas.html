@@ -1,0 +1,66 @@
+{#- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+    🩺 ILUS Fitness · «Problemas y reparaciones» de un equipo (2026-10-21). Daniel: «Si hay una máquina con un problema, yo tengo que
+    saber cuándo se le levantó el problema, cuándo se le reparó todo. Se tiene que ver por la ficha del cliente.»
+    Cada problema dice cuándo se levantó (y en qué OT, quién) y cuándo se reparó (o qué se está esperando y hace cuánto). Lo arma
+    _maq_problemas (app.py): paradas de fuera de servicio, solicitudes de repuesto y, para la gestión, hallazgos de las OT. Sin plata ni
+    proveedores (REGLAS #19/#26). Lo usan la ficha del cliente (pestaña Equipos) y la hoja de vida del equipo.
+    ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════ -#}
+{% macro lista(probs) -%}
+<ol class="pb-lista">
+  {% for x in probs %}
+  <li class="pb-it {{ 'ab' if x.abierto else 'ok' }} c-{{ x.color }}">
+    <div class="pb-tit"><i class="bi {{ x.icono }}" aria-hidden="true"></i> {{ x.titulo }}</div>
+    <div class="pb-linea">
+      <span class="pb-paso"><i class="bi bi-flag-fill" aria-hidden="true"></i> Se levantó el <b>{{ x.levantado }}</b>{% if x.levantado_ot %} en <a href="{{ x.levantado_ot.url }}">{{ x.levantado_ot.numero }}</a>{% endif %}{% if x.levantado_por %} · {{ x.levantado_por }}{% endif %}</span>
+      {% if x.abierto %}
+      <span class="pb-paso pend"><i class="bi bi-hourglass-split" aria-hidden="true"></i> {{ x.estado_txt }}</span>
+      {% else %}
+      <span class="pb-paso hecho"><i class="bi bi-check-circle-fill" aria-hidden="true"></i> {{ x.resuelto_txt }} el <b>{{ x.resuelto }}</b>{% if x.resuelto_ot %} en <a href="{{ x.resuelto_ot.url }}">{{ x.resuelto_ot.numero }}</a>{% endif %}{% if x.resuelto_por %} · {{ x.resuelto_por }}{% endif %} · {{ x.estado_txt }}</span>
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ol>
+{%- endmacro %}
+
+{% macro estilos() -%}
+<style>
+  .pb-card{background:#fff;border:1px solid #e5e7eb;border-left:6px solid #f59e0b;border-radius:14px;padding:12px 14px;margin:0 0 14px;scroll-margin-top:80px}
+  .pb-card.limpio{border-left-color:#16a34a}
+  .pb-cab{display:flex;flex-wrap:wrap;align-items:flex-start;gap:10px}
+  .pb-ic{width:36px;height:36px;border-radius:10px;background:#fff8e1;color:#b45309;display:inline-flex;align-items:center;justify-content:center;font-size:1.15rem;flex:0 0 36px}
+  .pb-card.limpio .pb-ic{background:#dcfce7;color:#166534}
+  .pb-tx{flex:1 1 240px;min-width:0}
+  .pb-tx h3{margin:0;font-size:1rem;font-weight:900;color:#111827}
+  .pb-tx small{color:#6b7280;font-size:.82rem}
+  .pb-n{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:3px 10px;font-size:.78rem;font-weight:700;border:1px solid transparent;white-space:nowrap}
+  .pb-n.ambar{background:#fff8e1;color:#92400e;border-color:#fde68a}
+  .pb-n.verde{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+  .pb-eq{border:1px solid #e5e7eb;border-radius:10px;margin-top:8px;background:#fff}
+  .pb-eq > summary{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;min-height:44px;padding:8px 12px;cursor:pointer;list-style:none}
+  .pb-eq > summary::-webkit-details-marker{display:none}
+  .pb-eq > summary b{overflow-wrap:anywhere}
+  .pb-eq > summary small{color:#6b7280}
+  .pb-sn{display:inline-block;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:6px;padding:1px 7px;font-size:.76rem;font-weight:700;color:#374151}
+  .pb-cnt{margin-left:auto;display:inline-flex;gap:5px;flex-wrap:wrap}
+  .pb-lista{list-style:none;margin:0;padding:0 12px 6px;display:grid;gap:8px}
+  .pb-it{border-left:4px solid #9ca3af;padding:6px 0 6px 10px}
+  .pb-it.c-rojo{border-left-color:#dc2626}
+  .pb-it.c-ambar{border-left-color:#f59e0b}
+  .pb-it.c-azul{border-left-color:#3b82f6}
+  .pb-it.c-negro{border-left-color:#0a0a0a}
+  .pb-it.ok{border-left-color:#16a34a}
+  .pb-tit{font-weight:800;color:#111827;overflow-wrap:anywhere}
+  .pb-tit i{margin-right:2px}
+  .pb-it.c-rojo .pb-tit i{color:#dc2626}
+  .pb-it.c-azul .pb-tit i{color:#3b82f6}
+  .pb-it.ok .pb-tit i{color:#16a34a}
+  .pb-linea{display:flex;flex-direction:column;gap:2px;margin-top:3px;font-size:.84rem;color:#374151}
+  .pb-paso i{margin-right:4px;color:#6b7280}
+  .pb-paso.pend{color:#92400e;font-weight:700}
+  .pb-paso.pend i{color:#f59e0b}
+  .pb-paso.hecho{color:#166534}
+  .pb-paso.hecho i{color:#16a34a}
+  .pb-hv{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 12px;margin:0 0 6px 12px;font-weight:700;font-size:.84rem}
+</style>
+{%- endmacro %}

@@ -1531,6 +1531,41 @@
   </div>
 </div>
 
+{#- 🩺 2026-10-21 (Daniel: «Si hay una máquina con un problema, yo tengo que saber cuándo se le levantó el problema, cuándo se le reparó
+    todo. Se tiene que ver por la ficha del cliente»): por equipo y N° de serie, cada problema con cuándo se levantó (OT, quién) y cuándo se
+    reparó, o qué se está esperando y hace cuánto. Abiertos primero; resueltos de los últimos 6 meses. Lo arma _maq_problemas (app.py). -#}
+{% import 'mantenciones/_problemas.html' as _pb %}
+{% set _con_prob = maquinas | selectattr('problemas') | list %}
+{% if _con_prob %}
+{% set _n_ab = _con_prob | sum(attribute='problemas_abiertos') %}
+{{ _pb.estilos() }}
+<section class="pb-card{{ '' if _n_ab else ' limpio' }}" id="eqProblemas" aria-labelledby="eqProbT">
+  <div class="pb-cab">
+    <span class="pb-ic" aria-hidden="true"><i class="bi bi-heart-pulse-fill"></i></span>
+    <div class="pb-tx">
+      <h3 id="eqProbT">Problemas de los equipos</h3>
+      <small>Cuándo se levantó cada problema y cuándo se reparó, por equipo y N° de serie. Abiertos primero; resueltos de los últimos 6 meses.</small>
+    </div>
+    <span class="pb-n {{ 'ambar' if _n_ab else 'verde' }}">{% if _n_ab %}<b>{{ _n_ab }}</b>&nbsp;abierto{{ 's' if _n_ab != 1 }}{% else %}Todo resuelto{% endif %}</span>
+  </div>
+  {% for m in _con_prob | sort(attribute='problemas_abiertos', reverse=True) %}
+  {% set _res = (m.problemas | length) - m.problemas_abiertos %}
+  <details class="pb-eq"{% if m.problemas_abiertos %} open{% endif %}>
+    <summary>
+      <b>{{ m.nombre or ('Equipo #' ~ m.id) }}</b>
+      {% if m.serie %}<span class="pb-sn">S/N {{ m.serie }}</span>{% elif m.sku %}<span class="pb-sn">SKU {{ m.sku }}</span>{% endif %}
+      <span class="pb-cnt">
+        {% if m.problemas_abiertos %}<span class="pb-n ambar">{{ m.problemas_abiertos }} abierto{{ 's' if m.problemas_abiertos != 1 }}</span>{% endif %}
+        {% if _res %}<span class="pb-n verde">{{ _res }} resuelto{{ 's' if _res != 1 }}</span>{% endif %}
+      </span>
+    </summary>
+    {{ _pb.lista(m.problemas) }}
+    <a class="pb-hv" href="{{ url_for('mant_maquina_ficha', mid=m.id) }}#hvProblemas"><i class="bi bi-journal-medical" aria-hidden="true"></i> Hoja de vida del equipo</a>
+  </details>
+  {% endfor %}
+</section>
+{% endif %}
+
 {# ── Layout: tabla + sidebar ──────────────────────────── #}
 <div class="d-flex gap-3 align-items-start flex-wrap flex-lg-nowrap">
 
