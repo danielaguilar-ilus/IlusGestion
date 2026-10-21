@@ -60,6 +60,9 @@
 {% block content %}
 {#- 💰 2026-10-07 — "$1.234.567" (y "−$…" si es negativo) para la cuenta única de finanzas. -#}
 {% macro _fclp(n) %}{% if (n or 0) < 0 %}−{% endif %}${{ '{:,.0f}'.format(((n or 0)|float)|abs)|replace(',', '.') }}{% endmacro %}
+{#- 🧾 2026-10-20 (REGLA #34): la franja «Un solo valor / No coincide» del vínculo costo ↔ anexo se dibuja en DOS lugares (el Paso 2 de la
+    tarjeta de edición y el bloque único «Costos y documentación»), así que vive en un macro: templates/ot2/_anexo_vinculo.html. -#}
+{% from 'ot2/_anexo_vinculo.html' import franja as anexo_franja %}
 {# 🆕 2026-08-28 (Daniel, 2do pedido del mismo tema hoy: "que se pueda
    realizar la firma... que firme el técnico, después el cliente, se pueda
    enviar por correo o WhatsApp... y que declaren la finanza al aprobar").
@@ -4929,6 +4932,10 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
          Debajo, la tarjeta de edición solo existe para quien puede editar. #}
       <div class="otd-card otd-span2" id="otdCardMotor">
         {% with fm_vid=v.id, fm_modo='ficha', fm_assets=True, fm_edita=puede_metadata %}{% include 'ot2/_fin_motor.html' %}{% endwith %}
+        {#- 🧾 2026-10-20 (REGLA #34, Daniel: «el valor debe ser único… debe estar en la mira para pagar y medir»): el vínculo costo ↔ anexo a la
+            vista en el bloque único. La franja del Paso 2 solo existe en la tarjeta de edición, que una OT CERRADA no dibuja; y es justo ahí
+            donde el superadmin la corrige con el anexo firmado («Corregir con el anexo»). Un técnico no llega acá (`not es_tecnico`). -#}
+        {% if anexo_vinculo %}{{ anexo_franja(anexo_vinculo, 'otdAnexoVinculoFicha', v.id, permissions and permissions.superadmin, '10px 0 0') }}{% endif %}
         {# Antes vivía al pie de la tarjeta «Finanzas de la OT». 2026-10-08: sube al bloque único (mismo id, mismo texto,
            lo sigue actualizando otdGuardarFinanzas). #}
         <div class="otd-warn otd-fin-faltan" id="otdFinFaltan" {% if not (finanzas and finanzas.faltan) %}hidden{% endif %}>
@@ -6406,39 +6413,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                   {# 🧾 2026-10-20 (REGLA #34, Daniel con la OT 239 / Anexo 221: «no son dos valores, es uno solo»): lo que se
                      le paga al proveedor sale del anexo vivo. Esta franja dice de cuál anexo y, si la OT no coincide, deja
                      alinearla con un botón. El servidor además rechaza (409) un costo que no sume lo mismo que el anexo. #}
-                  {% if anexo_vinculo %}
-                  {% set _av_ok = (anexo_vinculo.vinculo == 'alineado') %}
-                  <div id="otdAnexoVinculo" role="status"
-                       style="margin:0 0 10px;padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.45;color:#374151;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;border:1px solid {{ '#bbf7d0' if _av_ok else '#fde68a' }};background:{{ '#f0fdf4' if _av_ok else '#fff8e1' }}">
-                    <i class="bi {{ 'bi-link-45deg' if _av_ok else 'bi-exclamation-triangle' }}" aria-hidden="true"
-                       style="font-size:18px;line-height:1.2;color:{{ '#16a34a' if _av_ok else '#b45309' }}"></i>
-                    <div style="flex:1 1 220px;min-width:0">
-                      {% if _av_ok %}
-                        <b>Un solo valor.</b> El costo de la OT es el del Anexo N° {{ anexo_vinculo.numero }}
-                        ({{ 'firmado' if anexo_vinculo.firmado else 'vigente' }}) · {{ anexo_vinculo.total_txt }}.
-                        Si cambia lo que se le paga, {{ 'emite un anexo nuevo' if anexo_vinculo.firmado else 'corrige el monto en el anexo' }}
-                        y la OT lo sigue sola.
-                      {% elif anexo_vinculo.vinculo == 'sin_declarar' %}
-                        <b>El Anexo N° {{ anexo_vinculo.numero }} dice {{ anexo_vinculo.total_txt }}</b> y el costo de la OT aún no está
-                        declarado. Lo que se le paga al proveedor es un solo valor.
-                      {% else %}
-                        <b>No coincide.</b> La OT declara {{ anexo_vinculo.costo_txt }} y el Anexo N° {{ anexo_vinculo.numero }}
-                        dice {{ anexo_vinculo.total_txt }}. Lo que se le paga al proveedor es un solo valor.
-                      {% endif %}
-                    </div>
-                    {% if (not _av_ok) and anexo_vinculo.abierta %}
-                    <button type="button" class="btn btn-sm btn-dark" style="min-height:44px" onclick="otdCostoDesdeAnexo({{ v.id }})">
-                      Usar el valor del anexo</button>
-                    {% endif %}
-                    {#- OT ya cerrada (evidencia): solo el superadmin la alinea, con el registro inmutable de «Corregir finanzas». -#}
-                    {% if (not _av_ok) and (not anexo_vinculo.abierta) and anexo_vinculo.firmado and permissions and permissions.superadmin %}
-                    <button type="button" class="btn btn-sm btn-dark" style="min-height:44px"
-                            onclick="otdCostoCorregirConAnexo({{ v.id }}, {{ anexo_vinculo.numero }})"
-                            title="Solo superadmin: deja el costo de esta OT cerrada igual al del anexo firmado y registra quién y por qué">
-                      Corregir con el anexo <small>solo superadmin</small></button>
-                    {% endif %}
-                  </div>
-                  {% endif %}
+                  {% if anexo_vinculo %}{{ anexo_franja(anexo_vinculo, 'otdAnexoVinculo', v.id, permissions and permissions.superadmin) }}{% endif %}
                   {# 🏷️ 2026-09-10: en espejo con el Paso 1 (allá lo que
                      COBRAMOS, acá lo que nos CUESTA). Los ids no cambian. El
                      paso queda Listo solo con los DOS costos declarados, aunque

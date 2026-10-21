@@ -1,0 +1,54 @@
+{#- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+    🧾 ILUS Fitness · OT — vínculo COSTO ↔ ANEXO (REGLA #34: el costo de la OT y el anexo del proveedor son UN solo valor).
+    La franja dice de cuál anexo sale el costo de la OT y, si no coincide, deja alinearla con un botón.
+    Se dibuja en DOS lugares, con el MISMO texto y los MISMOS botones (un solo macro, para que no se separen):
+      · el Paso 2 de la tarjeta de edición (#otdAnexoVinculo): esa tarjeta solo existe para quien puede editar, o sea una OT ABIERTA;
+      · el bloque único «Costos y documentación de la OT» (#otdAnexoVinculoFicha): existe SIEMPRE, también en una OT CERRADA, que es justo
+        donde el superadmin la corrige con el anexo firmado. (2026-10-20: la primera versión solo vivía en el Paso 2 y en una OT cerrada
+        no se veía por ningún lado: nunca se dibujaba el botón «Corregir con el anexo».)
+    Parámetros:
+      av            lo que arma app.py::_ot_anexo_vinculo_vista(v): {numero, firmado, total_txt, costo_txt, vinculo, abierta}; None = no hay anexo vivo
+      dom_id        el id del elemento (no puede repetirse en la página)
+      vid           id de la OT
+      es_superadmin ¿es el superadministrador? (solo él corrige una OT ya cerrada)
+      margen        el `margin` CSS de la franja (por defecto, 10 px debajo; en el bloque único va 10 px arriba)
+    Solo gestión: el servidor ya no manda `av` a un técnico (REGLAS #19 y #26: es plata).
+    ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════ -#}
+{% macro franja(av, dom_id, vid, es_superadmin, margen='0 0 10px') %}
+{% if av %}
+{% set ok = (av.vinculo == 'alineado') %}
+<div id="{{ dom_id }}" role="status"
+     style="margin:{{ margen }};padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.45;color:#374151;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;border:1px solid {{ '#bbf7d0' if ok else '#fde68a' }};background:{{ '#f0fdf4' if ok else '#fff8e1' }}">
+  <i class="bi {{ 'bi-link-45deg' if ok else 'bi-exclamation-triangle' }}" aria-hidden="true"
+     style="font-size:18px;line-height:1.2;color:{{ '#16a34a' if ok else '#b45309' }}"></i>
+  <div style="flex:1 1 220px;min-width:0">
+    {% if ok %}
+      <b>Un solo valor.</b> El costo de la OT es el del Anexo N° {{ av.numero }}
+      ({{ 'firmado' if av.firmado else 'vigente' }}) · {{ av.total_txt }}.
+      {% if av.abierta %}Si cambia lo que se le paga, {{ 'emite un anexo nuevo' if av.firmado else 'corrige el monto en el anexo' }}
+      y la OT lo sigue sola.{% endif %}
+    {% elif av.vinculo == 'sin_declarar' %}
+      <b>El Anexo N° {{ av.numero }} dice {{ av.total_txt }}</b> y el costo de la OT aún no está
+      declarado. Lo que se le paga al proveedor es un solo valor.
+    {% else %}
+      <b>No coincide.</b> La OT declara {{ av.costo_txt }} y el Anexo N° {{ av.numero }}
+      dice {{ av.total_txt }}. Lo que se le paga al proveedor es un solo valor.
+    {% endif %}
+  </div>
+  {% if (not ok) and av.abierta %}
+  <button type="button" class="btn btn-sm btn-dark" style="min-height:44px" onclick="otdCostoDesdeAnexo({{ vid }})">
+    Usar el valor del anexo</button>
+  {% endif %}
+  {#- OT ya cerrada (evidencia): solo el superadmin la alinea, y solo con un anexo FIRMADO, con el registro inmutable de «Corregir finanzas». -#}
+  {% if (not ok) and (not av.abierta) and av.firmado and es_superadmin %}
+  <button type="button" class="btn btn-sm btn-dark" style="min-height:44px"
+          onclick="otdCostoCorregirConAnexo({{ vid }}, {{ av.numero }})"
+          title="Solo superadmin: deja el costo de esta OT cerrada igual al del anexo firmado y registra quién y por qué">
+    Corregir con el anexo <small>solo superadmin</small></button>
+  {% endif %}
+  {% if (not ok) and (not av.abierta) and (not av.firmado) %}
+  <div style="flex:1 1 100%;font-size:12px;color:#92400e">El Anexo N° {{ av.numero }} todavía no está firmado: una OT cerrada solo se alinea con un anexo firmado.</div>
+  {% endif %}
+</div>
+{% endif %}
+{% endmacro %}

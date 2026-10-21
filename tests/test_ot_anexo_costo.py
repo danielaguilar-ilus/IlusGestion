@@ -265,12 +265,18 @@ class TestCableado(unittest.TestCase):
         self.assertIn("NOT IN ('cerrada','cancelada','anulada')", fuente_funcion("_ot_anexo_alinear_costo"))
 
     def test_la_ficha_muestra_la_franja_y_el_boton(self):
+        # 2026-10-20: el HTML de la franja vive en un macro (templates/ot2/_anexo_vinculo.html) porque se dibuja en DOS lugares; la ficha lo
+        # llama desde el Paso 2 y desde el bloque único. Que se DIBUJE de verdad lo prueba tests/test_ot_anexo_vinculo_franja.py (render).
+        with open("templates/ot2/_anexo_vinculo.html", encoding="utf-8") as fh:
+            m = fh.read()
         with open("templates/ot2/detalle.html", encoding="utf-8") as fh:
             t = fh.read()
-        self.assertIn('id="otdAnexoVinculo"', t)
-        self.assertIn("/costo-desde-anexo", t)
-        self.assertIn("Usar el valor del anexo", t)
-        self.assertNotIn("alert(", t[t.index('id="otdAnexoVinculo"'):t.index('id="otdAnexoVinculo"') + 4000])
+        self.assertIn("anexo_franja(anexo_vinculo, 'otdAnexoVinculo'", t)
+        self.assertIn("Usar el valor del anexo", m)
+        self.assertIn("otdCostoDesdeAnexo({{ vid }})", m)
+        self.assertIn("/costo-desde-anexo", t)                                  # la ruta que llama el script global de la ficha
+        for prohibido in ("alert(", "confirm(", "prompt("):
+            self.assertNotIn(prohibido, m)
 
 
 class TestCorregirOtCerradaConElAnexo(unittest.TestCase):
@@ -387,12 +393,16 @@ class TestBotonDeCorregirCerrada(unittest.TestCase):
         self.assertIn("_ot_fin_es_superadmin()", fuente_funcion("ot_api_costo_corregir_con_anexo"))
 
     def test_la_ficha_ofrece_el_boton_solo_al_superadmin_en_una_ot_cerrada_con_anexo_firmado(self):
+        with open("templates/ot2/_anexo_vinculo.html", encoding="utf-8") as fh:
+            m = fh.read()
         with open("templates/ot2/detalle.html", encoding="utf-8") as fh:
             t = fh.read()
-        i = t.index("otdCostoCorregirConAnexo({{ v.id }}")
-        previo = t[i - 420:i]
-        for cond in ("not anexo_vinculo.abierta", "anexo_vinculo.firmado", "permissions.superadmin"):
+        i = m.index("otdCostoCorregirConAnexo({{ vid }}")
+        previo = m[i - 420:i]
+        for cond in ("not av.abierta", "av.firmado", "es_superadmin"):
             self.assertIn(cond, previo)
+        # ...y la ficha le pasa si es superadmin (permisos del servidor), no un valor puesto por el navegador
+        self.assertIn("permissions and permissions.superadmin", t[t.index("anexo_franja(anexo_vinculo, 'otdAnexoVinculo'"):][:300])
         self.assertIn("window.otdCostoCorregirConAnexo = async function", t)
         self.assertIn("simular: true", t)                                       # primero simula y muestra cómo queda
 
