@@ -1625,7 +1625,12 @@ class TestCableado(unittest.TestCase):
 
     # ── la variable apagada ──
     def test_la_variable_del_cliente_no_se_enciende_en_ningun_archivo_del_repositorio(self):
-        """REGLA #22: el aviso al cliente NACE APAGADO y solo Daniel lo enciende (en Cloud Run), nunca un commit."""
+        """REGLA #22: el aviso al cliente NACE APAGADO y solo Daniel lo enciende, nunca un commit por su cuenta.
+
+        Cuando Daniel lo autorice por escrito, se enciende como `RETIROS_ENCUESTA_ACTIVA`: `append_env OT_TERMINADA_CLIENTE_ACTIVA "1"` en
+        `.github/workflows/deploy.yml` (más su nombre en el `grep -vE` de limpieza) y en ESE mismo cambio se ajusta este assert al patrón de
+        `tests/test_retiros_07oct_encuesta_lanzada.py::test_el_deploy_no_enciende_nada_sin_autorizacion_de_daniel`. Ponerla a mano en la consola de
+        Cloud Run no sirve: el deploy usa `--env-vars-file` y reemplaza todas las variables."""
         permitidos = {".py", ".md", ".js", ".html", ".txt"}
         sospechosos = []
         for carpeta, subs, archivos in os.walk(RAIZ):
