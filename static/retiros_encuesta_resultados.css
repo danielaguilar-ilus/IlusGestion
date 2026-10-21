@@ -51,6 +51,7 @@
 
 /* ── Cifras ────────────────────────────────────────────────────────────── */
 .encr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:4px}
+.encr-stats.is-2{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:14px}
 .encr-stat{background:#fff;border:1px solid var(--linea);border-radius:18px;padding:16px 18px;box-shadow:0 4px 8px -2px rgba(15,23,42,.05)}
 .encr-stat-ico{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:12px;font-size:1.1rem;margin-bottom:10px}
 .encr-stat-ico.is-rojo{background:#fee2e2;color:var(--rojo-ilus)}

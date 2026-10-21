@@ -6403,6 +6403,35 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
 
                 <div class="otd-fhalf">
                   <div class="otd-fhalf-t">Cuánto me cobraron</div>
+                  {# 🧾 2026-10-20 (REGLA #34, Daniel con la OT 239 / Anexo 221: «no son dos valores, es uno solo»): lo que se
+                     le paga al proveedor sale del anexo vivo. Esta franja dice de cuál anexo y, si la OT no coincide, deja
+                     alinearla con un botón. El servidor además rechaza (409) un costo que no sume lo mismo que el anexo. #}
+                  {% if anexo_vinculo %}
+                  {% set _av_ok = (anexo_vinculo.vinculo == 'alineado') %}
+                  <div id="otdAnexoVinculo" role="status"
+                       style="margin:0 0 10px;padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.45;color:#374151;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;border:1px solid {{ '#bbf7d0' if _av_ok else '#fde68a' }};background:{{ '#f0fdf4' if _av_ok else '#fff8e1' }}">
+                    <i class="bi {{ 'bi-link-45deg' if _av_ok else 'bi-exclamation-triangle' }}" aria-hidden="true"
+                       style="font-size:18px;line-height:1.2;color:{{ '#16a34a' if _av_ok else '#b45309' }}"></i>
+                    <div style="flex:1 1 220px;min-width:0">
+                      {% if _av_ok %}
+                        <b>Un solo valor.</b> El costo de la OT es el del Anexo N° {{ anexo_vinculo.numero }}
+                        ({{ 'firmado' if anexo_vinculo.firmado else 'vigente' }}) · {{ anexo_vinculo.total_txt }}.
+                        Si cambia lo que se le paga, {{ 'emite un anexo nuevo' if anexo_vinculo.firmado else 'corrige el monto en el anexo' }}
+                        y la OT lo sigue sola.
+                      {% elif anexo_vinculo.vinculo == 'sin_declarar' %}
+                        <b>El Anexo N° {{ anexo_vinculo.numero }} dice {{ anexo_vinculo.total_txt }}</b> y el costo de la OT aún no está
+                        declarado. Lo que se le paga al proveedor es un solo valor.
+                      {% else %}
+                        <b>No coincide.</b> La OT declara {{ anexo_vinculo.costo_txt }} y el Anexo N° {{ anexo_vinculo.numero }}
+                        dice {{ anexo_vinculo.total_txt }}. Lo que se le paga al proveedor es un solo valor.
+                      {% endif %}
+                    </div>
+                    {% if (not _av_ok) and anexo_vinculo.abierta %}
+                    <button type="button" class="btn btn-sm btn-dark" style="min-height:44px" onclick="otdCostoDesdeAnexo({{ v.id }})">
+                      Usar el valor del anexo</button>
+                    {% endif %}
+                  </div>
+                  {% endif %}
                   {# 🏷️ 2026-09-10: en espejo con el Paso 1 (allá lo que
                      COBRAMOS, acá lo que nos CUESTA). Los ids no cambian. El
                      paso queda Listo solo con los DOS costos declarados, aunque
@@ -10828,6 +10857,24 @@ window.otdIrAFinanzas = function(){
     const primero = document.getElementById('otdErpDocQ');
     if (primero) setTimeout(() => primero.focus({preventScroll: true}), 420);
   });
+};
+
+/* 🧾 2026-10-20 (REGLA #34): «Usar el valor del anexo» — deja el costo de la OT igual al de su anexo vigente (un solo
+   valor). La franja #otdAnexoVinculo de la tarjeta de Finanzas llama a esta función; el servidor lo deja anotado en la
+   bitácora de la OT con el nombre de quien lo pidió y nunca toca una OT cerrada. */
+window.otdCostoDesdeAnexo = async function(vid){
+  const ok = await ilusConfirm({title:'Usar el valor del anexo',
+    message:'El costo de la OT quedará igual al del anexo vigente.',
+    sub:'Queda registrado en la bitácora de la OT con tu nombre.',
+    okLabel:'Usar el valor del anexo', cancelLabel:'Cancelar'});
+  if (!ok) return;
+  try {
+    const r = await fetch('/ot/api/' + vid + '/costo-desde-anexo', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    const d = await r.json().catch(function(){ return {}; });
+    if (!r.ok || d.ok === false) throw new Error(d.error || 'No se pudo alinear el costo con el anexo');
+    ilusToast('✓ ' + (d.mensaje || 'Costo alineado con el anexo'), {type:'success'});
+    setTimeout(function(){ location.reload(); }, 700);
+  } catch(e){ ilusToast(e.message || 'No se pudo alinear el costo con el anexo', {type:'error'}); }
 };
 
 /* "Sumar un documento" (Paso 1): abre/cierra el buscador por RUT y por

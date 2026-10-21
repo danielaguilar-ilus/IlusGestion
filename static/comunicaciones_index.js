@@ -630,8 +630,10 @@ const TPL_ESTADOS_MANTENCIONES = [
     color:'#0ea5e9', desc:'Al técnico, cuando cambia la fecha u horario de una OT suya (muestra ANTES → AHORA)' },
   { key:'ot_cancelada_tecnico', label:'OT cancelada (al técnico)', icon:'bi-x-circle',       grupo:'ot_tecnico',
     color:'#dc2626', desc:'Al técnico, cuando se cancela o anula una OT suya: ya no necesita ir' },
-  { key:'ot_desasignada_tecnico', label:'OT quitada al técnico', icon:'bi-person-dash',    grupo:'ot_tecnico',
-    color:'#6b7280', desc:'Al técnico anterior, cuando le quitan una OT (se asignó a otra persona o se reorganizó el equipo)' },
+  // 2026-10-20 (Daniel: «no digas "te quité la OT"… algo más sutil, se sentiría como un castigo»): ni el nombre ni el texto
+  // hablan de quitar; es un ajuste de la agenda, dicho con agradecimiento.
+  { key:'ot_desasignada_tecnico', label:'OT pasa a otra persona (ajuste de agenda)', icon:'bi-arrow-left-right', grupo:'ot_tecnico',
+    color:'#6b7280', desc:'Al técnico anterior, cuando la OT pasa a otra persona o se reorganiza el equipo: un aviso amable de ajuste de agenda, sin reproche' },
   { key:'agenda_tecnico_manana', label:'Agenda del técnico (17:00)', icon:'bi-alarm',      grupo:'ot_tecnico',
     color:'#16a34a', desc:'Recordatorio automático entre las 17:00 y las 21:00 del día hábil anterior, con las OT del técnico (el viernes avisa el lunes, y también un sábado o feriado que tenga OT; el correo nunca sale en sábado, domingo ni feriado)' },
 ];
