@@ -6411,6 +6411,13 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                     <button type="button" class="btn btn-sm btn-dark" style="min-height:44px" onclick="otdCostoDesdeAnexo({{ v.id }})">
                       Usar el valor del anexo</button>
                     {% endif %}
+                    {#- OT ya cerrada (evidencia): solo el superadmin la alinea, con el registro inmutable de «Corregir finanzas». -#}
+                    {% if (not _av_ok) and (not anexo_vinculo.abierta) and anexo_vinculo.firmado and permissions and permissions.superadmin %}
+                    <button type="button" class="btn btn-sm btn-dark" style="min-height:44px"
+                            onclick="otdCostoCorregirConAnexo({{ v.id }}, {{ anexo_vinculo.numero }})"
+                            title="Solo superadmin: deja el costo de esta OT cerrada igual al del anexo firmado y registra quién y por qué">
+                      Corregir con el anexo <small>solo superadmin</small></button>
+                    {% endif %}
                   </div>
                   {% endif %}
                   {# 🏷️ 2026-09-10: en espejo con el Paso 1 (allá lo que
@@ -10856,6 +10863,30 @@ window.otdCostoDesdeAnexo = async function(vid){
     ilusToast('✓ ' + (d.mensaje || 'Costo alineado con el anexo'), {type:'success'});
     setTimeout(function(){ location.reload(); }, 700);
   } catch(e){ ilusToast(e.message || 'No se pudo alinear el costo con el anexo', {type:'error'}); }
+};
+
+/* 🧾 2026-10-20 (REGLA #34): OT YA CERRADA con el costo distinto de su anexo FIRMADO — solo superadmin. Primero simula (muestra
+   cómo queda la ganancia), después corrige con el mismo registro inmutable de «Corregir finanzas». */
+window.otdCostoCorregirConAnexo = async function(vid, numero){
+  const llamar = async function(cuerpo){
+    const r = await fetch('/ot/api/' + vid + '/costo-desde-anexo/corregir', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cuerpo)});
+    const d = await r.json().catch(function(){ return {}; });
+    if (!r.ok || d.ok === false) throw new Error(d.error || 'No se pudo corregir el costo con el anexo');
+    return d;
+  };
+  const clp = function(n){ return '$' + Math.round(Number(n) || 0).toLocaleString('es-CL'); };
+  try {
+    const sim = await llamar({simular: true});
+    if (sim.sin_cambios){ ilusToast('El costo ya es igual al del anexo.', {type:'info'}); return; }
+    const ok = await ilusConfirm({title:'Corregir con el anexo N° ' + numero,
+      message:'El costo de esta OT cerrada quedará igual al del anexo firmado.',
+      sub:'La ganancia pasa de ' + clp(sim.ganancia_antes) + ' a ' + clp(sim.ganancia_despues) + '. Queda registrado con tu nombre en el historial de correcciones.',
+      okLabel:'Corregir', cancelLabel:'Cancelar'});
+    if (!ok) return;
+    const d = await llamar({});
+    ilusToast('✓ ' + (d.mensaje || 'Costo corregido con el anexo'), {type:'success'});
+    setTimeout(function(){ location.reload(); }, 800);
+  } catch(e){ ilusToast(e.message || 'No se pudo corregir el costo con el anexo', {type:'error'}); }
 };
 
 /* "Sumar un documento" (Paso 1): abre/cierra el buscador por RUT y por
