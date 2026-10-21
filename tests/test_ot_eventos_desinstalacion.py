@@ -1,4 +1,8 @@
-"""EVENTOS y OT de DESINSTALACIÓN (madre e hija) — Daniel, 19-oct-2026.
+"""OT de DESINSTALACIÓN (madre e hija) — Daniel, 19-oct-2026.
+
+2026-10-21: Daniel pidió eliminar la función «Eventos» («el de eventos no me sirve, elimínalo y el código»): se quitaron de
+este archivo las pruebas de eventos (estado, avance, semáforo, pantallas, rutas, filtro, Excel) y se agregó
+TestEventosEliminados, que vigila que no vuelvan.
 
 Cubre (sin base de datos ni Flask): la lógica pura (ot_eventos.py, ot_saldo_servicio.py) y las funciones de app.py que se
 EJECUTAN con dobles de la base (tests/_fuente_app.py recorta cada función del texto: no se parsea el archivo de 7 MB).
@@ -96,15 +100,17 @@ class TestFechas(unittest.TestCase):
         self.assertEqual(E.evaluar_fecha_desinstalacion("2026-11-26", "12:00", "11:00", madre(), {})["bloqueo"]["codigo"], "HORA_INVALIDA")
         self.assertEqual(E.evaluar_fecha_desinstalacion("2026-11-26", "9x", None, madre(), {})["bloqueo"]["codigo"], "HORA_INVALIDA")
 
-    def test_si_el_evento_termina_en_domingo_se_propone_el_siguiente_habil(self):
-        p = E.proponer_fecha_desinstalacion({"fecha_fin": "2026-11-29"}, madre(), {"2026-11-30": "feriado"})
+    def test_la_propuesta_es_el_siguiente_habil_despues_de_la_instalacion(self):
+        # viernes 27 + lunes 30 feriado => martes 1-dic
+        p = E.proponer_fecha_desinstalacion(madre(fecha_fin=D(2026, 11, 27)), {"2026-11-30": "feriado"})
         self.assertEqual(p["fecha"], D(2026, 12, 1))
+        # si hoy cae en domingo (la instalación ya pasó), se propone el siguiente día hábil
+        p = E.proponer_fecha_desinstalacion(madre(), {}, D(2026, 11, 29))
+        self.assertEqual(p["fecha"], D(2026, 11, 30))
         self.assertIn("domingo", p["motivo"])
-        # un día hábil se propone tal cual
-        self.assertEqual(E.proponer_fecha_desinstalacion({"fecha_fin": "2026-11-26"}, madre(), {})["fecha"], D(2026, 11, 26))
-        # sin evento: el siguiente día hábil DESPUÉS de la instalación (2026-10-20: antes proponía el mismo día y la propuesta
+        # el siguiente día hábil DESPUÉS de la instalación (2026-10-20: antes proponía el mismo día y la propuesta
         # podía quedar bloqueada por el mismo sistema; ver tests/test_ot_eventos_revision_20oct.py)
-        self.assertEqual(E.proponer_fecha_desinstalacion(None, madre(fecha_fin=None), {})["fecha"], D(2026, 10, 27))
+        self.assertEqual(E.proponer_fecha_desinstalacion(madre(fecha_fin=None), {})["fecha"], D(2026, 10, 27))
 
     def test_dias_habiles(self):
         self.assertEqual(E.restar_habiles(D(2026, 11, 2), 2, {}), D(2026, 10, 29))   # lunes - 2 hábiles = jueves
@@ -164,10 +170,10 @@ class TestCubierta(unittest.TestCase):
         self.assertFalse(E.puede_programar_desinstalacion(madre(ot_madre_id=4), [])[0])
         self.assertFalse(E.puede_programar_desinstalacion(madre(estado="cancelada"), [])[0])
 
-    def test_declarar_despues_pide_autorizacion_salvo_asistente_o_evento_con_fin(self):
-        self.assertTrue(E.necesita_autorizacion_prevista(False, False))
-        self.assertFalse(E.necesita_autorizacion_prevista(True, False))
-        self.assertFalse(E.necesita_autorizacion_prevista(False, True))
+    def test_declarar_despues_pide_autorizacion_salvo_que_se_responda_si_en_el_asistente(self):
+        # 2026-10-21: ya no existe la excepción «la madre nació en un evento con fecha de fin» (se eliminó Eventos).
+        self.assertTrue(E.necesita_autorizacion_prevista(False))
+        self.assertFalse(E.necesita_autorizacion_prevista(True))
 
     def test_eleccion_cubierta_o_cobra_la_decide_el_saldo_que_calcula_el_servidor(self):
         # sin saldo: es cubierta sin preguntar
@@ -226,10 +232,6 @@ class TestGuardias(unittest.TestCase):
         self.assertEqual(E.guardia_cambio_tipo(madre(), [])["codigo"], "TIPO_PROTEGIDO")   # tiene prevista
         self.assertIsNone(E.guardia_cambio_tipo(madre(desinstalacion_prevista=None), []))
 
-    def test_el_evento_de_la_hija_es_el_de_la_madre(self):
-        self.assertEqual(E.guardia_evento_de_hija(hija())["codigo"], "EVENTO_DE_LA_MADRE")
-        self.assertIsNone(E.guardia_evento_de_hija(madre()))
-
     def test_no_se_quita_la_prevista_con_hija_vigente(self):
         self.assertEqual(E.guardia_quitar_prevista(madre(), [hija()])["codigo"], "DESINSTALACION_AGENDADA")
         self.assertIsNone(E.guardia_quitar_prevista(madre(), [hija(estado="cancelada")]))
@@ -259,31 +261,24 @@ class TestEstadoYAvisos(unittest.TestCase):
 
     def test_barrido_avisa_dos_dias_habiles_antes_si_no_hay_hija(self):
         m = madre(desinstalacion_prevista=D(2026, 11, 26))   # jueves
-        self.assertIsNone(E.aviso_barrido(m, [], None, D(2026, 11, 20), {}))        # viernes: faltan 4 hábiles
-        a = E.aviso_barrido(m, [], None, D(2026, 11, 24), {})                       # martes: 2 hábiles
+        self.assertIsNone(E.aviso_barrido(m, [], D(2026, 11, 20), {}))        # viernes: faltan 4 hábiles
+        a = E.aviso_barrido(m, [], D(2026, 11, 24), {})                       # martes: 2 hábiles
         self.assertEqual(a["codigo"], "por_agendar")
-        self.assertEqual(E.aviso_barrido(m, [], None, D(2026, 11, 27), {})["codigo"], "vencida")
-        self.assertEqual(E.aviso_barrido(m, [], None, D(2026, 11, 27), {})["nivel"], "rojo")
+        self.assertEqual(E.aviso_barrido(m, [], D(2026, 11, 27), {})["codigo"], "vencida")
+        self.assertEqual(E.aviso_barrido(m, [], D(2026, 11, 27), {})["nivel"], "rojo")
 
     def test_barrido_no_avisa_si_la_desinstalacion_esta_agendada_a_tiempo_o_la_madre_esta_cancelada(self):
         m = madre(desinstalacion_prevista=D(2026, 11, 26))
-        self.assertIsNone(E.aviso_barrido(m, [hija(fecha_programada=D(2026, 11, 26))], None, D(2026, 11, 24), {}))
-        self.assertIsNone(E.aviso_barrido(madre(estado="cancelada"), [], None, D(2026, 11, 27), {}))
-        self.assertIsNone(E.aviso_barrido(madre(desinstalacion_prevista=None), [], None, D(2026, 11, 27), {}))
-
-    def test_barrido_avisa_cuando_el_evento_termino_con_la_instalacion_sin_desinstalar(self):
-        m = madre(desinstalacion_prevista=D(2026, 12, 20))
-        ev = {"fecha_fin": "2026-11-27", "estado": "activo"}
-        a = E.aviso_barrido(m, [], ev, D(2026, 11, 28), {})
-        self.assertEqual(a["codigo"], "evento_terminado")
-        self.assertIsNone(E.aviso_barrido(m, [], dict(ev, estado="cancelado"), D(2026, 11, 28), {}))
+        self.assertIsNone(E.aviso_barrido(m, [hija(fecha_programada=D(2026, 11, 26))], D(2026, 11, 24), {}))
+        self.assertIsNone(E.aviso_barrido(madre(estado="cancelada"), [], D(2026, 11, 27), {}))
+        self.assertIsNone(E.aviso_barrido(madre(desinstalacion_prevista=None), [], D(2026, 11, 27), {}))
 
     def test_barrido_avisa_si_llega_el_dia_de_la_hija_y_la_madre_no_se_ejecuto(self):
         m = madre(estado="programada")
-        a = E.aviso_barrido(m, [hija(fecha_programada=D(2026, 11, 26))], None, D(2026, 11, 26), {})
+        a = E.aviso_barrido(m, [hija(fecha_programada=D(2026, 11, 26))], D(2026, 11, 26), {})
         self.assertEqual(a["codigo"], "hija_sin_madre_ejecutada")
         m2 = madre(estado="cerrada")
-        self.assertIsNone(E.aviso_barrido(m2, [hija(fecha_programada=D(2026, 11, 26))], None, D(2026, 11, 26), {}))
+        self.assertIsNone(E.aviso_barrido(m2, [hija(fecha_programada=D(2026, 11, 26))], D(2026, 11, 26), {}))
 
     def test_aviso_al_cerrar_la_madre_solo_sin_hija_vigente(self):
         self.assertIsNotNone(E.aviso_cierre_madre(madre(), []))
@@ -292,97 +287,6 @@ class TestEstadoYAvisos(unittest.TestCase):
 
     def test_la_solicitud_a_daniel_dice_que_incluye_la_desinstalacion(self):
         self.assertEqual(E.resumen_instalacion_con_desinstalacion("2026-11-26"), "Incluye desinstalación 26/11")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
-class TestEventos(unittest.TestCase):
-    def test_normalizar_evento(self):
-        err, c = E.normalizar_evento({"nombre": "  Felipe   Fierro  ", "fecha_ini": "2026-10-26", "fecha_fin": "2026-10-27",
-                                      "direccion": "Av. Kennedy 1", "lat": "-33.4", "lng": "-70.6", "cliente_id": "5"})
-        self.assertIsNone(err)
-        self.assertEqual(c["nombre"], "Felipe Fierro")
-        self.assertEqual((c["fecha_ini"], c["fecha_fin"]), (D(2026, 10, 26), D(2026, 10, 27)))
-        self.assertEqual((c["lat"], c["lng"], c["cliente_id"]), (-33.4, -70.6, 5))
-
-    def test_normalizar_errores_y_fechas_opcionales(self):
-        self.assertEqual(E.normalizar_evento({"nombre": "ab"})[0]["codigo"], "NOMBRE_REQUERIDO")
-        self.assertEqual(E.normalizar_evento({"nombre": "Evento", "fecha_ini": "2026-10-27", "fecha_fin": "2026-10-26"})[0]["codigo"],
-                         "FECHAS_INVERTIDAS")
-        self.assertEqual(E.normalizar_evento({"nombre": "Evento", "fecha_ini": "basura"})[0]["codigo"], "FECHA_INI_INVALIDA")
-        err, c = E.normalizar_evento({"nombre": "Evento sin fechas"})
-        self.assertIsNone(err)
-        self.assertEqual((c["fecha_ini"], c["fecha_fin"]), (None, None))
-        # solo el fin: el inicio se iguala (un evento de un día)
-        err, c = E.normalizar_evento({"nombre": "Evento de un día", "fecha_fin": "2026-10-27"})
-        self.assertEqual((c["fecha_ini"], c["fecha_fin"]), (D(2026, 10, 27), D(2026, 10, 27)))
-        # coordenadas fuera de rango se descartan
-        self.assertIsNone(E.normalizar_evento({"nombre": "Evento", "lat": "999"})[1]["lat"])
-
-    def test_estado_calculado_del_evento(self):
-        ev = {"fecha_ini": "2026-10-26", "fecha_fin": "2026-10-27", "estado": "activo"}
-        pend = [{"id": 1, "tipo": "instalacion", "estado": "programada"}]
-        todo = [{"id": 1, "tipo": "instalacion", "estado": "cerrada"}]
-        self.assertEqual(E.estado_evento(ev, [], D(2026, 10, 20))[0], "proximo")
-        self.assertEqual(E.estado_evento(ev, [], D(2026, 10, 26))[0], "en_curso")
-        self.assertEqual(E.estado_evento(ev, pend, D(2026, 10, 30))[0], "por_cerrar")
-        self.assertEqual(E.estado_evento(ev, todo, D(2026, 10, 30))[0], "terminado")
-        self.assertEqual(E.estado_evento({"estado": "activo"}, [], D(2026, 10, 30))[0], "sin_fechas")
-        self.assertEqual(E.estado_evento(dict(ev, estado="cancelado"), [], D(2026, 10, 30))[0], "cancelado")
-
-    def test_instalacion_con_desinstalacion_pendiente_mantiene_el_evento_abierto(self):
-        ev = {"fecha_ini": "2026-10-26", "fecha_fin": "2026-10-27", "estado": "activo"}
-        ots = [{"id": 1, "tipo": "instalacion", "estado": "cerrada", "desinstalacion_prevista": D(2026, 11, 26),
-                "fecha_programada": D(2026, 10, 26)}]
-        self.assertEqual(E.estado_evento(ev, ots, D(2026, 10, 30))[0], "por_cerrar")
-
-    def test_avance_por_fase_une_los_pares_y_ignora_las_canceladas(self):
-        ots = [
-            {"id": 1, "numero_ot": "OT-1", "tipo": "instalacion", "estado": "cerrada", "desinstalacion_prevista": D(2026, 11, 26),
-             "fecha_programada": D(2026, 10, 26)},
-            {"id": 2, "numero_ot": "OT-2", "tipo": "desinstalacion", "estado": "programada", "ot_madre_id": 1,
-             "ot_relacion": "desinstalacion", "fecha_programada": D(2026, 11, 26)},
-            {"id": 3, "numero_ot": "OT-3", "tipo": "revision_interna", "estado": "cerrada", "fecha_programada": D(2026, 10, 20)},
-            {"id": 4, "numero_ot": "OT-4", "tipo": "instalacion", "estado": "cancelada", "fecha_programada": D(2026, 10, 26)},
-        ]
-        av = E.avance_evento(ots, D(2026, 11, 1))
-        self.assertEqual(av["total"], 3)                       # la cancelada no cuenta
-        self.assertEqual(av["por_fase"]["instalacion"]["cerradas"], 1)
-        self.assertEqual(av["por_fase"]["desinstalacion"]["pendientes"], 1)
-        self.assertEqual(av["por_fase"]["revision"]["cerradas"], 1)
-        self.assertEqual(av["pct"], 67)
-        self.assertEqual(len(av["pares"]), 1)
-        self.assertEqual(av["pares"][0]["hija"]["id"], 2)
-        self.assertEqual(av["desinst_pendientes"], 1)
-        self.assertEqual(av["proxima_fecha"], "2026-11-26")
-
-    def test_semaforo(self):
-        ev = {"fecha_ini": "2026-10-26", "fecha_fin": "2026-10-27", "estado": "activo"}
-        cerr = [{"id": 1, "tipo": "instalacion", "estado": "cerrada"}]
-        self.assertEqual(E.semaforo_evento(ev, cerr, D(2026, 10, 30))[0], "verde")
-        pend = [{"id": 1, "tipo": "instalacion", "estado": "programada", "fecha_programada": D(2026, 10, 26)}]
-        self.assertEqual(E.semaforo_evento(ev, pend, D(2026, 10, 26))[0], "ambar")
-        sin_agendar = [{"id": 1, "tipo": "instalacion", "estado": "cerrada", "desinstalacion_prevista": D(2026, 11, 26)}]
-        self.assertEqual(E.semaforo_evento(ev, sin_agendar, D(2026, 11, 1))[0], "rojo")   # evento terminado sin desinstalar
-        vencida = [{"id": 1, "tipo": "instalacion", "estado": "cerrada", "desinstalacion_prevista": D(2026, 10, 28)}]
-        self.assertEqual(E.semaforo_evento(dict(ev, fecha_fin="2026-12-30"), vencida, D(2026, 11, 1))[0], "rojo")
-        self.assertEqual(E.semaforo_evento(ev, [], D(2026, 10, 30))[0], "gris")
-        self.assertEqual(E.semaforo_evento(dict(ev, estado="cancelado"), cerr, D(2026, 10, 30))[0], "gris")
-
-    def test_una_linea_por_dia(self):
-        ots = [{"id": 1, "numero_ot": "OT-1", "tipo": "instalacion", "estado": "programada",
-                "fecha_programada": D(2026, 10, 26), "fecha_fin": D(2026, 10, 27)},
-               {"id": 2, "numero_ot": "OT-2", "tipo": "instalacion", "estado": "cancelada", "fecha_programada": D(2026, 10, 26)}]
-        d = E.cuadro_por_dia(ots)
-        self.assertEqual(sorted(d), ["2026-10-26", "2026-10-27"])
-        self.assertEqual(len(d["2026-10-26"]), 1)
-
-    def test_sugerir_ot_para_asociar(self):
-        ev = {"doc_ref": "NVI 687", "cliente_id": 5, "fecha_ini": "2026-10-26", "fecha_fin": "2026-10-27"}
-        self.assertEqual(E.sugerir_ot_para_evento({"docs": ["NVI 687"], "cliente_id": 9}, ev), 3)
-        self.assertEqual(E.sugerir_ot_para_evento({"docs": ["NVI687"], "cliente_id": 9}, ev), 3)
-        self.assertEqual(E.sugerir_ot_para_evento({"docs": [], "cliente_id": 5}, ev), 2)
-        self.assertEqual(E.sugerir_ot_para_evento({"docs": [], "cliente_id": 9, "fecha_programada": D(2026, 10, 26)}, ev), 1)
-        self.assertEqual(E.sugerir_ot_para_evento({"docs": [], "cliente_id": 9}, ev), 0)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -904,10 +808,13 @@ class TestMigraciones(unittest.TestCase):
             # con la base "ya aplicada" (la consulta devuelve una fila) la guardia SALTA la sentencia sin pedir el lock
             self.assertTrue(guardia(lambda sql, p: {"t": "x", "1": 1}, s), "la guardia no reconoce: " + s[:70])
         txt = " ".join(sentencias)
-        for col in ("evento_id", "ot_madre_id", "ot_relacion", "desinstalacion_prevista", "heredado_de_visita_id",
-                    "idx_v_evento_fecha", "idx_v_madre_rel", "mant_eventos"):
+        for col in ("ot_madre_id", "ot_relacion", "desinstalacion_prevista", "heredado_de_visita_id", "idx_v_madre_rel"):
             self.assertIn(col, txt)
+        # 2026-10-21: Eventos se eliminó: el arranque ya no crea su tabla ni sus columnas (en producción quedan sin usar)
+        for col in ("evento_id", "evento_fin_al_crear", "idx_v_evento_fecha", "mant_eventos"):
+            self.assertNotIn(col, txt)
         self.assertNotIn("DELETE", txt.upper())
+        self.assertNotIn("DROP", txt.upper())
 
     def test_tipo_de_autorizacion_nuevo_en_el_enum_y_en_las_listas(self):
         t = F.texto()
@@ -933,7 +840,7 @@ class TestCandadosPorTexto(unittest.TestCase):
         i = src.index("allowed = [")
         j = src.index("]", src.index('"centro_costo"', i))
         lista = src[i:j]
-        for col in ("evento_id", "ot_madre_id", "ot_relacion", "desinstalacion_prevista", "desinstalacion_aut_id"):
+        for col in ("ot_madre_id", "ot_relacion", "desinstalacion_prevista", "desinstalacion_aut_id"):
             self.assertNotIn(col, lista)
 
     def test_el_nucleo_no_lee_ot_madre_id_del_body(self):
@@ -942,8 +849,8 @@ class TestCandadosPorTexto(unittest.TestCase):
         self.assertNotIn('d.get("ot_madre_id")', core)
         self.assertNotIn('d["ot_madre_id"]', core)
         self.assertIn('"ot_madre_id", "ot_relacion"', core, "las llaves solo del servidor se descartan del body")
-        # la hija no hereda ticket, evento del body ni el forzar_choque de una aprobación
-        self.assertIn('"evento_id", "ticket_id"', core)
+        # la hija no hereda ticket ni el forzar_choque de una aprobación
+        self.assertIn('"desinstalacion", "ticket_id"', core)
         # y el correo al cliente se salta en la hija (REGLA #22)
         self.assertIn("if not es_interna and not es_hija:\n        try: _mant_ot_email_cliente_creacion(vid)", core)
 
@@ -965,23 +872,12 @@ class TestCandadosPorTexto(unittest.TestCase):
         self.assertIn("heredado_de_visita_id IS NULL", F.fuente_constante("_FAC_SQL_OT_CON_DOC"))
 
     def test_las_rutas_nuevas_y_sus_decoradores(self):
-        escritura = ("ot_api_evento_crear", "ot_api_evento_editar", "ot_api_evento_asociar", "ot_api_evento_candidatas",
-                     "ot_api_desinstalacion_info", "ot_api_desinstalacion_programar", "ot_api_desinstalacion_prevista")
+        # 2026-10-21: las rutas de Eventos se eliminaron; quedan las de la desinstalación (solo gestión).
+        escritura = ("ot_api_desinstalacion_info", "ot_api_desinstalacion_programar", "ot_api_desinstalacion_prevista")
         for f in escritura:
             decs = F.decoradores(f)
             self.assertIn("@_mant_required", decs, f)
             self.assertIn("@_no_tecnico", decs, f)
-        # ver: cualquiera con Mantenciones (el técnico ve solo lo suyo, ya filtrado en la función)
-        for f in ("ot_api_eventos_listar", "ot_api_evento_detalle", "ot_api_ot_evento"):
-            self.assertIn("@_mant_required", F.decoradores(f), f)
-            self.assertNotIn("@_no_tecnico", F.decoradores(f), f)
-        # el técnico recibe sus eventos acotados y sin datos internos
-        det = F.fuente_funcion("ot_api_evento_detalle")
-        self.assertIn("_evento_ids_del_tecnico()", det)
-        self.assertIn("con_internos=not es_tec", det)
-        lista = F.fuente_funcion("ot_api_eventos_listar")
-        self.assertIn("con_internos=not (es_tec or para_asistente)", lista)
-        self.assertIn("if not es_tec:\n            cols += \" OR e.doc_ref LIKE %s\"", lista, "el técnico no busca por documento")
 
     def test_la_hija_muestra_el_ticket_de_la_instalacion_solo_a_gestion_y_no_lo_hereda(self):
         # Crítica 25: la desinstalación NO hereda el ticket (la OT mueve sus estados); la ficha lo muestra como enlace
@@ -990,17 +886,16 @@ class TestCandadosPorTexto(unittest.TestCase):
         self.assertEqual(ctx.count("FROM tk_tickets WHERE visita_id=%s"), 1)
         antes = ctx[:ctx.index("FROM tk_tickets WHERE visita_id=%s")]
         self.assertIn("if con_montos:", antes[-500:], "solo gestión recibe el ticket de la instalación")
-        self.assertIn('"evento_id", "ticket_id"', F.fuente_funcion("_ot2_crear_core"),
+        self.assertIn('"desinstalacion", "ticket_id"', F.fuente_funcion("_ot2_crear_core"),
                       "la hija descarta el ticket del body")
-
-    def test_las_pantallas_de_eventos_vuelven_al_panel_si_falta_la_plantilla(self):
-        self.assertIn("TemplateNotFound", F.fuente_funcion("ot_pagina_eventos"))
-        self.assertIn("TemplateNotFound", F.fuente_funcion("ot_pagina_evento_detalle"))
 
     def test_bitacora_del_tecnico_con_las_acciones_nuevas_sin_plata(self):
         amb = F.cargar(constantes=("_ACT_TEC_PERMITIDAS",))
-        for acc in ("evento_asignado", "evento_quitado", "desinstalacion_programada", "creada_como_desinstalacion"):
+        for acc in ("desinstalacion_programada", "creada_como_desinstalacion"):
             self.assertIn(acc, amb["_ACT_TEC_PERMITIDAS"])
+        # 2026-10-21: Eventos se eliminó, sus acciones de bitácora ya no existen
+        for acc in ("evento_asignado", "evento_quitado"):
+            self.assertNotIn(acc, amb["_ACT_TEC_PERMITIDAS"])
         # lo que NO se le muestra: la declaración con su argumento y la autorización
         for acc in ("desinstalacion_prevista", "desinstalacion_cubierta_autorizada", "desinstalacion_prevista_quitada"):
             self.assertNotIn(acc, amb["_ACT_TEC_PERMITIDAS"])
@@ -1027,23 +922,24 @@ class TestCandadosPorTexto(unittest.TestCase):
                                 + F.fuente_funcion("ot_aut_api_aprobar") + F.fuente_funcion("_ot2_crear_core")))
         self.assertEqual(usados - {"otro", "ot_asignada", "ot_pendiente_aprobacion", "ot_aprobada", "ot_rechazada"}, set())
 
-    def test_el_panel_filtra_por_evento_con_parametros_y_lista_blanca(self):
+    def test_el_panel_conserva_los_chips_de_la_desinstalacion_sin_filtro_de_evento(self):
         panel = F.fuente_funcion("ot2_panel")
-        self.assertIn('f_evento = int(request.args.get("evento") or 0) or 0', panel)
-        self.assertIn('extra_where_q.append("v.evento_id = %s")', panel)
-        self.assertIn("f_evento=f_evento, eventos_opts=eventos_opts", panel)
-        self.assertNotIn("v.evento_id = {", panel)
+        self.assertNotIn("f_evento", panel)
+        self.assertNotIn("eventos_opts", panel)
+        self.assertNotIn("v.evento_id", panel)
         self.assertIn("_ot2_panel_evento_chips(filas)", panel)
         self.assertIn("_ot2_panel_evento_chips(filas_kanban)", panel)
         self.assertIn("_ot2_panel_evento_chips(filas_cal)", panel)
         # no se tocó _OT2_SELECT_FILAS
         self.assertNotIn("evento_id", F.fuente_constante("_OT2_SELECT_FILAS"))
 
-    def test_el_excel_agrega_evento_y_relacion_al_final(self):
+    def test_el_excel_agrega_la_relacion_al_final_sin_evento(self):
         x = F.fuente_funcion("ot2_reporte_xlsx")
-        self.assertIn('headers += ["Evento", "Relación (instalación ↔ desinstalación)"]', x)
-        self.assertIn("vals += [f.get(\"evento_nombre\") or \"\", _rel_xl]", x)
+        self.assertIn('headers += ["Relación (instalación ↔ desinstalación)"]', x)
+        self.assertIn("vals += [_rel_xl]", x)
         self.assertIn("ci == _COL_OBS and obs", x)
+        self.assertNotIn('"Evento"', x)
+        self.assertNotIn("evento_nombre", x)
 
     def test_borrar_madre_y_lote(self):
         self.assertIn("_evt.guardia_borrar_madre(_ot_hijas_de(vid, estricto=True))", F.fuente_funcion("_mant_visita_eliminar_core"))
@@ -1133,7 +1029,7 @@ class TestPrevioDelAsistente(unittest.TestCase):
                                "tecnico_user_ids": [3], "tecnico_lider_id": 3, "costo_proveedor": 0}}
     VACIO = {"servicio": 0, "despacho": 0, "leido": True, "por_doc": []}
 
-    def llamar(self, cambios=None, rem=None, choque=None, feriados=None, evento=None, documentos=None, superadmin=False,
+    def llamar(self, cambios=None, rem=None, choque=None, feriados=None, documentos=None, superadmin=False,
                equipos=None):
         import copy
         import types
@@ -1144,14 +1040,11 @@ class TestPrevioDelAsistente(unittest.TestCase):
             body["desinstalacion"][k] = v
         if documentos is not None:
             body["documentos"] = documentos
-        if evento:
-            body["evento_id"] = evento["id"]
         a = F.cargar(["ot_api_desinstalacion_previo", "_ot_desinst_normalizar", "_ot_desinst_validar_previo"],
                      extra={"_evt": E, "_saldo": S, "re": re, "print": lambda *x, **k: None})
         a["request"] = types.SimpleNamespace(get_json=lambda silent=True: body)
         a["jsonify"] = lambda d: d
         a["mysql_fetchone"] = lambda sql, p=None: {"rut": "76.111.111-1"}
-        a["_evento_fila"] = lambda eid: evento
         a["_feriados_cl"] = lambda *f: dict(feriados or {})
         a["_now_chile"] = lambda: dt.datetime(2026, 10, 19, 12, 0)
         a["_ot_desinst_remanente_saldo"] = lambda docs, ped=None, rut=None, ex=None: dict(rem or self.VACIO)
@@ -1229,10 +1122,10 @@ class TestPrevioDelAsistente(unittest.TestCase):
         self.assertTrue(r["choque"]["puede_forzar"])
         self.assertFalse(self.llamar(choque=ch)["choque"]["puede_forzar"])
 
-    def test_la_fecha_sugerida_pasa_al_siguiente_dia_habil_si_el_evento_termina_en_domingo(self):
-        ev = {"id": 7, "nombre": "Feria", "estado": "activo", "fecha_ini": D(2026, 10, 26), "fecha_fin": D(2026, 11, 29)}
-        r = self.llamar(evento=ev, cambios={"lleva": False})
-        self.assertEqual(r["fecha_sugerida"], "2026-11-30")
+    def test_la_fecha_sugerida_es_el_siguiente_dia_habil_despues_de_la_instalacion(self):
+        r = self.llamar(cambios={"lleva": False})
+        self.assertEqual(r["fecha_sugerida"], "2026-10-27")
+        self.assertIn("día hábil siguiente a la instalación", r["fecha_sugerida_motivo"])
 
     def test_muestra_el_checklist_que_se_le_pondria_a_cada_equipo(self):
         # «el sistema SUGIERE, la persona DECIDE»: antes de crear se ve qué checklist lleva cada equipo
@@ -1380,3 +1273,76 @@ class TestPrefijosEnApp(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+class TestEventosEliminados(unittest.TestCase):
+    """2026-10-21 — Daniel: «el de eventos no me sirve, elimínalo y el código». Que no vuelva a aparecer por accidente,
+    y que la desinstalación siga entera."""
+
+    ARCHIVOS_BORRADOS = ("static/ot_eventos.js", "static/ot_evento_form.js", "templates/ot2/eventos.html",
+                         "templates/ot2/evento_detalle.html")
+    FUNCIONES_BORRADAS = ("_evento_fila", "_evento_para_asignar", "_eventos_ots", "_evento_json", "_evento_ids_del_tecnico",
+                          "_evt_filtro_ok", "_evt_ots_de_muchos", "_evento_asignar_a_ot", "_ot_madre_evento_fin",
+                          "ot_api_eventos_listar", "ot_api_evento_detalle", "ot_api_evento_crear", "ot_api_evento_editar",
+                          "ot_api_ot_evento", "ot_api_evento_candidatas", "ot_api_evento_asociar", "ot_pagina_eventos",
+                          "ot_pagina_evento_detalle", "_mysql_insertar")
+    FUNCIONES_PURAS_BORRADAS = ("normalizar_evento", "estado_evento", "fase_de_ot", "avance_evento", "semaforo_evento",
+                                "rango_evento_txt", "cuadro_por_dia", "sugerir_ot_para_evento", "guardia_evento_de_hija", "hora_txt")
+
+    def test_los_archivos_de_eventos_ya_no_existen(self):
+        import os
+        raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for rel in self.ARCHIVOS_BORRADOS:
+            self.assertFalse(os.path.exists(os.path.join(raiz, *rel.split("/"))), rel)
+        # lo que se comparte con la desinstalación se queda
+        self.assertTrue(os.path.exists(os.path.join(raiz, "static", "ot_evento.css")))
+        self.assertTrue(os.path.exists(os.path.join(raiz, "static", "ot_desinst.js")))
+
+    def test_las_rutas_las_funciones_y_las_pantallas_de_eventos_ya_no_estan_en_app(self):
+        t = F.texto()
+        for nombre in self.FUNCIONES_BORRADAS:
+            self.assertIsNone(re.search(r"^def %s\(" % re.escape(nombre), t, re.M), nombre)
+        for ruta in ('"/ot/eventos"', '"/ot/eventos/<int:eid>"', '"/ot/api/eventos"', '"/ot/api/<int:vid>/evento"',
+                     "ot_pagina_evento", "mant_eventos", "evento_id", "evento_fin_al_crear", "_EVT_FILTROS",
+                     "DESINST_CONFIRMAR_NO"):
+            self.assertNotIn(ruta, t, ruta)
+
+    def test_el_modulo_puro_ya_no_tiene_nada_de_eventos_y_la_desinstalacion_sigue(self):
+        for nombre in self.FUNCIONES_PURAS_BORRADAS:
+            self.assertFalse(hasattr(E, nombre), nombre)
+        for nombre in ("evaluar_fecha_desinstalacion", "proponer_fecha_desinstalacion", "aviso_barrido", "estado_desinstalacion",
+                       "guardia_cancelar_madre", "guardia_reagendar_madre", "guardia_borrar_madre", "guardia_cambio_tipo",
+                       "guardia_quitar_prevista", "aviso_cierre_madre", "puede_programar_desinstalacion", "bucket_estado",
+                       "validar_cobro_desinstalacion", "madre_valida_para_cubrir", "es_hija_cubierta", "madre_cobra"):
+            self.assertTrue(callable(getattr(E, nombre, None)), nombre)
+
+    def test_las_pantallas_y_el_front_ya_no_nombran_eventos(self):
+        import os
+        raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        def leer(rel):
+            with open(os.path.join(raiz, *rel.split("/")), encoding="utf-8") as f:
+                return f.read()
+        for rel in ("templates/ot2/panel.html", "templates/ot2/detalle.html", "templates/ot2/_modal_crear.html",
+                    "templates/base.html", "static/ot_desinst.js"):
+            src = leer(rel)
+            for prohibido in ("ot_pagina_evento", "/ot/eventos", "/ot/api/eventos", "f_evento", "eventos_opts", "cambiarEvento",
+                              "ot_eventos.js", "ot_evento_form.js", "OTEventoForm", "evento_id", "DESINST_CONFIRMAR_NO"):
+                self.assertNotIn(prohibido, src, "%s: %s" % (rel, prohibido))
+
+    def test_declarar_la_desinstalacion_despues_siempre_pide_autorizacion(self):
+        # el único cambio de comportamiento: ya no hay «instalación nacida en un evento con fecha de fin» que la exima
+        self.assertTrue(E.necesita_autorizacion_prevista(False))
+        self.assertFalse(E.necesita_autorizacion_prevista(True))
+        for nombre in ("ot_api_desinstalacion_programar", "ot_api_desinstalacion_prevista", "_ot_desinst_contexto"):
+            src = F.fuente_funcion(nombre)
+            self.assertNotIn("ev_fin", src, nombre)
+            self.assertNotIn("_ot_madre_evento_fin", src, nombre)
+        self.assertIn("necesita_autorizacion_prevista(False)", F.fuente_funcion("ot_api_desinstalacion_programar"))
+        self.assertIn("necesita_autorizacion_prevista(False)", F.fuente_funcion("ot_api_desinstalacion_prevista"))
+
+    def test_el_barrido_y_la_ficha_siguen_sin_evento(self):
+        barrido = F.fuente_funcion("_desinst_barrido")
+        self.assertNotIn("evento", barrido.lower())
+        self.assertIn("_evt.aviso_barrido(f, hijas_por.get(int(f[\"id\"]), []), hoy, fer)", barrido)

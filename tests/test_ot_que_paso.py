@@ -321,7 +321,7 @@ class Mundo:
                      "contacto_email": "marta@aurum.cl", "contacto_rut": "1-9", "contacto_origen": "manual",
                      "direccion_visita": "Av. Siempre Viva 123", "direccion_detalle": "local 4", "direccion_lat": -33.4, "direccion_lng": -70.6,
                      "direccion_place_id": "pid", "direccion_comuna": "Providencia", "direccion_region": "RM", "created_by": "Aaron Urbina",
-                     "created_by_user_id": 7, "evento_id": 9,
+                     "created_by_user_id": 7,
                      # lo financiero de la madre: la pendiente NO debe copiarlo
                      "zz_monto": 250000, "zz_envio_monto": 30000, "factura_tido": "FCV", "factura_nudo": "11439", "costo_proveedor": 90000}
         self.hijas = []
@@ -403,7 +403,7 @@ class TestTransaccion(unittest.TestCase):
         self.assertIn("pagado", ins[0])
         up = self.m.n("UPDATE mant_visitas SET ot_madre_id=%s, ot_relacion=%s")[0]
         self.assertEqual(up[1][:2], (10, "pendiente_stock"))
-        self.assertIn("evento_id=%s", up[0])                                     # hereda el evento de la madre
+        self.assertNotIn("evento_id", up[0])                                     # 2026-10-21: Eventos se eliminó; ya no hereda ningún evento
         self.assertEqual(self.m.conn.commits, 1)
         self.assertEqual(self.m.conn.rollbacks, 0)
         self.assertTrue(self.m.conn.cerrada)
@@ -1235,28 +1235,19 @@ class TestCableado(unittest.TestCase):
         self.assertIn("_qp.chip_pendiente(", chips)
         self.assertIn("_qp.chip_madre(", chips)
 
-    def test_la_pendiente_no_cuenta_como_desinstalacion_ni_como_dia_del_evento(self):
+    def test_la_pendiente_no_cuenta_como_desinstalacion(self):
         # la relación pendiente_stock NO entra en las hijas de desinstalación (todas esas lecturas filtran ot_relacion='desinstalacion')
         self.assertIn("ot_relacion='desinstalacion'", _fuente("_ot_hijas_de"))
         self.assertIn("ot_relacion='desinstalacion'", _fuente("_ot_hijas_vigentes_lote"))
         hoy = dt.date(2026, 10, 25)
         madre = {"id": 10, "tipo": "instalacion", "estado": "cerrada", "ot_madre_id": None, "ot_relacion": None, "fecha_programada": "2026-10-20"}
-        pend = {"id": 11, "tipo": "instalacion", "estado": "programada", "ot_madre_id": 10, "ot_relacion": "pendiente_stock",
-                "fecha_programada": "2099-12-31"}
-        av = ev.avance_evento([madre, pend], hoy)
-        par_madre = [p for p in av["pares"] if p["madre"]["id"] == 10][0]
-        self.assertIsNone(par_madre["hija"])                                   # no es «su desinstalación»
-        self.assertEqual(par_madre["estado"]["codigo"], "ninguna")
-        self.assertEqual(av["desinst_pendientes"], 0)
-        self.assertEqual(av["pendientes_total"], 1)                           # pero el evento NO termina mientras quede la pendiente
-        self.assertIsNone(av["proxima_fecha"])                                # y 2099-12-31 no es «la próxima fecha»
-        self.assertEqual(ev.cuadro_por_dia([madre, pend]).keys(), {"2026-10-20"})
+        # la pendiente (otra relación) no es «su desinstalación»: la madre sigue sin desinstalación
+        self.assertEqual(ev.estado_desinstalacion(madre, [], hoy)["codigo"], "ninguna")
         # una desinstalación de verdad sigue funcionando igual
         desinst = {"id": 12, "tipo": "desinstalacion", "estado": "programada", "ot_madre_id": 10, "ot_relacion": "desinstalacion",
-                   "fecha_programada": "2026-11-20"}
-        av2 = ev.avance_evento([dict(madre, desinstalacion_prevista="2026-11-20"), desinst], hoy)
-        self.assertEqual(av2["desinst_pendientes"], 1)
-        self.assertEqual(av2["proxima_fecha"], "2026-11-20")
+                   "fecha_programada": "2026-11-20", "numero_ot": "OT-12"}
+        est = ev.estado_desinstalacion(dict(madre, desinstalacion_prevista="2026-11-20"), [desinst], hoy)
+        self.assertEqual((est["codigo"], est["fecha"]), ("agendada", "2026-11-20"))
 
     def test_excel_y_proxima_visita_no_muestran_la_fecha_centinela(self):
         xl = _fuente("ot2_reporte_xlsx")

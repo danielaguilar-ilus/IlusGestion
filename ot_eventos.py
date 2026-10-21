@@ -1,12 +1,15 @@
-"""EVENTOS y OT de DESINSTALACIÓN (madre e hija) — lógica PURA (Daniel, 19-oct-2026).
+"""OT de DESINSTALACIÓN (madre e hija) — lógica PURA (Daniel, 19-oct-2026).
 
 Daniel: «al momento de crear la orden de trabajo, si se selecciona instalación con desinstalación, el usuario tendrá que
 agendar en otra hija cuando se va a hacer la desinstalación para que quede de una vez agendado… literalmente
-cuadradito… que lo calendarice y deje agendado todo para que el técnico sepa». Y: clasificar las OT por EVENTO (evento
-Felipe Fierro con revisión interna NVI 687; el mall).
+cuadradito… que lo calendarice y deje agendado todo para que el técnico sepa».
 
-Este módulo NO conoce la base, Flask ni el ERP: recibe diccionarios (filas de mant_visitas / mant_eventos ya leídas) y
-devuelve veredictos. Las lecturas y escrituras viven en app.py (`_ot_crear_desinstalacion`, `_evento_*`, `_desinst_*`),
+2026-10-21: Daniel pidió eliminar la función «Eventos» («el de eventos no me sirve, elimínalo y el código»): las carpetas de
+OT por evento, sus pantallas, rutas y reglas se quitaron. Este módulo conserva SOLO la desinstalación. El nombre del archivo
+(`ot_eventos.py`) se deja igual porque lo importan app.py y las pruebas.
+
+Este módulo NO conoce la base, Flask ni el ERP: recibe diccionarios (filas de mant_visitas ya leídas) y
+devuelve veredictos. Las lecturas y escrituras viven en app.py (`_ot_crear_desinstalacion`, `_desinst_*`),
 que lo llaman. Lo que decide el módulo:
 
   · Cuándo una OT hija es «cubierta» por la instalación (no consume saldo de la nota de venta, no pide autorización de
@@ -14,7 +17,6 @@ que lo llaman. Lo que decide el módulo:
   · Las fechas de la desinstalación (REGLA #31: el domingo bloquea; sábado y feriado solo avisan; la hija no puede ir
     antes que la instalación).
   · Los guardias de cancelar / reagendar madre e hija.
-  · El estado de un evento (en curso, terminado…), su avance por fase y su semáforo.
   · Los avisos del barrido diario («que no se olvide»).
 """
 import datetime as _dt
@@ -26,12 +28,11 @@ ESTADOS_FUERA = ("cancelada", "anulada")           # una OT en estos estados ya 
 ESTADOS_SIN_EMPEZAR = ("programada", "creada", "asignada", "reagendada", "pendiente_info")
 ESTADOS_POR_CERRAR = ("completada", "pendiente_aprobacion", "firmada_tecnico", "pendiente_repuesto")
 ESTADO_CERRADA = "cerrada"
-ESTADOS_EVENTO = ("activo", "cancelado")
 # 🧭 2026-10-20: la OT PENDIENTE por falta de stock (ot_que_paso.py) cuelga de su madre con otra relación y nace con la fecha
-# centinela 2099-12-31 («todavía sin fecha»). No es una desinstalación y esa fecha no es «la próxima fecha» ni un día del evento.
+# centinela 2099-12-31 («todavía sin fecha»). No es una desinstalación y esa fecha no es «la próxima fecha».
 REL_PENDIENTE_STOCK = "pendiente_stock"
 # 🩺 2026-10-21 (REGLA #38): la OT de SEGUIMIENTO de un hallazgo cuelga de la OT de origen con esta relación (ot_hallazgos.REL_SEGUIMIENTO).
-# Tampoco es una desinstalación: no es «la hija» de nadie para los guardias de tipo y de evento ni para el avance del evento.
+# Tampoco es una desinstalación: no es «la hija» de nadie para el guardia de tipo.
 REL_SEGUIMIENTO = "seguimiento"
 ANIO_SIN_FECHA = 2099
 ARGUMENTO_MIN = 30          # igual que _OT_AUT_ARGUMENTO_MIN: lo que lee Daniel para autorizar
@@ -43,9 +44,6 @@ COBRO_CUBIERTA = "cubierta"
 COBRO_PROPIO = "cobra"
 COBROS_VALIDOS = (COBRO_CUBIERTA, COBRO_PROPIO)
 
-FASES = ("instalacion", "desinstalacion", "revision", "otras")
-FASE_TXT = {"instalacion": "Instalación", "desinstalacion": "Desinstalación", "revision": "Revisión interna",
-            "otras": "Otras"}
 _MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre",
           "noviembre", "diciembre")
 _DIAS = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
@@ -104,14 +102,9 @@ def hora_min(h):
     return hh * 60 + mm
 
 
-def hora_txt(h):
-    m = hora_min(h)
-    return "" if m is None else "%02d:%02d" % (m // 60, m % 60)
-
-
 def min_txt(m):
     """Minutos desde medianoche → 'HH:MM' (2026-10-20: el mensaje «…después de que termine la instalación ()» salía con la
-    hora vacía porque se le pasaban minutos enteros a hora_txt, que espera 'HH:MM')."""
+    hora vacía porque se le pasaban minutos enteros donde se esperaba 'HH:MM')."""
     try:
         m = int(m)
     except (TypeError, ValueError):
@@ -214,14 +207,14 @@ def fecha_referencia_madre(madre):
     return ref, hora
 
 
-def evaluar_fecha_desinstalacion(fecha, hora_ini, hora_fin, madre, feriados=None, evento=None):
+def evaluar_fecha_desinstalacion(fecha, hora_ini, hora_fin, madre, feriados=None):
     """Veredicto de la fecha/hora de una desinstalación frente a su instalación (madre).
 
     Devuelve {ok, bloqueo: {codigo, mensaje}|None, avisos: [texto]}. `ok` solo es False cuando hay `bloqueo`:
       · FECHA_REQUERIDA / FECHA_INVALIDA / HORA_INVALIDA
       · DOMINGO_BLOQUEADO — «Los domingos no se agendan órdenes de trabajo. Elige otro día.» (mismo texto de hoy)
       · DESINST_ANTES_DE_INSTALACION — la hija va el mismo día o después; el mismo día, su inicio ≥ término de la madre.
-    Avisos (ámbar, no bloquean): sábado, feriado, fuera del rango del evento, horario sin definir el mismo día."""
+    Avisos (ámbar, no bloquean): sábado, feriado, horario sin definir el mismo día."""
     avisos = []
     if fecha is None or str(fecha).strip() == "":
         return {"ok": False, "bloqueo": {"codigo": "FECHA_REQUERIDA", "mensaje": "Falta la fecha de la desinstalación."},
@@ -263,29 +256,18 @@ def evaluar_fecha_desinstalacion(fecha, hora_ini, hora_fin, madre, feriados=None
     nombre_fer = _fer_set(feriados).get(f.isoformat())
     if nombre_fer is not None:
         avisos.append("Es feriado" + (": %s." % nombre_fer if nombre_fer else "."))
-    if evento:
-        fi, ff = parse_fecha(evento.get("fecha_ini")), parse_fecha(evento.get("fecha_fin"))
-        if (fi and f < fi) or (ff and f > ff):
-            # La desinstalación suele ir DESPUÉS del evento: solo se avisa si cae antes de que empiece.
-            if fi and f < fi:
-                avisos.append("Cae antes de que empiece el evento (%s)." % fmt_fecha(fi))
     return {"ok": True, "bloqueo": None, "avisos": avisos}
 
 
-def proponer_fecha_desinstalacion(evento=None, madre=None, feriados=None, hoy=None):
+def proponer_fecha_desinstalacion(madre=None, feriados=None, hoy=None):
     """Fecha propuesta para la desinstalación. 2026-10-20 (revisión): la propuesta NUNCA puede quedar bloqueada por el
-    mismo sistema. Es la MAYOR entre el fin del evento (si lo hay) y el SIGUIENTE día hábil después de la instalación
-    (su fecha_fin / hora_fin, o la fecha real si ya se hizo): así no propone el mismo día de la instalación (que bloquea si
-    la instalación termina a las 13:00 y la desinstalación parte a las 09:00) ni un fin de evento anterior a la instalación.
+    mismo sistema. Es el SIGUIENTE día hábil después de la instalación (su fecha_fin / hora_fin, o la fecha real si ya se
+    hizo): así no propone el mismo día de la instalación (que bloquea si la instalación termina a las 13:00 y la
+    desinstalación parte a las 09:00). 2026-10-21: se quitó el «fin del evento» como candidata (se eliminó Eventos).
     Si cae en domingo o feriado se propone el siguiente día hábil (crítica 16). Devuelve {fecha: date|None, motivo}."""
-    fin_ev = parse_fecha((evento or {}).get("fecha_fin"))
     ref, _h = fecha_referencia_madre(madre)
-    sig_madre = siguiente_habil(ref, feriados, incluir_hoy=False) if ref is not None else None
-    base, origen = None, None
-    if fin_ev is not None and (sig_madre is None or fin_ev >= sig_madre):
-        base, origen = fin_ev, "fin del evento"
-    elif sig_madre is not None:
-        base, origen = sig_madre, "día hábil siguiente a la instalación"
+    base = siguiente_habil(ref, feriados, incluir_hoy=False) if ref is not None else None
+    origen = "día hábil siguiente a la instalación"
     if base is None:
         return {"fecha": None, "motivo": None}
     hoy = parse_fecha(hoy)
@@ -389,14 +371,12 @@ def puede_programar_desinstalacion(madre, hijas):
     return True, None
 
 
-def necesita_autorizacion_prevista(declarada_en_asistente, madre_en_evento_con_fin):
+def necesita_autorizacion_prevista(declarada_en_asistente):
     """Declarar `desinstalacion_prevista` DESPUÉS de crear la madre pide la autorización 'desinstalacion_cubierta'
-    (argumento ≥ 30), salvo que se haya respondido «Sí» en el asistente o que la madre HAYA NACIDO en el asistente dentro
-    de un evento que ya tenía fecha de fin (el evento ya dice que se desarma). Crítica 4: así una instalación vieja no sirve
-    de paraguas. 2026-10-20 (revisión): `madre_en_evento_con_fin` NO es «hoy está en un evento con fecha de fin» (eso se
-    arma a mano: crear el evento, asignarle cualquier instalación o ponerle la fecha después): es la marca
-    `evento_fin_al_crear` que solo escribe el servidor al crear la OT (ver `_ot_madre_evento_fin` en app.py)."""
-    return not (declarada_en_asistente or madre_en_evento_con_fin)
+    (argumento ≥ 30), salvo que se haya respondido «Sí» en el asistente. Crítica 4: así una instalación vieja no sirve
+    de paraguas. 2026-10-21: se eliminó Eventos, así que ya no existe la excepción «la madre nació en un evento con fecha
+    de fin»: declararla después SIEMPRE pide autorización (Daniel: «el de eventos no me sirve, elimínalo y el código»)."""
+    return not declarada_en_asistente
 
 
 def validar_cobro_desinstalacion(cobro, saldo_servicio_madre, saldo_despacho_madre=0, argumento=None):
@@ -500,16 +480,6 @@ def guardia_cambio_tipo(ot, hijas):
     return None
 
 
-def guardia_evento_de_hija(ot):
-    """El evento de la hija es el de la madre: asignarle uno directo responde 409. (La OT de seguimiento de un hallazgo no es una hija:
-    su evento se elige como el de cualquier otra OT.)"""
-    o = ot or {}
-    if o.get("ot_madre_id") and str(o.get("ot_relacion") or "").strip().lower() != REL_SEGUIMIENTO:
-        return {"codigo": "EVENTO_DE_LA_MADRE",
-                "mensaje": "El evento de una desinstalación es el de su instalación: cámbialo en la instalación."}
-    return None
-
-
 def guardia_quitar_prevista(madre, hijas):
     """Quitar la desinstalación prevista: no mientras haya una hija vigente (primero se cancela esa)."""
     hv = hijas_vigentes(hijas)
@@ -552,95 +522,6 @@ def estado_desinstalacion(madre, hijas, hoy=None):
             "texto": ""}
 
 
-# ───────────────────────── eventos ─────────────────────────
-def normalizar_evento(d, hoy=None):
-    """Valida el cuerpo para crear / editar un evento. Devuelve (error|None, campos).
-    Nombre obligatorio (≤160). Las fechas son OPCIONALES (estado «Sin fechas»); si vienen, fin ≥ inicio. El lugar
-    (dirección Google Places) es opcional pero si trae coordenadas deben estar en rango."""
-    d = d if isinstance(d, dict) else {}
-    nombre = " ".join(str(d.get("nombre") or "").split())[:160]
-    if len(nombre) < 3:
-        return {"codigo": "NOMBRE_REQUERIDO", "mensaje": "El evento necesita un nombre (mínimo 3 letras)."}, None
-    fi_raw, ff_raw = d.get("fecha_ini"), d.get("fecha_fin")
-    fi, ff = parse_fecha(fi_raw), parse_fecha(ff_raw)
-    if fi_raw not in (None, "") and fi is None:
-        return {"codigo": "FECHA_INI_INVALIDA", "mensaje": "La fecha de inicio del evento no es válida."}, None
-    if ff_raw not in (None, "") and ff is None:
-        return {"codigo": "FECHA_FIN_INVALIDA", "mensaje": "La fecha de término del evento no es válida."}, None
-    if fi and ff and ff < fi:
-        return {"codigo": "FECHAS_INVERTIDAS",
-                "mensaje": "El evento no puede terminar antes de empezar."}, None
-    if ff and not fi:
-        fi = ff
-    cliente_id = d.get("cliente_id")
-    try:
-        cliente_id = int(cliente_id) if cliente_id not in (None, "", 0, "0") else None
-    except (TypeError, ValueError):
-        return {"codigo": "CLIENTE_INVALIDO", "mensaje": "El cliente indicado no es válido."}, None
-
-    def _num(x, lo, hi):
-        try:
-            v = float(x)
-        except (TypeError, ValueError):
-            return None
-        return v if lo <= v <= hi else None
-
-    def _txt(k, n):
-        return (str(d.get(k) or "").strip()[:n]) or None
-
-    campos = {
-        "nombre": nombre, "cliente_id": cliente_id,
-        "direccion": _txt("direccion", 400), "detalle": _txt("detalle", 200),
-        "lat": _num(d.get("lat"), -90, 90), "lng": _num(d.get("lng"), -180, 180),
-        "place_id": _txt("place_id", 200), "comuna": _txt("comuna", 100), "region": _txt("region", 100),
-        "fecha_ini": fi, "fecha_fin": ff, "doc_ref": _txt("doc_ref", 60), "notas": _txt("notas", 2000),
-    }
-    return None, campos
-
-
-def estado_evento(ev, ots=None, hoy=None):
-    """Estado CALCULADO de un evento con sus fechas y sus OT (nunca se guarda 'en curso' ni 'terminado').
-    Devuelve (codigo, texto): cancelado · sin_fechas · proximo · en_curso · por_cerrar (pasó la fecha de término pero
-    queda algo sin cerrar o una desinstalación pendiente) · terminado."""
-    ev = ev or {}
-    if str(ev.get("estado") or "activo") == "cancelado":
-        return "cancelado", "Cancelado"
-    fi, ff = parse_fecha(ev.get("fecha_ini")), parse_fecha(ev.get("fecha_fin"))
-    hoy = parse_fecha(hoy)
-    if not fi and not ff:
-        return "sin_fechas", "Sin fechas"
-    if hoy is None:
-        return "en_curso", "En curso"
-    if fi and hoy < fi:
-        return "proximo", "Próximo"
-    if ff and hoy > ff:
-        av = avance_evento(ots or [], hoy)
-        if av["pendientes_total"] > 0 or av["desinst_pendientes"] > 0:
-            return "por_cerrar", "Por cerrar"
-        return "terminado", "Terminado"
-    if fi and not ff and hoy > fi:
-        # Un evento con solo fecha de inicio (revisión 2026-10-20) no se queda «En curso» para siempre: cuando todo su
-        # trabajo está cerrado pasa a «Terminado»; mientras quede algo, sigue en curso. No se inventa una fecha de término.
-        av = avance_evento(ots or [], hoy)
-        if av["total"] and av["pendientes_total"] == 0 and av["desinst_pendientes"] == 0:
-            return "terminado", "Terminado"
-        return "en_curso", "En curso (sin fecha de término)"
-    return "en_curso", "En curso"
-
-
-def fase_de_ot(ot):
-    """La fase de una OT dentro de un evento: instalación · desinstalación · revisión interna · otras."""
-    o = ot or {}
-    tipo = str(o.get("tipo") or "").strip().lower()
-    if o.get("ot_relacion") == REL_DESINSTALACION or tipo == TIPO_HIJA:
-        return "desinstalacion"
-    if tipo == TIPO_MADRE:
-        return "instalacion"
-    if tipo in ("revision_interna", "inspeccion", "control_calidad"):
-        return "revision"
-    return "otras"
-
-
 def bucket_estado(estado):
     """cerrada · por_cerrar · en_curso · pendiente · fuera."""
     e = str(estado or "").strip().lower()
@@ -655,143 +536,11 @@ def bucket_estado(estado):
     return "pendiente"
 
 
-def avance_evento(ots, hoy=None):
-    """Avance de un evento con sus OT (filas con tipo, estado, ot_relacion, ot_madre_id, desinstalacion_prevista,
-    fecha_programada, id, numero_ot). Sin montos (REGLA #26). Devuelve:
-      {por_fase: {fase: {total, cerradas, por_cerrar, en_curso, pendientes}}, total, cerradas, pct,
-       pendientes_total, desinst_pendientes (sin agendar + agendadas + vencidas: para el estado y el semáforo),
-       desinst_sin_agendar (solo instalaciones SIN hija vigente: lo que dice «sin agendar»), desinst_vencidas,
-       proxima_fecha, pares: [...]}
-    Las canceladas/anuladas no cuentan. `pares` une cada instalación con su desinstalación (hija vigente) o con la
-    prevista sin agendar."""
-    hoy = parse_fecha(hoy)
-    vivos = [o for o in (ots or []) if vigente(o.get("estado"))]
-    por_fase = {f: {"total": 0, "cerradas": 0, "por_cerrar": 0, "en_curso": 0, "pendientes": 0} for f in FASES}
-    for o in vivos:
-        f = fase_de_ot(o)
-        b = bucket_estado(o.get("estado"))
-        por_fase[f]["total"] += 1
-        key = {"cerrada": "cerradas", "por_cerrar": "por_cerrar", "en_curso": "en_curso", "pendiente": "pendientes"}.get(b)
-        if key:
-            por_fase[f][key] += 1
-    total = len(vivos)
-    cerradas = sum(1 for o in vivos if bucket_estado(o.get("estado")) == "cerrada")
-    por_madre = {}
-    for o in vivos:
-        if o.get("ot_madre_id") and str(o.get("ot_relacion") or "").strip().lower() not in (REL_PENDIENTE_STOCK, REL_SEGUIMIENTO):
-            por_madre.setdefault(int(o["ot_madre_id"]), []).append(o)
-    pares, desinst_pend, desinst_venc, desinst_sin_ag = [], 0, 0, 0
-    for o in vivos:
-        if fase_de_ot(o) != "instalacion":
-            continue
-        hijas = por_madre.get(int(o["id"]), [])
-        est = estado_desinstalacion(o, hijas, hoy)
-        if est["codigo"] == "ninguna" and not hijas:
-            pares.append({"madre": o, "hija": None, "estado": est})
-            continue
-        pares.append({"madre": o, "hija": (hijas[0] if hijas else None), "estado": est})
-        if est["codigo"] in ("sin_agendar", "agendada", "vencida"):
-            desinst_pend += 1
-        if est["codigo"] == "vencida":
-            desinst_venc += 1
-        # «Sin agendar» = instalación con desinstalación prevista y SIN hija vigente. Antes la pantalla mostraba
-        # `desinst_pendientes` con ese rótulo y una desinstalación ya agendada aparecía como «sin agendar».
-        if est["codigo"] in ("sin_agendar", "vencida") and not hijas:
-            desinst_sin_ag += 1
-    pend_total = sum(1 for o in vivos if bucket_estado(o.get("estado")) != "cerrada")
-    prox = None
-    for o in vivos:
-        if bucket_estado(o.get("estado")) == "cerrada":
-            continue
-        f = parse_fecha(o.get("fecha_programada"))
-        if f and f.year >= ANIO_SIN_FECHA:
-            continue          # OT pendiente por falta de stock: todavía sin fecha
-        if f and (hoy is None or f >= hoy) and (prox is None or f < prox):
-            prox = f
-    return {"por_fase": por_fase, "total": total, "cerradas": cerradas,
-            "pct": int(round(cerradas * 100.0 / total)) if total else 0,
-            "pendientes_total": pend_total, "desinst_pendientes": desinst_pend, "desinst_vencidas": desinst_venc,
-            "desinst_sin_agendar": desinst_sin_ag,
-            "proxima_fecha": prox.isoformat() if prox else None, "pares": pares}
-
-
-def semaforo_evento(ev, ots=None, hoy=None):
-    """verde = todo cerrado · ámbar = algo pendiente · rojo = desinstalación vencida o sin agendar con el evento ya
-    terminado. Devuelve (clase, texto)."""
-    codigo, _txt = estado_evento(ev, ots, hoy)
-    if codigo == "cancelado":
-        return "gris", "Cancelado"
-    av = avance_evento(ots or [], hoy)
-    if av["desinst_vencidas"] > 0:
-        return "rojo", "Hay una desinstalación vencida"
-    ff = parse_fecha((ev or {}).get("fecha_fin"))
-    hoy_d = parse_fecha(hoy)
-    sin_agendar_vencido = any(p["estado"]["codigo"] == "sin_agendar" for p in av["pares"]) and ff and hoy_d and hoy_d > ff
-    if sin_agendar_vencido:
-        return "rojo", "El evento terminó y hay instalaciones sin desinstalar"
-    if av["total"] and av["pendientes_total"] == 0 and av["desinst_pendientes"] == 0:
-        return "verde", "Todo cerrado"
-    if not av["total"]:
-        return "gris", "Sin órdenes de trabajo todavía"
-    return "ambar", "Queda trabajo pendiente"
-
-
-def rango_evento_txt(ev):
-    fi, ff = parse_fecha((ev or {}).get("fecha_ini")), parse_fecha((ev or {}).get("fecha_fin"))
-    if fi and ff and fi != ff:
-        return "%s – %s" % (fmt_fecha(fi), fmt_fecha(ff))
-    if fi or ff:
-        return fmt_fecha(fi or ff)
-    return "Sin fechas"
-
-
-def cuadro_por_dia(ots):
-    """Una línea por día con lo que pasa ese día en el evento: {iso: [{id, numero_ot, fase, estado}]}. Solo OT vigentes
-    con fecha. Sin montos."""
-    out = {}
-    for o in (ots or []):
-        if not vigente(o.get("estado")):
-            continue
-        fi = parse_fecha(o.get("fecha_programada"))
-        if not fi or fi.year >= ANIO_SIN_FECHA:
-            continue          # sin fecha (OT pendiente por falta de stock): no ocupa ningún día del evento
-        ff = parse_fecha(o.get("fecha_fin")) or fi
-        d = fi
-        for _ in range(60):
-            if d > ff:
-                break
-            out.setdefault(d.isoformat(), []).append({"id": o.get("id"), "numero_ot": o.get("numero_ot"),
-                                                       "fase": fase_de_ot(o), "estado": o.get("estado")})
-            d += _dt.timedelta(days=1)
-    return out
-
-
-def sugerir_ot_para_evento(ot, ev):
-    """Puntaje 0-3 de qué tan probable es que una OT existente sea del evento (para «Asociar OT existentes»):
-    mismo documento de referencia (doc_ref) = 3; mismo cliente del evento = 2; fecha dentro del rango = 1."""
-    ev = ev or {}
-    o = ot or {}
-    pts = 0
-    ref = str(ev.get("doc_ref") or "").strip().upper().replace(" ", "")
-    if ref:
-        docs = " ".join(str(x) for x in (o.get("docs") or [])).upper().replace(" ", "")
-        if ref in docs:
-            return 3
-    if ev.get("cliente_id") and o.get("cliente_id") and int(ev["cliente_id"]) == int(o["cliente_id"]):
-        pts = max(pts, 2)
-    f = parse_fecha(o.get("fecha_programada"))
-    fi, ff = parse_fecha(ev.get("fecha_ini")), parse_fecha(ev.get("fecha_fin"))
-    if f and fi and ff and fi <= f <= ff:
-        pts = max(pts, 1)
-    return pts
-
-
 # ───────────────────────── barrido diario («que no se olvide») ─────────────────────────
-def aviso_barrido(madre, hijas, evento=None, hoy=None, feriados=None, dias_antes=DIAS_HABILES_AVISO):
+def aviso_barrido(madre, hijas, hoy=None, feriados=None, dias_antes=DIAS_HABILES_AVISO):
     """¿Hay que avisar por esta instalación? Devuelve None o {codigo, nivel, titulo, texto}:
       · 'por_agendar' — faltan ≤ N días hábiles para la desinstalación prevista y todavía no hay hija;
       · 'vencida' — la fecha prevista ya pasó sin hija;
-      · 'evento_terminado' — el evento terminó y esta instalación sigue sin desinstalar;
       · 'hija_sin_madre_ejecutada' — llegó el día de la hija y la instalación (madre) no se ejecutó;
       · 'desinst_vencida' — la hija pasó su fecha sin hacerse y la instalación sí se ejecutó.
     Una instalación cancelada/anulada, o con la desinstalación ya hecha/agendada con tiempo, no avisa."""
@@ -828,11 +577,6 @@ def aviso_barrido(madre, hijas, evento=None, hoy=None, feriados=None, dias_antes
         return {"codigo": "por_agendar", "nivel": "ambar", "titulo": "Agenda la desinstalación",
                 "texto": "%s tiene la desinstalación prevista para el %s y todavía no está agendada." % (
                     num_m, fmt_fecha(prevista))}
-    ff = parse_fecha((evento or {}).get("fecha_fin"))
-    if ff and hoy > ff and str((evento or {}).get("estado") or "activo") != "cancelado":
-        return {"codigo": "evento_terminado", "nivel": "ambar", "titulo": "El evento terminó",
-                "texto": "El evento terminó el %s y %s sigue sin su desinstalación agendada." % (
-                    fmt_fecha(ff), num_m)}
     return None
 
 
