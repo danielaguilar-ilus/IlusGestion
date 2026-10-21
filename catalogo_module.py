@@ -1351,7 +1351,18 @@ def register_catalogo_routes(app, ctx):
             return jsonify({"ok": False, "error": "No se pudo crear la categoría"}), 500
         _cat_clases_map(force=True)
         row = mysql_fetchone("SELECT id FROM cat_clases_producto WHERE slug=%s", (slug,))
-        return jsonify({"ok": True, "id": row["id"] if row else None, "slug": slug})
+        # 🔑 2026-10-21 (REGLA #40, Daniel: «si creo una categoría, se crea nueva»): la clasificación nace con sus
+        # plantillas en cero (Instalación, Mantención, Visitas y Trabajo interno), ya ligadas por la llave y con N° de
+        # serie + GPS. Best-effort: si falla, la clasificación ya quedó creada y la pantalla de Plantillas la ofrece.
+        _plantillas_creadas = []
+        try:
+            _crear_pl = ctx.get("_plcls_crear_para_clase")
+            if _crear_pl and row:
+                _plantillas_creadas = _crear_pl(int(row["id"]), nombre, user)
+        except Exception as _e_pl:
+            print(f"[cat_api_clases_create] plantillas de la clasificación: {_e_pl}", flush=True)
+        return jsonify({"ok": True, "id": row["id"] if row else None, "slug": slug,
+                        "plantillas_creadas": _plantillas_creadas})
 
     @app.route("/catalogo/api/clases/<int:clid>", methods=["PATCH"])
     @_catalogo_clasificacion_required
@@ -1394,7 +1405,24 @@ def register_catalogo_routes(app, ctx):
         params.append(clid)
         mysql_execute(f"UPDATE cat_clases_producto SET {', '.join(sets)} WHERE id=%s", tuple(params))
         _cat_clases_map(force=True)
-        return jsonify({"ok": True})
+        # 🔑 2026-10-21 (REGLA #40, Daniel: «si edito una categoría, cambia en todo, no se crea otra»): renombrar,
+        # desactivar o reactivar la clasificación se propaga a sus plantillas por la llave (clase_id). Best-effort: el
+        # cambio de la clasificación ya quedó guardado; si algo falla aquí, el resultado lo dice y nada se pierde.
+        _plantillas = {}
+        try:
+            _user = current_username() or "sistema"
+            if "nombre" in d:
+                _ren = ctx.get("_plcls_renombrar")
+                if _ren:
+                    _plantillas["renombradas"] = _ren(clid, nombre, _user)
+            if "activo" in d:
+                _act = ctx.get("_plcls_activar")
+                if _act:
+                    _plantillas["activacion"] = _act(clid, bool(d.get("activo")), _user)
+        except Exception as _e_pl:
+            print(f"[cat_api_clases_update] plantillas de la clasificación: {_e_pl}", flush=True)
+            _plantillas["error"] = "No se pudo actualizar alguna plantilla; revísalo en Plantillas."
+        return jsonify({"ok": True, "plantillas": _plantillas})
 
     @app.route("/catalogo/api/clases/<int:clid>/tarifas", methods=["PATCH"])
     @_catalogo_clasificacion_required

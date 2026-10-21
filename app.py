@@ -122576,13 +122576,13 @@ def mant_plantillas_listar():
     # catálogo, en las 3 categorías que dependen de esa auto-conexión. Una
     # sola consulta (set de nombres), no una por fila.
     try:
-        _clases_activas = {
-            r["nombre"] for r in
-            (mysql_fetchall("SELECT nombre FROM cat_clases_producto WHERE activo=1") or [])
-        }
+        _cls_rows = mysql_fetchall("SELECT id, nombre FROM cat_clases_producto WHERE activo=1") or []
+        _clases_activas = {r["nombre"] for r in _cls_rows}
+        _clases_activas_ids = {int(r["id"]) for r in _cls_rows}   # 🔑 2026-10-21 (REGLA #40): la llave es el id
     except Exception as _e_cls:
         print(f"[plantillas_listar] leer clases activas falló: {_e_cls}", flush=True)
         _clases_activas = set()
+        _clases_activas_ids = set()
     return jsonify({
         "ok": True,
         "plantillas": [{
@@ -122606,9 +122606,12 @@ def mant_plantillas_listar():
             "es_default": bool(default_plantilla_id) and r["id"] == default_plantilla_id,
             "revisar_tecnico": bool(r.get("revisar_tecnico")),
             "de_clasificacion": (
-                (r.get("categoria_admin") or "") in ("instalacion", "mantencion", "visitas")
-                and r["nombre"] in _clases_activas
+                bool(r.get("clase_id")) or (
+                    (r.get("categoria_admin") or "") in ("instalacion", "mantencion", "visitas")
+                    and r["nombre"] in _clases_activas)
             ),
+            # 🔑 2026-10-21 (REGLA #40): llave de la clasificación a la que está ligada (None = sin liga).
+            "clase_id": int(r["clase_id"]) if r.get("clase_id") else None,
         } for r in rows],
         "total": len(rows),
         "default_plantilla_id": default_plantilla_id,
@@ -122663,15 +122666,19 @@ def mant_plantillas_cobertura_clases():
             "SELECT id, nombre FROM cat_clases_producto "
             " WHERE activo=1 ORDER BY orden, nombre") or []
         plantillas = mysql_fetchall(
-            "SELECT nombre, categoria_admin FROM mant_tarea_plantillas "
-            " WHERE activa=1") or []
+            "SELECT nombre, categoria_admin" + (", clase_id" if _plcls_ok() else "") +
+            "  FROM mant_tarea_plantillas WHERE activa=1") or []
     except Exception as e:
         print(f"[plantillas_cobertura_clases] consulta falló: {e}", flush=True)
         return jsonify(vacio)
 
     # nombre_normalizado -> {categorias que ya tienen plantilla activa}
     cobertura = {}
+    cobertura_id = {}   # 🔑 2026-10-21 (REGLA #40): clase_id -> {categorías}; la llave manda sobre el nombre
     for p in plantillas:
+        if p.get("clase_id"):
+            cobertura_id.setdefault(int(p["clase_id"]), set()).add(
+                (p.get("categoria_admin") or "").strip().lower())
         clave = _plant_texto_norm(p.get("nombre"))
         if not clave:
             continue
@@ -122683,7 +122690,7 @@ def mant_plantillas_cobertura_clases():
         nombre = (c.get("nombre") or "").strip()
         if not nombre:
             continue
-        ya = cobertura.get(_plant_texto_norm(nombre), set())
+        ya = cobertura.get(_plant_texto_norm(nombre), set()) | cobertura_id.get(int(c["id"]), set())
         faltan = [k for k in cats if k not in ya]
         if not faltan:
             continue
@@ -122806,17 +122813,22 @@ def _mant_cobertura_matriz_datos():
     #       un SELECT explícito reventaría en un ambiente donde todavía no
     #       existiera. Las columnas de la clase van aliaseadas, así no
     #       chocan con las de la plantilla.
+    # 🔑 2026-10-21 (REGLA #40): la plantilla ligada a una clasificación (clase_id) se une por la LLAVE, aunque haya
+    #       cambiado de nombre; la que no tiene liga sigue uniéndose por nombre exacto. `p.*` va PRIMERO: así el alias
+    #       `clase_id` de la clase (c.id) pisa a la columna homónima de la plantilla y no al revés.
+    _on_pl = ("((p.clase_id = c.id AND COALESCE(p.categoria_admin,'') <> 'trabajo_interno') "
+              " OR (p.clase_id IS NULL AND p.nombre = c.nombre))") if _plcls_ok() else "p.nombre = c.nombre"
     try:
         filas = mysql_fetchall("""
-            SELECT c.id     AS clase_id,
+            SELECT p.*,
+                   c.id     AS clase_id,
                    c.nombre AS clase,
                    c.slug   AS clase_slug,
                    COALESCE(c.orden, 0) AS clase_orden,
-                   COALESCE(it.cnt, 0)  AS items,
-                   p.*
+                   COALESCE(it.cnt, 0)  AS items
               FROM cat_clases_producto c
               LEFT JOIN mant_tarea_plantillas p
-                     ON p.nombre = c.nombre
+                     ON """ + _on_pl + """
               LEFT JOIN (SELECT plantilla_id, COUNT(*) AS cnt
                            FROM mant_tarea_plantilla_items
                           GROUP BY plantilla_id) it
@@ -123547,7 +123559,7 @@ _PLANT_CAT_ADMIN_A_TIPO_SERVICIO = {
 }
 
 
-def _plantilla_tarifa_sugerida(nombre, categoria_admin):
+def _plantilla_tarifa_sugerida(nombre, categoria_admin, clase_id=None):
     """de_clasificacion + tiempo estimado sugerido (min) para una plantilla,
     a partir de la clasificación de producto homónima ACTIVA en el catálogo
     -- mismo criterio de match que mant_plantilla_eliminar/mant_plantillas_listar
@@ -123560,9 +123572,13 @@ def _plantilla_tarifa_sugerida(nombre, categoria_admin):
     nombre = (nombre or "").strip()
     if not tipo_servicio or not nombre:
         return {"de_clasificacion": False, "tarifa_sugerida_min": None}
-    clase = mysql_fetchone(
-        "SELECT slug FROM cat_clases_producto WHERE nombre=%s AND activo=1",
-        (nombre,))
+    clase = None
+    if clase_id:   # 🔑 2026-10-21 (REGLA #40): si la plantilla está ligada, manda la llave, no el nombre
+        clase = mysql_fetchone("SELECT slug FROM cat_clases_producto WHERE id=%s AND activo=1", (clase_id,))
+    if not clase:
+        clase = mysql_fetchone(
+            "SELECT slug FROM cat_clases_producto WHERE nombre=%s AND activo=1",
+            (nombre,))
     if not clase:
         return {"de_clasificacion": False, "tarifa_sugerida_min": None}
     tarifa_min = None
@@ -123656,10 +123672,18 @@ def mant_plantilla_detalle(pid):
             "opciones_lista": opciones,
             "target_field": it.get("target_field") or "",
         })
-    _tarifa = _plantilla_tarifa_sugerida(plant["nombre"], plant.get("categoria_admin"))
+    _tarifa = _plantilla_tarifa_sugerida(plant["nombre"], plant.get("categoria_admin"), plant.get("clase_id"))
+    _clase_lig = None
+    if plant.get("clase_id"):   # 🔑 REGLA #40: nombre de la clasificación a la que está ligada (el nombre se cambia en Catálogo)
+        try:
+            _clase_lig = (mysql_fetchone("SELECT nombre FROM cat_clases_producto WHERE id=%s", (plant["clase_id"],)) or {}).get("nombre")
+        except Exception:
+            _clase_lig = None
     return jsonify({
         "ok": True,
         "plantilla": {
+            "clase_id": int(plant["clase_id"]) if plant.get("clase_id") else None,
+            "clase_nombre": _clase_lig,
             "id": plant["id"], "nombre": plant["nombre"],
             "descripcion": plant.get("descripcion") or "",
             "tipo_visita": plant.get("tipo_visita") or "otro",
@@ -123787,6 +123811,12 @@ def mant_plantilla_crear():
         try:
             _mant_log("plantilla", pid, "creada", f"{nombre} ({len(items_norm)} items)")
         except Exception: pass
+        # 🔑 2026-10-21 (REGLA #40): si el nombre coincide con una clasificación ACTIVA del catálogo, la plantilla nace
+        # ligada a ella (así, si la clasificación se renombra, la plantilla la sigue y no se crea otra).
+        try:
+            _plcls_ligar_si_coincide(pid, nombre, cat_admin)
+        except Exception as _e_lig:
+            print(f"[plantilla_crear] ligar a clasificación: {_e_lig}", flush=True)
         return jsonify({"ok": True, "id": pid, "items_count": len(items_norm), "agregados_estandar": _std_agregados})
     except Exception as _ex:
         conn.rollback()
@@ -123852,6 +123882,18 @@ def mant_plantilla_actualizar(pid):
         if norm.get("orden") in (0, None):
             norm["orden"] = idx + 1
         items_norm.append(norm)
+
+    # 🔑 2026-10-21 (REGLA #40, Daniel: «el nombre de una plantilla ligada se cambia solo en Catálogo»): una plantilla
+    # ligada a una clasificación NO se renombra desde aquí; el nombre lo gobierna la clasificación (Catálogo →
+    # Categorías) y se propaga solo. Lo demás de la plantilla se edita igual que siempre.
+    try:
+        _act = mysql_fetchone("SELECT nombre, clase_id FROM mant_tarea_plantillas WHERE id=%s", (pid,)) if _plcls_ok() else None
+    except Exception:
+        _act = None
+    if _act and _act.get("clase_id") and str(_act.get("nombre") or "").strip() != nombre:
+        return jsonify({"ok": False, "error_codigo": "NOMBRE_DE_CLASIFICACION",
+                        "error": ("El nombre de esta plantilla lo define su clasificación. Cámbialo en Catálogo → "
+                                  "Categorías y se actualiza aquí solo.")}), 409
 
     conn = get_mysql()
     try:
@@ -123966,12 +124008,12 @@ def mant_plantilla_eliminar(pid):
     trabajo interno no tiene este vínculo con el catálogo.
     """
     plant = mysql_fetchone(
-        "SELECT id, es_sistema, nombre, categoria_admin FROM mant_tarea_plantillas WHERE id=%s",
+        "SELECT * FROM mant_tarea_plantillas WHERE id=%s",
         (pid,))
     if not plant:
         return jsonify({"ok": False, "error": "Plantilla no encontrada"}), 404
-    _de_clasificacion = False
-    if (plant.get("categoria_admin") or "") in ("instalacion", "mantencion", "visitas"):
+    _de_clasificacion = bool(plant.get("clase_id"))   # 🔑 2026-10-21 (REGLA #40): ligada por llave = de clasificación
+    if not _de_clasificacion and (plant.get("categoria_admin") or "") in ("instalacion", "mantencion", "visitas"):
         _clasif = mysql_fetchone(
             "SELECT id FROM cat_clases_producto WHERE nombre=%s AND activo=1",
             (plant.get("nombre"),))
@@ -153141,7 +153183,7 @@ def _plantilla_por_clasificacion_sku(sku, tipo_ot):
         return None
     try:
         clase_row = mysql_fetchone(
-            "SELECT cp.nombre AS clase_nombre "
+            "SELECT cp.nombre AS clase_nombre, cp.id AS clase_id "
             "  FROM cat_productos p "
             "  JOIN cat_clases_producto cp "
             "    ON cp.slug = p.clase_producto AND cp.activo = 1 "
@@ -153157,14 +153199,27 @@ def _plantilla_por_clasificacion_sku(sku, tipo_ot):
         return None
     clase_nombre = clase_row["clase_nombre"]
     try:
-        prow = mysql_fetchone(
-            "SELECT p.id FROM mant_tarea_plantillas p "
-            "  JOIN mant_tarea_plantilla_items i ON i.plantilla_id = p.id "
-            " WHERE p.nombre = %s AND p.categoria_admin = %s "
-            "   AND COALESCE(p.activa, 1) = 1 "
-            " GROUP BY p.id LIMIT 1",
-            (clase_nombre, categoria)
-        )
+        # 🔑 2026-10-21 (REGLA #40): la plantilla ligada a la clasificación se encuentra por la LLAVE (clase_id), aunque
+        # la clasificación se haya renombrado; la que no tiene liga sigue por nombre exacto. Las plantillas de «trabajo
+        # interno» ligadas son de filtro (nombre con sufijo): el motor nunca las elige por clasificación.
+        if _plcls_ok() and categoria != "trabajo_interno" and clase_row.get("clase_id"):
+            prow = mysql_fetchone(
+                "SELECT p.id FROM mant_tarea_plantillas p "
+                "  JOIN mant_tarea_plantilla_items i ON i.plantilla_id = p.id "
+                " WHERE ((p.clase_id = %s) OR (p.clase_id IS NULL AND p.nombre = %s)) "
+                "   AND p.categoria_admin = %s AND COALESCE(p.activa, 1) = 1 "
+                " GROUP BY p.id LIMIT 1",
+                (clase_row["clase_id"], clase_nombre, categoria)
+            )
+        else:
+            prow = mysql_fetchone(
+                "SELECT p.id FROM mant_tarea_plantillas p "
+                "  JOIN mant_tarea_plantilla_items i ON i.plantilla_id = p.id "
+                " WHERE p.nombre = %s AND p.categoria_admin = %s "
+                "   AND COALESCE(p.activa, 1) = 1 "
+                " GROUP BY p.id LIMIT 1",
+                (clase_nombre, categoria)
+            )
     except Exception as e:
         print(f"[plantilla_por_clasificacion] buscar plantilla '{clase_nombre}' "
               f"(categoría {categoria}) falló: {e}", flush=True)
@@ -161432,8 +161487,249 @@ def mant_plantillas_propuestas_aplicar():
 # confirma; las (LU) además exigen superadmin + marca expresa. Las OT ya creadas conservan su copia de las tareas.
 # Lógica pura y probada en plantillas_serie_gps.py (tests/test_plantillas_serie_gps.py).
 # ══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
+# 🔑 2026-10-21 (REGLA #40) — LLAVE ESTABLE ENTRE CLASIFICACIÓN Y PLANTILLA (`mant_tarea_plantillas.clase_id`).
+# Daniel: «que sean como un SKU, un primary key… si le cambio el nombre a una categoría, que cambie en la configuración y no
+# cree plantillas nuevas… si creo una categoría, se crea nueva; si edito, cambia en todo, porque debería ser una base única».
+# Antes la plantilla se unía a la clasificación escribiendo el MISMO nombre (en ~6 lugares): al renombrar la clasificación
+# se perdía la unión y el sistema pedía/creaba otra plantilla. Ahora la unión es el id:
+#   · Renombrar la clasificación (Catálogo) → se renombran sus plantillas en todas las categorías (nunca se crea otra).
+#   · Crear una clasificación → se crean sus plantillas en cero (Instalación, Mantención, Visitas y Trabajo interno) con
+#     N° de serie + GPS, ya ligadas.
+#   · Desactivar / reactivar la clasificación → se desactivan / reactivan sus plantillas (soft: nunca se borran).
+#   · El motor de OT, la cobertura y la tarifa sugerida buscan por la llave; el nombre solo es respaldo si no hay liga.
+#   · El nombre de una plantilla ligada se cambia SOLO en Catálogo (PUT responde 409 NOMBRE_DE_CLASIFICACION).
+#   · «Trabajo interno»: una plantilla por clasificación, con el nombre «<Clase> (trabajo interno)». Va ligada (se renombra
+#     y se desactiva con la clasificación) pero es solo de FILTRO: el motor nunca la elige por clasificación.
+# La columna se asegura SIEMPRE al arrancar (una cláusula por sentencia, barata si existe: REGLA #18) y rellena UNA vez por
+# nombre exacto. Si la columna aún no existe en una instancia, _plcls_ok() es False y TODO sigue como antes.
+# ══════════════════════════════════════════════════════════════════════
+_PLCLS_SUFIJO_TI = " (trabajo interno)"
+_PLCLS_CATEGORIAS = ("instalacion", "mantencion", "visitas", "trabajo_interno")
+_PLCLS_ESTADO = {"ok": False, "t": 0.0}
+_PLCLS_SQL_COL = ("SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() "
+                  "AND TABLE_NAME='mant_tarea_plantillas' AND COLUMN_NAME='clase_id'")
+
+
+def _plcls_ok():
+    """¿Existe mant_tarea_plantillas.clase_id? Se recuerda por proceso; si falta, se vuelve a mirar a lo más cada 5 min."""
+    if _PLCLS_ESTADO["ok"]:
+        return True
+    if time.time() - _PLCLS_ESTADO["t"] < 300:
+        return False
+    _PLCLS_ESTADO["t"] = time.time()
+    try:
+        r = mysql_fetchone(_PLCLS_SQL_COL)
+        _PLCLS_ESTADO["ok"] = bool(r and int(r.get("n") or 0))
+    except Exception:
+        _PLCLS_ESTADO["ok"] = False
+    return _PLCLS_ESTADO["ok"]
+
+
+def _ensure_plantilla_clase_id():
+    """Columna `clase_id` (+ índice) y relleno único por nombre exacto. Devuelve cuántas plantillas ligó en este arranque."""
+    try:
+        r = mysql_fetchone(_PLCLS_SQL_COL)
+        if r and int(r.get("n") or 0):
+            _PLCLS_ESTADO["ok"] = True
+            return 0
+        mysql_execute("ALTER TABLE mant_tarea_plantillas ADD COLUMN clase_id INT NULL DEFAULT NULL "
+                      "COMMENT 'Clasificación de producto a la que está ligada (llave estable, REGLA #40)'")
+        try:
+            mysql_execute("ALTER TABLE mant_tarea_plantillas ADD INDEX idx_plant_clase (clase_id)")
+        except Exception:
+            pass
+        _PLCLS_ESTADO["ok"] = True
+        print("[ensure_plantilla_clase_id] columna agregada", flush=True)
+    except Exception as e:
+        print(f"[ensure_plantilla_clase_id] no se pudo agregar la columna: {e}", flush=True)
+        return 0
+    try:   # relleno ÚNICO (solo en el arranque que crea la columna): mismo nombre exacto = misma clasificación
+        n = mysql_execute_returning_rowcount(
+            "UPDATE mant_tarea_plantillas p JOIN cat_clases_producto c ON c.nombre = p.nombre "
+            "   SET p.clase_id = c.id "
+            " WHERE p.clase_id IS NULL AND p.categoria_admin IN ('instalacion','mantencion','visitas')")
+        print(f"[ensure_plantilla_clase_id] relleno inicial por nombre: {n} plantilla(s)", flush=True)
+        return n
+    except Exception as e:
+        print(f"[ensure_plantilla_clase_id] relleno falló: {e}", flush=True)
+        return 0
+
+
+def _plcls_nombre(clase_nombre, categoria):
+    """Nombre que lleva la plantilla de una clasificación en una categoría («trabajo interno» lleva sufijo: es de filtro)."""
+    n = str(clase_nombre or "").strip()
+    if str(categoria or "") == "trabajo_interno":
+        n += _PLCLS_SUFIJO_TI
+    return n[:200]
+
+
+def _plcls_ligar_si_coincide(pid, nombre, categoria):
+    """Liga una plantilla recién creada a la clasificación ACTIVA que se llame igual. Devuelve el clase_id o None."""
+    categoria = str(categoria or "")
+    if not _plcls_ok() or categoria not in _PLCLS_CATEGORIAS:
+        return None
+    nom = str(nombre or "").strip()
+    if categoria == "trabajo_interno":
+        if not nom.endswith(_PLCLS_SUFIJO_TI):
+            return None
+        nom = nom[:-len(_PLCLS_SUFIJO_TI)].strip()
+    if not nom:
+        return None
+    c = mysql_fetchone("SELECT id FROM cat_clases_producto WHERE nombre=%s AND activo=1 LIMIT 1", (nom,))
+    if not c:
+        return None
+    ya = mysql_fetchone("SELECT id FROM mant_tarea_plantillas WHERE clase_id=%s AND categoria_admin=%s AND id<>%s LIMIT 1",
+                        (c["id"], categoria, pid))
+    if ya:
+        return None
+    mysql_execute("UPDATE mant_tarea_plantillas SET clase_id=%s WHERE id=%s AND clase_id IS NULL", (c["id"], pid))
+    return int(c["id"])
+
+
+def _plcls_renombrar(clase_id, nombre_nuevo, user):
+    """Cascada de RENOMBRAR una clasificación: renombra sus plantillas ligadas (todas las categorías). Nunca crea.
+    Si el nombre nuevo ya lo usa OTRA plantilla de esa categoría, esa no se toca y queda en `conflictos`."""
+    out = {"renombradas": 0, "conflictos": []}
+    if not _plcls_ok() or not clase_id:
+        return out
+    filas = mysql_fetchall("SELECT id, nombre, categoria_admin FROM mant_tarea_plantillas WHERE clase_id=%s",
+                           (clase_id,)) or []
+    for f in filas:
+        cat = str(f.get("categoria_admin") or "").strip().lower()
+        nuevo = _plcls_nombre(nombre_nuevo, cat)
+        if str(f.get("nombre") or "") == nuevo:
+            continue
+        choque = mysql_fetchone(
+            "SELECT id FROM mant_tarea_plantillas WHERE nombre=%s AND categoria_admin <=> %s AND id<>%s LIMIT 1",
+            (nuevo, f.get("categoria_admin"), f["id"]))
+        if choque:
+            out["conflictos"].append({"plantilla_id": int(f["id"]), "categoria": cat,
+                                      "nombre_actual": f.get("nombre"), "choca_con": int(choque["id"])})
+            continue
+        mysql_execute("UPDATE mant_tarea_plantillas SET nombre=%s WHERE id=%s", (nuevo, f["id"]))
+        try:
+            _mant_log("plantilla", int(f["id"]), "renombrada_por_clasificacion",
+                      f"«{f.get('nombre')}» → «{nuevo}» por {user}: la clasificación se renombró en Catálogo.")
+        except Exception:
+            pass
+        out["renombradas"] += 1
+    return out
+
+
+def _plcls_activar(clase_id, activo, user):
+    """Cascada de DESACTIVAR / REACTIVAR una clasificación sobre sus plantillas ligadas (soft: nunca se borran)."""
+    out = {"cambiadas": 0}
+    if not _plcls_ok() or not clase_id:
+        return out
+    nuevo = 1 if activo else 0
+    filas = mysql_fetchall("SELECT id, nombre FROM mant_tarea_plantillas WHERE clase_id=%s AND COALESCE(activa,1)<>%s",
+                           (clase_id, nuevo)) or []
+    for f in filas:
+        mysql_execute("UPDATE mant_tarea_plantillas SET activa=%s WHERE id=%s", (nuevo, f["id"]))
+        try:
+            _mant_log("plantilla", int(f["id"]), "activada_por_clasificacion" if nuevo else "desactivada_por_clasificacion",
+                      f"«{f.get('nombre')}»: {user} {'reactivó' if nuevo else 'desactivó'} la clasificación en Catálogo.")
+        except Exception:
+            pass
+        out["cambiadas"] += 1
+    return out
+
+
+def _plcls_crear_para_clase(clase_id, nombre, user):
+    """Crea (en cero, con N° de serie + GPS, ligadas) las plantillas que le faltan a UNA clasificación en las 4 categorías.
+    Solo crea lo que no existe (por llave o por nombre); nunca toca una existente."""
+    creadas = []
+    for cat in _PLCLS_CATEGORIAS:
+        ya = mysql_fetchone(
+            "SELECT id FROM mant_tarea_plantillas WHERE (clase_id=%s OR nombre=%s) AND categoria_admin=%s LIMIT 1"
+            if _plcls_ok() else
+            "SELECT id FROM mant_tarea_plantillas WHERE nombre=%s AND categoria_admin=%s LIMIT 1",
+            (clase_id, _plcls_nombre(nombre, cat), cat) if _plcls_ok() else (_plcls_nombre(nombre, cat), cat))
+        if ya:
+            continue
+        est, extra = _psg_crear_clase(nombre, cat, user, clase_id=clase_id)
+        if est == "creada":
+            creadas.append({"categoria": cat, "plantilla_id": extra})
+    return creadas
+
+
+@app.route("/mantenciones/api/plantillas/adoptar", methods=["POST"])
+@_mant_required
+@_no_tecnico_externo
+def mant_plantillas_adoptar():
+    """🔑 REGLA #40: una PERSONA dice «esta plantilla (con contenido) ES la de esta clasificación». La plantilla toma el
+    nombre de la clasificación, queda ligada por la llave y conserva todo su contenido. Si ya existía otra plantilla
+    con ese nombre en esa categoría (típicamente una creada en cero), se borra SOLO si está vacía (≤ 2 ítems) y ninguna OT
+    la usó; si no, se rechaza. Body: {plantilla_id, clase_id}."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Esta acción es de gestión."}), 403
+    d = request.get_json(silent=True) or {}
+    try:
+        pid, cid = int(d.get("plantilla_id") or 0), int(d.get("clase_id") or 0)
+    except (TypeError, ValueError):
+        pid = cid = 0
+    if pid <= 0 or cid <= 0 or not _plcls_ok():
+        return jsonify({"ok": False, "error": "Faltan datos."}), 400
+    user = current_username() or "sistema"
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, nombre, categoria_admin, clase_id FROM mant_tarea_plantillas WHERE id=%s FOR UPDATE", (pid,))
+            p = cur.fetchone()
+            cur.execute("SELECT id, nombre FROM cat_clases_producto WHERE id=%s", (cid,))
+            c = cur.fetchone()
+            if not p or not c:
+                conn.rollback()
+                return jsonify({"ok": False, "error": "La plantilla o la clasificación no existe."}), 404
+            cat = str(p.get("categoria_admin") or "").strip().lower()
+            if cat not in ("instalacion", "mantencion", "visitas"):
+                conn.rollback()
+                return jsonify({"ok": False, "error": "Solo plantillas de Instalación, Mantención o Visitas."}), 400
+            if p.get("clase_id") and int(p["clase_id"]) != cid:
+                conn.rollback()
+                return jsonify({"ok": False, "error": "Esa plantilla ya está ligada a otra clasificación."}), 409
+            destino = _plcls_nombre(c["nombre"], cat)
+            cur.execute("SELECT id, nombre, clase_id FROM mant_tarea_plantillas WHERE categoria_admin=%s AND id<>%s "
+                        "AND (nombre=%s OR clase_id=%s) FOR UPDATE", (cat, pid, destino, cid))
+            otras = list(cur.fetchall() or [])
+            borradas = []
+            for o in otras:
+                cur.execute("SELECT COUNT(*) AS n FROM mant_tarea_plantilla_items WHERE plantilla_id=%s", (o["id"],))
+                n_items = int((cur.fetchone() or {}).get("n") or 0)
+                cur.execute("SELECT COUNT(*) AS n FROM mant_visita_tareas WHERE plantilla_id=%s", (o["id"],))
+                n_uso = int((cur.fetchone() or {}).get("n") or 0)
+                if n_items > 2 or n_uso:
+                    conn.rollback()
+                    return jsonify({"ok": False, "error_codigo": "YA_EXISTE_OTRA",
+                                    "error": (f"Ya existe otra plantilla «{o.get('nombre')}» con contenido o usada en OT. "
+                                              "No se borra: resuélvelo a mano.")}), 409
+                borradas.append(o)
+            for o in borradas:
+                cur.execute("INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) VALUES (%s,%s,%s,%s,%s)",
+                            ("plantilla", int(o["id"]), "eliminada_por_adopcion",
+                             f"«{o.get('nombre')}» (vacía) eliminada por {user}: la plantilla #{pid} «{p['nombre']}» fue adoptada "
+                             f"como la de la clasificación «{c['nombre']}».", user))
+                cur.execute("DELETE FROM mant_tarea_plantillas WHERE id=%s", (o["id"],))
+            cur.execute("INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) VALUES (%s,%s,%s,%s,%s)",
+                        ("plantilla", pid, "adoptada_por_clasificacion",
+                         f"«{p['nombre']}» → «{destino}» ligada a la clasificación #{cid} por {user}.", user))
+            cur.execute("UPDATE mant_tarea_plantillas SET nombre=%s, clase_id=%s WHERE id=%s", (destino, cid, pid))
+        conn.commit()
+        return jsonify({"ok": True, "plantilla_id": pid, "nombre": destino, "eliminadas": [int(o["id"]) for o in borradas]})
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"[plantillas_adoptar] {pid}→{cid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo adoptar la plantilla."}), 500
+    finally:
+        conn.close()
+
+
 _PSG_ACCION_LABEL = {
-    "convertir_serie": "El ítem de texto «N° de serie» pasa a ser el objeto N° de serie",
+    "convertir_serie":"El ítem de texto «N° de serie» pasa a ser el objeto N° de serie",
     "agregar_serie": "Agregar el objeto N° de serie",
     "agregar_gps": "Agregar el objeto GPS",
 }
@@ -161442,8 +161738,9 @@ _PSG_ACCION_LABEL = {
 def _psg_leer():
     """(plantillas, {plantilla_id: [ítems]}). Solo lectura."""
     plantillas = mysql_fetchall(
-        "SELECT id, nombre, categoria_admin, COALESCE(activa, 1) AS activa FROM mant_tarea_plantillas "
-        " ORDER BY categoria_admin, nombre") or []
+        "SELECT id, nombre, categoria_admin, COALESCE(activa, 1) AS activa"
+        + (", clase_id" if _plcls_ok() else "") +   # 🔑 REGLA #40
+        "  FROM mant_tarea_plantillas ORDER BY categoria_admin, nombre") or []
     items = {}
     for f in mysql_fetchall(
             "SELECT plantilla_id, id, orden, titulo, tipo_respuesta FROM mant_tarea_plantilla_items "
@@ -161593,20 +161890,24 @@ def mant_plantillas_serie_gps_aplicar():
     return jsonify({"ok": True, "resultados": res, "cuenta": cuenta})
 
 
-def _psg_crear_clase(clase, categoria, user):
-    """Crea UNA plantilla «en cero» para (clase, categoría) con los dos objetos estándar. (estado, id|mensaje)."""
+def _psg_crear_clase(clase, categoria, user, clase_id=None):
+    """Crea UNA plantilla «en cero» para (clase, categoría) con los dos objetos estándar, ligada a su clasificación por la
+    llave (REGLA #40). (estado, id|mensaje). «Trabajo interno» lleva el sufijo de filtro en el nombre."""
     conn = get_mysql()
     try:
+        con_llave = bool(clase_id) and _plcls_ok()
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO mant_tarea_plantillas "
                 "(nombre, descripcion, tipo_visita, tiempo_estimado_min, familia_checklist, familia_activo, "
-                " categoria_admin, aplica_plan_mantencion, activa, es_sistema, created_by) "
-                "VALUES (%s,%s,%s,NULL,'otro','todas',%s,1,1,0,%s)",
-                (clase[:200],
+                " categoria_admin, aplica_plan_mantencion, activa, es_sistema, created_by"
+                + (", clase_id" if con_llave else "") + ") "
+                "VALUES (%s,%s,%s,NULL,'otro','todas',%s,1,1,0,%s" + (",%s" if con_llave else "") + ")",
+                (_plcls_nombre(clase, categoria),
                  f"Plantilla creada en cero para la clasificación «{clase}»: ya trae N° de serie y GPS; "
                  "falta el resto del checklist.",
-                 _psg.TIPO_VISITA_POR_CATEGORIA.get(categoria, "otro"), categoria, user))
+                 _psg.TIPO_VISITA_POR_CATEGORIA.get(categoria, "otro"), categoria, user)
+                + ((int(clase_id),) if con_llave else ()))
             pid = cur.lastrowid
             _prop_insertar_items(cur, pid, [_psg.item_serie(1), _psg.item_gps(2)])
             cur.execute(
@@ -161663,7 +161964,7 @@ def mant_plantillas_crear_clases():
             res.append({"clase_id": clave[0], "categoria": clave[1], "estado": "no_vigente",
                         "mensaje": "Ya existe o la clasificación ya no está activa."})
             continue
-        est, extra = _psg_crear_clase(clase, clave[1], user)
+        est, extra = _psg_crear_clase(clase, clave[1], user, clase_id=clave[0])
         res.append({"clase_id": clave[0], "categoria": clave[1], "clase": clase, "estado": est,
                     "plantilla_id": extra if est == "creada" else None, "mensaje": "" if est == "creada" else extra})
     cuenta = {}
@@ -173142,6 +173443,16 @@ try:
         print(f"[ILUS] aplica_plan_mantencion=0 backfill inicial: {_n_plan_bf} plantilla(s)", flush=True)
 except Exception as _ensure_plan_err:
     print(f"[ILUS][WARN] _ensure_plantilla_aplica_plan_mantencion: {_ensure_plan_err}", flush=True)
+
+# 🔑 2026-10-21 (REGLA #40): llave estable clasificación ↔ plantilla (mant_tarea_plantillas.clase_id). SIEMPRE, incluso con
+# ILUS_SKIP_MIGRATIONS=1. Barato si ya existe (una consulta a information_schema); el relleno por nombre corre UNA vez.
+try:
+    with app.app_context():
+        _n_clase_bf = _ensure_plantilla_clase_id()
+    if _n_clase_bf:
+        print(f"[ILUS] clase_id de plantillas: {_n_clase_bf} plantilla(s) ligadas por nombre", flush=True)
+except Exception as _ensure_clase_err:
+    print(f"[ILUS][WARN] _ensure_plantilla_clase_id: {_ensure_clase_err}", flush=True)
 
 # CRÍTICO: tablas/columnas del Agente de Inteligencia SIEMPRE (incluso skip-migrations).
 try:

@@ -521,6 +521,10 @@
                 <label class="form-label small fw-semibold">Nombre <span class="pl-req">*</span></label>
                 <input type="text" id="ePNombre" class="form-control form-control-sm"
                        placeholder="Ej: Mantención preventiva trotadora" oninput="refrescarPasos()">
+                {#- 🔑 2026-10-21 (REGLA #40): el nombre de una plantilla ligada a una clasificación se cambia SOLO en Catálogo. -#}
+                <div id="ePNombreClase" class="small mt-1" style="display:none;color:#92400e">
+                  <i class="bi bi-link-45deg me-1"></i><span></span>
+                </div>
               </div>
               <div class="col-6 col-md-3">
                 <label class="form-label small fw-semibold">Tipo de visita</label>
@@ -1415,6 +1419,21 @@ function seleccionarCategoriaAdmin(key){
   refrescarPasos();
 }
 
+// 🔑 2026-10-21 (REGLA #40, Daniel: «el nombre de una plantilla ligada se cambia solo en Catálogo»): con la plantilla
+// ligada a una clasificación, el nombre queda de solo lectura y se explica dónde se cambia. El servidor lo exige igual
+// (PUT → 409 NOMBRE_DE_CLASIFICACION). `claseNombre` = nombre de la clasificación, o null si no está ligada.
+function plBloquearNombreClase(claseNombre){
+  const inp = document.getElementById('ePNombre');
+  const nota = document.getElementById('ePNombreClase');
+  if (!inp || !nota) return;
+  inp.readOnly = !!claseNombre;
+  inp.style.background = claseNombre ? '#f3f4f6' : '';
+  nota.style.display = claseNombre ? '' : 'none';
+  if (claseNombre){
+    nota.querySelector('span').textContent = 'Ligada a la clasificación «' + claseNombre + '». El nombre se cambia en Catálogo → Categorías y se actualiza aquí solo.';
+  }
+}
+
 function abrirEditor(pid){
   _editId = pid || null;
   _items = [];
@@ -1422,6 +1441,7 @@ function abrirEditor(pid){
   document.getElementById('editorTitulo').textContent = pid ? 'Editar plantilla' : 'Nueva plantilla';
   document.getElementById('btnEliminarPl').style.display = pid ? '' : 'none';
   document.getElementById('ePNombre').value = '';
+  plBloquearNombreClase(null);   // 🔑 REGLA #40: una plantilla nueva siempre puede ponerle nombre
   document.getElementById('ePDesc').value = '';
   document.getElementById('ePTipo').value = 'preventiva';
   document.getElementById('ePTiempo').value = '';
@@ -1469,6 +1489,7 @@ async function cargarDetalle(pid){
     if (!d.ok){ alert('No se pudo cargar la plantilla'); return; }
     const p = d.plantilla;
     document.getElementById('ePNombre').value = p.nombre || '';
+    plBloquearNombreClase(p.clase_id ? (p.clase_nombre || 'su clasificación') : null);
     document.getElementById('ePDesc').value = p.descripcion || '';
     document.getElementById('ePTipo').value = p.tipo_visita || 'preventiva';
     document.getElementById('ePTiempo').value = p.tiempo_estimado_min || '';

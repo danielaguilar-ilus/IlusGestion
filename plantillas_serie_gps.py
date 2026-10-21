@@ -29,8 +29,9 @@ TIPO_GPS = "gps"
 TIPOS_SERIE_CONVERTIBLES = ("texto", "check", "numero")
 
 CATEGORIAS = ("instalacion", "mantencion", "visitas", "trabajo_interno")
-# Por defecto la vista previa deja marcadas estas categorías al crear las plantillas que faltan por clase.
-CATEGORIAS_CLASE_POR_DEFECTO = ("instalacion", "mantencion", "trabajo_interno")
+# La vista previa deja marcadas estas categorías al crear las plantillas que faltan por clase (Daniel 21-oct: también
+# «Trabajo interno», como plantilla de filtro con sufijo, sin la etiqueta de clasificación hacia el motor).
+CATEGORIAS_CLASE_POR_DEFECTO = ("instalacion", "mantencion", "visitas", "trabajo_interno")
 TIPO_VISITA_POR_CATEGORIA = {
     "instalacion": "instalacion", "mantencion": "preventiva", "visitas": "inspeccion", "trabajo_interno": "otro",
 }
@@ -196,23 +197,39 @@ def completar_items_nueva(items_norm):
     return out, agregados
 
 
+SUFIJO_TRABAJO_INTERNO = " (trabajo interno)"
+
+
+def nombre_para_categoria(nombre_clase, categoria):
+    """Nombre que lleva la plantilla de una clasificación en una categoría. «Trabajo interno» es de FILTRO: lleva el
+    sufijo para que el motor (que busca por clasificación) nunca la elija."""
+    n = str(nombre_clase or "").strip()
+    return n + SUFIJO_TRABAJO_INTERNO if categoria == "trabajo_interno" else n
+
+
 def faltantes_por_clase(clases, plantillas, categorias=CATEGORIAS):
-    """Clases activas del catálogo sin plantilla (por nombre normalizado + categoría), contando TAMBIÉN las
-    desactivadas (el índice único uq_plant_nombre_cat impediría crear otra con el mismo nombre).
-    clases: [{id, nombre}] · plantillas: [{nombre, categoria_admin}] → [{clase_id, clase, categoria}]"""
+    """Clases activas del catálogo sin plantilla en una categoría. Una plantilla cuenta si está LIGADA a la clase por su
+    llave (`clase_id`, REGLA #40) o, si no tiene liga, si se llama como se llamaría (nombre normalizado + categoría).
+    Cuenta TAMBIÉN las desactivadas (el índice único uq_plant_nombre_cat impediría crear otra con ese nombre).
+    clases: [{id, nombre}] · plantillas: [{nombre, categoria_admin, clase_id?}] → [{clase_id, clase, categoria}]"""
     ya = set()
+    ya_llave = set()
     for p in plantillas or []:
-        ya.add((norm(p.get("nombre")), str(p.get("categoria_admin") or "").strip().lower()))
+        cat = str(p.get("categoria_admin") or "").strip().lower()
+        ya.add((norm(p.get("nombre")), cat))
+        if p.get("clase_id"):
+            ya_llave.add((int(p["clase_id"]), cat))
     out = []
     vistos = set()
     for c in clases or []:
         nombre = str(c.get("nombre") or "").strip()
-        n = norm(nombre)
-        if not n:
+        if not norm(nombre):
             continue
+        cid = int(c.get("id") or 0)
         for cat in categorias:
-            if (n, cat) in ya or (n, cat) in vistos:
+            n = norm(nombre_para_categoria(nombre, cat))
+            if (n, cat) in ya or (cid, cat) in ya_llave or (n, cat) in vistos:
                 continue
             vistos.add((n, cat))
-            out.append({"clase_id": int(c.get("id") or 0), "clase": nombre, "categoria": cat})
+            out.append({"clase_id": cid, "clase": nombre, "categoria": cat})
     return out

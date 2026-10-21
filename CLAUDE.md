@@ -1144,5 +1144,23 @@ Incidente real: el asistente sumaba por detrás «Revisión — Registro por equ
 
 ---
 
+## 🔑 REGLA #40 — Clasificación y plantilla se unen por una LLAVE (`clase_id`), no por el nombre; renombrar nunca crea otra (no negociable)
+
+**Pedido explícito de Daniel (2026-10-21):** «que sean como un SKU, un primary key… si le cambio el nombre, que cambie en la configuración y no cree plantillas nuevas. Si creo una categoría, se cree nueva; si edito una categoría, cambia en todo, porque debería ser una base única». Incidente real: días antes renombró clasificaciones del Catálogo y el sistema creó plantillas nuevas, dejando las antiguas (con contenido) huérfanas.
+
+- **Causa:** la plantilla se unía a la clasificación escribiendo el MISMO nombre (`p.nombre = cat_clases_producto.nombre`, en ~6 lugares). Renombrar la clasificación rompía la unión.
+- **Llave:** `mant_tarea_plantillas.clase_id` (índice `idx_plant_clase`). Se asegura SIEMPRE al arrancar (`_ensure_plantilla_clase_id`, una cláusula por sentencia, barata si existe: REGLA #18) y se rellena UNA vez por nombre exacto (Instalación, Mantención, Visitas). Mientras la columna no exista, `_plcls_ok()` es False y todo sigue por nombre como antes.
+- **Qué hace la llave:**
+  1. **Renombrar** una clasificación (`PATCH /catalogo/api/clases/<id>`) renombra sus plantillas en todas las categorías (`_plcls_renombrar`); si el nombre nuevo ya lo usa otra plantilla de esa categoría, esa no se toca y se avisa. Nunca crea.
+  2. **Crear** una clasificación (`POST /catalogo/api/clases`) crea sus plantillas en cero —Instalación, Mantención, Visitas y Trabajo interno— con N° de serie + GPS, ya ligadas (`_plcls_crear_para_clase`).
+  3. **Desactivar / reactivar** la clasificación desactiva / reactiva sus plantillas (soft: nunca se borran).
+  4. El **motor de OT** (`_plantilla_por_clasificacion_sku`), la **cobertura** (banner y matriz) y la **tarifa sugerida** buscan por la llave; el nombre solo es respaldo si no hay liga. Una plantilla creada a mano cuyo nombre coincide con una clasificación activa nace ligada (`_plcls_ligar_si_coincide`).
+  5. **El nombre de una plantilla ligada se cambia SOLO en Catálogo:** `PUT /mantenciones/api/plantillas/<id>` responde 409 `NOMBRE_DE_CLASIFICACION` y el editor lo muestra de solo lectura. Eliminar una plantilla ligada la desactiva (no se borra).
+  6. **Adoptar:** `POST /mantenciones/api/plantillas/adoptar {plantilla_id, clase_id}` (una persona) liga una plantilla con contenido a su clasificación —le pone el nombre de la clasificación— y borra la plantilla vacía (≤ 2 ítems, sin OT) que pudiera estorbar; si esa tiene contenido o uso, se rechaza (409).
+- **Trabajo interno por clasificación (Daniel: «igual sería bueno tenerlas… como filtro»):** una plantilla por clasificación llamada «<Clase> (trabajo interno)». Va ligada (se renombra y se desactiva con la clasificación) pero es solo de FILTRO: el motor nunca la elige por clasificación (el sufijo y la exclusión de `trabajo_interno` en las uniones lo garantizan).
+- Todo camino NUEVO que una una plantilla con una clasificación usa `clase_id`; nunca compara nombres. Pruebas: `tests/test_plantillas_clave_estable.py` (la cascada se ejecuta contra una base de mentira).
+
+---
+
 _Última actualización: 2026-10-21_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_
