@@ -223,10 +223,12 @@ REGISTRO = (
        "Cuando se cancela o anula una OT del técnico: ya no necesita ir. Lleva el .ics de cancelación.",
        modo="automatico", plantilla=("mantenciones", "ot_cancelada_tecnico"), plantilla_apagada="no_sale",
        adjunta="Archivo de calendario (.ics)", avisa_a="A cada técnico de la OT"),
-    _c("ot_tec_desasignada", "OT quitada: aviso al técnico anterior", "ot", "ot_tecnicos", "tecnico",
-       "Cuando le quitan una OT a un técnico (se asignó a otra persona o se reorganizó el equipo).",
+    # 2026-10-20 (Daniel: «no digas "te quité la OT"… algo más sutil, se sentiría como un castigo»): el nombre y el texto hablan de un
+    # ajuste de la agenda, nunca de quitar. La clave y la plantilla siguen siendo las mismas.
+    _c("ot_tec_desasignada", "OT pasa a otra persona: aviso de ajuste de agenda al técnico anterior", "ot", "ot_tecnicos", "tecnico",
+       "Cuando la OT pasa a otra persona o se reorganiza el equipo: un aviso amable de ajuste de agenda, sin reproche.",
        modo="automatico", plantilla=("mantenciones", "ot_desasignada_tecnico"), plantilla_apagada="no_sale",
-       adjunta="Archivo de calendario (.ics)", avisa_a="Al técnico que ya no la tiene"),
+       adjunta="Archivo de calendario (.ics)", avisa_a="Al técnico que deja de atenderla"),
     _c("ot_tec_agenda_manana", "Agenda del técnico para el siguiente día hábil", "ot", "ot_tecnicos", "tecnico",
        "Cada día hábil entre las 17:00 y las 21:00 (hora Chile), con las OT del técnico del siguiente día hábil. "
        "Nunca sale en sábado, domingo ni feriado.",
