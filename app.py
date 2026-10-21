@@ -70,6 +70,7 @@ import ot_que_paso as _qp  # «¿Qué pasó?» de una OT y la OT hija pendiente 
 import ot_piezas_medidas as _pm    # 2026-10-20: fichas de medidas por pieza, validación, aprendizaje del modelo y árbol «¿Qué le pasa?» (módulo puro con pruebas)
 import ot_producto_estado as _pe    # acciones por producto de una OT interna (No se puede usar / No tiene arreglo / No llegó) y repuestos sugeridos por defecto (módulo puro con pruebas)
 import ot_anexo_costo as _oac    # 2026-10-20: el costo de la OT y el anexo del proveedor son UN solo valor (módulo puro con pruebas)
+import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién puede serlo, defecto al crear, cambio y avisos suaves): reglas puras con pruebas
 import fedex_labels as _fxlabels    # parser puro de etiquetas FedEx (testeable)
 _ERP = erp_engine.init_engine(
     base_url=ERP_CONFIG.get("api_url", "https://lab.random.cl/ilus"),
@@ -4995,6 +4996,13 @@ PERMS_KEYS = (
     # para todos: el candado real para tecnico_externo es duro en código
     # (_es_tecnico_externo), no depende de este flag.
     "mant_taller",
+    # mant_ot_responsable — «Responsable de OT» (aditivo 2026-10-21, REGLA #36). Daniel: «¿los avisos le llegan a la persona que
+    # administra las órdenes de trabajo?» → cada OT tiene UN responsable (hoy Víctor, Aarón o Juan Pablo) y este permiso dice QUIÉN
+    # PUEDE SERLO. Nace APAGADO para todos los roles y personas; se enciende por persona (Permisos individuales) o por rol (Roles →
+    # Servicio Técnico). ⚠️ NO se lee de g.permissions para decidir quién es candidato: el superadministrador tiene TODAS las llaves
+    # en True y Daniel no es responsable de nada por serlo; la lista de candidatos sale de ot_responsable.es_candidato (permiso
+    # EXPLÍCITO, activo y fuera de la familia técnico). Dormido por completo mientras nadie lo tenga encendido.
+    "mant_ot_responsable",
 )
 
 _ROLE_PERMS_CACHE = {}   # in-process cache, busted por admin_roles_matrix_save
@@ -5152,6 +5160,9 @@ def _build_perms_from_matrix(role):
     # 🆕 2026-09-02 — acceso del TÉCNICO a la pantalla de OT 2.0. Este NO es
     # de tipo bloqueo: nace apagado y hay que encenderlo a propósito.
     base["mant_ot2_tecnico"] = bool(man.get("ot2_tecnico"))
+    # 🙋 2026-10-21 (REGLA #36): «Responsable de OT». Nace APAGADO (no es de tipo bloqueo): se enciende a propósito para quien
+    # corresponda. Ver "mant_ot_responsable" en PERMS_KEYS.
+    base["mant_ot_responsable"] = bool(man.get("ot_responsable"))
     # Flag coarse "transporte" — habilita TODO el módulo (/transporte/*,
     # manifiestos, couriers). Decisión 2026-06-03 (caso Alison): si el rol
     # tiene CUALQUIER acción de transporte marcada, el flag coarse se enciende.
@@ -14266,7 +14277,9 @@ PERMISSIONS_MATRIX = {
                                    # bloquear por el front en los roles.
                                    # Igual el reasignar el técnico").
                                    "reagendar", "reasignar_tecnico",
-                                   "ot2_tecnico", "taller"]},
+                                   "ot2_tecnico", "taller",
+                                   # 🙋 2026-10-21 (REGLA #36): quién puede ser el responsable de una OT. Nace apagado.
+                                   "ot_responsable"]},
     "retiros":        {"label":"Retiros",        "icon":"bi-box-arrow-up-right",
                        "acciones":["ver","gestionar","monitor","marketing","horarios","encuesta_firma"]},
     "transporte":     {"label":"Transporte",     "icon":"bi-truck",
@@ -14371,6 +14384,11 @@ PERMISSIONS_META = {
         # de cerrarlo a otro rol distinto sin otro deploy.
         "taller": {"label": "Taller (Plantillas, Proveedores, Repuestos, Ubicaciones, Técnicos, Incidencias)",
                          "tipo": "bloqueo", "icon": "bi-tools"},
+        # 🙋 2026-10-21 (Daniel: «la persona que administra las órdenes de trabajo… que ese rol de responsable de la OT quede bien
+        # establecido»). Quien lo tiene puede ser el RESPONSABLE de una OT y recibe sus avisos de gestión. Nace apagado para todos;
+        # se enciende solo para Víctor, Aarón y Juan Pablo (por persona en «Permisos individuales», o por rol aquí).
+        "ot_responsable": {"label": "Responsable de OT (lleva las órdenes de trabajo y recibe sus avisos)",
+                         "tipo": "submodulo", "icon": "bi-person-check"},
     },
     "retiros": {
         "ver":       {"label": "Monitor de retiros",  "tipo": "submodulo", "icon": "bi-eye"},
@@ -60893,7 +60911,7 @@ def init_mantenciones_tables():
                 "       'retiro_listo','retiro_cerrado',"
                 "       'retiro_propuesta','retiro_expedido','retiro_desfase','retiro_cierre',"
                 "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida',"
-                "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock') DEFAULT 'otro'",
+                "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable') DEFAULT 'otro'",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_destino_no_leida "
                 "  (destino_user_id, leida_at, archivada_at)",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_visita (visita_id)",
@@ -67130,6 +67148,7 @@ def mant_generar_calendario(cid):
     # Guardar visitas — solo si llegó confirm=true (validado arriba)
     conn = get_mysql()
     try:
+        _pares_cal = []     # 🙋 2026-10-21: (id de la visita, cliente) de cada una, para fijar su responsable al final
         with conn.cursor() as cur:
             for v in visitas_preview:
                 cur.execute(
@@ -67138,9 +67157,13 @@ def mant_generar_calendario(cid):
                        VALUES (%s,%s,%s,%s,%s,'programada',%s)""",
                     (cid, v["contrato_id"], v["titulo"], v["fecha"], v["tipo"], current_username())
                 )
+                _pares_cal.append((cur.lastrowid, cid))
         conn.commit()
         _mant_log("cliente", cid, "calendario_generado",
                   f"{len(visitas_preview)} visitas (confirm=true por {current_username()})")
+        # 🙋 2026-10-21 (REGLA #36): cada visita del calendario nace con su responsable, por la puerta única (sin avisos de campana).
+        try: _ot_responsable_al_crear_lote(_pares_cal, creador_id=(getattr(g, "user", None) or {}).get("id"))
+        except Exception as _e_rs: print(f"[generar-calendario responsable] {_e_rs}", flush=True)
         return jsonify({"ok": True, "creadas": len(visitas_preview)})
     finally:
         conn.close()
@@ -75862,6 +75885,9 @@ def mant_visita_multi(cid):
         conn.commit()
         _mant_log("cliente", cid, "visita_multi_creada",
                   f"Visita {vid}: {len(rows)} equipos, tipo {tipo_visita}, fecha {fecha_prog}")
+        # 🙋 2026-10-21 (REGLA #36): el responsable de la OT, por la puerta única (best-effort, después del commit).
+        try: _ot_responsable_al_crear(vid, cliente_id=cid, creador_id=_cre_uid_mv, elegido_id=d.get("responsable_user_id"))
+        except Exception as _e_rs: print(f"[visita-multi responsable] {_e_rs}", flush=True)
         # 📧 2026-10-19: los técnicos de la visita reciben «OT asignada» (llave propia 'ot_tecnicos'; best-effort).
         try: _mant_ot_email_tecnico_creacion(vid)
         except Exception as _e_emt: print(f"[visita-multi email-tecnico] {_e_emt}", flush=True)
@@ -77526,6 +77552,10 @@ def mant_maquina_solicitar_cambio(mid):
         conn.commit()
         _mant_log("maquina", mid, "solicitud_cambio",
                   f"{cant_afectada} unidad(es), {tipo_visita}, fecha {fecha_prog}, motivo: {motivo[:80]}")
+        # 🙋 2026-10-21 (REGLA #36): el responsable de la OT, por la puerta única (best-effort, después del commit).
+        try: _ot_responsable_al_crear(vid, cliente_id=cid, creador_id=(getattr(g, "user", None) or {}).get("id"),
+                                       elegido_id=d.get("responsable_user_id"))
+        except Exception as _e_rs: print(f"[solicitud-cambio responsable] {_e_rs}", flush=True)
         # 📧 2026-10-19 (revisión): esta OT nace «programada» con el técnico solo como texto (sin cuenta). Si ese nombre es
         # una empresa externa con ficha, se le avisa por la llave PROPIA 'ot_tecnicos'; si no resuelve a nadie, no sale nada.
         try: _mant_ot_email_tecnico_creacion(vid)
@@ -84700,6 +84730,9 @@ def mant_visita_historica(cid):
             _mant_log("visita", vid_historica, "registrada_historica",
                       f"Mantención de {fecha_real.strftime('%d/%m/%Y')} retroactiva")
         except Exception: pass
+        # 🙋 2026-10-21 (REGLA #36): el responsable de la OT, por la puerta única (best-effort, después del commit).
+        try: _ot_responsable_al_crear(vid_historica, cliente_id=cid, creador_id=(getattr(g, "user", None) or {}).get("id"))
+        except Exception as _e_rs: print(f"[visita-historica responsable] {_e_rs}", flush=True)
     finally:
         conn.close()
 
@@ -84737,6 +84770,9 @@ def mant_visita_historica(cid):
                 _mant_log("visita", proxima_creada, "programada_auto",
                           f"Generada por sistema tras mantención histórica {vid_historica}")
             except Exception: pass
+            # 🙋 2026-10-21 (REGLA #36): la próxima visita también nace con su responsable (misma puerta).
+            try: _ot_responsable_al_crear(proxima_creada, cliente_id=cid, creador_id=(getattr(g, "user", None) or {}).get("id"))
+            except Exception as _e_rs: print(f"[visita-historica proxima responsable] {_e_rs}", flush=True)
         except Exception as e:
             print(f"[mant_visita_historica] error creando próxima: {e}")
 
@@ -84898,6 +84934,9 @@ def mant_visita_retroactiva(cid):
             _mant_log("visita", vid, "retroactiva_creada",
                       f"{tipo} {fecha.strftime('%d/%m/%Y')} fact={estado_fact}")
         except Exception: pass
+        # 🙋 2026-10-21 (REGLA #36): el responsable de la OT, por la puerta única (best-effort, después del commit).
+        try: _ot_responsable_al_crear(vid, cliente_id=cid, creador_id=(getattr(g, "user", None) or {}).get("id"))
+        except Exception as _e_rs: print(f"[visita-retroactiva responsable] {_e_rs}", flush=True)
     finally:
         conn.close()
 
@@ -88132,6 +88171,9 @@ def _mant_visita_crear_core(d):
                   + (f" · garantía={'aplica' if cubierto_por_ins=='garantia' else 'no aplica'}"
                      if gar_aplica is not None else "")
                   + (f" · ⚠ {warn_mod}" if warn_mod else ""))
+        # 🙋 2026-10-21 (REGLA #36): el responsable de la OT, por la puerta única (best-effort, después del commit).
+        try: _ot_responsable_al_crear(vid, cliente_id=d.get("cliente_id"), creador_id=creador_user_id, elegido_id=d.get("responsable_user_id"))
+        except Exception as _e_rs: print(f"[crear-ot responsable] {_e_rs}", flush=True)
         # 2026-05-22 (Daniel) — si la OT se creó CON técnico ya asignado,
         # disparamos la notificación interna (campana) + el helper WA/SMS
         # legacy (silencioso si Twilio off). Best-effort, no bloquea.
@@ -90418,6 +90460,10 @@ def ot2_panel():
         f_evento = int(request.args.get("evento") or 0) or 0
     except (TypeError, ValueError):
         f_evento = 0
+    # 🙋 2026-10-21 (REGLA #36): filtro por RESPONSABLE de la OT — «Mis OT como responsable» (mis), «Sin responsable» (sin) o una persona
+    # (su id). Lista blanca y parametrizado (_ot_resp_filtro_sql); si la columna aún no existe no filtra. Entra al COUNT, al LIMIT, a los
+    # KPI y a las cuatro vistas, y viaja en todos los enlaces del panel (REGLA #4.3).
+    f_resp, _f_resp_sql, _f_resp_params = _ot_resp_filtro_sql(request.args.get("resp"), (getattr(g, "user", None) or {}).get("id"))
 
     # Orden por columna (Daniel: "siempre ordenado por el número de OT,
     # pero si yo quiero ordenar por cliente, por tipo, por estado, lo
@@ -90433,6 +90479,8 @@ def ot2_panel():
         "fecha":   "v.fecha_programada {d}, v.numero_ot DESC",
         "tecnico": "COALESCE(au.nombre, au.username) {d}, v.numero_ot DESC",
     }
+    if _ot_resp_ok():     # 🙋 2026-10-21: ordenar por responsable (sin responsable al final). Solo si la columna existe.
+        _ORDEN_SQL["responsable"] = "(v.responsable_nombre IS NULL) ASC, v.responsable_nombre {d}, v.numero_ot DESC"
     orden = (request.args.get("orden") or "ot").lower()
     if orden not in _ORDEN_SQL:
         orden = "ot"
@@ -90538,6 +90586,9 @@ def ot2_panel():
     if f_evento:
         extra_where_q.append("v.evento_id = %s")
         extra_params_q.append(f_evento)
+    if _f_resp_sql:      # 🙋 2026-10-21 (REGLA #36)
+        extra_where_q.append(_f_resp_sql)
+        extra_params_q.extend(_f_resp_params)
     where_extra_sql_q = (" AND " + " AND ".join(extra_where_q)) if extra_where_q else ""
 
     extra_where, extra_params = list(extra_where_q), list(extra_params_q)
@@ -90649,6 +90700,7 @@ def ot2_panel():
                 _ot2_enriquecer_fila(f, hoy)
             _ot2_panel_extras(filas)
             _ot2_panel_evento_chips(filas)   # 🧩 2026-10-19: evento + unión instalación ↔ desinstalación
+            _ot2_panel_responsables(filas)   # 🙋 2026-10-21 (REGLA #36): columna «Responsable» (una consulta por lote)
 
         elif vista == "kanban":
             _where_solo_q = f" WHERE {where_origen} {where_extra_sql_q} "
@@ -90897,9 +90949,22 @@ def ot2_panel():
                 tuple([f_evento or 0] + _filtro_ev_par)) or [])]
     except Exception as e:
         print(f"[ot2_panel] eventos para el filtro: {type(e).__name__}", flush=True)
+    # 🙋 2026-10-21 (REGLA #36): opciones del filtro «Responsable» = las personas que pueden serlo (permiso «Responsable de OT»). Sin
+    # candidatos y sin filtro activo no se dibuja el select (la función está dormida). «Mis OT como responsable» solo si quien mira
+    # puede serlo. Un técnico no ve este filtro.
+    resp_opts, resp_yo = [], False
+    try:
+        if _ot_resp_ok() and not _es_rol_tecnico():
+            _cands_panel = _ot_resp_candidatos()
+            resp_opts = [{"id": c["id"], "nombre": c["nombre"]} for c in _cands_panel]
+            _yo_panel = _oresp.entero((getattr(g, "user", None) or {}).get("id"))
+            resp_yo = bool(_yo_panel and any(c["id"] == _yo_panel for c in _cands_panel))
+    except Exception as e:
+        print(f"[ot2_panel] opciones de responsable: {type(e).__name__}", flush=True)
 
     return render_template(
         "ot2/panel.html",
+        f_resp=f_resp, resp_opts=resp_opts, resp_yo=resp_yo,   # 🙋 2026-10-21: filtro y columna «Responsable»
         f_evento=f_evento, eventos_opts=eventos_opts,   # 🧩 2026-10-19: filtro y chips de evento
         es_superadmin_ot=_ot_aut_es_superadmin(),   # 🔒 2026-10-11: botones Regularizar / Saldo de facturas / Autorizaciones
         filas=filas, origen=origen, vista=vista, kpis=kpis,
@@ -93052,6 +93117,10 @@ def ot2_detalle(vid):
         "eliminada":                    ("eliminó la OT", "bi-trash3-fill", "rojo", "cambios"),
         "tecnico_agregado":             ("agregó un técnico", "bi-person-plus-fill", "verde", "cambios"),
         "tecnico_quitado":              ("quitó un técnico", "bi-person-dash-fill", "ambar", "cambios"),
+        # 🙋 2026-10-21 (REGLA #36): quién lleva la OT. NO está en la lista blanca de la bitácora del técnico (_ACT_TEC_PERMITIDAS): el
+        # técnico ve al responsable en el chip de la cabecera, solo como nombre; el motivo del cambio es de la gestión.
+        "responsable_asignado":         ("asignó al responsable de la OT", "bi-person-check-fill", "azul", "cambios"),
+        "responsable_cambiado":         ("cambió al responsable de la OT", "bi-arrow-left-right", "azul", "cambios"),
         "ruta_iniciada":                ("inició la ruta", "bi-signpost-2-fill", "azul", "cambios"),
         "equipo_agregado_permiso_rol":  ("agregó un equipo a la OT", "bi-plus-square-fill", "verde", "cambios"),
         "plantilla_aplicada":           ("aplicó un checklist", "bi-list-check", "azul", "cambios"),
@@ -93625,6 +93694,9 @@ def ot2_detalle(vid):
     # 🧭 2026-10-20: franja «¿Qué pasó?» y chips de la unión con la OT de origen o las OT pendientes por falta de stock.
     # (Va ANTES del bloque de la barra de acciones: ese bloque se prueba aislado en tests/test_ot_producto_acciones.py.)
     que_paso = _qp_contexto_ficha(vid, v, puede_configurar, ot_solo_lectura)
+    # 🙋 2026-10-21 (REGLA #36): el responsable de la OT para el chip de la cabecera (un técnico lo ve solo como nombre). También va
+    # ANTES del bloque de la barra de acciones por el mismo motivo que la línea de arriba.
+    responsable = _ot_resp_contexto(v)
     # 🧰 2026-10-20: productos cuyo checklist se dispensa por una acción del técnico (espejo JS: otdChkEvaluar) y quién
     # puede devolver un producto a «operativo» (gestión, con motivo).
     try:
@@ -93699,6 +93771,7 @@ def ot2_detalle(vid):
         anexo_vinculo=anexo_vinculo,
         desinst=desinst,
         que_paso=que_paso,
+        responsable=responsable,
         acta=acta,
         prod_dispensa=prod_dispensa, acc_listas=acc_listas, acc_data=acc_data,
         puede_revertir_estado=bool((not _es_rol_tecnico()) and puede_configurar and not ot_solo_lectura),
@@ -97595,10 +97668,12 @@ def _ot_aut_json(r):
 
 
 # ───────────────── ¿A QUIÉN AVISA «LA GESTIÓN» DE UNA OT? — UN SOLO LUGAR ─────────────────
-# 🧭 2026-10-20: hoy una OT NO tiene un responsable explícito (los avisos de «lista para aprobar» van al creador + admin/supervisor/
-# superadmin y los ejecutivos solo los reciben si crearon la OT). Daniel va a pedir que cada OT tenga UN RESPONSABLE (uno de los
-# tres ejecutivos). Por eso NADIE fija a mano a quién avisar: la campana y el correo interno de «¿Qué pasó?» llaman a ESTA función, y
-# el día que exista `mant_visitas.responsable_user_id` ya la lee (llega en el SELECT *): cambiar la regla es tocar SOLO este lugar.
+# 🧭 2026-10-20: NADIE fija a mano a quién avisa «la gestión» de una OT: la campana y el correo interno de «¿Qué pasó?», y desde el
+# 2026-10-21 también el aviso «OT lista para aprobar» (_notificar_ot_pendiente_aprobacion_async), llaman a ESTA función. Cambiar la
+# regla es tocar SOLO este lugar.
+# 🙋 2026-10-21 (REGLA #36): cada OT puede tener UN RESPONSABLE (`mant_visitas.responsable_user_id`, ver más abajo «RESPONSABLE DE LA
+# OT»): va PRIMERO. Las OT anteriores a esa fecha tienen la columna en NULL y siguen cayendo al creador + ejecutivo del cliente +
+# respaldo de siempre (nunca se rellenan en masa).
 _GESTION_FAMILIAS_RESPALDO = ("superadmin", "admin", "supervisor")
 _GESTION_CORREO_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
 
@@ -97675,6 +97750,391 @@ def _ot_gestion_destinatarios(vid, fila=None):
     except Exception as e:
         print(f"[gestion] respaldo vid={vid}: {type(e).__name__}", flush=True)
         return []
+
+
+# ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  🙋 RESPONSABLE DE LA OT (F0 · REGLA #36) — Daniel, 20-oct-2026
+#  «¿Los avisos le llegan a la persona que administra las órdenes de trabajo (Víctor, Aarón o Juan Pablo)? Quiero que ese
+#  rol de responsable de la OT quede bien establecido.» Decidido con él (las reglas puras viven en ot_responsable.py):
+#    · El responsable es un PERMISO («Responsable de OT», Roles → Servicio Técnico / Permisos individuales), apagado para todos y
+#      encendido solo para esas tres personas. Mientras NADIE lo tenga, todo esto está dormido: no se pide nada, no se bloquea nada y
+#      los avisos siguen yendo como hoy (creador + ejecutivo del cliente + respaldo).
+#    · Al crear la OT: quien la crea si tiene el permiso; si no, el ejecutivo del cliente (si también lo tiene); si tampoco hay, el
+#      asistente PIDE elegirlo (REGLA #32: el sistema sugiere, la persona decide).
+#    · Cambiarlo: gestión (superadmin/admin/supervisor) o el propio responsable, con motivo opcional; bitácora (quién, cuándo, de quién
+#      a quién) y un aviso suave por la campana a la persona nueva y a la anterior. Todo INTERNO: al cliente no le llega nada (REGLA #22).
+#    · UNA sola puerta para fijarlo al crear (`_ot_responsable_al_crear`) y UNA para saber a quién avisar (`_ot_gestion_destinatarios`).
+#    · Las OT anteriores NO se rellenan: con la columna en NULL todo cae al respaldo de hoy. Nada de UPDATE masivo.
+#  Columnas nuevas de mant_visitas (REGLA #18: una cláusula por sentencia, por mysql_execute): responsable_user_id, responsable_nombre,
+#  responsable_at (UTC, como NOW()) y responsable_por (quién lo asignó o cambió). La historia completa vive en mant_logs.
+# ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
+_OT_RESP_ESTADO = {"ok": False, "revisado_en": 0.0}
+_OT_RESP_COLUMNAS = ("responsable_user_id", "responsable_nombre", "responsable_at", "responsable_por")
+
+
+def _ot_resp_revisar():
+    """¿Están las 4 columnas en mant_visitas? Una consulta liviana a information_schema; deja el resultado recordado por proceso."""
+    try:
+        r = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas' "
+            "   AND COLUMN_NAME IN (%s,%s,%s,%s)", _OT_RESP_COLUMNAS)
+        ok = int((r or {}).get("n") or 0) >= len(_OT_RESP_COLUMNAS)
+    except Exception as e:
+        print(f"[ot-resp] revisar columnas: {type(e).__name__}", flush=True)
+        ok = False
+    _OT_RESP_ESTADO["ok"] = bool(ok)
+    _OT_RESP_ESTADO["revisado_en"] = time.time()
+    return bool(ok)
+
+
+def _ot_resp_ok():
+    """¿Existen las columnas? Se recuerda por proceso; si faltan, se vuelve a mirar a lo más cada 5 minutos (nunca en cada petición).
+    Mientras no existan, TODO lo del responsable se salta sin error: ni el panel, ni la ficha, ni la creación de OT se enteran."""
+    if _OT_RESP_ESTADO["ok"]:
+        return True
+    if time.time() - _OT_RESP_ESTADO["revisado_en"] < 300:
+        return False
+    return _ot_resp_revisar()
+
+
+def _ensure_ot_responsable():
+    """Columnas del responsable en mant_visitas. REGLA #18: UNA cláusula por sentencia y siempre por mysql_execute: la guardia
+    _ddl_ya_aplicado las salta SIN pedir lock cuando ya existen; si faltan, `ADD COLUMN … NULL` en una tabla de unos cientos de filas es
+    inmediato y espera como máximo 3 s por el lock (lock_wait_timeout del DDL), nunca deja la tabla congelada. El índice va aparte.
+    No rellena ninguna OT anterior."""
+    for sql in (
+        "ALTER TABLE mant_visitas ADD COLUMN responsable_user_id INT NULL",
+        "ALTER TABLE mant_visitas ADD COLUMN responsable_nombre VARCHAR(190) NULL",
+        "ALTER TABLE mant_visitas ADD COLUMN responsable_at DATETIME NULL",
+        "ALTER TABLE mant_visitas ADD COLUMN responsable_por VARCHAR(190) NULL",
+        "ALTER TABLE mant_visitas ADD INDEX idx_v_responsable (responsable_user_id)",
+    ):
+        try:
+            mysql_execute(sql)
+        except Exception as e:
+            print(f"[ensure_ot_responsable] {sql[26:90]}: {type(e).__name__}: {e}", flush=True)
+    return _ot_resp_revisar()
+
+
+def _ot_resp_candidatos():
+    """[{id, nombre, rol}] de las personas que PUEDEN ser responsables: activas, con el permiso «Responsable de OT» EXPLÍCITO (por
+    persona o por rol; el atajo del superadministrador NO cuenta) y fuera de la familia técnico. Ordenadas por nombre. Una consulta por
+    petición (se recuerda en g). Nunca levanta: ante un error de la base devuelve [] y todo queda dormido."""
+    try:
+        memo = getattr(g, "_ot_resp_cands", None)
+        if memo is not None:
+            return [dict(c) for c in memo]
+    except Exception:
+        pass
+    filas = []
+    try:
+        filas = mysql_fetchall(
+            "SELECT u.id, u.username, u.nombre, u.role, "
+            "  (SELECT up.permitido FROM usuario_permisos up WHERE up.user_id=u.id AND up.permiso=%s LIMIT 1) AS ov, "
+            "  (SELECT rp.permitido FROM rol_permisos rp WHERE rp.rol_slug=u.role AND rp.modulo=%s AND rp.accion=%s LIMIT 1) AS rolp "
+            "  FROM app_users u WHERE u.active=1",
+            (_oresp.PERMISO_KEY, _oresp.PERMISO_MODULO, _oresp.PERMISO_ACCION)) or []
+    except Exception as e:
+        print(f"[ot-resp] candidatos (permisos individuales): {type(e).__name__}", flush=True)
+        try:      # sin la tabla de permisos individuales: solo el permiso del rol
+            filas = mysql_fetchall(
+                "SELECT u.id, u.username, u.nombre, u.role, NULL AS ov, "
+                "  (SELECT rp.permitido FROM rol_permisos rp WHERE rp.rol_slug=u.role AND rp.modulo=%s AND rp.accion=%s LIMIT 1) AS rolp "
+                "  FROM app_users u WHERE u.active=1",
+                (_oresp.PERMISO_MODULO, _oresp.PERMISO_ACCION)) or []
+        except Exception as e2:
+            print(f"[ot-resp] candidatos (rol): {type(e2).__name__}", flush=True)
+            filas = []
+    cands = _oresp.candidatos_de_filas([dict(f) for f in filas], _rol_familia)
+    try:
+        g._ot_resp_cands = cands
+    except Exception:
+        pass
+    return [dict(c) for c in cands]
+
+
+def _ot_resp_es_candidato(uid):
+    """¿Esta persona puede ser responsable de una OT? (activa, con el permiso explícito, no técnica)."""
+    n = _oresp.entero(uid)
+    return bool(n and any(c["id"] == n for c in _ot_resp_candidatos()))
+
+
+def _ot_responsable_por_defecto(cliente_id=None, creador_id=None, candidatos=None, memo_clientes=None):
+    """★ LA función que calcula el responsable por defecto de una OT (la regla vive en ot_responsable.decidir_defecto): quien la crea si
+    tiene el permiso; si no, el ejecutivo del cliente (mant_clientes.ejecutivo_user_id) si también lo tiene; si no, nadie ({}).
+    Devuelve {user_id, nombre, origen} o {}. `candidatos` y `memo_clientes` evitan repetir consultas en los lotes. Nunca levanta."""
+    try:
+        cands = candidatos if candidatos is not None else _ot_resp_candidatos()
+        if not cands:
+            return {}
+        ejecutivo_id = None
+        if cliente_id:
+            cid = _oresp.entero(cliente_id)
+            if cid:
+                if memo_clientes is not None and cid in memo_clientes:
+                    ejecutivo_id = memo_clientes[cid]
+                else:
+                    try:
+                        _r = mysql_fetchone("SELECT ejecutivo_user_id FROM mant_clientes WHERE id=%s", (cid,)) or {}
+                        ejecutivo_id = _oresp.entero(_r.get("ejecutivo_user_id"))
+                    except Exception as e:
+                        print(f"[ot-resp] ejecutivo del cliente {cid}: {type(e).__name__}", flush=True)
+                    if memo_clientes is not None:
+                        memo_clientes[cid] = ejecutivo_id
+        uid, origen = _oresp.decidir_defecto([c["id"] for c in cands], creador_id, ejecutivo_id)
+        if not uid:
+            return {}
+        return {"user_id": uid, "nombre": next((c["nombre"] for c in cands if c["id"] == uid), ""), "origen": origen}
+    except Exception as e:
+        print(f"[ot-resp] por defecto: {type(e).__name__}", flush=True)
+        return {}
+
+
+def _ot_resp_avisar(destino_uid, vid, titulo, cuerpo):
+    """Un aviso SUAVE por la campana (prioridad media, sin correo ni WhatsApp: es interno). Va por url+título, no por visita_id: así el
+    aviso «Ahora estás a cargo» y el «pasó a cargo de …» de una misma OT no se pisan entre sí. Best-effort; devuelve True si salió."""
+    try:
+        n = _oresp.entero(destino_uid)
+        if not n:
+            return False
+        _mant_notificar(n, _oresp.TIPO_AVISO, titulo, cuerpo, url_accion=f"/ot/{int(vid)}", prioridad="media")
+        _mant_notif_cache_invalidar(n)
+        return True
+    except Exception as e:
+        print(f"[ot-resp] aviso a {destino_uid}: {type(e).__name__}", flush=True)
+        return False
+
+
+def _ot_resp_datos_ot(vid):
+    """(numero_ot, cliente) para los textos de aviso."""
+    try:
+        r = mysql_fetchone("SELECT v.numero_ot, c.razon_social FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
+                           " WHERE v.id=%s", (int(vid),)) or {}
+        return (r.get("numero_ot") or f"V-{int(vid):05d}"), (r.get("razon_social") or "")
+    except Exception:
+        return f"V-{int(vid):05d}", ""
+
+
+def _ot_responsable_al_crear(vid, cliente_id=None, creador_id=None, elegido_id=None, madre_id=None,
+                             notificar=False, quien=None, memo=None):
+    """★ LA puerta por la que TODA OT recién creada recibe su responsable (el asistente, el calendario rápido, la visita multi-equipo, el
+    levantamiento, el Plan Anual, el Agente…). Va DESPUÉS del commit de la OT, con su propia conexión: nunca bloquea ni deshace la creación.
+    Orden: 1) la hija (desinstalación) hereda el de su madre · 2) lo que la persona eligió en el asistente (se revalida: tiene que ser un
+    candidato activo) · 3) el defecto (`_ot_responsable_por_defecto`) · 4) nadie: la OT queda sin responsable y los avisos caen al respaldo.
+    `notificar`: avisa por la campana a la persona nueva SI no es quien crea (solo el asistente lo pide; los lotes no).
+    Solo escribe si la OT aún no tiene responsable (`responsable_user_id IS NULL`). Devuelve {ok, user_id, nombre, origen, aviso}. Nunca levanta."""
+    res = {"ok": False, "user_id": None, "nombre": None, "origen": None, "aviso": None}
+    try:
+        vid = int(vid)
+        if not _ot_resp_ok():
+            return res
+        cands = _ot_resp_candidatos()
+        if not cands:
+            return res                         # el permiso aún no se enciende para nadie: todo dormido
+        ids = [c["id"] for c in cands]
+        por_id = {c["id"]: c["nombre"] for c in cands}
+        uid, origen, nombre, madre_txt = None, None, None, None
+        if madre_id:
+            _m = mysql_fetchone("SELECT numero_ot, responsable_user_id, responsable_nombre FROM mant_visitas WHERE id=%s",
+                                (int(madre_id),)) or {}
+            if _oresp.entero(_m.get("responsable_user_id")):
+                uid, nombre, origen = int(_m["responsable_user_id"]), _m.get("responsable_nombre"), _oresp.ORIGEN_HEREDADO
+                madre_txt = _m.get("numero_ot")
+        if uid is None:
+            defecto = _ot_responsable_por_defecto(cliente_id, creador_id, candidatos=cands, memo_clientes=memo)
+            if elegido_id not in (None, "", 0, "0"):
+                ok_id = _oresp.validar_elegido(elegido_id, ids)
+                if ok_id:
+                    uid, nombre = ok_id, por_id[ok_id]
+                    # Si dejó la sugerencia tal cual, el origen es el de la sugerencia; si la cambió, la eligió a mano.
+                    origen = defecto["origen"] if (defecto and defecto["user_id"] == ok_id) else _oresp.ORIGEN_ELEGIDO
+                else:
+                    res["aviso"] = ("La persona que elegiste como responsable ya no puede serlo (revisa el permiso «Responsable de OT»): "
+                                    "se usó la sugerida.")
+            if uid is None and defecto:
+                uid, nombre, origen = defecto["user_id"], defecto["nombre"], defecto["origen"]
+        if uid is None:
+            res["aviso"] = res["aviso"] or ("La OT quedó sin responsable: asígnalo desde el chip «Responsable» de la ficha "
+                                            "(avisos de gestión caen a quien la creó y al ejecutivo del cliente).")
+            return res
+        por = _oresp.limpiar(quien or current_username() or "el sistema", 190)
+        nombre = _oresp.limpiar(nombre, 190)
+        n = mysql_execute_returning_rowcount(
+            "UPDATE mant_visitas SET responsable_user_id=%s, responsable_nombre=%s, responsable_at=UTC_TIMESTAMP(), responsable_por=%s "
+            " WHERE id=%s AND responsable_user_id IS NULL", (uid, nombre, por, vid))
+        if not n:
+            return res                         # otra vía ya lo había puesto: no se pisa
+        _mant_log("visita", vid, "responsable_asignado", _oresp.detalle_bitacora_asignado(nombre, origen, por, madre_txt))
+        res.update({"ok": True, "user_id": uid, "nombre": nombre, "origen": origen})
+        if notificar and uid != _oresp.entero(creador_id) and origen != _oresp.ORIGEN_HEREDADO:
+            num, cli = _ot_resp_datos_ot(vid)
+            _ot_resp_avisar(uid, vid, _oresp.titulo_aviso_nuevo(num), _oresp.cuerpo_aviso_nuevo(num, cli, por, origen))
+        return res
+    except Exception as e:
+        print(f"[ot-resp] al crear vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return res
+
+
+def _ot_responsable_al_crear_lote(pares, creador_id=None):
+    """El mismo `_ot_responsable_al_crear` para varias OT recién creadas por un camino masivo (Plan Anual): [(vid, cliente_id), …]. Sin
+    avisos de campana (serían decenas) y con el ejecutivo de cada cliente consultado una sola vez. Devuelve cuántas quedaron con responsable."""
+    n, memo = 0, {}
+    for vid, cid in (pares or []):
+        if _ot_responsable_al_crear(vid, cliente_id=cid, creador_id=creador_id, memo=memo).get("ok"):
+            n += 1
+    return n
+
+
+def _ot_resp_puede_cambiar(fila, user=None):
+    """¿Puede la persona de la sesión cambiar el responsable de esta OT? Gestión (superadmin/admin/supervisor) o el propio responsable
+    actual; nunca un técnico. Una OT terminada (cerrada/cancelada/anulada) solo la mueve el superadministrador."""
+    u = user if user is not None else (getattr(g, "user", None) or {})
+    familia = _rol_familia(u.get("role"))
+    if not _oresp.puede_cambiar(familia, u.get("id"), (fila or {}).get("responsable_user_id")):
+        return False
+    if ((fila or {}).get("estado") or "").strip().lower() in _oresp.ESTADOS_TERMINALES and familia != "superadmin":
+        return False
+    return True
+
+
+def _ot_resp_contexto(fila):
+    """Lo que la ficha de la OT dibuja del responsable (chip de la cabecera): {id, nombre, por, cuando, puede_cambiar, hay_candidatos}.
+    Un técnico ve SOLO el nombre (REGLA #19/#26). None si la función aún no está activa o si no hay nada que mostrar (OT sin responsable
+    y nadie que pueda asignarlo). Nunca levanta."""
+    try:
+        if not _ot_resp_ok():
+            return None
+        fila = fila or {}
+        u = getattr(g, "user", None) or {}
+        es_tec = _rol_familia(u.get("role")) == _oresp.FAMILIA_TECNICO
+        uid = _oresp.entero(fila.get("responsable_user_id"))
+        cands = _ot_resp_candidatos()
+        puede = bool(cands) and (not es_tec) and _ot_resp_puede_cambiar(fila, u)
+        if not uid and not puede:
+            return None
+        cuando = ""
+        if fila.get("responsable_at") and not es_tec:
+            try:
+                cuando = chile_fmt_filter(fila["responsable_at"], "%d/%m/%Y %H:%M")
+            except Exception:
+                cuando = ""
+        return {"id": uid, "nombre": _oresp.limpiar(fila.get("responsable_nombre")) if uid else "",
+                "por": (None if es_tec else (_oresp.limpiar(fila.get("responsable_por")) or None)),
+                "cuando": cuando or None, "puede_cambiar": puede, "hay_candidatos": bool(cands)}
+    except Exception as e:
+        print(f"[ot-resp] contexto: {type(e).__name__}", flush=True)
+        return None
+
+
+def _ot2_panel_responsables(filas):
+    """El responsable de cada fila de la tabla del panel, en UNA consulta por lote (nunca una por fila) y sin tocar _OT2_SELECT_FILAS: si
+    la columna aún no existe, las filas quedan sin responsable y el panel funciona igual. Deja en cada fila `resp_id` y `resp_nombre`."""
+    for f in filas:
+        f["resp_id"], f["resp_nombre"], f["resp_ini"] = None, None, None
+    ids = [int(f["id"]) for f in filas if f.get("id")]
+    if not ids or not _ot_resp_ok():
+        return
+    try:
+        por_id = {int(f["id"]): f for f in filas if f.get("id")}
+        for r in (mysql_fetchall(
+                "SELECT id, responsable_user_id, responsable_nombre FROM mant_visitas WHERE id IN (" + ",".join(["%s"] * len(ids)) + ")",
+                tuple(ids)) or []):
+            f = por_id.get(int(r["id"]))
+            if f is not None and r.get("responsable_user_id"):
+                f["resp_id"] = int(r["responsable_user_id"])
+                f["resp_nombre"] = _oresp.limpiar(r.get("responsable_nombre")) or None
+                f["resp_ini"] = _ot2_iniciales(f["resp_nombre"])
+    except Exception as e:
+        print(f"[ot2_panel] responsables: {type(e).__name__}", flush=True)
+
+
+def _ot_resp_filtro_sql(valor, uid_actual):
+    """(clave, sql, params) del filtro «Responsable» del panel y del Excel (lista blanca, parametrizado). `clave` es lo que viaja por la
+    URL: '' | 'mis' | 'sin' | '<id>'. Si la columna aún no existe no filtra (clave '')."""
+    if not _ot_resp_ok():
+        return "", "", []
+    modo, n = _oresp.normalizar_filtro(valor, uid_actual)
+    if modo == "mis":
+        return "mis", "v.responsable_user_id = %s", [n]
+    if modo == "sin":
+        return "sin", "v.responsable_user_id IS NULL", []
+    if modo == "id":
+        return str(n), "v.responsable_user_id = %s", [n]
+    return "", "", []
+
+
+@app.route("/ot/api/responsables", methods=["GET"])
+@_mant_required
+def ot_api_responsables_listar():
+    """Quiénes pueden ser responsables de una OT y a quién se sugiere. Params opcionales: `cliente_id` (para sugerir al ejecutivo del
+    cliente cuando quien crea no es candidato). Lo usan el asistente de crear OT y el cambio de responsable de la ficha. Solo NOMBRES
+    (lo ve también un técnico: el trabajo interno lo crea Jaizer). Si la función no está activa o nadie tiene el permiso: hay=false y el
+    asistente no pide nada."""
+    if not _ot_resp_ok():
+        return jsonify({"ok": True, "hay": False, "candidatos": [], "sugerido": None, "yo_candidato": False})
+    cands = _ot_resp_candidatos()
+    u = getattr(g, "user", None) or {}
+    yo = _oresp.entero(u.get("id"))
+    sug = _ot_responsable_por_defecto(request.args.get("cliente_id"), yo, candidatos=cands) if cands else {}
+    return jsonify({
+        "ok": True, "hay": bool(cands),
+        "candidatos": [{"id": c["id"], "nombre": c["nombre"]} for c in cands],
+        "sugerido": ({"id": sug["user_id"], "nombre": sug["nombre"], "origen": sug["origen"]} if sug else None),
+        "yo_candidato": bool(yo and any(c["id"] == yo for c in cands))})
+
+
+@app.route("/ot/api/<int:vid>/responsable", methods=["POST"])
+@_mant_required
+@_ot_can_view
+def ot_api_responsable_cambiar(vid):
+    """Cambia el responsable de la OT. JSON: {user_id, motivo?}. Gestión (superadmin/admin/supervisor) o el propio responsable actual;
+    el nuevo tiene que ser un candidato activo (permiso «Responsable de OT»). Queda en la bitácora (quién, cuándo, de quién a quién, motivo)
+    y se avisa por la campana, con tono amable, a la persona nueva y a la anterior. El cliente no recibe nada (REGLA #22)."""
+    if not _ot_resp_ok():
+        return _ot2_err("Esta función no está disponible en este momento. Intenta de nuevo en un minuto.", "NO_DISPONIBLE", http=503)
+    v = mysql_fetchone(
+        "SELECT v.id, v.numero_ot, v.estado, v.responsable_user_id, v.responsable_nombre, c.razon_social "
+        "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (int(vid),))
+    if not v:
+        return _ot2_err("No encontramos esa orden de trabajo.", "OT_NO_EXISTE", http=404)
+    v = dict(v)
+    u = getattr(g, "user", None) or {}
+    if not _ot_resp_puede_cambiar(v, u):
+        return _ot2_err("Solo la gestión o quien es responsable de esta OT puede cambiarlo.", "SIN_PERMISO", http=403)
+    d = request.get_json(silent=True) or {}
+    cands = _ot_resp_candidatos()
+    ok, codigo, mensaje = _oresp.validar_cambio(v.get("responsable_user_id"), d.get("user_id"), [c["id"] for c in cands],
+                                                v.get("estado"), _rol_familia(u.get("role")) == "superadmin")
+    if not ok:
+        return _ot2_err(mensaje, codigo, http=(409 if codigo in ("YA_ES_RESPONSABLE", "OT_TERMINADA") else 400))
+    nuevo = next(c for c in cands if c["id"] == _oresp.entero(d.get("user_id")))
+    motivo = _oresp.normalizar_motivo(d.get("motivo"))
+    quien = _oresp.limpiar(u.get("nombre") or u.get("username") or current_username() or "el equipo", 190)
+    antes_id = _oresp.entero(v.get("responsable_user_id"))
+    antes_nombre = _oresp.limpiar(v.get("responsable_nombre")) or None
+    # NULL-safe: solo cambia si el responsable sigue siendo el que esta persona vio (dos personas a la vez no se pisan).
+    n = mysql_execute_returning_rowcount(
+        "UPDATE mant_visitas SET responsable_user_id=%s, responsable_nombre=%s, responsable_at=UTC_TIMESTAMP(), responsable_por=%s "
+        " WHERE id=%s AND responsable_user_id <=> %s", (nuevo["id"], nuevo["nombre"], quien, int(vid), antes_id))
+    if not n:
+        return _ot2_err("Alguien acaba de cambiar al responsable de esta OT. Recarga la página para ver quién es ahora.",
+                        "CONFLICTO", http=409)
+    _mant_log("visita", int(vid), "responsable_cambiado", _oresp.detalle_bitacora_cambio(antes_nombre, nuevo["nombre"], quien, motivo))
+    num = v.get("numero_ot") or f"V-{int(vid):05d}"
+    cli = v.get("razon_social") or ""
+    avisados = []
+    actor = _oresp.entero(u.get("id"))
+    if nuevo["id"] != actor:
+        if _ot_resp_avisar(nuevo["id"], vid, _oresp.titulo_aviso_nuevo(num),
+                           _oresp.cuerpo_aviso_nuevo(num, cli, quien, _oresp.ORIGEN_CAMBIO, motivo, antes_nombre)):
+            avisados.append(nuevo["nombre"])
+    if antes_id and antes_id != actor and antes_id != nuevo["id"]:
+        if _ot_resp_avisar(antes_id, vid, _oresp.titulo_aviso_anterior(num, nuevo["nombre"]),
+                           _oresp.cuerpo_aviso_anterior(num, cli, quien, nuevo["nombre"], motivo)):
+            avisados.append(antes_nombre or "la persona anterior")
+    return jsonify({"ok": True, "responsable": {"id": nuevo["id"], "nombre": nuevo["nombre"], "por": quien,
+                                                 "cuando": chile_fmt_filter(datetime.utcnow(), "%d/%m/%Y %H:%M")},
+                    "avisados": avisados})
 
 
 def _ot_aut_superadmins():
@@ -111312,6 +111772,22 @@ def _ot2_crear_core(d, autorizacion=None, madre=None):
                   f"{numero_ot} · {tipo_ot} · {n_tareas} tareas")
     except Exception as e:
         print(f"[ot2_crear] log: {e}", flush=True)
+    # 🙋 2026-10-21 (REGLA #36) — el RESPONSABLE de la OT, por la puerta única `_ot_responsable_al_crear`: la hija de una
+    # desinstalación hereda el de su instalación; si no, lo que la persona eligió en el asistente (se revalida); si no, quien la crea
+    # (si tiene el permiso «Responsable de OT») o el ejecutivo del cliente; si no, la OT queda sin responsable. Si la OT nace de una
+    # autorización aprobada, «quien la crea» es quien la pidió, no quien la aprobó. Interno: la campana de la persona nueva y nada más.
+    try:
+        _u_resp = getattr(g, "user", None) or {}
+        _resp_r = _ot_responsable_al_crear(
+            vid, cliente_id=cliente_id,
+            creador_id=(autorizacion or {}).get("solicitado_por_user_id") or _u_resp.get("id"),
+            elegido_id=(None if es_hija else d.get("responsable_user_id")),
+            madre_id=(int(madre["id"]) if es_hija else None), notificar=True,
+            quien=((autorizacion or {}).get("solicitado_por_nombre") or d.get("_creado_por") or current_username()))
+        if _resp_r.get("aviso"):
+            avisos.append(_resp_r["aviso"])
+    except Exception as e:
+        print(f"[ot2_crear] responsable vid={vid}: {type(e).__name__}: {e}", flush=True)
     # 🧩 2026-10-19 — constancia de la unión madre/hija y del evento (los detalles NUNCA llevan montos ni documentos: un
     # técnico los ve en la bitácora, ver _ACT_TEC_PERMITIDAS).
     try:
@@ -117884,6 +118360,18 @@ def _ot2_filtros_export(args):
         except Exception:
             _ev_nom = None
         desc.append("evento " + (_ev_nom or f"#{_ev_x}"))
+    # 🙋 2026-10-21 (REGLA #36): el filtro por responsable (mis OT / sin responsable / una persona) también acota el Excel: misma lista
+    # blanca y mismo SQL parametrizado que el panel (_ot_resp_filtro_sql).
+    _rs_clave, _rs_sql, _rs_par = _ot_resp_filtro_sql(args.get("resp"), (getattr(g, "user", None) or {}).get("id"))
+    if _rs_sql:
+        where.append(_rs_sql)
+        params += list(_rs_par)
+        if _rs_clave == "mis":
+            desc.append("mis OT como responsable")
+        elif _rs_clave == "sin":
+            desc.append("sin responsable")
+        else:
+            desc.append("responsable " + next((c["nombre"] for c in _ot_resp_candidatos() if str(c["id"]) == _rs_clave), f"#{_rs_clave}"))
 
     sql = " WHERE " + " AND ".join(where) if where else ""
     role_sql, role_params = _mant_calendario_role_where()
@@ -117952,6 +118440,8 @@ def ot2_reporte_xlsx():
         # 💰 2026-10-07: todas las columnas de la cuenta única (_ot_finanzas), tipo incluido.
         "       " + _ot_fin_cols_sql("v") + ", "
         "       v.created_by, v.created_at, v.cerrada_at, "
+        # 🙋 2026-10-21 (REGLA #36): el responsable (columna al final del Excel). Si la columna aún no existe, queda vacía.
+        + ("v.responsable_nombre, " if _ot_resp_ok() else "NULL AS responsable_nombre, ") +
         "       c.razon_social, c.rut AS cliente_rut, "
         "       c.direccion AS cliente_direccion, c.comuna AS cliente_comuna, "
         "       COALESCE(au.nombre, au.username) AS tecnico_nombre, "
@@ -118049,6 +118539,7 @@ def ot2_reporte_xlsx():
     _COL_OBS = len(headers)   # «Observaciones (revisar)»: la columna de alertas
     # 🧩 2026-10-19: «Evento» y «Relación» van AL FINAL, para no correr ninguna columna que ya existía.
     headers += ["Evento", "Relación (instalación ↔ desinstalación)"]
+    headers += ["Responsable de la OT"]     # 🙋 2026-10-21 (REGLA #36): al final, para no correr ninguna columna que ya existía
     NCOLS = len(headers)
     # Columnas por NOMBRE (no por número fijo): agregar una columna no corre los formatos.
     _COLS_CLP = {headers.index(h) + 1 for h in (
@@ -118245,6 +118736,7 @@ def ot2_reporte_xlsx():
         else:
             _rel_xl = ""
         vals += [f.get("evento_nombre") or "", _rel_xl]
+        vals += [f.get("responsable_nombre") or ""]     # 🙋 2026-10-21 (REGLA #36)
 
         bg = LGRAY if r % 2 == 0 else "FFFFFF"
         for ci, val in enumerate(vals, 1):
@@ -126618,7 +127110,10 @@ def _ensure_mant_notif_tipo_ot_firmada_cliente():
 
     2026-10-15 (revisión de solicitudes de repuesto): + repuesto_plazo (aviso de solicitud de repuesto
     fuera de plazo) e ia_alerta_proactiva (resumen diario de IA al superadmin). Los dos ya se usaban y el
-    INSERT fallaba en silencio. Al final, como los anteriores. tests/test_solicitud_sin_repuesto.py lo vigila."""
+    INSERT fallaba en silencio. Al final, como los anteriores. tests/test_solicitud_sin_repuesto.py lo vigila.
+
+    2026-10-21 (REGLA #36, responsable de la OT): + ot_responsable (los avisos suaves «Ahora estás a cargo de…» / «… pasó a cargo
+    de …»). También al final. tests/test_ot_responsable.py vigila que esté en las dos listas."""
     try:
         mysql_execute(
             "ALTER TABLE mant_notificaciones MODIFY COLUMN tipo "
@@ -126635,7 +127130,7 @@ def _ensure_mant_notif_tipo_ot_firmada_cliente():
             "       'retiro_listo','retiro_cerrado',"
             "       'retiro_propuesta','retiro_expedido','retiro_desfase','retiro_cierre',"
             "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida',"
-            "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock') DEFAULT 'otro'"
+            "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable') DEFAULT 'otro'"
         )
     except Exception as e:
         print(f"[ensure] mant_notificaciones.tipo (+ot_firmada_cliente): {e}", flush=True)
@@ -126648,9 +127143,11 @@ def _ensure_mant_notif_tipo_ot_firmada_cliente():
 # ═════════════════════════════════════════════════════════════════════
 
 def _notificar_ot_pendiente_aprobacion_async(vid, host_url="", notificar_tecnicos=False):
-    """Dispara hilo daemon que envía email + WhatsApp al `created_by` y
-    a los supervisores/admin que tengan email o teléfono cargado, con
-    un link directo a la OT para firmar como aprobador.
+    """Dispara hilo daemon que envía email + WhatsApp a la gestión de la OT
+    (el RESPONSABLE si lo tiene, quien la creó y el ejecutivo del cliente: lo
+    decide _ot_gestion_destinatarios) y a los supervisores/admin que tengan
+    email o teléfono cargado, con un link directo a la OT para firmar como
+    aprobador. Todo interno: al cliente no le llega nada.
 
     notificar_tecnicos (2026-08-12, Daniel "potenciar la firma"): cuando es
     True, ADEMÁS avisa a TODOS los técnicos asignados a la OT (principal +
@@ -126707,18 +127204,27 @@ def _notificar_ot_pendiente_aprobacion_async(vid, host_url="", notificar_tecnico
                     "kind":     kind,
                 })
 
-            # 1) Creador de la OT (prioridad)
-            if creador_username:
+            # 1) La GESTIÓN de la OT — 🙋 2026-10-21 (REGLA #36): el RESPONSABLE primero, luego quien la creó y el ejecutivo del cliente.
+            #    A quién avisa «la gestión» lo decide UNA sola función (_ot_gestion_destinatarios); acá solo se completa a cada persona con
+            #    su usuario y su teléfono. Antes se buscaba al creador por `created_by` como si fuera un usuario, pero ahí se guarda el
+            #    NOMBRE: la función compartida lo resuelve por usuario o por nombre. En una OT sin responsable queda lo de siempre
+            #    (creador) y de respaldo los admin/supervisor/superadmin, que se suman en el paso 2.
+            try:
+                _gestion = _ot_gestion_destinatarios(vid)
+            except Exception as _e:
+                print(f"[notif-pend] err armando la gestión de vid={vid}: {_e}", flush=True)
+                _gestion = []
+            _ids_gestion = [int(p["id"]) for p in _gestion if p.get("id")]
+            if _ids_gestion:
                 try:
-                    row = mysql_fetchone(
+                    _usr_gestion = {int(r["id"]): r for r in (mysql_fetchall(
                         f"SELECT id, username, nombre, phone FROM `{AUTH_TABLE}` "
-                        f" WHERE username=%s AND active=1 LIMIT 1",
-                        (creador_username,)
-                    )
-                    _add(row, "creador")
+                        f" WHERE active=1 AND id IN ({','.join(['%s'] * len(_ids_gestion))})",
+                        tuple(_ids_gestion)) or [])}
+                    for _p_g in _gestion:             # en el orden de la lista: el responsable va primero
+                        _add(_usr_gestion.get(int(_p_g["id"])), _p_g.get("por") or "creador")
                 except Exception as _e:
-                    print(f"[notif-pend] err buscando creador {creador_username}: {_e}",
-                          flush=True)
+                    print(f"[notif-pend] err buscando la gestión de vid={vid}: {_e}", flush=True)
 
             # 2) Supervisores + admins + superadmin (todos los que pueden aprobar)
             try:
@@ -138813,12 +139319,16 @@ def mant_intel_accion(cid):
                      # 2026-10-07 (integración fin-paso3): `costo` = espejo de lo cobrado (solo sin contrato real).
                      _pl_costo_espejo(_rv_cob),
                      current_username(), uid))
-                _ot_puerta_aplicar(_cur_rv, _cur_rv.lastrowid, _puerta_rv, fin_argumento=d.get("cobro_cero_argumento"))
+                _vid_rv = _cur_rv.lastrowid
+                _ot_puerta_aplicar(_cur_rv, _vid_rv, _puerta_rv, fin_argumento=d.get("cobro_cero_argumento"))
                 _conn_rv.commit()
             except Exception:
                 try: _conn_rv.rollback()
                 except Exception: pass
                 raise
+            # 🙋 2026-10-21 (REGLA #36): el responsable de la OT, por la puerta única (best-effort, después del commit).
+            try: _ot_responsable_al_crear(_vid_rv, cliente_id=cid, creador_id=uid)
+            except Exception as _e_rs: print(f"[intel retro responsable] {_e_rs}", flush=True)
         elif accion == "set_campo_cliente":
             campo = (d.get("campo") or "").strip()
             valor = (d.get("valor") or "").strip()
@@ -138880,12 +139390,16 @@ def mant_intel_accion(cid):
                     "VALUES (%s,%s,%s,'preventiva','programada',%s,'contrato',%s,%s)",
                     (cid, _ctid_prog, "Mantención preventiva (agendada por el Agente)",
                      fecha, current_username(), uid))
-                _ot_puerta_aplicar(_cur_pr, _cur_pr.lastrowid, _puerta_pr, fin_argumento=d.get("cobro_cero_argumento"))
+                _vid_pr = _cur_pr.lastrowid
+                _ot_puerta_aplicar(_cur_pr, _vid_pr, _puerta_pr, fin_argumento=d.get("cobro_cero_argumento"))
                 _conn_pr.commit()
             except Exception:
                 try: _conn_pr.rollback()
                 except Exception: pass
                 raise
+            # 🙋 2026-10-21 (REGLA #36): el responsable de la OT, por la puerta única (best-effort, después del commit).
+            try: _ot_responsable_al_crear(_vid_pr, cliente_id=cid, creador_id=uid)
+            except Exception as _e_rs: print(f"[intel programar responsable] {_e_rs}", flush=True)
         elif accion == "descartar_consulta":
             # No persiste nada — solo señal al frontend de que la tarjeta se ocultó.
             # Devolver sin intel evita que el re-render la reactive en esta sesión.
@@ -139357,6 +139871,7 @@ def mant_planificador_generar_ots():
         except (TypeError, ValueError):
             uid = None
         creadas = 0; omitidas = []
+        _pares_resp = []     # 🙋 2026-10-21: (id de la OT, cliente) de cada OT creada, para fijar su responsable al final
         # FIX 2026-06-11 dedup: TODOS los estados vivos (antes faltaban
         # cerrada/asignada/en_ejecucion/pendiente_* → riesgo de OT duplicada).
         _vivos_ph = ",".join(["%s"] * len(_PLAN_ESTADOS_VIVOS))
@@ -139428,9 +139943,14 @@ def mant_planificador_generar_ots():
                          _pl_costo_espejo(_pl_cob),
                          current_username(), uid))
                     creadas += 1
+                    _pares_resp.append((cur.lastrowid, cid))
             conn.commit()
         finally:
             conn.close()
+        # 🙋 2026-10-21 (REGLA #36): cada OT del Plan Anual nace con su responsable (el ejecutivo de su cliente, o quien las genera si
+        # tiene el permiso), por la puerta única y sin avisos de campana (serían decenas). Después del commit; best-effort.
+        try: _ot_responsable_al_crear_lote(_pares_resp, creador_id=uid)
+        except Exception as _e_rs: print(f"[planificador responsable] {_e_rs}", flush=True)
         try:
             _mant_log("cliente", 0, "plan_anual_generado",
                       f"{creadas} OT(s) año {anio} meses {meses_sel} por {current_username()}")
@@ -154150,6 +154670,15 @@ def _mant_lev_crear_ot_core(cid, data, ticket_id=None):
                 print(f"[lev_crear] sync estado ticket (ot_generated) fallo "
                       f"(ticket_id={ticket_id}): {e}", flush=True)
 
+        # 🙋 2026-10-21 (REGLA #36): el responsable de la OT, por la puerta única (best-effort, después del commit). Cubre el modal de
+        # Levantamiento de la ficha del cliente y el "Generar OT" de Tickets (mismo núcleo).
+        if visita_id:
+            try:
+                _ot_responsable_al_crear(visita_id, cliente_id=cid, creador_id=(getattr(g, "user", None) or {}).get("id"),
+                                         elegido_id=data.get("responsable_user_id"))
+            except Exception as _e_rs:
+                print(f"[lev_crear] responsable vid={visita_id}: {_e_rs}", flush=True)
+
         # 📮 FASE 3 -- 2026-09-11 (hallazgo al revisar esta pantalla:
         # "cuando se crea la OT, sí deberíamos considerar enviar un mail al
         # cliente y enviar un mail al técnico" -- pedido original del
@@ -163026,7 +163555,17 @@ def _qp_aplicar(vid, v, n, cands, user, uid):
                 if root.get("responsable_user_id"):
                     sets.append("responsable_user_id=%s")
                     vals.append(int(root["responsable_user_id"]))
+                    # 🙋 2026-10-21 (REGLA #36, F0 del responsable): ya existen sus 4 columnas. La pendiente hereda también el NOMBRE y deja
+                    # constancia de quién la dejó a cargo (quien registró «¿Qué pasó?») y cuándo. Si la columna aún no existiera, `root` no
+                    # trae la llave y no se toca nada.
+                    sets += ["responsable_nombre=%s", "responsable_at=UTC_TIMESTAMP()", "responsable_por=%s"]
+                    vals += [root.get("responsable_nombre"), str(user or "")[:190]]
                 cur.execute("UPDATE mant_visitas SET " + ", ".join(sets) + " WHERE id=%s", tuple(vals) + (hid,))
+                if root.get("responsable_user_id"):
+                    cur.execute("INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) VALUES ('visita',%s,%s,%s,%s)",
+                                (hid, "responsable_asignado",
+                                 ("Responsable: %s · hereda el responsable de %s" % (root.get("responsable_nombre") or "—", num_root))[:600],
+                                 user))
                 # El documento de la madre, ESPEJADO (es_cobro=0, heredado): se ve en la ficha, no consume saldo ni entra al libro.
                 try:
                     _ot_espejar_docs_en_hija(cur, hid, root_id, num_root)
@@ -170764,6 +171303,15 @@ try:
         _ensure_ot_que_paso()            # 🧭 2026-10-20: tabla de «¿Qué pasó?» de la OT (barata si ya está)
 except Exception as _ensure_etapa3_err:
     print(f"[ILUS][WARN] revisión etapa 3 (repuestos sugeridos / acta / acciones por producto): {_ensure_etapa3_err}", flush=True)
+
+# 🙋 2026-10-21 (REGLA #36): las 4 columnas del responsable de la OT en mant_visitas + su índice. SIEMPRE (también con
+# ILUS_SKIP_MIGRATIONS=1). Barato si ya están (REGLA #18: cada sentencia pasa por _ddl_ya_aplicado y se salta sin pedir lock); si
+# faltan, cada ADD COLUMN espera como máximo 3 s por el lock. Hasta que existan, el responsable queda dormido sin romper nada.
+try:
+    with app.app_context():
+        _ensure_ot_responsable()
+except Exception as _ensure_ot_resp_err:
+    print(f"[ILUS][WARN] _ensure_ot_responsable: {_ensure_ot_resp_err}", flush=True)
 
 # email_log.estado debe aceptar 'bloqueado' SIEMPRE (incluso skip-migrations):
 # sin esto, los envíos frenados por la llave de paso no dejaban rastro en el log.

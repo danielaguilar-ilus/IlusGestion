@@ -271,7 +271,10 @@ class TestAgendaWhere(unittest.TestCase):
             ["_OT2_AGENDA_OPTS", "_OT2_AGENDA_CLAVES", "_OT2_FASES", "_OT2_ESTADO_META"],
             extra={"datetime": _dt.datetime, "_now_chile": lambda: _dt.datetime(2026, 10, 14, 10, 0),
                    "_mant_calendario_role_where": lambda: (" AND 1=1", []), "_ot_tipos_todos": lambda: {},
-                   "_TIPO_OT_LABEL": {}, "_OT2_FASE_LABELS": {}, "_OT2_CENTROS_COSTO": (), "print": lambda *a, **k: None},
+                   "_TIPO_OT_LABEL": {}, "_OT2_FASE_LABELS": {}, "_OT2_CENTROS_COSTO": (), "print": lambda *a, **k: None,
+                   # 2026-10-21 (REGLA #36): el Excel también acota por «Responsable» (_ot_resp_filtro_sql, que tiene sus
+                   # propias pruebas en test_ot_responsable.py); acá se prueba solo la agenda, así que sin filtro de responsable.
+                   "_ot_resp_filtro_sql": lambda valor, uid: ("", "", []), "g": object()},
         )
         amb["_OT2_FASE_A_ESTADOS"] = {c: [k for k, v in amb["_OT2_ESTADO_META"].items() if v[3] == c]
                                       for c in amb["_OT2_FASES"]}
