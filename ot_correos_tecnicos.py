@@ -84,8 +84,19 @@ VARIABLES_DOC = (
 
 
 # ── Formatos (REGLA #6: día/mes/año, hora Chile; nunca ISO crudo) ──────────────────────────────────────────────
+# 🧭 2026-10-20: la OT PENDIENTE por falta de stock (ot_que_paso.py) nace SIN fecha: como mant_visitas.fecha_programada es NOT NULL, lleva la
+# fecha centinela 2099-12-31 hasta que alguien la reagenda. Para el técnico eso es «sin fecha»: el correo dice «por confirmar» y NO va un
+# archivo de calendario del 31/12/2099.
+ANIO_SIN_FECHA = 2099
+
+
 def a_fecha(v):
-    """date | datetime | 'YYYY-MM-DD…' → date (o None)."""
+    """date | datetime | 'YYYY-MM-DD…' → date (o None). La fecha centinela de «todavía sin fecha» (año 2099) cuenta como None."""
+    d = _a_fecha_cruda(v)
+    return None if (d is not None and d.year >= ANIO_SIN_FECHA) else d
+
+
+def _a_fecha_cruda(v):
     if v is None or v == "":
         return None
     if isinstance(v, _dt.datetime):

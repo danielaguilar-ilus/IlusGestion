@@ -79,6 +79,8 @@
     a ~1 MB con 19 productos, no pese más: aquí solo van un JSON y un <div> vacío por tarjeta. -#}
 <link rel="stylesheet" href="{{ url_for('static', filename='ot_acciones.css') }}">
 <script defer src="{{ url_for('static', filename='ot_acciones.js') }}"></script>
+{#- 🧭 2026-10-20: «¿Qué pasó?» de la OT (franja + modal): static/ot_que_paso.css y .js (el .js lo carga templates/ot2/_que_paso.html). -#}
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_que_paso.css') }}">
 <style>
 .otd{
   --pend:#3b82f6; --ejec:#dc2626; --comp:#16a34a; --cerr:#4b5563;
@@ -3239,6 +3241,20 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           {% endif %}
         </div>
         {% endif %}
+        {#- 🧭 2026-10-20: la unión con la OT pendiente por falta de stock (en la pendiente: de qué OT viene; en la madre: sus pendientes).
+            Sin plata ni documentos: lo ven también los técnicos (el servidor ya enmascara el enlace si no pueden verla). -#}
+        {% if que_paso and (que_paso.madre or que_paso.pendientes) %}
+        <div class="ev-rel" id="qpRel">
+          {% if que_paso.madre %}
+            {% if que_paso.madre.url %}<a class="ev-chip ambar" href="{{ que_paso.madre.url }}" title="Abrir la orden de la que viene"><i class="bi bi-hourglass-split"></i>{{ que_paso.madre.chip }}</a>
+            {% else %}<span class="ev-chip ambar"><i class="bi bi-hourglass-split"></i>{{ que_paso.madre.chip }}</span>{% endif %}
+          {% endif %}
+          {% for p in que_paso.pendientes %}
+            {% if p.url %}<a class="ev-chip ambar" href="{{ p.url }}" title="Abrir la OT pendiente"><i class="bi bi-hourglass-split"></i>{{ p.chip }}</a>
+            {% else %}<span class="ev-chip ambar"><i class="bi bi-hourglass-split"></i>{{ p.chip }}</span>{% endif %}
+          {% endfor %}
+        </div>
+        {% endif %}
         <h2 class="otd-num">{{ v.numero_ot or ('OT #' ~ v.id) }}</h2>
         <p class="otd-cli">{{ v.razon_social or 'Sin cliente asignado' }}</p>
         <div class="otd-titulo">
@@ -3467,7 +3483,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
         <div>
           <label>Fecha</label>
           <input type="date" id="otdReagFecha" class="form-control form-control-sm"
-                 value="{{ v.fecha_programada }}" style="max-width:170px">
+                 value="{{ '' if v.sin_fecha else v.fecha_programada }}" style="max-width:170px">
         </div>
         <div>
           <label>Término <span style="opacity:.7;font-weight:500">(SOLO si son varios días)</span></label>
@@ -3766,6 +3782,9 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
     {% endif %}
   </section>
   {% endif %}
+  {#- 🧭 2026-10-20 (Daniel, caso Aurum OT-2026-00171): «¿Qué pasó?» como en Retiros. Falta de stock → se cierra lo hecho y lo que falta queda
+      en una OT hija pendiente, sin fecha, con el mismo documento. Lo usa el técnico asignado y la gestión. -#}
+  {% include 'ot2/_que_paso.html' %}
   <div class="otd-tabs" id="otdTabs">
     <button type="button" class="otd-tab on" data-tab="info">
       <i class="bi bi-clipboard2-data"></i> Información</button>

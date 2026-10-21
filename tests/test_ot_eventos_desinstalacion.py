@@ -949,7 +949,9 @@ class TestCandadosPorTexto(unittest.TestCase):
 
     def test_la_puerta_acepta_madre_solo_como_parametro_y_relee_por_id(self):
         puerta = F.fuente_funcion("_ot_puerta_documento")
-        self.assertIn("def _ot_puerta_documento(v, momento=\"crear\", autorizacion=None, superadmin_declara=None, madre=None):", puerta)
+        # 2026-10-20: la puerta suma `pendiente_de` (la madre de una OT pendiente por falta de stock que todavía no existe: solo la pasa el
+        # servidor, ver tests/test_ot_que_paso.py); `madre` sigue siendo solo del servidor y la relación se sigue releyendo por id.
+        self.assertIn("def _ot_puerta_documento(v, momento=\"crear\", autorizacion=None, superadmin_declara=None, madre=None, pendiente_de=None):", puerta)
         via = F.fuente_funcion("_ot_puerta_via_cubierta")
         self.assertIn("_ot_fila_basica(vid)", via)
         self.assertNotIn('v.get("ot_madre_id")', via)

@@ -27,6 +27,10 @@ ESTADOS_SIN_EMPEZAR = ("programada", "creada", "asignada", "reagendada", "pendie
 ESTADOS_POR_CERRAR = ("completada", "pendiente_aprobacion", "firmada_tecnico", "pendiente_repuesto")
 ESTADO_CERRADA = "cerrada"
 ESTADOS_EVENTO = ("activo", "cancelado")
+# 🧭 2026-10-20: la OT PENDIENTE por falta de stock (ot_que_paso.py) cuelga de su madre con otra relación y nace con la fecha
+# centinela 2099-12-31 («todavía sin fecha»). No es una desinstalación y esa fecha no es «la próxima fecha» ni un día del evento.
+REL_PENDIENTE_STOCK = "pendiente_stock"
+ANIO_SIN_FECHA = 2099
 ARGUMENTO_MIN = 30          # igual que _OT_AUT_ARGUMENTO_MIN: lo que lee Daniel para autorizar
 MOTIVO_MIN = 10
 DIAS_HABILES_AVISO = 2      # el barrido avisa N días hábiles antes de la desinstalación prevista si no hay hija
@@ -669,7 +673,7 @@ def avance_evento(ots, hoy=None):
     cerradas = sum(1 for o in vivos if bucket_estado(o.get("estado")) == "cerrada")
     por_madre = {}
     for o in vivos:
-        if o.get("ot_madre_id"):
+        if o.get("ot_madre_id") and str(o.get("ot_relacion") or "").strip().lower() != REL_PENDIENTE_STOCK:
             por_madre.setdefault(int(o["ot_madre_id"]), []).append(o)
     pares, desinst_pend, desinst_venc, desinst_sin_ag = [], 0, 0, 0
     for o in vivos:
@@ -695,6 +699,8 @@ def avance_evento(ots, hoy=None):
         if bucket_estado(o.get("estado")) == "cerrada":
             continue
         f = parse_fecha(o.get("fecha_programada"))
+        if f and f.year >= ANIO_SIN_FECHA:
+            continue          # OT pendiente por falta de stock: todavía sin fecha
         if f and (hoy is None or f >= hoy) and (prox is None or f < prox):
             prox = f
     return {"por_fase": por_fase, "total": total, "cerradas": cerradas,
@@ -742,8 +748,8 @@ def cuadro_por_dia(ots):
         if not vigente(o.get("estado")):
             continue
         fi = parse_fecha(o.get("fecha_programada"))
-        if not fi:
-            continue
+        if not fi or fi.year >= ANIO_SIN_FECHA:
+            continue          # sin fecha (OT pendiente por falta de stock): no ocupa ningún día del evento
         ff = parse_fecha(o.get("fecha_fin")) or fi
         d = fi
         for _ in range(60):

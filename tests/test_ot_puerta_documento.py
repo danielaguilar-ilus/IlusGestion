@@ -56,6 +56,9 @@ def _cargar():
     # 2026-10-19: la vía de la desinstalación cubierta (madre/hija) tiene sus propias pruebas en test_ot_eventos_desinstalacion.py;
     # aquí no hay desinstalaciones: la puerta sigue su camino de siempre.
     amb["_ot_puerta_via_cubierta"] = lambda v, momento, madre=None: None
+    # 2026-10-20: lo mismo con la vía de la OT PENDIENTE por falta de stock («¿Qué pasó?»): sus pruebas están en
+    # tests/test_ot_que_paso.py (TestPuerta); aquí no hay OT pendientes y la puerta sigue su camino de siempre.
+    amb["_ot_puerta_via_pendiente"] = lambda v, momento, madre=None: None
     amb["_ot_puerta_contrato_real"] = lambda cid, ctid=None: bool(amb["contrato_real_bd"].get(cid) or amb["contrato_real_bd"].get(ctid))
     amb["_ot_resolver_doc_erp"] = lambda t, n, r=None: (None, None, False, None)
     amb["mysql_fetchone"] = lambda *a, **k: None
