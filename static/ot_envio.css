@@ -1,0 +1,140 @@
+/* ══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+   ot_envio.css — Comunicación de la orden de trabajo (REGLA #37): «Enviar OT por correo», el aviso previo «Al aprobar el cierre se enviará
+   esta OT a…», el recordatorio ámbar de una OT terminada que todavía no se le envió al cliente y los avisos de la creación.
+   Mismo lenguaje que Retiros (REGLA #15): tarjetas, círculos de paso rojo→verde, semáforo, nombres COMPLETOS (nunca cortados) y botones
+   de 44 px (REGLA #3). Paleta ILUS (REGLA #2): rojo #dc2626 · negro #0a0a0a · blanco; ámbar #f59e0b, verde #16a34a, azul #3b82f6.
+   ══════════════════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Aviso previo (dentro de los modales de firma y de cierre) ── */
+.oe-aviso{border:1px solid #bbf7d0;border-left:6px solid #16a34a;background:#f0fdf4;border-radius:12px;padding:10px 14px;margin:0 0 12px;color:#14532d}
+.oe-aviso.oe-con-alerta{border-color:#fde68a;border-left-color:#f59e0b;background:#fffbeb;color:#78350f}
+.oe-aviso[hidden]{display:none}
+.oe-aviso-cab{display:flex;align-items:center;gap:8px;font-weight:800;font-size:.92rem;line-height:1.35}
+.oe-aviso-cab i{font-size:1.15rem}
+.oe-aviso-lista{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:6px}
+.oe-aviso-lista li{display:flex;align-items:flex-start;gap:8px;font-size:.88rem;line-height:1.4;overflow-wrap:anywhere}
+.oe-aviso-lista li>i{margin-top:2px;flex:0 0 auto}
+.oe-aviso-lista li.oe-ok>i{color:#16a34a}
+.oe-aviso-lista li.oe-no>i{color:#d97706}
+.oe-aviso-lista small{display:block;color:#4b5563;font-weight:500}
+.oe-aviso-lista li.oe-no small{color:#92400e}
+.oe-aviso-pie{margin:8px 0 0;font-size:.8rem;color:#4b5563}
+
+/* ── Recordatorio de la ficha: la OT terminada todavía no se le envió al cliente ── */
+.oe-franja{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:linear-gradient(180deg,#fffbeb,#fff 70%);
+  border:1px solid #fde68a;border-left:6px solid #f59e0b;border-radius:14px;padding:12px 16px;margin:12px 0}
+.oe-franja-txt{display:flex;gap:10px;align-items:flex-start;color:#111827;font-weight:700;line-height:1.35;min-width:0;flex:1 1 280px}
+.oe-franja-txt>i{color:#d97706;font-size:1.3rem;line-height:1}
+.oe-franja-txt small{display:block;font-weight:500;color:#6b7280;font-size:.84rem;overflow-wrap:anywhere}
+.oe-btn{min-height:44px;border:0;border-radius:12px;padding:10px 18px;font-weight:800;background:#0a0a0a;color:#fff;display:inline-flex;align-items:center;
+  justify-content:center;gap:8px;cursor:pointer}
+.oe-btn:hover{background:#262626}
+.oe-btn:focus-visible{outline:3px solid #fca5a5;outline-offset:2px}
+.oe-btn.sec{background:#fff;color:#0a0a0a;border:2px solid #d1d5db}
+.oe-btn.sec:hover{background:#f3f4f6}
+.oe-btn.rojo{background:#dc2626}
+.oe-btn.rojo:hover{background:#b91c1c}
+.oe-btn[disabled]{opacity:.55;cursor:not-allowed}
+
+/* ── Avisos de la creación (dentro de los 15 minutos siguientes) ── */
+.oe-creacion{background:#fff;border:1px solid #e5e7eb;border-left:6px solid #3b82f6;border-radius:14px;padding:12px 16px;margin:12px 0}
+.oe-creacion-cab{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.oe-creacion-cab b{display:flex;align-items:center;gap:8px;color:#111827}
+.oe-creacion-cab b>i{color:#3b82f6}
+.oe-creacion ul{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:4px;font-size:.88rem;color:#374151;overflow-wrap:anywhere}
+.oe-creacion small{color:#6b7280}
+.oe-x{min-width:44px;min-height:44px;border:0;background:transparent;color:#6b7280;border-radius:10px;font-size:1.1rem;cursor:pointer}
+.oe-x:hover{background:#f3f4f6;color:#111827}
+
+/* ── Modal «Enviar OT por correo» ── */
+.oe-modal .modal-content{border:0;border-radius:18px;overflow:hidden}
+.oe-modal .oe-mh{background:#0a0a0a;color:#fff;border:0}
+.oe-modal .modal-title{font-weight:900;font-size:1.15rem}
+.oe-modal .modal-title i{margin-right:6px}
+.oe-modal .btn-close{width:44px;height:44px;padding:0;background-size:14px;flex:0 0 44px}
+.oe-sub{font-size:.85rem;color:#d1d5db;margin-top:2px;font-weight:500}
+.oe-modal .modal-footer{border-top:1px solid #f3f4f6;gap:8px}
+.oe-alerta{display:flex;gap:10px;background:#fffbeb;border:1px solid #fde68a;color:#78350f;border-radius:12px;padding:10px 14px;font-weight:700;margin-bottom:14px}
+.oe-alerta.rojo{background:#fee2e2;border-color:#fecaca;color:#7f1d1d}
+.oe-vacio{display:flex;align-items:center;gap:8px;color:#6b7280;padding:10px 4px}
+.oe-paso{border:1px solid #e5e7eb;border-radius:16px;padding:14px 16px;margin-bottom:12px;background:#fff}
+.oe-paso-cab{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.oe-circ{width:30px;height:30px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:900;background:#dc2626;color:#fff;flex:0 0 30px;
+  animation:oePulso 2.2s ease-in-out infinite}
+.oe-paso.is-ok .oe-circ{background:#16a34a;animation:none}
+.oe-circ.oe-gris{background:#6b7280;animation:none}
+.oe-paso-cab h6{margin:0;font-weight:900;font-size:1rem;color:#111827}
+.oe-paso-cab small{display:block;color:#6b7280;font-weight:500}
+@keyframes oePulso{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.35)}50%{box-shadow:0 0 0 6px rgba(220,38,38,0)}}
+
+/* destinatarios: tarjetas con casilla (REGLA #14: marcar/desmarcar todo) */
+.oe-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;flex-wrap:wrap}
+.oe-todo{min-height:44px;border:2px solid #d1d5db;background:#fff;border-radius:12px;padding:8px 14px;font-weight:800;color:#374151;display:inline-flex;gap:8px;
+  align-items:center;cursor:pointer}
+.oe-cuenta{font-weight:700;color:#6b7280;font-size:.88rem}
+.oe-dests{display:grid;gap:8px}
+.oe-fila{display:flex;gap:6px;align-items:stretch}
+.oe-fila .oe-dest{flex:1;min-width:0}
+.oe-dest{display:flex;gap:12px;align-items:flex-start;text-align:left;width:100%;border:2px solid #e5e7eb;border-radius:14px;padding:12px 14px;background:#fff;
+  min-height:64px;cursor:pointer;color:#111827}
+.oe-dest.on{border-color:#16a34a;background:#f0fdf4}
+.oe-chk{font-size:1.5rem;line-height:1;color:#9ca3af;flex:0 0 28px}
+.oe-dest.on .oe-chk{color:#16a34a}
+.oe-dest-tx{min-width:0;flex:1}
+.oe-dest-tx b{display:block;font-weight:800;overflow-wrap:anywhere}
+.oe-dest-tx small{display:block;color:#6b7280;font-weight:500;line-height:1.35;overflow-wrap:anywhere}
+.oe-rol{display:inline-flex;align-items:center;gap:4px;margin-top:4px;border-radius:99px;padding:2px 10px;font-size:.78rem;font-weight:700;border:1px solid #e5e7eb;background:#f3f4f6;color:#374151}
+.oe-rol.cliente{background:#dbeafe;border-color:#bfdbfe;color:#1e3a8a}
+.oe-rol.tecnico{background:#fff8e1;border-color:#fde68a;color:#92400e}
+.oe-rol.ejecutivo,.oe-rol.creador,.oe-rol.responsable,.oe-rol.respaldo{background:#ede9fe;border-color:#ddd6fe;color:#5b21b6}
+.oe-quitar{min-width:44px;min-height:44px;border:0;background:transparent;color:#9ca3af;border-radius:10px;font-size:1.1rem;cursor:pointer;flex:0 0 44px}
+.oe-quitar:hover{background:#fee2e2;color:#b91c1c}
+.oe-agregar{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.oe-agregar input{flex:1 1 220px;min-height:44px;border:2px solid #e5e7eb;border-radius:12px;padding:8px 12px;font-size:16px}
+.oe-agregar input:focus,.oe-paso textarea:focus,.oe-paso input.oe-in:focus{border-color:#dc2626;outline:none}
+.oe-paso input.oe-in{width:100%;min-height:44px;border:2px solid #e5e7eb;border-radius:12px;padding:8px 12px;font-size:16px}
+.oe-paso textarea{width:100%;min-height:90px;border:2px solid #e5e7eb;border-radius:12px;padding:10px 12px;font-size:16px;margin-top:6px}
+.oe-label{font-size:.85rem;font-weight:700;color:#374151;margin-top:10px;display:block}
+.oe-nota{font-size:.82rem;color:#6b7280;margin-top:6px;line-height:1.4}
+.oe-nota i{color:#d97706}
+
+/* resumen explícito + vista previa */
+.oe-resumen{background:#f9fafb;border:2px solid #e5e7eb;border-radius:14px;padding:12px 14px;font-weight:600;color:#111827;line-height:1.5;overflow-wrap:anywhere}
+.oe-resumen.vacio{color:#6b7280;font-weight:500}
+.oe-preview{width:100%;height:420px;border:1px solid #e5e7eb;border-radius:12px;margin-top:10px;background:#fff}
+
+/* envíos anteriores */
+.oe-hist{margin:4px 0 0;padding:0;list-style:none;display:grid;gap:8px}
+.oe-hist li{border:1px solid #e5e7eb;border-left:5px solid #9ca3af;border-radius:12px;padding:8px 12px;font-size:.86rem;line-height:1.45;overflow-wrap:anywhere}
+.oe-hist li.t-manual{border-left-color:#3b82f6}
+.oe-hist li.t-terminada{border-left-color:#16a34a}
+.oe-hist small{color:#6b7280}
+.oe-hist ul{margin:4px 0 0;padding-left:16px}
+.oe-hist li li{border:0;border-radius:0;padding:0;font-size:.84rem}
+
+/* resultado del envío: la verdad por destinatario */
+.oe-res-cab{text-align:center;padding:6px 4px 12px}
+.oe-res-ic{width:56px;height:56px;border-radius:50%;background:#16a34a;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:1.8rem;margin-bottom:8px}
+.oe-res-ic.ambar{background:#f59e0b}
+.oe-res-ic.rojo{background:#dc2626}
+.oe-res-cab h5{font-weight:900}
+.oe-res-lista{list-style:none;padding:0;margin:0;display:grid;gap:8px}
+.oe-res-lista li{display:flex;gap:10px;align-items:flex-start;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px;overflow-wrap:anywhere;line-height:1.4}
+.oe-res-lista li.ok{border-color:#bbf7d0;background:#f0fdf4}
+.oe-res-lista li.no{border-color:#fde68a;background:#fffbeb}
+.oe-res-lista li>i{font-size:1.25rem;line-height:1;margin-top:1px}
+.oe-res-lista li.ok>i{color:#16a34a}
+.oe-res-lista li.no>i{color:#d97706}
+
+body.oe-abierto #opChatBtn{display:none}
+
+@media (max-width:600px){
+  .oe-franja{padding:12px}
+  .oe-franja .oe-btn{width:100%}
+  .oe-modal .modal-footer .oe-btn{flex:1 1 0}
+  .oe-preview{height:340px}
+}
+@media (prefers-reduced-motion:reduce){
+  .oe-circ{animation:none}
+  .oe-modal .modal-dialog{transition:none}
+}

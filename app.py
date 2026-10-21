@@ -70,6 +70,7 @@ import ot_que_paso as _qp  # «¿Qué pasó?» de una OT y la OT hija pendiente 
 import ot_piezas_medidas as _pm    # 2026-10-20: fichas de medidas por pieza, validación, aprendizaje del modelo y árbol «¿Qué le pasa?» (módulo puro con pruebas)
 import ot_producto_estado as _pe    # acciones por producto de una OT interna (No se puede usar / No tiene arreglo / No llegó) y repuestos sugeridos por defecto (módulo puro con pruebas)
 import ot_anexo_costo as _oac    # 2026-10-20: el costo de la OT y el anexo del proveedor son UN solo valor (módulo puro con pruebas)
+import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
 import fedex_labels as _fxlabels    # parser puro de etiquetas FedEx (testeable)
 _ERP = erp_engine.init_engine(
     base_url=ERP_CONFIG.get("api_url", "https://lab.random.cl/ilus"),
@@ -83445,6 +83446,12 @@ def mant_visita_cerrar(vid):
                     "OT cerrada con las 3 firmas y checklist completo", visita_id=vid)
     except Exception as _e_tk_est:
         print(f"[mant_visita_cerrar] sync estado ticket fallo vid={vid}: {_e_tk_est}", flush=True)
+    # 📨 2026-10-21 (REGLA #37): este cierre auditable (con las tres firmas) también deja la OT 'cerrada': mismo aviso de «OT terminada»,
+    # por el MISMO punto común y con la misma garantía de una sola vez por cierre. Best-effort.
+    try:
+        _ot_terminada_notificar(vid, origen="cerrar_auditable")
+    except Exception as _e_ot_term:
+        print(f"[mant_visita_cerrar] aviso de OT terminada vid={vid}: {type(_e_ot_term).__name__}", flush=True)
     return jsonify({
         "ok": True,
         "estado": "cerrada",
@@ -93625,6 +93632,9 @@ def ot2_detalle(vid):
     # 🧭 2026-10-20: franja «¿Qué pasó?» y chips de la unión con la OT de origen o las OT pendientes por falta de stock.
     # (Va ANTES del bloque de la barra de acciones: ese bloque se prueba aislado en tests/test_ot_producto_acciones.py.)
     que_paso = _qp_contexto_ficha(vid, v, puede_configurar, ot_solo_lectura)
+    # 📨 2026-10-21 (REGLA #37): la comunicación de la OT en la ficha: «Enviar OT por correo» (solo gestión), el recordatorio ámbar de una OT terminada
+    # que todavía no se le envió al cliente y los avisos de la creación. A un técnico no le llega nada de esto (solo ve el aviso previo al firmar).
+    com_envio = _ot_com_contexto_ficha(vid, v)
     # 🧰 2026-10-20: productos cuyo checklist se dispensa por una acción del técnico (espejo JS: otdChkEvaluar) y quién
     # puede devolver un producto a «operativo» (gestión, con motivo).
     try:
@@ -93699,6 +93709,7 @@ def ot2_detalle(vid):
         anexo_vinculo=anexo_vinculo,
         desinst=desinst,
         que_paso=que_paso,
+        com_envio=com_envio,
         acta=acta,
         prod_dispensa=prod_dispensa, acc_listas=acc_listas, acc_data=acc_data,
         puede_revertir_estado=bool((not _es_rol_tecnico()) and puede_configurar and not ot_solo_lectura),
@@ -111658,6 +111669,13 @@ def _ot2_crear_core(d, autorizacion=None, madre=None):
     }
     if es_hija:
         _resp_ok["madre_id"], _resp_ok["madre_numero"] = int(madre["id"]), _num_madre
+    else:
+        # 📨 2026-10-21 (REGLA #37, Daniel: «que avise a quién se le está enviando»): lo que dijeron los correos de la creación (al técnico con su
+        # calendario y al cliente con la visita agendada): a quién, y si salió o quedó frenado y por qué. SOLO informa: no cambia cuándo se envía.
+        try:
+            _resp_ok["comunicacion"] = _ot_com_creacion_resultado(vid, interna=es_interna)
+        except Exception as _e_com_cr:
+            print(f"[ot2_crear] comunicación: {type(_e_com_cr).__name__}", flush=True)
     # 🧩 2026-10-19 — la instalación creó su DESINSTALACIÓN: se agenda ahora, en el mismo servidor (así la aprobación
     # remota de Daniel también la crea). Si falla solo la hija, la instalación queda creada con su desinstalación prevista y
     # el aviso dice por qué (en una aprobación remota, además, se le avisa por la campana a quien la pidió: crítica 13).
@@ -127661,6 +127679,14 @@ def mant_ot_aprobar_cierre(vid):
                 _fn_nca(vid, resultado="aprobada", motivo=comentario, host_url=request.host_url)
         except Exception as _e_nca:
             print(f"[aprobar-cierre notif] {_e_nca}", flush=True)
+        # 📨 2026-10-21 (REGLA #37, Daniel: «cuando se termine se envíe automáticamente por correo… y que se alerte que se enviará»):
+        # «OT TERMINADA» — el aviso que la función borrada de arriba nunca llegó a ser. UN solo punto común (`_ot_terminada_notificar`), una
+        # sola vez por aprobación (aquí el UPDATE de arriba ya dejó la OT 'cerrada' atómicamente), al cliente (NACE APAGADO: REGLA #22), a
+        # quien creó la OT / el ejecutivo / el responsable y al técnico que la hizo (sin montos). Best-effort: jamás rompe el cierre.
+        try:
+            _ot_terminada_notificar(vid, origen="aprobar_cierre")
+        except Exception as _e_ot_term:
+            print(f"[aprobar-cierre] aviso de OT terminada vid={vid}: {type(_e_ot_term).__name__}", flush=True)
         # Sincronizar estado del ticket vinculado (si lo hay): OT cerrada con
         # las 3 firmas -> ticket 'resolved' (queda a criterio del staff pasarlo
         # a 'closed' como paso administrativo aparte). Aditivo.
@@ -135400,6 +135426,726 @@ def mant_cron_agenda_tecnicos():
         return jsonify({"error": "forbidden"}), 403
     dry = (request.args.get("dry") or "") in ("1", "true", "yes")
     return jsonify(_ot_tec_barrido_agenda(dry=dry, fecha=(request.args.get("fecha") or "").strip() or None))
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  COMUNICACIÓN DE LA OT — «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (REGLA #37)
+#
+#  Daniel (20-oct-2026): «necesito que esto sea CONTROLABLE, que avises cuándo lo tienes que enviar y además habilita, así como las
+#  cotizaciones, un envío por mail directo de las órdenes de trabajo… y quiero que avise a quién se le está enviando: al momento de
+#  crearse y enviarse los correos se vaya educando el personal de cuándo genera comunicación tanto con los técnicos como con los clientes».
+#
+#  · La lógica pura (a quién, en qué estado queda cada aviso, textos, plantillas, el recordatorio) vive en ot_comunicacion.py, con
+#    pruebas. Acá están las lecturas y escrituras de la base y el envío.
+#  · OT TERMINADA (`_ot_terminada_notificar`): UN punto común, llamado al APROBAR el cierre (la OT ya es definitiva y su documento no
+#    cambia). Al cliente (NACE APAGADO: OT_TERMINADA_CLIENTE_ACTIVA, REGLA #22), a quien creó la OT / el ejecutivo / el responsable (los decide
+#    `_ot_gestion_destinatarios`, la única función que sabe a quién avisa la gestión) y al técnico que la hizo (copia SIN montos, llave propia
+#    'ot_tecnicos'). Best-effort: jamás rompe el cierre. Una sola vez por aprobación (mant_ot_comunicaciones, clave única por OT + aprobación).
+#  · ENVIAR OT POR CORREO (`ot2_api_com_enviar`): para la gestión, como «Enviar cotización». Destinatarios prellenados y editables; dice la
+#    verdad por destinatario (`_email_resultado`). Un técnico (de esa OT o de cualquiera) recibe SIEMPRE la versión sin plata y por su llave.
+#  · A LA VISTA: antes de cerrar (el técnico al firmar, la gestión al aprobar) y al crear la OT (REGLA #37).
+#  · CONFIDENCIALIDAD (REGLAS #19 y #26): ningún correo lleva montos, costos, proveedores, OC ni autorizaciones; el documento enlazado es el
+#    mismo que ya ve el cliente (`/ot-firmada/<token>`, sin costos).
+# ══════════════════════════════════════════════════════════════════════
+def _ensure_ot_comunicacion_tablas():
+    """mant_ot_comunicaciones — la constancia de cada comunicación de una OT (REGLA #37): el aviso automático de cada aprobación del cierre
+    ('terminada', clave única visita + aprobación: no se envía dos veces), cada «Enviar OT por correo» ('manual') y lo que dijeron los correos
+    de la creación ('creacion'). Barata (REGLA #18): CREATE TABLE IF NOT EXISTS, sin locks en el arranque. `cierre_clave` es NULL en
+    'manual' y 'creacion' (varias filas por OT: en un índice único MySQL cada NULL cuenta como distinto)."""
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS mant_ot_comunicaciones (
+                id             BIGINT AUTO_INCREMENT PRIMARY KEY,
+                visita_id      INT NOT NULL,
+                tipo           VARCHAR(20) NOT NULL,
+                cierre_clave   VARCHAR(40) NULL,
+                cliente_estado VARCHAR(20) NOT NULL DEFAULT '',
+                detalle_json   MEDIUMTEXT NULL,
+                creado_por     VARCHAR(190) NULL,
+                creado_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_ot_com_cierre (visita_id, tipo, cierre_clave),
+                KEY idx_ot_com_vid (visita_id, id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_ot_comunicacion_tablas] {e}", flush=True)
+
+
+def _ensure_comm_template_ot_comunicacion():
+    """Siembra las cuatro plantillas de la comunicación de la OT (ot_terminada, ot_terminada_interno, ot_terminada_tecnico, ot_envio_manual)
+    en el editor de Comunicaciones AUNQUE ILUS_SKIP_MIGRATIONS=1. Solo si NO existen: jamás pisa lo que Daniel editó."""
+    try:
+        sembradas = 0
+        for slug in _ocom.PLANTILLAS:
+            existe = mysql_fetchone(
+                "SELECT id FROM comm_templates WHERE modulo=%s AND estado=%s AND canal='email' LIMIT 1",
+                (_ocom.MODULO_PLANTILLAS, slug))
+            if existe:
+                continue
+            asunto, cuerpo = _ocom.SEMILLAS[slug]
+            mysql_execute(
+                "INSERT IGNORE INTO comm_templates (modulo, estado, canal, asunto, cuerpo) VALUES (%s,%s,'email',%s,%s)",
+                (_ocom.MODULO_PLANTILLAS, slug, asunto, cuerpo))
+            sembradas += 1
+        if sembradas:
+            print(f"[ensure_comm_tpl] {sembradas} plantilla(s) de la comunicación de la OT sembradas", flush=True)
+        return sembradas
+    except Exception as e:
+        print(f"[ensure_comm_tpl] no se pudo sembrar la comunicación de la OT: {e}", flush=True)
+        return 0
+
+
+# ── Lecturas ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+def _ot_com_cliente_correos(fila):
+    """Los correos del cliente para una OT, en el orden de siempre: el contacto de ESTA OT primero (la persona que se eligió en el asistente)
+    y después los de la ficha del cliente (contacto, segundo contacto, correo de la empresa), sin repetidos."""
+    out, vistos = [], set()
+    cont = _ocom.normalizar_correo(fila.get("contacto_email"))
+    if _ocom.correo_valido(cont):
+        vistos.add(cont)
+        out.append({"correo": cont, "nombre": (fila.get("contacto_nombre") or fila.get("cli_contacto_nombre") or "").strip(),
+                    "origen": "contacto_ot"})
+    if fila.get("cliente_id"):
+        for e in _mant_get_cliente_emails(fila["cliente_id"]):
+            if e not in vistos and _ocom.correo_valido(e):
+                vistos.add(e)
+                out.append({"correo": e, "nombre": "", "origen": "ficha"})
+    return out
+
+
+def _ot_com_datos(vid):
+    """Todo lo que necesitan los correos de la OT, SIN plata (REGLAS #19 y #26): la fila, el cliente, los técnicos (personas y fichas de
+    empresas externas), los equipos y cuándo/quién aprobó el cierre. None si la OT no existe."""
+    try:
+        vid = int(vid)
+    except (TypeError, ValueError):
+        return None
+    try:
+        get_db().commit()      # fin de la lectura anterior: la conexión del request es REPEATABLE READ y esto corre justo tras un UPDATE
+    except Exception:
+        pass
+    r = mysql_fetchone(
+        "SELECT v.*, c.razon_social AS cli_razon, c.contacto_nombre AS cli_contacto_nombre "
+        "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id = v.cliente_id WHERE v.id=%s", (vid,))
+    if not r:
+        return None
+    fila = dict(r)
+    info = (_ot_tec_filas([vid]) or {}).get(vid) or {}
+    equipos = (_ot_tec_equipos_bulk([vid]) or {}).get(vid, [])
+    tec_map, fichas_map = _ot_tec_destinatarios_bulk([vid], con_fichas=True)
+    tec = (tec_map or {}).get(vid, {})
+    fichas = (fichas_map or {}).get(vid, set())
+    personas = [n for e, n in tec.items() if e not in fichas]          # el nombre de una ficha es el de un PROVEEDOR: no se muestra
+    numero = fila.get("numero_ot") or f"V-{vid:05d}"
+    hija_desinst = (bool(fila.get("ot_madre_id"))
+                    and (fila.get("ot_relacion") or "").strip().lower() == _evt.REL_DESINSTALACION)
+    ot = {"id": vid, "numero_ot": numero, "cliente": fila.get("cli_razon") or info.get("cliente") or "",
+          "tipo_label": info.get("tipo_label") or _TIPO_OT_LABEL.get((fila.get("tipo") or "").lower(), fila.get("tipo") or "Visita"),
+          "fecha_realizada": fila.get("fecha_realizada"), "fecha": fila.get("fecha_programada"),
+          "direccion": info.get("direccion") or "", "equipos": equipos, "tecnicos": personas}
+    return {
+        "vid": vid, "fila": fila, "numero": numero, "estado": (fila.get("estado") or "").strip().lower(),
+        "interna": bool(_ot_es_interna(fila)), "hija_desinst": hija_desinst,
+        "cliente_nombre": fila.get("cli_razon") or "", "tecnicos": tec, "fichas": fichas, "personas": personas,
+        "cierre_clave": _ocom.cierre_clave(fila.get("cerrada_at")),
+        "aprobado_por": (fila.get("firma_supervisor_nombre") or fila.get("cerrada_por") or "").strip(),
+        "cerrada_en": chile_fmt_filter(fila.get("cerrada_at")) if fila.get("cerrada_at") else "",
+        "ot": ot,
+    }
+
+
+def _ot_com_bloqueos():
+    """Lo que diría HOY la puerta de envío para cada grupo de avisos de «OT terminada» (None = sale)."""
+    return {
+        "cliente": _correo_bloqueo_previo(_ocom.MODULO_GENERAL, _ocom.CORREO_TERMINADA_CLIENTE),
+        "responsable": _correo_bloqueo_previo(_ocom.MODULO_GENERAL, _ocom.CORREO_TERMINADA_RESPONSABLE),
+        "tecnico": _correo_bloqueo_previo(_ocom.MODULO_TECNICOS, _ocom.CORREO_TERMINADA_TECNICO),
+    }
+
+
+def _ot_com_plan(datos, documento_ok=True):
+    """El plan de «OT terminada» de esta OT: a quién se avisa, con qué rol y en qué estado queda cada aviso (ver ot_comunicacion.armar_plan_cierre).
+    Lo usan el aviso previo al cierre y el envío real, así lo que se promete es lo que se hace. Quien creó la OT / el ejecutivo / el responsable
+    los decide `_ot_gestion_destinatarios` (UN solo lugar)."""
+    fila = datos["fila"]
+    con_cliente = bool(fila.get("cliente_id"))
+    aplica = con_cliente and not datos["hija_desinst"]
+    motivo_no = ("La desinstalación no le escribe al cliente: el aviso es el de su instalación." if (con_cliente and datos["hija_desinst"]) else "")
+    return _ocom.armar_plan_cierre(
+        cliente_nombre=datos["cliente_nombre"], cliente_correos=(_ot_com_cliente_correos(fila) if aplica else []),
+        aplica_cliente=aplica, motivo_no_cliente=motivo_no, cliente_encendido=_ocom.cliente_activo(), documento_ok=documento_ok,
+        gestion=_ot_gestion_destinatarios(datos["vid"], fila=fila), tecnicos=datos["tecnicos"], fichas=datos["fichas"],
+        bloqueos=_ot_com_bloqueos(), llaves_txt=_KS_MODULO_TXT,
+        nombres_correo={c: _ccr.nombre_de(c) for c in (_ocom.CORREO_TERMINADA_CLIENTE, _ocom.CORREO_TERMINADA_RESPONSABLE,
+                                                       _ocom.CORREO_TERMINADA_TECNICO)},
+        plantilla_tecnico_apagada=_ot_tec_plantilla_apagada(_ocom.PLANTILLA_TERMINADA_TECNICO),
+        notas={"cliente": "recibe el documento firmado, sin montos", "responsable": "recibe el aviso con lo que se envió",
+               "tecnico": "recibe su copia, sin montos"})
+
+
+def _ot_com_documento_ok(vid):
+    """(listo, motivo) con la FUENTE DE VERDAD del documento firmado: `_ot_pdf_context`, el mismo que arma `/ot-firmada/<token>`. Sin él, el
+    enlace llevaría a una página que dice «esta orden todavía está en curso»."""
+    try:
+        _ctx, status, razones = _ot_pdf_context(vid)
+        if status == "ok":
+            return True, ""
+        return False, " ".join(razones or []).strip() or "El documento todavía no está completo."
+    except Exception as e:
+        print(f"[ot-com] documento vid={vid}: {type(e).__name__}", flush=True)
+        return False, "No se pudo revisar el documento."
+
+
+def _ot_com_enlace_firmada(vid):
+    """El enlace público al documento firmado (sin montos) de la OT: el mismo token HMAC de la firma remota, sin estado en la base, con la
+    vigencia de ot_comunicacion.TOKEN_DIAS. Seguro en hilos y crons (no necesita un request)."""
+    return f"{_public_base_url()}/ot-firmada/{_ot_firma_token(vid, ttl_horas=24 * _ocom.TOKEN_DIAS)}"
+
+
+def _ot_com_armar(slug, variables):
+    """(asunto en texto plano, cuerpo) desde la plantilla editable de Comunicaciones; si no está (o está apagada), desde la semilla del código."""
+    tpl = None
+    try:
+        tpl = _render_comm_template(slug, "email", variables, modulo=_ocom.MODULO_PLANTILLAS)
+    except Exception as e:
+        print(f"[ot-com] plantilla {slug} no disponible: {type(e).__name__}", flush=True)
+    return _ocom.armar_correo(slug, variables, tpl)
+
+
+def _ot_com_anotar(item, enviado):
+    """Anota en el renglón qué pasó con SU envío, diciendo la verdad: salió · lo frenó una llave/interruptor · el proveedor no lo aceptó."""
+    r = _email_resultado(enviado)
+    if r["salio"]:
+        item["resultado"], item["motivo"] = _ocom.RES_ENVIADO, ""
+    else:
+        item["resultado"] = _ocom.RES_FRENADO if r["causa"] == "apagado" else _ocom.RES_FALLO
+        item["motivo"] = _ocom.capitalizar(r["motivo"])
+    return item
+
+
+def _ot_com_tec_es_correo(correo):
+    """¿Este correo es de ALGÚN técnico (interno, elevado, externo o la ficha de un proveedor), aunque no sea de esta OT? A un técnico se le manda
+    SIEMPRE la versión sin plata (REGLAS #19 y #26). Ante un error de lectura se trata como técnico: callar plata es barato."""
+    c = _ocom.normalizar_correo(correo)
+    try:
+        u = mysql_fetchone("SELECT role FROM app_users WHERE LOWER(username)=%s LIMIT 1", (c,))
+        if u and _rol_familia(u.get("role")) == "tecnico":
+            return True
+        if mysql_fetchone("SELECT 1 AS x FROM mant_tecnicos WHERE LOWER(email)=%s LIMIT 1", (c,)):
+            return True
+        if mysql_fetchone("SELECT 1 AS x FROM mant_tecnicos_externos WHERE LOWER(contacto_email)=%s LIMIT 1", (c,)):
+            return True
+        return False
+    except Exception as e:
+        print(f"[ot-com] es técnico? {type(e).__name__}", flush=True)
+        return True
+
+
+# ── OT TERMINADA: el aviso automático al aprobar el cierre ───────────────────────────────────────────────────────────
+def _ot_terminada_notificar(vid, origen="aprobar_cierre"):
+    """«OT TERMINADA»: UN punto común, llamado al APROBAR el cierre de la OT. Avisa al cliente (nace APAGADO), a quien creó la OT / el ejecutivo /
+    el responsable y al técnico que la hizo (copia sin montos). Una sola vez por aprobación (clave única en mant_ot_comunicaciones). Best-effort:
+    NUNCA lanza ni rompe el cierre. Los correos salen por la puerta única (interruptor general > llave > interruptor de cada correo > cola) y
+    el resultado de cada uno queda en la bitácora de la OT, en mant_ot_comunicaciones y en el Historial de Comunicaciones.
+    Devuelve {ok, omitido, items, cliente_estado} (para las pruebas y el diagnóstico)."""
+    res = {"ok": False, "omitido": "", "items": [], "cliente_estado": ""}
+    try:
+        datos = _ot_com_datos(vid)
+        if not datos:
+            res["omitido"] = "la OT no existe"
+            return res
+        if datos["estado"] != "cerrada":
+            res["omitido"] = "la OT no está cerrada"
+            return res
+        v_id = datos["vid"]
+        usuario = (current_username() or "sistema")[:190]
+        reservada = False
+        try:
+            n = mysql_execute_returning_rowcount(
+                "INSERT IGNORE INTO mant_ot_comunicaciones (visita_id, tipo, cierre_clave, cliente_estado, creado_por) "
+                "VALUES (%s,%s,%s,%s,%s)", (v_id, _ocom.TIPO_TERMINADA, datos["cierre_clave"], _ocom.CLI_PENDIENTE, usuario))
+            if n != 1:
+                res["omitido"] = "ya se avisó por esta aprobación del cierre"
+                return res
+            reservada = True
+        except Exception as e:
+            # Sin la tabla no se puede garantizar la unicidad: se avisa igual (mejor un aviso de más que ninguno).
+            print(f"[ot-terminada] vid={v_id}: no se pudo reservar ({type(e).__name__}); se avisa igual", flush=True)
+
+        # El enlace del cliente solo sirve si el documento está completo: la fuente de verdad es _ot_pdf_context (pesado: solo si el aviso al
+        # cliente va a salir de verdad).
+        documento_ok, motivo_doc = True, ""
+        if datos["fila"].get("cliente_id") and not datos["hija_desinst"] and _ocom.cliente_activo():
+            documento_ok, motivo_doc = _ot_com_documento_ok(v_id)
+        plan = _ot_com_plan(datos, documento_ok=documento_ok)
+        for it in plan:
+            if it["estado"] == _ocom.EST_SIN_DOCUMENTO and motivo_doc:
+                it["motivo"] = f"El documento firmado todavía no está completo ({motivo_doc.rstrip('.')}), así que no se envió."
+
+        ot, numero = datos["ot"], datos["numero"]
+        ref = {"tipo": "OT", "id": v_id, "codigo": numero}
+        enlace_doc = _ot_com_enlace_firmada(v_id)
+        comunes = dict(link_ot_firmada=enlace_doc, link_ot=f"{_public_base_url()}/ot/{v_id}", aprobado_por=datos["aprobado_por"],
+                       cerrada_en=datos["cerrada_en"], tecnicos_nombres=datos["personas"])
+        contacto = (datos["fila"].get("contacto_nombre") or datos["fila"].get("cli_contacto_nombre") or "").strip()
+
+        # 1) al cliente (UN correo por dirección: cada uno queda con su resultado)
+        for it in _ocom.a_intentar(plan, "cliente"):
+            try:
+                vs = _ocom.variables_ot(ot, nombre_destinatario=(contacto if it.get("origen") == "contacto_ot" else ""), **comunes)
+                asunto, cuerpo = _ot_com_armar(_ocom.PLANTILLA_TERMINADA, vs)
+                asunto = _brand_subject(asunto)
+                ok = _send_ilus_email(it["correo"], asunto, _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {numero}"),
+                                      evento=_ocom.EVENTO_TERMINADA_CLIENTE, modulo="mantenciones", asincrono=True, ref=ref,
+                                      correo="ot_terminada_cliente")
+                _ot_com_anotar(it, ok)
+            except Exception as e:
+                print(f"[ot-terminada] cliente vid={v_id}: {type(e).__name__}: {e}", flush=True)
+                it["resultado"], it["motivo"] = _ocom.RES_FALLO, "No se pudo armar ni enviar el correo."
+
+        # 2) al técnico: su copia SIN montos ni proveedores, por la llave propia 'ot_tecnicos'
+        oculto = _ot_tec_oculta_detalle(v_id)
+        for it in _ocom.a_intentar(plan, "tecnico"):
+            try:
+                ot_t = dict(ot, direccion=(_otc.OCULTO_ANEXO if oculto else ot.get("direccion")))
+                vs = _ocom.variables_ot(ot_t, nombre_destinatario=it["nombre"], **comunes)
+                asunto, cuerpo = _ot_com_armar(_ocom.PLANTILLA_TERMINADA_TECNICO, vs)
+                ok = _ot_tec_enviar(it["correo"], _brand_subject(asunto), cuerpo, evento=_ocom.EVENTO_TERMINADA_TECNICO,
+                                    subtitulo=f"OT {numero}", ref=ref, correo="ot_tec_terminada")
+                _ot_com_anotar(it, ok)
+            except Exception as e:
+                print(f"[ot-terminada] técnico vid={v_id}: {type(e).__name__}: {e}", flush=True)
+                it["resultado"], it["motivo"] = _ocom.RES_FALLO, "No se pudo armar ni enviar el correo."
+
+        # 3) a quien creó la OT / el ejecutivo / el responsable: va al final para decirles lo que se envió al cliente y al técnico
+        resumen = _ocom.resumen_envio_html(plan)
+        for it in _ocom.a_intentar(plan, "responsable"):
+            try:
+                vs = _ocom.variables_ot(ot, nombre_destinatario=it["nombre"], resumen_envio_html=resumen, **comunes)
+                asunto, cuerpo = _ot_com_armar(_ocom.PLANTILLA_TERMINADA_INTERNO, vs)
+                asunto = _brand_subject(asunto)
+                ok = _send_ilus_email(it["correo"], asunto, _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {numero}"),
+                                      evento=_ocom.EVENTO_TERMINADA_RESPONSABLE, modulo="mantenciones", asincrono=True, ref=ref,
+                                      correo="ot_terminada_responsable")
+                _ot_com_anotar(it, ok)
+            except Exception as e:
+                print(f"[ot-terminada] equipo vid={v_id}: {type(e).__name__}: {e}", flush=True)
+                it["resultado"], it["motivo"] = _ocom.RES_FALLO, "No se pudo armar ni enviar el correo."
+
+        for it in plan:
+            it.setdefault("resultado", _ocom.RES_NO_ENVIADO)
+        estado_cli = _ocom.estado_cliente(plan)
+        res.update(ok=True, items=plan, cliente_estado=estado_cli)
+        if reservada:
+            try:
+                mysql_execute(
+                    "UPDATE mant_ot_comunicaciones SET cliente_estado=%s, detalle_json=%s "
+                    " WHERE visita_id=%s AND tipo=%s AND cierre_clave=%s",
+                    (estado_cli, _ocom.detalle_json(plan), v_id, _ocom.TIPO_TERMINADA, datos["cierre_clave"]))
+            except Exception as e:
+                print(f"[ot-terminada] vid={v_id}: no se pudo guardar el resultado ({type(e).__name__})", flush=True)
+        try:
+            _mant_log("visita", v_id, "ot_terminada_aviso", _ocom.bitacora_envio(plan, "OT terminada · avisos al aprobar el cierre")[:2000])
+        except Exception:
+            pass
+        return res
+    except Exception as e:
+        print(f"[ot-terminada] vid={vid} ({origen}): {type(e).__name__}: {e}", flush=True)
+        res["error"] = type(e).__name__
+        return res
+
+
+def _ot_com_items_json(items, tecnico=False):
+    """Los renglones de un plan para el navegador. A un TÉCNICO no le viaja el correo de nadie ni el nombre de un proveedor (REGLAS #19 y #26)."""
+    base = _ocom.para_tecnico(items) if tecnico else items
+    campos = ("grupo", "rol", "rol_txt", "nombre", "correo", "estado", "motivo", "saldra", "nota", "origen", "resultado")
+    return [{k: i.get(k) for k in campos if k in i} for i in base]
+
+
+@app.route("/ot/api/<int:vid>/correo/destinatarios", methods=["GET"])
+@_mant_required
+@_ot_can_view
+def ot2_api_com_destinatarios(vid):
+    """El aviso previo al cierre: «Al aprobar el cierre se enviará esta OT a: …» con cada destinatario, su rol y lo que esté apagado. Lo ven el
+    técnico (al firmar) y la gestión (en «Aprobar cierre»). Es el MISMO plan que usa el envío real. A un técnico no le llegan correos ajenos."""
+    datos = _ot_com_datos(vid)
+    if not datos:
+        return _ot2_err("Esa OT no existe.", "OT_NO_EXISTE", http=404)
+    if datos["estado"] in ("cerrada", "cancelada", "anulada"):
+        return jsonify({"ok": True, "aplica": False, "items": [], "texto": ""})
+    plan = _ot_com_plan(datos, documento_ok=True)
+    tecnico = bool(_es_rol_tecnico())
+    visibles = _ocom.para_tecnico(plan) if tecnico else plan
+    resp = jsonify({"ok": True, "aplica": True, "items": _ot_com_items_json(plan, tecnico), "texto": _ocom.resumen_se_enviara(visibles),
+                    "cliente_encendido": _ocom.cliente_activo()})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# ── ENVIAR OT POR CORREO (manual, como «Enviar cotización») ──────────────────────────────────────────────────────────
+def _ot_com_puede_enviar(vid):
+    """Solo la gestión (superadmin, admin, supervisor, ejecutivo): el mismo criterio de «aprobar». Un técnico NUNCA envía a clientes."""
+    try:
+        return (not _es_rol_tecnico()) and bool(_puede_ot_accion(vid, "aprobar"))
+    except Exception:
+        return False
+
+
+def _ot_com_candidatos_manual(datos):
+    """Los destinatarios que se le PROPONEN a quien envía a mano (prellenados y editables): el cliente (contacto de la OT y correos de la ficha), el
+    equipo de gestión de la OT y sus técnicos, sin repetidos y solo con correo. Es el mismo armado del plan de «OT terminada» (un solo lugar).
+    El respaldo de gestión (todos los superadmin/admin/supervisor, que `_ot_gestion_destinatarios` usa cuando de la OT no sale nadie para que un
+    aviso interno nunca se pierda) NO se propone: no tiene que ver con esta OT y llenaría el modal; si se quiere, se agrega a mano. Tope: el máximo
+    de destinatarios por envío."""
+    fila = datos["fila"]
+    plan = _ocom.armar_plan_cierre(
+        cliente_nombre=datos["cliente_nombre"], cliente_correos=_ot_com_cliente_correos(fila), aplica_cliente=bool(fila.get("cliente_id")),
+        cliente_encendido=True, documento_ok=True, gestion=_ot_gestion_destinatarios(datos["vid"], fila=fila),
+        tecnicos=datos["tecnicos"], fichas=datos["fichas"])
+    return [i for i in plan if i.get("correo") and i.get("rol") != "respaldo"][:_ocom.MAX_DESTINATARIOS]
+
+
+def _ot_com_anteriores(vid, limite=6):
+    """Los últimos envíos de esta OT (automáticos y manuales) para el modal: cuándo, quién y a quién, con lo que pasó."""
+    out = []
+    try:
+        filas = mysql_fetchall(
+            "SELECT id, tipo, cliente_estado, detalle_json, creado_por, creado_at FROM mant_ot_comunicaciones "
+            " WHERE visita_id=%s AND tipo IN (%s,%s) ORDER BY id DESC LIMIT %s",
+            (int(vid), _ocom.TIPO_TERMINADA, _ocom.TIPO_MANUAL, int(limite))) or []
+    except Exception as e:
+        print(f"[ot-com] anteriores vid={vid}: {type(e).__name__}", flush=True)
+        return out
+    for f in filas:
+        out.append({"id": f.get("id"), "tipo": f.get("tipo"),
+                    "titulo": "Aviso automático al aprobar el cierre" if f.get("tipo") == _ocom.TIPO_TERMINADA else "Envío manual",
+                    "cuando": chile_fmt_filter(f.get("creado_at")) if f.get("creado_at") else "", "quien": f.get("creado_por") or "",
+                    "lineas": _ocom.lineas_resultado(f.get("detalle_json"))})
+    return out
+
+
+@app.route("/ot/api/<int:vid>/correo/enviar", methods=["GET"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot2_api_com_enviar_datos(vid):
+    """Lo que necesita el modal «Enviar OT por correo»: si se puede, los destinatarios propuestos (con su rol), el asunto sugerido y los envíos
+    anteriores. Solo la gestión; una OT que todavía no está cerrada con sus firmas no tiene documento que enviar."""
+    if not _ot_com_puede_enviar(vid):
+        return _ot2_err("Solo la gestión puede enviar la OT por correo.", "OT_SIN_PERMISO", http=403)
+    datos = _ot_com_datos(vid)
+    if not datos:
+        return _ot2_err("Esa OT no existe.", "OT_NO_EXISTE", http=404)
+    base = {"ok": True, "ot": {"numero": datos["numero"], "cliente": datos["cliente_nombre"], "estado": datos["estado"]},
+            "maximo": _ocom.MAX_DESTINATARIOS, "max_asunto": _ocom.MAX_ASUNTO, "max_mensaje": _ocom.MAX_MENSAJE}
+    if datos["estado"] != "cerrada":
+        return jsonify(dict(base, puede=False, razon="La OT todavía no está cerrada: el documento firmado existe desde que se aprueba el cierre."))
+    listo, razon = _ot_com_documento_ok(vid)
+    if not listo:
+        return jsonify(dict(base, puede=False, razon="El documento firmado todavía no está completo: " + (razon or "faltan firmas")
+                            + " Mientras tanto el enlace no abriría."))
+    asunto_def, _c = _ot_com_armar(_ocom.PLANTILLA_MANUAL, _ocom.variables_ot(datos["ot"], tecnicos_nombres=datos["personas"]))
+    resp = jsonify(dict(base, puede=True, razon="", asunto=asunto_def,
+                        destinatarios=[{"correo": i["correo"], "nombre": i["nombre"], "rol": i["rol"], "rol_txt": i["rol_txt"]}
+                                       for i in _ot_com_candidatos_manual(datos)],
+                        anteriores=_ot_com_anteriores(vid)))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/ot/api/<int:vid>/correo/vista-previa", methods=["POST"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot2_api_com_vista_previa(vid):
+    """Cómo se vería «Enviar OT por correo» con el asunto y el mensaje que escribió la persona. No envía nada."""
+    if not _ot_com_puede_enviar(vid):
+        return _ot2_err("Solo la gestión puede enviar la OT por correo.", "OT_SIN_PERMISO", http=403)
+    datos = _ot_com_datos(vid)
+    if not datos:
+        return _ot2_err("Esa OT no existe.", "OT_NO_EXISTE", http=404)
+    d = request.get_json(silent=True) or {}
+    vs = _ocom.variables_ot(datos["ot"], link_ot_firmada=_ot_com_enlace_firmada(vid), mensaje=_ocom.mensaje_para(d.get("mensaje")),
+                            enviado_por=(current_username() or ""), tecnicos_nombres=datos["personas"])
+    asunto, cuerpo = _ot_com_armar(_ocom.PLANTILLA_MANUAL, vs)
+    asunto = _brand_subject(_ocom.asunto_para(d.get("asunto"), asunto))
+    return jsonify({"ok": True, "asunto": asunto, "html": _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {datos['numero']}")})
+
+
+@app.route("/ot/api/<int:vid>/correo/enviar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot2_api_com_enviar(vid):
+    """«ENVIAR OT POR CORREO»: el documento firmado (sin montos) a los correos que elija la gestión. Body: {destinatarios:[correos], asunto?, mensaje?}.
+    Un correo por destinatario, por la puerta única de envío; después dice la verdad por destinatario («Se envió a…» / «No salió porque…»).
+    Un técnico (de esa OT o de cualquiera) recibe SIEMPRE la versión sin plata y por su llave 'ot_tecnicos'. Queda en la bitácora de la OT, en
+    mant_ot_comunicaciones y en el Historial de Comunicaciones con su referencia a la OT. 200 si salió al menos uno; 409 si todo quedó
+    frenado por una llave o interruptor; 502 si el proveedor de correo no aceptó ninguno."""
+    if not _ot_com_puede_enviar(vid):
+        return _ot2_err("Solo la gestión puede enviar la OT por correo.", "OT_SIN_PERMISO", http=403)
+    datos = _ot_com_datos(vid)
+    if not datos:
+        return _ot2_err("Esa OT no existe.", "OT_NO_EXISTE", http=404)
+    if datos["estado"] != "cerrada":
+        return _ot2_err("La OT todavía no está cerrada: el documento firmado existe desde que se aprueba el cierre.", "OT_NO_CERRADA", http=409)
+    listo, razon = _ot_com_documento_ok(vid)
+    if not listo:
+        return _ot2_err("El documento firmado todavía no está completo (" + (razon or "faltan firmas").rstrip(".") + "): el enlace no abriría.",
+                        "DOCUMENTO_INCOMPLETO", http=409)
+    d = request.get_json(silent=True) or {}
+    pedidos = d.get("destinatarios")
+    if not isinstance(pedidos, list) or not pedidos:
+        return _ot2_err("Agrega al menos un destinatario.", "SIN_DESTINATARIOS")
+    buenos, malos, _rep, exceso = _ocom.normalizar_lista(pedidos[:200])
+    if malos:
+        return _ot2_err("Hay correos inválidos: " + ", ".join(malos[:5]), "CORREO_INVALIDO")
+    if exceso:
+        return _ot2_err(f"Como máximo {_ocom.MAX_DESTINATARIOS} destinatarios por envío.", "DEMASIADOS_DESTINATARIOS")
+    if not buenos:
+        return _ot2_err("No hay destinatarios válidos.", "SIN_DESTINATARIOS")
+
+    conocidos = {i["correo"]: {"nombre": i["nombre"], "rol": i["rol"]} for i in _ot_com_candidatos_manual(datos)}
+    pedidos_cl = _ocom.clasificar_pedidos(buenos, conocidos=conocidos, es_correo_tecnico=_ot_com_tec_es_correo)
+    numero, v_id = datos["numero"], datos["vid"]
+    usuario = (current_username() or "sistema")[:190]
+    ref = {"tipo": "OT", "id": v_id, "codigo": numero}
+    enlace_doc = _ot_com_enlace_firmada(v_id)
+    resultados = []
+    for p in pedidos_cl:
+        item = {"grupo": "tecnico" if p["tecnico"] else ("cliente" if p["rol"] == "cliente" else "responsable"),
+                "rol": p["rol"], "rol_txt": p["rol_txt"], "nombre": p["nombre"], "correo": p["correo"], "estado": _ocom.EST_SALE,
+                "motivo": "", "tecnico": bool(p["tecnico"])}
+        try:
+            vs = _ocom.variables_ot(datos["ot"], nombre_destinatario=p["nombre"], link_ot_firmada=enlace_doc,
+                                    link_ot=(f"{_public_base_url()}/ot/{v_id}" if p["tecnico"] else ""),
+                                    mensaje=_ocom.mensaje_para(d.get("mensaje"), p["tecnico"]), enviado_por=usuario,
+                                    tecnicos_nombres=datos["personas"])
+            asunto_def, cuerpo = _ot_com_armar(_ocom.PLANTILLA_MANUAL, vs)
+            asunto = _brand_subject(_ocom.asunto_para(d.get("asunto"), asunto_def, p["tecnico"]))
+            html = _comm_render_email_document(asunto, cuerpo, subtitle=f"OT {numero}")
+            if p["tecnico"]:
+                ok = _send_ilus_email(p["correo"], asunto, html, evento=_ocom.EVENTO_MANUAL_TECNICO, modulo="ot_tecnicos", ref=ref,
+                                      correo="ot_tec_envio_manual")
+            else:
+                ok = _send_ilus_email(p["correo"], asunto, html, evento=_ocom.EVENTO_MANUAL, modulo="mantenciones", ref=ref,
+                                      correo="ot_envio_manual")
+            _ot_com_anotar(item, ok)
+        except Exception as e:
+            print(f"[ot-envio-manual] vid={v_id}: {type(e).__name__}: {e}", flush=True)
+            item["resultado"], item["motivo"] = _ocom.RES_FALLO, "No se pudo armar ni enviar el correo."
+        resultados.append(item)
+
+    n_ok = sum(1 for r in resultados if r["resultado"] == _ocom.RES_ENVIADO)
+    n_frenado = sum(1 for r in resultados if r["resultado"] == _ocom.RES_FRENADO)
+    n_fallo = len(resultados) - n_ok - n_frenado
+    try:
+        mysql_execute(
+            "INSERT INTO mant_ot_comunicaciones (visita_id, tipo, cierre_clave, cliente_estado, detalle_json, creado_por) "
+            "VALUES (%s,%s,NULL,%s,%s,%s)",
+            (v_id, _ocom.TIPO_MANUAL, _ocom.estado_cliente_manual(resultados), _ocom.detalle_json(resultados), usuario))
+    except Exception as e:
+        print(f"[ot-envio-manual] vid={v_id}: no se pudo guardar la constancia ({type(e).__name__})", flush=True)
+    try:
+        _mant_log("visita", v_id, "ot_enviada_correo", _ocom.bitacora_envio(resultados, "OT enviada por correo")[:2000])
+    except Exception:
+        pass
+    salida = {"ok": n_ok > 0, "enviados": n_ok, "frenados": n_frenado, "fallidos": n_fallo,
+              "resultados": [{k: r.get(k) for k in ("correo", "nombre", "rol", "rol_txt", "resultado", "motivo", "tecnico")} for r in resultados],
+              "textos": [{"texto": t, "ok": ok} for t, ok in _ocom.resumen_resultados(resultados)]}
+    if n_ok:
+        return jsonify(salida)
+    if n_fallo == 0:
+        salida.update(error_codigo="NADA_SALIO_FRENADO",
+                      error="No salió ningún correo: todos quedaron frenados por una llave o interruptor de Comunicaciones.")
+        return jsonify(salida), 409
+    salida.update(error_codigo="NO_SALIO", error="No salió ningún correo: el proveedor de correo no los aceptó. El detalle quedó en el Historial.")
+    return jsonify(salida), 502
+
+
+# ── La ficha: recordatorio de lo que falta enviar y avisos de la creación ────────────────────────────────────────────
+def _ot_com_contexto_ficha(vid, v):
+    """Lo que la ficha necesita para la comunicación de la OT (`com_envio` en ot2/_enviar_ot.html): si el usuario puede enviarla a mano, si su
+    documento ya está completo, el recordatorio ámbar «todavía no se le envió al cliente» y los avisos de la creación. Un técnico no recibe nada
+    de esto (la gestión envía; el técnico solo ve el aviso previo). Nunca lanza."""
+    ctx = {"puede_enviar": False, "listo": False, "razon": "", "franja": None, "creacion": None}
+    try:
+        if _es_rol_tecnico():
+            return ctx
+        estado = (v.get("estado") or "").strip().lower()
+        puede = _ot_com_puede_enviar(vid)
+        if estado == "cerrada" and puede:
+            listo, razon = _ocom.documento_listo(v, _ot_es_interna(v))
+            ctx.update(puede_enviar=True, listo=listo, razon=razon)
+            filas = mysql_fetchall(
+                "SELECT id, tipo, cierre_clave, cliente_estado, detalle_json FROM mant_ot_comunicaciones "
+                " WHERE visita_id=%s ORDER BY id DESC LIMIT 30", (int(vid),)) or []
+            ctx["franja"] = _ocom.franja_pendiente(filas, _ocom.cierre_clave(v.get("cerrada_at")))
+        if puede:
+            r = mysql_fetchone(
+                "SELECT id, detalle_json, creado_por, creado_at FROM mant_ot_comunicaciones "
+                " WHERE visita_id=%s AND tipo=%s AND creado_at >= (NOW() - INTERVAL 15 MINUTE) ORDER BY id DESC LIMIT 1",
+                (int(vid), _ocom.TIPO_CREACION))
+            if r:
+                ctx["creacion"] = {"id": r.get("id"), "quien": r.get("creado_por") or "",
+                                   "cuando": chile_fmt_filter(r.get("creado_at")) if r.get("creado_at") else "",
+                                   "lineas": _ocom.lineas_resultado(r.get("detalle_json"))}
+    except Exception as e:
+        print(f"[ot-com] contexto de la ficha vid={vid}: {type(e).__name__}", flush=True)
+    return ctx
+
+
+# ── AL CREAR LA OT: a quién se avisará y a quién se avisó ────────────────────────────────────────────────────────────
+def _ot_com_tecnicos_de_usuarios(uids):
+    """({correo: nombre}, {correos de ficha}) de los técnicos que se eligen para una OT que todavía NO existe. Mismas fuentes que
+    `_ot_tec_destinatarios_bulk`: la cuenta (el usuario es el correo) y el contacto de la empresa externa a la que pertenece."""
+    ids = _ot_tec_ids(uids)
+    tec, fichas = {}, set()
+    if not ids:
+        return tec, fichas
+    ph = ",".join(["%s"] * len(ids))
+
+    def _add(email, nombre, ficha=False):
+        e = _ocom.normalizar_correo(email)
+        if _ocom.correo_valido(e) and e not in tec:
+            tec[e] = (nombre or "").strip() or e.split("@")[0]
+            if ficha:
+                fichas.add(e)
+
+    try:
+        for r in (mysql_fetchall(
+                f"SELECT u.username AS email, COALESCE(NULLIF(u.nombre,''), u.username) AS nombre FROM `{AUTH_TABLE}` u "
+                f" WHERE u.id IN ({ph}) AND u.active=1", tuple(ids)) or []):
+            _add(r.get("email"), r.get("nombre"))
+    except Exception as e:
+        print(f"[ot-com] técnicos (cuenta): {type(e).__name__}", flush=True)
+    for sql_ext in (
+        f"SELECT te.contacto_email AS email, te.razon_social AS nombre FROM mant_tecnicos_externos te WHERE te.user_id IN ({ph})",
+        "SELECT tee.contacto_email AS email, tee.razon_social AS nombre FROM mant_tecnico_externo_usuarios teu "
+        f"JOIN mant_tecnicos_externos tee ON tee.id = teu.tecnico_externo_id WHERE teu.user_id IN ({ph})",
+    ):
+        try:
+            for r in (mysql_fetchall(sql_ext, tuple(ids)) or []):
+                _add(r.get("email"), r.get("nombre"), ficha=True)
+        except Exception as e:
+            print(f"[ot-com] técnicos (proveedor): {type(e).__name__}", flush=True)
+    return tec, fichas
+
+
+def _ot_com_plan_creacion(cliente_nombre, correos_cliente, aplica_cliente, tecnicos, fichas):
+    """El plan de «al crear esta OT se enviará…»: el correo de la visita agendada al cliente (contacto de la OT primero y luego los de la ficha) y el
+    aviso con calendario a cada técnico. Con los mismos interruptores que usan los envíos de creación (`ot_creada_cliente`, `ot_tec_asignada`).
+    No cambia cuándo se envía nada: solo lo anticipa (antes de crear) o lo cuenta (después)."""
+    return _ocom.armar_plan_cierre(
+        cliente_nombre=cliente_nombre, cliente_correos=correos_cliente, aplica_cliente=aplica_cliente, cliente_encendido=True,
+        documento_ok=True, gestion=(), tecnicos=tecnicos, fichas=fichas,
+        bloqueos={"cliente": _correo_bloqueo_previo(_ocom.MODULO_GENERAL, "ot_creada_cliente"),
+                  "tecnico": _correo_bloqueo_previo(_ocom.MODULO_TECNICOS, "ot_tec_asignada")},
+        llaves_txt=_KS_MODULO_TXT, claves={"cliente": "ot_creada_cliente", "tecnico": "ot_tec_asignada"},
+        nombres_correo={"ot_creada_cliente": _ccr.nombre_de("ot_creada_cliente"), "ot_tec_asignada": _ccr.nombre_de("ot_tec_asignada")},
+        plantilla_tecnico_apagada=_ot_tec_plantilla_apagada("ot_asignada"),
+        notas={"cliente": "recibe el aviso de la visita agendada", "tecnico": "recibe el correo con el archivo de calendario"})
+
+
+@app.route("/ot/api/correo/creacion", methods=["POST"])
+@_mant_required
+def ot2_api_com_creacion_previa():
+    """«Al crear esta OT se enviará: …»: a quién le llegarán los correos de la creación (técnico con calendario, cliente con la visita agendada) y qué
+    está apagado, ANTES de confirmar. Body: {cliente_id?, tecnico_user_ids?, contacto_email?, contacto_nombre?}. Solo anticipa: no envía ni guarda nada."""
+    d = request.get_json(silent=True) or {}
+    try:
+        cid = int(d.get("cliente_id")) if d.get("cliente_id") not in (None, "", 0, "0") else None
+    except (TypeError, ValueError):
+        cid = None
+    ids = []
+    for t in (d.get("tecnico_user_ids") or [])[:30]:
+        try:
+            ids.append(int(t))
+        except (TypeError, ValueError):
+            continue
+    nombre = ""
+    if cid:
+        try:
+            nombre = (mysql_fetchone("SELECT razon_social FROM mant_clientes WHERE id=%s", (cid,)) or {}).get("razon_social") or ""
+        except Exception:
+            nombre = ""
+    correos = []
+    cont = _ocom.normalizar_correo(str(d.get("contacto_email") or "")[:180])
+    if _ocom.correo_valido(cont):
+        correos.append({"correo": cont, "nombre": str(d.get("contacto_nombre") or "")[:190].strip(), "origen": "contacto_ot"})
+    if cid:
+        for e in _mant_get_cliente_emails(cid):
+            if e != cont:
+                correos.append({"correo": e, "nombre": "", "origen": "ficha"})
+    tec, fichas = _ot_com_tecnicos_de_usuarios(ids)
+    plan = _ot_com_plan_creacion(nombre, correos, bool(cid), tec, fichas)
+    tecnico = bool(_es_rol_tecnico())
+    visibles = _ocom.para_tecnico(plan) if tecnico else plan
+    resp = jsonify({"ok": True, "items": _ot_com_items_json(plan, tecnico),
+                    "texto": _ocom.resumen_se_enviara(visibles, titulo="Al crear esta OT se enviará")})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _ot_com_creacion_resultado(vid, interna=False, hija=False):
+    """Lo que dijeron los correos de la creación, DESPUÉS de crear la OT (informa: no cambia cuándo se envía nada). Cada técnico: salió si quedó su
+    aviso de «asignada» (mant_ot_tec_avisos), si no, por qué. Cada dirección del cliente: lo que dice el Historial (email_log). Queda como
+    constancia ('creacion') y en la bitácora. Devuelve [{rol, nombre, correo, resultado, motivo}] para el asistente. Nunca lanza."""
+    try:
+        datos = _ot_com_datos(vid)
+        if not datos:
+            return []
+        fila = datos["fila"]
+        # Los técnicos y el cliente se leen de la OT recién creada (ya están guardados): el MISMO armado que el aviso previo.
+        aplica = bool(fila.get("cliente_id")) and not (interna or hija)
+        plan = _ot_com_plan_creacion(datos["cliente_nombre"], (_ot_com_cliente_correos(fila) if aplica else []), aplica,
+                                     datos["tecnicos"], datos["fichas"])
+        avisados = set()
+        try:
+            avisados = {_ocom.normalizar_correo(r.get("email")) for r in (mysql_fetchall(
+                "SELECT email FROM mant_ot_tec_avisos WHERE visita_id=%s AND evento='asignada'", (datos["vid"],)) or [])}
+        except Exception as e:
+            print(f"[ot-com] avisos de creación vid={vid}: {type(e).__name__}", flush=True)
+        enviados_cli = {}
+        try:
+            for r in (mysql_fetchall(
+                    "SELECT destinatario, estado FROM email_log WHERE ref_codigo=%s AND evento='visita_agendada' "
+                    "   AND created_at >= (NOW() - INTERVAL 15 MINUTE) ORDER BY id", (datos["numero"],)) or []):
+                enviados_cli[_ocom.normalizar_correo(r.get("destinatario"))] = r.get("estado")
+        except Exception as e:
+            print(f"[ot-com] Historial de creación vid={vid}: {type(e).__name__}", flush=True)
+        for it in plan:
+            if not it.get("intentar"):
+                it["resultado"] = _ocom.RES_NO_ENVIADO
+            elif it["estado"] != _ocom.EST_SALE:
+                it["resultado"] = _ocom.RES_FRENADO
+            elif it["grupo"] == "tecnico":
+                it["resultado"] = _ocom.RES_ENVIADO if it["correo"] in avisados else _ocom.RES_FALLO
+                if it["resultado"] == _ocom.RES_FALLO:
+                    it["motivo"] = "El correo no salió."
+            else:
+                est = enviados_cli.get(it["correo"])
+                it["resultado"] = {"enviado": _ocom.RES_ENVIADO, "bloqueado": _ocom.RES_FRENADO, "fallido": _ocom.RES_FALLO}.get(
+                    est, _ocom.RES_NO_ENVIADO)
+                if it["resultado"] == _ocom.RES_NO_ENVIADO:
+                    it["motivo"] = "No hay constancia del envío en el Historial."
+                elif it["resultado"] == _ocom.RES_FALLO:
+                    it["motivo"] = "El proveedor de correo no lo aceptó."
+        usuario = (current_username() or "sistema")[:190]
+        try:
+            mysql_execute(
+                "INSERT INTO mant_ot_comunicaciones (visita_id, tipo, cierre_clave, cliente_estado, detalle_json, creado_por) "
+                "VALUES (%s,%s,NULL,'',%s,%s)", (datos["vid"], _ocom.TIPO_CREACION, _ocom.detalle_json(plan), usuario))
+        except Exception as e:
+            print(f"[ot-com] constancia de creación vid={vid}: {type(e).__name__}", flush=True)
+        try:
+            _mant_log("visita", datos["vid"], "ot_creada_aviso", _ocom.bitacora_envio(plan, "OT creada · avisos por correo")[:2000])
+        except Exception:
+            pass
+        return [{k: i.get(k) for k in ("grupo", "rol", "rol_txt", "nombre", "correo", "resultado", "motivo")} for i in plan]
+    except Exception as e:
+        print(f"[ot-com] resultado de la creación vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return []
 
 
 # ── PROPUESTA DE PLAN DE MANTENCIÓN POR EMAIL (2026-06-11) ────────────
@@ -170885,6 +171631,15 @@ try:
         _ensure_comm_template_ot_tecnicos()
 except Exception as _ensure_ottec_err:
     print(f"[ILUS][WARN] correos a técnicos (tablas/llave/plantillas): {_ensure_ottec_err}", flush=True)
+
+# Comunicación de la OT (Daniel 2026-10-21, REGLA #37) — SIEMPRE, incluso skip-migrations: la tabla de constancia (CREATE TABLE IF NOT EXISTS,
+# barata: REGLA #18) y las cuatro plantillas editables (solo si no existen). Ninguna llave nueva: usa 'mantenciones' y 'ot_tecnicos'.
+try:
+    with app.app_context():
+        _ensure_ot_comunicacion_tablas()
+        _ensure_comm_template_ot_comunicacion()
+except Exception as _ensure_otcom_err:
+    print(f"[ILUS][WARN] comunicación de la OT (tabla/plantillas): {_ensure_otcom_err}", flush=True)
 
 # ZZ Envío saldo persistente (2026-07-22, Daniel) — SIEMPRE, incluso
 # skip-migrations: tabla nueva, no depende de init_transporte_tables.

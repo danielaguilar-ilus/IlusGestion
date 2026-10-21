@@ -640,6 +640,17 @@ const TPL_ESTADOS_MANTENCIONES = [
     color:'#6b7280', desc:'Al técnico anterior, cuando la OT pasa a otra persona o se reorganiza el equipo: un aviso amable de ajuste de agenda, sin reproche' },
   { key:'agenda_tecnico_manana', label:'Agenda del técnico (17:00)', icon:'bi-alarm',      grupo:'ot_tecnico',
     color:'#16a34a', desc:'Recordatorio automático entre las 17:00 y las 21:00 del día hábil anterior, con las OT del técnico (el viernes avisa el lunes, y también un sábado o feriado que tenga OT; el correo nunca sale en sábado, domingo ni feriado)' },
+  // 📨 2026-10-21 (Daniel: «cuando se termine la OT se envíe automáticamente por correo… y habilita, como las cotizaciones, un envío por
+  // mail directo de las órdenes de trabajo»). La OT terminada (al aprobar el cierre) y el envío manual: ninguno lleva montos ni proveedores.
+  // El del cliente nace APAGADO (OT_TERMINADA_CLIENTE_ACTIVA): solo Daniel lo enciende. Variables: ver TPL_VARS.ot_terminada.
+  { key:'ot_terminada',          label:'OT terminada (al cliente)', icon:'bi-envelope-check', grupo:'ot_terminada',
+    color:'#16a34a', desc:'Al cliente, cuando se aprueba el cierre de la OT: el enlace al documento firmado, sin montos (hoy apagado por configuración: OT_TERMINADA_CLIENTE_ACTIVA)' },
+  { key:'ot_terminada_interno',  label:'OT terminada (al equipo)',  icon:'bi-people',         grupo:'ot_terminada',
+    color:'#0ea5e9', desc:'A quien creó la OT, al ejecutivo del cliente y al responsable, con lo que se le envió al cliente y al técnico' },
+  { key:'ot_terminada_tecnico',  label:'OT terminada (al técnico)', icon:'bi-person-check',   grupo:'ot_terminada',
+    color:'#f59e0b', desc:'Al técnico que la hizo, cuando se aprueba el cierre: su copia, sin montos ni proveedores' },
+  { key:'ot_envio_manual',       label:'Enviar OT por correo (manual)', icon:'bi-send',       grupo:'ot_terminada',
+    color:'#dc2626', desc:'El botón «Enviar OT por correo» de la ficha de una OT cerrada: el mismo texto para todos los destinatarios, con el mensaje opcional de quien envía' },
 ];
 
 // 2026-10-04 (Daniel: «crear las plantillas separadas del resto, llámala gestión de prospectos de mantención,
@@ -822,6 +833,27 @@ const TPL_VARS = {
     { v:'{{n_ot_txt}}',          label:'«3 órdenes de trabajo» (solo «Agenda»)' },
     { v:'{{agenda_html}}',       label:'Una fila por OT, ordenada por hora; con un encabezado por día si abarca varios (solo «Agenda»)' },
     { v:'{{link_agenda}}',       label:'Link a la lista de OT (solo «Agenda»)' },
+  ],
+  // 📨 2026-10-21: variables REALES de la OT terminada y de «Enviar OT por correo» (ot_comunicacion.py → variables_ot). Ninguna lleva
+  // montos, costos ni proveedores (REGLAS #19 y #26). Los *_html ya vienen armados: se pegan tal cual.
+  ot_terminada: [
+    { v:'{{saludo}}',              label:'«Hola Nombre,» (o «Hola,» si no se sabe el nombre)' },
+    { v:'{{nombre_destinatario}}', label:'Nombre de quien recibe el correo' },
+    { v:'{{ot}}',                  label:'N° Orden de trabajo' },
+    { v:'{{cliente}}',             label:'Cliente (o «Trabajo interno»)' },
+    { v:'{{tipo_mantencion}}',     label:'Tipo de orden de trabajo' },
+    { v:'{{fecha_realizada}}',     label:'Fecha en que se hizo el trabajo' },
+    { v:'{{tecnicos}}',            label:'Los técnicos (personas) de la OT' },
+    { v:'{{maquina}}',             label:'Equipos de la OT' },
+    { v:'{{direccion}}',           label:'Dirección del trabajo' },
+    { v:'{{link_ot_firmada}}',     label:'Enlace al documento firmado (sin montos; vence a los 30 días)' },
+    { v:'{{link_ot}}',             label:'Enlace a la ficha de la OT (solo para quien tiene cuenta)' },
+    { v:'{{dias_vigencia}}',       label:'Días que dura el enlace al documento' },
+    { v:'{{aprobado_por}}',        label:'Quién aprobó el cierre (solo «al equipo»)' },
+    { v:'{{cerrada_en}}',          label:'Cuándo se aprobó el cierre, hora Chile (solo «al equipo»)' },
+    { v:'{{resumen_envio_html}}',  label:'Bloque «Qué se envió» y a quién (solo «al equipo»)' },
+    { v:'{{mensaje_html}}',        label:'El mensaje que escribió quien envía (solo «Enviar OT por correo»)' },
+    { v:'{{enviado_por}}',         label:'Quién envió el correo (solo «Enviar OT por correo»)' },
   ],
   // Variables REALES que arma ot2_api_anexo_enviar (_variables_anexo). Si
   // esta lista y esa se separan, Daniel inserta un campo que nunca se
@@ -1502,6 +1534,7 @@ const GRUPO_LABELS = {
   mantencion: { label:'Servicio Técnico',     icon:'bi-wrench-adjustable' },
   anexo:      { label:'Anexo de servicios',   icon:'bi-file-earmark-check' },
   ot_tecnico: { label:'Avisos al técnico (OT)', icon:'bi-person-badge' },
+  ot_terminada: { label:'OT terminada y envío de la OT', icon:'bi-envelope-check' },
   prospecto:  { label:'Oferta de mantención', icon:'bi-megaphone-fill' },
   interna:    { label:'Comunicación interna', icon:'bi-people' },
   general:    { label:'General',              icon:'bi-megaphone' },

@@ -1,0 +1,30 @@
+{#- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+    📨 ILUS Fitness · OT — COMUNICACIÓN DE LA ORDEN DE TRABAJO (Daniel 2026-10-21, REGLA #37).
+    «Necesito que esto sea controlable, que avises cuándo lo tienes que enviar y además habilita, así como las cotizaciones, un envío por mail
+    directo de las órdenes de trabajo… y que avise a quién se le está enviando.»
+    Esta pieza pone en la ficha: (1) el recordatorio ámbar de una OT terminada que todavía no se le envió al cliente, con el botón «Enviar OT por
+    correo»; (2) los avisos por correo de la creación (15 minutos, se pueden cerrar); (3) el script que dibuja el modal «Enviar OT por correo» y
+    el aviso previo «Al aprobar el cierre se enviará esta OT a…» dentro de los modales de firma y de cierre (static/ot_envio.js y .css).
+    Va al NIVEL RAÍZ del bloque de contenido (nunca dentro de una pestaña o del hero: lección del 20-oct). El modal lo crea el JS en <body>.
+    Contexto `com_envio` (lo arma _ot_com_contexto_ficha): puede_enviar, listo, razon, franja {estado, titulo, detalle}, creacion {id, quien,
+    cuando, lineas}. A un técnico no le llega nada de esto (solo ve el aviso previo al firmar). Sin plata, sin proveedores (REGLAS #19 y #26).
+    ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════ -#}
+{% set _ce = com_envio or {} %}
+{% if _ce.franja and _ce.puede_enviar %}
+<div class="oe-franja" id="oeFranja" role="region" aria-label="La OT terminada todavía no se le envió al cliente">
+  <div class="oe-franja-txt"><i class="bi bi-envelope-exclamation-fill" aria-hidden="true"></i>
+    <span>{{ _ce.franja.titulo }}
+      <small>{{ _ce.franja.detalle }} Cuando quieras, envíasela tú: eliges a quién y queda registrado.</small></span></div>
+  <button type="button" class="oe-btn" data-oe-abrir=""><i class="bi bi-envelope-paper-fill" aria-hidden="true"></i> Enviar OT por correo</button>
+</div>
+{% endif %}
+{% if _ce.creacion %}
+<div class="oe-creacion" id="oeCreacion" data-oe-id="{{ _ce.creacion.id }}" role="status">
+  <div class="oe-creacion-cab"><b><i class="bi bi-envelope-check-fill" aria-hidden="true"></i> Avisos por correo de la creación de esta OT</b>
+    <button type="button" class="oe-x" data-oe-cerrar="" aria-label="Cerrar este aviso"><i class="bi bi-x-lg" aria-hidden="true"></i></button></div>
+  <ul>{% for l in _ce.creacion.lineas %}<li>{{ l }}</li>{% endfor %}</ul>
+  <small>Creada por {{ _ce.creacion.quien }}{% if _ce.creacion.cuando %} el {{ _ce.creacion.cuando }}{% endif %}. Lo que no salió se puede enviar a mano cuando la OT esté cerrada.</small>
+</div>
+{% endif %}
+<script>window.OTD_OE_CFG = { vid: {{ v.id }}, gestion: {{ 'false' if es_tecnico else 'true' }}, puede: {{ 'true' if _ce.puede_enviar else 'false' }} };</script>
+<script defer src="{{ url_for('static', filename='ot_envio.js') }}"></script>

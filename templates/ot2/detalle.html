@@ -84,6 +84,8 @@
 <script defer src="{{ url_for('static', filename='ot_acciones.js') }}"></script>
 {#- 🧭 2026-10-20: «¿Qué pasó?» de la OT (franja + modal): static/ot_que_paso.css y .js (el .js lo carga templates/ot2/_que_paso.html). -#}
 <link rel="stylesheet" href="{{ url_for('static', filename='ot_que_paso.css') }}">
+{#- 📨 2026-10-21 (REGLA #37): comunicación de la OT («Enviar OT por correo», aviso previo al cerrar, recordatorio): static/ot_envio.css y .js (el .js lo carga templates/ot2/_enviar_ot.html). -#}
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_envio.css') }}">
 <style>
 .otd{
   --pend:#3b82f6; --ejec:#dc2626; --comp:#16a34a; --cerr:#4b5563;
@@ -3608,6 +3610,12 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       <button type="button" class="otd-qabtn wa" id="otdBtnWa" onclick="otdCompartirWa()">
         <i class="bi bi-whatsapp"></i> Enviar al cliente</button>
       {% endif %}
+      {#- 📨 2026-10-21 (REGLA #37): el envío por correo de la OT terminada, como en las cotizaciones. Solo gestión y OT cerrada (el documento
+          firmado existe desde que se aprueba el cierre). El modal lo dibuja static/ot_envio.js; elige a quién y queda registrado. -#}
+      {% if com_envio and com_envio.puede_enviar %}
+      <button type="button" class="otd-qabtn mail" id="otdBtnEnviarOT" data-oe-abrir="" title="Enviar la orden de trabajo terminada por correo: eliges a quién">
+        <i class="bi bi-envelope-paper-fill"></i> Enviar OT por correo</button>
+      {% endif %}
       {# 🔀 2026-09-18 (Daniel, viendo la barra duplicada: "revisa los
          botones repetidos"). Este "Ver PDF" y el de la barra inferior
          fija (.otd-bottom, más abajo) llamaban a la misma función para
@@ -3788,6 +3796,10 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   {#- 🧭 2026-10-20 (Daniel, caso Aurum OT-2026-00171): «¿Qué pasó?» como en Retiros. Falta de stock → se cierra lo hecho y lo que falta queda
       en una OT hija pendiente, sin fecha, con el mismo documento. Lo usa el técnico asignado y la gestión. -#}
   {% include 'ot2/_que_paso.html' %}
+  {#- 📨 2026-10-21 (REGLA #37, Daniel: «que avises cuándo lo tienes que enviar… y habilita un envío por mail directo de las órdenes de trabajo»):
+      el recordatorio ámbar de una OT terminada que todavía no se le envió al cliente, los avisos de la creación y el script del modal
+      «Enviar OT por correo» y del aviso previo al cerrar. Nivel raíz del bloque: nunca dentro de una pestaña ni del hero. -#}
+  {% include 'ot2/_enviar_ot.html' %}
   <div class="otd-tabs" id="otdTabs">
     <button type="button" class="otd-tab on" data-tab="info">
       <i class="bi bi-clipboard2-data"></i> Información</button>
@@ -7951,6 +7963,9 @@ window.otdFinModalCerrar = function(){
           <i class="bi bi-info-circle me-1"></i>
           Al firmar como técnico, la OT pasa a <strong>"Firmada por técnico"</strong>. El ejecutivo SSTT podrá revisar/corregir antes de la firma del cliente.
         </div>
+        {#- 📨 2026-10-21 (REGLA #37, Daniel: «que se alerte que se enviará la información por correo»): a quién se le avisará cuando se apruebe el
+            cierre, con su rol y lo que esté apagado. Lo llena static/ot_envio.js al abrir este modal (GET /ot/api/<id>/correo/destinatarios). -#}
+        <div class="oe-aviso mb-3" id="oeAvisoFirma" data-oe-aviso="firma" hidden></div>
 
         {# 🔴 FIX 2026-09-09 (Daniel, en vivo desde el celular: "la vista
            responsiva se ve pésima... en la firma"). Acá había DOS </div>
@@ -8130,8 +8145,8 @@ window.otdFinModalCerrar = function(){
         {% if _otf_puede_cerrar_ahora %}
         <div class="alert py-2 small mb-3" style="background:#dcfce7;color:#15803d;border:1px solid #16a34a">
           <i class="bi bi-info-circle me-1"></i>
-          Al firmar, la OT pasa a <strong>"Cerrada"</strong>. Se enviará la confirmación al cliente
-          y el PDF quedará disponible para descarga.
+          Al firmar, la OT pasa a <strong>"Cerrada"</strong> y el PDF quedará disponible para descarga.
+          Abajo ves a quién se le avisará por correo.
         </div>
         {% else %}
         <div class="alert py-2 small mb-3" style="background:#eff6ff;color:#1e3a8a;border:1px solid #bfdbfe">
@@ -8141,6 +8156,10 @@ window.otdFinModalCerrar = function(){
           garantía, y el costo del proveedor: queda todo guardado para cuando llegue esa firma.
         </div>
         {% endif %}
+        {#- 📨 2026-10-21 (REGLA #37): antes decía «Se enviará la confirmación al cliente» y no era cierto (la función que lo enviaba se borró en el
+            commit f3cb145e). Ahora dice la verdad, con nombre y rol: a quién se le avisará al aprobar el cierre y qué está apagado (el correo al
+            cliente nace apagado: OT_TERMINADA_CLIENTE_ACTIVA). Lo llena static/ot_envio.js al abrir este modal. -#}
+        <div class="oe-aviso mb-3" id="oeAvisoCierre" data-oe-aviso="cierre" hidden></div>
 
         {# 🧭 2026-10-07: el MISMO motor de la ficha, acá adentro: es la «segunda opción de modificar» del autorizador
            (agregar la factura que da de baja la nota de venta, pasar a $0 pidiendo autorización, corregir lo que cobró

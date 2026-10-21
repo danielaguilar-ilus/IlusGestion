@@ -269,6 +269,16 @@
 .o2m-foot{padding:14px 24px;border-top:1px solid #eaecf0;display:flex;
   align-items:center;gap:10px;background:#fafbfc}
 .o2m-foot .sp{margin-left:auto}
+{# 📨 2026-10-21 (REGLA #37, Daniel: «que avise a quién se le está enviando»): "Al crear esta OT se enviará: …" sobre el pie, con lo que esté apagado. #}
+.o2m-aviso-envio{margin:0 20px 10px;border:1px solid #bbf7d0;border-left:5px solid #16a34a;background:#f0fdf4;border-radius:10px;padding:8px 12px;
+  font-size:.82rem;color:#14532d;line-height:1.4}
+.o2m-aviso-envio[hidden]{display:none}
+.o2m-aviso-envio.alerta{border-color:#fde68a;border-left-color:#f59e0b;background:#fffbeb;color:#78350f}
+.o2m-aviso-envio ul{list-style:none;margin:4px 0 0;padding:0;display:grid;gap:3px}
+.o2m-aviso-envio li{overflow-wrap:anywhere}
+.o2m-aviso-envio li.no{color:#92400e}
+.o2m-aviso-envio small{color:#4b5563}
+@media (max-width:575.98px){.o2m-aviso-envio{margin:0 14px 8px}}
 .o2m h6.t{font-weight:800;margin-bottom:4px}
 .o2m p.d{color:#6b7280;font-size:1rem;margin-bottom:16px}
 
@@ -1338,6 +1348,7 @@
       </div>
 
       <div id="o2mErr" style="padding:0 20px"></div>
+      <div id="o2mAvisoEnvio" class="o2m-aviso-envio" role="status" hidden></div>
       <div class="o2m-foot">
         <button type="button" class="btn btn-outline-secondary btn-sm px-3"
                 style="min-height:44px" id="o2mAtras">
@@ -2105,9 +2116,51 @@ window.OT2C = (function(){
     _o2mDiVigilar();
     _o2mSigRotular();
     _o2mDiPieRotular();
+    try { _o2mAvisoEnvioRefrescar(); } catch(_) { /* informativo: nunca rompe el formulario */ }
   }
   // Alias corto reusado por handlers inline generados en varias funciones.
   function refrescarAnclas(){ pintarAnclas(); }
+
+  /* 📨 2026-10-21 (REGLA #37, Daniel: «que avise a quién se le está enviando… se vaya educando el personal de cuándo genera comunicación tanto
+     con los técnicos como con los clientes»). ANTES de confirmar: «Al crear esta OT se enviará: Técnico X (correo con calendario) · Cliente Y
+     (visita agendada)», y lo que esté apagado. Solo INFORMA lo que ya existe (no cambia cuándo se envía nada): el servidor arma el aviso con las
+     mismas llaves e interruptores que usan los correos de creación (POST /ot/api/correo/creacion). Se vuelve a pedir solo si cambia algo que
+     importa (cliente, técnicos o correo de la contraparte), con una pequeña espera para no martillar al servidor mientras se escribe. */
+  var _o2mAvisoClave = '', _o2mAvisoTimer = null, _o2mAvisoSeq = 0;
+  function _o2mAvisoEnvioPintar(box, d){
+    var items = (d && d.ok) ? (d.items || []) : [];
+    if (!items.length){ box.hidden = true; box.innerHTML = ''; return; }
+    var algunoSale = items.some(function(i){ return i.saldra; });
+    var hay = items.some(function(i){ return !i.saldra; });
+    box.className = 'o2m-aviso-envio' + (hay ? ' alerta' : '');
+    box.innerHTML = '<b><i class="bi bi-envelope-paper-fill me-1"></i>' +
+      (algunoSale ? 'Al crear esta OT se enviará:' : 'Al crear esta OT no se enviará ningún correo.') + '</b><ul>' +
+      items.map(function(i){
+        var det = i.saldra ? (i.nota || '') : (i.motivo || '');
+        return '<li class="' + (i.saldra ? 'ok' : 'no') + '"><b>' + esc(i.nombre || i.correo || '') + '</b> (' + esc(i.rol_txt || '') + ')' +
+          (i.correo ? ' <small>' + esc(i.correo) + '</small>' : '') + (det ? ' <small>· ' + esc(det) + '</small>' : '') + '</li>';
+      }).join('') + '</ul>';
+    box.hidden = false;
+  }
+  function _o2mAvisoEnvioRefrescar(){
+    var box = document.getElementById('o2mAvisoEnvio');
+    if (!box) return;
+    if (fase !== 'form' || !(S.tecnicos && S.tecnicos.length)){ box.hidden = true; box.innerHTML = ''; _o2mAvisoClave = ''; return; }
+    var interno = esInterno();
+    var cp = (!interno && S.contraparte) ? S.contraparte : {};
+    var cuerpo = JSON.stringify({cliente_id: (!interno && S.cliente) ? S.cliente.id : null, tecnico_user_ids: S.tecnicos.slice(),
+                                 contacto_email: cp.email || '', contacto_nombre: cp.nombre || ''});
+    if (cuerpo === _o2mAvisoClave) return;
+    _o2mAvisoClave = cuerpo;
+    clearTimeout(_o2mAvisoTimer);
+    var seq = ++_o2mAvisoSeq;
+    _o2mAvisoTimer = setTimeout(function(){
+      fetch('/ot/api/correo/creacion', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: cuerpo})
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(d){ if (seq === _o2mAvisoSeq) _o2mAvisoEnvioPintar(box, d); })
+        .catch(function(){ if (seq === _o2mAvisoSeq){ box.hidden = true; box.innerHTML = ''; } });
+    }, 350);
+  }
 
   /* 2026-08-30 (Daniel, confirmado dos veces: "que se complete cada paso
      en orden estricto"): índice (0-based) del primer paso de pasos() que
@@ -11115,7 +11168,27 @@ window.OT2C = (function(){
         // -- ver mant_visita_fotos_subir_inicial (app.py). Si algo falla
         // acá, la OT igual quedó creada: solo se avisa, no se bloquea.
         var _desFallaMostrada = false;
+        // 📨 2026-10-21 (REGLA #37, Daniel: «que avise a quién se le está enviando»): lo que dijeron los correos de la creación. Lo que salió se dice
+        // en un aviso; lo que NO salió (llave o interruptor apagado, sin correo, el proveedor de correo lo rechazó) se dice ANTES de entrar a la OT,
+        // con quién y por qué. La ficha de la OT lo repite durante 15 minutos. Solo informa: no cambia cuándo se envía nada.
+        var _comSale = [], _comFalla = [], _comMostrada = false;
+        (res.j.comunicacion || []).forEach(function(x){ (x.resultado === 'enviado' ? _comSale : _comFalla).push(x); });
+        if (_comSale.length && window.ilusToast){
+          ilusToast('Se avisó por correo a: ' + _comSale.map(function(x){ return (x.nombre || x.correo) + ' (' + x.rol_txt + ')'; }).join(' · '),
+            {type:'success', duration:9000});
+        }
         function _o2mIrADetalle(){
+          if (_comFalla.length && !_comMostrada && window.ilusAlert){
+            _comMostrada = true;
+            ilusAlert({title: 'La OT quedó creada · avisos por correo', type: 'warning',
+              message: 'Estos avisos NO salieron:',
+              sub: '<ul style="margin:6px 0 0;padding-left:18px">' + _comFalla.map(function(x){
+                return '<li><b>' + esc(x.nombre || x.correo || '') + '</b> (' + esc(x.rol_txt || '') + ')' + (x.motivo ? ': ' + esc(x.motivo) : '') + '</li>';
+              }).join('') + '</ul><div style="margin-top:8px">Se pueden enviar a mano desde la ficha de la OT cuando esté cerrada. No se perdió nada.</div>',
+              subHtml: true})
+              .then(_o2mIrADetalle, _o2mIrADetalle);
+            return;
+          }
           if (_desFalla && !_desFallaMostrada && window.ilusAlert){
             _desFallaMostrada = true;
             ilusAlert({title: 'La instalación quedó creada', type: 'warning',

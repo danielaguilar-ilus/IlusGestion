@@ -117,6 +117,10 @@ DEMO_EXTRA = {
     "botones_html": "<p>[Sí, quiero la cotización] [Llámenme] [No por ahora]</p>",
     "boton_propuesta_html": "<p>[Ver y aceptar mi cotización]</p>",
     "mensaje_extra": "", "link_agenda": "https://ilusfitness.com/ot/",
+    # OT terminada y «Enviar OT por correo» (REGLA #37): variables de las cuatro plantillas nuevas.
+    "saludo": "Hola María,", "nombre_destinatario": "María", "nombre_contacto": "María", "fecha_realizada": "21/10/2026",
+    "link_ot_firmada": "https://ilusfitness.com/ot-firmada/demo", "mensaje_html": "", "aprobado_por": "Aarón Rojas",
+    "cerrada_en": "21/10/2026 11:30", "resumen_envio_html": "", "dias_vigencia": "30", "enviado_por": "Aarón Rojas",
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -193,6 +197,16 @@ def _c(clave, nombre, modulo_ui, llave, destinatario, disparo, *, modo="manual",
         "avisa_a": avisa_a, "adjunta": adjunta, "nota": nota,
     }
 
+
+# Muestra del bloque «Qué se envió» del aviso al equipo (OT terminada): solo para la vista previa, con datos de mentira.
+_DEMO_RESUMEN_ENVIO = (
+    '<table cellpadding="0" cellspacing="0" width="100%" style="background:#f5f5f7;border-left:4px solid #6b7280;border-radius:4px;'
+    'padding:12px 18px;margin:18px 0"><tr><td style="font-size:11px;font-weight:800;letter-spacing:.1em;color:#6b7280;'
+    'padding-bottom:4px">QUÉ SE ENVIÓ</td></tr>'
+    '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Cliente:</strong>&nbsp; '
+    '<span style="color:#166534;font-weight:600">se le envió el documento firmado a contacto@gimnasiodemo.cl</span></td></tr>'
+    '<tr><td style="padding:5px 0;font-size:13px;color:#555"><strong style="color:#222">Técnico:</strong>&nbsp; '
+    '<span style="color:#166534;font-weight:600">recibió su copia (sin montos): Pedro Pérez</span></td></tr></table>')
 
 _TK_TEST = _cond("TK_TEST_EMAIL_TO", "vacio", "info",
                  "Modo prueba de Tickets apagado: los correos salen a sus destinatarios reales.",
@@ -275,6 +289,41 @@ REGISTRO = (
        modo="automatico", avisa_a="A los correos de bodega de Retiros → Configuración (nunca al cliente ni al técnico)",
        nota="Es un aviso interno: no sale a clientes ni a técnicos. Usa los mismos correos de bodega que «Avisar a bodega» de Retiros "
             "(Retiros → Configuración). Sale por la llave de Comunicación interna."),
+    # 2026-10-21 (Daniel, comunicación de la OT, REGLA #37): «OT terminada» automática al aprobar el cierre y «Enviar OT por correo» manual.
+    # El del CLIENTE nace APAGADO (variable de entorno, REGLA #22) y solo Daniel lo enciende; los demás salen por la puerta de siempre.
+    _c("ot_terminada_cliente", "OT terminada: aviso al cliente (documento firmado, sin montos)", "ot", "mantenciones", "cliente",
+       "Al APROBAR el cierre de una OT de cliente: el documento firmado (sin montos) al contacto de la OT y a los correos de la ficha "
+       "del cliente. No sale en un trabajo interno ni en una desinstalación.",
+       modo="automatico", plantilla=("mantenciones", "ot_terminada"),
+       condiciones=(_cond("OT_TERMINADA_CLIENTE_ACTIVA", "verdadero_amplio", "todo",
+                          "El aviso automático al cliente está encendido (OT_TERMINADA_CLIENTE_ACTIVA).",
+                          "Apagado por configuración: OT_TERMINADA_CLIENTE_ACTIVA no está encendida. Encenderla requiere la "
+                          "autorización explícita de Daniel (REGLA #22). Mientras tanto la gestión lo envía a mano con «Enviar OT por correo»."),),
+       avisa_a="Al contacto de la OT y a los correos de la ficha del cliente", adjunta="Enlace al documento firmado (sin montos)",
+       nota="Nace APAGADO. Al encenderlo no se manda nada retroactivo: solo las OT que se aprueben desde ese momento. Una OT terminada "
+            "cuyo aviso al cliente no salió muestra en su ficha «todavía no se le envió al cliente» con el botón «Enviar OT por correo»."),
+    _c("ot_terminada_responsable", "OT terminada: aviso a quien la creó, al ejecutivo o al responsable", "ot", "mantenciones",
+       "responsable_ot",
+       "Al APROBAR el cierre de una OT: quien la creó, el ejecutivo del cliente o el responsable de la OT (los decide "
+       "`_ot_gestion_destinatarios`), con lo que se le envió al cliente y al técnico.",
+       modo="automatico", plantilla=("mantenciones", "ot_terminada_interno"), demo={"resumen_envio_html": _DEMO_RESUMEN_ENVIO},
+       avisa_a="A quien creó la OT, al ejecutivo del cliente y al responsable (nunca al cliente ni al técnico)"),
+    _c("ot_tec_terminada", "OT terminada: copia para el técnico que la hizo (sin montos)", "ot", "ot_tecnicos", "tecnico",
+       "Al APROBAR el cierre de una OT: el técnico (o la empresa externa) que la hizo recibe su copia, sin montos ni proveedores.",
+       modo="automatico", plantilla=("mantenciones", "ot_terminada_tecnico"), plantilla_apagada="no_sale",
+       avisa_a="A cada técnico de la OT"),
+    _c("ot_envio_manual", "Enviar OT por correo (envío manual a cliente, ejecutivo u otros)", "ot", "mantenciones", "cliente",
+       "Botón «Enviar OT por correo» de la ficha de una OT cerrada (solo gestión): el documento firmado, sin montos, a los correos que se "
+       "elijan. Prellenado con el cliente, el ejecutivo y los técnicos; cada destinatario ve el mismo texto.",
+       plantilla=("mantenciones", "ot_envio_manual"), adjunta="Enlace al documento firmado (sin montos)",
+       avisa_a="A los correos que se elijan en el modal",
+       nota="Dice la verdad por destinatario: «Se envió a…» o «No salió porque…». Un técnico nunca lo recibe por esta llave: sale por la "
+            "de «Correos a técnicos (OT)» (ot_tec_envio_manual)."),
+    _c("ot_tec_envio_manual", "Enviar OT por correo: copia al técnico (sin montos)", "ot", "ot_tecnicos", "tecnico",
+       "Cuando el envío manual de la OT incluye a un técnico (de esa OT o de cualquiera): sale por la llave de «Correos a técnicos (OT)» y "
+       "el mensaje que escribió quien envía pierde las líneas que mencionen plata, proveedores u OC.",
+       plantilla=("mantenciones", "ot_envio_manual"), avisa_a="A los técnicos que se incluyan en el envío",
+       nota="Usa el texto de «Enviar OT por correo» (la misma plantilla)."),
     _c("mant_invitacion_tecnico_externo", "Invitación a un técnico externo", "ot", "mantenciones", "proveedor_courier",
        "Botón «Invitar» de la ficha del técnico externo.", avisa_a="Al contacto del proveedor"),
 
