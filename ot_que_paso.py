@@ -151,9 +151,12 @@ def candidatos_equipos(filas):
       · total / pendientes: tareas del equipo y cuántas siguen sin hacer.
       · estado_pe: la acción vigente del equipo ('falta_stock', 'no_esta', 'no_revisado' o None).
       · en_pendiente: el N° de la OT pendiente que ya lo tiene (o None).
-    Devuelve [{maquina_id, nombre, sku, serie, total, pendientes, estado_pe, preseleccionado, elegible, motivo_no}]:
+    Devuelve [{maquina_id, nombre, sku, serie, total, pendientes, pasan, todas_marcadas_hechas, estado_pe, preseleccionado, elegible, motivo_no}]:
       · un equipo dado de baja, fuera de servicio o con falla detectada NO se ofrece (su salida es otra);
-      · uno sin tareas pendientes ya está completo: no hay nada que dejar pendiente;
+      · uno sin tareas pendientes ya está completo: no hay nada que dejar pendiente… SALVO que la persona lo marcó «falta stock»:
+        ese equipo NO se hizo, aunque sus tareas figuren como hechas (caso real 21-oct, Aurum OT-2026-00171: la técnica marcó «falta stock»
+        a dos accesorios y DESPUÉS dejó sus 6 tareas «hechas» y vacías para poder firmar, así que no quedaba ninguna «sin hacer» y la
+        función no servía justo para el caso que la pidió). Ahí pasan TODAS sus tareas (`pasan`, `todas_marcadas_hechas`);
       · uno que ya está en una OT pendiente se muestra, pero no se puede elegir otra vez;
       · el sistema SUGIERE (preselecciona los que ya están «falta stock») y la persona DECIDE (REGLA #32)."""
     out = []
@@ -169,15 +172,20 @@ def candidatos_equipos(filas):
         total = int(f.get("total") or 0)
         pend = int(f.get("pendientes") or 0)
         ya_en = f.get("en_pendiente")
+        # «falta stock» declarado por una persona: el equipo no se hizo aunque sus tareas estén «hechas» (ver el docstring)
+        marcado = f.get("estado_pe") == "falta_stock"
+        todas_hechas = bool(marcado and pend <= 0 and total > 0)
+        pasan = pend if pend > 0 else (total if todas_hechas else 0)
         elegible, motivo_no = True, ""
         if ya_en:
             elegible, motivo_no = False, "Ya está en la OT pendiente %s." % ya_en
-        elif pend <= 0:
+        elif pasan <= 0:
             elegible, motivo_no = False, "Ya terminó todas sus tareas: no hay nada pendiente."
         out.append({
             "maquina_id": mid, "nombre": str(f.get("nombre") or "").strip() or "Equipo #%s" % mid,
             "sku": str(f.get("sku") or "").strip(), "serie": str(f.get("serie") or "").strip(),
-            "total": total, "pendientes": pend, "estado_pe": f.get("estado_pe") or None,
+            "total": total, "pendientes": pend, "pasan": pasan, "todas_marcadas_hechas": todas_hechas,
+            "estado_pe": f.get("estado_pe") or None,
             "preseleccionado": bool(elegible and f.get("estado_pe") == "falta_stock"),
             "elegible": elegible, "motivo_no": motivo_no,
         })

@@ -114,6 +114,9 @@
       if (e.sku) sub.push('SKU ' + e.sku);
       if (e.serie) sub.push('S/N ' + e.serie);
       var tar = e.pendientes + (e.pendientes === 1 ? ' tarea sin hacer' : ' tareas sin hacer') + (e.total ? ' de ' + e.total : '');
+      /* 21-oct (caso Aurum OT-2026-00171): un equipo marcado «falta stock» NO se hizo aunque sus tareas figuren como hechas (la técnica las
+         deja así para poder firmar): pasan todas a la OT pendiente. Se dice, para que la persona decida con eso a la vista (REGLA #32). */
+      if (e.todas_marcadas_hechas) tar = 'Marcado «falta stock»: pasan sus ' + e.total + (e.total === 1 ? ' tarea' : ' tareas') + ' a la OT pendiente, aunque figuren como hechas';
       h += '<button type="button" class="qp-eq' + (on ? ' on' : '') + (e.elegible ? '' : ' off') + '" data-qp-eq="' + e.maquina_id + '" aria-pressed="' + on + '"' + (e.elegible ? '' : ' disabled') + '>' +
         '<span class="qp-chk"><i class="bi ' + (on ? 'bi-check-square-fill' : 'bi-square') + '"></i></span>' +
         '<span class="qp-eq-tx"><b>' + esc(e.nombre) + '</b>' +
@@ -192,7 +195,7 @@
       /* Paso 4 · qué quedó pendiente */
       var n = 4;
       if (creaPendiente()) {
-        h += paso(n, elegidos().length > 0, '¿Qué quedó pendiente?', 'Elige los equipos que no se pudieron terminar. Solo pasan sus tareas sin hacer; lo hecho se queda en esta orden.', htmlEquipos());
+        h += paso(n, elegidos().length > 0, '¿Qué quedó pendiente?', 'Elige los equipos que no se pudieron terminar. Pasan sus tareas sin hacer (si un equipo está marcado «falta stock», pasan todas sus tareas); lo hecho se queda en esta orden.', htmlEquipos());
         n++;
       }
       /* Paso 5 · avisos */
