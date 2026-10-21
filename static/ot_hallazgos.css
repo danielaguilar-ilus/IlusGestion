@@ -1,0 +1,112 @@
+/* ══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+   ot_hallazgos.css — «Hallazgos de esta OT» (REGLA #38): la tarjeta de la ficha, el aviso «viene de» de la OT de seguimiento y la franja
+   del cierre. Mismo lenguaje que Retiros (REGLA #15): tarjetas, semáforo, nombres COMPLETOS (nunca cortados), botones de 44 px (REGLA #3),
+   nada de alert/confirm/prompt (REGLA #1). Paleta ILUS (REGLA #2): rojo #dc2626 · negro #0a0a0a · blanco; ámbar #f59e0b, verde #16a34a,
+   azul #3b82f6, gris #6b7280.
+   ══════════════════════════════════════════════════════════════════════════════════════════════════════════════ */
+.hz{background:#fff;border:1px solid #e5e7eb;border-left:6px solid #f59e0b;border-radius:14px;padding:14px 16px;margin:12px 0;scroll-margin-top:90px}
+.hz-cab{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.hz-ic{width:40px;height:40px;border-radius:12px;background:#fff8e1;color:#b45309;display:inline-flex;align-items:center;justify-content:center;font-size:1.3rem;flex:0 0 40px}
+.hz-cab-tx{flex:1 1 280px;min-width:0}
+.hz-cab-tx h3{margin:0;font-size:1.05rem;font-weight:900;color:#111827}
+.hz-cab-tx p{margin:2px 0 0;color:#6b7280;font-size:.86rem;line-height:1.4;overflow-wrap:anywhere}
+.hz-conteo{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.hz-n{display:inline-flex;align-items:center;gap:5px;border-radius:99px;padding:3px 11px;font-size:.78rem;font-weight:700;border:1px solid transparent;white-space:nowrap}
+.hz-n b{font-weight:900}
+.hz-n.ambar{background:#fff8e1;color:#92400e;border-color:#fde68a}
+.hz-n.azul{background:#dbeafe;color:#1e40af;border-color:#bfdbfe}
+.hz-n.verde{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.hz-n.gris{background:#f3f4f6;color:#4b5563;border-color:#e5e7eb}
+.hz-nota{display:flex;gap:8px;align-items:flex-start;margin-top:10px;padding:9px 12px;border-radius:10px;background:#f3f4f6;color:#374151;font-size:.84rem;line-height:1.4}
+.hz-nota i{margin-top:2px}
+
+/* Seleccionar todo (REGLA #14) */
+.hz-barra{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:12px 0 4px}
+.hz-cuenta{font-weight:700;color:#6b7280;font-size:.88rem}
+
+/* Botones: 44 px de alto, también con el dedo */
+.hz-btn{min-height:44px;border:2px solid #0a0a0a;background:#fff;color:#0a0a0a;border-radius:12px;padding:8px 16px;font-weight:800;font-size:.9rem;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;line-height:1.2;text-align:center}
+.hz-btn:hover{background:#f3f4f6}
+.hz-btn.pri{background:#0a0a0a;color:#fff}
+.hz-btn.pri:hover{background:#262626}
+.hz-btn.sec{border-color:#d1d5db;color:#374151}
+.hz-btn:disabled{opacity:.5;cursor:not-allowed}
+.hz-btn:focus-visible,.hz-foto:focus-visible,.hz-sel input:focus-visible{outline:3px solid #fca5a5;outline-offset:2px}
+
+/* La lista */
+.hz-lista{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:10px}
+.hz-item{display:flex;gap:10px;border:1px solid #e5e7eb;border-left:6px solid #9ca3af;border-radius:12px;padding:12px 14px;background:#fff;scroll-margin-top:90px}
+.hz-item.c-rojo{border-left-color:#dc2626}
+.hz-item.c-ambar{border-left-color:#f59e0b}
+.hz-item.c-azul{border-left-color:#3b82f6}
+.hz-item.c-negro{border-left-color:#0a0a0a}
+.hz-item.c-gris{border-left-color:#9ca3af}
+.hz-item.e-descartado{background:#f9fafb}
+.hz-item.e-resuelto{background:#f0fdf4}
+.hz-item.hz-resaltado{box-shadow:0 0 0 3px #fca5a5}
+.hz-sel{flex:0 0 28px;display:flex;align-items:flex-start;padding-top:2px;margin:0}
+.hz-sel input{width:24px;height:24px;accent-color:#dc2626;cursor:pointer}
+.hz-sel.vacio{visibility:hidden}      /* el que ya no se puede elegir conserva su lugar: el contenido de todas las tarjetas queda alineado */
+.hz-cuerpo{flex:1 1 auto;min-width:0}
+.hz-fila1{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.hz-chip{display:inline-flex;align-items:center;gap:5px;border-radius:99px;padding:2px 10px;font-size:.76rem;font-weight:800;border:1px solid transparent}
+.hz-chip.rojo{background:#fee2e2;color:#991b1b;border-color:#fecaca}
+.hz-chip.ambar{background:#fff8e1;color:#92400e;border-color:#fde68a}
+.hz-chip.azul{background:#dbeafe;color:#1e40af;border-color:#bfdbfe}
+.hz-chip.negro{background:#0a0a0a;color:#fff}
+.hz-chip.gris{background:#f3f4f6;color:#4b5563;border-color:#e5e7eb}
+.hz-est{margin-left:auto;font-size:.76rem;font-weight:800;border-radius:99px;padding:2px 10px;border:1px solid transparent}
+.hz-est.ambar{background:#fff8e1;color:#92400e;border-color:#fde68a}
+.hz-est.azul{background:#dbeafe;color:#1e40af;border-color:#bfdbfe}
+.hz-est.verde{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.hz-est.gris{background:#f3f4f6;color:#4b5563;border-color:#e5e7eb}
+/* El nombre del equipo o de la tarea va COMPLETO, aunque sea largo (REGLA #15). */
+.hz-tit{margin:8px 0 2px;font-size:1rem;font-weight:800;color:#111827;line-height:1.35;overflow-wrap:anywhere}
+.hz-det{margin:0 0 6px;color:#374151;font-size:.88rem;line-height:1.45;overflow-wrap:anywhere;white-space:pre-wrap}
+
+/* Fotos: la evidencia */
+.hz-fotos{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.hz-foto{width:72px;height:72px;padding:0;border:2px solid #e5e7eb;border-radius:10px;overflow:hidden;background:#f3f4f6;cursor:zoom-in}
+.hz-foto img{width:100%;height:100%;object-fit:cover;display:block}
+.hz-foto:hover{border-color:#dc2626}
+.hz-sinfoto{display:flex;gap:7px;align-items:flex-start;margin:8px 0;padding:7px 10px;border-radius:10px;background:#fff8e1;color:#92400e;border:1px solid #fde68a;font-size:.84rem;font-weight:700;line-height:1.35}
+.hz-sinfoto i{margin-top:2px}
+.hz-meta{color:#6b7280;font-size:.82rem;line-height:1.4}
+.hz-seg,.hz-desc,.hz-aviso{display:flex;gap:8px;align-items:flex-start;margin-top:8px;padding:7px 10px;border-radius:10px;font-size:.86rem;line-height:1.4;overflow-wrap:anywhere}
+.hz-seg{background:#dcfce7;color:#166534}
+.hz-seg a{color:#14532d;text-decoration:underline}
+.hz-seg small{font-weight:600}
+.hz-desc{background:#f3f4f6;color:#374151}
+.hz-aviso{background:#fff8e1;color:#92400e;border:1px solid #fde68a;font-weight:700}
+.hz-seg i,.hz-desc i,.hz-aviso i{margin-top:2px}
+.hz-acciones{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+
+/* Retirados por el técnico (evidencia: nada se borra) */
+.hz-retirados{margin-top:12px;border:1px dashed #d1d5db;border-radius:12px;padding:8px 12px;background:#fafafa}
+.hz-retirados summary{cursor:pointer;font-weight:800;color:#4b5563;min-height:32px;display:flex;align-items:center;gap:6px}
+.hz-retirados p{margin:6px 0;color:#6b7280;font-size:.84rem}
+.hz-retirados ul{margin:0;padding-left:0;list-style:none;display:grid;gap:6px;font-size:.86rem;color:#374151;overflow-wrap:anywhere}
+.hz-retirados small{color:#6b7280}
+
+/* «Esta orden es el seguimiento de OT-…» */
+.hz-origen{display:flex;gap:12px;align-items:flex-start;background:linear-gradient(180deg,#eff6ff,#fff 70%);border:1px solid #dbeafe;border-left:6px solid #3b82f6;border-radius:14px;padding:12px 16px;margin:12px 0}
+.hz-origen-ic{width:40px;height:40px;border-radius:12px;background:#dbeafe;color:#1e40af;display:inline-flex;align-items:center;justify-content:center;font-size:1.25rem;flex:0 0 40px}
+.hz-origen-tx{min-width:0;flex:1 1 auto;color:#111827}
+.hz-origen-tx a{color:#1e3a8a;text-decoration:underline}
+.hz-origen-tx small{display:block;color:#6b7280;font-weight:500;line-height:1.4;margin-top:2px}
+.hz-origen-tx ul{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:5px;font-size:.88rem;overflow-wrap:anywhere}
+
+/* Franja del cierre (modal «Firmar y cerrar OT»): ámbar, nunca un candado */
+.hz-cierre{background:#fff8e1;color:#92400e;border:1px solid #fcd34d;border-radius:10px;padding:9px 12px;font-size:.88rem;line-height:1.4}
+.hz-cierre a{color:#92400e;font-weight:800;text-decoration:underline;white-space:nowrap}
+
+@media (max-width:600px){
+  .hz{padding:12px}
+  .hz-item{padding:10px 12px}
+  .hz-est{margin-left:0}
+  .hz-acciones .hz-btn,.hz-barra .hz-btn{flex:1 1 100%}
+  .hz-foto{width:64px;height:64px}
+}
+@media (prefers-reduced-motion:reduce){
+  .hz-item,.hz-btn{transition:none}
+}

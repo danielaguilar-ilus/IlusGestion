@@ -274,7 +274,10 @@ class TestAgendaWhere(unittest.TestCase):
                    "_TIPO_OT_LABEL": {}, "_OT2_FASE_LABELS": {}, "_OT2_CENTROS_COSTO": (), "print": lambda *a, **k: None,
                    # 2026-10-21 (REGLA #36): el Excel también acota por «Responsable» (_ot_resp_filtro_sql, que tiene sus
                    # propias pruebas en test_ot_responsable.py); acá se prueba solo la agenda, así que sin filtro de responsable.
-                   "_ot_resp_filtro_sql": lambda valor, uid: ("", "", []), "g": object()},
+                   "_ot_resp_filtro_sql": lambda valor, uid: ("", "", []), "g": object(),
+                   # 2026-10-21 (REGLA #38): lo mismo con «Con hallazgos sin gestionar» (_ot_hall_filtro_sql, con sus pruebas en
+                   # test_ot_hallazgos.py).
+                   "_ot_hall_filtro_sql": lambda valor: ("", "", [])},
         )
         amb["_OT2_FASE_A_ESTADOS"] = {c: [k for k, v in amb["_OT2_ESTADO_META"].items() if v[3] == c]
                                       for c in amb["_OT2_FASES"]}

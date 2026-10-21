@@ -30,6 +30,9 @@ ESTADOS_EVENTO = ("activo", "cancelado")
 # 🧭 2026-10-20: la OT PENDIENTE por falta de stock (ot_que_paso.py) cuelga de su madre con otra relación y nace con la fecha
 # centinela 2099-12-31 («todavía sin fecha»). No es una desinstalación y esa fecha no es «la próxima fecha» ni un día del evento.
 REL_PENDIENTE_STOCK = "pendiente_stock"
+# 🩺 2026-10-21 (REGLA #38): la OT de SEGUIMIENTO de un hallazgo cuelga de la OT de origen con esta relación (ot_hallazgos.REL_SEGUIMIENTO).
+# Tampoco es una desinstalación: no es «la hija» de nadie para los guardias de tipo y de evento ni para el avance del evento.
+REL_SEGUIMIENTO = "seguimiento"
 ANIO_SIN_FECHA = 2099
 ARGUMENTO_MIN = 30          # igual que _OT_AUT_ARGUMENTO_MIN: lo que lee Daniel para autorizar
 MOTIVO_MIN = 10
@@ -484,7 +487,7 @@ def guardia_borrar_madre(hijas):
 def guardia_cambio_tipo(ot, hijas):
     """El tipo de una OT con madre, o con hijas vigentes, o con desinstalación prevista, no se cambia (crítica 24)."""
     o = ot or {}
-    if o.get("ot_madre_id"):
+    if o.get("ot_madre_id") and str(o.get("ot_relacion") or "").strip().lower() != REL_SEGUIMIENTO:
         return {"codigo": "TIPO_PROTEGIDO",
                 "mensaje": "Esta OT es la desinstalación de otra instalación: su tipo no se cambia."}
     if hijas_vigentes(hijas):
@@ -498,8 +501,10 @@ def guardia_cambio_tipo(ot, hijas):
 
 
 def guardia_evento_de_hija(ot):
-    """El evento de la hija es el de la madre: asignarle uno directo responde 409."""
-    if (ot or {}).get("ot_madre_id"):
+    """El evento de la hija es el de la madre: asignarle uno directo responde 409. (La OT de seguimiento de un hallazgo no es una hija:
+    su evento se elige como el de cualquier otra OT.)"""
+    o = ot or {}
+    if o.get("ot_madre_id") and str(o.get("ot_relacion") or "").strip().lower() != REL_SEGUIMIENTO:
         return {"codigo": "EVENTO_DE_LA_MADRE",
                 "mensaje": "El evento de una desinstalación es el de su instalación: cámbialo en la instalación."}
     return None
@@ -673,7 +678,7 @@ def avance_evento(ots, hoy=None):
     cerradas = sum(1 for o in vivos if bucket_estado(o.get("estado")) == "cerrada")
     por_madre = {}
     for o in vivos:
-        if o.get("ot_madre_id") and str(o.get("ot_relacion") or "").strip().lower() != REL_PENDIENTE_STOCK:
+        if o.get("ot_madre_id") and str(o.get("ot_relacion") or "").strip().lower() not in (REL_PENDIENTE_STOCK, REL_SEGUIMIENTO):
             por_madre.setdefault(int(o["ot_madre_id"]), []).append(o)
     pares, desinst_pend, desinst_venc, desinst_sin_ag = [], 0, 0, 0
     for o in vivos:
