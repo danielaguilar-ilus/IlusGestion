@@ -92533,6 +92533,13 @@ def ot2_detalle(vid):
         e["n_obl_falta"] = max(0, e["n_obl"] - e["n_obl_ok"])
         _rev = (e.get("estado_revision") or "").lower()
         e["estado_revision_label"] = _REV_LABEL.get(_rev, "")
+        # 2026-10-21 (Daniel: «el botón de no se pudo revisar el equipo… debería eximir de realizar el checklist y liberar para que
+        # se pueda cerrar, y dejar constancia»): un equipo saltado (No pude revisarlo, No está / no llegó, Dar de baja) o con falla
+        # (fuera de servicio) ya está exento en el servidor (_ot_maquinas_excluidas_cierre); aquí deja de contar como «pendiente»
+        # en «equipos listos» y en «Siguiente pendiente».
+        e["excluido_cierre"] = _rev in ("saltado", "falla_detectada")
+        if e["excluido_cierre"]:
+            e["n_obl_falta"] = 0
         e["diagnostico_label"] = _DIAG_LABEL.get((e.get("diagnostico_estado") or "").lower(), "")
         e["dado_baja_aqui"] = (_rev == "saltado"
                                and (e.get("razon_saltado") or "") == "dado_de_baja"

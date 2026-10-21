@@ -5448,6 +5448,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
         <details class="otd-wk-item{{ ' is-complete' if _excluido_cierre or (e.n_obl and e.n_obl_ok == e.n_obl) }}"
                  data-obl="{{ 1 if _excluido_cierre else e.n_obl }}"
                  data-oblok="{{ 1 if _excluido_cierre else e.n_obl_ok }}"
+                 data-excluido="{{ '1' if _excluido_cierre else '' }}"
                  data-mid="{{ e.id }}" data-idx="{{ loop.index }}"
                  data-buscar="{{ ((e.nombre or '') ~ ' ' ~ (e.sku or '') ~ ' ' ~ (e.serie or '') ~ ' ' ~ (e.marca or '')) | lower }}">
           <summary>
@@ -5490,7 +5491,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             {% endif %}
             <div class="nm">
               <b>{{ e.nombre or ('Equipo #' ~ e.id) }}{% if e.rep_abiertas %} <i class="bi bi-tools otd-rep-ico" title="Con repuesto solicitado"></i>{% endif %}</b>
-              <small id="otdWkSum-{{ e.id }}">{% if e.serie %}S/N {{ e.serie }} · {% endif %}{{ e.n_obl_ok }}/{{ e.n_obl }} obligatorias</small>
+              <small id="otdWkSum-{{ e.id }}">{% if e.serie %}S/N {{ e.serie }} · {% endif %}{% if _excluido_cierre %}No exige checklist{% else %}{{ e.n_obl_ok }}/{{ e.n_obl }} obligatorias{% endif %}</small>
             </div>
             <span class="sel {{ e.sello_cls }}">{{ e.sello }}</span>
             <i class="bi bi-chevron-right chev"></i>
@@ -5630,6 +5631,14 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                entonces (skeleton corto en vez de spinner, REGLA visual del
                proyecto). data-mid identifica a qué máquina pertenece este
                mount point para que el JS sepa dónde insertar cada grupo. #}
+            {#- 2026-10-21 (Daniel: «el botón de no se pudo revisar… debería eximir de realizar el checklist y liberar para que se pueda
+                cerrar»): dicho en claro sobre el checklist. Queda la constancia (quién, cuándo, por qué) en la barra y en la ficha del cliente. -#}
+            {% if _excluido_cierre %}
+            <div class="otd-exento" role="status">
+              <i class="bi bi-check2-circle" aria-hidden="true"></i>
+              <span><b>Este equipo no exige el checklist.</b> Quedó como «{{ e.estado_revision_label or 'Saltado' }}»{% if e.razon_saltado and e.razon_saltado not in ('fuera_de_servicio',) %} ({{ e.razon_saltado | replace('_', ' ') }}){% endif %}: la OT se puede firmar y cerrar sin completarlo. Si después lo revisas, igual puedes llenarlo.</span>
+            </div>
+            {% endif %}
             <div class="otd-chk-mount" data-mid="{{ e.id }}">
               <div class="otd-chk-skel"><i></i><i></i></div>
             </div>
@@ -13215,10 +13224,14 @@ function otdRenderChecklistEquipo(mid){
     elObl.textContent = `${oblOk}/${oblTot}` + (falta ? ` · faltan ${falta}` : '');
     elObl.style.color = falta ? '#b91c1c' : '#15803d';
   }
+  // 2026-10-21: un equipo exento (saltado / fuera de servicio / de baja) no vuelve a contar sus obligatorias: antes, al dibujarse su
+  // checklist, se reescribía 0/8 y el botón «Firmar como técnico» volvía a quedar bloqueado (el ciclo que vio Daniel).
+  const _itemEx = mount.closest('.otd-wk-item');
+  const _exento = !!(_itemEx && _itemEx.dataset.excluido === '1');
   const elSum = document.getElementById(`otdWkSum-${mid}`);
   if (elSum){
     const serieTxt = (elSum.textContent.match(/^S\/N [^·]+·\s*/) || [''])[0];
-    elSum.textContent = serieTxt + `${oblOk}/${oblTot} obligatorias`;
+    elSum.textContent = serieTxt + (_exento ? 'No exige checklist' : `${oblOk}/${oblTot} obligatorias`);
   }
   // 🆕 2026-08-30 (Daniel: "el borde del objeto en verde cuando se
   // seleccionen todos los necesarios... al tercero se me ponen todos en
@@ -13229,10 +13242,10 @@ function otdRenderChecklistEquipo(mid){
   // no marcarlo "completo" por descuido con 0/0.
   const item = mount.closest('.otd-wk-item');
   if (item){
-    const completo = oblTot > 0 && oblOk >= oblTot;
+    const completo = _exento || (oblTot > 0 && oblOk >= oblTot);
     item.classList.toggle('is-complete', completo);
-    item.dataset.oblok = String(oblOk);
-    item.dataset.obl = String(oblTot);
+    item.dataset.oblok = String(_exento ? 1 : oblOk);
+    item.dataset.obl = String(_exento ? 1 : oblTot);
   }
   otdWkCheckAllComplete();
   // 2026-09-02: además del banner, se refresca la barra de avance del

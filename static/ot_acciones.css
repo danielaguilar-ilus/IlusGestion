@@ -63,7 +63,11 @@
 .oa-lbl{display:flex;align-items:center;gap:6px;font:800 12px var(--oa-body);letter-spacing:.12em;text-transform:uppercase;
   color:var(--oa-soft);margin:0 2px}
 .oa-lbl i{color:var(--oa-amber);font-size:14px}
-.oa-lbl.oa-lbl-ay i{color:var(--oa-blue)}  /* 2026-10-21: «Ayuda» (manual, piolas, cinta) no es una alerta */
+.oa-lbl.oa-lbl-ay i{color:var(--oa-blue)}
+/* 2026-10-21: aviso «Este equipo no exige el checklist» (equipo saltado, fuera de servicio o de baja) sobre su checklist */
+.otd-exento{display:flex;gap:8px;align-items:flex-start;margin:10px 0;padding:10px 12px;border-radius:10px;background:#dcfce7;
+  border:1px solid #bbf7d0;color:#166534;font-size:.88rem;line-height:1.4}
+.otd-exento i{font-size:1.1rem;margin-top:1px}  /* 2026-10-21: «Ayuda» (manual, piolas, cinta) no es una alerta */
 .oa-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:0 18px;border-radius:14px;
   border:1.5px solid transparent;font:700 16px/1.15 var(--oa-body);text-decoration:none;text-align:center;
   transition:transform .12s var(--oa-ease),background .15s,box-shadow .15s,border-color .15s;-webkit-appearance:none;appearance:none}
