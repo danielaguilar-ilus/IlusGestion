@@ -102,6 +102,8 @@ def _llamar(cuerpo, fila=None):
         "_saldo": ot_saldo_servicio, "_ot_saldo_docs_de_ot": lambda vid: [], "_ot_saldo_chequear": lambda *a, **k: None,
         "_ot_saldo_autorizado_hasta": lambda *a, **k: {}, "_ot_saldo_error_json": lambda e, vid=None: (dict(e), 409),
         "_ot_saldo_reanotar_aportes": lambda vid, docs=None: None,
+        # 2026-10-21 (REGLA #34): la guardia del costo vs el anexo se prueba en tests/test_ot_anexo_costo.py; aquí no hay anexos.
+        "_ot_anexo_costo_guardia": lambda *a, **k: None,
     })
     for nombre in FUNCS:     # que las funciones vean ESTE ámbito (con la BD simulada)
         f = amb[nombre]
@@ -387,6 +389,9 @@ def _llamar_vivo(cuerpo, fila=None, saldo_err=None):
         "_ot_saldo_autorizado_hasta": lambda *a, **k: {},
         "_ot_saldo_error_json": lambda e, vid=None: (dict(e, visita_id=vid), 409),
         "_ot_saldo_reanotar_aportes": lambda vid, docs=None: amb.setdefault("_reanotado", []).append(vid),
+        # 2026-10-21 (REGLA #34): el costo del proveedor es el del anexo vivo; la guardia se prueba en tests/test_ot_anexo_costo.py.
+        # Aquí no hay anexos: deja pasar (sin este stub, ot2_api_finanzas fallaba con NameError en estas pruebas).
+        "_ot_anexo_costo_guardia": lambda *a, **k: None,
     })
     for nombre in FUNCS:
         f = amb[nombre]
