@@ -1560,6 +1560,12 @@ window.OT2C = (function(){
          // con productos del catálogo o tareas sueltas (sin plantilla) en
          // vez de un checklist único.
          tareas_manuales:[],
+         // 🙋 2026-10-21 (REGLA #36, F0 «Responsable de la OT»): quién lleva la OT y recibe sus avisos. El servidor dice quiénes
+         // PUEDEN serlo (permiso «Responsable de OT») y a quién sugiere (quien crea, si tiene el permiso; si no, el ejecutivo del
+         // cliente); la persona decide (REGLA #32). `hay:null` = aún no se sabe; `hay:false` = nadie tiene el permiso: el paso no
+         // existe y la OT se crea como siempre. `manual` = la persona eligió a mano (la sugerencia ya no la pisa).
+         resp:{id:null, nombre:'', origen:'', manual:false, hay:null, cargado:false, cargando:false, error:false,
+               candidatos:[], sugerido:null, clienteKey:null},
          // 🧾 2026-10-18 (Daniel: «elegir el plan, elegir todo»): modo de la tabla del trabajo interno, igual que
          // los chips de la tabla de cliente -- 'todo' (todo el documento incluido) o 'mano' (parte sin nada).
          tm_modo:'todo',
@@ -1786,6 +1792,10 @@ window.OT2C = (function(){
   function pasos(){
     var p = [{k:'tipo', n:'Tipo'}];
     if (!esInterno()) p.push({k:'cliente', n:'Cliente'});
+    // 🙋 2026-10-21 (REGLA #36, Daniel: «la persona que administra las órdenes de trabajo»): el RESPONSABLE de la OT. Va justo después
+    // del cliente porque la sugerencia depende de él (quien crea, si tiene el permiso; si no, el ejecutivo del cliente). Si nadie tiene
+    // el permiso «Responsable de OT» todavía (S.resp.hay === false), el paso no existe y nada se pide ni se bloquea.
+    if (S.resp && S.resp.hay !== false) p.push({k:'responsable', n:'Responsable'});
     // 📎 2026-09-27 (Daniel, corrigiendo en vivo: "dentro del paso 3 podemos
     // agregar imágenes y video... sin crear un paso 4"): los archivos para
     // el técnico YA NO son un paso propio -- viven DENTRO de la tarjeta
@@ -1865,6 +1875,9 @@ window.OT2C = (function(){
     switch(k){
       case 'tipo':     return !!S.tipo;
       case 'cliente':  return !!S.cliente;
+      // 🙋 2026-10-21 (REGLA #36): verde cuando ya hay responsable (el sugerido o el que la persona eligió). Si no se pudo consultar al
+      // servidor (error de red) NO bloquea: la OT se crea y el servidor aplica el defecto o la deja sin responsable.
+      case 'responsable': return !!(S.resp && S.resp.cargado && (S.resp.id || S.resp.error || S.resp.hay === false));
       // 2026-08-29 (Daniel, viendo "fdgnsrn" de prueba: "que al menos
       // tenga unos 25 caracteres para tener la descripcion exacta de por
       // que el motivo de la OT"): el título sigue autogenerándose si se
@@ -2271,6 +2284,7 @@ window.OT2C = (function(){
       try {
       if (p.k==='tipo')     pintarTipo(b);
       if (p.k==='cliente')  pintarCliente(b);
+      if (p.k==='responsable') pintarResponsable(b);   // 🙋 2026-10-21 (REGLA #36)
       if (p.k==='detalle')  pintarDetalle(b);
       if (p.k==='contraparte') pintarContraparte(b);
       if (p.k==='agenda')   pintarAgenda(b);
@@ -2300,6 +2314,7 @@ window.OT2C = (function(){
     try {
       if (k==='tipo')     pintarTipo(b);
       if (k==='cliente')  pintarCliente(b);
+      if (k==='responsable') pintarResponsable(b);   // 🙋 2026-10-21 (REGLA #36)
       if (k==='detalle')  pintarDetalle(b);
       if (k==='contraparte') pintarContraparte(b);
       if (k==='agenda')   pintarAgenda(b);
@@ -3889,6 +3904,94 @@ window.OT2C = (function(){
     }finally{
       if (btn){ btn.disabled = false; btn.innerHTML = original; }
     }
+  }
+
+  /* 🙋 2026-10-21 (REGLA #36, F0 «Responsable de la OT») -- Daniel: «¿los avisos le llegan a la persona que administra las órdenes de
+     trabajo?». Cada OT tiene UN responsable: quien la lleva y recibe sus avisos de gestión (hoy Víctor, Aarón o Juan Pablo).
+     REGLA #32: el sistema SUGIERE y la persona DECIDE. El servidor dice quiénes pueden serlo (permiso «Responsable de OT») y a quién
+     sugiere: quien crea la OT si tiene el permiso; si no, el ejecutivo del cliente; si tampoco hay, aquí se PIDE elegirlo. Nada de esto
+     existe mientras nadie tenga el permiso (S.resp.hay === false): el paso desaparece y la OT se crea como siempre. Lo elegido se
+     revalida en el servidor (_ot_responsable_al_crear) y queda en la bitácora de la OT. Solo nombres: ni plata ni proveedores. */
+  var _O2M_RESP_ORIGEN = {
+    creador:   'eres tú, quien crea la OT',
+    ejecutivo: 'es el ejecutivo del cliente'
+  };
+
+  function _o2mRespKey(){ return esInterno() ? 'interno' : String((S.cliente && S.cliente.id) || ''); }
+
+  function _o2mRespCargar(key){
+    var R = S.resp;
+    if (!R || R.cargando) return;
+    R.cargando = true;
+    var url = '/ot/api/responsables' + ((!esInterno() && S.cliente && S.cliente.id)
+      ? ('?cliente_id=' + encodeURIComponent(S.cliente.id)) : '');
+    fetch(url, {credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if (S.resp !== R) return;                        // el formulario se reinició mientras tanto
+        R.cargando = false; R.cargado = true; R.error = false; R.clienteKey = key;
+        R.hay = !!(j && j.hay);
+        R.candidatos = (j && j.candidatos) || [];
+        R.sugerido = (j && j.sugerido) || null;
+        // Lo que la persona eligió a mano se respeta mientras siga siendo un candidato; si no, vuelve a mandar la sugerencia.
+        var sigue = R.manual && R.id && R.candidatos.some(function(c){ return c.id === R.id; });
+        if (!sigue){
+          R.manual = false;
+          if (R.sugerido){ R.id = R.sugerido.id; R.nombre = R.sugerido.nombre; R.origen = R.sugerido.origen; }
+          else { R.id = null; R.nombre = ''; R.origen = ''; }
+        }
+        if (fase === 'form'){ if (R.hay === false) pintar(); else repintarSeccion('responsable'); }
+      })
+      .catch(function(){
+        if (S.resp !== R) return;
+        R.cargando = false; R.cargado = true; R.error = true; R.clienteKey = key;
+        if (fase === 'form') repintarSeccion('responsable');
+      });
+  }
+
+  function pintarResponsable(b){
+    var R = S.resp, key = _o2mRespKey();
+    // La sugerencia depende del cliente: si cambió (o aún no se consultó), se vuelve a pedir al servidor.
+    if (!R.cargando && (!R.cargado || R.clienteKey !== key)) _o2mRespCargar(key);
+    var cuerpo = '';
+    if (!R.cargado){
+      cuerpo = '<div class="p-3 text-muted small">Cargando…</div>';
+    } else if (R.error){
+      cuerpo = '<div class="p-3 text-muted small">No pudimos consultar quién puede ser responsable. La OT se crea igual y podrás ' +
+               'asignarlo desde su ficha.</div>';
+    } else {
+      var sug = R.sugerido;
+      if (sug){
+        cuerpo += '<div class="small mb-2" style="color:#374151"><i class="bi bi-stars me-1" style="color:#f59e0b"></i>Sugerido: <b>' +
+                  esc(sug.nombre) + '</b>' + (_O2M_RESP_ORIGEN[sug.origen] ? ' — ' + esc(_O2M_RESP_ORIGEN[sug.origen]) : '') + '.</div>';
+      } else if (!R.id){
+        cuerpo += '<div class="o2m-aviso mb-2"><i class="bi bi-person-exclamation me-1"></i>Nadie se sugiere solo para esta orden (' +
+                  'quien la crea no puede ser responsable' + (esInterno() ? '' : ' y el cliente no tiene un ejecutivo que pueda serlo') +
+                  '). <b>Elige quién se hace cargo.</b></div>';
+      }
+      var pills = (R.candidatos || []).map(function(c){
+        var sel = R.id === c.id;
+        var sub = sel ? (R.manual ? 'Elegido por ti' : (sug && sug.id === c.id ? 'Sugerido' : 'Responsable de esta OT'))
+                      : (sug && sug.id === c.id ? 'Sugerido' : 'Responsable de OT');
+        return '<button type="button" class="o2m-op' + (sel ? ' sel' : '') + '" onclick="OT2C.respElegir(' + c.id + ')">' +
+               '<span class="n">' + (sel ? '<i class="bi bi-check-circle-fill me-1"></i>' : '') + esc(c.nombre) + '</span>' +
+               '<span class="l">' + esc(sub) + '</span></button>';
+      }).join('');
+      cuerpo += '<div class="o2m-grid">' + pills + '</div>';
+    }
+    b.innerHTML = '<h6 class="t">Responsable de la OT</h6>' +
+      '<p class="d">Quién lleva esta orden y recibe sus avisos de gestión (por ejemplo, cuando queda lista para aprobar). ' +
+      'Lo puedes cambiar después desde la ficha de la OT.</p>' + cuerpo;
+  }
+
+  function respElegir(id){
+    var R = S.resp, c = (R.candidatos || []).find(function(x){ return x.id === id; });
+    if (!c) return;
+    R.id = c.id; R.nombre = c.nombre;
+    var vuelveASugerido = !!(R.sugerido && R.sugerido.id === c.id);
+    R.manual = !vuelveASugerido;
+    R.origen = vuelveASugerido ? R.sugerido.origen : 'elegido';
+    repintarSeccion('responsable');
   }
 
   function pintarTecnicos(b){
@@ -10618,6 +10721,7 @@ window.OT2C = (function(){
     }
     if (fase !== 'form'){ fase = 'form'; anclaActiva = null; pintar(); return; }
     repintarSeccion('cliente');
+    repintarSeccion('responsable');   // 🙋 2026-10-21: la sugerencia (ejecutivo del cliente) depende del cliente elegido
     repintarSeccion('equipos');
     // 📇 2026-09-27 (Daniel, caso real Unión Gastronómica: "esto se debería
     // autogestionar solo" -- Contraparte quedaba en blanco para siempre).
@@ -10861,6 +10965,9 @@ window.OT2C = (function(){
       // `elif plantilla_suelta`), es el mismo mecanismo que usa levantamiento.
       plantilla_id: esInterno() ? (S.plantilla_id_interno || null) : null,
       acceso: esInterno() ? {} : S.acceso,
+      // 🙋 2026-10-21 (REGLA #36): el responsable que se ve elegido en pantalla (sugerido o a mano). El servidor lo revalida: tiene
+      // que ser una persona activa con el permiso «Responsable de OT»; si no, usa el defecto o deja la OT sin responsable.
+      responsable_user_id: (S.resp && S.resp.id) ? S.resp.id : null,
       // 2026-08-29 — contraparte + dirección confirmada del lugar. Trabajo
       // interno no visita a nadie, así que va vacío (el backend lo trata
       // como ausente y deja las columnas en NULL).
@@ -12166,6 +12273,9 @@ window.OT2C = (function(){
     modal = modal || new bootstrap.Modal(document.getElementById('ot2ModalCrear'));
     pintar(); modal.show();
     _o2mCargarKillswitch();
+    // 🙋 2026-10-21: se consulta el responsable desde ya (ya sea que se entre al formulario directo o por la pantalla de origen), así
+    // el paso nace con la sugerencia puesta o no aparece si nadie tiene el permiso.
+    if (!S.resp.cargado && !S.resp.cargando) _o2mRespCargar(_o2mRespKey());
   }
 
   // 📮 2026-09-10 -- ver declaración de _o2mKillswitchEmail arriba. Solo
@@ -12252,6 +12362,7 @@ window.OT2C = (function(){
 
   return {abrir:abrir, abrirWizard:abrirWizard, abrirDesdeTicket:abrirDesdeTicket, cerrar:cerrar, irAncla:irAncla, avisarBloqueado:avisarBloqueado,
           setOrigen:setOrigen, setTipo:setTipo,
+          respElegir:respElegir,   // 🙋 2026-10-21 (REGLA #36): elegir al responsable de la OT
           setAcc:setAcc, setAccesoTexto:setAccesoTexto, setTitulo:setTitulo, setDescripcion:setDescripcion,
           setNotaVentaInterna:setNotaVentaInterna, abrirBusquedaDocInterno:abrirBusquedaDocInterno,
           abrirNuevoTipoInterno:abrirNuevoTipoInterno, _o2mNtGuardar:_o2mNtGuardar, _o2mNtIcono:_o2mNtIcono,

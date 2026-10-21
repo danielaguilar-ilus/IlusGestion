@@ -749,6 +749,9 @@ tr.o2t-s-vivo .o2t-sem{animation:ot2pulse 1.8s ease-out infinite}
 /* Anchos de columna (encabezados). La tabla es width:100% sin min-width: el sobrante va al cliente. */
 .ot2-tabla th.o2t-w-ot{width:7%} .ot2-tabla th.o2t-w-cli{width:30%} .ot2-tabla th.o2t-w-tipo{width:9%}
 .ot2-tabla th.o2t-w-est{width:24%} .ot2-tabla th.o2t-w-ag{width:12%} .ot2-tabla th.o2t-w-tec{width:16%}
+/* 🙋 2026-10-21 (REGLA #36): con la columna «Responsable» las demás ceden un poco de ancho (suman 101%, como antes sumaban 98%). */
+.ot2-tabla.con-resp th.o2t-w-cli{width:26%} .ot2-tabla.con-resp th.o2t-w-est{width:21%} .ot2-tabla.con-resp th.o2t-w-tec{width:13%}
+.ot2-tabla th.o2t-w-resp{width:13%}
 .ot2-tabla thead th.ot2-goth{width:40px} .ot2-tabla td.ot2-go{width:40px}
 /* El ícono de orden solo en la columna activa y al pasar el mouse (menos ruido en el encabezado). */
 .ot2-tabla thead .ot2-th i{opacity:0;transition:opacity .14s}
@@ -827,6 +830,11 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
   font-size:.66rem;font-weight:800;flex:none;border:1px solid #e5e7eb}
 .o2t-av.sin{background:#fff;color:#d1d5db;border:1.5px dashed #d1d5db}
 .o2t-sin{color:#92400e;font-weight:700}
+/* 🙋 2026-10-21 (REGLA #36) Responsable: mismo avatar gris y nombre COMPLETO que el técnico (REGLA #15); «Sin responsable» en ámbar suave
+   (te toca asignar), sin rojo. */
+.o2t-resp-td .o2t-resp{display:grid;grid-template-columns:30px minmax(0,1fr);gap:3px 8px;align-items:center;white-space:normal}
+.o2t-resp-td .o2t-resp .nom{font-weight:700;color:#0a0a0a;overflow-wrap:break-word;line-height:1.3;font-size:.84rem}
+.o2t-resp-td .o2t-sin{font-size:.8rem}
 
 /* ── Filtro rápido de agenda (Daniel: «a veces filtrar por agenda») ── */
 .o2t-agenda{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:-4px 0 12px}
@@ -864,7 +872,7 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
   .ot2-selmobile{display:flex;align-items:center;gap:8px;margin:12px 10px 0;padding:6px 10px 6px 2px;
     font-size:.82rem;font-weight:700;color:#374151}
   .ot2-tabla tbody tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) 0;
-    grid-template-areas:"num tipo sel" "cli cli cli" "eta eta eta" "ag tec tec";
+    grid-template-areas:"num tipo sel" "cli cli cli" "eta eta eta" "ag tec tec" "resp resp resp";
     width:100%;margin:10px 0;box-sizing:border-box;border:1px solid var(--ot-line);
     border-left:4px solid var(--o2t-sem,var(--c));border-radius:12px;padding:4px 0 6px;min-height:44px;background:#fff}
   .ot2-tabla tbody tr.o2t-con-sel{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 44px}
@@ -881,7 +889,8 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
   .o2t-eta-td{grid-area:eta;border-top:1px dashed #eef0f2}
   .o2t-ag-td{grid-area:ag;border-top:1px dashed #eef0f2}
   .o2t-tec-td{grid-area:tec;border-top:1px dashed #eef0f2}
-  .ot2-tabla td.o2t-ag-td::before,.ot2-tabla td.o2t-tec-td::before{content:attr(data-label);display:block;font-size:.6rem;
+  .o2t-resp-td{grid-area:resp;border-top:1px dashed #eef0f2}
+  .ot2-tabla td.o2t-ag-td::before,.ot2-tabla td.o2t-tec-td::before,.ot2-tabla td.o2t-resp-td::before{content:attr(data-label);display:block;font-size:.6rem;
     font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;margin-bottom:4px}
   .ot2-tabla td.ot2-go{display:none}
   .o2t-rec,.o2t-eta-td .ot2-prog{max-width:none}
@@ -958,7 +967,7 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
       </select>
       <a id="ot2RepGeneral"
          {#- 2026-10-19: `agenda` (filtro rápido de la vista Tabla) también viaja al Excel; antes con «Hoy» activo bajaba todo. -#}
-         href="{{ url_for('ot2_reporte_xlsx') }}?origen={{ origen }}&q={{ q|urlencode }}&fase={{ fase or '' }}&tipo={{ f_tipo or '' }}&tecnico={{ f_tec or '' }}&interna={{ f_interna or '' }}&agenda={{ f_agenda or '' }}&evento={{ f_evento or '' }}"
+         href="{{ url_for('ot2_reporte_xlsx') }}?origen={{ origen }}&q={{ q|urlencode }}&fase={{ fase or '' }}&tipo={{ f_tipo or '' }}&tecnico={{ f_tec or '' }}&interna={{ f_interna or '' }}&agenda={{ f_agenda or '' }}&evento={{ f_evento or '' }}&resp={{ f_resp or '' }}"
          class="btn btn-sm btn-outline-light"
          title="Descargar Excel con las OT del filtro actual (hojas: OT, Por técnico, Por centro de costo, Por tipo, Resumen)">
         <i class="bi bi-file-earmark-excel me-1"></i>Reporte Excel
@@ -1065,20 +1074,20 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
   {% set vista_lista = 'tabla' %}
   <div class="ot2-kpis">
     <a class="ot2-kpi k-pend {{ 'on' if fase=='pend' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, agenda=f_agenda or None, fase=None if fase=='pend' else 'pend') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, resp=f_resp or None, agenda=f_agenda or None, fase=None if fase=='pend' else 'pend') }}">
       <span class="num">{{ kpis.pend }}</span><span class="lbl">Pendientes</span>
     </a>
     <a class="ot2-kpi k-ejec {{ 'on' if fase=='ejec' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, agenda=f_agenda or None, fase=None if fase=='ejec' else 'ejec') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, resp=f_resp or None, agenda=f_agenda or None, fase=None if fase=='ejec' else 'ejec') }}">
       <span class="num">{{ kpis.ejec }}</span>
       <span class="lbl">{% if kpis.ejec %}<span class="ot2-dot"></span>{% endif %}En ejecución</span>
     </a>
     <a class="ot2-kpi k-comp {{ 'on' if fase=='comp' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, agenda=f_agenda or None, fase=None if fase=='comp' else 'comp') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, resp=f_resp or None, agenda=f_agenda or None, fase=None if fase=='comp' else 'comp') }}">
       <span class="num">{{ kpis.comp }}</span><span class="lbl">Completadas</span>
     </a>
     <a class="ot2-kpi k-cerr {{ 'on' if fase=='cerr' }}"
-       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, agenda=f_agenda or None, fase=None if fase=='cerr' else 'cerr') }}">
+       href="{{ url_for('ot2_panel', origen=origen, vista=vista_lista, q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, resp=f_resp or None, agenda=f_agenda or None, fase=None if fase=='cerr' else 'cerr') }}">
       <span class="num">{{ kpis.cerr }}</span><span class="lbl">Cerradas</span>
     </a>
   </div>
@@ -1087,7 +1096,7 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
   {# 2026-10-14 (Daniel: «está fallando un poco en la parte responsiva»): en celular los filtros se pliegan detrás
      de este botón (el buscador queda a la vista). En escritorio el botón no aparece y todo sigue igual. #}
   {% set _n_filtros = (1 if f_tipo else 0) + (1 if f_tec else 0) + (1 if f_interna else 0) + (1 if f_anexo else 0)
-                      + (1 if f_pago else 0) + (1 if origen == 'automaticas' else 0) + (1 if f_agenda else 0) + (1 if f_evento else 0) %}
+                      + (1 if f_pago else 0) + (1 if origen == 'automaticas' else 0) + (1 if f_agenda else 0) + (1 if f_evento else 0) + (1 if f_resp else 0) %}
   <button type="button" class="ot2-filtros-btn" aria-expanded="false" aria-controls="ot2Bar"
           onclick="var b=document.getElementById('ot2Bar');var a=b.classList.toggle('abierto');this.setAttribute('aria-expanded',a?'true':'false')">
     <i class="bi bi-sliders"></i> Filtros{% if _n_filtros %} <span class="n">{{ _n_filtros }}</span>{% endif %}
@@ -1153,6 +1162,21 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
       {% endfor %}
     </select>
     {% endif %}
+    {#- 🙋 2026-10-21 (REGLA #36, Daniel: «la persona que administra las órdenes de trabajo»): filtro por RESPONSABLE de la OT. «Mis OT
+        como responsable» solo lo ofrece a quien puede serlo; «Sin responsable» sirve para ver qué OT nadie lleva todavía. Acota la
+        tabla, el kanban, el calendario, los KPI y el Excel, y viaja en todos los enlaces de paginado y vistas. Mientras nadie tenga el
+        permiso «Responsable de OT» (la función está dormida) el select no se dibuja. -#}
+    {% if resp_opts or f_resp %}
+    <select name="resp" class="form-select form-select-sm" style="min-height:44px;max-width:240px"
+            onchange="this.form.submit()" aria-label="Filtrar por responsable de la OT">
+      <option value="">Todos los responsables</option>
+      {% if resp_yo or f_resp == 'mis' %}<option value="mis" {{ 'selected' if f_resp == 'mis' }}>Mis OT como responsable</option>{% endif %}
+      <option value="sin" {{ 'selected' if f_resp == 'sin' }}>Sin responsable</option>
+      {% for r in resp_opts %}
+      <option value="{{ r.id }}" {{ 'selected' if f_resp == (r.id | string) }}>{{ r.nombre }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
     {# 🆕 2026-09-14 (Juan Pablo, en la reunión: "¿se puede agregar una
        búsqueda de anexo?"). El buscador de arriba (q) ya empareja N° de
        anexo y proveedor externo; este select además deja aislar por
@@ -1190,7 +1214,7 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
     <button class="btn btn-dark btn-sm px-3" style="min-height:44px" type="submit">
       <i class="bi bi-funnel me-1"></i>Buscar
     </button>
-    {% if q or fase or f_tipo or f_tec or f_interna or f_anexo or f_pago or f_agenda or f_evento %}
+    {% if q or fase or f_tipo or f_tec or f_interna or f_anexo or f_pago or f_agenda or f_evento or f_resp %}
     <a class="btn btn-outline-secondary btn-sm px-3" style="min-height:44px"
        href="{{ url_for('ot2_panel', origen=origen, vista=vista) }}">
       <i class="bi bi-x-lg me-1"></i>Limpiar
@@ -1198,16 +1222,16 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
     {% endif %}
   </form>
 
-  {% if q or fase or f_tipo or f_tec or f_interna or f_anexo or f_pago or f_agenda or f_evento %}
+  {% if q or fase or f_tipo or f_tec or f_interna or f_anexo or f_pago or f_agenda or f_evento or f_resp %}
   <p class="ot2-nota">
     <i class="bi bi-info-circle-fill text-primary"></i>
-    {{ total_filtrado }} resultado(s){% if q %} para "<b>{{ q }}</b>"{% endif %}{% if fase %} en <b>{{ {'pend':'Pendientes','ejec':'En ejecución','comp':'Completadas','cerr':'Cerradas'}[fase] }}</b>{% endif %}{% if f_tipo %} · tipo <b>{{ tipos_opts | selectattr('0','equalto',f_tipo) | map(attribute='1') | first | default(f_tipo) }}</b>{% endif %}{% if f_tec %} · técnico <b>{{ tecnicos_opts | selectattr('0','equalto',f_tec) | map(attribute='1') | first | default('—') }}</b>{% endif %}{% if f_interna == '1' %} · <b>solo trabajo interno</b>{% elif f_interna == '0' %} · <b>solo de cliente</b>{% endif %}{% if f_anexo %} · anexo <b>{{ {'sin_anexo':'sin anexo','borrador':'en borrador','enviado':'enviado','visto':'visto, sin firmar','firmado':'firmado'}[f_anexo] }}</b>{% endif %}{% if f_pago %} · pago a proveedor <b>{{ {'sin_costo':'sin costo declarado','por_facturar':'por facturar','facturada':'facturada, sin pagar','pagada':'pagada'}[f_pago] }}</b>{% endif %}{% if f_agenda %} · agenda <b>{{ agenda_opts | selectattr('0','equalto',f_agenda) | map(attribute='1') | first | default(f_agenda) }}</b>{% endif %}{% if f_evento %} · evento <b>{{ eventos_opts | selectattr('id','equalto',f_evento) | map(attribute='nombre') | first | default('N° ' ~ f_evento) }}</b>{% endif %}
+    {{ total_filtrado }} resultado(s){% if q %} para "<b>{{ q }}</b>"{% endif %}{% if fase %} en <b>{{ {'pend':'Pendientes','ejec':'En ejecución','comp':'Completadas','cerr':'Cerradas'}[fase] }}</b>{% endif %}{% if f_tipo %} · tipo <b>{{ tipos_opts | selectattr('0','equalto',f_tipo) | map(attribute='1') | first | default(f_tipo) }}</b>{% endif %}{% if f_tec %} · técnico <b>{{ tecnicos_opts | selectattr('0','equalto',f_tec) | map(attribute='1') | first | default('—') }}</b>{% endif %}{% if f_interna == '1' %} · <b>solo trabajo interno</b>{% elif f_interna == '0' %} · <b>solo de cliente</b>{% endif %}{% if f_anexo %} · anexo <b>{{ {'sin_anexo':'sin anexo','borrador':'en borrador','enviado':'enviado','visto':'visto, sin firmar','firmado':'firmado'}[f_anexo] }}</b>{% endif %}{% if f_pago %} · pago a proveedor <b>{{ {'sin_costo':'sin costo declarado','por_facturar':'por facturar','facturada':'facturada, sin pagar','pagada':'pagada'}[f_pago] }}</b>{% endif %}{% if f_agenda %} · agenda <b>{{ agenda_opts | selectattr('0','equalto',f_agenda) | map(attribute='1') | first | default(f_agenda) }}</b>{% endif %}{% if f_evento %} · evento <b>{{ eventos_opts | selectattr('id','equalto',f_evento) | map(attribute='nombre') | first | default('N° ' ~ f_evento) }}</b>{% endif %}{% if f_resp == 'mis' %} · <b>mis OT como responsable</b>{% elif f_resp == 'sin' %} · <b>sin responsable</b>{% elif f_resp %} · responsable <b>{{ resp_opts | selectattr('id','equalto',(f_resp | int)) | map(attribute='nombre') | first | default('N° ' ~ f_resp) }}</b>{% endif %}
   </p>
   {% endif %}
 
   {# ── Selector de vista ───────────────────────────────────────────── #}
   <nav class="ot2-vistas" aria-label="Tipo de vista">
-    <a class="ot2-v {{ 'on' if vista=='tabla' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tabla', q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, agenda=f_agenda or None) }}">
+    <a class="ot2-v {{ 'on' if vista=='tabla' }}" href="{{ url_for('ot2_panel', origen=origen, vista='tabla', q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, resp=f_resp or None, agenda=f_agenda or None) }}">
       <i class="bi bi-table"></i><span>Tabla</span></a>
     {# 2026-08-20 (Daniel): la vista "Tarjetas" se quitó a pedido suyo --
        "cuando lo cambio a tabla y tarjeta no hace nada". Y era cierto: el
@@ -1215,9 +1239,9 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
        Tarjetas renderizaba EXACTAMENTE la tabla. Nunca se implementó como
        vista propia; existía solo el botón. Se elimina el botón en vez de
        dejar una opción que promete algo que no ocurre. #}
-    <a class="ot2-v {{ 'on' if vista=='kanban' }}" href="{{ url_for('ot2_panel', origen=origen, vista='kanban', q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None) }}">
+    <a class="ot2-v {{ 'on' if vista=='kanban' }}" href="{{ url_for('ot2_panel', origen=origen, vista='kanban', q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, resp=f_resp or None) }}">
       <i class="bi bi-kanban-fill"></i><span>Kanban</span></a>
-    <a class="ot2-v {{ 'on' if vista=='calendario' }}" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None) }}">
+    <a class="ot2-v {{ 'on' if vista=='calendario' }}" href="{{ url_for('ot2_panel', origen=origen, vista='calendario', q=q or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, resp=f_resp or None) }}">
       <i class="bi bi-calendar3"></i><span>Calendario</span></a>
   </nav>
 
@@ -1232,7 +1256,7 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
       <a class="o2t-agchip {{ 'on' if f_agenda == _ak }}"
          {% if f_agenda == _ak %}aria-current="true" title="Quitar el filtro «{{ _al }}»"{% endif %}
          href="{{ url_for('ot2_panel', origen=origen, vista='tabla', q=q or None, fase=fase or None, tipo=f_tipo or None,
-                          tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None,
+                          tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, resp=f_resp or None,
                           per_page=per_page, orden=orden, dir=dir, agenda=(None if f_agenda == _ak else _ak)) }}">
         {% if f_agenda == _ak %}<i class="bi bi-check-lg"></i>{% endif %}{{ _al }}</a>
       {% endfor %}
@@ -1253,7 +1277,11 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
       </div>
       {% endif %}
       <div class="ot2-scroll">
-        <table class="ot2-tabla">
+        {#- 🙋 2026-10-21 (REGLA #36): la columna «Responsable» aparece cuando la función está en uso (alguien tiene el permiso «Responsable
+            de OT», hay un filtro de responsable activo o alguna fila de esta página ya tiene responsable). Dormida, la tabla queda
+            exactamente como antes. -#}
+        {% set mostrar_resp = true if (resp_opts or f_resp or (filas | selectattr('resp_nombre') | list)) else false %}
+        <table class="ot2-tabla{{ ' con-resp' if mostrar_resp }}">
           {# Encabezados ordenables. Un clic ordena; volver a hacer clic en
              la misma columna invierte el sentido. El orden por defecto
              sigue siendo el N° de OT descendente, como pidió Daniel.
@@ -1265,7 +1293,7 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
               <a class="ot2-th {{ 'act' if act }}"
                  href="{{ url_for('ot2_panel', origen=origen, vista=vista, q=q or None,
                                   fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None,
-                                  interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None,
+                                  interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, resp=f_resp or None,
                                   agenda=f_agenda or None,
                                   per_page=per_page, orden=col,
                                   dir=('asc' if act and dir=='desc' else 'desc')) }}">
@@ -1294,6 +1322,7 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
                  dentro de «Estado y avance», junto al recorrido real de la OT (REGLA #4.2: nada se quita). #}
               {{ th('ot','N° OT','o2t-w-ot') }}{{ th('cliente','Cliente y trabajo','o2t-w-cli') }}{{ th('tipo','Tipo','o2t-w-tipo') }}
               {{ th('estado','Estado y avance','o2t-w-est') }}{{ th('fecha','Agenda','o2t-w-ag') }}{{ th('tecnico','Técnico','o2t-w-tec') }}
+              {% if mostrar_resp %}{{ th('responsable','Responsable','o2t-w-resp') }}{% endif %}
               <th class="ot2-goth" aria-label="Abrir"></th>
             </tr>
           </thead>
@@ -1498,6 +1527,18 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
                   {% if f.tecnico_tipo %}<span class="ot2-tec-tipo {{ f.tecnico_tipo }}">{{ 'Ext' if f.tecnico_tipo == 'externo' else 'Int' }}</span>{% endif %}
                 </div>
               </td>
+              {#- ── 🙋 2026-10-21 (REGLA #36) Responsable de la OT: quien la lleva y recibe sus avisos. Avatar gris con iniciales y nombre
+                  COMPLETO (REGLA #15); «Sin responsable» en ámbar suave (las OT anteriores a esta función quedan así hasta que alguien
+                  las asigna). Un técnico lo ve solo como nombre. ──────────────────────────────────────────────────────────────────── -#}
+              {% if mostrar_resp %}
+              <td data-label="Responsable" class="o2t-resp-td">
+                {% if f.resp_nombre %}
+                <div class="o2t-resp"><span class="o2t-av">{{ f.resp_ini }}</span><span class="nom">{{ f.resp_nombre }}</span></div>
+                {% else %}
+                <span class="o2t-sin">Sin responsable</span>
+                {% endif %}
+              </td>
+              {% endif %}
               {#- 2026-09-26 (Daniel: "tal vez sacar el botón de abrir porque
                   está toda la fila seleccionable"): el botón negro "Abrir"
                   pasa a ser una flecha discreta -- la fila entera sigue
@@ -1512,7 +1553,8 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
                (Daniel: "lo quiero más colorido"). #}
             <tr class="ot2-det f-{{ f.estado_fase or 'cancel' }}">
               {# 2026-10-18: 7 columnas (+1 con la casilla) -- Avance se fusionó en «Estado y avance». #}
-              <td colspan="{{ 8 if puede_lote else 7 }}">
+              {# 🙋 2026-10-21: +1 con la columna «Responsable» (mostrar_resp). #}
+              <td colspan="{{ (8 if puede_lote else 7) + (1 if mostrar_resp else 0) }}">
                 <div class="ot2-det-in">
                   <span class="dp dp-trab"><i class="bi bi-card-text"></i>
                     <b>{{ f.titulo or 'Sin título' }}</b></span>
@@ -1550,16 +1592,16 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
           {# 🔧 2026-09-14: los links del pie llevaban solo q/fase -- al pasar
              de página se perdían tipo/técnico/interna/anexo/pago y el orden,
              y la página 2 salía sin filtro (REGLA #4.3). Ahora viajan todos. #}
-          <a class="{{ 'on' if opt == per_page }}" href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=opt, page=1, q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, agenda=f_agenda or None, orden=orden, dir=dir) }}">{{ opt }}</a>
+          <a class="{{ 'on' if opt == per_page }}" href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=opt, page=1, q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, resp=f_resp or None, agenda=f_agenda or None, orden=orden, dir=dir) }}">{{ opt }}</a>
           {% endfor %}
         </div>
         <div class="ot2-nav">
           <a class="ot2-nb {{ 'off' if page <= 1 }}"
-             href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page-1, q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, agenda=f_agenda or None, orden=orden, dir=dir) if page > 1 else '#' }}">
+             href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page-1, q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, resp=f_resp or None, agenda=f_agenda or None, orden=orden, dir=dir) if page > 1 else '#' }}">
             <i class="bi bi-chevron-left"></i> Anterior</a>
           <span style="font-weight:800">Página <b>{{ page }}</b> de {{ total_paginas }}</span>
           <a class="ot2-nb {{ 'off' if page >= total_paginas }}"
-             href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page+1, q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, agenda=f_agenda or None, orden=orden, dir=dir) if page < total_paginas else '#' }}">
+             href="{{ url_for('ot2_panel', origen=origen, vista=vista, per_page=per_page, page=page+1, q=q or None, fase=fase or None, tipo=f_tipo or None, tecnico=f_tec or None, interna=f_interna or None, anexo=f_anexo or None, pago_prov=f_pago or None, evento=f_evento or None, resp=f_resp or None, agenda=f_agenda or None, orden=orden, dir=dir) if page < total_paginas else '#' }}">
             Siguiente <i class="bi bi-chevron-right"></i></a>
         </div>
       </footer>
@@ -1569,7 +1611,7 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
       <i class="bi bi-inbox"></i>
       {#- 2026-10-18: antes solo miraba q/fase -- filtrando por tipo, técnico, anexo, pago o agenda sin resultados decía
           «Ninguna orden creada por personas todavía». Ahora cualquier filtro activo avisa y ofrece Limpiar. -#}
-      {% if q or fase or f_tipo or f_tec or f_interna or f_anexo or f_pago or f_agenda or f_evento %}
+      {% if q or fase or f_tipo or f_tec or f_interna or f_anexo or f_pago or f_agenda or f_evento or f_resp %}
       <h5>No hay OT con estos filtros</h5><p>Prueba con otro texto o quita algún filtro.</p>
       <a class="btn btn-outline-secondary btn-sm px-3 o2t-vacio-btn" href="{{ url_for('ot2_panel', origen=origen, vista=vista) }}">
         <i class="bi bi-x-lg me-1"></i>Limpiar filtros

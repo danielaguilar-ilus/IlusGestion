@@ -1099,7 +1099,10 @@ class TestCableado(unittest.TestCase):
         for e in enums:
             valores = re.findall(r"'([a-z_]+)'", e)
             self.assertIn("ot_pendiente_stock", valores)
-            self.assertEqual(valores[-1], "ot_pendiente_stock")                   # nuevo valor AL FINAL: no se reordena nada (REGLA #18)
+            # nuevo valor AL FINAL: no se reordena nada (REGLA #18). 2026-10-21: después de este vino 'ot_responsable' (REGLA #36); lo que
+            # se vigila es que 'ot_pendiente_stock' siga justo detrás de los anteriores y que los nuevos se agreguen DESPUÉS.
+            self.assertEqual(valores[valores.index("ot_pendiente_stock") - 1], "ia_alerta_proactiva")
+            self.assertEqual(valores[valores.index("ot_pendiente_stock") + 1:], ["ot_responsable"])
         usados = set(re.findall(r'_mant_notificar\(\s*[^,()]+,\s*"([a-z_]+)"', APP))
         self.assertIn("ot_pendiente_stock", usados)
         for e in enums:
