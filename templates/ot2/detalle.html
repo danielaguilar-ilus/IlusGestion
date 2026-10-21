@@ -1086,6 +1086,9 @@
 .d-fec{--dc:#60a5fa} .d-hor{--dc:#c084fc} .d-tec{--dc:#4ade80}
 .d-eq{--dc:#fbbf24}  .d-fot{--dc:#f472b6} .d-ava{--dc:#dc2626}
 .d-con{--dc:#22d3ee} .d-auto{--dc:#4ade80}
+/* 🙋 2026-10-21 (REGLA #36): chip «Responsable» de la OT. Nombre COMPLETO (puede ser largo, REGLA #15): sin puntos suspensivos. */
+.d-resp{--dc:#38bdf8}
+.d-resp .v{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.25}
 /* 💰 "Valor del proyecto" (2026-09-11) -- mismo verde de plata que el resto
    de Costos (ver .row-zz-saldo/getFinanzas), no el verde de "resuelto" del
    chip Documento de al lado para no confundir ambas semánticas. */
@@ -3329,6 +3332,22 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           <button type="button" class="edit" onclick="otdAbrirReasignar()">
             <i class="bi bi-person-gear"></i> {{ 'Reasignar' if v.tecnico_nombre else 'Asignar' }}</button>
           {% endif %}</span></div></div>
+      {#- 🙋 2026-10-21 (REGLA #36, Daniel: «la persona que administra las órdenes de trabajo… que ese rol de responsable de la OT quede
+          bien establecido»): quién lleva esta OT y recibe sus avisos de gestión. Lo ve toda la familia técnico SOLO como nombre (el
+          servidor ya les quita quién lo asignó y cuándo). «Cambiar» lo ofrece la gestión (superadmin/admin/supervisor) y el propio
+          responsable; el motivo es opcional y todo queda en la bitácora. Sin responsable (OT anteriores) dice «Sin responsable» solo a
+          quien puede asignarlo. -#}
+      {% if responsable %}
+      <div class="otd-d d-resp{{ ' has-edit' if responsable.puede_cambiar }}" id="otdChipResponsable"
+           {% if responsable.por %}title="Asignado por {{ responsable.por }}{% if responsable.cuando %} el {{ responsable.cuando }}{% endif %}"{% endif %}>
+        <i class="bi bi-person-check-fill"></i>
+        <div class="in"><span class="k">Responsable</span>
+          <span class="v"><span id="otdRespNombre">{{ responsable.nombre or 'Sin responsable' }}</span>
+          {% if responsable.puede_cambiar %}
+          <button type="button" class="edit" onclick="otdAbrirResponsable()">
+            <i class="bi bi-arrow-left-right"></i> {{ 'Cambiar' if responsable.id else 'Asignar' }}</button>
+          {% endif %}</span></div></div>
+      {% endif %}
       {# 🆕 2026-09-02 (Daniel: "necesito expresar el documento en el ERP,
          eso lo quiero ver en el header... tiene que estar aprobado sí o sí,
          o que diga garantía, o trabajo interno"). Semáforo (REGLA #15):
@@ -11770,6 +11789,59 @@ window.otdConfirmarReasignar = async function(){
     }
   } catch(e){
     ilusToast('Error de conexión al reasignar el técnico.', {type:'error'});
+  }
+};
+
+/* 🙋 2026-10-21 (REGLA #36, Daniel: «que ese rol de responsable de la OT quede bien establecido»). Cambiar al RESPONSABLE de la OT:
+   se elige a la persona (hoja de opciones con las que tienen el permiso «Responsable de OT») y, si se quiere, el motivo. El servidor
+   revalida quién puede cambiarlo (gestión o el propio responsable), deja constancia en la bitácora (quién, cuándo, de quién a quién) y
+   avisa por la campana, con tono amable, a la persona nueva y a la anterior. Al cliente no le llega nada. Sin popups nativos (REGLA #1). */
+window.otdAbrirResponsable = async function(){
+  let lista = [];
+  try {
+    const r = await fetch('/ot/api/responsables', {credentials:'same-origin'});
+    const j = await r.json();
+    lista = (j && j.candidatos) || [];
+  } catch(e){
+    ilusToast('No pudimos cargar a las personas que pueden ser responsables.', {type:'error'});
+    return;
+  }
+  const actual = {{ ((responsable.id if responsable else None) or 'null') }};
+  const opciones = lista.filter(c => c.id !== actual)
+    .map(c => ({label: c.nombre, icon: 'bi-person-check', value: c.id, style: 'secondary'}));
+  if (!opciones.length){
+    ilusToast('No hay otra persona con el permiso «Responsable de OT».', {type:'info', duration:6000});
+    return;
+  }
+  const nuevo = await ilusActionSheet({
+    title: 'Quién queda a cargo de esta OT',
+    message: 'Recibirá los avisos de gestión de la orden.',
+    sub: actual ? 'Hoy la lleva ' + (document.getElementById('otdRespNombre')?.textContent || 'otra persona') + '.' : '',
+    options: opciones,
+  });
+  if (nuevo === null || nuevo === undefined) return;
+  const nombre = (lista.find(c => c.id === nuevo) || {}).nombre || 'La persona';
+  const motivo = await ilusPrompt({
+    title: '¿Por qué el cambio? (opcional)',
+    message: 'Queda en la bitácora de la OT, con tu nombre y la hora.',
+    placeholder: 'Ej: Aarón está de vacaciones esta semana',
+    required: false, multiline: true, okLabel: 'Cambiar responsable',
+  });
+  if (motivo === null) return;       // canceló
+  try {
+    const r = await fetch('/ot/api/{{ v.id }}/responsable', {
+      method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({user_id: nuevo, motivo: (motivo || '').trim()}),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok){
+      ilusToast('✓ ' + nombre + ' quedó a cargo de la OT', {type:'success'});
+      setTimeout(() => location.reload(), 700);
+    } else {
+      ilusToast(j.error || 'No se pudo cambiar al responsable.', {type:'error'});
+    }
+  } catch(e){
+    ilusToast('Error de conexión al cambiar al responsable.', {type:'error'});
   }
 };
 
