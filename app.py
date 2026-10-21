@@ -163792,13 +163792,19 @@ def _qp_aplicar(vid, v, n, cands, user, uid):
             cur.execute("SELECT COALESCE(MAX(orden),0) AS m FROM mant_visita_tareas WHERE visita_id=%s", (hija["id"],))
             orden = int((cur.fetchone() or {}).get("m") or 0)
             fsh = _fsh_ok()
+            _sel_tareas = ("SELECT plantilla_id, titulo, descripcion, tipo, tipo_respuesta, target_field, obligatoria, requiere_foto, unidad, "
+                           "       rango_min, rango_max, opciones_lista_json" + _fsh_col() + " "
+                           "  FROM mant_visita_tareas WHERE visita_id=%s AND maquina_id=%s")
             for e in equipos:
-                cur.execute(
-                    "SELECT plantilla_id, titulo, descripcion, tipo, tipo_respuesta, target_field, obligatoria, requiere_foto, unidad, "
-                    "       rango_min, rango_max, opciones_lista_json" + _fsh_col() + " "
-                    "  FROM mant_visita_tareas WHERE visita_id=%s AND maquina_id=%s AND COALESCE(completada,0)=0 ORDER BY orden, id",
-                    (int(vid), e["maquina_id"]))
-                for it in (cur.fetchall() or []):
+                cur.execute(_sel_tareas + " AND COALESCE(completada,0)=0 ORDER BY orden, id", (int(vid), e["maquina_id"]))
+                filas_t = cur.fetchall() or []
+                if not filas_t and e.get("todas_marcadas_hechas"):
+                    # 🧭 21-oct (caso real Aurum OT-2026-00171): la técnica marcó «falta stock» a dos accesorios y DESPUÉS dejó sus 6 tareas
+                    # «hechas» y vacías para poder firmar: no quedaba ninguna «sin hacer» y la hija habría nacido vacía. Un equipo que una
+                    # persona marcó «falta stock» NO se hizo: pasan TODAS sus tareas, como pendientes (la madre conserva las suyas: evidencia).
+                    cur.execute(_sel_tareas + " ORDER BY orden, id", (int(vid), e["maquina_id"]))
+                    filas_t = cur.fetchall() or []
+                for it in filas_t:
                     orden += 1
                     _c, _p, _v = _fsh_ins(fsh, it)
                     cur.execute(

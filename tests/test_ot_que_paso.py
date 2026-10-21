@@ -155,6 +155,26 @@ class TestCandidatos(unittest.TestCase):
         self.assertFalse(por[3]["elegible"])
         self.assertIn("nada pendiente", por[3]["motivo_no"])
 
+    def test_un_equipo_marcado_falta_stock_se_ofrece_aunque_sus_tareas_figuren_hechas(self):
+        # CASO REAL (21-oct, Aurum OT-2026-00171): la técnica marcó «falta stock» a los accesorios 7601 y 7603 y DESPUÉS dejó sus 6 tareas
+        # «hechas» y vacías para poder firmar. Con «solo las sin hacer» la función no servía para el caso que la pidió.
+        c = qp.candidatos_equipos([_cand(7601, estado_pe="falta_stock", pend=0, total=3), _cand(7603, estado_pe="falta_stock", pend=0, total=3),
+                                   _cand(9, pend=0, total=3), _cand(10, estado_pe="no_esta", pend=0, total=3)])
+        por = {x["maquina_id"]: x for x in c}
+        for mid in (7601, 7603):
+            self.assertTrue(por[mid]["elegible"] and por[mid]["preseleccionado"], mid)       # sugerido, y la persona decide
+            self.assertEqual((por[mid]["pasan"], por[mid]["todas_marcadas_hechas"]), (3, True), mid)
+        self.assertFalse(por[9]["elegible"])                    # sin marca y todo hecho: nada que dejar pendiente
+        self.assertFalse(por[10]["elegible"])                   # «no está» no es «falta stock»
+        n, err = qp.validar({"tipo": "falta_stock", "motivo": "falta_stock", "accion": "cerrar_y_pendiente", "equipos": [7601, 7603]},
+                            "firmada_tecnico", c)
+        self.assertIsNone(err)                                  # y la validación del servidor los acepta (la OT ya firmada por la técnica)
+        self.assertEqual(n["equipos"], [7601, 7603])
+
+    def test_con_tareas_sin_hacer_pasan_esas_y_no_todas(self):
+        c = qp.candidatos_equipos([_cand(1, estado_pe="falta_stock", pend=2, total=3), _cand(2, pend=2, total=3)])
+        self.assertEqual([(x["pasan"], x["todas_marcadas_hechas"]) for x in c], [(2, False), (2, False)])
+
     def test_baja_fuera_de_servicio_y_falla_no_se_ofrecen(self):
         c = qp.candidatos_equipos([_cand(1, baja=True), _cand(2, fuera_servicio=True), _cand(3, revision="falla_detectada"),
                                    _cand(4, razon_saltado="dado_de_baja"), _cand(5, razon_saltado="fuera_de_servicio"), _cand(6)])
@@ -254,7 +274,10 @@ class Cursor:
         elif s.startswith("SELECT COALESCE(MAX(orden)"):
             self._res = [{"m": 0}]
         elif s.startswith("SELECT plantilla_id, titulo") and "FROM mant_visita_tareas" in s:
-            self._res = [dict(t) for t in self.m.tareas.get(params[1], [])]
+            if "COALESCE(completada,0)=0" in s and params[1] in self.m.hechas:
+                self._res = []                                  # todas sus tareas figuran como hechas: ninguna «sin hacer»
+            else:
+                self._res = [dict(t) for t in self.m.tareas.get(params[1], [])]
         elif s.startswith("SELECT id, estado FROM mant_ot_producto_estado"):
             self._res = [dict(a) for a in self.m.activas.get(params[1], [])]
         elif s.startswith("INSERT INTO mant_ot_que_paso"):
@@ -302,6 +325,7 @@ class Mundo:
                      # lo financiero de la madre: la pendiente NO debe copiarlo
                      "zz_monto": 250000, "zz_envio_monto": 30000, "factura_tido": "FCV", "factura_nudo": "11439", "costo_proveedor": 90000}
         self.hijas = []
+        self.hechas = set()          # equipos cuyas tareas TODAS figuran como hechas (la consulta «sin hacer» no trae nada)
         self.tareas = {
             101: [{"plantilla_id": 7, "titulo": "Llegada al lugar", "descripcion": None, "tipo": "instalacion", "tipo_respuesta": "check",
                    "target_field": None, "obligatoria": 1, "requiere_foto": 0, "unidad": None, "rango_min": None, "rango_max": None,
@@ -417,6 +441,35 @@ class TestTransaccion(unittest.TestCase):
         sel = self.m.n("SELECT plantilla_id, titulo")[0][0]
         self.assertIn("COALESCE(completada,0)=0", sel)                            # lo ya hecho se queda en la madre (evidencia)
         self.assertEqual([t[1][1] for t in tareas], [7, 7, 7, 7])                 # la misma plantilla que la persona eligió (REGLA #32)
+
+    def test_un_equipo_marcado_falta_stock_con_todas_sus_tareas_hechas_pasa_con_todas_sus_tareas(self):
+        # CASO REAL (21-oct, Aurum OT-2026-00171): la hija no puede nacer vacía porque la técnica dejó «hechas» las tareas del accesorio.
+        self.m.hechas = {101}
+        cands = qp.candidatos_equipos([_cand(101, estado_pe="falta_stock", nombre="Pulsera", total=3, pendientes=0),
+                                       _cand(102, nombre="Accesorio")])
+        n, err = qp.validar({"tipo": "falta_stock", "motivo": "falta_stock", "accion": "cerrar_y_pendiente", "equipos": [101, 102]},
+                            "en_curso", cands)
+        self.assertIsNone(err)
+        r = self.amb["_qp_aplicar"](10, dict(V_MADRE), n, cands, "Isabel Milling", 31)
+        self.assertTrue(r["ok"], r)
+        tareas = self.m.n("INSERT INTO mant_visita_tareas")
+        self.assertEqual([t[1][6] for t in tareas], [101, 101, 101, 102])         # las 3 del 101 aunque figuraran hechas + la del 102
+        self.assertEqual({t[1][0] for t in tareas}, {500})                         # todas en la hija, y NUEVAS (sin «completada»)
+        self.assertTrue(all("completada" not in t[0] for t in tareas))
+        selects = [x[0] for x in self.m.n("SELECT plantilla_id, titulo")]
+        self.assertEqual(len(selects), 3)                                          # 101 con filtro, 101 sin filtro (no había «sin hacer»), 102 con filtro
+        self.assertIn("COALESCE(completada,0)=0", selects[0])
+        self.assertNotIn("completada", selects[1])
+        self.assertIn("COALESCE(completada,0)=0", selects[2])
+
+    def test_un_equipo_sin_la_marca_con_todo_hecho_no_trae_tareas_de_mas(self):
+        # sin «falta stock» NUNCA se copia lo ya hecho (la madre es evidencia): solo el equipo marcado tiene esa salida
+        self.m.hechas = {102}
+        n = _normalizado()
+        self.amb["_qp_aplicar"](10, dict(V_MADRE), n, CANDS, "Isabel Milling", 31)
+        tareas = self.m.n("INSERT INTO mant_visita_tareas")
+        self.assertEqual([t[1][6] for t in tareas], [101, 101, 101])               # el 102 no estaba marcado: no se le agrega nada
+        self.assertEqual(len(self.m.n("SELECT plantilla_id, titulo")), 2)
 
     def test_los_equipos_quedan_falta_stock_y_ya_no_frenan_la_firma(self):
         self._aplicar()
@@ -1340,6 +1393,12 @@ class TestFrente(unittest.TestCase):
         self.assertIn("preseleccionar", JS)
         self.assertIn("e.preseleccionado", JS)
         self.assertIn("equipos: creaPendiente() ? elegidos() : []", JS)         # viaja exactamente lo que se ve elegido
+
+    def test_dice_que_un_equipo_marcado_falta_stock_pasa_con_todas_sus_tareas_aunque_figuren_hechas(self):
+        # caso real Aurum OT-2026-00171 (21-oct): la persona decide con eso a la vista (REGLA #32)
+        self.assertIn("e.todas_marcadas_hechas", JS)
+        self.assertIn("aunque figuren como hechas", JS)
+        self.assertIn("pasan todas sus tareas", JS)
 
     def test_pide_confirmacion_antes_de_crear_la_ot_pendiente_y_dice_que_no_se_cobra_de_nuevo(self):
         self.assertIn("no se cobra de nuevo", JS)
