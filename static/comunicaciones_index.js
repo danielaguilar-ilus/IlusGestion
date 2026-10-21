@@ -566,7 +566,7 @@ const TPL_ESTADOS_RETIROS = [
   { key:'agenda_confirmada',  label:'Agenda confirmada',      icon:'bi-calendar-check', grupo:'retiro',
     color:'#22c55e', desc:'Cuando ambas partes acuerdan la fecha de retiro' },
   { key:'en_preparacion',     label:'En preparación',         icon:'bi-box-seam',       grupo:'retiro',
-    color:'#0ea5e9', desc:'Aviso 24h antes — bodega ya está preparando' },
+    color:'#0ea5e9', desc:'Cuando el retiro pasa a preparación (a mano, o solo cuando Check informa que bodega empezó a juntar el pedido) — «Estamos preparando tu retiro»' },
   { key:'retirada',           label:'Retirada / Completada',  icon:'bi-check-circle-fill',grupo:'retiro',
     color:'#16a34a', desc:'Confirma al cliente que el retiro se completó' },
   { key:'reagendada',         label:'Reagendada',             icon:'bi-arrow-repeat',   grupo:'retiro',
@@ -582,13 +582,17 @@ const TPL_ESTADOS_RETIROS = [
     color:'#f59e0b', desc:'Cuando faltan datos de documento/contacto/persona autorizada para avanzar' },
   { key:'recordatorio_24h',   label:'Recordatorio 24h antes', icon:'bi-alarm',          grupo:'retiro',
     color:'#fb923c', desc:'Recordatorio automático el día antes de la fecha confirmada' },
+  // 2026-10-20 (Control de correos): 'fallida' SÍ se envía («No pudimos concretar tu retiro»: estado No concretado o «¿Qué pasó?» con
+  // aviso al cliente) pero no figuraba en esta lista: Daniel no podía verla ni editarla desde /comunicaciones.
+  { key:'fallida',            label:'No pudimos concretar tu retiro', icon:'bi-x-octagon', grupo:'retiro',
+    color:'#b91c1c', desc:'Cuando el retiro queda «No concretado» (el cliente no vino ni reagendó) o «¿Qué pasó?» pide avisar al cliente' },
 ];
 
 const TPL_ESTADOS_MANTENCIONES = [
   { key:'visita_agendada',      label:'Visita agendada',        icon:'bi-calendar-check',   grupo:'mantencion',
     color:'#dc2626', desc:'Aviso al cliente cuando se agenda visita técnica' },
   { key:'recordatorio_visita',  label:'Recordatorio visita',    icon:'bi-bell',             grupo:'mantencion',
-    color:'#fb923c', desc:'Recordatorio 24h antes de la visita programada' },
+    color:'#fb923c', desc:'Recordatorio automático de 3 a 7 días antes de la visita programada (hoy apagado por configuración: MANT_RECORDATORIOS_EMAIL_ENABLED)' },
   { key:'ot_completada',        label:'OT completada',          icon:'bi-check-circle-fill',grupo:'mantencion',
     color:'#16a34a', desc:'Cuando se completa la visita y se firma la OT' },
   { key:'visita_proxima',       label:'Visita próxima',         icon:'bi-clock-history',    grupo:'mantencion',
@@ -1472,7 +1476,12 @@ async function cargarPlantillas(force=false) {
   }
   _tplLoaded = true;
   renderTplEstados();
-  if (!_tplEstado && TPL_ESTADOS.length) {
+  // Control de correos: «Editar plantilla» pide un estado concreto de este módulo (tplAbrirEstado)
+  if (!_tplEstado && _tplPendiente && TPL_ESTADOS.find(e => e.key === _tplPendiente)) {
+    const k = _tplPendiente; _tplPendiente = null;
+    tplSeleccionar(k);
+  } else if (!_tplEstado && TPL_ESTADOS.length) {
+    _tplPendiente = null;
     tplSeleccionar(TPL_ESTADOS[0].key);
   } else if (_tplEstado && TPL_ESTADOS.find(e => e.key === _tplEstado)) {
     tplMostrarVista();
@@ -2074,6 +2083,7 @@ const HIST_PER_PAGE_OK = [25, 50, 100, 200];
 const _hist = {
   page: 1, per_page: 100,
   estado: '', modulo: '', q: '', desde: '', hasta: '', ref: '',
+  correo: '', correo_nombre: '',      // Control de correos (2026-10-20): el Historial de UN correo (desde su tarjeta)
   seq: 0, filas: [], pages: 1, total: 0,
   iniciado: false, cargadoOk: false, actual: null, debounce: null,
 };
@@ -2099,6 +2109,7 @@ function histDesdeQuery(qs){
   _hist.desde  = qs.get('desde') || '';
   _hist.hasta  = qs.get('hasta') || '';
   _hist.ref    = qs.get('ref') || '';
+  _hist.correo = qs.get('correo') || '';
   const pg = parseInt(qs.get('page') || '1', 10);
   _hist.page = pg > 0 ? pg : 1;
   histPintarFiltros();
@@ -2114,6 +2125,44 @@ function histPintarFiltros(){
   set('histFHasta', _hist.hasta);
   set('histFRef', _hist.ref);
   histPintarChips();
+  histPintarCorreo();
+}
+
+/* Control de correos: aviso «Estás viendo solo los envíos de «X»» con su botón para quitar el filtro */
+function histPintarCorreo(){
+  const el = document.getElementById('histFiltroCorreo');
+  if (!el) return;
+  if (!_hist.correo) { el.innerHTML = ''; return; }
+  const nom = _hist.correo_nombre || _hist.correo;
+  el.innerHTML = `<i class="bi bi-envelope-check"></i><span>Solo los envíos del correo «${histEsc(nom)}»</span>` +
+    `<button type="button" class="btn btn-sm btn-outline-primary" onclick="histQuitarCorreo()"><i class="bi bi-x-lg me-1"></i>Ver todos</button>` +
+    `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="ctcIrATarjeta('${histEsc(_hist.correo)}')"><i class="bi bi-toggles me-1"></i>Ver su tarjeta</button>`;
+}
+
+function histQuitarCorreo(){
+  _hist.correo = ''; _hist.correo_nombre = ''; _hist.page = 1;
+  histPintarCorreo();
+  histCargar();                       // REGLA #4.3: al quitar un filtro la tabla se recarga
+}
+
+/* Desde la tarjeta de un correo («Ver en historial»): abre el Historial filtrado por ese correo */
+function histAbrirDesdeCorreo(clave){
+  _hist.correo = String(clave || ''); _hist.correo_nombre = ''; _hist.page = 1;
+  _hist.estado = ''; _hist.modulo = ''; _hist.q = ''; _hist.desde = ''; _hist.hasta = ''; _hist.ref = '';
+  histPintarFiltros();
+  const btn = document.querySelector('[data-bs-target="#tabLog"]');
+  if (btn) btn.click();
+  histCargar();
+}
+
+/* Desde la tarjeta de un correo («Editar plantilla»): abre Plantillas en ese módulo y ese estado */
+let _tplPendiente = null;
+function tplAbrirEstado(modulo, estado){
+  _tplPendiente = estado || null;
+  const btn = document.querySelector('[data-bs-target="#tabPlantillas"]');
+  if (btn) btn.click();
+  const card = document.querySelector(`.tpl-modulo-card[data-modulo="${modulo}"]`);
+  seleccionarModulo(modulo, card);
 }
 
 /* Solo el semáforo y el tamaño de página. Al llegar una respuesta NO se
@@ -2164,6 +2213,8 @@ function histLimpiar(){
   ['histFEstado','histFModulo','histFQ','histFDesde','histFHasta','histFRef'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });
+  _hist.correo = ''; _hist.correo_nombre = '';
+  histPintarCorreo();
   histFiltroCambio();
 }
 
@@ -2201,7 +2252,7 @@ function histAviso(msg){
    o la OT enlazada) el historial reaparece en la misma página y filtros. */
 function histGuardarEnHash(){
   const p = new URLSearchParams();
-  ['estado','modulo','q','desde','hasta','ref'].forEach(k => { if (_hist[k]) p.set(k, _hist[k]); });
+  ['estado','modulo','q','desde','hasta','ref','correo'].forEach(k => { if (_hist[k]) p.set(k, _hist[k]); });
   if (_hist.page > 1) p.set('page', String(_hist.page));
   const s = p.toString();
   try { history.replaceState(null, '', '#tabLog' + (s ? '?' + s : '')); } catch (_e) {}
@@ -2213,7 +2264,7 @@ async function histCargar(){
   const p = new URLSearchParams();
   p.set('page', String(_hist.page));
   p.set('per_page', String(_hist.per_page));
-  ['estado','modulo','q','desde','hasta','ref'].forEach(k => { if (_hist[k]) p.set(k, _hist[k]); });
+  ['estado','modulo','q','desde','hasta','ref','correo'].forEach(k => { if (_hist[k]) p.set(k, _hist[k]); });
   histSetCargando(true);
   try {
     const r = await fetch('/api/comm/historial?' + p.toString(),
@@ -2229,6 +2280,7 @@ async function histCargar(){
     _hist.total = d.total || 0;
     _hist.filas = d.filas || [];
     _hist.cargadoOk = true;
+    if (d.filtros && d.filtros.correo) { _hist.correo_nombre = d.filtros.correo_nombre || _hist.correo_nombre; histPintarCorreo(); }
     histRender(d);
     document.getElementById('histNuevoWrap')?.classList.remove('d-none');
     document.getElementById('histLegacyWrap')?.classList.add('d-none');
@@ -2265,7 +2317,7 @@ function histRender(d){
   const tbody = document.getElementById('histTbody');
   if (tbody) {
     if (!_hist.filas.length) {
-      const hayFiltros = ['estado','modulo','q','desde','hasta','ref'].some(k => _hist[k]);
+      const hayFiltros = ['estado','modulo','q','desde','hasta','ref','correo'].some(k => _hist[k]);
       tbody.innerHTML = `<tr class="hist-vacia"><td colspan="9">
           <i class="bi bi-envelope-x"></i>
           <div class="t">${hayFiltros ? 'Ningún correo coincide con los filtros' : 'Sin registros de envíos aún'}</div>
@@ -2292,7 +2344,7 @@ function histRender(d){
 
 const HIST_ESTADOS = {
   enviado:   {cls: 'ok',   icon: 'bi-check-circle-fill', txt: 'Enviado'},
-  bloqueado: {cls: 'warn', icon: 'bi-sign-stop-fill',    txt: 'Bloqueado por llave'},
+  bloqueado: {cls: 'warn', icon: 'bi-sign-stop-fill',    txt: 'Bloqueado'},      // 2026-10-20: el motivo dice si fue el general, una llave o el interruptor de ese correo
   fallido:   {cls: 'fail', icon: 'bi-x-circle-fill',     txt: 'Fallido'},
   en_cola:   {cls: 'info', icon: 'bi-hourglass-split',   txt: 'En cola'},
 };
@@ -2302,6 +2354,10 @@ function histEstadoHtml(r){
   let h = `<span class="hist-pill ${m.cls}"><i class="bi ${m.icon}"></i>${histEsc(m.txt)}</span>`;
   if (r.motivo) h += `<div class="hist-motivo ${m.cls}">${histEsc(r.motivo)}</div>`;
   else if (r.via) h += `<div class="hist-motivo muted">Vía ${histEsc(r.via)}</div>`;
+  // Control de correos: si lo frenó el interruptor de ESE correo, un enlace lleva a su tarjeta
+  if (r.estado === 'bloqueado' && r.bloqueo === 'correo' && r.correo_clave) {
+    h += `<button type="button" class="hist-ver-tarjeta" onclick="ctcIrATarjeta('${histEsc(r.correo_clave)}')"><i class="bi bi-toggles"></i>Ver su tarjeta</button>`;
+  }
   return h;
 }
 
@@ -2454,8 +2510,8 @@ async function histReenviar(){
   const ok = await ilusConfirm({
     title: 'Reenviar correo',
     message: `¿Reenviar «${r.asunto || '(sin asunto)'}» a ${r.destinatario}?`,
-    sub: 'Se envía el mismo contenido guardado. Respeta la llave de paso del módulo: '
-       + 'si sigue cerrada, quedará bloqueado otra vez.' + adj,
+    sub: 'Se envía el mismo contenido guardado. Respeta el interruptor general, la llave de paso del módulo y el '
+       + 'interruptor de ese correo: si siguen cerrados, quedará bloqueado otra vez.' + adj,
     okLabel: 'Reenviar', cancelLabel: 'Cancelar',
   });
   if (!ok) return;
@@ -2473,8 +2529,10 @@ async function histReenviar(){
       if (_histModal) _histModal.hide();
     } else if (d.estado === 'bloqueado') {
       await ilusAlert({title: 'Quedó bloqueado otra vez',
-                       message: 'La llave de paso de este módulo sigue cerrada: el correo no salió.',
-                       sub: 'Ábrela en la pestaña Plantillas → Llave de paso si corresponde enviarlo.',
+                       message: (d.motivo || 'Una llave de paso sigue cerrada') + ': el correo no salió.',
+                       sub: d.bloqueo === 'correo'
+                         ? 'Enciéndelo en la pestaña Control de correos si corresponde enviarlo.'
+                         : 'Ábrela en la pestaña Plantillas → Llave de paso si corresponde enviarlo.',
                        type: 'warning'});
     } else {
       await ilusAlert({title: 'No se pudo reenviar',
