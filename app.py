@@ -99304,6 +99304,94 @@ def ot_api_costo_desde_anexo(vid):
                     "mensaje": f"El costo de la OT quedó igual al Anexo N° {ax['numero']} ({_oac.clp(res['total'])})."})
 
 
+@app.route("/ot/api/<int:vid>/costo-desde-anexo/corregir", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot_api_costo_corregir_con_anexo(vid):
+    """Superadmin: una OT ya CERRADA cuyo costo no coincide con su anexo FIRMADO se corrige con el valor del anexo (un solo valor,
+    REGLA #34), por el mismo camino y con el mismo registro inmutable que «Corregir finanzas» (mant_ot_finanzas_correcciones:
+    antes / después / quién / cuándo / por qué). Solo los montos del costo; jamás firmas, estado, cliente ni documentos.
+    body: {simular?: true, motivo?}. Con `simular` solo dice qué cambiaría y cómo queda la ganancia (no escribe nada)."""
+    if not _ot_fin_es_superadmin():
+        return _ot2_err("Solo el superadministrador puede corregir las finanzas de una OT cerrada.", "SOLO_SUPERADMIN", 403)
+    v = mysql_fetchone(_OT_FIN_SELECT, (vid,))
+    if not v:
+        return _ot2_err("No encontramos esa orden.", "NO_ENCONTRADA", 404)
+    ax = _ot_anexo_vivo(vid)
+    if not ax:
+        return _ot2_err("Esta OT no tiene un anexo vigente: no hay con qué alinear su costo.", "SIN_ANEXO", 409)
+    if ax["estado"] != "firmado":
+        return _ot2_err(f"El Anexo N° {ax['numero']} aún no está firmado: una OT cerrada solo se alinea con un anexo firmado.",
+                        "ANEXO_SIN_FIRMA", 409)
+    res = _oac.alinear(v.get("costo_proveedor"), v.get("costo_despacho"), ax["items"])
+    if res.get("conflicto"):
+        return _ot2_err(res["conflicto"] + " Corrige el despacho o el anexo antes de alinear.", "ANEXO_MENOR_AL_DESPACHO", 409)
+    cambios = {}
+    for campo, nuevo in (("costo_proveedor", res["prov"]), ("costo_despacho", res["desp"])):
+        if nuevo is None:
+            continue
+        av = v.get(campo)
+        nv = int(round(float(nuevo)))
+        if av is None or int(round(float(av))) != nv:
+            cambios[campo] = {"antes": (None if av is None else int(round(float(av)))), "despues": nv}
+    if not cambios:
+        return jsonify({"ok": True, "sin_cambios": True, "mensaje": "El costo de la OT ya es igual al del anexo."})
+    rep = _ot_fin_rep_de(vid)
+    ganancia_antes = _ot_fin_ganancia(v, rep)
+    v2 = dict(v)
+    v2.update({k: c["despues"] for k, c in cambios.items()})
+    ganancia_despues = _ot_fin_ganancia(v2, rep)
+    d = request.get_json(silent=True) or {}
+    if d.get("simular"):
+        return jsonify({"ok": True, "simulacion": True, "cambios": cambios, "ganancia_antes": ganancia_antes,
+                        "ganancia_despues": ganancia_despues, "anexo": {"numero": ax["numero"], "total": ax["total"]}})
+    antes_txt = _oac.clp(v.get("costo_proveedor")) if v.get("costo_proveedor") is not None else "sin declarar"
+    motivo = ((d.get("motivo") or "").strip()[:500]
+              or (f"Se alinea con el Anexo N° {ax['numero']} firmado por el proveedor ({_oac.clp(ax['total'])}): el costo de la OT "
+                  f"y el anexo son un solo valor (REGLA #34). Antes la OT decía {antes_txt}."))
+    if len(motivo) < _OT_FIN_CORR_MOTIVO_MIN:
+        return _ot2_err(f"Escribe el motivo de la corrección (mínimo {_OT_FIN_CORR_MOTIVO_MIN} caracteres).", "MOTIVO_CORTO")
+    sets = ", ".join(f"{k}=%s" for k in cambios)
+    params = tuple(c["despues"] for c in cambios.values()) + (vid,)
+    quien = current_username() or "?"
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            # Solo esas columnas: las firmas, el estado, el cliente y los documentos NO se tocan.
+            cur.execute(f"UPDATE mant_visitas SET {sets} WHERE id=%s", params)
+            cur.execute(
+                "INSERT INTO mant_ot_finanzas_correcciones "
+                "(visita_id, numero_ot, usuario, motivo, antes_json, despues_json, ganancia_antes, ganancia_despues) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                (vid, v.get("numero_ot"), quien, motivo,
+                 json.dumps({k: c["antes"] for k, c in cambios.items()}, ensure_ascii=False),
+                 json.dumps({k: c["despues"] for k, c in cambios.items()}, ensure_ascii=False),
+                 ganancia_antes, ganancia_despues))
+        conn.commit()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"[costo-anexo-corregir] vid={vid}: {type(e).__name__}", flush=True)
+        return _ot2_err("No se pudo guardar la corrección. Inténtalo de nuevo.", "ERROR_GUARDAR", 500)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    try:
+        resumen = "; ".join(f"{_OT_FIN_CORR_ROT[k]}: {c['antes']} → {c['despues']}" for k, c in cambios.items())
+        _mant_log("visita", vid, "finanzas_corregidas",
+                  f"{quien} corrigió las finanzas de {v.get('numero_ot') or ('OT ' + str(vid))} (superadmin) con el Anexo N° "
+                  f"{ax['numero']}: {resumen}. Queda {ganancia_antes:,.0f} → {ganancia_despues:,.0f}. Motivo: {motivo}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "cambios": cambios, "ganancia_antes": ganancia_antes, "ganancia_despues": ganancia_despues,
+                    "mensaje": f"El costo de la OT quedó igual al Anexo N° {ax['numero']} ({_oac.clp(ax['total'])}). Queda registrado "
+                               "con tu nombre."})
+
+
 @app.route("/ot/api/anexos/vinculo-costos", methods=["GET"])
 @_mant_required
 @_no_tecnico
@@ -139814,6 +139902,8 @@ _MFP_SELECT_OT = (
     # 2026-09-20 ("el anexo lo necesito"): también su estado e id, para
     # mostrar Firmado/Enviado/Sin anexo y abrir el PDF desde la fila.
     "       anx.numero AS anexo_numero, anx.estado AS anexo_estado, anx.id AS anexo_id, "
+    # 🧾 2026-10-20 (REGLA #34, un solo valor): los ítems del anexo, para decirle a quien paga si lo que se paga es lo del anexo.
+    "       anx.precio_items_json AS anexo_items_json, "
     "       c.razon_social AS cliente, "
     # 📋 2026-09-21 (calidad de información en la tabla): comuna de la OT (o
     # del cliente) y ticket de origen, sin JOIN nuevo que multiplique filas.
@@ -139986,6 +140076,18 @@ def _mfp_fila_ot(f):
         _avisos.append({"n": "rojo", "t": "Pérdida: se cobró " + _ot_fin_clp(cobrado_cliente) + " y se paga " + _ot_fin_clp(pagado_proveedor) + "."})
     if _anx_estado != "firmado":
         _avisos.append({"n": "info", "t": "Sin anexo firmado: se avisa, no bloquea."})
+    # 🧾 2026-10-20 (REGLA #34, Daniel: «el valor debe ser único: es el costo de nuestro proveedor y debe estar en la mira para
+    # pagar y medir»): lo que se paga por la OT es el total de su anexo vivo. Si no coincide, se dice con las dos cifras; si
+    # coincide, queda a la vista de dónde sale.
+    _anx_total = None
+    if f.get("anexo_numero") and f.get("anexo_items_json") is not None and _oac.es_vivo(_anx_estado):
+        _anx_total = float(_oac.total(f.get("anexo_items_json")))
+        if abs(_anx_total - pagado_proveedor) > _oac.TOLERANCIA:
+            _avisos.append({"n": "rojo", "t": "Lo que se paga (" + _ot_fin_clp(pagado_proveedor) + ") no coincide con el Anexo N° "
+                            + str(f.get("anexo_numero")) + " (" + _ot_fin_clp(_anx_total) + "): es un solo valor. "
+                            "Corrígelo en la OT o en el anexo."})
+        else:
+            _avisos.append({"n": "info", "t": "Coincide con el Anexo N° " + str(f.get("anexo_numero")) + " (" + _ot_fin_clp(_anx_total) + ")."})
     if f.get("fac_id"):
         _avisos.append({"n": "rojo", "t": "Ya está en la factura #" + str(f.get("fac_id")) + "."})
     if not _fin["cobra"]:
@@ -140028,6 +140130,7 @@ def _mfp_fila_ot(f):
         "anexo_estado": _anx_estado,
         "anexo_id": f.get("anexo_id"),
         "anexo_firmado": _anx_estado == "firmado",
+        "anexo_total": _anx_total,          # 🧾 2026-10-20 (REGLA #34): None si no hay anexo vivo con ítems
         # 💰 2026-09-19 (Daniel: "si es una instalación, una mantención, o
         # si se trata de una garantía"). Es la condición comercial de la
         # OT (modalidad_cobro), NO el tipo de trabajo (tipo_label) -- una

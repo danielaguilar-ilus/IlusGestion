@@ -273,5 +273,129 @@ class TestCableado(unittest.TestCase):
         self.assertNotIn("alert(", t[t.index('id="otdAnexoVinculo"'):t.index('id="otdAnexoVinculo"') + 4000])
 
 
+class TestCorregirOtCerradaConElAnexo(unittest.TestCase):
+    """Superadmin: una OT ya cerrada se alinea con su anexo FIRMADO por el camino de «Corregir finanzas» (registro inmutable)."""
+
+    def _amb(self, v, anexo, superadmin=True, body=None):
+        self.exec_, self.logs, self.commits = [], [], []
+        suite = self
+
+        class Cur:
+            def __enter__(s): return s
+            def __exit__(s, *a): return False
+            def execute(s, sql, params=()): suite.exec_.append((sql, params))
+
+        class Conn:
+            def cursor(s): return Cur()
+            def commit(s): suite.commits.append(1)
+            def rollback(s): pass
+            def close(s): pass
+
+        req = types.SimpleNamespace(get_json=lambda silent=True: body or {})
+        amb = {"_oac": O, "json": json, "request": req, "print": lambda *a, **k: None,
+               "_ot_fin_es_superadmin": lambda: superadmin,
+               "_ot2_err": lambda msg, code, http=400: ({"ok": False, "error": msg, "error_codigo": code}, http),
+               "jsonify": lambda d: d,
+               "_OT_FIN_SELECT": "SELECT ...",
+               "_OT_FIN_CORR_MOTIVO_MIN": 15,
+               "_OT_FIN_CORR_ROT": {"costo_proveedor": "Pago al técnico/proveedor", "costo_despacho": "Costo del despacho"},
+               "mysql_fetchone": lambda sql, p=None: v,
+               "_ot_anexo_vivo": lambda vid: anexo,
+               "_ot_fin_rep_de": lambda vid: None,
+               "_ot_fin_ganancia": lambda r, rep=None: 97811 - float(r.get("costo_proveedor") or 0) - float(r.get("costo_despacho") or 0),
+               "get_mysql": lambda: Conn(),
+               "current_username": lambda: "daniel",
+               "_mant_log": lambda ent, eid, acc, det: self.logs.append((ent, eid, acc, det))}
+        return cargar(funciones=("ot_api_costo_corregir_con_anexo",), extra=amb)["ot_api_costo_corregir_con_anexo"]
+
+    def _v(self, **kw):
+        f = {"id": 347, "numero_ot": "OT-2026-00172", "estado": "cerrada", "costo_proveedor": 80000, "costo_despacho": None}
+        f.update(kw)
+        return f
+
+    def _ax(self, total=90000, estado="firmado"):
+        its = [{"concepto": "Mantención", "monto": total}]
+        return {"id": 2, "numero": 162, "estado": estado, "items": its, "total": total}
+
+    def test_solo_el_superadmin(self):
+        r, code = self._amb(self._v(), self._ax(), superadmin=False)(347)
+        self.assertEqual((code, r["error_codigo"]), (403, "SOLO_SUPERADMIN"))
+        self.assertEqual(self.exec_, [])
+
+    def test_sin_anexo_o_sin_firma_no_corrige(self):
+        r, code = self._amb(self._v(), None)(347)
+        self.assertEqual((code, r["error_codigo"]), (409, "SIN_ANEXO"))
+        r, code = self._amb(self._v(), self._ax(estado="enviado"))(347)
+        self.assertEqual((code, r["error_codigo"]), (409, "ANEXO_SIN_FIRMA"))
+        self.assertEqual(self.exec_, [])
+
+    def test_simular_dice_como_queda_y_no_escribe(self):
+        r = self._amb(self._v(), self._ax(), body={"simular": True})(347)
+        self.assertTrue(r["simulacion"])
+        self.assertEqual(r["cambios"]["costo_proveedor"], {"antes": 80000, "despues": 90000})
+        self.assertEqual((r["ganancia_antes"], r["ganancia_despues"]), (17811, 7811))
+        self.assertEqual(self.exec_, [])
+
+    def test_corrige_solo_los_montos_con_su_registro_inmutable(self):
+        r = self._amb(self._v(), self._ax())(347)
+        self.assertTrue(r["ok"])
+        (sql_u, p_u), (sql_i, p_i) = self.exec_
+        self.assertEqual(sql_u, "UPDATE mant_visitas SET costo_proveedor=%s WHERE id=%s")       # solo esa columna
+        self.assertEqual(p_u, (90000, 347))
+        self.assertIn("INSERT INTO mant_ot_finanzas_correcciones", sql_i)
+        self.assertEqual(p_i[2], "daniel")
+        self.assertIn("Anexo N° 162", p_i[3])
+        self.assertIn("Antes la OT decía $80.000", p_i[3])
+        self.assertEqual(json.loads(p_i[4]), {"costo_proveedor": 80000})
+        self.assertEqual(json.loads(p_i[5]), {"costo_proveedor": 90000})
+        self.assertEqual(len(self.commits), 1)
+        self.assertEqual(self.logs[0][:3], ("visita", 347, "finanzas_corregidas"))
+
+    def test_ya_igual_no_hace_nada(self):
+        r = self._amb(self._v(costo_proveedor=90000), self._ax())(347)
+        self.assertTrue(r["sin_cambios"])
+        self.assertEqual(self.exec_, [])
+
+    def test_anexo_menor_al_despacho_es_conflicto(self):
+        r, code = self._amb(self._v(costo_despacho=500000), self._ax(total=10000))(347)
+        self.assertEqual((code, r["error_codigo"]), (409, "ANEXO_MENOR_AL_DESPACHO"))
+        self.assertEqual(self.exec_, [])
+
+    def test_con_el_caso_ot_158_el_costo_de_un_peso_pasa_al_del_anexo(self):
+        r = self._amb(self._v(id=333, numero_ot="OT-2026-00158", costo_proveedor=1, costo_despacho=0), self._ax(total=30000))(333)
+        self.assertEqual(r["cambios"], {"costo_proveedor": {"antes": 1, "despues": 30000}})
+
+
+class TestLoteAvisaSiNoCoincideConElAnexo(unittest.TestCase):
+    def test_la_fila_del_lote_trae_el_anexo_y_avisa(self):
+        s = fuente_funcion("_mfp_fila_ot")
+        self.assertIn("_oac.es_vivo(_anx_estado)", s)
+        self.assertIn("no coincide con el Anexo N°", s)
+        self.assertIn("Coincide con el Anexo N°", s)
+        self.assertIn('"anexo_total": _anx_total', s)
+        self.assertIn("anx.precio_items_json AS anexo_items_json", texto())
+
+    def test_sin_los_items_del_anexo_no_inventa_un_aviso(self):
+        # las filas viejas (sin anexo_items_json) y los anexos rechazados no generan el aviso
+        s = fuente_funcion("_mfp_fila_ot")
+        self.assertIn('f.get("anexo_items_json") is not None', s)
+
+
+class TestBotonDeCorregirCerrada(unittest.TestCase):
+    def test_la_ruta_excluye_a_los_tecnicos(self):
+        self.assertIn("_no_tecnico", ",".join(decoradores("ot_api_costo_corregir_con_anexo")))
+        self.assertIn("_ot_fin_es_superadmin()", fuente_funcion("ot_api_costo_corregir_con_anexo"))
+
+    def test_la_ficha_ofrece_el_boton_solo_al_superadmin_en_una_ot_cerrada_con_anexo_firmado(self):
+        with open("templates/ot2/detalle.html", encoding="utf-8") as fh:
+            t = fh.read()
+        i = t.index("otdCostoCorregirConAnexo({{ v.id }}")
+        previo = t[i - 420:i]
+        for cond in ("not anexo_vinculo.abierta", "anexo_vinculo.firmado", "permissions.superadmin"):
+            self.assertIn(cond, previo)
+        self.assertIn("window.otdCostoCorregirConAnexo = async function", t)
+        self.assertIn("simular: true", t)                                       # primero simula y muestra cómo queda
+
+
 if __name__ == "__main__":
     unittest.main()
