@@ -67,6 +67,37 @@
   <div class="encr-aviso"><i class="bi bi-info-circle"></i> Hay {{ n_activas }} preguntas activas. Una encuesta de más de 4 preguntas baja la cantidad de clientes que la contestan.</div>
   {% endif %}
 
+  {# ── EMBUDO: a cuántos les llegó y cuántos respondieron (2026-10-20, Daniel: «cuántos clientes se les ha enviado y cuántos están
+       respondiendo, para medir esa tasa») — se ve SIEMPRE, también sin respuestas ───────────────────────────────────────── #}
+  <h3 class="encr-seccion"><i class="bi bi-funnel"></i> ¿A cuántos les llegó y cuántos respondieron?
+    {% if enviadas_desde and not demo %}<small>desde el {{ enviadas_desde }}</small>{% endif %}</h3>
+  <div class="encr-stats">
+    <div class="encr-stat">
+      <span class="encr-stat-ico is-azul" aria-hidden="true"><i class="bi bi-envelope-check"></i></span>
+      <div class="encr-kpi-l">Encuestas enviadas</div>
+      <div class="encr-stat-n">{{ n_inv }}</div>
+      <div class="encr-kpi-s">clientes que recibieron el correo «Retiro completado» con la encuesta</div>
+    </div>
+    <div class="encr-stat">
+      <span class="encr-stat-ico is-rojo" aria-hidden="true"><i class="bi bi-heart-fill"></i></span>
+      <div class="encr-kpi-l">Respondieron</div>
+      <div class="encr-kpi-n">{{ n_resp }}</div>
+      <div class="encr-kpi-s">de {{ n_inv }} enviada{{ 's' if n_inv != 1 }}</div>
+    </div>
+    <div class="encr-stat">
+      <span class="encr-stat-ico is-verde" aria-hidden="true"><i class="bi bi-graph-up-arrow"></i></span>
+      <div class="encr-kpi-l">Tasa de respuesta</div>
+      <div class="encr-stat-n">{{ resumen.tasa_pct if resumen.tasa_pct is not none else '–' }}{% if resumen.tasa_pct is not none %}<small>%</small>{% endif %}</div>
+      <div class="encr-kpi-s">{% if n_inv %}de cada 100 clientes que la recibieron{% else %}aún no sale ninguna encuesta{% endif %}</div>
+    </div>
+    <div class="encr-stat">
+      <span class="encr-stat-ico is-ambar" aria-hidden="true"><i class="bi bi-hourglass-split"></i></span>
+      <div class="encr-kpi-l">Esperando respuesta</div>
+      <div class="encr-stat-n">{{ n_pend }}</div>
+      <div class="encr-kpi-s">{% if n_venc %}{{ n_venc }} vencida{{ 's' if n_venc != 1 }} sin responder (el enlace dura 30 días){% else %}con el enlace vigente (dura 30 días){% endif %}</div>
+    </div>
+  </div>
+
   {% if not hay_datos %}
   <section class="encr-card encr-vacio">
     <div class="encr-vacio-ico"><i class="bi bi-envelope-heart"></i></div>
@@ -80,19 +111,7 @@
   {% endif %}
 
   {# ── CIFRAS: respuestas, tasa, clientes contentos, comentarios ─────── #}
-  <div class="encr-stats">
-    <div class="encr-stat">
-      <span class="encr-stat-ico is-rojo" aria-hidden="true"><i class="bi bi-heart-fill"></i></span>
-      <div class="encr-kpi-l">Respuestas recibidas</div>
-      <div class="encr-kpi-n">{{ n_resp }}</div>
-      <div class="encr-kpi-s">de {{ n_inv }} invitaci{{ 'ones' if n_inv != 1 else 'ón' }}</div>
-    </div>
-    <div class="encr-stat">
-      <span class="encr-stat-ico is-azul" aria-hidden="true"><i class="bi bi-envelope-open-heart"></i></span>
-      <div class="encr-kpi-l">Tasa de respuesta</div>
-      <div class="encr-stat-n">{{ resumen.tasa_pct if resumen.tasa_pct is not none else '–' }}{% if resumen.tasa_pct is not none %}<small>%</small>{% endif %}</div>
-      <div class="encr-kpi-s">de los clientes invitados respondió</div>
-    </div>
+  <div class="encr-stats is-2">
     <div class="encr-stat">
       <span class="encr-stat-ico is-verde" aria-hidden="true"><i class="bi bi-emoji-heart-eyes"></i></span>
       <div class="encr-kpi-l">Clientes contentos</div>

@@ -68,6 +68,7 @@ import comm_correos_registro as _ccr  # registro único de los correos (clave, l
 import ot_eventos as _evt  # eventos y OT de desinstalación (madre e hija): reglas puras con pruebas (2026-10-19)
 import ot_piezas_medidas as _pm    # 2026-10-20: fichas de medidas por pieza, validación, aprendizaje del modelo y árbol «¿Qué le pasa?» (módulo puro con pruebas)
 import ot_producto_estado as _pe    # acciones por producto de una OT interna (No se puede usar / No tiene arreglo / No llegó) y repuestos sugeridos por defecto (módulo puro con pruebas)
+import ot_anexo_costo as _oac    # 2026-10-20: el costo de la OT y el anexo del proveedor son UN solo valor (módulo puro con pruebas)
 import fedex_labels as _fxlabels    # parser puro de etiquetas FedEx (testeable)
 _ERP = erp_engine.init_engine(
     base_url=ERP_CONFIG.get("api_url", "https://lab.random.cl/ilus"),
@@ -88461,6 +88462,11 @@ def mant_visita_update(vid):
                     d[_campo_k] = max(0.0, float(_crudo_k))
                 except (TypeError, ValueError):
                     d[_campo_k] = None
+    # 🧾 2026-10-20 (un solo valor): con un anexo vivo el costo sale del anexo; un cambio que no suma lo mismo se rechaza.
+    if d.get("costo_proveedor") is not None or d.get("costo_despacho") is not None:
+        _g_anx = _ot_anexo_costo_guardia(vid, d.get("costo_proveedor"), d.get("costo_despacho"))
+        if _g_anx:
+            return _g_anx
     # 💰 2026-09-10 (Daniel, caso OT-2026-00157 -- instalación parcial: "que
     # me diga claramente qué cobro yo por despacho y que sea modificable").
     # Lo que se le COBRA al cliente, separado en sus dos mitades: zz_monto
@@ -88881,6 +88887,7 @@ def mant_visita_update(vid):
     _tec_antes = _ot_tec_antes(vid) if _tec_avisar else None
     _estado_nuevo_dm = (str(d.get("estado") or "")).strip().lower()
     _cascada_hija = None
+    _tec_antes_hija = None
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
@@ -88902,6 +88909,9 @@ def mant_visita_update(vid):
                                         "puede_incluir_desinstalacion": _err_c["codigo"] == "OT_CON_DESINSTALACION"}), 409
                     if _acc_c == "con_hija":
                         _cascada_hija = _evt.hijas_vigentes(_hijas_c)[0]
+                        # 📧 2026-10-20: lo que el técnico de la DESINSTALACIÓN sabe antes de que se cancele en cascada (su
+                        # calendario guarda ese evento): después del commit se le avisa «cancelada» con su .ics CANCEL.
+                        _tec_antes_hija = _ot_tec_antes(int(_cascada_hija["id"]))
             cur.execute(f"UPDATE mant_visitas SET {','.join(sets)} WHERE id=%s",
                         vals + [vid])
             if _cascada_hija:
@@ -88927,6 +88937,15 @@ def mant_visita_update(vid):
                 _fac_libro_marcar(int(_cascada_hija["id"]))
             except Exception as _e_cas:
                 print(f"[upd-ot] cascada desinstalación vid={vid}: {type(_e_cas).__name__}", flush=True)
+            # 📧 2026-10-20: «cancelada» al técnico de la desinstalación (y .ics CANCEL, que la borra de su calendario). Compara
+            # la foto de antes con la de ahora: si la hija no era cancelable (ya trabajada o firmada) el estado no cambió y
+            # no se avisa nada. Best-effort: un fallo de correo jamás deshace la cancelación.
+            if _tec_antes_hija:
+                try:
+                    _ot_tec_correo(int(_cascada_hija["id"]), _tec_antes_hija,
+                                   motivo="Se canceló junto con su instalación.")
+                except Exception as _e_tch:
+                    print(f"[upd-ot] correo al técnico de la desinstalación vid={vid}: {type(_e_tch).__name__}", flush=True)
         if _sal_put_reanota:   # 2026-10-08: lo que esta OT aporta desde cada documento, para que las demás lo vean
             try:
                 _ot_saldo_reanotar_aportes(vid)
@@ -92148,6 +92167,11 @@ def ot2_detalle(vid):
     el commit), no un toggle de rol. `_ot_can_view` sigue siendo el único
     gate real de acceso (¿puede ver esta OT en absoluto?).
     """
+    # 🧾 2026-10-20 (un solo valor, OT 239 / Anexo 221): una OT abierta con anexo vivo y el costo SIN declarar se completa sola
+    # con el total del anexo, con constancia en la bitácora; así la ficha ya no dice «costo no declarado» teniendo el anexo
+    # firmado. Un costo declarado distinto no se pisa aquí: la ficha lo avisa y se alinea con un botón. Solo gestión.
+    if not _es_rol_tecnico():
+        _ot_anexo_alinear_costo(vid, origen="al abrir la OT (el costo estaba sin declarar)", solo_si_falta=True)
 
     v = mysql_fetchone(
         "SELECT v.*, c.razon_social, c.rut AS cliente_rut, "
@@ -92184,6 +92208,8 @@ def ot2_detalle(vid):
         flash("Esa OT no existe.", "warning")
         return redirect(url_for("ot2_panel"))
     v = dict(v)
+    # 🧾 2026-10-20: el vínculo costo ↔ anexo que muestra la tarjeta de Finanzas (nunca a un técnico: es plata).
+    anexo_vinculo = None if _es_rol_tecnico() else _ot_anexo_vinculo_vista(v)
 
     # 🛣️ 2026-09-25 (Daniel: "los técnicos siguen teniendo problemas con el
     # botón de ruta"). La Ruta mandaba a Waze solo el TEXTO de la dirección
@@ -93643,6 +93669,7 @@ def ot2_detalle(vid):
         desinst = None
     return render_template(
         "ot2/detalle.html",
+        anexo_vinculo=anexo_vinculo,
         desinst=desinst,
         acta=acta,
         prod_dispensa=prod_dispensa, acc_listas=acc_listas, acc_data=acc_data,
@@ -95251,6 +95278,10 @@ def ot2_api_finanzas(vid):
             return None
     costo_proveedor = _parse_costo_opt(d.get("costo_proveedor")) if "costo_proveedor" in d else None
     costo_despacho = _parse_costo_opt(d.get("costo_despacho")) if "costo_despacho" in d else None
+    # 🧾 2026-10-20 (un solo valor): con un anexo vivo el costo sale del anexo; un cambio que no suma lo mismo se rechaza.
+    _g_anx = _ot_anexo_costo_guardia(vid, costo_proveedor, costo_despacho)
+    if _g_anx:
+        return _g_anx
 
     # 🆕 FASE 2 (2026-09-11): cuatro columnas que la tarjeta de Finanzas ya
     # mandaba a este endpoint y que este endpoint NO conocía -- por eso la
@@ -99098,6 +99129,212 @@ def ot_api_panorama(vid):
     })
 
 
+# ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+# 🧾 2026-10-20 — EL COSTO DE LA OT Y EL ANEXO DEL PROVEEDOR SON UN SOLO VALOR (REGLA #34).
+# Daniel, con la OT 239 y el Anexo 221 firmado por $370.000 mientras la OT decía «costo no declarado»: «necesito
+# urgentemente que las finanzas y los costos del anexo sean vinculados: no son dos valores, es uno solo… lo que estamos
+# pagando tiene que estar reflejado allí… hazlo obligatorio». Hasta hoy el anexo y el costo de la OT solo se comparaban al
+# cerrar (ANEXO_DESACTUALIZADO) y se podían declarar por separado. Lógica pura y probada en ot_anexo_costo.py:
+#   · el anexo VIVO (no rechazado ni anulado) manda: al crearlo, corregirlo o firmarlo la OT queda con el mismo costo;
+#   · una OT abierta con costo SIN declarar y anexo vivo se completa sola al abrirla (con constancia en la bitácora);
+#   · mientras haya anexo vivo, el costo no se escribe a mano por otro camino (409 COSTO_ES_DEL_ANEXO): se corrige el anexo
+#     (si no está firmado) o se emite uno nuevo (si ya está firmado), y la OT lo sigue sola;
+#   · una OT cerrada es evidencia: nunca se toca. El lote de Facturación de proveedor sigue el costo (REGLA #29).
+# ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+def _ot_anexo_vivo(vid):
+    """El anexo VIVO de la OT (el más reciente que no está rechazado ni anulado), con sus ítems y su total; None si no hay.
+    Nunca lanza."""
+    try:
+        r = mysql_fetchone(
+            "SELECT id, numero, estado, proveedor_nombre, precio_items_json FROM mant_anexos "
+            " WHERE ot_id=%s AND COALESCE(estado,'') NOT IN ('rechazado','anulado') ORDER BY id DESC LIMIT 1", (vid,))
+    except Exception as e:
+        print(f"[costo-anexo] leer el anexo vid={vid}: {type(e).__name__}", flush=True)
+        return None
+    if not r:
+        return None
+    items = _oac.items_de(r.get("precio_items_json"))
+    return {"id": int(r["id"]), "numero": r.get("numero"), "estado": (r.get("estado") or "").strip().lower(),
+            "proveedor": r.get("proveedor_nombre") or "", "items": items, "total": _oac.total(items)}
+
+
+def _ot_costo_fila(vid):
+    try:
+        return mysql_fetchone(
+            "SELECT id, numero_ot, estado, costo_proveedor, costo_despacho FROM mant_visitas WHERE id=%s", (vid,))
+    except Exception as e:
+        print(f"[costo-anexo] leer el costo vid={vid}: {type(e).__name__}", flush=True)
+        return None
+
+
+def _mfp_previo_de(vid):
+    """Lo que el lote PENDIENTE de Facturación de proveedor paga por la OT y lo que la OT declaraba (para saber si el lote
+    la «seguía»), con la misma forma que deja _mfp_costo_previo. None si la OT no está en un lote pendiente."""
+    try:
+        it = mysql_fetchone(
+            "SELECT fpi.monto FROM mant_factura_proveedor_items fpi "
+            "  JOIN mant_facturas_proveedor fp ON fp.id = fpi.factura_proveedor_id "
+            " WHERE fpi.visita_id=%s AND fp.estado_pago='pendiente'", (vid,))
+        if it:
+            return {int(vid): {"monto": round(float(it.get("monto") or 0), 2), "sugerido": _mfp_sugerido_ot(vid)}}
+    except Exception as e:
+        print(f"[costo-anexo] lote previo: {type(e).__name__}", flush=True)
+    return None
+
+
+def _mfp_seguir_costo(previo, quien=None, motivo="se corrigió el costo en la OT"):
+    """Misma regla que _mfp_costo_tras_escritura (REGLA #29), para los cambios que no pasan por una petición de OT: si el
+    lote pendiente pagaba exactamente lo que la OT declaraba, toma el costo nuevo. Nunca lanza."""
+    try:
+        for vid, ant in (previo or {}).items():
+            ahora = _mfp_sugerido_ot(vid)
+            if ahora is None or ant.get("sugerido") is None or abs(ahora - ant["sugerido"]) < 0.5:
+                continue
+            if abs(ant["monto"] - ant["sugerido"]) >= 0.5:
+                continue      # el lote no seguía a la OT (monto escrito a mano al asignar): no se pisa
+            _mfp_aplicar_costo_ot(vid, ahora, quien=quien, motivo=motivo)
+    except Exception as e:
+        print(f"[costo-anexo] lote tras el costo: {type(e).__name__}: {e}", flush=True)
+
+
+def _ot_anexo_alinear_costo(vid, origen="", solo_si_falta=False):
+    """Deja el costo de la OT (costo_proveedor + costo_despacho) igual al total de su anexo vivo. Devuelve el resultado de
+    ot_anexo_costo.alinear (con `anexo`, y `aplicado` si escribió) o None si no corresponde (OT cerrada o sin anexo vivo).
+    solo_si_falta=True solo completa un costo SIN declarar; un costo declarado distinto lo decide una persona (botón «Usar el
+    valor del anexo»). Una OT cerrada es evidencia: no se toca. Nunca lanza."""
+    try:
+        v = _ot_costo_fila(vid)
+        if not v or (v.get("estado") or "").strip().lower() in _oac.ESTADOS_OT_CERRADOS:
+            return None
+        ax = _ot_anexo_vivo(vid)
+        if not ax:
+            return None
+        res = _oac.alinear(v.get("costo_proveedor"), v.get("costo_despacho"), ax["items"])
+        res["anexo"] = ax
+        if res.get("conflicto") or not res["cambia"]:
+            return res
+        if solo_si_falta and v.get("costo_proveedor") is not None:
+            return res
+        previo = _mfp_previo_de(vid)
+        sets, vals = ["costo_proveedor=%s"], [res["prov"]]
+        if res.get("desp") is not None:
+            sets.append("costo_despacho=%s")
+            vals.append(res["desp"])
+        n = mysql_execute_returning_rowcount(
+            f"UPDATE mant_visitas SET {', '.join(sets)} WHERE id=%s AND COALESCE(estado,'') NOT IN ('cerrada','cancelada','anulada')",
+            tuple(vals) + (vid,))
+        if not n:
+            return res
+        try:
+            quien = current_username() or "sistema"
+        except Exception:
+            quien = "sistema"
+        _txt = lambda x: (_oac.clp(x) if x is not None else "sin declarar")
+        try:
+            _mant_log("visita", vid, "costo_alineado_anexo",
+                      f"El costo de la OT quedó igual al Anexo N° {ax['numero']} ({ax['estado']}, {_oac.clp(ax['total'])}): "
+                      f"técnico o proveedor {_txt(v.get('costo_proveedor'))} → {_txt(res['prov'])}"
+                      + (f" · despacho {_txt(v.get('costo_despacho'))} → {_txt(res['desp'])}" if res.get("desp") is not None else "")
+                      + f" · {origen or 'automático'} · por {quien}")
+        except Exception:
+            pass
+        _mfp_seguir_costo(previo, quien=quien, motivo=f"el costo quedó igual al Anexo N° {ax['numero']}")
+        res["aplicado"] = True
+        return res
+    except Exception as e:
+        print(f"[costo-anexo] alinear vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return None
+
+
+def _ot_anexo_costo_guardia(vid, prov_nuevo=None, desp_nuevo=None):
+    """None si el costo se puede escribir; si hay un anexo vivo y el cambio haría que el costo de la OT sume algo distinto
+    del anexo, la respuesta 409 COSTO_ES_DEL_ANEXO (un solo valor). Volver a guardar lo mismo no se bloquea."""
+    if prov_nuevo is None and desp_nuevo is None:
+        return None
+    ax = _ot_anexo_vivo(vid)
+    if not ax:
+        return None
+    v = _ot_costo_fila(vid) or {}
+    if _oac.cambio_permitido(prov_nuevo, desp_nuevo, v.get("costo_proveedor"), v.get("costo_despacho"), ax["total"]):
+        return None
+    return jsonify({"ok": False, "error_codigo": "COSTO_ES_DEL_ANEXO",
+                    "error": _oac.mensaje_costo_es_del_anexo(ax["numero"], ax["estado"], ax["total"]),
+                    "anexo": {"id": ax["id"], "numero": ax["numero"], "estado": ax["estado"], "total": ax["total"]},
+                    "acciones": ["editar_anexo" if ax["estado"] != "firmado" else "anexo_nuevo", "usar_valor_del_anexo"]}), 409
+
+
+def _ot_anexo_vinculo_vista(v):
+    """Lo que la ficha de la OT muestra del vínculo costo ↔ anexo: {id, numero, estado, firmado, total, total_txt, vinculo,
+    costo_txt, abierta}; None si no hay anexo vivo. `vinculo`: alineado | sin_declarar | difiere. Solo gestión."""
+    try:
+        ax = _ot_anexo_vivo(int(v["id"]))
+        if not ax:
+            return None
+        vinc = _oac.estado(v.get("costo_proveedor"), v.get("costo_despacho"), ax["items"])
+        suma = (float(v.get("costo_proveedor") or 0) + float(v.get("costo_despacho") or 0)) \
+            if v.get("costo_proveedor") is not None else None
+        return {"id": ax["id"], "numero": ax["numero"], "estado": ax["estado"], "firmado": ax["estado"] == "firmado",
+                "total": ax["total"], "total_txt": _oac.clp(ax["total"]), "vinculo": vinc,
+                "costo_txt": _oac.clp(suma) if suma is not None else "",
+                "abierta": (v.get("estado") or "").strip().lower() not in _oac.ESTADOS_OT_CERRADOS}
+    except Exception as e:
+        print(f"[costo-anexo] vista: {type(e).__name__}", flush=True)
+        return None
+
+
+@app.route("/ot/api/<int:vid>/costo-desde-anexo", methods=["POST"])
+@_mant_required
+@_no_tecnico
+@_ot_can_finanzas_cierre
+def ot_api_costo_desde_anexo(vid):
+    """«Usar el valor del anexo»: deja el costo de la OT igual a su anexo vivo (un solo valor), con constancia en la bitácora
+    de la OT. Solo hasta antes de cerrar (el decorador lo exige: una OT cerrada es evidencia)."""
+    ax = _ot_anexo_vivo(vid)
+    if not ax:
+        return jsonify({"ok": False, "error_codigo": "SIN_ANEXO",
+                        "error": "Esta OT no tiene un anexo vigente: su costo se declara en Finanzas."}), 409
+    res = _ot_anexo_alinear_costo(vid, origen=f"a pedido de {current_username() or 'gestión'}")
+    if res is None:
+        return jsonify({"ok": False, "error_codigo": "OT_CERRADA",
+                        "error": "La OT ya está cerrada: no se cambia su costo."}), 409
+    if res.get("conflicto"):
+        return jsonify({"ok": False, "error_codigo": "ANEXO_MENOR_AL_DESPACHO", "error": res["conflicto"]
+                        + " Corrige el despacho en Finanzas o el monto en el anexo."}), 409
+    return jsonify({"ok": True, "aplicado": bool(res.get("aplicado")), "total": res["total"],
+                    "mensaje": f"El costo de la OT quedó igual al Anexo N° {ax['numero']} ({_oac.clp(res['total'])})."})
+
+
+@app.route("/ot/api/anexos/vinculo-costos", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_api_anexos_vinculo_costos():
+    """Superadministrador: las OT cuyo costo NO es igual al de su anexo vivo (por declarar, o distinto), para corregirlas. Solo
+    lectura. Una OT cerrada se lista pero no se toca (es evidencia)."""
+    if not _ot_aut_es_superadmin():
+        return jsonify({"ok": False, "error": "Solo el superadministrador.", "error_codigo": "SOLO_SUPERADMIN"}), 403
+    filas = mysql_fetchall(
+        "SELECT a.id AS anexo_id, a.numero, a.estado AS anexo_estado, a.precio_items_json, "
+        "       v.id AS vid, v.numero_ot, v.estado AS ot_estado, v.costo_proveedor, v.costo_despacho "
+        "  FROM mant_anexos a JOIN mant_visitas v ON v.id = a.ot_id "
+        " WHERE COALESCE(a.estado,'') NOT IN ('rechazado','anulado') "
+        "   AND a.id = (SELECT MAX(a2.id) FROM mant_anexos a2 WHERE a2.ot_id = a.ot_id "
+        "                AND COALESCE(a2.estado,'') NOT IN ('rechazado','anulado')) "
+        " ORDER BY v.id DESC LIMIT 2000") or []
+    out, cuenta = [], {"alineado": 0, "sin_declarar": 0, "difiere": 0}
+    for r in filas:
+        items = _oac.items_de(r.get("precio_items_json"))
+        est = _oac.estado(r.get("costo_proveedor"), r.get("costo_despacho"), items)
+        cuenta[est] += 1
+        if est == "alineado":
+            continue
+        out.append({"ot_id": r["vid"], "ot": r.get("numero_ot"), "ot_estado": r.get("ot_estado"),
+                    "anexo": r.get("numero"), "anexo_estado": r.get("anexo_estado"), "total_anexo": _oac.total(items),
+                    "costo_proveedor": float(r["costo_proveedor"]) if r.get("costo_proveedor") is not None else None,
+                    "costo_despacho": float(r["costo_despacho"]) if r.get("costo_despacho") is not None else None,
+                    "vinculo": est})
+    return jsonify({"ok": True, "total": len(filas), "cuenta": cuenta, "por_corregir": out})
+
+
 @app.route("/ot/api/<int:vid>/costo-proveedor", methods=["POST"])
 @_mant_required
 @_ot_can_finanzas_cierre
@@ -99134,6 +99371,10 @@ def ot_api_costo_proveedor(vid):
         nuevos[campo] = val
     if not nuevos:
         return jsonify({"ok": False, "error": "Escribe el monto que cobró el proveedor.", "error_codigo": "SIN_CAMBIOS"}), 400
+    # 🧾 2026-10-20 (un solo valor): con un anexo vivo, lo que se le paga al proveedor sale del anexo y no se escribe a mano.
+    _g_anx = _ot_anexo_costo_guardia(vid, nuevos.get("costo_proveedor"), nuevos.get("costo_despacho"))
+    if _g_anx:
+        return _g_anx
     cambios = {k: nv for k, nv in nuevos.items() if v.get(k) is None or int(round(float(v.get(k)))) != nv}
     if not cambios:
         return jsonify({"ok": True, "sin_cambios": True, "mensaje": "Ya estaba con esos valores."})
@@ -111061,6 +111302,8 @@ def _ot2_crear_core(d, autorizacion=None, madre=None):
                                   f"N°{_num_auto} · {_prov_nombre} · OT {numero_ot} (automático al crear)")
                     except Exception:
                         pass
+                    # 🧾 2026-10-20 (un solo valor): el anexo creado con la OT y el costo de la OT son el mismo valor.
+                    _ot_anexo_alinear_costo(vid, origen=f"se creó el Anexo N° {_num_auto} junto con la OT")
                     _tok_auto = secrets.token_urlsafe(30)[:40]
                     _exp_auto = datetime.utcnow() + timedelta(days=15)
                     _correo_ok = False
@@ -115882,6 +116125,9 @@ def ot2_api_anexo_crear():
                       f"{current_username() or 'superadmin'} creó el anexo N°{numero} con nombre de prueba: {proveedor[:120]}")
     except Exception:
         pass
+    # 🧾 2026-10-20 (un solo valor): lo que dice el anexo es lo que se le paga al proveedor, y la OT lo refleja.
+    if vid:
+        _ot_anexo_alinear_costo(vid, origen=f"se creó el Anexo N° {numero}")
     return jsonify({"ok": True, "anexo_id": aid, "numero": numero})
 
 
@@ -116097,6 +116343,9 @@ def ot2_api_anexo_editar(aid):
         except Exception:
             pass
 
+    # 🧾 2026-10-20 (un solo valor): corregir el monto del anexo antes de la firma corrige también el costo de la OT.
+    if a.get("ot_id"):
+        _ot_anexo_alinear_costo(int(a["ot_id"]), origen=f"se corrigió el Anexo N° {a.get('numero')}")
     return jsonify({
         "ok": True, "anexo_id": aid, "numero": a.get("numero"),
         # Si ya se había mandado, el proveedor tiene en su correo un link a
@@ -117159,6 +117408,14 @@ def ot2_anexo_firma_submit(token):
             _anexo_archivar_en_ot(_anexo_dict(_a_firmado), etapa="firmado")
     except Exception as _e_arch:
         print(f"[anexo_firmar] archivar en OT: {_e_arch}", flush=True)
+
+    # 🧾 2026-10-20 (un solo valor): el proveedor firmó este monto: es lo que se le paga y la OT lo refleja (la OT 239 tenía
+    # el Anexo 221 firmado por $370.000 y decía «costo no declarado»). Best-effort: jamás deshace la firma.
+    try:
+        if a.get("ot_id"):
+            _ot_anexo_alinear_costo(int(a["ot_id"]), origen=f"el proveedor firmó el Anexo N° {a.get('numero')}")
+    except Exception as _e_cx:
+        print(f"[anexo_firmar] costo de la OT: {type(_e_cx).__name__}", flush=True)
 
     # 📧 2026-08-31 (Daniel, urgente: "que nos avise que ya se firmó el
     # anexo"): antes de esto, firmar el anexo no notificaba a NADIE -- la
@@ -126754,6 +127011,9 @@ def mant_ot_aprobar_cierre(vid):
     # FIX 2026-05-18 — Capturar el nombre del firmante. Si el form no lo
     # manda, usamos el display name del usuario actual (nombre o username).
     firma_sup_nombre = (d.get("firma_supervisor_nombre") or "").strip()[:200]
+    # 🧾 2026-10-20 (un solo valor): con un anexo vivo y el costo sin declarar, el cierre no pide declarar lo que el anexo ya
+    # dice: se completa con el total del anexo (con constancia en la bitácora). Un costo distinto lo sigue frenando ANEXO_DESACTUALIZADO.
+    _ot_anexo_alinear_costo(vid, origen="al aprobar el cierre (el costo estaba sin declarar)", solo_si_falta=True)
     # Validar estado actual
     v = mysql_fetchone(
         # cliente_id incluido (2026-08-10) — ver comentario igual en
@@ -134287,6 +134547,22 @@ def _ensure_comm_template_ot_tecnicos():
                     (a2, c2, "sistema", fila["id"], fila.get("cuerpo")))
                 print("[ensure_comm_tpl] 'ot_asignada' (semilla original sin editar) pasó a la versión con dirección",
                       flush=True)
+        # 2026-10-20 (Daniel: «no digas "te quité la OT"… algo más sutil»): una semilla ANTERIOR que nadie editó pasa a la
+        # versión vigente (el aviso de «OT que pasa a otra persona» ahora habla de un ajuste de la agenda). Si una persona
+        # tocó la plantilla en el editor, queda exactamente como la dejó.
+        for _slug_a, _anteriores in (_otc.SEMILLAS_ANTERIORES or {}).items():
+            _fila_a = mysql_fetchone(
+                "SELECT id, asunto, cuerpo FROM comm_templates WHERE modulo=%s AND estado=%s AND canal='email' LIMIT 1",
+                (_otc.MODULO_PLANTILLAS, _slug_a))
+            if not _fila_a:
+                continue
+            _nn = lambda s: (s or "").replace("\r\n", "\n").strip()
+            if any(_nn(_fila_a.get("asunto")) == _nn(a0) and _nn(_fila_a.get("cuerpo")) == _nn(c0) for a0, c0 in _anteriores):
+                a2, c2 = _otc.SEMILLAS[_slug_a]
+                mysql_execute(
+                    "UPDATE comm_templates SET asunto=%s, cuerpo=%s, updated_by=%s WHERE id=%s AND cuerpo=%s",
+                    (a2, c2, "sistema", _fila_a["id"], _fila_a.get("cuerpo")))
+                print(f"[ensure_comm_tpl] '{_slug_a}' (semilla anterior sin editar) pasó a la versión vigente", flush=True)
         if sembradas:
             print(f"[ensure_comm_tpl] {sembradas} plantilla(s) de avisos a técnicos sembradas", flush=True)
         return sembradas
