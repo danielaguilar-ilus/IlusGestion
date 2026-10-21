@@ -1,0 +1,247 @@
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+   CONTROL DE CORREOS — pestaña de Comunicaciones (Daniel, 2026-10-20)
+   Lenguaje visual de Retiros (REGLA #15): tarjetas, semáforo de 4 pasos con círculo de paso,
+   nombres y datos COMPLETOS (nunca recortados). Semáforo: verde = sale · ámbar = lo apagó una
+   persona (o una llave) · gris = lo apaga la configuración o el código · el rojo queda para errores.
+   Paleta ILUS (REGLA #2): #dc2626 · #0a0a0a · #ffffff.
+   ══════════════════════════════════════════════════════════════════════════════════════════════ */
+#tabCorreos{
+  --ctc-ok:#16a34a; --ctc-ok-bg:#dcfce7; --ctc-ok-bd:#86efac;
+  --ctc-am:#f59e0b; --ctc-am-bg:#fff8e1; --ctc-am-bd:#fcd34d; --ctc-am-tx:#92400e;
+  --ctc-gr:#6b7280; --ctc-gr-bg:#f3f4f6; --ctc-gr-bd:#d1d5db;
+  --ctc-az:#3b82f6; --ctc-az-bg:#dbeafe; --ctc-az-tx:#1e40af;
+}
+
+/* ── Avisos de arriba (general apagado, llaves cerradas…) ── */
+.ctc-avisos{display:flex;flex-direction:column;gap:8px;padding:12px 16px 0}
+.ctc-avisos:empty{display:none}
+.ctc-aviso{display:flex;align-items:flex-start;gap:10px;background:var(--ctc-am-bg);border:1.5px solid var(--ctc-am-bd);
+  border-left:4px solid var(--ctc-am);border-radius:10px;padding:10px 14px;font-size:.82rem;line-height:1.45;color:#78350f}
+.ctc-aviso > i{color:#b45309;font-size:1.05rem;flex-shrink:0;margin-top:1px}
+.ctc-aviso.error{background:#fef2f2;border-color:#fecaca;border-left-color:#dc2626;color:#7f1d1d}
+.ctc-aviso.error > i{color:#dc2626}
+
+/* ── Resumen (5 fichas; clic = filtrar) ── */
+.ctc-resumen{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;padding:14px 16px 4px}
+.ctc-ficha{display:flex;flex-direction:column;gap:2px;min-height:44px;padding:10px 14px;border-radius:12px;border:1.5px solid #e5e7eb;
+  background:#fff;text-align:left;cursor:pointer;transition:transform .12s,box-shadow .12s,border-color .12s}
+.ctc-ficha:hover{transform:translateY(-1px);box-shadow:0 3px 10px rgba(15,23,42,.08)}
+.ctc-ficha:focus-visible{outline:2px solid #fca5a5;outline-offset:2px}
+.ctc-ficha b{font-size:1.45rem;font-weight:900;line-height:1.1;font-variant-numeric:tabular-nums;color:#0a0a0a}
+.ctc-ficha span{font-size:.72rem;font-weight:700;color:#6b7280;line-height:1.25}
+.ctc-ficha.ok{background:var(--ctc-ok-bg);border-color:var(--ctc-ok-bd)} .ctc-ficha.ok b{color:#166534}
+.ctc-ficha.am{background:var(--ctc-am-bg);border-color:var(--ctc-am-bd)} .ctc-ficha.am b{color:#92400e}
+.ctc-ficha.gr{background:var(--ctc-gr-bg);border-color:var(--ctc-gr-bd)}
+.ctc-ficha.az{background:var(--ctc-az-bg);border-color:#93c5fd} .ctc-ficha.az b{color:var(--ctc-az-tx)}
+.ctc-ficha.activa{box-shadow:0 0 0 2px #0a0a0a inset}
+.ctc-desde{padding:0 16px 8px;font-size:.74rem;color:#6b7280}
+.ctc-desde:empty{display:none}
+
+/* ── Filtros ── */
+.ctc-filtros-barra{display:flex;align-items:center;gap:10px;padding:8px 16px 0}
+.ctc-filtros{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;padding:10px 16px 12px;border-bottom:1px solid #eef0f3}
+.ctc-f{display:flex;flex-direction:column;gap:3px;flex:0 1 190px;min-width:150px}
+.ctc-f-grow{flex:1 1 240px}
+.ctc-f label{font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;margin:0}
+.ctc-f .form-control,.ctc-f .form-select{min-height:38px}
+@media (max-width:767.98px){
+  .ctc-resumen{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ctc-resumen .ctc-ficha:first-child{grid-column:1/-1}
+  .ctc-filtros{display:none}
+  .ctc-filtros.abiertos{display:flex}
+  .ctc-f{flex:1 1 100%}
+  #tabCorreos .form-control,#tabCorreos .form-select{font-size:16px}            /* sin zoom automático en iOS */
+}
+@media (min-width:768px){ .ctc-filtros-barra{display:none} }          /* en escritorio los filtros siempre se ven: no hace falta el botón */
+
+/* ── Barra de selección múltiple (REGLA #14) ── */
+.ctc-barra{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px 16px;background:#fafafa;border-bottom:1px solid #eef0f3}
+.ctc-barra .ctc-sel-info{font-size:.8rem;color:#374151;font-weight:700}
+.ctc-barra .ctc-spacer{flex:1 1 auto}
+
+/* ── Botones ── */
+.ctc-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:38px;padding:6px 12px;border-radius:9px;
+  border:1.5px solid #d1d5db;background:#fff;color:#374151;font-size:.82rem;font-weight:700;line-height:1.2;cursor:pointer;
+  transition:background .12s,border-color .12s,transform .12s;text-decoration:none}
+.ctc-btn:hover{background:#f9fafb;border-color:#9ca3af}
+.ctc-btn:disabled{opacity:.5;cursor:not-allowed}
+.ctc-btn:focus-visible{outline:2px solid #fca5a5;outline-offset:2px}
+.ctc-btn.primario{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.ctc-btn.primario:hover{background:#262626}
+.ctc-btn.ambar{background:var(--ctc-am-bg);border-color:var(--ctc-am-bd);color:var(--ctc-am-tx)}
+.ctc-btn.verde{background:var(--ctc-ok-bg);border-color:var(--ctc-ok-bd);color:#166534}
+.ctc-btn.chico{min-height:32px;padding:3px 10px;font-size:.76rem}
+
+/* ── Encabezados de grupo ── */
+.ctc-lista{padding:6px 16px 4px}
+.ctc-grupo{display:flex;align-items:center;gap:12px;margin:18px 0 8px;padding:10px 14px;background:#0a0a0a;color:#fff;border-radius:12px}
+.ctc-grupo:first-child{margin-top:8px}
+.ctc-grupo .ic{width:34px;height:34px;border-radius:9px;background:#dc2626;display:flex;align-items:center;justify-content:center;
+  font-size:1.05rem;flex-shrink:0}
+.ctc-grupo h5{margin:0;font-size:1rem;font-weight:800;line-height:1.2}
+.ctc-grupo p{margin:1px 0 0;font-size:.74rem;color:#d1d5db;line-height:1.35}
+.ctc-grupo .n{margin-left:auto;font-size:.72rem;font-weight:800;background:rgba(255,255,255,.14);padding:3px 10px;border-radius:999px;white-space:nowrap}
+.ctc-subgrupo{margin:12px 2px 8px;font-size:.7rem;font-weight:900;letter-spacing:.09em;text-transform:uppercase;color:#6b7280;
+  display:flex;align-items:center;gap:8px}
+.ctc-subgrupo::after{content:'';flex:1;height:1px;background:#e5e7eb}
+
+/* ── La tarjeta de un correo ── */
+.ctc-tarjeta{margin:0 0 14px;padding:16px 18px;background:#fff;border:1.5px solid #e5e7eb;border-radius:14px;
+  box-shadow:0 1px 2px rgba(0,0,0,.03);transition:border-color .25s ease,background .25s ease,box-shadow .25s ease;
+  scroll-margin-top:90px}
+.ctc-tarjeta.est-sale{border-color:var(--ctc-ok-bd);background:linear-gradient(180deg,#f0fdf4 0%,#fff 55%);
+  box-shadow:0 1px 0 rgba(255,255,255,.7) inset,0 6px 18px -12px rgba(22,163,74,.35)}
+.ctc-tarjeta.est-correo,.ctc-tarjeta.est-llave,.ctc-tarjeta.est-general{border-color:var(--ctc-am-bd);
+  background:linear-gradient(180deg,#fffbeb 0%,#fff 55%);box-shadow:0 1px 0 rgba(255,255,255,.7) inset,0 6px 18px -12px rgba(245,158,11,.4)}
+.ctc-tarjeta.est-config,.ctc-tarjeta.est-codigo{border-color:var(--ctc-gr-bd);background:linear-gradient(180deg,#f9fafb 0%,#fff 55%)}
+.ctc-tarjeta.resaltada{animation:ctcResalte 1.8s ease 1}
+@keyframes ctcResalte{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}20%{box-shadow:0 0 0 5px rgba(220,38,38,.28)}}
+
+.ctc-th{display:flex;align-items:flex-start;gap:12px}
+.ctc-chk{display:flex;align-items:center;justify-content:center;width:34px;height:34px;flex-shrink:0;margin:0;cursor:pointer}
+.ctc-chk input{width:20px;height:20px;accent-color:#dc2626;cursor:pointer}
+.ctc-tit{flex:1;min-width:0}
+.ctc-nombre{margin:0;font-size:1rem;font-weight:800;line-height:1.3;color:#0a0a0a;overflow-wrap:anywhere}      /* completo: nunca se corta */
+.ctc-tags{display:flex;flex-wrap:wrap;gap:5px 6px;margin-top:6px}
+.ctc-tag{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;font-size:.68rem;font-weight:800;
+  background:var(--ctc-gr-bg);color:#374151;border:1px solid #e5e7eb;line-height:1.3}
+.ctc-tag.dest{background:#fff;border-color:#d1d5db}
+.ctc-tag.auto{background:var(--ctc-az-bg);color:var(--ctc-az-tx);border-color:#bfdbfe}
+.ctc-tag.sens{background:var(--ctc-am-bg);color:var(--ctc-am-tx);border-color:var(--ctc-am-bd)}
+.ctc-tag.prot{background:#e0e7ff;color:#3730a3;border-color:#c7d2fe}
+.ctc-tag.ter{background:#f3e8ff;color:#6b21a8;border-color:#e9d5ff}
+.ctc-pill{display:inline-flex;align-items:center;gap:6px;flex-shrink:0;max-width:46%;padding:6px 12px;border-radius:999px;
+  font-size:.74rem;font-weight:900;line-height:1.25;text-align:center;border:1.5px solid transparent}
+.ctc-pill.est-sale{background:var(--ctc-ok-bg);color:#166534;border-color:var(--ctc-ok-bd)}
+.ctc-pill.est-correo,.ctc-pill.est-llave,.ctc-pill.est-general{background:var(--ctc-am-bg);color:var(--ctc-am-tx);border-color:var(--ctc-am-bd)}
+.ctc-pill.est-config,.ctc-pill.est-codigo{background:var(--ctc-gr-bg);color:#374151;border-color:var(--ctc-gr-bd)}
+
+.ctc-disparo{margin:12px 0 2px;font-size:.84rem;line-height:1.5;color:#1f2937}
+.ctc-disparo b,.ctc-meta b{color:#0a0a0a}
+.ctc-meta{margin:2px 0 0;font-size:.78rem;line-height:1.5;color:#4b5563}
+.ctc-nota{margin:8px 0 0;font-size:.76rem;line-height:1.45;color:#6b7280;font-style:italic}
+
+/* ── Semáforo de 4 pasos (círculo de paso, como Retiros) ── */
+.ctc-pasos{list-style:none;margin:14px 0 6px;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;position:relative}
+.ctc-paso{display:flex;flex-direction:column;align-items:center;gap:5px;text-align:center;position:relative;padding:0 2px}
+.ctc-paso::before{content:'';position:absolute;top:18px;left:-50%;width:100%;height:3px;background:#e5e7eb;z-index:0}
+.ctc-paso:first-child::before{display:none}
+.ctc-paso.ok::before{background:var(--ctc-ok)}
+.ctc-paso.apagado::before,.ctc-paso.config::before,.ctc-paso.protegido::before,.ctc-paso.frena::before{background:#e5e7eb}
+.ctc-pc{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;z-index:1;
+  font-weight:900;font-size:1.05rem;color:#fff;border:2px solid #fff;background:#d1d5db;box-shadow:0 3px 8px rgba(0,0,0,.12);
+  transition:background .3s cubic-bezier(.4,0,.2,1),box-shadow .3s}
+.ctc-paso.ok .ctc-pc{background:var(--ctc-ok);box-shadow:0 4px 10px rgba(22,163,74,.32)}
+.ctc-paso.apagado .ctc-pc{background:var(--ctc-am);box-shadow:0 4px 10px rgba(245,158,11,.35)}
+.ctc-paso.config .ctc-pc{background:#9ca3af;box-shadow:0 4px 10px rgba(107,114,128,.3)}
+.ctc-paso.protegido .ctc-pc{background:var(--ctc-az);box-shadow:0 4px 10px rgba(59,130,246,.3)}
+.ctc-paso.saltado .ctc-pc{background:#fff;color:#9ca3af;border:2px dashed #d1d5db;box-shadow:none}
+.ctc-paso.frena .ctc-pc::after{content:'';position:absolute;inset:-6px;border-radius:50%;border:2px solid currentColor;opacity:.35;
+  animation:ctcPulso 1.6s ease-in-out infinite}
+.ctc-paso.apagado.frena .ctc-pc::after{color:var(--ctc-am)}
+.ctc-paso.config.frena .ctc-pc::after{color:#6b7280}
+@keyframes ctcPulso{0%{transform:scale(.85);opacity:.7}100%{transform:scale(1.28);opacity:0}}
+.ctc-pn{font-size:.58rem;font-weight:900;letter-spacing:.1em;text-transform:uppercase;color:#6b7280;line-height:1}
+.ctc-paso.ok .ctc-pn{color:#16a34a}
+.ctc-paso.apagado .ctc-pn{color:#b45309}
+.ctc-pt{font-size:.72rem;font-weight:800;line-height:1.25;color:#1f2937;overflow-wrap:anywhere}
+.ctc-pt.s{font-weight:600;color:#6b7280}                              /* lo que dice ese paso: «Encendido», «Abierta»… */
+.ctc-paso.saltado .ctc-pt{color:#9ca3af;font-weight:700}
+.ctc-paso .frena-txt{font-size:.64rem;font-weight:900;color:#b45309;line-height:1.2}
+.ctc-paso.config .frena-txt{color:#4b5563}
+@media (prefers-reduced-motion:reduce){.ctc-tarjeta,.ctc-pc{transition:none}.ctc-paso.frena .ctc-pc::after,.ctc-tarjeta.resaltada{animation:none}}
+.ctc-estado-linea{margin:8px 0 0;font-size:.8rem;font-weight:700;line-height:1.45;overflow-wrap:anywhere}
+.ctc-estado-linea.sale{color:#15803d}
+.ctc-estado-linea.correo,.ctc-estado-linea.llave,.ctc-estado-linea.general{color:#b45309}
+.ctc-estado-linea.config,.ctc-estado-linea.codigo{color:#4b5563}
+
+/* ── Condiciones de configuración, plantilla, cifras, cambios ── */
+.ctc-conds{display:flex;flex-direction:column;gap:4px;margin:10px 0 0}
+.ctc-cond{display:flex;align-items:flex-start;gap:7px;font-size:.74rem;line-height:1.4;color:#4b5563}
+.ctc-cond i{flex-shrink:0;margin-top:2px}
+.ctc-cond.on i{color:var(--ctc-ok)} .ctc-cond.off i{color:#6b7280} .ctc-cond.off{color:#374151}
+.ctc-cond code{font-size:.72rem;background:#f3f4f6;padding:0 5px;border-radius:5px;color:#111827}
+.ctc-aviso-plantilla{margin:10px 0 0;display:flex;align-items:flex-start;gap:8px;padding:8px 12px;border-radius:10px;font-size:.76rem;line-height:1.4;
+  background:var(--ctc-am-bg);border:1px solid var(--ctc-am-bd);color:#78350f}
+.ctc-aviso-plantilla i{flex-shrink:0;margin-top:1px;color:#b45309}
+.ctc-aviso-plantilla.info{background:var(--ctc-az-bg);border-color:#bfdbfe;color:var(--ctc-az-tx)} .ctc-aviso-plantilla.info i{color:var(--ctc-az-tx)}
+.ctc-cifras{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin:12px 0 0;padding:8px 12px;border-radius:10px;background:#f9fafb;
+  border:1px solid #eef0f3;font-size:.76rem;color:#374151}
+.ctc-cifras .c{display:inline-flex;align-items:center;gap:5px;font-weight:800;white-space:nowrap}
+.ctc-cifras .c b{font-variant-numeric:tabular-nums}
+.ctc-cifras .ok{color:#15803d} .ctc-cifras .fr{color:#b45309} .ctc-cifras .fa{color:#b91c1c}
+.ctc-cifras .ult{color:#6b7280;font-weight:600}
+.ctc-cambio{margin:8px 0 0;font-size:.76rem;line-height:1.45;color:#4b5563}
+.ctc-cambio b{color:#0a0a0a}
+.ctc-cambios{margin:8px 0 0;padding:8px 12px;border-radius:10px;background:#fff;border:1px dashed #d1d5db;font-size:.76rem}
+.ctc-cambios .fila{display:flex;flex-wrap:wrap;gap:4px 10px;padding:5px 0;border-bottom:1px solid #f1f5f9;line-height:1.4}
+.ctc-cambios .fila:last-child{border-bottom:0}
+
+/* ── Acciones e interruptor ── */
+.ctc-acciones{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:14px 0 0;padding-top:12px;border-top:1px dashed #e5e7eb}
+.ctc-acciones .ctc-spacer{flex:1 1 auto}
+.ctc-switch{display:inline-flex;align-items:center;gap:10px;min-height:44px;padding:4px 16px 4px 6px;border-radius:999px;
+  border:1.5px solid #d1d5db;background:#fff;color:#374151;font-weight:900;font-size:.84rem;cursor:pointer;
+  transition:border-color .12s,background .12s}
+.ctc-switch .perilla{position:relative;width:48px;height:28px;border-radius:999px;background:#d1d5db;transition:background .15s;flex-shrink:0}
+.ctc-switch .perilla::after{content:'';position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;
+  box-shadow:0 1px 3px rgba(0,0,0,.25);transition:left .15s}
+.ctc-switch[aria-checked="true"]{border-color:var(--ctc-ok-bd);background:#f0fdf4;color:#166534}
+.ctc-switch[aria-checked="true"] .perilla{background:var(--ctc-ok)}
+.ctc-switch[aria-checked="true"] .perilla::after{left:23px}
+.ctc-switch[aria-checked="false"]{border-color:var(--ctc-am-bd);background:var(--ctc-am-bg);color:var(--ctc-am-tx)}
+.ctc-switch[aria-checked="false"] .perilla{background:var(--ctc-am)}
+.ctc-switch:disabled{opacity:.6;cursor:not-allowed}
+.ctc-switch:focus-visible{outline:2px solid #fca5a5;outline-offset:2px}
+.ctc-bloqueado-msg{display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:4px 14px;border-radius:999px;background:#e0e7ff;
+  color:#3730a3;font-size:.78rem;font-weight:800;line-height:1.3}
+@media (max-width:767.98px){
+  .ctc-tarjeta{padding:14px 14px}
+  .ctc-th{flex-wrap:wrap}
+  .ctc-tit{flex:1 1 calc(100% - 50px)}
+  .ctc-pill{max-width:100%}
+  .ctc-btn,.ctc-switch{min-height:44px}
+  .ctc-btn.chico{min-height:44px}
+  .ctc-acciones .ctc-btn{flex:1 1 calc(50% - 8px)}
+  .ctc-acciones .ctc-btn[data-ctc="cambios"]{flex:1 1 100%}
+  .ctc-acciones .ctc-switch{flex:1 1 100%;justify-content:center}
+  .ctc-grupo{flex-wrap:wrap}
+  .ctc-grupo .n{margin-left:0}
+  /* Semáforo en el celular: lista vertical (círculo · nombre completo · estado). En 4 columnas de 70 px «Configuración» se partía */
+  .ctc-pasos{grid-template-columns:minmax(0,1fr);margin:12px 0 4px}
+  .ctc-paso{display:grid;grid-template-columns:38px minmax(0,1fr);grid-template-areas:"c n" "c t" "c s" "c f";column-gap:12px;row-gap:1px;
+    align-items:center;justify-items:start;text-align:left;padding:0 0 14px}
+  .ctc-paso:last-child{padding-bottom:0}
+  .ctc-paso::before{display:none}
+  .ctc-paso:not(:last-child)::after{content:'';position:absolute;left:18px;top:42px;bottom:2px;width:2px;background:#e5e7eb}
+  .ctc-paso .ctc-pc{grid-area:c;align-self:start}
+  .ctc-paso .ctc-pn{grid-area:n;align-self:end}
+  .ctc-paso .ctc-pt.n{grid-area:t;font-size:.82rem}
+  .ctc-paso .ctc-pt.s{grid-area:s;font-size:.76rem}
+  .ctc-paso .frena-txt{grid-area:f;font-size:.7rem}
+}
+
+/* ── Vacío, carga, herramientas ── */
+.ctc-vacio{text-align:center;padding:36px 16px;color:#6b7280}
+.ctc-vacio i{font-size:2rem;display:block;margin-bottom:6px;color:#9ca3af}
+.ctc-vacio .t{font-weight:800;color:#374151}
+.ctc-cargando-lista{opacity:.55;pointer-events:none}
+.ctc-herr{margin:6px 16px 16px;padding:12px 14px;border-radius:12px;background:#f9fafb;border:1px solid #eef0f3;font-size:.78rem;color:#4b5563;line-height:1.5}
+.ctc-herr b{color:#0a0a0a}
+
+/* ── Vista previa ── */
+#modalCtcPrevia .ctc-previa-info{padding:10px 16px;background:#f8f9fa;border-bottom:1px solid #dee2e6;font-size:.84rem}
+#modalCtcPrevia iframe{width:100%;height:68vh;min-height:360px;border:0;background:#f1f2f4;display:block}
+#modalCtcPrevia .ctc-previa-vacia{padding:36px 22px;text-align:center;color:#4b5563}
+@media (max-width:767.98px){
+  #modalCtcPrevia iframe{height:calc(100dvh - 190px)}
+  #modalCtcPrevia .modal-footer{flex-direction:column;align-items:stretch;gap:8px}
+  #modalCtcPrevia .modal-footer > *{width:100%;margin:0;min-height:44px}
+}
+
+/* El Historial: aviso del filtro por correo y enlace «Ver tarjeta» */
+.hist-filtro-correo{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 16px 10px;padding:8px 12px;border-radius:10px;
+  background:var(--ctc-az-bg,#dbeafe);border:1px solid #bfdbfe;color:#1e40af;font-size:.82rem;font-weight:700}
+.hist-filtro-correo:empty{display:none}
+.hist-ver-tarjeta{display:inline-flex;align-items:center;gap:4px;margin-top:3px;font-size:.7rem;font-weight:800;color:#1e40af;
+  background:none;border:0;padding:0;cursor:pointer;text-decoration:underline}

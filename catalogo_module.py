@@ -3300,6 +3300,7 @@ def register_catalogo_routes(app, ctx):
                 email, subject, html,
                 evento="catalogo_manual", modulo="catalogo", cc=cc,
                 attachments=[{"filename": manual_nombre, "content": pdf_bytes, "content_type": "application/pdf"}],
+                correo="catalogo_manual",
             )
         except Exception as _e:
             print(f"[cat_manual_enviar_correo] error envío pid={pid}: {_e}", flush=True)
@@ -3424,6 +3425,7 @@ def register_catalogo_routes(app, ctx):
                 email, subject, html,
                 evento="catalogo_manual", modulo="catalogo", cc=cc,
                 attachments=[{"filename": manual_nombre, "content": pdf_bytes, "content_type": "application/pdf"}],
+                correo="catalogo_manual",
             )
         except Exception as _e:
             print(f"[cat_manuales_multi_enviar_correo] error envío pid={pid} manual={manual_id}: {_e}", flush=True)

@@ -2618,6 +2618,24 @@ def register_pickup_routes(app, ctx):
         "message":           None,            # custom — sin plantilla
     }
 
+    # Clave de cada notify(kind) en el REGISTRO DE CORREOS (comm_correos_registro.py): es la que lleva `correo=` hacia la puerta
+    # única de envío, y con la que Comunicaciones → «Control de correos» puede apagar cada correo del retiro por separado
+    # (2026-10-20). Debe tener las mismas claves que _KIND_TO_ESTADO (hay una prueba que lo exige).
+    _KIND_TO_CORREO = {
+        "created":           "ret_solicitud_recibida",
+        "proposal":          "ret_propuesta",
+        "confirmed":         "ret_cita_confirmada",
+        "preparing":         "ret_en_preparacion",
+        "done":              "ret_retiro_completado",
+        "closed":            "ret_retiro_completado",     # mismo correo «retiro completado»
+        "rejected":          "ret_cancelado",
+        "rescheduled":       "ret_reagendado",
+        "reminder_24h":      "ret_recordatorio_24h",
+        "info_incompleta":   "ret_info_incompleta",
+        "failed":            "ret_no_concretado",
+        "message":           "ret_mensaje_cliente",
+    }
+
 
     def notify(req, kind="created", proposal=None, custom_message=""):
         """Envía notificación al cliente usando plantillas configuradas en
@@ -2773,7 +2791,8 @@ def register_pickup_routes(app, ctx):
                 # Sin "ILUS — ILUS propone…" (Daniel 2026-09-23): el prefijo
                 # solo si la plantilla no lo trae ya.
                 _asunto_final = asunto if (asunto or "").strip().upper().startswith("ILUS") else f"ILUS — {asunto}"
-                _multi = _send_pickup_email_multi(req, _asunto_final, html, attachments=_ics_att)
+                _multi = _send_pickup_email_multi(req, _asunto_final, html, attachments=_ics_att,
+                                                  correo=_KIND_TO_CORREO.get(kind))
                 sent_mail = len(_multi["sent"]) > 0
                 if _multi["sent"]:
                     print(f"[pickup-email] {asunto} → {_multi['total']} dest: "
@@ -2853,7 +2872,8 @@ def register_pickup_routes(app, ctx):
                     ],
                 )
                 # Multi-email (Daniel 2026-05-23)
-                _multi = _send_pickup_email_multi(req, f"ILUS - {title} {req['code']}", html, attachments=_ics_att)
+                _multi = _send_pickup_email_multi(req, f"ILUS - {title} {req['code']}", html, attachments=_ics_att,
+                                                  correo=_KIND_TO_CORREO.get(kind))
                 sent_mail = len(_multi["sent"]) > 0
         except Exception as exc:
             try:
@@ -3023,7 +3043,8 @@ def register_pickup_routes(app, ctx):
                                 ("", "Telefono", phone),
                             ],
                         )
-                        _send_ilus_email(dest, subject, html, evento="pickup_reject_operador", modulo="retiros", asincrono=True)
+                        _send_ilus_email(dest, subject, html, evento="pickup_reject_operador", modulo="retiros", asincrono=True,
+                                         correo="ret_aviso_soporte_rechazo")
                 except Exception as exc:
                     try:
                         print(f"[ILUS][PICKUP REJECT NOTIFY OPERADOR] {exc}")
@@ -3281,6 +3302,7 @@ def register_pickup_routes(app, ctx):
                                                 evento="retiros_equipo",
                                                 modulo="comunicacion_interna",
                                                 asincrono=True,
+                                                correo="ret_aviso_equipo",
                                             )
                                         except Exception as _e_m:
                                             print(f"[ILUS][PICKUP TEAM NOTIF] email {_mask_email(dest)}: {_e_m}", flush=True)
@@ -7059,7 +7081,7 @@ def register_pickup_routes(app, ctx):
             if not isinstance(doc, str) or not doc:
                 doc = ('<!doctype html><html lang="es"><body style="margin:0;background:#f3f4f6;padding:20px">'
                        '<div style="background:#ffffff;border-radius:12px;padding:20px">' + cuerpo + '</div></body></html>')
-            multi = _send_pickup_email_multi(req if req.get("id") else rid, asunto, doc)
+            multi = _send_pickup_email_multi(req if req.get("id") else rid, asunto, doc, correo="ret_comprobante_firma")
             if multi["sent"]:
                 log_event(rid, "comprobante_enviado", None, None,
                           f"Comprobante de recepción enviado al cliente ({len(multi['sent'])} destinatario(s)). Firmó {v['nombre']} · {v['cuando']}.",
@@ -11808,7 +11830,7 @@ def register_pickup_routes(app, ctx):
         })
 
     # Wrapper de envío que multiplica el mensaje a todos los destinos
-    def _send_pickup_email_multi(rid_or_req, subject, html, attachments=None):
+    def _send_pickup_email_multi(rid_or_req, subject, html, attachments=None, correo=None):
         """Envía email a TODOS los destinatarios del retiro (multi-email).
         Devuelve dict {sent: [emails], failed: [emails]}.
 
@@ -11816,6 +11838,9 @@ def register_pickup_routes(app, ctx):
         mimetype) — ej. el .ics del retiro. Viaja transparente vía **kwargs hasta
         _send_ilus_email_real, que ya soporta adjuntos (SMTP multipart / Resend
         base64). Si es None, el flujo es idéntico al de antes.
+
+        correo (2026-10-20, Control de correos): clave del correo en el registro (ret_cita_confirmada, ret_retiro_completado…).
+        TODOS los correos de Retiros salían con evento="pickup_created", así que el evento no los distingue: la clave sí.
         """
         emails = _get_pickup_all_emails(rid_or_req)
         sent, failed = [], []
@@ -11827,7 +11852,7 @@ def register_pickup_routes(app, ctx):
                 _kw = {"evento": "pickup_created", "modulo": "retiros"}
                 if attachments:
                     _kw["attachments"] = attachments
-                ok = _send_ilus_email(e, subject, html, **_kw)
+                ok = _send_ilus_email(e, subject, html, correo=correo, **_kw)
                 if ok:
                     sent.append(e)
                 else:
@@ -15221,7 +15246,7 @@ def register_pickup_routes(app, ctx):
             for d_b in dest:
                 try:
                     if _send_ilus_email(d_b, f"ILUS - {titulo}", html, evento="retiros_bodega", modulo="comunicacion_interna",
-                                        asincrono=True) is not False:      # False = lo frenó el interruptor de correos
+                                        asincrono=True, correo="ret_aviso_bodega") is not False:      # False = lo frenó el interruptor de correos
                         enviados.append(d_b)
                 except Exception as e_m:
                     print(f"[retiros-desviacion] correo a bodega {_mask_email(d_b)}: {e_m}", flush=True)

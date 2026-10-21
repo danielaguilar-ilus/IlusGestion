@@ -37,6 +37,16 @@ PLANTILLA_DE = {
 EVENTO_LOG = dict(PLANTILLA_DE)                 # nombre del evento en email_log / Historial de Comunicaciones
 PLANTILLA_AGENDA = "agenda_tecnico_manana"
 EVENTO_LOG_AGENDA = "agenda_tecnico_manana"
+# Clave de cada aviso en el REGISTRO DE CORREOS (comm_correos_registro.py): es la que lleva `correo=` hacia la puerta única de
+# envío, para que Comunicaciones → «Control de correos» pueda apagar cada uno por separado (2026-10-20).
+CORREO_DE = {
+    "asignada": "ot_tec_asignada",
+    "reagendada": "ot_tec_reagendada",
+    "cancelada": "ot_tec_cancelada",
+    "desasignada": "ot_tec_desasignada",
+}
+CORREO_AGENDA = "ot_tec_agenda_manana"
+CORREO_VISITA_COPIA = "ot_tec_visita_copia"       # la copia al técnico del botón manual «Enviar email» de la visita
 
 ESTADOS_CANCELADOS = frozenset({"cancelada", "anulada"})
 # El trabajo ya se hizo (o está firmado esperando cierre): no tiene sentido «asignar» ni «reagendar».
