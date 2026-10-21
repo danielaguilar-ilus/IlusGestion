@@ -765,6 +765,23 @@ def test_portada_con_nota_general_cifras_y_firma(entorno):
     assert "encr-hero-num" not in h2 and "Todavía no hay respuestas" in h2      # sin respuestas no se inventa una nota
 
 
+def test_el_embudo_se_ve_aunque_nadie_haya_respondido(entorno):
+    # 2026-10-20 (Daniel: «cuántos clientes se les ha enviado y cuántos están respondiendo, para medir esa tasa»)
+    sembrar(entorno)
+    entorno.activar()
+    entorno.db.retiro(2)
+    entorno.enviar(1)
+    entorno.enviar(2)
+    entorno.db.execute("UPDATE pickup_encuesta_invitaciones SET vence_en=%s WHERE request_id=2", (T0 - timedelta(days=1),))
+    entorno.admin()
+    html = entorno.client.get("/retiros/encuesta").get_data(as_text=True)
+    assert "¿A cuántos les llegó y cuántos respondieron?" in html and "Todavía no hay respuestas" in html
+    assert "Encuestas enviadas" in html and '<div class="encr-stat-n">2</div>' in html
+    assert '<div class="encr-kpi-n">0</div>' in html and "0<small>%</small>" in html
+    assert "1 vencida sin responder" in html and '<div class="encr-stat-n">1</div>' in html     # 1 esperando, 1 vencida
+    assert "desde el " in html
+
+
 def test_resumen_general_pondera_y_no_inventa():
     est = lambda n, prom, d: {"tipo": "estrellas", "n": n, "prom": prom,
                               "barras": [{"etiqueta": str(i), "c": d.get(i, 0)} for i in range(5, 0, -1)]}
