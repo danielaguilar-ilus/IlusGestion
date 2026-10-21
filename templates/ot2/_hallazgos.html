@@ -1,0 +1,136 @@
+{#- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+    🩺 ILUS Fitness · OT — «HALLAZGOS DE ESTA OT» (F1 · REGLA #38). Daniel, 2026-10-20: «Indícame si se está tomando fotografías como
+    evidencia, eso es necesario, y que la OT avise para que se tome el caso y se levante una acción que debería ser otra OT.»
+    Tarjeta de la ficha (static/ot_hallazgos.css y .js) con lo que el técnico reportó: una Falla o Alerta del checklist, un equipo «que no se
+    puede usar», una baja, un repuesto pedido, una incidencia. Cada hallazgo muestra su semáforo, el nombre COMPLETO del equipo o la tarea
+    (REGLA #15), las fotos como evidencia («sin foto» en ámbar si no hay), su estado y quién lo tomó. Acciones (botones de 44 px, REGLA #3):
+    «Tomar el caso», «Levantar OT de seguimiento» (abre el asistente «Nueva OT» PRELLENADO) y «Descartar» (motivo obligatorio).
+    Va al NIVEL RAÍZ del bloque de contenido (nunca dentro de una pestaña, del hero ni de `{% if puede_metadata %}`): también se dibuja en una
+    OT CERRADA (lección del 20-oct con la franja del anexo). SOLO gestión: el servidor no le arma `hallazgos` a un técnico (REGLAS #19/#26).
+    Contexto `hallazgos` (lo arma _hall_contexto_ficha): vid, numero_ot, activos[], retirados[], origen, n_* y cerrada. Sin plata ni proveedores.
+    ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════ -#}
+{% if hallazgos and not es_tecnico %}
+{% set _h = hallazgos %}
+{% if _h.origen %}
+<div class="hz-origen" id="hzOrigen" role="region" aria-label="OT de la que viene este seguimiento">
+  <span class="hz-origen-ic"><i class="bi bi-diagram-2-fill" aria-hidden="true"></i></span>
+  <div class="hz-origen-tx">
+    <b>Esta orden es el seguimiento de <a href="{{ _h.origen.url }}">{{ _h.origen.numero_ot }}</a></b>
+    <small>Nació de {{ _h.origen.hallazgos | length }} hallazgo{{ 's' if (_h.origen.hallazgos | length) != 1 }} que reportó el técnico en esa orden.
+      Pasó por la puerta del documento como cualquier otra OT: no hereda cobros ni saldo.</small>
+    {% if _h.origen.hallazgos %}
+    <ul>
+      {% for x in _h.origen.hallazgos %}
+      <li><span class="hz-chip {{ x.sev_color }}">{{ x.sev_texto }}</span> {{ x.titulo }}{% if x.n_fotos %} · {{ x.n_fotos }} foto{{ 's' if x.n_fotos != 1 }}{% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% if _h.n_total %}
+<section class="hz" id="otdHallazgos" data-vid="{{ _h.vid }}" aria-labelledby="hzTitulo">
+  <header class="hz-cab">
+    <span class="hz-ic" aria-hidden="true"><i class="bi bi-clipboard2-pulse-fill"></i></span>
+    <div class="hz-cab-tx">
+      <h3 id="hzTitulo">Hallazgos de esta OT</h3>
+      <p>Lo que el técnico reportó en terreno y merece una acción. Aquí se toma el caso o se levanta una OT de seguimiento. Nada se borra y al
+        cliente no se le avisa nada.</p>
+    </div>
+    <div class="hz-conteo" aria-label="Resumen de los hallazgos">
+      {% if _h.n_abiertos %}<span class="hz-n ambar" title="Nadie los ha tomado todavía"><b>{{ _h.n_abiertos }}</b> sin gestionar</span>{% endif %}
+      {% if _h.n_tomados %}<span class="hz-n azul"><b>{{ _h.n_tomados }}</b> con el caso tomado</span>{% endif %}
+      {% if _h.n_con_ot %}<span class="hz-n verde"><b>{{ _h.n_con_ot }}</b> con OT de seguimiento</span>{% endif %}
+      {% if _h.n_descartados %}<span class="hz-n gris"><b>{{ _h.n_descartados }}</b> descartado{{ 's' if _h.n_descartados != 1 }}</span>{% endif %}
+      {% if _h.n_sin_foto %}<span class="hz-n ambar" title="La foto es la evidencia"><i class="bi bi-camera" aria-hidden="true"></i> <b>{{ _h.n_sin_foto }}</b> sin foto</span>{% endif %}
+    </div>
+  </header>
+  {% if _h.cerrada %}
+  <div class="hz-nota"><i class="bi bi-lock-fill" aria-hidden="true"></i> Esta OT ya está cerrada y sigue siendo evidencia: no se modifica. Los hallazgos
+    sí se pueden gestionar (tomar el caso, levantar una OT de seguimiento o descartarlos con su motivo).</div>
+  {% endif %}
+  {% if _h.n_seleccionables > 1 %}
+  {#- REGLA #14: toda lista con selección múltiple lleva «marcar/desmarcar todo» (un solo botón que se comporta como interruptor). -#}
+  <div class="hz-barra">
+    <button type="button" class="hz-btn sec" data-hz-todo><i class="bi bi-check-all" aria-hidden="true"></i><span>Seleccionar todo</span></button>
+    <span class="hz-cuenta" data-hz-cuenta aria-live="polite">0 de {{ _h.n_seleccionables }} elegidos</span>
+    <button type="button" class="hz-btn pri" data-hz-levantar-sel disabled><i class="bi bi-diagram-3-fill" aria-hidden="true"></i>
+      <span>Levantar una OT con lo elegido</span></button>
+  </div>
+  {% endif %}
+  <ul class="hz-lista">
+    {% for i in _h.activos %}
+    <li class="hz-item c-{{ i.sev_color }} e-{{ i.estado_ef }}" data-hz-id="{{ i.id }}" id="hz{{ i.id }}">
+      {% if _h.n_seleccionables > 1 %}
+      <label class="hz-sel{% if not i.puede_levantar %} vacio{% endif %}">
+        <input type="checkbox" data-hz-sel value="{{ i.id }}"{% if not i.puede_levantar %} disabled{% endif %} aria-label="Elegir este hallazgo para la OT de seguimiento">
+      </label>
+      {% endif %}
+      <div class="hz-cuerpo">
+        <div class="hz-fila1">
+          <span class="hz-chip {{ i.sev_color }}"><i class="bi {{ i.sev_icono }}" aria-hidden="true"></i> {{ i.sev_texto }}</span>
+          {% if i.riesgo %}<span class="hz-chip rojo"><i class="bi bi-person-exclamation" aria-hidden="true"></i> Puede lastimar a alguien</span>{% endif %}
+          <span class="hz-est {{ i.estado_color }}">{{ i.estado_txt }}</span>
+        </div>
+        <h4 class="hz-tit">{{ i.titulo }}</h4>
+        {% if i.detalle %}<p class="hz-det">{{ i.detalle }}</p>{% endif %}
+        {#- Las fotos son la evidencia (Daniel: «eso es necesario»). Miniaturas que abren el visor global; sin foto se dice en ámbar. -#}
+        {% if i.fotos %}
+        <div class="hz-fotos" data-hz-fotos='{{ i.fotos | tojson }}'>
+          {% for u in i.fotos %}
+          <button type="button" class="hz-foto" data-hz-foto="{{ loop.index0 }}" aria-label="Ver la foto {{ loop.index }} de {{ i.fotos | length }}">
+            <img src="{{ u }}" alt="Foto del hallazgo {{ loop.index }}" loading="lazy">
+          </button>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="hz-sinfoto"><i class="bi bi-camera" aria-hidden="true"></i> Sin foto. La foto es la evidencia: pídele al técnico que la suba en la tarea.</div>
+        {% endif %}
+        <div class="hz-meta">
+          Reportó <b>{{ i.quien or 'el técnico' }}</b>{% if i.cuando %} · {{ i.cuando }}{% endif %}
+          {% if i.estado_ef == 'tomado' and i.tomado_por %} · Lo tomó <b>{{ i.tomado_por }}</b>{% if i.tomado_cuando %} el {{ i.tomado_cuando }}{% endif %}{% endif %}
+        </div>
+        {% if i.seguimiento %}
+        <div class="hz-seg">
+          <i class="bi bi-diagram-3-fill" aria-hidden="true"></i>
+          <span>{% if i.seguimiento.cerrada %}Resuelto con{% else %}OT de seguimiento:{% endif %}
+            <a href="{{ i.seguimiento.url }}"><b>{{ i.seguimiento.numero_ot }}</b></a>
+            <small>· {{ i.seguimiento.estado_txt }}</small></span>
+        </div>
+        {% endif %}
+        {% if i.seguimiento_caido %}
+        <div class="hz-aviso"><i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i> {{ i.seguimiento_caido_txt }}</div>
+        {% endif %}
+        {% if i.estado_ef == 'descartado' %}
+        <div class="hz-desc"><i class="bi bi-slash-circle" aria-hidden="true"></i>
+          <span>Lo descartó <b>{{ i.descartado_por }}</b>{% if i.descartado_cuando %} el {{ i.descartado_cuando }}{% endif %}. Motivo: {{ i.descarte_motivo }}</span></div>
+        {% endif %}
+        {% if i.puede_tomar or i.puede_levantar or i.puede_descartar or i.puede_reabrir %}
+        <div class="hz-acciones">
+          {% if i.puede_tomar %}<button type="button" class="hz-btn" data-hz-tomar="{{ i.id }}"><i class="bi bi-hand-index-thumb-fill" aria-hidden="true"></i> Tomar el caso</button>{% endif %}
+          {% if i.puede_levantar %}<button type="button" class="hz-btn pri" data-hz-levantar="{{ i.id }}"><i class="bi bi-diagram-3-fill" aria-hidden="true"></i> Levantar OT de seguimiento</button>{% endif %}
+          {% if i.puede_descartar %}<button type="button" class="hz-btn sec" data-hz-descartar="{{ i.id }}" data-hz-titulo="{{ i.titulo }}"><i class="bi bi-slash-circle" aria-hidden="true"></i> Descartar</button>{% endif %}
+          {% if i.puede_reabrir %}<button type="button" class="hz-btn sec" data-hz-reabrir="{{ i.id }}"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i> Reabrir</button>{% endif %}
+        </div>
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% if _h.retirados %}
+  <details class="hz-retirados">
+    <summary><i class="bi bi-arrow-return-left" aria-hidden="true"></i> Retirados por el técnico ({{ _h.retirados | length }})</summary>
+    <p>El técnico volvió su respuesta a «Aprobado» o se revirtió la acción. Quedan escritos como evidencia; no cuentan como hallazgos.</p>
+    <ul>
+      {% for i in _h.retirados %}
+      <li><span class="hz-chip {{ i.sev_color }}">{{ i.sev_texto }}</span> {{ i.titulo }}
+        <small>· retirado {{ i.retirado_cuando }}{% if i.retirado_motivo %}: {{ i.retirado_motivo }}{% endif %}</small></li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</section>
+<script>window.OTD_HZ_CFG = { vid: {{ _h.vid }}, numero: {{ _h.numero_ot | tojson }} };</script>
+<script defer src="{{ url_for('static', filename='ot_hallazgos.js') }}"></script>
+{% endif %}
+{% endif %}

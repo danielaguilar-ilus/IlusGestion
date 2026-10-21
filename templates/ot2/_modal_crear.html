@@ -1577,6 +1577,12 @@ window.OT2C = (function(){
          // existe y la OT se crea como siempre. `manual` = la persona eligió a mano (la sugerencia ya no la pisa).
          resp:{id:null, nombre:'', origen:'', manual:false, hay:null, cargado:false, cargando:false, error:false,
                candidatos:[], sugerido:null, clienteKey:null},
+         // 🩺 2026-10-21 (REGLA #38, Daniel: «que la OT avise para que se tome el caso y se levante una acción que debería ser otra OT»):
+         // esta OT es el SEGUIMIENTO de hallazgos de otra OT. Llega de la tarjeta «Hallazgos de esta OT» (OT2C.abrirDesdeHallazgos): el cliente, los
+         // equipos, el tipo correctiva, el título y el motivo ya vienen escritos (la persona decide qué queda, REGLA #32) y las fotos del hallazgo
+         // quedan como referencia en «Videos y documentos» de la OT nueva. {origen_id, origen_numero, cliente_id, ids, hallazgos[], fotos[],
+         // fotos_ok{url:bool}}. Viaja en crear() como `seguimiento`; el servidor lo revalida TODO y escribe el vínculo (jamás se cree el navegador).
+         seguimiento:null,
          // 🧾 2026-10-18 (Daniel: «elegir el plan, elegir todo»): modo de la tabla del trabajo interno, igual que
          // los chips de la tabla de cliente -- 'todo' (todo el documento incluido) o 'mano' (parte sin nada).
          tm_modo:'todo',
@@ -2671,6 +2677,63 @@ window.OT2C = (function(){
     S.descripcion = texto;
     S._motivoHeredado = {texto: texto, origen: origen};
   }
+  /* 🩺 2026-10-21 (REGLA #38, Daniel: «que la OT avise para que se tome el caso y se levante una acción que debería ser otra OT»).
+     Cuando esta OT nace de la tarjeta «Hallazgos de esta OT», el asistente llega prellenado (cliente, equipos, tipo correctiva, título y motivo) y
+     aquí se dice DE QUÉ hallazgos viene, con sus fotos como referencia (cada una se puede dejar fuera: la persona decide, REGLA #32). Las fotos que
+     queden entran a «Videos y documentos» de la OT nueva; el servidor revalida TODO y escribe el vínculo (ot_madre_id + ot_relacion='seguimiento').
+     Si la persona cambió de cliente el vínculo ya no corresponde: se dice y NO se manda. Esta OT pasa por la puerta del documento NORMAL
+     (REGLAS #24/#25/#28): no hereda cobros ni saldo. Sin plata ni proveedores en nada de esto. */
+  function _o2mSegVigente(){
+    var sg = S.seguimiento;
+    if (!sg) return false;
+    if (esInterno()) return !sg.cliente_id;
+    return !!(S.cliente && sg.cliente_id && S.cliente.id === sg.cliente_id);
+  }
+  function _o2mSegHtml(){
+    var sg = S.seguimiento;
+    if (!sg) return '';
+    var cab = 'style="background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a;margin-top:14px"';
+    if (!_o2mSegVigente()){
+      return '<div class="o2m-aviso" style="background:#fff8e1;border-color:#fde68a;color:#92400e;margin-top:14px">'+
+        '<b><i class="bi bi-diagram-2 me-1"></i>Cambiaste de cliente</b>: esta OT ya no queda ligada a '+esc(sg.origen_numero)+
+        ' (el seguimiento tiene que ser del mismo cliente).'+
+        ' <button type="button" class="btn btn-sm btn-outline-secondary ms-1" style="min-height:44px" onclick="OT2C.segQuitar()">Entendido, quitar el vínculo</button></div>';
+    }
+    var chip = {rojo:'#fee2e2;color:#991b1b', ambar:'#fff8e1;color:#92400e', azul:'#dbeafe;color:#1e40af', negro:'#0a0a0a;color:#fff', gris:'#f3f4f6;color:#4b5563'};
+    var h = '<div class="o2m-aviso" '+cab+'>'+
+      '<div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;justify-content:space-between">'+
+      '<b><i class="bi bi-diagram-3-fill me-1"></i>Seguimiento de <a href="/ot/'+encodeURIComponent(sg.origen_id)+'" target="_blank" rel="noopener" style="color:#1e3a8a">'+esc(sg.origen_numero)+'</a></b>'+
+      '<button type="button" class="btn btn-sm btn-outline-secondary" style="min-height:44px" onclick="OT2C.segQuitar()">Crear sin ligarla</button></div>'+
+      '<div style="margin-top:4px;font-size:.84rem">Nace de '+(sg.hallazgos||[]).length+' hallazgo'+((sg.hallazgos||[]).length===1?'':'s')+
+      ' que reportó el técnico. Ya viene el cliente, los equipos, el tipo y el motivo: cámbialos como necesites. No hereda cobros ni saldo.</div>'+
+      '<ul style="margin:8px 0 0;padding-left:0;list-style:none;display:grid;gap:6px">'+
+      (sg.hallazgos||[]).map(function(x){
+        return '<li style="overflow-wrap:anywhere"><span style="display:inline-block;border-radius:99px;padding:1px 9px;font-size:.74rem;font-weight:800;margin-right:6px;background:'+
+          (chip[x.sev_color]||chip.gris)+'">'+esc(x.sev_texto||'')+'</span>'+esc(x.titulo||'')+'</li>';
+      }).join('')+'</ul>';
+    if ((sg.fotos||[]).length){
+      h += '<div style="margin-top:10px;font-weight:800;font-size:.84rem"><i class="bi bi-images me-1"></i>Fotos del hallazgo como referencia '+
+        '<span style="font-weight:500">(quedan en «Videos y documentos» de la OT nueva; quita las que no hagan falta)</span></div>'+
+        '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">'+
+        sg.fotos.map(function(u, i){
+          var on = sg.fotos_ok[u] !== false;
+          return '<button type="button" onclick="OT2C.segFoto('+i+')" aria-pressed="'+on+'" aria-label="'+(on?'Quitar':'Dejar')+' la foto '+(i+1)+'"'+
+            ' style="position:relative;width:76px;height:76px;padding:0;border-radius:10px;overflow:hidden;background:#fff;cursor:pointer;border:3px solid '+(on?'#16a34a':'#e5e7eb')+';opacity:'+(on?1:.45)+'">'+
+            '<img src="'+esc(u)+'" alt="" style="width:100%;height:100%;object-fit:cover;display:block">'+
+            '<span style="position:absolute;top:2px;right:2px;background:'+(on?'#16a34a':'#6b7280')+';color:#fff;border-radius:50%;width:20px;height:20px;font-size:.7rem;display:flex;align-items:center;justify-content:center">'+
+            '<i class="bi bi-'+(on?'check-lg':'x-lg')+'"></i></span></button>';
+        }).join('')+'</div>';
+    }
+    return h+'</div>';
+  }
+  function segQuitar(){ S.seguimiento = null; repintarSeccion('detalle'); }
+  function segFoto(i){
+    var sg = S.seguimiento; if (!sg || !sg.fotos || !sg.fotos[i]) return;
+    var u = sg.fotos[i];
+    sg.fotos_ok[u] = (sg.fotos_ok[u] === false);
+    repintarSeccion('detalle');
+  }
+
   function pintarDetalle(b){
     var descLen = (S.descripcion||'').trim().length;
     var descOk = descLen >= O2M_DESC_MIN;
@@ -2709,6 +2772,8 @@ window.OT2C = (function(){
         '<span class="text-muted" style="font-weight:400">(opcional)</span></label>'+
         '<div class="o2m-adj-row" id="o2mAdjLista"></div>'+
       '</div>'+
+      // 🩺 2026-10-21 (REGLA #38): esta OT es el seguimiento de hallazgos de otra OT (ver _o2mSegHtml).
+      _o2mSegHtml()+
       // 🔧 FASE 4 REPUESTOS (2026-09-26): bloque informativo -- ver
       // S.repuestos_a_instalar en reset()/abrir(). Nombres completos,
       // nunca truncados (REGLA #15, formato Retiros).
@@ -11032,6 +11097,14 @@ window.OT2C = (function(){
     // hija se crea sola con el solicitante como autor.
     if (S.evento_id) body.evento_id = S.evento_id;
     if (_o2mDiAplica() && S.desinst.lleva) body.desinstalacion = _diPayload();
+    // 🩺 2026-10-21 (REGLA #38): si esta OT es el seguimiento de hallazgos de otra, se manda DE CUÁL y de cuáles (y las fotos que la persona dejó como
+    // referencia). El servidor lo revalida todo (los hallazgos son de esa OT, siguen disponibles, mismo cliente) y escribe él mismo el vínculo.
+    // Viaja también en el payload de «Pedir autorización a Daniel» (se copia este mismo body).
+    if (_o2mSegVigente()){
+      var _sg = S.seguimiento;
+      body.seguimiento = {origen_id: _sg.origen_id, hallazgo_ids: _sg.ids,
+                          fotos: (_sg.fotos || []).filter(function(u){ return _sg.fotos_ok[u] !== false; })};
+    }
     // 26-08-2026: Capacitación/Control de calidad -> productos/tareas
     // sueltas. Trabajo de bodega -> UNA tarea con la observación completa.
     // Mismo mecanismo del backend (tareas_manuales, plantilla_id NULL).
@@ -12411,6 +12484,45 @@ window.OT2C = (function(){
       .catch(function(){ abrir({origen:'ticket', ticket_id:_tid, onCreada:onCreada}); });
   }
 
+  /* 🩺 2026-10-21 (REGLA #38): «Levantar OT de seguimiento» desde la tarjeta «Hallazgos de esta OT». Se le pide al servidor lo prellenado (cliente,
+     equipos, tipo correctiva, título, motivo y fotos de referencia) para ESOS hallazgos de ESA OT; si ya no están disponibles (alguien los tomó o
+     el técnico los retiró) el servidor responde 409 y aquí se dice por qué, sin abrir el asistente a medias. La persona decide qué queda. */
+  function abrirDesdeHallazgos(vid, ids){
+    vid = parseInt(vid || 0, 10);
+    var lista = (ids || []).map(function(x){ return parseInt(x, 10); }).filter(function(x){ return x > 0; });
+    if (!vid || !lista.length){ abrir(); return; }
+    fetch('/ot/api/' + vid + '/hallazgos/prellenado?ids=' + lista.join(','), {credentials:'same-origin', headers:{'Accept':'application/json'}})
+      .then(function(r){ return r.json().catch(function(){ return {}; }); })
+      .then(function(j){
+        if (!j || !j.ok){
+          if (window.ilusAlert) ilusAlert({title:'No se puede levantar la OT de seguimiento', message:(j && j.error) || 'No pudimos preparar la OT de seguimiento.',
+            sub:'Vuelve a la ficha de la OT, recárgala y elige otra vez.', type:'warning'});
+          else abrir();
+          return;
+        }
+        var o = j.origen || {}, p = j.prellenado || {};
+        var opts = {titulo:p.titulo || '', descripcion:p.descripcion || ''};
+        if (o.cliente){
+          opts.origen = 'cliente';
+          opts.cliente = {id:o.cliente.id, nombre:o.cliente.nombre || '', rut:o.cliente.rut || ''};
+          opts.tipo = p.tipo_sugerido || 'correctiva';
+          if ((p.maquinas || []).length) opts.equipo_preset_maquina_ids = p.maquinas.slice();
+        } else {
+          opts.origen = 'interno';       // trabajo interno: el tipo lo elige la persona
+        }
+        abrir(opts);
+        var fotos = (p.fotos || []).slice(), ok = {};
+        fotos.forEach(function(u){ ok[u] = true; });
+        S.seguimiento = {origen_id:o.id, origen_numero:o.numero_ot || ('OT #' + o.id), cliente_id:(o.cliente ? o.cliente.id : null),
+                         ids:(j.hallazgos || []).map(function(h){ return h.id; }), hallazgos:(j.hallazgos || []), fotos:fotos, fotos_ok:ok};
+        S._motivoHeredado = {texto:S.descripcion, origen:'del seguimiento de ' + (o.numero_ot || 'la OT de origen')};
+        repintarSeccion('detalle');
+      })
+      .catch(function(){
+        if (window.ilusAlert) ilusAlert({title:'Sin conexión', message:'No pudimos preparar la OT de seguimiento. Revisa la señal e intenta de nuevo.', type:'warning'});
+      });
+  }
+
   document.addEventListener('DOMContentLoaded', function(){
     var a = document.getElementById('o2mAtras'), s = document.getElementById('o2mSig');
     // "Atrás" en la fase "form" vuelve a elegir el origen (Daniel: "Origen
@@ -12422,7 +12534,11 @@ window.OT2C = (function(){
     if (_qs.get('crear') === '1'){
       var _tid = parseInt(_qs.get('ticket') || '0', 10);
       var _evq = parseInt(_qs.get('evento') || '0', 10) || null;   // 🧩 2026-10-20
-      if (_tid) abrirDesdeTicket(_tid); else abrir(_evq ? {evento_id:_evq} : undefined);
+      // 🩺 2026-10-21 (REGLA #38): /ot/?crear=1&seguimiento=1,2&desde=<OT de origen> → el asistente llega prellenado con esos hallazgos.
+      var _segIds = (_qs.get('seguimiento') || '').split(',').map(function(x){ return parseInt(x, 10); }).filter(function(x){ return x > 0; });
+      var _segDesde = parseInt(_qs.get('desde') || '0', 10);
+      if (_segIds.length && _segDesde) abrirDesdeHallazgos(_segDesde, _segIds);
+      else if (_tid) abrirDesdeTicket(_tid); else abrir(_evq ? {evento_id:_evq} : undefined);
     }
   });
 
@@ -12434,6 +12550,7 @@ window.OT2C = (function(){
   function abrirWizard(opts){ abrir(opts); }
 
   return {abrir:abrir, abrirWizard:abrirWizard, abrirDesdeTicket:abrirDesdeTicket, cerrar:cerrar, irAncla:irAncla, avisarBloqueado:avisarBloqueado,
+          abrirDesdeHallazgos:abrirDesdeHallazgos, segQuitar:segQuitar, segFoto:segFoto,   // 🩺 2026-10-21 (REGLA #38)
           setOrigen:setOrigen, setTipo:setTipo,
           respElegir:respElegir,   // 🙋 2026-10-21 (REGLA #36): elegir al responsable de la OT
           setAcc:setAcc, setAccesoTexto:setAccesoTexto, setTitulo:setTitulo, setDescripcion:setDescripcion,

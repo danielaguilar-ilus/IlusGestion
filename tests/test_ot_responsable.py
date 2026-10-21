@@ -832,7 +832,9 @@ class TestCampanaEnum(unittest.TestCase):
         for e in enums:
             valores = re.findall(r"'([a-z_]+)'", e)
             self.assertIn(R.TIPO_AVISO, valores)
-            self.assertEqual(valores[-1], R.TIPO_AVISO, "nuevo valor AL FINAL: no se reordena nada (REGLA #18)")
+            # 2026-10-21 (REGLA #38): después de este vino 'ot_hallazgo', así que ya no es el último; sigue JUSTO detrás de 'ot_pendiente_stock'
+            # (los valores nuevos se agregan al final, nunca se reordena nada: REGLA #18).
+            self.assertEqual(valores[valores.index("ot_pendiente_stock") + 1], R.TIPO_AVISO)
             self.assertGreater(valores.index(R.TIPO_AVISO), valores.index("ot_pendiente_stock"))
         self.assertEqual(R.TIPO_AVISO, "ot_responsable")
         self.assertLessEqual(len(R.TIPO_AVISO), 50)

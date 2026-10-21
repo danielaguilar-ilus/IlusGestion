@@ -86,6 +86,8 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='ot_que_paso.css') }}">
 {#- 📨 2026-10-21 (REGLA #37): comunicación de la OT («Enviar OT por correo», aviso previo al cerrar, recordatorio): static/ot_envio.css y .js (el .js lo carga templates/ot2/_enviar_ot.html). -#}
 <link rel="stylesheet" href="{{ url_for('static', filename='ot_envio.css') }}">
+{#- 🩺 2026-10-21 (REGLA #38): «Hallazgos de esta OT» (tarjeta, aviso «viene de» y franja del cierre): static/ot_hallazgos.css y .js (el .js lo carga templates/ot2/_hallazgos.html). -#}
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_hallazgos.css') }}">
 <style>
 .otd{
   --pend:#3b82f6; --ejec:#dc2626; --comp:#16a34a; --cerr:#4b5563;
@@ -3815,6 +3817,10 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   {#- 🧭 2026-10-20 (Daniel, caso Aurum OT-2026-00171): «¿Qué pasó?» como en Retiros. Falta de stock → se cierra lo hecho y lo que falta queda
       en una OT hija pendiente, sin fecha, con el mismo documento. Lo usa el técnico asignado y la gestión. -#}
   {% include 'ot2/_que_paso.html' %}
+  {#- 🩺 2026-10-21 (REGLA #38, Daniel: «que la OT avise para que se tome el caso y se levante una acción que debería ser otra OT»): la tarjeta
+      «Hallazgos de esta OT» (y, en una OT de seguimiento, de cuál viene). SOLO gestión (el servidor no le arma `hallazgos` a un técnico) y
+      también en una OT CERRADA: va al nivel raíz, NUNCA dentro de `{% if puede_metadata %}` ni de una pestaña. -#}
+  {% include 'ot2/_hallazgos.html' %}
   {#- 📨 2026-10-21 (REGLA #37, Daniel: «que avises cuándo lo tienes que enviar… y habilita un envío por mail directo de las órdenes de trabajo»):
       el recordatorio ámbar de una OT terminada que todavía no se le envió al cliente, los avisos de la creación y el script del modal
       «Enviar OT por correo» y del aviso previo al cerrar. Nivel raíz del bloque: nunca dentro de una pestaña ni del hero. -#}
@@ -8179,6 +8185,15 @@ window.otdFinModalCerrar = function(){
             commit f3cb145e). Ahora dice la verdad, con nombre y rol: a quién se le avisará al aprobar el cierre y qué está apagado (el correo al
             cliente nace apagado: OT_TERMINADA_CLIENTE_ACTIVA). Lo llena static/ot_envio.js al abrir este modal. -#}
         <div class="oe-aviso mb-3" id="oeAvisoCierre" data-oe-aviso="cierre" hidden></div>
+        {#- 🩺 2026-10-21 (REGLA #38): hallazgos sin gestionar. SOLO AVISA (Daniel: «solo avisar, no trabar»): la OT se cierra igual; el enlace cierra
+            este modal y lleva a la tarjeta «Hallazgos de esta OT». El servidor no le arma `hallazgos` a un técnico. -#}
+        {% if hallazgos and hallazgos.n_abiertos %}
+        <div class="hz-cierre mb-3" id="otfHallazgosAviso" role="status">
+          <i class="bi bi-exclamation-triangle-fill me-1" aria-hidden="true"></i>
+          Hay <b>{{ hallazgos.n_abiertos }}</b> hallazgo{{ 's' if hallazgos.n_abiertos != 1 }} sin gestionar en esta OT. Puedes cerrarla igual: no se bloquea nada.
+          <a href="#otdHallazgos" data-hz-ir="">Ver los hallazgos</a>
+        </div>
+        {% endif %}
 
         {# 🧭 2026-10-07: el MISMO motor de la ficha, acá adentro: es la «segunda opción de modificar» del autorizador
            (agregar la factura que da de baja la nota de venta, pasar a $0 pidiendo autorización, corregir lo que cobró

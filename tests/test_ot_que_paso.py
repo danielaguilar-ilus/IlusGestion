@@ -1155,7 +1155,8 @@ class TestCableado(unittest.TestCase):
             # nuevo valor AL FINAL: no se reordena nada (REGLA #18). 2026-10-21: después de este vino 'ot_responsable' (REGLA #36); lo que
             # se vigila es que 'ot_pendiente_stock' siga justo detrás de los anteriores y que los nuevos se agreguen DESPUÉS.
             self.assertEqual(valores[valores.index("ot_pendiente_stock") - 1], "ia_alerta_proactiva")
-            self.assertEqual(valores[valores.index("ot_pendiente_stock") + 1:], ["ot_responsable"])
+            # 2026-10-21 (REGLA #38): después de 'ot_responsable' vino 'ot_hallazgo'; lo que importa es que 'ot_responsable' siga justo detrás.
+            self.assertEqual(valores[valores.index("ot_pendiente_stock") + 1:][:1], ["ot_responsable"])
         usados = set(re.findall(r'_mant_notificar\(\s*[^,()]+,\s*"([a-z_]+)"', APP))
         self.assertIn("ot_pendiente_stock", usados)
         for e in enums:

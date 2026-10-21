@@ -72,6 +72,7 @@ import ot_producto_estado as _pe    # acciones por producto de una OT interna (N
 import ot_anexo_costo as _oac    # 2026-10-20: el costo de la OT y el anexo del proveedor son UN solo valor (módulo puro con pruebas)
 import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién puede serlo, defecto al crear, cambio y avisos suaves): reglas puras con pruebas
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
+import ot_hallazgos as _oh    # 2026-10-21 (REGLA #38): hallazgos de la OT (alerta, «tomar el caso» y OT de seguimiento): reglas puras con pruebas
 import fedex_labels as _fxlabels    # parser puro de etiquetas FedEx (testeable)
 _ERP = erp_engine.init_engine(
     base_url=ERP_CONFIG.get("api_url", "https://lab.random.cl/ilus"),
@@ -60912,7 +60913,7 @@ def init_mantenciones_tables():
                 "       'retiro_listo','retiro_cerrado',"
                 "       'retiro_propuesta','retiro_expedido','retiro_desfase','retiro_cierre',"
                 "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida',"
-                "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable') DEFAULT 'otro'",
+                "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma') DEFAULT 'otro'",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_destino_no_leida "
                 "  (destino_user_id, leida_at, archivada_at)",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_visita (visita_id)",
@@ -88710,7 +88711,7 @@ def mant_visita_update(vid):
     if "tipo" in d or "factura_tido" in d or "factura_nudo" in d:
         _fila_g = mysql_fetchone(
             "SELECT tipo, cliente_id, factura_tido, factura_nudo, factura_asociada_por, factura_rut_ok, "
-            "       ot_madre_id, desinstalacion_prevista "
+            "       ot_madre_id, ot_relacion, desinstalacion_prevista "
             "  FROM mant_visitas WHERE id=%s", (vid,)) or {}
         # 🧩 2026-10-19 (crítica 24): el tipo de una desinstalación, de una instalación con desinstalación agendada o con
         # una desinstalación prevista no se cambia editando el campo (la unión madre/hija y el cobro cubierto dependen de él).
@@ -89255,6 +89256,14 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=
                 cur.execute("UPDATE mant_visitas SET ot_madre_id=NULL, ot_relacion=NULL WHERE ot_madre_id=%s", (vid,))
             except Exception as _e_madre:
                 print(f"[visita_del] soltar hijas canceladas falló: {_e_madre}", flush=True)
+            # 🩺 2026-10-21 (REGLA #38): los hallazgos de la OT que se borra se van con ella (sin filas huérfanas), y los de OTRA OT que la
+            # tenían como su OT de seguimiento vuelven a quedar «sin gestionar» (si no, el trabajo quedaría escondido como «resuelto»).
+            try:
+                cur.execute("DELETE FROM mant_ot_hallazgos WHERE visita_id=%s", (vid,))
+                cur.execute("UPDATE mant_ot_hallazgos SET estado='abierto', ot_seguimiento_id=NULL, seguimiento_por=NULL, seguimiento_en=NULL "
+                            " WHERE ot_seguimiento_id=%s", (vid,))
+            except Exception as _e_hall:
+                print(f"[visita_del] limpiar hallazgos falló: {_e_hall}", flush=True)
             if _fac and quitar_de_factura:
                 # 🧹 2026-10-07 (Daniel: "quiero que Aaron pueda borrar sin problemas" -- OT de prueba que quedaron en una
                 # factura de proveedor, incluso pagada): quien tiene permiso de eliminar OT puede borrarla; la línea sale de la
@@ -90314,6 +90323,10 @@ def _ot2_panel_evento_chips(filas):
         elif b.get("ot_madre_id") and (b.get("ot_relacion") or "") == _qp.REL_PENDIENTE_STOCK:
             f["rel"] = {"tipo": "pendiente", "chip": _qp.chip_pendiente(b.get("madre_numero")), "nivel": "ambar",
                         "madre_id": b.get("ot_madre_id"), "madre_numero": b.get("madre_numero"), "codigo": "pendiente_stock"}
+        elif b.get("ot_madre_id") and (b.get("ot_relacion") or "") == _oh.REL_SEGUIMIENTO:
+            # 🩺 2026-10-21 (REGLA #38): la OT de seguimiento de un hallazgo dice de cuál OT viene.
+            f["rel"] = {"tipo": "seguimiento", "chip": "Seguimiento de " + (b.get("madre_numero") or "su OT de origen"), "nivel": "azul",
+                        "madre_id": b.get("ot_madre_id"), "madre_numero": b.get("madre_numero"), "codigo": "seguimiento"}
         elif (b.get("tipo") or "") == _evt.TIPO_MADRE:
             hijas = hijas_por.get(vid, [])
             est = _evt.estado_desinstalacion(b, hijas, hoy)
@@ -90337,6 +90350,18 @@ def _ot2_panel_evento_chips(filas):
                             "codigo": "madre_pendiente_stock"}
     except Exception as e:
         print(f"[ot2_panel] chips de pendiente: {type(e).__name__}", flush=True)
+    # 🩺 2026-10-21 (REGLA #38): la OT de origen de una OT de seguimiento también lo dice («Seguimiento: OT-… +N»), si no tiene ya otro chip.
+    try:
+        for r in (mysql_fetchall(
+                "SELECT ot_madre_id, MIN(numero_ot) AS numero_ot, COUNT(*) AS n FROM mant_visitas WHERE ot_madre_id IN (" + ph + ") "
+                " AND ot_relacion=%s AND estado NOT IN ('cancelada','anulada','cerrada','completada') GROUP BY ot_madre_id",
+                tuple(ids) + (_oh.REL_SEGUIMIENTO,)) or []):
+            f = por_id.get(int(r["ot_madre_id"]))
+            if f is not None and not f.get("rel"):
+                f["rel"] = {"tipo": "madre_seguimiento", "chip": "Seguimiento: %s%s" % (r.get("numero_ot") or "OT", (" +%d" % (int(r["n"]) - 1)) if int(r["n"] or 0) > 1 else ""),
+                            "nivel": "azul", "codigo": "madre_seguimiento"}
+    except Exception as e:
+        print(f"[ot2_panel] chips de seguimiento: {type(e).__name__}", flush=True)
 
 
 @app.route("/ot/")
@@ -90471,6 +90496,10 @@ def ot2_panel():
     # (su id). Lista blanca y parametrizado (_ot_resp_filtro_sql); si la columna aún no existe no filtra. Entra al COUNT, al LIMIT, a los
     # KPI y a las cuatro vistas, y viaja en todos los enlaces del panel (REGLA #4.3).
     f_resp, _f_resp_sql, _f_resp_params = _ot_resp_filtro_sql(request.args.get("resp"), (getattr(g, "user", None) or {}).get("id"))
+    # 🩺 2026-10-21 (REGLA #38): filtro «Con hallazgos sin gestionar» (hall=1). Lista blanca y parametrizado (_ot_hall_filtro_sql); si la tabla
+    # aún no existe o quien mira es técnico no filtra. Entra al COUNT, al LIMIT, a los KPI y a las cuatro vistas, y viaja en todos los
+    # enlaces del panel (REGLA #4.3).
+    f_hall, _f_hall_sql, _f_hall_params = _ot_hall_filtro_sql(request.args.get("hall"))
 
     # Orden por columna (Daniel: "siempre ordenado por el número de OT,
     # pero si yo quiero ordenar por cliente, por tipo, por estado, lo
@@ -90596,6 +90625,9 @@ def ot2_panel():
     if _f_resp_sql:      # 🙋 2026-10-21 (REGLA #36)
         extra_where_q.append(_f_resp_sql)
         extra_params_q.extend(_f_resp_params)
+    if _f_hall_sql:      # 🩺 2026-10-21 (REGLA #38)
+        extra_where_q.append(_f_hall_sql)
+        extra_params_q.extend(_f_hall_params)
     where_extra_sql_q = (" AND " + " AND ".join(extra_where_q)) if extra_where_q else ""
 
     extra_where, extra_params = list(extra_where_q), list(extra_params_q)
@@ -90708,6 +90740,7 @@ def ot2_panel():
             _ot2_panel_extras(filas)
             _ot2_panel_evento_chips(filas)   # 🧩 2026-10-19: evento + unión instalación ↔ desinstalación
             _ot2_panel_responsables(filas)   # 🙋 2026-10-21 (REGLA #36): columna «Responsable» (una consulta por lote)
+            _ot2_panel_hallazgos(filas)      # 🩺 2026-10-21 (REGLA #38): «Hallazgos abiertos: N» (una consulta por lote)
 
         elif vista == "kanban":
             _where_solo_q = f" WHERE {where_origen} {where_extra_sql_q} "
@@ -90720,6 +90753,7 @@ def ot2_panel():
             for f in filas_kanban:
                 _ot2_enriquecer_fila(f, hoy)
             _ot2_panel_evento_chips(filas_kanban)   # 🧩 2026-10-19
+            _ot2_panel_hallazgos(filas_kanban)      # 🩺 2026-10-21 (REGLA #38)
             for clave in _OT2_FASES:
                 en_fase = [f for f in filas_kanban if f.get("estado_fase") == clave]
                 mostradas = en_fase[:_OT2_KANBAN_CAP_COL]
@@ -90972,6 +91006,7 @@ def ot2_panel():
     return render_template(
         "ot2/panel.html",
         f_resp=f_resp, resp_opts=resp_opts, resp_yo=resp_yo,   # 🙋 2026-10-21: filtro y columna «Responsable»
+        f_hall=f_hall, hall_activo=bool(not _es_rol_tecnico() and _hall_ok()),   # 🩺 2026-10-21: filtro «Con hallazgos sin gestionar»
         f_evento=f_evento, eventos_opts=eventos_opts,   # 🧩 2026-10-19: filtro y chips de evento
         es_superadmin_ot=_ot_aut_es_superadmin(),   # 🔒 2026-10-11: botones Regularizar / Saldo de facturas / Autorizaciones
         filas=filas, origen=origen, vista=vista, kpis=kpis,
@@ -93128,6 +93163,15 @@ def ot2_detalle(vid):
         # técnico ve al responsable en el chip de la cabecera, solo como nombre; el motivo del cambio es de la gestión.
         "responsable_asignado":         ("asignó al responsable de la OT", "bi-person-check-fill", "azul", "cambios"),
         "responsable_cambiado":         ("cambió al responsable de la OT", "bi-arrow-left-right", "azul", "cambios"),
+        # 🩺 2026-10-21 (REGLA #38): hallazgos de la OT (lo que el técnico reportó y lo que la gestión hizo con eso). NINGUNO está en la lista
+        # blanca de la bitácora del técnico (_ACT_TEC_PERMITIDAS): esta gestión no es suya. Sin montos ni documentos en el detalle.
+        "hallazgo_detectado":           ("registró un hallazgo", "bi-clipboard2-pulse-fill", "ambar", "cambios"),
+        "hallazgo_reabierto":           ("reabrió un hallazgo", "bi-arrow-counterclockwise", "ambar", "cambios"),
+        "hallazgo_retirado":            ("dejó de ser un hallazgo", "bi-arrow-return-left", "gris", "cambios"),
+        "hallazgo_tomado":              ("tomó el caso de un hallazgo", "bi-hand-index-thumb-fill", "azul", "cambios"),
+        "hallazgo_descartado":          ("descartó un hallazgo", "bi-slash-circle", "gris", "cambios"),
+        "hallazgo_seguimiento":         ("levantó una OT de seguimiento", "bi-diagram-3-fill", "verde", "cambios"),
+        "creada_como_seguimiento":      ("creó esta OT como seguimiento de otra", "bi-diagram-3-fill", "azul", "cambios"),
         "ruta_iniciada":                ("inició la ruta", "bi-signpost-2-fill", "azul", "cambios"),
         "equipo_agregado_permiso_rol":  ("agregó un equipo a la OT", "bi-plus-square-fill", "verde", "cambios"),
         "plantilla_aplicada":           ("aplicó un checklist", "bi-list-check", "azul", "cambios"),
@@ -93707,6 +93751,9 @@ def ot2_detalle(vid):
     # 📨 2026-10-21 (REGLA #37): la comunicación de la OT en la ficha: «Enviar OT por correo» (solo gestión), el recordatorio ámbar de una OT terminada
     # que todavía no se le envió al cliente y los avisos de la creación. A un técnico no le llega nada de esto (solo ve el aviso previo al firmar).
     com_envio = _ot_com_contexto_ficha(vid, v)
+    # 🩺 2026-10-21 (REGLA #38): la tarjeta «Hallazgos de esta OT» (y, en una OT de seguimiento, de qué OT viene). Solo gestión: a un técnico
+    # no viaja nada. También en una OT CERRADA. Va ANTES del bloque de la barra de acciones por el mismo motivo que las líneas de arriba.
+    hallazgos = _hall_contexto_ficha(vid, v)
     # 🧰 2026-10-20: productos cuyo checklist se dispensa por una acción del técnico (espejo JS: otdChkEvaluar) y quién
     # puede devolver un producto a «operativo» (gestión, con motivo).
     try:
@@ -93783,6 +93830,7 @@ def ot2_detalle(vid):
         que_paso=que_paso,
         responsable=responsable,
         com_envio=com_envio,
+        hallazgos=hallazgos,
         acta=acta,
         prod_dispensa=prod_dispensa, acc_listas=acc_listas, acc_data=acc_data,
         puede_revertir_estado=bool((not _es_rol_tecnico()) and puede_configurar and not ot_solo_lectura),
@@ -110462,7 +110510,7 @@ def _ot2_crear_core(d, autorizacion=None, madre=None):
         # Lo que NUNCA viene del body en una hija: la relación, el evento (es el de la madre), el ticket (la OT mueve los
         # estados del ticket) ni un nuevo bloque de desinstalación (no hay cadenas).
         d = dict(d)
-        for _k_prohibida in ("ot_madre_id", "ot_relacion", "desinstalacion", "evento_id", "ticket_id", "autorizacion_id"):
+        for _k_prohibida in ("ot_madre_id", "ot_relacion", "desinstalacion", "evento_id", "ticket_id", "autorizacion_id", "seguimiento"):
             d.pop(_k_prohibida, None)
         d["tipo_ot"] = _evt.TIPO_HIJA
         autorizacion = None
@@ -111274,6 +111322,23 @@ def _ot2_crear_core(d, autorizacion=None, madre=None):
                     choque=_choque, puede_forzar=_es_super_ch)
             _choque_forzado_txt = _det_ch
 
+    # ── 7.d 🩺 SEGUIMIENTO DE HALLAZGOS (REGLA #38) ────────────────────────────────────────────────────────────────────
+    # Daniel (20-oct-2026): «que la OT avise para que se tome el caso y se levante una acción que debería ser otra OT». El asistente
+    # «Nueva OT» llega prellenado desde la tarjeta «Hallazgos de esta OT» y manda `seguimiento` = {origen_id, hallazgo_ids, fotos}. NADA de
+    # eso se cree por venir del navegador: se relee todo de la base (los hallazgos son de esa OT, siguen disponibles, mismo cliente) y el
+    # vínculo (ot_madre_id + ot_relacion='seguimiento') lo escribe SOLO el servidor, dentro de la transacción de abajo. La OT de seguimiento
+    # pasa por la puerta del documento NORMAL: no hereda cobros ni saldo (REGLAS #24, #25, #28). Si la OT nace de una aprobación remota de
+    # Daniel (`autorizacion`), pasaron días: lo que él autorizó se crea igual y, si los hallazgos ya cambiaron, solo se avisa el porqué.
+    _seg = None
+    if not es_hija and isinstance(d.get("seguimiento"), dict) and d.get("seguimiento"):
+        _seg, _seg_err = _hall_seguimiento_validar(d["seguimiento"], cliente_id)
+        if _seg_err:
+            if autorizacion:
+                avisos.append("La OT se creó sin ligarla a los hallazgos de la OT de origen: " + _seg_err[0])
+            else:
+                return _ot2_err(_seg_err[0], _seg_err[1], http=409)
+    _seg_ligado = False
+
     # ── 8. ESCRITURA — una sola transacción ────────────────────────────
     conn = None
     try:
@@ -111413,6 +111478,23 @@ def _ot2_crear_core(d, autorizacion=None, madre=None):
             _ot_fin_clasif_guardar(cur, vid, _fin_campos, es_interna, autorizacion)
         except Exception as _e_cl:
             print(f"[ot-clasif] guardar {vid}: {type(_e_cl).__name__}: {_e_cl}", flush=True)
+
+        # 🩺 2026-10-21 (REGLA #38) — la OT de seguimiento nace LIGADA a su OT de origen y a sus hallazgos, en la MISMA transacción: o queda
+        # todo o no queda nada. Si alguien más tomó esos hallazgos mientras se armaba la OT: en el asistente se devuelve el error (nada se
+        # crea); en una aprobación remota la OT se crea igual y se avisa.
+        if _seg:
+            _ok_seg, _msg_seg, _n_fotos_seg = _hall_seguimiento_enlazar(
+                cur, vid, _seg, numero_ot, ((autorizacion or {}).get("solicitado_por_nombre") or _hall_quien()))
+            if _ok_seg:
+                _seg_ligado = True
+                if _seg.get("fotos") and not _n_fotos_seg:
+                    avisos.append("La OT se creó, pero las fotos del hallazgo no se pudieron dejar como referencia. Están en la OT de origen.")
+            elif autorizacion:
+                avisos.append("La OT se creó sin ligarla a los hallazgos de la OT de origen: " + (_msg_seg or ""))
+            else:
+                conn.rollback()
+                return _ot2_err(_msg_seg or "Los hallazgos cambiaron mientras creabas la OT. Recarga la ficha y vuelve a elegir.",
+                                "SEG_HALLAZGO_NO_DISPONIBLE", http=409)
 
         # El solape autorizado a mano queda registrado con nombre y apellido.
         if _choque_forzado_txt:
@@ -111799,6 +111881,18 @@ def _ot2_crear_core(d, autorizacion=None, madre=None):
             avisos.append(_resp_r["aviso"])
     except Exception as e:
         print(f"[ot2_crear] responsable vid={vid}: {type(e).__name__}: {e}", flush=True)
+    # 🩺 2026-10-21 (REGLA #38) — constancia del seguimiento en las DOS bitácoras (origen y nueva). Son acciones fuera de la lista blanca
+    # del técnico (REGLA #26): él no las ve. Nada de montos ni documentos.
+    if _seg_ligado and _seg:
+        try:
+            _num_o = _seg["origen"].get("numero_ot") or f"V-{int(_seg['origen']['id']):05d}"
+            _tits = "; ".join(_oh.limpio(h.get("titulo"), 140) for h in _seg["filas"])[:600]
+            _quien_seg = (autorizacion or {}).get("solicitado_por_nombre") or _hall_quien()
+            _mant_log("visita", vid, "creada_como_seguimiento", f"Seguimiento de {_num_o} ({len(_seg['filas'])} hallazgo(s)): {_tits}")
+            _mant_log("visita", int(_seg["origen"]["id"]), "hallazgo_seguimiento",
+                      f"{numero_ot} nació para dar seguimiento a: {_tits} · por {_quien_seg}"[:900])
+        except Exception as e:
+            print(f"[ot2_crear] log seguimiento: {type(e).__name__}: {e}", flush=True)
     # 🧩 2026-10-19 — constancia de la unión madre/hija y del evento (los detalles NUNCA llevan montos ni documentos: un
     # técnico los ve en la bitácora, ver _ACT_TEC_PERMITIDAS).
     try:
@@ -113388,7 +113482,10 @@ def ot_api_evento_detalle(eid):
         est = o.get("estado") or ""
         meta = _OT2_ESTADO_META.get(est)
         fase = _evt.fase_de_ot(o)
-        hija_de = num_por_id.get(int(o["ot_madre_id"])) if o.get("ot_madre_id") else None
+        # 🩺 2026-10-21 (REGLA #38): la OT de seguimiento de un hallazgo cuelga de otra OT pero NO es una desinstalación; la página del evento
+        # escribe «Desinstalación de …» bajo cualquier fila con `madre_numero`, así que a ella no se le pone.
+        hija_de = (num_por_id.get(int(o["ot_madre_id"]))
+                   if o.get("ot_madre_id") and (o.get("ot_relacion") or "") != _oh.REL_SEGUIMIENTO else None)
         return {"id": o["id"], "numero_ot": o.get("numero_ot") or f"V-{int(o['id']):05d}", "url": f"/ot/{o['id']}",
                 "cliente": o.get("cliente") or "Trabajo interno", "tipo": o.get("tipo"),
                 "tipo_label": _TIPO_OT_LABEL.get(o.get("tipo"), (o.get("tipo") or "").replace("_", " ").title()),
@@ -118390,6 +118487,12 @@ def _ot2_filtros_export(args):
             desc.append("sin responsable")
         else:
             desc.append("responsable " + next((c["nombre"] for c in _ot_resp_candidatos() if str(c["id"]) == _rs_clave), f"#{_rs_clave}"))
+    # 🩺 2026-10-21 (REGLA #38): «Con hallazgos sin gestionar» también acota el Excel (misma lista blanca y mismo SQL parametrizado que el panel).
+    _hl_clave, _hl_sql, _hl_par = _ot_hall_filtro_sql(args.get("hall"))
+    if _hl_sql:
+        where.append(_hl_sql)
+        params += list(_hl_par)
+        desc.append("con hallazgos sin gestionar")
 
     sql = " WHERE " + " AND ".join(where) if where else ""
     role_sql, role_params = _mant_calendario_role_where()
@@ -127131,7 +127234,11 @@ def _ensure_mant_notif_tipo_ot_firmada_cliente():
     INSERT fallaba en silencio. Al final, como los anteriores. tests/test_solicitud_sin_repuesto.py lo vigila.
 
     2026-10-21 (REGLA #36, responsable de la OT): + ot_responsable (los avisos suaves «Ahora estás a cargo de…» / «… pasó a cargo
-    de …»). También al final. tests/test_ot_responsable.py vigila que esté en las dos listas."""
+    de …»). También al final. tests/test_ot_responsable.py vigila que esté en las dos listas.
+
+    2026-10-21 (REGLA #38, hallazgos de la OT): + ot_hallazgo (la campana «OT-…: 3 hallazgos nuevos») y ot_hallazgo_toma (el aviso suave
+    de «tomó el caso»; tipo propio para que no se confunda con la anterior). También al final. tests/test_ot_hallazgos.py vigila que
+    estén en las dos listas."""
     try:
         mysql_execute(
             "ALTER TABLE mant_notificaciones MODIFY COLUMN tipo "
@@ -127148,7 +127255,7 @@ def _ensure_mant_notif_tipo_ot_firmada_cliente():
             "       'retiro_listo','retiro_cerrado',"
             "       'retiro_propuesta','retiro_expedido','retiro_desfase','retiro_cierre',"
             "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida',"
-            "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable') DEFAULT 'otro'"
+            "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma') DEFAULT 'otro'"
         )
     except Exception as e:
         print(f"[ensure] mant_notificaciones.tipo (+ot_firmada_cliente): {e}", flush=True)
@@ -164478,6 +164585,967 @@ def ot_api_que_paso_registrar(vid):
         "siguiente": ("reagendar" if n["accion"] == "reagendar" else ("firmar" if hija else None))})
 
 
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  🩺 HALLAZGOS DE LA OT (F1 · REGLA #38) — 2026-10-21
+#
+#  Daniel, 2026-10-20, revisando la OT de Aurum: «Indícame si se está tomando fotografías como evidencia, eso es necesario, y que
+#  la OT avise para que se tome el caso y se levante una acción que debería ser otra OT.» Hasta hoy una Falla o una Alerta del
+#  checklist, un equipo «que no se puede usar», una baja, un repuesto pedido o una incidencia quedaban ENTERRADOS en la OT: nadie
+#  recibía la campana, nadie «tomaba el caso» y no nacía ninguna OT de seguimiento.
+#
+#  DECISIONES DE DANIEL (no se vuelven a preguntar):
+#    1. Solo AVISAR, no trabar: un hallazgo sin gestionar NO impide cerrar la OT (la franja del cierre es ámbar).
+#    2. El aviso va al RESPONSABLE de la OT: A QUIÉN avisa la gestión lo decide UNA sola función, `_ot_gestion_destinatarios`.
+#    3. La acción que se levanta es OTRA OT (de seguimiento), por el asistente «Nueva OT», PRELLENADA y ligada a la de origen
+#       (mant_visitas.ot_madre_id + ot_relacion='seguimiento' y mant_ot_hallazgos.ot_seguimiento_id). Lo prellenado lo decide la persona
+#       (REGLA #32). Pasa por la puerta del documento NORMAL (REGLA #24): no hereda cobros ni saldo (REGLAS #25 y #28).
+#    4. Un técnico NO ve esta gestión (REGLAS #19 y #26): el dato se quita en el servidor; su flujo de trabajo no cambia.
+#
+#  CÓMO SE REGISTRAN (gancho best-effort DESPUÉS de guardar; jamás rompe la respuesta del técnico ni el cierre): un único
+#  `after_request` (`_hall_tras_escritura`) mira qué ruta acaba de guardar (tabla `_HALL_RUTAS`) y llama al manejador de esa ruta, que
+#  relee lo guardado y hace `_hall_registrar` (alta o actualización idempotente por «origen + referencia») o `_hall_retirar` (el
+#  técnico volvió a «Aprobado», revirtió la acción…: queda anotado como retirado, NUNCA se borra: la OT es evidencia).
+#  Una sola campana por OT y por persona agrupando lo que llegue en 30 minutos (`_hall_avisar`).
+#  La lógica pura vive en ot_hallazgos.py (con pruebas). Acá: la tabla, los ganchos, la campana, la ficha, las rutas y el vínculo.
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+_HALL_ESTADO = {"ok": False, "revisado_en": 0.0}
+
+
+def _ensure_ot_hallazgos():
+    """Tabla mant_ot_hallazgos. Barata cuando ya está aplicada (REGLA #18): un solo CREATE TABLE IF NOT EXISTS que la guarda de
+    mysql_execute salta sin pedir lock si la tabla ya existe. Sin llaves foráneas (como mant_ot_que_paso) y sin columnas nuevas en
+    mant_visitas: el vínculo con la OT de seguimiento usa ot_madre_id / ot_relacion, que ya existen."""
+    try:
+        mysql_execute(
+            "CREATE TABLE IF NOT EXISTS mant_ot_hallazgos ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  visita_id INT NOT NULL,"
+            "  origen VARCHAR(12) NOT NULL COMMENT 'tarea | producto | equipo',"
+            "  referencia VARCHAR(80) NOT NULL COMMENT 'clave única en la OT: t12 · i4:fuera_servicio · m9:rep:ab12cd34',"
+            "  tarea_id INT NULL,"
+            "  maquina_id INT NULL,"
+            "  item_manual_id INT NULL,"
+            "  severidad VARCHAR(20) NOT NULL COMMENT 'falla | alerta | fuera_servicio | baja | repuesto | incidencia',"
+            "  titulo VARCHAR(300) NOT NULL,"
+            "  detalle TEXT NULL,"
+            "  equipo_nombre VARCHAR(400) NULL,"
+            "  riesgo TINYINT(1) NOT NULL DEFAULT 0,"
+            "  fotos_json TEXT NULL,"
+            "  n_fotos INT NOT NULL DEFAULT 0,"
+            "  estado VARCHAR(12) NOT NULL DEFAULT 'abierto' COMMENT 'abierto | tomado | resuelto | descartado',"
+            "  detectado_por VARCHAR(190) NULL,"
+            "  detectado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            "  tomado_por_id INT NULL,"
+            "  tomado_por VARCHAR(190) NULL,"
+            "  tomado_en DATETIME NULL,"
+            "  ot_seguimiento_id INT NULL,"
+            "  seguimiento_por VARCHAR(190) NULL,"
+            "  seguimiento_en DATETIME NULL,"
+            "  descartado_por VARCHAR(190) NULL,"
+            "  descartado_en DATETIME NULL,"
+            "  descarte_motivo VARCHAR(400) NULL,"
+            "  retirado_en DATETIME NULL,"
+            "  retirado_motivo VARCHAR(200) NULL,"
+            "  aviso_grupo_en DATETIME NULL,"
+            "  actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,"
+            "  UNIQUE KEY uq_hall_origen (visita_id, origen, referencia),"
+            "  KEY ix_hall_visita_estado (visita_id, estado),"
+            "  KEY ix_hall_seguimiento (ot_seguimiento_id),"
+            "  KEY ix_hall_estado (estado, retirado_en)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+        ok = True
+    except Exception as e:
+        print(f"[ensure_ot_hallazgos] {e}", flush=True)
+        ok = False
+    _HALL_ESTADO["ok"] = bool(ok)
+    _HALL_ESTADO["revisado_en"] = time.time()
+    return bool(ok)
+
+
+def _hall_ok():
+    """¿Existe la tabla? Se recuerda por proceso; si quedó en False, se vuelve a mirar a lo más cada 5 minutos. Mientras no exista,
+    TODO esto está dormido (ni ganchos, ni tarjeta, ni filtro) y el resto de la app funciona igual."""
+    if _HALL_ESTADO["ok"]:
+        return True
+    if time.time() - _HALL_ESTADO["revisado_en"] < 300:
+        return False
+    return _ensure_ot_hallazgos()
+
+
+def _hall_quien():
+    """Nombre de quien hace la acción (de la sesión, nunca del navegador)."""
+    u = getattr(g, "user", None) or {}
+    return str(u.get("nombre") or u.get("username") or current_username() or "sistema")[:190]
+
+
+def _hall_uid():
+    return _oh.entero((getattr(g, "user", None) or {}).get("id"))
+
+
+# ── Nombres y fotos (solo lectura) ───────────────────────────────────────────────────────────────────────────────────────
+def _hall_nombre_equipo(mid):
+    """«Trotadora X (SKU ABC) · S/N 123» del equipo de ficha, completo (REGLA #15)."""
+    try:
+        r = mysql_fetchone("SELECT nombre, sku, serie FROM mant_maquinas WHERE id=%s", (int(mid),)) or {}
+    except Exception:
+        r = {}
+    return _oh.nombre_con_ficha(r.get("nombre") or ("Equipo #%s" % mid), r.get("sku"), r.get("serie"))
+
+
+def _hall_nombre_producto(vid, imid):
+    """Nombre del PRODUCTO de una OT de trabajo interno (igual que _otrep_cargar_ot_y_producto)."""
+    try:
+        f = mysql_fetchone(
+            "SELECT titulo, item_manual_sku, plantilla_id FROM mant_visita_tareas "
+            " WHERE visita_id=%s AND maquina_id IS NULL AND item_manual_id=%s "
+            " ORDER BY (plantilla_id IS NULL) DESC, id LIMIT 1", (int(vid), int(imid))) or {}
+    except Exception:
+        f = {}
+    nombre = (_otrep_nombre_producto(f.get("titulo")) if not f.get("plantilla_id") else "") or ("Producto #%s" % imid)
+    return _oh.nombre_con_ficha(nombre, (f.get("item_manual_sku") or "").strip() or None)
+
+
+def _hall_url_foto(fila):
+    u = _foto_url_actual(fila)
+    if not u and fila.get("archivo_path"):
+        u = "/static/" + str(fila["archivo_path"]).lstrip("/")
+    return u
+
+
+def _hall_fotos_por_tareas(vid, tids):
+    """{tarea_id: [urls]} de las fotos que el técnico subió en cada tarea, en UNA consulta. {} si falla (nunca inventa fotos)."""
+    tids = sorted({int(t) for t in (tids or []) if t})
+    if not tids:
+        return {}
+    try:
+        filas = mysql_fetchall(
+            "SELECT tarea_id, cloudinary_url, archivo_path FROM mant_visita_fotos WHERE visita_id=%s AND tarea_id IN ("
+            + ",".join(["%s"] * len(tids)) + ") ORDER BY id", (int(vid), *tids)) or []
+    except Exception as e:
+        print(f"[hall] fotos de tareas vid={vid}: {type(e).__name__}", flush=True)
+        return {}
+    out = {}
+    for f in filas:
+        u = _hall_url_foto(f)
+        if u and u not in out.setdefault(int(f["tarea_id"]), []):
+            out[int(f["tarea_id"])].append(u)
+    return out
+
+
+def _hall_fotos_equipo(vid, mid, prefijo):
+    """Fotos de evidencia del equipo (fuera de servicio / baja) que dejó el técnico en esta OT: las más recientes con ese texto."""
+    try:
+        filas = mysql_fetchall(
+            "SELECT cloudinary_url, archivo_path FROM mant_visita_fotos WHERE visita_id=%s AND maquina_id=%s AND tarea_id IS NULL "
+            "   AND tipo_foto='falla' AND descripcion LIKE %s ORDER BY id DESC LIMIT 3", (int(vid), int(mid), prefijo + "%")) or []
+    except Exception as e:
+        print(f"[hall] fotos de equipo vid={vid} mid={mid}: {type(e).__name__}", flush=True)
+        return []
+    return [u for u in (_hall_url_foto(f) for f in reversed(filas)) if u]
+
+
+def _hall_fotos_repuesto(sol_id):
+    try:
+        filas = mysql_fetchall("SELECT url FROM mant_ot_repuesto_evidencias WHERE solicitud_id=%s AND tipo='foto' ORDER BY id LIMIT 6",
+                               (int(sol_id),)) or []
+    except Exception as e:
+        print(f"[hall] fotos de repuesto sol={sol_id}: {type(e).__name__}", flush=True)
+        return []
+    return [str(f["url"]) for f in filas if f.get("url")]
+
+
+def _hall_fotos_incidencia(iid):
+    try:
+        filas = mysql_fetchall("SELECT gcs_key FROM mant_incidencia_fotos WHERE incidencia_id=%s ORDER BY orden, id LIMIT 6",
+                               (int(iid),)) or []
+    except Exception as e:
+        print(f"[hall] fotos de incidencia {iid}: {type(e).__name__}", flush=True)
+        return []
+    return ["/f/" + str(f["gcs_key"]) for f in filas if f.get("gcs_key")]
+
+
+# ── Escritura: alta idempotente y retiro (nunca se borra nada) ──────────────────────────────────────────────────────────
+def _hall_upsert(vid, h):
+    """Alta o actualización de UN hallazgo, única por (OT, origen, referencia). → {"res": 'nuevo'|'igual'|'reaparece', "id", "avisar"}.
+    `h`: origen, referencia, tarea_id, maquina_id, item_manual_id, severidad, titulo, detalle, equipo_nombre, riesgo, fotos[]."""
+    fotos = _oh.lista_urls(h.get("fotos"))
+    detalle = _oh.limpio(h.get("detalle"), _oh.DETALLE_MAX) or None
+    titulo = _oh.limpio(h.get("titulo"), _oh.TITULO_MAX) or "Hallazgo"
+    equipo = _oh.limpio(h.get("equipo_nombre"), 400) or None
+    riesgo = 1 if h.get("riesgo") else 0
+    fotos_json = json.dumps(fotos, ensure_ascii=False) if fotos else None
+    clave = (int(vid), h["origen"], h["referencia"])
+    fila = mysql_fetchone("SELECT id, estado, retirado_en FROM mant_ot_hallazgos WHERE visita_id=%s AND origen=%s AND referencia=%s", clave)
+    if not fila:
+        n = mysql_execute_returning_rowcount(
+            "INSERT IGNORE INTO mant_ot_hallazgos (visita_id, origen, referencia, tarea_id, maquina_id, item_manual_id, severidad, titulo, "
+            " detalle, equipo_nombre, riesgo, fotos_json, n_fotos, detectado_por) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (int(vid), h["origen"], h["referencia"], _oh.entero(h.get("tarea_id")), _oh.entero(h.get("maquina_id")),
+             _oh.entero(h.get("item_manual_id")), h["severidad"], titulo, detalle, equipo, riesgo, fotos_json, len(fotos), _hall_quien()))
+        fila = mysql_fetchone("SELECT id, estado, retirado_en FROM mant_ot_hallazgos WHERE visita_id=%s AND origen=%s AND referencia=%s", clave)
+        if not fila:
+            raise RuntimeError("el hallazgo no quedó guardado")
+        return {"res": "nuevo" if n else "igual", "id": int(fila["id"]), "avisar": bool(n)}
+    dec = _oh.decidir_reaparicion(fila)
+    mysql_execute(
+        "UPDATE mant_ot_hallazgos SET severidad=%s, titulo=%s, detalle=%s, equipo_nombre=%s, riesgo=%s, fotos_json=%s, n_fotos=%s, "
+        "       estado=%s, retirado_en=NULL, retirado_motivo=NULL WHERE id=%s",
+        (h["severidad"], titulo, detalle, equipo, riesgo, fotos_json, len(fotos), dec["estado"], int(fila["id"])))
+    return {"res": "reaparece" if dec["reabre"] else "igual", "id": int(fila["id"]), "avisar": bool(dec["avisar"])}
+
+
+def _hall_registrar(vid, h):
+    """Alta idempotente + bitácora de la OT. → id del hallazgo si hay que AVISAR (nuevo o que reaparece), si no None."""
+    r = _hall_upsert(vid, h)
+    if r["res"] == "nuevo":
+        _mant_log("visita", vid, "hallazgo_detectado",
+                  f"{_oh.sev_info(h['severidad'])['texto']}: {_oh.limpio(h.get('titulo'), 400)} · {len(_oh.lista_urls(h.get('fotos')))} foto(s) · {_hall_quien()}"[:900])
+    elif r["res"] == "reaparece":
+        _mant_log("visita", vid, "hallazgo_reabierto",
+                  f"El técnico volvió a marcarlo: {_oh.limpio(h.get('titulo'), 400)} · {_hall_quien()}"[:900])
+    return r["id"] if r["avisar"] else None
+
+
+def _hall_retirar(vid, origen, referencia, motivo):
+    """El técnico devolvió la tarea a «Aprobado», cambió la acción o la revirtió: el hallazgo queda ANOTADO como retirado (con
+    cuándo y por qué), jamás se borra. → cuántos se retiraron (0 si no había ninguno activo)."""
+    n = mysql_execute_returning_rowcount(
+        "UPDATE mant_ot_hallazgos SET retirado_en=NOW(), retirado_motivo=%s WHERE visita_id=%s AND origen=%s AND referencia=%s "
+        "   AND retirado_en IS NULL", (_oh.limpio(motivo, 200), int(vid), origen, referencia))
+    if n:
+        try:       # la bitácora dice QUÉ hallazgo era (no la clave interna)
+            t = mysql_fetchone("SELECT titulo FROM mant_ot_hallazgos WHERE visita_id=%s AND origen=%s AND referencia=%s",
+                               (int(vid), origen, referencia)) or {}
+        except Exception:
+            t = {}
+        _mant_log("visita", vid, "hallazgo_retirado", f"{_oh.limpio(t.get('titulo'), 300) or referencia}: {_oh.limpio(motivo, 300)} · {_hall_quien()}"[:900])
+    return n or 0
+
+
+# ── Los ganchos: qué hace cada ruta que guarda algo que puede ser un hallazgo ───────────────────────────────────────────
+def _hall_sujeto_tarea(vid, t):
+    """(nombre del equipo o producto, maquina_id, item_manual_id) de una tarea del checklist."""
+    mid = _oh.entero(t.get("maquina_id"))
+    imid = _oh.entero(t.get("item_manual_id"))
+    if mid:
+        return _hall_nombre_equipo(mid), mid, None
+    if imid:
+        return _hall_nombre_producto(vid, imid), None, imid
+    return "", None, None
+
+
+def _hall_h_tarea(vid, tid, j):
+    """Una respuesta del checklist: ¿la tarea quedó (o dejó de estar) en Alerta o Falla? Camino rápido: casi todas las respuestas
+    (texto, números, GPS, «Aprobado»…) no abren la base."""
+    tid = _oh.entero(tid)
+    modo = _oh.respuesta_puede_ser_hallazgo((j or {}).get("valor_norm"))
+    if not tid or not modo:
+        return
+    ref = _oh.ref_tarea(tid)
+    if modo == "retirar":
+        _hall_retirar(vid, _oh.ORIGEN_TAREA, ref, "El técnico cambió su respuesta: ya no es un hallazgo")
+        return
+    t = mysql_fetchone(
+        "SELECT id, titulo, tipo_respuesta, opciones_lista_json, valor_json, maquina_id, item_manual_id "
+        "  FROM mant_visita_tareas WHERE id=%s AND visita_id=%s", (tid, int(vid)))
+    ev = _oh.evaluar_tarea(t) if t else None
+    if not ev:
+        _hall_retirar(vid, _oh.ORIGEN_TAREA, ref, "El técnico cambió su respuesta: ya no es un hallazgo")
+        return
+    sujeto, mid, imid = _hall_sujeto_tarea(vid, t)
+    hid = _hall_registrar(vid, {
+        "origen": _oh.ORIGEN_TAREA, "referencia": ref, "tarea_id": tid, "maquina_id": mid, "item_manual_id": imid,
+        "severidad": ev["severidad"], "titulo": _oh.titulo_tarea(sujeto, t.get("titulo"), ev["valor_txt"]),
+        "detalle": None, "equipo_nombre": sujeto or None, "riesgo": 0,
+        "fotos": _hall_fotos_por_tareas(vid, [tid]).get(tid, [])})
+    if hid:
+        _hall_avisar(vid, [hid])
+
+
+def _hall_h_producto(vid, imid):
+    """«No se puede usar» / «No tiene arreglo» (o su reversión) de un PRODUCTO de una OT de trabajo interno. Se relee la acción vigente
+    del producto: la que está activa se registra y la otra (si había) queda retirada. «No llegó» no es un hallazgo."""
+    imid = _oh.entero(imid)
+    if not imid or not _otpe_ok():
+        return
+    fila = mysql_fetchone("SELECT * FROM mant_ot_producto_estado WHERE visita_id=%s AND item_manual_id=%s AND activo=1 "
+                          "ORDER BY id DESC LIMIT 1", (int(vid), imid))
+    sujeto = _hall_nombre_producto(vid, imid)
+    avisar = []
+    for clave in (_pe.ESTADO_FUERA_SERVICIO, _pe.ESTADO_BAJA):
+        ref = _oh.ref_producto(imid, clave)
+        if fila and fila.get("estado") == clave:
+            motivo = fila.get("motivo") or ""
+            hid = _hall_registrar(vid, {
+                "origen": _oh.ORIGEN_PRODUCTO, "referencia": ref, "item_manual_id": imid,
+                "severidad": clave, "titulo": _oh.titulo_accion(sujeto, _pe.BOTON[clave] + (" — " + motivo if motivo else "")),
+                "detalle": fila.get("detalle"), "equipo_nombre": sujeto,
+                "riesgo": bool(fila.get("riesgo_lesion")), "fotos": _oh.lista_urls(fila.get("fotos_json"))})
+            if hid:
+                avisar.append(hid)
+        else:
+            _hall_retirar(vid, _oh.ORIGEN_PRODUCTO, ref, "La acción del producto se cambió o se revirtió")
+    if avisar:
+        _hall_avisar(vid, avisar)
+
+
+def _hall_form_fs():
+    """(motivo, detalle, riesgo) de un «No se puede usar» de un equipo, venga como formulario (lista + detalle + foto) o como JSON."""
+    fd = request.form
+    if fd and (fd.get("motivo_clave") or fd.get("detalle")):
+        motivo = _pe.texto_motivo(_pe.ESTADO_FUERA_SERVICIO, (fd.get("motivo_clave") or "").strip())
+        return motivo, _oh.limpio(fd.get("detalle"), 1000), _oh.es_si(fd.get("riesgo"))
+    jb = request.get_json(silent=True) or {}
+    return _oh.limpio(jb.get("motivo") or fd.get("motivo"), 400), "", False
+
+
+def _hall_equipo_fs(vid, mid, motivo, detalle, riesgo):
+    """Registra «No se puede usar» de un equipo de cliente. → id si hay que avisar."""
+    sujeto = _hall_nombre_equipo(mid)
+    return _hall_registrar(vid, {
+        "origen": _oh.ORIGEN_EQUIPO, "referencia": _oh.ref_equipo(mid, "fuera_servicio"), "maquina_id": mid,
+        "severidad": _oh.SEV_FUERA_SERVICIO,
+        "titulo": _oh.titulo_accion(sujeto, "No se puede usar" + (" — " + motivo if motivo else "")),
+        "detalle": detalle, "equipo_nombre": sujeto, "riesgo": riesgo,
+        "fotos": _hall_fotos_equipo(vid, mid, "Fuera de servicio")})
+
+
+def _hall_h_equipo_fs(vid, mid, j):
+    """Ruta «fuera de servicio» de un equipo de cliente: marca (estado 'fuera_servicio') o reactiva (estado 'operativo')."""
+    mid = _oh.entero(mid)
+    est = (j or {}).get("estado")
+    if not mid or est not in ("fuera_servicio", "operativo"):
+        return
+    if est == "operativo":
+        _hall_retirar(vid, _oh.ORIGEN_EQUIPO, _oh.ref_equipo(mid, "fuera_servicio"), "El equipo volvió a operativo")
+        return
+    motivo, detalle, riesgo = _hall_form_fs()
+    hid = _hall_equipo_fs(vid, mid, motivo, detalle, riesgo)
+    if hid:
+        _hall_avisar(vid, [hid])
+
+
+def _hall_h_equipo_baja(vid, mid, j):
+    """«No tiene arreglo» (dar de baja) de un equipo de cliente."""
+    mid = _oh.entero(mid)
+    if not mid or (j or {}).get("estado") != "baja" or (j or {}).get("ya_de_baja"):
+        return
+    motivo = _oh.limpio(request.form.get("motivo"), 400)
+    sujeto = _hall_nombre_equipo(mid)
+    hid = _hall_registrar(vid, {
+        "origen": _oh.ORIGEN_EQUIPO, "referencia": _oh.ref_equipo(mid, "baja"), "maquina_id": mid, "severidad": _oh.SEV_BAJA,
+        "titulo": _oh.titulo_accion(sujeto, "No tiene arreglo (dar de baja)"), "detalle": motivo, "equipo_nombre": sujeto,
+        "riesgo": False, "fotos": _hall_fotos_equipo(vid, mid, "Baja del equipo")})
+    if hid:
+        _hall_avisar(vid, [hid])
+
+
+def _hall_h_equipo_falla(vid, mid):
+    """Un equipo de cliente con FALLA DETECTADA (diagnóstico «Con falla» o estado marcado a mano). «Fuera de servicio» y «baja» ya
+    tienen su propio hallazgo (más específico): si existe uno activo no se duplica con uno genérico."""
+    mid = _oh.entero(mid)
+    if not mid:
+        return
+    try:
+        f = mysql_fetchone("SELECT estado_revision, razon_saltado, observacion_tecnico, diagnostico_estado, diagnostico_texto "
+                           "  FROM mant_visita_equipos WHERE visita_id=%s AND maquina_id=%s", (int(vid), mid))
+    except Exception:
+        f = mysql_fetchone("SELECT estado_revision, razon_saltado, observacion_tecnico FROM mant_visita_equipos "
+                           " WHERE visita_id=%s AND maquina_id=%s", (int(vid), mid))
+    ref = _oh.ref_equipo(mid, "falla")
+    f = f or {}
+    activa = (f.get("estado_revision") == "falla_detectada" and (f.get("razon_saltado") or "") not in ("fuera_de_servicio", "dado_de_baja")
+              and (f.get("diagnostico_estado") or "") != "aprobado")
+    if activa:
+        especifico = mysql_fetchone(
+            "SELECT 1 AS x FROM mant_ot_hallazgos WHERE visita_id=%s AND origen=%s AND referencia IN (%s,%s) AND retirado_en IS NULL LIMIT 1",
+            (int(vid), _oh.ORIGEN_EQUIPO, _oh.ref_equipo(mid, "fuera_servicio"), _oh.ref_equipo(mid, "baja")))
+        activa = not especifico
+    if not activa:
+        _hall_retirar(vid, _oh.ORIGEN_EQUIPO, ref, "El equipo ya no tiene una falla detectada")
+        return
+    sujeto = _hall_nombre_equipo(mid)
+    detalle = _oh.limpio(f.get("diagnostico_texto") or f.get("observacion_tecnico"), _oh.DETALLE_MAX)
+    hid = _hall_registrar(vid, {
+        "origen": _oh.ORIGEN_EQUIPO, "referencia": ref, "maquina_id": mid, "severidad": _oh.SEV_FALLA,
+        "titulo": _oh.titulo_accion(sujeto, "Falla detectada"), "detalle": detalle, "equipo_nombre": sujeto, "riesgo": False,
+        "fotos": []})
+    if hid:
+        _hall_avisar(vid, [hid])
+
+
+def _hall_h_repuesto(vid, j, mid=None, imid=None):
+    """«Pedir repuesto» desde un equipo (uno o varios, con lote) o un producto. Un hallazgo por LOTE (o por solicitud suelta), con
+    los nombres de pieza y el diagnóstico del técnico. Solo nombres y cantidades: nunca proveedor ni costo (REGLAS #19/#26)."""
+    j = j or {}
+    mid, imid = _oh.entero(mid), _oh.entero(imid)
+    if not (mid or imid):
+        return
+    lineas, sol_id, extra = [], None, None
+    if j.get("lote_id") and isinstance(j.get("solicitudes"), list):
+        lineas = [{"nombre": s.get("repuesto_nombre"), "cantidad": s.get("cantidad")} for s in j["solicitudes"] if isinstance(s, dict)]
+        sol_id = _oh.entero((j["solicitudes"][0] or {}).get("solicitud_id")) if j["solicitudes"] else None
+        extra = str(j["lote_id"])[:8]
+    elif j.get("solicitud_id"):
+        sol_id = _oh.entero(j.get("solicitud_id"))
+        s = mysql_fetchone("SELECT repuesto_nombre, cantidad FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sol_id,)) if sol_id else None
+        if s:
+            lineas = [{"nombre": s.get("repuesto_nombre"), "cantidad": s.get("cantidad")}]
+        extra = "s%d" % sol_id if sol_id else None
+    if not lineas or not extra:
+        return
+    motivo = _oh.limpio(request.form.get("motivo"), _oh.DETALLE_MAX)
+    sujeto = _hall_nombre_equipo(mid) if mid else _hall_nombre_producto(vid, imid)
+    n_f = n_v = 0
+    if sol_id:
+        try:
+            r = mysql_fetchone("SELECT n_fotos, n_videos FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sol_id,)) or {}
+            n_f, n_v = int(r.get("n_fotos") or 0), int(r.get("n_videos") or 0)
+        except Exception:
+            n_f = n_v = 0
+    evid = "Evidencia: %d foto(s)%s." % (n_f, (", %d video(s)" % n_v) if n_v else "")
+    ref = _oh.ref_equipo(mid, "rep", extra) if mid else _oh.ref_producto(imid, "rep", extra)
+    hid = _hall_registrar(vid, {
+        "origen": _oh.ORIGEN_EQUIPO if mid else _oh.ORIGEN_PRODUCTO, "referencia": ref, "maquina_id": mid, "item_manual_id": imid,
+        "severidad": _oh.SEV_REPUESTO, "titulo": _oh.titulo_accion(sujeto, "Repuesto solicitado: " + _oh.resumen_repuestos(lineas)),
+        "detalle": (motivo + " · " if motivo else "") + evid, "equipo_nombre": sujeto, "riesgo": False,
+        "fotos": _hall_fotos_repuesto(sol_id) if sol_id else []})
+    ids = [hid] if hid else []
+    if mid and j.get("fuera_servicio"):      # «Pedir repuesto» + «dejar fuera de servicio»: además es un equipo que no se puede usar
+        hid_fs = _hall_equipo_fs(vid, mid, motivo, "", False)
+        if hid_fs:
+            ids.append(hid_fs)
+    if ids:
+        _hall_avisar(vid, ids)
+
+
+def _hall_h_incidencia(vid, j, mid=None, imid=None):
+    """«Informar incidencia» desde un equipo o un producto. El módulo de Incidencias no guarda la OT, así que el hallazgo se arma con lo
+    que acaba de informar el técnico (qué pasó, detalle) y las fotos de esa incidencia."""
+    j = j or {}
+    mid, imid = _oh.entero(mid), _oh.entero(imid)
+    iid = _oh.entero(j.get("incidencia_id"))
+    if not iid or not (mid or imid):
+        return
+    sujeto = _hall_nombre_equipo(mid) if mid else _hall_nombre_producto(vid, imid)
+    motivo = _oh.limpio(request.form.get("motivo"), 200)
+    ref = _oh.ref_equipo(mid, "inc", iid) if mid else _oh.ref_producto(imid, "inc", iid)
+    hid = _hall_registrar(vid, {
+        "origen": _oh.ORIGEN_EQUIPO if mid else _oh.ORIGEN_PRODUCTO, "referencia": ref, "maquina_id": mid, "item_manual_id": imid,
+        "severidad": _oh.SEV_INCIDENCIA, "titulo": _oh.titulo_accion(sujeto, "Incidencia %d: %s" % (iid, motivo)),
+        "detalle": _oh.limpio(request.form.get("detalle"), 1000), "equipo_nombre": sujeto, "riesgo": False,
+        "fotos": _hall_fotos_incidencia(iid)})
+    if hid:
+        _hall_avisar(vid, [hid])
+
+
+# endpoint (nombre de la función de la ruta) → qué manejador corre. Una ruta nueva que guarde un hallazgo se agrega AQUÍ.
+_HALL_RUTAS = {
+    "mant_visita_tarea_respuesta": "tarea",
+    "ot2_api_producto_estado": "producto",
+    "ot2_api_producto_estado_revertir": "producto",
+    "ot2_api_equipo_fuera_servicio": "equipo_fs",
+    "ot2_api_equipo_dar_baja": "equipo_baja",
+    "mant_visita_equipo_marcar": "equipo_falla",
+    "mant_visita_equipo_diagnostico": "equipo_falla",
+    "ot2_api_equipo_solicitar_repuesto": "repuesto_equipo",
+    "ot2_api_equipo_solicitar_repuestos": "repuesto_equipo",
+    "ot2_api_producto_solicitar_repuestos": "repuesto_producto",
+    "ot2_api_equipo_incidencia": "incidencia_equipo",
+    "ot2_api_producto_incidencia": "incidencia_producto",
+}
+
+
+def _hall_despachar(clave, vid, va, j):
+    if clave == "tarea":
+        _hall_h_tarea(vid, va.get("tid"), j)
+    elif clave == "producto":
+        _hall_h_producto(vid, va.get("imid"))
+    elif clave == "equipo_fs":
+        _hall_h_equipo_fs(vid, va.get("mid"), j)
+    elif clave == "equipo_baja":
+        _hall_h_equipo_baja(vid, va.get("mid"), j)
+    elif clave == "equipo_falla":
+        _hall_h_equipo_falla(vid, va.get("mid"))
+    elif clave == "repuesto_equipo":
+        _hall_h_repuesto(vid, j, mid=va.get("mid"))
+    elif clave == "repuesto_producto":
+        _hall_h_repuesto(vid, j, imid=va.get("imid"))
+    elif clave == "incidencia_equipo":
+        _hall_h_incidencia(vid, j, mid=va.get("mid"))
+    elif clave == "incidencia_producto":
+        _hall_h_incidencia(vid, j, imid=va.get("imid"))
+
+
+def _hall_db_fresca():
+    """Cierra la «foto» de la conexión de la petición: es REPEATABLE READ con autocommit apagado, así que si la ruta ya leyó algo y guardó
+    por OTRA conexión (get_mysql: los repuestos, las incidencias, las acciones por producto), lo recién guardado NO se vería y el hallazgo
+    saldría sin fotos o ni se registraría. Mismo gotcha y mismo remedio que `_fac_db_fresca` (la ruta ya terminó: no hay nada pendiente)."""
+    try:
+        get_db().commit()
+    except Exception:
+        pass
+
+
+@app.after_request
+def _hall_tras_escritura(resp):
+    """Después de que una ruta de la lista `_HALL_RUTAS` guardó bien (respuesta < 400), se registra o retira el hallazgo que
+    corresponda. BEST-EFFORT: cualquier fallo se anota en el registro del servidor y la respuesta del técnico sale intacta."""
+    try:
+        if request.method != "POST" or resp.status_code >= 400 or resp.direct_passthrough:
+            return resp
+        clave = _HALL_RUTAS.get(request.endpoint or "")
+        if not clave:
+            return resp
+        va = request.view_args or {}
+        vid = _oh.entero(va.get("vid"))
+        if not vid or not _hall_ok():
+            return resp
+        _hall_db_fresca()
+        j = resp.get_json(silent=True) if resp.is_json else None
+        _hall_despachar(clave, vid, va, j if isinstance(j, dict) else {})
+    except Exception as e:
+        print(f"[hall] tras escritura {request.endpoint}: {type(e).__name__}: {e}", flush=True)
+    return resp
+
+
+# ── La campana: una sola por OT y por persona, agrupando lo que llegue en 30 minutos ────────────────────────────────
+def _hall_destinos(vid, v, excluir_uid=None):
+    """A quién se le avisa de los hallazgos de ESTA OT: lo decide `_ot_gestion_destinatarios` (el responsable va primero). Aquí solo se
+    sacan los de la familia técnico (esta gestión no es suya: REGLAS #19/#26) y a quien lo causó. Si los ÚNICOS candidatos eran técnicos
+    (p. ej. una OT cuyo creador es técnico y que no tiene responsable ni ejecutivo), el aviso no se pierde: se le pide a la MISMA función el
+    respaldo de siempre (superadmin, admin y supervisor) como si la OT no tuviera a nadie. Nadie arma otra lista a mano."""
+    def _sin_tecnicos(gestion):
+        ids = sorted({int(p["id"]) for p in gestion})
+        if not ids:
+            return []
+        roles = {}
+        for r in (mysql_fetchall("SELECT id, role FROM app_users WHERE id IN (" + ",".join(["%s"] * len(ids)) + ")", tuple(ids)) or []):
+            roles[int(r["id"])] = r.get("role")
+        return [p for p in gestion if _rol_familia(roles.get(int(p["id"]))) != "tecnico"]
+    try:
+        gestion = _ot_gestion_destinatarios(vid, fila=v)
+        utiles = _sin_tecnicos(gestion)
+        if gestion and not utiles:
+            utiles = _sin_tecnicos(_ot_gestion_destinatarios(vid, fila={"id": int(vid)}))
+    except Exception as e:
+        print(f"[hall] roles de los destinatarios: {type(e).__name__}", flush=True)
+        return []
+    return [p for p in utiles if not (excluir_uid and int(p["id"]) == int(excluir_uid))]
+
+
+def _hall_avisar(vid, ids_nuevos):
+    """Campana a la gestión de la OT (el responsable primero) por los hallazgos recién registrados. Una sola campana por OT y por
+    persona: lo que llegue dentro de 30 minutos se SUMA («OT-2026-00171: 3 hallazgos nuevos»), con el enlace a la ficha y SIN plata
+    (REGLAS #19/#26). Sin correo (los correos de OT van por el registro, REGLA #33) y al cliente jamás (REGLA #22). → a cuántas personas."""
+    ids = sorted({int(i) for i in (ids_nuevos or []) if i})
+    if not ids:
+        return 0
+    v = mysql_fetchone("SELECT v.*, c.razon_social FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (int(vid),))
+    if not v:
+        return 0
+    v = dict(v)
+    num = v.get("numero_ot") or f"V-{int(vid):05d}"
+    ahora = (mysql_fetchone("SELECT NOW() AS t") or {}).get("t")
+    ult = (mysql_fetchone("SELECT MAX(aviso_grupo_en) AS ult FROM mant_ot_hallazgos WHERE visita_id=%s", (int(vid),)) or {}).get("ult")
+    grupo, continua = _oh.decidir_grupo(ult, ahora)
+    mysql_execute("UPDATE mant_ot_hallazgos SET aviso_grupo_en=%s WHERE id IN (" + ",".join(["%s"] * len(ids)) + ")", (grupo, *ids))
+    items = [dict(f) for f in (mysql_fetchall(
+        "SELECT id, severidad, titulo, riesgo, detectado_por FROM mant_ot_hallazgos "
+        " WHERE visita_id=%s AND aviso_grupo_en=%s AND retirado_en IS NULL ORDER BY id", (int(vid), grupo)) or [])]
+    if not items:
+        return 0
+    cliente_txt = v.get("razon_social") or "Trabajo interno"
+    quien_hoy = _hall_quien()
+
+    def _textos(lista):
+        return (_oh.titulo_campana(num, len(lista)), _oh.cuerpo_campana(cliente_txt, lista, quien_hoy), _oh.prioridad_campana(lista))
+
+    titulo, cuerpo, prioridad = _textos(items)
+    url = f"/ot/{int(vid)}#otdHallazgos"
+    n_ok = 0
+    for p in _hall_destinos(vid, v, excluir_uid=_hall_uid()):
+        uid = int(p["id"])
+        try:
+            ex = mysql_fetchone(
+                "SELECT id, leida_at, created_at FROM mant_notificaciones WHERE tipo=%s AND visita_id=%s AND destino_user_id=%s "
+                "   AND archivada_at IS NULL ORDER BY id DESC LIMIT 1", (_oh.TIPO_AVISO, int(vid), uid))
+            accion = _oh.decidir_campana({"leida": bool(ex.get("leida_at"))} if ex else None, continua)
+            t_p, c_p, pr_p = titulo, cuerpo, prioridad
+            if accion == "actualizar" and not ex.get("leida_at") and not continua and ex.get("created_at"):
+                # Sigue SIN leer y ya pasó la ventana de 30 minutos: la campana cuenta TODO lo que llegó desde que se creó. Si no, el número
+                # «bajaría» («2 hallazgos nuevos» → «1 hallazgo nuevo») y parecería que lo anterior se resolvió sin que esa persona lo viera.
+                acum = [dict(f) for f in (mysql_fetchall(
+                    "SELECT id, severidad, titulo, riesgo, detectado_por FROM mant_ot_hallazgos WHERE visita_id=%s "
+                    "   AND aviso_grupo_en >= DATE_SUB(%s, INTERVAL 2 MINUTE) AND retirado_en IS NULL ORDER BY id",
+                    (int(vid), ex["created_at"])) or [])]
+                if len(acum) > len(items):
+                    t_p, c_p, pr_p = _textos(acum)
+            if accion == "actualizar":
+                try:
+                    mysql_execute("UPDATE mant_notificaciones SET titulo=%s, cuerpo=%s, mensaje=%s, prioridad=%s, url_accion=%s, "
+                                  "       leida_at=NULL, estado='pendiente' WHERE id=%s", (t_p, c_p, c_p, pr_p, url, int(ex["id"])))
+                except Exception:
+                    mysql_execute("UPDATE mant_notificaciones SET titulo=%s, cuerpo=%s, prioridad=%s, url_accion=%s, leida_at=NULL "
+                                  " WHERE id=%s", (t_p, c_p, pr_p, url, int(ex["id"])))
+            else:
+                _mant_notificar(uid, _oh.TIPO_AVISO, t_p, c_p, url_accion=url, prioridad=pr_p, visita_id=int(vid))
+            _mant_notif_cache_invalidar(uid)
+            n_ok += 1
+        except Exception as e:
+            print(f"[hall] campana a {uid}: {type(e).__name__}", flush=True)
+    return n_ok
+
+
+def _hall_avisar_toma(vid, v, f, quien, quien_uid):
+    """Cuando OTRA persona toma el caso, se le avisa (suave, por la campana) al responsable de la OT: nada que suene a castigo. Si la
+    OT no tiene responsable no se avisa a nadie (quien la toma ya es gestión). Lleva su PROPIO tipo de campana (`ot_hallazgo_toma`):
+    así no se confunde con la campana de «hallazgos nuevos» de la misma OT y persona (ni la una suprime a la otra)."""
+    n_ok = 0
+    num = v.get("numero_ot") or f"V-{int(vid):05d}"
+    for p in _hall_destinos(vid, v, excluir_uid=quien_uid):
+        if p.get("por") != "responsable":
+            continue
+        try:
+            _mant_notificar(int(p["id"]), _oh.TIPO_AVISO_TOMA, _oh.titulo_toma(num), _oh.cuerpo_toma(quien, f.get("titulo")),
+                            url_accion=f"/ot/{int(vid)}#otdHallazgos", prioridad="baja", cliente_id=v.get("cliente_id"), visita_id=int(vid))
+            _mant_notif_cache_invalidar(int(p["id"]))
+            n_ok += 1
+        except Exception as e:
+            print(f"[hall] aviso de toma a {p.get('id')}: {type(e).__name__}", flush=True)
+    return n_ok
+
+
+# ── La ficha de la OT: la tarjeta «Hallazgos de esta OT» ────────────────────────────────────────────────────────────────
+def _hall_listar(vid):
+    """Todas las filas de la OT (activas, retiradas, descartadas) con la OT de seguimiento unida. [] si falla o no hay tabla."""
+    if not _hall_ok():
+        return []
+    try:
+        return [dict(r) for r in (mysql_fetchall(
+            "SELECT h.*, s.numero_ot AS seg_numero, s.estado AS seg_estado "
+            "  FROM mant_ot_hallazgos h LEFT JOIN mant_visitas s ON s.id = h.ot_seguimiento_id "
+            " WHERE h.visita_id=%s ORDER BY h.id", (int(vid),)) or [])]
+    except Exception as e:
+        print(f"[hall] listar vid={vid}: {type(e).__name__}", flush=True)
+        return []
+
+
+def _hall_cuando(dt_utc):
+    try:
+        return chile_fmt_filter(dt_utc, "%d/%m %H:%M") if dt_utc else ""
+    except Exception:
+        return ""
+
+
+def _hall_items(vid, filas):
+    """Las filas listas para dibujar: severidad con su semáforo, estado EFECTIVO, fotos (las de las tareas se releen vivas: el técnico
+    las sube DESPUÉS de responder), qué acciones admite cada una y la OT de seguimiento. Hora en Chile (REGLA #6). Sin plata."""
+    vivas = _hall_fotos_por_tareas(vid, [f.get("tarea_id") for f in filas if f.get("origen") == _oh.ORIGEN_TAREA and f.get("tarea_id")])
+    out = []
+    for f in filas:
+        sev = _oh.sev_info(f.get("severidad"))
+        estado_ef, caido = _oh.estado_efectivo(f, f.get("seg_numero"), f.get("seg_estado"))
+        seg_existe = bool(f.get("seg_numero") or f.get("seg_estado"))
+        fila_ef = dict(f, estado=estado_ef, ot_seguimiento_id=(None if caido else f.get("ot_seguimiento_id")))
+        fotos = list(vivas.get(int(f["tarea_id"]), [])) if (f.get("origen") == _oh.ORIGEN_TAREA and f.get("tarea_id")) else []
+        for u in _oh.lista_urls(f.get("fotos_json")):
+            if u not in fotos:
+                fotos.append(u)
+        retirado = bool(f.get("retirado_en"))
+        acc = {a: _oh.puede_accion(a, fila_ef, f.get("seg_estado"), seg_existe)[0] for a in ("tomar", "levantar", "descartar", "reabrir")}
+        seg = None
+        if f.get("ot_seguimiento_id") and not caido:
+            seg = {"id": int(f["ot_seguimiento_id"]), "numero_ot": f.get("seg_numero") or ("V-%05d" % int(f["ot_seguimiento_id"])),
+                   "estado": f.get("seg_estado"), "estado_txt": (_OT2_ESTADO_META.get(f.get("seg_estado")) or (f.get("seg_estado") or "",))[0],
+                   "cerrada": (f.get("seg_estado") or "") in ("cerrada", "completada"), "url": f"/ot/{int(f['ot_seguimiento_id'])}"}
+        out.append({
+            "id": int(f["id"]), "origen": f.get("origen"), "tarea_id": f.get("tarea_id"), "maquina_id": f.get("maquina_id"),
+            "item_manual_id": f.get("item_manual_id"),
+            "severidad": f.get("severidad"), "sev_texto": sev["texto"], "sev_color": sev["color"], "sev_icono": sev["icono"],
+            "sev_orden": sev["orden"], "titulo": f.get("titulo") or "", "detalle": f.get("detalle") or "", "equipo": f.get("equipo_nombre") or "",
+            "riesgo": bool(f.get("riesgo")), "fotos": fotos, "n_fotos": len(fotos), "sin_foto": not fotos,
+            "estado": f.get("estado"), "estado_ef": estado_ef, "estado_txt": _oh.estado_info(estado_ef)["texto"],
+            "estado_color": _oh.estado_info(estado_ef)["color"], "seguimiento_caido": bool(caido),
+            "seguimiento_caido_txt": ("La OT de seguimiento %s fue cancelada: el hallazgo volvió a quedar sin gestionar." %
+                                      (f.get("seg_numero") or "")).strip() if caido else "",
+            "retirado": retirado, "retirado_cuando": _hall_cuando(f.get("retirado_en")), "retirado_motivo": f.get("retirado_motivo") or "",
+            "quien": f.get("detectado_por") or "", "cuando": _hall_cuando(f.get("detectado_en")),
+            "tomado_por": f.get("tomado_por") or "", "tomado_cuando": _hall_cuando(f.get("tomado_en")),
+            "descartado_por": f.get("descartado_por") or "", "descartado_cuando": _hall_cuando(f.get("descartado_en")),
+            "descarte_motivo": f.get("descarte_motivo") or "", "seguimiento": seg,
+            "puede_tomar": acc["tomar"] and not retirado, "puede_levantar": acc["levantar"] and not retirado,
+            "puede_descartar": acc["descartar"] and not retirado, "puede_reabrir": acc["reabrir"],
+        })
+    return out
+
+
+def _hall_contexto_ficha(vid, v):
+    """Lo que la ficha dibuja de los hallazgos: la tarjeta (activos primero, por gravedad; los retirados aparte) y, si esta OT es una OT de
+    SEGUIMIENTO, de qué OT y de qué hallazgos viene. SOLO gestión: a un técnico no viaja nada (REGLAS #19/#26). La tarjeta también se
+    dibuja en una OT CERRADA (los hallazgos se siguen gestionando; la OT en sí no se toca). None si no hay nada que mostrar."""
+    try:
+        if _es_rol_tecnico() or not _hall_ok():
+            return None
+        items = _hall_items(vid, _hall_listar(vid))
+        activos = sorted([i for i in items if not i["retirado"]], key=lambda i: (i["sev_orden"], i["id"]))
+        retirados = [i for i in items if i["retirado"]]
+        origen = None
+        if v.get("ot_madre_id") and (v.get("ot_relacion") or "") == _oh.REL_SEGUIMIENTO:
+            m = _ot_fila_basica(v["ot_madre_id"])
+            if m:
+                lig = [i for i in _hall_items(m["id"], [f for f in _hall_listar(m["id"]) if f.get("ot_seguimiento_id") == int(vid)])]
+                origen = {"id": m["id"], "numero_ot": m.get("numero_ot") or f"V-{int(m['id']):05d}", "url": f"/ot/{m['id']}",
+                          "hallazgos": [{"titulo": i["titulo"], "sev_texto": i["sev_texto"], "sev_color": i["sev_color"], "n_fotos": i["n_fotos"]}
+                                        for i in lig]}
+        if not items and not origen:
+            return None
+        r = _oh.resumir(items)
+        return {"vid": int(vid), "numero_ot": v.get("numero_ot") or f"V-{int(vid):05d}", "activos": activos, "retirados": retirados,
+                "origen": origen, "n_total": r["total"], "n_abiertos": r["abiertos"], "n_tomados": r["tomados"], "n_con_ot": r["con_ot"],
+                "n_descartados": r["descartados"], "n_retirados": r["retirados"],
+                "n_sin_foto": len([i for i in activos if i["sin_foto"]]),
+                "n_seleccionables": len([i for i in activos if i["puede_levantar"]]),
+                "cerrada": bool(v.get("firma_cliente_url")) or (v.get("estado") or "").lower() in
+                           ("pendiente_aprobacion", "completada", "cerrada", "cancelada", "anulada")}
+    except Exception as e:
+        print(f"[hall] contexto ficha vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return None
+
+
+# ── Las rutas de la gestión: tomar el caso, descartar, reabrir y el prellenado de la OT de seguimiento ────────────────
+def _hall_fila_de(vid, hid):
+    r = mysql_fetchone(
+        "SELECT h.*, s.numero_ot AS seg_numero, s.estado AS seg_estado FROM mant_ot_hallazgos h "
+        "  LEFT JOIN mant_visitas s ON s.id = h.ot_seguimiento_id WHERE h.id=%s AND h.visita_id=%s", (int(hid), int(vid)))
+    return dict(r) if r else None
+
+
+def _hall_gestion_previa(vid, hid, accion):
+    """Lo común de tomar / descartar / reabrir: (fila, fila_efectiva, caido, None) o (None, None, None, respuesta_de_error)."""
+    if not _hall_ok():
+        return None, None, None, _ot2_err("Esta función no está disponible en este momento. Intenta de nuevo en un minuto.",
+                                          "TABLA_NO_DISPONIBLE", http=503)
+    f = _hall_fila_de(vid, hid)
+    if not f:
+        return None, None, None, _ot2_err("No encontramos ese hallazgo.", "HALLAZGO_NO_EXISTE", http=404)
+    estado_ef, caido = _oh.estado_efectivo(f, f.get("seg_numero"), f.get("seg_estado"))
+    fila_ef = dict(f, estado=estado_ef, ot_seguimiento_id=(None if caido else f.get("ot_seguimiento_id")))
+    ok, msg = _oh.puede_accion(accion, fila_ef, f.get("seg_estado"), bool(f.get("seg_numero") or f.get("seg_estado")))
+    if not ok:
+        return None, None, None, _ot2_err(msg, "HALLAZGO_NO_DISPONIBLE", http=409)
+    return f, fila_ef, caido, None
+
+
+_HALL_SQL_SOLTAR_SEG = ", ot_seguimiento_id=NULL, seguimiento_por=NULL, seguimiento_en=NULL"
+
+
+@app.route("/ot/api/<int:vid>/hallazgos/<int:hid>/tomar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot_api_hallazgo_tomar(vid, hid):
+    """«Tomar el caso»: queda a nombre de quien lo toma (cuándo, en hora Chile) y, si es otra persona que el responsable de la OT, se le
+    avisa a este (suave, por la campana). Funciona también en una OT cerrada: la OT no se toca, solo el hallazgo."""
+    f, _fe, caido, err = _hall_gestion_previa(vid, hid, "tomar")
+    if err:
+        return err
+    uid, quien = _hall_uid(), _hall_quien()
+    n = mysql_execute_returning_rowcount(
+        "UPDATE mant_ot_hallazgos SET estado='tomado', tomado_por_id=%s, tomado_por=%s, tomado_en=NOW()"
+        + (_HALL_SQL_SOLTAR_SEG if caido else "") + " WHERE id=%s AND visita_id=%s AND retirado_en IS NULL AND estado=%s",
+        (uid, quien, int(hid), int(vid), f["estado"]))
+    if not n:
+        return _ot2_err("Alguien más cambió este hallazgo mientras lo mirabas. Recarga la página.", "HALLAZGO_CAMBIO", http=409)
+    _mant_log("visita", vid, "hallazgo_tomado", f"{_oh.limpio(f.get('titulo'), 400)} · lo tomó {quien}"[:900])
+    try:
+        v = mysql_fetchone("SELECT * FROM mant_visitas WHERE id=%s", (int(vid),)) or {}
+        _hall_avisar_toma(vid, dict(v), f, quien, uid)
+    except Exception as e:
+        print(f"[hall] aviso de toma: {type(e).__name__}", flush=True)
+    return jsonify({"ok": True, "estado": "tomado", "tomado_por": quien})
+
+
+@app.route("/ot/api/<int:vid>/hallazgos/<int:hid>/descartar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot_api_hallazgo_descartar(vid, hid):
+    """«Descartar»: el motivo es obligatorio (≥ 10 caracteres) y queda escrito en la bitácora de la OT. No se borra nada; se puede
+    reabrir. Un hallazgo que ya tiene una OT de seguimiento viva no se descarta."""
+    motivo, e_mot = _oh.validar_descarte((request.get_json(silent=True) or {}).get("motivo"))
+    if e_mot:
+        return _ot2_err(e_mot, "MOTIVO_REQUERIDO")
+    f, _fe, caido, err = _hall_gestion_previa(vid, hid, "descartar")
+    if err:
+        return err
+    quien = _hall_quien()
+    n = mysql_execute_returning_rowcount(
+        "UPDATE mant_ot_hallazgos SET estado='descartado', descartado_por=%s, descartado_en=NOW(), descarte_motivo=%s"
+        + (_HALL_SQL_SOLTAR_SEG if caido else "") + " WHERE id=%s AND visita_id=%s AND retirado_en IS NULL AND estado=%s",
+        (quien, motivo, int(hid), int(vid), f["estado"]))
+    if not n:
+        return _ot2_err("Alguien más cambió este hallazgo mientras lo mirabas. Recarga la página.", "HALLAZGO_CAMBIO", http=409)
+    _mant_log("visita", vid, "hallazgo_descartado", f"{_oh.limpio(f.get('titulo'), 300)} · lo descartó {quien} · motivo: {motivo}"[:900])
+    return jsonify({"ok": True, "estado": "descartado"})
+
+
+@app.route("/ot/api/<int:vid>/hallazgos/<int:hid>/reabrir", methods=["POST"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot_api_hallazgo_reabrir(vid, hid):
+    """Reabre un hallazgo descartado (volvió a quedar «sin gestionar»). Queda en la bitácora; el descarte anterior sigue escrito ahí."""
+    f, _fe, _caido, err = _hall_gestion_previa(vid, hid, "reabrir")
+    if err:
+        return err
+    quien = _hall_quien()
+    n = mysql_execute_returning_rowcount(
+        "UPDATE mant_ot_hallazgos SET estado='abierto', tomado_por_id=NULL, tomado_por=NULL, tomado_en=NULL "
+        " WHERE id=%s AND visita_id=%s AND retirado_en IS NULL AND estado='descartado'", (int(hid), int(vid)))
+    if not n:
+        return _ot2_err("Alguien más cambió este hallazgo mientras lo mirabas. Recarga la página.", "HALLAZGO_CAMBIO", http=409)
+    _mant_log("visita", vid, "hallazgo_reabierto", f"{_oh.limpio(f.get('titulo'), 300)} · lo reabrió {quien}"[:900])
+    return jsonify({"ok": True, "estado": "abierto"})
+
+
+@app.route("/ot/api/<int:vid>/hallazgos/prellenado", methods=["GET"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot_api_hallazgos_prellenado(vid):
+    """Lo que el asistente «Nueva OT» muestra ya escrito para la OT de SEGUIMIENTO de estos hallazgos (`?ids=1,2`): el cliente, los equipos,
+    el tipo correctiva, el título, la descripción y las fotos como referencia. Todo se relee de la base y se valida (los hallazgos son
+    de esta OT y siguen disponibles). La persona decide qué queda (REGLA #32); el servidor lo vuelve a validar al crear."""
+    if not _hall_ok():
+        return _ot2_err("Esta función no está disponible en este momento. Intenta de nuevo en un minuto.", "TABLA_NO_DISPONIBLE", http=503)
+    ids = _oh.lista_enteros(request.args.get("ids"))
+    v = mysql_fetchone("SELECT v.id, v.numero_ot, v.cliente_id, v.estado, c.razon_social, c.rut FROM mant_visitas v "
+                       "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id WHERE v.id=%s", (int(vid),))
+    if not v:
+        return _ot2_err("No encontramos esa orden de trabajo.", "OT_NO_EXISTE", http=404)
+    v = dict(v)
+    filas = _hall_listar(vid)
+    seg_info = {int(f["id"]): {"existe": bool(f.get("seg_numero") or f.get("seg_estado")), "estado": f.get("seg_estado")} for f in filas}
+    elegidas, err = _oh.validar_seguimiento(v, filas, ids, v.get("cliente_id"), seg_info)
+    if err:
+        return _ot2_err(err[0], err[1], http=409)
+    elegidos_ids = {int(h["id"]) for h in elegidas}
+    items = [i for i in _hall_items(vid, [f for f in filas if int(f["id"]) in elegidos_ids]) if not i["retirado"]]
+    items.sort(key=lambda i: (i["sev_orden"], i["id"]))
+    num = v.get("numero_ot") or f"V-{int(vid):05d}"
+    pre = _oh.armar_prellenado({"numero_ot": num, "cliente_nombre": v.get("razon_social")}, items)
+    return jsonify({
+        "ok": True,
+        "origen": {"id": int(vid), "numero_ot": num, "interna": not v.get("cliente_id"),
+                   "cliente": ({"id": v["cliente_id"], "nombre": v.get("razon_social") or "", "rut": v.get("rut") or ""}
+                               if v.get("cliente_id") else None)},
+        "hallazgos": [{"id": i["id"], "severidad": i["severidad"], "sev_texto": i["sev_texto"], "sev_color": i["sev_color"], "titulo": i["titulo"],
+                       "detalle": i["detalle"], "equipo": i["equipo"], "fotos": i["fotos"], "maquina_id": i["maquina_id"]} for i in items],
+        "prellenado": pre})
+
+
+# ── El vínculo con la OT de seguimiento (lo usa el núcleo de creación de OT: _ot2_crear_core) ────────────────────────────
+def _hall_seguimiento_validar(raw, cliente_id):
+    """Revisa `d['seguimiento']` ({origen_id, hallazgo_ids, fotos}) con lo que hay en la base. → (seg, None) con
+    seg = {origen, filas, fotos} o (None, (mensaje, codigo)). Si la tabla no existe, no hay vínculo posible."""
+    if not isinstance(raw, dict) or not raw:
+        return None, None
+    if not _hall_ok():
+        return None, ("Los hallazgos no están disponibles en este momento: crea la OT sin el vínculo o intenta de nuevo en un minuto.",
+                      "SEG_NO_DISPONIBLE")
+    origen = _ot_fila_basica(_oh.entero(raw.get("origen_id")))
+    ids = _oh.lista_enteros(raw.get("hallazgo_ids"))
+    filas = _hall_listar(origen["id"]) if origen else []
+    seg_info = {int(f["id"]): {"existe": bool(f.get("seg_numero") or f.get("seg_estado")), "estado": f.get("seg_estado")} for f in filas}
+    elegidas, err = _oh.validar_seguimiento(origen, filas, ids, cliente_id, seg_info)
+    if err:
+        return None, err
+    # Las fotos de referencia: solo las que ya son evidencia de ESOS hallazgos (nunca una URL cualquiera que mande el navegador).
+    permitidas = []
+    ids_ok = {int(h["id"]) for h in elegidas}
+    for i in _hall_items(origen["id"], [f for f in filas if int(f["id"]) in ids_ok]):
+        for u in i["fotos"]:
+            if u not in permitidas:
+                permitidas.append(u)
+    pedidas = _oh.lista_urls(raw.get("fotos"), _oh.FOTOS_REFERENCIA_MAX)
+    return {"origen": origen, "filas": elegidas, "fotos": [u for u in pedidas if u in permitidas]}, None
+
+
+def _hall_seguimiento_enlazar(cur, vid_nueva, seg, numero_nueva, quien):
+    """DENTRO de la transacción de creación de la OT nueva: bloquea los hallazgos, vuelve a revisar que sigan disponibles y los pasa a
+    «con OT de seguimiento» (estado 'resuelto' + ot_seguimiento_id). La OT nueva queda hija (ot_relacion='seguimiento') de la de origen.
+    Las fotos de referencia entran a «Videos y documentos» de la OT nueva (la MISMA URL: no se copia ni se duplica el archivo; sin
+    public_id, así borrar el adjunto nunca borra la evidencia original). → (ok, mensaje|None, n_fotos)."""
+    quien = str(quien or _hall_quien())[:190]              # cabe en seguimiento_por / subido_por (VARCHAR 190)
+    ids = [int(h["id"]) for h in seg["filas"]]
+    ph = ",".join(["%s"] * len(ids))
+    cur.execute(f"SELECT id, estado, retirado_en, ot_seguimiento_id FROM mant_ot_hallazgos WHERE visita_id=%s AND id IN ({ph}) FOR UPDATE",
+                (int(seg["origen"]["id"]), *ids))
+    ahora = [dict(r) for r in (cur.fetchall() or [])]
+    if len(ahora) != len(ids) or any(r.get("retirado_en") or r.get("ot_seguimiento_id") or r.get("estado") not in _oh.ESTADOS_GESTIONABLES
+                                     for r in ahora):
+        return False, "Alguien más cambió esos hallazgos mientras creabas la OT. Recarga la ficha y vuelve a elegir.", 0
+    cur.execute(
+        f"UPDATE mant_ot_hallazgos SET estado='resuelto', ot_seguimiento_id=%s, seguimiento_por=%s, seguimiento_en=NOW(), "
+        f"       tomado_por_id=COALESCE(tomado_por_id, %s), tomado_por=COALESCE(tomado_por, %s), tomado_en=COALESCE(tomado_en, NOW()) "
+        f" WHERE visita_id=%s AND id IN ({ph})", (int(vid_nueva), quien, _hall_uid(), quien, int(seg["origen"]["id"]), *ids))
+    cur.execute("UPDATE mant_visitas SET ot_madre_id=%s, ot_relacion=%s WHERE id=%s",
+                (int(seg["origen"]["id"]), _oh.REL_SEGUIMIENTO, int(vid_nueva)))
+    n_fotos = 0
+    if seg.get("fotos"):
+        tit = "; ".join(_oh.limpio(h.get("titulo"), 120) for h in seg["filas"][:3])
+        try:
+            cur.execute("SAVEPOINT hall_fotos")
+            for i, u in enumerate(seg["fotos"][:_oh.FOTOS_REFERENCIA_MAX], start=1):
+                cur.execute(
+                    "INSERT INTO mant_visita_adjuntos (visita_id, tipo, archivo_path, cloudinary_url, cloudinary_public_id, archivo_nombre, "
+                    " file_size_kb, mime_type, descripcion, subido_por) VALUES (%s,'foto',NULL,%s,NULL,%s,NULL,NULL,%s,%s)",
+                    (int(vid_nueva), u[:600], ("hallazgo_%s_%d" % (numero_nueva or vid_nueva, i))[:300],
+                     _oh.descripcion_foto_referencia(seg["origen"].get("numero_ot"), tit), quien))
+                n_fotos += 1
+        except Exception as e:
+            n_fotos = 0
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT hall_fotos")
+            except Exception:
+                pass
+            print(f"[hall] fotos de referencia vid={vid_nueva}: {type(e).__name__}: {e}", flush=True)
+    return True, None, n_fotos
+
+
+# ── El panel de OT: «Hallazgos abiertos: N» en cada fila y el filtro «Con hallazgos sin gestionar» ─────────────────────
+def _ot_hall_filtro_sql(valor):
+    """(clave, sql, params) del filtro «Con hallazgos sin gestionar» del panel y del Excel (lista blanca, parametrizado; los alias son
+    fijos del código). `clave` es lo que viaja por la URL: '' | '1'. Si la tabla aún no existe o quien mira es técnico, no filtra."""
+    if str(valor or "").strip() != "1" or _es_rol_tecnico() or not _hall_ok():
+        return "", "", []
+    return "1", ("EXISTS (SELECT 1 FROM mant_ot_hallazgos hf LEFT JOIN mant_visitas sf ON sf.id = hf.ot_seguimiento_id "
+                 " WHERE hf.visita_id = v.id AND " + _oh.sql_abierto("hf", "sf") + ")"), []
+
+
+def _ot2_panel_hallazgos(filas):
+    """Hallazgos SIN GESTIONAR de cada fila de la tabla del panel, en UNA consulta por lote (nunca una por fila) y sin tocar
+    _OT2_SELECT_FILAS: si la tabla aún no existe, las filas quedan en 0 y el panel funciona igual. Deja en cada fila `hall_abiertos`.
+    A un técnico no se le entrega nada (esta gestión no es suya)."""
+    for f in filas:
+        f["hall_abiertos"] = 0
+    ids = [int(f["id"]) for f in filas if f.get("id")]
+    if not ids or _es_rol_tecnico() or not _hall_ok():
+        return
+    try:
+        por_id = {int(f["id"]): f for f in filas if f.get("id")}
+        for r in (mysql_fetchall(
+                "SELECT h.visita_id, COUNT(*) AS n FROM mant_ot_hallazgos h LEFT JOIN mant_visitas s ON s.id = h.ot_seguimiento_id "
+                " WHERE h.visita_id IN (" + ",".join(["%s"] * len(ids)) + ") AND " + _oh.sql_abierto("h", "s") + " GROUP BY h.visita_id",
+                tuple(ids)) or []):
+            f = por_id.get(int(r["visita_id"]))
+            if f is not None:
+                f["hall_abiertos"] = int(r["n"] or 0)
+    except Exception as e:
+        print(f"[ot2_panel] hallazgos: {type(e).__name__}", flush=True)
+
+
 def _otrep_sistema_de_equipo(v, m):
     """Sistema ('selector_peso', 'trotadora', 'eliptica'…) de un EQUIPO de cliente, o None. Una sola vez por pedido (se recuerda en g)."""
     try:
@@ -172058,6 +173126,15 @@ try:
         _ensure_ot_responsable()
 except Exception as _ensure_ot_resp_err:
     print(f"[ILUS][WARN] _ensure_ot_responsable: {_ensure_ot_resp_err}", flush=True)
+
+# 🩺 2026-10-21 (REGLA #38): la tabla de hallazgos de la OT (una sola sentencia: CREATE TABLE IF NOT EXISTS). SIEMPRE (también con
+# ILUS_SKIP_MIGRATIONS=1). Barata si ya existe (REGLA #18: la guarda de mysql_execute salta el DDL sin pedir lock). Hasta que exista,
+# los hallazgos quedan dormidos (_hall_ok) sin romper nada.
+try:
+    with app.app_context():
+        _ensure_ot_hallazgos()
+except Exception as _ensure_ot_hall_err:
+    print(f"[ILUS][WARN] _ensure_ot_hallazgos: {_ensure_ot_hall_err}", flush=True)
 
 # email_log.estado debe aceptar 'bloqueado' SIEMPRE (incluso skip-migrations):
 # sin esto, los envíos frenados por la llave de paso no dejaban rastro en el log.
