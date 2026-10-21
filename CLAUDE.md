@@ -1041,5 +1041,19 @@ Incidente real: el asistente sumaba por detrás «Revisión — Registro por equ
 
 ---
 
+## 📬 REGLA #33 — Todo correo nuevo nace en el REGISTRO, con su clave, y sale por la puerta única (no negociable)
+
+**Pedido de Daniel (2026-10-20): «el control de correos en Comunicaciones»** — una pestaña donde el superadmin ve TODOS los correos que envía el sistema, quién los recibe, qué los dispara, y puede **apagar cada uno** (con motivo), ver su estado real, la vista previa, mandarse una prueba y ver cuántos salieron o se frenaron. Las órdenes de trabajo forman su propio grupo.
+
+- **Un solo registro:** `comm_correos_registro.py` (puro, con pruebas). Cada correo tiene su **clave** (`ret_cita_confirmada`, `ot_tec_asignada`…), su nombre completo, su grupo de la pantalla (`modulo_ui`), la llave de paso que ya lo gobierna (`llave` = el `modulo=` con que sale), **quién lo recibe** (`destinatario`: cliente · tecnico · responsable_ot · bodega · proveedor_courier · interno · usuario), qué lo dispara y su plantilla. Las instrucciones para sumar uno nuevo están en el encabezado de ese archivo.
+- **Un correo NUEVO se registra ANTES de enviarse** y lleva su clave a la puerta única: `_send_ilus_email(..., modulo=…, correo="clave")` (o `correo=` en la función que lo envuelve: `_mant_send_email_multi`, `_send_pickup_email_multi`, `_prospecto_correo_por_ticket`, `_ot_tec_enviar`). **Nunca** dentro de `**kwargs` ni de `kwargs_json` de la cola (se reenvía al envío real, que no la conoce → `TypeError`): viaja en la columna propia `comm_email_jobs.correo_clave`. `tests/test_comm_control_correos.py` recorre TODOS los `.py` y falla si una llamada de envío no lleva una clave registrada (o no está en su lista de excepciones con razón).
+- **Orden de revisión (fijo):** interruptor general > llave del módulo > **interruptor de ese correo** > cola. Sin fila en `comm_correo_control` = **ENCENDIDO** (lo que se apaga por código, variable o llave sigue apagado). Si la tabla no se puede leer se usa el último valor conocido; si nunca se leyó, el correo sale (igual que las llaves).
+- **El interruptor SOLO apaga.** Un correo que hoy apaga una variable de entorno (`RETIROS_FIRMA_CORREO`, `MANT_RECORDATORIOS_EMAIL_ENABLED`, `PROSPECTOS_OFERTA_AUTO`…) se muestra «Apagado por configuración» y **no se enciende desde la pantalla**: sigue pasando por la variable y por el «sí» explícito de Daniel (REGLAS #22 y #23). Los correos de seguridad (`acceso_invitacion`, `acceso_cambio_clave`, `acceso_olvido_clave`) son `protegido`: no tienen interruptor y la puerta ignora cualquier fila que los apague.
+- **Un correo apagado deja rastro:** queda en `email_log` como `bloqueado` («Apagado en Control de correos: «Nombre»»), con su cuerpo y su clave en `correo_clave`; el Historial lo muestra. Cada cambio de interruptor queda en auditoría (`comm_correo_set`: quién, cuándo, motivo). «Reintentar» respeta el interruptor. «Enviarme una prueba» va **solo** al correo del usuario conectado, con «[PRUEBA]» en el asunto.
+- **`_tr_notificar_cliente` no se toca** (otras pruebas la comparan con `origin/main`): sus seis estados se resuelven por su evento `tracking_<estado>` con `comm_correos_registro.inferir()`.
+- Solo superadmin. Un técnico nunca ve esta pantalla ni montos (REGLAS #19 y #26). Pruebas: `tests/test_comm_control_correos.py`.
+
+---
+
 _Última actualización: 2026-10-20_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

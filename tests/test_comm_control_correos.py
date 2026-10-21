@@ -13,20 +13,31 @@ Qué se prueba aquí (todo con correo de MENTIRA — REGLA #22: jamás un correo
   4. La COLA: la clave viaja en su columna (nunca en kwargs_json), se vuelve a revisar al drenar, y sin la columna igual se encola.
   5. La MIGRACIÓN: barata (REGLA #18): la segunda corrida no ejecuta ningún DDL.
   6. REINTENTAR respeta el interruptor.
+  7. La PANTALLA (fase 2): los 5 endpoints reales (solo superadmin, 401/403 en JSON), apagar/encender con motivo, versión vista
+     (409 si otra persona ya lo cambió), auditoría, vista previa con datos de mentira, «Enviarme una prueba» solo a quien está
+     conectado, cifras de 30 días, el Historial («Apagado: «Nombre»» y filtro por clave) y las reglas de UI del proyecto
+     (sin popups nativos, tabla paginada, marcar todo, nombres completos, 44 px / 16 px en el celular).
 
 Sin BD ni Flask: las funciones de app.py se extraen con `ast` (importar app.py exige BD y credenciales) y se ejecutan en un ambiente de
 mentira. Correr con:  py -m unittest tests.test_comm_control_correos
 """
 import ast
+import datetime as _dtm
+import html as _html
 import json
 import os
 import re
+import shutil
+import subprocess
 import types
 import unittest
+import warnings
+from unittest import mock
 
 import comm_correos_registro as R
 import ot_correos_tecnicos as OTC
 from tests import _fuente_codigo as FC
+from tests import _mundo_correos as MC
 
 RAIZ = FC.RAIZ
 
@@ -907,6 +918,761 @@ class TestMigracion(unittest.TestCase):
         self._correr(sim)
         for sql in sim.ddl:
             self.assertTrue(amb["_ddl_ya_aplicado"](lambda q, p: {"x": 1}, sql), f"la guardia no entiende: {sql}")
+
+
+# ════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  7) LA PANTALLA «CONTROL DE CORREOS» (fase 2): los endpoints REALES de app.py en un mundo de mentira
+# ════════════════════════════════════════════════════════════════════════════════════════════════════════════
+K = "ret_cita_confirmada"         # un correo a clientes, automático, con plantilla en el editor y sin variables de entorno
+RUTAS_PANTALLA = (("comm_correos_listar", ()), ("comm_correos_cambiar", (K,)), ("comm_correos_vista_previa", (K,)),
+                  ("comm_correos_prueba", (K,)), ("comm_correos_cambios", (K,)))
+VARIABLES_DEL_REGISTRO = sorted({cond["variable"] for c in R.REGISTRO for cond in c["condiciones"]})
+APAGADOS_HOY = {"ret_comprobante_firma", "mant_recordatorio_visita", "mant_factura_pendiente", "prospecto_oferta_auto_1",
+                "prospecto_oferta_auto_2", "acceso_alerta_login"}
+
+
+class _PantallaBase(unittest.TestCase):
+    """Un mundo nuevo por prueba y SIN variables de entorno del registro (el estado inicial no depende de la máquina)."""
+
+    def setUp(self):
+        avisos = warnings.catch_warnings()                  # `datetime.utcnow()` es el estilo de todo el proyecto: su aviso de Python no es de aquí
+        avisos.__enter__()
+        self.addCleanup(avisos.__exit__, None, None, None)
+        warnings.simplefilter("ignore", DeprecationWarning)
+        patch = mock.patch.dict(os.environ)
+        patch.start()
+        self.addCleanup(patch.stop)
+        for v in VARIABLES_DEL_REGISTRO:
+            os.environ.pop(v, None)
+        self.m = MC.MundoPantalla()
+
+    # atajos
+    def listar(self):
+        st, d, resp = self.m.llamar("comm_correos_listar")
+        self.assertEqual(st, 200, d)
+        return d
+
+    def item(self, clave, datos=None):
+        return next(c for c in (datos or self.listar())["correos"] if c["clave"] == clave)
+
+    def put(self, clave, **cuerpo):
+        return self.m.llamar("comm_correos_cambiar", clave, json_body=cuerpo)
+
+    def version(self, clave):
+        return self.item(clave)["estado"]["version"]
+
+    def nada_cambio(self, m=None):
+        m = m or self.m
+        self.assertEqual(m.bd.ctrl, {})
+        self.assertEqual(m.bd.auditoria, [])
+        self.assertEqual(m.bd.log, [])
+        self.assertEqual(m.enviados_reales, [])
+
+
+class TestPantallaPermisos(_PantallaBase):
+    """Solo el superadministrador: ni un administrador ni ningún técnico ven ni tocan esto (REGLAS #19/#26)."""
+
+    def test_sin_sesion_responde_401_en_json_y_no_toca_la_base(self):
+        m = MC.MundoPantalla()
+        m.g.user = None
+        for nombre, args in RUTAS_PANTALLA:
+            st, d, _ = m.llamar(nombre, *args, json_body={"activo": False})
+            self.assertEqual((st, d["error_codigo"]), (401, "SIN_SESION"), nombre)
+        self.assertEqual(m.bd.sql, [])
+        self.nada_cambio(m)
+
+    def test_todo_rol_que_no_es_superadmin_recibe_403_sin_tocar_nada(self):
+        for rol in ("admin", "supervisor", "ejecutivo", "tecnico", "tecnico_ejecutivo", "tecnico_externo"):
+            m = MC.MundoPantalla(superadmin=False, rol=rol)
+            for nombre, args in RUTAS_PANTALLA:
+                st, d, _ = m.llamar(nombre, *args, json_body={"activo": False, "to": "otro@cliente.cl"})
+                self.assertEqual((st, d["error_codigo"]), (403, "SOLO_SUPERADMIN"), f"{rol} {nombre}")
+                self.assertEqual(set(d), {"ok", "error", "error_codigo"}, "la respuesta no debe traer datos")
+            self.assertEqual(m.bd.sql, [], f"{rol}: ni siquiera debe consultar la base")
+            self.nada_cambio(m)
+
+    def test_el_superadmin_entra_a_las_cinco_rutas(self):
+        for nombre, args in RUTAS_PANTALLA:
+            st, d, _ = self.m.llamar(nombre, *args, json_body={"activo": True})
+            self.assertNotIn(st, (401, 403), nombre)
+
+    def test_cada_ruta_de_correos_declara_el_decorador_de_superadmin_con_el_route_primero(self):
+        lineas = _leer("app.py").split("\n")
+        rutas = [i for i, l in enumerate(lineas) if re.match(r'@app\.route\("/api/comunicaciones/correos', l)]
+        self.assertEqual(len(rutas), 5, "se esperaban las 5 rutas de la pantalla")
+        metodos = []
+        for i in rutas:
+            decs, j = [lineas[i].strip()], i + 1
+            while not lineas[j].startswith("def "):
+                decs.append(lineas[j].strip())
+                j += 1
+            self.assertIn("@_require_superadmin_api", decs, lineas[i])
+            self.assertLess(0, decs.index("@_require_superadmin_api"), "el @app.route debe ir ANTES del decorador de permiso")
+            metodos.append(re.search(r'methods=\["(\w+)"\]', lineas[i]).group(1))
+        self.assertEqual(sorted(metodos), ["GET", "GET", "POST", "POST", "PUT"])
+
+    def test_el_decorador_responde_json_y_no_redirige(self):
+        codigo = FC.funcion_top("app.py", "_require_superadmin_api")
+        self.assertNotIn("redirect(", codigo)
+        self.assertIn("401", codigo)
+        self.assertIn("403", codigo)
+
+
+class TestPantallaListar(_PantallaBase):
+    def test_lista_todos_los_correos_de_ilus_y_ninguna_herramienta(self):
+        st, d, resp = self.m.llamar("comm_correos_listar")
+        self.assertEqual(st, 200)
+        self.assertTrue(d["ok"])
+        self.assertEqual([c["clave"] for c in d["correos"]], [c["clave"] for c in R.REGISTRO if c["tipo"] == "ilus"])
+        self.assertEqual(resp.headers["Cache-Control"], "no-store, max-age=0")
+        self.assertEqual({h["clave"] for h in d["herramientas"]}, set(R.HERRAMIENTAS))
+        self.assertNotIn("comunicaciones", [x["clave"] for x in d["modulos"]])
+        self.assertEqual(d["resumen"]["total"], len(d["correos"]))
+
+    def test_con_la_tabla_vacia_solo_no_salen_los_que_ya_estaban_apagados_por_configuracion_o_codigo(self):
+        d = self.listar()
+        r = d["resumen"]
+        self.assertEqual(r["apagados_usuario"], 0)
+        self.assertEqual({c["clave"] for c in d["correos"] if c["estado"]["efectivo"] in ("config", "codigo")}, APAGADOS_HOY)
+        self.assertEqual(r["apagados_config"], len(APAGADOS_HOY))
+        self.assertEqual(r["salen"] + r["apagados_config"], r["total"])
+        self.assertEqual(r["frenados_llave"], 0)
+        self.assertEqual(self.item("acceso_alerta_login", d)["estado"]["efectivo"], "codigo")
+        self.assertEqual(self.item("ret_comprobante_firma", d)["estado"]["efectivo"], "config")
+        self.assertEqual(d["avisos"], [])
+
+    def test_cada_tarjeta_trae_lo_que_el_front_necesita(self):
+        d = self.listar()
+        modulos, dests = {x["clave"] for x in d["modulos"]}, {x["clave"] for x in d["destinatarios"]}
+        for c in d["correos"]:
+            for k in ("clave", "nombre", "modulo_ui", "llave", "llave_label", "destinatario", "destinatario_label", "disparo", "modo",
+                      "modo_label", "avisa_a", "adjunta", "nota", "tipo", "protegido", "sensible", "tambien_whatsapp", "plantilla",
+                      "estado", "cifras"):
+                self.assertIn(k, c, c["clave"])
+            self.assertIn(c["modulo_ui"], modulos, c["clave"])
+            self.assertIn(c["destinatario"], dests, c["clave"])
+            self.assertTrue(c["nombre"].strip() and c["disparo"].strip() and c["llave_label"].strip(), c["clave"])
+            e = c["estado"]
+            self.assertEqual([p["n"] for p in e["pasos"]], [1, 2, 3, 4], c["clave"])
+            for k in ("efectivo", "frena_en", "condiciones", "puede_encender", "puede_apagar", "apagado_en_codigo", "switch_activo",
+                      "version", "motivo", "apagado_por", "apagado_en", "llave_motivo"):
+                self.assertIn(k, e, c["clave"])
+            self.assertTrue({"enviados", "frenados", "fallidos", "ultimo"} <= set(c["cifras"]), c["clave"])
+            if c["plantilla"]:
+                self.assertTrue({"modulo", "estado", "existe", "activo", "texto_apagada"} <= set(c["plantilla"]), c["clave"])
+
+    def test_las_ordenes_de_trabajo_son_su_propio_grupo_y_van_primero(self):
+        d = self.listar()
+        self.assertEqual(d["modulos"][0]["clave"], "ot")
+        ot = [c for c in d["correos"] if c["modulo_ui"] == "ot"]
+        self.assertTrue({"cliente", "tecnico"} <= {c["destinatario"] for c in ot})
+        tickets = [c for c in d["correos"] if c["modulo_ui"] == "tickets"]
+        self.assertTrue(tickets and not ({c["clave"] for c in tickets} & {c["clave"] for c in ot}))
+
+    def test_el_interruptor_de_una_persona_se_ve_con_quien_cuando_y_por_que(self):
+        self.m.bd.ctrl[K] = {"clave": K, "activo": 0, "motivo": "Pruebas hasta el viernes", "actualizado_por": "Daniel Aguilar",
+                             "actualizado_en": _dtm.datetime(2026, 10, 20, 18, 5, 30)}
+        d = self.listar()
+        e = self.item(K, d)["estado"]
+        self.assertEqual((e["efectivo"], e["frena_en"], e["switch_activo"]), ("correo", 3, False))
+        self.assertEqual([p["estado"] for p in e["pasos"]], ["ok", "ok", "apagado", "saltado"])
+        self.assertEqual((e["apagado_por"], e["motivo"]), ("Daniel Aguilar", "Pruebas hasta el viernes"))
+        self.assertEqual(e["apagado_en"], "20/10/2026 15:05")           # 18:05 UTC = 15:05 hora Chile (UTC-3 en octubre)
+        self.assertEqual(e["version"], "2026-10-20 18:05:30")
+        self.assertEqual(d["resumen"]["apagados_usuario"], 1)
+        self.assertEqual(d["resumen"]["salen"], d["resumen"]["total"] - len(APAGADOS_HOY) - 1)
+
+    def test_la_llave_cerrada_y_el_interruptor_general_se_ven_en_el_semaforo(self):
+        self.m.bd.llaves["retiros"] = {"email_bloqueado": 1, "motivo": "Revisión de Joaquín"}
+        d = self.listar()
+        for c in d["correos"]:
+            e = c["estado"]
+            if c["llave"] == "retiros" and c["clave"] not in APAGADOS_HOY and not c["protegido"]:
+                self.assertEqual((e["efectivo"], e["frena_en"]), ("llave", 2), c["clave"])
+                self.assertEqual([p["estado"] for p in e["pasos"]], ["ok", "apagado", "saltado", "saltado"])
+                self.assertEqual(e["llave_motivo"], "Revisión de Joaquín")
+        self.assertEqual(self.item("tr_en_ruta", d)["estado"]["efectivo"], "sale")
+        self.assertTrue(any("Retiros" in a["texto"] for a in d["avisos"]))
+        self.assertGreater(d["resumen"]["frenados_llave"], 0)
+        # el interruptor general manda sobre todo
+        self.m.bd.global_on = False
+        d2 = self.listar()
+        self.assertTrue(all(c["estado"]["efectivo"] == "general" for c in d2["correos"]))
+        self.assertTrue(any("general" in a["texto"] for a in d2["avisos"]))
+        self.assertTrue(any("contraseña" in a["texto"] for a in d2["avisos"]))      # los de acceso tampoco salen si el general está apagado
+
+    def test_las_cifras_cuentan_30_dias_y_no_cuentan_pruebas_ni_envios_sin_clave(self):
+        bd = self.m.bd
+        for dias in (1, 4, 10):
+            bd.poner_log(K, "enviado", hace_dias=dias)
+        bd.poner_log(K, "bloqueado", hace_dias=2)
+        bd.poner_log(K, "fallido", hace_dias=3)
+        bd.poner_log(K, "enviado", hace_dias=45)                                         # fuera de la ventana
+        bd.poner_log(K, "enviado", hace_dias=0.5, evento="prueba_" + K)                  # una prueba de la pantalla no cuenta
+        bd.poner_log(None, "enviado", hace_dias=1)                                       # sin clave: no es de ningún correo
+        d = self.listar()
+        c = self.item(K, d)["cifras"]
+        self.assertEqual((c["enviados"], c["frenados"], c["fallidos"]), (3, 1, 1))
+        ultimo = max(f["created_at"] for f in bd.log if f["correo_clave"] == K and f["estado"] == "enviado"
+                     and not f["evento"].startswith("prueba_") and f["created_at"] > _dtm.datetime.utcnow() - _dtm.timedelta(days=30))
+        self.assertEqual(c["ultimo"], MC.chile_fmt(ultimo))
+        r = d["resumen"]
+        self.assertEqual((r["enviados_30d"], r["frenados_30d"], r["fallidos_30d"]), (3, 1, 1))
+        primero = min(f["created_at"] for f in bd.log if f["correo_clave"] == K and f["created_at"] > _dtm.datetime.utcnow()
+                      - _dtm.timedelta(days=30) and not f["evento"].startswith("prueba_"))
+        self.assertEqual(d["contando_desde"], MC.chile_fmt(primero, "%d/%m/%Y"))          # el conteo empezó hace poco: la pantalla lo dice
+        self.assertTrue(d["cifras_disponibles"])
+
+    def test_si_hay_datos_de_los_30_dias_completos_no_dice_contando_desde(self):
+        self.m.bd.poner_log(K, "enviado", hace_dias=29.5)
+        d = self.listar()
+        self.assertIsNone(d["contando_desde"])
+        self.assertEqual(self.item(K, d)["cifras"]["enviados"], 1)
+
+    def test_sin_la_columna_correo_clave_no_hay_cifras_pero_la_pantalla_y_los_interruptores_funcionan(self):
+        self.m.bd.columna_log = False
+        d = self.listar()
+        self.assertFalse(d["cifras_disponibles"])
+        self.assertEqual(d["resumen"]["enviados_30d"], 0)
+        st, r, _ = self.put(K, activo=False, motivo="x", estado_visto="")
+        self.assertEqual(st, 200, r)
+
+    def test_si_la_base_no_se_puede_leer_la_pantalla_lo_dice_y_no_inventa_que_todo_esta_encendido(self):
+        self.m.bd.fallar_lectura = True
+        st, d, _ = self.m.llamar("comm_correos_listar")
+        self.assertEqual(st, 500)
+        self.assertFalse(d["ok"])
+        self.assertNotIn("la base no responde", d["error"])             # REGLA #4: ningún detalle interno al navegador
+        self.assertNotIn("RuntimeError", d["error"])
+
+    def test_la_puerta_de_envio_sigue_abierta_aunque_la_base_caiga_y_la_pantalla_sea_estricta(self):
+        self.m.bd.fallar_lectura = True
+        self.assertTrue(self.m.enviar(K))
+        self.assertEqual(len(self.m.enviados_reales), 1)
+
+    def test_el_listado_no_cambia_ningun_dato(self):
+        self.listar()
+        self.assertEqual(self.m.bd.ctrl, {})
+        self.assertEqual(self.m.bd.auditoria, [])
+        self.assertTrue(all(s.lstrip().upper().startswith("SELECT") for s, _p in self.m.bd.sql), "el listado solo puede leer")
+
+
+class TestPantallaCambiar(_PantallaBase):
+    def test_una_clave_que_no_existe_o_es_una_herramienta_es_404(self):
+        for clave in ("no_existe_este", "comm_prueba_manual", "comm_reenviar_historial", ""):
+            st, d, _ = self.put(clave or "  ", activo=False)
+            self.assertEqual((st, d["error_codigo"]), (404, "NO_EXISTE"), clave)
+        self.nada_cambio()
+
+    def test_la_clave_se_normaliza(self):
+        st, d, _ = self.put("  RET_CITA_CONFIRMADA ", activo=False, estado_visto="")
+        self.assertEqual(st, 200, d)
+        self.assertIn(K, self.m.bd.ctrl)
+
+    def test_hay_que_decir_si_se_enciende_o_se_apaga(self):
+        st, d, _ = self.put(K)
+        self.assertEqual((st, d["error_codigo"]), (400, "FALTA_ACTIVO"))
+        self.nada_cambio()
+
+    def test_los_correos_de_seguridad_no_tienen_interruptor(self):
+        for clave in ("acceso_olvido_clave", "acceso_invitacion", "acceso_cambio_clave"):
+            for activo in (False, True):
+                st, d, _ = self.put(clave, activo=activo)
+                self.assertEqual((st, d["error_codigo"]), (409, "PROTEGIDO"), f"{clave} {activo}")
+        self.nada_cambio()
+
+    def test_la_pantalla_solo_apaga_un_correo_que_la_configuracion_o_el_codigo_mantienen_apagado(self):
+        st, d, _ = self.put("ret_comprobante_firma", activo=True)
+        self.assertEqual((st, d["error_codigo"]), (409, "CON_CANDADO"))
+        st, d, _ = self.put("acceso_alerta_login", activo=True)                       # apagado en el código
+        self.assertEqual((st, d["error_codigo"]), (409, "CON_CANDADO"))
+        self.nada_cambio()
+        # apagarlo sí se puede (queda apagado aunque alguien después encienda la variable)
+        st, d, _ = self.put("ret_comprobante_firma", activo=False, motivo="Por si acaso", estado_visto="")
+        self.assertEqual(st, 200, d)
+        ver = d["correo"]["estado"]["version"]
+        # y encenderlo sigue sin poder mientras la variable esté apagada
+        st, d, _ = self.put("ret_comprobante_firma", activo=True, estado_visto=ver)
+        self.assertEqual((st, d["error_codigo"]), (409, "CON_CANDADO"))
+        self.assertEqual(self.m.bd.ctrl["ret_comprobante_firma"]["activo"], 0)
+        # con la variable encendida (decisión de Daniel, REGLA #23) la pantalla sí puede encenderlo
+        with mock.patch.dict(os.environ, {"RETIROS_FIRMA_CORREO": "1"}):
+            st, d, _ = self.put("ret_comprobante_firma", activo=True, estado_visto=ver)
+        self.assertEqual(st, 200, d)
+        self.assertEqual(self.m.bd.ctrl["ret_comprobante_firma"]["activo"], 1)
+
+    def test_apagar_guarda_la_fila_el_motivo_y_la_auditoria(self):
+        st, d, _ = self.put(K, activo=False, motivo="  Pruebas hasta el viernes  ", estado_visto="")
+        self.assertEqual(st, 200, d)
+        self.assertTrue(d["ok"])
+        fila = self.m.bd.ctrl[K]
+        self.assertEqual((fila["activo"], fila["motivo"], fila["actualizado_por"]), (0, "Pruebas hasta el viernes", "Daniel Aguilar"))
+        a, = self.m.bd.auditoria
+        self.assertEqual((a["action"], a["target_type"], a["target_id"]), ("comm_correo_set", "comm_correo_control", K))
+        self.assertEqual(json.loads(a["details"]), {"antes": True, "despues": False, "motivo": "Pruebas hasta el viernes",
+                                                    "nombre": R.nombre_de(K), "por": "Daniel Aguilar"})
+        e = d["correo"]["estado"]
+        self.assertEqual((e["efectivo"], e["switch_activo"], e["apagado_por"]), ("correo", False, "Daniel Aguilar"))
+        self.assertEqual(e["version"], fila["actualizado_en"].strftime("%Y-%m-%d %H:%M:%S"))
+        self.assertRegex(e["apagado_en"], r"^\d{2}/\d{2}/\d{4} \d{2}:\d{2}$")             # día/mes/año, hora Chile (REGLA #6)
+
+    def test_encender_limpia_el_motivo_y_deja_constancia(self):
+        st, d, _ = self.put(K, activo=False, motivo="Pruebas", estado_visto="")
+        st, d, _ = self.put(K, activo=True, motivo="este motivo se ignora al encender", estado_visto=d["correo"]["estado"]["version"])
+        self.assertEqual(st, 200, d)
+        fila = self.m.bd.ctrl[K]
+        self.assertEqual((fila["activo"], fila["motivo"]), (1, None))
+        self.assertEqual(d["correo"]["estado"]["efectivo"], "sale")
+        self.assertEqual(len(self.m.bd.auditoria), 2)
+        det = json.loads(self.m.bd.auditoria[1]["details"])
+        self.assertEqual((det["antes"], det["despues"]), (False, True))
+
+    def test_el_motivo_se_recorta_a_300_caracteres(self):
+        st, d, _ = self.put(K, activo=False, motivo="x" * 500, estado_visto="")
+        self.assertEqual(len(self.m.bd.ctrl[K]["motivo"]), 300)
+
+    def test_si_la_pantalla_vio_una_version_vieja_es_409_y_no_cambia_nada(self):
+        self.put(K, activo=False, motivo="primero", estado_visto="")
+        self.m.bd.ctrl[K]["actualizado_por"] = "María Soto"
+        antes = dict(self.m.bd.ctrl[K])
+        st, d, _ = self.put(K, activo=True, estado_visto="")                  # esta pantalla leyó cuando aún no había fila
+        self.assertEqual((st, d["error_codigo"]), (409, "CAMBIO_AJENO"))
+        self.assertIn("María Soto ya cambió este correo", d["error"])
+        self.assertRegex(d["error"], r"el \d{2}/\d{2}/\d{4} \d{2}:\d{2}")
+        self.assertEqual(self.m.bd.ctrl[K], antes)
+        self.assertEqual(len(self.m.bd.auditoria), 1)
+
+    def test_si_alguien_cambia_la_fila_entre_la_lectura_y_la_escritura_no_se_pisa(self):
+        self.put(K, activo=False, motivo="primero", estado_visto="")
+        leida = dict(self.m.bd.ctrl[K])                                         # lo que este request alcanzó a leer
+        self.m.bd.tick()
+        self.m.bd.ctrl[K].update(motivo="de otra persona", actualizado_en=self.m.bd.ahora)      # alguien lo cambió justo después
+        self.m.amb["_correo_ctrl_estado"] = lambda forzar=False, estricto=False: {K: leida}
+        ver = leida["actualizado_en"].strftime("%Y-%m-%d %H:%M:%S")
+        st, d, _ = self.put(K, activo=True, estado_visto=ver)
+        self.assertEqual((st, d["error_codigo"]), (409, "CAMBIO_AJENO"))
+        self.assertIn("justo ahora", d["error"])
+        self.assertEqual(self.m.bd.ctrl[K]["motivo"], "de otra persona")
+        self.assertEqual(self.m.amb["_CORREO_CTRL_CACHE"]["ts"], 0.0, "debe invalidar la caché para que se relea")
+        self.assertEqual(len(self.m.bd.auditoria), 1)
+
+    def test_sin_estado_visto_igual_funciona(self):
+        st, d, _ = self.put(K, activo=False)
+        self.assertEqual(st, 200, d)
+
+    def test_si_la_base_falla_al_guardar_responde_500_amable_y_no_deja_rastro(self):
+        def _boom():
+            raise RuntimeError("secreto interno: password=abc123")
+        self.m.amb["get_db"] = _boom
+        st, d, _ = self.put(K, activo=False)
+        self.assertEqual(st, 500)
+        self.assertNotIn("abc123", json.dumps(d))
+        self.assertNotIn("password", json.dumps(d))
+        self.nada_cambio()
+
+    def test_guardado_pero_sin_poder_releer_responde_ok_y_pide_recargar(self):
+        original = self.m.amb["_correo_ctrl_estado"]
+
+        def raro(forzar=False, estricto=False):
+            if estricto:
+                raise RuntimeError("se cayó justo ahora")
+            return original(forzar=forzar, estricto=estricto)
+        self.m.amb["_correo_ctrl_estado"] = raro
+        st, d, _ = self.put(K, activo=False, estado_visto="")
+        self.assertEqual(st, 200)
+        self.assertTrue(d["ok"] and d["recargar"] and d["correo"] is None)
+        self.assertEqual(self.m.bd.ctrl[K]["activo"], 0)
+        self.assertEqual(len(self.m.bd.auditoria), 1)
+
+    def test_apagar_y_encender_cambian_lo_que_decide_la_puerta_de_envio_al_instante(self):
+        self.assertTrue(self.m.enviar(K))                                           # sin fila: sale como siempre
+        self.m.enviados_reales.clear()
+        st, d, _ = self.put(K, activo=False, motivo="x", estado_visto="")
+        self.assertFalse(self.m.enviar(K))
+        self.assertEqual(self.m.enviados_reales, [])
+        ultimo = self.m.bd.log[-1]
+        self.assertEqual((ultimo["estado"], ultimo["correo_clave"]), ("bloqueado", K))
+        self.assertIn("Apagado en Control de correos", ultimo["error_msg"])
+        self.assertEqual(ultimo["metadata"]["bloqueo"], "correo")
+        self.assertTrue(self.m.enviar("ret_en_preparacion", evento="x"))            # los demás siguen saliendo
+        st, d, _ = self.put(K, activo=True, estado_visto=d["correo"]["estado"]["version"])
+        self.assertTrue(self.m.enviar(K))
+        self.assertEqual(self.m.bd.log[-1]["estado"], "enviado")
+
+
+class TestPantallaPrueba(_PantallaBase):
+    def test_la_prueba_va_solo_al_correo_de_quien_esta_conectado_y_lleva_PRUEBA_en_el_asunto(self):
+        self.m.sembrar_plantillas_de_ejemplo()
+        st, d, _ = self.m.llamar("comm_correos_prueba", K, json_body={"to": "otra.persona@cliente.cl", "destinatario": "x@y.cl",
+                                                                       "email": "z@w.cl", "cc": "q@r.cl"})
+        self.assertEqual(st, 200, d)
+        self.assertEqual(d, {"ok": True, "enviado_a": "daniel.aguilar@sphs.cl"})
+        env, = self.m.enviados_reales
+        self.assertEqual(env["to"], "daniel.aguilar@sphs.cl")
+        self.assertTrue(env["asunto"].startswith("[PRUEBA] ILUS · "), env["asunto"])
+        self.assertNotIn("cc", env)
+        self.assertNotIn("{{", env["html"])
+        log, = self.m.bd.log
+        self.assertEqual((log["evento"], log["estado"], log["correo_clave"], log["destinatario"], log["actor"]),
+                         ("prueba_" + K, "enviado", K, "daniel.aguilar@sphs.cl", "Daniel Aguilar"))
+        a, = self.m.bd.auditoria
+        self.assertEqual(a["action"], "comm_correo_prueba")
+        self.assertEqual(json.loads(a["details"]), {"destino": "daniel.aguilar@sphs.cl", "enviado": True})
+
+    def test_la_prueba_no_la_frena_el_interruptor_de_ese_correo_ni_su_llave(self):
+        self.put(K, activo=False, motivo="x", estado_visto="")
+        self.m.bd.llaves["retiros"] = {"email_bloqueado": 1}
+        self.m.bd.log.clear()
+        st, d, _ = self.m.llamar("comm_correos_prueba", K)
+        self.assertEqual(st, 200, d)
+        self.assertEqual(len(self.m.enviados_reales), 1)
+
+    def test_la_prueba_respeta_el_interruptor_general(self):
+        self.m.bd.global_on = False
+        st, d, _ = self.m.llamar("comm_correos_prueba", K)
+        self.assertEqual((st, d["error_codigo"]), (409, "CORREO_APAGADO_GENERAL"))
+        self.nada_cambio()
+
+    def test_sin_un_correo_valido_en_la_sesion_no_hay_a_donde_enviar(self):
+        for usuario in ("daniel", "", "a" * 200 + "@x.cl"):
+            self.m.g.user["username"] = usuario
+            st, d, _ = self.m.llamar("comm_correos_prueba", K)
+            self.assertEqual((st, d["error_codigo"]), (400, "SIN_CORREO"), usuario)
+        self.nada_cambio()
+
+    def test_si_el_proveedor_rechaza_queda_fallido_en_el_historial_y_no_se_filtra_el_detalle(self):
+        def _boom(*a, **k):
+            raise RuntimeError("smtp password=SECRETO")
+        self.m.amb["_send_ilus_email_real"] = _boom
+        st, d, _ = self.m.llamar("comm_correos_prueba", K)
+        self.assertEqual((st, d["error_codigo"]), (502, "ENVIO_FALLIDO"))
+        self.assertNotIn("SECRETO", json.dumps(d))                                   # REGLA #4
+        log, = self.m.bd.log
+        self.assertEqual((log["estado"], log["evento"]), ("fallido", "prueba_" + K))
+        self.assertIn("SECRETO", log["error_msg"])                                   # el detalle queda en el Historial, no en el navegador
+        self.m.amb["_send_ilus_email_real"] = lambda *a, **k: False
+        st, d, _ = self.m.llamar("comm_correos_prueba", K)
+        self.assertEqual(st, 502)
+
+    def test_la_prueba_no_cuenta_en_las_cifras(self):
+        self.m.llamar("comm_correos_prueba", K)
+        c = self.item(K)["cifras"]
+        self.assertEqual((c["enviados"], c["frenados"], c["fallidos"], c["ultimo"]), (0, 0, 0, ""))
+
+    def test_un_correo_sin_plantilla_en_el_editor_manda_un_texto_de_muestra(self):
+        clave = next(c["clave"] for c in R.listar("ilus") if not c["plantilla"])
+        st, d, _ = self.m.llamar("comm_correos_prueba", clave)
+        self.assertEqual(st, 200, d)
+        html = self.m.enviados_reales[0]["html"]
+        self.assertIn("prueba", html.lower())
+        self.assertIn(_html.escape(R.nombre_de(clave)), html)
+
+    def test_con_el_modo_prueba_de_la_empresa_la_redireccion_la_hace_el_envio_real(self):
+        """La pantalla no decide destinatarios: llama a `_send_ilus_email_real`, que aplica ILUS_COMM_TEST_TO (REGLA #22)."""
+        codigo = FC.funcion_top("app.py", "comm_correos_prueba")
+        self.assertIn("_send_ilus_email_real(destino", codigo)
+        self.assertNotRegex(codigo, r"\brequest\b", "el destinatario jamás sale de la petición")
+
+
+class TestPantallaVistaPrevia(_PantallaBase):
+    def test_la_vista_previa_no_envia_nada_ni_deja_variables_sin_resolver(self):
+        self.m.sembrar_plantillas_de_ejemplo()
+        con_plantilla = [c for c in R.listar("ilus") if c["plantilla"]]
+        self.assertGreater(len(con_plantilla), 30)
+        for c in con_plantilla:
+            st, d, _ = self.m.llamar("comm_correos_vista_previa", c["clave"])
+            self.assertEqual(st, 200, c["clave"])
+            self.assertFalse(d["sin_plantilla"], c["clave"])
+            self.assertNotIn("{{", d["html"], c["clave"])
+            self.assertNotIn("{{", d["asunto"], c["clave"])
+            self.assertTrue(d["asunto"].startswith("ILUS · "), d["asunto"])
+        self.assertEqual(self.m.enviados_reales, [])
+        self.assertEqual(self.m.bd.log, [])
+        self.assertEqual(self.m.bd.auditoria, [])
+
+    def test_los_datos_son_de_mentira_y_un_token_desconocido_se_ve_como_demo(self):
+        self.m.sembrar_plantillas_de_ejemplo()
+        st, d, _ = self.m.llamar("comm_correos_vista_previa", K)
+        self.assertIn("Juan Daniel Aguilar", d["html"])            # nombre_cliente de mentira
+        self.assertIn("RET-DEMO-7788", d["html"])
+        self.assertIn("[no_existe demo]", d["html"])
+
+    def test_solo_lee_plantillas_y_nunca_toca_retiros_ordenes_ni_clientes_reales(self):
+        self.m.sembrar_plantillas_de_ejemplo()
+        for c in R.listar("ilus"):
+            self.m.llamar("comm_correos_vista_previa", c["clave"])
+        tablas = set()
+        for sql, _p in self.m.bd.sql:
+            tablas |= set(re.findall(r"\bFROM\s+([A-Za-z_\.]+)", sql))
+        self.assertLessEqual(tablas, {"comm_templates", "email_log", "information_schema.COLUMNS"}, tablas)
+
+    def test_sin_plantilla_en_el_editor_lo_dice_y_apunta_al_ultimo_envio(self):
+        clave = next(c["clave"] for c in R.listar("ilus") if not c["plantilla"])
+        st, d, _ = self.m.llamar("comm_correos_vista_previa", clave)
+        self.assertTrue(d["sin_plantilla"])
+        self.assertIsNone(d["ultimo_log_id"])
+        self.assertIn("Historial", d["mensaje"])
+        primero = self.m.bd.poner_log(clave, "enviado")
+        self.m.bd.poner_log(clave, "enviado", evento="prueba_" + clave)               # las pruebas no cuentan como «último enviado»
+        st, d, _ = self.m.llamar("comm_correos_vista_previa", clave)
+        self.assertEqual(d["ultimo_log_id"], primero)
+
+    def test_con_la_plantilla_sin_guardar_en_el_editor_tambien_se_trata_como_sin_plantilla(self):
+        st, d, _ = self.m.llamar("comm_correos_vista_previa", K)
+        self.assertTrue(d["sin_plantilla"])
+        self.assertEqual(self.item(K)["plantilla"]["existe"], False)
+
+    def test_si_la_plantilla_esta_apagada_en_el_editor_avisa_lo_que_pasa_con_ese_correo(self):
+        self.m.sembrar_plantillas_de_ejemplo()
+        c = R.por_clave("ot_tec_asignada")
+        self.assertEqual(c["plantilla_apagada"], "no_sale")
+        self.m.poner_plantilla(*c["plantilla"], "Asunto", "<p>Cuerpo {{ot}}</p>", activo=0)
+        st, d, _ = self.m.llamar("comm_correos_vista_previa", "ot_tec_asignada")
+        self.assertFalse(d["plantilla_activa"])
+        self.assertEqual(d["aviso_plantilla_apagada"], R.PLANTILLA_APAGADA["no_sale"])
+        p = self.item("ot_tec_asignada")["plantilla"]
+        self.assertEqual((p["existe"], p["activo"], p["texto_apagada"]), (True, False, R.PLANTILLA_APAGADA["no_sale"]))
+
+    def test_vista_previa_de_una_clave_que_no_existe_es_404(self):
+        st, d, _ = self.m.llamar("comm_correos_vista_previa", "no_existe_este")
+        self.assertEqual((st, d["error_codigo"]), (404, "NO_EXISTE"))
+
+
+class TestPantallaCambios(_PantallaBase):
+    def test_lista_los_ultimos_5_cambios_del_mas_nuevo_al_mas_viejo_en_hora_chile(self):
+        ver = ""
+        for i in range(7):
+            st, d, _ = self.put(K, activo=bool(i % 2), motivo=f"m{i}" if i % 2 == 0 else "", estado_visto=ver)
+            self.assertEqual(st, 200, d)
+            ver = d["correo"]["estado"]["version"]
+        st, d, _ = self.m.llamar("comm_correos_cambios", K)
+        self.assertEqual(st, 200)
+        cambios = d["cambios"]
+        self.assertEqual(len(cambios), 5)
+        self.assertEqual([c["despues"] for c in cambios], [False, True, False, True, False])
+        self.assertEqual([c["antes"] for c in cambios], [True, False, True, False, True])
+        self.assertEqual(cambios[0]["motivo"], "m6")
+        for c in cambios:
+            self.assertRegex(c["fecha"], r"^\d{2}/\d{2}/\d{4} \d{2}:\d{2}$")
+            self.assertEqual(c["usuario"], "Daniel Aguilar")                  # el nombre, no el correo de la sesión
+
+    def test_un_correo_que_nadie_toco_no_tiene_cambios_y_una_clave_ajena_es_404(self):
+        st, d, _ = self.m.llamar("comm_correos_cambios", K)
+        self.assertEqual((st, d["cambios"]), (200, []))
+        st, d, _ = self.m.llamar("comm_correos_cambios", "no_existe_este")
+        self.assertEqual(st, 404)
+
+    def test_solo_muestra_los_cambios_de_ese_correo(self):
+        self.put(K, activo=False, estado_visto="")
+        self.put("ret_en_preparacion", activo=False, estado_visto="")
+        st, d, _ = self.m.llamar("comm_correos_cambios", K)
+        self.assertEqual(len(d["cambios"]), 1)
+
+
+# ────────────────────────────── Historial: la causa «Apagado: «Nombre»» y el filtro por clave ──────────────────────────────
+class TestHistorialControlDeCorreos(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        amb = {"re": re, "json": json, "datetime": _dtm.datetime, "_ccr": R, "chile_fmt_filter": MC.chile_fmt,
+               "_email_log_norm_ref": lambda ref, asunto: (None, None, None), "_EMAIL_LOG_MODULOS_PRIVADOS": (),
+               "PICKUP_REQUESTS_TABLE": "pickup_requests", "mysql_fetchall": lambda *a, **k: []}
+        _extraer(amb, ("_comm_hist_filtros", "_comm_hist_like", "_comm_hist_ramas", "_comm_hist_llave", "_comm_hist_serializar"),
+                 ("_COMM_HIST_ESTADOS", "_COMM_HIST_PER_PAGE", "_COMM_HIST_MODULO_LABELS", "_COMM_HIST_PROVEEDOR_LABELS",
+                  "_COMM_HIST_MARCA_DUP"))
+        cls.amb = amb
+
+    def fila(self, **kw):
+        base = {"src": "email_log", "id": 5, "canal": "email", "destinatario": "cliente@ejemplo.cl", "asunto": "Asunto", "evento": "x",
+                "estado": "bloqueado", "detalle": "", "enviado_por": "", "metadata": None, "created_at": _dtm.datetime(2026, 10, 20, 18, 0),
+                "modulo": "retiros", "ref_tipo": None, "ref_id": None, "ref_codigo": None, "proveedor": None, "job_id": None,
+                "cuerpo_redactado": None, "cuerpo_fila": 1, "cuerpo_html": 1, "adjuntos_json": None, "correo_clave": None}
+        base.update(kw)
+        return base
+
+    def test_un_correo_apagado_se_explica_con_su_nombre(self):
+        f = self.amb["_comm_hist_llave"]
+        detalle = f"Apagado en Control de correos: «{R.nombre_de(K)}» ({K})"
+        self.assertEqual(f(detalle, "retiros", {"bloqueo": "correo", "correo": K}), "Apagado: «" + R.nombre_de(K) + "»")
+        self.assertEqual(f("", "retiros", {"bloqueo": "correo", "correo": K}), "Apagado: «" + K + "»")
+
+    def test_las_otras_causas_se_explican_como_siempre(self):
+        f = self.amb["_comm_hist_llave"]
+        self.assertEqual(f("Email deshabilitado por superadmin (kill switch global ON)", "retiros", {}),
+                         "Interruptor general de email (todos los módulos)")
+        self.assertEqual(f('Llave de paso cerrada para módulo "retiros" — email no enviado', "retiros", {"killswitch": True}),
+                         "Llave de paso de Retiros")
+
+    def test_la_fila_bloqueada_por_un_correo_trae_su_nombre_su_clave_y_la_hora_chile(self):
+        meta = json.dumps({"modulo": "retiros", "bloqueo": "correo", "correo": K})
+        out, = self.amb["_comm_hist_serializar"]([self.fila(
+            detalle=f"Apagado en Control de correos: «{R.nombre_de(K)}» ({K})", metadata=meta, correo_clave=K)])
+        self.assertEqual(out["estado"], "bloqueado")
+        self.assertEqual(out["motivo"], "Apagado: «" + R.nombre_de(K) + "»")
+        self.assertEqual(out["llave"], out["motivo"])
+        self.assertEqual((out["correo_clave"], out["correo_nombre"], out["bloqueo"]), (K, R.nombre_de(K), "correo"))
+        self.assertEqual((out["fecha"], out["hora"]), ("20/10/2026", "15:00:00"))
+
+    def test_una_fila_de_antes_de_la_columna_usa_la_clave_que_quedo_en_la_metadata(self):
+        meta = json.dumps({"modulo": "retiros", "correo": K})
+        out, = self.amb["_comm_hist_serializar"]([self.fila(estado="enviado", metadata=meta, correo_clave=None)])
+        self.assertEqual(out["correo_clave"], K)
+        self.assertIsNone(out["bloqueo"])
+
+    def test_una_clave_que_ya_no_esta_en_el_registro_no_rompe_el_historial(self):
+        out, = self.amb["_comm_hist_serializar"]([self.fila(estado="enviado", correo_clave="correo_que_ya_no_existe")])
+        self.assertEqual(out["correo_clave"], "correo_que_ya_no_existe")
+        self.assertIsNone(out["correo_nombre"])
+
+    def test_el_filtro_por_clave_solo_acepta_claves_con_forma_de_clave(self):
+        filtros = self.amb["_comm_hist_filtros"]
+        self.assertEqual(filtros({"correo": "  RET_CITA_CONFIRMADA "})["correo"], K)
+        for malo in ("", "a", "x'; DROP TABLE email_log;--", "ret cita", "ñandú", "r" * 61, "9abc", "ret-cita", "ret.cita"):
+            self.assertEqual(filtros({"correo": malo})["correo"], "", malo)
+
+    def test_el_filtro_por_clave_va_como_parametro_y_deja_solo_la_fuente_que_tiene_esa_columna(self):
+        f = self.amb["_comm_hist_filtros"]({"correo": K})
+        f["desde_utc"] = f["hasta_utc"] = None
+        ramas = self.amb["_comm_hist_ramas"](f)
+        self.assertEqual(set(ramas), {"email_log"})
+        w, p = ramas["email_log"]
+        self.assertIn("e.correo_clave=%s", w)
+        self.assertEqual(p, [K])
+        self.assertNotIn(K, " ".join(w))
+        # sin el filtro siguen las tres fuentes de siempre
+        g = self.amb["_comm_hist_filtros"]({})
+        g["desde_utc"] = g["hasta_utc"] = None
+        self.assertEqual(set(self.amb["_comm_hist_ramas"](g)), {"email_log", "comm_log", "cola"})
+
+
+# ────────────────────────────── La pantalla en el navegador: HTML, JS, CSS y reglas del proyecto ──────────────────────────────
+class TestInterfazEstatica(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.js = _leer("static/comunicaciones_correos.js")
+        cls.css = _leer("static/comunicaciones_correos.css")
+        cls.html = _leer("templates/comunicaciones/index.html")
+        cls.hist_js = _leer("static/comunicaciones_index.js")
+
+    def test_sin_popups_nativos_del_navegador(self):                                  # REGLA #1
+        for nombre, texto in (("comunicaciones_correos.js", self.js),):
+            self.assertNotRegex(texto, r"(?<![\w.$])(alert|confirm|prompt)\s*\(", nombre)
+        self.assertIn("ilusPrompt(", self.js)
+        self.assertIn("ilusConfirm(", self.js)
+
+    def test_el_javascript_es_valido(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node no está instalado")
+        for rel in ("static/comunicaciones_correos.js", "static/comunicaciones_index.js"):
+            r = subprocess.run([node, "--check", os.path.join(RAIZ, rel.replace("/", os.sep))], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, rel + "\n" + r.stderr)
+
+    def test_la_plantilla_es_jinja_valido_y_conserva_las_pestanas_de_antes(self):       # REGLA #4.2: no se quitó nada
+        import jinja2
+        jinja2.Environment().parse(self.html)
+        for destino in ("#tabEmail", "#tabPlantillas", "#tabLog", "#tabCorreos"):
+            self.assertIn(f'data-bs-target="{destino}"', self.html)
+            self.assertIn(f'id="{destino[1:]}"', self.html)
+
+    def test_todo_id_que_usa_el_js_existe_en_la_plantilla(self):
+        ids = set(re.findall(r"\$\('([A-Za-z][\w-]*)'\)", self.js)) | set(re.findall(r"getElementById\('([A-Za-z][\w-]*)'\)", self.js))
+        self.assertGreater(len(ids), 20)
+        for i in sorted(ids):
+            self.assertTrue(re.search(r'id="%s"' % re.escape(i), self.html), f"el JS usa #{i} y la plantilla no lo tiene")
+        for i in re.findall(r"\$\('(hist[A-Za-z]*Correo)'\)|getElementById\('(histFiltroCorreo)'\)", self.hist_js):
+            for nombre in i:
+                if nombre:
+                    self.assertIn(f'id="{nombre}"', self.html)
+
+    def test_toda_accion_de_la_plantilla_y_del_js_tiene_su_caso(self):
+        casos = set(re.findall(r"case '([\w-]+)':", self.js[self.js.index("switch (acc)"):]))
+        usadas = set(re.findall(r'data-ctc="([\w-]+)"', self.html)) | set(re.findall(r'data-ctc="([\w-]+)"', self.js))
+        usadas -= {"sel"}           # las casillas se atienden en el evento «change», no en el «click»
+        self.assertGreater(len(usadas), 8)
+        self.assertFalse(usadas - casos, f"acciones sin caso en el JS: {sorted(usadas - casos)}")
+
+    def test_las_rutas_que_llama_el_js_existen_en_app_py(self):
+        app = _leer("app.py")
+        for ruta, metodo in (('/api/comunicaciones/correos"', "GET"), ('/api/comunicaciones/correos/<clave>"', "PUT"),
+                             ('/api/comunicaciones/correos/<clave>/vista-previa"', "POST"),
+                             ('/api/comunicaciones/correos/<clave>/prueba"', "POST"),
+                             ('/api/comunicaciones/correos/<clave>/cambios"', "GET")):
+            self.assertIn(f'@app.route("{ruta}, methods=["{metodo}"])', app)
+        for fragmento in ("'/api/comunicaciones/correos'", "'/api/comunicaciones/correos/' + encodeURIComponent(c.clave)",
+                          "'/vista-previa'", "'/prueba'", "'/cambios'"):
+            self.assertIn(fragmento, self.js)
+
+    def test_el_pie_de_tabla_es_el_de_etiquetas_y_el_tamano_de_pagina_lo_elige_el_usuario(self):     # REGLA #4.3
+        for texto in ("Mostrando", 'id="ctcPerPage"', 'value="25"', 'value="50"', 'value="100"', "por página", "Anterior", "Siguiente",
+                      "Página", 'id="ctcPrev"', 'id="ctcNext"'):
+            self.assertIn(texto, self.html)
+        self.assertIn("commCorreosPerPage", self.js)
+        self.assertIn("cargar({ fresco: true });", self.js[self.js.index("function limpiarFiltros"):][:400])     # limpiar un filtro recarga
+
+    def test_un_solo_boton_marca_y_desmarca_todo(self):                                # REGLA #14
+        self.assertIn('id="ctcBtnTodos"', self.html)
+        cuerpo = self.js[self.js.index("function alternarTodos"):][:500]
+        self.assertIn("some(", cuerpo)
+        self.assertIn("setSel(", cuerpo)
+        self.assertIn("Deseleccionar todo", self.js)
+
+    def test_los_nombres_no_se_cortan_y_el_celular_tiene_botones_de_44px_y_inputs_de_16px(self):    # REGLAS #15 y #3
+        self.assertNotRegex(self.css, r"line-clamp|text-overflow\s*:\s*ellipsis")
+        self.assertRegex(self.css, r"\.ctc-nombre\{[^}]*overflow-wrap:anywhere")
+        for regla in (".ctc-btn,.ctc-switch{min-height:44px}", ".ctc-btn.chico{min-height:44px}",
+                      "#tabCorreos .form-control,#tabCorreos .form-select{font-size:16px}"):
+            i = self.css.find(regla)
+            self.assertGreater(i, 0, regla)
+            self.assertTrue(self.css[self.css.rfind("@media", 0, i):].startswith("@media (max-width:767.98px)"),
+                            f"{regla} debe vivir dentro del bloque del celular")
+
+    def test_lo_que_escribe_una_persona_siempre_se_escapa_antes_de_pintarse(self):
+        # Funciones que arman el texto en una variable y lo pintan SOLO como esc(variable): se verifica que así sea.
+        seguro_por_funcion = {"lineaEstado": "esc(t)"}
+        for peligroso in ("e.motivo", "x.motivo", "e.apagado_por", "x.usuario", "c.nombre", "c.disparo", "c.avisa_a", "c.nota", "d.mensaje",
+                          "d.asunto", "x.fecha"):
+            for m in re.finditer(r"[+]\s*" + re.escape(peligroso) + r"\b", self.js):
+                # Vale si el texto va dentro de esc(…) o de un ilusPrompt/ilusConfirm/ilusAlert (ilus_ui.js escapa título, mensaje y sub)
+                seguro = False
+                for llamada in ("esc(", "ilusPrompt(", "ilusConfirm(", "ilusAlert("):
+                    ini = self.js.rfind(llamada, 0, m.start())
+                    previo = self.js[ini:m.start()] if ini >= 0 else ""
+                    seguro = seguro or (bool(previo) and previo.count("(") > previo.count(")"))     # sigue abierto su paréntesis
+                if not seguro:
+                    fn = re.findall(r"function (\w+)\(", self.js[:m.start()])[-1]
+                    if fn in seguro_por_funcion:
+                        cuerpo = self.js[self.js.rindex(f"function {fn}(", 0, m.start()):]
+                        cuerpo = cuerpo[:cuerpo.index("\n  }\n")]
+                        self.assertIn(seguro_por_funcion[fn], cuerpo, f"{fn} debe pintar su texto con {seguro_por_funcion[fn]}")
+                        seguro = True
+                self.assertTrue(seguro, f"se concatena {peligroso} sin esc(): …{self.js[max(0, m.start() - 40):m.end() + 20]}…")
+        self.assertIn("function esc(", self.js)
+        self.assertIn("esc(e.motivo)", self.js)
+        ui = _leer("static/ilus_ui.js")                                        # el contrato en que se apoya lo de arriba
+        self.assertIn("escapeHtml(title)", ui)
+        self.assertIn("escapeHtml(message)", ui)
+
+    def test_la_vista_previa_va_en_un_iframe_sin_permisos(self):
+        self.assertRegex(self.js, r"<iframe[^>]*sandbox=\"\"")
+        self.assertIn("srcdoc", self.js)
+
+    def test_el_js_solo_apaga_lo_permitido_y_avisa_lo_demas(self):
+        self.assertIn("puede_encender", self.js)
+        self.assertIn("No se puede encender desde aquí", self.js)
+        self.assertIn("c.protegido", self.js)
+
+    def test_claude_md_tiene_la_regla_33_y_sigue_teniendo_la_32(self):
+        md = _leer("CLAUDE.md")
+        self.assertIn("REGLA #33", md)
+        self.assertIn("REGLA #32", md)
+        self.assertLess(md.index("REGLA #32"), md.index("REGLA #33"))
+        self.assertIn("comm_correos_registro.py", md)
+
+    def test_ningun_texto_del_registro_para_tecnicos_muestra_montos(self):               # REGLAS #19 y #26
+        for c in R.REGISTRO:
+            if c["destinatario"] == "tecnico":
+                for campo in ("nombre", "disparo", "nota", "avisa_a", "adjunta"):
+                    self.assertNotIn("$", c[campo], f"{c['clave']}.{campo}")
 
 
 if __name__ == "__main__":

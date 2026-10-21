@@ -3,6 +3,7 @@
 
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='comunicaciones_index.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='comunicaciones_correos.css') }}">
 
 <div class="container-fluid py-3 px-3 px-md-4">
 
@@ -46,6 +47,11 @@
     <li class="nav-item">
       <button class="nav-link fw-semibold" data-bs-toggle="tab" data-bs-target="#tabLog">
         <i class="bi bi-list-ul me-1"></i>Historial
+      </button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link fw-semibold" data-bs-toggle="tab" data-bs-target="#tabCorreos">
+        <i class="bi bi-toggles me-1"></i>Control de correos
       </button>
     </li>
   </ul>
@@ -708,7 +714,7 @@
             <i class="bi bi-check-circle-fill"></i><span>Enviados</span><b id="histCnt_enviado">—</b>
           </button>
           <button type="button" class="hist-chip warn" data-estado="bloqueado" onclick="histFiltrarEstado('bloqueado')">
-            <i class="bi bi-sign-stop-fill"></i><span>Bloqueados por llave</span><b id="histCnt_bloqueado">—</b>
+            <i class="bi bi-sign-stop-fill"></i><span>Bloqueados</span><b id="histCnt_bloqueado">—</b>
           </button>
           <button type="button" class="hist-chip fail" data-estado="fallido" onclick="histFiltrarEstado('fallido')">
             <i class="bi bi-x-circle-fill"></i><span>Fallidos</span><b id="histCnt_fallido">—</b>
@@ -725,7 +731,7 @@
             <select id="histFEstado" class="form-select form-select-sm" onchange="histFiltroCambio()">
               <option value="">Todos</option>
               <option value="enviado">Enviado</option>
-              <option value="bloqueado">Bloqueado por llave</option>
+              <option value="bloqueado">Bloqueado (general, llave o correo apagado)</option>
               <option value="fallido">Fallido</option>
               <option value="en_cola">En cola</option>
             </select>
@@ -770,6 +776,9 @@
             </button>
           </div>
         </div>
+
+        {# Control de correos (2026-10-20): el Historial filtrado por UN correo (desde su tarjeta) #}
+        <div id="histFiltroCorreo" class="hist-filtro-correo"></div>
 
         <div id="histAviso" class="hist-aviso-error d-none" role="alert"></div>
 
@@ -917,6 +926,119 @@
       </div>{# /hist-card #}
     </div>{# /tabLog #}
 
+    {# ══════════════════════════════════════════════
+       TAB 4 — CONTROL DE CORREOS (Daniel, 2026-10-20)
+       Todos los correos que envía el sistema, cada uno con su interruptor, su semáforo de 4 pasos
+       (General → Llave del módulo → Este correo → Configuración), vista previa y prueba.
+       Se pinta desde static/comunicaciones_correos.js con GET /api/comunicaciones/correos.
+    ══════════════════════════════════════════════ #}
+    <div class="tab-pane fade" id="tabCorreos">
+      <div class="card shadow-sm border-0">
+        <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2"
+             style="background:var(--ilus-black);color:#fff;border-radius:.375rem .375rem 0 0">
+          <span class="fw-bold">
+            <i class="bi bi-toggles me-2 text-danger"></i>Control de correos
+            <span class="hist-sub d-none d-md-inline">· cada correo que el sistema envía, con su interruptor: su estado real, apagarlo (con motivo), la vista previa y una prueba</span>
+          </span>
+          <span class="d-flex align-items-center gap-2">
+            <span id="ctcCargando" class="hist-cargando d-none" role="status">
+              <span class="spinner-border spinner-border-sm me-1"></span>Cargando…
+            </span>
+            <button type="button" class="btn btn-sm btn-outline-light" data-ctc="refrescar" title="Volver a leer el estado">
+              <i class="bi bi-arrow-clockwise"></i><span class="d-none d-sm-inline ms-1">Actualizar</span>
+            </button>
+          </span>
+        </div>
+
+        <div id="ctcError"></div>
+        <div class="ctc-avisos" id="ctcAvisos"></div>
+        <div class="ctc-resumen" id="ctcResumen" aria-label="Resumen de los correos">
+          <div class="ctc-vacio" style="grid-column:1/-1;padding:18px"><span class="spinner-border spinner-border-sm me-2"></span>Cargando los correos…</div>
+        </div>
+        <div class="ctc-desde" id="ctcDesde"></div>
+
+        {# ── Filtros: en el celular quedan detrás del botón «Filtros»; al limpiar se vuelve a cargar ── #}
+        <div class="ctc-filtros-barra">
+          <button type="button" class="ctc-btn ctc-btn-filtros" data-ctc="filtros-abrir" aria-expanded="false" aria-controls="ctcFiltros">
+            <i class="bi bi-funnel"></i>Filtros
+          </button>
+        </div>
+        <div class="ctc-filtros" id="ctcFiltros">
+          <div class="ctc-f">
+            <label for="ctcFModulo">Grupo</label>
+            <select id="ctcFModulo" class="form-select form-select-sm"><option value="">Todos</option></select>
+          </div>
+          <div class="ctc-f">
+            <label for="ctcFDest">Quién lo recibe</label>
+            <select id="ctcFDest" class="form-select form-select-sm"><option value="">Todos</option></select>
+          </div>
+          <div class="ctc-f">
+            <label for="ctcFEstado">Estado</label>
+            <select id="ctcFEstado" class="form-select form-select-sm">
+              <option value="">Todos</option>
+              <option value="sale">Salen hoy</option>
+              <option value="apagado">Apagados aquí por una persona</option>
+              <option value="config">Apagados por configuración o código</option>
+              <option value="frenado">Frenados por una llave o el interruptor general</option>
+              <option value="frenados30">Con envíos frenados (30 días)</option>
+            </select>
+          </div>
+          <div class="ctc-f">
+            <label for="ctcFModo">Cómo se dispara</label>
+            <select id="ctcFModo" class="form-select form-select-sm">
+              <option value="">Automático y manual</option>
+              <option value="automatico">Automático</option>
+              <option value="manual">Manual</option>
+            </select>
+          </div>
+          <div class="ctc-f ctc-f-grow">
+            <label for="ctcFQ">Buscar</label>
+            <input type="search" id="ctcFQ" class="form-control form-control-sm" maxlength="100" autocomplete="off"
+                   placeholder="Nombre, qué lo dispara, a quién…">
+          </div>
+          <div class="ctc-f" style="flex:0 0 auto;min-width:auto">
+            <button type="button" class="ctc-btn" data-ctc="limpiar"><i class="bi bi-x-circle"></i>Limpiar filtros</button>
+          </div>
+        </div>
+
+        {# ── Selección múltiple (REGLA #14): un solo botón marca o desmarca todo lo visible ── #}
+        <div class="ctc-barra">
+          <button type="button" class="ctc-btn chico" id="ctcBtnTodos" data-ctc="todos"><i class="bi bi-check-all"></i>Seleccionar todo</button>
+          <button type="button" class="ctc-btn chico d-none" id="ctcBtnFiltrados" data-ctc="filtrados">Seleccionar los filtrados</button>
+          <span class="ctc-sel-info" id="ctcSelInfo">Ninguno seleccionado</span>
+          <span class="ctc-spacer"></span>
+          <button type="button" class="ctc-btn chico ambar" id="ctcBtnApagarSel" data-ctc="apagar-sel" disabled><i class="bi bi-pause-circle"></i>Apagar seleccionados</button>
+          <button type="button" class="ctc-btn chico verde" id="ctcBtnEncenderSel" data-ctc="encender-sel" disabled><i class="bi bi-play-circle"></i>Encender seleccionados</button>
+        </div>
+
+        <div class="ctc-lista" id="ctcLista"></div>
+
+        {# ── Pie de tabla (REGLA #4.3): Mostrando A–B de N · N por página · Anterior / Página X de Y / Siguiente ── #}
+        <div class="hist-pie" id="ctcPie">
+          <span class="hist-pie-info">Mostrando <b id="ctcDesdeN">0</b>–<b id="ctcHastaN">0</b> de <b id="ctcTotalN">0</b></span>
+          <div class="hist-pie-size">
+            <label for="ctcPerPage">Mostrar</label>
+            <select id="ctcPerPage" class="form-select form-select-sm">
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+            <span>por página</span>
+          </div>
+          <div class="hist-pie-nav">
+            <button type="button" class="btn btn-sm btn-outline-secondary fw-bold" id="ctcPrev" data-ctc="prev" aria-label="Página anterior" title="Página anterior">
+              <i class="bi bi-chevron-left"></i><span class="d-none d-sm-inline"> Anterior</span>
+            </button>
+            <span class="hist-pie-pos">Página <b id="ctcPagAct">1</b> de <b id="ctcPagTot">1</b></span>
+            <button type="button" class="btn btn-sm btn-danger fw-bold" id="ctcNext" data-ctc="next" aria-label="Página siguiente" title="Página siguiente">
+              <span class="d-none d-sm-inline">Siguiente </span><i class="bi bi-chevron-right"></i>
+            </button>
+          </div>
+        </div>
+        <div id="ctcHerramientas"></div>
+      </div>
+    </div>{# /tabCorreos #}
+
   </div>{# /tab-content #}
 </div>{# /container #}
 
@@ -1058,6 +1180,30 @@
   </div>
 </div>
 
+{# ══════════════════════════════════════════════
+   MODAL: Vista previa de un correo (Control de correos, 2026-10-20)
+   Datos de MENTIRA: no lee ni envía nada real. El HTML va en un <iframe sandbox> sin scripts.
+   Pantalla completa en el celular.
+══════════════════════════════════════════════ #}
+<div class="modal fade" id="modalCtcPrevia" tabindex="-1" aria-labelledby="ctcPreviaTitulo" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable modal-fullscreen-md-down">
+    <div class="modal-content border-0">
+      <div class="modal-header" style="background:var(--ilus-black);color:#fff">
+        <h6 class="modal-title" id="ctcPreviaTitulo"></h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div class="ctc-previa-info" id="ctcPreviaInfo"></div>
+        <div id="ctcPreviaCuerpo"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="ctc-btn" data-ctc="prueba-previa"><i class="bi bi-send"></i>Enviarme una prueba</button>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 
@@ -1071,4 +1217,5 @@ window.COMM_DATA = {
 };
 </script>
 <script defer src="{{ url_for('static', filename='comunicaciones_index.js') }}"></script>
+<script defer src="{{ url_for('static', filename='comunicaciones_correos.js') }}"></script>
 {% endblock %}

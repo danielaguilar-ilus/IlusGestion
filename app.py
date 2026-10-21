@@ -9745,10 +9745,12 @@ def _correo_ctrl_invalidar():
     _CORREO_CTRL_CACHE["ts"] = 0.0
 
 
-def _correo_ctrl_estado(forzar=False):
+def _correo_ctrl_estado(forzar=False, estricto=False):
     """{clave: {"activo": bool, "motivo", "actualizado_por", "actualizado_en"}} con lo que hay en comm_correo_control
     (solo los correos que una persona tocó). Caché de 30 s. Si la lectura falla devuelve el último valor conocido; si nunca
-    se leyó, {} (todo encendido)."""
+    se leyó, {} (todo encendido).
+    `estricto=True` (solo la pantalla de Control de correos): si la lectura falla, LANZA en vez de inventar «todo encendido» —
+    la pantalla no debe mostrar como encendido un interruptor cuyo estado no pudo leer. La puerta de envío nunca es estricta."""
     import time as _t
     now = _t.time()
     if (not forzar and _CORREO_CTRL_CACHE["data"] is not None
@@ -9767,6 +9769,8 @@ def _correo_ctrl_estado(forzar=False):
         _CORREO_CTRL_CACHE["ts"] = now
         return data
     except Exception as exc:
+        if estricto:
+            raise
         if "comm_correo_control" not in _CORREO_AVISADOS:
             _CORREO_AVISADOS.add("comm_correo_control")
             print(f"[CORREO] no se pudo leer comm_correo_control ({str(exc)[:120]}): se usa el último valor conocido "
@@ -54682,6 +54686,437 @@ def comm_killswitch_set(modulo):
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  CONTROL DE CORREOS — la pestaña de Comunicaciones (2026-10-20, Daniel)
+#
+#  «Una pestaña donde veo TODOS los correos que el sistema envía, puedo APAGAR cada uno (con motivo), ver su estado real, la
+#  vista previa, mandarme una prueba y ver cuántos salieron o se frenaron.» Solo superadmin (igual que el resto de
+#  /comunicaciones). La lista de correos, sus grupos y sus condiciones viven en comm_correos_registro.py; el interruptor de
+#  cada uno en la tabla comm_correo_control (sin fila = encendido); la puerta de envío es _send_ilus_email.
+#
+#  El interruptor SOLO puede apagar: un correo que hoy apaga una variable de entorno (RETIROS_FIRMA_CORREO,
+#  MANT_RECORDATORIOS_EMAIL_ENABLED, PROSPECTOS_OFERTA_AUTO…) se muestra «Apagado por configuración» y no se enciende desde
+#  aquí: eso sigue pasando por la variable y por el «sí» explícito de Daniel (REGLAS #22/#23). Los correos de seguridad
+#  (acceso_*) no tienen interruptor.
+#
+#  Endpoints (todos JSON, solo superadmin → 401/403 en JSON, nunca redirigen):
+#    GET  /api/comunicaciones/correos                    lista con estado efectivo, semáforo de 4 pasos y cifras de 30 días
+#    PUT  /api/comunicaciones/correos/<clave>            apagar/encender (motivo, estado_visto → 409 si otra persona ya lo cambió)
+#    POST /api/comunicaciones/correos/<clave>/vista-previa   plantilla + datos de MENTIRA (no lee ni envía nada real)
+#    POST /api/comunicaciones/correos/<clave>/prueba     «Enviarme una prueba»: SOLO al correo de quien está conectado
+#    GET  /api/comunicaciones/correos/<clave>/cambios    los últimos cambios del interruptor (quién, cuándo, motivo)
+# ══════════════════════════════════════════════════════════════════════
+
+def _require_superadmin_api(view):
+    """Como _require_superadmin pero para APIs JSON: responde 401/403 en JSON (un fetch no sabe seguir una redirección)."""
+    @wraps(view)
+    def wrapped(*a, **kw):
+        if not g.get("user"):
+            return jsonify({"ok": False, "error": "Sesión expirada. Vuelve a iniciar sesión.",
+                            "error_codigo": "SIN_SESION"}), 401
+        if not (getattr(g, "permissions", None) or {}).get("superadmin"):
+            return jsonify({"ok": False, "error": "Solo el superadministrador puede ver y cambiar el control de correos.",
+                            "error_codigo": "SOLO_SUPERADMIN"}), 403
+        return view(*a, **kw)
+    return wrapped
+
+
+# Qué clases de correo muestra la pantalla: los que envía ILUS y, en la fase 3, los avisos que envían FedEx y SimpliRoute.
+_COMM_CORREOS_TIPOS_EN_PANTALLA = ("ilus",)
+_COMM_CORREOS_CIFRAS = {"data": None, "ts": 0.0}
+_COMM_CORREOS_CIFRAS_TTL = 60            # segundos: las cifras no necesitan ser al segundo
+_COMM_CORREOS_VENTANA_DIAS = 30
+
+
+def _comm_correos_fecha(dt, fmt="%d/%m/%Y %H:%M"):
+    """Fecha en hora Chile y formato día/mes/año (REGLA #6). '' si no hay fecha."""
+    try:
+        return chile_fmt_filter(dt, fmt) if dt else ""
+    except Exception:
+        return ""
+
+
+def _comm_correos_version(fila):
+    """Token que viaja como `estado_visto`: cuándo se cambió por última vez ese interruptor ('' = nunca se tocó)."""
+    if not fila:
+        return ""
+    v = fila.get("actualizado_en")
+    try:
+        return v.strftime("%Y-%m-%d %H:%M:%S") if hasattr(v, "strftime") else str(v or "")
+    except Exception:
+        return ""
+
+
+def _comm_correos_cifras(forzar=False):
+    """Enviados / frenados / fallidos de los últimos 30 días por correo: UNA consulta agrupada sobre email_log (índice por fecha).
+    Las pruebas de esta pantalla (evento prueba_*) no cuentan. Se guarda 60 s en el proceso.
+    {"por_clave": {clave: {enviados, frenados, fallidos, ultimo}}, "desde": 'dd/mm/aaaa' | None, "disponible": bool}.
+    `desde` solo viene cuando el conteo empezó hace menos de 30 días (sin relleno de datos viejos: la pantalla lo dice)."""
+    import time as _t
+    ahora = _t.time()
+    cache = _COMM_CORREOS_CIFRAS
+    if not forzar and cache["data"] is not None and (ahora - cache["ts"]) < _COMM_CORREOS_CIFRAS_TTL:
+        return cache["data"]
+    res = {"por_clave": {}, "desde": None, "disponible": False}
+    try:
+        if _email_log_tiene_correo_clave():
+            desde_utc = datetime.utcnow() - timedelta(days=_COMM_CORREOS_VENTANA_DIAS)
+            filas = mysql_fetchall(
+                "SELECT correo_clave, estado, COUNT(*) AS n, MAX(created_at) AS ultimo, MIN(created_at) AS primero "
+                "  FROM email_log WHERE created_at >= %s AND correo_clave IS NOT NULL "
+                "   AND evento NOT LIKE 'prueba\\_%%' GROUP BY correo_clave, estado", (desde_utc,)) or []
+            primero = None
+            for r in filas:
+                k = str(r.get("correo_clave") or "")
+                d = res["por_clave"].setdefault(k, {"enviados": 0, "frenados": 0, "fallidos": 0, "ultimo": None})
+                n = int(r.get("n") or 0)
+                est = str(r.get("estado") or "")
+                if est == "enviado":
+                    d["enviados"] += n
+                    u = r.get("ultimo")
+                    if u and (d["ultimo"] is None or u > d["ultimo"]):
+                        d["ultimo"] = u
+                elif est == "bloqueado":
+                    d["frenados"] += n
+                elif est == "fallido":
+                    d["fallidos"] += n
+                p = r.get("primero")
+                if p and (primero is None or p < primero):
+                    primero = p
+            res["disponible"] = True
+            if primero and primero > desde_utc + timedelta(days=1):
+                res["desde"] = _comm_correos_fecha(primero, "%d/%m/%Y")
+            for d in res["por_clave"].values():
+                d["ultimo"] = _comm_correos_fecha(d["ultimo"]) if d["ultimo"] else ""
+    except Exception as exc:
+        print(f"[comm-correos] cifras: {type(exc).__name__}: {str(exc)[:160]}", flush=True)
+    cache["data"], cache["ts"] = res, ahora
+    return res
+
+
+def _comm_correos_plantillas():
+    """{(modulo, estado): {"activo": bool, "tiene": bool}} de las plantillas de email del editor de Comunicaciones."""
+    try:
+        filas = mysql_fetchall(
+            "SELECT modulo, estado, COALESCE(activo,1) AS activo, "
+            "       (COALESCE(CHAR_LENGTH(cuerpo),0) > 0 OR COALESCE(CHAR_LENGTH(asunto),0) > 0) AS tiene "
+            "  FROM comm_templates WHERE canal='email'") or []
+    except Exception as exc:
+        print(f"[comm-correos] plantillas: {type(exc).__name__}: {str(exc)[:160]}", flush=True)
+        return {}
+    return {(str(r.get("modulo") or ""), str(r.get("estado") or "")):
+            {"activo": bool(int(r.get("activo") if r.get("activo") is not None else 1)), "tiene": bool(r.get("tiene"))}
+            for r in filas}
+
+
+def _comm_correo_item(c, general, llaves, ctrl, cifras, plantillas):
+    """La tarjeta de UN correo: registro + estado real (semáforo de 4 pasos) + cifras + estado de su plantilla."""
+    fila = ctrl.get(c["clave"])
+    switch_activo = True if fila is None else bool(fila.get("activo", True))
+    ks = llaves.get(c["llave"]) or {}
+    st = _ccr.estado_efectivo(c, general_activo=general, llave_bloqueada=bool(ks.get("email_bloqueado")),
+                              switch_activo=switch_activo)
+    st["switch_activo"] = switch_activo
+    st["version"] = _comm_correos_version(fila)
+    st["motivo"] = (fila or {}).get("motivo") or ""
+    st["apagado_por"] = (fila or {}).get("actualizado_por") or ""
+    st["apagado_en"] = _comm_correos_fecha((fila or {}).get("actualizado_en"))
+    st["llave_motivo"] = ks.get("motivo") or ""
+    plan = None
+    if c.get("plantilla"):
+        info = plantillas.get(tuple(c["plantilla"]))
+        plan = {"modulo": c["plantilla"][0], "estado": c["plantilla"][1], "existe": bool(info and info["tiene"]),
+                "activo": bool(info["activo"]) if info else True, "efecto_apagada": c.get("plantilla_apagada"),
+                "texto_apagada": _ccr.PLANTILLA_APAGADA.get(c.get("plantilla_apagada"), "")}
+    cif = (cifras.get("por_clave") or {}).get(c["clave"]) or {"enviados": 0, "frenados": 0, "fallidos": 0, "ultimo": ""}
+    return {
+        "clave": c["clave"], "nombre": c["nombre"], "modulo_ui": c["modulo_ui"], "llave": c["llave"],
+        "llave_label": _ccr.LLAVES_TXT.get(c["llave"], c["llave"]), "destinatario": c["destinatario"],
+        "destinatario_label": _ccr.DESTINATARIOS.get(c["destinatario"], c["destinatario"]), "disparo": c["disparo"],
+        "modo": c["modo"], "modo_label": _ccr.MODOS.get(c["modo"], c["modo"]), "avisa_a": c.get("avisa_a") or "",
+        "adjunta": c.get("adjunta") or "", "nota": c.get("nota") or "", "tipo": c["tipo"], "protegido": bool(c["protegido"]),
+        "sensible": bool(c["sensible"]), "tambien_whatsapp": bool(c["tambien_whatsapp"]), "plantilla": plan,
+        "estado": st, "cifras": cif,
+    }
+
+
+def _comm_correos_payload(forzar_cifras=False):
+    """Todo lo que pinta la pestaña: tarjetas, resumen, grupos y avisos. Lee la tabla de interruptores SIEMPRE fresca."""
+    general = bool(comm_is_enabled("email"))
+    llaves = _comm_killswitch_estado()
+    ctrl = _correo_ctrl_estado(forzar=True, estricto=True)       # si no se puede leer, la pantalla lo dice (no muestra «encendido»)
+    cifras = _comm_correos_cifras(forzar_cifras)
+    plantillas = _comm_correos_plantillas()
+    items = [_comm_correo_item(c, general, llaves, ctrl, cifras, plantillas)
+             for c in _ccr.REGISTRO if c["tipo"] in _COMM_CORREOS_TIPOS_EN_PANTALLA]
+    resumen = {
+        "total": len(items),
+        "salen": sum(1 for i in items if i["estado"]["efectivo"] == "sale"),
+        "apagados_usuario": sum(1 for i in items if not i["estado"]["switch_activo"] and not i["protegido"]),
+        "apagados_config": sum(1 for i in items if i["estado"]["efectivo"] in ("config", "codigo")),
+        "frenados_llave": sum(1 for i in items if i["estado"]["efectivo"] in ("general", "llave")),
+        "enviados_30d": sum(i["cifras"]["enviados"] for i in items),
+        "frenados_30d": sum(i["cifras"]["frenados"] for i in items),
+        "fallidos_30d": sum(i["cifras"]["fallidos"] for i in items),
+    }
+    avisos = []
+    if not general:
+        avisos.append({"nivel": "ambar", "texto": "El interruptor general de correos está APAGADO: ningún correo sale, "
+                       "aunque estén encendidos aquí (Plantillas → Llave de paso)."})
+    cerradas = [_ccr.LLAVES_TXT.get(k, k) for k, v in llaves.items() if v.get("email_bloqueado")]
+    if cerradas:
+        avisos.append({"nivel": "ambar", "texto": "Llaves de paso cerradas: " + ", ".join(cerradas) +
+                       ". Los correos de esos módulos están frenados aunque estén encendidos aquí."})
+    seg = llaves.get("comunicacion_interna") or {}
+    if (not general) or seg.get("email_bloqueado"):
+        avisos.append({"nivel": "ambar", "texto": "Nadie puede recuperar su contraseña ni recibir una invitación mientras "
+                       "el interruptor general o la llave de Comunicación interna estén cerrados."})
+    return {
+        "ok": True, "general": general, "resumen": resumen, "avisos": avisos, "correos": items,
+        "modulos": [{k: m[k] for k in ("clave", "nombre", "icono", "descripcion")}
+                    for m in _ccr.MODULOS_UI if m["clave"] != "comunicaciones"],
+        "destinatarios": [{"clave": k, "nombre": _ccr.DESTINATARIOS[k]} for k in _ccr.DESTINATARIOS_ORDEN],
+        "herramientas": [{"clave": c["clave"], "nombre": c["nombre"], "nota": c.get("nota") or ""}
+                         for c in _ccr.REGISTRO if c["tipo"] == "herramienta"],
+        "contando_desde": cifras.get("desde"), "cifras_disponibles": bool(cifras.get("disponible")),
+        "ventana_dias": _COMM_CORREOS_VENTANA_DIAS, "generado": _comm_correos_fecha(datetime.utcnow()),
+    }
+
+
+@app.route("/api/comunicaciones/correos", methods=["GET"])
+@_require_superadmin_api
+def comm_correos_listar():
+    """Lista de TODOS los correos con su estado real y las cifras de los últimos 30 días."""
+    try:
+        data = _comm_correos_payload(forzar_cifras=(request.args.get("fresco") == "1"))
+    except Exception as exc:
+        print(f"[comm-correos] listar: {type(exc).__name__}: {str(exc)[:200]}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo cargar el control de correos. Intenta de nuevo en unos segundos."}), 500
+    resp = jsonify(data)
+    resp.headers["Cache-Control"] = "no-store, max-age=0"
+    return resp
+
+
+def _comm_correo_o_404(clave):
+    c = _ccr.por_clave((clave or "").strip().lower())
+    if c is None or c["tipo"] == "herramienta":
+        return None, (jsonify({"ok": False, "error": "Ese correo no existe.", "error_codigo": "NO_EXISTE"}), 404)
+    return c, None
+
+
+@app.route("/api/comunicaciones/correos/<clave>", methods=["PUT"])
+@_require_superadmin_api
+def comm_correos_cambiar(clave):
+    """Apaga o enciende UN correo. Body: {activo: bool, motivo?: str, estado_visto?: str}.
+    404 si la clave no existe · 409 si el correo es de seguridad (protegido), si se intenta ENCENDER uno que apaga la
+    configuración (variable de entorno o código) o si otra persona lo cambió después de que esta pantalla lo leyó
+    (`estado_visto` = la versión que vio la pantalla). Cada cambio queda en el registro de auditoría ANTES de responder."""
+    c, err = _comm_correo_o_404(clave)
+    if err:
+        return err
+    d = request.get_json(silent=True) or {}
+    if "activo" not in d:
+        return jsonify({"ok": False, "error": "Falta indicar si se enciende o se apaga.", "error_codigo": "FALTA_ACTIVO"}), 400
+    nuevo = bool(d.get("activo"))
+    motivo = (str(d.get("motivo") or "").strip()[:300] or None) if not nuevo else None
+    visto = d.get("estado_visto")
+    visto = None if visto is None else str(visto)
+
+    if c["protegido"]:
+        return jsonify({"ok": False, "error_codigo": "PROTEGIDO",
+                        "error": "Es un correo de seguridad: no tiene interruptor (nadie debe quedar fuera por un clic)."}), 409
+    general = bool(comm_is_enabled("email"))
+    llaves = _comm_killswitch_estado()
+    ctrl = _correo_ctrl_estado(forzar=True)
+    fila = ctrl.get(c["clave"])
+    ks = llaves.get(c["llave"]) or {}
+    actual = _ccr.estado_efectivo(c, general_activo=general, llave_bloqueada=bool(ks.get("email_bloqueado")),
+                                  switch_activo=True if fila is None else bool(fila.get("activo", True)))
+    if nuevo and not actual["puede_encender"]:
+        return jsonify({"ok": False, "error_codigo": "CON_CANDADO",
+                        "error": "Este correo está apagado por configuración o por el código: la pantalla solo puede apagar. "
+                                 "Encenderlo se hace con la variable de entorno y la autorización de Daniel."}), 409
+    version_actual = _comm_correos_version(fila)
+    if visto is not None and visto != version_actual:
+        quien = (fila or {}).get("actualizado_por") or "otra persona"
+        cuando = _comm_correos_fecha((fila or {}).get("actualizado_en"))
+        return jsonify({"ok": False, "error_codigo": "CAMBIO_AJENO",
+                        "error": f"{quien} ya cambió este correo" + (f" el {cuando}" if cuando else "") +
+                                 ". Se recargó la lista: revisa cómo quedó antes de cambiarlo."}), 409
+
+    usuario = (current_username() or "sistema")[:190]
+    antes = True if fila is None else bool(fila.get("activo", True))
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            if fila is not None:
+                cur.execute(
+                    "UPDATE comm_correo_control SET activo=%s, motivo=%s, actualizado_por=%s, actualizado_en=NOW() "
+                    " WHERE clave=%s AND actualizado_en <=> %s",
+                    (1 if nuevo else 0, motivo, usuario, c["clave"], fila.get("actualizado_en")))
+                tomado = cur.rowcount == 1
+            else:
+                cur.execute(
+                    "INSERT IGNORE INTO comm_correo_control (clave, activo, motivo, actualizado_por, actualizado_en) "
+                    "VALUES (%s,%s,%s,%s,NOW())", (c["clave"], 1 if nuevo else 0, motivo, usuario))
+                tomado = cur.rowcount == 1
+        conn.commit()
+    except Exception as exc:
+        print(f"[comm-correos] cambiar {c['clave']}: {type(exc).__name__}: {str(exc)[:200]}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar el cambio. Intenta de nuevo."}), 500
+    if not tomado:
+        _correo_ctrl_invalidar()
+        return jsonify({"ok": False, "error_codigo": "CAMBIO_AJENO",
+                        "error": "Otra persona cambió este correo justo ahora. Se recargó la lista: revisa cómo quedó."}), 409
+    _correo_ctrl_invalidar()
+    _audit("comm_correo_set", target_type="comm_correo_control", target_id=c["clave"],
+           details={"antes": antes, "despues": nuevo, "motivo": motivo or "", "nombre": c["nombre"], "por": usuario})
+    try:
+        item = _comm_correo_item(c, general, llaves, _correo_ctrl_estado(forzar=True, estricto=True), _comm_correos_cifras(),
+                                 _comm_correos_plantillas())
+    except Exception as exc:
+        # El cambio YA quedó guardado (y auditado): solo falló releerlo. La pantalla recarga la lista en vez de suponer el estado.
+        print(f"[comm-correos] cambiar {c['clave']}: guardado, pero no se pudo releer: {type(exc).__name__}", flush=True)
+        return jsonify({"ok": True, "correo": None, "recargar": True})
+    return jsonify({"ok": True, "correo": item})
+
+
+def _comm_correo_demo(c):
+    """(asunto, cuerpo_html, info) de la plantilla de un correo con datos de MENTIRA, sin leer ni mandar nada real. Si el correo
+    no tiene plantilla editable (su texto está en el código) o la fila no existe, devuelve (None, None, info)."""
+    plan = c.get("plantilla")
+    if not plan:
+        return None, None, {"origen": "codigo"}
+    try:
+        fila = mysql_fetchone(
+            "SELECT asunto, cuerpo, COALESCE(activo,1) AS activo FROM comm_templates "
+            " WHERE modulo=%s AND estado=%s AND canal='email' LIMIT 1", (plan[0], plan[1]))
+    except Exception as exc:
+        print(f"[comm-correos] demo {c['clave']}: {type(exc).__name__}", flush=True)
+        fila = None
+    if not fila or not ((fila.get("asunto") or "").strip() or (fila.get("cuerpo") or "").strip()):
+        return None, None, {"origen": "sin_fila"}
+    mapa = dict(_comm_demo_replacements())
+    mapa.update(_ccr.DEMO_EXTRA)
+    mapa.update(c.get("demo") or {})
+
+    def _sub(texto):
+        return re.sub(r"\{\{\s*([\w\.]+)\s*\}\}",
+                      lambda m: str(mapa.get(m.group(1).strip(), f"[{m.group(1).strip()} demo]")), texto or "")
+    asunto = _sub(fila.get("asunto") or "").strip() or c["nombre"]
+    cuerpo = _sub(fila.get("cuerpo") or "")
+    return asunto, cuerpo, {"origen": "plantilla", "plantilla_activa": bool(int(fila.get("activo") or 0))}
+
+
+@app.route("/api/comunicaciones/correos/<clave>/vista-previa", methods=["POST"])
+@_require_superadmin_api
+def comm_correos_vista_previa(clave):
+    """Cómo se ve ese correo con la plantilla del editor y datos de MENTIRA. No envía nada y jamás lee un retiro, una OT ni
+    un cliente real."""
+    c, err = _comm_correo_o_404(clave)
+    if err:
+        return err
+    asunto, cuerpo, info = _comm_correo_demo(c)
+    if asunto is None:
+        ultimo = None
+        try:
+            if _email_log_tiene_correo_clave():
+                r = mysql_fetchone("SELECT id FROM email_log WHERE correo_clave=%s AND evento NOT LIKE 'prueba\\_%%' "
+                                   "ORDER BY id DESC LIMIT 1", (c["clave"],))
+                ultimo = int(r["id"]) if r else None
+        except Exception:
+            ultimo = None
+        resp = jsonify({"ok": True, "sin_plantilla": True, "ultimo_log_id": ultimo,
+                        "mensaje": "El texto de este correo está en el código, no en una plantilla del editor: mira el último "
+                                   "enviado en el Historial."})
+    else:
+        html = _comm_render_email_document(_brand_subject(asunto), cuerpo, c["nombre"])
+        resp = jsonify({"ok": True, "sin_plantilla": False, "asunto": _brand_subject(asunto), "html": html,
+                        "plantilla_activa": info.get("plantilla_activa", True),
+                        "aviso_plantilla_apagada": (None if info.get("plantilla_activa", True)
+                                                    else _ccr.PLANTILLA_APAGADA.get(c.get("plantilla_apagada")))})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/api/comunicaciones/correos/<clave>/prueba", methods=["POST"])
+@_require_superadmin_api
+def comm_correos_prueba(clave):
+    """«Enviarme una prueba»: UN correo de muestra, con datos de mentira y «[PRUEBA]» en el asunto, SOLO al correo de quien está
+    conectado (el servidor ignora cualquier destinatario que venga en la petición). No lo frenan ni el interruptor de ese correo
+    ni su llave —solo te llega a ti—, pero sí el interruptor general y ILUS_COMM_TEST_TO (REGLA #22)."""
+    c, err = _comm_correo_o_404(clave)
+    if err:
+        return err
+    destino = str((getattr(g, "user", None) or {}).get("username") or "").strip().lower()
+    if "@" not in destino or len(destino) > 190:
+        return jsonify({"ok": False, "error": "Tu usuario no tiene un correo válido: no hay a dónde enviar la prueba.",
+                        "error_codigo": "SIN_CORREO"}), 400
+    if not comm_is_enabled("email"):
+        return jsonify({"ok": False, "error_codigo": "CORREO_APAGADO_GENERAL",
+                        "error": "El interruptor general de correos está apagado: no salió nada."}), 409
+    asunto, cuerpo, info = _comm_correo_demo(c)
+    if asunto is None:
+        import html as _html_pr
+        asunto = c["nombre"]
+        cuerpo = ("<p style='font-size:14px;color:#374151;line-height:1.6'>Esto es una <b>prueba</b> del correo "
+                  f"«{_html_pr.escape(c['nombre'])}». Su texto lo arma el sistema con los datos reales de cada caso, "
+                  "así que aquí solo comprobamos que el correo te llega.</p>"
+                  f"<p style='font-size:13px;color:#6b7280'><b>Cuándo sale:</b> {_html_pr.escape(c['disparo'])}</p>")
+    asunto_final = "[PRUEBA] " + _brand_subject(asunto)
+    html = _comm_render_email_document(asunto_final, cuerpo, c["nombre"])
+    usuario = (current_username() or "sistema")[:190]
+    err_txt, ok = None, False
+    try:
+        ok = bool(_send_ilus_email_real(destino, asunto_final, html))
+        if not ok:
+            err_txt = str(getattr(g, "_last_email_error", "") or "El proveedor de correo rechazó el envío")[:300]
+    except Exception as exc:
+        err_txt = f"{type(exc).__name__}: {str(exc)[:200]}"
+    try:
+        _email_log(destino, asunto_final, f"prueba_{c['clave']}", "enviado" if ok else "fallido", error_msg=err_txt,
+                   metadata={"modulo": c["llave"], "origen": "prueba", "correo": c["clave"]}, modulo=c["llave"],
+                   html=html, proveedor=(getattr(g, "_last_email_via", None) if ok else None), actor=usuario,
+                   correo=c["clave"])
+    except Exception:
+        pass
+    _audit("comm_correo_prueba", target_type="comm_correo_control", target_id=c["clave"],
+           details={"destino": destino, "enviado": ok})
+    if not ok:
+        # REGLA #4: el detalle técnico queda en el Historial (email_log.error_msg), nunca en la respuesta al navegador.
+        return jsonify({"ok": False, "error_codigo": "ENVIO_FALLIDO",
+                        "error": "No se pudo enviar la prueba: el proveedor de correo no la aceptó. "
+                                 "El detalle quedó en el Historial."}), 502
+    return jsonify({"ok": True, "enviado_a": destino})
+
+
+@app.route("/api/comunicaciones/correos/<clave>/cambios", methods=["GET"])
+@_require_superadmin_api
+def comm_correos_cambios(clave):
+    """Los últimos 5 cambios del interruptor de ese correo (del registro de auditoría): quién, cuándo (hora Chile) y por qué."""
+    c, err = _comm_correo_o_404(clave)
+    if err:
+        return err
+    out = []
+    try:
+        filas = mysql_fetchall(
+            "SELECT ts, username, details FROM app_audit_log WHERE action='comm_correo_set' "
+            "   AND target_type='comm_correo_control' AND target_id=%s ORDER BY ts DESC, id DESC LIMIT 5", (c["clave"],)) or []
+        for r in filas:
+            try:
+                det = json.loads(r.get("details") or "{}")
+            except Exception:
+                det = {}
+            out.append({"fecha": _comm_correos_fecha(r.get("ts")), "usuario": det.get("por") or r.get("username") or "",
+                        "antes": bool(det.get("antes", True)), "despues": bool(det.get("despues", True)),
+                        "motivo": det.get("motivo") or ""})
+    except Exception as exc:
+        print(f"[comm-correos] cambios {c['clave']}: {type(exc).__name__}", flush=True)
+    resp = jsonify({"ok": True, "cambios": out})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  COMUNICACIONES — TRAZABILIDAD: log de emails + página de estado
 # ══════════════════════════════════════════════════════════════════════
 
@@ -54891,8 +55326,13 @@ def _comm_hist_filtros(args):
             ref_tipo, ref_id = m.group(1).upper(), int(m.group(2))
         else:
             ref_codigo = ref.upper() if re.match(r"^[A-Za-z]{2,5}-", ref) else ref
+    # 2026-10-20 (Control de correos): filtro por la CLAVE del correo (la tarjeta → «Ver en historial»). Solo una clave con forma
+    # de clave (letras minúsculas, dígitos y «_»); va a la base como %s, igual que todo lo demás.
+    correo = str(args.get("correo") or "").strip().lower()
+    if not re.match(r"^[a-z][a-z0-9_]{2,59}$", correo):
+        correo = ""
     return {"page": page, "per_page": per_page, "estado": estado, "modulo": modulo,
-            "q": q, "desde": desde, "hasta": hasta, "ref": ref,
+            "q": q, "desde": desde, "hasta": hasta, "ref": ref, "correo": correo,
             "ref_tipo": ref_tipo, "ref_id": ref_id, "ref_codigo": ref_codigo}
 
 
@@ -54928,6 +55368,7 @@ def _comm_hist_ramas(f, con_estado=True, incluir_cola=True):
     like = _comm_hist_like(f["q"]) if f.get("q") else None
     d0, d1 = f.get("desde_utc"), f.get("hasta_utc")
     r_tipo, r_id, r_cod = f.get("ref_tipo"), f.get("ref_id"), f.get("ref_codigo")
+    corr = f.get("correo") or ""
     ramas = {}
 
     # email_log — el tráfico real de _send_ilus_email (y el manual desde hoy)
@@ -54937,6 +55378,8 @@ def _comm_hist_ramas(f, con_estado=True, incluir_cola=True):
             w.append("e.estado=%s"); p.append(est)
         if mod:
             w.append("e.modulo=%s"); p.append(mod)
+        if corr:
+            w.append("e.correo_clave=%s"); p.append(corr)           # Control de correos: los de UN correo (idx_correo_fecha)
         if like:
             w.append("(e.destinatario LIKE %s OR e.asunto LIKE %s OR e.evento LIKE %s "
                      "OR e.actor LIKE %s OR e.ref_codigo LIKE %s)")
@@ -54952,8 +55395,8 @@ def _comm_hist_ramas(f, con_estado=True, incluir_cola=True):
             w.append("(e.ref_codigo=%s OR e.asunto LIKE %s)"); p += [r_cod, _comm_hist_like(r_cod)]
         ramas["email_log"] = (w, p)
 
-    # comm_log — pruebas manuales antiguas + WhatsApp/SMS (sin módulo ni referencia)
-    if est != "en_cola" and mod in ("", "prueba_manual") and not (r_tipo or r_cod):
+    # comm_log — pruebas manuales antiguas + WhatsApp/SMS (sin módulo, referencia ni clave de correo)
+    if est != "en_cola" and mod in ("", "prueba_manual") and not (r_tipo or r_cod) and not corr:
         w, p = ["COALESCE(c.detalle,'') NOT LIKE %s"], [_COMM_HIST_MARCA_DUP]
         if est:
             w.append("c.estado=%s")
@@ -54967,8 +55410,8 @@ def _comm_hist_ramas(f, con_estado=True, incluir_cola=True):
             w.append("c.created_at < %s"); p.append(d1)
         ramas["comm_log"] = (w, p)
 
-    # comm_email_jobs — correos encolados que aún no salen (estado "en cola")
-    if incluir_cola and est in ("", "en_cola") and mod != "prueba_manual" and not r_tipo:
+    # comm_email_jobs — correos encolados que aún no salen (estado "en cola"); no se filtran por clave (aún no tienen log)
+    if incluir_cola and est in ("", "en_cola") and mod != "prueba_manual" and not r_tipo and not corr:
         w, p = ["j.origen='cola_v2'", "j.status IN ('queued','sending')"], []
         if mod:
             w.append("j.modulo=%s"); p.append(mod)
@@ -54995,8 +55438,14 @@ def _comm_hist_cx(expr):
 def _comm_hist_proyecciones():
     """SELECT de cada fuente con las MISMAS columnas, en el mismo orden.
     Devuelve {fuente: (alias_tabla, sql_select_from)}. Sin datos de usuario:
-    solo nombres de columna fijos."""
+    solo nombres de columna fijos.
+    2026-10-20: la última columna es `correo_clave` (Control de correos); si la columna aún no está migrada en email_log se
+    proyecta NULL, para que el Historial no se rompa mientras tanto."""
     cx = _comm_hist_cx
+    try:
+        _col_correo = cx("e.correo_clave") if _email_log_tiene_correo_clave() else "NULL"
+    except Exception:
+        _col_correo = "NULL"
     det_e = "LEFT(COALESCE(e.error_msg,''),1000)"
     det_c = "LEFT(COALESCE(c.detalle,''),1000)"
     det_j = "LEFT(COALESCE(j.ultimo_error,''),600)"
@@ -55020,7 +55469,8 @@ def _comm_hist_proyecciones():
         + cx("e.proveedor") + " AS proveedor, "
         "e.job_id AS job_id, b.redactado AS cuerpo_redactado, "
         "(b.log_id IS NOT NULL) AS cuerpo_fila, (b.html_gz IS NOT NULL) AS cuerpo_html, "
-        + cx("b.adjuntos_json") + " AS adjuntos_json "
+        + cx("b.adjuntos_json") + " AS adjuntos_json, "
+        + _col_correo + " AS correo_clave "
         "FROM email_log e LEFT JOIN email_log_cuerpo b ON b.log_id = e.id")
     comm_log = (
         "SELECT 'comm_log' AS src, c.id AS id, "
@@ -55035,7 +55485,7 @@ def _comm_hist_proyecciones():
         "NULL AS metadata, c.created_at AS created_at, NULL AS modulo, "
         "NULL AS ref_tipo, NULL AS ref_id, NULL AS ref_codigo, NULL AS proveedor, "
         "NULL AS job_id, NULL AS cuerpo_redactado, 0 AS cuerpo_fila, 0 AS cuerpo_html, "
-        "NULL AS adjuntos_json "
+        "NULL AS adjuntos_json, NULL AS correo_clave "
         "FROM comm_log c")
     cola = (
         "SELECT 'cola' AS src, j.id AS id, 'email' AS canal, "
@@ -55050,7 +55500,7 @@ def _comm_hist_proyecciones():
         + cx("j.modulo") + " AS modulo, "
         "NULL AS ref_tipo, NULL AS ref_id, NULL AS ref_codigo, NULL AS proveedor, "
         "j.id AS job_id, NULL AS cuerpo_redactado, 0 AS cuerpo_fila, "
-        "(j.cuerpo IS NOT NULL) AS cuerpo_html, NULL AS adjuntos_json "
+        "(j.cuerpo IS NOT NULL) AS cuerpo_html, NULL AS adjuntos_json, NULL AS correo_clave "
         "FROM comm_email_jobs j")
     return {"email_log": ("e", email_log), "comm_log": ("c", comm_log), "cola": ("j", cola)}
 
@@ -55116,8 +55566,12 @@ def _comm_hist_consultar(f, incluir_cola=True):
             "per_page": per_page, "offset": offset, "filas": filas}
 
 
-def _comm_hist_llave(detalle, modulo):
-    """Nombre legible de la llave que frenó un correo bloqueado."""
+def _comm_hist_llave(detalle, modulo, meta=None):
+    """Nombre legible de lo que frenó un correo bloqueado: el interruptor general, la llave del módulo o (2026-10-20) el
+    interruptor de ESE correo en Control de correos («Apagado: «Nombre»»)."""
+    if isinstance(meta, dict) and meta.get("bloqueo") == "correo":
+        m = re.search(r"«(.+?)»", str(detalle or ""))
+        return "Apagado: «" + (m.group(1) if m else str(meta.get("correo") or "este correo")) + "»"
     d = str(detalle or "").lower()
     if "global" in d:
         return "Interruptor general de email (todos los módulos)"
@@ -55147,7 +55601,7 @@ def _comm_hist_serializar(filas):
         llave = None
         via = ""
         if estado == "bloqueado":
-            llave = _comm_hist_llave(detalle, modulo)
+            llave = _comm_hist_llave(detalle, modulo, meta)
             motivo = llave
         elif estado == "fallido":
             motivo = detalle or "El proveedor rechazó el envío sin informar el motivo (registro antiguo)"
@@ -55203,11 +55657,16 @@ def _comm_hist_serializar(filas):
         except Exception:
             adjuntos = []
 
+        # Control de correos (2026-10-20): la clave del correo (columna propia; en filas viejas, la que quedó en metadata).
+        clave_c = str(r.get("correo_clave") or meta.get("correo") or "").strip() or None
         ts = r.get("created_at")
         out.append({
             "src": src,
             "id": int(r.get("id") or 0),
             "canal": str(r.get("canal") or "email"),
+            "correo_clave": clave_c,
+            "correo_nombre": (_ccr.nombre_de(clave_c) if clave_c and _ccr.por_clave(clave_c) else None),
+            "bloqueo": (meta.get("bloqueo") if estado == "bloqueado" and isinstance(meta, dict) else None),
             "fecha": chile_fmt_filter(ts, "%d/%m/%Y") if ts else "",
             "hora": chile_fmt_filter(ts, "%H:%M:%S") if ts else "",
             "destinatario": r.get("destinatario") or "",
@@ -55292,6 +55751,7 @@ def comm_historial_api():
             if _errno in (1054, 1146) and (time.time() - _COMM_HIST_ENSURE_ULTIMO[0]) > 60:
                 _COMM_HIST_ENSURE_ULTIMO[0] = time.time()
                 _ensure_email_log_trazabilidad()
+                _ensure_comm_correo_control()          # 2026-10-20: columna correo_clave (Control de correos)
             res = _comm_hist_consultar(f, incluir_cola=False)
         except Exception as exc2:
             print(f"[comm-historial] consulta falló de nuevo: {str(exc2)[:300]}", flush=True)
@@ -55317,7 +55777,8 @@ def comm_historial_api():
         "filtros": {"estado": f["estado"], "modulo": f["modulo"], "q": f["q"],
                     "desde": f["desde"].isoformat() if f["desde"] else "",
                     "hasta": f["hasta"].isoformat() if f["hasta"] else "",
-                    "ref": f["ref"]},
+                    "ref": f["ref"], "correo": f.get("correo") or "",
+                    "correo_nombre": (_ccr.nombre_de(f["correo"]) if f.get("correo") and _ccr.por_clave(f["correo"]) else "")},
     })
     resp.headers["Cache-Control"] = "no-store, max-age=0"
     return resp
