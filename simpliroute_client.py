@@ -35,6 +35,17 @@ DEFAULT_WINDOW_END = "23:59:00"
 DEFAULT_DURATION = "00:03:00"   # el Excel manda 3 (int minutos); la API exige HH:MM:SS
 
 
+# Comunicaciones → «Control de correos» (2026-10-20): SimpliRoute es quien le avisa al cliente, y lo hace al correo de contacto que le
+# entregamos en la visita. app.py reemplaza esta función por la que mira el interruptor de «Correo del cliente en la visita de
+# SimpliRoute» (ext_simpliroute_contacto). Recibe el correo que se iba a incluir y devuelve True si se incluye. Por defecto —en las
+# pruebas y fuera de la app— SIEMPRE se incluye: el módulo sigue siendo puro y la visita sale como siempre.
+def _contacto_email_permitido(mail):
+    return True
+
+
+CONTACTO_EMAIL_PERMITIDO = _contacto_email_permitido
+
+
 def _s(v, maxlen=None):
     """String limpio; '' si es None. Trunca si se pide."""
     out = "" if v is None else str(v).strip()
@@ -160,7 +171,12 @@ def build_visit_payload(item, *, planned_date, window_start=None, window_end=Non
         payload["contact_phone"] = tel
     mail = _s(item.get("email"), 100)
     if mail:
-        payload["contact_email"] = mail
+        try:
+            incluir_mail = bool(CONTACTO_EMAIL_PERMITIDO(mail))
+        except Exception:
+            incluir_mail = True          # si el interruptor falla, la visita sale como siempre: nunca se pierde por esto
+        if incluir_mail:
+            payload["contact_email"] = mail
 
     # reference: la doc lo define como nº de factura/pedido. Usamos TIDO-NUDO
     # para que sea único entre tipos de documento (FCV 100 ≠ VD 100).

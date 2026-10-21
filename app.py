@@ -9814,6 +9814,67 @@ def _correo_permitido(clave):
         return True
 
 
+# ── Avisos que NO envía ILUS sino FedEx o SimpliRoute (registro: tipo «externo»; Control de correos, fase 3) ──────────────────────
+# ILUS no manda ese correo: le ENTREGA al tercero el correo del destinatario (en la guía, el retiro, la visita o el Excel de carga) y el
+# tercero avisa. El interruptor decide si se lo entrega. Obedecen al interruptor general y a su propio interruptor (decisión de
+# Daniel, 20-oct-2026: «el general también corta los avisos de FedEx y SimpliRoute»); la llave de paso del módulo NO los frena.
+def _correo_externo_bloqueo(clave):
+    """¿Por qué ILUS NO le entregaría al tercero el correo del destinatario? 'global' (interruptor general de correos apagado) |
+    'correo' (el interruptor de ESE aviso, en Comunicaciones → Control de correos) | None (sí se lo entrega, como siempre).
+    Sin fila en la tabla = se lo entrega. Cualquier error al leer = se lo entrega (igual que la puerta de envío): un fallo aquí
+    jamás debe impedir crear una guía, programar un retiro, subir una visita o exportar un Excel."""
+    try:
+        if not comm_is_enabled("email"):
+            return "global"
+    except Exception:
+        pass
+    try:
+        return None if _correo_permitido(clave) else "correo"
+    except Exception:
+        return None
+
+
+def _correo_externo_permitido(clave):
+    """True si ILUS puede incluir el correo del destinatario en lo que le manda a FedEx/SimpliRoute (ver _correo_externo_bloqueo)."""
+    return _correo_externo_bloqueo(clave) is None
+
+
+def _correo_externo_frenado(clave, destinatario, motivo=None, detalle=""):
+    """Deja constancia en el Historial de que ILUS NO le entregó al tercero el correo de ese destinatario (best-effort: nunca lanza).
+    Queda como «bloqueado» con la clave del aviso: Control de correos cuenta lo frenado y el Historial dice por qué."""
+    try:
+        motivo = motivo or _correo_externo_bloqueo(clave) or "correo"
+        nombre = _ccr.nombre_de(clave)
+        if motivo == "global":
+            msg = "Email deshabilitado por superadmin (kill switch global ON)"
+            meta = {"modulo": "transporte", "killswitch": True, "externo": True, "correo": clave}
+        else:
+            msg = f"Apagado en Control de correos: «{nombre}» ({clave})"
+            meta = {"modulo": "transporte", "bloqueo": "correo", "externo": True, "correo": clave}
+        msg += ". ILUS no le entregó el correo del destinatario a quien envía el aviso" + (f" ({detalle})" if detalle else "") + "."
+        _email_log(str(destinatario or "")[:300], f"{nombre} (no enviado)", clave, "bloqueado", error_msg=msg[:1000],
+                   metadata=meta, modulo="transporte", correo=clave)
+    except Exception:
+        pass
+
+
+def _sr_contacto_email_permitido(mail):
+    """Gancho de simpliroute_client.build_visit_payload: ¿va el correo del cliente como contacto de la visita? (aviso
+    `ext_simpliroute_contacto`). Si no, la visita sale igual, sin ese campo, y queda constancia en el Historial."""
+    motivo = _correo_externo_bloqueo("ext_simpliroute_contacto")
+    if motivo:
+        _correo_externo_frenado("ext_simpliroute_contacto", mail, motivo, "visita de SimpliRoute")
+        return False
+    return True
+
+
+try:
+    import simpliroute_client as _src_hook
+    _src_hook.CONTACTO_EMAIL_PERMITIDO = _sr_contacto_email_permitido
+except Exception as _e_src_hook:
+    print(f"[CORREO] no se pudo conectar el interruptor de SimpliRoute: {type(_e_src_hook).__name__}", flush=True)
+
+
 _EMAIL_LOG_TIENE_CORREO = {"v": None, "ts": 0.0}
 
 
@@ -21094,6 +21155,15 @@ def _fedex_create_shipment(
     # FedEx exige máximo 15 dígitos
     rec_tel = rec_tel[:15]
     rec_email    = _fedex_clean_str(recipient.get("email"), 80)
+    # Comunicaciones → Control de correos (fase 3): FedEx es quien le avisa al destinatario. Si ese aviso está apagado (o el interruptor
+    # general), ILUS no le entrega el correo ni en el contacto del destinatario ni en emailNotificationDetail: la guía sale igual, sin él.
+    # Solo se deja constancia cuando se pidió la notificación (así el reintento por bultos sueltos no repite la fila).
+    _fx_envio_bloqueo = _correo_externo_bloqueo("ext_fedex_notif_envio") if (rec_email or notify_email) else None
+    if _fx_envio_bloqueo:
+        if notify_email:
+            _correo_externo_frenado("ext_fedex_notif_envio", notify_email, _fx_envio_bloqueo,
+                                    f"guía {reference}" if reference else "")
+        rec_email, notify_email = "", ""
     rec_dir      = _fedex_split_address(recipient.get("direccion"))
     rec_comuna_raw = (recipient.get("comuna") or "").strip()
     # Si llegó un código (2-4 chars), resolver contra TABCM del ERP.
@@ -21641,6 +21711,13 @@ def _fedex_pickup_create(
             "streetLines": _fedex_split_address(ILUS_REMITENTE["bodega"]),
         },
     }
+    if notify_email:
+        # Comunicaciones → Control de correos (fase 3): ese aviso lo envía FedEx. Apagado (o con el interruptor general apagado), ILUS
+        # no le entrega el correo: el retiro se programa igual, sin notificación.
+        _fx_ret_bloqueo = _correo_externo_bloqueo("ext_fedex_notif_retiro")
+        if _fx_ret_bloqueo:
+            _correo_externo_frenado("ext_fedex_notif_retiro", notify_email, _fx_ret_bloqueo, "retiro FedEx")
+            notify_email = ""
     if notify_email:
         body["pickupNotificationDetail"] = {
             "emailDetails": [{"address": notify_email, "locale": "es_CL"}],
@@ -46503,6 +46580,11 @@ def _tr_manifiesto_export_impl(mid, *, devolver_bytes=False):
         fedex_test_notify_email = os.environ.get(
             "ILUS_FEDEX_RECIPIENT_NOTIFY_EMAIL", "alison.mellado@sphs.cl"
         ).strip()
+        # Comunicaciones → Control de correos (fase 3): FedEx le avisa al correo de la columna 15 (con las banderas de las columnas
+        # 32-35). Si ese aviso está apagado (o el interruptor general), ILUS no le entrega ningún correo: la columna queda vacía,
+        # igual que cuando el cliente no tiene correo, y se deja UNA constancia por exportación en el Historial.
+        _fx_xl_bloqueo = _correo_externo_bloqueo("ext_fedex_export_email")
+        _fx_xl_omitidos = 0
 
         for ri, it in enumerate(items, 2):
             nbult = max(1, int(it.get("n_bultos") or 1))
@@ -46538,6 +46620,10 @@ def _tr_manifiesto_export_impl(mid, *, devolver_bytes=False):
             # recipientEmail: correo real del cliente por defecto (dinámico);
             # solo en modo prueba se sustituye por el interno (ver arriba).
             recipient_email = fedex_test_notify_email if _fedex_test_mode else (it.get("email") or "")
+            if _fx_xl_bloqueo:                       # aviso apagado: ningún correo viaja en el Excel (ver arriba)
+                if recipient_email:
+                    _fx_xl_omitidos += 1
+                recipient_email = ""
             row = [
                 it.get("nudo") or "",                                 # 1  reference
                 sender_name, s["company"], s["phone"], s["email"],    # 2-5 sender contact
@@ -46559,12 +46645,19 @@ def _tr_manifiesto_export_impl(mid, *, devolver_bytes=False):
             if _falta(it.get("telefono")): ws.cell(ri, 14).fill = MISS_FILL
             # El correo faltante solo importa fuera de modo prueba (en modo
             # prueba la celda siempre trae el correo interno, nunca falta).
-            if not _fedex_test_mode and _falta(it.get("email")):
-                ws.cell(ri, 15).fill = MISS_FILL
+            if not _fedex_test_mode and not _fx_xl_bloqueo and _falta(it.get("email")):
+                ws.cell(ri, 15).fill = MISS_FILL     # (con el aviso apagado la celda vacía es a propósito: no se marca como faltante)
             if not cp_dest:                ws.cell(ri, 19).fill = MISS_FILL  # FedEx rechaza sin CP
             if _falta(comuna_dest):        ws.cell(ri, 21).fill = MISS_FILL
+        if _fx_xl_bloqueo and _fx_xl_omitidos:
+            _correo_externo_frenado("ext_fedex_export_email", f"{_fx_xl_omitidos} correos de clientes", _fx_xl_bloqueo,
+                                    f"Excel de FedEx, manifiesto {man.get('correlativo') or mid}")
 
     elif formato == "simplyroute":
+        # Comunicaciones → Control de correos (fase 3): SimpliRoute le avisa al correo de contacto (columna 21). Si ese aviso está apagado
+        # (o el interruptor general), ILUS no le entrega ningún correo: la celda queda vacía y se deja UNA constancia por exportación.
+        _sr_xl_bloqueo = _correo_externo_bloqueo("ext_simpliroute_contacto")
+        _sr_xl_omitidos = 0
         ws.title = "Felca y Milling"
         _hdr([
             "Título*   Requerido", "Dirección completa*   Requerido", "Carga",
@@ -46597,8 +46690,16 @@ def _tr_manifiesto_export_impl(mid, *, devolver_bytes=False):
             ]
             for ci, v in enumerate(row, 1):
                 ws.cell(ri, ci, _xc(v))
+            if _sr_xl_bloqueo:                       # aviso apagado: ningún correo viaja en el Excel (ver arriba)
+                if it.get("email"):
+                    _sr_xl_omitidos += 1
+                ws.cell(ri, 21).value = None
             if _falta(it.get("telefono")): ws.cell(ri, 14).fill = MISS_FILL
-            if _falta(it.get("email")):    ws.cell(ri, 21).fill = MISS_FILL
+            if _falta(it.get("email")) and not _sr_xl_bloqueo:
+                ws.cell(ri, 21).fill = MISS_FILL     # (con el aviso apagado la celda vacía es a propósito: no se marca como faltante)
+        if _sr_xl_bloqueo and _sr_xl_omitidos:
+            _correo_externo_frenado("ext_simpliroute_contacto", f"{_sr_xl_omitidos} correos de clientes", _sr_xl_bloqueo,
+                                    f"Excel de SimpliRoute, manifiesto {man.get('correlativo') or mid}")
 
     elif formato == "clickex":
         ws.title = "Clickex"
@@ -54720,8 +54821,9 @@ def _require_superadmin_api(view):
     return wrapped
 
 
-# Qué clases de correo muestra la pantalla: los que envía ILUS y, en la fase 3, los avisos que envían FedEx y SimpliRoute.
-_COMM_CORREOS_TIPOS_EN_PANTALLA = ("ilus",)
+# Qué clases de correo muestra la pantalla: los que envía ILUS y los avisos que envían FedEx y SimpliRoute (fase 3: ILUS decide si
+# les entrega el correo del destinatario; no tienen plantilla ni prueba, y no pasan por la llave de paso del módulo).
+_COMM_CORREOS_TIPOS_EN_PANTALLA = ("ilus", "externo")
 _COMM_CORREOS_CIFRAS = {"data": None, "ts": 0.0}
 _COMM_CORREOS_CIFRAS_TTL = 60            # segundos: las cifras no necesitan ser al segundo
 _COMM_CORREOS_VENTANA_DIAS = 30
@@ -55015,6 +55117,10 @@ def comm_correos_vista_previa(clave):
     c, err = _comm_correo_o_404(clave)
     if err:
         return err
+    if c["tipo"] == "externo":
+        return jsonify({"ok": True, "sin_plantilla": True, "ultimo_log_id": None,
+                        "mensaje": "Este aviso lo envía FedEx o SimpliRoute, no ILUS: no tenemos su texto. Lo único que ILUS "
+                                   "decide es si le entrega el correo del destinatario."})
     asunto, cuerpo, info = _comm_correo_demo(c)
     if asunto is None:
         ultimo = None
@@ -55047,6 +55153,9 @@ def comm_correos_prueba(clave):
     c, err = _comm_correo_o_404(clave)
     if err:
         return err
+    if c["tipo"] == "externo":
+        return jsonify({"ok": False, "error_codigo": "NO_APLICA",
+                        "error": "Este aviso lo envía FedEx o SimpliRoute, no ILUS: no se puede mandar una prueba."}), 400
     destino = str((getattr(g, "user", None) or {}).get("username") or "").strip().lower()
     if "@" not in destino or len(destino) > 190:
         return jsonify({"ok": False, "error": "Tu usuario no tiene un correo válido: no hay a dónde enviar la prueba.",

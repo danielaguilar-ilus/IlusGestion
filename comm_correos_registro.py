@@ -30,6 +30,9 @@ CÓMO AGREGAR UN CORREO NUEVO (3 pasos; la prueba de cobertura te dice cuál fal
      (o `correo=` en la función que lo envuelve). NUNCA dentro de `**kwargs` ni de `kwargs_json` de la cola.
   3. Si lo condiciona una variable de entorno, decláralo en `condiciones` (`_cond(...)`): la pantalla lo muestra como
      «Apagado por configuración» y no deja encenderlo.
+  4. Si el correo NO lo envía ILUS sino un tercero (FedEx, SimpliRoute), regístralo con `tipo="externo"`: ILUS solo decide si le
+     ENTREGA el correo del destinatario. Se consulta con `_correo_externo_bloqueo(clave)` justo donde ILUS arma lo que le manda; obedece
+     al interruptor general y al suyo, no a la llave del módulo (REGLA #33).
 Un grupo o un destinatario nuevos se suman en `MODULOS_UI` / `DESTINATARIOS` (y su orden). Nada más: la pantalla, el interruptor, la
 vista previa y las cifras salen solas del registro.
 """
@@ -497,22 +500,29 @@ REGISTRO = (
        nota="Apagado en el código desde 08-06-2026 (Daniel: «un inicio de sesión no amerita un correo»)."),
 
     # ─────────────────────────────── LO QUE ENVÍAN TERCEROS (fase 3) ───────────────────────────────
+    # Estos cuatro NO los envía ILUS: los envía el tercero. El interruptor decide si ILUS le ENTREGA el correo del destinatario. Obedecen
+    # al interruptor general y a su propio interruptor (decisión de Daniel, 20-oct-2026); la llave de paso del módulo no los frena.
     _c("ext_fedex_notif_envio", "Aviso de FedEx al destinatario del envío", "transporte", "transporte", "cliente",
        "Casilla «Notificar» al crear una guía de FedEx (crear, masivo o reemitir). El correo lo envía FedEx.",
        tipo="externo", avisa_a="Al correo del destinatario de la guía",
-       nota="ILUS decide si incluye el correo del destinatario en lo que le manda a FedEx."),
+       nota="ILUS decide si le entrega a FedEx el correo del destinatario. Obedece al interruptor general y a este interruptor, "
+            "no a la llave de Transporte."),
     _c("ext_fedex_notif_retiro", "Aviso de FedEx por el retiro programado", "transporte", "transporte", "proveedor_courier",
        "«Programar retiro FedEx» con un correo escrito en la notificación. El correo lo envía FedEx.",
        tipo="externo", avisa_a="Al correo escrito en el formulario",
-       nota="ILUS decide si incluye el correo en lo que le manda a FedEx."),
+       nota="ILUS decide si le entrega a FedEx ese correo. Obedece al interruptor general y a este interruptor, "
+            "no a la llave de Transporte."),
     _c("ext_fedex_export_email", "Correo del cliente en el Excel de carga de FedEx", "transporte", "transporte", "cliente",
-       "Exportar el Excel de carga masiva o «Avisar al courier»: el Excel lleva el correo del cliente y los avisos.",
+       "Exportar el Excel de carga masiva de FedEx o «Avisar al courier»: el Excel lleva el correo del cliente y FedEx le avisa.",
        tipo="externo", avisa_a="FedEx envía los avisos al correo del Excel",
-       nota="ILUS decide si pone el correo del cliente en el Excel."),
+       nota="ILUS decide si pone el correo del cliente en el Excel (columna del destinatario). Obedece al interruptor general y a "
+            "este interruptor, no a la llave de Transporte."),
     _c("ext_simpliroute_contacto", "Correo del cliente en la visita de SimpliRoute", "transporte", "transporte", "cliente",
-       "Al subir o reenviar una visita a SimpliRoute (y en el redespacho automático). El aviso lo envía SimpliRoute si su "
-       "cuenta lo tiene configurado.", modo="mixto", tipo="externo", avisa_a="SimpliRoute avisa al correo de contacto",
-       nota="ILUS decide si incluye el correo del cliente en la visita."),
+       "Al subir o reenviar una visita a SimpliRoute (también en el redespacho automático) y al exportar el Excel de SimpliRoute. "
+       "El aviso lo envía SimpliRoute si su cuenta lo tiene configurado.", modo="mixto", tipo="externo",
+       avisa_a="SimpliRoute avisa al correo de contacto",
+       nota="ILUS decide si incluye el correo del cliente en la visita. Obedece al interruptor general y a este interruptor, "
+            "no a la llave de Transporte."),
 
     # ─────────────────────────────── HERRAMIENTAS (no se apagan por interruptor) ───────────────────────────────
     _c("comm_prueba_manual", "Enviar prueba (Comunicaciones)", "comunicaciones", "general", "interno",
@@ -686,6 +696,9 @@ def estado_efectivo(c, *, general_activo=True, llave_bloqueada=False, switch_act
             bloquea_config = True
     codigo = bool(c.get("apagado_en_codigo"))
     protegido = bool(c.get("protegido"))
+    # Los avisos que envía un tercero (FedEx, SimpliRoute: tipo «externo») NO pasan por la llave de paso del módulo: solo por el
+    # interruptor general y el suyo (decisión de Daniel, 20-oct-2026). Su paso 2 se muestra «no aplica» y nunca frena.
+    aplica_llave = c.get("tipo") != "externo"
     pasos = []
     frena = 0
     for n, clave_paso, nombre_paso in PASOS:
@@ -693,6 +706,8 @@ def estado_efectivo(c, *, general_activo=True, llave_bloqueada=False, switch_act
             est = "saltado"
         elif n == 1 and not general_activo:
             est, frena = "apagado", 1
+        elif n == 2 and not aplica_llave:
+            est = "saltado"
         elif n == 2 and llave_bloqueada:
             est, frena = "apagado", 2
         elif n == 3 and not protegido and not switch_activo:
@@ -715,7 +730,7 @@ def estado_efectivo(c, *, general_activo=True, llave_bloqueada=False, switch_act
     elif frena == 4:
         efectivo = "codigo" if codigo else "config"
     return {
-        "efectivo": efectivo, "frena_en": frena, "pasos": pasos, "condiciones": conds,
+        "efectivo": efectivo, "frena_en": frena, "pasos": pasos, "condiciones": conds, "aplica_llave": aplica_llave,
         "bloquea_config": bloquea_config, "apagado_en_codigo": codigo,
         "puede_encender": (not protegido) and (not bloquea_config) and (not codigo),
         "puede_apagar": not protegido,

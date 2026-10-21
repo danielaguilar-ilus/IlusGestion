@@ -172,7 +172,7 @@
     var auto = c.modo === 'automatico' ? '<i class="bi bi-robot"></i>Automático'
       : (c.modo === 'manual' ? '<i class="bi bi-hand-index-thumb"></i>Manual' : '<i class="bi bi-robot"></i>Automático y manual');
     t += '<span class="ctc-tag auto">' + auto + '</span>';
-    t += '<span class="ctc-tag"><i class="bi bi-key"></i>Llave: ' + esc(c.llave_label) + '</span>';
+    if (c.tipo !== 'externo') t += '<span class="ctc-tag"><i class="bi bi-key"></i>Llave: ' + esc(c.llave_label) + '</span>';   // los avisos de terceros no pasan por la llave
     if (c.protegido) t += '<span class="ctc-tag prot"><i class="bi bi-lock-fill"></i>Correo de seguridad</span>';
     if (c.sensible) t += '<span class="ctc-tag sens"><i class="bi bi-shield-exclamation"></i>Autorizaciones</span>';
     if (c.tipo === 'externo') t += '<span class="ctc-tag ter"><i class="bi bi-box-arrow-up-right"></i>Lo envía un tercero</span>';
@@ -193,6 +193,7 @@
   }
 
   function textoPaso(c, p) {
+    if (p.clave === 'llave' && c.tipo === 'externo') return 'No aplica a este aviso';
     if (p.estado === 'saltado') return 'No se revisa';
     switch (p.clave) {
       case 'general': return p.estado === 'ok' ? 'Encendido' : 'Apagado';
@@ -222,10 +223,16 @@
   }
 
   function lineaEstado(c) {
-    var e = c.estado, t;
+    var e = c.estado, t, ext = c.tipo === 'externo';
     switch (e.efectivo) {
-      case 'sale': t = c.protegido ? 'Correo de seguridad: sale siempre y no se puede apagar desde aquí.' : 'Hoy este correo sale cuando ocurre lo que lo dispara.'; break;
-      case 'correo': t = 'Está apagado: no sale aunque pase lo que lo dispara. Cada intento queda en el Historial como «Apagado».'; break;
+      case 'sale':
+        t = c.protegido ? 'Correo de seguridad: sale siempre y no se puede apagar desde aquí.'
+          : (ext ? 'Hoy ILUS le entrega el correo del destinatario a quien envía el aviso, así que el aviso sale.' : 'Hoy este correo sale cuando ocurre lo que lo dispara.');
+        break;
+      case 'correo':
+        t = ext ? 'Está apagado: ILUS no le entrega el correo del destinatario a quien envía el aviso, así que no avisa. Cada vez queda en el Historial como «Apagado».'
+          : 'Está apagado: no sale aunque pase lo que lo dispara. Cada intento queda en el Historial como «Apagado».';
+        break;
       case 'llave': t = 'La llave de paso de ' + c.llave_label + ' está cerrada (pestaña Plantillas): ningún correo de ese módulo sale.' +
         (e.llave_motivo ? ' Motivo: ' + e.llave_motivo : ''); break;
       case 'general': t = 'El interruptor general de correos está apagado: no sale ningún correo.'; break;
@@ -253,6 +260,7 @@
 
   function plantilla(c) {
     var p = c.plantilla;
+    if (c.tipo === 'externo') return '<div class="ctc-aviso-plantilla info"><i class="bi bi-box-arrow-up-right"></i><span>Este aviso lo envía FedEx o SimpliRoute, no ILUS: no hay plantilla ni texto que editar. ILUS solo decide si le entrega el correo del destinatario.</span></div>';
     if (!p) return '<div class="ctc-aviso-plantilla info"><i class="bi bi-code-square"></i><span>Texto en el código: este correo no tiene plantilla en el editor.</span></div>';
     if (!p.existe) return '<div class="ctc-aviso-plantilla"><i class="bi bi-exclamation-triangle-fill"></i><span>Su plantilla aún no está guardada en el editor: sale con el texto del código.</span></div>';
     if (!p.activo) return '<div class="ctc-aviso-plantilla"><i class="bi bi-exclamation-triangle-fill"></i><span>La plantilla está <b>apagada</b> en el editor. ' + esc(p.texto_apagada) + '</span></div>';
@@ -262,6 +270,12 @@
   function cifras(c) {
     var k = c.cifras || {};
     if (!S.datos.cifras_disponibles) return '';
+    if (c.tipo === 'externo') {                                                  // ILUS no cuenta lo que envía el tercero: solo lo que frenó
+      return '<div class="ctc-cifras" aria-label="Últimos ' + (S.datos.ventana_dias || 30) + ' días">' +
+        '<span class="c" style="color:#6b7280">Últimos ' + (S.datos.ventana_dias || 30) + ' días</span>' +
+        '<span class="c fr"><i class="bi bi-sign-stop"></i>Frenados por ILUS <b>' + fmt(k.frenados) + '</b></span>' +
+        '<span class="ult">Los avisos que sí salen los envía FedEx o SimpliRoute: ILUS no los cuenta.</span></div>';
+    }
     return '<div class="ctc-cifras" aria-label="Últimos ' + (S.datos.ventana_dias || 30) + ' días">' +
       '<span class="c" style="color:#6b7280">Últimos ' + (S.datos.ventana_dias || 30) + ' días</span>' +
       '<span class="c ok"><i class="bi bi-send-check"></i>Enviados <b>' + fmt(k.enviados) + '</b></span>' +
@@ -312,11 +326,13 @@
     h += cifras(c) + cambioLinea(c);
     h += '<div id="ctcCambios-' + esc(c.clave) + '"></div>';
     h += '<div class="ctc-acciones">';
-    h += c.plantilla && c.plantilla.existe
-      ? '<button type="button" class="ctc-btn" data-ctc="plantilla" data-clave="' + esc(c.clave) + '"><i class="bi bi-pencil-square"></i>Editar plantilla</button>'
-      : '<span class="ctc-btn" style="cursor:default;opacity:.75" title="Su texto está en el código"><i class="bi bi-code-square"></i>Texto en el código</span>';
-    h += '<button type="button" class="ctc-btn" data-ctc="previa" data-clave="' + esc(c.clave) + '"><i class="bi bi-eye"></i>Vista previa</button>';
-    h += '<button type="button" class="ctc-btn" data-ctc="prueba" data-clave="' + esc(c.clave) + '"><i class="bi bi-send"></i>Enviarme una prueba</button>';
+    if (c.tipo !== 'externo') {                                         // el texto de un aviso de FedEx o SimpliRoute no es de ILUS: sin plantilla, vista previa ni prueba
+      h += c.plantilla && c.plantilla.existe
+        ? '<button type="button" class="ctc-btn" data-ctc="plantilla" data-clave="' + esc(c.clave) + '"><i class="bi bi-pencil-square"></i>Editar plantilla</button>'
+        : '<span class="ctc-btn" style="cursor:default;opacity:.75" title="Su texto está en el código"><i class="bi bi-code-square"></i>Texto en el código</span>';
+      h += '<button type="button" class="ctc-btn" data-ctc="previa" data-clave="' + esc(c.clave) + '"><i class="bi bi-eye"></i>Vista previa</button>';
+      h += '<button type="button" class="ctc-btn" data-ctc="prueba" data-clave="' + esc(c.clave) + '"><i class="bi bi-send"></i>Enviarme una prueba</button>';
+    }
     h += '<button type="button" class="ctc-btn" data-ctc="historial" data-clave="' + esc(c.clave) + '"><i class="bi bi-list-ul"></i>Ver en historial</button>';
     h += '<button type="button" class="ctc-btn" data-ctc="cambios" data-clave="' + esc(c.clave) + '" aria-expanded="' + (S.cambiosAbiertos.has(c.clave) ? 'true' : 'false') + '"><i class="bi bi-clock-history"></i>Cambios</button>';
     h += '<span class="ctc-spacer"></span>' + interruptor(c) + '</div>';

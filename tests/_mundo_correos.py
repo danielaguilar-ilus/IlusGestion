@@ -21,6 +21,8 @@ FUNCS = (
     "_correo_ctrl_invalidar", "_correo_ctrl_estado", "_correo_resolver_clave", "_correo_permitido", "_correo_bloqueo_previo",
     "_email_log_tiene_correo_clave", "_email_marcar_bloqueo", "_email_ultimo_bloqueo", "_email_motivo_bloqueo_txt",
     "_email_resultado", "_modulo_desde_evento", "_send_ilus_email",
+    # avisos que envían FedEx y SimpliRoute (fase 3)
+    "_correo_externo_bloqueo", "_correo_externo_permitido", "_correo_externo_frenado",
     # la pantalla
     "_require_superadmin_api", "_comm_correos_fecha", "_comm_correos_version", "_comm_correos_cifras", "_comm_correos_plantillas",
     "_comm_correo_item", "_comm_correos_payload", "comm_correos_listar", "_comm_correo_o_404", "comm_correos_cambiar",
@@ -31,29 +33,19 @@ CONSTS = ("_CORREO_CTRL_CACHE", "_CORREO_CTRL_TTL", "_CORREO_AVISADOS", "_KS_MOD
           "_COMM_CORREOS_TIPOS_EN_PANTALLA", "_COMM_CORREOS_CIFRAS", "_COMM_CORREOS_CIFRAS_TTL", "_COMM_CORREOS_VENTANA_DIAS")
 
 _TZ = None
-_CODIGO = {}          # nombre → código compilado: buscar una función en 170 mil líneas cuesta; un mundo nuevo por prueba no debe repetirlo
+_LLAVES = []
 
 
 def _extraer_cacheado(amb, rel="app.py"):
-    """Como `FC.extraer`, pero compila cada función/constante UNA vez por proceso y solo la vuelve a ejecutar en cada mundo."""
-    for nombre in CONSTS:
-        clave = (rel, "const", nombre)
-        if clave not in _CODIGO:
-            _CODIGO[clave] = compile(FC.constante_top(rel, nombre), f"<{rel}:{nombre}>", "exec")
-        exec(_CODIGO[clave], amb)
-    for nombre in FUNCS:
-        clave = (rel, "func", nombre)
-        if clave not in _CODIGO:
-            _CODIGO[clave] = compile(FC.funcion_top(rel, nombre), f"<{rel}:{nombre}>", "exec")
-        exec(_CODIGO[clave], amb)
-    return amb
+    """Ejecuta en `amb` las funciones y constantes de app.py que usa la pantalla (FC.extraer las busca y compila una sola vez por proceso)."""
+    return FC.extraer(amb, rel, FUNCS, CONSTS)
 
 
 def llaves_validas():
     """`_MODULOS_KILLSWITCH_VALIDOS` leído del código de app.py (una vez por proceso)."""
-    if "llaves" not in _CODIGO:
-        _CODIGO["llaves"] = tuple(FC.valor_literal("app.py", "_MODULOS_KILLSWITCH_VALIDOS"))
-    return _CODIGO["llaves"]
+    if not _LLAVES:
+        _LLAVES.extend(FC.valor_literal("app.py", "_MODULOS_KILLSWITCH_VALIDOS"))
+    return tuple(_LLAVES)
 
 
 def _tz():

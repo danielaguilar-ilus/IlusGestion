@@ -1019,11 +1019,11 @@ class TestPantallaPermisos(_PantallaBase):
 
 
 class TestPantallaListar(_PantallaBase):
-    def test_lista_todos_los_correos_de_ilus_y_ninguna_herramienta(self):
+    def test_lista_los_correos_de_ilus_y_los_avisos_de_terceros_y_ninguna_herramienta(self):
         st, d, resp = self.m.llamar("comm_correos_listar")
         self.assertEqual(st, 200)
         self.assertTrue(d["ok"])
-        self.assertEqual([c["clave"] for c in d["correos"]], [c["clave"] for c in R.REGISTRO if c["tipo"] == "ilus"])
+        self.assertEqual([c["clave"] for c in d["correos"]], [c["clave"] for c in R.REGISTRO if c["tipo"] in ("ilus", "externo")])
         self.assertEqual(resp.headers["Cache-Control"], "no-store, max-age=0")
         self.assertEqual({h["clave"] for h in d["herramientas"]}, set(R.HERRAMIENTAS))
         self.assertNotIn("comunicaciones", [x["clave"] for x in d["modulos"]])
@@ -1673,6 +1673,577 @@ class TestInterfazEstatica(unittest.TestCase):
             if c["destinatario"] == "tecnico":
                 for campo in ("nombre", "disparo", "nota", "avisa_a", "adjunta"):
                     self.assertNotIn("$", c[campo], f"{c['clave']}.{campo}")
+
+
+# ════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  8) FASE 3: los avisos que envían FedEx y SimpliRoute (registro: tipo «externo»)
+#     ILUS no los envía: decide si le ENTREGA al tercero el correo del destinatario. Obedecen al interruptor general y a su propio
+#     interruptor (decisión de Daniel, 20-oct-2026); la llave de paso del módulo no los frena. Sin fila = como siempre.
+# ════════════════════════════════════════════════════════════════════════════════════════════════════════════
+EXTERNOS = ("ext_fedex_notif_envio", "ext_fedex_notif_retiro", "ext_fedex_export_email", "ext_simpliroute_contacto")
+FUNCS_EXTERNOS = ("_correo_externo_bloqueo", "_correo_externo_permitido", "_correo_externo_frenado")
+
+
+class TestExternosEnElRegistro(unittest.TestCase):
+    def test_los_cuatro_avisos_de_terceros_son_externos_sin_plantilla_ni_proteccion(self):
+        self.assertEqual(set(R.claves(tipo="externo")), set(EXTERNOS))
+        for k in EXTERNOS:
+            c = R.por_clave(k)
+            self.assertEqual((c["tipo"], c["plantilla"], c["protegido"], c["sensible"]), ("externo", None, False, False), k)
+            self.assertIn("interruptor general", c["nota"], k)
+
+    def test_la_llave_del_modulo_no_frena_un_aviso_de_un_tercero(self):
+        for k in EXTERNOS:
+            e = R.estado_efectivo(R.por_clave(k), llave_bloqueada=True)
+            self.assertEqual(e["efectivo"], "sale", k)
+            self.assertEqual([p["estado"] for p in e["pasos"]], ["ok", "saltado", "ok", "ok"], k)
+            self.assertFalse(e["aplica_llave"], k)
+
+    def test_el_interruptor_general_y_el_propio_si_los_frenan(self):
+        c = R.por_clave("ext_fedex_notif_envio")
+        e = R.estado_efectivo(c, general_activo=False)
+        self.assertEqual((e["efectivo"], e["frena_en"]), ("general", 1))
+        self.assertEqual([p["estado"] for p in e["pasos"]], ["apagado", "saltado", "saltado", "saltado"])
+        e = R.estado_efectivo(c, switch_activo=False)
+        self.assertEqual((e["efectivo"], e["frena_en"]), ("correo", 3))
+        self.assertEqual([p["estado"] for p in e["pasos"]], ["ok", "saltado", "apagado", "saltado"])
+        self.assertTrue(e["puede_encender"])
+
+    def test_un_correo_de_ilus_sigue_pasando_por_su_llave(self):
+        e = R.estado_efectivo(R.por_clave("tr_en_ruta"), llave_bloqueada=True)
+        self.assertEqual((e["efectivo"], e["frena_en"]), ("llave", 2))
+        self.assertTrue(e["aplica_llave"])
+
+
+class TestExternosLaPuerta(unittest.TestCase):
+    """`_correo_externo_*` de app.py, funciones REALES: general > interruptor del aviso; la llave del módulo NO cuenta."""
+
+    def mundo(self, **kw):
+        m = Mundo(**kw)
+        _extraer(m.amb, FUNCS_EXTERNOS)
+        return m
+
+    def test_sin_fila_se_le_entrega_el_correo_como_siempre(self):
+        m = self.mundo()
+        for k in EXTERNOS:
+            self.assertIsNone(m.amb["_correo_externo_bloqueo"](k), k)
+            self.assertTrue(m.amb["_correo_externo_permitido"](k), k)
+        self.assertEqual(m.logs, [])
+
+    def test_el_interruptor_general_lo_frena_aunque_el_del_aviso_este_encendido(self):
+        m = self.mundo(global_on=False)
+        self.assertEqual(m.amb["_correo_externo_bloqueo"]("ext_fedex_notif_envio"), "global")
+        self.assertFalse(m.amb["_correo_externo_permitido"]("ext_fedex_notif_envio"))
+
+    def test_el_interruptor_del_aviso_lo_frena_y_los_demas_siguen(self):
+        m = self.mundo(filas={"ext_fedex_notif_envio": 0})
+        self.assertEqual(m.amb["_correo_externo_bloqueo"]("ext_fedex_notif_envio"), "correo")
+        for k in EXTERNOS[1:]:
+            self.assertIsNone(m.amb["_correo_externo_bloqueo"](k), k)
+
+    def test_la_llave_de_paso_del_modulo_no_frena_estos_avisos(self):
+        m = self.mundo(llaves_cerradas={"transporte"})
+        for k in EXTERNOS:
+            self.assertTrue(m.amb["_correo_externo_permitido"](k), k)
+
+    def test_base_caida_o_error_al_leer_nunca_impide_crear_una_guia(self):
+        m = self.mundo()
+        m.db_cae = True
+        for k in EXTERNOS:
+            self.assertTrue(m.amb["_correo_externo_permitido"](k), k)
+
+        def _boom(canal):
+            raise RuntimeError("no se pudo leer el interruptor general")
+        m.amb["comm_is_enabled"] = _boom
+        self.assertTrue(m.amb["_correo_externo_permitido"]("ext_fedex_notif_envio"))
+
+    def test_lo_frenado_queda_en_el_historial_como_bloqueado_con_la_clave_del_aviso(self):
+        m = self.mundo(filas={"ext_fedex_notif_envio": 0})
+        m.amb["_correo_externo_frenado"]("ext_fedex_notif_envio", "cliente@ejemplo.cl", "correo", "guía FCV 123")
+        (args, kw), = m.logs
+        self.assertEqual(args[0], "cliente@ejemplo.cl")
+        self.assertEqual(args[3], "bloqueado")
+        self.assertEqual((kw["correo"], kw["modulo"]), ("ext_fedex_notif_envio", "transporte"))
+        self.assertEqual(kw["metadata"]["bloqueo"], "correo")
+        self.assertTrue(kw["metadata"]["externo"])
+        self.assertIn("«" + R.nombre_de("ext_fedex_notif_envio") + "»", kw["error_msg"])
+        self.assertIn("guía FCV 123", kw["error_msg"])
+        self.assertIsNone(kw.get("html"))                                   # no hay cuerpo que guardar: ILUS no envió ningún correo
+
+    def test_por_el_interruptor_general_el_motivo_lo_dice(self):
+        m = self.mundo(global_on=False)
+        m.amb["_correo_externo_frenado"]("ext_simpliroute_contacto", "cliente@ejemplo.cl", "global")
+        (args, kw), = m.logs
+        self.assertIn("global", kw["error_msg"].lower())
+        self.assertNotIn("bloqueo", kw["metadata"])
+        self.assertTrue(kw["metadata"]["killswitch"])
+
+    def test_sin_decir_el_motivo_lo_calcula(self):
+        m = self.mundo(filas={"ext_fedex_notif_retiro": 0})
+        m.amb["_correo_externo_frenado"]("ext_fedex_notif_retiro", "x@y.cl")
+        (args, kw), = m.logs
+        self.assertEqual(kw["metadata"]["bloqueo"], "correo")
+
+    def test_dejar_constancia_nunca_rompe_la_guia(self):
+        m = self.mundo()
+
+        def _boom(*a, **k):
+            raise RuntimeError("email_log no responde")
+        m.amb["_email_log"] = _boom
+        m.amb["_correo_externo_frenado"]("ext_fedex_notif_envio", "x@y.cl", "correo")        # no lanza
+
+
+class TestExternosEnElCodigo(unittest.TestCase):
+    """Los cuatro sitios donde ILUS le entrega el correo a un tercero pasan por la puerta, ANTES de armar lo que se envía."""
+
+    def test_cada_aviso_externo_se_consulta_en_el_codigo(self):
+        app = _leer("app.py")
+        for k in EXTERNOS:
+            self.assertRegex(app, r'_correo_externo_(?:bloqueo|permitido)\("' + k + r'"\)', f"{k}: nadie lo consulta")
+
+    def test_fedex_crea_la_guia_sin_correo_si_el_aviso_esta_apagado(self):
+        s = FC.funcion_top("app.py", "_fedex_create_shipment")
+        i_gate = s.index('_correo_externo_bloqueo("ext_fedex_notif_envio")')
+        i_rec = s.index('"emailAddress": rec_email')
+        i_notif = s.index('body["requestedShipment"]["emailNotificationDetail"]')
+        self.assertLess(s.index('rec_email    = _fedex_clean_str(recipient.get("email"), 80)'), i_gate)
+        self.assertLess(i_gate, i_rec)
+        self.assertLess(i_gate, i_notif)
+        self.assertIn('rec_email, notify_email = "", ""', s[i_gate:i_rec])
+        self.assertIn("_correo_externo_frenado(", s[i_gate:i_rec])
+
+    def test_fedex_programa_el_retiro_sin_correo_si_el_aviso_esta_apagado(self):
+        s = FC.funcion_top("app.py", "_fedex_pickup_create")
+        i_gate = s.index('_correo_externo_bloqueo("ext_fedex_notif_retiro")')
+        i_notif = s.index('body["pickupNotificationDetail"]')
+        self.assertLess(i_gate, i_notif)
+        self.assertIn('notify_email = ""', s[i_gate:i_notif])
+
+    def test_el_excel_de_fedex_y_el_de_simpliroute_dejan_vacia_la_celda_del_correo(self):
+        s = FC.funcion_top("app.py", "_tr_manifiesto_export_impl")
+        i_fx = s.index('_correo_externo_bloqueo("ext_fedex_export_email")')
+        i_row_fx = s.index("recipient_email = fedex_test_notify_email if _fedex_test_mode")
+        self.assertLess(i_fx, i_row_fx)
+        self.assertIn('recipient_email = ""', s[i_row_fx:i_row_fx + 400])
+        # SimpliRoute: la consulta va ANTES del título de la hoja (una prueba de «sin ceros» mira una ventana de texto desde ahí)
+        i_sr = s.index('_correo_externo_bloqueo("ext_simpliroute_contacto")')
+        self.assertLess(i_sr, s.index('ws.title = "Felca y Milling"'))
+        self.assertIn("ws.cell(ri, 21).value = None", s[s.index('ws.title = "Felca y Milling"'):])
+        # Clickex y el manifiesto genérico no tienen un aviso registrado: no se tocan
+        self.assertNotIn("ext_clickex", s)
+
+    def test_simpliroute_recibe_el_gancho_de_la_puerta(self):
+        app = _leer("app.py")
+        self.assertIn("_src_hook.CONTACTO_EMAIL_PERMITIDO = _sr_contacto_email_permitido", app)
+        cuerpo = FC.funcion_top("app.py", "_sr_contacto_email_permitido")
+        self.assertIn('_correo_externo_bloqueo("ext_simpliroute_contacto")', cuerpo)
+        self.assertIn("return False", cuerpo)
+
+    def test_lo_que_no_es_un_aviso_no_se_toca(self):
+        """Las funciones INTOCABLES de Transporte (otras pruebas las comparan con main) no llevan nada de esto."""
+        for nombre in ("_tr_notificar_cliente", "_simpliroute_poll_batch", "tr_item_simpliroute_cancelar", "_tr_bulk_sync_erp_mysql",
+                       "_transporte_scheduler_loop"):
+            self.assertNotIn("_correo_externo_", FC.funcion_top("app.py", nombre), nombre)
+
+
+class TestExternosFedExReal(unittest.TestCase):
+    """`_fedex_create_shipment` y `_fedex_pickup_create` REALES de app.py con la red de mentira: se captura el JSON que se le habría
+    mandado a FedEx. Con el aviso apagado la guía y el retiro salen igual, sin el correo del destinatario."""
+
+    DEST = {"nombre": "Gimnasio Demo", "empresa": "Demo SpA", "telefono": "+56912345678", "email": "cliente@ejemplo.cl",
+            "direccion": "Av. Demo 123", "comuna": "Las Condes", "region": "RM", "cod_postal": "7550000"}
+    PAQ = [{"peso_kg": 5, "largo": 10, "ancho": 10, "alto": 10}]
+    CONTACTO = {"empresa": "ILUS Fitness", "nombre": "Despacho", "telefono": "56229465970"}
+    DIRECCION = {"direccion": "Av. Industrial 4500", "comuna": "Quilicura", "cod_postal": "8730000"}
+
+    def correr(self, funcion, *, filas=None, global_on=True, **kw):
+        import sys
+        m = Mundo(filas=filas, global_on=global_on)
+        _extraer(m.amb, FUNCS_EXTERNOS)
+        capturado = []
+
+        class _Requests:                                          # el «módulo» requests: anota el JSON y corta (no hay red)
+            @staticmethod
+            def post(url, json=None, headers=None, timeout=None):
+                capturado.append(json)
+                raise RuntimeError("sin red: es una prueba")
+        m.amb.update({
+            "FEDEX_RATE_CLIENT_ID": "id", "FEDEX_RATE_CLIENT_SECRET": "secreto", "FEDEX_ACCOUNT": "123456789",
+            "FEDEX_DEFAULT_SERVICE_CL": "FEDEX_PRIORITY", "FEDEX_DECLARED_CURRENCY": "", "FEDEX_ORIGIN_POSTAL": "8730000",
+            "FEDEX_SHIP_URL": "https://fedex.invalid/ship", "FEDEX_PICKUP_CREATE_URL": "https://fedex.invalid/pickup",
+            "ILUS_REMITENTE": {"nombre": "ILUS Fitness", "telefono": "56229465970", "bodega": "Av. Industrial 4500",
+                               "direccion": "Av. Industrial 4500"},
+            "_fedex_get_token": lambda: "token", "_fedex_clean_str": lambda v, n=0: (str(v or "").strip()[:n] if n else str(v or "").strip()),
+            "_fedex_split_address": lambda a: [str(a or "")], "_fedex_postal_cl": lambda p: str(p or ""),
+            "_resolve_comuna_erp": lambda c: c, "_cl_resolve_short_code": lambda c, region_hint=None: None,
+            "_codigo_postal_chile": lambda c: "7550000", "_comuna_to_postal": lambda c: "7550000",
+        })
+        _extraer(m.amb, (funcion,))
+        with mock.patch.dict(sys.modules, {"requests": _Requests}):
+            res = m.amb[funcion](**kw)
+        return capturado, res, m
+
+    def guia(self, **kw):
+        kw.setdefault("recipient", dict(self.DEST))
+        kw.setdefault("packages", [dict(p) for p in self.PAQ])
+        kw.setdefault("reference", "FCV 123")
+        return self.correr("_fedex_create_shipment", **kw)
+
+    @staticmethod
+    def sin_correo(body):
+        """La guía sin el correo del contacto ni la notificación: lo ÚNICO que debe cambiar cuando el aviso se apaga."""
+        b = json.loads(json.dumps(body))
+        b["requestedShipment"]["recipients"][0]["contact"].pop("emailAddress", None)
+        b["requestedShipment"].pop("emailNotificationDetail", None)
+        return b
+
+    def test_con_el_aviso_encendido_la_guia_lleva_el_correo_y_la_notificacion(self):
+        cap, res, m = self.guia(notify_email="cliente@ejemplo.cl", notify_name="Gimnasio Demo")
+        body, = cap
+        rs = body["requestedShipment"]
+        self.assertEqual(rs["recipients"][0]["contact"]["emailAddress"], "cliente@ejemplo.cl")
+        self.assertEqual(rs["emailNotificationDetail"]["emailNotificationRecipients"][0]["emailAddress"], "cliente@ejemplo.cl")
+        self.assertEqual(m.logs, [])
+
+    def test_con_el_aviso_apagado_la_guia_sale_igual_pero_sin_correo_y_con_una_constancia(self):
+        con, _, _ = self.guia(notify_email="cliente@ejemplo.cl", notify_name="Gimnasio Demo")
+        sin, res, m = self.guia(filas={"ext_fedex_notif_envio": 0}, notify_email="cliente@ejemplo.cl", notify_name="Gimnasio Demo")
+        body, = sin
+        rs = body["requestedShipment"]
+        self.assertNotIn("emailAddress", rs["recipients"][0]["contact"])
+        self.assertNotIn("emailNotificationDetail", rs)
+        self.assertEqual(body, self.sin_correo(con[0]), "solo debe faltar el correo: el resto de la guía no cambia")
+        self.assertIn("Red FedEx", res["error"])                    # llegó hasta el envío a FedEx: nada se cortó antes
+        (args, kw), = m.logs
+        self.assertEqual((args[0], args[3], kw["correo"]), ("cliente@ejemplo.cl", "bloqueado", "ext_fedex_notif_envio"))
+        self.assertIn("guía FCV 123", kw["error_msg"])
+
+    def test_el_interruptor_general_apagado_tambien_deja_la_guia_sin_correo(self):
+        cap, _, m = self.guia(global_on=False, notify_email="cliente@ejemplo.cl")
+        rs = cap[0]["requestedShipment"]
+        self.assertNotIn("emailAddress", rs["recipients"][0]["contact"])
+        self.assertNotIn("emailNotificationDetail", rs)
+        (args, kw), = m.logs
+        self.assertTrue(kw["metadata"]["killswitch"])
+
+    def test_si_no_se_pidio_notificar_solo_se_quita_el_correo_del_contacto_y_no_hay_constancia(self):
+        con, _, m_on = self.guia()
+        sin, _, m_off = self.guia(filas={"ext_fedex_notif_envio": 0})
+        self.assertEqual(con[0]["requestedShipment"]["recipients"][0]["contact"]["emailAddress"], "cliente@ejemplo.cl")
+        self.assertNotIn("emailNotificationDetail", con[0]["requestedShipment"])
+        self.assertNotIn("emailAddress", sin[0]["requestedShipment"]["recipients"][0]["contact"])
+        self.assertEqual((m_on.logs, m_off.logs), ([], []))
+
+    def test_un_destinatario_sin_correo_no_consulta_ni_deja_constancia(self):
+        cap, _, m = self.guia(filas={"ext_fedex_notif_envio": 0}, recipient=dict(self.DEST, email=""))
+        self.assertNotIn("emailAddress", cap[0]["requestedShipment"]["recipients"][0]["contact"])
+        self.assertEqual(m.logs, [])
+
+    def retiro(self, **kw):
+        return self.correr("_fedex_pickup_create", contact=dict(self.CONTACTO), address=dict(self.DIRECCION),
+                           ready_dt="2026-10-21T10:00:00", **kw)
+
+    def test_el_retiro_con_el_aviso_encendido_lleva_la_notificacion(self):
+        cap, _, m = self.retiro(notify_email="alguien@ilus.cl")
+        self.assertEqual(cap[0]["pickupNotificationDetail"]["emailDetails"][0]["address"], "alguien@ilus.cl")
+        self.assertEqual(m.logs, [])
+
+    def test_el_retiro_con_el_aviso_apagado_sale_igual_sin_notificacion_y_con_constancia(self):
+        con, _, _ = self.retiro(notify_email="alguien@ilus.cl")
+        sin, res, m = self.retiro(filas={"ext_fedex_notif_retiro": 0}, notify_email="alguien@ilus.cl")
+        self.assertNotIn("pickupNotificationDetail", sin[0])
+        self.assertEqual(sin[0], {k: v for k, v in con[0].items() if k != "pickupNotificationDetail"})
+        self.assertIn("FedEx Pickup", res["error"])
+        (args, kw), = m.logs
+        self.assertEqual((args[0], args[3], kw["correo"]), ("alguien@ilus.cl", "bloqueado", "ext_fedex_notif_retiro"))
+
+    def test_el_retiro_sin_correo_no_consulta_nada(self):
+        cap, _, m = self.retiro(filas={"ext_fedex_notif_retiro": 0})
+        self.assertNotIn("pickupNotificationDetail", cap[0])
+        self.assertEqual(m.logs, [])
+
+    def test_cada_aviso_de_fedex_obedece_a_su_propio_interruptor(self):
+        cap, _, _ = self.guia(filas={"ext_fedex_notif_retiro": 0}, notify_email="cliente@ejemplo.cl")      # apagar el del retiro no toca la guía
+        self.assertIn("emailNotificationDetail", cap[0]["requestedShipment"])
+        cap, _, _ = self.retiro(filas={"ext_fedex_notif_envio": 0}, notify_email="alguien@ilus.cl")
+        self.assertIn("pickupNotificationDetail", cap[0])
+
+
+class TestExternosElExcel(unittest.TestCase):
+    """Los Excel de carga masiva (FedEx y SimpliRoute) generados por la función REAL `_tr_manifiesto_export_impl` de app.py, con
+    openpyxl y en un mundo de mentira: con el aviso apagado la celda del correo queda VACÍA y el resto del archivo no cambia."""
+
+    ITEMS = [
+        {"nudo": "0000023102", "tido": "FCV", "cliente_nombre": "Gimnasio Demo SpA", "direccion": "Av. Demo 123", "comuna": "Las Condes",
+         "telefono": "+56912345678", "email": "uno@cliente.cl", "n_bultos": 2, "peso": 40, "notas": "", "valor_bruto": 1000},
+        {"nudo": "0000023103", "tido": "FCV", "cliente_nombre": "Club Deportivo Dos", "direccion": "Calle 2 45", "comuna": "Providencia",
+         "telefono": "+56987654321", "email": "dos@cliente.cl", "n_bultos": 1, "peso": 10, "notas": "", "valor_bruto": 500},
+        {"nudo": "0000023104", "tido": "BLV", "cliente_nombre": "Sin Correo Ltda", "direccion": "Av. Tres 3", "comuna": "Ñuñoa",
+         "telefono": "+56911111111", "email": "", "n_bultos": 1, "peso": 5, "notas": "", "valor_bruto": 100},
+    ]
+    COURIER = {"fedex": "FedEx", "simplyroute": "Felca", "clickex": "Clickex", "generic": "Otro courier"}
+
+    def correr(self, formato, *, filas=None, global_on=True, items=None):
+        import io
+        import openpyxl
+        m = Mundo(filas=filas, global_on=global_on)
+        _extraer(m.amb, FUNCS_EXTERNOS)
+        man = {"id": 1, "courier": self.COURIER[formato], "correlativo": "MAN-0001"}
+        lista = self.ITEMS if items is None else items
+        m.amb.update({
+            "os": os, "flash": lambda *a, **k: None, "redirect": lambda *a, **k: None, "url_for": lambda *a, **k: "#",
+            "mysql_fetchone": lambda sql, p=(): {"formato_export": ""} if "transport_couriers" in sql else man,
+            "_tr_manifiesto_items_export": lambda mid: [dict(i) for i in lista],
+            "_peso_a_declarar": lambda it: float(it.get("peso") or 1),
+            "_tr_sender_cfg": lambda: {"name": "ILUS Fitness", "line1": "Av. Industrial 4500", "line2": "", "company": "ILUS Fitness",
+                                       "phone": "56229465970", "email": "despacho@ilus.cl", "postcode": "8730000", "state": "RM",
+                                       "city": "Quilicura", "country": "CL"},
+            "_codigo_postal_chile": lambda comuna: "7550000",
+            "nudo_fmt_filter": lambda v: str(v or "").lstrip("0"),
+            "_tr_log": lambda *a, **k: None,
+        })
+        _extraer(m.amb, ("_tr_manifiesto_export_impl",))
+        datos, nombre = m.amb["_tr_manifiesto_export_impl"](1, devolver_bytes=True)
+        return openpyxl.load_workbook(io.BytesIO(datos)).active, m
+
+    def columna(self, ws, col):
+        return [ws.cell(r, col).value for r in range(2, ws.max_row + 1)]
+
+    def test_fedex_con_el_aviso_encendido_el_excel_lleva_el_correo_de_cada_cliente(self):
+        ws, m = self.correr("fedex")
+        self.assertEqual(ws.cell(1, 15).value, "recipientEmail")
+        self.assertEqual(self.columna(ws, 15), ["uno@cliente.cl", "dos@cliente.cl", None])
+        self.assertEqual(ws.cell(4, 15).fill.fill_type, "solid")                 # sin correo: se marca como faltante, como siempre
+        self.assertEqual(m.logs, [])
+
+    def test_fedex_con_el_aviso_apagado_la_columna_queda_vacia_y_se_deja_una_sola_constancia(self):
+        ws, m = self.correr("fedex", filas={"ext_fedex_export_email": 0})
+        self.assertEqual(self.columna(ws, 15), [None, None, None])
+        for r in (2, 3, 4):
+            self.assertIsNone(ws.cell(r, 15).fill.fill_type, "lo vacío a propósito no se marca como faltante")
+        (args, kw), = m.logs                                                      # UNA por exportación, no una por fila
+        self.assertEqual((args[0], args[3], kw["correo"]), ("2 correos de clientes", "bloqueado", "ext_fedex_export_email"))
+        self.assertEqual(kw["metadata"]["bloqueo"], "correo")
+        self.assertIn("MAN-0001", kw["error_msg"])
+
+    def test_fedex_el_resto_del_archivo_no_cambia(self):
+        con, _ = self.correr("fedex")
+        sin, _ = self.correr("fedex", filas={"ext_fedex_export_email": 0})
+        self.assertEqual((con.max_row, con.max_column), (sin.max_row, sin.max_column))
+        for r in range(1, con.max_row + 1):
+            for c in range(1, con.max_column + 1):
+                if c != 15 or r == 1:                  # todo igual, salvo la celda del correo de cada fila (el encabezado sí se conserva)
+                    self.assertEqual(con.cell(r, c).value, sin.cell(r, c).value, (r, c))
+
+    def test_fedex_el_interruptor_general_apagado_tambien_vacia_la_columna(self):
+        ws, m = self.correr("fedex", global_on=False)
+        self.assertEqual(self.columna(ws, 15), [None, None, None])
+        (args, kw), = m.logs
+        self.assertTrue(kw["metadata"]["killswitch"])
+        self.assertIn("global", kw["error_msg"].lower())
+
+    def test_fedex_en_modo_prueba_el_correo_interno_tampoco_viaja_si_el_aviso_esta_apagado(self):
+        with mock.patch.dict(os.environ, {"ILUS_FEDEX_TEST_MODE": "1"}):
+            ws, _ = self.correr("fedex")
+            self.assertEqual(set(self.columna(ws, 15)), {"alison.mellado@sphs.cl"})
+            ws, m = self.correr("fedex", filas={"ext_fedex_export_email": 0})
+            self.assertEqual(self.columna(ws, 15), [None, None, None])
+
+    def test_si_ningun_cliente_trae_correo_no_hay_nada_que_frenar_ni_constancia(self):
+        sin_correo = [dict(i, email="") for i in self.ITEMS]
+        ws, m = self.correr("fedex", filas={"ext_fedex_export_email": 0}, items=sin_correo)
+        self.assertEqual(self.columna(ws, 15), [None, None, None])
+        self.assertEqual(m.logs, [])
+
+    def test_simpliroute_con_el_aviso_encendido_el_excel_lleva_el_correo_de_contacto(self):
+        ws, m = self.correr("simplyroute")
+        self.assertEqual(ws.cell(1, 21).value, "Correo electrónico de contacto")
+        self.assertEqual(self.columna(ws, 21), ["uno@cliente.cl", "dos@cliente.cl", None])
+        self.assertEqual(ws.cell(4, 21).fill.fill_type, "solid")
+        self.assertEqual(m.logs, [])
+
+    def test_simpliroute_con_el_aviso_apagado_la_celda_queda_vacia_y_el_resto_igual(self):
+        con, _ = self.correr("simplyroute")
+        sin, m = self.correr("simplyroute", filas={"ext_simpliroute_contacto": 0})
+        self.assertEqual(self.columna(sin, 21), [None, None, None])
+        for r in (2, 3, 4):
+            self.assertIsNone(sin.cell(r, 21).fill.fill_type)
+        for r in range(1, con.max_row + 1):
+            for c in range(1, con.max_column + 1):
+                if c != 21 or r == 1:
+                    self.assertEqual(con.cell(r, c).value, sin.cell(r, c).value, (r, c))
+        (args, kw), = m.logs
+        self.assertEqual((args[0], kw["correo"]), ("2 correos de clientes", "ext_simpliroute_contacto"))
+
+    def test_cada_excel_obedece_a_su_propio_interruptor(self):
+        ws, _ = self.correr("fedex", filas={"ext_simpliroute_contacto": 0})                   # apagar el de SimpliRoute no toca el de FedEx
+        self.assertEqual(self.columna(ws, 15), ["uno@cliente.cl", "dos@cliente.cl", None])
+        ws, _ = self.correr("simplyroute", filas={"ext_fedex_export_email": 0})
+        self.assertEqual(self.columna(ws, 21), ["uno@cliente.cl", "dos@cliente.cl", None])
+
+    def test_clickex_y_el_manifiesto_generico_no_dependen_de_estos_interruptores(self):
+        for formato, col in (("clickex", 7), ("generic", 6)):
+            ws, m = self.correr(formato, filas={k: 0 for k in EXTERNOS})
+            self.assertEqual(self.columna(ws, col), ["uno@cliente.cl", "dos@cliente.cl", None], formato)
+            self.assertEqual(m.logs, [], formato)
+
+
+class TestExternosSimpliRoute(unittest.TestCase):
+    """El gancho de `simpliroute_client.build_visit_payload`: por defecto el correo de contacto va como siempre."""
+
+    ITEM = {"item_id": 1, "nudo": "123", "tido": "FCV", "cliente_nombre": "Gimnasio Demo SpA", "direccion": "Av. Demo 123",
+            "comuna": "Las Condes", "region": "RM", "telefono": "+56912345678", "email": "cliente@ejemplo.cl", "n_bultos": 2,
+            "peso_declarar": 40}
+
+    def setUp(self):
+        import simpliroute_client as src
+        self.src = src
+        self.addCleanup(setattr, src, "CONTACTO_EMAIL_PERMITIDO", src.CONTACTO_EMAIL_PERMITIDO)
+
+    def test_por_defecto_el_correo_de_contacto_va_en_la_visita(self):
+        p, errores = self.src.build_visit_payload(self.ITEM, planned_date="2026-10-21")
+        self.assertEqual(errores, [])
+        self.assertEqual(p["contact_email"], "cliente@ejemplo.cl")
+
+    def test_con_el_aviso_apagado_la_visita_sale_igual_pero_sin_correo(self):
+        con, _ = self.src.build_visit_payload(self.ITEM, planned_date="2026-10-21")
+        vistos = []
+        self.src.CONTACTO_EMAIL_PERMITIDO = lambda mail: vistos.append(mail) or False
+        sin, errores = self.src.build_visit_payload(self.ITEM, planned_date="2026-10-21")
+        self.assertEqual(errores, [])
+        self.assertNotIn("contact_email", sin)
+        self.assertEqual(vistos, ["cliente@ejemplo.cl"])
+        self.assertEqual(sin, {k: v for k, v in con.items() if k != "contact_email"},
+                         "solo debe faltar el correo: el resto de la visita no cambia")
+
+    def test_sin_correo_en_el_item_ni_se_consulta_el_gancho(self):
+        llamado = []
+        self.src.CONTACTO_EMAIL_PERMITIDO = lambda mail: llamado.append(mail) or True
+        p, _ = self.src.build_visit_payload(dict(self.ITEM, email=""), planned_date="2026-10-21")
+        self.assertNotIn("contact_email", p)
+        self.assertEqual(llamado, [])
+
+    def test_si_el_gancho_falla_la_visita_sale_con_su_correo_como_siempre(self):
+        def _boom(mail):
+            raise RuntimeError("no se pudo leer el interruptor")
+        self.src.CONTACTO_EMAIL_PERMITIDO = _boom
+        p, errores = self.src.build_visit_payload(self.ITEM, planned_date="2026-10-21")
+        self.assertEqual(errores, [])
+        self.assertEqual(p["contact_email"], "cliente@ejemplo.cl")
+
+    def test_con_la_funcion_real_de_app_py_cada_visita_con_correo_deja_su_constancia_o_sale_con_su_correo(self):
+        items = [self.ITEM, dict(self.ITEM, item_id=2, nudo="124", email="otro@cliente.cl"), dict(self.ITEM, item_id=3, nudo="125", email="")]
+        m = Mundo(filas={"ext_simpliroute_contacto": 0})
+        _extraer(m.amb, FUNCS_EXTERNOS + ("_sr_contacto_email_permitido",))
+        self.src.CONTACTO_EMAIL_PERMITIDO = m.amb["_sr_contacto_email_permitido"]
+        payloads, saltados = self.src.build_visits_batch(items, planned_date="2026-10-21")
+        self.assertEqual((len(payloads), saltados), (3, []))
+        self.assertTrue(all("contact_email" not in p for _i, p in payloads))
+        self.assertEqual([a[0] for a, _k in m.logs], ["cliente@ejemplo.cl", "otro@cliente.cl"])       # la visita sin correo no deja constancia
+        self.assertTrue(all(a[3] == "bloqueado" and k["correo"] == "ext_simpliroute_contacto" for a, k in m.logs))
+        # encendido: salen con su correo y sin constancias
+        m2 = Mundo()
+        _extraer(m2.amb, FUNCS_EXTERNOS + ("_sr_contacto_email_permitido",))
+        self.src.CONTACTO_EMAIL_PERMITIDO = m2.amb["_sr_contacto_email_permitido"]
+        payloads, _ = self.src.build_visits_batch(items, planned_date="2026-10-21")
+        self.assertEqual([p.get("contact_email") for _i, p in payloads], ["cliente@ejemplo.cl", "otro@cliente.cl", None])
+        self.assertEqual(m2.logs, [])
+
+    def test_el_lote_completo_respeta_el_gancho(self):
+        self.src.CONTACTO_EMAIL_PERMITIDO = lambda mail: False
+        payloads, saltados = self.src.build_visits_batch([self.ITEM, dict(self.ITEM, item_id=2, nudo="124")],
+                                                         planned_date="2026-10-21")
+        self.assertEqual((len(payloads), saltados), (2, []))
+        self.assertTrue(all("contact_email" not in p for _i, p in payloads))
+
+
+class TestExternosLaPantalla(_PantallaBase):
+    def test_aparecen_en_el_grupo_de_transporte_con_la_llave_como_no_aplica(self):
+        d = self.listar()
+        for k in EXTERNOS:
+            c = self.item(k, d)
+            self.assertEqual((c["tipo"], c["modulo_ui"]), ("externo", "transporte"), k)
+            self.assertEqual(c["estado"]["pasos"][1]["estado"], "saltado", k)
+        self.assertEqual(d["resumen"]["total"], len([x for x in R.REGISTRO if x["tipo"] in ("ilus", "externo")]))
+
+    def test_la_llave_de_transporte_cerrada_frena_los_correos_de_ilus_pero_no_los_avisos_de_terceros(self):
+        self.m.bd.llaves["transporte"] = {"email_bloqueado": 1, "motivo": "Revisión"}
+        d = self.listar()
+        self.assertEqual(self.item("tr_en_ruta", d)["estado"]["efectivo"], "llave")
+        for k in EXTERNOS:
+            self.assertEqual(self.item(k, d)["estado"]["efectivo"], "sale", k)
+
+    def test_el_interruptor_general_los_frena_a_todos(self):
+        self.m.bd.global_on = False
+        d = self.listar()
+        for k in EXTERNOS:
+            self.assertEqual(self.item(k, d)["estado"]["efectivo"], "general", k)
+
+    def test_se_apagan_y_se_encienden_como_cualquier_correo_y_la_puerta_lo_ve(self):
+        k = "ext_fedex_notif_envio"
+        self.assertTrue(self.m.amb["_correo_externo_permitido"](k))
+        st, d, _ = self.put(k, activo=False, motivo="Pruebas de etiquetas", estado_visto="")
+        self.assertEqual(st, 200, d)
+        self.assertEqual(d["correo"]["estado"]["efectivo"], "correo")
+        self.assertFalse(self.m.amb["_correo_externo_permitido"](k))
+        st, d, _ = self.put(k, activo=True, estado_visto=d["correo"]["estado"]["version"])
+        self.assertEqual(st, 200, d)
+        self.assertTrue(self.m.amb["_correo_externo_permitido"](k))
+
+    def test_no_tienen_plantilla_ni_prueba_porque_el_texto_es_del_tercero(self):
+        st, d, _ = self.m.llamar("comm_correos_vista_previa", "ext_fedex_notif_envio")
+        self.assertEqual(st, 200)
+        self.assertTrue(d["sin_plantilla"])
+        self.assertIn("FedEx", d["mensaje"])
+        st, d, _ = self.m.llamar("comm_correos_prueba", "ext_fedex_notif_envio")
+        self.assertEqual((st, d["error_codigo"]), (400, "NO_APLICA"))
+        self.assertEqual(self.m.enviados_reales, [])
+        self.assertEqual(self.m.bd.log, [])
+
+    def test_las_cifras_cuentan_lo_frenado_y_no_inventan_enviados(self):
+        self.m.bd.poner_log("ext_fedex_notif_envio", "bloqueado", hace_dias=1)
+        self.m.bd.poner_log("ext_fedex_notif_envio", "bloqueado", hace_dias=2)
+        c = self.item("ext_fedex_notif_envio")["cifras"]
+        self.assertEqual((c["enviados"], c["frenados"]), (0, 2))
+
+
+class TestExternosEnElHistorial(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        TestHistorialControlDeCorreos.setUpClass()
+        cls.f = staticmethod(TestHistorialControlDeCorreos.amb["_comm_hist_llave"])      # la función real de app.py, sin «self»
+
+    def test_un_aviso_de_tercero_frenado_por_su_interruptor_se_explica_con_su_nombre(self):
+        nombre = R.nombre_de("ext_fedex_notif_envio")
+        detalle = f"Apagado en Control de correos: «{nombre}» (ext_fedex_notif_envio). ILUS no le entregó el correo del destinatario."
+        self.assertEqual(self.f(detalle, "transporte", {"bloqueo": "correo", "externo": True, "correo": "ext_fedex_notif_envio"}),
+                         "Apagado: «" + nombre + "»")
+
+    def test_frenado_por_el_interruptor_general_dice_general(self):
+        detalle = "Email deshabilitado por superadmin (kill switch global ON). ILUS no le entregó el correo del destinatario."
+        self.assertEqual(self.f(detalle, "transporte", {"killswitch": True, "externo": True}),
+                         "Interruptor general de email (todos los módulos)")
+
+
+class TestExternosEnLaInterfaz(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.js = _leer("static/comunicaciones_correos.js")
+
+    def test_la_tarjeta_de_un_aviso_de_tercero_no_ofrece_plantilla_vista_previa_ni_prueba(self):
+        i = self.js.index("function tarjeta(c)")
+        cuerpo = self.js[i:self.js.index("function renderLista")]
+        self.assertIn("c.tipo !== 'externo'", cuerpo)
+        self.assertLess(cuerpo.index("c.tipo !== 'externo'"), cuerpo.index('data-ctc="plantilla"'))
+        self.assertLess(cuerpo.index('data-ctc="prueba"'), cuerpo.index('data-ctc="historial"'))
+        self.assertIn('data-ctc="cambios"', cuerpo)
+
+    def test_el_paso_de_la_llave_dice_que_no_aplica(self):
+        self.assertIn("No aplica a este aviso", self.js)
+
+    def test_no_muestra_enviados_inventados_y_explica_quien_envia(self):
+        self.assertIn("lo envía FedEx o SimpliRoute", self.js)
+        self.assertIn("ILUS no los cuenta", self.js)
 
 
 if __name__ == "__main__":

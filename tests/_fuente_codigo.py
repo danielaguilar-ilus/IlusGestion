@@ -17,6 +17,8 @@ import tokenize
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _TEXTOS = {}
+_LINEAS = {}
+_CODIGOS = {}
 _LLAMADAS = {}
 
 
@@ -26,6 +28,13 @@ def texto(rel):
         with open(os.path.join(RAIZ, rel.replace("/", os.sep)), encoding="utf-8", newline="") as f:
             _TEXTOS[rel] = f.read().replace("\r\n", "\n")
     return _TEXTOS[rel]
+
+
+def _lineas(rel):
+    """Las líneas del archivo, cacheadas: partir 170 mil líneas en cada búsqueda es lo que más cuesta de este módulo."""
+    if rel not in _LINEAS:
+        _LINEAS[rel] = texto(rel).split("\n")
+    return _LINEAS[rel]
 
 
 def _trozo_valido(lineas, i, patron_fin):
@@ -48,7 +57,7 @@ _FIN_TOP = re.compile(r"^[^#)\]}\"']")
 
 def funcion_top(rel, nombre):
     """Código de la función de nivel módulo `nombre` (sin decoradores)."""
-    lineas = texto(rel).split("\n")
+    lineas = _lineas(rel)
     pat = re.compile(r"^(?:async\s+)?def\s+" + re.escape(nombre) + r"\s*\(")
     for i, l in enumerate(lineas):
         if pat.match(l):
@@ -58,7 +67,7 @@ def funcion_top(rel, nombre):
 
 def constante_top(rel, nombre):
     """Código de la asignación de nivel módulo `nombre = ...`."""
-    lineas = texto(rel).split("\n")
+    lineas = _lineas(rel)
     pat = re.compile(r"^" + re.escape(nombre) + r"\s*(?::[^=\n]+)?=(?!=)")
     for i, l in enumerate(lineas):
         if pat.match(l):
@@ -66,12 +75,22 @@ def constante_top(rel, nombre):
     raise AssertionError(f"no se encontró la constante {nombre} en {rel}")
 
 
+def _codigo(rel, tipo, nombre):
+    """Código compilado de una función o constante: se busca y compila UNA vez por proceso y se ejecuta en cada ambiente nuevo
+    (cada `exec` crea objetos nuevos: un `set()` o un `{}` de nivel módulo no se comparte entre ambientes)."""
+    clave = (rel, tipo, nombre)
+    if clave not in _CODIGOS:
+        fuente = constante_top(rel, nombre) if tipo == "const" else funcion_top(rel, nombre)
+        _CODIGOS[clave] = compile(fuente, f"<{rel}:{nombre}>", "exec")
+    return _CODIGOS[clave]
+
+
 def extraer(amb, rel="app.py", funcs=(), consts=()):
     """Ejecuta en `amb` las funciones y constantes de nivel módulo indicadas."""
     for nombre in consts:
-        exec(compile(constante_top(rel, nombre), f"<{rel}:{nombre}>", "exec"), amb)
+        exec(_codigo(rel, "const", nombre), amb)
     for nombre in funcs:
-        exec(compile(funcion_top(rel, nombre), f"<{rel}:{nombre}>", "exec"), amb)
+        exec(_codigo(rel, "func", nombre), amb)
     return amb
 
 
@@ -85,7 +104,7 @@ def valor_literal_anidado(rel, nombre, solo_claves=False):
     """Como `valor_literal`, pero para una constante definida DENTRO de una función (un `init_*` con closures): `    NOMBRE = {...}`.
     `solo_claves=True` devuelve las claves de un dict aunque sus valores no sean literales simples."""
     import textwrap
-    lineas = texto(rel).split("\n")
+    lineas = _lineas(rel)
     pat = re.compile(r"^(\s+)" + re.escape(nombre) + r"\s*(?::[^=\n]+)?=(?!=)")
     for i, l in enumerate(lineas):
         m = pat.match(l)
@@ -108,7 +127,7 @@ def valor_literal_anidado(rel, nombre, solo_claves=False):
 
 def fuente_de(rel, nombre):
     """Código de una función de nivel módulo O DE CUALQUIER NIVEL (closure dentro de un init), por nombre."""
-    lineas = texto(rel).split("\n")
+    lineas = _lineas(rel)
     pat = re.compile(r"^(\s*)(?:async\s+)?def\s+" + re.escape(nombre) + r"\s*\(")
     for i, l in enumerate(lineas):
         m = pat.match(l)
