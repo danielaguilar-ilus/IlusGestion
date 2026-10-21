@@ -210,3 +210,37 @@ class Privacidad(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReferenciasYAviso(unittest.TestCase):
+    """2026-10-21 (Daniel: «que lleguen y alerten a los administradores… basadas en el producto, referenciadas a la
+    OT y a la factura… con número de serie»)."""
+
+    def test_el_evento_creada_referencia_y_avisa(self):
+        src, _ = _fuente("_otrep_evento")
+        self.assertIn('accion == "creada" and a_estado == "solicitado"', src)
+        self.assertIn("_otrep_referenciar(sid)", src)
+        self.assertIn("_otrep_avisar_nueva(sid, usuario)", src)
+
+    def test_el_aviso_va_solo_a_gestion(self):
+        src, _ = _fuente("_otrep_avisar_nueva")
+        self.assertIn('("superadmin", "admin")', src)
+        self.assertIn('!= "tecnico"', src)
+        self.assertIn('"repuesto_nuevo"', src)
+        self.assertNotIn("_send_ilus_email", src)   # sin correo: solo campana
+
+    def test_referencia_nunca_pisa(self):
+        src, _ = _fuente("_otrep_referenciar")
+        self.assertIn("serie=COALESCE(serie,%s)", src)
+        self.assertIn("documento=COALESCE(documento,%s)", src)
+
+    def test_documento_oculto_a_tecnicos(self):
+        _arbol()
+        for nombre in ("_OTREP_SOL_SOLO_GESTION_PROV", "_OTREP_SOL_NO_EXTERNO"):
+            nodo = next(n for n in _CACHE["a"].body if isinstance(n, ast.Assign)
+                        and any(getattr(t, "id", "") == nombre for t in n.targets))
+            self.assertIn("documento", ast.literal_eval(nodo.value), nombre)
+
+    def test_docs_titulos_lee_la_lista_del_dict(self):
+        src, _ = _fuente("_otrep_docs_titulos")
+        self.assertIn('.get("documentos")', src)

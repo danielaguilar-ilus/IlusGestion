@@ -1285,6 +1285,7 @@
 
   /* 2026-10-14: ficha de la solicitud — otros nombres, camino, resolución y acciones */
   .rst-alt{display:block;color:#6b7280;font-size:.76rem}
+  .rst-doc{display:block;color:#1e40af;font-size:.76rem;font-weight:700}
   .rst-med{display:flex;gap:5px;align-items:flex-start;color:#1e40af;font-size:.78rem;font-weight:800;overflow-wrap:anywhere}
   .rst-med.sin{color:#92400e}
   .rsf-blk{display:flex;gap:8px;align-items:flex-start;margin-top:10px;padding:9px 12px;border-radius:12px;background:#fff;border:1px solid #e5e7eb;font-size:.9rem}
@@ -2433,7 +2434,8 @@ function rsFilaHtml(s){
     : (s.contexto === 'manual' && s.es_reposicion ? '<b>Reposición de stock propio</b>'
     : (s.contexto === 'incidencia' ? '<b>' + rsEsc(s.incidencia_descripcion || s.incidencia_sku || 'Incidencia') + '</b>'
     : '<b>' + rsEsc(s.cliente_nombre || 'Sin cliente') + '</b>'));
-  const equipo = [s.maquina_nombre, s.maquina_serie ? 'S/N ' + s.maquina_serie : ''].filter(Boolean).join(' · ');
+  // 2026-10-21 (Daniel: «que se basen en el producto… referenciado a la OT y a la factura… con número de serie»).
+  const equipo = [s.equipo_txt || s.maquina_nombre, (s.serie_txt || s.maquina_serie) ? 'S/N ' + (s.serie_txt || s.maquina_serie) : ''].filter(Boolean).join(' · ');
   const stock = s.stock_disponible == null ? (s.repuesto_stock_id ? '' : '<span class="rst-pill ambar">Sin asociar a bodega</span>')
     : (s.stock_disponible >= 0 ? '<span class="rst-pill verde">Hay stock · ' + rsFmt(s.stock_cantidad) + '</span>'
                                : '<span class="rst-pill rojo">Falta ' + rsFmt(Math.abs(s.stock_disponible)) + '</span>');
@@ -2467,7 +2469,7 @@ function rsFilaHtml(s){
   return '<tr class="rst-row" style="--rst-sem:var(--rst-' + semCls + ')" onclick="rsFilaGestionar(' + s.id + ')" title="Gestionar la solicitud #' + s.id + '">' +
     '<td class="rst-c0">' + sel + '<i class="bi bi-chevron-right rst-chev"></i></td>' +
     '<td><b class="rst-num">#' + s.id + '</b>' + origen + '<small class="rst-hace">' + rsEsc(s.created_at ? String(s.created_at).slice(0, 10) : '') + (s.dias_transcurridos != null ? ' · ' + rsFmt(s.dias_transcurridos) + ' d' : '') + '</small></td>' +
-    '<td>' + cliente + (equipo ? '<small>' + rsEsc(equipo) + '</small>' : '') + (s.prioridad_fs ? '<span class="rst-pill rojo fuerte"><i class="bi bi-exclamation-octagon-fill"></i>Fuera de servicio</span>' : '') + '</td>' +
+    '<td>' + cliente + (equipo ? '<small>' + rsEsc(equipo) + '</small>' : '') + (s.documento ? '<small class="rst-doc"><i class="bi bi-receipt"></i> ' + rsEsc(s.documento) + '</small>' : '') + (s.prioridad_fs ? '<span class="rst-pill rojo fuerte"><i class="bi bi-exclamation-octagon-fill"></i>Fuera de servicio</span>' : '') + '</td>' +
     '<td><b>' + rsEsc(s.repuesto_nombre || '') + ' × ' + rsFmt(s.cantidad) + '</b>' +
       ((s.nombres_alt || []).length ? '<small class="rst-alt"><i class="bi bi-tags"></i>También: ' + rsEsc(s.nombres_alt.join(' · ')) + '</small>' : '') +
       (s.datos_txt ? '<small class="rst-med' + (s.datos && s.datos.medido_con === 'no_pude' ? ' sin' : '') + '"><i class="bi bi-rulers"></i><span>' + rsEsc(s.datos_txt) + '</span></small>' : '') +
@@ -2615,6 +2617,15 @@ function rsFichaPintar(sid){
    reparó, y poder asociarle alguna orden de trabajo si es necesario"). */
 function rsFichaExtraHtml(s){
   let h = '';
+  // 2026-10-21: a qué producto, OT y factura corresponde (producto + N° de serie siempre a la vista).
+  const _eq = s.equipo_txt || s.maquina_nombre, _sn = s.serie_txt || s.maquina_serie;
+  if (_eq || _sn || s.numero_ot || s.documento){
+    h += '<div class="rsf-blk"><i class="bi bi-upc-scan"></i><span>' +
+      (_eq ? '<b>' + rsEsc(_eq) + '</b>' : '') + (_sn ? ' · S/N <b>' + rsEsc(_sn) + '</b>' : ' · <span class="text-warning-emphasis">sin N° de serie</span>') +
+      (s.numero_ot ? '<br>OT <a href="/ot/' + s.visita_id + '" target="_blank" rel="noopener">' + rsEsc(s.numero_ot) + '</a>' : '') +
+      (s.documento ? '<br><i class="bi bi-receipt"></i> ' + rsEsc(s.documento) : (s.numero_ot ? '<br><span class="text-warning-emphasis">La OT no tiene factura asociada</span>' : '')) +
+      '</span></div>';
+  }
   if ((s.nombres_alt || []).length) h += '<div class="rsf-blk"><i class="bi bi-tags"></i><span><b>También se conoce como:</b> ' + rsEsc(s.nombres_alt.join(' · ')) + '</span></div>';
   const camino = { bodega: 'Consumir de la bodega', ticket: 'Pedido por ticket (compra)', ot: 'Resolver con una OT' }[s.camino];
   if (camino) h += '<div class="rsf-blk"><i class="bi bi-signpost-split"></i><span><b>Camino elegido:</b> ' + rsEsc(camino) +

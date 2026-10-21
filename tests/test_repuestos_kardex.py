@@ -319,6 +319,8 @@ class TestOtrepFilaComprometidoPropio(unittest.TestCase):
             "_OTREP_ANTIGUEDAD_DIAS_VERDE": _extraer_constante_tupla("_OTREP_ANTIGUEDAD_DIAS_VERDE"),
             "_OTREP_ANTIGUEDAD_DIAS_AMBAR": _extraer_constante_tupla("_OTREP_ANTIGUEDAD_DIAS_AMBAR"),
             "datetime": datetime,
+            # 2026-10-21: _otrep_fila usa el módulo puro ot_producto_estado (seguimiento del pedido).
+            "_pe": __import__("ot_producto_estado"),
             # 🔒 2026-09-26 (revisión Opus, hallazgo ALTA #1 -- Vida del
             # cliente Etapa A): _otrep_fila ahora empieza llamando a
             # _es_rol_tecnico() para esconder costo_unitario/costo_origen

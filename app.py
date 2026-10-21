@@ -60913,7 +60913,7 @@ def init_mantenciones_tables():
                 "       'retiro_listo','retiro_cerrado',"
                 "       'retiro_propuesta','retiro_expedido','retiro_desfase','retiro_cierre',"
                 "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida',"
-                "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma') DEFAULT 'otro'",
+                "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma','repuesto_nuevo') DEFAULT 'otro'",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_destino_no_leida "
                 "  (destino_user_id, leida_at, archivada_at)",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_visita (visita_id)",
@@ -101341,7 +101341,9 @@ _OTREP_SOL_SOLO_GESTION_PROV = ("proveedor_id", "proveedor_nombre", "proveedor_c
                                 # 🔒 2026-10-15 (revisión Fase B): la nota de «se reparó / no
                                 # correspondía» es la misma nota de gestión (suele nombrar al
                                 # proveedor) y el camino dice si hubo compra. Solo gestión.
-                                "resolucion_nota", "camino")
+                                "resolucion_nota", "camino",
+                                # 2026-10-21: facturas/documentos de la OT (tipo y número): de gestión (REGLA #26).
+                                "documento")
 _OTREP_STOCK_NO_EXTERNO = ("proveedor", "proveedor_id", "ubicacion_codigo", "cantidad",
                            "comprometido", "disponible", "por_llegar",
                            # 🔒 2026-09-26: los campos nuevos del buscador del modal
@@ -101351,7 +101353,7 @@ _OTREP_STOCK_NO_EXTERNO = ("proveedor", "proveedor_id", "ubicacion_codigo", "can
                            "proveedor_contacto", "proveedor_telefono", "proveedor_email",
                            "proveedor_canal", "semaforo", "marca_id", "stock_minimo")
 _OTREP_SOL_NO_EXTERNO = ("nota_gestion", "oc_numero", "proveedor_nombre", "proveedor_id",
-                         "resolucion_nota", "camino",  # 🔒 2026-10-15, ver arriba
+                         "resolucion_nota", "camino", "documento",  # 🔒 2026-10-15 / 2026-10-21, ver arriba
                          # 🔒 2026-09-25 (Fase 2): mismos 3 campos nuevos de contacto del
                          # proveedor que _OTREP_SQL_SOL agrega para la vista agrupada
                          # "Por proveedor" -- un técnico externo no debe verlos tampoco.
@@ -102516,7 +102518,13 @@ def _otrep_resp_asegurar():
                 "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN nombres_alt TEXT NULL",
                 "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN camino VARCHAR(12) NULL",
                 "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN resolucion VARCHAR(24) NULL",
-                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN resolucion_nota TEXT NULL"):
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN resolucion_nota TEXT NULL",
+                # 2026-10-21 (Daniel: «que se basen en el producto y referenciado a la OT, y referenciado también a
+                # la factura, sobre todo… esto debe tener un número de serie, por lo menos el producto»): se fijan
+                # al crear la solicitud (_otrep_referenciar) y no cambian después.
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN serie VARCHAR(120) NULL",
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN equipo_ref VARCHAR(400) NULL",
+                "ALTER TABLE mant_ot_repuesto_solicitudes ADD COLUMN documento VARCHAR(400) NULL"):
         try:
             mysql_execute(ddl)
         except Exception as e:
@@ -102814,6 +102822,9 @@ def _otrep_fila(s, para_ot=False):
             s[k] = float(s[k])
     s["estado_label"] = _OTREP_ESTADO_LABEL.get(s.get("estado"), s.get("estado"))
     s["origen_label"] = _OTREP_ORIGEN_LABEL.get(s.get("origen"), s.get("origen"))
+    # 2026-10-21: producto + N° de serie de la solicitud (equipo del cliente o producto de una OT interna).
+    s["equipo_txt"] = s.get("maquina_nombre") or s.get("equipo_ref") or None
+    s["serie_txt"] = (s.get("serie") or s.get("maquina_serie") or None)
     s["abierta"] = s.get("estado") in _OTREP_ABIERTOS
     s["siguientes"] = list(_OTREP_TRANSICIONES.get(s.get("estado"), ()))
     if s.get("es_reposicion") and s.get("estado") == "recibido":
@@ -105387,7 +105398,12 @@ def _otrep_eventos_asegurar():
 
 
 def _otrep_evento(sid, accion, usuario, de_estado=None, a_estado=None, detalle=None):
-    """Agrega una línea a la bitácora de la solicitud. Nunca rompe a quien la llama."""
+    """Agrega una línea a la bitácora de la solicitud. Nunca rompe a quien la llama.
+
+    2026-10-21: el evento «creada» → «solicitado» es el punto ÚNICO que pasan los 7 caminos que crean una
+    solicitud (OT equipo y producto, incidencia, ticket, manual), siempre después de su commit. Ahí se fijan sus
+    referencias (producto + serie, OT y factura) y se avisa a la gestión. La hija de «repartir» nace «recibido»:
+    no avisa."""
     try:
         if not _otrep_eventos_asegurar():
             return
@@ -105398,6 +105414,117 @@ def _otrep_evento(sid, accion, usuario, de_estado=None, a_estado=None, detalle=N
              (detalle or None) and str(detalle)[:500]))
     except Exception as e:
         print(f"[otrep] evento sid={sid}: {e}", flush=True)
+    if accion == "creada" and a_estado == "solicitado":
+        _otrep_referenciar(sid)
+        _otrep_avisar_nueva(sid, usuario)
+
+
+def _otrep_serie_producto(vid, imid):
+    """N° de serie que el técnico respondió en el checklist de un producto de OT interna (ítem de tipo serie,
+    valor_json {"serie": "…"}). None si no lo hay."""
+    try:
+        for r in (mysql_fetchall(
+                "SELECT valor_json FROM mant_visita_tareas WHERE visita_id=%s AND maquina_id IS NULL "
+                "   AND item_manual_id=%s AND valor_json LIKE %s ORDER BY id", (vid, imid, '%"serie"%')) or []):
+            try:
+                v = json.loads(r.get("valor_json") or "{}")
+            except Exception:
+                continue
+            ser = str((v or {}).get("serie") or "").strip() if isinstance(v, dict) else ""
+            if ser:
+                return ser[:120]
+    except Exception as e:
+        print(f"[otrep] serie producto vid={vid} imid={imid}: {e}", flush=True)
+    return None
+
+
+def _otrep_referenciar(sid):
+    """Fija en la solicitud el producto (nombre/SKU), su N° de serie y los documentos de la OT (solo tipo y número,
+    nunca montos: _ot_docs_texto_lote). Solo completa lo vacío; nunca pisa. Best-effort."""
+    try:
+        if not _otrep_resp_asegurar():
+            return
+        s = mysql_fetchone(
+            "SELECT s.id, s.visita_id, s.maquina_id, s.item_manual_id, s.serie, s.equipo_ref, s.documento, "
+            "       m.serie AS m_serie, m.nombre AS m_nombre, m.sku AS m_sku "
+            "  FROM mant_ot_repuesto_solicitudes s LEFT JOIN mant_maquinas m ON m.id=s.maquina_id WHERE s.id=%s", (sid,))
+        if not s:
+            return
+        serie = (s.get("serie") or "").strip() or (s.get("m_serie") or "").strip() or None
+        ref = (s.get("equipo_ref") or "").strip() or None
+        if not ref and s.get("m_nombre"):
+            ref = (s["m_nombre"] + (f" (SKU {s['m_sku']})" if s.get("m_sku") else ""))[:400]
+        if s.get("item_manual_id") and s.get("visita_id"):
+            if not serie:
+                serie = _otrep_serie_producto(s["visita_id"], s["item_manual_id"])
+            if not ref:
+                try:
+                    _v, prod, _err = _otrep_cargar_ot_y_producto(s["visita_id"], s["item_manual_id"])
+                    if prod:
+                        ref = (prod.get("nombre") or "") + (f" (SKU {prod['sku']})" if prod.get("sku") else "")
+                except Exception:
+                    pass
+        doc = (s.get("documento") or "").strip() or None
+        if not doc and s.get("visita_id"):
+            doc = (_ot_docs_texto_lote([s["visita_id"]]).get(int(s["visita_id"])) or "").strip()[:400] or None
+        mysql_execute(
+            "UPDATE mant_ot_repuesto_solicitudes SET serie=COALESCE(serie,%s), equipo_ref=COALESCE(equipo_ref,%s), "
+            " documento=COALESCE(documento,%s) WHERE id=%s", (serie, (ref or None) and ref[:400], doc, sid))
+    except Exception as e:
+        print(f"[otrep] referenciar sid={sid}: {e}", flush=True)
+
+
+def _otrep_avisar_nueva(sid, usuario=None):
+    """Campana a la gestión cuando entra una solicitud (Daniel 2026-10-21: «necesito que lleguen y alerten a los
+    administradores»): superadmin y admin activos + el responsable por defecto del centro. Sin correo. Una campana
+    por OT mientras siga sin leer (_mant_notificar agrupa por OT); las de incidencia, ticket o manual van una por
+    solicitud. Nunca a la familia técnico (REGLA #19/#26) y nunca al cliente (REGLA #22)."""
+    try:
+        s = mysql_fetchone(
+            "SELECT s.id, s.visita_id, s.cliente_id, s.repuesto_nombre, s.cantidad, s.dejo_fuera_servicio, s.serie, "
+            "       s.equipo_ref, s.documento, s.incidencia_id, s.ticket_id, s.creada_desde, v.numero_ot, "
+            "       c.razon_social AS cliente "
+            "  FROM mant_ot_repuesto_solicitudes s LEFT JOIN mant_visitas v ON v.id=s.visita_id "
+            "  LEFT JOIN mant_clientes c ON c.id=s.cliente_id WHERE s.id=%s", (sid,))
+        if not s or (s.get("creada_desde") == "manual"):
+            return   # la levantó la propia gestión desde /repuestos: ya sabe que existe
+        dest = {}
+        for u in (mysql_fetchall("SELECT id, role FROM app_users WHERE active=1") or []):
+            if _rol_familia(u.get("role")) in ("superadmin", "admin"):
+                dest[int(u["id"])] = 1
+        resp = (_otrep_cfg().get("responsable_defecto") or "").strip()
+        if resp:
+            u = mysql_fetchone("SELECT id, role FROM app_users WHERE active=1 AND COALESCE(nombre, username)=%s LIMIT 1",
+                               (resp,))
+            if u and _rol_familia(u.get("role")) != "tecnico":
+                dest[int(u["id"])] = 1
+        if not dest:
+            return
+        donde = s.get("numero_ot") or (f"Incidencia #{s['incidencia_id']}" if s.get("incidencia_id") else "")
+        titulo = "Nueva solicitud de repuesto" + (f" · {donde}" if donde else "")
+        partes = [f"{s.get('repuesto_nombre') or 'Repuesto'} × {float(s.get('cantidad') or 1):g}"]
+        if s.get("equipo_ref"):
+            partes.append(s["equipo_ref"] + (f" · S/N {s['serie']}" if s.get("serie") else ""))
+        elif s.get("serie"):
+            partes.append(f"S/N {s['serie']}")
+        if s.get("cliente"):
+            partes.append(s["cliente"])
+        if s.get("documento"):
+            partes.append(s["documento"])
+        if usuario:
+            partes.append(f"pidió {usuario}")
+        cuerpo = " · ".join(partes) + (". Dejó el equipo FUERA DE SERVICIO." if s.get("dejo_fuera_servicio") else "")
+        for uid in dest:
+            _mant_notificar(uid, "repuesto_nuevo", titulo[:200], cuerpo,
+                            url_accion=f"/repuestos?solicitud={sid}#solicitudes",
+                            prioridad="alta" if s.get("dejo_fuera_servicio") else "media",
+                            cliente_id=s.get("cliente_id"), visita_id=s.get("visita_id"))
+            try:
+                _mant_notif_cache_invalidar(uid)
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[otrep] avisar nueva sid={sid}: {e}", flush=True)
 
 
 def _otrep_pendientes_tecnicos():
@@ -105557,6 +105684,22 @@ def repstock_solicitudes_ot_listar():
             + " ORDER BY (s.estado IN ('solicitado','validado','pedido','recibido') AND (COALESCE(s.dejo_fuera_servicio,0)=1 OR s.maquina_id IN (SELECT id FROM mant_maquinas WHERE estado_capturado='fuera_servicio'))) DESC, "
             + "(s.estado='solicitado') DESC, s.id DESC LIMIT %s OFFSET %s",
             tuple(params) + (per_page, offset)) or []
+        # 2026-10-21: las solicitudes anteriores a la referencia a la factura la completan aquí (una consulta por
+        # página) y la dejan guardada; nunca para un técnico (REGLA #26).
+        if rows and not _oculta_proveedores():
+            try:
+                _sin_doc = [r for r in rows if r.get("visita_id") and not (r.get("documento") or "").strip()]
+                if _sin_doc:
+                    _txt = _ot_docs_texto_lote([r["visita_id"] for r in _sin_doc])
+                    for r in _sin_doc:
+                        _d = (_txt.get(int(r["visita_id"])) or "").strip()[:400]
+                        if _d:
+                            r["documento"] = _d
+                            if _otrep_resp_asegurar():
+                                mysql_execute("UPDATE mant_ot_repuesto_solicitudes SET documento=%s WHERE id=%s AND documento IS NULL",
+                                              (_d, r["id"]))
+            except Exception as _e_doc:
+                print(f"[otrep] documento de la OT en la lista: {_e_doc}", flush=True)
         sols = [_otrep_fila(r) for r in rows]
         if sols:
             ids = [s["id"] for s in sols]
@@ -127255,7 +127398,7 @@ def _ensure_mant_notif_tipo_ot_firmada_cliente():
             "       'retiro_listo','retiro_cerrado',"
             "       'retiro_propuesta','retiro_expedido','retiro_desfase','retiro_cierre',"
             "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida',"
-            "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma') DEFAULT 'otro'"
+            "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma','repuesto_nuevo') DEFAULT 'otro'"
         )
     except Exception as e:
         print(f"[ensure] mant_notificaciones.tipo (+ot_firmada_cliente): {e}", flush=True)
@@ -162911,7 +163054,8 @@ def _otrep_cargar_ot_y_producto(vid, imid):
 def _otrep_docs_titulos(vid):
     """«NVI 687», «FCV 11439»… de la OT (solo número: nunca montos). [] si falla."""
     try:
-        return [d["titulo"] for d in (_ot_docs_listar(vid) or [])
+        # 2026-10-21: _ot_docs_listar devuelve {"documentos": [...]}; antes se recorría el dict y salía siempre [].
+        return [d["titulo"] for d in ((_ot_docs_listar(vid) or {}).get("documentos") or [])
                 if d.get("origen") == "erp" and (d.get("titulo") or "").strip()]
     except Exception as e:
         print(f"[otrep_docs_titulos] vid={vid}: {type(e).__name__}", flush=True)
