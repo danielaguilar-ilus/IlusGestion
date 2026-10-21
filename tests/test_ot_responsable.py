@@ -1043,7 +1043,7 @@ class TestPanelYFichaCableados(unittest.TestCase):
         xl = fuente_funcion("ot2_reporte_xlsx")
         self.assertIn('headers += ["Responsable de la OT"]', xl)
         self.assertIn('"v.responsable_nombre, " if _ot_resp_ok() else "NULL AS responsable_nombre, "', xl)
-        self.assertLess(xl.index('headers += ["Evento"'), xl.index('headers += ["Responsable de la OT"]'), "va al final: no corre ninguna columna")
+        self.assertLess(xl.index('headers += ["Relación (instalación ↔ desinstalación)"]'), xl.index('headers += ["Responsable de la OT"]'), "va al final: no corre ninguna columna")
 
     def test_la_ficha_lo_arma_antes_de_la_barra_de_acciones(self):
         """tests/test_ot_producto_acciones.py ejecuta el bloque entre `acc_puede` y `return render_template`: lo nuevo va ANTES."""
@@ -1091,7 +1091,7 @@ def _panel(**kw):
     ctx = dict(filas=[], origen="reales", vista="tabla", kpis={"pend": 2, "ejec": 0, "comp": 0, "cerr": 0}, conteo_reales=2, conteo_automaticas=0,
                total_filtrado=2, q="", fase="", page=1, per_page=25, total_paginas=1, per_page_opciones=[25, 50], error=None, kanban_cols=[],
                orden="ot", dir="desc", f_tipo="", f_tec=None, f_interna="", f_anexo="", f_pago="", f_agenda="", agenda_opts=[("hoy", "Hoy")],
-               tipos_opts=[], tecnicos_opts=[], f_evento=0, eventos_opts=[], es_superadmin_ot=False, permissions={"superadmin": False},
+               tipos_opts=[], tecnicos_opts=[], es_superadmin_ot=False, permissions={"superadmin": False},
                f_resp="", resp_opts=[], resp_yo=False)
     ctx.update(kw)
     return _entorno_panel().get_template("ot2/panel.html").render(**ctx)

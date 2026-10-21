@@ -90,7 +90,7 @@
   comentario en completo('equipos')).
   ══════════════════════════════════════════════════════════════════════
 #}
-{# 🧩 2026-10-20: estilos del cuadro de evento y del paso «Desinstalación» (evento + desinstalación unida a su instalación). #}
+{# 🧩 2026-10-20: estilos del paso «Desinstalación» (desinstalación unida a su instalación). #}
 <link rel="stylesheet" href="{{ url_for('static', filename='ot_evento.css') }}">
 <style>
 /* Tokens locales del paso "Agenda" (calendario + línea de tiempo, ver más
@@ -1368,8 +1368,6 @@
 {# 💰 2026-10-07: espejo en el navegador de la cuenta única de finanzas (_ot_finanzas de app.py). Lo usa la
    vista previa del paso Costos (_pintarFinMargenDom): el asistente todavía no tiene vid. #}
 <script src="{{ url_for('static', filename='ot_finanzas.js') }}"></script>
-{# 🧩 2026-10-20: formulario «Crear evento» (ventana apilada, la misma pieza de las pantallas de eventos). #}
-<script src="{{ url_for('static', filename='ot_evento_form.js') }}"></script>
 <script>
 // 🔏 2026-10-07: ¿quien crea es superadministrador? (puede «Autorizar y crear» sin esperar a Daniel).
 window.OT2C_ES_SUPERADMIN = {{ 'true' if (permissions and permissions.superadmin) else 'false' }};
@@ -1427,7 +1425,7 @@ window.OT2C = (function(){
   // alguno (ni is_tecnico ni es_tecnico), así que un técnico lo veía activo
   // y el backend lo rechazaba en silencio.
   var O2M_PUEDE_TOGGLE_PLAN = {{ (not es_tecnico or permissions.cat_clasificacion) | tojson }};
-  // 🧩 2026-10-20: el paso «Desinstalación» (cuenta, saldo, costos) y «Crear evento» no existen para un técnico (REGLA #26).
+  // 🧩 2026-10-20: el paso «Desinstalación» (cuenta, saldo, costos) no existe para un técnico (REGLA #26).
   var O2M_ES_TECNICO = {{ 'true' if es_tecnico else 'false' }};
   var fase = 'origen';   // 'origen' → pantalla de origen. 'form' → formulario único con scroll.
   // 📮 2026-09-10 (Daniel: "debes avisar que los correos estan bloqueados
@@ -1722,10 +1720,8 @@ window.OT2C = (function(){
                 fecha_inicio:'', fecha_termino:'', items:[], items_editados:false, productos:[],
                 email_destino:'', telefono:'', enviar_ahora:true, adjuntar_pdf:true},
          _tipoFiltro:'',
-         // 🧩 2026-10-20: evento (carpeta de OT) y desinstalación unida a esta instalación. Ver el bloque «EVENTO + DESINSTALACIÓN».
-         evento_id:null, evento:null, _evFiltro:'', _evPreset:null,
+         // 🧩 2026-10-20: desinstalación unida a esta instalación. Ver el bloque «DESINSTALACIÓN UNIDA A SU INSTALACIÓN».
          desinst:_o2mDiNuevo()};
-    cacheEventos = null; _evCargando = false; _evError = '';
     fase = 'origen';
     anclaActiva = null;
     _o2mStepCompleteTracked = {};
@@ -2050,7 +2046,7 @@ window.OT2C = (function(){
       case 'anexo':
         return !!(S.anexo.proveedor_nombre.trim() && S.anexo.objetivo_servicio.trim() &&
                   (S.fin_garantia || (S.anexo.items||[]).some(function(it){ return it.monto > 0; })));
-      // 🧩 2026-10-20: verde con «No» (confirmado si el evento tiene fecha de término), con «Por definir» + fecha válida, o con
+      // 🧩 2026-10-20: verde con «No», con «Por definir» + fecha válida, o con
       // «Sí» + fecha, horario, técnico, costo, cobro (si hay saldo) y checklist por equipo, todo revisado por el servidor.
       case 'desinst':  return _diCompleto();
       default: return false;
@@ -2431,11 +2427,8 @@ window.OT2C = (function(){
           '<input class="form-control" id="o2mTipoQ" placeholder="Buscar tipo… (ej: instalación, bodega)" '+
           'value="'+esc(S._tipoFiltro)+'" oninput="OT2C.filtrarTipo(this.value)" autocomplete="off"></div>'
         : '')+
-      '<div class="o2m-grid" id="o2mTipoGrid"></div>'+
-      // 🧩 2026-10-20 (Daniel, 19-oct: «clasificar las OT por EVENTO»): opcional, no bloquea el avance.
-      '<div id="o2mEventoBox"></div>';
+      '<div class="o2m-grid" id="o2mTipoGrid"></div>';
     pintarTipoGrid();
-    _pintarEventoDom();
   }
   function pintarTipoGrid(){
     var g = document.getElementById('o2mTipoGrid'); if (!g) return;
@@ -4432,7 +4425,6 @@ window.OT2C = (function(){
     b.innerHTML = '<h6 class="t">¿Quién recibe y dónde?</h6>'+
       '<p class="d">Es lo primero que el técnico necesita saber: a quién buscar y a qué '+
       'dirección llegar. Aparece en su pantalla apenas abre la OT.</p>'+
-      '<div id="o2mCpEvento"></div>'+
       '<div id="o2mCpLista" class="mb-3"></div>'+
       '<div class="row g-3">'+
         '<div class="col-md-7"><label class="fl">Nombre de quien recibe *</label>'+
@@ -4513,7 +4505,6 @@ window.OT2C = (function(){
       '</div>';
     cargarContactosCliente();
     _o2mPintarCpValidacion();
-    _o2mEvSugDir();   // 🧩 2026-10-20: la dirección del evento se SUGIERE con un botón (nunca pisa una confirmada)
     // Places se engancha después de que el input existe en el DOM.
     setTimeout(function(){
       var inp = document.getElementById('o2mCpDir');
@@ -11092,10 +11083,9 @@ window.OT2C = (function(){
       contraparte: esInterno() ? {} : S.contraparte,
       ticket_id: S.ticket_id
     };
-    // 🧩 2026-10-20: el evento y la desinstalación EXACTAMENTE como se ven en pantalla. Viajan también en el payload de
+    // 🧩 2026-10-20: la desinstalación EXACTAMENTE como se ve en pantalla. Viaja también en el payload de
     // «Pedir autorización a Daniel» (se copia este mismo body): Daniel lee «Incluye desinstalación dd/mm» y, al aprobar, la
     // hija se crea sola con el solicitante como autor.
-    if (S.evento_id) body.evento_id = S.evento_id;
     if (_o2mDiAplica() && S.desinst.lleva) body.desinstalacion = _diPayload();
     // 🩺 2026-10-21 (REGLA #38): si esta OT es el seguimiento de hallazgos de otra, se manda DE CUÁL y de cuáles (y las fotos que la persona dejó como
     // referencia). El servidor lo revalida todo (los hallazgos son de esa OT, siguen disponibles, mismo cliente) y escribe él mismo el vínculo.
@@ -11289,15 +11279,9 @@ window.OT2C = (function(){
           // 2026-08-30: #o2mErr vive ahora en el footer fijo del modal (ver
           // markup) desde que se quitó el paso "Revisar" -- siempre visible,
           // ya no hace falta navegar a ningún ancla para mostrarlo.
-          // 🧩 2026-10-20: errores del evento y de la desinstalación (el servidor valida todo el bloque ANTES de crear la
+          // 🧩 2026-10-20: errores de la desinstalación (el servidor valida todo el bloque ANTES de crear la
           // instalación: si algo falla, no se crea ninguna de las dos órdenes).
           var _cod = res.j.error_codigo || res.j.codigo;
-          if (_cod === 'DESINST_CONFIRMAR_NO'){
-            ilusConfirm({title: 'Esta instalación no se desinstala', message: 'El evento termina y estos equipos quedarían sin desinstalar.',
-              sub: '¿Seguro que no se retiran después?', okLabel: 'Sí, no se desinstala', cancelLabel: 'Volver', type: 'question'})
-              .then(function(ok){ if (!ok) return; S.desinst.lleva = 'no'; S.desinst.confirmo_no = true; crear(); });
-            return;
-          }
           var _esDes = ['DOMINGO_BLOQUEADO','DESINST_ANTES_DE_INSTALACION','FECHA_REQUERIDA','FECHA_INVALIDA','HORA_INVALIDA','TECNICO_OBLIGATORIO',
             'TECNICOS_EMPRESAS_MEZCLADAS','PROVEEDOR_TOPE_SIN_CONTRATO','FINANZAS_SIN_COSTO_PROVEEDOR','COBRO_REQUERIDO','ARGUMENTO_CUBIERTA',
             'SIN_SALDO_PARA_COBRAR','DESINST_SIN_DOCUMENTO_MADRE','DESINST_TIPO','DESINST_FECHA_REQUERIDA','MONTO_INVALIDO','EQUIPO_INVALIDO',
@@ -11308,13 +11292,6 @@ window.OT2C = (function(){
             S.desinst.previoKey = ''; S.desinst.previo = null;   // se vuelve a revisar con lo que dice el servidor
             _diProgramarPrevio(true);
             senalarPaso('desinst');
-            return;
-          }
-          if (_cod === 'EVENTO_CANCELADO' || _cod === 'EVENTO_NO_EXISTE' || _cod === 'EVENTO_INVALIDO'){
-            if (e) e.innerHTML = '<div class="o2m-err"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+esc(res.j.error || 'Ese evento ya no se puede usar.')+'</div>';
-            S.evento_id = null; S.evento = null; cacheEventos = null;
-            repintarSeccion('tipo');
-            senalarPaso('tipo');
             return;
           }
           if (res.j.codigo === 'ZZ_SALDO_CONSUMIDO'){ _o2mFinSaldoErrorCrear(res.j); return; }
@@ -11588,160 +11565,29 @@ window.OT2C = (function(){
   }
 
   /* ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-     🧩 2026-10-20 — EVENTO + DESINSTALACIÓN UNIDA A SU INSTALACIÓN (Daniel, 19-oct)
+     🧩 2026-10-20 — DESINSTALACIÓN UNIDA A SU INSTALACIÓN (Daniel, 19-oct)
      «Al momento de crear la orden de trabajo, si se selecciona instalación con desinstalación, el usuario tendrá que agendar
      en otra hija cuando se va a hacer la desinstalación para que quede de una vez agendado… literalmente cuadradito… que lo
      calendarice y deje agendado todo para que el técnico sepa. Ahí debe ser especialista el menú de crear OT, sobre todo en
      el consumo.» Y: «que se controle por el front, tú solo debes mostrar las opciones… para todo».
      REGLA DE ESTE BLOQUE: el sistema SUGIERE (técnico, checklist, fecha) y la persona DECIDE. Lo que se ve y se elige acá es
      EXACTAMENTE lo que viaja en body.desinstalacion y lo que el servidor crea: ningún dato se agrega por detrás.
-     · Cuadro «¿Es parte de un evento?» dentro del paso Tipo (carpeta que agrupa las OT: GET /ot/api/eventos?para=asistente).
+     (2026-10-21: se quitó el cuadro «¿Es parte de un evento?» del paso Tipo, junto con toda la función Eventos: Daniel, «el de
+     eventos no me sirve, elimínalo y el código».)
      · Paso «Desinstalación» (solo instalaciones de un cliente; nunca a un técnico). Va DESPUÉS de Costos a propósito: la
        pregunta de «cubierta por la instalación / la cobra su línea» depende de lo que la instalación toma de la nota de venta
        (pedido_madre), y de ahí en adelante no hay saltos hacia atrás. Va ANTES de Anexo (que nunca bloquea).
      · Todo lo que se puede validar antes de crear lo contesta POST /ot/api/desinstalacion/previo (no escribe nada): saldo de
        servicio que queda en la nota de venta, feriados, choque del técnico, checklist sugerido por equipo.
      Sin montos ni la palabra «cubierta» para un técnico: este paso no existe para un técnico (REGLA #26). */
-  var cacheEventos = null, _evCargando = false, _evOculto = false, _evPuedeCrear = false, _evError = '', _evPlantillas = null;
+  var _evPlantillas = null;
   var _diSeq = 0, _diTimer = null;
-
-  function _o2mEvCargar(){
-    if (_evCargando) return;
-    _evCargando = true;
-    fetch('/ot/api/eventos?para=asistente&per_page=100', {credentials:'same-origin'})
-      .then(function(r){ return r.json().catch(function(){ return null; }).then(function(j){ return {http:r.status, j:j}; }); })
-      .then(function(res){
-        _evCargando = false;
-        if (res.http === 403){ _evOculto = true; cacheEventos = []; }
-        else if (res.j && res.j.ok){ cacheEventos = res.j.eventos || []; _evPuedeCrear = !!res.j.puede_crear && !O2M_ES_TECNICO; _evError = ''; }
-        else { cacheEventos = []; _evError = (res.j && res.j.error) || 'No se pudieron leer los eventos.'; }
-        _o2mEvPreset();
-        _pintarEventoDom();
-      })
-      .catch(function(){ _evCargando = false; cacheEventos = []; _evError = 'No hay conexión para leer los eventos.'; _pintarEventoDom(); });
-  }
-  /* «Agregar OT al evento» (/ot/?crear=1&evento=ID) abre el asistente con ese evento ya elegido. Un evento que no sale en la
-     lista (p. ej. uno ya terminado) se lee aparte; uno cancelado nunca se ofrece. */
-  function _o2mEvPreset(){
-    var id = S._evPreset; if (!id) return;
-    S._evPreset = null;
-    var e = (cacheEventos || []).filter(function(x){ return x.id === id; })[0];
-    if (e){ S.evento_id = e.id; S.evento = e; return; }
-    fetch('/ot/api/eventos/' + id + '?per_page=1', {credentials:'same-origin'})
-      .then(function(r){ return r.json().catch(function(){ return null; }); })
-      .then(function(j){
-        if (j && j.ok && j.evento && j.evento.estado_db !== 'cancelado'){
-          cacheEventos = (cacheEventos || []).concat([j.evento]);
-          S.evento_id = j.evento.id; S.evento = j.evento;
-          _pintarEventoDom(); _o2mEvSugDir(); refrescarAnclas();
-        }
-      }).catch(function(){});
-  }
-  function _evFechasTxt(e){ return e.fechas_txt || 'Sin fechas definidas'; }
-  function _pintarEventoDom(){
-    var c = document.getElementById('o2mEventoBox'); if (!c) return;
-    if (_evOculto){ c.innerHTML = ''; return; }
-    var h = '<div class="o2m-ev-box"><h6><i class="bi bi-calendar-event me-1" style="color:var(--ilus-red,#dc2626)"></i>¿Es parte de un evento? '+
-      '<span style="font-weight:700;color:#6b7280">(opcional)</span></h6>'+
-      '<p class="d">Un evento agrupa las OT de un mismo lugar y fechas, por ejemplo la instalación y la desinstalación de un mall. '+
-      'Puedes elegirlo ahora o asociarlo después desde la ficha de la OT. No bloquea nada.</p>';
-    if (cacheEventos === null){
-      c.innerHTML = h + '<div class="d"><span class="spinner-border spinner-border-sm me-2"></span>Cargando eventos…</div></div>';
-      _o2mEvCargar();
-      return;
-    }
-    if (_evError) h += '<div class="o2m-aviso">'+esc(_evError)+'</div>';
-    if (cacheEventos.length > 3){
-      h += '<div class="o2m-ev-busca"><input type="search" id="o2mEvQ" placeholder="Buscar evento por nombre, lugar o cliente…" '+
-        'value="'+esc(S._evFiltro||'')+'" oninput="OT2C.filtrarEvento(this.value)" autocomplete="off" aria-label="Buscar evento"></div>';
-    }
-    h += '<div id="o2mEvGrid"></div><div id="o2mEvSel"></div></div>';
-    c.innerHTML = h;
-    _pintarEventoGrid();
-  }
-  function _pintarEventoGrid(){
-    var g = document.getElementById('o2mEvGrid'), s = document.getElementById('o2mEvSel');
-    if (!g || cacheEventos === null) return;
-    var q = (S._evFiltro || '').trim().toLowerCase();
-    var lista = cacheEventos.filter(function(e){
-      return !q || (String(e.nombre||'') + ' ' + String(e.lugar||'') + ' ' + String(e.cliente||'')).toLowerCase().indexOf(q) >= 0;
-    });
-    var MAX = 12, corte = lista.length > MAX && !q;
-    var vis = corte ? lista.slice(0, MAX) : lista;
-    if (S.evento && !vis.some(function(e){ return e.id === S.evento.id; })) vis = [S.evento].concat(vis);
-    var h = '<div class="o2m-ev-grid">'+
-      '<button type="button" class="o2m-ev-op ninguno'+(!S.evento_id?' sel':'')+'" onclick="OT2C.quitarEvento()">'+
-        '<span class="n">Sin evento</span><span class="l">Esta OT no pertenece a ningún evento</span></button>'+
-      vis.map(function(e){
-        var sel = S.evento_id === e.id;
-        return '<button type="button" class="o2m-ev-op'+(sel?' sel':'')+'" onclick="OT2C.setEvento('+e.id+')" aria-pressed="'+sel+'">'+
-          '<span class="n">'+(sel?'<i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>':'')+esc(e.nombre)+'</span>'+
-          (e.lugar ? '<span class="l"><i class="bi bi-geo-alt-fill me-1"></i>'+esc(e.lugar)+'</span>' : '')+
-          '<span class="f"><i class="bi bi-calendar-event me-1"></i>'+esc(_evFechasTxt(e))+'</span></button>';
-      }).join('')+
-      (_evPuedeCrear ? '<button type="button" class="o2m-ev-op crear" onclick="OT2C.crearEvento()"><i class="bi bi-plus-circle" style="font-size:1.2rem"></i>Crear evento</button>' : '')+
-      '</div>';
-    if (!vis.length && q) h += '<div class="d" style="margin-top:8px;color:#6b7280">Ningún evento coincide con «'+esc(S._evFiltro)+'».</div>';
-    if (corte) h += '<div class="d" style="margin-top:8px;color:#6b7280;font-size:.8rem">Mostrando '+MAX+' de '+lista.length+' eventos: usa el buscador para ver los demás.</div>';
-    g.innerHTML = h;
-    if (s){
-      s.innerHTML = S.evento
-        ? '<div class="o2m-ev-sel"><i class="bi bi-check-circle-fill ic"></i><span>Evento elegido: <b>'+esc(S.evento.nombre)+'</b>'+
-          (S.evento.lugar ? ' · '+esc(S.evento.lugar) : '')+' · '+esc(_evFechasTxt(S.evento))+'</span>'+
-          '<button type="button" onclick="OT2C.quitarEvento()">Quitar</button></div>'
-        : '';
-    }
-  }
-  function filtrarEvento(v){ S._evFiltro = v; _pintarEventoGrid(); }
-  function setEvento(id){
-    var e = (cacheEventos || []).filter(function(x){ return x.id === id; })[0];
-    if (!e) return;
-    S.evento_id = e.id; S.evento = e;
-    _pintarEventoGrid(); _o2mEvSugDir(); refrescarAnclas();
-  }
-  function quitarEvento(){
-    S.evento_id = null; S.evento = null;
-    _pintarEventoGrid(); _o2mEvSugDir(); refrescarAnclas();
-  }
-  function crearEvento(){
-    if (!window.OTEventoForm){
-      if (window.ilusToast) ilusToast('El formulario de eventos no está disponible. Recarga la página.', {type:'error'});
-      return;
-    }
-    window.OTEventoForm.abrir({
-      cliente: S.cliente ? {id:S.cliente.id, nombre:S.cliente.nombre} : null,
-      host: document.getElementById('ot2ModalCrear') || document.body,
-      onGuardado: function(ev){
-        if (!ev) return;
-        cacheEventos = (cacheEventos || []).filter(function(x){ return x.id !== ev.id; });
-        cacheEventos.unshift(ev);
-        setEvento(ev.id);
-      }
-    });
-  }
-  /* Contraparte: la dirección del evento se SUGIERE (un botón), nunca pisa una dirección ya confirmada con Google. */
-  function _o2mEvSugDir(){
-    var c = document.getElementById('o2mCpEvento'); if (!c) return;
-    var e = S.evento, cp = S.contraparte;
-    if (!e || e.lat == null || e.lng == null || (cp.lat && cp.lng)){ c.innerHTML = ''; return; }
-    c.innerHTML = '<div class="o2m-ev-sug"><i class="bi bi-calendar-event"></i><span>Esta OT es del evento <b>'+esc(e.nombre)+'</b>. '+
-      '¿El técnico llega a <b>'+esc(e.lugar || e.direccion || '')+'</b>?</span>'+
-      '<button type="button" onclick="OT2C.usarDireccionEvento()">Usar la dirección del evento</button></div>';
-  }
-  function usarDireccionEvento(){
-    var e = S.evento, cp = S.contraparte;
-    if (!e || e.lat == null || e.lng == null) return;
-    cp.direccion = e.direccion || ''; cp.lat = e.lat; cp.lng = e.lng; cp.place_id = e.place_id || '';
-    cp.comuna = e.comuna || ''; cp.region = e.region || ''; cp._direccion_auto = false;
-    if (e.detalle && !(cp.detalle || '').trim()) cp.detalle = e.detalle;
-    repintarSeccion('contraparte'); refrescarAnclas();
-  }
 
   /* ───────────────────────── Paso «Desinstalación» ───────────────────────── */
   function _o2mDiNuevo(){
     return {lleva:null, fecha:'', hini:'09:00', hfin:'13:00', tec_modo:'mismos', tecnicos:[], lider:null,
             costo_proveedor:'', costo_despacho:'', nota:'', cobro:null, argumento:'', cobra_servicio:'', cobra_despacho:'',
-            eq_fuera:{}, eq_plant:{}, forzar:false, confirmo_no:false, previo:null, previoPend:false, previoKey:'', _costoAuto:false};
+            eq_fuera:{}, eq_plant:{}, forzar:false, previo:null, previoPend:false, previoKey:'', _costoAuto:false};
   }
   function _o2mDiAplica(){ return S.tipo === 'instalacion' && !esInterno() && !O2M_ES_TECNICO && !!S.cliente; }
   function _diTec(){ var d = S.desinst; return (d.tec_modo === 'mismos' ? (S.tecnicos || []) : (d.tecnicos || [])).slice(); }
@@ -11785,7 +11631,7 @@ window.OT2C = (function(){
   /* El bloque que viaja (previo y crear): EXACTAMENTE lo que la persona ve y eligió. */
   function _diPayload(){
     var d = S.desinst, o = {lleva: d.lleva};
-    if (d.lleva === 'no'){ if (d.confirmo_no) o.confirmo_no = true; return o; }
+    if (d.lleva === 'no') return o;
     o.fecha = d.fecha || null;
     if (d.lleva === 'por_definir') return o;
     o.hora_inicio = d.hini; o.hora_fin = d.hfin;
@@ -11808,7 +11654,7 @@ window.OT2C = (function(){
   function _diPrevioBody(){
     var envio = S.fin_zz_envio && S.fin_zz_envio.monto != null ? (Number(S.fin_zz_envio.monto) || 0) : 0;
     return {
-      cliente_id: S.cliente ? S.cliente.id : null, fecha_programada: S.fecha, hora_fin: S.hfin, evento_id: S.evento_id || null,
+      cliente_id: S.cliente ? S.cliente.id : null, fecha_programada: S.fecha, hora_fin: S.hfin,
       documentos: _o2mFinDocsTodos().map(function(x){ return {tipo:x.tido, numero:x.nudo}; }),
       pedido_madre: {servicio: S.fin_garantia ? 0 : (Number(S.fin_zz_monto) || 0), despacho: S.fin_garantia ? 0 : envio},
       /* 2026-10-20: una instalación en garantía, regalía o arriendo ($0 autorizado solo para ella) no cubre a su desinstalación. */
@@ -11857,7 +11703,7 @@ window.OT2C = (function(){
       if (d.cobra_despacho === '' ) d.cobra_despacho = p.remanente.despacho || '';
     }
   }
-  /* Hook de pintarAnclas: cualquier cambio aguas arriba (fecha de la instalación, documentos, montos, equipos, evento)
+  /* Hook de pintarAnclas: cualquier cambio aguas arriba (fecha de la instalación, documentos, montos, equipos)
      vuelve a revisar la desinstalación. Barato: compara la huella antes de llamar a la red. */
   function _o2mDiVigilar(){
     if (fase !== 'form') return;
@@ -12170,7 +12016,7 @@ window.OT2C = (function(){
       '<div class="o2m-di-res-ot"><span class="k">Orden 1 · Instalación</span><b>'+_diEsc(S.cliente ? S.cliente.nombre : '')+'</b>'+
         '<div><i class="bi bi-calendar3 me-1"></i>'+_diEsc(inst)+'</div><div><i class="bi bi-people-fill me-1"></i>'+_diEsc(tecM)+'</div>'+
         '<div><i class="bi bi-hdd-stack me-1"></i>'+nEqM+' equipo'+(nEqM === 1 ? '' : 's')+'</div>'+
-        (S.evento ? '<div><i class="bi bi-calendar-event me-1"></i>'+_diEsc(S.evento.nombre)+'</div>' : '')+'</div>'+
+        '</div>'+
       '<div class="o2m-di-res-f" aria-hidden="true"><i class="bi bi-arrow-right"></i></div>';
     if (d.lleva === 'por_definir'){
       h += '<div class="o2m-di-res-ot pendiente"><span class="k">Desinstalación · por definir</span><b>Estimada para el '+_diEsc(d.fecha ? _o2mFechaBonita(d.fecha) : '—')+'</b>'+
@@ -12182,8 +12028,7 @@ window.OT2C = (function(){
         '<div><i class="bi bi-calendar3 me-1"></i>'+(d.fecha ? _diEsc(_diFechaLarga(d.fecha)) + ' · ' + _diEsc(d.hini) + '–' + _diEsc(d.hfin) : 'Falta la fecha')+'</div>'+
         '<div><i class="bi bi-people-fill me-1"></i>'+_diEsc(tecH)+'</div>'+
         '<div><i class="bi bi-hdd-stack me-1"></i>'+inc.length+' de '+nEqM+' equipo'+(nEqM === 1 ? '' : 's')+' con su checklist</div>'+
-        (cobTxt ? '<div><i class="bi bi-receipt me-1"></i>'+_diEsc(cobTxt)+'</div>' : '')+
-        (S.evento ? '<div><i class="bi bi-calendar-event me-1"></i>'+_diEsc(S.evento.nombre)+'</div>' : '')+'</div>';
+        (cobTxt ? '<div><i class="bi bi-receipt me-1"></i>'+_diEsc(cobTxt)+'</div>' : '')+'</div>';
     }
     h += '</div>'+(d.lleva === 'si' ? _o2mDiFamiliaHtml() : '')+
       '<div class="ev-ayuda" style="margin-top:10px">La desinstalación no le escribe nada al cliente. Al técnico le llega el aviso de su orden como a cualquier OT.</div></div>';
@@ -12193,21 +12038,7 @@ window.OT2C = (function(){
   /* ── Acciones (llamadas desde el HTML) ── */
   function diLleva(v){
     var d = S.desinst;
-    if (v === 'no'){
-      /* Responder «No» dentro de un evento con fecha de término pide confirmación: es la forma más fácil de perder una desinstalación. */
-      var ev = S.evento;
-      if (ev && ev.fecha_fin_iso && !d.confirmo_no){
-        ilusConfirm({
-          title: 'Esta instalación no se desinstala', message: 'El evento «' + ev.nombre + '» termina el ' + _o2mFechaBonita(ev.fecha_fin_iso) + '.',
-          sub: '¿Seguro que estos equipos no se retiran después? Si se retiran, elige «Sí» y agenda la desinstalación.',
-          okLabel: 'Sí, no se desinstala', cancelLabel: 'Volver', type: 'question'
-        }).then(function(ok){ if (!ok) return; d.lleva = 'no'; d.confirmo_no = true; _diAplicarLleva(); });
-        return;
-      }
-      d.confirmo_no = !!(ev && ev.fecha_fin_iso);
-    }
     d.lleva = v;
-    if (v !== 'no') d.confirmo_no = false;
     _diAplicarLleva();
   }
   function _diAplicarLleva(){
@@ -12395,8 +12226,6 @@ window.OT2C = (function(){
     if (opts.titulo)     S.titulo     = opts.titulo;
     if (opts.descripcion) S.descripcion = opts.descripcion;
     if (opts.fecha)      S.fecha      = opts.fecha;
-    // 🧩 2026-10-20: «Agregar OT al evento» (/ot/?crear=1&evento=ID) abre el asistente con ese evento ya elegido.
-    if (opts.evento_id)  S._evPreset  = parseInt(opts.evento_id, 10) || null;
     // 🔧 FASE 3 REPUESTOS (2026-09-21): ver S.equipo_preset_maquina_id en
     // reset() y su consumo en cargarEquipos().
     if (opts.equipo_preset_maquina_id) S.equipo_preset_maquina_id = opts.equipo_preset_maquina_id;
@@ -12533,12 +12362,11 @@ window.OT2C = (function(){
     var _qs = new URLSearchParams(location.search);
     if (_qs.get('crear') === '1'){
       var _tid = parseInt(_qs.get('ticket') || '0', 10);
-      var _evq = parseInt(_qs.get('evento') || '0', 10) || null;   // 🧩 2026-10-20
       // 🩺 2026-10-21 (REGLA #38): /ot/?crear=1&seguimiento=1,2&desde=<OT de origen> → el asistente llega prellenado con esos hallazgos.
       var _segIds = (_qs.get('seguimiento') || '').split(',').map(function(x){ return parseInt(x, 10); }).filter(function(x){ return x > 0; });
       var _segDesde = parseInt(_qs.get('desde') || '0', 10);
       if (_segIds.length && _segDesde) abrirDesdeHallazgos(_segDesde, _segIds);
-      else if (_tid) abrirDesdeTicket(_tid); else abrir(_evq ? {evento_id:_evq} : undefined);
+      else if (_tid) abrirDesdeTicket(_tid); else abrir();
     }
   });
 
@@ -12601,8 +12429,7 @@ window.OT2C = (function(){
           o2mCalMes:o2mCalMes, o2mCalHoy:o2mCalHoy, o2mCalClicDia:o2mCalClicDia,
           o2mCalReintentar:o2mCalReintentar, o2mDayPaso:o2mDayPaso,
           o2mDaySugerirHueco:o2mDaySugerirHueco,
-          // 🧩 2026-10-20 evento + desinstalación
-          setEvento:setEvento, quitarEvento:quitarEvento, filtrarEvento:filtrarEvento, crearEvento:crearEvento, usarDireccionEvento:usarDireccionEvento,
+          // 🧩 2026-10-20 desinstalación
           diLleva:diLleva, diFecha:diFecha, diCampo:diCampo, diMonto:diMonto, diBuscarHueco:diBuscarHueco, diTecModo:diTecModo, diTecTog:diTecTog,
           diCobro:diCobro, diEqTog:diEqTog, diEqTodo:diEqTodo, diEqPlant:diEqPlant, diForzar:diForzar};
 })();

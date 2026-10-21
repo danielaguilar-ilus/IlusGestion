@@ -75,7 +75,7 @@
    con el resto de esta pantalla) -- cero riesgo de colisión visual. #}
 <link rel="stylesheet" href="{{ url_for('static', filename='mantenciones_ot_ejecutar.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='ilus_firma.css') }}">
-{# 🧩 2026-10-20: chips de evento / desinstalación, modal «Programar desinstalación» (static/ot_desinst.js). #}
+{# 🧩 2026-10-20: chips de desinstalación, modal «Programar desinstalación» (static/ot_desinst.js). #}
 <link rel="stylesheet" href="{{ url_for('static', filename='ot_evento.css') }}">
 {#- 🧰 2026-10-20 (Daniel: «algo choro, algo espectacular… esta es nuestra página de orgullo»): barra de acciones de cada
     equipo/producto y sus flujos a pantalla completa. Todo en archivos estáticos (cacheables) para que la ficha, que llega
@@ -3226,11 +3226,11 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             <i class="bi bi-arrow-left"></i><span>Volver</span></a>
           <span class="otd-tipo"><i class="bi {{ v.tipo_icon }}"></i>{{ v.tipo_label }}</span>
         </div>
-        {#- 🧩 2026-10-20 (Daniel, 19-oct: «literalmente cuadradito… para que el técnico sepa»): la unión instalación ↔ desinstalación y el
-            evento, a la vista bajo el tipo. En la HIJA: cinta «Desinstalación de OT-…» (enlace a la instalación; texto si el técnico no la ve).
+        {#- 🧩 2026-10-20 (Daniel, 19-oct: «literalmente cuadradito… para que el técnico sepa»): la unión instalación ↔ desinstalación,
+            a la vista bajo el tipo. En la HIJA: cinta «Desinstalación de OT-…» (enlace a la instalación; texto si el técnico no la ve).
             En la MADRE: «Desinstalación programada: OT-… · dd/mm/aaaa» (azul) o «Desinstalación sin agendar» (ámbar) + el botón. Sin montos y
             sin la palabra «cubierta» para un técnico (REGLA #26: el servidor ya los quita de `desinst`). -#}
-        {% if desinst and (desinst.es_hija or desinst.es_madre or desinst.evento) %}
+        {% if desinst and (desinst.es_hija or desinst.es_madre) %}
         <div class="ev-rel" id="evRel">
           {% if desinst.es_hija and desinst.madre %}
             {% if desinst.madre.url %}
@@ -3242,9 +3242,6 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             {% if desinst.hija and desinst.hija.url %}
             <a class="ev-chip {{ _evn }}" href="{{ desinst.hija.url }}" title="Abrir la OT de desinstalación"><i class="bi {{ _evi }}"></i>{{ desinst.chip }}</a>
             {% else %}<span class="ev-chip {{ _evn }}"><i class="bi {{ _evi }}"></i>{{ desinst.chip }}</span>{% endif %}
-          {% endif %}
-          {% if desinst.evento %}
-          <a class="ev-chip" href="{{ desinst.evento.url }}" title="Abrir el evento{% if desinst.evento.fechas_txt %} · {{ desinst.evento.fechas_txt }}{% endif %}"><i class="bi bi-calendar-event"></i>Evento: {{ desinst.evento.nombre }}</a>
           {% endif %}
           {% if desinst.es_madre and desinst.puede_programar and puede_metadata and not es_tecnico %}
           <button type="button" class="ev-prog" onclick="OTDesinst.abrirProgramar()"><i class="bi bi-box-arrow-up"></i>Programar desinstalación</button>
@@ -3965,22 +3962,6 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           {% if v.cliente_rut %}
           <div class="fila"><span class="lbl">RUT</span>
             <span class="val mono">{{ v.cliente_rut | rut_fmt }}</span></div>
-          {% endif %}
-          {#- 🧩 2026-10-20: Evento (carpeta que agrupa OT). Editable: asociar, cambiar o quitar. La desinstalación hereda el de su
-              instalación, así que en la hija solo se lee. Un técnico solo lo cambia en un trabajo interno suyo (el servidor lo vuelve a exigir). -#}
-          {% if desinst and (desinst.evento or (puede_metadata and not desinst.es_hija and (not es_tecnico or not v.cliente_id))) %}
-          <div class="fila"><span class="lbl">Evento</span>
-            <span class="val ev-fila-acc">
-              {% if desinst.evento %}
-              <a class="ev-link" href="{{ desinst.evento.url }}"><b>{{ desinst.evento.nombre }}</b></a>
-              <span>{% if desinst.evento.lugar %}{{ desinst.evento.lugar }} · {% endif %}{{ desinst.evento.fechas_txt }}</span>
-              {% if desinst.evento.estado_db == 'cancelado' %}<span class="ev-chip rojo">Evento cancelado</span>{% endif %}
-              {% else %}<span style="color:#6b7280">Sin evento</span>{% endif %}
-              {% if desinst.es_hija %}<small style="color:#6b7280">Es el de su instalación</small>
-              {% elif puede_metadata and (not es_tecnico or not v.cliente_id) %}
-              <button type="button" class="acc" onclick="OTDesinst.cambiarEvento()"><i class="bi bi-calendar-event"></i> {{ 'Cambiar' if desinst.evento else 'Asociar a un evento' }}</button>
-              {% endif %}
-            </span></div>
           {% endif %}
           {% set _dir_ot = v.direccion_visita or v.cliente_direccion %}
           {# 🔴 FIX 2026-09-11 (Daniel: "comuna/región... el backend las
@@ -19681,7 +19662,7 @@ document.addEventListener('DOMContentLoaded', function(){
 });
 </script>
 {% endif %}
-{#- 🧩 2026-10-20: «Programar desinstalación», fecha prevista, quitarla y el evento de la OT (static/ot_desinst.js). -#}
+{#- 🧩 2026-10-20: «Programar desinstalación», fecha prevista y quitarla (static/ot_desinst.js). -#}
 <script>
 window.OTD_DESINST_CFG = {
   vid: {{ v.id }},

@@ -1,9 +1,11 @@
-"""EVENTOS y DESINSTALACIÓN — el FRENTE (Daniel, 19/20-oct-2026). Sin base de datos ni navegador: vigila por texto y con Jinja/node.
+"""DESINSTALACIÓN — el FRENTE (Daniel, 19/20-oct-2026). Sin base de datos ni navegador: vigila por texto y con Jinja/node.
 
-Cubre: el asistente de crear OT (cuadro de evento en el paso Tipo; paso «Desinstalación» después de Costos y antes de Anexo, nunca para un
+2026-10-21: Daniel pidió eliminar la función «Eventos» («el de eventos no me sirve, elimínalo y el código»): se quitaron de aquí las
+pruebas del cuadro de evento del asistente, del filtro `evento` del panel y de las dos pantallas de eventos.
+
+Cubre: el asistente de crear OT (paso «Desinstalación» después de Costos y antes de Anexo, nunca para un
 técnico; el bloque que viaja es EXACTAMENTE lo que el servidor lee), la ficha (cinta/chips, filas, botón y modal «Programar desinstalación»,
-nada para un técnico), el panel (el filtro `evento` viaja en TODOS los enlaces, chips de relación y evento), las dos pantallas de eventos
-(paginadas, marcar/desmarcar todo), Regularizar y Saldo de facturas, y la REGLA #1 (nada de alert/confirm/prompt nativos).
+nada para un técnico), el panel (chips de relación), Regularizar y Saldo de facturas, y la REGLA #1 (nada de alert/confirm/prompt nativos).
 La prueba de verdad en navegador (Playwright, 1366 y 390 px) se corre aparte con el arnés local; esto evita que se rompa en silencio.
 
 Correr (por archivo, la suite completa no sirve en esta máquina):  py -m pytest tests/test_ot_eventos_front.py -q -p no:warnings
@@ -31,10 +33,6 @@ MODAL = leer("templates", "ot2", "_modal_crear.html")
 FICHA = leer("templates", "ot2", "detalle.html")
 PANEL = leer("templates", "ot2", "panel.html")
 BASE = leer("templates", "base.html")
-EVENTOS_HTML = leer("templates", "ot2", "eventos.html")
-EVENTO_DET_HTML = leer("templates", "ot2", "evento_detalle.html")
-JS_PAGINAS = leer("static", "ot_eventos.js")
-JS_FORM = leer("static", "ot_evento_form.js")
 JS_FICHA = leer("static", "ot_desinst.js")
 CSS = leer("static", "ot_evento.css")
 JS_REGULARIZAR = leer("static", "ot_regularizar.js")
@@ -45,8 +43,8 @@ NATIVOS = re.compile(r"(?<![\w.$])(alert|confirm|prompt)\(")
 
 
 def bloque_wizard():
-    """El bloque «EVENTO + DESINSTALACIÓN» del asistente (de su comentario de cabecera hasta la API pública)."""
-    i = MODAL.index("EVENTO + DESINSTALACIÓN UNIDA A SU INSTALACIÓN")
+    """El bloque «DESINSTALACIÓN UNIDA A SU INSTALACIÓN» del asistente (de su comentario de cabecera hasta la API pública)."""
+    i = MODAL.index("DESINSTALACIÓN UNIDA A SU INSTALACIÓN (Daniel, 19-oct)")
     j = MODAL.index("API PÚBLICA — un solo modal")
     return MODAL[i:j]
 
@@ -54,13 +52,12 @@ def bloque_wizard():
 class TestPlantillas(unittest.TestCase):
     def test_jinja_de_las_plantillas_tocadas(self):
         env = jinja2.Environment(extensions=["jinja2.ext.do"])
-        for nombre, src in (("_modal_crear", MODAL), ("detalle", FICHA), ("panel", PANEL), ("eventos", EVENTOS_HTML),
-                            ("evento_detalle", EVENTO_DET_HTML), ("base", BASE)):
+        for nombre, src in (("_modal_crear", MODAL), ("detalle", FICHA), ("panel", PANEL), ("base", BASE)):
             env.parse(src)   # lanza TemplateSyntaxError si algo quedó mal
 
     @unittest.skipUnless(shutil.which("node"), "node no está disponible")
     def test_js_sin_errores_de_sintaxis(self):
-        for ruta in ("ot_eventos.js", "ot_evento_form.js", "ot_desinst.js", "ot_regularizar.js", "ot_saldo_facturas.js", "ot_autorizaciones.js"):
+        for ruta in ("ot_desinst.js", "ot_regularizar.js", "ot_saldo_facturas.js", "ot_autorizaciones.js"):
             r = subprocess.run(["node", "--check", os.path.join(RAIZ, "static", ruta)], capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, ruta + "\n" + r.stderr[:800])
         # El script del asistente (Jinja neutralizado): es el más grande y el que más cambió.
@@ -78,11 +75,12 @@ class TestPlantillas(unittest.TestCase):
             os.unlink(nombre)
 
     def test_regla_1_nada_de_popups_nativos_en_lo_nuevo(self):
-        for nombre, src in (("ot_eventos.js", JS_PAGINAS), ("ot_evento_form.js", JS_FORM), ("ot_desinst.js", JS_FICHA), ("bloque del asistente", bloque_wizard())):
+        for nombre, src in (("ot_desinst.js", JS_FICHA), ("bloque del asistente", bloque_wizard())):
             self.assertIsNone(NATIVOS.search(src), nombre)
 
-    def test_base_marca_activo_el_menu_en_las_pantallas_de_eventos(self):
-        self.assertIn("'ot_pagina_eventos','ot_pagina_evento_detalle'", BASE)
+    def test_base_ya_no_nombra_las_pantallas_de_eventos(self):
+        self.assertNotIn("ot_pagina_evento", BASE)
+        self.assertIn("['ot2_panel','ot2_diagnostico']", BASE)
 
 
 class TestAsistente(unittest.TestCase):
@@ -103,14 +101,12 @@ class TestAsistente(unittest.TestCase):
         cond = m.group(1)
         for k in ("S.tipo === 'instalacion'", "!esInterno()", "!O2M_ES_TECNICO", "!!S.cliente"):
             self.assertIn(k, cond)
-        # «Crear evento» tampoco se ofrece a un técnico.
-        self.assertIn("_evPuedeCrear = !!res.j.puede_crear && !O2M_ES_TECNICO", MODAL)
 
-    def test_el_cuerpo_lleva_evento_y_desinstalacion_antes_de_pedir_autorizacion(self):
+    def test_el_cuerpo_lleva_la_desinstalacion_antes_de_pedir_autorizacion(self):
         i_cuerpo = MODAL.index("if (_o2mDiAplica() && S.desinst.lleva) body.desinstalacion = _diPayload();")
         i_aut = MODAL.index("return pedirAutorizacionCrear(body, _esSA, sig, _origSig, {tipo: 'exceder_saldo'")
         self.assertLess(i_cuerpo, i_aut)   # el payload de «Pedir autorización a Daniel» copia este mismo body
-        self.assertIn("if (S.evento_id) body.evento_id = S.evento_id;", MODAL)
+        self.assertNotIn("body.evento_id", MODAL)
         self.assertIn("var payload = JSON.parse(JSON.stringify(body));", MODAL)
 
     def test_lo_que_viaja_es_lo_que_el_servidor_lee(self):
@@ -121,10 +117,8 @@ class TestAsistente(unittest.TestCase):
         claves = set(re.findall(r"\bo\.([a-z_]+)\s*=", cuerpo)) | {"lleva"}
         self.assertGreaterEqual(len(claves), 14, claves)
         for k in sorted(claves):
-            if k == "confirmo_no":
-                continue   # lo lee _ot2_crear_core (confirmación de «No» dentro de un evento con fecha de término)
             self.assertIn('"%s"' % k, f, "el servidor no lee la clave «%s»" % k)
-        self.assertIn('_dd_raw.get("confirmo_no")', F.texto())
+        self.assertNotIn("confirmo_no", F.texto())   # 2026-10-21: la confirmación del «No» dentro de un evento se eliminó con Eventos
         # y el mismo formato en la ficha (POST /ot/api/<vid>/desinstalacion)
         j = JS_FICHA.index("function cuerpo()")
         cuerpo2 = JS_FICHA[j:j + 2200]
@@ -146,22 +140,14 @@ class TestAsistente(unittest.TestCase):
         self.assertIn("' + desinstalación '", MODAL)
         self.assertIn("La instalación quedó creada", MODAL)       # si falla solo la hija, ámbar y con salida
         self.assertIn("Prográmala desde la ficha de la instalación", MODAL)
-        self.assertIn("DESINST_CONFIRMAR_NO", MODAL)
+        self.assertNotIn("DESINST_CONFIRMAR_NO", MODAL)
 
-    def test_cuadro_de_evento_en_el_paso_tipo(self):
-        self.assertIn("'<div id=\"o2mEventoBox\"></div>';", MODAL)
-        self.assertIn("/ot/api/eventos?para=asistente", MODAL)
-        self.assertIn("_pintarEventoDom();", MODAL)
-        self.assertIn("OT2C.crearEvento()", MODAL)
-        self.assertIn("window.OTEventoForm.abrir(", MODAL)
-        self.assertIn("ot_evento_form.js", MODAL)
+    def test_ya_no_hay_cuadro_de_evento_en_el_paso_tipo(self):
+        for k in ("o2mEventoBox", "/ot/api/eventos", "_pintarEventoDom", "OT2C.crearEvento", "OTEventoForm", "ot_evento_form.js",
+                  "_evPreset", "_qs.get('evento')", "usarDireccionEvento", "o2mCpEvento"):
+            self.assertNotIn(k, MODAL, k)
+        # el estilo de la desinstalación sí se carga
         self.assertIn("ot_evento.css", MODAL)
-        # la dirección del evento se SUGIERE con un botón y nunca pisa una confirmada
-        self.assertIn("(cp.lat && cp.lng)", bloque_wizard())
-        self.assertIn("Usar la dirección del evento", bloque_wizard())
-        # «Agregar OT al evento» abre el asistente con el evento elegido
-        self.assertRegex(MODAL, r"S\._evPreset\s*=\s*parseInt\(opts\.evento_id, 10\)")
-        self.assertIn("_qs.get('evento')", MODAL)
 
     def test_margen_de_la_familia_en_costos(self):
         self.assertIn("html += _o2mDiFamiliaHtml();", MODAL)
@@ -177,8 +163,8 @@ class TestAsistente(unittest.TestCase):
 
 class TestFicha(unittest.TestCase):
     def test_cinta_chips_y_filas(self):
-        for k in ('class="ev-rel" id="evRel"', "desinst.es_hija and desinst.madre", "desinst.chip", "Evento: {{ desinst.evento.nombre }}",
-                  '<span class="lbl">Evento</span>', '<span class="lbl">Desinstalación</span>', '<span class="lbl">Instalación</span>',
+        for k in ('class="ev-rel" id="evRel"', "desinst.es_hija and desinst.madre", "desinst.chip",
+                  '<span class="lbl">Desinstalación</span>', '<span class="lbl">Instalación</span>',
                   "desinst.aviso_cierre.texto", "desinst.madre.ticket.url"):
             self.assertIn(k, FICHA, k)
 
@@ -186,8 +172,9 @@ class TestFicha(unittest.TestCase):
         for m in re.finditer(r"OTDesinst\.(abrirProgramar|abrirDeclarar|abrirQuitar)\(\)", FICHA):
             previo = FICHA[max(0, m.start() - 900):m.start()]
             self.assertIn("not es_tecnico", previo, m.group(0))
-        # el evento solo lo cambia un técnico en un trabajo interno suyo (el servidor lo vuelve a exigir)
-        self.assertIn("(not es_tecnico or not v.cliente_id)", FICHA)
+        # 2026-10-21: la fila «Evento» y su botón se eliminaron con Eventos
+        self.assertNotIn("cambiarEvento", FICHA)
+        self.assertNotIn("desinst.evento", FICHA)
 
     def test_config_y_script(self):
         self.assertIn("window.OTD_DESINST_CFG = {", FICHA)
@@ -195,59 +182,29 @@ class TestFicha(unittest.TestCase):
         self.assertIn("ot_evento.css", FICHA)
 
     def test_modal_programar_y_demas_acciones(self):
-        for k in ("/ot/api/' + VID + '/desinstalacion'", "/ot/api/' + VID + '/desinstalacion-prevista'", "/ot/api/' + VID + '/evento'",
+        for k in ("/ot/api/' + VID + '/desinstalacion'", "/ot/api/' + VID + '/desinstalacion-prevista'",
                   "otdDesinstModal", "Seleccionar/deseleccionar todo", "Quitar la desinstalación prevista", "Agendar igual", "pendiente_autorizacion",
                   "Los domingos no se agendan órdenes de trabajo"):
             self.assertIn(k, JS_FICHA, k)
 
 
 class TestPanel(unittest.TestCase):
-    def test_el_filtro_evento_viaja_en_todos_los_enlaces(self):
+    def test_el_panel_ya_no_tiene_filtro_de_evento_y_conserva_los_filtros_de_siempre(self):
         n = PANEL.count("pago_prov=f_pago or None")
         self.assertEqual(n, 12)
-        self.assertEqual(PANEL.count("pago_prov=f_pago or None, evento=f_evento or None"), n)
-        self.assertIn('<select name="evento"', PANEL)
-        self.assertIn("&evento={{ f_evento or '' }}", PANEL)       # y al Excel
-        self.assertIn("(1 if f_evento else 0)", PANEL)             # cuenta en «Filtros»
+        self.assertEqual(PANEL.count("pago_prov=f_pago or None, resp=f_resp or None"), n)
+        for k in ("f_evento", "eventos_opts", 'name="evento"', "evento=f_evento"):
+            self.assertNotIn(k, PANEL, k)
+        self.assertNotIn("evento=", PANEL.replace("evento_", ""))
 
-    def test_chips_boton_y_modal_del_dia(self):
-        # 2026-10-21 (Daniel: «Sí, quita Eventos»): sin botón «Eventos» en la cabecera; los chips y el filtro siguen.
+    def test_chips_de_la_desinstalacion_en_el_panel(self):
+        # 2026-10-21 (Daniel: «el de eventos no me sirve, elimínalo y el código»): sin botón «Eventos», sin filtro y sin chip de evento.
         self.assertNotIn("url_for('ot_pagina_eventos')", PANEL)
-        for k in ("f.rel.chip", "f.evento_nombre", "ot_pagina_evento_detalle", "ev-pchip", "d.rel_nivel", "d.evento"):
+        for k in ("f.rel.chip", "ev-pchip", "d.rel_nivel"):
             self.assertIn(k, PANEL, k)
-        # el ícono del evento NO es bi-flag-fill (ese ya es de feriados y prioridad)
-        self.assertNotIn("bi-flag-fill\"></i>{{ f.evento_nombre", PANEL)
+        for k in ("f.evento_nombre", "ot_pagina_evento_detalle", "d.evento"):
+            self.assertNotIn(k, PANEL, k)
         self.assertNotIn("bi-flag-fill", bloque_wizard())
-
-
-class TestPantallasEventos(unittest.TestCase):
-    def test_paginacion_estilo_etiquetas(self):
-        for k in ("Mostrando <b>", "Anterior", "Siguiente", "Página <b>", "[20, 50, 100]", "[25, 50, 100]", "data-pp", "data-pg"):
-            self.assertIn(k, JS_PAGINAS, k)
-
-    def test_marcar_y_desmarcar_todo(self):
-        self.assertIn("Seleccionar/deseleccionar todo", JS_PAGINAS)
-        self.assertIn("algunaSin", JS_PAGINAS)
-
-    def test_fechas_nunca_iso_y_sin_montos(self):
-        self.assertIn("esc(bonita(av.proxima_fecha))", JS_PAGINAS)
-        self.assertNotRegex(JS_PAGINAS, r"\bclp\(|toLocaleString\('es-CL'\)|\$\{")   # es avance, no plata (REGLA #26)
-
-    def test_tecnico_sin_botones_de_gestion(self):
-        self.assertIn("var enGestion = !esTecnico;", JS_PAGINAS)
-        self.assertIn("var puedeEditar = d.puede_editar && !esTecnico;", JS_PAGINAS)
-        self.assertIn("{% if not es_tecnico %}", EVENTOS_HTML)
-
-    def test_plantillas_con_sidebar_y_page_header(self):
-        for src in (EVENTOS_HTML, EVENTO_DET_HTML):
-            self.assertIn('{% extends "base.html" %}', src)
-            self.assertIn('class="page-header', src)
-            self.assertIn("ot_evento.css", src)
-
-    def test_formulario_de_evento(self):
-        for k in ("/ot/api/eventos", "cancelar: true", "reactivar: true", "ilusPrompt", "ilusPlacesAutocomplete", "Documento de referencia"):
-            self.assertIn(k, JS_FORM, k)
-        self.assertIn("No cuenta como documento de ninguna OT", JS_FORM)   # REGLA #24
 
 
 class TestBandejas(unittest.TestCase):
@@ -274,14 +231,6 @@ class TestCssYCelular(unittest.TestCase):
     def test_nombres_completos_nunca_cortados(self):
         self.assertNotIn("text-overflow:ellipsis", CSS)
         self.assertNotIn("line-clamp", CSS)
-
-
-class TestBackendAsistente(unittest.TestCase):
-    def test_el_evento_proximo_se_puede_elegir_en_el_asistente(self):
-        """El mall se crea la semana antes: un evento PRÓXIMO debe salir en la lista del asistente (el chip «Activos» de la lista no lo incluye)."""
-        f = F.fuente_funcion("ot_api_eventos_listar")
-        self.assertIn('(para_asistente and cod == "proximo")', f)
-        self.assertIn('if para_asistente and cod in ("cancelado", "terminado"):', f)
 
 
 if __name__ == "__main__":

@@ -2319,23 +2319,10 @@ class TestCableado(unittest.TestCase):
         seg = {"ot_madre_id": 1, "ot_relacion": "seguimiento"}          # 1 = la instalación de más abajo
         des = {"ot_madre_id": 1, "ot_relacion": "desinstalacion"}
         self.assertIsNone(EV.guardia_cambio_tipo(seg, []))
-        self.assertIsNone(EV.guardia_evento_de_hija(seg))
         self.assertEqual(EV.guardia_cambio_tipo(des, [])["codigo"], "TIPO_PROTEGIDO")
-        self.assertEqual(EV.guardia_evento_de_hija(des)["codigo"], "EVENTO_DE_LA_MADRE")
-        self.assertEqual(EV.guardia_evento_de_hija({"ot_madre_id": 5})["codigo"], "EVENTO_DE_LA_MADRE", "sin relación escrita sigue protegido como antes")
-        # el avance del evento no cuenta el seguimiento como la desinstalación de su OT de origen
-        inst = {"id": 1, "tipo": EV.TIPO_MADRE, "estado": "cerrada", "ot_madre_id": None, "ot_relacion": None, "numero_ot": "OT-1"}
-        con_seg = EV.avance_evento([inst, {"id": 2, "tipo": "correctiva", "estado": "programada", **seg, "numero_ot": "OT-2"}], "2026-10-21")
-        self.assertIsNone(con_seg["pares"][0]["hija"])
-        self.assertEqual(con_seg["desinst_pendientes"], 0)
-        self.assertEqual(con_seg["total"], 2, "sigue contando como trabajo pendiente del evento")
-        con_des = EV.avance_evento([inst, {"id": 2, "tipo": "desinstalacion", "estado": "programada", **des, "numero_ot": "OT-2"}], "2026-10-21")
-        self.assertEqual(con_des["pares"][0]["hija"]["id"], 2)
-
-    def test_la_pagina_del_evento_no_escribe_desinstalacion_de_bajo_un_seguimiento(self):
-        i = APP.index("hija_de = (num_por_id.get(int(o[\"ot_madre_id\"]))")
-        self.assertIn('(o.get("ot_relacion") or "") != _oh.REL_SEGUIMIENTO else None)', APP[i:i + 300])
-        self.assertIn("'<small>Desinstalación de ' + esc(o.madre_numero)", _leer("static/ot_eventos.js"), "es esta línea la que escribe el texto")
+        # 2026-10-21: Eventos se eliminó (guardia_evento_de_hija y avance_evento ya no existen).
+        self.assertFalse(hasattr(EV, "guardia_evento_de_hija"))
+        self.assertFalse(hasattr(EV, "avance_evento"))
 
     def test_el_asistente_manda_el_seguimiento_y_el_servidor_lo_revalida(self):
         modal = _leer("templates/ot2/_modal_crear.html")
@@ -2597,7 +2584,7 @@ def _panel(**kw):
     ctx = dict(filas=[], origen="reales", vista="tabla", kpis={"pend": 2, "ejec": 0, "comp": 0, "cerr": 0}, conteo_reales=2, conteo_automaticas=0,
                total_filtrado=2, q="", fase="", page=1, per_page=25, total_paginas=1, per_page_opciones=[25, 50], error=None, kanban_cols=[],
                orden="ot", dir="desc", f_tipo="", f_tec=None, f_interna="", f_anexo="", f_pago="", f_agenda="", agenda_opts=[("hoy", "Hoy")],
-               tipos_opts=[], tecnicos_opts=[], f_evento=0, eventos_opts=[], es_superadmin_ot=False, permissions={"superadmin": False},
+               tipos_opts=[], tecnicos_opts=[], es_superadmin_ot=False, permissions={"superadmin": False},
                f_resp="", resp_opts=[], resp_yo=False)
     ctx.update(kw)
     return _entorno().get_template("ot2/panel.html").render(**ctx)

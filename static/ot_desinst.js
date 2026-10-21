@@ -1,4 +1,4 @@
-/* 🧩 2026-10-20 — Ficha de la OT: desinstalación unida a su instalación y evento (Daniel, 19-oct).
+/* 🧩 2026-10-20 — Ficha de la OT: desinstalación unida a su instalación (Daniel, 19-oct).
    «El usuario tendrá que agendar en otra hija cuando se va a hacer la desinstalación para que quede de una vez agendado… que lo
    calendarice y deje agendado todo para que el técnico sepa.»  «Que se controle por el front, tú solo debes mostrar las opciones.»
    Este archivo da vida a lo que dibuja detalle.html (window.OTD_DESINST_CFG):
@@ -7,10 +7,10 @@
                                        venta, equipos con su checklist, nota y, si hace falta, el argumento para Daniel.
      · OTDesinst.abrirDeclarar()    → anotar la desinstalación prevista (fecha por definir) sin crear todavía la orden.
      · OTDesinst.abrirQuitar()      → quitar la desinstalación prevista con un motivo (p. ej. el mall compra la trotadora).
-     · OTDesinst.cambiarEvento()    → asociar la OT a un evento, cambiarlo o quitarlo.
    El sistema SUGIERE (fecha, técnicos, checklist) y la persona DECIDE: lo que se ve en el modal es exactamente lo que viaja.
    Sin alert/confirm/prompt nativos (REGLA #1). Nada de montos para un técnico: estos botones no existen para uno (REGLA #26).
-   API: GET/POST /ot/api/<vid>/desinstalacion, POST /ot/api/<vid>/desinstalacion-prevista, POST /ot/api/<vid>/evento. */
+   2026-10-21: se quitó «Evento» (Daniel: «el de eventos no me sirve, elimínalo y el código»).
+   API: GET/POST /ot/api/<vid>/desinstalacion, POST /ot/api/<vid>/desinstalacion-prevista. */
 (function () {
   'use strict';
   var CFG = window.OTD_DESINST_CFG || {};
@@ -270,14 +270,14 @@
     var autHtml = '';
     if (requiereAut()) {
       autHtml = '<div class="o2m-di-sub falta"><h6><span class="pt"></span>Declarar la desinstalación pide autorización</h6>' +
-        '<p class="ev-ayuda" style="margin:0 0 8px">Esta instalación no tenía la desinstalación prevista y no está en un evento con fecha de término. ' +
+        '<p class="ev-ayuda" style="margin:0 0 8px">Esta instalación no tenía la desinstalación prevista. ' +
         (CFG.esSuperadmin ? 'Como superadministrador queda registrada a tu nombre.' : 'Se le pide a Daniel y la desinstalación se agenda sola cuando la apruebe.') + ' Explica por qué es necesaria (mínimo 30 caracteres).</p>' +
         '<textarea class="ev-in" id="dsAut" maxlength="1000" data-txt="argAut" placeholder="Ej: el mall pidió retirar el equipo al terminar la feria">' + esc(S.argAut) + '</textarea>' +
         '<div class="ev-ayuda" id="dsAutN">' + (S.argAut || '').trim().length + ' / 30 caracteres mínimos.</div></div>';
     }
     var heredaHtml = '<div class="ev-aviso azul" style="margin:12px 0 0"><i class="bi bi-copy"></i><span><b>Se copia de la instalación:</b> ' +
       [her.lugar ? 'lugar ' + esc(her.lugar) : '', her.contacto && her.contacto.nombre ? 'contacto ' + esc(her.contacto.nombre) + (her.contacto.tel ? ' (' + esc(her.contacto.tel) + ')' : '') : '',
-        her.centro_costo ? 'centro de costo ' + esc(her.centro_costo) : '', her.evento ? 'evento ' + esc(her.evento.nombre) : '',
+        her.centro_costo ? 'centro de costo ' + esc(her.centro_costo) : '',
         (her.documentos || []).length ? 'documentos ' + (her.documentos || []).map(function (d) { return esc(d.titulo); }).join(', ') : ''].filter(Boolean).join(' · ') +
       '. La desinstalación no le escribe nada al cliente.</span></div>';
 
@@ -503,53 +503,5 @@
     });
   }
 
-  /* ══════════════════════════ EVENTO DE LA OT ══════════════════════════════════════════════════════════════ */
-  function cambiarEvento() {
-    var ctx = CFG.ctx || {};
-    if (ctx.es_hija) { toast('El evento de una desinstalación es el de su instalación: cámbialo en la instalación.', 'info'); return; }
-    asegurarModal();
-    contenido(cabecera('Evento de esta OT', 'Agrupa las órdenes de un mismo lugar y fechas') +
-      '<div class="modal-body"><div class="ev-vacio"><span class="spinner-border spinner-border-sm me-2"></span>Cargando eventos…</div></div>');
-    modal.show();
-    api('/ot/api/eventos?para=asistente&per_page=100').then(function (r) {
-      if (!r.ok) {
-        contenido(cabecera('Evento de esta OT', '') + '<div class="modal-body"><div class="ev-error">' + esc(r.j.error || 'No se pudieron leer los eventos.') + '</div></div>' +
-          '<div class="modal-footer"><button type="button" class="ev-btn" data-bs-dismiss="modal">Cerrar</button></div>');
-        return;
-      }
-      var lista = r.j.eventos || [], actual = ctx.evento ? ctx.evento.id : null, filtro = '';
-      function pintarEv() {
-        var q = filtro.trim().toLowerCase();
-        var vis = lista.filter(function (e) { return !q || (String(e.nombre) + ' ' + String(e.lugar || '') + ' ' + String(e.cliente || '')).toLowerCase().indexOf(q) >= 0; });
-        contenido(cabecera('Evento de esta OT', 'Agrupa las órdenes de un mismo lugar y fechas') + '<div class="modal-body">' +
-          (lista.length > 3 ? '<input class="ev-in" type="search" id="evcQ" placeholder="Buscar evento por nombre, lugar o cliente…" value="' + esc(filtro) + '" style="margin-bottom:10px" aria-label="Buscar evento">' : '') +
-          '<div class="o2m-ev-grid" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr))">' +
-          '<button type="button" class="o2m-ev-op ninguno' + (!actual ? ' sel' : '') + '" data-ev="0"><span class="n">Sin evento</span><span class="l">Esta OT no pertenece a ningún evento</span></button>' +
-          vis.map(function (e) {
-            return '<button type="button" class="o2m-ev-op' + (e.id === actual ? ' sel' : '') + '" data-ev="' + e.id + '"><span class="n">' + esc(e.nombre) + '</span>' +
-              (e.lugar ? '<span class="l"><i class="bi bi-geo-alt-fill me-1"></i>' + esc(e.lugar) + '</span>' : '') +
-              '<span class="f"><i class="bi bi-calendar-event me-1"></i>' + esc(e.fechas_txt || 'Sin fechas') + '</span></button>';
-          }).join('') + '</div>' +
-          (ctx.es_madre ? '<div class="ev-ayuda" style="margin-top:10px">Si esta instalación tiene una desinstalación agendada, también se mueve al evento elegido.</div>' : '') +
-          '</div><div class="modal-footer"><button type="button" class="ev-btn" data-bs-dismiss="modal">Cerrar</button></div>');
-        var q2 = document.getElementById('evcQ');
-        if (q2) { q2.addEventListener('input', function () { filtro = q2.value; var pos = q2.selectionStart; pintarEv(); var n = document.getElementById('evcQ'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (_) { /* sin cursor */ } } }); }
-        Array.prototype.forEach.call(el.querySelectorAll('[data-ev]'), function (b) {
-          b.addEventListener('click', function () {
-            var id = parseInt(b.getAttribute('data-ev'), 10) || null;
-            if (id === actual) { modal.hide(); return; }
-            api('/ot/api/' + VID + '/evento', { evento_id: id }).then(function (rr) {
-              if (!rr.ok) { toast(rr.j.error || 'No se pudo cambiar el evento.', 'error'); return; }
-              modal.hide();
-              toast(id ? '✓ OT asociada al evento «' + (rr.j.evento_nombre || '') + '»' : 'Evento quitado de la OT.', 'success');
-              recargar();
-            });
-          });
-        });
-      }
-      pintarEv();
-    });
-  }
-
-  window.OTDesinst = { abrirProgramar: abrirProgramar, abrirDeclarar: abrirDeclarar, abrirQuitar: abrirQuitar, cambiarEvento: cambiarEvento };
+  window.OTDesinst = { abrirProgramar: abrirProgramar, abrirDeclarar: abrirDeclarar, abrirQuitar: abrirQuitar };
 })();
