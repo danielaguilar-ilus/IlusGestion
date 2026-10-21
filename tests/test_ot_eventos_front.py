@@ -211,7 +211,9 @@ class TestPanel(unittest.TestCase):
         self.assertIn("(1 if f_evento else 0)", PANEL)             # cuenta en «Filtros»
 
     def test_chips_boton_y_modal_del_dia(self):
-        for k in ("f.rel.chip", "f.evento_nombre", "url_for('ot_pagina_eventos')", "ot_pagina_evento_detalle", "ev-pchip", "d.rel_nivel", "d.evento"):
+        # 2026-10-21 (Daniel: «Sí, quita Eventos»): sin botón «Eventos» en la cabecera; los chips y el filtro siguen.
+        self.assertNotIn("url_for('ot_pagina_eventos')", PANEL)
+        for k in ("f.rel.chip", "f.evento_nombre", "ot_pagina_evento_detalle", "ev-pchip", "d.rel_nivel", "d.evento"):
             self.assertIn(k, PANEL, k)
         # el ícono del evento NO es bi-flag-fill (ese ya es de feriados y prioridad)
         self.assertNotIn("bi-flag-fill\"></i>{{ f.evento_nombre", PANEL)

@@ -93754,6 +93754,12 @@ def ot2_detalle(vid):
     # 🩺 2026-10-21 (REGLA #38): la tarjeta «Hallazgos de esta OT» (y, en una OT de seguimiento, de qué OT viene). Solo gestión: a un técnico
     # no viaja nada. También en una OT CERRADA. Va ANTES del bloque de la barra de acciones por el mismo motivo que las líneas de arriba.
     hallazgos = _hall_contexto_ficha(vid, v)
+    # 🧭 2026-10-21 (Daniel: «que quede alertado solamente en la parte de trabajo… qué pasó con los equipos, por equipo y N° de serie»).
+    try:
+        resumen_equipos = _ot_resumen_equipos(vid, equipos, hallazgos)
+    except Exception as _e_res:
+        print(f"[ot2_detalle] resumen de equipos vid={vid}: {type(_e_res).__name__}", flush=True)
+        resumen_equipos = []
     # 🧰 2026-10-20: productos cuyo checklist se dispensa por una acción del técnico (espejo JS: otdChkEvaluar) y quién
     # puede devolver un producto a «operativo» (gestión, con motivo).
     try:
@@ -93849,7 +93855,7 @@ def ot2_detalle(vid):
         com_envio=com_envio,
         hallazgos=hallazgos,
         acta=acta,
-        prod_dispensa=prod_dispensa, acc_listas=acc_listas, acc_data=acc_data,
+        prod_dispensa=prod_dispensa, acc_listas=acc_listas, acc_data=acc_data, resumen_equipos=resumen_equipos,
         puede_revertir_estado=bool((not _es_rol_tecnico()) and puede_configurar and not ot_solo_lectura),
         # 🔓 2026-10-20: «Informar incidencia» lo puede cualquier técnico asignado a ESTA OT (decisión de Daniel); ver acc_data.
         fac_alerta=fac_alerta,
@@ -165323,7 +165329,7 @@ def _hall_avisar(vid, ids_nuevos):
         return (_oh.titulo_campana(num, len(lista)), _oh.cuerpo_campana(cliente_txt, lista, quien_hoy), _oh.prioridad_campana(lista))
 
     titulo, cuerpo, prioridad = _textos(items)
-    url = f"/ot/{int(vid)}#otdHallazgos"
+    url = f"/ot/hallazgos?ot={int(vid)}#hzpTarjeta"   # 2026-10-21: la tarjeta vive en la página «Hallazgos»
     n_ok = 0
     for p in _hall_destinos(vid, v, excluir_uid=_hall_uid()):
         uid = int(p["id"])
@@ -165369,7 +165375,7 @@ def _hall_avisar_toma(vid, v, f, quien, quien_uid):
             continue
         try:
             _mant_notificar(int(p["id"]), _oh.TIPO_AVISO_TOMA, _oh.titulo_toma(num), _oh.cuerpo_toma(quien, f.get("titulo")),
-                            url_accion=f"/ot/{int(vid)}#otdHallazgos", prioridad="baja", cliente_id=v.get("cliente_id"), visita_id=int(vid))
+                            url_accion=f"/ot/hallazgos?ot={int(vid)}#hzpTarjeta", prioridad="baja", cliente_id=v.get("cliente_id"), visita_id=int(vid))
             _mant_notif_cache_invalidar(int(p["id"]))
             n_ok += 1
         except Exception as e:
@@ -165399,12 +165405,38 @@ def _hall_cuando(dt_utc):
         return ""
 
 
+def _hall_equipos_de(vid, filas):
+    """2026-10-21 (Daniel: «los hallazgos exactos se agrupan por equipo, número de serie»): nombre, SKU y N° de serie del equipo de ficha
+    (mant_maquinas) o del producto de la revisión (la serie que respondió el técnico en su checklist) de cada hallazgo. Clave «e<id>» o
+    «i<id>»; un hallazgo sin equipo no entra. Best-effort: si algo falla, el grupo queda con el nombre guardado en el hallazgo."""
+    out = {}
+    for f in filas or []:
+        try:
+            if f.get("maquina_id"):
+                k = "e%d" % int(f["maquina_id"])
+                if k not in out:
+                    m = mysql_fetchone("SELECT nombre, sku, serie FROM mant_maquinas WHERE id=%s", (int(f["maquina_id"]),)) or {}
+                    out[k] = {"nombre": m.get("nombre") or f.get("equipo_nombre") or "", "sku": m.get("sku") or "",
+                              "serie": (m.get("serie") or "").strip()}
+            elif f.get("item_manual_id"):
+                k = "i%d" % int(f["item_manual_id"])
+                if k not in out:
+                    out[k] = {"nombre": f.get("equipo_nombre") or "", "sku": "",
+                              "serie": _otrep_serie_producto(vid, int(f["item_manual_id"])) or ""}
+        except Exception as e:
+            print(f"[hall] equipo de un hallazgo vid={vid}: {type(e).__name__}", flush=True)
+    return out
+
+
 def _hall_items(vid, filas):
     """Las filas listas para dibujar: severidad con su semáforo, estado EFECTIVO, fotos (las de las tareas se releen vivas: el técnico
     las sube DESPUÉS de responder), qué acciones admite cada una y la OT de seguimiento. Hora en Chile (REGLA #6). Sin plata."""
     vivas = _hall_fotos_por_tareas(vid, [f.get("tarea_id") for f in filas if f.get("origen") == _oh.ORIGEN_TAREA and f.get("tarea_id")])
+    eqs = _hall_equipos_de(vid, filas)
     out = []
     for f in filas:
+        gk = ("e%d" % int(f["maquina_id"])) if f.get("maquina_id") else (("i%d" % int(f["item_manual_id"])) if f.get("item_manual_id") else "")
+        geq = eqs.get(gk) or {}
         sev = _oh.sev_info(f.get("severidad"))
         estado_ef, caido = _oh.estado_efectivo(f, f.get("seg_numero"), f.get("seg_estado"))
         seg_existe = bool(f.get("seg_numero") or f.get("seg_estado"))
@@ -165437,7 +165469,34 @@ def _hall_items(vid, filas):
             "descarte_motivo": f.get("descarte_motivo") or "", "seguimiento": seg,
             "puede_tomar": acc["tomar"] and not retirado, "puede_levantar": acc["levantar"] and not retirado,
             "puede_descartar": acc["descartar"] and not retirado, "puede_reabrir": acc["reabrir"],
+            "grupo": gk or "ot", "grupo_nombre": geq.get("nombre") or f.get("equipo_nombre") or "",
+            "grupo_sku": geq.get("sku") or "", "serie": geq.get("serie") or "",
         })
+    return out
+
+
+def _hall_agrupar(items):
+    """Los hallazgos activos agrupados por equipo + N° de serie (Daniel 2026-10-21), el grupo más grave primero; dentro de cada grupo, por
+    gravedad. Los que no son de un equipo van al final como «De la OT»."""
+    grupos = {}
+    for i in items:
+        g = grupos.setdefault(i["grupo"], {"key": i["grupo"], "nombre": i["grupo_nombre"] if i["grupo"] != "ot" else "De la OT",
+                                           "sku": i["grupo_sku"], "serie": i["serie"], "items": [], "peor": 99,
+                                           "n_abiertos": 0, "n_tomados": 0, "n_con_ot": 0, "n_descartados": 0})
+        g["items"].append(i)
+        g["peor"] = min(g["peor"], i["sev_orden"])
+        if i["estado_ef"] == _oh.EST_ABIERTO:
+            g["n_abiertos"] += 1
+        elif i.get("seguimiento"):
+            g["n_con_ot"] += 1
+        elif i["estado_ef"] == _oh.EST_TOMADO:
+            g["n_tomados"] += 1
+        else:
+            g["n_descartados"] += 1
+    out = sorted(grupos.values(), key=lambda g: (g["key"] == "ot", g["peor"], g["nombre"]))
+    for g in out:
+        g["items"].sort(key=lambda i: (i["sev_orden"], i["id"]))
+        g["color"] = g["items"][0]["sev_color"] if g["items"] else "gris"
     return out
 
 
@@ -165463,6 +165522,7 @@ def _hall_contexto_ficha(vid, v):
             return None
         r = _oh.resumir(items)
         return {"vid": int(vid), "numero_ot": v.get("numero_ot") or f"V-{int(vid):05d}", "activos": activos, "retirados": retirados,
+                "grupos": _hall_agrupar(activos),
                 "origen": origen, "n_total": r["total"], "n_abiertos": r["abiertos"], "n_tomados": r["tomados"], "n_con_ot": r["con_ot"],
                 "n_descartados": r["descartados"], "n_retirados": r["retirados"],
                 "n_sin_foto": len([i for i in activos if i["sin_foto"]]),
@@ -165472,6 +165532,176 @@ def _hall_contexto_ficha(vid, v):
     except Exception as e:
         print(f"[hall] contexto ficha vid={vid}: {type(e).__name__}: {e}", flush=True)
         return None
+
+
+def _ot_resumen_equipos(vid, equipos, hallazgos):
+    """2026-10-21 (Daniel: «que quede alertado solamente en la parte de trabajo, que me diga en un resumen qué pasó con los equipos…
+    por el equipo y por el N° de serie»): una fila por equipo o producto CON algo que contar (fuera de servicio, de baja, no llegó, no se
+    pudo revisar, repuestos en curso y, para la gestión, sus hallazgos). Sin plata ni proveedores (REGLAS #19/#26): `hallazgos` llega
+    None a un técnico, así que a él no le viajan."""
+    hall_por = {g["key"]: g for g in ((hallazgos or {}).get("grupos") or [])}
+    filas = []
+    for e in equipos or []:
+        eid = int(e.get("id") or 0)
+        if e.get("_interno") and not eid:
+            continue
+        key = ("i" if e.get("_interno") else "e") + str(eid)
+        chips = []
+        if e.get("_interno"):
+            est = (e.get("estado_prod") or {}).get("estado") or ""
+            serie = ""
+        else:
+            est = "fuera_servicio" if (e.get("estado_capturado") or "") == "fuera_servicio" else ""
+            if e.get("dado_baja_aqui"):
+                est = "baja"
+            serie = (e.get("serie") or "").strip()
+        if est == "fuera_servicio":
+            chips.append({"txt": "Fuera de servicio", "color": "rojo", "ic": "bi-sign-stop-fill"})
+        elif est == "baja":
+            chips.append({"txt": "Dado de baja", "color": "negro", "ic": "bi-slash-circle-fill"})
+        elif est == "no_llego":
+            chips.append({"txt": "No llegó", "color": "ambar", "ic": "bi-box-seam-fill"})
+        rs = (e.get("razon_saltado") or "").strip()
+        if not e.get("_interno") and rs and rs not in ("fuera_de_servicio", "dado_de_baja") and not est:
+            chips.append({"txt": "No se pudo revisar" if rs not in ("no_encontrado", "falta_stock") else "No está / no llegó",
+                          "color": "gris" if rs not in ("no_encontrado", "falta_stock") else "ambar", "ic": "bi-skip-forward-fill"})
+        ab = [x for x in (e.get("rep_solicitudes") or []) if x.get("abierta")]
+        if ab:
+            nombres = ", ".join("%s × %g" % (x.get("repuesto_nombre") or "Repuesto", float(x.get("cantidad") or 1)) for x in ab[:3])
+            chips.append({"txt": ("Repuesto en curso: " if len(ab) == 1 else "%d repuestos en curso: " % len(ab)) + nombres
+                          + (" y %d más" % (len(ab) - 3) if len(ab) > 3 else ""), "color": "azul", "ic": "bi-hourglass-split"})
+        h = hall_por.get(key)
+        if h:
+            if h["n_abiertos"]:
+                chips.append({"txt": "%d hallazgo%s sin gestionar" % (h["n_abiertos"], "s" if h["n_abiertos"] != 1 else ""),
+                              "color": "rojo" if h["peor"] <= 1 else "ambar", "ic": "bi-clipboard2-pulse-fill"})
+            if h["n_tomados"]:
+                chips.append({"txt": "%d con el caso tomado" % h["n_tomados"], "color": "azul", "ic": "bi-hand-index-thumb-fill"})
+            if h["n_con_ot"]:
+                chips.append({"txt": "%d con OT de seguimiento" % h["n_con_ot"], "color": "verde", "ic": "bi-diagram-3-fill"})
+        if chips and not serie:
+            serie = (h or {}).get("serie") or (_otrep_serie_producto(vid, eid) if e.get("_interno") else "") or ""
+        if chips:
+            filas.append({"key": key, "id": eid, "interno": bool(e.get("_interno")), "nombre": e.get("nombre") or "",
+                          "sku": e.get("sku") or "", "serie": serie, "chips": chips})
+    g = hall_por.get("ot")
+    if g and (g["n_abiertos"] or g["n_tomados"] or g["n_con_ot"]):
+        filas.append({"key": "ot", "id": 0, "interno": False, "nombre": "De la OT (sin equipo)", "sku": "", "serie": "",
+                      "chips": [{"txt": "%d hallazgo%s" % (len(g["items"]), "s" if len(g["items"]) != 1 else ""),
+                                 "color": "ambar", "ic": "bi-clipboard2-pulse-fill"}]})
+    return filas
+
+
+def _hall_n_sin_gestionar():
+    """Cuántos hallazgos esperan que alguien tome el caso, en TODAS las OT (la burbuja roja del panel). 0 si no hay tabla o falla."""
+    if not _hall_ok():
+        return 0
+    try:
+        r = mysql_fetchone("SELECT COUNT(*) AS n FROM mant_ot_hallazgos h LEFT JOIN mant_visitas s ON s.id = h.ot_seguimiento_id "
+                           "WHERE " + _oh.sql_abierto("h", "s")) or {}
+        return int(r.get("n") or 0)
+    except Exception as e:
+        print(f"[hall] contador: {type(e).__name__}", flush=True)
+        return 0
+
+
+@app.route("/ot/api/hallazgos/contador", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_api_hallazgos_contador():
+    """La burbuja roja del botón «Hallazgos» del panel (Daniel 2026-10-21: «cuántos hallazgos hay nuevos… esa notificación va a
+    desaparecer cuando alguien se haga cargo»): los sin gestionar de todas las OT."""
+    return jsonify({"ok": True, "n": _hall_n_sin_gestionar()})
+
+
+_HALL_PAG_FILTROS = {"sin_gestionar": "Sin gestionar", "en_curso": "Sin gestionar o con el caso tomado", "todos": "Todos"}
+
+
+@app.route("/ot/hallazgos", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_hallazgos_pagina():
+    """2026-10-21 (Daniel: «saca la tarjeta grande de los hallazgos… colocar una parte de hallazgos para que lo veamos todos»): la bandeja
+    de hallazgos de TODAS las OT. Arriba, las OT con hallazgos (paginadas, REGLA #4.3); abajo, la tarjeta de la OT elegida, agrupada por
+    equipo + N° de serie, con «Tomar el caso», «Levantar OT de seguimiento», «Descartar» y «Reabrir» (las mismas rutas de siempre).
+    Solo gestión: nunca un técnico (REGLAS #19/#26)."""
+    filtro = request.args.get("f") or "sin_gestionar"
+    if filtro not in _HALL_PAG_FILTROS:
+        filtro = "sin_gestionar"
+    try:
+        por_pag = int(request.args.get("pp") or 20)
+    except ValueError:
+        por_pag = 20
+    por_pag = por_pag if por_pag in (10, 20, 50) else 20
+    try:
+        pag = max(1, int(request.args.get("p") or 1))
+    except ValueError:
+        pag = 1
+    filas, error = [], False
+    if _hall_ok():
+        try:
+            abierto = _oh.sql_abierto("h", "s")
+            having = {"sin_gestionar": "HAVING n_abiertos > 0", "en_curso": "HAVING n_abiertos > 0 OR n_tomados > 0",
+                      "todos": ""}[filtro]
+            filas = [dict(r) for r in (mysql_fetchall(
+                "SELECT h.visita_id, v.numero_ot, v.estado AS ot_estado, c.razon_social AS cliente, "
+                f"       SUM(CASE WHEN {abierto} THEN 1 ELSE 0 END) AS n_abiertos, "
+                f"       SUM(CASE WHEN NOT {abierto} AND h.estado='tomado' THEN 1 ELSE 0 END) AS n_tomados, "
+                "       COUNT(*) AS n_activos, MAX(h.detectado_en) AS ultimo "
+                "  FROM mant_ot_hallazgos h JOIN mant_visitas v ON v.id = h.visita_id "
+                "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+                "  LEFT JOIN mant_visitas s ON s.id = h.ot_seguimiento_id "
+                " WHERE h.retirado_en IS NULL "
+                " GROUP BY h.visita_id, v.numero_ot, v.estado, c.razon_social " + having +
+                " ORDER BY (n_abiertos > 0) DESC, ultimo DESC") or [])]
+        except Exception as e:
+            print(f"[hall] bandeja: {type(e).__name__}: {e}", flush=True)
+            error = True
+    total = len(filas)
+    paginas = max(1, (total + por_pag - 1) // por_pag)
+    pag = min(pag, paginas)
+    pagina = filas[(pag - 1) * por_pag: pag * por_pag]
+    # Los equipos (con su N° de serie) de cada OT de la página: una sola consulta.
+    if pagina:
+        try:
+            vids = [int(r["visita_id"]) for r in pagina]
+            eq = {}
+            for r in (mysql_fetchall(
+                    "SELECT h.visita_id, h.maquina_id, h.item_manual_id, h.equipo_nombre, m.serie "
+                    "  FROM mant_ot_hallazgos h LEFT JOIN mant_maquinas m ON m.id = h.maquina_id "
+                    " WHERE h.retirado_en IS NULL AND h.visita_id IN (" + ",".join(["%s"] * len(vids)) + ")", tuple(vids)) or []):
+                k = (r.get("maquina_id"), r.get("item_manual_id"))
+                if k == (None, None):
+                    continue
+                d = eq.setdefault(int(r["visita_id"]), {})
+                if k not in d:
+                    d[k] = (r.get("equipo_nombre") or "Equipo") + ((" · S/N " + r["serie"].strip()) if (r.get("serie") or "").strip() else "")
+            for r in pagina:
+                r["equipos"] = list(eq.get(int(r["visita_id"]), {}).values())
+        except Exception as e:
+            print(f"[hall] bandeja equipos: {type(e).__name__}", flush=True)
+    for r in pagina:
+        r["ultimo_txt"] = _hall_cuando(r.get("ultimo"))
+        r["n_abiertos"] = int(r.get("n_abiertos") or 0)
+        r["n_tomados"] = int(r.get("n_tomados") or 0)
+        r["numero_ot"] = r.get("numero_ot") or f"V-{int(r['visita_id']):05d}"
+    # La OT elegida (o la primera de la página) con su tarjeta.
+    try:
+        sel = int(request.args.get("ot") or 0)
+    except ValueError:
+        sel = 0
+    if not sel and pagina:
+        sel = int(pagina[0]["visita_id"])
+    hallazgos, ot_sel = None, None
+    if sel:
+        v = mysql_fetchone("SELECT * FROM mant_visitas WHERE id=%s", (sel,)) if _puede_ot_accion(sel, "ver", getattr(g, "user", None) or {}) else None
+        if v:
+            ot_sel = {"id": sel, "numero_ot": v.get("numero_ot") or f"V-{sel:05d}", "url": f"/ot/{sel}"}
+            hallazgos = _hall_contexto_ficha(sel, dict(v))
+    return render_template("ot2/hallazgos.html", filas=pagina, total=total, pag=pag, paginas=paginas, por_pag=por_pag,
+                           desde=((pag - 1) * por_pag + 1) if total else 0, hasta=min(pag * por_pag, total),
+                           filtro=filtro, filtros=_HALL_PAG_FILTROS, sel=sel, ot_sel=ot_sel, hallazgos=hallazgos,
+                           hz_pagina=True, error=error, n_sin_gestionar=_hall_n_sin_gestionar())
 
 
 # ── Las rutas de la gestión: tomar el caso, descartar, reabrir y el prellenado de la OT de seguimiento ────────────────

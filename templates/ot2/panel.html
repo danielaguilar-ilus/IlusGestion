@@ -928,10 +928,8 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
       <a href="{{ url_for('mant_plantillas_page') }}" class="btn btn-sm btn-outline-light">
         <i class="bi bi-ui-checks me-1"></i>Plantillas
       </a>
-      {# 🧩 2026-10-20 (Daniel, 19-oct: «clasificar las OT por EVENTO»): las carpetas que agrupan las OT de un mismo lugar y fechas. #}
-      <a href="{{ url_for('ot_pagina_eventos') }}" class="btn btn-sm btn-outline-light">
-        <i class="bi bi-calendar-event me-1"></i>Eventos
-      </a>
+      {#- 2026-10-21 (Daniel: «Sí, quita Eventos»): el botón «Eventos» de la cabecera se quitó (REGLA #4.2, con su «sí»). Las carpetas de
+          eventos siguen: se abren desde el chip del evento de cada OT y se filtran con «Evento». -#}
       {# Reporte Excel — 2026-08-26. Antes este botón solo llevaba a la vista
          Tabla (no generaba archivo); el comentario viejo decía que el
          reporte formal "por técnico y por estado" quedaba pendiente. Ya
@@ -950,21 +948,19 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
          más un selector de período (Todo / Mes actual, `periodo=mes`)
          que ajusta ambos links sin recargar la página. #}
       {% if not es_tecnico %}
+      {#- 🩺 2026-10-21 (Daniel: «colocar una parte de hallazgos para que lo veamos todos. Y que con una burbujita roja me indique cuántos
+          hallazgos hay nuevos… esa notificación va a desaparecer cuando alguien se haga cargo»): la bandeja /ot/hallazgos y su burbuja con
+          los sin gestionar (los que nadie ha tomado) de todas las OT. Solo gestión. -#}
+      <a href="{{ url_for('ot_hallazgos_pagina') }}" class="btn btn-sm btn-outline-light ot2-hz-btn" id="ot2HzBtn">
+        <i class="bi bi-clipboard2-pulse-fill me-1"></i>Hallazgos
+        <span class="ot2-hz-bur" id="ot2HzBur" hidden></span>
+      </a>
       {# 🆕 2026-09-08 (Daniel, "Finanzas de la OT": "reportes... por
          períodos de tiempo"). El backend (`_ot2_filtros_export`) ya
          aceptaba `desde`/`hasta` desde el 27-08 -- solo el panel nunca
          ofrecía más que "todo" o "mes actual". Un rango de fechas manda
          por sobre el selector de período (igual criterio que el backend);
          dejar cualquiera de los dos vacío no filtra por ese lado. #}
-      <input type="date" id="ot2RepDesde" class="form-control form-control-sm" style="width:auto"
-             title="Reporte Excel: desde (opcional)">
-      <input type="date" id="ot2RepHasta" class="form-control form-control-sm" style="width:auto"
-             title="Reporte Excel: hasta (opcional)">
-      <select id="ot2RepPeriodo" class="form-select form-select-sm" style="width:auto"
-              title="Período del reporte Excel">
-        <option value="">Período: todo</option>
-        <option value="mes">Período: mes actual</option>
-      </select>
       <a id="ot2RepGeneral"
          {#- 2026-10-19: `agenda` (filtro rápido de la vista Tabla) también viaja al Excel; antes con «Hoy» activo bajaba todo. -#}
          href="{{ url_for('ot2_reporte_xlsx') }}?origen={{ origen }}&q={{ q|urlencode }}&fase={{ fase or '' }}&tipo={{ f_tipo or '' }}&tecnico={{ f_tec or '' }}&interna={{ f_interna or '' }}&agenda={{ f_agenda or '' }}&evento={{ f_evento or '' }}&resp={{ f_resp or '' }}&hall={{ f_hall or '' }}"
@@ -978,6 +974,41 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
          acceso directo al reporte Excel filtrado por centro de costo
          Logística/Comercial/sin definir -- confuso fuera de ese contexto.
          El reporte general (con esa misma columna adentro) sigue intacto. #}
+      {% endif %}
+      {# La copia operable del monitor de oficina, para disertar desde el
+         computador mientras el televisor lo muestra solo (Daniel 26-08).
+         2026-08-27: abierto a GESTIÓN (Daniel: "que Víctor pueda ver el
+         monitor"). Misma regla que @_require_gestion_monitor en el backend
+         — familia de gestión O cualquier rol dinámico con permiso de
+         mantenciones que no sea técnico — para que el botón no aparezca
+         donde la ruta después va a rechazar, ni falte donde sí entra. #}
+      {% if puede_gestionar_visitas or (permissions.mantenciones and not es_tecnico) %}
+      <a href="{{ url_for('ot2_monitor_control') }}" target="_blank"
+         class="btn btn-sm btn-outline-light"
+         title="Abrir el tablero del monitor de oficina en pantalla completa">
+        <i class="bi bi-tv me-1"></i>Monitor
+      </a>
+      {% endif %}
+      <button type="button" class="btn btn-sm btn-light fw-bold" onclick="OT2C.abrir()">
+        <i class="bi bi-plus-lg me-1"></i>Generar OT
+      </button>
+    </div>
+  </div>
+
+  {% if not es_tecnico %}
+  {#- 2026-10-21 (Daniel: «estos filtros los podríamos tirar abajo, el día, el periodo… para que esto esté libre»): el período del
+      Reporte Excel bajó de la cabecera a esta barra; mismos campos y mismo script (ajusta el enlace del botón sin recargar). -#}
+  <div class="ot2-rep-per" aria-label="Período del Reporte Excel">
+    <span class="ot2-rep-per-t"><i class="bi bi-file-earmark-excel"></i> Período del Reporte Excel</span>
+      <input type="date" id="ot2RepDesde" class="form-control form-control-sm" style="width:auto"
+             title="Reporte Excel: desde (opcional)">
+      <input type="date" id="ot2RepHasta" class="form-control form-control-sm" style="width:auto"
+             title="Reporte Excel: hasta (opcional)">
+      <select id="ot2RepPeriodo" class="form-select form-select-sm" style="width:auto"
+              title="Período del reporte Excel">
+        <option value="">Período: todo</option>
+        <option value="mes">Período: mes actual</option>
+      </select>
       <script>
       (function(){
         var sel = document.getElementById('ot2RepPeriodo');
@@ -1000,26 +1031,26 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
         if (d2) d2.addEventListener('change', actualizar);
       })();
       </script>
-      {% endif %}
-      {# La copia operable del monitor de oficina, para disertar desde el
-         computador mientras el televisor lo muestra solo (Daniel 26-08).
-         2026-08-27: abierto a GESTIÓN (Daniel: "que Víctor pueda ver el
-         monitor"). Misma regla que @_require_gestion_monitor en el backend
-         — familia de gestión O cualquier rol dinámico con permiso de
-         mantenciones que no sea técnico — para que el botón no aparezca
-         donde la ruta después va a rechazar, ni falte donde sí entra. #}
-      {% if puede_gestionar_visitas or (permissions.mantenciones and not es_tecnico) %}
-      <a href="{{ url_for('ot2_monitor_control') }}" target="_blank"
-         class="btn btn-sm btn-outline-light"
-         title="Abrir el tablero del monitor de oficina en pantalla completa">
-        <i class="bi bi-tv me-1"></i>Monitor
-      </a>
-      {% endif %}
-      <button type="button" class="btn btn-sm btn-light fw-bold" onclick="OT2C.abrir()">
-        <i class="bi bi-plus-lg me-1"></i>Generar OT
-      </button>
-    </div>
   </div>
+  <style>
+    .ot2-rep-per{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:-4px 0 12px}
+    .ot2-rep-per-t{font-size:.78rem;font-weight:800;color:#6b7280;text-transform:uppercase;letter-spacing:.05em}
+    .ot2-hz-btn{position:relative}
+    .ot2-hz-bur{background:#dc2626;color:#fff;border-radius:999px;font-size:.7rem;font-weight:900;padding:1px 7px;margin-left:4px;min-width:20px;
+      display:inline-block;text-align:center;line-height:1.4}
+    .ot2-hz-bur[hidden]{display:none}
+  </style>
+  <script>
+  (function(){ try {
+    fetch('/ot/api/hallazgos/contador', {credentials:'same-origin'})
+      .then(function(r){ return r.json(); })
+      .then(function(j){ var b = document.getElementById('ot2HzBur');
+        if (b && j && j.ok && j.n > 0) { b.textContent = j.n; b.hidden = false;
+          b.setAttribute('aria-label', j.n + ' hallazgo' + (j.n === 1 ? '' : 's') + ' sin gestionar'); } })
+      .catch(function(){});
+  } catch(e){} })();
+  </script>
+  {% endif %}
 
   {# 🔒 2026-10-11 (Daniel: «quería que se viera como botones en la OT y que solo lo vea el super admin»): las tres
      herramientas de control del documento y la plata, fuera del menú lateral. Solo superadministrador (las rutas
@@ -1383,7 +1414,7 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
                     {% if f.rel %}<span class="o2t-chip {{ f.rel.nivel or 'gris' }}" title="{{ f.rel.chip }}"><i class="bi bi-box-arrow-up"></i>{{ f.rel.chip }}</span>{% endif %}
                     {#- 🩺 2026-10-21 (REGLA #38): hallazgos que el técnico reportó y nadie ha gestionado; lleva a la tarjeta de la ficha. El servidor no se los
                         entrega a un técnico (esta gestión no es suya). -#}
-                    {% if f.hall_abiertos %}<a class="o2t-chip ambar" href="{{ url_for('ot2_detalle', vid=f.id) }}#otdHallazgos" onclick="event.stopPropagation()" title="Hallazgos que el técnico reportó y nadie ha gestionado"><i class="bi bi-clipboard2-pulse-fill"></i>Hallazgos abiertos: {{ f.hall_abiertos }}</a>{% endif %}
+                    {% if f.hall_abiertos %}<a class="o2t-chip ambar" href="{{ url_for('ot_hallazgos_pagina', ot=f.id) }}#hzpTarjeta" onclick="event.stopPropagation()" title="Hallazgos que el técnico reportó y nadie ha gestionado"><i class="bi bi-clipboard2-pulse-fill"></i>Hallazgos abiertos: {{ f.hall_abiertos }}</a>{% endif %}
                     {% if f.evento_nombre and f.evento_id %}<a class="o2t-chip gris" href="{{ url_for('ot_pagina_evento_detalle', eid=f.evento_id) }}" onclick="event.stopPropagation()" title="Evento de esta OT"><i class="bi bi-calendar-event"></i>{{ f.evento_nombre }}</a>{% endif %}
                     {#- 📋 2026-09-26 (Daniel: "necesita más información"): DÓNDE (comuna), cuántos equipos y con qué
                         documento se respalda. -#}

@@ -9,6 +9,10 @@
     OT CERRADA (lección del 20-oct con la franja del anexo). SOLO gestión: el servidor no le arma `hallazgos` a un técnico (REGLAS #19/#26).
     Contexto `hallazgos` (lo arma _hall_contexto_ficha): vid, numero_ot, activos[], retirados[], origen, n_* y cerrada. Sin plata ni proveedores.
     ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════ -#}
+{#- 🩺 2026-10-21 (Daniel: «saca la tarjeta grande de los hallazgos… que quede alertado solamente en la parte de trabajo»): en la ficha de
+    la OT esta plantilla dibuja SOLO el aviso «Esta orden es el seguimiento de…»; la tarjeta completa (con sus acciones) se dibuja en la
+    página «Hallazgos» (/ot/hallazgos, `hz_pagina`), agrupada por equipo + N° de serie. En la pestaña Trabajo de la OT queda el resumen
+    «Qué pasó con los equipos» con el enlace a esa página. -#}
 {% if hallazgos and not es_tecnico %}
 {% set _h = hallazgos %}
 {% if _h.origen %}
@@ -28,7 +32,7 @@
   </div>
 </div>
 {% endif %}
-{% if _h.n_total %}
+{% if _h.n_total and hz_pagina %}
 <section class="hz" id="otdHallazgos" data-vid="{{ _h.vid }}" aria-labelledby="hzTitulo">
   <header class="hz-cab">
     <span class="hz-ic" aria-hidden="true"><i class="bi bi-clipboard2-pulse-fill"></i></span>
@@ -59,7 +63,17 @@
   </div>
   {% endif %}
   <ul class="hz-lista">
-    {% for i in _h.activos %}
+    {#- Agrupados por equipo + N° de serie (Daniel 2026-10-21): primero el equipo más grave. -#}
+    {% for grp in (_h.grupos or [{'key': 'ot', 'nombre': '', 'items': _h.activos}]) %}
+    {% if grp.nombre %}
+    <li class="hz-grupo c-{{ grp.color or 'gris' }}">
+      <i class="bi bi-cpu" aria-hidden="true"></i>
+      <b>{{ grp.nombre }}</b>
+      {% if grp.serie %}<span class="hz-serie">S/N {{ grp.serie }}</span>{% elif grp.sku %}<span class="hz-serie">SKU {{ grp.sku }}</span>{% endif %}
+      <span class="hz-grupo-n">{{ grp['items'] | length }} hallazgo{{ 's' if (grp['items'] | length) != 1 }}{% if grp.n_abiertos %} · {{ grp.n_abiertos }} sin gestionar{% endif %}</span>
+    </li>
+    {% endif %}
+    {% for i in grp['items'] %}
     <li class="hz-item c-{{ i.sev_color }} e-{{ i.estado_ef }}" data-hz-id="{{ i.id }}" id="hz{{ i.id }}">
       {% if _h.n_seleccionables > 1 %}
       <label class="hz-sel{% if not i.puede_levantar %} vacio{% endif %}">
@@ -115,6 +129,7 @@
         {% endif %}
       </div>
     </li>
+    {% endfor %}
     {% endfor %}
   </ul>
   {% if _h.retirados %}

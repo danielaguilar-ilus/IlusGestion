@@ -1290,7 +1290,7 @@ class TestCampanaAgrupada(unittest.TestCase):
         self.assertEqual(sorted(n["destino"] for n in self.m.notifs), [2, 3, 4], "Aarón (responsable), Juan Pablo y Víctor; NO Lenin, que es técnico")
         c = self._de(3)[0]
         self.assertEqual((c["tipo"], c["titulo"], c["url"], c["prioridad"], c["visita_id"]),
-                         ("ot_hallazgo", "OT-2026-00171: 1 hallazgo nuevo", "/ot/171#otdHallazgos", "alta", 171))
+                         ("ot_hallazgo", "OT-2026-00171: 1 hallazgo nuevo", "/ot/hallazgos?ot=171#hzpTarjeta", "alta", 171))
         self.assertTrue(c["cuerpo"].startswith("Aurum Fit Girls Spa: Falla — Equipo t1: falla"), c["cuerpo"])
         self.assertIn("Lo reportó Pedro Técnico.", c["cuerpo"])
         self.assertEqual(self.m.caches, [3, 4, 2], "el responsable primero, y la campana de cada persona se refresca")
@@ -1474,7 +1474,7 @@ class TestAvisoDeToma(unittest.TestCase):
         self.assertEqual(amb["_hall_avisar_toma"](171, dict(VISITA_171), {"titulo": "Trotadora X: Falla"}, "Juan Pablo Díaz", 4), 1)
         (c,) = m.notifs
         self.assertEqual((c["destino"], c["tipo"], c["prioridad"], c["cliente_id"], c["visita_id"], c["url"]),
-                         (3, "ot_hallazgo_toma", "baja", 26, 171, "/ot/171#otdHallazgos"))
+                         (3, "ot_hallazgo_toma", "baja", 26, 171, "/ot/hallazgos?ot=171#hzpTarjeta"))
         self.assertEqual(c["titulo"], "OT-2026-00171: alguien tomó un hallazgo")
         self.assertIn("Juan Pablo Díaz tomó el caso: Trotadora X: Falla.", c["cuerpo"])
         self.assertEqual(m.caches, [3])
@@ -2209,7 +2209,8 @@ class TestCableado(unittest.TestCase):
                 usadas |= set(re.findall(r"\b([a-z_]+)=", m.group(1)))
             m = re.search(r"SELECT (.*?) FROM mant_ot_hallazgos", s)
             if m and "h.*" not in m.group(1):
-                usadas |= {t for t in re.findall(r"\b[a-z_]+\b", m.group(1)) if t not in ("as", "max", "count", "ult", "n", "x", "h", "s", "visita_id") or t == "visita_id"}
+                # 2026-10-21: una columna de OTRA tabla unida con su alias (m.serie de mant_maquinas) no es de mant_ot_hallazgos.
+                usadas |= {t for t in re.findall(r"\b[a-z_]+\b", re.sub(r"\b(?!h\.)[a-z]\.[a-z_]+", "", m.group(1))) if t not in ("as", "max", "count", "ult", "n", "x", "h", "s", "visita_id") or t == "visita_id"}
             m = re.search(r" WHERE (.*)$", s)
             if m:
                 usadas |= set(re.findall(r"\b([a-z_]+)\s*(?:=|>=|IS NULL|IS NOT NULL| IN \()", m.group(1)))
@@ -2374,7 +2375,8 @@ def _entorno(extra=None):
 
 
 def _tarjeta(hallazgos, es_tecnico=False):
-    return _entorno().get_template("ot2/_hallazgos.html").render(hallazgos=hallazgos, es_tecnico=es_tecnico)
+    # 2026-10-21: la tarjeta completa se dibuja en la página «Hallazgos» (hz_pagina); en la ficha de la OT solo el aviso «viene de».
+    return _entorno().get_template("ot2/_hallazgos.html").render(hallazgos=hallazgos, es_tecnico=es_tecnico, hz_pagina=True)
 
 
 def _texto_visible(html):
@@ -2557,7 +2559,8 @@ class TestPlantillasQueLaUsan(unittest.TestCase):
             self.assertEqual(franja.render(hallazgos=sin).strip(), "", sin)
         crudo = franja.render(hallazgos={"n_abiertos": 2})
         self.assertIn('id="otfHallazgosAviso"', crudo)
-        self.assertIn('href="#otdHallazgos" data-hz-ir=""', crudo)
+        self.assertIn('href="/ot/hallazgos?ot=', crudo)                 # 2026-10-21: abre la página «Hallazgos» de esta OT
+        self.assertIn('target="_blank"', crudo)                          # en otra pestaña: el modal del cierre no se pierde
         self.assertNotIn("disabled", crudo)
         # vive DENTRO del modal de aprobar el cierre, justo bajo el aviso de la comunicación de la OT
         modal = self.DETALLE[self.DETALLE.index('id="otfModalAprobacion"'):]
@@ -2610,7 +2613,7 @@ class TestPanelRenderizado(unittest.TestCase):
         html = _panel(filas=[_fila(1, hall_abiertos=3), _fila(2, hall_abiertos=0), _fila(3)], hall_activo=True)
         t = _tabla(html)
         self.assertEqual(t.count("Hallazgos abiertos:"), 1)
-        self.assertIn('<a class="o2t-chip ambar" href="/ot2_detalle?vid=1#otdHallazgos"', t)
+        self.assertIn('<a class="o2t-chip ambar" href="/ot_hallazgos_pagina?ot=1#hzpTarjeta"', t)
         self.assertIn("Hallazgos abiertos: 3</a>", t)
 
     def test_el_filtro_ofrece_sus_dos_opciones_y_se_ve_cuando_esta_activo(self):
@@ -2958,5 +2961,98 @@ class TestLaReglaEstaDocumentada(unittest.TestCase):
         for regla in ("## 🧭 REGLA #35", "## 🙋 REGLA #36", "## REGLA #37"):
             self.assertEqual(md.count(regla), 1, regla)
 
+
+
+# ═══════════ 2026-10-21: la tarjeta sale de la OT · página «Hallazgos» · resumen por equipo + N° de serie · burbuja del panel ═══════════
+class TestHallazgosFueraDeLaOT(unittest.TestCase):
+    """Daniel (21-oct): «saca la tarjeta grande de los hallazgos… que quede alertado solamente en la parte de trabajo… por el equipo y
+    por el N° de serie» y «colocar una parte de hallazgos para que lo veamos todos… con una burbujita roja… va a desaparecer cuando
+    alguien se haga cargo»."""
+    DETALLE = _leer("templates/ot2/detalle.html")
+    PANEL = _leer("templates/ot2/panel.html")
+    PAGINA = _leer("templates/ot2/hallazgos.html")
+
+    def _ctx(self):
+        it = {"id": 1, "sev_color": "rojo", "sev_icono": "bi-x", "sev_texto": "Falla", "estado_ef": "abierto", "estado_color": "ambar",
+              "estado_txt": "Sin gestionar", "titulo": "Piola cortada", "fotos": [], "puede_tomar": True, "puede_levantar": True,
+              "puede_descartar": True, "puede_reabrir": False}
+        return {"vid": 171, "numero_ot": "OT-2026-00171", "n_total": 1, "n_abiertos": 1, "activos": [it], "retirados": [], "origen": None,
+                "n_seleccionables": 1, "grupos": [{"key": "e9", "nombre": "Polea alta ILUS", "serie": "SN-123", "sku": "1121",
+                                                   "color": "rojo", "n_abiertos": 1, "items": [it]}]}
+
+    def test_en_la_ficha_de_la_ot_la_tarjeta_grande_no_se_dibuja(self):
+        html = _entorno().get_template("ot2/_hallazgos.html").render(hallazgos=self._ctx(), es_tecnico=False)
+        self.assertNotIn('<section class="hz"', html)
+        self.assertNotIn("ot_hallazgos.js", html)
+
+    def test_en_la_pagina_va_agrupada_por_equipo_y_numero_de_serie(self):
+        html = _tarjeta(self._ctx())
+        self.assertIn('<section class="hz"', html)
+        g = html[html.index('class="hz-grupo'):]
+        self.assertIn("Polea alta ILUS", g[:600])
+        self.assertIn("S/N SN-123", g[:600])
+        self.assertLess(html.index('class="hz-grupo'), html.index('data-hz-id="1"'), "el equipo va antes de sus hallazgos")
+
+    def test_un_tecnico_no_ve_nada(self):
+        self.assertEqual(_entorno().get_template("ot2/_hallazgos.html").render(hallazgos=self._ctx(), es_tecnico=True,
+                                                                                 hz_pagina=True).strip(), "")
+
+    def test_las_rutas_nuevas_son_solo_de_gestion(self):
+        for ruta, fn in (('@app.route("/ot/hallazgos", methods=["GET"])', "def ot_hallazgos_pagina("),
+                         ('@app.route("/ot/api/hallazgos/contador", methods=["GET"])', "def ot_api_hallazgos_contador(")):
+            i = APP.index(ruta)
+            cab = APP[i:APP.index(fn, i)]
+            self.assertIn("@_mant_required", cab)
+            self.assertIn("@_no_tecnico", cab)
+
+    def test_la_burbuja_cuenta_los_sin_gestionar_con_la_misma_definicion(self):
+        f = _fuente_funcion("_hall_n_sin_gestionar")
+        self.assertIn('_oh.sql_abierto("h", "s")', f)
+        self.assertIn("LEFT JOIN mant_visitas s ON s.id = h.ot_seguimiento_id", f)
+        pag = _fuente_funcion("ot_hallazgos_pagina")
+        self.assertIn('_oh.sql_abierto("h", "s")', pag)
+
+    def test_el_panel_trae_el_boton_con_burbuja_y_los_filtros_de_fecha_bajan(self):
+        self.assertIn("url_for('ot_hallazgos_pagina')", self.PANEL)
+        self.assertIn('id="ot2HzBur" hidden', self.PANEL)
+        self.assertIn("fetch('/ot/api/hallazgos/contador'", self.PANEL)
+        cab = self.PANEL[self.PANEL.index('<div class="page-header'):self.PANEL.index('class="ot2-rep-per"')]
+        self.assertNotIn('id="ot2RepDesde"', cab, "el período del Excel ya no va en la cabecera")
+        per = self.PANEL[self.PANEL.index('class="ot2-rep-per"'):]
+        for campo in ('id="ot2RepDesde"', 'id="ot2RepHasta"', 'id="ot2RepPeriodo"'):
+            self.assertIn(campo, per[:4000], campo)
+        self.assertLess(per.index('id="ot2RepPeriodo"'), per.index("getElementById('ot2RepPeriodo')"), "el script corre con los campos ya dibujados")
+
+    def test_la_pagina_pagina_como_etiquetas(self):
+        for t in ("Mostrando {{ desde }}–{{ hasta }} de {{ total }}", "Por página", "Anterior", "Página {{ pag }} de {{ paginas }}", "Siguiente"):
+            self.assertIn(t, self.PAGINA, t)
+        self.assertIn("{% include 'ot2/_hallazgos.html' %}", self.PAGINA)
+
+    def test_el_resumen_vive_en_la_pestana_trabajo(self):
+        i = self.DETALLE.index('<div class="otd-tabpanel" data-tab="trabajo">')
+        self.assertIn('id="otdResumenEquipos"', self.DETALLE[i:i + 3000])
+        self.assertEqual(self.DETALLE.count('id="otdResumenEquipos"'), 1)
+
+    def test_el_resumen_agrupa_por_equipo_y_serie(self):
+        amb = cargar(["_ot_resumen_equipos"], extra={"_otrep_serie_producto": lambda vid, imid: "SN-PROD"})
+        equipos = [
+            {"id": 9, "nombre": "Polea alta", "serie": "SN-1", "estado_capturado": "fuera_servicio", "rep_solicitudes": [
+                {"repuesto_nombre": "Piola", "cantidad": 2, "abierta": True}]},
+            {"id": 10, "nombre": "Banco plano", "serie": "", "estado_capturado": "operativo", "rep_solicitudes": []},
+            {"id": 4, "nombre": "Trotadora", "_interno": True, "estado_prod": {"estado": "no_llego"}, "rep_solicitudes": []},
+        ]
+        hall = {"grupos": [{"key": "e9", "serie": "SN-1", "peor": 0, "n_abiertos": 2, "n_tomados": 1, "n_con_ot": 0, "items": [1, 2, 3]}]}
+        filas = amb["_ot_resumen_equipos"](171, equipos, hall)
+        self.assertEqual([f["key"] for f in filas], ["e9", "i4"], "un equipo sin nada que contar no aparece")
+        e9 = filas[0]
+        self.assertEqual(e9["serie"], "SN-1")
+        txt = " | ".join(c["txt"] for c in e9["chips"])
+        for t in ("Fuera de servicio", "Repuesto en curso: Piola × 2", "2 hallazgos sin gestionar", "1 con el caso tomado"):
+            self.assertIn(t, txt)
+        self.assertEqual(filas[1]["serie"], "SN-PROD", "la serie del producto sale de su checklist")
+        self.assertEqual(filas[1]["chips"][0]["txt"], "No llegó")
+        # a un técnico no le llegan hallazgos (None): solo lo que ya ve en la tarjeta del equipo
+        txt_t = " ".join(c["txt"] for c in amb["_ot_resumen_equipos"](171, equipos, None)[0]["chips"])
+        self.assertNotIn("hallazgo", txt_t)
 
 # FIN_DEL_ARCHIVO

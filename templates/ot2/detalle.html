@@ -5097,6 +5097,48 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
      y Daniel la valida a fondo. #}
   <div class="otd-tabpanel" data-tab="trabajo">
 
+    {#- 🧭 2026-10-21 (Daniel: «que quede alertado solamente en la parte de trabajo, que me diga en un resumen qué pasó con los equipos…
+        por el equipo y por el N° de serie»): una fila por equipo o producto fuera de lo normal (fuera de servicio, de baja, no llegó, no se
+        pudo revisar, repuestos en curso y, para la gestión, sus hallazgos). Tocar una fila abre la tarjeta del equipo. Los hallazgos se
+        gestionan en la página «Hallazgos» (la tarjeta grande ya no va en la OT). Lo arma _ot_resumen_equipos (sin plata ni proveedores). -#}
+    {% if resumen_equipos %}
+    <section class="otd-res" id="otdResumenEquipos" aria-labelledby="otdResT">
+      <div class="otd-res-cab">
+        <span class="otd-res-ic" aria-hidden="true"><i class="bi bi-activity"></i></span>
+        <div class="otd-res-tx">
+          <h3 id="otdResT">Qué pasó con los equipos</h3>
+          <small>Lo que quedó fuera de lo normal en esta OT, por equipo y N° de serie. Toca uno para ir a su tarjeta.</small>
+        </div>
+        {% if hallazgos and hallazgos.n_total %}
+        <a class="otd-res-btn" href="/ot/hallazgos?ot={{ hallazgos.vid }}#hzpTarjeta">
+          <i class="bi bi-clipboard2-pulse-fill" aria-hidden="true"></i> Gestionar hallazgos
+          {% if hallazgos.n_abiertos %}<span class="otd-res-bur" aria-label="{{ hallazgos.n_abiertos }} sin gestionar">{{ hallazgos.n_abiertos }}</span>{% endif %}
+        </a>
+        {% endif %}
+      </div>
+      <ul class="otd-res-lista">
+        {% for r in resumen_equipos %}
+        <li>
+          <button type="button" class="otd-res-it" data-res-key="{{ r.key }}" onclick="otdResIr(this.dataset.resKey)">
+            <span class="nm"><b>{{ r.nombre }}</b>{% if r.serie %} <span class="sn">S/N {{ r.serie }}</span>{% elif r.sku %} <span class="sn">SKU {{ r.sku }}</span>{% endif %}</span>
+            <span class="chips">{% for c in r.chips %}<span class="otd-res-chip {{ c.color }}"><i class="bi {{ c.ic }}" aria-hidden="true"></i> {{ c.txt }}</span>{% endfor %}</span>
+          </button>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    <script>
+    /* Abre la tarjeta del equipo (la barra azul vive en su <summary>: #otdAcc-<clave>) y la deja a la vista. */
+    window.otdResIr = function (key) {
+      var bar = document.getElementById('otdAcc-' + key);
+      var det = bar && bar.closest ? bar.closest('details') : null;
+      if (!det) return;
+      det.open = true;
+      det.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+    </script>
+    {% endif %}
+
     {#- 🔭 LEVANTAMIENTO EN TERRENO -- 2026-09-13 (Daniel, OT-2026-00158:
         "no está mostrando el resultado en las OT 2.0 ¿por qué será si ya el
         levantamiento se realizó?").
@@ -8057,12 +8099,13 @@ window.otdFinModalCerrar = function(){
             cliente nace apagado: OT_TERMINADA_CLIENTE_ACTIVA). Lo llena static/ot_envio.js al abrir este modal. -#}
         <div class="oe-aviso mb-3" id="oeAvisoCierre" data-oe-aviso="cierre" hidden></div>
         {#- 🩺 2026-10-21 (REGLA #38): hallazgos sin gestionar. SOLO AVISA (Daniel: «solo avisar, no trabar»): la OT se cierra igual; el enlace cierra
-            este modal y lleva a la tarjeta «Hallazgos de esta OT». El servidor no le arma `hallazgos` a un técnico. -#}
+            este modal y lleva a la tarjeta «Hallazgos de esta OT». El servidor no le arma `hallazgos` a un técnico.
+            2026-10-21: la tarjeta salió de la OT; el enlace abre la página «Hallazgos» de esta OT en otra pestaña (el modal no se pierde). -#}
         {% if hallazgos and hallazgos.n_abiertos %}
         <div class="hz-cierre mb-3" id="otfHallazgosAviso" role="status">
           <i class="bi bi-exclamation-triangle-fill me-1" aria-hidden="true"></i>
           Hay <b>{{ hallazgos.n_abiertos }}</b> hallazgo{{ 's' if hallazgos.n_abiertos != 1 }} sin gestionar en esta OT. Puedes cerrarla igual: no se bloquea nada.
-          <a href="#otdHallazgos" data-hz-ir="">Ver los hallazgos</a>
+          <a href="/ot/hallazgos?ot={{ hallazgos.vid }}#hzpTarjeta" target="_blank" rel="noopener">Ver los hallazgos</a>
         </div>
         {% endif %}
 

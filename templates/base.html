@@ -749,12 +749,8 @@
          — así no se le mueve nada de la clasificación interno/externo ni
          de sus otros permisos. Si Daniel pide lo mismo para otro técnico,
          sumar su id a la tupla en vez de abrirlo a todos. #}
-      {% if current_user and (current_user.role != 'tecnico' or current_user.id == 16) %}
-      <a href="{{ url_for('mant_plantillas_page') }}"
-         class="sidebar-link{% if request.endpoint == 'mant_plantillas_page' %} active{% endif %}">
-        <i class="bi bi-list-check"></i><span>Plantillas</span>
-      </a>
-      {% endif %}
+      {#- 2026-10-21 (Daniel: «saca Plantillas del menú», con su «sí» — REGLA #4.2): el enlace «Plantillas» salió del menú lateral; se
+          entra por el botón «Plantillas» de la cabecera de Órdenes de Trabajo (lo ven todos, Lenin incluido). -#}
       {# Proveedores queda con el candado original — Daniel pidió
          plantillas para Lenin, no proveedores; no se abren las dos por
          compartir antes el mismo "if". #}

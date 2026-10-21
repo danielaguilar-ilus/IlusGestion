@@ -110,3 +110,40 @@
 @media (prefers-reduced-motion:reduce){
   .hz-item,.hz-btn{transition:none}
 }
+
+/* ── 2026-10-21: grupos por equipo + N° de serie (página «Hallazgos») y el resumen «Qué pasó con los equipos» (pestaña Trabajo de la OT) ── */
+.hz-grupo{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-top:8px;padding:8px 12px;border-radius:10px;background:#f9fafb;
+  border-left:6px solid #9ca3af;font-size:.92rem;color:#111827}
+.hz-grupo.c-rojo{border-left-color:#dc2626}
+.hz-grupo.c-ambar{border-left-color:#f59e0b}
+.hz-grupo.c-negro{border-left-color:#0a0a0a}
+.hz-grupo.c-azul{border-left-color:#3b82f6}
+.hz-grupo b{overflow-wrap:anywhere}
+.hz-serie{display:inline-block;background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:1px 7px;font-size:.78rem;font-weight:700;color:#374151}
+.hz-grupo-n{margin-left:auto;color:#6b7280;font-size:.8rem;font-weight:700}
+.otd-res{background:#fff;border:1px solid #e5e7eb;border-left:6px solid #f59e0b;border-radius:14px;padding:12px 14px;margin:0 0 14px}
+.otd-res-cab{display:flex;flex-wrap:wrap;align-items:flex-start;gap:10px}
+.otd-res-ic{width:36px;height:36px;border-radius:10px;background:#fff8e1;color:#b45309;display:inline-flex;align-items:center;justify-content:center;font-size:1.15rem;flex:0 0 36px}
+.otd-res-tx{flex:1 1 240px;min-width:0}
+.otd-res-tx h3{margin:0;font-size:1rem;font-weight:900;color:#111827}
+.otd-res-tx small{color:#6b7280;font-size:.82rem}
+.otd-res-btn{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 14px;border-radius:10px;background:#0a0a0a;color:#fff;
+  font-weight:800;font-size:.86rem;text-decoration:none}
+.otd-res-btn:hover{background:#262626;color:#fff}
+.otd-res-bur{background:#dc2626;color:#fff;border-radius:999px;font-size:.72rem;font-weight:900;padding:1px 8px;min-width:22px;text-align:center}
+.otd-res-lista{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:6px}
+.otd-res-it{width:100%;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-height:44px;padding:8px 12px;border:1px solid #e5e7eb;
+  border-radius:10px;background:#fff;text-align:left;cursor:pointer}
+.otd-res-it:hover{background:#f9fafb;border-color:#d1d5db}
+.otd-res-it:focus-visible{outline:3px solid #fca5a5;outline-offset:2px}
+.otd-res-it .nm{flex:1 1 220px;min-width:0;overflow-wrap:anywhere;color:#111827}
+.otd-res-it .sn{display:inline-block;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:6px;padding:1px 7px;font-size:.76rem;font-weight:700;color:#374151}
+.otd-res-it .chips{display:flex;flex-wrap:wrap;gap:5px}
+.otd-res-chip{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:3px 10px;font-size:.78rem;font-weight:700;border:1px solid transparent;overflow-wrap:anywhere}
+.otd-res-chip.rojo{background:#fee2e2;color:#991b1b;border-color:#fecaca}
+.otd-res-chip.ambar{background:#fff8e1;color:#92400e;border-color:#fde68a}
+.otd-res-chip.azul{background:#dbeafe;color:#1e40af;border-color:#bfdbfe}
+.otd-res-chip.verde{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.otd-res-chip.negro{background:#0a0a0a;color:#fff}
+.otd-res-chip.gris{background:#f3f4f6;color:#4b5563;border-color:#e5e7eb}
+@media (max-width:640px){.otd-res-btn{flex:1 1 100%;justify-content:center}}
