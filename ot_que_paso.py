@@ -281,8 +281,13 @@ def chip_madre(numero_hija):
     return "Pendiente: %s · falta stock" % (numero_hija or "OT")
 
 
-def titulo_campana(numero_ot, n_equipos):
-    return ("%s: quedó trabajo pendiente por falta de stock" % numero_ot)[:200] if n_equipos else ("%s: ¿qué pasó?" % numero_ot)[:200]
+def titulo_campana(numero_ot, n_equipos, cuando=None):
+    """`cuando` («20/10 15:32», hora Chile) distingue dos registros seguidos de la MISMA OT: la campana no repite un aviso idéntico
+    mientras el primero siga sin leer, y el segundo (otros equipos) no debe quedar escondido detrás del primero."""
+    t = ("%s: quedó trabajo pendiente por falta de stock" % numero_ot) if n_equipos else ("%s: ¿qué pasó?" % numero_ot)
+    if cuando:
+        t += " (%s)" % cuando
+    return t[:200]
 
 
 def cuerpo_campana(cliente, equipos, motivo_texto, quien, numero_pendiente=None):
@@ -294,6 +299,40 @@ def cuerpo_campana(cliente, equipos, motivo_texto, quien, numero_pendiente=None)
     if quien:
         t += " Lo registró %s." % quien
     return t[:1500]
+
+
+def nombres_gestion(gestion, excluir_id=None):
+    """Nombres (sin correo) de las personas que recibirán la campana, menos quien lo registra: para decirlo en el modal.
+    `gestion` es lo que devuelve _ot_gestion_destinatarios en app.py: [{id, nombre, correo, por}]."""
+    out = []
+    for p in (gestion or []):
+        try:
+            if excluir_id is not None and int(p.get("id")) == int(excluir_id):
+                continue
+        except (TypeError, ValueError):
+            pass
+        n = str(p.get("nombre") or "").strip()
+        if n and n not in out:
+            out.append(n)
+    return out
+
+
+def texto_avisar_a(gestion, maximo=4):
+    """«Víctor Soto (victor@sphs.cl) · Aarón Rojas»: a quién debe avisar bodega cuando lleguen los productos (va en el correo
+    interno). Vacío si no hay nadie. Todos los de la lista salvo que sean más de `maximo` («y 2 más»)."""
+    lista, vistos = [], set()
+    for p in (gestion or []):
+        nombre = str(p.get("nombre") or "").strip()
+        if nombre and nombre.lower() not in vistos:
+            vistos.add(nombre.lower())
+            lista.append(p)
+    partes = []
+    for p in lista[:maximo]:
+        correo = str(p.get("correo") or "").strip()
+        partes.append(str(p["nombre"]).strip() + (" (%s)" % correo if correo else ""))
+    if len(lista) > maximo:
+        partes.append("y %d más" % (len(lista) - maximo))
+    return " · ".join(partes)
 
 
 def json_clasificacion(numero_madre, madre_id, motivo_texto, quien, cuando_txt, detalle=None):

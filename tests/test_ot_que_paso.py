@@ -14,6 +14,8 @@ Se prueba:
   1. El módulo puro ot_que_paso.py (catálogo, validación, equipos candidatos, «sin fecha», textos sin plata).
   2. La transacción `_qp_aplicar` de app.py con una base en memoria: todo o nada, tareas sin hacer, documento espejado, sin cobro propio.
   3. Las rutas con dobles: OT terminada → 409, bodega solo si se pidió, el técnico no recibe enlaces que no puede abrir.
+  3b. A quién avisa «la gestión»: UNA función (_ot_gestion_destinatarios: responsable si la columna existe, creador, ejecutivo del
+     cliente; de respaldo superadmin/admin/supervisor) que alimenta la campana y el correo interno; nada se fija a mano.
   4. La vía 'pendiente_madre' de la puerta del documento (REGLA #24).
   5. Cableado: ENUM de la campana, arranque barato (REGLA #18), candados, nada de nombres financieros (REGLA #26), eventos y panel.
   6. Front: sin popups nativos, botones de 44 px, «marcar todo», nombres completos, respeta prefers-reduced-motion.
@@ -52,6 +54,11 @@ def _cand(mid, pend=2, total=3, **kw):
          "estado_pe": None, "baja": False, "fuera_servicio": False, "revision": None, "razon_saltado": None, "en_pendiente": None}
     f.update(kw)
     return f
+
+
+# Lo que devolvería _ot_gestion_destinatarios (la función única que decide a quién avisa «la gestión» de una OT).
+GESTION_MENTIRA = [{"id": 2, "nombre": "Víctor Soto", "correo": "victor@sphs.cl", "por": "ejecutivo"},
+                   {"id": 3, "nombre": "Aarón Rojas", "correo": "aaron@sphs.cl", "por": "creador"}]
 
 
 # ═══════════════════════════════ 1) el módulo puro ═══════════════════════════════
@@ -284,6 +291,7 @@ class Conexion:
 class Mundo:
     def __init__(self):
         self.sql, self.falla_en, self.conn = [], None, None
+        self.puerta_ok, self.puertas = True, []
         self.root = {"id": 10, "numero_ot": "OT-2026-00171", "tipo": "instalacion", "estado": "en_curso", "cliente_id": 5,
                      "centro_costo": "instalaciones", "acceso_ascensor": 1, "acceso_estacionamiento": 0, "acceso_piso": 3,
                      "acceso_notas": "portón lateral", "contacto_nombre": "Marta", "contacto_cargo": "Gerente", "contacto_tel": "+56911112222",
@@ -311,13 +319,22 @@ class Mundo:
         self.activas = {}
         self.espejos, self.libro = [], []
 
+    def puerta(self, v, momento="crear", **kw):
+        """La puerta del documento de mentira: anota con qué la llamaron y responde lo que el mundo diga."""
+        self.puertas.append((dict(v), momento, kw))
+        if self.puerta_ok:
+            return {"ok": True, "via": "pendiente_madre", "mensaje": ""}
+        return {"ok": False, "via": None, "code": "DOC_REQUERIDO", "falta": "documento", "accion": "abrir_ot_madre",
+                "mensaje": "La OT de origen no tiene un documento de Random"}
+
     def ambiente(self):
         m = self
         ambiente = {
             "print": lambda *a, **k: None, "json": json, "datetime": dt.datetime, "_qp": qp, "time": __import__("time"),
             "get_mysql": lambda: setattr(m, "conn", Conexion(m)) or m.conn,
             "mysql_fetchone": lambda sql, params=(): ({"razon_social": "Aurum Fit Girls Spa"} if "mant_clientes" in sql else dict(m.root)),
-            "_qp_madre_respalda": lambda madre, cliente, momento="crear": (True, None),
+            "_ot_puerta_documento": lambda v, momento="crear", **kw: m.puerta(v, momento, **kw),
+            "_OT_PUERTA_MSG": "Esta OT necesita un documento",
             "_next_ot_number_atomic": lambda conn=None: "OT-2026-00180",
             "_ot_espejar_docs_en_hija": lambda cur, hid, rid, num: m.espejos.append((hid, rid, num)) or 1,
             "_fsh_ok": lambda: True, "_fsh_col": lambda alias="": ", foto_si_hallazgo",
@@ -366,6 +383,17 @@ class TestTransaccion(unittest.TestCase):
         self.assertEqual(self.m.conn.commits, 1)
         self.assertEqual(self.m.conn.rollbacks, 0)
         self.assertTrue(self.m.conn.cerrada)
+
+    def test_si_la_madre_tiene_responsable_la_pendiente_lo_hereda_y_sin_la_columna_no_pasa_nada(self):
+        self._aplicar()
+        self.assertNotIn("responsable_user_id", self.m.n("UPDATE mant_visitas SET ot_madre_id=%s")[0][0])   # hoy la columna no existe
+        m2 = Mundo()
+        m2.root["responsable_user_id"] = 3
+        m2.ambiente()["_qp_aplicar"](10, dict(V_MADRE), _normalizado(), CANDS, "Isabel Milling", 31)
+        up = m2.n("UPDATE mant_visitas SET ot_madre_id=%s")[0]
+        self.assertIn("responsable_user_id=%s", up[0])
+        self.assertEqual(up[1][:2], (10, "pendiente_stock"))
+        self.assertIn(3, up[1])                                                                               # el mismo responsable que la madre
 
     def test_misma_factura_no_se_cobra_dos_veces(self):
         r = self._aplicar()
@@ -448,10 +476,27 @@ class TestTransaccion(unittest.TestCase):
         self.assertIn("FOR UPDATE", self.m.sql[1][0] + self.m.sql[2][0])
 
     def test_sin_documento_que_la_respalde_no_se_crea_nada(self):
-        self.amb["_qp_madre_respalda"] = lambda madre, cliente, momento="crear": (False, "La OT de origen no tiene un documento")
+        self.m.puerta_ok = False
         r = self._aplicar()
         self.assertEqual((r["ok"], r["codigo"], r["http"]), (False, "DOC_REQUERIDO", 409))
+        self.assertIn("no tiene un documento", r["error"])
+        self.assertEqual((r["falta"], r["accion"]), ("documento", "abrir_ot_madre"))
         self.assertEqual(self.m.sql, [])                                           # ni siquiera abrió la transacción
+        self.assertIsNone(self.m.conn)
+
+    def test_la_creacion_pasa_por_la_puerta_del_documento_con_la_madre_que_lee_el_servidor(self):
+        """REGLA #24: la OT pendiente se crea SOLO si la puerta la deja pasar (vía 'pendiente_madre'); la madre la lee el servidor."""
+        self._aplicar()
+        (v, momento, kw), = self.m.puertas
+        self.assertEqual(momento, "crear")
+        self.assertEqual((v["cliente_id"], v["tipo"]), (5, "instalacion"))
+        self.assertEqual(kw["pendiente_de"]["id"], 10)                             # la fila de la madre, releída de la base
+        self.assertNotIn("ot_madre_id", v)                                         # nada de la relación viaja en el dict de la petición
+
+    def test_solo_registrar_no_llama_a_la_puerta(self):
+        n, _e = qp.validar({"tipo": "falta_stock", "motivo": "falta_stock", "accion": "solo_registrar"}, "en_curso", CANDS)
+        self.amb["_qp_aplicar"](10, dict(V_MADRE), n, CANDS, "Isabel", 31)
+        self.assertEqual(self.m.puertas, [])
 
     def test_solo_registrar_no_crea_ni_marca_nada(self):
         n, err = qp.validar({"tipo": "falta_stock", "motivo": "falta_stock", "accion": "solo_registrar"}, "en_curso", CANDS)
@@ -489,8 +534,10 @@ class TestRutas(unittest.TestCase):
             "_qp_aplicar": aplicar or (lambda vid, v_, n, cands, user, uid: {
                 "ok": True, "hija": {"id": 500, "numero_ot": "OT-2026-00180", "nueva": True}, "equipos": [c for c in cands if c["maquina_id"] in n["equipos"]],
                 "registro_id": 77, "root": dict(v_), "cliente": "Aurum Fit Girls Spa"}),
-            "_qp_campana": lambda *a, **k: self.llamadas.append(("campana",)) or 3,
-            "_qp_bodega_correo": lambda *a, **k: self.llamadas.append(("bodega",)) or ("enviado", ["bodega@sphs.cl"]),
+            "_ot_gestion_destinatarios": lambda vid, fila=None: self.llamadas.append(("gestion", vid)) or list(GESTION_MENTIRA),
+            "_qp_campana": lambda *a, **k: self.llamadas.append(("campana",)) or setattr(self, "args_campana", (a, k)) or 3,
+            "_qp_bodega_correo": lambda *a, **k: self.llamadas.append(("bodega",)) or setattr(self, "args_bodega", (a, k))
+            or ("enviado", ["bodega@sphs.cl"]),
             "_fac_libro_marcar": lambda hid: self.llamadas.append(("libro", hid)),
             "_es_rol_tecnico": lambda *a, **k: tecnico,
             "_ot_visible_para_rol": lambda hid: False,
@@ -562,13 +609,286 @@ class TestRutas(unittest.TestCase):
         self.assertEqual((r["siguiente"], r["pendiente"]), ("reagendar", None))
         self.assertNotIn(("bodega",), self.llamadas)
 
+    def test_la_campana_y_el_correo_comparten_la_lista_que_decide_una_sola_funcion(self):
+        """Daniel va a pedir un RESPONSABLE por OT: por eso a quién avisa «la gestión» sale de UNA función y la usan los dos avisos."""
+        self.cuerpo = dict(self.CUERPO)
+        self._amb(dict(self.BASE))["ot_api_que_paso_registrar"](10)
+        self.assertEqual([x for x in self.llamadas if x[0] == "gestion"], [("gestion", 10)])          # una sola consulta
+        a_campana, _k = self.args_campana
+        _a, k_bodega = self.args_bodega
+        self.assertEqual([p["nombre"] for p in a_campana[0]], ["Víctor Soto", "Aarón Rojas"])         # la campana recibe la lista…
+        self.assertEqual(k_bodega["gestion"], a_campana[0])                                           # …y el correo, la MISMA
+
+    def test_si_la_funcion_de_destinatarios_falla_el_registro_igual_se_guarda_y_la_campana_no_se_cae(self):
+        self.cuerpo = dict(self.CUERPO)
+        amb = self._amb(dict(self.BASE))
+        amb["_ot_gestion_destinatarios"] = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bd caída"))
+        r = amb["ot_api_que_paso_registrar"](10)
+        self.assertTrue(r["ok"])
+        self.assertEqual(self.args_campana[0][0], [])                                                 # sin nadie: la campana no avisa a ciegas
+        self.assertIn(("bodega",), self.llamadas)                                                     # y bodega igual se entera
+
+
+# ═══════════════════════════════ 3b) A QUIÉN AVISA «LA GESTIÓN»: una sola función ═══════════════════════════════
+def _exec_asignaciones(nombres, amb):
+    """Ejecuta en `amb` las asignaciones simples de app.py de nivel módulo (constantes) con esos nombres."""
+    import ast
+    from tests.test_ot_saldo_servicio import _arbol
+    _codigo, arbol = _arbol()
+    hechas = set()
+    for n in arbol.body:
+        if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) and n.targets[0].id in nombres:
+            exec(compile(ast.Module(body=[ast.parse(ast.unparse(n)).body[0]], type_ignores=[]), "<app>", "exec"), amb)
+            hechas.add(n.targets[0].id)
+    assert hechas == set(nombres), set(nombres) - hechas
+
+
+class TestGestionDestinatarios(unittest.TestCase):
+    USUARIOS = {
+        1: {"id": 1, "username": "daniel.aguilar@sphs.cl", "nombre": "Daniel Aguilar", "role": "superadmin", "active": 1},
+        2: {"id": 2, "username": "victor@sphs.cl", "nombre": "Víctor Soto", "role": "ejecutivo", "active": 1},
+        3: {"id": 3, "username": "aaron@sphs.cl", "nombre": "Aarón Rojas", "role": "ejecutivo_sstt", "active": 1},
+        4: {"id": 4, "username": "juanpablo@sphs.cl", "nombre": "Juan Pablo Díaz", "role": "supervisor", "active": 1},
+        5: {"id": 5, "username": "isabel", "nombre": "Isabel Milling", "role": "tecnico_externo", "active": 1},
+        6: {"id": 6, "username": "exjefe@sphs.cl", "nombre": "Ex Jefe", "role": "admin", "active": 0},
+        7: {"id": 7, "username": "admin@sphs.cl", "nombre": "Administración", "role": "admin", "active": 1},
+    }
+
+    def _fn(self, ot, ejecutivo=None, usuarios=None, falla=None):
+        usuarios = dict(self.USUARIOS if usuarios is None else usuarios)
+        self.sql = sql = []
+
+        def uno(consulta, params=()):
+            sql.append(consulta)
+            if falla and falla in consulta:
+                raise RuntimeError("bd caída")
+            if "FROM mant_visitas" in consulta:
+                return dict(ot) if ot is not None else None
+            if "FROM mant_clientes" in consulta:
+                return {"ejecutivo_user_id": ejecutivo}
+            if "WHERE id=%s AND active=1" in consulta:
+                u = usuarios.get(params[0])
+                return dict(u) if u and u.get("active") else None
+            if "username=%s OR nombre=%s" in consulta:
+                for u in usuarios.values():
+                    if u.get("active") and params[0] in (u["username"], u["nombre"]):
+                        return dict(u)
+            return None
+
+        def varios(consulta, params=()):
+            sql.append(consulta)
+            if falla and falla in consulta:
+                raise RuntimeError("bd caída")
+            return [dict(u) for u in usuarios.values() if u.get("active")]
+
+        amb = {"print": lambda *a, **k: None, "re": re, "mysql_fetchone": uno, "mysql_fetchall": varios}
+        _exec("_rol_familia", amb)
+        _exec_asignaciones(("_GESTION_FAMILIAS_RESPALDO", "_GESTION_CORREO_RE"), amb)
+        _exec("_ot_gestion_destinatarios", amb)
+        return amb["_ot_gestion_destinatarios"]
+
+    def _ids(self, r):
+        return [p["id"] for p in r]
+
+    OT = {"id": 10, "cliente_id": 5, "created_by_user_id": 4, "created_by": "juanpablo@sphs.cl"}
+
+    def test_hoy_creador_y_ejecutivo_del_cliente_sin_repetidos(self):
+        r = self._fn(self.OT, ejecutivo=2)(10)
+        self.assertEqual([(p["id"], p["por"]) for p in r], [(4, "creador"), (2, "ejecutivo")])
+        self.assertEqual(self._ids(self._fn(self.OT, ejecutivo=4)(10)), [4])                    # el ejecutivo ES quien la creó: una vez
+        self.assertEqual(r[0], {"id": 4, "nombre": "Juan Pablo Díaz", "correo": "juanpablo@sphs.cl", "por": "creador"})
+
+    def test_si_la_columna_responsable_existe_va_primero_y_si_no_existe_todo_sigue_igual(self):
+        con = dict(self.OT, responsable_user_id=3)
+        self.assertEqual([(p["id"], p["por"]) for p in self._fn(con, ejecutivo=2)(10)],
+                         [(3, "responsable"), (4, "creador"), (2, "ejecutivo")])
+        self.assertEqual(self._ids(self._fn(self.OT, ejecutivo=2)(10)), [4, 2])                 # la columna todavía no existe: nada se rompe
+        self.assertEqual(self._ids(self._fn(dict(self.OT, responsable_user_id=None), ejecutivo=2)(10)), [4, 2])   # existe pero sin poner
+        self.assertEqual(self._ids(self._fn(dict(self.OT, responsable_user_id=0), ejecutivo=2)(10)), [4, 2])
+
+    def test_el_creador_de_una_ot_antigua_se_busca_por_usuario_o_por_nombre(self):
+        for creado_por in ("aaron@sphs.cl", "Aarón Rojas"):
+            r = self._fn({"id": 10, "cliente_id": None, "created_by": creado_por})(10)
+            self.assertEqual([(p["id"], p["por"]) for p in r], [(3, "creador")], creado_por)
+
+    def test_solo_usuarios_activos(self):
+        r = self._fn(dict(self.OT, created_by_user_id=6, created_by="exjefe@sphs.cl"), ejecutivo=2)(10)
+        self.assertEqual(self._ids(r), [2])                                                      # el creador ya no trabaja aquí
+        r = self._fn(dict(self.OT, responsable_user_id=6), ejecutivo=2)(10)
+        self.assertEqual(self._ids(r), [4, 2])                                                   # ni el responsable inactivo ni su aviso perdido
+
+    def test_de_respaldo_superadmin_admin_y_supervisor_activos_solo_si_no_sale_nadie(self):
+        r = self._fn({"id": 10, "cliente_id": None, "created_by": "sistema"})(10)
+        self.assertEqual([(p["id"], p["por"]) for p in r], [(1, "respaldo"), (7, "respaldo"), (4, "respaldo")])   # superadmin, admin, supervisor
+        self.assertNotIn(6, self._ids(r))                                                        # inactivo
+        self.assertTrue({2, 3, 5}.isdisjoint(self._ids(r)))                                      # ni ejecutivos ni técnicos son el respaldo
+        # y si hay alguien, el respaldo NO se suma
+        self.assertTrue({1, 7}.isdisjoint(self._ids(self._fn(self.OT, ejecutivo=2)(10))))
+        # un usuario del sistema sin nadie activo en esos roles → lista vacía, sin romper
+        solo_tecnico = {5: self.USUARIOS[5]}
+        self.assertEqual(self._fn({"id": 10, "cliente_id": None}, usuarios=solo_tecnico)(10), [])
+
+    def test_el_correo_solo_es_el_usuario_cuando_es_un_correo(self):
+        r = self._fn(dict(self.OT, created_by_user_id=5, created_by="isabel"))(10)
+        self.assertEqual((r[0]["nombre"], r[0]["correo"]), ("Isabel Milling", ""))               # su usuario no es un correo: nada que mostrar
+        self.assertEqual(self._fn(self.OT)(10)[0]["correo"], "juanpablo@sphs.cl")
+
+    def test_usa_la_fila_que_le_pasan_y_no_relee_la_ot(self):
+        fn = self._fn(None, ejecutivo=2)
+        self.assertEqual(self._ids(fn(10, fila=dict(self.OT))), [4, 2])
+        self.assertFalse([s for s in self.sql if "FROM mant_visitas" in s])
+
+    def test_nunca_levanta_ante_un_error_de_la_base(self):
+        self.assertEqual(self._ids(self._fn(self.OT, ejecutivo=2, falla="FROM mant_clientes")(10)), [4])     # sin el ejecutivo, el resto sirve
+        r = self._fn(self.OT, falla="FROM mant_visitas")(10)                                                  # sin la OT: el respaldo
+        self.assertEqual(self._ids(r), [1, 7, 4])
+        self.assertEqual(self._fn(self.OT, falla="FROM app_users")(10), [])                                   # sin usuarios: vacío, no explota
+        self.assertEqual(self._fn(self.OT)("no-es-un-id"), [])
+
+    def test_no_decide_nada_fijo_en_los_avisos_y_no_escribe_en_la_base(self):
+        src = _fuente("_ot_gestion_destinatarios")
+        for escritura in ("INSERT", "UPDATE", "DELETE", "mysql_execute", "get_mysql"):
+            self.assertNotIn(escritura, src, escritura)
+        self.assertNotIn("_send_ilus_email", src)                                                # solo dice a QUIÉN; no envía nada
+        self.assertNotIn("_mant_notificar", src)
+        self.assertEqual(APP.count("def _ot_gestion_destinatarios("), 1)
+
+
+class TestAvisosDeLaGestion(unittest.TestCase):
+    """La campana y el correo interno usan la lista de _ot_gestion_destinatarios y no deciden a quién avisar."""
+
+    def _campana(self):
+        self.notif = []
+        amb = {"print": lambda *a, **k: None, "_qp": qp, "_now_chile": lambda: dt.datetime(2026, 10, 20, 15, 32),
+               "_mant_notificar": lambda uid, tipo, titulo, cuerpo="", url_accion="", prioridad="media", **k:
+                   self.notif.append((uid, tipo, titulo, cuerpo, url_accion, prioridad)) or 1,
+               "_mant_notif_cache_invalidar": lambda uid: None}
+        _exec("_qp_campana", amb)
+        return amb["_qp_campana"]
+
+    N = {"motivo_texto": "Falta de stock", "detalle": None}
+    EQ = [{"nombre": "Pulsera cardio", "sku": "ABC1", "serie": "55"}]
+
+    def test_la_campana_avisa_a_la_lista_menos_a_quien_lo_registro_y_sin_repetir(self):
+        gestion = [{"id": 2, "nombre": "Víctor"}, {"id": 3, "nombre": "Aarón"}, {"id": 5, "nombre": "Isabel"}, {"id": 2, "nombre": "Víctor"}]
+        n = self._campana()(gestion, "OT-2026-00171", "Aurum", self.N, self.EQ, "OT-2026-00180", "Isabel Milling", 5, 500)
+        self.assertEqual(n, 2)
+        self.assertEqual([x[0] for x in self.notif], [2, 3])
+        uid, tipo, titulo, cuerpo, url, prio = self.notif[0]
+        self.assertEqual((tipo, url, prio), ("ot_pendiente_stock", "/ot/500", "alta"))
+        self.assertIsNone(_PLATA.search(titulo + " " + cuerpo), cuerpo)
+        # la hora (Chile) va en el título: la campana no repite un aviso IDÉNTICO mientras el primero siga sin leer, así que dos
+        # registros seguidos de la misma OT (otros equipos) no esconden el segundo detrás del primero
+        self.assertTrue(titulo.endswith("(20/10 15:32)"), titulo)
+
+    def test_el_titulo_de_la_campana_lleva_la_hora_solo_si_se_la_dan(self):
+        self.assertEqual(qp.titulo_campana("OT-1", 2), "OT-1: quedó trabajo pendiente por falta de stock")
+        self.assertEqual(qp.titulo_campana("OT-1", 0, "20/10 15:32"), "OT-1: ¿qué pasó? (20/10 15:32)")
+        self.assertLessEqual(len(qp.titulo_campana("OT-" + "9" * 400, 1, "20/10 15:32")), 200)           # cabe en mant_notificaciones.titulo
+
+    def test_sin_lista_no_avisa_a_nadie_ni_se_inventa_destinatarios(self):
+        for vacia in (None, [], [{}], [{"id": "x"}]):
+            self.assertEqual(self._campana()(vacia, "OT-1", "X", self.N, self.EQ, None, "Isabel", 5, 1), 0, vacia)
+        self.assertEqual(self.notif, [])
+
+    def _correo(self, gestion, bodega=("bodega@sphs.cl",)):
+        self.enviados, self.filas, self.master = [], [], {}
+
+        def master(d):
+            self.master = d
+            return "<html></html>"
+
+        amb = {"print": lambda *a, **k: None, "_qp": qp, "_qp_correos_bodega": lambda: list(bodega),
+               "_brand_subject": lambda s: "ILUS · " + s, "_now_chile": lambda: dt.datetime(2026, 10, 20, 15, 30),
+               "_public_base_url": lambda: "https://ilus.test", "_ilus_email_master": master,
+               "_ilus_email_rows": lambda filas: (self.filas.extend(filas) or "<rows></rows>"),
+               "_send_ilus_email": lambda to, asunto, html, **k: self.enviados.append((to, asunto, k)) or True}
+        _exec("_qp_bodega_correo", amb)
+        return amb["_qp_bodega_correo"]({"id": 10}, "OT-2026-00171", "Aurum Fit Girls Spa", self.N, self.EQ, "OT-2026-00180", "Isabel Milling",
+                                        gestion=gestion)
+
+    def test_el_correo_a_bodega_dice_a_quien_avisar_con_la_misma_lista(self):
+        estado, enviados = self._correo(GESTION_MENTIRA)
+        self.assertEqual((estado, enviados), ("enviado", ["bodega@sphs.cl"]))
+        self.assertIn(("Avisar a", "Víctor Soto (victor@sphs.cl) · Aarón Rojas (aaron@sphs.cl)"), self.filas)
+        self.assertIn("«Avisar a»", self.master["message"])
+        self.assertEqual([e[0] for e in self.enviados], ["bodega@sphs.cl"])                    # el correo sigue yendo SOLO a bodega
+        self.assertEqual((self.enviados[0][2]["evento"], self.enviados[0][2]["modulo"]), ("ot_que_paso_bodega", "comunicacion_interna"))
+
+    def test_sin_gestion_el_correo_sale_igual_y_pide_avisar_a_servicio_tecnico(self):
+        for vacia in (None, []):
+            estado, _e = self._correo(vacia)
+            self.assertEqual(estado, "enviado")
+            self.assertNotIn("Avisar a", [f[0] for f in self.filas])
+            self.assertIn("avisen a servicio técnico", self.master["message"])
+
+    def test_sin_correo_de_bodega_no_sale_nada(self):
+        self.assertEqual(self._correo(GESTION_MENTIRA, bodega=())[0], "sin_correos")
+        self.assertEqual(self.enviados, [])
+
+    def test_campana_y_correo_no_deciden_a_quien_avisar(self):
+        for nombre in ("_qp_campana", "_qp_bodega_correo"):
+            src = _fuente(nombre)
+            for fijo in ("role=", "role LIKE", "FROM app_users", "created_by", "ejecutivo_user_id", "mysql_fetch"):
+                self.assertNotIn(fijo, src, (nombre, fijo))
+        reg = _fuente("ot_api_que_paso_registrar")
+        self.assertEqual(reg.count("_ot_gestion_destinatarios("), 1)                          # UNA llamada para los dos avisos
+        self.assertIn("gestion=gestion", reg)
+        self.assertIn("_qp_campana(gestion,", reg)
+
+    def _leer(self, tecnico=False, puede=True):
+        resp = lambda d=None, **kw: d if d is not None else kw
+        fila = {"id": 10, "numero_ot": "OT-2026-00171", "cliente_id": 5, "estado": "en_curso", "firma_cliente_url": None,
+                "ot_madre_id": None, "ot_relacion": None}
+        gestion = [{"id": 31, "nombre": "Isabel Milling", "correo": "isabel@sphs.cl", "por": "creador"},
+                   {"id": 2, "nombre": "Víctor Soto", "correo": "victor@sphs.cl", "por": "ejecutivo"}]
+        amb = {"print": lambda *a, **k: None, "_qp": qp, "jsonify": resp,
+               "g": types.SimpleNamespace(user={"id": 31, "nombre": "Isabel Milling"}),
+               "mysql_fetchone": lambda sql, params=(): dict(fila),
+               "_ot2_err": lambda msg, cod, http=400, **kw: {"ok": False, "error_codigo": cod},
+               "_es_rol_tecnico": lambda *a, **k: tecnico, "_puede_ot_accion": lambda vid, acc: puede,
+               "_qp_equipos_de": lambda vid, v: [_cand(101)], "_qp_correos_bodega": lambda: ["bodega@sphs.cl"],
+               "_ot_gestion_destinatarios": lambda vid, fila=None: list(gestion),
+               "_qp_historial": lambda vid: [], "_qp_pendientes_de": lambda vid, v: []}
+        _exec("ot_api_que_paso_leer", amb)
+        return amb["ot_api_que_paso_leer"](10)
+
+    def test_el_modal_dice_a_quien_avisa_la_campana_sin_correos_y_sin_quien_esta_registrando(self):
+        r = self._leer()
+        self.assertEqual(r["gestion"], {"nombres": ["Víctor Soto"]})                           # Isabel (quien registra) no se avisa a sí misma
+        self.assertEqual(r["bodega"]["correos"], ["bodega@sphs.cl"])
+        r = self._leer(tecnico=True)                                                          # el técnico ve los nombres, nunca los correos de bodega
+        self.assertEqual((r["gestion"]["nombres"], r["bodega"]["correos"]), (["Víctor Soto"], []))
+        self.assertNotIn("victor@sphs.cl", json.dumps(r, ensure_ascii=False))
+        r = self._leer(puede=False)                                                           # sin permiso: ni destinatarios ni bodega
+        self.assertEqual((r["gestion"]["nombres"], r["bodega"]["hay"]), ([], False))
+
+    def test_el_modal_se_entera_de_los_nombres_sin_correos_y_sin_el_usuario_actual(self):
+        leer = _fuente("ot_api_que_paso_leer")
+        self.assertIn("_qp.nombres_gestion(gestion", leer)
+        self.assertNotIn('"correo"', leer)
+        self.assertIn("(getattr(g, \"user\", None) or {}).get(\"id\")", leer)
+
+    def test_nombres_y_texto_de_a_quien_avisar(self):
+        g = [{"id": 2, "nombre": "Víctor Soto", "correo": "v@sphs.cl"}, {"id": 3, "nombre": " Aarón ", "correo": ""},
+             {"id": 2, "nombre": "Víctor Soto"}, {"id": 9, "nombre": ""}]
+        self.assertEqual(qp.nombres_gestion(g), ["Víctor Soto", "Aarón"])
+        self.assertEqual(qp.nombres_gestion(g, excluir_id=2), ["Aarón"])
+        self.assertEqual(qp.nombres_gestion(None), [])
+        self.assertEqual(qp.texto_avisar_a(g), "Víctor Soto (v@sphs.cl) · Aarón")                  # sin repetir a nadie
+        self.assertEqual(qp.texto_avisar_a([]), "")
+        muchos = [{"nombre": "P%d" % i, "correo": "p%d@sphs.cl" % i} for i in range(7)]
+        self.assertEqual(qp.texto_avisar_a(muchos).count("@"), 4)
+        self.assertTrue(qp.texto_avisar_a(muchos).endswith("y 3 más"))
+
 
 # ═══════════════════════════════ 4) la puerta del documento (REGLA #24) ═══════════════════════════════
 class TestPuerta(unittest.TestCase):
-    def _respalda(self, madre, tiene_doc=True, tiene_factura=False, aprobadas=(), cotiz=False, cliente=5, momento="crear"):
+    def _respalda(self, madre, tiene_doc=True, tiene_factura=False, aprobadas=(), cotiz=False, cliente=5, momento="crear", contrato=False):
         amb = {"_qp": qp, "print": lambda *a, **k: None,
                "_ot_puerta_autorizaciones_de": lambda mid: [{"tipo": t, "estado": "aprobada"} for t in aprobadas],
                "_ot_madre_tiene_factura": lambda mid: tiene_factura, "_ot_madre_tiene_doc_real": lambda mid: tiene_doc,
+               "_ot_fin_contrato_real_de": lambda ids: {int(i): contrato for i in ids},
                "mysql_fetchone": lambda sql, params=(): ({"x": 1} if cotiz else None)}
         _exec("_qp_madre_respalda", amb)
         return amb["_qp_madre_respalda"](madre, cliente, momento)
@@ -588,6 +908,13 @@ class TestPuerta(unittest.TestCase):
         self.assertTrue(self._respalda(self.MADRE, tiene_factura=True, momento="cerrar")[0])
         self.assertTrue(self._respalda(self.MADRE, aprobadas=("cerrar_sin_documento",), momento="cerrar")[0])
         self.assertIn("factura o boleta", self._respalda(self.MADRE, momento="cerrar")[1])
+
+    def test_una_preventiva_de_un_contrato_real_se_respalda_con_el_contrato(self):
+        prev = dict(self.MADRE, tipo="preventiva")
+        for momento in ("crear", "cerrar"):
+            self.assertTrue(self._respalda(prev, tiene_doc=False, contrato=True, momento=momento)[0], momento)
+        self.assertFalse(self._respalda(prev, tiene_doc=False, contrato=False)[0])                 # sin contrato real: no
+        self.assertFalse(self._respalda(dict(self.MADRE, tipo="instalacion"), tiene_doc=False, contrato=True)[0])   # solo la preventiva
 
     def test_madre_cancelada_o_de_otro_cliente_no_respalda(self):
         self.assertFalse(self._respalda(dict(self.MADRE, estado="cancelada"))[0])
@@ -619,14 +946,123 @@ class TestPuerta(unittest.TestCase):
         self.assertFalse(v["ok"])
         self.assertEqual((v["code"], v["falta"], v["accion"]), ("DOC_REQUERIDO", "madre_factura", "abrir_ot_madre"))
 
+    def test_la_via_solo_nace_en_un_lugar_y_el_cierre_la_reconoce(self):
+        """Los candados de cierre eximen a la vía 'pendiente_madre' (como a la 'cubierta_madre'): esa vía no puede salir de otro lado."""
+        self.assertEqual(len(re.findall(r"""["']via["']\s*:\s*["']pendiente_madre["']""", APP)), 1)
+        self.assertIn('"via": "pendiente_madre"', _fuente("_ot_puerta_via_pendiente"))
+
     def test_la_puerta_la_consulta_antes_del_camino_normal_y_nunca_lee_la_relacion_del_dict(self):
         src = _fuente("_ot_puerta_documento")
-        self.assertIn("_ot_puerta_via_pendiente(v, momento)", src)
+        self.assertIn("_ot_puerta_via_pendiente(v, momento, madre=pendiente_de)", src)
         self.assertLess(src.index("_ot_puerta_via_pendiente"), src.index("# 4) Documentos del ERP"))
         via = _fuente("_ot_puerta_via_pendiente")
         self.assertIn("_ot_fila_basica(vid)", via)
         self.assertNotIn('v.get("ot_madre_id")', via)
         self.assertNotIn('(v or {}).get("ot_madre_id")', via)
+
+    def _via_creando(self, respalda=(True, None), falla=False):
+        def _resp(m, c, mo="crear"):
+            if falla:
+                raise RuntimeError("base caída")
+            return respalda
+        amb = {"_qp": qp, "_saldo": types.SimpleNamespace(_entero=lambda x: int(x or 0)), "print": lambda *a, **k: None,
+               "_qp_madre_respalda": _resp, "_ot_fila_basica": lambda vid: self.fail("al crear no se relee ninguna OT por id")}
+        _exec("_ot_puerta_via_pendiente", amb)
+        return amb["_ot_puerta_via_pendiente"]({"cliente_id": 5, "tipo": "instalacion"}, "crear",
+                                               madre={"id": 10, "numero_ot": "OT-2026-00171", "cliente_id": 5})
+
+    def test_al_crear_la_puerta_decide_con_la_madre_que_pasa_el_servidor(self):
+        v = self._via_creando()
+        self.assertTrue(v["ok"])
+        self.assertEqual((v["via"], v["madre_id"], v["madre_numero"]), ("pendiente_madre", 10, "OT-2026-00171"))
+
+    def test_al_crear_sin_respaldo_es_un_rechazo_explicito_nunca_un_camino_normal(self):
+        v = self._via_creando(respalda=(False, "La OT de origen no tiene un documento de Random"))
+        self.assertFalse(v["ok"])
+        self.assertEqual((v["code"], v["falta"]), ("DOC_REQUERIDO", "documento"))
+        self.assertIn("no tiene un documento", v["mensaje"])
+
+    def test_si_la_puerta_falla_al_crear_no_deja_pasar_nada(self):
+        v = self._via_creando(falla=True)
+        self.assertFalse(v["ok"])
+        self.assertEqual(v["code"], "DOC_REQUERIDO")
+
+    def test_la_puerta_recibe_pendiente_de_solo_del_servidor(self):
+        firma = _fuente("_ot_puerta_documento").split('"""')[0]
+        self.assertIn("pendiente_de=None", firma)
+        self.assertIn("_ot_puerta_via_pendiente(v, momento, madre=pendiente_de)", _fuente("_ot_puerta_documento"))
+        self.assertIn("if vid or pendiente_de is not None:", _fuente("_ot_puerta_documento"))
+        aplicar = _fuente("_qp_aplicar")
+        self.assertIn("_ot_puerta_documento(", aplicar)
+        self.assertIn("pendiente_de=(dict(root_pre) if root_pre else {})", aplicar)
+        # ningún camino de una petición pasa `pendiente_de`: solo la creación del servidor
+        usos = [m.start() for m in re.finditer(r"pendiente_de\s*=", APP)]
+        self.assertEqual(len(usos), 2, "pendiente_de= solo en la definición de la puerta y en _qp_aplicar")
+
+
+class TestCierreDeLaPendiente(unittest.TestCase):
+    """La OT pendiente se tiene que poder CERRAR sin factura propia ni cobro aparte (su documento es el de la madre, espejado), y sin
+    aflojar nada más: cada candado de `mant_ot_aprobar_cierre` se evalúa de verdad con la vía que le toque."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.SRC = _fuente("mant_ot_aprobar_cierre")
+
+    def _condicion(self, inicio):
+        """El encabezado `if …:` del candado que empieza con ese patrón, sin comentarios y listo para evaluarse."""
+        m = re.search(inicio, self.SRC)
+        self.assertIsNotNone(m, inicio)
+        fin = re.compile(r":[ \t]*\r?\n").search(self.SRC, m.start()).start()
+        texto = re.sub(r"#[^\n]*", "", self.SRC[m.start() + len("    if "):fin])
+        return " ".join(texto.split())
+
+    BASE = dict(_gate_on=True, _interna_cierre=False, _exenta_doc_cliente=False, _docs_cierre=[], _cob_cierre="cobra",
+                _cliente_acepta_nvv=False, v={"factura_tido": "NVV", "valor_origen": ""}, _OT_DOCS_NOTA_VENTA=("NVV", "NVI"),
+                _OT_SALDO_ORIGENES_NO_DOC=(), _ot_finanzas=lambda v: {"cobre": {"total": 0}})
+
+    def _bloquea(self, condicion, via, **extra):
+        return bool(eval(condicion, {}, dict(self.BASE, _via_cierre=via, **extra)))
+
+    def test_sin_factura_propia_la_pendiente_pasa_y_el_resto_sigue_igual(self):
+        c = self._condicion(r"    if \(_gate_on and not _interna_cierre\s+and not _exenta_doc_cliente\s+and _via_cierre not in")
+        for via, bloquea in (("pendiente_madre", False), ("cubierta_madre", False), ("documento", False), ("autorizacion_cerrar", False),
+                             ("cobro_cero", False), ("contrato_real", False),
+                             ("", True), ("nota_venta", True), ("cobro_cero_superadmin", True)):
+            self.assertEqual(self._bloquea(c, via), bloquea, via)
+        self.assertFalse(self._bloquea(c, "", _docs_cierre=[{"tido": "FCV"}]))                    # con documento propio no cambia nada
+        self.assertFalse(self._bloquea(c, "", _interna_cierre=True))
+        self.assertFalse(self._bloquea(c, "", _gate_on=False))
+
+    def test_la_pendiente_no_declara_un_cobro_aparte_pero_cualquier_otra_ot_que_cobra_si(self):
+        c = self._condicion(r"    if \(_gate_on and not _interna_cierre\s+and _cob_cierre == \"cobra\"\s+and _via_cierre != \"autorizacion_cerrar\"")
+        self.assertFalse(self._bloquea(c, "pendiente_madre"))
+        self.assertFalse(self._bloquea(c, "autorizacion_cerrar"))
+        for via in ("", "documento", "cubierta_madre", "cobro_cero", "nota_venta"):
+            self.assertTrue(self._bloquea(c, via), via)                                           # el candado de siempre
+        self.assertFalse(self._bloquea(c, "", _ot_finanzas=lambda v: {"cobre": {"total": 90000}}))   # ya declaró su cobro
+        self.assertFalse(self._bloquea(c, "", _cob_cierre="garantia"))
+
+    def test_la_pendiente_no_consume_saldo_de_ninguna_factura_al_cerrar(self):
+        c = self._condicion(r"    if \(_gate_on and not _interna_cierre and _cob_cierre == \"cobra\" and _via_cierre not in")
+        self.assertFalse(self._bloquea(c, "pendiente_madre"))
+        self.assertFalse(self._bloquea(c, "autorizacion_cerrar"))
+        for via in ("", "documento", "cubierta_madre"):
+            self.assertTrue(self._bloquea(c, via), via)                                           # el chequeo de saldo de siempre
+
+    def test_la_nota_de_venta_sola_tampoco_frena_a_la_pendiente(self):
+        c = self._condicion(r"    if \(_gate_on and not _interna_cierre and not _cliente_acepta_nvv")
+        self.assertFalse(self._bloquea(c, "pendiente_madre"))
+        self.assertTrue(self._bloquea(c, ""))
+        self.assertFalse(self._bloquea(c, "", v={"factura_tido": "FCV"}))
+
+    def test_lo_que_no_se_exime_sigue_exigiendo_a_la_pendiente(self):
+        """Centro de costo, costo del técnico, pérdida y anexo: ningún candado de esos nombra la vía 'pendiente_madre'."""
+        for codigo in ('"SIN_CENTRO_COSTO"', '"SIN_COSTO_PROVEEDOR"', '"ANEXO_DESACTUALIZADO"', '"CIERRE_CON_PERDIDA"', '"AUTORIZACION_PENDIENTE"'):
+            i = self.SRC.index(codigo)
+            j = self.SRC.rfind("    if ", 0, i)
+            self.assertNotIn("pendiente_madre", self.SRC[j:i], codigo)
+        self.assertEqual(self.SRC.count('"pendiente_madre"'), 4)                                   # justo: SIN_FACTURA, NOTA_VENTA, VALORIZAR y saldo
+        self.assertIn("_fac_perdida_aplica(_via_cierre, _fp_c)", self.SRC)                         # la pérdida se calcula igual que siempre
 
 
 # ═══════════════════════════════ 5) cableado en app.py, eventos y panel ═══════════════════════════════
@@ -675,7 +1111,11 @@ class TestCableado(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS mant_ot_que_paso", src)
         self.assertNotIn("ALTER TABLE", src)                                         # ni una columna nueva en mant_visitas
         self.assertNotIn("lock_wait_timeout", src)
-        self.assertRegex(APP, r"_ensure_ot_producto_estado\(\)\r?\n\s+_ensure_ot_que_paso\(\)")
+        # va DESPUÉS de _ensure_otrep_medidas(): test_ot_medidas_diagnostico fija que esa vaya pegada a _ensure_ot_producto_estado()
+        self.assertRegex(APP, r"_ensure_otrep_medidas\(\)[^\r\n]*\r?\n\s+_ensure_ot_que_paso\(\)")
+        llamada = re.search(r"\n[ \t]+_ensure_ot_que_paso\(\)", APP)
+        self.assertIsNotNone(llamada)
+        self.assertLess(llamada.start(), APP.index("except Exception as _ensure_etapa3_err"))
 
     def test_una_sola_transaccion_todo_o_nada(self):
         src = _fuente("_qp_aplicar")
@@ -714,11 +1154,13 @@ class TestCableado(unittest.TestCase):
         self.assertNotIn("contacto_email", _fuente("_qp_bodega_correo"))
 
     def test_la_campana_va_a_gestion_y_no_a_quien_lo_registro(self):
+        # A QUIÉN avisa la gestión lo decide _ot_gestion_destinatarios (ver TestGestionDestinatarios y TestAvisosDeLaGestion):
+        # la campana ya no fija roles ni busca al creador por su cuenta.
         src = _fuente("_qp_campana")
         self.assertIn('"ot_pendiente_stock"', src)
-        self.assertIn("created_by_user_id", src)
-        self.assertIn("role='supervisor' OR role LIKE 'ejecutivo%'", src)
-        self.assertIn("uid == int(quien_uid)", src)
+        self.assertIn("uid == int(quien_uid)", src)                                     # quien lo registró no se avisa a sí mismo
+        self.assertNotIn("role", src)
+        self.assertIn("_ot_gestion_destinatarios(vid, fila=v)", _fuente("ot_api_que_paso_registrar"))
 
     def test_la_ficha_recibe_el_contexto_y_enmascara_enlaces_de_tecnico(self):
         self.assertIn("que_paso = _qp_contexto_ficha(vid, v, puede_configurar, ot_solo_lectura)", APP)
@@ -759,9 +1201,109 @@ class TestCableado(unittest.TestCase):
         self.assertEqual(av2["desinst_pendientes"], 1)
         self.assertEqual(av2["proxima_fecha"], "2026-11-20")
 
+    def test_excel_y_proxima_visita_no_muestran_la_fecha_centinela(self):
+        xl = _fuente("ot2_reporte_xlsx")
+        self.assertIn('"Sin fecha" if _qp.es_sin_fecha(f.get("fecha_programada"))', xl)
+        self.assertIn("pendientes_numeros", xl)
+        self.assertIn('(f.get("ot_relacion") or "") == _qp.REL_PENDIENTE_STOCK', xl)    # no es «Desinstalación de …»
+        self.assertEqual(APP.count("AND fecha_programada < '2099-01-01'"), 2)          # la «próxima visita» de la lista de clientes
+        self.assertIn("hp.ot_relacion = 'pendiente_stock'", xl)
+
     def test_prueba_de_que_las_rutas_estan_registradas_una_vez(self):
         self.assertEqual(len(re.findall(r'@app\.route\("/ot/api/<int:vid>/que-paso", methods=\["GET"\]\)', APP)), 1)
         self.assertEqual(len(re.findall(r'@app\.route\("/ot/api/<int:vid>/que-paso", methods=\["POST"\]\)', APP)), 1)
+
+
+# ═══════════════════════════════ 5b) lo que se cruza con main: correos a técnicos y «devolver a operativo» ═══════════════════════════════
+import ot_correos_tecnicos as otc  # noqa: E402
+
+
+class TestCorreosATecnicosConLaOtSinFecha(unittest.TestCase):
+    """La OT pendiente nace con la fecha centinela: al técnico se le dice «por confirmar», nunca 31/12/2099 ni un archivo de calendario."""
+    SIN = dt.date(2099, 12, 31)
+    TEC = {"isabel@x.cl": "Isabel"}
+
+    def test_la_fecha_centinela_es_sin_fecha_para_el_correo(self):
+        self.assertIsNone(otc.a_fecha(self.SIN))
+        self.assertIsNone(otc.a_fecha("2099-12-31"))
+        self.assertIsNone(otc.a_fecha(dt.datetime(2099, 12, 31, 9, 0)))
+        self.assertEqual(otc.a_fecha("2026-11-03"), dt.date(2026, 11, 3))            # una fecha real no cambia
+        self.assertEqual(otc.rango_txt(self.SIN), "por confirmar")
+        self.assertEqual(otc.fecha_txt(self.SIN), "")
+        self.assertEqual(otc.foto("programada", self.SIN, None, None, None, self.TEC)["fecha"], "")
+
+    def test_la_misma_fecha_centinela_en_las_dos_piezas(self):
+        self.assertEqual(otc.ANIO_SIN_FECHA, qp.ANIO_SIN_FECHA)
+        self.assertEqual(ev.ANIO_SIN_FECHA, qp.ANIO_SIN_FECHA)
+        self.assertEqual(qp.FECHA_SIN_FECHA.year, qp.ANIO_SIN_FECHA)
+
+    def test_sin_archivo_de_calendario_para_una_ot_sin_fecha(self):
+        ot = {"id": 500, "numero_ot": "OT-2026-00180", "cliente": "Aurum", "fecha": self.SIN, "fecha_fin": None,
+              "hora_inicio": None, "hora_fin": None}
+        self.assertIsNone(otc.ics_evento(ot, "asignada", correo="isabel@x.cl", ts=1790000000))
+        self.assertIsNotNone(otc.ics_evento(dict(ot, fecha=dt.date(2026, 11, 3)), "asignada", correo="isabel@x.cl", ts=1790000000))
+
+    def test_asignar_tecnico_a_la_ot_ya_agendada_avisa_asignada_una_sola_vez(self):
+        antes = otc.foto("programada", self.SIN, None, None, None, {})
+        despues = otc.foto("programada", dt.date(2026, 11, 3), None, "09:00", "13:00", self.TEC)
+        self.assertEqual([(a["email"], a["evento"]) for a in otc.decidir_avisos(antes, despues)], [("isabel@x.cl", "asignada")])
+
+    def test_reagendar_sin_tecnico_no_avisa_a_nadie(self):
+        antes = otc.foto("programada", self.SIN, None, None, None, {})
+        despues = otc.foto("programada", dt.date(2026, 11, 3), None, None, None, {})
+        self.assertEqual(otc.decidir_avisos(antes, despues), [])
+
+    def test_si_el_tecnico_estaba_antes_de_la_fecha_el_cambio_dice_por_confirmar_antes(self):
+        antes = otc.foto("programada", self.SIN, None, None, None, self.TEC)
+        despues = otc.foto("programada", dt.date(2026, 11, 3), None, "09:00", None, self.TEC)
+        self.assertEqual([a["evento"] for a in otc.decidir_avisos(antes, despues)], ["reagendada"])
+        v = otc.construir_variables({"id": 500, "numero_ot": "OT-2026-00180", "cliente": "Aurum", "fecha": dt.date(2026, 11, 3),
+                                     "hora_inicio": "09:00"}, nombre_tecnico="Isabel", antes=antes)
+        self.assertEqual(v["fecha_antes"], "por confirmar")
+        self.assertNotIn("2099", v["antes_ahora_html"])
+
+    def test_cancelar_la_pendiente_sin_tecnico_no_avisa(self):
+        antes = otc.foto("programada", self.SIN, None, None, None, {})
+        despues = otc.foto("cancelada", self.SIN, None, None, None, {})
+        self.assertEqual(otc.decidir_avisos(antes, despues), [])
+
+    def test_la_creacion_de_la_pendiente_no_dispara_ningun_correo_a_tecnicos(self):
+        for nombre in ("_qp_aplicar", "ot_api_que_paso_registrar"):
+            src = _fuente(nombre)
+            self.assertNotIn("_ot_tec_", src, nombre)         # nace sin técnico: nadie recibe nada hasta que gestión la agende
+
+
+class TestDevolverAOperativoConOtPendiente(unittest.TestCase):
+    """Un equipo que ya pasó a una OT pendiente no se devuelve a operativo en la madre: quedaría duplicado en las dos órdenes."""
+
+    def _ruta(self, en_pend):
+        amb = {"print": lambda *a, **k: None, "_qp": qp,
+               "request": types.SimpleNamespace(get_json=lambda silent=True: {"motivo": "Apareció el equipo en bodega"}),
+               "jsonify": lambda d=None, **kw: d if d is not None else kw,
+               "_ot2_err": lambda msg, cod, http=400, **kw: {"ok": False, "error": msg, "error_codigo": cod, "http": http},
+               "_otrep_cargar_ot_y_equipo": lambda vid, mid: ({"id": vid, "estado": "en_curso"}, {"nombre": "Pulsera"}, None),
+               "_OTPROD_ESTADOS_FIN": ("cerrada", "completada", "cancelada", "anulada"), "_otpe_ok": lambda: True,
+               "mysql_fetchone": lambda sql, params=(): ({"numero_ot": "OT-2026-00180"} if en_pend else None),
+               "current_username": lambda: "aaron",
+               "get_db": lambda: (_ for _ in ()).throw(RuntimeError("paso la guarda"))}
+        _exec("ot2_api_equipo_no_esta_revertir", amb)
+        return amb["ot2_api_equipo_no_esta_revertir"]
+
+    def test_se_bloquea_con_409_y_dice_que_orden_cancelar(self):
+        r = self._ruta(True)(10, 101)
+        self.assertEqual((r["error_codigo"], r["http"]), ("EQUIPO_EN_OT_PENDIENTE", 409))
+        self.assertIn("OT-2026-00180", r["error"])
+        self.assertIn("cancela primero esa orden", r["error"])
+
+    def test_sin_ot_pendiente_el_camino_de_siempre_sigue_igual(self):
+        with self.assertRaises(RuntimeError):                  # llegó a abrir la base: la guarda no se interpuso
+            self._ruta(False)(10, 101)
+
+    def test_la_guarda_mira_solo_las_pendientes_vigentes_de_esta_ot(self):
+        src = _fuente("ot2_api_equipo_no_esta_revertir")
+        for pieza in ("h.ot_madre_id=%s AND h.ot_relacion=%s", "h.estado NOT IN ('cancelada','anulada')", "t.maquina_id=%s"):
+            self.assertIn(pieza, src, pieza)
+        self.assertEqual(_decoradores("ot2_api_equipo_no_esta_revertir")[1:], ["_mant_required", "_no_tecnico", "_ot_can_configurar"])   # nada se abrió
 
 
 # ═══════════════════════════════ 6) el frente ═══════════════════════════════
@@ -808,6 +1350,10 @@ class TestFrente(unittest.TestCase):
         self.assertIsNone(re.search(r"factura|saldo|costo|proveedor|\$\s?\d", JS, re.I))
         self.assertNotIn("avisar_cliente", JS)
 
+    def test_una_orden_sin_cliente_no_ofrece_dejar_pendiente(self):
+        self.assertIn("D.ot.tiene_cliente === false", JS)
+        self.assertIn("a.crea_pendiente", JS)
+
     def test_la_ficha_incluye_la_franja_los_chips_y_los_estilos(self):
         self.assertIn("{% include 'ot2/_que_paso.html' %}", DETALLE)
         self.assertIn("filename='ot_que_paso.css'", DETALLE)
@@ -818,6 +1364,14 @@ class TestFrente(unittest.TestCase):
         self.assertIn("window.OTD_QP_CFG = { vid: {{ v.id }} };", PARCIAL)
         self.assertIn("data-qp-abrir", PARCIAL)
         self.assertIn("¿Qué pasó?", PARCIAL)
+
+    def test_la_barra_de_acciones_ofrece_seguir_con_que_paso_sin_quitar_nada(self):
+        acc = _leer("static/ot_acciones.js")
+        self.assertIn('data-a="quepaso"', acc)
+        self.assertIn("window.OTQuePaso.abrir('falta_stock')", acc)
+        self.assertIn("s.op === 'falta_stock' && window.OTQuePaso", acc)            # solo con «No llegó · falta stock» y si el modal existe
+        self.assertIn('data-a="volverrec">Volver a la OT</button>', acc)            # el botón de siempre sigue
+        self.assertIsNone(re.search(r"(?<![A-Za-z.])(alert|confirm|prompt)\s*\(", acc[acc.index("quepaso:"):acc.index("quepaso:") + 300]))
 
     def test_la_ficha_cerrada_solo_deja_ver(self):
         self.assertIn("'Ver lo registrado'", PARCIAL)

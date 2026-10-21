@@ -1243,7 +1243,10 @@
                body: finGenerico({ tono: 'a', icono: 'box-seam', h: 'Anotado.', lead: np.chip || 'Quedó anotado.', det: np.chip || '',
                  lineas: [['clipboard-check', 'Quedó en la OT con tu nombre y la hora.'], ['pen', 'El equipo ya no bloquea la firma ni el cierre de la OT.'],
                           s.op === 'falta_stock' ? ['box-seam', 'Quedó como pendiente por falta de stock, para que gestión y bodega lo vean.', 'a'] : ['arrow-counterclockwise', 'Si aparece, gestión lo puede devolver a su estado normal.']] }),
-               foot: '<button type="button" class="oa-btn blue block lg" data-a="volverrec">Volver a la OT</button>' };
+               /* 2026-10-20: con «No llegó · falta stock» se ofrece seguir con «¿Qué pasó?» (static/ot_que_paso.js): los equipos pendientes pasan a una
+                  OT hija sin fecha, con el mismo documento. Solo suma un botón; «Volver a la OT» sigue igual. */
+               foot: (s.op === 'falta_stock' && window.OTQuePaso ? '<button type="button" class="oa-btn line block lg" data-a="quepaso" style="margin-bottom:10px"><i class="bi bi-signpost-split"></i> Dejar lo pendiente en una OT sin fecha</button>' : '') +
+                     '<button type="button" class="oa-btn blue block lg" data-a="volverrec">Volver a la OT</button>' };
     }
   };
 
@@ -1560,6 +1563,8 @@
     salir: function () { salir(false); },
     volver: function () { var k = S.key; cerrar(false); pintar(k); },
     volverrec: function () { recargar(S.key); },
+    /* 2026-10-20: desde «No llegó · falta stock» a «¿Qué pasó?»: la tarjeta ya muestra «falta stock» y el modal nace con ese equipo elegido. */
+    quepaso: function () { var k = S.key; cerrar(false); pintar(k); if (window.OTQuePaso) window.OTQuePaso.abrir('falta_stock'); },
     ir: function (el) { irA(el.getAttribute('data-go')); },
     cam: function () { S.camRef = ''; document.getElementById('oaCam').click(); },
     gal: function () { S.camRef = ''; document.getElementById('oaGal').click(); },

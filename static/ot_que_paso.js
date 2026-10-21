@@ -70,7 +70,13 @@
   function pieEl() { return el.querySelector('#qpPie'); }
 
   /* ───────────────────────── helpers de estado ───────────────────────── */
-  function acciones() { return (D.catalogo.acciones_por_tipo[S.tipo] || []); }
+  /* Una orden SIN cliente (trabajo interno) no tiene equipos de ficha que dejar pendientes: no se ofrece esa acción. */
+  function acciones() {
+    return (D.catalogo.acciones_por_tipo[S.tipo] || []).filter(function (k) {
+      var a = D.catalogo.acciones[k];
+      return !(a && a.crea_pendiente && D.ot && D.ot.tiene_cliente === false);
+    });
+  }
   function accion() { return S.accion; }
   function creaPendiente() { var a = D.catalogo.acciones[S.accion]; return !!(a && a.crea_pendiente); }
   function elegidos() { return Object.keys(S.equipos).filter(function (k) { return S.equipos[k]; }).map(Number); }
@@ -154,7 +160,7 @@
     var c = cuerpoEl();
     var sub = el.querySelector('#qpSub');
     sub.textContent = (D.ot.numero_ot || '') + (D.ot.estado ? ' · ' + String(D.ot.estado).replace(/_/g, ' ') : '');
-    if (S.listo) { c.innerHTML = S.listo; pie(); return; }
+    if (S.listo) { c.innerHTML = S.listo; c.scrollTop = 0; pie(); return; }       // el «Listo» se lee desde arriba, aunque el formulario haya quedado abajo
     var h = '';
     if (!D.puede) {
       h += '<div class="qp-alerta"><i class="bi bi-lock-fill"></i><span>' + (D.terminada
@@ -198,8 +204,10 @@
               ? 'Correo interno con los productos que faltan' + ((bod.correos || []).length ? ' a ' + esc(bod.correos.join(', ')) : '') + '.'
               : 'Bodega no tiene correo configurado todavía (Retiros → Configuración → Equipo y alertas): la gestión recibe el aviso por la campana.') + '</small></span></label>'
           : '';
+        var ges = (D.gestion || {}).nombres || [];        /* quién recibe la campana lo decide el servidor (quien se hace cargo de la OT) */
         h += paso(n, true, 'Avisos', 'Nada le llega al cliente.',
-          '<div class="qp-aviso fijo"><i class="bi bi-bell-fill"></i><span><b>Aviso a la gestión</b><small>Campana para quien creó la orden, los supervisores y los ejecutivos de servicio técnico.</small></span></div>' +
+          '<div class="qp-aviso fijo"><i class="bi bi-bell-fill"></i><span><b>Aviso a la gestión</b><small>' +
+            (ges.length ? 'Campana para ' + esc(ges.join(', ')) + '.' : 'Campana para la gestión de servicio técnico.') + '</small></span></div>' +
           avisoB + '<div class="qp-aviso fijo no"><i class="bi bi-person-slash"></i><span><b>Al cliente no se le envía nada</b><small>Ni correo ni mensaje: esto es solo interno.</small></span></div>');
       }
     }

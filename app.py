@@ -64617,6 +64617,7 @@ def mant_clientes():
             SELECT cliente_id, MIN(fecha_programada) AS fecha_programada
             FROM mant_visitas
             WHERE estado='programada' AND fecha_programada >= CURDATE()
+              AND fecha_programada < '2099-01-01'
             GROUP BY cliente_id
         ) v_next ON v_next.cliente_id = c.id
         WHERE {wstr}
@@ -64844,6 +64845,7 @@ def mant_clientes_reporte_xlsx():
             SELECT cliente_id, MIN(fecha_programada) AS fecha_programada
             FROM mant_visitas
             WHERE estado='programada' AND fecha_programada >= CURDATE()
+              AND fecha_programada < '2099-01-01'
             GROUP BY cliente_id
         ) v_next ON v_next.cliente_id = c.id
         WHERE {' AND '.join(wh)}
@@ -92770,6 +92772,9 @@ def ot2_detalle(vid):
         except Exception as _e_acta:
             print(f"[ot2_detalle] acta vid={vid}: {type(_e_acta).__name__}", flush=True)
             acta = None
+    # 🧭 2026-10-20: franja «¿Qué pasó?» y chips de la unión con la OT de origen o las OT pendientes por falta de stock.
+    # (Va ANTES del bloque de la barra de acciones: ese bloque se prueba aislado en tests/test_ot_producto_acciones.py.)
+    que_paso = _qp_contexto_ficha(vid, v, puede_configurar, ot_solo_lectura)
     # 🧰 2026-10-20: productos cuyo checklist se dispensa por una acción del técnico (espejo JS: otdChkEvaluar) y quién
     # puede devolver un producto a «operativo» (gestión, con motivo).
     try:
@@ -92839,8 +92844,6 @@ def ot2_detalle(vid):
     except Exception as _e_di:
         print(f"[ot2_detalle] desinstalación vid={vid}: {type(_e_di).__name__}", flush=True)
         desinst = None
-    # 🧭 2026-10-20: franja «¿Qué pasó?» y chips de la unión con la OT de origen o las OT pendientes por falta de stock.
-    que_paso = _qp_contexto_ficha(vid, v, puede_configurar, ot_solo_lectura)
     return render_template(
         "ot2/detalle.html",
         desinst=desinst,
@@ -96236,7 +96239,7 @@ def _ot_puerta_via_cubierta(v, momento, madre=None):
         return None
 
 
-def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_declara=None, madre=None):
+def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_declara=None, madre=None, pendiente_de=None):
     """★ LA PUERTA. ¿Esta OT (fila o payload de una por crear) tiene con qué existir / cerrarse?
 
     v: dict con cliente_id, tipo, modalidad_cobro, cubierto_por y, si existe, id. Opcionales:
@@ -96251,6 +96254,8 @@ def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_decla
     superadmin_declara: True si quien escribe es superadministrador y declara él mismo el $0 (cuenta como
        autorización; quien llama la REGISTRA con _ot_puerta_aplicar / _ot_cobro_cero_registrar). None = se mira
        la sesión (_ot_aut_es_superadmin).
+    pendiente_de: la fila de la OT MADRE de una OT pendiente por falta de stock que todavía NO existe (2026-10-20: «¿Qué pasó?»). Solo
+       la pasa el servidor al crearla (`_qp_aplicar`); una vez creada, la puerta la reconoce sola por su relación (vía 'pendiente_madre').
 
     Devuelve {"ok": True, "via": ..., "documentos_ok": [...]} o {"ok": False, "code": "DOC_REQUERIDO",
     "falta": "documento" | "factura" | "autorizacion_cobro_cero", "accion": "pedir_autorizacion",
@@ -96317,8 +96322,9 @@ def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_decla
 
     # 3c) 🧭 2026-10-20 — OT PENDIENTE POR FALTA DE STOCK: se respalda con el documento de su OT madre (espejado, sin saldo propio).
     #     La puerta relee la relación por v['id'] (jamás del dict `v`). Si la madre no la respalda, sigue el camino normal.
-    if vid:
-        _pen = _ot_puerta_via_pendiente(v, momento)
+    #     Al CREARLA (`pendiente_de`: la fila de la madre, que solo pasa el servidor) la misma vía decide si se puede crear.
+    if vid or pendiente_de is not None:
+        _pen = _ot_puerta_via_pendiente(v, momento, madre=pendiente_de)
         if _pen is not None:
             return _pen
 
@@ -96731,6 +96737,89 @@ def _ot_aut_json(r):
         "incluye_desinstalacion": _ot_aut_incluye_desinstalacion(r),   # 🧩 2026-10-19
         "url": f"/ot/autorizaciones/{r.get('id')}",
     }
+
+
+# ───────────────── ¿A QUIÉN AVISA «LA GESTIÓN» DE UNA OT? — UN SOLO LUGAR ─────────────────
+# 🧭 2026-10-20: hoy una OT NO tiene un responsable explícito (los avisos de «lista para aprobar» van al creador + admin/supervisor/
+# superadmin y los ejecutivos solo los reciben si crearon la OT). Daniel va a pedir que cada OT tenga UN RESPONSABLE (uno de los
+# tres ejecutivos). Por eso NADIE fija a mano a quién avisar: la campana y el correo interno de «¿Qué pasó?» llaman a ESTA función, y
+# el día que exista `mant_visitas.responsable_user_id` ya la lee (llega en el SELECT *): cambiar la regla es tocar SOLO este lugar.
+_GESTION_FAMILIAS_RESPALDO = ("superadmin", "admin", "supervisor")
+_GESTION_CORREO_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
+
+
+def _ot_gestion_destinatarios(vid, fila=None):
+    """Las personas a las que avisa «la gestión» de ESTA OT: [{id, nombre, correo, por}], sin repetidos y solo usuarios ACTIVOS.
+
+    Quiénes, en este orden: el RESPONSABLE de la OT (si la columna `mant_visitas.responsable_user_id` existe y está puesta) · quien
+    la CREÓ (created_by_user_id o, en las OT antiguas, created_by por usuario o por nombre) · el EJECUTIVO del cliente
+    (mant_clientes.ejecutivo_user_id). Si de ahí no sale nadie activo, de RESPALDO los usuarios activos de rol superadmin, admin o
+    supervisor, para que el aviso nunca se pierda. `por` dice por qué está en la lista: responsable | creador | ejecutivo | respaldo.
+    `correo` es el usuario cuando es un correo ('' si no lo es). `fila` (opcional) es la fila de la OT ya leída. Nunca levanta."""
+    try:
+        vid = int(vid)
+    except (TypeError, ValueError):
+        return []
+    try:
+        if fila is None:
+            fila = mysql_fetchone("SELECT * FROM mant_visitas WHERE id=%s", (vid,))
+        fila = dict(fila or {})
+    except Exception as e:
+        print(f"[gestion] OT vid={vid}: {type(e).__name__}", flush=True)
+        fila = {}
+
+    def _num(x):
+        try:
+            return int(x) if x not in (None, "", 0, "0") else None
+        except (TypeError, ValueError):
+            return None
+
+    candidatos = []                                   # [(user_id | None, por, nombre a buscar | None)]
+    if _num(fila.get("responsable_user_id")):         # la columna todavía no existe: .get() da None y todo sigue igual
+        candidatos.append((_num(fila.get("responsable_user_id")), "responsable", None))
+    if _num(fila.get("created_by_user_id")):
+        candidatos.append((_num(fila.get("created_by_user_id")), "creador", None))
+    elif (fila.get("created_by") or "").strip():
+        candidatos.append((None, "creador", (fila.get("created_by") or "").strip()))
+    if fila.get("cliente_id"):
+        try:
+            _ej = mysql_fetchone("SELECT ejecutivo_user_id FROM mant_clientes WHERE id=%s", (int(fila["cliente_id"]),)) or {}
+            if _num(_ej.get("ejecutivo_user_id")):
+                candidatos.append((_num(_ej.get("ejecutivo_user_id")), "ejecutivo", None))
+        except Exception as e:
+            print(f"[gestion] ejecutivo del cliente vid={vid}: {type(e).__name__}", flush=True)
+
+    def _item(u, por):
+        correo = (u.get("username") or "").strip()
+        return {"id": int(u["id"]), "nombre": (u.get("nombre") or u.get("username") or "").strip(),
+                "correo": correo if _GESTION_CORREO_RE.match(correo) else "", "por": por}
+
+    out, vistos = [], set()
+    for uid, por, nombre in candidatos:
+        try:
+            if uid is not None:
+                u = mysql_fetchone("SELECT id, username, nombre, role FROM app_users WHERE id=%s AND active=1", (uid,))
+            else:
+                u = mysql_fetchone("SELECT id, username, nombre, role FROM app_users "
+                                   " WHERE active=1 AND (username=%s OR nombre=%s) LIMIT 1", (nombre, nombre))
+        except Exception as e:
+            print(f"[gestion] usuario vid={vid}: {type(e).__name__}", flush=True)
+            u = None
+        if u and int(u["id"]) not in vistos:
+            vistos.add(int(u["id"]))
+            out.append(_item(dict(u), por))
+    if out:
+        return out
+    # Respaldo: nadie activo salió de lo anterior.
+    try:
+        orden = {f: i for i, f in enumerate(_GESTION_FAMILIAS_RESPALDO)}
+        activos = [dict(u) for u in (mysql_fetchall("SELECT id, username, nombre, role FROM app_users WHERE active=1") or [])
+                   if _rol_familia(u.get("role")) in orden]
+        activos.sort(key=lambda u: (orden[_rol_familia(u.get("role"))], (u.get("nombre") or u.get("username") or "").lower()))
+        return [_item(u, "respaldo") for u in activos[:20]]
+    except Exception as e:
+        print(f"[gestion] respaldo vid={vid}: {type(e).__name__}", flush=True)
+        return []
 
 
 def _ot_aut_superadmins():
@@ -116704,6 +116793,10 @@ def ot2_reporte_xlsx():
         "       (SELECT GROUP_CONCAT(hh.numero_ot ORDER BY hh.id SEPARATOR ', ') FROM mant_visitas hh "
         "         WHERE hh.ot_madre_id = v.id AND hh.ot_relacion = 'desinstalacion' "
         "           AND hh.estado NOT IN ('cancelada','anulada')) AS hijas_numeros, "
+        # 🧭 2026-10-20: las OT pendientes por falta de stock que cuelgan de esta OT (columna «Relación»).
+        "       (SELECT GROUP_CONCAT(hp.numero_ot ORDER BY hp.id SEPARATOR ', ') FROM mant_visitas hp "
+        "         WHERE hp.ot_madre_id = v.id AND hp.ot_relacion = 'pendiente_stock' "
+        "           AND hp.estado NOT IN ('cancelada','anulada')) AS pendientes_numeros, "
         "       COALESCE(tar.n_tareas, 0)    AS n_tareas, "
         "       COALESCE(tar.n_completas, 0) AS n_completas "
         "  FROM mant_visitas v "
@@ -116930,7 +117023,8 @@ def ot2_reporte_xlsx():
             f.get("prioridad") or "", estado_label,
             _OT2_FASE_LABELS.get(fase, fase), tec,
             "Externo" if externo else "Interno",
-            _d(f.get("fecha_programada")), _ot_tv_hhmm(f.get("hora_inicio")) or "",
+            ("Sin fecha" if _qp.es_sin_fecha(f.get("fecha_programada")) else _d(f.get("fecha_programada"))),   # 🧭 OT pendiente por falta de stock
+            _ot_tv_hhmm(f.get("hora_inicio")) or "",
             _d(f.get("fecha_realizada")), f"{n_c}/{n_t}" if n_t else "",
             pct, _LBL_CC.get(f.get("centro_costo"), f.get("centro_costo") or ""),
             f.get("zz_codigo") or "",
@@ -116967,10 +117061,14 @@ def ot2_reporte_xlsx():
             _ax["me_cobraron"] += float(_fin["me_cobraron"]["total"] or 0) if _tiene_finanzas else 0.0
             _ax["queda"] += float(margen or 0) if (margen is not None and _fin["cobra"]) else 0.0
         # 🧩 2026-10-19: Evento y Relación (sin montos).
-        if f.get("madre_numero"):
+        if f.get("madre_numero") and (f.get("ot_relacion") or "") == _qp.REL_PENDIENTE_STOCK:
+            _rel_xl = _qp.chip_pendiente(f.get("madre_numero"))                  # 🧭 2026-10-20: no es una desinstalación
+        elif f.get("madre_numero"):
             _rel_xl = "Desinstalación de " + str(f.get("madre_numero"))
         elif f.get("hijas_numeros"):
             _rel_xl = "Desinstalación: " + str(f.get("hijas_numeros"))
+        elif f.get("pendientes_numeros"):
+            _rel_xl = _qp.chip_madre(f.get("pendientes_numeros"))
         elif f.get("desinstalacion_prevista"):
             _rel_xl = "Desinstalación sin agendar (prevista " + _d(f.get("desinstalacion_prevista")) + ")"
         else:
@@ -126049,9 +126147,12 @@ def mant_ot_aprobar_cierre(vid):
     # factura_nudo (un PUT podía escribirlo a mano) sino los documentos VALIDADOS contra el ERP
     # (_ot_puerta_docs_de: tabla puente + asociar-factura).
     _docs_cierre = _ot_puerta_docs_de(vid)
+    # 🧭 2026-10-20: la OT PENDIENTE por falta de stock («¿Qué pasó?») se respalda con el documento de su OT madre (vía 'pendiente_madre':
+    # la puerta ya exigió la factura o boleta de la madre, y el documento viaja ESPEJADO, sin saldo propio): igual que la cubierta.
     if (_gate_on and not _interna_cierre
             and not _exenta_doc_cliente
-            and _via_cierre not in ("autorizacion_cerrar", "cobro_cero", "contrato_real", "documento", "cubierta_madre")
+            and _via_cierre not in ("autorizacion_cerrar", "cobro_cero", "contrato_real", "documento", "cubierta_madre",
+                                    "pendiente_madre")
             and not _docs_cierre):
         return jsonify({
             "ok": False,
@@ -126085,6 +126186,7 @@ def mant_ot_aprobar_cierre(vid):
     if (_gate_on and not _interna_cierre
             and _cob_cierre == "cobra"
             and _via_cierre != "autorizacion_cerrar"   # 2026-10-07: autorizada a cerrar sin documento: no hay cobro que declarar
+            and _via_cierre != "pendiente_madre"        # 2026-10-20: la pendiente no cobra aparte: el cobro es el de su OT madre
             and not (_ot_finanzas(v)["cobre"]["total"] > 0)):
         return jsonify({
             "ok": False,
@@ -126100,7 +126202,7 @@ def mant_ot_aprobar_cierre(vid):
     # cobran otras OT). Excede → 409 ZZ_SALDO_CONSUMIDO con las salidas en el MISMO modal (tomar solo el saldo,
     # agregar otra factura, pasar a garantía, pedir autorización con argumento): nunca un callejón sin salida.
     # No toca estado ni firmas. Mismo interruptor que los demás candados.
-    if (_gate_on and not _interna_cierre and _cob_cierre == "cobra" and _via_cierre != "autorizacion_cerrar"
+    if (_gate_on and not _interna_cierre and _cob_cierre == "cobra" and _via_cierre not in ("autorizacion_cerrar", "pendiente_madre")
             and (v.get("valor_origen") or "") not in _OT_SALDO_ORIGENES_NO_DOC):
         try:
             _docs_cs = _ot_saldo_docs_de_ot(vid)
@@ -126273,7 +126375,8 @@ def mant_ot_aprobar_cierre(vid):
     _cliente_acepta_nvv = (v.get("cliente_tipo") or "").strip().lower() in ("arriendo", "leasing")
     if (_gate_on and not _interna_cierre and not _cliente_acepta_nvv
             and not _exenta_doc_cliente   # 2026-10-07: + mantención de contrato real (ver SIN_FACTURA)
-            and _via_cierre not in ("autorizacion_cerrar", "cobro_cero", "contrato_real", "documento", "cubierta_madre")
+            and _via_cierre not in ("autorizacion_cerrar", "cobro_cero", "contrato_real", "documento", "cubierta_madre",
+                                    "pendiente_madre")
             and ((v.get("factura_tido") or "").upper() in _OT_DOCS_NOTA_VENTA)):
         _u_cierre = getattr(g, "user", None) or {}
         _es_superadmin_cierre = (_u_cierre.get("role") or "").lower() == "superadmin"
@@ -160994,7 +161097,7 @@ def ot2_api_productos_estado(vid):
 # de bloquear la firma y el cierre. Además queda una fila en mant_ot_producto_estado (maquina_id, estado 'no_esta' |
 # 'falta_stock' | 'no_revisado', quién, cuándo, motivo, foto opcional) para poder CONSULTAR los equipos pendientes por falta
 # de stock. NO se construye aquí la OT hija pendiente ni los avisos a gestión y bodega: eso lo hace «¿Qué pasó?» de la OT
-# (2026-10-20, ot_que_paso.py y _qp_aplicar, más abajo), sobre la misma relación madre/hija de los eventos.
+# (2026-10-20, ot_que_paso.py y _qp_aplicar, más abajo), sobre la misma relación madre/hija de la rama de eventos.
 def _otpe_equipo_publico(f):
     """Fila vigente de un equipo → dict para la ficha, con la hora en Chile (REGLA #6). Sin plata ni proveedores."""
     f = dict(f)
@@ -161182,6 +161285,18 @@ def ot2_api_equipo_no_esta_revertir(vid, mid):
                         "MOTIVO_REQUERIDO")
     if not _otpe_ok():
         return _ot2_err("Esta función no está disponible en este momento.", "TABLA_NO_DISPONIBLE", http=503)
+    # 🧭 2026-10-20: si el equipo ya pasó a una OT PENDIENTE por falta de stock, devolverlo a operativo aquí lo dejaría duplicado (sus
+    # tareas viven en las dos órdenes). Primero se cancela esa OT pendiente.
+    try:
+        en_pend = mysql_fetchone(
+            "SELECT h.numero_ot FROM mant_visita_tareas t JOIN mant_visitas h ON h.id = t.visita_id "
+            " WHERE h.ot_madre_id=%s AND h.ot_relacion=%s AND h.estado NOT IN ('cancelada','anulada') AND t.maquina_id=%s LIMIT 1",
+            (int(vid), _qp.REL_PENDIENTE_STOCK, int(mid)))
+    except Exception:
+        en_pend = None
+    if en_pend:
+        return _ot2_err("Este equipo ya pasó a la OT pendiente %s. Si apareció o llegó el stock, cancela primero esa orden." %
+                        (en_pend.get("numero_ot") or "pendiente"), "EQUIPO_EN_OT_PENDIENTE", http=409)
     user = current_username() or "sistema"
     db = get_db()
     try:
@@ -161303,6 +161418,13 @@ def _qp_madre_respalda(madre, cliente_hija, momento="crear"):
         aprobadas = {a.get("tipo") for a in _ot_puerta_autorizaciones_de(mid) if a.get("estado") == "aprobada"}
     except Exception:
         aprobadas = set()
+    # Una mantención preventiva de un contrato REAL: el contrato es el documento (misma regla del paso 3 de la puerta).
+    if (madre.get("tipo") or "").strip().lower() == "preventiva":
+        try:
+            if _ot_fin_contrato_real_de([mid]).get(mid, False):
+                return True, None
+        except Exception:
+            pass
     if momento == "cerrar":
         if _ot_madre_tiene_factura(mid) or ({"cerrar_sin_documento", "cobro_cero"} & aprobadas):
             return True, None
@@ -161318,27 +161440,39 @@ def _qp_madre_respalda(madre, cliente_hija, momento="crear"):
                    "agrégalo primero.")
 
 
-def _ot_puerta_via_pendiente(v, momento):
+def _ot_puerta_via_pendiente(v, momento, madre=None):
     """🧭 2026-10-20 — la vía 'pendiente_madre' de la puerta del documento: la OT PENDIENTE por falta de stock se respalda con el
-    documento de su madre (que ya lo pasó por la puerta). Devuelve el veredicto SOLO si la OT ES una pendiente (releída por id; la
-    puerta jamás lee ot_madre_id del dict `v`) cuya madre la respalda; None si debe seguir el camino normal. Al CERRAR exige además
-    la factura o boleta de la madre (o su autorización de cerrar sin documento)."""
+    documento de su madre (que ya lo pasó por la puerta).
+      · `madre` dada (solo la pasa el servidor al CREAR la pendiente, que todavía no existe): el veredicto dice si la madre la respalda;
+        si no, es un rechazo explícito con lo que hay que hacer (no hay otro camino: la pendiente nace sin documento propio).
+      · `madre` None: devuelve el veredicto SOLO si la OT ES una pendiente (releída por id; la puerta jamás lee ot_madre_id del dict `v`)
+        cuya madre la respalda; None si debe seguir el camino normal. Al CERRAR exige además la factura o boleta de la madre (o su
+        autorización de cerrar sin documento)."""
     try:
-        vid = (v or {}).get("id")
-        if not vid:
-            return None
-        h = _ot_fila_basica(vid)
-        if not h or not _qp.es_pendiente(h):
-            return None
-        if _saldo._entero(h.get("zz_monto")) > 0 or _saldo._entero(h.get("zz_envio_monto")) > 0:
-            return None   # cobra una línea propia: camino normal
-        madre = _ot_fila_basica(h["ot_madre_id"])
-        ok_c, _m = _qp_madre_respalda(madre, h.get("cliente_id"), "crear")
+        creando = madre is not None
+        if creando:
+            cliente_hija = (v or {}).get("cliente_id")
+            h = {}
+        else:
+            vid = (v or {}).get("id")
+            if not vid:
+                return None
+            h = _ot_fila_basica(vid)
+            if not h or not _qp.es_pendiente(h):
+                return None
+            if _saldo._entero(h.get("zz_monto")) > 0 or _saldo._entero(h.get("zz_envio_monto")) > 0:
+                return None   # cobra una línea propia: camino normal
+            madre = _ot_fila_basica(h["ot_madre_id"])
+            cliente_hija = h.get("cliente_id")
+        ok_c, motivo_c = _qp_madre_respalda(madre, cliente_hija, "crear")
         if not ok_c:
+            if creando:
+                return {"ok": False, "via": None, "code": "DOC_REQUERIDO", "falta": "documento", "accion": "abrir_ot_madre",
+                        "mensaje": motivo_c, "nota_venta": False, "documentos_ok": []}
             return None
         num = madre.get("numero_ot") or f"V-{int(madre['id']):05d}"
         base = {"via": "pendiente_madre", "madre_id": int(madre["id"]), "madre_numero": num}
-        if momento == "cerrar":
+        if momento == "cerrar" and not creando:
             ok_f, motivo = _qp_madre_respalda(madre, h.get("cliente_id"), "cerrar")
             if not ok_f:
                 return dict(base, ok=False, via=None, code="DOC_REQUERIDO", falta="madre_factura", accion="abrir_ot_madre",
@@ -161347,6 +161481,10 @@ def _ot_puerta_via_pendiente(v, momento):
                     docs_ya_guardados=True)
     except Exception as e:
         print(f"[ot-puerta] pendiente_madre: {type(e).__name__}: {e}", flush=True)
+        if madre is not None:   # al crear, un fallo NUNCA deja pasar: sin respuesta de la puerta no se crea nada
+            return {"ok": False, "via": None, "code": "DOC_REQUERIDO", "falta": "documento", "accion": "abrir_ot_madre",
+                    "mensaje": "No pudimos revisar el documento de la OT de origen. Intenta de nuevo en un momento.",
+                    "nota_venta": False, "documentos_ok": []}
         return None
 
 
@@ -161510,23 +161648,31 @@ def ot_api_que_paso_leer(vid):
     puede = bool(_puede_ot_accion(vid, "configurar") and not terminada)
     cands = _qp.candidatos_equipos(_qp_equipos_de(vid, v)) if (puede and v.get("cliente_id")) else []
     bodega = _qp_correos_bodega() if puede else []
+    # Quiénes recibirán la campana (solo NOMBRES, menos quien está registrando): lo decide _ot_gestion_destinatarios.
+    try:
+        gestion = _ot_gestion_destinatarios(vid, fila=v) if puede else []
+    except Exception:
+        gestion = []
     return jsonify({
         "ok": True, "catalogo": _qp.catalogo(), "terminada": terminada, "puede": puede,
         "ot": {"numero_ot": v.get("numero_ot") or f"V-{int(vid):05d}", "estado": v.get("estado"),
                "tiene_cliente": bool(v.get("cliente_id")), "es_pendiente": _qp.es_pendiente(v)},
         "equipos": cands, "registradas": _qp_historial(vid), "pendientes": _qp_pendientes_de(vid, v),
         "bodega": {"hay": bool(bodega), "correos": ([] if es_tec else bodega)},
+        "gestion": {"nombres": _qp.nombres_gestion(gestion, excluir_id=(getattr(g, "user", None) or {}).get("id"))},
         "es_tecnico": es_tec})
 
 
-def _qp_bodega_correo(v, num, cliente, n, equipos, pendiente, quien):
-    """Correo INTERNO a bodega: qué productos no llegaron, de qué OT y de qué cliente. Sale por la puerta de siempre
-    (_send_ilus_email: interruptor general + llave de paso 'comunicacion_interna', queda en el Historial). Jamás al cliente.
-    Devuelve (estado, enviados): 'enviado' | 'bloqueado' | 'sin_correos'."""
+def _qp_bodega_correo(v, num, cliente, n, equipos, pendiente, quien, gestion=None):
+    """Correo INTERNO a bodega: qué productos no llegaron, de qué OT y de qué cliente, y A QUIÉN avisar cuando lleguen (las personas
+    de `gestion` = _ot_gestion_destinatarios, la MISMA lista de la campana: hoy creador/ejecutivo del cliente y mañana el responsable
+    de la OT, sin tocar este correo). Sale por la puerta de siempre (_send_ilus_email: interruptor general + llave de paso
+    'comunicacion_interna', queda en el Historial). Jamás al cliente. Devuelve (estado, enviados): 'enviado' | 'bloqueado' | 'sin_correos'."""
     dest = _qp_correos_bodega()
     if not dest:
         return "sin_correos", []
     asunto = _brand_subject(f"Bodega · {num}: falta stock")
+    avisar_a = _qp.texto_avisar_a(gestion)
     filas = [("OT", num), ("Cliente", cliente or "—"), ("Qué pasó", n["motivo_texto"])]
     for e in equipos:
         filas.append(("Producto", _qp.resumen_equipos([e])))
@@ -161534,6 +161680,8 @@ def _qp_bodega_correo(v, num, cliente, n, equipos, pendiente, quien):
         filas.append(("Detalle", n["detalle"]))
     if pendiente:
         filas.append(("OT pendiente", pendiente))
+    if avisar_a:
+        filas.append(("Avisar a", avisar_a))
     filas.append(("Lo registró", f"{quien or 'el equipo de servicio técnico'} · {_now_chile().strftime('%d/%m/%Y %H:%M')} (hora Chile)"))
     html = _ilus_email_master({
         "subject": asunto,
@@ -161542,7 +161690,8 @@ def _qp_bodega_correo(v, num, cliente, n, equipos, pendiente, quien):
         "title": f"Faltan productos de {num}",
         "subtitle": cliente or "",
         "message": ("<p>El servicio técnico no pudo terminar esta orden porque el stock no llegó. Cuando lleguen los productos, "
-                    "avisen a servicio técnico para agendar la OT pendiente.</p>"
+                    + ("avisen a quien figura abajo en «Avisar a»" if avisar_a else "avisen a servicio técnico")
+                    + " para agendar la OT pendiente.</p>"
                     "<p><strong>Qué hacer en bodega:</strong> revisen el stock de estos productos y avisen cuándo estarán disponibles.</p>"),
         "detail_rows_html": _ilus_email_rows(filas),      # ya escapa cada celda
         "primary_cta_url": f"{_public_base_url()}/ot/{v['id']}", "primary_cta_label": "Ver la OT",
@@ -161560,25 +161709,21 @@ def _qp_bodega_correo(v, num, cliente, n, equipos, pendiente, quien):
     return ("enviado" if enviados else "bloqueado"), enviados
 
 
-def _qp_campana(v, root, num, cliente, n, equipos, pendiente, quien, quien_uid, destino_vid):
-    """Campana a la gestión: quien creó la OT + supervisores + ejecutivos de servicio técnico (menos quien lo registró). Sin plata."""
-    ids = []
-    try:
-        cre_uid, cre_name = root.get("created_by_user_id"), (root.get("created_by") or "").strip()
-        if cre_uid:
-            ids.append(int(cre_uid))
-        elif cre_name:
-            r = mysql_fetchone("SELECT id FROM app_users WHERE active=1 AND (username=%s OR nombre=%s) LIMIT 1", (cre_name, cre_name))
-            if r:
-                ids.append(int(r["id"]))
-        for r in (mysql_fetchall("SELECT id FROM app_users WHERE active=1 AND (role='supervisor' OR role LIKE 'ejecutivo%')") or []):
-            ids.append(int(r["id"]))
-    except Exception as e:
-        print(f"[qp] destinatarios de la campana: {type(e).__name__}", flush=True)
+def _qp_campana(gestion, num, cliente, n, equipos, pendiente, quien, quien_uid, destino_vid):
+    """Campana a la gestión de la OT: SOLO las personas que entrega `gestion` (= _ot_gestion_destinatarios, UN solo lugar que decide
+    a quién avisa «la gestión»; es la misma lista del correo interno), menos quien lo registró. Sin plata. Devuelve a cuántas avisó."""
     vistos, n_ok = set(), 0
-    titulo = _qp.titulo_campana(num, len(equipos))
+    try:
+        cuando = _now_chile().strftime("%d/%m %H:%M")           # hora Chile (REGLA #6): hace distinto el título de dos registros seguidos
+    except Exception:
+        cuando = None
+    titulo = _qp.titulo_campana(num, len(equipos), cuando)
     cuerpo = _qp.cuerpo_campana(cliente, equipos, n["motivo_texto"], quien, pendiente)
-    for uid in ids:
+    for p in (gestion or []):
+        try:
+            uid = int(p["id"])
+        except (KeyError, TypeError, ValueError):
+            continue
         if uid in vistos or (quien_uid and uid == int(quien_uid)):
             continue
         vistos.add(uid)
@@ -161605,9 +161750,13 @@ def _qp_aplicar(vid, v, n, cands, user, uid):
         cliente_txt = None
     if n["crea_pendiente"]:
         root_pre = mysql_fetchone("SELECT * FROM mant_visitas WHERE id=%s", (root_id,))
-        ok_d, motivo_d = _qp_madre_respalda(root_pre, v.get("cliente_id"), "crear")
-        if not ok_d:
-            return {"ok": False, "error": motivo_d, "codigo": "DOC_REQUERIDO", "http": 409}
+        # 🔏 REGLA #24: la OT pendiente nace SIN documento ni cobro propios y pasa por LA PUERTA del documento (vía 'pendiente_madre'):
+        # se apoya en el de su OT madre. Sin eso no se crea nada.
+        puerta = _ot_puerta_documento({"cliente_id": v.get("cliente_id"), "tipo": (root_pre or {}).get("tipo")}, "crear",
+                                      pendiente_de=(dict(root_pre) if root_pre else {}))
+        if not puerta.get("ok"):
+            return {"ok": False, "error": puerta.get("mensaje") or _OT_PUERTA_MSG, "codigo": "DOC_REQUERIDO", "http": 409,
+                    "falta": puerta.get("falta"), "accion": puerta.get("accion")}
     conn = get_mysql()
     try:
         conn.autocommit(False)
@@ -161653,6 +161802,11 @@ def _qp_aplicar(vid, v, n, cands, user, uid):
                 if root.get("created_by_user_id"):
                     sets.append("created_by_user_id=%s")
                     vals.append(int(root["created_by_user_id"]))
+                # El RESPONSABLE de la OT (Daniel va a pedir uno por OT): si la columna ya existe y la madre lo tiene, la pendiente lo
+                # hereda y «la gestión» de ambas es la misma persona (ver _ot_gestion_destinatarios). Sin la columna no pasa nada.
+                if root.get("responsable_user_id"):
+                    sets.append("responsable_user_id=%s")
+                    vals.append(int(root["responsable_user_id"]))
                 cur.execute("UPDATE mant_visitas SET " + ", ".join(sets) + " WHERE id=%s", tuple(vals) + (hid,))
                 # El documento de la madre, ESPEJADO (es_cobro=0, heredado): se ve en la ficha, no consume saldo ni entra al libro.
                 try:
@@ -161779,14 +161933,22 @@ def ot_api_que_paso_registrar(vid):
     avisos = {"gestion": 0, "bodega": "no_pedido"}
     if hija:
         _fac_libro_marcar(hija["id"])
+    # A quién avisa «la gestión» lo decide UNA sola función (hoy creador + ejecutivo del cliente; mañana el responsable de la OT):
+    # la misma lista alimenta la campana y el correo interno, y nada de aquí fija a mano a nadie.
     try:
-        avisos["gestion"] = _qp_campana(v, r.get("root") or v, num, r.get("cliente"), n, r["equipos"],
+        gestion = _ot_gestion_destinatarios(vid, fila=v)
+    except Exception as e:
+        print(f"[qp] destinatarios de la gestión: {type(e).__name__}", flush=True)
+        gestion = []
+    try:
+        avisos["gestion"] = _qp_campana(gestion, num, r.get("cliente"), n, r["equipos"],
                                         (hija or {}).get("numero_ot"), user, uid, (hija or {}).get("id") or vid)
     except Exception as e:
         print(f"[qp] campana: {type(e).__name__}", flush=True)
     if hija and n["avisar_bodega"]:
         try:
-            avisos["bodega"], _enviados = _qp_bodega_correo(v, num, r.get("cliente"), n, r["equipos"], hija["numero_ot"], user)
+            avisos["bodega"], _enviados = _qp_bodega_correo(v, num, r.get("cliente"), n, r["equipos"], hija["numero_ot"], user,
+                                                            gestion=gestion)
         except Exception as e:
             print(f"[qp] correo a bodega: {type(e).__name__}", flush=True)
             avisos["bodega"] = "bloqueado"
@@ -169286,8 +169448,8 @@ try:
         _ensure_otrep_item_manual_col()
         _ensure_acta_recepcion_regla()
         _ensure_ot_producto_estado()
-        _ensure_ot_que_paso()            # 🧭 2026-10-20: tabla de «¿Qué pasó?» de la OT (barata si ya está)
         _ensure_otrep_medidas()           # 📏 2026-10-20: columnas de medidas por línea y catálogo de medidas en terreno (barato si ya están)
+        _ensure_ot_que_paso()            # 🧭 2026-10-20: tabla de «¿Qué pasó?» de la OT (barata si ya está)
 except Exception as _ensure_etapa3_err:
     print(f"[ILUS][WARN] revisión etapa 3 (repuestos sugeridos / acta / acciones por producto): {_ensure_etapa3_err}", flush=True)
 
