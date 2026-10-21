@@ -93772,6 +93772,12 @@ def ot2_detalle(vid):
     # modales repetidos por producto: la ficha de hoy llega a 19 productos × 9 tareas y no puede pesar más por la barra.
     # Sin proveedores ni costos (REGLA #19 y #26): solo nombres de pieza, estados y las horas ya en Chile.
     acc_puede = bool((puede_ejecutar or puede_configurar) and not ot_solo_lectura)
+    _ACC_SALTO_LBL = {"sin_acceso": "No había acceso al equipo", "equipo_en_uso": "Estaba en uso por un socio",
+                      "cliente_no_permite": "El cliente no permitió intervenirlo", "no_encontrado": "No lo encontré en el recinto",
+                      "danado_inaccesible": "Dañado o inaccesible", "sin_energia": "Sin energía",
+                      "requiere_repuesto": "Necesita un repuesto que no tengo", "reagendar": "Hay que reagendarlo",
+                      "otro": "Otro motivo"}
+    _ACC_SALTO_SIN_AVISO = ("fuera_de_servicio", "dado_de_baja")   # esos ya tienen su propio aviso en la barra
     try:
         _np_map = _otpe_equipos_activos(vid) if any(not e.get("_interno") for e in equipos) else {}
     except Exception:
@@ -93792,7 +93798,11 @@ def ot2_detalle(vid):
               "cant": int(e.get("cantidad_doc") or 1) if _interno else 1, "sol": e.get("acc_sol") or [],
               "p": {"ped": acc_puede, "fs": acc_puede, "inc": acc_puede, "rev": _acc_rev,
                     "baja": bool(acc_puede and (_interno or not _acc_externo)),
-                    "nol": bool(acc_puede and _interno), "noe": bool(acc_puede and not _interno)}}
+                    "nol": bool(acc_puede and _interno), "noe": bool(acc_puede and not _interno),
+                    # 2026-10-21 (Daniel: «dejar uno solo… agregando manual, darle baja, todo»): la barra se queda con lo que
+                    # solo tenía el bloque «Fuera de lo normal» de abajo, que se quitó por duplicado: el manual, «No pude
+                    # revisarlo» y (más abajo) piola, cinta y los avisos de equipo saltado o con advertencia.
+                    "man": acc_puede, "salt": bool(acc_puede and not _interno)}}
         if _interno:
             _d["est"] = e.get("estado_prod")
         else:
@@ -93800,6 +93810,13 @@ def ot2_detalle(vid):
             _d["fs"] = e.get("fs_info")
             _d["np"] = _np_map.get(_eid)
             _d["bj"] = bool(e.get("dado_baja_aqui"))
+            _d["pio"] = bool(e.get("piola_aplica"))
+            _d["cin"] = bool(e.get("cinta_aplica"))
+            _d["adv"] = (e.get("estado_capturado") or "") == "advertencia"
+            _rs = (e.get("razon_saltado") or "").strip()
+            if _rs and _rs not in _ACC_SALTO_SIN_AVISO and not _d["np"]:
+                _d["sal"] = " — ".join(x for x in (_ACC_SALTO_LBL.get(_rs) or _rs.replace("_", " ").capitalize(),
+                                                   (e.get("observacion_tecnico") or "").strip()) if x)
         acc_data[("i" if _interno else "e") + str(_eid)] = _d
     acc_listas = {
         "fuera_servicio": [list(m) for m in _pe.motivos_de(_pe.ESTADO_FUERA_SERVICIO)],

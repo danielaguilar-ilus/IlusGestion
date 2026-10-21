@@ -414,8 +414,11 @@ class TestArmadoDeAccData(unittest.TestCase):
 
     def test_que_ve_cada_rol(self):
         acc, _l = self._armar(self.EQUIPOS)
-        self.assertEqual(acc["i101"]["p"], {"ped": True, "fs": True, "inc": True, "rev": True, "baja": True, "nol": True, "noe": False})
-        self.assertEqual(acc["e11"]["p"], {"ped": True, "fs": True, "inc": True, "rev": True, "baja": True, "nol": False, "noe": True})
+        # 2026-10-21: «man» (Manual) y «salt» (No pude revisarlo, solo equipos de ficha) pasaron a la barra desde el bloque quitado.
+        self.assertEqual(acc["i101"]["p"], {"ped": True, "fs": True, "inc": True, "rev": True, "baja": True, "nol": True, "noe": False,
+                                            "man": True, "salt": False})
+        self.assertEqual(acc["e11"]["p"], {"ped": True, "fs": True, "inc": True, "rev": True, "baja": True, "nol": False, "noe": True,
+                                           "man": True, "salt": True})
         # técnico (interno, elevado o externo): puede pedir, avisar e informar; NO devolver a operativo (gestión)
         acc, _l = self._armar(self.EQUIPOS, tecnico=True)
         self.assertFalse(acc["i101"]["p"]["rev"])
@@ -579,14 +582,27 @@ class TestBarraDeAcciones(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_los_botones_viejos_siguen_pero_apuntan_al_flujo_nuevo(self):   # REGLA #4.2
-        self.assertIn("No pude revisarlo", D)                                              # se conserva el botón que ya existía
-        self.assertIn("otdSaltarEquipo({{ e.id }})", D)
+        # 2026-10-21: el bloque «Fuera de lo normal» de la tarjeta se quitó por duplicado (Daniel); sus botones viven en la barra.
+        self.assertIn("'No pude revisarlo'", ACC_JS)                                         # se conserva el botón que ya existía
+        self.assertIn("window.otdSaltarEquipo(d.id)", ACC_JS)
+        self.assertIn("async function otdSaltarEquipo(mid)", D)
         f = D[D.index("window.otdFueraServicio = async function"):][:700]
         self.assertIn("window.otdAccAbrir('fs', 'e' + mid)", f)
         b = D[D.index("window.otdBajaAbrir = function"):][:600]
         self.assertIn("window.otdAccAbrir('baja', 'e' + mid)", b)
         self.assertIn("Solicitar repuesto", D)                                             # el modal clásico (piola, cinta, manual)
         self.assertIn("Cambio de piola", D)
+        self.assertIn("window.otdRepAbrir(mid, 'repuesto', 'docs')", ACC_JS)                 # Manual desde la barra
+        self.assertIn("window.otdRepAbrir(mid, a)", ACC_JS)                                  # Piolas / Cinta desde la barra
+
+    def test_un_solo_bloque_de_acciones_por_equipo(self):
+        """2026-10-21 (Daniel: «quitar el duplicado que sale en la OT y dejar uno solo, el que hicimos ayer»)."""
+        self.assertNotIn('<div class="otd-desv" data-mid="{{ e.id }}">', D)
+        self.assertNotIn('onclick="otdFueraServicio({{ e.id }}, false)"', D)
+        self.assertNotIn('onclick="otdBajaAbrir({{ e.id }})"', D)
+        self.assertIn('id="otdRepLista-{{ e.id }}"', D)                                       # la lista de pedidos del equipo sigue
+        for txt in ("'Manual'", "'Piolas'", "'Cinta'", "'No se pudo revisar'", "Quedó con advertencia en una visita anterior"):
+            self.assertIn(txt, ACC_JS, txt)
 
 
 if __name__ == "__main__":

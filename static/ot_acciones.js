@@ -214,6 +214,9 @@
         out.push(banner('', 'Fuera de servicio', 'sign-stop-fill', f.motivo || '', desdeTxt(f.desde, f.por), f.riesgo, rv));
       }
       if (bj) out.push(banner('baja', 'Dado de baja en esta OT', 'slash-circle-fill', 'Salió del parque del cliente. Un administrador puede restaurarlo desde la ficha del cliente.', '', false, ''));
+      // 2026-10-21: lo que antes avisaba el bloque «Fuera de lo normal» de abajo (se quitó por duplicado, Daniel).
+      if (d.sal && !fs && !bj) out.push(banner('nl', 'No se pudo revisar', 'skip-forward-fill', d.sal, '', false, ''));
+      if (d.adv && !fs && !bj && !d.sal) out.push('<div class="oa-stbar"><span class="oa-st amber"><i class="bi bi-exclamation-triangle-fill"></i> Quedó con advertencia en una visita anterior</span></div>');
       if (np) {
         var quitar = p.rev ? ' <button type="button" class="oa-lnk muted" data-a="quitarnp" data-key="' + esc(key) + '" style="min-height:30px;font-size:13.5px"><i class="bi bi-arrow-counterclockwise"></i> Quitar la marca</button>' : '';
         out.push('<div class="oa-stbar"><span class="oa-st ' + (np.estado === 'falta_stock' ? 'amber' : 'gray') + '"><i class="bi bi-box-seam"></i> ' + esc(np.chip) + '</span>' + quitar + '</div>');
@@ -241,12 +244,25 @@
       out.push('<button type="button" class="oa-btn blue oa-primary" data-a="abrir" data-f="pedir" data-key="' + esc(key) + '"><i class="bi bi-wrench-adjustable"></i> Pedir repuesto' +
         '<span class="oa-eqn">· ' + esc(sinPar(d.n)) + '</span></button>');
     }
+    // 2026-10-21 (Daniel: «agregar poder ver el manual del equipo y las piolas… que los técnicos vean las OT como una ayuda»):
+    // el manual del modelo y sus piolas (o la cinta de una trotadora) a un toque, sin tener que empezar un pedido.
+    var ay = [], vivo = !bj && !nlTotal && !np;
+    if (p.man) ay.push(['manual', 'file-earmark-pdf', 'Manual', inter ? 'Del producto y sus repuestos' : 'Del equipo y sus repuestos']);
+    if (d.pio && p.ped && vivo) ay.push(['piola', 'link-45deg', 'Piolas', 'Las del modelo y pedir cambio']);
+    if (d.cin && p.ped && vivo) ay.push(['cinta', 'arrow-left-right', 'Cinta', 'Pedir cambio de cinta']);
+    if (ay.length) {
+      out.push('<div class="oa-lbl oa-lbl-ay"><i class="bi bi-life-preserver"></i> Ayuda</div><div class="oa-grid oa-ayuda">' + ay.map(function (x, i) {
+        return '<button type="button" class="oa-btn line' + (ay.length % 2 === 1 && i === ay.length - 1 ? ' wide' : '') + '" data-a="' + x[0] + '" data-f="' + x[0] + '" data-key="' + esc(key) + '" title="' + esc(x[3]) + '">' +
+          '<i class="bi bi-' + x[1] + '"></i><span>' + esc(x[2]) + '<small>' + esc(x[3]) + '</small></span></button>';
+      }).join('') + '</div>');
+    }
     var g = [];
     if (p.fs && !fs && !bj && !nlTotal && !np) g.push(['fs', 'sign-stop', 'No se puede usar', 'Déjalo fuera de servicio']);
     if (p.baja && !bj && !nlTotal && !np) g.push(['baja', 'slash-circle', 'No tiene arreglo', inter ? 'Dar de baja' : 'Dar de baja del cliente']);
     if (inter && p.nol && !fs && !bj && !nl) g.push(['nollego', 'box-seam', 'No llegó', 'No vino en el despacho']);
     if (!inter && p.noe && !fs && !bj && !np) g.push(['noesta', 'box-seam', 'No está / no llegó', 'En el lugar o por falta de stock']);
     if (p.inc && !bj) g.push(['incidencia', 'megaphone', 'Informar incidencia', 'Con foto, para bodega']);
+    if (!inter && p.salt && !d.sal && !fs && !bj && !np) g.push(['saltar', 'skip-forward', 'No pude revisarlo', 'Queda escrito por qué', 'saltar']);
     // 2026-10-20: «¿Qué le pasa a este equipo?» va PRIMERO en «Fuera de lo normal», sin quitar ninguno de los otros botones; el pulso se
     // queda en «Pedir repuesto». En el computador es un botón compacto en la misma línea; en el celular sigue ancho y cómodo para el dedo.
     var puedeDiag = !bj && !nlTotal && !np && (p.ped || g.length > 0);
@@ -255,7 +271,7 @@
         (puedeDiag ? '<button type="button" class="oa-btn oa-diag" data-a="abrir" data-f="diag" data-key="' + esc(key) + '" title="Te ayudo a decidir qué hacer">' +
           '<i class="bi bi-clipboard2-pulse"></i><span>¿Qué le pasa a ' + (inter ? 'este producto' : 'este equipo') + '?<small>Te ayudo a decidir qué hacer</small></span></button>' : '') +
         (g.length ? '<div class="oa-grid">' + g.map(function (x, i) {
-          return '<button type="button" class="oa-btn line' + (g.length % 2 === 1 && i === g.length - 1 ? ' wide' : '') + '" data-a="abrir" data-f="' + x[0] + '" data-key="' + esc(key) + '" title="' + esc(x[3]) + '">' +
+          return '<button type="button" class="oa-btn line' + (g.length % 2 === 1 && i === g.length - 1 ? ' wide' : '') + '" data-a="' + (x[4] || 'abrir') + '" data-f="' + x[0] + '" data-key="' + esc(key) + '" title="' + esc(x[3]) + '">' +
             '<i class="bi bi-' + x[1] + '"></i><span>' + esc(x[2]) + '<small>' + esc(x[3]) + '</small></span></button>';
         }).join('') + '</div>' : ''));
     }
@@ -1747,6 +1763,10 @@
     if (a === 'abrir') return abrir(el.getAttribute('data-f'), key);
     if (a === 'seg') return abrir('seg', key);
     if (a === 'seguir') return abrir('pedir', key, { borrador: true });
+    var mid = d.k === 'i' ? 'i' + d.id : d.id;
+    if (a === 'manual') { if (window.otdRepAbrir) window.otdRepAbrir(mid, 'repuesto', 'docs'); return; }
+    if (a === 'piola' || a === 'cinta') { if (window.otdRepAbrir) window.otdRepAbrir(mid, a); return; }
+    if (a === 'saltar') { if (typeof window.otdSaltarEquipo === 'function') window.otdSaltarEquipo(d.id); return; }
     if (a === 'borrar') {
       window.ilusConfirm({ title: '¿Borrar el pedido sin terminar?', message: 'Se borran la foto y las piezas que ya habías elegido.', okLabel: 'Sí, borrar', cancelLabel: 'No, dejarlo', danger: true })
         .then(function (ok) { if (ok) borrarBorrador(key).then(function () { pintar(key); }); });

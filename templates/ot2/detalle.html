@@ -5482,143 +5482,15 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               {% endif %}
             </div>
 
-            {# ⛔ FUERA DE SERVICIO ══════════════════════════════════════
-               🆕 2026-09-02 (Daniel: "botón fuera de servicio por equipo
-               que levante una urgencia... y que segregue los equipos como
-               baja, o mejor como fuera de servicio").
-               OJO con la diferencia, que no es cosmética: dar de BAJA
-               significa que el equipo ya no es del cliente -- sale de su
-               parque y de las mantenciones futuras. Una máquina detenida
-               SIGUE siendo suya: hay que verla, arreglarla y cobrarla. Por
-               eso esto marca `fuera de servicio`, no `baja`. #}
-            {% set _fs = (e.estado_capturado or '') == 'fuera_servicio' %}
-            {# 🔒 2026-09-11: "fuera de servicio" marca el estado del EQUIPO
-               DEL CLIENTE en su ficha real -- no aplica a una tarjeta
-               sintética de trabajo interno (e._interno), que no tiene
-               ficha. #}
-            {#- 🔧 2026-09-20 (Daniel: "son opciones que están fuera del
-                checklist, extraordinarias... si está todo normal operan el
-                checklist; si no, pueden dar de baja, dejar fuera de
-                servicio, solicitar un repuesto o un cambio de piola"). El
-                botón de fuera de servicio de 2026-09-02 pasa a vivir acá,
-                junto a las otras tres salidas, en un solo bloque "Fuera de
-                lo normal". Quién puede: técnico asignado o gestión
-                (puede_configurar), nunca con la OT sellada. -#}
+            {#- 🧰 2026-10-21 (Daniel: «quitar el duplicado que sale en la OT y dejar uno solo, el que hicimos ayer…
+                agregando manual, darle baja, todo»): el bloque «Fuera de lo normal» que vivía aquí (2026-09-02 / 09-20:
+                fuera de servicio, solicitar repuesto, manual, piola, cinta, no pude revisarlo, dar de baja) repetía la
+                barra azul de arriba (static/ot_acciones.js). Todo lo que tenía pasó a la barra: sus botones (Manual,
+                Piolas, Cinta, No pude revisarlo) y sus avisos (fuera de servicio con su diagnóstico, dado de baja,
+                «No se pudo revisar», advertencia de una visita anterior, repuesto en curso). Aquí queda SOLO la lista
+                de solicitudes de repuesto de este equipo en esta OT, con su estado y su ticket. -#}
             {% if not e._interno %}
-            {% set _puede_desv = (puede_ejecutar or puede_configurar) and not ot_solo_lectura %}
-            <div class="otd-desv" data-mid="{{ e.id }}">
-              <div class="otd-desv-head">
-                <i class="bi bi-exclamation-diamond-fill"></i>
-                <b>Fuera de lo normal</b>
-                <small>Si todo está bien, sigue con el checklist. Si no, estas son las salidas.</small>
-              </div>
-              {% if e.dado_baja_aqui %}
-              <div class="otd-fs-badge baja">
-                <i class="bi bi-trash3-fill"></i>
-                <span><b>Dado de baja en esta OT.</b> Salió del parque del cliente{% if e.observacion_tecnico %} — {{ e.observacion_tecnico }}{% endif %}. Un administrador puede restaurarlo desde la ficha del cliente.</span>
-              </div>
-              {% else %}
-              {% if _fs %}
-              <div class="otd-fs-badge">
-                <i class="bi bi-exclamation-octagon-fill"></i>
-                {#- 🔀 2026-09-20 (Daniel: "debe dejar muy claro que el equipo
-                    está fuera de servicio... quisiera que me dejes un
-                    diagnóstico indicando exactamente el porqué"). El
-                    checklist YA se excluye solo (estado_revision=
-                    'falla_detectada', ver _ot_maquinas_excluidas_cierre) --
-                    lo que faltaba era mostrar el motivo acá: antes era
-                    genérico ("El cliente lo tiene detenido") sin decir POR
-                    QUÉ, a diferencia del badge de "No se pudo revisar" de
-                    más abajo, que sí interpola observacion_tecnico. -#}
-                <span><b>Fuera de servicio.</b> El cliente lo tiene detenido.{% if e.observacion_tecnico %} <strong>Diagnóstico:</strong> {{ e.observacion_tecnico }}{% endif %}</span>
-                {% if _puede_desv %}
-                <button type="button" class="otd-fs-btn ok"
-                        onclick="otdFueraServicio({{ e.id }}, true)">
-                  <i class="bi bi-arrow-counterclockwise"></i> Volver a operativo</button>
-                {% endif %}
-              </div>
-              {% elif e.rep_abiertas %}
-              <div class="otd-fs-badge alerta">
-                <i class="bi bi-exclamation-triangle-fill"></i>
-                <span><b>Operativo, con alerta.</b> Tiene {{ e.rep_abiertas }} solicitud{{ 'es' if e.rep_abiertas > 1 }} de repuesto en curso.</span>
-              </div>
-              {% elif (e.estado_capturado or '') == 'advertencia' %}
-              <div class="otd-fs-badge alerta">
-                <i class="bi bi-exclamation-triangle-fill"></i>
-                <span><b>Operativo, con alerta.</b> Quedó marcado con advertencia en una visita anterior.</span>
-              </div>
-              {#- 🔀 2026-09-20 (Daniel, en vivo sobre OT-2026-00222: "no pude
-                  revisarlo... agrégalo a las desviaciones", "la observación
-                  está de más, al final igual me pides un diagnóstico"). La
-                  nota de "Saltado" que antes vivía junto al textarea de
-                  observación (ya eliminado) se muestra acá como una salida
-                  más -- mismo lenguaje que fuera de servicio/con alerta.
-                  'fuera_de_servicio' y 'dado_de_baja' quedan afuera: esos
-                  YA tienen su propio badge más arriba en este mismo chain. -#}
-              {% elif e.razon_saltado and e.razon_saltado not in ('fuera_de_servicio', 'dado_de_baja') %}
-              <div class="otd-fs-badge alerta">
-                <i class="bi bi-skip-forward-fill"></i>
-                <span><b>No se pudo revisar.</b> {{ e.razon_saltado | replace('_',' ') | title }}{% if e.observacion_tecnico %} — {{ e.observacion_tecnico }}{% endif %}</span>
-              </div>
-              {% endif %}
-              {% if _puede_desv %}
-              <div class="otd-desv-btns">
-                {% if not _fs %}
-                <button type="button" class="otd-fs-btn"
-                        onclick="otdFueraServicio({{ e.id }}, false)">
-                  <i class="bi bi-exclamation-octagon"></i> Fuera de servicio</button>
-                {% endif %}
-                <button type="button" class="otd-fs-btn rep"
-                        onclick="otdRepAbrir({{ e.id }}, 'repuesto')">
-                  <i class="bi bi-tools"></i> Solicitar repuesto</button>
-                {#- 📖 2026-10-01 (Daniel: "te pedí agregar los manuales o manual de uso para tener acceso a eso"):
-                    acceso directo al MANUAL del equipo (y sus piolas) sin tener que entrar a pedir un repuesto.
-                    Abre el mismo modal en la pestaña "Manual del equipo"; solo se ve. -#}
-                <button type="button" class="otd-fs-btn man"
-                        onclick="otdRepAbrir({{ e.id }}, 'repuesto', 'docs')">
-                  <i class="bi bi-file-earmark-pdf"></i> Manual del equipo</button>
-                {#- Solo en equipos de polea / selector de pesos (y racks,
-                    opcional) -- Daniel 2026-09-20. Ver piola_aplica. -#}
-                {% if e.piola_aplica %}
-                <button type="button" class="otd-fs-btn piola"
-                        onclick="otdRepAbrir({{ e.id }}, 'piola')">
-                  <i class="bi bi-link-45deg"></i> Cambio de piola</button>
-                {% endif %}
-                {% if e.cinta_aplica %}
-                <button type="button" class="otd-fs-btn piola"
-                        onclick="otdRepAbrir({{ e.id }}, 'cinta')">
-                  <i class="bi bi-arrow-left-right"></i> Cambio de cinta</button>
-                {% endif %}
-                {#- 🔀 2026-09-20 (Daniel: "el no pude revisarlo, también
-                    déjalo fuera de lo normal... porque me pides un
-                    argumento"). Movido acá tal cual desde el bloque de
-                    Observación (mismo botón, mismo otdSaltarEquipo() -- ese
-                    ya pide la razón + un motivo ≥10 caracteres por sí solo,
-                    no dependía del textarea que se quitó). Mismo candado de
-                    siempre: si ya está saltado, no se vuelve a ofrecer. -#}
-                {% if not e.razon_saltado %}
-                <button type="button" class="otd-fs-btn"
-                        onclick="otdSaltarEquipo({{ e.id }})">
-                  <i class="bi bi-skip-forward-fill"></i> No pude revisarlo</button>
-                {% endif %}
-                {#- 🔒 2026-09-20 (revisión): dar de baja saca el equipo del
-                    parque del cliente -- reservado a técnico INTERNO o
-                    gestión, igual que la baja desde la ficha (superadmin/
-                    mant_equipos_baja). El externo sigue viendo fuera de
-                    servicio y solicitar repuesto, que son reversibles. -#}
-                {% if not es_tecnico_externo %}
-                <button type="button" class="otd-fs-btn baja"
-                        onclick="otdBajaAbrir({{ e.id }})">
-                  <i class="bi bi-trash3"></i> Dar de baja</button>
-                {% endif %}
-              </div>
-              {% endif %}
-              {% endif %}
-              {#- Solicitudes ya levantadas para este equipo en ESTA OT, con
-                  su estado en la trayectoria (bodega → proveedor → instalado)
-                  y el ticket que las agrupa. Se repinta por JS tras crear una
-                  nueva (otdRepRefrescar) sin recargar. -#}
-              <div class="otd-rep-lista" id="otdRepLista-{{ e.id }}"{% if not e.rep_solicitudes %} style="display:none"{% endif %}>
+            <div class="otd-rep-lista" id="otdRepLista-{{ e.id }}"{% if not e.rep_solicitudes %} style="display:none"{% endif %}>
                 {% for s in e.rep_solicitudes or [] %}
                 <div class="otd-rep-it {{ 'abierta' if s.abierta else 'cerrada' }}">
                   <i class="bi {{ 'bi-link-45deg' if s.origen == 'piola' else ('bi-arrow-left-right' if s.origen == 'cinta' else 'bi-tools') }}"></i>
@@ -5633,7 +5505,6 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                 </div>
                 {% endfor %}
               </div>
-            </div>
             {% endif %}
             {#- 🧰 2026-10-18 (Etapa 3): las solicitudes de repuesto de un PRODUCTO de la revisión (item_manual_id),
                 con su estado y su ticket, igual que las de un equipo de ficha (otdRepRefrescar('i' + id) las repinta
