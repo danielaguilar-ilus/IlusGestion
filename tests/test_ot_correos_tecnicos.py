@@ -601,7 +601,7 @@ class TestPuntoUnico(unittest.TestCase):
         self.assertIn("29/10/2026", nuevo["html"])                                   # el nuevo recibe la fecha NUEVA
         viejo = next(o for o in self.m.outbox if o["to"] == "ana@sphs.cl")
         self.assertIn("26/10/2026", viejo["html"])                                   # al anterior, lo que tenía en su calendario
-        self.assertIn("ya no está a tu cargo", viejo["asunto"])
+        self.assertIn("Ajuste en tu agenda", viejo["asunto"])                        # tono suave, no «te quité la OT»
 
     def test_el_motivo_del_cambio_solo_va_en_reagendada_y_cancelada(self):
         # reasignar y mover la fecha a la vez, con un motivo escrito: al técnico que SALE y al que ENTRA no se les muestra
@@ -1151,6 +1151,9 @@ class TestSiembraDePlantillas(unittest.TestCase):
             if "estado='ot_asignada'" in sql:                       # la lectura de 'ot_asignada' (asunto y cuerpo)
                 a = por_slug.get("ot_asignada")
                 return {"id": 1, "asunto": a[0], "cuerpo": a[1]} if a else None
+            if "asunto, cuerpo" in sql:                             # lectura de una plantilla por su slug (semillas anteriores)
+                a = por_slug.get(params[1])
+                return {"id": 7, "asunto": a[0], "cuerpo": a[1]} if a else None
             return {"id": 7} if params[1] in por_slug else None     # ¿ya existe esa plantilla?
 
         def execute(sql, params=()):
@@ -1193,6 +1196,29 @@ class TestSiembraDePlantillas(unittest.TestCase):
         self.assertIn("{{direccion}}", p[1])
         self.assertIn("{{notas_html}}", p[1])
         self.assertIn("{{link_ot}}", p[1])
+
+    def test_desasignada_sin_editar_pasa_al_tono_suave(self):
+        a0, c0 = O.SEMILLAS_ANTERIORES["ot_desasignada_tecnico"][0]
+        self.assertIn("ya no está a tu cargo", a0)                                       # la versión que ya está en producción
+        amb, capt = self.mundo([("ot_desasignada_tecnico", a0, c0.replace("\n", "\r\n"))])
+        amb["_ensure_comm_template_ot_tecnicos"]()
+        ups = [u for u in capt["updates"] if "comm_templates" in u[0]]
+        self.assertEqual(len(ups), 1)
+        sql, p = ups[0]
+        self.assertIn("WHERE id=%s AND cuerpo=%s", sql)                                   # a prueba de carreras
+        self.assertEqual((p[0], p[1]), O.SEMILLAS["ot_desasignada_tecnico"])
+        self.assertIn("Ajuste en tu agenda", p[0])
+
+    def test_desasignada_editada_por_una_persona_no_se_toca(self):
+        amb, capt = self.mundo([("ot_desasignada_tecnico", "Aviso a {{nombre_tecnico}}", "<p>Texto de Daniel</p>")])
+        amb["_ensure_comm_template_ot_tecnicos"]()
+        self.assertEqual([u for u in capt["updates"] if "comm_templates" in u[0]], [])
+
+    def test_desasignada_ya_en_tono_suave_no_se_reescribe(self):
+        a1, c1 = O.SEMILLAS["ot_desasignada_tecnico"]
+        amb, capt = self.mundo([("ot_desasignada_tecnico", a1, c1)])
+        amb["_ensure_comm_template_ot_tecnicos"]()
+        self.assertEqual(capt["updates"], [])
 
     def test_la_semilla_ot_asignada_conserva_lo_que_ya_tenia(self):
         amb, _c = self.mundo([])
@@ -1657,10 +1683,16 @@ class TestOtrosCaminosYTextos(unittest.TestCase):
         self.assertIn("_mant_ot_email_tecnico_creacion(vid)", s)
         self.assertLess(s.index("conn.commit()"), s.index("_mant_ot_email_tecnico_creacion(vid)"))
 
-    def test_la_semilla_de_desasignada_ya_no_dice_que_se_asigno_a_otra_persona(self):
-        cuerpo = O.SEMILLAS["ot_desasignada_tecnico"][1]
-        self.assertNotIn("se asignó a otra persona", cuerpo)
-        self.assertIn("no figuras como técnico", cuerpo)
+    def test_la_semilla_de_desasignada_no_suena_a_castigo(self):
+        """Daniel (20-oct): «no digas "te quité la OT"… algo más sutil, porque se sentiría como un castigo»."""
+        asunto, cuerpo = O.SEMILLAS["ot_desasignada_tecnico"]
+        texto = (asunto + " " + cuerpo).lower()
+        for malo in ("se asignó a otra persona", "no figuras", "a tu cargo", "te quit", "quitamos", "sacamos", "castigo"):
+            self.assertNotIn(malo, texto, malo)
+        self.assertIn("ajuste en tu agenda", texto)
+        self.assertIn("gracias por tu disposición", texto)
+        self.assertIn("{{link_ot}}", cuerpo)                                  # conserva el botón a la OT
+        self.assertNotIn("{{costo", cuerpo)                                   # y sigue sin plata (REGLA #19/#26)
 
     def test_las_ot_del_calendario_rapido_muestran_sus_equipos(self):
         lect = TestLecturas()

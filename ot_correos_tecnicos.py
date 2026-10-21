@@ -768,12 +768,14 @@ SEMILLAS = {
              "Abre el archivo adjunto y el evento se borra de tu calendario.")
         + _tabla("#dc2626", _FILAS_OT + _f("Estaba agendada para", "{{fecha}} · {{horario}}") + "{{motivo_html}}")
         + _boton("Ver orden de trabajo")),
+    # 2026-10-20 (Daniel: «no digas "te quité la OT"… di algo más sutil, porque se sentiría como un castigo»): el aviso
+    # de una OT que pasa a otra persona habla de un AJUSTE de la agenda y agradece; nunca de quitar ni de «ya no figuras».
     "ot_desasignada_tecnico": (
-        "OT {{ot}} ya no está a tu cargo",
+        "Ajuste en tu agenda · OT {{ot}}",
         _saludo("#6b7280")
-        + _p("Ya <strong>no figuras como técnico</strong> de la orden de trabajo de abajo (se reasignó o se reorganizó el "
-             "equipo). Ya no la tienes a tu cargo y puedes liberar ese horario: "
-             "abre el archivo adjunto y el evento se borra de tu calendario.")
+        + _p("Hubo un <strong>ajuste en tu agenda</strong>: la orden de trabajo de abajo la atenderá otra persona del "
+             "equipo. Gracias por tu disposición; no tienes que hacer nada más.")
+        + _p("Si abres el archivo adjunto, ese horario se libera en tu calendario.")
         + _tabla("#6b7280", _FILAS_OT + _f("Estaba agendada para", "{{fecha}} · {{horario}}") + "{{motivo_html}}")
         + _boton("Ver orden de trabajo")),
     "agenda_tecnico_manana": (
@@ -788,6 +790,21 @@ SEMILLAS = {
 
 # Se siembran SOLO si no existen. 'ot_asignada' se maneja aparte (ya existía; ver arriba).
 SEMILLAS_NUEVAS = tuple(k for k in SEMILLAS if k != "ot_asignada")
+
+# Versiones ANTERIORES de una semilla ya sembrada. Si en la base la plantilla sigue siendo EXACTAMENTE una de estas (nadie la
+# editó), se actualiza a la versión vigente de SEMILLAS; si una persona la tocó, queda como está (mismo criterio que
+# 'ot_asignada'). Se usa para mejorar el tono de un texto que todavía no editó nadie (ver _ensure_comm_template_ot_tecnicos).
+SEMILLAS_ANTERIORES = {
+    "ot_desasignada_tecnico": [(
+        "OT {{ot}} ya no está a tu cargo",
+        _saludo("#6b7280")
+        + _p("Ya <strong>no figuras como técnico</strong> de la orden de trabajo de abajo (se reasignó o se reorganizó el "
+             "equipo). Ya no la tienes a tu cargo y puedes liberar ese horario: "
+             "abre el archivo adjunto y el evento se borra de tu calendario.")
+        + _tabla("#6b7280", _FILAS_OT + _f("Estaba agendada para", "{{fecha}} · {{horario}}") + "{{motivo_html}}")
+        + _boton("Ver orden de trabajo")),
+    ],
+}
 
 _TOKEN = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 

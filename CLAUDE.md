@@ -1041,5 +1041,17 @@ Incidente real: el asistente sumaba por detrás «Revisión — Registro por equ
 
 ---
 
+## 🧾 REGLA #34 — El costo de la OT y el anexo del proveedor son UN solo valor (no negociable)
+
+**Pedido explícito de Daniel (2026-10-20), con la OT 239 y el Anexo 221 firmado por $370.000 mientras la OT decía «costo no declarado»: «no son dos valores, es uno solo… lo que estamos pagando tiene que estar reflejado allí… hazlo obligatorio».**
+
+- Lo que ILUS le paga al proveedor en una OT (`costo_proveedor` + `costo_despacho`) ES el total de su anexo **vivo** (no rechazado ni anulado): un ítem «Despacho» es el `costo_despacho` y el resto el `costo_proveedor`. Lógica pura y probada en `ot_anexo_costo.py`; en `app.py`: `_ot_anexo_vivo`, `_ot_anexo_alinear_costo`, `_ot_anexo_costo_guardia`.
+- **El anexo manda:** al crearlo, corregirlo o firmarlo, la OT queda con el mismo costo (constancia en la bitácora; el lote de Facturación de proveedor lo sigue: REGLA #29). Una OT abierta con el costo sin declarar y un anexo vivo se completa sola al abrirla y al aprobar el cierre.
+- **Mientras haya anexo vivo, el costo no se escribe «a mano» por otro camino:** `POST /ot/api/finanzas/<id>`, `POST /ot/api/<id>/costo-proveedor` y el PUT de la OT responden 409 `COSTO_ES_DEL_ANEXO` si el cambio no suma lo mismo que el anexo (volver a guardar lo mismo no se bloquea). Para cambiarlo: corregir el monto en el anexo (si no está firmado) o emitir uno nuevo (si ya está firmado). Si la OT no coincide, la ficha ofrece «Usar el valor del anexo» (`POST /ot/api/<id>/costo-desde-anexo`).
+- Una OT cerrada es evidencia: nunca se toca. Un técnico nunca ve nada de esto (es plata: REGLA #26).
+- Todo camino NUEVO que escriba el costo de una OT pasa por `_ot_anexo_costo_guardia`; todo camino que cambie un anexo llama a `_ot_anexo_alinear_costo`. Las OT que ya difieren se listan (solo superadmin) en `GET /ot/api/anexos/vinculo-costos`. Pruebas: `tests/test_ot_anexo_costo.py`.
+
+---
+
 _Última actualización: 2026-10-20_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_
