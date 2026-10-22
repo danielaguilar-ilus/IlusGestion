@@ -2147,7 +2147,8 @@ class TestCableado(unittest.TestCase):
             i = valores.index(H.TIPO_AVISO)
             self.assertEqual(valores[i:i + 2], [H.TIPO_AVISO, H.TIPO_AVISO_TOMA], "juntos y en ese orden")
             # 2026-10-21: lo que se agrega después va DETRÁS (nada se reordena, REGLA #18): «repuesto_nuevo» (aviso de solicitud de repuesto).
-            self.assertEqual(valores[i + 2:], ["repuesto_nuevo"], "al FINAL: nada se reordena (REGLA #18)")
+            # 2026-10-21 (REGLA #41): detrás de «repuesto_nuevo» vino «repuesto_tecnico» (la campana al técnico que pidió un repuesto).
+            self.assertEqual(valores[i + 2:], ["repuesto_nuevo", "repuesto_tecnico"], "al FINAL: nada se reordena (REGLA #18)")
             self.assertEqual(valores.count(H.TIPO_AVISO), 1)
             self.assertEqual(valores[valores.index("ot_responsable") + 1], H.TIPO_AVISO)
             self.assertIn("ot_pendiente_stock", valores)

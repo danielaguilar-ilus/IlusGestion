@@ -750,8 +750,10 @@ class TestCola(unittest.TestCase):
 class TestEstadoInicial(unittest.TestCase):
     def test_con_la_tabla_vacia_solo_no_salen_los_que_ya_estaban_apagados_por_configuracion_o_codigo(self):
         # 2026-10-21 (REGLA #37): «OT terminada: aviso al cliente» NACE apagado (OT_TERMINADA_CLIENTE_ACTIVA, REGLA #22).
+        # 2026-10-21 (solicitud de repuesto, REGLA #41): los tres correos INTERNOS de Repuestos nacen apagados (REPUESTOS_CORREOS_ACTIVOS).
         hoy_apagados_por_config = {"ret_comprobante_firma", "mant_recordatorio_visita", "mant_factura_pendiente",
-                                   "prospecto_oferta_auto_1", "prospecto_oferta_auto_2", "ot_terminada_cliente"}
+                                   "prospecto_oferta_auto_1", "prospecto_oferta_auto_2", "ot_terminada_cliente",
+                                   "rep_nueva", "rep_vencida", "rep_lista_tecnico"}
         hoy_apagados_por_codigo = {"acceso_alerta_login"}
         for c in R.listar():
             e = R.estado_efectivo(c, environ={})
@@ -973,7 +975,8 @@ RUTAS_PANTALLA = (("comm_correos_listar", ()), ("comm_correos_cambiar", (K,)), (
                   ("comm_correos_prueba", (K,)), ("comm_correos_cambios", (K,)))
 VARIABLES_DEL_REGISTRO = sorted({cond["variable"] for c in R.REGISTRO for cond in c["condiciones"]})
 APAGADOS_HOY = {"ret_comprobante_firma", "mant_recordatorio_visita", "mant_factura_pendiente", "prospecto_oferta_auto_1",
-                "prospecto_oferta_auto_2", "acceso_alerta_login", "ot_terminada_cliente"}     # 2026-10-21: el aviso al cliente de la OT terminada nace apagado
+                "prospecto_oferta_auto_2", "acceso_alerta_login", "ot_terminada_cliente",     # 2026-10-21: el aviso al cliente de la OT terminada nace apagado
+                "rep_nueva", "rep_vencida", "rep_lista_tecnico"}      # 2026-10-21: los tres correos internos de Repuestos nacen apagados (REGLA #41)
 
 
 class _PantallaBase(unittest.TestCase):

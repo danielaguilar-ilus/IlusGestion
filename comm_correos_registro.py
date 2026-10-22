@@ -62,7 +62,7 @@ MODULOS_UI = (
     {"clave": "prospectos", "nombre": "Prospectos de mantención", "icono": "bi-megaphone",
      "descripcion": "Ofertas del plan de mantención a clientes de instalación (pasos 1 a 4 y campaña automática)."},
     {"clave": "repuestos", "nombre": "Repuestos y compras", "icono": "bi-gear-wide-connected",
-     "descripcion": "Solicitudes de compra de repuestos a proveedores."},
+     "descripcion": "Solicitudes de compra de repuestos a proveedores y avisos internos de los pedidos de repuesto de las OT."},
     {"clave": "catalogo", "nombre": "Catálogo", "icono": "bi-box-seam",
      "descripcion": "Manuales de producto que se envían por correo."},
     {"clave": "accesos", "nombre": "Accesos y usuarios", "icono": "bi-shield-lock",
@@ -213,6 +213,12 @@ _TK_TEST = _cond("TK_TEST_EMAIL_TO", "vacio", "info",
                  "Modo prueba de Tickets encendido (TK_TEST_EMAIL_TO): estos correos se redirigen a una casilla de pruebas.")
 
 _TK_PAUSA = "No sale si el ticket tiene las notificaciones pausadas (tickets importados sin asignar)."
+
+# Los correos internos de Repuestos nacen APAGADOS (2026-10-21): los enciende Daniel con su «sí» (misma lógica de OT_TERMINADA_CLIENTE_ACTIVA).
+_REP_CORREOS = _cond("REPUESTOS_CORREOS_ACTIVOS", "verdadero_amplio", "todo",
+                     "Los correos internos de Repuestos están encendidos (REPUESTOS_CORREOS_ACTIVOS).",
+                     "Apagado por configuración: REPUESTOS_CORREOS_ACTIVOS no está encendida. Encenderla requiere la autorización explícita de "
+                     "Daniel (REGLAS #22 y #33). Mientras tanto el aviso llega solo por la campana.")
 
 REGISTRO = (
     # ─────────────────────────────── ÓRDENES DE TRABAJO ───────────────────────────────
@@ -538,6 +544,26 @@ REGISTRO = (
     _c("compra_repuesto_proveedor", "Solicitud de compra de repuestos al proveedor", "repuestos", "tickets",
        "proveedor_courier", "Al crear una compra de repuestos con la casilla «Enviar por correo» marcada.",
        condiciones=(_TK_TEST,), avisa_a="Al correo del proveedor", nota="Sale por la llave de Tickets."),
+    # 2026-10-21 (Daniel, solicitud de repuesto desde la OT, REGLA #41): tres correos INTERNOS que nacen APAGADOS por configuración
+    # (REPUESTOS_CORREOS_ACTIVOS, sin valor en deploy.yml: los enciende Daniel con su «sí»). Nunca al cliente (REGLA #22); al técnico jamás
+    # proveedor, costo ni N° de OC (REGLAS #19 y #26). La campana avisa igual mientras estos correos estén apagados.
+    _c("rep_nueva", "Pedido de repuesto grave: aviso al dueño y a bodega", "repuestos", "comunicacion_interna", "bodega",
+       "Cuando un técnico pide un repuesto desde una OT y el equipo queda FUERA DE SERVICIO o el diagnóstico dice que puede lastimar a "
+       "alguien. Un pedido normal avisa solo por la campana.",
+       modo="automatico", condiciones=(_REP_CORREOS,),
+       avisa_a="Al dueño del pedido (responsable de la OT) y a los correos de bodega de Retiros → Configuración (nunca al cliente ni al técnico)",
+       nota="Nace APAGADO. Sale por la llave de Comunicación interna."),
+    _c("rep_vencida", "Pedidos de repuesto sin primera respuesta: aviso al dueño y a supervisión", "repuestos", "comunicacion_interna",
+       "responsable_ot",
+       "Cuando un pedido lleva más de 8 horas hábiles sin que nadie lo responda (el plazo es de 1 día hábil): el barrido de cada 10 minutos "
+       "avisa al dueño y escala a supervisores y administradores. Un solo correo por persona con la lista de lo vencido.",
+       modo="automatico", condiciones=(_REP_CORREOS,),
+       avisa_a="Al dueño del pedido y a los supervisores y administradores activos (nunca al cliente ni al técnico)",
+       nota="Nace APAGADO. Solo en horario de cobertura (lunes a viernes hábiles, 08:00–17:00, colación 13:00–14:00) y una vez por pedido."),
+    _c("rep_lista_tecnico", "Repuesto en bodega: aviso al técnico que lo pidió", "repuestos", "ot_tecnicos", "tecnico",
+       "Cuando la pieza que pidió el técnico llega a bodega y queda lista para su OT. Sin proveedor, costo ni N° de OC.",
+       modo="automatico", condiciones=(_REP_CORREOS,), avisa_a="Al técnico que pidió el repuesto",
+       nota="Nace APAGADO. Sale por la llave de correos a técnicos (OT). El técnico recibe antes la campana de cada paso."),
 
     # ─────────────────────────────── CATÁLOGO ───────────────────────────────
     _c("catalogo_manual", "Manual de producto (PDF)", "catalogo", "catalogo", "cliente",
