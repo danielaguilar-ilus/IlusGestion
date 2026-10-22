@@ -531,7 +531,7 @@ class TestBarraDeAcciones(unittest.TestCase):
         self.assertIn("animation:oaPulse 2.4s ease-in-out infinite", ACC_CSS)
         self.assertIn("@keyframes oaPulse{", ACC_CSS)
         i = ACC_CSS.index("@media(prefers-reduced-motion:reduce)")
-        self.assertIn(".oa-primary{animation:none;box-shadow:0 0 0 3px", ACC_CSS[i:])    # sin animación, pero destacado
+        self.assertIn(".oa-primary.oa-pulso{animation:none;box-shadow:0 0 0 3px", ACC_CSS[i:])    # sin animación, pero destacado
         self.assertIn("rgba(37,99,235,", ACC_CSS)                                        # azul, nunca un texto de error
 
     def test_foto_obligatoria_donde_corresponde_y_ninguna_donde_no(self):
@@ -549,7 +549,7 @@ class TestBarraDeAcciones(unittest.TestCase):
 
     def test_borrador_sin_perder_la_foto_y_salir_a_la_ot_guarda(self):
         for pieza in ("indexedDB.open('ilus_ot_acciones', 1)", "localStorage.setItem(bkey(S.key)", "guardarBorrador(S).then(",
-                      "Guardado en este teléfono. Lo retomas desde la tarjeta.", "BORRADOR_DIAS", "window.ilusConfirm({ title: '¿Borrar el pedido sin terminar?'"):
+                      "Guardado en este teléfono. Lo retomas desde la tarjeta.", "BORRADOR_DIAS", "window.ilusConfirm({ title: yaEnviado ? '¿Descartar las fotos que faltan?' : '¿Borrar el pedido sin terminar?'"):
             self.assertIn(pieza, ACC_JS, pieza)
 
     def test_boton_atras_del_telefono_cierra_la_pantalla_no_la_ot(self):
@@ -593,7 +593,7 @@ class TestBarraDeAcciones(unittest.TestCase):
         self.assertIn("Solicitar repuesto", D)                                             # el modal clásico (piola, cinta, manual)
         self.assertIn("Cambio de piola", D)
         self.assertIn("window.otdRepAbrir(mid, 'repuesto', 'docs')", ACC_JS)                 # Manual desde la barra
-        self.assertIn("window.otdRepAbrir(mid, a)", ACC_JS)                                  # Piolas / Cinta desde la barra
+        self.assertIn("Usar la vista clásica", ACC_JS)                                      # Piolas / Cinta abren el flujo nuevo; el clásico sigue a un clic (21-oct)
 
     def test_un_solo_bloque_de_acciones_por_equipo(self):
         """2026-10-21 (Daniel: «quitar el duplicado que sale en la OT y dejar uno solo, el que hicimos ayer»)."""
