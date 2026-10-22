@@ -71,6 +71,8 @@
       <b>{{ grp.nombre }}</b>
       {% if grp.serie %}<span class="hz-serie">S/N {{ grp.serie }}</span>{% elif grp.sku %}<span class="hz-serie">SKU {{ grp.sku }}</span>{% endif %}
       <span class="hz-grupo-n">{{ grp['items'] | length }} hallazgo{{ 's' if (grp['items'] | length) != 1 }}{% if grp.n_abiertos %} · {{ grp.n_abiertos }} sin gestionar{% endif %}</span>
+      {#- 🧬 2026-10-21: su historia completa (la clave «e<id>» es un equipo de la ficha del cliente; «i<id>» es un producto de una revisión y «ot» no es un equipo). -#}
+      {% if grp.key and grp.key[:1] == 'e' and (grp.key[1:] | int) > 0 %}<a class="hz-hist" href="{{ url_for('mant_maquina_ficha', mid=(grp.key[1:] | int)) }}?tab=historia"><i class="bi bi-clock-history" aria-hidden="true"></i> Ver historia del equipo</a>{% endif %}
     </li>
     {% endif %}
     {% for i in grp['items'] %}

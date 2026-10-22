@@ -147,3 +147,7 @@
 .otd-res-chip.negro{background:#0a0a0a;color:#fff}
 .otd-res-chip.gris{background:#f3f4f6;color:#4b5563;border-color:#e5e7eb}
 @media (max-width:640px){.otd-res-btn{flex:1 1 100%;justify-content:center}}
+/* 🧬 2026-10-21: «Ver historia del equipo» (static/maquina_historia.js): bajo cada equipo del resumen de la OT y en la cabecera de su grupo en Hallazgos. */
+.otd-res-hv,.hz-hist{display:inline-flex;align-items:center;gap:6px;min-height:44px;font-weight:800;font-size:.84rem;color:#1e3a8a;text-decoration:underline;text-underline-offset:3px;white-space:nowrap}
+.otd-res-hv{margin:0 0 0 12px}
+.otd-res-hv:hover,.hz-hist:hover{color:#dc2626}

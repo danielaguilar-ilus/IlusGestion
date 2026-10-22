@@ -2,8 +2,16 @@
 {% block title %}{{ equipo.nombre or 'Equipo' }} — Ficha del equipo{% endblock %}
 
 {% block content %}
+{#- 🧬 2026-10-21 (Daniel: «si entro a determinado producto… me va a decir todos los diagnósticos que ha tenido, visitas, solicitudes de repuesto,
+    todo bien ordenadito»): «Historia del equipo» es la PRIMERA pestaña y la que se abre por defecto. Para que vuelva a abrir primero «Historial
+    intervenciones» basta cambiar 'historia' por 'historial' en la última línea de este bloque. `?tab=…` abre otra pestaña directamente (es lo que
+    usan los enlaces «Ver historia del equipo» de la ficha del cliente, de la OT y de Hallazgos). Nada de lo que ya había se quitó. -#}
+{% set _tabs_ok = ['historia', 'historial', 'levantamientos', 'fotos', 'eventos'] + (['disponibilidad'] if disponibilidad else []) %}
+{% set _tab_pedido = request.args.get('tab') %}
+{% set _tab_inicial = _tab_pedido if _tab_pedido in _tabs_ok else 'historia' %}
 {#- 🚨 2026-10-20 (Daniel): aviso llamativo de FUERA DE SERVICIO (motivo + desde cuándo). -#}
 <link rel="stylesheet" href="{{ url_for('static', filename='eq_fuera_servicio.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='maquina_historia.css') }}">
 <style>
 /* ═══════════ Layout ═══════════ */
 .eq-wrap { max-width: 1100px; margin: 0 auto; padding: 12px; }
@@ -640,28 +648,46 @@
       <span class="pb-n {{ 'ambar' if _n_ab else 'verde' }}">{% if _n_ab %}<b>{{ _n_ab }}</b>&nbsp;abierto{{ 's' if _n_ab != 1 }}{% else %}Todo resuelto{% endif %}</span>
     </div>
     <div style="margin-top:8px">{{ _pb.lista(problemas) }}</div>
+    {#- 🧬 2026-10-21: lo mismo, pero con TODO lo que le ha pasado al equipo (visitas, diagnósticos, repuestos, cambios), en orden. -#}
+    <a class="pb-hv" href="?tab=historia" onclick="cambiarTabEq('historia');return false;"><i class="bi bi-journal-medical" aria-hidden="true"></i> Ver historia del equipo</a>
   </section>
   {% endif %}
 
   {# ═════════ Tabs ═════════ #}
   <div class="eq-tabs">
-    <button class="eq-tab active" data-tab="historial" onclick="cambiarTabEq('historial')">
+    {#- 🧬 2026-10-21: la historia completa y unificada del equipo (ver static/maquina_historia.js y GET /mantenciones/api/maquinas/<id>/historia). -#}
+    <button class="eq-tab{{ ' active' if _tab_inicial == 'historia' }}" data-tab="historia" onclick="cambiarTabEq('historia')">
+      <i class="bi bi-journal-medical"></i> Historia del equipo
+    </button>
+    <button class="eq-tab{{ ' active' if _tab_inicial == 'historial' }}" data-tab="historial" onclick="cambiarTabEq('historial')">
       <i class="bi bi-clock-history"></i> Historial intervenciones ({{ ots|length }})
     </button>
-    <button class="eq-tab" data-tab="levantamientos" onclick="cambiarTabEq('levantamientos')">
+    <button class="eq-tab{{ ' active' if _tab_inicial == 'levantamientos' }}" data-tab="levantamientos" onclick="cambiarTabEq('levantamientos')">
       <i class="bi bi-clipboard-check"></i> Levantamientos ({{ levantamientos|length }})
     </button>
-    <button class="eq-tab" data-tab="fotos" onclick="cambiarTabEq('fotos')">
+    <button class="eq-tab{{ ' active' if _tab_inicial == 'fotos' }}" data-tab="fotos" onclick="cambiarTabEq('fotos')">
       <i class="bi bi-images"></i> Galería ({{ fotos|length }})
     </button>
-    <button class="eq-tab" data-tab="eventos" onclick="cambiarTabEq('eventos')">
+    <button class="eq-tab{{ ' active' if _tab_inicial == 'eventos' }}" data-tab="eventos" onclick="cambiarTabEq('eventos')">
       <i class="bi bi-journal-text"></i> Eventos ({{ eventos|length }})
     </button>
     {% if disponibilidad %}
-    <button class="eq-tab" data-tab="disponibilidad" onclick="cambiarTabEq('disponibilidad')">
+    <button class="eq-tab{{ ' active' if _tab_inicial == 'disponibilidad' }}" data-tab="disponibilidad" onclick="cambiarTabEq('disponibilidad')">
       <i class="bi bi-activity"></i> Disponibilidad ({{ disponibilidad.pct|round(1) }} %)
     </button>
     {% endif %}
+  </div>
+
+  {# ═════════ Tab Historia del equipo (hoja de vida unificada, 2026-10-21) ═════════
+     Daniel: «si entro a determinado producto, una trotadora de determinada cuenta, me va a decir todos los diagnósticos que ha tenido, visitas,
+     solicitudes de repuesto, todo bien ordenadito». Una sola línea de tiempo, sin duplicar lo que registran varias tablas, con paginación real,
+     filtros por tipo y fechas, y recortada en el servidor según quién mira (un técnico no recibe hallazgos, tickets ni quién hizo nada). Se
+     arma por JS desde GET /mantenciones/api/maquinas/{{ equipo.id }}/historia. #}
+  <div id="tab-eq-historia"{% if _tab_inicial != 'historia' %} style="display:none"{% endif %}>
+    <div class="mh" id="mhRaiz" data-mid="{{ equipo.id }}">
+      <div class="mh-estado"><i class="bi bi-journal-medical" aria-hidden="true"></i><b>Cargando la historia del equipo…</b></div>
+    </div>
+    <noscript><div class="mh-estado err">Para ver la historia del equipo hace falta tener JavaScript activado.</div></noscript>
   </div>
 
   {# ═════════ Tab Historial intervenciones (completo) ═════════ #}
@@ -670,7 +696,7 @@
      muestra TODAS las OTs que tocaron este equipo (no solo levantamientos),
      con badges por tipo (color), estado, técnico, observaciones/diagnóstico
      y un filtro por tipo. Click en una OT abre la ficha completa. #}
-  <div id="tab-eq-historial">
+  <div id="tab-eq-historial"{% if _tab_inicial != 'historial' %} style="display:none"{% endif %}>
     {% if ots %}
 
     {# Card resumen con stats #}
@@ -817,7 +843,7 @@
   </div>
 
   {# ═════════ Tab Levantamientos ═════════ #}
-  <div id="tab-eq-levantamientos" style="display:none">
+  <div id="tab-eq-levantamientos"{% if _tab_inicial != 'levantamientos' %} style="display:none"{% endif %}>
     {% if levantamientos %}
     <div class="small text-muted mb-2">
       <i class="bi bi-info-circle me-1"></i>
@@ -876,7 +902,7 @@
   </div>
 
   {# ═════════ Tab Galería ═════════ #}
-  <div id="tab-eq-fotos" style="display:none">
+  <div id="tab-eq-fotos"{% if _tab_inicial != 'fotos' %} style="display:none"{% endif %}>
     {% if fotos %}
     <div class="fotos-grid">
       {% for f in fotos %}
@@ -912,7 +938,7 @@
      que quedó fuera de servicio hasta que volvió a operar, con hora Chile.
      Se mide desde el 05/10/2026 (o desde su instalación, si es posterior). #}
   {% if disponibilidad %}
-  <div id="tab-eq-disponibilidad" style="display:none">
+  <div id="tab-eq-disponibilidad"{% if _tab_inicial != 'disponibilidad' %} style="display:none"{% endif %}>
     {% set _dp = disponibilidad.pct %}
     <div class="hist-stats">
       <div class="hist-stat {{ 'success' if _dp >= 97 else ('warn' if _dp >= 90 else 'danger') }}">
@@ -958,7 +984,7 @@
   {% endif %}
 
   {# ═════════ Tab Eventos / Audit log ═════════ #}
-  <div id="tab-eq-eventos" style="display:none">
+  <div id="tab-eq-eventos"{% if _tab_inicial != 'eventos' %} style="display:none"{% endif %}>
     {% if eventos %}
     {% for e in eventos %}
     <div class="evento-row">
@@ -984,14 +1010,25 @@
 
 </div>
 
+<script defer src="{{ url_for('static', filename='maquina_historia.js') }}"></script>
 <script>
 function cambiarTabEq(tab){
   document.querySelectorAll('.eq-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-  ['historial','levantamientos','fotos','eventos','disponibilidad'].forEach(name => {
+  ['historia','historial','levantamientos','fotos','eventos','disponibilidad'].forEach(name => {
     const el = document.getElementById('tab-eq-' + name);
     if (el) el.style.display = (name === tab) ? '' : 'none';
   });
+  // 🧬 2026-10-21: la historia se pide al servidor la primera vez que se abre; la URL recuerda la pestaña (se puede compartir).
+  if (tab === 'historia' && window.MaquinaHistoria) window.MaquinaHistoria.activar();
+  try {
+    const u = new URL(window.location.href);
+    u.searchParams.set('tab', tab);
+    window.history.replaceState(null, '', u.toString());
+  } catch (e) { /* la URL es solo comodidad */ }
 }
+{% if _tab_inicial == 'historia' %}
+document.addEventListener('DOMContentLoaded', function(){ if (window.MaquinaHistoria) window.MaquinaHistoria.activar(); });
+{% endif %}
 
 function abrirLightbox(url){
   const lb = document.createElement('div');

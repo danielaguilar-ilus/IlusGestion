@@ -74,6 +74,7 @@ import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién pued
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
 import plantillas_serie_gps as _psg  # 2026-10-21 (REGLA #39): N° de serie + GPS estándar en toda plantilla (reglas puras con pruebas)
 import ot_hallazgos as _oh    # 2026-10-21 (REGLA #38): hallazgos de la OT (alerta, «tomar el caso» y OT de seguimiento): reglas puras con pruebas
+import maquina_historia as _mh    # 2026-10-21: Historia del equipo (hoja de vida unificada: línea de tiempo sin duplicados, por rol): reglas puras con pruebas
 import fedex_labels as _fxlabels    # parser puro de etiquetas FedEx (testeable)
 _ERP = erp_engine.init_engine(
     base_url=ERP_CONFIG.get("api_url", "https://lab.random.cl/ilus"),
@@ -157607,6 +157608,313 @@ def mant_maquina_historial_ots(mid):
             "url":             f"/mantenciones/ot/{r['id']}",
         })
     return jsonify({"ok": True, "ots": out, "total": len(out)})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  🧬 HISTORIA DEL EQUIPO (hoja de vida unificada) — 2026-10-21
+#
+#  Daniel: «Si entro a determinado producto, una trotadora de determinada cuenta, me va a decir todos los diagnósticos que ha
+#  tenido, visitas, solicitudes de repuesto, todo bien ordenadito. La OT va a alimentar la ficha y a ordenar y clasificar la
+#  información SIN duplicarla.» Todo mira al N° de serie del equipo.
+#
+#  Es una VISTA DE LECTURA: ninguna tabla nueva, ningún DDL (REGLA #18) y nada se copia. Cada tipo de tarjeta sale de su tabla de
+#  siempre; la unión, la deduplicación (reglas D1–D8), el orden, los filtros, la paginación y el recorte por rol viven en
+#  maquina_historia.py (módulo puro, con pruebas). Aquí solo: las consultas, la ruta y las miniaturas de la página.
+#
+#    visita (OT)        ← mant_visitas (las que tocan el equipo por mant_visita_tareas, mant_visita_equipos o el levantamiento)
+#    diagnóstico        ← mant_visita_equipos (diagnostico_estado/texto, «no se pudo revisar», falla detectada)
+#    falla del checklist← mant_visita_tareas (verificación Alerta/Falla y «Resultado del control»: la misma regla de los hallazgos)
+#    hallazgo (gestión) ← mant_ot_hallazgos
+#    repuesto           ← mant_ot_repuesto_solicitudes (solo nombre de pieza y cantidad; ver REGLAS #19/#26)
+#    estado / baja      ← mant_maquina_paradas + mant_maquina_eventos (hoja de vida) + mant_maquina_audit
+#    cambios de ficha   ← mant_maquina_audit (N° de serie, ubicación, datos, estado)
+#    ticket (gestión)   ← tk_ticket_equipos + tk_tickets
+#    garantía / alta    ← mant_maquinas
+#
+#  CONFIDENCIALIDAD (REGLAS #19 y #26): el servidor quita el dato. Un técnico (familia completa: `_es_rol_tecnico()`) no recibe
+#  hallazgos, tickets, quién hizo nada, notas de gestión, proveedor, costo, N° de OC ni ticket de compra: ni siquiera se consultan.
+#  El «quién» de un diagnóstico o de la tarea del checklist es solo del superadmin (Daniel 2026-08-30).
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+_MH_TOPE = 400          # filas máximas por fuente (si una llega al tope, la respuesta lo avisa)
+_MH_AUDIT_CAMPOS = ("serie", "ubicacion_sala", "nombre", "sku", "marca", "modelo", "voltaje", "estado", "estado_op", "estado_capturado")
+
+
+def _mh_rol():
+    """Quién mira: la familia técnico completa (interno, elevado y externo) y, aparte, el superadmin."""
+    try:
+        sup = bool((getattr(g, "permissions", None) or {}).get("superadmin"))
+    except Exception:
+        sup = False
+    return _mh.Rol(es_tecnico=_es_rol_tecnico(), es_superadmin=sup)
+
+
+def _mh_marcadores(n):
+    return ",".join(["%s"] * n)
+
+
+def _mh_iso(x):
+    """'2026-10-21' → '2026-10-21'; cualquier otra cosa → '' (el filtro de fecha inválido se ignora, nunca falla)."""
+    d = _mh.fecha_iso(x)
+    return d.isoformat() if d else ""
+
+
+def _mh_leer(nombre, fallidas, sql, params=(), alternativa=None):
+    """Una lectura de SOLO LECTURA. Si falla (una tabla o columna que aún no existe en este ambiente) prueba la `alternativa` (sin las
+    columnas nuevas) y, si tampoco, anota la fuente como no disponible y sigue: la historia sale igual, con el aviso."""
+    for q in (sql, alternativa):
+        if not q:
+            continue
+        try:
+            return [dict(r) for r in (mysql_fetchall(q, tuple(params)) or [])]
+        except Exception as e:
+            print(f"[historia] {nombre}: {type(e).__name__}", flush=True)
+    fallidas.append(nombre)
+    return []
+
+
+def _mh_tecnico_puede(mid):
+    """El mismo candado de la ficha del equipo: un técnico solo abre equipos que están en una OT asignada a él."""
+    u = getattr(g, "user", None) or {}
+    if (u.get("role") or "").lower() not in ("tecnico", "tecnico_externo"):
+        return True
+    uid = u.get("id")
+    try:
+        return bool(mysql_fetchone(
+            "SELECT 1 FROM mant_visita_tareas vt JOIN mant_visitas v ON v.id = vt.visita_id "
+            " WHERE vt.maquina_id=%s AND (v.tecnico_user_id=%s OR v.id IN "
+            "       (SELECT visita_id FROM mant_visita_tecnicos WHERE tecnico_user_id=%s)) LIMIT 1", (mid, uid, uid)))
+    except Exception as e:
+        print(f"[historia] permiso técnico mid={mid}: {type(e).__name__}", flush=True)
+        return False                                     # ante la duda, no se abre
+
+
+def _mh_cargar_fuentes(mid, rol, eq):
+    """Las filas crudas de cada fuente (lo que `maquina_historia.construir` une). → (fuentes, fuentes_no_disponibles, fuentes_topadas)."""
+    fallidas, topadas = [], []
+    f = {"equipo": eq, "hoy": _now_chile().date(), "ahora": datetime.utcnow()}
+
+    def leer(nombre, sql, params=(), alt=None):
+        filas = _mh_leer(nombre, fallidas, sql, params, alt)
+        if len(filas) >= _MH_TOPE:
+            topadas.append(nombre)
+        return filas
+
+    # Las visitas que tocaron el equipo: por sus tareas, por su revisión en la visita o por el levantamiento.
+    vids, lev_vids = set(), set()
+    for nombre, tabla in (("visitas_tareas", "mant_visita_tareas"), ("visitas_equipos", "mant_visita_equipos"),
+                          ("visitas_levantamiento", "mant_maquina_levantamientos")):
+        for r in _mh_leer(nombre, fallidas, "SELECT DISTINCT visita_id FROM " + tabla + " WHERE maquina_id=%s", (mid,)):
+            if r.get("visita_id"):
+                vids.add(int(r["visita_id"]))
+                if tabla == "mant_maquina_levantamientos":
+                    lev_vids.add(int(r["visita_id"]))
+    ids = sorted(vids, reverse=True)[:_MH_TOPE]
+    f["lev_visitas"] = sorted(lev_vids)
+    # `descripcion` = el motivo de la OT (el POR QUÉ de la visita). El GPS del inicio de ejecución solo se lee para gestión (es dónde estaba una
+    # persona) y, si esas columnas no existen en este ambiente, la consulta cae a la versión sin ellas.
+    _vis_base = ("SELECT v.id, v.numero_ot, v.titulo, v.descripcion, v.tipo, v.estado, v.fecha_programada, v.hora_inicio, v.hora_real_inicio, "
+                 "       v.fecha_realizada, v.cerrada_at, v.ot_madre_id, v.ot_relacion, ")
+    _vis_gps = "v.exec_gps_lat, v.exec_gps_lng, v.exec_gps_at, v.exec_gps_direccion, " if rol.gestion else ""
+    _vis_fin = ("       COALESCE(u.nombre, u.username, v.tecnico) AS tecnico_nombre "
+                "  FROM mant_visitas v LEFT JOIN app_users u ON u.id = v.tecnico_user_id "
+                " WHERE v.id IN (" + _mh_marcadores(len(ids)) + ") ORDER BY v.fecha_programada DESC, v.id DESC LIMIT %s")
+    f["visitas"] = leer("visitas", _vis_base + _vis_gps + _vis_fin, tuple(ids) + (_MH_TOPE,),
+                        alt=(_vis_base + _vis_fin) if _vis_gps else None) if ids else []
+    # El veredicto sobre ESTE equipo en cada visita (diagnóstico final, «no se pudo revisar», falla detectada).
+    f["visita_equipos"] = leer(
+        "diagnosticos",
+        "SELECT ve.visita_id, ve.estado_revision, ve.razon_saltado, ve.observacion_tecnico, ve.diagnostico_estado, "
+        "       ve.diagnostico_texto, ve.revisado_at, ve.revisado_por "
+        "  FROM mant_visita_equipos ve WHERE ve.maquina_id=%s AND ve.revisado_at IS NOT NULL "
+        " ORDER BY ve.revisado_at DESC LIMIT %s", (mid, _MH_TOPE),
+        alt="SELECT ve.visita_id, ve.estado_revision, ve.razon_saltado, ve.observacion_tecnico, ve.revisado_at, ve.revisado_por "
+            "  FROM mant_visita_equipos ve WHERE ve.maquina_id=%s AND ve.revisado_at IS NOT NULL "
+            " ORDER BY ve.revisado_at DESC LIMIT %s")
+    # Tareas del checklist con respuesta de Alerta/Falla (o «Apto con observaciones»): luego ot_hallazgos.evaluar_tarea decide cuáles cuentan.
+    f["tareas"] = leer(
+        "checklist",
+        "SELECT t.id, t.visita_id, t.titulo, t.tipo_respuesta, t.valor_json, t.opciones_lista_json, t.completada_at, "
+        "       t.completada_por, t.observaciones "
+        "  FROM mant_visita_tareas t WHERE t.maquina_id=%s AND t.valor_json IS NOT NULL "
+        "   AND ((t.tipo_respuesta='verificacion' AND (t.valor_json LIKE %s OR t.valor_json LIKE %s)) "
+        "     OR (t.tipo_respuesta='lista' AND t.opciones_lista_json LIKE %s)) "
+        " ORDER BY t.id DESC LIMIT %s", (mid, '%"alerta"%', '%"falla"%', "%Apto con observaciones%", _MH_TOPE))
+    # Solo gestión: hallazgos y tickets. A un técnico ni se consultan (REGLAS #19/#26).
+    f["hallazgos"], f["tickets"] = [], []
+    if rol.gestion:
+        if _hall_ok():
+            f["hallazgos"] = leer(
+                "hallazgos",
+                "SELECT h.id, h.visita_id, h.origen, h.referencia, h.tarea_id, h.severidad, h.titulo, h.detalle, h.riesgo, "
+                "       h.fotos_json, h.estado, h.detectado_por, h.detectado_en, h.tomado_por, h.tomado_en, "
+                "       h.ot_seguimiento_id, h.seguimiento_en, h.descartado_por, h.descartado_en, h.descarte_motivo, "
+                "       h.retirado_en, s.numero_ot AS seg_numero, s.estado AS seg_estado, s.cerrada_at AS seg_cerrada "
+                "  FROM mant_ot_hallazgos h LEFT JOIN mant_visitas s ON s.id = h.ot_seguimiento_id "
+                " WHERE h.maquina_id=%s AND h.retirado_en IS NULL ORDER BY h.detectado_en DESC LIMIT %s", (mid, _MH_TOPE))
+        f["tickets"] = leer(
+            "tickets",
+            "SELECT t.id, t.numero_ticket, t.tipo, t.estado, t.titulo, t.prioridad, t.created_at, t.cerrado_at, t.created_by "
+            "  FROM tk_ticket_equipos te JOIN tk_tickets t ON t.id = te.ticket_id WHERE te.maquina_id=%s "
+            " ORDER BY t.created_at DESC LIMIT %s", (mid, _MH_TOPE))
+    # Repuestos: SOLO nombre de pieza, cantidad, avance y fechas. Nunca proveedor, costo, N° de OC, nota de gestión ni ticket de compra.
+    f["solicitudes"] = leer(
+        "repuestos",
+        "SELECT s.id, s.visita_id, s.ot_generada_id, s.repuesto_nombre, s.repuesto_sku, s.cantidad, s.origen, s.estado, s.motivo, "
+        "       s.dejo_fuera_servicio, s.solicitado_por, s.created_at, s.validado_at, s.pedido_at, s.recibido_at, s.instalado_at, "
+        "       s.updated_at "
+        "  FROM mant_ot_repuesto_solicitudes s WHERE s.maquina_id=%s AND COALESCE(s.es_reposicion,0)=0 "
+        "   AND s.solicitud_padre_id IS NULL ORDER BY s.created_at DESC LIMIT %s", (mid, _MH_TOPE),
+        alt="SELECT s.id, s.visita_id, s.ot_generada_id, s.repuesto_nombre, s.repuesto_sku, s.cantidad, s.origen, s.estado, s.motivo, "
+            "       s.dejo_fuera_servicio, s.solicitado_por, s.created_at, s.validado_at, s.pedido_at, s.recibido_at, s.instalado_at, "
+            "       s.updated_at "
+            "  FROM mant_ot_repuesto_solicitudes s WHERE s.maquina_id=%s ORDER BY s.created_at DESC LIMIT %s")
+    try:
+        _hv_asegurar()
+    except Exception as e:
+        print(f"[historia] hoja de vida: {type(e).__name__}", flush=True)
+    f["paradas"] = leer(
+        "paradas",
+        "SELECT p.id, p.inicio_at, p.fin_at, p.inicio_aprox, p.estado_inicio, p.estado_fin, p.motivo, p.abierta_por, p.cerrada_por, "
+        "       p.ref_tabla, p.ref_id, p.ref_fin_tabla, p.ref_fin_id "
+        "  FROM mant_maquina_paradas p WHERE p.maquina_id=%s ORDER BY p.inicio_at DESC LIMIT %s", (mid, _MH_TOPE))
+    f["eventos"] = leer(
+        "eventos",
+        "SELECT e.id, e.tipo, e.descripcion, e.fecha_evento, e.referencia_tabla, e.referencia_id, e.metadata_json, e.created_by "
+        "  FROM mant_maquina_eventos e WHERE e.maquina_id=%s ORDER BY e.fecha_evento DESC LIMIT %s", (mid, _MH_TOPE))
+    f["auditoria"] = leer(
+        "auditoria",
+        "SELECT a.id, a.campo, a.valor_antes, a.valor_nuevo, a.motivo, a.usuario, a.fecha "
+        "  FROM mant_maquina_audit a WHERE a.maquina_id=%s AND a.campo IN (" + _mh_marcadores(len(_MH_AUDIT_CAMPOS)) + ") "
+        " ORDER BY a.fecha DESC LIMIT %s", (mid,) + _MH_AUDIT_CAMPOS + (_MH_TOPE,))
+    # Los eventos de un levantamiento apuntan al levantamiento, no a la OT: cuál OT es se resuelve aquí.
+    lev_ids = sorted({int(e["referencia_id"]) for e in f["eventos"] if e.get("referencia_tabla") == "mant_levantamientos"
+                      and e.get("referencia_id")})
+    f["lev_visita"] = {}
+    if lev_ids:
+        for r in _mh_leer("levantamientos", fallidas,
+                          "SELECT id, visita_id FROM mant_levantamientos WHERE id IN (" + _mh_marcadores(len(lev_ids)) + ")", tuple(lev_ids)):
+            if r.get("visita_id"):
+                f["lev_visita"][int(r["id"])] = int(r["visita_id"])
+    # Los números de todas las OT que se mencionan y, para un técnico, a cuáles puede entrar (las demás van sin enlace).
+    f["numeros_ot"], f["visitas_visibles"] = {}, None
+    ids_ot = sorted(_mh.ids_ot_referenciados(f))
+    if ids_ot:
+        ph = _mh_marcadores(len(ids_ot))
+        f["estados_ot"] = {}
+        for r in _mh_leer("numeros_ot", fallidas, "SELECT id, numero_ot, estado FROM mant_visitas WHERE id IN (" + ph + ")", tuple(ids_ot)):
+            f["numeros_ot"][int(r["id"])] = r.get("numero_ot") or ("V-%05d" % int(r["id"]))
+            f["estados_ot"][int(r["id"])] = r.get("estado") or ""
+        if rol.es_tecnico:
+            donde, par = _mant_calendario_role_where()
+            f["visitas_visibles"] = {int(r["id"]) for r in _mh_leer(
+                "visitas_visibles", fallidas, "SELECT v.id FROM mant_visitas v WHERE v.id IN (" + ph + ")" + donde, tuple(ids_ot) + tuple(par))}
+    return f, fallidas, topadas
+
+
+def _mh_fotos(mid, tarjetas):
+    """{id de tarjeta: [urls]}: las miniaturas que el registro YA tiene, solo de las tarjetas de la página. Una consulta por clase.
+    Visitas: fotos de este equipo en esa visita · checklist y hallazgos de tarea: las fotos de la tarea · repuestos: la evidencia."""
+    out = {}
+    vids = sorted({t["_visita_id"] for t in tarjetas if t["tipo"] == "visita" and t["_visita_id"]})
+    tids = sorted({t["_tarea_id"] for t in tarjetas if t["_tarea_id"]})
+    sids = sorted({t["_solicitud_id"] for t in tarjetas if t["tipo"] == "repuesto" and t["_solicitud_id"]})
+    por_visita, por_tarea, por_sol = {}, {}, {}
+    try:
+        if vids:
+            for r in mysql_fetchall(
+                    "SELECT visita_id, cloudinary_url, archivo_path FROM mant_visita_fotos WHERE maquina_id=%s AND visita_id IN ("
+                    + _mh_marcadores(len(vids)) + ") ORDER BY id", (mid,) + tuple(vids)) or []:
+                u = _hall_url_foto(r)
+                if u:
+                    por_visita.setdefault(int(r["visita_id"]), []).append(u)
+        if tids:
+            for r in mysql_fetchall(
+                    "SELECT tarea_id, cloudinary_url, archivo_path FROM mant_visita_fotos WHERE tarea_id IN ("
+                    + _mh_marcadores(len(tids)) + ") ORDER BY id", tuple(tids)) or []:
+                u = _hall_url_foto(r)
+                if u:
+                    por_tarea.setdefault(int(r["tarea_id"]), []).append(u)
+        if sids:
+            for r in mysql_fetchall(
+                    "SELECT solicitud_id, url FROM mant_ot_repuesto_evidencias WHERE tipo='foto' AND solicitud_id IN ("
+                    + _mh_marcadores(len(sids)) + ") ORDER BY id", tuple(sids)) or []:
+                if r.get("url"):
+                    por_sol.setdefault(int(r["solicitud_id"]), []).append(str(r["url"]))
+    except Exception as e:
+        print(f"[historia] fotos mid={mid}: {type(e).__name__}", flush=True)
+    for t in tarjetas:
+        fs = []
+        if t["tipo"] == "visita" and t["_visita_id"]:
+            fs += por_visita.get(t["_visita_id"], [])[:3]
+        if t["_tarea_id"]:
+            fs += por_tarea.get(t["_tarea_id"], [])
+        if t["tipo"] == "repuesto" and t["_solicitud_id"]:
+            fs += por_sol.get(t["_solicitud_id"], [])
+        if fs:
+            out[t["id"]] = fs
+    return out
+
+
+@app.route("/mantenciones/api/maquinas/<int:mid>/historia", methods=["GET"])
+@_mant_required
+def mant_maquina_historia_api(mid):
+    """Historia del equipo: SU línea de tiempo unificada (visitas, diagnósticos, fallas, hallazgos, repuestos, fuera de servicio y bajas,
+    cambios de ficha, tickets y garantía), sin duplicar, del más nuevo al más antiguo. SOLO LECTURA.
+
+    Query: `pagina` · `por_pagina` (10/20/50/100) · `tipos` (separados por coma) · `desde` y `hasta` (AAAA-MM-DD, hora Chile).
+    Los contadores de las pastillas respetan el rango de fechas pero NO el filtro de tipo (así cada pastilla dice cuánto hay).
+    El mismo permiso de la ficha del equipo; un técnico solo recibe lo que puede ver (ver el encabezado del bloque)."""
+    try:
+        eq = mysql_fetchone(
+            "SELECT m.*, c.razon_social FROM mant_maquinas m JOIN mant_clientes c ON c.id = m.cliente_id WHERE m.id=%s", (mid,))
+    except Exception as e:
+        print(f"[historia] equipo mid={mid}: {type(e).__name__}", flush=True)
+        return jsonify({"ok": False, "error": "No pudimos abrir la historia del equipo. Intenta de nuevo en un minuto."}), 500
+    if not eq:
+        return jsonify({"ok": False, "error": "No encontramos ese equipo."}), 404
+    if not _mh_tecnico_puede(mid):
+        return jsonify({"ok": False, "error": "Este equipo no está en ninguna OT asignada a ti."}), 403
+    rol = _mh_rol()
+    try:
+        fuentes, fallidas, topadas = _mh_cargar_fuentes(mid, rol, dict(eq))
+        todas = _mh.construir(fuentes, rol)
+        tipos = _mh.limpiar_tipos(request.args.get("tipos"), rol)
+        desde = request.args.get("desde") or ""
+        hasta = request.args.get("hasta") or ""
+        en_fechas = _mh.filtrar_fechas(todas, desde, hasta)
+        contadores = _mh.contar(en_fechas)
+        solo_ot = str(request.args.get("solo_ot") or "").strip().lower() in ("1", "true", "si", "sí")
+        filtradas = _mh.filtrar_tipos(en_fechas, tipos)
+        pagina_t, meta = _mh.paginar(_mh.filtrar_ot(filtradas) if solo_ot else filtradas, request.args.get("pagina"), request.args.get("por_pagina"))
+        fotos = _mh_fotos(mid, pagina_t)
+        ahora = fuentes["ahora"]
+        encabezado = _mh.encabezado(fuentes["equipo"], fuentes["hoy"])
+        resumen = _mh.resumen(todas, ahora)
+        if not rol.gestion:                       # un técnico no recibe ni los nombres de lo que es solo de gestión
+            resumen.pop("hallazgos_abiertos", None)
+            resumen.pop("tickets_abiertos", None)
+        gps = _mh.ultimo_gps(fuentes["visitas"], rol, fuentes["numeros_ot"])
+        resp = jsonify({
+            "ok": True,
+            "equipo": encabezado,
+            "frase": _mh.frase_resumen(encabezado, todas, resumen, ahora, rol, gps),
+            "gps": gps,
+            "gestion": rol.gestion,
+            "tipos": [{"clave": k, "texto": _mh.TIPOS[k]["texto"], "icono": _mh.TIPOS[k]["icono"], "n": contadores.get(k, 0)}
+                      for k in _mh.tipos_permitidos(rol)],
+            "todos": contadores["todos"],
+            "n_ot": contadores["ot"],
+            "resumen": resumen,
+            "entradas": [_mh.a_json(t, fotos.get(t["id"]), ahora) for t in pagina_t],
+            "meta": meta,
+            "filtros": {"tipos": tipos, "desde": _mh_iso(desde), "hasta": _mh_iso(hasta), "solo_ot": solo_ot},
+            "fuentes_no_disponibles": fallidas, "fuentes_topadas": topadas,
+        })
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    except Exception as e:
+        print(f"[historia] mid={mid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No pudimos armar la historia del equipo. Intenta de nuevo en un minuto."}), 500
 
 
 # ════════════════════════════════════════════════════════════════════════
