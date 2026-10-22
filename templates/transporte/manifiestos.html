@@ -66,6 +66,17 @@
               title="Descarga un Excel con los despachos de la semana: cobro, costo, factura y productos">
         <i class="bi bi-file-earmark-excel"></i> Reporte semanal
       </button>
+      {# Base de manifiestos para editar en Excel (2026-10-22, Daniel): una
+         fila por envío, con los MISMOS filtros que la persona tiene en
+         pantalla. Se muestra con el permiso «Descargar base de manifiestos»
+         (Usuarios y roles → Transporte); admin y superadmin siempre. #}
+      {% if is_superadmin or (current_user and current_user.role == 'admin') or permissions.tr_exportar_base %}
+      <a class="btn-monitor" id="btnBaseManifiestos"
+         href="{{ url_for('tr_manifiestos_base_xlsx', courier=(filtros.courier or none), estado=(filtros.estado or none), desde=((filtros.desde if not filtros.fecha_default_aplicado else none) or none), hasta=(filtros.hasta or none)) }}"
+         title="Descarga un Excel ordenado con los envíos de los manifiestos (una fila por envío), con los filtros que tienes en pantalla">
+        <i class="bi bi-file-earmark-spreadsheet"></i> Base Excel
+      </a>
+      {% endif %}
       <button class="btn-nuevo-man" data-bs-toggle="modal" data-bs-target="#newManModal">
         <i class="bi bi-plus-circle-fill"></i> Nuevo manifiesto
       </button>
