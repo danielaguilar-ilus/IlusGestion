@@ -20933,7 +20933,11 @@ def _fedex_track_get_token() -> str:
 # ampliar esta tabla con casos reales.
 _FEDEX_STATUS_MAP = {
     # Pre-shipment
-    "OC": 'Entregado a transporte', # Order Created — etiqueta creada, FedEx lo tiene en su sistema
+    # FIX 2026-10-22 (Daniel: "cuando subo el manifiesto a FedEx me dice que ya
+    # está entregado... cuando FedEx actúe es que ahí ya lo tiene el
+    # transportista"): OC = etiqueta creada, el paquete sigue en la bodega de
+    # ILUS. Solo el primer movimiento real de FedEx (PU/AR/AF) es "Retirado".
+    "OC": 'En preparación',         # Order Created — etiqueta lista, aún NO lo retiran
     "PU": 'Entregado a transporte', # Picked Up
     "AR": 'Entregado a transporte', # Arrived at FedEx location
     "AF": 'Entregado a transporte',# At FedEx facility
@@ -21021,12 +21025,16 @@ def _fedex_estado_a_ilus(status_code: str, description: str = "",
         return 'En ruta'
 
     # ── 4) Ya lo tiene el transportista ──
+    # FIX 2026-10-22: "etiqueta creada" / "información de envío" NO es que
+    # FedEx ya lo tenga: el paquete sigue en ILUS. Va ANTES del bloque de
+    # retirado para que ese texto no lo marque como en manos del courier.
+    if ("etiqueta creada" in desc or "información de envío" in desc
+            or "informacion de envio" in desc
+            or "label created" in desc or "shipment information" in desc):
+        return 'En preparación'
     if ("recolectado" in desc or "recogido" in desc
             or "en posesión de fedex" in desc or "en posesion de fedex" in desc
-            or "etiqueta creada" in desc or "información de envío" in desc
-            or "informacion de envio" in desc
-            or "picked up" in desc or "in fedex possession" in desc
-            or "label created" in desc or "shipment information" in desc):
+            or "picked up" in desc or "in fedex possession" in desc):
         return 'Entregado a transporte'
 
     if sc or dc:
@@ -21985,6 +21993,25 @@ def _tr_apply_carrier_status(item_id, estado_ilus, fuente='fedex',
         return {"changed": False, "estado_actual": actual, "anterior": actual,
                 "bloqueado_terminal": True,
                 "error": f"'{actual}' es un estado terminal; {fuente} no puede cambiarlo"}
+
+    # FIX 2026-10-22: "En preparación" desde una API de courier solo significa
+    # "etiqueta creada, aún no lo retiran" (FedEx OC). Nunca debe DEVOLVER un
+    # envío que ya avanzó (ej. los que el sistema viejo ya marcó "Retirado" al
+    # crear la OT): se refresca la marca de poll y no se toca el estado ni se
+    # le escribe al cliente.
+    if (fuente in FUENTES_AUTOMATICAS and estado_ilus == 'En preparación'
+            and actual and actual != 'En preparación'):
+        try:
+            mysql_execute(
+                "UPDATE transport_manifest_items "
+                "SET last_carrier_poll_at=NOW(), last_carrier_status=%s, "
+                "    last_carrier_source=%s WHERE id=%s",
+                ((estado_ilus or '')[:120], fuente, item_id))
+        except Exception as _e_prep:
+            print(f"[tr_estado] no se pudo refrescar el poll del item {item_id}: "
+                  f"{_e_prep}", flush=True)
+        return {"changed": False, "estado_actual": actual, "anterior": actual,
+                "nuevo": actual, "sin_retroceso": True}
 
     changed = (estado_ilus != actual)
     conn = get_db()
@@ -36954,15 +36981,13 @@ def tr_crear_ot_fedex(item_id):
     _tr_ship_snapshot(item_id, "ot_creada", {"tn": master_tn, "bultos": n_b})
     _tr_log("manifest_item", item_id, "OT FedEx creada",
             f"TN {master_tn} ({len(piece_tns)} bulto/s)")
-    # 2026-06-14 (Daniel): al generar la etiqueta FedEx el pedido pasa a
-    # "Entregado a transporte" (delegado a FedEx) y se avisa al cliente.
-    # _tr_apply_carrier_status solo emite/notifica si el estado CAMBIÓ (dedup).
-    try:
-        _tr_apply_carrier_status(item_id, 'Entregado a transporte', fuente='sistema',
-                                 comentario='Etiqueta FedEx generada',
-                                 notify_cliente=True)
-    except Exception as _e_ot_ev:
-        print(f"[tr_event ot_fedex] item={item_id}: {_e_ot_ev}", flush=True)
+    # FIX 2026-10-22 (Daniel: "cuando subo el manifiesto a FedEx me dice que ya
+    # está entregado... cuando FedEx actúe es que ahí ya empezó que lo tiene el
+    # transportista"): crear la OT solo deja la etiqueta lista; el paquete sigue
+    # en la bodega de ILUS. El envío se queda «En preparación» y pasa a
+    # «Entregado a transporte» (Retirado) SOLO cuando FedEx registra su primer
+    # movimiento real (retiro/llegada a instalación): lo detecta el poller de
+    # FedEx (_fedex_poll_batch) y ahí recién se le avisa al cliente.
 
     return jsonify({
         "ok":                      True,
@@ -37097,17 +37122,9 @@ def tr_crear_ots_fedex_masivo(mid):
         _tr_ship_snapshot(iid, "ot_creada", {"tn": master_tn, "bultos": n_b, "via": "masivo"})
         _tr_log("manifest_item", iid, "OT FedEx creada (masivo)",
                 f"TN {master_tn} ({len(piece_tns)} bulto/s)")
-        # 2026-06-14 (Daniel) — FIX: el OT MASIVO no notificaba (a diferencia
-        # del unitario), por eso no llegaba el correo de las OT creadas en lote.
-        # Igual que el unitario, pasamos el item a "Entregado a transporte" y
-        # avisamos al cliente. _tr_apply_carrier_status hace dedup (solo si
-        # cambió) y respeta el kill switch.
-        try:
-            _tr_apply_carrier_status(iid, 'Entregado a transporte', fuente='sistema',
-                                     comentario='Etiqueta FedEx generada (masivo)',
-                                     notify_cliente=True)
-        except Exception as _e_ot_ev_m:
-            print(f"[tr_event ot_fedex masivo] item={iid}: {_e_ot_ev_m}", flush=True)
+        # FIX 2026-10-22: igual que el unitario, crear la OT en lote NO marca
+        # «Entregado a transporte»: ese estado (y el aviso al cliente) lo pone
+        # el poller de FedEx con el primer movimiento real.
         resultados.append({
             "item_id":                iid,
             "ok":                     True,
