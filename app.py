@@ -74,6 +74,7 @@ import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién pued
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
 import plantillas_serie_gps as _psg  # 2026-10-21 (REGLA #39): N° de serie + GPS estándar en toda plantilla (reglas puras con pruebas)
 import ot_hallazgos as _oh    # 2026-10-21 (REGLA #38): hallazgos de la OT (alerta, «tomar el caso» y OT de seguimiento): reglas puras con pruebas
+import repuestos_respuesta as _rresp    # 2026-10-21: solicitud de repuesto — dueño al nacer, reloj de primera respuesta, avisos y tiempos (módulo puro con pruebas)
 import fedex_labels as _fxlabels    # parser puro de etiquetas FedEx (testeable)
 _ERP = erp_engine.init_engine(
     base_url=ERP_CONFIG.get("api_url", "https://lab.random.cl/ilus"),
@@ -39502,6 +39503,15 @@ def tr_cron_simpliroute_poll():
             res["desinstalaciones"] = _desinst_barrido()
         except Exception as _e_ds:
             print(f"[cron-simpliroute] desinstalaciones: {_e_ds}", flush=True)
+    # 🔧 Repuestos (Daniel 2026-10-21, «que los obligues a tomar una respuesta midiendo los tiempos»): pedidos sin primera respuesta →
+    # campana al dueño (4 h hábiles) y escalamiento a supervisión (8 h hábiles). Solo en horario de cobertura, una vez por pedido y nivel,
+    # sin correo mientras REPUESTOS_CORREOS_ACTIVOS esté apagada. Mismo criterio: si falla no afecta al polling.
+    if not dry and time.time() - _t_peticion < 230:
+        try:
+            _br = _otrep_barrido_respuesta(max_s=min(25, max(5, 270 - (time.time() - _t_peticion))))
+            res["repuestos_respuesta"] = {k: _br.get(k) for k in ("revisados", "avisados", "escalados", "campanas", "correos", "omitido") if k in _br}
+        except Exception as _e_rr:
+            print(f"[cron-simpliroute] repuestos respuesta: {_e_rr}", flush=True)
     return jsonify(res), (200 if res.get("ok") else 502)
 
 
@@ -60915,7 +60925,7 @@ def init_mantenciones_tables():
                 "       'retiro_listo','retiro_cerrado',"
                 "       'retiro_propuesta','retiro_expedido','retiro_desfase','retiro_cierre',"
                 "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida',"
-                "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma','repuesto_nuevo') DEFAULT 'otro'",
+                "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma','repuesto_nuevo','repuesto_tecnico') DEFAULT 'otro'",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_destino_no_leida "
                 "  (destino_user_id, leida_at, archivada_at)",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_visita (visita_id)",
@@ -103180,6 +103190,7 @@ def _otrep_ticket_para_ot(vid, v, user):
                               f"{v.get('numero_ot') or ('OT #' + str(vid))}.", user))
                 cur.execute("SELECT RELEASE_LOCK(%s) AS r", (lock,))
                 conn.commit()
+                _otrep_ticket_dueno_asegurar(tid, vid, user)      # 2026-10-21: el ticket queda a nombre del mismo dueño (solo si estaba sin asignar)
                 return tid, prev.get("numero_ticket"), False
             _cli = {}
             if v.get("cliente_id"):
@@ -103212,6 +103223,7 @@ def _otrep_ticket_para_ot(vid, v, user):
                 " WHERE id=%s", (_tk_year(), tid))
             cur.execute("SELECT RELEASE_LOCK(%s) AS r", (lock,))
         conn.commit()
+        _otrep_ticket_dueno_asegurar(int(tid), vid, user)         # 2026-10-21: el ticket nace a nombre del dueño del pedido
         # Determinístico: se arma en Python (el pool REPEATABLE READ podía
         # devolver NULL al releerlo, ver mant_repuesto_solicitar).
         return int(tid), f"TK-{_tk_year()}-{int(tid):05d}", True
@@ -105389,7 +105401,11 @@ def _otrep_evento(sid, accion, usuario, de_estado=None, a_estado=None, detalle=N
         print(f"[otrep] evento sid={sid}: {e}", flush=True)
     if accion == "creada" and a_estado == "solicitado":
         _otrep_referenciar(sid)
+        _otrep_asignar_dueno(sid)          # 2026-10-21: todo pedido nace con DUEÑO (antes del aviso, que lo menciona)
         _otrep_avisar_nueva(sid, usuario)
+    elif accion == "estado" and de_estado and a_estado and de_estado != a_estado:
+        # 2026-10-21: UN solo punto para avisarle al técnico que pidió (revisado, pedido, llegó, instalado, cerrado). Best-effort.
+        _otrep_avisar_tecnico(sid, de_estado, a_estado, usuario, detalle)
 
 
 def _otrep_serie_producto(vid, imid):
@@ -105455,12 +105471,20 @@ def _otrep_avisar_nueva(sid, usuario=None):
     try:
         s = mysql_fetchone(
             "SELECT s.id, s.visita_id, s.cliente_id, s.repuesto_nombre, s.cantidad, s.dejo_fuera_servicio, s.serie, "
-            "       s.equipo_ref, s.documento, s.incidencia_id, s.ticket_id, s.creada_desde, v.numero_ot, "
-            "       c.razon_social AS cliente "
+            "       s.equipo_ref, s.documento, s.incidencia_id, s.ticket_id, s.creada_desde, s.responsable, s.diagnostico_json, "
+            "       v.numero_ot, c.razon_social AS cliente "
             "  FROM mant_ot_repuesto_solicitudes s LEFT JOIN mant_visitas v ON v.id=s.visita_id "
             "  LEFT JOIN mant_clientes c ON c.id=s.cliente_id WHERE s.id=%s", (sid,))
         if not s or (s.get("creada_desde") == "manual"):
             return   # la levantó la propia gestión desde /repuestos: ya sabe que existe
+        # 2026-10-21: un pedido que nace en una OT avisa a la GESTIÓN DE ESA OT (el dueño primero), agrupado por OT, y por correo si es grave
+        # (apagado hasta el «sí» de Daniel). Si no se pudo avisar a nadie por ese camino, sigue el aviso de siempre a superadmin/admin.
+        if s.get("visita_id"):
+            try:
+                if _otrep_avisar_nueva_ot(s, usuario) is not None:
+                    return
+            except Exception as e_ot:
+                print(f"[otrep] avisar nueva (OT) sid={sid}: {type(e_ot).__name__}: {e_ot}", flush=True)
         dest = {}
         for u in (mysql_fetchall("SELECT id, role FROM app_users WHERE active=1") or []):
             if _rol_familia(u.get("role")) in ("superadmin", "admin"):
@@ -105764,6 +105788,543 @@ def _otrep_avisar_vencidas(vencidas):
                           (x.get("etapa"), x["id"]))
     except Exception as e:
         print(f"[otrep] avisar vencidas: {e}", flush=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  SOLICITUD DE REPUESTO · DUEÑO, RELOJ DE RESPUESTA Y AVISOS  (2026-10-21 · REGLA #41)
+#  Daniel: «que sea práctico, ordenado, guiado, que tenga trayectoria, que alerte a los técnicos y también a los administradores, y que los
+#  obligues a tomar una respuesta midiendo los tiempos de respuesta, algo parecido a Retiros».
+#  La lógica pura (quién es el dueño, el reloj en horas hábiles, cuándo avisar y escalar, los textos y las cifras) vive en
+#  repuestos_respuesta.py (`_rresp`, con pruebas). Aquí solo está lo que toca la base y las campanas:
+#    · TODO pedido que nace en una OT nace con DUEÑO (`_otrep_asignar_dueno`, desde el evento «creada»);
+#    · el aviso del pedido nuevo va a la gestión de esa OT, agrupado por OT (`_otrep_avisar_nueva_ot`);
+#    · el técnico que pidió se entera de cada paso (`_otrep_avisar_tecnico`), sin proveedor ni costo ni N° de OC (REGLAS #19 y #26);
+#    · un barrido (colgado de `simpliroute-poll`, cada 10 min) avisa al dueño cuando el pedido está por vencer y escala a supervisión
+#      cuando pasa de las 8 h hábiles sin primera respuesta (`_otrep_barrido_respuesta`): una sola vez por pedido y nivel;
+#    · tres correos INTERNOS registrados (rep_nueva, rep_vencida, rep_lista_tecnico) que nacen APAGADOS (REPUESTOS_CORREOS_ACTIVOS);
+#    · una pantalla de solo lectura con los tiempos de respuesta (`/repuestos/api/tiempos-respuesta`).
+#  Al cliente no se le escribe NUNCA (REGLA #22). Todo es best-effort: ningún aviso rompe la creación ni el cambio de estado de un pedido.
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+def _otrep_correos_activos():
+    """¿Están encendidos los correos INTERNOS de Repuestos? Nacen APAGADOS: solo salen con REPUESTOS_CORREOS_ACTIVOS=1 (o true/yes/on/si), que
+    únicamente Daniel enciende con su «sí» (REGLAS #22 y #33; ver OT_TERMINADA_CLIENTE_ACTIVA). La puerta única de correos igual revisa el
+    interruptor general, la llave del módulo y el interruptor de cada correo."""
+    try:
+        return bool(_ccr.LECTORES["verdadero_amplio"](os.environ.get("REPUESTOS_CORREOS_ACTIVOS")))
+    except Exception:
+        return False
+
+
+def _otrep_usuario_por_nombre(valor):
+    """El usuario ACTIVO que corresponde a un nombre o a un correo (así se guarda quién pidió o quién es el responsable), o None."""
+    v = (valor or "").strip()
+    if not v:
+        return None
+    try:
+        u = mysql_fetchone("SELECT id, username, nombre, role FROM app_users WHERE active=1 AND (username=%s OR nombre=%s) LIMIT 1", (v, v))
+    except Exception as e:
+        print(f"[otrep] usuario '{v[:40]}': {type(e).__name__}", flush=True)
+        return None
+    return dict(u) if u else None
+
+
+def _otrep_correo_de(u):
+    """El correo de un usuario si su usuario es un correo válido; si no, ''."""
+    c = ((u or {}).get("correo") or (u or {}).get("username") or "").strip()
+    return c if _GESTION_CORREO_RE.match(c) else ""
+
+
+def _otrep_defecto_usuario():
+    """El «responsable por defecto» de Repuestos (el que se elige en pantalla) como {id, nombre}, o None si no hay o es un técnico."""
+    try:
+        nombre = (_otrep_cfg().get("responsable_defecto") or "").strip()
+        if not nombre:
+            return None
+        u = mysql_fetchone("SELECT id, role FROM app_users WHERE active=1 AND COALESCE(nombre, username)=%s LIMIT 1", (nombre,))
+        if not u or _rol_familia(u.get("role")) == "tecnico":
+            return None
+        return {"id": int(u["id"]), "nombre": nombre}
+    except Exception as e:
+        print(f"[otrep] responsable por defecto: {type(e).__name__}", flush=True)
+        return None
+
+
+def _otrep_destinos_gestion(vid, excluir_uid=None):
+    """La gestión de la OT a la que se le avisa de sus pedidos de repuesto: la decide `_ot_gestion_destinatarios` (responsable de la OT,
+    quien la creó, ejecutivo del cliente, o el respaldo) SIN la familia técnico (REGLAS #19 y #26) — la misma regla de los hallazgos."""
+    try:
+        return [dict(p) for p in _hall_destinos(vid, None, excluir_uid=excluir_uid)]
+    except Exception as e:
+        print(f"[otrep] gestión de la OT vid={vid}: {type(e).__name__}", flush=True)
+        return []
+
+
+def _otrep_dueno_resolver(vid):
+    """El DUEÑO que le corresponde a un pedido de la OT `vid`: {nombre, user_id, origen} o None. Orden (lo decide repuestos_respuesta.elegir_dueno):
+    el ticket de repuestos de la OT si ya tiene a alguien · responsable de la OT, creador, ejecutivo del cliente · responsable por defecto de
+    Repuestos · respaldo de la gestión. Nunca un técnico."""
+    ticket_asig = None
+    try:
+        r = mysql_fetchone(
+            "SELECT t.asignado_a FROM mant_ot_repuesto_solicitudes s JOIN tk_tickets t ON t.id=s.ticket_id "
+            " WHERE s.visita_id=%s AND t.tipo='spare_parts' AND COALESCE(t.asignado_a,'')<>'' "
+            " ORDER BY (t.estado NOT IN ('closed','resolved','cancelado')) DESC, s.id DESC LIMIT 1", (int(vid),))
+        ticket_asig = (r or {}).get("asignado_a")
+    except Exception as e:
+        print(f"[otrep] ticket de la OT vid={vid}: {type(e).__name__}", flush=True)
+    return _rresp.elegir_dueno(_otrep_destinos_gestion(vid), _otrep_defecto_usuario(), ticket_asig)
+
+
+def _otrep_asignar_dueno(sid):
+    """Todo pedido que nace en una OT nace con DUEÑO: se escribe en `responsable` de la solicitud (nunca pisa a uno ya escrito) y queda en la
+    bitácora quién, cuándo y por qué. Los que levanta la propia gestión (manual), una incidencia o un ticket directo ya eligen su responsable por
+    su camino. Best-effort. → el dueño asignado o None."""
+    try:
+        if not _otrep_resp_asegurar():
+            return None
+        s = mysql_fetchone("SELECT id, visita_id, responsable, creada_desde FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+        if not s or not s.get("visita_id") or (s.get("responsable") or "").strip():
+            return None
+        if (s.get("creada_desde") or "") in ("manual", "incidencia", "ticket"):
+            return None
+        d = _otrep_dueno_resolver(s["visita_id"])
+        if not d:
+            return None
+        n = mysql_execute_returning_rowcount(
+            "UPDATE mant_ot_repuesto_solicitudes SET responsable=%s WHERE id=%s AND (responsable IS NULL OR responsable='')",
+            (d["nombre"][:190], sid))
+        if not n:
+            return None
+        _otrep_evento(sid, "tomar", "sistema",
+                      detalle=f"Responsable: {d['nombre']} (asignado al crearse el pedido: {_rresp.ORIGEN_TXT.get(d['origen'], d['origen'])})")
+        return d
+    except Exception as e:
+        print(f"[otrep] asignar dueño sid={sid}: {type(e).__name__}: {e}", flush=True)
+        return None
+
+
+def _otrep_ticket_dueno_asegurar(tid, vid, user=None):
+    """El ticket de repuestos de la OT queda a nombre del MISMO dueño (la solicitud y su ticket nunca tienen dos). Solo completa un ticket
+    sin asignar; nunca pisa. Best-effort."""
+    try:
+        d = _otrep_dueno_resolver(vid)
+        if not d or d.get("origen") == "ticket":
+            return
+        n = mysql_execute_returning_rowcount(
+            "UPDATE tk_tickets SET asignado_a=%s WHERE id=%s AND (asignado_a IS NULL OR asignado_a='')", (d["nombre"][:190], int(tid)))
+        if n:
+            mysql_execute(
+                "INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno) VALUES (%s,'asignacion',%s,%s,%s,1)",
+                (int(tid), f"Asignado a: {d['nombre']} ({_rresp.ORIGEN_TXT.get(d['origen'], d['origen'])})",
+                 json.dumps({"campo": "asignado_a", "nuevo": d["nombre"], "via": "pedido_repuesto_ot"}, ensure_ascii=False), user or "sistema"))
+    except Exception as e:
+        print(f"[otrep] ticket dueño tid={tid}: {type(e).__name__}: {e}", flush=True)
+
+
+def _otrep_enviar_correo(clave, modulo, correos, asunto, status, titulo, subtitulo, mensaje, filas, url, cta, ref=None):
+    """Envía UN correo INTERNO de Repuestos a cada dirección (sin repetidos) por la puerta única, con su clave del registro (REGLA #33).
+    Nace APAGADO: sin REPUESTOS_CORREOS_ACTIVOS no sale nada (y la puerta aún revisa el general, la llave y el interruptor del correo).
+    Jamás al cliente ni con proveedor, costo o N° de OC. → las direcciones a las que salió."""
+    if not _otrep_correos_activos():
+        return []
+    vistos, enviados = set(), []
+    html = _ilus_email_master({
+        "subject": asunto, "preheader": titulo, "status_label": status, "title": titulo, "subtitle": subtitulo or "",
+        "message": mensaje, "detail_rows_html": _ilus_email_rows(filas),
+        "primary_cta_url": url, "primary_cta_label": cta,
+        "closing_message": "Correo interno de ILUS Fitness: no se le envía nada al cliente."})
+    for to in correos or []:
+        k = (to or "").strip().lower()
+        if not k or k in vistos:
+            continue
+        vistos.add(k)
+        try:
+            if _send_ilus_email(to, asunto, html, evento=clave, modulo=modulo, asincrono=True, correo=clave, ref=ref) is not False:
+                enviados.append(to)
+        except Exception as e:
+            print(f"[otrep] correo {clave}: {type(e).__name__}", flush=True)
+    return enviados
+
+
+def _otrep_avisar_nueva_ot(s, usuario=None):
+    """Aviso del pedido nuevo de una OT a la GESTIÓN DE ESA OT (el dueño primero; nunca un técnico), AGRUPADO por OT: una sola campana por
+    persona y OT («OT-2026-00171: 3 pedidos de repuesto nuevos»); lo que llegue mientras sigue sin leer —o dentro de 30 minutos— se suma.
+    Si el pedido es grave (equipo fuera de servicio o puede lastimar a alguien) sale además el correo interno `rep_nueva` (apagado hasta el
+    «sí» de Daniel). → cuántas personas recibieron la campana, o None si no hay a quién avisar por este camino (sigue el aviso de siempre)."""
+    vid = int(s["visita_id"])
+    todos = _otrep_destinos_gestion(vid)
+    if not todos:
+        return None
+    req = _otrep_usuario_por_nombre(usuario)
+    dest = {int(p["id"]): p for p in todos if not (req and int(p["id"]) == int(req["id"]))}
+    # El dueño y el responsable por defecto también se enteran aunque no figuren como gestión de la OT (nunca un técnico).
+    extra = [_otrep_usuario_por_nombre(s.get("responsable"))]
+    _def = _otrep_defecto_usuario()
+    if _def:
+        extra.append({"id": _def["id"], "nombre": _def["nombre"], "username": "", "role": ""})
+    for u in extra:
+        if u and u.get("id") and int(u["id"]) not in dest and not (req and int(u["id"]) == int(req["id"])) \
+                and _rol_familia(u.get("role")) != "tecnico":
+            dest[int(u["id"])] = {"id": int(u["id"]), "nombre": u.get("nombre") or u.get("username") or "", "correo": _otrep_correo_de(u), "por": "dueño"}
+    if not dest:
+        return 0
+    ahora = (mysql_fetchone("SELECT NOW() AS t") or {}).get("t")
+    donde = s.get("numero_ot") or f"V-{vid:05d}"
+    fs = bool(s.get("dejo_fuera_servicio"))
+    equipo = (s["equipo_ref"] + (f" · S/N {s['serie']}" if s.get("serie") else "")) if s.get("equipo_ref") else (f"S/N {s['serie']}" if s.get("serie") else "")
+    url = f"/repuestos?solicitud={s['id']}#solicitudes"
+    uno = [{"repuesto_nombre": s.get("repuesto_nombre"), "cantidad": s.get("cantidad")}]
+    n_ok = 0
+    for uid in dest:
+        try:
+            ex = mysql_fetchone(
+                "SELECT id, leida_at, created_at FROM mant_notificaciones WHERE tipo='repuesto_nuevo' AND visita_id=%s AND destino_user_id=%s "
+                "   AND archivada_at IS NULL ORDER BY id DESC LIMIT 1", (vid, uid))
+            minutos = None
+            if ex and ex.get("created_at") and isinstance(ahora, datetime):
+                minutos = (ahora - ex["created_at"]).total_seconds() / 60.0
+            accion = _rresp.decidir_campana(None if not ex else bool(ex.get("leida_at")), minutos)
+            items, fs_g = uno, fs
+            if accion == "actualizar" and ex and ex.get("created_at"):
+                acum = [dict(f) for f in (mysql_fetchall(
+                    "SELECT id, repuesto_nombre, cantidad, dejo_fuera_servicio FROM mant_ot_repuesto_solicitudes "
+                    " WHERE visita_id=%s AND created_at >= %s AND COALESCE(creada_desde,'')<>'manual' ORDER BY id LIMIT 40",
+                    (vid, ex["created_at"] - timedelta(minutes=2))) or [])]
+                if acum and any(int(f["id"]) == int(s["id"]) for f in acum):
+                    items, fs_g = acum, any(bool(f.get("dejo_fuera_servicio")) for f in acum)
+            titulo, cuerpo, prio = _rresp.campana_pedidos_nuevos(donde, items, s.get("cliente"), usuario, fs_g, equipo, s.get("documento"))
+            if accion == "actualizar" and ex:
+                try:
+                    mysql_execute("UPDATE mant_notificaciones SET titulo=%s, cuerpo=%s, mensaje=%s, prioridad=%s, url_accion=%s, "
+                                  "       leida_at=NULL, estado='pendiente' WHERE id=%s", (titulo, cuerpo, cuerpo, prio, url, int(ex["id"])))
+                except Exception:
+                    mysql_execute("UPDATE mant_notificaciones SET titulo=%s, cuerpo=%s, prioridad=%s, url_accion=%s, leida_at=NULL "
+                                  " WHERE id=%s", (titulo, cuerpo, prio, url, int(ex["id"])))
+            else:
+                _mant_notificar(uid, "repuesto_nuevo", titulo[:200], cuerpo, url_accion=url, prioridad=prio,
+                                cliente_id=s.get("cliente_id"), visita_id=vid)
+            try:
+                _mant_notif_cache_invalidar(uid)
+            except Exception:
+                pass
+            n_ok += 1
+        except Exception as e:
+            print(f"[otrep] campana nueva a {uid}: {type(e).__name__}", flush=True)
+    # Correo interno solo si es grave.
+    try:
+        diag = ""
+        try:
+            _dj = json.loads(s["diagnostico_json"]) if isinstance(s.get("diagnostico_json"), str) and s["diagnostico_json"].strip() else None
+            diag = _pm.diagnostico_txt(_dj) if isinstance(_dj, dict) else ""
+        except Exception:
+            diag = ""
+        if _rresp.es_critico(fs, diag) and _otrep_correos_activos():
+            correos = [p.get("correo") for p in dest.values() if p.get("correo")] + list(_qp_correos_bodega())
+            _otrep_enviar_correo(
+                "rep_nueva", "comunicacion_interna", correos, _brand_subject(f"Repuestos · {donde}: pedido grave"), "Pedido de repuesto",
+                f"Pedido de repuesto en {donde}", s.get("cliente") or "",
+                "<p>Un técnico pidió un repuesto y el equipo quedó <strong>fuera de servicio</strong> o el camino del diagnóstico dice que "
+                "<strong>puede lastimar a alguien</strong>. Hay que darle una primera respuesta cuanto antes.</p>",
+                [("OT", donde), ("Repuesto", _rresp.linea_pedido({"repuesto_nombre": s.get("repuesto_nombre"), "cantidad": s.get("cantidad")})),
+                 ("Equipo", equipo), ("Qué pasó", diag), ("Lo pidió", usuario or "un técnico"),
+                 ("Dueño del pedido", s.get("responsable") or "—"),
+                 ("Plazo para responder", _rresp.fmt_horas(_rresp.PLAZO_PRIMERA_FS_H if fs else _rresp.PLAZO_PRIMERA_H))],
+                f"{_public_base_url()}/repuestos?solicitud={s['id']}#solicitudes", "Ver el pedido",
+                ref={"tipo": "OT", "id": vid, "codigo": donde})
+    except Exception as e:
+        print(f"[otrep] correo rep_nueva sid={s.get('id')}: {type(e).__name__}", flush=True)
+    return n_ok if n_ok else None       # si ninguna campana pudo salir, sigue el aviso de siempre (superadmin/admin)
+
+
+def _otrep_avisar_tecnico(sid, de, a, actor=None, detalle=None):
+    """Cada paso del pedido le llega por la campana al técnico que lo pidió (UN solo punto: el evento de cambio de estado). → 1 si avisó."""
+    clave = _rresp.evento_tecnico(de, a)
+    if not clave:
+        return 0
+    return _otrep_avisar_tecnico_clave(sid, clave, actor, detalle)
+
+
+def _otrep_avisar_tecnico_clave(sid, clave, actor=None, detalle=None):
+    """Campana (y, cuando la pieza llega a bodega, el correo `rep_lista_tecnico`, apagado hasta el «sí» de Daniel) al técnico que pidió.
+    Palabras simples: JAMÁS proveedor, costo, N° de OC ni la nota de gestión (REGLAS #19 y #26). Solo pedidos de una OT; no a quien hizo el
+    cambio. Best-effort."""
+    try:
+        s = mysql_fetchone(
+            "SELECT s.id, s.visita_id, s.cliente_id, s.repuesto_nombre, s.cantidad, s.solicitado_por, s.camino, s.repuesto_stock_id, "
+            "       s.es_reposicion, s.solicitud_padre_id, s.creada_desde, cp.eta AS compra_eta, v.numero_ot "
+            "  FROM mant_ot_repuesto_solicitudes s LEFT JOIN mant_repuestos_compras cp ON cp.id=s.compra_id "
+            "  LEFT JOIN mant_visitas v ON v.id=s.visita_id WHERE s.id=%s", (sid,))
+        if not s or not s.get("visita_id") or s.get("es_reposicion") or s.get("solicitud_padre_id") or (s.get("creada_desde") or "") == "manual":
+            return 0
+        u = _otrep_usuario_por_nombre(s.get("solicitado_por"))
+        if not u:
+            return 0
+        a_l = (actor or "").strip().lower()
+        if a_l and a_l in ((u.get("username") or "").strip().lower(), (u.get("nombre") or "").strip().lower()):
+            return 0                     # lo hizo la misma persona: no hace falta avisarle
+        t = _rresp.texto_tecnico(clave, {
+            "repuesto_nombre": s.get("repuesto_nombre"), "cantidad": s.get("cantidad"), "camino": s.get("camino"),
+            "hay_en_bodega": bool(s.get("repuesto_stock_id")), "eta": s.get("compra_eta"), "detalle": detalle})
+        if not t:
+            return 0
+        titulo, cuerpo, prio = t
+        vid = int(s["visita_id"])
+        uid_t = int(u["id"])
+        _mant_notificar(uid_t, "repuesto_tecnico", titulo, cuerpo, url_accion=f"/ot/{vid}?rep={int(sid)}", prioridad=prio)
+        try:
+            _mant_notif_cache_invalidar(uid_t)
+        except Exception:
+            pass
+        if clave == "recibido" and _otrep_correos_activos() and _otrep_correo_de(u):
+            donde = s.get("numero_ot") or f"V-{vid:05d}"
+            _otrep_enviar_correo(
+                "rep_lista_tecnico", "ot_tecnicos", [_otrep_correo_de(u)], _brand_subject(f"Tu repuesto ya está en bodega · {donde}"),
+                "Repuesto en bodega", "Tu pieza ya está en bodega", donde,
+                f"<p>{_rresp.linea_pedido(s)} llegó a bodega y está lista para tu OT.</p>",
+                [("OT", donde), ("Repuesto", _rresp.linea_pedido(s))],
+                f"{_public_base_url()}/ot/{vid}", "Ver la OT", ref={"tipo": "OT", "id": vid, "codigo": donde})
+        return 1
+    except Exception as e:
+        print(f"[otrep] avisar técnico sid={sid} {clave}: {type(e).__name__}: {e}", flush=True)
+        return 0
+
+
+def _otrep_avisar_eta_compra(cid):
+    """Cuando una compra recibe o cambia su fecha de llegada, el técnico de cada pedido que viaja en ella se entera de la fecha (sin
+    proveedor). Se llama después de guardar la fecha. Best-effort."""
+    try:
+        for r in (mysql_fetchall("SELECT id FROM mant_ot_repuesto_solicitudes WHERE compra_id=%s AND estado='pedido'", (int(cid),)) or []):
+            _otrep_avisar_tecnico_clave(r["id"], "fecha", None, None)
+    except Exception as e:
+        print(f"[otrep] avisar fecha compra={cid}: {type(e).__name__}", flush=True)
+
+
+# ── El reloj de la primera respuesta ─────────────────────────────────────────────────────────────────────────────
+def _otrep_eventos_lote(ids):
+    """{solicitud_id: [eventos de estado y de plazo]} con la hora ya en Chile (varias consultas de a 400)."""
+    ids = sorted({int(i) for i in (ids or [])})
+    out = {i: [] for i in ids}
+    if not ids or not _otrep_eventos_asegurar():
+        return out
+    for k in range(0, len(ids), 400):
+        trozo = ids[k:k + 400]
+        ph = ",".join(["%s"] * len(trozo))
+        for r in (mysql_fetchall(
+                f"SELECT solicitud_id, accion, de_estado, a_estado, usuario, detalle, created_at FROM mant_ot_repuesto_eventos "
+                f" WHERE solicitud_id IN ({ph}) AND accion IN ('estado','plazo') ORDER BY id", tuple(trozo)) or []):
+            d = dict(r)
+            d["created_at"] = _otrep_a_chile(d.get("created_at"))
+            out.setdefault(int(d["solicitud_id"]), []).append(d)
+    return out
+
+
+def _otrep_reloj_de(row, eventos, ahora_ch, ciclo_actual=True):
+    """El reloj de la primera respuesta de UN pedido (la fila trae created_at y las demás fechas en UTC). → {rel, inicio, respuesta}.
+    `ciclo_actual`: un pedido reabierto parte de cero desde la reapertura (barrido); sin él se mide la primera respuesta de siempre (cifras)."""
+    creada = _otrep_a_chile(row.get("created_at"))
+    inicio = _rresp.inicio_reloj(creada, eventos) if ciclo_actual else creada
+    fila = {"estado": row.get("estado"), "validado_at": _otrep_a_chile(row.get("validado_at")), "pedido_at": _otrep_a_chile(row.get("pedido_at")),
+            "updated_at": _otrep_a_chile(row.get("updated_at")), "validado_por": row.get("validado_por"), "resuelto_por": row.get("resuelto_por")}
+    resp = _rresp.primera_respuesta(eventos, desde=(inicio if (ciclo_actual and inicio != creada) else None), fila=fila)
+    fs = bool(row.get("dejo_fuera_servicio")) or (row.get("maquina_estado") == "fuera_servicio")
+    rel = _rresp.estado_reloj(inicio, ahora_ch, resp["cuando"] if resp else None, fs, _otrep_feriados)
+    return {"rel": rel, "inicio": inicio, "respuesta": resp}
+
+
+def _otrep_escalamiento_destinos():
+    """A quién se escala un pedido que lleva demasiado sin respuesta: supervisores y administradores activos (si no hay ninguno, el superadmin).
+    Nunca un técnico. → [{id, nombre, correo}]."""
+    try:
+        activos = [dict(u) for u in (mysql_fetchall("SELECT id, username, nombre, role FROM app_users WHERE active=1") or [])]
+    except Exception as e:
+        print(f"[otrep] escalamiento: {type(e).__name__}", flush=True)
+        return []
+    sup = [u for u in activos if _rol_familia(u.get("role")) in ("supervisor", "admin")] \
+        or [u for u in activos if _rol_familia(u.get("role")) == "superadmin"]
+    sup.sort(key=lambda u: (u.get("nombre") or u.get("username") or "").lower())
+    return [{"id": int(u["id"]), "nombre": (u.get("nombre") or u.get("username") or "").strip(), "correo": _otrep_correo_de(u)} for u in sup[:20]]
+
+
+def _otrep_barrido_respuesta(max_s=25, ahora=None, dry=False, max_pedidos=300):
+    """El barrido de la primera respuesta (Daniel 2026-10-21: «que los obligues a tomar una respuesta midiendo los tiempos»). Cuelga del trabajo
+    de Cloud Scheduler `simpliroute-poll` (cada 10 min), así el aviso NO depende de que alguien abra la lista. Solo actúa en horario de
+    cobertura (lunes a viernes hábiles, 08:00–17:00 con colación 13:00–14:00, hora Chile). Para cada pedido de una OT que sigue «solicitado»:
+      · 4 h hábiles sin respuesta (REPUESTOS_AVISO_H): campana al DUEÑO («por vencer»);
+      · 8 h hábiles (REPUESTOS_ESCALA_H): campana al dueño y a SUPERVISIÓN (supervisores/administradores), y el correo `rep_vencida`
+        (apagado hasta el «sí» de Daniel).
+    Una sola vez por pedido y nivel (la marca queda en la bitácora del pedido); varios pedidos de una misma pasada llegan en UNA campana por
+    persona. Nunca avisa de un pedido respondido, cerrado ni de uno que levantó la propia gestión. Un candado impide dos barridos a la vez.
+    `dry=True` solo calcula. Best-effort: devuelve un resumen y nunca levanta."""
+    t0 = time.time()
+    out = {"revisados": 0, "avisados": 0, "escalados": 0, "campanas": 0, "correos": 0}
+    ahora_ch = ahora or _otrep_a_chile(datetime.utcnow())
+    cob = _rresp.en_cobertura(ahora_ch, _otrep_feriados)
+    if not cob["abierta"]:
+        return dict(out, omitido="fuera de cobertura (" + cob["motivo"] + ")")
+    conn_lock = None
+    try:
+        conn_lock = get_mysql()
+        with conn_lock.cursor() as cur:
+            cur.execute("SELECT GET_LOCK(%s, 0) AS l", ("otrep_barrido_respuesta",))
+            if not (cur.fetchone() or {}).get("l"):
+                try:
+                    conn_lock.close()
+                except Exception:
+                    pass
+                return dict(out, omitido="otro barrido en curso")
+    except Exception as e:
+        print(f"[otrep] barrido: sin candado ({type(e).__name__}); sigue", flush=True)
+    try:
+        filas = [dict(r) for r in (mysql_fetchall(
+            "SELECT s.id, s.visita_id, s.cliente_id, s.repuesto_nombre, s.cantidad, s.created_at, s.estado, s.responsable, "
+            "       s.dejo_fuera_servicio, s.validado_at, s.validado_por, s.pedido_at, s.resuelto_por, s.updated_at, "
+            "       v.numero_ot, c.razon_social AS cliente, m.estado_capturado AS maquina_estado, t.asignado_a AS ticket_asignado_a "
+            "  FROM mant_ot_repuesto_solicitudes s LEFT JOIN mant_visitas v ON v.id=s.visita_id "
+            "  LEFT JOIN mant_clientes c ON c.id=s.cliente_id LEFT JOIN mant_maquinas m ON m.id=s.maquina_id "
+            "  LEFT JOIN tk_tickets t ON t.id=s.ticket_id "
+            " WHERE s.estado='solicitado' AND COALESCE(s.creada_desde,'')<>'manual' AND COALESCE(s.es_reposicion,0)=0 "
+            "   AND s.solicitud_padre_id IS NULL ORDER BY s.id LIMIT %s", (int(max_pedidos),)) or [])]
+        eventos = _otrep_eventos_lote([f["id"] for f in filas])
+        escala = None
+        por_destino = {}          # (uid, nivel) → {"u": {...}, "items": [...]}
+        a_marcar = []             # (sid, nivel, texto)
+        cache_u = {}
+        for f in filas:
+            if time.time() - t0 > max_s:
+                break
+            out["revisados"] += 1
+            evs = eventos.get(int(f["id"]), [])
+            calc = _otrep_reloj_de(f, evs, ahora_ch, ciclo_actual=True)
+            rel = calc["rel"]
+            nivel = _rresp.nivel_pendiente(rel, _rresp.marcas_avisadas(evs, calc["inicio"]))
+            if not nivel:
+                continue
+            # El dueño efectivo: el ticket manda sobre la solicitud (igual que la cola); si nadie, el que le corresponde por la OT.
+            nombre = (f.get("ticket_asignado_a") or "").strip() or (f.get("responsable") or "").strip()
+            due = None
+            if nombre:
+                if nombre not in cache_u:
+                    cache_u[nombre] = _otrep_usuario_por_nombre(nombre)
+                due = cache_u[nombre]
+            elif f.get("visita_id"):
+                d = _otrep_dueno_resolver(f["visita_id"])
+                due = _otrep_usuario_por_nombre(d["nombre"]) if d else None
+            if due and _rol_familia(due.get("role")) == "tecnico":
+                due = None
+            dest = []
+            if due:
+                dest.append({"id": int(due["id"]), "nombre": due.get("nombre") or due.get("username") or "", "correo": _otrep_correo_de(due)})
+            if nivel >= _rresp.NIVEL_ESCALA or not dest:
+                if escala is None:
+                    escala = _otrep_escalamiento_destinos()
+                dest += [x for x in escala if x["id"] not in {y["id"] for y in dest}]
+            if not dest:
+                continue                   # nadie a quién avisar: no se marca, se reintenta
+            item = {"id": f["id"], "repuesto_nombre": f.get("repuesto_nombre"), "cantidad": f.get("cantidad"), "ot": f.get("numero_ot"),
+                    "cliente": f.get("cliente"), "transcurrido_h": rel["transcurrido_h"], "fs": bool(rel.get("fs")), "dueno": (due or {}).get("nombre") or "sin dueño"}
+            for p in dest:
+                por_destino.setdefault((p["id"], nivel), {"u": p, "items": []})["items"].append(item)
+            a_marcar.append((int(f["id"]), nivel, f"Sin primera respuesta tras {_rresp.fmt_horas(rel['transcurrido_h'])}"
+                             + (": se avisó al dueño" if nivel == _rresp.NIVEL_AVISO else ": se avisó al dueño y a supervisión")))
+        if dry:
+            out["pendientes"] = [{"solicitud": s_, "nivel": n_} for s_, n_, _t in a_marcar]
+            return out
+        enviados_ok = set()
+        correos_por_persona = {}
+        for (uid, nivel), g in por_destino.items():
+            titulo, cuerpo, prio = _rresp.campana_plazo(nivel, g["items"])
+            url = (f"/repuestos?solicitud={g['items'][0]['id']}#solicitudes" if len(g["items"]) == 1 else "/repuestos#solicitudes")
+            try:
+                _mant_notificar(uid, "repuesto_plazo", titulo, cuerpo, url_accion=url, prioridad=prio)
+                try:
+                    _mant_notif_cache_invalidar(uid)
+                except Exception:
+                    pass
+                out["campanas"] += 1
+                enviados_ok.update(int(i["id"]) for i in g["items"])
+                if nivel >= _rresp.NIVEL_ESCALA and g["u"].get("correo"):
+                    correos_por_persona.setdefault(g["u"]["correo"], []).extend(g["items"])
+            except Exception as e:
+                print(f"[otrep] barrido: campana a {uid}: {type(e).__name__}", flush=True)
+        # Correo `rep_vencida` (apagado por configuración hasta el «sí» de Daniel): uno por persona con la lista de lo vencido.
+        for correo, items in correos_por_persona.items():
+            vistos, lista = set(), []
+            for it in items:
+                if it["id"] not in vistos:
+                    vistos.add(it["id"])
+                    lista.append(it)
+            filas_c = [(f"#{it['id']} · {it.get('ot') or 'sin OT'}",
+                        f"{_rresp.linea_pedido(it)} · lleva {_rresp.fmt_horas(it['transcurrido_h'])} sin respuesta · dueño: {it.get('dueno')}")
+                       for it in lista[:12]]
+            if len(lista) > 12:
+                filas_c.append(("…", f"y {len(lista) - 12} más"))
+            out["correos"] += len(_otrep_enviar_correo(
+                "rep_vencida", "comunicacion_interna", [correo], _brand_subject(f"Repuestos: {len(lista)} pedido(s) sin primera respuesta"),
+                "Pedido sin respuesta", f"{len(lista)} pedido(s) de repuesto sin primera respuesta", "",
+                "<p>Estos pedidos llevan más de 8 horas hábiles sin que nadie les dé una primera respuesta (revisar si hay en bodega, pedirlo o "
+                "cerrarlo). El plazo es de 1 día hábil.</p>", filas_c, f"{_public_base_url()}/repuestos#solicitudes", "Abrir Repuestos"))
+        for sid, nivel, texto in a_marcar:
+            if sid in enviados_ok:
+                _otrep_evento(sid, "plazo", "sistema", detalle=_rresp.marca_detalle(nivel, texto))
+                out["escalados" if nivel >= _rresp.NIVEL_ESCALA else "avisados"] += 1
+    except Exception as e:
+        print(f"[otrep] barrido respuesta: {type(e).__name__}: {e}", flush=True)
+        out["error"] = True
+    finally:
+        if conn_lock is not None:
+            try:
+                with conn_lock.cursor() as cur:
+                    cur.execute("SELECT RELEASE_LOCK(%s) AS r", ("otrep_barrido_respuesta",))
+                conn_lock.commit()
+            except Exception:
+                pass
+            try:
+                conn_lock.close()
+            except Exception:
+                pass
+    return out
+
+
+@app.route("/repuestos/api/tiempos-respuesta", methods=["GET"])
+@_otrep_gestion_required
+@_no_tecnico
+def repstock_tiempos_respuesta():
+    """Solo lectura, solo gestión: los tiempos de PRIMERA respuesta de los pedidos de repuesto de los últimos N días (por defecto 30): promedio y
+    mediana en horas hábiles, % dentro del plazo, pedidos vencidos y las cifras por dueño. Una sola lógica (repuestos_respuesta.resumen_tiempos).
+    Solo horas y conteos (REGLA #26). Nota: la primera respuesta es la primera vez que el pedido sale de «solicitado»; los pedidos anteriores
+    a la bitácora (04-oct-2026) se deducen de las fechas de validación o de pedido."""
+    try:
+        dias = max(1, min(int(request.args.get("dias") or 30), 180))
+    except (TypeError, ValueError):
+        dias = 30
+    ahora_ch = _otrep_a_chile(datetime.utcnow())
+    try:
+        filas = [dict(r) for r in (mysql_fetchall(
+            "SELECT s.id, s.visita_id, s.repuesto_nombre, s.cantidad, s.created_at, s.estado, s.responsable, s.dejo_fuera_servicio, "
+            "       s.validado_at, s.validado_por, s.pedido_at, s.resuelto_por, s.updated_at, v.numero_ot, "
+            "       m.estado_capturado AS maquina_estado, t.asignado_a AS ticket_asignado_a "
+            "  FROM mant_ot_repuesto_solicitudes s LEFT JOIN mant_visitas v ON v.id=s.visita_id "
+            "  LEFT JOIN mant_maquinas m ON m.id=s.maquina_id LEFT JOIN tk_tickets t ON t.id=s.ticket_id "
+            " WHERE s.created_at >= %s AND COALESCE(s.creada_desde,'')<>'manual' AND COALESCE(s.es_reposicion,0)=0 "
+            "   AND s.solicitud_padre_id IS NULL ORDER BY s.id DESC LIMIT 1500",
+            (datetime.utcnow() - timedelta(days=dias),)) or [])]
+        eventos = _otrep_eventos_lote([f["id"] for f in filas])
+    except Exception as e:
+        print(f"[otrep] tiempos de respuesta: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudieron calcular los tiempos de respuesta."}), 500
+    pedidos = []
+    for f in filas:
+        calc = _otrep_reloj_de(f, eventos.get(int(f["id"]), []), ahora_ch, ciclo_actual=False)
+        pedidos.append({"id": f["id"], "dueno": (f.get("ticket_asignado_a") or f.get("responsable") or "").strip(), "inicio": calc["inicio"],
+                        "respuesta": calc["respuesta"]["cuando"] if calc["respuesta"] else None,
+                        "fs": bool(f.get("dejo_fuera_servicio")) or f.get("maquina_estado") == "fuera_servicio",
+                        "ot": f.get("numero_ot"), "repuesto": f.get("repuesto_nombre"), "cantidad": float(f.get("cantidad") or 0)})
+    res = _rresp.resumen_tiempos(pedidos, ahora_ch, _otrep_feriados)
+    cfg = _rresp.config()
+    return jsonify({"ok": True, "dias": dias, "generado": ahora_ch.strftime("%d/%m/%Y %H:%M"),
+                    "plazo": {"normal_h": cfg["plazo_h"], "fuera_servicio_h": cfg["plazo_fs_h"], "aviso_h": cfg["aviso_h"], "escala_h": cfg["escala_h"],
+                              "texto": "Horas hábiles: lunes a viernes, sin feriados"},
+                    "truncado": len(filas) >= 1500, **res})
 
 
 @app.route("/repuestos/api/solicitudes-ot/config", methods=["GET", "POST"])
@@ -107173,6 +107734,8 @@ def repstock_compra_estado(cid):
     for _sid_dev in devueltas:
         _otrep_evento(_sid_dev, "estado", user, "pedido", "validado",
                       f"Compra #{cid} cancelada: vuelve a validado · {nota[:200]}")
+    if eta and nuevo != "cancelada" and str(eta) != str(c.get("eta") or ""):
+        _otrep_avisar_eta_compra(cid)      # 2026-10-21: el técnico de cada pedido se entera de la fecha de llegada (sin proveedor)
     return jsonify({"ok": True, "estado": nuevo})
 
 
@@ -126741,7 +127304,10 @@ def _ensure_mant_notif_tipo_ot_firmada_cliente():
 
     2026-10-21 (REGLA #38, hallazgos de la OT): + ot_hallazgo (la campana «OT-…: 3 hallazgos nuevos») y ot_hallazgo_toma (el aviso suave
     de «tomó el caso»; tipo propio para que no se confunda con la anterior). También al final. tests/test_ot_hallazgos.py vigila que
-    estén en las dos listas."""
+    estén en las dos listas.
+
+    2026-10-21 (solicitud de repuesto, REGLA #41): + repuesto_tecnico (la campana al técnico que pidió: revisado, pedido, llegó, instalado, cerrado).
+    También al final ('repuesto_nuevo' y 'repuesto_plazo' ya estaban). tests/test_repuestos_respuesta.py lo vigila."""
     try:
         mysql_execute(
             "ALTER TABLE mant_notificaciones MODIFY COLUMN tipo "
@@ -126758,7 +127324,7 @@ def _ensure_mant_notif_tipo_ot_firmada_cliente():
             "       'retiro_listo','retiro_cerrado',"
             "       'retiro_propuesta','retiro_expedido','retiro_desfase','retiro_cierre',"
             "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida',"
-            "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma','repuesto_nuevo') DEFAULT 'otro'"
+            "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma','repuesto_nuevo','repuesto_tecnico') DEFAULT 'otro'"
         )
     except Exception as e:
         print(f"[ensure] mant_notificaciones.tipo (+ot_firmada_cliente): {e}", flush=True)
