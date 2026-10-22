@@ -1031,6 +1031,7 @@ body {
 .btn-ilus         { background: var(--ilus-red);    color: #fff; border: none; font-weight: 700; border-radius: 5px; }
 .btn-ilus:hover   { background: var(--ilus-red-dk); color: #fff; }
 .btn-ilus:active  { background: #770000; color: #fff; }
+.btn-ilus:disabled, .btn-ilus.disabled { background: var(--ilus-red); color: #fff; opacity: .45; cursor: not-allowed; }
 .btn-ilus-outline { border: 2px solid var(--ilus-red); color: var(--ilus-red); background: transparent; font-weight: 600; border-radius: 5px; }
 .btn-ilus-outline:hover { background: var(--ilus-red); color: #fff; }
 .btn-dark-ilus      { background: var(--ilus-black); color: #fff; border: none; font-weight: 600; border-radius: 5px; }

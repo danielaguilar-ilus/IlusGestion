@@ -326,7 +326,7 @@
       <i class="bi bi-lightbulb me-1"></i>Propuestas del sistema<span id="propBadge" hidden></span>
     </button>
     {#- 🔢 2026-10-21 (REGLA #39): estándar N° de serie + GPS en toda plantilla y una plantilla por cada clasificación. Lo aplica una persona. -#}
-    <button type="button" class="btn btn-sm btn-outline-dark fw-bold" onclick="abrirSerieGps()" id="btnSerieGps">
+    <button type="button" class="btn btn-sm btn-outline-light fw-bold" onclick="abrirSerieGps()" id="btnSerieGps">
       <i class="bi bi-upc-scan me-1"></i>Estándar serie + GPS<span id="sgBadge" hidden></span>
     </button>
     <button class="btn btn-sm btn-ilus fw-bold" onclick="abrirEditor(null)">
@@ -448,10 +448,10 @@
 .prop-act{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .prop-act .btn{min-height:46px;font-weight:700}
 .prop-no{font-size:.78rem;color:#6b7280;margin-top:6px}
-#propBadge{background:#dc2626;color:#fff;border-radius:999px;font-size:.68rem;padding:1px 7px;margin-left:4px}
+#propBadge{background:#f59e0b;color:#1f2937;border-radius:999px;font-size:.68rem;padding:1px 7px;margin-left:4px}
 </style>
 <style>
-#sgBadge{background:#dc2626;color:#fff;border-radius:999px;font-size:.68rem;padding:1px 7px;margin-left:4px}
+#sgBadge{background:#f59e0b;color:#1f2937;border-radius:999px;font-size:.68rem;padding:1px 7px;margin-left:4px}
 .sg-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
 .sg-tab{min-height:44px;border:1.5px solid #d1d5db;background:#fff;border-radius:12px;padding:6px 14px;font-weight:700;font-size:.88rem}
 .sg-tab.active{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
@@ -2053,16 +2053,23 @@ async function guardarPlantilla(){
   }
   // 🔢 REGLA #39: toda plantilla lleva el N° de serie y el GPS. Si falta alguno, se ofrece agregarlo (la persona decide).
   if (_items.length && (!_items.some(it => it.tipo_respuesta === 'serie') || !_items.some(it => it.tipo_respuesta === 'gps'))){
-    const agregar = await ilusConfirm({
+    // Impeccable C1 (21-oct): descartar el diálogo (Esc, clic fuera, «Volver a editar») NO guarda. Tres salidas explícitas.
+    // En una plantilla NUEVA el servidor agrega el estándar igual (REGLA #39), así que ahí no se ofrece «guardar sin ellos».
+    const faltaSerie = !_items.some(it => it.tipo_respuesta === 'serie');
+    const faltaGps = !_items.some(it => it.tipo_respuesta === 'gps');
+    const opciones = [{label: 'Agregarlos arriba y guardar', value: 'agregar', style: 'primary', icon: 'bi-plus-circle'}];
+    if (_editId) opciones.push({label: 'Guardar sin ellos (esta plantilla ya existía)', value: 'sin', style: 'secondary', icon: 'bi-save'});
+    const eleccion = await ilusActionSheet({
       title: 'Falta el estándar ILUS',
-      message: 'Esta plantilla no tiene ' + [(!_items.some(it => it.tipo_respuesta === 'serie') ? 'el N° de serie' : ''), (!_items.some(it => it.tipo_respuesta === 'gps') ? 'el GPS' : '')].filter(Boolean).join(' ni ') + '.',
+      message: 'Esta plantilla no tiene ' + [(faltaSerie ? 'el N° de serie' : ''), (faltaGps ? 'el GPS' : '')].filter(Boolean).join(' ni ') + '.',
       sub: 'Toda plantilla lleva el N° de serie y el GPS arriba (para la etiqueta de garantía y la ubicación del equipo).',
-      okLabel: 'Sí, agregarlos', cancelLabel: 'Guardar sin ellos', type: 'question',
+      options: opciones, cancelLabel: 'Volver a editar',
     });
-    if (agregar){
+    if (!eleccion) return;   // Esc / clic fuera / Volver a editar: no se guarda nada
+    if (eleccion === 'agregar'){
       const nuevos = [];
-      if (!_items.some(it => it.tipo_respuesta === 'serie')) nuevos.push(plItemEstandar(PL_STD_SERIE));
-      if (!_items.some(it => it.tipo_respuesta === 'gps')) nuevos.push(plItemEstandar(PL_STD_GPS));
+      if (faltaSerie) nuevos.push(plItemEstandar(PL_STD_SERIE));
+      if (faltaGps) nuevos.push(plItemEstandar(PL_STD_GPS));
       _items.unshift(...nuevos);
       renderItems();
     }

@@ -1030,6 +1030,19 @@
   });
   document.addEventListener('shown.bs.modal', ilusCleanModalBackdrops);
 
+  // Impeccable A1 (21-oct): con un diálogo ILUS abierto, Esc lo cierra A ÉL y no se propaga. Antes Esc llegaba también al modal
+  // Bootstrap (o al editor) que lo alojaba y lo cerraba entero, perdiendo lo que la persona estaba editando.
+  document.addEventListener('keydown', function(e){
+    if (e.key !== 'Escape') return;
+    var ovs = document.querySelectorAll('.ilus-overlay.show, .ilus-sheet-overlay.show');
+    if (!ovs.length) return;
+    var top = ovs[ovs.length - 1];
+    var btn = top.querySelector('.ilus-sheet-cancel') || top.querySelector('.ilus-btn[data-idx="0"]') || top.querySelector('.ilus-btn');
+    e.stopPropagation();
+    e.preventDefault();
+    if (btn) btn.click();
+  }, true);
+
   // ESC sale de cualquier overlay huérfano (último recurso)
   document.addEventListener('keydown', function(e){
     if (e.key === 'Escape'){
