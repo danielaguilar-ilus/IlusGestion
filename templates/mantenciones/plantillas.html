@@ -103,6 +103,21 @@
                     border-bottom:1px solid #e5e7eb;margin:-14px -14px 12px;padding:12px 14px 0}
   .pl-copy-panel{padding-bottom:12px;margin-bottom:12px;border-bottom:1px dashed #e5e7eb}
   .pl-copy-panel select{max-width:420px}
+  /* 🔎 2026-10-21: buscador de «Copiar ítems desde otra plantilla» (lista desplegable sobre el panel, sin crecerlo). */
+  .pl-copy-combo{position:relative;min-width:0}
+  .pl-copy-drop{position:absolute;left:0;right:0;top:100%;margin-top:4px;z-index:30;background:#fff;border:1.5px solid #d1d5db;
+                border-radius:12px;box-shadow:0 10px 28px rgba(16,24,40,.18);max-height:min(380px,52dvh);overflow:auto}
+  .pl-copy-pills{position:sticky;top:0;background:#fff;display:flex;gap:6px;flex-wrap:wrap;padding:8px 10px;border-bottom:1px solid #e5e7eb;z-index:1}
+  .pl-copy-pill{min-height:38px;border:1.5px solid #d1d5db;background:#fff;border-radius:999px;padding:4px 12px;font-size:.82rem;font-weight:700;color:#374151}
+  .pl-copy-pill.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+  .pl-copy-pill small{opacity:.75;margin-left:4px;font-weight:700}
+  .pl-copy-op{display:flex;gap:10px;align-items:center;min-height:48px;padding:6px 12px;cursor:pointer;border-bottom:1px solid #f3f4f6}
+  .pl-copy-op:hover,.pl-copy-op.act{background:#f3f4f6}
+  .pl-copy-op b{display:block;font-size:.92rem;line-height:1.2;overflow-wrap:anywhere}
+  .pl-copy-op .sub{font-size:.76rem;color:#6b7280}
+  .pl-copy-op .n{margin-left:auto;flex:none;font-size:.76rem;font-weight:800;color:#374151;background:#f3f4f6;border-radius:999px;padding:2px 9px}
+  .pl-copy-vacio{padding:14px 12px;font-size:.86rem;color:#6b7280}
+  #copyElegida{color:#065f46}
   .pl-add-panel{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;padding-bottom:12px}
   .pl-add-panel .pl-add-tipo{width:190px;flex:0 0 auto}
   .pl-add-panel .pl-add-titulo{flex:1 1 220px;min-width:180px}
@@ -649,16 +664,28 @@
                  después con la selección múltiple de más abajo). Cubre tanto
                  "crear la Mantención que falta partiendo de su Instalación" como
                  el pedido general de duplicar más rápido. #}
+              {#- 🔎 2026-10-21 (Daniel: «ese menú quiero que sea más potente, que me permita buscar… si estoy en instalación,
+                  muéstramelas nada más de la instalación… Y si le doy copiar ítem, borra todo, agrega los dos obligatorios, que
+                  es número de serie y GPS, y agrega el resto, sin duplicar»): buscador + filtro por categoría (la de la plantilla
+                  abierta por defecto) y «Copiar» que REEMPLAZA los ítems dejando arriba el N° de serie y el GPS sin duplicarlos. -#}
               <div class="pl-copy-panel">
-                <label class="form-label small fw-semibold mb-1" for="copyDesde">
+                <label class="form-label small fw-semibold mb-1" for="copyBuscar">
                   <i class="bi bi-clipboard-check me-1"></i>Copiar ítems desde otra plantilla
                 </label>
                 <div class="d-flex gap-2">
-                  <select id="copyDesde" class="form-select form-select-sm"></select>
-                  <button class="btn btn-sm btn-outline-secondary text-nowrap" onclick="copiarItemsDesde()">
+                  <div class="pl-copy-combo flex-grow-1">
+                    <input type="search" id="copyBuscar" class="form-control form-control-sm" autocomplete="off"
+                           role="combobox" aria-expanded="false" aria-controls="copyLista" aria-autocomplete="list"
+                           placeholder="Buscar plantilla por nombre…"
+                           oninput="copyFiltrar()" onfocus="copyAbrir()" onkeydown="copyTecla(event)">
+                    <input type="hidden" id="copyDesde" value="">
+                    <div id="copyLista" class="pl-copy-drop" role="listbox" hidden></div>
+                  </div>
+                  <button class="btn btn-sm btn-outline-secondary text-nowrap" id="copyBtn" onclick="copiarItemsDesde()" disabled>
                     <i class="bi bi-clipboard-plus me-1"></i>Copiar ítems
                   </button>
                 </div>
+                <div id="copyElegida" class="small mt-1" hidden></div>
               </div>
               <div class="pl-add-panel">
                 <div class="pl-add-tipo">
@@ -1436,7 +1463,10 @@ function plBloquearNombreClase(claseNombre){
 
 function abrirEditor(pid){
   _editId = pid || null;
-  _items = [];
+  // 🔢 REGLA #39: una plantilla NUEVA nace con el N° de serie y el GPS arriba (el servidor también los exige al crearla).
+  _items = pid ? [] : [plItemEstandar(PL_STD_SERIE), plItemEstandar(PL_STD_GPS)];
+  _copyCat = null; copyLimpiarEleccion(); copyCerrar();
+  { const _cb = document.getElementById('copyBuscar'); if (_cb) _cb.value = ''; }
   limpiarSeleccion();
   document.getElementById('editorTitulo').textContent = pid ? 'Editar plantilla' : 'Nueva plantilla';
   document.getElementById('btnEliminarPl').style.display = pid ? '' : 'none';
@@ -1576,27 +1606,132 @@ function poblarAddTipoSelect(){
 // con las plantillas que YA tienen contenido, excluyendo la que está abierta
 // ahora mismo (no tiene sentido copiarse a sí misma). Se repuebla cada vez
 // que cambia _plantillas (cargarPlantillas) o cambia _editId (abrirEditor).
+// 🔎 2026-10-21 (Daniel): el menú ahora tiene BUSCADOR y filtra por categoría (por defecto, la de la plantilla que se está
+// editando: «si estoy en instalación, muéstramelas nada más de la instalación»). Se repuebla cada vez que cambia
+// _plantillas o _editId; la plantilla elegida queda en #copyDesde (oculto) para no romper a quien ya lo lea.
+let _copyCat = null;        // null = la categoría de la plantilla abierta · '' = todas · 'instalacion'… = esa
+let _copyAct = -1;          // fila resaltada con el teclado
+let _copyVisibles = [];     // lo que se está mostrando (para teclado y clic)
+function _normBusca(s){ return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim(); }
+function copyCategoriaActiva(){
+  if (_copyCat !== null) return _copyCat;
+  return (document.getElementById('ePCategoriaAdmin') || {}).value || '';
+}
+function _copyCandidatas(){
+  return (_plantillas || []).filter(p => p.id !== _editId && (Number(p.items_count) || 0) > 0 && p.activa !== false);
+}
 function poblarCopyDesdeSelect(){
-  const sel = document.getElementById('copyDesde');
-  if (!sel) return;
-  const opciones = _plantillas
-    .filter(p => p.id !== _editId && (Number(p.items_count) || 0) > 0)
-    .slice()
+  // Si cambió la plantilla abierta o la lista, la elección anterior ya no vale.
+  const hid = document.getElementById('copyDesde');
+  if (hid && hid.value && !_copyCandidatas().some(p => String(p.id) === String(hid.value))) copyLimpiarEleccion();
+  const drop = document.getElementById('copyLista');
+  if (drop && !drop.hidden) copyRender();
+}
+function copyLimpiarEleccion(){
+  const hid = document.getElementById('copyDesde'), btn = document.getElementById('copyBtn'), el = document.getElementById('copyElegida');
+  if (hid) hid.value = '';
+  if (btn) btn.disabled = true;
+  if (el){ el.hidden = true; el.textContent = ''; }
+}
+function copyAbrir(){
+  const drop = document.getElementById('copyLista'), inp = document.getElementById('copyBuscar');
+  if (!drop) return;
+  drop.hidden = false;
+  if (inp) inp.setAttribute('aria-expanded', 'true');
+  copyRender();
+}
+function copyCerrar(){
+  const drop = document.getElementById('copyLista'), inp = document.getElementById('copyBuscar');
+  if (drop) drop.hidden = true;
+  if (inp) inp.setAttribute('aria-expanded', 'false');
+}
+function copyFiltrar(){ _copyAct = -1; copyAbrir(); }
+function copyCategoria(k){ _copyCat = k; _copyAct = -1; copyRender(); const i = document.getElementById('copyBuscar'); if (i) i.focus(); }
+function copyRender(){
+  const drop = document.getElementById('copyLista');
+  if (!drop) return;
+  const q = _normBusca((document.getElementById('copyBuscar') || {}).value);
+  const cat = copyCategoriaActiva();
+  const base = _copyCandidatas().filter(p => !q || _normBusca(p.nombre).includes(q));
+  const cuenta = k => base.filter(p => (p.categoria_admin || '') === k).length;
+  const lista = base.filter(p => !cat || (p.categoria_admin || '') === cat)
     .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
-  sel.innerHTML = '<option value="">— Elegir plantilla —</option>' +
-    opciones.map(p => {
-      const cat = PL_CATEGORIAS.find(c => c.key === p.categoria_admin);
-      const catLabel = cat ? cat.label : 'Sin categoría';
-      return `<option value="${p.id}">${escHtml(p.nombre)} — ${escHtml(catLabel)} (${p.items_count} items)</option>`;
-    }).join('');
+  _copyVisibles = lista.slice(0, 40);
+  const pills = '<div class="pl-copy-pills" role="group" aria-label="Categoría">' +
+    '<button type="button" class="pl-copy-pill' + (!cat ? ' on' : '') + '" onmousedown="event.preventDefault()" onclick="copyCategoria(\'\')">Todas<small>' + base.length + '</small></button>' +
+    PL_CATEGORIAS.map(c => '<button type="button" class="pl-copy-pill' + (cat === c.key ? ' on' : '') + '" onmousedown="event.preventDefault()" onclick="copyCategoria(\'' + c.key + '\')">' +
+      escHtml(c.label) + '<small>' + cuenta(c.key) + '</small></button>').join('') + '</div>';
+  const filas = _copyVisibles.map((p, i) => {
+    const c = PL_CATEGORIAS.find(x => x.key === p.categoria_admin);
+    return '<div class="pl-copy-op' + (i === _copyAct ? ' act' : '') + '" role="option" id="copyOp-' + i + '" aria-selected="' + (i === _copyAct) + '" ' +
+      'onmousedown="event.preventDefault()" onclick="copyElegir(' + i + ')">' +
+      '<div><b>' + escHtml(p.nombre) + '</b><div class="sub">' + escHtml(c ? c.label : 'Sin categoría') + '</div></div>' +
+      '<span class="n">' + (Number(p.items_count) || 0) + ' ítems</span></div>';
+  }).join('');
+  const vacio = '<div class="pl-copy-vacio">' + (q ? 'Ninguna plantilla de esta categoría se llama así. Prueba con «Todas».' : 'No hay plantillas con contenido en esta categoría.') + '</div>';
+  const pie = lista.length > _copyVisibles.length
+    ? '<div class="pl-copy-vacio">Mostrando ' + _copyVisibles.length + ' de ' + lista.length + ': sigue escribiendo para acotar.</div>' : '';
+  drop.innerHTML = pills + (filas || vacio) + pie;
+}
+function copyElegir(i){
+  const p = _copyVisibles[i];
+  if (!p) return;
+  document.getElementById('copyDesde').value = String(p.id);
+  const c = PL_CATEGORIAS.find(x => x.key === p.categoria_admin);
+  const el = document.getElementById('copyElegida');
+  el.hidden = false;
+  el.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Elegida: <b>' + escHtml(p.nombre) + '</b> · ' + escHtml(c ? c.label : 'Sin categoría') + ' · ' + (Number(p.items_count) || 0) + ' ítems';
+  document.getElementById('copyBuscar').value = '';
+  document.getElementById('copyBtn').disabled = false;
+  copyCerrar();
+}
+function copyTecla(ev){
+  const drop = document.getElementById('copyLista');
+  if (ev.key === 'Escape'){ copyCerrar(); return; }
+  if (!drop || drop.hidden){ if (ev.key === 'ArrowDown') copyAbrir(); return; }
+  if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp'){
+    ev.preventDefault();
+    const n = _copyVisibles.length;
+    if (!n) return;
+    _copyAct = (_copyAct + (ev.key === 'ArrowDown' ? 1 : -1) + n) % n;
+    copyRender();
+    const op = document.getElementById('copyOp-' + _copyAct);
+    if (op && op.scrollIntoView) op.scrollIntoView({block: 'nearest'});
+  } else if (ev.key === 'Enter'){
+    ev.preventDefault();
+    copyElegir(_copyAct >= 0 ? _copyAct : 0);
+  }
+}
+document.addEventListener('click', ev => {
+  const combo = document.querySelector('.pl-copy-combo');
+  if (combo && !combo.contains(ev.target)) copyCerrar();
+});
+
+// 🔢 Estándar ILUS (REGLA #39): los dos objetos que SIEMPRE van primero. Espejo de plantillas_serie_gps.py (item_serie/item_gps).
+const PL_STD_SERIE = {titulo: 'N° de serie del equipo', tipo_respuesta: 'serie',
+  descripcion: 'Número de serie real de fábrica. Si la ficha ya lo tiene se usa ese; si no, se anota el de la placa. Con la etiqueta de respaldo/garantía puesta, queda registrado para saber si el equipo fue manipulado.'};
+const PL_STD_GPS = {titulo: 'Ubicación del equipo (GPS)', tipo_respuesta: 'gps',
+  descripcion: 'Ubicación donde queda o se revisa el equipo. Se captura con el GPS del celular.'};
+function plItemEstandar(def){
+  return {_uid: _nextUid++, titulo: def.titulo, descripcion: def.descripcion, tipo_respuesta: def.tipo_respuesta,
+    obligatoria: true, requiere_foto: false, foto_si_hallazgo: false, unidad: '', rango_min: null, rango_max: null,
+    opciones_lista: [], target_field: ''};
+}
+// ¿Este ítem ya ES el N° de serie o el GPS (objeto o texto libre que lo hacía)? Se descarta al copiar para no duplicarlo.
+function plEsSerieOGps(it){
+  const t = String(it.tipo_respuesta || '');
+  if (t === 'serie' || t === 'gps') return true;
+  if (['texto', 'check', 'numero'].indexOf(t) === -1) return false;
+  const pal = _normBusca(it.titulo).split(/[^a-z0-9]+/);
+  if (pal.indexOf('foto') !== -1 || pal.indexOf('placa') !== -1) return false;
+  return pal.indexOf('serie') !== -1 || pal.indexOf('serial') !== -1;
 }
 
-// Trae los ítems de la plantilla elegida y los SUMA al final de _items --
-// nunca reemplaza lo que ya había escrito (si algo no sirve, se borra con
-// el checkbox de selección múltiple de más abajo, no se pisa en silencio).
+// Trae los ítems de la plantilla elegida y REEMPLAZA los de la que se está editando (Daniel 21-oct: «borres todo, agregues
+// los dos obligatorios, que es número de serie y GPS, y agregues el resto, sin duplicar»). Si ya había ítems, se pide
+// confirmar antes (es lo único que se puede perder, y solo hasta guardar).
 async function copiarItemsDesde(){
-  const sel = document.getElementById('copyDesde');
-  const pid = sel.value;
+  const pid = document.getElementById('copyDesde').value;
   if (!pid) return;
   try {
     const r = await fetch('/mantenciones/api/plantillas/' + pid);
@@ -1605,7 +1740,18 @@ async function copiarItemsDesde(){
       if (typeof ilusToast === 'function') ilusToast('No se pudo leer esa plantilla', {type:'error'});
       return;
     }
-    const copiados = d.items.map(it => ({
+    const resto = d.items.filter(it => !plEsSerieOGps(it));
+    // Solo se pide confirmar si hay contenido de verdad: una plantilla nueva trae únicamente el N° de serie y el GPS.
+    if (_items.some(it => !plEsSerieOGps(it))){
+      const ok = await ilusConfirm({
+        title: 'Reemplazar los ítems',
+        message: 'Se borrarán los ' + _items.length + ' ítems de esta plantilla y se copiarán los de «' + (d.plantilla.nombre || '') + '».',
+        sub: 'Arriba quedan el N° de serie y el GPS (sin duplicar). No se guarda nada hasta que presiones Guardar.',
+        okLabel: 'Sí, reemplazar', cancelLabel: 'Cancelar', danger: true,
+      });
+      if (!ok) return;
+    }
+    const copiados = resto.map(it => ({
       _uid: _nextUid++,
       titulo: it.titulo || '', descripcion: it.descripcion || '',
       tipo_respuesta: it.tipo_respuesta || 'check',
@@ -1614,11 +1760,13 @@ async function copiarItemsDesde(){
       unidad: it.unidad || '', rango_min: it.rango_min, rango_max: it.rango_max,
       opciones_lista: it.opciones_lista || [], target_field: it.target_field || '',
     }));
-    _items.push(...copiados);
-    sel.value = '';
+    _selected.clear();
+    _items.length = 0;
+    _items.push(plItemEstandar(PL_STD_SERIE), plItemEstandar(PL_STD_GPS), ...copiados);
+    copyLimpiarEleccion();
     renderItems();
     if (typeof ilusToast === 'function'){
-      ilusToast(`✓ ${copiados.length} ítem(s) copiados — revísalos y ajusta lo que corresponda`, {type:'success'});
+      ilusToast(`✓ Copiados: N° de serie + GPS y ${copiados.length} ítem(s) más — revísalos y ajusta lo que corresponda`, {type:'success'});
     }
   } catch(e){
     if (typeof ilusToast === 'function') ilusToast('Error de red al copiar', {type:'error'});
@@ -1881,6 +2029,22 @@ async function guardarPlantilla(){
       type: 'warning',
     });
     if (!ok) return;
+  }
+  // 🔢 REGLA #39: toda plantilla lleva el N° de serie y el GPS. Si falta alguno, se ofrece agregarlo (la persona decide).
+  if (_items.length && (!_items.some(it => it.tipo_respuesta === 'serie') || !_items.some(it => it.tipo_respuesta === 'gps'))){
+    const agregar = await ilusConfirm({
+      title: 'Falta el estándar ILUS',
+      message: 'Esta plantilla no tiene ' + [(!_items.some(it => it.tipo_respuesta === 'serie') ? 'el N° de serie' : ''), (!_items.some(it => it.tipo_respuesta === 'gps') ? 'el GPS' : '')].filter(Boolean).join(' ni ') + '.',
+      sub: 'Toda plantilla lleva el N° de serie y el GPS arriba (para la etiqueta de garantía y la ubicación del equipo).',
+      okLabel: 'Sí, agregarlos', cancelLabel: 'Guardar sin ellos', type: 'question',
+    });
+    if (agregar){
+      const nuevos = [];
+      if (!_items.some(it => it.tipo_respuesta === 'serie')) nuevos.push(plItemEstandar(PL_STD_SERIE));
+      if (!_items.some(it => it.tipo_respuesta === 'gps')) nuevos.push(plItemEstandar(PL_STD_GPS));
+      _items.unshift(...nuevos);
+      renderItems();
+    }
   }
   if (!_items.length){
     const ok = await ilusConfirm({
