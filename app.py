@@ -4856,6 +4856,14 @@ PERMS_KEYS = (
     # sección "Trazabilidad del manifiesto" de la ficha; este flag solo
     # abre la puerta de ENTRADA, no toca el registro de salida.
     "tr_cambiar_estado",
+    # tr_exportar_base — flag del módulo Transporte (aditivo 2026-10-22,
+    # Daniel: "una bajada de información de los manifiestos... bien
+    # ordenadito para que logística pueda hacer sus ediciones... controlable
+    # por el front"). Gobierna el botón y la ruta «Base de manifiestos»
+    # (Excel plano, una fila por envío). Mismo patrón que tr_eliminar /
+    # tr_cambiar_estado: nace en False para todos los roles; admin y
+    # superadmin pasan siempre por el OR del gate real.
+    "tr_exportar_base",
     # cotiz_eliminar_item — flag del módulo Cotizaciones (aditivo 2026-08-28,
     # Daniel en vivo, tras encontrar la causa raíz de OT-2026-00125: "estos
     # gallos [la] eliminan [la línea] en vez de clasificarla... ahora que no
@@ -5238,6 +5246,7 @@ def _build_perms_from_matrix(role):
     # Cambiar a mano el estado de entrega sin ser admin/superadmin (aditivo
     # 2026-09-14, caso Alison). Ver "tr_cambiar_estado" en PERMS_KEYS.
     base["tr_cambiar_estado"] = bool(tra.get("cambiar_estado"))
+    base["tr_exportar_base"] = bool(tra.get("exportar_base"))
     base["cotiz_eliminar_item"] = bool(man.get("cotizaciones_eliminar_item"))
 
     base["superadmin"] = False
@@ -14289,7 +14298,7 @@ PERMISSIONS_MATRIX = {
                        "acciones":["ver","gestionar","monitor","marketing","horarios","encuesta_firma"]},
     "transporte":     {"label":"Transporte",     "icon":"bi-truck",
                        "acciones":["ver","cubicador","asignar","manifiestos","couriers",
-                                   "eliminar","cambiar_estado"]},
+                                   "eliminar","cambiar_estado","exportar_base"]},
     "comunicaciones": {"label":"Comunicaciones", "icon":"bi-chat-dots",
                        "acciones":["ver","configurar","enviar","plantillas","kill_switch"]},
     "admin":          {"label":"Administración", "icon":"bi-gear-wide-connected",
@@ -14413,6 +14422,7 @@ PERMISSIONS_META = {
         "couriers":    {"label": "Couriers / tarifas","tipo": "submodulo", "icon": "bi-cash-coin"},
         "eliminar":    {"label": "Eliminar manifiestos y pedidos", "tipo": "bloqueo", "icon": "bi-trash"},
         "cambiar_estado": {"label": "Cambiar estado de entrega a mano", "tipo": "bloqueo", "icon": "bi-arrow-repeat"},
+        "exportar_base": {"label": "Descargar base de manifiestos (Excel)", "tipo": "bloqueo", "icon": "bi-file-earmark-excel"},
     },
     "comunicaciones": {
         "ver":         {"label": "Ver historial",         "tipo": "submodulo", "icon": "bi-chat-dots"},
@@ -40674,6 +40684,177 @@ def tr_dashboard_export_xlsx():
     nombre = f"reporte_transporte_{desde or 'inicio'}_a_{hasta or 'hoy'}.xlsx".replace(" ", "_")
     return send_file(buf, as_attachment=True, download_name=nombre,
                       mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.route("/transporte/manifiestos/base.xlsx")
+@_tr_required
+def tr_manifiestos_base_xlsx():
+    """Base de manifiestos para trabajar y editar en Excel (2026-10-22,
+    Daniel: "una bajada de información de los manifiestos, de los envíos...
+    ordenadito para que logística pueda hacer sus ediciones... controlable
+    por el front").
+
+    Una hoja plana, una fila por envío (factura/boleta dentro de un
+    manifiesto), sin filas combinadas ni totales intercalados: lista para
+    filtrar, ordenar y pivotear. Solo LECTURA: editar el Excel no cambia
+    nada en ILUS. Filtros: desde/hasta (fecha del manifiesto; default los
+    últimos 30 días), courier y estado del manifiesto.
+
+    Permiso: admin/superadmin o el flag granular tr_exportar_base (Usuarios
+    y roles → Transporte → «Descargar base de manifiestos»). _tr_required ya
+    deja afuera a los técnicos (REGLA #26).
+    """
+    _rol = ((getattr(g, "user", None) or {}).get("role") or "")
+    if not (_rol in ("admin", "superadmin") or g.permissions.get("superadmin")
+            or g.permissions.get("tr_exportar_base")):
+        flash("No tienes permiso para descargar la base de manifiestos. Pide que "
+              "te habiliten «Descargar base de manifiestos» en Usuarios y roles.", "warning")
+        return redirect(url_for("tr_manifiestos"))
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+    except Exception:
+        flash("Falta la librería openpyxl para generar el Excel.", "danger")
+        return redirect(url_for("tr_manifiestos"))
+    import re as _re_b
+    from datetime import datetime as _dt_b, timedelta as _td_b
+    from io import BytesIO
+    from flask import send_file
+
+    _ILLEGAL = _re_b.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+    def _x(v):
+        return _ILLEGAL.sub("", v) if isinstance(v, str) else v
+
+    def _fecha(v):
+        try:
+            return _dt_b.strptime((v or "").strip(), "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    hoy = _now_chile().date()
+    hasta = _fecha(request.args.get("hasta")) or hoy
+    desde = _fecha(request.args.get("desde")) or (hasta - _td_b(days=30))
+    if desde > hasta:
+        desde, hasta = hasta, desde
+    if (hasta - desde).days > 366:
+        desde = hasta - _td_b(days=366)
+    courier = (request.args.get("courier") or "").strip()
+    estado_m = (request.args.get("estado") or "").strip()
+
+    MAX_FILAS = 10000
+    params = [desde, hasta]
+    filtros_sql = ""
+    if courier:
+        filtros_sql += " AND m.courier = %s"
+        params.append(courier)
+    if estado_m:
+        filtros_sql += " AND m.estado = %s"
+        params.append(estado_m)
+    params.append(MAX_FILAS + 1)
+    filas = mysql_fetchall(f"""
+        SELECT mi.id AS item_id, m.id AS manifest_id, m.correlativo,
+               m.fecha AS fecha_manifiesto, m.courier, m.estado AS estado_manifiesto,
+               m.notas AS notas_manifiesto,
+               c.tido, c.nudo, c.cliente_nombre, c.cliente_rut, c.comuna, c.region,
+               c.direccion, c.telefono, c.email,
+               COALESCE(c.n_bultos, 1)          AS n_bultos,
+               COALESCE(c.peso_predominante, 0) AS peso_predominante,
+               c.zz_envio                       AS cobrado,
+               COALESCE(c.costo_courier, 0)     AS costo_courier,
+               mi.estado_entrega,
+               COALESCE(NULLIF(mi.master_tracking_number, ''), mi.tracking_number) AS tracking
+          FROM transport_manifest_items mi
+          JOIN transport_manifests m   ON m.id = mi.manifest_id
+          JOIN transport_commitments c ON c.id = mi.commitment_id
+         WHERE m.fecha BETWEEN %s AND %s
+           AND (m.eliminado = 0 OR m.eliminado IS NULL){filtros_sql}
+         ORDER BY m.fecha, m.id, mi.orden, mi.id
+         LIMIT %s
+    """, tuple(params)) or []
+    truncado = len(filas) > MAX_FILAS
+    if truncado:
+        filas = filas[:MAX_FILAS]
+
+    def _num(v):
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Envios"
+    HDR_FILL = PatternFill("solid", fgColor="0A0A0A")   # REGLA #2
+    HDR_FONT = Font(color="FFFFFF", bold=True)
+    heads = ["ID envío", "ID manifiesto", "Manifiesto", "Fecha manifiesto", "Courier",
+             "Estado manifiesto", "Tipo doc.", "N° documento", "Cliente", "RUT",
+             "Comuna", "Región", "Dirección", "Teléfono", "Correo", "Bultos",
+             "Peso a cobrar kg", "Cobrado (ZZ envío)", "Costo courier",
+             "Estado entrega", "N° tracking", "Notas del manifiesto"]
+    for ci, h in enumerate(heads, 1):
+        cell = ws.cell(1, ci, h)
+        cell.font = HDR_FONT
+        cell.fill = HDR_FILL
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for r in filas:
+        nudo = (r.get("nudo") or "").strip()
+        ws.append([
+            r.get("item_id"), r.get("manifest_id"), _x(r.get("correlativo")),
+            r.get("fecha_manifiesto"), _x(r.get("courier")), _x(r.get("estado_manifiesto")),
+            _x((r.get("tido") or "").strip()), _x(nudo.lstrip("0") or nudo),
+            _x(r.get("cliente_nombre")), _x(r.get("cliente_rut")), _x(r.get("comuna")),
+            _x(r.get("region")), _x(r.get("direccion")), _x(r.get("telefono")),
+            _x(r.get("email")), int(r.get("n_bultos") or 1), _num(r.get("peso_predominante")),
+            _num(r.get("cobrado")), (_num(r.get("costo_courier")) or None),
+            _x(r.get("estado_entrega")), _x(r.get("tracking")), _x(r.get("notas_manifiesto")),
+        ])
+    for c in ws["D"][1:]:
+        c.number_format = "dd/mm/yyyy"
+    for c in ws["Q"][1:]:
+        c.number_format = "#,##0.0"
+    for col in ("R", "S"):
+        for c in ws[col][1:]:
+            c.number_format = "#,##0"
+    for i, w in enumerate([10, 12, 16, 14, 20, 16, 9, 13, 34, 14, 18, 20, 40, 15, 28,
+                           8, 12, 14, 13, 20, 20, 36], 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+
+    wi = wb.create_sheet("Instrucciones")
+    lineas = [
+        "Base de manifiestos — Transporte ILUS Fitness",
+        f"Manifiestos con fecha del {desde.strftime('%d/%m/%Y')} al {hasta.strftime('%d/%m/%Y')}"
+        + (f" · Courier: {courier}" if courier else "")
+        + (f" · Estado: {estado_m}" if estado_m else ""),
+        f"Generado: {_now_chile().strftime('%d/%m/%Y %H:%M')} · por {current_username()} · {len(filas)} envíos",
+        "",
+        "Una fila por envío (factura o boleta dentro de un manifiesto). Sin filas combinadas ni totales: sirve para filtrar, ordenar y hacer tablas dinámicas.",
+        "«ID envío» e «ID manifiesto» son los identificadores internos de ILUS: no los modifiques si vas a cruzar esta base con otra.",
+        "Esta descarga es solo de lectura: editar el Excel NO cambia nada en ILUS.",
+        "Cobrado vacío = el documento no cobra flete (sin precio). Costo courier vacío = sin costo registrado.",
+    ]
+    if truncado:
+        lineas.append(f"⚠ El detalle se topó en {MAX_FILAS} filas — acota las fechas o el courier.")
+    for linea in lineas:
+        wi.append([linea])
+    wi["A1"].font = Font(bold=True, size=14)
+    wi.column_dimensions["A"].width = 120
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    try:
+        _tr_log("manifest", 0, "base_manifiestos_excel",
+                f"{desde} a {hasta} · {len(filas)} envíos"
+                + (f" · {courier}" if courier else "") + (f" · {estado_m}" if estado_m else ""))
+    except Exception:
+        pass
+    return send_file(buf, as_attachment=True,
+                     download_name=f"base_manifiestos_{desde.isoformat()}_a_{hasta.isoformat()}.xlsx",
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @app.route("/transporte/manifiestos/reporte-semanal.xlsx")
