@@ -122823,8 +122823,10 @@ def _mant_cobertura_matriz_datos():
     # 🔑 2026-10-21 (REGLA #40): la plantilla ligada a una clasificación (clase_id) se une por la LLAVE, aunque haya
     #       cambiado de nombre; la que no tiene liga sigue uniéndose por nombre exacto. `p.*` va PRIMERO: así el alias
     #       `clase_id` de la clase (c.id) pisa a la columna homónima de la plantilla y no al revés.
-    _on_pl = ("((p.clase_id = c.id AND COALESCE(p.categoria_admin,'') <> 'trabajo_interno') "
-              " OR (p.clase_id IS NULL AND p.nombre = c.nombre))") if _plcls_ok() else "p.nombre = c.nombre"
+    #       (La de «trabajo interno» ligada SÍ cuenta aquí: es de filtro para el motor, pero el mapa debe mostrarla como
+    #       cubierta —y «mínima» si solo trae serie + GPS— en vez de dar un falso «falta».)
+    _on_pl = ("(p.clase_id = c.id OR (p.clase_id IS NULL AND p.nombre = c.nombre))"
+              ) if _plcls_ok() else "p.nombre = c.nombre"
     try:
         filas = mysql_fetchall("""
             SELECT p.*,
@@ -161633,6 +161635,14 @@ def _plcls_activar(clase_id, activo, user):
     filas = mysql_fetchall("SELECT id, nombre FROM mant_tarea_plantillas WHERE clase_id=%s AND COALESCE(activa,1)<>%s",
                            (clase_id, nuevo)) or []
     for f in filas:
+        if nuevo:
+            # Solo se reactiva lo que ESTA cascada apagó (barrido 21-oct M6): si una persona había desactivado la
+            # plantilla a propósito (o no hay rastro de quién la apagó), se queda como está.
+            ult = mysql_fetchone(
+                "SELECT accion FROM mant_logs WHERE entidad='plantilla' AND entidad_id=%s "
+                " AND accion IN ('desactivada_por_clasificacion','desactivada') ORDER BY id DESC LIMIT 1", (f["id"],))
+            if not ult or ult.get("accion") != "desactivada_por_clasificacion":
+                continue
         mysql_execute("UPDATE mant_tarea_plantillas SET activa=%s WHERE id=%s", (nuevo, f["id"]))
         try:
             _mant_log("plantilla", int(f["id"]), "activada_por_clasificacion" if nuevo else "desactivada_por_clasificacion",
@@ -167215,6 +167225,15 @@ def _ensure_plantilla_repuesto():
     nombre = "Repuesto"
     categoria = "mantencion"
     try:
+        # 🔑 2026-10-21 (REGLA #40, barrido del 21-oct A1): la plantilla de la clasificación «repuesto» se reconoce por la
+        # LLAVE, no por el nombre. Si la clasificación se renombró («Repuestos»), su plantilla ligada ya existe con el
+        # nombre nuevo: sin esto, el arranque no encontraba «Repuesto» y creaba OTRA plantilla huérfana en cada reinicio.
+        if _plcls_ok():
+            _cl = mysql_fetchone("SELECT id FROM cat_clases_producto WHERE slug='repuesto' LIMIT 1")
+            if _cl and mysql_fetchone(
+                    "SELECT id FROM mant_tarea_plantillas WHERE clase_id=%s AND categoria_admin=%s LIMIT 1",
+                    (_cl["id"], categoria)):
+                return None
         ya = mysql_fetchone(
             "SELECT id FROM mant_tarea_plantillas WHERE nombre=%s AND categoria_admin=%s LIMIT 1",
             (nombre, categoria))

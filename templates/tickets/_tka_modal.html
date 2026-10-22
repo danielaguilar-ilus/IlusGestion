@@ -2885,8 +2885,10 @@ async function _tkaCotizacionElegir(idx){
       // archivo. Se pinta el texto tal cual (sin inventar un catálogo de
       // etiquetas), solo cambiando "_" por espacio para que no se vea
       // pegado -- el CSS (.ln-cot-clase) ya capitaliza con text-transform.
+      // 🔑 2026-10-21 (barrido M3): el servidor ahora manda el NOMBRE vivo de la clasificación (clase_producto_label);
+      // el slug humanizado queda solo como respaldo si no llegara.
       const claseHtml = it.clase_producto
-        ? `<span class="ln-cot-clase">${_tkaEsc(String(it.clase_producto).replace(/_/g, ' '))}</span>` : '';
+        ? `<span class="ln-cot-clase">${_tkaEsc(it.clase_producto_label || String(it.clase_producto).replace(/_/g, ' '))}</span>` : '';
       html += `<div class="tka-line${isSel ? ' is-selected' : ''}" data-cotitem-idx="${i}">
         <label class="tka-chk${isSel ? ' is-checked' : ''}">
           <input type="checkbox" ${isSel ? 'checked' : ''} data-cotitem-idx="${i}" onchange="tkaToggleLineaCotizacion(${i})">

@@ -5636,6 +5636,15 @@ def register_tickets_routes(app, ctx):
             "       maquina_id, aplica_mantencion, "
             "       item_tipo "
             "FROM tk_cotizacion_items WHERE cotizacion_id=%s ORDER BY id", (cid,)) or []
+        # 🔑 2026-10-21 (REGLA #40, barrido M3): la línea guarda el SLUG de la clasificación (estable); su NOMBRE se lee
+        # en vivo, así un renombre en Catálogo se ve también aquí.
+        try:
+            _cm = ctx.get("_cat_clases_map")
+            _labels = _cm() if _cm else {}
+        except Exception:
+            _labels = {}
+        for _it in items:
+            _it["clase_producto_label"] = _labels.get(_it.get("clase_producto") or "")
 
         def _iso(v):
             if v is None:

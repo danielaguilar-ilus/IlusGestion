@@ -1351,9 +1351,15 @@ window.catfEditarClase = async function(){
   if(!el || el.querySelector('select')) return;
   const original = catfProductoActual.clase_producto || '';
   const clases = await catObtenerClases();
+  // 2026-10-21 (barrido A3): si la clasificación actual del producto está INACTIVA no viene en la lista de las que se
+  // ofrecen; sin esta opción el selector arrancaba en «— Sin clase —» y, al salir del campo, BORRABA la clasificación.
+  // Se agrega como opción marcada para que quede como está (solo se cambia si la persona elige otra).
+  const _etiquetaOriginal = (catfProductoActual.clase_producto_label || original);
+  const _extraInactiva = (original && !clases.some(c=>c.value===original))
+    ? '<option value="'+esc(original)+'" selected>'+esc(_etiquetaOriginal)+' (inactiva)</option>' : '';
   const sel = document.createElement('select');
   sel.className = 'form-select form-select-sm';
-  sel.innerHTML = '<option value="">— Sin clase —</option>'
+  sel.innerHTML = '<option value="">— Sin clase —</option>' + _extraInactiva
     + clases.map(c=>'<option value="'+esc(c.value)+'"'+(c.value===original?' selected':'')+'>'+esc(c.label)+'</option>').join('');
   el.innerHTML = ''; el.appendChild(sel);
   sel.focus();
@@ -1363,7 +1369,7 @@ window.catfEditarClase = async function(){
     const nuevo = sel.value;
     if(nuevo === original){
       const lbl = clases.find(c=>c.value===original);
-      el.textContent = (lbl && lbl.label) || '—';
+      el.textContent = (lbl && lbl.label) || _etiquetaOriginal || '—';
       return;
     }
     try{
@@ -1694,6 +1700,7 @@ const CATW_STEPS = [
 let catwProductoId = null;
 let catwStep = 1;
 let catwProducto = null;
+let catwClaseOriginal = '';   // clase con la que se abrió el asistente (barrido A3: solo se manda si cambió)
 let catwPiolasExistentes = []; // piolas ya guardadas (con id) para el producto
 let catwManuales = [];
 const catwModalEl = document.getElementById('catwModal');
@@ -1723,7 +1730,12 @@ window.catwAbrir = async function(id){
   document.getElementById('catwCantPiolas').value = catwPiolasExistentes.length || '';
   const clasesW = await catObtenerClases();
   const claseActual = catwProducto.clase_producto || '';
-  document.getElementById('catwClase').innerHTML = '<option value="">— Sin clase —</option>'
+  catwClaseOriginal = claseActual;   // 2026-10-21 (barrido A3): para mandar la clase solo si la persona la cambió
+  // Si la clasificación actual está INACTIVA, se muestra como opción marcada (antes arrancaba en «— Sin clase —» y
+  // «Siguiente» la borraba).
+  const _extraW = (claseActual && !clasesW.some(c=>c.value===claseActual))
+    ? '<option value="'+esc(claseActual)+'" selected>'+esc(catwProducto.clase_producto_label || claseActual)+' (inactiva)</option>' : '';
+  document.getElementById('catwClase').innerHTML = '<option value="">— Sin clase —</option>' + _extraW
     + clasesW.map(c=>'<option value="'+esc(c.value)+'"'+(c.value===claseActual?' selected':'')+'>'+esc(c.label)+'</option>').join('');
 
   // 2026-07-14: familia/clase (PATCH /catalogo/api/productos/<id>) y
@@ -1799,8 +1811,11 @@ document.getElementById('catwBtnSiguiente').addEventListener('click', async func
     if(!familia && !clase){ catwStep = 3; catwMostrarPaso(); return; }
     btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando…';
     try{
+      // 2026-10-21 (barrido A3): la clase solo viaja si la persona la CAMBIÓ; mandar la de siempre (o vacía) no debe tocarla.
+      const _cuerpo = {familia: familia};
+      if(clase !== catwClaseOriginal) _cuerpo.clase_producto = clase;
       const r = await fetch('/catalogo/api/productos/'+catwProductoId, {method:'PATCH',
-        headers:{'Content-Type':'application/json'}, body: JSON.stringify({familia: familia, clase_producto: clase})});
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify(_cuerpo)});
       const d = await r.json();
       btn.disabled = false; btn.innerHTML = original;
       if(!d.ok){ ilusToast(d.error||'No se pudo guardar la familia', {type:'error'}); return; }

@@ -639,7 +639,7 @@ async function clcRenombrar(id){
   if(!fila) return;
   const nuevo = await ilusPrompt({
     title: 'Renombrar categoría',
-    message: 'Nuevo nombre para "' + fila.nombre + '"',
+    message: 'Nuevo nombre para "' + fila.nombre + '". Sus plantillas de checklist (Instalación, Mantención, Visitas y Trabajo interno) se renombran solas: no se crea ninguna nueva.',
     placeholder: 'Ej: Rack de accesorios',
     defaultValue: fila.nombre,
     required: true,
@@ -651,7 +651,20 @@ async function clcRenombrar(id){
   });
   const d = await r.json();
   if(!d.ok){ ilusToast(d.error || 'No se pudo renombrar', {type:'error'}); return; }
-  ilusToast('✓ Categoría renombrada', {type:'success'});
+  // 🔑 2026-10-21 (REGLA #40): la clasificación manda; se le dice a la persona qué se movió con ella.
+  const ren = (d.plantillas && d.plantillas.renombradas) || {};
+  const n = ren.renombradas || 0, choques = ren.conflictos || [];
+  ilusToast('✓ Categoría renombrada' + (n ? ' — ' + n + ' plantilla' + (n === 1 ? '' : 's') + ' de checklist la siguieron' : ''), {type:'success'});
+  if(choques.length){
+    ilusAlert({
+      title: 'Algunas plantillas no se renombraron',
+      message: choques.length + ' plantilla' + (choques.length === 1 ? '' : 's') + ' no pudo' + (choques.length === 1 ? '' : 'ieron') +
+        ' renombrarse porque ya existe otra plantilla con ese nombre en la misma categoría (' +
+        choques.map(c => c.categoria).join(', ') + '). Resuélvelo en Plantillas.',
+      type: 'warning',
+    });
+  }
+  if(d.plantillas && d.plantillas.error) ilusAlert({title: 'Revisa las plantillas', message: d.plantillas.error, type: 'warning'});
   clcCargar();
 }
 
@@ -662,7 +675,7 @@ async function clcToggle(id, activar){
     const ok = await ilusConfirm({
       title: 'Desactivar categoría',
       message: '"' + fila.nombre + '" dejará de aparecer para clasificar productos nuevos.',
-      sub: 'Los productos ya clasificados con ella NO pierden el dato — solo se oculta del selector.',
+      sub: 'Los productos ya clasificados con ella NO pierden el dato — solo se oculta del selector. Sus plantillas de checklist también se desactivan (no se borran) y vuelven al reactivarla.',
       okLabel: 'Desactivar', cancelLabel: 'Cancelar', danger: true,
     });
     if(!ok) return;
@@ -673,6 +686,8 @@ async function clcToggle(id, activar){
   });
   const d = await r.json();
   if(!d.ok){ ilusToast(d.error || 'No se pudo actualizar', {type:'error'}); return; }
+  const nAct = (d.plantillas && d.plantillas.activacion && d.plantillas.activacion.cambiadas) || 0;
+  if(nAct) ilusToast('✓ ' + nAct + ' plantilla' + (nAct === 1 ? '' : 's') + ' de checklist ' + (activar ? 'reactivada' : 'desactivada') + (nAct === 1 ? '' : 's'), {type:'success'});
   clcCargar();
 }
 
@@ -703,8 +718,10 @@ async function clcNueva(){
   });
   const d = await r.json();
   if(!d.ok){ ilusToast(d.error || 'No se pudo crear la categoría', {type:'error'}); return; }
+  const nPl = (d.plantillas_creadas || []).length;
   ilusToast('✓ Categoría creada — completa su ' +
-    (modelo==='fijo' ? 'precio unitario' : 'tarifa') + ' por servicio', {type:'success'});
+    (modelo==='fijo' ? 'precio unitario' : 'tarifa') + ' por servicio' +
+    (nPl ? '. Se crearon ' + nPl + ' plantillas de checklist en cero (con N° de serie y GPS): llénalas en Plantillas' : ''), {type:'success'});
   clcCargar();
 }
 

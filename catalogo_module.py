@@ -892,10 +892,19 @@ def register_catalogo_routes(app, ctx):
             data = {r["slug"]: r["nombre"] for r in rows}
         except Exception as _e:
             print(f"[_cat_clases_map] error: {_e}", flush=True)
-            data = _CAT_CLASES_CACHE["data"] or {}
+            # 2026-10-21 (barrido M10): un fallo de lectura NO se cachea (antes fijaba un mapa vacío por 30 s).
+            return _CAT_CLASES_CACHE["data"] or {}
         _CAT_CLASES_CACHE["data"] = data
         _CAT_CLASES_CACHE["ts"] = now
         return data
+
+    def _cat_clase_valida(slug):
+        """¿Es una clasificación ACTIVA? Si el mapa en caché (30 s por proceso) no la conoce, se relee UNA vez antes de
+        rechazarla: con varias instancias, una clasificación recién creada o renombrada en otra instancia no debe dar
+        «Clase de producto inválida» (2026-10-21, barrido M10)."""
+        if slug in _cat_clases_map():
+            return True
+        return slug in _cat_clases_map(force=True)
 
     def _cat_slugify(texto):
         """slug ascii_minusculas_con_guion_bajo, máx 60 chars — para el
@@ -1333,6 +1342,11 @@ def register_catalogo_routes(app, ctx):
         slug = _cat_slugify(nombre)
         if not slug:
             return jsonify({"ok": False, "error": "Nombre inválido"}), 400
+        # 🔑 2026-10-21 (REGLA #40, barrido A4/B2): el nombre también debe ser único (el slug de una clase renombrada puede
+        # no coincidir con su nombre actual); el mensaje dice cuál es la existente.
+        _dup = mysql_fetchone("SELECT nombre FROM cat_clases_producto WHERE nombre=%s LIMIT 1", (nombre,))
+        if _dup:
+            return jsonify({"ok": False, "error": f"Ya existe la categoría «{_dup['nombre']}»"}), 409
         modelo_precio = (d.get("modelo_precio") or "horas").strip().lower()
         if modelo_precio not in ("horas", "fijo"):
             modelo_precio = "horas"
@@ -1372,7 +1386,7 @@ def register_catalogo_routes(app, ctx):
         en los dropdowns nuevos -- los productos ya clasificados con ella
         conservan el dato."""
         _clase_actual = mysql_fetchone(
-            "SELECT id, slug FROM cat_clases_producto WHERE id=%s", (clid,))
+            "SELECT id, slug, nombre, activo FROM cat_clases_producto WHERE id=%s", (clid,))
         if not _clase_actual:
             return jsonify({"ok": False, "error": "Categoría no encontrada"}), 404
         d = request.get_json(silent=True) or {}
@@ -1381,6 +1395,12 @@ def register_catalogo_routes(app, ctx):
             nombre = (d.get("nombre") or "").strip()[:120]
             if not nombre:
                 return jsonify({"ok": False, "error": "El nombre no puede quedar vacío"}), 400
+            # 🔑 2026-10-21 (REGLA #40, barrido A4): dos clasificaciones no pueden llamarse igual (ni una activa y otra
+            # inactiva): el nombre es lo que la gente ve y lo que las plantillas heredan.
+            _igual = mysql_fetchone(
+                "SELECT id, nombre FROM cat_clases_producto WHERE id<>%s AND nombre=%s LIMIT 1", (clid, nombre))
+            if _igual:
+                return jsonify({"ok": False, "error": f"Ya existe otra categoría llamada «{_igual['nombre']}»"}), 409
             sets.append("nombre=%s"); params.append(nombre)
         if "activo" in d:
             sets.append("activo=%s"); params.append(1 if d.get("activo") else 0)
@@ -1409,6 +1429,15 @@ def register_catalogo_routes(app, ctx):
         # desactivar o reactivar la clasificación se propaga a sus plantillas por la llave (clase_id). Best-effort: el
         # cambio de la clasificación ya quedó guardado; si algo falla aquí, el resultado lo dice y nada se pierde.
         _plantillas = {}
+        # Auditoría con el nombre ANTERIOR (barrido A4): sin esto el renombre no deja rastro de cómo se llamaba antes.
+        try:
+            if _audit and ("nombre" in d or "activo" in d):
+                _audit("cat_clase_actualizada", target_type="cat_clases_producto", target_id=clid,
+                       details={"slug": _clase_actual.get("slug"),
+                                "nombre_antes": _clase_actual.get("nombre"), "nombre_despues": d.get("nombre"),
+                                "activo_antes": _clase_actual.get("activo"), "activo_despues": d.get("activo")})
+        except Exception as _e_aud:
+            print(f"[cat_api_clases_update] auditoría: {_e_aud}", flush=True)
         try:
             _user = current_username() or "sistema"
             if "nombre" in d:
@@ -1587,7 +1616,7 @@ def register_catalogo_routes(app, ctx):
             where_base.append("p.familia=%s")
             params_base.append(familia)
         if clase_producto:
-            if clase_producto not in _cat_clases_map():
+            if not _cat_clase_valida(clase_producto):
                 return jsonify({"ok": False, "error": "Clase de producto inválida"}), 400
             where_base.append("p.clase_producto=%s")
             params_base.append(clase_producto)
@@ -1709,7 +1738,7 @@ def register_catalogo_routes(app, ctx):
             return jsonify({"ok": False, "error": "Falta el nombre"}), 400
         familia = (d.get("familia") or "").strip()[:150] or None
         clase_producto = (d.get("clase_producto") or "").strip() or None
-        if clase_producto and clase_producto not in _cat_clases_map():
+        if clase_producto and not _cat_clase_valida(clase_producto):
             return jsonify({"ok": False, "error": "Clase de producto inválida"}), 400
         observacion = (d.get("observacion") or "").strip() or None
         user = current_username() or "sistema"
@@ -1789,7 +1818,7 @@ def register_catalogo_routes(app, ctx):
     @app.route("/catalogo/api/productos/<int:pid>", methods=["PATCH"])
     @_catalogo_producto_write_required
     def cat_api_update(pid):
-        prev = mysql_fetchone("SELECT id, sku FROM cat_productos WHERE id=%s", (pid,))
+        prev = mysql_fetchone("SELECT id, sku, clase_producto FROM cat_productos WHERE id=%s", (pid,))
         if not prev:
             return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
         d = request.get_json(silent=True) or {}
@@ -1812,7 +1841,9 @@ def register_catalogo_routes(app, ctx):
                 if key == "familia":
                     val = val[:150] if val else None
                 elif key == "clase_producto":
-                    if val and val not in _cat_clases_map():
+                    # 2026-10-21 (barrido A3): repetir la clase que el producto YA tiene no es un cambio: se acepta
+                    # aunque la clasificación esté inactiva (solo las clases NUEVAS deben estar activas).
+                    if val and val != (prev.get("clase_producto") or "") and not _cat_clase_valida(val):
                         return jsonify({"ok": False, "error": "Clase de producto inválida"}), 400
             sets.append(f"{key}=%s")
             params.append(val)
@@ -2877,7 +2908,7 @@ def register_catalogo_routes(app, ctx):
         # Solo se acepta una clase que exista de verdad en el catálogo de
         # categorías (evita ensuciar cat_productos con slugs inventados).
         clase_n = (str(clase) if clase is not None else "").strip() or None
-        if clase_n and clase_n not in _cat_clases_map():
+        if clase_n and not _cat_clase_valida(clase_n):
             clase_n = None
 
         existente = mysql_fetchone(

@@ -49,6 +49,11 @@ class BD:
         if s.startswith("SELECT id FROM mant_tarea_plantillas WHERE nombre=%s AND categoria_admin <=> %s AND id<>%s"):
             return [{"id": p["id"]} for p in self.pl if p["nombre"] == params[0]
                     and p["categoria_admin"] == params[1] and p["id"] != params[2]]
+        if s.startswith("SELECT accion FROM mant_logs WHERE entidad='plantilla' AND entidad_id=%s"):
+            for ent, i, acc, det in reversed(self.logs):
+                if ent == "plantilla" and i == params[0] and acc in ("desactivada_por_clasificacion", "desactivada"):
+                    return [{"accion": acc}]
+            return []
         if s.startswith("SELECT id, nombre FROM mant_tarea_plantillas WHERE clase_id=%s AND COALESCE(activa,1)<>%s"):
             return [dict(p) for p in self.pl if p.get("clase_id") == params[0] and int(p.get("activa", 1)) != params[1]]
         if s.startswith("SELECT id FROM mant_tarea_plantillas WHERE (clase_id=%s OR nombre=%s) AND categoria_admin=%s"):
@@ -141,6 +146,16 @@ def test_desactivar_y_reactivar_siguen_a_la_clasificacion(modulo_app):
     assert f(1, True, "d") == {"cambiadas": 2} and [p["activa"] for p in bd.pl] == [1, 1, 1]
 
 
+def test_reactivar_no_enciende_lo_que_una_persona_habia_apagado(modulo_app):
+    """Barrido 21-oct M6: una plantilla apagada a propósito antes de desactivar la clasificación NO vuelve sola."""
+    bd = BD([_pl(1, "A", "instalacion", 1), _pl(2, "A", "mantencion", 1, activa=0)], [])
+    bd.logs.append(("plantilla", 2, "desactivada", "A"))                  # la apagó una persona
+    f = _ns(modulo_app, bd)["_plcls_activar"]
+    assert f(1, False, "d") == {"cambiadas": 1}                           # solo la que estaba encendida
+    assert f(1, True, "d") == {"cambiadas": 1}                            # vuelve solo la que apagó la cascada
+    assert [p["activa"] for p in bd.pl] == [1, 0]
+
+
 # ── liga al crear ────────────────────────────────────────────────────────────────────────────────────────────────
 def test_ligar_si_coincide(modulo_app):
     bd = BD([_pl(1, "Bicicleta", "instalacion"), _pl(2, "Bicicleta (trabajo interno)", "trabajo_interno"),
@@ -197,7 +212,7 @@ def test_nombre_para_categoria():
 def test_cableado_en_app():
     for marca in ("def _ensure_plantilla_clase_id", "_n_clase_bf = _ensure_plantilla_clase_id()",
                   '@app.route("/mantenciones/api/plantillas/adoptar"', "NOMBRE_DE_CLASIFICACION",
-                  "p.clase_id = c.id AND COALESCE(p.categoria_admin,'') <> 'trabajo_interno'",
+                  "(p.clase_id = c.id OR (p.clase_id IS NULL AND p.nombre = c.nombre))",
                   "((p.clase_id = %s) OR (p.clase_id IS NULL AND p.nombre = %s))",
                   "categoria != \"trabajo_interno\"", "_plcls_ligar_si_coincide(pid, nombre, cat_admin)",
                   "_de_clasificacion = bool(plant.get(\"clase_id\"))"):
@@ -242,3 +257,52 @@ def test_el_editor_bloquea_el_nombre_de_una_plantilla_ligada():
     h = _leer("templates", "mantenciones", "plantillas.html")
     for marca in ("plBloquearNombreClase(", "ePNombreClase", "se cambia en Catálogo", "inp.readOnly"):
         assert marca in h, marca
+
+
+def test_la_pantalla_de_categorias_avisa_lo_que_se_movio_con_la_clasificacion():
+    h = _leer("templates", "catalogo", "clases.html")
+    for marca in ("d.plantillas.renombradas", "ren.conflictos", "plantillas_creadas", "d.plantillas.activacion",
+                  "se renombran solas: no se crea ninguna nueva", "también se desactivan (no se borran)"):
+        assert marca in h or marca.replace("ren.conflictos", "conflictos") in h, marca
+    assert "confirm(" not in re.sub(r"ilusConfirm\(", "", h)      # nada de confirm nativo (REGLA #1)
+
+
+# ── Barrido del 21-oct: lo que hace de la clasificación el centro de control ───────────────────────────────────────
+def test_el_arranque_no_crea_otra_plantilla_repuesto_si_la_clasificacion_se_renombro():
+    i = _APP.index("def _ensure_plantilla_repuesto")
+    f = _APP[i:i + 6500]
+    assert "slug='repuesto'" in f and "WHERE clase_id=%s AND categoria_admin=%s" in f
+    assert f.index("clase_id=%s") < f.index("INSERT IGNORE INTO mant_tarea_plantillas")   # la llave se mira antes de crear
+
+
+def test_el_catalogo_exige_nombre_unico_y_audita_con_el_nombre_anterior():
+    c = _leer("catalogo_module.py")
+    assert "id<>%s AND nombre=%s" in c and "Ya existe otra categoría llamada" in c            # renombrar
+    assert "SELECT nombre FROM cat_clases_producto WHERE nombre=%s" in c and "Ya existe la categoría" in c   # crear
+    assert '"cat_clase_actualizada"' in c and '"nombre_antes"' in c
+
+
+def test_una_clasificacion_recien_creada_en_otra_instancia_no_da_clase_invalida():
+    c = _leer("catalogo_module.py")
+    assert "def _cat_clase_valida" in c and "_cat_clases_map(force=True)" in c
+    assert c.count("_cat_clase_valida(") >= 5                                      # definición + los 4 puntos de validación
+    # un fallo de lectura del mapa ya no se cachea como «mapa vacío por 30 s»
+    i = c.index("def _cat_clases_map")
+    assert 'return _CAT_CLASES_CACHE["data"] or {}' in c[i:i + 1500]
+
+
+def test_editar_un_producto_con_clasificacion_inactiva_no_la_borra():
+    c = _leer("catalogo_module.py")
+    assert 'val != (prev.get("clase_producto") or "")' in c
+    js = _leer("static", "catalogo_list.js")
+    for marca in ("(inactiva)", "catwClaseOriginal", "if(clase !== catwClaseOriginal) _cuerpo.clase_producto = clase;",
+                  "_extraInactiva"):
+        assert marca in js, marca
+
+
+def test_la_cotizacion_interna_muestra_el_nombre_vivo_de_la_clasificacion():
+    t = _leer("tickets_module.py")
+    i = t.index("def tk_api_cotizacion_get")
+    assert 'clase_producto_label' in t[i:i + 3500] and 'ctx.get("_cat_clases_map")' in t[i:i + 3500]
+    h = _leer("templates", "tickets", "_tka_modal.html")
+    assert "it.clase_producto_label ||" in h
