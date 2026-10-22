@@ -5104,6 +5104,8 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             <span class="nm"><b>{{ r.nombre }}</b>{% if r.serie %} <span class="sn">S/N {{ r.serie }}</span>{% elif r.sku %} <span class="sn">SKU {{ r.sku }}</span>{% endif %}</span>
             <span class="chips">{% for c in r.chips %}<span class="otd-res-chip {{ c.color }}"><i class="bi {{ c.ic }}" aria-hidden="true"></i> {{ c.txt }}</span>{% endfor %}</span>
           </button>
+          {#- 🧬 2026-10-21: toda la historia de ese equipo (por N° de serie): solo para equipos de la ficha del cliente, no para productos de una revisión. -#}
+          {% if not r.interno and r.id %}<a class="otd-res-hv" href="{{ url_for('mant_maquina_ficha', mid=r.id) }}?tab=historia"><i class="bi bi-clock-history" aria-hidden="true"></i> Ver historia del equipo</a>{% endif %}
         </li>
         {% endfor %}
       </ul>

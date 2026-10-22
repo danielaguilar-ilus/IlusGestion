@@ -1,0 +1,178 @@
+/* ══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+   maquina_historia.css — «Historia del equipo» (hoja de vida unificada): la línea de tiempo del equipo en la ficha del equipo.
+   Mismo lenguaje que Retiros y que «Hallazgos» (REGLA #15): tarjetas, semáforo, nombres y datos COMPLETOS (nunca cortados),
+   botones de 44 px y campos de 16 px en celular (REGLA #3), nada de alert/confirm/prompt (REGLA #1). Paleta ILUS (REGLA #2):
+   rojo #dc2626 · negro #0a0a0a · blanco; ámbar #f59e0b, verde #16a34a, azul #3b82f6, gris #6b7280.
+   Semáforo de cada tarjeta: verde = ok · ámbar = hay algo que mirar · rojo = falla REAL · gris = informativo.
+   ══════════════════════════════════════════════════════════════════════════════════════════════════════════════ */
+.mh{display:block;color:#111827}
+.mh *{box-sizing:border-box}
+.mh [hidden]{display:none!important}      /* el atributo hidden manda aunque la regla de la clase diga display:flex/grid */
+.mh .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ── Cabecera: nombre, N° de serie, cliente, estado actual y garantía ── */
+.mh-cab{background:#fff;border:1px solid #e5e7eb;border-left:6px solid #9ca3af;border-radius:14px;padding:14px 16px;margin:0 0 12px;scroll-margin-top:90px}
+.mh-cab.e-rojo{border-left-color:#dc2626}
+.mh-cab.e-ambar{border-left-color:#f59e0b}
+.mh-cab.e-verde{border-left-color:#16a34a}
+.mh-cab.e-negro{border-left-color:#0a0a0a}
+.mh-cab-fila{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.mh-ic{width:40px;height:40px;border-radius:12px;background:#fee2e2;color:#dc2626;display:inline-flex;align-items:center;justify-content:center;font-size:1.3rem;flex:0 0 40px}
+.mh-cab-tx{flex:1 1 280px;min-width:0}
+.mh-cab-tx h3{margin:0;font-size:1.08rem;font-weight:900;color:#111827;line-height:1.3;overflow-wrap:anywhere}
+.mh-cab-tx p{margin:3px 0 0;color:#6b7280;font-size:.86rem;line-height:1.4}
+.mh-datos{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px 18px;margin:12px 0 0}
+.mh-datos > div{min-width:0}
+.mh-datos dt{font-size:.7rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0}
+.mh-datos dd{margin:2px 0 0;font-size:.92rem;font-weight:700;color:#111827;overflow-wrap:anywhere}
+.mh-sn{display:inline-block;background:#f3f4f6;border:1px solid #d1d5db;border-radius:6px;padding:1px 8px;font-size:.84rem;font-weight:800;color:#374151}
+.mh-pend{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-top:12px;padding-top:10px;border-top:1px dashed #e5e7eb}
+.mh-pend-t{font-size:.76rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin-right:4px}
+
+/* ── Chips (tipo, estado, pendiente) ── */
+.mh-chip{display:inline-flex;align-items:center;gap:5px;border-radius:99px;padding:2px 10px;font-size:.76rem;font-weight:800;border:1px solid transparent;line-height:1.35;overflow-wrap:anywhere}
+.mh-chip.tipo{background:#0a0a0a;color:#fff}
+.mh-chip.sub{background:#f3f4f6;color:#374151;border-color:#e5e7eb}
+.mh-chip.c-rojo{background:#fee2e2;color:#991b1b;border-color:#fecaca}
+.mh-chip.c-ambar{background:#fff8e1;color:#92400e;border-color:#fde68a}
+.mh-chip.c-azul{background:#dbeafe;color:#1e40af;border-color:#bfdbfe}
+.mh-chip.c-verde{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.mh-chip.c-gris{background:#f3f4f6;color:#4b5563;border-color:#e5e7eb}
+.mh-chip.c-negro{background:#0a0a0a;color:#fff}
+
+/* ── Filtros: pastillas por tipo + rango de fechas ── */
+.mh-filtros{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:10px 12px;margin:0 0 12px}
+.mh-pills{display:flex;flex-wrap:wrap;gap:6px}
+.mh-pill{min-height:44px;display:inline-flex;align-items:center;gap:6px;border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:99px;padding:6px 14px;font-weight:700;font-size:.86rem;cursor:pointer;line-height:1.2}
+.mh-pill b{font-weight:900;opacity:.85}
+.mh-pill:hover{border-color:#dc2626;color:#dc2626}
+.mh-pill.on{background:#dc2626;border-color:#dc2626;color:#fff}
+.mh-pill:focus-visible,.mh-btn:focus-visible,.mh-foto:focus-visible,.mh-enl:focus-visible,.mh-fechas input:focus-visible,.mh-pie select:focus-visible{outline:3px solid #fca5a5;outline-offset:2px}
+.mh-fechas{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin-top:10px}
+.mh-fechas label{display:flex;flex-direction:column;gap:2px;font-size:.74rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#6b7280}
+.mh-fechas input[type=date]{min-height:44px;font-size:16px;border:1px solid #d1d5db;border-radius:10px;padding:6px 10px;color:#111827;background:#fff;font-family:inherit}
+
+/* ── Botones (44 px, también con el dedo) ── */
+.mh-btn{min-height:44px;min-width:44px;border:2px solid #0a0a0a;background:#fff;color:#0a0a0a;border-radius:12px;padding:6px 14px;font-weight:800;font-size:.88rem;display:inline-flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;line-height:1.2;text-align:center}
+.mh-btn:hover{background:#f3f4f6}
+.mh-btn.pri{background:#0a0a0a;color:#fff}
+.mh-btn.pri:hover{background:#262626}
+.mh-btn.sec{border-color:#d1d5db;color:#374151}
+.mh-btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* ── La línea de tiempo ── */
+.mh-lista{list-style:none;margin:0;padding:0 0 0 36px;position:relative;display:grid;gap:10px}
+.mh-lista::before{content:'';position:absolute;left:14px;top:8px;bottom:8px;width:2px;background:linear-gradient(180deg,#dc2626 0%,#e5e7eb 100%)}
+.mh-lista.cargando{opacity:.55;transition:opacity .15s}
+.mh-mes{position:relative;margin:6px 0 -2px;font-size:.76rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:#6b7280}
+.mh-mes span{display:inline-block;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:99px;padding:2px 12px}
+.mh-card{position:relative;display:block;background:#fff;border:1px solid #e5e7eb;border-left:6px solid #9ca3af;border-radius:12px;padding:12px 14px;scroll-margin-top:90px}
+.mh-card.s-ok{border-left-color:#16a34a}
+.mh-card.s-aviso{border-left-color:#f59e0b}
+.mh-card.s-falla{border-left-color:#dc2626}
+.mh-card.s-info{border-left-color:#9ca3af}
+.mh-card.futuro{background:#fafafa;border-style:dashed;border-left-style:solid}
+.mh-card.resaltado{box-shadow:0 0 0 3px #fca5a5}
+/* El nodo sobre el riel: el color dice cómo está el hecho (rojo solo si es una falla real). */
+.mh-nodo{position:absolute;left:-36px;top:11px;width:28px;height:28px;border-radius:50%;background:#fff;border:3px solid #9ca3af;color:#6b7280;display:flex;align-items:center;justify-content:center;font-size:.8rem}
+.mh-card.s-ok .mh-nodo{border-color:#16a34a;color:#166534;background:#dcfce7}
+.mh-card.s-aviso .mh-nodo{border-color:#f59e0b;color:#92400e;background:#fff8e1}
+.mh-card.s-falla .mh-nodo{border-color:#dc2626;color:#991b1b;background:#fee2e2}
+.mh-card.abierto .mh-nodo{animation:mhPulso 2.4s ease-in-out infinite}
+@keyframes mhPulso{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.0)}50%{box-shadow:0 0 0 6px rgba(245,158,11,.28)}}
+.mh-cuerpo{min-width:0}
+.mh-fila1{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.mh-fecha{margin-left:auto;font-size:.8rem;font-weight:700;color:#4b5563;text-align:right;overflow-wrap:anywhere}
+.mh-fecha span{color:#6b7280;font-weight:600}
+/* El título, el detalle y los nombres van COMPLETOS aunque sean largos (REGLA #15). */
+.mh-tit{margin:8px 0 2px;font-size:1rem;font-weight:800;color:#111827;line-height:1.35;overflow-wrap:anywhere}
+.mh-det{margin:0 0 6px;color:#374151;font-size:.9rem;line-height:1.45;overflow-wrap:anywhere;white-space:pre-wrap}
+.mh-lineas{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:3px;font-size:.84rem;color:#4b5563}
+.mh-lineas li{display:flex;gap:7px;align-items:flex-start;overflow-wrap:anywhere}
+.mh-lineas i{margin-top:2px;color:#6b7280}
+.mh-meta{margin-top:6px;color:#6b7280;font-size:.8rem}
+
+/* Avance del hecho (solicitado → … → instalado, reportado → … → resuelto) */
+.mh-pasos{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:6px 18px}
+.mh-pasos li{position:relative;padding-left:17px;display:flex;flex-direction:column;font-size:.82rem;color:#374151;min-width:0}
+.mh-pasos li::before{content:'';position:absolute;left:0;top:4px;width:10px;height:10px;border-radius:50%;background:#16a34a;border:2px solid #16a34a}
+.mh-pasos li.pend::before{background:#fff;border-color:#f59e0b}
+.mh-pasos li b{font-weight:800;color:#111827;overflow-wrap:anywhere}
+.mh-pasos li small{color:#6b7280;font-size:.76rem}
+
+/* Estado de gestión pegado al hecho (hallazgo) */
+.mh-gest{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin-top:8px;padding:7px 10px;border-radius:10px;font-size:.84rem;line-height:1.4;overflow-wrap:anywhere}
+.mh-gest.c-ambar{background:#fff8e1;color:#92400e;border:1px solid #fde68a}
+.mh-gest.c-azul{background:#dbeafe;color:#1e40af;border:1px solid #bfdbfe}
+.mh-gest.c-verde{background:#dcfce7;color:#166534;border:1px solid #bbf7d0}
+.mh-gest.c-gris{background:#f3f4f6;color:#374151;border:1px solid #e5e7eb}
+.mh-gest a{color:inherit;font-weight:800;text-decoration:underline}
+
+/* Fotos: la evidencia */
+.mh-fotos{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 0}
+.mh-foto{width:72px;height:72px;padding:0;border:2px solid #e5e7eb;border-radius:10px;overflow:hidden;background:#f3f4f6;cursor:zoom-in}
+.mh-foto img{width:100%;height:100%;object-fit:cover;display:block}
+.mh-foto:hover{border-color:#dc2626}
+
+/* Enlaces: Ver OT · Ver hallazgo · Ver ticket */
+.mh-enlaces{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px}
+.mh-enl{display:inline-flex;align-items:center;gap:6px;min-height:44px;font-weight:800;font-size:.86rem;color:#1e3a8a;text-decoration:underline;text-underline-offset:3px}
+.mh-enl:hover{color:#dc2626}
+.mh-enl.sin{color:#6b7280;text-decoration:none;font-weight:700}
+
+/* ── Pie: Mostrando A–B de N · N por página · Anterior / Página X de Y / Siguiente (REGLA #4.3) ── */
+.mh-pie{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;justify-content:space-between;margin-top:12px;padding:10px 12px;padding-bottom:max(10px,env(safe-area-inset-bottom));background:#fff;border:1px solid #e5e7eb;border-radius:12px}
+.mh-pie-t{display:flex;align-items:center;gap:7px;font-size:.88rem;color:#4b5563}
+.mh-pie-t i{color:#dc2626}
+.mh-pie-t b{color:#111827}
+.mh-pie-c{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.mh-pie select{min-height:44px;font-size:16px;border:1px solid #d1d5db;border-radius:10px;padding:6px 28px 6px 10px;background:#fff;color:#111827;font-weight:700;font-family:inherit}
+.mh-pag-n{background:#dc2626;color:#fff;border-radius:8px;padding:8px 12px;font-size:.84rem;font-weight:800}
+
+/* ── Las cuatro respuestas de cada hecho: qué (título) · por qué · cuándo · OT ── */
+.mh-4w{display:flex;flex-wrap:wrap;gap:6px 22px;margin:6px 0 4px}
+.mh-4w > div{min-width:0}
+.mh-4w .mh-por{flex:1 1 100%}
+.mh-4w dt{font-size:.68rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0}
+.mh-4w dd{margin:1px 0 0;font-size:.88rem;color:#111827;overflow-wrap:anywhere}
+.mh-4w .mh-enl{min-height:32px}
+.mh-sin{color:#9ca3af;font-style:italic;font-weight:600}
+.mh-hasta{color:#6b7280;font-weight:600}
+.mh-pill.ot{border-style:dashed}
+.mh-pill.ot.on{border-style:solid}
+
+/* ── El resumen de arriba: dónde está, qué se le hizo por última vez, cómo está hoy ── */
+.mh-frase{margin:12px 0 0;padding:10px 12px;border-radius:12px;background:#f9fafb;border:1px solid #e5e7eb;display:grid;gap:6px}
+.mh-frase p{margin:0;display:flex;gap:8px;align-items:flex-start;font-size:.92rem;line-height:1.45;color:#111827;overflow-wrap:anywhere}
+.mh-frase i{margin-top:3px;color:#dc2626;flex:0 0 auto}
+
+/* ── Vacío / cargando / error ── */
+.mh-estado{background:#fff;border:1px dashed #d1d5db;border-radius:14px;padding:30px 18px;text-align:center;color:#6b7280}
+.mh-estado i{display:block;font-size:2.4rem;opacity:.35;margin-bottom:8px}
+.mh-estado b{display:block;color:#111827;font-size:1rem;margin-bottom:3px}
+.mh-estado p{margin:0 0 10px;font-size:.9rem;line-height:1.45}
+.mh-estado.err{border-style:solid;border-color:#fde68a;background:#fff8e1;color:#92400e}
+.mh-estado.err i{opacity:.7;color:#b45309}
+.mh-aviso{display:flex;gap:8px;align-items:flex-start;margin:0 0 10px;padding:8px 12px;border-radius:10px;background:#f3f4f6;color:#374151;font-size:.84rem;line-height:1.4}
+.mh-aviso i{margin-top:2px}
+.mh-esq{height:92px;border-radius:12px;background:linear-gradient(90deg,#f3f4f6 25%,#e5e7eb 37%,#f3f4f6 63%);background-size:400% 100%;animation:mhEsq 1.4s ease infinite;margin-bottom:10px}
+@keyframes mhEsq{0%{background-position:100% 50%}100%{background-position:0 50%}}
+
+/* ── Celular (REGLA #3): sin riel, botones a todo el ancho, nada se corta ── */
+@media (max-width:640px){
+  .mh-lista{padding-left:0}
+  .mh-lista::before,.mh-nodo{display:none}
+  .mh-card{padding:11px 12px}
+  .mh-fecha{margin-left:0;text-align:left;flex:1 1 100%}
+  .mh-datos{grid-template-columns:1fr 1fr}
+  .mh-pie{flex-direction:column;align-items:stretch}
+  .mh-pie-c{justify-content:space-between}
+  .mh-pie-c .mh-btn{flex:1 1 auto}
+  .mh-fechas label{flex:1 1 140px}
+  .mh-fechas input[type=date]{width:100%}
+  .mh-foto{width:64px;height:64px}
+}
+@media (prefers-reduced-motion:reduce){
+  .mh-card.abierto .mh-nodo,.mh-esq{animation:none}
+  .mh-lista.cargando{transition:none}
+}
