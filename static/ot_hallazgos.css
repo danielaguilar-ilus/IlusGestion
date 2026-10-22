@@ -31,7 +31,15 @@
 .hz-btn.pri:hover{background:#262626}
 .hz-btn.sec{border-color:#d1d5db;color:#374151}
 .hz-btn:disabled{opacity:.5;cursor:not-allowed}
-.hz-btn:focus-visible,.hz-foto:focus-visible,.hz-sel input:focus-visible{outline:3px solid #fca5a5;outline-offset:2px}
+/* H-27: mientras guarda, el botón que se tocó lo dice («Guardando…», con su ruedita) y los demás quedan deshabilitados. */
+.hz-btn[aria-busy="true"]{cursor:progress}
+.hz-btn[aria-busy="true"]:disabled{opacity:1}
+.hz-btn[aria-busy="true"]::before{content:"";flex:0 0 14px;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;
+  animation:hz-giro .7s linear infinite}
+@keyframes hz-giro{to{transform:rotate(360deg)}}
+/* H-18: foco visible de 3 px y con contraste (azul #1d4ed8 sobre blanco ≈ 6,7:1; el rosa de antes daba ≈ 1,9:1, bajo el mínimo de 3:1). */
+.hz-btn:focus-visible,.hz-foto:focus-visible,.hz-sel input:focus-visible,.hz-grupo-cab:focus-visible,.hz-retirados summary:focus-visible,
+.hz-seg a:focus-visible,.hz-origen-tx a:focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}
 
 /* La lista */
 .hz-lista{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:10px}
@@ -42,9 +50,13 @@
 .hz-item.c-negro{border-left-color:#0a0a0a}
 .hz-item.c-gris{border-left-color:#9ca3af}
 .hz-item.e-descartado{background:#f9fafb}
-.hz-item.e-resuelto{background:#f0fdf4}
-.hz-item.hz-resaltado{box-shadow:0 0 0 3px #fca5a5}
-.hz-sel{flex:0 0 28px;display:flex;align-items:flex-start;padding-top:2px;margin:0}
+/* H-12: «con OT de seguimiento» = azul («en curso», espera) hasta que esa OT se cierra; solo entonces verde («hecho»). */
+.hz-item.e-resuelto{background:#f5f9ff}
+.hz-item.e-resuelto.seg-cerrada{background:#f0fdf4}
+.hz-item.hz-resaltado{box-shadow:0 0 0 3px #bfdbfe}
+.hz-sel{flex:0 0 28px;position:relative;display:flex;align-items:flex-start;padding-top:2px;margin:0}
+/* H-18: la casilla se ve de 24 px, pero el área que responde al dedo mide 44 px de ancho (y todo el alto del hallazgo). */
+.hz-sel::after{content:"";position:absolute;top:0;bottom:0;left:-8px;right:-8px}
 .hz-sel input{width:24px;height:24px;accent-color:#dc2626;cursor:pointer}
 .hz-sel.vacio{visibility:hidden}      /* el que ya no se puede elegir conserva su lugar: el contenido de todas las tarjetas queda alineado */
 .hz-cuerpo{flex:1 1 auto;min-width:0}
@@ -73,8 +85,11 @@
 .hz-sinfoto i{margin-top:2px}
 .hz-meta{color:#6b7280;font-size:.82rem;line-height:1.4}
 .hz-seg,.hz-desc,.hz-aviso{display:flex;gap:8px;align-items:flex-start;margin-top:8px;padding:7px 10px;border-radius:10px;font-size:.86rem;line-height:1.4;overflow-wrap:anywhere}
-.hz-seg{background:#dcfce7;color:#166534}
-.hz-seg a{color:#14532d;text-decoration:underline}
+/* H-12: azul mientras la OT de seguimiento siga abierta; verde solo cuando ya se cerró (`.cerrada`). */
+.hz-seg{background:#dbeafe;color:#1e40af}
+.hz-seg a{color:#1e3a8a;text-decoration:underline}
+.hz-seg.cerrada{background:#dcfce7;color:#166534}
+.hz-seg.cerrada a{color:#14532d}
 .hz-seg small{font-weight:600}
 .hz-desc{background:#f3f4f6;color:#374151}
 .hz-aviso{background:#fff8e1;color:#92400e;border:1px solid #fde68a;font-weight:700}
@@ -105,20 +120,31 @@
   .hz-item{padding:10px 12px}
   .hz-est{margin-left:0}
   .hz-acciones .hz-btn,.hz-barra .hz-btn{flex:1 1 100%}
+  .hz-plegar{margin-left:0}
   .hz-foto{width:64px;height:64px}
 }
 @media (prefers-reduced-motion:reduce){
-  .hz-item,.hz-btn{transition:none}
+  .hz-item,.hz-btn,.hz-chev{transition:none}
+  .hz-btn[aria-busy="true"]::before{animation:none}
 }
 
-/* ── 2026-10-21: grupos por equipo + N° de serie (página «Hallazgos») y el resumen «Qué pasó con los equipos» (pestaña Trabajo de la OT) ── */
-.hz-grupo{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-top:8px;padding:8px 12px;border-radius:10px;background:#f9fafb;
-  border-left:6px solid #9ca3af;font-size:.92rem;color:#111827}
-.hz-grupo.c-rojo{border-left-color:#dc2626}
-.hz-grupo.c-ambar{border-left-color:#f59e0b}
-.hz-grupo.c-negro{border-left-color:#0a0a0a}
-.hz-grupo.c-azul{border-left-color:#3b82f6}
-.hz-grupo b{overflow-wrap:anywhere}
+/* ── 2026-10-21: grupos por equipo + N° de serie (página «Hallazgos») y el resumen «Estado de los equipos» (pestaña Trabajo de la OT) ── */
+/* 2026-10-22 (H-20): cada grupo es un <details> plegable; la barra de arriba es su <summary> (44 px) y conserva el semáforo de siempre. */
+.hz-gli{list-style:none}
+.hz-grupo{margin-top:8px}
+.hz-grupo-cab{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;min-height:44px;padding:8px 12px;border-radius:10px;background:#f9fafb;
+  border-left:6px solid #9ca3af;font-size:.92rem;color:#111827;cursor:pointer;list-style:none}
+.hz-grupo-cab::-webkit-details-marker{display:none}
+.hz-grupo.c-rojo > .hz-grupo-cab{border-left-color:#dc2626}
+.hz-grupo.c-ambar > .hz-grupo-cab{border-left-color:#f59e0b}
+.hz-grupo.c-negro > .hz-grupo-cab{border-left-color:#0a0a0a}
+.hz-grupo.c-azul > .hz-grupo-cab{border-left-color:#3b82f6}
+.hz-grupo-cab:hover{background:#f3f4f6}
+.hz-grupo-cab b{overflow-wrap:anywhere}
+.hz-chev{color:#6b7280;transition:transform .15s}
+.hz-grupo[open] > .hz-grupo-cab .hz-chev{transform:rotate(90deg)}
+.hz-grupo-items{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:10px}
+.hz-plegar{margin-left:auto}
 .hz-serie{display:inline-block;background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:1px 7px;font-size:.78rem;font-weight:700;color:#374151}
 .hz-grupo-n{margin-left:auto;color:#6b7280;font-size:.8rem;font-weight:700}
 .otd-res{background:#fff;border:1px solid #e5e7eb;border-left:6px solid #f59e0b;border-radius:14px;padding:12px 14px;margin:0 0 14px}
@@ -135,7 +161,7 @@
 .otd-res-it{width:100%;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-height:44px;padding:8px 12px;border:1px solid #e5e7eb;
   border-radius:10px;background:#fff;text-align:left;cursor:pointer}
 .otd-res-it:hover{background:#f9fafb;border-color:#d1d5db}
-.otd-res-it:focus-visible{outline:3px solid #fca5a5;outline-offset:2px}
+.otd-res-it:focus-visible,.otd-res-btn:focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}   /* H-18: foco con contraste (antes #fca5a5, ≈ 1,9:1) */
 .otd-res-it .nm{flex:1 1 220px;min-width:0;overflow-wrap:anywhere;color:#111827}
 .otd-res-it .sn{display:inline-block;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:6px;padding:1px 7px;font-size:.76rem;font-weight:700;color:#374151}
 .otd-res-it .chips{display:flex;flex-wrap:wrap;gap:5px}
