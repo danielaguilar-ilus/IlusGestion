@@ -1785,7 +1785,8 @@ class TestFichaDeLaOT(unittest.TestCase):
         self._escena()
         i = self._ctx()["activos"][0]
         self.assertEqual((i["cuando"], i["quien"]), ("21/10 11:05", "Pedro Técnico"))
-        self.assertIn("%d/%m %H:%M", self.m.fmts, "REGLA #6: toda fecha pasa por chile_fmt_filter")
+        self.assertIn("%d/%m/%Y %H:%M", self.m.fmts, "REGLA #6: toda fecha pasa por chile_fmt_filter y lleva el año (auditoría, H-24)")
+        self.assertNotIn("%d/%m %H:%M", self.m.fmts, "ninguna fecha sin año")
 
     def test_una_ot_cerrada_igual_muestra_y_deja_gestionar(self):
         for estado in ("pendiente_aprobacion", "completada", "cerrada", "cancelada", "anulada"):
@@ -2390,13 +2391,18 @@ class TestTarjetaRenderizada(unittest.TestCase):
         self.assertEqual([c[0] for c in chips], ["rojo", "rojo", "negro", "ambar", "azul", "gris"])
         self.assertEqual(html.count("Puede lastimar a alguien"), 1, "solo el equipo fuera de servicio con riesgo")
         txt = _texto_visible(html)
-        for pieza in ("3 sin gestionar", "1 con el caso tomado", "1 con OT de seguimiento", "1 descartado", "4 sin foto"):
+        for pieza in ("3 sin gestionar", "1 con el caso tomado", "1 con OT de seguimiento en curso", "1 descartado", "4 sin foto"):
             self.assertIn(pieza, txt, pieza)
+        # H-12: la OT de seguimiento de este repuesto está «Programada» (abierta): se ve AZUL («en curso»), no verde («hecho»).
+        self.assertIn('<span class="hz-n azul" title="Su OT de seguimiento sigue abierta"><b>1</b> con OT de seguimiento en curso</span>', html)
+        self.assertNotIn("con OT de seguimiento cerrada", txt)
         self.assertEqual(html.count("Sin foto. La foto es la evidencia"), 4, "sin foto se dice, en ámbar, hallazgo por hallazgo")
         self.assertIn('<img src="/f/live/t12.jpg" alt="Foto del hallazgo 1"', html, "la foto que el técnico subió después de responder")
         fotos = re.search(r"data-hz-fotos='([^']*)'", html.split('id="hz%d"' % e.h2["id"])[1]).group(1)
         self.assertEqual(json.loads(fotos), ["/f/fs1.jpg", "/f/fs2.jpg"])
-        self.assertIn("<h4 class=\"hz-tit\">Trotadora Pro 3000 · Revisar cinta: Falla</h4>", html)
+        # H-16: el equipo va UNA vez, completo, en el encabezado de su grupo; el hallazgo dice solo lo que pasó (el título completo sigue en data-hz-cap).
+        self.assertIn("<h4 class=\"hz-tit\">Revisar cinta: Falla</h4>", html)
+        self.assertIn('data-hz-cap="Trotadora Pro 3000 · Revisar cinta: Falla"', html)
 
     def test_cada_estado_muestra_quien_cuando_y_por_que(self):
         txt = _texto_visible(_tarjeta(self._ctx()))
@@ -2494,7 +2500,8 @@ class TestTarjetaRenderizada(unittest.TestCase):
         e = escena_aurum()
         e.h4["titulo"] = "Trotadora Pro 3000: Repuesto solicitado: Piola × 2"
         html = _tarjeta(e.amb["_hall_contexto_ficha"](171, e.m.visitas[171]))
-        lista = html[html.index('<ul class="hz-lista">'):html.index("</ul>", html.index('<ul class="hz-lista">'))]
+        ini = html.index('<ul class="hz-lista">')
+        lista = html[ini:html.index("</section>", ini)]          # todos los grupos (H-20: cada uno con su <ul> propio) y los retirados
         self.assertNotRegex(lista, r"\$\s?\d|(?i:proveedor|costo|factura|saldo|margen|\bOC\b)")
 
     def test_estilos_boton_de_44_px_mobile_y_paleta_ilus(self):
@@ -3021,7 +3028,7 @@ class TestHallazgosFueraDeLaOT(unittest.TestCase):
         self.assertEqual(self.DETALLE.count('id="otdResumenEquipos"'), 1)
 
     def test_el_resumen_agrupa_por_equipo_y_serie(self):
-        amb = cargar(["_ot_resumen_equipos"], extra={"_otrep_serie_producto": lambda vid, imid: "SN-PROD"})
+        amb = cargar(["_ot_resumen_equipos"], extra={"_otrep_serie_producto": lambda vid, imid: "SN-PROD", "_oh": H})
         equipos = [
             {"id": 9, "nombre": "Polea alta", "serie": "SN-1", "estado_capturado": "fuera_servicio", "rep_solicitudes": [
                 {"repuesto_nombre": "Piola", "cantidad": 2, "abierta": True}]},
@@ -3041,5 +3048,886 @@ class TestHallazgosFueraDeLaOT(unittest.TestCase):
         # a un técnico no le llegan hallazgos (None): solo lo que ya ve en la tarjeta del equipo
         txt_t = " ".join(c["txt"] for c in amb["_ot_resumen_equipos"](171, equipos, None)[0]["chips"])
         self.assertNotIn("hallazgo", txt_t)
+
+# ═══════════ 2026-10-22 · AUDITORÍA IMPECCABLE, FASE 1 («lo que ya está y confunde»): H-12 a H-28 (sin H-13, H-21 ni H-29 a H-31) ═══════════
+# Informe: outputs/impeccable_hallazgos_2026-10-21.md (secciones 4 y 6). Solo PRESENTACIÓN y texto: el estado guardado ('resuelto'), las reglas de negocio, las
+# rutas y los candados no cambian, y no se quita ningún botón ni función (REGLA #4.2). Los nombres de abajo son los reales vistos en producción el 21-oct.
+_BANCO = "Banco Ajustable ILUS Bio (SKU 1129100696) · S/N 255470655-0696-1"
+_DYNAMIS = "ILUS Dynamis 4 Stacks Jungle (SKU BA023) · S/N 255470655-A023-1"
+_KAIROS = "ILUS Kairos Row Machine (SKU 1121100518) · S/N 255470655-0518-1"
+
+
+def _regla_css(css, selector):
+    """El cuerpo de la primera regla CSS que se llama exactamente `selector` ('' si no existe)."""
+    m = re.search(r"(?:^|[}\s])" + re.escape(selector) + r"\s*\{([^}]*)\}", css)
+    return m.group(1) if m else ""
+
+
+def _luminancia(hexa):
+    h = hexa.lstrip("#")
+    canales = [int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4)]
+    r, g, b = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in canales]
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contraste(a, b):
+    """Razón de contraste WCAG entre dos colores #rrggbb."""
+    mayor, menor = sorted((_luminancia(a), _luminancia(b)), reverse=True)
+    return (mayor + 0.05) / (menor + 0.05)
+
+
+def escena_bancos(solo_banco=False):
+    """La OT-2026-00340 de la auditoría, con los nombres guardados «con la serie de ese momento»: un banco con dos alertas del checklist (grupo e9),
+    un repuesto pedido (e10), una falla sin gestionar (e11), una falla con su OT de seguimiento EN CURSO (e12) y una baja con su OT de seguimiento
+    ya CERRADA (e13). Con `solo_banco` queda solo el banco (una OT con un único equipo)."""
+    m = Mundo(usuario=GESTOR)
+    m.visitas[340] = dict(VISITA_171, id=340, numero_ot="OT-2026-00340")
+    m.visitas[400] = {"id": 400, "numero_ot": "OT-2026-00400", "estado": "en_curso", "cliente_id": 26, "ot_madre_id": 340,
+                      "ot_relacion": "seguimiento", "firma_cliente_url": None}
+    m.visitas[401] = {"id": 401, "numero_ot": "OT-2026-00401", "estado": "completada", "cliente_id": 26, "ot_madre_id": 340,
+                      "ot_relacion": "seguimiento", "firma_cliente_url": None}
+    m.maquinas.update({
+        9: {"nombre": "Banco Ajustable ILUS Bio", "sku": "1129100696", "serie": "255470655-0696-1"},
+        10: {"nombre": "ILUS Dynamis 4 Stacks Jungle", "sku": "BA023", "serie": "255470655-A023-1"},
+        11: {"nombre": "Prensa de piernas", "sku": "PP1", "serie": "SN-PP1"},
+        12: {"nombre": "Cinta de correr X", "sku": "CC1", "serie": "SN-CC1"},
+        13: {"nombre": "Remo Kairos", "sku": "RK1", "serie": "SN-RK1"}})
+    a = m.agregar
+    e = types.SimpleNamespace(m=m, amb=m.ambiente())
+    e.h1 = a(340, ref="t1", severidad="alerta", tarea_id=1, maquina_id=9, equipo_nombre=_BANCO, titulo=_BANCO + " · Tapiz y espuma: Alerta")
+    e.h2 = a(340, ref="t2", severidad="alerta", tarea_id=2, maquina_id=9, equipo_nombre=_BANCO,
+             titulo=_BANCO + " · Mecanismo de ajuste de respaldo y asiento: Alerta")
+    if not solo_banco:
+        e.h3 = a(340, ref="m10:rep:ab12", origen="equipo", severidad="repuesto", maquina_id=10, equipo_nombre=_DYNAMIS,
+                 titulo=_DYNAMIS + ": Repuesto solicitado: Varilla guía o buje de guía × 5", fotos_json='["/f/rep1.jpg"]', n_fotos=1,
+                 detalle="Se perdió o falta — Está raspada · Evidencia: 1 foto(s).")
+        e.h4 = a(340, ref="m11:baja", origen="equipo", severidad="falla", maquina_id=11, equipo_nombre="Prensa de piernas (SKU PP1) · S/N SN-PP1",
+                 titulo="Prensa de piernas (SKU PP1) · S/N SN-PP1: Falla detectada")
+        e.h5 = a(340, ref="m12:falla", origen="equipo", severidad="falla", maquina_id=12, equipo_nombre="Cinta de correr X (SKU CC1) · S/N SN-CC1",
+                 titulo="Cinta de correr X (SKU CC1) · S/N SN-CC1: Falla detectada", estado="resuelto", ot_seguimiento_id=400)
+        e.h6 = a(340, ref="m13:baja", origen="equipo", severidad="baja", maquina_id=13, equipo_nombre="Remo Kairos (SKU RK1) · S/N SN-RK1",
+                 titulo="Remo Kairos (SKU RK1) · S/N SN-RK1: No tiene arreglo (dar de baja)", estado="resuelto", ot_seguimiento_id=401)
+    e.ctx = lambda: e.amb["_hall_contexto_ficha"](340, e.m.visitas[340])        # noqa: E731
+    return e
+
+
+class TestFase1Puro(unittest.TestCase):
+    """El módulo puro: lo que se MUESTRA de lo guardado."""
+
+    def test_h12_con_ot_de_seguimiento_es_azul_en_curso_y_verde_solo_cuando_esa_ot_se_cerro(self):
+        self.assertEqual(H.estado_visual("resuelto", False), {"texto": "OT de seguimiento en curso", "color": "azul"})
+        self.assertEqual(H.estado_visual("resuelto", True), {"texto": "OT de seguimiento cerrada", "color": "verde"})
+        self.assertEqual(H.estado_visual("resuelto"), H.estado_visual("resuelto", False), "sin saber el estado de la OT, se asume abierta")
+        # el criterio de Retiros: ámbar = te toca, azul = espera, verde = hecho
+        self.assertEqual(H.estado_visual("abierto"), {"texto": "Sin gestionar", "color": "ambar"})
+        self.assertEqual(H.estado_visual("tomado"), {"texto": "Caso tomado", "color": "azul"})
+        self.assertEqual(H.estado_visual("descartado"), {"texto": "Descartado", "color": "gris"})
+        self.assertEqual(H.estado_visual("abierto", True), H.estado_visual("abierto"), "seg_cerrada solo importa para 'resuelto'")
+        self.assertEqual(H.estado_visual("raro")["texto"], "Sin gestionar")
+        # LO GUARDADO no cambia: es la misma definición que usan el panel, el filtro, la franja del cierre, la bandeja y la ficha del cliente
+        self.assertEqual(H.EST_RESUELTO, "resuelto")
+        self.assertEqual(H.ESTADOS["resuelto"], {"texto": "Con OT de seguimiento", "color": "verde"})
+        self.assertEqual(H.estado_info("resuelto")["texto"], "Con OT de seguimiento")
+
+    def test_h12_cuando_se_considera_cerrada_la_ot_de_seguimiento(self):
+        for cerrada in ("cerrada", "completada", "Cerrada", " COMPLETADA "):
+            self.assertTrue(H.seguimiento_cerrado(cerrada), cerrada)
+        for abierta in ("programada", "en_curso", "pendiente_aprobacion", "cancelada", "anulada", "", None):
+            self.assertFalse(H.seguimiento_cerrado(abierta), repr(abierta))
+
+    def test_h16_el_titulo_dice_lo_que_paso_sin_repetir_el_equipo(self):
+        f = H.titulo_corto
+        self.assertEqual(f(_BANCO + " · Tapiz y espuma: Alerta", _BANCO), "Tapiz y espuma: Alerta")
+        self.assertEqual(f(_BANCO + " · Mecanismo de ajuste de respaldo y asiento: Alerta", _BANCO), "Mecanismo de ajuste de respaldo y asiento: Alerta")
+        # una acción del técnico: «<equipo>: <qué pasó>»
+        self.assertEqual(f(_DYNAMIS + ": Repuesto solicitado: Varilla guía o buje de guía × 5", _DYNAMIS), "Repuesto solicitado: Varilla guía o buje de guía × 5")
+        self.assertEqual(f("Banco plano X: No se puede usar — pieza rota", "Banco plano X"), "No se puede usar — pieza rota")
+        # lo que no se puede acortar con seguridad se deja TAL CUAL (REGLA #15: nada inventado ni cortado)
+        for titulo, equipo in (("Revisar cinta: Falla", ""), ("Revisar cinta: Falla", None), ("", "Banco"), ("Banco", "Banco"),
+                               ("Banco X (SKU 1) · Tapiz: Alerta", "Banco X"), ("Otra cosa: Falla", "Banco")):
+            self.assertEqual(f(titulo, equipo), titulo, (titulo, equipo))
+        self.assertEqual(f(None, "Banco"), "")
+
+    def test_h16_el_sujeto_largo_que_titulo_tarea_corta_a_200_letras_tambien_se_quita(self):
+        largo = ("Trotadora comercial de alto rendimiento con pantalla táctil de 22 pulgadas y banda ortopédica reforzada " * 3).strip()
+        for corte in range(190, 215):               # el espacio del corte puede caer en cualquier lugar de las 200 letras
+            sujeto = H.nombre_con_ficha(("x" * corte + " ") + largo, "ABC", "123")
+            titulo = H.limpio(H.titulo_tarea(sujeto, "Revisar cinta", "Falla"), H.TITULO_MAX)     # así lo guarda _hall_upsert
+            self.assertEqual(H.titulo_corto(titulo, sujeto), "Revisar cinta: Falla", corte)
+
+    def test_h15_la_serie_sale_una_sola_vez_y_es_la_vigente(self):
+        self.assertEqual(H.partir_serie("Banco X (SKU 1) · S/N 123"), ("Banco X (SKU 1)", "123"))
+        self.assertEqual(H.partir_serie("Banco X (SKU 1)"), ("Banco X (SKU 1)", ""))
+        self.assertEqual(H.partir_serie(None), ("", ""))
+        f = H.equipo_con_serie
+        # la bandeja decía «… · S/N 255470655-A023-1 · S/N 255470655-A023-1»
+        self.assertEqual(f(_DYNAMIS, "255470655-A023-1"), _DYNAMIS)
+        self.assertEqual(f(_DYNAMIS, None), _DYNAMIS, "si la ficha no trae serie queda la que se guardó")
+        self.assertEqual(f("Stair Climber DSC6, LED Console (SKU DSC6)", None), "Stair Climber DSC6, LED Console (SKU DSC6)")
+        self.assertEqual(f("Banco X (SKU 1)", "123"), "Banco X (SKU 1) · S/N 123", "un nombre sin serie recibe la de la ficha")
+        self.assertEqual(f(None, None), "Equipo")
+        # el Kairos de la OT-339: la serie cambió desde que se reportó → se dicen las dos, rotuladas
+        self.assertEqual(f(_KAIROS, "255470655-055555555tt518-1"),
+                         "ILUS Kairos Row Machine (SKU 1121100518) · S/N 255470655-055555555tt518-1 (al reportar: S/N 255470655-0518-1)")
+        self.assertEqual(f(_KAIROS, " 255470655-0518-1 "), _KAIROS, "la misma serie con espacios de más no cuenta como distinta")
+
+    def test_h16_el_conteo_de_fotos_sobra_cuando_las_miniaturas_se_ven(self):
+        f = H.detalle_visible
+        self.assertEqual(f("Se perdió o falta — Está raspada · Evidencia: 1 foto(s).", True), "Se perdió o falta — Está raspada")
+        self.assertEqual(f("Evidencia: 2 foto(s).", True), "")
+        self.assertEqual(f("Raspada · Evidencia: 2 foto(s), 1 video(s).", True), "Raspada · Evidencia: 1 video(s).", "los videos no se muestran: se conservan")
+        self.assertEqual(f("Evidencia: 2 foto(s), 3 video(s).", True), "Evidencia: 3 video(s).")
+        self.assertEqual(f("Raspada · Evidencia: 0 foto(s).", False), "Raspada · Evidencia: 0 foto(s).", "sin miniaturas el conteo sí informa")
+        self.assertEqual(f("No enciende", True), "No enciende")
+        self.assertEqual(f(None, True), "")
+
+    def test_h23_el_lapso_nunca_dice_hace_el_mismo_dia(self):
+        f = H.lapso_texto
+        self.assertEqual((f(-1), f(0)), ("menos de un día", "menos de un día"))
+        self.assertEqual((f(1), f(2), f(40)), ("1 día", "2 días", "40 días"))
+        self.assertEqual((f(None), f("x")), ("", ""))
+        self.assertEqual(("hace " + f(0), "En " + f(0)), ("hace menos de un día", "En menos de un día"))
+
+    def test_h24_la_fecha_lleva_el_ano(self):
+        self.assertEqual(H.FORMATO_FECHA, "%d/%m/%Y %H:%M")
+        self.assertEqual(dt.datetime(2026, 10, 21, 16, 51).strftime(H.FORMATO_FECHA), "21/10/2026 16:51")
+
+    def test_h22_el_chip_de_un_equipo_saltado_dice_el_motivo_y_no_se_contradice(self):
+        f = H.chip_salto
+        self.assertEqual(f("sin_acceso"), ("No se pudo revisar: sin acceso", "gris"))
+        self.assertEqual(f("cliente_no_permite"), ("No se pudo revisar: el cliente no lo permitió", "gris"))
+        self.assertEqual(f("otro"), ("No se pudo revisar: otro motivo", "gris"))
+        self.assertEqual(f("no_encontrado"), ("No estaba en el recinto", "ambar"))
+        self.assertEqual(f("falta_stock"), ("No llegó · falta stock", "ambar"))
+        self.assertEqual(f("motivo_nuevo"), ("No se pudo revisar: motivo nuevo", "gris"), "una razón que nadie conoce igual se dice")
+        self.assertEqual(f(""), ("No se pudo revisar", "gris"))
+        # sin estados contradictorios: si ya se respondió o reportó algo en ese equipo, no se dice que «no se pudo revisar»
+        self.assertEqual(f("sin_energia", parcial=True), ("Revisión incompleta: sin energía", "gris"))
+        self.assertEqual(f("falta_stock", parcial=True), ("No llegó · falta stock", "ambar"), "un equipo que no llegó no tiene revisión parcial")
+        # toda razón válida del servidor tiene un motivo corto legible (ninguna sale con guiones bajos)
+        validas = cargar(constantes=("_RAZONES_SALTADO_VALIDAS",))["_RAZONES_SALTADO_VALIDAS"]
+        self.assertGreaterEqual(len(validas), 10)
+        for razon in validas:
+            if razon == "dado_de_baja":                      # ese equipo no dibuja este chip (ya tiene el de «Dado de baja»)
+                continue
+            self.assertNotIn("_", f(razon)[0], razon)
+            self.assertIn(razon, list(H.SALTO_NO_ESTA) + list(H.SALTO_MOTIVO_CORTO), razon)
+
+    def test_h20_un_grupo_se_abre_si_tiene_algo_grave_por_gestionar_o_es_el_unico(self):
+        f = H.grupo_abierto
+        self.assertTrue(f([{"estado_ef": "abierto", "severidad": "falla"}], 3))
+        self.assertTrue(f([{"estado_ef": "tomado", "severidad": "baja"}], 3), "con el caso tomado todavía admite acciones")
+        self.assertTrue(f([{"estado_ef": "abierto", "severidad": "fuera_servicio"}], 3))
+        self.assertTrue(f([{"estado_ef": "abierto", "severidad": "alerta", "riesgo": True}], 3), "puede lastimar a alguien")
+        for plegado in ([{"estado_ef": "abierto", "severidad": "alerta"}], [{"estado_ef": "abierto", "severidad": "repuesto"}],
+                        [{"estado_ef": "resuelto", "severidad": "falla"}], [{"estado_ef": "descartado", "severidad": "baja"}], []):
+            self.assertFalse(f(plegado, 3), plegado)
+        self.assertTrue(f([{"estado_ef": "abierto", "severidad": "alerta"}], 1), "un solo equipo: no hay nada que plegar")
+        self.assertTrue(f([], 1))
+
+
+class TestFase1ConBase(unittest.TestCase):
+    """Lo que arma el servidor con una base de mentira (nunca la real: REGLA #22)."""
+
+    def test_h12_el_hallazgo_con_ot_de_seguimiento_se_pinta_azul_hasta_que_esa_ot_se_cierra(self):
+        e = escena_bancos()
+        c = e.ctx()
+        por = {i["id"]: i for i in c["activos"]}
+        en_curso, cerrada = por[e.h5["id"]], por[e.h6["id"]]
+        self.assertEqual((en_curso["estado"], en_curso["estado_ef"]), ("resuelto", "resuelto"), "lo guardado sigue siendo 'resuelto'")
+        self.assertEqual((en_curso["estado_txt"], en_curso["estado_color"], en_curso["seg_cerrada"]), ("OT de seguimiento en curso", "azul", False))
+        self.assertEqual((cerrada["estado_txt"], cerrada["estado_color"], cerrada["seg_cerrada"]), ("OT de seguimiento cerrada", "verde", True))
+        self.assertEqual((c["n_con_ot"], c["n_con_ot_en_curso"], c["n_con_ot_cerrada"]), (2, 1, 1))
+        self.assertEqual({g["key"]: (g["n_con_ot"], g["n_con_ot_cerrada"]) for g in c["grupos"] if g["n_con_ot"]}, {"e12": (1, 0), "e13": (1, 1)})
+        # la misma fila, sin tocar la base: cuando esa OT se cierra pasa de azul a verde
+        e.m.visitas[400]["estado"] = "completada"
+        c2 = e.ctx()
+        self.assertEqual((c2["n_con_ot"], c2["n_con_ot_en_curso"], c2["n_con_ot_cerrada"]), (2, 0, 2))
+        self.assertEqual({i["id"]: i["estado_color"] for i in c2["activos"] if i["estado_ef"] == "resuelto"}, {e.h5["id"]: "verde", e.h6["id"]: "verde"})
+        # y si la OT de seguimiento se cancela, vuelve a «Sin gestionar» (ámbar), como siempre
+        e.m.visitas[400]["estado"] = "cancelada"
+        vuelto = {i["id"]: i for i in e.ctx()["activos"]}[e.h5["id"]]
+        self.assertEqual((vuelto["estado_ef"], vuelto["estado_color"]), ("abierto", "ambar"))
+
+    def test_h16_cada_hallazgo_dice_lo_que_paso_y_el_equipo_va_una_vez_en_su_grupo(self):
+        e = escena_bancos()
+        c = e.ctx()
+        por = {i["id"]: i for i in c["activos"]}
+        self.assertEqual(por[e.h1["id"]]["titulo_corto"], "Tapiz y espuma: Alerta")
+        self.assertEqual(por[e.h2["id"]]["titulo_corto"], "Mecanismo de ajuste de respaldo y asiento: Alerta")
+        self.assertEqual(por[e.h3["id"]]["titulo_corto"], "Repuesto solicitado: Varilla guía o buje de guía × 5")
+        self.assertEqual(por[e.h1["id"]]["titulo"], e.h1["titulo"], "el título completo sigue intacto: lo usan el prellenado, la campana y la bitácora")
+        self.assertEqual(por[e.h3["id"]]["detalle_ver"], "Se perdió o falta — Está raspada")
+        self.assertEqual(por[e.h3["id"]]["detalle"], e.h3["detalle"], "lo guardado no se toca")
+        grupos = {g["key"]: g for g in c["grupos"]}
+        self.assertEqual((grupos["e9"]["nombre"], grupos["e9"]["serie"], grupos["e9"]["sku"]), ("Banco Ajustable ILUS Bio", "255470655-0696-1", "1129100696"),
+                         "el encabezado dice el nombre COMPLETO y la serie vigente de la ficha (REGLA #15)")
+
+    def test_h16_si_el_equipo_ya_no_existe_el_encabezado_no_repite_la_serie_del_nombre_guardado(self):
+        e = escena_bancos(solo_banco=True)
+        del e.m.maquinas[9]
+        g = e.ctx()["grupos"][0]
+        self.assertEqual(g["nombre"], "Banco Ajustable ILUS Bio (SKU 1129100696)", "sin «· S/N …» (la serie va aparte)")
+        self.assertEqual(e.ctx()["activos"][0]["titulo_corto"], "Tapiz y espuma: Alerta")
+
+    def test_h20_los_grupos_se_pliegan_menos_los_que_tienen_algo_grave_por_gestionar(self):
+        e = escena_bancos()
+        c = e.ctx()
+        self.assertEqual({g["key"]: g["abierto"] for g in c["grupos"]},
+                         {"e9": False, "e10": False, "e11": True, "e12": False, "e13": False},
+                         "solo la falla sin gestionar abre su grupo; alertas, repuesto y lo que ya tiene OT quedan plegados")
+        un_equipo = escena_bancos(solo_banco=True).ctx()
+        self.assertEqual([g["abierto"] for g in un_equipo["grupos"]], [True], "un solo equipo: nada que plegar")
+
+    def test_h24_toda_fecha_de_la_tarjeta_lleva_el_ano(self):
+        e = escena_bancos()
+        amb = e.m.ambiente(chile_fmt_filter=lambda v, f="%d/%m/%Y %H:%M": v.strftime(f))
+        self.assertEqual(amb["_hall_cuando"](dt.datetime(2026, 10, 21, 16, 51)), "21/10/2026 16:51")
+        self.assertEqual(amb["_hall_cuando"](None), "")
+        c = amb["_hall_contexto_ficha"](340, e.m.visitas[340])
+        self.assertTrue(c["activos"])
+        for i in c["activos"]:
+            self.assertRegex(i["cuando"], r"^\d\d/\d\d/\d{4} \d\d:\d\d$", i["cuando"])
+
+    def test_h23_la_ficha_del_cliente_nunca_dice_hace_el_mismo_dia(self):
+        ahora = dt.datetime.utcnow().replace(microsecond=0)
+        solicitudes = [
+            {"maquina_id": 9, "visita_id": 513, "repuesto_nombre": "Pasillo", "cantidad": 2, "origen": "repuesto", "estado": "pedido",
+             "created_at": ahora - dt.timedelta(hours=2), "instalado_at": None, "updated_at": ahora, "solicitado_por": "Lenin Urbina"},
+            {"maquina_id": 9, "visita_id": 514, "repuesto_nombre": "Piola", "cantidad": 1, "origen": "repuesto", "estado": "instalado",
+             "created_at": ahora - dt.timedelta(hours=5), "instalado_at": ahora - dt.timedelta(hours=1), "updated_at": ahora - dt.timedelta(hours=1),
+             "solicitado_por": "Jaizer"},
+            {"maquina_id": 9, "visita_id": 515, "repuesto_nombre": "Cinta", "cantidad": 1, "origen": "repuesto", "estado": "pedido",
+             "created_at": ahora - dt.timedelta(days=3), "instalado_at": None, "updated_at": ahora, "solicitado_por": "Jaizer"}]
+
+        def fetchall(sql, params=()):
+            s = " ".join(sql.split())
+            if "FROM mant_maquina_paradas" in s or "FROM mant_ot_hallazgos h" in s:
+                return []
+            if "FROM mant_ot_repuesto_solicitudes" in s:
+                return [dict(r) for r in solicitudes]
+            if s.startswith("SELECT id, numero_ot FROM mant_visitas WHERE id IN"):
+                return [{"id": i, "numero_ot": "OT-2026-%05d" % i} for i in params]
+            raise AssertionError("consulta no prevista: " + s[:160])
+        amb = cargar(["_maq_problemas"], extra={
+            "datetime": dt.datetime, "mysql_fetchall": fetchall, "_hv_asegurar": lambda: None, "_hall_ok": lambda: True, "_oh": H,
+            "_FS_MARCA_RIESGO": "⚠ PUEDE LASTIMAR A ALGUIEN", "_OTREP_ABIERTOS": ("solicitado", "validado", "pedido", "recibido"),
+            "_OTREP_ESTADO_LABEL": {"pedido": "Pedido al proveedor", "instalado": "Instalado"},
+            "chile_fmt_filter": lambda v, f="": v.strftime(f), "print": lambda *a, **k: None})
+        textos = [p["estado_txt"] for p in amb["_maq_problemas"]([9])[9]]
+        self.assertIn("Pedido al proveedor · hace menos de un día", textos)
+        self.assertIn("En menos de un día", textos, "cerrado dentro del mismo día")
+        self.assertIn("Pedido al proveedor · hace 3 días", textos, "lo demás no cambia")
+        self.assertFalse([t for t in textos if "mismo día" in t], textos)
+
+
+class TestFase1Resumen(unittest.TestCase):
+    """«Estado de los equipos» (pestaña Trabajo): H-22 y los chips de H-12."""
+
+    def _filas(self, equipos, hall=None):
+        amb = cargar(["_ot_resumen_equipos"], extra={"_otrep_serie_producto": lambda vid, imid: "", "_oh": H})
+        return amb["_ot_resumen_equipos"](340, equipos, hall)
+
+    def test_h22_un_equipo_que_no_se_pudo_revisar_dice_por_que(self):
+        eq = [{"id": 9, "nombre": "Banco Ajustable ILUS Bio", "serie": "S9", "razon_saltado": "sin_acceso", "n_ok": 0, "rep_solicitudes": []},
+              {"id": 10, "nombre": "Prensa", "serie": "S10", "razon_saltado": "no_encontrado", "rep_solicitudes": []},
+              {"id": 11, "nombre": "Remo", "serie": "S11", "razon_saltado": "falta_stock", "rep_solicitudes": []},
+              {"id": 12, "nombre": "Cinta", "serie": "S12", "razon_saltado": "dado_de_baja", "rep_solicitudes": []}]
+        chips = {f["id"]: f["chips"] for f in self._filas(eq)}
+        self.assertEqual([(c["txt"], c["color"]) for c in chips[9]], [("No se pudo revisar: sin acceso", "gris")])
+        self.assertEqual([(c["txt"], c["color"]) for c in chips[10]], [("No estaba en el recinto", "ambar")])
+        self.assertEqual([(c["txt"], c["color"]) for c in chips[11]], [("No llegó · falta stock", "ambar")])
+        self.assertNotIn(12, chips, "dado de baja ya tiene su propio aviso: este chip no se repite")
+
+    def test_h22_sin_estados_contradictorios_en_un_equipo_con_algo_ya_respondido_o_reportado(self):
+        # (a) con tareas ya respondidas en esa OT
+        parcial = self._filas([{"id": 9, "nombre": "Banco", "serie": "S9", "razon_saltado": "sin_energia", "n_ok": 3, "rep_solicitudes": []}])
+        self.assertEqual([c["txt"] for c in parcial[0]["chips"]], ["Revisión incompleta: sin energía"])
+        # (b) con hallazgos reportados en el equipo (el caso real: «No se pudo revisar» junto a «2 hallazgos sin gestionar»)
+        hall = {"grupos": [{"key": "e9", "serie": "S9", "peor": 4, "n_abiertos": 2, "n_tomados": 0, "n_con_ot": 0, "items": [1, 2]}]}
+        f = self._filas([{"id": 9, "nombre": "Banco Ajustable ILUS Bio", "serie": "S9", "razon_saltado": "sin_acceso", "n_ok": 0, "rep_solicitudes": []}], hall)
+        txt = [c["txt"] for c in f[0]["chips"]]
+        self.assertEqual(txt, ["Revisión incompleta: sin acceso", "2 hallazgos sin gestionar"])
+        self.assertFalse([t for t in txt if t.startswith("No se pudo revisar")], "nunca los dos a la vez")
+
+    def test_h12_los_chips_de_con_ot_de_seguimiento_son_azules_en_curso_y_verdes_cerrada(self):
+        eq = [{"id": 9, "nombre": "Banco", "serie": "S9", "rep_solicitudes": []}]
+        mixto = self._filas(eq, {"grupos": [{"key": "e9", "serie": "S9", "peor": 1, "n_abiertos": 0, "n_tomados": 0, "n_con_ot": 3, "n_con_ot_cerrada": 1,
+                                             "items": [1, 2, 3]}]})
+        self.assertEqual([(c["txt"], c["color"]) for c in mixto[0]["chips"]],
+                         [("2 con OT de seguimiento en curso", "azul"), ("1 con OT de seguimiento cerrada", "verde")])
+        todas_cerradas = self._filas(eq, {"grupos": [{"key": "e9", "serie": "S9", "peor": 1, "n_abiertos": 0, "n_tomados": 0, "n_con_ot": 2,
+                                                      "n_con_ot_cerrada": 2, "items": [1, 2]}]})
+        self.assertEqual([(c["txt"], c["color"]) for c in todas_cerradas[0]["chips"]], [("2 con OT de seguimiento cerrada", "verde")])
+        sin_dato = self._filas(eq, {"grupos": [{"key": "e9", "serie": "S9", "peor": 1, "n_abiertos": 0, "n_tomados": 0, "n_con_ot": 1, "items": [1]}]})
+        self.assertEqual([(c["txt"], c["color"]) for c in sin_dato[0]["chips"]], [("1 con OT de seguimiento en curso", "azul")],
+                         "sin saber si se cerró, es «en curso»: nunca verde por defecto")
+
+    def test_h12_el_contexto_real_alimenta_los_chips(self):
+        e = escena_bancos()
+        c = e.ctx()
+        equipos = [{"id": 12, "nombre": "Cinta de correr X", "serie": "SN-CC1", "rep_solicitudes": []},
+                   {"id": 13, "nombre": "Remo Kairos", "serie": "SN-RK1", "rep_solicitudes": []}]
+        filas = {f["id"]: [(x["txt"], x["color"]) for x in f["chips"]] for f in self._filas(equipos, c)}
+        self.assertEqual(filas[12], [("1 con OT de seguimiento en curso", "azul")])
+        self.assertEqual(filas[13], [("1 con OT de seguimiento cerrada", "verde")])
+
+
+class TestFase1Bandeja(unittest.TestCase):
+    """`ot_hallazgos_pagina` y la página «Hallazgos» renderizada (H-15, H-18, H-26, H-28)."""
+
+    def _llamar(self, equipos, args=None):
+        ots = [{"visita_id": 340, "numero_ot": "OT-2026-00340", "ot_estado": "programada", "cliente": "Juan Daniel Aguilar Tejera",
+                "n_abiertos": 3, "n_tomados": 0, "n_activos": 3, "ultimo": dt.datetime(2026, 10, 21, 19, 51)}]
+
+        def fetchall(sql, params=()):
+            s = " ".join(sql.split())
+            if s.startswith("SELECT h.visita_id, v.numero_ot"):
+                return [dict(r) for r in ots]
+            if s.startswith("SELECT h.visita_id, h.maquina_id, h.item_manual_id, h.equipo_nombre, m.serie"):
+                return [dict(r) for r in equipos]
+            raise AssertionError("consulta no prevista: " + s[:140])
+        visto = {}
+
+        def render(plantilla, **kw):
+            visto["plantilla"], visto["ctx"] = plantilla, kw
+            return "html"
+        amb = cargar(["ot_hallazgos_pagina", "_hall_cuando"], constantes=("_HALL_PAG_FILTROS",), extra={
+            "_oh": H, "request": types.SimpleNamespace(args=dict(args or {})), "_hall_ok": lambda: True, "mysql_fetchall": fetchall,
+            "mysql_fetchone": lambda sql, params=(): {"id": 340, "numero_ot": "OT-2026-00340"}, "_puede_ot_accion": lambda *a, **k: True,
+            "g": types.SimpleNamespace(user={}), "_hall_contexto_ficha": lambda vid, v: None, "_hall_n_sin_gestionar": lambda: 3,
+            "render_template": render, "chile_fmt_filter": lambda v, f="%d/%m/%Y %H:%M": v.strftime(f), "print": lambda *a, **k: None})
+        amb["ot_hallazgos_pagina"]()
+        self.assertEqual(visto["plantilla"], "ot2/hallazgos.html")
+        return visto["ctx"]
+
+    def test_h15_la_serie_sale_una_sola_vez_y_es_la_vigente_en_cada_ot_de_la_bandeja(self):
+        ctx = self._llamar([
+            {"visita_id": 340, "maquina_id": 10, "item_manual_id": None, "equipo_nombre": _DYNAMIS, "serie": "255470655-A023-1"},
+            {"visita_id": 340, "maquina_id": 10, "item_manual_id": None, "equipo_nombre": _DYNAMIS, "serie": "255470655-A023-1"},
+            {"visita_id": 340, "maquina_id": 9, "item_manual_id": None, "equipo_nombre": _BANCO, "serie": "255470655-0696-1"},
+            {"visita_id": 340, "maquina_id": 12, "item_manual_id": None, "equipo_nombre": _KAIROS, "serie": "255470655-055555555tt518-1"},
+            {"visita_id": 340, "maquina_id": None, "item_manual_id": 4, "equipo_nombre": "Stair Climber DSC6, LED Console (SKU DSC6)", "serie": None}])
+        equipos = ctx["filas"][0]["equipos"]
+        self.assertEqual(equipos, [
+            _DYNAMIS, _BANCO,
+            "ILUS Kairos Row Machine (SKU 1121100518) · S/N 255470655-055555555tt518-1 (al reportar: S/N 255470655-0518-1)",
+            "Stair Climber DSC6, LED Console (SKU DSC6)"])
+        self.assertEqual(" ".join(equipos).count("S/N 255470655-A023-1"), 1, "antes: «· S/N 255470655-A023-1 · S/N 255470655-A023-1»")
+        self.assertEqual(ctx["filas"][0]["ultimo_txt"], "21/10/2026 19:51", "H-24: con año")
+
+    def _pagina(self, error=False, sel=340, ots=None):
+        e = escena_bancos()
+        filas = ots if ots is not None else [
+            {"visita_id": 340, "numero_ot": "OT-2026-00340", "cliente": "Juan Daniel Aguilar Tejera", "n_abiertos": 3, "n_tomados": 0, "n_activos": 5,
+             "ultimo_txt": "21/10/2026 19:51", "equipos": [_BANCO, _DYNAMIS]},
+            {"visita_id": 339, "numero_ot": "OT-2026-00339", "cliente": None, "n_abiertos": 0, "n_tomados": 1, "n_activos": 1, "ultimo_txt": "21/10/2026 16:47",
+             "equipos": []}]
+        env = _entorno_pagina()
+        return env.get_template("ot2/hallazgos.html").render(
+            filas=filas, total=len(filas), pag=1, paginas=1, por_pag=20, desde=1, hasta=len(filas), filtro="sin_gestionar",
+            filtros={"sin_gestionar": "Sin gestionar", "en_curso": "Sin gestionar o con el caso tomado", "todos": "Todos"}, sel=sel,
+            ot_sel={"id": 340, "numero_ot": "OT-2026-00340", "url": "/ot/340"} if sel else None, hallazgos=e.ctx() if sel else None, hz_pagina=True,
+            error=error, n_sin_gestionar=3)
+
+    def test_h18_la_bandeja_es_una_lista_real_con_el_enlace_adentro(self):
+        html = self._pagina()
+        self.assertIn('<ul class="hzp-lista">', html)
+        self.assertEqual(len(re.findall(r'<li>\s*<a class="hzp-ot', html)), 2, "cada OT es un <li> con su <a> adentro")
+        self.assertNotIn('role="listitem"', html, "un role=listitem sobre un <a> le quita al lector de pantalla que es un enlace")
+        self.assertEqual(html.count('aria-current="true"'), 2, "el filtro activo y la OT elegida, y ninguna otra")
+        elegida = re.search(r'<a class="hzp-ot[^"]*"[^>]*aria-current="true"', html)
+        self.assertTrue(elegida and "on" in elegida.group(0).split('class="')[1].split('"')[0].split())
+
+    def test_h15_cada_equipo_de_una_ot_es_una_etiqueta_propia(self):
+        html = self._pagina()
+        etiquetas = re.findall(r'<span class="hzp-eq">([^<]+)</span>', html)
+        self.assertEqual(etiquetas, [_BANCO, _DYNAMIS])
+        self.assertNotIn(" · S/N 255470655-A023-1 · S/N", html)
+
+    def test_h26_la_ot_elegida_se_marca_en_negro_no_en_rojo(self):
+        html = self._pagina()
+        css = html[html.index("<style>"):html.index("</style>")]
+        elegida = _regla_css(css, ".hzp-ot.on")
+        self.assertIn("#0a0a0a", elegida)
+        self.assertNotRegex(elegida, r"#dc2626|#fca5a5|#ef4444|red", "el rojo es riesgo y error: ya no marca una selección")
+        self.assertIn("border-left-color:#f59e0b", _regla_css(css, ".hzp-ot.abiertos"), "la franja de la izquierda conserva el color del estado")
+        self.assertNotIn("border-color:#dc2626", css)
+        self.assertNotIn("border-left-color", elegida, "elegir una OT no le cambia la franja de estado")
+
+    def test_h28_el_error_dice_que_hacer_sin_jerga(self):
+        html = self._pagina(error=True)
+        txt = _texto_visible(html)
+        self.assertIn("No pudimos cargar la lista completa de hallazgos. Recarga la página; si el aviso sigue, escribe a soporte (soportetec@sphs.cl).", txt)
+        self.assertNotRegex(txt, r"(?i)registro del servidor|traceback|exception|stack trace")
+        self.assertIn('role="alert"', html)
+        self.assertNotIn("No pudimos cargar", self._pagina(error=False))
+
+    def test_h18_los_controles_de_la_bandeja_miden_44_px_y_tienen_foco_visible(self):
+        html = self._pagina()
+        css = html[html.index("<style>"):html.index("</style>")]
+        for sel in (".hzp-f", ".hzp-pp select", ".hzp-nav .btn", ".hzp-btn"):
+            self.assertRegex(_regla_css(css, sel), r"min-height:44px", sel)
+        self.assertRegex(_regla_css(css, ".hzp-sel-cab > span > a"), r"min-height:44px", "el enlace «OT-…» medía 20 px")
+        self.assertEqual(html.count('class="btn btn-sm btn-outline-secondary hzp-btn"'), 2, "«Volver a las OT» y «Abrir la OT»")
+        self.assertRegex(css, r"\.hzp-ot:focus-visible[^{]*\{outline:3px solid #1d4ed8")
+        self.assertRegex(_regla_css(css, ".hzp-pp select"), r"font-size:16px", "«Por página»: además de 44 px, 16 px para que iOS no haga zoom")
+
+
+def _entorno_pagina():
+    def cargador(nombre):
+        if nombre in ("ot2/hallazgos.html", "ot2/_hallazgos.html"):
+            return _leer("templates/" + nombre)
+        if nombre == "base.html":
+            return "{% block title %}{% endblock %}{% block head_extra %}{% endblock %}<main>{% block content %}{% endblock %}</main>"
+        return ""
+    env = jinja2.Environment(loader=jinja2.FunctionLoader(cargador), extensions=["jinja2.ext.do"], undefined=jinja2.ChainableUndefined, autoescape=True)
+    env.globals["url_for"] = lambda ep, **kw: ("/static/" + kw.get("filename", "")) if ep == "static" else "/" + ep
+    return env
+
+
+class TestFase1Tarjeta(unittest.TestCase):
+    """La tarjeta `_hallazgos.html` renderizada de verdad."""
+    CSS = _leer("static/ot_hallazgos.css")
+
+    def _html(self, e=None, **kw):
+        self.e = e or escena_bancos()
+        return _tarjeta(self.e.ctx(), **kw)
+
+    def test_h20_cada_equipo_es_un_details_abierto_solo_si_tiene_algo_grave_por_gestionar(self):
+        html = self._html()
+        abiertos = {k: bool(o) for k, o in re.findall(r'<details class="hz-grupo [^"]*" data-hz-grupo="(\w+)"( open)?>', html)}
+        self.assertEqual(abiertos, {"e9": False, "e10": False, "e11": True, "e12": False, "e13": False})
+        self.assertEqual(html.count('<summary class="hz-grupo-cab">'), 5)
+        # el contador y el nombre COMPLETO (REGLA #15) están a la vista aunque el grupo esté plegado, dentro del <summary>
+        resumen = re.search(r'data-hz-grupo="e9"[^>]*>\s*<summary class="hz-grupo-cab">(.*?)</summary>', html, re.S).group(1)
+        txt = _texto_visible(resumen)
+        self.assertIn("Banco Ajustable ILUS Bio", txt)
+        self.assertIn("S/N 255470655-0696-1", txt)
+        self.assertIn("2 hallazgos · 2 sin gestionar", txt)
+        # nada se quitó: los hallazgos de un grupo plegado siguen en la página (con sus botones)
+        self.assertIn('data-hz-tomar="%d"' % self.e.h1["id"], html)
+        self.assertIn('id="hz%d"' % self.e.h3["id"], html)
+
+    def test_h20_con_varios_equipos_hay_un_boton_para_abrir_o_cerrar_todos(self):
+        html = self._html()
+        self.assertIn('data-hz-plegar-todo aria-expanded="false"', html)
+        self.assertIn("Abrir todos los equipos", html, "hay equipos plegados: el botón ofrece abrirlos")
+        solo = self._html(escena_bancos(solo_banco=True))
+        self.assertNotIn("data-hz-plegar-todo", solo, "con un solo equipo no hay nada que plegar")
+        self.assertIn('data-hz-grupo="e9" open>', solo)
+        self.assertIn("data-hz-todo", solo, "«Seleccionar todo» (REGLA #14) sigue donde estaba")
+
+    def test_h12_la_tarjeta_pinta_azul_en_curso_y_verde_cerrada(self):
+        html = self._html()
+        txt = _texto_visible(html)
+        self.assertIn("1 con OT de seguimiento en curso", txt)
+        self.assertIn("1 con OT de seguimiento cerrada", txt)
+        self.assertIn('<span class="hz-n azul" title="Su OT de seguimiento sigue abierta"><b>1</b> con OT de seguimiento en curso</span>', html)
+        self.assertIn('<span class="hz-n verde"><b>1</b> con OT de seguimiento cerrada</span>', html)
+        self.assertEqual(re.findall(r'<span class="hz-est (\w+)">OT de seguimiento (en curso|cerrada)</span>', html), [("azul", "en curso"), ("verde", "cerrada")])
+        self.assertIn('class="hz-item c-rojo e-resuelto seg-curso"', html)
+        self.assertIn('class="hz-item c-negro e-resuelto seg-cerrada"', html)
+        self.assertEqual(len(re.findall(r'<div class="hz-seg">', html)), 1, "en curso: bloque azul")
+        self.assertEqual(len(re.findall(r'<div class="hz-seg cerrada">', html)), 1, "cerrada: bloque verde")
+        self.assertNotIn("Resuelto con", txt, "una OT cerrada no es «resuelto»: eso lo decide la fase 2")
+        # el verde solo existe para lo cerrado
+        self.assertIn("background:#dbeafe", _regla_css(self.CSS, ".hz-seg"))
+        self.assertIn("background:#dcfce7", _regla_css(self.CSS, ".hz-seg.cerrada"))
+        self.assertIn("background:#f5f9ff", _regla_css(self.CSS, ".hz-item.e-resuelto"))
+        self.assertIn("background:#f0fdf4", _regla_css(self.CSS, ".hz-item.e-resuelto.seg-cerrada"))
+
+    def test_h16_el_titulo_del_hallazgo_no_repite_el_equipo(self):
+        html = self._html()
+        titulos = re.findall(r'<h4 class="hz-tit">([^<]*)</h4>', html)
+        self.assertIn("Tapiz y espuma: Alerta", titulos)
+        self.assertIn("Mecanismo de ajuste de respaldo y asiento: Alerta", titulos)
+        self.assertIn("Repuesto solicitado: Varilla guía o buje de guía × 5", titulos)
+        for t in titulos:
+            self.assertNotIn("S/N", t, "la serie va en el encabezado del grupo, no en cada hallazgo")
+            self.assertNotIn("(SKU", t)
+        # el nombre completo va UNA vez por grupo y el título completo sigue como pie de las fotos y del «Descartar»
+        self.assertEqual(html.count("<b>Banco Ajustable ILUS Bio</b>"), 1)
+        self.assertIn('data-hz-cap="%s · Tapiz y espuma: Alerta"' % _BANCO, html)
+        self.assertIn('data-hz-titulo="%s · Tapiz y espuma: Alerta"' % _BANCO, html)
+        self.assertNotIn("Evidencia: 1 foto(s)", html, "las miniaturas ya muestran la evidencia")
+        self.assertIn("Se perdió o falta — Está raspada", html)
+
+    def test_h18_cada_casilla_tiene_su_propio_nombre_para_el_lector_de_pantalla(self):
+        html = self._html()
+        nombres = re.findall(r'<input type="checkbox" data-hz-sel value="\d+"(?: disabled)? aria-label="([^"]+)"', html)
+        self.assertEqual(len(nombres), 6)
+        self.assertEqual(len(set(nombres)), 6, "ninguna se llama igual que otra")
+        self.assertTrue(all(n.startswith("Elegir para la OT de seguimiento: ") for n in nombres))
+        self.assertIn("Elegir para la OT de seguimiento: Banco Ajustable ILUS Bio · Tapiz y espuma: Alerta", nombres)
+
+    def test_h18_la_casilla_se_ve_de_24_px_pero_responde_en_44(self):
+        sel = _regla_css(self.CSS, ".hz-sel")
+        self.assertRegex(sel, r"flex:0 0 28px")
+        area = _regla_css(self.CSS, ".hz-sel::after")
+        izq, der = (int(x) for x in re.search(r"left:-(\d+)px;right:-(\d+)px", area).groups())
+        self.assertGreaterEqual(28 + izq + der, 44, "el área táctil mide al menos 44 px de ancho")
+        self.assertIn("position:relative", sel)
+
+    def test_h18_el_foco_es_visible_de_3_px_y_con_contraste(self):
+        reglas = re.findall(r"([^{}]*:focus-visible[^{}]*)\{([^}]*)\}", self.CSS)
+        self.assertGreaterEqual(len(reglas), 2)
+        for selector, cuerpo in reglas:
+            m = re.search(r"outline:\s*(\d+)px solid (#[0-9a-fA-F]{6})", cuerpo)
+            self.assertTrue(m, selector)
+            self.assertGreaterEqual(int(m.group(1)), 3, selector)
+            for fondo in ("#ffffff", "#f9fafb", "#f5f9ff"):
+                self.assertGreaterEqual(_contraste(m.group(2), fondo), 3.0, (selector, m.group(2), fondo))
+        self.assertLess(_contraste("#fca5a5", "#ffffff"), 3.0, "el rosa de antes no llegaba al mínimo: por eso se cambió")
+        self.assertNotIn("#fca5a5", re.sub(r"/\*.*?\*/", "", self.CSS, flags=re.S), "ya no queda el rosa en ninguna regla (los comentarios sí lo citan)")
+        self.assertIn(".hz-grupo-cab:focus-visible", self.CSS, "el <summary> de cada equipo también se ve enfocado")
+
+    def test_h27_cada_boton_de_accion_tiene_su_rotulo_aparte_para_decir_guardando(self):
+        html = self._html()
+        for texto in ("Tomar el caso", "Levantar OT de seguimiento", "Descartar"):
+            self.assertIn('<span class="hz-btn-tx">%s</span>' % texto, html)
+        self.assertIn('<span class="hz-btn-tx">Seleccionar todo</span>', html)
+        self.assertIn('<span class="hz-btn-tx">Levantar una OT con lo elegido</span>', html)
+        espera = _regla_css(self.CSS, '.hz-btn[aria-busy="true"]::before')
+        self.assertIn("animation:hz-giro", espera.replace(" ", ""))
+        self.assertIn("@keyframes hz-giro", self.CSS)
+        self.assertRegex(self.CSS, r"prefers-reduced-motion:reduce\)\{[^@]*\.hz-btn\[aria-busy=\"true\"\]::before\{animation:none")
+
+    def test_regla_4_2_no_se_quito_ninguna_funcion(self):
+        """La tarjeta sigue ofreciendo exactamente lo mismo que antes (tomar, levantar, descartar, reabrir, elegir todo, levantar con lo elegido, fotos,
+        retirados y el aviso de «viene de»), más lo nuevo."""
+        tpl = _leer("templates/ot2/_hallazgos.html")
+        for pieza in ("data-hz-tomar", "data-hz-levantar=", "data-hz-levantar-sel", "data-hz-descartar", "data-hz-reabrir", "data-hz-todo", "data-hz-sel",
+                      "data-hz-foto", "data-hz-fotos", "hz-retirados", "hzOrigen", "hz-sinfoto", "hz-seg", "hz-aviso", "hz-desc", "Puede lastimar a alguien",
+                      "Retirados por el técnico", "Esta orden es el seguimiento de"):
+            self.assertIn(pieza, tpl, pieza)
+
+
+class TestFase1EnlacesViejosYTextos(unittest.TestCase):
+    DETALLE = _leer("templates/ot2/detalle.html")
+
+    def _script_de_redireccion(self, html):
+        m = re.search(r"<script>(\(function \(\) \{ try \{ if \(location\.hash === '#otdHallazgos'\).*?)</script>", html, re.S)
+        return m.group(1) if m else None
+
+    def test_h14_el_ancla_vieja_de_la_campana_lleva_a_la_pagina_de_hallazgos_de_esa_ot(self):
+        ctx = escena_bancos().ctx()
+        ficha = _entorno().get_template("ot2/_hallazgos.html").render(hallazgos=ctx, es_tecnico=False)          # la ficha de la OT: sin hz_pagina
+        script = self._script_de_redireccion(ficha)
+        self.assertIsNotNone(script)
+        self.assertIn("/ot/hallazgos?ot=340#hzpTarjeta", script)
+        # no se dibuja en la propia página de hallazgos (ahí el ancla existe), ni para un técnico (no puede entrar ahí), ni sin hallazgos
+        self.assertIsNone(self._script_de_redireccion(_tarjeta(ctx)))
+        self.assertEqual(_entorno().get_template("ot2/_hallazgos.html").render(hallazgos=ctx, es_tecnico=True).strip(), "")
+        self.assertEqual(_entorno().get_template("ot2/_hallazgos.html").render(hallazgos=None, es_tecnico=False).strip(), "")
+
+    @unittest.skipUnless(HAY_NODE, "Node no está instalado")
+    def test_h14_el_script_redirige_solo_con_el_ancla_vieja(self):
+        ficha = _entorno().get_template("ot2/_hallazgos.html").render(hallazgos=escena_bancos().ctx(), es_tecnico=False)
+        script = self._script_de_redireccion(ficha)
+        arnes = ("const vm=require('vm');const s=JSON.parse(process.argv[1]);const r={};"
+                 "for(const h of ['#otdHallazgos','#otro','','#hz4']){const llamadas=[];const loc={hash:h,replace:u=>llamadas.push(u)};"
+                 "vm.runInNewContext(s,{location:loc});r[h]=llamadas;}"
+                 "const roto={get hash(){throw new Error('x')},replace:u=>{throw new Error('y')}};vm.runInNewContext(s,{location:roto});"
+                 "console.log(JSON.stringify(r));")
+        r = subprocess.run(["node", "-e", arnes, json.dumps(script)], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-800:])
+        self.assertEqual(json.loads(r.stdout.strip().splitlines()[-1]),
+                         {"#otdHallazgos": ["/ot/hallazgos?ot=340#hzpTarjeta"], "#otro": [], "": [], "#hz4": []})
+
+    def test_h25_el_resumen_de_la_pestana_trabajo_se_llama_estado_de_los_equipos(self):
+        self.assertIn('<h3 id="otdResT">Estado de los equipos</h3>', self.DETALLE)
+        self.assertEqual(self.DETALLE.count('id="otdResumenEquipos"'), 1)
+        self.assertIn("Estado de los equipos", _leer("static/ot_hallazgos.css"))
+        self.assertIn("Estado de los equipos", _leer("templates/ot2/_hallazgos.html"))
+
+    def test_h25_ninguna_pantalla_vuelve_a_decir_que_paso_con_los_equipos(self):
+        """«¿Qué pasó?» ya es la franja de la REGLA #35 (y el título de los flujos del técnico): el resumen no puede llevar el mismo nombre."""
+        for raiz, _carpetas, archivos in os.walk(os.path.join(RAIZ, "templates")):
+            for nombre in archivos:
+                if not nombre.endswith(".html"):
+                    continue
+                with open(os.path.join(raiz, nombre), encoding="utf-8", newline="") as fh:
+                    t = fh.read()
+                visible = re.sub(r"\{#.*?#\}|<!--.*?-->", "", t, flags=re.S)            # los comentarios que citan a Daniel no se ven
+                self.assertNotIn("Qué pasó con los equipos", visible, os.path.join(raiz, nombre))
+
+    def test_h25_la_ficha_sigue_dibujando_el_resumen_con_el_mismo_boton(self):
+        i = self.DETALLE.index('id="otdResumenEquipos"')
+        bloque = self.DETALLE[i:i + 1800]
+        self.assertIn('href="/ot/hallazgos?ot={{ hallazgos.vid }}#hzpTarjeta"', bloque)
+        self.assertIn("Gestionar hallazgos", bloque)
+
+    def test_los_archivos_tocados_conservan_crlf_y_parsean(self):
+        for rel in ("templates/ot2/_hallazgos.html", "templates/ot2/hallazgos.html", "templates/ot2/detalle.html", "static/ot_hallazgos.js",
+                    "static/ot_hallazgos.css", "ot_hallazgos.py"):
+            with open(os.path.join(RAIZ, rel.replace("/", os.sep)), "rb") as fh:
+                crudo = fh.read()
+            self.assertEqual(crudo.count(b"\n"), crudo.count(b"\r\n"), rel)
+        for rel in ("templates/ot2/_hallazgos.html", "templates/ot2/hallazgos.html"):
+            jinja2.Environment(extensions=["jinja2.ext.do"]).parse(_leer(rel))
+
+
+_HARNESS_FASE1 = r"""
+const vm = require('vm'), fs = require('fs');
+const codigo = fs.readFileSync(process.argv[2], 'utf8');
+const esperar = async () => { for (let i = 0; i < 12; i++) await new Promise(r => setImmediate(r)); };
+
+function elemento(extra) {
+  const attrs = {};
+  return Object.assign({disabled: false, textContent: '', attrs,
+    getAttribute(n) { return Object.prototype.hasOwnProperty.call(attrs, n) ? attrs[n] : null; },
+    setAttribute(n, v) { attrs[n] = String(v); }, removeAttribute(n) { delete attrs[n]; }}, extra || {});
+}
+function boton(texto, attr, valor) {          // <button class="hz-btn" data-hz-X="v"><span class="hz-btn-tx">texto</span></button>
+  const tx = elemento({textContent: texto});
+  const b = elemento({tx, querySelector: (s) => s === '.hz-btn-tx' ? tx : null});
+  b.attrs[attr] = String(valor);
+  b.closest = (s) => s === '[' + attr + ']' ? b : null;
+  return b;
+}
+function grupo(clave, abierto) { const g = elemento({open: abierto, matches: (s) => s === 'details[data-hz-grupo]'}); g.attrs['data-hz-grupo'] = clave; return g; }
+
+function pagina(config) {
+  const log = {fetches: [], toasts: [], reloads: 0, scrolls: [], replace: [], lightbox: []};
+  const listeners = {}, memoria = Object.assign({}, config.storage || {}), pendientes = [];
+  const botones = config.botones || [], grupos = config.grupos || [];
+  const checks = (config.checks || []).map(c => Object.assign({checked: false, disabled: false}, c));
+  const cuenta = {textContent: ''}, spanTodo = {textContent: ''};
+  const document = {
+    addEventListener: (t, f) => { listeners[t] = f; },
+    querySelectorAll: (sel) => ({'.hz-btn': botones, 'details[data-hz-grupo]': grupos, '[data-hz-sel]:not(:disabled)': checks.filter(c => !c.disabled)})[sel] || [],
+    querySelector: (sel) => ({'[data-hz-cuenta]': cuenta, '[data-hz-todo] span': spanTodo, '[data-hz-plegar-todo]': config.plegar || null})[sel] || null,
+    getElementById: () => null, documentElement: {scrollTop: 0},
+  };
+  const ventana = {OTD_HZ_CFG: {vid: 171, numero: 'OT-2026-00171'}, pageYOffset: config.y || 0,
+    scrollTo: (x, y) => log.scrolls.push([x, y]),
+    ilusToast: (m, o) => log.toasts.push([m, (o || {}).type]),
+    ilusLightbox: (imgs, idx, alt) => log.lightbox.push([imgs, idx, alt]),
+    addEventListener: (t, f) => { ventana['_' + t] = f; }};
+  if (!config.sinAlmacen) {
+    ventana.sessionStorage = {getItem: (k) => Object.prototype.hasOwnProperty.call(memoria, k) ? memoria[k] : null,
+      setItem: (k, v) => { memoria[k] = String(v); }, removeItem: (k) => { delete memoria[k]; }};
+  }
+  const location = {pathname: '/ot/hallazgos', search: '?f=sin_gestionar&ot=171', _h: null, reload: () => { log.reloads++; },
+    get href() { return this._h; }, set href(v) { this._h = v; }};
+  const ctx = {window: ventana, document, location, history: {replaceState: (a, b, u) => log.replace.push(u)}, setTimeout: (f) => f(),
+    fetch: (url, init) => { log.fetches.push([url, init.method]);
+      return new Promise((res) => { pendientes.push(() => res({status: 200, json: () => Promise.resolve(config.respuesta || {ok: true})})); }); },
+    console, JSON, parseInt, String, Array, Promise};
+  vm.createContext(ctx);
+  vm.runInContext(codigo, ctx);
+  return {log, listeners, ventana, memoria, location, checks,
+    clic: (el) => listeners.click({target: el, preventDefault() {}}),
+    responder: () => { while (pendientes.length) pendientes.shift()(); }};
+}
+const estado = (b) => ({texto: b.tx.textContent, disabled: b.disabled, busy: b.attrs['aria-busy'] || null});
+
+(async () => {
+  const r = {};
+  { // tomar: el botón dice «Guardando…», todos quedan deshabilitados y, si el servidor lo rechaza, todo vuelve a su lugar
+    const tomar = boton('Tomar el caso', 'data-hz-tomar', 5), desc = boton('Descartar', 'data-hz-descartar', 5);
+    const p = pagina({botones: [tomar, desc], respuesta: {ok: false, error: 'Este caso ya lo tomó Aarón Rojas.'}});
+    p.clic(tomar);
+    r.mientras = {tomar: estado(tomar), desc: estado(desc), reloads: p.log.reloads, doble: (p.clic(tomar), p.log.fetches.length)};
+    p.responder(); await esperar();
+    r.rechazado = {tomar: estado(tomar), desc: estado(desc), toasts: p.log.toasts, reloads: p.log.reloads, vista: p.memoria['ilus_hz_vista'] || null};
+  }
+  { // tomar con éxito: sigue bloqueado hasta la recarga y la vista (scroll y equipos abiertos) queda guardada
+    const tomar = boton('Tomar el caso', 'data-hz-tomar', 5), desc = boton('Descartar', 'data-hz-descartar', 5);
+    const p = pagina({botones: [tomar, desc], grupos: [grupo('e9', true), grupo('e10', false)], y: 640});
+    p.clic(tomar); p.responder(); await esperar();
+    r.exito = {tomar: estado(tomar), desc: estado(desc), reloads: p.log.reloads, toasts: p.log.toasts, replace: p.log.replace,
+               vista: JSON.parse(p.memoria['ilus_hz_vista'] || 'null')};
+  }
+  { // el servidor no responde bien (caída): mensaje con qué hacer
+    const tomar = boton('Tomar el caso', 'data-hz-tomar', 5);
+    const p = pagina({botones: [tomar], respuesta: {}});
+    p.clic(tomar); p.responder(); await esperar();
+    r.sin_motivo = {toasts: p.log.toasts, tomar: estado(tomar)};
+  }
+  { // al volver a cargar, la persona queda donde estaba
+    const g1 = grupo('e9', false), g2 = grupo('e10', true), g3 = grupo('e11', true);
+    const guardada = JSON.stringify({y: 640, grupos: {e9: true, e10: false}, t: Date.now(), ruta: '/ot/hallazgos?f=sin_gestionar&ot=171'});
+    const p = pagina({grupos: [g1, g2, g3], storage: {ilus_hz_vista: guardada}});
+    r.restaurada = {abiertos: [g1.open, g2.open, g3.open], scrolls: p.log.scrolls, sigueGuardada: 'ilus_hz_vista' in p.memoria};
+    const h1 = grupo('e9', false);
+    const vieja = JSON.stringify({y: 640, grupos: {e9: true}, t: Date.now() - 300000, ruta: '/ot/hallazgos?f=sin_gestionar&ot=171'});
+    const p2 = pagina({grupos: [h1], storage: {ilus_hz_vista: vieja}});
+    r.vieja = {abierto: h1.open, scrolls: p2.log.scrolls};
+    const h2 = grupo('e9', false);
+    const otra = JSON.stringify({y: 640, grupos: {e9: true}, t: Date.now(), ruta: '/ot/hallazgos?f=todos'});
+    const p3 = pagina({grupos: [h2], storage: {ilus_hz_vista: otra}});
+    r.otra_pagina = {abierto: h2.open, scrolls: p3.log.scrolls};
+    const p4 = pagina({grupos: [grupo('e9', true)], storage: {ilus_hz_vista: 'no es json'}});
+    r.basura = {scrolls: p4.log.scrolls};
+  }
+  { // sin sessionStorage (navegación privada): todo sigue funcionando
+    const tomar = boton('Tomar el caso', 'data-hz-tomar', 5);
+    const p = pagina({botones: [tomar], grupos: [grupo('e9', true)], sinAlmacen: true, y: 300});
+    p.clic(tomar); p.responder(); await esperar();
+    r.sin_almacen = {reloads: p.log.reloads, toasts: p.log.toasts, scrolls: p.log.scrolls};
+  }
+  { // descartar y reabrir también muestran «Guardando…»
+    const desc = boton('Descartar', 'data-hz-descartar', 6), tom = boton('Tomar el caso', 'data-hz-tomar', 6);
+    const p = pagina({botones: [desc, tom]});
+    p.ventana.ilusPrompt = () => Promise.resolve('El cliente ya lo resolvió');
+    p.clic(desc); await esperar();
+    r.descartando = {desc: estado(desc), tom: estado(tom), fetches: p.log.fetches};
+    p.responder(); await esperar();
+    const reab = boton('Reabrir', 'data-hz-reabrir', 8);
+    const q = pagina({botones: [reab]});
+    q.ventana.ilusConfirm = () => Promise.resolve(true);
+    q.clic(reab); await esperar();
+    r.reabriendo = {reab: estado(reab), fetches: q.log.fetches};
+  }
+  { // abrir o cerrar todos los equipos
+    const g1 = grupo('e9', true), g2 = grupo('e10', false);
+    const plegar = boton('Abrir todos los equipos', 'data-hz-plegar-todo', '');
+    const p = pagina({grupos: [g1, g2], plegar});
+    r.plegar_inicial = {texto: plegar.tx.textContent, expandido: plegar.attrs['aria-expanded']};
+    p.clic(plegar);
+    r.plegar_abre = {abiertos: [g1.open, g2.open], texto: plegar.tx.textContent, expandido: plegar.attrs['aria-expanded']};
+    p.clic(plegar);
+    r.plegar_cierra = {abiertos: [g1.open, g2.open], texto: plegar.tx.textContent, expandido: plegar.attrs['aria-expanded']};
+    g1.open = true; g2.open = true; p.listeners.toggle({target: g1});         // la persona los abrió a mano uno por uno
+    r.plegar_a_mano = {texto: plegar.tx.textContent, expandido: plegar.attrs['aria-expanded']};
+    g2.open = false; p.listeners.toggle({target: g2});
+    r.plegar_uno_cerrado = plegar.tx.textContent;
+  }
+  { // «Seleccionar todo» abre los equipos plegados (para que se vea qué quedó elegido) y al quitar la selección no los vuelve a cerrar
+    const g1 = grupo('e9', false), g2 = grupo('e10', false);
+    const p = pagina({grupos: [g1, g2], checks: [{value: '1'}, {value: '2'}]});
+    const todo = boton('Seleccionar todo', 'data-hz-todo', '');
+    p.clic(todo);
+    r.todo_abre = {abiertos: [g1.open, g2.open], checks: p.checks.map(c => c.checked)};
+    p.clic(todo);
+    r.todo_quita = {abiertos: [g1.open, g2.open], checks: p.checks.map(c => c.checked)};
+  }
+  { // levantar: «Abriendo…» y, si la persona vuelve con «Atrás», los botones no quedan trabados
+    const lev = boton('Levantar OT de seguimiento', 'data-hz-levantar', 7), tom = boton('Tomar el caso', 'data-hz-tomar', 7);
+    const p = pagina({botones: [lev, tom]});
+    p.clic(lev);
+    r.levantar = {href: p.location.href, lev: estado(lev), tom: estado(tom)};
+    p.ventana._pageshow({persisted: false});
+    r.pageshow_normal = {lev: estado(lev), tom: estado(tom)};
+    p.ventana._pageshow({persisted: true});
+    r.volvio = {lev: estado(lev), tom: estado(tom)};
+  }
+  { // el pie de las fotos es el título COMPLETO (con el equipo), no el corto de la pantalla
+    const cont = {getAttribute: () => '["/f/a.jpg"]'};
+    const item = {getAttribute: (n) => n === 'data-hz-cap' ? 'Banco Ajustable ILUS Bio (SKU 1129100696) · S/N 255470655-0696-1 · Tapiz y espuma: Alerta' : null,
+                  querySelector: () => ({textContent: 'Tapiz y espuma: Alerta'})};
+    const btn = {getAttribute: (n) => n === 'data-hz-foto' ? '0' : null, closest: (s) => s === '[data-hz-fotos]' ? cont : (s === '.hz-item' ? item : null)};
+    const p = pagina({});
+    p.listeners.click({target: {closest: (s) => s === '[data-hz-foto]' ? btn : null}, preventDefault() {}});
+    r.pie = p.log.lightbox;
+  }
+  console.log(JSON.stringify(r));
+})().catch(e => { console.error(e); process.exit(1); });
+"""
+
+
+@unittest.skipUnless(HAY_NODE, "Node no está instalado")
+class TestFase1Js(unittest.TestCase):
+    """El JS de la tarjeta con un DOM de mentira: estado de carga, vista que se conserva, equipos plegables."""
+
+    @classmethod
+    def setUpClass(cls):
+        with tempfile.TemporaryDirectory() as d:
+            ruta = os.path.join(d, "arnes_fase1.js")
+            with open(ruta, "w", encoding="utf-8") as fh:
+                fh.write(_HARNESS_FASE1)
+            r = subprocess.run(["node", ruta, os.path.join(RAIZ, "static", "ot_hallazgos.js")], capture_output=True, text=True, encoding="utf-8", timeout=90)
+        if r.returncode != 0:
+            raise AssertionError("node falló:\n" + r.stderr[-2500:])
+        cls.R = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_h27_mientras_guarda_el_boton_lo_dice_y_todos_quedan_deshabilitados(self):
+        m = self.R["mientras"]
+        self.assertEqual(m["tomar"], {"texto": "Guardando…", "disabled": True, "busy": "true"})
+        self.assertEqual(m["desc"]["disabled"], True, "el otro botón también queda deshabilitado")
+        self.assertEqual(m["desc"]["texto"], "Descartar", "pero su rótulo no cambia")
+        self.assertEqual(m["reloads"], 0)
+        self.assertEqual(m["doble"], 1, "un segundo toque no manda otra petición")
+
+    def test_h27_si_el_servidor_lo_rechaza_todo_vuelve_a_su_lugar_y_se_dice_por_que(self):
+        x = self.R["rechazado"]
+        self.assertEqual(x["tomar"], {"texto": "Tomar el caso", "disabled": False, "busy": None})
+        self.assertEqual(x["desc"], {"texto": "Descartar", "disabled": False, "busy": None})
+        self.assertEqual(x["toasts"], [["Este caso ya lo tomó Aarón Rojas.", "error"]])
+        self.assertEqual(x["reloads"], 0)
+        self.assertIsNone(x["vista"], "si no recarga no guarda nada")
+
+    def test_h28_si_el_servidor_no_da_motivo_el_mensaje_dice_que_hacer(self):
+        t = self.R["sin_motivo"]["toasts"]
+        self.assertEqual(len(t), 1)
+        self.assertEqual(t[0][1], "error")
+        self.assertIn("Recarga la página", t[0][0])
+        self.assertIn("avisa a soporte", t[0][0])
+        self.assertEqual(self.R["sin_motivo"]["tomar"]["disabled"], False)
+
+    def test_h27_con_exito_sigue_bloqueado_hasta_la_recarga_y_guarda_donde_estaba_la_persona(self):
+        x = self.R["exito"]
+        self.assertEqual(x["tomar"]["texto"], "Guardando…")
+        self.assertTrue(x["tomar"]["disabled"] and x["desc"]["disabled"])
+        self.assertEqual(x["reloads"], 1)
+        self.assertEqual(x["toasts"], [["✓ Tomaste el caso. Queda a tu nombre.", "success"]])
+        self.assertEqual(x["replace"], ["/ot/hallazgos?f=sin_gestionar&ot=171#otdHallazgos"])
+        v = x["vista"]
+        self.assertEqual((v["y"], v["grupos"], v["ruta"]), (640, {"e9": True, "e10": False}, "/ot/hallazgos?f=sin_gestionar&ot=171"))
+        self.assertIsInstance(v["t"], (int, float))
+
+    def test_h27_al_recargar_vuelve_al_mismo_scroll_con_los_mismos_equipos_abiertos(self):
+        r = self.R["restaurada"]
+        self.assertEqual(r["abiertos"], [True, False, True], "los que guardó se restauran; uno nuevo (e11) queda como llegó")
+        self.assertEqual(r["scrolls"], [[0, 640]])
+        self.assertFalse(r["sigueGuardada"], "se usa una sola vez")
+        self.assertEqual(self.R["vieja"], {"abierto": False, "scrolls": []}, "una vista de hace más de 2 minutos no se usa")
+        self.assertEqual(self.R["otra_pagina"], {"abierto": False, "scrolls": []}, "ni la de otra página")
+        self.assertEqual(self.R["basura"], {"scrolls": []}, "ni algo que no es JSON")
+
+    def test_h27_sin_almacenamiento_del_navegador_todo_sigue_funcionando(self):
+        x = self.R["sin_almacen"]
+        self.assertEqual(x["reloads"], 1)
+        self.assertEqual(x["toasts"][0][1], "success")
+        self.assertEqual(x["scrolls"], [])
+
+    def test_h27_descartar_y_reabrir_tambien_dicen_guardando(self):
+        self.assertEqual(self.R["descartando"]["desc"], {"texto": "Guardando…", "disabled": True, "busy": "true"})
+        self.assertTrue(self.R["descartando"]["tom"]["disabled"])
+        self.assertEqual(self.R["descartando"]["fetches"], [["/ot/api/171/hallazgos/6/descartar", "POST"]])
+        self.assertEqual(self.R["reabriendo"]["reab"], {"texto": "Guardando…", "disabled": True, "busy": "true"})
+        self.assertEqual(self.R["reabriendo"]["fetches"], [["/ot/api/171/hallazgos/8/reabrir", "POST"]])
+
+    def test_h20_un_boton_abre_o_cierra_todos_los_equipos_y_su_rotulo_sigue_a_cada_uno(self):
+        self.assertEqual(self.R["plegar_inicial"], {"texto": "Abrir todos los equipos", "expandido": "false"})
+        self.assertEqual(self.R["plegar_abre"], {"abiertos": [True, True], "texto": "Cerrar todos los equipos", "expandido": "true"})
+        self.assertEqual(self.R["plegar_cierra"], {"abiertos": [False, False], "texto": "Abrir todos los equipos", "expandido": "false"})
+        self.assertEqual(self.R["plegar_a_mano"], {"texto": "Cerrar todos los equipos", "expandido": "true"})
+        self.assertEqual(self.R["plegar_uno_cerrado"], "Abrir todos los equipos")
+
+    def test_h20_seleccionar_todo_abre_los_equipos_y_quitar_la_seleccion_no_los_cierra(self):
+        self.assertEqual(self.R["todo_abre"], {"abiertos": [True, True], "checks": [True, True]})
+        self.assertEqual(self.R["todo_quita"], {"abiertos": [True, True], "checks": [False, False]})
+
+    def test_h27_levantar_dice_abriendo_y_si_la_persona_vuelve_con_atras_no_queda_trabado(self):
+        self.assertEqual(self.R["levantar"]["href"], "/ot/?crear=1&seguimiento=7&desde=171")
+        self.assertEqual(self.R["levantar"]["lev"], {"texto": "Abriendo…", "disabled": True, "busy": "true"})
+        self.assertTrue(self.R["levantar"]["tom"]["disabled"])
+        self.assertEqual(self.R["pageshow_normal"]["lev"]["texto"], "Abriendo…", "una carga normal no toca nada")
+        self.assertEqual(self.R["volvio"]["lev"], {"texto": "Levantar OT de seguimiento", "disabled": False, "busy": None})
+        self.assertFalse(self.R["volvio"]["tom"]["disabled"])
+
+    def test_h16_el_pie_de_la_foto_es_el_titulo_completo_con_el_equipo(self):
+        (imgs, idx, alt), = self.R["pie"]
+        self.assertEqual(imgs, [{"url": "/f/a.jpg", "caption": _BANCO + " · Tapiz y espuma: Alerta"}])
+        self.assertEqual((idx, alt), (0, "Hallazgo"))
+
+    def test_el_js_sigue_sin_popups_nativos_y_con_sintaxis_valida(self):
+        ruta = os.path.join(RAIZ, "static", "ot_hallazgos.js")
+        self.assertEqual(subprocess.run(["node", "--check", ruta], capture_output=True, text=True, timeout=60).returncode, 0)
+        self.assertIsNone(re.search(r"(?<![\w.])(alert|confirm|prompt)\(", _leer("static/ot_hallazgos.js")), "REGLA #1")
+
 
 # FIN_DEL_ARCHIVO

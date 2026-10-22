@@ -165310,8 +165310,9 @@ def _hall_listar(vid):
 
 
 def _hall_cuando(dt_utc):
+    """Fecha y hora en Chile CON AÑO (REGLA #6; auditoría H-24: antes salía «21/10 16:51»)."""
     try:
-        return chile_fmt_filter(dt_utc, "%d/%m %H:%M") if dt_utc else ""
+        return chile_fmt_filter(dt_utc, _oh.FORMATO_FECHA) if dt_utc else ""
     except Exception:
         return ""
 
@@ -165327,12 +165328,12 @@ def _hall_equipos_de(vid, filas):
                 k = "e%d" % int(f["maquina_id"])
                 if k not in out:
                     m = mysql_fetchone("SELECT nombre, sku, serie FROM mant_maquinas WHERE id=%s", (int(f["maquina_id"]),)) or {}
-                    out[k] = {"nombre": m.get("nombre") or f.get("equipo_nombre") or "", "sku": m.get("sku") or "",
+                    out[k] = {"nombre": m.get("nombre") or _oh.partir_serie(f.get("equipo_nombre"))[0], "sku": m.get("sku") or "",
                               "serie": (m.get("serie") or "").strip()}
             elif f.get("item_manual_id"):
                 k = "i%d" % int(f["item_manual_id"])
                 if k not in out:
-                    out[k] = {"nombre": f.get("equipo_nombre") or "", "sku": "",
+                    out[k] = {"nombre": _oh.partir_serie(f.get("equipo_nombre"))[0], "sku": "",
                               "serie": _otrep_serie_producto(vid, int(f["item_manual_id"])) or ""}
         except Exception as e:
             print(f"[hall] equipo de un hallazgo vid={vid}: {type(e).__name__}", flush=True)
@@ -165362,15 +165363,18 @@ def _hall_items(vid, filas):
         if f.get("ot_seguimiento_id") and not caido:
             seg = {"id": int(f["ot_seguimiento_id"]), "numero_ot": f.get("seg_numero") or ("V-%05d" % int(f["ot_seguimiento_id"])),
                    "estado": f.get("seg_estado"), "estado_txt": (_OT2_ESTADO_META.get(f.get("seg_estado")) or (f.get("seg_estado") or "",))[0],
-                   "cerrada": (f.get("seg_estado") or "") in ("cerrada", "completada"), "url": f"/ot/{int(f['ot_seguimiento_id'])}"}
+                   "cerrada": _oh.seguimiento_cerrado(f.get("seg_estado")), "url": f"/ot/{int(f['ot_seguimiento_id'])}"}
+        # Cómo se PINTA el estado (H-12): «con OT de seguimiento» es azul («en curso») hasta que esa OT se cierra; el estado guardado no cambia.
+        seg_cerrada = bool(seg and seg["cerrada"])
+        vis = _oh.estado_visual(estado_ef, seg_cerrada)
         out.append({
             "id": int(f["id"]), "origen": f.get("origen"), "tarea_id": f.get("tarea_id"), "maquina_id": f.get("maquina_id"),
             "item_manual_id": f.get("item_manual_id"),
             "severidad": f.get("severidad"), "sev_texto": sev["texto"], "sev_color": sev["color"], "sev_icono": sev["icono"],
             "sev_orden": sev["orden"], "titulo": f.get("titulo") or "", "detalle": f.get("detalle") or "", "equipo": f.get("equipo_nombre") or "",
             "riesgo": bool(f.get("riesgo")), "fotos": fotos, "n_fotos": len(fotos), "sin_foto": not fotos,
-            "estado": f.get("estado"), "estado_ef": estado_ef, "estado_txt": _oh.estado_info(estado_ef)["texto"],
-            "estado_color": _oh.estado_info(estado_ef)["color"], "seguimiento_caido": bool(caido),
+            "estado": f.get("estado"), "estado_ef": estado_ef, "estado_txt": vis["texto"],
+            "estado_color": vis["color"], "seg_cerrada": seg_cerrada, "seguimiento_caido": bool(caido),
             "seguimiento_caido_txt": ("La OT de seguimiento %s fue cancelada: el hallazgo volvió a quedar sin gestionar." %
                                       (f.get("seg_numero") or "")).strip() if caido else "",
             "retirado": retirado, "retirado_cuando": _hall_cuando(f.get("retirado_en")), "retirado_motivo": f.get("retirado_motivo") or "",
@@ -165380,8 +165384,12 @@ def _hall_items(vid, filas):
             "descarte_motivo": f.get("descarte_motivo") or "", "seguimiento": seg,
             "puede_tomar": acc["tomar"] and not retirado, "puede_levantar": acc["levantar"] and not retirado,
             "puede_descartar": acc["descartar"] and not retirado, "puede_reabrir": acc["reabrir"],
-            "grupo": gk or "ot", "grupo_nombre": geq.get("nombre") or f.get("equipo_nombre") or "",
+            "grupo": gk or "ot", "grupo_nombre": geq.get("nombre") or _oh.partir_serie(f.get("equipo_nombre"))[0],
             "grupo_sku": geq.get("sku") or "", "serie": geq.get("serie") or "",
+            # Lo que se ve en la bandeja (H-16): el título sin repetir el equipo (ya va, completo, en el encabezado de su grupo) y el detalle sin
+            # el conteo de fotos que las miniaturas ya muestran. `titulo` y `detalle` siguen completos para el prellenado, la campana y la bitácora.
+            "titulo_corto": _oh.titulo_corto(f.get("titulo"), f.get("equipo_nombre")),
+            "detalle_ver": _oh.detalle_visible(f.get("detalle"), bool(fotos)),
         })
     return out
 
@@ -165393,13 +165401,15 @@ def _hall_agrupar(items):
     for i in items:
         g = grupos.setdefault(i["grupo"], {"key": i["grupo"], "nombre": i["grupo_nombre"] if i["grupo"] != "ot" else "De la OT",
                                            "sku": i["grupo_sku"], "serie": i["serie"], "items": [], "peor": 99,
-                                           "n_abiertos": 0, "n_tomados": 0, "n_con_ot": 0, "n_descartados": 0})
+                                           "n_abiertos": 0, "n_tomados": 0, "n_con_ot": 0, "n_con_ot_cerrada": 0, "n_descartados": 0})
         g["items"].append(i)
         g["peor"] = min(g["peor"], i["sev_orden"])
         if i["estado_ef"] == _oh.EST_ABIERTO:
             g["n_abiertos"] += 1
         elif i.get("seguimiento"):
             g["n_con_ot"] += 1
+            if i["seguimiento"].get("cerrada"):
+                g["n_con_ot_cerrada"] += 1
         elif i["estado_ef"] == _oh.EST_TOMADO:
             g["n_tomados"] += 1
         else:
@@ -165408,6 +165418,8 @@ def _hall_agrupar(items):
     for g in out:
         g["items"].sort(key=lambda i: (i["sev_orden"], i["id"]))
         g["color"] = g["items"][0]["sev_color"] if g["items"] else "gris"
+        # H-20: el grupo se muestra plegable; abierto si hay algo grave que todavía admite una acción (o si la OT tiene un solo equipo).
+        g["abierto"] = _oh.grupo_abierto(g["items"], len(out))
     return out
 
 
@@ -165432,9 +165444,12 @@ def _hall_contexto_ficha(vid, v):
         if not items and not origen:
             return None
         r = _oh.resumir(items)
+        # H-12: los «con OT de seguimiento» se cuentan aparte según esa OT siga abierta (azul, en curso) o ya cerrada (verde).
+        n_seg_cerrada = len([i for i in activos if i["estado_ef"] == _oh.EST_RESUELTO and i["seg_cerrada"]])
         return {"vid": int(vid), "numero_ot": v.get("numero_ot") or f"V-{int(vid):05d}", "activos": activos, "retirados": retirados,
                 "grupos": _hall_agrupar(activos),
                 "origen": origen, "n_total": r["total"], "n_abiertos": r["abiertos"], "n_tomados": r["tomados"], "n_con_ot": r["con_ot"],
+                "n_con_ot_cerrada": n_seg_cerrada, "n_con_ot_en_curso": max(0, r["con_ot"] - n_seg_cerrada),
                 "n_descartados": r["descartados"], "n_retirados": r["retirados"],
                 "n_sin_foto": len([i for i in activos if i["sin_foto"]]),
                 "n_seleccionables": len([i for i in activos if i["puede_levantar"]]),
@@ -165472,16 +165487,17 @@ def _ot_resumen_equipos(vid, equipos, hallazgos):
             chips.append({"txt": "Dado de baja", "color": "negro", "ic": "bi-slash-circle-fill"})
         elif est == "no_llego":
             chips.append({"txt": "No llegó", "color": "ambar", "ic": "bi-box-seam-fill"})
+        h = hall_por.get(key)
         rs = (e.get("razon_saltado") or "").strip()
         if not e.get("_interno") and rs and rs not in ("fuera_de_servicio", "dado_de_baja") and not est:
-            chips.append({"txt": "No se pudo revisar" if rs not in ("no_encontrado", "falta_stock") else "No está / no llegó",
-                          "color": "gris" if rs not in ("no_encontrado", "falta_stock") else "ambar", "ic": "bi-skip-forward-fill"})
+            # H-22: con el MOTIVO corto a la vista y sin decir «No se pudo revisar» de un equipo al que ya se le respondió o reportó algo.
+            txt_s, color_s = _oh.chip_salto(rs, int(e.get("n_ok") or 0) > 0 or bool(h and h.get("items")))
+            chips.append({"txt": txt_s, "color": color_s, "ic": "bi-skip-forward-fill"})
         ab = [x for x in (e.get("rep_solicitudes") or []) if x.get("abierta")]
         if ab:
             nombres = ", ".join("%s × %g" % (x.get("repuesto_nombre") or "Repuesto", float(x.get("cantidad") or 1)) for x in ab[:3])
             chips.append({"txt": ("Repuesto en curso: " if len(ab) == 1 else "%d repuestos en curso: " % len(ab)) + nombres
                           + (" y %d más" % (len(ab) - 3) if len(ab) > 3 else ""), "color": "azul", "ic": "bi-hourglass-split"})
-        h = hall_por.get(key)
         if h:
             if h["n_abiertos"]:
                 chips.append({"txt": "%d hallazgo%s sin gestionar" % (h["n_abiertos"], "s" if h["n_abiertos"] != 1 else ""),
@@ -165489,7 +165505,13 @@ def _ot_resumen_equipos(vid, equipos, hallazgos):
             if h["n_tomados"]:
                 chips.append({"txt": "%d con el caso tomado" % h["n_tomados"], "color": "azul", "ic": "bi-hand-index-thumb-fill"})
             if h["n_con_ot"]:
-                chips.append({"txt": "%d con OT de seguimiento" % h["n_con_ot"], "color": "verde", "ic": "bi-diagram-3-fill"})
+                # H-12: azul («en curso») mientras la OT de seguimiento siga abierta; verde solo cuando ya se cerró.
+                n_cerr = min(int(h.get("n_con_ot_cerrada") or 0), h["n_con_ot"])
+                if h["n_con_ot"] - n_cerr:
+                    chips.append({"txt": "%d con %s" % (h["n_con_ot"] - n_cerr, _oh.TXT_SEGUIMIENTO_EN_CURSO), "color": "azul",
+                                  "ic": "bi-diagram-3-fill"})
+                if n_cerr:
+                    chips.append({"txt": "%d con %s" % (n_cerr, _oh.TXT_SEGUIMIENTO_CERRADA), "color": "verde", "ic": "bi-diagram-3-fill"})
         if chips and not serie:
             serie = (h or {}).get("serie") or (_otrep_serie_producto(vid, eid) if e.get("_interno") else "") or ""
         if chips:
@@ -165586,7 +165608,8 @@ def ot_hallazgos_pagina():
                     continue
                 d = eq.setdefault(int(r["visita_id"]), {})
                 if k not in d:
-                    d[k] = (r.get("equipo_nombre") or "Equipo") + ((" · S/N " + r["serie"].strip()) if (r.get("serie") or "").strip() else "")
+                    # H-15: el nombre guardado ya trae «· S/N …» (la de cuando se reportó): la serie sale UNA vez, la vigente de la ficha.
+                    d[k] = _oh.equipo_con_serie(r.get("equipo_nombre"), r.get("serie"))
             for r in pagina:
                 r["equipos"] = list(eq.get(int(r["visita_id"]), {}).values())
         except Exception as e:
@@ -165984,7 +166007,7 @@ def _maq_problemas(mids, con_hallazgos=True, dias=180):
             d = int(((b or ahora) - a).total_seconds() // 86400)
         except Exception:
             return ""
-        return "el mismo día" if d <= 0 else ("1 día" if d == 1 else "%d días" % d)
+        return _oh.lapso_texto(d)      # «menos de un día» · «1 día» · «N días» (H-23: antes decía «hace el mismo día»)
 
     crudo = []          # (mid, dict) con las fechas crudas para ordenar
     ots = set()

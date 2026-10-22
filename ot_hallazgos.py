@@ -63,6 +63,13 @@ ESTADOS = {
 ESTADOS_GESTIONABLES = (EST_ABIERTO, EST_TOMADO)
 
 ESTADOS_OT_CAIDA = ("cancelada", "anulada")      # una OT de seguimiento cancelada deja el hallazgo otra vez sin gestionar
+ESTADOS_OT_CERRADA = ("cerrada", "completada")   # una OT de seguimiento en estos estados ya terminó (la aprobación pendiente NO cuenta)
+
+# 2026-10-22 (auditoría Impeccable, H-12). Semáforo de Retiros: ámbar = te toca, azul = espera, verde = hecho. Un hallazgo «con OT de
+# seguimiento» todavía NO está hecho mientras esa OT siga abierta: se PINTA azul («en curso»); solo se pinta verde cuando esa OT ya se
+# cerró. El estado GUARDADO sigue siendo 'resuelto' (lo leen cinco pantallas y sus pruebas): esto es únicamente cómo se muestra.
+TXT_SEGUIMIENTO_EN_CURSO = "OT de seguimiento en curso"
+TXT_SEGUIMIENTO_CERRADA = "OT de seguimiento cerrada"
 
 VENTANA_AVISO_MIN = 30        # una sola campana por OT y por persona agrupando lo que llegue en estos minutos
 DESCARTE_MIN = 10             # el motivo de un descarte: mínimo de letras (queda en la bitácora)
@@ -271,6 +278,111 @@ def titulo_accion(sujeto, texto):
     return ("%s: %s" % (s, limpio(texto, 200)) if s else limpio(texto, 200))[:TITULO_MAX]
 
 
+# ── Cómo se MUESTRA lo guardado (auditoría Impeccable del 21-oct, fase 1): nada de esto cambia lo que hay en la base ───────────
+FORMATO_FECHA = "%d/%m/%Y %H:%M"        # H-24 · REGLA #6: día/mes/año y hora de Chile, siempre con el año
+_SEP_SERIE = " · S/N "
+
+
+def titulo_corto(titulo, equipo_nombre):
+    """El título SIN repetir el equipo (H-16). Lo guardado es «<equipo> · <tarea>: <valor>» o «<equipo>: <qué pasó>» (titulo_tarea y
+    titulo_accion) y la bandeja ya pone el nombre COMPLETO del equipo (REGLA #15) una sola vez, en el encabezado de su grupo. Si el título no
+    empieza por el equipo (o es solo el equipo) se devuelve tal cual: nunca se inventa ni se corta nada."""
+    t = limpio(titulo, 2 * TITULO_MAX)
+    e = limpio(equipo_nombre, 400)
+    if not t or not e:
+        return t
+    # titulo_tarea corta el sujeto a 200 letras (y el corte puede dejar un espacio al final); equipo_nombre guarda hasta 400.
+    for pref in dict.fromkeys((e.rstrip(), limpio(e, 200).rstrip())):
+        if pref and t.startswith(pref):
+            for sep in (" · ", ": "):
+                if t[len(pref):].startswith(sep):
+                    resto = t[len(pref) + len(sep):].strip()
+                    if resto:
+                        return resto
+    return t
+
+
+def partir_serie(nombre):
+    """(nombre, serie) de un nombre guardado con el hallazgo. `nombre_con_ficha` le agrega « · S/N …» al final con la serie DE ESE MOMENTO;
+    aquí se separa para no repetirla (H-15). «Banco X (SKU 1) · S/N 123» → («Banco X (SKU 1)», «123»). Sin serie → (nombre, "")."""
+    t = limpio(nombre, 400)
+    i = t.rfind(_SEP_SERIE)
+    if i < 0:
+        return t, ""
+    return t[:i].rstrip(), t[i + len(_SEP_SERIE):].strip()
+
+
+def equipo_con_serie(nombre_guardado, serie_vigente=None):
+    """«Banco X (SKU 1) · S/N 123» con la serie UNA sola vez: la vigente de la ficha del equipo (H-15). Si la que se guardó al reportar era
+    otra se dicen las dos, rotuladas: «… · S/N 456 (al reportar: S/N 123)». Sin ninguna serie, solo el nombre."""
+    base, vieja = partir_serie(nombre_guardado)
+    base = base or "Equipo"
+    nueva = limpio(serie_vigente, 60)
+    if nueva and vieja and norm(nueva) != norm(vieja):
+        return "%s%s%s (al reportar: S/N %s)" % (base, _SEP_SERIE, nueva, vieja)
+    serie = nueva or vieja
+    return base + (_SEP_SERIE + serie if serie else "")
+
+
+_RX_EVIDENCIA = re.compile(r"(\s*·\s*)?Evidencia: (\d+) foto\(s\)(?:, (\d+) video\(s\))?\.?")
+
+
+def detalle_visible(detalle, hay_fotos):
+    """El detalle como se ve en la tarjeta (H-16). «Pedir repuesto» lo guarda terminado en «Evidencia: N foto(s)[, M video(s)].»: con las
+    miniaturas a la vista, contar las fotos sobra; los videos se conservan (la tarjeta no los muestra). Lo guardado no se modifica."""
+    t = str(detalle or "").strip()
+    if not t or not hay_fotos:
+        return t
+
+    def _sin_fotos(m):
+        videos = int(m.group(3) or 0)
+        return ((m.group(1) or "") + "Evidencia: %d video(s)." % videos) if videos else ""
+    return _RX_EVIDENCIA.sub(_sin_fotos, t).strip(" ·\t\n")
+
+
+def lapso_texto(dias):
+    """«menos de un día» · «1 día» · «N días» (H-23: antes salía «hace el mismo día»). Quien lo usa pone «hace …» o «En …»."""
+    try:
+        d = int(dias)
+    except (TypeError, ValueError):
+        return ""
+    return "menos de un día" if d <= 0 else ("1 día" if d == 1 else "%d días" % d)
+
+
+# Resumen «Estado de los equipos» (pestaña Trabajo de la OT, H-22): el motivo corto de un equipo que se saltó. Mismas razones que
+# app.py::_RAZONES_SALTADO_VALIDAS. «No está / no llegó» va en ámbar (el equipo no estaba o no llegó); el resto, en gris.
+SALTO_NO_ESTA = {"no_encontrado": "No estaba en el recinto", "falta_stock": "No llegó · falta stock"}
+SALTO_MOTIVO_CORTO = {
+    "sin_acceso": "sin acceso", "cliente_no_permite": "el cliente no lo permitió", "equipo_en_uso": "estaba en uso",
+    "danado_inaccesible": "dañado o inaccesible", "dañado_inaccesible": "dañado o inaccesible", "sin_energia": "sin energía",
+    "requiere_repuesto": "necesita un repuesto",
+    "reagendar": "hay que reagendarlo", "cliente_lo_quito": "el cliente lo retiró", "no_aplica": "no aplica", "otro": "otro motivo",
+}
+
+
+def chip_salto(razon, parcial=False):
+    """(texto, color) del chip de un equipo con `razon_saltado`, con el MOTIVO corto a la vista. Sin estados contradictorios: «No se pudo
+    revisar» solo si de verdad no se revisó nada; si ya hay algo respondido o reportado en ese equipo (`parcial`), dice «Revisión incompleta»."""
+    r = str(razon or "").strip().lower()
+    if r in SALTO_NO_ESTA:
+        return SALTO_NO_ESTA[r], "ambar"
+    motivo = SALTO_MOTIVO_CORTO.get(r) or r.replace("_", " ")
+    return ("Revisión incompleta" if parcial else "No se pudo revisar") + (": " + motivo if motivo else ""), "gris"
+
+
+def grupo_abierto(items, n_grupos=2):
+    """¿El grupo de un equipo se muestra ABIERTO? (H-20) Sí si la OT tiene un solo equipo (no hay nada que plegar) o si el grupo tiene algo de
+    gravedad alta (falla, fuera de servicio, baja o riesgo para alguien) que todavía admite una acción. El resto queda plegado, con su
+    contador a la vista. `items`: los hallazgos del grupo, con `estado_ef` (o `estado`), `severidad` y `riesgo`."""
+    if n_grupos <= 1:
+        return True
+    for it in (items or []):
+        pendiente = str(it.get("estado_ef") or it.get("estado") or "") in ESTADOS_GESTIONABLES
+        if pendiente and (it.get("riesgo") or sev_info(it.get("severidad"))["prioridad"] == "alta"):
+            return True
+    return False
+
+
 def resumen_repuestos(lineas, maximo=4):
     """«Piola (cable de acero) × 2, Pin selector × 1 y 2 más» — solo nombres de pieza y cantidades (REGLAS #19/#26: nada de proveedor)."""
     partes = []
@@ -292,6 +404,21 @@ def resumen_repuestos(lineas, maximo=4):
 
 def estado_info(estado):
     return ESTADOS.get(estado) or ESTADOS[EST_ABIERTO]
+
+
+def seguimiento_cerrado(seg_estado):
+    """¿La OT de seguimiento ya terminó (cerrada o completada)? Una OT que espera su aprobación todavía no."""
+    return str(seg_estado or "").strip().lower() in ESTADOS_OT_CERRADA
+
+
+def estado_visual(estado, seg_cerrada=False):
+    """Texto y color CON QUE SE VE un estado (H-12). Igual que `estado_info`, salvo «con OT de seguimiento» ('resuelto'): azul y «OT de
+    seguimiento en curso» mientras esa OT siga abierta; verde y «OT de seguimiento cerrada» solo cuando ya se cerró. El estado guardado no
+    cambia: esto es solo la capa de presentación. → {texto, color}."""
+    if estado == EST_RESUELTO:
+        return {"texto": TXT_SEGUIMIENTO_CERRADA if seg_cerrada else TXT_SEGUIMIENTO_EN_CURSO,
+                "color": "verde" if seg_cerrada else "azul"}
+    return dict(estado_info(estado))
 
 
 # ── Cuando el mismo hallazgo aparece otra vez ──────────────────────────────────────────────────────────────────────────
