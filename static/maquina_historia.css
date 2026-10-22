@@ -47,7 +47,7 @@
 .mh-pill b{font-weight:900;opacity:.85}
 .mh-pill:hover{border-color:#dc2626;color:#dc2626}
 .mh-pill.on{background:#dc2626;border-color:#dc2626;color:#fff}
-.mh-pill:focus-visible,.mh-btn:focus-visible,.mh-foto:focus-visible,.mh-enl:focus-visible,.mh-fechas input:focus-visible,.mh-pie select:focus-visible{outline:3px solid #fca5a5;outline-offset:2px}
+.mh-pill:focus-visible,.mh-btn:focus-visible,.mh-foto:focus-visible,.mh-enl:focus-visible,.mh-fechas input:focus-visible,.mh-pie select:focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}
 .mh-fechas{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end;margin-top:10px}
 .mh-fechas label{display:flex;flex-direction:column;gap:2px;font-size:.74rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#6b7280}
 .mh-fechas input[type=date]{min-height:44px;font-size:16px;border:1px solid #d1d5db;border-radius:10px;padding:6px 10px;color:#111827;background:#fff;font-family:inherit}
@@ -135,8 +135,8 @@
 .mh-4w .mh-por{flex:1 1 100%}
 .mh-4w dt{font-size:.68rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0}
 .mh-4w dd{margin:1px 0 0;font-size:.88rem;color:#111827;overflow-wrap:anywhere}
-.mh-4w .mh-enl{min-height:32px}
-.mh-sin{color:#9ca3af;font-style:italic;font-weight:600}
+.mh-4w .mh-enl{min-height:44px}
+.mh-sin{color:#6b7280;font-style:italic;font-weight:600}
 .mh-hasta{color:#6b7280;font-weight:600}
 .mh-pill.ot{border-style:dashed}
 .mh-pill.ot.on{border-style:solid}
