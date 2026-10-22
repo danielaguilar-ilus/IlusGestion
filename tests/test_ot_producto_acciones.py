@@ -187,6 +187,8 @@ class TestReglaTreintaYDos(unittest.TestCase):
         "_ensure_categoria_admin_plantillas", "_ensure_plantilla_capacitacion_rica", "_ensure_plantilla_repuesto",
         "_ensure_plantilla_aplica_plan_mantencion", "_ensure_plantillas_autorrelleno", "_ensure_plantillas_matriz_clases",
         "_ensure_levantamiento_target_field", "_ensure_tipo_respuesta_asistencia", "_ensure_marcar_revision_tecnica_28ago",
+        # REGLA #40 (21-oct): solo crea la columna clase_id y la rellena UNA vez por coincidencia exacta de nombre; no cambia contenido ni nombre.
+        "_ensure_plantilla_clase_id",
     }
 
     def test_ninguna_migracion_nueva_escribe_en_plantillas(self):
