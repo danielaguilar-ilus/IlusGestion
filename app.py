@@ -94395,14 +94395,21 @@ def ot2_api_producto_clasificar():
             return jsonify({"ok": True, "guardado": False, "motivo": "ya_clasificado"})
 
         plant = mysql_fetchone(
-            "SELECT nombre FROM mant_tarea_plantillas "
+            "SELECT nombre, categoria_admin" + (", clase_id" if _plcls_ok() else "") + " FROM mant_tarea_plantillas "
             " WHERE id=%s AND COALESCE(activa,1)=1 LIMIT 1", (pid,))
         if not plant or not (plant.get("nombre") or "").strip():
             return jsonify({"ok": True, "guardado": False, "motivo": "plantilla_no_encontrada"})
 
-        clase = mysql_fetchone(
-            "SELECT slug, nombre FROM cat_clases_producto "
-            " WHERE nombre=%s AND activo=1 LIMIT 1", (plant["nombre"].strip(),))
+        # 🔑 2026-10-21 (REGLA #40): la clasificación de una plantilla ligada la da la LLAVE (aunque la clasificación se
+        # haya renombrado); la de «trabajo interno» es de filtro y no clasifica productos. Sin liga, sigue el nombre exacto.
+        clase = None
+        if plant.get("clase_id") and (plant.get("categoria_admin") or "") in ("instalacion", "mantencion", "visitas"):
+            clase = mysql_fetchone(
+                "SELECT slug, nombre FROM cat_clases_producto WHERE id=%s AND activo=1 LIMIT 1", (plant["clase_id"],))
+        if not clase and not plant.get("clase_id"):
+            clase = mysql_fetchone(
+                "SELECT slug, nombre FROM cat_clases_producto "
+                " WHERE nombre=%s AND activo=1 LIMIT 1", (plant["nombre"].strip(),))
         if not clase:
             # El checklist elegido no representa una clase del catalogo:
             # no hay nada que aprender de ahi.
@@ -161724,6 +161731,58 @@ def mant_plantillas_adoptar():
             pass
         print(f"[plantillas_adoptar] {pid}→{cid}: {type(e).__name__}: {e}", flush=True)
         return jsonify({"ok": False, "error": "No se pudo adoptar la plantilla."}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/mantenciones/api/plantillas/desligar", methods=["POST"])
+@_mant_required
+@_no_tecnico_externo
+def mant_plantillas_desligar():
+    """🔑 REGLA #40: inverso de «adoptar». Una PERSONA suelta una plantilla de su clasificación y le pone el nombre que
+    diga (típicamente el que tenía antes de ser adoptada por error). La plantilla conserva todo su contenido; solo pierde
+    la liga. Body: {plantilla_id, nombre}. Si ya existe otra plantilla con ese nombre en esa categoría, se rechaza (409)."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Esta acción es de gestión."}), 403
+    d = request.get_json(silent=True) or {}
+    try:
+        pid = int(d.get("plantilla_id") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    nuevo = str(d.get("nombre") or "").strip()[:200]
+    if pid <= 0 or not nuevo or not _plcls_ok():
+        return jsonify({"ok": False, "error": "Faltan datos."}), 400
+    user = current_username() or "sistema"
+    conn = get_mysql()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, nombre, categoria_admin, clase_id FROM mant_tarea_plantillas WHERE id=%s FOR UPDATE", (pid,))
+            p = cur.fetchone()
+            if not p:
+                conn.rollback()
+                return jsonify({"ok": False, "error": "La plantilla no existe."}), 404
+            if not p.get("clase_id"):
+                conn.rollback()
+                return jsonify({"ok": False, "error": "Esa plantilla no está ligada a ninguna clasificación."}), 400
+            cur.execute("SELECT id FROM mant_tarea_plantillas WHERE nombre=%s AND categoria_admin <=> %s AND id<>%s LIMIT 1",
+                        (nuevo, p.get("categoria_admin"), pid))
+            if cur.fetchone():
+                conn.rollback()
+                return jsonify({"ok": False, "error_codigo": "NOMBRE_EN_USO",
+                                "error": f"Ya existe otra plantilla «{nuevo}» en esa categoría."}), 409
+            cur.execute("INSERT INTO mant_logs (entidad, entidad_id, accion, detalle, usuario) VALUES (%s,%s,%s,%s,%s)",
+                        ("plantilla", pid, "desligada_de_clasificacion",
+                         f"«{p['nombre']}» soltada de la clasificación #{p['clase_id']} por {user}; queda como «{nuevo}».", user))
+            cur.execute("UPDATE mant_tarea_plantillas SET nombre=%s, clase_id=NULL WHERE id=%s", (nuevo, pid))
+        conn.commit()
+        return jsonify({"ok": True, "plantilla_id": pid, "nombre": nuevo})
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"[plantillas_desligar] {pid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo soltar la plantilla."}), 500
     finally:
         conn.close()
 

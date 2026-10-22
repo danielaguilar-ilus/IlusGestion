@@ -105,8 +105,9 @@
   .pl-copy-panel select{max-width:420px}
   /* 🔎 2026-10-21: buscador de «Copiar ítems desde otra plantilla» (lista desplegable sobre el panel, sin crecerlo). */
   .pl-copy-combo{position:relative;min-width:0}
-  .pl-copy-drop{position:absolute;left:0;right:0;top:100%;margin-top:4px;z-index:30;background:#fff;border:1.5px solid #d1d5db;
-                border-radius:12px;box-shadow:0 10px 28px rgba(16,24,40,.18);max-height:min(380px,52dvh);overflow:auto}
+  /* posición fija (la coloca copyPosicionar() según el espacio libre): dentro del cuerpo del modal se cortaba y quedaba angosta */
+  .pl-copy-drop{position:fixed;z-index:1080;background:#fff;border:1.5px solid #d1d5db;
+                border-radius:12px;box-shadow:0 10px 28px rgba(16,24,40,.22);overflow:auto;overscroll-behavior:contain}
   .pl-copy-pills{position:sticky;top:0;background:#fff;display:flex;gap:6px;flex-wrap:wrap;padding:8px 10px;border-bottom:1px solid #e5e7eb;z-index:1}
   .pl-copy-pill{min-height:38px;border:1.5px solid #d1d5db;background:#fff;border-radius:999px;padding:4px 12px;font-size:.82rem;font-weight:700;color:#374151}
   .pl-copy-pill.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
@@ -1640,6 +1641,25 @@ function copyAbrir(){
   if (inp) inp.setAttribute('aria-expanded', 'true');
   copyRender();
 }
+// La lista flota sobre el modal (position:fixed): ancho cómodo (≥ 460 px o el ancho disponible en el celular) y alto según el
+// espacio libre; se abre hacia abajo, o hacia arriba si abajo hay poco lugar.
+function copyPosicionar(){
+  const drop = document.getElementById('copyLista'), inp = document.getElementById('copyBuscar');
+  if (!drop || drop.hidden || !inp) return;
+  const r = inp.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight, m = 12;
+  const ancho = Math.min(Math.max(r.width, 460), vw - 2 * m);
+  drop.style.width = ancho + 'px';
+  drop.style.left = Math.max(m, Math.min(r.left, vw - ancho - m)) + 'px';
+  const abajo = vh - r.bottom - m, arriba = r.top - m;
+  if (abajo >= 300 || abajo >= arriba){
+    drop.style.top = (r.bottom + 4) + 'px'; drop.style.bottom = 'auto';
+    drop.style.maxHeight = Math.max(160, abajo - 4) + 'px';
+  } else {
+    drop.style.bottom = (vh - r.top + 4) + 'px'; drop.style.top = 'auto';
+    drop.style.maxHeight = Math.max(160, arriba - 4) + 'px';
+  }
+}
+window.addEventListener('resize', copyPosicionar);
 function copyCerrar(){
   const drop = document.getElementById('copyLista'), inp = document.getElementById('copyBuscar');
   if (drop) drop.hidden = true;
@@ -1672,6 +1692,7 @@ function copyRender(){
   const pie = lista.length > _copyVisibles.length
     ? '<div class="pl-copy-vacio">Mostrando ' + _copyVisibles.length + ' de ' + lista.length + ': sigue escribiendo para acotar.</div>' : '';
   drop.innerHTML = pills + (filas || vacio) + pie;
+  copyPosicionar();
 }
 function copyElegir(i){
   const p = _copyVisibles[i];

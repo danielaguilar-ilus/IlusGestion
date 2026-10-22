@@ -204,6 +204,21 @@ def test_cableado_en_app():
         assert marca in _APP, marca
 
 
+def test_desligar_es_el_inverso_de_adoptar_y_no_borra_nada():
+    i = _APP.index("def mant_plantillas_desligar")
+    f = _APP[i:i + 3200]
+    assert '@app.route("/mantenciones/api/plantillas/desligar"' in _APP
+    assert "clase_id=NULL" in f and "NOMBRE_EN_USO" in f and "desligada_de_clasificacion" in f
+    assert "DELETE" not in f                                     # solo suelta la liga, jamás borra
+    assert f.index("desligada_de_clasificacion") < f.index("UPDATE mant_tarea_plantillas")   # bitácora antes de escribir
+
+
+def test_clasificar_producto_desde_la_plantilla_usa_la_llave():
+    i = _APP.index("def ot2_producto_clasificar") if "def ot2_producto_clasificar" in _APP else _APP.index("plantilla_no_es_clase") - 3000
+    f = _APP[i:i + 4500]
+    assert 'plant.get("clase_id")' in f and "WHERE id=%s AND activo=1" in f
+
+
 def test_la_matriz_pone_p_estrella_primero():
     """Si `p.*` fuera después del alias, la columna clase_id de la plantilla pisaría a la de la clase (c.id)."""
     i = _APP.index("SELECT p.*,\n                   c.id     AS clase_id")

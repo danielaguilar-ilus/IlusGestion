@@ -61,7 +61,7 @@ def test_los_objetos_estandar_son_los_mismos_que_en_el_servidor():
 
 def test_el_menu_tiene_buscador_filtro_y_teclado():
     for marca in ('id="copyBuscar"', 'role="combobox"', 'id="copyLista"', "function copyRender", "function copyCategoria",
-                  "function copyTecla", "copyCategoriaActiva()", "PL_CATEGORIAS.map", 'aria-label="Categoría"',
+                  "function copyTecla", "copyCategoriaActiva()", "copyPosicionar", "PL_CATEGORIAS.map", 'aria-label="Categoría"',
                   "Mostrando ' + _copyVisibles.length"):
         assert marca in HTML, marca
 
