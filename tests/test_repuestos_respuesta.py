@@ -483,7 +483,7 @@ FUNCIONES = ("_otrep_correos_activos", "_otrep_usuario_por_nombre", "_otrep_corr
              "_otrep_dueno_resolver", "_otrep_asignar_dueno", "_otrep_ticket_dueno_asegurar", "_otrep_enviar_correo",
              "_otrep_avisar_nueva_ot", "_otrep_avisar_tecnico", "_otrep_avisar_tecnico_clave", "_otrep_avisar_eta_compra",
              "_otrep_eventos_lote", "_otrep_reloj_de", "_otrep_escalamiento_destinos", "_otrep_barrido_respuesta",
-             "repstock_tiempos_respuesta", "_otrep_a_chile", "_otrep_feriados", "_rol_familia")
+             "repstock_tiempos_respuesta", "_otrep_reloj_json", "_otrep_adjuntar_reloj", "_otrep_a_chile", "_otrep_feriados", "_rol_familia")
 CONSTANTES = ("_GESTION_CORREO_RE", "_OTREP_FERIADOS")
 
 
@@ -566,7 +566,7 @@ class Mundo:
                "_brand_subject": lambda s: s, "_public_base_url": lambda: "https://ilus.test", "_qp_correos_bodega": lambda: ["bodega@sphs.cl"],
                "current_username": lambda: "Pedro Técnico", "request": types.SimpleNamespace(args={}),
                "jsonify": lambda *a, **k: (a[0] if a else k), "_NOTIF_TEC": None}
-        FC.extraer(amb, "app.py", FUNCIONES[:-1] if False else FUNCIONES, CONSTANTES)
+        FC.extraer(amb, "app.py", FUNCIONES, CONSTANTES)
         # El evento y el reloj de pared son los de mentira: la hora «ahora» la fija la prueba.
         self.amb = amb
         self.f = types.SimpleNamespace(**{k: amb[k] for k in FUNCIONES})
@@ -1102,6 +1102,56 @@ class TestBarrido:
         self.corre(mundo)
         for n in mundo.notifs:
             assert not re.search(r"proveedor|costo|\$|\bOC\b|factur", n["titulo"] + n["cuerpo"], re.I), n
+
+
+class TestRelojEnLaCola:
+    def fijar(self, mundo, ahora):
+        mundo.ahora_chile = ahora
+        mundo.amb["datetime"] = types.SimpleNamespace(utcnow=lambda: a_utc(ahora), combine=datetime.combine, min=datetime.min)
+
+    def test_cada_pedido_de_la_pagina_lleva_su_reloj(self, mundo):
+        self.fijar(mundo, datetime(2026, 10, 20, 12, 0))
+        rows = [mundo.pedido(1, creada=datetime(2026, 10, 19, 8), estado="validado", validado_at=a_utc(datetime(2026, 10, 19, 10)), validado_por="Ana"),
+                mundo.pedido(2, creada=datetime(2026, 10, 20, 9)),
+                mundo.pedido(3, creada=datetime(2026, 10, 16, 8))]
+        mundo.eventos.append({"solicitud_id": 1, "accion": "estado", "de_estado": "solicitado", "a_estado": "validado", "usuario": "Ana",
+                              "detalle": None, "created_at": a_utc(datetime(2026, 10, 19, 10))})
+        sols = [{"id": r["id"]} for r in rows]
+        mundo.f._otrep_adjuntar_reloj(rows, sols)
+        r1, r2, r3 = (s["reloj"] for s in sols)
+        assert r1["estado"] == "respondida" and r1["respuesta"] == {"cuando": "19/10/2026 10:00", "quien": "Ana", "a_estado": "validado",
+                                                                      "tiempo_h": 2.0, "en_plazo": True, "texto": "2 h hábiles"}
+        assert (r2["estado"], r2["nivel"], r2["texto"]) == ("en_plazo", 0, "3 h hábiles") and r2["respuesta"] is None
+        assert r3["estado"] == "vencida" and r3["nivel"] == 2 and r3["vence"] == "16/10/2026 17:00"
+        assert r2["inicio"] == "20/10/2026 09:00"
+
+    def test_sin_bitacora_usa_las_columnas(self, mundo):
+        self.fijar(mundo, datetime(2026, 10, 20, 12, 0))
+        rows = [mundo.pedido(1, creada=datetime(2026, 10, 19, 8), estado="pedido", pedido_at=a_utc(datetime(2026, 10, 19, 15)),
+                             validado_at=a_utc(datetime(2026, 10, 19, 11)), validado_por="Bea", updated_at=a_utc(datetime(2026, 10, 19, 15)))]
+        sols = [{"id": 1}]
+        mundo.f._otrep_adjuntar_reloj(rows, sols)
+        assert sols[0]["reloj"]["respuesta"]["quien"] == "Bea" and sols[0]["reloj"]["respuesta"]["tiempo_h"] == 3.0
+
+    def test_el_equipo_fuera_de_servicio_de_la_cola_acorta_el_plazo(self, mundo):
+        self.fijar(mundo, datetime(2026, 10, 19, 14, 0))
+        rows = [mundo.pedido(1, creada=datetime(2026, 10, 19, 8), maquina_estado_capturado="fuera_servicio")]
+        sols = [{"id": 1}]
+        mundo.f._otrep_adjuntar_reloj(rows, sols)
+        assert sols[0]["reloj"]["plazo_h"] == 4.0 and sols[0]["reloj"]["estado"] == "vencida"
+
+    def test_un_error_deja_la_cola_sin_reloj_pero_viva(self, mundo):
+        mundo.amb["_otrep_eventos_lote"] = lambda ids: (_ for _ in ()).throw(RuntimeError("base caída"))
+        sols = [{"id": 1}]
+        mundo.f._otrep_adjuntar_reloj([mundo.pedido(1)], sols)
+        assert "reloj" not in sols[0] and any("reloj de la cola" in a for a in mundo.avisos)
+
+    def test_la_cola_lo_llama_y_el_reloj_no_lleva_montos(self, mundo):
+        assert "_otrep_adjuntar_reloj(rows, sols)" in FC.funcion_top("app.py", "repstock_solicitudes_ot_listar")
+        self.fijar(mundo, datetime(2026, 10, 20, 12, 0))
+        sols = [{"id": 1}]
+        mundo.f._otrep_adjuntar_reloj([mundo.pedido(1, creada=datetime(2026, 10, 16, 8))], sols)
+        assert not re.search(r"costo|monto|proveedor|precio", json.dumps(sols[0]["reloj"]), re.I)
 
 
 class TestEndpointTiempos:

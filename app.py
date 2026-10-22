@@ -105698,6 +105698,7 @@ def repstock_solicitudes_ot_listar():
             except Exception as _e_doc:
                 print(f"[otrep] documento de la OT en la lista: {_e_doc}", flush=True)
         sols = [_otrep_fila(r) for r in rows]
+        _otrep_adjuntar_reloj(rows, sols)        # 2026-10-21: reloj de la primera respuesta de cada pedido (horas hábiles; best-effort)
         if sols:
             ids = [s["id"] for s in sols]
             ph = ",".join(["%s"] * len(ids))
@@ -106126,9 +106127,35 @@ def _otrep_reloj_de(row, eventos, ahora_ch, ciclo_actual=True):
     fila = {"estado": row.get("estado"), "validado_at": _otrep_a_chile(row.get("validado_at")), "pedido_at": _otrep_a_chile(row.get("pedido_at")),
             "updated_at": _otrep_a_chile(row.get("updated_at")), "validado_por": row.get("validado_por"), "resuelto_por": row.get("resuelto_por")}
     resp = _rresp.primera_respuesta(eventos, desde=(inicio if (ciclo_actual and inicio != creada) else None), fila=fila)
-    fs = bool(row.get("dejo_fuera_servicio")) or (row.get("maquina_estado") == "fuera_servicio")
+    fs = bool(row.get("dejo_fuera_servicio")) or ((row.get("maquina_estado") or row.get("maquina_estado_capturado")) == "fuera_servicio")
     rel = _rresp.estado_reloj(inicio, ahora_ch, resp["cuando"] if resp else None, fs, _otrep_feriados)
     return {"rel": rel, "inicio": inicio, "respuesta": resp}
+
+
+def _otrep_reloj_json(calc):
+    """El reloj de un pedido listo para la pantalla (sin datetimes crudos, REGLA #6): estado, nivel, horas hábiles, vencimiento y la primera
+    respuesta (quién y cuándo, hora Chile). Solo horas: nunca montos."""
+    rel, resp = calc["rel"], calc.get("respuesta")
+    f = lambda d: d.strftime("%d/%m/%Y %H:%M") if d else None          # noqa: E731
+    out = {"estado": rel["estado"], "nivel": rel["nivel"], "transcurrido_h": rel["transcurrido_h"], "plazo_h": rel["plazo_h"],
+           "aviso_h": rel["aviso_h"], "escala_h": rel["escala_h"], "vence": f(rel.get("vence")), "inicio": f(calc.get("inicio")),
+           "texto": _rresp.fmt_horas(rel["transcurrido_h"]), "respuesta": None}
+    if resp:
+        out["respuesta"] = {"cuando": f(resp["cuando"]), "quien": resp.get("quien") or "", "a_estado": resp.get("a_estado"),
+                            "tiempo_h": rel.get("tiempo_respuesta_h"), "en_plazo": rel.get("en_plazo"), "texto": _rresp.fmt_horas(rel.get("tiempo_respuesta_h"))}
+    return out
+
+
+def _otrep_adjuntar_reloj(rows, sols):
+    """Agrega `reloj` a cada solicitud de la página de la cola de gestión (una sola consulta de bitácora para toda la página). Best-effort:
+    si algo falla la cola sale igual, sin `reloj`."""
+    try:
+        evs = _otrep_eventos_lote([s["id"] for s in sols])
+        ahora = _otrep_a_chile(datetime.utcnow())
+        for r, s in zip(rows, sols):
+            s["reloj"] = _otrep_reloj_json(_otrep_reloj_de(dict(r), evs.get(int(s["id"]), []), ahora, ciclo_actual=True))
+    except Exception as e:
+        print(f"[otrep] reloj de la cola: {type(e).__name__}: {e}", flush=True)
 
 
 def _otrep_escalamiento_destinos():
