@@ -49,6 +49,128 @@
   function enPar(s) { var m = /\(([^)]*)\)/.exec(String(s || '')); return m ? m[1].trim() : ''; }
   function base(d) { return '/ot/api/' + VID() + (d.k === 'i' ? '/producto/' : '/equipo/') + d.id; }
 
+  /* ───────────────────────────── funciones PURAS del pedido de repuesto (sin DOM; probadas con Node) ─────────────────────────────
+     2026-10-21 (Daniel: «práctico, ordenado, guiado, con trayectoria… algo parecido a Retiros»). Aquí viven las reglas que no dependen
+     de la pantalla para poder probarlas solas: cuándo una pieza «se parece» a una baldosa, qué otros nombres viajan al servidor,
+     qué ficha de medidas manda, si ya hay un pedido igual, y la trayectoria de un pedido (misma palabra para técnico y gestión).
+     Las fechas SIEMPRE salen en hora Chile y en día/mes/año (REGLA #6): jamás una fecha ISO cruda. */
+  var STOP = { para: 1, con: 1, del: 1, los: 1, las: 1, una: 1, uno: 1, por: 1, que: 1, sin: 1 };
+  function palabras(s) {
+    return norm(s).replace(/[^a-z0-9 ]+/g, ' ').split(' ').filter(function (w) { return w.length >= 3 && !STOP[w]; });
+  }
+  /* «poleas» y «polea» son la misma pieza; «apoya» y «apoyar» NO (antes bastaban 4 letras sueltas y salía la ficha equivocada). */
+  function raizPalabra(w) {
+    w = norm(w);
+    if (w.length > 4 && /[^aeiou]es$/.test(w)) return w.slice(0, -2);
+    if (w.length > 3 && /s$/.test(w)) return w.slice(0, -1);
+    return w;
+  }
+  function raices(s, minLen) { return palabras(s).map(raizPalabra).filter(function (w) { return w.length >= (minLen || 3); }); }
+  /* ¿Esta pieza de bodega corresponde a esta baldosa? Misma familia de dibujo, o una palabra COMPLETA (o su raíz) en común. */
+  function coincidePieza(tile, desc) {
+    var a = icDe(tile.full || tile.n), b = icDe(desc);
+    if (a !== 'otra' && a === b) return true;
+    var dw = raices(desc, 3);
+    return raices(tile.n || tile.full, 4).some(function (w) { return dw.indexOf(w) >= 0; });
+  }
+  /* La ficha de medidas sigue a la PIEZA ELEGIDA (la que calcula el servidor desde su nombre), no a la baldosa tocada. Solo si el
+     servidor no trae una ficha propia (o es la genérica «H») se usa la de la baldosa. */
+  function fichaParaLinea(fichaRepuesto, fichaBaldosa, existe) {
+    if (fichaRepuesto && fichaRepuesto !== 'H' && (!existe || existe(fichaRepuesto))) return fichaRepuesto;
+    return fichaBaldosa || ((fichaRepuesto && (!existe || existe(fichaRepuesto))) ? fichaRepuesto : undefined);
+  }
+  /* Otros nombres con que el técnico conoce la pieza («perilla» = pin): lo que buscó, lo que escribió en «¿Cómo le dicen en tu empresa?»
+     y lo escrito en «Otra pieza». Sin repetidos, sin el nombre canónico, máximo 6 (el servidor aprende el alias al validar). */
+  function armarNombresAlt(o) {
+    o = o || {};
+    var canon = norm(o.canonico || ''), vistos = {}, out = [];
+    function add(t) {
+      var n = String(t == null ? '' : t).replace(/\s+/g, ' ').trim().slice(0, 80), k = norm(n);
+      if (n.length < 2 || !k || k === canon || vistos[k] || out.length >= 6) return;
+      vistos[k] = 1; out.push(n);
+    }
+    add(o.buscado);
+    String(o.alias || '').split(/[\n;,]+/).forEach(add);
+    add(o.escrito);
+    return out;
+  }
+  /* Fechas: siempre día/mes/año hora Chile. Acepta texto ya en Chile («21/10/2026 15:03»), milisegundos o ISO CON zona horaria. */
+  function fechaChile(v, soloFecha) {
+    if (v == null || v === '') return '';
+    if (typeof v === 'string' && /^\d{2}\/\d{2}\/\d{4}/.test(v.trim())) return soloFecha ? v.trim().slice(0, 10) : v.trim();
+    var d;
+    if (typeof v === 'number') d = new Date(v);
+    else if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(String(v).trim())) d = new Date(String(v).trim());
+    else return '';                                  // sin zona horaria no se adivina: jamás se muestra un ISO crudo
+    if (isNaN(d.getTime())) return '';
+    try {
+      var p = {};
+      new Intl.DateTimeFormat('es-CL', { timeZone: 'America/Santiago', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+        .formatToParts(d).forEach(function (x) { p[x.type] = x.value; });
+      var f = p.day + '/' + p.month + '/' + p.year;
+      return soloFecha ? f : f + ' ' + p.hour + ':' + p.minute;
+    } catch (e) { return ''; }
+  }
+  function haceTxt(ms, ahora) {
+    if (typeof ms !== 'number' || !isFinite(ms)) return '';
+    var m = Math.max(0, ((ahora == null ? Date.now() : ahora) - ms) / 60000);
+    if (m < 1) return 'hace un momento';
+    if (m < 60) return 'hace ' + Math.floor(m) + ' min';
+    if (m < 1440) return 'hace ' + Math.floor(m / 60) + ' h';
+    var dd = Math.floor(m / 1440);
+    return 'hace ' + dd + (dd === 1 ? ' día' : ' días');
+  }
+  /* ¿Ya hay un pedido ABIERTO de esta pieza para este equipo? Solo sugiere (REGLA #32): la persona decide si es otra distinta. */
+  function mismaPieza(a, b) {
+    var na = norm(sinPar(a)), nb = norm(sinPar(b));
+    if (!na || !nb) return false;
+    if (na === nb) return true;
+    var ia = icDe(a), ib = icDe(b);
+    if (ia !== 'otra' && ia === ib) return true;
+    var wb = raices(sinPar(b), 4);
+    return raices(sinPar(a), 4).some(function (w) { return wb.indexOf(w) >= 0; });
+  }
+  function buscarDuplicado(nombre, sols) {
+    var l = (sols || []).filter(function (s) { return s && s.abierta && mismaPieza(nombre, s.nombre); });
+    return l.length ? l[0] : null;
+  }
+  var DUP_ESTADO = { solicitado: 'en revisión', validado: 'revisado por bodega', pedido: 'pedido', recibido: 'lista en bodega' };
+  function dupTexto(sol, ahora) {
+    var cuando = typeof sol.creada_ms === 'number' ? haceTxt(sol.creada_ms, ahora) : (fechaChile(sol.creada) ? 'el ' + fechaChile(sol.creada) : '');
+    var est = DUP_ESTADO[String(sol.estado || '').toLowerCase()] || '';
+    var det = [cuando, est].filter(Boolean).join(', ');
+    return 'Ya hay un pedido de ' + sinPar(sol.nombre) + ' para este equipo' + (det ? ' (' + det + ')' : '') + '.';
+  }
+  /* Trayectoria de UN pedido: Solicitado → Revisado por bodega → Pedido (llega ~fecha) o Apartado → Lista en bodega → Instalada.
+     La misma palabra para el técnico y para gestión. Las horas salen de `hitos` (por estado) si el servidor las manda; si no, no se inventan. */
+  var NIVEL_ESTADO = { solicitado: 1, validado: 2, pedido: 3, recibido: 4, instalado: 5 };
+  function trayectoria(x) {
+    x = x || {};
+    var e = String(x.estado || '').toLowerCase();
+    if (e === 'rechazado') return { rechazado: true, motivo: String(x.rechazo_motivo || '').trim(), pasos: [] };
+    var lvl = NIVEL_ESTADO[e] || 1, h = x.hitos || {};
+    if (x.apartado && lvl < 3) lvl = 3;
+    var textoConsigue = x.apartado ? 'Apartado' : ((e === 'pedido' || e === 'recibido' || e === 'instalado' || x.compra_eta) ? 'Pedido' : 'Pedido o apartado');
+    var eta = (x.compra_eta && lvl < 4) ? fechaChile(x.compra_eta, true) : '';
+    var def = [
+      ['solicitado', 'Solicitado', h.solicitado || x.creada_ms || x.creada, ''],
+      ['revisado', 'Revisado por bodega', h.validado, ''],
+      ['consigue', textoConsigue, h.pedido || h.apartado, eta ? 'llega ~' + eta : ''],
+      ['lista', 'Lista en bodega', h.recibido, ''],
+      ['instalada', 'Instalada', h.instalado, '']
+    ];
+    return {
+      rechazado: false, motivo: '',
+      pasos: def.map(function (p, i) {
+        var n = i + 1;
+        return { clave: p[0], texto: p[1], estado: n <= lvl ? 'hecho' : (n === lvl + 1 ? 'actual' : 'pendiente'),
+                 cuando: n <= lvl ? fechaChile(p[2]) : '', extra: p[3] };
+      })
+    };
+  }
+  function esVideoArchivo(f) { return !!f && (/^video\//.test(f.type || '') || /\.(mp4|mov|m4v|webm|3gp)$/i.test(f.name || '')); }
+  var MAX_VIDEO_BYTES = 28 * 1024 * 1024;     // el servidor acepta hasta 28 MB (_OTREP_MAX_VIDEO)
+
   function api(method, url, body) {
     var opt = { method: method, credentials: 'same-origin', headers: Object.assign({}, HDR) };
     if (typeof FormData !== 'undefined' && body instanceof FormData) opt.body = body;
@@ -128,7 +250,11 @@
       } catch (e) { res(null); }
     });
   }
+  /* 2026-10-21: el guardado local NUNCA puede frenar un envío: si IndexedDB no responde (modo privado, disco lleno…) se sigue sin él. */
   function idbOp(modo, fn) {
+    return Promise.race([idbOpReal(modo, fn), new Promise(function (res) { setTimeout(function () { res(null); }, 8000); })]);
+  }
+  function idbOpReal(modo, fn) {
     return idb().then(function (db) {
       if (!db) return null;
       return new Promise(function (res) {
@@ -143,19 +269,39 @@
   function borrarBorrador(key) {
     try { localStorage.removeItem(bkey(key)); } catch (e) { /* nada */ }
     var n = 0;
-    return idbOp('readwrite', function (st) { for (n = 0; n < MAX_FOTOS; n++) st.delete(bkey(key) + '#' + n); return null; });
+    return idbOp('readwrite', function (st) { for (n = 0; n < MAX_FOTOS; n++) st.delete(bkey(key) + '#' + n); st.delete(bkey(key) + '#v'); return null; });
+  }
+  /* 2026-10-21: si el pedido YA se envió pero faltan archivos por subir (mala señal), el borrador se conserva con `env` (lo que el servidor
+     devolvió y qué archivos ya subieron) hasta que TODOS suban: así «Reintentar fotos» no pierde la foto con huincha. */
+  function envMinimo(S) {
+    if (!S.enviadoOk || !S.res) return null;
+    var r = S.res;
+    return { res: { lote_id: r.lote_id || S.loteId, numero_ticket: r.numero_ticket || '', atiende: r.atiende || '', responde_antes: r.responde_antes || '',
+                    solicitudes: (r.solicitudes || []).map(function (x) { return { ref: x.ref, solicitud_id: x.solicitud_id, repuesto_nombre: x.repuesto_nombre, cantidad: x.cantidad, medida: x.medida || '' }; }) },
+             ok: S.subidas || [], creada: S.creadaMs || 0 };
   }
   function guardarBorrador(S) {
-    var j = { t: Date.now(), step: S.step, sel: S.sel, q: S.q, falla: S.falla, detalle: S.detalle, dejarFS: S.dejarFS,
+    var previo = leerBorrador(S.key);
+    if (previo && previo.env && !S.enviadoOk) return Promise.resolve(false);     // no pisar las fotos pendientes de un pedido anterior
+    var j = { t: Date.now(), step: S.step, sel: S.sel, q: S.q, falla: S.falla, detalle: S.detalle, dejarFS: S.dejarFS, alias: S.alias || '',
               tile: S.tile, loteId: S.loteId, nFotos: S.fotos.length, refs: S.fotos.map(function (f) { return f.ref || ''; }),
-              diag: S.diag || null, sug: S.sug || null, pend: S.pend || null };
+              diag: S.diag || null, sug: S.sug || null, pend: S.pend || null, video: !!S.video, env: envMinimo(S) };
     try { localStorage.setItem(bkey(S.key), JSON.stringify(j)); } catch (e) { return Promise.resolve(false); }
     return idbOp('readwrite', function (st) {
       for (var i = 0; i < MAX_FOTOS; i++) {
         if (S.fotos[i]) st.put({ blob: S.fotos[i].file, name: S.fotos[i].file.name || ('foto' + i + '.jpg'), type: S.fotos[i].file.type }, bkey(S.key) + '#' + i);
         else st.delete(bkey(S.key) + '#' + i);
       }
+      if (S.video) st.put({ blob: S.video.file, name: S.video.file.name || 'video.mp4', type: S.video.file.type }, bkey(S.key) + '#v');
+      else st.delete(bkey(S.key) + '#v');
       return null;
+    });
+  }
+  function cargarVideoBorrador(S) {
+    return idbOp('readonly', function (st) { return st.get(bkey(S.key) + '#v'); }).then(function (r) {
+      if (r && r.blob) {
+        try { var f = new File([r.blob], r.name || 'video.mp4', { type: r.type || 'video/mp4' }); S.video = { file: f, url: URL.createObjectURL(f) }; } catch (e) { /* nada */ }
+      }
     });
   }
   function cargarFotosBorrador(S, n, refs) {
@@ -220,11 +366,20 @@
       if (np) {
         var quitar = p.rev ? ' <button type="button" class="oa-lnk muted" data-a="quitarnp" data-key="' + esc(key) + '" style="min-height:30px;font-size:13.5px"><i class="bi bi-arrow-counterclockwise"></i> Quitar la marca</button>' : '';
         out.push('<div class="oa-stbar"><span class="oa-st ' + (np.estado === 'falta_stock' ? 'amber' : 'gray') + '"><i class="bi bi-box-seam"></i> ' + esc(np.chip) + '</span>' + quitar + '</div>');
+        // 2026-10-21 (A9): quien marcó «No pude revisarlo» y después descubre que SÍ falta una pieza no queda sin camino: avisa a gestión con el
+        // flujo de siempre (Informar incidencia, con foto). Solo se ofrece si ese flujo está permitido.
+        if (p.inc) out.push('<div class="oa-stbar"><button type="button" class="oa-lnk" data-a="avisarpieza" data-key="' + esc(key) + '"><i class="bi bi-megaphone"></i> Avisar a gestión que sí hay una pieza que pedir</button></div>');
       }
     }
 
     var borr = leerBorrador(key);
-    if (borr && p.ped) {
+    if (borr && borr.env && p.ped) {
+      // El pedido YA se envió; solo faltan archivos por subir (mala señal): se conservan en el teléfono hasta que suban todos.
+      var faltan = ((borr.env.ok || []).filter(function (x) { return !x; })).length;
+      out.push('<div class="oa-draft"><div class="t"><i class="bi bi-cloud-arrow-up"></i><div>Tu pedido ya está enviado' + (faltan ? ' · faltan ' + faltan + (faltan === 1 ? ' archivo' : ' archivos') + ' por subir' : '') +
+        '<small>Las fotos siguen guardadas en este teléfono.</small></div></div><div class="b">' +
+        btnAccion('seguir', key, 'arrow-repeat', 'Reintentar fotos', '', 'blue') + btnAccion('borrar', key, 'trash3', 'Descartar', '', 'ghost') + '</div></div>');
+    } else if (borr && p.ped) {
       var nn = (borr.sel || []).length;
       out.push('<div class="oa-draft"><div class="t"><i class="bi bi-pencil-square"></i><div>Pedido sin terminar' + (nn ? ' · ' + nn + (nn === 1 ? ' pieza' : ' piezas') : '') +
         '<small>Quedó guardado en este teléfono.</small></div></div><div class="b">' +
@@ -250,12 +405,8 @@
     if (p.man) ay.push(['manual', 'file-earmark-pdf', 'Manual', inter ? 'Del producto y sus repuestos' : 'Del equipo y sus repuestos']);
     if (d.pio && p.ped && vivo) ay.push(['piola', 'link-45deg', 'Piolas', 'Las del modelo y pedir cambio']);
     if (d.cin && p.ped && vivo) ay.push(['cinta', 'arrow-left-right', 'Cinta', 'Pedir cambio de cinta']);
-    if (ay.length) {
-      out.push('<div class="oa-lbl oa-lbl-ay"><i class="bi bi-life-preserver"></i> Ayuda</div><div class="oa-grid oa-ayuda">' + ay.map(function (x, i) {
-        return '<button type="button" class="oa-btn line' + (ay.length % 2 === 1 && i === ay.length - 1 ? ' wide' : '') + '" data-a="' + x[0] + '" data-f="' + x[0] + '" data-key="' + esc(key) + '" title="' + esc(x[3]) + '">' +
-          '<i class="bi bi-' + x[1] + '"></i><span>' + esc(x[2]) + '<small>' + esc(x[3]) + '</small></span></button>';
-      }).join('') + '</div>');
-    }
+    // 2026-10-21 (M2): en el CELULAR «Pedir repuesto» y «¿Qué le pasa a este equipo?» quedan a la vista y lo demás (ayuda y desviaciones) se
+    // pliega detrás de «Más acciones». Es el MISMO contenido: nada se quita (REGLA #4.2). En computador todo se ve como antes.
     var g = [];
     if (p.fs && !fs && !bj && !nlTotal && !np) g.push(['fs', 'sign-stop', 'No se puede usar', 'Déjalo fuera de servicio']);
     if (p.baja && !bj && !nlTotal && !np) g.push(['baja', 'slash-circle', 'No tiene arreglo', inter ? 'Dar de baja' : 'Dar de baja del cliente']);
@@ -263,25 +414,47 @@
     if (!inter && p.noe && !fs && !bj && !np) g.push(['noesta', 'box-seam', 'No está / no llegó', 'En el lugar o por falta de stock']);
     if (p.inc && !bj) g.push(['incidencia', 'megaphone', 'Informar incidencia', 'Con foto, para bodega']);
     if (!inter && p.salt && !d.sal && !fs && !bj && !np) g.push(['saltar', 'skip-forward', 'No pude revisarlo', 'Queda escrito por qué', 'saltar']);
+    var puedeDiag = !bj && !nlTotal && !np && (p.ped || g.length > 0);
+    var plg = (puedeCta || puedeDiag) && (ay.length + g.length) > 0 ? ' oa-plg' : '';
+    if (ay.length) {
+      out.push('<div class="oa-lbl oa-lbl-ay' + plg + '"><i class="bi bi-life-preserver"></i> Ayuda</div><div class="oa-grid oa-ayuda' + plg + '">' + ay.map(function (x, i) {
+        return '<button type="button" class="oa-btn line' + (ay.length % 2 === 1 && i === ay.length - 1 ? ' wide' : '') + '" data-a="' + x[0] + '" data-f="' + x[0] + '" data-key="' + esc(key) + '" title="' + esc(x[3]) + '">' +
+          '<i class="bi bi-' + x[1] + '"></i><span>' + esc(x[2]) + '<small>' + esc(x[3]) + '</small></span></button>';
+      }).join('') + '</div>');
+    }
     // 2026-10-20: «¿Qué le pasa a este equipo?» va PRIMERO en «Fuera de lo normal», sin quitar ninguno de los otros botones; el pulso se
     // queda en «Pedir repuesto». En el computador es un botón compacto en la misma línea; en el celular sigue ancho y cómodo para el dedo.
-    var puedeDiag = !bj && !nlTotal && !np && (p.ped || g.length > 0);
     if (g.length || puedeDiag) {
       out.push('<div class="oa-lbl"><i class="bi bi-exclamation-diamond-fill"></i> Fuera de lo normal</div>' +
         (puedeDiag ? '<button type="button" class="oa-btn oa-diag" data-a="abrir" data-f="diag" data-key="' + esc(key) + '" title="Te ayudo a decidir qué hacer">' +
           '<i class="bi bi-clipboard2-pulse"></i><span>¿Qué le pasa a ' + (inter ? 'este producto' : 'este equipo') + '?<small>Te ayudo a decidir qué hacer</small></span></button>' : '') +
-        (g.length ? '<div class="oa-grid">' + g.map(function (x, i) {
+        (g.length ? '<div class="oa-grid' + plg + '">' + g.map(function (x, i) {
           return '<button type="button" class="oa-btn line' + (g.length % 2 === 1 && i === g.length - 1 ? ' wide' : '') + '" data-a="' + (x[4] || 'abrir') + '" data-f="' + x[0] + '" data-key="' + esc(key) + '" title="' + esc(x[3]) + '">' +
             '<i class="bi bi-' + x[1] + '"></i><span>' + esc(x[2]) + '<small>' + esc(x[3]) + '</small></span></button>';
         }).join('') + '</div>' : ''));
     }
+    if (plg) {
+      var abierto = !!MAS_ABIERTO[key];
+      out.push('<button type="button" class="oa-btn line oa-masbtn" data-a="masacc" data-key="' + esc(key) + '" aria-expanded="' + abierto + '"><i class="bi bi-' + (abierto ? 'chevron-up' : 'three-dots') + '"></i> ' +
+        (abierto ? 'Menos acciones' : 'Más acciones <span class="oa-masn">' + (ay.length + g.length) + '</span>') + '</button>');
+    }
     return out.join('');
+  }
+  var MAS_ABIERTO = {};          // qué tarjetas tienen desplegado «Más acciones» (solo importa en el celular)
+  /* El pulso de «Pedir repuesto» es solo para la PRIMERA tarjeta pendiente: si late en todas, deja de significar «empieza aquí». */
+  function marcarPulso() {
+    var primeros = document.querySelectorAll('.otd-acc .oa-primary'), ya = false;
+    Array.prototype.forEach.call(primeros, function (b) {
+      var card = b.closest('.otd-acc'), libre = !ya && card && !card.querySelector('.oa-trk');
+      b.classList.toggle('oa-pulso', !!libre);
+      if (libre) ya = true;
+    });
   }
   function pintar(key) {
     var d = DATA()[key], el = document.getElementById('otdAcc-' + key);
-    if (d && el) el.innerHTML = barHTML(key, d);
+    if (d && el) { el.innerHTML = barHTML(key, d); el.classList.toggle('oa-mas-open', !!MAS_ABIERTO[key]); marcarPulso(); }
   }
-  function pintarTodo() { Object.keys(DATA()).forEach(pintar); }
+  function pintarTodo() { Object.keys(DATA()).forEach(pintar); marcarPulso(); }
 
   /* ───────────────────────────── pantalla completa ───────────────────────────── */
   var root = null, win = null, S = null, histPuesto = false, overflowPrev = '';
@@ -293,7 +466,8 @@
     root.setAttribute('role', 'dialog'); root.setAttribute('aria-modal', 'true'); root.setAttribute('aria-label', 'Acciones del equipo');
     root.innerHTML = '<div class="oa-win" id="oaWin" tabindex="-1"><div id="oaTop"></div><div class="oa-body" id="oaBody"></div><div id="oaFoot"></div></div>' +
       '<input type="file" id="oaCam" accept="image/*" capture="environment" hidden>' +
-      '<input type="file" id="oaGal" accept="image/*" multiple hidden>';
+      '<input type="file" id="oaGal" accept="image/*" multiple hidden>' +
+      '<input type="file" id="oaVid" accept="video/*" capture="environment" hidden>';
     document.body.appendChild(root);
     win = root.querySelector('#oaWin');
     root.addEventListener('click', onClick);
@@ -366,7 +540,11 @@
     if (!S) return;
     var key = S.key;
     if (S.flow === 'pedir' && S.step !== 'fin' && hayAvance(S)) {
-      guardarBorrador(S).then(function () { cerrar(vinoDeAtras); pintar(key); toast('Guardado en este teléfono. Lo retomas desde la tarjeta.', 'success'); });
+      guardarBorrador(S).then(function (ok) {
+        cerrar(vinoDeAtras); pintar(key);
+        if (ok === false) toast('Primero termina de subir las fotos pendientes de tu pedido anterior.', 'warning');
+        else toast('Guardado en este teléfono. Lo retomas desde la tarjeta.', 'success');
+      });
       return;
     }
     if (S.step !== 'fin' && S.dirty && S.flow !== 'pedir' && S.flow !== 'seg') {
@@ -379,6 +557,12 @@
     }
     cerrar(vinoDeAtras);
     pintar(key);
+  }
+  /* Salir al modal de siempre (vista clásica / manual) sin perder lo que se llevaba escrito. */
+  function irAlClasico(modo, tab) {
+    var s = S, key = s.key, d = s.d, mid = d.k === 'i' ? 'i' + d.id : d.id;
+    var seguir = function () { cerrar(false); pintar(key); if (window.otdRepAbrir) window.otdRepAbrir(mid, modo, tab); };
+    if (s.flow === 'pedir' && s.step !== 'fin' && hayAvance(s)) guardarBorrador(s).then(seguir); else seguir();
   }
   function recargar(key) {
     try { sessionStorage.setItem('otdAccVolver', key); } catch (e) { /* nada */ }
@@ -429,11 +613,23 @@
         '<button type="button" class="x" data-a="quitarfoto" data-i="' + x.i + '" aria-label="Quitar la foto ' + (x.i + 1) + '"><i class="bi bi-x-lg"></i></button></div>';
     }).join('') + '</div>';
   }
-  function mediaCuerpo(ayuda) {
+  function mediaCuerpo(ayuda, conVideo) {
     var lleno = S.fotos.length >= MAX_FOTOS;
     return (ayuda ? '<div class="oa-hint" style="margin:-4px 0 10px"><i class="bi bi-info-circle"></i><span>' + esc(ayuda) + '</span></div>' : '') +
       '<div class="oa-media"><button type="button" class="oa-btn blue" data-a="cam"' + (lleno ? ' disabled' : '') + '><i class="bi bi-camera-fill"></i> ' + (S.fotos.length ? 'Otra foto' : 'Tomar foto') + '</button>' +
-      '<button type="button" class="oa-btn line" data-a="gal"' + (lleno ? ' disabled' : '') + '><i class="bi bi-images"></i> De la galería</button></div>' + thumbs();
+      '<button type="button" class="oa-btn line" data-a="gal"' + (lleno ? ' disabled' : '') + '><i class="bi bi-images"></i> De la galería</button></div>' + thumbs() +
+      (conVideo ? videoCuerpo() : '');
+  }
+  /* 2026-10-21 (A5): el video SUMA y no reemplaza a la foto (regla de Daniel: la foto es obligatoria). Opcional, hasta 28 MB (10 a 20 segundos). */
+  function videoCuerpo() {
+    if (S.video) {
+      return '<div class="oa-vid"><video src="' + esc(S.video.url) + '" muted playsinline preload="metadata" aria-label="Video del pedido"></video><div><b><i class="bi bi-check-circle-fill"></i> Video listo</b>' +
+        '<small>' + esc(S.video.file.name || 'video') + ' · ' + Math.max(1, Math.round(S.video.file.size / 1048576)) + ' MB</small>' +
+        '<button type="button" class="oa-lnk muted" data-a="quitarvideo"><i class="bi bi-trash3"></i> Quitar el video</button></div></div>' +
+        (S.fotos.length ? '' : '<div class="oa-av" role="status"><i class="bi bi-exclamation-triangle-fill"></i><span>El video solo no basta: saca también una foto de la pieza.</span></div>');
+    }
+    return '<div class="oa-vid-add"><button type="button" class="oa-btn line block" data-a="camvid"><i class="bi bi-camera-video-fill"></i> Grabar un video corto <span class="oa-opc">(opcional)</span></button>' +
+      '<small>De 10 a 20 segundos y con sonido, sobre todo si hace ruido o se traba. No reemplaza la foto.</small></div>';
   }
   function chipsHTML(lista, actual, accion) {
     return '<div class="oa-chips">' + lista.map(function (m) {
@@ -459,6 +655,40 @@
       return '<li class="oa-stp ' + cl + (seg && seg.rechazado ? ' no' : '') + '">' + esc(txt[i] || p.texto) + '</li>';
     }).join('') + '</ol>';
   }
+  /* Trayectoria de un pedido, con fecha y hora Chile (REGLA #6). Los datos salen de `trayectoria()`; lo que el servidor aún no manda no se inventa. */
+  function trayectoriaHTML(x) {
+    var t = trayectoria(x);
+    if (t.rechazado) {
+      return '<div class="oa-note oa-rech"><i class="bi bi-x-circle"></i><span><b>Este pedido no se va a pedir.</b>' +
+        (t.motivo ? ' ' + esc(t.motivo) : '') + '</span></div>';
+    }
+    return '<ol class="oa-tray">' + t.pasos.map(function (p) {
+      return '<li class="oa-tr ' + (p.estado === 'hecho' ? 'done' : (p.estado === 'actual' ? 'now' : '')) + '"><span class="oa-tr-t">' + esc(p.texto) +
+        (p.extra ? ' <em>' + esc(p.extra) + '</em>' : '') + '</span>' +
+        (p.cuando ? '<span class="oa-tr-w">' + esc(p.cuando) + '</span>' : (p.estado === 'actual' ? '<span class="oa-tr-w">ahora</span>' : '')) + '</li>';
+    }).join('') + '</ol>';
+  }
+  /* «Lo atiende» y «Responde antes de»: SOLO si el servidor ya los manda (dueño y reloj de respuesta). Nunca se inventan. */
+  function atiendeHTML(x) {
+    if (!x) return '';
+    var antes = x.responde_antes ? fechaChile(x.responde_antes) : '';
+    if (!x.atiende && !antes) return '';
+    return '<div class="oa-atn">' + (x.atiende ? '<div><i class="bi bi-person-check"></i><span>Lo atiende: <b>' + esc(x.atiende) + '</b></span></div>' : '') +
+      (antes ? '<div><i class="bi bi-alarm"></i><span>Responde antes de: <b>' + esc(antes) + '</b></span></div>' : '') + '</div>';
+  }
+  /* Aviso de duplicado (M3): sugiere, no bloquea. Solo para las piezas de este pedido que aún no se marcaron como «otra distinta». */
+  function dupHTML(s) {
+    var out = '';
+    (s.sel || []).forEach(function (l, i) {
+      if (l.otraDistinta || !l.nombre) return;
+      var sol = buscarDuplicado(l.nombre, (s.d && s.d.sol) || []);
+      if (!sol) return;
+      out += '<div class="oa-dup" role="status"><i class="bi bi-files"></i><div><b>' + esc(dupTexto(sol)) + '</b><span>¿Es el mismo? Mírala antes de pedirla otra vez.</span>' +
+        '<div class="act"><button type="button" class="oa-btn line" data-a="dupver">Ver</button><button type="button" class="oa-btn ghost" data-a="dupotra" data-i="' + i + '">Es otra distinta</button></div></div></div>';
+    });
+    return out;
+  }
+  var TXT_NO_HAY = 'No hay en bodega: la pide gestión';   // 2026-10-21 (M10): antes «Hay que pedirla» y parecía que la compraba el técnico
   function stockChip(r) {
     if (!r) return '<span class="oa-st gray"><span class="oa-dot x"></span>Pídela con una foto</span>';
     var s = r.semaforo;
@@ -466,8 +696,8 @@
       var n = (typeof r.disponible === 'number' && !cfg().externo) ? Math.floor(r.disponible) : null;
       return '<span class="oa-st green"><span class="oa-dot g"></span>' + (n ? n + ' en bodega' : 'Hay en bodega') + '</span>';
     }
-    if (s === 'ambar') return '<span class="oa-st amber"><span class="oa-dot a"></span>Hay que pedirla</span>';
-    return '<span class="oa-st gray"><span class="oa-dot x"></span>Hay que pedirla</span>';
+    if (s === 'ambar') return '<span class="oa-st amber"><span class="oa-dot a"></span>' + TXT_NO_HAY + '</span>';
+    return '<span class="oa-st gray"><span class="oa-dot x"></span>' + TXT_NO_HAY + '</span>';
   }
   function finGenerico(o) {
     return '<div class="oa-fin"><div class="oa-done-ic ' + (o.tono || '') + '"><i class="bi bi-' + o.icono + '"></i></div><h2>' + esc(o.h) + '</h2><p class="lead">' + esc(o.lead) + '</p>' +
@@ -541,7 +771,7 @@
     return (id && fichaPorId(s, id)) ? id : (fichaPorId(s, 'H') ? 'H' : undefined);
   }
   function fichaDeLinea(s, l) { return fichaPorId(s, l.fichaId); }
-  function nuevaLinea(l, fid) { l.uid = uuid().slice(0, 12); if (fid) l.fichaId = fid; return l; }
+  function nuevaLinea(l, fid) { l.uid = uuid().slice(0, 12); if (fid) l.fichaId = fid; if (l.q == null) l.q = (S && S.q) || ''; return l; }   // `q`: la palabra con que lo buscó (alias)
   function datosDe(l) {
     if (!l.datos) l.datos = { ficha: l.fichaId, medido_con: '', motivo_no: '', campos: {}, confirmados: {}, otro: {} };
     if (!l.datos.confirmados) l.datos.confirmados = {};
@@ -779,25 +1009,32 @@
     });
     return pz.length ? tiles.filter(function (t) { return pz.indexOf(t.full) >= 0; }).concat(tiles.filter(function (t) { return pz.indexOf(t.full) < 0; })) : tiles;
   }
-  function matchTile(tile, desc) {
-    var a = icDe(tile.full), b = icDe(desc);
-    if (a !== 'otra' && a === b) return true;
-    var d = norm(desc);
-    return norm(tile.n).split(' ').some(function (w) { return w.length >= 4 && d.indexOf(w) >= 0; });
-  }
+  function matchTile(tile, desc) { return coincidePieza(tile, desc); }   // 2026-10-21 (M1): palabra completa o raíz, ya no 4 letras sueltas
   function compat(s) { return (s.ops && s.ops.compatibles) || []; }
   function enSel(s, id) { return s.sel.filter(function (l) { return l.id === id; })[0]; }
 
+  function todosArchivos(s) {             // fotos en orden (la 0 viaja con el pedido) y, al final, el video opcional
+    var l = s.fotos.map(function (f) { return { file: f.file, ref: f.ref || '', esVideo: false }; });
+    if (s.video) l.push({ file: s.video.file, ref: '', esVideo: true });
+    return l;
+  }
   var pedir = {
     init: function (s) {
       s.sel = []; s.q = ''; s.ops = null; s.cargando = true; s.falla = ''; s.detalle = ''; s.dejarFS = false; s.tile = null;
       s.loteId = uuid(); s.res = null; s.sug = null; s.pend = []; s.diag = null; s.camRef = ''; s.propiasAct = false;
+      s.alias = ''; s.video = null; s.enviadoOk = false; s.subidas = []; s.fotoExtraFallo = 0; s.progreso = ''; s.creadaMs = 0;
       var b = s.borrador ? leerBorrador(s.key) : null;
       if (b) {
-        s.sel = b.sel || []; s.q = b.q || ''; s.falla = b.falla || ''; s.detalle = b.detalle || ''; s.dejarFS = !!b.dejarFS;
+        s.sel = b.sel || []; s.q = b.q || ''; s.falla = b.falla || ''; s.detalle = b.detalle || ''; s.dejarFS = !!b.dejarFS; s.alias = b.alias || '';
         s.tile = b.tile || null; s.loteId = b.loteId || s.loteId; s.step = b.step === 3 ? 3 : (b.step === 2 && s.tile ? 2 : 1);
         s.diag = b.diag || null; s.sug = b.sug || null; s.pend = b.pend || [];
         if (b.nFotos) cargarFotosBorrador(s, b.nFotos, b.refs).then(function () { if (S === s) render(false); });
+        if (b.video) cargarVideoBorrador(s).then(function () { if (S === s) render(false); });
+        if (b.env) {            // el pedido ya salió: solo faltan archivos por subir -> pantalla final con «Reintentar fotos»
+          s.enviadoOk = true; s.res = b.env.res; s.subidas = b.env.ok || []; s.creadaMs = b.env.creada || 0; s.step = 'fin'; s.cargando = false;
+          s.fotoExtraFallo = s.subidas.filter(function (x) { return !x; }).length;
+          return;
+        }
       }
       var key = s.key;
       if (s.sem && s.sem.ops) return;       // el diagnóstico ya trajo las piezas, sus fichas y el stock: no se pide dos veces
@@ -805,8 +1042,20 @@
         if (S !== s) return;
         s.cargando = false;
         if (j.ok) s.ops = j; else s.opsErr = j.error;
+        if (s.pre && !s.sel.length) pedir.preElegir(s);
         render(false);
       });
+    },
+    /* 2026-10-21 (A2): «Piolas» y «Cinta» de la tarjeta abren ESTE flujo con la baldosa ya elegida (antes abrían el modal viejo, que copiaba la
+       medida del Catálogo como si fuera de terreno). Es una sugerencia a la vista: la persona cambia la pieza o la confirma (REGLA #32). */
+    preElegir: function (s) {
+      var t = tilesDe(s).filter(function (x) { return icDe(x.full) === s.pre; })[0];
+      if (!t) { s.q = s.pre === 'cinta' ? 'cinta' : 'piola'; return; }          // el modelo no la trae como baldosa: se deja buscada
+      var ms = compat(s).filter(function (r) { return matchTile(t, r.descripcion); });
+      s.tile = t;
+      if (ms.length) { s.step = 2; return; }
+      s.sel.push(nuevaLinea({ id: null, nombre: t.n, tile: t.n, origen: 'manual', cant: 1 }, fichaDeNombre(s, t.full)));
+      s.step = 3;
     },
     semilla: function (s, sem) {
       semillaBase(s, sem);
@@ -839,12 +1088,24 @@
     },
     /* paso 1 — la pieza */
     p1: function (s) {
-      var h = '<h2 class="oa-hq">¿Qué pieza necesita ' + esc(sinPar(s.d.n)) + '?</h2>' + sugBanner(s);
+      var h = '<h2 class="oa-hq">¿Qué pieza necesita ' + esc(sinPar(s.d.n)) + '?</h2>' + sugBanner(s) + dupHTML(s);
+      // 2026-10-21 (guiado): si no sabe qué pieza es, lo primero a la vista es «¿Qué le pasa?» (el diagnóstico guiado de siempre)
+      if (!s.sug && !s.sel.length && permitida(s, 'pedir')) {
+        h += '<button type="button" class="oa-btn oa-diag" data-a="adiag"><i class="bi bi-clipboard2-pulse"></i><span>¿Qué le pasa a ' + (s.d.k === 'i' ? 'este producto' : 'este equipo') +
+          '?<small>No sé qué pieza es: te ayudo a decidir</small></span></button>';
+      }
       if (s.cargando) h += '<div class="oa-hint"><i class="bi bi-arrow-repeat"></i> Buscando las piezas de este modelo…</div>';
       if (s.opsErr) h += '<div class="oa-urg"><i class="bi bi-wifi-off"></i><span>No pudimos traer las piezas de bodega. Igual puedes pedirla con una foto.</span></div>';
       h += '<div class="oa-search"><i class="bi bi-search"></i><input type="search" data-in="q" value="' + esc(s.q) + '" placeholder="Como tú le digas: perilla, cable…" aria-label="Buscar la pieza" autocomplete="off">' +
         '<button type="button" class="clr" id="oaClrQ" data-a="limpiarq" aria-label="Borrar la búsqueda"' + (s.q ? '' : ' hidden') + '><i class="bi bi-x-lg"></i></button></div>';
-      return h + '<div id="oaP1R">' + pedir.p1res(s) + '</div>';
+      return h + '<div id="oaP1R">' + pedir.p1res(s) + '</div>' + pedir.enlaces(s);
+    },
+    /* Enlaces pequeños de salida: el manual del modelo y la «vista clásica» (el modal de antes se conserva, REGLA #4.2). */
+    enlaces: function (s) {
+      var l = '';
+      if (s.d.p && s.d.p.man && window.otdRepAbrir) l += '<button type="button" class="oa-lnk" data-a="manualviejo"><i class="bi bi-file-earmark-pdf"></i> Ver el manual del ' + (s.d.k === 'i' ? 'producto' : 'equipo') + '</button>';
+      if (window.otdRepAbrir) l += '<button type="button" class="oa-lnk muted" data-a="clasica"><i class="bi bi-window"></i> Usar la vista clásica</button>';
+      return l ? '<div class="oa-enl">' + l + '</div>' : '';
     },
     /* resultados del paso 1 (se repintan solos al escribir en el buscador, sin tocar el campo: no se cierra el teclado) */
     p1res: function (s) {
@@ -856,7 +1117,7 @@
         var ms = cm.filter(function (r) { return matchTile(t, r.descripcion); });
         var hay = ms.some(function (r) { return r.semaforo === 'verde'; });
         var ya = s.sel.some(function (l) { return !l.id && l.tile === t.n; }) || ms.some(function (r) { return enSel(s, r.id); });
-        var sub = !ms.length ? '<span class="oa-dot x"></span> Pídela con una foto' : (hay ? '<span class="oa-dot g"></span> Hay en bodega' : '<span class="oa-dot a"></span> Hay que pedirla');
+        var sub = !ms.length ? '<span class="oa-dot x"></span> Pídela con una foto' : (hay ? '<span class="oa-dot g"></span> Hay en bodega' : '<span class="oa-dot a"></span> ' + TXT_NO_HAY);
         var sugT = ((s.sug && s.sug.piezas) || []).indexOf(t.full) >= 0;
         return '<button type="button" class="oa-tile' + (ya ? ' on' : '') + (sugT ? ' sug' : '') + '" data-a="tile" data-i="' + tiles.indexOf(t) + '">' + (ya ? '<span class="oa-ck"><i class="bi bi-check-lg"></i></span>' : '') +
           (sugT && !ya ? '<span class="oa-tile-sug">Sugerida</span>' : '') +
@@ -888,7 +1149,7 @@
     /* paso 2 — cuál es */
     p2: function (s) {
       var t = s.tile, ms = compat(s).filter(function (r) { return matchTile(t, r.descripcion); });
-      return sugBanner(s) + '<div class="oa-sc info" style="padding-left:14px"><div class="oa-sum-it"><span class="ph" style="display:grid;place-items:center">' + icSvg(t.ic) + '</span><span><b>' + esc(t.n) + '</b><small>' +
+      return sugBanner(s) + dupHTML(s) + '<div class="oa-sc info" style="padding-left:14px"><div class="oa-sum-it"><span class="ph" style="display:grid;place-items:center">' + icSvg(t.ic) + '</span><span><b>' + esc(t.n) + '</b><small>' +
         (t.dice ? 'le dicen «' + esc(t.dice) + '»' : 'Pieza elegida') + '</small></span></div></div>' +
         '<h2 class="oa-hq">¿Cuál es?</h2><p class="oa-hsub">Toca la que se parece. Elegir ya es agregar al pedido.</p>' +
         ms.map(function (r) { return pedir.repCard(s, r); }).join('') +
@@ -907,23 +1168,28 @@
       var okF = s.fotos.length > 0 && (!me.propias || s.fotos.some(function (f) { return !f.ref; }));
       var sinFoto = me.propias ? me.propiasIdx.filter(function (i) { return !s.fotos.some(function (f) { return f.ref === s.sel[i].uid; }); }) : [];
       var okQ = !!s.falla && (s.falla !== 'otro' || s.detalle.replace(/\s/g, '').length >= 10);
+      var okA = !!String(s.alias || '').trim();
       var okL = s.sel.length > 0 && s.sel.every(function (l) { return l.id || (l.nombre || '').replace(/\s/g, '').length >= 2; });
-      var falta = !me.okM ? { t: me.falta, go: me.go || 'oaSc-med' } : !okF ? { t: 'la foto', go: 'oaSc-foto' } :
+      var falta = !me.okM ? { t: me.falta, go: me.go || 'oaSc-med' } : !okF ? { t: s.video && !s.fotos.length ? 'una foto (el video solo no basta)' : 'la foto', go: 'oaSc-foto' } :
         sinFoto.length ? { t: 'la foto de ' + (s.sel[sinFoto[0]].nombre || 'la pieza') + ' con la huincha', go: 'oaLf' + sinFoto[0] } :
         !okQ ? { t: 'qué le pasó', go: 'oaSc-falla' } : !okL ? { t: 'el nombre de la pieza', go: 'oaSc-lista' } : null;
-      return { okM: me.okM, okF: okF, okQ: okQ, okL: okL, falta: falta, me: me };
+      return { okM: me.okM, okF: okF, okQ: okQ, okL: okL, okA: okA, falta: falta, me: me };
     },
     p3: function (s) {
       var e = pedir.estado3(s), me = e.me, n = 1;
       var h = '<h2 class="oa-hq">' + (me.hay ? 'Medidas, foto y envío' : 'Foto y envío') + '</h2><p class="oa-hsub">' +
-        (me.hay ? 'Lo que mide la pieza y una foto de la pieza con la huincha al lado. Bodega ve esto antes de buscarla.' : 'Una foto de la pieza y qué le pasó. Bodega ve esto antes de buscarla.') + '</p>' + errHTML() + sugBanner(s);
+        (me.hay ? 'Lo que mide la pieza y una foto de la pieza con la huincha al lado. Bodega ve esto antes de buscarla.' : 'Una foto de la pieza y qué le pasó. Bodega ve esto antes de buscarla.') + '</p>' + errHTML() + sugBanner(s) + dupHTML(s);
       var med = medidasHTML(s, n);
       if (med) { h += med; n++; }
       var f0 = s.sel.map(function (l) { return fichaDeLinea(s, l); }).filter(function (f) { return f && f.id !== 'H'; })[0];
       h += sc('oaSc-foto', e.okF, n++, 'Foto de la pieza con la huincha al lado', 'Obligatoria',
-        mediaCuerpo((f0 && f0.foto ? f0.foto + ' ' : '') + 'Sirve para que bodega reconozca la pieza.' + (me.propias ? ' Cada pieza con medida lleva además su propia foto arriba.' : '')));
+        mediaCuerpo((f0 && f0.foto ? f0.foto + ' ' : '') + 'Sirve para que bodega reconozca la pieza.' + (me.propias ? ' Cada pieza con medida lleva además su propia foto arriba.' : ''), true));
       h += sc('oaSc-falla', e.okQ, n++, '¿Qué le pasó?', 'Obligatoria', '<div class="oa-chips-h">Toca lo que pasó.</div>' + chipsHTML(FALLAS, s.falla, 'falla') +
         '<div style="margin-top:12px">' + textoHTML('detalle', s.detalle, s.falla === 'otro' ? 'Cuéntalo con tus palabras (mínimo 10 letras)' : 'Algo más que ayude (opcional)', s.falla === 'otro' ? 10 : 0) + '</div>');
+      // 2026-10-21 (A3): la palabra del técnico («perilla») viaja al servidor como otro nombre de la pieza; gestión la confirma o corrige
+      h += sc('oaSc-alias', e.okA, n++, '¿Cómo le dicen en tu empresa?', 'Opcional',
+        '<div class="oa-chips-h">Si la pieza tiene otro nombre en tu gimnasio o en tu taller, escríbelo. Así bodega la encuentra y el sistema aprende.</div>' +
+        '<input class="oa-inp" data-in="alias" maxlength="120" autocomplete="off" value="' + esc(s.alias || '') + '" placeholder="Ej: perilla, cable de fuerza" aria-label="Cómo le dicen a la pieza en tu empresa">', 'opt');
       h += sc('oaSc-lista', e.okL, n++, 'Piezas del pedido', '', pedir.lista(s), e.okL ? '' : '');
       if (s.d.k === 'e' && !s.d.fsb) {
         h += '<button type="button" class="oa-o2 wide' + (s.dejarFS ? ' on r' : '') + '" style="margin-bottom:12px" aria-pressed="' + !!s.dejarFS + '" data-a="dejarfs">' +
@@ -947,26 +1213,32 @@
       var e = pedir.estado3(s);
       if (e.falta) return faltaBtn(e.falta.t, e.falta.go);
       return '<button type="button" class="oa-btn blue block lg" data-a="enviar"' + (s.enviando ? ' aria-busy="true"' : '') + '>' +
-        (s.enviando ? '<span class="oa-spin"></span> Enviando…' : '<i class="bi bi-send-fill"></i> Enviar pedido a bodega') + '</button>';
+        (s.enviando ? '<span class="oa-spin"></span> ' + esc(s.progreso || 'Enviando…') : '<i class="bi bi-send-fill"></i> Enviar pedido a bodega') + '</button>';
     },
-    /* confirmación */
+    /* confirmación: qué pasó, quién lo atiende (si el servidor ya lo manda) y la trayectoria con fecha y hora Chile */
     fin: function (s) {
-      var r = s.res || {}, d = s.d;
+      var r = s.res || {}, d = s.d, primera = (r.solicitudes || [])[0] || {};
       var items = (r.solicitudes || []).map(function (x) {
         return '<div class="oa-sum-it"><span class="ph">' + icSvg(icDe(x.repuesto_nombre)) + '</span><span><b>' + esc(x.repuesto_nombre) + ' <span style="white-space:nowrap">× ' + (+x.cantidad || 1) + '</span></b><small>para ' + esc(sinPar(d.n)) + (x.medida ? ' · ' + esc(x.medida) : '') + '</small></span></div>';
       }).join('');
+      var pseudo = { estado: 'solicitado', creada_ms: s.creadaMs || Date.now(), atiende: r.atiende || primera.atiende || '', responde_antes: r.responde_antes || primera.responde_antes || '' };
+      var promesa = (pseudo.atiende || pseudo.responde_antes) ? 'Te avisamos por la campana en cada paso. No tienes que ir a buscarla.' : 'Bodega lo revisa. Lo verás avanzar aquí, en la OT.';
+      var faltan = s.fotoExtraFallo || 0;
       var body = '<div class="oa-fin"><div class="oa-done-ic"><i class="bi bi-check-lg"></i></div><h2>Listo.</h2>' +
-        '<p class="lead">Bodega ya recibió tu pedido' + (r.numero_ticket ? ' <span style="white-space:nowrap">N° ' + esc(r.numero_ticket) + '</span>' : '') + '.</p><div class="oa-sum">' + items + '</div><div class="oa-info-l">' +
-        '<div><i class="bi bi-person-check"></i><span>Bodega lo revisa y te avisa. No tienes que ir a buscarla.</span></div>' +
+        '<p class="lead">Bodega ya recibió tu pedido' + (r.numero_ticket ? ' <span style="white-space:nowrap">N° ' + esc(r.numero_ticket) + '</span>' : '') + '.</p><div class="oa-sum">' + items + '</div>' + atiendeHTML(pseudo) + '<div class="oa-info-l">' +
+        '<div><i class="bi bi-person-check"></i><span>' + promesa + '</span></div>' +
         (r.repetido ? '<div class="w"><i class="bi bi-files"></i><span>Este pedido ya estaba enviado: no se duplicó.</span></div>' : '') +
         (s.fsAviso ? '<div class="a"><i class="bi bi-sign-stop"></i><span>El equipo quedó fuera de servicio. Avisamos como urgente.</span></div>' : '') +
         (r.avisos && r.avisos.length ? r.avisos.map(function (a) { return '<div class="w"><i class="bi bi-exclamation-triangle-fill"></i><span>' + esc(a) + '</span></div>'; }).join('') : '') +
-        (s.fotoExtraFallo ? '<div class="w"><i class="bi bi-exclamation-triangle-fill"></i><span>' + s.fotoExtraFallo + ' foto(s) extra no se pudieron subir. El pedido sí quedó.</span></div>' : '') +
-        '<div><i class="bi bi-eye"></i><span>Lo verás avanzar aquí, en la OT.</span></div></div>' +
-        '<div class="oa-prev"><div class="oa-prev-t">Así va a avanzar</div>' + pasosPedido(null) + '</div>' + pendHTML(s) + '</div>';
-      return { top: '<div class="oa-top"><div class="oa-r1"><span class="oa-eb">Pedido enviado</span></div></div>', body: body,
-               foot: '<div class="row"><button type="button" class="oa-btn ghost lg" data-a="otrapieza"><i class="bi bi-plus-lg"></i> Pedir otra pieza</button>' +
-                     '<button type="button" class="oa-btn blue lg" data-a="volver">Volver a la OT</button></div>' };
+        (faltan ? '<div class="w"><i class="bi bi-cloud-slash"></i><span>' + faltan + (faltan === 1 ? ' archivo no se pudo subir' : ' archivos no se pudieron subir') + '. El pedido sí quedó y lo que falta sigue guardado en tu teléfono: toca «Reintentar fotos».</span></div>' : '') +
+        '</div>' +
+        '<div class="oa-prev"><div class="oa-prev-t">Así va a avanzar</div>' + trayectoriaHTML(pseudo) + '</div>' + pendHTML(s) + '</div>';
+      var foot = faltan
+        ? '<div class="row"><button type="button" class="oa-btn blue lg" data-a="reintfotos"' + (s.subiendo ? ' aria-busy="true"' : '') + '>' + (s.subiendo ? '<span class="oa-spin"></span> ' + esc(s.progreso || 'Subiendo…') : '<i class="bi bi-arrow-repeat"></i> Reintentar fotos') + '</button>' +
+          '<button type="button" class="oa-btn ghost lg" data-a="volver">Volver a la OT</button></div>'
+        : '<div class="row"><button type="button" class="oa-btn ghost lg" data-a="otrapieza"><i class="bi bi-plus-lg"></i> Pedir otra pieza</button>' +
+          '<button type="button" class="oa-btn blue lg" data-a="volver">Volver a la OT</button></div>';
+      return { top: '<div class="oa-top"><div class="oa-r1"><span class="oa-eb">Pedido enviado</span></div></div>', body: body, foot: foot };
     },
     /* acciones */
     elegirRep: function (s, id) {
@@ -975,8 +1247,8 @@
       var l = enSel(s, r.id);
       if (l) { s.sel = s.sel.filter(function (x) { return x !== l; }); }
       else {
-        var fid = s.tile && fichaDeNombre(s, s.tile.full);
-        if (!fid || fid === 'H') fid = (r.ficha && fichaPorId(s, r.ficha)) ? r.ficha : fid;
+        // 2026-10-21 (M1): manda la ficha de la PIEZA ELEGIDA; la de la baldosa solo si el servidor no trae una propia (o es la genérica)
+        var fid = fichaParaLinea(r.ficha, s.tile && fichaDeNombre(s, s.tile.full), function (id) { return !!fichaPorId(s, id); });
         s.sel.push(nuevaLinea({ id: r.id, nombre: r.descripcion, sku: r.sku || '', origen: 'compatible', cant: 1 }, fid));
       }
       s.dirty = true;
@@ -984,7 +1256,7 @@
     enviar: async function (s) {
       var e = pedir.estado3(s);
       if (e.falta || s.enviando) return;
-      s.enviando = true; s.err = ''; marco();
+      s.enviando = true; s.err = ''; s.progreso = 'Enviando…'; marco();
       s.fotos = fotosOrdenadas(s, e.me.propias);      // la foto general va primero: es la que viaja con el pedido
       var d = s.d, fd = new FormData();
       var motivo = falla_txt(s.falla) + (s.detalle.trim() ? ' — ' + s.detalle.trim() : '');
@@ -996,6 +1268,10 @@
         if (l.sku) o.repuesto_sku = l.sku;
         var dd = datosParaEnviar(s, l);                  // las medidas viajan POR LÍNEA (l.datos)
         if (dd) { o.datos = dd; o.ficha = dd.ficha; }
+        // 2026-10-21 (A3): la palabra del técnico viaja como otro nombre de la pieza («perilla» = pin); gestión lo confirma o corrige al validar
+        var propia = !l.id && !l.tile;                   // «Otra pieza»: lo escrito ES el nombre
+        var alt = armarNombresAlt({ canonico: propia ? '' : l.nombre, buscado: l.q || '', alias: s.alias, escrito: propia ? l.nombre : '' });
+        if (alt.length) o.nombres_alt = alt;
         return o;
       })));
       if (s.diag) {                                      // el camino del «¿Qué le pasa?», para bodega y gestión
@@ -1007,28 +1283,48 @@
       fd.append('evidencia', s.fotos[0].file, s.fotos[0].file.name || 'foto.jpg');
       var j = await api('POST', base(d) + '/solicitar-repuestos', fd);
       if (S !== s) return;
-      if (!j.ok) { s.enviando = false; s.err = j.error || 'No se pudo enviar el pedido.'; render(false); irA('oaBody'); return; }
-      s.fotoExtraFallo = 0;
-      for (var i = 1; i < s.fotos.length; i++) {
-        var f2 = new FormData();
-        f2.append('evidencia', s.fotos[i].file, s.fotos[i].file.name || 'foto.jpg');
-        var sidRef = null;                                // la foto de UNA pieza se asocia a SU solicitud; las generales, a todo el lote
-        if (e.me.propias && s.fotos[i].ref) {
-          var xr = (j.solicitudes || []).filter(function (x) { return x.ref === s.fotos[i].ref; })[0];
-          sidRef = xr ? xr.solicitud_id : null;
-        }
-        if (sidRef) f2.append('solicitud_id', sidRef); else f2.append('lote_id', j.lote_id || s.loteId);
-        var r2 = await api('POST', base(d) + '/evidencia', f2);
-        if (!r2.ok) s.fotoExtraFallo++;
-      }
-      s.res = j; s.enviando = false; s.step = 'fin'; s.fsAviso = !!(d.k === 'e' && s.dejarFS);
+      if (!j.ok) { s.enviando = false; s.progreso = ''; s.err = j.error || 'No se pudo enviar el pedido.'; render(false); irA('oaBody'); return; }
+      // El pedido YA quedó creado. Lo que falta (fotos 2..N y el video) sube una por una y cada una queda anotada: si se corta la señal,
+      // el borrador NO se borra y «Reintentar fotos» sube solo lo que falta (2026-10-21, M4).
+      s.res = j; s.enviadoOk = true; s.creadaMs = Date.now();
+      s.subidas = todosArchivos(s).map(function (_x, i) { return i === 0; });
       d.sol = (d.sol || []).concat((j.solicitudes || []).map(function (x) {
-        return { id: x.solicitud_id, nombre: x.repuesto_nombre, cant: x.cantidad, estado: 'solicitado', label: 'Solicitado', abierta: true, seg: null, medida: x.medida || '' };
+        return { id: x.solicitud_id, nombre: x.repuesto_nombre, cant: x.cantidad, estado: 'solicitado', label: 'Solicitado', abierta: true, seg: null, medida: x.medida || '',
+                 creada_ms: s.creadaMs, atiende: x.atiende || j.atiende || '', responde_antes: x.responde_antes || j.responde_antes || '' };
       }));
+      s.fsAviso = !!(d.k === 'e' && s.dejarFS);
       if (s.fsAviso) { d.fsb = true; d.fs = { motivo: motivo, riesgo: false, desde: '', por: '' }; }
-      borrarBorrador(s.key);
+      await guardarBorrador(s);                          // las fotos quedan a salvo en el teléfono mientras suben
+      await pedir.subirPendientes(s);
+      if (S !== s) return;
+      s.enviando = false; s.step = 'fin';
       try { if (window.otdRepRefrescar) window.otdRepRefrescar(d.k === 'i' ? 'i' + d.id : d.id); } catch (e2) { /* nada */ }
       render(true);
+    },
+    /* Sube los archivos que faltan (fotos 2..N y el video). Cada resultado se anota y se guarda; si todos suben, recién ahí se borra el borrador. */
+    subirPendientes: async function (s) {
+      var d = s.d, todos = todosArchivos(s), r = s.res || {}, nFoto = 0;
+      for (var i = 0; i < todos.length; i++) {
+        var it = todos[i];
+        if (!it.esVideo) nFoto++;
+        if (s.subidas[i]) continue;
+        s.progreso = it.esVideo ? 'Subiendo el video…' : 'Subiendo la foto ' + nFoto + ' de ' + todos.filter(function (x) { return !x.esVideo; }).length + '…';
+        if (S === s) marco();
+        var f2 = new FormData();
+        f2.append('evidencia', it.file, it.file.name || (it.esVideo ? 'video.mp4' : 'foto.jpg'));
+        var sidRef = null;                                // la foto de UNA pieza se asocia a SU solicitud; las generales, a todo el lote
+        if (it.ref) {
+          var xr = (r.solicitudes || []).filter(function (x) { return x.ref === it.ref; })[0];
+          sidRef = xr ? xr.solicitud_id : null;
+        }
+        if (sidRef) f2.append('solicitud_id', sidRef); else f2.append('lote_id', r.lote_id || s.loteId);
+        var r2 = await api('POST', base(d) + '/evidencia', f2);
+        if (r2.ok) s.subidas[i] = true;
+        await guardarBorrador(s);
+      }
+      s.fotoExtraFallo = s.subidas.filter(function (x) { return !x; }).length;
+      s.progreso = '';
+      if (!s.fotoExtraFallo) borrarBorrador(s.key);
     }
   };
 
@@ -1359,14 +1655,14 @@
   function semillaDe(s, r) { return Object.assign({}, r, { ops: s.ops, diag: diagPayload(s, r) }); }
   /* Lo que cada flujo hace al recibir la sugerencia: se muestra con su motivo y la persona lo cambia o lo confirma. */
   function semillaBase(s, sem) {
-    s.sug = { por_que: sem.por_que || '', aviso: sem.aviso || '', riesgo: sem.riesgo || '', piezas: sem.piezas || [] };
+    s.sug = { por_que: sem.por_que || '', aviso: sem.aviso || '', riesgo: sem.riesgo || '', piezas: sem.piezas || [], titulo: sem.titulo || '' };
     s.pend = sem.ademas || [];
     s.pendCtx = { ops: sem.ops || null, diag: sem.diag || null };
     if (sem.ops && !s.ops) s.ops = sem.ops;
   }
   function sugBanner(s) {
     if (!s.sug) return '';
-    return '<div class="oa-sugb"><i class="bi bi-clipboard2-pulse"></i><div><b>Sugerido por «¿Qué le pasa?»</b>' + (s.sug.por_que ? '<span>' + esc(s.sug.por_que) + '</span>' : '') +
+    return '<div class="oa-sugb"><i class="bi bi-clipboard2-pulse"></i><div><b>' + esc(s.sug.titulo || 'Sugerido por «¿Qué le pasa?»') + '</b>' + (s.sug.por_que ? '<span>' + esc(s.sug.por_que) + '</span>' : '') +
       '<span class="s">Puedes cambiarlo: tú decides.</span></div></div>' +
       (s.sug.aviso ? '<div class="oa-urg"><i class="bi bi-exclamation-triangle-fill"></i><span>' + esc(s.sug.aviso) + '</span></div>' : '');
   }
@@ -1469,9 +1765,10 @@
       var body = '<h2 class="oa-hq">Mis pedidos de repuesto</h2><p class="oa-hsub">Así van los pedidos de ' + esc(sinPar(s.d.n)) + '.</p>' +
         (sols.length ? sols.slice().reverse().map(function (x) {
           var sg = x.seg || null;
+          // 2026-10-21: trayectoria con fecha y hora Chile (misma palabra que ve gestión); si el pedido aún no trae su estado, el dibujo de 4 pasos de antes
+          var tray = x.estado ? trayectoriaHTML(x) : (pasosPedido(sg) + (sg && sg.rechazado ? '<div class="oa-note"><i class="bi bi-x-circle"></i><span>Este pedido no se va a pedir.</span></div>' : ''));
           return '<div class="oa-pedido"><b>' + esc(x.nombre || '') + ' × ' + (+x.cant || 1) + '</b><small>' + esc(String(x.label || '').split(' · ')[0]) + '</small>' +
-            (x.medida ? '<small class="oa-medtag"><i class="bi bi-rulers"></i> ' + esc(x.medida) + '</small>' : '') + pasosPedido(sg) +
-            (sg && sg.rechazado ? '<div class="oa-note"><i class="bi bi-x-circle"></i><span>Este pedido no se va a pedir. Bodega dejó una nota en el ticket.</span></div>' : '') + '</div>';
+            (x.medida ? '<small class="oa-medtag"><i class="bi bi-rulers"></i> ' + esc(x.medida) + '</small>' : '') + atiendeHTML(x) + tray + '</div>';
         }).join('') : '<div class="oa-empty">Todavía no hay pedidos para este equipo.</div>');
       return { top: topHTML({ eyebrow: 'Seguimiento' }), body: body,
                foot: '<div class="row"><button type="button" class="oa-btn ghost lg" data-a="abrir-pedir"><i class="bi bi-plus-lg"></i> Pedir otra pieza</button><button type="button" class="oa-btn blue lg" data-a="volver">Volver a la OT</button></div>' };
@@ -1533,7 +1830,7 @@
   }
   /* El tick verde de cada tarjeta se actualiza mientras se escribe, sin repintar el cuerpo (no se pierde el foco ni el clic). */
   var TICKS = {
-    pedir: { okM: 'oaSc-med', okF: 'oaSc-foto', okQ: 'oaSc-falla', okL: 'oaSc-lista' },
+    pedir: { okM: 'oaSc-med', okF: 'oaSc-foto', okQ: 'oaSc-falla', okL: 'oaSc-lista', okA: 'oaSc-alias' },
     fs: { okF: 'oaSc-foto', okQ: 'oaSc-que', okR: 'oaSc-riesgo' },
     baja: { okF: 'oaSc-foto', okM: 'oaSc-mot', okT: 'oaSc-diag' },
     nollego: { okC: 'oaSc-cuantos', okQ: 'oaSc-quepaso', okW: 'oaSc-quien' },
@@ -1555,9 +1852,21 @@
   }
   async function onChange(ev) {
     var t = ev.target;
-    if (!S || !t || (t.id !== 'oaCam' && t.id !== 'oaGal')) return;
+    if (!S || !t || (t.id !== 'oaCam' && t.id !== 'oaGal' && t.id !== 'oaVid')) return;
     var files = Array.prototype.slice.call(t.files || []);
     t.value = '';
+    if (t.id === 'oaVid') {                              // 2026-10-21 (A5): video opcional de 10 a 20 s, hasta 28 MB; suma a la foto, no la reemplaza
+      var v = files[0];
+      if (!v) return;
+      if (!esVideoArchivo(v)) { toast('Eso no es un video.', 'warning'); return; }
+      if (v.size > MAX_VIDEO_BYTES) { toast('El video pesa más de 28 MB. Graba uno de 10 a 20 segundos.', 'warning'); return; }
+      if (S.video) { try { URL.revokeObjectURL(S.video.url); } catch (e) { /* nada */ } }
+      S.video = { file: v, url: URL.createObjectURL(v) };
+      S.dirty = true; S.err = '';
+      if (S.flow === 'pedir') guardarBorrador(S);
+      render(false);
+      return;
+    }
     for (var i = 0; i < files.length; i++) {
       var f = files[i];
       if (S.fotos.length >= MAX_FOTOS) { toast('Como máximo ' + MAX_FOTOS + ' fotos.', 'warning'); break; }
@@ -1586,6 +1895,30 @@
     gal: function () { S.camRef = ''; document.getElementById('oaGal').click(); },
     camlinea: function (el) { var l = S.sel[+el.getAttribute('data-i')]; if (!l) return; S.camRef = l.uid; document.getElementById('oaCam').click(); },
     gallinea: function (el) { var l = S.sel[+el.getAttribute('data-i')]; if (!l) return; S.camRef = l.uid; document.getElementById('oaGal').click(); },
+    camvid: function () { document.getElementById('oaVid').click(); },
+    quitarvideo: function () {
+      if (S.video) { try { URL.revokeObjectURL(S.video.url); } catch (e) { /* nada */ } }
+      S.video = null; S.dirty = true; if (S.flow === 'pedir') guardarBorrador(S); render(false);
+    },
+    /* Reintentar los archivos que no subieron: el pedido ya existe, solo se sube lo que falta. */
+    reintfotos: async function () {
+      var s = S;
+      if (!s || s.subiendo) return;
+      s.subiendo = true; s.progreso = 'Subiendo…'; render(false);
+      await pedir.subirPendientes(s);
+      s.subiendo = false;
+      if (S !== s) return;
+      if (!s.fotoExtraFallo) toast('Listo: se subieron todas las fotos.', 'success');
+      else toast('Todavía faltan ' + s.fotoExtraFallo + '. Revisa la señal e intenta de nuevo.', 'warning');
+      render(false);
+    },
+    /* Aviso de duplicado (M3): «Ver» guarda el pedido sin terminar y abre los pedidos del equipo; «Es otra distinta» lo da por distinto. */
+    dupver: function () { var k = S.key; guardarBorrador(S).then(function () { abrir('seg', k); }); },
+    dupotra: function (el) { var l = S.sel[+el.getAttribute('data-i')]; if (!l) return; l.otraDistinta = true; S.dirty = true; guardarBorradorDeb(); render(false); },
+    adiag: function () { var k = S.key; abrir('diag', k); },
+    /* La «vista clásica» y el manual siguen siendo el modal de siempre (REGLA #4.2): se conserva el pedido a medias antes de salir. */
+    clasica: function () { irAlClasico(S.pre === 'cinta' ? 'cinta' : (S.pre === 'piola' ? 'piola' : 'repuesto')); },
+    manualviejo: function () { irAlClasico('repuesto', 'docs'); },
     quitarfoto: function (el) {
       var i = +el.getAttribute('data-i'), f = S.fotos.splice(i, 1)[0];
       if (f) try { URL.revokeObjectURL(f.url); } catch (e) { /* nada */ }
@@ -1638,7 +1971,13 @@
     falla: function (el) { S.falla = el.getAttribute('data-v'); S.dirty = true; render(false); },
     dejarfs: function () { S.dejarFS = !S.dejarFS; render(false); },
     otrapieza: function () {
-      var s = S; s.step = 1; s.sel = []; s.tile = null; s.fotos = []; s.falla = ''; s.detalle = ''; s.dejarFS = false; s.res = null; s.fsAviso = false;
+      if (S.fotoExtraFallo > 0) {          // fotos del pedido anterior sin subir: no se pierden sin avisar
+        var s0 = S;
+        window.ilusConfirm({ title: 'Faltan fotos por subir', message: 'Si pides otra pieza ahora, las fotos que faltan de este pedido se descartan.', okLabel: 'Descartar y seguir', cancelLabel: 'Reintentar primero', danger: true })
+          .then(function (ok) { if (ok && S === s0) { borrarBorrador(s0.key).then(function () { s0.fotoExtraFallo = 0; s0.enviadoOk = false; ACC.otrapieza(); }); } });
+        return;
+      }
+      var s = S; s.step = 1; s.alias = ''; s.video = null; s.enviadoOk = false; s.subidas = []; s.creadaMs = 0; s.fotoExtraFallo = 0; s.subiendo = false; s.progreso = ''; s.sel = []; s.tile = null; s.fotos = []; s.falla = ''; s.detalle = ''; s.dejarFS = false; s.res = null; s.fsAviso = false;
       s.sug = null; s.pend = []; s.diag = null; s.camRef = '';
       s.loteId = uuid(); s.dirty = false; render(true);
     },
@@ -1658,7 +1997,7 @@
     nmot: function (el) { S.motivo = el.getAttribute('data-v'); S.dirty = true; render(false); },
     incmenos: function () { if (S.cant > 1) { S.cant--; render(false); } },
     incmas: function () { if (S.cant < (S.d.cant || 1)) { S.cant++; render(false); } },
-    'abrir-pedir': function () { abrir('pedir', S.key); },
+    'abrir-pedir': function () { var k = S.key; abrir('pedir', k, leerBorrador(k) ? { borrador: true } : undefined); },
     /* medidas */
     mopc: function (el) {
       var i = +el.getAttribute('data-i'), k = el.getAttribute('data-k'), v = el.getAttribute('data-v'), l = S.sel[i], f = l && fichaDeLinea(S, l);
@@ -1763,12 +2102,23 @@
     if (a === 'abrir') return abrir(el.getAttribute('data-f'), key);
     if (a === 'seg') return abrir('seg', key);
     if (a === 'seguir') return abrir('pedir', key, { borrador: true });
+    if (a === 'masacc') { MAS_ABIERTO[key] = !MAS_ABIERTO[key]; pintar(key); return; }          // «Más acciones» del celular
     var mid = d.k === 'i' ? 'i' + d.id : d.id;
     if (a === 'manual') { if (window.otdRepAbrir) window.otdRepAbrir(mid, 'repuesto', 'docs'); return; }
-    if (a === 'piola' || a === 'cinta') { if (window.otdRepAbrir) window.otdRepAbrir(mid, a); return; }
+    // 2026-10-21 (A2): «Piolas» y «Cinta» abren el flujo NUEVO con la baldosa ya elegida; el modal viejo queda como «vista clásica» dentro del flujo
+    if (a === 'piola' || a === 'cinta') {
+      return abrir('pedir', key, { pre: a, semilla: { titulo: 'Empezaste desde «' + (a === 'piola' ? 'Piolas' : 'Cinta') + '»', por_que: 'Dejé elegida la pieza que tocaste.', piezas: [] } });
+    }
+    // 2026-10-21 (A9): «No pude revisarlo» no deja al técnico sin salida: avisa a gestión con el flujo de Informar incidencia
+    if (a === 'avisarpieza') {
+      return abrir('incidencia', key, { semilla: { titulo: 'Avisas a gestión', por_que: 'Marcaste que no pudiste revisar este equipo. Cuéntale a gestión qué pieza hace falta y súbele una foto.', piezas: [] } });
+    }
     if (a === 'saltar') { if (typeof window.otdSaltarEquipo === 'function') window.otdSaltarEquipo(d.id); return; }
     if (a === 'borrar') {
-      window.ilusConfirm({ title: '¿Borrar el pedido sin terminar?', message: 'Se borran la foto y las piezas que ya habías elegido.', okLabel: 'Sí, borrar', cancelLabel: 'No, dejarlo', danger: true })
+      var yaEnviado = !!(leerBorrador(key) || {}).env;
+      window.ilusConfirm({ title: yaEnviado ? '¿Descartar las fotos que faltan?' : '¿Borrar el pedido sin terminar?',
+        message: yaEnviado ? 'El pedido ya quedó enviado. Se borran solo las fotos que no alcanzaron a subir.' : 'Se borran la foto y las piezas que ya habías elegido.',
+        okLabel: yaEnviado ? 'Sí, descartar' : 'Sí, borrar', cancelLabel: 'No, dejarlo', danger: true })
         .then(function (ok) { if (ok) borrarBorrador(key).then(function () { pintar(key); }); });
       return;
     }
@@ -1805,6 +2155,9 @@
 
   /* API pública */
   window.OtAcc = { abrir: abrir, pintar: pintar, pintarTodo: pintarTodo, recargar: recargar, icSvg: icSvg };
+  // Funciones puras del pedido de repuesto (sin DOM): las usan las pruebas con Node (tests/test_ot_acciones_repuestos_front.py).
+  window.OtAccPuro = { coincidePieza: coincidePieza, fichaParaLinea: fichaParaLinea, armarNombresAlt: armarNombresAlt, fechaChile: fechaChile, haceTxt: haceTxt,
+                       buscarDuplicado: buscarDuplicado, dupTexto: dupTexto, trayectoria: trayectoria, raizPalabra: raizPalabra, esVideoArchivo: esVideoArchivo, mismaPieza: mismaPieza };
   window.otdAccPintar = pintar;
   window.otdAccAbrir = abrir;
 
