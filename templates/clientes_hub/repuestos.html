@@ -1889,7 +1889,7 @@ document.addEventListener('DOMContentLoaded', function(){
   // 2026-09-16: sin_costo/sin_modelo/pendiente_modelo/descontinuado tambien
   // son filtros de Bodega -- si no se listan aca, al filtrar por ellos la
   // pagina podia abrir en la pestana Seguimiento y el filtro "no hacia nada".
-  const tieneBod = p.get('bq') || p.get('marca_id') || p.get('ubicacion_id') || p.get('bajo_minimo') ||
+  const tieneBod = p.get('bq') || p.get('marca_id') || p.get('ubicacion_id') || p.get('proveedor_id') || p.get('bajo_minimo') ||
                    p.get('sin_costo') || p.get('sin_modelo') || p.get('pendiente_modelo') || p.get('descontinuado') || p.get('bpage');
   let elegida = 'bodega';
   if (location.hash === '#bodega' || tieneBod) elegida = 'bodega';

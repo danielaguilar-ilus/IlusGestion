@@ -149643,12 +149643,16 @@ def mant_proveedor_repuesto_update(pid):
     if err:
         return jsonify({"ok": False, "error": err}), 400
     if "nombre" in d:
-        nombre = (d.get("nombre") or "").strip()[:200]
+        nombre = " ".join(str(d.get("nombre") or "").split())[:200]
         if not nombre:
             return jsonify({"ok": False, "error": "El nombre del proveedor no puede quedar vacío."}), 400
         otro = mysql_fetchone("SELECT id FROM mant_proveedores_repuesto WHERE nombre=%s AND id<>%s", (nombre, pid))
         if otro:
             return jsonify({"ok": False, "error": "Ya existe otro proveedor con ese nombre."}), 409
+        _parecido = _prov_nombre_parecido(nombre, excluir_id=pid)     # 2026-10-23: tampoco un nombre que se escriba casi igual
+        if _parecido:
+            return jsonify({"ok": False, "error": f"Ya existe «{_parecido}» (se escribe parecido). Elige otro nombre o usa ese proveedor.",
+                            "error_codigo": "PROVEEDOR_PARECIDO"}), 409
         campos["nombre"] = nombre
     contactos, err = _prov_contactos_desde_body(d.get("contactos") if "contactos" in d else None)
     if err:
@@ -149686,12 +149690,21 @@ def mant_proveedor_repuesto_crear():
     """2026-07-13: crea un proveedor de repuestos nuevo desde el Tarjetero
     de Proveedores (/mantenciones/proveedores). Mismos campos editables
     que el PUT de arriba, más 'nombre' (obligatorio, solo en el alta)."""
+    # 🚚 2026-10-23 (Daniel: «los proveedores los crean los administradores, no los técnicos: hay varios repetidos porque se crean con
+    # mayúscula o con errores»): solo superadmin / admin / supervisor dan de alta un proveedor; los demás eligen de la lista.
+    if not _prov_puede_crear():
+        return jsonify({"ok": False, "error": "Los proveedores los crea un administrador. Elige uno de la lista o pídeselo a un administrador.",
+                        "error_codigo": "SOLO_ADMIN"}), 403
     d = request.get_json(silent=True) or {}
-    nombre = (d.get("nombre") or "").strip()
+    nombre = " ".join(str(d.get("nombre") or "").split())
     if not nombre:
         return jsonify({"ok": False, "error": "El nombre del proveedor es obligatorio"}), 400
     if mysql_fetchone("SELECT id FROM mant_proveedores_repuesto WHERE nombre=%s", (nombre[:200],)):
         return jsonify({"ok": False, "error": "Ya existe un proveedor con ese nombre."}), 409
+    _parecido = _prov_nombre_parecido(nombre)
+    if _parecido:
+        return jsonify({"ok": False, "error": f"Ya existe «{_parecido}» (se escribe parecido). Úsalo en vez de crear otro.",
+                        "error_codigo": "PROVEEDOR_PARECIDO"}), 409
     # 2026-10-04: mismos campos que la edición, incluidos los datos nuevos de la ficha.
     _prov_cols_asegurar()
     campos, err = _prov_campos_desde_body(d, parcial=False)
@@ -150754,6 +150767,58 @@ def repstock_actividad():
         return jsonify({"ok": False, "error": "No se pudo calcular el avance de la Bodega."}), 500
 
 
+def _prov_clave_nombre(nombre):
+    """Clave para comparar/ordenar nombres de proveedor: sin tildes, sin mayúsculas, sin signos y con los espacios colapsados
+    («DRAX», «Drax », «drax.» → «drax»). Una sola definición para el orden, el selector y el control de duplicados."""
+    import unicodedata
+    s = unicodedata.normalize("NFD", str(nombre or ""))
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn").lower()
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", s).split())
+
+
+def _prov_puede_crear():
+    """¿Puede dar de alta un proveedor de repuestos? Solo superadmin, admin y supervisor (2026-10-23); nunca un técnico."""
+    try:
+        if _es_rol_tecnico():
+            return False
+        u = getattr(g, "user", None) or {}
+        return _rol_familia(u.get("role")) in ("superadmin", "admin", "supervisor")
+    except Exception:
+        return False
+
+
+def _prov_nombre_parecido(nombre, excluir_id=None):
+    """Nombre de un proveedor ACTIVO que se escribe casi igual (mismas letras sin tildes, mayúsculas ni signos), o None.
+    Evita «Drax», «DRAX» y «drax.» como tres proveedores distintos."""
+    clave = _prov_clave_nombre(nombre)
+    if not clave:
+        return None
+    try:
+        for r in (mysql_fetchall("SELECT id, nombre FROM mant_proveedores_repuesto WHERE COALESCE(activo,1)=1") or []):
+            if excluir_id and int(r["id"]) == int(excluir_id):
+                continue
+            if _prov_clave_nombre(r.get("nombre")) == clave:
+                return r.get("nombre")
+    except Exception as e:
+        print(f"[prov] parecido: {type(e).__name__}", flush=True)
+    return None
+
+
+def _repstock_proveedores_ordenados():
+    """[{id, nombre, n}] de los proveedores activos, en orden alfabético (sin distinguir mayúsculas ni tildes), con cuántos repuestos
+    de la Bodega tiene cada uno. Nunca levanta: si algo falla devuelve []."""
+    try:
+        filas = mysql_fetchall(
+            "SELECT p.id, p.nombre, (SELECT COUNT(*) FROM mant_repuestos_stock r WHERE r.proveedor_id=p.id AND r.activo=1) AS n "
+            "  FROM mant_proveedores_repuesto p WHERE COALESCE(p.activo,1)=1") or []
+    except Exception as e:
+        print(f"[repstock] proveedores ordenados: {type(e).__name__}", flush=True)
+        return []
+    out = [{"id": f["id"], "nombre": (f.get("nombre") or "").strip(), "n": int(f.get("n") or 0)} for f in filas if (f.get("nombre") or "").strip()]
+    out.sort(key=lambda p: (_prov_clave_nombre(p["nombre"]), p["nombre"].lower(), p["id"]))
+    return out
+
+
 def _repstock_contexto_bodega():
     """Todo lo que la pestaña "Bodega" necesita para pintarse. Se llama
     tanto desde /repuestos (donde vive de verdad, Daniel 2026-08-07) como
@@ -150762,6 +150827,9 @@ def _repstock_contexto_bodega():
     q = (request.args.get("bq") or "").strip()
     marca_id = request.args.get("marca_id") or ""
     ubicacion_id = request.args.get("ubicacion_id") or ""
+    # 🚚 2026-10-23 (Daniel: «un filtro de proveedores… deben llamarse en orden por proveedores»). 🔒 Un técnico nunca ve ni filtra por
+    # proveedor (REGLA #19): para él se ignora. «sin» = repuestos sin proveedor asignado.
+    proveedor_id = "" if _oculta_proveedores() else (request.args.get("proveedor_id") or "").strip()
     solo_bajo_minimo = request.args.get("bajo_minimo") == "1"
     # 2026-08-08 (Daniel: "quiero filtrar por lo que no tiene costo... es
     # para atacar el caso de qué es lo que no está asociado, qué máquina no
@@ -150805,6 +150873,10 @@ def _repstock_contexto_bodega():
         where.append("r.marca_id=%s"); params.append(int(marca_id))
     if ubicacion_id.isdigit():
         where.append("r.ubicacion_id=%s"); params.append(int(ubicacion_id))
+    if proveedor_id == "sin":
+        where.append("(r.proveedor_id IS NULL OR r.proveedor_id=0)")
+    elif proveedor_id.isdigit():
+        where.append("r.proveedor_id=%s"); params.append(int(proveedor_id))
     if solo_bajo_minimo:
         where.append("r.stock_minimo IS NOT NULL AND r.cantidad <= r.stock_minimo")
 
@@ -150944,6 +151016,10 @@ def _repstock_contexto_bodega():
             "SELECT id, codigo, nombre FROM mant_repuestos_ubicaciones WHERE activo=1 ORDER BY codigo"
         ) or [],
         "bod_q": q, "bod_marca_id": marca_id, "bod_ubicacion_id": ubicacion_id,
+        "bod_proveedor_id": proveedor_id,
+        # 🚚 2026-10-23: el selector «Proveedor» (solo gestión), en orden alfabético sin distinguir mayúsculas ni tildes, con cuántos
+        # repuestos tiene cada uno. Vacío para un técnico (el dato ni viaja).
+        "bod_proveedores": [] if _oculta_proveedores() else _repstock_proveedores_ordenados(),
         "bod_bajo_minimo": solo_bajo_minimo,
         "bod_sin_costo": solo_sin_costo, "bod_sin_modelo": solo_sin_modelo,
         "bod_pendiente_modelo": solo_pendiente_modelo,
@@ -150955,6 +151031,7 @@ def _repstock_contexto_bodega():
         # (decisión Daniel 2026-09-16). La plantilla lo expone como
         # RB_PUEDE_GESTIONAR_MODELOS; el backend lo vuelve a exigir igual.
         "bod_puede_gestionar_modelos": _repstock_puede_gestionar_modelos(),
+        "bod_puede_crear_proveedor": _prov_puede_crear(),
         "bod_page": page, "bod_page_size": page_size,
         "bod_total": total, "bod_total_pages": total_pages,
     }
@@ -152828,6 +152905,7 @@ def repstock_exportar_excel():
     q = (request.args.get("bq") or "").strip()
     marca_id = request.args.get("marca_id") or ""
     ubicacion_id = request.args.get("ubicacion_id") or ""
+    proveedor_id = "" if _oculta_proveedores() else (request.args.get("proveedor_id") or "").strip()   # 2026-10-23: igual que la pantalla
     solo_bajo_minimo = request.args.get("bajo_minimo") == "1"
     # 🔒 2026-10-01: a un técnico (interno) el Excel le sale SIN las columnas
     # "Costo unitario" y "Proveedor", y sin el filtro "sin costo". El técnico
@@ -152851,6 +152929,10 @@ def repstock_exportar_excel():
         where.append("r.marca_id=%s"); params.append(int(marca_id))
     if ubicacion_id.isdigit():
         where.append("r.ubicacion_id=%s"); params.append(int(ubicacion_id))
+    if proveedor_id == "sin":
+        where.append("(r.proveedor_id IS NULL OR r.proveedor_id=0)")
+    elif proveedor_id.isdigit():
+        where.append("r.proveedor_id=%s"); params.append(int(proveedor_id))
     if solo_bajo_minimo:
         where.append("r.stock_minimo IS NOT NULL AND r.cantidad <= r.stock_minimo")
     if solo_sin_costo:

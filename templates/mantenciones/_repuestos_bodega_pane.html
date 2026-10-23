@@ -331,6 +331,15 @@
     <option value="">Todas las ubicaciones</option>
     {% for u in ubicaciones %}<option value="{{ u.id }}" {% if bod_ubicacion_id|string == u.id|string %}selected{% endif %}>{{ u.codigo }}{% if u.nombre %} — {{ u.nombre }}{% endif %}</option>{% endfor %}
   </select>
+  {# 🚚 2026-10-23 (Daniel: «un filtro de proveedores… deben llamarse en orden por proveedores»): solo gestión (REGLA #19: un técnico no
+     ve proveedores). Orden alfabético sin distinguir mayúsculas ni tildes, con cuántos repuestos tiene cada uno. #}
+  {% if not oculta_proveedores %}
+  <select name="proveedor_id" aria-label="Filtrar por proveedor">
+    <option value="">Todos los proveedores</option>
+    <option value="sin" {% if bod_proveedor_id == 'sin' %}selected{% endif %}>Sin proveedor asignado</option>
+    {% for p in bod_proveedores %}<option value="{{ p.id }}" {% if bod_proveedor_id|string == p.id|string %}selected{% endif %}>{{ p.nombre }} ({{ p.n }})</option>{% endfor %}
+  </select>
+  {% endif %}
   <label class="d-flex align-items-center gap-1" style="font-size:.82rem;color:#374151">
     <input type="checkbox" name="bajo_minimo" value="1" {% if bod_bajo_minimo %}checked{% endif %}> Bajo stock mínimo
   </label>
@@ -391,7 +400,7 @@
        falta). Mismo patrón de querystring que _repuestos_bodega_pag.html
        (_b_filtros): bq/marca_id/ubicacion_id/bajo_minimo/sin_costo/
        sin_modelo, para que "descargar" traiga lo mismo que se está viendo. #}
-    {% set rb_export_qs = '?bq=' ~ (bod_q or '')|urlencode ~ '&marca_id=' ~ (bod_marca_id or '') ~ '&ubicacion_id=' ~ (bod_ubicacion_id or '') ~ ('&bajo_minimo=1' if bod_bajo_minimo else '') ~ ('&sin_costo=1' if bod_sin_costo else '') ~ ('&sin_modelo=1' if bod_sin_modelo else '') ~ ('&pendiente_modelo=1' if bod_pendiente_modelo else '') ~ ('&descontinuado=1' if bod_descontinuado else '') %}
+    {% set rb_export_qs = '?bq=' ~ (bod_q or '')|urlencode ~ '&marca_id=' ~ (bod_marca_id or '') ~ '&ubicacion_id=' ~ (bod_ubicacion_id or '') ~ ('&proveedor_id=' ~ bod_proveedor_id if bod_proveedor_id else '') ~ ('&bajo_minimo=1' if bod_bajo_minimo else '') ~ ('&sin_costo=1' if bod_sin_costo else '') ~ ('&sin_modelo=1' if bod_sin_modelo else '') ~ ('&pendiente_modelo=1' if bod_pendiente_modelo else '') ~ ('&descontinuado=1' if bod_descontinuado else '') %}
     <a class="btn btn-sm btn-outline-success" href="{{ url_for('repstock_exportar_excel') }}{{ rb_export_qs }}"
        title="Descargar Excel con los repuestos del filtro actual (incluye fotos)">
       <i class="bi bi-file-earmark-excel me-1"></i>Descargar Excel
@@ -561,7 +570,7 @@
   {# 🔧 FIX 2026-09-16: faltaban pendiente_modelo y descontinuado en esta
      lista -- con "Pendiente de identificar" como unico filtro activo y
      cero resultados decia "Aun no hay repuestos cargados", que es falso. #}
-  {% if bod_q or bod_marca_id or bod_ubicacion_id or bod_bajo_minimo or bod_sin_costo or bod_sin_modelo or bod_pendiente_modelo or bod_descontinuado %}
+  {% if bod_q or bod_marca_id or bod_ubicacion_id or bod_proveedor_id or bod_bajo_minimo or bod_sin_costo or bod_sin_modelo or bod_pendiente_modelo or bod_descontinuado %}
     Sin resultados para este filtro.
   {% else %}
     Aún no hay repuestos cargados — usa "Nuevo repuesto" para empezar el levantamiento.
@@ -1418,6 +1427,7 @@ const RB_CSRF = {{ csrf_token()|tojson }};
 // proveedor ni costo"): para un técnico el modal no manda proveedor_id ni costo_unitario
 // (si no, cada edición suya BORRARÍA el proveedor y el costo que gestión ya cargó).
 const RB_OCULTA_PROV = {{ 'true' if oculta_proveedores else 'false' }};
+const RB_PUEDE_CREAR_PROV = {{ 'true' if bod_puede_crear_proveedor else 'false' }};   // 2026-10-23: solo superadmin / admin / supervisor
 // 2026-10-05: técnico de bodega (rol elevado) = elige proveedor viendo SOLO el nombre (endpoint /nombres).
 const RB_PROV_SOLO_NOMBRE = {{ 'true' if (oculta_proveedores and prov_nombre_tecnico) else 'false' }};
 let RB_MODAL = null;
@@ -2599,7 +2609,8 @@ async function rbBuscarProveedores(){
     '</div>'
   ).join('');
   const existe = RB_PROVEEDOR_RESULTS.some(p => p.nombre.toLowerCase() === q.toLowerCase());
-  if (!existe && !RB_PROV_SOLO_NOMBRE){   // el técnico de bodega no crea proveedores: solo elige
+  if (!existe && !RB_PROV_SOLO_NOMBRE && RB_PUEDE_CREAR_PROV){   // solo un administrador crea proveedores (2026-10-23): los demás eligen de la lista
+    // (el servidor lo vuelve a exigir y no deja crear un nombre que se escriba casi igual a otro)
     html += '<div class="rb-modelo-resultado-item" style="color:#dc2626;font-weight:600" onclick="rbAbrirNuevoProveedor()">' +
             '<i class="bi bi-plus-circle me-1"></i>Nuevo proveedor' + (q ? ' "' + escHtmlRb(q) + '"' : '') + '</div>';
   }
