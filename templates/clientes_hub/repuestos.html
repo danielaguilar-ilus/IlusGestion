@@ -660,6 +660,10 @@
           deshabilitado no puede vivir SOLO en el title (invisible en
           touch) -- visible siempre que haya algo que explicar. -#}
       <small id="rsListaBtnOTMotivo" class="rs-motivo" style="display:none"></small>
+      {#- 🗑️ 2026-10-23 (Daniel: «eliminarlos por el front, masivo, lo que seleccione; solo el superadmin»): el botón solo se
+          muestra si el servidor dice es_superadmin; el servidor lo vuelve a exigir en la ruta. -#}
+      <button type="button" class="rs-btn" id="rsListaBtnDel" style="display:none;color:#fff;background:#dc2626;border-color:#dc2626"
+              onclick="rsListaEliminar()"><i class="bi bi-trash3 me-1"></i>Eliminar seleccionadas (0)</button>
     </div>
     <div class="rs-lista" id="rsLista"><div class="rs-vacio"><span class="spinner-border spinner-border-sm me-1"></span> Cargando solicitudes…</div></div>
     <div class="rs-pie" id="rsPie" style="display:none">
@@ -2084,6 +2088,7 @@ async function rsCargar(){
     _rs.total_pages = j.total_pages || 1;
     _rs.puedePedir = (j.puede_pedir_rechazar !== false);
     _rs.puedeGenerarOT = !!j.puede_generar_ot;
+    _rs.esSuper = !!j.es_superadmin;     // 🗑️ 2026-10-23: «Eliminar seleccionadas» solo para el superadministrador
     // 🏗️ Fase 4: cada fetch nuevo (filtro/página) reinicia la selección de
     // "Generar OT (N)" -- REGLA #14 opera sobre lo VISIBLE, no across pages.
     _rs.selLista = {};
@@ -2424,7 +2429,7 @@ function rsSemaforoConteo(){
 }
 const _RST_ETAPA_CLS = {gestionar: 'rojo', lote: 'ambar', ot: 'azul', compra: 'violeta', cerrada: 'gris'};
 function rsFilaHtml(s){
-  const sel = _rs.puedeGenerarOT ? '<input type="checkbox" class="rst-chk" ' + (_rs.selLista[s.id] ? 'checked' : '') + ' onclick="event.stopPropagation()" onchange="rsListaToggle(' + s.id + ', this.checked)" aria-label="Seleccionar la solicitud #' + s.id + '">' : '';
+  const sel = (_rs.puedeGenerarOT || _rs.esSuper) ? '<input type="checkbox" class="rst-chk" ' + (_rs.selLista[s.id] ? 'checked' : '') + ' onclick="event.stopPropagation()" onchange="rsListaToggle(' + s.id + ', this.checked)" aria-label="Seleccionar la solicitud #' + s.id + '">' : '';
   const origen = s.solicitud_padre_id ? '<span class="rst-org">Parte de #' + s.solicitud_padre_id + '</span>'
     : (s.contexto === 'ot' ? '<a class="rst-org ot" href="/ot/' + s.visita_id + '" target="_blank" rel="noopener" onclick="event.stopPropagation()"><i class="bi bi-clipboard2-check"></i>' + rsEsc(s.numero_ot || ('OT #' + s.visita_id)) + '</a>'
     : (s.contexto === 'incidencia' ? '<span class="rst-org inc"><i class="bi bi-exclamation-triangle-fill"></i>Incidencia</span>'
@@ -2993,7 +2998,7 @@ function rsCard(s){
   // la vista Lista -- solo tiene sentido si el usuario puede generar OT
   // (mismo permiso que ya gatea el botón individual de cada tarjeta).
   // Reusa .rs-grupo-item (checkbox + tarjeta), YA estilado para esto.
-  if (!_rs.puedeGenerarOT) return card;
+  if (!(_rs.puedeGenerarOT || _rs.esSuper)) return card;
   const checked = !!_rs.selLista[s.id];
   return '<div class="rs-grupo-item"><input type="checkbox" ' + (checked ? 'checked' : '') +
     ' onchange="rsListaToggle(' + s.id + ', this.checked)" ' +
@@ -3014,7 +3019,15 @@ function rsListaActualizarBoton(){
   const btn = document.getElementById('rsListaBtnOT');
   const motivo = document.getElementById('rsListaBtnOTMotivo');
   if (!acc || !btn) return;
-  acc.style.display = _rs.puedeGenerarOT ? '' : 'none';
+  acc.style.display = (_rs.puedeGenerarOT || _rs.esSuper) ? '' : 'none';
+  const btnDel = document.getElementById('rsListaBtnDel');
+  if (btnDel){
+    const nSel = _rs.pagina.filter(function(s){ return _rs.selLista[s.id]; }).length;
+    btnDel.style.display = _rs.esSuper ? '' : 'none';
+    btnDel.disabled = !nSel;
+    btnDel.innerHTML = '<i class="bi bi-trash3 me-1"></i>Eliminar seleccionadas (' + nSel + ')';
+  }
+  btn.style.display = _rs.puedeGenerarOT ? '' : 'none';
   if (!_rs.puedeGenerarOT) return;
   // 🔒 M4 (coordinación post-merge, 2026-09-26): el motivo del botón
   // deshabilitado también se muestra en un <small> visible bajo el botón
@@ -3044,6 +3057,47 @@ function rsListaActualizarBoton(){
   btn.disabled = !!razones.length;
   btn.title = razones.length ? razones.join(' · ') : 'Genera una OT de instalación de repuestos con estas ' + sels.length + ' solicitud(es).';
   _setMotivo(razones.length ? razones.join(' · ') : '');
+}
+// 🗑️ 2026-10-23: elimina las solicitudes marcadas (solo superadmin). El servidor omite, con su motivo, las que ya movieron stock,
+// están en una compra o ya tienen OT; el resto se borra dejando el registro en la auditoría.
+async function rsListaEliminar(){
+  if (!_rs.esSuper) return;
+  const ids = rsListaSeleccionIds();
+  if (!ids.length) return;
+  const filas = _rs.pagina.filter(function(s){ return ids.indexOf(s.id) >= 0; });
+  const resumen = filas.slice(0, 12).map(function(s){
+    return rsEsc('#' + s.id + ' · ' + (s.repuesto_nombre || '') + ' × ' + rsFmt(s.cantidad) + (s.numero_ticket ? ' · ' + s.numero_ticket : ''));
+  }).join('<br>') + (filas.length > 12 ? '<br>… y ' + (filas.length - 12) + ' más' : '');
+  const ok = await ilusConfirm({
+    title: 'Eliminar ' + ids.length + (ids.length === 1 ? ' solicitud' : ' solicitudes') + ' de repuestos',
+    message: 'Se eliminarán de forma permanente, con sus fotos e historial. No se puede deshacer.',
+    sub: resumen, subHtml: true, okLabel: 'Continuar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  const motivo = await ilusPrompt({
+    title: 'Motivo', message: 'Queda guardado en la auditoría junto con quién las eliminó.',
+    placeholder: 'Ej: solicitudes de prueba', required: true,
+  });
+  if (!motivo) return;
+  const btn = document.getElementById('rsListaBtnDel');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/repuestos/api/solicitudes-ot/eliminar', { method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ids: ids, motivo: motivo }) });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || 'No se pudo eliminar');
+    const om = j.omitidas || [];
+    if (om.length){
+      await ilusAlert({ title: (j.eliminadas || []).length + ' eliminadas · ' + om.length + ' no se pudieron eliminar',
+        message: 'Estas quedaron como estaban:',
+        sub: om.map(function(o){ return rsEsc('#' + o.id + ': ' + o.motivo); }).join('<br>'), subHtml: true, type: 'warning' });
+    } else {
+      ilusToast('✓ ' + (j.eliminadas || []).length + ' solicitud(es) eliminada(s)', { type: 'success' });
+    }
+  } catch(e){
+    ilusToast('No se pudo eliminar: ' + e.message, { type: 'error' });
+  }
+  rsCargar();
 }
 async function rsListaGenerarOT(){
   const ids = rsListaSeleccionIds();

@@ -106182,7 +106182,9 @@ def repstock_solicitudes_ot_listar():
                     "puede_pedir_rechazar": puede_gestion_plata,
                     # 🏗️ Fase 3 (2026-09-21): controla si la cola ofrece
                     # "Generar OT de instalación" -- ver _otrep_puede_generar_ot.
-                    "puede_generar_ot": _otrep_puede_generar_ot()})
+                    "puede_generar_ot": _otrep_puede_generar_ot(),
+                    # 🗑️ 2026-10-23: solo el superadministrador ve la selección con «Eliminar seleccionadas».
+                    "es_superadmin": bool((getattr(g, "permissions", None) or {}).get("superadmin"))})
 
 
 def _otrep_avisar_vencidas(vencidas):
@@ -107448,6 +107450,84 @@ def _otrep_compra_tras_estado(sid, compra_id_antes, nuevo, user):
             _otrep_compra_sincronizar(compra_id_antes, user)
     except Exception as e:
         print(f"[otrep] estado->compra sync sid={sid} compra={compra_id_antes}: {e}", flush=True)
+
+
+@app.route("/repuestos/api/solicitudes-ot/eliminar", methods=["POST"])
+@_require_superadmin_api
+def repstock_solicitudes_ot_eliminar():
+    """🗑️ 2026-10-23 (Daniel: «hay solicitudes de repuestos que son de prueba y quiero eliminarlas… por el front, masivo, lo que
+    seleccione; solo para el superadmin»). Elimina las solicitudes elegidas. Body: {ids:[...], motivo:"…" (≥ 5 caracteres)}.
+
+    Se OMITEN (con su motivo, nada se rompe) las que ya movieron stock (movimientos de bodega), las que están en una compra, las que
+    ya tienen OT generada y las que tienen partes repartidas que no van en la misma selección. Antes de borrar cada una queda su
+    foto completa en la auditoría (REGLA #5) y, si pertenece a una OT, en la bitácora de esa OT. El stock comprometido se
+    recalcula solo (es la suma de las solicitudes abiertas); sus fotos/eventos se van con ella. El ticket agrupador NO se toca."""
+    d = request.get_json(silent=True) or {}
+    motivo = " ".join(str(d.get("motivo") or "").split())[:300]
+    if len(motivo) < 5:
+        return jsonify({"ok": False, "error": "Escribe el motivo (al menos 5 caracteres) para dejar el registro."}), 400
+    ids = []
+    for x in (d.get("ids") or []):
+        try:
+            n = int(x)
+        except (TypeError, ValueError):
+            continue
+        if n > 0 and n not in ids:
+            ids.append(n)
+    if not ids:
+        return jsonify({"ok": False, "error": "No hay solicitudes seleccionadas."}), 400
+    if len(ids) > 300:
+        return jsonify({"ok": False, "error": "Elimina de a 300 como máximo."}), 400
+    quien = current_username() or "superadmin"
+    elegidas = set(ids)
+    eliminadas, omitidas = [], []
+    for sid in ids:
+        try:
+            s = mysql_fetchone("SELECT * FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))
+            if not s:
+                omitidas.append({"id": sid, "motivo": "Ya no existe."})
+                continue
+            razon = None
+            try:
+                _movio = (mysql_fetchone("SELECT 1 AS x FROM mant_repuestos_movimientos WHERE solicitud_id=%s LIMIT 1", (sid,)) or {}).get("x")
+            except Exception:
+                _movio = False      # sin tabla de movimientos no hay kardex que desordenar
+            if _movio:
+                razon ="Ya movió stock de bodega (recibida o instalada): borrarla desordenaría el kardex."
+            elif s.get("compra_id"):
+                razon = "Está dentro de una compra: sácala de la compra primero."
+            elif s.get("ot_generada_id"):
+                razon = "Ya tiene una OT generada: desasóciala de la OT primero."
+            else:
+                hijas = mysql_fetchall("SELECT id FROM mant_ot_repuesto_solicitudes WHERE solicitud_padre_id=%s", (sid,)) or []
+                if any(h["id"] not in elegidas for h in hijas):
+                    razon = "Tiene partes repartidas (stock libre) que no están en la selección."
+            if razon:
+                omitidas.append({"id": sid, "motivo": razon})
+                continue
+            foto = {k: (str(v) if v is not None else None) for k, v in dict(s).items()}
+            _audit("repuesto_solicitud_eliminada", target_type="repuesto_solicitud", target_id=sid,
+                   details={"motivo": motivo, "solicitud": foto})
+            if s.get("visita_id"):
+                try:
+                    _mant_log("visita", int(s["visita_id"]), "repuesto_solicitud_eliminada",
+                              f"Solicitud #{sid} «{s.get('repuesto_nombre')}» × {s.get('cantidad')} eliminada por {quien}. Motivo: {motivo}")
+                except Exception:
+                    pass
+            try:
+                mysql_execute("DELETE FROM mant_ot_repuesto_eventos WHERE solicitud_id=%s", (sid,))
+            except Exception:
+                pass
+            try:
+                mysql_execute("UPDATE mant_repuestos_stock_alias SET solicitud_id=NULL WHERE solicitud_id=%s", (sid,))
+            except Exception:
+                pass
+            mysql_execute("DELETE FROM mant_ot_repuesto_solicitudes WHERE id=%s", (sid,))   # las evidencias se van en cascada
+            eliminadas.append({"id": sid, "ticket_id": s.get("ticket_id")})
+        except Exception as e:
+            print(f"[otrep] eliminar sid={sid}: {type(e).__name__}: {e}", flush=True)
+            omitidas.append({"id": sid, "motivo": "No se pudo eliminar (quedó el detalle en el registro del servidor)."})
+    return jsonify({"ok": True, "eliminadas": eliminadas, "omitidas": omitidas})
 
 
 # ═══════════════════════════════════════════════════════════════════════
