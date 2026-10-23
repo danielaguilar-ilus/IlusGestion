@@ -5016,6 +5016,11 @@ PERMS_KEYS = (
     # en True y Daniel no es responsable de nada por serlo; la lista de candidatos sale de ot_responsable.es_candidato (permiso
     # EXPLÍCITO, activo y fuera de la familia técnico). Dormido por completo mientras nadie lo tenga encendido.
     "mant_ot_responsable",
+    # mant_ot_autoriza_aviso — «Recibe avisos de autorizaciones de OT» (aditivo 2026-10-23). Daniel: «a Felipe, al ser superadmin, le
+    # llegan esos mensajes; si él tiene mis mismas credenciales no va a autorizar: sácale eso por el front». Tipo BLOQUEO: nace
+    # concedido (los superadmins siguen recibiéndolos) y se apaga por persona en «Permisos individuales». Solo decide a quién llega la
+    # campana y el correo de «Autorización pendiente» (_ot_aut_receptores); no cambia quién puede resolverlas.
+    "mant_ot_autoriza_aviso",
 )
 
 _ROLE_PERMS_CACHE = {}   # in-process cache, busted por admin_roles_matrix_save
@@ -5031,7 +5036,7 @@ _ROLE_PERMS_CACHE = {}   # in-process cache, busted por admin_roles_matrix_save
 # False como el resto, reagendar y reasignar se apagarían de golpe para
 # todo el mundo al desplegar, que es justo lo contrario de lo pedido. Un
 # permiso de tipo "bloqueo" solo apaga a quien se le marca explícitamente.
-_PERMS_CONCEDIDOS_POR_DEFECTO = ("mant_reagendar", "mant_reasignar_tecnico")
+_PERMS_CONCEDIDOS_POR_DEFECTO = ("mant_reagendar", "mant_reasignar_tecnico", "mant_ot_autoriza_aviso")
 
 
 def _empty_perms():
@@ -5176,6 +5181,9 @@ def _build_perms_from_matrix(role):
     # 🙋 2026-10-21 (REGLA #36): «Responsable de OT». Nace APAGADO (no es de tipo bloqueo): se enciende a propósito para quien
     # corresponda. Ver "mant_ot_responsable" en PERMS_KEYS.
     base["mant_ot_responsable"] = bool(man.get("ot_responsable"))
+    # 🔔 2026-10-23: «Recibe avisos de autorizaciones de OT». Tipo BLOQUEO (ausencia de fila = concedido), como mant_taller.
+    base["mant_ot_autoriza_aviso"] = (man.get("ot_autoriza_aviso") is None
+                                      or bool(man.get("ot_autoriza_aviso")))
     # Flag coarse "transporte" — habilita TODO el módulo (/transporte/*,
     # manifiestos, couriers). Decisión 2026-06-03 (caso Alison): si el rol
     # tiene CUALQUIER acción de transporte marcada, el flag coarse se enciende.
@@ -14293,8 +14301,10 @@ PERMISSIONS_MATRIX = {
                                    "reagendar", "reasignar_tecnico",
                                    "ot2_tecnico", "taller",
                                    # 🙋 2026-10-21 (REGLA #36): quién puede ser el responsable de una OT. Nace apagado.
-                                   "ot_responsable"]},
-    "retiros":        {"label":"Retiros",        "icon":"bi-box-arrow-up-right",
+                                   "ot_responsable",
+                                   # 🔔 2026-10-23: quién recibe los avisos de «Autorización pendiente» (bloqueo: nace concedido).
+                                   "ot_autoriza_aviso"]},
+    "retiros":        {"label":"Retiros",       "icon":"bi-box-arrow-up-right",
                        "acciones":["ver","gestionar","monitor","marketing","horarios","encuesta_firma"]},
     "transporte":     {"label":"Transporte",     "icon":"bi-truck",
                        "acciones":["ver","cubicador","asignar","manifiestos","couriers",
@@ -14403,6 +14413,11 @@ PERMISSIONS_META = {
         # se enciende solo para Víctor, Aarón y Juan Pablo (por persona en «Permisos individuales», o por rol aquí).
         "ot_responsable": {"label": "Responsable de OT (lleva las órdenes de trabajo y recibe sus avisos)",
                          "tipo": "submodulo", "icon": "bi-person-check"},
+        # 🔔 2026-10-23 (Daniel: «a Felipe, al ser superadmin, le llegan esos mensajes… sácale eso por el front»). Quien lo tiene recibe
+        # la campana y el correo de «Autorización pendiente» (OT sin documento, $0, etc.). Nace concedido; se apaga por persona en
+        # «Permisos individuales». No cambia quién puede aprobar.
+        "ot_autoriza_aviso": {"label": "Recibe avisos de autorizaciones de OT (correo y campana de «Autorización pendiente»)",
+                         "tipo": "bloqueo", "icon": "bi-bell"},
     },
     "retiros": {
         "ver":       {"label": "Monitor de retiros",  "tipo": "submodulo", "icon": "bi-eye"},
@@ -14521,6 +14536,7 @@ _PERMS_CONCEDIDOS_POR_OMISION = {
     # Este permiso solo queda visible/editable para que Daniel pueda, en el
     # futuro, cerrar el Taller a OTRO rol adicional sin pedir otro deploy.
     ("mantenciones", "taller"),
+    ("mantenciones", "ot_autoriza_aviso"),     # 2026-10-23: bloqueo (nace concedido), se apaga por persona
 }
 
 
@@ -98562,6 +98578,32 @@ def _ot_aut_superadmins():
         return []
 
 
+def _ot_aut_receptores():
+    """Superadministradores que RECIBEN el aviso de «Autorización pendiente» (campana + correo). Es `_ot_aut_superadmins()` menos
+    quienes tengan apagado «Recibe avisos de autorizaciones de OT» (la fila de la persona manda sobre la de su rol; sin fila = recibe).
+    Si por error se apagara a todos, avisa a todos (una autorización jamás puede quedar sin destinatario)."""
+    todos = _ot_aut_superadmins()
+    if not todos:
+        return todos
+    try:
+        filas = mysql_fetchall(
+            "SELECT u.id, "
+            "  (SELECT up.permitido FROM usuario_permisos up WHERE up.user_id=u.id AND up.permiso=%s LIMIT 1) AS ov, "
+            "  (SELECT rp.permitido FROM rol_permisos rp WHERE rp.rol_slug=u.role AND rp.modulo=%s AND rp.accion=%s LIMIT 1) AS rolp "
+            "  FROM app_users u WHERE u.active=1 AND u.role LIKE 'superadmin%%'",
+            ("mant_ot_autoriza_aviso", "mantenciones", "ot_autoriza_aviso")) or []
+    except Exception as e:
+        print(f"[ot-aut] receptores: {type(e).__name__}", flush=True)
+        return todos
+    apagados = set()
+    for f in filas:
+        ov, rolp = f.get("ov"), f.get("rolp")
+        if (ov is not None and not ov) or (ov is None and rolp is not None and not rolp):
+            apagados.add(f.get("id"))
+    elegidos = [s for s in todos if s.get("id") not in apagados]
+    return elegidos or todos
+
+
 def _ot_aut_resumen(a, numero_ot=None, cliente=None):
     """Una línea que explica la solicitud (campana, correo, bitácora)."""
     t = _OT_AUT_TIPO_TXT.get(a.get("tipo"), a.get("tipo"))
@@ -98615,7 +98657,7 @@ def _ot_aut_notificar_superadmins(a):
     resumen = _ot_aut_resumen(a, numero_ot, cliente)
     titulo = f"Autorización pendiente: {resumen}"[:200]
     cuerpo = (f"{a.get('solicitado_por_nombre') or '?'} pide: {a.get('argumento') or ''}")[:1500]
-    for sa in _ot_aut_superadmins():
+    for sa in _ot_aut_receptores():
         try:
             # tipo 'otro' (valor ya existente del ENUM); con cliente/visita vacíos el dedupe usa url+título.
             _mant_notificar(sa["id"], "otro", titulo, cuerpo, url_accion=url, prioridad="alta")
@@ -98643,7 +98685,7 @@ def _ot_aut_notificar_superadmins(a):
                 "subject": _brand_subject(f"Autorización pendiente · {resumen}"),
                 "preheader": "Una OT necesita tu autorización remota.",
                 "status_label": "Autorización pendiente",
-                "title": "Te piden autorizar algo que no tiene documento",
+                "title": "Te piden autorizar algo que no tiene un documento que respalde el cobro",
                 "subtitle": resumen,
                 "customer_name": sa.get("nombre") or "",
                 "message": (f"<p><b>Argumento de {_esc(a.get('solicitado_por_nombre') or '?')}:</b></p>"

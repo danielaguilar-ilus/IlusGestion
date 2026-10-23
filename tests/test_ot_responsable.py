@@ -797,7 +797,7 @@ class TestArranque(unittest.TestCase):
 # ═══════════════════════════ C) el cableado en app.py ═══════════════════════════
 class TestPermiso(unittest.TestCase):
     def test_llave_matriz_y_etiqueta(self):
-        self.assertIn('    "mant_ot_responsable",\n)', APP, "la llave está en PERMS_KEYS (permisos individuales)")
+        self.assertIn('    "mant_ot_responsable",\n', APP, "la llave está en PERMS_KEYS (permisos individuales)")
         self.assertEqual(R.PERMISO_KEY, "mant_ot_responsable")
         i = APP.index('"mantenciones":   {"label":"Servicio Técnico"')
         self.assertIn('"ot_responsable"', APP[i:i + 1800], "aparece en Roles → Servicio Técnico")
