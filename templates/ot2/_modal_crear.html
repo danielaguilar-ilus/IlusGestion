@@ -5669,6 +5669,7 @@ window.OT2C = (function(){
   // sigue viendo, atenuada, y NO se envía al crear la OT.
   // Tope de filas por OT: el mismo que el servidor (_OT2_TAREAS_MANUALES_MAX).
   var O2M_MAX_FILAS = 150;
+  var O2M_SPLIT_MAX = 20;      // 2026-10-23: hasta cuántas unidades de un mismo producto se abren una por una en una revisión
   function _o2mTmIncluida(tm){ return !!tm && !tm.excluida; }
   function _o2mTareasIncluidas(){ return (S.tareas_manuales || []).filter(_o2mTmIncluida); }
   function _o2mTmNombre(tm){
@@ -5973,10 +5974,17 @@ window.OT2C = (function(){
         if (!j || !j.ok || !j.activo){ comoSiempre(); return; }
         _o2mChk.bloques = j.bloques_sistema || [];
         _o2mChk.clases = j.clases_catalogo || [];
+        var _filasEst = (S.tareas_manuales || []).length;
         lista.forEach(function(it){
           var h = (j.skus || {})[it.sku] || {};
           var porLinea = h.repetible === true;
+          // 🧾 2026-10-23 (Daniel, NVI 687: «cuando subimos una OT es necesario que veamos el detalle de las cantidades… en una revisión
+          // puede actuar como las mantenciones, duplicando las filas por cantidad, para que no dé la sensación de ausencia de material»):
+          // también los discos, mancuernas y bancos (clase repetible) se abren UNA FILA POR UNIDAD, «(1 de 3)». Solo si son pocas
+          // (≤ O2M_SPLIT_MAX) y caben en el tope de filas de la OT; si no, quedan en una línea con su cantidad, para contar.
+          if (porLinea && it.qty > 1 && it.qty <= O2M_SPLIT_MAX && _filasEst + it.qty <= O2M_MAX_FILAS) porLinea = false;
           var n = porLinea ? 1 : it.qty;
+          _filasEst += n;
           for (var u = 1; u <= n; u++){
             var tm = {
               sku: it.sku,
@@ -6010,7 +6018,7 @@ window.OT2C = (function(){
     // 🎛️ 2026-10-20 (REGLA #32): la nota solo describe lo que la persona ve elegido en cada fila.
     return '<div class="o2m-her-nota o2m-rv-hint-nota"><i class="bi bi-diagram-3"></i> Cada producto lleva <b>solo la plantilla elegida en su fila</b> ' +
       '(la sugerida sale de su clase del catálogo; puedes cambiarla). ' +
-      'Máquinas: una tarjeta por unidad. Discos y mancuernas: una por línea, para contar. ' +
+      'Cada unidad del documento es una fila («1 de 3»), también discos y mancuernas; si son más de ' + O2M_SPLIT_MAX + ', quedan en una línea con su cantidad. ' +
       'Si algo no llegó o no se puede usar, se declara en la ficha, arriba de ese producto.</div>';
   }
   // Columna CHECKLIST de una fila con checklist heredado: el bloque de su sistema y de dónde salió, con el mismo
