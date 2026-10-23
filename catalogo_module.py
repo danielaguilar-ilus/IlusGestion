@@ -1620,6 +1620,12 @@ def register_catalogo_routes(app, ctx):
                 return jsonify({"ok": False, "error": "Clase de producto inválida"}), 400
             where_base.append("p.clase_producto=%s")
             params_base.append(clase_producto)
+        # 🧹 2026-10-23 (Daniel: «yo pienso que debería filtrarlo [el Catálogo], ya que el Catálogo maneja PRODUCTOS»): los servicios y el
+        # descuento de un documento (SKU «ZZ…», «DE», «DESCUENTO…») no son productos: no se listan para clasificar. Escotilla: con
+        # `?incluir_servicios=1` se ven (no se pierde nada, REGLA #4.2). Misma regla que `_sku_es_servicio` de app.py.
+        if (request.args.get("incluir_servicios") or "").strip() != "1":
+            where_base.append("(UPPER(TRIM(p.sku)) NOT LIKE 'ZZ%%' AND UPPER(TRIM(p.sku)) <> 'DE' "
+                              "AND UPPER(TRIM(COALESCE(p.nombre,''))) NOT LIKE 'DESCUENTO%%')")
 
         # 2026-07-24 (Daniel: "no es buena idea lo de las fotos del
         # ecommerce... lo veo impreciso" -- match automático por SKU exacto

@@ -68211,6 +68211,8 @@ def _inc_clasificacion_sku(sku: str) -> dict:
     sku = (sku or "").strip()
     if not sku:
         return {"clase": None, "clase_nombre": None, "repetible": None}
+    if _sku_es_servicio(sku):      # 2026-10-23: un servicio / descuento no es un producto: jamás lleva clase (ni «accesorio»)
+        return {"clase": None, "clase_nombre": None, "repetible": None}
     try:
         row = mysql_fetchone(
             "SELECT p.clase_producto AS slug, c.nombre, c.modelo_precio "
@@ -68246,7 +68248,8 @@ def _inc_clasificacion_skus_batch(skus) -> dict:
     Los SKU sin clasificación NO aparecen en el dict (mismo criterio que
     usa el caller: `.get(sku, {}).get("repetible")` da None = sin dato).
     """
-    skus_norm = sorted({(s or "").strip() for s in (skus or []) if (s or "").strip()})
+    # 2026-10-23: los servicios / descuentos (ZZ…, DE) no son productos: no entran a la clasificación (jamás «accesorio»).
+    skus_norm = sorted({(s or "").strip() for s in (skus or []) if (s or "").strip() and not _sku_es_servicio(s)})
     if not skus_norm:
         return {}
     try:

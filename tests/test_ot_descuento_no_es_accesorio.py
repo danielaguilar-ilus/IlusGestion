@@ -33,5 +33,23 @@ class TestDescuentoNoEsAccesorio(unittest.TestCase):
         self.assertFalse(es("ILUS-TRO-01", "Trotadora ILUS"))
 
 
+class TestElCatalogoFiltraLosServicios(unittest.TestCase):
+    """Daniel: «debería filtrarlo [el Catálogo], ya que el Catálogo maneja PRODUCTOS»."""
+
+    def test_la_clasificacion_no_le_da_clase_a_un_servicio(self):
+        i = APP.index("def _inc_clasificacion_sku(sku: str) -> dict:")
+        self.assertIn("if _sku_es_servicio(sku):", APP[i:i + 1800])
+        j = APP.index("def _inc_clasificacion_skus_batch(skus) -> dict:")
+        self.assertIn("and not _sku_es_servicio(s)}", APP[j:j + 2200])
+
+    def test_el_listado_del_catalogo_oculta_servicios_con_escotilla(self):
+        with open(os.path.join(RAIZ, "catalogo_module.py"), encoding="utf-8") as fh:
+            cat = fh.read()
+        self.assertIn('request.args.get("incluir_servicios")', cat)
+        self.assertIn("NOT LIKE 'ZZ%%'", cat)
+        self.assertIn("<> 'DE'", cat)
+        self.assertIn("NOT LIKE 'DESCUENTO%%'", cat)
+
+
 if __name__ == "__main__":
     unittest.main()
