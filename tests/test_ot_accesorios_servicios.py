@@ -51,7 +51,7 @@ class _BD:
         if self.falla:
             raise RuntimeError("base caída")
         if "SELECT DISTINCT m.id, m.sku" in sql:
-            return [{"id": i, "sku": s} for i, s in self.tm]
+            return [{"id": i, "sku": s, "nombre": ("DESCUENTO VENTAS" if s == "DE" else f"Producto {s}")} for i, s in self.tm]
         if "estado_revision IN ('saltado','falla_detectada')" in sql:
             return [{"maquina_id": i} for i in self.ve]
         if "FROM mant_ot_producto_estado" in sql:
@@ -72,6 +72,15 @@ class TestAccesoriosDeLaOT(unittest.TestCase):
         self.amb["mysql_fetchall"] = bd.fetchall
         self.amb["_inc_clasificacion_skus_batch"] = lambda skus: {s: {"clase": bd.clases.get(s)} for s in skus if s in bd.clases}
         self.amb["_otpe_ok"] = lambda: otpe_ok
+        self.amb["_sku_es_servicio"] = _extraer(["_sku_es_servicio"], extra={"re": re},
+                                                constantes=("_SERVICIO_NOMBRE_RE",))["_sku_es_servicio"]
+
+    def test_un_descuento_clasificado_accesorio_no_es_accesorio(self):
+        # OT de Isabel (23-oct): el Catálogo clasifica «DESCUENTO VENTAS» (SKU «DE») como accesorio y pedía «¿Llegó?».
+        bd = _BD([(1, "BAND-1"), (2, "DE"), (3, "ZZENVIO")], {"BAND-1": "accesorio", "DE": "accesorio", "ZZENVIO": "accesorio"})
+        self._preparar(bd)
+        self.assertEqual(self.amb["_ot_accesorios_ids"](7), {1})
+        self.assertEqual(self.amb["_ot_accesorios_estado"](7)["total"], 1)
 
     def test_solo_los_de_clase_accesorio(self):
         bd = _BD([(1, "BAND-1"), (2, "CINTA-9"), (3, "SIN-CLASE")], {"BAND-1": "accesorio", "CINTA-9": "trotadora"})
