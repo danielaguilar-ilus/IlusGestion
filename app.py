@@ -165162,16 +165162,31 @@ def _otpe_equipos_activos(vid):
 def _ot_accesorios_ids(vid):
     """maquina_id de los accesorios de la OT (tareas ∪ equipos, sin los de baja). set() si algo falla (FAIL-OPEN: sin dato no se inventa
     una exigencia ni se saca a nadie del checklist)."""
+    # 🚑 2026-10-23 (caída de las OT, «no me deja entrar»): la versión anterior filtraba con `m.id IN (subconsulta con UNION)`, que MySQL
+    # ejecuta UNA VEZ POR CADA máquina de la tabla (subconsulta dependiente) y, llamada varias veces por página, agotó la base. Ahora la
+    # unión va como tabla derivada con JOIN (se evalúa una sola vez) y el resultado se recuerda durante la petición.
+    try:
+        _cache = getattr(g, "_ot_acc_ids_cache", None)
+        if _cache is None:
+            _cache = {}
+            g._ot_acc_ids_cache = _cache
+    except Exception:            # fuera de una petición (pruebas, procesos): sin recuerdo
+        _cache = {}
+    if vid in _cache:
+        return set(_cache[vid])
     try:
         filas = mysql_fetchall(
-            "SELECT DISTINCT m.id, m.sku FROM mant_maquinas m WHERE COALESCE(m.estado,'activo') <> 'baja' AND m.id IN ("
-            "  SELECT t.maquina_id FROM mant_visita_tareas t WHERE t.visita_id=%s AND t.maquina_id IS NOT NULL"
-            "  UNION SELECT ve.maquina_id FROM mant_visita_equipos ve WHERE ve.visita_id=%s AND ve.maquina_id IS NOT NULL)",
+            "SELECT DISTINCT m.id, m.sku FROM ("
+            "  SELECT t.maquina_id AS mid FROM mant_visita_tareas t WHERE t.visita_id=%s AND t.maquina_id IS NOT NULL"
+            "  UNION SELECT ve.maquina_id AS mid FROM mant_visita_equipos ve WHERE ve.visita_id=%s AND ve.maquina_id IS NOT NULL"
+            ") x JOIN mant_maquinas m ON m.id = x.mid WHERE COALESCE(m.estado,'activo') <> 'baja'",
             (vid, vid)) or []
         skus = sorted({(r.get("sku") or "").strip() for r in filas if (r.get("sku") or "").strip()})
         clases = _inc_clasificacion_skus_batch(skus) if skus else {}
         por_sku = {str(k).strip().upper(): (v or {}).get("clase") for k, v in clases.items()}
-        return {int(r["id"]) for r in filas if por_sku.get((r.get("sku") or "").strip().upper()) == "accesorio"}
+        _res = {int(r["id"]) for r in filas if por_sku.get((r.get("sku") or "").strip().upper()) == "accesorio"}
+        _cache[vid] = set(_res)
+        return _res
     except Exception as e:
         print(f"[ot_accesorios] ids vid={vid}: {type(e).__name__}", flush=True)
         return set()
