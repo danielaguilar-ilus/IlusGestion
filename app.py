@@ -98576,8 +98576,11 @@ def _ot_aut_notificar_superadmins(a):
                 "primary_cta_url": link, "primary_cta_label": "Revisar",
                 "closing_message": "<p>Correo interno de ILUS Fitness: no se le envía nada al cliente.</p>",
             })
+            # 🔔 2026-10-23 (Daniel: «Víctor pidió una autorización de una instalación con desinstalación y nunca me llegó»): es un aviso
+            # INTERNO al dueño. Salía por la llave «Servicio Técnico» (mantenciones), que está cerrada «por pruebas» y frenaba el correo en
+            # silencio (quedaba «bloqueado» en el Historial); ahora sale por «Comunicación interna», como los demás avisos internos.
             _send_ilus_email(correo, _brand_subject(f"Autorización pendiente · {resumen}"), html,
-                             evento="ot_autorizacion_pendiente", modulo="mantenciones",
+                             evento="ot_autorizacion_pendiente", modulo="comunicacion_interna",
                              ref={"tipo": "ot_autorizacion", "id": aid}, correo="ot_autorizacion_pendiente")
         except Exception as e:
             print(f"[ot-aut] correo a {correo}: {type(e).__name__}", flush=True)

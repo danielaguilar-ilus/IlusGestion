@@ -269,10 +269,11 @@ REGISTRO = (
        "Cuando el cliente firma la OT: avisa a los técnicos asignados.", modo="automatico",
        avisa_a="A los técnicos de la OT",
        nota="Hoy el técnico con cuenta puede recibir este aviso dos veces (dos rutas del código lo envían)."),
-    _c("ot_autorizacion_pendiente", "Autorización pendiente: aviso a los superadministradores", "ot", "mantenciones",
+    _c("ot_autorizacion_pendiente", "Autorización pendiente: aviso a los superadministradores", "ot", "comunicacion_interna",
        "interno", "Cuando alguien pide una autorización (documento, $0, exceso de saldo…).", modo="automatico",
        sensible=True, avisa_a="A los superadministradores activos",
-       nota="La bandeja de autorizaciones sigue funcionando: solo deja de llegar el correo."),
+       nota="La bandeja de autorizaciones sigue funcionando: solo deja de llegar el correo. Sale por la llave de Comunicación interna "
+            "(2026-10-23: antes salía por la de Servicio Técnico, que estaba cerrada «por pruebas», y el correo no llegaba)."),
     _c("ot_anexo_auto", "Anexo de servicios al crear una OT con técnico externo", "ot", "general", "proveedor_courier",
        "Al crear una OT con técnico externo: le llega el enlace para firmar el Anexo de Servicios.", modo="automatico",
        avisa_a="Al proveedor externo asignado", nota="Sale por la llave «General» (el código no indica módulo)."),
