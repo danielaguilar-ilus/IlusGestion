@@ -633,6 +633,10 @@ a.pv-it:hover{transform:translateX(3px);border-color:#dc2626;box-shadow:0 4px 12
       </div>
     </div>
     <div class="trx-hero-actions">
+      {% if permissions and permissions.superadmin %}
+      {#- 🧹 2026-10-23 (Daniel: «unifica los proveedores duplicados»): solo superadmin; el servidor lo vuelve a exigir. -#}
+      <button class="trx-btn-primary" type="button" style="background:#fff;color:#111827;border:1px solid #d1d5db" onclick="provUnificarAbrir()"><i class="bi bi-intersect"></i>Unificar duplicados</button>
+      {% endif %}
       <button class="trx-btn-primary" type="button" onclick="provAbrirNuevo()"><i class="bi bi-plus-lg"></i>Nuevo proveedor</button>
     </div>
   </div>
@@ -875,6 +879,39 @@ a.pv-it:hover{transform:translateX(3px);border-color:#dc2626;box-shadow:0 4px 12
   </div>
   {% endif %}
 </div>
+
+{% if permissions and permissions.superadmin %}
+{#- 🧹 2026-10-23: Unificar proveedores duplicados. Lista los grupos (idénticos / parecidos) con lo que tiene cada uno; el superadmin elige cuál se
+    queda (viene sugerido el más usado y completo) y cuáles se unifican. Todo lo de los duplicados pasa al que se queda y ellos quedan dados de
+    baja (no se borran). -#}
+<div class="modal fade" id="modalProvUnificar" tabindex="-1" aria-hidden="true" aria-labelledby="pvuTitulo">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold" id="pvuTitulo"><i class="bi bi-intersect" style="color:#dc2626"></i> Unificar proveedores duplicados</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body" id="pvuCuerpo"><div class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span> Buscando duplicados…</div></div>
+      <div class="modal-footer justify-content-between flex-wrap gap-2">
+        <small class="text-muted">Los repuestos, solicitudes, compras y contactos pasan al proveedor que se queda. Los duplicados quedan dados de baja con su motivo.</small>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+<style>
+  .pvu-grupo{border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:14px;background:#fff}
+  .pvu-grupo h6{margin:0 0 10px;font-weight:800;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .pvu-tag{border-radius:50px;padding:2px 10px;font-size:.72rem;font-weight:800}
+  .pvu-tag.id{background:#dcfce7;color:#166534}.pvu-tag.pa{background:#fff8e1;color:#92400e}
+  .pvu-fila{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:10px;align-items:start;padding:9px 10px;border-radius:10px;background:#f9fafb;margin-bottom:6px}
+  .pvu-fila.queda{background:#ecfdf5;outline:2px solid #16a34a}
+  .pvu-fila .nom{font-weight:800;overflow-wrap:anywhere}
+  .pvu-fila small{display:block;color:#6b7280;overflow-wrap:anywhere}
+  .pvu-fila input[type=checkbox],.pvu-fila input[type=radio]{width:22px;height:22px;margin-top:2px}
+  .pvu-acc{display:flex;justify-content:flex-end;margin-top:8px}
+</style>
+{% endif %}
 
 <!-- Ficha del proveedor: crear, ver y editar en UN solo lugar, con el formato de
      "Nuevo retiro interno" (REGLA #15; Daniel 2026-10-04). Cabecera con los datos
@@ -2219,6 +2256,113 @@ async function provGuardar(){
   _pvfCerrarOk = true;
   pvfModal().hide();
   setTimeout(function(){ location.reload(); }, 450);
+}
+
+/* 🧹 2026-10-23 — Unificar proveedores duplicados (solo superadmin). */
+let _pvu = { grupos: [] };
+function _pvuEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+async function provUnificarAbrir(){
+  const el = document.getElementById('modalProvUnificar');
+  if (!el) return;
+  bootstrap.Modal.getOrCreateInstance(el).show();
+  const cuerpo = document.getElementById('pvuCuerpo');
+  cuerpo.innerHTML = '<div class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span> Buscando duplicados…</div>';
+  try {
+    const r = await fetch('/mantenciones/api/proveedores-repuesto/duplicados', {credentials:'same-origin', cache:'no-store'});
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || 'No se pudo buscar');
+    _pvu.grupos = j.grupos || [];
+    _pvuPintar();
+  } catch(e){
+    cuerpo.innerHTML = '<div class="text-danger">No se pudo buscar duplicados: ' + _pvuEsc(e.message) + '</div>';
+  }
+}
+function _pvuPintar(){
+  const cuerpo = document.getElementById('pvuCuerpo');
+  if (!_pvu.grupos.length){
+    cuerpo.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-check-circle-fill" style="color:#16a34a;font-size:1.6rem"></i><div class="mt-2">No hay proveedores duplicados.</div></div>';
+    return;
+  }
+  const ident = _pvu.grupos.filter(function(g){ return g.tipo === 'identicos'; }).length;
+  let h = '<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">' +
+    '<div><b>' + _pvu.grupos.length + '</b> grupo' + (_pvu.grupos.length === 1 ? '' : 's') + ' · <b>' + ident + '</b> idéntico' + (ident === 1 ? '' : 's') + ' (mismo nombre con otra mayúscula o signos)</div>' +
+    (ident ? '<button type="button" class="btn btn-sm btn-danger" onclick="provUnificarTodosIdenticos()"><i class="bi bi-intersect me-1"></i>Unificar todos los idénticos (' + ident + ')</button>' : '') + '</div>';
+  _pvu.grupos.forEach(function(g, gi){
+    h += '<div class="pvu-grupo" id="pvuG' + gi + '"><h6>Grupo ' + (gi + 1) +
+      '<span class="pvu-tag ' + (g.tipo === 'identicos' ? 'id">Idénticos' : 'pa">Parecidos (revisa)') + '</span></h6>';
+    g.miembros.forEach(function(m){
+      const queda = m.id === g.sugerido_id;
+      h += '<label class="pvu-fila' + (queda ? ' queda' : '') + '">' +
+        '<input type="radio" name="pvuD' + gi + '" value="' + m.id + '"' + (queda ? ' checked' : '') + ' onchange="_pvuMarcar(' + gi + ')" aria-label="Se queda ' + _pvuEsc(m.nombre) + '">' +
+        '<span class="pvu-uso" style="font-size:.74rem;color:#166534;font-weight:800;white-space:nowrap">' + (queda ? 'SE QUEDA' : 'se queda') + '</span>' +
+        '<span><span class="nom">' + _pvuEsc(m.nombre) + '</span>' +
+        '<small>' + m.repuestos + ' repuesto' + (m.repuestos === 1 ? '' : 's') + ' · ' + m.solicitudes + ' solicitud' + (m.solicitudes === 1 ? '' : 'es') + ' · ' + m.compras + ' compra' + (m.compras === 1 ? '' : 's') +
+        (m.contacto ? ' · ' + _pvuEsc(m.contacto) : '') + (m.email ? ' · ' + _pvuEsc(m.email) : '') + (m.telefono ? ' · ' + _pvuEsc(m.telefono) : '') + ' · ficha ' + m.ficha + ' dato' + (m.ficha === 1 ? '' : 's') + (m.creado ? ' · creado ' + _pvuEsc(m.creado) : '') + ' · #' + m.id + '</small></span></label>';
+    });
+    h += '<div class="pvu-acc"><button type="button" class="btn btn-sm btn-outline-danger" onclick="provUnificarGrupo(' + gi + ')"><i class="bi bi-intersect me-1"></i>Unificar este grupo</button></div></div>';
+  });
+  cuerpo.innerHTML = h;
+}
+function _pvuDestino(gi){
+  const r = document.querySelector('input[name="pvuD' + gi + '"]:checked');
+  return r ? parseInt(r.value, 10) : null;
+}
+function _pvuMarcar(gi){
+  const d = _pvuDestino(gi);
+  document.querySelectorAll('#pvuG' + gi + ' .pvu-fila').forEach(function(f){
+    const rad = f.querySelector('input[type=radio]');
+    const queda = rad && parseInt(rad.value, 10) === d;
+    f.classList.toggle('queda', !!queda);
+    f.querySelector('.pvu-uso').textContent = queda ? 'SE QUEDA' : 'se queda';
+  });
+}
+async function _pvuEnviar(gi){
+  const g = _pvu.grupos[gi];
+  const destino = _pvuDestino(gi);
+  const origenes = g.miembros.map(function(m){ return m.id; }).filter(function(id){ return id !== destino; });
+  const r = await fetch('/mantenciones/api/proveedores-repuesto/unificar', {method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({destino_id: destino, origen_ids: origenes})});
+  const j = await r.json().catch(function(){ return {}; });
+  if (!r.ok || !j.ok) throw new Error(j.error || 'No se pudo unificar');
+  return j;
+}
+async function provUnificarGrupo(gi){
+  const g = _pvu.grupos[gi];
+  const destino = _pvuDestino(gi);
+  const dest = g.miembros.find(function(m){ return m.id === destino; });
+  const otros = g.miembros.filter(function(m){ return m.id !== destino; });
+  const ok = await ilusConfirm({
+    title: 'Unificar proveedores',
+    message: 'Todo lo de los duplicados pasa a «' + (dest ? dest.nombre : '') + '». Los duplicados quedan dados de baja.',
+    sub: otros.map(function(m){ return _pvuEsc(m.nombre) + ' → ' + _pvuEsc(dest ? dest.nombre : ''); }).join('<br>'),
+    subHtml: true, okLabel: 'Unificar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  try {
+    await _pvuEnviar(gi);
+    ilusToast('✓ Proveedores unificados', {type:'success'});
+    provUnificarAbrir();
+  } catch(e){
+    ilusToast(e.message, {type:'error'});
+  }
+}
+async function provUnificarTodosIdenticos(){
+  const idx = [];
+  _pvu.grupos.forEach(function(g, gi){ if (g.tipo === 'identicos') idx.push(gi); });
+  if (!idx.length) return;
+  const ok = await ilusConfirm({
+    title: 'Unificar los idénticos',
+    message: 'Se unifican ' + idx.length + ' grupo(s) de proveedores que se llaman igual (con otra mayúscula, tilde o signo). En cada grupo se queda el que marcaste (por defecto, el más usado y completo).',
+    sub: 'Los duplicados quedan dados de baja y todo lo suyo pasa al que se queda. Los «parecidos» no se tocan: se revisan uno por uno.',
+    okLabel: 'Unificar ' + idx.length + ' grupo(s)', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  let hechos = 0, falla = '';
+  for (const gi of idx){
+    try { await _pvuEnviar(gi); hechos++; } catch(e){ falla = e.message; break; }
+  }
+  ilusToast(falla ? ('Se unificaron ' + hechos + '. ' + falla) : ('✓ ' + hechos + ' grupo(s) unificados'), {type: falla ? 'warning' : 'success'});
+  provUnificarAbrir();
 }
 </script>
 {% endblock %}

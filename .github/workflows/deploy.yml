@@ -279,6 +279,12 @@ jobs:
       # incidente_concurrencia_cloud_run_2026_09_08 en memoria (incluye la
       # recurrencia del 22-sep) -- si esto se vuelve a quedar corto, medir
       # instancias reales en Cloud Run Metrics antes de volver a subir a ciegas.
+      # 🚀 2026-10-23 (Daniel: «la aplicación se ha sentido más lenta; la velocidad es prioridad»). Medido en los logs: el uso normal es
+      # rápido (la mayoría de las pantallas responde en menos de 0,6 s), pero CADA deploy dejaba ~18-20 s de congelamiento. Causa: la sonda
+      # de arranque era TCP, que pasa en cuanto gunicorn abre el puerto, ANTES de que los workers terminen de cargar la app (~20 s); Cloud
+      # Run mandaba tráfico a una instancia que aún no podía responder. Ahora la sonda es HTTP a /ping (responde solo cuando el worker ya
+      # está arriba): el tráfico pasa a la revisión nueva recién cuando está lista. Hasta 150 s (30 intentos cada 5 s). Mismo
+      # criterio al escalar instancias.
       - name: Deploy to Cloud Run
         id: deploy
         run: |
@@ -294,6 +300,7 @@ jobs:
             --cpu 2 \
             --timeout 300 \
             --concurrency 16 \
+            --startup-probe=httpGet.path=/ping,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=3,failureThreshold=30 \
             --env-vars-file /tmp/env.yaml \
             --quiet
 

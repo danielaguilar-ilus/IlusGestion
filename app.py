@@ -42317,7 +42317,15 @@ def tr_cron_refrescar_saldo_productos():
     actualizados, fallidos, guias_catchup = 0, 0, 0
     guias_encontradas = 0
     _ids_tanda = [d["id"] for d in docs if d.get("id")]
+    # 🚀 2026-10-23 (velocidad): 300 consultas seguidas al ERP pasaban SIEMPRE de los 300 s de Cloud Run (cada hora el trabajo moría por
+    # tiempo y ocupaba un hilo del servidor 5 minutos). Ahora corta a los 150 s; lo que falte lo toma la próxima corrida (la rotación por
+    # `guia_intentada_at` ya garantiza que se avanza por documentos distintos) y el marcado final alcanza a correr.
+    _t_cron = time.time()
+    _cortado = False
     for d in docs:
+        if time.time() - _t_cron > 150:
+            _cortado = True
+            break
         try:
             if d.get("activo"):
                 # Caso de siempre: despacho activo, refresca saldo + guía.
@@ -42378,7 +42386,7 @@ def tr_cron_refrescar_saldo_productos():
     # Ahora se reporta también cuántas guías se ENCONTRARON de verdad, y el
     # rango de ids de la tanda: si el min/max no se mueve entre corridas, la
     # cola está congelada y se ve al instante en el log.
-    return jsonify({"ok": True, "documentos": len(docs), "actualizados": actualizados,
+    return jsonify({"ok": True, "documentos": len(docs), "actualizados": actualizados, "cortado_por_tiempo": _cortado,
                     "guias_catchup": guias_catchup,
                     "guias_encontradas": guias_encontradas,
                     "fallidos": fallidos,
@@ -149741,6 +149749,188 @@ def mant_proveedor_repuesto_crear():
     except Exception as e:
         print(f"[mant_proveedor_repuesto_crear] CRASH: {e}", flush=True)
         return jsonify({"ok": False, "error": "Error interno"}), 500
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  🧹 Unificar proveedores duplicados (2026-10-23, Daniel: «sí, unifica los proveedores duplicados»). SOLO superadmin.
+#  GET  /mantenciones/api/proveedores-repuesto/duplicados   grupos de proveedores que se escriben igual (sin mayúsculas/tildes/signos)
+#                                                           o casi igual (errores), con cuántos repuestos/solicitudes/compras tiene cada
+#                                                           uno y cuál conviene dejar (el más usado y completo).
+#  POST /mantenciones/api/proveedores-repuesto/unificar     {destino_id, origen_ids:[…]}: todo lo de los duplicados pasa al destino y los
+#                                                           duplicados quedan DADOS DE BAJA (nunca se borran: REGLA #5), con su motivo.
+# ═══════════════════════════════════════════════════════════════════════
+# Tablas con `proveedor_id` que apuntan a mant_proveedores_repuesto.id (lista explícita: otras tablas usan el mismo nombre de columna
+# para OTRA cosa, p. ej. técnicos externos). Si alguna no existe se salta.
+_PROV_TABLAS_REF = ("mant_repuestos_stock", "mant_ot_repuesto_solicitudes", "mant_repuestos_compras", "mant_repuestos_marcas",
+                    "mant_repuestos", "mant_proveedor_contactos", "mant_proveedor_notas")
+_PROV_CAMPOS_FICHA = ("contacto_nombre", "telefono", "email", "canal_preferido", "sitio_web", "direccion", "ciudad", "pais", "rut_tax",
+                      "condiciones_pago", "marcas", "origen", "moneda")
+
+
+def _prov_conteos(ids):
+    """{id: {"repuestos": n, "solicitudes": n, "compras": n}} de los proveedores pedidos (cada tabla en su try: si falta, 0)."""
+    out = {int(i): {"repuestos": 0, "solicitudes": 0, "compras": 0} for i in ids}
+    if not out:
+        return out
+    ph = ",".join(["%s"] * len(out))
+    for clave, tabla, extra in (("repuestos", "mant_repuestos_stock", " AND activo=1"),
+                                ("solicitudes", "mant_ot_repuesto_solicitudes", ""),
+                                ("compras", "mant_repuestos_compras", "")):
+        try:
+            for r in (mysql_fetchall(
+                    f"SELECT proveedor_id AS pid, COUNT(*) AS n FROM {tabla} WHERE proveedor_id IN ({ph}){extra} GROUP BY proveedor_id",
+                    tuple(out.keys())) or []):
+                if int(r["pid"]) in out:
+                    out[int(r["pid"])][clave] = int(r["n"])
+        except Exception as e:
+            print(f"[prov_unificar] conteo {tabla}: {type(e).__name__}", flush=True)
+    return out
+
+
+def _prov_grupos_duplicados(filas):
+    """Agrupa proveedores ACTIVOS que son el mismo: misma clave de nombre (identicos) o claves muy parecidas (errores de tipeo).
+    Devuelve [[fila, …], …] (solo grupos de 2 o más). Puro: recibe las filas, no toca la base."""
+    import difflib
+    filas = [f for f in filas if _prov_clave_nombre(f.get("nombre"))]
+    padre = {int(f["id"]): int(f["id"]) for f in filas}
+
+    def raiz(x):
+        while padre[x] != x:
+            padre[x] = padre[padre[x]]
+            x = padre[x]
+        return x
+
+    def unir(a, b):
+        ra, rb = raiz(a), raiz(b)
+        if ra != rb:
+            padre[rb] = ra
+    por_clave = {}
+    for f in filas:
+        por_clave.setdefault(_prov_clave_nombre(f["nombre"]), []).append(int(f["id"]))
+    for ids in por_clave.values():
+        for otro in ids[1:]:
+            unir(ids[0], otro)
+    claves = sorted(por_clave)
+    for i, a in enumerate(claves):
+        for b in claves[i + 1:]:
+            if len(a) >= 5 and len(b) >= 5 and abs(len(a) - len(b)) <= 3 \
+                    and difflib.SequenceMatcher(None, a, b).ratio() >= 0.88:
+                unir(por_clave[a][0], por_clave[b][0])
+    grupos = {}
+    for f in filas:
+        grupos.setdefault(raiz(int(f["id"])), []).append(f)
+    return [g for g in grupos.values() if len(g) > 1]
+
+
+def _prov_completitud(fila):
+    return sum(1 for c in _PROV_CAMPOS_FICHA if str(fila.get(c) or "").strip())
+
+
+@app.route("/mantenciones/api/proveedores-repuesto/duplicados", methods=["GET"])
+@_require_superadmin_api
+def mant_proveedores_repuesto_duplicados():
+    _prov_cols_asegurar()
+    filas = [dict(r) for r in (mysql_fetchall("SELECT * FROM mant_proveedores_repuesto WHERE COALESCE(activo,1)=1") or [])]
+    grupos = _prov_grupos_duplicados(filas)
+    conteos = _prov_conteos([f["id"] for g in grupos for f in g])
+    salida = []
+    for g in grupos:
+        miembros = []
+        for f in g:
+            c = conteos.get(int(f["id"]), {})
+            miembros.append({"id": f["id"], "nombre": (f.get("nombre") or "").strip(), "contacto": (f.get("contacto_nombre") or "").strip(),
+                             "email": (f.get("email") or "").strip(), "telefono": (f.get("telefono") or "").strip(),
+                             "repuestos": c.get("repuestos", 0), "solicitudes": c.get("solicitudes", 0), "compras": c.get("compras", 0),
+                             "ficha": _prov_completitud(f), "creado": str(f.get("created_at") or "")[:10]})
+        sugerido = max(miembros, key=lambda m: (m["repuestos"] + m["solicitudes"] + m["compras"], m["ficha"], -int(m["id"])))
+        miembros.sort(key=lambda m: (_prov_clave_nombre(m["nombre"]), m["nombre"], int(m["id"])))
+        identicos = len({_prov_clave_nombre(m["nombre"]) for m in miembros}) == 1
+        salida.append({"tipo": "identicos" if identicos else "parecidos", "sugerido_id": sugerido["id"], "miembros": miembros})
+    salida.sort(key=lambda gr: (gr["tipo"] != "identicos", _prov_clave_nombre(gr["miembros"][0]["nombre"])))
+    return jsonify({"ok": True, "grupos": salida})
+
+
+@app.route("/mantenciones/api/proveedores-repuesto/unificar", methods=["POST"])
+@_require_superadmin_api
+def mant_proveedores_repuesto_unificar():
+    d = request.get_json(silent=True) or {}
+    try:
+        destino = int(d.get("destino_id"))
+        origenes = sorted({int(x) for x in (d.get("origen_ids") or [])} - {destino})
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Elige el proveedor que se queda y los que se unifican."}), 400
+    if not origenes:
+        return jsonify({"ok": False, "error": "Elige al menos un proveedor duplicado para unificar."}), 400
+    if len(origenes) > 30:
+        return jsonify({"ok": False, "error": "Unifica de a 30 como máximo."}), 400
+    _prov_cols_asegurar()
+    quien = current_username() or "superadmin"
+    dest = mysql_fetchone("SELECT * FROM mant_proveedores_repuesto WHERE id=%s AND COALESCE(activo,1)=1", (destino,))
+    if not dest:
+        return jsonify({"ok": False, "error": "El proveedor que se queda no existe o está dado de baja."}), 404
+    dest = dict(dest)
+    ph = ",".join(["%s"] * len(origenes))
+    orgs = [dict(r) for r in (mysql_fetchall(
+        f"SELECT * FROM mant_proveedores_repuesto WHERE id IN ({ph}) AND COALESCE(activo,1)=1", tuple(origenes)) or [])]
+    if len(orgs) != len(origenes):
+        return jsonify({"ok": False, "error": "Alguno de los duplicados ya no existe o ya estaba dado de baja. Recarga la lista."}), 409
+    nombre_dest = (dest.get("nombre") or "").strip()
+    unificados = []
+    for org in orgs:
+        # Foto del duplicado ANTES de tocar nada (REGLA #5: auditoría antes de actuar).
+        _audit("proveedor_repuesto_unificar", target_type="proveedor_repuesto", target_id=org["id"],
+               details={"destino_id": destino, "destino": nombre_dest, "origen": {k: (str(v) if v is not None else None) for k, v in org.items()}})
+        movidos = {}
+        try:
+            conn = get_mysql()
+            try:
+                with conn.cursor() as cur:
+                    # Contactos: el principal del duplicado deja de serlo si el destino ya tiene los suyos.
+                    try:
+                        cur.execute("SELECT COUNT(*) AS n FROM mant_proveedor_contactos WHERE proveedor_id=%s", (destino,))
+                        if int((cur.fetchone() or {}).get("n") or 0):
+                            cur.execute("UPDATE mant_proveedor_contactos SET es_principal=0 WHERE proveedor_id=%s", (org["id"],))
+                    except Exception as _e_c:
+                        print(f"[prov_unificar] contactos: {type(_e_c).__name__}", flush=True)
+                    for tabla in _PROV_TABLAS_REF:
+                        try:
+                            cur.execute(f"UPDATE {tabla} SET proveedor_id=%s WHERE proveedor_id=%s", (destino, org["id"]))
+                            if cur.rowcount:
+                                movidos[tabla] = cur.rowcount
+                        except Exception as _e_t:
+                            if "1146" in str(_e_t) or "1054" in str(_e_t):      # la tabla o la columna no existe: nada que mover
+                                continue
+                            raise
+                    # La ficha del que se queda se completa con lo que solo tenía el duplicado (nunca se pisa lo que ya tiene).
+                    for col in _PROV_CAMPOS_FICHA:
+                        if str(dest.get(col) or "").strip() or not str(org.get(col) or "").strip():
+                            continue
+                        try:
+                            cur.execute(f"UPDATE mant_proveedores_repuesto SET {col}=%s WHERE id=%s", (org[col], destino))
+                            dest[col] = org[col]
+                        except Exception as _e_f:
+                            print(f"[prov_unificar] ficha {col}: {type(_e_f).__name__}", flush=True)
+                    cur.execute(
+                        "UPDATE mant_proveedores_repuesto SET activo=0, baja_motivo=%s, baja_por=%s, baja_at=NOW() WHERE id=%s",
+                        (f"Unificado con «{nombre_dest}» (#{destino})"[:250], quien, org["id"]))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"[prov_unificar] #{org['id']} → #{destino}: {type(e).__name__}: {e}", flush=True)
+            return jsonify({"ok": False, "unificados": unificados,
+                            "error": f"No se pudo unificar «{org.get('nombre')}». Lo que ya se unificó quedó bien; ese quedó como estaba."}), 500
+        try:
+            _mant_log("proveedor_repuesto", destino, "unificado",
+                      f"{quien} unificó «{org.get('nombre')}» (#{org['id']}) con «{nombre_dest}» (#{destino}). Movido: "
+                      + (", ".join(f"{t}={n}" for t, n in movidos.items()) or "nada (no tenía uso)") + ".")
+        except Exception:
+            pass
+        unificados.append({"id": org["id"], "nombre": org.get("nombre"), "movidos": movidos})
+    return jsonify({"ok": True, "destino": {"id": destino, "nombre": nombre_dest}, "unificados": unificados})
 
 
 _PROV_FAMILIAS_CACHE = {"data": None, "ts": 0.0}
