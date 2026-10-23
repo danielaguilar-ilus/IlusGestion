@@ -858,7 +858,8 @@ class TestCandadosPorTexto(unittest.TestCase):
         puerta = F.fuente_funcion("_ot_puerta_documento")
         # 2026-10-20: la puerta suma `pendiente_de` (la madre de una OT pendiente por falta de stock que todavía no existe: solo la pasa el
         # servidor, ver tests/test_ot_que_paso.py); `madre` sigue siendo solo del servidor y la relación se sigue releyendo por id.
-        self.assertIn("def _ot_puerta_documento(v, momento=\"crear\", autorizacion=None, superadmin_declara=None, madre=None, pendiente_de=None):", puerta)
+        # 2026-10-23: suma `cero_de` (la instalación de una desinstalación que hereda su $0 autorizado; también solo del servidor).
+        self.assertIn("def _ot_puerta_documento(v, momento=\"crear\", autorizacion=None, superadmin_declara=None, madre=None, pendiente_de=None,\n                         cero_de=None):", puerta)
         via = F.fuente_funcion("_ot_puerta_via_cubierta")
         self.assertIn("_ot_fila_basica(vid)", via)
         self.assertNotIn('v.get("ot_madre_id")', via)

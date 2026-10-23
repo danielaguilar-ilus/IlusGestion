@@ -2034,7 +2034,10 @@ window.OT2C = (function(){
         //    o sin garantía): no toda OT tiene flete/courier de por medio.
         // '' (nunca tocado) bloquea el servicio (fuera de garantía);
         // '0' (declarado explícito) no.
-        if (!S.fin_garantia && String(S.fin_costo_proveedor||'').trim() === '') return false;
+        // 🔒 2026-10-23 (Daniel: «los costos siempre deben reflejarse: cuánto me cobran, para atribuirlo a comercial o al centro de costo»;
+        // «sí, se puede siempre retractar y solo queda sellada después de firmarla el responsable»): también en garantía/regalía/arriendo
+        // el costo del servicio se declara al crear (0 si es técnico propio). Se corrige después hasta que se firma.
+        if (String(S.fin_costo_proveedor||'').trim() === '') return false;
         return true;
       // 2026-08-29: solo aparece si el líder es externo (ver pasos()) --
       // ahí sí es obligatorio, es lo que Daniel llamó "indispensable para
@@ -9585,7 +9588,7 @@ window.OT2C = (function(){
     var sb;
     if (r.cobra && !co.hay) sb = 'Declara arriba cuánto le cobras para ver cuánto queda.';
     else if (me.falta_tecnico) sb = 'Ingresa lo que te cobra el técnico para ver cuánto queda.' +
-      (gar ? ' En garantía puedes crear la OT sin este dato y declararlo después.' : '');
+      (gar ? ' También en garantía se declara al crear (0 si es técnico propio): lo puedes corregir hasta que se firme.' : '');
     else if (me.falta_despacho) sb = 'Le cobras despacho al cliente: ingresa también lo que te cuesta el despacho.';
     else sb = r.frase + (r.clase === 'rojo' ? ' No bloquea: queda registrado para el informe.' : '');
     var html = sem(s[0], s[1], esc(r.label), esc(sb));

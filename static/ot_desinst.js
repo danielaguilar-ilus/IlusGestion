@@ -162,7 +162,7 @@
     if (String(S.costo == null ? '' : S.costo).trim() === '') return false;
     var r = remanente();
     if (lecturaIncompleta()) return false;
-    if (!madreCobra() && !(r.elige && S.cobro === 'cobra')) return false;
+    // 2026-10-23: una instalación en $0 (garantía, regalía, arriendo) ya no bloquea: su desinstalación hereda ese $0 (el servidor lo respalda).
     if (r.elige) {
       if (!S.cobro) return false;
       if (S.cobro === 'cobra' && !((num(S.cobraS) || 0) + (num(S.cobraD) || 0) > 0)) return false;
@@ -208,10 +208,8 @@
       '<div class="ev-ayuda" style="margin-top:6px">Es obligatorio para poder pagarle al proveedor sin equivocarnos. ' + (ext ? 'Es un técnico externo: se le manda el anexo de servicios.' : '') + '</div></div>';
 
     var cobroHtml = '';
-    var sinCobroTxt = '<div class="ev-aviso rojo" style="margin:10px 0"><i class="bi bi-shield-lock-fill"></i><span><b>Esta instalación no se cobra</b> (garantía, regalía, arriendo o sin costo): ' +
-      'su desinstalación no puede quedar cubierta por ella, porque ese $0 se autorizó solo para la instalación. ' +
-      (r.elige ? 'Si la nota de venta trae una línea de desinstalación, elige «La cobra la desinstalación». ' : '') +
-      'Si no, créala como una OT de desinstalación aparte, con su propio documento o su propia autorización de $0.</span></div>';
+    var sinCobroTxt = '<div class="ev-aviso azul" style="margin:10px 0"><i class="bi bi-shield-check"></i><span><b>Esta instalación no se cobra</b> (garantía, regalía, arriendo o sin costo): su desinstalación sale con el <b>mismo $0 y el mismo motivo</b>. ' +
+      'Lo que te cobra el técnico queda registrado y se atribuye al centro de costo de la instalación.</span></div>';
     if (lecturaIncompleta()) {
       cobroHtml = '<div class="ev-aviso rojo" style="margin:10px 0"><i class="bi bi-cloud-slash-fill"></i><span><b>No pudimos leer el saldo de la nota de venta en Random.</b> ' +
         'Por seguridad la desinstalación no se agenda a ciegas (podría cobrarse dos veces la misma línea). Espera unos segundos y reintenta.</span>' +

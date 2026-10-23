@@ -497,8 +497,12 @@ class TestGateDelPasoCostos(unittest.TestCase):
                                      fin_costo_proveedor="0"), False],
             "cobra_con_monto": [dict(fin_centro="sstt", fin_doc={"tido": "FCV", "nudo": "1"}, fin_zz_monto=90000,
                                      fin_costo_proveedor="0"), True],
+            # 2026-10-23 (Daniel: «los costos siempre deben reflejarse: cuánto me cobran»; «se puede siempre retractar y solo queda sellada
+            # después de firmarla el responsable»): también en garantía el costo del servicio se declara al crear (0 si es técnico propio).
             "garantia_sin_monto": [dict(fin_centro="sstt", fin_garantia=True, fin_garantia_motivo="x" * 30,
-                                        fin_costo_proveedor=""), True],
+                                        fin_costo_proveedor=""), False],
+            "garantia_con_costo_cero": [dict(fin_centro="sstt", fin_garantia=True, fin_garantia_motivo="x" * 30,
+                                             fin_costo_proveedor="0"), True],
         }
         interna = {k for k in casos if k.startswith("interna")}
         js = r"""

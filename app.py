@@ -97507,7 +97507,66 @@ def _ot_puerta_via_cubierta(v, momento, madre=None):
         return None
 
 
-def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_declara=None, madre=None, pendiente_de=None):
+def _ot_madre_cero_respaldo(madre):
+    """🧩 2026-10-23 — ¿La instalación es un $0 (garantía, regalía, arriendo/leasing) YA AUTORIZADO por Daniel? Devuelve
+    (motivo, autorizacion_id, argumento) o None. Respaldo = una autorización APROBADA ligada a la instalación: la solicitud que la
+    creó («Incluye desinstalación dd/mm»: `desinstalacion_aut_id`) o su $0 declarado/aprobado (`cobro_cero_autorizacion_id`).
+    Sin respaldo no hay herencia: la desinstalación sigue el camino normal (y la puerta pide la autorización a Daniel: hay salida)."""
+    m = madre or {}
+    motivo = _evt.motivo_cero_de_madre(m)
+    if not motivo:
+        return None
+    for k in ("desinstalacion_aut_id", "cobro_cero_autorizacion_id"):
+        aid = m.get(k)
+        if not aid:
+            continue
+        try:
+            a = mysql_fetchone("SELECT id, argumento FROM mant_ot_autorizaciones WHERE id=%s AND estado='aprobada'", (int(aid),))
+        except Exception:
+            a = None
+        if a:
+            arg = (str(m.get("cobro_cero_argumento") or "").strip() or str(a.get("argumento") or "").strip())
+            return motivo, int(a["id"]), arg
+    return None
+
+
+def _ot_puerta_via_cero_madre(v, momento, cero_de=None):
+    """🧩 2026-10-23 — la vía 'cero_madre' de la puerta: la desinstalación de una instalación que NO se cobra hereda su $0 autorizado
+    (mismo motivo). Devuelve el veredicto SOLO si la OT es la hija de una instalación con respaldo; None = sigue el camino normal.
+    · Al CREAR, `cero_de` (la fila de la instalación) solo lo pasa el servidor.
+    · Al CERRAR se relee la relación por v['id']: la hija debe traer su propio $0 (cobro_cero_motivo) y, si guarda una autorización,
+      tiene que ser la de su instalación."""
+    v = v or {}
+    try:
+        madre, h = cero_de, None
+        if madre is None:
+            vid = v.get("id")
+            if not vid:
+                return None
+            h = mysql_fetchone("SELECT tipo, ot_relacion, ot_madre_id, cobro_cero_motivo, cobro_cero_autorizacion_id "
+                               "  FROM mant_visitas WHERE id=%s", (int(vid),))
+            if (not h or (h.get("tipo") or "").strip().lower() != _evt.TIPO_HIJA
+                    or (h.get("ot_relacion") or "").strip().lower() != _evt.REL_DESINSTALACION
+                    or not h.get("ot_madre_id") or not (h.get("cobro_cero_motivo") or "").strip()):
+                return None
+            madre = mysql_fetchone("SELECT * FROM mant_visitas WHERE id=%s", (int(h["ot_madre_id"]),))
+        resp = _ot_madre_cero_respaldo(madre)
+        if not resp:
+            return None
+        motivo, aid, arg = resp
+        if h and h.get("cobro_cero_autorizacion_id") and int(h["cobro_cero_autorizacion_id"]) != aid:
+            return None
+        num = (madre or {}).get("numero_ot") or f"V-{int((madre or {}).get('id') or 0):05d}"
+        return {"ok": True, "via": "cero_madre", "code": None, "falta": None, "accion": None, "mensaje": "",
+                "nota_venta": False, "documentos_ok": [], "autorizacion_id": aid, "motivo": motivo, "argumento": arg,
+                "madre_id": int(madre["id"]), "madre_numero": num, "docs_ya_guardados": True}
+    except Exception as e:
+        print(f"[ot-puerta] cero_madre: {type(e).__name__}: {e}", flush=True)
+        return None
+
+
+def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_declara=None, madre=None, pendiente_de=None,
+                         cero_de=None):
     """★ LA PUERTA. ¿Esta OT (fila o payload de una por crear) tiene con qué existir / cerrarse?
 
     v: dict con cliente_id, tipo, modalidad_cobro, cubierto_por y, si existe, id. Opcionales:
@@ -97587,6 +97646,14 @@ def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_decla
         _cub = _ot_puerta_via_cubierta(v, momento, madre=madre)
         if _cub is not None:
             return _cub
+        # 🧩 2026-10-23: la desinstalación de una instalación en $0 AUTORIZADO (garantía/regalía/arriendo) hereda ese $0.
+        _cer = _ot_puerta_via_cero_madre(v, momento, cero_de=cero_de)
+        if _cer is not None:
+            return _cer
+    elif cero_de is not None:
+        _cer = _ot_puerta_via_cero_madre(v, momento, cero_de=cero_de)
+        if _cer is not None:
+            return _cer
 
     # 3c) 🧭 2026-10-20 — OT PENDIENTE POR FALTA DE STOCK: se respalda con el documento de su OT madre (espejado, sin saldo propio).
     #     La puerta relee la relación por v['id'] (jamás del dict `v`). Si la madre no la respalda, sigue el camino normal.
@@ -97802,6 +97869,15 @@ def _ot_puerta_aplicar(cur, vid, p, fin_argumento=None):
                         " cobro_cero_autorizacion_id=%s, cobro_cero_argumento=COALESCE(cobro_cero_argumento,%s) WHERE id=%s",
                         (motivo, aid, (fin_argumento or "")[:1000], vid))
             cur.execute("UPDATE mant_ot_autorizaciones SET visita_id=COALESCE(visita_id,%s) WHERE id=%s", (vid, aid))
+        elif via == "cero_madre" and aid:
+            # 🧩 2026-10-23: la desinstalación hereda el $0 AUTORIZADO de su instalación (misma autorización, mismo motivo).
+            cur.execute("UPDATE mant_visitas SET cobro_cero_motivo=COALESCE(cobro_cero_motivo,%s), "
+                        " cobro_cero_autorizacion_id=%s, cobro_cero_argumento=COALESCE(cobro_cero_argumento,%s) WHERE id=%s",
+                        (motivo, aid, ((p.get("argumento") or fin_argumento or "")[:1000] or None), vid))
+            cur.execute("INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) VALUES ('visita',%s,%s,%s,%s)",
+                        (vid, "cobro_cero_heredado",
+                         f"$0 · {_OT_COBRO_CERO_MOTIVOS.get(motivo, motivo)} · heredado de {p.get('madre_numero') or 'su instalación'} "
+                         f"(autorización N° {aid})", current_username() or "sistema"))
         elif via == "nota_venta":
             cur.execute("UPDATE mant_visitas SET estado_facturacion='con_nota_venta' WHERE id=%s", (vid,))
     except Exception as e:
@@ -111109,7 +111185,12 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
     # garantía sigue exactamente igual que el 2026-09-21.
     if exigir_costo_prov_desp:
         _fin_costo_prov_raw = _fin.get("costo_proveedor")
-        if not es_interna and not _fin_cero and (_fin_costo_prov_raw is None or str(_fin_costo_prov_raw).strip() == ""):
+        # 🔒 2026-10-23 (Daniel: «las finanzas de las OT o los costos siempre deben reflejarse: cuánto me cobran, para que ese valor se
+        # atribuya a comercial o al centro de costo que corresponda» y, sobre declararlo al crear también en garantía/regalía: «sí, se
+        # puede siempre retractar y solo queda sellada después de firmarla el responsable»): el costo del servicio es obligatorio SIEMPRE,
+        # también en $0 (garantía, regalía, arriendo). Un 0 declarado es un dato («no hay proveedor de por medio»). Se puede corregir
+        # después, con las reglas de siempre, hasta que se firma.
+        if not es_interna and (_fin_costo_prov_raw is None or str(_fin_costo_prov_raw).strip() == ""):
             return _ferr(
                 "Indica cuánto le pagamos al proveedor externo por esta OT (0 si no hay "
                 "proveedor de por medio): así el reporte de margen no queda con un vacío "
@@ -112174,7 +112255,9 @@ def _ot2_crear_core(d, autorizacion=None, madre=None):
         # línea propia pasa por la puerta normal con el documento de la nota de venta.
         _puerta = _ot_puerta_documento(_ot_puerta_payload_desde_campos(
             _fin_campos, cliente_id, tipo_ot, cliente_rut=(_cli.get("rut") if cliente_id and _cli else None)), "crear",
-            madre=(madre if (es_hija and _fin_campos.get("cobertura") == "cubierta") else None))
+            madre=(madre if (es_hija and _fin_campos.get("cobertura") == "cubierta") else None),
+            # 🧩 2026-10-23: la hija de una instalación en $0 autorizado hereda su $0 (vía 'cero_madre'; solo la pasa el servidor).
+            cero_de=(madre if (es_hija and d.get("_desinst_cobro") == _evt.COBRO_CERO) else None))
         if not _puerta["ok"]:
             return _ot_puerta_respuesta(_puerta)
         _puerta["docs_ya_guardados"] = True   # este núcleo espeja factura_*/documentos_extra más abajo
@@ -112197,7 +112280,7 @@ def _ot2_crear_core(d, autorizacion=None, madre=None):
         _tipos_reales = set(_saldo.NOTAS_VENTA + _saldo.DOCS_COBRO)
         _tiene_doc_real = any(_saldo.clave_doc(t, n)[0] in _tipos_reales for (t, n) in _docs_dd)
         _aut_incluye = bool(autorizacion and (_puerta or {}).get("via") == "autorizacion_crear")
-        if (_dd_norm["lleva"] == "si" and _dd_norm.get("cobro") != _evt.COBRO_PROPIO
+        if (_dd_norm["lleva"] == "si" and _dd_norm.get("cobro") not in (_evt.COBRO_PROPIO, _evt.COBRO_CERO)   # 2026-10-23: el $0 se respalda con su autorización, no con un documento
                 and not (_tiene_doc_real or _aut_incluye)):
             return _ot2_err(
                 "La desinstalación solo va cubierta si la instalación tiene una nota de venta, factura o boleta de Random "
@@ -114083,9 +114166,16 @@ def _ot_desinst_validar_previo(dd, madre_fila, docs_madre, pedido_madre=None, cl
         return {"codigo": "LECTURA_INCOMPLETA",
                 "mensaje": "No pudimos leer en Random el saldo de la nota de venta (o de uno de sus documentos): la "
                            "desinstalación no se agenda a ciegas. Reintenta en unos segundos."}, None
-    err, cobro = _evt.validar_cobro_desinstalacion(
-        dd.get("cobro"), rem["servicio"] if rem["leido"] else 0, rem["despacho"] if rem["leido"] else 0,
-        dd.get("argumento_cubierta"))
+    # 🧩 2026-10-23 (Daniel: la OT de instalación + desinstalación por garantía/regalía «está en un bucle»): una instalación que NO se
+    # cobra no cubre a su desinstalación (REGLA #24) y no tiene saldo que cobrar: antes no había salida. Ahora la desinstalación
+    # hereda el MISMO $0 (cobro «cero»), sin preguntar: su costo y su centro de costo quedan registrados igual. El servidor revisa
+    # después que ese $0 esté autorizado (si no, la puerta pide la autorización a Daniel).
+    if (not _evt.madre_cobra(madre_fila)) and dd.get("cobro") in (None, "", _evt.COBRO_CUBIERTA, _evt.COBRO_CERO):
+        err, cobro = None, _evt.COBRO_CERO
+    else:
+        err, cobro = _evt.validar_cobro_desinstalacion(
+            dd.get("cobro"), rem["servicio"] if rem["leido"] else 0, rem["despacho"] if rem["leido"] else 0,
+            dd.get("argumento_cubierta"))
     if err:
         return err, None
     dd["cobro"] = cobro
@@ -114172,6 +114262,19 @@ def _ot_crear_desinstalacion(madre_vid, datos, usuario=None, autorizacion=None, 
         fin = {"costo_proveedor": dd["costo_proveedor"], "costo_despacho": dd["costo_despacho"],
                "proveedor_tipo": dd["proveedor_tipo"], "proveedor_nombre": dd["proveedor_nombre"],
                "centro_costo": m.get("centro_costo")}
+        if dd["cobro"] == _evt.COBRO_CERO:
+            # 🧩 2026-10-23: la instalación NO se cobra (garantía, regalía, arriendo/leasing) → su desinstalación hereda el mismo $0
+            # y el mismo motivo, y lo que cobra el técnico y el centro de costo quedan registrados como en cualquier OT $0 (el valor
+            # que «te cobran» se atribuye al centro de costo de la instalación). La puerta lo deja pasar por la vía 'cero_madre'
+            # solo si ese $0 está autorizado; si no, devuelve la solicitud de autorización a Daniel (no hay bucle).
+            _mot_cero = _evt.motivo_cero_de_madre(m) or "garantia"
+            _resp_cero = _ot_madre_cero_respaldo(m)
+            _arg_cero = ((_resp_cero[2] if _resp_cero else "") or "").strip()
+            if len(_arg_cero) < 30:
+                _arg_cero = (f"Desinstalación de {num_m}: hereda el $0 de la instalación ({_OT_COBRO_CERO_MOTIVOS.get(_mot_cero, _mot_cero)}), "
+                             f"autorizado por Daniel con la instalación. " + _arg_cero)[:1000]
+            fin.update({"cobro_cero_motivo": _mot_cero, "cobro_cero_argumento": _arg_cero,
+                        "garantia_aplica": _mot_cero == "garantia", "garantia_motivo": _arg_cero[:500]})
         if dd["cobro"] == _evt.COBRO_PROPIO:
             docs_m = _ot_saldo_docs_de_ot(madre_vid)
             if not docs_m:
@@ -114569,7 +114672,8 @@ def ot_api_desinstalacion_previo():
         rem = _ot_desinst_remanente_saldo(docs, pedido, cli_rut)
         out["remanente"] = {"servicio": rem["servicio"], "despacho": rem["despacho"], "leido": rem["leido"],
                             "completo": rem.get("completo", True), "documentos": rem["por_doc"]}
-        out["elige_cobro"] = bool(rem["leido"] and rem.get("completo", True) and (rem["servicio"] > 0 or rem["despacho"] > 0))
+        out["elige_cobro"] = bool(rem["leido"] and rem.get("completo", True) and (rem["servicio"] > 0 or rem["despacho"] > 0)
+                                  and _evt.madre_cobra(madre_virtual))   # 2026-10-23: una instalación en $0 no pregunta: hereda su $0
     err, _info = _ot_desinst_validar_previo(dd, madre_virtual, docs, pedido, cli_rut, None, feriados=fer,
                                             remanente=rem)
     if err and err["codigo"] == "COBRO_REQUERIDO" and not dd.get("cobro"):
@@ -114587,9 +114691,12 @@ def ot_api_desinstalacion_previo():
         return jsonify(out)
     out["cobro"] = dd.get("cobro")
     out["cobro_txt"] = ("Se cobra su línea de desinstalación" if dd.get("cobro") == _evt.COBRO_PROPIO
-                        else "Cubierta por esta instalación: no consume saldo aparte")
+                        else ("Sin cobro, igual que la instalación ($0 con su mismo motivo): lo que te cobra el técnico y el centro de costo "
+                              "quedan registrados"
+                              if dd.get("cobro") == _evt.COBRO_CERO
+                              else "Cubierta por esta instalación: no consume saldo aparte"))
     if dd["lleva"] == "si":
-        out["sin_documento_madre"] = (dd.get("cobro") != _evt.COBRO_PROPIO and not tiene_doc)
+        out["sin_documento_madre"] = (dd.get("cobro") not in (_evt.COBRO_PROPIO, _evt.COBRO_CERO) and not tiene_doc)
         if dd.get("tecnico_lider_id") and dd.get("fecha"):
             try:
                 adv = _validar_disponibilidad_visita(dd["tecnico_lider_id"], _evt.parse_fecha(dd["fecha"]),
@@ -114627,7 +114734,7 @@ def ot_api_desinstalacion_info(vid):
         out["remanente"] = {"servicio": rem["servicio"], "despacho": rem["despacho"], "leido": rem["leido"],
                             "completo": rem.get("completo", True), "documentos": rem["por_doc"],
                             "elige": bool(rem["leido"] and rem.get("completo", True)
-                                          and (rem["servicio"] > 0 or rem["despacho"] > 0))}
+                                          and (rem["servicio"] > 0 or rem["despacho"] > 0) and _evt.madre_cobra(f))}
         out["madre_cobra"] = _evt.madre_cobra(f)
         tec = [dict(r) for r in (mysql_fetchall(
             "SELECT vt.tecnico_user_id AS id, vt.rol, COALESCE(au.nombre, au.username) AS nombre "
@@ -128372,7 +128479,7 @@ def mant_ot_aprobar_cierre(vid):
     # la puerta ya exigió la factura o boleta de la madre, y el documento viaja ESPEJADO, sin saldo propio): igual que la cubierta.
     if (_gate_on and not _interna_cierre
             and not _exenta_doc_cliente
-            and _via_cierre not in ("autorizacion_cerrar", "cobro_cero", "contrato_real", "documento", "cubierta_madre",
+            and _via_cierre not in ("autorizacion_cerrar", "cobro_cero", "contrato_real", "documento", "cubierta_madre", "cero_madre",
                                     "pendiente_madre")
             and not _docs_cierre):
         return jsonify({
@@ -128596,7 +128703,7 @@ def mant_ot_aprobar_cierre(vid):
     _cliente_acepta_nvv = (v.get("cliente_tipo") or "").strip().lower() in ("arriendo", "leasing")
     if (_gate_on and not _interna_cierre and not _cliente_acepta_nvv
             and not _exenta_doc_cliente   # 2026-10-07: + mantención de contrato real (ver SIN_FACTURA)
-            and _via_cierre not in ("autorizacion_cerrar", "cobro_cero", "contrato_real", "documento", "cubierta_madre",
+            and _via_cierre not in ("autorizacion_cerrar", "cobro_cero", "contrato_real", "documento", "cubierta_madre", "cero_madre",
                                     "pendiente_madre")
             and ((v.get("factura_tido") or "").upper() in _OT_DOCS_NOTA_VENTA)):
         _u_cierre = getattr(g, "user", None) or {}

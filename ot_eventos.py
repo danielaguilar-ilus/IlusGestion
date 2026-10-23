@@ -42,7 +42,13 @@ EDAD_MAX_PREVISTA_DIAS = 92  # solo informativo (la regla de los 3 meses de la s
 
 COBRO_CUBIERTA = "cubierta"
 COBRO_PROPIO = "cobra"
-COBROS_VALIDOS = (COBRO_CUBIERTA, COBRO_PROPIO)
+# 2026-10-23 (Daniel: «la instalación y desinstalación está en un bucle: es por garantía o regalía y no me deja crear la OT por la
+# desinstalación»): una instalación que NO se cobra (garantía, regalía, arriendo/leasing) no puede «cubrir» a su desinstalación (REGLA
+# #24) ni tiene saldo que cobrar: antes no quedaba ninguna salida. La desinstalación hereda el MISMO $0 y el mismo motivo (sale como
+# una OT de garantía/regalía/arriendo, con su costo, su centro de costo y su historia) siempre que el $0 de la instalación ya esté
+# autorizado por Daniel (la solicitud «Incluye desinstalación» o su propia declaración de superadmin).
+COBRO_CERO = "cero"
+COBROS_VALIDOS = (COBRO_CUBIERTA, COBRO_PROPIO, COBRO_CERO)
 
 _MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre",
           "noviembre", "diciembre")
@@ -294,6 +300,21 @@ def madre_cobra(madre):
     return mod == "pagado" and cub != "garantia" and not cero
 
 
+def motivo_cero_de_madre(madre):
+    """El motivo del $0 de una instalación que NO se cobra ('garantia' | 'regalia' | 'arriendo_leasing'), o None si se cobra.
+    Misma deducción que la puerta de documentos (app.py::_ot_puerta_documento, paso 5): el motivo declarado; si no hay, 'garantia'
+    cuando la modalidad o la cobertura dicen garantía, y 'regalia' en el resto (sin costo / interna)."""
+    m = madre or {}
+    if madre_cobra(m):
+        return None
+    motivo = str(m.get("cobro_cero_motivo") or "").strip().lower()
+    if motivo:
+        return motivo
+    mod = str(m.get("modalidad_cobro") or "").strip().lower()
+    cub = str(m.get("cubierto_por") or "").strip().lower()
+    return "garantia" if (mod == "garantia" or cub == "garantia") else "regalia"
+
+
 def madre_valida_para_cubrir(madre, cliente_hija, tiene_doc_real, aut_aprobada=False):
     """¿Esta fila puede ser la MADRE de una desinstalación cubierta? Cuenta lo que dice la crítica adversarial:
       · instalación, sin madre propia (no hay cadenas), no cancelada ni anulada, del MISMO cliente;
@@ -387,6 +408,8 @@ def validar_cobro_desinstalacion(cobro, saldo_servicio_madre, saldo_despacho_mad
     Devuelve (error|None, cobro_normalizado). Sin saldo no se pregunta: es 'cubierta'."""
     cobro = (str(cobro or "").strip().lower()) or None
     saldo = max(0, int(round(float(saldo_servicio_madre or 0)))) + max(0, int(round(float(saldo_despacho_madre or 0))))
+    if cobro == COBRO_CERO:        # la instalación no se cobra: el servidor lo exige y lo respalda aparte (app.py)
+        return None, cobro
     if cobro is None:
         cobro = COBRO_CUBIERTA if saldo <= 0 else None
         if cobro is None:

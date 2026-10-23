@@ -443,22 +443,36 @@ class TestA5_RandomCaidoNoSeAgendaAciegas(_AyudasValidarPrevio, unittest.TestCas
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
 class TestValidarPrevioCobraYDomingo(_AyudasValidarPrevio, unittest.TestCase):
-    def test_madre_que_no_se_cobra_no_admite_cubierta(self):
+    def test_madre_que_no_se_cobra_no_admite_cubierta_pero_hereda_su_cero(self):
+        """2026-10-23 (Daniel: «la instalación con desinstalación por garantía o regalía está en un bucle»): antes una instalación que no
+        se cobra no admitía «cubierta» (REGLA #24) y tampoco tenía saldo que cobrar: no quedaba ninguna salida. Ahora la desinstalación
+        hereda el MISMO $0 («cero»); «cubierta» sigue sin existir para ella."""
         garantia = madre(modalidad_cobro="garantia")
-        err, _ = self.validar(self.norm(), {"servicio": 0, "despacho": 0, "leido": True, "completo": True, "por_doc": []}, garantia)
-        self.assertEqual(err["codigo"], "DESINST_MADRE_SIN_COBRO")
-        self.assertIn("no se cobra", err["mensaje"])
+        sin_saldo = {"servicio": 0, "despacho": 0, "leido": True, "completo": True, "por_doc": []}
+        dd = self.norm()
+        err, info = self.validar(dd, sin_saldo, garantia)
+        self.assertIsNone(err, "sin saldo y sin elegir nada: hereda el $0, sin bucle")
+        self.assertEqual(dd["cobro"], "cero")
         # con saldo en la nota de venta puede elegir «la cobra la desinstalación» (camino normal con su propio documento)
         rem = {"servicio": 120000, "despacho": 0, "leido": True, "completo": True, "por_doc": []}
         err, _ = self.validar(self.norm(cobro="cobra", cobra_servicio=100000), rem, garantia)
         self.assertIsNone(err)
-        # y si elige «cubierta» con saldo, también se rechaza
-        err, _ = self.validar(self.norm(cobro="cubierta", argumento_cubierta="x" * 40), rem, garantia)
-        self.assertEqual(err["codigo"], "DESINST_MADRE_SIN_COBRO")
+        # «cubierta» ya no es una opción para ella: se vuelve su $0 heredado (nunca una cobertura por la instalación)
+        dd = self.norm(cobro="cubierta", argumento_cubierta="x" * 40)
+        err, _ = self.validar(dd, rem, garantia)
+        self.assertIsNone(err)
+        self.assertEqual(dd["cobro"], "cero")
         # una instalación en arriendo o con regalía igual
         for kw in ({"cobro_cero_motivo": "arriendo_leasing"}, {"cobro_cero_motivo": "regalia"}):
-            err, _ = self.validar(self.norm(), {"servicio": 0, "despacho": 0, "leido": True, "completo": True, "por_doc": []}, madre(**kw))
-            self.assertEqual(err["codigo"], "DESINST_MADRE_SIN_COBRO", kw)
+            dd = self.norm()
+            err, _ = self.validar(dd, sin_saldo, madre(**kw))
+            self.assertIsNone(err, kw)
+            self.assertEqual(dd["cobro"], "cero", kw)
+        # una instalación que SÍ se cobra no cambia: sin saldo queda «cubierta»
+        dd = self.norm()
+        err, _ = self.validar(dd, sin_saldo, madre())
+        self.assertIsNone(err)
+        self.assertEqual(dd["cobro"], "cubierta")
 
     def test_por_definir_en_domingo_se_bloquea_en_el_servidor(self):
         dd = self.norm(lleva="por_definir", fecha="2026-11-29")      # domingo
