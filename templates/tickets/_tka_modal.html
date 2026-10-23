@@ -1638,6 +1638,16 @@ function _tkaStockBadge(l){
     + '<i class="bi bi-info-circle-fill"></i>' + _tkaEsc(texto) + '</span>';
 }
 
+// 2026-10-23 (Daniel, OT-2026-00348: «se están filtrando productos del servicio: descuentos, ZZENVIO, ZZINSTALACION»): una línea del
+// documento que NO es un producto físico: servicio (SKU ZZ…) o descuento de la venta (SKU «DE» / «DESCUENTO VENTAS», cuya «cantidad» es el
+// MONTO). Antes solo se filtraba es_zz y el descuento pasaba como un producto más. Misma regla que _sku_es_servicio (app.py).
+function _tkaEsServicio(l){
+  if (!l) return false;
+  const s = String(l.sku || '').trim().toUpperCase();
+  if (l.es_zz || l.es_descuento || s.startsWith('ZZ') || s === 'DE') return true;
+  return /^\s*descuento/i.test(String(l.descripcion_erp || l.nombre_app || l.nombre || ''));
+}
+
 // 2026-09-17 (soloHeader -- ver tkaOpen): tarjeta de confirmación para un
 // documento que solo trae líneas de servicio/flete (ZZ), cuando el caller
 // no necesita productos físicos, solo el encabezado (tido/nudo/cliente).
@@ -1735,7 +1745,7 @@ async function tkaBuscarPorDoc(){
       comuna: hdr.comuna || '',
       fecha: hdr.fecha || ''
     };
-    const lineas = (d.lineas || []).filter(l => !l.es_zz);
+    const lineas = (d.lineas || []).filter(l => !_tkaEsServicio(l));
     if (!lineas.length){
       if (_TKA.ctx.soloHeader){
         // 2026-09-17 (Daniel, NV 10618 con solo ZZINSTALACION -- "muy
@@ -2143,7 +2153,7 @@ async function tkaToggleDocCli(idx){
       comuna: ddHdr.comuna || '',
       fecha: ddHdr.fecha || doc.fecha || ''
     };
-    const lineas = (dd.lineas || []).filter(l => !l.es_zz);
+    const lineas = (dd.lineas || []).filter(l => !_tkaEsServicio(l));
     if (!lineas.length){
       // 2026-09-17: mismo criterio que tkaBuscarPorDoc -- un caller
       // soloHeader (ej. Costos de OT 2.0) no necesita productos físicos.
@@ -2327,7 +2337,7 @@ async function _tkaSelDocCompleto(doc, idxDoc, marcar){
     });
     const d = await r.json();
     if (d.error) return 0;
-    const lineas = (d.lineas || []).filter(l => !l.es_zz);
+    const lineas = (d.lineas || []).filter(l => !_tkaEsServicio(l));
     lineas.forEach((l, j) => {
       const saldo = _tkaSaldoLinea(l);
       if (saldo <= 0) return;
@@ -2388,7 +2398,7 @@ async function tkaAsociarTodasConSaldo(){
       });
       const d = await r.json();
       if (d.error) continue;
-      const lineas = (d.lineas || []).filter(l => !l.es_zz);
+      const lineas = (d.lineas || []).filter(l => !_tkaEsServicio(l));
       lineas.forEach((l, j) => {
         const saldo = _tkaSaldoLinea(l);
         if (saldo <= 0) return;

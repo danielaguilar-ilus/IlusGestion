@@ -56405,6 +56405,21 @@ def _mant_notif_tecnico_ok(tipo, titulo, cuerpo):
     return not _NOTIF_TEC_RE_VEDADO.search(f"{tipo or ''} {titulo or ''} {cuerpo or ''}")
 
 
+# 🧹 2026-10-23 (Daniel, OT-2026-00348 de VF Sports: «se están filtrando productos del servicio: descuentos, ZZENVIO, ZZINSTALACION,
+# ya que son servicios»). Una línea de un documento del ERP que NO es un producto físico: los servicios (SKU «ZZ…»: instalación,
+# envío, mantención) y el descuento («DE» / «DESCUENTO VENTAS», cuya «cantidad» es el MONTO). Nunca es un equipo de una OT, no se da
+# de alta en la ficha del cliente ni lleva checklist. UNA sola definición: los filtros de las pantallas (ZZ por un lado, DE por otro)
+# se desfasaban y una de las dos dejaba pasar la línea.
+_SERVICIO_NOMBRE_RE = re.compile(r"\s*descuento", re.I)
+
+
+def _sku_es_servicio(sku, nombre=""):
+    s = str(sku or "").strip().upper()
+    if s.startswith("ZZ") or s == "DE":
+        return True
+    return bool(_SERVICIO_NOMBRE_RE.match(str(nombre or "")))
+
+
 # Importes de un documento del ERP (Random) que un técnico NO recibe (REGLA #26). Solo lectura (REGLA #4.1).
 _ERP_CLAVES_PLATA_RE = re.compile(
     r"(precio|valor|neto|bruto|monto|vaneli|vabrli|ppprne|ppprbr|descuento|importe|iva|costo|subtotal)", re.I)
@@ -56419,8 +56434,21 @@ def _erp_doc_sin_montos(resp):
             if _ERP_CLAVES_PLATA_RE.search(str(k)):
                 h[k] = None
         h["raw_sample"] = {}
+
+        # 2026-10-23 (Daniel: «Isabel está viendo descuentos por ventas… los técnicos solo completan el checklist y
+        # reportan desviaciones, fallas o solicitudes»): la línea «DESCUENTO VENTAS» (SKU «DE») trae el MONTO del
+        # descuento como «cantidad». Borrar solo los campos con nombre de plata la dejaba pasar con su monto.
+        # Una línea de descuento entera no es operativa para un técnico: no se le entrega.
+        def _es_linea_descuento(ln):
+            if ln.get("es_descuento") or str(ln.get("sku") or "").strip().upper() == "DE":
+                return True
+            for k in ("descripcion_erp", "nombre", "nombre_app", "descripcion", "glosa"):
+                if re.match(r"\s*descuento", str(ln.get(k) or ""), re.I):
+                    return True
+            return False
+
         lineas = [{k: v for k, v in dict(ln).items() if not _ERP_CLAVES_PLATA_RE.search(str(k))}
-                  for ln in ((resp or {}).get("lineas") or [])]
+                  for ln in ((resp or {}).get("lineas") or []) if not _es_linea_descuento(dict(ln))]
         return {"hdr": h, "lineas": lineas}
     except Exception:
         return {"hdr": {}, "lineas": []}
@@ -64643,7 +64671,8 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
             n_doc = 0
             for ln in (lineas or []):
                 sku = (ln.get("sku") or "").strip()
-                if not sku or ln.get("es_zz") or sku.upper().startswith("ZZ"):
+                if (not sku or ln.get("es_zz") or ln.get("es_descuento")
+                        or _sku_es_servicio(sku, ln.get("descripcion_erp") or ln.get("nombre_app"))):   # 2026-10-23: + el descuento «DE»
                     continue
                 try:
                     cant = int(float(ln.get("cantidad") or 0))
@@ -64696,7 +64725,7 @@ def _ficha_equipos_desde_instalacion(cid, confirmar=False, usuario=None, tickets
                     f"SELECT ticket_id, erp_kopr, sku, nombre, cantidad, documento_garantia FROM tk_ticket_equipos "
                     f" WHERE ticket_id IN ({ph}) ORDER BY id", tuple(por_id)) or []):
                 sku = (e.get("erp_kopr") or e.get("sku") or "").strip()
-                if not sku or sku.upper().startswith("ZZ"):
+                if not sku or _sku_es_servicio(sku, e.get("nombre")):   # 2026-10-23: servicios ZZ y descuento «DE»
                     continue
                 cant = max(1, int(e.get("cantidad") or 1))
                 if cant > 300:
@@ -75018,6 +75047,11 @@ def mant_maquina_add(cid):
     # (MAN = manual). El usuario lo puede editar después desde la ficha.
     if not sku and d.get("auto_sku"):
         sku = f"MAN-{cid}-{int(time.time())}"[:80].upper()
+    # 🧹 2026-10-23 (Daniel, OT-2026-00348: «DESCUENTO VENTAS» quedó en la ficha como equipo): un servicio (ZZ…) o el descuento de la
+    # venta («DE») no es un equipo del cliente: no se da de alta, venga del documento o de una pantalla vieja.
+    if _sku_es_servicio(sku, d.get("nombre")):
+        return jsonify({"ok": False, "codigo": "ES_SERVICIO",
+                        "error": "Eso es un servicio o un descuento de la venta, no un equipo: no se agrega a la ficha."}), 400
     # doc_origen NORMALIZADO al formato canónico 'TIDO NUDO' (sin leading zeros)
     # Esto garantiza que _asignados_por_sku encuentre el match en futuras consultas.
     doc_origen   = _doc_origen_normalizar((d.get("doc_origen","") or "").strip())
@@ -82961,6 +82995,30 @@ def _ot_maquinas_excluidas_cierre(vid):
     except Exception:
         # Tabla nueva — si aún no se creó, no excluimos nada (comp. atrás).
         excluir_maquinas = set()
+    # 🧹 2026-10-23 (Daniel, OT-2026-00348: «DESCUENTO VENTAS» quedó como equipo con 4 tareas obligatorias): una línea de servicio
+    # o de descuento del documento NO es un equipo — jamás bloquea la firma ni el cierre (OT que ya nacieron así). Mismo criterio
+    # que _sku_es_servicio; ZZ% y DE. Si la consulta falla no se excluye nada (fail-open: lo de siempre).
+    try:
+        rows_serv = mysql_fetchall(
+            "SELECT DISTINCT x.maquina_id FROM ("
+            "  SELECT t.maquina_id FROM mant_visita_tareas t WHERE t.visita_id=%s AND t.maquina_id IS NOT NULL"
+            "  UNION SELECT ve.maquina_id FROM mant_visita_equipos ve WHERE ve.visita_id=%s AND ve.maquina_id IS NOT NULL"
+            ") x JOIN mant_maquinas m ON m.id = x.maquina_id "
+            " WHERE UPPER(TRIM(COALESCE(m.sku,''))) LIKE 'ZZ%%' OR UPPER(TRIM(COALESCE(m.sku,''))) = 'DE' "
+            "    OR UPPER(TRIM(COALESCE(m.nombre,''))) LIKE 'DESCUENTO%%'",
+            (vid, vid)) or []
+        for r in rows_serv:
+            if r.get("maquina_id"):
+                excluir_maquinas.add(int(r["maquina_id"]))
+    except Exception:
+        pass
+    # 🧩 2026-10-23 (Daniel, OT-2026-00348: «los accesorios deben solo colocar si llegó o no… no se instalan»): un ACCESORIO no exige su
+    # checklist, su diagnóstico ni sus fotos. En su lugar exige UNA respuesta («¿Llegó?»), que cuenta aparte en
+    # `_ot_chk_revision_pendientes` (la misma fuente única que firma, cierre y ficha).
+    try:
+        excluir_maquinas |= _ot_accesorios_ids(vid)
+    except Exception:
+        pass
     return excluir_maquinas
 
 
@@ -89654,6 +89712,9 @@ def mant_cliente_maquinas_list(cid):
         "  FROM mant_maquinas WHERE cliente_id=%s AND COALESCE(estado,'activo') <> 'baja' "
         " ORDER BY nombre", (cid,)
     ) or []
+    # 🧹 2026-10-23 (Daniel, OT-2026-00348): una línea de servicio (ZZ…) o el descuento de la venta («DE») que quedó en la ficha como
+    # «equipo» no se ofrece para una OT ni para pedir repuestos (no es una máquina). No se borra de la ficha: solo no se lista aquí.
+    rows = [r for r in rows if not _sku_es_servicio(r.get("sku"), r.get("nombre"))]
     return jsonify([dict(r) for r in rows])
 
 
@@ -92638,6 +92699,9 @@ def ot2_detalle(vid):
         " WHERE (COALESCE(m.estado,'activo') <> 'baja' "
         "        OR (ve.estado_revision='saltado' AND ve.razon_saltado='dado_de_baja')) "
         "   AND (t.maquina_id IS NOT NULL OR ve.maquina_id IS NOT NULL) "
+        # 🧹 2026-10-23: un servicio (ZZ…) o el descuento («DE») del documento no es un equipo: no se dibuja (ver _sku_es_servicio).
+        "   AND UPPER(TRIM(COALESCE(m.sku,''))) NOT LIKE 'ZZ%%' AND UPPER(TRIM(COALESCE(m.sku,''))) <> 'DE' "
+        "   AND UPPER(TRIM(COALESCE(m.nombre,''))) NOT LIKE 'DESCUENTO%%' "
         " ORDER BY m.nombre LIMIT 200",
         (vid, vid)
     ) or []
@@ -92704,6 +92768,20 @@ def ot2_detalle(vid):
             e["sello"], e["sello_cls"] = "En curso", "eq-go"
         else:
             e["sello"], e["sello_cls"] = "Pendiente", "eq-pend"
+
+    # 🧩 2026-10-23 (Daniel, OT-2026-00348: «los accesorios deben solo colocar si llegó o no… no se instalan»): un ACCESORIO cuenta UNA obligatoria,
+    # «¿Llegó?», en vez de su checklist (que ya no exige: ver _ot_maquinas_excluidas_cierre). Aquí se corrigen sus cifras por tarjeta para que
+    # «equipos listos» y «Siguiente pendiente» digan lo mismo que el candado de firma (_ot_chk_revision_pendientes).
+    try:
+        _acc0 = _ot_accesorios_estado(vid) if equipos else {"ids": set(), "sin_respuesta": []}
+    except Exception:
+        _acc0 = {"ids": set(), "sin_respuesta": []}
+    _acc_sin0 = {a["id"] for a in _acc0["sin_respuesta"]}
+    for e in equipos:
+        if int(e.get("id") or 0) in _acc0["ids"]:
+            e["n_obl"], e["n_obl_ok"] = 1, (0 if int(e["id"]) in _acc_sin0 else 1)
+            e["n_obl_falta"] = 1 - e["n_obl_ok"]
+            e["excluido_cierre"] = False
 
     # 🆕 2026-08-30 (Daniel: "estoy viendo un número de serie que no me
     # está dando el formato... trae eso de allá [ot_ejecutar.html]"). Esta
@@ -93958,6 +94036,11 @@ def ot2_detalle(vid):
         _acc_externo = False
     _acc_rev = bool((not _es_rol_tecnico()) and puede_configurar and not ot_solo_lectura)
     acc_data = {}
+    # 🧩 2026-10-23: los ACCESORIOS de la OT (clase «accesorio» del Catálogo) solo contestan «¿Llegó?» (ver _ot_accesorios_ids).
+    try:
+        _acc_ids = set(_acc0["ids"]) if any(not e.get("_interno") for e in equipos) else set()
+    except Exception:            # (el bloque se prueba aislado: sin el cálculo de arriba no hay accesorios)
+        _acc_ids = set()
     for e in equipos:
         _eid = int(e.get("id") or 0)
         _interno = bool(e.get("_interno"))
@@ -93979,6 +94062,19 @@ def ot2_detalle(vid):
             _d["fsb"] = (e.get("estado_capturado") or "") == "fuera_servicio"
             _d["fs"] = e.get("fs_info")
             _d["np"] = _np_map.get(_eid)
+            if _eid in _acc_ids:
+                # Accesorio: una sola pregunta. «Sí, llegó» va aparte de «No llegó» (que es el `np` de siempre).
+                _d["acc"] = True
+                _d["p"]["llego"] = acc_puede
+                if _d["np"] and _d["np"].get("estado") == _pe.ESTADO_LLEGO:
+                    _d["llego"] = _d["np"]
+                    _d["np"] = None
+                e["es_accesorio"] = True
+                e["acc_respondido"] = bool(_d.get("llego") or _d.get("np")
+                                           or (e.get("estado_revision") or "") in ("saltado", "falla_detectada"))
+                e["acc_chip"] = (_d.get("llego") or _d.get("np") or {}).get("chip") or ""
+                e["sello"] = "Llegó" if _d.get("llego") else ("No llegó" if _d.get("np") else "Pendiente")
+                e["sello_cls"] = "eq-ok" if _d.get("llego") else ("eq-go" if e["acc_respondido"] else "eq-pend")
             _d["bj"] = bool(e.get("dado_baja_aqui"))
             _d["pio"] = bool(e.get("piola_aplica"))
             _d["cin"] = bool(e.get("cinta_aplica"))
@@ -96588,6 +96684,9 @@ def _ot_equipos_desde_doc_core(vid, confirmar=False, usuario=None):
         # Las líneas ZZ son SERVICIOS (instalación, envío, mantención), no
         # máquinas: nunca entran a la ficha de equipos.
         if ln.get("es_zz") or _sku_u.startswith("ZZ"):
+            continue
+        # 🧹 2026-10-23: el descuento de la venta («DE»: su «cantidad» es el MONTO) tampoco es una máquina (antes se daba de alta).
+        if ln.get("es_descuento") or _sku_es_servicio(_sku, ln.get("descripcion_erp") or ln.get("nombre_app")):
             continue
         if not _sku:
             continue
@@ -111682,6 +111781,22 @@ def _ot2_crear_core(d, autorizacion=None, madre=None):
                     "PLANTILLA_REQUERIDA")
             pid = None      # el levantamiento resuelve su plantilla abajo
         equipos.append({"maquina_id": mid, "plantilla_id": pid})
+
+    # 🧹 2026-10-23 (Daniel, OT-2026-00348: «DESCUENTO VENTAS» llegó a la OT como equipo): una línea de servicio o de descuento del
+    # documento NO es un equipo. Si una pantalla vieja o una ficha creada antes la manda, se deja fuera y se AVISA (nunca en silencio).
+    if equipos:
+        try:
+            _ph_srv = ",".join(["%s"] * len(equipos))
+            _filas_srv = mysql_fetchall(
+                f"SELECT id, sku, nombre FROM mant_maquinas WHERE id IN ({_ph_srv})",
+                tuple(e["maquina_id"] for e in equipos)) or []
+            _ids_srv = {int(r["id"]) for r in _filas_srv if _sku_es_servicio(r.get("sku"), r.get("nombre"))}
+        except Exception:
+            _ids_srv = set()
+        if _ids_srv:
+            equipos = [e for e in equipos if e["maquina_id"] not in _ids_srv]
+            avisos.append(f"Se dejaron fuera {len(_ids_srv)} línea(s) del documento que son servicios o descuentos, no equipos "
+                          "(instalación, envío, descuento de venta).")
 
     # Un descubrimiento sin equipos es lo NORMAL, no un error.
     if descubrimiento:
@@ -163386,6 +163501,19 @@ def _ot_chk_revision_pendientes(vid, excluir_maquinas=None):
         f"{nombre}: " + " · ".join(f"{n} {_CHK_MOTIVO_TXT.get(m, m)}" if m != "argumento" else _CHK_MOTIVO_TXT[m]
                                    for m, n in sorted(motivos.items()))
         for nombre, motivos in por_producto.items()]
+    # 🧩 2026-10-23: cada ACCESORIO de la OT debe decir si llegó o no (una obligatoria por accesorio). Va en los mismos contadores y en
+    # el mismo candado que el resto de la revisión: el botón «Firmar como técnico», el servidor y el cierre dicen lo mismo.
+    try:
+        acc = _ot_accesorios_estado(vid)
+        if acc["total"]:
+            out["kpi_delta"]["obl"] += acc["total"]
+            out["kpi_delta"]["obl_ok"] += acc["ok"]
+            for a in acc["sin_respuesta"]:
+                out["pendientes"].append({"tarea_id": None, "titulo": "¿Llegó?", "producto": a["nombre"], "maquina_id": a["id"],
+                                          "item_manual_id": None, "motivo": "acc_llego"})
+                out["faltantes"].append(f"{a['nombre']}: falta indicar si llegó")
+    except Exception as _e_acc:      # FAIL-OPEN, como el resto de esta función: un problema de consulta nunca inventa un pendiente
+        print(f"[chk_revision_pendientes] accesorios vid={vid}: {type(_e_acc).__name__}", flush=True)
     return out
 
 
@@ -164914,6 +165042,60 @@ def _otpe_equipos_activos(vid):
     return {mid: _otpe_equipo_publico(f) for mid, f in por_equipo.items()}
 
 
+# ───────────────────────── ACCESORIOS DE UNA OT: una sola pregunta, «¿Llegó?» ─────────────────────────
+# 🧩 2026-10-23 (Daniel, OT-2026-00348 de VF Sports, Isabel en terreno: «los accesorios deben solo colocar si llegó o no y el formulario chico de
+# foto y descripción opcional, nada más, ya que los accesorios no se instalan»). ACCESORIO = producto cuya clase en el Catálogo es «accesorio»
+# (la misma clasificación que ya decide pisos/accesorios en el resto del sistema). Un accesorio NO exige su checklist, su diagnóstico ni sus fotos
+# para firmar o cerrar (queda en `_ot_maquinas_excluidas_cierre`, la fuente única) y en su lugar exige UNA respuesta: «Sí, llegó» (con foto y
+# descripción opcionales) o «No llegó» (la salida de siempre). Esa respuesta cuenta como UNA obligatoria en los contadores y el candado de firma
+# (`_ot_chk_revision_pendientes`, la misma fuente única que usan la ficha, la firma y el cierre).
+def _ot_accesorios_ids(vid):
+    """maquina_id de los accesorios de la OT (tareas ∪ equipos, sin los de baja). set() si algo falla (FAIL-OPEN: sin dato no se inventa
+    una exigencia ni se saca a nadie del checklist)."""
+    try:
+        filas = mysql_fetchall(
+            "SELECT DISTINCT m.id, m.sku FROM mant_maquinas m WHERE COALESCE(m.estado,'activo') <> 'baja' AND m.id IN ("
+            "  SELECT t.maquina_id FROM mant_visita_tareas t WHERE t.visita_id=%s AND t.maquina_id IS NOT NULL"
+            "  UNION SELECT ve.maquina_id FROM mant_visita_equipos ve WHERE ve.visita_id=%s AND ve.maquina_id IS NOT NULL)",
+            (vid, vid)) or []
+        skus = sorted({(r.get("sku") or "").strip() for r in filas if (r.get("sku") or "").strip()})
+        clases = _inc_clasificacion_skus_batch(skus) if skus else {}
+        por_sku = {str(k).strip().upper(): (v or {}).get("clase") for k, v in clases.items()}
+        return {int(r["id"]) for r in filas if por_sku.get((r.get("sku") or "").strip().upper()) == "accesorio"}
+    except Exception as e:
+        print(f"[ot_accesorios] ids vid={vid}: {type(e).__name__}", flush=True)
+        return set()
+
+
+def _ot_accesorios_estado(vid, ids=None):
+    """{"ids", "total", "ok", "sin_respuesta": [{id, nombre}]}: cuántos accesorios tiene la OT y cuáles faltan por contestar «¿Llegó?».
+    Contestado = tiene una acción vigente (Sí llegó / No llegó…) o ya quedó saltado/gestionado. FAIL-OPEN: si algo falla, total=0."""
+    vacio = {"ids": set(), "total": 0, "ok": 0, "sin_respuesta": []}
+    try:
+        ids = set(ids) if ids is not None else _ot_accesorios_ids(vid)
+        if not ids:
+            return vacio
+        lista = sorted(ids)
+        ph = ",".join(["%s"] * len(lista))
+        resp = set()
+        for r in (mysql_fetchall(
+                f"SELECT maquina_id FROM mant_visita_equipos WHERE visita_id=%s AND maquina_id IN ({ph}) "
+                f"AND estado_revision IN ('saltado','falla_detectada')", (vid, *lista)) or []):
+            resp.add(int(r["maquina_id"]))
+        if _otpe_ok():
+            for r in (mysql_fetchall(
+                    f"SELECT DISTINCT maquina_id FROM mant_ot_producto_estado WHERE visita_id=%s AND activo=1 "
+                    f"AND maquina_id IN ({ph})", (vid, *lista)) or []):
+                resp.add(int(r["maquina_id"]))
+        nombres = {int(r["id"]): r.get("nombre") for r in (mysql_fetchall(
+            f"SELECT id, nombre FROM mant_maquinas WHERE id IN ({ph})", tuple(lista)) or [])}
+        falta = [{"id": i, "nombre": nombres.get(i) or f"Accesorio #{i}"} for i in lista if i not in resp]
+        return {"ids": ids, "total": len(lista), "ok": len(lista) - len(falta), "sin_respuesta": falta}
+    except Exception as e:
+        print(f"[ot_accesorios] estado vid={vid}: {type(e).__name__}", flush=True)
+        return vacio
+
+
 def _otpe_pendientes_falta_stock(vid=None, limite=500):
     """Equipos de OT de cliente que quedaron PENDIENTES POR FALTA DE STOCK (estado 'falta_stock' vigente): visita, equipo,
     SKU, cantidad, quién y cuándo (hora Chile). Con `vid` solo los de esa OT. Es el dato que usará el trabajo de la rama de
@@ -165105,6 +165287,97 @@ def ot2_api_equipo_no_esta_revertir(vid, mid):
     except Exception:
         pass
     return jsonify({"ok": True})
+
+
+@app.route("/ot/api/<int:vid>/equipo/<int:mid>/llego", methods=["POST"])
+@_mant_required
+@_ot_can_configurar
+def ot2_api_equipo_llego(vid, mid):
+    """«Sí, llegó» de un ACCESORIO de una OT de cliente (2026-10-23, Daniel: «solo colocar si llegó o no y el formulario chico de foto y
+    descripción opcional, nada más»). multipart: descripcion (opcional) y fotos (opcionales, hasta 3). Mismos candados que «No está / no
+    llegó»: técnico asignado o gestión (también el externo), el equipo es del cliente de esta OT y la OT no está cerrada. SOLO accesorios:
+    una máquina real se revisa con su checklist. Si el accesorio ya está marcado «No llegó», primero se devuelve a su estado normal (gestión,
+    con motivo). Volver a enviar «Sí, llegó» reemplaza la respuesta anterior (la fila vieja queda marcada, no se borra)."""
+    v, m, err = _otrep_cargar_ot_y_equipo(vid, mid)
+    if err:
+        return err
+    if (v.get("estado") or "").strip().lower() in _OTPROD_ESTADOS_FIN:
+        return _ot2_err("La OT ya está cerrada: no se pueden cambiar las acciones de sus equipos.", "OT_CERRADA", http=409)
+    if (m.get("estado") or "").lower() == "baja":
+        return _ot2_err("Ese equipo está dado de baja.", "EQUIPO_DE_BAJA")
+    if int(mid) not in _ot_accesorios_ids(vid):
+        return _ot2_err("Esto es solo para accesorios. Un equipo se revisa con su checklist.", "NO_ES_ACCESORIO", http=409)
+    if not _otpe_ok():
+        return _ot2_err("Esta función no está disponible en este momento. Intenta de nuevo en un minuto.",
+                        "TABLA_NO_DISPONIBLE", http=503)
+    archivos = [x for x in (request.files.getlist("fotos") or []) if x and x.filename]
+    limpio = _pe.normalizar_llego({"descripcion": request.form.get("descripcion")}, n_fotos=len(archivos))
+    if len(archivos) > _OTPE_MAX_FOTOS:
+        return _ot2_err(f"Como máximo {_OTPE_MAX_FOTOS} fotos por aviso.", "EVIDENCIA_EXCESO")
+    for a in archivos:
+        tipo_a, e_a = _otrep_clasificar_archivo(a)
+        if e_a:
+            return _ot2_err(e_a, "EVIDENCIA_INVALIDA")
+        if tipo_a != "foto":
+            return _ot2_err("Aquí van solo fotos.", "EVIDENCIA_INVALIDA")
+    previa = mysql_fetchone(
+        "SELECT estado FROM mant_ot_producto_estado WHERE visita_id=%s AND maquina_id=%s AND activo=1 ORDER BY id DESC LIMIT 1",
+        (vid, mid)) or {}
+    if previa.get("estado") and previa.get("estado") != _pe.ESTADO_LLEGO:
+        return _ot2_err("Ese accesorio ya está marcado como «%s». Si cambió, primero devuélvelo a su estado normal."
+                        % (_pe.CHIP_EQUIPO.get(previa.get("estado")) or "otra cosa"), "EQUIPO_YA_MARCADO", http=409)
+    if archivos and not _gcs_ready():
+        return _ot2_err("El almacenamiento de fotos no está disponible en este momento. Intenta de nuevo en un "
+                        "minuto.", "STORAGE_OFF", http=503)
+    user = current_username() or "sistema"
+    fotos = []
+    if archivos:
+        fotos, e_fotos = _otpe_subir_fotos(vid, f"m{mid}", _pe.ESTADO_LLEGO, archivos)
+        if e_fotos:
+            return _ot2_err(e_fotos + " Como no subió la foto, NO se registró la respuesta.", "EVIDENCIA_NO_SUBIO", http=502)
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                "UPDATE mant_ot_producto_estado SET activo=0, revertido_por=%s, revertido_en=NOW(), "
+                "       revertido_motivo=%s WHERE visita_id=%s AND maquina_id=%s AND activo=1",
+                (user, "Reemplazado por una nueva respuesta «Sí, llegó»", vid, mid))
+            cur.execute(
+                "INSERT INTO mant_ot_producto_estado (visita_id, maquina_id, estado, motivo_clave, motivo, detalle, "
+                " cantidad, cantidad_total, fotos_json, creado_por) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (vid, mid, _pe.ESTADO_LLEGO, None, limpio["motivo"], limpio["detalle"], 1, 1,
+                 json.dumps(fotos, ensure_ascii=False) if fotos else None, user))
+            nuevo_id = int(cur.lastrowid)
+            cur.execute(
+                "INSERT INTO mant_visita_equipos (visita_id, maquina_id, estado_revision, observacion_tecnico, revisado_at, revisado_por) "
+                "VALUES (%s,%s,'verificado',%s,NOW(),%s) "
+                "ON DUPLICATE KEY UPDATE estado_revision='verificado', observacion_tecnico=VALUES(observacion_tecnico), "
+                "   revisado_at=NOW(), revisado_por=VALUES(revisado_por)",
+                (vid, mid, limpio["observacion"], user))
+        db.commit()
+    except Exception as e:
+        print(f"[otpe] llego vid={vid} mid={mid}: {type(e).__name__}: {e}", flush=True)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        for s in fotos:
+            try:
+                if s.get("public_id"):
+                    _uploader_destroy(s["public_id"])
+            except Exception:
+                pass
+        return _ot2_err("No pudimos guardar la respuesta. Intenta de nuevo.", "ERROR_INTERNO", http=500)
+    fila = {"id": nuevo_id, "estado": _pe.ESTADO_LLEGO, "activo": 1, "creado_por": user, "creado_en": datetime.utcnow(),
+            "motivo": limpio["motivo"], "detalle": limpio["detalle"],
+            "fotos_json": json.dumps(fotos, ensure_ascii=False) if fotos else None}
+    try:
+        _mant_log("visita", vid, "equipo_llego",
+                  f"Accesorio #{mid} ({m.get('nombre')}): llegó" + (f" · {limpio['detalle'][:200]}" if limpio["detalle"] else "")
+                  + f" · {len(fotos)} foto(s) · por {user}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "estado": _otpe_equipo_publico(fila)})
 
 
 @app.route("/ot/api/<int:vid>/pendientes-falta-stock", methods=["GET"])

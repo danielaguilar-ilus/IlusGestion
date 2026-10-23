@@ -512,6 +512,27 @@ MOTIVOS_EQUIPO = {
 }
 MIN_DETALLE_EQUIPO = 10
 
+# 🧩 2026-10-23 (Daniel, OT-2026-00348 de VF Sports, con Isabel en terreno: «en el formulario de accesorios deben solo colocar si llegó o no y el
+# formulario chico de foto y descripción opcional, nada más, ya que los accesorios no se instalan»). Un ACCESORIO (clase «accesorio» del Catálogo)
+# no lleva checklist ni «Pedir repuesto»: se contesta UNA pregunta, «¿Llegó?». «No llegó» es la salida de siempre de arriba («No llegó · falta
+# stock»); «Sí, llegó» es esta fila, con foto y descripción OPCIONALES. Mismo registro por debajo (mant_ot_producto_estado, sin migración: `estado`
+# es VARCHAR(20)) y mismo cierre del equipo (mant_visita_equipos.estado_revision='verificado').
+ESTADO_LLEGO = "llego"
+CHIP_EQUIPO[ESTADO_LLEGO] = "Llegó"
+BOTON_EQUIPO[ESTADO_LLEGO] = "Sí, llegó"
+MAX_DESCRIPCION_LLEGO = 600
+
+
+def normalizar_llego(datos, n_fotos=0):
+    """«Sí, llegó» de un accesorio: foto y descripción OPCIONALES (nada se exige). Devuelve el dict para guardar."""
+    datos = datos or {}
+    desc = _limpio(datos.get("descripcion"))[:MAX_DESCRIPCION_LLEGO]
+    return {
+        "estado": ESTADO_LLEGO, "razon_saltado": None, "motivo_clave": None, "motivo": "Llegó",
+        "detalle": desc or None, "observacion": ("Llegó" + (" — " + desc if desc else ""))[:2000],
+        "cantidad": 1, "cantidad_total": 1, "fotos_validas": max(0, int(n_fotos or 0)),
+    }
+
 
 def motivos_equipo(opcion):
     return MOTIVOS_EQUIPO.get(opcion, ())
@@ -557,7 +578,7 @@ def primer_nombre(usuario):
 def chip_equipo(fila, cuando=""):
     """Texto del chip de la tarjeta del equipo: «No llegó · falta stock · 20/10 · Isabel». `cuando` ya viene en hora
     Chile (dd/mm) desde app.py (REGLA #6). Una acción que no es de equipo devuelve ''."""
-    if not fila or fila.get("estado") not in ESTADOS_EQUIPO:
+    if not fila or (fila.get("estado") not in ESTADOS_EQUIPO and fila.get("estado") != ESTADO_LLEGO):
         return ""
     partes = [CHIP_EQUIPO[fila["estado"]]]
     if fila["estado"] == ESTADO_NO_REVISADO and fila.get("motivo"):

@@ -5428,10 +5428,15 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             aunque el backend ya lo hubiera dejado libre. Mismo criterio
             que el backend, un solo lugar que lo decide. #}
         {% set _excluido_cierre = (e.estado_revision or '') in ('saltado', 'falla_detectada') %}
-        <details class="otd-wk-item{{ ' is-complete' if _excluido_cierre or (e.n_obl and e.n_obl_ok == e.n_obl) }}"
-                 data-obl="{{ 1 if _excluido_cierre else e.n_obl }}"
-                 data-oblok="{{ 1 if _excluido_cierre else e.n_obl_ok }}"
+        {#- 🧩 2026-10-23 (Daniel, OT-2026-00348, Isabel en terreno: «los accesorios deben solo colocar si llegó o no… no se instalan»): un ACCESORIO
+            (clase «accesorio» del Catálogo) cuenta UNA obligatoria —«¿Llegó?»— en vez de su checklist. data-obl=1 y data-oblok=1 solo cuando ya
+            contestó (Sí llegó / No llegó): el servidor (_ot_chk_revision_pendientes) cuenta lo mismo, así el botón de firma y el candado coinciden. -#}
+        {% set _es_acc = (e.es_accesorio and not e._interno) %}
+        <details class="otd-wk-item{{ ' is-complete' if (e.acc_respondido if _es_acc else (_excluido_cierre or (e.n_obl and e.n_obl_ok == e.n_obl))) }}{{ ' otd-wk-acc' if _es_acc }}"
+                 data-obl="{{ 1 if (_excluido_cierre or _es_acc) else e.n_obl }}"
+                 data-oblok="{{ (1 if e.acc_respondido else 0) if _es_acc else (1 if _excluido_cierre else e.n_obl_ok) }}"
                  data-excluido="{{ '1' if _excluido_cierre else '' }}"
+                 data-acc="{{ '1' if _es_acc else '' }}"
                  data-mid="{{ e.id }}" data-idx="{{ loop.index }}"
                  data-buscar="{{ ((e.nombre or '') ~ ' ' ~ (e.sku or '') ~ ' ' ~ (e.serie or '') ~ ' ' ~ (e.marca or '')) | lower }}">
           <summary>
@@ -5440,7 +5445,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                en qué punto de la lista vas; el color, si ese equipo ya
                está resuelto (o quedó excluido por fuera de servicio/baja/
                saltado, mismo verde -- ver _excluido_cierre arriba). #}
-            <span class="num {{ 'ok' if (_excluido_cierre or (e.n_obl and e.n_obl_ok == e.n_obl)) else ('go' if e.n_ok else 'pend') }}">
+            <span class="num {{ ('ok' if e.acc_respondido else 'pend') if _es_acc else ('ok' if (_excluido_cierre or (e.n_obl and e.n_obl_ok == e.n_obl)) else ('go' if e.n_ok else 'pend')) }}">
               {{ loop.index }}</span>
             {# 🖼️ 2026-09-05 (Daniel, mirando la OT-319 cerrada: "aún se ven
                sin fotos"). Esta miniatura sale de `mant_maquinas.foto_url`,
@@ -5474,7 +5479,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             {% endif %}
             <div class="nm">
               <b>{{ e.nombre or ('Equipo #' ~ e.id) }}{% if e.rep_abiertas %} <i class="bi bi-tools otd-rep-ico" title="Con repuesto solicitado"></i>{% endif %}</b>
-              <small id="otdWkSum-{{ e.id }}">{% if e.serie %}S/N {{ e.serie }} · {% endif %}{% if _excluido_cierre %}No exige checklist{% else %}{{ e.n_obl_ok }}/{{ e.n_obl }} obligatorias{% endif %}</small>
+              <small id="otdWkSum-{{ e.id }}">{% if e.serie %}S/N {{ e.serie }} · {% endif %}{% if _es_acc %}Accesorio · {{ e.acc_chip if e.acc_respondido and e.acc_chip else ('respondido' if e.acc_respondido else 'falta indicar si llegó') }}{% else %}{% if _excluido_cierre %}No exige checklist{% else %}{{ e.n_obl_ok }}/{{ e.n_obl }} obligatorias{% endif %}{% endif %}</small>
             </div>
             <span class="sel {{ e.sello_cls }}">{{ e.sello }}</span>
             <i class="bi bi-chevron-right chev"></i>
@@ -5489,6 +5494,20 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                  aria-label="Acciones de {{ e.nombre or 'este equipo' }}" onclick="event.preventDefault()"></div>
             {% endif %}
           </summary>
+          {% if _es_acc %}
+          {#- 🧩 2026-10-23: el accesorio no lleva checklist, diagnóstico ni plantilla: solo la pregunta «¿Llegó?» de la barra de arriba. -#}
+          <div class="otd-wk-body">
+            <div class="otd-exento" role="status">
+              <i class="bi bi-box-seam" aria-hidden="true"></i>
+              <span><b>Los accesorios no se instalan:</b> solo cuéntanos si llegó. {% if e.acc_respondido %}Ya quedó respondido ({{ e.acc_chip or 'respondido' }}).{% else %}Toca «Sí, llegó» o «No llegó» en la barra de arriba (la foto y la descripción son opcionales).{% endif %}</span>
+            </div>
+            {% if e.sku %}<div class="otd-wk-kv"><div><div class="k">SKU</div><div class="v">{{ e.sku }}</div></div></div>{% endif %}
+            <div class="otd-wk-nav">
+              <button type="button" class="otd-wk-navbtn" onclick="otdWkSiguienteDesde({{ e.id }})">
+                Siguiente equipo <i class="bi bi-arrow-right-circle-fill"></i></button>
+            </div>
+          </div>
+          {% else %}
           <div class="otd-wk-body">
             <div class="otd-wk-kv">
               {% if e.sku %}<div><div class="k">SKU</div><div class="v">{{ e.sku }}</div></div>{% endif %}
@@ -5695,6 +5714,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                pantalla ya no necesita salida hacia mantenciones_ot_ejecutar.
                No reponer. #}
           </div>
+          {% endif %}
         </details>
         {% endfor %}
       </div>

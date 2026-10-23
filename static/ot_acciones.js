@@ -339,7 +339,37 @@
     return (cuando ? 'desde ' + cuando : '') + (por ? (cuando ? ' · ' : '') + por : '');
   }
 
+  /* 🧩 2026-10-23 (Daniel, OT-2026-00348, Isabel en terreno: «los accesorios deben solo colocar si llegó o no y el formulario chico de foto y
+     descripción opcional, nada más, ya que los accesorios no se instalan»): un ACCESORIO (clase «accesorio» del Catálogo; el servidor manda
+     `acc`) no lleva «Pedir repuesto», «¿Qué le pasa?» ni «Más acciones»: solo UNA pregunta, «¿Llegó?». «Sí, llegó» abre el formulario chico
+     (foto y descripción, ambas opcionales); «No llegó» es la salida de siempre («No llegó · falta stock»). Una vez contestado, la barra dice qué se
+     respondió y deja cambiarlo. */
+  function accHTML(key, d) {
+    var p = d.p || {}, ll = d.llego || null, np = d.np || null, out = [];
+    if (ll) {
+      out.push('<div class="oa-stbar"><span class="oa-st green"><i class="bi bi-check-circle-fill"></i> ' + esc(ll.chip || 'Llegó') + '</span></div>');
+      if (ll.detalle) out.push('<div class="oa-note"><i class="bi bi-chat-left-text"></i><span>' + esc(ll.detalle) + '</span></div>');
+      if (p.llego || p.noe) {
+        out.push('<div class="oa-grid">' +
+          (p.llego ? '<button type="button" class="oa-btn line" data-a="abrir" data-f="llego" data-key="' + esc(key) + '"><i class="bi bi-camera"></i> Agregar foto o descripción</button>' : '') +
+          (p.noe ? '<button type="button" class="oa-btn ghost" data-a="accnollego" data-key="' + esc(key) + '"><i class="bi bi-box-seam"></i> Mejor marcar que no llegó</button>' : '') + '</div>');
+      }
+      return out.join('');
+    }
+    if (np) {
+      var quitar = p.rev ? ' <button type="button" class="oa-lnk muted" data-a="quitarnp" data-key="' + esc(key) + '" style="min-height:30px;font-size:13.5px"><i class="bi bi-arrow-counterclockwise"></i> Quitar la marca</button>' : '';
+      out.push('<div class="oa-stbar"><span class="oa-st ' + (np.estado === 'falta_stock' ? 'amber' : 'gray') + '"><i class="bi bi-box-seam"></i> ' + esc(np.chip) + '</span>' + quitar + '</div>');
+      return out.join('');
+    }
+    if (!p.llego && !p.noe) return '<div class="oa-stbar"><span class="oa-st gray"><i class="bi bi-hourglass-split"></i> Falta indicar si llegó</span></div>';
+    out.push('<div class="oa-lbl"><i class="bi bi-box-seam"></i> ¿Llegó este accesorio?</div><div class="oa-grid">' +
+      (p.llego ? '<button type="button" class="oa-btn blue oa-primary" data-a="abrir" data-f="llego" data-key="' + esc(key) + '"><i class="bi bi-check-circle-fill"></i> Sí, llegó</button>' : '') +
+      (p.noe ? '<button type="button" class="oa-btn line" data-a="accnollego" data-key="' + esc(key) + '"><i class="bi bi-x-circle"></i> No llegó</button>' : '') + '</div>');
+    return out.join('');
+  }
+
   function barHTML(key, d) {
+    if (d.acc && d.k !== 'i') return accHTML(key, d);
     var p = d.p || {}, out = [], inter = d.k === 'i';
     var fs = false, bj = false, nlTotal = false, nl = false, np = null;
 
@@ -1775,7 +1805,43 @@
     }
   };
 
-  var FLUJO = { pedir: pedir, diag: diag, fs: fuera, baja: baja, nollego: nollego, noesta: noesta, incidencia: incidencia, seg: seg };
+  /* ───────────────────────────── flujo: «SÍ, LLEGÓ» (accesorio de una OT de cliente) ─────────────────────────────
+     2026-10-23: el formulario chico del accesorio. Nada es obligatorio: foto y descripción son opcionales (Daniel: «foto y descripción opcional,
+     nada más»). Guardar deja el accesorio como «Llegó» (cuenta como su única obligatoria para firmar). */
+  var llego = {
+    init: function (s) { s.detalle = (s.d.llego && s.d.llego.detalle) || ''; s.dirty = false; },
+    estado: function () { return { falta: null, ok: 1 }; },
+    vista: function (s) {
+      if (s.step === 'fin') return llego.fin(s);
+      var body = '<h2 class="oa-hq">¿Llegó este accesorio?</h2><p class="oa-hsub">Los accesorios no se instalan: solo cuéntanos que llegó. La foto y la descripción son opcionales.</p>' + errHTML();
+      body += sc('oaSc-foto', s.fotos.length > 0, 1, 'Foto', 'Opcional', mediaCuerpo('Si quieres, deja una foto del accesorio.'), 'opt');
+      body += sc('oaSc-desc', s.detalle.replace(/\s/g, '').length > 0, 2, 'Descripción', 'Opcional',
+        textoHTML('detalle', s.detalle, 'Si quieres, cuéntanos algo: cómo llegó, cuántos, qué trae…', 0), 'opt');
+      var foot = '<button type="button" class="oa-btn blue block lg" data-a="enviar"' + (s.enviando ? ' aria-busy="true"' : '') + '>' +
+        (s.enviando ? '<span class="oa-spin"></span> Guardando…' : '<i class="bi bi-check-circle-fill"></i> Confirmar que llegó') + '</button>';
+      return { top: topHTML({ eyebrow: 'Accesorio · ¿Llegó?' }), body: body, foot: foot };
+    },
+    enviar: async function (s) {
+      if (s.enviando) return;
+      s.enviando = true; s.err = ''; marco();
+      var fd = new FormData();
+      fd.append('descripcion', s.detalle.trim());
+      s.fotos.forEach(function (f) { fd.append('fotos', f.file, f.file.name || 'foto.jpg'); });
+      var j = await api('POST', base(s.d) + '/llego', fd);
+      if (S !== s) return;
+      s.enviando = false;
+      if (!j.ok) { s.err = j.error || 'No se pudo guardar.'; render(false); return; }
+      s.res = j; s.step = 'fin'; s.d.llego = j.estado; render(true);
+    },
+    fin: function (s) {
+      return { top: '<div class="oa-top"><div class="oa-r1"><span class="oa-eb">Accesorio · ¿Llegó?</span></div></div>',
+               body: finGenerico({ tono: '', icono: 'check-lg', h: 'Listo.', lead: 'Quedó anotado que llegó.', det: 'Llegó', dib: 'otra',
+                 lineas: [['clipboard-check', 'Quedó en la OT con tu nombre y la hora.'], ['pen', 'Este accesorio ya no bloquea la firma de la OT.']] }),
+               foot: '<button type="button" class="oa-btn blue block lg" data-a="volverrec">Volver a la OT</button>' };
+    }
+  };
+
+  var FLUJO = { pedir: pedir, diag: diag, fs: fuera, baja: baja, nollego: nollego, noesta: noesta, incidencia: incidencia, seg: seg, llego: llego };
 
   /* ───────────────────────────── eventos ───────────────────────────── */
   function onInput(ev) {
@@ -2100,6 +2166,11 @@
     var a = el.getAttribute('data-a'), key = el.getAttribute('data-key'), d = DATA()[key];
     if (!d) return;
     if (a === 'abrir') return abrir(el.getAttribute('data-f'), key);
+    // 2026-10-23: «No llegó» de un accesorio = la salida de siempre «No llegó · falta stock», ya elegida (la persona elige el motivo).
+    if (a === 'accnollego') {
+      return abrir('noesta', key, { semilla: { opcion: 'falta_stock', titulo: 'Accesorio: no llegó',
+        por_que: 'Un accesorio que no llegó queda como «No llegó · falta stock». Elige el motivo.', piezas: [] } });
+    }
     if (a === 'seg') return abrir('seg', key);
     if (a === 'seguir') return abrir('pedir', key, { borrador: true });
     if (a === 'masacc') { MAS_ABIERTO[key] = !MAS_ABIERTO[key]; pintar(key); return; }          // «Más acciones» del celular

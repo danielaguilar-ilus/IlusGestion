@@ -10353,6 +10353,11 @@ def register_tickets_routes(app, ctx):
             print(f"[tk_buscar_cliente_docs] ya_asociados fallback: {e}", flush=True)
 
         # ── Formatear respuesta ──────────────────────────────────────
+        # 🔒 2026-10-23 (REGLA #26, Daniel: «Isabel está viendo descuentos por ventas… los técnicos solo completan el
+        # checklist y reportan desviaciones, fallas o solicitudes»): este buscador también lo abre el técnico desde
+        # Repuestos y mostraba el total de cada venta. A un técnico se le entrega el documento SIN importes (el
+        # dato se quita en el servidor: lo que viaja en el JSON se lee con «ver código fuente»).
+        _sin_plata = _tk_es_tecnico()
         out = []
         for r in docs:
             tido_raw = (r.get("TIDO") or "").strip()
@@ -10377,9 +10382,9 @@ def register_tickets_routes(app, ctx):
                 "razon_social": (r.get("NOMBRE") or "").strip().title(),
                 "fecha":        fe.strftime("%d/%m/%Y") if fe else "",
                 "fecha_iso":    fe.strftime("%Y-%m-%d") if fe else "",
-                "valor_neto":   float(r.get("VANEDO") or 0),
-                "valor_total":  float(r.get("VABRDO") or 0),
-                "estado_pago":  (r.get("ESPGDO") or "").strip(),
+                "valor_neto":   None if _sin_plata else float(r.get("VANEDO") or 0),
+                "valor_total":  None if _sin_plata else float(r.get("VABRDO") or 0),
+                "estado_pago":  "" if _sin_plata else (r.get("ESPGDO") or "").strip(),
                 "saldo_zz":            saldo_zz,
                 "saldo_real_unidades": saldo_real_unidades,
                 "tiene_saldo":         saldo_real_unidades > 0,

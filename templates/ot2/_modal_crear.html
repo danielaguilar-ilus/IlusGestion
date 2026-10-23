@@ -9826,6 +9826,17 @@ window.OT2C = (function(){
      fuente de donde viene la información y traer sus productos") para que
      "Cotización" y "Ticket" reusen EXACTAMENTE este mismo camino en vez de
      duplicarlo -- antes solo lo llamaba _o2mDocumentoSeleccionado. */
+  /* 🧹 2026-10-23 (Daniel, OT-2026-00348: «se están filtrando productos del servicio: descuentos, ZZENVIO, ZZINSTALACION, ya que son
+     servicios»): una línea del documento/cotización que NO es un producto físico — servicio (SKU ZZ…) o descuento de la venta (SKU «DE» /
+     «DESCUENTO VENTAS», cuya «cantidad» es el MONTO). Antes solo se filtraba es_zz y el descuento se daba de alta como un equipo.
+     Misma regla que _sku_es_servicio (app.py): el servidor también la aplica al crear. */
+  function _o2mEsServicio(l){
+    if (!l) return false;
+    var s = String(l.sku || '').trim().toUpperCase();
+    if (l.es_zz || l.es_descuento || s.indexOf('ZZ') === 0 || s === 'DE') return true;
+    return /^\s*descuento/i.test(String(l.descripcion_erp || l.nombre_app || l.nombre || ''));
+  }
+
   async function _o2mResolverClienteYEquipos(header, items){
     if (!header || !header.rut || !header.cliente){
       if (window.ilusToast) ilusToast('No se encontraron datos de cliente identificables en esa selección.', {type:'warning'});
@@ -9887,7 +9898,7 @@ window.OT2C = (function(){
     // las cantidades, así sea piso por 400 o 500"): el modal traía el SALDO
     // pendiente de despacho (0 → 1 en un piso ya entregado), no lo
     // facturado. En la OT manda la cantidad del documento.
-    S.doc_lineas = Array.isArray(items) ? items.filter(function(it){ return it && it.sku; })
+    S.doc_lineas = Array.isArray(items) ? items.filter(function(it){ return it && it.sku && !_o2mEsServicio(it); })
       .map(function(it){
         return {sku: it.sku, nombre: it.nombre, qty: _o2mQtyDeItem(it),
                 tido: it.tido || null, nudo: it.nudo || null,
@@ -10033,7 +10044,7 @@ window.OT2C = (function(){
     // prioridad -- si el ticket los declaró a mano, esos mandan siempre.
     var items = (Array.isArray(d.equipos) ? d.equipos : []).map(function(e){
       return {sku: e.sku, nombre: e.nombre, qty: e.cantidad || 1};
-    }).filter(function(it){ return it.sku; });
+    }).filter(function(it){ return it.sku && !_o2mEsServicio(it); });
     // 2026-08-30 (Daniel, en vivo: "cuando llamo de un origen como un
     // ticket me debe traer la información del documento -- puede ser
     // multidocumento -- así que los productos que tiene el ticket según el
@@ -10060,7 +10071,7 @@ window.OT2C = (function(){
         // Mismo filtro que tkaBuscarPorDoc (_tka_modal.html): las líneas
         // ZZ son servicio/flete, no productos físicos que ocupen la
         // sección Equipos.
-        dd.lineas.filter(function(l){ return !l.es_zz && l.sku; }).forEach(function(l){
+        dd.lineas.filter(function(l){ return !_o2mEsServicio(l) && l.sku; }).forEach(function(l){
           // Combinadas SIN deduplicar -- cada línea de cada documento es
           // real y queda separada, aunque el SKU se repita entre
           // documentos (si Daniel pide consolidar cantidades repetidas,
@@ -10086,7 +10097,7 @@ window.OT2C = (function(){
         // cada ítem de la cotización puede traer su propio tido/nudo real
         // (erp_tido/erp_nudo); la fecha por ítem no existe en el origen, así
         // que se usa la de la cotización completa como mejor real a mano.
-        items = dc.items.filter(function(it){ return (!it.item_tipo || it.item_tipo === 'producto') && it.sku; })
+        items = dc.items.filter(function(it){ return (!it.item_tipo || it.item_tipo === 'producto') && it.sku && !_o2mEsServicio(it); })
           .map(function(it){ return {sku: it.sku, nombre: it.nombre, qty: it.qty,
                                       tido: it.tido || null, nudo: it.nudo || null}; });
         header.fecha = (dc.cotizacion && dc.cotizacion.created_at) || '';
@@ -11792,39 +11803,109 @@ window.OT2C = (function(){
       (d.lleva === 'no'
         ? '<div class="o2m-di-av verde"><i class="bi bi-check-circle-fill"></i><span>Esta instalación <b>no lleva desinstalación</b>. Se crea una sola orden.</span></div>' : '');
   }
+  /* 📅 2026-10-23 (Daniel, probando un pedido con desinstalación: «coloca un calendario como corresponde o utiliza el mismo para
+     recalendarizar… ahorramos espacio y código, y no darle tanto scroll… déjalo espectacular, tecnológico… los objetos más pequeños sin perder
+     calidad»): la fecha y el horario de la desinstalación se eligen en UN calendario compacto (mismos datos del calendario general: carga de
+     OT por día, feriados no, domingos bloqueados) con un panel «ficha» a su lado: día elegido, cuánto después de la instalación, horario y
+     atajos. Reemplaza al campo de fecha + dos horas + 5 botones sueltos. El calendario del paso Agenda y este leen el MISMO mes del servidor
+     (o2mCal.cache), pero este no toca S.fecha: escribe solo S.desinst.fecha (REGLA: lo que se ve es lo que viaja). */
+  var _diCal = {a:null, m:null};
+  function _diCalInicio(){
+    var d = S.desinst, base = d.fecha || S.fecha || _o2mHoyStr();
+    var p = String(base).split('-');
+    if (!_diCal.a || !_diCal.m || d._calBase !== (d.fecha || '') + '|' + (S.fecha || '')){
+      _diCal.a = parseInt(p[0], 10); _diCal.m = parseInt(p[1], 10);
+      d._calBase = (d.fecha || '') + '|' + (S.fecha || '');
+    }
+  }
+  function _diCalCargar(){
+    var a = _diCal.a, m = _diCal.m, key = _o2mCalKey(a, m);
+    if (o2mCal.cache[key]) return;
+    fetch('/servicio-tecnico/api/calendario/mes/' + a + '/' + m, {credentials:'same-origin'})
+      .then(function(r){ if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
+      .then(function(j){ o2mCal.cache[key] = _o2mCalNormalizarMes(j); })
+      .catch(function(){ o2mCal.cache[key] = {}; })
+      .then(function(){ if (_diCal.a === a && _diCal.m === m) _diPintarRegiones(['fecha']); });
+  }
+  function _diDiasEntre(i, f){
+    var x = String(i || '').split('-'), y = String(f || '').split('-');
+    if (x.length < 3 || y.length < 3) return null;
+    return Math.round((new Date(+y[0], +y[1]-1, +y[2]) - new Date(+x[0], +x[1]-1, +x[2])) / 86400000);
+  }
+  function _diDurTxt(hi, hf){
+    var a = _o2mDayToMin(hi), z = _o2mDayToMin(hf);
+    if (a == null || z == null || z <= a) return '';
+    var mi = z - a, h = Math.floor(mi / 60), r = mi % 60;
+    return (h ? h + ' h' : '') + (h && r ? ' ' : '') + (r ? r + ' min' : '');
+  }
+  function _diCalGrid(){
+    var d = S.desinst, a = _diCal.a, m = _diCal.m, key = _o2mCalKey(a, m), mapa = o2mCal.cache[key];
+    var sug = d.previo && d.previo.fecha_sugerida, hoy = _o2mHoyStr(), min = (S.fecha && S.fecha > hoy) ? S.fecha : hoy;
+    var nDias = new Date(a, m, 0).getDate(), off = new Date(a, m-1, 1).getDay() - 1; if (off < 0) off = 6;
+    var h = '';
+    for (var i = 0; i < off; i++) h += '<i class="dc-d blank"></i>';
+    for (var dia = 1; dia <= nDias; dia++){
+      var f = a + '-' + String(m).padStart(2, '0') + '-' + String(dia).padStart(2, '0');
+      var dow = new Date(a, m-1, dia).getDay(), n = mapa && mapa[f] ? mapa[f].length : 0;
+      var off1 = f < min || dow === 0;                      // antes de la instalación (o pasado) y domingo: no se agenda
+      var cl = 'dc-d' + (dow === 6 ? ' sab' : '') + (f === hoy ? ' hoy' : '') + (f === S.fecha ? ' inst' : '') + (f === d.fecha ? ' sel' : '') +
+               (sug && f === sug ? ' sug' : '') + (off1 ? ' off' : '') + (n >= 5 ? ' c3' : (n >= 3 ? ' c2' : (n ? ' c1' : '')));
+      var lbl = dia + ' de ' + O2M_CAL_MES_ES[m-1] + (f === S.fecha ? ' · día de la instalación' : '') + (sug && f === sug ? ' · fecha sugerida' : '') +
+                (dow === 0 ? ' · domingo, no se agenda' : (f < min ? ' · antes de la instalación' : (n ? ' · ' + n + ' OT agendada(s)' : '')));
+      h += off1
+        ? '<i class="'+cl+'" aria-label="'+_diEsc(lbl)+'" aria-disabled="true"><b>'+dia+'</b></i>'
+        : '<button type="button" class="'+cl+'" aria-label="'+_diEsc(lbl)+'" aria-pressed="'+(f === d.fecha)+'" onclick="OT2C.diFecha(\''+f+'\')"><b>'+dia+'</b>'+
+          (f === S.fecha ? '<u class="mk"><i class="bi bi-box-seam"></i></u>' : '')+(sug && f === sug && f !== d.fecha ? '<u class="mk"><i class="bi bi-stars"></i></u>' : '')+
+          (n ? '<s>'+(n > 9 ? '9+' : n)+'</s>' : '')+'</button>';
+    }
+    return h;
+  }
   function _diAtajos(){
     var base = S.fecha || '', d = S.desinst, sug = d.previo && d.previo.fecha_sugerida;
     if (!base) return '';
-    var op = [['En 1 semana', _diSumarDias(base, 7)], ['En 2 semanas', _diSumarDias(base, 14)], ['En 1 mes', _diSumarMeses(base, 1)], ['En 2 meses', _diSumarMeses(base, 2)]];
-    var h = '<div class="o2m-di-atajos" role="group" aria-label="Fechas rápidas">';
-    if (sug) h += '<button type="button" class="o2m-di-atajo sug" onclick="OT2C.diFecha(\''+sug+'\')"><i class="bi bi-stars"></i>Sugerida: '+_o2mFechaBonita(sug)+
-      (d.previo.fecha_sugerida_motivo ? ' · '+_diEsc(String(d.previo.fecha_sugerida_motivo).replace(/^Propuesta:\s*/, '')) : '')+'</button>';
+    var op = [['+1 sem', _diSumarDias(base, 7)], ['+2 sem', _diSumarDias(base, 14)], ['+1 mes', _diSumarMeses(base, 1)], ['+2 meses', _diSumarMeses(base, 2)]];
+    var h = '<div class="dc-atajos" role="group" aria-label="Fechas rápidas">';
+    if (sug) h += '<button type="button" class="dc-at sug" title="'+_diEsc(String((d.previo && d.previo.fecha_sugerida_motivo) || '').replace(/^Propuesta:\s*/, ''))+'" onclick="OT2C.diFecha(\''+sug+'\')"><i class="bi bi-stars"></i>Sugerida · '+_diDM(sug)+'</button>';
     op.forEach(function(x){
       var f = _diHabil(x[1]);
-      h += '<button type="button" class="o2m-di-atajo" onclick="OT2C.diFecha(\''+f+'\')">'+x[0]+' · '+_o2mFechaBonita(f)+'</button>';
+      h += '<button type="button" class="dc-at'+(f === d.fecha ? ' on' : '')+'" onclick="OT2C.diFecha(\''+f+'\')">'+x[0]+' · '+_diDM(f)+'</button>';
     });
     return h + '</div>';
   }
+  function _diDM(iso){ var p = String(iso || '').split('-'); return p.length < 3 ? '' : (parseInt(p[2], 10) + ' ' + O2M_CAL_MES_ES[parseInt(p[1], 10) - 1].slice(0, 3)); }
   function _diRegFecha(el){
     var d = S.desinst;
     if (!d.lleva || d.lleva === 'no'){ el.innerHTML = ''; return; }
-    var min = S.fecha || _o2mHoyStr();
     var porDef = d.lleva === 'por_definir';
     var ok = !!d.fecha && d.fecha >= (S.fecha || '') && !_o2mEsDomingo(d.fecha);
-    el.innerHTML = '<div class="o2m-di-sub '+(ok?'ok':'falta')+'"><h6><span class="pt"></span>'+(porDef ? 'Fecha estimada' : 'Fecha y horario')+'</h6>'+
-      '<div class="o2m-di-fila'+(porDef?' dos':'')+'">'+
-        '<div><label for="o2mDiFechaIn">'+(porDef ? 'Fecha estimada *' : 'Fecha de la desinstalación *')+'</label>'+
-        '<input type="date" id="o2mDiFechaIn" value="'+_diEsc(d.fecha)+'" min="'+_diEsc(min)+'" onchange="OT2C.diFecha(this.value)"></div>'+
-        (porDef ? '' :
-          '<div><label for="o2mDiHini">Hora de inicio</label><input type="time" id="o2mDiHini" value="'+_diEsc(d.hini)+'" oninput="OT2C.diCampo(\'hini\',this.value)" onchange="OT2C.diCampo(\'hini\',this.value)"></div>'+
-          '<div><label for="o2mDiHfin">Hora de término</label><input type="time" id="o2mDiHfin" value="'+_diEsc(d.hfin)+'" oninput="OT2C.diCampo(\'hfin\',this.value)" onchange="OT2C.diCampo(\'hfin\',this.value)"></div>')+
-      '</div>'+
-      (d.fecha ? '<div class="ev-ayuda" style="margin-top:6px"><i class="bi bi-calendar3 me-1"></i><b>'+_diEsc(_diFechaLarga(d.fecha))+'</b>'+
-        (S.fecha ? ' · la instalación es el '+_o2mFechaBonita(S.fecha) : '')+'</div>' : '')+
+    _diCalInicio();
+    if (!o2mCal.cache[_o2mCalKey(_diCal.a, _diCal.m)]) _diCalCargar();
+    var cargando = !o2mCal.cache[_o2mCalKey(_diCal.a, _diCal.m)];
+    var dias = d.fecha && S.fecha ? _diDiasEntre(S.fecha, d.fecha) : null;
+    var p = d.fecha ? String(d.fecha).split('-') : null;
+    var dur = _diDurTxt(d.hini, d.hfin);
+    var side = '<div class="dc-side"><div class="dc-k"><i class="bi bi-box-arrow-up"></i>'+(porDef ? 'Fecha estimada' : 'Desinstalación')+'</div>'+
+      (d.fecha
+        ? '<div class="dc-big"><b>'+parseInt(p[2], 10)+'</b><span>'+O2M_CAL_MES_ES[parseInt(p[1], 10) - 1]+' '+p[0]+'<em>'+_diDOW(d.fecha)+'</em></span></div>'+
+          (dias != null ? '<div class="dc-rel">'+(dias === 0 ? 'El mismo día de la instalación' : (dias === 1 ? '1 día' : dias + ' días')+' después de la instalación ('+_diDM(S.fecha)+')')+'</div>' : '')
+        : '<div class="dc-vacio"><i class="bi bi-hand-index-thumb"></i>Toca un día en el calendario</div>')+
+      (porDef ? '' :
+        '<div class="dc-hrs"><label for="o2mDiHini">Inicio<input type="time" id="o2mDiHini" value="'+_diEsc(d.hini)+'" oninput="OT2C.diCampo(\'hini\',this.value)" onchange="OT2C.diCampo(\'hini\',this.value)"></label>'+
+        '<span class="dc-ar"><i class="bi bi-arrow-right"></i></span>'+
+        '<label for="o2mDiHfin">Término<input type="time" id="o2mDiHfin" value="'+_diEsc(d.hfin)+'" oninput="OT2C.diCampo(\'hfin\',this.value)" onchange="OT2C.diCampo(\'hfin\',this.value)"></label>'+
+        (dur ? '<span class="dc-dur">'+dur+'</span>' : '')+'</div>')+
       _diAtajos()+
-      (porDef ? '<div class="ev-ayuda" style="margin-top:8px">Queda anotada en la instalación. La orden de desinstalación se programa después, desde su ficha («Programar desinstalación»), y te avisamos antes de la fecha.</div>'
-              : '<div class="o2m-di-atajos"><button type="button" class="o2m-di-atajo" id="o2mDiHuecoBtn" onclick="OT2C.diBuscarHueco()"><i class="bi bi-search"></i>Buscar hueco libre para el técnico</button></div>')+
+      (porDef ? '<div class="ev-ayuda" style="margin-top:8px">Queda anotada en la instalación. La orden se programa después desde su ficha («Programar desinstalación») y te avisamos antes de la fecha.</div>'
+              : '<button type="button" class="dc-at hueco" id="o2mDiHuecoBtn" onclick="OT2C.diBuscarHueco()"><i class="bi bi-search"></i>Buscar hueco libre para el técnico</button>')+
       '</div>';
+    el.innerHTML = '<div class="o2m-dc '+(ok ? 'ok' : 'falta')+'"><div class="dc-cal">'+
+      '<div class="dc-nav"><button type="button" class="dc-nb" aria-label="Mes anterior" onclick="OT2C.diCalMes(-1)"><i class="bi bi-chevron-left"></i></button>'+
+        '<b>'+O2M_CAL_MES_ES[_diCal.m - 1]+' '+_diCal.a+'</b>'+
+        '<button type="button" class="dc-nb" aria-label="Mes siguiente" onclick="OT2C.diCalMes(1)"><i class="bi bi-chevron-right"></i></button></div>'+
+      '<div class="dc-dow"><span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span></div>'+
+      '<div class="dc-grid'+(cargando ? ' cargando' : '')+'">'+_diCalGrid()+'</div>'+
+      '<div class="dc-ley"><span><i class="k inst"></i>Instalación</span><span><i class="k sel"></i>Elegido</span><span><i class="k c1"></i>OT agendadas</span><span><i class="k off"></i>No disponible</span></div>'+
+      '</div>'+side+'</div>';
   }
   function _diRegAvisos(el){
     var d = S.desinst, p = d.previo;
@@ -12081,6 +12162,13 @@ window.OT2C = (function(){
     _diProgramarPrevio(false);
     _diPintarRegiones(['res']);
     refrescarAnclas();
+  }
+  function diCalMes(delta){
+    _diCalInicio();
+    var m = _diCal.m + delta, a = _diCal.a;
+    if (m > 12){ m = 1; a++; } else if (m < 1){ m = 12; a--; }
+    _diCal.a = a; _diCal.m = m;
+    _diPintarRegiones(['fecha']);
   }
   function diBuscarHueco(){
     var d = S.desinst, btn = document.getElementById('o2mDiHuecoBtn');
@@ -12430,7 +12518,7 @@ window.OT2C = (function(){
           o2mCalReintentar:o2mCalReintentar, o2mDayPaso:o2mDayPaso,
           o2mDaySugerirHueco:o2mDaySugerirHueco,
           // 🧩 2026-10-20 desinstalación
-          diLleva:diLleva, diFecha:diFecha, diCampo:diCampo, diMonto:diMonto, diBuscarHueco:diBuscarHueco, diTecModo:diTecModo, diTecTog:diTecTog,
+          diLleva:diLleva, diFecha:diFecha, diCalMes:diCalMes, diCampo:diCampo, diMonto:diMonto, diBuscarHueco:diBuscarHueco, diTecModo:diTecModo, diTecTog:diTecTog,
           diCobro:diCobro, diEqTog:diEqTog, diEqTodo:diEqTodo, diEqPlant:diEqPlant, diForzar:diForzar};
 })();
 </script>

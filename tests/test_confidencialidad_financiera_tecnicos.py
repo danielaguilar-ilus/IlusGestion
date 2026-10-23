@@ -368,6 +368,31 @@ class TestAyudasDeConfidencialidad(unittest.TestCase):
             self.assertNotIn(k, ln)
         self.assertEqual(resp["hdr"]["valor_neto"], 100, "no muta la respuesta cacheada")
 
+    def test_linea_de_descuento_no_llega_al_tecnico(self):
+        """2026-10-23 (Daniel, Isabel veía «descuentos por ventas»): la línea «DESCUENTO VENTAS» (SKU «DE») trae el MONTO
+        del descuento como «cantidad»: borrar solo los campos con nombre de plata la dejaba pasar con su monto."""
+        f = self.amb["_erp_doc_sin_montos"]
+        resp = {"hdr": {"tido": "NVV", "nudo": "VD10667"},
+                "lineas": [{"sku": "A1", "nombre": "Cinta", "cantidad": 2, "saldo": 1},
+                           {"sku": "DE", "nombre": "DESCUENTO VENTAS", "descripcion_erp": "DESCUENTO VENTAS",
+                            "cantidad": 828000, "saldo": 828000, "es_descuento": True},
+                           {"sku": "X9", "nombre": "Descuento especial", "cantidad": 120000},
+                           {"sku": "ZZINSTALACION", "nombre": "Servicio de instalación", "cantidad": 1, "es_zz": True}]}
+        out = f(resp)
+        self.assertEqual([ln["sku"] for ln in out["lineas"]], ["A1", "ZZINSTALACION"],
+                         "el producto y el servicio siguen; el descuento no se entrega")
+        self.assertEqual(len(resp["lineas"]), 4, "no muta la respuesta cacheada")
+
+    def test_buscador_de_documentos_por_cliente_sin_totales_para_el_tecnico(self):
+        """El buscador compartido de Repuestos (tickets/_tka_modal.html) lo abre el técnico y mostraba el total de cada
+        venta: el servidor lo quita, no la pantalla."""
+        src = _leer("tickets_module.py")
+        i = src.index("def tk_api_erp_buscar_cliente_documentos")
+        f = src[i:i + 16000]
+        self.assertIn("_sin_plata = _tk_es_tecnico()", f)
+        for campo in ('"valor_neto":   None if _sin_plata', '"valor_total":  None if _sin_plata'):
+            self.assertIn(campo, f)
+
 
 # ───────────────────────── contratos de las rutas con doble ─────────────────────────
 class _Resp:
