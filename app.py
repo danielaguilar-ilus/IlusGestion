@@ -94122,8 +94122,17 @@ def ot2_detalle(vid):
     except Exception as _e_di:
         print(f"[ot2_detalle] desinstalación vid={vid}: {type(_e_di).__name__}", flush=True)
         desinst = None
+    # 🗑️ 2026-10-23: «Quitar de la OT» en cada producto (solo gestión, OT abierta). Si el anexo ya está firmado el botón sale
+    # bloqueado con su motivo (el servidor lo vuelve a exigir en ot2_api_quitar_equipo).
+    try:
+        _eq_quitar_ok = bool((not _es_rol_tecnico()) and puede_configurar and not ot_solo_lectura)
+        eq_quitar = {"puede": _eq_quitar_ok, "bloqueo": (_ot_anexo_firmado_bloqueo(vid) or "") if _eq_quitar_ok else ""}
+    except Exception as _e_eq:
+        print(f"[ot2_detalle] quitar equipo vid={vid}: {type(_e_eq).__name__}", flush=True)
+        eq_quitar = {"puede": False, "bloqueo": ""}
     return render_template(
         "ot2/detalle.html",
+        eq_quitar=eq_quitar,
         anexo_vinculo=anexo_vinculo,
         desinst=desinst,
         que_paso=que_paso,
@@ -113683,6 +113692,86 @@ def ot2_api_agregar_equipo(vid):
     })
 
 
+def _ot_anexo_firmado_bloqueo(vid):
+    """🔏 2026-10-23 (Daniel, OT 353 D Vitacura): «mientras no haya firmado el anexo se pueden eliminar los productos; si firmo el anexo,
+    esa edición queda bloqueada». Devuelve el texto que explica el bloqueo si la OT tiene un anexo FIRMADO (el contrato con el proveedor
+    ya fija sus productos), o None si se puede editar. Si la base no responde no bloquea (el resto de las reglas igual protege)."""
+    try:
+        r = mysql_fetchone("SELECT numero FROM mant_anexos WHERE ot_id=%s AND estado='firmado' ORDER BY id DESC LIMIT 1", (int(vid),))
+    except Exception as e:
+        print(f"[ot_anexo_firmado] vid={vid}: {type(e).__name__}", flush=True)
+        return None
+    if not r:
+        return None
+    return (f"El Anexo N° {r.get('numero')} ya está firmado: los productos de esta OT quedan bloqueados. "
+            "Si cambiaron las condiciones, emite un anexo nuevo.")
+
+
+@app.route("/ot/api/<int:vid>/equipos/<int:mid>/quitar", methods=["POST"])
+@_mant_required
+@_ot_can_configurar
+def ot2_api_quitar_equipo(vid, mid):
+    """🗑️ 2026-10-23 (Daniel, OT 353 D Vitacura: «mientras no haya firmado el anexo se pueden eliminar los productos, con registro de
+    actividad; si firmo el anexo esa edición queda bloqueada»). Quita UN producto (equipo + su checklist) de una OT.
+
+    Candados: solo gestión (nunca un técnico); la OT no puede estar terminada; con el anexo FIRMADO no se quita nada (409
+    ANEXO_FIRMADO); y una OT es evidencia: si el técnico ya respondió tareas de ese producto, el equipo ya fue revisado o hay un
+    repuesto pedido por él, tampoco se borra (409 CON_ACTIVIDAD). Queda en la bitácora de la OT: quién, cuándo y qué producto."""
+    if _es_rol_tecnico():
+        return _ot2_err("Quitar productos de la OT es de gestión.", "SOLO_GESTION", http=403)
+    v = mysql_fetchone("SELECT id, estado FROM mant_visitas WHERE id=%s", (vid,))
+    if not v:
+        return _ot2_err("Esa OT no existe.", "OT_NO_EXISTE", http=404)
+    est = (v.get("estado") or "").strip().lower()
+    if est in ("cerrada", "completada", "cancelada", "anulada"):
+        return _ot2_err(f"La OT ya está {est}: no se le pueden quitar productos.", "OT_TERMINAL", http=409)
+    bloqueo = _ot_anexo_firmado_bloqueo(vid)
+    if bloqueo:
+        return _ot2_err(bloqueo, "ANEXO_FIRMADO", http=409)
+    maq = mysql_fetchone("SELECT id, nombre, sku, numero_serie FROM mant_maquinas WHERE id=%s", (mid,)) or {}
+    t = mysql_fetchone(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(completada=1),0) AS hechas "
+        "  FROM mant_visita_tareas WHERE visita_id=%s AND maquina_id=%s", (vid, mid)) or {}
+    if not int(t.get("n") or 0):
+        return _ot2_err("Ese producto no está en esta OT.", "EQUIPO_NO_ESTA_EN_LA_OT", http=404)
+    try:
+        trabajo = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_visita_tareas WHERE visita_id=%s AND maquina_id=%s "
+            "   AND COALESCE(estado_trabajo,'pendiente') <> 'pendiente'", (vid, mid)) or {}
+    except Exception:
+        trabajo = {}
+    try:
+        revisado = mysql_fetchone(
+            "SELECT 1 AS x FROM mant_visita_equipos WHERE visita_id=%s AND maquina_id=%s AND revisado_at IS NOT NULL LIMIT 1",
+            (vid, mid))
+    except Exception:
+        revisado = None
+    try:
+        reps = mysql_fetchone(
+            "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes WHERE visita_id=%s AND maquina_id=%s", (vid, mid)) or {}
+    except Exception:
+        reps = {}
+    if int(t.get("hechas") or 0) or int(trabajo.get("n") or 0) or revisado or int(reps.get("n") or 0):
+        return _ot2_err("Este producto ya tiene trabajo registrado (tareas respondidas, revisión o repuesto pedido). Una OT es evidencia: "
+                        "lo que el técnico ya hizo no se borra.", "CON_ACTIVIDAD", http=409)
+    quien = current_username() or "?"
+    nombre = maq.get("nombre") or f"Equipo #{mid}"
+    try:
+        _mant_log("visita", vid, "equipo_quitado",
+                  f"{quien} quitó el producto «{nombre}»"
+                  + (f" (S/N {maq.get('numero_serie')})" if maq.get("numero_serie") else "")
+                  + (f" · SKU {maq.get('sku')}" if maq.get("sku") else "")
+                  + f" de la OT, con sus {int(t.get('n') or 0)} tarea(s) sin responder. El anexo aún no estaba firmado.")
+    except Exception as e:
+        print(f"[ot_quitar_equipo] bitácora vid={vid}: {type(e).__name__}", flush=True)
+    mysql_execute("DELETE FROM mant_visita_tareas WHERE visita_id=%s AND maquina_id=%s", (vid, mid))
+    try:
+        mysql_execute("DELETE FROM mant_visita_equipos WHERE visita_id=%s AND maquina_id=%s", (vid, mid))
+    except Exception:
+        pass
+    return jsonify({"ok": True, "maquina_id": mid, "nombre": nombre})
+
+
 @app.route("/ot/api/<int:vid>/equipos-masivo", methods=["POST"])
 @_mant_required
 def ot2_api_agregar_equipos_masivo(vid):
@@ -117730,6 +117819,22 @@ def ot2_api_anexo_editar(aid):
                                  "(puede que el proveedor lo acabe de firmar). "
                                  "Recarga la página para ver cómo quedó."}), 409
 
+    # 🗑️ 2026-10-23 (Daniel, OT 353: «mientras no haya firmado el anexo se pueden eliminar los productos, con registro de actividad»):
+    # cada producto que ya no está en el anexo corregido queda anotado (quién y cuál) en la bitácora del anexo y de la OT.
+    try:
+        _prev = _json.loads(a.get("productos_json") or "[]")
+        _ahora = {(p.get("sku") or "", p.get("nombre") or "") for p in _anexo_productos_norm(d.get("productos"))}
+        _quitados = [p for p in _anexo_productos_norm(_prev if isinstance(_prev, list) else [])
+                     if (p.get("sku") or "", p.get("nombre") or "") not in _ahora]
+        if _quitados:
+            _txt = (f"{current_username() or '?'} quitó del Anexo N° {a.get('numero')} (aún sin firmar): "
+                    + "; ".join(f"{p['nombre']}" + (f" ({p['sku']})" if p.get("sku") else "") + f" × {p['cantidad']}" for p in _quitados[:20])
+                    + (f" y {len(_quitados) - 20} más" if len(_quitados) > 20 else ""))
+            _mant_log("anexo", aid, "productos_quitados", _txt)
+            if a.get("ot_id"):
+                _mant_log("visita", a["ot_id"], "anexo_productos_quitados", _txt)
+    except Exception as _e_pq:
+        print(f"[anexo_editar] productos quitados aid={aid}: {type(_e_pq).__name__}", flush=True)
     try:
         _mant_log("anexo", aid, "editado",
                   f"N° {a.get('numero')} · estado {a['estado']}"
@@ -165298,11 +165403,15 @@ def _ot_accesorios_ids(vid):
         return set(_cache[vid])
     try:
         filas = mysql_fetchall(
-            "SELECT DISTINCT m.id, m.sku FROM ("
+            "SELECT DISTINCT m.id, m.sku, m.nombre FROM ("
             "  SELECT t.maquina_id AS mid FROM mant_visita_tareas t WHERE t.visita_id=%s AND t.maquina_id IS NOT NULL"
             "  UNION SELECT ve.maquina_id AS mid FROM mant_visita_equipos ve WHERE ve.visita_id=%s AND ve.maquina_id IS NOT NULL"
             ") x JOIN mant_maquinas m ON m.id = x.mid WHERE COALESCE(m.estado,'activo') <> 'baja'",
             (vid, vid)) or []
+        # 🧹 2026-10-23 (Daniel, OT de Isabel: «el descuento por ventas aún sigue entrampando la OT»): una línea de servicio o de DESCUENTO
+        # (ZZ…, «DE», «DESCUENTO VENTAS») el Catálogo la puede clasificar como «accesorio», y entonces pedía «¿Llegó?». No es un producto:
+        # no es accesorio ni equipo (la excluye `_ot_maquinas_excluidas_cierre` como servicio). Mismo criterio único: `_sku_es_servicio`.
+        filas = [r for r in filas if not _sku_es_servicio(r.get("sku"), r.get("nombre"))]
         skus = sorted({(r.get("sku") or "").strip() for r in filas if (r.get("sku") or "").strip()})
         clases = _inc_clasificacion_skus_batch(skus) if skus else {}
         por_sku = {str(k).strip().upper(): (v or {}).get("clase") for k, v in clases.items()}

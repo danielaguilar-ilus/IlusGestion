@@ -2254,6 +2254,12 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   border:1px solid #e5e7eb;background:#fff;color:#374151;font-size:.82rem;
   font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:7px}
 .otd-wk-navbtn:hover{border-color:var(--ilus-red,#dc2626);color:var(--ilus-red,#dc2626)}
+/* 🗑️ 2026-10-23: «Quitar de la OT» (solo gestión; bloqueado con el anexo firmado) */
+.otd-wk-quitar{margin-top:12px;padding-top:10px;border-top:1px dashed #e5e7eb;display:flex;justify-content:flex-start}
+.otd-wk-quitar-btn{min-height:44px;padding:0 16px;border-radius:10px;border:1px solid #fecaca;background:#fff;color:#b91c1c;
+  font-size:.82rem;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:7px}
+.otd-wk-quitar-btn:hover{background:#fee2e2;border-color:#dc2626}
+.otd-wk-quitar-bl{display:inline-flex;align-items:flex-start;gap:7px;font-size:.8rem;color:#6b7280;background:#f3f4f6;border-radius:10px;padding:9px 12px;line-height:1.35}
 @media (max-width:640px){
   .otd-wk-bar{flex-direction:column;align-items:stretch}
   .otd-wk-bar .prog{min-width:0}
@@ -5502,6 +5508,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               <span><b>Los accesorios no se instalan:</b> solo cuéntanos si llegó. {% if e.acc_respondido %}Ya quedó respondido ({{ e.acc_chip or 'respondido' }}).{% else %}Toca «Sí, llegó» o «No llegó» en la barra de arriba (la foto y la descripción son opcionales).{% endif %}</span>
             </div>
             {% if e.sku %}<div class="otd-wk-kv"><div><div class="k">SKU</div><div class="v">{{ e.sku }}</div></div></div>{% endif %}
+            {% include 'ot2/_quitar_equipo.html' %}
             <div class="otd-wk-nav">
               <button type="button" class="otd-wk-navbtn" onclick="otdWkSiguienteDesde({{ e.id }})">
                 Siguiente equipo <i class="bi bi-arrow-right-circle-fill"></i></button>
@@ -5526,6 +5533,7 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
               <div><div class="k">Revisado</div><div class="v">{{ e.revisado_at | chile_fmt('%d/%m %H:%M') }}{% if e.revisado_por %} · {{ e.revisado_por }}{% endif %}</div></div>
               {% endif %}
             </div>
+            {% include 'ot2/_quitar_equipo.html' %}
 
             {#- 🧰 2026-10-21 (Daniel: «quitar el duplicado que sale en la OT y dejar uno solo, el que hicimos ayer…
                 agregando manual, darle baja, todo»): el bloque «Fuera de lo normal» que vivía aquí (2026-09-02 / 09-20:
@@ -13636,6 +13644,33 @@ async function otdDocAgregar(tipoDirecto, numDirecto){
   finally { _otdDocAgregando = false; }
 }
 
+/* 🗑️ 2026-10-23: quitar UN producto de la OT mientras el anexo no esté firmado (queda en la bitácora de la OT). */
+async function otdEquipoQuitar(mid, btn){
+  const nombre = (btn && btn.dataset && btn.dataset.nombre) || 'este producto';
+  const ok = await ilusConfirm({
+    title: 'Quitar producto de la OT',
+    message: '¿Quitar «' + nombre + '» de esta OT?',
+    sub: 'Se quita con su checklist y queda anotado en la actividad de la OT. Solo se puede mientras el anexo no esté firmado.',
+    okLabel: 'Quitar', cancelLabel: 'Cancelar', danger: true,
+  });
+  if (!ok) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`/ot/api/${OTD_VID}/equipos/${mid}/quitar`, {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'}, body: '{}'});
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) {
+      ilusToast(j.error || 'No se pudo quitar el producto.', {type: 'error'});
+      if (btn) btn.disabled = false;
+      return;
+    }
+    ilusToast('✓ Producto quitado de la OT', {type: 'success'});
+    location.reload();
+  } catch (_e) {
+    ilusToast('Error de conexión. Reintenta.', {type: 'error'});
+    if (btn) btn.disabled = false;
+  }
+}
 async function otdDocQuitar(did){
   const ok = await ilusConfirm({
     title: 'Quitar documento',

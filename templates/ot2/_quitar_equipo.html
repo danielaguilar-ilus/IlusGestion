@@ -1,0 +1,14 @@
+{#- 🗑️ 2026-10-23 (Daniel, OT 353 D Vitacura: «mientras no haya firmado el anexo se pueden eliminar los productos, con registro de
+    actividad; si firmo el anexo esa edición queda bloqueada»). Se incluye dentro del bucle de equipos de detalle.html (usa `e`).
+    Solo gestión y OT abierta (eq_quitar.puede); con el anexo firmado sale el motivo en vez del botón. El servidor lo vuelve a exigir
+    en POST /ot/api/<vid>/equipos/<mid>/quitar. -#}
+{% if eq_quitar and eq_quitar.puede and not e._interno and e.id %}
+<div class="otd-wk-quitar">
+  {% if eq_quitar.bloqueo %}
+  <span class="otd-wk-quitar-bl" role="note"><i class="bi bi-lock-fill" aria-hidden="true"></i><span>{{ eq_quitar.bloqueo }}</span></span>
+  {% else %}
+  <button type="button" class="otd-wk-quitar-btn" data-nombre="{{ e.nombre or '' }}" onclick="otdEquipoQuitar({{ e.id }}, this)">
+    <i class="bi bi-trash3" aria-hidden="true"></i> Quitar de la OT</button>
+  {% endif %}
+</div>
+{% endif %}
