@@ -889,7 +889,8 @@ var TKREP = (function(){
    `permissions`/`es_tecnico`, que ya llegan a TODOS los templates vía
    context_processor (app.py, inject_globals) -- no hace falta pasarle
    nada especial desde tk_ficha(). #}
-{% include "ot2/_modal_crear.html" %}
+{#- 🚀 2026-10-23: el asistente (~765 KB) ya no viaja dentro de esta página: se descarga bajo demanda desde /ot/modal-crear (ver static/ot_modal_lazy.js). -#}
+<script src="{{ url_for('static', filename='ot_modal_lazy.js') }}"></script>
 
 <script>
 // Abre el wizard de OT 2.0 SIN salir de esta página (Daniel, 2026-09-04:

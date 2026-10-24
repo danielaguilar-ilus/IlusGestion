@@ -1932,7 +1932,8 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
 {# Modal de creación PROPIO de este módulo (namespace OT2C, endpoint
    /ot/api/crear). No es el de Tickets: si mañana se borra aquel, este
    sigue funcionando — que es justo lo que Daniel pidió. #}
-{% include "ot2/_modal_crear.html" %}
+{#- 🚀 2026-10-23: el asistente (~765 KB) ya no viaja dentro de esta página: se descarga bajo demanda desde /ot/modal-crear (ver static/ot_modal_lazy.js). -#}
+<script src="{{ url_for('static', filename='ot_modal_lazy.js') }}"></script>
 
 {# Buscador avanzado de documentos ERP COMPARTIDO (namespace _TKA/tkaOpen) --
    el mismo componente que ya usan Tickets/Repuestos/Cotizaciones/Cubicador.

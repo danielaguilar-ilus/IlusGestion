@@ -5922,5 +5922,6 @@ async function rcrConfirmar(){
 {% include "tickets/_tka_modal.html" %}
 {# Wizard de OT 2.0, el mismo motor que Tickets/Panel/Cotizaciones (Fase 3
    de repuestos, 2026-09-21) -- ver rsGenerarOT() arriba. #}
-{% include "ot2/_modal_crear.html" %}
+{#- 🚀 2026-10-23: el asistente (~765 KB) ya no viaja dentro de esta página: se descarga bajo demanda desde /ot/modal-crear (ver static/ot_modal_lazy.js). -#}
+<script src="{{ url_for('static', filename='ot_modal_lazy.js') }}"></script>
 {% endblock %}

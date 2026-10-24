@@ -39533,6 +39533,13 @@ def tr_cron_simpliroute_poll():
                 "enviados": len(_ag.get("enviados") or []), "pendientes": len(_ag.get("pendientes") or [])}
         except Exception as _e_at:
             print(f"[cron-simpliroute] agenda técnicos: {_e_at}", flush=True)
+    # 🚀 Check precargado (Daniel 2026-10-23, «sí, precarga lo de Check»): renueva las cachés de stock y trazabilidad antes de que venzan, para que
+    # Retiros e Incidencias no esperen la descarga (8-35 s). Solo lectura de Check; con tope de tiempo; si falla no afecta al polling.
+    if not dry and time.time() - _t_peticion < 150:
+        try:
+            res["check_precarga"] = _checkwms_precalentar(max_s=min(60.0, max(10.0, 200 - (time.time() - _t_peticion))))
+        except Exception as _e_cp:
+            print(f"[cron-simpliroute] check precarga: {_e_cp}", flush=True)
     # 📒 Libro de saldo de facturas (Daniel 2026-10-11, auditoría): carga inicial y revisión continua por tramos, con
     # tope de tiempo (la petición tiene 300 s). Mismo criterio: si falla no afecta al polling.
     if not dry and time.time() - _t_peticion < 200:
@@ -68037,11 +68044,42 @@ _CHECKWMS_TRAZA = {"ts": 0, "rows": None, "lock": threading.Lock()}
 _CHECKWMS_TRAZA_TTL = 3600   # 1 hora (Daniel 2026-08-03)
 
 
+# 🚀 2026-10-23 (Daniel: «sí, precarga lo de Check»): los reportes de Check (stock ~2 MB / trazabilidad ~5 MB) tardan 4-35 s y se cacheaban 1 hora;
+# la primera persona después de vencer la caché esperaba toda la descarga (8-25 s en Retiros). Ahora: (1) vencida la caché se sirve lo que hay AL
+# INSTANTE y se refresca en segundo plano (hasta 6 h de antigüedad; más viejo que eso sí se espera), y (2) el trabajo programado de cada 10 min
+# (_checkwms_precalentar) lo renueva antes de que venza. Solo lectura (REGLA #4.4: mismas rutas de la lista blanca, solo GET).
+_CHECKWMS_STALE_MAX = 6 * 3600
+_CHECKWMS_SWR = {"stock": False, "traza": False}
+
+
+def _checkwms_swr(clave: str, fn) -> None:
+    """Lanza UNA renovación en segundo plano de la caché `clave` (si no hay otra en curso). Nunca levanta."""
+    if _CHECKWMS_SWR.get(clave):
+        return
+    _CHECKWMS_SWR[clave] = True
+
+    def _run():
+        try:
+            fn(forzar=True)
+        except Exception as _e:
+            print(f"[checkwms] renovación en segundo plano ({clave}): {type(_e).__name__}", flush=True)
+        finally:
+            _CHECKWMS_SWR[clave] = False
+    try:
+        threading.Thread(target=_run, daemon=True, name=f"checkwms-swr-{clave}").start()
+    except Exception:
+        _CHECKWMS_SWR[clave] = False
+
+
 def _checkwms_trazabilidad_rows(forzar: bool = False) -> list | None:
     """Filas de GetStockTrazabilidad, cacheadas. None si no se pudo traer."""
     now = time.time()
     if (not forzar and _CHECKWMS_TRAZA["rows"] is not None
             and (now - _CHECKWMS_TRAZA["ts"]) < _CHECKWMS_TRAZA_TTL):
+        return _CHECKWMS_TRAZA["rows"]
+    if (not forzar and _CHECKWMS_TRAZA["rows"] is not None
+            and (now - _CHECKWMS_TRAZA["ts"]) < _CHECKWMS_STALE_MAX):
+        _checkwms_swr("traza", _checkwms_trazabilidad_rows)      # vencida: se sirve lo que hay y se renueva atrás
         return _CHECKWMS_TRAZA["rows"]
     with _CHECKWMS_TRAZA["lock"]:
         # Doble chequeo: otro hilo pudo refrescar mientras esperábamos.
@@ -68072,6 +68110,10 @@ def _checkwms_stock_rows(forzar: bool = False) -> list | None:
     if (not forzar and _CHECKWMS_STOCK["rows"] is not None
             and (now - _CHECKWMS_STOCK["ts"]) < _CHECKWMS_STOCK_TTL):
         return _CHECKWMS_STOCK["rows"]
+    if (not forzar and _CHECKWMS_STOCK["rows"] is not None
+            and (now - _CHECKWMS_STOCK["ts"]) < _CHECKWMS_STALE_MAX):
+        _checkwms_swr("stock", _checkwms_stock_rows)             # vencida: se sirve lo que hay y se renueva atrás
+        return _CHECKWMS_STOCK["rows"]
     with _CHECKWMS_STOCK["lock"]:
         if (not forzar and _CHECKWMS_STOCK["rows"] is not None
                 and (time.time() - _CHECKWMS_STOCK["ts"]) < _CHECKWMS_STOCK_TTL):
@@ -68082,6 +68124,24 @@ def _checkwms_stock_rows(forzar: bool = False) -> list | None:
         rows = ((data or {}).get("body") or {}).get("response") or []
         _CHECKWMS_STOCK.update({"ts": time.time(), "rows": rows})
         return rows
+
+
+def _checkwms_precalentar(max_s: float = 60.0) -> dict:
+    """Renueva el reporte de STOCK de Check ANTES de que venza (lo llama el trabajo programado de cada 10 min): se renueva si tiene más de 30 min
+    o no existe. La trazabilidad no se toca aquí: Retiros ya la mantiene fresca por su cuenta (cada 3 min en uso) y, vencida, se sirve al instante
+    y se renueva atrás (_checkwms_swr). Solo lectura. Nunca levanta."""
+    res = {}
+    try:
+        if not _checkwms_configurado():
+            return {"omitido": "sin credenciales de Check"}
+        edad_s = (time.time() - _CHECKWMS_STOCK["ts"]) if _CHECKWMS_STOCK["rows"] is not None else None
+        if edad_s is None or edad_s > 1800:
+            filas = _checkwms_stock_rows(forzar=True)
+            res["stock"] = len(filas) if filas is not None else "sin respuesta"
+    except Exception as e:
+        print(f"[checkwms] precalentar: {type(e).__name__}", flush=True)
+        res["error"] = type(e).__name__
+    return res
 
 
 def _checkwms_norm_ua(codigo: str) -> str:
@@ -90669,6 +90729,39 @@ def _ot2_panel_evento_chips(filas):
                             "nivel": "azul", "codigo": "madre_seguimiento"}
     except Exception as e:
         print(f"[ot2_panel] chips de seguimiento: {type(e).__name__}", flush=True)
+
+
+# 🚀 2026-10-23 (Daniel: «mejorar el performance de este modal… tecnología del 2028»): el asistente «Generar OT» pesa ~765 KB (HTML + estilos +
+# ~12 mil líneas de JS) y viajaba DENTRO de tres páginas (Órdenes de trabajo, ficha de ticket y Repuestos) en cada carga, aunque casi nunca se
+# abra. Ahora esas páginas cargan solo un cargador de ~3 KB (static/ot_modal_lazy.js) y el asistente se descarga una vez, en un momento ocioso o
+# al acercar el dedo o el mouse al botón. El HTML ya armado se recuerda por combinación de permisos (la plantilla solo cambia con ellos) y el navegador
+# lo revalida con ETag (304 sin cuerpo si no cambió): cada despliegue nuevo cambia la plantilla y por lo tanto el ETag.
+_OT_MODAL_CREAR_CACHE = {}
+
+
+@app.route("/ot/modal-crear", methods=["GET"])
+@_mant_required
+def ot2_modal_crear_fragmento():
+    import hashlib as _hl
+    p = getattr(g, "permissions", None) or {}
+    clave = (bool(p.get("superadmin")), bool(p.get("mant_tipo_interno_crear")), bool(_es_rol_tecnico()), bool(p.get("cat_clasificacion")))
+    hit = _OT_MODAL_CREAR_CACHE.get(clave)
+    if not hit:
+        html = render_template("ot2/_modal_crear.html")
+        hit = (_hl.sha1(html.encode("utf-8")).hexdigest()[:20], html)
+        if len(_OT_MODAL_CREAR_CACHE) < 16:
+            _OT_MODAL_CREAR_CACHE[clave] = hit
+    etag = '"' + hit[0] + '"'
+    if request.headers.get("If-None-Match") == etag:
+        r304 = make_response("", 304)
+        r304.headers["ETag"] = etag
+        r304.headers["Cache-Control"] = "private, no-cache"
+        return r304
+    resp = make_response(hit[1])
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    resp.headers["ETag"] = etag
+    resp.headers["Cache-Control"] = "private, no-cache"
+    return resp
 
 
 @app.route("/ot/")

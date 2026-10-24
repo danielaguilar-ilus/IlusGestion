@@ -12446,7 +12446,9 @@ window.OT2C = (function(){
       });
   }
 
-  document.addEventListener('DOMContentLoaded', function(){
+  // 🚀 2026-10-23: este bloque ahora se descarga bajo demanda (static/ot_modal_lazy.js), cuando la página ya terminó de cargar: si el documento ya
+  // está listo se ejecuta al tiro, si no, espera el DOMContentLoaded de siempre.
+  function _o2mInicio(){
     var a = document.getElementById('o2mAtras'), s = document.getElementById('o2mSig');
     // "Atrás" en la fase "form" vuelve a elegir el origen (Daniel: "Origen
     // se mantiene como pantalla propia"). En la pantalla de Origen no hay
@@ -12462,7 +12464,9 @@ window.OT2C = (function(){
       if (_segIds.length && _segDesde) abrirDesdeHallazgos(_segDesde, _segIds);
       else if (_tid) abrirDesdeTicket(_tid); else abrir();
     }
-  });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _o2mInicio);
+  else setTimeout(_o2mInicio, 0);     // después de que OT2C quede asignado (el IIFE termina antes)
 
   /* Alias histórico: hasta el 2026-08-26 esto defendía el "wizard corto"
      contra el hijack automático a #ot2ModalForm (la réplica O2F). Ese
