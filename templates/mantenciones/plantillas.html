@@ -291,6 +291,13 @@
   #plStep1.is-plegado .pl-step-header{border-bottom:0;border-radius:12px}
   #plStep1.is-plegado .pl-step1-resumen{display:block;flex:1 1 auto}
   #plStep1.is-plegado .pl-step-sub{display:none}
+ /* 2026-10-25: aviso de la pestaña «Desinstalación» (plantillas guardadas en otra pestaña) */
+.pl-desinst-aviso{grid-column:1/-1;background:#fff8e1;border:1px solid #fde68a;border-left:4px solid #f59e0b;border-radius:14px;padding:14px 16px;color:#78350f}
+.pl-desinst-tit{font-weight:800;margin-bottom:6px}
+.pl-desinst-lista{margin:0 0 10px;padding-left:18px;font-size:.88rem}
+.pl-desinst-lista li{overflow-wrap:anywhere}
+.pl-desinst-lista span{color:#92400e}
+.pl-desinst-aviso .btn{min-height:44px;font-weight:700}
 </style>
 
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -401,7 +408,10 @@
 <div class="pl-grid-sel-toolbar" id="plGridSelToolbar">
   <i class="bi bi-check-square-fill"></i>
   <span id="plGridSelCount">0 seleccionadas</span>
-  <button class="btn btn-sm btn-danger ms-auto" onclick="eliminarPlantillasSeleccionadas()">
+  <button class="btn btn-sm btn-primary ms-auto" onclick="moverPlantillasSeleccionadas()" title="Pasar las plantillas seleccionadas a otra pestaña">
+    <i class="bi bi-folder-symlink me-1"></i>Mover a…
+  </button>
+  <button class="btn btn-sm btn-danger" onclick="eliminarPlantillasSeleccionadas()">
     <i class="bi bi-trash me-1"></i>Eliminar seleccionadas
   </button>
   <button class="btn btn-sm btn-outline-secondary" onclick="limpiarSeleccionPlantillas()">Cancelar</button>
@@ -969,6 +979,9 @@ const TIPOS_VISITA_LABEL = {
 // ═══════════════════════════════════════════════════════════════════
 const PL_CATEGORIAS = [
   {key:'instalacion',     label:'Instalación',     icon:'bi-box-seam'},
+  // 2026-10-25 (Daniel: «agrega una que diga Desinstalación»): las de desinstalación viven aquí. Las que ya existen se mueven con
+  // «Mover a…» (lo decide una persona: REGLA #32).
+  {key:'desinstalacion',  label:'Desinstalación',  icon:'bi-box-arrow-up'},
   {key:'mantencion',      label:'Mantención',      icon:'bi-wrench-adjustable'},
   {key:'visitas',         label:'Visitas',         icon:'bi-person-check'},
   {key:'trabajo_interno', label:'Trabajo interno', icon:'bi-clipboard-check'},
@@ -1325,8 +1338,9 @@ function renderPlantillas(){
   }
   const grupo = GRUPOS_PLANTILLA.find(g => g.key === _tabActiva) || GRUPOS_PLANTILLA[0];
   const lista = plantillasDeGrupo(_tabActiva);
+  const avisoDesinst = (_tabActiva === 'desinstalacion') ? _plAvisoDesinstHtml() : '';
   if (!lista.length){
-    cont.innerHTML = `
+    cont.innerHTML = avisoDesinst + `
       <div class="pl-full text-center w-100 py-5">
         <i class="bi ${grupo.icon}" style="font-size:2.5rem;color:#cbd5e1"></i>
         <div class="fw-semibold mt-2 text-muted">Sin plantillas en «${escHtml(grupo.label)}»</div>
@@ -1340,7 +1354,7 @@ function renderPlantillas(){
       </div>`;
     return;
   }
-  cont.innerHTML = lista.map(p => {
+  cont.innerHTML = avisoDesinst + lista.map(p => {
     // Marca de "plantilla vacía" (Daniel 28-08-2026). El badge se suma a los
     // que ya había — nada se reemplaza — y el borde ámbar la hace saltar a la
     // vista dentro de la grilla.
@@ -1348,7 +1362,7 @@ function renderPlantillas(){
     return `
     <div class="pl-card ${p.activa ? '' : 'inactive'}${vacia ? ' is-vacia' : ''}" onclick="abrirEditor(${p.id})"
          ${vacia ? 'title="Esta plantilla todavía no tiene checklist: el técnico la abre y no encuentra tareas que completar."' : ''}>
-      <input type="checkbox" class="pl-card-sel" title="Seleccionar para borrar en masa"
+      <input type="checkbox" class="pl-card-sel" title="Seleccionar para mover a otra pestaña o borrar en masa"
              onclick="event.stopPropagation()"
              onchange="togglePlantillaSeleccion(${p.id}, this.checked)"
              ${_plSelected.has(p.id) ? 'checked' : ''}>
@@ -1391,6 +1405,82 @@ function _actualizarToolbarPlantillas(){
   bar.classList.toggle('is-active', n > 0);
   const lbl = document.getElementById('plGridSelCount');
   if (lbl) lbl.textContent = n + (n === 1 ? ' seleccionada' : ' seleccionadas');
+}
+
+// ── «Mover a…» (Daniel 2026-10-25: «reducirle las cantidades a Trabajo interno… agrega una que diga Desinstalación»). Pasa las
+// plantillas seleccionadas a otra pestaña: solo cambia DÓNDE vive cada una, nunca su contenido. Lo decide la persona, con confirmación.
+async function _moverPlantillas(ids, categoria, tipoOt){
+  const r = await fetch('/mantenciones/api/plantillas/mover-categoria', {
+    method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ids: ids, categoria: categoria, tipo_ot: tipoOt || ''})
+  });
+  let d = {}; try { d = await r.json(); } catch(e){}
+  if (!r.ok && !d.error) d.error = 'No se pudo mover. Inténtalo de nuevo.';
+  return d;
+}
+
+async function moverPlantillasSeleccionadas(){
+  const ids = Array.from(_plSelected);
+  if (!ids.length) return;
+  // Una opción por pestaña (botones de 44 px, desde abajo en el celular): la persona toca a cuál pasan.
+  const elegido = await ilusActionSheet({
+    title: 'Mover a otra pestaña',
+    message: `¿A qué pestaña pasan ${ids.length} plantilla${ids.length===1?'':'s'}?`,
+    sub: 'Solo cambia la pestaña donde vive cada plantilla: su checklist no se toca.',
+    options: PL_CATEGORIAS.map(c => ({label: c.label, icon: c.icon, value: c.key, style: 'secondary'})),
+  });
+  if (!elegido) return;
+  const cat = PL_CATEGORIAS.find(c => c.key === elegido);
+  if (!cat) return;
+  const d = await _moverPlantillas(ids, cat.key, '');
+  if (d.error){ ilusToast(d.error, {type:'error'}); return; }
+  limpiarSeleccionPlantillas();
+  await cargarPlantillas();
+  ilusToast(`${(d.movidas||[]).length} movida${(d.movidas||[]).length===1?'':'s'} a «${cat.label}»` +
+            (d.ya_estaban ? ` · ${d.ya_estaban} ya estaba${d.ya_estaban===1?'':'n'} ahí` : ''), {type: d.ok ? 'success' : 'warning'});
+}
+
+// Plantillas de desinstalación que quedaron en OTRA pestaña (familia «desinstalación» o el nombre lo dice). Se muestran en la pestaña
+// Desinstalación para que se puedan encontrar y traer con un toque.
+function _plDesinstFuera(){
+  return _plantillas.filter(p => {
+    const cat = String(p.categoria_admin || '').trim().toLowerCase();
+    if (cat === 'desinstalacion') return false;
+    const fam = String(p.familia_checklist || '').trim().toLowerCase();
+    return fam === 'desinstalacion' || /desinstal/i.test(String(p.nombre || ''));
+  });
+}
+
+function _plAvisoDesinstHtml(){
+  const fuera = _plDesinstFuera();
+  if (!fuera.length) return '';
+  const lab = k => { const c = PL_CATEGORIAS.find(x => x.key === k); return c ? c.label : 'Sin categoría'; };
+  return `
+    <div class="pl-full pl-desinst-aviso" role="status">
+      <div class="pl-desinst-tit"><i class="bi bi-search me-1"></i>Hay ${fuera.length} plantilla${fuera.length===1?'':'s'} de desinstalación guardada${fuera.length===1?'':'s'} en otra pestaña</div>
+      <ul class="pl-desinst-lista">
+        ${fuera.map(p => `<li><b>${escHtml(p.nombre)}</b> <span>· está en «${escHtml(lab(String(p.categoria_admin||'').toLowerCase()))}»</span></li>`).join('')}
+      </ul>
+      <button type="button" class="btn btn-sm btn-primary" onclick="traerDesinstalacion()">
+        <i class="bi bi-folder-symlink me-1"></i>Traerlas a «Desinstalación»
+      </button>
+    </div>`;
+}
+
+async function traerDesinstalacion(){
+  const fuera = _plDesinstFuera();
+  if (!fuera.length) return;
+  const ok = await ilusConfirm({
+    title: 'Traer las plantillas de desinstalación',
+    message: `Se mueven ${fuera.length} plantilla${fuera.length===1?'':'s'} a la pestaña «Desinstalación».`,
+    sub: 'Además, las OT de desinstalación van a buscar sus plantillas en esta pestaña. Ningún checklist cambia: solo dónde vive cada plantilla.',
+    okLabel: 'Mover', cancelLabel: 'Cancelar',
+  });
+  if (!ok) return;
+  const d = await _moverPlantillas(fuera.map(p => p.id), 'desinstalacion', 'desinstalacion');
+  if (d.error){ ilusToast(d.error, {type:'error'}); return; }
+  await cargarPlantillas();
+  ilusToast(`${(d.movidas||[]).length} movida${(d.movidas||[]).length===1?'':'s'} a «Desinstalación»`, {type: d.ok ? 'success' : 'warning'});
 }
 
 async function eliminarPlantillasSeleccionadas(){

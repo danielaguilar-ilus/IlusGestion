@@ -59960,7 +59960,7 @@ def init_mantenciones_tables():
                 # Ver _ensure_categoria_admin_plantillas() — se garantiza también
                 # fuera de este bloque porque prod corre con ILUS_SKIP_MIGRATIONS=1.
                 "ALTER TABLE mant_tarea_plantillas ADD COLUMN categoria_admin "
-                "ENUM('instalacion','mantencion','visitas','trabajo_interno') NULL",
+                "ENUM('instalacion','mantencion','visitas','trabajo_interno','desinstalacion') NULL",
                 "ALTER TABLE mant_tarea_plantillas ADD INDEX idx_cat_admin (categoria_admin)",
                 # 2026-08-30 (Daniel — "le agregaría ese toggle de plan a
                 # todas las plantillas, menos a pisos y accesorios"):
@@ -124451,7 +124451,7 @@ def _mant_cobertura_matriz_datos():
     SOLO LECTURA. Nunca lanza: si una consulta falla devuelve
     `disponible=False` y la pantalla lo dice en vez de romperse.
     """
-    cats = list(_PLANT_CATEGORIAS_ADMIN)
+    cats = list(_PLCLS_CATEGORIAS)      # 2026-10-25: sin «desinstalacion» (no se espera una por clase de producto)
     datos = {
         "disponible": False,
         "categorias": cats,
@@ -125170,6 +125170,74 @@ def mant_plantillas_categorias_listar():
         "tipos_ot_disponibles": sorted(_TIPO_OT_LABEL.keys()),
         "tipo_ot_label": _TIPO_OT_LABEL,
     })
+
+
+@app.route("/mantenciones/api/plantillas/mover-categoria", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_plantillas_mover_categoria():
+    """2026-10-25 (Daniel: «¿dónde se guardan las plantillas de desinstalación?… reducirle las cantidades a Trabajo interno»): mueve las
+    plantillas elegidas a otra pestaña (categoria_admin). Lo decide una PERSONA desde la pantalla, con confirmación (REGLA #32): nada se
+    mueve solo. No cambia el contenido de ninguna plantilla, solo la pestaña donde vive. Opcional: `tipo_ot` hace que ese tipo de OT busque
+    sus plantillas en la pestaña nueva (mismo mapa editable de PUT /categorias). Queda en la bitácora (mant_logs) cada movimiento.
+    Body: {ids: [int], categoria: str, tipo_ot?: str}"""
+    d = request.get_json(silent=True) or {}
+    categoria = str(d.get("categoria") or "").strip().lower()
+    if categoria not in _PLANT_CATEGORIAS_ADMIN:
+        return jsonify({"ok": False, "error": "Elige una pestaña válida."}), 400
+    ids = []
+    for x in (d.get("ids") or [])[:300]:
+        try:
+            ids.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    ids = sorted(set(ids))
+    tipo_ot = str(d.get("tipo_ot") or "").strip().lower()
+    if tipo_ot and tipo_ot not in _TIPO_OT_LABEL:
+        return jsonify({"ok": False, "error": "Ese tipo de OT no existe."}), 400
+    if not ids and not tipo_ot:
+        return jsonify({"ok": False, "error": "Elige al menos una plantilla."}), 400
+    movidas, iguales, errores = [], 0, 0
+    quien = current_username()
+    destino = _PLANT_CATEGORIA_LABEL.get(categoria, categoria)
+    if ids:
+        filas = mysql_fetchall(
+            "SELECT id, nombre, categoria_admin FROM mant_tarea_plantillas WHERE id IN (" + ",".join(["%s"] * len(ids)) + ")",
+            tuple(ids)) or []
+        for f in filas:
+            antes = (f.get("categoria_admin") or "").strip().lower()
+            if antes == categoria:
+                iguales += 1
+                continue
+            try:
+                mysql_execute("UPDATE mant_tarea_plantillas SET categoria_admin=%s WHERE id=%s", (categoria, f["id"]))
+                movidas.append(int(f["id"]))
+                try:
+                    _mant_log("plantilla", int(f["id"]), "categoria_movida",
+                              f"«{f.get('nombre') or ''}»: de «{_PLANT_CATEGORIA_LABEL.get(antes, 'Sin categoría')}» a «{destino}» · {quien}")
+                except Exception:
+                    pass
+            except Exception as e_mv:
+                print(f"[plantillas_mover_categoria] id={f.get('id')}: {type(e_mv).__name__}", flush=True)
+                errores += 1
+    mapa_ok = False
+    if tipo_ot:
+        try:
+            mysql_execute(
+                "INSERT INTO mant_categoria_tipo_map (tipo_ot, categoria, updated_by) VALUES (%s,%s,%s) "
+                "ON DUPLICATE KEY UPDATE categoria=VALUES(categoria), updated_by=VALUES(updated_by)",
+                (tipo_ot, categoria, quien))
+            mapa_ok = True
+            try:
+                _mant_log("plantilla_categoria_map", 0, "actualizado",
+                          f"Las OT de «{_TIPO_OT_LABEL.get(tipo_ot, tipo_ot)}» buscan sus plantillas en «{destino}» · {quien}")
+            except Exception:
+                pass
+        except Exception as e_map:
+            print(f"[plantillas_mover_categoria] mapa {tipo_ot}: {type(e_map).__name__}", flush=True)
+            errores += 1
+    return jsonify({"ok": errores == 0, "movidas": movidas, "ya_estaban": iguales, "errores": errores,
+                    "mapa_actualizado": mapa_ok, "categoria_label": destino})
 
 
 @app.route("/mantenciones/api/plantillas/categorias", methods=["PUT"])
@@ -169091,9 +169159,12 @@ def _ensure_plantillas_nombre_sin_prefijo():
 # Distinta de `familia_checklist` (las 9 familias del modelo Fracttal) y de
 # `tipo_visita` (el ENUM de 7 valores que usa _plantilla_estandar_para_tipo):
 # ninguna de esas dos es exactamente "la pestaña", por eso esta columna nueva.
-_PLANT_CATEGORIAS_ADMIN = ("instalacion", "mantencion", "visitas", "trabajo_interno")
+# 2026-10-25 (Daniel: «¿dónde se guardan las plantillas de desinstalación?… agrega una que diga Desinstalación»): 5.ª pestaña. Las
+# plantillas que ya existen NO se mueven solas (REGLA #32): se mueven con «Mover a…» (POST /mantenciones/api/plantillas/mover-categoria).
+_PLANT_CATEGORIAS_ADMIN = ("instalacion", "desinstalacion", "mantencion", "visitas", "trabajo_interno")
 _PLANT_CATEGORIA_LABEL = {
     "instalacion":     "Instalación",
+    "desinstalacion":  "Desinstalación",
     "mantencion":      "Mantención",
     "visitas":         "Visitas",
     "trabajo_interno": "Trabajo interno",
@@ -169137,12 +169208,22 @@ def _ensure_categoria_admin_plantillas():
     try:
         mysql_execute(
             "ALTER TABLE mant_tarea_plantillas ADD COLUMN categoria_admin "
-            "ENUM('instalacion','mantencion','visitas','trabajo_interno') NULL "
+            "ENUM('instalacion','mantencion','visitas','trabajo_interno','desinstalacion') NULL "
             "COMMENT 'Pestaña asignada manualmente por el admin (Tarea 1, 2026-08-10)'"
         )
         out["columna"] = True
     except Exception:
         pass  # ya existía
+    # 2026-10-25: pestaña «Desinstalación». Solo AGREGA el valor al final del ENUM (instantáneo en MySQL 8); si ya está, la guardia de
+    # mysql_execute (_ddl_ya_aplicado) lo salta sin pedir lock (REGLA #18). Una cláusula por sentencia.
+    try:
+        mysql_execute(
+            "ALTER TABLE mant_tarea_plantillas MODIFY COLUMN categoria_admin "
+            "ENUM('instalacion','mantencion','visitas','trabajo_interno','desinstalacion') NULL "
+            "COMMENT 'Pestaña asignada manualmente por el admin (Tarea 1, 2026-08-10)'"
+        )
+    except Exception as e_enum:
+        print(f"[ensure_categoria_admin] ENUM categoria_admin + desinstalacion: {type(e_enum).__name__}", flush=True)
     try:
         mysql_execute("ALTER TABLE mant_tarea_plantillas ADD INDEX idx_cat_admin (categoria_admin)")
     except Exception:
@@ -169151,7 +169232,7 @@ def _ensure_categoria_admin_plantillas():
         mysql_execute("""
             CREATE TABLE IF NOT EXISTS mant_categoria_tipo_map (
                 tipo_ot     VARCHAR(40) NOT NULL PRIMARY KEY,
-                categoria   ENUM('instalacion','mantencion','visitas','trabajo_interno') NOT NULL,
+                categoria   ENUM('instalacion','mantencion','visitas','trabajo_interno','desinstalacion') NOT NULL,
                 updated_by  VARCHAR(190),
                 updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -169160,6 +169241,10 @@ def _ensure_categoria_admin_plantillas():
     except Exception as e_tbl:
         print(f"[ensure_categoria_admin] CREATE TABLE mant_categoria_tipo_map falló: {e_tbl}", flush=True)
         return out
+    try:
+        mysql_execute("ALTER TABLE mant_categoria_tipo_map MODIFY COLUMN categoria " + "ENUM('instalacion','mantencion','visitas','trabajo_interno','desinstalacion') NOT NULL")
+    except Exception as e_enum2:
+        print(f"[ensure_categoria_admin] ENUM mant_categoria_tipo_map + desinstalacion: {type(e_enum2).__name__}", flush=True)
     for tipo_ot, categoria in _PLANT_CATEGORIA_TIPO_SEED.items():
         try:
             mysql_execute(
