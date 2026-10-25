@@ -257,8 +257,8 @@
   table.tka-lt td{padding:10px 14px;vertical-align:middle;}
   .tka-lt-num{background:#fef3c7;color:#92400e;padding:5px 10px;border-radius:7px;
     font-family:'JetBrains Mono',monospace;font-size:.72rem;font-weight:800;letter-spacing:.04em;white-space:nowrap;}
-  .tka-lt-cli{font-weight:800;font-size:.87rem;color:#0f172a;white-space:nowrap;overflow:hidden;
-    text-overflow:ellipsis;max-width:240px;}
+  /* 2026-10-24 (REGLA #15): la razón social completa, sin cortarla con «…» (si es larga, baja de línea). */
+  .tka-lt-cli{font-weight:800;font-size:.87rem;color:#0f172a;white-space:normal;overflow-wrap:anywhere;max-width:340px;min-width:160px;}
   .tka-lt-sub{font-size:.75rem;color:#9ca3af;margin-top:2px;white-space:nowrap;}
   .tka-lt-fecha{font-size:.78rem;color:#374151;white-space:nowrap;}
   .tka-lt-badge{padding:3px 9px;border-radius:50px;font-size:.64rem;font-weight:800;letter-spacing:.04em;
@@ -442,9 +442,10 @@
   .tka-bod-thumb img{width:100%;height:100%;object-fit:cover;display:block}
   .tka-bod-card.tka-bod-en-cat .tka-bod-thumb{background:#fee2e2;color:var(--tka-red)}
   .tka-bod-info{min-width:0;display:flex;flex-direction:column;gap:4px}
+  /* 2026-10-24 (REGLA #15: datos completos, nunca cortados): el nombre del producto se ve ENTERO (antes se cortaba a 2 líneas con «…»). */
   .tka-bod-nombre{
     font-weight:700;color:#0f172a;font-size:.93rem;line-height:1.3;
-    overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+    overflow-wrap:anywhere;
   }
   .tka-bod-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   .tka-bod-sku{
@@ -663,6 +664,29 @@
     cursor:pointer;font-size:.85rem;line-height:1;flex-shrink:0;
   }
   .tka-bodega-sel-chip button:hover{background:var(--tka-red);color:#fff}
+
+  /* ── 2026-10-24 (Daniel: «todos los formularios con este modal deberán notificar en qué bodega se encuentra el producto… con Check podemos
+     identificar las bodegas… que este motor sea un motor único»): en qué bodega de CHECK está cada producto, debajo de su nombre, más un
+     resumen del documento arriba. SOLO informa (no cambia la selección). Mismo lenguaje que «Agregar factura o boleta» de Retiros: chips azules,
+     ámbar si el producto está repartido en varias bodegas. Datos: /api/erp/check-bodegas (el mismo motor que /retiros/api/check-bodegas). ── */
+  .tka-modal .ln-bod{display:flex;flex-wrap:wrap;gap:4px 6px;margin-top:6px;font-weight:500}
+  .tka-modal .ln-bod:empty{display:none}
+  .tka-modal .ln-bod-chip{display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px 4px;padding:2px 9px;border-radius:14px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;font-size:.76rem;line-height:1.5;max-width:100%;overflow-wrap:anywhere}
+  .tka-modal .ln-bod-chip i{color:#2563eb}
+  .tka-modal .ln-bod-chip small{color:#475569;font-size:.72rem}
+  .tka-modal .ln-bod-gris{display:inline-flex;align-items:center;gap:4px;color:#6b7280;font-size:.76rem}
+  .tka-modal .ln-bod-cargando{display:inline-flex;align-items:center;gap:6px;color:#6b7280;font-size:.74rem}
+  .tka-modal .ln-bod-varias{display:block;width:100%;font-size:.74rem;font-weight:700;color:#92400e;margin-bottom:2px}
+  .tka-modal .ln-bod-edad{color:#9ca3af;font-size:.7rem;align-self:center}
+  .tka-bod-resumen{border:1px solid #bfdbfe;border-left:4px solid #3b82f6;background:#f8fbff;border-radius:12px;padding:10px 12px;margin:0 0 10px}
+  .tka-bod-resumen.is-varias{border-color:#fde68a;border-left-color:#f59e0b;background:#fffbeb}
+  .tka-bod-res-t{font-size:.86rem;color:#1f2937;margin-bottom:6px;overflow-wrap:break-word}
+  .tka-bod-res-t i{color:#3b82f6}
+  .tka-bod-resumen.is-varias .tka-bod-res-t i{color:#b45309}
+  .tka-bod-res-t span{color:#92400e;font-weight:600}
+  .tka-bod-res-l{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+  /* celular: la descripción (nombre + bodegas) usa todo el ancho de la columna de contenido, no la del checkbox (antes salía letra por letra) */
+  @media(max-width:600px){.tka-line .ln-desc{grid-column:2;min-width:0}}
 </style>
 
 <div class="tka-backdrop" id="tkaBackdrop" onclick="tkaClose()" aria-hidden="true"></div>
@@ -1638,6 +1662,84 @@ function _tkaStockBadge(l){
     + '<i class="bi bi-info-circle-fill"></i>' + _tkaEsc(texto) + '</span>';
 }
 
+// ── 2026-10-24 (Daniel: «todos los formularios con este modal deberán notificar en qué bodega se encuentra el producto… con Check podemos
+//    identificar las bodegas… que este motor sea un motor único»): en qué bodega de CHECK está cada producto, debajo de su nombre, y un
+//    resumen del pedido arriba («¿Dónde está este pedido según Check?»). SOLO informa: no cambia la selección ni bloquea nada. Datos de
+//    /api/erp/check-bodegas (SOLO LECTURA, REGLA #4.4): la misma respuesta que ya usa Retiros. Se llama con la caja `.ln-bod[data-bod-sku]`
+//    de cada línea: Por documento, Por RUT, Productos, Catálogo y Cotización interna usan ESTA misma función.
+const _TKA_BOD = { cache: new Map(), edad: null };          // sku → {t, lista}; vale 5 min (el reporte de Check se renueva cada ~30 min)
+const _TKA_BOD_TTL = 5 * 60 * 1000;
+async function _tkaCargarBodegas(raiz, opts){
+  opts = opts || {};
+  const cajas = [].slice.call((raiz || document).querySelectorAll('[data-bod-sku]'));
+  if (!cajas.length) return;
+  const skus = Array.from(new Set(cajas.map(c => c.dataset.bodSku).filter(Boolean)));
+  if (!skus.length){ cajas.forEach(c => { c.innerHTML = ''; }); return; }
+  const fmt = (n) => (Math.round((parseFloat(n) || 0) * 10) / 10).toLocaleString('es-CL');
+  const vigente = (s) => { const e = _TKA_BOD.cache.get(s); return !!e && (Date.now() - e.t) < _TKA_BOD_TTL; };
+  const faltan = skus.filter(s => !vigente(s));
+  if (faltan.length){
+    cajas.forEach(c => {
+      if (faltan.indexOf(c.dataset.bodSku) >= 0)
+        c.innerHTML = '<span class="ln-bod-cargando"><span class="spinner-border spinner-border-sm"></span> Buscando la bodega en Check…</span>';
+    });
+  }
+  for (let i = 0; i < faltan.length; i += 80){            // el servidor atiende hasta 80 SKU por consulta
+    const lote = faltan.slice(i, i + 80);
+    let d = null;
+    try{
+      const r = await fetch('/api/erp/check-bodegas?skus=' + encodeURIComponent(lote.join(',')), { headers: { 'Accept': 'application/json' } });
+      d = await r.json();
+    }catch(e){ d = null; }
+    if (d && d.ok){
+      lote.forEach(s => _TKA_BOD.cache.set(s, { t: Date.now(), lista: (d.bodegas || {})[s] || [] }));
+      _TKA_BOD.edad = d.edad_min;
+    }
+  }
+  // Resumen del pedido arriba de la lista (como Retiros: «si el producto está en varias bodegas, hazme un resumen para decidir la fecha»).
+  if (raiz){
+    const previo = raiz.querySelector(':scope > .tka-bod-resumen');
+    if (previo) previo.remove();
+    if (opts.resumen !== false && skus.every(vigente)){
+      const porBodega = {}; let sinStock = 0;
+      skus.forEach(s => {
+        const lista = _TKA_BOD.cache.get(s).lista || [];
+        if (!lista.length) sinStock += 1;
+        lista.forEach(b => {
+          const r = porBodega[b.bodega] || (porBodega[b.bodega] = { prods: 0, u: 0 });
+          r.prods += 1; r.u += parseFloat(b.fisico) || 0;
+        });
+      });
+      const nombres = Object.keys(porBodega).sort((x, y) => porBodega[y].prods - porBodega[x].prods || porBodega[y].u - porBodega[x].u);
+      const caja = document.createElement('div');
+      caja.className = 'tka-bod-resumen' + (nombres.length > 1 ? ' is-varias' : '');
+      caja.innerHTML = '<div class="tka-bod-res-t"><i class="bi bi-geo-alt-fill"></i> <b>¿Dónde está este pedido según Check?</b>'
+        + (nombres.length > 1 ? ' <span>Está repartido en ' + nombres.length + ' bodegas: revísalo antes de comprometer la fecha.</span>' : '')
+        + '</div><div class="tka-bod-res-l">'
+        + nombres.map(n => '<span class="ln-bod-chip"><b>' + _tkaEsc(n) + '</b> · ' + porBodega[n].prods + ' producto'
+          + (porBodega[n].prods === 1 ? '' : 's') + ' · ' + fmt(porBodega[n].u) + ' u.</span>').join('')
+        + (sinStock ? '<span class="ln-bod-gris"><i class="bi bi-exclamation-circle"></i> ' + sinStock + ' producto' + (sinStock === 1 ? '' : 's')
+          + ' sin stock en Check</span>' : '')
+        + (_TKA_BOD.edad != null ? '<span class="ln-bod-edad">Check · hace ' + _TKA_BOD.edad + ' min</span>' : '') + '</div>';
+      raiz.insertBefore(caja, raiz.firstChild);
+    }
+  }
+  cajas.forEach(c => {
+    const e = vigente(c.dataset.bodSku) ? _TKA_BOD.cache.get(c.dataset.bodSku) : null;
+    if (!e){ c.innerHTML = '<span class="ln-bod-gris"><i class="bi bi-wifi-off"></i> Check no respondió: bodega sin verificar</span>'; return; }
+    const lista = e.lista || [];
+    if (!lista.length){ c.innerHTML = '<span class="ln-bod-gris"><i class="bi bi-geo-alt"></i> Sin stock en Check</span>'; return; }
+    const total = lista.reduce((t, b) => t + (parseFloat(b.fisico) || 0), 0);
+    c.innerHTML = (lista.length > 1 ? '<span class="ln-bod-varias">En ' + lista.length + ' bodegas · ' + fmt(total) + ' u. en total</span>' : '')
+      + lista.map(b => {
+        const ubi = (b.ubicaciones || []).join(', ') + (b.mas_ubicaciones ? ' +' + b.mas_ubicaciones : '');
+        const tip = b.bodega + ': ' + fmt(b.fisico) + ' físico · ' + fmt(b.disponible) + ' disponible' + (ubi ? ' · ' + ubi : '');
+        return '<span class="ln-bod-chip" title="' + _tkaEsc(tip) + '"><i class="bi bi-geo-alt-fill"></i><b>' + _tkaEsc(b.bodega) + '</b> · '
+          + fmt(b.fisico) + ' u.' + (ubi ? ' <small>' + _tkaEsc(ubi) + '</small>' : '') + '</span>';
+      }).join('');
+  });
+}
+
 // 2026-10-23 (Daniel, OT-2026-00348: «se están filtrando productos del servicio: descuentos, ZZENVIO, ZZINSTALACION»): una línea del
 // documento que NO es un producto físico: servicio (SKU ZZ…) o descuento de la venta (SKU «DE» / «DESCUENTO VENTAS», cuya «cantidad» es el
 // MONTO). Antes solo se filtraba es_zz y el descuento pasaba como un producto más. Misma regla que _sku_es_servicio (app.py).
@@ -1839,6 +1941,7 @@ function tkaRenderDocLineas(lineas, fetchMs){
       <div class="ln-desc">
         ${_tkaEsc(nom)}
         ${isZero ? '<span class="tka-line-tag-zero" title="Esta línea ya fue rebajada del sistema (ya entregada). Puedes marcarla igualmente si necesitas, pero por defecto no se asocia."><i class="bi bi-check-circle-fill"></i> entregado</span>' : ''}
+        ${sku ? `<div class="ln-bod" data-bod-sku="${_tkaEsc(sku)}"></div>` : ''}
       </div>
       <div class="ln-qty">
         <span>${qty} u.</span>
@@ -1850,6 +1953,7 @@ function tkaRenderDocLineas(lineas, fetchMs){
   });
   html += '</div>';
   cont.innerHTML = html;
+  _tkaCargarBodegas(cont);          // 2026-10-24: en qué bodega de Check está cada producto (motor único, solo informa)
   setTimeout(() => {
     document.querySelectorAll('#tkaDocResult input[type="checkbox"][data-line-key]:checked').forEach(cb => {
       tkaToggleLineaDoc(cb, /*silent=*/true);
@@ -2207,6 +2311,7 @@ async function tkaToggleDocCli(idx){
         <div class="ln-desc">
           ${_tkaEsc(nom)}
           ${isZero ? '<span class="tka-line-tag-zero" title="Esta línea ya fue rebajada del sistema (entregada). Puedes marcarla igualmente si necesitas."><i class="bi bi-check-circle-fill"></i> entregado</span>' : ''}
+          ${sku ? `<div class="ln-bod" data-bod-sku="${_tkaEsc(sku)}"></div>` : ''}
         </div>
         <div class="ln-qty">
           <span>${qty} u.</span>
@@ -2218,6 +2323,7 @@ async function tkaToggleDocCli(idx){
     });
     body.innerHTML = html;
     body.dataset.loaded = '1';
+    _tkaCargarBodegas(body);        // 2026-10-24: en qué bodega de Check está cada producto (motor único, solo informa)
     setTimeout(() => {
       body.querySelectorAll('input[type="checkbox"][data-line-key]:checked').forEach(cb => {
         tkaToggleLineaCli(cb, /*silent=*/true);
@@ -2502,6 +2608,7 @@ async function tkaBuscarPorBodega(){
         <div class="tka-bod-info">
           <div class="tka-bod-nombre">${_tkaEsc(it.nombre)}</div>
           <div class="tka-bod-meta"><span class="tka-bod-sku">${_tkaEsc(it.sku)}</span>${catBadge}</div>
+          ${it.sku ? `<div class="ln-bod" data-bod-sku="${_tkaEsc(String(it.sku).toUpperCase())}"></div>` : ''}
         </div>
         <span class="tka-bod-stock ${stockCls}"><i class="bi bi-box-seam-fill"></i>${_tkaEsc(stockTxt)}</span>
       </div>`;
@@ -2511,6 +2618,7 @@ async function tkaBuscarPorBodega(){
     cont.innerHTML = html;
     _TKA._bodegaItems = items;
     _tkaRenderBodegaSeleccion();
+    _tkaCargarBodegas(cont, { resumen: false });     // 2026-10-24: bodega de Check de cada producto encontrado (sin resumen: no es un documento)
   }catch(e){
     if (myToken !== _tkaBodegaReqToken) return; // abortado/obsoleto, no mostrar error de una búsqueda vieja
     cont.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>Error: ${_tkaEsc(e.message)}</div>`;
@@ -2640,6 +2748,7 @@ async function tkaBuscarPorCatalogo(){
         <div class="tka-bod-info">
           <div class="tka-bod-nombre">${_tkaEsc(it.nombre)}</div>
           <div class="tka-bod-meta"><span class="tka-bod-sku">${_tkaEsc(it.sku || 's/SKU')}</span>${it.familia ? `<span>${_tkaEsc(it.familia)}</span>` : ''}</div>
+          ${it.sku ? `<div class="ln-bod" data-bod-sku="${_tkaEsc(String(it.sku).toUpperCase())}"></div>` : ''}
         </div>
       </div>`;
     });
@@ -2648,6 +2757,7 @@ async function tkaBuscarPorCatalogo(){
     cont.innerHTML = html;
     _TKA._catalogoItems = items;
     _tkaRenderCatalogoSeleccion();
+    _tkaCargarBodegas(cont, { resumen: false });     // 2026-10-24: bodega de Check de cada producto del catálogo encontrado
   }catch(e){
     if (myToken !== _tkaCatalogoReqToken) return;
     cont.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>Error: ${_tkaEsc(e.message)}</div>`;
@@ -2909,12 +3019,13 @@ async function _tkaCotizacionElegir(idx){
           ${_tkaEsc(it.nombre)}
           ${claseHtml}
           ${precioHtml}
+          ${sku ? `<div class="ln-bod" data-bod-sku="${_tkaEsc(sku)}"></div>` : ''}
         </div>
         <div class="ln-qty"><span>${qty} u.</span></div>
       </div>`;
     });
     html += '</div>';
-    if (itemsRes) itemsRes.innerHTML = html;
+    if (itemsRes){ itemsRes.innerHTML = html; _tkaCargarBodegas(itemsRes); }     // 2026-10-24: bodega de Check de cada producto de la cotización
   }catch(e){
     if (itemsRes) itemsRes.innerHTML = `<div class="text-muted small py-2"><i class="bi bi-x-circle me-1"></i>Error: ${_tkaEsc(e.message)}</div>`;
   }

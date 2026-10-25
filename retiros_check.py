@@ -253,3 +253,31 @@ def bodegas_por_sku(filas, skus, max_ubicaciones=3):
             b["disponible"] = round(b["disponible"], 2)
         res[sku] = lista
     return res
+
+
+def skus_de(skus_texto, max_skus=80):
+    """«a, b ,C» → ['A', 'B', 'C'] (mayúsculas, sin vacíos, hasta `max_skus`). Las rutas lo miran ANTES de leer el reporte de Check: sin SKUs
+    no se espera a nadie."""
+    return [x.strip().upper() for x in str(skus_texto or "").split(",") if x.strip()][:max_skus]
+
+
+def respuesta_bodegas(skus_texto, filas, ts_cache=None, ahora=None, max_skus=80):
+    """Respuesta ÚNICA de «¿en qué bodega de Check está cada producto?» → (payload, status_http).
+
+    La usan las dos rutas que existen —/retiros/api/check-bodegas (Retiros) y /api/erp/check-bodegas (el modal «Búsqueda avanzada de
+    productos» de todos los formularios)— para que digan siempre lo mismo (Daniel 2026-10-24: «que este motor sea un motor único»).
+    `skus_texto`: «A,B,C» tal como llega por la URL. `filas`: filas de GetReporteStock ya leídas (None = Check no respondió, y sin datos
+    viejos que servir). `ts_cache`: cuándo se leyó ese reporte (epoch) y `ahora` el epoch actual, para decir su antigüedad en minutos.
+    Pura: no lee de Check ni de la base."""
+    skus = skus_de(skus_texto, max_skus)
+    if not skus:
+        return {"ok": True, "bodegas": {}, "edad_min": None}, 200
+    if filas is None:
+        return {"ok": False, "error": "Check no respondió. Intenta de nuevo en un minuto."}, 503
+    edad = None
+    try:
+        if ts_cache and ahora is not None:
+            edad = max(int((float(ahora) - float(ts_cache)) // 60), 0)
+    except (TypeError, ValueError):
+        edad = None
+    return {"ok": True, "bodegas": bodegas_por_sku(filas, skus), "edad_min": edad}, 200

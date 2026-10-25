@@ -7576,6 +7576,29 @@ def api_erp_stock():
         return jsonify(ok=False, error="No fue posible consultar el stock del ERP."), 500
 
 
+@app.route("/api/erp/check-bodegas", methods=["GET"])
+@login_required
+def api_check_bodegas():
+    """¿En qué bodega de CHECK está cada producto? Motor ÚNICO para todo formulario que use el modal «Búsqueda avanzada de productos»
+    (templates/tickets/_tka_modal.html: Tickets, Cotizaciones, OT, Transporte, Cubicador…): Daniel 2026-10-24, «todos los formularios con este
+    modal deberán notificar en qué bodega se encuentra el producto… con Check podemos identificar las bodegas… que este motor sea un motor
+    único». Es lo mismo que ya ve Retiros (/retiros/api/check-bodegas) y la respuesta la arma la MISMA función (retiros_check.respuesta_bodegas),
+    pero sin el permiso de Retiros: es solo DÓNDE está el stock (jamás costos, proveedores ni precios: REGLAS #19 y #26).
+    SOLO LECTURA (REGLA #4.4): usa el reporte de stock de Check YA cacheado (_checkwms_stock_rows, GetReporteStock de la lista blanca); no llama
+    a Check por su cuenta. ?skus=A,B,C (hasta 80)."""
+    import retiros_check as _rck
+    txt = request.args.get("skus") or ""
+    if not _rck.skus_de(txt):
+        return jsonify(_rck.respuesta_bodegas(txt, None)[0])          # sin SKUs no se espera a Check
+    try:
+        filas = _checkwms_stock_rows()
+    except Exception as _e_cb:
+        print(f"[api_check_bodegas] {type(_e_cb).__name__}", flush=True)
+        filas = None
+    payload, st = _rck.respuesta_bodegas(txt, filas, _CHECKWMS_STOCK.get("ts"), time.time())
+    return jsonify(payload), st
+
+
 def get_full(product_id):
     product = mysql_fetchone(f"SELECT * FROM `{PRODUCTS_TABLE}` WHERE id=%s", (product_id,))
     if not product:

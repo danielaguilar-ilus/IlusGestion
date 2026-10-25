@@ -9874,25 +9874,24 @@ def register_pickup_routes(app, ctx):
         cacheado en app.py (_checkwms_stock_rows, 1 h). ?skus=A,B,C (hasta 80)."""
         import time as _t_cb
         import retiros_check as _rck_cb
-        skus = [x.strip().upper() for x in (request.args.get("skus") or "").split(",") if x.strip()][:80]
-        if not skus:
-            return jsonify({"ok": True, "bodegas": {}, "edad_min": None})
+        # 2026-10-24: la respuesta la arma retiros_check.respuesta_bodegas, la MISMA que usa /api/erp/check-bodegas (el modal «Búsqueda
+        # avanzada de productos» de todos los formularios): un solo motor, dice siempre lo mismo.
+        txt = request.args.get("skus") or ""
+        if not _rck_cb.skus_de(txt):
+            return jsonify(_rck_cb.respuesta_bodegas(txt, None)[0])      # sin SKUs no se espera a Check
         _filas_fn = ctx.get("_checkwms_stock_rows")
         try:
             filas = _filas_fn() if callable(_filas_fn) else None
         except Exception as _e_cb:
             print(f"[retiros-check-bodegas] {type(_e_cb).__name__}", flush=True)
             filas = None
-        if filas is None:
-            return jsonify({"ok": False, "error": "Check no respondió. Intenta de nuevo en un minuto."}), 503
-        edad = None
+        ts = None
         try:
-            _cache = ctx.get("_CHECKWMS_STOCK") or {}
-            if _cache.get("ts"):
-                edad = max(int((_t_cb.time() - float(_cache["ts"])) // 60), 0)
+            ts = (ctx.get("_CHECKWMS_STOCK") or {}).get("ts")
         except Exception:
-            edad = None
-        return jsonify({"ok": True, "bodegas": _rck_cb.bodegas_por_sku(filas, skus), "edad_min": edad})
+            ts = None
+        payload, st = _rck_cb.respuesta_bodegas(txt, filas, ts, _t_cb.time())
+        return jsonify(payload), st
 
     @app.route("/retiros/<int:rid>/productos-erp", methods=["GET"])
     @require_permission("retiros")   # antes «view»: lo tenía cualquiera con Etiquetas/Mantenciones/Transporte (revisión 2026-10-12)

@@ -129,8 +129,11 @@ class TestLaPreseleccionDeComprometidoCambio(unittest.TestCase):
         # El guard de "toggle all" no cambió de código -- compara contra
         # dataset.sinStock, que ahora solo es true para 'sin'. Por
         # construcción, 'comprometido' ya participa en el bulk-select.
-        self.assertIn("if (checked && (isZero || sinStockBod)) return;", self.tka)
-        self.assertIn("if (checked && (isZero || sinStockBod)) return;", self.rba)
+        # (Desde el 2026-09-16 «seleccionar todo» también marca las líneas SIN SALDO pidiendo su motivo; lo único que sigue excluyendo es
+        # `sinStockBod` = 0 físico. La prueba vieja miraba el guard anterior `isZero || sinStockBod`; el criterio de fondo es el mismo.)
+        self.assertIn("const sinStockBod = inp.dataset.sinStock === '1';", self.tka)
+        self.assertIn("if (checked && sinStockBod) continue;", self.tka)
+        self.assertIn("if (checked && sinStockBod) continue;", self.rba)
 
     def test_el_aviso_ambar_sobrevive_estando_seleccionada(self):
         # Riesgo real: .is-selected (verde) y .is-stock-comprometido (ámbar)
