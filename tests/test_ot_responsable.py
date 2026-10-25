@@ -1378,7 +1378,8 @@ __ESCENARIO__
         self.assertIn("Sugerido: <b>Aarón Rojas</b> — es el ejecutivo del cliente.", h)
         for n in ("Aarón Rojas", "Juan Pablo Díaz", "Víctor Soto"):
             self.assertIn(n, h)
-        self.assertEqual(h.count('class="o2m-op sel"'), 1, "una sola elegida")
+        self.assertEqual(h.count('class="o2m-op sel-ok"'), 1, "una sola elegida, en verde (25-oct: es un requisito que se resuelve al elegir, no un error)")
+        self.assertEqual(h.count('class="o2m-op sel"'), 0)
         self.assertEqual(len(re.findall(r'onclick="OT2C.respElegir\(\d+\)"', h)), 3)
         self.assertNotIn("line-clamp", h)
         self.assertNotIn("alert(", h)

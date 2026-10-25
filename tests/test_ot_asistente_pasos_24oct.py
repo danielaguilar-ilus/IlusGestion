@@ -45,7 +45,7 @@ class TestAcceso(unittest.TestCase):
 
 class TestCostos(unittest.TestCase):
     def setUp(self):
-        self.f = _fn("pintarFinanzas(b)", 14000)
+        self.f = _fn("pintarFinanzas(b)", 20000)   # 25-oct: la función creció (despacho y valor de referencia plegados): la ventana también
 
     def test_primero_centro_luego_como_se_cobra_luego_cuanto_luego_costo(self):
         f = self.f

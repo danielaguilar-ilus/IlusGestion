@@ -274,7 +274,12 @@
   font-size:.82rem;color:#14532d;line-height:1.4}
 .o2m-aviso-envio[hidden]{display:none}
 .o2m-aviso-envio.alerta{border-color:#fde68a;border-left-color:#f59e0b;background:#fffbeb;color:#78350f}
-.o2m-aviso-envio ul{list-style:none;margin:4px 0 0;padding:0;display:grid;gap:3px}
+.o2m-avenvio-t{display:flex;align-items:center;gap:8px;width:100%;min-height:44px;margin:-8px 0;padding:0;border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.o2m-avenvio-t .tx{flex:1;min-width:0;overflow-wrap:anywhere}
+.o2m-avenvio-t .ver{flex:none;font-size:.78rem;font-weight:700;color:#2563eb;white-space:nowrap}
+.o2m-avenvio-t:focus-visible{outline:2px solid #2563eb;outline-offset:2px;border-radius:6px}
+.o2m-aviso-envio ul[hidden]{display:none}
+.o2m-aviso-envio ul{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:3px}
 .o2m-aviso-envio li{overflow-wrap:anywhere}
 .o2m-aviso-envio li.no{color:#92400e}
 .o2m-aviso-envio small{color:#4b5563}
@@ -552,10 +557,37 @@
 .o2m-fpaso.listo{border-color:#bbf7d0}
 .o2m-fpaso.listo .hd{background:#f0fdf4;color:#15803d}
 .o2m-fpaso.listo .hd .est{color:#16a34a}
-.o2m-fpaso.falta{border-color:#fecaca}
-.o2m-fpaso.falta .hd{background:#fef2f2;color:#991b1b}
-.o2m-fpaso.falta .hd .est{color:#dc2626}
+/* 2026-10-25 (Daniel: «esto debe ser amigable… no un instrumento que retrase la toma de decisiones»): lo que falta en Costos se dice en ÁMBAR
+   («te toca»), no en rojo: el rojo se lee como error y aquí nadie se equivocó, solo falta un dato. */
+.o2m-fpaso.falta{border-color:#fde68a}
+.o2m-fpaso.falta .hd{background:#fffbeb;color:#92400e}
+.o2m-fpaso.falta .hd .est{color:#b45309}
 .o2m-fpaso.opcional .hd .est{color:#9ca3af}
+/* 🤝 2026-10-25: enlaces chicos de «Agregar …» (opcionales plegados en Costos) y la línea de partidas del anexo que vienen de Costos. */
+.o2m-linkbtn{display:inline-flex;align-items:center;min-height:44px;padding:0 4px;border:0;background:transparent;color:#2563eb;font-weight:700;font-size:.86rem;border-radius:8px;cursor:pointer}
+.o2m-linkbtn:hover{background:#eff6ff}
+.o2m-linkbtn[hidden]{display:none}
+.o2m-anx-res .o2m-anx-partidas{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;font-size:.95rem;margin-bottom:6px}
+.o2m-anx-res .o2m-anx-partidas i{color:#9ca3af;font-size:.7rem}
+.o2m-anx-res .o2m-anx-viene{font-size:.8rem;color:#4b5563}
+/* 🔁 2026-10-25: el checklist de la SALIDA vive en la fila de cada equipo del paso Equipos (con «Instalación con desinstalación»). */
+.o2m-eq-sal{margin-top:8px;padding-top:8px;border-top:1px dashed #e5e7eb;display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center}
+.o2m-eq-sal .k,.o2m-eq-ini-k{flex:none;font-size:.7rem;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:#6b7280}
+.o2m-eq-ini-k{display:block;margin-bottom:4px}
+.o2m-eq-sal select{flex:1 1 190px;min-width:0;min-height:44px;font-size:16px;border:1.5px solid #d1d5db;border-radius:10px;padding:0 10px;background:#fff}
+.o2m-eq-sal.ok select{border-color:#86efac;background:#f0fdf4}
+.o2m-eq-sal.falta select{border-color:#fde68a;background:#fffbeb}
+.o2m-eq-sal .no{flex:1 1 auto;font-size:.85rem;color:#6b7280}
+.o2m-eq-sal-b{flex:none;min-height:44px;padding:0 10px;border:0;background:transparent;color:#2563eb;font-weight:700;font-size:.82rem;border-radius:8px}
+.o2m-eq-sal-b:hover{background:#eff6ff}
+.o2m-eq-sal.off{opacity:.85}
+/* Sub-paso que es solo referencia: una línea que se abre con un toque (los campos siguen en la página). */
+.o2m-fpaso.plegable .hd{cursor:pointer;min-height:44px}
+.o2m-fpaso.plegable .hd:focus-visible{outline:2px solid #2563eb;outline-offset:-2px}
+.o2m-fpaso.plegable .hd .tg{flex:none;margin-left:4px;color:#6b7280;transition:transform .16s}
+.o2m-fpaso.plegable:not(.plegado) .hd .tg{transform:rotate(180deg)}
+.o2m-fpaso.plegado .bd{display:none}
+@media (prefers-reduced-motion:reduce){ .o2m-fpaso.plegable .hd .tg{transition:none} }
 .o2m-fpaso .bd{padding:12px}
 /* Al intentar avanzar/crear con algo pendiente, el sub-paso culpable late
    dos veces (mismo otfLatido de la ficha). Nunca un alert() (REGLA #1). */
@@ -1845,6 +1877,10 @@ window.OT2C = (function(){
          // 💰 2026-10-07: "Valorizar (opcional)" en una OT que se cobra -- cuánto vale el servicio según
          // tarifa, solo referencia (valorizado_clp). En garantía el valorizado es el campo del sub-paso 2.
          fin_valorizado:'',
+         // 2026-10-25: sub-pasos de Costos que son solo REFERENCIA y quedan plegados en una línea hasta que alguien los abre (ver _o2mFpasoHtml).
+         _fpAbierto:{},
+         // 2026-10-25: el costo $0 del técnico propio lo sugiere el sistema (visible y editable); solo vale mientras nadie lo escriba (ver _o2mFinCostoAuto).
+         _finCostoAuto:false,
          // 💰 2026-09-15 (Daniel: "toda OT debe salir VALORIZADA, se cobre o
          // no... si no hay línea ZZ, se declara un SUPUESTO"). De dónde
          // salió el valor vigente de fin_zz_monto -- viaja al backend como
@@ -2324,14 +2360,36 @@ window.OT2C = (function(){
     var algunoSale = items.some(function(i){ return i.saldra; });
     var hay = items.some(function(i){ return !i.saldra; });
     box.className = 'o2m-aviso-envio' + (hay ? ' alerta' : '');
-    box.innerHTML = '<b><i class="bi bi-envelope-paper-fill me-1"></i>' +
-      (algunoSale ? 'Al crear esta OT se enviará:' : 'Al crear esta OT no se enviará ningún correo.') + '</b><ul>' +
+    // 2026-10-25 (Daniel: «aparece como un menú dando vueltas, no sé qué es… muy confuso»): el aviso ya no ocupa el pie con la lista entera en
+    // cada paso: queda en UNA línea («Al crear esta OT se enviará: Cliente y técnico · 2 correos · Ver») y la lista se abre con un toque.
+    // Sigue diciendo a quién y lo que esté apagado (REGLA #37): solo cambia cuánto espacio ocupa.
+    var sale = items.filter(function(i){ return i.saldra; }), noSale = items.length - sale.length;
+    var roles = sale.map(function(i){ return String(i.rol_txt || '').toLowerCase(); }).filter(function(x, k, a){ return x && a.indexOf(x) === k; });
+    var resumen = (algunoSale
+      ? roles.join(' y ') + ' · ' + sale.length + ' correo' + (sale.length === 1 ? '' : 's') + (noSale ? ' · ' + noSale + ' no saldrá' + (noSale === 1 ? '' : 'n') : '')
+      : 'ninguno saldrá: ' + noSale + ' frenado' + (noSale === 1 ? '' : 's'));
+    box.innerHTML = '<button type="button" class="o2m-avenvio-t" aria-expanded="' + _o2mAvisoAbierto + '" onclick="OT2C.avisoEnvioTog()">' +
+      '<i class="bi bi-envelope-paper-fill"></i><span class="tx"><b>' +
+      (algunoSale ? 'Al crear esta OT se enviará:' : 'Al crear esta OT no se enviará ningún correo.') + '</b> ' + esc(resumen) + '</span>' +
+      '<span class="ver">' + (_o2mAvisoAbierto ? 'Ocultar' : 'Ver a quién') + ' <i class="bi bi-chevron-' + (_o2mAvisoAbierto ? 'up' : 'down') + '"></i></span></button>' +
+      '<ul' + (_o2mAvisoAbierto ? '' : ' hidden') + '>' +
       items.map(function(i){
         var det = i.saldra ? (i.nota || '') : (i.motivo || '');
         return '<li class="' + (i.saldra ? 'ok' : 'no') + '"><b>' + esc(i.nombre || i.correo || '') + '</b> (' + esc(i.rol_txt || '') + ')' +
           (i.correo ? ' <small>' + esc(i.correo) + '</small>' : '') + (det ? ' <small>· ' + esc(det) + '</small>' : '') + '</li>';
       }).join('') + '</ul>';
     box.hidden = false;
+  }
+  var _o2mAvisoAbierto = false;
+  function avisoEnvioTog(){
+    _o2mAvisoAbierto = !_o2mAvisoAbierto;
+    var box = document.getElementById('o2mAvisoEnvio'); if (!box) return;
+    var b = box.querySelector('.o2m-avenvio-t'), ul = box.querySelector('ul');
+    if (ul) ul.hidden = !_o2mAvisoAbierto;
+    if (b){
+      b.setAttribute('aria-expanded', String(_o2mAvisoAbierto));
+      var v = b.querySelector('.ver'); if (v) v.innerHTML = (_o2mAvisoAbierto ? 'Ocultar' : 'Ver a quién') + ' <i class="bi bi-chevron-' + (_o2mAvisoAbierto ? 'up' : 'down') + '"></i>';
+    }
   }
   function _o2mAvisoEnvioRefrescar(){
     var box = document.getElementById('o2mAvisoEnvio');
@@ -4456,7 +4514,7 @@ window.OT2C = (function(){
         var sel = R.id === c.id;
         var sub = sel ? (R.manual ? 'Elegido por ti' : (sug && sug.id === c.id ? 'Sugerido' : 'Responsable de esta OT'))
                       : (sug && sug.id === c.id ? 'Sugerido' : 'Responsable de OT');
-        return '<button type="button" class="o2m-op' + (sel ? ' sel' : '') + '" onclick="OT2C.respElegir(' + c.id + ')">' +
+        return '<button type="button" class="o2m-op' + (sel ? ' sel-ok' : '') + '" onclick="OT2C.respElegir(' + c.id + ')">' +   // requisito que se resuelve al elegir: verde, no rojo
                '<span class="n">' + (sel ? '<i class="bi bi-check-circle-fill me-1"></i>' : '') + esc(c.nombre) + '</span>' +
                '<span class="l">' + esc(sub) + '</span></button>';
       }).join('');
@@ -4523,7 +4581,9 @@ window.OT2C = (function(){
       var pills = g.items.map(function(t){
         var sel = S.tecnicos.indexOf(t.id) >= 0;
         var bloqueado = !sel && bloqueada && t.empresa_id && t.empresa_id !== bloqueada;
-        var cls = 'o2m-op' + (sel ? ' sel' : '') + (bloqueado ? ' disabled' : '');
+        // 2026-10-25 (Daniel: «sigue marcando en rojo… si ya estoy validando la restricción»): el técnico es un REQUISITO que se resuelve al
+        // elegir (como el centro de costo), así que queda en verde (sel-ok); el rojo se lee como error y aquí no lo hay.
+        var cls = 'o2m-op' + (sel ? ' sel-ok' : '') + (bloqueado ? ' disabled' : '');
         var click = bloqueado
           ? "ilusToast('No puedes mezclar técnicos externos de dos empresas distintas en la misma OT.',{type:'warning'})"
           : ('OT2C.tecTog(' + t.id + ')');
@@ -4549,6 +4609,7 @@ window.OT2C = (function(){
   function pintarEquipos(b){
     if (S.tipo === 'revision_interna') return pintarBodegaEvidencia(b);
     if (esInterno()) return pintarTrabajoInterno(b);
+    if (_o2mDiAplica()) _diCargarPlantillas();   // 2026-10-25: el checklist de la salida se elige aquí, en cada equipo
     b.innerHTML = '<h6 class="t">Equipos y su checklist</h6>'+
       '<p class="d">Cada equipo necesita su checklist elegido. Sin eso la orden no avanza.</p>'+
       // Origen "Factura o boleta" / "Cotización" / "Ticket": las líneas que
@@ -5460,6 +5521,34 @@ window.OT2C = (function(){
   /* HTML de UNA fila de la tabla de equipos. Vive aparte para que
      marcar un equipo o elegir un checklist puedan actualizar SOLO su
      fila, en vez de repintar la tabla entera. */
+  /* 🔁 2026-10-25 — El checklist de la SALIDA de cada equipo, dentro de la fila del paso Equipos (misma plantilla, mismo estado que el paso
+     «Desinstalación»: S.desinst.eq_plant / eq_fuera; lo que se ve y se elige es exactamente lo que se crea). Solo con «Instalación con
+     desinstalación». La sugerencia llega del servidor (checklists_sugeridos) y la persona decide. */
+  function _o2mEqSalidaHtml(mid){
+    if (!_o2mDiTieneHija()) return '';
+    var d = S.desinst, on = !d.eq_fuera[mid], sug = _diSug(mid), pe = _diPlantEleg(mid);
+    if (!on){
+      return '<div class="o2m-eq-sal off"><span class="k"><i class="bi bi-box-arrow-up"></i> Al desinstalar</span>'+
+        '<span class="no">No se retira</span>'+
+        '<button type="button" class="o2m-eq-sal-b" onclick="OT2C.diEqTog('+mid+')">Incluir</button></div>';
+    }
+    var opts = (_evPlantillas || []).slice();
+    if (pe && !opts.some(function(x){ return x.id === pe; })) opts.unshift({id:pe, nombre:(sug && sug.plantilla_nombre) || ('Checklist #' + pe)});
+    var sel = opts.length
+      ? '<select aria-label="Checklist al desinstalar '+esc(_diEqNombre(mid))+'" onchange="OT2C.diEqPlant('+mid+', this.value)">'+
+          (pe ? '' : '<option value="">Elige el checklist de la salida…</option>')+
+          opts.map(function(x){ return '<option value="'+x.id+'"'+(x.id===pe?' selected':'')+'>'+esc(x.nombre)+'</option>'; }).join('')+'</select>'
+      : '<span class="no">'+((_evPlantillas === null || _evPlantCargando) ? 'Cargando checklists…' : 'Sin checklist configurado para desinstalaciones')+'</span>';
+    return '<div class="o2m-eq-sal'+(pe ? ' ok' : ' falta')+'"><span class="k"><i class="bi bi-box-arrow-up"></i> Al desinstalar</span>'+sel+
+      '<button type="button" class="o2m-eq-sal-b" onclick="OT2C.diEqTog('+mid+')" title="Este equipo no se retira en la desinstalación">No se retira</button></div>';
+  }
+  /* Repinta SOLO el bloque de la salida de cada fila (la sugerencia llega después; no se toca la tabla ni el scroll). */
+  function _o2mEqSalidaRefrescar(){
+    (S.equipos || []).forEach(function(e){
+      var w = document.getElementById('o2mEqSal-'+e.maquina_id);
+      if (w) w.innerHTML = _o2mEqSalidaHtml(e.maquina_id);
+    });
+  }
   function _o2mFilaEquipoHTML(m){
           var sel = S.equipos.find(function(e){ return e.maquina_id===m.id; });
           var cls = sel ? (sel.plantilla_id ? 'ok' : 'sel') : '';
@@ -5508,7 +5597,8 @@ window.OT2C = (function(){
                 (enPlan?'bi-shield-check':'bi-shield-slash')+'"></i></span>'
             )+'</td>')+
             '<td>'+(sel
-              ? '<div class="o2m-combo">'+
+              ? (_o2mDiTieneHija() ? '<span class="o2m-eq-ini-k"><i class="bi bi-box-arrow-in-down"></i> Al instalar</span>' : '')+
+                '<div class="o2m-combo">'+
                   '<input type="text" class="form-control form-control-sm o2m-combo-input" '+
                   'id="o2mComboInp-'+m.id+'" value="'+esc(_o2mPlantNombre(sel.plantilla_id))+'" '+
                   'placeholder="Buscar checklist…" autocomplete="off" '+
@@ -5518,7 +5608,10 @@ window.OT2C = (function(){
                 // Solo se muestra mientras el valor elegido sigue siendo el que
                 // llegó por sugerencia (eqPlant apaga la bandera al elegir a mano).
                 (sel.plantilla_sugerida ? '<small class="o2m-eq-sug">'+
-                  '<i class="bi bi-magic me-1"></i>Sugerida automáticamente.</small>' : '')
+                  '<i class="bi bi-magic me-1"></i>Sugerida automáticamente.</small>' : '')+
+                // 2026-10-25 (Daniel: «cuando escojo el checklist de instalación y el de desinstalación, en el paso 7… no me ofrece la opción de
+                // escoger»): con «Instalación con desinstalación», cada equipo elige AQUÍ las dos plantillas, la de entrada y la de salida.
+                (_o2mDiTieneHija() ? '<div class="o2m-eq-sal-wrap" id="o2mEqSal-'+m.id+'">'+_o2mEqSalidaHtml(m.id)+'</div>' : '')
               : '<span class="muted"><i class="bi bi-lock-fill me-1"></i>marca el equipo</span>')+
             '</td>'+
           '</tr>';
@@ -5563,13 +5656,17 @@ window.OT2C = (function(){
             ? '<i class="bi bi-square me-1"></i>Desmarcar todos'
             : '<i class="bi bi-check2-square me-1"></i>Marcar todos')+
           '</button>'+
+          // 🔁 2026-10-25: con «Instalación con desinstalación», un atajo para decidir de una vez qué equipos se retiran (REGLA #14: marcar/desmarcar todo).
+          (_o2mDiTieneHija() && equiposVista.length > 1
+            ? '<button type="button" class="btn btn-sm btn-outline-dark" style="min-height:44px" onclick="OT2C.diEqTodo()" '+
+              'title="Marca o desmarca todos los equipos que se retiran en la desinstalación"><i class="bi bi-box-arrow-up me-1"></i>Retirar todos / ninguno</button>' : '')+
           '<span id="o2mEqBarraPlan">'+_o2mBarraPlan()+'</span>'+
         '</div>'+
         '<div class="o2m-eq-tablewrap"><table class="o2m-eq-table"><thead><tr>'+
           '<th class="chk"></th><th class="doc">Documento</th>'+
           '<th>Producto</th><th class="cant">Cant.</th>'+
           (_o2mPlanAplica() ? '<th class="plan">Plan</th>' : '')+
-          '<th>Plantillas extra'+
+          '<th>'+(_o2mDiTieneHija() ? 'Checklist de entrada y de salida' : 'Plantillas extra')+
             (cachePlantCategoria ? ' <span class="o2m-eq-cat">'+esc(_O2M_CATEGORIA_LABEL[cachePlantCategoria]||cachePlantCategoria)+'</span>' : '')+
           '</th>'+
         '</tr></thead><tbody>'+
@@ -6893,7 +6990,33 @@ window.OT2C = (function(){
     try { el.setSelectionRange(nuevaPos, nuevaPos); } catch(e){}
     _pintarFinMargenDom();
   }
-  function setFinCostoProveedor(el){ _o2mInputDineroCambio(el, 'fin_costo_proveedor'); _pintarFinCostoChipDom(); _o2mFinEstadosDom(); _o2mAnexoSeguirCostos(); }
+  function setFinCostoProveedor(el){ S._finCostoAuto = false; _o2mInputDineroCambio(el, 'fin_costo_proveedor'); _pintarFinCostoChipDom(); _o2mFinEstadosDom(); _o2mAnexoSeguirCostos(); }
+  /* El costo del despacho solo se muestra si ya trae un valor, si al cliente se le cobra despacho o si la persona lo pidió. */
+  function _o2mFinDespachoVisible(){
+    if (S._fpAbierto.despacho) return true;
+    if (String(S.fin_costo_despacho == null ? '' : S.fin_costo_despacho).trim() !== '') return true;
+    var env = S.fin_zz_envio ? parseFloat(S.fin_zz_envio.monto) : NaN;
+    return isFinite(env) && env > 0;
+  }
+  function _o2mFinDespachoMostrar(foco){
+    var w = document.getElementById('o2mFinDespWrap'), b = document.getElementById('o2mFinDespBtn');
+    if (w) w.hidden = false;
+    if (b) b.hidden = true;
+    if (foco){ var i = document.getElementById('o2mFinCostoDesp'); if (i) i.focus(); }
+  }
+  function finDespachoAbrir(){ S._fpAbierto.despacho = true; _o2mFinDespachoMostrar(true); }
+  /* 🤝 2026-10-25 (Daniel: «al crear una OT los costos se hacen largos y dan pereza rellenar valores duplicados o similares»): con un técnico PROPIO
+     el costo del servicio es $0 y queda SUGERIDO ya escrito (visible y editable, igual que en la desinstalación: _diAutoCosto), así el caso más
+     común no pide ni un toque. Con uno externo se deja vacío para que lo escriba (o use la tarifa de su ficha). Lo que la persona escribe nunca se
+     pisa: `S._finCostoAuto` solo vale mientras el valor lo puso el sistema. Devuelve true si cambió el valor. */
+  function _o2mFinCostoAuto(){
+    if (esInterno() || !(S.tecnicos || []).length) return false;
+    var antes = S.fin_costo_proveedor;
+    var vacio = String(antes == null ? '' : antes).trim() === '';
+    if (_primerTecnicoExterno()){ if (S._finCostoAuto){ S.fin_costo_proveedor = ''; S._finCostoAuto = false; } }
+    else if (vacio || S._finCostoAuto){ S.fin_costo_proveedor = '0'; S._finCostoAuto = true; }
+    return antes !== S.fin_costo_proveedor;
+  }
   function setFinCostoDespacho(el){ _o2mInputDineroCambio(el, 'fin_costo_despacho'); _o2mFinEstadosDom(); _o2mAnexoSeguirCostos(); }
   /* 💰 2026-10-07 (Daniel, modelo único): "Valorizar (opcional)" en una OT que SE COBRA -- cuánto vale el
      servicio según tarifa, solo como referencia (valorizado_clp). Nunca se suma a lo cobrado ni se exige
@@ -6901,13 +7024,27 @@ window.OT2C = (function(){
      campo del sub-paso 2. */
   function setFinValorizado(el){ _o2mInputDineroCambio(el, 'fin_valorizado'); }
   function _o2mFinValorizarHtml(){
-    return '<div class="o2m-valorizar"><label class="fl" for="o2mFinValorizadoInput">Valorizar '+
+    // 🤝 2026-10-25 (Daniel: «valores duplicados o similares»): «Valorizar» es un segundo monto parecido a «Le cobras» y solo sirve de referencia, así
+    // que queda detrás de un enlace («Agregar valor de referencia»); si ya trae un valor se ve abierto. El campo sigue en la página (mismo id).
+    var abierto = !!S._fpAbierto.valorizar || String(S.fin_valorizado == null ? '' : S.fin_valorizado).trim() !== '';
+    return '<div class="o2m-valorizar">'+
+      '<button type="button" class="o2m-linkbtn" id="o2mFinValorizarBtn" onclick="OT2C.finValorizarAbrir()"'+(abierto ? ' hidden' : '')+'>'+
+        '<i class="bi bi-plus-lg me-1"></i>Agregar valor de referencia (opcional)</button>'+
+      '<div id="o2mFinValorizarBox"'+(abierto ? '' : ' hidden')+'>'+
+      '<label class="fl" for="o2mFinValorizadoInput">Valor de referencia '+
       '<span class="text-muted" style="font-weight:400">(opcional)</span></label>'+
       '<div class="o2m-money sm"><span class="pre">$</span>'+
       '<input type="text" inputmode="numeric" id="o2mFinValorizadoInput" placeholder="Tarifa de referencia" '+
       'value="'+esc(_o2mFormatearMiles(S.fin_valorizado))+'" oninput="OT2C.setFinValorizado(this)"></div>'+
       '<div class="o2m-fin-hint" style="margin:4px 0 0">Cuánto vale el servicio según tarifa. Es solo referencia: '+
-      'nunca se suma a lo que le cobras.</div></div>';
+      'nunca se suma a lo que le cobras.</div></div></div>';
+  }
+  function finValorizarAbrir(){
+    S._fpAbierto.valorizar = true;
+    var b = document.getElementById('o2mFinValorizarBtn'), x = document.getElementById('o2mFinValorizarBox');
+    if (b) b.hidden = true;
+    if (x) x.hidden = false;
+    var i = document.getElementById('o2mFinValorizadoInput'); if (i) i.focus();
   }
   /* 2026-09-15: mientras el usuario NO haya editado la tabla del anexo, sus
      ítems siguen a Costos en vivo (antes solo se recalculaban al volver a
@@ -6929,11 +7066,24 @@ window.OT2C = (function(){
   }
   /* Sub-paso numerado (cabecera con estado + cuerpo). El estado del <est>
      lo mantiene _o2mFinEstadosDom() sin reconstruir el HTML. */
-  function _o2mFpasoHtml(id, num, titulo, bodyHtml, hint){
-    return '<div class="o2m-fpaso" id="o2mFp-'+id+'" data-sub="'+id+'">'+
-      '<div class="hd"><span class="num"><span class="n">'+num+'</span></span>'+
-      '<span class="tt">'+titulo+'</span><span class="est" id="o2mFpEst-'+id+'"></span></div>'+
+  /* `plegable` (2026-10-25, Daniel: «no hay que repetir opciones… cuánto nos cobran, cuánto cobré, el margen y ya»): un sub-paso que solo es
+     una referencia (el valor de una garantía) queda CERRADO en una línea y se abre con un toque. Los campos siguen en la página (mismos ids),
+     solo se esconden: nada se quita. */
+  function _o2mFpasoHtml(id, num, titulo, bodyHtml, hint, plegable){
+    var abierto = !plegable || !!S._fpAbierto[id];
+    return '<div class="o2m-fpaso'+(plegable ? ' plegable' : '')+(abierto ? '' : ' plegado')+'" id="o2mFp-'+id+'" data-sub="'+id+'">'+
+      '<div class="hd"'+(plegable ? ' role="button" tabindex="0" aria-expanded="'+abierto+'" onclick="OT2C.fpasoTog(\''+id+'\')" '+
+        'onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();OT2C.fpasoTog(\''+id+'\')}"' : '')+'>'+
+      '<span class="num"><span class="n">'+num+'</span></span>'+
+      '<span class="tt">'+titulo+'</span><span class="est" id="o2mFpEst-'+id+'"></span>'+
+      (plegable ? '<i class="bi bi-chevron-down tg" aria-hidden="true"></i>' : '')+'</div>'+
       '<div class="bd">'+(hint ? '<div class="o2m-fin-hint">'+hint+'</div>' : '')+bodyHtml+'</div></div>';
+  }
+  function fpasoTog(id){
+    S._fpAbierto[id] = !S._fpAbierto[id];
+    var el = document.getElementById('o2mFp-'+id); if (!el) return;
+    el.classList.toggle('plegado', !S._fpAbierto[id]);
+    var hd = el.querySelector('.hd'); if (hd) hd.setAttribute('aria-expanded', String(!!S._fpAbierto[id]));
   }
 
   /* ══ PASO COSTOS (rediseño 2026-09-15) ═══════════════════════════════
@@ -6985,6 +7135,7 @@ window.OT2C = (function(){
     // progressive disclosure SOLO visual: mientras no hay centro elegido,
     // el resto queda oculto detrás de un aviso. completo() NO cambia.
     var centroElegido = !!S.fin_centro;
+    _o2mFinCostoAuto();   // 2026-10-25: técnico propio → costo $0 sugerido (visible y editable)
 
     // ── Sub-paso 1: centro de costo (3 rectángulos con icono y color) ──
     var ccMeta = {sstt:{cls:'cc-sstt', ico:'bi-wrench-adjustable-circle-fill', sub:'El costo es nuestro'},
@@ -7098,15 +7249,18 @@ window.OT2C = (function(){
             // 🔧 2026-09-27 (Daniel: "llamémoslo costo de la OT y no cuánto
             // nos cobran, porque a veces son técnicos internos" -- "nos
             // cuesta"/"nos cobran" insinuaba siempre un proveedor externo).
-            // El * (obligatorio) se oculta en garantía -- ahí es opcional,
-            // se puede corregir después (ver completo('finanzas')).
-            '<label class="fl">Costo de '+(S.tipo==='instalacion'?'la instalación':'el servicio')+(S.fin_garantia?'':' <span class="text-danger">*</span>')+'</label>'+
+            // 2026-10-25: el * vale TAMBIÉN en garantía (completo('finanzas') lo exige desde el 23-oct: 0 si el técnico es propio). Antes
+            // se ocultaba ahí y el campo parecía opcional mientras bloqueaba.
+            '<label class="fl">Costo de '+(S.tipo==='instalacion'?'la instalación':'el servicio')+' <span style="color:#b45309">*</span></label>'+
             '<div class="o2m-money sm"><span class="pre">$</span>'+
             '<input type="text" inputmode="numeric" id="o2mFinCostoProv" '+
             'value="'+esc(_o2mFormatearMiles(S.fin_costo_proveedor))+'" placeholder="0 si no hay proveedor externo" '+
             'oninput="OT2C.setFinCostoProveedor(this)"></div>'+
           '</div>'+
-          '<div class="col-12 col-sm-6">'+
+          // 🤝 2026-10-25 (Daniel: «dan pereza rellenar valores duplicados o similares»): el costo del despacho es opcional, así que solo se ve si ya
+          // trae un valor, si al cliente se le cobra despacho (entonces falta saber lo que cuesta) o si la persona lo pide con «Agregar costo de
+          // despacho». El caso común queda con UN solo campo de plata en este sub-paso.
+          '<div class="col-12 col-sm-6" id="o2mFinDespWrap"'+(_o2mFinDespachoVisible() ? '' : ' hidden')+'>'+
             // 🔧 2026-09-27 (Daniel: "el despacho... a veces no es
             // necesario, ese valor es opcional"): sin asterisco, siempre.
             '<label class="fl">Costo del despacho <span class="text-muted" style="font-weight:400">(opcional)</span></label>'+
@@ -7116,6 +7270,8 @@ window.OT2C = (function(){
             'oninput="OT2C.setFinCostoDespacho(this)"></div>'+
           '</div>'+
         '</div>'+
+        '<button type="button" class="o2m-linkbtn" id="o2mFinDespBtn" onclick="OT2C.finDespachoAbrir()"'+(_o2mFinDespachoVisible() ? ' hidden' : '')+'>'+
+          '<i class="bi bi-plus-lg me-1"></i>Agregar costo de despacho (opcional)</button>'+
         '<div id="o2mFinMargen"></div>';
     }
 
@@ -7143,12 +7299,16 @@ window.OT2C = (function(){
               '<div id="o2mDocExtra" class="mt-2"></div>',
               'Con documento (sus líneas ZZ traen el monto), por garantía, o sin documento todavía. Si el servicio ya se pagó en otro documento, agrégalo aquí abajo.'))+
           _o2mFpasoHtml('valor', interno ? 2 : 3,
-            interno ? '¿Cuánto vale esta OT?' : (S.fin_garantia ? 'Valorizar (opcional)' : '¿Cuánto le cobras?'),
+            interno ? '¿Cuánto vale esta OT?' : (S.fin_garantia ? 'Valor de referencia (opcional)' : '¿Cuánto le cobras?'),
             valorHtml,
             interno ? '' : (S.fin_garantia
-              ? 'Va por garantía: no se le cobra. Si quieres, anota cuánto vale el servicio (solo referencia, nunca se suma a lo cobrado).'
-              : 'Elige la línea de servicio del documento, toca «Usar este monto» en una referencia (por ejemplo la estimación por clasificación) o escribe cuánto le cobras. Lo que escribas lleva su motivo.'))+
-          (interno ? '' : _o2mFpasoHtml('costo', 4, '¿Cuánto nos cuesta?', costoHtml, '')));
+              ? 'No se le cobra. Si quieres, anota cuánto vale el servicio: es solo referencia y nunca se suma a lo cobrado.'
+              : 'Elige la línea de servicio del documento, toca «Usar este monto» en una referencia (por ejemplo la estimación por clasificación) o escribe cuánto le cobras. Lo que escribas lleva su motivo.'),
+            // 2026-10-25 (Daniel: «no hay que repetir opciones… cuánto nos cobran, cuánto cobré, el margen y ya»): en un $0 el valor es solo
+            // referencia, así que queda plegado en una línea (se abre con un toque); si pide algo (motivo de un valor escrito a mano) se abre solo.
+            !interno && !!S.fin_garantia && _o2mFinSubEstado('valor').cls !== 'falta')+
+          (interno ? '' : _o2mFpasoHtml('costo', 4, '¿Cuánto nos cuesta?', costoHtml,
+            'Lo que cobra el técnico o proveedor por el trabajo y, si hubo, el despacho. Con un técnico propio es $0. Abajo ves enseguida cuánto queda.')));
     if (centroElegido){
       if (interno){
         _o2mCostoInternoAutoCalc();
@@ -7641,12 +7801,13 @@ window.OT2C = (function(){
     var v = S.fin_zz_monto;
     // 💰 2026-10-07 (Daniel, modelo único): en garantía Cobré es $0 y el valor es el VALORIZADO -- referencia
     // opcional, nunca se suma a lo cobrado. Lo que de verdad cuesta la garantía se ve en el sub-paso 4.
+    // 2026-10-25 (Daniel: «información recopilada: cuánto nos cobran, cuánto cobré, el margen y ya… no hay que repetir opciones»): el resumen ya no
+    // repite una columna «Valorizado» vacía; solo aparece el valor de referencia si alguien lo anotó.
     c.innerHTML = '<div class="o2m-gar-resumen">'+
       '<div class="c"><span class="l">Cobré</span><span class="v">$0 <small>· garantía</small></span></div>'+
-      '<div class="c"><span class="l">Valorizado (referencia)</span>'+
-      '<span class="v">'+(v > 0 ? $o2mPesos(v) : '<small>sin valorizar (opcional)</small>')+'</span></div>'+
-      '<div class="tx">No se le cobra al cliente. El valorizado es solo referencia para '+esc(_o2mCentroNombre(S.fin_centro) || 'el centro de costo')+
-      ': nunca se suma a lo cobrado. Lo que nos cuesta se declara en "¿Cuánto nos cuesta?".</div>'+
+      (v > 0 ? '<div class="c"><span class="l">Valor de referencia</span><span class="v">'+$o2mPesos(v)+'</span></div>' : '')+
+      '<div class="tx">No se le cobra al cliente'+(v > 0 ? '; el valor de referencia nunca se suma a lo cobrado' : '')+
+      '. Lo que nos cuesta se declara abajo, en «¿Cuánto nos cuesta?», y se carga a '+esc(_o2mCentroNombre(S.fin_centro) || 'el centro de costo')+'.</div>'+
       '</div>';
   }
   /* Chip "Costo del proveedor: valor de visita de {nombre}" -- solo si el
@@ -7661,12 +7822,32 @@ window.OT2C = (function(){
   function _pintarFinCostoChipDom(){
     var c = document.getElementById('o2mFinCostoChip'); if (!c) return;
     var te = _o2mFinTecExtTarifa();
-    if (!te){ c.innerHTML = ''; return; }
+    if (!te){
+      // 2026-10-25 (Daniel: «amigable… que no retrase la toma de decisiones»): con un técnico PROPIO el costo es $0 y viene SUGERIDO ya escrito
+      // (visible y editable: ver _o2mFinCostoAuto); este chip lo dice y, si la persona lo borró, lo vuelve a declarar con un toque. Con un
+      // externo sin tarifa en su ficha se escribe el monto.
+      if (esInterno() || !(S.tecnicos || []).length || _primerTecnicoExterno()){ c.innerHTML = ''; return; }
+      var cero = String(S.fin_costo_proveedor == null ? '' : S.fin_costo_proveedor).trim() === '0';
+      c.innerHTML = '<div class="o2m-fuentes"><button type="button" class="o2m-fchip'+(cero?' is-sel':'')+'" onclick="OT2C.usarCostoCero()">'+
+        '<i class="bi '+(cero?'bi-check-circle-fill':'bi-person-check')+'"></i>'+
+        '<span class="tx"><span class="nm">Técnico propio: sin costo extra</span>'+
+        '<span class="sb">'+(cero ? (S._finCostoAuto ? 'sugerido · puedes escribir otro valor' : 'declarado en $0') : 'toca para declarar $0')+'</span></span><b class="mt">$0</b></button></div>';
+      return;
+    }
     var sel = (parseInt(_o2mLimpiarNumero(S.fin_costo_proveedor), 10) === te.tarifa);
     c.innerHTML = '<div class="o2m-fuentes"><button type="button" class="o2m-fchip'+(sel?' is-sel':'')+'" onclick="OT2C.usarTarifaProveedor()">'+
       '<i class="bi '+(sel?'bi-check-circle-fill':'bi-person-badge')+'"></i>'+
       '<span class="tx"><span class="nm">Costo del proveedor: valor de visita de '+esc(te.nombre)+'</span>'+
       '<span class="sb">desde su ficha de técnico externo</span></span><b class="mt">'+$o2mPesos(te.tarifa)+'</b></button></div>';
+  }
+  /* 2026-10-25: «Es técnico propio» declara el costo del servicio en $0 (queda en el campo, se puede cambiar). */
+  function usarCostoCero(){
+    S.fin_costo_proveedor = '0'; S._finCostoAuto = false;
+    var inp = document.getElementById('o2mFinCostoProv');
+    if (inp) inp.value = '0';
+    _pintarFinCostoChipDom(); _pintarFinMargenDom(); _o2mFinEstadosDom();
+    _o2mAnexoSeguirCostos();
+    refrescarAnclas();
   }
   function usarTarifaProveedor(){
     var te = _o2mFinTecExtTarifa(); if (!te) return;
@@ -7761,9 +7942,11 @@ window.OT2C = (function(){
         // salvo garantía; el despacho es SIEMPRE opcional (no toda OT tiene
         // flete de por medio) -- ver completo('finanzas').
         if (interno) return {cls:'', txt:''};
-        if (S.fin_garantia) return {cls:'opcional', txt:'Opcional'};
+        // 2026-10-25 (Daniel: «dice opcional, pero no me deja avanzar… esto debe ser amigable»): desde el 23-oct el costo del servicio se declara
+        // SIEMPRE (garantía, regalía y arriendo incluidos: 0 si el técnico es propio). La tarjeta seguía diciendo «Opcional» mientras
+        // completo('finanzas') lo exigía: una etiqueta que miente y un paso que no deja avanzar sin decir por qué.
         return (String(S.fin_costo_proveedor||'').trim() !== '')
-          ? {cls:'listo', txt:'Listo'} : {cls:'falta', txt:'Pendiente'};
+          ? {cls:'listo', txt:'Listo'} : {cls:'falta', txt:'Falta este dato'};
     }
     return {cls:'', txt:''};
   }
@@ -9219,6 +9402,22 @@ window.OT2C = (function(){
      algún ítem > 0. */
   function _o2mAnexoItemsHtml(){
     var a = S.anexo;
+    // 🤝 2026-10-25 (Daniel: «los costos de la OT son los mismos del anexo»; «valores duplicados»): mientras las partidas sigan siendo las de Costos
+    // (nadie las tocó), el anexo NO las vuelve a pedir: se ven en una línea («Instalación $X + Despacho $Y = $Z») y «Cambiar partidas» abre la tabla
+    // editable de siempre. Un solo lugar donde se escribe la plata (REGLA #34); aquí solo se confirma.
+    if (!a.items_editados && (a.items || []).length && !S._fpAbierto.anexoItems){
+      return '<div class="o2m-anx-items o2m-anx-res" id="o2mAnexoItems">'+
+        '<div class="o2m-anx-partidas">'+(a.items || []).map(function(it){
+          return '<span>'+esc(it.concepto || 'Concepto')+' <b>'+$o2mPesos(parseFloat(it.monto) || 0)+'</b></span>';
+        }).join('<i class="bi bi-plus-lg"></i>')+'</div>'+
+        '<div class="o2m-anx-total"><span>Total del anexo</span><b id="o2mAnexoTotal">'+$o2mPesos(_o2mAnexoTotal())+'</b></div>'+
+        '<div class="o2m-anx-foot"><span class="o2m-anx-viene"><i class="bi bi-link-45deg me-1"></i>Vienen de Costos: no se vuelven a escribir.</span>'+
+          '<button type="button" class="btn btn-sm btn-link p-0" style="min-height:44px" onclick="OT2C.anexoPartidasAbrir()">Cambiar partidas</button></div></div>'+
+        '<div class="o2m-anx-nota"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
+        ((S.fin_garantia && _o2mAnexoTotal() === 0)
+          ? 'Garantía sin pago al proveedor: el anexo sale en $0 y solo lo compromete a realizar el servicio en tiempo, forma y condiciones.'
+          : 'Estos montos van al anexo que firma el proveedor; quedan bajo tu responsabilidad.')+'</div>';
+    }
     var filas = (a.items||[]).map(function(it, i){
       return '<div class="o2m-anx-row">'+
         '<input class="form-control c" value="'+esc(it.concepto||'')+'" placeholder="Concepto (ej: Instalación)" '+
@@ -9246,6 +9445,12 @@ window.OT2C = (function(){
   }
   function _o2mAnexoTotal(){
     return (S.anexo.items||[]).reduce(function(s,it){ return s + (parseFloat(it.monto) || 0); }, 0);
+  }
+  /* «Cambiar partidas»: abre la tabla editable del anexo (las partidas dejan de seguir a Costos solo si después se editan). */
+  function anexoPartidasAbrir(){
+    S._fpAbierto.anexoItems = true;
+    repintarSeccion('anexo');
+    var f = document.querySelector('#o2mAnexoItems .o2m-anx-row input.c'); if (f) f.focus();
   }
   /* Ítems que viajan al backend: tal como los dejó el usuario, omitiendo
      solo una fila vacía (sin concepto y sin monto). Montos como número. */
@@ -10024,6 +10229,7 @@ window.OT2C = (function(){
     else if (me.falta_despacho) sb = 'Le cobras despacho al cliente: ingresa también lo que te cuesta el despacho.';
     else sb = r.frase + (r.clase === 'rojo' ? ' No bloquea: queda registrado para el informe.' : '');
     var html = sem(s[0], s[1], esc(r.label), esc(sb));
+    if (me.falta_despacho) _o2mFinDespachoMostrar(false);   // 2026-10-25: al cliente se le cobra despacho: aparece el campo del costo del despacho
     var filas = '';
     if (q.mostrar){
       filas += fila('total', r.cobra ? 'Le cobras al cliente' : 'Le cobras · '+esc(r.cobertura_txt.split(':')[0].toLowerCase()), $f(co.total));
@@ -10980,6 +11186,13 @@ window.OT2C = (function(){
     // "listo"); con estadoVisual('tecnicos') dependiendo de si HAY alguien
     // marcado, la tarjeta se quedaba pegada en el color de antes de elegir.
     refrescarAnclas();
+    try {   // 2026-10-25: «técnico propio · $0» solo si el técnico no es externo (y el $0 sugerido sigue a quien se marque)
+      if (_o2mFinCostoAuto()){
+        var _ic = document.getElementById('o2mFinCostoProv'); if (_ic) _ic.value = _o2mFormatearMiles(S.fin_costo_proveedor);
+        _pintarFinMargenDom(); _o2mFinEstadosDom(); _o2mAnexoSeguirCostos();
+      }
+      _pintarFinCostoChipDom();
+    } catch(_) {}
     // El bloque "Tu OT" del paso Agenda muestra el conteo de técnicos, y
     // el choque de horario depende de quién quedó seleccionado.
     o2mDayRenderMine();
@@ -12097,7 +12310,7 @@ window.OT2C = (function(){
      · Todo lo que se puede validar antes de crear lo contesta POST /ot/api/desinstalacion/previo (no escribe nada): saldo de
        servicio que queda en la nota de venta, feriados, choque del técnico, checklist sugerido por equipo.
      Sin montos ni la palabra «cubierta» para un técnico: este paso no existe para un técnico (REGLA #26). */
-  var _evPlantillas = null;
+  var _evPlantillas = null, _evPlantCargando = false;
   var _diSeq = 0, _diTimer = null;
 
   /* ───────────────────────── Paso «Desinstalación» ───────────────────────── */
@@ -12482,16 +12695,18 @@ window.OT2C = (function(){
   }
   function _diCargarPlantillas(){
     if (_evPlantillas !== null) return;
-    _evPlantillas = [];
+    _evPlantillas = []; _evPlantCargando = true;
     fetch('/mantenciones/api/plantillas?tipo_ot=desinstalacion&activa=1', {credentials:'same-origin'})
       .then(function(r){ return r.json().catch(function(){ return null; }); })
       .then(function(j){
         _evPlantillas = ((j && j.plantillas) || []).filter(function(p){ return (p.items_count || 0) > 0; });
+        _evPlantCargando = false;
         _diPintarRegiones(['eq']);
-      }).catch(function(){ _evPlantillas = []; });
+      }).catch(function(){ _evPlantillas = []; _evPlantCargando = false; try { _o2mEqSalidaRefrescar(); } catch(_) {} });
   }
   function _diPintarRegiones(lista){
     _o2mAgResumenPintar();           // cualquier cambio de la salida (fecha, horas, técnico…) actualiza el resumen de las dos fechas del paso Agenda
+    try { _o2mEqSalidaRefrescar(); } catch(e){ console.error('[OT2C] checklist de la salida en Equipos', e); }   // 2026-10-25: el mismo estado se ve en la fila de cada equipo
     if (!document.getElementById('o2mDiPreg')) return;
     var f = {preg:_diRegPreg, avisos:_diRegAvisos, tec:_diRegTec, costo:_diRegCosto, cobro:_diRegCobro,
              eq:_diRegEq, nota:_diRegNota, res:_diRegRes};
@@ -12675,6 +12890,18 @@ window.OT2C = (function(){
     var inc = _diEqIncluidos();
     var ok = inc.length > 0 && inc.every(function(e){ return !!_diPlantEleg(e.maquina_id); });
     var plants = _evPlantillas || [];
+    if (S.conDesinst){
+      // 🔁 2026-10-25 (Daniel: «muy confuso y demasiados pasos… no hay que repetir opciones»): el checklist de la salida de cada equipo se
+      // elige en el paso EQUIPOS, junto al de la entrada. Acá solo queda el resumen (mismo estado: nada se pierde ni se repite).
+      var faltan = inc.filter(function(e){ return !_diPlantEleg(e.maquina_id); });
+      el.innerHTML = '<div class="o2m-di-sub '+(ok?'ok':'falta')+'"><h6><span class="pt"></span>Equipos y checklist de la salida</h6>'+
+        '<p class="ev-ayuda" style="margin:0 0 8px">'+(!inc.length
+          ? 'Ningún equipo se retira: marca al menos uno en el paso <b>Equipos</b>.'
+          : (ok ? inc.length + ' de ' + eqs.length + ' equipo' + (eqs.length === 1 ? '' : 's') + ' con su checklist de desinstalación. Se eligen en el paso <b>Equipos</b>, junto al de la instalación.'
+                : 'Falta el checklist de la salida de ' + faltan.map(function(e){ return '<b>'+_diEsc(_diEqNombre(e.maquina_id))+'</b>'; }).join(', ') + '. Elígelo en el paso <b>Equipos</b>.'))+'</p>'+
+        '<button type="button" class="o2m-di-atajo" onclick="OT2C.irAncla(\'equipos\')"><i class="bi bi-arrow-up-circle"></i>Ir a Equipos</button></div>';
+      return;
+    }
     el.innerHTML = '<div class="o2m-di-sub '+(ok?'ok':'falta')+'"><h6><span class="pt"></span>Equipos que se desinstalan y su checklist</h6>'+
       '<p class="ev-ayuda" style="margin:0 0 6px">Se muestran los equipos de esta instalación. Deja marcados los que se retiran; el checklist sugerido se puede cambiar.</p>'+
       (eqs.length > 1 ? '<button type="button" class="o2m-di-atajo" onclick="OT2C.diEqTodo()" style="margin-bottom:6px"><i class="bi bi-check-all"></i>Seleccionar/deseleccionar todo</button>' : '')+
@@ -13126,7 +13353,8 @@ window.OT2C = (function(){
           setFinMotivoManual:setFinMotivoManual, setFinEnvioMotivoManual:setFinEnvioMotivoManual,
           usarEnvioDocumento:usarEnvioDocumento,   // 🧹 2026-10-08 «Usar este monto» del transporte del documento
           // 💰 2026-09-15: paso Costos rediseñado (valorización de toda OT)
-          setFinCobro:setFinCobro, setFinCeroMotivo:setFinCeroMotivo, usarFuenteValor:usarFuenteValor, usarTarifaProveedor:usarTarifaProveedor,
+          setFinCobro:setFinCobro, setFinCeroMotivo:setFinCeroMotivo, usarFuenteValor:usarFuenteValor, usarTarifaProveedor:usarTarifaProveedor, usarCostoCero:usarCostoCero, fpasoTog:fpasoTog, avisoEnvioTog:avisoEnvioTog,
+          finDespachoAbrir:finDespachoAbrir, finValorizarAbrir:finValorizarAbrir, anexoPartidasAbrir:anexoPartidasAbrir,
           _o2mFinCostoInternoHeroCambio:_o2mFinCostoInternoHeroCambio, usarCostoInternoAuto:usarCostoInternoAuto,
           _o2mFinHeroBlur:_o2mFinHeroBlur,
           setAnexoItemMonto:setAnexoItemMonto, setAnexoItemConcepto:setAnexoItemConcepto,
