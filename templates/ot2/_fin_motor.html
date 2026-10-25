@@ -7,6 +7,10 @@
 {% if fm_assets %}
 <link rel="stylesheet" href="{{ url_for('static', filename='ot_fin_motor.css') }}">
 <script src="{{ url_for('static', filename='ot_fin_motor.js') }}" defer></script>
+{#- 2026-10-25: «Trazabilidad en Random» (nota de venta → factura o boleta → guía, saldo, margen de otras OT y la factura
+    sugerida) se monta sola dentro de este bloque. Lee /ot/api/<vid>/documentos/cadena (solo lectura, nunca técnicos). -#}
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_doc_cadena.css') }}">
+<script src="{{ url_for('static', filename='ot_doc_cadena.js') }}" defer></script>
 {% endif %}
 {#- 2026-10-08: «Costos y documentación de la OT». `data-declaro` = quién declaró la plata y cuándo (lo lee el resumen de la cuenta); lo
     mantiene al día otdFinSetEstadoDeclarado (detalle.html) al guardar. Solo en la ficha. -#}

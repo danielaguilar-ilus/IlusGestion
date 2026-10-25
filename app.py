@@ -63,6 +63,7 @@ import erp_engine
 import transporte_tarifas as _ttar  # motor de tarifas réplica EXACTA de la macro SPHS
 import usuarios_perfil as _uperf  # datos personales del usuario: fecha de nacimiento y dirección validada con Google
 import ot_saldo_servicio as _saldo  # saldo por línea de servicio de cada documento (módulo puro con pruebas)
+import ot_doc_cadena as _cadena  # 2026-10-25: trazabilidad en Random (nota de venta → factura/boleta → guía), sugerencias y alertas: lógica pura con pruebas
 import ot_correos_tecnicos as _otc  # correos a técnicos (asignada/reagendada/cancelada/quitada/agenda): lógica pura con pruebas
 import comm_correos_registro as _ccr  # registro único de los correos (clave, llave, plantilla, condiciones): Comunicaciones → Control de correos (REGLA #33)
 import ot_eventos as _evt  # eventos y OT de desinstalación (madre e hija): reglas puras con pruebas (2026-10-19)
@@ -122447,6 +122448,185 @@ def ot_api_saldo_servicio_ot(vid):
     return jsonify({"ok": True, "visita_id": vid, "documentos": r["por_doc"], "combinado": r["combinado"],
                     "cobro": cobro, "excedido": not ev["ok"], "excesos": ev["excesos"], "permitido": ev["permitido"],
                     "acciones": ([] if ev["ok"] else _saldo.acciones_exceso(ev["excesos"]))})
+
+
+# ══════════════════════════════════════════════════════════════════
+#  🔗 2026-10-25 — TRAZABILIDAD EN RANDOM de los documentos de una OT (cadena documental)
+#  Daniel: «agregar inteligencia a los cobros, ya que se les olvida que los servicios se facturan… sugieras el documento
+#  en caso que lo tenga: FCV o BLV es lo que cierra una OT, a menos que pase por la autorización»; «si la ocupé en otra
+#  orden de trabajo, me debe arrojar el saldo y el margen de esa OT… que no te metan gato por liebre… nació una nota de
+#  venta, se volvió factura o boleta y después salió el stock con una guía de despacho».
+#  · Lecturas en SOLO LECTURA (REGLA #4.1): la familia (_ot_saldo_familia), el saldo de cada documento (_ot_saldo_doc,
+#    el MISMO motor del candado de las REGLAS #25/#28: no hay otra cuenta), la cabecera cacheada (_mant_erp_doc_cached)
+#    y las guías de despacho (MAEDDO.TIDOPA/NUDOPA, igual que _tr_fetch_guias_from_erp).
+#  · El margen de las otras OT sale de la cuenta única (_ot_fin_lote → _ot_finanzas).
+#  · Solo informa: sugiere la factura o boleta y alerta lo que no cuadra; agregarla sigue siendo el diálogo de siempre.
+#    Lógica pura y probada en ot_doc_cadena.py. Nada para técnicos (REGLAS #19/#26) ni para el cliente (REGLA #22).
+# ══════════════════════════════════════════════════════════════════
+_OT_CADENA_CACHE = {}
+_OT_CADENA_TTL = 90
+_OT_CADENA_MAX_DOCS = 12      # documentos de Random que se miran por OT (la OT y sus familias)
+_OT_CADENA_MAX_GUIAS = 4      # guías por documento
+
+
+def _ot_cadena_guias(tido_real, nudo_real):
+    """Guías de despacho (GDV) que salieron de ese documento en Random: [{numero, fecha, lineas, productos}].
+    None si Random no respondió (nunca se inventa una salida de stock)."""
+    try:
+        filas = _random_sql_query(
+            "SELECT TOP 80 d.NUDO AS guia, d.KOPRCT AS sku, d.NOKOPR AS producto, d.CAPRCO1 AS cantidad, "
+            "       e.FEEMDO AS fecha "
+            "  FROM MAEDDO d LEFT JOIN MAEEDO e ON e.TIDO = d.TIDO AND e.NUDO = d.NUDO AND e.ENDO = d.ENDO "
+            " WHERE d.TIDOPA = %s AND d.NUDOPA = %s AND d.TIDO = %s "
+            " ORDER BY d.NUDO, d.NULIDO", (tido_real, nudo_real, "GDV"))
+    except Exception as e:
+        print(f"[ot-cadena] guias {tido_real} {nudo_real}: {type(e).__name__}", flush=True)
+        return None
+    if filas is None:
+        return None
+    por_guia = {}
+    for f in filas:
+        num = (str(f.get("guia") or "")).strip()
+        if not num:
+            continue
+        g = por_guia.setdefault(num, {"numero": num, "fecha": f.get("fecha"), "lineas": 0, "productos": []})
+        g["lineas"] += 1
+        try:
+            cant = float(f.get("cantidad") or 0)
+        except (TypeError, ValueError):
+            cant = 0
+        g["productos"].append({"sku": (str(f.get("sku") or "")).strip(), "nombre": (str(f.get("producto") or "")).strip(),
+                               "cantidad": int(cant) if cant == int(cant) else round(cant, 2)})
+    return sorted(por_guia.values(), key=lambda g: str(g["fecha"] or ""))[:_OT_CADENA_MAX_GUIAS]
+
+
+def _ot_doc_cadena(vid):
+    """La trazabilidad de los documentos de UNA OT para la tarjeta «Costos y documentación». None si la OT no existe.
+    Caché corta por OT y por huella de sus documentos: agregar o dar de baja un documento la renueva al instante."""
+    v = mysql_fetchone(
+        "SELECT v.id, v.tipo, v.cliente_id, v.modalidad_cobro, v.factura_tido, v.factura_nudo, c.rut AS cli_rut "
+        "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id = v.cliente_id WHERE v.id = %s", (vid,))
+    if not v:
+        return None
+    if _ot_es_interna(v):
+        return {"interna": True, "cadenas": [], "sugerencias": [], "alertas": [], "leido": True}
+    try:
+        filas = mysql_fetchall(
+            "SELECT id, erp_tido, erp_nudo, es_cobro, reemplazado_por_id, heredado_de_visita_id "
+            "  FROM mant_visita_documentos "
+            " WHERE visita_id = %s AND origen = 'erp' AND COALESCE(erp_nudo, '') <> '' ORDER BY es_principal DESC, id",
+            (vid,)) or []
+    except Exception as e:
+        print(f"[ot-cadena] documentos vid={vid}: {type(e).__name__}", flush=True)
+        filas = []
+    clave_de_id, docs = {}, []
+    for f in filas:
+        k = _saldo.clave_doc(f.get("erp_tido"), f.get("erp_nudo"))
+        if k[0] and k[1]:
+            clave_de_id[f["id"]] = k
+    for f in filas:
+        k = clave_de_id.get(f["id"])
+        if not k or any(tuple(d["clave"]) == k for d in docs):
+            continue
+        docs.append({"clave": k, "es_cobro": bool(f.get("es_cobro", 1)),
+                     "reemplazado_por": clave_de_id.get(f.get("reemplazado_por_id")),
+                     "heredado": bool(f.get("heredado_de_visita_id"))})
+    if not docs:
+        k = _saldo.clave_doc(v.get("factura_tido"), v.get("factura_nudo"))
+        if k[0] and k[1]:
+            docs.append({"clave": k, "es_cobro": True, "reemplazado_por": None, "heredado": False})
+    huella = tuple((tuple(d["clave"]), tuple(d["reemplazado_por"] or ()), d["heredado"]) for d in docs)
+    ahora = time.time()
+    hit = _OT_CADENA_CACHE.get(vid)
+    if hit and hit[1] == huella and ahora - hit[0] < _OT_CADENA_TTL:
+        return hit[2]
+    if not docs:
+        res = {"cadenas": [], "sugerencias": [], "alertas": [], "leido": True}
+        _OT_CADENA_CACHE[vid] = (ahora, huella, res)
+        return res
+
+    cli_rut = v.get("cli_rut")
+    familias, claves = {}, []
+    for d in docs:
+        k = tuple(d["clave"])
+        t_r, n_r = _ot_saldo_real(k)
+        miembros = _ot_saldo_familia(t_r, n_r)
+        # La familia está «leída» solo si Random respondió (la caché de familias se llena únicamente con una lectura
+        # buena): con Random caído la familia es solo el propio documento y no se sugiere ni se alerta nada.
+        familias[k] = {"miembros": [tuple(x) for x in miembros], "leida": k in _OT_SALDO_FAM_CACHE}
+        for x in [k] + sorted(tuple(y) for y in miembros if tuple(y) != k):
+            if x not in claves and (x[0] in _saldo.NOTAS_VENTA or x[0] in _saldo.DOCS_COBRO):
+                claves.append(x)
+    claves = claves[:_OT_CADENA_MAX_DOCS]
+
+    info, guias, vids_usos = {}, {}, set()
+    for k in claves:
+        t_r, n_r = _ot_saldo_real(k)
+        i = {"leido": False}
+        try:
+            s = _ot_saldo_doc(t_r, n_r, excluir_vid=vid, cliente_rut=cli_rut)
+            i["leido"] = bool(s.get("leido"))
+            i["saldo"] = {c: s.get(c) for c in _saldo.CATEGORIAS}
+            i["usos"] = s.get("usos") or []
+            vids_usos.update(int(u["vid"]) for u in i["usos"] if u.get("vid"))
+        except Exception as e:
+            print(f"[ot-cadena] saldo {k}: {type(e).__name__}", flush=True)
+        try:
+            hdr, _lin = _mant_erp_doc_cached(t_r, n_r)
+        except Exception:
+            hdr = None
+        if hdr:
+            i["fecha"] = hdr.get("fecha") or ""
+            i["rut"] = (hdr.get("cliente_rut") or "").strip()
+            i["razon_social"] = (hdr.get("cliente_nombre") or "").strip()
+            if cli_rut and i["rut"]:
+                try:
+                    i["mismo_cliente"] = bool(_rut_analisis_comparacion(cli_rut, i["rut"]).get("match"))
+                except Exception:
+                    pass
+        info[k] = i
+        g = _ot_cadena_guias(t_r, n_r)
+        if g:
+            guias[k] = g
+
+    fins = {}
+    if vids_usos:
+        try:
+            ids = sorted(vids_usos)[:40]
+            rows = mysql_fetchall(
+                "SELECT v.id, " + _ot_fin_cols_sql("v") + " FROM mant_visitas v WHERE v.id IN ("
+                + ",".join(["%s"] * len(ids)) + ")", tuple(ids)) or []
+            for x, f in (_ot_fin_lote(rows) or {}).items():
+                q = f.get("queda") or {}
+                fins[int(x)] = {"pct": q.get("pct"), "queda": q.get("total"), "mostrar": bool(q.get("mostrar"))}
+        except Exception as e:
+            print(f"[ot-cadena] margen de otras OT vid={vid}: {type(e).__name__}", flush=True)
+
+    res = _cadena.armar(docs, familias, info, guias, fins)
+    if len(_OT_CADENA_CACHE) > 300:
+        _OT_CADENA_CACHE.clear()
+    _OT_CADENA_CACHE[vid] = (ahora, huella, res)
+    return res
+
+
+@app.route("/ot/api/<int:vid>/documentos/cadena", methods=["GET"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot_api_documentos_cadena(vid):
+    """La trazabilidad en Random de los documentos de la OT: nota de venta → factura o boleta → guía de despacho, con
+    el saldo de cada documento y el margen de las otras OT que lo usan, las facturas o boletas que conviene agregar y
+    lo que no cuadra. Solo lectura. Lleva montos: nunca para técnicos (REGLAS #19/#26)."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Sin permiso para ver montos."}), 403
+    try:
+        res = _ot_doc_cadena(vid)
+    except Exception as e:
+        print(f"[ot-cadena] vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No pudimos leer la trazabilidad de los documentos ahora."}), 500
+    if res is None:
+        return jsonify({"ok": False, "error": "No encontramos esa OT."}), 404
+    return jsonify({"ok": True, "visita_id": vid, **res})
 
 
 @app.route("/ot/api/<int:vid>/saldo-servicio/tomar", methods=["POST"])

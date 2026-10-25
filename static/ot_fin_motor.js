@@ -878,10 +878,11 @@
       ok: 'Buscar y agregar',
       campos: [
         { k: 'tipo', label: 'Tipo de documento', tipo: 'select', valor: (pre && pre.tipo) || 'FCV', opciones: [
-          { v: 'FCV', n: 'Factura' }, { v: 'FCE', n: 'Factura exenta' }, { v: 'BLV', n: 'Boleta' },
+          { v: 'FCV', n: 'Factura' }, { v: 'FCE', n: 'Factura exenta' }, { v: 'BLV', n: 'Boleta' }, { v: 'BLE', n: 'Boleta exenta' },
           { v: 'NVV', n: 'Nota de venta' }, { v: 'COT', n: 'Cotización interna (COT-000045)' }] },
         { k: 'numero', label: 'Número', req: true, tipo: 'texto', valor: (pre && pre.numero) || '', placeholder: 'Ej: 11439' },
-        { k: 'etiqueta', label: 'Para qué es (opcional)', tipo: 'texto', placeholder: 'Ej: Instalación' }
+        /* 2026-10-25: la sugerencia de «Trazabilidad en Random» (static/ot_doc_cadena.js) llega con la etiqueta ya escrita. */
+        { k: 'etiqueta', label: 'Para qué es (opcional)', tipo: 'texto', valor: (pre && pre.etiqueta) || '', placeholder: 'Ej: Instalación' }
       ]
     }).then(function (v) {
       if (!v) return;

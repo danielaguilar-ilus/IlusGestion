@@ -1,0 +1,78 @@
+/* 🔗 «Trazabilidad en Random» (static/ot_doc_cadena.js) — vive dentro del bloque «Costos y documentación» (.fm) y usa
+   sus mismos colores (REGLA #2): azul = información y botón, ámbar = algo que revisar (sin bloquear), verde = en orden,
+   rojo SOLO para una pérdida real. Nombres y números completos, sin cortar (REGLA #15). Celular: una columna (REGLA #3). */
+.dc{border:1px solid var(--fm-borde,#e5e7eb);border-radius:12px;padding:10px 12px;background:#fff;display:flex;flex-direction:column;gap:8px;min-width:0}
+.dc-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px}
+.dc-h h3{margin:0;font-size:.92rem;font-weight:900;display:flex;align-items:center;gap:6px}
+.dc-h h3 i{color:var(--fm-azul,#3b82f6)}
+.dc-h small{color:var(--fm-gris,#6b7280);font-weight:600;font-size:.72rem}
+.dc-help{margin:0;color:#4b5563;font-size:.76rem}
+
+/* Sugerencia: azul (información). De otra empresa: ámbar. */
+.dc-sug{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:8px 10px;align-items:start;border:1px solid #bfdbfe;background:var(--fm-azul-f,#dbeafe);
+  border-radius:10px;padding:9px 11px;color:#1e3a8a}
+.dc-sug>i{font-size:1.05rem;color:#2563eb;margin-top:1px}
+.dc-sug.otra{border-color:#fde68a;background:var(--fm-ambar-f,#fff8e1);color:#78350f}
+.dc-sug.otra>i{color:#b45309}
+.dc-sug-t{min-width:0}
+.dc-sug-t b{font-size:.84rem}
+.dc-sug-t p{margin:2px 0 0;overflow-wrap:anywhere}
+.dc-sug .dc-av{font-weight:800}
+.dc-btn{min-height:44px;padding:0 14px;border-radius:9px;border:1px solid #2563eb;background:#2563eb;color:#fff;font-weight:800;font-size:.8rem;
+  display:inline-flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap;align-self:center}
+.dc-btn:hover{background:#1d4ed8;border-color:#1d4ed8}
+.dc-btn:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}
+
+/* Alerta: ámbar, nunca bloquea. */
+.dc-al{display:flex;gap:8px;align-items:flex-start;border:1px solid #fde68a;background:var(--fm-ambar-f,#fff8e1);color:#78350f;border-radius:10px;padding:8px 11px}
+.dc-al i{color:#b45309;margin-top:2px}
+.dc-al p{margin:0;overflow-wrap:anywhere}
+
+/* La cadena: en fila en pantallas anchas (con flecha entre documentos), en columna en el celular. */
+.dc-cad{list-style:none;margin:0;padding:0;display:flex;flex-wrap:nowrap;gap:8px 24px;align-items:stretch;overflow-x:auto}
+/* 4 o más documentos en una venta: en columna (las flechas nunca quedan sueltas al cortar la fila). */
+.dc-cad.largo{flex-direction:column;gap:18px;overflow:visible}
+.dc-cad.largo .dc-n{flex-basis:auto}
+.dc-cad.largo .dc-n+.dc-n::before{content:"↓" / "";left:14px;top:-17px}
+.dc-n{position:relative;flex:1 1 220px;min-width:0;border:1px solid var(--fm-borde,#e5e7eb);border-radius:10px;padding:8px 10px;background:#fff;display:flex;flex-direction:column;gap:4px}
+.dc-n+.dc-n::before{content:"→" / "";position:absolute;left:-19px;top:10px;color:var(--fm-gris,#6b7280);font-weight:900}
+.dc-n.en-ot{border-color:#86efac;background:#f7fef9}
+.dc-n.baja{background:var(--fm-gris-f,#f3f4f6)}
+.dc-n.baja .dc-n-h b{text-decoration:line-through;text-decoration-color:#9ca3af}
+.dc-n.t-guia{border-style:dashed}
+.dc-n-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 6px}
+.dc-tipo{font-size:.74rem;font-weight:900;text-transform:uppercase;letter-spacing:.04em;color:var(--fm-gris,#6b7280)}
+.dc-n-h b{font-size:.92rem;font-variant-numeric:tabular-nums}
+.dc-f{color:var(--fm-gris,#6b7280);font-size:.74rem;font-variant-numeric:tabular-nums}
+.dc-chips{display:flex;flex-wrap:wrap;gap:4px}
+.dc-chip{display:inline-flex;align-items:center;gap:3px;border-radius:999px;padding:1px 8px;font-size:.74rem;font-weight:800;border:1px solid transparent}
+.dc-chip.verde{background:var(--fm-verde-f,#dcfce7);color:#14532d;border-color:#bbf7d0}
+.dc-chip.azul{background:var(--fm-azul-f,#dbeafe);color:#1e3a8a;border-color:#bfdbfe}
+.dc-chip.ambar{background:var(--fm-ambar-f,#fff8e1);color:#78350f;border-color:#fde68a}
+.dc-chip.gris{background:var(--fm-gris-f,#f3f4f6);color:#374151;border-color:var(--fm-borde,#e5e7eb)}
+.dc-sal{margin:0;display:flex;flex-wrap:wrap;gap:4px 10px;font-size:.76rem}
+.dc-sal-i{font-weight:700;font-variant-numeric:tabular-nums}
+.dc-sal-i.libre{color:#14532d}
+.dc-sal-i.parc{color:#92400e}
+.dc-sal-i.cons{color:#92400e}
+.dc-gris{color:var(--fm-gris,#6b7280)}
+.dc-ambar{color:#92400e;font-weight:700}
+.dc-usos,.dc-prods{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px;font-size:.74rem}
+.dc-usos li{overflow-wrap:anywhere}
+.dc-usos a{font-weight:800;color:#1d4ed8}
+.dc-usos a:focus-visible{outline:2px solid #93c5fd;outline-offset:1px}
+.dc-mg{display:inline-block;border-radius:999px;padding:0 7px;font-weight:800;font-size:.74rem}
+.dc-mg.verde{background:var(--fm-verde-f,#dcfce7);color:#14532d}
+.dc-mg.ambar{background:var(--fm-ambar-f,#fff8e1);color:#78350f}
+.dc-mg.rojo{background:var(--fm-rojo-f,#fee2e2);color:#991b1b}
+.dc-mg.gris{background:var(--fm-gris-f,#f3f4f6);color:#374151}
+.dc-prods small{color:#4b5563;font-size:.74rem}
+
+@media (max-width:600px){
+  .dc-sug{grid-template-columns:22px minmax(0,1fr)}
+  .dc-btn{grid-column:1/-1;width:100%;justify-content:center;white-space:normal}
+  .dc-cad{flex-direction:column;gap:18px}
+  .dc-n{flex-basis:auto}
+  .dc-usos a{display:inline-flex;align-items:center;min-height:44px;padding:0 4px}
+  .dc-n+.dc-n::before{content:"↓" / "";left:14px;top:-17px}
+}
