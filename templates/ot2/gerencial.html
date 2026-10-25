@@ -1,0 +1,474 @@
+{% extends "base.html" %}
+{% block title %}Costeo de órdenes de trabajo · ILUS Fitness{% endblock %}
+
+{#
+  📊 2026-10-25 (Daniel): «el costeo» — el informe para decir qué tan rentable es Servicio Técnico. Abre con las cinco tarjetas
+  (Cobré · Me cobraron · Gané · Perdí · Neto), debajo las garantías y coberturas con su trazabilidad (quién lo asume, por qué,
+  quién lo autorizó) y recién después el detalle. SOLO SUPERADMIN y SOLO LECTURA (REGLAS #19 y #26). Toda la plata sale de la
+  cuenta de cada OT (_ot_finanzas) y de la suma única del proyecto (_ot_fin_agregado); el armado vive en ot_gerencial.py.
+  Lenguaje visual de Retiros (REGLA #15): tarjetas con semáforo, nombres completos, nada truncado. Ámbar suave para lo que falta
+  clasificar; rojo solo para una pérdida real. Mobile primero (REGLA #3). Las cifras con "¿Cómo se calcula?" a un toque.
+#}
+
+{% macro cmp(c) -%}
+  {%- if c.flecha == 'sin_base' -%}
+    <span class="gc-cmp n"><i class="bi bi-dash-circle"></i> Sin período anterior para comparar</span>
+  {%- elif c.flecha == 'igual' -%}
+    <span class="gc-cmp n"><i class="bi bi-dash-lg"></i> Igual que el período anterior ({{ G.clp(c.previo) }})</span>
+  {%- else -%}
+    <span class="gc-cmp {{ c.tono }}"><i class="bi {{ 'bi-arrow-up-right' if c.flecha == 'sube' else 'bi-arrow-down-right' }}"></i>
+      {{ G.clp(c.delta, True) }}{% if c.delta_pct is not none %} ({{ G.pct_txt(c.delta_pct) }}){% endif %} frente al período anterior ({{ G.clp(c.previo) }})</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro sin_clasificar(que) -%}
+  <span class="gc-sc" title="{{ que }} aún no se registra para esta OT"><i class="bi bi-tag"></i>Sin clasificar</span>
+{%- endmacro %}
+
+{% macro vacio(texto) -%}
+  <div class="gc-vacio"><i class="bi bi-inbox"></i><span>{{ texto }}</span></div>
+{%- endmacro %}
+
+{% macro ayuda(texto) -%}
+  <details class="gc-ayuda"><summary><i class="bi bi-question-circle"></i> ¿Cómo se calcula?</summary><p>{{ texto }}</p></details>
+{%- endmacro %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_gerencial.css') }}">
+{% endblock %}
+
+{% block content %}
+{% set P = d.periodo %}
+{% set R = d.resumen %}
+{% set M = d.meta %}
+{% set GA = d.garantias %}
+{% set AT = d.atribucion %}
+{% set TE = d.tecnicos %}
+{% set RE = d.reincidencia %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-bullseye me-2"></i>Costeo de órdenes de trabajo</h4>
+    <div class="sub">Qué tan rentable es el departamento: lo que cobramos, lo que nos cobran, lo que ganamos y lo que perdemos.
+      <span class="gc-clasif"><i class="bi bi-shield-lock-fill"></i>{{ d.clasificacion }}</span></div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('ot_gerencial_excel', modo=P.modo, ancla=(P.desde.isoformat() if P.modo != 'rango' else none), desde=(P.desde.isoformat() if P.modo == 'rango' else none), hasta=(P.hasta.isoformat() if P.modo == 'rango' else none), dias=M.dias_reinc) }}" class="btn btn-sm btn-danger"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Excel del período</a>
+    <a href="{{ url_for('ot_gerencial_pagina', modo=P.modo, ancla=(P.desde.isoformat() if P.modo != 'rango' else none), desde=(P.desde.isoformat() if P.modo == 'rango' else none), hasta=(P.hasta.isoformat() if P.modo == 'rango' else none), dias=M.dias_reinc, actualizar=1) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-clockwise me-1"></i>Actualizar</a>
+    <a href="{{ url_for('ot2_panel') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Volver a las OT</a>
+  </div>
+</div>
+
+<div class="gc" id="gcApp">
+
+  {# ─────────────────────────── Período ─────────────────────────── #}
+  <nav class="gc-periodo" aria-label="Período del costeo">
+    <div class="gc-tabs">
+      {% for m, t in [('semana', 'Semana'), ('mes', 'Mes'), ('trimestre', 'Trimestre'), ('rango', 'Rango')] %}
+      <a class="gc-tab {{ 'on' if P.modo == m }}" href="{{ url_for('ot_gerencial_pagina', modo=m, dias=M.dias_reinc) }}" {% if P.modo == m %}aria-current="page"{% endif %}>{{ t }}</a>
+      {% endfor %}
+    </div>
+    <div class="gc-nav">
+      {% if P.ancla_previa %}<a class="gc-flecha" href="{{ url_for('ot_gerencial_pagina', modo=P.modo, ancla=P.ancla_previa.isoformat(), dias=M.dias_reinc) }}" aria-label="Período anterior"><i class="bi bi-chevron-left"></i></a>{% endif %}
+      <div class="gc-et">
+        <b>{{ P.etiqueta }}</b>
+        <small>{{ G.fecha_txt(P.desde) }} al {{ G.fecha_txt(P.hasta) }} · hora de Chile{% if P.en_curso %} · en curso: lleva {{ P.transcurridos }} de {{ P.dias }} días{% endif %}</small>
+      </div>
+      {% if P.ancla_siguiente %}<a class="gc-flecha" href="{{ url_for('ot_gerencial_pagina', modo=P.modo, ancla=P.ancla_siguiente.isoformat(), dias=M.dias_reinc) }}" aria-label="Período siguiente"><i class="bi bi-chevron-right"></i></a>{% endif %}
+    </div>
+    {% if P.modo == 'rango' %}
+    <form class="gc-rango" method="get" action="{{ url_for('ot_gerencial_pagina') }}">
+      <input type="hidden" name="modo" value="rango"><input type="hidden" name="dias" value="{{ M.dias_reinc }}">
+      <label>Desde<input type="date" name="desde" value="{{ P.desde.isoformat() }}" required></label>
+      <label>Hasta<input type="date" name="hasta" value="{{ P.hasta.isoformat() }}" required></label>
+      <button type="submit" class="gc-btn"><i class="bi bi-funnel"></i>Aplicar</button>
+    </form>
+    {% endif %}
+  </nav>
+
+  {% if P.en_curso %}
+  <div class="gc-aviso gc-neutro"><i class="bi bi-hourglass-split"></i><span>Este período sigue en curso (lleva {{ P.transcurridos }} de {{ P.dias }} días): las comparaciones son contra el período anterior completo, por eso lo que aún no se cierra se ve más bajo.</span></div>
+  {% endif %}
+  {% if M.truncado %}
+  <div class="gc-aviso"><i class="bi bi-info-circle"></i><span>Se leyeron las {{ M.limite }} OT cerradas más recientes: hay más en la ventana de 6 meses, así que las comparaciones largas pueden quedar cortas. El período elegido está completo si es reciente.</span></div>
+  {% endif %}
+  {% if M.fallos %}
+  <div class="gc-aviso"><i class="bi bi-exclamation-circle"></i><span>No se pudo leer: {{ M.fallos|join(', ') }}. Lo que depende de eso aparece incompleto; vuelve a intentar con «Actualizar».</span></div>
+  {% endif %}
+
+  {# ─────────────────────────── 1 · LAS CINCO TARJETAS ─────────────────────────── #}
+  <section class="gc-tarjetas" aria-label="Resumen del período: Cobré, Me cobraron, Gané, Perdí y Neto">
+    {% for t in d.tarjetas %}
+    <article class="gc-tarjeta t-{{ t.tono }}" id="gcT-{{ t.clave }}">
+      <header><i class="bi {{ t.icono }}"></i><span>{{ t.titulo }}</span></header>
+      <div class="gc-cifra">{{ G.clp(t.valor) }}</div>
+      {% if t.clave == 'neto' %}<div class="gc-pct">{% if t.pct is not none %}Margen de {{ G.pct_txt(t.pct) }} sobre lo cobrado{% else %}Sin cobros en el período para medir el margen{% endif %}</div>{% endif %}
+      {{ cmp(t.cmp) }}
+      <ul class="gc-det">
+        {% for etiqueta, valor, tipo in t.detalle %}
+        <li><span>{{ etiqueta }}</span><b>{% if tipo == 'n' %}{{ valor }}{% else %}{{ G.clp(valor) }}{% endif %}</b></li>
+        {% endfor %}
+      </ul>
+      {{ ayuda(t.ayuda) }}
+    </article>
+    {% endfor %}
+  </section>
+
+  <section class="gc-veredicto v-{{ d.veredicto.clase }}" aria-live="polite">
+    <i class="bi {{ {'ok': 'bi-emoji-smile', 'bajo': 'bi-exclamation-circle', 'rojo': 'bi-exclamation-triangle-fill', 'gris': 'bi-hourglass-split'}[d.veredicto.clase] }}"></i>
+    <div><b>{{ d.veredicto.titulo }}</b><p>{{ d.veredicto.texto }}</p></div>
+  </section>
+  {% if R.n_sin_medir %}
+  <div class="gc-aviso"><i class="bi bi-calculator"></i><span><b>{{ R.n_sin_medir }} OT cerradas no están en las cifras</b> porque falta el costo del técnico o del despacho (no se inventa un $0). <a href="#gcSinMedir">Ver cuáles</a>.</span></div>
+  {% endif %}
+  {% if R.aparte %}
+  <div class="gc-aviso gc-neutro"><i class="bi bi-collection"></i><span>Van aparte, fuera de las cifras: {% for k, a in R.aparte.items() %}{{ a.n }} {{ a.txt|lower }} ({{ G.clp(a.costo) }}){% if not loop.last %} · {% endif %}{% endfor %}. No son negocio con nadie.</span></div>
+  {% endif %}
+
+  {# ─────────────────────────── 2 · GARANTÍAS Y COBERTURAS ─────────────────────────── #}
+  <section class="gc-sec" id="gcGarantias" aria-labelledby="gcGarT">
+    <header class="gc-sec-h">
+      <div><span class="gc-eye">Debajo de las cifras</span><h2 id="gcGarT">Garantías y coberturas</h2>
+        <p>Todo lo que se hizo sin cobrar: cuánto vale, cuánto nos costó y, sobre todo, <b>quién lo asume, por qué y quién lo autorizó</b>.</p></div>
+      <span class="gc-clasif"><i class="bi bi-shield-lock-fill"></i>{{ d.clasificacion }}</span>
+    </header>
+
+    {% set TR = GA.total_regalado %}
+    <div class="gc-kpis">
+      <div class="gc-kpi"><span>OT sin cobrar</span><b>{{ TR.n }}</b><small>garantía, regalía, arriendo o leasing y cortesía</small></div>
+      <div class="gc-kpi"><span>Valor del servicio</span><b>{{ G.clp(TR.valor) }}</b><small>{% if TR.n_sin_valor %}{{ TR.n_sin_valor }} sin valorizar{% else %}todas valorizadas{% endif %}</small></div>
+      <div class="gc-kpi"><span>Nos costó</span><b>{{ G.clp(TR.costo) }}</b><small>{% if TR.n_sin_costo %}{{ TR.n_sin_costo }} sin costo declarado (no suman){% else %}con el costo declarado{% endif %}</small></div>
+      <div class="gc-kpi {{ 'k-ambar' if TR.n_costo_mayor }}"><span>Cuestan más de lo que valen</span><b>{{ TR.n_costo_mayor }}</b><small>{% if TR.n_costo_mayor %}revisa su valorización o su costo{% else %}ninguna{% endif %}</small></div>
+    </div>
+
+    {% if GA.por_familia %}
+    <div class="gc-familias">
+      {% for x in GA.por_familia %}
+      <div class="gc-fam {{ 'f-reg' if x.regalada else 'f-otra' }}">
+        <div class="gc-fam-t"><b>{{ x.txt }}</b>{% if not x.regalada %}<small>no es un regalo: aparte</small>{% endif %}</div>
+        <div class="gc-fam-n">{{ x.n }} OT</div>
+        <dl><div><dt>Valor</dt><dd>{{ G.clp(x.valor) }}</dd></div><div><dt>Nos costó</dt><dd>{{ G.clp(x.costo) }}</dd></div>
+          <div><dt>Costo / valor</dt><dd>{{ G.pct_txt(x.pct_costo_valor) if x.pct_costo_valor is not none else '—' }}</dd></div></dl>
+        {% if x.n_sin_costo %}<div class="gc-nota-suave">{{ x.n_sin_costo }} sin costo declarado</div>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    {{ vacio('En este período no hubo OT sin cobrar. Cuando haya garantías, regalías o cortesías aparecerán aquí.') }}
+    {% endif %}
+
+    {# — ¿Quién lo asume? y por qué — #}
+    <div class="gc-asume">
+      <article class="gc-card">
+        <h3>¿Quién lo asume?</h3>
+        {% set cl = GA.por_area %}
+        {% if cl and not (cl|length == 1 and cl[0].sin_clasificar) %}
+          <ul class="gc-lista-barra">{% for e in cl %}<li><span>{% if e.sin_clasificar %}{{ sin_clasificar('El área que asume') }}{% else %}<b>{{ e.etiqueta }}</b>{% endif %}<small>{{ e.n }} OT</small></span><b>{{ G.clp(e.costo) }}</b></li>{% endfor %}</ul>
+        {% else %}
+          <p class="gc-nota-suave"><i class="bi bi-tag"></i> El área que asume cada garantía <b>aún no se registra</b>: {{ TR.n }} OT quedan «sin clasificar». Mientras tanto, esto es lo que cada una cargó al <b>centro de costo</b>:</p>
+        {% endif %}
+        {% if GA.por_centro %}
+        <ul class="gc-lista-barra">{% for e in GA.por_centro %}<li><span><b>{{ e.etiqueta }}</b><small>{{ e.n }} OT</small></span><b>{{ G.clp(e.costo) }}</b></li>{% endfor %}</ul>
+        {% endif %}
+      </article>
+      <article class="gc-card">
+        <h3>¿Por qué se hizo sin cobrar?</h3>
+        {% set it = GA.por_intencion %}
+        {% if it and not (it|length == 1 and it[0].sin_clasificar) %}
+          <ul class="gc-lista-barra">{% for e in it %}<li><span>{% if e.sin_clasificar %}{{ sin_clasificar('La intención') }}{% else %}<b>{{ e.etiqueta }}</b>{% endif %}<small>{{ e.n }} OT</small></span><b>{{ G.clp(e.costo) }}</b></li>{% endfor %}</ul>
+        {% else %}
+          <p class="gc-nota-suave"><i class="bi bi-tag"></i> La <b>intención</b> (evento, marketing, «lo asume Comercial»…) aún no se registra: {{ TR.n }} OT quedan «sin clasificar». Abajo, en cada OT, verás el <b>argumento</b> que quedó guardado al autorizarla.</p>
+        {% endif %}
+        <ul class="gc-lista-barra">{% for x in GA.por_familia if x.regalada %}<li><span><b>{{ x.txt }}</b><small>{{ x.n }} OT</small></span><b>{{ G.clp(x.costo) }}</b></li>{% endfor %}</ul>
+      </article>
+    </div>
+
+    {# — Trazabilidad: una fila legible por cada cobertura u OT a pérdida — #}
+    <div class="gc-traza" id="gcTraza">
+      <header class="gc-traza-h">
+        <div><h3>Trazabilidad, OT por OT</h3>
+          <p>Cada fila separa <b>cuatro papeles</b>: quién la <b>originó</b>, quién la <b>autorizó</b>, quién la <b>lleva</b> y quién la <b>ejecutó</b>. Cada uno sale de su propio registro, y por eso nadie se atribuye lo ajeno.</p></div>
+        <div class="gc-chips" role="group" aria-label="Filtrar casos">
+          <button type="button" class="gc-chip on" data-gc-filtro="todas" data-gc-destino="gcCasos">Todas ({{ AT.casos|length }})</button>
+          <button type="button" class="gc-chip" data-gc-filtro="cobertura" data-gc-destino="gcCasos">Garantías y coberturas ({{ AT.casos|selectattr('tipo', 'equalto', 'cobertura')|list|length }})</button>
+          <button type="button" class="gc-chip" data-gc-filtro="perdida" data-gc-destino="gcCasos">Cobradas a pérdida ({{ AT.casos|selectattr('tipo', 'equalto', 'perdida')|list|length }})</button>
+          <button type="button" class="gc-chip" data-gc-filtro="sinaut" data-gc-destino="gcCasos">Sin autorización registrada ({{ AT.n_sin_autorizacion }})</button>
+        </div>
+      </header>
+      {% if AT.casos %}
+      <div class="gc-casos" id="gcCasos" data-gc-pag data-por="10">
+        {% for c in AT.casos %}
+        <article class="gc-caso gc-item" data-tipo="{{ c.tipo }}" data-sinaut="{{ 1 if c.sin_autorizacion else 0 }}" data-href="{{ url_for('ot2_detalle', vid=c.id) }}">
+          <header class="gc-caso-h">
+            <a class="gc-ot" href="{{ url_for('ot2_detalle', vid=c.id) }}"><i class="bi bi-box-arrow-up-right"></i>{{ c.numero }}</a>
+            <span class="gc-pill {{ 'p-perdida' if c.tipo == 'perdida' else 'p-cob' }}">{{ c.cobertura_txt }}</span>
+            <span class="gc-cliente">{{ c.cliente }}</span>
+            <span class="gc-monto {{ 'm-perdida' if c.tipo == 'perdida' }}">
+              {%- if c.tipo == 'perdida' %}Perdimos {{ G.clp(c.monto) }}
+              {%- elif c.monto is none %}Costo aún sin declarar
+              {%- else %}Nos costó {{ G.clp(c.monto) }}{% endif -%}
+            </span>
+          </header>
+          <div class="gc-caso-b">
+            <div class="gc-q">
+              <span class="gc-q-t">¿Quién lo asume?</span>
+              <p>{% if c.asume_area %}<b>{{ c.asume_area }}</b>{% else %}{{ sin_clasificar('El área que asume') }}{% endif %}
+                <small>Cargado al centro de costo: <b>{{ c.centro_txt }}</b></small></p>
+            </div>
+            <div class="gc-q">
+              <span class="gc-q-t">¿Qué es y por qué?</span>
+              <p>{% if c.intencion %}<b>{{ c.intencion }}</b>{% else %}{{ sin_clasificar('La intención') }}{% endif %}
+                {% if c.argumento %}<small class="gc-arg">«{{ c.argumento }}»</small>
+                {% else %}<small class="gc-nota-suave">Sin argumento guardado</small>{% endif %}</p>
+            </div>
+            <div class="gc-q">
+              <span class="gc-q-t">¿Quién lo autorizó?</span>
+              {% if c.autorizo.nombre %}
+              <p><b>{{ c.autorizo.nombre }}</b>
+                <small>{% if c.autorizo.at_txt %}{{ c.autorizo.at_txt }} · {% endif %}{{ c.autorizo.fuente }}{% if c.autorizo.solicito %} · lo pidió {{ c.autorizo.solicito }}{% endif %}</small></p>
+              {% else %}
+              <p><span class="gc-sc"><i class="bi bi-shield-exclamation"></i>Sin autorización registrada</span>
+                <small>No hay una autorización aprobada guardada para esta OT.</small></p>
+              {% endif %}
+            </div>
+          </div>
+          <dl class="gc-roles">
+            <div><dt>Originó</dt><dd>{{ c.origino.nombre or 'Sin registrar' }}<small>{{ c.origino.fuente }}{% if c.origino.at %} · {{ G.fecha_hora_chile_txt(c.origino.at) }}{% endif %}</small></dd></div>
+            <div><dt>Autorizó</dt><dd>{{ c.autorizo.nombre or 'Sin autorización' }}<small>{{ c.autorizo.fuente }}</small></dd></div>
+            <div><dt>Lleva</dt><dd>{{ c.lleva.nombre or 'Sin responsable' }}<small>{{ c.lleva.fuente }}{% if c.lleva.at %} · {{ G.fecha_hora_chile_txt(c.lleva.at) }}{% endif %}</small></dd></div>
+            <div><dt>Ejecutó</dt><dd>{{ c.ejecuto.nombre or 'Sin técnico asignado' }}<small>{{ c.ejecuto.tipo_txt }}{% if c.ejecuto.empresa and c.ejecuto.persona %} · {{ c.ejecuto.persona }}{% endif %}</small></dd></div>
+          </dl>
+        </article>
+        {% endfor %}
+      </div>
+      {% else %}
+      {{ vacio('Sin garantías, coberturas ni OT cobradas a pérdida en este período.') }}
+      {% endif %}
+    </div>
+
+    {# — Por cliente y por mes — #}
+    <div class="gc-dos">
+      <article class="gc-card">
+        <h3>Por cliente</h3>
+        {% if GA.por_cliente %}
+        <div class="gc-lista" data-gc-pag data-por="5">
+          {% for e in GA.por_cliente %}
+          <div class="gc-fila gc-item">
+            <div class="gc-fila-t"><b>{{ e.cliente }}</b><small>{{ e.n }} OT · {% for k, n in e.familias.items() %}{{ n }} {{ k|lower }}{% if not loop.last %}, {% endif %}{% endfor %}</small>
+              <span class="gc-otlinks">{% for o in e.ots %}<a href="{{ url_for('ot2_detalle', vid=o.id) }}">{{ o.numero }}</a>{% endfor %}</span></div>
+            <div class="gc-fila-v"><b>{{ G.clp(e.costo) }}</b><small>valor {{ G.clp(e.valor) }}{% if e.n_sin_costo %} · {{ e.n_sin_costo }} sin costo{% endif %}</small></div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}{{ vacio('Sin clientes con garantías o coberturas en este período.') }}{% endif %}
+      </article>
+      <article class="gc-card">
+        <h3>Por mes (últimos 6)</h3>
+        <ul class="gc-meses">
+          {% for m in GA.por_mes %}
+          <li><span class="gc-mes-e">{{ m.etiqueta }}</span>
+            <span class="gc-barra"><i style="width: {{ m.pct }}%"></i></span>
+            <span class="gc-mes-v"><b>{{ G.clp(m.costo) }}</b><small>{{ m.n }} OT · valor {{ G.clp(m.valor) }}</small></span></li>
+          {% endfor %}
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  {# ─────────────────────────── 3 · EL DETALLE ─────────────────────────── #}
+  <section class="gc-sec" id="gcTendencia" aria-labelledby="gcTenT">
+    <header class="gc-sec-h"><div><span class="gc-eye">El detalle</span><h2 id="gcTenT">¿Es rentable el departamento?</h2>
+      <p>El neto de cada una de las últimas 12 semanas (lunes a domingo, hora de Chile).</p></div><span class="gc-clasif"><i class="bi bi-shield-lock-fill"></i>{{ d.clasificacion }}</span></header>
+    <div class="gc-card gc-grafico">
+      {{ d.svg_tendencia|safe }}
+      <div class="gc-leyenda"><span><i class="l-pos"></i>La semana dejó margen</span><span><i class="l-neg"></i>La semana perdió plata</span><span><i class="l-vacia"></i>Sin OT medidas</span></div>
+      {% set TP = d.tendencia_pct %}
+      <div class="gc-margen-linea">
+        <div><span class="gc-eye">Margen por semana</span>
+          {% if TP.n_semanas_con_dato %}<p>Última semana con cobros: <b>{{ G.pct_txt(TP.ultimo) }}</b> · mínimo <b>{{ G.pct_txt(TP.min) }}</b> · máximo <b>{{ G.pct_txt(TP.max) }}</b></p>
+          {% else %}<p>Todavía no hay semanas con cobros para medir el margen.</p>{% endif %}</div>
+        {{ TP.svg|safe }}
+      </div>
+      <details class="gc-ayuda"><summary><i class="bi bi-table"></i> Ver los números semana a semana</summary>
+        <div class="gc-tabla-wrap"><table class="gc-tabla">
+          <thead><tr><th>Semana</th><th>OT medidas</th><th>Cobré</th><th>Me cobraron</th><th>Neto</th><th>Margen</th></tr></thead>
+          <tbody>{% for s in d.tendencia %}<tr><td>{{ s.etiqueta }}</td><td>{{ s.n_medidas }}</td><td>{{ G.clp(s.cobre) }}</td><td>{{ G.clp(s.me_cobraron) }}</td><td class="{{ 'neg' if s.neto < 0 }}">{{ G.clp(s.neto) }}</td><td>{{ G.pct_txt(s.pct) }}</td></tr>{% endfor %}</tbody>
+        </table></div>
+      </details>
+    </div>
+  </section>
+
+  <section class="gc-sec" id="gcDonde" aria-labelledby="gcDondeT">
+    <header class="gc-sec-h"><div><h2 id="gcDondeT">¿A dónde se va la plata?</h2>
+      <p>Todo lo que nos cobraron en las OT cerradas del período ({{ G.clp(d.donde_se_va.total) }}): técnicos, despacho y repuestos, por tipo de trabajo, centro de costo y proveedor.</p></div><span class="gc-clasif"><i class="bi bi-shield-lock-fill"></i>{{ d.clasificacion }}</span></header>
+    {% if d.donde_se_va.n %}
+    <div class="gc-tres">
+      {% for titulo, lista in [('Por tipo de OT', d.donde_se_va.por_tipo), ('Por centro de costo', d.donde_se_va.por_centro), ('Por proveedor', d.donde_se_va.por_proveedor)] %}
+      <article class="gc-card">
+        <h3>{{ titulo }}</h3>
+        <ul class="gc-pareto">
+          {% for e in lista %}
+          <li><div class="gc-pareto-t"><b>{{ e.etiqueta }}</b><span>{{ G.clp(e.costo) }}</span></div>
+            <div class="gc-barra"><i style="width: {{ e.pct }}%"></i></div>
+            <small>{{ e.n }} OT · {{ G.pct_txt(e.pct) }} del total · acumulado {{ G.pct_txt(e.acum) }}</small></li>
+          {% endfor %}
+        </ul>
+      </article>
+      {% endfor %}
+    </div>
+    {% if d.donde_se_va.n_sin_costo %}<p class="gc-nota-suave">{{ d.donde_se_va.n_sin_costo }} OT no declaran todavía el costo del técnico: suman $0 aquí.</p>{% endif %}
+    {% else %}{{ vacio('Sin OT cerradas en este período.') }}{% endif %}
+  </section>
+
+  <section class="gc-sec" id="gcTecnicos" aria-labelledby="gcTecT">
+    <header class="gc-sec-h"><div><h2 id="gcTecT">Técnicos y proveedores: cuánto nos cobran</h2>
+      <p>Los externos se agrupan por empresa; los propios, por persona. Los técnicos propios no cobran por OT.</p></div><span class="gc-clasif"><i class="bi bi-shield-lock-fill"></i>{{ d.clasificacion }}</span></header>
+    {% if TE.tipos %}
+    <div class="gc-kpis">
+      {% for t in TE.tipos %}<div class="gc-kpi"><span>{{ t.txt }}</span><b>{{ G.clp(t.cobran) }}</b><small>{{ t.n }} OT · {{ t.n_grupos }} {{ 'empresa' if t.tipo == 'externo' else 'persona' }}{{ '' if t.n_grupos == 1 else 's' }}</small></div>{% endfor %}
+    </div>
+    <div class="gc-lista" data-gc-pag data-por="8">
+      {% for g in TE.grupos %}
+      <article class="gc-fila gc-tec gc-item">
+        <div class="gc-fila-t">
+          <b>{{ g.nombre }}</b>
+          <span class="gc-pill p-tipo-{{ g.tipo }}">{{ g.tipo_txt }}</span>
+          {% if g.personas and g.tipo == 'externo' %}<small>Enviaron a: {{ g.personas|join(', ') }}</small>{% endif %}
+          <span class="gc-otlinks">{% for o in g.ots %}<a href="{{ url_for('ot2_detalle', vid=o.id) }}" title="{{ G.clp(o.cobran) }}">{{ o.numero }}</a>{% endfor %}</span>
+        </div>
+        <dl class="gc-metricas">
+          <div><dt>OT</dt><dd>{{ g.n }}</dd></div>
+          <div><dt>Nos cobran</dt><dd>{{ G.clp(g.cobran) }}</dd></div>
+          <div><dt>Promedio por OT</dt><dd>{{ G.clp(g.promedio) if g.promedio is not none else '—' }}</dd></div>
+          <div><dt>% del costo</dt><dd>{{ G.pct_txt(g.pct_costo) }}</dd></div>
+          <div><dt>Garantías</dt><dd>{{ g.n_garantias }}{% if g.costo_garantias %} · {{ G.clp(g.costo_garantias) }}{% endif %}</dd></div>
+          <div><dt>Evolución</dt><dd><span class="gc-evo">{{ G.svg_sparkline(g.serie, 110, 30, 'Lo que nos cobró en las últimas 8 semanas')|safe }}</span>
+            {% if g.cmp.flecha in ('sube', 'baja') %}<small>{{ G.clp(g.cmp.delta, True) }} vs anterior</small>{% else %}<small>{{ 'sin base' if g.cmp.flecha == 'sin_base' else 'igual' }}</small>{% endif %}</dd></div>
+        </dl>
+        {% if g.cumplimiento %}
+        <div class="gc-cump">
+          <i class="bi bi-calendar-check"></i>
+          <span>¿Están yendo? <b>{{ g.cumplimiento.agendadas }}</b> agendadas en el período · <b>{{ g.cumplimiento.hechas }}</b> hechas
+            {% if g.cumplimiento.vencidas %}· <span class="gc-sc">{{ g.cumplimiento.vencidas }} vencidas sin cerrar</span>
+              {% for cv in g.cumplimiento.casos_vencidos[:6] %}<a href="{{ url_for('ot2_detalle', vid=cv.id) }}">{{ cv.numero }}</a>{% endfor %}{% endif %}</span>
+        </div>
+        {% endif %}
+        {% if g.tipo == 'externo' and g.reincidencia %}
+        <div class="gc-cump {{ 'c-revisar' if g.reincidencia.revisar }}">
+          <i class="bi bi-arrow-repeat"></i>
+          <span>Reincidencia ({{ RE.dias }} días): <b>{{ G.pct_txt(g.reincidencia.tasa) if g.reincidencia.tasa is not none else 'sin datos' }}</b>
+            · {{ g.reincidencia.n_reincidentes }} de {{ g.reincidencia.n_evaluadas }} OT evaluadas{% if g.reincidencia.revisar %} · <b>conviene revisarlo</b>{% endif %}</span>
+        </div>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}{{ vacio('Sin OT cerradas en este período.') }}{% endif %}
+  </section>
+
+  <section class="gc-sec" id="gcReinc" aria-labelledby="gcReincT">
+    <header class="gc-sec-h"><div><h2 id="gcReincT">Técnicos externos: ¿reincidentes?</h2>
+      <p>Es un indicador para <b>revisar</b>, no una sentencia: una OT correctiva o de garantía sobre el <b>mismo equipo</b> (o el mismo cliente, si no hay equipos registrados) que se abre hasta
+        <b>{{ RE.dias if RE else M.dias_reinc }} días</b> después de que un externo cerró una OT. Se miran los últimos 6 meses y no depende del período elegido.</p></div>
+      <div class="gc-chips" role="group" aria-label="Días de ventana">
+        {% for n in G.DIAS_REINCIDENCIA %}<a class="gc-chip {{ 'on' if n == M.dias_reinc }}" href="{{ url_for('ot_gerencial_pagina', modo=P.modo, ancla=(P.desde.isoformat() if P.modo != 'rango' else none), desde=(P.desde.isoformat() if P.modo == 'rango' else none), hasta=(P.hasta.isoformat() if P.modo == 'rango' else none), dias=n) }}#gcReinc">{{ n }} días</a>{% endfor %}
+      </div>
+      <span class="gc-clasif"><i class="bi bi-shield-lock-fill"></i>{{ d.clasificacion }}</span>
+    </header>
+    {% if RE and RE.por_empresa %}
+    <div class="gc-kpis">
+      <div class="gc-kpi"><span>Tasa de reincidencia</span><b>{{ G.pct_txt(RE.tasa_global) if RE.tasa_global is not none else '—' }}</b><small>{{ RE.n_reincidentes }} de {{ RE.n_evaluadas }} OT evaluadas</small></div>
+      <div class="gc-kpi"><span>Volvió la misma empresa</span><b>{{ RE.n_repite_visita }}</b><small>repitió la visita</small></div>
+      <div class="gc-kpi"><span>En observación</span><b>{{ RE.n_en_observacion }}</b><small>su ventana de {{ RE.dias }} días aún no termina</small></div>
+      <div class="gc-kpi {{ 'k-ambar' if RE.n_revisar }}"><span>Conviene revisar</span><b>{{ RE.n_revisar }}</b><small>empresa{{ '' if RE.n_revisar == 1 else 's' }} con {{ G.TASA_REVISAR }} % o más</small></div>
+    </div>
+    <div class="gc-lista" data-gc-pag data-por="6">
+      {% for e in RE.por_empresa %}
+      <article class="gc-fila gc-item">
+        <div class="gc-fila-t"><b>{{ e.nombre }}</b>
+          <small>{{ e.n_cerradas }} OT cerradas · {{ e.n_evaluadas }} evaluadas · {{ e.n_en_observacion }} en observación</small></div>
+        <div class="gc-fila-v">
+          <span class="gc-tasa {{ 'revisar' if e.revisar }}">{{ G.pct_txt(e.tasa) if e.tasa is not none else 'sin datos' }}</span>
+          <small>{{ e.n_reincidentes }} con reincidencia{% if e.n_repite_visita %} · en {{ e.n_repite_visita }} volvió la misma empresa{% endif %}</small>
+        </div>
+        {% if e.casos %}
+        <details class="gc-casos-reinc"><summary>Ver los {{ e.casos|length }} caso{{ '' if e.casos|length == 1 else 's' }}</summary>
+          <ul>{% for c in e.casos %}<li><a href="{{ url_for('ot2_detalle', vid=c.x_id) }}">{{ c.x_numero }}</a> (cerrada {{ G.fecha_hora_chile_txt(c.cerrada_at)[:10] }}) →
+            <a href="{{ url_for('ot2_detalle', vid=c.y_id) }}">{{ c.y_numero }}</a> a los {{ c.dias_despues }} días · {{ c.cliente }} ·
+            <span class="gc-pill p-nivel">{{ 'mismo equipo' if c.nivel == 'equipo' else 'mismo cliente (sin equipo registrado)' }}</span>{% if c.misma_empresa %} · <b>volvió la misma empresa</b>{% elif c.y_ejecutor %} · fue {{ c.y_ejecutor }}{% endif %}</li>{% endfor %}</ul>
+        </details>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+    {% elif RE is none %}
+    {{ vacio('No se pudo leer la reincidencia en este momento. Prueba con «Actualizar».') }}
+    {% else %}
+    {{ vacio('Ningún técnico externo cerró OT en los últimos 6 meses.') }}
+    {% endif %}
+  </section>
+
+  <section class="gc-sec" id="gcPersonas" aria-labelledby="gcPerT">
+    <header class="gc-sec-h"><div><h2 id="gcPerT">Cada persona, con lo suyo</h2>
+      <p>De las garantías, coberturas y OT a pérdida del período: cuántas <b>originó</b>, <b>autorizó</b>, <b>lleva</b> y <b>ejecutó</b> cada persona. Los cuatro papeles se cuentan <b>por separado</b>; nunca se mezclan.</p></div>
+      <span class="gc-clasif"><i class="bi bi-shield-lock-fill"></i>{{ d.clasificacion }}</span></header>
+    {% if AT.personas %}
+    <div class="gc-lista" data-gc-pag data-por="8">
+      {% for p_ in AT.personas %}
+      <article class="gc-fila gc-persona gc-item">
+        <div class="gc-fila-t"><b>{{ p_.nombre }}</b></div>
+        <dl class="gc-metricas gc-4">
+          {% for clave, titulo, ayuda_rol in AT.roles %}
+          {% set e = p_[clave] %}
+          <div class="{{ 'vacio' if not e.n }}"><dt>{{ titulo }}</dt>
+            <dd>{{ e.n }} OT{% if e.costo %}<small>costaron {{ G.clp(e.costo) }}</small>{% endif %}{% if e.perdida %}<small class="m-perdida">perdieron {{ G.clp(e.perdida) }}</small>{% endif %}</dd></div>
+          {% endfor %}
+        </dl>
+      </article>
+      {% endfor %}
+    </div>
+    <ul class="gc-leyenda-roles">{% for clave, titulo, ayuda_rol in AT.roles %}<li><b>{{ titulo }}:</b> {{ ayuda_rol }}</li>{% endfor %}</ul>
+    {% else %}{{ vacio('Sin garantías, coberturas ni pérdidas que atribuir en este período.') }}{% endif %}
+  </section>
+
+  <section class="gc-sec" id="gcCamino" aria-labelledby="gcCamT">
+    <header class="gc-sec-h"><div><h2 id="gcCamT">Plata en camino</h2>
+      <p>Lo que todavía no se cierra: las OT abiertas ya traen lo que se cobrará y lo que se pagará.</p></div><span class="gc-clasif"><i class="bi bi-shield-lock-fill"></i>{{ d.clasificacion }}</span></header>
+    <div class="gc-kpis">
+      {% if d.abiertas %}
+      <div class="gc-kpi"><span>Por cobrar con las OT abiertas</span><b>{{ G.clp(d.abiertas.por_cobrar) }}</b><small>{{ d.abiertas.n_con_cobro }} de {{ d.abiertas.n }} OT abiertas ya declaran su cobro</small></div>
+      <div class="gc-kpi"><span>Por pagar a técnicos y proveedores</span><b>{{ G.clp(d.abiertas.por_pagar) }}</b><small>costo declarado en las OT abiertas</small></div>
+      {% endif %}
+      {% if d.cxp %}
+      <div class="gc-kpi"><span>Facturas de proveedor pendientes</span><b>{{ G.clp(d.cxp.pendiente_monto) }}</b><small>{{ d.cxp.pendiente_n }} factura{{ '' if d.cxp.pendiente_n == 1 else 's' }} por pagar</small></div>
+      <div class="gc-kpi"><span>Pagado a proveedores en el período</span><b>{{ G.clp(d.cxp.pagadas_monto) }}</b><small>{{ d.cxp.pagadas_n }} factura{{ '' if d.cxp.pagadas_n == 1 else 's' }} pagada{{ '' if d.cxp.pagadas_n == 1 else 's' }}</small></div>
+      {% endif %}
+      {% if not d.abiertas and not d.cxp %}{{ vacio('No se pudo leer la plata en camino. Prueba con «Actualizar».') }}{% endif %}
+    </div>
+  </section>
+
+  {% if d.sin_medir %}
+  <section class="gc-sec" id="gcSinMedir" aria-labelledby="gcSMT">
+    <header class="gc-sec-h"><div><h2 id="gcSMT">OT cerradas sin medir</h2>
+      <p>Les falta el costo del técnico o del despacho. No están en las cifras de arriba: completarlo en la OT las suma sin inventar nada.</p></div><span class="gc-clasif"><i class="bi bi-shield-lock-fill"></i>{{ d.clasificacion }}</span></header>
+    <div class="gc-lista" data-gc-pag data-por="8">
+      {% for f in d.sin_medir %}
+      <a class="gc-fila gc-item gc-link" href="{{ url_for('ot2_detalle', vid=f.id) }}">
+        <div class="gc-fila-t"><b>{{ f.numero }}</b><small>{{ f.cliente }} · {{ f.tipo_txt }} · {{ f.ejecutor.nombre }}</small></div>
+        <div class="gc-fila-v"><span class="gc-sc">{{ f.fin.label }}</span></div>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <footer class="gc-pie">
+    <p><b>Cómo leer este informe.</b> Período por fecha de <b>cierre</b> de la OT, en hora de Chile. Las cifras son las de cada OT (la misma cuenta de su ficha: «Cobré − Me cobraron = Queda») y se suman con la regla única del proyecto: el trabajo interno y las mantenciones de contrato van aparte, y las OT a las que les falta un costo se cuentan aparte en vez de inventar un cero.</p>
+    <p>Neto = Gané − Perdí − garantías y coberturas (− desinstalaciones cubiertas por su instalación). «Perdí» son solo las OT que se cobran y quedaron en negativo.</p>
+    <p>Solo lectura: no escribe nada, no consulta a Random ni a Check, y nunca le llega a un técnico. Leído a las {{ M.generado }} (hora de Chile); se guarda 90 segundos en memoria: usa «Actualizar» para releer.</p>
+  </footer>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='ot_gerencial.js') }}"></script>
+{% endblock %}
