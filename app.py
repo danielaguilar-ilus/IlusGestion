@@ -70,6 +70,7 @@ import ot_que_paso as _qp  # «¿Qué pasó?» de una OT y la OT hija pendiente 
 import ot_piezas_medidas as _pm    # 2026-10-20: fichas de medidas por pieza, validación, aprendizaje del modelo y árbol «¿Qué le pasa?» (módulo puro con pruebas)
 import ot_producto_estado as _pe    # acciones por producto de una OT interna (No se puede usar / No tiene arreglo / No llegó) y repuestos sugeridos por defecto (módulo puro con pruebas)
 import ot_anexo_costo as _oac    # 2026-10-20: el costo de la OT y el anexo del proveedor son UN solo valor (módulo puro con pruebas)
+import ot_intenciones as _oint   # 2026-10-25 (REGLA #47): intenciones del costeo (por qué, quién lo asume) y su validación: módulo puro con pruebas
 import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién puede serlo, defecto al crear, cambio y avisos suaves): reglas puras con pruebas
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
 import plantillas_serie_gps as _psg  # 2026-10-21 (REGLA #39): N° de serie + GPS estándar en toda plantilla (reglas puras con pruebas)
@@ -98671,6 +98672,9 @@ def _ot_aut_json(r):
         "comentario": r.get("comentario") or "", "visita_creada_id": r.get("visita_creada_id"),
         "payload": payload, "constancia": constancia,
         "incluye_desinstalacion": _ot_aut_incluye_desinstalacion(r),   # 🧩 2026-10-19
+        # 🧭 2026-10-25 (REGLA #47): el «por qué» clasificado, quién lo asume y lo que detectó el sistema (el argumento de quien pide ya va arriba).
+        "intencion": r.get("intencion") or None, "mensaje_sistema": r.get("mensaje_sistema") or "",
+        **_ot_intencion_campos(r.get("intencion"), r.get("centro_costo")),
         "url": f"/ot/autorizaciones/{r.get('id')}",
     }
 
@@ -99187,6 +99191,9 @@ def _ot_aut_resumen(a, numero_ot=None, cliente=None):
     partes = [t]
     if m:
         partes.append(m)
+    ni = _oint.nombre_de(a.get("intencion"), _ot_intenciones_catalogo()) if a.get("intencion") else ""
+    if ni and ni != m:
+        partes.append(ni)          # 🧭 2026-10-25: «Cerrar OT con pérdida · Costo asumido por Marketing · OT-… · Cliente»
     if numero_ot:
         partes.append(str(numero_ot))
     if cliente:
@@ -99232,7 +99239,10 @@ def _ot_aut_notificar_superadmins(a):
         pass
     resumen = _ot_aut_resumen(a, numero_ot, cliente)
     titulo = f"Autorización pendiente: {resumen}"[:200]
-    cuerpo = (f"{a.get('solicitado_por_nombre') or '?'} pide: {a.get('argumento') or ''}")[:1500]
+    _inf_i = _ot_intencion_info(a.get("intencion"), a.get("centro_costo")) if a.get("intencion") else None
+    cuerpo = (f"{a.get('solicitado_por_nombre') or '?'} pide"
+              + (f" ({_inf_i['nombre']}" + (f" · lo asume {_inf_i['asume_txt']}" if _inf_i.get("asume_txt") else "") + ")" if _inf_i else "")
+              + f": {a.get('argumento') or ''}")[:1500]
     for sa in _ot_aut_receptores():
         try:
             # tipo 'otro' (valor ya existente del ENUM); con cliente/visita vacíos el dedupe usa url+título.
@@ -99252,6 +99262,8 @@ def _ot_aut_notificar_superadmins(a):
                 f'<td style="padding:6px 10px;font-size:13px"><b>{_esc(str(val))}</b></td></tr>'
                 for k, val in (("Tipo", _OT_AUT_TIPO_TXT.get(a.get("tipo"), a.get("tipo"))),
                                ("Motivo", _OT_COBRO_CERO_MOTIVOS.get(a.get("motivo") or "", "—")),
+                               ("Por qué (clasificación)", (_inf_i or {}).get("nombre") or "—"),
+                               ("Lo asume", (_inf_i or {}).get("asume_txt") or "—"),
                                ("OT", numero_ot or "por crear"), ("Cliente", cliente or "—"),
                                ("Centro de costo", a.get("centro_costo") or "—"),
                                ("Valorizado sugerido", (_ot_fin_clp(float(a["valorizado_clp"]))
@@ -99264,7 +99276,8 @@ def _ot_aut_notificar_superadmins(a):
                 "title": "Te piden autorizar algo que no tiene un documento que respalde el cobro",
                 "subtitle": resumen,
                 "customer_name": sa.get("nombre") or "",
-                "message": (f"<p><b>Argumento de {_esc(a.get('solicitado_por_nombre') or '?')}:</b></p>"
+                "message": ((f"<p><b>Lo que detectó el sistema:</b> {_esc(a.get('mensaje_sistema'))}</p>" if a.get("mensaje_sistema") else "")
+                            + f"<p><b>Argumento de {_esc(a.get('solicitado_por_nombre') or '?')}:</b></p>"
                             f"<p style=\"white-space:pre-wrap\">{_esc(a.get('argumento') or '')}</p>"),
                 "detail_rows_html": filas,
                 "primary_cta_url": link, "primary_cta_label": "Revisar",
@@ -99336,14 +99349,29 @@ def _ot_aut_insertar(cur, campos):
               campos.get("estado") or "pendiente", campos.get("resuelto_por_user_id"),
               campos.get("resuelto_por_nombre"), campos.get("resuelto_at"), campos.get("comentario"),
               campos.get("visita_creada_id"))
+    # 🧭 2026-10-25 (REGLA #47): la intención y el «mensaje del sistema» van en columnas nuevas. Si todavía no existen (migración pendiente),
+    # la autorización se guarda igual que siempre: jamás se cae una solicitud por la clasificación.
+    sql_i = ("INSERT INTO mant_ot_autorizaciones (entidad, entidad_id, tipo, visita_id, cliente_id, payload_json, "
+             " motivo, argumento, centro_costo, valorizado_clp, solicitado_por_user_id, solicitado_por_nombre, "
+             " estado, resuelto_por_user_id, resuelto_por_nombre, resuelto_at, comentario, visita_creada_id, "
+             " intencion, mensaje_sistema) VALUES (" + ",".join(["%s"] * 20) + ")")
+    params_i = params + ((campos.get("intencion") or None), ((campos.get("mensaje_sistema") or "")[:600] or None))
+
+    def _ejecutar(c):
+        try:
+            c.execute(sql_i, params_i)
+        except Exception as e_i:
+            if "intencion" not in str(e_i) and "mensaje_sistema" not in str(e_i):
+                raise
+            print(f"[ot-aut] columnas de la intención aún no existen: {type(e_i).__name__}", flush=True)
+            c.execute(sql, params)
+        return c.lastrowid
     if cur is not None:
-        cur.execute(sql, params)
-        return cur.lastrowid
+        return _ejecutar(cur)
     conn = get_mysql()
     try:
         with conn.cursor() as c2:
-            c2.execute(sql, params)
-            aid = c2.lastrowid
+            aid = _ejecutar(c2)
         conn.commit()
         return aid
     finally:
@@ -99351,7 +99379,7 @@ def _ot_aut_insertar(cur, campos):
 
 
 def _ot_cobro_cero_registrar(vid, motivo, argumento, centro_costo=None, valorizado_clp=None, cur=None,
-                             autorizacion=None, origen=""):
+                             autorizacion=None, origen="", intencion=None):
     """Deja constancia de un $0 AUTORIZADO en la OT: si viene `autorizacion` (aprobada, de un solicitante) se liga;
     si no, el superadministrador lo declara él mismo y se registra una autorización 'aprobada' a su nombre (Daniel:
     "cuenta como autorización y queda registrada"). Escribe cobro_cero_motivo/argumento/autorizacion_id,
@@ -99376,7 +99404,8 @@ def _ot_cobro_cero_registrar(vid, motivo, argumento, centro_costo=None, valoriza
         else:
             aid = _ot_aut_insertar(cur, {
                 "tipo": "cobro_cero", "visita_id": vid, "motivo": motivo, "argumento": argumento,
-                "centro_costo": centro_costo, "valorizado_clp": valorizado_clp,
+                "centro_costo": centro_costo, "valorizado_clp": valorizado_clp, "intencion": intencion,
+                "mensaje_sistema": _oint.mensaje_sistema("cobro_cero", {"familia": motivo}),
                 "solicitado_por_user_id": uid, "solicitado_por_nombre": nombre, "estado": "aprobada",
                 "resuelto_por_user_id": uid, "resuelto_por_nombre": nombre, "resuelto_at": datetime.utcnow(),
                 "comentario": "Declarado por el superadministrador" + (f" · {origen}" if origen else ""),
@@ -99401,13 +99430,18 @@ def _ot_cobro_cero_registrar(vid, motivo, argumento, centro_costo=None, valoriza
             (motivo, aid, (argumento or "")[:1000], _OT_COBRO_CERO_MODALIDAD[motivo],
              ("garantia" if motivo == "garantia" else "cliente"), (argumento or "")[:500],
              centro_costo, valorizado_clp, valorizado_clp, vid))
+        # 🧭 2026-10-25 (REGLA #47): el «por qué» del $0 (la clasificación elegida, la de la autorización aprobada o, si no hubo, la propia familia).
+        _clave_i = (intencion or (autorizacion or {}).get("intencion") or motivo or "").strip().lower() or None
+        _ot_intencion_poner(cur, vid, _clave_i, pisar=True)
+        _inf_i = _ot_intencion_info(_clave_i, centro_costo)
+        _por_que = (f" · por qué: {_inf_i['nombre']}" + (f" (lo asume {_inf_i['asume_txt']})" if _inf_i.get("asume_txt") else "")) if _inf_i else ""
         cur.execute(
             "INSERT INTO mant_logs (entidad,entidad_id,accion,detalle,usuario) VALUES ('visita',%s,%s,%s,%s)",
             (vid, "cobro_cero_autorizado",
              (f"$0 · {_OT_COBRO_CERO_MOTIVOS[motivo]} · autorizado por {quien}"
               + (f" · centro {centro_costo}" if centro_costo else "")
               + (f" · valorizado {_ot_fin_clp(float(valorizado_clp))}" if valorizado_clp else "")
-              + f" · argumento: {(argumento or '')[:600]}" + (f" · {origen}" if origen else ""))[:4000],
+              + _por_que + f" · argumento: {(argumento or '')[:600]}" + (f" · {origen}" if origen else ""))[:4000],
              current_username() or "sistema"))
         if propia:
             conn.commit()
@@ -99439,9 +99473,17 @@ def _ot_cobro_cero_desde_peticion(vid, d, origen=""):
     Devuelve (respuesta_flask | None, autorizacion_id | None). Respuesta None = seguir."""
     motivo = (d.get("cobro_cero_motivo") or "garantia")
     argumento = (d.get("cobro_cero_argumento") or d.get("garantia_motivo") or d.get("motivo") or "").strip()
+    # 🧭 2026-10-25 (REGLA #47): la clasificación del $0 es opcional por este camino (otros escritores no la mandan); si no viene, la clasificación es
+    # la propia familia (garantía, regalía, arriendo/leasing): todo $0 queda con un «por qué».
+    _resp_i, _fila_i = _ot_intencion_validar(d.get("intencion"), "cobertura", requerida=False)
+    if _resp_i:
+        return _resp_i, None
+    if _fila_i and _fila_i.get("familia_cero"):
+        motivo = _fila_i["familia_cero"]
     err, motivo = _ot_aut_validar("cobro_cero", motivo, argumento)
     if err:
         return (jsonify({"ok": False, **err}), 400), None
+    intencion = (_fila_i or {}).get("clave") or motivo
     centro = (str(d.get("centro_costo") or "").strip().lower()) or None
     if centro and centro not in dict(_OT2_CENTROS_COSTO):
         centro = None
@@ -99458,7 +99500,7 @@ def _ot_cobro_cero_desde_peticion(vid, d, origen=""):
             val = None
         break
     if _ot_aut_es_superadmin():
-        aid = _ot_cobro_cero_registrar(vid, motivo, argumento, centro, val, origen=origen)
+        aid = _ot_cobro_cero_registrar(vid, motivo, argumento, centro, val, origen=origen, intencion=intencion)
         if not aid:
             return (jsonify({"ok": False, "error": "No se pudo registrar la autorización del $0.",
                              "error_codigo": "ERROR_INTERNO"}), 500), None
@@ -99483,13 +99525,14 @@ def _ot_cobro_cero_desde_peticion(vid, d, origen=""):
         aid = _ot_aut_insertar(None, {
             "tipo": "cobro_cero", "visita_id": vid, "cliente_id": cli, "motivo": motivo, "argumento": argumento,
             "centro_costo": centro, "valorizado_clp": val, "solicitado_por_user_id": uid,
-            "solicitado_por_nombre": nombre, "estado": "pendiente",
+            "solicitado_por_nombre": nombre, "estado": "pendiente", "intencion": intencion,
+            "mensaje_sistema": _oint.mensaje_sistema("cobro_cero", {"familia": motivo}),
         })
     except Exception as e:
         print(f"[ot-aut] solicitud $0 vid={vid}: {type(e).__name__}", flush=True)
         return (jsonify({"ok": False, "error": "No se pudo guardar la solicitud de autorización.",
                          "error_codigo": "ERROR_INTERNO"}), 500), None
-    a = _ot_aut_fila(aid) or {"id": aid, "tipo": "cobro_cero", "visita_id": vid, "motivo": motivo,
+    a = _ot_aut_fila(aid) or {"id": aid, "tipo": "cobro_cero", "visita_id": vid, "motivo": motivo, "intencion": intencion,
                               "argumento": argumento, "solicitado_por_nombre": nombre}
     try:
         _mant_log("visita", vid, "autorizacion_solicitada",
@@ -99513,7 +99556,23 @@ def ot_aut_api_crear():
     del asistente POST /ot/api/crear); 'cobro_cero' y 'cerrar_sin_documento' exigen visita_id."""
     d = request.get_json(silent=True) or {}
     tipo = (d.get("tipo") or "").strip().lower()
-    err, motivo = _ot_aut_validar(tipo, d.get("motivo"), d.get("argumento"))
+    # 🧭 2026-10-25 (REGLA #47): TODA solicitud de una OT lleva su «¿Por qué?» clasificado (con el argumento de quien pide aparte). Un $0 (la
+    # autorización «cobro_cero», o crear una OT en $0) se clasifica como «cobertura» y esa intención fija la familia contable (garantía, regalía,
+    # arriendo/leasing); el resto, por su tipo. El servidor la valida (existe, activa, aplica, y «solo administrador» solo para un administrador).
+    _motivo_in = d.get("motivo")
+    _uso_i = ("cobertura" if (tipo == "cobro_cero" or (tipo == "crear_sin_documento" and str(_motivo_in or "").strip()))
+              else _oint.uso_de(tipo))
+    intencion, _fila_i = None, None
+    if _uso_i:
+        _resp_i, _fila_i = _ot_intencion_validar(d.get("intencion"), _uso_i,
+                                                 requerida=((d.get("entidad") or "ot").strip().lower() == "ot"))
+        if _resp_i:
+            return _resp_i
+        if _fila_i:
+            intencion = _fila_i["clave"]
+            if _uso_i == "cobertura" and _fila_i.get("familia_cero"):
+                _motivo_in = _fila_i["familia_cero"]
+    err, motivo = _ot_aut_validar(tipo, _motivo_in, d.get("argumento"))
     if err:
         return jsonify({"ok": False, **err}), 400
     argumento = (d.get("argumento") or "").strip()[:1000]
@@ -99536,6 +99595,7 @@ def ot_aut_api_crear():
         if not (0 < val < 1e10):
             val = None
     visita_id, cliente_id, payload_json = None, None, None
+    _ms = {}          # 🧭 lo que el servidor sabe de la solicitud (para el «mensaje del sistema»)
     # 🧮 2026-10-08: «exceder_saldo» sin OT todavía (el asistente de crear) viaja como el 'crear_sin_documento':
     # con el payload completo; con OT (ficha / modal de cierre) lleva visita_id y lo que se quiere cobrar.
     if tipo in ("crear_sin_documento", "documento_observado") or (tipo == "exceder_saldo" and not d.get("visita_id")):
@@ -99566,6 +99626,7 @@ def ot_aut_api_crear():
                 _obs_p = []
             if _obs_p:
                 payload["_observaciones_doc"] = _obs_p
+                _ms["observaciones"] = _oint.observaciones_txt(_obs_p)
             elif tipo == "documento_observado":
                 return jsonify({"ok": False, "error": "Ese documento no necesita autorización: tiene menos de 3 meses y "
                                 "sus productos tienen saldo en Random. Crea la OT normalmente.",
@@ -99575,6 +99636,8 @@ def ot_aut_api_crear():
             if isinstance(payload["finanzas"], dict):
                 payload["finanzas"]["cobro_cero_motivo"] = motivo
                 payload["finanzas"]["cobro_cero_argumento"] = argumento
+                if intencion and _uso_i == "cobertura":
+                    payload["finanzas"]["intencion"] = intencion       # 🧭 la OT nace con la clasificación que Daniel aprobó
         payload_json = json.dumps(payload, ensure_ascii=False, default=str)
         if len(payload_json) > 4_000_000:
             return jsonify({"ok": False, "error": "La solicitud es demasiado grande.", "error_codigo": "PAYLOAD_GRANDE"}), 400
@@ -99591,6 +99654,7 @@ def ot_aut_api_crear():
         if (v.get("estado") or "") in ("cancelada", "anulada"):
             return jsonify({"ok": False, "error": "Esa OT está cancelada o anulada.", "error_codigo": "OT_CERRADA"}), 409
         cliente_id = v.get("cliente_id")
+        _ms["numero_ot"] = v.get("numero_ot")
         if not cliente_id:
             return jsonify({"ok": False, "error": "Una OT interna sin cliente no necesita autorización.",
                             "error_codigo": "NO_APLICA"}), 400
@@ -99608,6 +99672,7 @@ def ot_aut_api_crear():
         if tipo == "exceder_saldo":
             sp = d.get("saldo_pedido") if isinstance(d.get("saldo_pedido"), dict) else {}
             pedido_sp = {c: max(0, _saldo._entero(sp.get(c))) for c in _saldo.CATEGORIAS}
+            _ms["saldo_pedido"] = {c: m for c, m in pedido_sp.items() if m}
             if not any(pedido_sp.values()):
                 return jsonify({"ok": False, "error": "Indica cuánto se quiere cobrar por encima del saldo.",
                                 "error_codigo": "SALDO_PEDIDO_REQUERIDO"}), 400
@@ -99629,6 +99694,7 @@ def ot_aut_api_crear():
                 return jsonify({"ok": False, "error": "Esta OT no va a pérdida: no necesita esta autorización.",
                                 "error_codigo": "NO_APLICA"}), 400
             _pl = {"perdida": _per, "cobre": _fp["cobre"], "me_cobraron": _fp["me_cobraron"]}
+            _ms.update(perdida=_per, cobre=_fp["cobre"], me_cobraron=_fp["me_cobraron"])
             if _fp.get("familia"):
                 # 🧩 2026-10-19: la cuenta es la de la instalación CON su(s) desinstalación(es): se dice cuáles.
                 _pl["incluye"] = _fp.get("incluye_txt")
@@ -99662,6 +99728,8 @@ def ot_aut_api_crear():
             if _e_rv0:
                 return jsonify({"ok": False, "error": _e_rv0["mensaje"], "error_codigo": _e_rv0["codigo"]}), (
                     503 if _e_rv0["codigo"] == "LECTURA_INCOMPLETA" else 409)
+    _ms.setdefault("familia", motivo)
+    _ms_txt = _oint.mensaje_sistema(tipo, _ms)
     uid, nombre = _ot_aut_usuario()
     # Sin duplicar una pendiente igual.
     try:
@@ -99684,6 +99752,7 @@ def ot_aut_api_crear():
             "cliente_id": cliente_id, "payload_json": payload_json, "motivo": motivo, "argumento": argumento,
             "centro_costo": centro, "valorizado_clp": val, "solicitado_por_user_id": uid,
             "solicitado_por_nombre": nombre, "estado": "pendiente",
+            "intencion": intencion, "mensaje_sistema": _ms_txt,
         })
     except Exception as e:
         print(f"[ot-aut] crear: {type(e).__name__}: {e}", flush=True)
@@ -99692,11 +99761,13 @@ def ot_aut_api_crear():
     try:
         _mant_log("visita" if visita_id else "cliente", visita_id or cliente_id, "autorizacion_solicitada",
                   f"{_OT_AUT_TIPO_TXT.get(tipo, tipo)} (N° {aid}) pedida a Daniel por {nombre}"
-                  + (f" · {_OT_COBRO_CERO_MOTIVOS[motivo]}" if motivo else "") + f" · argumento: {argumento[:600]}")
+                  + (f" · {_OT_COBRO_CERO_MOTIVOS[motivo]}" if motivo else "")
+                  + (f" · por qué: {_fila_i['nombre']}" if _fila_i else "") + f" · argumento: {argumento[:600]}")
     except Exception:
         pass
     n = _ot_aut_notificar_superadmins(a or {"id": aid, "tipo": tipo, "visita_id": visita_id, "cliente_id": cliente_id,
-                                            "motivo": motivo, "argumento": argumento,
+                                            "motivo": motivo, "argumento": argumento, "intencion": intencion,
+                                            "mensaje_sistema": _ms_txt, "centro_costo": centro,
                                             "solicitado_por_nombre": nombre})
     return jsonify({"ok": True, "id": aid, "estado": "pendiente", "notificados": n,
                     "mensaje": "Se pidió autorización a Daniel.", "autorizacion": _ot_aut_json(a)}), 201
@@ -99828,6 +99899,9 @@ def ot_aut_api_aprobar(aid):
     aprobada = dict(a, estado="aprobada", resuelto_por_user_id=uid, resuelto_por_nombre=nombre, resuelto_at=ahora,
                     comentario=comentario)
     constancia = f"Autorizada por {nombre} el {chile_fmt_filter(ahora)}: {a.get('argumento') or ''}"
+    _ni = _oint.nombre_de(a.get("intencion"), _ot_intenciones_catalogo()) if a.get("intencion") else ""
+    if _ni:
+        constancia += f" · Clasificación: {_ni}"          # 🧭 2026-10-25: queda en cada bitácora donde se cuente esta autorización
 
     if tipo in ("crear_sin_documento", "documento_observado") or (tipo == "exceder_saldo" and not a.get("visita_id")):
         try:
@@ -99872,6 +99946,7 @@ def ot_aut_api_aprobar(aid):
                           " WHERE id=%s", (vid_nuevo, vid_nuevo, aid))
             mysql_execute("UPDATE mant_visitas SET cobro_cero_autorizacion_id=COALESCE(cobro_cero_autorizacion_id,%s) "
                           " WHERE id=%s AND modalidad_cobro IN ('garantia','sin_costo')", (aid, vid_nuevo))
+            _ot_intencion_poner(None, vid_nuevo, a.get("intencion"))      # 🧭 la OT nace clasificada como la aprobó Daniel
         except Exception as e:
             print(f"[ot-aut] asociar OT {vid_nuevo} a {aid}: {type(e).__name__}", flush=True)
         try:
@@ -99958,6 +100033,8 @@ def ot_aut_api_aprobar(aid):
                          (f"Sin documento de Random · {constancia} · pedida por {a.get('solicitado_por_nombre') or '?'} "
                           f"(autorización N° {aid})" + (f" · comentario: {comentario}" if comentario else ""))[:4000],
                          current_username() or "sistema"))
+        if tipo != "cobro_cero":      # el $0 ya la dejó clasificada (_ot_cobro_cero_registrar)
+            _ot_intencion_poner(cur, vid, a.get("intencion"))             # 🧭 2026-10-25: la OT queda con la clasificación aprobada (la primera manda)
         conn.commit()
     except Exception as e:
         try:
@@ -100105,6 +100182,359 @@ def _ot_solo_superadmin(view):
         flash("Esa sección es solo del superadministrador.", "warning")
         return redirect(url_for("ot2_panel"))
     return wrapped
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+# 🧭 2026-10-25 — INTENCIONES DEL COSTEO (REGLA #47): POR QUÉ una OT no se cobra, se cierra sin factura/boleta, se cobra distinto
+# del documento o va a pérdida, y QUIÉN LO ASUME. Daniel: «agregar los motivos… solamente para ser administrador: garantía, regalía,
+# arriendo, leasing, evento, marketing, el precio lo asume comercial… dinámico para la toma de decisiones del mes» y «todo cobro… sea
+# CERRADO con FCV o BLV; de lo contrario bloquea la OT solicitando autorización, ya que puede ser arriendo, por descuadre de precio o
+# pérdida, puede ser costo asumido por marketing… ¿Quién lo asume? ¿Por qué? Autorizaron. Toda esa trazabilidad la necesito».
+#   · La FAMILIA contable de un $0 (cobro_cero_motivo) NO cambia; la INTENCIÓN es la razón de negocio, administrable (tabla ot_intenciones).
+#   · Cada solicitud de autorización lleva su intención + el argumento de quien pide + un «mensaje del sistema» (qué pasó, con cifras).
+#   · El sistema SUGIERE (con su origen a la vista) y la persona DECIDE. Nada se borra: una intención se desactiva.
+# Lógica pura y probada en ot_intenciones.py; acá viven la base, las rutas y el cableado con las autorizaciones.
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+_OT_INTEN_TTL_S = 20
+_ot_inten_cache = {"t": 0.0, "cat": None}
+_OT_INTEN_COLS = "clave, nombre, descripcion, familia_cero, aplica_a, asume_centro, solo_admin, activa, sistema, orden"
+
+
+def _ensure_ot_intenciones():
+    """La tabla del catálogo, sus siembras y las columnas `intencion` de la OT y de la autorización. REGLA #18: una cláusula por sentencia y
+    siempre por mysql_execute (la guardia las salta sin pedir lock si ya están; si faltan, esperan 3 s como máximo). La siembra solo
+    agrega las claves que faltan y NUNCA pisa lo que Daniel editó. No rellena ninguna OT anterior. Mientras algo no exista, todo sigue
+    funcionando con el catálogo de la SEMILLA."""
+    try:
+        mysql_execute("""
+            CREATE TABLE IF NOT EXISTS ot_intenciones (
+                id              INT AUTO_INCREMENT PRIMARY KEY,
+                clave           VARCHAR(40)  NOT NULL,
+                nombre          VARCHAR(80)  NOT NULL,
+                descripcion     VARCHAR(300) NULL,
+                familia_cero    VARCHAR(20)  NULL,
+                aplica_a        VARCHAR(200) NOT NULL,
+                asume_centro    VARCHAR(20)  NULL,
+                solo_admin      TINYINT(1)   NOT NULL DEFAULT 0,
+                activa          TINYINT(1)   NOT NULL DEFAULT 1,
+                sistema         TINYINT(1)   NOT NULL DEFAULT 0,
+                orden           INT          NOT NULL DEFAULT 500,
+                creada_por      VARCHAR(190) NULL,
+                creada_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                actualizada_por VARCHAR(190) NULL,
+                actualizada_at  DATETIME     NULL,
+                UNIQUE KEY uq_oint_clave (clave)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    except Exception as e:
+        print(f"[ensure_ot_intenciones] tabla: {type(e).__name__}: {e}", flush=True)
+    for sql in ("ALTER TABLE mant_visitas ADD COLUMN intencion VARCHAR(40) NULL",
+                "ALTER TABLE mant_ot_autorizaciones ADD COLUMN intencion VARCHAR(40) NULL",
+                "ALTER TABLE mant_ot_autorizaciones ADD COLUMN mensaje_sistema VARCHAR(600) NULL"):
+        try:
+            mysql_execute(sql)
+        except Exception as e:
+            print(f"[ensure_ot_intenciones] {sql[12:60]}: {type(e).__name__}: {e}", flush=True)
+    try:
+        existentes = {str(r.get("clave")) for r in (mysql_fetchall("SELECT clave FROM ot_intenciones") or [])}
+        for f in _oint.semilla_filas():
+            if f["clave"] in existentes:
+                continue
+            mysql_execute(
+                "INSERT IGNORE INTO ot_intenciones (clave, nombre, descripcion, familia_cero, aplica_a, asume_centro, solo_admin, activa, "
+                "sistema, orden, creada_por) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'sistema')",
+                (f["clave"], f["nombre"], f["descripcion"], f["familia_cero"], f["aplica_a"], f["asume_centro"],
+                 f["solo_admin"], f["activa"], f["sistema"], f["orden"]))
+    except Exception as e:
+        print(f"[ensure_ot_intenciones] siembra: {type(e).__name__}: {e}", flush=True)
+
+
+def _ot_intenciones_catalogo(forzar=False):
+    """El catálogo vigente [{clave, nombre, …, aplica_a (lista)}], con una memoria corta (20 s; se invalida al editar). Si la tabla aún no
+    existe o la base no responde, el de la SEMILLA: nada se cae."""
+    ahora = time.time()
+    if not forzar and _ot_inten_cache["cat"] is not None and ahora - _ot_inten_cache["t"] < _OT_INTEN_TTL_S:
+        return [dict(f) for f in _ot_inten_cache["cat"]]
+    try:
+        filas = mysql_fetchall("SELECT " + _OT_INTEN_COLS + " FROM ot_intenciones ORDER BY orden, nombre") or []
+        cat = _oint.catalogo_de([dict(f) for f in filas]) or _oint.catalogo_semilla()
+    except Exception as e:
+        print(f"[ot-inten] catálogo: {type(e).__name__}", flush=True)
+        cat = _oint.catalogo_semilla()
+    _ot_inten_cache["t"], _ot_inten_cache["cat"] = ahora, cat
+    return [dict(f) for f in cat]
+
+
+def _ot_intenciones_invalidar():
+    _ot_inten_cache["t"], _ot_inten_cache["cat"] = 0.0, None
+
+
+def _ot_aut_es_admin():
+    """Administrador = superadministrador o la familia «admin». Es quien puede ELEGIR una intención marcada «solo administrador»."""
+    try:
+        return bool(_ot_aut_es_superadmin() or _rol_familia((getattr(g, "user", None) or {}).get("role")) == "admin")
+    except Exception:
+        return False
+
+
+def _ot_intencion_validar(clave, uso, requerida=True):
+    """La validación del SERVIDOR de la intención elegida. Devuelve (respuesta_flask|None, fila|None): una respuesta 400 con su código si no
+    pasa (INTENCION_REQUERIDA / INVALIDA / INACTIVA / NO_APLICA / SOLO_ADMIN)."""
+    err, fila = _oint.validar(clave, _ot_intenciones_catalogo(), uso, _ot_aut_es_admin(), requerida)
+    if err:
+        return (jsonify({"ok": False, **err}), 400), None
+    return None, fila
+
+
+def _ot_intencion_info(clave, centro=None, catalogo=None):
+    """{clave, nombre, descripcion, familia_cero, asume_centro, asume_txt, centro_txt} para mostrar una intención. `asume_txt` = el centro de
+    costo que ESTÁ asumiendo la OT (`centro`) o, si no hay, el que la intención sugiere. None si la clave no está en el catálogo."""
+    f = _oint.por_clave(catalogo if catalogo is not None else _ot_intenciones_catalogo()).get((clave or "").strip().lower())
+    if not f:
+        return None
+    centros = dict(_OT2_CENTROS_COSTO)
+    c = (centro or "").strip().lower() or f.get("asume_centro")
+    return {"clave": f["clave"], "nombre": f["nombre"], "descripcion": f["descripcion"], "familia_cero": f["familia_cero"],
+            "asume_centro": c, "asume_txt": centros.get(c, "") if c else ""}
+
+
+def _ot_intencion_campos(clave, centro=None, catalogo=None):
+    """Lo que se le agrega a la salida JSON de una autorización o de una OT: intencion_txt, asume_txt, asume_centro. Vacío si no hay."""
+    i = _ot_intencion_info(clave, centro, catalogo)
+    if not i:
+        return {"intencion_txt": "", "asume_txt": "", "asume_centro": None}
+    return {"intencion_txt": i["nombre"], "asume_txt": i["asume_txt"], "asume_centro": i["asume_centro"]}
+
+
+def _ot_intencion_poner(cur, vid, clave, pisar=False):
+    """Deja la intención en la OT (`mant_visitas.intencion`). Sin `pisar` solo la escribe si la OT aún no tiene (la primera clasificación manda);
+    con `pisar` (un $0 que se declara ahora) la reemplaza. Nunca lanza: si la columna aún no existe, la OT sigue como siempre."""
+    clave = (clave or "").strip().lower()
+    if not clave or not vid:
+        return
+    try:
+        sql = ("UPDATE mant_visitas SET intencion=%s WHERE id=%s" if pisar
+               else "UPDATE mant_visitas SET intencion=COALESCE(intencion,%s) WHERE id=%s")
+        if cur is not None:
+            cur.execute(sql, (clave, int(vid)))
+        else:
+            mysql_execute(sql, (clave, int(vid)))
+    except Exception as e:
+        print(f"[ot-inten] poner vid={vid}: {type(e).__name__}", flush=True)
+
+
+def _ot_intencion_asentar(cur, vid, clave=None, aut_id=None, respaldo=None):
+    """Después de crear una OT: deja su intención (la que se declaró, o la de la autorización con la que nació) y, si la OT quedó apuntando a
+    una autorización de $0 sin clasificar (la que registra el propio superadministrador al crearla), la clasifica igual. Nunca lanza."""
+    try:
+        clave = (clave or "").strip().lower() or None
+        if not clave and aut_id:
+            cur.execute("SELECT intencion FROM mant_ot_autorizaciones WHERE id=%s", (int(aut_id),))
+            r = cur.fetchone() or {}
+            clave = ((r.get("intencion") if isinstance(r, dict) else None) or "").strip().lower() or None
+        clave = clave or ((respaldo or "").strip().lower() or None)
+        if not clave:
+            return
+        _ot_intencion_poner(cur, vid, clave)
+        cur.execute("UPDATE mant_ot_autorizaciones SET intencion=COALESCE(intencion,%s) "
+                    " WHERE id=(SELECT cobro_cero_autorizacion_id FROM mant_visitas WHERE id=%s)", (clave, int(vid)))
+    except Exception as e:
+        print(f"[ot-inten] asentar vid={vid}: {type(e).__name__}", flush=True)
+
+
+def _ot_intenciones_de_autorizaciones(ids):
+    """{autorizacion_id: intencion} para una lista de ids (una sola consulta). {} si falla (nunca rompe el recorrido)."""
+    try:
+        ids = sorted({int(x) for x in ids if x})
+        if not ids:
+            return {}
+        filas = mysql_fetchall("SELECT id, intencion FROM mant_ot_autorizaciones WHERE id IN (" + ",".join(["%s"] * len(ids)) + ")",
+                               tuple(ids)) or []
+        return {int(r["id"]): (r.get("intencion") or None) for r in filas}
+    except Exception as e:
+        print(f"[ot-inten] de autorizaciones: {type(e).__name__}", flush=True)
+        return {}
+
+
+def _ot_intenciones_de_ots(ids):
+    """{visita_id: intencion} para una lista de OT, en UNA consulta. {} si falla (el reporte sale igual, «Sin clasificar»)."""
+    try:
+        ids = sorted({int(x) for x in ids if x})
+        if not ids:
+            return {}
+        filas = mysql_fetchall("SELECT id, intencion FROM mant_visitas WHERE id IN (" + ",".join(["%s"] * len(ids)) + ")", tuple(ids)) or []
+        return {int(r["id"]): (r.get("intencion") or None) for r in filas}
+    except Exception as e:
+        print(f"[ot-inten] de OT en lote: {type(e).__name__}", flush=True)
+        return {}
+
+
+def _ot_intencion_de(vid):
+    """La intención de una OT (clave) o None. Nunca lanza."""
+    try:
+        r = mysql_fetchone("SELECT intencion FROM mant_visitas WHERE id=%s", (int(vid),)) or {}
+        return (r.get("intencion") or None)
+    except Exception as e:
+        print(f"[ot-inten] de la OT {vid}: {type(e).__name__}", flush=True)
+        return None
+
+
+def _ot_intencion_frase(clave, centro=None):
+    """« Por qué: Costo asumido por Marketing · lo asume Marketing.» para contar una intención dentro de una frase del recorrido. Vacío si no hay."""
+    i = _ot_intencion_info(clave, centro) if clave else None
+    if not i:
+        return ""
+    return f" Por qué: {i['nombre']}" + (f" · lo asume {i['asume_txt']}" if i.get("asume_txt") else "") + "."
+
+
+def _ot_intencion_publica(f, es_admin):
+    centros = dict(_OT2_CENTROS_COSTO)
+    return {"clave": f["clave"], "nombre": f["nombre"], "descripcion": f["descripcion"], "familia_cero": f["familia_cero"],
+            "aplica_a": f["aplica_a"], "asume_centro": f["asume_centro"], "asume_txt": centros.get(f["asume_centro"], ""),
+            "solo_admin": f["solo_admin"]}
+
+
+@app.route("/ot/api/intenciones", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_intenciones_api_listar():
+    """Las intenciones que ESTA persona puede elegir (activas; las «solo administrador» solo para un administrador). ?uso=cobertura|
+    cerrar_sin_documento|cerrar_con_perdida|exceder_saldo|crear_sin_documento|documento_observado (sin `uso`: todas), y con ?centro= y
+    ?tipo_ot= viene la `sugerida` con su origen. Es el catálogo que pintan los selectores «¿Por qué?» (asistente, ficha y modal de cierre)."""
+    uso = (request.args.get("uso") or "").strip().lower()
+    cat = _ot_intenciones_catalogo()
+    es_admin = _ot_aut_es_admin()
+    usos = [uso] if uso in _oint.USOS else list(_oint.USOS)
+    items = [_ot_intencion_publica(f, es_admin) for f in cat
+             if f["activa"] and (es_admin or not f["solo_admin"]) and any(u in f["aplica_a"] for u in usos)]
+    sug = None
+    if uso in _oint.USOS:
+        sug = _oint.sugerir(cat, uso, request.args.get("centro"), request.args.get("tipo_ot"), es_admin)
+    return jsonify({"ok": True, "items": items, "sugerida": sug, "es_admin": es_admin, "uso": uso or None})
+
+
+@app.route("/ot/api/intenciones/gestion", methods=["GET"])
+@_mant_required
+@_no_tecnico
+@_ot_solo_superadmin
+def ot_intenciones_api_gestion():
+    """Superadministrador: TODO el catálogo (también las desactivadas) con quién y cuándo la tocó, para la pantalla de gestión."""
+    try:
+        filas = mysql_fetchall("SELECT " + _OT_INTEN_COLS + ", creada_por, creada_at, actualizada_por, actualizada_at "
+                               "  FROM ot_intenciones ORDER BY orden, nombre") or []
+    except Exception as e:
+        print(f"[ot-inten] gestión: {type(e).__name__}", flush=True)
+        filas = []
+    extra = {str(r.get("clave")): r for r in filas}
+    items = []
+    for f in (_oint.catalogo_de([dict(r) for r in filas]) or _oint.catalogo_semilla()):
+        x = _ot_intencion_publica(f, True)
+        e = extra.get(f["clave"]) or {}
+        x.update({"activa": f["activa"], "sistema": f["sistema"], "orden": f["orden"],
+                  "creada_por": e.get("creada_por") or "", "creada_at": chile_fmt_filter(e.get("creada_at")) if e.get("creada_at") else "",
+                  "actualizada_por": e.get("actualizada_por") or "",
+                  "actualizada_at": chile_fmt_filter(e.get("actualizada_at")) if e.get("actualizada_at") else ""})
+        items.append(x)
+    return jsonify({"ok": True, "items": items, "usos": [{"v": u, "n": _oint.USOS_TXT[u]} for u in _oint.USOS],
+                    "familias": [{"v": k, "n": n} for k, n in _oint.FAMILIAS_TXT.items()],
+                    "centros": [{"v": c, "n": n} for c, n in _OT2_CENTROS_COSTO]})
+
+
+def _ot_intencion_guardar(datos, clave_actual=None):
+    """Crea o edita una intención (solo el superadministrador llega acá). Devuelve (respuesta_flask, http)."""
+    cat = _ot_intenciones_catalogo(forzar=True)
+    existente = _oint.por_clave(cat).get((clave_actual or "").strip().lower()) if clave_actual else None
+    if clave_actual and not existente:
+        return jsonify({"ok": False, "error": "No encontramos esa clasificación.", "error_codigo": "NO_EXISTE"}), 404
+    err, limpio = _oint.validar_edicion(datos, existente, {f["clave"] for f in cat}, {c for c, _ in _OT2_CENTROS_COSTO})
+    if err:
+        return jsonify({"ok": False, **err}), 400
+    uid, nombre = _ot_aut_usuario()
+    try:
+        if existente:
+            mysql_execute(
+                "UPDATE ot_intenciones SET nombre=%s, descripcion=%s, familia_cero=%s, aplica_a=%s, asume_centro=%s, solo_admin=%s, "
+                " orden=%s, actualizada_por=%s, actualizada_at=UTC_TIMESTAMP() WHERE clave=%s",
+                (limpio["nombre"], limpio["descripcion"] or None, limpio["familia_cero"], ",".join(limpio["aplica_a"]),
+                 limpio["asume_centro"], 1 if limpio["solo_admin"] else 0, limpio["orden"], nombre, limpio["clave"]))
+            accion = "intencion_editada"
+        else:
+            mysql_execute(
+                "INSERT INTO ot_intenciones (clave, nombre, descripcion, familia_cero, aplica_a, asume_centro, solo_admin, activa, sistema, "
+                " orden, creada_por) VALUES (%s,%s,%s,%s,%s,%s,%s,1,0,%s,%s)",
+                (limpio["clave"], limpio["nombre"], limpio["descripcion"] or None, limpio["familia_cero"], ",".join(limpio["aplica_a"]),
+                 limpio["asume_centro"], 1 if limpio["solo_admin"] else 0, limpio["orden"], nombre))
+            accion = "intencion_creada"
+    except Exception as e:
+        print(f"[ot-inten] guardar: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo guardar la clasificación.", "error_codigo": "ERROR_INTERNO"}), 500
+    _ot_intenciones_invalidar()
+    try:
+        _mant_log("intencion", int((mysql_fetchone("SELECT id FROM ot_intenciones WHERE clave=%s", (limpio["clave"],)) or {}).get("id") or 0),
+                  accion, f"{nombre}: «{limpio['nombre']}» ({limpio['clave']}) · se usa en: {', '.join(limpio['aplica_a'])}"
+                          f" · lo asume: {limpio['asume_centro'] or '—'} · solo administrador: {'sí' if limpio['solo_admin'] else 'no'}")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "clave": limpio["clave"], "intencion": limpio}), (200 if existente else 201)
+
+
+@app.route("/ot/api/intenciones", methods=["POST"])
+@_mant_required
+@_no_tecnico
+@_ot_solo_superadmin
+def ot_intenciones_api_crear():
+    """Superadministrador: crea una clasificación nueva (body: nombre, descripcion?, familia_cero?, aplica_a[], asume_centro?, solo_admin?, orden?)."""
+    return _ot_intencion_guardar(request.get_json(silent=True) or {})
+
+
+@app.route("/ot/api/intenciones/<string:clave>", methods=["POST"])
+@_mant_required
+@_no_tecnico
+@_ot_solo_superadmin
+def ot_intenciones_api_editar(clave):
+    """Superadministrador: edita una clasificación (la clave no cambia nunca)."""
+    return _ot_intencion_guardar(request.get_json(silent=True) or {}, clave_actual=clave)
+
+
+@app.route("/ot/api/intenciones/<string:clave>/estado", methods=["POST"])
+@_mant_required
+@_no_tecnico
+@_ot_solo_superadmin
+def ot_intenciones_api_estado(clave):
+    """Superadministrador: activa o desactiva (NUNCA se borra: lo ya clasificado sigue mostrándose). body: {activa: true|false}. Las de sistema no
+    se desactivan."""
+    cat = _ot_intenciones_catalogo(forzar=True)
+    f = _oint.por_clave(cat).get((clave or "").strip().lower())
+    if not f:
+        return jsonify({"ok": False, "error": "No encontramos esa clasificación.", "error_codigo": "NO_EXISTE"}), 404
+    activa = bool((request.get_json(silent=True) or {}).get("activa"))
+    if not activa:
+        ok, motivo = _oint.puede_desactivar(f)
+        if not ok:
+            return jsonify({"ok": False, "error": motivo, "error_codigo": "SISTEMA"}), 409
+    uid, nombre = _ot_aut_usuario()
+    try:
+        mysql_execute("UPDATE ot_intenciones SET activa=%s, actualizada_por=%s, actualizada_at=UTC_TIMESTAMP() WHERE clave=%s",
+                      (1 if activa else 0, nombre, f["clave"]))
+    except Exception as e:
+        print(f"[ot-inten] estado: {type(e).__name__}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo cambiar el estado.", "error_codigo": "ERROR_INTERNO"}), 500
+    _ot_intenciones_invalidar()
+    try:
+        _mant_log("intencion", int((mysql_fetchone("SELECT id FROM ot_intenciones WHERE clave=%s", (f["clave"],)) or {}).get("id") or 0),
+                  "intencion_activada" if activa else "intencion_desactivada", f"{nombre}: «{f['nombre']}» ({f['clave']})")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "clave": f["clave"], "activa": activa})
+
+
+@app.route("/ot/intenciones", methods=["GET"])
+@_mant_required
+@_no_tecnico
+@_ot_solo_superadmin
+def ot_intenciones_pagina():
+    """Pantalla de gestión de las clasificaciones del costeo (solo superadministrador). Datos: GET /ot/api/intenciones/gestion."""
+    return render_template("ot2/intenciones.html")
 
 
 @app.route("/ot/api/regularizar", methods=["GET"])
@@ -100306,6 +100736,11 @@ def ot_api_recorrido(vid):
     en_firma = (v.get("estado") or "") in ("pendiente_aprobacion", "completada")   # solo en estos estados el servidor deja aprobar el cierre
     ext = (v.get("proveedor_tipo") or "").strip().lower() == "externo"
     pend = next((a for a in auts if a.get("estado") == "pendiente"), None)
+    # 🧭 2026-10-25 (REGLA #47): el «por qué» clasificado y quién lo asume, junto a quién autorizó y cuándo (toda la trazabilidad en la misma frase).
+    _int_por_aut = _ot_intenciones_de_autorizaciones([a.get("id") for a in auts])
+    _cl_cero = (_ot_intencion_de(vid) or (_int_por_aut.get(aut_cero.get("id")) if aut_cero else None)) if aut_cero else None
+    _txt_inten = _ot_intencion_frase(_cl_cero, v.get("centro_costo"))
+    _txt_inten_cerrar = _ot_intencion_frase(_int_por_aut.get(aut_cerrar.get("id")), v.get("centro_costo")) if aut_cerrar else ""
 
     def _const(a):
         # 2026-10-25: la MISMA frase que cuenta el paso ① (_ot_aut_frase) + el argumento completo: una autorización no se puede contar dos veces distinto.
@@ -100351,7 +100786,8 @@ def ot_api_recorrido(vid):
         if aut_cero:
             # La constancia COMPLETA (quién, cuándo, quién la pidió y el motivo): ya no se repite en otra tarjeta con otras palabras.
             p1 = {"estado": "hecho", "texto": f"{fin['cobertura_txt']}. {_ot_aut_frase(aut_cero)}"
-                  + (f". Motivo: «{(aut_cero.get('argumento') or '').strip().rstrip(' .')}»" if (aut_cero.get("argumento") or "").strip() else "") + "."}
+                  + (f". Motivo: «{(aut_cero.get('argumento') or '').strip().rstrip(' .')}»" if (aut_cero.get("argumento") or "").strip() else "") + "."
+                  + _txt_inten}
         elif via == "cero_madre":
             p1 = {"estado": "hecho", "texto": f"{fin['cobertura_txt']}. Hereda el $0 autorizado de su instalación."}
         elif via in ("cobro_cero_superadmin", "autorizacion_cerrar"):
@@ -100375,7 +100811,8 @@ def ot_api_recorrido(vid):
               " (referencia de la venta: esta OT no se cobra).")}
     elif aut_cerrar:
         p2 = {"estado": "no_aplica", "texto": f"Se cierra sin factura: {_ot_aut_frase(aut_cerrar, False)}"
-              + (f". Motivo: «{(aut_cerrar.get('argumento') or '').strip().rstrip(' .')}»" if (aut_cerrar.get("argumento") or "").strip() else "") + "."}
+              + (f". Motivo: «{(aut_cerrar.get('argumento') or '').strip().rstrip(' .')}»" if (aut_cerrar.get("argumento") or "").strip() else "") + "."
+              + _txt_inten_cerrar}
     elif via == "pendiente_madre":
         # 🧭 2026-10-20: la OT pendiente por falta de stock se respalda con el documento de su OT madre (espejado, sin saldo propio).
         p2 = {"estado": "no_aplica", "texto": "El documento es el de su OT madre: esta OT no lleva uno propio"}
@@ -100537,10 +100974,12 @@ def ot_api_recorrido(vid):
         "interna": interna, "puede_pedir_autorizacion": not interna,
         "estado": v.get("estado"), "cerrada": cerrada, "pasos": pasos, "fin": fin,
         "puerta": p_cerrar, "documentos": docs_todos, "documentos_validados": docs_val,
-        "autorizaciones": [_ot_aut_json(a) for a in auts], "solicitud_pendiente": (_ot_aut_json(pend) if pend else None),
+        "autorizaciones": [_ot_aut_json(dict(a, intencion=_int_por_aut.get(a.get("id")))) for a in auts],
+        "solicitud_pendiente": (_ot_aut_json(dict(pend, intencion=_int_por_aut.get(pend.get("id")))) if pend else None),
         "cobro_cero": {"motivo": v.get("cobro_cero_motivo"), "motivo_txt": _OT_COBRO_CERO_MOTIVOS.get(v.get("cobro_cero_motivo") or "", ""),
                        "argumento": v.get("cobro_cero_argumento"), "autorizacion_id": v.get("cobro_cero_autorizacion_id"),
-                       "constancia": _const(aut_cero)},
+                       "constancia": _const(aut_cero), "intencion": _cl_cero,
+                       **_ot_intencion_campos(_cl_cero, v.get("centro_costo"))},
         "estado_facturacion": v.get("estado_facturacion"), "falta_factura": nv and not cobro_doc,
         "superadmin": _ot_aut_es_superadmin(), "motivos": [{"v": k, "n": n} for k, n in _OT_COBRO_CERO_MOTIVOS.items()],
         "perdida": perdida,
@@ -111881,6 +112320,19 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
         _fin_gar = True
     _fin_cero = _fin_cero_motivo is not None
     _fin_cero_argumento = (str(_fin.get("cobro_cero_argumento") or "").strip()[:1000]) or None
+    # 🧭 2026-10-25 (REGLA #47): la clasificación de un $0 declarado («por qué»: evento, marketing, comercial…). La familia contable sigue siendo
+    # cobro_cero_motivo; solo un $0 se clasifica por acá (las demás clasificaciones viajan con su autorización).
+    _fin_intencion = (str(_fin.get("intencion") or "").strip().lower()) or None
+    if _fin_intencion:
+        if not _fin_cero:
+            _fin_intencion = None
+        else:
+            _e_in, _f_in = _oint.validar(_fin_intencion, _ot_intenciones_catalogo(), "cobertura", True, requerida=False)
+            if _e_in:
+                return _ferr(_e_in["error"], _e_in["error_codigo"]), None
+            if _f_in.get("familia_cero") and _f_in["familia_cero"] != _fin_cero_motivo:
+                return _ferr("La clasificación elegida corresponde a otra familia del $0 (Garantía, Regalía o Arriendo/leasing).",
+                             "INTENCION_MOTIVO"), None
     _fin_aut_id = _fin.get("autorizacion_id")
     try:
         _fin_aut_id = int(_fin_aut_id) if _fin_aut_id not in (None, "", 0, "0") else None
@@ -112431,6 +112883,7 @@ def _ot_validar_normalizar_finanzas(fin_dict, tipo_ot, es_interna, cliente_rut=N
         # 🔏 2026-10-07 — lo que lee la puerta del documento (_ot_puerta_documento) y la constancia del $0.
         "cobro_cero_motivo": _fin_cero_motivo,
         "cobro_cero_argumento": _fin_cero_argumento,
+        "intencion": _fin_intencion,
         "autorizacion_id": _fin_aut_id,
         "documentos_validados": _fin_docs_validados,
         "docs_aporte": _fin_docs_aporte,
@@ -113440,9 +113893,20 @@ def _ot2_crear_core(d, autorizacion=None, madre=None):
             # La instalación recuerda para cuándo es su desinstalación (si venía "por definir" o ya tenía otra, no se pisa).
             cur.execute("UPDATE mant_visitas SET desinstalacion_prevista=COALESCE(desinstalacion_prevista, %s) WHERE id=%s",
                         (_f, int(madre["id"])))
+            # 🧭 2026-10-25 (REGLA #47): la desinstalación hereda el «por qué» del $0 de su instalación: el costo del retiro se cuenta en el mismo
+            # lugar del mes (nunca «Sin clasificar» junto a una instalación clasificada). Solo si la instalación ES un $0. Nunca lanza.
+            try:
+                cur.execute("UPDATE mant_visitas h JOIN mant_visitas m ON m.id=%s SET h.intencion=COALESCE(h.intencion, m.intencion) "
+                            " WHERE h.id=%s AND m.cobro_cero_motivo IS NOT NULL AND m.intencion IS NOT NULL", (int(madre["id"]), vid))
+            except Exception as _e_ih:
+                print(f"[ot-inten] heredar vid={vid}: {type(_e_ih).__name__}", flush=True)
         # 🔏 2026-10-07 — constancia de la puerta (autorización consumida, $0 declarado por superadmin, etc.).
         if _puerta is not None:
             _ot_puerta_aplicar(cur, vid, _puerta, fin_argumento=_fin_campos.get("cobro_cero_argumento"))
+            # 🧭 2026-10-25 (REGLA #47): la OT queda con su «por qué» (el declarado; si no, el de la autorización con que nació; si no, la
+            # familia del $0) y la autorización de $0 que registró el superadministrador al crearla, también.
+            _ot_intencion_asentar(cur, vid, _fin_campos.get("intencion"), (_puerta or {}).get("autorizacion_id"),
+                                  respaldo=_fin_campos.get("cobro_cero_motivo"))
         # 🧩 Los documentos de la instalación, ESPEJADOS en la desinstalación cubierta (es_cobro=0, sin ZZ): se ven en su
         # ficha pero no consumen saldo ni entran al libro.
         if es_hija and _fin_campos.get("cobertura") == "cubierta":
@@ -114793,6 +115257,7 @@ def _ot_fin_campos_cubierta(fin_dict, madre, exigir_costo_prov_desp=True):
         "doc_observaciones": [],
         "doc_obs_autorizacion": None,
         "reserva_hija": False,           # misma forma que _ot_validar_normalizar_finanzas (la hija no reserva nada)
+        "intencion": None,               # 🧭 REGLA #47: misma forma; la hija hereda el «por qué» de su instalación al crearse (_ot2_crear_core)
         # Solo para la clasificación persistente («Desinstalación cubierta por OT-…»):
         "madre_id": int(madre["id"]),
         "madre_numero": madre.get("numero_ot") or f"V-{int(madre['id']):05d}",
@@ -120509,7 +120974,8 @@ def ot2_reporte_xlsx():
                 ("Falta lo que cobró el técnico" if _falta_k else "Completo"), f.get("razon_social") or "", estado_label,
                 (_docs_xl.get(int(f["id"])) or ((f.get("factura_tido") or "") + " " + (f.get("factura_nudo") or "")).strip()),
                 (_cxd.get("texto") or ""), (_cxd.get("autorizado_por") or ""),
-                (str(_cxd.get("argumento") or "")[:300] if not _cxd.get("derivada") else "")])
+                (str(_cxd.get("argumento") or "")[:300] if not _cxd.get("derivada") else ""),
+                int(f["id"]), f.get("fecha_programada"), (_cxd.get("autorizado_at") or "")])
         # 🧩 2026-10-19: Relación (sin montos).
         if f.get("madre_numero") and (f.get("ot_relacion") or "") == _qp.REL_PENDIENTE_STOCK:
             _rel_xl = _qp.chip_pendiente(f.get("madre_numero"))                  # 🧭 2026-10-20: no es una desinstalación
@@ -120805,33 +121271,80 @@ def ot2_reporte_xlsx():
         _r6 += 2
         ws6.cell(row=_r6, column=1, value="Detalle OT por OT").font = Font(size=11, bold=True, color="DC2626")
         _r6 += 1
+        # 🧭 2026-10-25 (REGLA #47): «Por qué» = la clasificación elegida (evento, marketing, comercial asume…); el «Centro de costo» de al lado es QUIÉN
+        # LO ASUME. Sin clasificar se dice, no se inventa.
+        _int_ots = _ot_intenciones_de_ots([x[12] for x in det_cob])
+        _cat_xl6 = _oint.por_clave(_ot_intenciones_catalogo())
+
+        def _int_txt6(vid_):
+            c_ = _int_ots.get(vid_)
+            return (_cat_xl6.get(c_) or {}).get("nombre") or (c_ if c_ else "Sin clasificar")
         _h6d = ["Cobertura", "Centro de costo", "N° OT", "Nos costó", "Valorizado (referencia)", "Estado del costo",
-                "Cliente", "Estado de la OT", "Documentos"]
+                "Cliente", "Estado de la OT", "Documentos", "Por qué (clasificación)"]
         if _xl_sa:
-            _h6d += ["Cómo nació", "Autorizó", "Argumento"]
+            _h6d += ["Cómo nació", "Autorizó", "Cuándo autorizó", "Argumento"]
         _r6_det = _r6
         for ci, h in enumerate(_h6d, 1):
             _hdr(ws6.cell(row=_r6, column=ci), h)
         _r6 += 1
         for _fd in sorted(det_cob, key=lambda x: (_ord_lbl.get(x[0], 99), x[1], str(x[2]))):
-            _fila6 = _fd[:9] + (_fd[9:12] if _xl_sa else [])
+            _fila6 = _fd[:9] + [_int_txt6(_fd[12])] + ([_fd[9], _fd[10], _fd[14], _fd[11]] if _xl_sa else [])
             for ci, val in enumerate(_fila6, 1):
                 c6 = _txt_xl(ws6.cell(row=_r6, column=ci, value=val))
                 c6.font = Font(size=9, bold=(ci == 3))
                 c6.border = border
-                c6.alignment = Alignment(vertical="center", wrap_text=(ci in (7, 9, 10, 12)))
+                c6.alignment = Alignment(vertical="center", wrap_text=(ci in (7, 9, 10, 11, 14)))
                 c6.fill = PatternFill("solid", fgColor=(
-                    AMBER if (ci == 6 and val != "Completo") else LGRAY if _r6 % 2 == 0 else "FFFFFF"))
+                    AMBER if ((ci == 6 and val != "Completo") or (ci == 10 and val == "Sin clasificar"))
+                    else LGRAY if _r6 % 2 == 0 else "FFFFFF"))
                 if ci in (4, 5) and val is not None:
                     c6.number_format = '"$"#,##0'
             _r6 += 1
         ws6.auto_filter.ref = f"A{_r6_det}:{get_column_letter(len(_h6d))}{max(_r6_det, _r6 - 1)}"
-        for ci, w in enumerate([24, 30, 16, 16, 20, 28, 34, 18, 30, 46, 24, 50], 1):
+        for ci, w in enumerate([24, 30, 16, 16, 20, 28, 34, 18, 30, 34, 46, 24, 20, 50], 1):
             ws6.column_dimensions[get_column_letter(ci)].width = w
         ws6.cell(row=_r6 + 1, column=1, value=(
             "«Nos costó» es lo que pagamos por el servicio (técnico + despacho + repuestos instalados): la misma cuenta de la OT. "
             "Si el técnico aún no declara su costo, la fila lo dice en vez de poner $0. Una cobertura sin cobro siempre se carga "
-            "a un centro de costo: así se puede reportar cuánto cuesta cada garantía, regalía o contrato.")).font = \
+            "a un centro de costo (que es quien asume ese costo): así se puede reportar cuánto cuesta cada garantía, regalía o contrato. "
+            "«Por qué» es la clasificación que se eligió al declararla.")).font = \
+            Font(size=9, italic=True, color="6B7280")
+
+        # ── Hoja «Por mes e intención» ── 🧭 2026-10-25 (REGLA #47, Daniel: «dinámico para la toma de decisiones en el mes… debemos dejar en claro
+        # la segregación para nuestro propio dashboard»): lo mismo de arriba, pero por MES de la OT (fecha programada, hora Chile) y por la
+        # clasificación elegida, con quién lo asume (centro de costo) y cuánto nos costó.
+        ws7 = wb.create_sheet("Por mes e intención")
+        _filas_mes = _oint.resumen_por_mes([{"fecha": _fd[13], "intencion": _int_txt6(_fd[12]), "centro": _fd[1], "nos": _fd[3], "val": _fd[4]}
+                                            for _fd in det_cob])
+        _h7 = ["Mes", "Por qué (clasificación)", "Centro de costo (quién lo asume)", "Cantidad de OT", "Nos costó",
+               "Valorizado (referencia)", "OT sin costo declarado"]
+        for ci, h in enumerate(_h7, 1):
+            _hdr(ws7.cell(row=1, column=ci), h)
+        _r7 = 2
+        for _p7 in _filas_mes:
+            for ci, val in enumerate([(_p7["mes"][5:7] + "/" + _p7["mes"][:4]) if (len(_p7["mes"]) == 7 and _p7["mes"][4] == "-") else _p7["mes"], _p7["intencion"], _p7["centro"], _p7["n"], _p7["nos"], _p7["val"], _p7["sin_costo"]], 1):
+                c7 = _txt_xl(ws7.cell(row=_r7, column=ci, value=val))
+                c7.font = Font(size=9, bold=(ci == 1))
+                c7.border = border
+                c7.fill = PatternFill("solid", fgColor=(AMBER if (ci == 2 and val == "Sin clasificar") else LGRAY if _r7 % 2 == 0 else "FFFFFF"))
+                if ci in (5, 6):
+                    c7.number_format = '"$"#,##0'
+            _r7 += 1
+        for ci, val in enumerate(["TOTAL", "", "", sum(p["n"] for p in _filas_mes), sum(p["nos"] for p in _filas_mes),
+                                  sum(p["val"] for p in _filas_mes), sum(p["sin_costo"] for p in _filas_mes)], 1):
+            c7 = ws7.cell(row=_r7 + 1, column=ci, value=val)
+            c7.font = Font(size=10, bold=True, color="FFFFFF")
+            c7.fill = PatternFill("solid", fgColor="DC2626")
+            c7.border = border
+            if ci in (5, 6):
+                c7.number_format = '"$"#,##0'
+        for ci, w in enumerate([12, 40, 32, 16, 16, 20, 22], 1):
+            ws7.column_dimensions[get_column_letter(ci)].width = w
+        ws7.freeze_panes = "A2"
+        ws7.auto_filter.ref = f"A1:{get_column_letter(len(_h7))}{max(1, _r7 - 1)}"
+        ws7.cell(row=_r7 + 3, column=1, value=(
+            "Cada OT que no se cobra queda con su «por qué» (la clasificación que se eligió al declararla) y con el centro de costo que la asume. "
+            "El mes es el de la fecha programada de la OT. «Sin clasificar» son las OT anteriores a esta clasificación o declaradas sin elegirla.")).font = \
             Font(size=9, italic=True, color="6B7280")
 
     # ── Hoja 5: Resumen ───────────────────────────────────────────────
@@ -176367,6 +176880,14 @@ try:
         _ensure_ot_autorizaciones()
 except Exception as _ensure_oa_err:
     print(f"[ILUS][WARN] _ensure_ot_autorizaciones: {_ensure_oa_err}", flush=True)
+
+# 🧭 Intenciones del costeo (REGLA #47) — SIEMPRE, también con ILUS_SKIP_MIGRATIONS=1. Barato si ya están (REGLA #18: cada sentencia pasa por
+# _ddl_ya_aplicado y se salta sin pedir lock); si faltan, cada DDL espera 3 s como máximo. Hasta que existan, rige el catálogo de la SEMILLA.
+try:
+    with app.app_context():
+        _ensure_ot_intenciones()
+except Exception as _ensure_oint_err:
+    print(f"[ILUS][WARN] _ensure_ot_intenciones: {_ensure_oint_err}", flush=True)
 
 # 📒 Libro de saldo de facturas (Daniel 2026-10-11, auditoría) — SIEMPRE, incluso con ILUS_SKIP_MIGRATIONS=1.
 try:

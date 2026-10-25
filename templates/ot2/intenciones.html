@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Clasificaciones del costeo · ILUS Fitness{% endblock %}
+
+{#
+  🧭 2026-10-25 (REGLA #47, Daniel: «agregar los motivos… solamente para ser administrador: garantía, regalía, arriendo, leasing, evento, marketing, el precio
+  lo asume comercial… algo dinámico para la toma de decisiones en el mes»). Las CLASIFICACIONES («¿Por qué?») que se eligen al declarar un $0 o al pedir una
+  autorización (cerrar sin factura/boleta, con pérdida, cobrar distinto del documento…), con el centro de costo que las asume. SOLO el superadministrador las
+  crea, edita, activa o desactiva (nunca se borran: lo ya clasificado sigue mostrándose). Formato Retiros (REGLA #15): tarjetas, semáforo, nombres completos;
+  móvil primero (REGLA #3). Datos: GET /ot/api/intenciones/gestion.
+#}
+
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_puerta_paginas.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_intenciones.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-signpost-split me-2"></i>Clasificaciones del costeo</h4>
+    <div class="sub">Por qué una OT no se cobra, se cierra sin factura o boleta, se cobra distinto del documento o va a pérdida, y qué área lo asume. Con esto se mide cada mes dónde se va la plata.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <button type="button" class="btn btn-sm btn-dark" id="oiNueva" style="min-height:44px"><i class="bi bi-plus-lg me-1"></i>Nueva clasificación</button>
+    <a href="{{ url_for('ot_aut_pagina') }}" class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center" style="min-height:44px"><i class="bi bi-shield-lock me-1"></i>Autorizaciones</a>
+    <a href="{{ url_for('ot2_panel') }}" class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center" style="min-height:44px"><i class="bi bi-arrow-left me-1"></i>Volver a las OT</a>
+  </div>
+</div>
+<div class="pp oi" id="ppInten">
+  <div class="pp-vacio">Cargando clasificaciones…</div>
+</div>
+{% endblock %}
+
+{% block scripts %}<script src="{{ url_for('static', filename='ot_intenciones.js') }}"></script>{% endblock %}

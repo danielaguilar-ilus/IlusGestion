@@ -19,6 +19,8 @@
   <div class="d-flex gap-2 flex-wrap">
     <a href="{{ url_for('ot_regularizar_pagina') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-clipboard2-check me-1"></i>Regularizar OT</a>
     <a href="{{ url_for('ot_saldo_facturas_pagina') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-safe2 me-1"></i>Saldo de facturas</a>
+    {#- 🧭 2026-10-25 (REGLA #47): las clasificaciones («¿Por qué?») de cada autorización las administra el superadministrador. -#}
+    {% if es_superadmin %}<a href="{{ url_for('ot_intenciones_pagina') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-signpost-split me-1"></i>Clasificaciones del costeo</a>{% endif %}
     <a href="{{ url_for('ot2_panel') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Volver a las OT</a>
   </div>
 </div>
