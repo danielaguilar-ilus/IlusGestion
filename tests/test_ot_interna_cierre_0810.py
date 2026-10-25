@@ -65,7 +65,8 @@ def _amb_recorrido():
              funcs=("_ot_fin_clp", "_ot_finanzas", "_ot_fin_rep_liviano", "_ot_interna_sin_cliente",
                     "ot_api_recorrido", "ot_api_panorama"),
              consts=("_OT_FIN_FUENTE_COBRO", "_OT_FIN_UMBRAL_BAJO", "_OT_TXT_INTERNA", "_OT2_CENTROS_COSTO",
-                     "_OT_PANORAMA_MAX_LECTURAS_ERP"))
+                     "_OT_PANORAMA_MAX_LECTURAS_ERP", "_OT_TIDO_TXT"))
+    amb["_ot_anexo_vinculo_vista"] = lambda v: amb.get("ANEXO")      # 2026-10-25: el vínculo costo ↔ anexo (REGLA #34); cada prueba lo pone o no
     amb["jsonify"] = lambda d: d
     amb["_ot_fin_cols_sql"] = lambda alias="v": "v.cliente_id"
     amb["_ot_repuestos_desglose"] = lambda ids: {}
@@ -322,6 +323,242 @@ setTimeout(function () { process.stdout.write(el.innerHTML); }, 80);
             i = js.index(fn)
             self.assertIn("esInterna(inst)", js[i:i + 200], fn)
         self.assertIn("SOLO_CLIENTE[act] && esInterna(inst)", js)
+
+
+class TestRecorridoDeLaGarantiaAutorizada(unittest.TestCase):
+    """2026-10-25 (Daniel, con la OT-2026-00354: «arriba dice sin autorización de Daniel y abajo, garantía autorizada, la pidió Aarón… ¿la pidió o no la
+    pidió? Eso tiene que ser dinámico»): el recorrido del servidor cuenta la autorización con la MISMA regla y la MISMA frase que la puerta de cierre,
+    con texto específico por paso y una frase de arriba (`resumen`) que dice qué falta."""
+
+    AUT = {"id": 8, "tipo": "crear_sin_documento", "estado": "aprobada", "motivo": "garantia", "visita_creada_id": 461,
+           "resuelto_por_nombre": "Daniel Aguilar", "resuelto_at": datetime(2026, 10, 23, 14, 59), "solicitado_por_nombre": "Aarón Urbina",
+           "argumento": "El equipo falló a los dos meses de instalado, cubierto por la garantía del proveedor."}
+    NV = {"tido": "NVV", "nudo": "VD00010667", "es_cobro": 1}
+    FCV = {"tido": "FCV", "nudo": "11439", "es_cobro": 1}
+    FILA_GARANTIA = dict(cliente_id=7, cliente="Aurum Fit Girls", modalidad_cobro="garantia", cobro_cero_motivo="garantia", cobro_cero_autorizacion_id=8,
+                         tipo="instalacion", estado="en_ejecucion", costo_proveedor=370000, costo_despacho=0, proveedor_tipo="externo")
+
+    def _r(self, auts=(), docs=(), anexo=None, **fila):
+        amb = _amb_recorrido()
+        amb["auts_bd"][461] = [dict(a) for a in auts]
+        amb["docs_bd"][461] = [dict(d) for d in docs]
+        amb["ANEXO"] = anexo
+        row = dict(_FILA_BASE, **dict(self.FILA_GARANTIA, **fila))
+        amb["mysql_fetchone"] = lambda *a, **k: dict(row)
+        return amb["ot_api_recorrido"](461), amb
+
+    def test_la_autorizacion_con_la_que_nacio_la_ot_se_cuenta_completa_en_el_paso_1(self):
+        r, _ = self._r(auts=[self.AUT], docs=[self.NV])
+        p1 = r["pasos"][0]
+        self.assertEqual(p1["estado"], "hecho")
+        self.assertEqual(p1["texto"], "Garantía: no se le cobra. Autorizada por Daniel Aguilar el 08/10/2026 16:24 (la pidió Aarón Urbina). "
+                                      "Motivo: «El equipo falló a los dos meses de instalado, cubierto por la garantía del proveedor».")
+        self.assertEqual(r["cobro_cero"]["constancia"], "Autorizada por Daniel Aguilar el 08/10/2026 16:24 (la pidió Aarón Urbina): " + self.AUT["argumento"])
+        self.assertEqual(r["resumen"]["aut_usada_id"], 8)
+
+    def test_el_paso_1_y_la_puerta_de_cierre_dicen_lo_mismo(self):
+        """La contradicción de la OT-2026-00354: antes la tarjeta decía «sin autorización» y la lista «autorizada»."""
+        r, amb = self._r(auts=[self.AUT])                    # sin factura: la garantía nació de esa autorización y con ella cierra
+        self.assertTrue(r["puerta"]["ok"])
+        self.assertEqual(r["puerta"]["via"], "cobro_cero")
+        self.assertEqual(r["puerta"]["autorizacion_id"], 8)
+        self.assertEqual(r["pasos"][0]["estado"], "hecho")
+        con_factura, _ = self._r(auts=[self.AUT], docs=[self.FCV])         # con factura la puerta pasa por el documento (la factura manda)
+        self.assertEqual((con_factura["puerta"]["ok"], con_factura["puerta"]["via"]), (True, "documento"))
+        self.assertNotIn("Falta la autorización", r["pasos"][0]["texto"])
+        # y una autorización de OTRA OT no cuenta ni en la puerta ni en el recorrido
+        r2, _ = self._r(auts=[dict(self.AUT, visita_creada_id=999)], cobro_cero_autorizacion_id=None)
+        self.assertFalse(r2["puerta"]["ok"])
+        self.assertEqual(r2["pasos"][0]["estado"], "falta")
+
+    def test_sin_autorizacion_el_paso_1_pide_la_de_daniel(self):
+        r, _ = self._r(cobro_cero_autorizacion_id=None)
+        self.assertEqual(r["pasos"][0]["estado"], "falta")
+        self.assertEqual(r["pasos"][0]["texto"], "Garantía: no se le cobra. Falta la autorización de Daniel: pídela para poder cerrar.")
+        self.assertIn("la autorización del $0", r["resumen"]["faltan"])
+        self.assertEqual(r["resumen"]["estado"], "falta")
+
+    def test_con_una_solicitud_pendiente_dice_a_quien_se_espera_y_quien_la_pidio(self):
+        pend = {"id": 9, "tipo": "cobro_cero", "estado": "pendiente", "motivo": "garantia", "solicitado_por_nombre": "Aarón Urbina"}
+        r, _ = self._r(auts=[pend], cobro_cero_autorizacion_id=None)
+        self.assertEqual(r["pasos"][0]["texto"], "Garantía: no se le cobra. Esperando a Daniel: solicitud N° 9 (la pidió Aarón Urbina).")
+        self.assertEqual((r["resumen"]["estado"], r["resumen"]["titulo"]), ("espera", "Esperando a Daniel (solicitud N° 9)"))
+
+    def test_el_paso_2_se_llama_factura_y_dice_que_la_nota_de_venta_es_provisoria(self):
+        r, _ = self._r(auts=[self.AUT], docs=[self.NV])
+        p2 = r["pasos"][1]
+        self.assertEqual((p2["titulo"], p2["estado"]), ("Factura", "falta"))
+        self.assertEqual(p2["texto"], "Solo hay nota de venta (Nota de venta N° VD00010667): es provisoria, falta la factura para poder cerrar.")
+        self.assertEqual((r["resumen"]["estado"], r["resumen"]["titulo"]), ("falta", "Falta la factura"))
+        self.assertEqual(r["resumen"]["faltan"], ["la factura"])
+        ok, _ = self._r(auts=[self.AUT], docs=[self.FCV])
+        self.assertEqual(ok["pasos"][1]["estado"], "hecho")
+        self.assertEqual(ok["pasos"][1]["texto"], "Factura N° 11439 (referencia de la venta: esta OT no se cobra).")
+
+    def test_lista_para_cerrar_cuando_no_falta_nada(self):
+        r, _ = self._r(auts=[self.AUT], docs=[self.FCV], estado="pendiente_aprobacion")
+        self.assertEqual([p["estado"] for p in r["pasos"]], ["hecho", "hecho", "no_aplica", "hecho", "hecho", "pendiente"])
+        self.assertEqual((r["resumen"]["estado"], r["resumen"]["titulo"]), ("listo", "Lista para cerrar"))
+        self.assertEqual(r["pasos"][4]["texto"], "Garantía: no se le cobra. Nos costó $370.000. Se carga a Servicio Técnico.")
+        self.assertEqual(r["resumen"]["centro"], {"valor": "sstt", "nombre": "Servicio Técnico"})
+
+    def test_sin_centro_de_costo_una_cobertura_sin_cobro_lo_pide_para_poder_reportarla(self):
+        r, _ = self._r(auts=[self.AUT], docs=[self.FCV], centro_costo=None)
+        p5 = r["pasos"][4]
+        self.assertEqual(p5["estado"], "falta")
+        self.assertIn("Falta elegir el centro de costo: a quién se le carga.", p5["texto"])
+        self.assertIn("el centro de costo", r["resumen"]["faltan"])
+
+    def test_el_costo_del_proveedor_es_el_del_anexo(self):
+        anexo = {"id": 3, "numero": 221, "estado": "firmado", "firmado": True, "total": 370000, "total_txt": "$370.000", "vinculo": "alineado",
+                 "costo_txt": "$370.000", "abierta": True}
+        r, _ = self._r(auts=[self.AUT], docs=[self.FCV], anexo=anexo)
+        self.assertEqual(r["pasos"][3]["texto"], "Instalación $370.000 + despacho $0 = $370.000 · igual al Anexo N° 221 (firmado)")
+        self.assertEqual(r["anexo"]["numero"], 221)
+        dif = dict(anexo, vinculo="difiere", costo_txt="$250.000")
+        r2, _ = self._r(auts=[self.AUT], docs=[self.FCV], anexo=dif)
+        self.assertEqual((r2["pasos"][3]["estado"], r2["pasos"][3]["texto"]),
+                         ("falta", "No coincide con el Anexo N° 221: la OT dice $250.000 y el anexo $370.000. Es un solo valor."))
+        # una garantía no se frena por el anexo (el servidor la exime de ANEXO_DESACTUALIZADO): se avisa, no se exige
+        self.assertEqual(r2["resumen"]["faltan"], [])
+        self.assertIn("el costo igual al del anexo", r2["resumen"]["avisos"])
+        # sin declarar: el anexo dice cuánto y la OT aún no lo declara
+        r3, _ = self._r(auts=[self.AUT], docs=[self.FCV], anexo=dict(anexo, vinculo="sin_declarar", costo_txt=""), costo_proveedor=None)
+        self.assertEqual(r3["pasos"][3]["texto"], "El Anexo N° 221 dice $370.000 y la OT aún no lo declara.")
+
+    def test_una_ot_que_va_a_perdida_lo_dice_en_la_frase_de_arriba(self):
+        r, amb = self._r(docs=[self.FCV], modalidad_cobro="pagado", cobro_cero_motivo=None, cobro_cero_autorizacion_id=None, tipo="instalacion",
+                         zz_monto=302101, valor_origen="zz", costo_proveedor=380000, costo_despacho=0)
+        # la lectura de la pérdida vive en otras funciones de app.py (REGLA #28): aquí se simula su veredicto «va a pérdida, falta autorizar»
+        amb["_fac_perdida_info"] = lambda vid, fin: {"perdida": 77899, "ok": False, "pendiente_id": None, "cobre": 302101, "me_cobraron": 380000}
+        amb["_fac_perdida_aplica"] = lambda via, p: True
+        r = amb["ot_api_recorrido"](461)
+        self.assertEqual(r["pasos"][5]["accion"], "pedir_aut_perdida")
+        self.assertIn("la autorización de Daniel para cerrar con pérdida", r["resumen"]["faltan"])
+        self.assertEqual(r["resumen"]["titulo"], "Falta la autorización de Daniel para cerrar con pérdida")
+
+    def test_la_constancia_no_termina_con_doble_punto(self):
+        r, _ = self._r(auts=[dict(self.AUT, argumento="Falla de fábrica. ")], docs=[self.NV])
+        self.assertTrue(r["pasos"][0]["texto"].endswith("Motivo: «Falla de fábrica»."))
+
+
+class TestElResumenDiceLoQueExigeElCierre(unittest.TestCase):
+    """2026-10-25 (revisión independiente del bloque «Costos y documentación»): la frase de arriba NO puede prometer ni negar más que el servidor.
+    `faltan` = lo que de verdad frena la firma del cierre (mant_ot_aprobar_cierre); `avisos` = lo que se ve en los pasos y NO frena; antes de que el
+    técnico firme, los papeles pueden estar al día pero «Lista para cerrar» sería falso."""
+
+    FCV = {"tido": "FCV", "nudo": "11439", "es_cobro": 1}
+    NV = {"tido": "NVV", "nudo": "VD00010667", "es_cobro": 1}
+    COBRA = dict(cliente_id=7, cliente="Gimnasio Uno", modalidad_cobro="pagado", cobro_cero_motivo=None, cobro_cero_autorizacion_id=None,
+                 tipo="instalacion", estado="pendiente_aprobacion", zz_monto=500000, valor_origen="zz", costo_proveedor=300000,
+                 costo_despacho=0, proveedor_tipo="externo")
+    GARANTIA = dict(COBRA, modalidad_cobro="garantia", cobro_cero_motivo="garantia", zz_monto=None, valor_origen=None, costo_proveedor=100000)
+    AUT_CERRAR = {"id": 12, "tipo": "cerrar_sin_documento", "estado": "aprobada", "visita_id": 461, "resuelto_por_nombre": "Daniel Aguilar",
+                  "resuelto_at": datetime(2026, 10, 23, 14, 59), "solicitado_por_nombre": "Aarón Urbina",
+                  "argumento": "El cliente está en convenio: la factura sale a fin de mes."}
+    AUT_CERO = {"id": 8, "tipo": "crear_sin_documento", "estado": "aprobada", "motivo": "garantia", "visita_creada_id": 461,
+                "resuelto_por_nombre": "Daniel Aguilar", "resuelto_at": datetime(2026, 10, 23, 14, 59), "solicitado_por_nombre": "Aarón Urbina",
+                "argumento": "Falla de fábrica a los dos meses."}
+
+    def _r(self, puerta=None, auts=(), docs=(), anexo=None, **fila):
+        amb = _amb_recorrido()
+        amb["auts_bd"][461] = [dict(a) for a in auts]
+        amb["docs_bd"][461] = [dict(d) for d in docs]
+        amb["ANEXO"] = anexo
+        amb["_fac_perdida_info"] = lambda vid, fin: {"perdida": 0, "ok": True}
+        amb["_fac_perdida_aplica"] = lambda via, p: True
+        if puerta:   # la puerta de una vía que depende de la base (OT madre…) se simula con su veredicto
+            ok = {"ok": True, "via": puerta, "code": None, "falta": None, "accion": None, "mensaje": "", "nota_venta": False, "documentos_ok": []}
+            amb["_ot_puerta_documento"] = lambda v, momento="crear", **k: dict(ok)
+        row = dict(_FILA_BASE, **fila)
+        amb["mysql_fetchone"] = lambda *a, **k: dict(row)
+        return amb["ot_api_recorrido"](461), amb
+
+    @staticmethod
+    def _anexo(**k):
+        return dict({"id": 3, "numero": 221, "estado": "firmado", "firmado": True, "total": 370000, "total_txt": "$370.000", "vinculo": "alineado",
+                     "costo_txt": "$370.000", "abierta": True}, **k)
+
+    def test_una_ot_hija_que_hereda_el_cero_de_su_instalacion_no_pide_nada_propio(self):
+        r, _ = self._r(puerta="cero_madre", **dict(self.GARANTIA, tipo="desinstalacion"))
+        p = {x["n"]: x for x in r["pasos"]}
+        self.assertEqual((p[1]["estado"], p[1]["texto"]), ("hecho", "Garantía: no se le cobra. Hereda el $0 autorizado de su instalación."))
+        self.assertEqual((p[2]["estado"], p[2]["texto"]), ("no_aplica", "Hereda el $0 autorizado de su instalación: no lleva documento propio"))
+        self.assertEqual((r["resumen"]["estado"], r["resumen"]["titulo"], r["resumen"]["faltan"]), ("listo", "Lista para cerrar", []))
+
+    def test_la_pendiente_por_falta_de_stock_no_declara_cobro_ni_documento_propio(self):
+        r, _ = self._r(puerta="pendiente_madre", **dict(self.COBRA, zz_monto=None, valor_origen=None, costo_proveedor=50000))
+        p = {x["n"]: x for x in r["pasos"]}
+        self.assertEqual(p[2]["estado"], "no_aplica")
+        self.assertEqual((p[3]["estado"], p[3]["texto"]), ("no_aplica", "Se cobra en la OT madre: esta OT no cobra aparte"))
+        self.assertNotIn("lo que se cobró", r["resumen"]["faltan"], "el servidor no corre SIN_VALORIZAR para la pendiente")
+        self.assertEqual(r["resumen"]["titulo"], "Lista para cerrar")
+
+    def test_el_cierre_autorizado_sin_factura_no_pide_factura_ni_cobro_aunque_haya_nota_de_venta(self):
+        r, _ = self._r(auts=[self.AUT_CERRAR], docs=[self.NV], **dict(self.COBRA, zz_monto=None, valor_origen=None))
+        self.assertEqual(r["puerta"]["via"], "autorizacion_cerrar")
+        p = {x["n"]: x for x in r["pasos"]}
+        self.assertEqual(p[2]["estado"], "no_aplica")
+        self.assertTrue(p[2]["texto"].startswith("Se cierra sin factura:"), p[2]["texto"])
+        self.assertEqual((p[3]["estado"], p[3]["texto"]), ("no_aplica", "Cierre autorizado sin factura: no hay cobro que declarar"))
+        self.assertEqual((r["resumen"]["estado"], r["resumen"]["faltan"]), ("listo", []))
+
+    def test_un_cero_autorizado_de_antes_no_se_cuenta_en_una_ot_que_se_cobra(self):
+        r, _ = self._r(auts=[self.AUT_CERO], docs=[self.FCV], **dict(self.COBRA, cobro_cero_autorizacion_id=8))
+        self.assertEqual(r["pasos"][0]["texto"], "Se le cobra al cliente")
+        self.assertIsNone(r["resumen"]["aut_usada_id"])
+        self.assertEqual(r["cobro_cero"]["constancia"], "")
+
+    def test_antes_de_la_firma_los_papeles_estan_al_dia_pero_no_se_puede_cerrar(self):
+        firma, _ = self._r(docs=[self.FCV], **self.COBRA)
+        self.assertEqual((firma["resumen"]["estado"], firma["resumen"]["titulo"]), ("listo", "Lista para cerrar"))
+        self.assertTrue(firma["pasos"][5]["texto"].startswith("Puede cerrar: "), firma["pasos"][5]["texto"])
+        for est in ("programada", "en_ejecucion"):
+            antes, _ = self._r(docs=[self.FCV], **dict(self.COBRA, estado=est))
+            self.assertEqual((antes["resumen"]["estado"], antes["resumen"]["titulo"]), ("listo", "Papeles al día, aún sin la firma del cierre"), est)
+            self.assertTrue(antes["pasos"][5]["texto"].startswith("Papeles al día, aún sin la firma del cierre: "), antes["pasos"][5]["texto"])
+            self.assertEqual(antes["resumen"]["faltan"], [], est)
+
+    def test_una_garantia_con_factura_pero_sin_autorizacion_cierra_igual_y_se_avisa(self):
+        r, _ = self._r(docs=[self.FCV], **self.GARANTIA)
+        self.assertEqual(r["puerta"]["via"], "documento")
+        self.assertEqual(r["pasos"][0]["estado"], "falta")
+        self.assertIn("la OT cierra igual (tiene factura o boleta de Random)", r["pasos"][0]["texto"])
+        self.assertEqual(r["resumen"]["faltan"], [], "el servidor no exige la autorización del $0 cuando la respalda una factura")
+        self.assertEqual(r["resumen"]["avisos"], ["la autorización del $0"])
+        self.assertEqual((r["resumen"]["estado"], r["resumen"]["titulo"]), ("listo", "Se puede cerrar · revisa: la autorización del $0"))
+
+    def test_el_anexo_solo_frena_el_cierre_si_esta_firmado_es_proveedor_externo_y_la_ot_se_cobra(self):
+        dif = self._anexo(vinculo="difiere", costo_txt="$300.000")
+        firmado, _ = self._r(docs=[self.FCV], anexo=dif, **self.COBRA)
+        self.assertEqual(firmado["resumen"]["faltan"], ["el costo igual al del anexo firmado"])
+        self.assertEqual(firmado["resumen"]["titulo"], "Falta el costo igual al del anexo firmado")
+        # sin firmar: el servidor compara con el último anexo FIRMADO, así que solo se avisa
+        vigente, _ = self._r(docs=[self.FCV], anexo=dict(dif, estado="vigente", firmado=False), **self.COBRA)
+        self.assertEqual(vigente["resumen"]["faltan"], [])
+        self.assertEqual(vigente["resumen"]["titulo"], "Se puede cerrar · revisa: el costo igual al del anexo")
+        # garantía y proveedor propio: exentos de ANEXO_DESACTUALIZADO
+        gar, _ = self._r(docs=[self.FCV], anexo=dif, **dict(self.GARANTIA, cobro_cero_autorizacion_id=None))
+        self.assertEqual(gar["resumen"]["faltan"], [])
+        propio, _ = self._r(docs=[self.FCV], anexo=dif, **dict(self.COBRA, proveedor_tipo="interno"))
+        self.assertEqual(propio["resumen"]["faltan"], [])
+
+    def test_con_un_anexo_vivo_el_despacho_no_se_declara_aparte(self):
+        fila = dict(self.COBRA, zz_envio_monto=100000, costo_despacho=None)
+        sin, _ = self._r(docs=[self.FCV], **fila)
+        self.assertEqual((sin["pasos"][3]["estado"], sin["pasos"][3]["texto"]), ("falta", "Falta el costo del despacho"))
+        self.assertEqual(sin["resumen"]["avisos"], ["el costo del despacho"])
+        self.assertEqual(sin["resumen"]["faltan"], [], "el costo del despacho es opcional al cerrar")
+        con, _ = self._r(docs=[self.FCV], anexo=self._anexo(total=300000, total_txt="$300.000", costo_txt="$300.000"), **fila)
+        self.assertEqual(con["pasos"][3]["estado"], "hecho", con["pasos"][3]["texto"])
+        self.assertNotIn("el costo del despacho", con["resumen"]["avisos"])
+
+    def test_sin_costo_del_proveedor_ni_anexo_frena_pero_con_anexo_el_cierre_lo_completa(self):
+        sin, _ = self._r(docs=[self.FCV], **dict(self.COBRA, costo_proveedor=None))
+        self.assertEqual(sin["resumen"]["faltan"], ["lo que cobró el proveedor"])
+        con, _ = self._r(docs=[self.FCV], anexo=self._anexo(vinculo="sin_declarar", costo_txt=""), **dict(self.COBRA, costo_proveedor=None))
+        self.assertEqual(con["resumen"]["faltan"], [], "con un anexo vivo, aprobar el cierre completa el costo solo (REGLA #34)")
+        self.assertIn("el costo igual al del anexo", con["resumen"]["avisos"])
 
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════════════════

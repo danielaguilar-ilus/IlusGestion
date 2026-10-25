@@ -4,7 +4,9 @@
    espacio, compactemos todo en un mismo lugar». Una fila de encabezado, una franja de 6 chips, contadores en chips, la
    cuenta en una línea con el centro de costo al lado y dos columnas balanceadas (REGLA #16). Mismo componente en la ficha
    y en el modal de cierre: el diseño responde al ANCHO DEL BLOQUE (container queries), no al de la pantalla.
-   Móvil 390 px primero (REGLA #3): sin scroll horizontal, botones de 44px, inputs de 16px. */
+   Móvil 390 px primero (REGLA #3): sin scroll horizontal, botones de 44px, inputs de 16px.
+   2026-10-25: v2 (ver «LA TARJETA v2» más abajo): la franja de 6 chips pasó a seis FILAS con el texto completo de cada paso, la cuenta + el
+   anexo + el centro de costo son UNA tarjeta, y los contadores viven dentro de «Documentos». */
 .fm{--fm-rojo:#dc2626;--fm-negro:#0a0a0a;--fm-verde:#16a34a;--fm-verde-f:#dcfce7;--fm-ambar:#f59e0b;--fm-ambar-f:#fff8e1;
   --fm-azul:#3b82f6;--fm-azul-f:#dbeafe;--fm-rojo-f:#fee2e2;--fm-gris:#6b7280;--fm-gris-f:#f3f4f6;--fm-borde:#e5e7eb;
   container-type:inline-size;display:flex;flex-direction:column;gap:6px;min-width:0;color:var(--fm-negro);font-size:.82rem;line-height:1.35}
@@ -29,23 +31,42 @@
 .fm-head h3 small{font-size:.74rem;font-weight:700;color:var(--fm-gris);overflow-wrap:anywhere}
 .fm-head-a{display:flex;flex-wrap:wrap;align-items:stretch;gap:6px}
 
-/* Recorrido: UNA franja de 6 chips (círculo de estado + título corto + una línea de estado) */
+/* ═══ LA TARJETA v2 · 2026-10-25 (Daniel, con la OT-2026-00354: «contradicciones y muy poco explicativo… no tantas tarjetas… más específico»).
+   Paleta de «guiar sin gritar» (feedback del 14-oct): lo que TOCA va en ámbar, lo que ESPERA en azul, lo hecho en verde, lo que no aplica en gris;
+   el rojo queda para un problema real (una pérdida). */
+/* La frase de arriba: ¿lista para cerrar, o qué falta? (la dice el servidor con las mismas palabras de los pasos) */
+.fm-resumen{display:flex;align-items:center;gap:9px;border-radius:10px;padding:8px 12px;font-size:.9rem;font-weight:900;border:1px solid var(--fm-borde);background:#fff;min-width:0}
+.fm-resumen i{font-size:1.2rem;flex:none}
+.fm-resumen b{min-width:0;overflow-wrap:anywhere}
+.fm-resumen.listo{background:var(--fm-verde-f);border-color:#86efac;color:#14532d}.fm-resumen.listo i{color:var(--fm-verde)}
+.fm-resumen.falta{background:var(--fm-ambar-f);border-color:#fde68a;color:#78350f}.fm-resumen.falta i{color:#b45309}
+.fm-resumen.espera{background:var(--fm-azul-f);border-color:#bfdbfe;color:#1e3a8a}.fm-resumen.espera i{color:#2563eb}
+.fm-resumen.cerrada{background:var(--fm-gris-f);color:#374151}.fm-resumen.cerrada i{color:#6b7280}
+
+/* Dos columnas iguales (REGLA #16): «El recorrido» (seis filas) | «La cuenta» (UNA tarjeta) */
+.fm-top{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;align-items:start}
+@container (min-width:900px){.fm-top{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+@container (max-width:899px){.fm-top .fm-cta{order:-1}}   /* en una sola columna lo primero es la plata (cuánto cobramos, cuánto nos cobraron, el margen); después, el recorrido */
+.fm-col-t{margin:0 0 6px;font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;font-weight:900;color:#374151;display:flex;align-items:center;gap:6px}
+.fm-col-t i{color:var(--fm-rojo)}
+
+/* El recorrido: seis filas, cada una con su círculo de estado, el título y el texto ESPECÍFICO y completo del paso (nada de chips cortados) */
 .fm-s1{min-width:0}
-.fm-pasos{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
-@container (min-width:560px){.fm-pasos{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@container (min-width:900px){.fm-pasos{grid-template-columns:repeat(6,minmax(0,1fr))}}
-.fm-paso{display:grid;grid-template-columns:26px minmax(0,1fr);column-gap:8px;align-items:center;border:1px solid var(--fm-borde);border-radius:10px;padding:6px 8px;background:#fff;min-width:0;min-height:48px}
-.fm-paso .fm-circ{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.95rem;background:var(--fm-rojo)}
+.fm-pasos{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.fm-paso{display:grid;grid-template-columns:28px minmax(0,1fr);column-gap:10px;align-items:start;border:1px solid var(--fm-borde);border-radius:10px;padding:8px 10px;background:#fff;min-width:0;min-height:48px}
+.fm-paso .fm-circ{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:1rem;background:var(--fm-ambar)}
 .fm-paso.hecho{border-color:#bbf7d0;background:#f7fef9}.fm-paso.hecho .fm-circ{background:var(--fm-verde)}
-.fm-paso.falta{border-color:#fecaca;background:#fffafa}.fm-paso.falta .fm-circ{animation:fmPulso 1.4s ease 3}
+.fm-paso.falta{border-color:#fde68a;background:var(--fm-ambar-f)}.fm-paso.falta .fm-circ{background:var(--fm-ambar);animation:fmPulso 1.4s ease 3}
 .fm-paso.no_aplica{background:var(--fm-gris-f)}.fm-paso.no_aplica .fm-circ{background:#9ca3af}
-.fm-paso.pendiente{border-color:#fde68a;background:var(--fm-ambar-f)}.fm-paso.pendiente .fm-circ{background:var(--fm-ambar)}
+.fm-paso.pendiente{border-color:#bfdbfe;background:#eff6ff}.fm-paso.pendiente .fm-circ{background:#3b82f6}
 .fm-paso.c-azul,.fm-paso.c-info{border-color:#bfdbfe}
-.fm-paso-c{min-width:0;display:flex;flex-direction:column;gap:1px}
-.fm-paso-c b{font-size:.76rem;font-weight:900;line-height:1.2;overflow-wrap:anywhere}
-.fm-paso-e{font-size:.69rem;color:#4b5563;line-height:1.2;overflow-wrap:anywhere}
-.fm-paso-a{grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
-@keyframes fmPulso{0%{box-shadow:0 0 0 0 rgba(220,38,38,.5)}100%{box-shadow:0 0 0 12px rgba(220,38,38,0)}}
+.fm-paso-c{min-width:0;display:flex;flex-direction:column;gap:2px}
+.fm-paso-c b{font-size:.84rem;font-weight:900;line-height:1.25;overflow-wrap:anywhere}
+.fm-paso-e{font-size:.8rem;color:#374151;line-height:1.4;overflow-wrap:anywhere}
+.fm-paso-a{grid-column:2 / -1;display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+/* los botones de «te toca» van en azul (el rojo no es el color de «te toca») */
+.fm-paso-a .fm-btn-pri{background:#2563eb;border-color:#2563eb}.fm-paso-a .fm-btn-pri:hover{background:#1d4ed8;border-color:#1d4ed8}
+@keyframes fmPulso{0%{box-shadow:0 0 0 0 rgba(245,158,11,.5)}100%{box-shadow:0 0 0 12px rgba(245,158,11,0)}}
 .fm-espera,.fm-rechazo{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;border-radius:10px;padding:8px 10px;margin-bottom:6px}
 .fm-espera{background:var(--fm-ambar-f);border:1px solid #fde68a}
 .fm-espera i{font-size:1.3rem;color:#b45309}
@@ -65,10 +86,8 @@
 .fm-tile.warn b{background:var(--fm-ambar-f);color:#b45309}.fm-tile.mal b{background:var(--fm-rojo-f);color:#b91c1c}
 .fm-tile.cero{opacity:.62}
 
-/* La cuenta en una línea (izquierda) + el centro de costo (derecha) */
-.fm-fila{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;align-items:stretch}
-@container (min-width:900px){.fm-fila{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}}
-.fm-cta{--c:#9ca3af;background:#fff;border:1px solid var(--fm-borde);border-left:4px solid var(--c);border-radius:10px;padding:7px 10px;display:flex;flex-direction:column;gap:5px;min-width:0}
+/* La cuenta: UNA tarjeta con las cifras, el anexo del proveedor y el centro de costo (2026-10-25: ya no es una línea con el centro de costo al lado) */
+.fm-cta{--c:#9ca3af;background:#fff;border:1px solid var(--fm-borde);border-left:4px solid var(--c);border-radius:10px;padding:9px 12px;display:flex;flex-direction:column;gap:7px;min-width:0}
 .fm-cta.c-ok{--c:#16a34a}.fm-cta.c-bajo,.fm-cta.c-ambar{--c:#f59e0b}.fm-cta.c-rojo{--c:#dc2626}.fm-cta.c-info{--c:#3b82f6}
 .fm-eq{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
 .fm-eq>i{font-style:normal;font-weight:900;font-size:1.05rem;color:var(--fm-gris)}
@@ -114,6 +133,25 @@
 .fm-const{margin:0;font-size:.78rem;background:var(--fm-gris-f);border-radius:8px;padding:6px 9px;overflow-wrap:anywhere}
 .fm-aviso{background:var(--fm-ambar-f);border-radius:8px;padding:5px 9px;font-size:.74rem;color:#78350f;overflow-wrap:anywhere}
 .fm-cen{background:#fff;border:1px solid var(--fm-borde);border-radius:10px;padding:7px 10px;display:flex;flex-direction:column;gap:5px;min-width:0}
+/* dentro de la tarjeta de la cuenta el centro de costo no lleva caja propia: va debajo de una línea punteada */
+.fm-cta .fm-cen{border:0;border-top:1px dashed var(--fm-borde);border-radius:0;padding:8px 0 0;background:transparent}
+/* el vínculo con el anexo (REGLA #34) se adopta dentro de la tarjeta: sin el margen que le pone el servidor para cuando va suelto */
+.fm-anx{min-width:0}
+.fm-anx #otdAnexoVinculoFicha{margin:0 !important}
+.fm-anx-l{margin:0;font-size:.76rem;color:#1e40af;background:var(--fm-azul-f);border-radius:8px;padding:5px 9px;overflow-wrap:anywhere}
+/* «Usar el valor del anexo» dentro de la línea del anexo (modal de cierre): azul como los botones de «te toca» del recorrido, no rojo. */
+.fm-anx-b{display:block;margin-top:6px}
+.fm-anx-l .fm-btn-pri{background:#2563eb;border-color:#2563eb}.fm-anx-l .fm-btn-pri:hover{background:#1d4ed8;border-color:#1d4ed8}
+.fm-lock{display:inline-flex;align-items:center;gap:4px;margin-top:3px;font-size:.66rem;font-weight:800;color:#1e40af;background:var(--fm-azul-f);border-radius:999px;padding:1px 8px}
+/* los contadores de «Documentos»: solo los que dicen algo */
+.fm-sec .fm-tiles{margin:0 0 6px}
+/* el pie de superadmin: tranquilo, con una línea que explica qué hace cada cosa */
+.fm-pie{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;border-top:1px dashed var(--fm-borde);padding-top:8px}
+.fm-pie-t{font-size:.64rem;text-transform:uppercase;letter-spacing:.06em;font-weight:900;color:var(--fm-gris);display:inline-flex;align-items:center;gap:5px}
+.fm-pie-i{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px 10px;min-width:0;flex:1 1 280px}
+.fm-pie-i small{font-size:.72rem;color:var(--fm-gris);flex:1 1 200px;min-width:0;overflow-wrap:anywhere}
+.fm-pie .fm-btn{min-height:30px;font-size:.72rem;border-style:dashed;white-space:nowrap}
+.fm-pie .fm-btn small{display:none}      /* el rótulo «Solo superadmin» de la fila ya lo dice */
 .fm-cen h4{margin:0;font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;font-weight:900;color:#374151;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
 .fm-cen h4 small{font-size:.66rem;font-weight:800;border-radius:999px;padding:1px 8px;text-transform:none;letter-spacing:0;color:var(--fm-gris);background:var(--fm-gris-f)}
 .fm-cen h4 small.ok{color:#15803d;background:var(--fm-verde-f)}.fm-cen h4 small.mal{color:#b91c1c;background:var(--fm-rojo-f)}
@@ -285,7 +323,7 @@
 @media (max-width:560px){
   .fm-head-a .fm-btn small{display:none}
   .fm{font-size:.88rem}
-  .fm-btn,.fm-btn-chip{min-height:44px}
+  .fm-btn,.fm-btn-chip,.fm-pie .fm-btn{min-height:44px}
   .fm-head-a{width:100%}
   .fm-head-a .fm-btn{flex:1 1 auto}
   .fm-paso-a .fm-btn{flex:1 1 100%}

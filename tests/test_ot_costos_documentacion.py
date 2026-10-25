@@ -254,12 +254,14 @@ class TestElBotonEditarCobroYCostos(_HarnessBase):
         self.assertIn("{% with fm_vid=v.id, fm_modo='ficha', fm_assets=True, fm_edita=puede_metadata %}{% include 'ot2/_fin_motor.html' %}", det)
         self.assertIn("{% with fm_vid=v.id, fm_modo='modal', fm_assets=False %}{% include 'ot2/_fin_motor.html' %}", det)
 
-    def test_el_motor_pone_el_boton_en_el_encabezado_junto_a_actualizar_y_antes_de_los_de_superadmin(self):
+    def test_el_motor_pone_el_boton_en_el_encabezado_junto_a_actualizar_y_lo_de_superadmin_en_el_pie(self):
         html = self._pintar("cobro_2docs", editar=BOTON_EDITAR, extra='<button class="fm-btn">Corregir finanzas</button>')
         botones = html.split('<div class="fm-head-a">')[1].split("</div>")[0]
-        i_act, i_edit, i_cor = botones.index("Actualizar"), botones.index("Editar cobro y costos"), botones.index("Corregir finanzas")
-        self.assertTrue(i_act < i_edit < i_cor)
+        self.assertLess(botones.index("Actualizar"), botones.index("Editar cobro y costos"))
         self.assertIn("otdFinModalAbrir()", botones)
+        # 2026-10-25: «Corregir finanzas» ya no va arriba con la OT abierta (arriba hay UN solo camino para tocar la plata): va en el pie de superadmin
+        self.assertNotIn("Corregir finanzas", botones)
+        self.assertIn("Corregir finanzas", html.split('<div class="fm-pie">')[1])
 
     def test_sin_el_template_el_motor_no_inventa_el_boton(self):
         self.assertNotIn("Editar cobro y costos", self._pintar("cobro_2docs"))
@@ -307,12 +309,16 @@ class TestElResumenDeArriba(_HarnessBase):
         self.assertNotIn("Perdimos", cta)
 
     def test_si_no_se_cobra_dice_no_se_cobra_nos_costo(self):
-        cta = self._cta(self._pintar("garantia_nv"))
+        html = self._pintar("garantia_nv")
+        cta = self._cta(html)
         self.assertIn('<div class="fm-res-i q"><small>No se cobra</small><b>nos costó $200.000</b></div>', cta)
         self.assertIn('<span class="fm-motivo">Garantía</span>', cta)
         self.assertNotIn("Ganamos", cta)
         self.assertNotIn("Perdimos", cta)
-        self.assertIn("Autorizado por Daniel el 07/10/2026 14:00: falla de fábrica", cta, "la autorización con su argumento completo")
+        # 2026-10-25: quién autorizó el $0 (con su argumento completo) se cuenta UNA vez, en el paso ① del recorrido, y no se repite en la tarjeta
+        self.assertNotIn("Autorizado por Daniel", cta)
+        paso1 = html.split('<ol class="fm-pasos">')[1].split("</ol>")[0]
+        self.assertIn("Autorizado por Daniel el 07/10/2026 14:00: falla de fábrica", paso1, "la autorización con su argumento completo")
 
     def test_la_mini_tabla_trae_cobramos_nos_cobraron_queda_y_el_total(self):
         cta = self._cta(self._pintar("cobro_2docs"))
@@ -433,7 +439,8 @@ class TestTrabajoInternoYSinPermisos(_HarnessBase):
         for malo in ("pedirCero", "pedirCierre", "ligarDoc", "declararCobro"):
             self.assertNotIn(f'data-fm-act="{malo}"', html)
         visible = re.sub(r'title="[^"]*"', "", html)
-        self.assertEqual(visible.count(TXT_INTERNA), 1, "a la vista una sola vez (la línea del cuerpo); el resto va en los tooltips")
+        # 2026-10-25: solo en los dos pasos del recorrido que lo dicen (②, y ⑥ «Cerrada… · …»); la línea del cuerpo ya no lo repite con las mismas palabras
+        self.assertEqual(visible.count(TXT_INTERNA), 2)
 
 
 if __name__ == "__main__":

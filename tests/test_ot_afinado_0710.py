@@ -252,10 +252,13 @@ class TestMotorYTarjeta(unittest.TestCase):
         # costó» (+ «Modificar») a la derecha. Antes: documentos → lo que nos costó → el resultado.
         pinta = js.split("function pintar(inst)")[1]
         armado = pinta.split("inst.el.innerHTML =")[1]
-        for antes, despues in (("htmlCabecera(inst)", "htmlPasos(inst)"), ("htmlPasos(inst)", "htmlContadores(inst)"),
-                               ("htmlContadores(inst)", "htmlCuenta(inst)"), ("htmlCuenta(inst)", "htmlCentro(inst)"),
-                               ("htmlCentro(inst)", "cuerpo")):
+        # 2026-10-25 (tarjeta v2): encabezado → UNA frase dinámica → recorrido | cuenta (con el anexo y el centro de costo adentro) → cuerpo → pie;
+        # los contadores viven dentro de «Documentos» y el centro de costo dentro de la cuenta.
+        for antes, despues in (("htmlCabecera(inst)", "htmlResumen(inst)"), ("htmlResumen(inst)", "htmlPasos(inst)"),
+                               ("htmlPasos(inst)", "htmlCuenta(inst)"), ("htmlCuenta(inst)", "cuerpo"), ("cuerpo", "htmlPie(inst)")):
             self.assertLess(armado.index(antes), armado.index(despues), f"{antes} va antes que {despues}")
+        self.assertIn("htmlContadores(inst)", js.split("function htmlDocs(inst) {")[1].split("function htmlCostos")[0])
+        self.assertIn("htmlCentro(inst)", js.split("function htmlCuenta(inst) {")[1].split("var CC_META")[0])
         cuerpo = pinta.split("if (hayDocs) {")[1].split("} else {")[0]
         self.assertLess(cuerpo.index("htmlDocs(inst)"), cuerpo.index("htmlCostos(inst)"), "documentos a la izquierda, costos a la derecha")
         self.assertLess(cuerpo.index("htmlCostos(inst)"), cuerpo.index("htmlAcciones(inst"))

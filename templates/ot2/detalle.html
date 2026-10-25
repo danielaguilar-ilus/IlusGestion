@@ -724,6 +724,8 @@
   font-variant-numeric:tabular-nums;border:1.5px solid #d1d5db;border-radius:9px;padding:4px 10px;
   background:#fff;color:#0a0a0a}
 .otd-fm-in input:focus{outline:none;border-color:var(--ilus-red,#dc2626);box-shadow:0 0 0 3px rgba(220,38,38,.15)}
+/* 🔒 2026-10-25 (REGLA #34): con un anexo vivo el costo del proveedor es de solo lectura (lo fija el anexo): se ve apagado y no se puede escribir */
+.otd-fm-in input.otd-anx-lock,.otd-fm-in input.otd-anx-lock:focus{background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a;cursor:not-allowed;box-shadow:none}
 .otd-fm-refs{grid-column:1/-1;min-width:0}
 .otd-fm-refs:empty{display:none}
 .otd-fm-op{display:flex;justify-content:center;align-items:center;height:26px}
@@ -6396,8 +6398,12 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                       <label class="otd-fm-lab" for="otdFinCostoProveedor">Costo {{ _fin_neg }}
                         <small>técnico o proveedor · 0 si no hubo</small></label>
                       <div class="otd-fm-in"><span>$</span>
-                        <input type="text" id="otdFinCostoProveedor" class="form-control" data-money="1"
+                        {#- 🔒 2026-10-25 (Daniel: «si el anexo está firmado, esto se bloquee»; REGLA #34): con un anexo vivo el costo ES el del anexo, así que el
+                            campo es de solo lectura (se ve y se guarda tal cual) y dice de dónde sale. Para cambiarlo: el monto del anexo, o un anexo nuevo
+                            si ya está firmado. El servidor lo rechaza igual (COSTO_ES_DEL_ANEXO) aunque alguien saltara el navegador. -#}
+                        <input type="text" id="otdFinCostoProveedor" class="form-control{{ ' otd-anx-lock' if anexo_vinculo else '' }}" data-money="1"
                                inputmode="numeric" autocomplete="off" placeholder="—"
+                               {% if anexo_vinculo %}readonly aria-readonly="true" data-anexo-lock="1" title="Lo fija el Anexo N° {{ anexo_vinculo.numero }} ({{ 'firmado' if anexo_vinculo.firmado else 'vigente' }}): {{ 'para cambiarlo, emite un anexo nuevo' if anexo_vinculo.firmado else 'para cambiarlo, corrige el monto en el anexo' }}"{% endif %}
                                value="{{ '{:,.0f}'.format(v.costo_proveedor|float)|replace(',','.') if v.costo_proveedor is not none else '' }}"></div>
                     </div>
                     <div class="otd-fm-op" aria-hidden="true"><span>+</span></div>
@@ -6405,8 +6411,9 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
                       <label class="otd-fm-lab" for="otdFinCostoDespacho">Costo del despacho <small class="text-muted">(opcional)</small>
                         <small>flete o courier · 0 si no hubo</small></label>
                       <div class="otd-fm-in"><span>$</span>
-                        <input type="text" id="otdFinCostoDespacho" class="form-control" data-money="1"
+                        <input type="text" id="otdFinCostoDespacho" class="form-control{{ ' otd-anx-lock' if anexo_vinculo else '' }}" data-money="1"
                                inputmode="numeric" autocomplete="off" placeholder="—"
+                               {% if anexo_vinculo %}readonly aria-readonly="true" data-anexo-lock="1" title="Lo fija el Anexo N° {{ anexo_vinculo.numero }} ({{ 'firmado' if anexo_vinculo.firmado else 'vigente' }})"{% endif %}
                                value="{{ '{:,.0f}'.format(v.costo_despacho|float)|replace(',','.') if v.costo_despacho is not none else '' }}"></div>
                     </div>
                     <div class="otd-fm-op" aria-hidden="true"><span>=</span></div>
@@ -13872,6 +13879,11 @@ window.otdFinCotizUsar = function(){
   const j = _otdCotiz;
   const el = document.getElementById('otdFinCostoProveedor');
   if (!j || j.total_costo === null || j.total_costo === undefined || !el) return;
+  // 🔒 2026-10-25 (REGLA #34): con un anexo vivo el costo ES el del anexo; el cotizador no lo reemplaza (el servidor lo rechazaría: COSTO_ES_DEL_ANEXO).
+  if (el.readOnly){
+    if (window.ilusToast) ilusToast('El costo lo fija el anexo del proveedor: no se cambia desde el cotizador.', {type: 'info'});
+    return;
+  }
   window.otdMoneySet('otdFinCostoProveedor', Math.round(j.total_costo));
   // otdMoneySet no dispara eventos: se avisa a mano para que la cuenta se rehaga.
   el.dispatchEvent(new Event('input', {bubbles: true}));

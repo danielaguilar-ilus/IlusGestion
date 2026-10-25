@@ -16,7 +16,8 @@ from tests.test_incidencias_bajas import _codigo_y_arbol
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FUNCS = ("_ot_es_interna", "_ot_cobertura", "_ot_fin_num", "_ot_puerta_documento", "_ot_puerta_documento_eval",
          "_ot_puerta_desde_body", "_ot_puerta_doc_norm", "_ot_puerta_validar_erp", "_ot_puerta_cotizacion_existe",
-         "_ot_puerta_autorizacion_por_id", "_ot_puerta_aut_crear_valida", "_ot_puerta_fuera_asistente")
+         "_ot_puerta_autorizacion_por_id", "_ot_puerta_aut_crear_valida", "_ot_puerta_fuera_asistente",
+         "_ot_aut_cubre_cero", "_ot_aut_frase")   # 2026-10-25: la regla única de «¿esta autorización respalda el $0?» (puerta de cierre y recorrido de la ficha) y su frase
 CONSTS = ("_OT_DOCS_NOTA_VENTA", "_OT_DOCS_CIERRE", "_OT_DOCS_COBRO", "_OT_COBRO_CERO_MOTIVOS",
           "_OT_COBRO_CERO_MODALIDAD", "_OT_AUT_TIPOS", "_OT_AUT_ARGUMENTO_MIN", "_OT_PUERTA_NV_CIERRA",
           "_OT_PUERTA_MSG", "_OT_PUERTA_MSG_FACTURA", "_OT_PUERTA_MSG_CERO", "_OT_ESTADOS_NACIMIENTO",
@@ -63,6 +64,7 @@ def _cargar():
     amb["_ot_resolver_doc_erp"] = lambda t, n, r=None: (None, None, False, None)
     amb["mysql_fetchone"] = lambda *a, **k: None
     amb["mysql_fetchall"] = lambda *a, **k: []
+    amb["chile_fmt_filter"] = lambda d, *a, **k: d.strftime("%d/%m/%Y %H:%M") if hasattr(d, "strftime") else str(d)   # (la real pasa a hora Chile: REGLA #6)
     amb["_ot_aut_es_superadmin"] = lambda *a, **k: False
     amb["_ot_aut_usuario"] = lambda: (1, "Aaron")
     amb["_ot_aut_fila"] = lambda aid: None
@@ -340,6 +342,84 @@ class TestPuertaCerrar(unittest.TestCase):
         AMB["docs_bd"][41] = []
         AMB["auts_bd"][41] = [{"id": 1, "tipo": "cerrar_sin_documento", "estado": "aprobada"}]
         self.assertTrue(P({"id": 41, "documentos": None, "autorizaciones": None}, "cerrar")["ok"])
+
+
+class TestUnaSolaReglaDelCeroAutorizado(unittest.TestCase):
+    """2026-10-25 (Daniel, con la OT-2026-00354: «arriba dice sin autorización de Daniel y abajo dice Crear OT sin documento · Garantía, autorizada…
+    ¿la pidió o no la pidió? Eso tiene que ser dinámico»): la puerta de cierre y el recorrido de la ficha deciden con UNA sola regla si una
+    autorización respalda el $0, y la cuentan con UNA sola frase."""
+
+    @classmethod
+    def setUpClass(cls):
+        global AMB
+        if AMB is None:
+            AMB = _cargar()
+
+    def regla(self, a, vid=354, aut_id=None):
+        return AMB["_ot_aut_cubre_cero"](a, vid, aut_id)
+
+    def test_una_cobro_cero_aprobada_respalda_el_cero(self):
+        self.assertTrue(self.regla({"id": 5, "tipo": "cobro_cero", "estado": "aprobada"}))
+        self.assertFalse(self.regla({"id": 5, "tipo": "cobro_cero", "estado": "pendiente"}))
+        self.assertFalse(self.regla({"id": 5, "tipo": "cobro_cero", "estado": "rechazada"}))
+
+    def test_si_la_ot_apunta_a_una_en_particular_solo_esa_vale(self):
+        a = {"id": 5, "tipo": "cobro_cero", "estado": "aprobada"}
+        self.assertTrue(self.regla(a, aut_id=5))
+        self.assertFalse(self.regla(a, aut_id=7))
+
+    def test_la_autorizacion_con_la_que_nacio_la_ot_respalda_su_cero(self):
+        a = {"id": 8, "tipo": "crear_sin_documento", "estado": "aprobada", "motivo": "garantia", "visita_creada_id": 354}
+        self.assertTrue(self.regla(a, vid=354))                       # nació de ella y su motivo ya era un $0
+        self.assertTrue(self.regla(dict(a, motivo="regalia"), vid=354))
+        self.assertTrue(self.regla(dict(a, motivo="arriendo_leasing"), vid=354))
+        self.assertTrue(self.regla(dict(a, visita_creada_id=None), vid=354, aut_id=8))        # o la OT apunta a ella (cobro_cero_autorizacion_id)
+
+    def test_no_respalda_lo_que_no_es_suyo(self):
+        a = {"id": 8, "tipo": "crear_sin_documento", "estado": "aprobada", "motivo": "garantia", "visita_creada_id": 354}
+        self.assertFalse(self.regla(a, vid=355))                                                # otra OT
+        self.assertFalse(self.regla(dict(a, estado="pendiente")))                               # sin aprobar
+        self.assertFalse(self.regla(dict(a, motivo="otro")))                                    # un motivo que no es un $0
+        self.assertFalse(self.regla(dict(a, motivo="")))
+        self.assertFalse(self.regla(dict(a, visita_creada_id=None), vid=354))                   # sin vínculo con esta OT
+        self.assertFalse(self.regla({"id": 3, "tipo": "cerrar_sin_documento", "estado": "aprobada"}))   # cerrar sin documento no es un $0
+        self.assertFalse(self.regla({"id": 4, "tipo": "exceder_saldo", "estado": "aprobada"}))
+
+    def test_datos_raros_no_rompen(self):
+        for raro in (None, "x", 5, [], {}):
+            self.assertFalse(self.regla(raro), raro)
+        # ids que no son números: falso, sin lanzar
+        self.assertFalse(self.regla({"id": "a", "tipo": "cobro_cero", "estado": "aprobada"}, aut_id="z"))
+        self.assertFalse(self.regla({"id": "a", "tipo": "crear_sin_documento", "estado": "aprobada", "motivo": "garantia", "visita_creada_id": "x"}))
+
+    def test_la_puerta_deja_cerrar_la_ot_que_nacio_de_una_autorizacion_de_garantia_sin_pedir_otra(self):
+        aut = {"id": 8, "tipo": "crear_sin_documento", "estado": "aprobada", "motivo": "garantia", "visita_creada_id": 354}
+        base = {"modalidad_cobro": "garantia", "cobro_cero_motivo": "garantia", "autorizaciones": [aut]}
+        r = P(dict(base, id=354, cobro_cero_autorizacion_id=8), "cerrar")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual((r["via"], r["autorizacion_id"]), ("cobro_cero", 8))
+        # la misma autorización NO respalda a OTRA OT
+        r2 = P(dict(base, id=355), "cerrar")
+        self.assertFalse(r2["ok"])
+        self.assertEqual(r2["falta"], "autorizacion_cobro_cero")
+
+    def test_el_recorrido_y_la_puerta_usan_la_misma_funcion(self):
+        app = _arbol()[0]
+        self.assertIn("if _ot_aut_cubre_cero(a, vid, aut_id):", app)                            # la puerta
+        self.assertIn("next((a for a in auts if _ot_aut_cubre_cero(a, vid, v.get(\"cobro_cero_autorizacion_id\"))), None)", app)   # el recorrido
+
+    def test_la_frase_cuenta_quien_autorizo_cuando_y_quien_la_pidio(self):
+        import datetime
+        a = {"resuelto_por_nombre": "Daniel Aguilar", "resuelto_at": datetime.datetime(2026, 10, 23, 14, 59), "solicitado_por_nombre": "Aarón Urbina"}
+        f = AMB["_ot_aut_frase"]
+        self.assertEqual(f(a), "Autorizada por Daniel Aguilar el 23/10/2026 14:59 (la pidió Aarón Urbina)")
+        self.assertEqual(f(a, False), "autorizada por Daniel Aguilar el 23/10/2026 14:59 (la pidió Aarón Urbina)")
+        # si quien la pidió es quien la autorizó (un superadmin que la declara), no se repite el nombre
+        self.assertEqual(f(dict(a, solicitado_por_nombre="daniel aguilar")), "Autorizada por Daniel Aguilar el 23/10/2026 14:59")
+        self.assertEqual(f(dict(a, resuelto_at=None, solicitado_por_nombre="")), "Autorizada por Daniel Aguilar")
+        self.assertEqual(f(None), "")
+        self.assertEqual(f({}), "")                                       # sin autorización no hay frase
+        self.assertEqual(f({"id": 1}), "Autorizada por ?")                 # con una autorización sin dato de quién: nunca lanza ni inventa un nombre
 
 
 # ── Prueba estática: TODOS los caminos que crean una OT de cliente pasan por la puerta ────────────────────────

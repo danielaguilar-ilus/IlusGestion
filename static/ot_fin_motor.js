@@ -15,7 +15,11 @@
          completos con sus líneas del ERP, contadores, lo que nos costó).
    Escribe (todo con registro de quién y cuándo): POST /ot/api/<vid>/documentos, POST /ot/api/<vid>/centro-costo,
          POST /ot/api/<vid>/costo-proveedor, POST /ot/api/autorizaciones (+ aprobar si quien pide es superadmin).
-   Sin alert/confirm/prompt nativos (REGLA #1): ilusToast/ilusConfirm y un diálogo propio para formularios. */
+   Sin alert/confirm/prompt nativos (REGLA #1): ilusToast/ilusConfirm y un diálogo propio para formularios.
+   2026-10-25 (REGLA #44, Daniel con la OT-2026-00354: «contradicciones y muy poco explicativo… no tantas tarjetas»): v2. De arriba abajo: encabezado
+   (UN camino para tocar la plata) → UNA frase dinámica (rec.resumen) → «El recorrido» (seis filas con el texto completo de cada paso) | «La cuenta»
+   (UNA tarjeta: cifras + anexo del proveedor + centro de costo) → Documentos (con sus contadores) | Lo que nos costó → pie de superadmin. El
+   servidor cuenta la autorización del $0 con la MISMA regla que el candado de cierre, así que la pantalla no se puede contradecir. */
 (function (global) {
   'use strict';
 
@@ -163,9 +167,12 @@
     ]).then(function (r) {
       inst.el.classList.remove('cargando');
       if (!r[0].ok || !r[1].ok) {
+        /* La franja del anexo (la dibuja el servidor y adoptarAnexo la guardó dentro de la tarjeta) no se pierde si el bloque no se puede leer. */
+        var franjaAnx = inst.anexoNodo || document.getElementById('otdAnexoVinculoFicha');
         inst.el.innerHTML = '<div class="fm-err"><i class="bi bi-exclamation-triangle-fill"></i> ' +
           esc((r[0].j && r[0].j.error) || (r[1].j && r[1].j.error) || 'No se pudo leer las finanzas y documentos de esta OT.') +
           ' <button type="button" class="fm-btn" data-fm-act="recargar">Reintentar</button>' + (inst.editar || '') + '</div>';
+        if (franjaAnx) { inst.anexoNodo = franjaAnx; try { franjaAnx.hidden = false; inst.el.appendChild(franjaAnx); } catch (e) { } }
         /* 2026-10-08: la vista de solo lectura de la tarjeta «Finanzas de la OT» se oculta mientras el motor está presente;
            si el motor no pudo leer, vuelve a mostrarse para no dejar la OT sin ver sus finanzas. */
         try {
@@ -194,20 +201,35 @@
     return '<button type="button" class="fm-btn' + (extra ? ' ' + extra : '') + '" data-fm-act="' + act + '"><i class="bi ' + icono + '"></i> ' + esc(label) + '</button>';
   }
 
-  /* ── Encabezado en UNA fila (2026-10-08, Daniel: «compactemos todo en un mismo lugar») ──────────────────────────
-     Título + Actualizar + (solo superadmin, en la ficha) Corregir finanzas y OT con finanzas dudosas: todos los
-     botones de la misma altura. Los dos últimos los dibuja el servidor en la plantilla del motor (<template
-     data-fm-extra>, con su permiso) y aquí solo se acomodan; antes vivían en la tarjeta «Finanzas de la OT».
-     2026-10-08 (Daniel: «el Editar finanzas está de más y ocupa muchísimo espacio»): la tarjeta de edición ya no está en la página; vive
-     en el modal «Editar cobro y costos» (#otdFinModal, en detalle.html) y se abre con el botón de <template data-fm-edit> (el
-     servidor lo dibuja solo para quien puede editar: puede_metadata; nunca en el modal de cierre ni para técnicos). */
+  /* ═══ LA TARJETA v2 — 2026-10-25 (Daniel, con la OT-2026-00354: «contradicciones y muy poco explicativo… tratemos de resumir esto, no tantas tarjetas;
+     en una puedo sacar cuánto me cobraron, cuánto es mi margen y el porcentaje… entiendo que es un paso a paso, pero lo necesito más específico»).
+     Un SOLO sentido: ① ¿Se cobra? → ② Factura → ③ Cobré → ④ Me cobró el proveedor (= el anexo) → ⑤ Margen → ⑥ Cierre.
+       · Arriba, UNA frase dinámica (rec.resumen) que dice si la OT está lista para cerrar o qué le falta, con las mismas palabras de los pasos.
+       · A la izquierda, el recorrido con el texto ESPECÍFICO y completo de cada paso (nada de chips cortados); a la derecha, UNA tarjeta: la
+         cuenta (Cobramos · Nos cobraron · Ganamos/Perdimos con su %), el vínculo con el anexo del proveedor y el centro de costo.
+       · Los once contadores pasaron a unos pocos chips dentro de «Documentos» (solo los que dicen algo).
+       · La plata se toca por UN camino según el estado de la OT: abierta → «Editar cobro y costos»; cerrada → «Corregir finanzas». Lo avanzado
+         de superadmin vive en un pie tranquilo, con una línea que explica qué hace cada cosa. */
   function htmlCabecera(inst) {
     var p = inst.pan;
     var sub = esc(p.numero_ot || '') + (p.cliente ? ' · ' + esc(p.cliente) : '');
     return '<div class="fm-head"><h3><i class="bi bi-compass-fill"></i> Costos y documentación' + (inst.modo === 'modal' ? ' para cerrar' : ' de la OT') +
       (sub ? '<small>' + sub + '</small>' : '') + '</h3>' +
       '<div class="fm-head-a"><button type="button" class="fm-btn" data-fm-act="recargar" title="Volver a leer lo declarado"><i class="bi bi-arrow-clockwise"></i> Actualizar</button>' +
-      (inst.editar || '') + (inst.extra || '') + '</div></div>';
+      (inst.editar || '') + (p.cerrada ? (inst.btnCorregir || '') : '') + '</div></div>';
+  }
+
+  /* El pie de superadmin (solo en la ficha): «Corregir finanzas» (si la OT está abierta; en una cerrada ya es el botón de arriba) y «OT con
+     finanzas dudosas», cada uno con UNA línea que dice qué hace. Daniel preguntó si «Editar costos», «Corregir finanzas» y «OT con finanzas
+     dudosas» eran lo mismo: no lo son, y ahora la pantalla lo explica. */
+  function htmlPie(inst) {
+    if (inst.modo !== 'ficha' || !(inst.btnCorregir || inst.lnkDudosas)) return '';
+    var h = '<div class="fm-pie"><span class="fm-pie-t"><i class="bi bi-shield-lock"></i> Solo superadmin</span>';
+    if (inst.btnCorregir && !inst.pan.cerrada)
+      h += '<span class="fm-pie-i">' + inst.btnCorregir + '<small>reabre lo ya declarado y deja registrado quién lo cambió y por qué</small></span>';
+    if (inst.lnkDudosas)
+      h += '<span class="fm-pie-i">' + inst.lnkDudosas + '<small>lista todas las OT con la plata por revisar (sin cobro, sin costo o sin factura)</small></span>';
+    return h + '</div>';
   }
 
   /* Botón chico dentro de un chip del recorrido: el texto completo queda en el tooltip. */
@@ -215,45 +237,28 @@
     return '<button type="button" class="fm-btn fm-btn-chip' + (pri ? ' fm-btn-pri' : '') + '" data-fm-act="' + act + '" title="' + esc(titulo || label) + '"><i class="bi ' + icono + '"></i> ' + esc(label) + '</button>';
   }
 
-  /* Lo que dice cada chip del recorrido, en UNA línea. Lo que FALTA o está pendiente va completo (es lo que hay que
-     hacer); lo ya resuelto se resume, y el texto entero queda en el tooltip del chip y en las secciones de abajo. */
-  function ultimaCifra(t) { return t.indexOf(' = ') >= 0 ? t.split(' = ').pop() : t; }
-  /* Un mensaje largo se lee en su primera cláusula (hasta « (», «: » o «. »); el mensaje entero queda en el tooltip del chip
-     y, cuando es un aviso de la cuenta, escrito completo en la sección de la cuenta. */
-  function recorte(t) {
-    if (t.length <= 48) return t;
-    var corte = -1;
-    [' (', ': ', '. '].forEach(function (s) { var i = t.indexOf(s, 12); if (i > 0 && (corte < 0 || i < corte)) corte = i; });
-    return corte > 0 ? t.slice(0, corte) : t;
+  /* LA frase de arriba: la dice el servidor (rec.resumen) con las mismas reglas que los pasos, así que no puede contradecirlos. */
+  var ICONO_RESUMEN = { listo: 'bi-check-circle-fill', cerrada: 'bi-lock-fill', espera: 'bi-hourglass-split', falta: 'bi-exclamation-circle-fill' };
+  function htmlResumen(inst) {
+    var r = inst.rec && inst.rec.resumen;
+    if (!r || !r.titulo) return '';
+    /* Lo que se cobra no puede pasar del saldo de las facturas (el servidor frena el cierre por saldo consumido): se mide en el panorama, no en el
+       recorrido, así que la frase lo suma acá para no decir «Lista para cerrar» cuando el cierre se va a rechazar. */
+    var sal = inst.pan && inst.pan.saldo, via = (inst.rec.puerta && inst.rec.puerta.via) || '';
+    if (r.estado === 'listo' && sal && sal.excedido && inst.rec.fin && inst.rec.fin.cobra && !inst.rec.cerrada && via !== 'autorizacion_cerrar' && via !== 'pendiente_madre')
+      r = { estado: 'falta', titulo: 'Falta resolver el saldo de la factura: lo que se cobra pasa de lo que le queda' };
+    return '<div class="fm-resumen ' + esc(r.estado || 'falta') + '" role="status"><i class="bi ' + (ICONO_RESUMEN[r.estado] || 'bi-info-circle-fill') + '"></i><b>' + esc(r.titulo) + '</b></div>';
   }
-  function estadoCorto(inst, p) {
-    var t = String(p.texto || ''), fin = (inst.rec && inst.rec.fin) || {}, interna = esInterna(inst);
-    if (p.estado === 'falta' || p.estado === 'pendiente') {
-      if (p.n === 1) {
-        var ps = t.split(' · ');
-        if (ps.length > 2) return ps[1].split(':')[0] + ' · ' + ps[ps.length - 1];   /* «Garantía · sin autorización de Daniel» */
-      }
-      return recorte(t);
-    }
-    if (p.n === 1) return t.split(' · ').slice(0, 2).map(function (s) { return s.split(':')[0]; }).join(' · ');
-    if (p.n === 2) return interna ? 'No necesita documento' : t.split(' · ')[0];
-    if (p.n === 3) return interna ? 'Sin cobro' : ultimaCifra(t);
-    if (p.n === 4) return ultimaCifra(t);
-    if (p.n === 5) {
-      var q = fin.queda || {}, m = fin.me_cobraron || {};
-      if (fin.cobra && q.mostrar) return 'Queda ' + clp(q.total) + (q.pct != null ? ' · ' + String(q.pct).replace('.', ',') + ' %' : '');
-      if (!fin.cobra && m.total != null && !m.falta_tecnico) return 'Nos costó ' + clp(m.total);
-      return t;
-    }
-    if (p.n === 6) return t.split(' · ')[0];
-    return t;
-  }
+
+  /* ¿El costo del proveedor viene de un anexo vivo? (REGLA #34: el costo de la OT y el anexo son UN solo valor). */
+  function anexoVivo(inst) { return (inst.rec && inst.rec.anexo) || null; }
 
   function htmlPasos(inst) {
     var rec = inst.rec, puede = inst.pan.puede_editar || (inst.pan.cerrada && inst.pan.puede_regularizar);
     var pend = rec.solicitud_pendiente;
     var html = '';
     var interna = esInterna(inst);
+    var ax = anexoVivo(inst);
     if (pend && !interna) {
       html += '<div class="fm-espera"><i class="bi bi-hourglass-split"></i><div><b>Esperando autorización de ' + CAMPANA_DAN + ' desde ' + esc(pend.solicitado_at) + '</b>' +
         '<span>' + esc(pend.tipo_txt) + (pend.motivo_txt ? ' · ' + esc(pend.motivo_txt) : '') + ' · la pidió ' + esc(pend.solicitado_por_nombre) + '. ' +
@@ -264,7 +269,7 @@
       html += '<div class="fm-rechazo" id="fmRechazo"><i class="bi bi-x-octagon-fill"></i><div><b>No se pudo cerrar la OT</b><span>' + esc(inst.rechazo.error || '') + '</span></div>' +
         accionDeRechazo(inst.rechazo) + '</div>';
     }
-    /* El recorrido: UNA franja de 6 chips (círculo de estado + título corto + una línea de estado). */
+    /* El recorrido: seis filas, cada una con su círculo de estado, el título y el texto ESPECÍFICO y completo del paso. */
     html += '<ol class="fm-pasos">';
     (rec.pasos || []).forEach(function (p) {
       var act = '';
@@ -273,13 +278,16 @@
         if (p.n === 1 && !interna) act = botonChip('pedirCero', 'Pedir autorización', 'bi-shield-check', false, 'Pedir autorización del $0');
         else if (p.n === 2 && !interna) act = botonChip('ligarDoc', 'Agregar factura', 'bi-link-45deg', true, 'Agregar factura o boleta') + botonChip('pedirCierre', 'Pedir autorización', 'bi-shield-lock', false, 'Pedir autorización a ' + CAMPANA_DAN);
         else if (p.n === 3 && !interna && inst.pan.puede_editar) act = botonChip('declararCobro', 'Declarar cobro', 'bi-cash-coin', false, 'Declarar lo que cobré');
-        else if (p.n === 4 && inst.pan.puede_editar) act = botonChip('corregirProv', 'Declarar costo', 'bi-pencil-square', false, 'Declarar lo que cobró el proveedor');
+        /* Con un anexo vivo el costo ES el del anexo: la salida es alinearlo con un clic, no escribirlo a mano (el servidor lo rechazaría). */
+        else if (p.n === 4 && inst.pan.puede_editar && ax && ax.abierta && ax.vinculo !== 'alineado' && global.otdCostoDesdeAnexo)
+          act = botonChip('usarAnexo', 'Usar el valor del anexo', 'bi-link-45deg', true, 'Dejar el costo de la OT igual al del Anexo N° ' + ax.numero);
+        else if (p.n === 4 && inst.pan.puede_editar && !(ax && ax.abierta)) act = botonChip('corregirProv', 'Declarar costo', 'bi-pencil-square', false, 'Declarar lo que cobró el proveedor');
         else if (p.n === 6 && !pend && !interna && p.accion === 'pedir_aut_perdida') act = botonChip('pedirPerdida', 'Pedir autorización', 'bi-shield-exclamation', true, 'Pedir a ' + CAMPANA_DAN + ' la autorización para cerrar con pérdida');
         else if (p.n === 6 && !pend && !interna) act = botonChip('pedirCierre', 'Pedir autorización', 'bi-shield-lock', false, 'Pedir autorización a ' + CAMPANA_DAN);
       }
-      html += '<li class="fm-paso ' + esc(p.estado) + (p.clase ? ' c-' + esc(p.clase) : '') + '" title="' + esc('Paso ' + p.n + ' · ' + p.titulo + ': ' + (p.texto || '')) + '">' +
+      html += '<li class="fm-paso ' + esc(p.estado) + (p.clase ? ' c-' + esc(p.clase) : '') + '" data-paso="' + esc(p.n) + '">' +
         '<span class="fm-circ"><i class="bi ' + (ICONO_PASO[p.estado] || 'bi-circle') + '"></i></span>' +
-        '<div class="fm-paso-c"><b>' + p.n + '. ' + esc(p.titulo) + '</b><span class="fm-paso-e">' + esc(estadoCorto(inst, p)) + '</span></div>' +
+        '<div class="fm-paso-c"><b>' + p.n + '. ' + esc(p.titulo) + '</b><span class="fm-paso-e">' + esc(p.texto || '') + '</span></div>' +
         (act ? '<div class="fm-paso-a">' + act + '</div>' : '') + '</li>';
     });
     return html + '</ol>';
@@ -297,32 +305,28 @@
     return boton(m, a.label || 'Resolver', 'bi-arrow-right-circle', 'fm-btn-pri');
   }
 
+  /* Los contadores, ahora DENTRO de «Documentos» y solo los que dicen algo (2026-10-25, Daniel: «no tantas tarjetas»): antes eran once chips fijos, con ceros y
+     datos repetidos (documentos con servicio / líneas de servicio). Ahora: qué tipo de documentos hay, cuáles traen instalación o despacho y, si pasa, el aviso
+     de que otra OT usa su saldo o que se agotó. El detalle de cada uno va en su tooltip. */
   function htmlContadores(inst) {
     var c = inst.pan.contadores || {};
-    if (esInterna(inst) && !(c.total || 0)) return '';   /* trabajo interno: no hay documentos que contar */
+    if (!(c.total || 0)) return '';   /* trabajo interno o sin documentos: no hay nada que contar */
     var baja = c.notas_venta_dadas_de_baja || 0;
-    /* Una sola fila de chips chicos que se ajustan. El detalle de cada uno va en su tooltip; solo lo que avisa algo
-       (usado en otra OT, saldo agotado, falta la factura, documentos sin leer) se escribe al lado. */
-    function tile(n, titulo, sub, cls, ver) {
-      return '<span class="fm-tile ' + (cls || '') + (n ? '' : ' cero') + '"' + (sub ? ' title="' + esc(titulo + ': ' + sub) + '"' : '') + '><b>' + n + '</b><span>' + esc(titulo) + '</span>' +
-        (ver && sub ? '<small>' + esc(sub) + '</small>' : '') + '</span>';
+    var chips = '';
+    function tile(n, titulo, sub, cls) {
+      if (!n) return;
+      chips += '<span class="fm-tile ' + (cls || '') + '"' + (sub ? ' title="' + esc(titulo + ': ' + sub) + '"' : '') + '><b>' + n + '</b><span>' + esc(titulo) + '</span></span>';
     }
-    var usadas = c.docs_usados_en_otras || 0, agot = c.docs_saldo_agotado || 0;
-    /* 2026-10-08 (Daniel: «este nuevo motor indica todo cierto en un panel: cuántas facturas están involucradas y
-       cuántas tienen el servicio de instalación y despacho, y si se usó anteriormente»). */
-    return '<div class="fm-tiles">' +
-      tile(c.total || 0, 'Documentos involucrados', 'Todos los de esta OT', '') +
-      tile(c.docs_con_servicio || 0, 'Con instalación o servicio', 'Traen línea ZZ de servicio', 'ser') +
-      tile(c.docs_con_despacho || 0, 'Con despacho', 'Traen línea ZZENVIO', 'des') +
-      tile(usadas, 'Usados en otras OT', usadas ? 'Otra OT ya toma plata de ellos' : 'Nadie más los usa', usadas ? 'warn' : '', usadas) +
-      tile(agot, 'Saldo agotado', agot ? 'No queda nada por cobrar' : 'Todos con saldo', agot ? 'mal' : '', agot) +
-      tile(c.facturas || 0, 'Facturas y boletas', 'Documentos que cobran', 'ok') +
-      tile(c.notas_venta || 0, 'Notas de venta', baja ? (baja + ' ya dada' + (baja > 1 ? 's' : '') + ' de baja por factura') : ((c.notas_venta || 0) ? 'Falta agregar la factura' : ''), 'nv', c.notas_venta || 0) +
-      tile(c.cotizaciones || 0, 'Cotizaciones', 'Referencia', '') +
-      tile(c.servicios || 0, 'Servicios', c.incompleto ? ('Líneas de servicio (ZZ) · +' + (c.sin_leer || 0) + ' documento' + ((c.sin_leer || 0) > 1 ? 's' : '') + ' sin leer') : 'Líneas de servicio (ZZ)', 'ser', c.incompleto) +
-      tile(c.despachos || 0, 'Despachos', c.incompleto ? ('Líneas de despacho · +' + (c.sin_leer || 0) + ' sin leer') : 'Líneas de despacho', 'des', c.incompleto) +
-      tile(c.otros || 0, 'Otros documentos', 'Guías y otros', '') +
-      '</div>';
+    tile(c.facturas, 'Facturas y boletas', 'Documentos que cobran', 'ok');
+    tile(c.notas_venta, 'Notas de venta', baja ? (baja + ' ya dada' + (baja > 1 ? 's' : '') + ' de baja por factura') : 'Falta agregar la factura', 'nv');
+    tile(c.cotizaciones, 'Cotizaciones', 'Referencia', '');
+    tile(c.otros, 'Otros documentos', 'Guías y otros', '');
+    tile(c.docs_con_servicio, 'Con instalación o servicio', 'Traen línea ZZ de servicio' + (c.servicios ? ' · ' + c.servicios + ' línea' + (c.servicios > 1 ? 's' : '') : ''), 'ser');
+    tile(c.docs_con_despacho, 'Con despacho', 'Traen línea ZZENVIO' + (c.despachos ? ' · ' + c.despachos + ' línea' + (c.despachos > 1 ? 's' : '') : ''), 'des');
+    tile(c.docs_usados_en_otras, 'Usados en otras OT', 'Otra OT ya toma plata de ellos', 'warn');
+    tile(c.docs_saldo_agotado, 'Saldo agotado', 'No queda nada por cobrar', 'mal');
+    if (c.incompleto) tile(c.sin_leer || 1, 'Sin leer en Random', 'Documentos que Random no devolvió ahora: las cifras pueden estar incompletas', 'warn');
+    return chips ? '<div class="fm-tiles">' + chips + '</div>' : '';
   }
 
   /* Las líneas de un documento como filas de UNA tabla (la etiqueta Servicio/Despacho va en la primera columna). */
@@ -453,7 +457,8 @@
   function htmlSinDocs(inst) {
     var p = inst.pan, puede = p.puede_editar || (p.cerrada && p.puede_regularizar);
     if (esInterna(inst)) {
-      return '<div class="fm-sindoc interna"><i class="bi bi-info-circle"></i><b>' + esc(TXT_INTERNA) + '</b>' +
+      /* (el recorrido ya dice «Trabajo interno: no necesita documento ni autorización» en sus pasos: esta línea no lo repite) */
+      return '<div class="fm-sindoc interna"><i class="bi bi-info-circle"></i><b>Sin documentos: es un trabajo interno.</b>' +
         '<span>No tiene cliente: no hay a quién cobrarle ni factura que agregar.</span></div>';
     }
     return '<div class="fm-sindoc"><i class="bi bi-file-earmark-x"></i><b>Sin documentos aún.</b>' +
@@ -465,7 +470,8 @@
     var docs = inst.pan.documentos || [];
     if (!docs.length) return '';
     var h = '<div class="fm-sec-h"><h3>Documentos <small>' + docs.length + '</small></h3>' +
-      '<span class="fm-help">Cada documento con sus líneas de servicio y despacho, y lo que aporta al cobro.</span></div>';
+      '<span class="fm-help">Cada documento con sus líneas de servicio y despacho, y lo que aporta al cobro.</span></div>' +
+      htmlContadores(inst);     /* 2026-10-25: los contadores viven acá, y solo los que dicen algo */
     /* 2026-10-08 (revisión): el «Cobré» de la OT sale de lo declarado (zz_monto / despacho), no de las líneas leídas en
        Random. Si no coinciden, se dice: dos números distintos en la misma pantalla sin explicación confunden. */
     var fin = (inst.rec && inst.rec.fin) || null, sumaAp = 0, hayAp = false;
@@ -487,10 +493,13 @@
   /* «Lo que nos costó»: una fila por registro (técnico, despacho, repuestos). El total ya está en la cuenta de arriba
      («Me cobraron» / «Nos costó»): no se repite acá. */
   function htmlCostos(inst) {
-    var c = inst.pan.costos;
+    var c = inst.pan.costos, ax = anexoVivo(inst);
     var h = '<div class="fm-sec-h"><h3>Lo que nos costó</h3></div><div class="fm-cs">';
     (c.registros || []).forEach(function (r) {
-      h += '<div class="fm-ci' + (r.falta ? ' falta' : '') + '"><div class="fm-d"><b>' + esc(r.rotulo) + '</b><small>' + esc(r.detalle) + '</small></div>' +
+      /* REGLA #34: lo que se le paga al técnico o proveedor ES el total de su anexo vivo: con un anexo, esas filas llevan su candado. */
+      var lock = (ax && (r.clave === 'tecnico' || r.clave === 'despacho'))
+        ? '<span class="fm-lock" title="El costo de la OT y el anexo del proveedor son un solo valor"><i class="bi bi-lock-fill"></i> Anexo N° ' + esc(ax.numero) + (ax.firmado ? ' · firmado' : ' · vigente') + '</span>' : '';
+      h += '<div class="fm-ci' + (r.falta ? ' falta' : '') + '"><div class="fm-d"><b>' + esc(r.rotulo) + '</b><small>' + esc(r.detalle) + '</small>' + lock + '</div>' +
         '<span class="fm-n">' + (r.falta ? '<span class="fm-pend">Falta declararlo</span>' : clp(r.monto)) + '</span></div>';
     });
     h += '</div>';
@@ -551,11 +560,16 @@
      todo bien detalladito»): «Cobramos $X» (servicio + despacho) · «Nos cobraron $Y» (técnico o proveedor + despacho + repuestos) y el
      resultado en grande y con color: «Ganamos $Z (n %)» o «Perdimos $Z»; si no se cobra (garantía, regalía, interno): «No se cobra ·
      nos costó $Y». Debajo, la mini-tabla por negocio y UNA línea por dato: de dónde sale lo cobrado, el valorizado de referencia, quién
-     lo declaró y cuándo, y la autorización si la hay. La frase completa del modelo viaja en el tooltip. */
+     lo declaró y cuándo, y la autorización si la hay. La frase completa del modelo viaja en el tooltip.
+     2026-10-25 (Daniel: «no tantas tarjetas… en una puedo sacar cuánto me cobraron, cuánto es mi margen, cuánto es el porcentaje»): es LA tarjeta:
+     además de las cifras trae, adentro, el vínculo con el anexo del proveedor (el costo es UNO solo: REGLA #34) y el centro de costo al que se carga
+     (una garantía, regalía o contrato SIEMPRE se carga a uno, así se puede reportar). La constancia de quién autorizó el $0 ya no se repite acá: la
+     cuenta el paso ① del recorrido, con las mismas palabras (así tarjeta y recorrido no pueden contradecirse). */
   function htmlCuenta(inst) {
-    var fin = inst.rec.fin, cc = inst.rec.cobro_cero || {}, cobra = fin.cobra, M = fin.me_cobraron || {}, C = fin.cobre || {}, Q = fin.queda || {};
+    var fin = inst.rec.fin, cobra = fin.cobra, M = fin.me_cobraron || {}, C = fin.cobre || {}, Q = fin.queda || {};
     var clase = (cobra && Q.mostrar && Q.total < 0) ? 'rojo' : (fin.clase || 'gris');
     var h = '<section class="fm-cta c-' + esc(clase) + '" aria-label="La cuenta de esta OT" title="' + esc(fin.frase || '') + '">';
+    h += '<h4 class="fm-col-t"><i class="bi bi-calculator-fill"></i> La cuenta</h4>';
     /* El semáforo («Margen sano», «Pérdida», «Falta…») va al final de la misma línea (baja si no cabe). */
     var sem = (cobra || M.falta_tecnico) ? '<span class="fm-sem">' + esc(fin.label || '') + '</span>' : '';
     h += '<div class="fm-res">';
@@ -569,7 +583,7 @@
       else { rot = 'Resultado'; val = '—'; pie = 'falta un dato para calcularlo'; }
       h += '<div class="fm-res-i q"><small>' + rot + '</small><b>' + val + (pie ? '<em>' + (Q.mostrar && Q.total !== 0 ? '(' + esc(pie) + ')' : esc(pie)) + '</em>' : '') + '</b></div>' + sem;
     } else {
-      var motivo = cc.motivo_txt || String(fin.cobertura_txt || '').split(':')[0];
+      var motivo = (inst.rec.cobro_cero || {}).motivo_txt || String(fin.cobertura_txt || '').split(':')[0];
       h += '<div class="fm-res-i q"><small>No se cobra</small><b>' + (M.falta_tecnico ? 'falta declarar lo que nos costó' : 'nos costó ' + clp(M.total)) + '</b></div>' +
         '<span class="fm-motivo">' + esc(motivo) + '</span>' + sem;
     }
@@ -590,13 +604,17 @@
     if (cobra && aprob && !esInterna(inst))
       det.push({ t: 'Autorización: ' + esc(aprob.tipo_txt) + (aprob.motivo_txt ? ' · ' + esc(aprob.motivo_txt) : '') + ', aprobada por ' + esc(aprob.resuelto_por_nombre) + (aprob.resuelto_at ? ' el ' + esc(aprob.resuelto_at) : '') });
     if (det.length) h += '<ul class="fm-det">' + det.map(function (x) { return '<li' + (x.o ? ' class="o"' : '') + '>' + x.t + '</li>'; }).join('') + '</ul>';
-    /* La constancia de quién autorizó el $0 (con su argumento completo). En un trabajo interno no hay autorización: la línea
-       «Trabajo interno: no necesita documento ni autorización» de más abajo ya lo dice, no se repite. */
-    if (!cobra && !esInterna(inst)) {
-      h += '<p class="fm-const">' + (cc.constancia ? esc(cc.constancia) : '<em>Sin autorización de ' + CAMPANA_DAN + ' todavía.</em>') + '</p>';
-    }
     (fin.avisos || []).forEach(function (a) { h += '<div class="fm-aviso">' + esc(a) + '</div>'; });
-    return h + '</section>';
+    /* El vínculo con el anexo del proveedor (REGLA #34): en la ficha, el servidor lo dibuja con su macro y acá se ADOPTA (ver adoptarAnexo);
+       en el modal de cierre solo se dice en una línea de qué anexo sale lo que nos cobraron. */
+    var ax = anexoVivo(inst);
+    if (ax && inst.modo === 'ficha') h += '<div class="fm-anx" data-fm-anx hidden></div>';
+    else if (ax) h += '<p class="fm-anx-l"><i class="bi bi-lock-fill"></i> Lo que nos cobraron es el del <b>Anexo N° ' + esc(ax.numero) + '</b> (' + (ax.firmado ? 'firmado' : 'vigente') + ', ' + esc(ax.total_txt) + ')' +
+      (ax.vinculo === 'alineado' ? '' : (ax.vinculo === 'sin_declarar' ? ' y la OT aún no lo declara' : ' y la OT dice ' + esc(ax.costo_txt || 'otro valor')) + ': ' +
+        /* Con la OT abierta el botón alinea ahí mismo (y vuelve a abrir este cierre); cerrada, solo se corrige desde la ficha. */
+        (ax.abierta && global.otdCostoDesdeAnexo ? '<span class="fm-anx-b">' + botonChip('usarAnexo', 'Usar el valor del anexo', 'bi-link-45deg', true, 'Dejar el costo de la OT igual al del Anexo N° ' + ax.numero) + '</span>'
+          : (ax.abierta ? 'alinéalo desde la ficha de la OT' : 'se corrige desde la ficha de la OT') + '.')) + '</p>';
+    return h + htmlCentro(inst) + '</section>';
   }
 
   /* Centro de costo con BOTONES (Daniel 2026-10-08: «hazlo con botones, dinámico, bonito»): el mismo diseño que los
@@ -609,15 +627,20 @@
   };
 
   function htmlCentro(inst) {
-    var c = inst.pan.centro, puede = inst.pan.puede_editar;
-    var h = '<section class="fm-cen"><h4>Centro de costo <small class="' + (c.valor ? 'ok' : 'mal') + '">' + (c.valor ? 'declarado' : 'obligatorio') + '</small></h4>';
+    var c = inst.pan.centro, puede = inst.pan.puede_editar, fin = (inst.rec && inst.rec.fin) || {};
+    /* 2026-10-25 (Daniel: «garantías o coberturas asociadas a centro de costo y poder reportar esas situaciones»): una OT que no se cobra
+       (garantía, regalía, arriendo o contrato) SIEMPRE se carga a un centro de costo, y el Excel de OT suma lo que costaron por cobertura y centro. */
+    var sinCobro = !fin.cobra && !esInterna(inst);
+    var h = '<section class="fm-cen"><h4>' + (sinCobro ? 'Se carga a este centro de costo' : 'Centro de costo') + ' <small class="' + (c.valor ? 'ok' : 'mal') + '">' + (c.valor ? 'declarado' : 'obligatorio') + '</small></h4>';
     h += '<div class="fm-cc-grid" data-fm-cc-grid role="group" aria-label="Centro de costo">' + c.opciones.map(function (o) {
       var m = CC_META[o.v] || { cls: '', ico: 'bi-circle', sub: '' };
       var on = o.v === c.valor;
       return '<button type="button" class="fm-cc ' + m.cls + (on ? ' on' : '') + '" data-fm-cc="' + esc(o.v) + '" aria-pressed="' + (on ? 'true' : 'false') + '" title="' + esc(o.n + (m.sub ? ' · ' + m.sub : '')) + '"' +
         (puede ? '' : ' disabled') + '><i class="bi ' + m.ico + '"></i><b>' + esc(o.n) + '</b></button>';
     }).join('') + '</div>' +
-      '<span class="fm-help">' + (inst.pan.cerrada ? 'OT cerrada: el superadministrador lo corrige con «Corregir finanzas» (queda registrado).' : 'Se guarda al elegirlo y queda registrado. Sin centro de costo la OT no se cierra.') + '</span></section>';
+      '<span class="fm-help">' + (inst.pan.cerrada ? 'OT cerrada: el superadministrador lo corrige con «Corregir finanzas» (queda registrado).'
+        : (sinCobro ? 'Lo que no se le cobra al cliente (garantía, regalía, arriendo o contrato) siempre se carga a un centro de costo: así se puede reportar cuánto cuesta cada cobertura. Se guarda al elegirlo y queda registrado.'
+          : 'Se guarda al elegirlo y queda registrado. Sin centro de costo la OT no se cierra.')) + '</span></section>';
     return h;
   }
 
@@ -635,7 +658,11 @@
     return h + '</ul>';
   }
 
-  /* «Modificar»: dentro de la sección «Lo que nos costó». `sinLigar`: la línea «Sin documentos aún» ya ofrece agregar. */
+  /* «Modificar»: dentro de la sección «Lo que nos costó». `sinLigar`: la línea «Sin documentos aún» ya ofrece agregar.
+     2026-10-25: los botones dependen del ESTADO de la OT (nada que ya está hecho se ofrece de nuevo):
+       · $0 ya autorizado (garantía, regalía…) → solo «Sí se cobra: quitar…»; «No se cobra: declarar $0» solo si todavía no hay autorización;
+       · con un anexo vivo el costo del proveedor ES el del anexo (REGLA #34): se dice y la salida es «Usar el valor del anexo» (o emitir uno nuevo
+         si está firmado), no escribirlo a mano (el servidor lo rechazaría con COSTO_ES_DEL_ANEXO). */
   function htmlAcciones(inst, sinLigar) {
     var p = inst.pan;
     if (!(p.puede_editar || (p.cerrada && p.puede_regularizar))) return '';
@@ -645,6 +672,7 @@
       return '<div class="fm-acciones"><span>Modificar</span>' +
         boton('corregirProv', 'Corregir lo que cobró el proveedor', 'bi-pencil-square') + '</div>';
     }
+    var ax = anexoVivo(inst);
     var h = '<div class="fm-acciones"><span>Modificar</span>' + (sinLigar ? '' : boton('ligarDoc', 'Agregar factura, boleta o nota de venta', 'bi-link-45deg', 'fm-btn-pri'));
     if (p.cerrada) {
       h += boton('pedirCierre', p.superadmin ? 'Autorizar sin documento' : 'Pedir autorización a ' + CAMPANA_DAN, 'bi-shield-lock') +
@@ -654,25 +682,45 @@
          salida para volver a cobrarla vive AQUÍ, donde se mira la plata. Antes solo existía más abajo en el modal y
          solo si la modalidad decía garantía (no si la marcaba `cubierto_por`). */
       var cobAct = ((inst.rec && inst.rec.fin) || {}).cobertura;
+      var yaAutorizada = !!(inst.rec && inst.rec.resumen && inst.rec.resumen.aut_usada_id);
       if (['garantia', 'sin_costo', 'regalia', 'arriendo_leasing'].indexOf(cobAct) >= 0) {
         h += boton('quitarCero', cobAct === 'garantia' ? 'Sí se cobra: quitar la garantía' : 'Sí se cobra: quitar el $0',
           'bi-arrow-counterclockwise', 'fm-btn-pri');
       }
-      h += boton('pedirCero', 'No se cobra: declarar $0', 'bi-shield-check') +
-        boton('corregirProv', 'Corregir lo que cobró el proveedor', 'bi-pencil-square') +
-        boton('pedirCierre', p.superadmin ? 'Autorizar cierre sin documento' : 'Pedir autorización a ' + CAMPANA_DAN, 'bi-shield-lock');
+      if (!yaAutorizada) h += boton('pedirCero', 'No se cobra: declarar $0', 'bi-shield-check');
+      if (ax) {
+        /* («Usar el valor del anexo» ya está en el paso ④ y en la franja del anexo de la cuenta: aquí solo se dice por qué no se escribe a mano.) */
+        h += '<span class="fm-help fm-help-ancho"><i class="bi bi-lock-fill"></i> El costo del proveedor lo fija el Anexo N° ' + esc(ax.numero) + ' (' + (ax.firmado ? 'firmado' : 'vigente') + '): ' +
+          (ax.firmado ? 'para cambiarlo, emite un anexo nuevo' : 'para cambiarlo, corrige el monto en el anexo') + ' y la OT lo sigue sola.</span>';
+      } else {
+        h += boton('corregirProv', 'Corregir lo que cobró el proveedor', 'bi-pencil-square');
+      }
+      h += boton('pedirCierre', p.superadmin ? 'Autorizar cierre sin documento' : 'Pedir autorización a ' + CAMPANA_DAN, 'bi-shield-lock');
     }
     return h + '</div>';
+  }
+
+  /* El vínculo costo ↔ anexo (REGLA #34) lo dibuja el servidor con su macro de siempre (templates/ot2/_anexo_vinculo.html, con sus botones) DEBAJO del
+     bloque; acá se ADOPTA dentro de la tarjeta de la cuenta, justo junto a «Nos cobraron», para que se lea donde está el número (2026-10-25). El nodo se
+     guarda la primera vez: al repintar, el bloque se reescribe entero y el nodo se vuelve a poner en su lugar (no se duplica ni se pierde). */
+  function adoptarAnexo(inst) {
+    try {
+      if (inst.modo !== 'ficha') return;
+      var slot = inst.el.querySelector && inst.el.querySelector('[data-fm-anx]');
+      if (!slot) return;
+      if (!inst.anexoNodo) inst.anexoNodo = document.getElementById('otdAnexoVinculoFicha');
+      if (inst.anexoNodo) { slot.appendChild(inst.anexoNodo); slot.hidden = false; }
+    } catch (e) { }
   }
 
   function pintar(inst) {
     var p = inst.pan, rec = inst.rec;
     var hayDocs = (p.documentos || []).length > 0;
     var puedeLigar = !esInterna(inst) && !!(p.puede_editar || (p.cerrada && p.puede_regularizar));
-    /* 2026-10-08 (Daniel: «la finanza y finanzas y documentos de la OT te quedó mucho espacio… compactemos todo en un
-       mismo lugar»): UN solo bloque. Encabezado en una fila → franja de 6 chips → contadores → la cuenta en una línea
-       con el centro de costo al lado → dos columnas BALANCEADAS: «Documentos» a la izquierda; «Lo que nos costó» con
-       «Modificar» a la derecha. Sin documentos: una línea y «Lo que nos costó» a todo el ancho (sin hueco). */
+    /* 2026-10-25 (Daniel, con la OT-2026-00354: «contradicciones y muy poco explicativo… no tantas tarjetas»). De arriba abajo: encabezado en una fila
+       (un solo camino para tocar la plata) → UNA frase que dice si la OT está lista para cerrar o qué le falta → dos columnas: «El recorrido» (seis
+       filas con el texto específico de cada paso) | «La cuenta» (UNA tarjeta con las cifras, el anexo y el centro de costo) → documentos | lo que nos
+       costó (REGLA #16: la fila de arriba mide parecido a cada lado) → pie de superadmin. Sin documentos: una línea y «Lo que nos costó» a todo el ancho. */
     var cuerpo;
     if (hayDocs) {
       cuerpo = '<div class="fm-main"><section class="fm-sec fm-izq">' + htmlDocs(inst) + '</section>' +
@@ -684,10 +732,12 @@
     }
     inst.el.innerHTML =
       htmlCabecera(inst) +
-      '<section class="fm-s1">' + htmlPasos(inst) + '</section>' +
-      htmlContadores(inst) +
-      '<div class="fm-fila">' + htmlCuenta(inst) + htmlCentro(inst) + '</div>' +
-      cuerpo;
+      htmlResumen(inst) +
+      '<div class="fm-top"><section class="fm-s1" aria-label="El recorrido de la plata de esta OT"><h4 class="fm-col-t"><i class="bi bi-signpost-split-fill"></i> El recorrido</h4>' +
+        htmlPasos(inst) + '</section>' + htmlCuenta(inst) + '</div>' +
+      cuerpo +
+      htmlPie(inst);
+    adoptarAnexo(inst);
     var r = inst.el.querySelector('#fmRechazo');
     if (r && inst.rechazo && inst.rechazo.__nuevo) { inst.rechazo.__nuevo = false; try { r.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { } }
   }
@@ -1030,6 +1080,17 @@
     pedirCierre: function (inst) { return pedirAutorizacion(inst, 'cerrar_sin_documento'); },
     pedirPerdida: function (inst) { return pedirPerdida(inst); },
     irFinanzas: function (inst) { return irFinanzas(inst); },
+    /* REGLA #34: «Usar el valor del anexo» (deja el costo de la OT igual al del anexo vivo, con constancia en la bitácora). Vive en la ficha de la OT. */
+    usarAnexo: function (inst) {
+      if (!global.otdCostoDesdeAnexo) { toast('Alinea el costo con el anexo desde la ficha de la OT.', 'info'); return; }
+      /* En el modal de cierre, la página se recarga al alinear: el aviso hace que el cierre se vuelva a abrir solo. Si la persona cancela (la página
+         NO se recarga), el aviso se retira para que un recargo posterior no abra el cierre sin que nadie lo pida. */
+      var k = 'otfReabrirCierre_' + inst.vid;
+      try { if (inst.modo === 'modal') sessionStorage.setItem(k, '1'); } catch (e) { }
+      return Promise.resolve(global.otdCostoDesdeAnexo(inst.vid)).then(function () {
+        setTimeout(function () { try { sessionStorage.removeItem(k); } catch (e) { } }, 3000);
+      });
+    },
     declararCobro: function (inst) { return declararCobro(inst); },
     /* El cierre fue rechazado por saldo consumido: sus salidas se ofrecen en el mismo modal. */
     resolverSaldo: function (inst) { return resolverSaldo(inst, inst.rechazo); },
@@ -1048,6 +1109,13 @@
     /* Botones extra del encabezado (solo superadmin: Corregir finanzas y OT con finanzas dudosas): los dibuja la
        plantilla del servidor, con su permiso, dentro de <template data-fm-extra>; se leen ANTES del primer pintado. */
     try { var ex = el.querySelector && el.querySelector('template[data-fm-extra]'); inst.extra = ex ? ex.innerHTML : ''; } catch (e) { inst.extra = ''; }
+    /* 2026-10-25: «Corregir finanzas» (el botón) y «OT con finanzas dudosas» (el enlace) se separan para acomodarlos según el estado de la OT: la
+       corrección va arriba si la OT está cerrada y, si no, en el pie junto a una línea que explica qué hace cada uno. */
+    try {
+      var mb = /<button[\s\S]*?<\/button>/.exec(inst.extra || ''), ma = /<a\s[\s\S]*?<\/a>/.exec(inst.extra || '');
+      inst.btnCorregir = mb ? mb[0] : '';
+      inst.lnkDudosas = ma ? ma[0] : '';
+    } catch (e) { inst.btnCorregir = ''; inst.lnkDudosas = ''; }
     try { var ed = el.querySelector && el.querySelector('template[data-fm-edit]'); inst.editar = ed ? ed.innerHTML : ''; } catch (e) { inst.editar = ''; }
     montados.push(inst);
     el.addEventListener('click', function (e) {

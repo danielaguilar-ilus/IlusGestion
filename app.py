@@ -97378,11 +97378,56 @@ def _ot_puerta_autorizaciones_de(vid):
     try:
         return [dict(r) for r in (mysql_fetchall(
             "SELECT id, tipo, estado, motivo, argumento, centro_costo, valorizado_clp, solicitado_por_nombre, "
-            "       solicitado_at, resuelto_por_nombre, resuelto_at, comentario "
+            "       solicitado_at, resuelto_por_nombre, resuelto_at, comentario, visita_creada_id "
             "  FROM mant_ot_autorizaciones WHERE visita_id=%s ORDER BY id DESC", (vid,)) or [])]
     except Exception as e:
         print(f"[ot-puerta] autorizaciones vid={vid}: {type(e).__name__}", flush=True)
         return []
+
+
+def _ot_aut_cubre_cero(a, vid, aut_id=None):
+    """¿Esta autorización APROBADA respalda el $0 (garantía, regalía, arriendo/leasing) de la OT `vid`? UNA sola regla para la puerta de
+    cierre y para el recorrido de la ficha (2026-10-25, Daniel con la OT-2026-00354: «arriba dice sin autorización de Daniel y abajo dice
+    Crear OT sin documento · Garantía, autorizada… ¿la pidió o no la pidió? Eso tiene que ser dinámico»). Cuenta:
+      · una 'cobro_cero' aprobada (si la OT apunta a una en particular, esa);
+      · la 'crear_sin_documento' aprobada CON LA QUE NACIÓ esta OT cuando su motivo ya era un $0: Daniel la aprobó viendo el motivo, el argumento
+        y el centro de costo, y _ot_puerta_aplicar dejó la OT apuntando a ella (cobro_cero_autorizacion_id) y la ligó (visita_creada_id).
+        Pedirle OTRA autorización por lo mismo al cerrar era la contradicción: la pantalla y el candado la ignoraban.
+    Una autorización de otra OT, sin aprobar o de otro motivo no cuenta (aquí solo llegan las de esta OT, pero se vuelve a exigir el vínculo)."""
+    if not isinstance(a, dict) or (a.get("estado") or "") != "aprobada":
+        return False
+    try:
+        tipo = a.get("tipo") or ""
+        aid = int(a.get("id") or 0)
+        pedida = int(aut_id) if aut_id else 0
+        if tipo == "cobro_cero":
+            return (not pedida) or aid == pedida
+        if tipo == "crear_sin_documento":
+            if (a.get("motivo") or "") not in _OT_COBRO_CERO_MOTIVOS:
+                return False
+            creada = int(a.get("visita_creada_id") or 0)
+            return bool((pedida and aid == pedida) or (vid and creada and creada == int(vid)))
+    except (TypeError, ValueError):
+        return False
+    return False
+
+
+def _ot_aut_frase(a, inicial=True):
+    """«Autorizada por Daniel Aguilar el 23/10/2026 14:59 (la pidió Aaron Urbina)»: UNA frase para contar una autorización, la misma en todo
+    el bloque de costos (la tarjeta «¿Se cobra?», los documentos y la lista de autorizaciones). `inicial`=False la deja en minúscula para
+    seguir una frase («Se cierra sin factura: autorizada por…»). Nunca lanza."""
+    if not a:
+        return ""
+    try:
+        quien = (a.get("resuelto_por_nombre") or "").strip() or "?"
+        cuando = chile_fmt_filter(a.get("resuelto_at")) if a.get("resuelto_at") else ""
+        pidio = (a.get("solicitado_por_nombre") or "").strip()
+    except Exception:
+        return ""
+    s = ("Autorizada" if inicial else "autorizada") + f" por {quien}" + (f" el {cuando}" if cuando else "")
+    if pidio and pidio.lower() != quien.lower():
+        s += f" (la pidió {pidio})"
+    return s
 
 
 def _ot_puerta_autorizaciones_lote(vids):
@@ -97396,7 +97441,7 @@ def _ot_puerta_autorizaciones_lote(vids):
     try:
         for r in (mysql_fetchall(
                 "SELECT id, visita_id, tipo, estado, motivo, argumento, solicitado_por_nombre, solicitado_at, "
-                "       resuelto_por_nombre, resuelto_at, comentario FROM mant_ot_autorizaciones "
+                "       resuelto_por_nombre, resuelto_at, comentario, visita_creada_id FROM mant_ot_autorizaciones "
                 " WHERE visita_id IN (" + ",".join(["%s"] * len(ids)) + ") ORDER BY id DESC", tuple(ids)) or []):
             out[int(r["visita_id"])].append(dict(r))
     except Exception as e:
@@ -97907,8 +97952,8 @@ def _ot_puerta_documento(v, momento="crear", autorizacion=None, superadmin_decla
             motivo = "garantia" if (mod == "garantia" or cub == "garantia" or tipo == "garantia") else "regalia"
         aut_id = v.get("cobro_cero_autorizacion_id")
         for a in auts:
-            if a.get("tipo") == "cobro_cero" and a.get("estado") == "aprobada" and (
-                    not aut_id or int(a.get("id") or 0) == int(aut_id)):
+            # 2026-10-25: también cuenta la autorización con la que NACIÓ esta OT si ya era un $0 (garantía…): ver _ot_aut_cubre_cero.
+            if _ot_aut_cubre_cero(a, vid, aut_id):
                 return _ok("cobro_cero", autorizacion_id=a.get("id"), motivo=motivo)
         # 🔒 2026-10-08: un $0 aprobado vale solo para LA OT para la que se pidió (nunca para crear otra).
         if isinstance(autorizacion, dict) and autorizacion.get("tipo") == "cobro_cero" \
@@ -99896,15 +99941,43 @@ def ot_api_recorrido(vid):
         docs_todos = []
     cob = fin["cobertura"]
     cerrada = (v.get("estado") or "") == "cerrada"
-    aut_cero = next((a for a in auts if a.get("tipo") == "cobro_cero" and a.get("estado") == "aprobada"), None)
+    # 2026-10-25: misma regla que la puerta. Solo cuenta si la OT ES un $0 (garantía, regalía…): en una OT que se cobra, un $0 autorizado de antes no pinta nada.
+    aut_cero = (next((a for a in auts if _ot_aut_cubre_cero(a, vid, v.get("cobro_cero_autorizacion_id"))), None)
+                if cob not in ("cobra", "contrato", "interno", "cubierta") else None)
     aut_cerrar = next((a for a in auts if a.get("tipo") == "cerrar_sin_documento" and a.get("estado") == "aprobada"), None)
+    via = (p_cerrar.get("via") or "") if p_cerrar.get("ok") else ""   # por dónde pasa la puerta de cierre: manda sobre lo que cuentan los pasos
+    en_firma = (v.get("estado") or "") in ("pendiente_aprobacion", "completada")   # solo en estos estados el servidor deja aprobar el cierre
+    ext = (v.get("proveedor_tipo") or "").strip().lower() == "externo"
     pend = next((a for a in auts if a.get("estado") == "pendiente"), None)
 
     def _const(a):
+        # 2026-10-25: la MISMA frase que cuenta el paso ① (_ot_aut_frase) + el argumento completo: una autorización no se puede contar dos veces distinto.
         if not a:
             return ""
-        return (f"Autorizado por {a.get('resuelto_por_nombre') or '?'} el "
-                f"{chile_fmt_filter(a.get('resuelto_at')) if a.get('resuelto_at') else ''}: {a.get('argumento') or ''}")
+        return _ot_aut_frase(a) + (f": {a.get('argumento')}" if a.get("argumento") else "")
+
+    # ═══ El recorrido en palabras ESPECÍFICAS (2026-10-25, Daniel con la OT-2026-00354: «contradicciones y muy poco explicativo… ¿la pidió o no la
+    # pidió? Eso tiene que ser dinámico… necesito que todo se facture»). Un SOLO sentido: ① ¿Se cobra? → ② Documento (la FACTURA manda; la nota de
+    # venta y la cotización son provisorias) → ③ Cobré → ④ Me cobró el proveedor (= el anexo) → ⑤ Margen / centro de costo → ⑥ Cierre. La autorización
+    # del $0 sale de UNA regla (_ot_aut_cubre_cero) y se cuenta con UNA frase (_ot_aut_frase): la tarjeta de arriba y la lista de autorizaciones de
+    # abajo ya no pueden decir cosas distintas.
+    centro_nom = dict(_OT2_CENTROS_COSTO).get((v.get("centro_costo") or "").strip(), "")
+    ax = None
+    if not interna:
+        try:
+            ax = _ot_anexo_vinculo_vista(v)
+        except Exception:
+            ax = None
+
+    def _doc_txt(x):
+        return f"{_OT_TIDO_TXT.get((x.get('tido') or '').upper(), x.get('tido'))} N° {x.get('nudo')}"
+
+    _VIA_TXT = {"documento": "tiene factura o boleta de Random", "contrato_real": "mantención de un contrato real",
+                "cobro_cero": "el $0 está autorizado por Daniel", "cobro_cero_superadmin": "el $0 lo declaró el superadministrador, con su argumento",
+                "autorizacion_cerrar": "cierre autorizado por Daniel, sin factura", "autorizacion_crear": "nació de una autorización de Daniel",
+                "nota_venta": "nota de venta (queda «Falta factura»)", "cotizacion": "cotización (solo sirve para crear la OT)",
+                "interna_sin_cliente": "trabajo interno", "cubierta_madre": "la cubre su instalación",
+                "cero_madre": "hereda el $0 autorizado de su instalación", "pendiente_madre": "la respalda el documento de su OT madre"}
 
     # ① ¿Se cobra?
     if cob == "cobra":
@@ -99919,18 +99992,41 @@ def ot_api_recorrido(vid):
             f" ({p_cerrar.get('madre_numero')})" if p_cerrar.get("madre_numero") else "")}
     else:
         if aut_cero:
-            p1 = {"estado": "hecho", "texto": f"$0 · {fin['cobertura_txt']} · {_const(aut_cero)}"}
+            # La constancia COMPLETA (quién, cuándo, quién la pidió y el motivo): ya no se repite en otra tarjeta con otras palabras.
+            p1 = {"estado": "hecho", "texto": f"{fin['cobertura_txt']}. {_ot_aut_frase(aut_cero)}"
+                  + (f". Motivo: «{(aut_cero.get('argumento') or '').strip().rstrip(' .')}»" if (aut_cero.get("argumento") or "").strip() else "") + "."}
+        elif via == "cero_madre":
+            p1 = {"estado": "hecho", "texto": f"{fin['cobertura_txt']}. Hereda el $0 autorizado de su instalación."}
+        elif via in ("cobro_cero_superadmin", "autorizacion_cerrar"):
+            p1 = {"estado": "hecho", "texto": f"{fin['cobertura_txt']}. {_VIA_TXT[via][:1].upper() + _VIA_TXT[via][1:]}."}
         elif pend and pend.get("tipo") == "cobro_cero":
-            p1 = {"estado": "falta", "texto": f"$0 · {fin['cobertura_txt']} · esperando a Daniel (solicitud N° {pend['id']})"}
+            p1 = {"estado": "falta", "texto": f"{fin['cobertura_txt']}. Esperando a Daniel: solicitud N° {pend['id']}"
+                  + (f" (la pidió {pend.get('solicitado_por_nombre')})" if pend.get("solicitado_por_nombre") else "") + "."}
+        elif p_cerrar.get("ok"):
+            # el servidor igual deja cerrar (la respalda un documento…): lo que falta es la constancia, y se dice tal cual
+            p1 = {"estado": "falta", "texto": f"{fin['cobertura_txt']}. Sin autorización de Daniel registrada: la OT cierra igual "
+                                              f"({_VIA_TXT.get(via, via)}), pero pídela para que el $0 quede con constancia."}
         else:
-            p1 = {"estado": "falta", "texto": f"$0 · {fin['cobertura_txt']} · sin autorización de Daniel"}
-    # ② Documentos
-    nv = bool({x["tido"] for x in docs_val} & set(_OT_DOCS_NOTA_VENTA))
-    cobro_doc = bool({x["tido"] for x in docs_val} & set(_OT_DOCS_COBRO))
+            p1 = {"estado": "falta", "texto": f"{fin['cobertura_txt']}. Falta la autorización de Daniel: pídela para poder cerrar."}
+    # ② Documento
+    docs_cobro = [x for x in docs_val if x["tido"] in _OT_DOCS_COBRO]
+    docs_nv = [x for x in docs_val if x["tido"] in _OT_DOCS_NOTA_VENTA]
+    nv = bool(docs_nv)
+    cobro_doc = bool(docs_cobro)
     if cobro_doc:
-        p2 = {"estado": "hecho", "texto": ", ".join(f"{x['tido']} {x['nudo']}" for x in docs_val)}
+        p2 = {"estado": "hecho", "texto": ", ".join(_doc_txt(x) for x in docs_cobro) + ("." if cob == "cobra" else
+              " (referencia de la venta: esta OT no se cobra).")}
+    elif aut_cerrar:
+        p2 = {"estado": "no_aplica", "texto": f"Se cierra sin factura: {_ot_aut_frase(aut_cerrar, False)}"
+              + (f". Motivo: «{(aut_cerrar.get('argumento') or '').strip().rstrip(' .')}»" if (aut_cerrar.get("argumento") or "").strip() else "") + "."}
+    elif via == "pendiente_madre":
+        # 🧭 2026-10-20: la OT pendiente por falta de stock se respalda con el documento de su OT madre (espejado, sin saldo propio).
+        p2 = {"estado": "no_aplica", "texto": "El documento es el de su OT madre: esta OT no lleva uno propio"}
+    elif via == "cero_madre":
+        p2 = {"estado": "no_aplica", "texto": "Hereda el $0 autorizado de su instalación: no lleva documento propio"}
     elif nv:
-        p2 = {"estado": "falta", "texto": "Falta factura: " + ", ".join(f"{x['tido']} {x['nudo']}" for x in docs_val)}
+        p2 = {"estado": "falta", "texto": "Solo hay nota de venta (" + ", ".join(_doc_txt(x) for x in docs_nv)
+              + "): es provisoria, falta la factura para poder cerrar."}
     elif cob == "cubierta":
         # 🧩 2026-10-19: el documento vive en la instalación; la desinstalación cierra cuando esa tiene factura o boleta.
         _num_m = p_cerrar.get("madre_numero") or "la instalación"
@@ -99938,11 +100034,12 @@ def ot_api_recorrido(vid):
             p2 = {"estado": "no_aplica", "texto": f"El documento es el de la instalación {_num_m}"}
         else:
             p2 = {"estado": "falta", "texto": p_cerrar.get("mensaje") or f"La instalación {_num_m} aún no tiene factura o boleta"}
-    elif cob in ("contrato", "interno") or aut_cero or aut_cerrar:
-        p2 = {"estado": "no_aplica", "texto": ("Sin documento de Random · " + _const(aut_cerrar or aut_cero))
-              if (aut_cerrar or aut_cero) else "No necesita documento"}
+    elif aut_cero:
+        p2 = {"estado": "no_aplica", "texto": "No lleva factura: el $0 ya quedó autorizado (ver «¿Se cobra?»)."}
+    elif cob in ("contrato", "interno"):
+        p2 = {"estado": "no_aplica", "texto": "No necesita documento"}
     else:
-        p2 = {"estado": "falta", "texto": "Sin documento validado del ERP"}
+        p2 = {"estado": "falta", "texto": "Falta la factura de Random (o la autorización de Daniel para cerrar sin ella)."}
     # ③ Cobré
     c = fin["cobre"]
     if cob == "cubierta":
@@ -99952,41 +100049,50 @@ def ot_api_recorrido(vid):
         p3 = {"estado": "no_aplica", "texto": "$0 (no se cobra)"}
     elif c["hay"] and c["total"] > 0:
         p3 = {"estado": "hecho", "texto": f"Servicio {_ot_fin_clp(c['servicio'])} + despacho {_ot_fin_clp(c['despacho'])} = {_ot_fin_clp(c['total'])}"}
+    elif via == "autorizacion_cerrar":
+        # el servidor no pide declarar el cobro cuando Daniel autorizó el cierre sin factura (SIN_VALORIZAR no corre)
+        p3 = {"estado": "no_aplica", "texto": "Cierre autorizado sin factura: no hay cobro que declarar"}
+    elif via == "pendiente_madre":
+        p3 = {"estado": "no_aplica", "texto": "Se cobra en la OT madre: esta OT no cobra aparte"}
     else:
         p3 = {"estado": "falta", "texto": ("Falta el documento de cobro: hay un precio anotado de "
                                            f"{_ot_fin_clp(fin['precio_anotado'])} que no cuenta como cobro"
                                            if fin.get("precio_anotado") is not None
                                            else "Falta lo que cobraste (servicio y despacho)")}
-    # ④ Me cobró el proveedor
+    # ④ Me cobró el proveedor (= el anexo: REGLA #34, un solo valor)
     m = fin["me_cobraron"]
-    if m["falta_tecnico"]:
-        p4 = {"estado": "falta", "texto": "Falta lo que te cobró el técnico/proveedor por la instalación"}
-    elif m["falta_despacho"]:
+    _anx_txt = ""
+    if ax:
+        _anx_txt = (f" · igual al Anexo N° {ax['numero']} ({'firmado' if ax['firmado'] else 'vigente'})" if ax["vinculo"] == "alineado" else "")
+    if ax and ax["vinculo"] == "difiere":
+        p4 = {"estado": "falta", "texto": f"No coincide con el Anexo N° {ax['numero']}: la OT dice {ax['costo_txt']} y el anexo {ax['total_txt']}. Es un solo valor."}
+    elif m["falta_tecnico"]:
+        p4 = {"estado": "falta", "texto": (f"El Anexo N° {ax['numero']} dice {ax['total_txt']} y la OT aún no lo declara." if ax
+                                           else "Falta lo que te cobró el técnico/proveedor por la instalación")}
+    elif m["falta_despacho"] and not ax:   # con un anexo vivo el total ya es el del anexo: el despacho no se declara aparte (REGLA #34)
         p4 = {"estado": "falta", "texto": "Falta el costo del despacho"}
     else:
         p4 = {"estado": "hecho", "texto": f"Instalación {_ot_fin_clp(m['tecnico'] or 0)} + despacho {_ot_fin_clp(m['despacho'] or 0)}"
-              + (f" + repuestos {_ot_fin_clp(m['repuestos'])}" if m.get("repuestos") else "") + f" = {_ot_fin_clp(m['total'])}"}
-    # ⑤ Margen
+              + (f" + repuestos {_ot_fin_clp(m['repuestos'])}" if m.get("repuestos") else "") + f" = {_ot_fin_clp(m['total'])}" + _anx_txt}
+    # ⑤ Margen y centro de costo (una cobertura sin cobro SIEMPRE se carga a un centro de costo: así se puede reportar)
     if cob == "cobra":
         p5 = {"estado": ("hecho" if fin["queda"]["mostrar"] else "falta"), "texto": fin["frase"], "clase": fin["clase"]}
     else:
-        p5 = {"estado": ("hecho" if not m["falta_tecnico"] else "falta"),
-              "texto": fin["frase"] + (f" → centro {v.get('centro_costo') or '—'}"), "clase": fin["clase"]}
+        p5 = {"estado": ("hecho" if (not m["falta_tecnico"] and (centro_nom or interna)) else "falta"),
+              "texto": fin["frase"] + (f" Se carga a {centro_nom}." if centro_nom else (
+                  "" if interna else " Falta elegir el centro de costo: a quién se le carga.")), "clase": fin["clase"]}
     # ⑥ Revisión al cerrar
     if cerrada and p_cerrar["ok"]:
-        p6 = {"estado": "hecho", "texto": f"Cerrada el {chile_fmt_filter(v['cerrada_at']) if v.get('cerrada_at') else ''} · {p_cerrar.get('via')}"}
+        p6 = {"estado": "hecho", "texto": f"Cerrada el {chile_fmt_filter(v['cerrada_at']) if v.get('cerrada_at') else ''} · {_VIA_TXT.get(p_cerrar.get('via'), p_cerrar.get('via') or '')}"}
     elif not p_cerrar["ok"]:
         p6 = {"estado": "falta", "texto": p_cerrar.get("mensaje") + (" (OT ya cerrada: regularizar)" if cerrada else "")}
     elif v.get("cliente_id") and not (v.get("centro_costo") or "").strip():
         # 🔒 2026-10-08: el servidor también rechaza el cierre sin centro de costo (SIN_CENTRO_COSTO).
         p6 = {"estado": "falta", "texto": "Documento listo, pero falta el centro de costo: se exige al cerrar"}
     else:
-        p6 = {"estado": "pendiente", "texto": "Puede cerrar: " + {"documento": "documento de cobro validado",
-                                                                  "contrato_real": "mantención de contrato real",
-                                                                  "cobro_cero": "$0 autorizado",
-                                                                  "autorizacion_cerrar": "cierre autorizado por Daniel",
-                                                                  "nota_venta": "nota de venta (queda «Falta factura»)",
-                                                                  "interna_sin_cliente": "trabajo interno"}.get(p_cerrar.get("via"), p_cerrar.get("via") or "")}
+        # «Puede cerrar» solo cuando el servidor deja aprobar el cierre (OT firmada por el técnico); antes, los papeles están al día pero la OT aún no llega ahí.
+        p6 = {"estado": "pendiente", "texto": ("Puede cerrar: " if en_firma else "Papeles al día, aún sin la firma del cierre: ")
+              + _VIA_TXT.get(p_cerrar.get("via"), p_cerrar.get("via") or "")}
     # 📒 2026-10-11 (Daniel: «te va a indicar si la factura va a pérdida y eso iría autorizado por mí»): una OT que se
     # cobra y va a pérdida cierra solo con la autorización 'cerrar_con_perdida'. El paso 6 lo dice ANTES de firmar.
     perdida = None
@@ -100021,9 +100127,53 @@ def ot_api_recorrido(vid):
             p6 = {"estado": "hecho", "texto": "Cerrada" + (f" el {_cuando_int}" if _cuando_int else "") + " · " + _OT_TXT_INTERNA}
         else:
             p6 = {"estado": "pendiente", "texto": _OT_TXT_INTERNA}
-    pasos = [dict(n=1, titulo="¿Se cobra?", **p1), dict(n=2, titulo="Documentos", **p2),
+    pasos = [dict(n=1, titulo="¿Se cobra?", **p1), dict(n=2, titulo="Factura", **p2),   # 2026-10-25 (Daniel: «necesito que todo se facture»): el paso se llama por lo que se exige
              dict(n=3, titulo="Cobré", **p3), dict(n=4, titulo="Me cobró el proveedor", **p4),
              dict(n=5, titulo="Margen", **p5), dict(n=6, titulo="Revisión al cerrar", **p6)]
+    # 🧭 2026-10-25 — LA FRASE DE ARRIBA (una sola, dinámica): lista para cerrar / cerrada / qué falta, con las mismas palabras que los pasos.
+    # Revisión independiente (25-oct): la frase NO puede prometer más ni menos que el servidor. `faltan` = lo que de verdad frena la firma del
+    # cierre (mant_ot_aprobar_cierre: la puerta del documento, SIN_VALORIZAR, centro de costo, costo del proveedor, ANEXO_DESACTUALIZADO y la
+    # pérdida); `avisos` = lo que se ve en los pasos pero NO frena (un $0 sin constancia con factura, el despacho sin costo, un anexo sin firmar).
+    _NOM_PUERTA = {"factura": "la factura", "documento": "la factura", "autorizacion_cobro_cero": "la autorización del $0"}
+    faltan, avisos = [], []
+    if not interna:
+        if not p_cerrar["ok"]:
+            faltan.append(_NOM_PUERTA.get(p_cerrar.get("falta"), "el documento"))
+        else:
+            if cob == "cobra" and via not in ("autorizacion_cerrar", "pendiente_madre") and not (c["total"] > 0):
+                faltan.append("lo que se cobró")
+            if not (v.get("centro_costo") or "").strip():
+                faltan.append("el centro de costo")
+            if v.get("costo_proveedor") is None and not ax:   # con un anexo vivo el cierre completa el costo solo (REGLA #34)
+                faltan.append("lo que cobró el proveedor")
+            elif ax and ax["firmado"] and ax["vinculo"] == "difiere" and ext and (v.get("modalidad_cobro") or "").strip().lower() not in ("garantia", "sin_costo"):
+                faltan.append("el costo igual al del anexo firmado")
+            if perdida and perdida.get("perdida") and not perdida["ok"]:
+                faltan.append("la autorización de Daniel para cerrar con pérdida")
+            if p1["estado"] == "falta":
+                avisos.append("la autorización del $0")
+            if ax and ax["vinculo"] != "alineado" and "el costo igual al del anexo firmado" not in faltan:
+                avisos.append("el costo igual al del anexo")
+            if m["falta_despacho"] and not ax:
+                avisos.append("el costo del despacho")
+    if interna:
+        _res = {"estado": "listo" if not cerrada else "cerrada", "titulo": "Cerrada" if cerrada else "Trabajo interno: no necesita documento ni autorización"}
+    elif cerrada and p_cerrar["ok"]:
+        _res = {"estado": "cerrada", "titulo": "Cerrada"}
+    elif faltan and pend:
+        _res = {"estado": "espera", "titulo": f"Esperando a Daniel (solicitud N° {pend['id']})"}
+    elif faltan:
+        _res = {"estado": "falta", "titulo": "Falta " + " · ".join(faltan)}
+    else:
+        _rev = (" · revisa: " + " · ".join(avisos)) if avisos else ""
+        if en_firma:
+            _res = {"estado": "listo", "titulo": ("Se puede cerrar" + _rev) if avisos else "Lista para cerrar"}
+        else:
+            _res = {"estado": "listo", "titulo": "Papeles al día, aún sin la firma del cierre" + _rev}
+    _res["faltan"] = faltan
+    _res["avisos"] = avisos
+    _res["centro"] = {"valor": (v.get("centro_costo") or "").strip() or None, "nombre": centro_nom}
+    _res["aut_usada_id"] = (aut_cero or {}).get("id") if aut_cero else None
     return jsonify({
         "ok": True, "visita_id": vid, "numero_ot": v.get("numero_ot"), "cliente": v.get("cliente"),
         # 🔒 2026-10-08: el motor de finanzas (static/ot_fin_motor.js) no pinta documento/cobro/autorización si esto es True.
@@ -100039,6 +100189,8 @@ def ot_api_recorrido(vid):
         "perdida": perdida,
         # 🧩 2026-10-19: la cuenta CONJUNTA de la instalación y su desinstalación (None si la OT no tiene familia).
         "familia": _ot_familia_resumen(vid),
+        # 🧭 2026-10-25: el anexo vivo (el costo de la OT ES el del anexo: REGLA #34; con el anexo vigente el costo no se escribe a mano) y la frase de arriba.
+        "anexo": ax, "resumen": _res,
     })
 
 
@@ -119568,6 +119720,8 @@ def ot2_reporte_xlsx():
     _docs_xl = _ot_docs_texto_lote([x.get("id") for x in rows])
     _fins = _ot_fin_lote(rows)
     _clasif_xl, por_clasif = {}, {}
+    # 🛡️ 2026-10-25: acumuladores de la hoja «Garantías y coberturas» (toda OT que NO se cobra, por cobertura y centro de costo).
+    por_cob, det_cob = {}, []
     if _xl_sa:
         try:
             _clasif_xl = _ot_fin_clasif_lote([x.get("id") for x in rows])
@@ -119703,6 +119857,27 @@ def ot2_reporte_xlsx():
             _ax["cobre"] += float(_cobre or 0) if _fin["cobra"] else 0.0
             _ax["me_cobraron"] += float(_fin["me_cobraron"]["total"] or 0) if _tiene_finanzas else 0.0
             _ax["queda"] += float(margen or 0) if (margen is not None and _fin["cobra"]) else 0.0
+        # 🛡️ 2026-10-25 (Daniel: «Garantías o coberturas asociadas a centro de costo y poder reportar esas situaciones»):
+        # toda OT que NO se cobra se carga a un centro de costo y queda en la hoja «Garantías y coberturas». "Nos costó" es la
+        # misma cuenta de la OT (_ot_finanzas); si el técnico aún no declara su costo se dice, no se inventa un $0.
+        if _fin["cobertura"] != "cobra":
+            _cob_k = _fin["cobertura"]
+            _cc_k = _LBL_CC.get(f.get("centro_costo"), f.get("centro_costo") or "(sin centro de costo)")
+            _falta_k = bool(_fin["me_cobraron"]["falta_tecnico"])
+            _nos_k = None if _falta_k else float(_fin["me_cobraron"]["total"] or 0)
+            _val_k = _fin["valorizado"]["monto"]
+            _pc = por_cob.setdefault((_cob_k, _cc_k), {"n": 0, "nos": 0.0, "val": 0.0, "sin_costo": 0})
+            _pc["n"] += 1
+            _pc["nos"] += _nos_k or 0.0
+            _pc["val"] += float(_val_k or 0)
+            _pc["sin_costo"] += 1 if _falta_k else 0
+            _cxd = (_clasif_xl.get(int(f["id"])) or {}) if _xl_sa else {}
+            det_cob.append([
+                _OT_FIN_COBERTURA_CORTA.get(_cob_k, _cob_k), _cc_k, f.get("numero_ot") or "", _nos_k, _val_k,
+                ("Falta lo que cobró el técnico" if _falta_k else "Completo"), f.get("razon_social") or "", estado_label,
+                (_docs_xl.get(int(f["id"])) or ((f.get("factura_tido") or "") + " " + (f.get("factura_nudo") or "")).strip()),
+                (_cxd.get("texto") or ""), (_cxd.get("autorizado_por") or ""),
+                (str(_cxd.get("argumento") or "")[:300] if not _cxd.get("derivada") else "")])
         # 🧩 2026-10-19: Relación (sin montos).
         if f.get("madre_numero") and (f.get("ot_relacion") or "") == _qp.REL_PENDIENTE_STOCK:
             _rel_xl = _qp.chip_pendiente(f.get("madre_numero"))                  # 🧭 2026-10-20: no es una desinstalación
@@ -119950,6 +120125,82 @@ def ot2_reporte_xlsx():
     for ci, w in enumerate([26, 10, 16, 16, 16, 14, 13, 20], 1):
         ws3b.column_dimensions[get_column_letter(ci)].width = w
     ws3b.freeze_panes = "A2"
+
+    # ── Hoja «Garantías y coberturas» ── 🛡️ 2026-10-25 (Daniel: «Garantías o coberturas asociadas a centro de costo y poder
+    # reportar esas situaciones»). Toda OT que NO se cobra (garantía, regalía, arriendo o leasing, cortesía, trabajo interno,
+    # mantención de contrato, desinstalación cubierta) se carga a un centro de costo. Arriba: cuántas son y cuánto nos
+    # costaron por cobertura y centro de costo (la misma cuenta de la OT); abajo, el detalle OT por OT. Solo el
+    # superadministrador ve además cómo nació, quién autorizó y el argumento (REGLA #26: es información interna).
+    if det_cob:
+        ws6 = wb.create_sheet("Garantías y coberturas")
+
+        def _txt_xl(cel):
+            # El cliente, los documentos y el argumento los escribe una persona: un texto que parta con «=» se guardaría como FÓRMULA
+            # (openpyxl lo hace solo). Aquí queda siempre como texto.
+            if isinstance(cel.value, str) and cel.value[:1] == "=":
+                cel.data_type = "s"
+            return cel
+
+        _ORD_COB =("garantia", "regalia", "arriendo_leasing", "sin_costo", "interno", "contrato", "cubierta")
+        _ord_lbl = {_OT_FIN_COBERTURA_CORTA.get(k, k): i for i, k in enumerate(_ORD_COB)}
+        _h6 = ["Cobertura", "Centro de costo", "Cantidad de OT", "Nos costó", "Valorizado (referencia)",
+               "OT sin costo declarado"]
+        for ci, h in enumerate(_h6, 1):
+            _hdr(ws6.cell(row=1, column=ci), h)
+        _r6 = 2
+        for (_ck, _cck), _pv in sorted(
+                por_cob.items(), key=lambda kv: (_ORD_COB.index(kv[0][0]) if kv[0][0] in _ORD_COB else 99, -kv[1]["nos"], kv[0][1])):
+            for ci, val in enumerate([_OT_FIN_COBERTURA_CORTA.get(_ck, _ck), _cck, _pv["n"], _pv["nos"], _pv["val"],
+                                      _pv["sin_costo"]], 1):
+                c6 = _txt_xl(ws6.cell(row=_r6, column=ci, value=val))
+                c6.font = Font(size=9, bold=(ci == 1))
+                c6.border = border
+                c6.fill = PatternFill("solid", fgColor=(
+                    REDL if _cck == "(sin centro de costo)" else LGRAY if _r6 % 2 == 0 else "FFFFFF"))
+                if ci in (4, 5):
+                    c6.number_format = '"$"#,##0'
+            _r6 += 1
+        _r6 += 1
+        for ci, val in enumerate(
+                ["TOTAL", "", sum(p["n"] for p in por_cob.values()), sum(p["nos"] for p in por_cob.values()),
+                 sum(p["val"] for p in por_cob.values()), sum(p["sin_costo"] for p in por_cob.values())], 1):
+            c6 = ws6.cell(row=_r6, column=ci, value=val)
+            c6.font = Font(size=10, bold=True, color="FFFFFF")
+            c6.fill = PatternFill("solid", fgColor="DC2626")
+            c6.border = border
+            if ci in (4, 5):
+                c6.number_format = '"$"#,##0'
+        _r6 += 2
+        ws6.cell(row=_r6, column=1, value="Detalle OT por OT").font = Font(size=11, bold=True, color="DC2626")
+        _r6 += 1
+        _h6d = ["Cobertura", "Centro de costo", "N° OT", "Nos costó", "Valorizado (referencia)", "Estado del costo",
+                "Cliente", "Estado de la OT", "Documentos"]
+        if _xl_sa:
+            _h6d += ["Cómo nació", "Autorizó", "Argumento"]
+        _r6_det = _r6
+        for ci, h in enumerate(_h6d, 1):
+            _hdr(ws6.cell(row=_r6, column=ci), h)
+        _r6 += 1
+        for _fd in sorted(det_cob, key=lambda x: (_ord_lbl.get(x[0], 99), x[1], str(x[2]))):
+            _fila6 = _fd[:9] + (_fd[9:12] if _xl_sa else [])
+            for ci, val in enumerate(_fila6, 1):
+                c6 = _txt_xl(ws6.cell(row=_r6, column=ci, value=val))
+                c6.font = Font(size=9, bold=(ci == 3))
+                c6.border = border
+                c6.alignment = Alignment(vertical="center", wrap_text=(ci in (7, 9, 10, 12)))
+                c6.fill = PatternFill("solid", fgColor=(
+                    AMBER if (ci == 6 and val != "Completo") else LGRAY if _r6 % 2 == 0 else "FFFFFF"))
+                if ci in (4, 5) and val is not None:
+                    c6.number_format = '"$"#,##0'
+            _r6 += 1
+        ws6.auto_filter.ref = f"A{_r6_det}:{get_column_letter(len(_h6d))}{max(_r6_det, _r6 - 1)}"
+        for ci, w in enumerate([24, 30, 16, 16, 20, 28, 34, 18, 30, 46, 24, 50], 1):
+            ws6.column_dimensions[get_column_letter(ci)].width = w
+        ws6.cell(row=_r6 + 1, column=1, value=(
+            "«Nos costó» es lo que pagamos por el servicio (técnico + despacho + repuestos instalados): la misma cuenta de la OT. "
+            "Si el técnico aún no declara su costo, la fila lo dice en vez de poner $0. Una cobertura sin cobro siempre se carga "
+            "a un centro de costo: así se puede reportar cuánto cuesta cada garantía, regalía o contrato.")).font = \
+            Font(size=9, italic=True, color="6B7280")
 
     # ── Hoja 5: Resumen ───────────────────────────────────────────────
     ws4 = wb.create_sheet("Resumen")

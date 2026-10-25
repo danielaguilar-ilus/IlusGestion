@@ -100,7 +100,7 @@ class TestMotorUnico(unittest.TestCase):
         js = _leer("static/ot_fin_motor.js")
         for ruta in ("/recorrido", "/panorama", "/costo-proveedor", "/documentos", "/centro-costo", "/ot/api/autorizaciones"):
             self.assertIn(ruta, js)
-        for texto in ("Facturas y boletas", "Notas de venta", "Cotizaciones", "Servicios", "Despachos", "Otros documentos",
+        for texto in ("Facturas y boletas", "Notas de venta", "Cotizaciones", "Con instalación o servicio", "Con despacho", "Otros documentos",   # 2026-10-25: «Servicios»/«Despachos» (líneas) se fundieron en los de «Con …»
                       # 2026-10-08 (un solo bloque compacto): la columna de documentos se llama «Documentos» y la cuenta ya no es una
                       # sección con título sino UNA línea (queda con su aria-label «La cuenta de esta OT»).
                       "<h3>Documentos <small>", "Lo que nos costó", "La cuenta de esta OT", "Centro de costo",

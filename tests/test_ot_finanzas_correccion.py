@@ -85,6 +85,7 @@ def _ambito(superadmin=True, cuerpo=None, fila=FILA):
          # la cuenta única y lo que usa
          "_ot_finanzas", "_ot_cobertura", "_ot_es_interna", "_ot_fin_num", "_ot_fin_clp"],
         ["_OT_FIN_CORR_CAMPOS", "_OT_FIN_CORR_ROT", "_OT_FIN_CORR_MOTIVO_MIN", "_OT_FIN_SQL_CONTRATO_REAL",
+         "_OT_FIN_SQL_MADRE_VALIDA", "_OT_FIN_SQL_MADRE_COLS",   # 2026-10-25: _OT_FIN_SELECT las usa (desinstalación cubierta, 19-oct)
          "_OT_FIN_SELECT", "_OT_FIN_ORIGENES_NO_COBRO", "_OT_FIN_ORIGENES_COBRO_RESPALDO", "_OT_FIN_FUENTE_COBRO", "_OT_FIN_ZZ_NO_SERVICIO",
          "_OT_FIN_COBERTURA_TXT", "_OT_FIN_UMBRAL_BAJO", "_OT2_LINEA_ZZ"],
         extra={
