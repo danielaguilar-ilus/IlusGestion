@@ -7587,6 +7587,10 @@ def api_check_bodegas():
     SOLO LECTURA (REGLA #4.4): usa el reporte de stock de Check YA cacheado (_checkwms_stock_rows, GetReporteStock de la lista blanca); no llama
     a Check por su cuenta. ?skus=A,B,C (hasta 80)."""
     import retiros_check as _rck
+    # El proveedor EXTERNO no ve el stock de las bodegas (Daniel 2026-09-08: «ellos son externos y no deben ver información sensible… costos/stock»):
+    # mismo criterio que @_no_tecnico_externo, que no se puede usar de decorador acá porque se define más abajo en este archivo.
+    if _es_tecnico_externo():
+        return jsonify({"ok": False, "error": "No tienes acceso a esta información."}), 403
     txt = request.args.get("skus") or ""
     if not _rck.skus_de(txt):
         return jsonify(_rck.respuesta_bodegas(txt, None)[0])          # sin SKUs no se espera a Check

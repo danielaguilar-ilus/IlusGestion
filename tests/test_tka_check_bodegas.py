@@ -84,9 +84,22 @@ class TestRutaGeneral(unittest.TestCase):
         self.assertNotIn("request.method", self.ruta)
 
     def test_no_expone_plata_ni_proveedores(self):
-        # REGLAS #19 y #26: solo DÓNDE está el stock.
-        for palabra in ("costo", "precio", "proveedor", "margen", "valor"):
-            self.assertNotIn(palabra, self.ruta.lower().split('"""')[2] if self.ruta.count('"""') >= 2 else "")
+        # REGLAS #19 y #26: solo DÓNDE está el stock (el código de la función, sin su docstring ni sus comentarios).
+        i = APP.index("def api_check_bodegas(")
+        cuerpo = APP[i:APP.index("def get_full(product_id):", i)]
+        cuerpo = re.sub(r'""".*?"""', "", cuerpo, flags=re.S)
+        cuerpo = re.sub(r"#.*", "", cuerpo)
+        for palabra in ("mysql", "costo", "precio", "proveedor", "margen", "valor"):
+            self.assertNotIn(palabra, cuerpo.lower())
+
+    def test_el_proveedor_externo_no_ve_el_stock_de_las_bodegas(self):
+        # Daniel (2026-09-08): el externo no ve costos ni stock. El decorador @_no_tecnico_externo se define MÁS ABAJO que esta ruta (NameError al
+        # importar), así que la revisión va dentro de la función, antes de leer nada.
+        self.assertIn("if _es_tecnico_externo():", self.ruta)
+        self.assertIn('"No tienes acceso a esta información."}), 403', self.ruta)
+        self.assertLess(self.ruta.index("if _es_tecnico_externo():"), self.ruta.index("_checkwms_stock_rows()"))
+        self.assertLess(APP.index("def _es_tecnico_externo("), APP.index("def api_check_bodegas(") + 10**9)   # existe en el archivo
+        self.assertGreater(APP.index("def _no_tecnico_externo("), APP.index("def api_check_bodegas("))        # por eso no es decorador
 
     def test_sin_skus_responde_sin_leer_el_reporte(self):
         self.assertLess(self.ruta.index("if not _rck.skus_de(txt):"), self.ruta.index("_checkwms_stock_rows()"))
