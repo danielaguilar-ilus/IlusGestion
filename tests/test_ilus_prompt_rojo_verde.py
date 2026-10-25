@@ -65,5 +65,52 @@ class TestIlusPromptEnVivo(unittest.TestCase):
         self.assertRegex(REGLAS, r"ilusPrompt\(\{[^}]*minLength")
 
 
+def _generico():
+    i = JS.index("//  🚦 REGLA #42 (Daniel 2026-10-24: «pasan de rojo a verde… en el proyecto entero")
+    return JS[i:JS.index("//  COMPARADOR DE RUT CHILENO", i)]
+
+
+class TestCamposConMinimoEnTodoElProyecto(unittest.TestCase):
+    """Los campos que ya existen (placeholder «(mínimo N caracteres)» o data-min) pasan de rojo a verde solos."""
+
+    def test_el_minimo_sale_de_data_min_o_del_placeholder(self):
+        g = _generico()
+        self.assertIn("el.getAttribute('data-min')", g)
+        self.assertIn("/m[ií]nimo\\s+(\\d+)\\s+caracteres/i.exec(el.getAttribute('placeholder') || '')", g)
+
+    def test_pinta_en_vivo_y_nunca_bloquea(self):
+        g = _generico()
+        for pista in ("el.classList.toggle('ilus-vc-ok', len > 0 && ok);", "el.classList.toggle('ilus-vc-bad', len > 0 && !ok);",
+                      "el.setAttribute('aria-invalid'", "document.addEventListener('input', function(e){ pintar(e.target); }, true);",
+                      "document.addEventListener('focusin'"):
+            self.assertIn(pista, g)
+        for prohibido in ("preventDefault", "stopPropagation", "disabled =", ".disabled=", "setCustomValidity"):
+            self.assertNotIn(prohibido, g)               # solo informa
+
+    def test_no_se_mete_donde_ya_hay_otro_motor(self):
+        g = _generico()
+        self.assertIn("el.classList.contains('ilus-prompt-input')", g)
+        self.assertIn("el.closest('#ot2ModalCrear')", g)
+        self.assertIn("if (el.disabled || el.readOnly) return false;", g)
+
+    def test_no_rompe_filas_flex_ni_input_group(self):
+        g = _generico()
+        self.assertIn("/flex|grid/.test(disp)", g)
+        self.assertIn("padre.classList.contains('input-group')", g)
+
+    def test_vacio_sin_color_ni_mensaje(self):
+        g = _generico()
+        self.assertIn("if (!len){ if (m) m.remove(); return; }", g)
+
+    def test_el_estilo_se_inyecta_una_sola_vez(self):
+        g = _generico()
+        self.assertIn("if (document.getElementById('__ilus_vc_css')) return;", g)
+        self.assertIn("textarea.ilus-vc-bad,input.ilus-vc-bad{border-color:#dc2626 !important", g)
+        self.assertIn("textarea.ilus-vc-ok,input.ilus-vc-ok{border-color:#16a34a !important", g)
+
+    def test_la_regla_lo_dice(self):
+        self.assertIn("placeholder diga «(mínimo N caracteres)»", REGLAS)
+
+
 if __name__ == "__main__":
     unittest.main()

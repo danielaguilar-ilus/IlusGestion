@@ -782,6 +782,66 @@
   global.ilusActionSheet = ilusActionSheet;
 
   // ════════════════════════════════════════════════════════════════
+  //  🚦 REGLA #42 (Daniel 2026-10-24: «pasan de rojo a verde… en el proyecto entero, cuando la tarjeta apruebe los caracteres»)
+  //  Todo campo con un MÍNIMO DE CARACTERES se pinta EN VIVO mientras se escribe: rojo con «Faltan N caracteres (mínimo M)» hasta que cumple,
+  //  verde («Listo.») cuando cumple, sin color si está vacío. El mínimo sale de `data-min="N"` o, si no lo trae, de lo que el propio campo le
+  //  promete a la persona en su placeholder («… (mínimo 10 caracteres)»): así los formularios que ya existen lo reciben sin tocarlos.
+  //  SOLO informa: no bloquea nada (cada formulario sigue validando como siempre al guardar). Quedan fuera el asistente de OT (#ot2ModalCrear: su
+  //  propio motor con `data-min` → .is-valid / .is-invalid) e ilusPrompt (su propio motor con `minLength` / `validate`).
+  // ════════════════════════════════════════════════════════════════
+  (function(){
+    if (document.getElementById('__ilus_vc_css')) return;
+    const st = document.createElement('style');
+    st.id = '__ilus_vc_css';
+    st.textContent = `
+      textarea.ilus-vc-bad,input.ilus-vc-bad{border-color:#dc2626 !important;box-shadow:0 0 0 3px rgba(220,38,38,.14) !important}
+      textarea.ilus-vc-ok,input.ilus-vc-ok{border-color:#16a34a !important;box-shadow:0 0 0 3px rgba(22,163,74,.14) !important}
+      .ilus-vc-msg{margin-top:5px;font-size:.8rem;font-weight:600;display:flex;align-items:center;gap:6px}
+      .ilus-vc-msg.ok{color:#15803d}.ilus-vc-msg.bad{color:#b91c1c}
+    `;
+    (document.head || document.documentElement).appendChild(st);
+
+    function minimo(el){
+      const n = parseInt(el.getAttribute('data-min') || '', 10);
+      if (n > 0) return n;
+      const m = /m[ií]nimo\s+(\d+)\s+caracteres/i.exec(el.getAttribute('placeholder') || '');
+      return m ? parseInt(m[1], 10) : 0;
+    }
+    function aplicable(el){
+      if (!el || el.nodeType !== 1 || !el.matches) return false;
+      if (!el.matches('textarea, input[type="text"], input:not([type])')) return false;
+      if (el.disabled || el.readOnly) return false;
+      if (el.classList.contains('ilus-prompt-input')) return false;      // ilusPrompt: su propio motor (minLength / validate)
+      if (el.closest && el.closest('#ot2ModalCrear')) return false;      // el asistente de OT: data-min + .is-valid / .is-invalid
+      return true;
+    }
+    function pintar(el){
+      if (!aplicable(el)) return;
+      const n = minimo(el); if (!n) return;
+      const len = (el.value || '').trim().length, ok = len >= n;
+      el.classList.toggle('ilus-vc-ok', len > 0 && ok);
+      el.classList.toggle('ilus-vc-bad', len > 0 && !ok);
+      el.setAttribute('aria-invalid', (len > 0 && !ok) ? 'true' : 'false');
+      let m = el.nextElementSibling;
+      if (!(m && m.classList && m.classList.contains('ilus-vc-msg'))) m = null;
+      if (!len){ if (m) m.remove(); return; }
+      if (!m){
+        const padre = el.parentElement, disp = padre ? getComputedStyle(padre).display : '';
+        // dentro de una fila flex/grid o un input-group un hermano nuevo rompería el diseño: ahí queda solo el color del borde
+        if (!padre || /flex|grid/.test(disp) || (padre.classList && padre.classList.contains('input-group'))) return;
+        m = document.createElement('div');
+        el.insertAdjacentElement('afterend', m);
+      }
+      m.className = 'ilus-vc-msg ' + (ok ? 'ok' : 'bad');
+      m.innerHTML = '<i class="bi ' + (ok ? 'bi-check-circle-fill' : 'bi-exclamation-circle-fill') + '"></i><span></span>';
+      const f = n - len;
+      m.lastChild.textContent = ok ? 'Listo.' : 'Faltan ' + f + ' caracter' + (f === 1 ? '' : 'es') + ' (mínimo ' + n + ').';
+    }
+    document.addEventListener('input', function(e){ pintar(e.target); }, true);
+    document.addEventListener('focusin', function(e){ pintar(e.target); }, true);   // un campo ya escrito al abrir se pinta al tocarlo
+  })();
+
+  // ════════════════════════════════════════════════════════════════
   //  COMPARADOR DE RUT CHILENO — tolerante a presencia/ausencia de DV
   // ════════════════════════════════════════════════════════════════
   //  El ERP a veces guarda RUT con código verificador ("78.129.118-8")
