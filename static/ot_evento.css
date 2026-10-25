@@ -248,3 +248,15 @@ button.dc-d:focus-visible{outline:2px solid #0a0a0a;outline-offset:1px}
   .dc-big b{font-size:2.1rem}
 }
 @media (prefers-reduced-motion:reduce){.dc-d{transition:none}button.dc-d:hover{transform:none}}
+
+/* ── 📅 2026-10-24 · Paso «Agenda» con «Instalación con desinstalación» (Daniel: «que el modal se comporte en términos de calendario para crear dos
+   órdenes de trabajo»): la ENTRADA arriba (el calendario de siempre) y la SALIDA abajo (calendario compacto con su ficha), unidas por una flecha. */
+.o2m-ag-lbl{display:flex;align-items:center;flex-wrap:wrap;gap:4px 9px;margin:6px 0 8px;font-size:.9rem;color:#0a0a0a}
+.o2m-ag-lbl i{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-size:1rem;flex:none}
+.o2m-ag-lbl.ent i{background:#eff6ff;color:#2563eb;box-shadow:0 0 0 1.5px #bfdbfe inset}
+.o2m-ag-lbl.sal i{background:#fef2f2;color:#dc2626;box-shadow:0 0 0 1.5px #fecaca inset}
+.o2m-ag-lbl b{font-weight:900;letter-spacing:.01em}
+.o2m-ag-lbl span{flex:1 1 100%;margin-left:39px;font-size:.78rem;font-weight:500;line-height:1.4;color:#6b7280}
+.o2m-ag-salida{position:relative;margin-top:22px;padding-top:12px;border-top:2px dashed #d1d5db}
+.o2m-ag-union{position:absolute;left:50%;top:-14px;transform:translateX(-50%);background:#fff;color:#dc2626;font-size:1.4rem;line-height:1;padding:0 8px}
+@media (max-width:640px){.o2m-ag-lbl span{margin-left:0}}

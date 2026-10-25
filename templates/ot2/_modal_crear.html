@@ -1403,6 +1403,54 @@
 .o2m-sec{border-radius:16px}
 .o2m-op{border-radius:14px}
 .o2m-sec .o2m-op:hover{border-color:#fca5a5}
+/* 📑 Paso Anexo (2026-10-24): cabecera con lo esencial (rojo hasta que hay proveedor, monto y productos; verde al completarse), camino de 3 pasos y la
+   lista de productos con sus cantidades. Nombres completos, sin recortes (REGLA #15). */
+.o2m-ax-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:8px 0 12px}
+.o2m-ax-kpis>div{border:1.5px solid #fecaca;border-left:4px solid var(--ilus-red,#dc2626);border-radius:12px;background:#fffafa;padding:10px 12px;transition:border-color .25s,background .25s}
+.o2m-ax-kpis.ok>div{border-color:#86efac;border-left-color:#16a34a;background:#f4fdf7}
+.o2m-ax-kpis small{display:block;color:#6b7280;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.o2m-ax-kpis b{display:block;font-size:1.02rem;color:#0a0a0a;overflow-wrap:anywhere}
+.o2m-ax-camino{list-style:none;margin:0 0 12px;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.o2m-ax-camino li{display:flex;gap:10px;align-items:flex-start}
+.o2m-ax-camino li>span{flex:0 0 auto;width:28px;height:28px;border-radius:50%;background:#0a0a0a;color:#fff;display:grid;place-items:center;font-weight:800;font-size:.85rem}
+.o2m-ax-camino b{display:block;font-size:.92rem}
+.o2m-ax-camino small{display:block;color:#6b7280;font-size:.8rem;line-height:1.35}
+.o2m-ax-prods{border:1px solid #e5e7eb;border-radius:12px;padding:0 12px;margin-bottom:12px;background:#fff}
+.o2m-ax-prods>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:700}
+.o2m-ax-tabla{width:100%;border-collapse:collapse;margin-bottom:10px;font-size:.88rem}
+.o2m-ax-tabla th{text-transform:uppercase;font-size:.7rem;color:#6b7280;text-align:left;padding:6px 4px;border-bottom:1px solid #e5e7eb}
+.o2m-ax-tabla td{padding:8px 4px;border-bottom:1px solid #f3f4f6;vertical-align:top;overflow-wrap:anywhere}
+.o2m-ax-tabla td small{display:block;color:#6b7280}
+.o2m-ax-tabla .n{text-align:right;font-variant-numeric:tabular-nums;width:64px}
+/* 🚪 Paso Acceso (2026-10-24): dos preguntas-tarjeta, rojas mientras faltan y verdes al responder; lo demás, plegado y opcional. */
+.o2m-accq-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px;margin-bottom:12px}
+.o2m-accq{border:1.5px solid #fecaca;border-left:4px solid var(--ilus-red,#dc2626);border-radius:16px;background:#fffafa;padding:14px 14px 16px;
+  transition:border-color .25s,background .25s,box-shadow .25s}
+.o2m-accq .q{display:flex;align-items:flex-start;gap:12px}
+.o2m-accq .q .ico{flex:0 0 auto;width:46px;height:46px;border-radius:14px;display:grid;place-items:center;font-size:1.35rem;
+  background:#fee2e2;color:var(--ilus-red,#dc2626);transition:background .25s,color .25s}
+.o2m-accq .q b{display:block;font-size:1.02rem;color:#0a0a0a;line-height:1.25}
+.o2m-accq .q small{display:block;margin-top:2px;color:#6b7280;font-size:.84rem;line-height:1.35}
+.o2m-accq .q .est{margin-left:auto;font-size:1.3rem;color:#d1d5db;transition:color .25s}
+.o2m-accq .o2m-acc-toggle{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.o2m-accq .o2m-acc-btn{min-height:52px;flex-direction:row;justify-content:center;gap:8px;font-weight:800;font-size:1rem}
+.o2m-accq.ok{border-color:#86efac;border-left-color:#16a34a;background:#f4fdf7;box-shadow:0 10px 24px -18px rgba(22,163,74,.55)}
+.o2m-accq.ok .q .ico{background:#dcfce7;color:#16a34a}
+.o2m-accq.ok .q .est{color:#16a34a}
+.o2m-acc-cnt{color:#b91c1c;white-space:nowrap}
+.o2m-acc-cnt.ok{color:#16a34a}
+.o2m-accmas{border:1px dashed #d1d5db;border-radius:12px;padding:0 12px;background:#fafafa}
+.o2m-accmas>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:700;color:#374151;list-style:none}
+.o2m-accmas>summary::-webkit-details-marker{display:none}
+.o2m-accmas>summary span{margin-left:6px;font-weight:500;color:#6b7280}
+.o2m-accmas[open]{padding-bottom:12px;background:#fff}
+/* 🚦 2026-10-24 (Daniel: «pasan de rojo a verde… en el proyecto entero»): campo con mínimo de caracteres (`data-min`) = rojo mientras falta,
+   VERDE al cumplirlo (borde, resplandor, y la tarjeta de motivo completa con su franja y su etiqueta). */
+.o2m [data-min].is-invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
+.o2m [data-min].is-valid,.o2m [data-min].is-valid:focus{border-color:#16a34a;box-shadow:0 0 0 3px rgba(22,163,74,.16)}
+.o2m-motivo{transition:border-color .25s,background .25s}
+.o2m-motivo.ok{border-color:#86efac;border-left-color:#16a34a;background:#f4fdf7}
+.o2m-motivo.ok .imp{color:#16a34a}
 .o2m-foot{padding:14px 26px;background:rgba(250,251,252,.92);backdrop-filter:blur(6px)}
 #o2mSig{border-radius:12px;padding-inline:26px;font-size:1rem;box-shadow:0 10px 22px -10px rgba(220,38,38,.65);
   transition:transform .15s,box-shadow .15s}
@@ -1472,7 +1520,12 @@ window.OT2C = (function(){
        el buscador arriba de la grilla (ver pintarTipo/pintarTipoGrid). */
   var TIPOS = [
     {v:'instalacion',       n:'Instalación',            i:'bi-tools',              l:'Montar equipos nuevos donde el cliente'},
-    {v:'preventiva',        n:'Mantención preventiva',  i:'bi-shield-check',       l:'Mantención programada del plan'},
+    /* 🔁 2026-10-24 (Daniel: «una tarjeta que diga instalación con desinstalación… ese comportamiento se lo dejamos al tipo de orden de
+       trabajo»): MISMO tipo de la base (`instalacion`) con la desinstalación ya decidida. Elegirlo crea DOS órdenes unidas: la instalación de
+       hoy y la desinstalación calendarizada, con su técnico (obligatorio). La «Instalación» a secas ya no pregunta por desinstalación.
+       Es una variante de pantalla (como `descubrimiento`): el servidor sigue recibiendo tipo_ot='instalacion' + desinstalacion{…}. */
+    {v:'instalacion',       n:'Instalación con desinstalación', i:'bi-arrow-repeat', l:'Evento o arriendo: una OT para instalar y otra, agendada con su técnico, para desinstalar', conDesinst:true},
+    {v:'preventiva',       n:'Mantención preventiva',  i:'bi-shield-check',       l:'Mantención programada del plan'},
     {v:'correctiva',        n:'Mantención correctiva',  i:'bi-wrench-adjustable',  l:'Reparar una falla reportada'},
     {v:'visita_tecnica',    n:'Visita técnica',         i:'bi-clipboard2-pulse',   l:'Ir a revisar y diagnosticar en terreno'},
     {v:'inspeccion',        n:'Inspección',             i:'bi-search',             l:'Revisar estado sin intervenir'},
@@ -1566,7 +1619,7 @@ window.OT2C = (function(){
     // apertura del wizard vuelve a pedirla, si no, al reabrir para el mismo
     // cliente sin recargar la página la contraparte no se prellenaba.
     cacheContactos = null; cacheContactosCid = null;
-    S = {origen:null, tipo:null, descubrimiento:false, cliente:null, titulo:'',
+    S = {origen:null, tipo:null, descubrimiento:false, conDesinst:false, cliente:null, titulo:'',
          descripcion:'', fecha:'', hini:'09:00', hfin:'13:00', tecnicos:[], lider:null,
          equipos:[], acceso:{ascensor:null, estacionamiento:null, piso:'', notas:''},
          // 🔧 FASE 3 REPUESTOS (2026-09-21): equipo exacto ya conocido antes
@@ -1982,7 +2035,8 @@ window.OT2C = (function(){
       // el pasado (ver _o2mHoyStr). Al vivir acá, crear() la bloquea sola
       // (ya recorre completo() de todos los pasos) y la tarjeta del paso
       // queda en rojo, sin necesidad de una validación aparte.
-      case 'agenda':   return !!S.fecha && S.fecha >= _o2mHoyStr();
+      // 📅 2026-10-24: con «Instalación con desinstalación» el paso agenda LAS DOS órdenes: también debe estar la fecha de la salida (≥ la entrada, no domingo).
+      case 'agenda':   return !!S.fecha && S.fecha >= _o2mHoyStr() && (!_o2mDiAplica() || _diFechaSalidaOk());
       // 🔒 2026-09-16 (Daniel: "están creando OT sin técnicos, deja eso
       // completamente prohibido... debe ser motivo de bloqueo"): el paso
       // Técnicos deja de ser permisivo. Sin al menos un técnico marcado la
@@ -2167,6 +2221,7 @@ window.OT2C = (function(){
   /* ── Nav de anclas: solo dibuja/actualiza el riel, nunca el contenido.
      Se llama después de CUALQUIER cambio que afecte un check verde. ────── */
   function pintarAnclas(){
+    try { _o2mVcBarrido(); } catch (e) {}      // 🚦 2026-10-24: campos con mínimo de caracteres: rojo → verde también tras cada repintado
     // 2026-08-29 noche (Daniel, viendo el modal en vivo): "los pasos
     // enumerados o el tracking te pedi sacarlo" -- el riel lateral quedaba
     // redundante con el check verde que ya trae cada tarjeta de paso
@@ -2218,7 +2273,7 @@ window.OT2C = (function(){
     try { _o2mAvisoEnvioRefrescar(); } catch(_) { /* informativo: nunca rompe el formulario */ }
   }
   // Alias corto reusado por handlers inline generados en varias funciones.
-  function refrescarAnclas(){ pintarAnclas(); }
+  function refrescarAnclas(){ pintarAnclas(); try { _o2mAnexoResumenRefrescar(); } catch (e) {} }
 
   /* 📨 2026-10-21 (REGLA #37, Daniel: «que avise a quién se le está enviando… se vaya educando el personal de cuándo genera comunicación tanto
      con los técnicos como con los clientes»). ANTES de confirmar: «Al crear esta OT se enviará: Técnico X (correo con calendario) · Cliente Y
@@ -2538,7 +2593,7 @@ window.OT2C = (function(){
     if (q) lista = lista.filter(function(t){
       return t.n.toLowerCase().indexOf(q)>=0 || (t.l||'').toLowerCase().indexOf(q)>=0; });
     g.innerHTML = lista.length ? lista.map(function(t){
-      var sel = (S.tipo===t.v && !!S.descubrimiento === !!t.descubrimiento);
+      var sel = (S.tipo===t.v && !!S.descubrimiento === !!t.descubrimiento && !!S.conDesinst === !!t.conDesinst);
       // 2026-08-30 (Daniel, viendo "Capacitación" seleccionada con el
       // mismo rojo de Origen/Técnicos: "aún queda el contorno en rojo" --
       // pidió verde acá específicamente, distinto del resto del wizard):
@@ -2843,13 +2898,13 @@ window.OT2C = (function(){
       '<label class="fl">Título</label>'+
       '<input class="form-control mb-3" id="o2mTit" value="'+esc(S.titulo)+'" maxlength="200" '+
       'placeholder="Ej: Instalación sala de musculación" oninput="OT2C.setTitulo(this.value)">'+
-      '<div class="o2m-motivo">'+
+      '<div class="o2m-motivo'+(descOk?' ok':'')+'">'+
       '<label class="fl" for="o2mDesc">Motivo *<span class="imp">lo más importante de la OT</span></label>'+
       ((S._motivoHeredado && String(S.descripcion||'').trim() === S._motivoHeredado.texto)
         ? '<div class="o2m-her-mot"><i class="bi bi-diagram-3"></i>Heredado '+esc(S._motivoHeredado.origen)+' · puedes editarlo</div>'
         : '')+
       '<textarea class="form-control'+(descLen>0 && !descOk?' is-invalid':(descOk?' is-valid':''))+'" '+
-      'id="o2mDesc" rows="4" maxlength="2000" minlength="'+O2M_DESC_MIN+'" '+
+      'id="o2mDesc" rows="4" maxlength="2000" minlength="'+O2M_DESC_MIN+'" data-min="'+O2M_DESC_MIN+'" '+
       'placeholder="Qué va a hacer el técnico y por qué: ej. garantía, revisión post-instalación, qué se espera, qué llevar, con quién coordinar…" '+
       'oninput="OT2C.setDescripcion(this.value)">'+esc(S.descripcion)+'</textarea>'+
       '<small class="d-block mt-1" id="o2mDescHint" style="font-size:.72rem;color:'+(descOk?'#16a34a':'#9ca3af')+'">'+
@@ -2884,7 +2939,15 @@ window.OT2C = (function(){
   }
 
   function pintarAgenda(b){
-    b.innerHTML = '<h6 class="t">Agenda</h6>'+
+    // 📅 2026-10-24 (Daniel: «que el modal se comporte en términos de calendario para crear dos órdenes de trabajo, una por instalación y otra por
+    // desinstalación»): con «Instalación con desinstalación» este paso agenda LAS DOS órdenes: arriba la de ENTRADA (el calendario de siempre) y
+    // abajo la de SALIDA (el calendario compacto de la desinstalación, con su ficha, atajos y «buscar hueco libre»). Técnico, costo y checklist de
+    // la salida siguen en el paso «Desinstalación».
+    var di = _o2mDiAplica();
+    b.innerHTML = '<h6 class="t">Agenda'+(di ? ' · entrada y salida' : '')+'</h6>'+
+      (di ? '<p class="d"><b>Aquí agendas las dos órdenes.</b> Primero la <b>de entrada</b> (instalar) y, más abajo, la <b>de salida</b> '+
+            '(desinstalar), que queda en el calendario para acordarnos de retirar los equipos.</p>'+
+            '<div class="o2m-ag-lbl ent"><i class="bi bi-box-arrow-in-down"></i><b>Entrada · instalación</b></div>' : '')+
       '<p class="d">La jornada es de 08:00 a 17:00, con colación de 13:00 a 14:00 (achurada en la línea '+
       'de tiempo). Puedes arrastrar el bloque "Tu OT" con el mouse o el dedo para reagendarlo -- '+
       'también sigues pudiendo escribir la hora a mano. Puedes salirte de la jornada: no se bloquea, '+
@@ -2963,8 +3026,9 @@ window.OT2C = (function(){
           '<i class="bi bi-info-circle me-1"></i>Toca un espacio libre para fijar el horario de tu OT. '+
           'Los bloques de color son OTs de otros técnicos ese día.</small>'+
         '</div>'+
-      '</div>';
+      '</div>'+(di ? _o2mAgSalidaHtml() : '');
     avisosAgenda();
+    if (di) _o2mAgSalidaPintar();
     o2mCalInit();
     // El canvas se reconstruye entero en cada pintarAgenda() (innerHTML
     // nuevo) -- el listener se re-liga cada vez, no hay riesgo de
@@ -4685,26 +4749,38 @@ window.OT2C = (function(){
     refrescarAnclas();
   }
 
+  /* 🚪 2026-10-24 (Daniel, paso 8: «veo cuatro cosas y no entiendo qué tengo que completar: si tiene ascensor y si tiene estacionamiento… hay que
+     hacerlo más dinámico, más amigable»): lo OBLIGATORIO son solo DOS preguntas, cada una en su tarjeta con su ícono, su frase y un Sí/No grande
+     (roja mientras falta, VERDE al responder) y un contador «N de 2». Piso y notas pasan a «Más datos del lugar (opcional)», plegado. Mismos
+     datos (S.acceso.ascensor / estacionamiento / piso / notas), misma regla de completo: solo cambia cómo se pide. */
+  function _o2mAccContar(){ return (S.acceso.ascensor !== null ? 1 : 0) + (S.acceso.estacionamiento !== null ? 1 : 0); }
+  function _o2mAccPregunta(k, ic, titulo, ayuda, val){
+    return '<div class="o2m-accq'+(val !== null ? ' ok' : '')+'" data-acc="'+k+'">'+
+      '<div class="q"><span class="ico"><i class="bi '+ic+'"></i></span><div><b>'+titulo+'</b><small>'+ayuda+'</small></div>'+
+      '<span class="est"><i class="bi bi-check-circle-fill"></i></span></div>'+
+      _o2mAccToggle(k, val, ic)+'</div>';
+  }
   function pintarAcceso(b){
+    var a = S.acceso, n = _o2mAccContar();
     b.innerHTML = '<h6 class="t">Acceso al lugar</h6>'+
-      '<p class="d">Lo necesita el técnico para saber con qué llega.</p>'+
-      '<div class="row g-3">'+
-        '<div class="col-md-4"><label class="fl">¿Tiene ascensor? *</label>'+
-        _o2mAccToggle('ascensor', S.acceso.ascensor, 'bi-arrow-down-up')+'</div>'+
-        '<div class="col-md-4"><label class="fl">¿Hay estacionamiento? *</label>'+
-        _o2mAccToggle('estacionamiento', S.acceso.estacionamiento, 'bi-p-square')+'</div>'+
-        '<div class="col-md-2"><label class="fl">Piso</label>'+
-        '<input type="number" class="form-control" min="-5" max="30" value="'+esc(S.acceso.piso)+'" '+
-        'placeholder="Opc." oninput="OT2C.setAccesoTexto(\'piso\',this.value)"></div>'+
-        // 📝 2026-09-27 (Daniel, viendo el campo cortado: "más grandecito,
-        // pero que no ocupe mucho espacio"): pasa de col-md-2 (se veía
-        // recortado, sin espacio para leer lo escrito) a su propia fila a
-        // ancho completo -- más ancho para leer, misma altura de una línea.
-        '<div class="col-md-6"><label class="fl">Notas de acceso</label>'+
-        '<input class="form-control" maxlength="500" value="'+esc(S.acceso.notas)+'" '+
-        'placeholder="Ej: entregado por Felipe Gómez, timbre no funciona, llamar antes de subir" '+
-        'oninput="OT2C.setAccesoTexto(\'notas\',this.value)"></div>'+
-      '</div>';
+      '<p class="d">Dos preguntas rápidas para que el técnico llegue preparado. <b id="o2mAccCnt" class="o2m-acc-cnt'+(n === 2 ? ' ok' : '')+'">'+n+' de 2 respondidas</b></p>'+
+      '<div class="o2m-accq-grid">'+
+        _o2mAccPregunta('ascensor', 'bi-arrow-down-up', '¿El lugar tiene ascensor?', 'Para saber si se pueden subir los equipos sin cargarlos por escalera.', a.ascensor)+
+        _o2mAccPregunta('estacionamiento', 'bi-p-square', '¿Hay estacionamiento?', 'Para saber dónde puede dejar el vehículo el técnico.', a.estacionamiento)+
+      '</div>'+
+      '<details class="o2m-accmas"'+((a.piso || a.notas) ? ' open' : '')+'>'+
+        '<summary><i class="bi bi-plus-circle me-1"></i>Más datos del lugar <span>(opcional: piso y notas)</span></summary>'+
+        '<div class="row g-3 mt-0">'+
+          '<div class="col-6 col-md-3"><label class="fl">Piso</label>'+
+          '<input type="number" class="form-control" min="-5" max="30" value="'+esc(a.piso)+'" '+
+          'placeholder="Ej: 3" oninput="OT2C.setAccesoTexto(\'piso\',this.value)"></div>'+
+          // 📝 2026-09-27 (Daniel, viendo el campo cortado: "más grandecito, pero que no ocupe mucho espacio"): ancho completo.
+          '<div class="col-12 col-md-9"><label class="fl">Notas de acceso</label>'+
+          '<input class="form-control" maxlength="500" value="'+esc(a.notas)+'" '+
+          'placeholder="Ej: entregado por Felipe Gómez, timbre no funciona, llamar antes de subir" '+
+          'oninput="OT2C.setAccesoTexto(\'notas\',this.value)"></div>'+
+        '</div>'+
+      '</details>';
   }
 
   function cargarEquipos(){
@@ -6779,7 +6855,7 @@ window.OT2C = (function(){
           ? '<div id="o2mFinGarResumen"></div>'+
             '<label class="fl">Motivo del $0 *</label>'+_o2mCeroMotivoHtml()+
             '<label class="fl">Argumento para Daniel * <span class="text-muted" style="font-weight:400">(mínimo 30 caracteres)</span></label>'+
-            '<textarea class="form-control mb-2" rows="2" maxlength="500" '+
+            '<textarea class="form-control mb-2" rows="2" maxlength="500" data-min="30" '+
             'placeholder="Por qué queda cubierto sin cobrar: es lo que Daniel va a leer para autorizar…" '+
             'oninput="OT2C.setFinGarantiaMotivo(this.value)">'+esc(S.fin_garantia_motivo)+'</textarea>'+
             '<div id="o2mArgCnt" style="font-size:.76rem;font-weight:700;margin:-4px 0 8px">'+_o2mArgCntTxt()+'</div>'+
@@ -6849,19 +6925,23 @@ window.OT2C = (function(){
       (!centroElegido
         ? '<div class="o2m-aviso"><i class="bi bi-arrow-up-circle me-1"></i>'+
           'Elige primero el centro de costo para continuar con el valor, la cobertura y los costos.</div>'
-        : _o2mFpasoHtml('valor', 2,
+        : (interno ? '' :
+            // 🔀 2026-10-24 (Daniel, paso 9: «primero el centro de costo; luego pregúntame por el documento —las líneas ZZ, si el servicio ya se
+            // pagó en otro documento, o garantía—; y recién ahí cuánto. El paso 13 se puede resumir con el 2, bien organizadito»): la pregunta
+            // «¿cómo se cobra?» (documento · garantía · sin documento) pasa ANTES de «¿cuánto?», y el botón «agregar otro documento» (por si el
+            // servicio ya se pagó en otro) vive pegado a esa pregunta y no al final. Mismos sub-pasos, mismos ids y mismas reglas: solo el orden.
+            _o2mFpasoHtml('cobro', 2, '¿Cómo se cobra esta OT?', cobroHtml +
+              // 2026-08-29 (Daniel: "en la tabla de documentos siempre deberan poderse agregar documentos... ese boton persistira en
+              // todas las opciones para tener flexibilidad"). Antes iba al final del paso; ahora acompaña al documento.
+              '<div id="o2mDocExtra" class="mt-2"></div>',
+              'Con documento (sus líneas ZZ traen el monto), por garantía, o sin documento todavía. Si el servicio ya se pagó en otro documento, agrégalo aquí abajo.'))+
+          _o2mFpasoHtml('valor', interno ? 2 : 3,
             interno ? '¿Cuánto vale esta OT?' : (S.fin_garantia ? 'Valorizar (opcional)' : '¿Cuánto le cobras?'),
             valorHtml,
             interno ? '' : (S.fin_garantia
               ? 'Va por garantía: no se le cobra. Si quieres, anota cuánto vale el servicio (solo referencia, nunca se suma a lo cobrado).'
-              : 'Elige la línea de servicio del documento, toca «Usar este monto» en una referencia o escribe cuánto le cobras. Lo que escribas lleva su motivo.'))+
-          (interno ? '' :
-            _o2mFpasoHtml('cobro', 3, '¿Se le cobra al cliente?', cobroHtml, '')+
-            _o2mFpasoHtml('costo', 4, '¿Cuánto nos cuesta?', costoHtml, '')+
-            // 2026-08-29 (Daniel: "en la tabla de documentos siempre deberan
-            // poderse agregar documentos... ese boton persistira en todas las
-            // opciones para tener flexibilidad"). Se conserva tal cual, al final.
-            '<div id="o2mDocExtra" class="mt-3"></div>'));
+              : 'Elige la línea de servicio del documento, toca «Usar este monto» en una referencia (por ejemplo la estimación por clasificación) o escribe cuánto le cobras. Lo que escribas lleva su motivo.'))+
+          (interno ? '' : _o2mFpasoHtml('costo', 4, '¿Cuánto nos cuesta?', costoHtml, '')));
     if (centroElegido){
       if (interno){
         _o2mCostoInternoAutoCalc();
@@ -6914,7 +6994,7 @@ window.OT2C = (function(){
       '<div class="o2m-fin-docchip ref" style="margin-bottom:8px"><i class="bi bi-exclamation-triangle-fill"></i>'+
       '<b>Esta OT necesita un documento de Random</b><span>· factura, boleta, nota de venta o cotización</span></div>'+
       '<label class="fl">Argumento para Daniel * <span class="text-muted" style="font-weight:400">(mínimo 30 caracteres)</span></label>'+
-      '<textarea class="form-control mb-1" rows="3" maxlength="500" placeholder="Por qué se hace la visita sin documento: es lo que Daniel va a leer para autorizar…" '+
+      '<textarea class="form-control mb-1" rows="3" maxlength="500" data-min="30" placeholder="Por qué se hace la visita sin documento: es lo que Daniel va a leer para autorizar…" '+
       'oninput="OT2C.setFinGarantiaMotivo(this.value)">'+esc(S.fin_garantia_motivo)+'</textarea>'+
       '<div id="o2mArgCnt" style="font-size:.76rem;font-weight:700;margin-bottom:8px">'+_o2mArgCntTxt()+'</div>'+
       '<button type="button" class="btn btn-outline-secondary" style="min-height:44px" onclick="OT2C.abrirBusquedaFinDoc()">'+
@@ -7496,7 +7576,7 @@ window.OT2C = (function(){
   function _o2mFinSenalarPendiente(){
     // 🔒 FIX 2026-09-21: 'costo' se suma a la lista -- pasó de opcional a
     // obligatorio (ver completo('finanzas') y _o2mFinSubEstado('costo')).
-    var subs = esInterno() ? ['centro','valor'] : ['centro','valor','cobro','costo'];
+    var subs = esInterno() ? ['centro','valor'] : ['centro','cobro','valor','costo'];   // 2026-10-24: el orden en pantalla (cobro antes que valor)
     for (var i=0;i<subs.length;i++){
       var e = _o2mFinSubEstado(subs[i]);
       if (e.cls !== 'falta') continue;
@@ -7951,7 +8031,7 @@ window.OT2C = (function(){
         return d.doc.observaciones.map(function(o){ return '<li>' + esc(o.texto) + '</li>'; }).join('');
       }).join('') + '</ul>' +
       '<label class="fl" for="o2mObsArg">Argumento para Daniel * <span class="text-muted" style="font-weight:400">(mínimo 30 caracteres · queda guardado en la OT)</span></label>' +
-      '<textarea id="o2mObsArg" class="form-control" rows="2" maxlength="1000" ' +
+      '<textarea id="o2mObsArg" class="form-control" rows="2" maxlength="1000" data-min="30" ' +
       'placeholder="Por qué esta OT se hace con este documento. Ej: el cliente pidió instalar tres meses después de la compra por obras en su gimnasio…" ' +
       'oninput="OT2C.setFinObsArgumento(this.value)">' + esc(S.fin_obs_argumento || '') + '</textarea>' +
       '<div id="o2mObsCnt" class="o2m-obs-cnt">' + _o2mFinObsCntHtml() + '</div>' +
@@ -9022,11 +9102,55 @@ window.OT2C = (function(){
     S.anexo.items_editados = false;
     repintarSeccion('anexo');
   }
+  /* 📑 2026-10-24 (Daniel, paso 11: «el anexo de contrato me gustaría empoderarlo un poquito más en la gestión de creación de la OT»): antes de los
+     campos, una CABECERA con lo esencial de lo que se firma —proveedor, cuánto se le paga, cuántos productos y unidades— y el camino que sigue
+     (enviar → firma → la OT se libera), y la LISTA de productos con sus cantidades declaradas (la misma que va al PDF), a la vista y no escondida.
+     Solo lee del estado: no cambia ningún campo ni regla del anexo. */
+  function _o2mAnexoResumenHtml(){
+    _o2mAnexoProductosCalc();
+    var a = S.anexo, prods = a.productos || [], total = _o2mAnexoTotal();
+    var uds = prods.reduce(function(s, p){ return s + (parseInt(p.cantidad, 10) || 0); }, 0);
+    var ok = !!(a.proveedor_nombre || '').trim() && total > 0 && prods.length > 0;
+    return '<div id="o2mAxResumen">'+_o2mAnexoResumenInterior(ok, a, total, prods, uds)+'</div>';
+  }
+  /* Se vuelve a escribir solo la cabecera/lista (sin tocar los campos) cada vez que cambia algo: el precio, el proveedor, los equipos. */
+  function _o2mAnexoResumenRefrescar(){
+    var el = document.getElementById('o2mAxResumen'); if (!el) return;
+    _o2mAnexoProductosCalc();
+    var a = S.anexo, prods = a.productos || [], total = _o2mAnexoTotal();
+    var uds = prods.reduce(function(s, p){ return s + (parseInt(p.cantidad, 10) || 0); }, 0);
+    var abierto = (el.querySelector('details') || {}).open !== false;
+    el.innerHTML = _o2mAnexoResumenInterior(!!(a.proveedor_nombre || '').trim() && total > 0 && prods.length > 0, a, total, prods, uds);
+    var d = el.querySelector('details'); if (d) d.open = abierto;
+  }
+  function _o2mAnexoResumenInterior(ok, a, total, prods, uds){
+    return '<div class="o2m-ax-kpis'+(ok ? ' ok' : '')+'">'+
+        '<div><small>Proveedor</small><b>'+esc(a.proveedor_nombre || 'Sin definir')+'</b></div>'+
+        '<div><small>Se le paga</small><b>'+_o2mPesos(total)+'</b></div>'+
+        '<div><small>Productos</small><b>'+prods.length+' · '+uds+' u.</b></div>'+
+        '<div><small>Fecha del trabajo</small><b>'+esc(S.fecha ? _o2mFechaBonita(S.fecha) : 'Sin definir')+'</b></div>'+
+      '</div>'+
+      '<ol class="o2m-ax-camino" aria-label="Qué pasa con el anexo">'+
+        '<li><span>1</span><div><b>Se crea la OT</b><small>El anexo nace con ella'+(a.enviar_ahora ? ' y se envía' : ' como borrador')+'.</small></div></li>'+
+        '<li><span>2</span><div><b>El proveedor firma</b><small>Desde el enlace o el PDF que recibe por correo.</small></div></li>'+
+        '<li><span>3</span><div><b>La OT se libera</b><small>Recién entonces puede verla e iniciarla.</small></div></li>'+
+      '</ol>'+
+      '<details class="o2m-ax-prods" open><summary><i class="bi bi-box-seam me-1"></i>Qué firma el proveedor: '+prods.length+' producto'+(prods.length === 1 ? '' : 's')+
+        ' · '+uds+' unidad'+(uds === 1 ? '' : 'es')+'</summary>'+
+        (prods.length
+          ? '<table class="o2m-ax-tabla"><thead><tr><th>Producto</th><th>Documento</th><th class="n">Cant.</th></tr></thead><tbody>'+
+            prods.map(function(p){
+              return '<tr><td><b>'+esc(p.nombre)+'</b>'+(p.sku ? '<small>'+esc(p.sku)+'</small>' : '')+'</td><td>'+esc(p.documento || '—')+'</td><td class="n">'+esc(String(p.cantidad))+'</td></tr>';
+            }).join('')+'</tbody></table>'
+          : '<div class="o2m-aviso" style="margin:8px 0 0">Todavía no hay productos: se arman con los equipos que marques en el paso Equipos.</div>')+
+      '</details>';
+  }
   function pintarAnexo(b){
     _o2mAnexoAutoRellenar();
     var a = S.anexo;
     b.innerHTML =
       '<h6 class="t">Anexo de Contrato</h6>'+
+      _o2mAnexoResumenHtml()+
       '<div class="o2m-aviso" style="background:#fee2e2;border-color:#fca5a5;color:#991b1b">'+
         '<i class="bi bi-shield-lock-fill me-1"></i><b>'+esc(a.proveedor_nombre||'El proveedor')+
         '</b> no podrá ver ni iniciar esta OT hasta firmar este anexo.</div>'+
@@ -10270,6 +10394,9 @@ window.OT2C = (function(){
 
   function setTipo(i){
     var t = TIPOS[i]; S.tipo = t.v; S.descubrimiento = !!t.descubrimiento;
+    // 🔁 2026-10-24: «Instalación con desinstalación» nace con la desinstalación decidida (siempre agendada, con técnico). Con otro tipo el paso no existe.
+    S.conDesinst = !!t.conDesinst;
+    if (S.conDesinst && S.desinst){ S.desinst.lleva = 'si'; _diAutoCosto(); }
     if (t.interno) S.origen = 'interno';
     _o2mFinSoltarCentroAuto();   // 2026-09-15: ver setOrigen
     // La plantilla de checklist sugerida es POR TIPO -- si el tipo cambia,
@@ -10299,7 +10426,14 @@ window.OT2C = (function(){
     // contenido, no lo saca del formulario.
     if (fase === 'form') pintarFormulario(); else pintar();
   }
-  function setAcc(k,v){ S.acceso[k] = v==='' ? null : parseInt(v); refrescarAnclas(); }
+  function setAcc(k,v){
+    S.acceso[k] = v==='' ? null : parseInt(v);
+    // 🚪 2026-10-24: la tarjeta de la pregunta pasa de rojo a verde y el contador «N de 2» se actualiza sin repintar la sección.
+    document.querySelectorAll('.o2m-accq[data-acc="'+k+'"]').forEach(function(c){ c.classList.toggle('ok', S.acceso[k] !== null); });
+    var cnt = document.getElementById('o2mAccCnt');
+    if (cnt){ var n = _o2mAccContar(); cnt.textContent = n+' de 2 respondidas'; cnt.classList.toggle('ok', n === 2); }
+    refrescarAnclas();
+  }
   /* 2026-08-29 (Daniel: "el acceso al lugar... déjalo con objeto animado,
      que se ve espectacular, ponle un ascensor, ponle un estacionamiento").
      Botones con ícono en vez de un <select> plano -- misma pregunta
@@ -10325,6 +10459,24 @@ window.OT2C = (function(){
   // el contador/borde a mano en vez de repintar toda la sección -- un
   // repintado completo en cada tecla le haría perder el foco al textarea
   // (el cursor saltaría al final o se cerraría el teclado en el celular).
+  /* 🚦 2026-10-24 (Daniel: «pasan de rojo a verde… en el proyecto entero, cuando la tarjeta apruebe los caracteres, tiene que pasar de rojo a
+     verde»): TODO campo del asistente con `data-min="N"` queda en rojo mientras no llega a N caracteres y pasa a VERDE (borde, resplandor y,
+     si está dentro de una tarjeta de motivo, la tarjeta entera) en cuanto los cumple. Se aplica al escribir (delegado) y tras cada repintado. */
+  function _o2mVcUno(el){
+    var min = parseInt(el.getAttribute('data-min'), 10) || 0; if (!min) return;
+    var len = String(el.value || '').trim().length, ok = len >= min;
+    el.classList.toggle('is-valid', ok);
+    el.classList.toggle('is-invalid', len > 0 && !ok);
+    var c = el.closest ? el.closest('.o2m-motivo') : null; if (c) c.classList.toggle('ok', ok);
+  }
+  function _o2mVcBarrido(){
+    var raiz = document.getElementById('ot2ModalCrear'); if (!raiz) return;
+    Array.prototype.forEach.call(raiz.querySelectorAll('[data-min]'), _o2mVcUno);
+  }
+  (function(){
+    var raiz = document.getElementById('ot2ModalCrear');
+    if (raiz) raiz.addEventListener('input', function(ev){ var t = ev.target; if (t && t.getAttribute && t.getAttribute('data-min')) _o2mVcUno(t); });
+  })();
   function setDescripcion(v){
     S.descripcion = v;
     refrescarAnclas();
@@ -10332,6 +10484,7 @@ window.OT2C = (function(){
     var len = v.trim().length, ok = len >= O2M_DESC_MIN;
     ta.classList.toggle('is-invalid', len>0 && !ok);
     ta.classList.toggle('is-valid', ok);
+    var _cm = ta.closest('.o2m-motivo'); if (_cm) _cm.classList.toggle('ok', ok);
     var hint = document.getElementById('o2mDescHint');
     if (hint){
       hint.style.color = ok ? '#16a34a' : '#9ca3af';
@@ -11704,7 +11857,8 @@ window.OT2C = (function(){
             costo_proveedor:'', costo_despacho:'', nota:'', cobro:null, argumento:'', cobra_servicio:'', cobra_despacho:'',
             eq_fuera:{}, eq_plant:{}, forzar:false, previo:null, previoPend:false, previoKey:'', _costoAuto:false};
   }
-  function _o2mDiAplica(){ return S.tipo === 'instalacion' && !esInterno() && !O2M_ES_TECNICO && !!S.cliente; }
+  /* 🔁 2026-10-24: el paso existe SOLO con «Instalación con desinstalación» (el tipo decide, no una pregunta dentro de la instalación). */
+  function _o2mDiAplica(){ return S.tipo === 'instalacion' && !!S.conDesinst && !esInterno() && !O2M_ES_TECNICO && !!S.cliente; }
   function _diTec(){ var d = S.desinst; return (d.tec_modo === 'mismos' ? (S.tecnicos || []) : (d.tecnicos || [])).slice(); }
   function _diLider(){ var d = S.desinst; return d.tec_modo === 'mismos' ? (S.lider || null) : (d.lider || null); }
   function _diTecObj(id){ return (cacheTec || []).filter(function(x){ return x.id === id; })[0] || null; }
@@ -11835,7 +11989,7 @@ window.OT2C = (function(){
     if (d.lleva === 'si'){
       var antes = d.costo_proveedor;
       _diAutoCosto();
-      var regs = ['tec', 'res'];
+      var regs = ['preg', 'tec', 'res'];     // 'preg': el aviso «necesita un técnico» y las fechas de las dos órdenes se mantienen al día
       var ae = document.activeElement;
       if (antes !== d.costo_proveedor && !(ae && ae.closest && ae.closest('#o2mDiCosto'))) regs.push('costo');
       _diPintarRegiones(regs);
@@ -11864,16 +12018,43 @@ window.OT2C = (function(){
   function _diEsc(s){ return esc(s); }
   function pintarDesinst(b){
     var d = S.desinst;
-    b.innerHTML = '<h6 class="t">¿Esta instalación se desinstala después?</h6>'+
-      '<p class="d">Si los equipos se retiran más adelante (un mall, un evento, un arriendo), agéndalo ahora: se crea una '+
-      '<b>segunda orden de trabajo</b>, unida a esta instalación, con su propia fecha, técnico y checklist. Así el técnico y el '+
-      'calendario lo saben desde hoy. Tú decides cada dato: el sistema solo sugiere.</p>'+
+    // 🔁 2026-10-24: con «Instalación con desinstalación» el paso ya no pregunta «¿se desinstala?»: la respuesta es sí, y lo que falta es agendarla.
+    b.innerHTML = '<h6 class="t">'+(S.conDesinst ? 'Desinstalación agendada' : '¿Esta instalación se desinstala después?')+'</h6>'+
+      (S.conDesinst
+        ? '<p class="d">Es un <b>evento o arriendo</b>, así que este pedido crea <b>dos órdenes de trabajo unidas</b>: una de '+
+          '<b>entrada</b> (instalar) y una de <b>salida</b> (desinstalar), que queda <b>calendarizada</b> para acordarnos de retirar los '+
+          'equipos. La de salida lleva su propia fecha, su checklist y, <b>sí o sí, un técnico asignado</b>. Tú decides cada dato: '+
+          'el sistema solo sugiere.</p>'
+        : '<p class="d">Si los equipos se retiran más adelante (un mall, un evento, un arriendo), agéndalo ahora: se crea una '+
+          '<b>segunda orden de trabajo</b>, unida a esta instalación, con su propia fecha, técnico y checklist. Así el técnico y el '+
+          'calendario lo saben desde hoy. Tú decides cada dato: el sistema solo sugiere.</p>')+
       '<div id="o2mDiPreg"></div>'+
-      '<div id="o2mDiFecha"></div><div id="o2mDiAvisos"></div><div id="o2mDiTec"></div><div id="o2mDiCosto"></div>'+
+      // 📅 2026-10-24: con «Instalación con desinstalación» la fecha, el horario y sus avisos se agendan en el paso «Agenda» (ver _o2mAgSalidaHtml).
+      (S.conDesinst ? '' : '<div id="o2mDiFecha"></div><div id="o2mDiAvisos"></div>')+'<div id="o2mDiTec"></div><div id="o2mDiCosto"></div>'+
       '<div id="o2mDiCobro"></div><div id="o2mDiEq"></div><div id="o2mDiNota"></div><div id="o2mDiRes"></div>';
     _diPintarRegiones(['preg', 'fecha', 'avisos', 'tec', 'costo', 'cobro', 'eq', 'nota', 'res']);
     if (d.lleva && d.lleva !== 'no') _diProgramarPrevio(true);
     _diCargarPlantillas();
+  }
+  /* 📅 2026-10-24 (Daniel: «el modal se comporte en términos de calendario para crear dos órdenes de trabajo»): con «Instalación con desinstalación»
+     la fecha y el horario de la SALIDA se agendan en el paso «Agenda», justo debajo de la entrada, con el MISMO calendario compacto y la misma
+     «ficha» de siempre (carga por día, domingos no, atajos, «buscar hueco libre»). Son los mismos contenedores `o2mDiFecha` / `o2mDiAvisos` (ids
+     únicos: en este modo ya no existen en el paso «Desinstalación»), así que todo lo que repinta la desinstalación llega acá sin cambios. */
+  function _diFechaSalidaOk(){
+    var d = S.desinst;
+    return !!d.fecha && d.fecha >= (S.fecha || '') && !_o2mEsDomingo(d.fecha);
+  }
+  function _o2mAgSalidaHtml(){
+    return '<div class="o2m-ag-salida" id="o2mAgSalida">'+
+      '<div class="o2m-ag-union" aria-hidden="true"><i class="bi bi-arrow-down-circle-fill"></i></div>'+
+      '<div class="o2m-ag-lbl sal"><i class="bi bi-box-arrow-up"></i><b>Salida · desinstalación</b>'+
+        '<span>Segunda orden, calendarizada para retirar los equipos. Lleva su propio técnico (sí o sí) y checklist: se completan en el paso «Desinstalación».</span></div>'+
+      '<div id="o2mDiFecha"></div><div id="o2mDiAvisos"></div></div>';
+  }
+  function _o2mAgSalidaPintar(){
+    var f = document.getElementById('o2mDiFecha'), a = document.getElementById('o2mDiAvisos');
+    try { if (f) _diRegFecha(f); if (a) _diRegAvisos(a); } catch (e) { console.error('[OT2C] agenda · salida', e); }
+    _diProgramarPrevio(true);
   }
   function _diCargarPlantillas(){
     if (_evPlantillas !== null) return;
@@ -11899,6 +12080,17 @@ window.OT2C = (function(){
     function op(v, ic, n, l){
       return '<button type="button" class="o2m-di-op'+(d.lleva===v?' sel':'')+'" aria-pressed="'+(d.lleva===v)+'" onclick="OT2C.diLleva(\''+v+'\')">'+
         '<i class="bi '+ic+' ic"></i><span class="n">'+n+'</span><span class="l">'+l+'</span></button>';
+    }
+    if (S.conDesinst){
+      // Sin opciones «por definir» ni «no»: el tipo ya dice que se desinstala y debe quedar agendada con su técnico.
+      var tec = _diTec(), conTec = !!(_diLider() && tec.length);
+      el.innerHTML = '<div class="o2m-di-av verde"><i class="bi bi-diagram-2-fill"></i><span><b>Se crean 2 órdenes unidas:</b> la '+
+        '<b>de entrada</b> (instalación)'+(S.fecha ? ' · '+_diEsc(_diFechaLarga(S.fecha)) : '')+' y la <b>de salida</b> (desinstalación)'+
+        (d.fecha ? ' · '+_diEsc(_diFechaLarga(d.fecha)) : ', que agendas en el paso <b>Agenda</b>')+'.</span>'+
+        (d.fecha ? '' : '<button type="button" onclick="OT2C.irAncla(\'agenda\')">Ir a Agenda</button>')+'</div>'+
+        (conTec ? '' : '<div class="o2m-di-av ambar"><i class="bi bi-person-exclamation"></i><span>La desinstalación <b>necesita un técnico asignado</b>: '+
+          'elígelo en «Técnicos de la desinstalación» (puedes usar los mismos de la instalación).</span></div>');
+      return;
     }
     el.innerHTML = '<div class="o2m-di-pregunta">'+
       op('si','bi-box-arrow-up','Sí, la agendo ahora','Fecha, técnico y checklist de la desinstalación quedan listos')+
@@ -12127,7 +12319,7 @@ window.OT2C = (function(){
         : '')+
       (d.cobro === 'cubierta'
         ? '<div style="margin-top:10px"><label class="ev-lbl" for="o2mDiArg">Por qué queda saldo sin usar (mínimo 30 caracteres) *</label>'+
-          '<textarea id="o2mDiArg" maxlength="1000" placeholder="Ej: el cliente acordó que la desinstalación va incluida en el precio de la instalación" oninput="OT2C.diCampo(\'argumento\',this.value)">'+_diEsc(d.argumento)+'</textarea>'+
+          '<textarea id="o2mDiArg" maxlength="1000" data-min="30" placeholder="Ej: el cliente acordó que la desinstalación va incluida en el precio de la instalación" oninput="OT2C.diCampo(\'argumento\',this.value)">'+_diEsc(d.argumento)+'</textarea>'+
           '<div class="ev-ayuda" id="o2mDiArgN">'+(d.argumento||'').trim().length+' / 30 caracteres mínimos. Queda guardado con tu nombre.</div></div>'
         : '')+'</div>';
   }
@@ -12242,7 +12434,7 @@ window.OT2C = (function(){
       return;
     }
     d.fecha = v || '';
-    _diPintarRegiones(['fecha', 'avisos', 'res']);
+    _diPintarRegiones(['preg', 'fecha', 'avisos', 'res']);
     _diProgramarPrevio(false);
     refrescarAnclas();
   }
@@ -12300,7 +12492,7 @@ window.OT2C = (function(){
     d.tec_modo = m;
     if (m === 'otros' && !d.tecnicos.length){ d.tecnicos = []; d.lider = null; }
     _diAutoCosto();
-    _diPintarRegiones(['tec', 'costo', 'res']);
+    _diPintarRegiones(['preg', 'tec', 'costo', 'res']);
     _diProgramarPrevio(false);
     refrescarAnclas();
   }
@@ -12318,7 +12510,7 @@ window.OT2C = (function(){
       d.tecnicos.splice(i, 1); if (d.lider === id) d.lider = d.tecnicos[0] || null;
     }
     _diAutoCosto();
-    _diPintarRegiones(['tec', 'costo', 'res']);
+    _diPintarRegiones(['preg', 'tec', 'costo', 'res']);
     _diProgramarPrevio(false);
     refrescarAnclas();
   }
@@ -12429,8 +12621,11 @@ window.OT2C = (function(){
       S.repuestos_a_instalar = opts.repuestos_a_instalar.slice();
     if (opts.tipo){
       var t = TIPOS.find(function(x){
-        return x.v === opts.tipo && !!x.descubrimiento === !!opts.descubrimiento; });
-      if (t){ S.tipo = t.v; S.descubrimiento = !!t.descubrimiento; }
+        return x.v === opts.tipo && !!x.descubrimiento === !!opts.descubrimiento && !!x.conDesinst === !!opts.conDesinst; });
+      if (t){
+        S.tipo = t.v; S.descubrimiento = !!t.descubrimiento; S.conDesinst = !!t.conDesinst;
+        if (S.conDesinst && S.desinst) S.desinst.lleva = 'si';
+      }
     }
 
     // Si ya se sabe el origen (y el cliente, cuando corresponde), se salta
