@@ -325,9 +325,14 @@ class TestElResumenDeArriba(_HarnessBase):
         tabla = cta.split('<table class="fm-neg">')[1].split("</table>")[0]
         self.assertIn("<th>Por negocio</th><th>Cobramos</th><th>Nos cobraron</th><th>Queda</th>", tabla)
         self.assertEqual(tabla.count("<tr>") + tabla.count('<tr class="tot">'), 4, "encabezado + instalación + despacho + total")
-        self.assertIn('<tr class="tot"><th scope="row">Total</th><td>$302.101</td><td>$250.000</td><td class="pos">+$52.101</td></tr>', tabla)
+        # 2026-10-25: cada celda lleva su rótulo (data-l) para que, en el celular, la fila sea una tarjetita (Cobramos · Nos cobraron · Queda)
+        self.assertIn('<tr class="tot"><th scope="row">Total</th><td data-l="Cobramos">$302.101</td><td data-l="Nos cobraron">$250.000</td>'
+                      '<td data-l="Queda" class="pos">+$52.101</td></tr>', tabla)
         self.assertIn("Instalación o servicio", tabla)
         self.assertIn("Despacho", tabla)
+        # …y cada fila de «Nos cobraron» dice QUIÉN nos cobró (lo que antes mostraba la tarjeta «Lo que nos costó», que ya no existe aparte)
+        self.assertIn('<small class="fm-quien">Técnico Demo · proveedor externo</small>', tabla)
+        self.assertIn('<small class="fm-quien">Flete o courier que nos cobraron</small>', tabla)
 
     def test_con_repuestos_instalados_la_tabla_los_suma_antes_del_total(self):
         def con_rep(rec, pan):
@@ -338,6 +343,60 @@ class TestElResumenDeArriba(_HarnessBase):
         self.assertIn("Repuestos instalados", tabla)
         self.assertLess(tabla.index("Repuestos instalados"), tabla.index("Total"))
         self.assertIn("bodega $40.000", tabla)
+
+    def test_cada_repuesto_va_debajo_con_su_origen_y_su_costo_dentro_de_la_misma_tabla(self):
+        """2026-10-25 (Daniel: «los costos, resumidos»): «Lo que nos costó» se fundió en La cuenta; lo que esa tarjeta mostraba (cada repuesto con su origen)
+        sigue ahí, en filas debajo de «Repuestos instalados»."""
+        def con_rep(rec, pan):
+            f = rec["fin"]
+            f["me_cobraron"].update(repuestos=40000, total=290000, repuestos_desglose={"bodega": 40000}, repuestos_sin_costo=1)
+            f["queda"].update(repuestos=-40000, total=12101, pct=4.0)
+            pan["costos"]["sin_costo"] = 1
+            pan["costos"]["registros"] += [
+                {"clave": "rep7", "rotulo": "Repuesto: Correa de trotadora", "detalle": "1 u · origen: bodega", "monto": 40000.0, "falta": False},
+                {"clave": "rep8", "rotulo": "Repuesto: Sensor de velocidad", "detalle": "2 u · sin costo registrado", "monto": None, "falta": True}]
+        tabla = self._cta(self._pintar("cobro_2docs", mutar=con_rep)).split('<table class="fm-neg">')[1].split("</table>")[0]
+        self.assertLess(tabla.index("Repuestos instalados"), tabla.index("Correa de trotadora"))
+        self.assertLess(tabla.index("Sensor de velocidad"), tabla.index("Total"))
+        self.assertIn('<tr class="fm-sub"><th scope="row">Correa de trotadora<small class="fm-quien">1 u · origen: bodega</small></th><td></td>'
+                      '<td data-l="Nos cobraron">$40.000</td><td></td></tr>', tabla)
+        self.assertIn('Sensor de velocidad<small class="fm-quien">2 u · sin costo registrado</small></th><td></td>'
+                      '<td data-l="Nos cobraron"><span class="fm-pend">Falta declararlo</span></td>', tabla)
+        self.assertIn("bodega $40.000 · 1 sin costo registrado", tabla, "la fila de repuestos conserva el desglose por origen")
+        self.assertNotIn("repuesto(s) instalado(s) sin costo registrado", self._cta(self._pintar("cobro_2docs", mutar=con_rep)),
+                         "el aviso suelto no se repite si la fila de repuestos ya lo dice")
+
+    def test_lo_que_falta_declarar_se_dice_en_ambar_en_la_misma_fila(self):
+        def falta(rec, pan):
+            rec["fin"]["me_cobraron"].update(falta_tecnico=True, tecnico=None, total=0)
+            rec["fin"]["queda"].update(mostrar=False)
+            pan["costos"]["registros"][0].update(monto=None, falta=True)
+        tabla = self._cta(self._pintar("cobro_2docs", mutar=falta)).split('<table class="fm-neg">')[1].split("</table>")[0]
+        fila = tabla.split('<tr><th scope="row">Instalación o servicio')[1].split("</tr>")[0]
+        self.assertIn('<td data-l="Nos cobraron"><span class="fm-pend">Falta declararlo</span></td>', fila)
+        self.assertIn('<td data-l="Queda" class="">—</td>', fila)
+        css = _leer("static/ot_fin_motor.css")
+        pend = css.split(".fm-pend{")[1].split("}")[0]
+        self.assertIn("var(--fm-ambar-f)", pend)                      # «guiar sin gritar»: lo que falta es ámbar, no rojo
+        self.assertNotIn("fee2e2", pend)
+        self.assertNotIn("var(--fm-rojo-f)", pend)
+
+    def test_una_ot_que_no_se_cobra_trae_la_misma_tabla_con_solo_lo_que_nos_costo(self):
+        cta = self._cta(self._pintar("garantia_nv"))
+        tabla = cta.split('<table class="fm-neg fm-neg-c">')[1].split("</table>")[0]
+        self.assertIn("<th>Lo que nos costó</th><th>Monto</th>", tabla)
+        self.assertIn('<th scope="row">Instalación o servicio<small class="fm-quien">Técnico Demo · proveedor externo</small></th>', tabla)
+        self.assertIn('<tr class="tot"><th scope="row">Total</th><td data-l="Nos cobraron">$200.000</td></tr>', tabla)
+        self.assertNotIn("Cobramos", tabla)
+        self.assertNotIn("Queda", tabla)
+        self.assertNotIn('<table class="fm-neg">', cta, "sin cobro no hay desglose Cobramos/Queda por negocio")
+
+    def test_un_aviso_de_repuestos_sin_costo_va_en_ambar_solo_si_la_tabla_no_lo_dijo(self):
+        def sin_costo(rec, pan):
+            pan["costos"]["sin_costo"] = 2
+        cta = self._cta(self._pintar("cobro_2docs", mutar=sin_costo))
+        self.assertIn('<div class="fm-aviso">2 repuesto(s) instalado(s) sin costo registrado: no suman todavía.</div>', cta)
+        self.assertIn(".fm-aviso{background:var(--fm-ambar-f)", _leer("static/ot_fin_motor.css"))
 
     def test_de_donde_sale_lo_cobrado_dice_el_documento_el_servicio_y_el_despacho(self):
         cta = self._cta(self._pintar("cobro_2docs"))

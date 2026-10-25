@@ -133,6 +133,7 @@ def _caso(nombre):
         interna, fin, pasos, cerrada = False, _fin(), PASOS_OK, False
     else:   # sin_docs
         docs, interna, fin, pasos, cerrada = [], False, _fin(), PASOS_SIN_DOC, False
+    pasos = [dict(p) for p in pasos]       # 2026-10-25: copia: las pruebas cambian pasos sueltos y no deben contaminar a las demás (PASOS_* son globales)
     rec = {"ok": True, "numero_ot": "OT-2026-00284", "cliente": "" if interna else "Gimnasio de prueba", "interna": interna,
            "puede_pedir_autorizacion": not interna, "estado": "cerrada" if cerrada else "en_curso", "cerrada": cerrada,
            "pasos": pasos, "fin": fin, "solicitud_pendiente": None, "autorizaciones": [],
@@ -168,10 +169,11 @@ class _Base(unittest.TestCase):
 const fs = require('fs');
 const datos = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
 global.window = global;
+const oyentes = [];
 const el = {
   innerHTML: '', classList: { add() {}, remove() {} },
   getAttribute(k) { return { 'data-vid': '461', 'data-modo': process.argv[4] || 'ficha' }[k] || null; },
-  addEventListener() {}, closest() { return null; }, contains() { return true; },
+  addEventListener(t, f) { if (t === 'click') oyentes.push(f); }, closest() { return null; }, contains() { return true; },
   querySelector(sel) { return (sel.indexOf('data-fm-extra') >= 0 && datos.extra) ? { innerHTML: datos.extra } : null; }
 };
 global.document = { readyState: 'complete', querySelectorAll() { return [el]; }, getElementById() { return null; },
@@ -183,21 +185,29 @@ global.fetch = function (url) {
   return Promise.resolve({ ok: true, status: 200, json() { return Promise.resolve(j); } });
 };
 require(process.argv[2]);
-setTimeout(function () { process.stdout.write(el.innerHTML); }, 80);
+setTimeout(function () {
+  // 2026-10-25: «clics» (argv[6], separados por coma) simula el toque de cada botón [data-fm-act] por el mismo oyente de click que usa el motor
+  (process.argv[6] ? process.argv[6].split(',') : []).forEach(function (act) {
+    const b = { getAttribute(k) { return k === 'data-fm-act' ? act : null; } };
+    const ev = { target: { closest(sel) { return sel === '[data-fm-act]' ? b : null; } }, preventDefault() {} };
+    oyentes.forEach(function (f) { f(ev); });
+  });
+  process.stdout.write(el.innerHTML);
+}, 80);
 """)
 
     @classmethod
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
-    def _pintar(self, caso, modo="ficha", extra="", mutar=None, con_funcion_anexo=False):
+    def _pintar(self, caso, modo="ficha", extra="", mutar=None, con_funcion_anexo=False, clics=""):
         rec, pan = _caso(caso)
         if mutar:
             mutar(rec, pan)
         datos = os.path.join(self.tmp, "datos.json")
         with open(datos, "w", encoding="utf-8") as f:
             json.dump({"recorrido": rec, "panorama": pan, "extra": extra}, f)
-        r = subprocess.run([self.node, self.harness, os.path.join(RAIZ, "static", "ot_fin_motor.js"), datos, modo, "anexo" if con_funcion_anexo else ""],
+        r = subprocess.run([self.node, self.harness, os.path.join(RAIZ, "static", "ot_fin_motor.js"), datos, modo, "anexo" if con_funcion_anexo else "", clics],
                            capture_output=True, text=True, encoding="utf-8", timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
         return r.stdout
@@ -209,7 +219,7 @@ class TestEncabezadoUnico(_Base):
         Actualizar (y «Editar cobro y costos» si se puede); «Corregir finanzas» y «OT con finanzas dudosas» van en un pie «Solo superadmin», cada uno con
         una línea que dice qué hace."""
         html = self._pintar("cobro_2docs", extra=EXTRA_SUPERADMIN)
-        cab = html.split('<div class="fm-head">')[1].split('<div class="fm-top">')[0]
+        cab = html.split('<div class="fm-head">')[1].split('<div class="fm-top')[0]
         botones = cab.split('<div class="fm-head-a">')[1]
         self.assertIn("Actualizar", botones)
         self.assertEqual(botones.count("fm-btn"), 1, "solo Actualizar (ningún botón de superadmin arriba)")
@@ -227,7 +237,7 @@ class TestEncabezadoUnico(_Base):
 
     def test_con_la_ot_cerrada_corregir_finanzas_sube_al_encabezado_y_el_pie_solo_trae_las_dudosas(self):
         html = self._pintar("cobro_2docs", extra=EXTRA_SUPERADMIN, mutar=lambda rec, pan: pan.update(cerrada=True, puede_editar=False))
-        botones = html.split('<div class="fm-head">')[1].split('<div class="fm-top">')[0].split('<div class="fm-head-a">')[1]
+        botones = html.split('<div class="fm-head">')[1].split('<div class="fm-top')[0].split('<div class="fm-head-a">')[1]
         self.assertLess(botones.index("Actualizar"), botones.index("Corregir finanzas"))
         pie = html.split('<div class="fm-pie">')[1].split("</div>")[0]
         self.assertNotIn("Corregir finanzas", pie)
@@ -317,9 +327,12 @@ class TestElRecorridoEnSeisFilas(_Base):
         lista = css.split(".fm-pasos{")[1].split("}")[0]
         self.assertIn("display:flex;flex-direction:column", lista)
         self.assertIn("min-height:48px", css.split(".fm-paso{")[1].split("}")[0])
-        # dos columnas iguales en un bloque ancho (REGLA #16) y, en una sola columna, lo primero es la plata
-        self.assertRegex(css, r"@container \(min-width:900px\)\{\.fm-top\{grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\)\}\}")
-        self.assertIn("@container (max-width:899px){.fm-top .fm-cta{order:-1}}", css)
+        # dos columnas iguales en un bloque ancho (REGLA #16: La cuenta | El recorrido); con el recorrido plegado, una sola columna (la línea arriba y La cuenta
+        # debajo, con sus dos mitades lado a lado); en una sola columna (celular) lo primero es la plata
+        self.assertRegex(css, r"@container \(min-width:900px\)\{\.fm-top\{grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\)\}"
+                              r"\.fm-top\.plegado\{grid-template-columns:minmax\(0,1fr\)\}\}")
+        self.assertIn("@container (max-width:899px){.fm-top.plegado .fm-cta{order:-1}}", css)
+        self.assertIn("@container (min-width:900px){.fm-top.plegado .fm-cta-in{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr)}}", css)
         self.assertIn("@media (max-width:560px)", css)
         self.assertIn("min-height:44px", css.split("@media (max-width:560px)")[-1], "botones táctiles de 44 px en el celular")
         self.assertIn(".fm-btn,.fm-btn-chip,.fm-pie .fm-btn{min-height:44px}", css)        # también los del pie de superadmin
@@ -350,7 +363,7 @@ class TestLaFraseDeArribaYElPaso2(_Base):
         # va justo debajo del encabezado y antes del recorrido
         h = self._pintar("sin_docs", mutar=con("falta", "x"))
         self.assertLess(h.index('class="fm-head"'), h.index('class="fm-resumen'))
-        self.assertLess(h.index('class="fm-resumen'), h.index('class="fm-top"'))
+        self.assertLess(h.index('class="fm-resumen'), h.index('class="fm-top'))
 
     def test_si_el_servidor_no_manda_la_frase_no_se_inventa_una(self):
         self.assertNotIn('class="fm-resumen', self._pintar("cobro_2docs"))
@@ -437,7 +450,10 @@ class TestContadoresYCuenta(_Base):
         # 2026-10-08: «No se cobra · nos costó $Y» (la cuenta ya no repite «Cobré $0 − …»); el motivo va aparte
         self.assertIn("No se cobra</small><b>nos costó $200.000", cta)
         self.assertIn('<span class="fm-motivo">Garantía</span>', cta)
-        self.assertNotIn("fm-neg", cta, "sin cobro no hay desglose Cobré/Queda por negocio")
+        # 2026-10-25: sin cobro no hay desglose Cobramos/Queda por negocio, pero SÍ lo que nos costó (la tarjeta «Lo que nos costó» se fundió acá)
+        self.assertNotIn('<table class="fm-neg">', cta)
+        self.assertIn('<table class="fm-neg fm-neg-c">', cta)
+        self.assertNotIn("<h3>Lo que nos costó</h3>", html, "ya no hay una tarjeta aparte")
         self.assertIn("Valorizado (referencia): <b>$959.000</b>", cta)
         # 2026-10-25 (Daniel: «¿la pidió o no la pidió? tiene que ser dinámico»): quién autorizó el $0 se cuenta UNA sola vez, en el paso ①, con las
         # palabras del servidor; la tarjeta ya no repite la constancia con otras palabras (así no se pueden contradecir)
@@ -445,7 +461,8 @@ class TestContadoresYCuenta(_Base):
         self.assertNotIn("Sin autorización", html)
         paso1 = html.split('<ol class="fm-pasos">')[1].split("</ol>")[0].split('<li class="fm-paso ')[1]
         self.assertIn("Autorizado por Daniel el 07/10/2026 14:00: falla de fábrica cubierta por la garantía", paso1)
-        self.assertEqual(html.count("Autorizado por Daniel el 07/10/2026 14:00"), 1)
+        # (el tooltip del chip ① del recorrido plegado repite el MISMO texto del paso: no cuenta como una segunda versión)
+        self.assertEqual(re.sub(r'title="[^"]*"', "", html).count("Autorizado por Daniel el 07/10/2026 14:00"), 1)
 
     def test_el_centro_de_costo_vive_dentro_de_la_tarjeta_de_la_cuenta(self):
         html = self._pintar("cobro_2docs")
@@ -482,23 +499,28 @@ class TestElAnexoYElCandado(_Base):
         a = dict(self.ANEXO, **kw)
         return lambda rec, pan: rec.update(anexo=a)
 
-    def test_con_un_anexo_vivo_las_filas_del_proveedor_llevan_candado(self):
+    def test_con_un_anexo_vivo_las_filas_del_proveedor_llevan_candado_dentro_de_la_cuenta(self):
+        """2026-10-25: «Lo que nos costó» se fundió en La cuenta: el candado del anexo (REGLA #34) va en cada fila de «Nos cobraron» (técnico y despacho)."""
         html = self._pintar("cobro_2docs", mutar=self._con_anexo())
-        costos = html.split("<h3>Lo que nos costó</h3>")[1]
-        self.assertIn('<i class="bi bi-lock-fill"></i> Anexo N° 221 · firmado</span>', costos)
-        self.assertEqual(costos.count('class="fm-lock"'), 2, "técnico y despacho")
-        self.assertNotIn('class="fm-lock"', self._pintar("cobro_2docs").split("<h3>Lo que nos costó</h3>")[1])
+        tabla = html.split('<table class="fm-neg">')[1].split("</table>")[0]
+        self.assertIn('<i class="bi bi-lock-fill"></i> Anexo N° 221 · firmado</span>', tabla)
+        self.assertEqual(tabla.count('class="fm-lock"'), 2, "técnico y despacho")
+        self.assertEqual(html.count("<h3>Lo que nos costó</h3>"), 0)
+        sin = self._pintar("cobro_2docs").split('<table class="fm-neg">')[1].split("</table>")[0]
+        self.assertNotIn('class="fm-lock"', sin)
+        vigente = self._pintar("cobro_2docs", mutar=self._con_anexo(estado="vigente", firmado=False)).split('<table class="fm-neg">')[1].split("</table>")[0]
+        self.assertIn("Anexo N° 221 · vigente</span>", vigente)
 
     def test_el_costo_no_se_escribe_a_mano_cuando_hay_anexo(self):
         html = self._pintar("cobro_2docs", mutar=lambda rec, pan: (self._con_anexo()(rec, pan), pan.update(puede_editar=True)))
-        mod = html.split('<div class="fm-acciones">')[1].split("</div>")[0]
+        mod = html.split('<div class="fm-mas-p"')[1].split("</div>")[0]       # «Más opciones»: con la cuenta completa, lo excepcional va ahí
         self.assertNotIn('data-fm-act="corregirProv"', mod, "con un anexo vivo el servidor rechazaría escribirlo (COSTO_ES_DEL_ANEXO)")
         self.assertIn("El costo del proveedor lo fija el Anexo N° 221 (firmado): para cambiarlo, emite un anexo nuevo y la OT lo sigue sola.", mod)
         vigente = self._pintar("cobro_2docs", mutar=lambda rec, pan: (self._con_anexo(estado="vigente", firmado=False)(rec, pan), pan.update(puede_editar=True)))
-        self.assertIn("para cambiarlo, corrige el monto en el anexo", vigente.split('<div class="fm-acciones">')[1].split("</div>")[0])
+        self.assertIn("para cambiarlo, corrige el monto en el anexo", vigente.split('<div class="fm-mas-p"')[1].split("</div>")[0])
         # sin anexo, todo como siempre
         libre = self._pintar("cobro_2docs", mutar=lambda rec, pan: pan.update(puede_editar=True))
-        self.assertIn('data-fm-act="corregirProv"', libre.split('<div class="fm-acciones">')[1].split("</div>")[0])
+        self.assertIn('data-fm-act="corregirProv"', libre.split('<div class="fm-mas-p"')[1].split("</div>")[0])
 
     def test_si_no_coincide_con_el_anexo_el_paso_4_ofrece_usar_el_valor_del_anexo(self):
         def difiere(rec, pan):
@@ -565,19 +587,242 @@ class TestElAnexoYElCandado(_Base):
         self.assertIn(".fm-anx #otdAnexoVinculoFicha{margin:0 !important}", _leer("static/ot_fin_motor.css"))
 
 
-class TestCuerpoYSinDocumentos(_Base):
-    def test_con_documentos_dos_columnas_documentos_y_lo_que_nos_costo_con_modificar(self):
-        html = self._pintar("cobro_2docs")
-        cuerpo = html.split('<div class="fm-main">')[1]
-        izq, der = cuerpo.split('<div class="fm-col">')
-        self.assertIn("<h3>Documentos <small>2</small></h3>", izq)
-        self.assertIn("FCV 11439", izq)
-        self.assertIn("BLV 23375", izq)
-        self.assertIn("<h3>Lo que nos costó</h3>", der)
-        self.assertIn("<span>Modificar</span>", der)
-        self.assertLess(der.index("Lo que nos costó"), der.index("Modificar"))
+LISTO = {"estado": "listo", "titulo": "Papeles al día, aún sin la firma del cierre", "faltan": [], "avisos": []}
+
+
+def _con_resumen(res=None, **extra_pan):
+    def f(rec, pan):
+        rec["resumen"] = dict(res or LISTO)
+        pan.update(extra_pan)
+    return f
+
+
+class TestElRecorridoPlegado(_Base):
+    """2026-10-25 (Daniel, con la OT-2026-00247: «esto está bien, se puede mejorar es los costos: resumidos y con pocos clics»): cuando ningún paso falta,
+    las seis filas se ven como UNA línea de chips; un toque abre las seis filas con su texto completo (REGLA #15: el texto sigue en la página)."""
+
+    def test_sin_nada_pendiente_es_una_linea_de_chips_y_las_seis_filas_siguen_ahi(self):
+        html = self._pintar("cobro_2docs", mutar=_con_resumen())
+        self.assertIn('<div class="fm-top plegado">', html)
+        rec = html.split('<section class="fm-s1 fm-rec"')[1].split("</section>")[0]
+        self.assertIn('<button type="button" class="fm-rec-sum" data-fm-act="recTog" aria-expanded="false" aria-controls="fmRec1">', rec)
+        chips = rec.split('<span class="fm-rec-chips">')[1].split("</span><span class=\"fm-rec-ver\">")[0]
+        self.assertEqual(chips.count('<span class="fm-pchip '), 6)
+        # cada chip con la cifra que importa (el texto completo del paso viaja en su tooltip)
+        plano = re.sub(r"<[^>]+>", "", chips)
+        for texto in ("① Se cobra", "② Factura 11439 y Boleta 23375", "③ Cobré $302.101", "④ Proveedor $250.000", "⑤ Margen 17,2 %", "⑥ Papeles al día"):
+            self.assertIn(texto, plano, texto)
+        self.assertIn('title="3. Cobré: Servicio $252.101 + despacho $50.000 = $302.101"', chips)
+        self.assertIn('<span class="fm-pchip hecho"', chips)
+        self.assertIn('<span class="fm-pchip pendiente"', chips)       # ⑥ espera la firma del cierre: azul, no un problema
+        # las seis filas con su texto completo siguen en la página, ocultas (no <details>: el atributo hidden)
+        det = rec.split('<div class="fm-rec-det" id="fmRec1" hidden>')[1]
+        self.assertEqual(det.count('<li class="fm-paso '), 6)
+        self.assertIn("Servicio $252.101 + despacho $50.000 = $302.101", det)
+        self.assertIn("Ver el detalle", rec)
+
+    def test_plegado_la_linea_va_arriba_y_la_cuenta_debajo_y_abierto_primero_la_cuenta(self):
+        plegado = self._pintar("cobro_2docs", mutar=_con_resumen())
+        self.assertLess(plegado.index('<section class="fm-s1 fm-rec"'), plegado.index('<section class="fm-cta '))
+        abierto = self._pintar("sin_docs")
+        self.assertIn('<div class="fm-top">', abierto)
+        self.assertLess(abierto.index('<section class="fm-cta '), abierto.index('<section class="fm-s1"'),
+                        "con algo por hacer: La cuenta | El recorrido (la plata primero también en el celular)")
+
+    def test_un_toque_abre_el_detalle_y_otro_lo_cierra_y_el_foco_es_del_boton(self):
+        abierto = self._pintar("cobro_2docs", mutar=_con_resumen(), clics="recTog")
+        self.assertIn('data-fm-act="recTog" aria-expanded="true" aria-controls="fmRec1"', abierto)
+        self.assertIn('<div class="fm-rec-det" id="fmRec1">', abierto)
+        self.assertNotIn('id="fmRec1" hidden', abierto)
+        self.assertIn("Ocultar el detalle", abierto)
+        cerrado = self._pintar("cobro_2docs", mutar=_con_resumen(), clics="recTog,recTog")
+        self.assertIn('aria-expanded="false"', cerrado)
+        self.assertIn('id="fmRec1" hidden', cerrado)
+        js = _leer("static/ot_fin_motor.js")
+        alt = js.split("function alternar(inst, clave, act) {")[1].split("\n  }")[0]
+        self.assertIn(".focus()", alt, "después de repintar, el foco vuelve al mismo botón (teclado y lectores de pantalla)")
+
+    def test_el_modal_de_cierre_tambien_pliega_y_abre(self):
+        html = self._pintar("cobro_2docs", modo="modal", mutar=_con_resumen(), clics="recTog")
+        self.assertIn('class="fm-rec-sum"', html)
+        self.assertIn('<div class="fm-rec-det" id="fmRec1">', html)
+
+    def test_si_algo_falta_el_recorrido_queda_abierto_como_siempre(self):
+        for caso, mut in (("sin_docs", None),
+                          ("cobro_2docs", _con_resumen({"estado": "falta", "titulo": "Falta la factura", "faltan": ["la factura"]})),
+                          ("cobro_2docs", _con_resumen({"estado": "espera", "titulo": "Esperando a Daniel (solicitud N° 12)", "faltan": []})),
+                          ("cobro_2docs", lambda rec, pan: rec.update(solicitud_pendiente={"id": 12, "tipo_txt": "Cobrar $0", "motivo_txt": "", "solicitado_at": "08/10 10:00",
+                                                                                           "solicitado_por_nombre": "Aarón Urbina", "url": "/ot/autorizaciones/12"}))):
+            html = self._pintar(caso, mutar=mut)
+            self.assertNotIn('class="fm-rec-sum"', html, caso)
+            self.assertNotIn('class="fm-rec-det"', html, caso)
+            self.assertIn('<div class="fm-top">', html, caso)
+            self.assertIn('<ol class="fm-pasos">', html, caso)
+
+    def test_si_lo_cobrado_pasa_del_saldo_de_la_factura_tampoco_se_pliega(self):
+        html = self._pintar("cobro_2docs", mutar=_con_resumen(saldo={"excedido": True, "excesos": [], "acciones": [], "texto": "x"}))
+        self.assertNotIn('class="fm-rec-sum"', html)
+        self.assertIn("Falta resolver el saldo de la factura", html)
+
+    def test_una_ot_cerrada_en_orden_se_pliega_y_una_cerrada_con_algo_por_revisar_no(self):
+        orden = self._pintar("cobro_2docs", mutar=lambda rec, pan: (rec.update(cerrada=True, resumen={"estado": "cerrada", "titulo": "Cerrada", "faltan": []}),
+                                                                   pan.update(cerrada=True, puede_editar=False)))
+        self.assertIn('class="fm-rec-sum"', orden)
+        self.assertIn("Cerrada", re.sub(r"<[^>]+>", "", orden.split('<span class="fm-rec-chips">')[1].split("</span><span class=\"fm-rec-ver\">")[0]))
+
+        def revisar(rec, pan):
+            rec.update(cerrada=True, resumen={"estado": "falta", "titulo": "Falta la factura", "faltan": ["la factura"]})
+            rec["pasos"][1] = {"n": 2, "titulo": "Factura", "estado": "falta", "texto": "Falta la factura de Random."}
+            pan.update(cerrada=True, puede_editar=False)
+        self.assertNotIn('class="fm-rec-sum"', self._pintar("cobro_2docs", mutar=revisar))
+
+    def test_la_interna_en_orden_se_pliega_con_chips_de_trabajo_interno(self):
+        html = self._pintar("interna_cerrada", mutar=_con_resumen({"estado": "cerrada", "titulo": "Cerrada", "faltan": []}))
+        chips = re.sub(r"<[^>]+>", "", html.split('<span class="fm-rec-chips">')[1].split("</span><span class=\"fm-rec-ver\">")[0])
+        self.assertIn("Trabajo interno", chips)
+        self.assertIn("Factura: no aplica", chips)
+        self.assertIn('<span class="fm-pchip no_aplica"', html)
+        self.assertIn(TXT_INTERNA.rstrip("."), html, "el texto completo sigue en la página")
+
+    def test_los_chips_van_en_verde_gris_y_azul_y_el_boton_mide_44_px(self):
         css = _leer("static/ot_fin_motor.css")
-        self.assertIn("@container (min-width:900px){.fm-main{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}", css)
+        self.assertIn("background:var(--fm-verde-f);color:#14532d;border:1px solid #bbf7d0", css.split(".fm-pchip{")[1].split("}")[0])
+        self.assertIn(".fm-pchip.pendiente{background:var(--fm-azul-f)", css)
+        self.assertIn(".fm-pchip.no_aplica{background:var(--fm-gris-f)", css)
+        self.assertIn("min-height:44px", css.split(".fm-rec-sum{")[1].split("}")[0])
+        self.assertIn(".fm-rec-det[hidden],.fm-mas-p[hidden]{display:none !important}", css)        # también fuera de #otdCardMotor (el modal de cierre)
+
+    def test_el_recorrido_plegado_no_usa_details_ni_acordeon_de_bootstrap(self):
+        js = _leer("static/ot_fin_motor.js")
+        self.assertNotIn("<details", js)
+        self.assertNotIn("collapse", js)
+        self.assertIn("aria-expanded", js)
+        self.assertIn("aria-controls", js)
+
+
+class TestMasOpciones(_Base):
+    """«Modificar» (dentro de La cuenta): con la OT en orden NO hay botones sueltos; lo excepcional va detrás de UN botón «Más opciones». Si algo falta, el
+    botón que lo resuelve se ve, en azul («te toca»)."""
+
+    @staticmethod
+    def _edita(rec, pan):
+        pan.update(puede_editar=True)
+
+    def _fila(self, html):
+        return html.split('<div class="fm-acciones">')[1].split("</div>")[0]
+
+    def _panel(self, html):
+        return html.split('<div class="fm-mas-p"')[1].split("</div>")[0]
+
+    def test_con_la_ot_en_orden_no_hay_botones_sueltos_solo_mas_opciones(self):
+        html = self._pintar("cobro_2docs", mutar=self._edita)
+        fila = self._fila(html)
+        self.assertEqual(fila.count("<button"), 1, "UN solo botón visible")
+        self.assertIn('<button type="button" class="fm-btn fm-btn-mas" data-fm-act="masTog" aria-expanded="false" aria-controls="fmMas1">', fila)
+        self.assertIn("Más opciones", fila)
+        self.assertIn('<div class="fm-mas-p" id="fmMas1" hidden>', html)
+        panel = self._panel(html)
+        for act in ("ligarDoc", "pedirCero", "corregirProv", "pedirCierre"):
+            self.assertIn(f'data-fm-act="{act}"', panel, act)           # nada se quitó (REGLA #4.2): está detrás de «Más opciones»
+            self.assertNotIn(f'data-fm-act="{act}"', fila, act)
+        self.assertNotIn("fm-btn-toca", fila + panel)                   # nada «te toca»: la OT está en orden
+        self.assertNotIn("fm-btn-pri", fila + panel)                    # y el rojo de la marca no es el color de un botón de modificar
+
+    def test_un_toque_abre_las_opciones_y_otro_las_cierra_sin_tocar_el_recorrido(self):
+        abierto = self._pintar("cobro_2docs", mutar=self._edita, clics="masTog")
+        self.assertIn('data-fm-act="masTog" aria-expanded="true" aria-controls="fmMas1"', abierto)
+        self.assertIn('<div class="fm-mas-p" id="fmMas1">', abierto)
+        cerrado = self._pintar("cobro_2docs", mutar=self._edita, clics="masTog,masTog")
+        self.assertIn('data-fm-act="masTog" aria-expanded="false"', cerrado)
+        self.assertIn('<div class="fm-mas-p" id="fmMas1" hidden>', cerrado)
+        # los dos interruptores son independientes
+        ambos = self._pintar("cobro_2docs", mutar=lambda rec, pan: (_con_resumen()(rec, pan), pan.update(puede_editar=True)), clics="recTog,masTog")
+        self.assertIn('<div class="fm-rec-det" id="fmRec1">', ambos)
+        self.assertIn('<div class="fm-mas-p" id="fmMas1">', ambos)
+
+    def test_si_falta_la_factura_el_boton_que_la_resuelve_se_ve_en_azul_y_lo_demas_queda_detras(self):
+        def sin_factura(rec, pan):
+            rec["pasos"][1] = {"n": 2, "titulo": "Factura", "estado": "falta", "texto": "Solo hay nota de venta: es provisoria, falta la factura para poder cerrar."}
+            # el servidor marca también el paso ⑥ (el cierre pide factura o la autorización): «autorizar sin documento» sigue siendo la EXCEPCIÓN, no lo que toca
+            rec["pasos"][5] = {"n": 6, "titulo": "Revisión al cerrar", "estado": "falta", "texto": "Se necesita al menos un documento de cobro de Random o la autorización de Daniel."}
+            pan.update(puede_editar=True)
+        html = self._pintar("garantia_nv", mutar=sin_factura)
+        fila, panel = self._fila(html), self._panel(html)
+        self.assertIn('class="fm-btn fm-btn-toca" data-fm-act="ligarDoc"', fila)
+        for otro in ("pedirCierre", "pedirCero", "quitarCero", "corregirProv"):
+            self.assertNotIn(f'data-fm-act="{otro}"', fila, otro)
+            self.assertIn(f'data-fm-act="{otro}"', panel, otro)
+        self.assertNotIn('data-fm-act="ligarDoc"', panel, "no se repite detrás de «Más opciones»")
+        self.assertIn("Más opciones", fila)
+
+    def test_si_falta_el_costo_declararlo_queda_a_la_vista_en_azul(self):
+        def sin_costo(rec, pan):
+            rec["pasos"][3] = {"n": 4, "titulo": "Me cobró el proveedor", "estado": "falta", "texto": "Falta lo que te cobró el técnico/proveedor por la instalación"}
+            pan.update(puede_editar=True)
+        fila = self._fila(self._pintar("cobro_2docs", mutar=sin_costo))
+        self.assertIn('class="fm-btn fm-btn-toca" data-fm-act="corregirProv"', fila)
+
+    def test_si_el_cero_no_tiene_autorizacion_pedirla_queda_a_la_vista_en_azul(self):
+        def sin_aut(rec, pan):
+            rec["pasos"][0] = {"n": 1, "titulo": "¿Se cobra?", "estado": "falta", "texto": "Garantía: no se le cobra. Falta la autorización de Daniel: pídela para poder cerrar."}
+            pan.update(puede_editar=True)
+        fila = self._fila(self._pintar("garantia_nv", mutar=sin_aut))
+        self.assertIn('class="fm-btn fm-btn-toca" data-fm-act="pedirCero"', fila)
+
+    def test_una_ot_cerrada_ofrece_regularizar_detras_de_mas_opciones_y_lo_explica(self):
+        html = self._pintar("cobro_2docs", mutar=lambda rec, pan: (rec.update(cerrada=True), pan.update(cerrada=True, puede_editar=False, puede_regularizar=True)))
+        panel = self._panel(html)
+        self.assertIn('data-fm-act="ligarDoc"', panel)
+        self.assertIn('data-fm-act="pedirCierre"', panel)
+        self.assertIn("OT cerrada (evidencia)", panel)
+        self.assertNotIn('data-fm-act="corregirProv"', panel, "una OT cerrada no reescribe el costo: eso es «Corregir finanzas»")
+
+    def test_sin_permiso_no_hay_modificar_ni_mas_opciones(self):
+        html = self._pintar("cobro_2docs", mutar=lambda rec, pan: pan.update(puede_editar=False, puede_regularizar=False))
+        self.assertNotIn('class="fm-acciones"', html)
+        self.assertNotIn("fm-mas-p", html.replace(".fm-mas-p", ""))
+
+    def test_los_botones_de_te_toca_son_azules_y_en_el_celular_todo_mide_44_px(self):
+        css = _leer("static/ot_fin_motor.css")
+        self.assertIn(".fm-btn-toca{background:#2563eb;border-color:#2563eb;color:#fff}", css)
+        self.assertIn(".fm-mas-p[hidden]", css)
+        movil = css.split("@media (max-width:560px)")[-1]
+        self.assertIn(".fm-acciones .fm-btn,.fm-mas-p .fm-btn{flex:1 1 100%}", movil)
+        self.assertIn(".fm-btn,.fm-btn-chip,.fm-pie .fm-btn{min-height:44px}", movil)
+
+
+class TestLaTablaPorNegocioEnElCelular(_Base):
+    def test_cada_celda_lleva_su_rotulo_y_la_fila_se_vuelve_tarjetita_en_un_bloque_angosto(self):
+        html = self._pintar("cobro_2docs")
+        tabla = html.split('<table class="fm-neg">')[1].split("</table>")[0]
+        self.assertEqual(tabla.count('data-l="Cobramos"'), 3)
+        self.assertEqual(tabla.count('data-l="Nos cobraron"'), 3)
+        self.assertEqual(tabla.count('data-l="Queda"'), 3)
+        css = _leer("static/ot_fin_motor.css")
+        angosto = css.split("@container (max-width:560px){")[1].split("\n}")[0]
+        self.assertIn(".fm-neg:not(.fm-neg-c) tr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))", angosto)
+        self.assertIn(".fm-neg:not(.fm-neg-c) td::before{content:attr(data-l)", angosto)
+        self.assertIn(".fm-neg:not(.fm-neg-c) th:first-child{grid-column:1 / -1", angosto)
+        self.assertIn(".fm-neg:not(.fm-neg-c) td:empty{display:none}", angosto)       # las celdas vacías de las filas de repuestos no dejan etiquetas sueltas
+
+
+class TestCuerpoYSinDocumentos(_Base):
+    def test_los_documentos_van_a_ancho_completo_debajo_y_la_plata_vive_dentro_de_la_cuenta(self):
+        """2026-10-25 (Daniel: «los costos, resumidos y con pocos clics»): La cuenta (con lo que nos costó y «Modificar» adentro) | El recorrido, y los
+        documentos a ANCHO COMPLETO debajo (antes: documentos a la izquierda y «Lo que nos costó» + «Modificar» a la derecha)."""
+        html = self._pintar("cobro_2docs", mutar=lambda rec, pan: pan.update(puede_editar=True))
+        cta, resto = html.split('<section class="fm-cta ')[1].split('<div class="fm-main">')
+        self.assertIn("<span>Modificar</span>", cta, "«Modificar» vive dentro de La cuenta")
+        self.assertIn('<table class="fm-neg">', cta, "lo que nos costó vive dentro de La cuenta")
+        self.assertNotIn("<h3>Lo que nos costó</h3>", html)
+        self.assertIn("<h3>Documentos <small>2</small></h3>", resto)
+        self.assertIn("FCV 11439", resto)
+        self.assertIn("BLV 23375", resto)
+        self.assertNotIn('class="fm-col"', html)
+        self.assertNotIn("fm-izq", html)
+        css = _leer("static/ot_fin_motor.css")
+        self.assertRegex(css, r"\.fm-main\{display:grid;grid-template-columns:minmax\(0,1fr\)")
+        self.assertNotRegex(css, r"@container \(min-width:900px\)\{\.fm-main\{")        # nunca más dos columnas en el cuerpo
 
     def test_los_productos_ya_no_se_muestran_y_el_saldo_no_repite_las_lineas(self):
         js = _leer("static/ot_fin_motor.js")
@@ -606,14 +851,13 @@ class TestCuerpoYSinDocumentos(_Base):
         self.assertIn("Sin documentos: es un trabajo interno.", html.split('<div class="fm-sindoc interna">')[1].split("</div>")[0])
         self.assertNotIn("fm-vacio", html)
         self.assertNotIn("Documentos <small>", html, "no hay columna de documentos")
-        self.assertIn('<div class="fm-main fm-main-uno">', html)
-        self.assertIn("<h3>Lo que nos costó</h3>", html.split('<div class="fm-main fm-main-uno">')[1])
+        # 2026-10-25: lo que nos costó vive en La cuenta (no en una tarjeta a todo el ancho): se ve igual, una sola vez
+        self.assertIn('<table class="fm-neg fm-neg-c">', html.split('<section class="fm-cta ')[1])
+        self.assertNotIn("<h3>Lo que nos costó</h3>", html)
         css, js = _leer("static/ot_fin_motor.css"), _leer("static/ot_fin_motor.js")
         self.assertNotIn(".fm-vacio", css)
         self.assertNotIn("fm-vacio", js)
         self.assertNotIn("2px dashed", css, "ya no hay caja punteada grande")
-        self.assertIn(".fm-main.fm-main-uno{grid-template-columns:minmax(0,1fr)}", css)
-        self.assertIn(".fm-main-uno .fm-cs{grid-template-columns:repeat(2,minmax(0,1fr))}", css)
 
     def test_el_trabajo_interno_no_repite_su_texto_en_la_cuenta_ni_en_el_cuerpo(self):
         html = self._pintar("interna_cerrada")
@@ -629,14 +873,16 @@ class TestCuerpoYSinDocumentos(_Base):
         self.assertIn("Sin documentos aún", linea)
         self.assertIn('data-fm-act="ligarDoc"', linea)
         self.assertNotIn("fm-vacio", html)
-        mod = html.split('<div class="fm-acciones">')[1].split("</div>")[0]
-        self.assertNotIn('data-fm-act="ligarDoc"', mod, "el botón de asociar ya está en la línea: no se repite en «Modificar»")
-        self.assertIn('data-fm-act="pedirCero"', mod)
-        self.assertIn('<div class="fm-main fm-main-uno">', html)
+        acc = html.split('<div class="fm-acciones">')[1].split("</section>")[0]       # «Modificar» + «Más opciones» (lo último de La cuenta)
+        self.assertNotIn('data-fm-act="ligarDoc"', acc, "el botón de asociar ya está en la línea: no se repite en «Modificar»")
+        self.assertIn('data-fm-act="pedirCero"', acc)
+        # el botón de la línea es de «te toca»: azul (no el rojo de la marca)
+        self.assertIn('class="fm-btn fm-btn-toca" data-fm-act="ligarDoc"', linea)
+        self.assertNotIn("fm-btn-pri", linea)
 
     def test_la_interna_solo_ofrece_corregir_el_costo_del_proveedor(self):
         html = self._pintar("interna_cerrada", mutar=lambda rec, pan: pan.update(puede_editar=True))
-        mod = html.split('<div class="fm-acciones">')[1].split("</div>")[0]
+        mod = html.split('<div class="fm-mas-p"')[1].split("</div>")[0]        # todo está en orden: lo excepcional va detrás de «Más opciones»
         self.assertIn('data-fm-act="corregirProv"', mod)
         for malo in ("pedirCero", "pedirCierre", "ligarDoc", "declararCobro"):
             self.assertNotIn(f'data-fm-act="{malo}"', html)

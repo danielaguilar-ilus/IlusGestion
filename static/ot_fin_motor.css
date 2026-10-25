@@ -43,10 +43,27 @@
 .fm-resumen.espera{background:var(--fm-azul-f);border-color:#bfdbfe;color:#1e3a8a}.fm-resumen.espera i{color:#2563eb}
 .fm-resumen.cerrada{background:var(--fm-gris-f);color:#374151}.fm-resumen.cerrada i{color:#6b7280}
 
-/* Dos columnas iguales (REGLA #16): «El recorrido» (seis filas) | «La cuenta» (UNA tarjeta) */
+/* Dos columnas iguales (REGLA #16): «La cuenta» (UNA tarjeta, con todo el costo adentro) | «El recorrido» (seis filas). En el HTML la cuenta va primero: en una sola
+   columna (celular) lo primero es la plata (cuánto cobramos, cuánto nos cobraron, el margen); después, el recorrido.
+   2026-10-25: con el recorrido PLEGADO (ningún paso falta) es una línea: ocupa todo el ancho arriba y La cuenta va debajo, a ancho completo, con sus dos mitades
+   lado a lado (ver .fm-cta-in). En el celular, la plata primero también. */
 .fm-top{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;align-items:start}
-@container (min-width:900px){.fm-top{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
-@container (max-width:899px){.fm-top .fm-cta{order:-1}}   /* en una sola columna lo primero es la plata (cuánto cobramos, cuánto nos cobraron, el margen); después, el recorrido */
+@container (min-width:900px){.fm-top{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.fm-top.plegado{grid-template-columns:minmax(0,1fr)}}
+@container (max-width:899px){.fm-top.plegado .fm-cta{order:-1}}
+
+/* El recorrido plegado: UNA línea de chips verdes (el texto completo de cada paso va en su tooltip y, abierto, en sus seis filas) */
+.fm-rec-sum{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;width:100%;min-height:44px;padding:6px 10px;border:1px solid #bbf7d0;background:#f7fef9;border-radius:10px;
+  cursor:pointer;font:inherit;text-align:left;color:var(--fm-negro)}
+.fm-rec-sum:hover,.fm-rec-sum:focus-visible{border-color:var(--fm-verde);outline:none}
+.fm-rec-chips{display:flex;flex-wrap:wrap;gap:5px 6px;flex:1 1 280px;min-width:0}
+.fm-pchip{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:3px 10px;font-size:.76rem;font-weight:800;min-width:0;overflow-wrap:anywhere;
+  background:var(--fm-verde-f);color:#14532d;border:1px solid #bbf7d0}
+.fm-pchip b{font-weight:900}
+.fm-pchip.no_aplica{background:var(--fm-gris-f);color:#374151;border-color:var(--fm-borde)}
+.fm-pchip.pendiente{background:var(--fm-azul-f);color:#1e3a8a;border-color:#bfdbfe}      /* esperando la firma: azul (espera), no un problema */
+.fm-rec-ver{margin-left:auto;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;font-size:.72rem;font-weight:800;color:#1d4ed8}
+.fm-rec-det{margin-top:6px}
+.fm-rec-det[hidden],.fm-mas-p[hidden]{display:none !important}
 .fm-col-t{margin:0 0 6px;font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;font-weight:900;color:#374151;display:flex;align-items:center;gap:6px}
 .fm-col-t i{color:var(--fm-rojo)}
 
@@ -89,6 +106,11 @@
 /* La cuenta: UNA tarjeta con las cifras, el anexo del proveedor y el centro de costo (2026-10-25: ya no es una línea con el centro de costo al lado) */
 .fm-cta{--c:#9ca3af;background:#fff;border:1px solid var(--fm-borde);border-left:4px solid var(--c);border-radius:10px;padding:9px 12px;display:flex;flex-direction:column;gap:7px;min-width:0}
 .fm-cta.c-ok{--c:#16a34a}.fm-cta.c-bajo,.fm-cta.c-ambar{--c:#f59e0b}.fm-cta.c-rojo{--c:#dc2626}.fm-cta.c-info{--c:#3b82f6}
+/* 2026-10-25: las dos mitades de La cuenta. A = las cifras (cobramos, nos cobraron con quién y su anexo, margen, de dónde sale); B = el anexo, el centro de costo y
+   «Modificar». Una debajo de la otra; con el recorrido plegado en un bloque ancho van lado a lado (REGLA #16: parecidas en alto). */
+.fm-cta-in{display:grid;grid-template-columns:minmax(0,1fr);gap:7px 18px;min-width:0}
+.fm-cta-a,.fm-cta-b{display:flex;flex-direction:column;gap:7px;min-width:0}
+@container (min-width:900px){.fm-top.plegado .fm-cta-in{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr)}}
 .fm-eq{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
 .fm-eq>i{font-style:normal;font-weight:900;font-size:1.05rem;color:var(--fm-gris)}
 .fm-eq-i{display:inline-flex;align-items:baseline;gap:6px;background:var(--fm-gris-f);border-radius:8px;padding:4px 10px;min-width:0}
@@ -122,12 +144,22 @@
 .fm-cta.c-rojo .fm-sem{background:var(--fm-rojo-f);color:#991b1b}
 .fm-cta.c-info .fm-sem{background:var(--fm-azul-f);color:#1e40af}
 .fm-val b{color:#374151}
-.fm-neg{width:100%;max-width:560px;border-collapse:collapse;font-size:.74rem;font-variant-numeric:tabular-nums}
-.fm-neg th,.fm-neg td{padding:2px 0 2px 10px;border-bottom:1px solid #f1f5f9;text-align:right;white-space:nowrap;font-weight:700}
+.fm-neg{width:100%;max-width:640px;border-collapse:collapse;font-size:.74rem;font-variant-numeric:tabular-nums}
+.fm-neg th,.fm-neg td{padding:3px 0 3px 10px;border-bottom:1px solid #f1f5f9;text-align:right;white-space:nowrap;font-weight:700;vertical-align:top}
 .fm-neg thead th{font-size:.6rem;text-transform:uppercase;letter-spacing:.05em;color:var(--fm-gris);font-weight:800}
-.fm-neg th:first-child{text-align:left;white-space:normal;padding:2px 8px 2px 0}
+.fm-neg th:first-child{text-align:left;white-space:normal;padding:3px 8px 3px 0}
 .fm-neg tbody th{font-weight:800}
-.fm-neg th small{display:block;font-size:.66rem;font-weight:600;color:#b91c1c}
+.fm-neg th small{display:block;font-size:.66rem;font-weight:600}
+/* lo que nos costó, dentro de la cuenta: quién nos cobró (gris), el candado del anexo y las notas (ámbar: avisa, no grita) */
+.fm-neg th small.fm-quien{color:var(--fm-gris)}
+.fm-neg th small.fm-nota{color:#b45309}
+.fm-neg th .fm-lock{margin-top:2px}
+.fm-neg tr.fm-sub th{padding-left:14px;font-size:.7rem;font-weight:700}
+.fm-neg tr.fm-sub th small.fm-quien{display:inline;margin-left:5px}
+.fm-neg tr.fm-sub td{font-weight:700}
+.fm-neg-c td:last-child{min-width:7ch}
+/* lo que falta declarar: ámbar (te toca), no rojo */
+.fm-pend{display:inline-block;color:#92400e;background:var(--fm-ambar-f);border-radius:6px;padding:2px 8px;font-size:.72rem;font-weight:800;white-space:normal;text-align:left}
 .fm-neg tr.tot th,.fm-neg tr.tot td{border-top:2px solid #cbd5e1;font-weight:900}
 .fm-neg td.pos{color:#15803d;font-weight:900}.fm-neg td.neg{color:#b91c1c;font-weight:900}.fm-neg td.cero{color:var(--fm-gris)}
 .fm-const{margin:0;font-size:.78rem;background:var(--fm-gris-f);border-radius:8px;padding:6px 9px;overflow-wrap:anywhere}
@@ -176,10 +208,8 @@
 @supports not (color: color-mix(in srgb, red 50%, transparent)){.fm-cc.on{background:#f9fafb}}
 @media (prefers-reduced-motion:reduce){.fm-cc,.fm-cc.on,.fm-cc.pulsa{animation:none;transition:none}}
 
-/* Cuerpo: dos columnas BALANCEADAS (REGLA #16): documentos a la izquierda, lo que nos costó + Modificar a la derecha */
+/* Cuerpo (2026-10-25): los documentos a ANCHO COMPLETO y, debajo, las autorizaciones. «Lo que nos costó» y «Modificar» viven dentro de La cuenta. */
 .fm-main{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;min-width:0;align-items:start}
-@container (min-width:900px){.fm-main{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}.fm-main.fm-main-uno{grid-template-columns:minmax(0,1fr)}}
-.fm-col{display:flex;flex-direction:column;gap:6px;min-width:0}
 .fm-sec{background:#fff;border:1px solid var(--fm-borde);border-radius:10px;padding:8px 10px;min-width:0}
 .fm-sec:empty{display:none}
 .fm-sec-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;margin-bottom:6px}
@@ -188,8 +218,8 @@
 .fm-sec-h .fm-help{flex:1 1 180px}
 
 /* Sin documentos que mostrar: UNA línea (no una caja grande) */
-.fm-sindoc{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;border:1px dashed #fca5a5;background:#fffafa;border-radius:10px;padding:6px 12px;min-height:44px}
-.fm-sindoc i{color:var(--fm-rojo);font-size:1.1rem}
+.fm-sindoc{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;border:1px dashed #fde68a;background:var(--fm-ambar-f);border-radius:10px;padding:6px 12px;min-height:44px}
+.fm-sindoc i{color:#b45309;font-size:1.1rem}
 .fm-sindoc b{font-size:.84rem}
 .fm-sindoc span{font-size:.78rem;color:#374151;flex:1 1 220px;min-width:0}
 .fm-sindoc .fm-btn{margin-left:auto}
@@ -232,22 +262,18 @@
 .fm-sd{font-size:.64rem;font-weight:900;border-radius:999px;padding:2px 8px}
 .fm-sd.ok{background:var(--fm-verde-f);color:#14532d}.fm-sd.aviso{background:var(--fm-ambar-f);color:#78350f}.fm-sd.mal{background:var(--fm-rojo-f);color:#991b1b}
 
-/* Lo que nos costó: una fila por registro (en un bloque sin documentos va a todo el ancho, en dos columnas) */
-.fm-cs{display:grid;grid-template-columns:minmax(0,1fr);column-gap:22px}
-@container (min-width:700px){.fm-main-uno .fm-cs{grid-template-columns:repeat(2,minmax(0,1fr))}}
-.fm-ci{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:4px 0;border-bottom:1px solid #f1f5f9;min-width:0}
-.fm-ci .fm-d{min-width:0;overflow-wrap:anywhere}
-.fm-ci .fm-d b{font-size:.8rem}
-.fm-ci .fm-d small{display:block;color:var(--fm-gris);font-size:.7rem;font-weight:600}
-.fm-ci .fm-n{font-size:.86rem;font-weight:900}
-.fm-pend{color:#b91c1c;background:var(--fm-rojo-f);border-radius:6px;padding:2px 8px;font-size:.72rem;white-space:normal}
-.fm-acciones{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px dashed var(--fm-borde)}
+/* Modificar (dentro de La cuenta): lo que TOCA se ve en azul; todo lo excepcional va detrás de UN botón «Más opciones» (2026-10-25: pocos clics) */
+.fm-acciones{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:2px;padding-top:8px;border-top:1px dashed var(--fm-borde)}
 .fm-acciones>span:first-child{font-size:.64rem;text-transform:uppercase;letter-spacing:.06em;font-weight:900;color:var(--fm-gris)}
+.fm-btn-toca{background:#2563eb;border-color:#2563eb;color:#fff}.fm-btn-toca:hover{background:#1d4ed8;border-color:#1d4ed8}
+.fm-btn-mas{border-style:dashed;color:#374151}
+.fm-btn-mas .bi-chevron-down,.fm-btn-mas .bi-chevron-up{font-size:.7rem}
+.fm-mas-p{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px;border:1px dashed var(--fm-borde);border-radius:10px;background:#fafafa}
 .fm-help-ancho{flex:1 1 100%}
 
 /* Autorizaciones */
 .fm-hist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
-@container (min-width:700px){.fm-main-uno .fm-hist{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container (min-width:700px){.fm-main .fm-hist{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}}
 .fm-hist li{border:1px solid var(--fm-borde);border-radius:9px;padding:6px 9px;background:#fff}
 .fm-hist li.pendiente{background:var(--fm-ambar-f)}.fm-hist li.aprobada{background:#f7fef9}.fm-hist li.rechazada{background:var(--fm-rojo-f)}
 .fm-hist b span{font-size:.68rem;font-weight:900;background:#fff;border-radius:999px;padding:2px 8px;margin-left:6px}
@@ -311,6 +337,16 @@
   .fm-eq{gap:4px}
   .fm-eq-i{flex-direction:column;align-items:flex-start;gap:0;padding:4px 8px}
   .fm-eq-i b{font-size:1rem}
+  /* «Por negocio» en un bloque angosto: cada fila es una tarjetita (rótulo, quién nos cobró y su anexo arriba; Cobramos · Nos cobraron · Queda debajo) */
+  .fm-neg:not(.fm-neg-c),.fm-neg:not(.fm-neg-c) tbody{display:block;max-width:none}
+  .fm-neg:not(.fm-neg-c) thead{display:none}
+  .fm-neg:not(.fm-neg-c) tr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px 8px;padding:5px 0;border-bottom:1px solid #f1f5f9}
+  .fm-neg:not(.fm-neg-c) tr.tot{border-top:2px solid #cbd5e1}
+  .fm-neg:not(.fm-neg-c) tr.tot th,.fm-neg:not(.fm-neg-c) tr.tot td{border-top:0}      /* la línea del total la lleva la fila, no cada celda */
+  .fm-neg:not(.fm-neg-c) th:first-child{grid-column:1 / -1;padding:0;border:0}
+  .fm-neg:not(.fm-neg-c) td{border:0;padding:0;text-align:left;white-space:normal}
+  .fm-neg:not(.fm-neg-c) td::before{content:attr(data-l);display:block;font-size:.58rem;text-transform:uppercase;letter-spacing:.04em;color:var(--fm-gris);font-weight:800}
+  .fm-neg:not(.fm-neg-c) td:empty{display:none}
   .fm-st thead{display:none}
   .fm-st tr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px 8px;padding:4px 0;border-bottom:1px solid #f1f5f9}
   .fm-st td{border:0;padding:0}
@@ -327,6 +363,9 @@
   .fm-head-a{width:100%}
   .fm-head-a .fm-btn{flex:1 1 auto}
   .fm-paso-a .fm-btn{flex:1 1 100%}
+  .fm-acciones .fm-btn,.fm-mas-p .fm-btn{flex:1 1 100%}
+  .fm-rec-ver{margin-left:0;flex:1 1 100%;justify-content:flex-end}
+  .fm-pchip{font-size:.72rem;padding:2px 8px}      /* chips más compactos: caben dos o tres por línea y la línea del recorrido ocupa menos pantalla */
   .fm-aporta{margin-left:0;flex:1 1 100%}
   .fm-sindoc .fm-btn{margin-left:0;flex:1 1 100%}
   .fm-tg{width:52px}

@@ -252,22 +252,26 @@ class TestMotorYTarjeta(unittest.TestCase):
         # costó» (+ «Modificar») a la derecha. Antes: documentos → lo que nos costó → el resultado.
         pinta = js.split("function pintar(inst)")[1]
         armado = pinta.split("inst.el.innerHTML =")[1]
-        # 2026-10-25 (tarjeta v2): encabezado → UNA frase dinámica → recorrido | cuenta (con el anexo y el centro de costo adentro) → cuerpo → pie;
-        # los contadores viven dentro de «Documentos» y el centro de costo dentro de la cuenta.
-        for antes, despues in (("htmlCabecera(inst)", "htmlResumen(inst)"), ("htmlResumen(inst)", "htmlPasos(inst)"),
-                               ("htmlPasos(inst)", "htmlCuenta(inst)"), ("htmlCuenta(inst)", "cuerpo"), ("cuerpo", "htmlPie(inst)")):
+        # 2026-10-25 (tarjeta v3): encabezado → UNA frase dinámica → La cuenta | El recorrido (el recorrido plegado va ANTES de la cuenta: su línea arriba) → cuerpo
+        # (documentos a ancho completo) → pie; «Lo que nos costó» y «Modificar» viven dentro de la cuenta (htmlNegocios, htmlAcciones), y el centro de costo también.
+        for antes, despues in (("htmlCabecera(inst)", "htmlResumen(inst)"), ("htmlResumen(inst)", "cuenta + recorrido"),
+                               ("cuenta + recorrido", "cuerpo"), ("cuerpo", "htmlPie(inst)")):
             self.assertLess(armado.index(antes), armado.index(despues), f"{antes} va antes que {despues}")
-        self.assertIn("htmlContadores(inst)", js.split("function htmlDocs(inst) {")[1].split("function htmlCostos")[0])
-        self.assertIn("htmlCentro(inst)", js.split("function htmlCuenta(inst) {")[1].split("var CC_META")[0])
-        cuerpo = pinta.split("if (hayDocs) {")[1].split("} else {")[0]
-        self.assertLess(cuerpo.index("htmlDocs(inst)"), cuerpo.index("htmlCostos(inst)"), "documentos a la izquierda, costos a la derecha")
-        self.assertLess(cuerpo.index("htmlCostos(inst)"), cuerpo.index("htmlAcciones(inst"))
+        self.assertIn("htmlContadores(inst)", js.split("function htmlDocs(inst) {")[1].split("function signo")[0])
+        cuenta = js.split("function htmlCuenta(inst, sinLigar) {")[1].split("var CC_META")[0]
+        self.assertIn("htmlCentro(inst)", cuenta)
+        self.assertIn("htmlNegocios(inst)", cuenta)
+        self.assertIn("htmlAcciones(inst, sinLigar)", cuenta)
+        self.assertNotIn("function htmlCostos", js, "«Lo que nos costó» ya no es una tarjeta aparte")
+        cuerpo = pinta.split("var cuerpo =")[1].split("inst.el.innerHTML")[0]
+        self.assertIn("htmlDocs(inst)", cuerpo)
+        self.assertIn("htmlHistorial(inst)", cuerpo)
 
     def test_compacto_y_sin_scroll_horizontal(self):
         css = _leer("static/ot_fin_motor.css")
         self.assertIn("COMPACTO", css)
         self.assertIn(".fm-main", css)
-        self.assertIn("minmax(0,1.5fr)", css)
+        self.assertIn("minmax(0,1.1fr) minmax(0,1fr)", css)      # 2026-10-25: La cuenta con el recorrido plegado: sus dos mitades lado a lado (los documentos van a ancho completo)
         self.assertIn("overflow-wrap:anywhere", css)
         self.assertRegex(css, r"@media \(max-width:560px\)")
         self.assertIn("min-height:44px", css)

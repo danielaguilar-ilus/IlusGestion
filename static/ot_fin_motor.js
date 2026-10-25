@@ -19,7 +19,11 @@
    2026-10-25 (REGLA #44, Daniel con la OT-2026-00354: «contradicciones y muy poco explicativo… no tantas tarjetas»): v2. De arriba abajo: encabezado
    (UN camino para tocar la plata) → UNA frase dinámica (rec.resumen) → «El recorrido» (seis filas con el texto completo de cada paso) | «La cuenta»
    (UNA tarjeta: cifras + anexo del proveedor + centro de costo) → Documentos (con sus contadores) | Lo que nos costó → pie de superadmin. El
-   servidor cuenta la autorización del $0 con la MISMA regla que el candado de cierre, así que la pantalla no se puede contradecir. */
+   servidor cuenta la autorización del $0 con la MISMA regla que el candado de cierre, así que la pantalla no se puede contradecir.
+   2026-10-25 (Daniel, con la OT-2026-00247: «los costos, resumidos y con pocos clics»): v3. «Lo que nos costó» se fundió en La cuenta (UN solo lugar para
+   la plata: quién nos cobró, su anexo y los repuestos en la misma tabla); «Modificar» queda detrás de UN botón «Más opciones» cuando todo está en
+   orden (si algo falta, el botón que lo resuelve se ve, en azul); y el recorrido se pliega en una línea de chips cuando ningún paso falta.
+   Orden: encabezado → frase → La cuenta | El recorrido (plegado: su línea arriba y La cuenta debajo) → Documentos a ancho completo → pie. */
 (function (global) {
   'use strict';
 
@@ -239,14 +243,21 @@
 
   /* LA frase de arriba: la dice el servidor (rec.resumen) con las mismas reglas que los pasos, así que no puede contradecirlos. */
   var ICONO_RESUMEN = { listo: 'bi-check-circle-fill', cerrada: 'bi-lock-fill', espera: 'bi-hourglass-split', falta: 'bi-exclamation-circle-fill' };
-  function htmlResumen(inst) {
+  /* La frase TAL COMO se muestra (la del servidor, más el saldo excedido, que solo mide el panorama): la usan la frase de arriba y la decisión de
+     plegar el recorrido, para que las dos digan siempre lo mismo. */
+  function resumenDe(inst) {
     var r = inst.rec && inst.rec.resumen;
-    if (!r || !r.titulo) return '';
+    if (!r || !r.titulo) return null;
     /* Lo que se cobra no puede pasar del saldo de las facturas (el servidor frena el cierre por saldo consumido): se mide en el panorama, no en el
        recorrido, así que la frase lo suma acá para no decir «Lista para cerrar» cuando el cierre se va a rechazar. */
     var sal = inst.pan && inst.pan.saldo, via = (inst.rec.puerta && inst.rec.puerta.via) || '';
     if (r.estado === 'listo' && sal && sal.excedido && inst.rec.fin && inst.rec.fin.cobra && !inst.rec.cerrada && via !== 'autorizacion_cerrar' && via !== 'pendiente_madre')
       r = { estado: 'falta', titulo: 'Falta resolver el saldo de la factura: lo que se cobra pasa de lo que le queda' };
+    return r;
+  }
+  function htmlResumen(inst) {
+    var r = resumenDe(inst);
+    if (!r) return '';
     return '<div class="fm-resumen ' + esc(r.estado || 'falta') + '" role="status"><i class="bi ' + (ICONO_RESUMEN[r.estado] || 'bi-info-circle-fill') + '"></i><b>' + esc(r.titulo) + '</b></div>';
   }
 
@@ -291,6 +302,51 @@
         (act ? '<div class="fm-paso-a">' + act + '</div>' : '') + '</li>';
     });
     return html + '</ol>';
+  }
+
+  /* ═══ EL RECORRIDO, PLEGADO CUANDO NO HAY NADA QUE HACER ═══════════════════════════════════════════════════════════════════
+     2026-10-25 (Daniel, con la OT-2026-00247: «esto está bien, se puede mejorar es los costos: resumidos y con pocos clics»): si ningún paso está en
+     «falta» (todo hecho, no aplica o esperando la firma), las seis filas no le dicen nada nuevo a nadie: se ven como UNA línea de chips
+     («① Se cobra ✓ · ② Factura 11567 ✓ · … · ⑥ Papeles al día») y un toque abre las seis filas con su texto completo (REGLA #15: el texto sigue en la
+     página, solo plegado). Si algo falta, está esperando a Daniel o el cierre fue rechazado, el recorrido queda abierto como siempre: ahí están los botones
+     de «te toca». */
+  var NUMEROS = ['①', '②', '③', '④', '⑤', '⑥'];
+  function recorridoPlegable(inst) {
+    var rec = inst.rec, pasos = rec.pasos || [], r = resumenDe(inst);
+    if (pasos.length !== 6 || inst.rechazo) return false;
+    if (rec.solicitud_pendiente && !esInterna(inst)) return false;
+    if (pasos.some(function (p) { return p.estado === 'falta'; })) return false;
+    if (r && r.estado !== 'listo' && r.estado !== 'cerrada') return false;   /* «falta» (también la del saldo) y «espera» dejan el recorrido abierto */
+    return true;
+  }
+  /* Un chip por paso, con la cifra o el dato que importa; el texto COMPLETO del paso viaja en su tooltip y, abierto el recorrido, en su fila. */
+  function chipsRecorrido(inst) {
+    var rec = inst.rec, pasos = rec.pasos || [], fin = rec.fin || {}, C = fin.cobre || {}, M = fin.me_cobraron || {}, Q = fin.queda || {};
+    var docs = ((inst.pan && inst.pan.documentos) || []).filter(function (d) { return d.es_cobro && d.categoria === 'cobro' && !d.dada_de_baja_por; });
+    var centro = ((inst.pan && inst.pan.centro) || {}).nombre || '';
+    var r = resumenDe(inst), t = [];
+    t[0] = fin.cobra ? 'Se cobra' : (esInterna(inst) ? 'Trabajo interno' : String(fin.cobertura_txt || 'No se cobra').split(':')[0]);
+    t[1] = docs.length
+      ? docs.slice(0, 2).map(function (d) { return (d.tipo_txt || 'Documento') + ' ' + d.nudo; }).join(' y ') + (docs.length > 2 ? ' +' + (docs.length - 2) : '')
+      : 'Factura: no aplica';
+    t[2] = fin.cobra ? 'Cobré ' + (C.hay ? clp(C.total) : '—') : 'No se cobra';
+    t[3] = 'Proveedor ' + (M.falta_tecnico ? '—' : clp(M.total));
+    t[4] = (fin.cobra && Q.mostrar) ? 'Margen ' + (Q.pct !== null && Q.pct !== undefined ? pctTxt(Q.pct) : signo(Q.total)) : (centro ? 'Se carga a ' + centro : 'Margen');
+    t[5] = String((r && r.titulo) || (pasos[5] || {}).titulo || 'Revisión al cerrar').split(/[,:·]/)[0].trim();
+    return pasos.slice(0, 6).map(function (p, i) {
+      var ico = p.estado === 'hecho' ? 'bi-check-lg' : (p.estado === 'pendiente' ? 'bi-hourglass-split' : 'bi-dash-lg');
+      return '<span class="fm-pchip ' + esc(p.estado) + '" title="' + esc(p.n + '. ' + p.titulo + ': ' + (p.texto || '')) + '"><b>' + NUMEROS[i] + '</b> ' + esc(t[i]) +
+        ' <i class="bi ' + ico + '"></i></span>';
+    }).join('');
+  }
+  function htmlRecorrido(inst, plegar) {
+    var h = '<section class="fm-s1' + (plegar ? ' fm-rec' : '') + '" aria-label="El recorrido de la plata de esta OT"><h4 class="fm-col-t"><i class="bi bi-signpost-split-fill"></i> El recorrido</h4>';
+    if (!plegar) return h + htmlPasos(inst) + '</section>';
+    var abierto = !!inst.recAbierto, id = 'fmRec' + inst.id;
+    return h + '<button type="button" class="fm-rec-sum" data-fm-act="recTog" aria-expanded="' + abierto + '" aria-controls="' + id + '">' +
+      '<span class="fm-rec-chips">' + chipsRecorrido(inst) + '</span>' +
+      '<span class="fm-rec-ver">' + (abierto ? 'Ocultar el detalle' : 'Ver el detalle') + ' <i class="bi bi-chevron-' + (abierto ? 'up' : 'down') + '"></i></span></button>' +
+      '<div class="fm-rec-det" id="' + id + '"' + (abierto ? '' : ' hidden') + '>' + htmlPasos(inst) + '</div></section>';
   }
 
   function accionDeRechazo(d) {
@@ -463,7 +519,7 @@
     }
     return '<div class="fm-sindoc"><i class="bi bi-file-earmark-x"></i><b>Sin documentos aún.</b>' +
       '<span>Agrega una factura, boleta, nota de venta o cotización; o pide la autorización de ' + CAMPANA_DAN + '.</span>' +
-      (puede ? boton('ligarDoc', 'Agregar factura, boleta o nota de venta', 'bi-link-45deg', 'fm-btn-pri') : '') + '</div>';
+      (puede ? boton('ligarDoc', 'Agregar factura, boleta o nota de venta', 'bi-link-45deg', 'fm-btn-toca') : '') + '</div>';
   }
 
   function htmlDocs(inst) {
@@ -490,50 +546,78 @@
     return h + '<div class="fm-docs">' + docs.map(htmlDoc).join('') + '</div>';
   }
 
-  /* «Lo que nos costó»: una fila por registro (técnico, despacho, repuestos). El total ya está en la cuenta de arriba
-     («Me cobraron» / «Nos costó»): no se repite acá. */
-  function htmlCostos(inst) {
-    var c = inst.pan.costos, ax = anexoVivo(inst);
-    var h = '<div class="fm-sec-h"><h3>Lo que nos costó</h3></div><div class="fm-cs">';
-    (c.registros || []).forEach(function (r) {
-      /* REGLA #34: lo que se le paga al técnico o proveedor ES el total de su anexo vivo: con un anexo, esas filas llevan su candado. */
-      var lock = (ax && (r.clave === 'tecnico' || r.clave === 'despacho'))
-        ? '<span class="fm-lock" title="El costo de la OT y el anexo del proveedor son un solo valor"><i class="bi bi-lock-fill"></i> Anexo N° ' + esc(ax.numero) + (ax.firmado ? ' · firmado' : ' · vigente') + '</span>' : '';
-      h += '<div class="fm-ci' + (r.falta ? ' falta' : '') + '"><div class="fm-d"><b>' + esc(r.rotulo) + '</b><small>' + esc(r.detalle) + '</small>' + lock + '</div>' +
-        '<span class="fm-n">' + (r.falta ? '<span class="fm-pend">Falta declararlo</span>' : clp(r.monto)) + '</span></div>';
-    });
-    h += '</div>';
-    if (c.sin_costo) h += '<div class="fm-aviso">' + c.sin_costo + ' repuesto(s) instalado(s) sin costo registrado: no suman todavía.</div>';
-    return h;
-  }
-
   function signo(n) { return (n > 0 ? '+' : '') + clp(n); }
 
-  /* El desglose por negocio (antes las tres cajas «Resultado de la OT»): Cobramos / Nos cobraron / Queda para la instalación o el
-     servicio, el despacho, los repuestos instalados (si hay) y el total. */
+  /* ═══ LO QUE NOS COSTÓ, DENTRO DE LA CUENTA ═════════════════════════════════════════════════════════════════════════════════
+     2026-10-25 (Daniel, con la OT-2026-00247: «esto está bien, se puede mejorar es los costos: resumidos y con pocos clics»): la tarjeta aparte «Lo que
+     nos costó» repetía lo que la cuenta ya dice (cuánto nos cobraron, por negocio). Ahora vive acá, en UN solo lugar para la plata: cada fila de
+     «Nos cobraron» dice QUIÉN nos cobró (el técnico o proveedor) y, con un anexo vivo, lleva su candado (REGLA #34: el costo es el del anexo); los
+     repuestos van debajo, uno por uno, con su origen; y lo que falta se dice en ámbar, en la misma fila. Nada de lo que mostraba se perdió (REGLA #4.2):
+     solo dejó de estar en dos tarjetas. */
+  function regsDe(inst) { return (inst.pan && inst.pan.costos && inst.pan.costos.registros) || []; }
+  function regPorClave(inst, clave) { return regsDe(inst).filter(function (r) { return r.clave === clave; })[0] || null; }
+  /* El candado del anexo vivo en las filas del técnico/proveedor y del despacho (REGLA #34). */
+  function chipAnexo(inst, clave) {
+    var ax = anexoVivo(inst);
+    if (!ax || (clave !== 'tecnico' && clave !== 'despacho')) return '';
+    return '<span class="fm-lock" title="El costo de la OT y el anexo del proveedor son un solo valor"><i class="bi bi-lock-fill"></i> Anexo N° ' + esc(ax.numero) + (ax.firmado ? ' · firmado' : ' · vigente') + '</span>';
+  }
+  function celdaMonto(v, falta) {
+    if (falta) return '<span class="fm-pend">Falta declararlo</span>';
+    return (v === null || v === undefined) ? '—' : clp(v);
+  }
+  /* Encabezado de fila: el rótulo, quién nos cobró (el «detalle» del registro), el candado del anexo y, si hay, una nota. */
+  function thFila(inst, rotulo, reg, nota) {
+    return '<th scope="row">' + esc(rotulo) + (reg && reg.detalle ? '<small class="fm-quien">' + esc(reg.detalle) + '</small>' : '') +
+      (reg ? chipAnexo(inst, reg.clave) : '') + (nota ? '<small class="fm-nota">' + esc(nota) + '</small>' : '') + '</th>';
+  }
+  /* Cada repuesto instalado, con su origen (bodega, compra, manual) y su costo. */
+  function filasRepuestos(inst, conCobro) {
+    return regsDe(inst).filter(function (r) { return /^rep/.test(r.clave); }).map(function (r) {
+      return '<tr class="fm-sub"><th scope="row">' + esc(String(r.rotulo || '').replace(/^Repuesto:\s*/, '')) + (r.detalle ? '<small class="fm-quien">' + esc(r.detalle) + '</small>' : '') + '</th>' +
+        (conCobro ? '<td></td>' : '') + '<td data-l="Nos cobraron">' + celdaMonto(r.monto, r.falta) + '</td>' + (conCobro ? '<td></td>' : '') + '</tr>';
+    }).join('');
+  }
+  function notaRepuestos(M) {
+    var dsg = M.repuestos_desglose || {}, partes = [];
+    if (dsg.bodega) partes.push('bodega ' + clp(dsg.bodega));
+    if (dsg.compra) partes.push('compra ' + clp(dsg.compra));
+    if (dsg.manual) partes.push('manual ' + clp(dsg.manual));
+    if (M.repuestos_sin_costo) partes.push(M.repuestos_sin_costo + ' sin costo registrado');
+    return partes.join(' · ');
+  }
+
+  /* El desglose por negocio. Con cobro: Cobramos / Nos cobraron / Queda para la instalación o el servicio, el despacho, los repuestos (si hay) y el
+     total. Sin cobro (garantía, regalía, interno…) o sin lo cobrado declarado todavía: la misma tabla con solo «Lo que nos costó». */
   function htmlNegocios(inst) {
     var fin = inst.rec.fin, C = fin.cobre || {}, M = fin.me_cobraron || {}, Q = fin.queda || {};
-    if (!fin.cobra || !C.hay) return '';
+    var rTec = regPorClave(inst, 'tecnico'), rDes = regPorClave(inst, 'despacho');
+    var hayRep = M.repuestos > 0 || M.repuestos_sin_costo > 0;
     var kDes = M.despacho === null || M.despacho === undefined ? (M.falta_despacho ? null : 0) : M.despacho;
-    function fila(rotulo, cob, cue, q, falta, nota, tot) {
-      var cls = falta ? '' : (q > 0 ? 'pos' : (q < 0 ? 'neg' : 'cero'));
-      return '<tr' + (tot ? ' class="tot"' : '') + '><th scope="row">' + esc(rotulo) + (nota ? '<small>' + esc(nota) + '</small>' : '') + '</th><td>' + clp(cob) + '</td><td>' + (cue === null || cue === undefined ? '—' : clp(cue)) + '</td>' +
-        '<td class="' + cls + '">' + (falta ? '—' : signo(q)) + '</td></tr>';
+    var notaRep = hayRep ? notaRepuestos(M) : '';
+    var h;
+    if (fin.cobra && C.hay) {
+      var fila = function (th, cob, cue, q, falta, tot) {
+        var cls = falta ? '' : (q > 0 ? 'pos' : (q < 0 ? 'neg' : 'cero'));
+        return '<tr' + (tot ? ' class="tot"' : '') + '>' + th + '<td data-l="Cobramos">' + clp(cob) + '</td><td data-l="Nos cobraron">' + cue + '</td>' +
+          '<td data-l="Queda" class="' + cls + '">' + (falta ? '—' : signo(q)) + '</td></tr>';
+      };
+      h = '<table class="fm-neg"><thead><tr><th>Por negocio</th><th>Cobramos</th><th>Nos cobraron</th><th>Queda</th></tr></thead><tbody>' +
+        fila(thFila(inst, 'Instalación o servicio', rTec, (C.servicio <= 0 && (M.tecnico || 0) > 0) ? 'se pagó el servicio y no se le cobró al cliente' : ''),
+          C.servicio, celdaMonto(M.tecnico, M.falta_tecnico), Q.servicio, M.falta_tecnico) +
+        fila(thFila(inst, 'Despacho', rDes, (C.despacho === 0 && (M.despacho || 0) > 0) ? 'se pagó despacho y no se le cobró al cliente' : ''),
+          C.despacho, celdaMonto(kDes, M.falta_despacho), Q.despacho, M.falta_despacho);
+      if (hayRep)
+        h += fila(thFila(inst, 'Repuestos instalados', null, notaRep), 0, celdaMonto(M.repuestos > 0 ? M.repuestos : null, false), Q.repuestos, M.repuestos <= 0) + filasRepuestos(inst, true);
+      h += fila('<th scope="row">Total</th>', C.total, M.falta_tecnico ? '—' : clp(M.total), Q.total, !Q.mostrar, true);
+      return h + '</tbody></table>';
     }
-    var h = '<table class="fm-neg"><thead><tr><th>Por negocio</th><th>Cobramos</th><th>Nos cobraron</th><th>Queda</th></tr></thead><tbody>' +
-      fila('Instalación o servicio', C.servicio, M.tecnico, Q.servicio, M.falta_tecnico,
-        (C.servicio <= 0 && (M.tecnico || 0) > 0) ? 'se pagó el servicio y no se le cobró al cliente' : '') +
-      fila('Despacho', C.despacho, kDes, Q.despacho, M.falta_despacho,
-        (C.despacho === 0 && (M.despacho || 0) > 0) ? 'se pagó despacho y no se le cobró al cliente' : '');
-    if (M.repuestos > 0 || M.repuestos_sin_costo > 0) {
-      var dsg = M.repuestos_desglose || {}, partes = [];
-      if (dsg.bodega) partes.push('bodega ' + clp(dsg.bodega));
-      if (dsg.compra) partes.push('compra ' + clp(dsg.compra));
-      if (dsg.manual) partes.push('manual ' + clp(dsg.manual));
-      if (M.repuestos_sin_costo) partes.push(M.repuestos_sin_costo + ' sin costo registrado');
-      h += fila('Repuestos instalados', 0, M.repuestos > 0 ? M.repuestos : null, Q.repuestos, M.repuestos <= 0, partes.join(' · '));
-    }
-    h += fila('Total', C.total, M.falta_tecnico ? null : M.total, Q.total, !Q.mostrar, '', true);
+    var fc = function (th, cue, tot) { return '<tr' + (tot ? ' class="tot"' : '') + '>' + th + '<td data-l="Nos cobraron">' + cue + '</td></tr>'; };
+    h = '<table class="fm-neg fm-neg-c"><thead><tr><th>Lo que nos costó</th><th>Monto</th></tr></thead><tbody>' +
+      fc(thFila(inst, 'Instalación o servicio', rTec, ''), celdaMonto(M.tecnico, M.falta_tecnico));
+    if (rDes || (M.despacho || 0) > 0 || M.falta_despacho) h += fc(thFila(inst, 'Despacho', rDes, ''), celdaMonto(M.despacho, M.falta_despacho));
+    if (hayRep) h += fc(thFila(inst, 'Repuestos instalados', null, notaRep), celdaMonto(M.repuestos > 0 ? M.repuestos : null, false)) + filasRepuestos(inst, false);
+    h += fc('<th scope="row">Total</th>', M.falta_tecnico ? '—' : clp(M.total), true);
     return h + '</tbody></table>';
   }
 
@@ -565,11 +649,14 @@
      además de las cifras trae, adentro, el vínculo con el anexo del proveedor (el costo es UNO solo: REGLA #34) y el centro de costo al que se carga
      (una garantía, regalía o contrato SIEMPRE se carga a uno, así se puede reportar). La constancia de quién autorizó el $0 ya no se repite acá: la
      cuenta el paso ① del recorrido, con las mismas palabras (así tarjeta y recorrido no pueden contradecirse). */
-  function htmlCuenta(inst) {
+  function htmlCuenta(inst, sinLigar) {
     var fin = inst.rec.fin, cobra = fin.cobra, M = fin.me_cobraron || {}, C = fin.cobre || {}, Q = fin.queda || {};
     var clase = (cobra && Q.mostrar && Q.total < 0) ? 'rojo' : (fin.clase || 'gris');
     var h = '<section class="fm-cta c-' + esc(clase) + '" aria-label="La cuenta de esta OT" title="' + esc(fin.frase || '') + '">';
     h += '<h4 class="fm-col-t"><i class="bi bi-calculator-fill"></i> La cuenta</h4>';
+    /* 2026-10-25: dos mitades. A: las cifras (cobramos, nos cobraron —con quién y su anexo—, margen, de dónde sale). B: el anexo, el centro de costo y lo que se
+       puede modificar. En un bloque ancho con el recorrido plegado van lado a lado (REGLA #16); si no, una debajo de la otra. */
+    h += '<div class="fm-cta-in"><div class="fm-cta-a">';
     /* El semáforo («Margen sano», «Pérdida», «Falta…») va al final de la misma línea (baja si no cabe). */
     var sem = (cobra || M.falta_tecnico) ? '<span class="fm-sem">' + esc(fin.label || '') + '</span>' : '';
     h += '<div class="fm-res">';
@@ -605,6 +692,10 @@
       det.push({ t: 'Autorización: ' + esc(aprob.tipo_txt) + (aprob.motivo_txt ? ' · ' + esc(aprob.motivo_txt) : '') + ', aprobada por ' + esc(aprob.resuelto_por_nombre) + (aprob.resuelto_at ? ' el ' + esc(aprob.resuelto_at) : '') });
     if (det.length) h += '<ul class="fm-det">' + det.map(function (x) { return '<li' + (x.o ? ' class="o"' : '') + '>' + x.t + '</li>'; }).join('') + '</ul>';
     (fin.avisos || []).forEach(function (a) { h += '<div class="fm-aviso">' + esc(a) + '</div>'; });
+    /* Repuestos instalados sin costo registrado: se dice acá (en ámbar) solo si la tabla no lo dijo ya en su fila de repuestos. */
+    var cst = inst.pan.costos || {};
+    if (cst.sin_costo && !(M.repuestos > 0 || M.repuestos_sin_costo > 0)) h += '<div class="fm-aviso">' + cst.sin_costo + ' repuesto(s) instalado(s) sin costo registrado: no suman todavía.</div>';
+    h += '</div><div class="fm-cta-b">';
     /* El vínculo con el anexo del proveedor (REGLA #34): en la ficha, el servidor lo dibuja con su macro y acá se ADOPTA (ver adoptarAnexo);
        en el modal de cierre solo se dice en una línea de qué anexo sale lo que nos cobraron. */
     var ax = anexoVivo(inst);
@@ -614,7 +705,7 @@
         /* Con la OT abierta el botón alinea ahí mismo (y vuelve a abrir este cierre); cerrada, solo se corrige desde la ficha. */
         (ax.abierta && global.otdCostoDesdeAnexo ? '<span class="fm-anx-b">' + botonChip('usarAnexo', 'Usar el valor del anexo', 'bi-link-45deg', true, 'Dejar el costo de la OT igual al del Anexo N° ' + ax.numero) + '</span>'
           : (ax.abierta ? 'alinéalo desde la ficha de la OT' : 'se corrige desde la ficha de la OT') + '.')) + '</p>';
-    return h + htmlCentro(inst) + '</section>';
+    return h + htmlCentro(inst) + htmlAcciones(inst, sinLigar) + '</div></div></section>';
   }
 
   /* Centro de costo con BOTONES (Daniel 2026-10-08: «hazlo con botones, dinámico, bonito»): el mismo diseño que los
@@ -658,46 +749,75 @@
     return h + '</ul>';
   }
 
-  /* «Modificar»: dentro de la sección «Lo que nos costó». `sinLigar`: la línea «Sin documentos aún» ya ofrece agregar.
+  /* «Modificar»: dentro de La cuenta (antes vivía en la tarjeta «Lo que nos costó», que ya no existe aparte). `sinLigar`: la línea «Sin documentos aún» ya ofrece agregar.
      2026-10-25: los botones dependen del ESTADO de la OT (nada que ya está hecho se ofrece de nuevo):
        · $0 ya autorizado (garantía, regalía…) → solo «Sí se cobra: quitar…»; «No se cobra: declarar $0» solo si todavía no hay autorización;
        · con un anexo vivo el costo del proveedor ES el del anexo (REGLA #34): se dice y la salida es «Usar el valor del anexo» (o emitir uno nuevo
          si está firmado), no escribirlo a mano (el servidor lo rechazaría con COSTO_ES_DEL_ANEXO). */
-  function htmlAcciones(inst, sinLigar) {
-    var p = inst.pan;
-    if (!(p.puede_editar || (p.cerrada && p.puede_regularizar))) return '';
+  function accionesLista(inst, sinLigar) {
+    var p = inst.pan, items = [], ayudas = [];
     /* 2026-10-08: trabajo interno sin cliente. Ni agregar documento, ni «declarar $0», ni pedir autorización: no aplican. */
     if (esInterna(inst)) {
-      if (!p.puede_editar) return '';
-      return '<div class="fm-acciones"><span>Modificar</span>' +
-        boton('corregirProv', 'Corregir lo que cobró el proveedor', 'bi-pencil-square') + '</div>';
+      if (p.puede_editar) items.push({ act: 'corregirProv', label: 'Corregir lo que cobró el proveedor', ico: 'bi-pencil-square' });
+      return { items: items, ayudas: ayudas };
     }
     var ax = anexoVivo(inst);
-    var h = '<div class="fm-acciones"><span>Modificar</span>' + (sinLigar ? '' : boton('ligarDoc', 'Agregar factura, boleta o nota de venta', 'bi-link-45deg', 'fm-btn-pri'));
+    if (!sinLigar) items.push({ act: 'ligarDoc', label: 'Agregar factura, boleta o nota de venta', ico: 'bi-link-45deg' });
     if (p.cerrada) {
-      h += boton('pedirCierre', p.superadmin ? 'Autorizar sin documento' : 'Pedir autorización a ' + CAMPANA_DAN, 'bi-shield-lock') +
-        '<span class="fm-help fm-help-ancho">OT cerrada (evidencia): solo se regulariza el documento y la plata; el estado, las firmas y las fechas no se tocan.</span>';
+      items.push({ act: 'pedirCierre', label: p.superadmin ? 'Autorizar sin documento' : 'Pedir autorización a ' + CAMPANA_DAN, ico: 'bi-shield-lock' });
+      ayudas.push('<span class="fm-help fm-help-ancho">OT cerrada (evidencia): solo se regulariza el documento y la plata; el estado, las firmas y las fechas no se tocan.</span>');
     } else if (p.puede_editar) {
       /* 2026-10-19 (OT-2026-00276, Aarón no podía cerrarla): si la OT está leída como $0 (garantía, regalía…), la
          salida para volver a cobrarla vive AQUÍ, donde se mira la plata. Antes solo existía más abajo en el modal y
          solo si la modalidad decía garantía (no si la marcaba `cubierto_por`). */
       var cobAct = ((inst.rec && inst.rec.fin) || {}).cobertura;
       var yaAutorizada = !!(inst.rec && inst.rec.resumen && inst.rec.resumen.aut_usada_id);
-      if (['garantia', 'sin_costo', 'regalia', 'arriendo_leasing'].indexOf(cobAct) >= 0) {
-        h += boton('quitarCero', cobAct === 'garantia' ? 'Sí se cobra: quitar la garantía' : 'Sí se cobra: quitar el $0',
-          'bi-arrow-counterclockwise', 'fm-btn-pri');
-      }
-      if (!yaAutorizada) h += boton('pedirCero', 'No se cobra: declarar $0', 'bi-shield-check');
+      if (['garantia', 'sin_costo', 'regalia', 'arriendo_leasing'].indexOf(cobAct) >= 0)
+        items.push({ act: 'quitarCero', label: cobAct === 'garantia' ? 'Sí se cobra: quitar la garantía' : 'Sí se cobra: quitar el $0', ico: 'bi-arrow-counterclockwise' });
+      if (!yaAutorizada) items.push({ act: 'pedirCero', label: 'No se cobra: declarar $0', ico: 'bi-shield-check' });
       if (ax) {
         /* («Usar el valor del anexo» ya está en el paso ④ y en la franja del anexo de la cuenta: aquí solo se dice por qué no se escribe a mano.) */
-        h += '<span class="fm-help fm-help-ancho"><i class="bi bi-lock-fill"></i> El costo del proveedor lo fija el Anexo N° ' + esc(ax.numero) + ' (' + (ax.firmado ? 'firmado' : 'vigente') + '): ' +
-          (ax.firmado ? 'para cambiarlo, emite un anexo nuevo' : 'para cambiarlo, corrige el monto en el anexo') + ' y la OT lo sigue sola.</span>';
+        ayudas.push('<span class="fm-help fm-help-ancho"><i class="bi bi-lock-fill"></i> El costo del proveedor lo fija el Anexo N° ' + esc(ax.numero) + ' (' + (ax.firmado ? 'firmado' : 'vigente') + '): ' +
+          (ax.firmado ? 'para cambiarlo, emite un anexo nuevo' : 'para cambiarlo, corrige el monto en el anexo') + ' y la OT lo sigue sola.</span>');
       } else {
-        h += boton('corregirProv', 'Corregir lo que cobró el proveedor', 'bi-pencil-square');
+        items.push({ act: 'corregirProv', label: 'Corregir lo que cobró el proveedor', ico: 'bi-pencil-square' });
       }
-      h += boton('pedirCierre', p.superadmin ? 'Autorizar cierre sin documento' : 'Pedir autorización a ' + CAMPANA_DAN, 'bi-shield-lock');
+      items.push({ act: 'pedirCierre', label: p.superadmin ? 'Autorizar cierre sin documento' : 'Pedir autorización a ' + CAMPANA_DAN, ico: 'bi-shield-lock' });
     }
-    return h + '</div>';
+    return { items: items, ayudas: ayudas };
+  }
+  /* Qué botones de «Modificar» RESUELVEN algo que hoy falta (el paso del recorrido está en «falta»): esos se ven siempre, en azul de «te toca». */
+  function actosQueResuelven(inst) {
+    var s = {};
+    ((inst.rec && inst.rec.pasos) || []).forEach(function (p) {
+      if (p.estado !== 'falta') return;
+      if (p.n === 1) s.pedirCero = 1;          /* el $0 todavía no tiene la autorización de Daniel */
+      if (p.n === 2) s.ligarDoc = 1;           /* falta la factura o boleta */
+      if (p.n === 4) s.corregirProv = 1;       /* falta lo que cobró el proveedor (con un anexo vivo la salida es «Usar el valor del anexo», en el paso) */
+      if (p.n === 6 && p.accion !== 'pedir_aut_perdida') s.pedirCierre = 1;   /* el cierre pide la autorización (la de pérdida tiene su propio botón en el paso) */
+    });
+    /* Con la factura por agregar, «autorizar el cierre sin documento» es la EXCEPCIÓN: lo que toca es agregarla (la excepción queda en «Más opciones»). */
+    if (s.ligarDoc) delete s.pedirCierre;
+    return s;
+  }
+  /* «Modificar»: dentro de La cuenta. 2026-10-25 (Daniel: «resumidos y con pocos clics»): si la OT ya tiene su factura y la cuenta está completa NO se
+     muestran botones sueltos: todo lo excepcional (declarar $0, autorizar el cierre sin documento, agregar otro documento, corregir el costo) va detrás de
+     UN botón «Más opciones». Si algo falta, el botón que lo resuelve queda a la vista, en azul («te toca»). */
+  function htmlAcciones(inst, sinLigar) {
+    var p = inst.pan;
+    if (!(p.puede_editar || (p.cerrada && p.puede_regularizar))) return '';
+    var L = accionesLista(inst, sinLigar);
+    if (!L.items.length && !L.ayudas.length) return '';
+    var toca = actosQueResuelven(inst), vis = '', oc = '';
+    L.items.forEach(function (b) {
+      if (toca[b.act]) vis += boton(b.act, b.label, b.ico, 'fm-btn-toca');
+      else oc += boton(b.act, b.label, b.ico);
+    });
+    var hayMas = !!(oc || L.ayudas.length), abierto = !!inst.masAbierto, id = 'fmMas' + inst.id;
+    return '<div class="fm-acciones"><span>Modificar</span>' + vis +
+      (hayMas ? '<button type="button" class="fm-btn fm-btn-mas" data-fm-act="masTog" aria-expanded="' + abierto + '" aria-controls="' + id + '">' +
+        '<i class="bi bi-three-dots"></i> Más opciones <i class="bi bi-chevron-' + (abierto ? 'up' : 'down') + '"></i></button>' : '') + '</div>' +
+      (hayMas ? '<div class="fm-mas-p" id="' + id + '"' + (abierto ? '' : ' hidden') + '>' + oc + L.ayudas.join('') + '</div>' : '');
   }
 
   /* El vínculo costo ↔ anexo (REGLA #34) lo dibuja el servidor con su macro de siempre (templates/ot2/_anexo_vinculo.html, con sus botones) DEBAJO del
@@ -721,20 +841,17 @@
        (un solo camino para tocar la plata) → UNA frase que dice si la OT está lista para cerrar o qué le falta → dos columnas: «El recorrido» (seis
        filas con el texto específico de cada paso) | «La cuenta» (UNA tarjeta con las cifras, el anexo y el centro de costo) → documentos | lo que nos
        costó (REGLA #16: la fila de arriba mide parecido a cada lado) → pie de superadmin. Sin documentos: una línea y «Lo que nos costó» a todo el ancho. */
-    var cuerpo;
-    if (hayDocs) {
-      cuerpo = '<div class="fm-main"><section class="fm-sec fm-izq">' + htmlDocs(inst) + '</section>' +
-        '<div class="fm-col"><section class="fm-sec">' + htmlCostos(inst) + htmlAcciones(inst, false) + '</section>' +
-        '<section class="fm-sec">' + htmlHistorial(inst) + '</section></div></div>';
-    } else {
-      cuerpo = htmlSinDocs(inst) + '<div class="fm-main fm-main-uno"><section class="fm-sec">' + htmlCostos(inst) + htmlAcciones(inst, puedeLigar) + '</section>' +
-        '<section class="fm-sec">' + htmlHistorial(inst) + '</section></div>';
-    }
+    /* 2026-10-25 (Daniel, con la OT-2026-00247: «los costos, resumidos y con pocos clics»): «Lo que nos costó» y «Modificar» viven dentro de La cuenta (UN solo
+       lugar para la plata); abajo, a ancho completo, los documentos y las autorizaciones. El recorrido se pliega en una línea cuando nada falta. */
+    var plegar = recorridoPlegable(inst);
+    var recorrido = htmlRecorrido(inst, plegar), cuenta = htmlCuenta(inst, puedeLigar && !hayDocs);
+    var cuerpo = (hayDocs ? '' : htmlSinDocs(inst)) +
+      '<div class="fm-main"><section class="fm-sec">' + htmlDocs(inst) + '</section><section class="fm-sec">' + htmlHistorial(inst) + '</section></div>';
     inst.el.innerHTML =
       htmlCabecera(inst) +
       htmlResumen(inst) +
-      '<div class="fm-top"><section class="fm-s1" aria-label="El recorrido de la plata de esta OT"><h4 class="fm-col-t"><i class="bi bi-signpost-split-fill"></i> El recorrido</h4>' +
-        htmlPasos(inst) + '</section>' + htmlCuenta(inst) + '</div>' +
+      /* Con algo por hacer: La cuenta | El recorrido (dos columnas; en celular la plata primero). Plegado: la línea del recorrido arriba y La cuenta debajo. */
+      '<div class="fm-top' + (plegar ? ' plegado' : '') + '">' + (plegar ? recorrido + cuenta : cuenta + recorrido) + '</div>' +
       cuerpo +
       htmlPie(inst);
     adoptarAnexo(inst);
@@ -1099,8 +1216,17 @@
       var s = inst.pan.saldo || {};
       return resolverSaldo(inst, { error: s.texto || '', excesos: s.excesos || [], acciones: s.acciones || [] });
     },
-    enfocarCentro: function (inst) { var s = inst.el.querySelector('[data-fm-cc-grid]'); if (s) { s.scrollIntoView({ behavior: 'smooth', block: 'center' }); var b = s.querySelector('[data-fm-cc]'); if (b) b.focus(); } }
+    enfocarCentro: function (inst) { var s = inst.el.querySelector('[data-fm-cc-grid]'); if (s) { s.scrollIntoView({ behavior: 'smooth', block: 'center' }); var b = s.querySelector('[data-fm-cc]'); if (b) b.focus(); } },
+    /* 2026-10-25: abrir/cerrar el recorrido plegado y «Más opciones». Se repinta el bloque (el estado vive en la instancia, así «Actualizar» no lo cierra) y el foco
+       vuelve al mismo botón (teclado y lectores de pantalla). */
+    recTog: function (inst) { return alternar(inst, 'recAbierto', 'recTog'); },
+    masTog: function (inst) { return alternar(inst, 'masAbierto', 'masTog'); }
   };
+  function alternar(inst, clave, act) {
+    inst[clave] = !inst[clave];
+    pintar(inst);
+    try { var b = inst.el.querySelector('[data-fm-act="' + act + '"]'); if (b && b.focus) b.focus(); } catch (e) { }
+  }
 
   function montar(el) {
     if (el.__fmInst) return el.__fmInst;
