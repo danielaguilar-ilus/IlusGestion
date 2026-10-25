@@ -1263,5 +1263,34 @@ Incidente real: el asistente sumaba por detrás «Revisión — Registro por equ
 
 ---
 
+## 🧭 REGLA #47 — Todo $0, cierre sin factura/boleta, cobro sobre el saldo y pérdida se CLASIFICA («¿Por qué?» + quién lo asume), y queda con la autorización (no negociable)
+
+**Pedido explícito de Daniel (2026-10-25):** «agregar los motivos, pero solamente para ser administrador: garantía, regalía, arriendo, leasing, evento, marketing, el precio lo asume comercial… algo dinámico para la toma de decisiones en el mes»; «todo cobro se gestiona con NVV, BLV y FCV pero se CIERRA con FCV o BLV; de lo contrario bloquea la OT y pide autorización, ya que puede ser arriendo, descuadre de precio o pérdida, costo asumido por marketing»; «¿Quién lo asume? ¿Por qué? Autorizaron… toda esa trazabilidad la necesito».
+
+- **Dos capas:** la FAMILIA contable de un $0 (`cobro_cero_motivo`: garantía | regalía | arriendo_leasing) no cambia ni se renombra («Garantía» sigue siendo Garantía: no se afectan las OT hechas); la INTENCIÓN es la razón de negocio, administrable, que se elige encima. Catálogo `ot_intenciones` (clave, nombre, descripción, familia_cero, aplica_a, asume_centro, solo_admin, activa, sistema, orden, quién/cuándo). Nunca se borra: se desactiva (las del sistema —las 3 familias y «Otro motivo»— no). La siembra solo agrega claves que faltan y jamás pisa lo editado. Lógica pura en `ot_intenciones.py`.
+- **Dónde se usa** (`aplica_a`): un $0, cerrar sin documento, cerrar con pérdida, cobrar sobre el saldo, crear sin documento y documento observado. El **servidor** valida cada una (existe, activa, aplica a ese uso y «solo administrador» solo para un administrador); sin «¿Por qué?» no hay solicitud de una OT (`INTENCION_REQUERIDA`). En un $0 la clasificación fija la familia contable (evento, marketing y «lo asume Comercial» quedan como `regalia`).
+- **El sistema sugiere, la persona decide (REGLA #32):** el asistente y los diálogos preseleccionan según el centro de costo y el tipo de OT, con su origen a la vista, y se puede cambiar. Ninguna intención nace «solo administrador»: Daniel las marca desde la pantalla.
+- **Trazabilidad:** cada autorización guarda `intencion` + el argumento de quien pide (aparte) + un «mensaje del sistema» con lo que detectó, con cifras. Se ve en el detalle y la bandeja, la campana, el correo interno, la constancia, la bitácora y el recorrido de la OT. La OT guarda `mant_visitas.intencion` (la primera clasificación manda); la desinstalación cubierta hereda la de su instalación si es un $0. «Quién lo asume» = el centro de costo con que quedó la OT.
+- **Gestión solo superadmin:** `/ot/intenciones` y `/ot/api/intenciones/…` (el acceso está en la bandeja de autorizaciones), con bitácora. El catálogo que se ofrece es para gestión (`@_no_tecnico`): un técnico no ve nada (REGLAS #19/#26).
+- **Para decidir en el mes:** el Excel «Garantías y coberturas» (columnas «Por qué» y «Cuándo autorizó») y la hoja «Por mes e intención» (mes × clasificación × centro que lo asume), y el Costeo de OT (REGLA #48). Las OT anteriores salen «Sin clasificar»: no se rellenan.
+- **No cambia** los umbrales de pérdida y equilibrio (REGLAS #28/#29) ni a quién se le escribe (nada al cliente: REGLA #22). Arranque barato (REGLA #18): 1 CREATE TABLE y 3 ALTER de una cláusula (`ot_intenciones`, `mant_visitas.intencion`, `mant_ot_autorizaciones.intencion` y `mensaje_sistema`). Pruebas: `tests/test_ot_intenciones.py` (108; 18 mutaciones detectadas).
+- **Quién recibe las autorizaciones:** `_ot_aut_receptores()` = superadmins menos quien tenga apagado el permiso `mant_ot_autoriza_aviso` (Roles → Permisos individuales): así se evita molestar a quien no debe, sin tocar código.
+
+---
+
+## 📊 REGLA #48 — «Costeo de órdenes de trabajo»: el informe de rentabilidad de Servicio Técnico es solo superadmin y solo lectura, y cada garantía lleva su trazabilidad (no negociable)
+
+**Pedido explícito de Daniel (2026-10-25):** «cómo vamos semanalmente, cuánto ganamos, cuánto perdimos, cuánto generamos de garantías, a nombre de quién la estamos haciendo, cuánto nos cobran los técnicos, son reincidentes los externos, es rentable el departamento… que con nuestros propios datos ordenados y clasificados no nos puedan jugar a robarnos un poco de rol o protagonismo», y «necesito saber cuánto gané, cuánto perdí, cuánto cobré, cuánto me cobraron, todo en tarjetas resumidas… ¿Quién lo asume? ¿Por qué? Autorizaron».
+
+- Pantalla `/ot/gerencial` y su Excel (`/ot/gerencial/excel`); botón «Costeo de OT» arriba en Órdenes de Trabajo, solo superadmin; nunca en el menú ni para un técnico (REGLAS #19 y #26: `@_no_tecnico` + `_ger_solo_superadmin`).
+- **Solo lectura:** no escribe, no hace DDL, no consulta a Random ni a Check, no envía nada (REGLAS #4.1, #4.4, #18 y #22). Caché corta de 90 s; techo de 6000 OT leídas (si se toca, lo avisa).
+- Abre con **Cobré · Me cobraron · Gané · Perdí · Neto** (cada una con «¿Cómo se calcula?» y su comparativo), debajo las garantías y coberturas con su trazabilidad, y recién después el detalle (tendencia de 12 semanas, a dónde se va la plata, técnicos y proveedores, reincidencia de externos, cada persona con lo suyo).
+- Neto = Gané − Perdí − garantías y coberturas, con la suma única `_ot_fin_agregado` y la cuenta de cada OT es la MISMA de su ficha (`_ot_finanzas`). Lo que no se puede medir se cuenta aparte, nunca como $0.
+- **Atribución en cuatro papeles separados** (originó, autorizó, lleva, ejecutó), cada uno con su fuente guardada; «Sin clasificar» y «sin autorización» en ámbar suave y nunca se inventan. «¿Qué es y por qué?» y «¿Quién lo asume?» salen de la clasificación de la REGLA #47 (`mant_visitas.intencion` + el centro de costo de la OT).
+- **Reincidencia** de un externo (por defecto 60 días; 30/60/90 ajustable): una OT correctiva o de garantía sobre el mismo equipo (o el mismo cliente, si no hay equipos) abierta después de que ese externo cerró una OT. Es un indicador para revisar, no una sentencia: en ámbar, nunca en rojo.
+- Toda la lógica va en `ot_gerencial.py` con sus pruebas (`tests/test_ot_gerencial.py`, 99; mutaciones detectadas) y `tests/test_ot_costeo_intenciones.py` (el enlace con la REGLA #47).
+
+---
+
 _Última actualización: 2026-10-25_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

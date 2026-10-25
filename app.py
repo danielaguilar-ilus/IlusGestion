@@ -67933,7 +67933,7 @@ _GER_LIMITE_FILAS = 6000     # techo de OT cerradas que se leen (6 meses); si se
 _GER_LIMITE_ABIERTAS = 3000
 # Nombres posibles de las columnas que Daniel agregará después (intención del $0 y área que lo asume). Se buscan en
 # information_schema una vez cada 10 min; si no existen, el tablero muestra «Sin clasificar» y nada más cambia.
-_GER_COLS_INTENCION = ("cobro_cero_intencion", "cobertura_intencion", "intencion_cero")
+_GER_COLS_INTENCION = ("intencion", "cobro_cero_intencion", "cobertura_intencion", "intencion_cero")   # `intencion` = ot_intenciones (REGLA #47)
 _GER_COLS_ASUME = ("cobro_cero_asume_area", "cobertura_asume_area", "asume_area")
 _GER_COLS_ESTADO = {"revisado_en": 0.0, "cols": None}
 
@@ -68180,12 +68180,21 @@ def _ger_cargar(modo, ancla, desde, hasta, dias):
     nombres = _ger_nombres_usuarios() if ids_atribuibles else {}
     centros = dict(_OT2_CENTROS_COSTO)
     en_per = set(ids_periodo)
+    try:
+        cat_int = _ot_intenciones_catalogo()        # REGLA #47: la clave de la clasificación se muestra con su NOMBRE
+    except Exception as e:
+        print(f"[ot-gerencial] catálogo de intenciones: {type(e).__name__}", flush=True)
+        cat_int = []
     filas = []
     for r in filas_sql:
         vid = int(r["id"])
+        # La clasificación del $0 (ot_intenciones): su nombre, y «quién lo asume» = el centro de costo con que quedó la OT (o el que la
+        # clasificación sugiere si la OT no lo trae). Una OT sin clasificar sigue siendo «Sin clasificar», nunca se inventa.
+        info_int = _ot_intencion_info(r.get("intencion"), r.get("centro_costo"), cat_int) if r.get("intencion") else None
         ctx = {"nombres": nombres, "tipo_txt": _TIPO_OT_LABEL.get((r.get("tipo") or "").lower()) or (r.get("tipo") or "").replace("_", " ").capitalize(),
                "centro_txt": centros.get((r.get("centro_costo") or "").lower()) or (r.get("centro_costo") or "Sin centro de costo"),
-               "intencion": r.get("intencion"), "asume_area": _ger_etiqueta_area(r.get("asume_area"))}
+               "intencion": (info_int["nombre"] if info_int else r.get("intencion")),
+               "asume_area": _ger_etiqueta_area(r.get("asume_area")) or ((info_int or {}).get("asume_txt") or None)}
         if vid in en_per:
             ctx["autorizaciones"] = auts.get(vid, [])
             ctx["clasif"] = clasif.get(vid)
