@@ -1823,6 +1823,10 @@ window.OT2C = (function(){
          // autorización de Daniel. fin_aut = «sin documento»; fin_cero_motivo = Garantía | Regalía | Arriendo o leasing.
          // El argumento (mínimo 30) vive en fin_garantia_motivo, igual que el motivo de la garantía de siempre.
          fin_aut:false, fin_cero_motivo:'garantia',
+         // 🧭 2026-10-25 (REGLA #47): el «¿Por qué?» clasificado de cada camino que pide la autorización de Daniel: cobertura ($0), crear sin documento
+         // todavía, cobrar sobre el saldo y documento observado. `_intElegido` = la persona lo tocó (una sugerencia ya no lo cambia); `_intSug` = de dónde
+         // salió la sugerida (se muestra mientras siga elegida).
+         fin_int:{cobertura:'garantia', crear_sin_documento:'', exceder_saldo:'', documento_observado:''}, _intElegido:{}, _intSug:{},
          fin_doc:null, fin_costo_estimado:null,
          // 2026-08-29 (Daniel: "los costos y lo que nos cobra el
          // proveedor... % de margen sí o sí"): lineas ZZ reales del
@@ -2214,6 +2218,7 @@ window.OT2C = (function(){
         if (!S.fin_garantia && (S.fin_zz_monto == null || S.fin_zz_monto < 0)) return false;
         if (!S.fin_garantia && S.fin_zz_monto === 0) return false;
         if ((S.fin_garantia || S.fin_aut) && (S.fin_garantia_motivo||'').trim().length < 30) return false;   // 🔏 argumento ≥ 30
+        if (S.fin_aut && !S.fin_garantia && !(S.fin_int && S.fin_int.crear_sin_documento)) return false;      // 🧭 REGLA #47: y su «¿Por qué?» elegido
         // 2026-08-30 (Daniel: "si no trae esto se podrá declarar a mano,
         // pero deberá reportarse con un argumento... hay que ser bien
         // riguroso y detallista con esto"): esto SÍ bloquea -- a diferencia
@@ -7341,11 +7346,90 @@ window.OT2C = (function(){
      menos que yo lo autorice"). Tres caminos: con documento / $0 (garantía, regalía, arriendo o leasing) / todavía sin
      documento. Los dos últimos piden la autorización de Daniel con un argumento de mínimo 30 caracteres. */
   var _O2M_CERO_MOTIVOS = [['garantia','Garantía'],['regalia','Regalía'],['arriendo_leasing','Arriendo o leasing']];
-  function _o2mCeroMotivoHtml(){
-    return '<select class="form-select mb-2" style="min-height:44px;font-size:16px" onchange="OT2C.setFinCeroMotivo(this.value)">'+
-      _O2M_CERO_MOTIVOS.map(function(m){ return '<option value="'+m[0]+'"'+(S.fin_cero_motivo===m[0]?' selected':'')+'>'+m[1]+'</option>'; }).join('')+'</select>';
+  /* 🧭 2026-10-25 (REGLA #47, Daniel: «¿Quién lo asume? ¿Por qué? Autorizaron… toda esa trazabilidad la necesito»): el «Motivo del $0» y el «¿Por qué?» de
+     cada camino que pide la autorización de Daniel salen del catálogo que administra el superadministrador (GET /ot/api/intenciones: solo lo que ESTA persona
+     puede elegir). Garantía, Regalía y Arriendo/leasing siguen siendo la base (la familia contable del $0 no cambia). Si el catálogo no responde, queda esa base
+     y «Otro motivo»; el servidor valida igual. El sistema SUGIERE según el centro de costo (con su origen a la vista) y la persona decide. */
+  var _O2M_INT_RESPALDO = [
+    {clave:'garantia', nombre:'Garantía', familia_cero:'garantia', aplica_a:['cobertura','cerrar_sin_documento','cerrar_con_perdida']},
+    {clave:'regalia', nombre:'Regalía', familia_cero:'regalia', aplica_a:['cobertura','cerrar_sin_documento']},
+    {clave:'arriendo_leasing', nombre:'Arriendo o leasing', familia_cero:'arriendo_leasing', aplica_a:['cobertura','cerrar_sin_documento']},
+    {clave:'otro', nombre:'Otro motivo', familia_cero:null, aplica_a:['cobertura','cerrar_sin_documento','cerrar_con_perdida','exceder_saldo','crear_sin_documento','documento_observado']}
+  ];
+  var _O2M_INT = {items:null, cargando:false, sug:{}};
+  function _o2mIntCargar(){
+    if (_O2M_INT.items || _O2M_INT.cargando) return;
+    _O2M_INT.cargando = true;
+    fetch('/ot/api/intenciones', {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(j){
+      _O2M_INT.items = (j && j.ok && j.items && j.items.length) ? j.items : _O2M_INT_RESPALDO;
+    }).catch(function(){ _O2M_INT.items = _O2M_INT_RESPALDO; }).then(function(){
+      _O2M_INT.cargando = false;
+      ['cobertura','crear_sin_documento','documento_observado'].forEach(_o2mIntPintar);
+    });
   }
-  function setFinCeroMotivo(v){ S.fin_cero_motivo = v; }
+  function _o2mIntOpciones(uso){
+    return (_O2M_INT.items || _O2M_INT_RESPALDO).filter(function(i){ return (i.aplica_a || []).indexOf(uso) >= 0; });
+  }
+  function _o2mIntFamilia(clave){
+    var it = (_O2M_INT.items || _O2M_INT_RESPALDO).filter(function(i){ return i.clave === clave; })[0];
+    return (it && it.familia_cero) || (clave === 'garantia' || clave === 'regalia' || clave === 'arriendo_leasing' ? clave : 'regalia');
+  }
+  function _o2mIntOpcionesHtml(uso){
+    var sel = (S.fin_int && S.fin_int[uso]) || '';
+    return '<option value=""'+(sel ? '' : ' selected')+'>Elige el motivo…</option>'+_o2mIntOpciones(uso).map(function(i){
+      return '<option value="'+esc(i.clave)+'"'+(sel === i.clave ? ' selected' : '')+'>'+esc(i.nombre)+'</option>'; }).join('');
+  }
+  function _o2mIntOrigenTxt(uso){
+    var sug = S._intSug && S._intSug[uso], sel = S.fin_int && S.fin_int[uso];
+    return (sug && sel === sug.clave) ? esc(sug.origen)+': puedes cambiarla.' : 'Queda guardado junto a la autorización: por qué y quién lo asume.';
+  }
+  function _o2mIntPintar(uso){
+    var el = document.getElementById('o2mInt-'+uso); if (!el) return;
+    el.innerHTML = _o2mIntOpcionesHtml(uso);
+    var h = document.getElementById('o2mIntOri-'+uso); if (h) h.innerHTML = _o2mIntOrigenTxt(uso);
+  }
+  function _o2mIntSugerir(uso){
+    var c = S.fin_centro || ''; if (!c) return;
+    var k = uso+'|'+c;
+    function aplicar(sug){
+      if (!sug || S._intElegido[uso]) return;
+      S._intSug[uso] = sug; S.fin_int[uso] = sug.clave;
+      if (uso === 'cobertura') S.fin_cero_motivo = _o2mIntFamilia(sug.clave);
+      _o2mIntPintar(uso);
+    }
+    if (_O2M_INT.sug[k] !== undefined){ aplicar(_O2M_INT.sug[k]); return; }
+    _O2M_INT.sug[k] = null;
+    fetch('/ot/api/intenciones?uso='+encodeURIComponent(uso)+'&centro='+encodeURIComponent(c)+'&tipo_ot='+encodeURIComponent(S.tipo || ''), {credentials:'same-origin'})
+      .then(function(r){ return r.json(); }).then(function(j){
+        _O2M_INT.sug[k] = (j && j.ok && j.sugerida) ? j.sugerida : null;
+        if (S.fin_centro === c) aplicar(_O2M_INT.sug[k]);
+      }).catch(function(){});
+  }
+  function _o2mIntSelectHtml(uso, etiqueta, requerido){
+    _o2mIntCargar(); _o2mIntSugerir(uso);
+    return (etiqueta ? '<label class="fl" for="o2mInt-'+uso+'">'+esc(etiqueta)+(requerido ? ' *' : '')+'</label>' : '')+
+      '<select class="form-select mb-1" id="o2mInt-'+uso+'" style="min-height:44px;font-size:16px" onchange="OT2C.setFinIntencion(\''+uso+'\', this.value)">'+
+      _o2mIntOpcionesHtml(uso)+'</select>'+
+      '<div class="o2m-fin-hint" id="o2mIntOri-'+uso+'" style="margin:0 0 8px">'+_o2mIntOrigenTxt(uso)+'</div>';
+  }
+  function _o2mCeroMotivoHtml(){
+    return _o2mIntSelectHtml('cobertura', '', false);      // la etiqueta «Motivo del $0 *» ya la pone el sub-paso
+  }
+  /* La persona eligió: la sugerencia ya no manda. En un $0 la clasificación fija la familia contable (garantía, regalía, arriendo/leasing). */
+  function setFinIntencion(uso, v){
+    S.fin_int[uso] = v; S._intElegido[uso] = true;
+    if (uso === 'cobertura') S.fin_cero_motivo = _o2mIntFamilia(v);
+    var h = document.getElementById('o2mIntOri-'+uso); if (h) h.innerHTML = _o2mIntOrigenTxt(uso);
+    try { _o2mFinEstadosDom(); _pintarFinGuiaDom(); refrescarAnclas(); } catch(e){}
+  }
+  function setFinCeroMotivo(v){ setFinIntencion('cobertura', v); }
+  /* Cuando el camino pide la autorización en el último paso (sin haber elegido el motivo en pantalla): una hoja de opciones. */
+  function _o2mIntPreguntar(uso, titulo){
+    var ops = _o2mIntOpciones(uso);
+    if (typeof window.ilusActionSheet !== 'function') return Promise.resolve(ops.length ? ops[0].clave : null);
+    return window.ilusActionSheet({title: titulo, message: 'Queda guardado junto a la autorización: por qué y quién lo asume.',
+      options: ops.map(function(i){ return {label: i.nombre, value: i.clave, style: 'secondary'}; })});
+  }
   function _o2mArgCntTxt(){
     var n = (S.fin_garantia_motivo||'').trim().length;
     return '<span style="color:'+(n>=30?'#15803d':'#b45309')+'">'+n+' de 30 caracteres como mínimo'+(n>=30?' ✓':'')+'</span>';
@@ -7360,6 +7444,7 @@ window.OT2C = (function(){
     return '<div id="o2mFinGarResumen"></div>'+
       '<div class="o2m-fin-docchip ref" style="margin-bottom:8px"><i class="bi bi-exclamation-triangle-fill"></i>'+
       '<b>Esta OT necesita un documento de Random</b><span>· factura, boleta, nota de venta o cotización</span></div>'+
+      _o2mIntSelectHtml('crear_sin_documento', '¿Por qué todavía no hay documento?', true)+
       '<label class="fl">Argumento para Daniel * <span class="text-muted" style="font-weight:400">(mínimo 30 caracteres)</span></label>'+
       '<textarea class="form-control mb-1" rows="3" maxlength="500" data-min="30" placeholder="Por qué se hace la visita sin documento: es lo que Daniel va a leer para autorizar…" '+
       'oninput="OT2C.setFinGarantiaMotivo(this.value)">'+esc(S.fin_garantia_motivo)+'</textarea>'+
@@ -7933,6 +8018,7 @@ window.OT2C = (function(){
           // la garantía (mismo fix que en 'valor', más arriba).
           if ((S.fin_garantia_motivo||'').trim().length < 30) return {cls:'falta', txt:'Falta el argumento (30 caracteres)'};
         } else if (S.fin_aut){
+          if (!(S.fin_int && S.fin_int.crear_sin_documento)) return {cls:'falta', txt:'Falta elegir el motivo'};
           if ((S.fin_garantia_motivo||'').trim().length < 30) return {cls:'falta', txt:'Falta el argumento (30 caracteres)'};
         } else {
           if (!(S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo)) return {cls:'falta', txt:'Pendiente'};
@@ -8385,7 +8471,7 @@ window.OT2C = (function(){
     return _o2mFinFacturaDocs().filter(function(d){ return d.doc && d.doc.observaciones && d.doc.observaciones.length; });
   }
   function _o2mFinObsFalta(){
-    return _o2mFinObservados().length > 0 && (S.fin_obs_argumento || '').trim().length < 30;
+    return _o2mFinObservados().length > 0 && ((S.fin_obs_argumento || '').trim().length < 30 || !(S.fin_int && S.fin_int.documento_observado));
   }
   function _o2mFinObsCntHtml(){
     var n = (S.fin_obs_argumento || '').trim().length;
@@ -8421,6 +8507,7 @@ window.OT2C = (function(){
       '<ul>' + obs.map(function(d){
         return d.doc.observaciones.map(function(o){ return '<li>' + esc(o.texto) + '</li>'; }).join('');
       }).join('') + '</ul>' +
+      _o2mIntSelectHtml('documento_observado', '¿Por qué se usa este documento?', true) +
       '<label class="fl" for="o2mObsArg">Argumento para Daniel * <span class="text-muted" style="font-weight:400">(mínimo 30 caracteres · queda guardado en la OT)</span></label>' +
       '<textarea id="o2mObsArg" class="form-control" rows="2" maxlength="1000" data-min="30" ' +
       'placeholder="Por qué esta OT se hace con este documento. Ej: el cliente pidió instalar tres meses después de la compra por obras en su gimnasio…" ' +
@@ -8444,7 +8531,9 @@ window.OT2C = (function(){
     }).join(' ');
     var seguir = function(arg){
       S.fin_obs_argumento = arg;
-      return pedirAutorizacionCrear(body, esSA, sig, origSig, {tipo: 'documento_observado', argumento: arg});
+      var _ir = function(clave){ return pedirAutorizacionCrear(body, esSA, sig, origSig, {tipo: 'documento_observado', argumento: arg, intencion: clave}); };
+      if (S.fin_int && S.fin_int.documento_observado) return _ir(S.fin_int.documento_observado);
+      return _o2mIntPreguntar('documento_observado', '¿Por qué se usa este documento?').then(function(c){ if (c){ S.fin_int.documento_observado = c; return _ir(c); } });
     };
     var previo = (S.fin_obs_argumento || '').trim();
     if (previo.length >= 30) return seguir(previo);
@@ -8662,8 +8751,12 @@ window.OT2C = (function(){
         if (!arg) return;
         arg = String(arg).trim();
         if (arg.length < 30){ if (window.ilusToast) ilusToast('Escribe al menos 30 caracteres.', {type:'warning'}); return; }
-        S._saldoAut = {argumento: arg};
-        crear();
+        _o2mIntPreguntar('exceder_saldo', '¿Por qué se cobra distinto del documento?').then(function(clave){
+          if (!clave) return;
+          S.fin_int.exceder_saldo = clave;
+          S._saldoAut = {argumento: arg, intencion: clave};
+          crear();
+        });
       });
     }
   }
@@ -11792,7 +11885,9 @@ window.OT2C = (function(){
     var payload = JSON.parse(JSON.stringify(body));
     payload.anexo_delegado = false;   // la OT nace al aprobarse: el anexo automático la acompaña
     var cuerpo = { tipo: opts.tipo || 'crear_sin_documento', payload: payload, argumento: arg, centro_costo: S.fin_centro || null,
-      motivo: (!opts.tipo && S.fin_garantia) ? (S.fin_cero_motivo || 'garantia') : null, cliente_id: body.cliente_id };
+      motivo: (!opts.tipo && S.fin_garantia) ? (S.fin_cero_motivo || 'garantia') : null, cliente_id: body.cliente_id,
+      // 🧭 REGLA #47: el «¿Por qué?» del camino (un $0 → cobertura; sin documento todavía → crear_sin_documento; el resto lo trae opts)
+      intencion: opts.intencion || (!opts.tipo ? (S.fin_garantia ? S.fin_int.cobertura : S.fin_int.crear_sin_documento) : null) || null };
     var vz = body.finanzas && body.finanzas.valorizado_clp;
     if (vz) cuerpo.valorizado_clp = vz;
     function falla(msg){
@@ -11951,6 +12046,7 @@ window.OT2C = (function(){
         // documento los lee (superadministrador = autoriza al declararlo; el resto = se pide a Daniel).
         body.finanzas.cobro_cero_motivo = S.fin_cero_motivo || 'garantia';
         body.finanzas.cobro_cero_argumento = S.fin_garantia_motivo || '';
+        if (S.fin_int && S.fin_int.cobertura) body.finanzas.intencion = S.fin_int.cobertura;      // 🧭 REGLA #47: el «¿Por qué?» del $0
         delete body.finanzas.factura_tido; delete body.finanzas.factura_nudo;
       } else if (S.fin_doc && S.fin_doc.tido && S.fin_doc.nudo){
         body.finanzas.factura_tido = S.fin_doc.tido;
@@ -12050,11 +12146,12 @@ window.OT2C = (function(){
       // observaciones y la aprobación de Daniel las cubre: una sola autorización por OT).
       var _argSa = _sa.argumento + (_obsDocs.length && (S.fin_obs_argumento || '').trim()
         ? ' · Sobre el documento: ' + S.fin_obs_argumento.trim() : '');
-      return pedirAutorizacionCrear(body, _esSA, sig, _origSig, {tipo: 'exceder_saldo', argumento: _argSa});
+      return pedirAutorizacionCrear(body, _esSA, sig, _origSig, {tipo: 'exceder_saldo', argumento: _argSa, intencion: _sa.intencion || S.fin_int.exceder_saldo});
     }
     // 🗓️ 2026-10-12: documento de más de 3 meses o con productos sin saldo en Random → autorización de Daniel.
     if (!esInterno() && !S.fin_garantia && !S.fin_aut && _obsDocs.length){
-      return pedirAutorizacionCrear(body, _esSA, sig, _origSig, {tipo: 'documento_observado', argumento: (S.fin_obs_argumento || '').trim()});
+      return pedirAutorizacionCrear(body, _esSA, sig, _origSig, {tipo: 'documento_observado', argumento: (S.fin_obs_argumento || '').trim(),
+                                                                    intencion: S.fin_int.documento_observado});
     }
     if (!esInterno() && (S.fin_aut || (S.fin_garantia && !_esSA))){
       return pedirAutorizacionCrear(body, _esSA, sig, _origSig);
@@ -13418,7 +13515,7 @@ window.OT2C = (function(){
           setFinMotivoManual:setFinMotivoManual, setFinEnvioMotivoManual:setFinEnvioMotivoManual,
           usarEnvioDocumento:usarEnvioDocumento,   // 🧹 2026-10-08 «Usar este monto» del transporte del documento
           // 💰 2026-09-15: paso Costos rediseñado (valorización de toda OT)
-          setFinCobro:setFinCobro, setFinCeroMotivo:setFinCeroMotivo, usarFuenteValor:usarFuenteValor, usarTarifaProveedor:usarTarifaProveedor, usarCostoCero:usarCostoCero, fpasoTog:fpasoTog, avisoEnvioTog:avisoEnvioTog,
+          setFinCobro:setFinCobro, setFinCeroMotivo:setFinCeroMotivo, setFinIntencion:setFinIntencion, usarFuenteValor:usarFuenteValor, usarTarifaProveedor:usarTarifaProveedor, usarCostoCero:usarCostoCero, fpasoTog:fpasoTog, avisoEnvioTog:avisoEnvioTog,
           finDespachoAbrir:finDespachoAbrir, finValorizarAbrir:finValorizarAbrir, anexoPartidasAbrir:anexoPartidasAbrir,
           _o2mFinCostoInternoHeroCambio:_o2mFinCostoInternoHeroCambio, usarCostoInternoAuto:usarCostoInternoAuto,
           _o2mFinHeroBlur:_o2mFinHeroBlur,

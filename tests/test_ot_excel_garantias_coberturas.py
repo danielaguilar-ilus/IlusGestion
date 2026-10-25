@@ -16,6 +16,7 @@ import re
 import types
 import unittest
 
+import ot_intenciones
 from tests.test_incidencias_bajas import _codigo_y_arbol
 
 FUNCS = ("ot2_reporte_xlsx", "_ot_cobertura", "_ot_finanzas", "_ot_fin_num", "_ot_fin_clp", "_ot_fin_lote", "_ot_fin_agregado", "_ot_es_interna",
@@ -25,6 +26,7 @@ CONSTS = ("_OT_FIN_COBERTURA_TXT", "_OT_FIN_COBERTURA_CORTA", "_OT_FIN_AGG_APART
 
 _ARBOL = None
 HOJA = "Garantías y coberturas"
+HOJA_MES = "Por mes e intención"
 
 
 def _arbol():
@@ -56,7 +58,7 @@ def _garantia(i, **kw):
     return _fila(i, **base)
 
 
-def _ejecutar(filas, superadmin=True):
+def _ejecutar(filas, superadmin=True, intenciones=None):
     """Corre ot2_reporte_xlsx de verdad con `filas` y devuelve el libro de Excel (openpyxl)."""
     import openpyxl
     amb = {"print": lambda *a, **k: None, "re": re, "datetime": datetime, "__builtins__": __builtins__}
@@ -86,6 +88,8 @@ def _ejecutar(filas, superadmin=True):
         "_qp": types.SimpleNamespace(es_sin_fecha=lambda f: False, REL_PENDIENTE_STOCK="pendiente_stock", chip_pendiente=lambda n: f"Pendiente de {n}",
                                      chip_madre=lambda n: f"Pendientes: {n}"),
         "_ot_tv_hhmm": lambda x: str(x or ""), "_mant_log": lambda *a, **k: None, "send_file": lambda buf, **k: buf,
+        "_oint": ot_intenciones, "_ot_intenciones_catalogo": ot_intenciones.catalogo_semilla,
+        "_ot_intenciones_de_ots": lambda ids: {i: (intenciones or {})[i] for i in ids if i in (intenciones or {})},
         "_ot_fin_contrato_real_de": lambda vids, con_madre=False: {int(v): ((False, False) if con_madre else False) for v in vids},
     })
     buf = amb["ot2_reporte_xlsx"]()
@@ -124,7 +128,7 @@ class TestHojaGarantiasYCoberturas(unittest.TestCase):
 
     def test_la_hoja_va_despues_de_por_tipo_y_antes_del_resumen(self):
         n = self.wb.sheetnames
-        self.assertEqual(n[:6], ["OT", "Por técnico", "Por centro de costo", "Por tipo", HOJA, "Resumen"])
+        self.assertEqual(n[:7], ["OT", "Por técnico", "Por centro de costo", "Por tipo", HOJA, HOJA_MES, "Resumen"])
 
     def test_arriba_cuenta_cuantas_son_y_cuanto_costaron_por_cobertura_y_centro_de_costo(self):
         self.assertEqual(self.f[0][:6], ["Cobertura", "Centro de costo", "Cantidad de OT", "Nos costó", "Valorizado (referencia)", "OT sin costo declarado"])
@@ -160,16 +164,17 @@ class TestHojaGarantiasYCoberturas(unittest.TestCase):
     def test_el_superadmin_ve_como_nacio_quien_autorizo_y_el_argumento(self):
         i = next(n for n, r in enumerate(self.f) if r[0] == "Detalle OT por OT")
         cab = self.f[i + 1]
-        self.assertEqual(cab[9:12], ["Cómo nació", "Autorizó", "Argumento"])
+        # 🧭 REGLA #47: «Por qué» va justo después de «Documentos» y «Cuándo autorizó» entre quien autorizó y el argumento.
+        self.assertEqual(cab[9:14], ["Por qué (clasificación)", "Cómo nació", "Autorizó", "Cuándo autorizó", "Argumento"])
         fila = next(r for r in self.f[i + 2:] if r[2] == "OT-2026-00001")
-        self.assertEqual(fila[9:12], ["Garantía autorizada por Daniel", "Daniel Aguilar", "Falla de fábrica a los dos meses"])
+        self.assertEqual((fila[10], fila[11], fila[13]), ("Garantía autorizada por Daniel", "Daniel Aguilar", "Falla de fábrica a los dos meses"))
 
     def test_sin_superadmin_no_hay_columnas_de_autorizacion(self):
         ws = _ejecutar(FILAS, superadmin=False)[HOJA]
         filas = _filas(ws)
         i = next(n for n, r in enumerate(filas) if r[0] == "Detalle OT por OT")
         self.assertEqual([c for c in filas[i + 1] if c], ["Cobertura", "Centro de costo", "N° OT", "Nos costó", "Valorizado (referencia)", "Estado del costo",
-                                                          "Cliente", "Estado de la OT", "Documentos"])
+                                                          "Cliente", "Estado de la OT", "Documentos", "Por qué (clasificación)"])
         texto = " ".join(str(c) for r in filas for c in r if c)
         for privado in ("Daniel Aguilar", "Falla de fábrica", "Autorizó", "Cómo nació"):
             self.assertNotIn(privado, texto)
@@ -190,9 +195,38 @@ class TestHojaGarantiasYCoberturas(unittest.TestCase):
             self.assertEqual(c.data_type, "s", f"{c.coordinate} se guardó como {c.data_type}")
         self.assertFalse([c for fila in ws.iter_rows() for c in fila if c.data_type == "f"], "ninguna celda de la hoja es una fórmula")
 
+    def test_cada_ot_dice_por_que_no_se_cobra_y_si_no_esta_clasificada_lo_dice(self):
+        """REGLA #47: la clasificación elegida (marketing, evento, mal cobro…) sale con su nombre; sin clasificar se dice, no se inventa."""
+        wb = _ejecutar(FILAS, superadmin=True, intenciones={1: "marketing", 2: "mal_cobro"})
+        filas = _filas(wb[HOJA])
+        i = next(n for n, r in enumerate(filas) if r[0] == "Detalle OT por OT")
+        por_ot = {r[2]: r[9] for r in filas[i + 2:] if r[2] and str(r[2]).startswith("OT-2026-")}
+        self.assertEqual(por_ot["OT-2026-00001"], "Costo asumido por Marketing")
+        self.assertEqual(por_ot["OT-2026-00002"], "Mal cobro en los servicios")
+        self.assertEqual(por_ot["OT-2026-00003"], "Sin clasificar")
+        # una OT sin clasificar se marca en ámbar para que se note (no es un error: es una OT anterior o sin elegir)
+        celda = next(c for fila in wb[HOJA].iter_rows() for c in fila if c.value == "Sin clasificar")
+        self.assertEqual(celda.fill.fgColor.rgb[-6:], "FFF8E1")
+
+    def test_la_hoja_por_mes_e_intencion_segrega_para_decidir_en_el_mes(self):
+        wb = _ejecutar(FILAS, superadmin=True, intenciones={1: "marketing", 2: "marketing", 3: "comercial_asume"})
+        f = _filas(wb[HOJA_MES])
+        self.assertEqual(f[0], ["Mes", "Por qué (clasificación)", "Centro de costo (quién lo asume)", "Cantidad de OT", "Nos costó",
+                                "Valorizado (referencia)", "OT sin costo declarado"])
+        datos = {(r[1], r[2]): r for r in f[1:] if r[1] and isinstance(r[3], (int, float))}
+        mk = datos[("Costo asumido por Marketing", "Servicio Técnico")]
+        self.assertEqual(mk[3], 1)
+        self.assertEqual(mk[4], 370000.0)
+        # el TOTAL de la hoja cuadra con el de «Garantías y coberturas» (5 OT sin cobro, $540.000)
+        total = next(r for r in f if r[0] == "TOTAL")
+        self.assertEqual((total[3], total[4]), (5, 540000.0))
+        meses = {r[0] for r in f[1:] if r[0] and r[0] != "TOTAL" and isinstance(r[3], (int, float))}
+        self.assertEqual(meses, {"10/2026"}, "el mes va como MM/AAAA, nunca ISO crudo (REGLA #6)")
+
     def test_sin_ninguna_ot_sin_cobro_la_hoja_no_existe(self):
         wb = _ejecutar([_fila(5), _fila(7)])
         self.assertNotIn(HOJA, wb.sheetnames)
+        self.assertNotIn(HOJA_MES, wb.sheetnames)
         self.assertEqual(wb.sheetnames[:4], ["OT", "Por técnico", "Por centro de costo", "Por tipo"])
 
 

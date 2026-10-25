@@ -1079,7 +1079,18 @@ async function fpdMostrarCandado(res){
   await ilusAlert({title: res.codigo === 'EQUILIBRIO_LOTE' ? 'Hay OT que no se pueden pagar todavía' : 'No se puede asignar',
                    message: res.error, type: res.codigo === 'LECTURA_INCOMPLETA' ? 'warning' : 'error'});
 }
+// 🧭 2026-10-25 (REGLA #47): toda autorización de pérdida lleva su «¿Por qué?» clasificado (quién la asume), aparte del argumento.
+async function fpdElegirPorQue(){
+  let items = [];
+  try { const r = await fetch('/ot/api/intenciones?uso=cerrar_con_perdida', {credentials: 'same-origin'}); const j = await r.json(); items = (j && j.ok && j.items) || []; } catch (e) {}
+  if (!items.length) items = [{clave: 'otro', nombre: 'Otro motivo'}];
+  if (typeof ilusActionSheet !== 'function') return items[0].clave;
+  return await ilusActionSheet({title: '¿Quién asume esta pérdida / por qué?', message: 'Queda guardado junto a la autorización.',
+    options: items.map(i => ({label: i.nombre, value: i.clave, style: 'secondary'}))});
+}
 async function fpdPedirAutEquilibrio(vid, numero, exceso){
+  const intencion = await fpdElegirPorQue();
+  if (!intencion) return;
   const arg = await ilusPrompt({title: 'Pedir autorización a Daniel · ' + numero,
     message: 'Se le pagaría al proveedor ' + FPD_CLP(exceso) + ' por encima de lo que la OT cobra con respaldo de su factura. Explica por qué hay que pagarle igual.',
     sub: 'Mínimo 30 caracteres. Daniel lo ve en su celular y autoriza hasta ese monto.',
@@ -1087,7 +1098,7 @@ async function fpdPedirAutEquilibrio(vid, numero, exceso){
   if (!arg) return;
   if (arg.trim().length < 30){ ilusToast('El argumento necesita al menos 30 caracteres.', {type: 'warning'}); return; }
   const r = await fetch('/ot/api/autorizaciones', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({tipo: 'cerrar_con_perdida', visita_id: vid, argumento: arg.trim()})});
+    body: JSON.stringify({tipo: 'cerrar_con_perdida', visita_id: vid, argumento: arg.trim(), intencion: intencion})});
   const d = await r.json().catch(() => ({}));
   if (!r.ok || d.ok === false){ ilusToast(d.error || 'No se pudo pedir la autorización', {type: d.error_codigo === 'YA_PENDIENTE' ? 'warning' : 'error'}); return; }
   ilusToast('✓ Autorización pedida a Daniel (N° ' + d.id + ')', {type: 'success'});

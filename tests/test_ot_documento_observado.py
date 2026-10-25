@@ -327,14 +327,14 @@ class TestGuiaEnElNavegador(unittest.TestCase):
         open(f, "w", encoding="utf-8").write(prog)
         return json.loads(subprocess.run(["node", f], capture_output=True, text=True, check=True).stdout)
 
-    def _estado(self, obs=None, arg=""):
+    def _estado(self, obs=None, arg="", por_que=""):
         doc = {"clave": ["FCV", "11439"], "tido": "FCV", "nudo": "11439", "titulo": "FCV 11439",
                "servicio": {"hay_lineas": True, "total": 100000, "usado": 0, "saldo": 100000},
                "despacho": {"hay_lineas": False, "total": 0, "usado": 0, "saldo": 0},
                "doc": {"leido": True, "fecha": "01/06/2026", "productos": {"total": 1, "con_saldo": 1},
                        "observaciones": obs or []}}
         return {"fin_garantia": False, "fin_aut": False, "fin_centro": "sstt", "fin_zz_monto": 100000,
-                "fin_zz_envio": None, "fin_costo_proveedor": "60000", "fin_obs_argumento": arg,
+                "fin_zz_envio": None, "fin_costo_proveedor": "60000", "fin_obs_argumento": arg, "fin_int": {"documento_observado": por_que},
                 "fin_tomas": {"FCV|11439": {"servicio": 100000, "despacho": 0}}, "_docs": [{"tido": "FCV", "nudo": "11439"}],
                 "fin_saldo": {"docs": [doc], "servicio": {"hay": True, "saldo": 100000}, "despacho": {"hay": False, "saldo": 0}}}
 
@@ -346,7 +346,11 @@ class TestGuiaEnElNavegador(unittest.TestCase):
         obs = [{"codigo": "antiguo", "texto": "FCV 11439 es del 01/06/2026 (hace 133 días): tiene más de 3 meses.", "dias": 133}]
         r = self._correr(self._estado(obs), "console.log(JSON.stringify([_o2mFinObsFalta(), _o2mFinGuiaPasos()[2].e]));")
         self.assertEqual(r, [True, "aut"])
+        # 🧭 REGLA #47: con el argumento escrito pero SIN elegir el «¿Por qué se usa este documento?» sigue faltando
         r = self._correr(self._estado(obs, "El cliente pidió instalar después por obras en su gimnasio."),
+                         "console.log(JSON.stringify([_o2mFinObsFalta(), _o2mFinGuiaPasos()[2].e]));")
+        self.assertEqual(r, [True, "aut"])
+        r = self._correr(self._estado(obs, "El cliente pidió instalar después por obras en su gimnasio.", "otro"),
                          "console.log(JSON.stringify([_o2mFinObsFalta(), _o2mFinGuiaPasos()[2].e]));")
         self.assertEqual(r, [False, "arg"])
 
@@ -364,7 +368,8 @@ class TestGuiaEnElNavegador(unittest.TestCase):
 class TestAsistenteCableado(unittest.TestCase):
     def test_bloquea_sin_argumento_y_lo_envia(self):
         self.assertIn("        if (_o2mFinObsFalta()) return false;", H)
-        self.assertIn("{tipo: 'documento_observado', argumento: (S.fin_obs_argumento || '').trim()}", H)
+        self.assertIn("{tipo: 'documento_observado', argumento: (S.fin_obs_argumento || '').trim(),", H)
+        self.assertIn("intencion: S.fin_int.documento_observado}", H)      # 🧭 REGLA #47: viaja con su «por qué»
         self.assertIn("if (res.j.codigo === 'DOC_OBSERVADO'){", H)
         self.assertIn("setFinObsArgumento:setFinObsArgumento,", H)
 

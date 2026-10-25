@@ -50,8 +50,12 @@
       '<div><dt>La pidió</dt><dd>' + esc(a.solicitado_por_nombre) + '<br><small>' + esc(a.solicitado_at) + '</small></dd></div>' +
       '<div><dt>' + (a.visita_id ? 'Orden de trabajo' : 'Qué se creará') + '</dt><dd>' + destino + '</dd></div>' +
       '<div><dt>Centro de costo</dt><dd>' + esc(CENTROS[a.centro_costo] || a.centro_costo || 'Sin definir') + '</dd></div>' +
-      '<div><dt>Valorizado sugerido</dt><dd>' + clp(a.valorizado_clp) + '</dd></div></dl>' +
-      '<div class="pp-arg"><small>Argumento (completo)</small>' + esc(a.argumento) + '</div>';
+      '<div><dt>Valorizado sugerido</dt><dd>' + clp(a.valorizado_clp) + '</dd></div>' +
+      /* 🧭 2026-10-25 (REGLA #47): el «por qué» clasificado y quién lo asume (la trazabilidad completa: quién la pidió, por qué, quién autorizó y cuándo). */
+      '<div><dt>Por qué (clasificación)</dt><dd>' + (a.intencion_txt ? '<b>' + esc(a.intencion_txt) + '</b>' : '<small>Sin clasificar</small>') + '</dd></div>' +
+      '<div><dt>Quién lo asume</dt><dd>' + esc(a.asume_txt || CENTROS[a.centro_costo] || 'Sin definir') + '</dd></div></dl>' +
+      (a.mensaje_sistema ? '<div class="pp-arg" style="border-left-color:#92400e;background:#fff8e1"><small>Lo que detectó el sistema</small>' + esc(a.mensaje_sistema) + '</div>' : '') +
+      '<div class="pp-arg"><small>Argumento (completo) · de ' + esc(a.solicitado_por_nombre || 'quien la pide') + '</small>' + esc(a.argumento) + '</div>';
     /* 🧩 2026-10-20: si la solicitud trae una desinstalación, quien autoriza lo lee: al aprobar se crean las dos órdenes. */
     if (a.incluye_desinstalacion) {
       h += '<div class="pp-arg" style="border-left-color:#1d4ed8;background:#eff6ff"><small>Incluye</small><i class="bi bi-box-arrow-up me-1"></i>' + esc(a.incluye_desinstalacion) + '</div>';

@@ -1001,19 +1001,44 @@
     });
   }
 
+  /* 🧭 2026-10-25 (REGLA #47, Daniel: «¿Quién lo asume? ¿Por qué? Autorizaron: toda esa trazabilidad la necesito»): cada solicitud de autorización lleva su
+     «¿Por qué?» clasificado (arriendo, descuadre de precio, pérdida, costo asumido por Marketing o Comercial…), aparte del argumento de quien pide. El
+     catálogo lo administra el superadministrador (/ot/intenciones) y el servidor ofrece solo lo que esa persona puede elegir; si no responde, queda «Otro
+     motivo» para no dejar la solicitud sin salida (el servidor la valida igual). El sistema SUGIERE según el centro de costo; la persona decide. */
+  var INTEN_RESPALDO = { items: [{ clave: 'otro', nombre: 'Otro motivo', familia_cero: null }], sugerida: null };
+  function cargarIntenciones(uso, centro) {
+    var q = '/ot/api/intenciones?uso=' + encodeURIComponent(uso) + (centro ? '&centro=' + encodeURIComponent(centro) : '');
+    return api(q).then(function (r) {
+      return (r.ok && r.j && r.j.items && r.j.items.length) ? r.j : INTEN_RESPALDO;
+    });
+  }
+  function campoPorQue(cat, etiqueta) {
+    var sug = cat.sugerida;
+    return { k: 'intencion', label: etiqueta || '¿Por qué?', tipo: 'select', req: true, valor: sug ? sug.clave : '',
+      opciones: [{ v: '', n: 'Elige el motivo…' }].concat((cat.items || []).map(function (i) { return { v: i.clave, n: i.nombre }; })),
+      ayuda: sug ? sug.origen + ': puedes cambiarla.' : 'Queda guardado junto a la autorización: quién lo asume y por qué.' };
+  }
+  function familiaDe(cat, clave) {
+    var it = (cat.items || []).filter(function (i) { return i.clave === clave; })[0];
+    return (it && it.familia_cero) || null;
+  }
+
   function pedirExceder(inst, err) {
     var sa = inst.pan && inst.pan.superadmin, sp = {};
     (err.excesos || []).forEach(function (e) { sp[e.categoria] = e.pedido; });
-    return dialogo({
-      titulo: 'Cobrar más que el saldo del documento',
-      intro: sa ? 'Eres superadministrador: tu decisión queda registrada como autorización, con tu nombre y la hora.'
-        : 'Esto le llega a ' + CAMPANA_DAN + ' a su celular, con tu argumento. Mientras responde, el cobro no puede pasar del saldo.',
-      ok: sa ? 'Autorizar y registrar' : 'Pedir autorización a ' + CAMPANA_DAN,
-      campos: [{ k: 'argumento', label: 'Argumento', tipo: 'area', req: true, min: 30,
-        placeholder: 'Ej: la factura trae una sola línea de instalación pero cubre dos equipos instalados en visitas distintas' }]
+    var centroEx = inst.pan && inst.pan.centro && inst.pan.centro.valor;
+    return cargarIntenciones('exceder_saldo', centroEx).then(function (cat) {
+      return dialogo({
+        titulo: 'Cobrar más que el saldo del documento',
+        intro: sa ? 'Eres superadministrador: tu decisión queda registrada como autorización, con tu nombre y la hora.'
+          : 'Esto le llega a ' + CAMPANA_DAN + ' a su celular, con tu argumento. Mientras responde, el cobro no puede pasar del saldo.',
+        ok: sa ? 'Autorizar y registrar' : 'Pedir autorización a ' + CAMPANA_DAN,
+        campos: [campoPorQue(cat, '¿Por qué se cobra distinto del documento?'), { k: 'argumento', label: 'Argumento', tipo: 'area', req: true, min: 30,
+          placeholder: 'Ej: la factura trae una sola línea de instalación pero cubre dos equipos instalados en visitas distintas' }]
+      });
     }).then(function (v) {
       if (!v) return;
-      return api('/ot/api/autorizaciones', { method: 'POST', body: { tipo: 'exceder_saldo', visita_id: inst.vid, argumento: v.argumento, saldo_pedido: sp } }).then(function (r) {
+      return api('/ot/api/autorizaciones', { method: 'POST', body: { tipo: 'exceder_saldo', visita_id: inst.vid, argumento: v.argumento, intencion: v.intencion, saldo_pedido: sp } }).then(function (r) {
         if (!r.ok) { toast((r.j && r.j.error) || 'No se pudo pedir la autorización.', 'error'); return; }
         if (!sa) return despuesDeEscribir(inst, 'Se pidió autorización a ' + CAMPANA_DAN + '.');
         return api('/ot/api/autorizaciones/' + r.j.id + '/aprobar', { method: 'POST', body: { comentario: 'Autorizado por quien lo declara (superadministrador).' } }).then(function (a) {
@@ -1051,23 +1076,28 @@
   function pedirAutorizacion(inst, tipo) {
     if (esInterna(inst)) { toast(TXT_INTERNA, 'info'); return Promise.resolve(); }
     var cero = tipo === 'cobro_cero', sa = inst.pan.superadmin;
-    var campos = [];
-    if (cero) campos.push({ k: 'motivo', label: 'Motivo del $0', tipo: 'select', valor: 'garantia', opciones: [
-      { v: 'garantia', n: 'Garantía' }, { v: 'regalia', n: 'Regalía' }, { v: 'arriendo_leasing', n: 'Arriendo o leasing' }] });
-    campos.push({ k: 'argumento', label: 'Argumento', tipo: 'area', req: true, min: 30,
-      placeholder: cero ? 'Ej: equipo con 8 meses de uso, falla de fábrica cubierta por la garantía del proveedor' : 'Ej: servicio sin costo acordado con gerencia; no habrá factura' });
-    campos.push({ k: 'centro_costo', label: 'Centro de costo', req: true, tipo: 'select', valor: inst.pan.centro.valor || '',
-      opciones: [{ v: '', n: 'Elige…' }].concat(inst.pan.centro.opciones) });
-    if (cero) campos.push({ k: 'valorizado_clp', label: 'Cuánto vale (sugerido, opcional)', tipo: 'monto', ayuda: 'Solo de referencia: lo que de verdad cuenta es lo que nos costó.' });
-    return dialogo({
-      titulo: cero ? 'Cobrar $0 en esta OT' : 'Cerrar sin documento',
-      intro: sa ? 'Eres superadministrador: tu decisión queda registrada como autorización, con tu nombre y la hora.'
-        : 'Esto le llega a ' + CAMPANA_DAN + ' a su celular. Mientras responde, la OT queda «Esperando autorización de ' + CAMPANA_DAN + '».',
-      ok: sa ? 'Autorizar y registrar' : 'Pedir autorización a ' + CAMPANA_DAN, campos: campos
+    var cat = INTEN_RESPALDO;
+    return cargarIntenciones(cero ? 'cobertura' : 'cerrar_sin_documento', inst.pan.centro.valor).then(function (c) {
+      cat = c;
+      var campos = [];
+      /* 🧭 REGLA #47: el «Motivo del $0» ahora es el «¿Por qué?» del catálogo (las tres familias de siempre + las que cree el superadministrador); la familia
+         contable (garantía, regalía, arriendo/leasing) la fija la clasificación elegida. «Garantía» sigue llamándose Garantía. */
+      campos.push(campoPorQue(cat, cero ? 'Motivo del $0 (¿por qué?)' : '¿Por qué se cierra sin factura ni boleta?'));
+      campos.push({ k: 'argumento', label: 'Argumento', tipo: 'area', req: true, min: 30,
+        placeholder: cero ? 'Ej: equipo con 8 meses de uso, falla de fábrica cubierta por la garantía del proveedor' : 'Ej: servicio sin costo acordado con gerencia; no habrá factura' });
+      campos.push({ k: 'centro_costo', label: 'Centro de costo (quién lo asume)', req: true, tipo: 'select', valor: inst.pan.centro.valor || '',
+        opciones: [{ v: '', n: 'Elige…' }].concat(inst.pan.centro.opciones) });
+      if (cero) campos.push({ k: 'valorizado_clp', label: 'Cuánto vale (sugerido, opcional)', tipo: 'monto', ayuda: 'Solo de referencia: lo que de verdad cuenta es lo que nos costó.' });
+      return dialogo({
+        titulo: cero ? 'Cobrar $0 en esta OT' : 'Cerrar sin documento',
+        intro: sa ? 'Eres superadministrador: tu decisión queda registrada como autorización, con tu nombre y la hora.'
+          : 'Esto le llega a ' + CAMPANA_DAN + ' a su celular. Mientras responde, la OT queda «Esperando autorización de ' + CAMPANA_DAN + '».',
+        ok: sa ? 'Autorizar y registrar' : 'Pedir autorización a ' + CAMPANA_DAN, campos: campos
+      });
     }).then(function (v) {
       if (!v) return;
-      var body = { tipo: tipo, visita_id: inst.vid, argumento: v.argumento, centro_costo: v.centro_costo };
-      if (cero) { body.motivo = v.motivo; if (v.valorizado_clp) body.valorizado_clp = Number(v.valorizado_clp); }
+      var body = { tipo: tipo, visita_id: inst.vid, argumento: v.argumento, centro_costo: v.centro_costo, intencion: v.intencion };
+      if (cero) { body.motivo = familiaDe(cat, v.intencion) || v.intencion; if (v.valorizado_clp) body.valorizado_clp = Number(v.valorizado_clp); }
       return api('/ot/api/autorizaciones', { method: 'POST', body: body }).then(function (r) {
         if (!r.ok) { toast((r.j && r.j.error) || 'No se pudo pedir la autorización.', 'error'); return; }
         if (!sa) return despuesDeEscribir(inst, 'Se pidió autorización a ' + CAMPANA_DAN + '.');
@@ -1089,16 +1119,19 @@
     var pr = (inst.rec && inst.rec.perdida) || (inst.rechazo && inst.rechazo.perdida) || {};
     var cuenta = (pr.perdida ? '<span class="fm-perdida-cuenta"><span>Cobramos <b>' + clp(pr.cobre) + '</b></span><span>Nos cobraron <b>' + clp(pr.me_cobraron) + '</b></span>' +
       '<span class="mal">Se pierden <b>' + clp(pr.perdida) + '</b></span></span>' : '');
-    return dialogo({
-      titulo: 'Cerrar esta OT con pérdida',
-      intro: cuenta + (sa ? 'Eres superadministrador: tu decisión queda registrada como autorización, con tu nombre y la hora.'
-        : 'Esto le llega a ' + CAMPANA_DAN + ' a su celular con la cuenta de la OT. Mientras no responda, la OT no se puede cerrar.'),
-      ok: sa ? 'Autorizar y registrar' : 'Pedir autorización a ' + CAMPANA_DAN,
-      campos: [{ k: 'argumento', label: 'Por qué se cierra con pérdida', tipo: 'area', req: true, min: 30,
-        placeholder: 'Ej: el proveedor cobró un despacho extra por acceso difícil que no se le cobró al cliente; se acordó absorberlo' }]
+    var centroP = inst.pan && inst.pan.centro && inst.pan.centro.valor;
+    return cargarIntenciones('cerrar_con_perdida', centroP).then(function (cat) {
+      return dialogo({
+        titulo: 'Cerrar esta OT con pérdida',
+        intro: cuenta + (sa ? 'Eres superadministrador: tu decisión queda registrada como autorización, con tu nombre y la hora.'
+          : 'Esto le llega a ' + CAMPANA_DAN + ' a su celular con la cuenta de la OT. Mientras no responda, la OT no se puede cerrar.'),
+        ok: sa ? 'Autorizar y registrar' : 'Pedir autorización a ' + CAMPANA_DAN,
+        campos: [campoPorQue(cat, '¿Quién asume la pérdida / por qué?'), { k: 'argumento', label: 'Por qué se cierra con pérdida', tipo: 'area', req: true, min: 30,
+          placeholder: 'Ej: el proveedor cobró un despacho extra por acceso difícil que no se le cobró al cliente; se acordó absorberlo' }]
+      });
     }).then(function (v) {
       if (!v) return;
-      return api('/ot/api/autorizaciones', { method: 'POST', body: { tipo: 'cerrar_con_perdida', visita_id: inst.vid, argumento: v.argumento } }).then(function (r) {
+      return api('/ot/api/autorizaciones', { method: 'POST', body: { tipo: 'cerrar_con_perdida', visita_id: inst.vid, argumento: v.argumento, intencion: v.intencion } }).then(function (r) {
         if (!r.ok) { toast((r.j && r.j.error) || 'No se pudo pedir la autorización.', 'error'); return; }
         if (!sa) return despuesDeEscribir(inst, 'Se pidió autorización a ' + CAMPANA_DAN + '.');
         return api('/ot/api/autorizaciones/' + r.j.id + '/aprobar', { method: 'POST', body: { comentario: 'Autorizado por quien lo declara (superadministrador).' } }).then(function (a) {

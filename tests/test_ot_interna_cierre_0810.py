@@ -73,6 +73,11 @@ def _amb_recorrido():
     amb["_ot_docs_listar"] = lambda vid: {"documentos": []}
     amb["chile_fmt_filter"] = lambda d, f=None: "08/10/2026 16:24"
     amb["_ot_aut_json"] = lambda a: a
+    # 2026-10-25 (REGLA #47): el «por qué» clasificado de cada autorización y de la OT; estas pruebas no lo usan (tests/test_ot_intenciones.py sí)
+    amb["_ot_intenciones_de_autorizaciones"] = lambda ids: {}
+    amb["_ot_intencion_de"] = lambda vid: None
+    amb["_ot_intencion_frase"] = lambda clave, centro=None: ""
+    amb["_ot_intencion_campos"] = lambda clave, centro=None, catalogo=None: {"intencion_txt": "", "asume_txt": "", "asume_centro": None}
     amb["_es_rol_tecnico"] = lambda: False
     amb["_ot_panorama_docs"] = lambda vid, v: []
     # 2026-10-19 (desinstalación): el recorrido trae la cuenta de la familia; estas OT no tienen desinstalaciones.
