@@ -268,11 +268,13 @@ def respuesta_bodegas(skus_texto, filas, ts_cache=None, ahora=None, max_skus=80)
     productos» de todos los formularios)— para que digan siempre lo mismo (Daniel 2026-10-24: «que este motor sea un motor único»).
     `skus_texto`: «A,B,C» tal como llega por la URL. `filas`: filas de GetReporteStock ya leídas (None = Check no respondió, y sin datos
     viejos que servir). `ts_cache`: cuándo se leyó ese reporte (epoch) y `ahora` el epoch actual, para decir su antigüedad en minutos.
+    Un reporte VACÍO tampoco es una respuesta: la bodega real siempre tiene miles de filas, así que `[]` es una lectura fallida y se trata como
+    «no respondió» (si no, todos los productos saldrían «sin stock en Check» durante la hora que dura la caché).
     Pura: no lee de Check ni de la base."""
     skus = skus_de(skus_texto, max_skus)
     if not skus:
         return {"ok": True, "bodegas": {}, "edad_min": None}, 200
-    if filas is None:
+    if filas is None or (isinstance(filas, (list, tuple)) and not filas):
         return {"ok": False, "error": "Check no respondió. Intenta de nuevo en un minuto."}, 503
     edad = None
     try:

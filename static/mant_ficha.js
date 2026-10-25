@@ -3080,9 +3080,10 @@ async function guardarCliente() {
     if (typeof ilusAlert === 'function') ilusAlert({type:'error', message:'Razón social requerida'});
     return;
   }
-  // 2026-10-24 (Daniel: «la ubicación se debe verificar para poder avanzar»): sin dirección verificada con Google NO se guarda (el botón ya viene
-  // apagado y el pie dice por qué; esto es la red de seguridad). Única excepción: que Google no esté disponible (no hay cómo verificar): ahí se
-  // avisa y la persona decide, para no dejar un callejón sin salida.
+  // 2026-10-24 (Daniel: «la ubicación se debe verificar para poder avanzar»): una dirección escrita o cambiada sin verificar con Google NO se guarda
+  // (el botón ya viene apagado y el pie dice por qué; esto es la red de seguridad). Dos salidas para no dejar un callejón sin salida: que Google no
+  // esté disponible (no hay cómo verificar: se avisa y la persona decide) y que la dirección NO se haya tocado y nunca estuviera verificada
+  // (cliente anterior a esta regla, o sin dirección): `dp.ok` con `aviso:'heredada'` — se guarda y el modal ya mostró el aviso ámbar.
   if (typeof window.ecfDireccionPendiente === 'function') {
     const dp = window.ecfDireccionPendiente();
     if (dp && !dp.ok) {

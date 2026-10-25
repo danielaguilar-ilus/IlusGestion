@@ -81,6 +81,11 @@ class TestMarcado(unittest.TestCase):
         self.assertIn('class="ecf-sec is-neutral" id="ecfSec5"', self.m)
         self.assertIn('class="ecf-sec is-neutral" id="ecfSec6"', self.m)
 
+    def test_esc_de_un_aviso_no_cierra_tambien_el_formulario(self):
+        # Revisión independiente (24-oct): «Hay datos por revisar» y «Falta verificar la ubicación» se montan dentro del modal y cierran con Esc;
+        # Bootstrap cerraba además el formulario entero. Se cierra con Cancelar, ✕ o el fondo.
+        self.assertIn('id="modalEditarCliente" tabindex="-1" aria-labelledby="ecfTitulo" data-bs-keyboard="false"', self.m)
+
     def test_el_guardado_sigue_siendo_el_mismo(self):
         self.assertIn('id="btnGuardarCliente" onclick="guardarCliente()"', self.m)
         self.assertIn('data-current="{{ cliente.ejecutivo_user_id or \'\' }}"', self.m)   # lo llena _ilusCargarEjecutivos()
@@ -118,6 +123,12 @@ class TestMarcado(unittest.TestCase):
         grande = ECF_CSS.split(".ecf .ecf-grande{")[1].split("}")[0]
         self.assertIn("min-height:56px", grande)
         self.assertIn("font-size:1.08rem", grande)
+
+    def test_el_nombre_del_cliente_de_la_cabecera_no_se_corta_en_celular(self):
+        # Revisión independiente (24-oct): un `line-clamp:2` cortaba razones sociales largas (REGLA #15: ningún dato se trunca).
+        self.assertNotIn("line-clamp", ECF_CSS)
+        self.assertNotIn("text-overflow:ellipsis", ECF_CSS)
+        self.assertIn(".ecf-head .sub{overflow-wrap:anywhere}", ECF_CSS)
 
     def test_el_modal_se_ensancha_en_tablet(self):
         # A 768–991 px el modal de Bootstrap mide 500 px y las columnas quedaban angostas.
@@ -288,7 +299,8 @@ console.log(JSON.stringify(out));
         v = self.o["vacio"]
         self.assertEqual(v["razon"], "ecf-bad")
         self.assertEqual(v["rut"], "ecf-warn")           # el RUT se recomienda pero no se exige
-        self.assertEqual(v["dir"], "ecf-bad")
+        # Un cliente SIN dirección que no se toca no se traba (se avisa en ámbar): se exige verificar lo que se escribe o cambia.
+        self.assertEqual(v["dir"], "ecf-warn")
         self.assertEqual(v["pasos"], "rojo,rojo,rojo,rojo,ambar,ambar")
         self.assertEqual(v["prog"], "0 de 4 pasos listos")
         self.assertTrue(v["pie"]["guardarApagado"])          # sin razón social no se guarda (como siempre)
@@ -345,10 +357,13 @@ console.log(JSON.stringify(out));
         self.assertTrue(r["pie"]["guardarApagado"])
         self.assertEqual(r["pendiente"], {"ok": False, "motivo": "cambiada"})
 
-    def test_sin_direccion_con_google_no_se_guarda(self):
+    def test_dejar_la_direccion_como_vino_y_sin_verificar_se_guarda_con_aviso(self):
+        # Volver al estado inicial (sin dirección y nunca verificada) no es un cambio: no hay nada que verificar ni que trabar.
+        # (Borrar una dirección que SÍ estaba verificada se traba: lo cubre test_cliente_editar_ubicacion.py.)
         v = self.o["vaciaConGoogle"]
-        self.assertTrue(v["pie"]["guardarApagado"])
-        self.assertEqual(v["pendiente"], {"ok": False, "motivo": "vacia"})
+        self.assertFalse(v["pie"]["guardarApagado"])
+        self.assertEqual(v["pendiente"], {"ok": True, "aviso": "heredada"})
+        self.assertIn("warn", v["pie"]["clase"])
 
     def test_sin_razon_social_tampoco_se_guarda(self):
         s = self.o["sinRazon"]["pie"]
@@ -375,7 +390,7 @@ console.log(JSON.stringify(out));
         guion = r"""
 const fs = require('fs');
 const src = fs.readFileSync(process.argv[2], 'utf8');
-const i = src.indexOf('function rutOk'), j = src.indexOf('function emailOk'), k = src.indexOf('var verificada');
+const i = src.indexOf('function rutOk'), j = src.indexOf('function emailOk'), k = src.indexOf('// ── Dirección: qué está verificado');
 const f = new Function(src.slice(i, k) + '; return {rutOk, emailOk, telOk};')();
 console.log(JSON.stringify({
   ok: ['76.753.123-0', '12.345.678-5', '6-K', '11.111.111-1'].map(f.rutOk),

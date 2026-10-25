@@ -7587,13 +7587,22 @@ def api_check_bodegas():
     SOLO LECTURA (REGLA #4.4): usa el reporte de stock de Check YA cacheado (_checkwms_stock_rows, GetReporteStock de la lista blanca); no llama
     a Check por su cuenta. ?skus=A,B,C (hasta 80)."""
     import retiros_check as _rck
-    # El proveedor EXTERNO no ve el stock de las bodegas (Daniel 2026-09-08: «ellos son externos y no deben ver información sensible… costos/stock»):
-    # mismo criterio que @_no_tecnico_externo, que no se puede usar de decorador acá porque se define más abajo en este archivo.
-    if _es_tecnico_externo():
+    # Ningún técnico (interno, elevado ni externo) ve las bodegas de Check: son las de un operador externo (REGLA #19: ni siquiera pueden ver mis
+    # proveedores) y el proveedor externo además no ve stock (Daniel 2026-09-08). Una sola fuente de verdad: _oculta_proveedores(), que no se puede
+    # usar de decorador acá porque se define más abajo en este archivo. El modal oculta el cuadro al recibir este 403.
+    if _oculta_proveedores():
         return jsonify({"ok": False, "error": "No tienes acceso a esta información."}), 403
     txt = request.args.get("skus") or ""
     if not _rck.skus_de(txt):
         return jsonify(_rck.respuesta_bodegas(txt, None)[0])          # sin SKUs no se espera a Check
+    # Caché FRÍA (instancia recién levantada): leer el reporte de Check tarda 4-45 s y mientras tanto la persona y los hilos del servidor quedarían
+    # colgados en el candado. No se espera: se pide la lectura en segundo plano (una a la vez, _checkwms_swr) y se responde «calentando» al instante
+    # para que el modal reintente en unos segundos. Con la caché tibia (incluso vencida) se responde al momento, como siempre.
+    if _CHECKWMS_STOCK.get("rows") is None:
+        if not _checkwms_configurado():
+            return jsonify({"ok": False, "error": "Check no está configurado en esta instalación."}), 503
+        _checkwms_swr("stock", _checkwms_stock_rows)
+        return jsonify({"ok": False, "calentando": True, "error": "Conectando con Check… reintenta en unos segundos."}), 503
     try:
         filas = _checkwms_stock_rows()
     except Exception as _e_cb:
@@ -68149,6 +68158,11 @@ def _checkwms_stock_rows(forzar: bool = False) -> list | None:
         if data is None:
             return _CHECKWMS_STOCK["rows"]
         rows = ((data or {}).get("body") or {}).get("response") or []
+        if not rows:
+            # Un reporte de stock VACÍO no es una lectura válida (la bodega real tiene miles de filas): no se guarda ni pisa lo que ya había. Si se
+            # guardara, durante una hora todo producto saldría «sin stock en Check» (revisión independiente 24-oct).
+            print("[checkwms] GetReporteStock vino vacío: se ignora", flush=True)
+            return _CHECKWMS_STOCK["rows"]
         _CHECKWMS_STOCK.update({"ts": time.time(), "rows": rows})
         return rows
 
@@ -81831,6 +81845,11 @@ def mant_calendario_mes(anio, mes):
             _feriados_anio = _feriados_chile(anio) or {}
         except Exception:
             _feriados_anio = {}
+        # 2026-10-24 (REGLA #31: «todo calendario marca los días no laborales»): TODOS los feriados del mes, no solo el del día que ya tenía visitas
+        # (dias[f].feriado), para que los calendarios del asistente de OT (entrada y salida) los dibujen aunque ese día esté libre. Aditivo: quien no
+        # conoce la clave `feriados` la ignora.
+        _pref_mes = "%04d-%02d-" % (anio, mes)
+        _feriados_mes = {k: v for k, v in _feriados_anio.items() if str(k).startswith(_pref_mes)}
 
         dias = {}
         for v in visitas:
@@ -81867,6 +81886,7 @@ def mant_calendario_mes(anio, mes):
             "ok": True,
             "anio": anio, "mes": mes,
             "dias": dias,
+            "feriados": _feriados_mes,
             "kpis": {
                 "total_mes": len(visitas),
                 "dias_con_ot": len(dias),

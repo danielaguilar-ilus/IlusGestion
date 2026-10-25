@@ -4799,7 +4799,9 @@
    🧾 2026-10-24 (Daniel: «que el modal de editar clientes se comporte como el formulario: semáforo, tarjetas con paso a paso, validación de Google,
    el cargo con más espacio»). MISMOS ids (ec_*) y mismo guardarCliente() (static/mant_ficha.js): solo cambia cómo se presenta. Estilos en
    static/cliente_form.css y semáforo/validaciones en static/cliente_form.js (rojo = falta · verde = listo · ámbar = opcional). #}
-<div class="modal fade ecf" id="modalEditarCliente" tabindex="-1" aria-labelledby="ecfTitulo">
+{# data-bs-keyboard="false": los avisos de guardarCliente() («Hay datos por revisar», «Falta verificar la ubicación») se montan DENTRO de este modal y
+   cierran con Esc; sin esto el mismo Esc cerraba también el formulario entero (revisión independiente 24-oct). Se cierra con Cancelar, ✕ o el fondo. #}
+<div class="modal fade ecf" id="modalEditarCliente" tabindex="-1" aria-labelledby="ecfTitulo" data-bs-keyboard="false">
   <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content">
       <div class="ecf-head">

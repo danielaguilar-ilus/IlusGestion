@@ -454,6 +454,14 @@
       //     cierra y muestra el motivo abajo del campo.
       const _sanitize = typeof opts.sanitize === 'function' ? opts.sanitize : null;
       const _validate = typeof opts.validate === 'function' ? opts.validate : null;
+      // El contrato es {ok, valor, error}. Formularios más viejos devuelven un TEXTO de error (o null si está bien) o un booleano: se leen igual,
+      // para que un validador que devuelve un string no pase por «válido» (ni se pinte de verde, ni deje cerrar el modal con el dato malo).
+      const _lee = (r) => {
+        if (r === false) return { ok: false };
+        if (typeof r === 'string') return r.trim() ? { ok: false, error: r } : { ok: true };
+        if (r && typeof r === 'object') return r;
+        return { ok: true };
+      };
       // 🚦 2026-10-24 (REGLA #42): `minLength` (mínimo de caracteres) y/o `validate` pintan el campo en vivo: rojo con su motivo mientras no
       // cumple, verde apenas cumple. Vacío = sin color. No cambia lo que ya hacía (Aceptar sigue validando y bloqueando igual).
       const _minLen = (typeof opts.minLength === 'number' && opts.minLength > 0) ? Math.floor(opts.minLength) : 0;
@@ -506,7 +514,7 @@
           }
           if (ok && _validate){
             let r = null;
-            try { r = _validate(v); } catch(_){ r = null; }
+            try { r = _lee(_validate(v)); } catch(_){ r = null; }
             if (r && r.ok === false){ ok = false; msg = r.error || 'El valor no es válido.'; }
           }
           inputEl.classList.toggle('ilus-vc-ok', ok);
@@ -536,7 +544,7 @@
           return;
         }
         if (ok && _validate && val && val.trim()){
-          const r = _validate(val);
+          const r = _lee(_validate(val));
           if (r && r.ok === false){
             _mostrarError(r.error || 'El valor no es válido.');
             inputEl.focus();
@@ -839,6 +847,14 @@
     }
     document.addEventListener('input', function(e){ pintar(e.target); }, true);
     document.addEventListener('focusin', function(e){ pintar(e.target); }, true);   // un campo ya escrito al abrir se pinta al tocarlo
+    // Un campo que el código vacía con `.value = ''` (al reabrir un modal) conserva el verde/rojo y el mensaje del texto anterior hasta que alguien
+    // lo toca: al abrir un modal se vuelven a evaluar los campos que ya estaban pintados (un campo vacío vuelve a quedar sin color ni mensaje).
+    const repintar = function(e){
+      const host = e.target;
+      if (host && host.querySelectorAll) host.querySelectorAll('.ilus-vc-ok, .ilus-vc-bad').forEach(pintar);
+    };
+    document.addEventListener('show.bs.modal', repintar);
+    document.addEventListener('shown.bs.modal', repintar);
   })();
 
   // ════════════════════════════════════════════════════════════════

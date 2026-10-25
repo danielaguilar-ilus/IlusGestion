@@ -1122,6 +1122,15 @@
 .o2m-cal-day.domingo{opacity:.45;cursor:not-allowed;background:repeating-linear-gradient(135deg,#f8f9fa,#f8f9fa 6px,#eef0f2 6px,#eef0f2 12px)}
 .o2m-cal-day.domingo:hover{transform:none;border-color:var(--o2m-line)}
 .o2m-cal-day.domingo .num{color:#9ca3af}
+/* 🗓️ 2026-10-24 (REGLA #31, «todo calendario marca los días no laborales»): feriado de Chile = rojo suave + banderita; el nombre va al pasar el
+   mouse. Solo avisa: se puede agendar igual (el domingo sigue sin poder). */
+.o2m-cal-day.feriado{background:#fef2f2;border-color:#fecaca}
+.o2m-cal-day.feriado .num{color:#991b1b}
+.o2m-cal-day .fer-mk{position:absolute;left:3px;top:2px;font-size:.5rem;color:#dc2626;line-height:1}
+.o2m-cal-day.feriado.sel{background:#0a0a0a;border-color:#0a0a0a}
+.o2m-cal-day.feriado.sel .num{color:#fff}
+.o2m-cal-day.feriado.pasado{background:#f8f9fa;border-color:var(--o2m-line)}
+.o2m-cal-day.feriado.domingo{background:repeating-linear-gradient(135deg,#fef2f2,#fef2f2 6px,#fde4e4 6px,#fde4e4 12px)}
 
 /* ── Col B: línea de tiempo del día -- esqueleto de .tkday-* original,
    bordes/radios/línea armonizados con la Col A (var(--o2m-line), radius
@@ -1925,6 +1934,10 @@ window.OT2C = (function(){
     if (origen === 'interno') return !!t.interno;
     if (t.interno) return false;
     if (origen === 'cliente' && t.v === 'instalacion') return false;
+    // 🧩 2026-10-24 (revisión independiente): «Instalación con desinstalación» crea DOS órdenes con costos, cobro y saldo de la salida (REGLA #26:
+    // un técnico no los ve ni puede revisar la desinstalación en el servidor). Si se le ofreciera, el asistente le crearía UNA sola OT aunque
+    // haya elegido dos (REGLA #32: lo que se ve elegido es lo que se crea). Para un técnico la tarjeta no existe.
+    if (t.conDesinst && O2M_ES_TECNICO) return false;
     return true;
   }
   function tiposParaOrigen(){
@@ -2947,6 +2960,7 @@ window.OT2C = (function(){
     b.innerHTML = '<h6 class="t">Agenda'+(di ? ' · entrada y salida' : '')+'</h6>'+
       (di ? '<p class="d"><b>Aquí agendas las dos órdenes.</b> Primero la <b>de entrada</b> (instalar) y, más abajo, la <b>de salida</b> '+
             '(desinstalar), que queda en el calendario para acordarnos de retirar los equipos.</p>'+
+            '<div class="o2m-ag-resumen" id="o2mAgResumen" role="group" aria-label="Fechas de las dos órdenes"></div>'+
             '<div class="o2m-ag-lbl ent"><i class="bi bi-box-arrow-in-down"></i><b>Entrada · instalación</b></div>' : '')+
       // 2026-10-24: el párrafo largo se partió en lo esencial + «puedes salirte de la jornada» plegado (mismas reglas, menos texto a la vista).
       '<p class="d">Jornada de <b>08:00 a 17:00</b> con colación de <b>13:00 a 14:00</b> (achurada en la línea de tiempo). '+
@@ -2992,6 +3006,7 @@ window.OT2C = (function(){
           '<div class="o2m-cal-leyenda">'+
           '<span><i class="k" style="background:#0a0a0a"></i>Día seleccionado</span>'+
           '<span><i class="k" style="background:#fff;border:1px solid var(--ilus-red,#dc2626)"></i>Hoy</span>'+
+          '<span><i class="k" style="background:#fef2f2;border:1px solid #fecaca"></i>Feriado</span>'+
           '</div>'+
         '</div>'+
         '<div class="o2m-sched-col">'+
@@ -3029,7 +3044,7 @@ window.OT2C = (function(){
         '</div>'+
       '</div>'+(di ? _o2mAgSalidaHtml() : '');
     avisosAgenda();
-    if (di) _o2mAgSalidaPintar();
+    if (di){ _o2mAgSalidaPintar(); _agResUlt = ''; _o2mAgResumenPintar(); }
     o2mCalInit();
     // El canvas se reconstruye entero en cada pintarAgenda() (innerHTML
     // nuevo) -- el listener se re-liga cada vez, no hay riesgo de
@@ -3089,12 +3104,16 @@ window.OT2C = (function(){
     if (S.hini && S.hfin && S.hini < '14:00' && S.hfin > '13:00') a.push('Cruza la colación (13:00–14:00).');
     if (S.fecha){ var d = new Date(S.fecha+'T12:00:00').getDay();
       if (d===0 || d===6) a.push('Cae en fin de semana, cuando no hay operación.'); }
+    // 🗓️ 2026-10-24 (REGLA #31): feriado de Chile. Se lee del mes que ya cargó el calendario; solo avisa, nunca bloquea.
+    var nomFerEntrada = S.fecha ? _o2mFeriadoDe(S.fecha) : '';
+    if (nomFerEntrada) a.push('Cae en feriado ('+esc(nomFerEntrada)+'), cuando no hay operación.');
     // Hoy + hora de inicio ya pasada: NO bloquea (la OT puede nacer para
     // "ahora mismo", y la ventana de 60 min de tolerancia al iniciar la
     // absorbe), pero se avisa -- es justo el caso donde esa ventana ya
     // está corriendo en contra.
     if (S.fecha && S.fecha === _o2mHoyStr() && S.hini && S.hini < _o2mHoraAhora())
       a.push('La hora de inicio ya pasó hoy — el margen de 60 min para iniciar corre desde ya.');
+    _o2mAgResumenPintar();           // 2026-10-24: «Instalación con desinstalación»: las dos fechas de un vistazo (no hace nada si no existe el resumen)
     var bloqueo = (S.fecha && S.fecha < _o2mHoyStr())
       ? '<div class="o2m-aviso" style="background:#fee2e2;border-color:#fca5a5;color:#991b1b">'+
         '<i class="bi bi-slash-circle-fill me-1"></i><b>No se puede agendar en el pasado.</b> '+
@@ -3142,7 +3161,8 @@ window.OT2C = (function(){
      conserva el lenguaje visual original (bloque por técnico, con
      choque), solo con bordes/radios/línea armonizados con la Col A.
      ════════════════════════════════════════════════════════════════════ */
-  var o2mCal = { anio:null, mes:null, cache:{}, error:{}, diaSel:null };
+  // fer: feriados de Chile por mes {«AAAA-MM»: {«AAAA-MM-DD»: nombre}} (REGLA #31: todo calendario marca los días no laborales; los manda el servidor).
+  var o2mCal = { anio:null, mes:null, cache:{}, error:{}, fer:{}, diaSel:null };
   var o2mDay = { fecha:null, rejilla:false, choque:false, choqueFecha:null, choqueKeys:null, visitas:[] };
   var _o2mChoqueToken = 0, _o2mChoqueTimer = null, _o2mFlashToken = 0;
 
@@ -3209,6 +3229,7 @@ window.OT2C = (function(){
       .then(function(r){ if (!r.ok) throw new Error('http '+r.status); return r.json(); })
       .then(function(d){
         o2mCal.cache[key] = _o2mCalNormalizarMes(d);
+        o2mCal.fer[key] = (d && d.feriados) || {};
         delete o2mCal.error[key];
         o2mCalRenderGrid();
         if (o2mCal.diaSel && o2mCal.diaSel.slice(0,7)===key) o2mDayRender(o2mCal.diaSel, {silencio:true});
@@ -3268,6 +3289,9 @@ window.OT2C = (function(){
       var esDomingo = (dow === 0);                // 📅 2026-10-18: el domingo no se agenda
       if (esDomingo && !esPasado) clases.push('domingo');
       if (dow===0 || dow===6) clases.push('finde');
+      // 🗓️ 2026-10-24 (REGLA #31): feriado de Chile = rojo suave y su nombre al pasar el mouse. Solo avisa: se puede agendar igual.
+      var nomFer = (o2mCal.fer[_o2mCalKey(a,m)] || {})[fecha] || '';
+      if (nomFer) clases.push('feriado');
       if (fecha===hoyStr) clases.push('hoy');
       if (fecha===fechaProg) clases.push('sel');
       if (fecha===o2mCal.diaSel && fecha!==fechaProg) clases.push('vista');
@@ -3286,11 +3310,11 @@ window.OT2C = (function(){
           ? ' aria-disabled="true" title="'+(esDomingo && !esPasado ? 'Los domingos no se agendan' : 'Fecha pasada')+'"'
           : ' onclick="OT2C.o2mCalClicDia(\''+fecha+'\')"'+
             ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();OT2C.o2mCalClicDia(\''+fecha+'\');}"'+
-            ' role="button" tabindex="0"')+
+            ' role="button" tabindex="0"'+(nomFer ? ' title="Feriado: '+esc(nomFer)+'"' : ''))+
         ' aria-label="'+esc(fecha+' — '+(esPasado ? 'fecha pasada, no se puede agendar' :
             esDomingo ? 'domingo, no se agenda' :
-            (visitas.length ? (visitas.length+' OT agendada(s)') : 'sin OTs agendadas')))+'">'+
-        '<span class="num">'+dia+'</span>'+
+            (visitas.length ? (visitas.length+' OT agendada(s)') : 'sin OTs agendadas'))+(nomFer ? ' · feriado: '+nomFer : ''))+'">'+
+        '<span class="num">'+dia+'</span>'+(nomFer ? '<i class="bi bi-flag-fill fer-mk" aria-hidden="true"></i>' : '')+
         (visitas.length ? '<span class="cnt '+cntCls+'">'+visitas.length+'</span>' : '')+
         dots+'</div>';
     }
@@ -3305,6 +3329,14 @@ window.OT2C = (function(){
     var p = String(fecha || '').split('-').map(function(x){ return parseInt(x, 10); });
     if (p.length < 3 || !p[0] || !p[1] || !p[2]) return false;
     return new Date(p[0], p[1]-1, p[2]).getDay() === 0;
+  }
+  // 🗓️ 2026-10-24 (REGLA #31): nombre del feriado de Chile de una fecha ISO, leído del mes que el calendario ya cargó
+  // (`feriados` de /servicio-tecnico/api/calendario/mes). '' si no es feriado o el mes aún no llegó: es un apoyo, nunca un candado.
+  function _o2mFeriadoDe(fecha){
+    var p = String(fecha || '').split('-');
+    if (p.length < 3) return '';
+    var k = _o2mCalKey(parseInt(p[0], 10), parseInt(p[1], 10));
+    return (o2mCal.fer[k] || {})[fecha] || '';
   }
   function o2mCalClicDia(fecha){
     // Guardia real, no solo cosmética: las celdas pasadas ya se dibujan sin
@@ -3346,6 +3378,7 @@ window.OT2C = (function(){
     o2mCal.mes = base.getMonth()+1;
     o2mCal.diaSel = null;
     o2mCal.cache = {};
+    o2mCal.fer = {};
     o2mCal.error = {};
     o2mDay.fecha = null;
     o2mDay.rejilla = false;
@@ -11160,7 +11193,7 @@ window.OT2C = (function(){
         placeholder: 'Ej: 76.996.964-0',
         required: true,
         validate: function(v){
-          return _o2cRutValido(v) ? null : 'Ese RUT no es válido — revisa el dígito verificador.';
+          return _o2cRutValido(v) ? {ok: true} : {ok: false, error: 'Ese RUT no es válido — revisa el dígito verificador.'};
         },
       });
       if (!rut) return;   // canceló
@@ -12031,7 +12064,8 @@ window.OT2C = (function(){
           'calendario lo saben desde hoy. Tú decides cada dato: el sistema solo sugiere.</p>')+
       '<div id="o2mDiPreg"></div>'+
       // 📅 2026-10-24: con «Instalación con desinstalación» la fecha, el horario y sus avisos se agendan en el paso «Agenda» (ver _o2mAgSalidaHtml).
-      (S.conDesinst ? '' : '<div id="o2mDiFecha"></div><div id="o2mDiAvisos"></div>')+'<div id="o2mDiTec"></div><div id="o2mDiCosto"></div>'+
+      // (con la tarjeta nueva, lo que no es de la fecha —técnico, costo, cobro, saldo— se explica acá, junto al dato que lo resuelve: ver _diRegAvisos)
+      (S.conDesinst ? '<div id="o2mDiAvisosDes"></div>' : '<div id="o2mDiFecha"></div><div id="o2mDiAvisos"></div>')+'<div id="o2mDiTec"></div><div id="o2mDiCosto"></div>'+
       '<div id="o2mDiCobro"></div><div id="o2mDiEq"></div><div id="o2mDiNota"></div><div id="o2mDiRes"></div>';
     _diPintarRegiones(['preg', 'fecha', 'avisos', 'tec', 'costo', 'cobro', 'eq', 'nota', 'res']);
     if (d.lleva && d.lleva !== 'no') _diProgramarPrevio(true);
@@ -12057,6 +12091,37 @@ window.OT2C = (function(){
     try { if (f) _diRegFecha(f); if (a) _diRegAvisos(a); } catch (e) { console.error('[OT2C] agenda · salida', e); }
     _diProgramarPrevio(true);
   }
+  /* 📅 2026-10-24: las DOS fechas de un vistazo arriba del paso Agenda (entrada · salida y cuántos días hay entre ellas). Cada ficha lleva a su
+     calendario. Solo informa (la validez real sigue siendo completo('agenda') y el servidor): verde si la fecha sirve, rojo con el motivo si no. */
+  var _agResUlt = '';
+  function _o2mAgResumenHtml(){
+    var d = S.desinst, hoy = _o2mHoyStr();
+    var entOk = !!S.fecha && S.fecha >= hoy, salOk = _diFechaSalidaOk();
+    function horas(a, z){ return a && z ? ' · ' + _diEsc(a) + '–' + _diEsc(z) : ''; }
+    function ficha(cual, ok, titulo, icono, texto){
+      return '<button type="button" class="o2m-ag-chip '+cual+(ok ? ' ok' : ' falta')+'" onclick="OT2C.agIr(\''+cual+'\')" aria-label="'+_diEsc(titulo+': '+texto.replace(/<[^>]+>/g, ''))+'">'+
+        '<i class="bi '+icono+' ic"></i><span class="tx"><b>'+titulo+'</b><em>'+texto+'</em></span>'+
+        '<i class="bi '+(ok ? 'bi-check-circle-fill' : 'bi-exclamation-circle-fill')+' est"></i></button>';
+    }
+    var tEnt = !S.fecha ? 'Falta la fecha' : (entOk ? _diEsc(_diFechaLarga(S.fecha)) + horas(S.hini, S.hfin) : 'La fecha ya pasó: elige hoy o una futura');
+    var tSal = !d.fecha ? 'Falta la fecha de salida'
+      : (_o2mEsDomingo(d.fecha) ? 'Domingo: elige otro día'
+      : (d.fecha < (S.fecha || '') ? 'Va antes de la instalación' : _diEsc(_diFechaLarga(d.fecha)) + horas(d.hini, d.hfin)));
+    var dias = (S.fecha && d.fecha && entOk && salOk) ? _diDiasEntre(S.fecha, d.fecha) : null;
+    return ficha('ent', entOk, 'Entrada · instalación', 'bi-box-arrow-in-down', tEnt)+
+      '<span class="o2m-ag-gap" aria-hidden="true"><i class="bi bi-arrow-right"></i>'+
+        (dias != null ? '<small>'+(dias === 0 ? 'mismo día' : (dias === 1 ? '1 día' : dias+' días'))+'</small>' : '')+'</span>'+
+      ficha('sal', salOk, 'Salida · desinstalación', 'bi-box-arrow-up', tSal);
+  }
+  function _o2mAgResumenPintar(){
+    var el = document.getElementById('o2mAgResumen'); if (!el) return;
+    var h; try { h = _o2mAgResumenHtml(); } catch (e) { console.error('[OT2C] agenda · resumen', e); return; }
+    if (h !== _agResUlt || !el.innerHTML){ _agResUlt = h; el.innerHTML = h; }       // sin reescribir si no cambió: no se pierde el foco ni un clic en curso
+  }
+  function agIr(w){
+    var el = w === 'sal' ? document.getElementById('o2mAgSalida') : document.querySelector('#o2mSec-agenda .o2m-ag-lbl.ent');
+    if (el && el.scrollIntoView) el.scrollIntoView({behavior:'smooth', block:'start'});
+  }
   function _diCargarPlantillas(){
     if (_evPlantillas !== null) return;
     _evPlantillas = [];
@@ -12068,6 +12133,7 @@ window.OT2C = (function(){
       }).catch(function(){ _evPlantillas = []; });
   }
   function _diPintarRegiones(lista){
+    _o2mAgResumenPintar();           // cualquier cambio de la salida (fecha, horas, técnico…) actualiza el resumen de las dos fechas del paso Agenda
     if (!document.getElementById('o2mDiPreg')) return;
     var f = {preg:_diRegPreg, fecha:_diRegFecha, avisos:_diRegAvisos, tec:_diRegTec, costo:_diRegCosto, cobro:_diRegCobro,
              eq:_diRegEq, nota:_diRegNota, res:_diRegRes};
@@ -12075,6 +12141,11 @@ window.OT2C = (function(){
       var el = document.getElementById('o2mDi' + k.charAt(0).toUpperCase() + k.slice(1));
       if (el && f[k]) { try { f[k](el); } catch(e){ console.error('[OT2C] desinst', k, e); } }
     });
+    // Si el paso Agenda todavía no existe (no hay `o2mDiAvisos`), igual se escribe lo que corresponde al paso Desinstalación.
+    var dres = document.getElementById('o2mDiAvisosDes');
+    if (dres && lista.indexOf('avisos') >= 0 && !document.getElementById('o2mDiAvisos')){
+      try { dres.innerHTML = (S.desinst.lleva && S.desinst.lleva !== 'no') ? _diAvisosHtml('resto') : ''; } catch(e){ console.error('[OT2C] desinst avisos', e); }
+    }
   }
   function _diRegPreg(el){
     var d = S.desinst;
@@ -12120,7 +12191,7 @@ window.OT2C = (function(){
     if (o2mCal.cache[key]) return;
     fetch('/servicio-tecnico/api/calendario/mes/' + a + '/' + m, {credentials:'same-origin'})
       .then(function(r){ if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
-      .then(function(j){ o2mCal.cache[key] = _o2mCalNormalizarMes(j); })
+      .then(function(j){ o2mCal.cache[key] = _o2mCalNormalizarMes(j); o2mCal.fer[key] = (j && j.feriados) || {}; })
       .catch(function(){ o2mCal.cache[key] = {}; })
       .then(function(){ if (_diCal.a === a && _diCal.m === m) _diPintarRegiones(['fecha']); });
   }
@@ -12145,14 +12216,17 @@ window.OT2C = (function(){
       var f = a + '-' + String(m).padStart(2, '0') + '-' + String(dia).padStart(2, '0');
       var dow = new Date(a, m-1, dia).getDay(), n = mapa && mapa[f] ? mapa[f].length : 0;
       var off1 = f < min || dow === 0;                      // antes de la instalación (o pasado) y domingo: no se agenda
-      var cl = 'dc-d' + (dow === 6 ? ' sab' : '') + (f === hoy ? ' hoy' : '') + (f === S.fecha ? ' inst' : '') + (f === d.fecha ? ' sel' : '') +
+      var nomFer = (o2mCal.fer[key] || {})[f] || '';        // 🗓️ 2026-10-24 (REGLA #31): feriado de Chile (rojo suave; solo avisa, el servidor además lo advierte)
+      var cl = 'dc-d' + (dow === 6 ? ' sab' : '') + (nomFer ? ' fer' : '') + (f === hoy ? ' hoy' : '') + (f === S.fecha ? ' inst' : '') + (f === d.fecha ? ' sel' : '') +
                (sug && f === sug ? ' sug' : '') + (off1 ? ' off' : '') + (n >= 5 ? ' c3' : (n >= 3 ? ' c2' : (n ? ' c1' : '')));
       var lbl = dia + ' de ' + O2M_CAL_MES_ES[m-1] + (f === S.fecha ? ' · día de la instalación' : '') + (sug && f === sug ? ' · fecha sugerida' : '') +
+                (nomFer ? ' · feriado: ' + nomFer : '') +
                 (dow === 0 ? ' · domingo, no se agenda' : (f < min ? ' · antes de la instalación' : (n ? ' · ' + n + ' OT agendada(s)' : '')));
       h += off1
         ? '<i class="'+cl+'" aria-label="'+_diEsc(lbl)+'" aria-disabled="true"><b>'+dia+'</b></i>'
-        : '<button type="button" class="'+cl+'" aria-label="'+_diEsc(lbl)+'" aria-pressed="'+(f === d.fecha)+'" onclick="OT2C.diFecha(\''+f+'\')"><b>'+dia+'</b>'+
+        : '<button type="button" class="'+cl+'" aria-label="'+_diEsc(lbl)+'"'+(nomFer ? ' title="Feriado: '+_diEsc(nomFer)+'"' : '')+' aria-pressed="'+(f === d.fecha)+'" onclick="OT2C.diFecha(\''+f+'\')"><b>'+dia+'</b>'+
           (f === S.fecha ? '<u class="mk"><i class="bi bi-box-seam"></i></u>' : '')+(sug && f === sug && f !== d.fecha ? '<u class="mk"><i class="bi bi-stars"></i></u>' : '')+
+          (nomFer && f !== S.fecha && !(sug && f === sug && f !== d.fecha) ? '<u class="mk fm"><i class="bi bi-flag-fill"></i></u>' : '')+
           (n ? '<s>'+(n > 9 ? '9+' : n)+'</s>' : '')+'</button>';
     }
     return h;
@@ -12201,34 +12275,44 @@ window.OT2C = (function(){
         '<button type="button" class="dc-nb" aria-label="Mes siguiente" onclick="OT2C.diCalMes(1)"><i class="bi bi-chevron-right"></i></button></div>'+
       '<div class="dc-dow"><span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span></div>'+
       '<div class="dc-grid'+(cargando ? ' cargando' : '')+'">'+_diCalGrid()+'</div>'+
-      '<div class="dc-ley"><span><i class="k inst"></i>Instalación</span><span><i class="k sel"></i>Elegido</span><span><i class="k c1"></i>OT agendadas</span><span><i class="k off"></i>No disponible</span></div>'+
+      '<div class="dc-ley"><span><i class="k inst"></i>Instalación</span><span><i class="k sel"></i>Elegido</span><span><i class="k c1"></i>OT agendadas</span><span><i class="k fer"></i>Feriado</span><span><i class="k off"></i>No disponible</span></div>'+
       '</div>'+side+'</div>';
   }
-  function _diRegAvisos(el){
-    var d = S.desinst, p = d.previo;
-    if (!d.lleva || d.lleva === 'no'){ el.innerHTML = ''; return; }
-    var h = '';
-    if (d.fecha && S.fecha && d.fecha < S.fecha)
+  /* Los códigos del servidor que hablan de la FECHA y el horario de la salida. Con «Instalación con desinstalación» solo estos se explican en el
+     paso Agenda (revisión independiente 24-oct: ahí aparecía en rojo «Indica cuánto le pagamos…» sin que existiera ningún campo para corregirlo);
+     los demás (técnico, costo, cobro, saldo, documento) se explican en el paso «Desinstalación», junto al dato que los resuelve. */
+  var DI_COD_FECHA = {FECHA_REQUERIDA:1, DESINST_FECHA_REQUERIDA:1, FECHA_INVALIDA:1, HORA_INVALIDA:1, DOMINGO_BLOQUEADO:1, DESINST_ANTES_DE_INSTALACION:1};
+  function _diAvisosHtml(modo){          // 'todo' (la desinstalación clásica) · 'fecha' (paso Agenda) · 'resto' (paso Desinstalación)
+    var d = S.desinst, p = d.previo, h = '';
+    var conFecha = modo !== 'resto', conResto = modo !== 'fecha';
+    if (conFecha && d.fecha && S.fecha && d.fecha < S.fecha)
       h += '<div class="o2m-di-av rojo"><i class="bi bi-exclamation-octagon-fill"></i><span>La desinstalación no puede ir antes de la instalación (<b>'+_o2mFechaBonita(S.fecha)+'</b>).</span></div>';
-    if (d.fecha && _o2mEsDomingo(d.fecha))
+    if (conFecha && d.fecha && _o2mEsDomingo(d.fecha))
       h += '<div class="o2m-di-av rojo"><i class="bi bi-slash-circle-fill"></i><span>Los domingos no se agendan órdenes de trabajo. Elige otro día.</span></div>';
     if (d.previoPend) h += '<div class="o2m-di-av azul"><span class="spinner-border spinner-border-sm"></span><span>Revisando fecha, saldo y agenda del técnico…</span></div>';
     if (p && !d.previoPend){
       var b = p.bloqueo;
-      if (b && !(b.codigo === 'FECHA_REQUERIDA' && !d.fecha) && !(d.fecha && S.fecha && d.fecha < S.fecha) && !(d.fecha && _o2mEsDomingo(d.fecha)))
+      if (b && (DI_COD_FECHA[b.codigo] ? conFecha : conResto) && !(b.codigo === 'FECHA_REQUERIDA' && !d.fecha) && !(d.fecha && S.fecha && d.fecha < S.fecha) && !(d.fecha && _o2mEsDomingo(d.fecha)))
         h += '<div class="o2m-di-av rojo"><i class="bi bi-exclamation-octagon-fill"></i><span>'+_diEsc(b.mensaje)+'</span></div>';
-      (p.avisos || []).forEach(function(a){ h += '<div class="o2m-di-av ambar"><i class="bi bi-exclamation-triangle-fill"></i><span>'+_diEsc(a)+'</span></div>'; });
-      if (p.choque){
+      if (conFecha) (p.avisos || []).forEach(function(a){ h += '<div class="o2m-di-av ambar"><i class="bi bi-exclamation-triangle-fill"></i><span>'+_diEsc(a)+'</span></div>'; });
+      if (conFecha && p.choque){
         var c = p.choque;
         h += '<div class="o2m-di-av rojo"><i class="bi bi-person-exclamation"></i><span><b>'+_diEsc(c.tecnico_nombre || 'El técnico')+'</b> ya tiene trabajo agendado ese día en ese horario'+
           (c.numero_ot ? ' (' + _diEsc(c.numero_ot) + ')' : '')+'. Elige otra fecha u otro técnico.</span>'+
           (c.puede_forzar && !d.forzar ? '<button type="button" onclick="OT2C.diForzar()">Agendar igual</button>' : '')+'</div>';
         if (d.forzar) h += '<div class="o2m-di-av ambar"><i class="bi bi-shield-exclamation"></i><span>Agendarás igual aunque haya choque (solo superadministrador). Queda registrado.</span></div>';
       }
-      if (p.sin_documento_madre)
+      if (conResto && p.sin_documento_madre)
         h += '<div class="o2m-di-av ambar"><i class="bi bi-shield-lock-fill"></i><span>Esta instalación se crea sin documento de Random: la desinstalación va incluida en la autorización que se le pide a Daniel.</span></div>';
     }
-    el.innerHTML = h;
+    return h;
+  }
+  function _diRegAvisos(el){
+    var d = S.desinst;
+    var resto = document.getElementById('o2mDiAvisosDes');      // solo existe con «Instalación con desinstalación»: la fecha va en Agenda, lo demás acá
+    if (!d.lleva || d.lleva === 'no'){ el.innerHTML = ''; if (resto) resto.innerHTML = ''; return; }
+    el.innerHTML = _diAvisosHtml(resto ? 'fecha' : 'todo');
+    if (resto) resto.innerHTML = _diAvisosHtml('resto');
   }
   function _diRegTec(el){
     var d = S.desinst;
@@ -12623,6 +12707,7 @@ window.OT2C = (function(){
     if (opts.tipo){
       var t = TIPOS.find(function(x){
         return x.v === opts.tipo && !!x.descubrimiento === !!opts.descubrimiento && !!x.conDesinst === !!opts.conDesinst; });
+      if (t && t.conDesinst && O2M_ES_TECNICO) t = null;      // un técnico no tiene «Instalación con desinstalación» (ver tipoValidoParaOrigen)
       if (t){
         S.tipo = t.v; S.descubrimiento = !!t.descubrimiento; S.conDesinst = !!t.conDesinst;
         if (S.conDesinst && S.desinst) S.desinst.lleva = 'si';
@@ -12823,6 +12908,6 @@ window.OT2C = (function(){
           o2mDaySugerirHueco:o2mDaySugerirHueco,
           // 🧩 2026-10-20 desinstalación
           diLleva:diLleva, diFecha:diFecha, diCalMes:diCalMes, diCampo:diCampo, diMonto:diMonto, diBuscarHueco:diBuscarHueco, diTecModo:diTecModo, diTecTog:diTecTog,
-          diCobro:diCobro, diEqTog:diEqTog, diEqTodo:diEqTodo, diEqPlant:diEqPlant, diForzar:diForzar};
+          diCobro:diCobro, diEqTog:diEqTog, diEqTodo:diEqTodo, diEqPlant:diEqPlant, diForzar:diForzar, agIr:agIr};
 })();
 </script>

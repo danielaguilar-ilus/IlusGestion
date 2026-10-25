@@ -5,7 +5,9 @@
  * DOS REGLAS DE DANIEL (24-oct):
  *  · «La ubicación se debe verificar para poder avanzar»: la dirección solo cuenta como verificada si se eligió una sugerencia de Google Places
  *    (place_id) y el texto verificado no se tocó (se puede AGREGAR oficina, depto o referencias al final). Sin eso el botón Guardar queda
- *    apagado y el pie dice por qué. Si Google no está disponible no hay cómo verificar: ahí NO se traba (se avisa al guardar).
+ *    apagado y el pie dice por qué. Dos salidas para no dejar un callejón sin salida: si Google no está disponible no hay cómo verificar (se
+ *    avisa al guardar), y si la dirección NO se tocó y nunca estuvo verificada (cliente anterior a esta regla, o sin dirección) se puede guardar
+ *    con un aviso ámbar: se exige verificar lo que se cambia, no el pasado. El place_id y las coordenadas ocultos siempre calzan con el texto.
  *  · «Región, comuna y ciudad deben ser grandes… se va a entrecortar cualquier dato»: los textos largos van en cajas que CRECEN con lo escrito
  *    (<textarea rows="1" class="ecf-auto">): nunca se corta un dato, en ningún ancho. Enter no agrega líneas.
  */
@@ -31,17 +33,62 @@
     return d.length === 9 || d.length === 8;
   }
 
-  var verificada = '';        // texto de la dirección tal como Google la devolvió (o la que ya venía verificada al abrir)
+  // ── Dirección: qué está verificado y qué se puede guardar ──────────────────────────────────────────────
+  // Se recuerdan TODAS las direcciones verificadas que se vieron (la que vino del servidor y cada sugerencia de Google elegida): si la persona
+  // prueba otra y vuelve a la anterior, sigue verificada. Cerrar y reabrir el modal NO borra ni inventa verificaciones (el estado vive acá, no
+  // se recalcula del texto que haya en el campo). El place_id y las coordenadas (campos ocultos) siempre calzan con el texto: si el texto se
+  // aparta de lo verificado se vacían —nunca se guarda un texto nuevo con las coordenadas de otro lugar— y vuelven si la persona regresa.
+  var inicial = { dir: '', pid: '', lat: '', lng: '' };   // lo que vino del servidor al cargar la página (antes de que alguien editara)
+  var verifs = [];            // [{texto, pid, lat, lng}] direcciones verificadas conocidas
   var abiertoEn = 0;          // cuándo se abrió el modal (para distinguir «conectando con Google» de «Google no responde»)
 
   // ¿Google Places ya está enganchado al campo de dirección? (lo marca ilusPlacesAutocomplete). Sin eso no hay cómo verificar.
   function googleListo() { var d = $('ec_direccion'); return !!(d && d.dataset && d.dataset.placesInit === '1'); }
   function googleConectando() { return !googleListo() && !!abiertoEn && (Date.now() - abiertoEn) < 8000; }
 
-  // Verificada = se eligió una sugerencia de Google y lo verificado sigue intacto al comienzo (se puede agregar detalle AL FINAL).
-  function direccionVerificada() {
-    var dir = val('ec_direccion'), pid = val('ec_direccion_place_id');
-    return !!dir && !!pid && !!verificada && dir.indexOf(verificada) === 0;
+  function capturarInicial() {
+    inicial = { dir: val('ec_direccion'), pid: val('ec_direccion_place_id'), lat: val('ec_direccion_lat'), lng: val('ec_direccion_lng') };
+    verifs = inicial.pid && inicial.dir ? [{ texto: inicial.dir, pid: inicial.pid, lat: inicial.lat, lng: inicial.lng }] : [];
+  }
+  // El texto empieza con lo verificado y lo que sigue se AGREGÓ al final, separado («…4501, oficina 5»). «…4501A» ya no es la misma dirección.
+  function empiezaCon(dir, base) {
+    if (!base || dir.indexOf(base) !== 0) return false;
+    var resto = dir.slice(base.length);
+    return resto === '' || /^[\s,;\-–—]/.test(resto);
+  }
+  // La verificación que respalda el texto actual (la más larga si hay varias), o null.
+  function coincidencia() {
+    var dir = val('ec_direccion'), mejor = null;
+    if (!dir) return null;
+    verifs.forEach(function (v) { if (v.pid && empiezaCon(dir, v.texto) && (!mejor || v.texto.length > mejor.texto.length)) mejor = v; });
+    return mejor;
+  }
+  function direccionVerificada() { return !!coincidencia(); }
+  function fijar(id, v) { var e = $(id); if (e && String(e.value || '') !== String(v || '')) e.value = v || ''; }
+  function sincronizarPlace() {
+    var c = coincidencia(), o = c || (val('ec_direccion') === inicial.dir ? inicial : { pid: '', lat: '', lng: '' });
+    fijar('ec_direccion_place_id', o.pid); fijar('ec_direccion_lat', o.lat); fijar('ec_direccion_lng', o.lng);
+  }
+  // Estado de la ubicación para guardar:
+  //  verificada → listo · heredada → no se tocó y nunca estuvo verificada: se guarda con aviso · google → no hay cómo verificar ahora (se avisa al guardar)
+  //  vacia · cambiada · sin_verificar → traban (Daniel: «la ubicación se debe verificar para poder avanzar»)
+  function estadoUbicacion() {
+    var dir = val('ec_direccion');
+    if (direccionVerificada()) return 'verificada';
+    if (dir === inicial.dir && !inicial.pid) return 'heredada';
+    if (!googleListo()) return 'google';
+    if (!dir) return 'vacia';
+    return verifs.length ? 'cambiada' : 'sin_verificar';
+  }
+
+  // Las regiones aria-live (verificación, pie, progreso) solo se reescriben si cambiaron: un lector de pantalla no debe releerlas en cada tecla.
+  var _ult = {};
+  function escribir(el, clase, html) {
+    if (!el) return;
+    var k = clase + '\u0001' + html;
+    if (_ult[el.id] === k) return;
+    _ult[el.id] = k;
+    el.className = clase; el.innerHTML = html;
   }
 
   function marca(id, estado, msg) {
@@ -81,26 +128,28 @@
   }
 
   // Pie del modal: dice POR QUÉ Guardar está apagado (si lo está) y lleva a ese lugar al tocarlo.
-  function pie(razonOk, verif) {
+  function pie(razonOk, est) {
     var p = $('ecfFootEstado'), b = $('btnGuardarCliente'); if (!p) return;
-    var google = googleListo(), falta = [];
+    var falta = [];
     if (!razonOk) falta.push('la razón social');
-    if (google && !verif) falta.push('la dirección verificada con Google');
+    if (est === 'vacia' || est === 'cambiada' || est === 'sin_verificar') falta.push('la dirección verificada con Google');
     p.hidden = false;
     if (falta.length) {
-      p.className = 'ecf-foot-estado bad';
-      p.innerHTML = '<i class="bi bi-lock-fill"></i><span>Para guardar falta ' + falta.join(' y ') + '</span>';
+      escribir(p, 'ecf-foot-estado bad', '<i class="bi bi-lock-fill"></i><span>Para guardar falta ' + falta.join(' y ') + '</span>');
       p.dataset.ir = !razonOk ? 'ec_razon' : 'ec_direccion';
       if (b) b.disabled = true;
-    } else if (!verif) {                                  // Google no está (todavía o no responde): no se traba, se avisa al guardar
-      p.className = 'ecf-foot-estado warn';
-      p.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i><span>' + (googleConectando()
-        ? 'Conectando con Google para verificar la dirección…' : 'Sin Google no se pudo verificar la dirección') + '</span>';
+    } else if (est === 'heredada') {                      // dirección que no se tocó y nunca se verificó: se puede guardar, se recomienda verificarla
+      escribir(p, 'ecf-foot-estado warn', '<i class="bi bi-exclamation-triangle-fill"></i><span>' + (val('ec_direccion')
+        ? 'La dirección nunca se verificó con Google · puedes guardar igual' : 'Este cliente no tiene dirección · puedes guardar igual') + '</span>');
+      p.dataset.ir = 'ec_direccion';
+      if (b) b.disabled = false;
+    } else if (est === 'google') {                        // Google no está (todavía o no responde): no se traba, se avisa al guardar
+      escribir(p, 'ecf-foot-estado warn', '<i class="bi bi-exclamation-triangle-fill"></i><span>' + (googleConectando()
+        ? 'Conectando con Google para verificar la dirección…' : 'Sin Google no se pudo verificar la dirección') + '</span>');
       p.dataset.ir = 'ec_direccion';
       if (b) b.disabled = false;
     } else {
-      p.className = 'ecf-foot-estado ok';
-      p.innerHTML = '<i class="bi bi-check-circle-fill"></i><span>Listo para guardar</span>';
+      escribir(p, 'ecf-foot-estado ok', '<i class="bi bi-check-circle-fill"></i><span>Listo para guardar</span>');
       p.dataset.ir = '';
       if (b) b.disabled = false;
     }
@@ -109,7 +158,7 @@
   function evaluar() {
     if (!$('modalEditarCliente')) return;
     // ── Paso 1 · Empresa ───────────────────────────────────────────
-    var razonOk = val('ec_razon').length >= 3;
+    var razonOk = val('ec_razon').length >= 2;     // «3M», «AB»: nombres cortos reales; solo el vacío (y 1 letra) traba
     marca('ec_razon', razonOk ? 'ok' : 'bad', razonOk ? '' : (val('ec_razon') ? 'Escribe el nombre completo de la empresa.' : 'La razón social es obligatoria.'));
     var rut = val('ec_rut'), rutValido = !!rut && rutOk(rut);
     if (!rut) marca('ec_rut', 'warn', 'Recomendado: con el RUT se cruza con el ERP y los documentos.');
@@ -123,38 +172,39 @@
     paso(1, s1 ? 'complete' : 'pending');
 
     // ── Paso 2 · Ubicación (Google Places): VERIFICADA para poder guardar ─────────
-    var dir = val('ec_direccion'), pid = val('ec_direccion_place_id');
-    var verif = direccionVerificada(), google = googleListo();
+    sincronizarPlace();                                   // place_id y coordenadas siempre calzan con el texto que hay ahora
+    var dir = val('ec_direccion');
+    var est = estadoUbicacion(), verif = (est === 'verificada'), vig = coincidencia();
     var caja = $('ecfVerif');
     if (caja) {
       var tip = 'Si Google no encuentra el número exacto, elige la calle más cercana y escribe el número, oficina o referencia <b>al final</b>.';
-      if (!dir) {
-        caja.className = 'ecf-verif bad';
-        caja.innerHTML = '<i class="bi bi-geo-alt-fill"></i><div class="ecf-verif-t"><b>Falta la dirección.</b> Escríbela y elige una sugerencia de Google: sin dirección verificada no se puede guardar.'
-          + '<span class="ecf-verif-sub">' + tip + '</span></div>';
-      } else if (verif) {
-        var extra = dir.slice(verificada.length).replace(/^[\s,;-]+/, '');
-        caja.className = 'ecf-verif ok';
-        caja.innerHTML = '<i class="bi bi-check-circle-fill"></i><div class="ecf-verif-t"><b>Dirección verificada con Google.</b>'
-          + '<span class="ecf-verif-dir">' + esc(verificada) + '</span>'
+      if (est === 'verificada') {
+        var extra = dir.slice(vig.texto.length).replace(/^[\s,;\-–—]+/, '');
+        escribir(caja, 'ecf-verif ok', '<i class="bi bi-check-circle-fill"></i><div class="ecf-verif-t"><b>Dirección verificada con Google.</b>'
+          + '<span class="ecf-verif-dir">' + esc(vig.texto) + '</span>'
           + (extra ? '<span class="ecf-verif-sub">Detalle agregado: <b>' + esc(extra) + '</b></span>'
-                   : '<span class="ecf-verif-sub">Si hace falta, agrega oficina, depto o referencias <b>al final</b>: la dirección sigue verificada.</span>') + '</div>';
-      } else if (!google) {
-        caja.className = 'ecf-verif warn';
-        caja.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i><div class="ecf-verif-t">' + (googleConectando()
+                   : '<span class="ecf-verif-sub">Si hace falta, agrega oficina, depto o referencias <b>al final</b>: la dirección sigue verificada.</span>') + '</div>');
+      } else if (est === 'heredada') {                    // no se tocó y nunca estuvo verificada: alertar, no trabar
+        escribir(caja, 'ecf-verif warn', '<i class="bi bi-exclamation-triangle-fill"></i><div class="ecf-verif-t">' + (dir
+          ? '<b>Esta dirección nunca se verificó con Google.</b> Puedes guardar sin tocarla, pero conviene verificarla: elige una sugerencia del menú para que el técnico y el transporte lleguen al punto exacto.'
+          : '<b>Este cliente no tiene dirección.</b> Puedes guardar sin ella, pero conviene agregarla: escríbela y elige una sugerencia de Google.')
+          + '<span class="ecf-verif-sub">' + tip + '</span></div>');
+      } else if (est === 'google') {
+        escribir(caja, 'ecf-verif warn', '<i class="bi bi-exclamation-triangle-fill"></i><div class="ecf-verif-t">' + (googleConectando()
           ? '<b>Conectando con Google…</b> En unos segundos podrás elegir una sugerencia para verificar la dirección.'
-          : '<b>No se pudo conectar con Google.</b> Sin Google no hay cómo verificar la dirección ahora: podrás guardar igual, avisándote antes.') + '</div>';
-      } else if (pid) {
-        caja.className = 'ecf-verif bad';
-        caja.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i><div class="ecf-verif-t"><b>Cambiaste la dirección verificada.</b> Elige otra sugerencia del menú de Google para poder guardar.'
-          + '<span class="ecf-verif-sub">Para agregar oficina, depto o referencias, escríbelos <b>al final</b> sin tocar el resto.</span></div>';
+          : '<b>No se pudo conectar con Google.</b> Sin Google no hay cómo verificar la dirección ahora: podrás guardar igual, avisándote antes.') + '</div>');
+      } else if (est === 'vacia') {
+        escribir(caja, 'ecf-verif bad', '<i class="bi bi-geo-alt-fill"></i><div class="ecf-verif-t"><b>Falta la dirección.</b> Escríbela y elige una sugerencia de Google: sin dirección verificada no se puede guardar.'
+          + '<span class="ecf-verif-sub">' + tip + '</span></div>');
+      } else if (est === 'cambiada') {
+        escribir(caja, 'ecf-verif bad', '<i class="bi bi-exclamation-triangle-fill"></i><div class="ecf-verif-t"><b>Cambiaste la dirección verificada.</b> Elige otra sugerencia del menú de Google para poder guardar.'
+          + '<span class="ecf-verif-sub">Para agregar oficina, depto o referencias, escríbelos <b>al final</b> sin tocar el resto.</span></div>');
       } else {
-        caja.className = 'ecf-verif bad';
-        caja.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i><div class="ecf-verif-t"><b>Falta verificar la dirección.</b> Elige una sugerencia del menú de Google para poder guardar.'
-          + '<span class="ecf-verif-sub">' + tip + '</span></div>';
+        escribir(caja, 'ecf-verif bad', '<i class="bi bi-exclamation-triangle-fill"></i><div class="ecf-verif-t"><b>Falta verificar la dirección.</b> Elige una sugerencia del menú de Google para poder guardar.'
+          + '<span class="ecf-verif-sub">' + tip + '</span></div>');
       }
     }
-    marca('ec_direccion', !dir ? 'bad' : (verif ? 'ok' : (google ? 'bad' : 'warn')), '');
+    marca('ec_direccion', verif ? 'ok' : ((est === 'heredada' || est === 'google') ? 'warn' : 'bad'), '');
     var reg = val('ec_region'), com = val('ec_comuna'), ciu = val('ec_ciudad');
     marca('ec_region', reg ? 'ok' : '', ''); marca('ec_comuna', com ? 'ok' : '', ''); marca('ec_ciudad', ciu ? 'ok' : '', '');
     var s2 = verif && !!reg && !!com;
@@ -195,11 +245,12 @@
     // Progreso de la cabecera: los 4 pasos que importan.
     var listos = [s1, s2, s3, !!ej].filter(Boolean).length;
     var t = $('ecfProgTxt'), b = $('ecfProgBar'), p = document.querySelector('.ecf-prog');
-    if (t) t.textContent = listos + ' de 4 pasos listos';
+    var txtProg = listos + ' de 4 pasos listos';
+    if (t && t.textContent !== txtProg) t.textContent = txtProg;      // región aria-live: solo se reescribe si cambió
     if (b) b.style.width = (listos * 25) + '%';
     if (p) p.classList.toggle('ok', listos === 4);
 
-    pie(razonOk, verif);
+    pie(razonOk, est);
     crecerTodo();
   }
 
@@ -232,9 +283,9 @@
     });
     m.addEventListener('change', evaluarPronto);
     m.addEventListener('blur', evaluarPronto, true);
+    capturarInicial();      // lo que vino del servidor, antes de que alguien edite
     m.addEventListener('show.bs.modal', function () {
-      abiertoEn = Date.now();
-      verificada = (val('ec_direccion_place_id') ? val('ec_direccion') : '');
+      abiertoEn = Date.now();       // NO se recalcula qué está verificado desde el campo: cerrar y reabrir no puede «verificar» un texto cambiado
       evaluar();
     });
     // Google carga después de abrir: se vuelve a mirar cada medio segundo (hasta 12 s) para pasar de «conectando» a verificable (o a «sin Google»).
@@ -245,18 +296,28 @@
   }
 
   // Lo llama mant_ficha.js cuando Google Places entrega una sugerencia: esa dirección queda verificada.
-  window.ecfDireccionVerificada = function (texto) { verificada = String(texto || val('ec_direccion')); evaluar(); };
+  window.ecfDireccionVerificada = function (texto) {
+    // mant_ficha.js ya dejó el place_id y las coordenadas de ESTA sugerencia en los campos ocultos: se recuerdan junto con su texto.
+    var t = String(texto || val('ec_direccion')).trim(), pid = val('ec_direccion_place_id');
+    if (t && pid) {
+      verifs = verifs.filter(function (v) { return v.texto !== t; });
+      verifs.push({ texto: t, pid: pid, lat: val('ec_direccion_lat'), lng: val('ec_direccion_lng') });
+    }
+    evaluar();
+  };
   window.ecfEvaluar = evaluar;
   window.ecfIr = ir;
 
-  // ¿Se puede guardar con esta dirección? { ok:true } | { ok:false, motivo:'vacia'|'sin_verificar'|'cambiada'|'google_no_disponible' }.
+  // ¿Se puede guardar con esta dirección? { ok:true } · { ok:true, aviso:'heredada' } (no se tocó y nunca estuvo verificada: se guarda con aviso)
+  // · { ok:false, motivo:'vacia'|'sin_verificar'|'cambiada'|'google_no_disponible' }.
   // Sin Google no hay cómo verificar: ese caso NO traba (guardarCliente avisa y deja decidir); los demás sí (Daniel: «para poder avanzar»).
   window.ecfDireccionPendiente = function () {
     evaluar();
-    if (direccionVerificada()) return { ok: true };
-    if (!googleListo()) return { ok: false, motivo: 'google_no_disponible' };
-    var dir = val('ec_direccion');
-    return { ok: false, motivo: !dir ? 'vacia' : (val('ec_direccion_place_id') ? 'cambiada' : 'sin_verificar') };
+    var est = estadoUbicacion();
+    if (est === 'verificada') return { ok: true };
+    if (est === 'heredada') return { ok: true, aviso: 'heredada' };
+    if (est === 'google') return { ok: false, motivo: 'google_no_disponible' };
+    return { ok: false, motivo: est };
   };
 
   // Datos ESCRITOS pero mal (rojo con valor): guardarCliente() los muestra antes de guardar y la persona decide («alertar, no trabar»).

@@ -6677,7 +6677,7 @@ async function otdMarcarEstado(mid, sel){
       placeholder: 'Mínimo 10 caracteres',
       required: true,
       validate: function(v){
-        return (v || '').trim().length >= 10 ? null : 'Escribe al menos 10 caracteres.';
+        return (v || '').trim().length >= 10 ? {ok: true} : {ok: false, error: 'Escribe al menos 10 caracteres.'};
       },
     });
     if (!obs){ sel.value = sel.dataset.previo || ''; return; }

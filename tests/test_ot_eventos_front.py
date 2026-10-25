@@ -204,7 +204,9 @@ class TestPanel(unittest.TestCase):
             self.assertIn(k, PANEL, k)
         for k in ("f.evento_nombre", "ot_pagina_evento_detalle", "d.evento"):
             self.assertNotIn(k, PANEL, k)
-        self.assertNotIn("bi-flag-fill", bloque_wizard())
+        # La bandera era el ícono del chip de evento (ya no existe en el asistente). Única excepción: la banderita del FERIADO del calendario de
+        # la salida (REGLA #31, 2026-10-24), el mismo ícono que usa el calendario de OT para los feriados.
+        self.assertNotIn("bi-flag-fill", bloque_wizard().replace('<u class="mk fm"><i class="bi bi-flag-fill"></i></u>', ''))
 
 
 class TestBandejas(unittest.TestCase):

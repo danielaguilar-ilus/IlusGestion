@@ -103,7 +103,8 @@
      esconde para no quitarle alto a la pantalla: solo habla cuando algo falta */
   .ecf-foot-estado{order:3;width:100%;margin-right:0}
   .ecf-foot-estado.ok{display:none}
-  /* el nombre del cliente de la cabecera: 2 líneas como máximo (el nombre completo está en el primer campo) */
-  .ecf-head .sub{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  /* el nombre del cliente de la cabecera SE MUESTRA COMPLETO (REGLA #15; Daniel 24-oct: «se va a entrecortar cualquier dato… en lo responsivo»):
+     si es largo baja de línea en vez de cortarse */
+  .ecf-head .sub{overflow-wrap:anywhere}
 }
 @media (prefers-reduced-motion:reduce){.ecf-circ,.ecf-sec,.ecf-prog .bar>span{transition:none}}

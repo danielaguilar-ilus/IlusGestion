@@ -1667,35 +1667,54 @@ function _tkaStockBadge(l){
 //    resumen del pedido arriba («¿Dónde está este pedido según Check?»). SOLO informa: no cambia la selección ni bloquea nada. Datos de
 //    /api/erp/check-bodegas (SOLO LECTURA, REGLA #4.4): la misma respuesta que ya usa Retiros. Se llama con la caja `.ln-bod[data-bod-sku]`
 //    de cada línea: Por documento, Por RUT, Productos, Catálogo y Cotización interna usan ESTA misma función.
-const _TKA_BOD = { cache: new Map(), edad: null };          // sku → {t, lista}; vale 5 min (el reporte de Check se renueva cada ~30 min)
+const _TKA_BOD = { cache: new Map(), edad: null, sinAcceso: false, falloHasta: 0 };   // sku → {t, lista}; vale 5 min (el reporte de Check se renueva cada ~30 min)
 const _TKA_BOD_TTL = 5 * 60 * 1000;
+const _TKA_BOD_FALLO_MS = 30 * 1000;                         // tras un fallo no se vuelve a preguntar por 30 s (no se golpea a Check en cada búsqueda)
 async function _tkaCargarBodegas(raiz, opts){
   opts = opts || {};
   const cajas = [].slice.call((raiz || document).querySelectorAll('[data-bod-sku]'));
   if (!cajas.length) return;
   const skus = Array.from(new Set(cajas.map(c => c.dataset.bodSku).filter(Boolean)));
-  if (!skus.length){ cajas.forEach(c => { c.innerHTML = ''; }); return; }
+  if (!skus.length || _TKA_BOD.sinAcceso){ cajas.forEach(c => { c.innerHTML = ''; }); return; }    // sin acceso (técnicos): el cuadro no existe, no se muestra un falso «sin verificar»
   const fmt = (n) => (Math.round((parseFloat(n) || 0) * 10) / 10).toLocaleString('es-CL');
   const vigente = (s) => { const e = _TKA_BOD.cache.get(s); return !!e && (Date.now() - e.t) < _TKA_BOD_TTL; };
   const faltan = skus.filter(s => !vigente(s));
-  if (faltan.length){
+  // Una búsqueda nueva sobre el MISMO contenedor deja obsoleta a la anterior: si la respuesta lenta de A llegara después que la de B, no puede borrar ni
+  // pintar encima del resumen de B (revisión independiente 24-oct).
+  const dueno = raiz || document.body;
+  const mio = (dueno._bodSeq = (dueno._bodSeq || 0) + 1);
+  if (faltan.length && Date.now() >= _TKA_BOD.falloHasta){
     cajas.forEach(c => {
       if (faltan.indexOf(c.dataset.bodSku) >= 0)
         c.innerHTML = '<span class="ln-bod-cargando"><span class="spinner-border spinner-border-sm"></span> Buscando la bodega en Check…</span>';
     });
   }
-  for (let i = 0; i < faltan.length; i += 80){            // el servidor atiende hasta 80 SKU por consulta
+  for (let i = 0; i < faltan.length && Date.now() >= _TKA_BOD.falloHasta; i += 80){            // el servidor atiende hasta 80 SKU por consulta
     const lote = faltan.slice(i, i + 80);
-    let d = null;
-    try{
-      const r = await fetch('/api/erp/check-bodegas?skus=' + encodeURIComponent(lote.join(',')), { headers: { 'Accept': 'application/json' } });
-      d = await r.json();
-    }catch(e){ d = null; }
+    let d = null, st = 0;
+    // La primera consulta de una instancia recién levantada puede tardar: el servidor responde «calentando» al instante y se reintenta unos segundos.
+    for (let intento = 0; intento < 6; intento++){
+      try{
+        const r = await fetch('/api/erp/check-bodegas?skus=' + encodeURIComponent(lote.join(',')), { headers: { 'Accept': 'application/json' } });
+        st = r.status;
+        d = await r.json().catch(() => null);
+      }catch(e){ d = null; st = 0; }
+      if (dueno._bodSeq !== mio) break;
+      if (st === 503 && d && d.calentando){ await new Promise(ok => setTimeout(ok, 3500)); if (dueno._bodSeq !== mio) break; continue; }
+      break;
+    }
     if (d && d.ok){
       lote.forEach(s => _TKA_BOD.cache.set(s, { t: Date.now(), lista: (d.bodegas || {})[s] || [] }));
       _TKA_BOD.edad = d.edad_min;
+    } else if (st === 403){
+      _TKA_BOD.sinAcceso = true;                              // este usuario no ve las bodegas de Check (técnicos): se oculta, sin mensaje
+    } else if (dueno._bodSeq === mio){
+      _TKA_BOD.falloHasta = Date.now() + _TKA_BOD_FALLO_MS;
     }
+    if (dueno._bodSeq !== mio) return;                        // otra búsqueda tomó este contenedor: ella pinta
   }
+  if (dueno._bodSeq !== mio) return;
+  if (_TKA_BOD.sinAcceso){ cajas.forEach(c => { c.innerHTML = ''; }); return; }
   // Resumen del pedido arriba de la lista (como Retiros: «si el producto está en varias bodegas, hazme un resumen para decidir la fecha»).
   if (raiz){
     const previo = raiz.querySelector(':scope > .tka-bod-resumen');
