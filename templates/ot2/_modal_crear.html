@@ -1327,6 +1327,87 @@
   #o2mTareasList .o2m-her-nm{display:block;font-size:.8rem;color:#111827;line-height:1.35;overflow-wrap:anywhere}
   #o2mTareasList .o2m-her-nm b{font-weight:700}
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   🎨 REDISEÑO 2026-10-24 (Daniel: «rediseña el modal… tecnología del 2028»). CAPA VISUAL SOLAMENTE: no cambia ni un paso, campo, permiso ni
+   regla del asistente. Respeta la paleta ILUS (rojo #dc2626 / negro #0a0a0a / blanco), las tarjetas con profundidad que Daniel pidió el
+   29-ago, los toques de 44 px (REGLA #3) y los nombres completos sin truncar (REGLA #15). Va AL FINAL a propósito: gana por orden, sin !important.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.o2m .modal-content{border-radius:22px;box-shadow:0 34px 90px -24px rgba(10,10,10,.6),0 0 0 1px rgba(10,10,10,.08)}
+/* Cabecera: negro profundo con un resplandor rojo, ícono en baldosa y cierre redondo de 44 px. */
+.o2m-head{position:relative;padding:20px 26px;gap:16px;border-bottom:0;
+  background:radial-gradient(760px 200px at 100% -45%,rgba(220,38,38,.42),transparent 62%),linear-gradient(135deg,#1c1c20,#0a0a0a 66%)}
+.o2m-head::after{content:'';position:absolute;left:0;right:0;bottom:0;height:3px;
+  background:linear-gradient(90deg,#dc2626,#ef4444 38%,rgba(220,38,38,.12))}
+.o2m-head>i.bi{flex:0 0 auto;width:48px;height:48px;border-radius:15px;display:grid;place-items:center;
+  background:rgba(220,38,38,.17);border:1px solid rgba(248,113,113,.38);box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+.o2m-head h5{font-size:1.28rem;letter-spacing:.004em}
+.o2m-head .sub{font-size:.95rem;color:rgba(255,255,255,.66)}
+.o2m-head .x{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;font-size:1.55rem;
+  transition:background .15s,color .15s}
+.o2m-head .x:hover,.o2m-head .x:focus-visible{background:rgba(255,255,255,.14);color:#fff;outline:0}
+/* Pantalla de ORIGEN: la primera impresión. Tarjetas grandes con baldosa de ícono, flecha que aparece y atajo de teclado 1-5. */
+.o2m-body.solo{padding:30px 34px 38px;
+  background:radial-gradient(1100px 260px at 0 0,#fff4f4,transparent 62%),#fff}
+.o2m-body.solo h6.t{font-size:1.55rem;font-weight:800;letter-spacing:-.012em;margin-bottom:6px;color:#0a0a0a}
+.o2m-body.solo p.d{font-size:1.04rem;line-height:1.5;margin-bottom:26px;max-width:62ch}
+.o2m-body.solo .o2m-grid{grid-template-columns:repeat(auto-fit,minmax(196px,1fr));gap:14px}
+.o2m-body.solo .o2m-op{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:4px;
+  min-height:178px;padding:20px 18px 20px;border-radius:18px;border:1.5px solid #e8eaee;overflow:hidden;
+  background:linear-gradient(180deg,#fff 0%,#fafafb 100%);
+  box-shadow:0 1px 2px rgba(15,23,42,.05),0 8px 20px -14px rgba(15,23,42,.18);
+  transition:transform .22s cubic-bezier(.2,.8,.2,1),box-shadow .22s,border-color .18s,background .18s;
+  animation:o2mOpEntra .5s cubic-bezier(.2,.8,.2,1) both}
+.o2m-body.solo .o2m-op:nth-child(2){animation-delay:.05s}
+.o2m-body.solo .o2m-op:nth-child(3){animation-delay:.1s}
+.o2m-body.solo .o2m-op:nth-child(4){animation-delay:.15s}
+.o2m-body.solo .o2m-op:nth-child(5){animation-delay:.2s}
+@keyframes o2mOpEntra{from{opacity:0;transform:translateY(12px) scale(.98)}to{opacity:1;transform:none}}
+.o2m-body.solo .o2m-op .ic{width:54px;height:54px;border-radius:17px;display:grid;place-items:center;font-size:1.65rem;margin:0 0 12px;
+  background:#fef2f2;border:1px solid #fecaca;color:var(--ilus-red,#dc2626);
+  transition:background .2s,color .2s,transform .25s cubic-bezier(.2,.8,.2,1),box-shadow .2s}
+.o2m-body.solo .o2m-op .n{font-size:1.14rem;letter-spacing:-.005em}
+.o2m-body.solo .o2m-op .l{font-size:.92rem;line-height:1.42;color:#5b6472;padding-right:6px}
+.o2m-body.solo .o2m-op::after{content:'\f138';font-family:'bootstrap-icons';position:absolute;right:16px;bottom:14px;
+  font-size:1.15rem;color:var(--ilus-red,#dc2626);opacity:0;transform:translateX(-8px);transition:opacity .2s,transform .22s cubic-bezier(.2,.8,.2,1)}
+.o2m-body.solo .o2m-op::before{position:absolute;top:14px;right:14px;min-width:24px;height:24px;padding:0 6px;border-radius:8px;
+  display:grid;place-items:center;font-size:.74rem;font-weight:800;color:#8a93a3;background:#f3f4f6;border:1px solid #e5e7eb}
+.o2m-body.solo .o2m-op:nth-child(1)::before{content:'1'}
+.o2m-body.solo .o2m-op:nth-child(2)::before{content:'2'}
+.o2m-body.solo .o2m-op:nth-child(3)::before{content:'3'}
+.o2m-body.solo .o2m-op:nth-child(4)::before{content:'4'}
+.o2m-body.solo .o2m-op:nth-child(5)::before{content:'5'}
+.o2m-body.solo .o2m-op:hover,.o2m-body.solo .o2m-op:focus-visible{border-color:var(--ilus-red,#dc2626);transform:translateY(-4px);outline:0;
+  background:linear-gradient(180deg,#fff 0%,#fff6f6 100%);
+  box-shadow:0 22px 40px -18px rgba(220,38,38,.42),0 0 0 3px rgba(220,38,38,.10)}
+.o2m-body.solo .o2m-op:hover .ic,.o2m-body.solo .o2m-op:focus-visible .ic{background:var(--ilus-red,#dc2626);color:#fff;border-color:var(--ilus-red,#dc2626);
+  transform:scale(1.06) rotate(-3deg);box-shadow:0 10px 22px -8px rgba(220,38,38,.65)}
+.o2m-body.solo .o2m-op:hover::after,.o2m-body.solo .o2m-op:focus-visible::after{opacity:1;transform:none}
+.o2m-body.solo .o2m-op:hover::before,.o2m-body.solo .o2m-op:focus-visible::before{background:#fee2e2;border-color:#fecaca;color:#b91c1c}
+.o2m-body.solo .o2m-op:active{transform:translateY(-1px) scale(.992)}
+@media (max-width:575.98px){
+  .o2m-body.solo{padding:22px 16px 28px}
+  .o2m-body.solo h6.t{font-size:1.32rem}
+  .o2m-body.solo .o2m-grid{grid-template-columns:1fr 1fr;gap:10px}
+  .o2m-body.solo .o2m-op{min-height:150px;padding:16px 14px}
+  .o2m-body.solo .o2m-op::before{display:none}      /* sin teclado físico: el atajo estorba */
+  #o2mHint.o2m-hint-atajo{display:none}
+  .o2m-head{padding:16px 16px}
+  .o2m-head>i.bi{width:42px;height:42px}
+}
+@media (prefers-reduced-motion:reduce){
+  .o2m-body.solo .o2m-op{animation:none;transition:none}
+  .o2m-body.solo .o2m-op:hover,.o2m-body.solo .o2m-op:focus-visible,.o2m-body.solo .o2m-op:hover .ic{transform:none}
+}
+/* Formulario (fases siguientes): mismas tarjetas con un poco más de aire y pie con vidrio. */
+.o2m-sec{border-radius:16px}
+.o2m-op{border-radius:14px}
+.o2m-sec .o2m-op:hover{border-color:#fca5a5}
+.o2m-foot{padding:14px 26px;background:rgba(250,251,252,.92);backdrop-filter:blur(6px)}
+#o2mSig{border-radius:12px;padding-inline:26px;font-size:1rem;box-shadow:0 10px 22px -10px rgba(220,38,38,.65);
+  transition:transform .15s,box-shadow .15s}
+#o2mSig:hover{transform:translateY(-1px);box-shadow:0 14px 26px -10px rgba(220,38,38,.75)}
+#o2mAtras{border-radius:12px}
 </style>
 
 <div class="modal fade o2m" id="ot2ModalCrear" tabindex="-1" aria-hidden="true">
@@ -2282,6 +2363,7 @@ window.OT2C = (function(){
 
     atras.style.visibility = 'visible';
     sig.style.display = '';
+    var _hAt = document.getElementById('o2mHint'); if (_hAt) _hAt.classList.remove('o2m-hint-atajo');   // 🎨 2026-10-24: el atajo es solo de la pantalla de origen
     _o2mSigRotular();
     body.className = 'o2m-body';
     // 2026-08-30 (Daniel, confirmado dos veces: "que se complete cada paso
@@ -2390,6 +2472,20 @@ window.OT2C = (function(){
     pintarAnclas();
   }
 
+  /* 🎨 2026-10-24: atajo de teclado en la pantalla de ORIGEN — las teclas 1 a 5 eligen la tarjeta (solo si el asistente es lo único abierto y no se
+     está escribiendo en un campo). Una sola vez por página. */
+  document.addEventListener('keydown', function(ev){
+    if (fase !== 'origen' || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    var n = parseInt(ev.key, 10);
+    if (!(n >= 1 && n <= ORIGENES.length)) return;
+    var m = document.getElementById('ot2ModalCrear');
+    if (!m || !m.classList.contains('show') || document.querySelectorAll('.modal.show').length !== 1) return;
+    var t = ev.target, tag = t && t.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) return;
+    ev.preventDefault();
+    setOrigen(ORIGENES[n - 1].v);
+  });
+
   function pintarOrigen(b){
     document.getElementById('o2mSub').textContent = '¿De dónde nace esta OT?';
     b.innerHTML = '<h6 class="t">Origen de la orden</h6>'+
@@ -2398,6 +2494,8 @@ window.OT2C = (function(){
         return '<button type="button" class="o2m-op '+(S.origen===o.v?'sel':'')+'" onclick="OT2C.setOrigen(\''+o.v+'\')">'+
           '<i class="bi '+o.i+' ic"></i><span class="n">'+o.n+'</span><span class="l">'+o.l+'</span></button>';
       }).join('') +'</div>';
+    // 🎨 2026-10-24: pista del atajo en el pie (en celular no se ve: ahí no hay teclado).
+    var _h = document.getElementById('o2mHint'); if (_h){ _h.textContent = 'Atajo: teclas 1 a ' + ORIGENES.length; _h.classList.add('o2m-hint-atajo'); }
       // 2026-08-30 (Daniel, dictado: "quiero que me traiga las cotizaciones
       // de nuestro sistema... igual en los tickets debe poder buscar y
       // traer los datos"): los 5 orígenes ya están conectados -- "Cotización"
