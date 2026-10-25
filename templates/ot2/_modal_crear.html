@@ -7299,14 +7299,14 @@ window.OT2C = (function(){
               '<div id="o2mDocExtra" class="mt-2"></div>',
               'Con documento (sus líneas ZZ traen el monto), por garantía, o sin documento todavía. Si el servicio ya se pagó en otro documento, agrégalo aquí abajo.'))+
           _o2mFpasoHtml('valor', interno ? 2 : 3,
-            interno ? '¿Cuánto vale esta OT?' : (S.fin_garantia ? 'Valor de referencia (opcional)' : '¿Cuánto le cobras?'),
+            interno ? '¿Cuánto vale esta OT?' : (S.fin_garantia ? '¿Cuánto vale este servicio?' : '¿Cuánto le cobras?'),
             valorHtml,
+            // 2026-10-25 (Daniel: «si es garantía, que lo valorice, a ver cuánto nos cuesta y si estamos perdiendo dinero»): en un $0 el valor se
+            // ve y se invita a anotarlo (viene la estimación por clasificación como sugerencia): sirve para comparar lo que cuesta contra lo que
+            // vale; nunca se suma a lo cobrado. (Antes quedaba plegado: se deshizo.)
             interno ? '' : (S.fin_garantia
-              ? 'No se le cobra. Si quieres, anota cuánto vale el servicio: es solo referencia y nunca se suma a lo cobrado.'
-              : 'Elige la línea de servicio del documento, toca «Usar este monto» en una referencia (por ejemplo la estimación por clasificación) o escribe cuánto le cobras. Lo que escribas lleva su motivo.'),
-            // 2026-10-25 (Daniel: «no hay que repetir opciones… cuánto nos cobran, cuánto cobré, el margen y ya»): en un $0 el valor es solo
-            // referencia, así que queda plegado en una línea (se abre con un toque); si pide algo (motivo de un valor escrito a mano) se abre solo.
-            !interno && !!S.fin_garantia && _o2mFinSubEstado('valor').cls !== 'falta')+
+              ? 'No se le cobra. Anota cuánto vale el servicio (o toca la estimación): abajo ves cuánto nos cuesta y si estamos perdiendo dinero. Nunca se suma a lo cobrado.'
+              : 'Elige la línea de servicio del documento, toca «Usar este monto» en una referencia (por ejemplo la estimación por clasificación) o escribe cuánto le cobras. Lo que escribas lleva su motivo.'))+
           (interno ? '' : _o2mFpasoHtml('costo', 4, '¿Cuánto nos cuesta?', costoHtml,
             'Lo que cobra el técnico o proveedor por el trabajo y, si hubo, el despacho. Con un técnico propio es $0. Abajo ves enseguida cuánto queda.')));
     if (centroElegido){
@@ -7911,7 +7911,8 @@ window.OT2C = (function(){
         // sigue exigiéndose -- mismo criterio que completo('finanzas').
         if (S.fin_garantia){
           if (_o2mFinEsManual() && !(S.fin_zz_motivo_manual||'').trim()) return {cls:'falta', txt:'Falta el motivo'};
-          return {cls:'opcional', txt:'Opcional'};
+          // 2026-10-25: en un $0 el valor del servicio se RECOMIENDA (para ver cuánto nos cuesta frente a lo que vale); no se exige.
+          return S.fin_zz_monto > 0 ? {cls:'listo', txt:'Listo'} : {cls:'opcional', txt:'Recomendado'};
         }
         if (S.fin_zz_monto == null) return {cls:'falta', txt:'Pendiente'};
         if (S.fin_zz_monto === 0) return {cls:'falta', txt:'$0: declara garantía, regalía o arriendo'};
@@ -10200,6 +10201,22 @@ window.OT2C = (function(){
       valorizado_clp: nz(m.valorizado_clp), valorizado_fuente: nz(m.valorizado_fuente)
     }, null);
   }
+  /* 🛡️ 2026-10-25 — El veredicto de un $0 (garantía, regalía, arriendo…): lo que NOS CUESTA frente a lo que VALE el servicio (referencia).
+     Devuelve {clase, titulo, texto}; clase: 'ok' (no cuesta plata) · 'bajo' (cuesta, pero menos de lo que vale) · 'rojo' (cuesta más de lo que vale).
+     En un $0 siempre se pierde en caja lo que cuesta: Daniel ya autoriza ese $0, aquí solo se le dice cuánto y frente a qué. */
+  function _o2mFinVeredictoCero(valor, costo){
+    var v = Math.round(parseFloat(valor) || 0), c = Math.round(parseFloat(costo) || 0);
+    var f = function(n){ return '$' + Math.abs(n).toLocaleString('es-CL'); };
+    if (c <= 0) return {clase:'ok', titulo:'No nos cuesta dinero',
+      texto: v > 0 ? 'Entregamos un servicio que vale ' + f(v) + ' sin gasto extra: no perdemos plata.' : 'Con técnico propio y sin despacho no hay gasto: no perdemos plata.'};
+    if (v <= 0) return {clase:'bajo', titulo:'Nos cuesta ' + f(c),
+      texto: 'Perdemos ' + f(c) + ' en caja. Anota cuánto vale el servicio (o toca la estimación) para ver cuánto pesa.'};
+    var pct = Math.round(c * 100 / v);
+    if (c > v) return {clase:'rojo', titulo:'Cuesta más de lo que vale',
+      texto: 'Nos cuesta ' + f(c) + ' y el servicio vale ' + f(v) + ': perdemos ' + f(c) + ' en caja, ' + f(c - v) + ' más de su valor.'};
+    return {clase:'bajo', titulo:'Nos cuesta ' + f(c) + ' · ' + pct + ' % de su valor',
+      texto: 'El servicio vale ' + f(v) + ' y esta cobertura nos cuesta ' + f(c) + ': perdemos ' + f(c) + ' en caja.'};
+  }
   function _pintarFinMargenDom(){
     var c = document.getElementById('o2mFinMargen'); if (!c) return;
     if (typeof window.ilusOtFinanzas !== 'function'){ c.innerHTML = ''; _o2mFinEstadosDom(); return; }
@@ -10227,8 +10244,14 @@ window.OT2C = (function(){
     else if (me.falta_tecnico) sb = 'Ingresa lo que te cobra el técnico para ver cuánto queda.' +
       (gar ? ' También en garantía se declara al crear (0 si es técnico propio): lo puedes corregir hasta que se firme.' : '');
     else if (me.falta_despacho) sb = 'Le cobras despacho al cliente: ingresa también lo que te cuesta el despacho.';
-    else sb = r.frase + (r.clase === 'rojo' ? ' No bloquea: queda registrado para el informe.' : '');
+    // 2026-10-25 (Daniel: «alértame si estamos perdiendo; no lo dejes pasar sin mi autorización»): con pérdida, la alerta dice lo que de verdad pasa —
+    // se puede crear, pero el cierre exige la autorización de Daniel (REGLA #28)—, no «no bloquea».
+    else sb = r.frase + (r.clase === 'rojo' ? ' Puedes crear la OT, pero no se podrá cerrar sin la autorización de Daniel.' : '');
     var html = sem(s[0], s[1], esc(r.label), esc(sb));
+    // 2026-10-25 (Daniel: «si es garantía, que lo valorice, a ver cuánto nos cuesta y si estamos perdiendo dinero»): en un $0 el veredicto compara lo
+    // que nos cuesta contra lo que vale el servicio (referencia) y dice si perdemos plata.
+    var ver = (!r.cobra && q.mostrar && !me.falta_tecnico) ? _o2mFinVeredictoCero(r.valorizado.monto, me.total) : null;
+    if (ver){ var sv = SEM[ver.clase] || s; html = sem(sv[0], sv[1], esc(ver.titulo), esc(ver.texto)); }
     if (me.falta_despacho) _o2mFinDespachoMostrar(false);   // 2026-10-25: al cliente se le cobra despacho: aparece el campo del costo del despacho
     var filas = '';
     if (q.mostrar){

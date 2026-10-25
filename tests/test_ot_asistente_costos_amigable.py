@@ -202,10 +202,13 @@ class TestElValorDeReferenciaQuedaPlegado(unittest.TestCase):
         self.assertEqual(r["a"], {"abierto": True, "plegado": False, "aria": "true"})
         self.assertEqual(r["b"], {"abierto": False, "plegado": True, "aria": "false"})
 
-    def test_en_un_cero_el_valor_va_plegado_salvo_que_pida_algo(self):
+    def test_en_un_cero_el_valor_del_servicio_se_ve_y_no_va_plegado(self):
+        """Daniel (25-oct, después): «si es garantía, que lo valorice, a ver cuánto nos cuesta y si estamos perdiendo dinero»: se deshizo el plegado."""
         f = _js_funcion("pintarFinanzas")
-        self.assertIn("'Valor de referencia (opcional)'", f)
-        self.assertIn("!interno && !!S.fin_garantia && _o2mFinSubEstado('valor').cls !== 'falta')", f)
+        self.assertIn("'¿Cuánto vale este servicio?'", f)
+        self.assertNotIn("Valor de referencia (opcional)", f)
+        self.assertNotIn("!interno && !!S.fin_garantia && _o2mFinSubEstado('valor').cls !== 'falta')", f)
+        self.assertIn("abajo ves cuánto nos cuesta y si estamos perdiendo dinero", f)
 
     def test_el_estado_inicial_trae_el_registro_de_abiertos(self):
         self.assertIn("_fpAbierto:{},", H)
@@ -482,6 +485,53 @@ class TestElAvisoDeCorreosOcupaUnaLinea(unittest.TestCase):
         self.assertIn("avisoEnvioTog:avisoEnvioTog", H)
         self.assertIn(".o2m-avenvio-t{display:flex;align-items:center;gap:8px;width:100%;min-height:44px", H)
         self.assertIn(".o2m-aviso-envio ul[hidden]{display:none}", H)
+
+
+@unittest.skipUnless(shutil.which("node"), "sin Node")
+class TestGarantiaSeValorizaYDiceSiPerdemos(unittest.TestCase):
+    """Daniel: «si es garantía, que lo valorice, a ver cuánto nos cuesta y si estamos perdiendo dinero»."""
+
+    def _v(self, valor, costo):
+        prog = "\n".join([_js_funcion("_o2mFinVeredictoCero"),
+                          "console.log(JSON.stringify(_o2mFinVeredictoCero(%s, %s)));" % (json.dumps(valor), json.dumps(costo))])
+        return _correr(prog)
+
+    def test_sin_costo_no_perdemos_plata(self):
+        r = self._v(109817, 0)
+        self.assertEqual(r["clase"], "ok")
+        self.assertEqual(r["titulo"], "No nos cuesta dinero")
+        self.assertIn("vale $109.817", r["texto"])
+        self.assertEqual(self._v(None, "0")["clase"], "ok")
+
+    def test_con_costo_menor_al_valor_dice_cuanto_pesa_y_que_se_pierde_en_caja(self):
+        r = self._v(109817, 54909)
+        self.assertEqual(r["clase"], "bajo")
+        self.assertEqual(r["titulo"], "Nos cuesta $54.909 · 50 % de su valor")
+        self.assertIn("perdemos $54.909 en caja", r["texto"])
+
+    def test_con_costo_mayor_al_valor_alerta_en_rojo(self):
+        r = self._v(100000, 130000)
+        self.assertEqual(r["clase"], "rojo")
+        self.assertEqual(r["titulo"], "Cuesta más de lo que vale")
+        self.assertIn("perdemos $130.000 en caja, $30.000 más de su valor", r["texto"])
+
+    def test_sin_valor_anotado_invita_a_valorizar(self):
+        r = self._v(0, 80000)
+        self.assertEqual(r["clase"], "bajo")
+        self.assertEqual(r["titulo"], "Nos cuesta $80.000")
+        self.assertIn("Anota cuánto vale el servicio", r["texto"])
+
+    def test_el_margen_lo_usa_solo_en_un_cero_y_con_el_costo_declarado(self):
+        f = _js_funcion("_pintarFinMargenDom")
+        self.assertIn("(!r.cobra && q.mostrar && !me.falta_tecnico) ? _o2mFinVeredictoCero(r.valorizado.monto, me.total) : null", f)
+        self.assertIn("Puedes crear la OT, pero no se podrá cerrar sin la autorización de Daniel.", f)
+        self.assertNotIn("No bloquea: queda registrado para el informe.", f)
+
+    def test_el_valor_del_servicio_se_recomienda_no_se_exige(self):
+        f = _js_funcion("_o2mFinSubEstado")
+        self.assertIn("{cls:'listo', txt:'Listo'} : {cls:'opcional', txt:'Recomendado'}", f)
+        comp = _js_funcion("completo")
+        self.assertNotIn("fin_valorizado", comp, "el valorizado nunca bloquea (decisión de Daniel)")
 
 
 class TestAmbarYVerde(unittest.TestCase):
