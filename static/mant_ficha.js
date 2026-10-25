@@ -480,6 +480,8 @@ function _ilusInitDireccionCliente() {
       setIf('ec_region', _ilusLimpiaRegion(region));
       setIf('ec_comuna', comuna);
       setIf('ec_ciudad', ciudad);
+      // 2026-10-24: el semáforo del modal (static/cliente_form.js) marca la dirección como «verificada con Google» solo desde acá.
+      try { if (window.ecfDireccionVerificada) window.ecfDireccionVerificada(place.direccion); } catch (e) {}
       const hint = document.getElementById('ec_direccion_hint');
       if (hint) {
         const la = (typeof place.lat === 'number') ? place.lat.toFixed(4) : '?';
@@ -492,6 +494,7 @@ function _ilusInitDireccionCliente() {
       const hint = document.getElementById('ec_direccion_hint');
       if (hint) hint.innerHTML = '<i class="bi bi-exclamation-triangle me-1" style="color:#f59e0b"></i>' +
         'Selecciona una opción del menú para validar la dirección.';
+      try { if (window.ecfEvaluar) window.ecfEvaluar(); } catch (e) {}   // semáforo: la dirección queda «sin verificar»
     }
   });
 }
@@ -3076,6 +3079,27 @@ async function guardarCliente() {
   if (!data.razon_social) {
     if (typeof ilusAlert === 'function') ilusAlert({type:'error', message:'Razón social requerida'});
     return;
+  }
+  // 2026-10-24 (Daniel: «alertar, no trabar»): lo que el semáforo de static/cliente_form.js marca en rojo con un valor escrito (RUT que no calza,
+  // correo sin @, teléfono incompleto…) se muestra antes de guardar; la persona decide si revisa o guarda igual. Nunca bloquea.
+  if (typeof window.ecfProblemas === 'function' && typeof ilusConfirm === 'function') {
+    const malos = window.ecfProblemas();
+    if (malos.length) {
+      const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+      const seguir = await ilusConfirm({
+        type: 'warning',
+        title: 'Hay datos por revisar',
+        message: malos.length === 1 ? 'Un dato parece mal escrito.' : malos.length + ' datos parecen mal escritos.',
+        sub: '<ul class="mb-0 ps-3 text-start">' + malos.map(p => '<li><b>' + esc(p.etiqueta) + ':</b> ' + esc(p.msg) + '</li>').join('') + '</ul>',
+        subHtml: true,
+        okLabel: 'Guardar igual', cancelLabel: 'Revisar',
+      });
+      if (!seguir) {
+        const e = document.getElementById(malos[0].id);
+        if (e) { try { e.scrollIntoView({ behavior: 'smooth', block: 'center' }); e.focus(); } catch (_e) {} }
+        return;
+      }
+    }
   }
   const btn = document.getElementById('btnGuardarCliente');
   const original = btn ? btn.innerHTML : '';

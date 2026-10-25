@@ -11,6 +11,8 @@
    tickets/ficha.html y así el modal se ve idéntico desde las dos
    pantallas. Ver el encabezado de static/modal_generar_ot.css. #}
 <link rel="stylesheet" href="{{ url_for('static', filename='modal_generar_ot.css') }}">
+{#- 🧾 2026-10-24 (Daniel): «Editar cliente» con semáforo, pasos y validación de Google, como el formulario de OT. -#}
+<link rel="stylesheet" href="{{ url_for('static', filename='cliente_form.css') }}">
 
 {# ── Breadcrumb ─────────────────────────────────────── #}
 <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
@@ -4793,189 +4795,236 @@
   </div>
 </div>
 
-{# ── Modal: Editar cliente ── #}
-<div class="modal fade" id="modalEditarCliente" tabindex="-1">
+{# ── Modal: Editar cliente ──
+   🧾 2026-10-24 (Daniel: «que el modal de editar clientes se comporte como el formulario: semáforo, tarjetas con paso a paso, validación de Google,
+   el cargo con más espacio»). MISMOS ids (ec_*) y mismo guardarCliente() (static/mant_ficha.js): solo cambia cómo se presenta. Estilos en
+   static/cliente_form.css y semáforo/validaciones en static/cliente_form.js (rojo = falta · verde = listo · ámbar = opcional). #}
+<div class="modal fade ecf" id="modalEditarCliente" tabindex="-1" aria-labelledby="ecfTitulo">
   <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Editar cliente</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <div class="row g-3">
-          <div class="col-12">
-            <label class="form-label fw-semibold">Razón social <span class="text-danger">*</span></label>
-            <input type="text" id="ec_razon" class="form-control" value="{{ cliente.razon_social }}">
-          </div>
-          <div class="col-6">
-            <label class="form-label fw-semibold">RUT</label>
-            <input type="text" id="ec_rut" class="form-control font-monospace"
-                   value="{{ (cliente.rut | rut_fmt) if cliente.rut else '' }}"
-                   placeholder="77.753.941-8" maxlength="12" autocomplete="off">
-          </div>
-          <div class="col-6 col-sm-3">
-            <label class="form-label fw-semibold">Estado</label>
-            <select id="ec_estado" class="form-select">
-              {% for e in ['activo','prospecto','inactivo','suspendido'] %}
-              <option value="{{ e }}" {% if cliente.estado==e %}selected{% endif %}>{{ e.title() }}</option>
-              {% endfor %}
-            </select>
-          </div>
-
-          {# ── Tipo de cliente (mantención / arriendo / leasing) ──
-             Permite cambiar la categoría comercial directamente desde la
-             ficha. El badge del header se actualiza al guardar. #}
-          <div class="col-6 col-sm-3">
-            <label class="form-label fw-semibold">Tipo cliente</label>
-            <select id="ec_tipo_cliente" class="form-select">
-              {% set _tc_cur = (cliente.tipo_cliente or 'mantencion')|lower %}
-              {# 🔴 2026-09-06: este select tenía SOLO 3 opciones y el ENUM
-                 tiene 5. Un cliente en 'instalacion' o 'prospecto' no
-                 calzaba con ninguna, el navegador dejaba marcada la
-                 primera y al guardar CUALQUIER campo (un teléfono, una
-                 dirección) la clasificación se degradaba a Mantención sin
-                 avisar -- el backend la acepta como válida. Con las 5
-                 opciones, el valor real queda seleccionado y guardar deja
-                 de destruir el dato. #}
-              <option value="mantencion"  {% if _tc_cur=='mantencion'  %}selected{% endif %}>Mantención</option>
-              <option value="instalacion" {% if _tc_cur=='instalacion' %}selected{% endif %}>Instalación</option>
-              <option value="arriendo"    {% if _tc_cur=='arriendo'    %}selected{% endif %}>Arriendo</option>
-              <option value="leasing"     {% if _tc_cur=='leasing'     %}selected{% endif %}>Leasing</option>
-              <option value="prospecto"   {% if _tc_cur=='prospecto'   %}selected{% endif %}>Prospecto</option>
-            </select>
-            <small class="text-muted" style="font-size:.7rem">Define categoría comercial</small>
-          </div>
-
-          {# ── Datos de empresa ── #}
-          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">
-            <i class="bi bi-building me-1"></i>Datos de empresa
-          </div></div>
-          <div class="col-12 col-sm-6">
-            <label class="form-label fw-semibold">Giro / actividad</label>
-            <input type="text" id="ec_giro" class="form-control" value="{{ cliente.giro or '' }}" placeholder="Servicios deportivos, hotelería…">
-          </div>
-          {# PLANIFICADOR 2026-06-10: día del mes preferido (caso U.Católica = 12) #}
-          <div class="col-6 col-sm-3">
-            <label class="form-label fw-semibold">Día mantención <small class="text-muted">(1-28)</small></label>
-            <input type="number" id="ec_dia_pref" class="form-control" min="1" max="28"
-                   value="{{ cliente.dia_mantencion_pref or '' }}" placeholder="Ej: 12">
-            <div class="form-text" style="font-size:.7rem">Día del mes preferido. Si cae feriado/finde se mueve al hábil siguiente.</div>
-          </div>
-          <div class="col-6 col-sm-3">
-            <label class="form-label fw-semibold">Email empresa</label>
-            <input type="email" id="ec_email_empresa" class="form-control" value="{{ cliente.email_empresa or '' }}" placeholder="contacto@empresa.cl">
-          </div>
-          <div class="col-6 col-sm-3">
-            <label class="form-label fw-semibold">Tel. empresa</label>
-            <input type="text" id="ec_tel_empresa" class="form-control ec-tel"
-                   value="{{ (cliente.tel_empresa | tel_chile_fmt) if cliente.tel_empresa else '' }}"
-                   placeholder="+56 2 2345 6789" inputmode="tel" autocomplete="off">
-          </div>
-
-          {# ── Ubicación ── #}
-          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">
-            <i class="bi bi-geo-alt me-1"></i>Ubicación
-          </div></div>
-          <div class="col-12">
-            <label class="form-label fw-semibold">Dirección</label>
-            <input type="text" id="ec_direccion" class="form-control"
-                   value="{{ cliente.direccion or '' }}"
-                   placeholder="Empieza a escribir y elige una sugerencia…" autocomplete="off">
-            <input type="hidden" id="ec_direccion_lat"      value="{{ cliente.get('direccion_lat') or '' }}">
-            <input type="hidden" id="ec_direccion_lng"      value="{{ cliente.get('direccion_lng') or '' }}">
-            <input type="hidden" id="ec_direccion_place_id" value="{{ cliente.get('direccion_place_id') or '' }}">
-            <small id="ec_direccion_hint" class="d-block mt-1" style="font-size:.74rem; color:#6b7280">
-              {% if cliente.get('direccion_place_id') %}
-              <i class="bi bi-check-circle-fill me-1" style="color:#16a34a"></i>Dirección verificada — comuna, ciudad y región se completan al elegir otra del menú.
-              {% else %}
-              <i class="bi bi-geo-alt me-1"></i>Escribe la dirección y selecciona del menú: comuna, ciudad y región se completan solas.
-              {% endif %}
-            </small>
-          </div>
-          <div class="col-12 col-sm-4">
-            <label class="form-label fw-semibold">Región</label>
-            <input type="text" id="ec_region" class="form-control" value="{{ cliente.get('region') or '' }}" placeholder="Ej: Metropolitana">
-          </div>
-          <div class="col-6 col-sm-4">
-            <label class="form-label fw-semibold">Comuna</label>
-            <input type="text" id="ec_comuna" class="form-control" value="{{ cliente.comuna or '' }}">
-          </div>
-          <div class="col-6 col-sm-4">
-            <label class="form-label fw-semibold">Ciudad</label>
-            <input type="text" id="ec_ciudad" class="form-control" value="{{ cliente.ciudad or '' }}">
-          </div>
-
-          {# ── Contacto principal ── #}
-          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">
-            <i class="bi bi-person-vcard me-1"></i>Contacto principal
-          </div></div>
-          <div class="col-12 col-md-4">
-            <label class="form-label fw-semibold">Nombre completo</label>
-            <input type="text" id="ec_contacto_nombre" class="form-control" value="{{ cliente.contacto_nombre or '' }}">
-          </div>
-          <div class="col-6 col-md-2">
-            <label class="form-label fw-semibold">Cargo / Rol</label>
-            <input type="text" id="ec_contacto_cargo" class="form-control" value="{{ cliente.contacto_cargo or '' }}" placeholder="Administrador…">
-          </div>
-          <div class="col-6 col-md-2">
-            <label class="form-label fw-semibold">Teléfono</label>
-            <input type="text" id="ec_contacto_tel" class="form-control ec-tel"
-                   value="{{ (cliente.contacto_tel | tel_chile_fmt) if cliente.contacto_tel else '' }}"
-                   placeholder="+56 9 1234 5678" inputmode="tel" autocomplete="off">
-          </div>
-          <div class="col-12 col-md-4">
-            <label class="form-label fw-semibold">Email</label>
-            <input type="email" id="ec_contacto_email" class="form-control" value="{{ cliente.contacto_email or '' }}">
-          </div>
-
-          {# ── Ejecutivo asignado (2026-07-11) ──
-             Responsable de comunicarse con el cliente / atender la falencia.
-             Se puebla por JS (fetch a /mantenciones/api/ejecutivos) con TODOS
-             los usuarios activos de app_users — no filtra por rol, porque no
-             existe un rol formal "ejecutivo" en el sistema de permisos. #}
-          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">
-            <i class="bi bi-person-badge me-1"></i>Ejecutivo asignado
-            <span class="text-muted fw-normal" style="font-size:.72rem">— quién se encarga de comunicarse con este cliente</span>
-          </div></div>
-          <div class="col-12 col-md-6">
-            <label class="form-label fw-semibold">Responsable</label>
-            <select id="ec_ejecutivo_user_id" class="form-select" data-current="{{ cliente.ejecutivo_user_id or '' }}">
-              <option value="">— Sin asignar —</option>
-            </select>
-          </div>
-
-          {# ── Contacto secundario ── #}
-          <div class="col-12"><hr class="my-1"><div class="small fw-bold text-muted">
-            <i class="bi bi-people me-1"></i>Contacto secundario
-            <span class="text-muted fw-normal" style="font-size:.72rem">— opcional</span>
-          </div></div>
-          <div class="col-12 col-md-4">
-            <label class="form-label fw-semibold">Nombre completo</label>
-            <input type="text" id="ec_contacto2_nombre" class="form-control" value="{{ cliente.contacto2_nombre or '' }}" placeholder="Ej: María González">
-          </div>
-          <div class="col-6 col-md-2">
-            <label class="form-label fw-semibold">Cargo / Rol</label>
-            <input type="text" id="ec_contacto2_cargo" class="form-control" value="{{ cliente.contacto2_cargo or '' }}" placeholder="Gerente, mantenedor…">
-          </div>
-          <div class="col-6 col-md-2">
-            <label class="form-label fw-semibold">Teléfono</label>
-            <input type="text" id="ec_contacto2_tel" class="form-control ec-tel"
-                   value="{{ (cliente.contacto2_tel | tel_chile_fmt) if cliente.contacto2_tel else '' }}"
-                   placeholder="+56 9 1234 5678" inputmode="tel" autocomplete="off">
-          </div>
-          <div class="col-12 col-md-4">
-            <label class="form-label fw-semibold">Email</label>
-            <input type="email" id="ec_contacto2_email" class="form-control" value="{{ cliente.contacto2_email or '' }}">
-          </div>
-
-          <div class="col-12"><hr class="my-1"></div>
-          <div class="col-12">
-            <label class="form-label fw-semibold">Notas internas</label>
-            <textarea id="ec_notas" class="form-control" rows="2">{{ cliente.notas or '' }}</textarea>
-          </div>
+      <div class="ecf-head">
+        <div class="ecf-head-ic"><i class="bi bi-pencil-square"></i></div>
+        <div class="ecf-head-tx">
+          <h5 id="ecfTitulo">Editar cliente</h5>
+          <div class="sub">{{ cliente.razon_social }}</div>
         </div>
+        <div class="ecf-prog" aria-live="polite">
+          <span id="ecfProgTxt">0 de 4 pasos listos</span>
+          <span class="bar"><span id="ecfProgBar"></span></span>
+        </div>
+        <button type="button" class="ecf-x" data-bs-dismiss="modal" aria-label="Cerrar">&times;</button>
       </div>
-      <div class="modal-footer">
+
+      <div class="modal-body ecf-body">
+
+        {# ── PASO 1 · Empresa ── #}
+        <section class="ecf-sec" id="ecfSec1">
+          <div class="ecf-circ-wrap"><span class="ecf-circ-label">Paso 1</span><span class="ecf-circ"><span class="num">1</span><i class="bi bi-check-lg chk"></i></span></div>
+          <div class="ecf-content">
+            <h6 class="ecf-t">Empresa</h6>
+            <p class="ecf-d">La razón social y el RUT identifican al cliente en todo el sistema y lo cruzan con los documentos del ERP.</p>
+            <div class="row g-3">
+              <div class="col-12 col-md-6">
+                <label class="form-label" for="ec_razon">Razón social <span class="text-danger">*</span></label>
+                <input type="text" id="ec_razon" class="form-control" value="{{ cliente.razon_social }}" autocomplete="off">
+                <small class="ecf-msg" data-ecf-msg="ec_razon"></small>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label" for="ec_rut">RUT</label>
+                <input type="text" id="ec_rut" class="form-control font-monospace"
+                       value="{{ (cliente.rut | rut_fmt) if cliente.rut else '' }}"
+                       placeholder="77.753.941-8" maxlength="12" autocomplete="off">
+                <small class="ecf-msg" data-ecf-msg="ec_rut"></small>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label" for="ec_estado">Estado</label>
+                <select id="ec_estado" class="form-select">
+                  {% for e in ['activo','prospecto','inactivo','suspendido'] %}
+                  <option value="{{ e }}" {% if cliente.estado==e %}selected{% endif %}>{{ e.title() }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              {# ── Tipo de cliente (mantención / arriendo / leasing) ──
+                 Permite cambiar la categoría comercial directamente desde la ficha. El badge del header se actualiza al guardar. #}
+              <div class="col-12 col-md-6">
+                <label class="form-label" for="ec_tipo_cliente">Tipo de cliente</label>
+                <select id="ec_tipo_cliente" class="form-select">
+                  {% set _tc_cur = (cliente.tipo_cliente or 'mantencion')|lower %}
+                  {# 🔴 2026-09-06: este select tenía SOLO 3 opciones y el ENUM tiene 5. Un cliente en 'instalacion' o 'prospecto' no calzaba con ninguna,
+                     el navegador dejaba marcada la primera y al guardar CUALQUIER campo la clasificación se degradaba a Mantención sin avisar. #}
+                  <option value="mantencion"  {% if _tc_cur=='mantencion'  %}selected{% endif %}>Mantención</option>
+                  <option value="instalacion" {% if _tc_cur=='instalacion' %}selected{% endif %}>Instalación</option>
+                  <option value="arriendo"    {% if _tc_cur=='arriendo'    %}selected{% endif %}>Arriendo</option>
+                  <option value="leasing"     {% if _tc_cur=='leasing'     %}selected{% endif %}>Leasing</option>
+                  <option value="prospecto"   {% if _tc_cur=='prospecto'   %}selected{% endif %}>Prospecto</option>
+                </select>
+                <small class="ecf-msg">Define la categoría comercial.</small>
+              </div>
+              <div class="col-12"><div class="ecf-sub">Datos de la empresa</div></div>
+              <div class="col-12 col-md-6">
+                <label class="form-label" for="ec_giro">Giro / actividad</label>
+                <input type="text" id="ec_giro" class="form-control" value="{{ cliente.giro or '' }}" placeholder="Servicios deportivos, hotelería…">
+              </div>
+              {# PLANIFICADOR 2026-06-10: día del mes preferido (caso U.Católica = 12) #}
+              <div class="col-12 col-md-6">
+                <label class="form-label" for="ec_dia_pref">Día de mantención <small class="text-muted fw-normal">(1-28)</small></label>
+                <input type="number" id="ec_dia_pref" class="form-control" min="1" max="28"
+                       value="{{ cliente.dia_mantencion_pref or '' }}" placeholder="Ej: 12">
+                <small class="ecf-msg" data-ecf-msg="ec_dia_pref">Día del mes preferido. Si cae feriado o fin de semana, se mueve al hábil siguiente.</small>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label" for="ec_email_empresa">Email de la empresa</label>
+                <input type="email" id="ec_email_empresa" class="form-control" value="{{ cliente.email_empresa or '' }}" placeholder="contacto@empresa.cl">
+                <small class="ecf-msg" data-ecf-msg="ec_email_empresa"></small>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label" for="ec_tel_empresa">Teléfono de la empresa</label>
+                <input type="text" id="ec_tel_empresa" class="form-control ec-tel"
+                       value="{{ (cliente.tel_empresa | tel_chile_fmt) if cliente.tel_empresa else '' }}"
+                       placeholder="+56 2 2345 6789" inputmode="tel" autocomplete="off">
+                <small class="ecf-msg" data-ecf-msg="ec_tel_empresa"></small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {# ── PASO 2 · Ubicación (Google Places) ── #}
+        <section class="ecf-sec" id="ecfSec2">
+          <div class="ecf-circ-wrap"><span class="ecf-circ-label">Paso 2</span><span class="ecf-circ"><span class="num">2</span><i class="bi bi-check-lg chk"></i></span></div>
+          <div class="ecf-content">
+            <h6 class="ecf-t">Ubicación</h6>
+            <p class="ecf-d">Escribe la dirección y elige una sugerencia de Google: así queda verificada y el técnico llega al punto exacto. Comuna, ciudad y región se completan solas.</p>
+            <div class="row g-3">
+              <div class="col-12">
+                <label class="form-label" for="ec_direccion">Dirección</label>
+                <input type="text" id="ec_direccion" class="form-control"
+                       value="{{ cliente.direccion or '' }}"
+                       placeholder="Empieza a escribir y elige una sugerencia…" autocomplete="off">
+                <input type="hidden" id="ec_direccion_lat"      value="{{ cliente.get('direccion_lat') or '' }}">
+                <input type="hidden" id="ec_direccion_lng"      value="{{ cliente.get('direccion_lng') or '' }}">
+                <input type="hidden" id="ec_direccion_place_id" value="{{ cliente.get('direccion_place_id') or '' }}">
+                <div id="ecfVerif" class="ecf-verif warn" role="status"></div>
+                {# Lo escribe mant_ficha.js al elegir una sugerencia; se deja oculto (lo reemplaza el cuadro de arriba). #}
+                <small id="ec_direccion_hint" class="mt-1" style="font-size:.74rem; color:#6b7280">
+                  {% if cliente.get('direccion_place_id') %}Dirección verificada.{% else %}Escribe la dirección y selecciona del menú.{% endif %}
+                </small>
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label" for="ec_region">Región</label>
+                <input type="text" id="ec_region" class="form-control" value="{{ cliente.get('region') or '' }}" placeholder="Ej: Metropolitana">
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label" for="ec_comuna">Comuna</label>
+                <input type="text" id="ec_comuna" class="form-control" value="{{ cliente.comuna or '' }}">
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label" for="ec_ciudad">Ciudad</label>
+                <input type="text" id="ec_ciudad" class="form-control" value="{{ cliente.ciudad or '' }}">
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {# ── PASO 3 · Contacto principal ── #}
+        <section class="ecf-sec" id="ecfSec3">
+          <div class="ecf-circ-wrap"><span class="ecf-circ-label">Paso 3</span><span class="ecf-circ"><span class="num">3</span><i class="bi bi-check-lg chk"></i></span></div>
+          <div class="ecf-content">
+            <h6 class="ecf-t">Contacto principal</h6>
+            <p class="ecf-d">Con quién hablar para coordinar visitas, instalaciones y cobros. Necesita al menos un teléfono o un correo.</p>
+            <div class="row g-3">
+              <div class="col-12 col-md-5">
+                <label class="form-label" for="ec_contacto_nombre">Nombre completo</label>
+                <input type="text" id="ec_contacto_nombre" class="form-control" value="{{ cliente.contacto_nombre or '' }}" autocomplete="off">
+                <small class="ecf-msg" data-ecf-msg="ec_contacto_nombre"></small>
+              </div>
+              {# Cargo con MÁS espacio (7/12 de la fila) y el texto completo al pasar el mouse (Daniel 2026-10-24). #}
+              <div class="col-12 col-md-7">
+                <label class="form-label" for="ec_contacto_cargo">Cargo / Rol</label>
+                <input type="text" id="ec_contacto_cargo" class="form-control" value="{{ cliente.contacto_cargo or '' }}" title="{{ cliente.contacto_cargo or '' }}" placeholder="Administrador, jefe de operaciones, encargado de compras…">
+                <small class="ecf-msg" data-ecf-msg="ec_contacto_cargo"></small>
+              </div>
+              <div class="col-12 col-md-5">
+                <label class="form-label" for="ec_contacto_tel">Teléfono</label>
+                <input type="text" id="ec_contacto_tel" class="form-control ec-tel"
+                       value="{{ (cliente.contacto_tel | tel_chile_fmt) if cliente.contacto_tel else '' }}"
+                       placeholder="+56 9 1234 5678" inputmode="tel" autocomplete="off">
+                <small class="ecf-msg" data-ecf-msg="ec_contacto_tel"></small>
+              </div>
+              <div class="col-12 col-md-7">
+                <label class="form-label" for="ec_contacto_email">Email</label>
+                <input type="email" id="ec_contacto_email" class="form-control" value="{{ cliente.contacto_email or '' }}" placeholder="nombre@empresa.cl">
+                <small class="ecf-msg" data-ecf-msg="ec_contacto_email"></small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {# ── PASO 4 · Ejecutivo asignado (2026-07-11) ──
+           Responsable de comunicarse con el cliente / atender la falencia. Se puebla por JS (fetch a /mantenciones/api/ejecutivos) con TODOS los
+           usuarios activos de app_users — no filtra por rol, porque no existe un rol formal "ejecutivo" en el sistema de permisos. #}
+        <section class="ecf-sec" id="ecfSec4">
+          <div class="ecf-circ-wrap"><span class="ecf-circ-label">Paso 4</span><span class="ecf-circ"><span class="num">4</span><i class="bi bi-check-lg chk"></i></span></div>
+          <div class="ecf-content">
+            <h6 class="ecf-t">Ejecutivo asignado</h6>
+            <p class="ecf-d">Quién se encarga de comunicarse con este cliente y de atender sus falencias.</p>
+            <div class="row g-3">
+              <div class="col-12 col-md-6">
+                <label class="form-label" for="ec_ejecutivo_user_id">Responsable</label>
+                <select id="ec_ejecutivo_user_id" class="form-select" data-current="{{ cliente.ejecutivo_user_id or '' }}">
+                  <option value="">— Sin asignar —</option>
+                </select>
+                <small class="ecf-msg" data-ecf-msg="ec_ejecutivo_user_id"></small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {# ── PASO 5 · Contacto secundario (opcional) ── #}
+        <section class="ecf-sec is-neutral" id="ecfSec5">
+          <div class="ecf-circ-wrap"><span class="ecf-circ-label">Paso 5</span><span class="ecf-circ"><span class="num">5</span><i class="bi bi-check-lg chk"></i></span></div>
+          <div class="ecf-content">
+            <h6 class="ecf-t">Contacto secundario <span class="text-muted fw-normal" style="font-size:.8rem">— opcional</span></h6>
+            <p class="ecf-d">Un respaldo por si el contacto principal no responde.</p>
+            <div class="row g-3">
+              <div class="col-12 col-md-5">
+                <label class="form-label" for="ec_contacto2_nombre">Nombre completo</label>
+                <input type="text" id="ec_contacto2_nombre" class="form-control" value="{{ cliente.contacto2_nombre or '' }}" placeholder="Ej: María González" autocomplete="off">
+                <small class="ecf-msg" data-ecf-msg="ec_contacto2_nombre"></small>
+              </div>
+              <div class="col-12 col-md-7">
+                <label class="form-label" for="ec_contacto2_cargo">Cargo / Rol</label>
+                <input type="text" id="ec_contacto2_cargo" class="form-control" value="{{ cliente.contacto2_cargo or '' }}" title="{{ cliente.contacto2_cargo or '' }}" placeholder="Gerente, mantenedor, encargado de compras…">
+                <small class="ecf-msg" data-ecf-msg="ec_contacto2_cargo"></small>
+              </div>
+              <div class="col-12 col-md-5">
+                <label class="form-label" for="ec_contacto2_tel">Teléfono</label>
+                <input type="text" id="ec_contacto2_tel" class="form-control ec-tel"
+                       value="{{ (cliente.contacto2_tel | tel_chile_fmt) if cliente.contacto2_tel else '' }}"
+                       placeholder="+56 9 1234 5678" inputmode="tel" autocomplete="off">
+                <small class="ecf-msg" data-ecf-msg="ec_contacto2_tel"></small>
+              </div>
+              <div class="col-12 col-md-7">
+                <label class="form-label" for="ec_contacto2_email">Email</label>
+                <input type="email" id="ec_contacto2_email" class="form-control" value="{{ cliente.contacto2_email or '' }}" placeholder="nombre@empresa.cl">
+                <small class="ecf-msg" data-ecf-msg="ec_contacto2_email"></small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {# ── PASO 6 · Notas internas (opcional) ── #}
+        <section class="ecf-sec is-neutral" id="ecfSec6">
+          <div class="ecf-circ-wrap"><span class="ecf-circ-label">Paso 6</span><span class="ecf-circ"><span class="num">6</span><i class="bi bi-check-lg chk"></i></span></div>
+          <div class="ecf-content">
+            <h6 class="ecf-t">Notas internas <span class="text-muted fw-normal" style="font-size:.8rem">— opcional</span></h6>
+            <p class="ecf-d">Solo las ve el equipo; el cliente nunca las recibe.</p>
+            <label class="form-label visually-hidden" for="ec_notas">Notas internas</label>
+            <textarea id="ec_notas" class="form-control" rows="3" placeholder="Acuerdos, horarios de acceso, particularidades del cliente…">{{ cliente.notas or '' }}</textarea>
+          </div>
+        </section>
+
+      </div>
+      <div class="modal-footer ecf-foot">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-ilus fw-bold px-4" id="btnGuardarCliente" onclick="guardarCliente()">
           <i class="bi bi-floppy me-1"></i>Guardar
@@ -6509,6 +6558,8 @@ const TIPO_LABEL = {};
 </script>
 <script src="{{ url_for('static', filename='mant_ficha.js') }}" defer></script>
 <script src="{{ url_for('static', filename='mantenciones_ficha.js') }}" defer></script>
+{# Semáforo y validaciones del modal «Editar cliente» (ids ec_*): solo marca los campos, no cambia lo que guarda guardarCliente(). #}
+<script src="{{ url_for('static', filename='cliente_form.js') }}" defer></script>
 {# Dueño real de la lógica del modal "Generar OT" compartido (ver TID=null
    más arriba). Se carga DESPUÉS de mant_ficha.js: no es estrictamente
    necesario (CID/_TKOT solo se leen dentro de funciones, en tiempo de

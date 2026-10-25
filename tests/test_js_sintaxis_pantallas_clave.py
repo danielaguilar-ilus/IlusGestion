@@ -33,6 +33,8 @@ ESTATICOS = [
     "static/ot_hallazgos.js",
     "static/ot_que_paso.js",
     "static/catalogo_list.js",
+    "static/cliente_form.js",
+    "static/mant_ficha.js",
 ]
 
 
