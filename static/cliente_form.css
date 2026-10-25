@@ -56,6 +56,29 @@
 .ecf-verif.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
 .ecf-verif.warn{background:#fffbeb;border:1px solid #fde68a;color:#92400e}
 .ecf-verif.bad{background:#fef2f2;border:1px solid #fecaca;color:#7f1d1d}
+/* Cajas que CRECEN con lo escrito (razón social, giro, región, comuna, ciudad, nombres y cargos): ningún dato se corta, en ningún ancho.
+   Son <textarea rows="1"> con auto-altura (cliente_form.js). Van DESPUÉS de «.ecf textarea.form-control» (las notas) para ganarle el alto mínimo. */
+.ecf textarea.ecf-auto{min-height:46px;resize:none;overflow:hidden;display:block;line-height:1.35;padding-top:.62rem;padding-bottom:.62rem;overflow-wrap:anywhere}
+/* Región, comuna y ciudad: bien grandes (Daniel 2026-10-24: «deben ser grandes… se va a entrecortar cualquier dato en la parte responsiva») */
+.ecf .ecf-grande{min-height:56px;font-size:1.08rem;font-weight:600}
+.ecf textarea.ecf-auto.ecf-grande{min-height:56px;padding-top:.8rem;padding-bottom:.8rem}
+/* En tablet (768–991 px) el modal de Bootstrap mide solo 500 px: se ensancha para que las columnas no queden angostas. */
+@media (min-width:576px){.ecf .modal-dialog{max-width:min(1100px,calc(100vw - 1.5rem))}}
+/* Dirección verificada: la dirección completa, sin cortar, y cómo agregar oficina o depto sin perder la verificación */
+.ecf-verif{align-items:flex-start}
+.ecf-verif > i{margin-top:2px;flex:0 0 auto}
+.ecf-verif .ecf-verif-t{min-width:0}
+.ecf-verif .ecf-verif-dir{display:block;margin-top:2px;font-weight:700;overflow-wrap:anywhere}
+.ecf-verif .ecf-verif-sub{display:block;margin-top:3px;font-weight:500;font-size:.8rem;opacity:.9}
+/* Pie: por qué no se puede guardar todavía (y lleva a ese lugar al tocarlo) */
+.ecf-foot-estado{margin-right:auto;display:inline-flex;align-items:center;gap:8px;min-height:46px;padding:8px 14px;border-radius:12px;border:1.5px solid;
+  font-size:.88rem;font-weight:700;line-height:1.3;text-align:left;background:#fff;cursor:pointer}
+.ecf-foot-estado[hidden]{display:none}
+.ecf-foot-estado.bad{background:#fef2f2;border-color:#fecaca;color:#991b1b}
+.ecf-foot-estado.warn{background:#fffbeb;border-color:#fde68a;color:#92400e}
+.ecf-foot-estado.ok{background:#f0fdf4;border-color:#bbf7d0;color:#166534;cursor:default}
+.ecf-foot-estado i{flex:0 0 auto}
+.ecf-foot .btn-ilus:disabled{opacity:.45;box-shadow:none;cursor:not-allowed}
 .ecf-foot{background:#fafbfc;border-top:1px solid #eaecf0;padding:14px 24px}
 .ecf-foot .btn{min-height:46px;border-radius:12px}
 .ecf-foot .btn-ilus{padding-inline:26px;box-shadow:0 10px 22px -10px rgba(220,38,38,.65)}
@@ -76,5 +99,11 @@
   .ecf-circ-wrap{flex-direction:row-reverse;justify-content:flex-end;align-items:center;gap:10px;min-width:0}
   .ecf-content{width:100%}
   .ecf-t{font-size:1.05rem}
+  /* el aviso del pie va ARRIBA de los botones apilados (el pie usa column-reverse en celular) y a todo el ancho; en verde («Listo») se
+     esconde para no quitarle alto a la pantalla: solo habla cuando algo falta */
+  .ecf-foot-estado{order:3;width:100%;margin-right:0}
+  .ecf-foot-estado.ok{display:none}
+  /* el nombre del cliente de la cabecera: 2 líneas como máximo (el nombre completo está en el primer campo) */
+  .ecf-head .sub{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 }
 @media (prefers-reduced-motion:reduce){.ecf-circ,.ecf-sec,.ecf-prog .bar>span{transition:none}}

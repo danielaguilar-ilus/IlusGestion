@@ -4824,9 +4824,11 @@
             <h6 class="ecf-t">Empresa</h6>
             <p class="ecf-d">La razón social y el RUT identifican al cliente en todo el sistema y lo cruzan con los documentos del ERP.</p>
             <div class="row g-3">
-              <div class="col-12 col-md-6">
+              {# Los textos largos van en cajas que CRECEN con lo escrito y nunca se cortan (Daniel 2026-10-24): razón social, giro, región, comuna,
+                 ciudad, nombres y cargos. Son <textarea rows="1"> con auto-altura (static/cliente_form.js); Enter no agrega líneas. #}
+              <div class="col-12">
                 <label class="form-label" for="ec_razon">Razón social <span class="text-danger">*</span></label>
-                <input type="text" id="ec_razon" class="form-control" value="{{ cliente.razon_social }}" autocomplete="off">
+                <textarea id="ec_razon" class="form-control ecf-auto" rows="1" autocomplete="off" spellcheck="false">{{ cliente.razon_social }}</textarea>
                 <small class="ecf-msg" data-ecf-msg="ec_razon"></small>
               </div>
               <div class="col-12 col-md-6">
@@ -4860,11 +4862,6 @@
                 </select>
                 <small class="ecf-msg">Define la categoría comercial.</small>
               </div>
-              <div class="col-12"><div class="ecf-sub">Datos de la empresa</div></div>
-              <div class="col-12 col-md-6">
-                <label class="form-label" for="ec_giro">Giro / actividad</label>
-                <input type="text" id="ec_giro" class="form-control" value="{{ cliente.giro or '' }}" placeholder="Servicios deportivos, hotelería…">
-              </div>
               {# PLANIFICADOR 2026-06-10: día del mes preferido (caso U.Católica = 12) #}
               <div class="col-12 col-md-6">
                 <label class="form-label" for="ec_dia_pref">Día de mantención <small class="text-muted fw-normal">(1-28)</small></label>
@@ -4872,12 +4869,17 @@
                        value="{{ cliente.dia_mantencion_pref or '' }}" placeholder="Ej: 12">
                 <small class="ecf-msg" data-ecf-msg="ec_dia_pref">Día del mes preferido. Si cae feriado o fin de semana, se mueve al hábil siguiente.</small>
               </div>
-              <div class="col-12 col-md-6">
+              <div class="col-12"><div class="ecf-sub">Datos de la empresa</div></div>
+              <div class="col-12">
+                <label class="form-label" for="ec_giro">Giro / actividad</label>
+                <textarea id="ec_giro" class="form-control ecf-auto" rows="1" placeholder="Servicios deportivos, hotelería…">{{ cliente.giro or '' }}</textarea>
+              </div>
+              <div class="col-12 col-md-7">
                 <label class="form-label" for="ec_email_empresa">Email de la empresa</label>
-                <input type="email" id="ec_email_empresa" class="form-control" value="{{ cliente.email_empresa or '' }}" placeholder="contacto@empresa.cl">
+                <textarea id="ec_email_empresa" class="form-control ecf-auto" rows="1" inputmode="email" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="contacto@empresa.cl">{{ cliente.email_empresa or '' }}</textarea>
                 <small class="ecf-msg" data-ecf-msg="ec_email_empresa"></small>
               </div>
-              <div class="col-12 col-md-6">
+              <div class="col-12 col-md-5">
                 <label class="form-label" for="ec_tel_empresa">Teléfono de la empresa</label>
                 <input type="text" id="ec_tel_empresa" class="form-control ec-tel"
                        value="{{ (cliente.tel_empresa | tel_chile_fmt) if cliente.tel_empresa else '' }}"
@@ -4893,7 +4895,7 @@
           <div class="ecf-circ-wrap"><span class="ecf-circ-label">Paso 2</span><span class="ecf-circ"><span class="num">2</span><i class="bi bi-check-lg chk"></i></span></div>
           <div class="ecf-content">
             <h6 class="ecf-t">Ubicación</h6>
-            <p class="ecf-d">Escribe la dirección y elige una sugerencia de Google: así queda verificada y el técnico llega al punto exacto. Comuna, ciudad y región se completan solas.</p>
+            <p class="ecf-d"><b>La dirección debe quedar verificada para poder guardar.</b> Escríbela y elige una sugerencia de Google: así el técnico y el transporte llegan al punto exacto. Región, comuna y ciudad se completan solas.</p>
             <div class="row g-3">
               <div class="col-12">
                 <label class="form-label" for="ec_direccion">Dirección</label>
@@ -4903,23 +4905,25 @@
                 <input type="hidden" id="ec_direccion_lat"      value="{{ cliente.get('direccion_lat') or '' }}">
                 <input type="hidden" id="ec_direccion_lng"      value="{{ cliente.get('direccion_lng') or '' }}">
                 <input type="hidden" id="ec_direccion_place_id" value="{{ cliente.get('direccion_place_id') or '' }}">
-                <div id="ecfVerif" class="ecf-verif warn" role="status"></div>
+                <div id="ecfVerif" class="ecf-verif warn" role="status" aria-live="polite"></div>
                 {# Lo escribe mant_ficha.js al elegir una sugerencia; se deja oculto (lo reemplaza el cuadro de arriba). #}
                 <small id="ec_direccion_hint" class="mt-1" style="font-size:.74rem; color:#6b7280">
                   {% if cliente.get('direccion_place_id') %}Dirección verificada.{% else %}Escribe la dirección y selecciona del menú.{% endif %}
                 </small>
               </div>
-              <div class="col-12 col-md-4">
+              {# Región, comuna y ciudad GRANDES (Daniel 2026-10-24: «se va a entrecortar cualquier dato… en la parte responsiva»): cada una usa todo
+                 el ancho que puede y crece en alto si el dato es largo (ej. «Libertador General Bernardo O'Higgins»). #}
+              <div class="col-12">
                 <label class="form-label" for="ec_region">Región</label>
-                <input type="text" id="ec_region" class="form-control" value="{{ cliente.get('region') or '' }}" placeholder="Ej: Metropolitana">
+                <textarea id="ec_region" class="form-control ecf-auto ecf-grande" rows="1" placeholder="Ej: Metropolitana">{{ cliente.get('region') or '' }}</textarea>
               </div>
-              <div class="col-12 col-md-4">
+              <div class="col-12 col-md-6">
                 <label class="form-label" for="ec_comuna">Comuna</label>
-                <input type="text" id="ec_comuna" class="form-control" value="{{ cliente.comuna or '' }}">
+                <textarea id="ec_comuna" class="form-control ecf-auto ecf-grande" rows="1" placeholder="Ej: Las Condes">{{ cliente.comuna or '' }}</textarea>
               </div>
-              <div class="col-12 col-md-4">
+              <div class="col-12 col-md-6">
                 <label class="form-label" for="ec_ciudad">Ciudad</label>
-                <input type="text" id="ec_ciudad" class="form-control" value="{{ cliente.ciudad or '' }}">
+                <textarea id="ec_ciudad" class="form-control ecf-auto ecf-grande" rows="1" placeholder="Ej: Santiago">{{ cliente.ciudad or '' }}</textarea>
               </div>
             </div>
           </div>
@@ -4934,13 +4938,13 @@
             <div class="row g-3">
               <div class="col-12 col-md-5">
                 <label class="form-label" for="ec_contacto_nombre">Nombre completo</label>
-                <input type="text" id="ec_contacto_nombre" class="form-control" value="{{ cliente.contacto_nombre or '' }}" autocomplete="off">
+                <textarea id="ec_contacto_nombre" class="form-control ecf-auto" rows="1" autocomplete="off">{{ cliente.contacto_nombre or '' }}</textarea>
                 <small class="ecf-msg" data-ecf-msg="ec_contacto_nombre"></small>
               </div>
               {# Cargo con MÁS espacio (7/12 de la fila) y el texto completo al pasar el mouse (Daniel 2026-10-24). #}
               <div class="col-12 col-md-7">
                 <label class="form-label" for="ec_contacto_cargo">Cargo / Rol</label>
-                <input type="text" id="ec_contacto_cargo" class="form-control" value="{{ cliente.contacto_cargo or '' }}" title="{{ cliente.contacto_cargo or '' }}" placeholder="Administrador, jefe de operaciones, encargado de compras…">
+                <textarea id="ec_contacto_cargo" class="form-control ecf-auto" rows="1" placeholder="Administrador, jefe de operaciones, encargado de compras…">{{ cliente.contacto_cargo or '' }}</textarea>
                 <small class="ecf-msg" data-ecf-msg="ec_contacto_cargo"></small>
               </div>
               <div class="col-12 col-md-5">
@@ -4952,7 +4956,7 @@
               </div>
               <div class="col-12 col-md-7">
                 <label class="form-label" for="ec_contacto_email">Email</label>
-                <input type="email" id="ec_contacto_email" class="form-control" value="{{ cliente.contacto_email or '' }}" placeholder="nombre@empresa.cl">
+                <textarea id="ec_contacto_email" class="form-control ecf-auto" rows="1" inputmode="email" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="nombre@empresa.cl">{{ cliente.contacto_email or '' }}</textarea>
                 <small class="ecf-msg" data-ecf-msg="ec_contacto_email"></small>
               </div>
             </div>
@@ -4988,12 +4992,12 @@
             <div class="row g-3">
               <div class="col-12 col-md-5">
                 <label class="form-label" for="ec_contacto2_nombre">Nombre completo</label>
-                <input type="text" id="ec_contacto2_nombre" class="form-control" value="{{ cliente.contacto2_nombre or '' }}" placeholder="Ej: María González" autocomplete="off">
+                <textarea id="ec_contacto2_nombre" class="form-control ecf-auto" rows="1" placeholder="Ej: María González" autocomplete="off">{{ cliente.contacto2_nombre or '' }}</textarea>
                 <small class="ecf-msg" data-ecf-msg="ec_contacto2_nombre"></small>
               </div>
               <div class="col-12 col-md-7">
                 <label class="form-label" for="ec_contacto2_cargo">Cargo / Rol</label>
-                <input type="text" id="ec_contacto2_cargo" class="form-control" value="{{ cliente.contacto2_cargo or '' }}" title="{{ cliente.contacto2_cargo or '' }}" placeholder="Gerente, mantenedor, encargado de compras…">
+                <textarea id="ec_contacto2_cargo" class="form-control ecf-auto" rows="1" placeholder="Gerente, mantenedor, encargado de compras…">{{ cliente.contacto2_cargo or '' }}</textarea>
                 <small class="ecf-msg" data-ecf-msg="ec_contacto2_cargo"></small>
               </div>
               <div class="col-12 col-md-5">
@@ -5005,7 +5009,7 @@
               </div>
               <div class="col-12 col-md-7">
                 <label class="form-label" for="ec_contacto2_email">Email</label>
-                <input type="email" id="ec_contacto2_email" class="form-control" value="{{ cliente.contacto2_email or '' }}" placeholder="nombre@empresa.cl">
+                <textarea id="ec_contacto2_email" class="form-control ecf-auto" rows="1" inputmode="email" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="nombre@empresa.cl">{{ cliente.contacto2_email or '' }}</textarea>
                 <small class="ecf-msg" data-ecf-msg="ec_contacto2_email"></small>
               </div>
             </div>
@@ -5025,6 +5029,8 @@
 
       </div>
       <div class="modal-footer ecf-foot">
+        {# Dice POR QUÉ no se puede guardar todavía (y lleva a ese lugar al tocarlo): razón social y dirección verificada con Google. #}
+        <button type="button" class="ecf-foot-estado" id="ecfFootEstado" aria-live="polite" hidden></button>
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-ilus fw-bold px-4" id="btnGuardarCliente" onclick="guardarCliente()">
           <i class="bi bi-floppy me-1"></i>Guardar

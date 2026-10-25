@@ -3080,6 +3080,34 @@ async function guardarCliente() {
     if (typeof ilusAlert === 'function') ilusAlert({type:'error', message:'Razón social requerida'});
     return;
   }
+  // 2026-10-24 (Daniel: «la ubicación se debe verificar para poder avanzar»): sin dirección verificada con Google NO se guarda (el botón ya viene
+  // apagado y el pie dice por qué; esto es la red de seguridad). Única excepción: que Google no esté disponible (no hay cómo verificar): ahí se
+  // avisa y la persona decide, para no dejar un callejón sin salida.
+  if (typeof window.ecfDireccionPendiente === 'function') {
+    const dp = window.ecfDireccionPendiente();
+    if (dp && !dp.ok) {
+      if (dp.motivo === 'google_no_disponible') {
+        if (typeof ilusConfirm === 'function') {
+          const seguirSinGoogle = await ilusConfirm({
+            type: 'warning',
+            title: 'No se pudo verificar la dirección',
+            message: 'No hay conexión con Google en este momento, así que la dirección no se puede verificar.',
+            sub: 'Puedes guardar igual y verificarla después, o revisar e intentar de nuevo.',
+            okLabel: 'Guardar igual', cancelLabel: 'Revisar',
+          });
+          if (!seguirSinGoogle) { if (window.ecfIr) window.ecfIr('ec_direccion'); return; }
+        }
+      } else {
+        const falta = dp.motivo === 'vacia' ? 'Falta la dirección.' : (dp.motivo === 'cambiada' ? 'Cambiaste la dirección verificada.' : 'La dirección no está verificada.');
+        if (typeof ilusAlert === 'function') {
+          await ilusAlert({ type: 'warning', title: 'Falta verificar la ubicación',
+            message: falta + ' Escríbela y elige una sugerencia del menú de Google para poder guardar.' });
+        }
+        if (window.ecfIr) window.ecfIr('ec_direccion');
+        return;
+      }
+    }
+  }
   // 2026-10-24 (Daniel: «alertar, no trabar»): lo que el semáforo de static/cliente_form.js marca en rojo con un valor escrito (RUT que no calza,
   // correo sin @, teléfono incompleto…) se muestra antes de guardar; la persona decide si revisa o guarda igual. Nunca bloquea.
   if (typeof window.ecfProblemas === 'function' && typeof ilusConfirm === 'function') {
@@ -3118,6 +3146,7 @@ async function guardarCliente() {
     ilusToast('Error de red al guardar el cliente. Intenta de nuevo.', { type:'error' });
   } finally {
     if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    try { if (window.ecfEvaluar) window.ecfEvaluar(); } catch (_e) {}   // vuelve a apagar Guardar si todavía falta verificar la dirección
   }
 }
 
