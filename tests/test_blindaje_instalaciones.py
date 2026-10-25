@@ -37,6 +37,10 @@ def _ns(*nombres, **extra):
     ns = {"re": re, "time": time, "datetime": dt.datetime, "print": lambda *a, **k: None,
           "_NOMBRES_RELLENO": _RELLENO,
           "_doc_origen_key": lambda t, n: f"{(t or '').upper()} {str(n or '').lstrip('0')}",
+          # 2026-10-24: _ficha_equipos_desde_instalacion ya no cuenta servicios/descuentos como equipos (23-oct); la prueba le presta la misma regla.
+          "_sku_es_servicio": lambda sku, nombre=None: (str(sku or "").strip().upper().startswith("ZZ")
+                                                          or str(sku or "").strip().upper() == "DE"
+                                                          or str(nombre or "").strip().lower().startswith("descuento")),
           "chile_fmt_filter": lambda v, f: v.strftime(f) if hasattr(v, "strftime") else str(v)}
     for n in ("normalizar_rut", "_calcular_dv_rut", "validar_rut", "_rut_canon", "_rut_cuerpo"):
         exec(_fn(n, "\ndef "), ns)

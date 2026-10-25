@@ -353,6 +353,7 @@ endpoint "suene" a consulta.
   `GetStockTrazabilidad`, `GetStockTrazabilidadV2`, `GetSeguimientoDespacho`,
   `GetControlSalida`.
 - **Bodega de cada producto en Retiros (2026-10-16):** el modal «Agregar factura o boleta» muestra en qué bodega de Check está cada producto y un resumen del documento (`/retiros/api/check-bodegas`, `retiros_check.bodegas_por_sku`) usando el reporte de stock YA cacheado (`_checkwms_stock_rows`, 1 h): ninguna llamada nueva a Check.
+- **Bodega de cada producto en TODOS los formularios (2026-10-24, Daniel: «que este motor sea un motor único»):** el modal compartido «Búsqueda avanzada de productos» (`templates/tickets/_tka_modal.html`: Tickets, Cotizaciones, OT, Transporte, Cubicador…) muestra bajo cada producto sus bodegas de Check y, arriba del documento, «¿Dónde está este pedido según Check?» (`_tkaCargarBodegas`). Lo sirve `GET /api/erp/check-bodegas` (cualquier usuario con sesión, salvo el proveedor externo; solo DÓNDE está el stock) y comparte con Retiros la MISMA función de respuesta, `retiros_check.respuesta_bodegas`; ambos usan el reporte de stock YA cacheado: ninguna llamada nueva a Check. Una pantalla nueva con productos de un documento usa el modal compartido (no vuelve a armar esto a mano).
 - **Prueba:** `tests/test_checkwms_solo_lectura.py` falla si alguien agrega un
   POST/PUT/DELETE, saca la lista blanca o le habla a Check desde otro archivo.
 
