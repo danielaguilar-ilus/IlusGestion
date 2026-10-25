@@ -393,6 +393,11 @@
           .ilus-prompt-input:focus{
             border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.15);
           }
+          /* 🚦 REGLA #42 (Daniel 2026-10-24): rojo → verde EN VIVO mientras se escribe (con minLength o validate) */
+          .ilus-prompt-input.ilus-vc-bad,.ilus-prompt-input.ilus-vc-bad:focus{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,.14)}
+          .ilus-prompt-input.ilus-vc-ok,.ilus-prompt-input.ilus-vc-ok:focus{border-color:#16a34a;box-shadow:0 0 0 3px rgba(22,163,74,.14)}
+          .ilus-vc-msg{margin-top:7px;font-size:.8rem;font-weight:600;display:flex;align-items:center;gap:6px}
+          .ilus-vc-msg.ok{color:#15803d}.ilus-vc-msg.bad{color:#b91c1c}
         `;
         document.head.appendChild(s);
       }
@@ -449,8 +454,13 @@
       //     cierra y muestra el motivo abajo del campo.
       const _sanitize = typeof opts.sanitize === 'function' ? opts.sanitize : null;
       const _validate = typeof opts.validate === 'function' ? opts.validate : null;
+      // 🚦 2026-10-24 (REGLA #42): `minLength` (mínimo de caracteres) y/o `validate` pintan el campo en vivo: rojo con su motivo mientras no
+      // cumple, verde apenas cumple. Vacío = sin color. No cambia lo que ya hacía (Aceptar sigue validando y bloqueando igual).
+      const _minLen = (typeof opts.minLength === 'number' && opts.minLength > 0) ? Math.floor(opts.minLength) : 0;
+      let _vcEl = null;
       let _errEl = null;
       function _mostrarError(msg){
+        if (_vcEl){ _vcEl.remove(); _vcEl = null; }         // un solo mensaje bajo el campo: el de «Aceptar» manda sobre el de «en vivo»
         if (!_errEl){
           _errEl = document.createElement('div');
           _errEl.style.cssText = 'margin-top:7px;font-size:.8rem;font-weight:600;'
@@ -481,11 +491,47 @@
           _limpiarError();
         });
       }
+      if (_minLen || _validate){
+        const _vcPintar = () => {
+          const v = inputEl.value || '', len = v.trim().length;
+          if (!len){                                       // vacío: sin color (lo cubre «obligatorio» al aceptar)
+            inputEl.classList.remove('ilus-vc-ok', 'ilus-vc-bad');
+            if (_vcEl){ _vcEl.remove(); _vcEl = null; }
+            return;
+          }
+          let ok = true, msg = '';
+          if (_minLen && len < _minLen){
+            const f = _minLen - len;
+            ok = false; msg = 'Faltan ' + f + ' caracter' + (f === 1 ? '' : 'es') + ' (mínimo ' + _minLen + ').';
+          }
+          if (ok && _validate){
+            let r = null;
+            try { r = _validate(v); } catch(_){ r = null; }
+            if (r && r.ok === false){ ok = false; msg = r.error || 'El valor no es válido.'; }
+          }
+          inputEl.classList.toggle('ilus-vc-ok', ok);
+          inputEl.classList.toggle('ilus-vc-bad', !ok);
+          if (!_vcEl){
+            _vcEl = document.createElement('div');
+            inputEl.parentNode.insertBefore(_vcEl, inputEl.nextSibling);
+          }
+          _vcEl.className = 'ilus-vc-msg ' + (ok ? 'ok' : 'bad');
+          _vcEl.innerHTML = '<i class="bi ' + (ok ? 'bi-check-circle-fill' : 'bi-exclamation-circle-fill') + '"></i><span></span>';
+          _vcEl.querySelector('span').textContent = ok ? 'Listo.' : msg;
+        };
+        inputEl.addEventListener('input', () => { _limpiarError(); _vcPintar(); });
+        _vcPintar();                                        // si ya viene con un valor por defecto
+      }
 
       function done(ok){
         const val = ok ? inputEl.value : null;
         if (ok && required && (!val || !val.trim())){
           _mostrarError('Este campo es obligatorio.');
+          inputEl.focus();
+          return;
+        }
+        if (ok && _minLen && val && val.trim() && val.trim().length < _minLen){
+          _mostrarError('Escribe al menos ' + _minLen + ' caracteres.');
           inputEl.focus();
           return;
         }

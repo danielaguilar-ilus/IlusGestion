@@ -35,7 +35,9 @@ ESTATICOS = [
     "static/catalogo_list.js",
     "static/cliente_form.js",
     "static/mant_ficha.js",
+    "static/ilus_ui.js",
 ]
+PLANTILLAS.append("templates/tickets/_tka_modal.html")
 
 
 def _sin_jinja(js):

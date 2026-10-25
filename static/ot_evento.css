@@ -260,3 +260,8 @@ button.dc-d:focus-visible{outline:2px solid #0a0a0a;outline-offset:1px}
 .o2m-ag-salida{position:relative;margin-top:22px;padding-top:12px;border-top:2px dashed #d1d5db}
 .o2m-ag-union{position:absolute;left:50%;top:-14px;transform:translateX(-50%);background:#fff;color:#dc2626;font-size:1.4rem;line-height:1;padding:0 8px}
 @media (max-width:640px){.o2m-ag-lbl span{margin-left:0}}
+/* «Puedes salirte de la jornada»: plegado, para no empujar el calendario hacia abajo */
+.o2m-ag-mas{margin:-4px 0 10px;font-size:.8rem;color:#6b7280}
+.o2m-ag-mas summary{cursor:pointer;font-weight:700;color:#374151;min-height:32px;display:inline-flex;align-items:center;gap:6px}
+.o2m-ag-mas[open]{background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:2px 12px 10px}
+@media (max-width:640px){.o2m-ag-mas summary{min-height:44px}}

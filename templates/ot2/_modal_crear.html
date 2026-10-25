@@ -2948,10 +2948,11 @@ window.OT2C = (function(){
       (di ? '<p class="d"><b>Aquí agendas las dos órdenes.</b> Primero la <b>de entrada</b> (instalar) y, más abajo, la <b>de salida</b> '+
             '(desinstalar), que queda en el calendario para acordarnos de retirar los equipos.</p>'+
             '<div class="o2m-ag-lbl ent"><i class="bi bi-box-arrow-in-down"></i><b>Entrada · instalación</b></div>' : '')+
-      '<p class="d">La jornada es de 08:00 a 17:00, con colación de 13:00 a 14:00 (achurada en la línea '+
-      'de tiempo). Puedes arrastrar el bloque "Tu OT" con el mouse o el dedo para reagendarlo -- '+
-      'también sigues pudiendo escribir la hora a mano. Puedes salirte de la jornada: no se bloquea, '+
-      'solo se avisa -- salvo las 22:00, que es el límite absoluto del día.</p>'+
+      // 2026-10-24: el párrafo largo se partió en lo esencial + «puedes salirte de la jornada» plegado (mismas reglas, menos texto a la vista).
+      '<p class="d">Jornada de <b>08:00 a 17:00</b> con colación de <b>13:00 a 14:00</b> (achurada en la línea de tiempo). '+
+      'Toca un espacio libre o arrastra el bloque «Tu OT» (mouse o dedo) para fijar el horario; también puedes escribir la hora a mano.</p>'+
+      '<details class="o2m-ag-mas"><summary>Puedes salirte de la jornada</summary>'+
+      'No se bloquea, solo se avisa — salvo las 22:00, que es el límite absoluto del día.</details>'+
       '<div class="row g-3">'+
         '<div class="col-md-4"><label class="fl">Fecha programada *</label>'+
         '<input type="date" class="form-control" id="o2mFecha" value="'+esc(S.fecha)+'" '+
