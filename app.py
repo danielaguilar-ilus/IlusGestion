@@ -67912,6 +67912,355 @@ def clientes_hub_tipo_relacion(cid):
 
 
 # ════════════════════════════════════════════════════════════════════
+#  📊 COSTEO DE ÓRDENES DE TRABAJO — el tablero gerencial de Servicio Técnico  (Daniel, 2026-10-25)
+#  «cómo vamos semanalmente, cuánto ganamos, cuánto perdimos, cuánto estamos generando de garantías… a nombre de quién la
+#  estamos haciendo, cuánto nos cobran nuestros técnicos, los externos están siendo reincidentes… es rentable el
+#  departamento». Abre con Cobré · Me cobraron · Gané · Perdí · Neto; debajo, garantías y coberturas con su trazabilidad
+#  (quién lo asume, por qué, quién lo autorizó) y recién después el detalle.
+#
+#  SOLO LECTURA y SOLO SUPERADMIN (REGLAS #19 y #26: es plata y proveedores). Ninguna escritura, ningún DDL (REGLA #18), ni
+#  una llamada a Random ni a Check (REGLAS #4.1 y #4.4): usa lo ya guardado en MySQL — la cuenta de cada OT es la MISMA de
+#  su ficha (_ot_finanzas) y la suma es la MISMA del proyecto (_ot_fin_agregado). Toda la lógica de agregación vive en el
+#  módulo puro ot_gerencial.py (con pruebas); aquí solo están las lecturas, la caché corta y las rutas.
+#  Puntos de extensión (hoy devuelven None; no hay columna): _ger_columna_intencion() y _ger_columna_asume().
+# ════════════════════════════════════════════════════════════════════
+import ot_gerencial as _ger   # 2026-10-25: costeo de OT (módulo puro con pruebas)
+
+_GER_CACHE = {}              # (modo, ancla, desde, hasta, dias) -> (momento, datos). Solo superadmin: no mezcla personas.
+_GER_CACHE_SEG = 90
+_GER_LIMITE_FILAS = 6000     # techo de OT cerradas que se leen (6 meses); si se toca, el tablero lo avisa
+_GER_LIMITE_ABIERTAS = 3000
+# Nombres posibles de las columnas que Daniel agregará después (intención del $0 y área que lo asume). Se buscan en
+# information_schema una vez cada 10 min; si no existen, el tablero muestra «Sin clasificar» y nada más cambia.
+_GER_COLS_INTENCION = ("cobro_cero_intencion", "cobertura_intencion", "intencion_cero")
+_GER_COLS_ASUME = ("cobro_cero_asume_area", "cobertura_asume_area", "asume_area")
+_GER_COLS_ESTADO = {"revisado_en": 0.0, "cols": None}
+
+
+def _ger_solo_superadmin(view):
+    """La misma puerta de Regularizar OT y Saldo de facturas (_ot_solo_superadmin), resuelta al llamar: ese decorador vive
+    más abajo en el archivo y todavía no existe cuando Python lee esta línea."""
+    @wraps(view)
+    def wrapped(*a, **kw):
+        return _ot_solo_superadmin(view)(*a, **kw)
+    return wrapped
+
+
+def _ger_columnas_visitas():
+    """Columnas de mant_visitas (solo lectura de information_schema), a lo más cada 10 minutos. Si no se puede leer: vacío."""
+    ahora = time.time()
+    if _GER_COLS_ESTADO["cols"] is not None and ahora - _GER_COLS_ESTADO["revisado_en"] < 600:
+        return _GER_COLS_ESTADO["cols"]
+    try:
+        cols = {(r.get("COLUMN_NAME") or "").lower() for r in (mysql_fetchall(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mant_visitas'") or [])}
+    except Exception as e:
+        print(f"[ot-gerencial] columnas: {type(e).__name__}", flush=True)
+        cols = set()
+    _GER_COLS_ESTADO["cols"], _GER_COLS_ESTADO["revisado_en"] = cols, ahora
+    return cols
+
+
+def _ger_columna_intencion():
+    """PUNTO DE EXTENSIÓN: la columna de mant_visitas con la INTENCIÓN del $0 (garantía, evento, marketing, «lo asume
+    Comercial»…). Hoy no existe: devuelve None y el tablero muestra «Sin clasificar». Cuando exista, la usa sola."""
+    cols = _ger_columnas_visitas()
+    return next((c for c in _GER_COLS_INTENCION if c in cols), None)
+
+
+def _ger_columna_asume():
+    """PUNTO DE EXTENSIÓN: la columna de mant_visitas con el ÁREA QUE ASUME el costo (Comercial, Marketing…). Hoy no existe:
+    devuelve None y el tablero muestra «Sin clasificar» (junto al centro de costo, que sí existe). Cuando exista, la usa sola."""
+    cols = _ger_columnas_visitas()
+    return next((c for c in _GER_COLS_ASUME if c in cols), None)
+
+
+def _ger_etiqueta_area(valor):
+    """Un código de centro de costo (comercial, marketing…) se muestra con su nombre; cualquier otro texto, tal cual."""
+    v = (str(valor).strip() if valor is not None else "")
+    if not v:
+        return None
+    return dict(_OT2_CENTROS_COSTO).get(v.lower(), v)
+
+
+def _ger_select_cerradas():
+    """SELECT de las OT cerradas con TODO lo que necesita _ot_finanzas, el técnico y su empresa, el ticket de origen, el
+    responsable y las dos columnas de extensión (si existen). Los nombres de columna salen de constantes de código."""
+    resp = ("v.responsable_nombre, v.responsable_at, " if _ot_resp_ok() else "NULL AS responsable_nombre, NULL AS responsable_at, ")
+    ci, ca = _ger_columna_intencion(), _ger_columna_asume()
+    ext = (f"v.{ci} AS intencion, " if ci else "NULL AS intencion, ") + (f"v.{ca} AS asume_area, " if ca else "NULL AS asume_area, ")
+    return ("SELECT v.id, v.numero_ot, v.titulo, v.estado, v.centro_costo, v.cerrada_at, v.created_by, v.created_at, "
+            "       v.tecnico_user_id, v.proveedor_nombre, " + resp + ext + _ot_fin_cols_sql("v") + ", "
+            "       c.razon_social AS cliente, COALESCE(au.nombre, au.username) AS tecnico_nombre, au.role AS tecnico_role, "
+            "       te.id AS te_id, te.razon_social AS te_empresa, "
+            "       tk.id AS tk_id, tk.numero_ticket, tk.origen AS tk_origen, tk.created_by AS tk_creado_por, tk.created_at AS tk_creado_at "
+            "  FROM mant_visitas v "
+            "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+            "  LEFT JOIN app_users au ON au.id = v.tecnico_user_id "
+            "  LEFT JOIN mant_tecnicos_externos te ON te.user_id = au.id "
+            "  LEFT JOIN tk_tickets tk ON tk.visita_id = v.id ")
+
+
+_GER_SQL_EJECUTOR = ("v.tecnico_user_id, v.proveedor_nombre, v.proveedor_tipo, au.role AS tecnico_role, "
+                     "COALESCE(au.nombre, au.username) AS tecnico_nombre, te.id AS te_id, te.razon_social AS te_empresa ")
+_GER_SQL_JOIN_EJECUTOR = ("  LEFT JOIN app_users au ON au.id = v.tecnico_user_id "
+                          "  LEFT JOIN mant_tecnicos_externos te ON te.user_id = au.id ")
+
+
+def _ger_leer(sql_base, where, params, limite, orden, fallos, que):
+    """Lee dejando fuera las fichas de proveedor de PRUEBA (te.es_prueba). Si esa columna aún no existe se repite sin el
+    filtro. Si la lectura falla del todo se anota en `fallos` (el tablero lo dice) y se devuelve vacío."""
+    for filtro in (" AND COALESCE(te.es_prueba, 0) = 0", ""):
+        try:
+            return mysql_fetchall(sql_base + " WHERE " + where + filtro + orden + " LIMIT %s",
+                                  tuple(params) + (limite,)) or []
+        except Exception as e:
+            print(f"[ot-gerencial] {que}: {type(e).__name__}", flush=True)
+    fallos.append(que)
+    return []
+
+
+def _ger_chunks(ids, n=800):
+    ids = sorted({int(x) for x in ids if x})
+    return [ids[i:i + n] for i in range(0, len(ids), n)]
+
+
+def _ger_autorizaciones(ids, fallos):
+    """{vid: [autorizaciones aprobadas]} — quién las resolvió, cuándo y con qué argumento (tabla de autorizaciones, solo
+    lectura). Una autorización que creó una OT cuenta para esa OT; si no creó ninguna, para la OT sobre la que se pidió."""
+    out = {}
+    for lote in _ger_chunks(ids):
+        ph = ",".join(["%s"] * len(lote))
+        try:
+            for r in (mysql_fetchall(
+                    "SELECT id, visita_id, visita_creada_id, tipo, estado, motivo, argumento, solicitado_por_nombre, solicitado_at, "
+                    "       resuelto_por_nombre, resuelto_at FROM mant_ot_autorizaciones "
+                    f" WHERE entidad = 'ot' AND estado = 'aprobada' AND (visita_id IN ({ph}) OR visita_creada_id IN ({ph}))",
+                    tuple(lote) + tuple(lote)) or []):
+                v = r.get("visita_creada_id") or r.get("visita_id")
+                if v:
+                    out.setdefault(int(v), []).append(dict(r))
+        except Exception as e:
+            print(f"[ot-gerencial] autorizaciones: {type(e).__name__}", flush=True)
+            fallos.append("autorizaciones")
+            break
+    return out
+
+
+def _ger_nombres_usuarios():
+    """{usuario en minúsculas: nombre completo}: el ticket y la OT guardan el USUARIO de quien las creó; aquí se muestra
+    la persona. Solo lectura."""
+    try:
+        return {(r.get("username") or "").strip().lower(): (r.get("nombre") or r.get("username") or "").strip()
+                for r in (mysql_fetchall("SELECT username, nombre FROM app_users") or []) if r.get("username")}
+    except Exception as e:
+        print(f"[ot-gerencial] usuarios: {type(e).__name__}", flush=True)
+        return {}
+
+
+def _ger_equipos(ids, fallos):
+    """{vid: {maquina_id}} — los equipos de cada OT (para saber si una OT nueva es sobre el mismo equipo)."""
+    out = {}
+    for lote in _ger_chunks(ids):
+        try:
+            for r in (mysql_fetchall("SELECT visita_id, maquina_id FROM mant_visita_equipos WHERE visita_id IN ("
+                                     + ",".join(["%s"] * len(lote)) + ")", tuple(lote)) or []):
+                out.setdefault(int(r["visita_id"]), set()).add(int(r["maquina_id"]))
+        except Exception as e:
+            print(f"[ot-gerencial] equipos: {type(e).__name__}", flush=True)
+            fallos.append("equipos")
+            break
+    return out
+
+
+def _ger_reincidencia(dias, ahora_utc, fallos):
+    """Las OT que los externos cerraron en los últimos 6 meses y las OT correctivas o de garantía que las pudieron seguir,
+    con sus equipos. La regla vive en ot_gerencial.detectar_reincidencias."""
+    desde = ahora_utc - timedelta(days=_ger.VENTANA_REINCIDENCIA_DIAS)
+    externo = ("(v.proveedor_tipo = 'externo' OR LEFT(LOWER(COALESCE(au.role,'')), 15) = 'tecnico_externo' OR te.id IS NOT NULL)")
+    base = ("SELECT v.id, v.numero_ot, v.cliente_id, v.tipo, v.modalidad_cobro, v.cubierto_por, v.estado, v.cerrada_at, v.created_at, "
+            "       v.ot_madre_id, v.ot_relacion, c.razon_social AS cliente, " + _GER_SQL_EJECUTOR +
+            "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id = v.cliente_id " + _GER_SQL_JOIN_EJECUTOR)
+    cer_rows = _ger_leer(base, "v.estado = 'cerrada' AND v.cerrada_at >= %s AND v.cliente_id IS NOT NULL AND " + externo,
+                         (desde,), 4000, " ORDER BY v.cerrada_at DESC", fallos, "reincidencia (OT cerradas)")
+    cand_rows = _ger_leer(base, "v.created_at >= %s AND v.cliente_id IS NOT NULL AND v.estado NOT IN ('cancelada','anulada') "
+                                "AND (v.tipo IN ('correctiva','visita_correctiva','garantia') OR v.modalidad_cobro = 'garantia' "
+                                "     OR v.cubierto_por = 'garantia')",
+                          (desde,), 8000, " ORDER BY v.created_at DESC", fallos, "reincidencia (OT posteriores)")
+    eq = _ger_equipos([r["id"] for r in cer_rows] + [r["id"] for r in cand_rows], fallos)
+    cerradas = [{"id": r["id"], "numero": r.get("numero_ot"), "cliente_id": r.get("cliente_id"), "cliente": r.get("cliente"),
+                 "cerrada_at": r.get("cerrada_at"), "ejecutor": _ger.armar_ejecutor(r), "maquinas": eq.get(int(r["id"]), set())}
+                for r in cer_rows]
+    candidatas = [{"id": r["id"], "numero": r.get("numero_ot"), "cliente_id": r.get("cliente_id"), "tipo": (r.get("tipo") or "").lower(),
+                   "es_garantia": (r.get("modalidad_cobro") or "").lower() == "garantia" or (r.get("cubierto_por") or "").lower() == "garantia",
+                   "estado": r.get("estado"), "created_at": r.get("created_at"), "ot_madre_id": r.get("ot_madre_id"),
+                   "ot_relacion": r.get("ot_relacion"), "ejecutor": _ger.armar_ejecutor(r), "maquinas": eq.get(int(r["id"]), set())}
+                  for r in cand_rows]
+    return {"cerradas": cerradas, "candidatas": candidatas, "dias": dias, "hoy_utc": ahora_utc}
+
+
+def _ger_agendadas(periodo, fallos):
+    """OT con fecha programada dentro del período y técnico asignado (para «¿están yendo?»: agendadas, hechas, vencidas)."""
+    base = ("SELECT v.id, v.numero_ot, v.estado, v.fecha_programada, " + _GER_SQL_EJECUTOR +
+            "  FROM mant_visitas v " + _GER_SQL_JOIN_EJECUTOR)
+    rows = _ger_leer(base, "v.fecha_programada >= %s AND v.fecha_programada <= %s AND v.tecnico_user_id IS NOT NULL "
+                           "AND v.estado NOT IN ('cancelada','anulada','reagendada')",
+                     (periodo["desde"], periodo["hasta"]), 5000, " ORDER BY v.fecha_programada", fallos, "OT agendadas")
+    return [{"id": r["id"], "numero": r.get("numero_ot"), "estado": r.get("estado"), "fecha_programada": r.get("fecha_programada"),
+             "ejecutor": _ger.armar_ejecutor(r)} for r in rows]
+
+
+def _ger_abiertas(fallos):
+    """La plata en camino: lo que se cobrará y se pagará con las OT que siguen abiertas (misma cuenta de la OT)."""
+    try:
+        rows = mysql_fetchall(
+            "SELECT v.id, " + _ot_fin_cols_sql("v") + " FROM mant_visitas v "
+            " WHERE v.estado NOT IN ('cerrada','cancelada','anulada') AND v.cliente_id IS NOT NULL "
+            " ORDER BY v.id DESC LIMIT %s", (_GER_LIMITE_ABIERTAS,)) or []
+        fins = _ot_fin_lote(rows)
+    except Exception as e:
+        print(f"[ot-gerencial] abiertas: {type(e).__name__}", flush=True)
+        fallos.append("OT abiertas")
+        return None
+    return [{"cobra": f["cobra"], "mide": f["queda"]["mostrar"], "cobre": f["cobre"]["total"], "a_pagar": f["a_pagar_proveedor"]}
+            for f in fins.values()]
+
+
+def _ger_cuentas_por_pagar(periodo, fallos):
+    """Lo que ILUS le debe a los proveedores externos (facturas pendientes) y lo pagado en el período. Solo lectura."""
+    try:
+        pen = mysql_fetchone("SELECT COUNT(*) AS n, COALESCE(SUM(monto_total), 0) AS monto FROM mant_facturas_proveedor "
+                             " WHERE estado_pago = 'pendiente'") or {}
+        pag = mysql_fetchone("SELECT COUNT(*) AS n, COALESCE(SUM(monto_total), 0) AS monto FROM mant_facturas_proveedor "
+                             " WHERE estado_pago = 'pagada' AND pagada_at >= %s AND pagada_at < %s",
+                             (periodo["ini_utc"], periodo["fin_utc"])) or {}
+    except Exception as e:
+        print(f"[ot-gerencial] cuentas por pagar: {type(e).__name__}", flush=True)
+        fallos.append("facturas de proveedor")
+        return None
+    return {"pendiente_n": int(pen.get("n") or 0), "pendiente_monto": float(pen.get("monto") or 0),
+            "pagadas_n": int(pag.get("n") or 0), "pagadas_monto": float(pag.get("monto") or 0)}
+
+
+def _ger_cargar(modo, ancla, desde, hasta, dias):
+    """Lee todo (solo SELECT), normaliza cada OT cerrada con la cuenta única y arma el tablero."""
+    hoy = _now_chile().date()
+    periodo = _ger.rango_periodo(hoy, modo, desde, hasta, ancla)
+    d_ini, d_fin = _ger.ventana_carga(periodo)
+    ini_utc = _ger.inicio_dia_utc(d_ini)
+    fin_utc = _ger.inicio_dia_utc(d_fin + timedelta(days=1))
+    fallos = []
+    rows = _ger_leer(_ger_select_cerradas(), "v.estado = 'cerrada' AND v.cerrada_at >= %s AND v.cerrada_at < %s",
+                     (ini_utc, fin_utc), _GER_LIMITE_FILAS, " ORDER BY v.cerrada_at DESC", fallos, "OT cerradas")
+    truncado = len(rows) >= _GER_LIMITE_FILAS
+    vistas, filas_sql = set(), []
+    for r in rows:                       # una OT con dos tickets viene dos veces: se queda la primera
+        if r["id"] in vistas:
+            continue
+        vistas.add(r["id"])
+        filas_sql.append(r)
+    fins = _ot_fin_lote(filas_sql) if filas_sql else {}
+
+    def _fin(r):
+        return fins.get(int(r["id"])) or _ot_finanzas(r)
+
+    en_periodo = [r for r in filas_sql if periodo["ini_utc"] <= r["cerrada_at"] < periodo["fin_utc"]]
+    ids_periodo = [r["id"] for r in en_periodo]
+    clasif = {}
+    if ids_periodo:
+        try:
+            clasif = _ot_fin_clasif_lote(ids_periodo)
+        except Exception as e:
+            print(f"[ot-gerencial] clasificación: {type(e).__name__}", flush=True)
+            fallos.append("clasificación")
+    ids_atribuibles = [r["id"] for r in en_periodo
+                       if _fin(r)["cobertura"] != "cobra" or _fin(r)["queda"]["total"] < 0]
+    auts = _ger_autorizaciones(ids_atribuibles, fallos) if ids_atribuibles else {}
+    nombres = _ger_nombres_usuarios() if ids_atribuibles else {}
+    centros = dict(_OT2_CENTROS_COSTO)
+    en_per = set(ids_periodo)
+    filas = []
+    for r in filas_sql:
+        vid = int(r["id"])
+        ctx = {"nombres": nombres, "tipo_txt": _TIPO_OT_LABEL.get((r.get("tipo") or "").lower()) or (r.get("tipo") or "").replace("_", " ").capitalize(),
+               "centro_txt": centros.get((r.get("centro_costo") or "").lower()) or (r.get("centro_costo") or "Sin centro de costo"),
+               "intencion": r.get("intencion"), "asume_area": _ger_etiqueta_area(r.get("asume_area"))}
+        if vid in en_per:
+            ctx["autorizaciones"] = auts.get(vid, [])
+            ctx["clasif"] = clasif.get(vid)
+        filas.append(_ger.armar_fila(r, _fin(r), ctx))
+    ahora_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    abiertas = _ger_abiertas(fallos)
+    cxp = _ger_cuentas_por_pagar(periodo, fallos)
+    try:
+        agendadas = _ger_agendadas(periodo, fallos)
+    except Exception as e:
+        print(f"[ot-gerencial] agendadas: {type(e).__name__}", flush=True)
+        agendadas = None
+    try:
+        reinc = _ger_reincidencia(dias, ahora_utc, fallos)
+    except Exception as e:
+        print(f"[ot-gerencial] reincidencia: {type(e).__name__}", flush=True)
+        fallos.append("reincidencia")
+        reinc = None
+    meta = {"truncado": truncado, "limite": _GER_LIMITE_FILAS, "fallos": sorted(set(fallos)), "n_leidas": len(filas_sql),
+            "generado": _now_chile().strftime("%d/%m/%Y %H:%M"), "col_intencion": _ger_columna_intencion(),
+            "col_asume": _ger_columna_asume(), "ventana": (d_ini, d_fin), "dias_reinc": dias}
+    return _ger.armar_tablero(periodo, filas, _ot_fin_agregado, hoy, agendadas=agendadas, reinc=reinc,
+                              abiertas=abiertas, cxp=cxp, meta=meta)
+
+
+def _ger_datos(p, forzar=False):
+    """El tablero del período `p` (de ot_gerencial.leer_parametros), con caché de 90 s para que abrirlo, cambiar de pestaña o
+    bajar el Excel no vuelva a leer seis meses de OT. `forzar` salta la caché (botón «Actualizar»)."""
+    clave = (p["modo"], p["ancla"], p["desde"], p["hasta"], p["dias"])
+    ahora = time.time()
+    c = _GER_CACHE.get(clave)
+    if c and not forzar and ahora - c[0] < _GER_CACHE_SEG:
+        return c[1]
+    datos = _ger_cargar(p["modo"], p["ancla"], p["desde"], p["hasta"], p["dias"])
+    if len(_GER_CACHE) > 12:
+        _GER_CACHE.clear()
+    _GER_CACHE[clave] = (ahora, datos)
+    return datos
+
+
+@app.route("/ot/gerencial", methods=["GET"])
+@_mant_required
+@_no_tecnico
+@_ger_solo_superadmin
+def ot_gerencial_pagina():
+    """«Costeo de órdenes de trabajo»: ?modo=semana|mes|trimestre|rango &ancla=AAAA-MM-DD &desde= &hasta= &dias=30|60|90
+    &actualizar=1. Solo el superadministrador (los técnicos nunca ven plata ni proveedores: REGLAS #19 y #26)."""
+    p = _ger.leer_parametros(request.args, _now_chile().date())
+    try:
+        d = _ger_datos(p, forzar=request.args.get("actualizar") == "1")
+    except Exception as e:
+        print(f"[ot-gerencial] {type(e).__name__}: {str(e)[:200]}", flush=True)
+        return _friendly_error_page("No pudimos armar el costeo", "Vuelve a intentarlo en un momento. Si sigue igual, avísale a soporte.", 500)
+    return render_template("ot2/gerencial.html", d=d, G=_ger, p=p)
+
+
+@app.route("/ot/gerencial/excel", methods=["GET"])
+@_mant_required
+@_no_tecnico
+@_ger_solo_superadmin
+def ot_gerencial_excel():
+    """El mismo período en un Excel (una hoja por sección). Solo el superadministrador."""
+    p = _ger.leer_parametros(request.args, _now_chile().date())
+    try:
+        d = _ger_datos(p)
+        contenido = _ger.excel_bytes(d)
+    except Exception as e:
+        print(f"[ot-gerencial] excel {type(e).__name__}: {str(e)[:200]}", flush=True)
+        flash("No pudimos generar el Excel del costeo. Vuelve a intentarlo.", "danger")
+        return redirect(url_for("ot_gerencial_pagina"))
+    nombre = "Costeo_OT_" + d["periodo"]["desde"].strftime("%d-%m-%Y") + "_al_" + d["periodo"]["hasta"].strftime("%d-%m-%Y") + ".xlsx"
+    return send_file(io.BytesIO(contenido), as_attachment=True, download_name=nombre,
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+# ════════════════════════════════════════════════════════════════════
 #  HUB TOP-LEVEL — Dashboard / Órdenes de Trabajo / Plantillas
 #  (2026-07-12, Daniel: rediseño de sidebar sin duplicar lógica)
 #  MISMA VISTA, MISMOS PERMISOS -- reuso directo de las páginas globales
