@@ -110,13 +110,17 @@ textarea.ev-in{min-height:84px;resize:vertical}
   display:inline-flex;align-items:center;gap:6px}
 .o2m-di-atajo:hover{border-color:#0a0a0a;color:#0a0a0a}
 .o2m-di-atajo.sug{border-color:#93c5fd;background:#eff6ff;color:#1e40af}
-.o2m-di-av{display:flex;gap:9px;align-items:flex-start;border-radius:10px;padding:9px 12px;margin-top:10px;font-size:.84rem;line-height:1.4;overflow-wrap:anywhere}
+/* El texto del aviso se queda con el ancho que necesita (nunca aplastado por los botones): si no caben a su lado, los botones bajan a su propia fila.
+   Revisión independiente 25-oct, hallazgo 1: en celular el botón «Buscar hueco libre» dejaba el texto de la caja de choque en 44 px de ancho. */
+.o2m-di-av{display:flex;flex-wrap:wrap;gap:9px;align-items:flex-start;border-radius:10px;padding:9px 12px;margin-top:10px;font-size:.84rem;line-height:1.4;overflow-wrap:anywhere}
 .o2m-di-av i{margin-top:2px;flex:none}
+.o2m-di-av>span{flex:1 1 220px;min-width:0}
 .o2m-di-av.ambar{background:#fff8e1;border:1px solid #fde68a;color:#92400e}
 .o2m-di-av.rojo{background:#fef2f2;border:1px solid #fecaca;color:#7f1d1d}
 .o2m-di-av.azul{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a}
 .o2m-di-av.verde{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
 .o2m-di-av button{margin-left:auto;flex:none;min-height:44px;padding:0 12px;border-radius:8px;border:1px solid currentColor;background:#fff;font-weight:800;color:inherit}
+@media (max-width:640px){.o2m-di-av button{flex:1 1 140px;margin-left:0;display:inline-flex;align-items:center;justify-content:center;gap:6px}}
 .o2m-di-tec{display:flex;flex-wrap:wrap;gap:8px}
 .o2m-di-tchip{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:4px 10px;background:#eef2ff;border:1px solid #c7d2fe;color:#312e81;font-weight:800;font-size:.76rem}
 .o2m-di-tchip.lider{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
@@ -175,120 +179,93 @@ a.o2t-chip{text-decoration:none}a.o2t-chip:hover{filter:brightness(.96);text-dec
 /* 2026-10-20 (REGLA #3, revision): en celular los enlaces a una OT median 20-21 px: area tactil minima de 44 px. */
 @media (max-width:640px){.ev-link{display:inline-flex;align-items:center;min-height:44px}}
 
-/* ── 📅 2026-10-23 · Fecha y horario de la desinstalación: calendario compacto + «ficha» (Daniel: «un calendario como corresponde… espectacular,
-   tecnológico… objetos más pequeños sin perder calidad»). Todo en texto, bordes y degradados (nada escalado: queda nítido en cualquier pantalla).
-   Paleta REGLA #2 (negro/blanco/rojo); el azul es solo «día de la instalación» y el ámbar «sugerida». */
-.o2m-dc{display:grid;grid-template-columns:minmax(0,292px) minmax(0,1fr);margin-top:9px;border:1.5px solid #e5e7eb;border-radius:16px;overflow:hidden;background:#fff;
-  box-shadow:0 10px 26px -18px rgba(10,10,10,.55)}
-.o2m-dc.ok{border-color:#86efac}.o2m-dc.falta{border-color:#fde68a}
-.dc-cal{padding:10px 12px 9px;min-width:0}
-.dc-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
-.dc-nav b{font-weight:900;font-size:.86rem;text-transform:capitalize;letter-spacing:.02em;color:#0a0a0a}
-.dc-nb{width:30px;height:30px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;display:grid;place-items:center;font-size:.78rem;color:#374151;cursor:pointer;padding:0}
-.dc-nb:hover{border-color:#0a0a0a;color:#0a0a0a}
-.dc-dow,.dc-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px}
-.dc-dow{margin-bottom:3px}
-.dc-dow span{text-align:center;font-size:.6rem;font-weight:800;color:#9ca3af;letter-spacing:.08em}
-.dc-d{position:relative;aspect-ratio:1/1;min-width:0;min-height:32px;border-radius:9px;border:1px solid transparent;background:#f6f7f9;display:grid;place-items:center;padding:0;
-  font:inherit;cursor:pointer;transition:transform .12s,border-color .12s,background .12s}
-.dc-d b{font-size:.78rem;font-weight:800;color:#111827;font-variant-numeric:tabular-nums;line-height:1}
-button.dc-d:hover{background:#fff;border-color:#0a0a0a;transform:translateY(-1px)}
-button.dc-d:focus-visible{outline:2px solid #0a0a0a;outline-offset:1px}
-.dc-d.blank{visibility:hidden;pointer-events:none}
-.dc-d.sab{background:#eef0f3}
-.dc-d.fer{background:#fef2f2;border-color:#fecaca}.dc-d.fer b{color:#991b1b}   /* 🗓️ 2026-10-24 (REGLA #31): feriado de Chile, rojo suave: solo informa */
-.dc-d.off{opacity:.38;cursor:not-allowed;background:repeating-linear-gradient(135deg,#f8f9fa,#f8f9fa 5px,#eef0f2 5px,#eef0f2 10px)}
-.dc-d.hoy b{color:#dc2626}
-.dc-d.inst{background:#eff6ff;box-shadow:0 0 0 1.5px #3b82f6 inset}
-.dc-d.sug{box-shadow:0 0 0 1.5px #f59e0b inset}
-.dc-d.sel{background:#0a0a0a;border-color:#0a0a0a;box-shadow:0 0 0 2px #fff,0 0 0 3.5px #dc2626,0 6px 14px -5px rgba(220,38,38,.6);z-index:1}
-.dc-d.sel b{color:#fff}
-.dc-d s{position:absolute;right:2px;top:1px;text-decoration:none;font-size:.5rem;font-weight:900;color:#fff;background:#94a3b8;border-radius:6px;padding:0 3px;line-height:1.35}
-.dc-d.c2 s{background:#f59e0b}.dc-d.c3 s{background:#dc2626}
-.dc-d .mk{position:absolute;left:2px;bottom:1px;text-decoration:none;font-size:.52rem;line-height:1;color:#3b82f6}.dc-d.sug .mk{color:#f59e0b}
-.dc-d .mk.fm{color:#dc2626}
-.dc-d.sel .mk{color:#fff}
-.dc-grid.cargando{opacity:.5}
-.dc-ley{display:flex;flex-wrap:wrap;gap:3px 10px;margin-top:8px;font-size:.62rem;color:#6b7280;font-weight:700}
-.dc-ley span{display:inline-flex;align-items:center;gap:4px}
-.dc-ley i.k{width:9px;height:9px;border-radius:3px;display:inline-block}
-.dc-ley i.k.inst{background:#eff6ff;box-shadow:0 0 0 1.5px #3b82f6 inset}.dc-ley i.k.sel{background:#0a0a0a}
-.dc-ley i.k.fer{background:#fef2f2;box-shadow:0 0 0 1.5px #fecaca inset}
-.dc-ley i.k.c1{background:#94a3b8}.dc-ley i.k.off{background:repeating-linear-gradient(135deg,#f8f9fa,#f8f9fa 2px,#d9dde2 2px,#d9dde2 4px)}
-/* la «ficha» (lado oscuro) */
-.dc-side{position:relative;color:#fff;padding:13px 15px;display:flex;flex-direction:column;gap:9px;min-width:0;
-  background:radial-gradient(120% 90% at 100% 0%,rgba(220,38,38,.3),transparent 55%),linear-gradient(160deg,#181b21,#0a0a0a)}
-.dc-side:before{content:"";position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);
-  background-size:20px 20px;-webkit-mask-image:linear-gradient(180deg,#000,transparent 80%);mask-image:linear-gradient(180deg,#000,transparent 80%)}
-.dc-side>*{position:relative}
-.dc-k{font-size:.62rem;font-weight:900;text-transform:uppercase;letter-spacing:.14em;color:#fca5a5;display:flex;align-items:center;gap:6px}
-.dc-big{display:flex;align-items:center;gap:11px}
-.dc-big b{font-size:2.5rem;font-weight:900;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.03em;text-shadow:0 0 22px rgba(220,38,38,.55)}
-.dc-big span{font-size:.86rem;font-weight:800;line-height:1.25;text-transform:capitalize}
-.dc-big em{display:block;font-style:normal;font-weight:700;font-size:.72rem;color:#d1d5db;text-transform:capitalize}
-.dc-rel{font-size:.72rem;color:#d1d5db;margin-top:-4px}
-.dc-vacio{display:flex;align-items:center;gap:8px;font-size:.84rem;color:#d1d5db;padding:8px 0}
-.dc-vacio i{font-size:1.3rem;color:#fca5a5}
-.dc-hrs{display:flex;align-items:flex-end;gap:7px;flex-wrap:wrap}
-.dc-hrs label{display:flex;flex-direction:column;gap:2px;font-size:.58rem;font-weight:900;text-transform:uppercase;letter-spacing:.1em;color:#9ca3af;margin:0}
-.dc-hrs input[type=time]{width:100px;min-height:44px;font-size:16px;font-weight:800;font-variant-numeric:tabular-nums;color:#fff;background:rgba(255,255,255,.08);
-  border:1px solid rgba(255,255,255,.22);border-radius:9px;padding:4px 8px;color-scheme:dark}
-@media (min-width:641px){.dc-hrs input[type=time]{min-height:34px;font-size:14px}}
-.dc-hrs input[type=time]:focus{outline:2px solid #dc2626;outline-offset:0;border-color:#dc2626}
-.dc-ar{color:#9ca3af;padding-bottom:9px}
-.dc-dur{margin-left:auto;align-self:flex-end;font-size:.7rem;font-weight:900;color:#0a0a0a;background:#fca5a5;border-radius:999px;padding:3px 10px;margin-bottom:6px}
-.dc-atajos{display:flex;flex-wrap:wrap;gap:6px}
-.dc-at{min-height:44px;padding:0 11px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.07);color:#fff;font-weight:800;font-size:.72rem;
-  cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-variant-numeric:tabular-nums}
-@media (min-width:641px){.dc-at{min-height:30px}}
-.dc-at:hover{border-color:#fff;background:rgba(255,255,255,.16)}
-.dc-at.on{background:#fff;color:#0a0a0a;border-color:#fff}
-.dc-at.sug{border-color:#fcd34d;color:#fde68a}
-.dc-at.hueco{align-self:flex-start;border-style:dashed}
-@media (max-width:720px){
-  .o2m-dc{grid-template-columns:1fr}
-  .dc-d{min-height:38px}.dc-d b{font-size:.86rem}
-  .dc-big b{font-size:2.1rem}
-}
-@media (prefers-reduced-motion:reduce){.dc-d{transition:none}button.dc-d:hover{transform:none}}
-
-/* ── 📅 2026-10-24 · Paso «Agenda» con «Instalación con desinstalación» (Daniel: «que el modal se comporte en términos de calendario para crear dos
-   órdenes de trabajo»): la ENTRADA arriba (el calendario de siempre) y la SALIDA abajo (calendario compacto con su ficha), unidas por una flecha. */
-.o2m-ag-lbl{display:flex;align-items:center;flex-wrap:wrap;gap:4px 9px;margin:6px 0 8px;font-size:.9rem;color:#0a0a0a}
-.o2m-ag-lbl i{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-size:1rem;flex:none}
-.o2m-ag-lbl.ent i{background:#eff6ff;color:#2563eb;box-shadow:0 0 0 1.5px #bfdbfe inset}
-.o2m-ag-lbl.sal i{background:#fef2f2;color:#dc2626;box-shadow:0 0 0 1.5px #fecaca inset}
-.o2m-ag-lbl b{font-weight:900;letter-spacing:.01em}
-.o2m-ag-lbl span{flex:1 1 100%;margin-left:39px;font-size:.78rem;font-weight:500;line-height:1.4;color:#6b7280}
-.o2m-ag-salida{position:relative;margin-top:22px;padding-top:12px;border-top:2px dashed #d1d5db}
-.o2m-ag-union{position:absolute;left:50%;top:-14px;transform:translateX(-50%);background:#fff;color:#dc2626;font-size:1.4rem;line-height:1;padding:0 8px}
-@media (max-width:640px){.o2m-ag-lbl span{margin-left:0}}
-/* «Puedes salirte de la jornada»: plegado, para no empujar el calendario hacia abajo */
+/* ── 📅 2026-10-25 · Paso «Agenda» con «Instalación con desinstalación» (Daniel: «reciclar el mismo calendario… hazlo potente, hazlo amigable, hazlo
+   con pocos pasos, muy poco scroll»). UN solo calendario para las dos órdenes: arriba un interruptor «Entrada | Salida» que se queda a la vista
+   al bajar a la línea de tiempo y que muestra las dos fechas y los días que hay entre ellas; debajo, una línea de guía («qué sigue») y, con la
+   salida activa, los atajos de fecha. Reemplaza al calendario compacto oscuro de la salida (ya no existe). Paleta REGLA #2: azul = entrada
+   (info), rojo = salida; verde/rojo de las fichas = semáforo de la fecha. Nada se corta (REGLA #15) y en celular todo mide 44 px (REGLA #3). */
+/* «Cómo funciona la agenda» / «Puedes salirte de la jornada»: plegado, para no empujar el calendario hacia abajo */
 .o2m-ag-mas{margin:-4px 0 10px;font-size:.8rem;color:#6b7280}
 .o2m-ag-mas summary{cursor:pointer;font-weight:700;color:#374151;min-height:32px;display:inline-flex;align-items:center;gap:6px}
 .o2m-ag-mas[open]{background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:2px 12px 10px}
 @media (max-width:640px){.o2m-ag-mas summary{min-height:44px}}
-/* Las DOS fechas de un vistazo (entrada → salida): semáforo verde si la fecha sirve, rojo con el motivo si no. Nombres completos, sin cortar. */
-.o2m-ag-resumen{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;gap:8px;margin:6px 0 12px}
-.o2m-ag-chip{display:flex;align-items:center;gap:10px;min-height:56px;padding:9px 12px;border:1.5px solid #e5e7eb;border-radius:12px;background:#fff;text-align:left;cursor:pointer;font:inherit;min-width:0;
-  transition:border-color .15s,background .15s,transform .12s}
+/* El interruptor: pegajoso (position:sticky) arriba del paso. `top` negativo = el relleno de arriba de .o2m-body (22 px; 16 px en celular),
+   para que se pegue al borde mismo del cuerpo y no deje una franja por donde asome lo que se desplaza. */
+.o2m-ag-resumen{position:sticky;top:-22px;z-index:30;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;gap:8px;
+  margin:2px -6px 8px;padding:6px;background:#fff;      /* fondo sólido: el desenfoque cuesta GPU al desplazar en celulares modestos y con este alfa no se notaba */
+  border-radius:14px;box-shadow:0 12px 14px -14px rgba(10,10,10,.6)}
+/* La barra pegajosa no tapa el campo que recibe el foco al volver atrás con Tab (WCAG 2.4.11): el cuerpo reserva su alto al desplazar el foco. */
+.o2m-body:has(.o2m-ag-resumen){scroll-padding-top:116px}
+.o2m-ag-chip{display:flex;align-items:center;gap:10px;min-height:56px;padding:8px 12px;border:1.5px solid #e5e7eb;border-radius:12px;background:#fff;text-align:left;cursor:pointer;font:inherit;min-width:0;
+  transition:border-color .15s,background .15s,box-shadow .15s,transform .12s}
 .o2m-ag-chip:hover{transform:translateY(-1px);border-color:#0a0a0a}
 .o2m-ag-chip:focus-visible{outline:2px solid #0a0a0a;outline-offset:2px}
 .o2m-ag-chip .ic{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-size:1.05rem;flex:none}
 .o2m-ag-chip.ent .ic{background:#eff6ff;color:#2563eb}
 .o2m-ag-chip.sal .ic{background:#fef2f2;color:#dc2626}
 .o2m-ag-chip .tx{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
-.o2m-ag-chip .tx b{font-size:.74rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;color:#6b7280}
+.o2m-ag-chip .tx b{font-size:.74rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;display:flex;align-items:center;flex-wrap:wrap;gap:2px 6px}
 .o2m-ag-chip .tx em{font-style:normal;font-weight:800;font-size:.9rem;line-height:1.3;color:#0a0a0a;overflow-wrap:anywhere}
 .o2m-ag-chip .est{font-size:1.1rem;flex:none}
+.o2m-ag-chip .sh{display:none}
 .o2m-ag-chip.ok{border-color:#86efac;background:#f4fdf7}.o2m-ag-chip.ok .est{color:#16a34a}
 .o2m-ag-chip.falta{border-color:#fca5a5;background:#fff7f7}.o2m-ag-chip.falta .est{color:#dc2626}.o2m-ag-chip.falta .tx em{color:#b91c1c}
+/* la orden que se está agendando: borde negro y la etiqueta «editando» */
+.o2m-ag-chip.on.ok,.o2m-ag-chip.on.falta{border-color:#0a0a0a;box-shadow:0 0 0 3px rgba(10,10,10,.1)}
+.o2m-ag-chip .tx b .ed{padding:1px 7px;border-radius:999px;background:#0a0a0a;color:#fff;font-size:.58rem;letter-spacing:.08em;line-height:1.5}
 .o2m-ag-gap{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#9ca3af;font-size:1.1rem}
 .o2m-ag-gap small{font-size:.66rem;font-weight:800;color:#6b7280;white-space:nowrap}
-@media (max-width:720px){
-  .o2m-ag-resumen{grid-template-columns:1fr}
-  .o2m-ag-chip{min-height:60px}
-  .o2m-ag-gap{flex-direction:row;justify-content:center;gap:8px;padding:0;margin:-2px 0}
-  .o2m-ag-gap .bi-arrow-right{transform:rotate(90deg)}
+/* La guía: una línea que dice qué hacer ahora y, si corresponde, el botón para pasar a lo que sigue. */
+.o2m-ag-guia{margin:0 0 8px}
+.o2m-ag-guia .g-t{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;font-size:.9rem;line-height:1.35;color:#111827;min-height:36px}
+.o2m-ag-guia .g-t>i{font-size:1.15rem;color:#6b7280;flex:none}
+.o2m-ag-guia .g-t>i.ok{color:#16a34a}.o2m-ag-guia .g-t>i.falta{color:#dc2626}
+.o2m-ag-guia .g-t>span{flex:1 1 200px;min-width:0}
+.o2m-ag-go{min-height:44px;padding:0 16px;border:0;border-radius:999px;background:var(--ilus-red,#dc2626);color:#fff;font-weight:800;font-size:.86rem;display:inline-flex;align-items:center;gap:8px;cursor:pointer;
+  box-shadow:0 8px 18px -8px rgba(220,38,38,.65);transition:transform .12s,box-shadow .15s}
+.o2m-ag-go:hover{transform:translateY(-1px)}
+.o2m-ag-go:focus-visible{outline:2px solid #0a0a0a;outline-offset:2px}
+@media (min-width:641px){.o2m-ag-go{min-height:36px}}
+/* Atajos de fecha de la salida (contados desde la entrada). */
+.o2m-ag-atajos{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.o2m-ag-at{min-height:44px;padding:0 12px;border-radius:999px;border:1.5px solid #d1d5db;background:#fff;color:#111827;font-weight:800;font-size:.78rem;display:inline-flex;align-items:center;gap:6px;
+  cursor:pointer;font-variant-numeric:tabular-nums;transition:border-color .12s,background .12s}
+@media (min-width:641px){.o2m-ag-at{min-height:32px}}
+.o2m-ag-at:hover{border-color:#0a0a0a}
+.o2m-ag-at:focus-visible{outline:2px solid #0a0a0a;outline-offset:2px}
+.o2m-ag-at.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.o2m-ag-at.sug{border-color:#fcd34d;background:#fffbeb;color:#92400e}
+/* Celular: el interruptor es una sola fila de dos fichas compactas (fecha corta), para ocupar poco y quedarse a la vista. */
+@media (max-width:640px){
+  .o2m-ag-resumen{top:-16px}      /* el relleno de .o2m-body en celular es de 16 px */
+  /* los atajos de fecha van en UNA fila que se desliza dentro de su caja (la página nunca de lado): menos scroll vertical */
+  .o2m-ag-atajos{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px}
+  .o2m-ag-atajos::-webkit-scrollbar{display:none}
+  .o2m-ag-at{flex:none}
+  /* Con las dos órdenes, TODO lo que se toca en el paso Agenda mide 44 px en celular (revisión independiente 25-oct, hallazgo 10): flechas del mes y del día,
+     «Hoy», «Sugerir horario» y las cajas de fecha y hora. Sin la tarjeta nueva el paso queda como siempre (la clase .o2m-ag-di solo existe con ella). */
+  .o2m-ag-di .o2m-cal-toolbar{gap:6px}
+  .o2m-ag-di .o2m-cal-navbtn{width:44px;height:44px}
+  .o2m-ag-di .o2m-cal-titulo{min-width:0;font-size:.88rem;letter-spacing:.02em}      /* con las flechas de 44 px el título cede un poco para que la barra no se salga de su caja */
+  .o2m-ag-di .o2m-cal-hoy{min-height:44px;min-width:48px;padding:0 10px}
+  @media (max-width:359px){      /* pantallas muy angostas (320 px): el título del mes pasa a su propia fila y las flechas y «Hoy» van debajo */
+    .o2m-ag-di .o2m-cal-toolbar{flex-wrap:wrap;justify-content:space-between}
+    .o2m-ag-di .o2m-cal-titulo{order:-1;flex:1 1 100%}
+  }
+  .o2m-ag-di .o2m-day-navd button{width:44px;height:44px}
+  .o2m-ag-di .o2m-day-sugerir-btn{min-height:44px;padding-left:14px;padding-right:14px}
+  .o2m-ag-di input.form-control{min-height:44px}
 }
-@media (prefers-reduced-motion:reduce){.o2m-ag-chip{transition:none}.o2m-ag-chip:hover{transform:none}}
+@media (max-width:720px){
+  .o2m-ag-resumen{grid-template-columns:1fr 1fr;gap:6px;margin:0 -4px 6px;padding:5px}
+  .o2m-ag-gap{display:none}
+  .o2m-ag-chip{min-height:56px;padding:6px 9px;gap:6px}
+  .o2m-ag-chip .ic{display:none}
+  .o2m-ag-chip .tx b{font-size:.62rem;letter-spacing:.04em}
+  .o2m-ag-chip .tx b .ed{display:none}
+  .o2m-ag-chip .tx em{font-size:.82rem}
+  .o2m-ag-chip .est{font-size:1rem}
+  .o2m-ag-chip .lg{display:none}
+  .o2m-ag-chip .sh{display:inline}
+}
+@media (prefers-reduced-motion:reduce){.o2m-ag-chip,.o2m-ag-go,.o2m-ag-at{transition:none}.o2m-ag-chip:hover,.o2m-ag-go:hover{transform:none}}

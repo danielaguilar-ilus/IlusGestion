@@ -1131,6 +1131,15 @@
 .o2m-cal-day.feriado.sel .num{color:#fff}
 .o2m-cal-day.feriado.pasado{background:#f8f9fa;border-color:var(--o2m-line)}
 .o2m-cal-day.feriado.domingo{background:repeating-linear-gradient(135deg,#fef2f2,#fef2f2 6px,#fde4e4 6px,#fde4e4 12px)}
+/* 📅 2026-10-25 · «Instalación con desinstalación»: el MISMO calendario marca las dos fechas (entrada azul, salida roja, con su icono) y una
+   franja azul bajo los días de en medio («equipos instalados»). El día que se está agendando sigue siendo el negro de siempre (.sel). */
+.o2m-cal-day.m-ent:not(.sel){background:#eff6ff;border-color:#2563eb;box-shadow:0 0 0 1px #2563eb inset}
+.o2m-cal-day.m-sal:not(.sel){background:#fef2f2;border-color:#dc2626;box-shadow:0 0 0 1px #dc2626 inset}
+.o2m-cal-day .mk-o{position:absolute;left:3px;bottom:2px;display:flex;gap:2px;font-size:.62rem;line-height:1;pointer-events:none}
+.o2m-cal-day .mk-o .ent{color:#2563eb}
+.o2m-cal-day .mk-o .sal{color:#dc2626}
+.o2m-cal-day.sel .mk-o i{color:#fff}
+.o2m-cal-day.rango::after{content:'';position:absolute;left:-2px;right:-2px;bottom:3px;height:3px;background:#93c5fd;border-radius:2px;pointer-events:none}
 
 /* ── Col B: línea de tiempo del día -- esqueleto de .tkday-* original,
    bordes/radios/línea armonizados con la Col A (var(--o2m-line), radius
@@ -1152,6 +1161,7 @@
 .o2m-day-legend i.k{width:11px;height:11px;border-radius:3px;display:inline-block;flex-shrink:0}
 .o2m-day-legend i.k.ag{background:#f8fafc;border:1px solid #cbd5e1;border-left:3px solid #475569}
 .o2m-day-legend i.k.mine{background:rgba(220,38,38,.12);border:2px dashed var(--ilus-red,#dc2626)}
+.o2m-day-legend i.k.otra{background:repeating-linear-gradient(135deg,rgba(148,163,184,.4),rgba(148,163,184,.4) 3px,#fff 3px,#fff 6px);border:1px dashed #94a3b8}
 @media (max-width:575.98px){ .o2m-day-legend{margin-left:0;width:100%} }
 
 .o2m-day-scroll{position:relative;height:460px;overflow-y:auto;overflow-x:hidden;background:#fff;
@@ -1237,6 +1247,15 @@
   .o2m-day-blk.mine{transition:none}
   .o2m-day-blk.mine.flash{animation:none}
 }
+
+/* 📅 2026-10-25 · la OTRA orden (entrada o salida) cuando cae el mismo día que se está mirando: bloque fantasma rayado, sin clic, bajo «Tu OT». */
+.o2m-day-blk.otra{left:0;width:calc(100% - 4px);z-index:2;pointer-events:none;border-width:1.5px;border-style:dashed;border-color:#94a3b8;
+  background:repeating-linear-gradient(135deg,rgba(148,163,184,.16),rgba(148,163,184,.16) 6px,rgba(148,163,184,.05) 6px,rgba(148,163,184,.05) 12px)}
+.o2m-day-blk.otra.ent{border-color:#93c5fd}
+.o2m-day-blk.otra.sal{border-color:#fca5a5}
+.o2m-day-blk.otra .ot-tag{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;font-weight:800;color:#475569;white-space:nowrap}
+.o2m-day-blk.otra.ent .ot-tag i{color:#2563eb}
+.o2m-day-blk.otra.sal .ot-tag i{color:#dc2626}
 
 .o2m-day-ghost{position:absolute;top:45%;left:0;right:0;text-align:center;pointer-events:none;z-index:1}
 .o2m-day-ghost > i{font-size:1.53rem;color:#cbd5e1}
@@ -1630,6 +1649,9 @@ window.OT2C = (function(){
     cacheContactos = null; cacheContactosCid = null;
     S = {origen:null, tipo:null, descubrimiento:false, conDesinst:false, cliente:null, titulo:'',
          descripcion:'', fecha:'', hini:'09:00', hfin:'13:00', tecnicos:[], lider:null,
+         // 📅 2026-10-25: con «Instalación con desinstalación» el MISMO calendario del paso Agenda sirve a las dos órdenes: 'ent' (la
+         // instalación, S.fecha/hini/hfin) o 'sal' (la desinstalación, S.desinst.*). Ver _agSal() y los accesores ag*().
+         agOrden:'ent',
          equipos:[], acceso:{ascensor:null, estacionamiento:null, piso:'', notas:''},
          // 🔧 FASE 3 REPUESTOS (2026-09-21): equipo exacto ya conocido antes
          // de abrir (viene de una solicitud de repuesto de origen OT, que
@@ -2049,7 +2071,9 @@ window.OT2C = (function(){
       // (ya recorre completo() de todos los pasos) y la tarjeta del paso
       // queda en rojo, sin necesidad de una validación aparte.
       // 📅 2026-10-24: con «Instalación con desinstalación» el paso agenda LAS DOS órdenes: también debe estar la fecha de la salida (≥ la entrada, no domingo).
-      case 'agenda':   return !!S.fecha && S.fecha >= _o2mHoyStr() && (!_o2mDiAplica() || _diFechaSalidaOk());
+      // 📅 2026-10-25 (revisión independiente, hallazgo 4): además de «fecha ≥ entrada y no domingo», la salida no puede estar bloqueada por el servidor
+      // (mismo día antes de que termine la entrada, término antes del inicio) ni chocar con la agenda del técnico sin que nadie autorice agendar igual.
+      case 'agenda':   return !!S.fecha && S.fecha >= _o2mHoyStr() && (!_o2mDiAplica() || _diSalidaListaParaAgendar());
       // 🔒 2026-09-16 (Daniel: "están creando OT sin técnicos, deja eso
       // completamente prohibido... debe ser motivo de bloqueo"): el paso
       // Técnicos deja de ser permisivo. Sin al menos un técnico marcado la
@@ -2952,32 +2976,43 @@ window.OT2C = (function(){
   }
 
   function pintarAgenda(b){
-    // 📅 2026-10-24 (Daniel: «que el modal se comporte en términos de calendario para crear dos órdenes de trabajo, una por instalación y otra por
-    // desinstalación»): con «Instalación con desinstalación» este paso agenda LAS DOS órdenes: arriba la de ENTRADA (el calendario de siempre) y
-    // abajo la de SALIDA (el calendario compacto de la desinstalación, con su ficha, atajos y «buscar hueco libre»). Técnico, costo y checklist de
-    // la salida siguen en el paso «Desinstalación».
+    // 📅 2026-10-25 (Daniel, probando en producción: «reciclar el mismo calendario… para ahorrar código y texto lo usamos el mismo calendario»):
+    // con «Instalación con desinstalación» este paso agenda LAS DOS órdenes con UN solo calendario (mes + línea de tiempo del día). Arriba, un
+    // interruptor «Entrada | Salida» —que además muestra las dos fechas y los días que hay entre ellas— decide cuál se agenda; el calendario, las
+    // horas, los avisos y el choque de técnicos siguen a esa orden (accesores ag*()). Técnico, costo y checklist de la salida siguen en el paso
+    // «Desinstalación». Sin la tarjeta nueva el paso queda exactamente igual que siempre.
     var di = _o2mDiAplica();
+    if (!di) S.agOrden = 'ent';
+    b.classList.toggle('o2m-ag-di', !!di);      // 📅 2026-10-25: solo con las dos órdenes cambian las medidas táctiles del celular (el paso de siempre queda idéntico)
     b.innerHTML = '<h6 class="t">Agenda'+(di ? ' · entrada y salida' : '')+'</h6>'+
-      (di ? '<p class="d"><b>Aquí agendas las dos órdenes.</b> Primero la <b>de entrada</b> (instalar) y, más abajo, la <b>de salida</b> '+
-            '(desinstalar), que queda en el calendario para acordarnos de retirar los equipos.</p>'+
-            '<div class="o2m-ag-resumen" id="o2mAgResumen" role="group" aria-label="Fechas de las dos órdenes"></div>'+
-            '<div class="o2m-ag-lbl ent"><i class="bi bi-box-arrow-in-down"></i><b>Entrada · instalación</b></div>' : '')+
-      // 2026-10-24: el párrafo largo se partió en lo esencial + «puedes salirte de la jornada» plegado (mismas reglas, menos texto a la vista).
-      '<p class="d">Jornada de <b>08:00 a 17:00</b> con colación de <b>13:00 a 14:00</b> (achurada en la línea de tiempo). '+
-      'Toca un espacio libre o arrastra el bloque «Tu OT» (mouse o dedo) para fijar el horario; también puedes escribir la hora a mano.</p>'+
-      '<details class="o2m-ag-mas"><summary>Puedes salirte de la jornada</summary>'+
-      'No se bloquea, solo se avisa — salvo las 22:00, que es el límite absoluto del día.</details>'+
-      '<div class="row g-3">'+
-        '<div class="col-md-4"><label class="fl">Fecha programada *</label>'+
-        '<input type="date" class="form-control" id="o2mFecha" value="'+esc(S.fecha)+'" '+
-        'min="'+_o2mHoyStr()+'" onchange="OT2C.setFecha(this.value)"></div>'+
-        '<div class="col-md-4"><label class="fl">Hora inicio</label>'+
-        '<input type="time" class="form-control" id="o2mHoraIni" value="'+esc(S.hini)+'" '+
+      (di ? '<div class="o2m-ag-resumen" id="o2mAgResumen" role="group" aria-label="Orden que estás agendando"></div>'+
+            // La guía se lee en voz alta SOLO por esta región fija (la frase, no los atajos): si cada botón repintado fuera «aria-live», cada
+            // cambio de fecha reanunciaría todo (revisión independiente 25-oct, hallazgo 9).
+            '<div class="o2m-ag-guia" id="o2mAgGuia"></div><div class="visually-hidden" id="o2mAgLive" role="status" aria-live="polite" aria-atomic="true"></div>'+
+            // Con las dos órdenes el paso es más compacto: las reglas de la jornada van plegadas (mismas reglas, menos texto a la vista).
+            '<details class="o2m-ag-mas"><summary>Cómo funciona la agenda</summary>'+
+            'Jornada de <b>08:00 a 17:00</b> con colación de <b>13:00 a 14:00</b> (achurada en la línea de tiempo). Toca un espacio libre o arrastra el bloque '+
+            'de la orden (mouse o dedo) para fijar el horario; también puedes escribir la hora a mano. Puedes salirte de la jornada: no se bloquea, '+
+            'solo se avisa — salvo las 22:00, que es el límite absoluto del día.</details>'
+        // 2026-10-24: el párrafo largo se partió en lo esencial + «puedes salirte de la jornada» plegado (mismas reglas, menos texto a la vista).
+        : '<p class="d">Jornada de <b>08:00 a 17:00</b> con colación de <b>13:00 a 14:00</b> (achurada en la línea de tiempo). '+
+          'Toca un espacio libre o arrastra el bloque «Tu OT» (mouse o dedo) para fijar el horario; también puedes escribir la hora a mano.</p>'+
+          '<details class="o2m-ag-mas"><summary>Puedes salirte de la jornada</summary>'+
+          'No se bloquea, solo se avisa — salvo las 22:00, que es el límite absoluto del día.</details>')+
+      '<div class="row '+(di ? 'g-2' : 'g-3')+'">'+
+        '<div class="col-md-4"><label class="fl" id="o2mFechaLbl">'+(di ? 'Fecha de la entrada *' : 'Fecha programada *')+'</label>'+
+        '<input type="date" class="form-control" id="o2mFecha" value="'+esc(agFecha())+'" '+
+        'min="'+agMinFecha()+'" onchange="OT2C.setFecha(this.value)"></div>'+
+        // 📅 2026-10-25: con las dos órdenes, en celular las dos horas van lado a lado (menos scroll); el resto de los tipos, igual que siempre.
+        '<div class="'+(di ? 'col-6 ' : '')+'col-md-4"><label class="fl">Hora inicio</label>'+
+        '<input type="time" class="form-control" id="o2mHoraIni" value="'+esc(agHini())+'" '+
         'oninput="OT2C.setHora(\'hini\',this.value)" onchange="OT2C.setHora(\'hini\',this.value)"></div>'+
-        '<div class="col-md-4"><label class="fl">Hora término</label>'+
-        '<input type="time" class="form-control" id="o2mHoraFin" value="'+esc(S.hfin)+'" '+
+        '<div class="'+(di ? 'col-6 ' : '')+'col-md-4"><label class="fl">Hora término</label>'+
+        '<input type="time" class="form-control" id="o2mHoraFin" value="'+esc(agHfin())+'" '+
         'oninput="OT2C.setHora(\'hfin\',this.value)" onchange="OT2C.setHora(\'hfin\',this.value)"></div>'+
       '</div><div id="o2mAvisos"></div>'+
+      // 📅 2026-10-25: lo que el servidor dice de la fecha y el choque de la SALIDA (solo cuando se está agendando la salida): ver _diRegAvisos.
+      (di ? '<div id="o2mDiAvisos"></div>' : '')+
       // Choque de horario (§ más abajo, o2mChequearChoque): banner reusando
       // el mismo lenguaje de error que el resto del modal (.o2m-err).
       '<div id="o2mChoqueWarn" class="o2m-err" style="display:none;margin-top:12px"></div>'+
@@ -3007,6 +3042,9 @@ window.OT2C = (function(){
           '<span><i class="k" style="background:#0a0a0a"></i>Día seleccionado</span>'+
           '<span><i class="k" style="background:#fff;border:1px solid var(--ilus-red,#dc2626)"></i>Hoy</span>'+
           '<span><i class="k" style="background:#fef2f2;border:1px solid #fecaca"></i>Feriado</span>'+
+          (di ? '<span><i class="k" style="background:#eff6ff;border:2px solid #2563eb"></i>Entrada</span>'+
+                '<span><i class="k" style="background:#fef2f2;border:2px solid #dc2626"></i>Salida</span>'+
+                '<span><i class="k" style="background:#93c5fd;height:4px;border-radius:2px"></i>Equipos instalados</span>' : '')+
           '</div>'+
         '</div>'+
         '<div class="o2m-sched-col">'+
@@ -3023,7 +3061,8 @@ window.OT2C = (function(){
             'title="Busca el próximo horario libre para los técnicos seleccionados">'+
             '<i class="bi bi-stars" aria-hidden="true"></i>Sugerir horario</button>'+
             '<span class="o2m-day-legend"><span><i class="k ag"></i>Agendada</span>'+
-            '<span><i class="k mine"></i>Tu OT</span></span>'+
+            (di ? '<span><i class="k mine"></i>Esta orden</span><span><i class="k otra"></i>La otra orden</span></span>'
+                : '<span><i class="k mine"></i>Tu OT</span></span>')+
           '</div>'+
           '<div id="o2mDayCarrilesLegend" style="display:flex;flex-wrap:wrap;gap:.4rem;margin:-.35rem 0 .5rem"></div>'+
           '<div class="o2m-day-scroll" id="o2mDayScroll">'+
@@ -3033,18 +3072,19 @@ window.OT2C = (function(){
                 '<div id="o2mDayRejilla"></div>'+
                 '<div id="o2mDayNow"></div>'+
                 '<div id="o2mDayBlks"></div>'+
+                (di ? '<div class="o2m-day-blk otra" id="o2mDayOtra" style="display:none"></div>' : '')+
                 '<div class="o2m-day-blk mine" id="o2mDayMine" style="display:none"></div>'+
                 '<div class="o2m-day-ghost" id="o2mDayGhost" style="display:none"></div>'+
               '</div>'+
             '</div>'+
           '</div>'+
           '<small class="text-muted d-block mt-2" style="font-size:.72rem">'+
-          '<i class="bi bi-info-circle me-1"></i>Toca un espacio libre para fijar el horario de tu OT. '+
+          '<i class="bi bi-info-circle me-1"></i>Toca un espacio libre para fijar el horario de '+(di ? 'esta orden' : 'tu OT')+'. '+
           'Los bloques de color son OTs de otros técnicos ese día.</small>'+
         '</div>'+
-      '</div>'+(di ? _o2mAgSalidaHtml() : '');
+      '</div>';
     avisosAgenda();
-    if (di){ _o2mAgSalidaPintar(); _agResUlt = ''; _o2mAgResumenPintar(); }
+    if (di){ _agResUlt = ''; _agGuiaUlt = ''; _o2mAgResumenPintar(); _o2mAgAvisosSalida(); _diProgramarPrevio(true); }
     o2mCalInit();
     // El canvas se reconstruye entero en cada pintarAgenda() (innerHTML
     // nuevo) -- el listener se re-liga cada vez, no hay riesgo de
@@ -3086,35 +3126,38 @@ window.OT2C = (function(){
   function avisosAgenda(){
     var c = document.getElementById('o2mAvisos'); if (!c) return;
     var a = [];
-    if (S.hini && S.hini < '08:00') a.push('Empieza antes de las 08:00, fuera de la jornada.');
-    if (S.hfin && S.hfin > '17:00'){
+    // 📅 2026-10-25: todo se lee de la orden que se está agendando (entrada o salida: ver los accesores ag*()). La instalación a secas es la entrada.
+    var sal = _agSal(), fecha = agFecha(), hini = agHini(), hfin = agHfin();
+    if (hini && hini < '08:00') a.push('Empieza antes de las 08:00, fuera de la jornada.');
+    if (hfin && hfin > '17:00'){
       a.push(esInterno()
         ? 'Termina después de las 17:00: cuenta como hora extraordinaria para el personal interno.'
         : 'Termina después de las 17:00: es jornada extendida.');
     }
-    if (S.hfin && S.hfin > O2M_SCHED_CORTE_SUGERIDO && S.hfin <= O2M_SCHED_LIMITE_ABS){
+    if (hfin && hfin > O2M_SCHED_CORTE_SUGERIDO && hfin <= O2M_SCHED_LIMITE_ABS){
       a.push('Pasa las '+O2M_SCHED_CORTE_SUGERIDO+': para un trabajo de un solo día lo recomendable es '+
         'cortar ahí y continuar mañana. (Si la OT se declara en varios días el corte sugerido baja a '+
         '19:00 -- ese concepto de "varios días" todavía no existe en este wizard.)');
     }
-    if (S._hfinTopado){
+    if (_agDueno()._hfinTopado){
       a.push('La hora de término se topó en '+O2M_SCHED_LIMITE_ABS+': es el límite absoluto del día, '+
         'no se puede agendar más tarde.');
     }
-    if (S.hini && S.hfin && S.hini < '14:00' && S.hfin > '13:00') a.push('Cruza la colación (13:00–14:00).');
-    if (S.fecha){ var d = new Date(S.fecha+'T12:00:00').getDay();
+    if (hini && hfin && hini < '14:00' && hfin > '13:00') a.push('Cruza la colación (13:00–14:00).');
+    // Fin de semana y feriado de la SALIDA los explica el servidor (_diAvisosHtml: «Cae en sábado…», «Es feriado: X»): acá solo los de la entrada.
+    if (fecha && !sal){ var d = new Date(fecha+'T12:00:00').getDay();
       if (d===0 || d===6) a.push('Cae en fin de semana, cuando no hay operación.'); }
     // 🗓️ 2026-10-24 (REGLA #31): feriado de Chile. Se lee del mes que ya cargó el calendario; solo avisa, nunca bloquea.
-    var nomFerEntrada = S.fecha ? _o2mFeriadoDe(S.fecha) : '';
+    var nomFerEntrada = (fecha && !sal) ? _o2mFeriadoDe(fecha) : '';
     if (nomFerEntrada) a.push('Cae en feriado ('+esc(nomFerEntrada)+'), cuando no hay operación.');
     // Hoy + hora de inicio ya pasada: NO bloquea (la OT puede nacer para
     // "ahora mismo", y la ventana de 60 min de tolerancia al iniciar la
     // absorbe), pero se avisa -- es justo el caso donde esa ventana ya
     // está corriendo en contra.
-    if (S.fecha && S.fecha === _o2mHoyStr() && S.hini && S.hini < _o2mHoraAhora())
+    if (fecha && fecha === _o2mHoyStr() && hini && hini < _o2mHoraAhora())
       a.push('La hora de inicio ya pasó hoy — el margen de 60 min para iniciar corre desde ya.');
     _o2mAgResumenPintar();           // 2026-10-24: «Instalación con desinstalación»: las dos fechas de un vistazo (no hace nada si no existe el resumen)
-    var bloqueo = (S.fecha && S.fecha < _o2mHoyStr())
+    var bloqueo = (fecha && fecha < _o2mHoyStr())
       ? '<div class="o2m-aviso" style="background:#fee2e2;border-color:#fca5a5;color:#991b1b">'+
         '<i class="bi bi-slash-circle-fill me-1"></i><b>No se puede agendar en el pasado.</b> '+
         'Elige hoy o una fecha futura.</div>'
@@ -3163,8 +3206,24 @@ window.OT2C = (function(){
      ════════════════════════════════════════════════════════════════════ */
   // fer: feriados de Chile por mes {«AAAA-MM»: {«AAAA-MM-DD»: nombre}} (REGLA #31: todo calendario marca los días no laborales; los manda el servidor).
   var o2mCal = { anio:null, mes:null, cache:{}, error:{}, fer:{}, diaSel:null };
-  var o2mDay = { fecha:null, rejilla:false, choque:false, choqueFecha:null, choqueKeys:null, visitas:[] };
+  var o2mDay = { fecha:null, rejilla:false, choque:false, choqueFecha:null, choqueKeys:null, choqueMsgs:null, visitas:[] };
   var _o2mChoqueToken = 0, _o2mChoqueTimer = null, _o2mFlashToken = 0;
+
+  /* 📅 2026-10-25 (Daniel, probando en producción: «reciclar el mismo calendario… para ahorrar código y texto lo usamos el mismo calendario»):
+     con «Instalación con desinstalación» el calendario del paso Agenda (mes + línea de tiempo del día) es UNO solo y sirve a las DOS órdenes.
+     Un interruptor «Entrada | Salida» (S.agOrden) decide cuál de las dos se está agendando: la ENTRADA lee y escribe S.fecha/hini/hfin/tecnicos/lider
+     (como siempre) y la SALIDA S.desinst.* (lo que viaja en body.desinstalacion). Todo lo que este calendario leía de S.* pasa por estos
+     accesores; sin la tarjeta nueva `_agSal()` es siempre false y nada cambia (la instalación a secas y los demás tipos quedan idénticos). */
+  function _agSal(){ return S.agOrden === 'sal' && _o2mDiAplica(); }
+  function agFecha(){ return _agSal() ? (S.desinst.fecha || '') : (S.fecha || ''); }
+  function agHini(){ return _agSal() ? (S.desinst.hini || '') : (S.hini || ''); }
+  function agHfin(){ return _agSal() ? (S.desinst.hfin || '') : (S.hfin || ''); }
+  function agTecnicos(){ return _agSal() ? _diTec() : (S.tecnicos || []).slice(); }
+  function agLider(){ return _agSal() ? _diLider() : S.lider; }
+  /* Dónde vive el estado de la orden que se agenda (para banderas propias de cada una, como el tope de las 22:00). */
+  function _agDueno(){ return _agSal() ? S.desinst : S; }
+  /* La fecha más temprana que admite la orden que se agenda: hoy; la salida, además, no puede ir antes de la entrada. */
+  function agMinFecha(){ var hoy = _o2mHoyStr(); return (_agSal() && S.fecha && S.fecha > hoy) ? S.fecha : hoy; }
 
   var O2M_CAL_MES_ES = ['enero','febrero','marzo','abril','mayo','junio','julio',
     'agosto','septiembre','octubre','noviembre','diciembre'];
@@ -3277,7 +3336,11 @@ window.OT2C = (function(){
     var offset = primerDia.getDay() - 1; if (offset < 0) offset = 6;
     var hoy = new Date();
     var hoyStr = hoy.getFullYear()+'-'+String(hoy.getMonth()+1).padStart(2,'0')+'-'+String(hoy.getDate()).padStart(2,'0');
-    var fechaProg = S.fecha || '';
+    var fechaProg = agFecha();                    // 📅 2026-10-25: la de la orden que se agenda (entrada o salida)
+    // 📅 2026-10-25: con «Instalación con desinstalación» el MISMO calendario marca las dos fechas (entrada azul, salida roja) y una franja
+    // «equipos instalados» en los días de en medio; la salida no admite días anteriores a la entrada. Sin la tarjeta nueva no se agrega nada.
+    var di = _o2mDiAplica(), minF = agMinFecha();
+    var entF = di ? (S.fecha || '') : '', salF = di ? (S.desinst.fecha || '') : '';
     var html = '';
     for (var i=0;i<offset;i++) html += '<div class="o2m-cal-day blank"></div>';
     for (var dia=1; dia<=nDias; dia++){
@@ -3286,13 +3349,18 @@ window.OT2C = (function(){
       var dow = new Date(a, m-1, dia).getDay();
       var clases = ['o2m-cal-day'];
       var esPasado = fecha < hoyStr;              // no se agenda hacia atrás
-      if (esPasado) clases.push('pasado');
+      var esAntes = !esPasado && fecha < minF;    // la salida no puede ir antes de la entrada
+      if (esPasado) clases.push('pasado'); else if (esAntes) clases.push('pasado', 'antes');
       var esDomingo = (dow === 0);                // 📅 2026-10-18: el domingo no se agenda
       if (esDomingo && !esPasado) clases.push('domingo');
       if (dow===0 || dow===6) clases.push('finde');
       // 🗓️ 2026-10-24 (REGLA #31): feriado de Chile = rojo suave y su nombre al pasar el mouse. Solo avisa: se puede agendar igual.
       var nomFer = (o2mCal.fer[_o2mCalKey(a,m)] || {})[fecha] || '';
       if (nomFer) clases.push('feriado');
+      var esEnt = !!entF && fecha === entF, esSal = !!salF && fecha === salF;
+      if (esEnt) clases.push('m-ent');
+      if (esSal) clases.push('m-sal');
+      if (entF && salF && entF < salF && fecha > entF && fecha < salF) clases.push('rango');
       if (fecha===hoyStr) clases.push('hoy');
       if (fecha===fechaProg) clases.push('sel');
       if (fecha===o2mCal.diaSel && fecha!==fechaProg) clases.push('vista');
@@ -3306,18 +3374,23 @@ window.OT2C = (function(){
       // Un día pasado se sigue DIBUJANDO (con sus OTs, para poder mirar el
       // historial del mes) pero deja de ser accionable: sin onclick, sin
       // foco de teclado y anunciado como no disponible.
+      var marcaOrden = (esEnt ? 'Entrada' : '') + (esEnt && esSal ? ' y ' : '') + (esSal ? 'Salida' : '');
       html += '<div class="'+clases.join(' ')+'"'+
-        ((esPasado || esDomingo)
-          ? ' aria-disabled="true" title="'+(esDomingo && !esPasado ? 'Los domingos no se agendan' : 'Fecha pasada')+'"'
+        ((esPasado || esAntes || esDomingo)
+          ? ' aria-disabled="true" title="'+(esDomingo && !esPasado && !esAntes ? 'Los domingos no se agendan' : (esAntes ? 'Antes de la instalación' : 'Fecha pasada'))+'"'
           : ' onclick="OT2C.o2mCalClicDia(\''+fecha+'\')"'+
             ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();OT2C.o2mCalClicDia(\''+fecha+'\');}"'+
-            ' role="button" tabindex="0"'+(nomFer ? ' title="Feriado: '+esc(nomFer)+'"' : ''))+
+            ' role="button" tabindex="0"'+((nomFer || marcaOrden) ? ' title="'+esc([marcaOrden, nomFer ? 'Feriado: '+nomFer : ''].filter(Boolean).join(' · '))+'"' : ''))+
         ' aria-label="'+esc(fecha+' — '+(esPasado ? 'fecha pasada, no se puede agendar' :
+            esAntes ? 'antes de la instalación, la salida no puede ir antes' :
             esDomingo ? 'domingo, no se agenda' :
-            (visitas.length ? (visitas.length+' OT agendada(s)') : 'sin OTs agendadas'))+(nomFer ? ' · feriado: '+nomFer : ''))+'">'+
+            (visitas.length ? (visitas.length+' OT agendada(s)') : 'sin OTs agendadas'))+(nomFer ? ' · feriado: '+nomFer : '')+
+            (esEnt ? ' · día de la entrada' : '')+(esSal ? ' · día de la salida' : ''))+'">'+
         '<span class="num">'+dia+'</span>'+(nomFer ? '<i class="bi bi-flag-fill fer-mk" aria-hidden="true"></i>' : '')+
         (visitas.length ? '<span class="cnt '+cntCls+'">'+visitas.length+'</span>' : '')+
-        dots+'</div>';
+        dots+
+        ((esEnt || esSal) ? '<span class="mk-o" aria-hidden="true">'+(esEnt ? '<i class="bi bi-box-arrow-in-down ent"></i>' : '')+(esSal ? '<i class="bi bi-box-arrow-up sal"></i>' : '')+'</span>' : '')+
+        '</div>';
     }
     grid.innerHTML = html;
   }
@@ -3347,6 +3420,11 @@ window.OT2C = (function(){
       if (window.ilusToast) ilusToast('No se puede agendar en el pasado.', {type:'warning'});
       return;
     }
+    // 📅 2026-10-25: la SALIDA no puede ir antes de la ENTRADA.
+    if (fecha < agMinFecha()){
+      if (window.ilusToast) ilusToast('La salida no puede ir antes de la instalación ('+_o2mFechaBonita(S.fecha)+').', {type:'warning'});
+      return;
+    }
     // 📅 2026-10-18 (Daniel: «al menos el domingo no se agenda»).
     if (_o2mEsDomingo(fecha)){
       if (window.ilusToast) ilusToast('Los domingos no se agendan órdenes de trabajo. Elige otro día.', {type:'warning'});
@@ -3373,8 +3451,8 @@ window.OT2C = (function(){
   // sin este reset, la rejilla de horas NO se redibujaría en un segundo
   // montaje porque el flag seguiría en true de la vez anterior).
   function o2mCalInit(){
-    var fp = S.fecha || '';
-    var base = fp ? new Date(fp+'T00:00:00') : new Date();
+    var fp = agFecha();                // 📅 2026-10-25: la fecha de la orden que se agenda (entrada, o salida con «Instalación con desinstalación»)
+    var base = fp ? new Date(fp+'T00:00:00') : ((_agSal() && S.fecha) ? new Date(S.fecha+'T00:00:00') : new Date());
     o2mCal.anio = base.getFullYear();
     o2mCal.mes = base.getMonth()+1;
     o2mCal.diaSel = null;
@@ -3386,6 +3464,7 @@ window.OT2C = (function(){
     o2mDay.choque = false;
     o2mDay.choqueFecha = null;
     o2mDay.choqueKeys = null;
+    o2mDay.choqueMsgs = null;
     o2mDay.visitas = [];
     var warn = document.getElementById('o2mChoqueWarn');
     if (warn) warn.style.display = 'none';
@@ -3640,12 +3719,13 @@ window.OT2C = (function(){
     });
     // Reserva un carril propio para el técnico LÍDER de "Tu OT" aunque hoy
     // no tenga ninguna otra OT -- si no, su bloque no tendría dónde ubicarse.
-    if (S.lider!=null){
-      var tidLider = String(S.lider);
+    var lider = agLider();            // 📅 2026-10-25: el líder de la orden que se agenda (entrada o salida)
+    if (lider!=null){
+      var tidLider = String(lider);
       if (ids.indexOf(tidLider)===-1){
         var tLider = (cacheTec||[]).filter(function(x){ return String(x.id)===tidLider; })[0];
         ids.push(tidLider);
-        out.push({tecId:tidLider, tecIdRaw:S.lider, nombre: tLider ? tLider.nombre : 'Tu técnico'});
+        out.push({tecId:tidLider, tecIdRaw:lider, nombre: tLider ? tLider.nombre : 'Tu técnico'});
       }
     }
     return out;
@@ -3654,9 +3734,10 @@ window.OT2C = (function(){
     var el = document.getElementById('o2mDayCarrilesLegend');
     if (!el) return;
     if (carriles.length < 2){ el.innerHTML = ''; return; }
+    var liderLey = agLider();
     el.innerHTML = carriles.map(function(c){
       var pal = _o2mDayColor(c.tecIdRaw);
-      var esLider = S.lider!=null && String(S.lider)===c.tecId;
+      var esLider = liderLey!=null && String(liderLey)===c.tecId;
       return '<span style="display:inline-flex;align-items:center;gap:.3rem;font-size:.72rem;'+
         'padding:.15rem .5rem;border-radius:999px;border:1px solid '+pal[0]+';background:'+pal[1]+
         (esLider ? ';font-weight:700' : '')+'">'+
@@ -3762,7 +3843,28 @@ window.OT2C = (function(){
     blks.innerHTML = html;
     _o2mDayNow(fecha);
     o2mDayRenderMine();
+    _o2mDayRenderOtra();
     _o2mDayAutoScroll();
+  }
+
+  /* 📅 2026-10-25: con «Instalación con desinstalación», si el día que se mira es también el de la OTRA orden, su horario se ve como un bloque
+     fantasma (rayado, sin clic) para no encimarlas sin querer. Se redibuja al cambiar de día o de orden: la otra orden no cambia mientras se
+     agenda esta. Sin la tarjeta nueva el bloque no existe. */
+  function _o2mDayRenderOtra(){
+    var el = document.getElementById('o2mDayOtra'); if (!el) return;
+    if (!_o2mDiAplica()){ el.style.display = 'none'; return; }
+    var sal = _agSal();
+    var f = sal ? (S.fecha || '') : (S.desinst.fecha || '');
+    var hi = sal ? S.hini : S.desinst.hini, hf = sal ? S.hfin : S.desinst.hfin;
+    var g = (f && f === o2mDay.fecha) ? _o2mDayGeom(hi, hf) : null;
+    if (!g){ el.style.display = 'none'; return; }
+    el.className = 'o2m-day-blk otra ' + (sal ? 'ent' : 'sal');
+    el.style.display = '';
+    el.style.top = g.top + 'px';
+    el.style.height = g.height + 'px';
+    el.innerHTML = '<span class="ot-tag"><i class="bi ' + (sal ? 'bi-box-arrow-in-down' : 'bi-box-arrow-up') + '"></i>' +
+      (sal ? 'Entrada' : 'Salida') + ' · ' + esc((hi || '--') + (hf && !g.sinFin ? '–' + hf : '')) + '</span>';
+    el.setAttribute('aria-label', (sal ? 'La orden de entrada' : 'La orden de salida') + ' va este día de ' + (hi || '--') + (hf ? ' a ' + hf : ''));
   }
 
   // ── Clic/tap en una zona VACÍA de la línea de tiempo fija el horario de
@@ -3781,13 +3883,18 @@ window.OT2C = (function(){
     min = Math.floor(min/30)*30;
     min = Math.max(O2M_DAY_START, Math.min(min, O2M_DAY_END-30));
 
-    var iniActual = _o2mDayToMin(S.hini);
-    var finActual = _o2mDayToMin(S.hfin);
+    var iniActual = _o2mDayToMin(agHini());
+    var finActual = _o2mDayToMin(agHfin());
     var dur = (iniActual!=null && finActual!=null) ? (finActual-iniActual) : 0;
     if (!(dur>0)) dur = 60;
     var finMin = Math.min(min+dur, O2M_DAY_END);
 
-    if (o2mDay.fecha !== S.fecha) o2mCalClicDia(o2mDay.fecha);
+    if (o2mDay.fecha !== agFecha()){
+      o2mCalClicDia(o2mDay.fecha);
+      // Con «Instalación con desinstalación»: el día que se miraba no se puede agendar (pasado, domingo o antes de la entrada) y no se tocan las
+      // horas. Sin la tarjeta nueva el paso queda IDÉNTICO al de siempre (revisión independiente 25-oct, hallazgo 7).
+      if (_o2mDiAplica() && o2mDay.fecha !== agFecha()) return;
+    }
 
     var hi = _o2mDayHHMM(min), hf = _o2mDayHHMM(finMin);
     var elIni = document.getElementById('o2mHoraIni'), elFin = document.getElementById('o2mHoraFin');
@@ -3815,10 +3922,10 @@ window.OT2C = (function(){
     var mine = document.getElementById('o2mDayMine');
     if (!mine) return;
     var vista = o2mDay.fecha;
-    var fechaProg = S.fecha || '';
+    var fechaProg = agFecha();
     var hi = '', hf = '', dibujar = false;
     if (vista && fechaProg && vista===fechaProg){
-      hi = S.hini || ''; hf = S.hfin || ''; dibujar = true;
+      hi = agHini(); hf = agHfin(); dibujar = true;
     }
     var g = dibujar ? _o2mDayGeom(hi, hf) : null;
     if (!g){ mine.style.display = 'none'; _o2mDayGhostSync(); return; }
@@ -3842,14 +3949,17 @@ window.OT2C = (function(){
     // S.lider puede cambiar sin que el mes/día se vuelva a cargar.
     var carriles = _o2mDayCarriles(o2mDay.visitas||[]);
     var nCarr = Math.max(carriles.length, 1);
-    var ci = S.lider!=null ? carriles.map(function(c){ return c.tecId; }).indexOf(String(S.lider)) : -1;
+    var lid = agLider();
+    var ci = lid!=null ? carriles.map(function(c){ return c.tecId; }).indexOf(String(lid)) : -1;
     if (ci===-1) ci = 0;
     var carrilW = 100/nCarr;
     mine.style.left = (ci*carrilW)+'%';
     mine.style.width = 'calc('+carrilW+'% - 4px)';
 
-    var nTec = (S.tecnicos||[]).length;
+    var nTec = agTecnicos().length;
     var rangoTxt = (hi||'--') + (hf && !g.sinFin ? '–'+hf : '');
+    // 📅 2026-10-25: con «Instalación con desinstalación» el bloque dice de cuál de las dos órdenes es («Entrada» / «Salida»), no «Tu OT».
+    var rotuloOrden = _o2mDiAplica() ? (_agSal() ? 'Salida' : 'Entrada') : 'Tu OT';
     var _dmin = 0;
     if (!g.sinFin && hi && hf && hi.indexOf(':')>0 && hf.indexOf(':')>0){
       var _pa = hi.split(':'), _pb = hf.split(':');
@@ -3859,7 +3969,7 @@ window.OT2C = (function(){
     if (_dmin > 0){ var _h = Math.floor(_dmin/60), _m = _dmin%60;
       _durTxt = (_h?_h+' h':'') + (_h&&_m?' ':'') + (_m?_m+' min':''); }
     var _tecPend = nTec===0;
-    var _tecTxt = _tecPend ? 'Asigna técnico en el paso Técnicos' : (nTec+(nTec===1?' técnico':' técnicos'));
+    var _tecTxt = _tecPend ? (_agSal() ? 'Asigna técnico en el paso Desinstalación' : 'Asigna técnico en el paso Técnicos') : (nTec+(nTec===1?' técnico':' técnicos'));
     var _tecIco = _tecPend ? 'bi-person-plus' : 'bi-person-check-fill';
     var _durLine = _durTxt ? '<div class="mine-dur"><i class="bi bi-clock-history"></i>'+esc(_durTxt)+'</div>' : '';
     var _tecLine = '<div class="mine-tec'+(_tecPend?' pendiente':'')+'"><i class="bi '+_tecIco+'"></i>'+esc(_tecTxt)+'</div>';
@@ -3867,7 +3977,7 @@ window.OT2C = (function(){
     var _body = '';
     if (_H >= 48){ _body = '<i class="bi bi-calendar2-check mine-wm" aria-hidden="true"></i>'+_durLine+_tecLine; }
     else if (_H >= 28){ _body = _tecLine; }
-    mine.innerHTML = '<span class="mine-tag"><i class="bi bi-geo-alt-fill" style="font-size:.5rem"></i>Tu OT · '+esc(rangoTxt)+'</span>'+
+    mine.innerHTML = '<span class="mine-tag"><i class="bi bi-geo-alt-fill" style="font-size:.5rem"></i>'+rotuloOrden+' · '+esc(rangoTxt)+'</span>'+
       '<div class="mine-body">'+_body+'</div>';
     _o2mDayGhostSync();
   }
@@ -3884,11 +3994,11 @@ window.OT2C = (function(){
   var _o2mDrag = null;
 
   function _o2mDayMineDragStart(ev){
-    if (!S.hini || !S.hfin) return; // sin horario aún, nada que arrastrar
+    if (!agHini() || !agHfin()) return; // sin horario aún, nada que arrastrar
     var mine = document.getElementById('o2mDayMine');
     var canvas = document.getElementById('o2mDayCanvas');
     if (!mine || !canvas || mine.style.display === 'none') return;
-    var iniMin = _o2mDayToMin(S.hini), finMin = _o2mDayToMin(S.hfin);
+    var iniMin = _o2mDayToMin(agHini()), finMin = _o2mDayToMin(agHfin());
     if (iniMin==null || finMin==null || finMin<=iniMin) return;
     ev.preventDefault();
     _o2mDrag = {
@@ -3981,7 +4091,7 @@ window.OT2C = (function(){
   // ── Flechas ‹› del día: recorren el día que muestra la línea de tiempo
   //    SIN tocar S.fecha -- permite espiar el día siguiente antes de decidir. ──
   function o2mDayPaso(delta){
-    var base = o2mDay.fecha || S.fecha || '';
+    var base = o2mDay.fecha || agFecha() || '';
     if (!base) return;
     var p = base.split('-');
     var d = new Date(parseInt(p[0],10), parseInt(p[1],10)-1, parseInt(p[2],10));
@@ -4008,14 +4118,17 @@ window.OT2C = (function(){
   function o2mChequearChoque(){
     var warn = document.getElementById('o2mChoqueWarn');
     if (!warn) return;
-    var fecha = S.fecha || '';
-    var horaIni = S.hini || '';
-    var horaFin = S.hfin || '';
-    var tecnicoIds = (S.tecnicos || []).slice();
+    var sal = _agSal();                  // 📅 2026-10-25: se revisa la orden que se agenda (entrada o salida, cada una con SUS técnicos)
+    var fecha = agFecha();
+    var horaIni = agHini();
+    var horaFin = agHfin();
+    var tecnicoIds = agTecnicos();
     if (!fecha || !tecnicoIds.length){
+      ++_o2mChoqueToken;                 // una respuesta en vuelo de la OTRA orden ya no vale (revisión independiente 25-oct, hallazgo 6)
       warn.style.display = 'none';
-      o2mDay.choque = false; o2mDay.choqueFecha = null; o2mDay.choqueKeys = null;
+      o2mDay.choque = false; o2mDay.choqueFecha = null; o2mDay.choqueKeys = null; o2mDay.choqueMsgs = null;
       o2mDayAplicarChoque();
+      if (sal) _o2mAgAvisosSalida();
       return;
     }
     var idNombre = {};
@@ -4049,7 +4162,10 @@ window.OT2C = (function(){
         }).join(', ');
         mensajes.push('<b>'+esc(nombre)+'</b> ya tiene una visita agendada este día'+(detalle?' ('+esc(detalle)+')':'')+'.');
       });
-      if (mensajes.length){
+      // 📅 2026-10-25: en la SALIDA el choque lo explica UNA sola caja (la de _diAvisosHtml, en #o2mDiAvisos: la del servidor si choca el líder, con
+      // «Buscar hueco libre» y, para el superadministrador, «Agendar igual»; o, si choca otro técnico, estos mismos mensajes): este aviso
+      // solo se pinta en la ENTRADA. Revisión independiente 25-oct, hallazgo 8: antes el choque de un técnico que no es líder no se explicaba en la salida.
+      if (mensajes.length && !sal){
         warn.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>'+mensajes.join('<br>')+
           '<div style="margin-top:8px"><button type="button" class="btn btn-sm btn-outline-danger" onclick="OT2C.o2mDaySugerirHueco()">'+
           '<i class="bi bi-stars me-1"></i>Buscar hueco libre</button></div>';
@@ -4060,7 +4176,9 @@ window.OT2C = (function(){
       o2mDay.choque = mensajes.length > 0;
       o2mDay.choqueFecha = fecha;
       o2mDay.choqueKeys = choqueKeys;
+      o2mDay.choqueMsgs = mensajes;
       o2mDayAplicarChoque();
+      if (sal) _o2mAgAvisosSalida();
     }).catch(function(e){ console.warn('o2m choque:', e); });
   }
 
@@ -4085,12 +4203,19 @@ window.OT2C = (function(){
         return o2mCal.cache[key];
       });
   }
-  function _o2mDayCalcularHueco(fecha, durMin, tecnicoIds){
+  // `lim` (opcional, 2026-10-25, revisión independiente hallazgo 5): lo que la OTRA orden de «Instalación con desinstalación» deja ocupado ese día,
+  // aunque aún no exista en el calendario: {fecha, antes: minuto} → ocupado todo lo anterior a ese minuto (la salida del mismo día empieza cuando
+  // termina la entrada); {fecha, despues: minuto} → ocupado desde ese minuto (la entrada del día de la salida termina antes de que ella empiece).
+  function _o2mDayCalcularHueco(fecha, durMin, tecnicoIds, lim){
     var key = _o2mCalKey(parseInt(fecha.slice(0,4),10), parseInt(fecha.slice(5,7),10));
     var mapa = o2mCal.cache[key] || {};
     var visitas = mapa[fecha] || [];
     var filtro = (Array.isArray(tecnicoIds) && tecnicoIds.length) ? new Set(tecnicoIds.map(String)) : null;
     var ocupados = [];
+    if (lim && lim.fecha === fecha){
+      if (lim.antes != null) ocupados.push([0, lim.antes]);
+      if (lim.despues != null) ocupados.push([lim.despues, 24*60]);
+    }
     visitas.forEach(function(v){
       if (String(v.estado||'').toLowerCase()==='cancelada') return;
       if (filtro && !filtro.has(String(v.tecnico_id))) return;
@@ -4122,14 +4247,33 @@ window.OT2C = (function(){
     }
     return null;
   }
-  async function _o2mDayBuscarHuecoRango(fechaInicio, durMin, tecnicoIds, maxDias){
+  // 📅 2026-10-25 (revisión independiente, hallazgo 5): lo que la OTRA orden de «Instalación con desinstalación» deja ocupado, para que «Sugerir horario» no
+  // proponga un hueco que choca con ella: con la SALIDA activa, el mismo día de la entrada solo vale desde que ella termina; con la ENTRADA activa y una salida
+  // ya agendada, la entrada no puede pasar de la fecha de la salida ni terminar después de que ella empiece. Lee a propósito el estado de la otra orden
+  // (por eso vive aparte de las funciones del calendario, que solo leen la orden que se agenda: ver test_las_funciones_del_calendario_no_leen_…).
+  function _agLimiteOtraOrden(sal){
+    var lim = null, tope = null;
+    if (!_o2mDiAplica()) return {lim: lim, tope: tope};
+    if (sal){
+      var eFin = _o2mDayToMin(S.hfin);
+      if (S.fecha && eFin != null) lim = {fecha: S.fecha, antes: eFin};
+    } else if (S.desinst.fecha){
+      var sIni = _o2mDayToMin(S.desinst.hini);
+      tope = S.desinst.fecha;
+      if (sIni != null) lim = {fecha: S.desinst.fecha, despues: sIni};
+    }
+    return {lim: lim, tope: tope};
+  }
+  // `tope` (opcional): última fecha (ISO) que se puede sugerir —la entrada no puede quedar después de la salida ya agendada—.
+  async function _o2mDayBuscarHuecoRango(fechaInicio, durMin, tecnicoIds, maxDias, lim, tope){
     var p = fechaInicio.split('-').map(function(s){ return parseInt(s,10); });
     var d = new Date(p[0], p[1]-1, p[2]);
     for (var i=0; i<=maxDias; i++){
       var f = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      if (tope && f > tope) return null;
       if (d.getDay() === 0){ d.setDate(d.getDate()+1); continue; }   // 📅 el domingo no se agenda
       await _o2mDayAsegurarMesCache(d.getFullYear(), d.getMonth()+1);
-      var hora = _o2mDayCalcularHueco(f, durMin, tecnicoIds);
+      var hora = _o2mDayCalcularHueco(f, durMin, tecnicoIds, lim);
       if (hora) return {fecha:f, hora:hora};
       d.setDate(d.getDate()+1);
     }
@@ -4138,28 +4282,50 @@ window.OT2C = (function(){
   // Selecciona `fecha` como si el usuario hubiera hecho clic en el
   // mini-calendario, pero AWAIT-eable (necesario para esperar a que el
   // mes/día queden pintados antes de fijar las horas encontradas).
-  async function _o2mDayIrADia(fecha){
+  // 📅 2026-10-25 (revisión independiente, hallazgo 2): `orden` es la orden ('ent' | 'sal') para la que se busca. Si mientras llegaba el mes la persona
+  // cambió de orden, esta fecha ya no es de la que se agenda y se descarta (devuelve false): nada cruza de una orden a la otra.
+  async function _o2mDayIrADia(fecha, orden){
+    orden = orden || S.agOrden;
+    if (S.agOrden !== orden) return false;       // ya se cambió de orden: esta fecha no es de la que se agenda
     var fp = document.getElementById('o2mFecha');
     if (fp) fp.value = fecha;
     var y = parseInt(fecha.slice(0,4),10), m = parseInt(fecha.slice(5,7),10);
     if (y && m && (y!==o2mCal.anio || m!==o2mCal.mes)){
       o2mCal.anio = y; o2mCal.mes = m;
       await o2mCalCargarMes();
+      if (S.agOrden !== orden) return false;     // se cambió de orden MIENTRAS llegaba el mes: nada se escribe
     }
-    S.fecha = fecha;
+    if (orden === 'sal'){
+      // 📅 2026-10-25: la fecha que se busca es la de la SALIDA (S.desinst.fecha, lo que viaja en body.desinstalacion).
+      S.desinst.fecha = fecha;
+      _diPintarRegiones(['preg', 'avisos', 'res']);
+      _diProgramarPrevio(false);
+    } else {
+      S.fecha = fecha;
+    }
     o2mCalSelDia(fecha, {silencio:true});
     refrescarAnclas();
-    _o2mAnexoSincronizarFechas();
+    if (orden !== 'sal') _o2mAnexoSincronizarFechas();
+    return true;
   }
   async function o2mDaySugerirHueco(){
     var btn = document.getElementById('o2mDaySugerirBtn');
     var original = btn ? btn.innerHTML : null;
     if (btn){ btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split"></i>Buscando…'; }
     try{
-      var iniActual = _o2mDayToMin(S.hini);
-      var finActual = _o2mDayToMin(S.hfin);
+      var iniActual = _o2mDayToMin(agHini());
+      var finActual = _o2mDayToMin(agHfin());
       var durMin = (iniActual!=null && finActual!=null && finActual>iniActual) ? (finActual-iniActual) : 60;
-      var tecnicoIds = (S.tecnicos || []).slice();
+      var tecnicoIds = agTecnicos();
+      var sal = _agSal();           // 📅 2026-10-25: para la SALIDA se busca con SUS técnicos, desde la entrada en adelante y hasta 30 días (la desinstalación suele ir más lejos)
+      var orden = S.agOrden;        // la orden para la que se busca: si mientras tanto se cambia de orden (Entrada ↔ Salida) el resultado se descarta (revisión independiente, hallazgo 2)
+      if (sal && !tecnicoIds.length){
+        if (window.ilusToast) ilusToast('Elige primero el técnico de la desinstalación (paso «Desinstalación»).', {type:'warning'});
+        return;
+      }
+      // 📅 La OTRA orden también ocupa su hueco, aunque todavía no exista en el calendario (revisión independiente, hallazgo 5): la salida del mismo día
+      // empieza cuando termina la entrada; la entrada no puede pasar de la fecha de la salida, ni terminar después de que ella empiece.
+      var _ol = _agLimiteOtraOrden(sal), lim = _ol.lim, tope = _ol.tope;
       // 2026-08-30 (Daniel: "sugerir hora no toma la hora actual de Chile y
       // agenda en pasado"): _o2mDayCalcularHueco SOLO compara contra "ahora"
       // cuando el día que evalúa es exactamente hoy (fecha === _o2mDayHoyStr()) --
@@ -4169,10 +4335,13 @@ window.OT2C = (function(){
       // hoy, y devolvía "libre" un horario que ya no existe. Ahora fechaBase
       // nunca puede ser anterior a hoy -- como mínimo, arranca hoy mismo.
       var _hoyStr = _o2mDayHoyStr();
-      var fechaBase = o2mDay.fecha || S.fecha || _hoyStr;
+      var fechaBase = o2mDay.fecha || agFecha() || _hoyStr;
       if (fechaBase < _hoyStr) fechaBase = _hoyStr;
+      if (sal && S.fecha && fechaBase < S.fecha) fechaBase = S.fecha;
+      var maxDias = sal ? 30 : 14;
 
-      var encontrado = await _o2mDayBuscarHuecoRango(fechaBase, durMin, tecnicoIds, 14);
+      var encontrado = await _o2mDayBuscarHuecoRango(fechaBase, durMin, tecnicoIds, maxDias, lim, tope);
+      if (S.agOrden !== orden) return;
       // 2026-08-30 (Daniel, insistiendo -- "son ya las seis y media... y lo
       // agenda en el pasado"): candado FINAL, sin confiar en ningún cálculo
       // intermedio -- se arma la fecha+hora real que devolvió la búsqueda y
@@ -4188,14 +4357,17 @@ window.OT2C = (function(){
           encontrado.fecha.slice(0,4)*1, encontrado.fecha.slice(5,7)*1-1, encontrado.fecha.slice(8,10)*1,
           _partes[0], _partes[1]);
         if (_dtReal.getTime() < Date.now()){
-          encontrado = await _o2mDayBuscarHuecoRango(_o2mDayHoyStr(), durMin, tecnicoIds, 14);
+          encontrado = await _o2mDayBuscarHuecoRango(sal && S.fecha && S.fecha > _o2mDayHoyStr() ? S.fecha : _o2mDayHoyStr(), durMin, tecnicoIds, maxDias, lim, tope);
+          if (S.agOrden !== orden) return;
         }
       }
       if (!encontrado){
-        if (window.ilusToast) ilusToast('Sin huecos en los próximos 14 días para ese equipo de técnicos', {type:'warning'});
+        if (window.ilusToast) ilusToast(tope
+          ? 'Sin huecos para la entrada antes de la salida ('+_o2mFechaBonita(tope)+'). Mueve la salida o elige otro equipo de técnicos'
+          : 'Sin huecos en los próximos '+maxDias+' días para ese equipo de técnicos', {type:'warning'});
         return;
       }
-      await _o2mDayIrADia(encontrado.fecha);
+      if (!(await _o2mDayIrADia(encontrado.fecha, orden))) return;
       var hf = _o2mDayHHMM(_o2mDayToMin(encontrado.hora) + durMin);
       var elIni = document.getElementById('o2mHoraIni'), elFin = document.getElementById('o2mHoraFin');
       if (elIni) elIni.value = encontrado.hora;
@@ -10588,27 +10760,62 @@ window.OT2C = (function(){
     S.anexo.fecha_termino = S.fecha || '';
   }
   function setFecha(v){
+    var sal = _agSal();         // 📅 2026-10-25: la fecha que se escribe es la de la orden que se agenda (entrada o salida)
     // 📅 2026-10-18 (Daniel): una fecha escrita a mano que cae domingo se rechaza.
     if (v && _o2mEsDomingo(v)){
       if (window.ilusToast) ilusToast('Los domingos no se agendan órdenes de trabajo. Elige otro día.', {type:'warning'});
       var _fpd = document.getElementById('o2mFecha');
-      if (_fpd) _fpd.value = S.fecha || '';
+      if (_fpd) _fpd.value = agFecha();
       return;
     }
-    S.fecha = v; avisosAgenda(); refrescarAnclas();
-    _o2mAnexoSincronizarFechas();
+    // 📅 2026-10-25: la salida no puede ir antes de la entrada. Un clic o un atajo ni llegan acá (o2mCalClicDia ya los rechazó); escrita a mano NO se
+    // rechaza ni se reasigna el campo mientras se tipea: el navegador avisa cada año parcial (p. ej. «0002-11-12») y borrarlo reseteaba lo que la
+    // persona escribía (revisión independiente 25-oct, hallazgo 3). El valor se acepta, la ficha «Salida» queda en rojo diciendo el motivo, el servidor
+    // lo rechaza igual y solo se avisa con un toast cuando ya es una fecha completa y plausible.
+    var plausible = !!v && v.length === 10 && parseInt(v.slice(0, 4), 10) >= parseInt(_o2mHoyStr().slice(0, 4), 10);   // «hoy» del navegador, la misma referencia del resto del paso
+    if (v && sal && S.fecha && v < S.fecha && plausible){
+      if (window.ilusToast) ilusToast('La salida no puede ir antes de la instalación ('+_o2mFechaBonita(S.fecha)+').', {type:'warning'});
+    }
+    // Mismo día que la entrada: la salida no puede empezar antes de que ella termine (regla del servidor). Se SUGIERE el horario que sí sirve
+    // (empieza cuando termina la entrada, con la misma duración) y la persona puede cambiarlo.
+    if (sal && plausible && S.fecha && v === S.fecha && S.hfin){
+      var _eFin = _o2mDayToMin(S.hfin), _sIni = _o2mDayToMin(S.desinst.hini), _sFin = _o2mDayToMin(S.desinst.hfin);
+      if (_eFin != null && _eFin < O2M_DAY_END && (_sIni == null || _sIni < _eFin)){
+        var _dur = (_sIni != null && _sFin != null && _sFin > _sIni) ? (_sFin - _sIni) : 120;
+        S.desinst.hini = _o2mDayHHMM(_eFin);
+        S.desinst.hfin = _o2mDayHHMM(Math.min(_eFin + _dur, O2M_DAY_END));
+        var _hi = document.getElementById('o2mHoraIni'), _hf = document.getElementById('o2mHoraFin');
+        if (_hi) _hi.value = S.desinst.hini;
+        if (_hf) _hf.value = S.desinst.hfin;
+        if (window.ilusToast) ilusToast('El mismo día, la salida empieza a las '+S.desinst.hini+', cuando termina la instalación. Puedes cambiarlo.', {type:'info'});
+      }
+    }
+    if (sal){
+      // La SALIDA escribe solo S.desinst.fecha (lo que viaja en body.desinstalacion) y vuelve a revisarse con el servidor.
+      S.desinst.fecha = v || '';
+      _diPintarRegiones(['preg', 'avisos', 'res']);
+      _diProgramarPrevio(false);
+    } else {
+      S.fecha = v;
+    }
+    avisosAgenda(); refrescarAnclas();
+    if (!sal) _o2mAnexoSincronizarFechas();
     // Mini-calendario del paso Agenda: sigue la fecha del input, tipeada a
     // mano o fijada por un clic en el propio calendario (o2mCalClicDia
     // dispara el 'change' de #o2mFecha, que termina llamando acá mismo --
     // mismo mecanismo que tkotFechaProgChange() en el modal de Tickets).
-    if (v){
+    // Con la SALIDA y un año parcial («0002-…») el calendario espera a que la fecha sea plausible: no pide meses absurdos al servidor.
+    if (v && (plausible || !sal)){
       var y = parseInt(v.slice(0,4),10), m = parseInt(v.slice(5,7),10);
       if (y && m && (y!==o2mCal.anio || m!==o2mCal.mes)){
         o2mCal.anio = y; o2mCal.mes = m;
-        o2mCalCargarMes().then(function(){ o2mCalSelDia(v, {silencio:true}); });
+        // Si mientras llegaba el mes se cambió de orden (Entrada ↔ Salida), este resultado ya no es de la orden que se agenda: se descarta.
+        o2mCalCargarMes().then(function(){ if (_agSal() !== sal) return; o2mCalSelDia(v, {silencio:true}); });
       } else {
         o2mCalSelDia(v, {silencio:true});
       }
+    } else if (v){
+      // salida con una fecha aún incompleta: no se mueve el calendario (la ficha «Salida» ya lo dice en rojo)
     } else {
       o2mCal.diaSel = null;
       o2mCalRenderGrid();
@@ -10621,15 +10828,22 @@ window.OT2C = (function(){
     // este SÍ bloquea de verdad (a diferencia del resto de los avisos de
     // este paso, que son solo sugerencia). Se topa el valor y se marca
     // S._hfinTopado para que avisosAgenda() explique por qué.
+    var dueno = _agDueno();      // 📅 2026-10-25: la hora es de la orden que se agenda (entrada: S.*; salida: S.desinst.*, con los mismos nombres hini/hfin)
     if (campo === 'hfin' && v && v > O2M_SCHED_LIMITE_ABS){
       v = O2M_SCHED_LIMITE_ABS;
       var elFinTope = document.getElementById('o2mHoraFin');
       if (elFinTope) elFinTope.value = v;
-      S._hfinTopado = true;
+      dueno._hfinTopado = true;
     } else if (campo === 'hfin'){
-      S._hfinTopado = false;
+      dueno._hfinTopado = false;
     }
-    S[campo] = v; avisosAgenda();
+    dueno[campo] = v; avisosAgenda();
+    // 📅 Con las dos órdenes, cambiar las horas de CUALQUIERA de las dos vuelve a revisar la salida con el servidor: su regla del mismo día depende de
+    // cuándo termina la entrada (revisión independiente 25-oct, hallazgo 4). La respuesta repinta las fichas y los checks de los pasos.
+    if (_o2mDiAplica()){
+      if (_agSal()){ _diPintarRegiones(['avisos', 'res']); _diProgramarPrevio(false); refrescarAnclas(); }
+      else _diProgramarPrevio(false);
+    }
     // El bloque "Tu OT" de la línea de tiempo se mueve EN VIVO y el
     // choque se re-chequea (debounced) con cada cambio de hora.
     o2mDayRenderMine();
@@ -11988,7 +12202,7 @@ window.OT2C = (function(){
         dRef.previo = (res.j && res.j.ok) ? res.j
           : {ok:false, valido:false, bloqueo:{codigo:'PREVIO', mensaje:(res.j && res.j.error) || 'No se pudo revisar la desinstalación. Reintenta.'}, avisos:[], checklists_sugeridos:[]};
         _diAplicarSugerencias();
-        _diPintarRegiones(['fecha', 'avisos', 'cobro', 'eq', 'res']);
+        _diPintarRegiones(['avisos', 'cobro', 'eq', 'res']);
         refrescarAnclas();
       })
       .catch(function(){
@@ -12064,64 +12278,207 @@ window.OT2C = (function(){
           '<b>segunda orden de trabajo</b>, unida a esta instalación, con su propia fecha, técnico y checklist. Así el técnico y el '+
           'calendario lo saben desde hoy. Tú decides cada dato: el sistema solo sugiere.</p>')+
       '<div id="o2mDiPreg"></div>'+
-      // 📅 2026-10-24: con «Instalación con desinstalación» la fecha, el horario y sus avisos se agendan en el paso «Agenda» (ver _o2mAgSalidaHtml).
-      // (con la tarjeta nueva, lo que no es de la fecha —técnico, costo, cobro, saldo— se explica acá, junto al dato que lo resuelve: ver _diRegAvisos)
-      (S.conDesinst ? '<div id="o2mDiAvisosDes"></div>' : '<div id="o2mDiFecha"></div><div id="o2mDiAvisos"></div>')+'<div id="o2mDiTec"></div><div id="o2mDiCosto"></div>'+
+      // 📅 2026-10-25: la fecha, el horario y sus avisos se agendan en el paso «Agenda», con el MISMO calendario que la entrada (interruptor
+      // «Entrada | Salida»; ver agOrden). Acá, lo que no es de la fecha —técnico, costo, cobro, saldo— se explica junto al dato que lo resuelve (ver _diRegAvisos).
+      // (Este paso solo existe con «Instalación con desinstalación»: ver _o2mDiAplica.)
+      '<div id="o2mDiAvisosDes"></div><div id="o2mDiTec"></div><div id="o2mDiCosto"></div>'+
       '<div id="o2mDiCobro"></div><div id="o2mDiEq"></div><div id="o2mDiNota"></div><div id="o2mDiRes"></div>';
-    _diPintarRegiones(['preg', 'fecha', 'avisos', 'tec', 'costo', 'cobro', 'eq', 'nota', 'res']);
+    _diPintarRegiones(['preg', 'avisos', 'tec', 'costo', 'cobro', 'eq', 'nota', 'res']);
     if (d.lleva && d.lleva !== 'no') _diProgramarPrevio(true);
     _diCargarPlantillas();
   }
-  /* 📅 2026-10-24 (Daniel: «el modal se comporte en términos de calendario para crear dos órdenes de trabajo»): con «Instalación con desinstalación»
-     la fecha y el horario de la SALIDA se agendan en el paso «Agenda», justo debajo de la entrada, con el MISMO calendario compacto y la misma
-     «ficha» de siempre (carga por día, domingos no, atajos, «buscar hueco libre»). Son los mismos contenedores `o2mDiFecha` / `o2mDiAvisos` (ids
-     únicos: en este modo ya no existen en el paso «Desinstalación»), así que todo lo que repinta la desinstalación llega acá sin cambios. */
+  /* 📅 2026-10-25 (Daniel, probando en producción: «reciclar el mismo calendario… o ese calendario potenciarlo tal cual como el que tenemos de
+     entrada… Hazlo potente, hazlo amigable, hazlo con pocos pasos, muy poco scroll»): la SALIDA ya no tiene calendario propio. Se agenda en el
+     MISMO calendario de la entrada (mes + línea de tiempo del día: feriados, carga por técnico, arrastre del bloque, «sugerir horario»)
+     eligiendo arriba «Salida» en el interruptor de las dos órdenes. Acá viven solo el interruptor (con las dos fechas y los días que hay entre
+     ellas, siempre a la vista), la guía de qué sigue y los atajos de fecha de la salida. El calendario sigue a la orden elegida por los
+     accesores ag*() de más arriba; la salida escribe solo S.desinst.* (lo que se ve es lo que viaja). */
   function _diFechaSalidaOk(){
     var d = S.desinst;
     return !!d.fecha && d.fecha >= (S.fecha || '') && !_o2mEsDomingo(d.fecha);
   }
-  function _o2mAgSalidaHtml(){
-    return '<div class="o2m-ag-salida" id="o2mAgSalida">'+
-      '<div class="o2m-ag-union" aria-hidden="true"><i class="bi bi-arrow-down-circle-fill"></i></div>'+
-      '<div class="o2m-ag-lbl sal"><i class="bi bi-box-arrow-up"></i><b>Salida · desinstalación</b>'+
-        '<span>Segunda orden, calendarizada para retirar los equipos. Lleva su propio técnico (sí o sí) y checklist: se completan en el paso «Desinstalación».</span></div>'+
-      '<div id="o2mDiFecha"></div><div id="o2mDiAvisos"></div></div>';
+  /* El servidor avisa que el técnico de la salida ya tiene trabajo ese día y esa hora (y nadie autorizó agendar igual): la ficha lo dice. */
+  function _diSalidaChoca(){
+    var d = S.desinst, p = d.previo;
+    return !!(p && !d.previoPend && p.choque && !d.forzar);
   }
-  function _o2mAgSalidaPintar(){
-    var f = document.getElementById('o2mDiFecha'), a = document.getElementById('o2mDiAvisos');
-    try { if (f) _diRegFecha(f); if (a) _diRegAvisos(a); } catch (e) { console.error('[OT2C] agenda · salida', e); }
-    _diProgramarPrevio(true);
+  /* El servidor (previo.bloqueo) rechaza la fecha u hora de la salida por una regla que el navegador no ve —el mismo día de la entrada con inicio antes
+     de que ella termine, término antes del inicio…—. Solo cuenta si ya respondió para ESTOS datos (no mientras revisa) y si es un código de fecha u
+     horario. Revisión independiente 25-oct, hallazgo 4: las fichas, la guía y el check de «Agenda» decían «lista» mientras el servidor bloqueaba. */
+  function _diSalidaBloqueada(){
+    var d = S.desinst, p = d.previo, b = (p && !d.previoPend) ? p.bloqueo : null;
+    if (!b || !d.fecha || b.codigo === 'FECHA_REQUERIDA' || !DI_COD_FECHA[b.codigo]) return null;
+    return b;
   }
-  /* 📅 2026-10-24: las DOS fechas de un vistazo arriba del paso Agenda (entrada · salida y cuántos días hay entre ellas). Cada ficha lleva a su
-     calendario. Solo informa (la validez real sigue siendo completo('agenda') y el servidor): verde si la fecha sirve, rojo con el motivo si no. */
-  var _agResUlt = '';
+  /* La salida sirve para agendar: fecha válida (≥ entrada, no domingo), sin bloqueo del servidor y sin choque de técnico (salvo «Agendar igual»). */
+  function _diSalidaListaParaAgendar(){ return _diFechaSalidaOk() && !_diSalidaBloqueada() && !_diSalidaChoca(); }
+  /* Por qué la salida NO está lista (texto corto y completo para la ficha y la guía); '' si está lista. */
+  function _diSalidaMotivo(){
+    var d = S.desinst, b = _diSalidaBloqueada();
+    if (!d.fecha) return 'Falta la fecha de salida';
+    if (_o2mEsDomingo(d.fecha)) return 'Domingo: elige otro día';
+    if (d.fecha < (S.fecha || '')) return 'Va antes de la instalación';
+    if (b) return b.mensaje || 'El servidor no acepta esta fecha u horario';
+    if (_diSalidaChoca()) return 'El técnico ya tiene trabajo';
+    return '';
+  }
+  /* 📅 Interruptor «Entrada | Salida»: las DOS fechas de un vistazo (y cuántos días hay entre ellas), la orden que se agenda marcada, y cada ficha
+     en verde si la fecha sirve o en rojo con el motivo. Tocar una ficha cambia la orden que edita el calendario (agOrden). Solo informa: la
+     validez real sigue siendo completo('agenda') y el servidor. */
+  var _agResUlt = '', _agGuiaUlt = '';
   function _o2mAgResumenHtml(){
-    var d = S.desinst, hoy = _o2mHoyStr();
-    var entOk = !!S.fecha && S.fecha >= hoy, salOk = _diFechaSalidaOk();
+    var d = S.desinst, hoy = _o2mHoyStr(), sal = _agSal();
+    var bloq = _diSalidaBloqueada();          // el servidor no acepta esa fecha u horario (p. ej. el mismo día antes de que termine la entrada)
+    var entOk = !!S.fecha && S.fecha >= hoy, salOk = _diSalidaListaParaAgendar();
     function horas(a, z){ return a && z ? ' · ' + _diEsc(a) + '–' + _diEsc(z) : ''; }
-    function ficha(cual, ok, titulo, icono, texto){
-      return '<button type="button" class="o2m-ag-chip '+cual+(ok ? ' ok' : ' falta')+'" onclick="OT2C.agIr(\''+cual+'\')" aria-label="'+_diEsc(titulo+': '+texto.replace(/<[^>]+>/g, ''))+'">'+
-        '<i class="bi '+icono+' ic"></i><span class="tx"><b>'+titulo+'</b><em>'+texto+'</em></span>'+
+    // `corto`: la misma ficha en celular (donde dos fichas comparten una fila y, con el interruptor pegajoso, deben ocupar poco): título y fecha cortos.
+    function ficha(cual, ok, titulo, tituloCorto, icono, texto, corto){
+      var on = (cual === 'sal') === sal;
+      return '<button type="button" class="o2m-ag-chip '+cual+(on ? ' on' : '')+(ok ? ' ok' : ' falta')+'" aria-pressed="'+on+'" onclick="OT2C.agOrden(\''+cual+'\')" '+
+        'aria-label="'+_diEsc(titulo+': '+texto.replace(/<[^>]+>/g, '')+(on ? ' (la que estás agendando)' : ''))+'">'+
+        '<i class="bi '+icono+' ic"></i><span class="tx"><b><span class="lg">'+titulo+'</span><span class="sh">'+tituloCorto+'</span>'+(on ? '<span class="ed">editando</span>' : '')+'</b>'+
+        '<em><span class="lg">'+texto+'</span><span class="sh">'+(corto || texto)+'</span></em></span>'+
         '<i class="bi '+(ok ? 'bi-check-circle-fill' : 'bi-exclamation-circle-fill')+' est"></i></button>';
     }
     var tEnt = !S.fecha ? 'Falta la fecha' : (entOk ? _diEsc(_diFechaLarga(S.fecha)) + horas(S.hini, S.hfin) : 'La fecha ya pasó: elige hoy o una futura');
+    var cEnt = (S.fecha && entOk) ? _diFechaCorta(S.fecha) : '';
     var tSal = !d.fecha ? 'Falta la fecha de salida'
       : (_o2mEsDomingo(d.fecha) ? 'Domingo: elige otro día'
-      : (d.fecha < (S.fecha || '') ? 'Va antes de la instalación' : _diEsc(_diFechaLarga(d.fecha)) + horas(d.hini, d.hfin)));
-    var dias = (S.fecha && d.fecha && entOk && salOk) ? _diDiasEntre(S.fecha, d.fecha) : null;
-    return ficha('ent', entOk, 'Entrada · instalación', 'bi-box-arrow-in-down', tEnt)+
+      : (d.fecha < (S.fecha || '') ? 'Va antes de la instalación'
+      : (bloq ? _diEsc(_diFechaLarga(d.fecha)) + horas(d.hini, d.hfin) + ' · ' + _diEsc(bloq.mensaje || 'revisa la fecha y el horario')
+      : (_diSalidaChoca() ? _diEsc(_diFechaLarga(d.fecha)) + horas(d.hini, d.hfin) + ' · el técnico ya tiene trabajo'
+      : _diEsc(_diFechaLarga(d.fecha)) + horas(d.hini, d.hfin)))));
+    var cSal = (d.fecha && _diFechaSalidaOk()) ? _diFechaCorta(d.fecha) + (_diSalidaChoca() ? ' · choca' : '') + (bloq ? ' · revisa' : '') : '';
+    var dias = (S.fecha && d.fecha && entOk && _diFechaSalidaOk()) ? _diDiasEntre(S.fecha, d.fecha) : null;
+    return ficha('ent', entOk, 'Entrada · instalación', 'Entrada', 'bi-box-arrow-in-down', tEnt, cEnt)+
       '<span class="o2m-ag-gap" aria-hidden="true"><i class="bi bi-arrow-right"></i>'+
         (dias != null ? '<small>'+(dias === 0 ? 'mismo día' : (dias === 1 ? '1 día' : dias+' días'))+'</small>' : '')+'</span>'+
-      ficha('sal', salOk, 'Salida · desinstalación', 'bi-box-arrow-up', tSal);
+      ficha('sal', salOk, 'Salida · desinstalación', 'Salida', 'bi-box-arrow-up', tSal, cSal);
+  }
+  function _diFechaCorta(iso){ var w = _diDOW(iso); return w ? (w.charAt(0).toUpperCase() + w.slice(1, 3) + ' ' + _diDM(iso)) : ''; }
+  /* 🧭 La guía: una línea que dice qué hacer ahora (y un botón para pasar a lo siguiente). Con la salida activa, debajo van los atajos de fecha. */
+  function _o2mAgGuiaHtml(){
+    var d = S.desinst, sal = _agSal(), hoy = _o2mHoyStr();
+    var entOk = !!S.fecha && S.fecha >= hoy, salOk = _diSalidaListaParaAgendar();   // lista = fecha válida, sin bloqueo del servidor y sin choque (hallazgo 4)
+    var dias = (entOk && _diFechaSalidaOk()) ? _diDiasEntre(S.fecha, d.fecha) : null;
+    var ic, txt, btn = '';
+    if (!sal){
+      if (!entOk){
+        ic = 'bi-hand-index-thumb'; txt = 'Toca en el calendario el día en que <b>se instala</b> (la entrada).';
+      } else if (!d.fecha){
+        ic = 'bi-check-circle-fill ok'; txt = '<b>Entrada lista.</b> Ahora agenda la <b>salida</b>: cuándo se retiran los equipos.';
+        btn = '<button type="button" class="o2m-ag-go" onclick="OT2C.agOrden(\'sal\')">Agendar la salida<i class="bi bi-arrow-right"></i></button>';
+      } else if (!salOk){
+        // La salida YA existe pero no sirve: no se dice «ahora agenda la salida» (revisión independiente 25-oct, hallazgo 4); se dice por qué y se lleva a corregirla.
+        ic = 'bi-exclamation-circle-fill falta'; txt = 'Ajustando la <b>entrada</b>. La <b>salida</b> necesita un cambio: ' + _diEsc(_diSalidaMotivo()) + '.';
+        btn = '<button type="button" class="o2m-ag-go" onclick="OT2C.agOrden(\'sal\')">Revisar la salida<i class="bi bi-arrow-right"></i></button>';
+      } else {
+        ic = 'bi-pencil-square'; txt = 'Ajustando la <b>entrada</b>. La salida ya está agendada' +
+          (dias === 0 ? ' (el mismo día)' : (dias === 1 ? ' (1 día después)' : ' (' + dias + ' días después)')) + '.';
+      }
+    } else if (!entOk){
+      ic = 'bi-exclamation-circle-fill falta'; txt = 'Primero elige la fecha de la <b>entrada</b>: la salida no puede ir antes.';
+      btn = '<button type="button" class="o2m-ag-go" onclick="OT2C.agOrden(\'ent\')"><i class="bi bi-arrow-left"></i>Volver a la entrada</button>';
+    } else if (!d.fecha){
+      ic = 'bi-hand-index-thumb'; txt = 'Toca el día en que <b>se retiran</b> los equipos, o elige un atajo:';
+    } else if (!salOk){
+      ic = 'bi-exclamation-circle-fill falta'; txt = 'Revisa la fecha de la salida (mira el aviso de abajo).';
+    } else {
+      ic = 'bi-check-circle-fill ok';
+      txt = '<b>Salida lista.</b> ' + (dias === 0 ? 'Los equipos se retiran el mismo día de la instalación.' : 'Los equipos quedan instalados ' + (dias === 1 ? '1 día' : dias + ' días') + '.') +
+        ' Su técnico y checklist van en el paso «Desinstalación».';
+    }
+    return '<div class="g-t"><i class="bi ' + ic + '"></i><span>' + txt + '</span>' + btn + '</div>' + (sal ? _agAtajosHtml() : '');
+  }
+  /* Atajos de fecha de la SALIDA, contados desde la entrada (y la que sugiere el servidor, si la hay). Un toque: fecha puesta y calendario ahí. */
+  function _agAtajosHtml(){
+    var base = S.fecha || '', d = S.desinst, sug = d.previo && d.previo.fecha_sugerida;
+    if (!base || base < _o2mHoyStr()) return '';
+    var op = [['+1 sem', _diSumarDias(base, 7)], ['+2 sem', _diSumarDias(base, 14)], ['+1 mes', _diSumarMeses(base, 1)], ['+2 meses', _diSumarMeses(base, 2)]];
+    var h = '<div class="o2m-ag-atajos" role="group" aria-label="Fechas rápidas para la salida">';
+    if (sug) h += '<button type="button" class="o2m-ag-at sug" title="'+_diEsc(String((d.previo && d.previo.fecha_sugerida_motivo) || '').replace(/^Propuesta:\s*/, ''))+'" onclick="OT2C.agFechaRapida(\''+sug+'\')"><i class="bi bi-stars"></i>Sugerida · '+_diDM(sug)+'</button>';
+    op.forEach(function(x){
+      var f = _diHabil(x[1]);
+      h += '<button type="button" class="o2m-ag-at'+(f === d.fecha ? ' on' : '')+'" onclick="OT2C.agFechaRapida(\''+f+'\')">'+x[0]+' · '+_diDM(f)+'</button>';
+    });
+    return h + '</div>';
+  }
+  function _diDM(iso){ var p = String(iso || '').split('-'); return p.length < 3 ? '' : (parseInt(p[2], 10) + ' ' + O2M_CAL_MES_ES[parseInt(p[1], 10) - 1].slice(0, 3)); }
+  function _diDiasEntre(i, f){
+    var x = String(i || '').split('-'), y = String(f || '').split('-');
+    if (x.length < 3 || y.length < 3) return null;
+    return Math.round((new Date(+y[0], +y[1]-1, +y[2]) - new Date(+x[0], +x[1]-1, +x[2])) / 86400000);
   }
   function _o2mAgResumenPintar(){
     var el = document.getElementById('o2mAgResumen'); if (!el) return;
-    var h; try { h = _o2mAgResumenHtml(); } catch (e) { console.error('[OT2C] agenda · resumen', e); return; }
-    if (h !== _agResUlt || !el.innerHTML){ _agResUlt = h; el.innerHTML = h; }       // sin reescribir si no cambió: no se pierde el foco ni un clic en curso
+    var h, g; try { h = _o2mAgResumenHtml(); g = _o2mAgGuiaHtml(); } catch (e) { console.error('[OT2C] agenda · resumen', e); return; }
+    if (h !== _agResUlt || !el.innerHTML){ _agResUlt = h; _agPintarConFoco(el, h); }       // sin reescribir si no cambió: no se pierde el foco ni un clic en curso
+    var gu = document.getElementById('o2mAgGuia');
+    if (gu && (g !== _agGuiaUlt || !gu.innerHTML)){
+      _agGuiaUlt = g; _agPintarConFoco(gu, g);
+      // La frase de la guía se anuncia por la región fija #o2mAgLive (solo la frase, no los atajos), y solo si cambió.
+      var lv = document.getElementById('o2mAgLive'), fr = gu.querySelector('.g-t > span');
+      if (lv && fr && lv.textContent !== fr.textContent) lv.textContent = fr.textContent;
+    }
   }
-  function agIr(w){
-    var el = w === 'sal' ? document.getElementById('o2mAgSalida') : document.querySelector('#o2mSec-agenda .o2m-ag-lbl.ent');
-    if (el && el.scrollIntoView) el.scrollIntoView({behavior:'smooth', block:'start'});
+  /* Repinta un contenedor conservando el foco: si el elemento enfocado era un botón de ESE contenedor, el foco vuelve al botón que ocupa el mismo
+     lugar (revisión independiente 25-oct, hallazgo 9: antes el foco caía al <body> al cambiar el texto de una ficha o de un atajo). */
+  function _agPintarConFoco(el, html){
+    var ae = document.activeElement, idx = -1;
+    if (ae && ae !== el && el.contains(ae)) idx = Array.prototype.indexOf.call(el.querySelectorAll('button'), ae);
+    el.innerHTML = html;
+    if (idx >= 0){
+      var nb = el.querySelectorAll('button')[idx];
+      if (nb){ try { nb.focus({preventScroll:true}); } catch (_) { nb.focus(); } }
+    }
+  }
+  /* Lo que el servidor dice de la fecha y el choque de la SALIDA (solo mientras se agenda la salida: ver _diRegAvisos). */
+  function _o2mAgAvisosSalida(){
+    var a = document.getElementById('o2mDiAvisos'); if (!a) return;
+    try { _diRegAvisos(a); } catch (e) { console.error('[OT2C] agenda · avisos de la salida', e); }
+  }
+  /* Cambia la orden que edita el calendario ('ent' | 'sal'). No reconstruye el paso: solo reubica fecha, horas, mes, línea de tiempo y avisos. */
+  function agOrden(w){
+    w = (w === 'sal') ? 'sal' : 'ent';
+    if (w === 'sal' && !_o2mDiAplica()) return;
+    if (S.agOrden === w) return;
+    var ae = document.activeElement, tenia = !!(ae && ae.closest && ae.closest('#o2mAgResumen, #o2mAgGuia'));
+    S.agOrden = w;
+    _agAplicarOrden();
+    if (tenia){      // los botones se repintaron: el foco vuelve al interruptor (teclado y lectores de pantalla)
+      var btn = document.querySelector('#o2mAgResumen .o2m-ag-chip.' + w);
+      if (btn){ try { btn.focus({preventScroll:true}); } catch (_) { btn.focus(); } }
+    }
+  }
+  function _agAplicarOrden(){
+    var sal = _agSal(), f = agFecha(), orden = S.agOrden;
+    var fp = document.getElementById('o2mFecha'), hi = document.getElementById('o2mHoraIni'), hf = document.getElementById('o2mHoraFin');
+    var lb = document.getElementById('o2mFechaLbl');
+    if (fp){ fp.value = f; fp.min = agMinFecha(); }
+    if (hi) hi.value = agHini();
+    if (hf) hf.value = agHfin();
+    if (lb) lb.textContent = sal ? 'Fecha de la salida *' : 'Fecha de la entrada *';
+    // El calendario salta al mes de la orden que se agenda (o, si la salida aún no tiene fecha, al de la entrada).
+    var base = f || (sal && S.fecha) || _o2mHoyStr();
+    var y = parseInt(base.slice(0, 4), 10), m = parseInt(base.slice(5, 7), 10);
+    var cambioMes = (y !== o2mCal.anio || m !== o2mCal.mes);
+    o2mCal.anio = y; o2mCal.mes = m; o2mCal.diaSel = f || null;
+    o2mDay.choque = false; o2mDay.choqueFecha = null; o2mDay.choqueKeys = null; o2mDay.choqueMsgs = null;
+    var warn = document.getElementById('o2mChoqueWarn'); if (warn) warn.style.display = 'none';
+    // Si mientras llegaba el mes se volvió a cambiar de orden, este pintado ya no es de la orden que se agenda: se descarta (la última llamada pinta).
+    // Sin esto, alternar Entrada → Salida → Entrada rápido dejaba la línea de tiempo en el día de la salida con la entrada activa y un toque en un hueco
+    // movía la ENTRADA a la fecha de la salida (revisión independiente 25-oct, hallazgo 2).
+    var pintar = function(){ if (S.agOrden !== orden) return; o2mCalRenderGrid(); o2mDayRender(f || null, {silencio:true}); };
+    if (cambioMes) o2mCalCargarMes().then(pintar); else pintar();
+    _o2mAgResumenPintar();
+    avisosAgenda();
+    _o2mAgAvisosSalida();
+    o2mChequearChoque();
+  }
+  /* Un atajo de fecha de la salida: pasa por el mismo camino que tocar el día en el calendario (mismas validaciones y avisos). */
+  function agFechaRapida(f){
+    if (!_agSal()) return;
+    o2mCalClicDia(f);
   }
   function _diCargarPlantillas(){
     if (_evPlantillas !== null) return;
@@ -12136,7 +12493,7 @@ window.OT2C = (function(){
   function _diPintarRegiones(lista){
     _o2mAgResumenPintar();           // cualquier cambio de la salida (fecha, horas, técnico…) actualiza el resumen de las dos fechas del paso Agenda
     if (!document.getElementById('o2mDiPreg')) return;
-    var f = {preg:_diRegPreg, fecha:_diRegFecha, avisos:_diRegAvisos, tec:_diRegTec, costo:_diRegCosto, cobro:_diRegCobro,
+    var f = {preg:_diRegPreg, avisos:_diRegAvisos, tec:_diRegTec, costo:_diRegCosto, cobro:_diRegCobro,
              eq:_diRegEq, nota:_diRegNota, res:_diRegRes};
     lista.forEach(function(k){
       var el = document.getElementById('o2mDi' + k.charAt(0).toUpperCase() + k.slice(1));
@@ -12160,7 +12517,7 @@ window.OT2C = (function(){
       el.innerHTML = '<div class="o2m-di-av verde"><i class="bi bi-diagram-2-fill"></i><span><b>Se crean 2 órdenes unidas:</b> la '+
         '<b>de entrada</b> (instalación)'+(S.fecha ? ' · '+_diEsc(_diFechaLarga(S.fecha)) : '')+' y la <b>de salida</b> (desinstalación)'+
         (d.fecha ? ' · '+_diEsc(_diFechaLarga(d.fecha)) : ', que agendas en el paso <b>Agenda</b>')+'.</span>'+
-        (d.fecha ? '' : '<button type="button" onclick="OT2C.irAncla(\'agenda\')">Ir a Agenda</button>')+'</div>'+
+        (d.fecha ? '' : '<button type="button" onclick="OT2C.agOrden(\'sal\');OT2C.irAncla(\'agenda\')">Ir a Agenda</button>')+'</div>'+
         (conTec ? '' : '<div class="o2m-di-av ambar"><i class="bi bi-person-exclamation"></i><span>La desinstalación <b>necesita un técnico asignado</b>: '+
           'elígelo en «Técnicos de la desinstalación» (puedes usar los mismos de la instalación).</span></div>');
       return;
@@ -12171,113 +12528,6 @@ window.OT2C = (function(){
       op('no','bi-x-circle','No se desinstala','Esta instalación queda como trabajo único')+'</div>'+
       (d.lleva === 'no'
         ? '<div class="o2m-di-av verde"><i class="bi bi-check-circle-fill"></i><span>Esta instalación <b>no lleva desinstalación</b>. Se crea una sola orden.</span></div>' : '');
-  }
-  /* 📅 2026-10-23 (Daniel, probando un pedido con desinstalación: «coloca un calendario como corresponde o utiliza el mismo para
-     recalendarizar… ahorramos espacio y código, y no darle tanto scroll… déjalo espectacular, tecnológico… los objetos más pequeños sin perder
-     calidad»): la fecha y el horario de la desinstalación se eligen en UN calendario compacto (mismos datos del calendario general: carga de
-     OT por día, feriados no, domingos bloqueados) con un panel «ficha» a su lado: día elegido, cuánto después de la instalación, horario y
-     atajos. Reemplaza al campo de fecha + dos horas + 5 botones sueltos. El calendario del paso Agenda y este leen el MISMO mes del servidor
-     (o2mCal.cache), pero este no toca S.fecha: escribe solo S.desinst.fecha (REGLA: lo que se ve es lo que viaja). */
-  var _diCal = {a:null, m:null};
-  function _diCalInicio(){
-    var d = S.desinst, base = d.fecha || S.fecha || _o2mHoyStr();
-    var p = String(base).split('-');
-    if (!_diCal.a || !_diCal.m || d._calBase !== (d.fecha || '') + '|' + (S.fecha || '')){
-      _diCal.a = parseInt(p[0], 10); _diCal.m = parseInt(p[1], 10);
-      d._calBase = (d.fecha || '') + '|' + (S.fecha || '');
-    }
-  }
-  function _diCalCargar(){
-    var a = _diCal.a, m = _diCal.m, key = _o2mCalKey(a, m);
-    if (o2mCal.cache[key]) return;
-    fetch('/servicio-tecnico/api/calendario/mes/' + a + '/' + m, {credentials:'same-origin'})
-      .then(function(r){ if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
-      .then(function(j){ o2mCal.cache[key] = _o2mCalNormalizarMes(j); o2mCal.fer[key] = (j && j.feriados) || {}; })
-      .catch(function(){ o2mCal.cache[key] = {}; })
-      .then(function(){ if (_diCal.a === a && _diCal.m === m) _diPintarRegiones(['fecha']); });
-  }
-  function _diDiasEntre(i, f){
-    var x = String(i || '').split('-'), y = String(f || '').split('-');
-    if (x.length < 3 || y.length < 3) return null;
-    return Math.round((new Date(+y[0], +y[1]-1, +y[2]) - new Date(+x[0], +x[1]-1, +x[2])) / 86400000);
-  }
-  function _diDurTxt(hi, hf){
-    var a = _o2mDayToMin(hi), z = _o2mDayToMin(hf);
-    if (a == null || z == null || z <= a) return '';
-    var mi = z - a, h = Math.floor(mi / 60), r = mi % 60;
-    return (h ? h + ' h' : '') + (h && r ? ' ' : '') + (r ? r + ' min' : '');
-  }
-  function _diCalGrid(){
-    var d = S.desinst, a = _diCal.a, m = _diCal.m, key = _o2mCalKey(a, m), mapa = o2mCal.cache[key];
-    var sug = d.previo && d.previo.fecha_sugerida, hoy = _o2mHoyStr(), min = (S.fecha && S.fecha > hoy) ? S.fecha : hoy;
-    var nDias = new Date(a, m, 0).getDate(), off = new Date(a, m-1, 1).getDay() - 1; if (off < 0) off = 6;
-    var h = '';
-    for (var i = 0; i < off; i++) h += '<i class="dc-d blank"></i>';
-    for (var dia = 1; dia <= nDias; dia++){
-      var f = a + '-' + String(m).padStart(2, '0') + '-' + String(dia).padStart(2, '0');
-      var dow = new Date(a, m-1, dia).getDay(), n = mapa && mapa[f] ? mapa[f].length : 0;
-      var off1 = f < min || dow === 0;                      // antes de la instalación (o pasado) y domingo: no se agenda
-      var nomFer = (o2mCal.fer[key] || {})[f] || '';        // 🗓️ 2026-10-24 (REGLA #31): feriado de Chile (rojo suave; solo avisa, el servidor además lo advierte)
-      var cl = 'dc-d' + (dow === 6 ? ' sab' : '') + (nomFer ? ' fer' : '') + (f === hoy ? ' hoy' : '') + (f === S.fecha ? ' inst' : '') + (f === d.fecha ? ' sel' : '') +
-               (sug && f === sug ? ' sug' : '') + (off1 ? ' off' : '') + (n >= 5 ? ' c3' : (n >= 3 ? ' c2' : (n ? ' c1' : '')));
-      var lbl = dia + ' de ' + O2M_CAL_MES_ES[m-1] + (f === S.fecha ? ' · día de la instalación' : '') + (sug && f === sug ? ' · fecha sugerida' : '') +
-                (nomFer ? ' · feriado: ' + nomFer : '') +
-                (dow === 0 ? ' · domingo, no se agenda' : (f < min ? ' · antes de la instalación' : (n ? ' · ' + n + ' OT agendada(s)' : '')));
-      h += off1
-        ? '<i class="'+cl+'" aria-label="'+_diEsc(lbl)+'" aria-disabled="true"><b>'+dia+'</b></i>'
-        : '<button type="button" class="'+cl+'" aria-label="'+_diEsc(lbl)+'"'+(nomFer ? ' title="Feriado: '+_diEsc(nomFer)+'"' : '')+' aria-pressed="'+(f === d.fecha)+'" onclick="OT2C.diFecha(\''+f+'\')"><b>'+dia+'</b>'+
-          (f === S.fecha ? '<u class="mk"><i class="bi bi-box-seam"></i></u>' : '')+(sug && f === sug && f !== d.fecha ? '<u class="mk"><i class="bi bi-stars"></i></u>' : '')+
-          (nomFer && f !== S.fecha && !(sug && f === sug && f !== d.fecha) ? '<u class="mk fm"><i class="bi bi-flag-fill"></i></u>' : '')+
-          (n ? '<s>'+(n > 9 ? '9+' : n)+'</s>' : '')+'</button>';
-    }
-    return h;
-  }
-  function _diAtajos(){
-    var base = S.fecha || '', d = S.desinst, sug = d.previo && d.previo.fecha_sugerida;
-    if (!base) return '';
-    var op = [['+1 sem', _diSumarDias(base, 7)], ['+2 sem', _diSumarDias(base, 14)], ['+1 mes', _diSumarMeses(base, 1)], ['+2 meses', _diSumarMeses(base, 2)]];
-    var h = '<div class="dc-atajos" role="group" aria-label="Fechas rápidas">';
-    if (sug) h += '<button type="button" class="dc-at sug" title="'+_diEsc(String((d.previo && d.previo.fecha_sugerida_motivo) || '').replace(/^Propuesta:\s*/, ''))+'" onclick="OT2C.diFecha(\''+sug+'\')"><i class="bi bi-stars"></i>Sugerida · '+_diDM(sug)+'</button>';
-    op.forEach(function(x){
-      var f = _diHabil(x[1]);
-      h += '<button type="button" class="dc-at'+(f === d.fecha ? ' on' : '')+'" onclick="OT2C.diFecha(\''+f+'\')">'+x[0]+' · '+_diDM(f)+'</button>';
-    });
-    return h + '</div>';
-  }
-  function _diDM(iso){ var p = String(iso || '').split('-'); return p.length < 3 ? '' : (parseInt(p[2], 10) + ' ' + O2M_CAL_MES_ES[parseInt(p[1], 10) - 1].slice(0, 3)); }
-  function _diRegFecha(el){
-    var d = S.desinst;
-    if (!d.lleva || d.lleva === 'no'){ el.innerHTML = ''; return; }
-    var porDef = d.lleva === 'por_definir';
-    var ok = !!d.fecha && d.fecha >= (S.fecha || '') && !_o2mEsDomingo(d.fecha);
-    _diCalInicio();
-    if (!o2mCal.cache[_o2mCalKey(_diCal.a, _diCal.m)]) _diCalCargar();
-    var cargando = !o2mCal.cache[_o2mCalKey(_diCal.a, _diCal.m)];
-    var dias = d.fecha && S.fecha ? _diDiasEntre(S.fecha, d.fecha) : null;
-    var p = d.fecha ? String(d.fecha).split('-') : null;
-    var dur = _diDurTxt(d.hini, d.hfin);
-    var side = '<div class="dc-side"><div class="dc-k"><i class="bi bi-box-arrow-up"></i>'+(porDef ? 'Fecha estimada' : 'Desinstalación')+'</div>'+
-      (d.fecha
-        ? '<div class="dc-big"><b>'+parseInt(p[2], 10)+'</b><span>'+O2M_CAL_MES_ES[parseInt(p[1], 10) - 1]+' '+p[0]+'<em>'+_diDOW(d.fecha)+'</em></span></div>'+
-          (dias != null ? '<div class="dc-rel">'+(dias === 0 ? 'El mismo día de la instalación' : (dias === 1 ? '1 día' : dias + ' días')+' después de la instalación ('+_diDM(S.fecha)+')')+'</div>' : '')
-        : '<div class="dc-vacio"><i class="bi bi-hand-index-thumb"></i>Toca un día en el calendario</div>')+
-      (porDef ? '' :
-        '<div class="dc-hrs"><label for="o2mDiHini">Inicio<input type="time" id="o2mDiHini" value="'+_diEsc(d.hini)+'" oninput="OT2C.diCampo(\'hini\',this.value)" onchange="OT2C.diCampo(\'hini\',this.value)"></label>'+
-        '<span class="dc-ar"><i class="bi bi-arrow-right"></i></span>'+
-        '<label for="o2mDiHfin">Término<input type="time" id="o2mDiHfin" value="'+_diEsc(d.hfin)+'" oninput="OT2C.diCampo(\'hfin\',this.value)" onchange="OT2C.diCampo(\'hfin\',this.value)"></label>'+
-        (dur ? '<span class="dc-dur">'+dur+'</span>' : '')+'</div>')+
-      _diAtajos()+
-      (porDef ? '<div class="ev-ayuda" style="margin-top:8px">Queda anotada en la instalación. La orden se programa después desde su ficha («Programar desinstalación») y te avisamos antes de la fecha.</div>'
-              : '<button type="button" class="dc-at hueco" id="o2mDiHuecoBtn" onclick="OT2C.diBuscarHueco()"><i class="bi bi-search"></i>Buscar hueco libre para el técnico</button>')+
-      '</div>';
-    el.innerHTML = '<div class="o2m-dc '+(ok ? 'ok' : 'falta')+'"><div class="dc-cal">'+
-      '<div class="dc-nav"><button type="button" class="dc-nb" aria-label="Mes anterior" onclick="OT2C.diCalMes(-1)"><i class="bi bi-chevron-left"></i></button>'+
-        '<b>'+O2M_CAL_MES_ES[_diCal.m - 1]+' '+_diCal.a+'</b>'+
-        '<button type="button" class="dc-nb" aria-label="Mes siguiente" onclick="OT2C.diCalMes(1)"><i class="bi bi-chevron-right"></i></button></div>'+
-      '<div class="dc-dow"><span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span></div>'+
-      '<div class="dc-grid'+(cargando ? ' cargando' : '')+'">'+_diCalGrid()+'</div>'+
-      '<div class="dc-ley"><span><i class="k inst"></i>Instalación</span><span><i class="k sel"></i>Elegido</span><span><i class="k c1"></i>OT agendadas</span><span><i class="k fer"></i>Feriado</span><span><i class="k off"></i>No disponible</span></div>'+
-      '</div>'+side+'</div>';
   }
   /* Los códigos del servidor que hablan de la FECHA y el horario de la salida. Con «Instalación con desinstalación» solo estos se explican en el
      paso Agenda (revisión independiente 24-oct: ahí aparecía en rojo «Indica cuánto le pagamos…» sin que existiera ningún campo para corregirlo);
@@ -12300,19 +12550,27 @@ window.OT2C = (function(){
         var c = p.choque;
         h += '<div class="o2m-di-av rojo"><i class="bi bi-person-exclamation"></i><span><b>'+_diEsc(c.tecnico_nombre || 'El técnico')+'</b> ya tiene trabajo agendado ese día en ese horario'+
           (c.numero_ot ? ' (' + _diEsc(c.numero_ot) + ')' : '')+'. Elige otra fecha u otro técnico.</span>'+
+          '<button type="button" onclick="OT2C.o2mDaySugerirHueco()"><i class="bi bi-stars"></i>Buscar hueco libre</button>'+
           (c.puede_forzar && !d.forzar ? '<button type="button" onclick="OT2C.diForzar()">Agendar igual</button>' : '')+'</div>';
         if (d.forzar) h += '<div class="o2m-di-av ambar"><i class="bi bi-shield-exclamation"></i><span>Agendarás igual aunque haya choque (solo superadministrador). Queda registrado.</span></div>';
       }
       if (conResto && p.sin_documento_madre)
         h += '<div class="o2m-di-av ambar"><i class="bi bi-shield-lock-fill"></i><span>Esta instalación se crea sin documento de Random: la desinstalación va incluida en la autorización que se le pide a Daniel.</span></div>';
     }
+    // 📅 2026-10-25 (revisión independiente, hallazgo 8): el servidor solo mira al técnico LÍDER. Si choca otro técnico de la salida, la MISMA caja única lo
+    // explica con los mensajes del calendario (aviso ámbar: no bloquea), con «Buscar hueco libre».
+    if (conFecha && _agSal() && !(p && !d.previoPend && p.choque) && o2mDay.choque && o2mDay.choqueMsgs && o2mDay.choqueMsgs.length && o2mDay.choqueFecha === d.fecha)
+      h += '<div class="o2m-di-av ambar"><i class="bi bi-person-exclamation"></i><span>'+o2mDay.choqueMsgs.join(' ')+' Elige otra fecha u otro horario.</span>'+
+        '<button type="button" onclick="OT2C.o2mDaySugerirHueco()"><i class="bi bi-stars"></i>Buscar hueco libre</button></div>';
     return h;
   }
   function _diRegAvisos(el){
     var d = S.desinst;
     var resto = document.getElementById('o2mDiAvisosDes');      // solo existe con «Instalación con desinstalación»: la fecha va en Agenda, lo demás acá
     if (!d.lleva || d.lleva === 'no'){ el.innerHTML = ''; if (resto) resto.innerHTML = ''; return; }
-    el.innerHTML = _diAvisosHtml(resto ? 'fecha' : 'todo');
+    // 📅 2026-10-25: en Agenda, lo de la fecha y el choque de la SALIDA se explica mientras se agenda la salida; con la entrada, la ficha «Salida» del
+    // interruptor ya dice en rojo si falta o va mal (el calendario muestra una orden a la vez: no se mezclan los avisos de las dos).
+    el.innerHTML = resto ? (_agSal() ? _diAvisosHtml('fecha') : '') : _diAvisosHtml('todo');
     if (resto) resto.innerHTML = _diAvisosHtml('resto');
   }
   function _diRegTec(el){
@@ -12508,20 +12766,8 @@ window.OT2C = (function(){
     var d = S.desinst;
     if (d.lleva === 'si') _diAutoCosto();   // técnico propio: $0 sugerido (visible y editable)
     d.previo = null; d.previoKey = ''; d.previoPend = false;
-    _diPintarRegiones(['preg', 'fecha', 'avisos', 'tec', 'costo', 'cobro', 'eq', 'nota', 'res']);
+    _diPintarRegiones(['preg', 'avisos', 'tec', 'costo', 'cobro', 'eq', 'nota', 'res']);
     if (d.lleva && d.lleva !== 'no') _diProgramarPrevio(true);
-    refrescarAnclas();
-  }
-  function diFecha(v){
-    var d = S.desinst;
-    if (v && _o2mEsDomingo(v)){
-      if (window.ilusToast) ilusToast('Los domingos no se agendan órdenes de trabajo. Elige otro día.', {type:'warning'});
-      var inp = document.getElementById('o2mDiFechaIn'); if (inp) inp.value = d.fecha || '';
-      return;
-    }
-    d.fecha = v || '';
-    _diPintarRegiones(['preg', 'fecha', 'avisos', 'res']);
-    _diProgramarPrevio(false);
     refrescarAnclas();
   }
   function diCampo(k, v){
@@ -12545,33 +12791,12 @@ window.OT2C = (function(){
     _diPintarRegiones(['res']);
     refrescarAnclas();
   }
-  function diCalMes(delta){
-    _diCalInicio();
-    var m = _diCal.m + delta, a = _diCal.a;
-    if (m > 12){ m = 1; a++; } else if (m < 1){ m = 12; a--; }
-    _diCal.a = a; _diCal.m = m;
-    _diPintarRegiones(['fecha']);
-  }
-  function diBuscarHueco(){
-    var d = S.desinst, btn = document.getElementById('o2mDiHuecoBtn');
-    var tec = _diTec();
-    if (!tec.length){ if (window.ilusToast) ilusToast('Elige primero el técnico de la desinstalación.', {type:'warning'}); return; }
-    var ini = (d.fecha && d.fecha >= (S.fecha || '')) ? d.fecha : (S.fecha || _o2mHoyStr());
-    if (ini < _o2mHoyStr()) ini = _o2mHoyStr();
-    var a = _o2mDayToMin(d.hini), z = _o2mDayToMin(d.hfin), dur = (a != null && z != null && z > a) ? (z - a) : 240;
-    var orig = btn ? btn.innerHTML : '';
-    if (btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>Buscando…'; }
-    _o2mDayBuscarHuecoRango(ini, dur, tec, 30).then(function(r){
-      if (btn){ btn.disabled = false; btn.innerHTML = orig; }
-      if (!r){ if (window.ilusToast) ilusToast('No hay huecos libres en los próximos 30 días para ese equipo de técnicos.', {type:'warning'}); return; }
-      d.fecha = r.fecha; d.hini = r.hora; d.hfin = _o2mDayHHMM(_o2mDayToMin(r.hora) + dur);
-      _diPintarRegiones(['fecha', 'avisos', 'res']);
-      _diProgramarPrevio(false);
-      refrescarAnclas();
-    }).catch(function(){
-      if (btn){ btn.disabled = false; btn.innerHTML = orig; }
-      if (window.ilusToast) ilusToast('No se pudo buscar un hueco libre.', {type:'error'});
-    });
+  /* La salida cambió de técnicos (paso «Desinstalación»): si el calendario está mostrando la salida, su bloque, sus carriles y el choque se
+     ponen al día (la búsqueda de hueco libre y el choque usan los técnicos de ESA orden: ver agTecnicos). */
+  function _agRefrescarTecnicosSalida(){
+    if (!_agSal() || !document.getElementById('o2mDayCanvas')) return;
+    o2mDayRender(o2mDay.fecha, {silencio:true});
+    o2mChequearChoqueDebounced();
   }
   function diTecModo(m){
     var d = S.desinst; if (d.tec_modo === m) return;
@@ -12581,6 +12806,7 @@ window.OT2C = (function(){
     _diPintarRegiones(['preg', 'tec', 'costo', 'res']);
     _diProgramarPrevio(false);
     refrescarAnclas();
+    _agRefrescarTecnicosSalida();
   }
   function diTecTog(id){
     var d = S.desinst, i = d.tecnicos.indexOf(id);
@@ -12599,6 +12825,7 @@ window.OT2C = (function(){
     _diPintarRegiones(['preg', 'tec', 'costo', 'res']);
     _diProgramarPrevio(false);
     refrescarAnclas();
+    _agRefrescarTecnicosSalida();
   }
   /* El costo sugerido de un técnico PROPIO es $0 (visible y editable). Con un externo se deja vacío para que lo escriba. */
   function _diAutoCosto(){
@@ -12908,7 +13135,9 @@ window.OT2C = (function(){
           o2mCalReintentar:o2mCalReintentar, o2mDayPaso:o2mDayPaso,
           o2mDaySugerirHueco:o2mDaySugerirHueco,
           // 🧩 2026-10-20 desinstalación
-          diLleva:diLleva, diFecha:diFecha, diCalMes:diCalMes, diCampo:diCampo, diMonto:diMonto, diBuscarHueco:diBuscarHueco, diTecModo:diTecModo, diTecTog:diTecTog,
-          diCobro:diCobro, diEqTog:diEqTog, diEqTodo:diEqTodo, diEqPlant:diEqPlant, diForzar:diForzar, agIr:agIr};
+          diLleva:diLleva, diCampo:diCampo, diMonto:diMonto, diTecModo:diTecModo, diTecTog:diTecTog,
+          diCobro:diCobro, diEqTog:diEqTog, diEqTodo:diEqTodo, diEqPlant:diEqPlant, diForzar:diForzar,
+          // 📅 2026-10-25: el interruptor «Entrada | Salida» del calendario único y sus atajos de fecha
+          agOrden:agOrden, agFechaRapida:agFechaRapida};
 })();
 </script>
