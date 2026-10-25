@@ -7595,14 +7595,20 @@ def api_check_bodegas():
     txt = request.args.get("skus") or ""
     if not _rck.skus_de(txt):
         return jsonify(_rck.respuesta_bodegas(txt, None)[0])          # sin SKUs no se espera a Check
-    # Caché FRÍA (instancia recién levantada): leer el reporte de Check tarda 4-45 s y mientras tanto la persona y los hilos del servidor quedarían
-    # colgados en el candado. No se espera: se pide la lectura en segundo plano (una a la vez, _checkwms_swr) y se responde «calentando» al instante
-    # para que el modal reintente en unos segundos. Con la caché tibia (incluso vencida) se responde al momento, como siempre.
-    if _CHECKWMS_STOCK.get("rows") is None:
+    # Caché FRÍA (instancia recién levantada, o un reporte más viejo de lo que se sirve: _CHECKWMS_STALE_MAX): leer el reporte de Check tarda 4-45 s
+    # y mientras tanto la persona y los hilos del servidor quedarían colgados en el candado. La lectura se pide en segundo plano (una a la vez,
+    # _checkwms_swr) y acá se espera SOLO unos segundos —con la petición viva Cloud Run le da CPU a esa lectura; sin petición en curso se la
+    # estrangula—. Si en ese rato no terminó se responde «calentando» (503) y el modal reintenta. Con la caché tibia (incluso vencida pero
+    # servible) se responde al momento, como siempre.
+    if _checkwms_stock_frio():
         if not _checkwms_configurado():
             return jsonify({"ok": False, "error": "Check no está configurado en esta instalación."}), 503
         _checkwms_swr("stock", _checkwms_stock_rows)
-        return jsonify({"ok": False, "calentando": True, "error": "Conectando con Check… reintenta en unos segundos."}), 503
+        _t_fin = time.time() + _CHECKWMS_ESPERA_FRIA_S
+        while _checkwms_stock_frio() and time.time() < _t_fin and _CHECKWMS_SWR.get("stock"):
+            time.sleep(0.25)
+        if _checkwms_stock_frio():
+            return jsonify({"ok": False, "calentando": True, "error": "Conectando con Check… reintenta en unos segundos."}), 503
     try:
         filas = _checkwms_stock_rows()
     except Exception as _e_cb:
@@ -68085,6 +68091,7 @@ _CHECKWMS_TRAZA_TTL = 3600   # 1 hora (Daniel 2026-08-03)
 # INSTANTE y se refresca en segundo plano (hasta 6 h de antigüedad; más viejo que eso sí se espera), y (2) el trabajo programado de cada 10 min
 # (_checkwms_precalentar) lo renueva antes de que venza. Solo lectura (REGLA #4.4: mismas rutas de la lista blanca, solo GET).
 _CHECKWMS_STALE_MAX = 6 * 3600
+_CHECKWMS_ESPERA_FRIA_S = 8.0   # cuánto espera la ruta del buscador (/api/erp/check-bodegas) a que termine la primera lectura antes de decir «calentando»
 _CHECKWMS_SWR = {"stock": False, "traza": False}
 
 
@@ -68138,6 +68145,13 @@ def _checkwms_trazabilidad_rows(forzar: bool = False) -> list | None:
 # en la app (bug reportado por Daniel 2026-08-03).
 _CHECKWMS_STOCK = {"ts": 0, "rows": None, "lock": threading.Lock()}
 _CHECKWMS_STOCK_TTL = 3600   # 1 hora (Daniel 2026-08-03)
+
+
+def _checkwms_stock_frio() -> bool:
+    """¿El reporte de stock está FRÍO? No hay ninguno (instancia recién levantada) o es más viejo de lo que se sirve (_CHECKWMS_STALE_MAX):
+    leerlo bloquea 4-45 s. Lo usa la ruta del buscador de productos para no dejar hilos esperando (ver api_check_bodegas)."""
+    return (_CHECKWMS_STOCK.get("rows") is None
+            or (time.time() - (_CHECKWMS_STOCK.get("ts") or 0)) >= _CHECKWMS_STALE_MAX)
 
 
 def _checkwms_stock_rows(forzar: bool = False) -> list | None:

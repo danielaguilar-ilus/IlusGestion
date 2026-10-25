@@ -3232,6 +3232,7 @@ window.OT2C = (function(){
         o2mCal.fer[key] = (d && d.feriados) || {};
         delete o2mCal.error[key];
         o2mCalRenderGrid();
+        avisosAgenda();           // el aviso «Cae en feriado» de la fecha elegida necesita este mes ya cargado (2.ª revisión independiente)
         if (o2mCal.diaSel && o2mCal.diaSel.slice(0,7)===key) o2mDayRender(o2mCal.diaSel, {silencio:true});
       })
       .catch(function(e){

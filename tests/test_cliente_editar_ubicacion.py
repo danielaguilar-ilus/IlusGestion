@@ -50,25 +50,38 @@ global.document = {
 };
 // Lo que el servidor dejó escrito en el HTML ANTES de que la página cargara (y de que alguien editara).
 for (const k of Object.keys(cfg.inicial)) document.getElementById(k).value = cfg.inicial[k];
+let ocultado = 0, hayAviso = false, hayLista = false;
+global.bootstrap = { Modal: { getInstance: function () { return { hide: function () { ocultado++; } }; } } };
 vm.runInThisContext(fs.readFileSync(process.argv[2], 'utf8'));
 const g = function (id) { return document.getElementById(id); };
+// el modal y el documento de mentira para el Esc: ¿hay un aviso (ilusConfirm…) encima? ¿está abierta la lista de sugerencias de Google?
+g('modalEditarCliente').querySelector = function (sel) { return (sel === '.ilus-overlay' && hayAviso) ? {} : null; };
+const qsPrevio = document.querySelector;
+document.querySelector = function (sel) { return sel === '.pac-container' ? (hayLista ? { offsetParent: {}, children: [1] } : null) : qsPrevio(sel); };
 const snap = function () {
   const p = g('ecfFootEstado'), b = g('btnGuardarCliente');
   return {
     pend: window.ecfDireccionPendiente(),
     caja: g('ecfVerif').className,
     cajaTxt: g('ecfVerif').innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
+    cajaHtml: g('ecfVerif').innerHTML,
     pie: { clase: p.className, texto: p.innerHTML.replace(/<[^>]+>/g, ''), apagado: b.disabled },
     dirCls: ['ecf-ok', 'ecf-bad', 'ecf-warn'].filter(function (c) { return g('ec_direccion').classList.contains(c); })[0] || '',
     oculto: { pid: g('ec_direccion_place_id').value, lat: g('ec_direccion_lat').value, lng: g('ec_direccion_lng').value },
+    geo: { region: g('ec_region').value, comuna: g('ec_comuna').value, ciudad: g('ec_ciudad').value },
+    dir: g('ec_direccion').value,
+    cerrado: ocultado,
   };
 };
 const out = [];
 for (const paso of cfg.pasos) {
   if (paso.set) for (const k of Object.keys(paso.set)) g(k).value = paso.set[k];
   if (paso.google !== undefined) g('ec_direccion').dataset.placesInit = paso.google ? '1' : '';
-  if (paso.verificar) window.ecfDireccionVerificada(paso.verificar);
+  if (paso.verificar) window.ecfDireccionVerificada(paso.verificar, paso.geo);
+  if (paso.authFallo) window.gm_authFailure();
+  if (paso.restaurar) window.ecfRestaurarDireccion();
   if (paso.abrir) (g('modalEditarCliente')._h['show.bs.modal'] || []).forEach(function (fn) { fn({}); });
+  if (paso.esc) { hayAviso = !!paso.aviso; hayLista = !!paso.lista; (g('modalEditarCliente')._h.keydown || []).forEach(function (fn) { fn({ key: 'Escape', target: g('ec_direccion'), defaultPrevented: false, preventDefault: function () {} }); }); }
   out.push(snap());
 }
 // Cuántas veces se reescribieron las regiones aria-live (al terminar todos los pasos).
@@ -90,8 +103,9 @@ def _correr(inicial, pasos):
     return json.loads(r.stdout.strip().splitlines()[-1])
 
 
-def _ini(direccion="", pid="", lat="", lng="", razon="Gimnasio Aurum SpA"):
-    return {"ec_razon": razon, "ec_direccion": direccion, "ec_direccion_place_id": pid, "ec_direccion_lat": lat, "ec_direccion_lng": lng}
+def _ini(direccion="", pid="", lat="", lng="", razon="Gimnasio Aurum SpA", region="", comuna="", ciudad=""):
+    return {"ec_razon": razon, "ec_direccion": direccion, "ec_direccion_place_id": pid, "ec_direccion_lat": lat, "ec_direccion_lng": lng,
+            "ec_region": region, "ec_comuna": comuna, "ec_ciudad": ciudad}
 
 
 @unittest.skipIf(not NODE, "Node no está instalado")
@@ -274,6 +288,198 @@ class TestRegionesAriaLiveSoloSiCambian(unittest.TestCase):
         self.assertEqual(r["escrituras"]["pie"]["innerHTML"], 2)
 
 
+LC = dict(direccion="Av. Apoquindo 4501, Las Condes, Chile", pid="P_LC", lat="-33.41", lng="-70.58", region="Metropolitana", comuna="Las Condes", ciudad="Santiago")
+PROVIDENCIA = {"ec_direccion": "Calle Dos 2, Providencia, Chile", "ec_direccion_place_id": "P_PV", "ec_direccion_lat": "-33.43", "ec_direccion_lng": "-70.61",
+               "ec_region": "Metropolitana", "ec_comuna": "Providencia", "ec_ciudad": "Providencia"}
+GEO_PV = {"region": "Metropolitana", "comuna": "Providencia", "ciudad": "Providencia"}
+GEO_LC = {"region": "Metropolitana", "comuna": "Las Condes", "ciudad": "Santiago"}
+
+
+@unittest.skipIf(not NODE, "Node no está instalado")
+class TestRegionComunaYCiudadSiguenALaDireccion(unittest.TestCase):
+    """2.ª revisión independiente (25-oct): probar otra sugerencia y volver a la original dejaba el modal diciendo «verificada» con el place_id y
+    las coordenadas de Las Condes, pero comuna y ciudad de Providencia (y eso es lo que se guardaba)."""
+
+    def test_volver_a_la_direccion_original_repone_region_comuna_y_ciudad(self):
+        r = _correr(_ini(**LC), [
+            {"google": True},
+            {"set": PROVIDENCIA, "verificar": PROVIDENCIA["ec_direccion"], "geo": GEO_PV},        # elige una sugerencia de Providencia
+            {"set": {"ec_direccion": LC["direccion"]}},                                           # se arrepiente
+        ])["pasos"]
+        self.assertEqual(r[1]["geo"], GEO_PV)
+        self.assertEqual(r[1]["oculto"]["pid"], "P_PV")
+        self.assertEqual(r[2]["pend"], {"ok": True})
+        self.assertEqual(r[2]["oculto"], {"pid": "P_LC", "lat": "-33.41", "lng": "-70.58"})
+        self.assertEqual(r[2]["geo"], GEO_LC)                                                     # antes: seguían siendo las de Providencia
+
+    def test_lo_que_la_persona_escribio_a_mano_no_se_pisa(self):
+        r = _correr(_ini(**LC), [
+            {"google": True},
+            {"set": PROVIDENCIA, "verificar": PROVIDENCIA["ec_direccion"], "geo": GEO_PV},
+            {"set": {"ec_comuna": "Providencia Norte"}},                                          # corrige la comuna a mano
+            {"set": {"ec_direccion": LC["direccion"]}},
+        ])["pasos"]
+        self.assertEqual(r[3]["geo"], {"region": "Metropolitana", "comuna": "Providencia Norte", "ciudad": "Santiago"})   # la ciudad sin tocar sí vuelve
+
+    def test_lo_que_google_no_trajo_no_se_queda_con_el_valor_de_otra_direccion(self):
+        r = _correr(_ini(**LC), [
+            {"google": True},
+            # sugerencia rural sin comuna ni ciudad: mant_ficha.js solo escribe lo que Google trae, así que los campos quedan con lo de Las Condes
+            {"set": {"ec_direccion": "Sector Rural s/n, Chile", "ec_direccion_place_id": "P_R", "ec_direccion_lat": "-38.7", "ec_direccion_lng": "-72.6",
+                     "ec_region": "La Araucanía"}, "verificar": "Sector Rural s/n, Chile", "geo": {"region": "La Araucanía", "comuna": "", "ciudad": ""}},
+        ])["pasos"]
+        self.assertEqual(r[1]["geo"], {"region": "La Araucanía", "comuna": "", "ciudad": ""})
+
+    def test_si_la_persona_ya_habia_escrito_la_comuna_se_respeta_aunque_google_no_la_traiga(self):
+        r = _correr(_ini(**LC), [
+            {"google": True},
+            {"set": {"ec_comuna": "Mi comuna"}},                                                  # a mano, distinta de lo guardado
+            {"set": {"ec_direccion": "Sector Rural s/n, Chile", "ec_direccion_place_id": "P_R", "ec_direccion_lat": "-38.7", "ec_direccion_lng": "-72.6",
+                     "ec_region": "La Araucanía"}, "verificar": "Sector Rural s/n, Chile", "geo": {"region": "La Araucanía", "comuna": "", "ciudad": ""}},
+        ])["pasos"]
+        self.assertEqual(r[2]["geo"]["comuna"], "Mi comuna")
+        self.assertEqual(r[2]["geo"]["ciudad"], "")                                               # esa sí era la de la dirección anterior
+
+    def test_un_cliente_anterior_sin_verificar_recupera_sus_datos_al_volver_a_su_texto(self):
+        r = _correr(_ini("Calle Vieja 100", region="Valparaíso", comuna="Viña del Mar", ciudad="Viña del Mar"), [
+            {"google": True},
+            {"set": PROVIDENCIA, "verificar": PROVIDENCIA["ec_direccion"], "geo": GEO_PV},
+            {"set": {"ec_direccion": "Calle Vieja 100"}},
+        ])["pasos"]
+        self.assertEqual(r[2]["geo"], {"region": "Valparaíso", "comuna": "Viña del Mar", "ciudad": "Viña del Mar"})
+        self.assertEqual(r[2]["pend"], {"ok": True, "aviso": "heredada"})
+        self.assertEqual(r[2]["oculto"], {"pid": "", "lat": "", "lng": ""})
+
+
+@unittest.skipIf(not NODE, "Node no está instalado")
+class TestDetalleYaGuardadoSePuedeEditar(unittest.TestCase):
+    """2.ª revisión: «…, Chile, oficina 5» ya guardado trataba TODO como base verificada: cambiar a «oficina 6» o quitar el detalle dejaba Guardar apagado."""
+
+    @classmethod
+    def setUpClass(cls):
+        base = "Av. Apoquindo 4501, Las Condes, Chile"
+        cls.r = _correr(_ini(base + ", oficina 5", "P1", "-33.4", "-70.6"), [
+            {"google": True},                                          # 0 recién abierto
+            {"set": {"ec_direccion": base + ", oficina 6"}},           # 1 cambia el detalle
+            {"set": {"ec_direccion": base}},                           # 2 lo quita
+            {"set": {"ec_direccion": base + ", piso 3, oficina 5"}},   # 3 detalle nuevo
+            {"set": {"ec_direccion": "Av. Apoquindo 4502, Las Condes, Chile, oficina 5"}},   # 4 cambia la calle de verdad
+        ])["pasos"]
+
+    def test_se_puede_editar_o_quitar_el_detalle(self):
+        for i in (0, 1, 2, 3):
+            self.assertEqual(self.r[i]["pend"], {"ok": True}, i)
+            self.assertFalse(self.r[i]["pie"]["apagado"], i)
+            self.assertEqual(self.r[i]["oculto"]["pid"], "P1", i)
+        self.assertIn("Detalle agregado: oficina 6", self.r[1]["cajaTxt"])
+
+    def test_cambiar_la_calle_si_la_traba(self):
+        self.assertEqual(self.r[4]["pend"], {"ok": False, "motivo": "cambiada"})
+
+    def test_sin_chile_en_el_texto_la_base_es_todo_lo_guardado_como_antes(self):
+        r = _correr(_ini("Av. Vieja 100, Santiago", "P1", "-33.4", "-70.6"), [
+            {"google": True}, {"set": {"ec_direccion": "Av. Vieja 100, Santiago, oficina 2"}}, {"set": {"ec_direccion": "Av. Vieja 100"}}])["pasos"]
+        self.assertEqual(r[1]["pend"], {"ok": True})                    # detalle al final: sigue verificada
+        self.assertEqual(r[2]["pend"], {"ok": False, "motivo": "cambiada"})   # quitar parte de lo guardado: no hay base conocida
+
+
+@unittest.skipIf(not NODE, "Node no está instalado")
+class TestVolverALaDireccionGuardada(unittest.TestCase):
+    def test_un_retoque_accidental_tiene_salida_directa(self):
+        r = _correr(_ini(**LC), [
+            {"google": True},
+            {"set": {"ec_direccion": "Parcela 12, Km 40"}},            # retoque
+            {"restaurar": True},
+        ])["pasos"]
+        self.assertEqual(r[1]["pend"], {"ok": False, "motivo": "cambiada"})
+        self.assertIn("ecfRestaurarDireccion()", r[1]["cajaHtml"])                               # el botón está en el aviso
+        self.assertIn("Volver a la dirección guardada", r[1]["cajaTxt"])
+        self.assertEqual(r[2]["pend"], {"ok": True})
+        self.assertEqual(r[2]["dir"], LC["direccion"])
+        self.assertEqual(r[2]["oculto"], {"pid": "P_LC", "lat": "-33.41", "lng": "-70.58"})
+        self.assertFalse(r[2]["pie"]["apagado"])
+        self.assertNotIn("ecfRestaurarDireccion", r[2]["cajaHtml"])
+
+    def test_tambien_repone_region_comuna_y_ciudad(self):
+        r = _correr(_ini(**LC), [
+            {"google": True},
+            {"set": PROVIDENCIA, "verificar": PROVIDENCIA["ec_direccion"], "geo": GEO_PV},
+            {"set": {"ec_direccion": "Otra calle 5"}},
+            {"restaurar": True},
+        ])["pasos"]
+        self.assertEqual(r[3]["geo"], GEO_LC)
+        self.assertEqual(r[3]["pend"], {"ok": True})
+
+    def test_sin_direccion_guardada_no_hay_a_donde_volver(self):
+        r = _correr(_ini(""), [{"google": True}, {"set": {"ec_direccion": "Algo 1"}}])["pasos"]
+        self.assertEqual(r[1]["pend"], {"ok": False, "motivo": "sin_verificar"})
+        self.assertNotIn("ecfRestaurarDireccion", r[1]["cajaHtml"])
+
+    def test_si_la_direccion_no_se_toco_no_se_ofrece(self):
+        r = _correr(_ini("Calle Vieja 100"), [{"google": True}])["pasos"]
+        self.assertNotIn("ecfRestaurarDireccion", r[0]["cajaHtml"])
+
+
+@unittest.skipIf(not NODE, "Node no está instalado")
+class TestEscCierraSoloLoQueCorresponde(unittest.TestCase):
+    """data-bs-keyboard="false" + este manejador: el Esc de un aviso (ilusConfirm…) o de la lista de Google no cierra el formulario entero, pero el teclado sigue sirviendo."""
+
+    def test_esc(self):
+        r = _correr(_ini(**LC), [
+            {"esc": True, "aviso": True},          # un aviso encima: el Esc es suyo
+            {"esc": True, "lista": True},          # la lista de sugerencias de Google abierta: el Esc es suyo
+            {"esc": True},                         # nada encima: cierra el formulario
+        ])["pasos"]
+        self.assertEqual([p["cerrado"] for p in r], [0, 0, 1])
+
+
+@unittest.skipIf(not NODE, "Node no está instalado")
+class TestGoogleCargadoPeroInutil(unittest.TestCase):
+    """Google rechaza la clave (gm_authFailure): el campo queda «enganchado» pero nunca da sugerencias. Eso es «Google no disponible», no un callejón."""
+
+    def test_auth_failure_deja_guardar_con_aviso(self):
+        r = _correr(_ini("Calle Vieja 100"), [
+            {"google": True},
+            {"set": {"ec_direccion": "Calle Nueva 5"}},
+            {"authFallo": True},
+        ])["pasos"]
+        self.assertEqual(r[1]["pend"], {"ok": False, "motivo": "sin_verificar"})
+        self.assertTrue(r[1]["pie"]["apagado"])
+        self.assertEqual(r[2]["pend"], {"ok": False, "motivo": "google_no_disponible"})          # guardarCliente avisa y deja decidir
+        self.assertFalse(r[2]["pie"]["apagado"])
+
+    def test_gm_authfailure_encadena_al_anterior(self):
+        with open(os.path.join(RAIZ, "static", "cliente_form.js"), encoding="utf-8") as fh:
+            js = fh.read()
+        self.assertIn("var _gmPrevio = window.gm_authFailure;", js)
+        self.assertIn("_gmPrevio.apply(this, arguments)", js)
+
+
+@unittest.skipIf(not NODE, "Node no está instalado")
+class TestGoogleTodaviaCargando(unittest.TestCase):
+    """2.ª revisión: en los primeros segundos «Guardar igual» decía «no hay conexión con Google» cuando Google aún estaba cargando."""
+
+    def test_cargando_no_es_sin_conexion(self):
+        r = _correr(_ini("Calle Vieja 100"), [
+            {"abrir": True, "google": False, "set": {"ec_direccion": "Calle Nueva 5"}},
+        ])["pasos"]
+        self.assertEqual(r[0]["pend"], {"ok": False, "motivo": "google_conectando"})
+        self.assertIn("Conectando con Google", r[0]["pie"]["texto"])
+
+    def test_un_cliente_sin_tocar_dice_la_verdad_sobre_google(self):
+        r = _correr(_ini("Calle Vieja 100"), [
+            {"google": True},                                          # 0 con Google
+            {"google": False},                                         # 1 sin Google (nunca se abrió: «no responde»)
+            {"abrir": True, "google": False},                          # 2 recién abierto, Google cargando
+        ])["pasos"]
+        self.assertIn("elige una sugerencia del menú", r[0]["cajaTxt"])
+        self.assertNotIn("elige una sugerencia del menú", r[1]["cajaTxt"])
+        self.assertIn("no hay conexión con Google", r[1]["cajaTxt"])
+        self.assertIn("Google está cargando", r[2]["cajaTxt"])
+        for p in r:
+            self.assertEqual(p["pend"], {"ok": True, "aviso": "heredada"})                          # nada de esto traba
+
+
 class TestCodigoDeLaFicha(unittest.TestCase):
     """Lo que el JS de la ficha tiene que seguir haciendo para que lo anterior valga."""
 
@@ -281,9 +487,31 @@ class TestCodigoDeLaFicha(unittest.TestCase):
         with open(os.path.join(RAIZ, "static", "mant_ficha.js"), encoding="utf-8") as fh:
             js = fh.read()
         i = js.index("function _ilusInitDireccionCliente()")
-        f = js[i:i + 4500]
-        self.assertLess(f.index("set('ec_direccion_place_id'"), f.index("window.ecfDireccionVerificada(place.direccion)"))
-        self.assertLess(f.index("set('ec_direccion_lat'"), f.index("window.ecfDireccionVerificada(place.direccion)"))
+        f = js[i:i + 5200]
+        self.assertLess(f.index("set('ec_direccion_place_id'"), f.index("window.ecfDireccionVerificada(place.direccion"))
+        self.assertLess(f.index("set('ec_direccion_lat'"), f.index("window.ecfDireccionVerificada(place.direccion"))
+        self.assertLess(f.index("setIf('ec_ciudad'"), f.index("window.ecfDireccionVerificada(place.direccion"))
+        # y le cuenta qué región/comuna/ciudad trajo Google (vacío si no trajo alguna)
+        self.assertIn("{ region: _ilusLimpiaRegion(region), comuna: comuna, ciudad: ciudad }", f)
+
+    def test_guardar_deja_el_semaforo_al_dia_antes_de_leer_los_campos(self):
+        with open(os.path.join(RAIZ, "static", "mant_ficha.js"), encoding="utf-8") as fh:
+            js = fh.read()
+        i = js.index("async function guardarCliente()")
+        f = js[i:i + 3600]
+        self.assertLess(f.index("window.ecfEvaluar()"), f.index("const data = {"))
+        # Google todavía cargando: se pide esperar, no se dice «no hay conexión»
+        self.assertIn("dp.motivo === 'google_conectando'", f)
+        self.assertLess(f.index("dp.motivo === 'google_conectando'"), f.index("dp.motivo === 'google_no_disponible'"))
+
+    def test_el_modal_no_deja_que_bootstrap_cierre_con_esc_y_el_manejador_propio_lo_hace(self):
+        with open(os.path.join(RAIZ, "templates", "mantenciones", "ficha.html"), encoding="utf-8") as fh:
+            ficha = fh.read()
+        self.assertIn('id="modalEditarCliente" tabindex="-1" aria-labelledby="ecfTitulo" data-bs-keyboard="false"', ficha)
+        with open(os.path.join(RAIZ, "static", "cliente_form.js"), encoding="utf-8") as fh:
+            js = fh.read()
+        self.assertIn("m.querySelector('.ilus-overlay')", js)
+        self.assertIn("document.querySelector('.pac-container')", js)
 
     def test_show_ya_no_recalcula_lo_verificado_desde_el_campo(self):
         with open(os.path.join(RAIZ, "static", "cliente_form.js"), encoding="utf-8") as fh:

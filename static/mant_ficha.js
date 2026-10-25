@@ -481,7 +481,8 @@ function _ilusInitDireccionCliente() {
       setIf('ec_comuna', comuna);
       setIf('ec_ciudad', ciudad);
       // 2026-10-24: el semáforo del modal (static/cliente_form.js) marca la dirección como «verificada con Google» solo desde acá.
-      try { if (window.ecfDireccionVerificada) window.ecfDireccionVerificada(place.direccion); } catch (e) {}
+      // Se le avisa también qué región/comuna/ciudad trajo Google ('' si alguna no vino): el semáforo no deja la de la dirección anterior.
+      try { if (window.ecfDireccionVerificada) window.ecfDireccionVerificada(place.direccion, { region: _ilusLimpiaRegion(region), comuna: comuna, ciudad: ciudad }); } catch (e) {}
       const hint = document.getElementById('ec_direccion_hint');
       if (hint) {
         const la = (typeof place.lat === 'number') ? place.lat.toFixed(4) : '?';
@@ -3039,6 +3040,8 @@ document.addEventListener('click', e => {
 });
 
 async function guardarCliente() {
+  // 2026-10-25: primero se deja el semáforo al día (sincroniza place_id/coordenadas/región con el texto actual): lo que se lee abajo es lo que se guarda.
+  try { if (window.ecfEvaluar) window.ecfEvaluar(); } catch (_e) {}
   const $v = id => (document.getElementById(id)?.value || '').trim();
   const data = {
     // Empresa
@@ -3087,6 +3090,15 @@ async function guardarCliente() {
   if (typeof window.ecfDireccionPendiente === 'function') {
     const dp = window.ecfDireccionPendiente();
     if (dp && !dp.ok) {
+      if (dp.motivo === 'google_conectando') {
+        // Google está cargando (primeros segundos tras abrir): no es «sin conexión». Se pide esperar un momento y volver a guardar.
+        if (typeof ilusAlert === 'function') {
+          await ilusAlert({ type: 'info', title: 'Google está cargando',
+            message: 'Espera unos segundos a que Google termine de conectar para verificar la dirección y vuelve a apretar Guardar.' });
+        }
+        if (window.ecfIr) window.ecfIr('ec_direccion');
+        return;
+      }
       if (dp.motivo === 'google_no_disponible') {
         if (typeof ilusConfirm === 'function') {
           const seguirSinGoogle = await ilusConfirm({

@@ -419,7 +419,7 @@ class TestGuardado(unittest.TestCase):
 
     def test_google_places_avisa_al_semaforo(self):
         f = _fn(MANT_JS, "function _ilusInitDireccionCliente()")
-        self.assertIn("window.ecfDireccionVerificada(place.direccion)", f)
+        self.assertIn("window.ecfDireccionVerificada(place.direccion, {", f)
         self.assertIn("window.ecfEvaluar()", f)
         # Lo que ya hacía sigue igual: coordenadas, place_id y región/comuna/ciudad.
         for pista in ("ec_direccion_lat", "ec_direccion_lng", "ec_direccion_place_id", "setIf('ec_region'", "setIf('ec_comuna'", "setIf('ec_ciudad'"):

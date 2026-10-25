@@ -1672,35 +1672,44 @@ const _TKA_BOD_TTL = 5 * 60 * 1000;
 const _TKA_BOD_FALLO_MS = 30 * 1000;                         // tras un fallo no se vuelve a preguntar por 30 s (no se golpea a Check en cada búsqueda)
 async function _tkaCargarBodegas(raiz, opts){
   opts = opts || {};
+  // Una búsqueda nueva sobre el MISMO contenedor deja obsoleta a la anterior: si la respuesta lenta de A llegara después que la de B, no puede borrar ni
+  // pintar encima del resumen de B. Se invalida ANTES de cualquier salida temprana (2.ª revisión independiente: una búsqueda sin cajas no la invalidaba).
+  const dueno = raiz || document.body;
+  const mio = (dueno._bodSeq = (dueno._bodSeq || 0) + 1);
   const cajas = [].slice.call((raiz || document).querySelectorAll('[data-bod-sku]'));
   if (!cajas.length) return;
+  // «Sigue vigente»: nadie la reemplazó Y sus cajas aún están en pantalla (si el contenedor se volvió a dibujar con otro contenido —un «No se encontró el
+  // documento», por ejemplo—, esas cajas ya no existen y no se pinta nada encima).
+  const sigue = () => dueno._bodSeq === mio && cajas.some(c => c.isConnected !== false);
   const skus = Array.from(new Set(cajas.map(c => c.dataset.bodSku).filter(Boolean)));
   if (!skus.length || _TKA_BOD.sinAcceso){ cajas.forEach(c => { c.innerHTML = ''; }); return; }    // sin acceso (técnicos): el cuadro no existe, no se muestra un falso «sin verificar»
   const fmt = (n) => (Math.round((parseFloat(n) || 0) * 10) / 10).toLocaleString('es-CL');
   const vigente = (s) => { const e = _TKA_BOD.cache.get(s); return !!e && (Date.now() - e.t) < _TKA_BOD_TTL; };
   const faltan = skus.filter(s => !vigente(s));
-  // Una búsqueda nueva sobre el MISMO contenedor deja obsoleta a la anterior: si la respuesta lenta de A llegara después que la de B, no puede borrar ni
-  // pintar encima del resumen de B (revisión independiente 24-oct).
-  const dueno = raiz || document.body;
-  const mio = (dueno._bodSeq = (dueno._bodSeq || 0) + 1);
-  if (faltan.length && Date.now() >= _TKA_BOD.falloHasta){
-    cajas.forEach(c => {
-      if (faltan.indexOf(c.dataset.bodSku) >= 0)
-        c.innerHTML = '<span class="ln-bod-cargando"><span class="spinner-border spinner-border-sm"></span> Buscando la bodega en Check…</span>';
-    });
-  }
+  const pintarCargando = (txt) => cajas.forEach(c => {
+    if (faltan.indexOf(c.dataset.bodSku) >= 0)
+      c.innerHTML = '<span class="ln-bod-cargando"><span class="spinner-border spinner-border-sm"></span> ' + txt + '</span>';
+  });
+  if (faltan.length && Date.now() >= _TKA_BOD.falloHasta) pintarCargando('Buscando la bodega en Check…');
   for (let i = 0; i < faltan.length && Date.now() >= _TKA_BOD.falloHasta; i += 80){            // el servidor atiende hasta 80 SKU por consulta
     const lote = faltan.slice(i, i + 80);
     let d = null, st = 0;
-    // La primera consulta de una instancia recién levantada puede tardar: el servidor responde «calentando» al instante y se reintenta unos segundos.
-    for (let intento = 0; intento < 6; intento++){
+    // La primera consulta de una instancia recién levantada puede tardar: el servidor espera unos segundos a que Check responda y, si no alcanza,
+    // contesta «calentando» (503); se reintenta (5 × ~9 s cubre los 45 s que puede tardar la primera lectura). Cada intento tiene su tope de 25 s.
+    for (let intento = 0; intento < 5; intento++){
+      const ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+      const tope = ctl ? setTimeout(() => ctl.abort(), 25000) : 0;
       try{
-        const r = await fetch('/api/erp/check-bodegas?skus=' + encodeURIComponent(lote.join(',')), { headers: { 'Accept': 'application/json' } });
+        const r = await fetch('/api/erp/check-bodegas?skus=' + encodeURIComponent(lote.join(',')), { headers: { 'Accept': 'application/json' }, signal: ctl ? ctl.signal : undefined });
         st = r.status;
         d = await r.json().catch(() => null);
       }catch(e){ d = null; st = 0; }
-      if (dueno._bodSeq !== mio) break;
-      if (st === 503 && d && d.calentando){ await new Promise(ok => setTimeout(ok, 3500)); if (dueno._bodSeq !== mio) break; continue; }
+      if (tope) clearTimeout(tope);
+      if (!sigue()) break;
+      if (st === 503 && d && d.calentando){
+        if (intento === 0) pintarCargando('Conectando con Check… la primera consulta tarda unos segundos');
+        await new Promise(ok => setTimeout(ok, 1500)); if (!sigue()) break; continue;
+      }
       break;
     }
     if (d && d.ok){
@@ -1708,12 +1717,12 @@ async function _tkaCargarBodegas(raiz, opts){
       _TKA_BOD.edad = d.edad_min;
     } else if (st === 403){
       _TKA_BOD.sinAcceso = true;                              // este usuario no ve las bodegas de Check (técnicos): se oculta, sin mensaje
-    } else if (dueno._bodSeq === mio){
+    } else if (sigue()){
       _TKA_BOD.falloHasta = Date.now() + _TKA_BOD_FALLO_MS;
     }
-    if (dueno._bodSeq !== mio) return;                        // otra búsqueda tomó este contenedor: ella pinta
+    if (!sigue()) return;                                     // otra búsqueda tomó este contenedor (o ya se redibujó): ella pinta
   }
-  if (dueno._bodSeq !== mio) return;
+  if (!sigue()) return;
   if (_TKA_BOD.sinAcceso){ cajas.forEach(c => { c.innerHTML = ''; }); return; }
   // Resumen del pedido arriba de la lista (como Retiros: «si el producto está en varias bodegas, hazme un resumen para decidir la fecha»).
   if (raiz){

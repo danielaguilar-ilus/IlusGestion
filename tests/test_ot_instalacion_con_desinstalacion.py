@@ -408,6 +408,14 @@ class TestFeriadosEnLosCalendariosDelAsistente(unittest.TestCase):
         g = _fn("_o2mFeriadoDe(fecha){", 600)
         self.assertIn("o2mCal.fer[k]", g)
 
+    def test_el_aviso_de_feriado_se_repinta_cuando_llega_el_mes(self):
+        # 2.ª revisión independiente: con una fecha preasignada o tecleada en un mes aún no cargado, el aviso se calculaba antes de saber los feriados
+        # y no volvía a calcularse; la grilla sí pintaba la bandera. Al llegar el mes se vuelve a avisar.
+        f = _fn("o2mCalCargarMes(){", 2200)
+        i = f.index("o2mCal.fer[key] = (d && d.feriados) || {};")
+        self.assertIn("avisosAgenda();", f[i:i + 400])
+        self.assertLess(f.index("o2mCalRenderGrid();", i), f.index("avisosAgenda();", i))
+
 
 class TestRojoAVerde(unittest.TestCase):
     def test_los_campos_con_minimo_de_caracteres_pasan_de_rojo_a_verde(self):

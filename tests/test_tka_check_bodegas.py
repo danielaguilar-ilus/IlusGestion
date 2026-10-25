@@ -105,13 +105,22 @@ class TestRutaGeneral(unittest.TestCase):
         self.assertLess(self.ruta.index("if not _rck.skus_de(txt):"), self.ruta.index("_checkwms_stock_rows()"))
 
     def test_la_cache_fria_no_deja_a_nadie_esperando_45_segundos(self):
-        # La primera lectura del reporte de Check (instancia recién levantada) tarda 4-45 s: se pide en segundo plano y se responde «calentando».
-        self.assertIn('if _CHECKWMS_STOCK.get("rows") is None:', self.ruta)
+        # La primera lectura del reporte de Check (instancia recién levantada) tarda 4-45 s: se pide en segundo plano, se espera SOLO unos segundos
+        # (con la petición viva Cloud Run le da CPU a la lectura) y, si no alcanzó, se responde «calentando». Un reporte más viejo de lo que se
+        # sirve (_CHECKWMS_STALE_MAX) es tan frío como no tener ninguno: antes caía al candado y colgaba el hilo.
+        self.assertIn("if _checkwms_stock_frio():", self.ruta)
         self.assertIn('_checkwms_swr("stock", _checkwms_stock_rows)', self.ruta)
+        self.assertIn("_CHECKWMS_ESPERA_FRIA_S", self.ruta)
+        self.assertIn("time.sleep(0.25)", self.ruta)
         self.assertIn('"calentando": True', self.ruta)
         self.assertIn("}), 503", self.ruta)
-        self.assertLess(self.ruta.index('if _CHECKWMS_STOCK.get("rows") is None:'), self.ruta.index("filas = _checkwms_stock_rows()"))
-        self.assertLess(self.ruta.index("if not _rck.skus_de(txt):"), self.ruta.index('if _CHECKWMS_STOCK.get("rows") is None:'))
+        self.assertLess(self.ruta.index("if _checkwms_stock_frio():"), self.ruta.index("filas = _checkwms_stock_rows()"))
+        self.assertLess(self.ruta.index("if not _rck.skus_de(txt):"), self.ruta.index("if _checkwms_stock_frio():"))
+        i = APP.index("def _checkwms_stock_frio(")
+        f = APP[i:APP.index("def _checkwms_stock_rows(", i)]
+        self.assertIn('_CHECKWMS_STOCK.get("rows") is None', f)
+        self.assertIn("_CHECKWMS_STALE_MAX", f)
+        self.assertIn("_CHECKWMS_ESPERA_FRIA_S = 8.0", APP)
         # sin credenciales no se queda «calentando» para siempre: lo dice
         self.assertIn("_checkwms_configurado()", self.ruta)
 
@@ -199,10 +208,12 @@ const BODS = {
   X:[{bodega:'<img src=x onerror=alert(1)>', fisico:1, disponible:1, ubicaciones:[], mas_ubicaciones:0}] };
 const respuesta = function(skus){ const b = {}; skus.forEach(s => { b[s] = BODS[s] || []; }); return { ok:true, bodegas:b, edad_min:7 }; };
 global.setTimeout = function(fn){ fn(); return 0; };          // las esperas entre reintentos no se esperan de verdad
-let calentando = 0;
-global.fetch = async function(u){
+let calentando = 0; const vistoEnCalentando = []; let cajasObservadas = null; const opcionesFetch = [];
+global.fetch = async function(u, o){
   llamadas.push(decodeURIComponent(u.split('skus=')[1]).split(',').length);
+  opcionesFetch.push(o);
   const skus = decodeURIComponent(u.split('skus=')[1]).split(',');
+  if (modo === 'calentando' && cajasObservadas) vistoEnCalentando.push(cajasObservadas[0].innerHTML);
   if (modo === 'caido') return { status: 503, json: async () => ({ ok:false, error:'Check no respondió' }) };
   if (modo === 'prohibido') return { status: 403, json: async () => ({ ok:false, error:'No tienes acceso a esta información.' }) };
   if (modo === 'calentando' && calentando-- > 0) return { status: 503, json: async () => ({ ok:false, calentando:true, error:'Conectando con Check…' }) };
@@ -236,8 +247,9 @@ global.fetch = async function(u){
   const a3 = llamadas.length; r = raiz([caja('')]); await _tkaCargarBodegas(r); out.sinSku = { nuevasLlamadas: llamadas.length - a3 };
   // 8) Caché fría del servidor: responde «calentando» dos veces y a la tercera hay datos → el modal reintenta solo
   _TKA_BOD.cache.clear(); modo = 'calentando'; calentando = 2; const a5 = llamadas.length;
-  r = raiz([caja('A')]); await _tkaCargarBodegas(r);
-  out.calentando = { llamadas: llamadas.length - a5, a: r.cajas[0].innerHTML.indexOf('En 2 bodegas') >= 0 };
+  r = raiz([caja('A')]); cajasObservadas = r.cajas; await _tkaCargarBodegas(r); cajasObservadas = null;
+  out.calentando = { llamadas: llamadas.length - a5, a: r.cajas[0].innerHTML.indexOf('En 2 bodegas') >= 0, visto: vistoEnCalentando.slice(),
+    conTope: opcionesFetch.slice(-3).every(function (o) { return !!(o && o.signal); }) };
   modo = 'ok';
   // 9) Una búsqueda NUEVA sobre el mismo contenedor deja obsoleta a la anterior: la respuesta lenta de A no puede pintar encima de B
   _TKA_BOD.cache.clear(); modo = 'manual'; pend.length = 0;
@@ -260,6 +272,17 @@ global.fetch = async function(u){
   const trasPrimera = llamadas.length - a6;
   r = raiz([caja('M1')]); await _tkaCargarBodegas(r);
   out.prohibido = { llamadasPrimera: trasPrimera, llamadasTotales: llamadas.length - a6, cajas: [r.cajas[0].innerHTML], resumen: r.resumen, bandera: _TKA_BOD.sinAcceso };
+  _TKA_BOD.sinAcceso = false;
+  // 11) El contenedor se vuelve a dibujar SIN cajas (p. ej. «No se encontró el documento») mientras la consulta lenta sigue: no se pinta nada encima
+  _TKA_BOD.cache.clear(); modo = 'manual'; pend.length = 0;
+  const rd = raiz([caja('RA')]); const cajaA = rd.cajas[0]; cajaA.isConnected = true;
+  const pD = _tkaCargarBodegas(rd);
+  await Promise.resolve();
+  cajaA.isConnected = false; rd.cajas = [];                    // el documento nuevo no existe: se dibujó otra cosa y la caja ya no está en pantalla
+  pend[0]();                                                   // responde la consulta vieja
+  await pD;
+  out.sinCajas = { resumen: rd.resumen, cajaA: cajaA.innerHTML };
+  modo = 'ok';
   console.log(JSON.stringify(out));
 })();
 """ % (esc, cuerpo)
@@ -327,6 +350,20 @@ global.fetch = async function(u){
         c = self.o["calentando"]
         self.assertEqual(c["llamadas"], 3)           # «calentando», «calentando» y por fin los datos
         self.assertTrue(c["a"])
+
+    def test_mientras_calienta_dice_que_la_primera_consulta_tarda_y_cada_intento_tiene_tope(self):
+        c = self.o["calentando"]
+        self.assertIn("Buscando la bodega en Check", c["visto"][0])
+        self.assertIn("Conectando con Check", c["visto"][1])
+        self.assertIn("la primera consulta tarda unos segundos", c["visto"][1])
+        self.assertTrue(c["conTope"])                                   # fetch lleva AbortController: una conexión colgada no deja el spinner para siempre
+
+    def test_un_contenedor_redibujado_sin_cajas_no_recibe_nada_de_la_consulta_lenta(self):
+        # 2.ª revisión: «No se encontró el documento» (o un error de red) se dibuja sin cajas y NO llama a esta función; la consulta lenta
+        # anterior terminaba pintando «¿Dónde está este pedido según Check?» encima.
+        s = self.o["sinCajas"]
+        self.assertIsNone(s["resumen"])
+        self.assertNotIn("BODEGA", s["cajaA"])
 
     def test_una_respuesta_lenta_no_pisa_a_la_de_la_busqueda_nueva(self):
         # Revisión independiente (24-oct): si la respuesta de A (lenta) llegaba después que la de B, borraba el resumen correcto de B e

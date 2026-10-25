@@ -70,6 +70,11 @@
 .ecf-verif .ecf-verif-t{min-width:0}
 .ecf-verif .ecf-verif-dir{display:block;margin-top:2px;font-weight:700;overflow-wrap:anywhere}
 .ecf-verif .ecf-verif-sub{display:block;margin-top:3px;font-weight:500;font-size:.8rem;opacity:.9}
+/* «Volver a la dirección guardada»: salida directa de un retoque accidental (táctil: 44 px en celular) */
+.ecf-verif .ecf-verif-btn{display:inline-flex;align-items:center;gap:6px;margin-top:8px;min-height:36px;padding:4px 12px;border-radius:999px;border:1.5px solid currentColor;background:#fff;color:inherit;font:inherit;font-size:.8rem;font-weight:800;cursor:pointer}
+.ecf-verif .ecf-verif-btn:hover{background:rgba(255,255,255,.7);box-shadow:0 0 0 3px rgba(0,0,0,.06)}
+.ecf-verif .ecf-verif-btn:focus-visible{outline:2px solid #0a0a0a;outline-offset:2px}
+@media (max-width:575.98px){.ecf-verif .ecf-verif-btn{min-height:44px}}
 /* Pie: por qué no se puede guardar todavía (y lleva a ese lugar al tocarlo) */
 .ecf-foot-estado{margin-right:auto;display:inline-flex;align-items:center;gap:8px;min-height:46px;padding:8px 14px;border-radius:12px;border:1.5px solid;
   font-size:.88rem;font-weight:700;line-height:1.3;text-align:left;background:#fff;cursor:pointer}
