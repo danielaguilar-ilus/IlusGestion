@@ -9366,9 +9366,11 @@ window.OT2C = (function(){
       // corresponda, nunca una frase fija.
       var _conceptosObj = [(tInfo ? tInfo.n.toLowerCase() : S.tipo)];
       var _cdObj = parseFloat(S.fin_costo_despacho);
-      if (isFinite(_cdObj) && _cdObj > 0 && _conceptosObj.indexOf('despacho') === -1){
+      var _salObj = _o2mAnexoSalida();
+      if (((isFinite(_cdObj) && _cdObj > 0) || (_salObj && _salObj.desp > 0)) && _conceptosObj.indexOf('despacho') === -1){
         _conceptosObj.push('despacho');
       }
+      if (_salObj) _conceptosObj.push('desinstalación');   // 🧾 anexo único (REGLA #46)
       var _conceptosObjTxt = _conceptosObj.length > 1
         ? _conceptosObj.slice(0, -1).join(', ') + ' y ' + _conceptosObj[_conceptosObj.length - 1]
         : _conceptosObj[0];
@@ -9392,10 +9394,43 @@ window.OT2C = (function(){
     if (a.items_editados) return;
     var items = [];
     var cp = parseFloat(S.fin_costo_proveedor);
-    if (isFinite(cp) && cp > 0) items.push({concepto: S.tipo==='instalacion' ? 'Instalación' : 'Servicio', monto: cp});
+    var sal = _o2mAnexoSalida();       // 🧾 ANEXO ÚNICO (REGLA #46): ¿la desinstalación va en este mismo anexo?
+    var _ot = function(it){ if (sal) it.ot = 'entrada'; return it; };
+    if (isFinite(cp) && cp > 0) items.push(_ot({concepto: S.tipo==='instalacion' ? 'Instalación' : 'Servicio', monto: cp}));
     var cd = parseFloat(S.fin_costo_despacho);
-    if (isFinite(cd) && cd > 0) items.push({concepto: 'Despacho', monto: cd});
+    if (isFinite(cd) && cd > 0) items.push(_ot({concepto: sal ? 'Despacho (instalación)' : 'Despacho', monto: cd}));
+    if (sal && sal.prov > 0) items.push({concepto: 'Desinstalación', monto: sal.prov, ot: 'salida'});
+    if (sal && sal.desp > 0) items.push({concepto: 'Despacho (desinstalación)', monto: sal.desp, ot: 'salida'});
     a.items = items;
+  }
+  /* 🧾 ANEXO ÚNICO (REGLA #46, Daniel 25-oct: «el anexo debe ser único… describiendo el detalle de cuánto se me va a cobrar por instalación,
+     desinstalación y despacho»): si se agenda la desinstalación y su técnico líder es el MISMO proveedor externo que el de la instalación, las dos
+     OT van en UN solo anexo (el proveedor firma una vez). Devuelve lo que se le paga por la salida ({prov, desp}) o null si no aplica. El
+     servidor vuelve a decidirlo al crear (misma empresa, anexo sin firmar): lo que no coincida se descarta antes de enviar el anexo. */
+  function _o2mAnexoSalida(){
+    try {
+      if (!_o2mDiTieneHija()) return null;
+      var lid = _diTecObj(_diLider()), ent = _primerTecnicoExterno();
+      if (!lid || !lid.es_externo || !ent) return null;
+      var mismo = lid.id === ent.id || (!!lid.empresa_nombre && lid.empresa_nombre === ent.empresa_nombre);
+      if (!mismo) return null;
+      return {prov: _diNum(S.desinst.costo_proveedor) || 0, desp: _diNum(S.desinst.costo_despacho) || 0};
+    } catch (e){ return null; }
+  }
+  function _o2mAnexoUnicoNota(){
+    return _o2mAnexoSalida()
+      ? '<div class="o2m-anx-nota" id="o2mAnexoUnico" style="background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a"><i class="bi bi-link-45deg me-1"></i>'+
+        '<b>Anexo único:</b> cubre la instalación y la desinstalación. El proveedor firma una sola vez y cada orden de trabajo queda cuadrada con su parte.</div>'
+      : '';
+  }
+  /* Lo que viaja al servidor: si el servidor dijo que la desinstalación NO comparte el anexo, las partidas de la salida se descartan (esa OT
+     tiene el suyo) y la entrada vuelve a llamarse «Despacho». */
+  function _o2mAnexoItemsParaServidor(comparte){
+    var its = _o2mAnexoItemsValidos();
+    if (comparte) return its;
+    return its.filter(function(it){ return it.ot !== 'salida'; }).map(function(it){
+      return {concepto: String(it.concepto || '').replace(/\s*\(instalación\)\s*$/i, ''), monto: it.monto};
+    });
   }
   /* ── Tabla de precio del anexo, EDITABLE (2026-09-15) ────────────────
      Monto editable por fila, concepto editable, "Agregar concepto" y quitar
@@ -9414,6 +9449,7 @@ window.OT2C = (function(){
         '<div class="o2m-anx-total"><span>Total del anexo</span><b id="o2mAnexoTotal">'+$o2mPesos(_o2mAnexoTotal())+'</b></div>'+
         '<div class="o2m-anx-foot"><span class="o2m-anx-viene"><i class="bi bi-link-45deg me-1"></i>Vienen de Costos: no se vuelven a escribir.</span>'+
           '<button type="button" class="btn btn-sm btn-link p-0" style="min-height:44px" onclick="OT2C.anexoPartidasAbrir()">Cambiar partidas</button></div></div>'+
+        _o2mAnexoUnicoNota()+
         '<div class="o2m-anx-nota"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
         ((S.fin_garantia && _o2mAnexoTotal() === 0)
           ? 'Garantía sin pago al proveedor: el anexo sale en $0 y solo lo compromete a realizar el servicio en tiempo, forma y condiciones.'
@@ -9439,6 +9475,7 @@ window.OT2C = (function(){
           ? '<button type="button" class="btn btn-sm btn-link p-0" onclick="OT2C.anexoRestaurarItems()">Volver a lo declarado en Costos</button>'
           : '')+
       '</div></div>'+
+      _o2mAnexoUnicoNota()+
       '<div class="o2m-anx-nota"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+
       ((S.fin_garantia && _o2mAnexoTotal() === 0)
         ? 'Garantía sin pago al proveedor: el anexo sale en $0 y solo lo compromete a realizar el servicio en tiempo, forma y condiciones.'
@@ -9458,7 +9495,11 @@ window.OT2C = (function(){
   function _o2mAnexoItemsValidos(){
     var items = (S.anexo.items||[]).filter(function(it){
       return (it.concepto||'').trim() !== '' || (parseFloat(it.monto) || 0) > 0;
-    }).map(function(it){ return {concepto: (it.concepto||'').trim(), monto: Math.round(parseFloat(it.monto) || 0)}; });
+    }).map(function(it){
+      var o = {concepto: (it.concepto||'').trim(), monto: Math.round(parseFloat(it.monto) || 0)};
+      if (it.ot === 'entrada' || it.ot === 'salida') o.ot = it.ot;     // 🧾 anexo único: la OT a la que pertenece la partida
+      return o;
+    });
     // 2026-10-02 (Anexo N°203): garantía sin pago al proveedor -> el anexo
     // igual se crea, en $0 y con el concepto explícito. Sin esto la OT
     // quedaba sin anexo (el POST de abajo no se disparaba).
@@ -11992,7 +12033,7 @@ window.OT2C = (function(){
     // persona vio en pantalla (caso: editó ítems pero dejó vacío el
     // objetivo, así que anexo_delegado viaja false).
     if (_tecExtPre){
-      body.anexo = { precio_items: _o2mAnexoItemsValidos() };
+      body.anexo = { precio_items: _o2mAnexoItemsParaServidor(false) };   // la desinstalación se suma después en el servidor (REGLA #46)
     }
 
     var sig = document.getElementById('o2mSig');
@@ -12155,7 +12196,7 @@ window.OT2C = (function(){
               productos: (_o2mAnexoProductosCalc(), S.anexo.productos || []),
               // 2026-09-15: tal como los dejó el usuario (editados o no);
               // solo se omite una fila vacía (sin concepto y sin monto).
-              precio_items: _o2mAnexoItemsValidos(),
+              precio_items: _o2mAnexoItemsParaServidor(!!(res.j.desinstalacion && res.j.desinstalacion.comparte_anexo)),
               fecha_inicio: S.anexo.fecha_inicio || null,
               fecha_termino: S.anexo.fecha_termino || null,
               cliente_nombre: S.cliente ? S.cliente.nombre : null,
@@ -13040,6 +13081,7 @@ window.OT2C = (function(){
     _diProgramarPrevio(false);
     _diPintarRegiones(['res']);
     refrescarAnclas();
+    try { _o2mAnexoSeguirCostos(); } catch (e){}      // 🧾 anexo único: las partidas de la desinstalación siguen a su costo
   }
   /* La salida cambió de técnicos (paso «Desinstalación»): si el calendario está mostrando la salida, su bloque, sus carriles y el choque se
      ponen al día (la búsqueda de hueco libre y el choque usan los técnicos de ESA orden: ver agTecnicos). */

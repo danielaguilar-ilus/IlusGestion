@@ -1203,6 +1203,10 @@ class TestChecklistSugeridoYElegido(unittest.TestCase):
         a["_ot_plantilla_para_hija"] = lambda sku, fb: 77 if sku == "SD45" else fb
         a["_chk_plantillas_validas"] = lambda ids, tipo: {int(i) for i in ids} - {999}
         a["_ot_saldo_docs_de_ot"] = lambda vid: [("NVV", "VD00010961")]
+        # 🧾 anexo único (REGLA #46): sin el mismo proveedor externo en las dos OT, la desinstalación NO comparte anexo (esto tiene sus pruebas
+        # en test_ot_anexo_unico.py); aquí se prueba el resto del flujo, que no cambia.
+        a["_ot_hija_comparte_anexo"] = lambda madre_vid, lider, en_camino=False: False
+        a["_ot_anexo_agregar_salida"] = lambda *x, **k: None
 
         def _core(d, autorizacion=None, madre=None):
             cap["llamadas"] += 1

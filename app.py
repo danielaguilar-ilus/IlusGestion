@@ -90103,9 +90103,14 @@ _OT2_SELECT_FILAS = (
 # OT puede acumular varios por re-firma) + su factura de proveedor si ya
 # tiene una asignada. Aparte de _joins_comunes a propósito (ver arriba).
 _OT2_JOIN_ANEXO_FAC = (
-    "  LEFT JOIN mant_anexos anx ON anx.id = (SELECT a2.id FROM mant_anexos a2 "
-    "         WHERE a2.ot_id = v.id AND a2.estado <> 'anulado' "
-    "         ORDER BY (a2.estado = 'firmado') DESC, a2.id DESC LIMIT 1) "
+    # 🧾 2026-10-25 (ANEXO ÚNICO, REGLA #46): una desinstalación SIN anexo propio ve el de su instalación cuando ese anexo trae partidas de la
+    # desinstalación (INSTR sobre '"salida"': sin `%`, que esta cadena viaja con parámetros). El propio manda siempre.
+    "  LEFT JOIN mant_anexos anx ON anx.id = COALESCE("
+    "       (SELECT a2.id FROM mant_anexos a2 WHERE a2.ot_id = v.id AND a2.estado <> 'anulado' "
+    "         ORDER BY (a2.estado = 'firmado') DESC, a2.id DESC LIMIT 1), "
+    "       (SELECT a3.id FROM mant_anexos a3 WHERE v.ot_relacion = 'desinstalacion' AND a3.ot_id = v.ot_madre_id "
+    "           AND a3.estado <> 'anulado' AND INSTR(a3.precio_items_json, '\"salida\"') > 0 "
+    "         ORDER BY (a3.estado = 'firmado') DESC, a3.id DESC LIMIT 1)) "
     "  LEFT JOIN mant_factura_proveedor_items fpi ON fpi.visita_id = v.id "
     "  LEFT JOIN mant_facturas_proveedor fp ON fp.id = fpi.factura_proveedor_id "
 )
@@ -94422,6 +94427,9 @@ def ot2_detalle(vid):
                                     if v.get("costo_proveedor") is not None else None),
                 "costo_despacho": (int(v["costo_despacho"])
                                    if v.get("costo_despacho") is not None else None),
+                # 🧾 ANEXO ÚNICO (REGLA #46): lo que cobra el proveedor por la DESINSTALACIÓN de esta instalación (si va con el mismo
+                # proveedor y aún no tiene anexo propio): el anexo lleva las dos OT y se firma una sola vez.
+                "salida": _ot_anexo_salida_defaults(vid),
                 # Equipos de la OT, para la tabla del anexo.
                 # 🔴 2026-09-03 — en mantención/visita/inspección la tabla
                 # del anexo va SOLO con los equipos del plan (ver
@@ -100509,21 +100517,79 @@ def ot_api_panorama(vid):
 #     (si no está firmado) o se emite uno nuevo (si ya está firmado), y la OT lo sigue sola;
 #   · una OT cerrada es evidencia: nunca se toca. El lote de Facturación de proveedor sigue el costo (REGLA #29).
 # ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+_ANEXO_SEL_VIVO = "SELECT id, numero, estado, proveedor_nombre, precio_items_json, ot_id FROM mant_anexos "
+
+
+def _ot_anexo_de_la_madre(vid, solo_firmado=False):
+    """🧾 ANEXO ÚNICO (REGLA #46): para una DESINSTALACIÓN sin anexo propio, la fila del anexo de su instalación, pero SOLO si ese
+    anexo trae partidas de la desinstalación (si no, no la cubre y la OT sigue como siempre). `solo_firmado` pide el firmado.
+    None si no corresponde. Lanza si la base falla (el llamador decide)."""
+    f = mysql_fetchone("SELECT ot_madre_id, ot_relacion FROM mant_visitas WHERE id=%s", (int(vid),))
+    if not f or not f.get("ot_madre_id") or (f.get("ot_relacion") or "").strip().lower() != _oac.REL_DESINSTALACION:
+        return None
+    filtro = ("estado='firmado' ORDER BY firmado_at DESC, id DESC" if solo_firmado else
+              "COALESCE(estado,'') NOT IN ('rechazado','anulado') ORDER BY id DESC")
+    r = mysql_fetchone(_ANEXO_SEL_VIVO + " WHERE ot_id=%s AND " + filtro + " LIMIT 1", (int(f["ot_madre_id"]),))
+    if r and _oac.tiene_salida(r.get("precio_items_json")):
+        return r
+    return None
+
+
 def _ot_anexo_vivo(vid):
     """El anexo VIVO de la OT (el más reciente que no está rechazado ni anulado), con sus ítems y su total; None si no hay.
-    Nunca lanza."""
+    Nunca lanza.
+
+    🧾 ANEXO ÚNICO (REGLA #46): si el anexo trae partidas de la desinstalación, `items`/`total` son los de la PARTE de ESTA OT
+    (la instalación o la desinstalación), así que todo lo que compara «costo de la OT vs anexo» sigue funcionando sin cambios;
+    el anexo completo viene en `items_general`/`total_general`. Una desinstalación sin anexo propio lee el de su instalación."""
     try:
-        r = mysql_fetchone(
-            "SELECT id, numero, estado, proveedor_nombre, precio_items_json FROM mant_anexos "
-            " WHERE ot_id=%s AND COALESCE(estado,'') NOT IN ('rechazado','anulado') ORDER BY id DESC LIMIT 1", (vid,))
+        r = mysql_fetchone(_ANEXO_SEL_VIVO + " WHERE ot_id=%s AND COALESCE(estado,'') NOT IN ('rechazado','anulado') "
+                                             "ORDER BY id DESC LIMIT 1", (vid,))
+        propio = bool(r)
+        if not r:
+            r = _ot_anexo_de_la_madre(vid)
     except Exception as e:
         print(f"[costo-anexo] leer el anexo vid={vid}: {type(e).__name__}", flush=True)
         return None
     if not r:
         return None
-    items = _oac.items_de(r.get("precio_items_json"))
+    todos = _oac.items_de(r.get("precio_items_json"))
+    compartido = _oac.tiene_salida(todos)
+    rol = (_oac.ROL_ENTRADA if propio else _oac.ROL_SALIDA) if compartido else None
+    mis = _oac.parte(todos, rol) if rol else todos
     return {"id": int(r["id"]), "numero": r.get("numero"), "estado": (r.get("estado") or "").strip().lower(),
-            "proveedor": r.get("proveedor_nombre") or "", "items": items, "total": _oac.total(items)}
+            "proveedor": r.get("proveedor_nombre") or "", "items": mis, "total": _oac.total(mis),
+            "compartido": compartido, "rol": rol, "ot_id": int(r.get("ot_id") or vid),
+            "items_general": todos, "total_general": _oac.total(todos)}
+
+
+def _ot_anexo_familia_ids(vid, ax):
+    """Las OTRAS OT que comparten el anexo `ax` de `vid` (la desinstalación de una instalación, o la instalación de una
+    desinstalación). [] si el anexo no es compartido. Nunca lanza."""
+    try:
+        if not ax or not ax.get("compartido"):
+            return []
+        duena = int(ax.get("ot_id") or vid)
+        if int(vid) != duena:
+            return [duena]
+        return [int(h["id"]) for h in _ot_hijas_de(duena)
+                if (h.get("estado") or "").strip().lower() not in ("cancelada", "anulada")]
+    except Exception as e:
+        print(f"[costo-anexo] familia vid={vid}: {type(e).__name__}", flush=True)
+        return []
+
+
+def _ot_anexo_alinear_familia(vid, origen="", solo_si_falta=False):
+    """🧾 ANEXO ÚNICO: deja el costo de la OT `vid` igual a su parte del anexo (_ot_anexo_alinear_costo) y, si el anexo es compartido,
+    también el de la otra OT de la familia (la desinstalación de la instalación, o al revés). Devuelve el resultado de `vid`."""
+    res = _ot_anexo_alinear_costo(vid, origen=origen, solo_si_falta=solo_si_falta)
+    try:
+        ax = (res or {}).get("anexo") or _ot_anexo_vivo(vid)
+        for otro in _ot_anexo_familia_ids(vid, ax):
+            _ot_anexo_alinear_costo(otro, origen=origen, solo_si_falta=solo_si_falta)
+    except Exception as e:
+        print(f"[costo-anexo] alinear familia vid={vid}: {type(e).__name__}: {e}", flush=True)
+    return res
 
 
 def _ot_costo_fila(vid):
@@ -100626,8 +100692,9 @@ def _ot_anexo_costo_guardia(vid, prov_nuevo=None, desp_nuevo=None):
     if _oac.cambio_permitido(prov_nuevo, desp_nuevo, v.get("costo_proveedor"), v.get("costo_despacho"), ax["total"]):
         return None
     return jsonify({"ok": False, "error_codigo": "COSTO_ES_DEL_ANEXO",
-                    "error": _oac.mensaje_costo_es_del_anexo(ax["numero"], ax["estado"], ax["total"]),
-                    "anexo": {"id": ax["id"], "numero": ax["numero"], "estado": ax["estado"], "total": ax["total"]},
+                    "error": _oac.mensaje_costo_es_del_anexo(ax["numero"], ax["estado"], ax["total"], ax.get("total_general")),
+                    "anexo": {"id": ax["id"], "numero": ax["numero"], "estado": ax["estado"], "total": ax["total"],
+                              "total_general": ax.get("total_general"), "compartido": bool(ax.get("compartido"))},
                     "acciones": ["editar_anexo" if ax["estado"] != "firmado" else "anexo_nuevo", "usar_valor_del_anexo"]}), 409
 
 
@@ -100641,10 +100708,29 @@ def _ot_anexo_vinculo_vista(v):
         vinc = _oac.estado(v.get("costo_proveedor"), v.get("costo_despacho"), ax["items"])
         suma = (float(v.get("costo_proveedor") or 0) + float(v.get("costo_despacho") or 0)) \
             if v.get("costo_proveedor") is not None else None
-        return {"id": ax["id"], "numero": ax["numero"], "estado": ax["estado"], "firmado": ax["estado"] == "firmado",
-                "total": ax["total"], "total_txt": _oac.clp(ax["total"]), "vinculo": vinc,
-                "costo_txt": _oac.clp(suma) if suma is not None else "",
-                "abierta": (v.get("estado") or "").strip().lower() not in _oac.ESTADOS_OT_CERRADOS}
+        vista = {"id": ax["id"], "numero": ax["numero"], "estado": ax["estado"], "firmado": ax["estado"] == "firmado",
+                 "total": ax["total"], "total_txt": _oac.clp(ax["total"]), "vinculo": vinc,
+                 "costo_txt": _oac.clp(suma) if suma is not None else "",
+                 "abierta": (v.get("estado") or "").strip().lower() not in _oac.ESTADOS_OT_CERRADOS,
+                 "compartido": bool(ax.get("compartido")), "rol": ax.get("rol")}
+        if vista["compartido"]:
+            # 🧾 ANEXO ÚNICO: cuánto es SU parte y cuánto el anexo completo, con el detalle por OT (instalación / desinstalación / despacho).
+            res_p = _oac.resumen_partidas(ax["items_general"])
+
+            def _txt_parte(p):
+                d = f" (despacho {_oac.clp(p['despacho'])})" if p["despacho"] else ""
+                return f"{_oac.clp(p['total'])}{d}"
+            vista.update({"total_general": ax["total_general"], "total_general_txt": _oac.clp(ax["total_general"]),
+                          "partidas": res_p, "proveedor": ax.get("proveedor") or "", "anexo_ot_id": ax.get("ot_id"),
+                          "es_hija": ax.get("rol") == _oac.ROL_SALIDA,
+                          "partidas_txt": f"Instalación {_txt_parte(res_p['entrada'])} · Desinstalación {_txt_parte(res_p['salida'])}"})
+            if vista["es_hija"]:
+                try:
+                    duena_ot = mysql_fetchone("SELECT numero_ot FROM mant_visitas WHERE id=%s", (ax["ot_id"],)) or {}
+                    vista["anexo_ot_numero"] = duena_ot.get("numero_ot") or f"V-{int(ax['ot_id']):05d}"
+                except Exception:
+                    vista["anexo_ot_numero"] = ""
+        return vista
     except Exception as e:
         print(f"[costo-anexo] vista: {type(e).__name__}", flush=True)
         return None
@@ -100777,17 +100863,31 @@ def ot_api_anexos_vinculo_costos():
         "                AND COALESCE(a2.estado,'') NOT IN ('rechazado','anulado')) "
         " ORDER BY v.id DESC LIMIT 2000") or []
     out, cuenta = [], {"alineado": 0, "sin_declarar": 0, "difiere": 0}
-    for r in filas:
-        items = _oac.items_de(r.get("precio_items_json"))
-        est = _oac.estado(r.get("costo_proveedor"), r.get("costo_despacho"), items)
+
+    def _fila(vid, num, ot_est, r, items, rol, cprov, cdesp):
+        est = _oac.estado(cprov, cdesp, items, rol)
         cuenta[est] += 1
         if est == "alineado":
-            continue
-        out.append({"ot_id": r["vid"], "ot": r.get("numero_ot"), "ot_estado": r.get("ot_estado"),
-                    "anexo": r.get("numero"), "anexo_estado": r.get("anexo_estado"), "total_anexo": _oac.total(items),
-                    "costo_proveedor": float(r["costo_proveedor"]) if r.get("costo_proveedor") is not None else None,
-                    "costo_despacho": float(r["costo_despacho"]) if r.get("costo_despacho") is not None else None,
-                    "vinculo": est})
+            return
+        out.append({"ot_id": vid, "ot": num, "ot_estado": ot_est,
+                    "anexo": r.get("numero"), "anexo_estado": r.get("anexo_estado"), "total_anexo": _oac.total(items, rol),
+                    "costo_proveedor": float(cprov) if cprov is not None else None,
+                    "costo_despacho": float(cdesp) if cdesp is not None else None,
+                    "vinculo": est, "compartido": bool(rol), "parte": rol})
+
+    for r in filas:
+        items = _oac.items_de(r.get("precio_items_json"))
+        # 🧾 ANEXO ÚNICO: con partidas de la desinstalación, la instalación se compara con SU parte y cada desinstalación con la suya.
+        comp = _oac.tiene_salida(items)
+        _fila(r["vid"], r.get("numero_ot"), r.get("ot_estado"), r, items, _oac.ROL_ENTRADA if comp else None,
+              r.get("costo_proveedor"), r.get("costo_despacho"))
+        if comp:
+            for h in (mysql_fetchall(
+                    "SELECT id, numero_ot, estado, costo_proveedor, costo_despacho FROM mant_visitas "
+                    " WHERE ot_madre_id=%s AND ot_relacion='desinstalacion' AND estado NOT IN ('cancelada','anulada') ORDER BY id",
+                    (r["vid"],)) or []):
+                _fila(h["id"], h.get("numero_ot"), h.get("estado"), r, items, _oac.ROL_SALIDA,
+                      h.get("costo_proveedor"), h.get("costo_despacho"))
     return jsonify({"ok": True, "total": len(filas), "cuenta": cuenta, "por_corregir": out})
 
 
@@ -113788,7 +113888,8 @@ def _ot2_crear_core(d, autorizacion=None, madre=None):
         else:
             _r_dd = _ot_crear_desinstalacion(
                 vid, dict(_dd_norm, lleva="si"), autorizacion=autorizacion,
-                creado_por=((autorizacion or {}).get("solicitado_por_nombre") or None))
+                creado_por=((autorizacion or {}).get("solicitado_por_nombre") or None),
+                anexo_en_camino=bool(d.get("anexo_delegado")))      # 🧾 el asistente crea el anexo de la instalación justo después (REGLA #46)
         if _r_dd is not None:
             _resp_ok["desinstalacion"] = _r_dd
             if _r_dd.get("ok"):
@@ -114727,7 +114828,124 @@ def _ot_desinst_validar_previo(dd, madre_fila, docs_madre, pedido_madre=None, cl
     return None, {"avisos": ev["avisos"], "remanente": rem}
 
 
-def _ot_crear_desinstalacion(madre_vid, datos, usuario=None, autorizacion=None, creado_por=None):
+def _ot_proveedor_ext_key(uid):
+    """Con QUIÉN es el contrato de un técnico externo: ('ficha', id) de mant_tecnicos_externos si tiene ficha, ('usuario', id) si solo
+    tiene el rol tecnico_externo; None si es técnico propio o no se sabe. Dos técnicos con la misma clave son el mismo proveedor."""
+    try:
+        uid = int(uid)
+    except (TypeError, ValueError):
+        return None
+    try:
+        r = mysql_fetchone(
+            "SELECT te.id AS fid FROM mant_tecnico_externo_usuarios teu "
+            "  JOIN mant_tecnicos_externos te ON te.id = teu.tecnico_externo_id WHERE teu.user_id=%s "
+            "UNION SELECT id AS fid FROM mant_tecnicos_externos WHERE user_id=%s LIMIT 1", (uid, uid))
+        if r and r.get("fid"):
+            return ("ficha", int(r["fid"]))
+        a = mysql_fetchone("SELECT role FROM app_users WHERE id=%s", (uid,))
+        if a and (a.get("role") or "").strip().lower() == "tecnico_externo":
+            return ("usuario", uid)
+    except Exception as e:
+        print(f"[anexo_unico] proveedor de {uid}: {type(e).__name__}", flush=True)
+    return None
+
+
+def _ot_hija_comparte_anexo(madre_vid, hija_lider_id, en_camino=False):
+    """🧾 ANEXO ÚNICO (REGLA #46, Daniel 25-oct: «el anexo debe ser único»): ¿la desinstalación de `madre_vid` va en el anexo de su
+    instalación? Sí cuando el técnico líder de las dos OT es el MISMO proveedor externo y el anexo de la instalación todavía no está
+    firmado (un anexo firmado es evidencia: no se le agregan partidas; la desinstalación tendrá el suyo), Y ese anexo existe (sin firmar) o
+    viene en camino (`en_camino`: el asistente lo crea justo después de la OT). Si la instalación nunca tendrá anexo, la desinstalación
+    lleva el suyo como siempre."""
+    try:
+        m = mysql_fetchone("SELECT tecnico_user_id FROM mant_visitas WHERE id=%s", (int(madre_vid),)) or {}
+        km, kh = _ot_proveedor_ext_key(m.get("tecnico_user_id")), _ot_proveedor_ext_key(hija_lider_id)
+        if not km or km != kh:
+            return False
+        firmado = mysql_fetchone("SELECT 1 AS x FROM mant_anexos WHERE ot_id=%s AND estado='firmado' LIMIT 1", (int(madre_vid),))
+        if firmado:
+            return False
+        if en_camino:
+            return True
+        return bool(mysql_fetchone(
+            "SELECT 1 AS x FROM mant_anexos WHERE ot_id=%s AND COALESCE(estado,'') NOT IN ('rechazado','anulado') LIMIT 1", (int(madre_vid),)))
+    except Exception as e:
+        print(f"[anexo_unico] comparte vid={madre_vid}: {type(e).__name__}", flush=True)
+        return False
+
+
+def _ot_anexo_salida_defaults(vid):
+    """🧾 ANEXO ÚNICO: para el modal «Anexo de servicios» de una INSTALACIÓN, lo que cobra el proveedor por su desinstalación vigente
+    ({ot_id, numero_ot, costo_proveedor, costo_despacho}), cuando va con el mismo proveedor y la desinstalación no tiene un anexo
+    propio. None en cualquier otro caso (el anexo queda solo con la instalación, como siempre). Nunca lanza."""
+    try:
+        hijas = [h for h in _ot_hijas_de(int(vid)) if (h.get("estado") or "").strip().lower() not in ("cancelada", "anulada")]
+        if not hijas:
+            return None
+        h = hijas[0]
+        if not _ot_hija_comparte_anexo(vid, h.get("tecnico_user_id")):
+            return None
+        if mysql_fetchone("SELECT 1 AS x FROM mant_anexos WHERE ot_id=%s AND COALESCE(estado,'') NOT IN ('rechazado','anulado') LIMIT 1",
+                          (int(h["id"]),)):
+            return None
+        c = mysql_fetchone("SELECT id, numero_ot, costo_proveedor, costo_despacho FROM mant_visitas WHERE id=%s", (int(h["id"]),)) or {}
+        return {"ot_id": int(h["id"]), "numero_ot": c.get("numero_ot") or f"V-{int(h['id']):05d}",
+                "costo_proveedor": int(c["costo_proveedor"]) if c.get("costo_proveedor") is not None else None,
+                "costo_despacho": int(c["costo_despacho"]) if c.get("costo_despacho") is not None else None}
+    except Exception as e:
+        print(f"[anexo_unico] defaults de la salida vid={vid}: {type(e).__name__}", flush=True)
+        return None
+
+
+def _ot_anexo_agregar_salida(madre_vid, hija_vid, costo_prov, costo_desp):
+    """🧾 ANEXO ÚNICO: si la instalación YA tiene un anexo sin firmar, le suma las partidas de su desinstalación («Desinstalación» y
+    «Despacho (desinstalación)») y marca las de la instalación como suyas, para que el proveedor firme UNA sola vez con todo el
+    detalle. Devuelve el aviso para la pantalla, o None si no había anexo que completar (el asistente lo crea después con ambas)."""
+    try:
+        r = mysql_fetchone(
+            "SELECT id, numero, estado, precio_items_json FROM mant_anexos WHERE ot_id=%s "
+            " AND COALESCE(estado,'') NOT IN ('rechazado','anulado') ORDER BY id DESC LIMIT 1", (int(madre_vid),))
+        if not r or (r.get("estado") or "").strip().lower() not in _ANEXO_EDITABLES:
+            return None
+        todos = _oac.items_de(r.get("precio_items_json"))
+        if _oac.tiene_salida(todos):
+            return None
+        prov = int(round(float(costo_prov or 0)))
+        desp = int(round(float(costo_desp or 0)))
+        nuevos = []
+        if prov > 0:
+            nuevos.append({"concepto": "Desinstalación", "monto": prov, "ot": _oac.ROL_SALIDA})
+        if desp > 0:
+            nuevos.append({"concepto": "Despacho (desinstalación)", "monto": desp, "ot": _oac.ROL_SALIDA})
+        if not nuevos:
+            return None
+        entrada = []
+        for it in todos:
+            c = dict(it, ot=_oac.ROL_ENTRADA)
+            if c["concepto"].strip().lower() == "despacho":
+                c["concepto"] = "Despacho (instalación)"
+            entrada.append(c)
+        n = mysql_execute_returning_rowcount(
+            "UPDATE mant_anexos SET precio_items_json=%s WHERE id=%s AND estado IN ('borrador','enviado','visto','vencido')",
+            (json.dumps(entrada + nuevos), int(r["id"])))
+        if not n:
+            return None
+        txt = (f"La desinstalación se sumó al Anexo N° {r.get('numero')} (anexo único con el proveedor): "
+               + " · ".join(f"{i['concepto']} {_oac.clp(i['monto'])}" for i in nuevos))
+        try:
+            _mant_log("anexo", int(r["id"]), "desinstalacion_sumada", txt)
+            _mant_log("visita", int(madre_vid), "anexo_desinstalacion_sumada", txt)
+            _mant_log("visita", int(hija_vid), "anexo_desinstalacion_sumada", txt)
+        except Exception:
+            pass
+        _ot_anexo_alinear_familia(int(madre_vid), origen=f"la desinstalación se sumó al Anexo N° {r.get('numero')}")
+        reenviar = (r.get("estado") or "").strip().lower() in ("enviado", "visto")
+        return (f"{txt}." + (" El proveedor ya tenía el enlace: conviene reenviárselo para que vea las partidas nuevas." if reenviar else ""))
+    except Exception as e:
+        print(f"[anexo_unico] sumar salida madre={madre_vid}: {type(e).__name__}: {e}", flush=True)
+        return None
+
+
+def _ot_crear_desinstalacion(madre_vid, datos, usuario=None, autorizacion=None, creado_por=None, anexo_en_camino=False):
     """★ Crea la OT HIJA (desinstalación) de la instalación `madre_vid`. ÚNICA puerta para que una OT nazca con madre:
     llama a _ot2_crear_core(d, madre=fila) -- `madre` es un parámetro de la función, nunca una clave de `d`
     (un ot_madre_id que llegue en el body de /ot/api/crear se ignora).
@@ -114837,6 +115055,11 @@ def _ot_crear_desinstalacion(madre_vid, datos, usuario=None, autorizacion=None, 
         }
         if creado_por:
             d_hija["_creado_por"] = creado_por
+        # 🧾 ANEXO ÚNICO (REGLA #46): con el mismo proveedor externo en las dos OT, la desinstalación NO genera un anexo propio: sus
+        # partidas van en el de la instalación (que firma una sola vez).
+        _comparte_anexo = _ot_hija_comparte_anexo(madre_vid, dd.get("tecnico_lider_id"), en_camino=anexo_en_camino)
+        if _comparte_anexo:
+            d_hija["anexo_delegado"] = True
         r = _ot2_crear_core(d_hija, madre=m)
         resp, http = (r if isinstance(r, tuple) else (r, 200))
         try:
@@ -114846,9 +115069,14 @@ def _ot_crear_desinstalacion(madre_vid, datos, usuario=None, autorizacion=None, 
         if http != 200 or not cuerpo.get("ok"):
             return {"ok": False, "codigo": cuerpo.get("codigo") or "ERROR_INTERNO",
                     "error": cuerpo.get("error") or "No se pudo agendar la desinstalación.", "http": http}
+        _avisos_hija = list(cuerpo.get("avisos") or [])
+        if _comparte_anexo:
+            _av_ax = _ot_anexo_agregar_salida(madre_vid, cuerpo.get("visita_id"), dd.get("costo_proveedor"), dd.get("costo_despacho"))
+            if _av_ax:
+                _avisos_hija.append(_av_ax)
         return {"ok": True, "visita_id": cuerpo.get("visita_id"), "numero_ot": cuerpo.get("numero_ot"),
-                "fecha": dd["fecha"], "fecha_txt": _evt.fmt_fecha(dd["fecha"]), "avisos": cuerpo.get("avisos") or [],
-                "ot_url": cuerpo.get("ot_url"), "cobro": dd["cobro"]}
+                "fecha": dd["fecha"], "fecha_txt": _evt.fmt_fecha(dd["fecha"]), "avisos": _avisos_hija,
+                "ot_url": cuerpo.get("ot_url"), "cobro": dd["cobro"], "comparte_anexo": bool(_comparte_anexo)}
     except Exception as e:
         print(f"[desinst] crear hija de {madre_vid}: {type(e).__name__}: {e}", flush=True)
         return {"ok": False, "codigo": "ERROR_INTERNO", "error": "No pudimos agendar la desinstalación. Ya quedó registrado el detalle."}
@@ -117765,6 +117993,48 @@ def _anexo_bloqueo_nombre_prueba(proveedor, d):
         "crearlo.".format(proveedor), "PROVEEDOR_DE_PRUEBA", puede_forzar=es_super)
 
 
+def _anexo_items_norm(items):
+    """Partidas del anexo tal como se guardan: concepto, monto entero y, si la persona/pantalla la marcó, la OT a la que pertenecen
+    (`ot`: 'entrada' = la instalación, 'salida' = la desinstalación; REGLA #46). Una etiqueta que no sea una de esas dos se ignora."""
+    out = []
+    for it in items:
+        fila = {"concepto": str(it.get("concepto") or "")[:120], "monto": int(it.get("monto") or 0)}
+        rol = _oac.rol_valido(it.get("ot"))
+        if rol:
+            fila["ot"] = rol
+        out.append(fila)
+    return out
+
+
+def _anexo_validar_salida(vid, items):
+    """🧾 ANEXO ÚNICO (REGLA #46): las partidas de la desinstalación solo caben en el anexo de una instalación que TIENE una
+    desinstalación vigente, y esa desinstalación no puede tener ya su propio anexo vivo (no se cobran dos veces). None si pasa;
+    si no, la respuesta de error ya redactada."""
+    if not any(i.get("ot") == _oac.ROL_SALIDA for i in items):
+        return None
+    if not vid:
+        return _ot2_err("Las partidas de la desinstalación necesitan la OT de la instalación.", "SALIDA_SIN_OT")
+    try:
+        hijas = [h for h in _ot_hijas_de(int(vid), estricto=True)
+                 if (h.get("estado") or "").strip().lower() not in ("cancelada", "anulada")]
+        propio = None
+        if hijas:
+            ph = ",".join(["%s"] * len(hijas))
+            propio = mysql_fetchone(
+                "SELECT numero FROM mant_anexos WHERE ot_id IN (" + ph + ") "
+                " AND COALESCE(estado,'') NOT IN ('rechazado','anulado') LIMIT 1", tuple(int(h["id"]) for h in hijas))
+    except Exception as e:
+        print(f"[anexo_unico] validar salida vid={vid}: {type(e).__name__}", flush=True)
+        return _ot2_err("No pudimos revisar la desinstalación de esta OT. Inténtalo de nuevo.", "ERROR_INTERNO", http=500)
+    if not hijas:
+        return _ot2_err("El anexo trae partidas de la desinstalación, pero esta OT no tiene una desinstalación agendada. "
+                        "Agéndala primero o quita esas partidas.", "SALIDA_SIN_DESINSTALACION")
+    if propio:
+        return _ot2_err(f"La desinstalación ya tiene su propio Anexo N° {propio.get('numero')}. Anúlalo para incluirla en este "
+                        "anexo único: así el proveedor firma una sola vez y no se cobra dos veces.", "SALIDA_CON_ANEXO_PROPIO", http=409)
+    return None
+
+
 @app.route("/ot/api/anexos", methods=["POST"])
 @_mant_required
 def ot2_api_anexo_crear():
@@ -117816,9 +118086,8 @@ def ot2_api_anexo_crear():
     if not isinstance(items, list) or not items:
         return _ot2_err("Agrega al menos un ítem de precio.", "PRECIO_REQUERIDO")
     try:
-        items = [{"concepto": str(it.get("concepto") or "")[:120],
-                  "monto": int(it.get("monto") or 0)} for it in items]
-    except (TypeError, ValueError):
+        items = _anexo_items_norm(items)
+    except (TypeError, ValueError, AttributeError):
         return _ot2_err("Algún monto no es válido.", "MONTO_INVALIDO")
 
     vid = d.get("ot_id")
@@ -117827,6 +118096,9 @@ def ot2_api_anexo_crear():
     except (TypeError, ValueError):
         vid = None
     _ax_garantia = _anexo_ot_en_garantia(vid)
+    _err_salida = _anexo_validar_salida(vid, items)
+    if _err_salida:
+        return _err_salida
     if _anexo_total_items(items) <= 0 and not _ax_garantia:
         return _ot2_err(
             "Agrega al menos un ítem de precio con monto. Solo una OT en "
@@ -117937,7 +118209,7 @@ def ot2_api_anexo_crear():
         pass
     # 🧾 2026-10-20 (un solo valor): lo que dice el anexo es lo que se le paga al proveedor, y la OT lo refleja.
     if vid:
-        _ot_anexo_alinear_costo(vid, origen=f"se creó el Anexo N° {numero}")
+        _ot_anexo_alinear_familia(vid, origen=f"se creó el Anexo N° {numero}")
     return jsonify({"ok": True, "anexo_id": aid, "numero": numero})
 
 
@@ -118076,12 +118348,14 @@ def ot2_api_anexo_editar(aid):
     if not isinstance(items, list) or not items:
         return _ot2_err("Agrega al menos un ítem de precio.", "PRECIO_REQUERIDO")
     try:
-        items = [{"concepto": str(it.get("concepto") or "")[:120],
-                  "monto": int(it.get("monto") or 0)} for it in items]
-    except (TypeError, ValueError):
+        items = _anexo_items_norm(items)
+    except (TypeError, ValueError, AttributeError):
         return _ot2_err("Algún monto no es válido.", "MONTO_INVALIDO")
     # 2026-10-02: misma regla que al crear -- $0 solo si la OT es garantía.
     _ax_garantia = _anexo_ot_en_garantia((a or {}).get("ot_id"))
+    _err_salida = _anexo_validar_salida((a or {}).get("ot_id"), items)
+    if _err_salida:
+        return _err_salida
     if _anexo_total_items(items) <= 0 and not _ax_garantia:
         return _ot2_err(
             "Agrega al menos un ítem de precio con monto. Solo una OT en "
@@ -118171,7 +118445,7 @@ def ot2_api_anexo_editar(aid):
 
     # 🧾 2026-10-20 (un solo valor): corregir el monto del anexo antes de la firma corrige también el costo de la OT.
     if a.get("ot_id"):
-        _ot_anexo_alinear_costo(int(a["ot_id"]), origen=f"se corrigió el Anexo N° {a.get('numero')}")
+        _ot_anexo_alinear_familia(int(a["ot_id"]), origen=f"se corrigió el Anexo N° {a.get('numero')}")
     return jsonify({
         "ok": True, "anexo_id": aid, "numero": a.get("numero"),
         # Si ya se había mandado, el proveedor tiene en su correo un link a
@@ -119239,7 +119513,7 @@ def ot2_anexo_firma_submit(token):
     # el Anexo 221 firmado por $370.000 y decía «costo no declarado»). Best-effort: jamás deshace la firma.
     try:
         if a.get("ot_id"):
-            _ot_anexo_alinear_costo(int(a["ot_id"]), origen=f"el proveedor firmó el Anexo N° {a.get('numero')}")
+            _ot_anexo_alinear_familia(int(a["ot_id"]), origen=f"el proveedor firmó el Anexo N° {a.get('numero')}")
     except Exception as _e_cx:
         print(f"[anexo_firmar] costo de la OT: {type(_e_cx).__name__}", flush=True)
 
@@ -119364,6 +119638,15 @@ def _anexo_bloquea_ot(vid):
                    or (_v.get("rol_tec") or "").lower() == "tecnico_externo")
         if not _es_ext:
             return None
+        # 🧾 ANEXO ÚNICO (REGLA #46): una desinstalación sin anexo propio sigue el estado del anexo de su instalación (si lo comparte):
+        # firmado → libre; enviado/visto sin firmar → bloqueada con su número; en cualquier otro caso, como siempre.
+        _h_ax = _ot_anexo_de_la_madre(vid)
+        if _h_ax:
+            _est_h = (_h_ax.get("estado") or "").strip().lower()
+            if _est_h == "firmado":
+                return None
+            if _est_h in ("enviado", "visto"):
+                return _h_ax["numero"]
         return "SIN_ANEXO"
     except Exception as e:
         print(f"[anexo_bloquea] {e}", flush=True)
@@ -129360,18 +129643,27 @@ def mant_ot_aprobar_cierre(vid):
         except Exception:
             _es_ext_cierre = False
         if _es_ext_cierre:
+            _rol_anx_cierre = None
             try:
                 _anx_firmado_cierre = mysql_fetchone(
                     "SELECT numero, precio_items_json FROM mant_anexos "
                     " WHERE ot_id=%s AND estado='firmado' "
                     " ORDER BY firmado_at DESC, id DESC LIMIT 1", (vid,))
+                # 🧾 ANEXO ÚNICO (REGLA #46): con partidas de la desinstalación en el mismo anexo, cada OT se compara con SU parte; una
+                # desinstalación sin anexo propio usa el firmado de su instalación.
+                if _anx_firmado_cierre:
+                    if _oac.tiene_salida(_anx_firmado_cierre.get("precio_items_json")):
+                        _rol_anx_cierre = _oac.ROL_ENTRADA
+                else:
+                    _anx_firmado_cierre = _ot_anexo_de_la_madre(vid, solo_firmado=True)
+                    _rol_anx_cierre = _oac.ROL_SALIDA if _anx_firmado_cierre else None
             except Exception:
                 _anx_firmado_cierre = None
             if _anx_firmado_cierre:
                 try:
                     import json as _json_anx_cierre
                     _items_anx = _json_anx_cierre.loads(_anx_firmado_cierre.get("precio_items_json") or "[]")
-                    _monto_anexo_cierre = sum(float(it.get("monto") or 0) for it in _items_anx)
+                    _monto_anexo_cierre = sum(float(it.get("monto") or 0) for it in _oac.parte(_items_anx, _rol_anx_cierre))
                 except Exception:
                     _monto_anexo_cierre = None
                 if _monto_anexo_cierre is not None:
@@ -142626,9 +142918,14 @@ _MFP_JOINS_OT = (
     # tener varias filas por OT (re-firma, ANEXO_DESACTUALIZADO, y los
     # "anexos gemelos" de antes del 10-sep) y un JOIN directo duplicaría
     # esta lista o mostraría "sin firmar" teniendo uno firmado.
-    "  LEFT JOIN mant_anexos anx ON anx.id = (SELECT a2.id FROM mant_anexos a2 "
-    "         WHERE a2.ot_id = v.id AND a2.estado <> 'anulado' "
-    "         ORDER BY (a2.estado = 'firmado') DESC, a2.id DESC LIMIT 1) "
+    # 🧾 2026-10-25 (ANEXO ÚNICO, REGLA #46): una desinstalación SIN anexo propio ve el de su instalación cuando ese anexo trae partidas de la
+    # desinstalación (INSTR sobre '"salida"': sin `%`, que esta cadena viaja con parámetros). El propio manda siempre.
+    "  LEFT JOIN mant_anexos anx ON anx.id = COALESCE("
+    "       (SELECT a2.id FROM mant_anexos a2 WHERE a2.ot_id = v.id AND a2.estado <> 'anulado' "
+    "         ORDER BY (a2.estado = 'firmado') DESC, a2.id DESC LIMIT 1), "
+    "       (SELECT a3.id FROM mant_anexos a3 WHERE v.ot_relacion = 'desinstalacion' AND a3.ot_id = v.ot_madre_id "
+    "           AND a3.estado <> 'anulado' AND INSTR(a3.precio_items_json, '\"salida\"') > 0 "
+    "         ORDER BY (a3.estado = 'firmado') DESC, a3.id DESC LIMIT 1)) "
     "  LEFT JOIN mant_factura_proveedor_items fpi ON fpi.visita_id = v.id "
     "  LEFT JOIN mant_facturas_proveedor fp ON fp.id = fpi.factura_proveedor_id "
 )
@@ -142642,7 +142939,7 @@ _MFP_SELECT_OT = (
     # mostrar Firmado/Enviado/Sin anexo y abrir el PDF desde la fila.
     "       anx.numero AS anexo_numero, anx.estado AS anexo_estado, anx.id AS anexo_id, "
     # 🧾 2026-10-20 (REGLA #34, un solo valor): los ítems del anexo, para decirle a quien paga si lo que se paga es lo del anexo.
-    "       anx.precio_items_json AS anexo_items_json, "
+    "       anx.precio_items_json AS anexo_items_json, anx.ot_id AS anexo_ot_id, "
     "       c.razon_social AS cliente, "
     # 📋 2026-09-21 (calidad de información en la tabla): comuna de la OT (o
     # del cliente) y ticket de origen, sin JOIN nuevo que multiplique filas.
@@ -142820,13 +143117,21 @@ def _mfp_fila_ot(f):
     # coincide, queda a la vista de dónde sale.
     _anx_total = None
     if f.get("anexo_numero") and f.get("anexo_items_json") is not None and _oac.es_vivo(_anx_estado):
-        _anx_total = float(_oac.total(f.get("anexo_items_json")))
+        # 🧾 ANEXO ÚNICO (REGLA #46): con partidas de la desinstalación en el mismo anexo, cada OT se compara con SU parte.
+        _its_anx = _oac.items_de(f.get("anexo_items_json"))
+        _rol_anx = None
+        if _oac.tiene_salida(_its_anx):
+            _anx_de_otra = f.get("anexo_ot_id") is not None and int(f["anexo_ot_id"]) != int(f["id"])
+            _rol_anx = _oac.ROL_SALIDA if _anx_de_otra else _oac.ROL_ENTRADA
+        _anx_total = float(_oac.total(_its_anx, _rol_anx))
+        _anx_parte = (" (su parte: " + _ot_fin_clp(_anx_total) + " de " + _ot_fin_clp(_oac.total(_its_anx)) + ")") if _rol_anx else ""
         if abs(_anx_total - pagado_proveedor) > _oac.TOLERANCIA:
             _avisos.append({"n": "rojo", "t": "Lo que se paga (" + _ot_fin_clp(pagado_proveedor) + ") no coincide con el Anexo N° "
                             + str(f.get("anexo_numero")) + " (" + _ot_fin_clp(_anx_total) + "): es un solo valor. "
-                            "Corrígelo en la OT o en el anexo."})
+                            "Corrígelo en la OT o en el anexo." + (" El anexo es único con la desinstalación" + _anx_parte + "." if _rol_anx else "")})
         else:
-            _avisos.append({"n": "info", "t": "Coincide con el Anexo N° " + str(f.get("anexo_numero")) + " (" + _ot_fin_clp(_anx_total) + ")."})
+            _avisos.append({"n": "info", "t": "Coincide con el Anexo N° " + str(f.get("anexo_numero")) + " (" + _ot_fin_clp(_anx_total) + ")."
+                            + (" Anexo único con la desinstalación" + _anx_parte + "." if _rol_anx else "")})
     if f.get("fac_id"):
         _avisos.append({"n": "rojo", "t": "Ya está en la factura #" + str(f.get("fac_id")) + "."})
     if not _fin["cobra"]:

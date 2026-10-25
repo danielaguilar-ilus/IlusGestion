@@ -318,6 +318,13 @@
       <tr><td>{{ it.concepto }}</td><td class="monto">${{ '{:,}'.format(it.monto|int).replace(',', '.') }}</td></tr>
       {% set total.v = total.v + (it.monto|int) %}
       {% endfor %}
+      {#- 🧾 ANEXO ÚNICO (REGLA #46): con instalación y desinstalación en el mismo anexo, cuánto es de cada una (el detalle ya está en los conceptos). -#}
+      {% set _sal_its = anexo.precio_items | selectattr('ot', 'equalto', 'salida') | list %}
+      {% if _sal_its %}
+      {% set _sal_t = (_sal_its | sum(attribute='monto')) | int %}
+      <tr style="font-size:.92em;color:#4b5563"><td>Subtotal instalación</td><td class="monto">${{ '{:,}'.format(total.v - _sal_t).replace(',', '.') }}</td></tr>
+      <tr style="font-size:.92em;color:#4b5563"><td>Subtotal desinstalación</td><td class="monto">${{ '{:,}'.format(_sal_t).replace(',', '.') }}</td></tr>
+      {% endif %}
       {% if total.v == 0 %}
       {#- 2026-10-02 (Anexo N°203): garantía sin pago al proveedor. El anexo
           compromete el servicio igual; se dice explícito, no un "$0" mudo. #}

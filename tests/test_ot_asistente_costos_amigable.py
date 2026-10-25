@@ -311,6 +311,7 @@ class TestMenosCamposQueRepitenLaPlata(unittest.TestCase):
             "var S = %s;" % json.dumps({"anexo": {"items": items, "items_editados": editados}, "_fpAbierto": {"anexoItems": True} if abierto else {}, "fin_garantia": garantia}),
             "function esc(s){ return String(s==null?'':s); } function _o2mFormatearMiles(v){ return String(v==null?'':v); }",
             "function $o2mPesos(n){ return '$'+Math.round(n).toLocaleString('es-CL'); }",
+            "function _o2mAnexoUnicoNota(){ return ''; }",       # la nota del anexo único (REGLA #46) tiene sus propias pruebas en test_ot_anexo_unico.py
             _js_funcion("_o2mAnexoTotal"), _js_funcion("_o2mAnexoItemsHtml"),
             "console.log(JSON.stringify({h: _o2mAnexoItemsHtml()}));"])
         return _correr(prog)["h"]

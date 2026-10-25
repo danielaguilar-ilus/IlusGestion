@@ -820,6 +820,13 @@
                 </tr>
                 {% endfor %}
                 {% set _ax_total = anexo.precio_items | sum(attribute='monto') %}
+                {#- 🧾 ANEXO ÚNICO (REGLA #46): cuánto es de la instalación y cuánto de la desinstalación. -#}
+                {% set _sal_its = anexo.precio_items | selectattr('ot', 'equalto', 'salida') | list %}
+                {% if _sal_its %}
+                {% set _sal_t = _sal_its | sum(attribute='monto') %}
+                <tr><td><i>Subtotal instalación</i></td><td class="monto">{{ clp(_ax_total - _sal_t) }}</td></tr>
+                <tr><td><i>Subtotal desinstalación</i></td><td class="monto">{{ clp(_sal_t) }}</td></tr>
+                {% endif %}
                 <tr class="total">
                   <td>Total neto</td>
                   <td class="monto">{{ clp(_ax_total) }}{% if _ax_total == 0 %} · Sin pago al proveedor (garantía){% endif %}</td>

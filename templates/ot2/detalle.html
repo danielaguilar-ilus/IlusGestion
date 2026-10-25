@@ -4559,9 +4559,29 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
       {% if not es_tecnico %}
       <div class="otd-card">
         <h3><i class="bi bi-file-earmark-medical-fill"></i> Anexo de servicios
-          {% if anexo %}<span class="n">N° {{ anexo.numero }}</span>{% endif %}</h3>
+          {% if anexo %}<span class="n">N° {{ anexo.numero }}</span>
+          {% elif anexo_vinculo and anexo_vinculo.compartido %}<span class="n">N° {{ anexo_vinculo.numero }}</span>{% endif %}</h3>
         <div style="padding:14px 16px">
-          {% if not anexo %}
+          {% if not anexo and anexo_vinculo and anexo_vinculo.compartido %}
+          {#- 🧾 ANEXO ÚNICO (REGLA #46, Daniel 25-oct: «el anexo debe ser único»): una desinstalación con el MISMO proveedor que su instalación NO
+              tiene anexo propio: va en el de la instalación, que el proveedor firma una sola vez. Acá se ve de cuál es y cuánto es SU parte; el anexo se
+              gestiona (corregir, enviar, reenviar) desde la OT de la instalación. -#}
+          <div class="otd-din" style="padding:0 0 10px" id="otdAnexoCompartido">
+            <div class="row"><span>Anexo</span><b>N° {{ anexo_vinculo.numero }} · {{ 'firmado' if anexo_vinculo.firmado else 'vigente (aún sin firmar)' }}</b></div>
+            {% if anexo_vinculo.proveedor %}<div class="row"><span>Proveedor</span><b>{{ anexo_vinculo.proveedor }}</b></div>{% endif %}
+            <div class="row"><span>Esta OT</span><b>{{ anexo_vinculo.total_txt }} de {{ anexo_vinculo.total_general_txt }}</b></div>
+          </div>
+          <div class="otf-hint" style="margin-bottom:10px">
+            Esta desinstalación va en el <b>anexo único</b> de su instalación
+            {% if anexo_vinculo.anexo_ot_numero %}<b>{{ anexo_vinculo.anexo_ot_numero }}</b>{% endif %}:
+            el proveedor firma una sola vez, con el detalle de instalación, desinstalación y despacho
+            ({{ anexo_vinculo.partidas_txt }}).
+          </div>
+          {% if anexo_vinculo.anexo_ot_id %}
+          <a class="otd-btn" style="width:100%;justify-content:center" href="{{ url_for('ot2_detalle', vid=anexo_vinculo.anexo_ot_id) }}">
+            <i class="bi bi-box-arrow-up-right"></i> Abrir la instalación para gestionar el anexo</a>
+          {% endif %}
+          {% elif not anexo %}
           <div class="otd-din" style="padding:0 0 10px">
             <div class="row"><span>Estado</span><b>Sin anexo</b></div>
           </div>
@@ -4586,6 +4606,12 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
             <i class="bi bi-file-earmark-plus-fill"></i> Crear anexo de servicios</button>
           {% else %}
           {% set _anx_firmado = anexo.firmado_at is not none %}
+          {% if anexo_vinculo and anexo_vinculo.compartido and not anexo_vinculo.es_hija %}
+          {#- 🧾 ANEXO ÚNICO (REGLA #46): este anexo cubre la instalación Y su desinstalación; el detalle de cuánto se le paga por cada cosa. -#}
+          <div class="otf-hint" style="margin-bottom:10px" id="otdAnexoUnicoDetalle">
+            <b>Anexo único</b> (instalación + desinstalación) · {{ anexo_vinculo.partidas_txt }} · total {{ anexo_vinculo.total_general_txt }}.
+          </div>
+          {% endif %}
           {# 👁️ 2026-09-06 (Daniel: "debe tener el anexo un tracking a ver si
              firmó el proveedor"). Antes decía "Enviado — esperando firma"
              tanto si el proveedor lo había abierto como si nunca lo vio, y

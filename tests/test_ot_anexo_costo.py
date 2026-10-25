@@ -232,9 +232,10 @@ class TestCableado(unittest.TestCase):
             self.assertLess(s.index("_ot_anexo_costo_guardia("), s.index(antes_de), nombre)
 
     def test_el_anexo_alinea_el_costo_al_crearse_corregirse_y_firmarse(self):
-        self.assertIn("_ot_anexo_alinear_costo(vid,", fuente_funcion("ot2_api_anexo_crear"))
-        self.assertIn("_ot_anexo_alinear_costo(", fuente_funcion("ot2_api_anexo_editar"))
-        self.assertIn("_ot_anexo_alinear_costo(", fuente_funcion("ot2_anexo_firma_submit"))
+        # 2026-10-25 (anexo único, REGLA #46): crear, corregir y firmar cuadran las DOS OT que comparten el anexo (la instalación y su desinstalación)
+        self.assertIn("_ot_anexo_alinear_familia(vid,", fuente_funcion("ot2_api_anexo_crear"))
+        self.assertIn("_ot_anexo_alinear_familia(", fuente_funcion("ot2_api_anexo_editar"))
+        self.assertIn("_ot_anexo_alinear_familia(", fuente_funcion("ot2_anexo_firma_submit"))
         # el anexo que nace con la OT (asistente) también
         self.assertIn("_ot_anexo_alinear_costo(vid, origen=f\"se creó el Anexo N° {_num_auto} junto con la OT\")", texto())
 

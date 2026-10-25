@@ -76,8 +76,14 @@
 .oax-prog.full{color:#166534}
 .oax input.form-control,.oax select.form-select,.oax textarea.form-control{font-size:16px}
 
-.oax-item{display:flex;gap:8px;margin-bottom:8px;align-items:center}
+.oax-item{display:flex;gap:8px;margin-bottom:8px;align-items:center;flex-wrap:wrap}
 .oax-item input:first-child{flex:1.5;min-width:0}
+/* 🧾 Anexo único (REGLA #46): a qué OT pertenece cada partida (instalación / desinstalación) */
+.oax-item select.rol{flex:0 0 auto;width:150px;min-height:38px}
+.oax-sub{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:6px;font-size:13px;color:#374151}
+.oax-sub b{color:#0a0a0a}
+@media (max-width:575.98px){.oax-item select.rol{flex:1 1 100%;width:100%;min-height:44px}
+  .oax-item:has(select.rol){padding-bottom:10px;border-bottom:1px dashed #d1d5db}}
 .oax-item input.monto{flex:1;max-width:150px}
 .oax-item-del{width:40px;height:40px;min-height:40px;border-radius:8px;border:1px solid #fecaca;
   background:#fef2f2;color:#dc2626;flex:none;display:grid;place-items:center;cursor:pointer}
@@ -296,6 +302,7 @@
           <button type="button" class="btn btn-outline-secondary btn-sm" onclick="OT2ANX.agregarItem()">
             <i class="bi bi-plus-lg"></i> Agregar ítem</button>
           <div class="oax-total" id="oaxTotal">Total neto: $0</div>
+          <div class="oax-sub" id="oaxSubtotales" hidden></div>
         </div>
 
         <div class="oax-sec" data-paso="fechas">
@@ -540,11 +547,26 @@ window.OT2ANX = (function(){
      vacía como antes: nunca se inventa un monto. */
   function itemsDesdeOT(){
     var its = [];
+    /* 🧾 ANEXO ÚNICO (REGLA #46, Daniel 25-oct: «el anexo debe ser único… describiendo el detalle de cuánto se me va a cobrar por
+       instalación, desinstalación y despacho»): si la instalación tiene una desinstalación con el MISMO proveedor, ambas van en este
+       anexo y cada partida lleva la OT a la que pertenece (ot: 'entrada' = instalación, 'salida' = desinstalación). */
+    var sal = DEF_OT && DEF_OT.salida;
     if (DEF_OT && DEF_OT.costo_proveedor)
-      its.push({concepto: (DEF_OT.tipo_label || 'Servicio'), monto: String(DEF_OT.costo_proveedor)});
+      its.push(sal ? {concepto: (DEF_OT.tipo_label || 'Instalación'), monto: String(DEF_OT.costo_proveedor), ot: 'entrada'}
+                   : {concepto: (DEF_OT.tipo_label || 'Servicio'), monto: String(DEF_OT.costo_proveedor)});
     if (DEF_OT && DEF_OT.costo_despacho)
-      its.push({concepto: 'Despacho', monto: String(DEF_OT.costo_despacho)});
+      its.push(sal ? {concepto: 'Despacho (instalación)', monto: String(DEF_OT.costo_despacho), ot: 'entrada'}
+                   : {concepto: 'Despacho', monto: String(DEF_OT.costo_despacho)});
+    if (sal && sal.costo_proveedor)
+      its.push({concepto: 'Desinstalación', monto: String(sal.costo_proveedor), ot: 'salida'});
+    if (sal && sal.costo_despacho)
+      its.push({concepto: 'Despacho (desinstalación)', monto: String(sal.costo_despacho), ot: 'salida'});
     return its.length ? its : [{concepto:'', monto:''}];
+  }
+
+  /* ¿El anexo cubre las dos OT? Cuando la ficha trae la desinstalación, o al corregir un anexo que ya trae partidas de ella. */
+  function esCompartido(){
+    return !!(DEF_OT && DEF_OT.salida) || (S && (S.items || []).some(function(it){ return it.ot === 'salida'; }));
   }
 
   /* El objetivo del servicio nombra al cliente CON su RUT: es quien recibe
@@ -563,9 +585,10 @@ window.OT2ANX = (function(){
     // naturalmente con "y" -- variable de verdad, no una frase fija.
     var _conceptosObj = [];
     if (DEF_OT && DEF_OT.tipo_label) _conceptosObj.push(DEF_OT.tipo_label.toLowerCase());
-    if (DEF_OT && DEF_OT.costo_despacho && _conceptosObj.indexOf('despacho') === -1){
+    if (DEF_OT && (DEF_OT.costo_despacho || (DEF_OT.salida && DEF_OT.salida.costo_despacho)) && _conceptosObj.indexOf('despacho') === -1){
       _conceptosObj.push('despacho');
     }
+    if (DEF_OT && DEF_OT.salida) _conceptosObj.push('desinstalación');
     if (_conceptosObj.length === 1) t += ' de ' + _conceptosObj[0];
     else if (_conceptosObj.length > 1){
       t += ' de ' + _conceptosObj.slice(0, -1).join(', ') + ' y ' + _conceptosObj[_conceptosObj.length - 1];
@@ -574,7 +597,8 @@ window.OT2ANX = (function(){
     if (DEF_OT && DEF_OT.cliente_rut) t += ' (RUT ' + DEF_OT.cliente_rut + ')';
     if (DEF_OT && DEF_OT.direccion) t += ', en ' + DEF_OT.direccion +
       (DEF_OT.comuna ? ', ' + DEF_OT.comuna : '');
-    t += '. Referencia: ' + (DEF_OT && DEF_OT.numero_ot ? DEF_OT.numero_ot : 'OT') + '.';
+    t += '. Referencia: ' + (DEF_OT && DEF_OT.numero_ot ? DEF_OT.numero_ot : 'OT') +
+      (DEF_OT && DEF_OT.salida ? ' (instalación) y ' + DEF_OT.salida.numero_ot + ' (desinstalación)' : '') + '.';
     /* 🔴 2026-09-07 (Daniel, viendo el Anexo N° 162: "en los objetivos el
        servicio estaba agregando repetitivamente los SKU y los nombres de
        los equipos; me gustaría que subieran a la tabla").
@@ -695,7 +719,9 @@ window.OT2ANX = (function(){
       S.objetivo_servicio = _obj;
       S.items = (a.precio_items && a.precio_items.length)
         ? a.precio_items.map(function(it){
-            return {concepto: it.concepto || '', monto: String(it.monto || '')}; })
+            var f = {concepto: it.concepto || '', monto: String(it.monto || '')};
+            if (it.ot === 'entrada' || it.ot === 'salida') f.ot = it.ot;
+            return f; })
         : [{concepto:'', monto:''}];
       /* Si el anexo se creó antes de que este modal mandara productos, la
          lista viene vacía. Se rellena con los equipos de la OT: es
@@ -786,11 +812,16 @@ window.OT2ANX = (function(){
 
   function pintarItems(){
     var wrap = document.getElementById('oaxItems');
+    var comp = esCompartido();
     wrap.innerHTML = S.items.map((it, i) => `
       <div class="oax-item">
         <input class="form-control form-control-sm" placeholder="Concepto (ej: Instalación)"
                value="${(it.concepto||'').replace(/"/g,'&quot;')}"
                oninput="OT2ANX.setItemConcepto(${i}, this.value)">
+        ${comp ? `<select class="form-select form-select-sm rol" aria-label="A qué orden de trabajo corresponde esta partida"
+                 onchange="OT2ANX.setItemOt(${i}, this.value)">
+          <option value="entrada"${it.ot === 'salida' ? '' : ' selected'}>Instalación</option>
+          <option value="salida"${it.ot === 'salida' ? ' selected' : ''}>Desinstalación</option></select>` : ''}
         <input type="number" min="0" step="1" class="form-control form-control-sm monto" placeholder="Monto"
                value="${it.monto||''}" oninput="OT2ANX.setItemMonto(${i}, this.value)">
         <button type="button" class="oax-item-del" onclick="OT2ANX.quitarItem(${i})" aria-label="Quitar ítem">
@@ -805,6 +836,23 @@ window.OT2ANX = (function(){
       'Total neto: $' + total.toLocaleString('es-CL') +
       (OT_GARANTIA && total === 0
         ? ' · Garantía sin pago al proveedor: el anexo solo compromete el servicio.' : '');
+    /* 🧾 Anexo único: cuánto es de cada OT, para que el proveedor y ILUS lean lo mismo («cuánto se me va a cobrar por instalación,
+       desinstalación y despacho»). */
+    var sub = document.getElementById('oaxSubtotales');
+    if (sub){
+      if (esCompartido()){
+        var ent = 0, sal = 0, desp = 0;
+        S.items.forEach(function(it){
+          var m = Number(it.monto) || 0;
+          if (it.ot === 'salida') sal += m; else ent += m;
+          if (/^\s*despacho/i.test(it.concepto || '')) desp += m;
+        });
+        sub.hidden = false;
+        sub.innerHTML = '<span>Instalación: <b>$' + ent.toLocaleString('es-CL') + '</b></span>' +
+          '<span>Desinstalación: <b>$' + sal.toLocaleString('es-CL') + '</b></span>' +
+          (desp ? '<span>de los cuales despacho: <b>$' + desp.toLocaleString('es-CL') + '</b></span>' : '');
+      } else { sub.hidden = true; sub.innerHTML = ''; }
+    }
   }
 
   async function cargarProveedores(){
@@ -1013,7 +1061,8 @@ window.OT2ANX = (function(){
   function setCond(campo, v){ S[campo] = v; }
   function setItemConcepto(i, v){ if (S.items[i]) S.items[i].concepto = v; pintarPasos(); }
   function setItemMonto(i, v){ if (S.items[i]){ S.items[i].monto = v; actualizarTotal(); } pintarPasos(); }
-  function agregarItem(){ S.items.push({concepto:'', monto:''}); pintarItems(); pintarPasos(); }
+  function setItemOt(i, v){ if (S.items[i]){ S.items[i].ot = (v === 'salida' ? 'salida' : 'entrada'); actualizarTotal(); } pintarPasos(); }
+  function agregarItem(){ S.items.push(esCompartido() ? {concepto:'', monto:'', ot:'entrada'} : {concepto:'', monto:''}); pintarItems(); pintarPasos(); }
   function quitarItem(i){
     if (S.items.length <= 1){ S.items[i] = {concepto:'', monto:''}; }
     else { S.items.splice(i, 1); }
@@ -1262,7 +1311,11 @@ window.OT2ANX = (function(){
     }
     var items = (S.items || [])
       .filter(it => (it.concepto || '').trim() || Number(it.monto) > 0)
-      .map(it => ({concepto: (it.concepto || '').trim(), monto: Math.round(Number(it.monto) || 0)}));
+      .map(it => {
+        var o = {concepto: (it.concepto || '').trim(), monto: Math.round(Number(it.monto) || 0)};
+        if (it.ot === 'entrada' || it.ot === 'salida') o.ot = it.ot;    // 🧾 anexo único: la OT a la que pertenece la partida
+        return o;
+      });
     if (!items.some(it => it.monto > 0)){
       if (!OT_GARANTIA){
         ilusToast('Agrega al menos un ítem de precio con monto.', {type:'warning'});
@@ -1583,7 +1636,7 @@ window.OT2ANX = (function(){
     abrir, abrirEnviar, abrirEditar, crear, enviar, enviarPor, copiarLink, focoVisible,
     onProveedorChange, toggleManual, toggleCondiciones, setContactoSel,
     oaxValidarCampoManual, oaxFormatearRut,
-    setObjetivo, setFecha, setCond, setItemConcepto, setItemMonto,
+    setObjetivo, setFecha, setCond, setItemConcepto, setItemMonto, setItemOt,
     agregarItem, quitarItem,
   };
 })();

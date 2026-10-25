@@ -22,17 +22,23 @@
   <i class="bi {{ 'bi-link-45deg' if ok else 'bi-exclamation-triangle' }}" aria-hidden="true"
      style="font-size:18px;line-height:1.2;color:{{ '#16a34a' if ok else '#b45309' }}"></i>
   <div style="flex:1 1 220px;min-width:0">
+    {#- 🧾 ANEXO ÚNICO (REGLA #46): una instalación y su desinstalación con el mismo proveedor firman UN solo anexo; cada OT se cuadra con SU parte. -#}
+    {% set parte = (' su parte (' ~ av.total_txt ~ ' de ' ~ av.total_general_txt ~ ') del') if av.compartido else '' %}
     {% if ok %}
-      <b>Un solo valor.</b> El costo de la OT es el del Anexo N° {{ av.numero }}
-      ({{ 'firmado' if av.firmado else 'vigente' }}) · {{ av.total_txt }}.
+      <b>Un solo valor.</b> El costo de la OT es{{ parte if av.compartido else '' }} {{ '' if av.compartido else 'el ' }}Anexo N° {{ av.numero }}
+      ({{ 'firmado' if av.firmado else 'vigente' }}){% if not av.compartido %} · {{ av.total_txt }}{% endif %}.
       {% if av.abierta %}Si cambia lo que se le paga, {{ 'emite un anexo nuevo' if av.firmado else 'corrige el monto en el anexo' }}
       y la OT lo sigue sola.{% endif %}
     {% elif av.vinculo == 'sin_declarar' %}
-      <b>El Anexo N° {{ av.numero }} dice {{ av.total_txt }}</b> y el costo de la OT aún no está
+      <b>{{ 'Su parte del Anexo N° ' ~ av.numero ~ ' dice ' if av.compartido else 'El Anexo N° ' ~ av.numero ~ ' dice ' }}{{ av.total_txt }}</b> y el costo de la OT aún no está
       declarado. Lo que se le paga al proveedor es un solo valor.
     {% else %}
-      <b>No coincide.</b> La OT declara {{ av.costo_txt }} y el Anexo N° {{ av.numero }}
+      <b>No coincide.</b> La OT declara {{ av.costo_txt }} y {{ 'su parte del ' if av.compartido else 'el ' }}Anexo N° {{ av.numero }}
       dice {{ av.total_txt }}. Lo que se le paga al proveedor es un solo valor.
+    {% endif %}
+    {% if av.compartido and av.partidas_txt %}
+    <div style="margin-top:6px;font-size:12px;color:#4b5563"><b>Anexo único con el proveedor:</b> {{ av.partidas_txt }}
+      {%- if av.es_hija and av.anexo_ot_numero %} · se firma desde la instalación {{ av.anexo_ot_numero }}{% endif %}.</div>
     {% endif %}
   </div>
   {% if (not ok) and av.abierta %}
