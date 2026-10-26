@@ -385,10 +385,11 @@ class TestArmadoDeAccData(unittest.TestCase):
     def _armar(self, equipos, externo=False, tecnico=False, ejecutar=True, configurar=True, solo_lectura=False, np_map=None):
         f = _fuente("ot2_detalle")
         bloque = f[f.index("    acc_puede = bool("):f.index("    return render_template(")]
-        src = ("def _f(equipos, puede_ejecutar, puede_configurar, ot_solo_lectura, vid):\n" + bloque.rstrip()
+        src = ("def _f(equipos, puede_ejecutar, puede_configurar, ot_solo_lectura, vid, v=None):\n" + bloque.rstrip()
                + "\n    return acc_data, acc_listas\n")
         amb = {"_pe": pe, "_otpe_equipos_activos": lambda vid: np_map or {}, "_es_tecnico_externo": lambda: externo,
-               "_es_rol_tecnico": lambda: tecnico}
+               "_es_rol_tecnico": lambda: tecnico,
+               "_inq_ctx_ficha_ot": lambda *a, **k: None}      # 2026-10-26: «El cliente me comentó…» (inquietudes) cae dentro del mismo tramo de ot2_detalle
         exec(compile(src, "<acc_data>", "exec"), amb)
         return amb["_f"](equipos, ejecutar, configurar, solo_lectura, 900)
 
