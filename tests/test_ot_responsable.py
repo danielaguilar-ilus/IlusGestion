@@ -786,6 +786,10 @@ class TestArranque(unittest.TestCase):
     def test_no_rellena_ninguna_ot_anterior(self):
         """Ningún UPDATE masivo de mant_visitas que ponga el responsable fuera de _ot_responsable_al_crear / el cambio de una OT."""
         for m in re.finditer(r"SET responsable_user_id\s*=", APP):
+            # 2026-10-26: solo las sentencias sobre las OT (mant_visitas). Otras tablas con su propio responsable (p. ej. cli_inquietudes,
+            # el módulo «Inquietudes de clientes») no son OT y no entran en esta regla.
+            if "mant_visitas" not in APP[APP.rfind("UPDATE", 0, m.start()):m.start()]:
+                continue
             ini = APP.rfind("\ndef ", 0, m.start())
             nombre = re.match(r"\ndef (\w+)\(", APP[ini:ini + 200]).group(1)
             self.assertIn(nombre, ("_ot_responsable_al_crear", "ot_api_responsable_cambiar"), nombre)
