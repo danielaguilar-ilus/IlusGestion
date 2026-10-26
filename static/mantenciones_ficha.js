@@ -333,7 +333,17 @@ async function bajaMasivaSeleccionados() {
   }
 }
 
+// 🧩 2026-10-26 (Daniel: «que el botón de generar OT sea uno solo»): «Generar OT con los seleccionados» abre el MISMO asistente «Nueva OT» (OT2C) que
+// todos los demás botones de la ficha, con los equipos marcados ya elegidos. El formulario propio de esta barra (#modalVisitaMulti) ya no se abre desde
+// ningún botón; queda intacto abajo como abrirVisitaMultiAntiguo() (REGLA #4.2: no se borra nada sin permiso).
 function abrirVisitaMulti() {
+  const ids = Array.from(document.querySelectorAll('.eq-row-chk:checked'))
+    .map(c => parseInt(c.dataset.id, 10)).filter(n => n > 0);
+  if (!ids.length) { ilusToast('Selecciona al menos un equipo', { type: 'warning' }); return; }
+  abrirLevantamientoSelector(null, null, ids);
+}
+
+function abrirVisitaMultiAntiguo() {
   const seleccionados = Array.from(document.querySelectorAll('.eq-row-chk:checked'))
     .map(c => ({
       id: c.dataset.id,

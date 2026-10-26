@@ -1307,5 +1307,18 @@ Incidente real: el asistente sumaba por detrás «Revisión — Registro por equ
 
 ---
 
+## 🔘 REGLA #49 — Hay UN SOLO «Generar OT»: todos los botones abren el asistente «Nueva OT» (OT2C); nadie mantiene su propia copia del formulario (no negociable)
+
+**Pedido explícito de Daniel (2026-10-26):** «el botón de generar OT de la ficha de clientes no está tan actualizado; que sea uno solo, de manera que si hacemos un cambio en el modal de gestionar OT se aplique a todos».
+
+- **Un solo formulario:** el asistente de `templates/ot2/_modal_crear.html` (`window.OT2C`). Lo abren, cada uno con el contexto que ya conoce, el panel de OT (`/ot/`), la ficha del **ticket** (`OT2C.abrirDesdeTicket`), **Repuestos**, los **hallazgos** (`abrirDesdeHallazgos`) y la ficha del **cliente** (`abrirLevantamientoSelector` en `static/mant_ficha.js`: «Generar OT», «Nueva visita», «Programar mantención», la agenda del plan anual y «Generar OT con los seleccionados» en `abrirVisitaMulti`, con el cliente y los equipos marcados ya puestos).
+- **Cómo se trae a una pantalla:** con el cargador `<script src="…/ot_modal_lazy.js">` (el asistente pesa ~765 KB y se descarga bajo demanda de `/ot/modal-crear`; mientras no está cargado `window.OT2C` es un cascarón que espera y ejecuta la llamada). **Nunca** con `{% include "ot2/_modal_crear.html" %}` dentro de la página (`tests/test_ot_modal_lazy.py` lo vigila para las cuatro pantallas).
+- **Pantalla nueva con un botón «Generar OT» → llama a `OT2C.abrir({...})`**: `origen` (`cliente` | `ticket` | `cotizacion` | `interno`), `cliente`, `tipo`, `fecha`, `equipo_preset_maquina_ids`, `onCreada`. No se copia el modal ni se arma otro formulario de OT: cualquier cambio del asistente (costos, anexo, motivos, checklists, agenda) tiene que llegar a todas las pantallas sin tocarlas.
+- **Lo viejo no se borra sin permiso (REGLA #4.2):** el modal `#modalGenerarOT` (`tickets/_modal_generar_ot.html`, lo necesita `tickets_ficha.js` para cargar), `ot2/_modal_ot_form.html` y el formulario de la barra de selección (`abrirVisitaMultiAntiguo`) quedan en el código sin que ningún botón los abra.
+- **Al terminar:** el asistente avisa «✓ OT creada»; la ficha del cliente cierra el asistente y se refresca (la persona se queda donde estaba, como en el ticket). Ya no se exige que el cliente tenga equipos registrados: el asistente sabe crear una instalación o un levantamiento sin ellos.
+- Pruebas: `tests/test_ficha_cliente_generar_ot_unico.py` (JS ejecutado en Node: cliente, tipo, fecha y equipos viajan al asistente; cada botón pasa por el mismo punto) y `tests/test_ot_modal_lazy.py`.
+
+---
+
 _Última actualización: 2026-10-26_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

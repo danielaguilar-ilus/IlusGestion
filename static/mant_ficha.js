@@ -653,35 +653,33 @@ const _LEV_CONTACTOS = { lista: [], cargados: false, manual: false };
 // datos capturados, mismo endpoint final (_mant_lev_crear_ot_core) --
 // solo cambia qué modal técnicamente se abre por dentro.
 // ════════════════════════════════════════════════════════════
-async function abrirLevantamientoSelector(tipoPreset, fechaPreset){
-  const modalEl = document.getElementById('modalGenerarOT');
-  if (!modalEl) { ilusToast('Modal no inicializado', { type:'error' }); return; }
-
-  // Mismo gate que el modal viejo: sin equipos en la ficha no hay nada que
-  // levantar (el modal nuevo sabe crear OTs "de descubrimiento" sin
-  // equipos preseleccionados, pero ese flujo es para tickets sin ficha --
-  // acá, en la ficha del cliente, seguimos exigiendo al menos 1 equipo).
-  const filas = Array.from(document.querySelectorAll('[data-maquina-id]'));
-  if (!filas.length){
-    ilusAlert({
-      title: 'Sin equipos',
-      message: 'Este cliente no tiene equipos registrados todavía.',
-      sub: 'Agrega equipos primero desde la pestaña Equipos (manual o Importar ERP).',
-      type: 'warning',
-    });
+async function abrirLevantamientoSelector(tipoPreset, fechaPreset, equipoIds){
+  // 🧩 2026-10-26 (Daniel: «el botón de generar OT de la ficha de clientes no está tan actualizado; que sea uno solo, de manera que si
+  // hacemos un cambio en el modal de gestionar OT se aplique a todos»): la ficha ya NO abre su copia del formulario (#modalGenerarOT,
+  // tickets_ficha.js en «modo cliente»): abre el MISMO asistente «Nueva OT» (OT2C, templates/ot2/_modal_crear.html) que el panel de OT, los
+  // tickets y los repuestos, con el cliente de esta ficha ya puesto. Todo lo que se cambie en ese asistente aplica acá sin tocar este archivo.
+  //   tipoPreset  'preventiva' (Programar mantención / Nueva visita) u otro tipo del asistente; sin preset el asistente pregunta el tipo.
+  //   fechaPreset AAAA-MM-DD (la agenda del plan anual); cualquier otra cosa se ignora.
+  //   equipoIds   ids de equipos de ESTA ficha que ya vienen marcados (la barra «Generar OT con los seleccionados»).
+  // Antes se exigía tener equipos registrados (límite de la copia vieja): el asistente sí sabe crear una instalación o un levantamiento sin ellos.
+  if (!window.OT2C){
+    ilusToast('El formulario de OT no cargó — recarga la página.', { type:'error' });
     return;
   }
-
-  // El modal compartido lee estos "presets" en su listener show.bs.modal
-  // (static/tickets_ficha.js) cuando detecta modo cliente -- reemplazan el
-  // tipo/fecha por defecto (levantamiento/hoy) que usa cuando lo abre un
-  // ticket. Se limpian solos ahí apenas se consumen.
-  if (typeof _TKOT !== 'undefined' && _TKOT){
-    _TKOT.pendingTipoPreset = tipoPreset || null;
-    _TKOT.pendingFechaPreset = (fechaPreset && /^\d{4}-\d{2}-\d{2}$/.test(fechaPreset)) ? fechaPreset : null;
-  }
-
-  new bootstrap.Modal(modalEl).show();
+  const opts = {
+    origen: 'cliente',
+    cliente: { id: CID, nombre: DATA.cliente_razon_social || '', rut: DATA.cliente_rut || '' },
+    // La persona sigue en la ficha (como con el modal de antes): se cierra el asistente y se refresca para que la OT nueva aparezca.
+    onCreada: function(){
+      OT2C.cerrar();
+      setTimeout(function(){ location.reload(); }, 700);
+    },
+  };
+  if (tipoPreset) opts.tipo = tipoPreset;
+  if (fechaPreset && /^\d{4}-\d{2}-\d{2}$/.test(fechaPreset)) opts.fecha = fechaPreset;
+  const ids = (Array.isArray(equipoIds) ? equipoIds : []).map(function(x){ return parseInt(x, 10); }).filter(function(x){ return x > 0; });
+  if (ids.length) opts.equipo_preset_maquina_ids = ids;
+  OT2C.abrir(opts);
 }
 
 // ════════════════════════════════════════════════════════════
@@ -690,9 +688,8 @@ async function abrirLevantamientoSelector(tipoPreset, fechaPreset){
 // "Cotización") NO reimplementa el modal de 7 pasos -- resuelve el cliente
 // y NAVEGA a esta ficha con el query param; acá lo abrimos solos, por el
 // MISMO camino que un click manual en "Generar OT" (abrirGenerarOT(),
-// arriba, con su aviso "sin equipos" incluido). ?cotizacion_id= (si vino)
-// lo lee _tkotMostrarRefCotizacion() (tickets_ficha.js) directo desde la
-// URL -- no hace falta pasarlo a mano acá.
+// arriba: hoy el asistente único OT2C). ?cotizacion_id= (si vino) ya no
+// lo lee nadie: el asistente nuevo no lo usa y ninguna pantalla lo manda.
 // ════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
   try{

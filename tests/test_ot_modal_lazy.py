@@ -22,7 +22,9 @@ APP = _leer("app.py")
 LAZY = _leer("static", "ot_modal_lazy.js")
 MODAL = _leer("templates", "ot2", "_modal_crear.html")
 PAGINAS = {"panel": _leer("templates", "ot2", "panel.html"), "ticket": _leer("templates", "tickets", "ficha.html"),
-           "repuestos": _leer("templates", "clientes_hub", "repuestos.html")}
+           "repuestos": _leer("templates", "clientes_hub", "repuestos.html"),
+           # 2026-10-26: la ficha del cliente también (un solo «Generar OT»: abre el mismo asistente)
+           "ficha_cliente": _leer("templates", "mantenciones", "ficha.html")}
 
 
 class TestLasPaginasYaNoTraenElAsistente(unittest.TestCase):

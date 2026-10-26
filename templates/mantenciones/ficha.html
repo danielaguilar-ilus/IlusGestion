@@ -6588,7 +6588,19 @@ const TIPO_LABEL = {};
    real. El punto de entrada sigue siendo abrirLevantamientoSelector()
    en mant_ficha.js -- los 4 call-sites de la ficha (botones +
    abrirNuevaVisita() + la agenda del plan anual) no cambiaron.
+   ⚠️ 2026-10-26: HOY ese punto de entrada abre el asistente único OT2C (ver
+   el cargador ot_modal_lazy.js al final de este archivo), no este
+   modal: lo que se lee arriba describe cómo funcionaba hasta el 25-oct.
    ══════════════════════════════════════════════════════════════════ #}
 {% include "tickets/_modal_generar_ot.html" %}
+
+{# 🧩 2026-10-26 (Daniel: «el botón de generar OT de la ficha de clientes no está tan actualizado; que sea uno solo, de manera que si hacemos un
+   cambio en el modal de gestionar OT se aplique a todos»): el asistente «Nueva OT» (el MISMO de /ot/, los tickets y los repuestos). Todos los botones
+   «Generar OT» / «Nueva visita» / «Programar mantención» / «Generar OT con los seleccionados» de esta ficha lo abren con el cliente ya puesto
+   (abrirLevantamientoSelector, static/mant_ficha.js). El modal de arriba (#modalGenerarOT) sigue en la página sin que ningún botón lo abra:
+   tickets_ficha.js lo necesita para cargar (REGLA #4.2).
+   🚀 Igual que las otras tres pantallas, el asistente (~765 KB) NO viaja dentro de esta página: este cargador de ~3 KB lo descarga bajo demanda
+   desde /ot/modal-crear (ver static/ot_modal_lazy.js); mientras no está cargado, window.OT2C es un cascarón que espera y ejecuta la llamada. #}
+<script src="{{ url_for('static', filename='ot_modal_lazy.js') }}"></script>
 
 {% endblock %}
