@@ -157,7 +157,8 @@ def register_catalogo_routes(app, ctx):
     ILUS_SOPORTE_EMAIL = ctx.get("ILUS_SOPORTE_EMAIL") or "soportetec@sphs.cl"
 
     MAX_FOTOS_POR_PRODUCTO = 10
-    MAX_PIOLAS_POR_PRODUCTO = 10  # 2026-07-21 (Daniel): vuelve a 10 (lo había bajado a 6 el 2026-07-14)
+    MAX_PIOLAS_POR_PRODUCTO = 6   # 2026-10-25 (Daniel: «la selectora hasta 6 piolas por si acaso»). Historia: 6 el 14-07, 10 el 21-07.
+                                  # Un producto que ya tenga más no pierde ninguna: solo no se agregan nuevas.
     MAX_MANUAL_MB = 25  # mismo techo/motivo que MAX_ADJUNTO_MB en tickets_module.py:
                         # Cloud Run limita cada request HTTP a 32MB.
     MAX_MANUALES_POR_PRODUCTO = 5  # 2026-07-12 (Daniel, wizard "Registrar producto"):
@@ -500,6 +501,16 @@ def register_catalogo_routes(app, ctx):
              "ALTER TABLE cat_productos ADD COLUMN origen VARCHAR(10) NOT NULL DEFAULT 'erp' "
              "AFTER descontinuado_by",
              "ALTER TABLE cat_productos ADD INDEX idx_cat_origen (origen)"),
+            # 🏃 2026-10-25 (Daniel: «las trotadoras lo vamos a colocar en las medidas de cinta»): la medida de la cinta del
+            # MODELO (una por trotadora), en mm. Se piden al cambiar la cinta en una OT; acá queda la del fabricante.
+            ("cinta_largo_mm",
+             "ALTER TABLE cat_productos ADD COLUMN cinta_largo_mm DECIMAL(7,1) NULL AFTER origen", None),
+            ("cinta_ancho_mm",
+             "ALTER TABLE cat_productos ADD COLUMN cinta_ancho_mm DECIMAL(6,1) NULL AFTER cinta_largo_mm", None),
+            ("cinta_espesor_mm",
+             "ALTER TABLE cat_productos ADD COLUMN cinta_espesor_mm DECIMAL(4,1) NULL AFTER cinta_ancho_mm", None),
+            ("cinta_obs",
+             "ALTER TABLE cat_productos ADD COLUMN cinta_obs VARCHAR(300) NULL AFTER cinta_espesor_mm", None),
         )
         # ⚠️ Si este ALTER falla (permisos, lock), las consultas nuevas que
         # nombran estas columnas (Bodega, Catálogo, buscador de Tickets)
@@ -1824,7 +1835,7 @@ def register_catalogo_routes(app, ctx):
     @app.route("/catalogo/api/productos/<int:pid>", methods=["PATCH"])
     @_catalogo_producto_write_required
     def cat_api_update(pid):
-        prev = mysql_fetchone("SELECT id, sku, clase_producto FROM cat_productos WHERE id=%s", (pid,))
+        prev = mysql_fetchone("SELECT * FROM cat_productos WHERE id=%s", (pid,))
         if not prev:
             return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
         d = request.get_json(silent=True) or {}
@@ -1836,12 +1847,35 @@ def register_catalogo_routes(app, ctx):
         # queda bloqueado por la misma razon (viene del ERP al crear). Ambos
         # se quitan de "allowed" -- si algun dia hace falta corregir uno,
         # se corrige desde el ERP (Regla #4.1) o se re-sincroniza el producto.
-        allowed = ("familia", "clase_producto", "observacion")
+        allowed = ("familia", "clase_producto", "observacion",
+                   # 🏃 2026-10-25: medidas de la cinta de una trotadora (mm). Vacío = sin dato.
+                   "cinta_largo_mm", "cinta_ancho_mm", "cinta_espesor_mm", "cinta_obs")
+        _cinta_rangos = {"cinta_largo_mm": (500, 10000, "el largo"), "cinta_ancho_mm": (200, 1500, "el ancho"),
+                         "cinta_espesor_mm": (0.5, 15, "el espesor")}
         sets, params = [], []
         for key in allowed:
             if key not in d:
                 continue
             val = d[key]
+            if key in _cinta_rangos:
+                if val in (None, ""):
+                    val = None
+                else:
+                    try:
+                        val = round(float(str(val).replace(",", ".")), 1)
+                    except (TypeError, ValueError):
+                        return jsonify({"ok": False, "error": f"Revisa {_cinta_rangos[key][2]} de la cinta: debe ser un número en mm."}), 400
+                    lo, hi, txt = _cinta_rangos[key]
+                    if not (lo <= val <= hi):
+                        return jsonify({"ok": False, "error": f"Revisa {txt} de la cinta: entre {lo:g} y {hi:g} mm."}), 400
+                sets.append(f"{key}=%s")
+                params.append(val)
+                continue
+            if key == "cinta_obs":
+                val = (str(val or "").strip()[:300]) or None
+                sets.append(f"{key}=%s")
+                params.append(val)
+                continue
             if isinstance(val, str):
                 val = val.strip() or None
                 if key == "familia":
@@ -1871,6 +1905,15 @@ def register_catalogo_routes(app, ctx):
                 return jsonify({"ok": False, "error": "Ya existe un producto con ese SKU"}), 409
             print(f"[cat_api_update] error pid={pid}: {_e}", flush=True)
             return jsonify({"ok": False, "error": "No se pudo actualizar el producto"}), 500
+        # 🗂️ 2026-10-25: registro de actividad del producto («quién y cuándo» de cada cambio, con antes → después).
+        if _audit:
+            _cambios = {}
+            for _k, _v in zip([x.split("=")[0] for x in sets[:-2]], params[:len(sets) - 2]):
+                _a = prev.get(_k)
+                if str(_a if _a is not None else "") != str(_v if _v is not None else ""):
+                    _cambios[_k] = {"antes": _a, "despues": _v}
+            if _cambios:
+                _audit("cat_producto_editar", target_type="cat_producto", target_id=pid, details={"cambios": _cambios})
         if "clase_producto" in d:
             try:
                 _ot_resync_plantillas_por_sku(prev["sku"], actor=current_username())
@@ -2048,6 +2091,8 @@ def register_catalogo_routes(app, ctx):
         row = mysql_fetchone(
             "SELECT id FROM cat_producto_fotos WHERE producto_id=%s AND gcs_key=%s "
             "ORDER BY id DESC LIMIT 1", (pid, key))
+        if _audit:
+            _audit("cat_foto_subir", target_type="cat_producto", target_id=pid, details={"foto_id": row["id"] if row else None})
         return jsonify({"ok": True, "id": row["id"] if row else None, "url": url})
 
     @app.route("/catalogo/api/productos/<int:pid>/fotos/<int:foto_id>", methods=["DELETE"])
@@ -2065,6 +2110,8 @@ def register_catalogo_routes(app, ctx):
                 _uploader_destroy(foto["gcs_key"])
             except Exception:
                 pass
+        if _audit:
+            _audit("cat_foto_eliminar", target_type="cat_producto", target_id=pid, details={"foto_id": foto_id})
         return jsonify({"ok": True})
 
     # ─────────────────────────────────────────────────────────────────
@@ -2123,6 +2170,8 @@ def register_catalogo_routes(app, ctx):
                 _uploader_destroy(old_key)
             except Exception:
                 pass
+        if _audit:
+            _audit("cat_manual_subir", target_type="cat_producto", target_id=pid, details={"nombre": f.filename, "size_kb": size_kb})
         return jsonify({"ok": True, "nombre": f.filename, "size_kb": size_kb})
 
     @app.route("/catalogo/api/productos/<int:pid>/manual", methods=["DELETE"])
@@ -2142,6 +2191,8 @@ def register_catalogo_routes(app, ctx):
                 _uploader_destroy(key)
             except Exception:
                 pass
+        if _audit:
+            _audit("cat_manual_eliminar", target_type="cat_producto", target_id=pid, details={})
         return jsonify({"ok": True})
 
     # ─────────────────────────────────────────────────────────────────
@@ -2530,6 +2581,54 @@ def register_catalogo_routes(app, ctx):
                 pass
         return jsonify({"ok": True})
 
+    @app.route("/catalogo/api/productos/<int:pid>/actividad", methods=["GET"])
+    @_catalogo_required
+    def cat_api_actividad(pid):
+        """🗂️ 2026-10-25 (Daniel: «el historial puede quedar como registro de actividad, algo así como la [actividad de la
+        OT] pero en el producto»). Todo lo que le pasó al producto, del más nuevo al más viejo: cambios de datos, piolas,
+        fotos, manuales y envíos. Sale de app_audit_log (solo lectura). Lo anterior a hoy que no quedó registrado no se
+        inventa: solo se agrega la creación, que ya estaba en el producto (created_at / created_by)."""
+        p = mysql_fetchone("SELECT id, created_at, created_by FROM cat_productos WHERE id=%s", (pid,))
+        if not p:
+            return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
+        conds, params = ["(target_type='cat_producto' AND target_id=%s)"], [str(pid)]
+        for tt, tabla in (("cat_producto_piola", "cat_producto_piolas"), ("cat_producto_manual", "cat_producto_manuales")):
+            try:
+                ids = [str(r["id"]) for r in (mysql_fetchall(f"SELECT id FROM {tabla} WHERE producto_id=%s", (pid,)) or [])]
+            except Exception:
+                ids = []
+            if ids:
+                conds.append(f"(target_type='{tt}' AND target_id IN ({','.join(['%s'] * len(ids))}))")
+                params.extend(ids)
+        try:
+            rows = mysql_fetchall(
+                "SELECT ts, username, role, action, details FROM app_audit_log WHERE " + " OR ".join(conds)
+                + " ORDER BY ts DESC LIMIT 300", tuple(params)) or []
+        except Exception as e:
+            print(f"[cat_actividad] pid={pid}: {type(e).__name__}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo leer la actividad del producto."}), 500
+        eventos = []
+        for r in rows:
+            det = r.get("details")
+            if isinstance(det, str):
+                try:
+                    det = json.loads(det)
+                except Exception:
+                    det = {"texto": det}
+            # La clase se guarda con su clave; en la actividad se muestra con su nombre visible.
+            if isinstance(det, dict) and isinstance(det.get("cambios"), dict) and "clase_producto" in det["cambios"]:
+                _mapa = _cat_clases_map()
+                _c = det["cambios"]["clase_producto"]
+                det["cambios"]["clase_producto"] = {"antes": _mapa.get(_c.get("antes") or "", _c.get("antes")),
+                                                    "despues": _mapa.get(_c.get("despues") or "", _c.get("despues"))}
+            eventos.append({"fecha": _fmt_dt(r.get("ts")), "usuario": _cat_nombre_visible(r.get("username")) if r.get("username") else "sistema",
+                            "accion": r.get("action") or "", "detalle": det or {}})
+        if p.get("created_at"):
+            eventos.append({"fecha": _fmt_dt(p.get("created_at")),
+                            "usuario": _cat_nombre_visible(p.get("created_by")) if p.get("created_by") else "sistema",
+                            "accion": "cat_producto_creado", "detalle": {}})
+        return jsonify({"ok": True, "eventos": eventos})
+
     @app.route("/catalogo/api/productos/<int:pid>/piolas/historial", methods=["GET"])
     @_catalogo_required
     def cat_api_piolas_historial(pid):
@@ -2644,6 +2743,8 @@ def register_catalogo_routes(app, ctx):
         row = mysql_fetchone(
             "SELECT id FROM cat_producto_manuales WHERE producto_id=%s AND gcs_key=%s "
             "ORDER BY id DESC LIMIT 1", (pid, key))
+        if _audit:
+            _audit("cat_manual_subir", target_type="cat_producto", target_id=pid, details={"nombre": f.filename, "size_kb": size_kb})
         return jsonify({"ok": True, "id": row["id"] if row else None, "nombre": f.filename, "size_kb": size_kb})
 
     @app.route("/catalogo/api/productos/<int:pid>/manuales/<int:manual_id>", methods=["DELETE"])
@@ -2661,6 +2762,8 @@ def register_catalogo_routes(app, ctx):
                 _uploader_destroy(m["gcs_key"])
             except Exception:
                 pass
+        if _audit:
+            _audit("cat_manual_eliminar", target_type="cat_producto", target_id=pid, details={"manual_id": manual_id})
         return jsonify({"ok": True})
 
     @app.route("/catalogo/api/productos/<int:pid>/manuales/<int:manual_id>/descargar", methods=["GET"])

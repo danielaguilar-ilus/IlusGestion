@@ -63,7 +63,7 @@ const CAN_DESCARGAR_MANUAL = window.CAT_LIST_DATA.canDescargarManual;
 // (el backend igual lo rechaza con 403). Ver y descargar siguen igual.
 const CAN_ENVIAR_MANUAL = window.CAT_LIST_DATA.canEnviarManual !== false;
 const MAX_FOTOS = 10;
-const MAX_PIOLAS = 10;  // 2026-07-21 (Daniel): vuelve a 10 (ver MAX_PIOLAS_POR_PRODUCTO en catalogo_module.py)
+const MAX_PIOLAS = 6;   // 2026-10-25 (Daniel: «la selectora hasta 6 piolas por si acaso»; ver MAX_PIOLAS_POR_PRODUCTO)
 let _catTimer = null;
 let _catfPiolas = [];
 
@@ -865,7 +865,86 @@ async function catfCargar(){
   // Piolas: vienen en el mismo payload de detalle (d.piolas), 1 sola llamada.
   _catfPiolas = d.piolas || [];
   catpRender();
+  _catfUltimoDetalle = d;
+  catfAjustarSecciones(p, d);
+  cataCargar();
 }
+
+// ══════════════ Secciones según el tipo de producto (2026-10-25) ══════════════
+// Daniel: «si el producto dice que es un accesorio, las piolas solamente las coloques para las selectoras de peso. Y las
+// trotadoras lo vamos a colocar en las medidas de cinta… Los manuales, si es accesorio, sácalo». Nunca se esconde un dato
+// ya cargado (REGLA #4.2): un producto con piolas o con manual los sigue mostrando aunque su clase no calce.
+function catfTipoEquipo(p){
+  const txt = [p.clase_producto_label, p.clase_producto, p.familia, p.nombre].join(' ').toLowerCase();
+  const claseFam = [p.clase_producto_label, p.clase_producto, p.familia].join(' ').toLowerCase();
+  if (/accesori/.test(claseFam)) return 'accesorio';
+  if (/trotador|treadmill|cinta de correr/.test(txt)) return 'trotadora';
+  if (/selector|stack|polea|pulley|cable|crossover|multiestaci|multi estaci/.test(txt)) return 'selectora';
+  return 'otro';
+}
+
+let _catfUltimoDetalle = null;
+function catfAjustarSecciones(p, d){
+  d = d || _catfUltimoDetalle;
+  const tipo = catfTipoEquipo(p);
+  const hayPiolas = (_catfPiolas || []).length > 0;
+  const hayManual = !!((d && d.manual && d.manual.tiene) || (d && (d.manuales || []).length));
+  const verPiolas = tipo === 'selectora' || hayPiolas;
+  const verCinta = tipo === 'trotadora';
+  const verManual = tipo !== 'accesorio' || hayManual;
+  const sec = (id, ver) => { const e = document.getElementById(id); if (e) e.style.display = ver ? '' : 'none'; };
+  sec('catfEtapaPiolas', verPiolas);
+  sec('catfEtapaCinta', verCinta);
+  sec('catfEtapaManuales', verManual);
+  // Numeración de las etapas que se ven (1, 2, 3…): nunca un salto de número.
+  let n = 0;
+  document.querySelectorAll('#catFichaModal .catf-etapa, .catf-etapa').forEach(function(s){
+    if (s.style.display === 'none') return;
+    const num = s.querySelector('.catf-etapa-num');
+    if (num) num.textContent = String(++n);
+  });
+  if (verCinta) catcPintar(p);
+}
+
+function catcPintar(p){
+  const v = (x) => (x === null || x === undefined || x === '') ? '' : String(Number(x));
+  document.getElementById('catcLargo').value = v(p.cinta_largo_mm);
+  document.getElementById('catcAncho').value = v(p.cinta_ancho_mm);
+  document.getElementById('catcEspesor').value = v(p.cinta_espesor_mm);
+  document.getElementById('catcObs').value = p.cinta_obs || '';
+  const est = document.getElementById('catcEstado');
+  const tiene = p.cinta_largo_mm && p.cinta_ancho_mm;
+  est.className = 'catc-estado ' + (tiene ? 'ok' : 'falta');
+  est.textContent = tiene ? ('Cinta ' + v(p.cinta_largo_mm) + ' × ' + v(p.cinta_ancho_mm) + ' mm' + (p.cinta_espesor_mm ? ' · ' + v(p.cinta_espesor_mm) + ' mm de espesor' : ''))
+                          : 'Falta registrar la medida de la cinta';
+}
+
+async function catcGuardar(){
+  const btn = document.getElementById('catcGuardar');
+  const leer = (id) => document.getElementById(id).value.trim();
+  const body = {cinta_largo_mm: leer('catcLargo'), cinta_ancho_mm: leer('catcAncho'),
+                cinta_espesor_mm: leer('catcEspesor'), cinta_obs: leer('catcObs')};
+  if (!body.cinta_largo_mm || !body.cinta_ancho_mm){ ilusToast('Escribe al menos el largo y el ancho de la cinta (en mm).', {type:'warning'}); return; }
+  btn.disabled = true;
+  try{
+    const r = await fetch('/catalogo/api/productos/'+catfProductoId, {method:'PATCH',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const d = await r.json();
+    if (d.ok){
+      ['cinta_largo_mm','cinta_ancho_mm','cinta_espesor_mm'].forEach(function(k){ catfProductoActual[k] = body[k] === '' ? null : Number(String(body[k]).replace(',', '.')); });
+      catfProductoActual.cinta_obs = body.cinta_obs;
+      catcPintar(catfProductoActual);
+      cataCargar();
+      ilusToast('✓ Medidas de la cinta guardadas', {type:'success'});
+    } else { ilusToast(d.error || 'No se pudieron guardar las medidas', {type:'error'}); }
+  }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
+  btn.disabled = false;
+}
+document.addEventListener('DOMContentLoaded', function(){
+  const b = document.getElementById('catcGuardar');
+  if (b) b.addEventListener('click', catcGuardar);
+});
+
 
 // ══════════════ Piolas ══════════════
 // 2026-07-23: acordeón con diametro_mm/largo_m/descripcion/observacion +
@@ -1141,7 +1220,7 @@ async function catpRecargar(){
   try{
     const r = await fetch('/catalogo/api/productos/'+catfProductoId);
     const d = await r.json();
-    if(d.ok){ _catfPiolas = d.piolas || []; catpRender(); }
+    if(d.ok){ _catfPiolas = d.piolas || []; catpRender(); cataCargar(); }
   }catch(e){ ilusToast('Sin conexión', {type:'error'}); }
 }
 
@@ -1330,6 +1409,8 @@ window.catfEditar = function(campo){
         el.textContent = nuevo || '—';
         if(campo==='nombre') document.getElementById('catfNombre').textContent = nuevo || catfProductoActual.sku;
         if(campo==='sku') document.getElementById('catfSkuTag').textContent = nuevo;
+        if(campo==='familia') catfAjustarSecciones(catfProductoActual, null);   // 2026-10-25: «Accesorios» es una familia
+        cataCargar();
         ilusToast('✓ Guardado', {type:'success'});
         cargarCatalogo();
       } else {
@@ -1385,6 +1466,8 @@ window.catfEditarClase = async function(){
         const badgeClase = document.getElementById('catfBadgeClase');
         if(nuevo){ badgeClase.textContent = texto; badgeClase.style.display = 'inline-flex'; }
         else { badgeClase.style.display = 'none'; }
+        catfAjustarSecciones(catfProductoActual, null);   // 2026-10-25: cambiar la clase cambia las secciones que aplican
+        cataCargar();
         ilusToast('✓ Guardado', {type:'success'});
         cargarCatalogo();
       } else {
@@ -1993,3 +2076,96 @@ window.catwEliminarManual = async function(manualId){
 };
 
 cargarCatalogo();
+
+// ══════════════ Registro de actividad del producto (2026-10-25) ══════════════
+// Daniel: «el historial puede quedar como registro de actividad, algo así como la [Actividad de la OT] pero en el
+// producto». Lee /catalogo/api/productos/<id>/actividad. Todo el texto se escapa. Sin diálogos nativos (REGLA #1).
+let _cataEventos = [], _cataFiltro = 'todo', _cataTodos = false;
+const CATA_VISIBLES = 6;
+const CATA_CAMPO = {familia:'Familia', clase_producto:'Clase de producto', observacion:'Observación',
+  cinta_largo_mm:'Largo de la cinta', cinta_ancho_mm:'Ancho de la cinta', cinta_espesor_mm:'Espesor de la cinta', cinta_obs:'Observación de la cinta'};
+
+function cataTipo(a){
+  if (/piola/.test(a)) return 'piolas';
+  if (/enviado/.test(a)) return 'envios';
+  if (/foto|manual_subir|manual_eliminar/.test(a)) return 'archivos';
+  return 'cambios';
+}
+function cataTexto(ev){
+  const a = ev.accion || '', det = ev.detalle || {};
+  const v = (x) => (x === null || x === undefined || x === '') ? '—' : String(x);
+  switch (a){
+    case 'cat_producto_creado': return {t:'creó el producto', d:''};
+    case 'cat_producto_editar': {
+      const c = det.cambios || {};
+      const u = (k, x) => (/_mm$/.test(k) && x !== null && x !== undefined && x !== '') ? String(Number(x)).replace('.', ',') + ' mm' : v(x);
+      const partes = Object.keys(c).map(k => (CATA_CAMPO[k] || k) + ': ' + u(k, c[k].antes) + ' → ' + u(k, c[k].despues));
+      return {t:'editó ' + Object.keys(c).map(k => (CATA_CAMPO[k] || k).toLowerCase()).join(', '), d: partes.join(' · ')};
+    }
+    case 'cat_piola_crear': return {t:'agregó una piola', d:[det.descripcion || det.descripcion_despues, det.diametro_mm != null ? det.diametro_mm + ' mm' : '', det.largo_m != null ? det.largo_m + ' m' : ''].filter(Boolean).join(' · ')};
+    case 'cat_piola_editar': {
+      const p = [];
+      ['diametro_mm','largo_m','descripcion','observacion'].forEach(function(k){
+        if (det[k+'_antes'] != null || det[k+'_despues'] != null) p.push({diametro_mm:'Diámetro',largo_m:'Largo',descripcion:'Descripción',observacion:'Observación'}[k] + ': ' + v(det[k+'_antes']) + ' → ' + v(det[k+'_despues']));
+      });
+      return {t:'editó una piola', d:p.join(' · ')};
+    }
+    case 'cat_piola_eliminar': return {t:'eliminó una piola', d: det.descripcion || det.descripcion_antes || ''};
+    case 'cat_foto_subir': return {t:'subió una foto', d:''};
+    case 'cat_foto_eliminar': return {t:'eliminó una foto', d:''};
+    case 'cat_manual_subir': return {t:'subió un manual', d:[det.nombre, det.size_kb ? det.size_kb + ' KB' : ''].filter(Boolean).join(' · ')};
+    case 'cat_manual_eliminar': return {t:'eliminó un manual', d:''};
+    case 'cat_manual_enviado': case 'cat_manual_multi_enviado':
+      return {t:'envió el manual por correo', d:[det.manual_nombre || det.nombre, det.email ? 'a ' + det.email : '', det.enviado === false ? 'no salió' : ''].filter(Boolean).join(' · ')};
+    default: return {t: a.replace(/^cat_/, '').replace(/_/g, ' '), d:''};
+  }
+}
+const CATA_ICONO = {cambios:'bi-pencil-fill', piolas:'bi-link-45deg', archivos:'bi-paperclip', envios:'bi-envelope-fill'};
+
+function cataPintar(){
+  const sec = document.getElementById('cataSection');
+  if (!sec) return;
+  const lista = _cataEventos.filter(e => _cataFiltro === 'todo' || cataTipo(e.accion) === _cataFiltro);
+  sec.style.display = _cataEventos.length ? '' : 'none';
+  document.getElementById('cataN').textContent = String(_cataEventos.length);
+  const ver = _cataTodos ? lista : lista.slice(0, CATA_VISIBLES);
+  document.getElementById('cataLista').innerHTML = ver.length ? ver.map(function(ev){
+    const tipo = cataTipo(ev.accion), tx = cataTexto(ev);
+    return '<li class="cata-ev t-' + tipo + '"><span class="cata-ic" aria-hidden="true"><i class="bi ' + CATA_ICONO[tipo] + '"></i></span>'
+      + '<div class="cata-card"><div class="cata-l1"><span><b>' + esc(ev.usuario || 'sistema') + '</b> ' + esc(tx.t) + '</span>'
+      + '<span class="cata-f">' + esc(ev.fecha || '') + '</span></div>'
+      + (tx.d ? '<div class="cata-d">' + esc(tx.d) + '</div>' : '') + '</div></li>';
+  }).join('') : '<li class="cata-vacio">Sin actividad de este tipo.</li>';
+  const mas = document.getElementById('cataMas');
+  if (lista.length > CATA_VISIBLES){
+    mas.style.display = '';
+    mas.innerHTML = _cataTodos ? '<i class="bi bi-chevron-up"></i> Ver menos' : '<i class="bi bi-chevron-down"></i> Ver los ' + lista.length + ' eventos';
+  } else { mas.style.display = 'none'; }
+}
+
+async function cataCargar(){
+  if (!catfProductoId) return;
+  const pid = catfProductoId;
+  try{
+    const r = await fetch('/catalogo/api/productos/' + pid + '/actividad');
+    const d = await r.json();
+    if (pid !== catfProductoId) return;            // se abrió otro producto mientras tanto
+    _cataEventos = (d && d.ok) ? (d.eventos || []) : [];
+  }catch(e){ _cataEventos = []; }
+  _cataTodos = false;
+  cataPintar();
+}
+
+document.addEventListener('DOMContentLoaded', function(){
+  const f = document.getElementById('cataFiltros');
+  if (f) f.addEventListener('click', function(e){
+    const b = e.target.closest('button[data-f]');
+    if (!b) return;
+    _cataFiltro = b.getAttribute('data-f');
+    f.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    _cataTodos = false;
+    cataPintar();
+  });
+  const m = document.getElementById('cataMas');
+  if (m) m.addEventListener('click', function(){ _cataTodos = !_cataTodos; cataPintar(); });
+});

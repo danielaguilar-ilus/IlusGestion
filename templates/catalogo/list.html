@@ -191,8 +191,8 @@
             </div>
           </section>
 
-          <!-- ═══ ETAPA 2 · Piolas ═══ -->
-          <section class="catf-etapa">
+          <!-- ═══ ETAPA 2 · Piolas ═══ (2026-10-25: solo selectoras de peso y máquinas de cables; ver catfAjustarSecciones) -->
+          <section class="catf-etapa" id="catfEtapaPiolas">
             <header class="catf-etapa-header">
               <span class="catf-etapa-num">2</span>
               <span class="catf-etapa-tit">
@@ -212,8 +212,35 @@
             </div>
           </section>
 
-          <!-- ═══ ETAPA 3 · Manuales ═══ -->
-          <section class="catf-etapa">
+          <!-- ═══ Medidas de la cinta ═══ (2026-10-25, Daniel: «las trotadoras lo vamos a colocar en las medidas de cinta») -->
+          <section class="catf-etapa" id="catfEtapaCinta" style="display:none">
+            <header class="catf-etapa-header">
+              <span class="catf-etapa-num">2</span>
+              <span class="catf-etapa-tit">
+                <span class="t"><i class="bi bi-arrow-left-right me-1"></i>Medidas de la cinta</span>
+                <span class="s">Trotadora · la cinta del fabricante, en milímetros</span>
+              </span>
+            </header>
+            <div class="catf-etapa-body">
+              <div class="catc-grid">
+                <div class="fld"><label for="catcLargo">Largo (mm)</label>
+                  <input type="number" inputmode="decimal" step="0.1" min="500" max="10000" class="form-control form-control-sm" id="catcLargo" placeholder="Ej: 3200"></div>
+                <div class="fld"><label for="catcAncho">Ancho (mm)</label>
+                  <input type="number" inputmode="decimal" step="0.1" min="200" max="1500" class="form-control form-control-sm" id="catcAncho" placeholder="Ej: 520"></div>
+                <div class="fld"><label for="catcEspesor">Espesor (mm) <span class="text-muted fw-normal">opcional</span></label>
+                  <input type="number" inputmode="decimal" step="0.1" min="0.5" max="15" class="form-control form-control-sm" id="catcEspesor" placeholder="Ej: 2.2"></div>
+                <div class="fld full"><label for="catcObs">Observación <span class="text-muted fw-normal">opcional</span></label>
+                  <input type="text" maxlength="300" class="form-control form-control-sm" id="catcObs" placeholder="Ej: cinta con textura, unión diagonal"></div>
+              </div>
+              <div class="catc-pie">
+                <span class="catc-estado" id="catcEstado"></span>
+                <button type="button" class="btn btn-sm btn-ilus" id="catcGuardar"><i class="bi bi-check-lg me-1"></i>Guardar medidas</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- ═══ ETAPA 3 · Manuales ═══ (2026-10-25: un accesorio no lleva manual) -->
+          <section class="catf-etapa" id="catfEtapaManuales">
             <header class="catf-etapa-header">
               <span class="catf-etapa-num">3</span>
               <span class="catf-etapa-tit">
@@ -251,6 +278,22 @@
           <h6><i class="bi bi-clock-history me-1"></i>Auditoría · quién y cuándo</h6>
           <div id="catfAuditoriaBody" class="text-muted small"></div>
         </div>
+
+        {#- 🗂️ 2026-10-25 (Daniel: «el historial puede quedar como registro de actividad, algo así como la [Actividad de la
+            OT] pero en el producto»). Todo lo que le pasó al producto, con quién y cuándo (hora Chile). Lo llena
+            static/catalogo_list.js con /catalogo/api/productos/<id>/actividad. -#}
+        <section class="cata" id="cataSection" aria-label="Registro de actividad del producto" style="display:none">
+          <div class="cata-h"><span><i class="bi bi-activity" aria-hidden="true"></i> Registro de actividad</span><span class="cata-n" id="cataN">0</span></div>
+          <div class="cata-filtros" id="cataFiltros" role="group" aria-label="Filtrar la actividad">
+            <button type="button" class="on" data-f="todo">Todo</button>
+            <button type="button" data-f="cambios">Cambios</button>
+            <button type="button" data-f="piolas">Piolas</button>
+            <button type="button" data-f="archivos">Archivos</button>
+            <button type="button" data-f="envios">Envíos</button>
+          </div>
+          <ol class="cata-lista" id="cataLista"></ol>
+          <button type="button" class="cata-mas" id="cataMas" style="display:none"></button>
+        </section>
       </div>
       <div class="modal-footer" style="justify-content:space-between;">
         <div>

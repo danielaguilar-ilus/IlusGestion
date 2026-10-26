@@ -397,3 +397,40 @@ table.cat-table tbody tr.seleccionada:hover{background:#fecaca;}
   table.cat-table thead th{padding:14px 14px;}
   .catf-foto .x{width:28px;height:28px;}
 }
+
+/* 🏃 2026-10-25: «Medidas de la cinta» de una trotadora (catfEtapaCinta). */
+.catc-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.catc-grid .fld label{display:block;font-size:.72rem;font-weight:800;color:#374151;text-transform:uppercase;letter-spacing:.03em;margin-bottom:3px}
+.catc-grid .fld.full{grid-column:1/-1}
+.catc-grid input{min-height:44px;font-size:16px}
+.catc-pie{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:10px}
+.catc-pie .btn{min-height:44px}
+.catc-estado{font-weight:700;font-size:.84rem}
+.catc-estado.ok{color:#15803d}
+.catc-estado.falta{color:#92400e}
+@media (max-width:600px){.catc-grid{grid-template-columns:1fr}.catc-pie .btn{width:100%}}
+
+/* 🗂️ 2026-10-25: «Registro de actividad» del producto (mismo lenguaje que la Actividad de la OT). */
+.cata{margin-top:12px;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px;background:#fff}
+.cata-h{display:flex;justify-content:space-between;align-items:center;font-size:.74rem;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:#374151}
+.cata-h i{color:#dc2626}
+.cata-n{color:#6b7280;font-variant-numeric:tabular-nums}
+.cata-filtros{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.cata-filtros button{min-height:32px;padding:0 12px;border-radius:999px;border:1px solid #e5e7eb;background:#f3f4f6;color:#374151;font-weight:800;font-size:.76rem}
+.cata-filtros button.on{background:#dc2626;border-color:#dc2626;color:#fff}
+.cata-filtros button:focus-visible,.cata-mas:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}
+.cata-lista{list-style:none;margin:0;padding:0;position:relative}
+.cata-lista::before{content:"";position:absolute;left:15px;top:6px;bottom:6px;width:2px;background:#e5e7eb}
+.cata-ev{display:grid;grid-template-columns:32px minmax(0,1fr);gap:10px;align-items:start;margin-bottom:8px;position:relative}
+.cata-ic{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#f3f4f6;border:2px solid #fff;box-shadow:0 0 0 1px #e5e7eb;color:#6b7280;z-index:1}
+.t-cambios .cata-ic{background:#dbeafe;color:#1d4ed8}
+.t-piolas .cata-ic{background:#fff8e1;color:#b45309}
+.t-archivos .cata-ic{background:#f3f4f6;color:#374151}
+.t-envios .cata-ic{background:#dcfce7;color:#15803d}
+.cata-card{border:1px solid #eef0f3;border-radius:10px;padding:7px 10px;background:#fafafa;min-width:0}
+.cata-l1{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:.84rem;color:#111827}
+.cata-f{color:#6b7280;font-size:.74rem;font-variant-numeric:tabular-nums;white-space:nowrap}
+.cata-d{margin-top:3px;font-size:.78rem;color:#4b5563;overflow-wrap:anywhere}
+.cata-vacio{color:#6b7280;font-size:.8rem;padding:6px 0 6px 42px}
+.cata-mas{width:100%;min-height:44px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;font-weight:800;font-size:.82rem;color:#111827}
+@media (max-width:600px){.cata-filtros button{min-height:44px;padding:0 14px}.cata-l1{flex-direction:column;gap:2px}}
