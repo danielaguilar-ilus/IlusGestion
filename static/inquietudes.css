@@ -130,3 +130,10 @@ a.rm-kpi{color:inherit;text-decoration:none}
 .rm-toolbar .rm-tools input.rm-select{min-width:200px}
 .gp-sig .gp-acc .gp-btn,.gp-paso .gp-acc .gp-btn{text-decoration:none}
 .iqf-grid{margin-top:14px}
+
+/* 2026-10-26 (revisión Impeccable): el panel negro de la guía (.gp, color:#fff) pintaba en BLANCO el título de cada paso, que va sobre
+   una tarjeta clara: «1. Recibida» quedaba invisible. Las tarjetas de paso llevan su propio color de texto. */
+.gp .gp-paso{color:#0a0a0a}
+.gp .gp-paso .gp-ptit{color:#0a0a0a}
+/* 2026-10-26 (revisión Impeccable): el enlace a la OT de la cabecera, tocable con el dedo en el celular (REGLA #3). */
+@media (max-width:600px){.sub a[href^="/ot/"]{display:inline-flex;align-items:center;min-height:44px;padding:0 4px}}
