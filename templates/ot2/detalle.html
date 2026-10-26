@@ -2359,20 +2359,20 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
    registro de actividad, a qué hora fue respondida… el botón de capturar la ubicación no tiene que ser tan grande, el N° de serie
    tampoco»). SOLO en el computador (≥1024 px) y SOLO en una OT cerrada (de revisión): cada tarea se lee como una fila de resultado
    (qué se respondió, quién y a qué hora) en vez de botones e inputs deshabilitados. El celular del técnico no cambia. */
-.otd-res{display:none}
+.otd-tres{display:none}
 @media (min-width:1024px){
   .otd-chk-item.is-revision{background:#fff;border-color:#e5e7eb;border-left-width:4px}
   .otd-chk-item.is-revision.is-ok{background:#fff;border-left-color:#16a34a}
-  .otd-chk-item.is-revision .bodyc > :not(.otd-chk-fotos):not(.otd-res){display:none}
+  .otd-chk-item.is-revision .bodyc > :not(.otd-chk-fotos):not(.otd-tres){display:none}
   .otd-chk-item.is-revision .sello{display:none}
-  .otd-res{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;grid-column:2/-1;margin-top:6px;font-size:.86rem}
-  .otd-res-val{display:inline-flex;align-items:center;gap:6px;font-weight:800;border-radius:8px;padding:4px 10px;border:1px solid #e5e7eb;background:#f9fafb;color:#111827}
-  .otd-res-val.ok{background:#f0fdf4;border-color:#bbf7d0;color:#14532d}
-  .otd-res-val.ambar{background:#fff8e1;border-color:#fde68a;color:#78350f}
-  .otd-res-val.rojo{background:#fee2e2;border-color:#fecaca;color:#991b1b}
-  .otd-res-val.gris{background:#f3f4f6;border-color:#e5e7eb;color:#374151}
-  .otd-res-quien{color:#4b5563;font-size:.8rem}
-  .otd-res-quien b{color:#111827}
+  .otd-tres{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;grid-column:2/-1;margin-top:6px;font-size:.86rem}
+  .otd-tres-val{display:inline-flex;align-items:center;gap:6px;font-weight:800;border-radius:8px;padding:4px 10px;border:1px solid #e5e7eb;background:#f9fafb;color:#111827}
+  .otd-tres-val.ok{background:#f0fdf4;border-color:#bbf7d0;color:#14532d}
+  .otd-tres-val.ambar{background:#fff8e1;border-color:#fde68a;color:#78350f}
+  .otd-tres-val.rojo{background:#fee2e2;border-color:#fecaca;color:#991b1b}
+  .otd-tres-val.gris{background:#f3f4f6;border-color:#e5e7eb;color:#374151}
+  .otd-tres-quien{color:#4b5563;font-size:.8rem}
+  .otd-tres-quien b{color:#111827}
   /* Botones grandes de una OT ABIERTA, más mesurados en el computador (el celular conserva su tamaño de toque). */
   .otd-chk-gpsbtn{max-width:340px;min-height:40px;align-self:flex-start}
   .otd-chk-row .otd-chk-input{max-width:420px}
@@ -14683,9 +14683,9 @@ function otdChkResumenHtml(t, tipo){
     cls = v != null && String(v).trim() ? 'ok' : (t.completada ? 'gris' : 'ambar');
   }
   const quien = (t.completada_por || t.completada_at)
-    ? '<span class="otd-res-quien"><i class="bi bi-clock-history"></i> Respondida' + (t.completada_por ? ' por <b>' + otdEsc(t.completada_por) + '</b>' : '')
+    ? '<span class="otd-tres-quien"><i class="bi bi-clock-history"></i> Respondida' + (t.completada_por ? ' por <b>' + otdEsc(t.completada_por) + '</b>' : '')
       + (t.completada_at ? ' · ' + otdChkCuando(t.completada_at) : '') + '</span>' : '';
-  return '<div class="otd-res"><span class="otd-res-val ' + cls + '">' + txt + '</span>' + quien + '</div>';
+  return '<div class="otd-tres"><span class="otd-tres-val ' + cls + '">' + txt + '</span>' + quien + '</div>';
 }
 
 function otdChkTareaHtml(t, nro, esSiguiente){
