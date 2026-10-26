@@ -48,6 +48,7 @@
   var PAUSA_MS = 70;        /* entre intentos de lectura */
   var FALLAS_PARA_CAMBIAR = 12;  /* errores seguidos del nativo → polyfill */
   var AVISO_SIN_LECTURA_MS = 7000;
+  var SEGUNDO_MOTOR_MS = 4000;  /* 2026-10-26: sin lectura en este tiempo con el detector del teléfono → se suma zxing y se alternan */
 
   var abierto = false;
   var polyPromise = null;
@@ -179,6 +180,7 @@
       var stream = null, track = null, motor = null;
       var activo = true, cerrado = false, motorListo = false;
       var temporizador = null, ultimaLectura = null, errSeguidos = 0, intento = 0;
+      var motorAlt = null, cargandoAlt = false;   /* 2026-10-26: segundo lector (zxing) que se alterna con el del teléfono */
       var linterna = false, zoomActual = 1, zoomCaps = null;
       var lentes = [], lenteIdx = 0;
       var inicioLectura = 0, avisado = false;
@@ -441,9 +443,18 @@
           decir('¿Cuesta leerlo? Prueba con más luz (Linterna), aléjate un poco hasta que se vea nítido o ' +
                 'usa el zoom. También puedes cerrar y escribir el código.');
         }
+        /* 🔧 2026-10-26 (Daniel: «el capturador de código de barras no está funcionando al 100 con los Android… otro que sea más
+           activo»). En muchos Android el detector del teléfono no da ERROR: responde «no veo nada», así que nunca se pasaba al lector
+           alternativo. Ahora, si en SEGUNDO_MOTOR_MS no leyó nada, se carga también zxing y se ALTERNAN los dos en cada intento: lee el
+           que funcione en ese teléfono. */
+        if (motor.tipo === 'nativo' && !motorAlt && !cargandoAlt && Date.now() - inicioLectura > SEGUNDO_MOTOR_MS) {
+          cargandoAlt = true;
+          crearMotor(true).then(function (m) { if (m && m.tipo === 'polyfill') motorAlt = m; }).catch(function () {});
+        }
         var src;
         try { src = fuenteDeteccion(); } catch (e) { src = video; }
-        motor.detect(src).then(function (codigos) {
+        var motorUsado = (motorAlt && intento % 2 === 0) ? motorAlt : motor;
+        motorUsado.detect(src).then(function (codigos) {
           errSeguidos = 0;
           if (!activo || cerrado) return;
           if (codigos && codigos.length) {
