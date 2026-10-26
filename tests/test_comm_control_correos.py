@@ -570,11 +570,31 @@ class TestOrdenDeRevision(unittest.TestCase):
 
 class TestPorDefecto(unittest.TestCase):
     def test_sin_fila_en_la_tabla_todos_los_correos_salen(self):
+        # Salvo los que NACEN APAGADOS (avisos internos nuevos, Daniel 26-oct-2026): esos se prueban abajo.
         m = Mundo()
-        for c in R.listar():
+        normales = [c for c in R.listar() if not c.get("nace_apagado")]
+        for c in normales:
             self.assertTrue(m.enviar(modulo=c["llave"], correo=c["clave"]), c["clave"])
-        self.assertEqual(len(m.salieron), len(R.listar()))
-        self.assertEqual({l[1]["correo"] for l in m.logs}, {c["clave"] for c in R.listar()})
+        self.assertEqual(len(m.salieron), len(normales))
+        self.assertEqual({l[1]["correo"] for l in m.logs}, {c["clave"] for c in normales})
+
+    def test_los_que_nacen_apagados_no_salen_sin_fila_y_se_encienden_desde_la_pantalla(self):
+        # Daniel 26-oct: «agrégalos apagados para encenderlos desde el front».
+        nuevos = [c for c in R.listar() if c.get("nace_apagado")]
+        self.assertEqual({c["clave"] for c in nuevos}, {"inq_nueva_gestion", "inq_asignada_responsable", "inq_sla_vencido",
+                                                       "hall_nuevos_gestion", "hall_tomado_responsable"})
+        for c in nuevos:
+            self.assertNotEqual(c["destinatario"], "cliente", "un correo a clientes jamás se enciende desde la pantalla (REGLA #22)")
+            self.assertEqual(c["llave"], "comunicacion_interna", c["clave"])
+            self.assertFalse(Mundo().enviar(modulo=c["llave"], correo=c["clave"]), "sin fila: apagado · " + c["clave"])
+            self.assertTrue(Mundo(filas={c["clave"]: 1}).enviar(modulo=c["llave"], correo=c["clave"]), "encendido en la pantalla · " + c["clave"])
+            self.assertFalse(Mundo(filas={c["clave"]: 0}).enviar(modulo=c["llave"], correo=c["clave"]), c["clave"])
+            st = R.estado_efectivo(c, switch_activo=R.switch_de_fila(c, None))
+            self.assertEqual(st["efectivo"], "correo", "la pantalla lo muestra apagado por su interruptor (ámbar), no por configuración")
+            self.assertTrue(st["puede_encender"], "se puede encender desde la pantalla")
+        self.assertTrue(R.switch_de_fila("ot_que_paso_bodega", None), "los de siempre: sin fila, encendidos")
+        self.assertFalse(R.switch_de_fila("inq_nueva_gestion", None))
+        self.assertTrue(R.switch_de_fila("inq_nueva_gestion", {"activo": 1}))
 
     def test_clave_desconocida_sale_y_deja_un_aviso(self):
         m = Mundo(filas={"clave_que_no_existe": 0})
@@ -1083,7 +1103,9 @@ class TestPantallaListar(_PantallaBase):
         self.assertEqual(r["apagados_usuario"], 0)
         self.assertEqual({c["clave"] for c in d["correos"] if c["estado"]["efectivo"] in ("config", "codigo")}, APAGADOS_HOY)
         self.assertEqual(r["apagados_config"], len(APAGADOS_HOY))
-        self.assertEqual(r["salen"] + r["apagados_config"], r["total"])
+        # 26-oct: los avisos internos nuevos nacen apagados («por encender»); no cuentan como apagados por una persona.
+        self.assertEqual(r["por_encender"], 5)
+        self.assertEqual(r["salen"] + r["apagados_config"] + r["por_encender"], r["total"])
         self.assertEqual(r["frenados_llave"], 0)
         self.assertEqual(self.item("acceso_alerta_login", d)["estado"]["efectivo"], "codigo")
         self.assertEqual(self.item("ret_comprobante_firma", d)["estado"]["efectivo"], "config")
@@ -1128,7 +1150,7 @@ class TestPantallaListar(_PantallaBase):
         self.assertEqual(e["apagado_en"], "20/10/2026 15:05")           # 18:05 UTC = 15:05 hora Chile (UTC-3 en octubre)
         self.assertEqual(e["version"], "2026-10-20 18:05:30")
         self.assertEqual(d["resumen"]["apagados_usuario"], 1)
-        self.assertEqual(d["resumen"]["salen"], d["resumen"]["total"] - len(APAGADOS_HOY) - 1)
+        self.assertEqual(d["resumen"]["salen"], d["resumen"]["total"] - len(APAGADOS_HOY) - 1 - d["resumen"]["por_encender"])
 
     def test_la_llave_cerrada_y_el_interruptor_general_se_ven_en_el_semaforo(self):
         self.m.bd.llaves["retiros"] = {"email_bloqueado": 1, "motivo": "Revisión de Joaquín"}

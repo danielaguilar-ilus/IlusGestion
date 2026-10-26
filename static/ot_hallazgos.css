@@ -177,3 +177,48 @@
 .otd-res-hv,.hz-hist{display:inline-flex;align-items:center;gap:6px;min-height:44px;font-weight:800;font-size:.84rem;color:#1e3a8a;text-decoration:underline;text-underline-offset:3px;white-space:nowrap}
 .otd-res-hv{margin:0 0 0 12px}
 .otd-res-hv:hover,.hz-hist:hover{color:#dc2626}
+
+/* 🔁 2026-10-26 — Gestión circular de cada hallazgo (Daniel: «editarla, crear un repuesto, solicitarlo, generar una OT, generar un ticket…
+   gestionando de manera circular… además de su valorización»). Recorrido con semáforo SIEMPRE a la vista (nada plegado), valorización,
+   vínculos y registro de actividad. Paleta ILUS (REGLA #2): verde hecho, ámbar falta, gris opcional; el rojo solo para borrar. */
+a.hz-btn{text-decoration:none}
+.hz-btn.peligro{border-color:#fecaca;color:#991b1b;background:#fff}
+.hz-btn.peligro:hover{background:#fee2e2}
+.hz-rec{list-style:none;margin:10px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px}
+.hz-rec-p{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border-radius:10px;border:1px solid #e5e7eb;background:#f9fafb}
+.hz-rec-p.verde{background:#f0fdf4;border-color:#bbf7d0}
+.hz-rec-p.ambar{background:#fff8e1;border-color:#fde68a}
+.hz-rec-dot{flex:0 0 22px;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:800;background:#e5e7eb;color:#374151}
+.hz-rec-p.verde .hz-rec-dot{background:#16a34a;color:#fff}
+.hz-rec-p.ambar .hz-rec-dot{background:#f59e0b;color:#111827}
+.hz-rec-tx{display:flex;flex-direction:column;min-width:0;line-height:1.25}
+.hz-rec-tx b{font-size:.8rem;color:#111827}
+.hz-rec-tx small{font-size:.78rem;color:#4b5563;overflow-wrap:anywhere}
+.hz-valor{display:flex;gap:8px;align-items:flex-start;margin-top:8px;padding:8px 12px;border-radius:10px;background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d}
+.hz-valor small{display:block;color:#166534;font-size:.8rem}
+.hz-vinc{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.hz-vinc-a{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:4px 12px;border-radius:999px;background:#dbeafe;color:#1e3a8a;font-weight:800;font-size:.84rem;text-decoration:none}
+.hz-vinc-a:hover{background:#bfdbfe}
+.hz-act{margin-top:10px;padding-top:8px;border-top:1px dashed #e5e7eb}
+.hz-act-tit{display:flex;align-items:center;gap:6px;font-size:.82rem;color:#374151}
+.hz-act ul{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.hz-act li{display:flex;gap:8px;align-items:flex-start;font-size:.84rem;color:#1f2937}
+.hz-act li small{display:block;color:#6b7280;font-size:.76rem}
+.hz-act-dot{flex:0 0 10px;width:10px;height:10px;border-radius:50%;margin-top:5px;background:#9ca3af}
+.hz-act-dot.verde{background:#16a34a}.hz-act-dot.azul{background:#3b82f6}.hz-act-dot.ambar{background:#f59e0b}
+/* Diálogo propio (editar / valorizar): más de 3 campos no van en un ilusPrompt (REGLA #8). Pantalla completa en el celular (REGLA #3). */
+.hzg-velo{position:fixed;inset:0;background:rgba(10,10,10,.55);z-index:2050;display:flex;align-items:center;justify-content:center;padding:16px}
+.hzg-caja{background:#fff;border-radius:16px;width:min(560px,100%);max-height:calc(100dvh - 32px);overflow:auto;box-shadow:0 20px 50px rgba(0,0,0,.3)}
+.hzg-cab{display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid #e5e7eb}
+.hzg-cab h4{margin:0;font-size:1.05rem;font-weight:800;color:#0a0a0a}
+.hzg-cab p{margin:2px 0 0;font-size:.84rem;color:#4b5563;overflow-wrap:anywhere}
+.hzg-cuerpo{padding:14px 18px;display:flex;flex-direction:column;gap:12px}
+.hzg-cuerpo label{display:flex;flex-direction:column;gap:4px;font-weight:700;font-size:.86rem;color:#111827}
+.hzg-cuerpo label small{font-weight:500;color:#6b7280}
+.hzg-cuerpo input,.hzg-cuerpo textarea,.hzg-cuerpo select{font-size:16px;min-height:44px;border:1px solid #d1d5db;border-radius:10px;padding:8px 12px;font-weight:500;color:#111827;background:#fff}
+.hzg-cuerpo textarea{min-height:88px;resize:vertical}
+.hzg-fila{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.hzg-total{font-weight:800;color:#14532d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:8px 12px}
+.hzg-err{color:#991b1b;font-weight:700;font-size:.86rem;min-height:1.2em}
+.hzg-pie{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid #e5e7eb;flex-wrap:wrap}
+@media (max-width:640px){.hz-rec{grid-template-columns:1fr 1fr}.hzg-velo{padding:0}.hzg-caja{width:100%;height:100dvh;max-height:100dvh;border-radius:0}.hzg-fila{grid-template-columns:1fr}.hzg-pie .hz-btn{flex:1 1 100%}}

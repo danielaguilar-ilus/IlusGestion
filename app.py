@@ -79,6 +79,7 @@ import plantillas_serie_gps as _psg  # 2026-10-21 (REGLA #39): N° de serie + GP
 import ot_hallazgos as _oh    # 2026-10-21 (REGLA #38): hallazgos de la OT (alerta, «tomar el caso» y OT de seguimiento): reglas puras con pruebas
 import maquina_historia as _mh    # 2026-10-21: Historia del equipo (hoja de vida unificada: línea de tiempo sin duplicados, por rol): reglas puras con pruebas
 import repuestos_respuesta as _rresp    # 2026-10-21: solicitud de repuesto — dueño al nacer, reloj de primera respuesta, avisos y tiempos (módulo puro con pruebas)
+import gestion_circular as _gc    # 2026-10-26: gestión circular de hallazgos e inquietudes (editar, borrar, valorizar, ticket, repuesto)
 import inquietudes as _iq    # 2026-10-26: Inquietudes de clientes — SLA en horas hábiles, semáforo y recorrido paso a paso (módulo puro con pruebas)
 import fedex_labels as _fxlabels    # parser puro de etiquetas FedEx (testeable)
 _ERP = erp_engine.init_engine(
@@ -9890,7 +9891,7 @@ def _correo_permitido(clave):
         return True
     try:
         fila = _correo_ctrl_estado().get(clave)
-        return True if fila is None else bool(fila.get("activo", True))
+        return _ccr.switch_de_fila(clave, fila)        # sin fila: encendido, salvo los que nacen apagados (26-oct)
     except Exception:
         return True
 
@@ -55228,13 +55229,16 @@ def _comm_correos_plantillas():
 def _comm_correo_item(c, general, llaves, ctrl, cifras, plantillas):
     """La tarjeta de UN correo: registro + estado real (semáforo de 4 pasos) + cifras + estado de su plantilla."""
     fila = ctrl.get(c["clave"])
-    switch_activo = True if fila is None else bool(fila.get("activo", True))
+    switch_activo = _ccr.switch_de_fila(c, fila)
     ks = llaves.get(c["llave"]) or {}
     st = _ccr.estado_efectivo(c, general_activo=general, llave_bloqueada=bool(ks.get("email_bloqueado")),
                               switch_activo=switch_activo)
     st["switch_activo"] = switch_activo
     st["version"] = _comm_correos_version(fila)
     st["motivo"] = (fila or {}).get("motivo") or ""
+    st["nace_apagado"] = bool(c.get("nace_apagado"))
+    # 26-oct: nació apagado y nadie lo ha tocado todavía → «por encender» (no es «apagado por una persona»).
+    st["por_encender"] = bool(c.get("nace_apagado")) and fila is None
     st["apagado_por"] = (fila or {}).get("actualizado_por") or ""
     st["apagado_en"] = _comm_correos_fecha((fila or {}).get("actualizado_en"))
     st["llave_motivo"] = ks.get("motivo") or ""
@@ -55268,7 +55272,9 @@ def _comm_correos_payload(forzar_cifras=False):
     resumen = {
         "total": len(items),
         "salen": sum(1 for i in items if i["estado"]["efectivo"] == "sale"),
-        "apagados_usuario": sum(1 for i in items if not i["estado"]["switch_activo"] and not i["protegido"]),
+        "apagados_usuario": sum(1 for i in items if not i["estado"]["switch_activo"] and not i["protegido"]
+                                and not i["estado"].get("por_encender")),
+        "por_encender": sum(1 for i in items if i["estado"].get("por_encender")),
         "apagados_config": sum(1 for i in items if i["estado"]["efectivo"] in ("config", "codigo")),
         "frenados_llave": sum(1 for i in items if i["estado"]["efectivo"] in ("general", "llave")),
         "enviados_30d": sum(i["cifras"]["enviados"] for i in items),
@@ -55347,7 +55353,7 @@ def comm_correos_cambiar(clave):
     fila = ctrl.get(c["clave"])
     ks = llaves.get(c["llave"]) or {}
     actual = _ccr.estado_efectivo(c, general_activo=general, llave_bloqueada=bool(ks.get("email_bloqueado")),
-                                  switch_activo=True if fila is None else bool(fila.get("activo", True)))
+                                  switch_activo=_ccr.switch_de_fila(c, fila))
     if nuevo and not actual["puede_encender"]:
         return jsonify({"ok": False, "error_codigo": "CON_CANDADO",
                         "error": "Este correo está apagado por configuración o por el código: la pantalla solo puede apagar. "
@@ -55361,7 +55367,7 @@ def comm_correos_cambiar(clave):
                                  ". Se recargó la lista: revisa cómo quedó antes de cambiarlo."}), 409
 
     usuario = (current_username() or "sistema")[:190]
-    antes = True if fila is None else bool(fila.get("activo", True))
+    antes = _ccr.switch_de_fila(c, fila)
     try:
         conn = get_db()
         with conn.cursor() as cur:
@@ -98710,6 +98716,44 @@ _GESTION_FAMILIAS_RESPALDO = ("superadmin", "admin", "supervisor")
 _GESTION_CORREO_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
 
 
+def _aviso_interno_correo(clave, uids, titulo_, cuerpo_, url, etiqueta="Aviso interno", ref=None):
+    """Copia por CORREO de un aviso de campana (Daniel 26-oct-2026: «agrégalos apagados para encenderlos desde el front»).
+    Va por la puerta única con su clave del registro (REGLA #33): estos correos NACEN APAGADOS y se encienden en Comunicaciones →
+    Control de correos. Solo a usuarios ACTIVOS de la gestión cuyo usuario es un correo; nunca a un técnico ni a un cliente (REGLAS
+    #19, #22 y #26). Sin montos. Nunca levanta: un fallo de correo jamás rompe lo que la persona estaba haciendo. → cuántos encolados."""
+    ids = sorted({int(u) for u in (uids or []) if u})
+    if not ids:
+        return 0
+    try:
+        filas = mysql_fetchall("SELECT id, username, role FROM app_users WHERE active=1 AND id IN ("
+                               + ",".join(["%s"] * len(ids)) + ")", tuple(ids)) or []
+    except Exception as e:
+        print(f"[aviso-correo] {clave}: usuarios: {type(e).__name__}", flush=True)
+        return 0
+    try:
+        html = _ilus_email_master({
+            "subject": titulo_, "preheader": str(cuerpo_ or "")[:140], "status_label": etiqueta, "title": titulo_,
+            "message": "<p>" + __import__("html").escape(str(cuerpo_ or "")).replace("\n", "<br>") + "</p>",
+            "primary_cta_url": f"{_public_base_url()}{url}", "primary_cta_label": "Abrir en ILUS",
+            "closing_message": "Correo interno de ILUS Fitness: al cliente no se le envía nada. Se apaga en Comunicaciones → Control de correos.",
+        })
+    except Exception as e:
+        print(f"[aviso-correo] {clave}: plantilla: {type(e).__name__}", flush=True)
+        return 0
+    n = 0
+    for u in filas:
+        correo = (u.get("username") or "").strip()
+        if not _GESTION_CORREO_RE.match(correo) or _rol_familia(u.get("role")) == "tecnico":
+            continue
+        try:
+            if _send_ilus_email(correo, _brand_subject(titulo_), html, evento=clave, modulo="comunicacion_interna",
+                                asincrono=True, correo=clave, ref=ref) is not False:
+                n += 1
+        except Exception as e:
+            print(f"[aviso-correo] {clave} a {u.get('id')}: {type(e).__name__}", flush=True)
+    return n
+
+
 def _ot_gestion_destinatarios(vid, fila=None):
     """Las personas a las que avisa «la gestión» de ESTA OT: [{id, nombre, correo, por}], sin repetidos y solo usuarios ACTIVOS.
 
@@ -111158,7 +111202,7 @@ def repstock_solicitud_manual():
         fd = request.form
         d = {"cliente_id": fd.get("cliente_id"), "es_reposicion": fd.get("es_reposicion"),
              "maquina_id": fd.get("maquina_id"), "motivo": fd.get("motivo"),
-             "responsable": fd.get("responsable")}
+             "responsable": fd.get("responsable"), "origen_ref": fd.get("origen_ref")}
         try:
             d["items"] = json.loads(fd.get("items") or "[]")
         except Exception:
@@ -111460,6 +111504,10 @@ def repstock_solicitud_manual():
                   + f" · motivo: {motivo[:200]} · por {user}")
     except Exception:
         pass
+
+    # 🔁 2026-10-26 (gestión circular): si la solicitud nace desde un hallazgo o una inquietud, queda el vínculo de vuelta.
+    if d.get("origen_ref"):
+        _gc_vincular_repuesto(d.get("origen_ref"), lote_id, creados, numero_man)
 
     return jsonify({"ok": True, "lote_id": lote_id, "solicitudes": creados,
                     "creadas": len(creados), "aviso": "\n".join(avisos) or None,
@@ -168856,10 +168904,15 @@ def _inq_destinos(f, excluir_uid=None):
     return out
 
 
-def _inq_campana(f, titulo_, cuerpo_, prioridad="media", destinos=None):
-    """Campana a la gestión (sin correo, sin cliente: REGLA #22). → a cuántas personas."""
+def _inq_campana(f, titulo_, cuerpo_, prioridad="media", destinos=None, correo=None):
+    """Campana a la gestión (sin cliente: REGLA #22). `correo` = clave del registro para la copia por correo (nace apagada, 26-oct).
+    → a cuántas personas."""
     n = 0
-    for uid in (destinos if destinos is not None else _inq_destinos(f, excluir_uid=_hall_uid())):
+    gente = list(destinos if destinos is not None else _inq_destinos(f, excluir_uid=_hall_uid()))
+    if correo and gente:
+        _aviso_interno_correo(correo, gente, titulo_, cuerpo_, f"/ot/inquietudes/{int(f['id'])}", "Inquietud de cliente",
+                              ref={"tipo": "INQ", "id": int(f["id"]), "codigo": f.get("numero") or f"INQ-{int(f['id']):04d}"})
+    for uid in gente:
         try:
             _mant_notificar(uid, TIPO_CAMPANA, titulo_, cuerpo_, url_accion=f"/ot/inquietudes/{int(f['id'])}", prioridad=prioridad)
             _mant_notif_cache_invalidar(uid)
@@ -168927,7 +168980,7 @@ def _inq_crear_core(cliente_id, visita_id, form, archivos, origen):
     f = _inq_leer(iid)
     if f:
         tt, cc = _iq.campana_nueva(iid, f.get("cliente"), equipo, _hall_quien())
-        _inq_campana(f, tt, cc, "alta")
+        _inq_campana(f, tt, cc, "alta", correo="inq_nueva_gestion")
     return iid, None
 
 
@@ -169162,6 +169215,7 @@ def ot_inquietud_ficha(iid):
         cands = []
     uid = _hall_uid()
     return render_template("ot2/inquietud_ficha.html", q=vista, actividad=actividad, intel=_inq_inteligencia(f), ticket=ticket, ot=ot,
+                           gestion=_gc_gestion_inquietud(f),
                            candidatos=cands, tipos=_iq.TIPOS, es_superadmin=_ot_aut_es_superadmin(), mi_id=uid,
                            puede={a: _iq.puede_accion(a, f, _ot_aut_es_superadmin())[0] for a in
                                   ("adjudicar", "asignar", "clasificar", "editar", "cerrar", "anular", "reabrir", "borrar", "ticket", "vincular", "paso")},
@@ -169237,7 +169291,7 @@ def inq_api_asignar(iid):
         return _ot2_err("Alguien cambió el responsable justo ahora. Recarga la página.", "INQUIETUD_CAMBIO", http=409)
     if uid != _hall_uid():
         tt, cc = _iq.campana_asignada(iid, f.get("cliente"), quien)
-        _inq_campana(f, tt, cc, "media", destinos=[uid])
+        _inq_campana(f, tt, cc, "media", destinos=[uid], correo="inq_asignada_responsable")
     return jsonify({"ok": True, "mensaje": "Ahora la lleva %s." % cand["nombre"]})
 
 
@@ -169530,6 +169584,48 @@ def inq_api_ticket(iid):
     return jsonify({"ok": True, "ticket_id": tid, "numero": numero, "url": f"/tickets/{tid}"})
 
 
+# ── 🔁 2026-10-26: gestión circular también en la inquietud (valorización + «Solicitar repuesto» prellenado) ──────────────
+def _gc_gestion_inquietud(f):
+    """Lo que la ficha de la inquietud muestra de la gestión circular. None si las tablas aún no existen (dormido). Solo gestión."""
+    if not f or not _gc_ok():
+        return None
+    try:
+        e = _gc_extra_de(_gc.ENTIDAD_INQUIETUD, [int(f["id"])]).get(int(f["id"])) or {}
+        val = _gc.valor_vista(dict(e, valorizado_cuando=_hall_cuando(e.get("valorizado_en")))) if e else None
+        rp = ({"numero": ("Ticket de compra " + e["repuesto_ticket"]) if e.get("repuesto_ticket") else "Solicitud de repuesto",
+               "url": "/repuestos#solicitudes", "cuando": _hall_cuando(e.get("repuesto_en"))} if e.get("repuesto_lote_id") else None)
+        c = mysql_fetchone("SELECT id, razon_social FROM mant_clientes WHERE id=%s", (int(f["cliente_id"]),)) or {}
+        cliente = {"id": int(c["id"]), "nombre": c.get("razon_social") or ""} if c.get("id") else None
+        return {"valor": val, "repuesto_sol": rp,
+                "url_repuesto": _gc_url_repuesto(_gc.origen_ref(_gc.ENTIDAD_INQUIETUD, f["id"]), cliente, f.get("maquina_id"),
+                                                 f"Inquietud del cliente {_iq.numero(f['id'])}: {f.get('inquietud') or ''}")}
+    except Exception as ex:
+        print(f"[gc] gestión de la inquietud {f.get('id')}: {type(ex).__name__}", flush=True)
+        return None
+
+
+@app.route("/ot/inquietudes/api/<int:iid>/valorizar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def inq_api_valorizar(iid):
+    """Valorizar la inquietud (repuestos + servicio y una nota). Plata: solo gestión (REGLAS #19/#26). Queda en su registro de actividad."""
+    f, err = _inq_pre(iid, "editar")
+    if err:
+        return err
+    if not _gc_ok():
+        return _ot2_err("Esta función no está disponible en este momento. Intenta de nuevo en un minuto.", "TABLA_NO_DISPONIBLE", http=503)
+    val, e_val = _gc.validar_valor(_inq_json())
+    if e_val:
+        return _ot2_err(e_val, "VALOR_INVALIDO")
+    quien = _hall_quien()
+    _gc_extra_set(_gc.ENTIDAD_INQUIETUD, iid, valor_repuestos=val["repuestos"], valor_servicio=val["servicio"],
+                  valor_nota=val["nota"], valorizado_por=quien)
+    tot = _gc.pesos(_gc.total_valor(val["repuestos"], val["servicio"]))
+    _inq_log(iid, "valorizada", (f"Repuestos {_gc.pesos(val['repuestos']) or '—'} + servicio {_gc.pesos(val['servicio']) or '—'} = {tot}"
+                                 + (f" · {val['nota']}" if val["nota"] else "") + f" · {quien}")[:900])
+    return jsonify({"ok": True, "total": tot})
+
+
 @app.route("/ot/inquietudes/api/<int:iid>/prellenado-ot", methods=["GET"])
 @_mant_required
 @_no_tecnico
@@ -169623,7 +169719,7 @@ def _inq_barrido(max_s=15, dry=False):
         n = mysql_execute_returning_rowcount("UPDATE cli_inquietudes SET sla_aviso_nivel=%s WHERE id=%s AND sla_aviso_nivel < %s", (nivel, int(f["id"]), nivel))
         if n:
             tt, cc = _iq.campana_sla(f["id"], f.get("cliente"), nivel)
-            _inq_campana(f, tt, cc, _iq.PRIORIDAD_NIVEL.get(nivel, "media"), destinos=_inq_destinos(f))
+            _inq_campana(f, tt, cc, _iq.PRIORIDAD_NIVEL.get(nivel, "media"), destinos=_inq_destinos(f), correo="inq_sla_vencido")
             _inq_log(f["id"], "aviso_plazo", "Aviso por " + ("plazo vencido" if nivel >= 2 else "plazo por vencer"))
             out["avisadas"] += 1
     return out
@@ -169820,6 +169916,9 @@ def _hall_upsert(vid, h):
     fotos_json = json.dumps(fotos, ensure_ascii=False) if fotos else None
     clave = (int(vid), h["origen"], h["referencia"])
     fila = mysql_fetchone("SELECT id, estado, retirado_en FROM mant_ot_hallazgos WHERE visita_id=%s AND origen=%s AND referencia=%s", clave)
+    if not fila and _gc_lapida(*clave):
+        # 26-oct: el superadmin lo BORRÓ (prueba): no vuelve a nacer solo aunque el técnico guarde de nuevo esa tarea.
+        return {"res": "borrado", "id": 0, "avisar": False}
     if not fila:
         n = mysql_execute_returning_rowcount(
             "INSERT IGNORE INTO mant_ot_hallazgos (visita_id, origen, referencia, tarea_id, maquina_id, item_manual_id, severidad, titulo, "
@@ -170208,6 +170307,7 @@ def _hall_avisar(vid, ids_nuevos):
     titulo, cuerpo, prioridad = _textos(items)
     url = f"/ot/hallazgos?ot={int(vid)}#hzpTarjeta"   # 2026-10-21: la tarjeta vive en la página «Hallazgos»
     n_ok = 0
+    nuevos_uid = []        # 26-oct: a quienes les nació la campana → su copia por correo (nace apagada)
     for p in _hall_destinos(vid, v, excluir_uid=_hall_uid()):
         uid = int(p["id"])
         try:
@@ -170234,10 +170334,14 @@ def _hall_avisar(vid, ids_nuevos):
                                   " WHERE id=%s", (t_p, c_p, pr_p, url, int(ex["id"])))
             else:
                 _mant_notificar(uid, _oh.TIPO_AVISO, t_p, c_p, url_accion=url, prioridad=pr_p, visita_id=int(vid))
+                nuevos_uid.append(uid)
             _mant_notif_cache_invalidar(uid)
             n_ok += 1
         except Exception as e:
             print(f"[hall] campana a {uid}: {type(e).__name__}", flush=True)
+    if nuevos_uid:
+        _aviso_interno_correo("hall_nuevos_gestion", nuevos_uid, titulo, cuerpo, url, "Hallazgos de la OT",
+                              ref={"tipo": "OT", "id": int(vid), "codigo": num})
     return n_ok
 
 
@@ -170254,6 +170358,9 @@ def _hall_avisar_toma(vid, v, f, quien, quien_uid):
             _mant_notificar(int(p["id"]), _oh.TIPO_AVISO_TOMA, _oh.titulo_toma(num), _oh.cuerpo_toma(quien, f.get("titulo")),
                             url_accion=f"/ot/hallazgos?ot={int(vid)}#hzpTarjeta", prioridad="baja", cliente_id=v.get("cliente_id"), visita_id=int(vid))
             _mant_notif_cache_invalidar(int(p["id"]))
+            _aviso_interno_correo("hall_tomado_responsable", [int(p["id"])], _oh.titulo_toma(num), _oh.cuerpo_toma(quien, f.get("titulo")),
+                                  f"/ot/hallazgos?ot={int(vid)}#hzpTarjeta", "Hallazgos de la OT",
+                                  ref={"tipo": "OT", "id": int(vid), "codigo": num})
             n_ok += 1
         except Exception as e:
             print(f"[hall] aviso de toma a {p.get('id')}: {type(e).__name__}", flush=True)
@@ -170396,7 +170503,7 @@ def _hall_contexto_ficha(vid, v):
     try:
         if _es_rol_tecnico() or not _hall_ok():
             return None
-        items = _hall_items(vid, _hall_listar(vid))
+        items = _gc_enriquecer_hallazgos(vid, v, _hall_items(vid, _hall_listar(vid)))   # 26-oct: gestión circular
         activos = sorted([i for i in items if not i["retirado"]], key=lambda i: (i["sev_orden"], i["id"]))
         retirados = [i for i in items if i["retirado"]]
         origen = None
@@ -170419,6 +170526,9 @@ def _hall_contexto_ficha(vid, v):
                 "n_descartados": r["descartados"], "n_retirados": r["retirados"],
                 "n_sin_foto": len([i for i in activos if i["sin_foto"]]),
                 "n_seleccionables": len([i for i in activos if i["puede_levantar"]]),
+                "valor_total": _gc.pesos(sum((i.get("valor") or {}).get("total_n") or 0 for i in activos)) if any(i.get("valor") for i in activos) else "",
+                "n_valorizados": len([i for i in activos if i.get("valor")]),
+                "es_superadmin": _es_superadmin_actual(),
                 "cerrada": bool(v.get("firma_cliente_url")) or (v.get("estado") or "").lower() in
                            ("pendiente_aprobacion", "completada", "cerrada", "cancelada", "anulada")}
     except Exception as e:
@@ -170649,6 +170759,7 @@ def ot_api_hallazgo_tomar(vid, hid):
     if not n:
         return _ot2_err("Alguien más cambió este hallazgo mientras lo mirabas. Recarga la página.", "HALLAZGO_CAMBIO", http=409)
     _mant_log("visita", vid, "hallazgo_tomado", f"{_oh.limpio(f.get('titulo'), 400)} · lo tomó {quien}"[:900])
+    _gc_act(_gc.ENTIDAD_HALLAZGO, hid, "tomado", "Queda a su nombre")
     try:
         v = mysql_fetchone("SELECT * FROM mant_visitas WHERE id=%s", (int(vid),)) or {}
         _hall_avisar_toma(vid, dict(v), f, quien, uid)
@@ -170678,6 +170789,7 @@ def ot_api_hallazgo_descartar(vid, hid):
     if not n:
         return _ot2_err("Alguien más cambió este hallazgo mientras lo mirabas. Recarga la página.", "HALLAZGO_CAMBIO", http=409)
     _mant_log("visita", vid, "hallazgo_descartado", f"{_oh.limpio(f.get('titulo'), 300)} · lo descartó {quien} · motivo: {motivo}"[:900])
+    _gc_act(_gc.ENTIDAD_HALLAZGO, hid, "descartado", "Motivo: " + motivo)
     return jsonify({"ok": True, "estado": "descartado"})
 
 
@@ -170697,7 +170809,478 @@ def ot_api_hallazgo_reabrir(vid, hid):
     if not n:
         return _ot2_err("Alguien más cambió este hallazgo mientras lo mirabas. Recarga la página.", "HALLAZGO_CAMBIO", http=409)
     _mant_log("visita", vid, "hallazgo_reabierto", f"{_oh.limpio(f.get('titulo'), 300)} · lo reabrió {quien}"[:900])
+    _gc_act(_gc.ENTIDAD_HALLAZGO, hid, "reabierto", "Volvió a quedar sin gestionar")
     return jsonify({"ok": True, "estado": "abierto"})
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  🔁 GESTIÓN CIRCULAR de hallazgos e inquietudes (Daniel, 26-oct-2026)
+#  «necesito un CRUD en los hallazgos… borrar algunos hallazgos que hemos hecho de prueba… solamente para el superadministrador… tomar
+#  el levantamiento… editarla, crear un repuesto, solicitarlo, generar una OT, generar un ticket… gestionando de manera circular» y
+#  «agreguemos todo para que no se quede nada atrás… además de su valorización».
+#  Reglas puras en gestion_circular.py (con pruebas). Tres tablas propias (CREATE TABLE IF NOT EXISTS, REGLA #18; sin ALTER):
+#    · mant_gestion_extra       → por hallazgo/inquietud: ticket, solicitud de repuesto, valorización, última edición.
+#    · mant_gestion_actividad   → el registro de actividad de cada hallazgo (quién, qué, cuándo).
+#    · mant_ot_hallazgo_borrados → la FOTO completa de un hallazgo borrado por el superadmin (REGLA #5: antes de borrar) y su «lápida»
+#                                  (el mismo hallazgo no vuelve a nacer solo si el técnico vuelve a guardar esa tarea).
+#  Solo gestión: todas las rutas llevan @_no_tecnico (la valorización es plata: REGLAS #19/#26). Al cliente no se le escribe (REGLA #22).
+# ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+_GC_ESTADO = {"ok": False, "revisado_en": 0.0}
+
+
+def _ensure_gestion_circular():
+    """Tres CREATE TABLE IF NOT EXISTS (baratos si ya existen: REGLA #18). Cada uno por separado: si uno falla los otros siguen."""
+    ok = True
+    for sql in (
+        "CREATE TABLE IF NOT EXISTS mant_gestion_extra ("
+        "  id INT AUTO_INCREMENT PRIMARY KEY,"
+        "  entidad VARCHAR(12) NOT NULL COMMENT 'hallazgo | inquietud',"
+        "  entidad_id INT NOT NULL,"
+        "  ticket_id INT NULL,"
+        "  repuesto_lote_id VARCHAR(40) NULL,"
+        "  repuesto_sol_ids VARCHAR(400) NULL,"
+        "  repuesto_ticket VARCHAR(40) NULL,"
+        "  repuesto_por VARCHAR(190) NULL,"
+        "  repuesto_en DATETIME NULL,"
+        "  valor_repuestos DECIMAL(14,2) NULL,"
+        "  valor_servicio DECIMAL(14,2) NULL,"
+        "  valor_nota VARCHAR(300) NULL,"
+        "  valorizado_por VARCHAR(190) NULL,"
+        "  valorizado_en DATETIME NULL,"
+        "  editado_por VARCHAR(190) NULL,"
+        "  editado_en DATETIME NULL,"
+        "  actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,"
+        "  UNIQUE KEY uq_gestion_ent (entidad, entidad_id)"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS mant_gestion_actividad ("
+        "  id INT AUTO_INCREMENT PRIMARY KEY,"
+        "  entidad VARCHAR(12) NOT NULL,"
+        "  entidad_id INT NOT NULL,"
+        "  accion VARCHAR(30) NOT NULL,"
+        "  detalle VARCHAR(900) NULL,"
+        "  usuario VARCHAR(190) NULL,"
+        "  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "  KEY ix_gestion_act (entidad, entidad_id, id)"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS mant_ot_hallazgo_borrados ("
+        "  id INT AUTO_INCREMENT PRIMARY KEY,"
+        "  hallazgo_id INT NOT NULL,"
+        "  visita_id INT NOT NULL,"
+        "  origen VARCHAR(12) NOT NULL,"
+        "  referencia VARCHAR(80) NOT NULL,"
+        "  titulo VARCHAR(300) NULL,"
+        "  motivo VARCHAR(400) NOT NULL,"
+        "  snapshot_json MEDIUMTEXT NULL,"
+        "  borrado_por VARCHAR(190) NULL,"
+        "  borrado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "  UNIQUE KEY uq_hall_lapida (visita_id, origen, referencia)"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    ):
+        try:
+            mysql_execute(sql)
+        except Exception as e:
+            ok = False
+            print(f"[ensure_gestion_circular] {str(e)[:200]}", flush=True)
+    _GC_ESTADO["ok"] = ok
+    _GC_ESTADO["revisado_en"] = time.time()
+    return ok
+
+
+def _gc_ok():
+    """¿Están las tablas? Dormido (sin romper nada) hasta que existan; se vuelve a mirar a lo más cada 5 minutos."""
+    if _GC_ESTADO["ok"]:
+        return True
+    if time.time() - _GC_ESTADO["revisado_en"] < 300:
+        return False
+    return _ensure_gestion_circular()
+
+
+def _gc_lapida(vid, origen, referencia):
+    """¿El superadmin borró este hallazgo? (Entonces no vuelve a nacer solo.) Nunca levanta: ante la duda, no hay lápida."""
+    if not _gc_ok():
+        return False
+    try:
+        return bool(mysql_fetchone("SELECT id FROM mant_ot_hallazgo_borrados WHERE visita_id=%s AND origen=%s AND referencia=%s",
+                                   (int(vid), str(origen), str(referencia))))
+    except Exception as e:
+        print(f"[gc] lápida vid={vid}: {type(e).__name__}", flush=True)
+        return False
+
+
+def _gc_act(entidad, eid, accion, detalle=""):
+    """Una línea del registro de actividad (best-effort: nunca rompe la acción)."""
+    if not _gc_ok():
+        return
+    try:
+        mysql_execute("INSERT INTO mant_gestion_actividad (entidad, entidad_id, accion, detalle, usuario) VALUES (%s,%s,%s,%s,%s)",
+                      (entidad, int(eid), str(accion)[:30], _gc.limpio(detalle, 900) or None, _hall_quien()))
+    except Exception as e:
+        print(f"[gc] actividad {entidad}:{eid}: {type(e).__name__}", flush=True)
+
+
+def _gc_extra_de(entidad, ids):
+    """{id: fila de mant_gestion_extra} en UNA consulta. {} si falla."""
+    ids = sorted({int(i) for i in (ids or []) if i})
+    if not ids or not _gc_ok():
+        return {}
+    try:
+        return {int(r["entidad_id"]): dict(r) for r in (mysql_fetchall(
+            "SELECT * FROM mant_gestion_extra WHERE entidad=%s AND entidad_id IN (" + ",".join(["%s"] * len(ids)) + ")",
+            (entidad, *ids)) or [])}
+    except Exception as e:
+        print(f"[gc] extra {entidad}: {type(e).__name__}", flush=True)
+        return {}
+
+
+def _gc_actividad_de(entidad, ids, por_item=25):
+    """{id: [{accion_txt, color, detalle, usuario, cuando}]} lo más nuevo primero, en UNA consulta."""
+    ids = sorted({int(i) for i in (ids or []) if i})
+    if not ids or not _gc_ok():
+        return {}
+    try:
+        filas = mysql_fetchall(
+            "SELECT entidad_id, accion, detalle, usuario, creado_en FROM mant_gestion_actividad WHERE entidad=%s AND entidad_id IN ("
+            + ",".join(["%s"] * len(ids)) + ") ORDER BY id DESC LIMIT 2000", (entidad, *ids)) or []
+    except Exception as e:
+        print(f"[gc] actividad de {entidad}: {type(e).__name__}", flush=True)
+        return {}
+    out = {}
+    for r in filas:
+        lst = out.setdefault(int(r["entidad_id"]), [])
+        if len(lst) < por_item:
+            a = r.get("accion") or ""
+            lst.append({"accion": a, "accion_txt": _gc.ACCIONES_TXT.get(a, a), "color": _gc.ACCIONES_COLOR.get(a, "gris"),
+                        "detalle": r.get("detalle") or "", "usuario": r.get("usuario") or "", "cuando": _hall_cuando(r.get("creado_en"))})
+    return out
+
+
+def _gc_extra_set(entidad, eid, **campos):
+    """Escribe (o crea) la fila extra de un hallazgo/inquietud. Las columnas vienen del código, nunca del navegador."""
+    permitidas = {"ticket_id", "repuesto_lote_id", "repuesto_sol_ids", "repuesto_ticket", "repuesto_por", "valor_repuestos",
+                  "valor_servicio", "valor_nota", "valorizado_por", "editado_por"}
+    cols = [c for c in campos if c in permitidas]
+    ahora_cols = []
+    if "repuesto_lote_id" in campos:
+        ahora_cols.append("repuesto_en")
+    if "valorizado_por" in campos:
+        ahora_cols.append("valorizado_en")
+    if "editado_por" in campos:
+        ahora_cols.append("editado_en")
+    if not cols:
+        return False
+    sets = ", ".join(f"{c}=VALUES({c})" for c in cols) + "".join(f", {c}=NOW()" for c in ahora_cols)
+    mysql_execute(
+        "INSERT INTO mant_gestion_extra (entidad, entidad_id, " + ", ".join(cols + ahora_cols) + ") VALUES (%s,%s,"
+        + ",".join(["%s"] * len(cols) + ["NOW()"] * len(ahora_cols)) + ") ON DUPLICATE KEY UPDATE " + sets,
+        (entidad, int(eid), *[campos[c] for c in cols]))
+    return True
+
+
+def _gc_cliente_de_ot(vid, v=None):
+    try:
+        v = v or mysql_fetchone("SELECT cliente_id FROM mant_visitas WHERE id=%s", (int(vid),)) or {}
+        if not v.get("cliente_id"):
+            return None
+        c = mysql_fetchone("SELECT id, razon_social FROM mant_clientes WHERE id=%s", (int(v["cliente_id"]),)) or {}
+        return {"id": int(c["id"]), "nombre": c.get("razon_social") or ""} if c.get("id") else None
+    except Exception:
+        return None
+
+
+def _gc_url_repuesto(origen, cliente, maquina_id, motivo):
+    """El enlace a «Solicitar repuesto» (Repuestos → Solicitudes) PRELLENADO: cliente, equipo y motivo; la persona elige los repuestos y
+    decide (REGLA #32). `rs_origen` deja el vínculo de vuelta al crear la solicitud."""
+    from urllib.parse import urlencode
+    q = {"rs_solicitar": "1", "rs_origen": origen, "rs_motivo": _gc.limpio(motivo, 280)}
+    if cliente:
+        q["rs_cliente"] = str(cliente["id"])
+        q["rs_cliente_nombre"] = cliente.get("nombre") or ""
+    if maquina_id:
+        q["rs_maquina"] = str(int(maquina_id))
+    return "/repuestos?" + urlencode(q) + "#solicitudes"
+
+
+def _gc_tickets_de(ids):
+    ids = sorted({int(i) for i in (ids or []) if i})
+    if not ids:
+        return {}
+    try:
+        return {int(r["id"]): r.get("numero_ticket") or f"Ticket #{int(r['id'])}" for r in (mysql_fetchall(
+            "SELECT id, numero_ticket FROM tk_tickets WHERE id IN (" + ",".join(["%s"] * len(ids)) + ")", tuple(ids)) or [])}
+    except Exception:
+        return {}
+
+
+def _gc_enriquecer_hallazgos(vid, v, items):
+    """Suma a cada hallazgo de la tarjeta lo de la gestión circular: valorización, ticket, solicitud de repuesto, recorrido con semáforo,
+    registro de actividad y los permisos de editar/borrar. Solo gestión (el contexto ya no viaja a un técnico). Best-effort."""
+    if not items or not _gc_ok():
+        return items
+    ids = [i["id"] for i in items]
+    extra = _gc_extra_de(_gc.ENTIDAD_HALLAZGO, ids)
+    act = _gc_actividad_de(_gc.ENTIDAD_HALLAZGO, ids)
+    tks = _gc_tickets_de([e.get("ticket_id") for e in extra.values()])
+    cliente = _gc_cliente_de_ot(vid, v)
+    es_sa = _es_superadmin_actual()
+    for i in items:
+        e = extra.get(i["id"]) or {}
+        val = _gc.valor_vista(dict(e, valorizado_cuando=_hall_cuando(e.get("valorizado_en")))) if e else None
+        tk = ({"id": int(e["ticket_id"]), "numero": tks.get(int(e["ticket_id"])) or f"Ticket #{int(e['ticket_id'])}",
+               "url": f"/tickets/{int(e['ticket_id'])}"} if e.get("ticket_id") else None)
+        rp = ({"numero": ("Ticket de compra " + e["repuesto_ticket"]) if e.get("repuesto_ticket") else "Solicitud de repuesto",
+               "url": "/repuestos#solicitudes", "por": e.get("repuesto_por") or "", "cuando": _hall_cuando(e.get("repuesto_en"))}
+              if e.get("repuesto_lote_id") else None)
+        seg = i.get("seguimiento")
+        i["valor"] = val
+        i["ticket"] = tk
+        i["repuesto_sol"] = rp
+        i["actividad"] = act.get(i["id"], [])
+        i["editado_por"] = e.get("editado_por") or ""
+        i["editado_cuando"] = _hall_cuando(e.get("editado_en"))
+        i["recorrido"] = _gc.recorrido(i["estado_ef"], tk, rp, {"numero": seg["numero_ot"]} if seg else None, val,
+                                       i.get("tomado_por") if i["estado_ef"] == _oh.EST_TOMADO else "")
+        vivo = not i.get("retirado")
+        i["puede_editar"] = vivo
+        i["puede_valorizar"] = vivo
+        i["puede_ticket"] = vivo and not tk and i["estado_ef"] != _oh.EST_DESCARTADO
+        i["puede_repuesto"] = vivo and i["estado_ef"] != _oh.EST_DESCARTADO
+        i["puede_borrar"] = es_sa
+        i["url_repuesto"] = _gc_url_repuesto(_gc.origen_ref(_gc.ENTIDAD_HALLAZGO, i["id"]), cliente, i.get("maquina_id"),
+                                             f"Hallazgo de la OT {(v or {}).get('numero_ot') or ''}: {i.get('titulo') or ''}")
+    return items
+
+
+def _gc_vincular_repuesto(origen, lote_id, sol_ids, numero_ticket):
+    """Al crear una solicitud de repuesto desde un hallazgo o una inquietud, deja el vínculo de vuelta y una línea en su actividad."""
+    ent, eid = _gc.leer_origen_ref(origen)
+    if not ent or not _gc_ok():
+        return
+    try:
+        _gc_extra_set(ent, eid, repuesto_lote_id=str(lote_id)[:40], repuesto_sol_ids=",".join(str(int(s)) for s in (sol_ids or []))[:400],
+                      repuesto_ticket=(numero_ticket or None), repuesto_por=_hall_quien())
+        det = f"{len(sol_ids or [])} solicitud(es)" + (f" · ticket de compra {numero_ticket}" if numero_ticket else "")
+        if ent == _gc.ENTIDAD_HALLAZGO:
+            _gc_act(ent, eid, "repuesto", det)
+            h = mysql_fetchone("SELECT visita_id, titulo FROM mant_ot_hallazgos WHERE id=%s", (int(eid),)) or {}
+            if h.get("visita_id"):
+                _mant_log("visita", h["visita_id"], "hallazgo_repuesto", f"{_oh.limpio(h.get('titulo'), 300)} · {det} · {_hall_quien()}"[:900])
+        else:
+            _inq_log(eid, "repuesto_solicitado", det + f" · {_hall_quien()}")
+    except Exception as e:
+        print(f"[gc] vincular repuesto {origen}: {type(e).__name__}: {e}", flush=True)
+
+
+def _gc_hallazgo_previo(vid, hid):
+    """La fila del hallazgo para editar/valorizar/ticket/borrar. → (fila, None) o (None, respuesta_de_error)."""
+    if not _hall_ok() or not _gc_ok():
+        return None, _ot2_err("Esta función no está disponible en este momento. Intenta de nuevo en un minuto.", "TABLA_NO_DISPONIBLE", http=503)
+    f = _hall_fila_de(vid, hid)
+    if not f:
+        return None, _ot2_err("No encontramos ese hallazgo.", "HALLAZGO_NO_EXISTE", http=404)
+    return f, None
+
+
+@app.route("/ot/api/<int:vid>/hallazgos/<int:hid>/editar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot_api_hallazgo_editar(vid, hid):
+    """Editar título, detalle y gravedad, con MOTIVO. No toca la respuesta del técnico (la OT es evidencia); corrige cómo se lee el hallazgo.
+    Queda en su registro de actividad y en la bitácora de la OT, con lo de antes y lo de después."""
+    f, err = _gc_hallazgo_previo(vid, hid)
+    if err:
+        return err
+    if f.get("retirado_en"):
+        return _ot2_err("El técnico retiró este hallazgo: ya no se edita.", "HALLAZGO_NO_DISPONIBLE", http=409)
+    cambios, motivo, e_val = _gc.validar_edicion(request.get_json(silent=True) or {}, f)
+    if e_val:
+        return _ot2_err(e_val, "EDICION_INVALIDA")
+    sets = ", ".join(f"{c}=%s" for c in cambios)
+    n = mysql_execute_returning_rowcount(
+        f"UPDATE mant_ot_hallazgos SET {sets} WHERE id=%s AND visita_id=%s AND actualizado_en <=> %s",
+        (*cambios.values(), int(hid), int(vid), f.get("actualizado_en")))
+    if not n:
+        return _ot2_err("Alguien más cambió este hallazgo mientras lo editabas. Recarga la página.", "HALLAZGO_CAMBIO", http=409)
+    nombres = {k: _oh.sev_info(k)["texto"] for k in _gc.SEVERIDADES_EDITABLES}
+    res = _gc.resumen_cambios(cambios, f, nombres)
+    quien = _hall_quien()
+    _gc_extra_set(_gc.ENTIDAD_HALLAZGO, hid, editado_por=quien)
+    _gc_act(_gc.ENTIDAD_HALLAZGO, hid, "editado", f"{res} · motivo: {motivo}")
+    _mant_log("visita", vid, "hallazgo_editado", f"{_oh.limpio(f.get('titulo'), 200)} · {res} · motivo: {motivo} · {quien}"[:900])
+    return jsonify({"ok": True, "mensaje": "Hallazgo actualizado."})
+
+
+@app.route("/ot/api/<int:vid>/hallazgos/<int:hid>/valorizar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot_api_hallazgo_valorizar(vid, hid):
+    """Cuánto se estima que cuesta resolverlo (repuestos + servicio) y una nota. Plata: solo gestión (REGLAS #19/#26)."""
+    f, err = _gc_hallazgo_previo(vid, hid)
+    if err:
+        return err
+    val, e_val = _gc.validar_valor(request.get_json(silent=True) or {})
+    if e_val:
+        return _ot2_err(e_val, "VALOR_INVALIDO")
+    quien = _hall_quien()
+    _gc_extra_set(_gc.ENTIDAD_HALLAZGO, hid, valor_repuestos=val["repuestos"], valor_servicio=val["servicio"],
+                  valor_nota=val["nota"], valorizado_por=quien)
+    tot = _gc.pesos(_gc.total_valor(val["repuestos"], val["servicio"]))
+    det = (f"Repuestos {_gc.pesos(val['repuestos']) or '—'} + servicio {_gc.pesos(val['servicio']) or '—'} = {tot}"
+           + (f" · {val['nota']}" if val["nota"] else ""))
+    _gc_act(_gc.ENTIDAD_HALLAZGO, hid, "valorizado", det)
+    return jsonify({"ok": True, "total": tot})
+
+
+def _gc_ticket_hallazgo(f, v, quien):
+    """Un ticket INTERNO para el hallazgo (sin correo al cliente: REGLA #22), con el equipo y una nota de dónde viene. Idempotente por
+    hallazgo (GET_LOCK + mant_gestion_extra.ticket_id). → (ticket_id, numero) o (None, None)."""
+    from tickets_module import _chile_now_year as _tk_year
+    hid = int(f["id"])
+    lock = f"hall_ticket_{hid}"
+    conn = None
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute("SELECT GET_LOCK(%s, 5) AS l", (lock,))
+            cur.execute("SELECT ticket_id FROM mant_gestion_extra WHERE entidad='hallazgo' AND entidad_id=%s", (hid,))
+            ya = cur.fetchone() or {}
+            if ya.get("ticket_id"):
+                cur.execute("SELECT RELEASE_LOCK(%s) AS r", (lock,))
+                conn.commit()
+                t = mysql_fetchone("SELECT id, numero_ticket FROM tk_tickets WHERE id=%s", (int(ya["ticket_id"]),)) or {}
+                return int(ya["ticket_id"]), t.get("numero_ticket")
+            c = {}
+            if v.get("cliente_id"):
+                cur.execute("SELECT razon_social, rut, contacto_email, contacto_tel, direccion, comuna FROM mant_clientes WHERE id=%s",
+                            (int(v["cliente_id"]),))
+                c = cur.fetchone() or {}
+            num_ot = v.get("numero_ot") or f"V-{int(v['id']):05d}"
+            equipo = f.get("equipo_nombre") or "equipo sin identificar"
+            titulo_t = f"Hallazgo de {num_ot} · {_oh.sev_info(f.get('severidad'))['texto']} · {equipo}"
+            desc = (f"El técnico reportó en {num_ot}: {f.get('titulo') or ''}"
+                    + (f"\n{f.get('detalle')}" if f.get("detalle") else "")
+                    + f"\n\nLevantado desde los hallazgos de la OT por {quien}.")
+            cur.execute(
+                "INSERT INTO tk_tickets (origen, estado, tipo, prioridad, titulo, descripcion, rut, empresa, email, phone, direccion, "
+                " comuna_nombre, created_by, asignado_a) VALUES ('backoffice','open','tech_evaluation',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                ("alta" if _oh.sev_info(f.get("severidad"))["prioridad"] == "alta" else "media",
+                 titulo_t[:300], desc, (c.get("rut") or "")[:12] or None, (c.get("razon_social") or "")[:150] or None,
+                 (c.get("contacto_email") or "")[:150] or None, (c.get("contacto_tel") or "")[:20] or None,
+                 (c.get("direccion") or "")[:255] or None, (c.get("comuna") or "")[:120] or None, quien, quien))
+            tid = int(cur.lastrowid)
+            cur.execute("UPDATE tk_tickets SET numero_ticket=CONCAT('TK-', %s, '-', LPAD(id,5,'0')) WHERE id=%s", (_tk_year(), tid))
+            m = None
+            if f.get("maquina_id"):
+                cur.execute("SELECT nombre, sku, serie FROM mant_maquinas WHERE id=%s", (int(f["maquina_id"]),))
+                m = cur.fetchone()
+            cur.execute("INSERT INTO tk_ticket_equipos (ticket_id, nombre, sku, serie, maquina_id, notas) VALUES (%s,%s,%s,%s,%s,%s)",
+                        (tid, ((m or {}).get("nombre") or equipo)[:300], (m or {}).get("sku"), (m or {}).get("serie"),
+                         _oh.entero(f.get("maquina_id")), f"Hallazgo de {num_ot}"))
+            cur.execute("INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno) VALUES (%s,'otro',%s,%s,%s,1)",
+                        (tid, f"Viene de un hallazgo de {num_ot}: {f.get('titulo') or ''}",
+                         json.dumps({"hallazgo_id": hid, "visita_id": int(v["id"])}), quien))
+            cur.execute("INSERT INTO mant_gestion_extra (entidad, entidad_id, ticket_id) VALUES ('hallazgo',%s,%s) "
+                        "ON DUPLICATE KEY UPDATE ticket_id=VALUES(ticket_id)", (hid, tid))
+            cur.execute("SELECT RELEASE_LOCK(%s) AS r", (lock,))
+        conn.commit()
+        return tid, f"TK-{_tk_year()}-{tid:05d}"
+    except Exception as e:
+        print(f"[gc] ticket hallazgo {hid}: {type(e).__name__}: {e}", flush=True)
+        try:
+            if conn:
+                conn.rollback()
+        except Exception:
+            pass
+        return None, None
+
+
+@app.route("/ot/api/<int:vid>/hallazgos/<int:hid>/ticket", methods=["POST"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot_api_hallazgo_ticket(vid, hid):
+    """«Levantar ticket»: SUGERIDO, nunca automático (exige `confirmar`; la pantalla pregunta antes). Interno: no le escribe al cliente."""
+    f, err = _gc_hallazgo_previo(vid, hid)
+    if err:
+        return err
+    if f.get("retirado_en") or f.get("estado") == _oh.EST_DESCARTADO:
+        return _ot2_err("Este hallazgo está retirado o descartado: no se le levanta un ticket.", "HALLAZGO_NO_DISPONIBLE", http=409)
+    if not (request.get_json(silent=True) or {}).get("confirmar"):
+        return _ot2_err("Confirma que quieres levantar el ticket.", "FALTA_CONFIRMAR")
+    v = dict(mysql_fetchone("SELECT * FROM mant_visitas WHERE id=%s", (int(vid),)) or {})
+    quien = _hall_quien()
+    tid, numero = _gc_ticket_hallazgo(f, v, quien)
+    if not tid:
+        return _ot2_err("No pudimos crear el ticket ahora. Intenta de nuevo.", "ERROR_INTERNO", http=500)
+    _gc_act(_gc.ENTIDAD_HALLAZGO, hid, "ticket", f"Ticket {numero} (sin correo al cliente)")
+    _mant_log("visita", vid, "hallazgo_ticket", f"{_oh.limpio(f.get('titulo'), 300)} · ticket {numero} · {quien}"[:900])
+    if f.get("estado") == _oh.EST_ABIERTO and _hall_uid():
+        mysql_execute_returning_rowcount(
+            "UPDATE mant_ot_hallazgos SET estado='tomado', tomado_por_id=%s, tomado_por=%s, tomado_en=NOW() "
+            " WHERE id=%s AND visita_id=%s AND estado='abierto' AND retirado_en IS NULL", (_hall_uid(), quien, int(hid), int(vid)))
+    return jsonify({"ok": True, "ticket_id": tid, "numero": numero, "url": f"/tickets/{tid}"})
+
+
+@app.route("/ot/api/<int:vid>/hallazgos/<int:hid>/borrar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot_api_hallazgo_borrar(vid, hid):
+    """Borrar DE VERDAD un hallazgo (Daniel: «borrar algunos hallazgos que hemos hecho de prueba… solamente para el superadministrador»).
+    Exige escribir BORRAR y un motivo. ANTES de borrar se guarda la foto completa de la fila (REGLA #5) en mant_ot_hallazgo_borrados, que
+    además es la «lápida»: el mismo hallazgo no vuelve a nacer solo. Un hallazgo con OT de seguimiento viva no se borra (la OT lo cita)."""
+    if not _es_superadmin_actual():
+        return _ot2_err("Solo el superadministrador puede borrar un hallazgo.", "SOLO_SUPERADMIN", http=403)
+    motivo, e_val = _gc.validar_borrado(request.get_json(silent=True) or {}, True)
+    if e_val:
+        return _ot2_err(e_val, "BORRADO_INVALIDO")
+    f, err = _gc_hallazgo_previo(vid, hid)
+    if err:
+        return err
+    _est, caido = _oh.estado_efectivo(f, f.get("seg_numero"), f.get("seg_estado"))
+    if f.get("ot_seguimiento_id") and not caido:
+        return _ot2_err("Este hallazgo tiene una OT de seguimiento (%s): no se borra. Descártalo si ya no aplica." % (f.get("seg_numero") or ""),
+                        "HALLAZGO_CON_OT", http=409)
+    quien = _hall_quien()
+    snap = {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in f.items()}
+    try:
+        snap["gestion"] = dict(_gc_extra_de(_gc.ENTIDAD_HALLAZGO, [hid]).get(int(hid)) or {})   # json.dumps(default=str) lo serializa
+    except Exception:
+        pass
+    conn = None
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mant_ot_hallazgo_borrados (hallazgo_id, visita_id, origen, referencia, titulo, motivo, snapshot_json, borrado_por) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE hallazgo_id=VALUES(hallazgo_id), titulo=VALUES(titulo), "
+                " motivo=VALUES(motivo), snapshot_json=VALUES(snapshot_json), borrado_por=VALUES(borrado_por), borrado_en=NOW()",
+                (int(hid), int(vid), f["origen"], f["referencia"], _oh.limpio(f.get("titulo"), 300), motivo,
+                 json.dumps(snap, ensure_ascii=False, default=str), quien))
+            cur.execute("DELETE FROM mant_ot_hallazgos WHERE id=%s AND visita_id=%s", (int(hid), int(vid)))
+            borrados = cur.rowcount
+            cur.execute("DELETE FROM mant_gestion_extra WHERE entidad='hallazgo' AND entidad_id=%s", (int(hid),))
+        conn.commit()
+    except Exception as e:
+        print(f"[gc] borrar hallazgo {hid}: {type(e).__name__}: {e}", flush=True)
+        try:
+            if conn:
+                conn.rollback()
+        except Exception:
+            pass
+        return _ot2_err("No se pudo borrar. Intenta de nuevo.", "ERROR_INTERNO", http=500)
+    if not borrados:
+        return _ot2_err("Ese hallazgo ya no estaba.", "HALLAZGO_NO_EXISTE", http=404)
+    _mant_log("visita", vid, "hallazgo_borrado",
+              f"BORRADO por {quien} (superadmin): {_oh.limpio(f.get('titulo'), 300)} · motivo: {motivo} · la fila completa quedó guardada"[:900])
+    try:
+        _audit("hallazgo_borrado", target_type="mant_ot_hallazgos", target_id=str(hid),
+               details={"visita_id": int(vid), "titulo": f.get("titulo"), "motivo": motivo, "por": quien})
+    except Exception:
+        pass
+    return jsonify({"ok": True, "mensaje": "Hallazgo borrado. Quedó guardada una copia completa en el registro."})
 
 
 @app.route("/ot/api/<int:vid>/hallazgos/prellenado", methods=["GET"])
@@ -178601,6 +179184,12 @@ try:
         _ensure_ot_hallazgos()
 except Exception as _ensure_ot_hall_err:
     print(f"[ILUS][WARN] _ensure_ot_hallazgos: {_ensure_ot_hall_err}", flush=True)
+# 🔁 2026-10-26: gestión circular de hallazgos e inquietudes (tres CREATE TABLE IF NOT EXISTS, REGLA #18). Dormida hasta que existan.
+try:
+    with app.app_context():
+        _ensure_gestion_circular()
+except Exception as _ensure_gc_err:
+    print(f"[ILUS][WARN] _ensure_gestion_circular: {_ensure_gc_err}", flush=True)
 # 🗣️ 2026-10-26: tablas de «Inquietudes de clientes» (dos sentencias CREATE TABLE IF NOT EXISTS, REGLA #18). Dormidas hasta que existan.
 try:
     with app.app_context():

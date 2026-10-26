@@ -1552,7 +1552,7 @@
   </div>
   {% for m in _con_prob | sort(attribute='problemas_abiertos', reverse=True) %}
   {% set _res = (m.problemas | length) - m.problemas_abiertos %}
-  <details class="pb-eq"{% if m.problemas_abiertos %} open{% endif %}>
+  <details class="pb-eq" open>{#- Daniel 26-oct: siempre abierto, «ver el bosque» #}
     <summary>
       <b>{{ m.nombre or ('Equipo #' ~ m.id) }}</b>
       {% if m.serie %}<span class="pb-sn">S/N {{ m.serie }}</span>{% elif m.sku %}<span class="pb-sn">SKU {{ m.sku }}</span>{% endif %}

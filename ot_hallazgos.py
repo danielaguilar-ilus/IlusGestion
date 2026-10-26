@@ -374,13 +374,9 @@ def grupo_abierto(items, n_grupos=2):
     """¿El grupo de un equipo se muestra ABIERTO? (H-20) Sí si la OT tiene un solo equipo (no hay nada que plegar) o si el grupo tiene algo de
     gravedad alta (falla, fuera de servicio, baja o riesgo para alguien) que todavía admite una acción. El resto queda plegado, con su
     contador a la vista. `items`: los hallazgos del grupo, con `estado_ef` (o `estado`), `severidad` y `riesgo`."""
-    if n_grupos <= 1:
-        return True
-    for it in (items or []):
-        pendiente = str(it.get("estado_ef") or it.get("estado") or "") in ESTADOS_GESTIONABLES
-        if pendiente and (it.get("riesgo") or sev_info(it.get("severidad"))["prioridad"] == "alta"):
-            return True
-    return False
+    # 2026-10-26, Daniel: «no me gustan que las tarjetas se contraigan, me gusta ver el bosque siempre… si falta algo o ya está
+    # gestionado déjalo abierto». Todo grupo nace ABIERTO; la persona puede plegarlo a mano si quiere, el sistema nunca.
+    return True
 
 
 def resumen_repuestos(lineas, maximo=4):

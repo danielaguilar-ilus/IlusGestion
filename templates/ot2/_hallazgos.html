@@ -66,13 +66,54 @@
     <div class="hz-desc"><i class="bi bi-slash-circle" aria-hidden="true"></i>
       <span>Lo descartó <b>{{ i.descartado_por }}</b>{% if i.descartado_cuando %} el {{ i.descartado_cuando }}{% endif %}. Motivo: {{ i.descarte_motivo }}</span></div>
     {% endif %}
-    {% if i.puede_tomar or i.puede_levantar or i.puede_descartar or i.puede_reabrir %}
+    {#- 🔁 2026-10-26 (gestión circular, Daniel: «gestionando de manera circular… además de su valorización»): el recorrido de cada hallazgo
+        con su semáforo (atención → valorización → ticket → repuesto → OT de seguimiento), siempre a la vista (REGLA #15: nada plegado). -#}
+    {% if i.recorrido %}
+    <ol class="hz-rec" aria-label="Recorrido de la gestión">
+      {% for p in i.recorrido %}
+      <li class="hz-rec-p {{ p.color }}"><span class="hz-rec-dot" aria-hidden="true">{% if p.ok %}<i class="bi bi-check-lg"></i>{% else %}{{ loop.index }}{% endif %}</span>
+        <span class="hz-rec-tx"><b>{{ p.titulo }}</b><small>{{ p.txt }}</small></span></li>
+      {% endfor %}
+    </ol>
+    {% endif %}
+    {% if i.valor %}
+    <div class="hz-valor"><i class="bi bi-cash-coin" aria-hidden="true"></i>
+      <span><b>Valorización: {{ i.valor.total }}</b>
+        <small>{% if i.valor.repuestos %}Repuestos {{ i.valor.repuestos }}{% endif %}{% if i.valor.repuestos and i.valor.servicio %} · {% endif %}{% if i.valor.servicio %}Servicio {{ i.valor.servicio }}{% endif %}
+          {% if i.valor.nota %} · {{ i.valor.nota }}{% endif %} · {{ i.valor.por }}{% if i.valor.cuando %}, {{ i.valor.cuando }}{% endif %}</small></span></div>
+    {% endif %}
+    {% if i.ticket or i.repuesto_sol %}
+    <div class="hz-vinc">
+      {% if i.ticket %}<a class="hz-vinc-a" href="{{ i.ticket.url }}"><i class="bi bi-ticket-perforated-fill" aria-hidden="true"></i> {{ i.ticket.numero }}</a>{% endif %}
+      {% if i.repuesto_sol %}<a class="hz-vinc-a" href="{{ i.repuesto_sol.url }}"><i class="bi bi-gear-wide-connected" aria-hidden="true"></i> {{ i.repuesto_sol.numero }}{% if i.repuesto_sol.cuando %} · {{ i.repuesto_sol.cuando }}{% endif %}</a>{% endif %}
+    </div>
+    {% endif %}
+    {% if i.puede_tomar or i.puede_levantar or i.puede_descartar or i.puede_reabrir or i.puede_editar or i.puede_borrar %}
     <div class="hz-acciones">
       {#- El texto de cada botón va en un <span class="hz-btn-tx">: así el JS lo cambia a «Guardando…» sin tocar el icono (H-27). -#}
       {% if i.puede_tomar %}<button type="button" class="hz-btn" data-hz-tomar="{{ i.id }}"><i class="bi bi-hand-index-thumb-fill" aria-hidden="true"></i> <span class="hz-btn-tx">Tomar el caso</span></button>{% endif %}
       {% if i.puede_levantar %}<button type="button" class="hz-btn pri" data-hz-levantar="{{ i.id }}"><i class="bi bi-diagram-3-fill" aria-hidden="true"></i> <span class="hz-btn-tx">Levantar OT de seguimiento</span></button>{% endif %}
       {% if i.puede_descartar %}<button type="button" class="hz-btn sec" data-hz-descartar="{{ i.id }}" data-hz-titulo="{{ i.titulo }}"><i class="bi bi-slash-circle" aria-hidden="true"></i> <span class="hz-btn-tx">Descartar</span></button>{% endif %}
       {% if i.puede_reabrir %}<button type="button" class="hz-btn sec" data-hz-reabrir="{{ i.id }}"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i> <span class="hz-btn-tx">Reabrir</span></button>{% endif %}
+      {#- 🔁 26-oct: la gestión circular (editar, valorizar, ticket, repuesto) y, solo para el superadministrador, borrar. -#}
+      {% if i.puede_ticket %}<button type="button" class="hz-btn sec" data-hz-ticket="{{ i.id }}" data-hz-titulo="{{ i.titulo }}"><i class="bi bi-ticket-perforated" aria-hidden="true"></i> <span class="hz-btn-tx">Levantar ticket</span></button>{% endif %}
+      {% if i.puede_repuesto %}<a class="hz-btn sec" href="{{ i.url_repuesto }}"><i class="bi bi-gear-wide-connected" aria-hidden="true"></i> <span class="hz-btn-tx">Solicitar repuesto</span></a>{% endif %}
+      {% if i.puede_valorizar %}<button type="button" class="hz-btn sec" data-hz-valorizar="{{ i.id }}" data-hz-titulo="{{ i.titulo }}"
+        data-hz-rep="{{ i.valor.rep_n if i.valor and i.valor.rep_n is not none else '' }}" data-hz-srv="{{ i.valor.srv_n if i.valor and i.valor.srv_n is not none else '' }}"
+        data-hz-nota="{{ i.valor.nota if i.valor else '' }}"><i class="bi bi-cash-coin" aria-hidden="true"></i> <span class="hz-btn-tx">{{ 'Cambiar valorización' if i.valor else 'Valorizar' }}</span></button>{% endif %}
+      {% if i.puede_editar %}<button type="button" class="hz-btn sec" data-hz-editar="{{ i.id }}" data-hz-ed='{{ {"titulo": i.titulo, "detalle": i.detalle, "severidad": i.severidad} | tojson | forceescape }}'><i class="bi bi-pencil-square" aria-hidden="true"></i> <span class="hz-btn-tx">Editar</span></button>{% endif %}
+      {% if i.puede_borrar %}<button type="button" class="hz-btn peligro" data-hz-borrar="{{ i.id }}" data-hz-titulo="{{ i.titulo }}"><i class="bi bi-trash3" aria-hidden="true"></i> <span class="hz-btn-tx">Borrar</span></button>{% endif %}
+    </div>
+    {% endif %}
+    {% if i.actividad %}
+    <div class="hz-act" aria-label="Registro de actividad del hallazgo">
+      <b class="hz-act-tit"><i class="bi bi-clock-history" aria-hidden="true"></i> Registro de actividad</b>
+      <ul>
+        {% for a in i.actividad %}
+        <li><span class="hz-act-dot {{ a.color }}" aria-hidden="true"></span><span><b>{{ a.accion_txt }}</b>{% if a.detalle %} · {{ a.detalle }}{% endif %}
+          <small>{{ a.usuario }}{% if a.cuando %} · {{ a.cuando }}{% endif %}</small></span></li>
+        {% endfor %}
+      </ul>
     </div>
     {% endif %}
   </div>
@@ -109,8 +150,9 @@
     <span class="hz-ic" aria-hidden="true"><i class="bi bi-clipboard2-pulse-fill"></i></span>
     <div class="hz-cab-tx">
       <h3 id="hzTitulo">Hallazgos de esta OT</h3>
-      <p>Lo que el técnico reportó en terreno y merece una acción. Aquí se toma el caso o se levanta una OT de seguimiento. Nada se borra y al
-        cliente no se le avisa nada.</p>
+      <p>Lo que el técnico reportó en terreno y merece una acción. Aquí se toma el caso, se valoriza, se levanta un ticket, se solicita el
+        repuesto o una OT de seguimiento. Al cliente no se le avisa nada{% if _h.es_superadmin %}; solo el superadministrador puede borrar
+        (queda una copia completa en el registro){% endif %}.</p>
     </div>
     <div class="hz-conteo" aria-label="Resumen de los hallazgos">
       {% if _h.n_abiertos %}<span class="hz-n ambar" title="Nadie los ha tomado todavía"><b>{{ _h.n_abiertos }}</b> sin gestionar</span>{% endif %}
@@ -120,6 +162,7 @@
       {% if _h.n_con_ot_cerrada %}<span class="hz-n verde"><b>{{ _h.n_con_ot_cerrada }}</b> con OT de seguimiento cerrada</span>{% endif %}
       {% if _h.n_descartados %}<span class="hz-n gris"><b>{{ _h.n_descartados }}</b> descartado{{ 's' if _h.n_descartados != 1 }}</span>{% endif %}
       {% if _h.n_sin_foto %}<span class="hz-n ambar" title="La foto es la evidencia"><i class="bi bi-camera" aria-hidden="true"></i> <b>{{ _h.n_sin_foto }}</b> sin foto</span>{% endif %}
+      {% if _h.valor_total %}<span class="hz-n verde" title="Suma de lo valorizado"><i class="bi bi-cash-coin" aria-hidden="true"></i> <b>{{ _h.valor_total }}</b> valorizado ({{ _h.n_valorizados }})</span>{% endif %}
     </div>
   </header>
   {% if _h.cerrada %}
@@ -168,7 +211,7 @@
     {% endfor %}
   </ul>
   {% if _h.retirados %}
-  <details class="hz-retirados">
+  <details class="hz-retirados" open>
     <summary><i class="bi bi-arrow-return-left" aria-hidden="true"></i> Retirados por el técnico ({{ _h.retirados | length }})</summary>
     <p>El técnico volvió su respuesta a «Aprobado» o se revirtió la acción. Quedan escritos como evidencia; no cuentan como hallazgos.</p>
     <ul>
@@ -182,5 +225,6 @@
 </section>
 <script>window.OTD_HZ_CFG = { vid: {{ _h.vid }}, numero: {{ _h.numero_ot | tojson }} };</script>
 <script defer src="{{ url_for('static', filename='ot_hallazgos.js') }}"></script>
+<script defer src="{{ url_for('static', filename='ot_hallazgos_gestion.js') }}"></script>
 {% endif %}
 {% endif %}

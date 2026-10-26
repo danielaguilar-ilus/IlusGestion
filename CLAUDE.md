@@ -1056,6 +1056,11 @@ Incidente real: el asistente sumaba por detrás «Revisión — Registro por equ
 - **`_tr_notificar_cliente` no se toca** (otras pruebas la comparan con `origin/main`): sus seis estados se resuelven por su evento `tracking_<estado>` con `comm_correos_registro.inferir()`.
 - **Avisos que envía un TERCERO (FedEx, SimpliRoute; `tipo="externo"` en el registro):** ILUS no manda ese correo: le **entrega** al tercero el correo del destinatario (en la guía, el retiro, el Excel de carga o la visita) y el tercero avisa. El interruptor decide si se lo entrega; la guía, el retiro o la visita salen igual, sin ese correo. **Obedecen al interruptor general y a su propio interruptor** (decisión de Daniel, 20-oct-2026), **no a la llave de paso del módulo**. Se consultan con `_correo_externo_bloqueo(clave)` / `_correo_externo_permitido(clave)` —siempre fail-open: un error al leer jamás impide crear una guía— y lo frenado queda en el Historial (`_correo_externo_frenado`). Un aviso nuevo de un tercero se suma al registro con `tipo="externo"` y se consulta justo donde ILUS arma lo que le manda; el gancho de SimpliRoute es `simpliroute_client.CONTACTO_EMAIL_PERMITIDO` (el módulo sigue puro). **Clickex no tiene interruptor a propósito:** su API exige el correo del destinatario para crear el envío (`clickex_client.build_shipment_payload`), así que quitárselo rompería el envío; si Daniel lo quiere, se decide aparte.
 - Solo superadmin. Un técnico nunca ve esta pantalla ni montos (REGLAS #19 y #26). Pruebas: `tests/test_comm_control_correos.py`.
+- **Correos que NACEN APAGADOS (Daniel 26-oct-2026: «agrégalos apagados para encenderlos desde el front»):** un aviso INTERNO nuevo se
+  registra con `nace_apagado=True`: sin fila en `comm_correo_control` NO sale (`comm_correos_registro.switch_de_fila`), la pantalla lo
+  muestra «Nace apagado: enciéndelo cuando quieras» (ficha «Nuevos: nacen apagados») y una persona lo enciende o apaga ahí. Solo para
+  avisos internos: a un cliente nada se enciende desde la pantalla (REGLA #22). Hoy: inquietud nueva / asignada / plazo vencido y hallazgos
+  nuevos / tomado (`_aviso_interno_correo`: copia por correo de la campana, sin montos, nunca a un técnico).
 
 ---
 
@@ -1130,6 +1135,16 @@ Incidente real: el asistente sumaba por detrás «Revisión — Registro por equ
 - **Panel de OT:** chip «Hallazgos abiertos: N» en la fila (tabla y Kanban, una consulta por lote) y filtro **«Con hallazgos sin gestionar»** (`hall=1`) en todas las vistas, los KPI, el paginado (REGLA #4.3) y el Reporte Excel. «Sin gestionar» tiene dos escrituras que deben decir lo mismo: `ot_hallazgos.sql_abierto` (SQL: panel, filtro y Excel) y `ot_hallazgos.estado_efectivo` (Python: la tarjeta y la franja del cierre); una prueba ejecuta el SQL de verdad y las compara en todas las combinaciones.
 - **Confidencialidad (REGLAS #19 y #26):** las 4 rutas de gestión llevan `@_mant_required @_no_tecnico @_ot_can_view` (no `_ot_can_configurar`: se niega a todos, incluido el superadmin, en una OT cerrada); la bitácora de hallazgos (`hallazgo_*`, `creada_como_seguimiento`) no está en la lista blanca del técnico; nada de plata, documentos ni proveedores en campana, tarjeta ni prellenado (los repuestos van con nombre y cantidad solamente).
 - **Datos:** la tabla `mant_ot_hallazgos` (clave única `visita_id + origen + referencia`, sin llaves foráneas) la crea `_ensure_ot_hallazgos` al arrancar —también con `ILUS_SKIP_MIGRATIONS=1`— con **una sola sentencia** `CREATE TABLE IF NOT EXISTS` (REGLA #18: barata si ya existe) y **sin ningún `ALTER` sobre `mant_visitas`** (el vínculo usa `ot_madre_id` / `ot_relacion`, que ya existían). Mientras la tabla no exista todo queda dormido (`_hall_ok`) y el resto de la app funciona igual. Las OT anteriores **NO se rellenan**: solo cuentan los hallazgos que nacen desde ahora.
+- **Gestión CIRCULAR (Daniel 26-oct-2026: «un CRUD en los hallazgos… editarla, crear un repuesto, solicitarlo, generar una OT, generar
+  un ticket… gestionando de manera circular… además de su valorización»).** Cada hallazgo muestra su recorrido con semáforo (atención →
+  valorización → ticket → repuesto → OT de seguimiento) y su registro de actividad, SIEMPRE abiertos («me gusta ver el bosque siempre»: el
+  sistema nunca pliega una tarjeta). Acciones: **Editar** (título, detalle, gravedad, con motivo; la respuesta del técnico no se toca),
+  **Valorizar** (repuestos + servicio en pesos: plata, solo gestión), **Levantar ticket** (sugerido, pregunta antes, sin correo al cliente),
+  **Solicitar repuesto** (abre Repuestos PRELLENADO con cliente, equipo y motivo; `origen_ref` deja el vínculo de vuelta) y **Borrar**
+  (SOLO superadmin, escribiendo BORRAR + motivo; ANTES de borrar se guarda la fila completa en `mant_ot_hallazgo_borrados`, que es también
+  la «lápida»: el mismo hallazgo no vuelve a nacer solo). La inquietud de cliente tiene la misma valorización y el mismo «Solicitar
+  repuesto». Reglas puras en `gestion_circular.py`; tablas `mant_gestion_extra`, `mant_gestion_actividad`, `mant_ot_hallazgo_borrados`
+  (`_ensure_gestion_circular`, solo CREATE TABLE IF NOT EXISTS). Pruebas: `tests/test_gestion_circular.py`.
 - Pruebas: `tests/test_ot_hallazgos.py` (módulo puro, base de mentira, SQL del panel ejecutado de verdad en SQLite, plantillas renderizadas y JS ejecutado con Node). Esto se prueba SIEMPRE con datos de mentira: hay clientes reales de por medio (REGLA #22: cero correos o cambios visibles para el cliente al probar).
 
 ---
@@ -1292,5 +1307,5 @@ Incidente real: el asistente sumaba por detrás «Revisión — Registro por equ
 
 ---
 
-_Última actualización: 2026-10-25_
+_Última actualización: 2026-10-26_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

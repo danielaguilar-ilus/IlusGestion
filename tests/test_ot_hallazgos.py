@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import ot_eventos as EV  # noqa: E402
 import ot_hallazgos as H  # noqa: E402
+import gestion_circular as GC  # noqa: E402  (26-oct: gestión circular)
 import ot_producto_estado as PE  # noqa: E402
 from tests._fuente_app import RAIZ, decoradores, fuente_constante, texto  # noqa: E402
 from tests._fuente_app import fuente_funcion as _fuente_funcion  # noqa: E402
@@ -490,7 +491,7 @@ _INI_BLOQUE = APP.rfind("\n", 0, APP.index("HALLAZGOS DE LA OT (F1")) + 1       
 _FIN_BLOQUE = APP.index("\ndef _otrep_sistema_de_equipo(", _INI_BLOQUE)
 BLOQUE = APP[_INI_BLOQUE:_FIN_BLOQUE]
 FUNCIONES_BLOQUE = re.findall(r"^def (\w+)\(", BLOQUE, re.M)
-CONSTANTES_BLOQUE = ("_HALL_ESTADO", "_HALL_RUTAS", "_HALL_SQL_SOLTAR_SEG")
+CONSTANTES_BLOQUE = ("_HALL_ESTADO", "_HALL_RUTAS", "_HALL_SQL_SOLTAR_SEG", "_GC_ESTADO")   # 26-oct: + gestión circular
 _COMPILADO = {}
 
 
@@ -786,9 +787,16 @@ class Mundo:
             "_OT2_ESTADO_META": {"programada": ("Programada",), "en_curso": ("En ejecución",), "cerrada": ("Cerrada",), "cancelada": ("Cancelada",)},
         }
         amb.update(extra)
+        amb.setdefault("_gc", GC)
+        amb.setdefault("_aviso_interno_correo", lambda *a, **k: m.__dict__.setdefault("correos_internos", []).append((a, k)) or 0)
+        amb.setdefault("_es_superadmin_actual", lambda: bool(getattr(m, "superadmin", False)))
         amb = cargar(FUNCIONES_BLOQUE + ["_ot2_err", "_rol_familia"], CONSTANTES_BLOQUE, amb)
         amb["_HALL_ESTADO"]["ok"] = bool(ok)
         amb["_HALL_ESTADO"]["revisado_en"] = time.time()
+        # 26-oct: la gestión circular queda DORMIDA en estas pruebas (sus tablas no están en la base de mentira); sus pruebas
+        # propias viven en tests/test_gestion_circular.py.
+        amb["_GC_ESTADO"]["ok"] = bool(extra.get("gc_ok", False))
+        amb["_GC_ESTADO"]["revisado_en"] = time.time()
         return amb
 
 
@@ -3214,15 +3222,12 @@ class TestFase1Puro(unittest.TestCase):
             self.assertNotIn("_", f(razon)[0], razon)
             self.assertIn(razon, list(H.SALTO_NO_ESTA) + list(H.SALTO_MOTIVO_CORTO), razon)
 
-    def test_h20_un_grupo_se_abre_si_tiene_algo_grave_por_gestionar_o_es_el_unico(self):
+    def test_h20_todo_grupo_nace_abierto_daniel_26oct(self):
+        # Daniel 26-oct: «me gusta ver el bosque siempre… si falta algo o ya está gestionado déjalo abierto».
         f = H.grupo_abierto
-        self.assertTrue(f([{"estado_ef": "abierto", "severidad": "falla"}], 3))
-        self.assertTrue(f([{"estado_ef": "tomado", "severidad": "baja"}], 3), "con el caso tomado todavía admite acciones")
-        self.assertTrue(f([{"estado_ef": "abierto", "severidad": "fuera_servicio"}], 3))
-        self.assertTrue(f([{"estado_ef": "abierto", "severidad": "alerta", "riesgo": True}], 3), "puede lastimar a alguien")
-        for plegado in ([{"estado_ef": "abierto", "severidad": "alerta"}], [{"estado_ef": "abierto", "severidad": "repuesto"}],
-                        [{"estado_ef": "resuelto", "severidad": "falla"}], [{"estado_ef": "descartado", "severidad": "baja"}], []):
-            self.assertFalse(f(plegado, 3), plegado)
+        for it in ([{"estado_ef": "abierto", "severidad": "falla"}], [{"estado_ef": "abierto", "severidad": "alerta"}],
+                   [{"estado_ef": "resuelto", "severidad": "falla"}], [{"estado_ef": "descartado", "severidad": "baja"}], []):
+            self.assertTrue(f(it, 3), it)
         self.assertTrue(f([{"estado_ef": "abierto", "severidad": "alerta"}], 1), "un solo equipo: no hay nada que plegar")
         self.assertTrue(f([], 1))
 
@@ -3275,8 +3280,8 @@ class TestFase1ConBase(unittest.TestCase):
         e = escena_bancos()
         c = e.ctx()
         self.assertEqual({g["key"]: g["abierto"] for g in c["grupos"]},
-                         {"e9": False, "e10": False, "e11": True, "e12": False, "e13": False},
-                         "solo la falla sin gestionar abre su grupo; alertas, repuesto y lo que ya tiene OT quedan plegados")
+                         {"e9": True, "e10": True, "e11": True, "e12": True, "e13": True},
+                         "Daniel 26-oct: «ver el bosque siempre»: todo grupo nace abierto")
         un_equipo = escena_bancos(solo_banco=True).ctx()
         self.assertEqual([g["abierto"] for g in un_equipo["grupos"]], [True], "un solo equipo: nada que plegar")
 
@@ -3498,7 +3503,7 @@ class TestFase1Tarjeta(unittest.TestCase):
     def test_h20_cada_equipo_es_un_details_abierto_solo_si_tiene_algo_grave_por_gestionar(self):
         html = self._html()
         abiertos = {k: bool(o) for k, o in re.findall(r'<details class="hz-grupo [^"]*" data-hz-grupo="(\w+)"( open)?>', html)}
-        self.assertEqual(abiertos, {"e9": False, "e10": False, "e11": True, "e12": False, "e13": False})
+        self.assertEqual(abiertos, {"e9": True, "e10": True, "e11": True, "e12": True, "e13": True}, "Daniel 26-oct: todo abierto")
         self.assertEqual(html.count('<summary class="hz-grupo-cab">'), 5)
         # el contador y el nombre COMPLETO (REGLA #15) están a la vista aunque el grupo esté plegado, dentro del <summary>
         resumen = re.search(r'data-hz-grupo="e9"[^>]*>\s*<summary class="hz-grupo-cab">(.*?)</summary>', html, re.S).group(1)
@@ -3512,8 +3517,8 @@ class TestFase1Tarjeta(unittest.TestCase):
 
     def test_h20_con_varios_equipos_hay_un_boton_para_abrir_o_cerrar_todos(self):
         html = self._html()
-        self.assertIn('data-hz-plegar-todo aria-expanded="false"', html)
-        self.assertIn("Abrir todos los equipos", html, "hay equipos plegados: el botón ofrece abrirlos")
+        self.assertIn('data-hz-plegar-todo aria-expanded="true"', html)
+        self.assertIn("Cerrar todos los equipos", html, "todo nace abierto (Daniel 26-oct): el botón ofrece cerrarlos a mano")
         solo = self._html(escena_bancos(solo_banco=True))
         self.assertNotIn("data-hz-plegar-todo", solo, "con un solo equipo no hay nada que plegar")
         self.assertIn('data-hz-grupo="e9" open>', solo)
@@ -3881,7 +3886,7 @@ class TestFase1Js(unittest.TestCase):
 
     def test_h27_al_recargar_vuelve_al_mismo_scroll_con_los_mismos_equipos_abiertos(self):
         r = self.R["restaurada"]
-        self.assertEqual(r["abiertos"], [True, False, True], "los que guardó se restauran; uno nuevo (e11) queda como llegó")
+        self.assertEqual(r["abiertos"], [True, True, True], "Daniel 26-oct: recargar nunca vuelve a plegar un equipo (solo abre)")
         self.assertEqual(r["scrolls"], [[0, 640]])
         self.assertFalse(r["sigueGuardada"], "se usa una sola vez")
         self.assertEqual(self.R["vieja"], {"abierto": False, "scrolls": []}, "una vista de hace más de 2 minutos no se usa")

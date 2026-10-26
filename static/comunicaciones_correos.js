@@ -78,7 +78,8 @@
   function coincideEstado(c, f) {
     var e = c.estado;
     if (f === 'sale') return e.efectivo === 'sale';
-    if (f === 'apagado') return !e.switch_activo && !c.protegido;
+    if (f === 'apagado') return !e.switch_activo && !c.protegido && !e.por_encender;
+    if (f === 'porencender') return !!e.por_encender;              /* 26-oct: nacen apagados, se encienden aquí */
     if (f === 'config') return e.efectivo === 'config' || e.efectivo === 'codigo';
     if (f === 'frenado') return e.efectivo === 'general' || e.efectivo === 'llave';
     if (f === 'frenados30') return (c.cifras.frenados || 0) > 0;
@@ -155,6 +156,7 @@
       ficha('', '', r.total, 'Correos en total') +
       ficha('ok', 'sale', r.salen, 'Salen hoy') +
       ficha('am', 'apagado', r.apagados_usuario, 'Apagados aquí por una persona') +
+      (r.por_encender ? ficha('az', 'porencender', r.por_encender, 'Nuevos: nacen apagados, enciéndelos aquí') : '') +
       ficha('gr', 'config', r.apagados_config, 'Apagados por configuración o código') +
       ficha('az', 'frenados30', r.frenados_30d, 'Frenados en los últimos ' + (S.datos.ventana_dias || 30) + ' días');
     var d = $('ctcDesde');
@@ -286,6 +288,7 @@
 
   function cambioLinea(c) {
     var e = c.estado;
+    if (e.por_encender) return '<p class="ctc-cambio"><i class="bi bi-power"></i> Nace apagado: enciéndelo cuando quieras que salga.</p>';
     if (!e.apagado_por && !e.apagado_en) return '';
     return '<p class="ctc-cambio">Cambiado por <b>' + esc(e.apagado_por || '—') + '</b>' + (e.apagado_en ? ' el ' + esc(e.apagado_en) : '') +
       (e.switch_activo ? ' (lo volvió a encender)' : '') + (e.motivo ? ' · Motivo: ' + esc(e.motivo) : '') + '</p>';
@@ -413,7 +416,8 @@
     var cs = S.datos.correos, r = S.datos.resumen;
     r.total = cs.length;
     r.salen = cs.filter(function (c) { return c.estado.efectivo === 'sale'; }).length;
-    r.apagados_usuario = cs.filter(function (c) { return !c.estado.switch_activo && !c.protegido; }).length;
+    r.apagados_usuario = cs.filter(function (c) { return !c.estado.switch_activo && !c.protegido && !c.estado.por_encender; }).length;
+    r.por_encender = cs.filter(function (c) { return !!c.estado.por_encender; }).length;
     r.apagados_config = cs.filter(function (c) { return c.estado.efectivo === 'config' || c.estado.efectivo === 'codigo'; }).length;
     r.frenados_llave = cs.filter(function (c) { return c.estado.efectivo === 'general' || c.estado.efectivo === 'llave'; }).length;
   }

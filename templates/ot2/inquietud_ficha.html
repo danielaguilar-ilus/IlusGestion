@@ -9,12 +9,12 @@
   inteligencia del equipo y registro de actividad. Las acciones PREGUNTAN antes (REGLA #32); nunca se le escribe al cliente (REGLA #22).
 #}
 
-{% block head_extra %}<link rel="stylesheet" href="{{ url_for('static', filename='retiros_guia.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='inquietudes.css') }}">{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="{{ url_for('static', filename='retiros_guia.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='inquietudes.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='ot_hallazgos.css') }}">{% endblock %}
 
 {% macro botones(p) %}
   {% if p.accion == 'adjudicar' and puede.adjudicar %}<button type="button" class="gp-btn" data-inq="adjudicar"><i class="bi bi-person-raised-hand"></i>Adjudicarme</button>{% endif %}
   {% if p.accion == 'clasificar' and puede.clasificar %}<a class="gp-btn" href="#iqfClasificar"><i class="bi bi-signpost-split"></i>Elegir qué pide</a>{% endif %}
-  {% if p.accion == 'solicitar_repuesto' %}{% if q.visita_id %}<a class="gp-btn" href="/ot/{{ q.visita_id }}"><i class="bi bi-gear-wide-connected"></i>Ir a la OT a pedir el repuesto</a>{% endif %}{% endif %}
+  {% if p.accion == 'solicitar_repuesto' %}{% if gestion and gestion.url_repuesto %}<a class="gp-btn" href="{{ gestion.url_repuesto }}"><i class="bi bi-gear-wide-connected"></i>Solicitar repuesto</a>{% endif %}{% if q.visita_id %}<a class="gp-btn sec" href="/ot/{{ q.visita_id }}"><i class="bi bi-clipboard2-check"></i>Ir a la OT</a>{% endif %}{% endif %}
   {% if p.accion == 'levantar_ticket' and puede.ticket %}<button type="button" class="gp-btn" data-inq="ticket"><i class="bi bi-ticket-detailed-fill"></i>Levantar ticket</button>
     <button type="button" class="gp-btn sec" data-inq="vincular" data-que="ticket">Ya hay un ticket: ligarlo</button>{% endif %}
   {% if p.accion == 'levantar_ot' and puede.vincular %}<a class="gp-btn" href="/ot/?crear=1&inquietud={{ q.id }}"><i class="bi bi-clipboard2-plus-fill"></i>Levantar OT</a>
@@ -123,6 +123,26 @@
         {% if puede.anular %}<button type="button" class="gp-btn sec" data-inq="anular"><i class="bi bi-slash-circle"></i>Anular</button>{% endif %}
         {% if es_superadmin %}<button type="button" class="gp-btn sec" style="border-color:#dc2626;color:#b91c1c" data-inq="borrar"><i class="bi bi-trash3-fill"></i>Borrar (solo superadmin)</button>{% endif %}
       </div>
+      {#- 🔁 2026-10-26 (gestión circular, Daniel: «solicitud y gestión de repuestos además de su valorización»): cuánto cuesta resolverla
+          (solo gestión: es plata, REGLAS #19/#26) y la solicitud del repuesto PRELLENADA con el cliente, el equipo y lo que pidió. -#}
+      {% if gestion %}
+      <div class="iqf-lbl">Valorización y repuestos</div>
+      {% if gestion.valor %}
+      <div class="hz-valor"><i class="bi bi-cash-coin" aria-hidden="true"></i>
+        <span><b>Valorización: {{ gestion.valor.total }}</b>
+          <small>{% if gestion.valor.repuestos %}Repuestos {{ gestion.valor.repuestos }}{% endif %}{% if gestion.valor.repuestos and gestion.valor.servicio %} · {% endif %}{% if gestion.valor.servicio %}Servicio {{ gestion.valor.servicio }}{% endif %}
+            {% if gestion.valor.nota %} · {{ gestion.valor.nota }}{% endif %} · {{ gestion.valor.por }}{% if gestion.valor.cuando %}, {{ gestion.valor.cuando }}{% endif %}</small></span></div>
+      {% else %}<p class="text-muted mb-1">Todavía sin valorizar.</p>{% endif %}
+      {% if gestion.repuesto_sol %}<div class="hz-vinc"><a class="hz-vinc-a" href="{{ gestion.repuesto_sol.url }}"><i class="bi bi-gear-wide-connected" aria-hidden="true"></i> {{ gestion.repuesto_sol.numero }}{% if gestion.repuesto_sol.cuando %} · {{ gestion.repuesto_sol.cuando }}{% endif %}</a></div>{% endif %}
+      <div class="iqf-acciones">
+        {% if not q.terminada %}
+        <button type="button" class="gp-btn sec" data-hz-valorizar="{{ q.id }}" data-gc-url="/ot/inquietudes/api/{{ q.id }}/valorizar" data-hz-titulo="{{ q.numero }} · {{ q.equipo }}"
+          data-hz-rep="{{ gestion.valor.rep_n if gestion.valor and gestion.valor.rep_n is not none else '' }}" data-hz-srv="{{ gestion.valor.srv_n if gestion.valor and gestion.valor.srv_n is not none else '' }}"
+          data-hz-nota="{{ gestion.valor.nota if gestion.valor else '' }}"><i class="bi bi-cash-coin"></i>{{ 'Cambiar valorización' if gestion.valor else 'Valorizar' }}</button>
+        <a class="gp-btn sec" href="{{ gestion.url_repuesto }}"><i class="bi bi-gear-wide-connected"></i>Solicitar repuesto</a>
+        {% endif %}
+      </div>
+      {% endif %}
       {% if puede.asignar %}
       <div class="iqf-fila">
         <label for="iqfResp" class="fw-bold">Responsable</label>
@@ -192,4 +212,5 @@
 {% block scripts %}
 <script>window.INQ_CFG = { modo: 'ficha', id: {{ q.id }}, numero: {{ q.numero|tojson }}, visitaId: {{ (q.visita_id or 0) }} };</script>
 <script src="{{ url_for('static', filename='inquietudes.js') }}"></script>
+<script defer src="{{ url_for('static', filename='ot_hallazgos_gestion.js') }}"></script>
 {% endblock %}

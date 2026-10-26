@@ -4738,6 +4738,7 @@ function rsmPintarSelectsProv(){
 
 function rsmAbrir(){
   _rsm.cliente = null; _rsm.es_reposicion = false; _rsm.items = []; _rsm.subtab = 'bodega';
+  _rsm.origen = '';   // 26-oct: «hallazgo:12» / «inquietud:5» cuando se abre desde la gestión circular (deja el vínculo de vuelta)
   _rsm.equipo = null; _rsm.maquinas = [];
   document.getElementById('rsmReposicion').checked = false;
   document.getElementById('rsmClienteWrap').style.display = '';
@@ -5338,6 +5339,7 @@ async function rsmEnviar(){
       fd.append('motivo', motivo);
       fd.append('items', JSON.stringify(items));
       fd.append('responsable', responsable);
+      if (_rsm.origen) fd.append('origen_ref', _rsm.origen);
       fd.append('evidencia', adjunto);
       const r = await fetch('/repuestos/api/solicitudes/manual', { method: 'POST', credentials: 'same-origin', body: fd });
       j = await r.json();
@@ -5348,6 +5350,7 @@ async function rsmEnviar(){
           cliente_id: _rsm.es_reposicion ? null : (_rsm.cliente ? _rsm.cliente.id : null),
           es_reposicion: _rsm.es_reposicion, maquina_id: maquinaId || null,
           motivo: motivo, items: items, responsable: responsable,
+          origen_ref: _rsm.origen || undefined,
         })
       });
       j = await r.json();
@@ -5364,6 +5367,16 @@ async function rsmEnviar(){
     + (j.numero_ticket ? ' · ticket ' + j.numero_ticket + (j.responsable ? ' a cargo de ' + j.responsable : '') : ''), { type: 'success' });
   bootstrap.Modal.getOrCreateInstance(document.getElementById('rsmModal')).hide();
   if (j.aviso) await ilusAlert({ title: 'Aviso de stock', message: j.aviso, type: 'warning' });
+  if (_rsm.origen) {
+    /* 26-oct: quedó ligada al hallazgo / la inquietud. Se ofrece volver (no se lleva a la persona sin preguntar). */
+    const vuelta = _rsm.origen.indexOf('inquietud:') === 0 ? '/ot/inquietudes/' + _rsm.origen.split(':')[1] : (document.referrer || '');
+    _rsm.origen = '';
+    if (vuelta) {
+      const ir = await ilusConfirm({ title: 'Solicitud ligada', message: 'La solicitud quedó ligada y aparece en su recorrido.',
+        okLabel: 'Volver', cancelLabel: 'Quedarme aquí', type: 'success' });
+      if (ir) { location.href = vuelta; return; }
+    }
+  }
   rsCargar();
 }
 
@@ -5399,8 +5412,26 @@ document.addEventListener('DOMContentLoaded', rsCargarProveedoresFiltro);
 // ?rs_solicitar=1 y abre directo la ventana de solicitud.
 document.addEventListener('DOMContentLoaded', function(){
   try {
-    if (new URLSearchParams(location.search).get('rs_solicitar') === '1' && typeof rsmAbrir === 'function')
-      setTimeout(function(){ rsmAbrir(); }, 400);
+    const q = new URLSearchParams(location.search);
+    if (q.get('rs_solicitar') === '1' && typeof rsmAbrir === 'function')
+      setTimeout(async function(){
+        if (typeof repTab === 'function') { try { repTab('solicitudes'); } catch(e){} }
+        rsmAbrir();
+        /* 🔁 2026-10-26 (gestión circular): desde un hallazgo o una inquietud llega PRELLENADO — cliente, equipo y motivo. La persona
+           elige los repuestos y decide (REGLA #32). `rs_origen` viaja con la solicitud para dejar el vínculo de vuelta. */
+        const origen = q.get('rs_origen') || '';
+        if (/^(hallazgo|inquietud):\d{1,10}$/.test(origen)) _rsm.origen = origen;
+        const cid = parseInt(q.get('rs_cliente') || '', 10);
+        if (isFinite(cid) && cid > 0) {
+          await rsmClienteElegir(cid, q.get('rs_cliente_nombre') || ('Cliente #' + cid));
+          const mid = q.get('rs_maquina');
+          const sel = document.getElementById('rsmMaquina');
+          if (mid && sel && sel.querySelector('option[value="' + String(parseInt(mid, 10)) + '"]')) { sel.value = String(parseInt(mid, 10)); rsmMaquinaCambio(); }
+        }
+        const mot = q.get('rs_motivo');
+        if (mot) document.getElementById('rsmMotivo').value = mot.slice(0, 280);
+        rsmActualizarEstado();
+      }, 400);
   } catch(e){}
 });
 

@@ -188,13 +188,16 @@ def evaluar_condicion(cond, environ=None):
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 def _c(clave, nombre, modulo_ui, llave, destinatario, disparo, *, modo="manual", plantilla=None, tipo="ilus",
        protegido=False, sensible=False, condiciones=(), apagado_en_codigo=False, tambien_whatsapp=False,
-       plantilla_apagada="texto_codigo", demo=None, avisa_a="", adjunta="", nota=""):
+       plantilla_apagada="texto_codigo", demo=None, avisa_a="", adjunta="", nota="", nace_apagado=False):
+    # nace_apagado (Daniel, 26-oct-2026: «agrégalos apagados para encenderlos desde el front»): sin fila en comm_correo_control
+    # el correo está APAGADO; una persona lo enciende (o lo vuelve a apagar) desde la pantalla. Solo para avisos INTERNOS: a un
+    # cliente nada se enciende desde la pantalla (REGLA #22).
     return {
         "clave": clave, "nombre": nombre, "modulo_ui": modulo_ui, "llave": llave, "destinatario": destinatario,
         "disparo": disparo, "modo": modo, "plantilla": plantilla, "tipo": tipo, "protegido": protegido,
         "sensible": sensible, "condiciones": tuple(condiciones), "apagado_en_codigo": apagado_en_codigo,
         "tambien_whatsapp": tambien_whatsapp, "plantilla_apagada": plantilla_apagada, "demo": dict(demo or {}),
-        "avisa_a": avisa_a, "adjunta": adjunta, "nota": nota,
+        "avisa_a": avisa_a, "adjunta": adjunta, "nota": nota, "nace_apagado": bool(nace_apagado),
     }
 
 
@@ -291,6 +294,31 @@ REGISTRO = (
     # al mezclar las ramas, el interruptor ya exista. Lo envía `_send_ilus_email(..., evento="ot_que_paso_bodega",
     # modulo="comunicacion_interna")`; la puerta resuelve la clave sola por el evento (`_EVENTO_A_CLAVE`) aunque ese envío
     # todavía no lleve `correo=`.
+    # 2026-10-26 (Daniel: «agrégalos apagados para encenderlos desde el front»): los avisos de Inquietudes de clientes y de Hallazgos
+    # también por correo. Hoy avisan por la campana; estos correos son INTERNOS (nunca al cliente ni a un técnico), sin montos, y
+    # NACEN APAGADOS: se encienden en Comunicaciones → Control de correos.
+    _c("inq_nueva_gestion", "Inquietud de cliente nueva: aviso a la gestión", "ot", "comunicacion_interna", "responsable_ot",
+       "Cuando alguien anota una inquietud de un cliente (desde la OT, la ficha del cliente o la bandeja).",
+       modo="automatico", nace_apagado=True,
+       avisa_a="Al responsable de la inquietud o, si no tiene, a la gestión de la OT / quienes tienen el permiso «Responsable de OT»",
+       nota="Interno. La campana avisa igual aunque el correo esté apagado."),
+    _c("inq_asignada_responsable", "Inquietud asignada: aviso al nuevo responsable", "ot", "comunicacion_interna", "responsable_ot",
+       "Cuando la gestión le asigna una inquietud a una persona (Víctor, Aarón o Juan Pablo).",
+       modo="automatico", nace_apagado=True, avisa_a="A la persona que queda a cargo",
+       nota="Interno. Si la persona se la adjudica a sí misma no se le escribe."),
+    _c("inq_sla_vencido", "Inquietud con el plazo por vencer o vencido", "ot", "comunicacion_interna", "responsable_ot",
+       "Cuando el reloj de la inquietud (primera respuesta o resolución) entra en ámbar o rojo.",
+       modo="automatico", nace_apagado=True, avisa_a="Al responsable (o a la gestión si aún no tiene)",
+       nota="Interno. Un aviso por cada cambio de nivel, no uno por minuto."),
+    _c("hall_nuevos_gestion", "Hallazgos nuevos en una OT: aviso a la gestión", "ot", "comunicacion_interna", "responsable_ot",
+       "Cuando el técnico reporta una falla, alerta, baja, repuesto o incidencia en la OT (REGLA #38).",
+       modo="automatico", nace_apagado=True,
+       avisa_a="A la gestión de la OT (el responsable primero), nunca al técnico ni al cliente",
+       nota="Interno y agrupado: un correo por OT y persona cuando nace la campana; si llegan más en 30 minutos no se repite."),
+    _c("hall_tomado_responsable", "Hallazgo tomado por otra persona: aviso al responsable de la OT", "ot", "comunicacion_interna",
+       "responsable_ot", "Cuando alguien de la gestión toma un hallazgo de una OT que tiene otro responsable.",
+       modo="automatico", nace_apagado=True, avisa_a="Al responsable de la OT",
+       nota="Interno, tono suave: solo informa quién tomó el caso."),
     _c("ot_que_paso_bodega", "Falta de stock: aviso a bodega", "ot", "comunicacion_interna", "bodega",
        "Cuando «¿Qué pasó?» deja una OT con productos pendientes por falta de stock: aviso interno para que bodega lo sepa.",
        modo="automatico", avisa_a="A los correos de bodega de Retiros → Configuración (nunca al cliente ni al técnico)",
@@ -627,6 +655,15 @@ REGISTRO = (
 HERRAMIENTAS = tuple(c["clave"] for c in REGISTRO if c["tipo"] == "herramienta")
 
 _POR_CLAVE = {c["clave"]: c for c in REGISTRO}
+
+
+def switch_de_fila(clave_o_correo, fila):
+    """¿El interruptor de ESTE correo está encendido? Con fila en comm_correo_control manda la fila; sin fila, encendido salvo que
+    el correo `nace_apagado` (avisos internos nuevos, Daniel 26-oct-2026)."""
+    if fila is not None:
+        return bool(fila.get("activo", True))
+    c = clave_o_correo if isinstance(clave_o_correo, dict) else por_clave(clave_o_correo)
+    return not bool((c or {}).get("nace_apagado"))
 
 
 def por_clave(clave):

@@ -69,7 +69,8 @@
     if (!v || v.ruta !== rutaActual() || (Date.now() - (v.t || 0)) > 120000) return;      // solo la recarga que acabamos de pedir
     grupos().forEach(function (d) {
       var k = d.getAttribute('data-hz-grupo');
-      if (v.grupos && Object.prototype.hasOwnProperty.call(v.grupos, k)) d.open = !!v.grupos[k];
+      /* 26-oct (Daniel: «ver el bosque siempre»): lo recordado solo puede ABRIR un grupo; nunca lo vuelve a plegar al cargar. */
+      if (v.grupos && Object.prototype.hasOwnProperty.call(v.grupos, k) && v.grupos[k]) d.open = true;
     });
     var y = parseInt(v.y, 10) || 0;
     function ir() { try { window.scrollTo(0, y); } catch (e) { /* nada */ } }
@@ -275,5 +276,6 @@
   restaurarVista();
   pintarSeleccion();
   pintarPlegado();
-  window.OTHallazgos = { levantar: levantar, tomar: tomar, descartar: descartar, reabrir: reabrir, elegidos: elegidos };
+  window.OTHallazgos = { levantar: levantar, tomar: tomar, descartar: descartar, reabrir: reabrir, elegidos: elegidos,
+                         recargar: recargar, bloquear: bloquear, api: api };   /* 26-oct: ot_hallazgos_gestion.js los reutiliza */
 })();
