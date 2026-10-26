@@ -37,10 +37,13 @@ TIPO_AVISO_TOMA = "ot_hallazgo_toma"  # tipo del aviso suave «alguien tomó un 
 TIPO_OT_SEGUIMIENTO = "correctiva"  # el tipo que el asistente sugiere (la persona lo puede cambiar)
 
 ORIGEN_TAREA, ORIGEN_PRODUCTO, ORIGEN_EQUIPO = "tarea", "producto", "equipo"
-ORIGENES = (ORIGEN_TAREA, ORIGEN_PRODUCTO, ORIGEN_EQUIPO)
+# 🗣️ 2026-10-25 (Daniel): «Inquietud del cliente» que el técnico (o la gestión) anota desde la OT, de CUALQUIER equipo del cliente.
+ORIGEN_CLIENTE = "cliente"
+ORIGENES = (ORIGEN_TAREA, ORIGEN_PRODUCTO, ORIGEN_EQUIPO, ORIGEN_CLIENTE)
 
 SEV_FALLA, SEV_FUERA_SERVICIO, SEV_BAJA = "falla", "fuera_servicio", "baja"
 SEV_ALERTA, SEV_REPUESTO, SEV_INCIDENCIA = "alerta", "repuesto", "incidencia"
+SEV_INQUIETUD = "inquietud"
 
 # Semáforo (REGLA #2/#15): rojo = hay que actuar ya, ámbar = mirar, azul = en camino, gris = informado. `orden` ordena la lista.
 SEVERIDADES = {
@@ -50,6 +53,8 @@ SEVERIDADES = {
     SEV_ALERTA: {"texto": "Alerta", "color": "ambar", "icono": "bi-exclamation-triangle-fill", "orden": 4, "prioridad": "media"},
     SEV_REPUESTO: {"texto": "Repuesto", "color": "azul", "icono": "bi-tools", "orden": 5, "prioridad": "media"},
     SEV_INCIDENCIA: {"texto": "Incidencia", "color": "gris", "icono": "bi-flag-fill", "orden": 6, "prioridad": "media"},
+    # Informativa (azul): no es una falla del checklist, es lo que el cliente comentó + el diagnóstico del técnico.
+    SEV_INQUIETUD: {"texto": "Inquietud del cliente", "color": "azul", "icono": "bi-chat-quote-fill", "orden": 7, "prioridad": "media"},
 }
 
 EST_ABIERTO, EST_TOMADO, EST_RESUELTO, EST_DESCARTADO = "abierto", "tomado", "resuelto", "descartado"
@@ -682,3 +687,37 @@ def sql_abierto(alias="h", seg="s"):
     return ("({a}.retirado_en IS NULL AND ({a}.estado='abierto' OR ({a}.estado IN ('tomado','resuelto') "
             "AND {a}.ot_seguimiento_id IS NOT NULL AND ({s}.id IS NULL OR {s}.estado IN ('cancelada','anulada')))))"
             ).format(a=alias, s=seg)
+
+
+# ── 🗣️ Inquietud del cliente (2026-10-25) ─────────────────────────────────────────────────────────────────────────────────
+# Daniel: «son las inquietudes del cliente que pueden levantar los técnicos que manipulan OT… elevarlo directamente con el técnico
+# para que brinde un diagnóstico adicional y el cliente no quede sin nada pendiente». Solo queda como HALLAZGO: el ticket o la OT
+# los decide la gestión desde la bandeja (nada automático, REGLA #32).
+INQUIETUD_MIN = 10            # letras mínimas de «¿Qué le preocupa al cliente?» y del diagnóstico
+INQUIETUD_MAX = 700
+INQUIETUD_FOTOS_MAX = 3
+
+
+def ref_inquietud(token):
+    """Referencia única de una inquietud (cada una es un caso aparte, aunque sea del mismo equipo)."""
+    return ("q:" + re.sub(r"[^A-Za-z0-9]", "", str(token or "")))[:80]
+
+
+def validar_inquietud(inquietud, diagnostico, maquina_id=None, producto_texto=None):
+    """→ (ok, mensaje). Los dos textos son obligatorios; el equipo puede ser uno de la ficha o uno escrito a mano."""
+    if len(limpio(inquietud, INQUIETUD_MAX)) < INQUIETUD_MIN:
+        return False, "Cuenta qué le preocupa al cliente (mínimo %d caracteres)." % INQUIETUD_MIN
+    if len(limpio(diagnostico, INQUIETUD_MAX)) < INQUIETUD_MIN:
+        return False, "Escribe tu diagnóstico del equipo (mínimo %d caracteres)." % INQUIETUD_MIN
+    if not entero(maquina_id) and len(limpio(producto_texto, 200)) < 3:
+        return False, "Elige el equipo en el buscador o escribe cuál es."
+    return True, ""
+
+
+def titulo_inquietud(equipo):
+    return limpio("Inquietud del cliente · " + (limpio(equipo, 250) or "equipo sin identificar"), TITULO_MAX)
+
+
+def detalle_inquietud(inquietud, diagnostico):
+    return limpio("El cliente comentó: " + limpio(inquietud, INQUIETUD_MAX) + " · Diagnóstico del técnico: " + limpio(diagnostico, INQUIETUD_MAX),
+                  DETALLE_MAX)

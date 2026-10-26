@@ -2,6 +2,7 @@ import base64
 import hashlib
 import io
 import json
+import uuid
 import os
 import re
 import secrets
@@ -168594,6 +168595,233 @@ def ot_api_que_paso_registrar(vid):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  🗣️ INQUIETUD DEL CLIENTE desde la OT (2026-10-25)
+#  Daniel: «los hallazgos… son las inquietudes del cliente que pueden levantar los técnicos que manipulan OT»; «elevarlo directamente
+#  con el técnico para que brinde un diagnóstico adicional y el cliente no quede sin nada pendiente»; «un ticket es una sugerencia…
+#  OT no crea tickets automáticos pero sí pregunta»; «la gestión decide desde la bandeja».
+#  · El técnico asignado (también externo) y la gestión anotan, de CUALQUIER equipo del cliente (buscador sobre su ficha, sin plata ni
+#    proveedores: REGLAS #19/#26), qué le preocupa al cliente + su diagnóstico + foto opcional. Queda SOLO como hallazgo (origen
+#    'cliente', severidad 'inquietud') con la campana de siempre a la gestión. Nada al cliente (REGLA #22).
+#  · «Levantar ticket» lo hace la GESTIÓN desde la bandeja, con pregunta previa. El ticket nace por SQL directo (como
+#    _otrep_ticket_para_ot): tk_api_create le escribe al cliente y esto no debe hacerlo. Un hallazgo = un ticket (tabla puente).
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+def _ensure_hallazgo_tickets():
+    """Puente hallazgo → ticket (uno por hallazgo). Una sola sentencia CREATE TABLE IF NOT EXISTS: barata si ya existe (REGLA #18)."""
+    mysql_execute("""
+        CREATE TABLE IF NOT EXISTS mant_hallazgo_tickets (
+            hallazgo_id  INT NOT NULL PRIMARY KEY,
+            ticket_id    INT NOT NULL,
+            visita_id    INT NOT NULL,
+            creado_por   VARCHAR(190) NULL,
+            creado_en    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_hall_tk_ticket (ticket_id),
+            KEY idx_hall_tk_visita (visita_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+
+def _hall_tickets_de(ids):
+    """{hallazgo_id: {"id", "numero", "url", "estado"}} de los hallazgos que ya tienen ticket (una consulta). {} si la tabla aún no existe."""
+    ids = [int(x) for x in ids if x]
+    if not ids:
+        return {}
+    try:
+        rows = mysql_fetchall(
+            "SELECT ht.hallazgo_id, t.id, t.numero_ticket, t.estado FROM mant_hallazgo_tickets ht JOIN tk_tickets t ON t.id = ht.ticket_id "
+            " WHERE ht.hallazgo_id IN (" + ",".join(["%s"] * len(ids)) + ")", tuple(ids)) or []
+    except Exception:
+        return {}
+    return {int(r["hallazgo_id"]): {"id": int(r["id"]), "numero": r.get("numero_ticket") or f"#{r['id']}",
+                                    "url": f"/tickets/{int(r['id'])}", "estado": r.get("estado") or ""} for r in rows}
+
+
+def _inq_ot_y_cliente(vid):
+    """(fila de la OT, None) o (None, respuesta de error). La inquietud es del CLIENTE: sin cliente no hay a quién atribuirla."""
+    v = mysql_fetchone("SELECT id, numero_ot, cliente_id, estado FROM mant_visitas WHERE id=%s", (int(vid),))
+    if not v:
+        return None, _ot2_err("No encontramos esa OT.", "OT_NO_EXISTE", http=404)
+    if not v.get("cliente_id"):
+        return None, _ot2_err("Esta OT no tiene cliente: la inquietud del cliente no aplica.", "SIN_CLIENTE")
+    return v, None
+
+
+@app.route("/ot/api/<int:vid>/equipos-cliente", methods=["GET"])
+@_mant_required
+@_ot_can_configurar
+def ot_api_equipos_cliente(vid):
+    """Buscador de los equipos que el CLIENTE de esta OT tiene en su ficha (no solo los de la OT): nombre, SKU y N° de serie. Sin
+    montos ni proveedores (REGLAS #19/#26). `q` busca por palabras (todas deben estar); vacío = los primeros 20 por nombre."""
+    v, err = _inq_ot_y_cliente(vid)
+    if err:
+        return err
+    q = " ".join((request.args.get("q") or "").split())[:60]
+    palabras = [w for w in q.split(" ") if w][:4]
+    cond, params = ["cliente_id=%s", "COALESCE(estado,'activo') <> 'baja'"], [v["cliente_id"]]
+    for w in palabras:
+        cond.append("(nombre LIKE %s OR sku LIKE %s OR serie LIKE %s)")
+        params.extend(["%" + w + "%"] * 3)
+    try:
+        rows = mysql_fetchall("SELECT id, nombre, sku, serie FROM mant_maquinas WHERE " + " AND ".join(cond)
+                              + " ORDER BY nombre LIMIT 40", tuple(params)) or []
+    except Exception as e:
+        print(f"[inquietud] buscador vid={vid}: {type(e).__name__}", flush=True)
+        return _ot2_err("No pudimos buscar los equipos del cliente ahora.", "ERROR_INTERNO", http=500)
+    rows = [r for r in rows if not _sku_es_servicio(r.get("sku"), r.get("nombre"))][:20]
+    return jsonify({"ok": True, "equipos": [{"id": int(r["id"]), "nombre": r.get("nombre") or "", "sku": r.get("sku") or "",
+                                            "serie": r.get("serie") or ""} for r in rows]})
+
+
+@app.route("/ot/api/<int:vid>/inquietud-cliente", methods=["POST"])
+@_mant_required
+@_ot_can_configurar
+def ot_api_inquietud_cliente(vid):
+    """Guarda la inquietud del cliente como HALLAZGO (origen 'cliente', severidad 'inquietud') y avisa a la gestión por la campana.
+    multipart: maquina_id? | producto_texto?, inquietud, diagnostico, fotos[] (0 a 3, opcionales). No crea tickets ni OT: eso lo
+    decide la gestión desde la bandeja. Nada al cliente (REGLA #22)."""
+    if not _hall_ok():
+        return _ot2_err("Esta función no está disponible en este momento. Intenta de nuevo en un minuto.", "TABLA_NO_DISPONIBLE", http=503)
+    v, err = _inq_ot_y_cliente(vid)
+    if err:
+        return err
+    f = request.form
+    inquietud, diagnostico = f.get("inquietud") or "", f.get("diagnostico") or ""
+    mid, prod = _oh.entero(f.get("maquina_id")), _oh.limpio(f.get("producto_texto"), 200)
+    ok, msg = _oh.validar_inquietud(inquietud, diagnostico, mid, prod)
+    if not ok:
+        return _ot2_err(msg, "INQUIETUD_INCOMPLETA")
+    equipo = prod
+    if mid:
+        m = mysql_fetchone("SELECT id, nombre, sku, serie, cliente_id, estado FROM mant_maquinas WHERE id=%s", (mid,))
+        if not m or int(m.get("cliente_id") or 0) != int(v["cliente_id"]) or (m.get("estado") or "") == "baja":
+            return _ot2_err("Ese equipo no es de este cliente. Búscalo de nuevo.", "EQUIPO_AJENO")
+        equipo = _hall_nombre_equipo(mid) or _oh.nombre_con_ficha(m.get("nombre"), m.get("sku"), m.get("serie"))
+    archivos = [x for x in (request.files.getlist("fotos") or []) if x and x.filename][:_oh.INQUIETUD_FOTOS_MAX + 1]
+    if len(archivos) > _oh.INQUIETUD_FOTOS_MAX:
+        return _ot2_err(f"Como máximo {_oh.INQUIETUD_FOTOS_MAX} fotos por inquietud.", "EVIDENCIA_EXCESO")
+    fotos = []
+    if archivos:
+        if not _gcs_ready():
+            return _ot2_err("El almacenamiento de fotos no está disponible. Guárdala sin foto o intenta en un minuto.", "STORAGE_OFF", http=503)
+        for a in archivos:
+            t_a, e_a = _otrep_clasificar_archivo(a)
+            if e_a or t_a != "foto":
+                return _ot2_err(e_a or "Solo fotos (no videos) en la inquietud.", "EVIDENCIA_INVALIDA")
+            try:
+                r = _gcs_upload_like_cloudinary(a, public_id=f"inquietud_{int(vid)}_{uuid.uuid4().hex[:10]}", folder="ilus/ot_inquietudes")
+                if r and r.get("secure_url"):
+                    fotos.append(r["secure_url"])
+            except Exception as e:
+                print(f"[inquietud] foto vid={vid}: {type(e).__name__}", flush=True)
+                return _ot2_err("No pudimos subir la foto. Intenta de nuevo.", "FOTO_FALLO", http=500)
+    h = {"origen": _oh.ORIGEN_CLIENTE, "referencia": _oh.ref_inquietud(uuid.uuid4().hex[:16]), "maquina_id": mid,
+         "severidad": _oh.SEV_INQUIETUD, "titulo": _oh.titulo_inquietud(equipo), "detalle": _oh.detalle_inquietud(inquietud, diagnostico),
+         "equipo_nombre": equipo, "riesgo": False, "fotos": fotos}
+    try:
+        hid = _hall_registrar(vid, h)
+        if hid:
+            _hall_avisar(vid, [hid])
+    except Exception as e:
+        print(f"[inquietud] guardar vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return _ot2_err("No pudimos guardar la inquietud. Intenta de nuevo.", "ERROR_INTERNO", http=500)
+    return jsonify({"ok": True, "mensaje": "Quedó registrada. La gestión la verá en Hallazgos y decidirá si levanta un ticket o una OT."})
+
+
+def _hall_ticket_crear(vid, f, user):
+    """Crea UN ticket para el hallazgo (SQL directo, sin correo al cliente), con el equipo y una nota interna con la OT.
+    → (ticket_id, numero) o (None, None). Idempotente por hallazgo (PRIMARY KEY del puente + GET_LOCK)."""
+    from tickets_module import _chile_now_year as _tk_year
+    lock = f"hall_ticket_{int(f['id'])}"
+    conn = None
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute("SELECT GET_LOCK(%s, 5) AS l", (lock,))
+            cur.execute("SELECT ticket_id FROM mant_hallazgo_tickets WHERE hallazgo_id=%s", (int(f["id"]),))
+            ya = cur.fetchone()
+            if ya:
+                cur.execute("SELECT RELEASE_LOCK(%s) AS r", (lock,))
+                conn.commit()
+                t = mysql_fetchone("SELECT id, numero_ticket FROM tk_tickets WHERE id=%s", (int(ya["ticket_id"]),)) or {}
+                return int(ya["ticket_id"]), t.get("numero_ticket")
+            cur.execute("SELECT v.numero_ot, c.razon_social, c.rut, c.contacto_email, c.contacto_tel, c.direccion, c.comuna "
+                        "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (int(vid),))
+            ot = cur.fetchone() or {}
+            numero_ot = ot.get("numero_ot") or f"OT #{vid}"
+            equipo = f.get("equipo_nombre") or "equipo sin identificar"
+            titulo = f"Inquietud del cliente · {equipo}" + (f" · {ot.get('razon_social')}" if ot.get("razon_social") else "")
+            desc = (f"{f.get('detalle') or ''}\n\nLevantado desde la {numero_ot} (hallazgo «Inquietud del cliente», reportado por "
+                    f"{f.get('detectado_por') or 'el técnico'}). Ticket creado por {user} desde la bandeja de Hallazgos.")
+            cur.execute(
+                "INSERT INTO tk_tickets (origen, estado, tipo, prioridad, titulo, descripcion, rut, empresa, email, phone, direccion, "
+                " comuna_nombre, created_by, asignado_a) VALUES ('backoffice','open','tech_evaluation','media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (titulo[:300], desc, (ot.get("rut") or "")[:12] or None, (ot.get("razon_social") or "")[:150] or None,
+                 (ot.get("contacto_email") or "")[:150] or None, (ot.get("contacto_tel") or "")[:20] or None,
+                 (ot.get("direccion") or "")[:255] or None, (ot.get("comuna") or "")[:120] or None, user, user))
+            tid = int(cur.lastrowid)
+            cur.execute("UPDATE tk_tickets SET numero_ticket=CONCAT('TK-', %s, '-', LPAD(id,5,'0')) WHERE id=%s", (_tk_year(), tid))
+            m = None
+            if f.get("maquina_id"):
+                cur.execute("SELECT nombre, sku, serie FROM mant_maquinas WHERE id=%s", (int(f["maquina_id"]),))
+                m = cur.fetchone()
+            cur.execute("INSERT INTO tk_ticket_equipos (ticket_id, nombre, sku, serie, maquina_id, notas) VALUES (%s,%s,%s,%s,%s,%s)",
+                        (tid, ((m or {}).get("nombre") or equipo)[:300], (m or {}).get("sku"), (m or {}).get("serie"),
+                         _oh.entero(f.get("maquina_id")), "Inquietud del cliente levantada en la " + numero_ot))
+            cur.execute("INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno) VALUES (%s,'otro',%s,%s,%s,1)",
+                        (tid, f"Viene del hallazgo «Inquietud del cliente» de la {numero_ot}: {f.get('detalle') or ''}",
+                         json.dumps({"visita_id": int(vid), "hallazgo_id": int(f["id"])}), user))
+            cur.execute("INSERT INTO mant_hallazgo_tickets (hallazgo_id, ticket_id, visita_id, creado_por) VALUES (%s,%s,%s,%s)",
+                        (int(f["id"]), tid, int(vid), user))
+            cur.execute("SELECT RELEASE_LOCK(%s) AS r", (lock,))
+        conn.commit()
+        return tid, f"TK-{_tk_year()}-{tid:05d}"
+    except Exception as e:
+        print(f"[inquietud] ticket hallazgo={f.get('id')}: {type(e).__name__}: {e}", flush=True)
+        try:
+            if conn:
+                conn.rollback()
+                with conn.cursor() as cur:
+                    cur.execute("SELECT RELEASE_LOCK(%s) AS r", (lock,))
+        except Exception:
+            pass
+        return None, None
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+
+
+@app.route("/ot/api/<int:vid>/hallazgos/<int:hid>/ticket", methods=["POST"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot_api_hallazgo_ticket(vid, hid):
+    """«Levantar ticket» de una inquietud del cliente: lo decide la GESTIÓN (la pantalla pregunta antes). Si el hallazgo seguía sin
+    gestionar, queda tomado por quien levantó el ticket. Nada al cliente (REGLA #22)."""
+    if not _hall_ok():
+        return _ot2_err("Esta función no está disponible en este momento.", "TABLA_NO_DISPONIBLE", http=503)
+    f = _hall_fila_de(vid, hid)
+    if not f:
+        return _ot2_err("No encontramos ese hallazgo.", "HALLAZGO_NO_EXISTE", http=404)
+    if f.get("origen") != _oh.ORIGEN_CLIENTE:
+        return _ot2_err("El ticket se levanta desde una inquietud del cliente.", "NO_ES_INQUIETUD")
+    estado_ef, _caido = _oh.estado_efectivo(f, f.get("seg_numero"), f.get("seg_estado"))
+    if f.get("retirado_en") or estado_ef not in _oh.ESTADOS_GESTIONABLES:
+        return _ot2_err("Este hallazgo ya no se puede gestionar (descartado o con OT de seguimiento).", "HALLAZGO_NO_DISPONIBLE", http=409)
+    quien = _hall_quien()
+    tid, numero = _hall_ticket_crear(vid, f, quien)
+    if not tid:
+        return _ot2_err("No pudimos crear el ticket ahora. Intenta de nuevo.", "ERROR_INTERNO", http=500)
+    if f.get("estado") == _oh.EST_ABIERTO:
+        mysql_execute("UPDATE mant_ot_hallazgos SET estado='tomado', tomado_por_id=%s, tomado_por=%s, tomado_en=NOW() "
+                      " WHERE id=%s AND visita_id=%s AND estado='abierto'", (_hall_uid(), quien, int(hid), int(vid)))
+    _mant_log("visita", vid, "hallazgo_ticket_levantado", f"{_oh.limpio(f.get('titulo'), 300)} → ticket {numero} · {quien}"[:900])
+    return jsonify({"ok": True, "ticket_id": tid, "numero": numero, "url": f"/tickets/{tid}"})
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 #  🩺 HALLAZGOS DE LA OT (F1 · REGLA #38) — 2026-10-21
 #
 #  Daniel, 2026-10-20, revisando la OT de Aurum: «Indícame si se está tomando fotografías como evidencia, eso es necesario, y que
@@ -177565,6 +177793,11 @@ try:
         _ensure_ot_hallazgos()
 except Exception as _ensure_ot_hall_err:
     print(f"[ILUS][WARN] _ensure_ot_hallazgos: {_ensure_ot_hall_err}", flush=True)
+try:
+    with app.app_context():
+        _ensure_hallazgo_tickets()      # 🗣️ 2026-10-25: puente hallazgo → ticket (una sentencia CREATE TABLE IF NOT EXISTS, REGLA #18)
+except Exception as _ensure_hall_tk_err:
+    print(f"[ILUS][WARN] _ensure_hallazgo_tickets: {_ensure_hall_tk_err}", flush=True)
 
 # email_log.estado debe aceptar 'bloqueado' SIEMPRE (incluso skip-migrations):
 # sin esto, los envíos frenados por la llave de paso no dejaban rastro en el log.
