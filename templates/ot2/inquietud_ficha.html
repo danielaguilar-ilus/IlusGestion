@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block title %}{{ q.numero }} · Inquietud de cliente · ILUS Fitness{% endblock %}
+
+{#
+  🗣️ 2026-10-26 — Ficha de UNA inquietud de cliente (solo gestión, @_no_tecnico: REGLAS #19/#26), con EL MISMO lenguaje de la ficha de Retiros
+  (Daniel: «debe verse como el módulo de Retiros, tabla y ficha»): la guía numerada paso a paso de static/retiros_guia.css (.gp: cabecera negra con
+  progreso, «Te toca», pasos con círculo rojo→verde con pulso, insignias de estado, botón de acción en cada paso). El recorrido cambia según lo que
+  pide el cliente (repuesto · abastecer · ticket · OT · reparación) y lo arma inquietudes.ruta(). Debajo: lo que dijo el cliente, gestión,
+  inteligencia del equipo y registro de actividad. Las acciones PREGUNTAN antes (REGLA #32); nunca se le escribe al cliente (REGLA #22).
+#}
+
+{% block head_extra %}<link rel="stylesheet" href="{{ url_for('static', filename='retiros_guia.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='inquietudes.css') }}">{% endblock %}
+
+{% macro botones(p) %}
+  {% if p.accion == 'adjudicar' and puede.adjudicar %}<button type="button" class="gp-btn" data-inq="adjudicar"><i class="bi bi-person-raised-hand"></i>Adjudicarme</button>{% endif %}
+  {% if p.accion == 'clasificar' and puede.clasificar %}<a class="gp-btn" href="#iqfClasificar"><i class="bi bi-signpost-split"></i>Elegir qué pide</a>{% endif %}
+  {% if p.accion == 'solicitar_repuesto' %}{% if q.visita_id %}<a class="gp-btn" href="/ot/{{ q.visita_id }}"><i class="bi bi-gear-wide-connected"></i>Ir a la OT a pedir el repuesto</a>{% endif %}{% endif %}
+  {% if p.accion == 'levantar_ticket' and puede.ticket %}<button type="button" class="gp-btn" data-inq="ticket"><i class="bi bi-ticket-detailed-fill"></i>Levantar ticket</button>
+    <button type="button" class="gp-btn sec" data-inq="vincular" data-que="ticket">Ya hay un ticket: ligarlo</button>{% endif %}
+  {% if p.accion == 'levantar_ot' and puede.vincular %}<a class="gp-btn" href="/ot/?crear=1&inquietud={{ q.id }}"><i class="bi bi-clipboard2-plus-fill"></i>Levantar OT</a>
+    <button type="button" class="gp-btn sec" data-inq="vincular" data-que="ot">Ya hay una OT: ligarla</button>{% endif %}
+  {% if p.accion == 'marcar' and puede.paso %}<button type="button" class="gp-btn" data-inq="paso" data-clave="{{ p.clave }}" data-hecho="1"><i class="bi bi-check2-square"></i>Marcar como hecho</button>{% endif %}
+  {% if p.accion == 'cerrar' and puede.cerrar %}<button type="button" class="gp-btn verde" data-inq="cerrar"><i class="bi bi-check-circle-fill"></i>Cerrar con resolución</button>{% endif %}
+{% endmacro %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-chat-quote-fill me-2"></i>{{ q.numero }} · {{ q.cliente }}</h4>
+    <div class="sub">Anotada por {{ q.creada_por or '—' }} el {{ q.creada }} · {{ q.origen_txt }}{% if q.numero_ot %} · desde la OT <a href="/ot/{{ q.visita_id }}">{{ q.numero_ot }}</a>{% endif %}</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('ot_inquietudes_pagina') }}" class="btn btn-sm btn-outline-secondary iq-btn-ui"><i class="bi bi-arrow-left me-1"></i>Volver al monitor</a>
+  </div>
+</div>
+
+{% set actual = q.ruta.actual %}
+{#- ══ Guía paso a paso (mismo componente visual que la guía del retiro) ══ -#}
+<section class="gp" aria-label="Recorrido de la inquietud">
+  <div class="gp-head">
+    <div class="gp-head-t"><i class="bi bi-signpost-split-fill" aria-hidden="true"></i>
+      <div><h3>Recorrido: {{ q.tipo_txt }}</h3><p>{{ q.reloj_txt }}{% if q.reloj.resolucion and q.reloj.resolucion.vence and not q.terminada %} · resolver antes del {{ q.reloj.resolucion.vence.strftime('%d/%m/%Y %H:%M') }} (horas hábiles de Chile){% endif %}</p></div></div>
+    <div class="gp-prog"><b>{{ q.ruta.hechos }} de {{ q.ruta.total }} pasos</b><div class="gp-prog-bar"><i style="width:{{ q.ruta.avance }}%"></i></div></div>
+  </div>
+
+  {% if q.terminada %}
+  <div class="gp-sig is-fin"><div class="gp-sig-k"><i class="bi bi-flag-fill"></i>{{ q.estado_txt }}</div>
+    <h4>{{ 'Resuelta: ' ~ q.resolucion if q.estado == 'cerrada' else 'Anulada: ' ~ q.resolucion }}</h4>
+    {% if puede.reabrir %}<div class="gp-acc"><button type="button" class="gp-btn sec" data-inq="reabrir"><i class="bi bi-arrow-counterclockwise"></i>Reabrir</button></div>{% endif %}</div>
+  {% elif actual %}
+  <div class="gp-sig {{ 'is-actual' if q.semaforo == 'rojo' else 'is-espera' }}">
+    <div class="gp-sig-k"><i class="bi bi-exclamation-lg"></i>Te toca · Paso {{ q.ruta.pasos.index(actual) + 1 }}</div>
+    <h4>{{ actual.titulo }}</h4>
+    <p class="gp-preg">{{ actual.texto }}</p>
+    <div class="gp-acc">{{ botones(actual) }}</div>
+  </div>
+  {% endif %}
+
+  {% if puede.clasificar %}
+  <div class="gp-detalle" id="iqfClasificar" style="margin:12px 16px 0">
+    <b>¿Qué pide el cliente?</b>
+    <div class="iqf-fila">
+      <select id="iqfTipo" class="form-select" style="width:auto" aria-label="Qué pide el cliente">
+        {% for k, t in tipos.items() %}<option value="{{ k }}"{{ ' selected' if k == q.tipo }}>{{ t.texto }}</option>{% endfor %}
+      </select>
+      <button type="button" class="gp-btn sec" data-inq="clasificar"><i class="bi bi-check2"></i>Guardar</button>
+    </div>
+    <small class="text-muted">Tú decides: el sistema solo te muestra el camino de cada opción. Nada se hace solo.</small>
+  </div>
+  {% endif %}
+
+  <ol class="gp-lista">
+    {% for p in q.ruta.pasos %}
+    {% set cls = 'hecho' if p.estado == 'hecho' else (('actual' if q.semaforo == 'rojo' else 'espera') if p.estado == 'actual' else 'pendiente') %}
+    <li class="gp-paso is-{{ cls }}">
+      <span class="gp-circ" aria-hidden="true">{% if p.estado == 'hecho' %}<i class="bi bi-check-lg"></i>{% else %}{{ loop.index }}{% endif %}</span>
+      <div class="gp-ptop"><h4 class="gp-ptit">{{ loop.index }}. {{ p.titulo }}</h4>
+        <span class="gp-badge b-{{ cls }}"><i class="bi bi-{{ 'check-circle-fill' if p.estado == 'hecho' else ('exclamation-circle-fill' if p.estado == 'actual' else 'circle') }}"></i>{{ 'Hecho' if p.estado == 'hecho' else ('Te toca' if p.estado == 'actual' else 'Aún no toca') }}</span></div>
+      <p class="gp-pq">{{ p.texto }}</p>
+      {% if p.estado == 'hecho' and p.quien %}<p class="gp-res"><i class="bi bi-person-check-fill"></i> Lo marcó {{ p.quien }}{% if p.cuando %} · {{ p.cuando }}{% endif %}</p>{% endif %}
+      {% if p.estado == 'actual' and not q.terminada %}<div class="gp-acc">{{ botones(p) }}</div>{% endif %}
+      {% if p.estado != 'actual' and p.marcable and puede.paso and not q.terminada %}<div class="gp-acc">
+        {% if p.estado == 'hecho' %}<button type="button" class="gp-btn sec" data-inq="paso" data-clave="{{ p.clave }}" data-hecho="0">Desmarcar</button>
+        {% else %}<button type="button" class="gp-btn sec" data-inq="paso" data-clave="{{ p.clave }}" data-hecho="1">Marcar como hecho</button>{% endif %}</div>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+
+<div class="iqf-grid">
+  <div>
+    <section class="iqf-card" aria-labelledby="iqfTit1">
+      <h5 id="iqfTit1"><i class="bi bi-chat-quote-fill text-primary"></i>Lo que comentó el cliente</h5>
+      <div class="iqf-cab">
+        <span class="badge rm-estado e-{{ q.estado_color }}"><i class="bi {{ q.estado_icono }}"></i>{{ q.estado_txt }}</span>
+        <span class="iqm-tipo"><i class="bi {{ q.tipo_icono }}"></i>{{ q.tipo_txt }}</span>
+        <span class="iqm-meta">{% if q.responsable %}A cargo de <b>{{ q.responsable }}</b>{% else %}<b class="iqm-sin">Sin responsable</b>{% endif %}</span>
+      </div>
+      <div class="iqf-eq">
+        <span class="iqm-foto">{% if q.foto %}<img src="{{ q.foto }}" alt="Foto del producto en el catálogo">{% else %}<i class="bi bi-image" aria-hidden="true"></i>{% endif %}</span>
+        <div><b>{{ q.equipo }}</b><small class="text-muted">Cliente: {{ q.cliente }}</small></div>
+      </div>
+      <div class="iqf-lbl">¿Qué le preocupa al cliente?</div>
+      <p class="iqf-tx" id="iqfInq">{{ q.inquietud }}</p>
+      <div class="iqf-lbl">Diagnóstico adicional del técnico</div>
+      <p class="iqf-tx" id="iqfDia">{{ q.diagnostico or '— sin diagnóstico todavía —' }}</p>
+      {% if q.fotos %}<div class="iqf-lbl">Fotos</div>
+      <div class="iqf-fotos">{% for u in q.fotos %}<a href="{{ u }}" target="_blank" rel="noopener"><img src="{{ u }}" alt="Foto {{ loop.index }} de la inquietud" loading="lazy"></a>{% endfor %}</div>{% endif %}
+      {% if ticket or ot %}<div class="iqf-lbl">Ligada a</div>
+      <div class="iqf-vinc">
+        {% if ticket %}<div><i class="bi bi-ticket-detailed-fill"></i> Ticket <a href="/tickets/{{ ticket.id }}">{{ ticket.numero }}</a> <small class="text-muted">{{ ticket.estado }}</small></div>{% endif %}
+        {% if ot %}<div><i class="bi bi-clipboard2-check-fill"></i> OT <a href="/ot/{{ ot.id }}">{{ ot.numero }}</a> <small class="text-muted">{{ ot.estado }}</small></div>{% endif %}
+      </div>{% endif %}
+    </section>
+
+    <section class="iqf-card" aria-labelledby="iqfTit3">
+      <h5 id="iqfTit3"><i class="bi bi-sliders"></i>Gestionar</h5>
+      <div class="iqf-acciones">
+        {% if puede.adjudicar %}<button type="button" class="gp-btn" data-inq="adjudicar"><i class="bi bi-person-raised-hand"></i>Adjudicarme</button>{% endif %}
+        {% if puede.editar %}<button type="button" class="gp-btn sec" data-inq="editar"><i class="bi bi-pencil-fill"></i>Editar</button>{% endif %}
+        <button type="button" class="gp-btn sec" data-inq="nota"><i class="bi bi-journal-plus"></i>Agregar una nota</button>
+        {% if puede.cerrar %}<button type="button" class="gp-btn verde" data-inq="cerrar"><i class="bi bi-check-circle-fill"></i>Cerrar</button>{% endif %}
+        {% if puede.anular %}<button type="button" class="gp-btn sec" data-inq="anular"><i class="bi bi-slash-circle"></i>Anular</button>{% endif %}
+        {% if es_superadmin %}<button type="button" class="gp-btn sec" style="border-color:#dc2626;color:#b91c1c" data-inq="borrar"><i class="bi bi-trash3-fill"></i>Borrar (solo superadmin)</button>{% endif %}
+      </div>
+      {% if puede.asignar %}
+      <div class="iqf-fila">
+        <label for="iqfResp" class="fw-bold">Responsable</label>
+        <select id="iqfResp" class="form-select" style="width:auto">
+          <option value="">Elige a una persona…</option>
+          {% for c in candidatos %}<option value="{{ c.id }}"{{ ' selected' if q.responsable_id == c.id }}>{{ c.nombre }}</option>{% endfor %}
+        </select>
+        <button type="button" class="gp-btn sec" data-inq="asignar"><i class="bi bi-person-fill-gear"></i>Asignar</button>
+        {% if not candidatos %}<small class="text-muted w-100">Nadie tiene todavía el permiso «Responsable de OT»: cuando se encienda aparecerán aquí. Mientras, usa «Adjudicarme».</small>{% endif %}
+      </div>
+      {% endif %}
+    </section>
+  </div>
+
+  <div>
+    <section class="iqf-card iqf-intel" aria-labelledby="iqfTit4">
+      <h5 id="iqfTit4"><i class="bi bi-lightbulb-fill text-warning"></i>Lo que ayuda a decidir</h5>
+      {% if not q.maquina_id %}<p class="text-muted mb-0">El equipo se escribió a mano: no hay ficha con compras ni historial. Si el cliente lo tiene en su ficha, edita la inquietud para ligarlo.</p>
+      {% else %}
+      <dl class="mb-0">
+        <dt>De dónde viene el equipo</dt>
+        <dd>{% if intel.equipo and intel.equipo.doc_origen %}Documento <b>{{ intel.equipo.doc_origen }}</b>{% if intel.equipo.doc_fecha %} · {{ intel.equipo.doc_fecha }}{% endif %}{% else %}No consta el documento de origen en la ficha del equipo.{% endif %}</dd>
+        <dt>Garantía</dt>
+        <dd>{% if intel.equipo and intel.equipo.garantia %}<span class="iqf-garantia {{ 'si' if intel.equipo.garantia_vigente else 'no' }}">{{ intel.equipo.garantia }}</span>
+          {% elif intel.equipo and intel.equipo.estado == 'garantia' %}<span class="iqf-garantia si">El equipo está marcado en garantía</span>
+          {% else %}No consta una fecha de garantía.{% endif %}</dd>
+        <dt>Inquietudes anteriores del mismo equipo ({{ intel.previas|length }})</dt>
+        <dd>{% if intel.previas %}<ul>{% for p in intel.previas %}<li><a href="{{ url_for('ot_inquietud_ficha', iid=p.id) }}">{{ p.numero }}</a> · {{ p.estado }} · {{ p.creada }}<br>{{ p.inquietud }}</li>{% endfor %}</ul>{% else %}Ninguna.{% endif %}</dd>
+        <dt>Hallazgos de OT de este equipo ({{ intel.hallazgos|length }})</dt>
+        <dd>{% if intel.hallazgos %}<ul>{% for h in intel.hallazgos %}<li>{{ h.titulo }} · {{ h.estado }}{% if h.ot %} · <a href="/ot/{{ h.visita_id }}">{{ h.ot }}</a>{% endif %} · {{ h.cuando }}</li>{% endfor %}</ul>{% else %}Ninguno.{% endif %}</dd>
+        <dt>Repuestos pedidos para este equipo ({{ intel.repuestos|length }})</dt>
+        <dd>{% if intel.repuestos %}<ul>{% for r in intel.repuestos %}<li>{{ r.nombre }} × {{ r.cantidad|int if r.cantidad is not none else 1 }} · {{ r.estado }}{% if r.ot %} · <a href="/ot/{{ r.visita_id }}">{{ r.ot }}</a>{% endif %} · {{ r.cuando }}</li>{% endfor %}</ul>{% else %}Ninguno.{% endif %}</dd>
+      </dl>
+      {% endif %}
+      {% if intel.otras_del_cliente %}<p class="mt-2 mb-0 text-muted">Este cliente tiene {{ intel.otras_del_cliente }} inquietud{{ '' if intel.otras_del_cliente == 1 else 'es' }} más en el sistema.</p>{% endif %}
+    </section>
+
+    <section class="iqf-card" aria-labelledby="iqfTit5">
+      <h5 id="iqfTit5"><i class="bi bi-clock-history"></i>Registro de actividad</h5>
+      {% if not actividad %}<p class="text-muted mb-0">Todavía no hay movimientos.</p>{% endif %}
+      <ul class="iqf-act">
+        {% for a in actividad %}<li><b>{{ a.accion|replace('_', ' ')|capitalize }}</b> — {{ a.detalle }}<small>{{ a.usuario }} · {{ a.cuando }}</small></li>{% endfor %}
+      </ul>
+    </section>
+  </div>
+</div>
+
+<div class="modal fade iqf-modal" id="iqfEditar" tabindex="-1" aria-hidden="true" aria-labelledby="iqfEditarT">
+  <div class="modal-dialog modal-dialog-centered modal-fullscreen-sm-down"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title" id="iqfEditarT"><i class="bi bi-pencil-fill me-2"></i>Editar la inquietud</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button></div>
+    <div class="modal-body">
+      <label class="fw-bold" for="iqfEdInq">¿Qué le preocupa al cliente?</label>
+      <textarea id="iqfEdInq" class="form-control mb-2" rows="3" maxlength="700">{{ q.inquietud }}</textarea>
+      <label class="fw-bold" for="iqfEdDia">Diagnóstico adicional</label>
+      <textarea id="iqfEdDia" class="form-control mb-2" rows="3" maxlength="700">{{ q.diagnostico }}</textarea>
+      <label class="fw-bold" for="iqfEdMot">¿Por qué lo corriges? (obligatorio)</label>
+      <textarea id="iqfEdMot" class="form-control" rows="2" maxlength="500" placeholder="Queda escrito en el registro de actividad."></textarea>
+      <div class="text-danger fw-bold mt-2" id="iqfEdErr" role="alert" hidden></div>
+    </div>
+    <div class="modal-footer"><button type="button" class="gp-btn sec" data-bs-dismiss="modal">Cancelar</button>
+      <button type="button" class="gp-btn" id="iqfEdOk"><i class="bi bi-check2"></i>Guardar cambios</button></div>
+  </div></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>window.INQ_CFG = { modo: 'ficha', id: {{ q.id }}, numero: {{ q.numero|tojson }}, visitaId: {{ (q.visita_id or 0) }} };</script>
+<script src="{{ url_for('static', filename='inquietudes.js') }}"></script>
+{% endblock %}

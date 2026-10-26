@@ -13442,6 +13442,26 @@ window.OT2C = (function(){
       });
   }
 
+  /* 🗣️ 2026-10-26: «Levantar OT» desde una inquietud de cliente (/ot/?crear=1&inquietud=ID). Trae lo prellenado (cliente, equipo, tipo correctiva, título y
+     motivo); la persona cambia lo que quiera (REGLA #32). El ligamen con la inquietud lo hace la gestión después con «Ya hay una OT: ligarla». */
+  function abrirDesdeInquietud(iid){
+    fetch('/ot/inquietudes/api/' + iid + '/prellenado-ot', {credentials:'same-origin', headers:{'Accept':'application/json'}})
+      .then(function(r){ return r.json().catch(function(){ return {}; }); })
+      .then(function(j){
+        if (!j || !j.ok){
+          if (window.ilusAlert) ilusAlert({title:'No se puede levantar la OT', message:(j && j.error) || 'No pudimos preparar la OT desde la inquietud.', type:'warning'});
+          else abrir();
+          return;
+        }
+        var p = j.prellenado || {}, c = j.cliente || {};
+        var opts = {origen:'cliente', cliente:{id:c.id, nombre:c.nombre || '', rut:c.rut || ''}, tipo:p.tipo_sugerido || 'correctiva',
+                    titulo:p.titulo || '', descripcion:p.descripcion || ''};
+        if ((p.maquinas || []).length) opts.equipo_preset_maquina_ids = p.maquinas.slice();
+        abrir(opts);
+      })
+      .catch(function(){ if (window.ilusAlert) ilusAlert({title:'Sin conexión', message:'No pudimos preparar la OT. Revisa la señal e intenta de nuevo.', type:'warning'}); });
+  }
+
   // 🚀 2026-10-23: este bloque ahora se descarga bajo demanda (static/ot_modal_lazy.js), cuando la página ya terminó de cargar: si el documento ya
   // está listo se ejecuta al tiro, si no, espera el DOMContentLoaded de siempre.
   function _o2mInicio(){
@@ -13457,7 +13477,9 @@ window.OT2C = (function(){
       // 🩺 2026-10-21 (REGLA #38): /ot/?crear=1&seguimiento=1,2&desde=<OT de origen> → el asistente llega prellenado con esos hallazgos.
       var _segIds = (_qs.get('seguimiento') || '').split(',').map(function(x){ return parseInt(x, 10); }).filter(function(x){ return x > 0; });
       var _segDesde = parseInt(_qs.get('desde') || '0', 10);
-      if (_segIds.length && _segDesde) abrirDesdeHallazgos(_segDesde, _segIds);
+      var _inqId = parseInt(_qs.get('inquietud') || '0', 10);
+      if (_inqId) abrirDesdeInquietud(_inqId);
+      else if (_segIds.length && _segDesde) abrirDesdeHallazgos(_segDesde, _segIds);
       else if (_tid) abrirDesdeTicket(_tid); else abrir();
     }
   }

@@ -2,6 +2,7 @@ import base64
 import hashlib
 import io
 import json
+import uuid
 import os
 import re
 import secrets
@@ -78,6 +79,7 @@ import plantillas_serie_gps as _psg  # 2026-10-21 (REGLA #39): N° de serie + GP
 import ot_hallazgos as _oh    # 2026-10-21 (REGLA #38): hallazgos de la OT (alerta, «tomar el caso» y OT de seguimiento): reglas puras con pruebas
 import maquina_historia as _mh    # 2026-10-21: Historia del equipo (hoja de vida unificada: línea de tiempo sin duplicados, por rol): reglas puras con pruebas
 import repuestos_respuesta as _rresp    # 2026-10-21: solicitud de repuesto — dueño al nacer, reloj de primera respuesta, avisos y tiempos (módulo puro con pruebas)
+import inquietudes as _iq    # 2026-10-26: Inquietudes de clientes — SLA en horas hábiles, semáforo y recorrido paso a paso (módulo puro con pruebas)
 import fedex_labels as _fxlabels    # parser puro de etiquetas FedEx (testeable)
 _ERP = erp_engine.init_engine(
     base_url=ERP_CONFIG.get("api_url", "https://lab.random.cl/ilus"),
@@ -39607,6 +39609,12 @@ def tr_cron_simpliroute_poll():
             res["repuestos_respuesta"] = {k: _br.get(k) for k in ("revisados", "avisados", "escalados", "campanas", "correos", "omitido") if k in _br}
         except Exception as _e_rr:
             print(f"[cron-simpliroute] repuestos respuesta: {_e_rr}", flush=True)
+    # 🗣️ Inquietudes de clientes (2026-10-26): aviso por la campana, una vez por nivel, cuando una está por vencer o venció su plazo.
+    if time.time() - _t_peticion < 240:
+        try:
+            res["inquietudes"] = _inq_barrido(max_s=min(15, max(3, 270 - (time.time() - _t_peticion))), dry=bool(dry))
+        except Exception as _e_inq:
+            print(f"[cron-simpliroute] inquietudes: {_e_inq}", flush=True)
     return jsonify(res), (200 if res.get("ok") else 502)
 
 
@@ -94660,12 +94668,14 @@ def ot2_detalle(vid):
     except Exception as _e_eq:
         print(f"[ot2_detalle] quitar equipo vid={vid}: {type(_e_eq).__name__}", flush=True)
         eq_quitar = {"puede": False, "bloqueo": ""}
+    inquietud_ctx = _inq_ctx_ficha_ot(vid, v, puede_configurar, ot_solo_lectura)   # 🗣️ 2026-10-26: «El cliente me comentó…»
     return render_template(
         "ot2/detalle.html",
         eq_quitar=eq_quitar,
         anexo_vinculo=anexo_vinculo,
         desinst=desinst,
         que_paso=que_paso,
+        inquietud_ctx=inquietud_ctx,
         responsable=responsable,
         com_envio=com_envio,
         hallazgos=hallazgos,
@@ -168594,6 +168604,1032 @@ def ot_api_que_paso_registrar(vid):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+#  🗣️ INQUIETUDES DE CLIENTES (módulo propio · 2026-10-26)
+#  Daniel (25-oct): «los hallazgos… son las inquietudes del cliente que pueden levantar los técnicos… verlos bien profesional como el
+#  módulo de recepción de Retiros con SLA de atención… un CRUD con registro de actividad… que el superadmin pueda borrar y los demás
+#  puedan adjudicarse el ticket, la OT o la solicitud… poder recorrer el paso a paso, tipo semáforo, y tracking de lo que debe realizar».
+#  · Tablas propias (cli_inquietudes + cli_inquietud_actividad): una inquietud puede NO tener OT (la reporta la gestión desde la ficha del
+#    cliente o el superadmin), tiene responsable, SLA y registro de actividad. Una sentencia CREATE TABLE IF NOT EXISTS por tabla (REGLA #18).
+#  · El técnico (también el externo) anota desde la OT «El cliente me comentó…» de CUALQUIER equipo del cliente; no ve plata, proveedores
+#    ni el monitor (REGLAS #19/#26). La gestión trabaja desde /ot/inquietudes (@_no_tecnico).
+#  · Acciones SUGERIDAS, nunca automáticas (REGLA #32): «Levantar ticket» y «Levantar OT» preguntan antes. El ticket nace por SQL directo
+#    (como _otrep_ticket_para_ot): tk_api_create le escribe al cliente y esto no debe hacerlo (REGLA #22). Nada de correo ni WhatsApp.
+#  · Lógica pura y probada en inquietudes.py (SLA en horas hábiles, semáforo, recorrido paso a paso); pruebas: tests/test_inquietudes.py.
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+TIPO_CAMPANA = "ot_hallazgo"            # tipo de campana que YA existe en el ENUM de mant_notificaciones (no se agrega un valor nuevo)
+_INQ_ESTADO = {"ok": False, "revisado_en": 0.0}
+
+
+def _ensure_cli_inquietudes():
+    """Las dos tablas del módulo. Cada una es UNA sentencia CREATE TABLE IF NOT EXISTS (barata si ya existe: la guarda de mysql_execute
+    la salta sin pedir lock, REGLA #18) y sin llaves foráneas ni ALTER sobre tablas ajenas. Estados y tipos son VARCHAR (no ENUM) para no
+    tener que migrar nunca un ENUM."""
+    try:
+        mysql_execute(
+            "CREATE TABLE IF NOT EXISTS cli_inquietudes ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  cliente_id INT NOT NULL,"
+            "  visita_id INT NULL COMMENT 'OT desde la que se anotó (si la hay)',"
+            "  maquina_id INT NULL COMMENT 'mant_maquinas.id del equipo de la ficha del cliente',"
+            "  producto_texto VARCHAR(400) NULL COMMENT 'nombre completo del equipo (de la ficha o escrito a mano)',"
+            "  inquietud TEXT NOT NULL,"
+            "  diagnostico TEXT NULL,"
+            "  fotos_json TEXT NULL,"
+            "  tipo_solicitud VARCHAR(20) NOT NULL DEFAULT 'sin_clasificar',"
+            "  estado VARCHAR(20) NOT NULL DEFAULT 'nueva',"
+            "  origen VARCHAR(20) NOT NULL DEFAULT 'ot' COMMENT 'ot | ficha_cliente | superadmin',"
+            "  responsable_user_id INT NULL,"
+            "  responsable_nombre VARCHAR(190) NULL,"
+            "  responsable_en DATETIME NULL,"
+            "  creada_por VARCHAR(190) NULL,"
+            "  creada_por_id INT NULL,"
+            "  creada_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            "  primera_respuesta_en DATETIME NULL,"
+            "  primera_respuesta_por VARCHAR(190) NULL,"
+            "  resuelta_en DATETIME NULL,"
+            "  resuelta_por VARCHAR(190) NULL,"
+            "  resolucion TEXT NULL,"
+            "  reabierta_en DATETIME NULL,"
+            "  ticket_id INT NULL,"
+            "  ot_id INT NULL,"
+            "  pasos_json TEXT NULL,"
+            "  sla_aviso_nivel TINYINT NOT NULL DEFAULT 0,"
+            "  actualizada_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,"
+            "  borrada TINYINT(1) NOT NULL DEFAULT 0,"
+            "  borrada_por VARCHAR(190) NULL,"
+            "  borrada_en DATETIME NULL,"
+            "  borrada_motivo VARCHAR(500) NULL,"
+            "  KEY idx_inq_cliente (cliente_id),"
+            "  KEY idx_inq_estado (borrada, estado),"
+            "  KEY idx_inq_maquina (maquina_id),"
+            "  KEY idx_inq_visita (visita_id),"
+            "  KEY idx_inq_resp (responsable_user_id)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+        mysql_execute(
+            "CREATE TABLE IF NOT EXISTS cli_inquietud_actividad ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  inquietud_id INT NOT NULL,"
+            "  accion VARCHAR(40) NOT NULL,"
+            "  detalle VARCHAR(900) NULL,"
+            "  usuario VARCHAR(190) NULL,"
+            "  usuario_id INT NULL,"
+            "  creada_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            "  KEY idx_inqact_inq (inquietud_id, id)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+        _INQ_ESTADO["ok"] = True
+    except Exception as e:
+        _INQ_ESTADO["ok"] = False
+        print(f"[inquietudes] tablas: {type(e).__name__}: {e}", flush=True)
+    _INQ_ESTADO["revisado_en"] = time.time()
+    return _INQ_ESTADO["ok"]
+
+
+def _inq_ok():
+    """¿Existen las tablas? Si no, el módulo queda dormido y el resto de la app funciona igual (se reintenta cada 5 minutos)."""
+    if _INQ_ESTADO["ok"]:
+        return True
+    if time.time() - _INQ_ESTADO["revisado_en"] < 300:
+        return False
+    return _ensure_cli_inquietudes()
+
+
+def _inq_ahora():
+    """Ahora, hora de Chile, sin zona (como pide inquietudes.py)."""
+    return _now_chile().replace(tzinfo=None)
+
+
+def _inq_cuando(dt_utc):
+    """Fecha y hora Chile con año (REGLA #6)."""
+    try:
+        return chile_fmt_filter(dt_utc, "%d/%m/%Y %H:%M") if dt_utc else ""
+    except Exception:
+        return ""
+
+
+def _inq_fila_chile(f):
+    """La fila con las fechas del reloj pasadas de UTC (como las guarda MySQL) a hora Chile sin zona."""
+    d = dict(f)
+    for k in ("creada_en", "primera_respuesta_en", "resuelta_en", "reabierta_en"):
+        d[k] = _otrep_a_chile(f.get(k)) if f.get(k) else None
+    return d
+
+
+def _inq_reloj(f, ahora=None):
+    return _iq.reloj(_inq_fila_chile(f), ahora or _inq_ahora(), _otrep_feriados)
+
+
+def _inq_log(iid, accion, detalle=""):
+    """Registro de actividad de la inquietud (quién, qué, cuándo) y, además, la bitácora general. Nunca levanta."""
+    try:
+        mysql_execute("INSERT INTO cli_inquietud_actividad (inquietud_id, accion, detalle, usuario, usuario_id) VALUES (%s,%s,%s,%s,%s)",
+                      (int(iid), str(accion)[:40], (str(detalle or ""))[:900], _hall_quien(), _hall_uid()))
+    except Exception as e:
+        print(f"[inquietudes] actividad iid={iid}: {type(e).__name__}", flush=True)
+    _mant_log("inquietud", int(iid), str(accion)[:60], (str(detalle or ""))[:500])
+
+
+def _inq_fotos_catalogo(skus):
+    """{sku: '/f/<clave>'}: la primera foto del catálogo de cada SKU (una consulta). Solo lectura, sin plata (REGLAS #19/#26)."""
+    skus = sorted({str(s).strip() for s in (skus or []) if s and str(s).strip()})
+    if not skus:
+        return {}
+    out = {}
+    try:
+        for r in (mysql_fetchall(
+                "SELECT p.sku, f.gcs_key FROM cat_producto_fotos f JOIN cat_productos p ON p.id = f.producto_id "
+                " WHERE p.sku IN (" + ",".join(["%s"] * len(skus)) + ") ORDER BY f.orden, f.id", tuple(skus)) or []):
+            if r.get("sku") not in out and r.get("gcs_key"):
+                out[r["sku"]] = "/f/" + r["gcs_key"]
+    except Exception as e:
+        print(f"[inquietudes] fotos de catálogo: {type(e).__name__}", flush=True)
+    return out
+
+
+def _inq_ctx_lote(filas):
+    """{id: ctx} para el recorrido de cada inquietud, con pocas consultas (una de repuestos y una de OT por lote).
+    ctx: solicitud_repuesto · repuesto_recibido · repuesto_instalado · ticket · ot · ot_terminada."""
+    ctx = {int(f["id"]): {"ticket": bool(f.get("ticket_id")), "ot": bool(f.get("ot_id")), "solicitud_repuesto": False,
+                          "repuesto_recibido": False, "repuesto_instalado": False, "ot_terminada": False} for f in filas}
+    try:
+        ot_ids = sorted({int(f["ot_id"]) for f in filas if f.get("ot_id")})
+        if ot_ids:
+            est = {int(r["id"]): r.get("estado") for r in (mysql_fetchall(
+                "SELECT id, estado FROM mant_visitas WHERE id IN (" + ",".join(["%s"] * len(ot_ids)) + ")", tuple(ot_ids)) or [])}
+            for f in filas:
+                if f.get("ot_id"):
+                    ctx[int(f["id"])]["ot_terminada"] = est.get(int(f["ot_id"])) in ("completada", "cerrada")
+        maq = sorted({int(f["maquina_id"]) for f in filas if f.get("maquina_id") and f.get("tipo_solicitud") == "repuesto"})
+        if maq:
+            sol = mysql_fetchall(
+                "SELECT maquina_id, estado, created_at FROM mant_ot_repuesto_solicitudes WHERE maquina_id IN ("
+                + ",".join(["%s"] * len(maq)) + ") AND estado <> 'rechazado'", tuple(maq)) or []
+            for f in filas:
+                if f.get("tipo_solicitud") != "repuesto" or not f.get("maquina_id"):
+                    continue
+                for s in sol:
+                    if int(s["maquina_id"]) == int(f["maquina_id"]) and s.get("created_at") and f.get("creada_en") and s["created_at"] >= f["creada_en"]:
+                        c = ctx[int(f["id"])]
+                        c["solicitud_repuesto"] = True
+                        if s.get("estado") in ("recibido", "instalado"):
+                            c["repuesto_recibido"] = True
+                        if s.get("estado") == "instalado":
+                            c["repuesto_instalado"] = True
+    except Exception as e:
+        print(f"[inquietudes] contexto de la ruta: {type(e).__name__}", flush=True)
+    return ctx
+
+
+_INQ_SELECT = ("SELECT i.*, c.razon_social AS cliente, m.sku AS m_sku, m.serie AS m_serie, v.numero_ot AS numero_ot "
+               "  FROM cli_inquietudes i LEFT JOIN mant_clientes c ON c.id = i.cliente_id "
+               "  LEFT JOIN mant_maquinas m ON m.id = i.maquina_id LEFT JOIN mant_visitas v ON v.id = i.visita_id ")
+
+
+def _inq_pct(rel):
+    """% del plazo usado del tramo que corre (primera respuesta mientras nadie la toma; después, la resolución). Para la barra del reloj."""
+    try:
+        t = rel.get("primera") if not (rel.get("primera") or {}).get("terminado") else rel.get("resolucion")
+        if not t or rel.get("semaforo") == "gris":
+            return 0
+        return int(max(0, min(100, round(100.0 * t["transcurrido_h"] / t["plazo_h"]))))
+    except Exception:
+        return 0
+
+
+def _inq_vista(f, ctx=None, fotos=None, ahora=None):
+    """La inquietud lista para pintar (monitor y ficha): textos, semáforo del SLA, recorrido y lo que falta."""
+    ctx = ctx or {}
+    rel = _inq_reloj(f, ahora)
+    rt = _iq.ruta(f, ctx, _iq.pasos_de_json(f.get("pasos_json")))
+    est = _iq.ESTADOS.get(f.get("estado")) or _iq.ESTADOS["nueva"]
+    tip = _iq.TIPOS.get(f.get("tipo_solicitud")) or _iq.TIPOS["sin_clasificar"]
+    return {
+        "id": int(f["id"]), "numero": _iq.numero(f["id"]), "cliente_id": f.get("cliente_id"), "cliente": f.get("cliente") or "Sin cliente",
+        "equipo": f.get("producto_texto") or "Equipo sin identificar", "maquina_id": f.get("maquina_id"),
+        "foto": (fotos or {}).get((f.get("m_sku") or "").strip()), "estado": f.get("estado"), "estado_txt": est["texto"],
+        "estado_color": est["color"], "estado_icono": est["icono"], "tipo": f.get("tipo_solicitud"), "tipo_txt": tip["texto"],
+        "tipo_icono": tip["icono"], "origen": f.get("origen"), "origen_txt": _iq.ORIGENES.get(f.get("origen"), ""),
+        "responsable": f.get("responsable_nombre") or "", "responsable_id": f.get("responsable_user_id"),
+        "creada_por": f.get("creada_por") or "", "creada": _inq_cuando(f.get("creada_en")), "numero_ot": f.get("numero_ot") or "",
+        "visita_id": f.get("visita_id"), "ticket_id": f.get("ticket_id"), "ot_id": f.get("ot_id"),
+        "semaforo": rel["semaforo"], "reloj_txt": rel["texto"], "vencida": rel["vencida"], "reloj": rel, "ruta": rt,
+        "reloj_pct": _inq_pct(rel),
+        "pendiente": rt["pendiente"], "inquietud": f.get("inquietud") or "", "diagnostico": f.get("diagnostico") or "",
+        "resolucion": f.get("resolucion") or "", "fotos": _iq.fotos_de_json(f.get("fotos_json")),
+        "terminada": f.get("estado") in _iq.ESTADOS_TERMINADOS,
+    }
+
+
+def _inq_leer(iid):
+    """La fila (con cliente, SKU, serie y N° de OT) o None. Una inquietud eliminada no se devuelve."""
+    r = mysql_fetchone(_INQ_SELECT + " WHERE i.id=%s AND i.borrada=0", (int(iid),))
+    return dict(r) if r else None
+
+
+def _inq_es_gestion():
+    return not _es_rol_tecnico()
+
+
+def _inq_destinos(f, excluir_uid=None):
+    """A quién avisa la campana: el responsable si ya tiene; si no, la gestión de la OT (la decide `_hall_destinos`, que usa
+    `_ot_gestion_destinatarios`) o, sin OT, las personas con el permiso «Responsable de OT». Nunca un técnico."""
+    gente = []
+    try:
+        if f.get("responsable_user_id"):
+            gente = [{"id": int(f["responsable_user_id"])}]
+        elif f.get("visita_id"):
+            gente = _hall_destinos(int(f["visita_id"]), None)
+        if not gente:
+            gente = [{"id": int(c["id"])} for c in _ot_resp_candidatos()]
+        if not gente:
+            gente = [{"id": int(r["id"])} for r in (mysql_fetchall(
+                "SELECT id FROM app_users WHERE active=1 AND role IN ('superadmin','admin','supervisor')") or [])]
+    except Exception as e:
+        print(f"[inquietudes] destinos iid={f.get('id')}: {type(e).__name__}", flush=True)
+        return []
+    vistos, out = set(), []
+    for p in gente:
+        uid = int(p["id"])
+        if uid in vistos or (excluir_uid and uid == int(excluir_uid)):
+            continue
+        vistos.add(uid)
+        out.append(uid)
+    return out
+
+
+def _inq_campana(f, titulo_, cuerpo_, prioridad="media", destinos=None):
+    """Campana a la gestión (sin correo, sin cliente: REGLA #22). → a cuántas personas."""
+    n = 0
+    for uid in (destinos if destinos is not None else _inq_destinos(f, excluir_uid=_hall_uid())):
+        try:
+            _mant_notificar(uid, TIPO_CAMPANA, titulo_, cuerpo_, url_accion=f"/ot/inquietudes/{int(f['id'])}", prioridad=prioridad)
+            _mant_notif_cache_invalidar(uid)
+            n += 1
+        except Exception as e:
+            print(f"[inquietudes] campana a {uid}: {type(e).__name__}", flush=True)
+    return n
+
+
+def _inq_subir_fotos(archivos, prefijo):
+    """→ (urls, None) o (None, respuesta_de_error). Máximo 3 fotos (no videos)."""
+    archivos = [x for x in (archivos or []) if x and x.filename][:_iq.MAX_FOTOS + 1]
+    if len(archivos) > _iq.MAX_FOTOS:
+        return None, _ot2_err(f"Como máximo {_iq.MAX_FOTOS} fotos por inquietud.", "EVIDENCIA_EXCESO")
+    urls = []
+    if archivos:
+        if not _gcs_ready():
+            return None, _ot2_err("El almacenamiento de fotos no está disponible. Guárdala sin foto o intenta en un minuto.", "STORAGE_OFF", http=503)
+        for a in archivos:
+            t_a, e_a = _otrep_clasificar_archivo(a)
+            if e_a or t_a != "foto":
+                return None, _ot2_err(e_a or "Solo fotos (no videos) en la inquietud.", "EVIDENCIA_INVALIDA")
+            try:
+                r = _gcs_upload_like_cloudinary(a, public_id=f"{prefijo}_{uuid.uuid4().hex[:10]}", folder="ilus/ot_inquietudes")
+                if r and r.get("secure_url"):
+                    urls.append(r["secure_url"])
+            except Exception as e:
+                print(f"[inquietudes] foto: {type(e).__name__}", flush=True)
+                return None, _ot2_err("No pudimos subir la foto. Intenta de nuevo.", "FOTO_FALLO", http=500)
+    return urls, None
+
+
+def _inq_crear_core(cliente_id, visita_id, form, archivos, origen):
+    """Valida y guarda UNA inquietud. → (id, None) o (None, respuesta_de_error). El equipo debe ser del cliente (o texto libre)."""
+    inquietud, diagnostico = _iq.limpio(form.get("inquietud")), _iq.limpio(form.get("diagnostico"))
+    mid, prod = _iq.entero(form.get("maquina_id")), _iq.limpio(form.get("producto_texto"), _iq.MAX_PRODUCTO)
+    ok, msg = _iq.validar_crear(inquietud, diagnostico, mid, prod, origen)
+    if not ok:
+        return None, _ot2_err(msg, "INQUIETUD_INCOMPLETA")
+    equipo = prod
+    if mid:
+        m = mysql_fetchone("SELECT id, nombre, sku, serie, cliente_id, estado FROM mant_maquinas WHERE id=%s", (mid,))
+        if not m or int(m.get("cliente_id") or 0) != int(cliente_id) or (m.get("estado") or "") == "baja":
+            return None, _ot2_err("Ese equipo no es de este cliente. Búscalo de nuevo.", "EQUIPO_AJENO")
+        equipo = _iq.nombre_con_ficha(m.get("nombre"), m.get("sku"), m.get("serie"))
+    urls, err = _inq_subir_fotos(archivos, "inquietud_%s" % (visita_id or "c%s" % cliente_id))
+    if err:
+        return None, err
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO cli_inquietudes (cliente_id, visita_id, maquina_id, producto_texto, inquietud, diagnostico, fotos_json, origen, "
+                " creada_por, creada_por_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (int(cliente_id), (int(visita_id) if visita_id else None), mid, equipo[:400], inquietud, diagnostico or None,
+                 _iq.fotos_a_json(urls), origen, _hall_quien(), _hall_uid()))
+            iid = int(cur.lastrowid or 0)
+        conn.commit()
+    except Exception as e:
+        print(f"[inquietudes] guardar: {type(e).__name__}: {e}", flush=True)
+        return None, _ot2_err("No pudimos guardar la inquietud. Intenta de nuevo.", "ERROR_INTERNO", http=500)
+    if not iid:
+        return None, _ot2_err("No pudimos guardar la inquietud. Intenta de nuevo.", "ERROR_INTERNO", http=500)
+    _inq_log(iid, "creada", f"{_iq.ORIGENES.get(origen, origen)} · {equipo}"[:900])
+    f = _inq_leer(iid)
+    if f:
+        tt, cc = _iq.campana_nueva(iid, f.get("cliente"), equipo, _hall_quien())
+        _inq_campana(f, tt, cc, "alta")
+    return iid, None
+
+
+# ── Lo que ve y hace el TÉCNICO desde la OT (también el externo): sin plata, sin proveedores, sin monitor ─────────────────
+def _inq_ot_y_cliente(vid):
+    """(fila de la OT, None) o (None, respuesta de error). La inquietud es del CLIENTE: sin cliente no hay a quién atribuirla."""
+    v = mysql_fetchone("SELECT id, numero_ot, cliente_id, estado FROM mant_visitas WHERE id=%s", (int(vid),))
+    if not v:
+        return None, _ot2_err("No encontramos esa OT.", "OT_NO_EXISTE", http=404)
+    if not v.get("cliente_id"):
+        return None, _ot2_err("Esta OT no tiene cliente: la inquietud del cliente no aplica.", "SIN_CLIENTE")
+    return v, None
+
+
+def _inq_buscar_equipos(cliente_id, q):
+    """Los equipos de la ficha del cliente (nombre, SKU, serie, foto del catálogo). `q`: todas las palabras deben estar. Sin montos."""
+    palabras = [w for w in " ".join((q or "").split())[:60].split(" ") if w][:4]
+    cond, params = ["cliente_id=%s", "COALESCE(estado,'activo') <> 'baja'"], [int(cliente_id)]
+    for w in palabras:
+        cond.append("(nombre LIKE %s OR sku LIKE %s OR serie LIKE %s)")
+        params.extend(["%" + w + "%"] * 3)
+    rows = mysql_fetchall("SELECT id, nombre, sku, serie FROM mant_maquinas WHERE " + " AND ".join(cond) + " ORDER BY nombre LIMIT 40",
+                          tuple(params)) or []
+    rows = [r for r in rows if not _sku_es_servicio(r.get("sku"), r.get("nombre"))][:20]
+    fotos = _inq_fotos_catalogo([r.get("sku") for r in rows])
+    return [{"id": int(r["id"]), "nombre": r.get("nombre") or "", "sku": r.get("sku") or "", "serie": r.get("serie") or "",
+             "foto": fotos.get((r.get("sku") or "").strip())} for r in rows]
+
+
+@app.route("/ot/api/<int:vid>/equipos-cliente", methods=["GET"])
+@_mant_required
+@_ot_can_configurar
+def ot_api_equipos_cliente(vid):
+    """Buscador de los equipos que el CLIENTE de esta OT tiene en su ficha (no solo los de la OT), con su foto del catálogo."""
+    v, err = _inq_ot_y_cliente(vid)
+    if err:
+        return err
+    try:
+        return jsonify({"ok": True, "equipos": _inq_buscar_equipos(v["cliente_id"], request.args.get("q"))})
+    except Exception as e:
+        print(f"[inquietudes] buscador vid={vid}: {type(e).__name__}", flush=True)
+        return _ot2_err("No pudimos buscar los equipos del cliente ahora.", "ERROR_INTERNO", http=500)
+
+
+@app.route("/ot/api/<int:vid>/inquietud-cliente", methods=["POST"])
+@_mant_required
+@_ot_can_configurar
+def ot_api_inquietud_cliente(vid):
+    """«El cliente me comentó…»: guarda la inquietud (multipart: maquina_id? | producto_texto?, inquietud, diagnostico, fotos[] de 0 a 3)
+    y avisa a la gestión por la campana. No crea tickets ni OT (lo decide la gestión). Nada al cliente (REGLA #22)."""
+    if not _inq_ok():
+        return _ot2_err("Esta función no está disponible en este momento. Intenta de nuevo en un minuto.", "TABLA_NO_DISPONIBLE", http=503)
+    v, err = _inq_ot_y_cliente(vid)
+    if err:
+        return err
+    iid, err = _inq_crear_core(v["cliente_id"], vid, request.form, request.files.getlist("fotos"), _iq.ORIG_OT)
+    if err:
+        return err
+    return jsonify({"ok": True, "id": iid, "numero": _iq.numero(iid),
+                    "mensaje": "Quedó registrada. La gestión la verá y decidirá qué hacer; al cliente no se le avisa nada."})
+
+
+@app.route("/ot/api/<int:vid>/inquietudes", methods=["GET"])
+@_mant_required
+@_ot_can_configurar
+def ot_api_inquietudes_de_ot(vid):
+    """Las inquietudes anotadas desde ESTA OT, para la franja de la ficha. Sin responsable, sin SLA ni plata: solo número, equipo y estado."""
+    if not _inq_ok():
+        return jsonify({"ok": True, "items": []})
+    rows = mysql_fetchall("SELECT id, producto_texto, estado, creada_en, creada_por FROM cli_inquietudes WHERE visita_id=%s AND borrada=0 "
+                          " ORDER BY id DESC LIMIT 30", (int(vid),)) or []
+    return jsonify({"ok": True, "items": [{"numero": _iq.numero(r["id"]), "equipo": r.get("producto_texto") or "", "creada_por": r.get("creada_por") or "",
+                                           "estado": (_iq.ESTADOS.get(r.get("estado")) or {}).get("texto", ""), "creada": _inq_cuando(r.get("creada_en"))}
+                                          for r in rows]})
+
+
+def _inq_ctx_ficha_ot(vid, v, puede_configurar, ot_solo_lectura):
+    """Lo que la ficha de la OT necesita para la franja «El cliente me comentó…»: {puede, n}. Nunca rompe la ficha."""
+    try:
+        if not v.get("cliente_id"):
+            return None
+        n = 0
+        if _inq_ok():
+            n = int((mysql_fetchone("SELECT COUNT(*) AS n FROM cli_inquietudes WHERE visita_id=%s AND borrada=0", (int(vid),)) or {}).get("n") or 0)
+        puede = bool(puede_configurar and not ot_solo_lectura)
+        return {"vid": int(vid), "puede": puede, "n": n} if (puede or n) else None
+    except Exception as e:
+        print(f"[inquietudes] contexto ficha vid={vid}: {type(e).__name__}", flush=True)
+        return None
+
+
+# ── La GESTIÓN: monitor, ficha y acciones (siempre @_no_tecnico) ──────────────────────────────────────────────────────
+_INQ_COLS_FILTRO = {"sin": "i.responsable_user_id IS NULL"}
+
+
+@app.route("/ot/inquietudes", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_inquietudes_pagina():
+    """Monitor de recepción de inquietudes (como la recepción de Retiros): tarjetas por estado con semáforo del SLA, filtros y paginación
+    (REGLA #4.3). Se pagina en Python porque el semáforo y las «vencidas» dependen del reloj en horas hábiles."""
+    vista = request.args.get("vista") if request.args.get("vista") in _iq.VISTAS else "abiertas"
+    por_pag = _iq.pagina_valida(request.args.get("pp"))
+    pag = max(1, _iq.entero(request.args.get("p")) or 1)
+    q = _iq.limpio(request.args.get("q"), 80)
+    resp = (request.args.get("resp") or "").strip()
+    origen = request.args.get("origen") if request.args.get("origen") in _iq.ORIGENES else ""
+    tipo = request.args.get("tipo") if request.args.get("tipo") in _iq.TIPOS else ""
+    tec = _iq.limpio(request.args.get("tec"), 60)
+    error, filas = False, []
+    if _inq_ok():
+        cond, params = ["i.borrada=0"], []
+        if q:
+            cond.append("(c.razon_social LIKE %s OR i.producto_texto LIKE %s OR m.sku LIKE %s OR m.serie LIKE %s OR i.inquietud LIKE %s)")
+            params += ["%" + q + "%"] * 5
+        if resp == "sin":
+            cond.append("i.responsable_user_id IS NULL")
+        elif _iq.entero(resp):
+            cond.append("i.responsable_user_id=%s")
+            params.append(int(resp))
+        if origen:
+            cond.append("i.origen=%s")
+            params.append(origen)
+        if tipo:
+            cond.append("i.tipo_solicitud=%s")
+            params.append(tipo)
+        if tec:
+            cond.append("i.creada_por LIKE %s")
+            params.append("%" + tec + "%")
+        try:
+            filas = [dict(r) for r in (mysql_fetchall(_INQ_SELECT + " WHERE " + " AND ".join(cond) + " ORDER BY i.id DESC LIMIT 1500", tuple(params)) or [])]
+        except Exception as e:
+            print(f"[inquietudes] monitor: {type(e).__name__}: {e}", flush=True)
+            error = True
+    ahora = _inq_ahora()
+    resumen = _iq.resumen_estados(filas)
+    n_vencidas = len(_iq.filtrar_vista(filas, "vencidas", ahora, _otrep_feriados))
+    n_pendientes = len(_iq.filtrar_vista(filas, "pendientes", ahora, _otrep_feriados))
+    elegidas = _iq.filtrar_vista(filas, vista, ahora, _otrep_feriados)
+    total = len(elegidas)
+    paginas = max(1, (total + por_pag - 1) // por_pag)
+    pag = min(pag, paginas)
+    pagina = elegidas[(pag - 1) * por_pag: pag * por_pag]
+    ctx = _inq_ctx_lote(pagina) if pagina else {}
+    fotos = _inq_fotos_catalogo([f.get("m_sku") for f in pagina])
+    items = [_inq_vista(f, ctx.get(int(f["id"])), fotos, ahora) for f in pagina]
+    try:
+        cands = _ot_resp_candidatos()
+    except Exception:
+        cands = []
+    return render_template("ot2/inquietudes.html", items=items, total=total, pag=pag, paginas=paginas, por_pag=por_pag,
+                           desde=((pag - 1) * por_pag + 1) if total else 0, hasta=min(pag * por_pag, total), vista=vista, vistas=_iq.VISTAS,
+                           resumen=resumen, estados=_iq.ESTADOS, n_vencidas=n_vencidas, n_pendientes=n_pendientes, q=q, resp=resp, origen=origen, tipo=tipo, tec=tec,
+                           origenes=_iq.ORIGENES, tipos=_iq.TIPOS, candidatos=cands, error=error, es_superadmin=_ot_aut_es_superadmin(),
+                           cfg=_iq.config(), dormido=not _inq_ok())
+
+
+def _inq_inteligencia(f):
+    """Lo que ayuda a decidir (solo gestión): de dónde viene el equipo, garantía, inquietudes y hallazgos anteriores del MISMO equipo y sus
+    solicitudes de repuesto. Solo lectura; sin costos, proveedores ni N° de OC. La factura de origen es el texto de la ficha del equipo."""
+    out = {"equipo": None, "previas": [], "hallazgos": [], "repuestos": [], "otras_del_cliente": 0}
+    try:
+        out["otras_del_cliente"] = int((mysql_fetchone("SELECT COUNT(*) AS n FROM cli_inquietudes WHERE cliente_id=%s AND borrada=0 AND id<>%s",
+                                                       (int(f["cliente_id"]), int(f["id"]))) or {}).get("n") or 0)
+        mid = f.get("maquina_id")
+        if not mid:
+            return out
+        m = None
+        try:
+            m = mysql_fetchone("SELECT nombre, sku, serie, doc_origen, doc_fecha, estado, fecha_fin_garantia FROM mant_maquinas WHERE id=%s", (int(mid),))
+        except Exception:
+            m = mysql_fetchone("SELECT nombre, sku, serie, doc_origen, doc_fecha, estado FROM mant_maquinas WHERE id=%s", (int(mid),))
+        if m:
+            fin = m.get("fecha_fin_garantia")
+            hoy = _inq_ahora().date()
+            out["equipo"] = {"doc_origen": m.get("doc_origen") or "", "doc_fecha": (m["doc_fecha"].strftime("%d/%m/%Y") if m.get("doc_fecha") else ""),
+                             "estado": m.get("estado") or "",
+                             "garantia": ("" if not fin else ("Vigente hasta " if fin >= hoy else "Venció el ") + fin.strftime("%d/%m/%Y")),
+                             "garantia_vigente": bool(fin and fin >= hoy)}
+        out["previas"] = [{"id": int(r["id"]), "numero": _iq.numero(r["id"]), "estado": (_iq.ESTADOS.get(r["estado"]) or {}).get("texto", ""),
+                           "inquietud": r.get("inquietud") or "", "creada": _inq_cuando(r.get("creada_en"))}
+                          for r in (mysql_fetchall("SELECT id, estado, inquietud, creada_en FROM cli_inquietudes WHERE maquina_id=%s AND borrada=0 AND id<>%s "
+                                                   " ORDER BY id DESC LIMIT 8", (int(mid), int(f["id"]))) or [])]
+        if _hall_ok():
+            out["hallazgos"] = [{"titulo": r.get("titulo") or "", "estado": r.get("estado") or "", "ot": r.get("numero_ot") or "", "visita_id": r.get("visita_id"),
+                                 "cuando": _inq_cuando(r.get("detectado_en"))}
+                                for r in (mysql_fetchall(
+                                    "SELECT h.titulo, h.estado, h.visita_id, h.detectado_en, v.numero_ot FROM mant_ot_hallazgos h "
+                                    "  LEFT JOIN mant_visitas v ON v.id = h.visita_id WHERE h.maquina_id=%s AND h.retirado_en IS NULL "
+                                    " ORDER BY h.id DESC LIMIT 8", (int(mid),)) or [])]
+        out["repuestos"] = [{"nombre": r.get("repuesto_nombre") or "", "cantidad": r.get("cantidad"), "estado": r.get("estado") or "",
+                             "ot": r.get("numero_ot") or "", "visita_id": r.get("visita_id"), "cuando": _inq_cuando(r.get("created_at"))}
+                            for r in (mysql_fetchall(
+                                "SELECT s.repuesto_nombre, s.cantidad, s.estado, s.visita_id, s.created_at, v.numero_ot "
+                                "  FROM mant_ot_repuesto_solicitudes s LEFT JOIN mant_visitas v ON v.id = s.visita_id "
+                                " WHERE s.maquina_id=%s ORDER BY s.id DESC LIMIT 8", (int(mid),)) or [])]
+    except Exception as e:
+        print(f"[inquietudes] inteligencia iid={f.get('id')}: {type(e).__name__}", flush=True)
+    return out
+
+
+@app.route("/ot/inquietudes/<int:iid>", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_inquietud_ficha(iid):
+    """La ficha de UNA inquietud: qué dijo el cliente, el diagnóstico, el recorrido paso a paso con semáforo, la inteligencia del equipo y
+    el registro de actividad. Las acciones piden confirmación antes (REGLA #32)."""
+    if not _inq_ok():
+        flash("El módulo de inquietudes no está disponible en este momento. Intenta de nuevo en un minuto.", "warning")
+        return redirect(url_for("ot2_panel"))
+    f = _inq_leer(iid)
+    if not f:
+        flash("No encontramos esa inquietud (puede haber sido eliminada).", "warning")
+        return redirect(url_for("ot_inquietudes_pagina"))
+    ctx = _inq_ctx_lote([f])
+    fotos = _inq_fotos_catalogo([f.get("m_sku")])
+    vista = _inq_vista(f, ctx.get(int(f["id"])), fotos)
+    actividad = [{"accion": r.get("accion"), "detalle": r.get("detalle") or "", "usuario": r.get("usuario") or "", "cuando": _inq_cuando(r.get("creada_en"))}
+                 for r in (mysql_fetchall("SELECT accion, detalle, usuario, creada_en FROM cli_inquietud_actividad WHERE inquietud_id=%s ORDER BY id DESC LIMIT 200",
+                                          (int(iid),)) or [])]
+    ticket = None
+    if f.get("ticket_id"):
+        t = mysql_fetchone("SELECT id, numero_ticket, estado FROM tk_tickets WHERE id=%s", (int(f["ticket_id"]),)) or {}
+        ticket = {"id": f["ticket_id"], "numero": t.get("numero_ticket") or "#%s" % f["ticket_id"], "estado": t.get("estado") or ""}
+    ot = None
+    if f.get("ot_id"):
+        o = mysql_fetchone("SELECT id, numero_ot, estado FROM mant_visitas WHERE id=%s", (int(f["ot_id"]),)) or {}
+        ot = {"id": f["ot_id"], "numero": o.get("numero_ot") or "#%s" % f["ot_id"], "estado": o.get("estado") or ""}
+    try:
+        cands = _ot_resp_candidatos()
+    except Exception:
+        cands = []
+    uid = _hall_uid()
+    return render_template("ot2/inquietud_ficha.html", q=vista, actividad=actividad, intel=_inq_inteligencia(f), ticket=ticket, ot=ot,
+                           candidatos=cands, tipos=_iq.TIPOS, es_superadmin=_ot_aut_es_superadmin(), mi_id=uid,
+                           puede={a: _iq.puede_accion(a, f, _ot_aut_es_superadmin())[0] for a in
+                                  ("adjudicar", "asignar", "clasificar", "editar", "cerrar", "anular", "reabrir", "borrar", "ticket", "vincular", "paso")},
+                           cfg=_iq.config())
+
+
+def _inq_pre(iid, accion):
+    """Lo común de las acciones: (fila, None) o (None, respuesta_de_error). Revisa tablas, existencia y las reglas de estado."""
+    if not _inq_ok():
+        return None, _ot2_err("Esta función no está disponible en este momento.", "TABLA_NO_DISPONIBLE", http=503)
+    f = _inq_leer(iid)
+    if not f:
+        return None, _ot2_err("No encontramos esa inquietud.", "INQUIETUD_NO_EXISTE", http=404)
+    ok, msg = _iq.puede_accion(accion, f, _ot_aut_es_superadmin())
+    if not ok:
+        return None, _ot2_err(msg, "INQUIETUD_NO_DISPONIBLE", http=(403 if accion == "borrar" else 409))
+    return f, None
+
+
+def _inq_json():
+    return request.get_json(silent=True) or {}
+
+
+_INQ_ABIERTA_SQL = " AND borrada=0 AND estado IN ('nueva','en_atencion','escalada')"
+
+
+def _inq_poner_responsable(iid, f, uid, nombre, accion_log, detalle):
+    """Deja a `uid` como responsable. Si es la primera vez, cumple la «primera respuesta» del SLA. UPDATE condicionado a lo que se vio
+    (dos personas a la vez no se pisan). → True si se aplicó."""
+    nuevo_estado = _iq.estado_tras_asignar(f.get("estado"))
+    n = mysql_execute_returning_rowcount(
+        "UPDATE cli_inquietudes SET responsable_user_id=%s, responsable_nombre=%s, responsable_en=NOW(), estado=%s, "
+        " primera_respuesta_en=COALESCE(primera_respuesta_en, NOW()), primera_respuesta_por=COALESCE(primera_respuesta_por, %s) "
+        " WHERE id=%s AND responsable_user_id <=> %s" + _INQ_ABIERTA_SQL,
+        (int(uid), nombre[:190], nuevo_estado, nombre[:190], int(iid), f.get("responsable_user_id")))
+    if n:
+        _inq_log(iid, accion_log, detalle)
+    return bool(n)
+
+
+@app.route("/ot/inquietudes/api/<int:iid>/adjudicar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def inq_api_adjudicar(iid):
+    """«Adjudicarme»: cualquiera de la gestión toma la inquietud (si nadie la tiene). Cumple la primera respuesta del SLA."""
+    f, err = _inq_pre(iid, "adjudicar")
+    if err:
+        return err
+    quien, uid = _hall_quien(), _hall_uid()
+    if not uid or not _inq_poner_responsable(iid, f, uid, quien, "adjudicada", f"{quien} se hizo cargo"):
+        return _ot2_err("Otra persona la tomó justo ahora. Recarga la página.", "INQUIETUD_CAMBIO", http=409)
+    return jsonify({"ok": True, "mensaje": "Quedaste a cargo de %s." % _iq.numero(iid)})
+
+
+@app.route("/ot/inquietudes/api/<int:iid>/asignar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def inq_api_asignar(iid):
+    """Cambia el responsable. Solo puede ser una persona con el permiso «Responsable de OT» (`_ot_resp_candidatos`). Avisa por la campana."""
+    f, err = _inq_pre(iid, "asignar")
+    if err:
+        return err
+    d = _inq_json()
+    uid = _iq.entero(d.get("user_id"))
+    cand = next((c for c in _ot_resp_candidatos() if int(c["id"]) == uid), None) if uid else None
+    if not cand:
+        return _ot2_err("Elige a una persona de la lista: solo ellas pueden ser responsables.", "NO_ES_CANDIDATO")
+    if f.get("responsable_user_id") and int(f["responsable_user_id"]) == uid:
+        return _ot2_err("Esa persona ya es la responsable.", "MISMO_RESPONSABLE")
+    quien = _hall_quien()
+    prev = f.get("responsable_nombre") or "nadie"
+    if not _inq_poner_responsable(iid, f, uid, cand["nombre"], "responsable_cambiado", f"{prev} → {cand['nombre']} · por {quien}"):
+        return _ot2_err("Alguien cambió el responsable justo ahora. Recarga la página.", "INQUIETUD_CAMBIO", http=409)
+    if uid != _hall_uid():
+        tt, cc = _iq.campana_asignada(iid, f.get("cliente"), quien)
+        _inq_campana(f, tt, cc, "media", destinos=[uid])
+    return jsonify({"ok": True, "mensaje": "Ahora la lleva %s." % cand["nombre"]})
+
+
+@app.route("/ot/inquietudes/api/<int:iid>/clasificar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def inq_api_clasificar(iid):
+    """Elige qué pide la inquietud (repuesto, abastecer, ticket, OT directa, reparación). Lo decide la persona; el sistema solo sugiere."""
+    f, err = _inq_pre(iid, "clasificar")
+    if err:
+        return err
+    tipo = (_inq_json().get("tipo") or "").strip()
+    if not _iq.validar_tipo(tipo):
+        return _ot2_err("Elige qué pide la inquietud.", "TIPO_INVALIDO")
+    mysql_execute("UPDATE cli_inquietudes SET tipo_solicitud=%s WHERE id=%s" + _INQ_ABIERTA_SQL, (tipo, int(iid)))
+    _inq_log(iid, "clasificada", f"{(_iq.TIPOS.get(f.get('tipo_solicitud')) or {}).get('texto', '')} → {_iq.TIPOS[tipo]['texto']} · {_hall_quien()}")
+    return jsonify({"ok": True})
+
+
+@app.route("/ot/inquietudes/api/<int:iid>/editar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def inq_api_editar(iid):
+    """Corrige el texto de la inquietud o el diagnóstico. El motivo es obligatorio y queda en el registro con el antes y el después."""
+    f, err = _inq_pre(iid, "editar")
+    if err:
+        return err
+    d = _inq_json()
+    ok, msg = _iq.validar_motivo(d.get("motivo"), "Cuenta por qué lo corriges")
+    if not ok:
+        return _ot2_err(msg, "MOTIVO_OBLIGATORIO")
+    inq = _iq.limpio(d.get("inquietud")) or f.get("inquietud") or ""
+    dia = _iq.limpio(d.get("diagnostico")) if "diagnostico" in d else (f.get("diagnostico") or "")
+    if len(inq) < _iq.MIN_TEXTO or (dia and len(dia) < _iq.MIN_TEXTO):
+        return _ot2_err("Los textos deben tener al menos %d caracteres." % _iq.MIN_TEXTO, "TEXTO_CORTO")
+    if inq == (f.get("inquietud") or "") and dia == (f.get("diagnostico") or ""):
+        return _ot2_err("No cambiaste nada.", "SIN_CAMBIOS")
+    mysql_execute("UPDATE cli_inquietudes SET inquietud=%s, diagnostico=%s WHERE id=%s AND borrada=0", (inq, dia or None, int(iid)))
+    _inq_log(iid, "editada", (f"Motivo: {_iq.limpio(d.get('motivo'), 200)} · Antes: «{_iq.limpio(f.get('inquietud'), 150)}» / «{_iq.limpio(f.get('diagnostico'), 120)}» "
+                              f"· Ahora: «{_iq.limpio(inq, 150)}» / «{_iq.limpio(dia, 120)}»"))
+    return jsonify({"ok": True})
+
+
+@app.route("/ot/inquietudes/api/<int:iid>/cerrar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def inq_api_cerrar(iid):
+    """Cierra con una resolución obligatoria (qué se hizo o se decidió). Nada al cliente (REGLA #22)."""
+    f, err = _inq_pre(iid, "cerrar")
+    if err:
+        return err
+    res = _iq.limpio(_inq_json().get("resolucion"), _iq.MAX_MOTIVO)
+    ok, msg = _iq.validar_cierre(res)
+    if not ok:
+        return _ot2_err(msg, "RESOLUCION_OBLIGATORIA")
+    quien = _hall_quien()
+    n = mysql_execute_returning_rowcount(
+        "UPDATE cli_inquietudes SET estado='cerrada', resolucion=%s, resuelta_en=NOW(), resuelta_por=%s, "
+        " primera_respuesta_en=COALESCE(primera_respuesta_en, NOW()), primera_respuesta_por=COALESCE(primera_respuesta_por, %s) WHERE id=%s" + _INQ_ABIERTA_SQL,
+        (res, quien[:190], quien[:190], int(iid)))
+    if not n:
+        return _ot2_err("Alguien la cambió justo ahora. Recarga la página.", "INQUIETUD_CAMBIO", http=409)
+    _inq_log(iid, "cerrada", f"Resolución: {res}"[:900])
+    return jsonify({"ok": True, "mensaje": "Cerrada."})
+
+
+@app.route("/ot/inquietudes/api/<int:iid>/anular", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def inq_api_anular(iid):
+    """Anula una inquietud que no procede (motivo obligatorio). No se borra: queda en el registro."""
+    f, err = _inq_pre(iid, "anular")
+    if err:
+        return err
+    motivo = _iq.limpio(_inq_json().get("motivo"), _iq.MAX_MOTIVO)
+    ok, msg = _iq.validar_motivo(motivo, "Cuenta por qué no procede")
+    if not ok:
+        return _ot2_err(msg, "MOTIVO_OBLIGATORIO")
+    quien = _hall_quien()
+    n = mysql_execute_returning_rowcount(
+        "UPDATE cli_inquietudes SET estado='anulada', resolucion=%s, resuelta_en=NOW(), resuelta_por=%s WHERE id=%s" + _INQ_ABIERTA_SQL, (motivo, quien[:190], int(iid)))
+    if not n:
+        return _ot2_err("Alguien la cambió justo ahora. Recarga la página.", "INQUIETUD_CAMBIO", http=409)
+    _inq_log(iid, "anulada", f"Motivo: {motivo}"[:900])
+    return jsonify({"ok": True, "mensaje": "Anulada."})
+
+
+@app.route("/ot/inquietudes/api/<int:iid>/reabrir", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def inq_api_reabrir(iid):
+    """Reabre una cerrada o anulada (motivo obligatorio). El reloj de la resolución parte de nuevo desde la reapertura."""
+    f, err = _inq_pre(iid, "reabrir")
+    if err:
+        return err
+    motivo = _iq.limpio(_inq_json().get("motivo"), _iq.MAX_MOTIVO)
+    ok, msg = _iq.validar_motivo(motivo, "Cuenta por qué la reabres")
+    if not ok:
+        return _ot2_err(msg, "MOTIVO_OBLIGATORIO")
+    nuevo = "escalada" if (f.get("ticket_id") or f.get("ot_id")) else ("en_atencion" if f.get("responsable_user_id") else "nueva")
+    mysql_execute("UPDATE cli_inquietudes SET estado=%s, resuelta_en=NULL, resuelta_por=NULL, reabierta_en=NOW(), sla_aviso_nivel=0 WHERE id=%s AND borrada=0", (nuevo, int(iid)))
+    _inq_log(iid, "reabierta", f"Motivo: {motivo}"[:900])
+    return jsonify({"ok": True})
+
+
+@app.route("/ot/inquietudes/api/<int:iid>/borrar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def inq_api_borrar(iid):
+    """BORRAR: solo el superadministrador, con motivo. Es un borrado lógico: la fila y su actividad quedan, ocultas del monitor, y el
+    borrado queda escrito en el registro (REGLA #5: nada se pierde sin rastro)."""
+    if not _ot_aut_es_superadmin():
+        return _ot2_err("Solo el superadministrador puede borrar una inquietud. Puedes anularla o cerrarla.", "SOLO_SUPERADMIN", http=403)
+    f, err = _inq_pre(iid, "borrar")
+    if err:
+        return err
+    motivo = _iq.limpio(_inq_json().get("motivo"), _iq.MAX_MOTIVO)
+    ok, msg = _iq.validar_motivo(motivo, "Escribe por qué la borras")
+    if not ok:
+        return _ot2_err(msg, "MOTIVO_OBLIGATORIO")
+    _inq_log(iid, "borrada", f"Motivo: {motivo} · Contenido: «{_iq.limpio(f.get('inquietud'), 300)}» · {_iq.numero(iid)}"[:900])   # antes de borrar (REGLA #5)
+    mysql_execute("UPDATE cli_inquietudes SET borrada=1, borrada_por=%s, borrada_en=NOW(), borrada_motivo=%s WHERE id=%s", (_hall_quien()[:190], motivo, int(iid)))
+    return jsonify({"ok": True, "mensaje": "Eliminada.", "volver": "/ot/inquietudes"})
+
+
+@app.route("/ot/inquietudes/api/<int:iid>/nota", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def inq_api_nota(iid):
+    """Una nota en el registro de actividad (no cambia nada más)."""
+    f, err = _inq_pre(iid, "nota")
+    if err:
+        return err
+    texto = _iq.limpio(_inq_json().get("texto"), 600)
+    if len(texto) < 3:
+        return _ot2_err("Escribe la nota.", "NOTA_VACIA")
+    _inq_log(iid, "nota", texto)
+    return jsonify({"ok": True})
+
+
+@app.route("/ot/inquietudes/api/<int:iid>/paso", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def inq_api_paso(iid):
+    """Marca o desmarca a mano un paso del recorrido (solo los que el sistema no puede saber solo: revisar stock, diagnóstico…)."""
+    f, err = _inq_pre(iid, "paso")
+    if err:
+        return err
+    d = _inq_json()
+    clave = str(d.get("clave") or "")[:40]
+    rt = _iq.ruta(f, _inq_ctx_lote([f]).get(int(iid)), _iq.pasos_de_json(f.get("pasos_json")))
+    if not _iq.marcar_a_mano(rt, clave):
+        return _ot2_err("Ese paso no se marca a mano.", "PASO_INVALIDO")
+    pasos = _iq.pasos_de_json(f.get("pasos_json"))
+    if d.get("hecho", True):
+        pasos[clave] = {"por": _hall_quien(), "en": _inq_cuando(datetime.utcnow())}
+    else:
+        pasos.pop(clave, None)
+    mysql_execute("UPDATE cli_inquietudes SET pasos_json=%s WHERE id=%s" + _INQ_ABIERTA_SQL, (json.dumps(pasos, ensure_ascii=False), int(iid)))
+    titulo_p = next((p["titulo"] for p in rt["pasos"] if p["clave"] == clave), clave)
+    _inq_log(iid, "paso_marcado" if d.get("hecho", True) else "paso_desmarcado", f"{titulo_p} · {_hall_quien()}")
+    return jsonify({"ok": True})
+
+
+@app.route("/ot/inquietudes/api/<int:iid>/vincular", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def inq_api_vincular(iid):
+    """Liga el ticket o la OT que nació de esta inquietud (por su número). Deben ser del mismo cliente. La inquietud queda «Escalada»
+    y, si nadie la tenía, queda a cargo de quien la liga (se adjudica el ticket o la OT)."""
+    f, err = _inq_pre(iid, "vincular")
+    if err:
+        return err
+    d = _inq_json()
+    que, ref = (d.get("que") or "").strip(), _iq.limpio(d.get("referencia"), 60)
+    if que not in ("ticket", "ot") or not ref:
+        return _ot2_err("Escribe el número del ticket o de la OT.", "REFERENCIA_VACIA")
+    if que == "ot":
+        r = mysql_fetchone("SELECT id, numero_ot, cliente_id FROM mant_visitas WHERE numero_ot=%s OR id=%s LIMIT 1", (ref, _iq.entero(ref) or 0))
+        if not r:
+            return _ot2_err("No encontramos esa OT.", "OT_NO_EXISTE", http=404)
+        if int(r.get("cliente_id") or 0) != int(f["cliente_id"]):
+            return _ot2_err("Esa OT es de otro cliente.", "OTRO_CLIENTE")
+        col, val, texto = "ot_id", int(r["id"]), r.get("numero_ot") or "#%s" % r["id"]
+    else:
+        r = mysql_fetchone("SELECT id, numero_ticket FROM tk_tickets WHERE numero_ticket=%s OR id=%s LIMIT 1", (ref, _iq.entero(ref) or 0))
+        if not r:
+            return _ot2_err("No encontramos ese ticket.", "TICKET_NO_EXISTE", http=404)
+        col, val, texto = "ticket_id", int(r["id"]), r.get("numero_ticket") or "#%s" % r["id"]
+    tipo_nuevo = f.get("tipo_solicitud")
+    if tipo_nuevo == "sin_clasificar":
+        tipo_nuevo = "ticket_para_ot" if que == "ticket" else "ot_directa"
+    mysql_execute("UPDATE cli_inquietudes SET " + col + "=%s, estado=%s, tipo_solicitud=%s WHERE id=%s" + _INQ_ABIERTA_SQL,
+                  (val, _iq.estado_tras_vinculo(f.get("estado")), tipo_nuevo, int(iid)))
+    _inq_log(iid, "vinculada", f"{'OT' if que == 'ot' else 'Ticket'} {texto} · por {_hall_quien()}")
+    if not f.get("responsable_user_id") and _hall_uid():
+        f2 = _inq_leer(iid)
+        if f2:
+            _inq_poner_responsable(iid, f2, _hall_uid(), _hall_quien(), "adjudicada", f"{_hall_quien()} se hizo cargo al ligar {texto}")
+    return jsonify({"ok": True})
+
+
+def _inq_ticket_crear(f, user):
+    """Crea UN ticket interno para la inquietud (SQL directo, SIN correo al cliente): con el equipo y una nota interna que dice de dónde viene.
+    → (ticket_id, numero) o (None, None). Idempotente por inquietud (GET_LOCK + ticket_id). No usa tk_tickets.visita_id (es UNIQUE y
+    significa «la OT que NACIÓ del ticket»); el vínculo vive en cli_inquietudes.ticket_id."""
+    from tickets_module import _chile_now_year as _tk_year
+    lock = f"inq_ticket_{int(f['id'])}"
+    conn = None
+    try:
+        conn = get_mysql()
+        with conn.cursor() as cur:
+            cur.execute("SELECT GET_LOCK(%s, 5) AS l", (lock,))
+            cur.execute("SELECT ticket_id FROM cli_inquietudes WHERE id=%s", (int(f["id"]),))
+            ya = cur.fetchone() or {}
+            if ya.get("ticket_id"):
+                cur.execute("SELECT RELEASE_LOCK(%s) AS r", (lock,))
+                conn.commit()
+                t = mysql_fetchone("SELECT id, numero_ticket FROM tk_tickets WHERE id=%s", (int(ya["ticket_id"]),)) or {}
+                return int(ya["ticket_id"]), t.get("numero_ticket")
+            cur.execute("SELECT razon_social, rut, contacto_email, contacto_tel, direccion, comuna FROM mant_clientes WHERE id=%s", (int(f["cliente_id"]),))
+            c = cur.fetchone() or {}
+            equipo = f.get("producto_texto") or "equipo sin identificar"
+            titulo_t = f"Inquietud del cliente · {equipo}" + (f" · {c.get('razon_social')}" if c.get("razon_social") else "")
+            desc = (f"El cliente comentó: {f.get('inquietud') or ''}\nDiagnóstico: {f.get('diagnostico') or '(pendiente)'}\n\n"
+                    f"Levantado desde la inquietud {_iq.numero(f['id'])} por {user}.")
+            cur.execute(
+                "INSERT INTO tk_tickets (origen, estado, tipo, prioridad, titulo, descripcion, rut, empresa, email, phone, direccion, "
+                " comuna_nombre, created_by, asignado_a) VALUES ('backoffice','open','tech_evaluation','media',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (titulo_t[:300], desc, (c.get("rut") or "")[:12] or None, (c.get("razon_social") or "")[:150] or None,
+                 (c.get("contacto_email") or "")[:150] or None, (c.get("contacto_tel") or "")[:20] or None,
+                 (c.get("direccion") or "")[:255] or None, (c.get("comuna") or "")[:120] or None, user, user))
+            tid = int(cur.lastrowid)
+            cur.execute("UPDATE tk_tickets SET numero_ticket=CONCAT('TK-', %s, '-', LPAD(id,5,'0')) WHERE id=%s", (_tk_year(), tid))
+            m = None
+            if f.get("maquina_id"):
+                cur.execute("SELECT nombre, sku, serie FROM mant_maquinas WHERE id=%s", (int(f["maquina_id"]),))
+                m = cur.fetchone()
+            cur.execute("INSERT INTO tk_ticket_equipos (ticket_id, nombre, sku, serie, maquina_id, notas) VALUES (%s,%s,%s,%s,%s,%s)",
+                        (tid, ((m or {}).get("nombre") or equipo)[:300], (m or {}).get("sku"), (m or {}).get("serie"),
+                         _iq.entero(f.get("maquina_id")), "Inquietud del cliente " + _iq.numero(f["id"])))
+            cur.execute("INSERT INTO tk_mensajes (ticket_id, tipo, contenido, metadata, usuario, es_interno) VALUES (%s,'otro',%s,%s,%s,1)",
+                        (tid, f"Viene de la inquietud del cliente {_iq.numero(f['id'])}: {f.get('inquietud') or ''}",
+                         json.dumps({"inquietud_id": int(f["id"])}), user))
+            cur.execute("UPDATE cli_inquietudes SET ticket_id=%s WHERE id=%s", (tid, int(f["id"])))
+            cur.execute("SELECT RELEASE_LOCK(%s) AS r", (lock,))
+        conn.commit()
+        return tid, f"TK-{_tk_year()}-{tid:05d}"
+    except Exception as e:
+        print(f"[inquietudes] ticket iid={f.get('id')}: {type(e).__name__}: {e}", flush=True)
+        try:
+            if conn:
+                conn.rollback()
+                with conn.cursor() as cur:
+                    cur.execute("SELECT RELEASE_LOCK(%s) AS r", (lock,))
+        except Exception:
+            pass
+        return None, None
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+
+
+@app.route("/ot/inquietudes/api/<int:iid>/ticket", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def inq_api_ticket(iid):
+    """«Levantar ticket»: SUGERIDO, nunca automático. Exige `confirmar` (la pantalla pregunta antes). El ticket es interno: no le escribe
+    al cliente (REGLA #22). La inquietud queda «Escalada» y a cargo de quien lo levantó si nadie la tenía."""
+    f, err = _inq_pre(iid, "ticket")
+    if err:
+        return err
+    if not _inq_json().get("confirmar"):
+        return _ot2_err("Confirma que quieres levantar el ticket.", "FALTA_CONFIRMAR")
+    quien = _hall_quien()
+    tid, numero = _inq_ticket_crear(f, quien)
+    if not tid:
+        return _ot2_err("No pudimos crear el ticket ahora. Intenta de nuevo.", "ERROR_INTERNO", http=500)
+    tipo_nuevo = "ticket_para_ot" if f.get("tipo_solicitud") == "sin_clasificar" else f.get("tipo_solicitud")
+    mysql_execute("UPDATE cli_inquietudes SET estado=%s, tipo_solicitud=%s WHERE id=%s" + _INQ_ABIERTA_SQL,
+                  (_iq.estado_tras_vinculo(f.get("estado")), tipo_nuevo, int(iid)))
+    _inq_log(iid, "ticket_levantado", f"Ticket {numero} · {quien} (sin correo al cliente)")
+    if not f.get("responsable_user_id") and _hall_uid():
+        f2 = _inq_leer(iid)
+        if f2:
+            _inq_poner_responsable(iid, f2, _hall_uid(), quien, "adjudicada", f"{quien} se hizo cargo al levantar el ticket {numero}")
+    return jsonify({"ok": True, "ticket_id": tid, "numero": numero, "url": f"/tickets/{tid}"})
+
+
+@app.route("/ot/inquietudes/api/<int:iid>/prellenado-ot", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def inq_api_prellenado_ot(iid):
+    """Lo que el asistente «Nueva OT» muestra ya escrito al levantar una OT desde la inquietud (la persona cambia lo que quiera: REGLA #32)."""
+    f, err = _inq_pre(iid, "vincular")
+    if err:
+        return err
+    c = mysql_fetchone("SELECT id, razon_social, rut FROM mant_clientes WHERE id=%s", (int(f["cliente_id"]),)) or {}
+    desc = (f"Inquietud del cliente {_iq.numero(iid)}: {f.get('inquietud') or ''}" + (f"\nDiagnóstico previo: {f.get('diagnostico')}" if f.get("diagnostico") else ""))
+    return jsonify({"ok": True, "cliente": {"id": f["cliente_id"], "nombre": c.get("razon_social") or "", "rut": c.get("rut") or ""},
+                    "prellenado": {"titulo": _iq.titulo(f.get("producto_texto")), "descripcion": desc[:1500], "tipo_sugerido": "correctiva",
+                                   "maquinas": ([int(f["maquina_id"])] if f.get("maquina_id") else [])},
+                    "inquietud": {"id": int(iid), "numero": _iq.numero(iid)}})
+
+
+# ── Crear a mano (la gestión desde la ficha del cliente; el superadmin cuando quiera) ────────────────────────────────────
+@app.route("/ot/inquietudes/api/clientes", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def inq_api_clientes():
+    """Buscador de clientes para anotar una inquietud sin OT (nombre o RUT)."""
+    q = _iq.limpio(request.args.get("q"), 60)
+    if len(q) < 2:
+        return jsonify({"ok": True, "clientes": []})
+    rows = mysql_fetchall("SELECT id, razon_social, rut FROM mant_clientes WHERE razon_social LIKE %s OR rut LIKE %s ORDER BY razon_social LIMIT 15",
+                          ("%" + q + "%", "%" + q + "%")) or []
+    return jsonify({"ok": True, "clientes": [{"id": int(r["id"]), "nombre": r.get("razon_social") or "", "rut": r.get("rut") or ""} for r in rows]})
+
+
+@app.route("/ot/inquietudes/api/equipos", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def inq_api_equipos():
+    """Los equipos de la ficha de un cliente (con foto del catálogo) para anotar una inquietud sin OT."""
+    cid = _iq.entero(request.args.get("cliente_id"))
+    if not cid:
+        return _ot2_err("Elige primero el cliente.", "SIN_CLIENTE")
+    try:
+        return jsonify({"ok": True, "equipos": _inq_buscar_equipos(cid, request.args.get("q"))})
+    except Exception as e:
+        print(f"[inquietudes] equipos cliente={cid}: {type(e).__name__}", flush=True)
+        return _ot2_err("No pudimos buscar los equipos ahora.", "ERROR_INTERNO", http=500)
+
+
+@app.route("/ot/inquietudes/api/crear", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def inq_api_crear():
+    """La gestión (o el superadmin) anota una inquietud que el cliente reportó fuera de una OT. multipart: cliente_id, maquina_id? |
+    producto_texto?, inquietud, diagnostico? (opcional aquí), fotos[]. Origen «superadmin» si lo hace el superadmin, «ficha_cliente» si no."""
+    if not _inq_ok():
+        return _ot2_err("Esta función no está disponible en este momento.", "TABLA_NO_DISPONIBLE", http=503)
+    cid = _iq.entero(request.form.get("cliente_id"))
+    if not cid or not mysql_fetchone("SELECT id FROM mant_clientes WHERE id=%s", (cid,)):
+        return _ot2_err("Elige el cliente.", "SIN_CLIENTE")
+    visita = _iq.entero(request.form.get("visita_id"))
+    if visita:
+        v = mysql_fetchone("SELECT id, cliente_id FROM mant_visitas WHERE id=%s", (visita,))
+        if not v or int(v.get("cliente_id") or 0) != cid:
+            visita = None
+    origen = _iq.ORIG_SUPER if _ot_aut_es_superadmin() else _iq.ORIG_FICHA
+    iid, err = _inq_crear_core(cid, visita, request.form, request.files.getlist("fotos"), origen)
+    if err:
+        return err
+    return jsonify({"ok": True, "id": iid, "url": f"/ot/inquietudes/{iid}", "numero": _iq.numero(iid)})
+
+
+# ── Aviso por plazo (SLA): barrido colgado de `simpliroute-poll` (cada 10 min), solo en horario de cobertura ─────────────
+def _inq_barrido(max_s=15, dry=False):
+    """Avisa por la campana (una sola vez por nivel) a quien lleva la inquietud —o a la gestión si nadie la tomó— cuando una está cerca del
+    plazo (ámbar) o lo pasó (rojo). Solo con la cobertura abierta (lunes a viernes hábiles, jornada de Retiros): nunca de madrugada, en
+    colación ni en fin de semana. Sin correo y nada al cliente. → {revisadas, avisadas}."""
+    out = {"revisadas": 0, "avisadas": 0}
+    if not _inq_ok():
+        return out
+    ahora = _inq_ahora()
+    if not _rresp.en_cobertura(ahora, _otrep_feriados).get("abierta") and not dry:
+        out["omitido"] = "fuera de cobertura"
+        return out
+    t0 = time.time()
+    for f in (mysql_fetchall(_INQ_SELECT + " WHERE i.borrada=0 AND i.estado IN ('nueva','en_atencion','escalada') ORDER BY i.id LIMIT 300") or []):
+        if time.time() - t0 > max_s:
+            break
+        f = dict(f)
+        out["revisadas"] += 1
+        nivel = _iq.nivel_aviso(_inq_reloj(f, ahora), f.get("sla_aviso_nivel"))
+        if not nivel or dry:
+            out["avisadas"] += 1 if (nivel and dry) else 0
+            continue
+        n = mysql_execute_returning_rowcount("UPDATE cli_inquietudes SET sla_aviso_nivel=%s WHERE id=%s AND sla_aviso_nivel < %s", (nivel, int(f["id"]), nivel))
+        if n:
+            tt, cc = _iq.campana_sla(f["id"], f.get("cliente"), nivel)
+            _inq_campana(f, tt, cc, _iq.PRIORIDAD_NIVEL.get(nivel, "media"), destinos=_inq_destinos(f))
+            _inq_log(f["id"], "aviso_plazo", "Aviso por " + ("plazo vencido" if nivel >= 2 else "plazo por vencer"))
+            out["avisadas"] += 1
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 #  🩺 HALLAZGOS DE LA OT (F1 · REGLA #38) — 2026-10-21
 #
 #  Daniel, 2026-10-20, revisando la OT de Aurum: «Indícame si se está tomando fotografías como evidencia, eso es necesario, y que
@@ -177565,6 +178601,12 @@ try:
         _ensure_ot_hallazgos()
 except Exception as _ensure_ot_hall_err:
     print(f"[ILUS][WARN] _ensure_ot_hallazgos: {_ensure_ot_hall_err}", flush=True)
+# 🗣️ 2026-10-26: tablas de «Inquietudes de clientes» (dos sentencias CREATE TABLE IF NOT EXISTS, REGLA #18). Dormidas hasta que existan.
+try:
+    with app.app_context():
+        _ensure_cli_inquietudes()
+except Exception as _ensure_cli_inq_err:
+    print(f"[ILUS][WARN] _ensure_cli_inquietudes: {_ensure_cli_inq_err}", flush=True)
 
 # email_log.estado debe aceptar 'bloqueado' SIEMPRE (incluso skip-migrations):
 # sin esto, los envíos frenados por la llave de paso no dejaban rastro en el log.

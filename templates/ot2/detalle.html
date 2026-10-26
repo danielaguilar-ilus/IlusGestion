@@ -3845,6 +3845,8 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   {#- 🧭 2026-10-20 (Daniel, caso Aurum OT-2026-00171): «¿Qué pasó?» como en Retiros. Falta de stock → se cierra lo hecho y lo que falta queda
       en una OT hija pendiente, sin fecha, con el mismo documento. Lo usa el técnico asignado y la gestión. -#}
   {% include 'ot2/_que_paso.html' %}
+  {#- 🗣️ 2026-10-26 (Daniel: las inquietudes del cliente que levantan los técnicos): «El cliente me comentó…», con buscador de los equipos de su ficha. -#}
+  {% include 'ot2/_inquietud.html' %}
   {#- 🩺 2026-10-21 (REGLA #38, Daniel: «que la OT avise para que se tome el caso y se levante una acción que debería ser otra OT»): la tarjeta
       «Hallazgos de esta OT» (y, en una OT de seguimiento, de cuál viene). SOLO gestión (el servidor no le arma `hallazgos` a un técnico) y
       también en una OT CERRADA: va al nivel raíz, NUNCA dentro de `{% if puede_metadata %}` ni de una pestaña. -#}

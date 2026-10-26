@@ -1,0 +1,24 @@
+{#- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+    🗣️ ILUS Fitness · OT — «EL CLIENTE ME COMENTÓ…» (Daniel 2026-10-25/26: las inquietudes del cliente que levantan los técnicos).
+    Franja de la ficha + el modal (static/ot_inquietud.js y .css). Servidor: GET /ot/api/<id>/equipos-cliente, GET/POST
+    /ot/api/<id>/inquietud-cliente(s). Contexto `inquietud_ctx` (lo arma _inq_ctx_ficha_ot): {vid, puede, n}.
+    Sin plata, sin proveedores, sin monitor (REGLAS #19 y #26). Al cliente no se le avisa nada (REGLA #22).
+    ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════ -#}
+{% if inquietud_ctx %}
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_inquietud.css') }}">
+<div class="iq-entrada" id="iqEntrada" role="region" aria-label="Lo que comentó el cliente">
+  <div class="iq-entrada-txt"><i class="bi bi-chat-quote-fill" aria-hidden="true"></i>
+    <span>
+      {% if inquietud_ctx.puede %}¿El cliente te comentó algo de sus equipos?
+        <small>Anota qué le preocupa y tu diagnóstico, de cualquier equipo de su ficha. La gestión lo toma y decide qué hacer. Al cliente no se le avisa nada.</small>
+      {% else %}Lo que comentó el cliente
+        <small>{{ inquietud_ctx.n }} inquietud{{ '' if inquietud_ctx.n == 1 else 'es' }} anotada{{ '' if inquietud_ctx.n == 1 else 's' }} desde esta orden.</small>
+      {% endif %}
+      <span class="iq-lista" id="iqLista" aria-live="polite"></span>
+    </span>
+  </div>
+  {% if inquietud_ctx.puede %}<button type="button" class="iq-entrada-btn" id="iqAbrir"><i class="bi bi-plus-circle-fill"></i>El cliente me comentó…</button>{% endif %}
+</div>
+<script>window.OTD_IQ_CFG = { vid: {{ inquietud_ctx.vid }}, puede: {{ 'true' if inquietud_ctx.puede else 'false' }}, n: {{ inquietud_ctx.n }} };</script>
+<script defer src="{{ url_for('static', filename='ot_inquietud.js') }}"></script>
+{% endif %}

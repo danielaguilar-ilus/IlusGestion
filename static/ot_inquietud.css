@@ -1,0 +1,57 @@
+/* ══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+   ot_inquietud.css — «El cliente me comentó…» (franja de la OT + modal del técnico). Lenguaje de Retiros (REGLA #15): tarjetas, círculos
+   de paso rojo→verde, nombres completos (nunca cortados), botones de 44 px (REGLA #3). Paleta ILUS (REGLA #2).
+   ══════════════════════════════════════════════════════════════════════════════════════════════════════════════ */
+.iq-entrada{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:#fff;border:1px solid #e5e7eb;
+  border-left:6px solid #3b82f6;border-radius:14px;padding:12px 16px;margin:12px 0}
+.iq-entrada-txt{display:flex;gap:10px;align-items:flex-start;color:#111827;font-weight:700;line-height:1.35;min-width:0;flex:1 1 280px}
+.iq-entrada-txt>i{color:#3b82f6;font-size:1.25rem;line-height:1}
+.iq-entrada-txt small{display:block;font-weight:500;color:#6b7280;font-size:.84rem;overflow-wrap:anywhere}
+.iq-entrada-btn{min-height:44px;border:0;border-radius:12px;padding:10px 18px;font-weight:800;background:#0a0a0a;color:#fff;display:inline-flex;align-items:center;gap:8px;cursor:pointer}
+.iq-entrada-btn:hover{background:#262626}
+.iq-entrada-btn:focus-visible,.iq-btn:focus-visible,.iq-input:focus-visible,.iq-eq:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}
+.iq-lista{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.iq-chip{display:inline-flex;align-items:center;gap:4px;background:#dbeafe;color:#1e3a8a;border:1px solid #bfdbfe;border-radius:99px;padding:2px 10px;font-size:.78rem;font-weight:600;overflow-wrap:anywhere}
+
+.iq-modal .modal-content{border:0;border-radius:18px;overflow:hidden}
+.iq-modal .iq-mh{background:#0a0a0a;color:#fff;border:0}
+.iq-modal .modal-title{font-weight:900;font-size:1.15rem}
+.iq-modal .modal-title i{margin-right:6px}
+.iq-modal .btn-close{width:44px;height:44px;padding:0;background-size:14px;flex:0 0 44px}
+.iq-sub{font-size:.85rem;color:#d1d5db;margin-top:2px;font-weight:500}
+.iq-modal .modal-footer{border-top:1px solid #f3f4f6;gap:8px}
+.iq-paso{border:1px solid #e5e7eb;border-radius:16px;padding:14px 16px;margin-bottom:12px;background:#fff}
+.iq-paso-cab{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.iq-paso-cab small{font-weight:500;color:#6b7280}
+.iq-circ{width:30px;height:30px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:900;background:#dc2626;color:#fff;flex:0 0 30px;transition:background .2s}
+.iq-circ.ok{background:#16a34a}
+.iq-circ.iq-gris{background:#6b7280}
+.iq-lbl{display:block;font-size:.85rem;font-weight:700;color:#374151;margin-bottom:4px}
+.iq-input{width:100%;min-height:44px;border:1.5px solid #d1d5db;border-radius:12px;padding:10px 12px;font-size:16px;background:#fff;color:#111827}
+textarea.iq-input{resize:vertical}
+.iq-cont{font-size:.78rem;color:#b45309;min-height:1.1em;margin-top:4px}
+.iq-resultados{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:280px;overflow:auto}
+.iq-eq,.iq-eq-sel{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:#fff;border:1.5px solid #e5e7eb;border-radius:12px;padding:8px 10px;min-height:56px}
+.iq-eq{cursor:pointer}
+.iq-eq:hover{border-color:#3b82f6;background:#eff6ff}
+.iq-eq-sel{border-color:#16a34a;background:#f0fdf4}
+.iq-eq-foto{width:48px;height:48px;border-radius:10px;object-fit:cover;background:#f3f4f6;flex:0 0 48px;border:1px solid #e5e7eb}
+.iq-eq-sin{display:inline-flex;align-items:center;justify-content:center;color:#9ca3af}
+.iq-eq-datos{display:flex;flex-direction:column;min-width:0;flex:1}
+.iq-eq-datos b{font-weight:800;color:#111827;overflow-wrap:anywhere}
+.iq-eq-datos small{color:#6b7280;overflow-wrap:anywhere}
+.iq-vacio{color:#6b7280;padding:10px 4px;display:flex;gap:8px;align-items:center}
+.iq-link{background:none;border:0;color:#1d4ed8;font-weight:700;min-height:44px;padding:6px 4px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;text-align:left}
+.iq-link:hover{text-decoration:underline}
+.iq-fotos{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
+.iq-foto{position:relative;width:96px;height:96px;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb}
+.iq-foto img{width:100%;height:100%;object-fit:cover}
+.iq-foto-x{position:absolute;top:2px;right:2px;width:44px;height:44px;border:0;border-radius:50%;background:rgba(10,10,10,.65);color:#fff;display:flex;align-items:center;justify-content:center}
+.iq-btn{min-height:44px;font-weight:800;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:10px 18px;border:2px solid transparent;cursor:pointer}
+.iq-btn-pri{background:#0a0a0a;color:#fff}
+.iq-btn-pri:hover{background:#262626}
+.iq-btn-pri:disabled{opacity:.6}
+.iq-btn-sec{background:#fff;color:#0a0a0a;border-color:#d1d5db}
+.iq-error{background:#fee2e2;border:1px solid #fecaca;color:#7f1d1d;border-radius:12px;padding:10px 14px;font-weight:700}
+@media (max-width:575.98px){.iq-modal .modal-footer .iq-btn{flex:1}}
+@media (prefers-reduced-motion:reduce){.iq-circ{transition:none}}

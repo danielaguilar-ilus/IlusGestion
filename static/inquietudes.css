@@ -1,0 +1,132 @@
+/* ══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+   inquietudes.css — Monitor y ficha de «Inquietudes de clientes» (solo gestión). Lenguaje de Retiros (REGLA #15): tarjetas con semáforo,
+   círculos de paso rojo→verde con pulso, nombres COMPLETOS (nunca cortados con line-clamp), botones de 44 px (REGLA #3), 16 px en campos
+   (anti-zoom iOS). Paleta ILUS (REGLA #2): rojo #dc2626 · negro #0a0a0a · blanco; ámbar #f59e0b, verde #16a34a, azul #3b82f6.
+   ══════════════════════════════════════════════════════════════════════════════════════════════════════════════ */
+.iq-btn-ui{min-height:44px;display:inline-flex;align-items:center;justify-content:center;font-weight:700}
+
+/* ── Monitor ── */
+.iqm-cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:0 0 14px}
+.iqm-card{display:grid;grid-template-columns:auto 1fr;grid-template-areas:"i n" "i t";column-gap:10px;align-items:center;background:#fff;border:1px solid #e5e7eb;
+  border-left:6px solid #9ca3af;border-radius:14px;padding:12px 14px;text-decoration:none;color:#111827;min-height:64px}
+.iqm-card i{grid-area:i;font-size:1.5rem}
+.iqm-card b{grid-area:n;font-size:1.5rem;line-height:1}
+.iqm-card span{grid-area:t;font-size:.8rem;color:#6b7280;font-weight:600}
+.iqm-card:hover{background:#fafafa}
+.iqm-card.c-rojo{border-left-color:#dc2626}.iqm-card.c-rojo i{color:#dc2626}
+.iqm-card.c-ambar{border-left-color:#f59e0b}.iqm-card.c-ambar i{color:#f59e0b}
+.iqm-card.c-azul{border-left-color:#3b82f6}.iqm-card.c-azul i{color:#3b82f6}
+.iqm-card.c-verde{border-left-color:#16a34a}.iqm-card.c-verde i{color:#16a34a}
+.iqm-card.c-rojo2{border-left-color:#9ca3af}.iqm-card.c-rojo2 i{color:#9ca3af}
+.iqm-card.c-rojo2.on{border-left-color:#dc2626;background:#fef2f2}.iqm-card.c-rojo2.on i{color:#dc2626}
+.iqm-filtros{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
+.iqm-f{display:inline-flex;align-items:center;min-height:44px;padding:0 16px;border-radius:999px;border:1px solid #d1d5db;background:#fff;color:#374151;font-weight:700;font-size:.88rem;text-decoration:none}
+.iqm-f.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
+.iqm-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;align-items:end;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:12px;margin:0 0 14px}
+.iqm-fl{display:flex;flex-direction:column;gap:4px;margin:0}
+.iqm-fl span{font-size:.78rem;font-weight:700;color:#374151}
+.iqm-fl .form-control,.iqm-fl .form-select{min-height:44px;font-size:16px}
+.iqm-fb{display:flex;gap:8px;flex-wrap:wrap}
+.iqm-lista{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.iqm-item{display:flex;gap:14px;align-items:flex-start;background:#fff;border:1px solid #e5e7eb;border-left:6px solid #9ca3af;border-radius:14px;padding:12px 14px;text-decoration:none;color:#111827}
+.iqm-item:hover{background:#fafafa}
+.iqm-item.s-verde{border-left-color:#16a34a}.iqm-item.s-ambar{border-left-color:#f59e0b}.iqm-item.s-rojo{border-left-color:#dc2626}.iqm-item.s-gris{border-left-color:#9ca3af}
+.iqm-foto{flex:0 0 72px;width:72px;height:72px;border-radius:12px;background:#f3f4f6;border:1px solid #e5e7eb;display:flex;align-items:center;justify-content:center;overflow:hidden;color:#9ca3af;font-size:1.6rem}
+.iqm-foto img{width:100%;height:100%;object-fit:cover}
+.iqm-cuerpo{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1}
+.iqm-cab{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.iqm-cab>b{font-size:1rem}
+.iqm-est,.iqm-tipo{display:inline-flex;align-items:center;gap:5px;border-radius:99px;padding:2px 10px;font-size:.78rem;font-weight:800}
+.iqm-est.e-rojo{background:#fee2e2;color:#991b1b}.iqm-est.e-ambar{background:#fff8e1;color:#92400e}.iqm-est.e-azul{background:#dbeafe;color:#1e3a8a}
+.iqm-est.e-verde{background:#dcfce7;color:#166534}.iqm-est.e-gris{background:#f3f4f6;color:#374151}
+.iqm-tipo{background:#f3f4f6;color:#374151}
+.iqm-cli{font-weight:800;overflow-wrap:anywhere}
+.iqm-eq{color:#374151;font-size:.88rem;overflow-wrap:anywhere}
+.iqm-txt{color:#111827;font-size:.9rem;overflow-wrap:anywhere}
+.iqm-meta{color:#6b7280;font-size:.78rem;overflow-wrap:anywhere}
+.iqm-sin{color:#b91c1c}
+.iqm-falta{display:inline-flex;align-items:center;gap:6px;color:#92400e;background:#fff8e1;border-radius:8px;padding:2px 8px;font-size:.82rem;font-weight:700;align-self:flex-start}
+.iqm-reloj{flex:0 0 190px;display:flex;gap:8px;align-items:flex-start;border-radius:12px;padding:8px 10px;font-size:.82rem;font-weight:800;line-height:1.3}
+.iqm-reloj.r-verde{background:#f0fdf4;color:#166534}.iqm-reloj.r-ambar{background:#fff8e1;color:#92400e}.iqm-reloj.r-rojo{background:#fee2e2;color:#991b1b}.iqm-reloj.r-gris{background:#f3f4f6;color:#374151}
+.iqm-vacio{background:#f9fafb;border:1px dashed #d1d5db;border-radius:12px;padding:18px;text-align:center;color:#6b7280;font-weight:600;margin:10px 0}
+.iqm-vacio i{color:#16a34a;margin-right:6px}
+.iqm-pie{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin:12px 0 4px;color:#374151;font-size:.88rem}
+.iqm-pp{display:flex;align-items:center;gap:6px;margin:0}
+.iqm-pp select{width:auto;min-height:44px;font-size:16px}
+.iqm-nav{display:flex;align-items:center;gap:8px}
+.iqm-nav .btn{min-height:44px;display:inline-flex;align-items:center}
+.iqm-f:focus-visible,.iqm-item:focus-visible,.iqm-card:focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}
+@media (max-width:991.98px){.iqm-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:640px){.iqm-item{flex-wrap:wrap}.iqm-reloj{flex:1 1 100%}.iqm-pie{justify-content:center}}
+
+/* ── Ficha ── */
+.iqf-grid{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:14px;align-items:start}
+@media (max-width:991.98px){.iqf-grid{grid-template-columns:1fr}}
+.iqf-card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:16px;margin-bottom:14px}
+.iqf-card h5{font-size:1rem;font-weight:900;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+.iqf-cab{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:8px}
+.iqf-reloj{border-radius:14px;padding:12px 14px;display:flex;gap:12px;align-items:center;font-weight:800;margin-bottom:14px}
+.iqf-reloj.r-verde{background:#f0fdf4;color:#166534;border:1px solid #bbf7d0}.iqf-reloj.r-ambar{background:#fff8e1;color:#92400e;border:1px solid #fde68a}
+.iqf-reloj.r-rojo{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}.iqf-reloj.r-gris{background:#f3f4f6;color:#374151;border:1px solid #e5e7eb}
+.iqf-reloj small{display:block;font-weight:500;opacity:.85}
+.iqf-eq{display:flex;gap:12px;align-items:center;background:#f9fafb;border-radius:12px;padding:10px;margin-bottom:12px}
+.iqf-eq .iqm-foto{flex-basis:72px}
+.iqf-eq b{display:block;overflow-wrap:anywhere}
+.iqf-tx{white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 10px}
+.iqf-lbl{font-size:.75rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;margin:10px 0 2px}
+.iqf-fotos{display:flex;flex-wrap:wrap;gap:8px}
+.iqf-fotos a{display:block;width:96px;height:96px;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb}
+.iqf-fotos img{width:100%;height:100%;object-fit:cover}
+.iqf-acciones{display:flex;flex-wrap:wrap;gap:8px}
+.iqf-acciones .btn,.iqf-btn{min-height:44px;font-weight:700;display:inline-flex;align-items:center;gap:6px}
+.iqf-fila{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}
+.iqf-fila select{min-height:44px;font-size:16px;max-width:100%}
+/* recorrido paso a paso (como la guía de Retiros) */
+.iqf-ruta{list-style:none;margin:0;padding:0}
+.iqf-paso{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid #f3f4f6}
+.iqf-paso:last-child{border-bottom:0}
+.iqf-circ{width:32px;height:32px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:900;color:#fff;background:#9ca3af;flex:0 0 32px}
+.iqf-paso.hecho .iqf-circ{background:#16a34a}
+.iqf-paso.actual .iqf-circ{background:#dc2626;animation:iqPulso 2.2s ease-in-out infinite}
+.iqf-paso.actual.s-ambar .iqf-circ{background:#f59e0b}
+.iqf-paso.actual.s-verde .iqf-circ{background:#3b82f6}
+@keyframes iqPulso{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.45)}50%{box-shadow:0 0 0 8px rgba(220,38,38,0)}}
+.iqf-paso-t{flex:1;min-width:0}
+.iqf-paso-t b{display:block;overflow-wrap:anywhere}
+.iqf-paso-t small{display:block;color:#6b7280;overflow-wrap:anywhere}
+.iqf-paso.pendiente{opacity:.7}
+.iqf-barra{height:8px;border-radius:99px;background:#e5e7eb;overflow:hidden;margin:0 0 6px}
+.iqf-barra>span{display:block;height:100%;background:#16a34a}
+.iqf-intel dt{font-size:.75rem;font-weight:800;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;margin-top:10px}
+.iqf-intel dd{margin:2px 0 0;overflow-wrap:anywhere}
+.iqf-intel ul{margin:2px 0 0;padding-left:18px}
+.iqf-intel li{margin-bottom:4px;overflow-wrap:anywhere}
+.iqf-garantia{display:inline-block;border-radius:99px;padding:2px 10px;font-weight:800;font-size:.8rem}
+.iqf-garantia.si{background:#dcfce7;color:#166534}.iqf-garantia.no{background:#f3f4f6;color:#374151}
+.iqf-act{list-style:none;margin:0;padding:0}
+.iqf-act li{border-left:3px solid #e5e7eb;padding:2px 0 10px 12px;margin-left:6px;overflow-wrap:anywhere}
+.iqf-act small{color:#6b7280;display:block}
+.iqf-vinc a{font-weight:800}
+.iqf-modal .modal-content{border-radius:18px;overflow:hidden;border:0}
+.iqf-modal .modal-header{background:#0a0a0a;color:#fff;border:0}
+.iqf-modal .btn-close{width:44px;height:44px;filter:invert(1)}
+.iqf-modal textarea,.iqf-modal input[type=text],.iqf-modal input[type=search]{font-size:16px;min-height:44px}
+.iqf-lista-sel{display:flex;flex-direction:column;gap:6px;max-height:240px;overflow:auto;margin-top:6px}
+.iqf-op{display:flex;gap:10px;align-items:center;text-align:left;background:#fff;border:1.5px solid #e5e7eb;border-radius:12px;padding:8px 10px;min-height:48px;width:100%}
+.iqf-op:hover{border-color:#3b82f6;background:#eff6ff}
+.iqf-op img,.iqf-op .sin{width:44px;height:44px;border-radius:8px;object-fit:cover;background:#f3f4f6;flex:0 0 44px;display:inline-flex;align-items:center;justify-content:center;color:#9ca3af}
+.iqf-op span{min-width:0;overflow-wrap:anywhere}
+.iqf-op small{display:block;color:#6b7280}
+@media (prefers-reduced-motion:reduce){.iqf-paso.actual .iqf-circ{animation:none}}
+
+/* ── Ajustes sobre el lenguaje de Retiros (static/retiros_monitor.css y retiros_guia.css se reutilizan tal cual) ── */
+.page-header{--rm-red:#dc2626;--rm-black:#0a0a0a;--rm-ink:#111827;--rm-ink2:#374151;--rm-line:#e5e7eb}
+.page-header a.rm-btn{text-decoration:none;color:#111827}
+a.rm-kpi{color:inherit;text-decoration:none}
+.rm-estado.e-rojo{background:#fee2e2;color:#991b1b}.rm-estado.e-ambar{background:#fef3c7;color:#92400e}.rm-estado.e-azul{background:#dbeafe;color:#1e3a8a}
+.rm-estado.e-verde{background:#dcfce7;color:#166534}.rm-estado.e-gris{background:#f3f4f6;color:#374151}
+.iq-eqcell{display:flex;gap:10px;align-items:flex-start}
+.iq-eqcell .rm-doc{display:block;overflow-wrap:anywhere}
+.rm-toolbar .rm-tools input.rm-select{min-width:200px}
+.gp-sig .gp-acc .gp-btn,.gp-paso .gp-acc .gp-btn{text-decoration:none}
+.iqf-grid{margin-top:14px}

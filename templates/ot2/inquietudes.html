@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Inquietudes de clientes · ILUS Fitness{% endblock %}
+
+{#
+  🗣️ 2026-10-26 (Daniel: «verlos bien profesional como el módulo de recepción de Retiros con SLA de atención… un CRUD con registro de
+  actividad» y, después, «debe verse como el módulo de Retiros, tabla y ficha»). Monitor de recepción de las inquietudes de los clientes con
+  EL MISMO lenguaje del Monitor de Retiros: tarjetas KPI (.rm-kpi), buscador con etiqueta negra (.rm-search), chips por etapa (.rm-chip),
+  semáforo (.rm-seg / .rm-dot), tabla negra con filas de semáforo (.rm-table / .rm-row[data-alerta]), reloj SLA «Sin responder» (.rm-reloj /
+  .rm-pill) y pie de tabla paginado (.rm-foot, REGLA #4.3). Se reutiliza static/retiros_monitor.css; lo propio está en static/inquietudes.css.
+  Nombres completos y foto del catálogo (REGLA #15). Solo gestión (@_no_tecnico: REGLAS #19/#26). Datos: ot_inquietudes_pagina (app.py).
+#}
+
+{% block head_extra %}<link rel="stylesheet" href="{{ url_for('static', filename='retiros_monitor.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='inquietudes.css') }}">{% endblock %}
+
+{% macro enlace(vista_, p=1) -%}?vista={{ vista_ }}&pp={{ por_pag }}&p={{ p }}&q={{ q|urlencode }}&resp={{ resp|urlencode }}&origen={{ origen }}&tipo={{ tipo }}&tec={{ tec|urlencode }}{%- endmacro %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-chat-quote-fill me-2"></i>Inquietudes de clientes</h4>
+    <div class="sub">Lo que los clientes comentan de sus equipos, con plazo de atención: primera respuesta en {{ (cfg.primera_h)|round(0)|int }} h hábiles y
+      resolución en {{ (cfg.resolucion_h / 9)|round(1) }} días hábiles. Tómala, clasifícala y sigue su recorrido hasta cerrarla.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <button type="button" class="rm-btn" id="inqNueva"><i class="bi bi-plus-circle-fill"></i>Nueva inquietud</button>
+    <a href="{{ url_for('ot2_panel') }}" class="rm-btn"><i class="bi bi-arrow-left"></i>Volver a las OT</a>
+  </div>
+</div>
+
+{% if dormido %}
+<div class="alert alert-warning py-2" role="alert"><i class="bi bi-exclamation-triangle-fill me-1"></i> El módulo todavía no está disponible (no pudimos preparar sus tablas).
+  Recarga en un minuto; si sigue, escribe a soporte (soportetec@sphs.cl).</div>
+{% endif %}
+{% if error %}
+<div class="alert alert-warning py-2" role="alert"><i class="bi bi-exclamation-triangle-fill me-1"></i> No pudimos cargar la lista completa. Recarga la página; si el aviso sigue, escribe a soporte (soportetec@sphs.cl).</div>
+{% endif %}
+
+{#- Tarjetas KPI (mismas del Monitor de Retiros): cada una lleva a su vista. -#}
+<section class="rm-kpis iq-kpis" aria-label="Resumen por estado">
+  <a class="rm-kpi{{ ' is-active' if vista == 'sin_tomar' }}" style="--acc:#dc2626" href="{{ enlace('sin_tomar') }}">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Nuevas · sin tomar</span><i class="bi bi-bell-fill"></i></div>
+    <div class="rm-kpi-num">{{ resumen.nueva }}</div><div class="rm-kpi-foot"><span>Nadie las ha tomado: corre la primera respuesta</span></div></a>
+  <a class="rm-kpi{{ ' is-active' if vista == 'abiertas' }}" style="--acc:#f59e0b" href="{{ enlace('abiertas') }}">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">En atención</span><i class="bi bi-person-check-fill"></i></div>
+    <div class="rm-kpi-num">{{ resumen.en_atencion }}</div><div class="rm-kpi-foot"><span>Con responsable, en camino</span></div></a>
+  <a class="rm-kpi" style="--acc:#3b82f6" href="{{ enlace('abiertas') }}">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Escaladas</span><i class="bi bi-diagram-3-fill"></i></div>
+    <div class="rm-kpi-num">{{ resumen.escalada }}</div><div class="rm-kpi-foot"><span>Con ticket u OT levantada</span></div></a>
+  <a class="rm-kpi{{ ' is-active' if vista == 'vencidas' }}" style="--acc:#991b1b" href="{{ enlace('vencidas') }}">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Plazo vencido</span><i class="bi bi-alarm-fill"></i></div>
+    <div class="rm-kpi-num">{{ n_vencidas }}</div><div class="rm-kpi-foot"><span>Pasaron su plazo de atención</span></div></a>
+  <a class="rm-kpi{{ ' is-active' if vista == 'pendientes' }}" style="--acc:#0a0a0a" href="{{ enlace('pendientes') }}">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Repuesto o reparación pendiente</span><i class="bi bi-wrench-adjustable-circle-fill"></i></div>
+    <div class="rm-kpi-num">{{ n_pendientes }}</div><div class="rm-kpi-foot"><span>Lo que falta por hacer</span></div></a>
+  <a class="rm-kpi{{ ' is-active' if vista == 'cerradas' }}" style="--acc:#16a34a" href="{{ enlace('cerradas') }}">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Cerradas</span><i class="bi bi-check-circle-fill"></i></div>
+    <div class="rm-kpi-num">{{ resumen.cerrada }}</div><div class="rm-kpi-foot"><span>Con su resolución escrita</span></div></a>
+</section>
+
+<section class="rm-monitor" aria-label="Monitor de inquietudes">
+  <form method="get" class="rm-toolbar" aria-label="Buscar y filtrar">
+    <input type="hidden" name="vista" value="{{ vista }}"><input type="hidden" name="pp" value="{{ por_pag }}">
+    <div class="rm-search" role="search">
+      <label class="rm-search-tag" for="iqSearch"><i class="bi bi-search"></i><span>Buscar</span></label>
+      <input id="iqSearch" type="search" name="q" value="{{ q }}" autocomplete="off" spellcheck="false" placeholder="Cliente, equipo, SKU, N° de serie o lo que dijo el cliente…" aria-label="Buscar inquietudes">
+      <span class="rm-search-count" aria-live="polite">{{ total }} resultado{{ '' if total == 1 else 's' }}</span>
+    </div>
+    <div class="rm-tools-row">
+      <div class="rm-chips" role="group" aria-label="Qué inquietudes ver">
+        {% for k, t in vistas.items() %}<a href="{{ enlace(k) }}" class="rm-chip{{ ' is-active' if vista == k }}"{% if vista == k %} aria-current="true"{% endif %}>{{ t }}</a>{% endfor %}
+      </div>
+    </div>
+    <div class="rm-tools-row">
+      <div class="rm-tools">
+        <select name="resp" class="rm-select" aria-label="Filtrar por responsable"><option value="">Todos los responsables</option><option value="sin"{{ ' selected' if resp == 'sin' }}>Sin asignar</option>
+          {% for c in candidatos %}<option value="{{ c.id }}"{{ ' selected' if resp == (c.id|string) }}>{{ c.nombre }}</option>{% endfor %}</select>
+        <select name="origen" class="rm-select" aria-label="Filtrar por origen"><option value="">Todos los orígenes</option>{% for k, t in origenes.items() %}<option value="{{ k }}"{{ ' selected' if origen == k }}>{{ t }}</option>{% endfor %}</select>
+        <select name="tipo" class="rm-select" aria-label="Filtrar por lo que pide"><option value="">Todo lo que piden</option>{% for k, t in tipos.items() %}<option value="{{ k }}"{{ ' selected' if tipo == k }}>{{ t.texto }}</option>{% endfor %}</select>
+        <input type="search" name="tec" value="{{ tec }}" class="rm-select" placeholder="Anotada por (técnico)" aria-label="Filtrar por quien la anotó">
+        <button class="rm-btn" type="submit"><i class="bi bi-funnel-fill"></i>Filtrar</button>
+        {% if q or resp or origen or tipo or tec %}<a class="rm-btn rm-btn-rojo" href="?vista={{ vista }}&pp={{ por_pag }}"><i class="bi bi-x-circle"></i>Limpiar filtros</a>{% endif %}
+      </div>
+    </div>
+  </form>
+
+  <div class="rm-wrap">
+    <div class="table-responsive">
+      <table class="ilus-table table-mobile-cards rm-table align-middle" id="iqTabla">
+        <thead><tr>
+          <th>Inquietud</th><th>Cliente</th><th>Equipo</th><th class="desktop-only">Qué pide</th><th class="desktop-only">Responsable</th><th>Estado</th>
+          <th title="Reloj del plazo de atención: lo más urgente primero">Tiempo</th><th class="text-end">Acción</th>
+        </tr></thead>
+        <tbody>
+          {% if not items %}
+          <tr class="rm-empty"><td colspan="8"><i class="bi bi-check2-circle"></i><span>{% if vista in ('abiertas', 'sin_tomar') %}No hay inquietudes esperando atención.{% else %}Ninguna inquietud coincide con este filtro.{% endif %}</span></td></tr>
+          {% endif %}
+          {% for x in items %}
+          <tr class="rm-row row-clickable" data-alerta="{{ x.semaforo }}" data-href="{{ url_for('ot_inquietud_ficha', iid=x.id) }}" style="cursor:pointer">
+            <td data-label="Inquietud"><div class="rm-cell">
+              <div class="rm-l1"><span class="rm-code rm-hl">{{ x.numero }}</span></div>
+              <div class="rm-sub"><span class="rm-origen {{ 'interno' if x.origen != 'ot' else '' }}">{{ x.origen_txt }}</span></div>
+              <div class="rm-sub">Anotada {{ x.creada }}{% if x.creada_por %} por {{ x.creada_por }}{% endif %}{% if x.numero_ot %} · {{ x.numero_ot }}{% endif %}</div>
+            </div></td>
+            <td data-label="Cliente"><div class="rm-cell"><div class="rm-cli-name rm-hl">{{ x.cliente }}</div></div></td>
+            <td data-label="Equipo"><div class="rm-cell iq-eqcell">
+              <span class="iqm-foto">{% if x.foto %}<img src="{{ x.foto }}" alt="Foto del producto en el catálogo" loading="lazy">{% else %}<i class="bi bi-image" aria-hidden="true"></i>{% endif %}</span>
+              <span><b class="rm-doc">{{ x.equipo }}</b><span class="rm-sub d-block">{{ x.inquietud }}</span></span>
+            </div></td>
+            <td class="desktop-only" data-label="Qué pide"><div class="rm-cell"><span class="rm-pill gris"><i class="bi {{ x.tipo_icono }}"></i>{{ x.tipo_txt }}</span>
+              {% if x.pendiente and not x.terminada %}<div class="rm-sub"><i class="bi bi-signpost-split"></i>Falta: {{ x.pendiente }}</div>{% endif %}</div></td>
+            <td class="desktop-only" data-label="Responsable"><div class="rm-cell">{% if x.responsable %}<div class="rm-resp"><span class="rm-avatar" aria-hidden="true">{{ x.responsable[:1] }}</span><span class="rm-hl">{{ x.responsable }}</span></div>
+              {% else %}<span class="rm-pill gris" style="margin-top:0"><i class="bi bi-person-dash"></i>Sin asignar</span>{% endif %}</div></td>
+            <td data-label="Estado"><div class="rm-cell"><span class="badge rm-estado e-{{ x.estado_color }}"><i class="bi {{ x.estado_icono }}"></i>{{ x.estado_txt }}</span></div></td>
+            <td data-label="Tiempo"><div class="rm-cell"><div class="rm-reloj {{ x.semaforo }}{{ ' rm-reloj-alerta' if x.semaforo == 'rojo' }}">
+              <span class="rm-pill {{ x.semaforo }}"><i class="bi bi-stopwatch"></i><span class="rm-reloj-t">{{ x.reloj_txt }}</span></span>
+              <div class="rm-reloj-fila"><div class="rm-reloj-barra"><i style="width:{{ x.reloj_pct }}%"></i></div></div></div></div></td>
+            <td class="text-end" data-label="Acción"><a class="rm-btn" href="{{ url_for('ot_inquietud_ficha', iid=x.id) }}"><i class="bi bi-box-arrow-up-right"></i>Abrir</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {#- Pie de tabla como Etiquetas / Retiros (REGLA #4.3): Mostrando A–B de N · por página · Anterior / Página X de Y / Siguiente -#}
+    <div class="rm-foot">
+      <div class="rm-foot-count"><i class="bi bi-collection"></i><span>Mostrando <strong>{{ desde }}–{{ hasta }}</strong> de <strong>{{ total }}</strong></span></div>
+      <div class="rm-foot-ctrl">
+        <form method="get" class="d-inline-flex align-items-center gap-2 m-0">
+          <input type="hidden" name="vista" value="{{ vista }}"><input type="hidden" name="q" value="{{ q }}"><input type="hidden" name="resp" value="{{ resp }}">
+          <input type="hidden" name="origen" value="{{ origen }}"><input type="hidden" name="tipo" value="{{ tipo }}"><input type="hidden" name="tec" value="{{ tec }}">
+          <select name="pp" class="rm-select" aria-label="Filas por página" onchange="this.form.submit()">
+            {% for n in (10, 20, 50) %}<option value="{{ n }}"{% if n == por_pag %} selected{% endif %}>{{ n }} por página</option>{% endfor %}
+          </select>
+        </form>
+        {% if pag > 1 %}<a class="rm-btn" href="{{ enlace(vista, pag - 1) }}"><i class="bi bi-chevron-left"></i>Anterior</a>{% else %}<span class="rm-btn" style="opacity:.45"><i class="bi bi-chevron-left"></i>Anterior</span>{% endif %}
+        <span>Página {{ pag }} de {{ paginas }}</span>
+        {% if pag < paginas %}<a class="rm-btn" href="{{ enlace(vista, pag + 1) }}">Siguiente<i class="bi bi-chevron-right"></i></a>{% else %}<span class="rm-btn" style="opacity:.45">Siguiente<i class="bi bi-chevron-right"></i></span>{% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>window.INQ_CFG = { modo: 'monitor', superadmin: {{ 'true' if es_superadmin else 'false' }} };</script>
+<script src="{{ url_for('static', filename='inquietudes.js') }}"></script>
+{% endblock %}
