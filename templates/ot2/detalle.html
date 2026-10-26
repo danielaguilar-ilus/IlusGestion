@@ -2354,6 +2354,29 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
   transition:border-color .2s,background .2s,box-shadow .2s}
 .otd-chk-item.is-obl{border-left-color:#f59e0b;background:#fffbeb}
 .otd-chk-item.is-ok{border-color:#bbf7d0;border-left-color:#16a34a;background:#f0fdf4}
+/* 🗂️ 2026-10-26 (Daniel, OT cerrada de la ILUS IS2 Dual Pull Down: «mejorar esa vista… que los autorizadores tengan más
+   responsabilidad… sin alterar la vista responsiva que ven los técnicos; la siento muy verde… resaltar cada uno de los resultados y su
+   registro de actividad, a qué hora fue respondida… el botón de capturar la ubicación no tiene que ser tan grande, el N° de serie
+   tampoco»). SOLO en el computador (≥1024 px) y SOLO en una OT cerrada (de revisión): cada tarea se lee como una fila de resultado
+   (qué se respondió, quién y a qué hora) en vez de botones e inputs deshabilitados. El celular del técnico no cambia. */
+.otd-res{display:none}
+@media (min-width:1024px){
+  .otd-chk-item.is-revision{background:#fff;border-color:#e5e7eb;border-left-width:4px}
+  .otd-chk-item.is-revision.is-ok{background:#fff;border-left-color:#16a34a}
+  .otd-chk-item.is-revision .bodyc > :not(.otd-chk-fotos):not(.otd-res){display:none}
+  .otd-chk-item.is-revision .sello{display:none}
+  .otd-res{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;grid-column:2/-1;margin-top:6px;font-size:.86rem}
+  .otd-res-val{display:inline-flex;align-items:center;gap:6px;font-weight:800;border-radius:8px;padding:4px 10px;border:1px solid #e5e7eb;background:#f9fafb;color:#111827}
+  .otd-res-val.ok{background:#f0fdf4;border-color:#bbf7d0;color:#14532d}
+  .otd-res-val.ambar{background:#fff8e1;border-color:#fde68a;color:#78350f}
+  .otd-res-val.rojo{background:#fee2e2;border-color:#fecaca;color:#991b1b}
+  .otd-res-val.gris{background:#f3f4f6;border-color:#e5e7eb;color:#374151}
+  .otd-res-quien{color:#4b5563;font-size:.8rem}
+  .otd-res-quien b{color:#111827}
+  /* Botones grandes de una OT ABIERTA, más mesurados en el computador (el celular conserva su tamaño de toque). */
+  .otd-chk-gpsbtn{max-width:340px;min-height:40px;align-self:flex-start}
+  .otd-chk-row .otd-chk-input{max-width:420px}
+}
 /* 🔴🟢 2026-09-08 (Daniel, viendo la OT-2026-00179: "no se entiende, como
    todo es blanco... no veo cuáles son los pasos de qué equipo... ya
    pasaste al paso uno, ahora fotos del equipo, eso es lo que necesito").
@@ -14617,6 +14640,52 @@ async function otdCapturarGps(tid){
   }
 }
 
+/* 🗂️ 2026-10-26: el RESULTADO de una tarea, en limpio, para la vista de revisión del computador (OT cerrada). Nunca inventa: si no hay
+   dato lo dice. Incluye el caso que se veía vacío: el N° de serie marcado «No aplica» o guardado solo en la ficha del equipo. */
+function otdChkResumenHtml(t, tipo){
+  const vj = t.valor_json || {};
+  let txt = '', cls = 'gris';
+  if (vj.na){
+    txt = 'No aplica' + (vj.na_motivo ? ' · ' + otdEsc(vj.na_motivo) : ''); cls = 'gris';
+  } else if (tipo === 'serie'){
+    const eqS = OTD_EQUIPOS_SERIE[String(t.maquina_id)] || {};
+    const sv = String(vj.serie || '').trim(), sf = String(eqS.serie || '').trim();
+    if (sv){ txt = 'N° de serie: ' + otdEsc(sv); cls = 'ok'; }
+    else if (sf){ txt = 'N° de serie (de la ficha del equipo): ' + otdEsc(sf); cls = 'ok'; }
+    else { txt = t.completada ? 'Respondida sin N° de serie guardado' : 'Sin N° de serie'; cls = 'ambar'; }
+  } else if (tipo === 'gps'){
+    const dist = (vj.dist_destino_m != null && isFinite(Number(vj.dist_destino_m))) ? Number(vj.dist_destino_m) : null;
+    if (vj.lat == null){ txt = 'Sin ubicación'; cls = 'ambar'; }
+    else if (dist == null){ txt = 'Ubicación tomada'; cls = 'ok'; }
+    else {
+      const d = dist >= 1000 ? (dist / 1000).toFixed(1).replace('.', ',') + ' km' : Math.round(dist) + ' m';
+      txt = 'Llegó al lugar · a ' + d + ' de la dirección' + (dist <= 500 ? ' (dentro de lo aceptable)' : (dist <= 3000 ? ' (revisar)' : ' (lejos de la dirección)'));
+      cls = dist <= 500 ? 'ok' : (dist <= 3000 ? 'ambar' : 'rojo');
+    }
+  } else if (tipo === 'verificacion'){
+    const v = String(vj.valor || '');
+    txt = {aprobado: 'Aprobado', alerta: 'Alerta', falla: 'Falla'}[v] || (t.completada ? 'Respondida' : 'Sin responder');
+    cls = {aprobado: 'ok', alerta: 'ambar', falla: 'rojo'}[v] || 'gris';
+  } else if (tipo === 'sino'){
+    const v = String(vj.valor || '');
+    txt = {si: 'Sí', no: 'No', na: 'N/A'}[v] || 'Sin responder'; cls = v === 'si' ? 'ok' : (v ? 'gris' : 'ambar');
+  } else if (tipo === 'numero'){
+    txt = vj.numero != null ? otdEsc(String(vj.numero)) + (t.unidad ? ' ' + otdEsc(t.unidad) : '') : 'Sin valor'; cls = vj.numero != null ? 'ok' : 'ambar';
+  } else if (tipo === 'check'){
+    txt = t.completada ? 'Completada' : 'Sin completar'; cls = t.completada ? 'ok' : 'ambar';
+  } else if (tipo === 'foto'){
+    const n = (t.fotos || []).length; txt = n ? n + ' foto' + (n === 1 ? '' : 's') : 'Sin foto'; cls = n ? 'ok' : 'ambar';
+  } else {
+    const v = vj.texto != null ? vj.texto : (vj.valor != null ? vj.valor : (vj.opcion != null ? vj.opcion : null));
+    txt = v != null && String(v).trim() ? otdEsc(String(v)) : (t.completada ? 'Respondida' : 'Sin responder');
+    cls = v != null && String(v).trim() ? 'ok' : (t.completada ? 'gris' : 'ambar');
+  }
+  const quien = (t.completada_por || t.completada_at)
+    ? '<span class="otd-res-quien"><i class="bi bi-clock-history"></i> Respondida' + (t.completada_por ? ' por <b>' + otdEsc(t.completada_por) + '</b>' : '')
+      + (t.completada_at ? ' · ' + otdChkCuando(t.completada_at) : '') + '</span>' : '';
+  return '<div class="otd-res"><span class="otd-res-val ' + cls + '">' + txt + '</span>' + quien + '</div>';
+}
+
 function otdChkTareaHtml(t, nro, esSiguiente){
   const tipo = (t.tipo_respuesta || 'check').toLowerCase();
   const bloqueada = otdChkEstaBloqueada(t);
@@ -14795,7 +14864,8 @@ function otdChkTareaHtml(t, nro, esSiguiente){
   const clase = _lista ? ' is-ok'
     : ((esSiguiente ? ' is-next' : '') + (_exig ? ' is-obl' : ''));
 
-  return `<div class="otd-chk-item${clase}${bloqueada ? ' is-locked' : ''}${(_evT && _evT.dispensada) ? ' is-disp' : ''}" id="otdChkItem-${t.id}">
+  const _revision = bloqueada && otdBloqueadaPorCierre();   // 2026-10-26: vista de revisión (solo se nota en el computador)
+  return `<div class="otd-chk-item${clase}${bloqueada ? ' is-locked' : ''}${_revision ? ' is-revision' : ''}${(_evT && _evT.dispensada) ? ' is-disp' : ''}" id="otdChkItem-${t.id}">
     <span class="nm">${String(nro || 0).padStart(2, '0')}</span>
     <span class="tk"><i class="bi bi-${_lista ? 'check-lg' : (_exig ? 'exclamation-lg' : 'dash-lg')}"></i></span>
     <div class="hd"><b>${otdEsc(t.titulo || '')}</b>${oblBadge}</div>
@@ -14803,6 +14873,7 @@ function otdChkTareaHtml(t, nro, esSiguiente){
     ${t.descripcion ? `<div class="desc">${otdEsc(t.descripcion)}</div>` : ''}
     ${sello}
     <div class="bodyc">
+      ${_revision ? otdChkResumenHtml(t, tipo) : ''}
       ${body}
       ${otdChkNoAplicaHtml(t, tipo, bloqueada)}
       ${otdChkFotoBtnHtml(t)}
