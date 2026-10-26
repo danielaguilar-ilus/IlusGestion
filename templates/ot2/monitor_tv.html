@@ -720,6 +720,19 @@
       color:#93c5fd;background:rgba(59,130,246,.16);border:1px solid rgba(147,197,253,.35);border-radius:50px;
       padding:0 10px;font-weight:800;font-size:.9em;letter-spacing:.02em;margin-right:8px}
     .p-sub .p-empresa:empty{display:none}
+    /* 🗂️ 2026-10-25 (Daniel: «acorta los nombres de empresa… el disponible con un botoncito verde al lado del nombre y abajo la
+       empresa para cortar el tamaño… las tareas pueden ser dinámicas y es raro que choquen, pero igual el sistema tiene que
+       avisar»). La empresa va ABREVIADA (empresaCorta: sin «SpA/Ltda» ni palabras genéricas; el nombre completo queda en el
+       título y en el modal). Disponible = un punto verde junto al nombre, sin etiqueta. Los demás estados conservan su etiqueta. */
+    #stage.con-empresa{--col-left:380px}
+    .p-nombre-l{display:flex;align-items:center;gap:8px;min-width:0}
+    .p-nombre-l .p-nombre{min-width:0}
+    .p-dot{display:none;width:12px;height:12px;border-radius:50%;flex:none;background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.22)}
+    .estado-disponible .p-dot{display:inline-block}
+    .estado-disponible .p-badge{display:none}
+    .p-choque{display:none;flex:none;align-items:center;gap:5px;font-size:var(--fs-badge,14px);font-weight:800;color:#fbbf24;
+      background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.4);border-radius:50px;padding:1px 9px;white-space:nowrap}
+    .p-choque.on{display:inline-flex}
     /* Filas altas (pocas personas): la empresa va COMPLETA en su propia línea, sin cortar el nombre.
        Filas bajas (md/sm): se queda la etiqueta de arriba, en la línea del estado. */
     .p-empresa-fila{display:none;margin-top:4px;max-width:100%;color:#93c5fd;font-weight:800;
@@ -1487,6 +1500,21 @@
        ámbar falta algo. Sin animación de pulso (a diferencia de las de
        firma): esto es un estado a revisar cuando se pueda, no algo que
        esté esperando una acción inmediata del técnico en terreno. */
+    /* 🗂️ 2026-10-25 (Daniel: «expresa la documentación y sus comentarios y motivos además de las comunas y costos… una mejora
+       más informativa que la actual, sin botones o indicadores muy grandes»). Ficha administrativa del modal de CONTROL: filas
+       cortas etiqueta → dato en vez de barras a todo el ancho. La MISMA información de antes (anexo, documento, la cuenta) más
+       documentos, «¿Por qué?», autorizaciones, comuna y comentario. Solo gestión (el televisor y los técnicos nunca la reciben). */
+    .tvm-adm{margin:10px 0 0;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 12px;font-size:13px;line-height:1.35;
+      border-top:1px solid rgba(255,255,255,.08);padding-top:9px}
+    .tvm-adm dt{color:#9ca3af;font-weight:800;font-size:11px;letter-spacing:.06em;text-transform:uppercase;padding-top:2px;white-space:nowrap}
+    .tvm-adm dd{margin:0;color:#e5e7eb;font-weight:600;min-width:0;overflow-wrap:anywhere}
+    .tvm-adm .ok{color:#86efac}.tvm-adm .ambar{color:#fcd34d}.tvm-adm .rojo{color:#fca5a5}.tvm-adm .azul{color:#93c5fd}.tvm-adm .gris{color:#9ca3af}
+    .tvm-adm b{font-weight:800;font-variant-numeric:tabular-nums}
+    .tvm-adm .tvm-adm-doc{display:inline-block;margin:0 8px 2px 0}
+    .tvm-adm .tvm-adm-doc s{color:#9ca3af}
+    .tvm-adm q{display:block;margin-top:2px;color:#d1d5db;font-weight:500;font-style:italic}
+    .tvm-adm .tvm-adm-aut + .tvm-adm-aut{margin-top:4px}
+    @media (max-width:560px){.tvm-adm{grid-template-columns:1fr;gap:1px 0}.tvm-adm dd{margin-bottom:6px}}
     .tvm-doc{
       display:flex;align-items:center;gap:8px;margin-top:10px;padding:8px 12px;
       border-radius:10px;font-size:14px;font-weight:800;letter-spacing:-.01em;
@@ -1899,6 +1927,63 @@
     if (fe === 'tecnico') return 3;   // firmó el técnico -> falta el cliente
     return 1;                          // creada ya está: va en ejecución
   }
+  /* 🗂️ 2026-10-25: ficha administrativa del modal de CONTROL (ver .tvm-adm). Todo el texto con textContent/esc. */
+  function fichaAdmin(b){
+    const A = b.admin || {};
+    const F = b.finanzas;
+    const dl = el('dl', 'tvm-adm');
+    const fmt = (n) => '$' + Math.round(Math.abs(Number(n) || 0)).toLocaleString('es-CL');
+    const fila = (titulo, html) => {
+      const dt = el('dt'); dt.textContent = titulo;
+      const dd = el('dd'); dd.innerHTML = html;
+      dl.appendChild(dt); dl.appendChild(dd);
+    };
+    // La cuenta (la única de la OT, _ot_finanzas: el costo del proveedor es el del anexo, REGLA #34)
+    if (F){
+      if (!F.cobra){
+        fila('Cuenta', '<span class="azul">' + esc(F.cobertura_corta || 'No se cobra') + '</span> · no se cobra · nos costó <b class="azul">' + fmt(F.me_cobraron) + '</b>');
+      } else if (!F.mostrar){
+        fila('Cuenta', 'Cobré <b>' + (F.cobre_hay ? fmt(F.cobre) : '—') + '</b> · <span class="ambar">' + esc(F.label || 'falta un dato') + '</span>');
+      } else {
+        const neg = Number(F.queda) < 0;
+        fila('Cuenta', 'Cobré <b>' + fmt(F.cobre) + '</b> · nos cobraron <b>' + fmt(F.me_cobraron) + '</b> · queda <b class="' + (neg ? 'rojo' : 'ok') + '">' +
+          (neg ? '−' : '+') + fmt(F.queda) + '</b>' + (F.pct != null ? ' <span class="gris">(' + String(Math.round(F.pct * 10) / 10).replace('.', ',') + ' %)</span>' : ''));
+      }
+    }
+    // Documentos (todos los de la OT; la nota de venta dada de baja por su factura, tachada)
+    const docs = A.documentos || [];
+    const dc = b.doc_cierre || {};
+    if (docs.length){
+      fila('Documentos', docs.map(d => '<span class="tvm-adm-doc">' + (d.baja ? '<s>' + esc(d.titulo) + '</s> <span class="gris">dada de baja</span>' :
+        '<b' + (d.principal ? ' class="ok"' : '') + '>' + esc(d.titulo) + '</b>') + (d.etiqueta ? ' <span class="gris">· ' + esc(d.etiqueta) + '</span>' : '') +
+        (d.copia ? ' <span class="gris">(de la OT madre)</span>' : '') + '</span>').join('') +
+        (!dc.ok && (dc.faltan || []).length ? '<div class="ambar">Falta: ' + esc(dc.faltan.join(', ')) + '</div>' : ''));
+    } else if (dc.label || (dc.faltan || []).length){
+      fila('Documento', dc.ok ? '<b class="ok">' + esc(dc.label || 'Documento OK') + '</b>' : '<span class="ambar">Falta: ' + esc((dc.faltan || []).join(', ')) + '</span>');
+    }
+    if (b.anexo && ANEXO_PILL[b.anexo.estado]){
+      const cls = b.anexo.estado === 'firmado' ? 'ok' : (b.anexo.estado === 'visto' ? 'azul' : 'ambar');
+      fila('Anexo', '<span class="' + cls + '">' + esc((b.anexo.numero ? 'N° ' + b.anexo.numero + ' · ' : '') + ANEXO_PILL[b.anexo.estado].txt.replace(/^Anexo /, '')) + '</span>');
+    }
+    // ¿Por qué? (REGLA #47) y quién lo asume
+    const porque = [];
+    if (A.intencion_txt) porque.push('<b>' + esc(A.intencion_txt) + '</b>');
+    if (A.motivo_cero && !A.intencion_txt) porque.push('<b>' + esc(A.motivo_cero) + '</b>');
+    const asume = A.asume_txt || A.centro_txt;
+    if (asume) porque.push('lo asume <b>' + esc(asume) + '</b>');
+    if (porque.length) fila('¿Por qué?', porque.join(' · '));
+    // Autorizaciones con su argumento completo (REGLA #15) y quién la resolvió
+    if ((A.autorizaciones || []).length){
+      fila('Autorización', A.autorizaciones.map(a => '<div class="tvm-adm-aut"><b class="' + (a.estado === 'aprobada' ? 'ok' : 'ambar') + '">' + esc(a.tipo_txt) + '</b> · ' +
+        (a.estado === 'aprobada' ? 'aprobada' + (a.resolvio ? ' por ' + esc(a.resolvio) : '') : 'pendiente' + (a.pidio ? ', la pidió ' + esc(a.pidio) : '')) +
+        (a.cuando ? ' <span class="gris">' + esc(a.cuando) + '</span>' : '') +
+        (a.argumento ? '<q>' + esc(a.argumento) + '</q>' : '') + (a.comentario ? '<q>Respuesta: ' + esc(a.comentario) + '</q>' : '') + '</div>').join(''));
+    }
+    if (b.comuna) fila('Comuna', esc(b.comuna));
+    if (A.comentario) fila('Comentario', esc(A.comentario));
+    return dl;
+  }
+
   function renderEtapas(b, be){
     // 🔧 2026-09-13 (Daniel: "aplicar la misma regla que ya usa la ficha de
     // la OT" -- ver `_ot_es_interna` en app.py, que desde el 2026-09-03
@@ -2353,6 +2438,19 @@
 
   /* ───────────────────────── franja por persona ───────────────────────── */
 
+  /* 🗂️ 2026-10-25: nombre corto de la empresa del técnico externo para la fila (el completo va en el título y en el modal).
+     «LOGISTICA Y TRANSPORTES MILLING SPA» → «Milling» · «Transportes felcarm SPA» → «Felcarm» · «DAP Servicio» → «DAP». */
+  function empresaCorta(nombre){
+    let s = String(nombre || '').replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!s) return '';
+    const legal = /\s+(S ?P ?A|S ?A|LTDA|LIMITADA|E ?I ?R ?L|Y C[IÍ]A)$/i;
+    for (let i = 0; i < 3 && legal.test(s); i++) s = s.replace(legal, '').trim();
+    const generica = /^(log[ií]stica|transportes?|servicios?|sociedad|comercial|comercializadora|inversiones|empresa|ingenier[ií]a|y|de|del|e)$/i;
+    const utiles = s.split(' ').filter(w => !generica.test(w));
+    const r = utiles.length ? utiles.join(' ') : s;
+    return r.split(' ').map(w => (w.length > 3 && (w === w.toUpperCase() || w === w.toLowerCase())) ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w).join(' ');
+  }
+
   function crearFila(p, idx){
     const row = el('div', 'u-p');
     row.style.setProperty('--i', idx);
@@ -2360,9 +2458,10 @@
       '<div class="p-id">' +
         '<div class="p-avatar"></div>' +
         '<div class="p-idtxt">' +
-          '<span class="p-nombre"></span>' +
+          '<span class="p-nombre-l"><i class="p-dot" role="img" aria-label="Disponible" title="Disponible"></i><span class="p-nombre"></span></span>' +
           '<div class="p-line2">' +
             '<span class="p-badge"><i></i><b class="badge-txt"></b></span>' +
+            '<span class="p-choque" role="status"></span>' +
             '<span class="p-sub"><span class="p-empresa"></span><span class="p-tipo"></span><span class="p-cliente"></span><span class="p-dir"></span></span>' +
           '</div>' +
           '<span class="p-empresa-fila"></span>' +
@@ -2507,7 +2606,7 @@
     // angosto, ver el CSS de la variable).
     // 🏢 2026-09-30: la empresa del técnico EXTERNO (Daniel: "a los externos les figure la empresa").
     const empEl = $('.p-empresa', row);
-    setTexto(empEl, p.empresa || '');
+    setTexto(empEl, empresaCorta(p.empresa));
     if (empEl) empEl.title = p.empresa ? ('Empresa: ' + p.empresa) : '';
     // 2026-10-19 (captura: "LOGISTICA Y TRANSPORTES MI…"): nombre completo,
     // achicando la letra antes que cortarlo.
@@ -2515,7 +2614,8 @@
       const _k = p.empresa + '|' + ($('#stage').dataset.densidad || '');
       if (empEl.dataset.fit !== _k){ empEl.dataset.fit = _k; achicarHastaCaber(empEl, 10); }
     }
-    setTexto($('.p-empresa-fila', row), p.empresa || '');
+    setTexto($('.p-empresa-fila', row), empresaCorta(p.empresa));
+    { const _ef = $('.p-empresa-fila', row); if (_ef) _ef.title = p.empresa ? ('Empresa: ' + p.empresa) : ''; }
     setTexto($('.p-tipo', row), '');
     setTexto($('.p-cliente', row), '');
     setTexto($('.p-dir', row), '');
@@ -2602,6 +2702,18 @@
       ? Math.min(20, OT_MIN_PX_BLOQUE / _anchoPista * 100)
       : 0;
     const _lanes = repartirCarriles(bloques, state.minPctBloque) || 1;
+    // 🗂️ 2026-10-25 (Daniel: «es raro que choquen, pero igual el sistema tiene que avisar»): OT que se pisan en el horario.
+    // Se cuenta con el horario REAL (sin el ancho mínimo de la burbuja, que solo es para dibujar).
+    { const ch = $('.p-choque', row);
+      if (ch){
+        const real = bloques.map(b => { const i = hm(b.ini), f = hm(b.fin); return [i, (f != null && i != null && f > i) ? f : (i != null ? i + 60 : null)]; })
+                            .filter(x => x[0] != null).sort((a, b) => a[0] - b[0]);
+        let max = 1;
+        real.forEach((x, k) => { const n = real.filter(y => y[0] < x[1] && y[1] > x[0]).length; if (n > max) max = n; });
+        ch.classList.toggle('on', max > 1);
+        setTexto(ch, max > 1 ? ('⚠ ' + max + ' OT a la vez') : '');
+        ch.title = max > 1 ? 'Este técnico tiene trabajos que se pisan en el horario. Revisa la agenda.' : '';
+      } }
     // Alto real de cada carril en esta fila (la fila ya creció en
     // ajustarDensidad): decide si la burbuja va en dos renglones o en uno.
     const _hFila = row.__hFila || state.rowH || 60;
@@ -2998,7 +3110,7 @@
       // está firmado esa etapa"). Mismo criterio que la píldora de firma de
       // arriba, pero es un dato aparte: el anexo lo firma el PROVEEDOR
       // EXTERNO, no el técnico ni el cliente.
-      if (b.anexo && ANEXO_PILL[b.anexo.estado]){
+      if (!b.admin && b.anexo && ANEXO_PILL[b.anexo.estado]){
         const ap = ANEXO_PILL[b.anexo.estado];
         const apill = el('div', 'tvm-anexo tvm-anexo-' + b.anexo.estado);
         apill.innerHTML = '<i class="bi ' + ap.icon + '"></i><span>' + ap.txt + '</span>';
@@ -3024,7 +3136,7 @@
          es ruido: es LA información que se viene a buscar acá.
          Ahora se muestra siempre que haya algo que decir: el número si
          existe, o lo que falta si no. */
-      if (b.doc_cierre && (b.doc_cierre.label || (b.doc_cierre.faltan || []).length)){
+      if (!b.admin && b.doc_cierre && (b.doc_cierre.label || (b.doc_cierre.faltan || []).length)){
         const dc = b.doc_cierre;
         const pillDoc = el('div', 'tvm-doc ' + (dc.ok ? 'tvm-doc-ok' : 'tvm-doc-falta'));
         const txtDoc = dc.ok
@@ -3047,8 +3159,10 @@
          contrato, interno) muestra lo que nos costó en azul, nunca como venta;
          si falta un dato se dice cuál. El bloque de abajo (precio/costo) queda
          solo de respaldo si el servidor no mandó la cuenta. */
-      if (b.fin){
-        const F = b.fin;
+      if (b.admin){
+        ot.appendChild(fichaAdmin(b));
+      } else if (b.finanzas){
+        const F = b.finanzas;
         const finEl = el('div', 'tvm-ot-fin');
         const fmtF = (n) => '$' + Math.round(Math.abs(Number(n) || 0)).toLocaleString('es-CL');
         finEl.title = F.frase || '';

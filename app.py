@@ -117031,6 +117031,98 @@ def _ot_tv_fin_resumen(fin):
     }
 
 
+def _ot_tv_admin_lote(vids):
+    """🗂️ 2026-10-25 (Daniel, viendo el modal del Monitor: «expresa la documentación y sus comentarios y motivos además de las
+    comunas y costos; esta vista está prohibida para técnicos ya que es administrativa»). Lo administrativo de cada OT para el
+    modal del Monitor de CONTROL: documentos, el «¿Por qué?» (REGLA #47) y quién lo asume, las autorizaciones con su argumento
+    y quién las resolvió, el motivo del $0 y el comentario de la OT. Solo lectura; una consulta por tipo de dato para todo el
+    lote; si una falla, ese dato no se muestra (el Monitor nunca se cae por esto). Jamás para el televisor público ni para
+    técnicos: solo lo pide _ot_tv_datos(incluir_finanzas=True), que exige _require_gestion_monitor (REGLAS #19/#26)."""
+    out = {}
+    for v in vids or []:
+        try:
+            out[int(v)] = {"documentos": [], "autorizaciones": [], "intencion_txt": "", "asume_txt": "", "centro_txt": "",
+                           "motivo_cero": "", "comentario": ""}
+        except (TypeError, ValueError):
+            continue
+    if not out:
+        return {}
+    ids = sorted(out)
+    ph = ",".join(["%s"] * len(ids))
+    centros = dict(_OT2_CENTROS_COSTO)
+    motivos_cero = {"garantia": "Garantía", "regalia": "Regalía", "arriendo_leasing": "Arriendo o leasing"}
+    principal = {}
+    try:
+        for r in (mysql_fetchall(
+                "SELECT id, centro_costo, cobro_cero_motivo, observaciones, descripcion, factura_tido, factura_nudo "
+                f"  FROM mant_visitas WHERE id IN ({ph})", tuple(ids)) or []):
+            a = out.get(int(r["id"]))
+            if a is None:
+                continue
+            a["centro_txt"] = centros.get((r.get("centro_costo") or "").strip().lower(), "")
+            a["motivo_cero"] = motivos_cero.get((r.get("cobro_cero_motivo") or "").strip().lower(), "")
+            a["comentario"] = ((r.get("observaciones") or "").strip() or (r.get("descripcion") or "").strip())
+            if (r.get("factura_nudo") or "").strip():
+                principal[int(r["id"])] = " ".join(_ot_doc_real_a_usuario(r.get("factura_tido") or "FCV", r["factura_nudo"])).strip()
+    except Exception as e:
+        print(f"[ot_tv] admin ot: {type(e).__name__}", flush=True)
+    # El «¿Por qué?» de la OT (REGLA #47): columna nueva; si todavía no existe en esta base, simplemente no se muestra.
+    try:
+        cat = _ot_intenciones_catalogo()
+        for r in (mysql_fetchall(f"SELECT id, intencion, centro_costo FROM mant_visitas WHERE id IN ({ph})", tuple(ids)) or []):
+            a = out.get(int(r["id"]))
+            if a is None or not (r.get("intencion") or "").strip():
+                continue
+            c = _ot_intencion_campos(r.get("intencion"), r.get("centro_costo"), cat)
+            a["intencion_txt"], a["asume_txt"] = c.get("intencion_txt") or "", c.get("asume_txt") or ""
+    except Exception as e:
+        print(f"[ot_tv] admin intencion: {type(e).__name__}", flush=True)
+    try:
+        con_doc = set()
+        for r in (mysql_fetchall(
+                "SELECT d.visita_id, d.origen, d.erp_tido, d.erp_nudo, d.etiqueta, d.es_principal, d.reemplazado_por_id, "
+                "       d.heredado_de_visita_id, c.numero_cotizacion "
+                "  FROM mant_visita_documentos d LEFT JOIN tk_cotizaciones c ON c.id = d.cotizacion_id "
+                f" WHERE d.visita_id IN ({ph}) ORDER BY d.visita_id, d.es_principal DESC, d.id", tuple(ids)) or []):
+            a = out.get(int(r["visita_id"]))
+            if a is None or len(a["documentos"]) >= 8:
+                continue
+            if r.get("origen") == "cotizacion":
+                titulo = r.get("numero_cotizacion") or "Cotización"
+            else:
+                titulo = " ".join(_ot_doc_real_a_usuario(r.get("erp_tido") or "FCV", r.get("erp_nudo") or "")).strip()
+            if not titulo:
+                continue
+            con_doc.add(int(r["visita_id"]))
+            a["documentos"].append({"titulo": titulo, "etiqueta": (r.get("etiqueta") or "").strip(),
+                                    "principal": bool(r.get("es_principal")), "baja": bool(r.get("reemplazado_por_id")),
+                                    "copia": bool(r.get("heredado_de_visita_id"))})
+        for vid, titulo in principal.items():
+            if vid not in con_doc and vid in out:
+                out[vid]["documentos"].append({"titulo": titulo, "etiqueta": "", "principal": True, "baja": False, "copia": False})
+    except Exception as e:
+        print(f"[ot_tv] admin documentos: {type(e).__name__}", flush=True)
+    try:
+        for r in (mysql_fetchall(
+                "SELECT visita_id, tipo, estado, argumento, comentario, solicitado_por_nombre, resuelto_por_nombre, "
+                "       resuelto_at, solicitado_at "
+                "  FROM mant_ot_autorizaciones "
+                f" WHERE entidad = 'ot' AND visita_id IN ({ph}) AND estado IN ('aprobada', 'pendiente') "
+                " ORDER BY visita_id, id DESC", tuple(ids)) or []):
+            a = out.get(int(r["visita_id"]))
+            if a is None or len(a["autorizaciones"]) >= 3:
+                continue
+            cuando = r.get("resuelto_at") if r.get("estado") == "aprobada" else r.get("solicitado_at")
+            a["autorizaciones"].append({
+                "tipo_txt": _OT_AUT_TIPO_TXT.get(r.get("tipo"), r.get("tipo") or ""), "estado": r.get("estado") or "",
+                "argumento": (r.get("argumento") or "").strip(), "comentario": (r.get("comentario") or "").strip(),
+                "pidio": r.get("solicitado_por_nombre") or "", "resolvio": r.get("resuelto_por_nombre") or "",
+                "cuando": chile_fmt_filter(cuando) if cuando else ""})
+    except Exception as e:
+        print(f"[ot_tv] admin autorizaciones: {type(e).__name__}", flush=True)
+    return out
+
+
 def _ot_tv_datos(fecha=None, incluir_finanzas=False):
     """Payload del monitor: un día agrupado por persona + próximos días.
 
@@ -117156,6 +117248,8 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
         except Exception as e:
             print(f"[ot_tv] finanzas: {type(e).__name__}", flush=True)
             _fin_por_visita = {}
+    # 🗂️ 2026-10-25: documentos, «¿Por qué?», autorizaciones y comentario (solo pantalla de CONTROL, ver _ot_tv_admin_lote).
+    _admin_por_visita = _ot_tv_admin_lote(_vids) if (incluir_finanzas and _vids) else {}
 
     if _vids:
         try:
@@ -117447,7 +117541,11 @@ def _ot_tv_datos(fecha=None, incluir_finanzas=False):
             "costo_proveedor": (float(f.get("costo_proveedor")) if incluir_finanzas and f.get("costo_proveedor") is not None else None),
             "costo_despacho": (float(f.get("costo_despacho")) if incluir_finanzas and f.get("costo_despacho") is not None else None),
             # 💰 2026-10-07: la cuenta única de la OT (lo que pinta el modal). None en el televisor público.
-            "fin": (_ot_tv_fin_resumen(_fin_por_visita.get(f.get("id"))) if incluir_finanzas else None),
+            # 🔴 FIX 2026-10-25 (Daniel: «está saliendo que nada se cobra… en la de Pitbull dice que no se cobra cuando sí
+            # se cobró»): esta clave se llamaba "fin" y el MISMO diccionario trae más abajo "fin" = hora de término, que la
+            # pisaba: el modal recibía «18:00» en vez de la cuenta y mostraba «no se cobra · nos costó $0» en TODAS las OT.
+            "finanzas": (_ot_tv_fin_resumen(_fin_por_visita.get(f.get("id"))) if incluir_finanzas else None),
+            "admin": (_admin_por_visita.get(f.get("id")) if incluir_finanzas else None),
             # 🆕 2026-08-28 (Daniel: "que en esa burbuja me diga... la
             # comuna, al menos la comuna") -- el dato YA se traía en
             # _OT_TV_SELECT (c.comuna AS cliente_comuna) para armar

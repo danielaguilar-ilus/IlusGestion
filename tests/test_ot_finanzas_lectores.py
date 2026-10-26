@@ -425,9 +425,27 @@ class TestLectoresUsanLaCuentaUnica(unittest.TestCase):
         self.fail("no está mant_finanzas_servicios")
 
     def test_monitor_y_calendario_no_le_mandan_montos_al_tecnico(self):
-        self.assertIn("if incluir_finanzas else None", _fuente_de("_ot_tv_datos").split('"fin":')[1][:200])
+        # 2026-10-25: la cuenta viaja como "finanzas" (como "fin" la pisaba la hora de término del MISMO dict) y lo
+        # administrativo como "admin": las dos solo con incluir_finanzas (pantalla de control, nunca técnicos ni el televisor).
+        src = _fuente_de("_ot_tv_datos")
+        self.assertIn("if incluir_finanzas else None", src.split('"finanzas":')[1][:200])
+        self.assertIn("if incluir_finanzas else None", src.split('"admin":')[1][:200])
         self.assertIn("not _es_rol_tecnico()", _fuente_de("mant_visitas_api"))
         self.assertIn("not _es_rol_tecnico()", _fuente_de("mant_ot_ficha"))
+
+    def test_el_bloque_del_monitor_no_repite_claves(self):
+        """Bug real del 07-10 al 25-10: el dict de cada OT del Monitor traía "fin" dos veces (la cuenta y la hora de
+        término); Python se queda con la última y el modal mostraba «no se cobra · nos costó $0» en TODAS las OT."""
+        arbol = ast.parse(_fuente_de("_ot_tv_datos"))
+        revisados = 0
+        for nodo in ast.walk(arbol):
+            if isinstance(nodo, ast.Dict):
+                claves = [k.value for k in nodo.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+                if "numero" in claves and "cliente" in claves:
+                    revisados += 1
+                    repetidas = sorted({k for k in claves if claves.count(k) > 1})
+                    self.assertEqual(repetidas, [], f"claves repetidas en el bloque del Monitor: {repetidas}")
+        self.assertGreater(revisados, 0)
 
     def test_lo_que_ve_el_cliente_no_cambio(self):
         # REGLAS #22/#23: el PDF público sigue decidiendo "Datos para transferencia" con modalidad_cobro

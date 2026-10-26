@@ -245,7 +245,10 @@ class TestEmpresasDelMonitor(unittest.TestCase):
     def test_la_plantilla_del_monitor_pinta_la_empresa_en_la_fila_y_en_el_modal(self):
         html = _leer(MONITOR)
         self.assertIn('<span class="p-empresa"></span>', html)
-        self.assertIn("setTexto(empEl, p.empresa || '')", html)
+        # 2026-10-25 (Daniel: «acorta los nombres de empresa en el monitor»): la FILA lleva el nombre corto; el completo
+        # queda en el título de la etiqueta y en el modal.
+        self.assertIn("setTexto(empEl, empresaCorta(p.empresa))", html)
+        self.assertIn("function empresaCorta(", html)
         self.assertIn("'Empresa: ' + p.empresa", html)
 
 
