@@ -275,6 +275,33 @@ class TestElBotonEditarCobroYCostos(_HarnessBase):
         self.assertNotIn("data-fm-edit", _leer("templates/ot2/panel.html"))
 
 
+class TestNotaDeVentaOmitidaNoSumaDosVeces(_HarnessBase):
+    """OT-2026-00220 (27-oct): la nota de venta y la boleta que la facturó están las dos en la OT; el saldo ya omite la nota
+    («su factura ya está en la OT»), pero la lista la sumaba igual y avisaba «los documentos suman $248.880 y se cobró
+    $124.440» donde no había ninguna diferencia."""
+
+    @staticmethod
+    def _con_nota_de_venta(omitida):
+        def mutar(rec, pan):
+            nv = json.loads(json.dumps(pan["documentos"][0]))     # copia: mismas líneas de servicio que la factura
+            nv.update(id=9, es_principal=False, categoria="nota_venta", tipo_txt="Nota de venta", tido="VD", nudo="10618",
+                      titulo="VD 10618", cuenta="nota_venta")
+            if omitida:
+                nv["saldo"]["omitido"] = "Su factura ya está en la OT: el cobro cuenta en la factura."
+            pan["documentos"].append(nv)
+        return mutar
+
+    def test_con_la_nota_omitida_no_aparece_el_aviso_de_que_los_documentos_suman_de_mas(self):
+        html = self._pintar("cobro_2docs", mutar=self._con_nota_de_venta(True))
+        self.assertIn("VD 10618", html)
+        self.assertIn("No suma: su factura o boleta ya cobra", html)
+        self.assertNotIn("Las líneas de los documentos suman", html)
+
+    def test_sin_omitir_el_aviso_de_diferencia_sigue_avisando(self):
+        html = self._pintar("cobro_2docs", mutar=self._con_nota_de_venta(False))
+        self.assertIn("Las líneas de los documentos suman", html)
+
+
 class TestElResumenDeArriba(_HarnessBase):
     def _cta(self, html):
         return html.split('<section class="fm-cta ')[1].split("</section>")[0]

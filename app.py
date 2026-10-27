@@ -122688,6 +122688,14 @@ def _ot_doc_cadena(vid):
         docs.append({"clave": k, "es_cobro": bool(f.get("es_cobro", 1)),
                      "reemplazado_por": clave_de_id.get(f.get("reemplazado_por_id")),
                      "heredado": bool(f.get("heredado_de_visita_id"))})
+    # 🧾 2026-10-27 (Daniel, OT-2026-00220): el principal que solo vive en mant_visitas.factura_* y los adicionales de
+    # antes de la tabla puente TAMBIÉN son documentos de la OT (los cuentan el recorrido y la puerta de cierre). Antes
+    # solo se miraban si la tabla venía vacía: con una nota de venta en la tabla, la BLV de la OT salía como «no está
+    # en esta OT» y se sugería agregarla. Se leen con la MISMA función que el panorama (_ot_docs_listar).
+    try:
+        docs.extend(_cadena.docs_anteriores(_ot_docs_listar(vid).get("documentos") or [], docs, _saldo.clave_doc))
+    except Exception as e:
+        print(f"[ot-cadena] documentos anteriores vid={vid}: {type(e).__name__}", flush=True)
     if not docs:
         k = _saldo.clave_doc(v.get("factura_tido"), v.get("factura_nudo"))
         if k[0] and k[1]:

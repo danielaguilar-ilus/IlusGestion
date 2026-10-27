@@ -91,6 +91,28 @@ def agrupar(docs_ot, familias):
     return grupos
 
 
+def docs_anteriores(listado, existentes, clave_doc):
+    """Los documentos de la OT que NO viven en la tabla puente: el principal que solo está en mant_visitas.factura_*
+    y los adicionales de antes de la tabla (documentos_extra). `listado`: la salida de _ot_docs_listar (los de la
+    tabla traen id; estos no). Son documentos de la OT igual que los otros: los cuenta el recorrido, la puerta de
+    cierre y el saldo. Si la tarjeta los ignora, dice «la boleta no está en esta OT» de una OT que sí la tiene
+    (OT-2026-00220: BLV 23588). Devuelve solo los que `existentes` todavía no trae."""
+    vistos = {tuple(d["clave"]) for d in (existentes or [])}
+    out = []
+    for d in (listado or []):
+        if d.get("id") is not None or d.get("origen") != "erp":
+            continue
+        partes = (d.get("titulo") or "").split(" ", 1)
+        if len(partes) < 2:
+            continue
+        k = tuple(clave_doc(partes[0], partes[1]))
+        if not k[0] or not k[1] or k in vistos:
+            continue
+        vistos.add(k)
+        out.append({"clave": k, "es_cobro": bool(d.get("es_cobro", True)), "reemplazado_por": None, "heredado": False})
+    return out
+
+
 def sugerencias(docs_ot, familias, info=None):
     """Para cada nota de venta de la OT que sigue VIVA (no dada de baja, no copiada de la madre) y cuya familia se
     leyó en Random: las facturas o boletas de esa familia que todavía no están en la OT. Si la OT ya tiene alguna

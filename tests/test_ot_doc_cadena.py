@@ -199,6 +199,64 @@ class TestCadena(unittest.TestCase):
         self.assertEqual(nodos[0]["reemplazado_por"], "FCV 11745")
 
 
+class TestDocumentosAnteriores(unittest.TestCase):
+    """OT-2026-00220 (27-oct): la BLV 23588 vivía solo en mant_visitas.factura_* y la tarjeta decía «no está en esta OT»
+    y sugería agregarla, mientras el recorrido, el contador y el cierre la daban por buena."""
+
+    @staticmethod
+    def _clave(t, n):
+        t, n = str(t).strip().upper(), str(n).strip().upper()
+        return (t, n.lstrip("0") or "0")
+
+    def _listado_220(self):
+        # lo que devuelve _ot_docs_listar: la nota de venta de la tabla (con id) y la boleta solo en mant_visitas
+        return [{"id": 41, "origen": "erp", "es_cobro": True, "es_principal": True, "titulo": "VD 10618"},
+                {"id": None, "origen": "erp", "es_cobro": True, "es_principal": True, "titulo": "BLV 23588", "solo_legacy": True}]
+
+    def test_el_principal_que_solo_vive_en_mant_visitas_es_un_documento_de_la_ot(self):
+        existentes = [{"clave": ("VD", "10618"), "es_cobro": True, "reemplazado_por": None, "heredado": False}]
+        extra = C.docs_anteriores(self._listado_220(), existentes, self._clave)
+        self.assertEqual([tuple(d["clave"]) for d in extra], [("BLV", "23588")])
+        self.assertTrue(extra[0]["es_cobro"])
+        self.assertIsNone(extra[0]["reemplazado_por"])
+        self.assertFalse(extra[0]["heredado"])
+
+    def test_con_la_boleta_en_la_ot_ya_no_se_sugiere_agregarla(self):
+        nv, blv = ("VD", "10618"), ("BLV", "23588")
+        docs = [{"clave": nv, "es_cobro": True, "reemplazado_por": None, "heredado": False}]
+        fams = {nv: {"miembros": [nv, blv], "leida": True}}
+        info = {nv: {"saldo": _saldo(124440, 124440), "usos": []}, blv: {"saldo": _saldo(124440, 124440), "usos": []}}
+        # antes (solo la tabla): falsa alarma
+        self.assertEqual(len(C.sugerencias(docs, fams, info)), 1)
+        # ahora: se suman los documentos anteriores a la tabla
+        docs += C.docs_anteriores(self._listado_220(), docs, self._clave)
+        fams[blv] = {"miembros": [nv, blv], "leida": True}
+        self.assertEqual(C.sugerencias(docs, fams, info), [])
+        cad = C.armar(docs, fams, info)
+        self.assertEqual(cad["sugerencias"], [])
+        nodos = {n["titulo"]: n for n in cad["cadenas"][0]["nodos"]}
+        self.assertTrue(nodos["VD 10618"]["en_ot"])
+        self.assertTrue(nodos["BLV 23588"]["en_ot"], "la boleta de la OT tiene que figurar «en esta OT»")
+
+    def test_no_repite_lo_que_la_tabla_ya_trae_ni_toca_cotizaciones_o_filas_sin_tipo(self):
+        existentes = [{"clave": ("BLV", "23588"), "es_cobro": True, "reemplazado_por": None, "heredado": False}]
+        listado = self._listado_220() + [{"id": None, "origen": "cotizacion", "titulo": "COT-55"},
+                                         {"id": None, "origen": "erp", "titulo": "FCV"},
+                                         {"id": None, "origen": "erp", "titulo": ""},
+                                         {"id": None, "origen": "erp", "es_cobro": False, "titulo": "FCV 00011439"},
+                                         {"id": None, "origen": "erp", "titulo": "FCV 11439"}]
+        extra = C.docs_anteriores(listado, existentes, self._clave)
+        self.assertEqual([tuple(d["clave"]) for d in extra], [("FCV", "11439")], "una sola vez, con los ceros quitados")
+        self.assertFalse(extra[0]["es_cobro"], "respeta si el documento anterior era solo de referencia")
+        self.assertEqual(C.docs_anteriores(None, None, self._clave), [])
+
+    def test_app_lee_los_documentos_anteriores_con_la_misma_funcion_que_el_panorama(self):
+        app = _leer("app.py")
+        ini = app.index("def _ot_doc_cadena(vid):")
+        cuerpo = app[ini:app.index('@app.route("/ot/api/<int:vid>/documentos/cadena"')]
+        self.assertIn("_cadena.docs_anteriores(_ot_docs_listar(vid)", cuerpo)
+
+
 class TestCableado(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

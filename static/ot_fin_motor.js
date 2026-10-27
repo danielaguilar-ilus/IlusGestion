@@ -405,6 +405,9 @@
   function sumaMontos(arr) { var t = 0; (arr || []).forEach(function (l) { t += Number(l.monto) || 0; }); return t; }
   function aporteDoc(d) {
     if (d.dada_de_baja_por) return { cls: 'no', txt: 'No suma: la factura que la reemplaza ya cobra' };
+    /* 2026-10-27 (OT-2026-00220): una nota de venta cuya factura o boleta TAMBIÉN está en la OT es el mismo cobro (el saldo ya la
+       omite) aunque la factura no la haya «dado de baja» formalmente: sumarla dos veces mostraba $248.880 donde se cobró $124.440. */
+    if (d.saldo && d.saldo.omitido) return { cls: 'no', txt: 'No suma: su factura o boleta ya cobra' };
     if (d.origen === 'cotizacion') return { cls: 'no', txt: 'Referencia: no suma al cobro' };
     if (!d.es_cobro) return { cls: 'no', txt: 'No suma: referencia de la garantía' };
     var s = null, e = null;
