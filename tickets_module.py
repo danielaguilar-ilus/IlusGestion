@@ -2071,8 +2071,8 @@ def register_tickets_routes(app, ctx):
         # subtotal). Las cotizaciones viejas quedan 'pct' -> sin cambios.
         if "descuento_tipo" not in existentes:
             alters.append("ADD COLUMN descuento_tipo ENUM('pct','monto') NOT NULL DEFAULT 'pct'")
-        # 2026-10-27 (Daniel: «agregar 40% de margen» en el editor de cotización): margen propio de ESTA cotización. NULL (las viejas y
-        # las que no lo tocan) = el margen global del cotizador (tk_settings.cotiz_margen_pct, hoy 40): sus precios no cambian.
+        # 2026-10-27 (Daniel: «agregar % de margen» en el editor de cotización): margen propio de ESTA cotización. NULL (las viejas y
+        # las que no lo traen) = el margen global del cotizador (tk_settings.cotiz_margen_pct, hoy 40): sus precios no cambian.
         if "margen_pct" not in existentes:
             alters.append("ADD COLUMN margen_pct DECIMAL(6,2) NULL")
         # 2026-07-22 (Cotizaciones v3, Daniel): tabla inteligente con
@@ -2925,6 +2925,10 @@ def register_tickets_routes(app, ctx):
     # de precio que usa el Cotizador, sin duplicar la fórmula.
     ctx["_tk_cotiz_pricing_config"] = _tk_cotiz_pricing_config
 
+    # 2026-10-27 (Daniel: «déjalo definido en 30%»): el margen con el que el editor ARMA una cotización nueva. La persona lo cambia en pantalla; el
+    # margen general del cotizador (tk_settings.cotiz_margen_pct) sigue valiendo para las cotizaciones que no guardaron uno propio.
+    _TK_COTIZ_MARGEN_DEFECTO = 30.0
+
     def _tk_cfg_margen(cfg, margen):
         """La configuración de precios con el «Margen %» propio de la cotización (2026-10-27). margen None = el global, tal cual."""
         if margen is None:
@@ -2943,10 +2947,10 @@ def register_tickets_routes(app, ctx):
             return None
 
     def _tk_margen_in(d):
-        """(presente, valor): el «Margen %» de ESTA cotización que mandó el editor. Solo el superadministrador lo cambia: de cualquier otro
-        usuario se ignora (presente=False: la cotización conserva el suyo o el global). Vacío = None (vuelve al global). Rango 0–300; fuera de
-        rango o no numérico se ignora."""
-        if not isinstance(d, dict) or "margen_pct" not in d or not _tk_solo_superadmin():
+        """(presente, valor): el «Margen %» de ESTA cotización que mandó el editor (Daniel 2026-10-27: «genérico para todos, que se decida por el
+        front»: lo elige quien arma la cotización). Vacío = None (vuelve al global). Rango 0–300; fuera de rango o no numérico se ignora
+        (presente=False: la cotización conserva el suyo o el global)."""
+        if not isinstance(d, dict) or "margen_pct" not in d:
             return False, None
         raw = d.get("margen_pct")
         if raw in (None, ""):
@@ -3468,7 +3472,7 @@ def register_tickets_routes(app, ctx):
             return jsonify({"ok": False, "error": "items debe ser una lista"}), 400
         cfg = _tk_cotiz_pricing_config()
         _margen_global = cfg.get("margen_pct")
-        _mg_ok, _mg_val = _tk_margen_in(d)   # 2026-10-27: solo el superadmin ve precios con otro margen (los demás, el global)
+        _mg_ok, _mg_val = _tk_margen_in(d)   # 2026-10-27: los precios se ven con el margen que eligió quien arma la cotización
         if _mg_ok and _mg_val is not None:
             cfg = _tk_cfg_margen(cfg, _mg_val)
         out = []
@@ -3480,7 +3484,7 @@ def register_tickets_routes(app, ctx):
                 f.get("clase_producto"), tipo_servicio, f.get("cantidad"),
                 f.get("descuento_pct"), cfg)
             out.append(calc)
-        return jsonify({"ok": True, "precios": out, "margen_global": _margen_global})
+        return jsonify({"ok": True, "precios": out, "margen_global": _margen_global, "margen_defecto": _TK_COTIZ_MARGEN_DEFECTO})
 
     @app.route("/tickets/api/cotizaciones/valido-hasta-sugerido", methods=["GET"])
     @_tickets_required

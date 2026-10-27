@@ -61,8 +61,8 @@ function cotWizAbrir(editCid){
   document.getElementById('cotWizDescModo').value = 'pct';
   document.getElementById('cotWizDescValor').value = '0';
   cotWizDescModoCambio();
-  _WIZ.margenPropio = false; _WIZ.margenGlobal = 40;     // 2026-10-27: «Margen %» de la cotización (40 = el global hasta que se lea)
-  { const _mg = document.getElementById('cotWizMargen'); if (_mg) _mg.value = '40'; }
+  _WIZ.margenPropio = true; _WIZ.margenGlobal = 40; _WIZ.margenDefecto = 30;   // 2026-10-27: una cotización nueva parte en 30% (lo cambia quien la arma)
+  { const _mg = document.getElementById('cotWizMargen'); if (_mg) _mg.value = String(_WIZ.margenDefecto); }
   _WIZ.garantiaHeaderPreexistente = false;
   _cotWizAplicarCandadoGarantia();
   document.getElementById('cotWizCostoRuta').value = '0';
@@ -158,7 +158,7 @@ async function _cotWizCargarEdicion(cid){
     cotWizDescModoCambio();
     // 2026-10-27: el margen propio de la cotización (vacío/null = el global, que se muestra cuando llegan los precios).
     _WIZ.margenPropio = (c.margen_pct !== null && c.margen_pct !== undefined && c.margen_pct !== '');
-    { const _mg = document.getElementById('cotWizMargen'); if (_mg && _WIZ.margenPropio) _mg.value = String(parseFloat(c.margen_pct)); }
+    { const _mg = document.getElementById('cotWizMargen'); if (_mg) _mg.value = _WIZ.margenPropio ? String(parseFloat(c.margen_pct)) : ''; }
     // 🔒 2026-09-26 (Daniel: "en las cotizaciones solo yo puedo aplicar
     // descuentos de garantías"): si esta cotización YA traía un descuento
     // de cabecera del 100% (o un MONTO fijo que ya cubría el subtotal
@@ -1530,8 +1530,8 @@ async function cotWizQuitar(i){
   await cotWizPrecios();
 }
 
-// 2026-10-27 (Daniel: «agregar 40% de margen»): «Margen %» de la cotización. Solo el superadmin lo cambia (el campo viene deshabilitado para los
-// demás y el servidor lo ignora). Sin tocarlo, la cotización usa el margen global del cotizador y no guarda nada propio.
+// 2026-10-27 (Daniel: «genérico para todos, que se decida por el front… definido en 30%»): «Margen %» de la cotización. Lo elige quien la arma
+// y una cotización nueva parte en 30%. Si deja el campo vacío, la cotización usa el margen general del cotizador y no guarda nada propio.
 function _cotWizMargenPayload(){
   const el = document.getElementById('cotWizMargen');
   if (!el || el.disabled || !_WIZ || !_WIZ.margenPropio) return {};
@@ -1542,14 +1542,14 @@ function _cotWizMargenGlobal(g){
   if (!_WIZ || g === undefined || g === null) return;
   _WIZ.margenGlobal = parseFloat(g);
   const el = document.getElementById('cotWizMargen');
-  if (el && !_WIZ.margenPropio) el.value = String(_WIZ.margenGlobal);
+  if (el && !_WIZ.margenPropio && String(el.value).trim() === '') el.placeholder = String(_WIZ.margenGlobal);
   const h = document.getElementById('cotWizMargenHint');
-  if (h) h.textContent = 'Precio del ítem = costo × (1 + margen). El margen general es ' + String(_WIZ.margenGlobal).replace('.', ',') + '%.';
+  if (h) h.textContent = 'Precio del ítem = costo × (1 + margen). Elige el % que quieres aumentar; vacío usa el margen general (' + String(_WIZ.margenGlobal).replace('.', ',') + '%).';
 }
 function cotWizMargenCambio(){
   if (!_WIZ) return;
   const el = document.getElementById('cotWizMargen');
-  _WIZ.margenPropio = !!(el && String(el.value).trim() !== '' && parseFloat(el.value) !== _WIZ.margenGlobal);
+  _WIZ.margenPropio = !!(el && String(el.value).trim() !== '' && isFinite(parseFloat(el.value)));
   cotWizPrecios();
 }
 

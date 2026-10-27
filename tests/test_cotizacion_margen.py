@@ -32,12 +32,12 @@ def _fn(nombre, ambito=None):
 
 
 class TestMargenPropio(unittest.TestCase):
-    def _entrada(self, superadmin):
+    def _entrada(self, superadmin=True):
         return _fn("_tk_margen_in", {"_tk_solo_superadmin": lambda: superadmin})
 
-    def test_solo_el_superadmin_lo_cambia(self):
-        self.assertEqual(self._entrada(True)({"margen_pct": 45}), (True, 45.0))
-        self.assertEqual(self._entrada(False)({"margen_pct": 45}), (False, None), "de otro usuario se ignora")
+    def test_es_generico_lo_elige_quien_arma_la_cotizacion_no_solo_el_superadmin(self):
+        for sa in (True, False):
+            self.assertEqual(self._entrada(sa)({"margen_pct": 45}), (True, 45.0), "genérico para todos (Daniel 27-oct)")
 
     def test_vacio_vuelve_al_global_y_lo_invalido_se_ignora(self):
         f = self._entrada(True)
@@ -82,10 +82,15 @@ class TestCableado(unittest.TestCase):
         self.assertIn('_tk_cfg_margen(_tk_cotiz_pricing_config(), cot.get("margen_pct"))', _SRC)
         self.assertIn('"margen_global": _margen_global', _SRC)
 
-    def test_el_editor_tiene_el_campo_y_lo_manda(self):
+    def test_el_editor_tiene_el_campo_para_todos_y_parte_en_30(self):
         html = _leer("templates/tickets/cotizaciones.html")
         self.assertIn('id="cotWizMargen"', html)
-        self.assertRegex(html, r'id="cotWizMargen"[^>]*\{% if not permissions\.superadmin %\}disabled\{% endif %\}')
+        campo = html[html.index('id="cotWizMargen"'):html.index('id="cotWizMargen"') + 260]
+        self.assertIn('value="30"', campo)
+        self.assertNotIn("disabled", campo, "genérico: nadie lo tiene deshabilitado")
+        self.assertIn("_TK_COTIZ_MARGEN_DEFECTO = 30.0", _SRC)
+        js0 = _leer("static/tickets_cotizaciones.js")
+        self.assertIn("_WIZ.margenDefecto = 30", js0)
         js = _leer("static/tickets_cotizaciones.js")
         self.assertIn("function cotWizMargenCambio()", js)
         self.assertIn("_cotWizMargenPayload()", js)
