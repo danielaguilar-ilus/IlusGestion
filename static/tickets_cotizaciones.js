@@ -1577,6 +1577,7 @@ async function cotWizPrecios(){
     _WIZ.items.forEach(function(it, i){
       const p = precios[i];
       it._precioCalc = _cotWizEsAccesorio(it) ? 0 : (p ? p.precio_unitario : null);
+      it._costoUnit = (_cotWizEsAccesorio(it) || !p || p.costo_unitario == null) ? null : p.costo_unitario;   // 2026-10-27: para el desglose interno
       if (_cotWizEsAccesorio(it)) it.precio_manual = null;
     });
     cotWizRecalcLocal();
@@ -1622,6 +1623,7 @@ function cotWizRecalcLocal(){
     return !_cotWizSinCostoRuta(it) && (parseInt(it.qty, 10) || 0) > 0 && bases[i] != null && bases[i] > 0;
   }).length;
   let suma = 0;
+  let intCosto = 0, intMargen = 0, intFijo = 0;      // 2026-10-27: desglose interno costo / margen (solo en este editor, nunca al PDF)
   _WIZ.items.forEach(function(it, i){
     const accesorio = _cotWizEsAccesorio(it);
     const pu = accesorio ? 0 : bases[i];
@@ -1638,6 +1640,16 @@ function cotWizRecalcLocal(){
     }
     const totConRuta = (totBase != null) ? totBase + rutaLinea : null;
     suma += totBase || 0;
+    it._int = null;
+    if (!accesorio && totBase != null && totBase > 0){
+      if (it.precio_manual == null && it._costoUnit != null){
+        const c = Math.round(it._costoUnit * qty);
+        it._int = { costo: it._costoUnit, margen: pu - it._costoUnit };
+        intCosto += c; intMargen += totBase - c;
+      } else {
+        intFijo += totBase;
+      }
+    }
     const inp = inputsPu[i];
     // 🔒 2026-09-26: no pisar el candado de garantía que ya puso cotWizRender
     // -- sin esto, CUALQUIER recálculo (cambiar cantidad de otra fila,
@@ -1668,7 +1680,9 @@ function cotWizRecalcLocal(){
         desgloses[i].className = 'cot-ruta-desglose';
         desgloses[i].innerHTML = _wizCLP(pu) + ' base + ' + _wizCLP(rutaUnidad)
           + ' ruta = <b>' + _wizCLP(pu + rutaUnidad) + '/u</b>'
-          + (sinRuta ? ' <span class="cot-ruta-sin-ruta">(repuesto, sin ruta)</span>' : '');
+          + (sinRuta ? ' <span class="cot-ruta-sin-ruta">(repuesto, sin ruta)</span>' : '')
+          + (it._int ? '<span class="cot-int-linea">interno: costo ' + _wizCLP(it._int.costo) + ' + margen ' + _wizCLP(it._int.margen) + ' (no va al PDF)</span>'
+                     : (pu > 0 ? '<span class="cot-int-linea">interno: precio fijo o escrito a mano (no va al PDF)</span>' : ''));
       }
     }
     if (filasTot[i]) filasTot[i].innerHTML = (totConRuta != null)
@@ -1676,6 +1690,7 @@ function cotWizRecalcLocal(){
       : '<span class="cot-rev-precio cero">sin clasificar</span>';
   });
   _WIZ.sumaItems = suma;
+  _WIZ.interno = { costo: intCosto, margen: intMargen, fijo: intFijo };
   _WIZ.unidadesCobrables = unidadesCobrables;
   _WIZ.rutaAplicada = rutaAplicada;
   const hintRuta = document.getElementById('cotWizRutaProrrateoHint');
@@ -1872,6 +1887,24 @@ function cotWizResumen(){
   document.getElementById('cotWizResIva').textContent = _wizCLP(iva);
   document.getElementById('cotWizResTotal').textContent = _wizCLP(total);
   _cotWizActualizarUf(total);
+  _cotWizInternoPintar(desc);
+}
+
+// 2026-10-27 (Daniel: «no se describe cuánto es costo y cuánto margen… no quiero que lo vea el cliente en el PDF»): el desglose INTERNO.
+// Solo se pinta en el editor; el PDF y el correo leen los precios guardados y no llevan nada de esto.
+function _cotWizInternoPintar(desc){
+  const caja = document.getElementById('cotWizInterno');
+  if (!caja || !_WIZ) return;
+  const it = _WIZ.interno || { costo: 0, margen: 0, fijo: 0 };
+  const el = function(id){ return document.getElementById(id); };
+  el('cotWizIntCosto').textContent = _wizCLP(it.costo);
+  const pct = it.costo > 0 ? Math.round(it.margen / it.costo * 1000) / 10 : null;
+  el('cotWizIntMargenTxt').textContent = 'Margen' + (pct !== null ? ' (' + String(pct).replace('.', ',') + '% sobre el costo)' : '');
+  el('cotWizIntMargen').textContent = _wizCLP(it.margen);
+  el('cotWizIntFijoRow').style.display = it.fijo > 0 ? '' : 'none';
+  el('cotWizIntFijo').textContent = _wizCLP(it.fijo);
+  el('cotWizIntDescRow').style.display = desc > 0 ? '' : 'none';
+  el('cotWizIntNeto').textContent = (it.margen - desc < 0 ? '−' : '') + _wizCLP(Math.abs(it.margen - desc));
 }
 
 (function(){

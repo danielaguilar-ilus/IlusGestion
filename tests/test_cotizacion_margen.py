@@ -70,6 +70,45 @@ class TestMargenPropio(unittest.TestCase):
         self.assertEqual(r50["precio_unitario"], 30000)
 
 
+class TestDesgloseInterno(unittest.TestCase):
+    """Daniel 27-oct: «en ninguna parte se describe cuánto es costo y cuánto margen… no quiero que lo vea el cliente en el PDF»."""
+
+    def test_el_calculo_entrega_el_costo_unitario_sin_margen(self):
+        calc = _fn("_tk_cotiz_calcular_item", {
+            "_tk_cotiz_clase_no_cobrable": lambda c: False, "_tk_money_round": lambda x: int(round(x)), "ctx": {}, "math": math})
+        base = {"valor_hh": {"mantencion": 20000.0}, "iva_pct": 19.0, "margen_pct": 30.0}
+        r = calc("trotadora", "mantencion", 2, 0, base, tarifa={"horas": 1.0, "tecnicos": 1, "precio_fijo": None, "precio_piso": None,
+                                                                 "tipo_servicio_origen": None})
+        self.assertEqual((r["costo_unitario"], r["precio_unitario"]), (20000, 26000))
+        fijo = calc("pisos", "mantencion", 1, 0, base, tarifa={"horas": 0, "tecnicos": 0, "precio_fijo": 50000, "precio_piso": None,
+                                                              "tipo_servicio_origen": None})
+        self.assertIsNone(fijo["costo_unitario"], "un precio fijo no tiene desglose de costo")
+
+    def test_la_caja_interna_esta_en_el_editor_siempre_abierta_y_dice_que_no_va_al_pdf(self):
+        html = _leer("templates/tickets/cotizaciones.html")
+        caja = html[html.index('id="cotWizInterno"'):html.index('id="cotWizInterno"') + 1500]
+        self.assertIn("no sale en el PDF", caja)
+        self.assertIn('id="cotWizIntCosto"', caja)
+        self.assertIn('id="cotWizIntMargen"', caja)
+        self.assertNotIn("<details", caja, "las tarjetas no se pliegan solas")
+        js = _leer("static/tickets_cotizaciones.js")
+        self.assertIn("_cotWizInternoPintar(desc)", js)
+        self.assertIn("p.costo_unitario", js)
+
+    def test_el_pdf_y_el_correo_nunca_llevan_costo_ni_margen(self):
+        for rel in ("templates/tickets/cotizacion_pdf.html",):
+            t = _leer(rel)
+            for prohibido in ("costo_unitario", "margen_pct", "cotWizInterno", "_int.", "interno:"):
+                self.assertNotIn(prohibido, t, rel + " no debe llevar " + prohibido)
+        i = _SRC.index("def _tk_cotizacion_pdf_bytes")
+        pdf = _SRC[i:_SRC.index('@app.route("/tickets/cotizaciones/<int:cid>/pdf")', i)]   # solo la función del PDF (el detalle de cálculo es del superadmin)
+        ctx_pdf = _SRC[_SRC.index("def _tk_cotizacion_pdf_ctx"):i]
+        self.assertNotIn("costo_unitario", ctx_pdf)
+        self.assertNotIn("_tk_cfg_margen", ctx_pdf)
+        self.assertNotIn("costo_unitario", pdf)
+        self.assertNotIn("_tk_cfg_margen", pdf)
+
+
 class TestCableado(unittest.TestCase):
     def test_columna_nula_y_guardado_antes_de_recalcular(self):
         self.assertIn("ADD COLUMN margen_pct DECIMAL(6,2) NULL", _SRC)

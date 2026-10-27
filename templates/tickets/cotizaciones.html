@@ -613,7 +613,7 @@
       </div>
       <div class="cot-wiz-resumen">
         <div><span>Costo Ruta:</span><b id="cotWizResRuta">$0</b></div>
-        <div><span>Costo Ítems (mano de obra):</span><b id="cotWizResItems">$0</b></div>
+        <div><span>Ítems (mano de obra, con margen):</span><b id="cotWizResItems">$0</b></div>
         <div><span>Subtotal:</span><b id="cotWizResSubtotal">$0</b></div>
         <div id="cotWizResDescRow" style="display:none;"><span>Descuento:</span><b id="cotWizResDesc">−$0</b></div>
         <div><span>IVA (19%):</span><b id="cotWizResIva">$0</b></div>
@@ -626,6 +626,16 @@
           <b id="cotWizResUf"></b>
           <i class="bi bi-info-circle" id="cotWizResUfHint" title=""></i>
         </div>
+      </div>
+      {# 2026-10-27 (Daniel: «en ninguna parte se describe cuánto es costo y cuánto margen… no quiero que lo vea el cliente en el PDF»): el desglose
+         INTERNO del precio. Vive solo en este editor: el PDF y el correo leen los precios guardados y nunca esto. Siempre abierto (no se pliega). #}
+      <div class="cot-wiz-interno" id="cotWizInterno" aria-label="Costo y margen, solo interno">
+        <div class="cot-wiz-interno-t"><i class="bi bi-eye-slash-fill" aria-hidden="true"></i> Costo y margen · solo para ti, no sale en el PDF ni lo ve el cliente</div>
+        <div class="cot-wiz-interno-fila"><span>Costo de la mano de obra</span><b id="cotWizIntCosto">$0</b></div>
+        <div class="cot-wiz-interno-fila"><span id="cotWizIntMargenTxt">Margen</span><b id="cotWizIntMargen">$0</b></div>
+        <div class="cot-wiz-interno-fila" id="cotWizIntFijoRow" style="display:none;"><span>Ítems con precio fijo o escrito a mano (sin desglose)</span><b id="cotWizIntFijo">$0</b></div>
+        <div class="cot-wiz-interno-fila" id="cotWizIntDescRow" style="display:none;"><span>Margen después del descuento</span><b id="cotWizIntNeto">$0</b></div>
+        <div class="cot-wiz-interno-nota">Los ítems se cobran al costo más el margen. La ruta se cobra aparte y no cuenta como margen.</div>
       </div>
         </div>
       </div>

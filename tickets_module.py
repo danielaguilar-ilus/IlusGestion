@@ -3068,6 +3068,7 @@ def register_tickets_routes(app, ctx):
         # tiene precio_fijo configurado, ESE es el precio unitario directo;
         # horas/técnicos/piso no aplican para esta línea.
         _fijo = tarifa.get("precio_fijo")
+        _costo_unit = None   # 2026-10-27: lo que cuesta la mano de obra por unidad (sin margen); None si el precio es fijo (no hay desglose)
         if _fijo is not None:
             hh = 0.0
             precio_unitario = _tk_money_round(_fijo)
@@ -3082,6 +3083,7 @@ def register_tickets_routes(app, ctx):
             _valor_hh_tipo = cfg["valor_hh"].get(_tipo_precio, 20000.0) \
                 if isinstance(cfg.get("valor_hh"), dict) else cfg["valor_hh"]
             costo = hh * _valor_hh_tipo
+            _costo_unit = _tk_money_round(costo)
             precio_unitario = _tk_money_round(costo * (1 + cfg["margen_pct"] / 100.0))
             # Precio piso (2026-07-28, Daniel: "un mínimo... tres mil
             # quinientos pesos"): si el cálculo automático queda por debajo
@@ -3115,7 +3117,7 @@ def register_tickets_routes(app, ctx):
 
         subtotal = _tk_money_round(precio_unitario * cant)
         total = _tk_money_round(subtotal * (1 - desc / 100.0))
-        return {"hh": hh, "precio_unitario": precio_unitario, "subtotal": subtotal, "total": total}
+        return {"hh": hh, "precio_unitario": precio_unitario, "subtotal": subtotal, "total": total, "costo_unitario": _costo_unit}
     ctx["_tk_cotiz_calcular_item"] = _tk_cotiz_calcular_item
 
     def _tk_cotiz_log(cid, accion, detalle=None, user=None):
