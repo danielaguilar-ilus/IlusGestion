@@ -3441,6 +3441,7 @@ class TestFase1Bandeja(unittest.TestCase):
             "_hall_monitor_kpis": lambda: {"sin_gestionar": 3, "graves": 1, "tomados": 0, "con_ot": 0, "descartados": 0, "sin_foto": 0, "todos": 3},
             "_hall_vencidos_ids": lambda: set(vencidos), "_hall_trazabilidad": self._trazabilidad,
             "_hall_fotos_tareas_lote": lambda tids: dict(fotos_vivas or {}),
+            "_es_superadmin_actual": lambda: True,
             "render_template": render, "chile_fmt_filter": lambda v, f="%d/%m/%Y %H:%M": v.strftime(f), "print": lambda *a, **k: None})
         amb["ot_hallazgos_pagina"]()
         self.assertEqual(visto["plantilla"], "ot2/hallazgos.html")

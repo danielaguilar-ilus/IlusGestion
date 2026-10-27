@@ -171005,7 +171005,7 @@ def ot_hallazgos_pagina():
     return render_template("ot2/hallazgos.html", items=items, total=total, pag=pag, paginas=paginas, por_pag=por_pag,
                            desde=((pag - 1) * por_pag + 1) if total else 0, hasta=min(pag * por_pag, total),
                            vista=vista, vistas=_oh.VISTAS_MONITOR, q=q, sev=sev, tec=tec, severidades=_oh.SEVERIDADES, kpis=kpis,
-                           sla=_hs.config(), sel=sel, ot_sel=ot_sel, hallazgos=hallazgos, hz_pagina=True, error=error,
+                           sla=_hs.config(), sel=sel, ot_sel=ot_sel, hallazgos=hallazgos, hz_pagina=True, error=error, es_sa=_es_superadmin_actual(),
                            n_sin_gestionar=kpis.get("sin_gestionar", 0) if kpis else _hall_n_sin_gestionar())
 
 
@@ -171547,27 +171547,9 @@ def ot_api_hallazgo_ticket(vid, hid):
     return jsonify({"ok": True, "ticket_id": tid, "numero": numero, "url": f"/tickets/{tid}"})
 
 
-@app.route("/ot/api/<int:vid>/hallazgos/<int:hid>/borrar", methods=["POST"])
-@_mant_required
-@_no_tecnico
-@_ot_can_view
-def ot_api_hallazgo_borrar(vid, hid):
-    """Borrar DE VERDAD un hallazgo (Daniel: «borrar algunos hallazgos que hemos hecho de prueba… solamente para el superadministrador»).
-    Exige escribir BORRAR y un motivo. ANTES de borrar se guarda la foto completa de la fila (REGLA #5) en mant_ot_hallazgo_borrados, que
-    además es la «lápida»: el mismo hallazgo no vuelve a nacer solo. Un hallazgo con OT de seguimiento viva no se borra (la OT lo cita)."""
-    if not _es_superadmin_actual():
-        return _ot2_err("Solo el superadministrador puede borrar un hallazgo.", "SOLO_SUPERADMIN", http=403)
-    motivo, e_val = _gc.validar_borrado(request.get_json(silent=True) or {}, True)
-    if e_val:
-        return _ot2_err(e_val, "BORRADO_INVALIDO")
-    f, err = _gc_hallazgo_previo(vid, hid)
-    if err:
-        return err
-    _est, caido = _oh.estado_efectivo(f, f.get("seg_numero"), f.get("seg_estado"))
-    if f.get("ot_seguimiento_id") and not caido:
-        return _ot2_err("Este hallazgo tiene una OT de seguimiento (%s): no se borra. Descártalo si ya no aplica." % (f.get("seg_numero") or ""),
-                        "HALLAZGO_CON_OT", http=409)
-    quien = _hall_quien()
+def _gc_borrar_core(vid, hid, f, motivo, quien):
+    """Borra DE VERDAD un hallazgo: primero guarda la foto completa de la fila en mant_ot_hallazgo_borrados (REGLA #5, además es la
+    «lápida»), después lo borra, y deja la bitácora y la auditoría. Lo usan el borrado de uno y el masivo. → 'ok' | 'ya_no_estaba' | 'error'."""
     snap = {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in f.items()}
     try:
         snap["gestion"] = dict(_gc_extra_de(_gc.ENTIDAD_HALLAZGO, [hid]).get(int(hid)) or {})   # json.dumps(default=str) lo serializa
@@ -171594,9 +171576,9 @@ def ot_api_hallazgo_borrar(vid, hid):
                 conn.rollback()
         except Exception:
             pass
-        return _ot2_err("No se pudo borrar. Intenta de nuevo.", "ERROR_INTERNO", http=500)
+        return "error"
     if not borrados:
-        return _ot2_err("Ese hallazgo ya no estaba.", "HALLAZGO_NO_EXISTE", http=404)
+        return "ya_no_estaba"
     _mant_log("visita", vid, "hallazgo_borrado",
               f"BORRADO por {quien} (superadmin): {_oh.limpio(f.get('titulo'), 300)} · motivo: {motivo} · la fila completa quedó guardada"[:900])
     try:
@@ -171604,6 +171586,81 @@ def ot_api_hallazgo_borrar(vid, hid):
                details={"visita_id": int(vid), "titulo": f.get("titulo"), "motivo": motivo, "por": quien})
     except Exception:
         pass
+    return "ok"
+
+
+@app.route("/ot/api/hallazgos/borrar-masivo", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot_api_hallazgos_borrar_masivo():
+    """Borrar VARIOS hallazgos de una vez (Daniel 27-oct: «no puedo eliminar en masivo las que eran pruebas»). Solo superadministrador, con las
+    mismas exigencias del borrado de uno: escribir BORRAR y un motivo; cada hallazgo deja su foto completa en el registro (_gc_borrar_core).
+    Los que tienen una OT de seguimiento viva no se borran (se dicen aparte). Cuerpo: {items:[{vid,hid}], motivo, confirmar}. Tope 200."""
+    if not _es_superadmin_actual():
+        return _ot2_err("Solo el superadministrador puede borrar hallazgos.", "SOLO_SUPERADMIN", http=403)
+    datos = request.get_json(silent=True) or {}
+    motivo, e_val = _gc.validar_borrado(datos, True)
+    if e_val:
+        return _ot2_err(e_val, "BORRADO_INVALIDO")
+    pares, vistos = [], set()
+    for it in (datos.get("items") or []):
+        try:
+            par = (int(it.get("vid")), int(it.get("hid")))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if par not in vistos:
+            vistos.add(par)
+            pares.append(par)
+    if not pares:
+        return _ot2_err("Marca al menos un hallazgo.", "SIN_HALLAZGOS")
+    if len(pares) > 200:
+        return _ot2_err("Son demasiados de una vez: borra hasta 200 por vez.", "DEMASIADOS")
+    quien = _hall_quien()
+    borrados, omitidos = 0, []
+    for vid, hid in pares:
+        f, err = _gc_hallazgo_previo(vid, hid)
+        if err:
+            omitidos.append({"hid": hid, "razon": "Ya no estaba."})
+            continue
+        _est, caido = _oh.estado_efectivo(f, f.get("seg_numero"), f.get("seg_estado"))
+        if f.get("ot_seguimiento_id") and not caido:
+            omitidos.append({"hid": hid, "razon": "Tiene la OT de seguimiento %s: descártalo si ya no aplica." % (f.get("seg_numero") or "")})
+            continue
+        r = _gc_borrar_core(vid, hid, f, motivo, quien)
+        if r == "ok":
+            borrados += 1
+        else:
+            omitidos.append({"hid": hid, "razon": "Ya no estaba." if r == "ya_no_estaba" else "No se pudo borrar."})
+    return jsonify({"ok": True, "borrados": borrados, "omitidos": omitidos,
+                    "mensaje": "%d hallazgo%s borrado%s. Quedó una copia completa de cada uno en el registro." % (borrados, "" if borrados == 1 else "s", "" if borrados == 1 else "s")})
+
+
+@app.route("/ot/api/<int:vid>/hallazgos/<int:hid>/borrar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot_api_hallazgo_borrar(vid, hid):
+    """Borrar DE VERDAD un hallazgo (Daniel: «borrar algunos hallazgos que hemos hecho de prueba… solamente para el superadministrador»).
+    Exige escribir BORRAR y un motivo. ANTES de borrar se guarda la foto completa de la fila (REGLA #5) en mant_ot_hallazgo_borrados, que
+    además es la «lápida»: el mismo hallazgo no vuelve a nacer solo. Un hallazgo con OT de seguimiento viva no se borra (la OT lo cita)."""
+    if not _es_superadmin_actual():
+        return _ot2_err("Solo el superadministrador puede borrar un hallazgo.", "SOLO_SUPERADMIN", http=403)
+    motivo, e_val = _gc.validar_borrado(request.get_json(silent=True) or {}, True)
+    if e_val:
+        return _ot2_err(e_val, "BORRADO_INVALIDO")
+    f, err = _gc_hallazgo_previo(vid, hid)
+    if err:
+        return err
+    _est, caido = _oh.estado_efectivo(f, f.get("seg_numero"), f.get("seg_estado"))
+    if f.get("ot_seguimiento_id") and not caido:
+        return _ot2_err("Este hallazgo tiene una OT de seguimiento (%s): no se borra. Descártalo si ya no aplica." % (f.get("seg_numero") or ""),
+                        "HALLAZGO_CON_OT", http=409)
+    quien = _hall_quien()
+    r = _gc_borrar_core(vid, hid, f, motivo, quien)
+    if r == "error":
+        return _ot2_err("No se pudo borrar. Intenta de nuevo.", "ERROR_INTERNO", http=500)
+    if r == "ya_no_estaba":
+        return _ot2_err("Ese hallazgo ya no estaba.", "HALLAZGO_NO_EXISTE", http=404)
     return jsonify({"ok": True, "mensaje": "Hallazgo borrado. Quedó guardada una copia completa en el registro."})
 
 

@@ -82,20 +82,30 @@
     </div>
   </form>
 
+  {% if es_sa %}
+  {#- Limpiar pruebas en masa (Daniel 27-oct): solo superadmin. REGLA #14: un solo botón marca/desmarca todo lo visible. Borrar pide motivo y BORRAR; cada uno deja su copia. -#}
+  <div class="hzm-masivo" id="hzMasivo" role="group" aria-label="Acciones en masa">
+    <button type="button" class="rm-btn" id="hzTodoBtn"><i class="bi bi-check2-square"></i><span>Seleccionar todos los de esta página</span></button>
+    <span class="hzm-masivo-n" id="hzMasivoN" aria-live="polite">Ninguno seleccionado</span>
+    <button type="button" class="rm-btn rm-btn-rojo" id="hzBorrarBtn" disabled><i class="bi bi-trash3"></i><span>Borrar seleccionados</span></button>
+  </div>
+  {% endif %}
   <div class="rm-wrap">
     <div class="table-responsive">
       <table class="ilus-table table-mobile-cards rm-table align-middle" id="hzTabla">
         <thead><tr>
+          {% if es_sa %}<th class="hzm-w-c"><input type="checkbox" id="hzTodo" aria-label="Marcar o desmarcar todos los de esta página"></th>{% endif %}
           <th class="hzm-w-h">Hallazgo</th><th class="hzm-w-o">OT y cliente</th><th class="hzm-w-e">Equipo</th>
           <th class="hzm-w-s">Atención · ahora toca</th><th class="hzm-w-p" title="Plazo en horas hábiles: tomarlo y darle salida">Plazo</th><th class="text-end hzm-w-x">Acción</th>
         </tr></thead>
         <tbody>
           {% if not items %}
-          <tr class="rm-empty"><td colspan="6"><i class="bi bi-check2-circle"></i><span>{% if vista == 'sin_gestionar' and not (q or sev or tec) %}No hay hallazgos esperando que alguien tome el caso.{% else %}Ningún hallazgo coincide con este filtro.{% endif %}</span></td></tr>
+          <tr class="rm-empty"><td colspan="{{ 7 if es_sa else 6 }}"><i class="bi bi-check2-circle"></i><span>{% if vista == 'sin_gestionar' and not (q or sev or tec) %}No hay hallazgos esperando que alguien tome el caso.{% else %}Ningún hallazgo coincide con este filtro.{% endif %}</span></td></tr>
           {% endif %}
           {% for x in items %}
           {% set _url = enlace(vista, pag, x.visita_id) ~ '#hz' ~ x.id %}
           <tr class="rm-row row-clickable hzm-row{{ ' is-sel' if x.visita_id == sel }}" data-alerta="{{ x.semaforo }}" data-href="{{ _url }}" style="cursor:pointer">
+            {% if es_sa %}<td class="hzm-chk" data-label="Marcar"><input type="checkbox" class="hzm-sel" data-vid="{{ x.visita_id }}" data-hid="{{ x.id }}" data-tit="{{ x.titulo }}" aria-label="Marcar este hallazgo: {{ x.titulo }}"></td>{% endif %}
             <td data-label="Hallazgo"><div class="rm-cell">
               <div class="rm-l1"><span class="hz-chip {{ x.sev_color }}"><i class="bi {{ x.sev_icono }}" aria-hidden="true"></i> {{ x.sev_texto }}</span>
                 {% if x.riesgo %}<span class="hz-chip rojo"><i class="bi bi-person-exclamation" aria-hidden="true"></i> Puede lastimar a alguien</span>{% endif %}</div>
@@ -135,7 +145,7 @@
           </tr>
           {#- La GUÍA de cada hallazgo (como el detalle del Monitor de Retiros, pero SIEMPRE a la vista: nada plegado): los 7 pasos de su recorrido con
               semáforo — atención → valorización → OT de seguimiento → ticket → abastecimiento → bodega → consumo de la OT. -#}
-          <tr class="hzm-guia-row" data-alerta="{{ x.semaforo }}" data-href="{{ _url }}" style="cursor:pointer"><td colspan="6">
+          <tr class="hzm-guia-row" data-alerta="{{ x.semaforo }}" data-href="{{ _url }}" style="cursor:pointer"><td colspan="{{ 7 if es_sa else 6 }}">
             <div class="hzm-guia-tit"><i class="bi bi-signpost-split" aria-hidden="true"></i> Recorrido de {{ x.sev_texto|lower }} · {{ x.numero_ot }}
               <small>salidas: OT de seguimiento, ticket, abastecimiento, bodega y consumo de la OT</small></div>
             <ol class="hzm-guia" aria-label="Recorrido de la gestión de este hallazgo">
@@ -193,7 +203,15 @@
   .hzm-sinfoto{color:#92400e;font-weight:700}
   .hzm-cons{color:#14532d}
   /* Anchos como PREFERENCIA (no mínimos): la tabla cabe en la pantalla sin scroll horizontal (REGLA #4.3); el texto largo se parte (REGLA #15). */
-  .hzm-w-h{width:22%}.hzm-w-o{width:16%}.hzm-w-e{width:15%}.hzm-w-s{width:21%}.hzm-w-p{width:14%}.hzm-w-x{width:12%}
+  .hzm-w-h{width:22%}.hzm-w-o{width:16%}.hzm-w-e{width:15%}.hzm-w-s{width:21%}.hzm-w-p{width:14%}.hzm-w-x{width:12%}.hzm-w-c{width:44px}
+  /* Aire alrededor de la lista (Daniel 27-oct: «la siento sin márgenes»): la tabla ya no pega a los bordes de la pantalla. */
+  .rm-monitor .rm-wrap{padding:6px clamp(8px,1.2vw,18px) 12px;margin-top:10px}
+  @media (max-width:768px){.rm-monitor .rm-wrap{padding:4px 6px 10px}}
+  .hzm-masivo{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:12px 0 0;padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px}
+  .hzm-masivo .rm-btn{min-height:44px}
+  .hzm-masivo-n{font-weight:700;color:#374151;flex:1 1 140px}
+  .hzm-chk{text-align:center;vertical-align:top}
+  .hzm-chk input,#hzTodo{width:22px;height:22px;cursor:pointer;accent-color:#0a0a0a}
   /* Filas más compactas en el computador, como el Monitor de Retiros (#rmTable): el recorrido va debajo y no necesita más alto aquí. */
   @media (min-width:769px){
     #hzTabla{table-layout:fixed}
@@ -226,11 +244,63 @@
 {% endblock %}
 
 {% block scripts %}
+{% if es_sa %}
+<script>
+/* Borrar hallazgos en masa (solo superadmin; Daniel 27-oct: «no puedo eliminar en masivo las que eran pruebas»). Pide el motivo y escribir BORRAR con los
+   diálogos de ILUS (REGLA #1); el servidor guarda la copia completa de cada uno antes de borrar y dice los que no pudo (con OT de seguimiento viva). */
+(function () {
+  var todo = document.getElementById('hzTodo'), btnTodo = document.getElementById('hzTodoBtn'), btnBorrar = document.getElementById('hzBorrarBtn'), cuenta = document.getElementById('hzMasivoN');
+  if (!btnTodo || !btnBorrar) return;
+  function cajas() { return Array.prototype.slice.call(document.querySelectorAll('.hzm-sel')); }
+  function marcadas() { return cajas().filter(function (c) { return c.checked; }); }
+  function aviso(m, t) { if (typeof window.ilusToast === 'function') window.ilusToast(m, { type: t || 'info' }); }
+  function pintar() {
+    var n = marcadas().length, total = cajas().length;
+    cuenta.textContent = n ? (n + (n === 1 ? ' seleccionado' : ' seleccionados')) : 'Ninguno seleccionado';
+    btnBorrar.disabled = !n;
+    btnTodo.querySelector('span').textContent = (n && n === total) ? 'Quitar la selección' : 'Seleccionar todos los de esta página';
+    if (todo) { todo.checked = !!n && n === total; todo.indeterminate = !!n && n < total; }
+  }
+  function marcarTodo(v) { cajas().forEach(function (c) { c.checked = v; }); pintar(); }
+  btnTodo.addEventListener('click', function () { var c = cajas(); marcarTodo(!(c.length && marcadas().length === c.length)); });
+  if (todo) todo.addEventListener('change', function () { marcarTodo(todo.checked); });
+  document.addEventListener('change', function (ev) { if (ev.target.classList && ev.target.classList.contains('hzm-sel')) pintar(); });
+  btnBorrar.addEventListener('click', function () {
+    var sel = marcadas();
+    if (!sel.length) return;
+    var n = sel.length;
+    window.ilusPrompt({ title: 'Borrar ' + n + (n === 1 ? ' hallazgo' : ' hallazgos'), required: true,
+      message: 'Solo para limpiar hallazgos de prueba. De cada uno queda una copia completa en el registro y no vuelve a aparecer solo. ¿Por qué se borran? (mínimo 10 caracteres)',
+      placeholder: 'Ej: hallazgos de prueba de la capacitación' }).then(function (motivo) {
+      if (motivo == null) return;
+      if (String(motivo).replace(/\s+/g, ' ').trim().length < 10) { aviso('Cuenta por qué se borran (mínimo 10 caracteres).', 'warning'); return; }
+      return window.ilusPrompt({ title: 'Confirma el borrado', required: true, message: 'Se borrarán ' + n + (n === 1 ? ' hallazgo' : ' hallazgos') + '. Escribe BORRAR para confirmar.', placeholder: 'BORRAR' }).then(function (conf) {
+        if (conf == null) return;
+        if (String(conf).trim().toUpperCase() !== 'BORRAR') { aviso('Escribe BORRAR para confirmar.', 'warning'); return; }
+        btnBorrar.disabled = true;
+        var items = sel.map(function (c) { return { vid: parseInt(c.getAttribute('data-vid'), 10), hid: parseInt(c.getAttribute('data-hid'), 10) }; });
+        return fetch('/ot/api/hallazgos/borrar-masivo', { method: 'POST', credentials: 'same-origin',
+          headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: items, motivo: motivo, confirmar: conf }) })
+          .then(function (r) { return r.json().catch(function () { return {}; }); })
+          .then(function (j) {
+            if (!j.ok) { aviso(j.error || 'No se pudo borrar. Recarga e intenta de nuevo.', 'error'); pintar(); return; }
+            var om = (j.omitidos || []).length;
+            aviso('✓ ' + j.mensaje + (om ? ' ' + om + ' no se borró: ' + j.omitidos.map(function (o) { return o.razon; }).join(' ') : ''), om ? 'warning' : 'success');
+            setTimeout(function () { location.reload(); }, om ? 2500 : 900);
+          }).catch(function () { aviso('Sin conexión. Revisa la señal e intenta de nuevo.', 'error'); pintar(); });
+      });
+    });
+  });
+  pintar();
+})();
+</script>
+{% endif %}
 <script>
 /* La fila entera lleva a «Gestionar» (como el Monitor de Retiros), salvo que se toque un enlace de la propia fila (OT, ticket). */
 (function () {
   document.addEventListener('click', function (ev) {
-    if (ev.target.closest('a, button, input, select')) return;
+    if (ev.target.closest('a, button, input, select, .hzm-chk')) return;
     var tr = ev.target.closest('tr[data-href]');
     if (tr) location.href = tr.getAttribute('data-href');
   });

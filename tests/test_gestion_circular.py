@@ -240,7 +240,7 @@ class Mundo:
             "_inq_log": lambda iid, acc, det="": m.logs.append(("inquietud", iid, acc, det)),
         }
         amb = cargar(["_ot2_err", "_gc_ok", "_gc_lapida", "_gc_act", "_gc_extra_set", "_gc_extra_de", "_gc_hallazgo_previo",
-                      "_hall_fila_de", "ot_api_hallazgo_editar", "ot_api_hallazgo_borrar", "ot_api_hallazgo_valorizar",
+                      "_hall_fila_de", "ot_api_hallazgo_editar", "_gc_borrar_core", "ot_api_hallazgo_borrar", "ot_api_hallazgos_borrar_masivo", "ot_api_hallazgo_valorizar",
                       "_gc_vincular_repuesto", "_hall_upsert", "_ensure_gestion_circular"], ["_GC_ESTADO"], amb)
         amb["_GC_ESTADO"]["ok"] = True
         amb["_GC_ESTADO"]["revisado_en"] = time.time()
@@ -309,6 +309,47 @@ class TestRutas(unittest.TestCase):
         d, st = _r(a["ot_api_hallazgo_borrar"](171, 5))
         self.assertEqual(st, 409, d)
         self.assertEqual(len(m.hall), 1)
+
+    def test_borrado_masivo_borra_varios_con_su_copia_y_dice_los_que_no(self):
+        m = Mundo()
+        m.hall.append(dict(m.hall[0], id=6, referencia="t13", titulo="Otro de prueba"))
+        m.hall.append(dict(m.hall[0], id=7, referencia="t14", titulo="Con OT viva", ot_seguimiento_id=400, seg_numero="OT-2026-00400",
+                           seg_estado="en_curso", estado="resuelto"))
+        a = m.ambiente()
+        m.req.json = {"confirmar": "borrar", "motivo": "hallazgos de prueba de la capacitación",
+                      "items": [{"vid": 171, "hid": 5}, {"vid": 171, "hid": 6}, {"vid": 171, "hid": 7}, {"vid": 171, "hid": 5}, {"vid": "x"}]}
+        d, st = _r(a["ot_api_hallazgos_borrar_masivo"]())
+        self.assertEqual(st, 200, d)
+        self.assertEqual(d["borrados"], 2)
+        self.assertEqual([o["hid"] for o in d["omitidos"]], [7], "el que tiene OT de seguimiento viva no se borra y se dice")
+        self.assertEqual([h["id"] for h in m.hall], [7])
+        copias = [p for s_, p in m.sql if s_.startswith("INSERT INTO mant_ot_hallazgo_borrados")]
+        self.assertEqual(len(copias), 2, "cada hallazgo borrado deja su copia completa (REGLA #5)")
+        self.assertEqual(len([1 for _e, _i, acc, _d in m.logs if acc == "hallazgo_borrado"]), 2)
+
+    def test_borrado_masivo_exige_superadmin_borrar_y_motivo(self):
+        m = Mundo(superadmin=False)
+        a = m.ambiente()
+        m.req.json = {"confirmar": "BORRAR", "motivo": "hallazgos de prueba", "items": [{"vid": 171, "hid": 5}]}
+        self.assertEqual(_r(a["ot_api_hallazgos_borrar_masivo"]())[1], 403)
+        m2 = Mundo()
+        a2 = m2.ambiente()
+        m2.req.json = {"confirmar": "nada", "motivo": "hallazgos de prueba", "items": [{"vid": 171, "hid": 5}]}
+        self.assertEqual(_r(a2["ot_api_hallazgos_borrar_masivo"]())[1], 400)
+        m2.req.json = {"confirmar": "BORRAR", "motivo": "hallazgos de prueba", "items": []}
+        self.assertEqual(_r(a2["ot_api_hallazgos_borrar_masivo"]())[1], 400)
+        self.assertEqual(len(m2.hall), 1, "sin confirmar o sin nada marcado no se borra nada")
+
+    def test_la_pantalla_trae_la_seleccion_solo_para_superadmin(self):
+        import os as _os
+        raiz = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+        t = open(_os.path.join(raiz, "templates", "ot2", "hallazgos.html"), encoding="utf-8").read()
+        self.assertIn("{% if es_sa %}", t)
+        self.assertIn("/ot/api/hallazgos/borrar-masivo", t)
+        self.assertIn("window.ilusPrompt", t)
+        sin = re.sub(r"/\*.*?\*/", "", t, flags=re.S)
+        for nativo in ("alert(", "confirm("):
+            self.assertIsNone(re.search(r"(?<![\w.])" + re.escape(nativo), sin), nativo)
 
     def test_el_borrado_no_vuelve_a_nacer_solo(self):
         m = Mundo()
