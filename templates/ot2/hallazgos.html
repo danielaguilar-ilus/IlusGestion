@@ -86,12 +86,12 @@
     <div class="table-responsive">
       <table class="ilus-table table-mobile-cards rm-table align-middle" id="hzTabla">
         <thead><tr>
-          <th class="hzm-w-h">Hallazgo</th><th class="hzm-w-o">OT y cliente</th><th class="hzm-w-e">Equipo</th><th class="desktop-only hzm-w-a">Atención</th>
-          <th class="hzm-w-s">Estado · lo que toca</th><th class="hzm-w-p" title="Plazo en horas hábiles: tomarlo y darle salida">Plazo</th><th class="text-end">Acción</th>
+          <th class="hzm-w-h">Hallazgo</th><th class="hzm-w-o">OT y cliente</th><th class="hzm-w-e">Equipo</th>
+          <th class="hzm-w-s">Atención · ahora toca</th><th class="hzm-w-p" title="Plazo en horas hábiles: tomarlo y darle salida">Plazo</th><th class="text-end hzm-w-x">Acción</th>
         </tr></thead>
         <tbody>
           {% if not items %}
-          <tr class="rm-empty"><td colspan="7"><i class="bi bi-check2-circle"></i><span>{% if vista == 'sin_gestionar' and not (q or sev or tec) %}No hay hallazgos esperando que alguien tome el caso.{% else %}Ningún hallazgo coincide con este filtro.{% endif %}</span></td></tr>
+          <tr class="rm-empty"><td colspan="6"><i class="bi bi-check2-circle"></i><span>{% if vista == 'sin_gestionar' and not (q or sev or tec) %}No hay hallazgos esperando que alguien tome el caso.{% else %}Ningún hallazgo coincide con este filtro.{% endif %}</span></td></tr>
           {% endif %}
           {% for x in items %}
           {% set _url = enlace(vista, pag, x.visita_id) ~ '#hz' ~ x.id %}
@@ -117,14 +117,13 @@
                 {% if x.serie %}<span class="rm-sub d-block">S/N {{ x.serie }}</span>{% elif x.sku %}<span class="rm-sub d-block">SKU {{ x.sku }}</span>{% endif %}
                 <span class="rm-sub d-block">{% if x.n_fotos %}<i class="bi bi-images" aria-hidden="true"></i> {{ x.n_fotos }} foto{{ 's' if x.n_fotos != 1 }}{% else %}<span class="hzm-sinfoto"><i class="bi bi-camera" aria-hidden="true"></i> Sin foto</span>{% endif %}</span></span>
             </div></td>
-            <td class="desktop-only" data-label="Atención"><div class="rm-cell">
-              {% if x.tomado_por %}<div class="rm-resp"><span class="rm-avatar" aria-hidden="true">{{ x.tomado_por[:1] }}</span><span class="rm-hl">{{ x.tomado_por }}</span></div>
-                {% if x.tomado %}<div class="rm-sub">Lo tomó el {{ x.tomado }}</div>{% endif %}
-              {% elif x.estado_ef == 'descartado' %}<span class="rm-pill gris" style="margin-top:0"><i class="bi bi-slash-circle"></i>Descartado por {{ x.descartado_por or '—' }}</span>
-              {% else %}<span class="rm-pill {{ 'rojo' if x.semaforo == 'rojo' else 'ambar' }}" style="margin-top:0"><i class="bi bi-person-dash"></i>Nadie lo ha tomado</span>{% endif %}
-            </div></td>
-            <td data-label="Estado"><div class="rm-cell"><span class="badge rm-estado e-{{ x.estado_color }}">{{ x.estado_txt }}</span>
+            <td data-label="Atención"><div class="rm-cell"><span class="badge rm-estado e-{{ x.estado_color }}">{{ x.estado_txt }}</span>
               {% if x.seg_numero %}<div class="rm-sub"><i class="bi bi-diagram-3-fill" aria-hidden="true"></i> <a href="/ot/{{ x.seg_id }}">{{ x.seg_numero }}</a></div>{% endif %}
+              {#- Quién lo lleva (o que nadie lo ha tomado): como la columna «Responsable» del Monitor de Retiros, dentro de esta celda. -#}
+              {% if x.tomado_por %}<div class="rm-resp" style="margin-top:6px"><span class="rm-avatar" aria-hidden="true">{{ x.tomado_por[:1] }}</span><span class="rm-hl">{{ x.tomado_por }}</span></div>
+                {% if x.tomado %}<div class="rm-sub">Lo tomó el {{ x.tomado }}</div>{% endif %}
+              {% elif x.estado_ef == 'descartado' %}<span class="rm-pill gris" style="margin-top:6px"><i class="bi bi-slash-circle"></i>Descartado por {{ x.descartado_por or '—' }}</span>
+              {% else %}<span class="rm-pill {{ 'rojo' if x.semaforo == 'rojo' else 'ambar' }}" style="margin-top:6px"><i class="bi bi-person-dash"></i>Nadie lo ha tomado</span>{% endif %}
               {#- La guía (como el «siguiente paso» del Monitor de Retiros): lo que toca ahora, en una frase. -#}
               {% if x.siguiente and x.siguiente.txt %}<div class="hzm-sig a-{{ x.siguiente.accion }}"><i class="bi {{ 'bi-check2-circle' if x.siguiente.accion in ('listo', 'nada') else 'bi-arrow-right-circle-fill' }}" aria-hidden="true"></i><span><small>Ahora toca</small>{{ x.siguiente.txt }}</span></div>{% endif %}
             </div></td>
@@ -136,7 +135,7 @@
           </tr>
           {#- La GUÍA de cada hallazgo (como el detalle del Monitor de Retiros, pero SIEMPRE a la vista: nada plegado): los 7 pasos de su recorrido con
               semáforo — atención → valorización → OT de seguimiento → ticket → abastecimiento → bodega → consumo de la OT. -#}
-          <tr class="hzm-guia-row" data-alerta="{{ x.semaforo }}" data-href="{{ _url }}" style="cursor:pointer"><td colspan="7">
+          <tr class="hzm-guia-row" data-alerta="{{ x.semaforo }}" data-href="{{ _url }}" style="cursor:pointer"><td colspan="6">
             <div class="hzm-guia-tit"><i class="bi bi-signpost-split" aria-hidden="true"></i> Recorrido de {{ x.sev_texto|lower }} · {{ x.numero_ot }}
               <small>salidas: OT de seguimiento, ticket, abastecimiento, bodega y consumo de la OT</small></div>
             <ol class="hzm-guia" aria-label="Recorrido de la gestión de este hallazgo">
@@ -193,7 +192,21 @@
   .hzm-valor{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 12px;background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d;font-weight:800;font-size:.8rem}
   .hzm-sinfoto{color:#92400e;font-weight:700}
   .hzm-cons{color:#14532d}
-  .hzm-w-h{min-width:230px}.hzm-w-o{min-width:190px}.hzm-w-e{min-width:190px}.hzm-w-a{min-width:130px}.hzm-w-s{min-width:210px}.hzm-w-p{min-width:170px}
+  /* Anchos como PREFERENCIA (no mínimos): la tabla cabe en la pantalla sin scroll horizontal (REGLA #4.3); el texto largo se parte (REGLA #15). */
+  .hzm-w-h{width:22%}.hzm-w-o{width:16%}.hzm-w-e{width:15%}.hzm-w-s{width:21%}.hzm-w-p{width:14%}.hzm-w-x{width:12%}
+  /* Filas más compactas en el computador, como el Monitor de Retiros (#rmTable): el recorrido va debajo y no necesita más alto aquí. */
+  @media (min-width:769px){
+    #hzTabla{table-layout:fixed}
+    #hzTabla thead th{white-space:normal;padding:10px}
+    #hzTabla tbody td{padding:9px 10px;font-size:.88rem;line-height:1.3;overflow-wrap:anywhere}
+    #hzTabla .rm-btn{padding:0 8px;font-size:.82rem}
+    #hzTabla .iqm-foto{flex:0 0 44px;width:44px;height:44px;font-size:1.2rem}
+    #hzTabla .iq-eqcell{gap:8px}
+    #hzTabla .rm-sub{font-size:.8rem;margin-top:1px}
+    #hzTabla .hzm-sig{padding:6px 9px;margin-top:6px}
+    #hzTabla tbody tr.hzm-guia-row > td{padding:8px 14px 12px}
+    #hzTabla .hzm-guia .hz-rec-p{padding:6px 8px}
+  }
   .rm-table tbody tr.hzm-guia-row > td{padding:10px 16px 16px;background:#f3f4f6;border-bottom:2px solid #d1d5db;box-shadow:inset 5px 0 0 var(--rm-sem,transparent)}
   .hzm-guia-row[data-alerta=rojo]{--rm-sem:#dc2626}.hzm-guia-row[data-alerta=ambar]{--rm-sem:#f59e0b}.hzm-guia-row[data-alerta=verde]{--rm-sem:#16a34a}.hzm-guia-row[data-alerta=gris]{--rm-sem:#9ca3af}
   .rm-table tbody tr.hzm-row > td{border-bottom:0}
@@ -201,7 +214,7 @@
   .hzm-guia-tit small{font-weight:600;text-transform:none;letter-spacing:0;color:#6b7280;margin-left:6px}
   .hzm-guia{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
   .hzm-guia .hz-rec-sub{display:block}
-  @media (max-width:768px){.hzm-guia{grid-template-columns:1fr 1fr}.hzm-guia-tit small{display:block;margin:2px 0 0}}
+  @media (max-width:768px){.rm-table tbody tr.hzm-guia-row > td{display:block}.hzm-guia{grid-template-columns:1fr 1fr}.hzm-guia-tit small{display:block;margin:2px 0 0}}
   .hzp-vacio{background:#f9fafb;border:1px dashed #d1d5db;border-radius:12px;padding:18px;text-align:center;color:#6b7280;font-weight:600;margin:10px 0}
   .hzp-sel-cab{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin:22px 0 10px;font-size:1rem;background:#fff;
     border:1px solid #e5e7eb;border-left:6px solid #0a0a0a;border-radius:14px;padding:10px 14px}

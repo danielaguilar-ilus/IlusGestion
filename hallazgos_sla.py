@@ -204,6 +204,7 @@ def bodega(sols, stock_por_id):
     Las solicitudes ya instaladas no cuentan (esa unidad ya salió de bodega)."""
     stock_por_id = stock_por_id or {}
     pedido = {}
+    propio_compromete = {}      # lo de ESTE hallazgo que ya cuenta como comprometido (validado o recibido): no se resta dos veces
     sin_ficha = 0
     for s in sols or []:
         e = str(_g(s, "estado") or "solicitado")
@@ -214,20 +215,32 @@ def bodega(sols, stock_por_id):
             sin_ficha += 1
             continue
         pedido[int(sid)] = pedido.get(int(sid), 0.0) + _cant(_g(s, "cantidad"))
+        if e in ("validado", "recibido"):
+            propio_compromete[int(sid)] = propio_compromete.get(int(sid), 0.0) + _cant(_g(s, "cantidad"))
     if not pedido and not sin_ficha:
         if any(str(_g(s, "estado")) == "instalado" for s in sols or []):
             return {"estado": "hecho", "color": "verde", "txt": "Ya salió de bodega", "sub": "Lo pedido se instaló en la OT"}
         return {"estado": "na", "color": "gris", "txt": "—", "sub": "Sin repuesto que guardar o sacar"}
     faltan, alcanza, ubic = [], [], []
     for sid, cant in pedido.items():
-        fisico = _cant((stock_por_id.get(sid) or {}).get("cantidad"))
-        u = (stock_por_id.get(sid) or {}).get("ubicacion")
+        ficha = stock_por_id.get(sid) or {}
+        fisico = _cant(ficha.get("cantidad"))
+        # Lo que OTRAS solicitudes ya tienen prometido (validadas o recibidas) no está disponible para este hallazgo.
+        otros = max(0.0, _cant(ficha.get("comprometido")) - propio_compromete.get(sid, 0.0))
+        u = ficha.get("ubicacion")
         if u:
             ubic.append(str(u))
-        (alcanza if fisico >= cant else faltan).append((sid, cant, fisico))
+        (alcanza if fisico - otros >= cant else faltan).append((sid, cant, fisico, otros))
     if faltan:
-        sid, cant, fis = faltan[0]
-        sub = "Piden %s y hay %s en bodega" % (num_txt(cant), num_txt(fis)) if len(faltan) == 1 else "Faltan %d repuestos" % len(faltan)
+        sid, cant, fis, otros = faltan[0]
+        if len(faltan) > 1:
+            sub = "Faltan %d repuestos" % len(faltan)
+        elif otros > 0 and fis >= cant:
+            sub = "Piden %s: hay %s en bodega, pero %s ya están prometidos a otras solicitudes" % (num_txt(cant), num_txt(fis), num_txt(otros))
+        elif otros > 0:
+            sub = "Piden %s y hay %s en bodega (%s ya prometidos a otras)" % (num_txt(cant), num_txt(fis), num_txt(otros))
+        else:
+            sub = "Piden %s y hay %s en bodega" % (num_txt(cant), num_txt(fis))
         return {"estado": "curso", "color": "ambar", "txt": "Sin stock suficiente" if fis else "Sin stock", "sub": sub}
     if alcanza:
         return {"estado": "hecho", "color": "verde", "txt": "Hay stock en bodega",
@@ -320,10 +333,19 @@ def siguiente(ctx):
         return {"txt": "Listo: la OT de seguimiento %s se cerró" % (seg.get("numero") or ""), "accion": "listo"}
     r = resumen_sols(sols)
     p = r["por_estado"]
+    vivas = [s for s in sols if str(_g(s, "estado")) != "rechazado"]
     if r["vivas"]:
         if p["solicitado"]:
             return {"txt": "Validar el repuesto pedido (Repuestos → Solicitudes)", "accion": "validar"}
         if p["validado"]:
+            validadas = [s for s in vivas if str(_g(s, "estado")) == "validado"]
+            # Antes de mirar la bodega: ¿la solicitud ya tomó otro camino? (comprada, asociada a una OT o resuelta con una OT).
+            if any(_g(s, "compra_id") for s in validadas):
+                return {"txt": "Ya está en una compra: esperar al proveedor", "accion": "esperar"}
+            if any(_g(s, "ot_generada_id") for s in validadas):
+                return {"txt": "El repuesto va en una OT: seguir esa OT", "accion": "ot"}
+            if any(str(_g(s, "camino") or "") == "ot" and not _g(s, "repuesto_stock_id") for s in validadas):
+                return {"txt": "Se resuelve con una OT: generarla o asociarla", "accion": "ot"}
             bo = bodega(sols, ctx.get("stock"))
             if bo["estado"] == "hecho":
                 return {"txt": "Hay stock: preparar el repuesto desde bodega", "accion": "bodega"}
@@ -333,10 +355,13 @@ def siguiente(ctx):
         if p["recibido"]:
             return {"txt": "Repuesto en bodega: instalarlo en la OT", "accion": "instalar"}
         if p["instalado"] and not seg:
-            return {"txt": "Repuesto instalado: cierra el hallazgo o levanta la OT", "accion": "salida"}
+            # Las acciones que existen son levantar la OT o descartar (con su motivo): la frase apunta a ellas.
+            return {"txt": "Repuesto instalado: levanta la OT de seguimiento o descarta el hallazgo con su motivo", "accion": "salida"}
     if seg:
         return {"txt": "Esperando que se cierre la OT %s" % (seg.get("numero") or "de seguimiento"), "accion": "ot"}
     if tk:
+        if tk.get("cerrado"):
+            return {"txt": "Ticket %s cerrado: levanta la OT de seguimiento o descarta el hallazgo" % (tk.get("numero") or ""), "accion": "salida"}
         return {"txt": "Ticket %s abierto: seguirlo en Tickets" % (tk.get("numero") or ""), "accion": "ticket"}
     if est == "abierto" and not ctx.get("tomado_por"):
         return {"txt": "Tomar el caso (así corre su plazo y se sabe quién lo lleva)", "accion": "tomar"}

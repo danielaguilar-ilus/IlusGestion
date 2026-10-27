@@ -199,7 +199,7 @@ class Mundo:
         s = " ".join(sql.split())
         self.sql.append((s, tuple(params or ())))
         if s.startswith("SELECT * FROM mant_gestion_extra"):
-            return []
+            return [dict(v) for k, v in getattr(self, "extra_previo", {}).items() if k in set(params[1:])]
         raise AssertionError("SQL no previsto: " + s[:200])
 
     def escribe(self, sql, params=()):
@@ -341,6 +341,14 @@ class TestRutas(unittest.TestCase):
         self.assertEqual(p[:6], ("hallazgo", 5, "abc123", "301,302", "TK-2026-00099", "Daniel Aguilar"))
         self.assertEqual(m.acts[0][2], "repuesto")
         self.assertTrue(any(acc == "hallazgo_repuesto" for _e, _i, acc, _d in m.logs))
+        # Revisión 27-oct: una segunda solicitud SUMA a las anteriores y repuesto_en conserva la primera vez.
+        m.extra.clear()
+        m.extra_previo = {5: {"entidad_id": 5, "repuesto_sol_ids": "301,302"}}
+        a2 = m.ambiente()
+        a2["_gc_vincular_repuesto"]("hallazgo:5", "def456", [302, 303], None)
+        s2, p2 = m.extra[0]
+        self.assertEqual(p2[3], "301,302,303", "se suman sin repetir")
+        self.assertIn("repuesto_en=COALESCE(repuesto_en, NOW())", s2, "conserva la PRIMERA vez que la gestión pidió un repuesto")
         a["_gc_vincular_repuesto"]("inquietud:3", "x", [1], None)
         self.assertTrue(any(e == "inquietud" and acc == "repuesto_solicitado" for e, _i, acc, _d in m.logs))
         n = len(m.extra)

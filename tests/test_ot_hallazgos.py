@@ -3386,7 +3386,7 @@ class TestFase1Bandeja(unittest.TestCase):
     página de Retiros, insisto» y «tablas amigables con filas informativas y una buena sensación de guía»). Conserva lo de la auditoría
     Impeccable: serie vigente una sola vez (H-15), controles de 44 px y foco (H-18), selección en negro y no en rojo (H-26), error sin jerga (H-28)."""
 
-    ROW = {"id": 1, "visita_id": 340, "origen": "tarea", "referencia": "t1", "severidad": "falla", "titulo": "Banco: Falla", "detalle": "", "equipo_nombre": _BANCO,
+    ROW = {"id": 1, "visita_id": 340, "origen": "tarea", "referencia": "t1", "tarea_id": 11, "severidad": "falla", "titulo": "Banco: Falla", "detalle": "", "equipo_nombre": _BANCO,
            "maquina_id": 9, "item_manual_id": None, "riesgo": 0, "n_fotos": 0, "fotos_json": None, "estado": "abierto", "detectado_por": "Lenin Urbina",
            "detectado_en": dt.datetime(2026, 10, 21, 19, 51), "tomado_por": None, "tomado_en": None, "ot_seguimiento_id": None, "seguimiento_en": None,
            "descartado_por": None, "descartado_en": None, "retirado_en": None, "min_desde": 180, "numero_ot": "OT-2026-00340", "ot_estado": "programada",
@@ -3403,7 +3403,7 @@ class TestFase1Bandeja(unittest.TestCase):
                             "consumo_ot": {"n": 3.0, "valor": 44970, "con_costo": True}, "consumo_seg": None}
         return out
 
-    def _llamar(self, filas, args=None, vencidos=()):
+    def _llamar(self, filas, args=None, vencidos=(), fotos_vivas=None):
         consultas = []
 
         def _ver(sql, params):
@@ -3440,6 +3440,7 @@ class TestFase1Bandeja(unittest.TestCase):
             "_hall_contexto_ficha": lambda vid, v: None, "_hall_n_sin_gestionar": lambda: 3, "_ot_resp_ok": lambda: True,
             "_hall_monitor_kpis": lambda: {"sin_gestionar": 3, "graves": 1, "tomados": 0, "con_ot": 0, "descartados": 0, "sin_foto": 0, "todos": 3},
             "_hall_vencidos_ids": lambda: set(vencidos), "_hall_trazabilidad": self._trazabilidad,
+            "_hall_fotos_tareas_lote": lambda tids: dict(fotos_vivas or {}),
             "render_template": render, "chile_fmt_filter": lambda v, f="%d/%m/%Y %H:%M": v.strftime(f), "print": lambda *a, **k: None})
         amb["ot_hallazgos_pagina"]()
         self.assertEqual(visto["plantilla"], "ot2/hallazgos.html")
@@ -3455,6 +3456,17 @@ class TestFase1Bandeja(unittest.TestCase):
         self.assertEqual(x["serie"], "255470655-055555555tt518-1", "la vigente de la ficha, no la de cuando se reportó")
         self.assertNotIn("S/N", x["equipo"])
         self.assertEqual(x["reportado"], "21/10/2026 19:51", "H-24: con año")
+
+    def test_las_fotos_de_una_tarea_se_releen_vivas_porque_el_tecnico_las_sube_despues(self):
+        # Revisión 27-oct: el monitor solo mostraba lo guardado al registrar el hallazgo («Sin foto» aunque la tarjeta de la OT sí las tenía).
+        ctx = self._llamar([self.ROW], fotos_vivas={11: ["/f/a.jpg", "/f/b.jpg"]})
+        x = ctx["items"][0]
+        self.assertEqual((x["foto"], x["n_fotos"]), ("/f/a.jpg", 2))
+        sin = self._llamar([self.ROW])["items"][0]
+        self.assertEqual((sin["foto"], sin["n_fotos"]), ("", 0))
+        guardada = self._llamar([dict(self.ROW, fotos_json=json.dumps(["/f/guardada.jpg"]))], fotos_vivas={11: ["/f/a.jpg"]})["items"][0]
+        self.assertEqual((guardada["foto"], guardada["n_fotos"]), ("/f/a.jpg", 2), "las vivas primero y las guardadas se suman sin repetirse")
+        self.assertIn("h.tarea_id", [c for c in self._llamar([self.ROW])["consultas"] if c.startswith("SELECT h.id")][0])
 
     def test_cada_fila_trae_quien_que_ot_cliente_plazo_guia_y_consumo(self):
         ctx = self._llamar([self.ROW])
@@ -3548,7 +3560,9 @@ class TestFase1Bandeja(unittest.TestCase):
         for sel in (".rm-btn", ".rm-select", ".rm-chip"):
             self.assertRegex(_regla_css(base, sel), r"min-height:44px", sel + " (los controles de Retiros)")
         self.assertIn("table-mobile-cards", html, "en el celular cada fila se ve como tarjeta")
-        self.assertRegex(css, r"@media \(max-width:768px\)\{\.hzm-guia\{grid-template-columns:1fr 1fr\}")
+        self.assertRegex(css, r"@media \(max-width:768px\)\{\.rm-table tbody tr\.hzm-guia-row > td\{display:block\}\.hzm-guia\{grid-template-columns:1fr 1fr\}")
+        # Revisión 27-oct: sin mínimos de ancho por columna (la tabla cabía a 1280 px solo con scroll horizontal).
+        self.assertNotRegex(css, r"\.hzm-w-[a-z]\{min-width")
         self.assertRegex(_regla_css(_leer("static/inquietudes.css"), ".rm-toolbar .rm-tools input.rm-select"), r"min-width")
 
     def test_solo_gestion_y_sin_plata_para_un_tecnico(self):

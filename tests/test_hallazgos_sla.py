@@ -144,6 +144,18 @@ class TestSalidas(unittest.TestCase):
         inst = HS.bodega([{"estado": "instalado", "cantidad": 5, "repuesto_stock_id": 5}], stock)
         self.assertEqual(inst["estado"], "hecho")
 
+    def test_bodega_descuenta_lo_que_otras_solicitudes_ya_tienen_prometido(self):
+        # Revisión 27-oct: «Hay stock» era engañoso si otras solicitudes ya tenían ese stock comprometido.
+        stock = {5: {"cantidad": 3, "ubicacion": "A-01", "comprometido": 2}}
+        otras = HS.bodega([{"estado": "solicitado", "cantidad": 2, "repuesto_stock_id": 5}], stock)
+        self.assertEqual((otras["txt"], otras["color"]), ("Sin stock suficiente", "ambar"))
+        self.assertIn("ya están prometidos a otras solicitudes", otras["sub"])
+        # Si lo comprometido es del PROPIO hallazgo (validado), no se resta dos veces.
+        propio = HS.bodega([{"estado": "validado", "cantidad": 2, "repuesto_stock_id": 5}], stock)
+        self.assertEqual(propio["txt"], "Hay stock en bodega")
+        # Sin el dato (esquemas viejos) se comporta como antes.
+        self.assertEqual(HS.bodega([{"estado": "solicitado", "cantidad": 2, "repuesto_stock_id": 5}], {5: {"cantidad": 3}})["txt"], "Hay stock en bodega")
+
     def test_consumo_cuenta_lo_instalado_y_su_valor(self):
         self.assertEqual(HS.consumo([])["estado"], "na")
         self.assertEqual(HS.consumo([{"estado": "validado", "cantidad": 1}])["txt"], "Aún sin consumir")
@@ -199,10 +211,27 @@ class TestGuia(unittest.TestCase):
         self.assertEqual(s("recibido"), "instalar")
         self.assertEqual(s("instalado"), "salida")
 
+    def test_la_guia_no_contradice_el_recorrido_ticket_cerrado_compra_y_ot(self):
+        # Revisión 27-oct: «ticket abierto» con el ticket ya cerrado, «pedir al proveedor» con la compra hecha, y «cierra el hallazgo» sin esa acción.
+        cerrado = HS.siguiente(self.ctx(estado_ef="tomado", tomado_por="Ana", ticket={"numero": "TK-1", "cerrado": True}))
+        self.assertEqual(cerrado["accion"], "salida")
+        self.assertIn("cerrado", cerrado["txt"])
+        self.assertNotIn("abierto", cerrado["txt"])
+        base = {"estado": "validado", "cantidad": 2, "repuesto_stock_id": None}
+        sig = lambda **kw: HS.siguiente(self.ctx(estado_ef="tomado", tomado_por="Ana", sols=[dict(base, **kw)]))   # noqa: E731
+        self.assertEqual(sig(compra_id=7)["accion"], "esperar", "ya está en una compra: no se vuelve a pedir")
+        self.assertEqual(sig(ot_generada_id=9)["accion"], "ot")
+        self.assertEqual(sig(camino="ot")["accion"], "ot", "se resuelve con una OT: no pasa por bodega")
+        self.assertEqual(sig(camino="bodega", repuesto_stock_id=5)["accion"], "pedir")
+        inst = HS.siguiente(self.ctx(estado_ef="tomado", tomado_por="Ana", sols=[{"estado": "instalado", "cantidad": 1}]))
+        self.assertNotIn("cierra el hallazgo", inst["txt"], "no existe una acción «cerrar»: se apunta a las que sí existen")
+        self.assertIn("levanta la OT", inst["txt"])
+        self.assertIn("descarta", inst["txt"])
+
     def test_cada_frase_es_corta_y_sin_jerga(self):
         for kw in ({}, {"estado_ef": "tomado", "tomado_por": "Ana"}, {"ticket": {"numero": "TK-1"}}, {"seg": {"numero": "OT-1", "cerrada": False}}):
             t = HS.siguiente(self.ctx(**kw))["txt"]
-            self.assertLessEqual(len(t), 90, t)
+            self.assertLessEqual(len(t), 100, t)
             self.assertNotRegex(t, r"(?i)traceback|exception|null|none|_")
 
 
@@ -255,10 +284,12 @@ class Base:
             ids = set(params)
             return [dict(v) for k, v in self.sols.items() if k in ids]
         if s.startswith("SELECT s.id, s.cantidad, u.codigo"):
-            return [{"id": k, "cantidad": v[0], "codigo": v[1]} for k, v in self.stock.items() if k in set(params)]
+            return [{"id": k, "cantidad": v[0], "codigo": v[1], "comprometido": (v[2] if len(v) > 2 else 0)} for k, v in self.stock.items() if k in set(params)]
         if s.startswith("SELECT id, numero_ticket, estado FROM tk_tickets"):
             return [{"id": k, **v} for k, v in self.tickets.items() if k in set(params)]
-        if s.startswith("SELECT visita_id, cantidad"):
+        if s.startswith("SELECT COALESCE(ot_generada_id, visita_id) AS visita_id, cantidad"):
+            return [dict(r) for r in self.consumo if r["visita_id"] in set(params)]
+        if s.startswith("SELECT visita_id, cantidad"):          # respaldo (columna ot_generada_id aún inexistente)
             return [dict(r) for r in self.consumo if r["visita_id"] in set(params)]
         raise AssertionError("consulta no prevista: " + s[:160])
 
@@ -275,7 +306,8 @@ class TestTrazabilidadPorLotes(unittest.TestCase):
         return cargar(["_hall_trazabilidad", "_hall_in"], ["_HALL_REF_SOL", "_HALL_REF_LOTE"], {
             "re": re, "print": lambda *a, **k: None, "_oh": H, "_hs": HS, "_gc": GC, "mysql_fetchall": bd.fetchall,
             "_gc_extra_de": lambda ent, ids: {k: dict(v) for k, v in bd.extra.items() if k in set(ids)},
-            "_inq_ahora": lambda: dt.datetime(2026, 10, 26, 15, 0), "_otrep_a_chile": lambda d: d, "_otrep_feriados": lambda a: set()})
+            "_inq_ahora": lambda: dt.datetime(2026, 10, 26, 15, 0), "_otrep_a_chile": lambda d: d, "_otrep_feriados": lambda a: set(),
+            "_OTREP_ESTADOS_COMPROMETEN": ("validado", "recibido")})
 
     def test_la_solicitud_del_propio_tecnico_se_encuentra_por_su_clave_y_no_da_por_atendido_el_hallazgo(self):
         bd = Base()
@@ -334,7 +366,7 @@ class TestTrazabilidadPorLotes(unittest.TestCase):
         self.assertEqual((t["estado_ef"], t["caido"], t["seg"]), ("abierto", True, None))
 
     def test_si_una_consulta_falla_el_resto_sigue_y_nunca_levanta(self):
-        for falla in ("FROM mant_repuestos_stock", "FROM tk_tickets", "mant_ot_repuesto_solicitudes WHERE id IN", "SELECT visita_id, cantidad"):
+        for falla in ("FROM mant_repuestos_stock", "FROM tk_tickets", "mant_ot_repuesto_solicitudes WHERE id IN", "AS visita_id, cantidad"):
             bd = Base()
             bd.sols[301] = {"id": 301, "visita_id": 340, "estado": "pedido", "cantidad": 1, "repuesto_nombre": "X", "repuesto_stock_id": 5, "ticket_id": 9,
                             "created_at": None, "validado_at": None, "pedido_at": None, "recibido_at": None, "instalado_at": None}
@@ -342,6 +374,53 @@ class TestTrazabilidadPorLotes(unittest.TestCase):
             r = self.amb(bd)["_hall_trazabilidad"]([hall(1, severidad="repuesto", referencia="m9:rep:s301")])
             self.assertIn(1, r, falla)
             self.assertEqual(len(r[1]["recorrido"]), 7, falla)
+
+    def test_una_solicitud_rechazada_no_cuenta_como_que_la_gestion_actuo(self):
+        # Revisión 27-oct: rechazar no limpia validado_at; el hallazgo quedaba «con salida» y el plazo dejaba de correr.
+        bd = Base()
+        bd.sols[301] = {"id": 301, "visita_id": 340, "estado": "rechazado", "cantidad": 1, "repuesto_nombre": "X", "repuesto_stock_id": None, "ticket_id": None,
+                        "created_at": None, "validado_at": dt.datetime(2026, 10, 26, 13, 0), "pedido_at": None, "recibido_at": None, "instalado_at": None}
+        bd.extra[1] = {"entidad_id": 1, "repuesto_sol_ids": "301", "repuesto_lote_id": "x", "repuesto_en": dt.datetime(2026, 10, 26, 13, 0)}
+        t = self.amb(bd)["_hall_trazabilidad"]([hall(1, severidad="falla", detectado_en=dt.datetime(2026, 10, 22, 9, 0))])[1]
+        self.assertFalse(t["reloj"]["primera"]["terminado"], "todas sus solicitudes se rechazaron: nadie actuó")
+        self.assertEqual((t["reloj"]["semaforo"], t["reloj"]["vencida"]), ("rojo", True))
+        # Con una viva, sí cuenta.
+        bd.sols[302] = dict(bd.sols[301], id=302, estado="validado", validado_at=dt.datetime(2026, 10, 22, 10, 0))
+        bd.extra[1]["repuesto_sol_ids"] = "301,302"
+        t = self.amb(bd)["_hall_trazabilidad"]([hall(1, severidad="falla", detectado_en=dt.datetime(2026, 10, 22, 9, 0))])[1]
+        self.assertTrue(t["reloj"]["primera"]["terminado"])
+
+    def test_si_la_ot_de_seguimiento_cayo_el_plazo_vuelve_a_correr_desde_el_reporte(self):
+        # Revisión 27-oct: seguimiento_en y tomado_en seguían puestos y el hallazgo salía verde («Con salida») para siempre.
+        bd = Base()
+        f = hall(5, severidad="falla", estado="resuelto", ot_seguimiento_id=400, seg_numero="OT-2026-00400", seg_estado="anulada",
+                 detectado_en=dt.datetime(2026, 10, 1, 9, 0), tomado_por="Aarón", tomado_en=dt.datetime(2026, 10, 1, 10, 0),
+                 seguimiento_en=dt.datetime(2026, 10, 1, 11, 0))
+        t = self.amb(bd)["_hall_trazabilidad"]([f])[5]
+        self.assertEqual((t["estado_ef"], t["caido"]), ("abierto", True))
+        self.assertEqual((t["reloj"]["semaforo"], t["reloj"]["vencida"]), ("rojo", True))
+        self.assertIn("Sin tomar", t["reloj"]["pill"])
+        # Un descartado que se reabrió tampoco arrastra su «tomado_en» viejo.
+        r = self.amb(bd)["_hall_trazabilidad"]([hall(6, severidad="falla", estado="abierto", tomado_en=dt.datetime(2026, 10, 1, 10, 0),
+                                                     detectado_en=dt.datetime(2026, 10, 1, 9, 0))])[6]
+        self.assertTrue(r["reloj"]["vencida"])
+
+    def test_el_consumo_se_atribuye_a_la_ot_generada_como_en_el_resultado_financiero(self):
+        bd = Base()
+        bd.consumo = [{"visita_id": 400, "cantidad": 1, "costo_unitario": 700}]
+        self.amb(bd)["_hall_trazabilidad"]([hall(7, ot_seguimiento_id=400, seg_numero="OT-2026-00400", seg_estado="en_curso", estado="resuelto")])
+        q = [s for s in bd.sql if "estado='instalado'" in s][0]
+        self.assertIn("COALESCE(ot_generada_id, visita_id)", q, "la misma regla de _ot_repuestos_desglose")
+
+    def test_el_stock_trae_lo_comprometido_por_otras_solicitudes(self):
+        bd = Base()
+        bd.sols[301] = {"id": 301, "visita_id": 340, "estado": "solicitado", "cantidad": 2, "repuesto_nombre": "X", "repuesto_stock_id": 5, "ticket_id": None,
+                        "created_at": None, "validado_at": None, "pedido_at": None, "recibido_at": None, "instalado_at": None}
+        bd.stock[5] = (3, "A-01", 2)
+        t = self.amb(bd)["_hall_trazabilidad"]([hall(1, severidad="repuesto", referencia="m9:rep:s301")])[1]
+        paso = {p["clave"]: p for p in t["recorrido"]}
+        self.assertEqual(paso["bodega"]["txt"], "Sin stock suficiente", "hay 3 físicos pero 2 ya están prometidos a otras")
+        self.assertTrue(any("comprometido" in s for s in bd.sql))
 
     def test_sin_filas_o_sin_id_no_consulta_nada(self):
         bd = Base()

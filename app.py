@@ -169873,6 +169873,27 @@ def _hall_fotos_por_tareas(vid, tids):
     return out
 
 
+def _hall_fotos_tareas_lote(tids):
+    """{tarea_id: [urls]} de las fotos que el técnico subió en cada tarea, en UNA consulta y de VARIAS OT a la vez (el monitor muestra
+    hallazgos de muchas OT; `tarea_id` es único en todo el sistema). {} si falla (nunca inventa fotos)."""
+    tids = sorted({int(t) for t in (tids or []) if t})
+    if not tids:
+        return {}
+    try:
+        filas = mysql_fetchall(
+            "SELECT tarea_id, cloudinary_url, archivo_path FROM mant_visita_fotos WHERE tarea_id IN (" + ",".join(["%s"] * len(tids)) + ") ORDER BY id",
+            tuple(tids)) or []
+    except Exception as e:
+        print(f"[hall] fotos de tareas (lote): {type(e).__name__}", flush=True)
+        return {}
+    out = {}
+    for f in filas:
+        u = _hall_url_foto(f)
+        if u and u not in out.setdefault(int(f["tarea_id"]), []):
+            out[int(f["tarea_id"])].append(u)
+    return out
+
+
 def _hall_fotos_equipo(vid, mid, prefijo):
     """Fotos de evidencia del equipo (fuera de servicio / baja) que dejó el técnico en esta OT: las más recientes con ese texto."""
     try:
@@ -170694,25 +170715,33 @@ def _hall_trazabilidad(filas):
     if todas:
         base = ("SELECT id, visita_id, estado, cantidad, repuesto_nombre, repuesto_stock_id, ticket_id, created_at, validado_at, pedido_at, "
                 "recibido_at, instalado_at{c} FROM mant_ot_repuesto_solicitudes WHERE id IN (" + _hall_in(todas) + ")")
-        try:
-            rows = mysql_fetchall(base.format(c=", costo_unitario"), tuple(todas)) or []
-        except Exception:
+        rows = None
+        # Con costo, camino (bodega u OT), compra y la OT generada; si alguna columna no existe todavía, se intenta con menos.
+        for extra_cols in (", costo_unitario, camino, compra_id, ot_generada_id", ", costo_unitario", ""):
             try:
-                rows = mysql_fetchall(base.format(c=""), tuple(todas)) or []
+                rows = mysql_fetchall(base.format(c=extra_cols), tuple(todas)) or []
+                break
             except Exception as e:
-                print(f"[hall] traz solicitudes: {type(e).__name__}", flush=True)
-                rows = []
+                if not extra_cols:
+                    print(f"[hall] traz solicitudes: {type(e).__name__}", flush=True)
+        rows = rows or []
         sols = {int(r["id"]): dict(r) for r in rows}
     # 3) Almacenamiento: existencia física y ubicación de cada repuesto de la bodega que se pidió.
     stock = {}
     sids = sorted({int(x["repuesto_stock_id"]) for x in sols.values() if x.get("repuesto_stock_id")})
     if sids:
-        try:
-            stock = {int(r["id"]): {"cantidad": r.get("cantidad"), "ubicacion": r.get("codigo")} for r in (mysql_fetchall(
-                "SELECT s.id, s.cantidad, u.codigo FROM mant_repuestos_stock s LEFT JOIN mant_repuestos_ubicaciones u ON u.id = s.ubicacion_id "
-                " WHERE s.id IN (" + _hall_in(sids) + ")", tuple(sids)) or [])}
-        except Exception as e:
-            print(f"[hall] traz stock: {type(e).__name__}", flush=True)
+        comp = ("(SELECT COALESCE(SUM(x.cantidad),0) FROM mant_ot_repuesto_solicitudes x WHERE x.repuesto_stock_id = s.id "
+                " AND COALESCE(x.es_reposicion,0)=0 AND x.estado IN ('" + "','".join(_OTREP_ESTADOS_COMPROMETEN) + "'))")
+        for c_extra in (", " + comp + " AS comprometido", ""):
+            try:
+                stock = {int(r["id"]): {"cantidad": r.get("cantidad"), "ubicacion": r.get("codigo"), "comprometido": r.get("comprometido") or 0}
+                         for r in (mysql_fetchall(
+                             "SELECT s.id, s.cantidad, u.codigo" + c_extra + " FROM mant_repuestos_stock s LEFT JOIN mant_repuestos_ubicaciones u "
+                             " ON u.id = s.ubicacion_id WHERE s.id IN (" + _hall_in(sids) + ")", tuple(sids)) or [])}
+                break
+            except Exception as e:
+                if not c_extra:
+                    print(f"[hall] traz stock: {type(e).__name__}", flush=True)
     # 4) Tickets (el de la gestión circular o el que la solicitud de repuesto ya tiene).
     tids = sorted({int(e["ticket_id"]) for e in extra.values() if e.get("ticket_id")} | {int(x["ticket_id"]) for x in sols.values() if x.get("ticket_id")})
     tickets = {}
@@ -170726,15 +170755,19 @@ def _hall_trazabilidad(filas):
     vids = sorted({int(f["visita_id"]) for f in filas if f.get("visita_id")} | {int(f["ot_seguimiento_id"]) for f in filas if f.get("ot_seguimiento_id")})
     cons_por_ot = {}
     if vids:
-        base = "SELECT visita_id, cantidad{c} FROM mant_ot_repuesto_solicitudes WHERE estado='instalado' AND visita_id IN (" + _hall_in(vids) + ")"
-        try:
-            rows = mysql_fetchall(base.format(c=", costo_unitario"), tuple(vids)) or []
-        except Exception:
+        # La misma regla de atribución que el resultado financiero de la OT (_ot_repuestos_desglose): un repuesto se consume en la OT que
+        # se generó a partir de la solicitud (ot_generada_id) y, si no hubo, en la OT donde se pidió (visita_id).
+        rows = None
+        for col, c_extra in (("COALESCE(ot_generada_id, visita_id)", ", costo_unitario"), ("COALESCE(ot_generada_id, visita_id)", ""), ("visita_id", "")):
             try:
-                rows = mysql_fetchall(base.format(c=""), tuple(vids)) or []
+                rows = mysql_fetchall(
+                    "SELECT " + col + " AS visita_id, cantidad" + c_extra + " FROM mant_ot_repuesto_solicitudes WHERE estado='instalado' AND "
+                    + col + " IN (" + _hall_in(vids) + ")", tuple(vids)) or []
+                break
             except Exception as e:
-                print(f"[hall] traz consumo: {type(e).__name__}", flush=True)
-                rows = []
+                if (col, c_extra) == ("visita_id", ""):
+                    print(f"[hall] traz consumo: {type(e).__name__}", flush=True)
+        rows = rows or []
         agrup = {}
         for r in rows:
             agrup.setdefault(int(r["visita_id"]), []).append(r)
@@ -170758,12 +170791,17 @@ def _hall_trazabilidad(filas):
             tk = {"id": int(tid), "numero": t.get("numero_ticket") or f"Ticket #{int(tid)}", "cerrado": est_t in ("resolved", "closed", "cancelado"),
                   "estado_txt": est_t.replace("_", " ")}
         val = _gc.valor_vista(e) if e else None
-        # «Repuesto en marcha» = la primera vez que la gestión actuó sobre lo pedido (no cuando el técnico lo pidió).
-        accion_rep = e.get("repuesto_en") or _hs._min_fecha(*[x.get(k) for x in ss for k in ("validado_at", "pedido_at", "recibido_at", "instalado_at")])
+        # «Repuesto en marcha» = la primera vez que la gestión actuó sobre lo pedido (no cuando el técnico lo pidió). Una solicitud RECHAZADA
+        # no cuenta (rechazar no limpia sus fechas) y, si todas las ligadas se rechazaron, tampoco el `repuesto_en` de la gestión circular.
+        vivas = [x for x in ss if str(x.get("estado") or "") != "rechazado"]
+        accion_rep = (e.get("repuesto_en") if (vivas or not ss) else None) or _hs._min_fecha(
+            *[x.get(k) for x in vivas for k in ("validado_at", "pedido_at", "recibido_at", "instalado_at")])
+        abierto_ef = estado_ef == _oh.EST_ABIERTO     # sin gestionar (o con su OT de seguimiento caída): el plazo vuelve a correr desde el reporte
         fila_reloj = {
             "estado_ef": estado_ef, "severidad": f.get("severidad"), "riesgo": f.get("riesgo"),
-            "detectado_en": _otrep_a_chile(f.get("detectado_en")), "tomado_en": _otrep_a_chile(f.get("tomado_en")),
-            "descartado_en": _otrep_a_chile(f.get("descartado_en")), "seguimiento_en": _otrep_a_chile(f.get("seguimiento_en")),
+            "detectado_en": _otrep_a_chile(f.get("detectado_en")), "tomado_en": None if abierto_ef else _otrep_a_chile(f.get("tomado_en")),
+            "descartado_en": _otrep_a_chile(f.get("descartado_en")),
+            "seguimiento_en": None if (caido or abierto_ef) else _otrep_a_chile(f.get("seguimiento_en")),
             "ticket_en": _otrep_a_chile(tk_en.get(hid)), "repuesto_en": _otrep_a_chile(accion_rep),
             "seg_cerrada": bool(seg and seg["cerrada"])}
         ctx = {"estado_ef": estado_ef, "tomado_por": f.get("tomado_por") if estado_ef == _oh.EST_TOMADO else "", "valor": val["total"] if val else "",
@@ -170878,7 +170916,7 @@ def ot_hallazgos_pagina():
             orden_venc = ("(h.id IN (" + _hall_in(sorted(vencidos)) + ")) DESC, ") if (vencidos and vista != "vencidos") else ""
             par_orden = list(sorted(vencidos)) if (vencidos and vista != "vencidos") else []
             filas = [dict(r) for r in (mysql_fetchall(
-                "SELECT h.id, h.visita_id, h.origen, h.referencia, h.severidad, h.titulo, h.detalle, h.equipo_nombre, h.maquina_id, h.item_manual_id, "
+                "SELECT h.id, h.visita_id, h.origen, h.referencia, h.tarea_id, h.severidad, h.titulo, h.detalle, h.equipo_nombre, h.maquina_id, h.item_manual_id, "
                 "       h.riesgo, h.n_fotos, h.fotos_json, h.estado, h.detectado_por, h.detectado_en, h.tomado_por, h.tomado_en, "
                 "       h.ot_seguimiento_id, h.seguimiento_en, h.descartado_por, h.descartado_en, h.retirado_en, "
                 "       TIMESTAMPDIFF(MINUTE, h.detectado_en, UTC_TIMESTAMP()) AS min_desde, "
@@ -170891,6 +170929,8 @@ def ot_hallazgos_pagina():
             print(f"[hall] monitor: {type(e).__name__}: {e}", flush=True)
             error = True
     traz = _hall_trazabilidad(filas) if filas else {}
+    # Las fotos de una TAREA las sube el técnico DESPUÉS de responder: se releen vivas (como en la tarjeta de gestión) y no solo de lo guardado.
+    vivas_t = _hall_fotos_tareas_lote([f.get("tarea_id") for f in filas if f.get("origen") == _oh.ORIGEN_TAREA and f.get("tarea_id")])
     # Responsable de cada OT (REGLA #36).
     resp = {}
     if filas and _ot_resp_ok():
@@ -170909,7 +170949,10 @@ def ot_hallazgos_pagina():
         seg = t.get("seg")
         vis = _oh.estado_visual(estado_ef, bool(seg and seg["cerrada"]))
         rj = t.get("reloj") or {}
-        fotos = _oh.lista_urls(f.get("fotos_json"))
+        fotos = list(vivas_t.get(int(f["tarea_id"]), [])) if (f.get("origen") == _oh.ORIGEN_TAREA and f.get("tarea_id")) else []
+        for u_ in _oh.lista_urls(f.get("fotos_json")):
+            if u_ not in fotos:
+                fotos.append(u_)
         nombre, serie_guardada = _oh.partir_serie(f.get("equipo_nombre"))
         co_ot, co_seg = t.get("consumo_ot") or {}, t.get("consumo_seg")
         items.append({
@@ -171213,7 +171256,9 @@ def _gc_extra_set(entidad, eid, **campos):
         ahora_cols.append("editado_en")
     if not cols:
         return False
-    sets = ", ".join(f"{c}=VALUES({c})" for c in cols) + "".join(f", {c}=NOW()" for c in ahora_cols)
+    # `repuesto_en` conserva la PRIMERA vez que la gestión pidió un repuesto (el plazo de salida se mide con ella): COALESCE, no NOW().
+    sets = ", ".join(f"{c}=VALUES({c})" for c in cols) + "".join(
+        (", repuesto_en=COALESCE(repuesto_en, NOW())" if c == "repuesto_en" else f", {c}=NOW()") for c in ahora_cols)
     mysql_execute(
         "INSERT INTO mant_gestion_extra (entidad, entidad_id, " + ", ".join(cols + ahora_cols) + ") VALUES (%s,%s,"
         + ",".join(["%s"] * len(cols) + ["NOW()"] * len(ahora_cols)) + ") ON DUPLICATE KEY UPDATE " + sets,
@@ -171314,7 +171359,21 @@ def _gc_vincular_repuesto(origen, lote_id, sol_ids, numero_ticket):
     if not ent or not _gc_ok():
         return
     try:
-        _gc_extra_set(ent, eid, repuesto_lote_id=str(lote_id)[:40], repuesto_sol_ids=",".join(str(int(s)) for s in (sol_ids or []))[:400],
+        # Una segunda solicitud desde el mismo hallazgo SUMA a las anteriores (antes pisaba la lista y se perdía el rastro de la primera).
+        previas = []
+        try:
+            previas = [int(x) for x in str((_gc_extra_de(ent, [eid]).get(int(eid)) or {}).get("repuesto_sol_ids") or "").split(",") if x.strip().isdigit()]
+        except Exception:
+            previas = []
+        todas_ids = []
+        for x in list(previas) + [int(s) for s in (sol_ids or [])]:
+            if x not in todas_ids:
+                todas_ids.append(x)
+        txt_ids = ",".join(str(x) for x in todas_ids)
+        while len(txt_ids) > 400 and len(todas_ids) > 1:      # sin partir un número: se descartan las más antiguas
+            todas_ids.pop(0)
+            txt_ids = ",".join(str(x) for x in todas_ids)
+        _gc_extra_set(ent, eid, repuesto_lote_id=str(lote_id)[:40], repuesto_sol_ids=txt_ids[:400],
                       repuesto_ticket=(numero_ticket or None), repuesto_por=_hall_quien())
         det = f"{len(sol_ids or [])} solicitud(es)" + (f" · ticket de compra {numero_ticket}" if numero_ticket else "")
         if ent == _gc.ENTIDAD_HALLAZGO:

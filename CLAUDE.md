@@ -1145,6 +1145,21 @@ Incidente real: el asistente sumaba por detrás «Revisión — Registro por equ
   la «lápida»: el mismo hallazgo no vuelve a nacer solo). La inquietud de cliente tiene la misma valorización y el mismo «Solicitar
   repuesto». Reglas puras en `gestion_circular.py`; tablas `mant_gestion_extra`, `mant_gestion_actividad`, `mant_ot_hallazgo_borrados`
   (`_ensure_gestion_circular`, solo CREATE TABLE IF NOT EXISTS). Pruebas: `tests/test_gestion_circular.py`.
+- **Monitor, SLA y trazabilidad (Daniel 26-oct-2026: «algo parecido a la página de Retiros, insisto», «tablas amigables con filas informativas y una buena
+  sensación de guía» y «implementar los SLA y poder tener trazabilidad y considerar varios puntos de salida: OT, Tickets, Abastecimiento y almacenamiento de
+  repuestos. Y el consumo de las OT»).** `/ot/hallazgos` es un MONITOR con el lenguaje de Retiros: tarjetas KPI, buscador, chips por estado y UNA FILA POR
+  HALLAZGO con quién lo reportó, de qué OT y de qué cliente (RUT y responsable de la OT), equipo con su N° de serie, quién lo tomó, el plazo con su barra y
+  «Ahora toca» (la guía); debajo de cada fila, SIEMPRE abierta, la guía de 7 pasos con semáforo: Atención → Valorización → OT de seguimiento → Ticket →
+  Abastecimiento (solicitudes de repuesto) → Bodega (existencia física menos lo prometido a otras solicitudes) → Consumo de la OT (repuestos instalados,
+  atribuidos con COALESCE(ot_generada_id, visita_id) como el resultado financiero). El plazo (`hallazgos_sla.py`, módulo puro; reusa las horas hábiles de
+  Retiros e Inquietudes) tiene DOS tramos: tomarlo (2 h hábiles si es grave: falla, fuera de servicio, baja o riesgo; 4 h los demás) y darle salida (OT,
+  ticket, solicitud de repuesto o descartarlo: 2 días hábiles los graves, 5 los demás); se ajusta con `HALLAZGOS_PRIMERA_GRAVE_H`, `HALLAZGOS_PRIMERA_H`,
+  `HALLAZGOS_SALIDA_GRAVE_DIAS`, `HALLAZGOS_SALIDA_DIAS` y `HALLAZGOS_AVISO_PCT`. Reglas finas (revisión adversarial del 27-oct): pedir un repuesto NO cuenta
+  como que alguien tomó el hallazgo (lo cuenta la primera acción de la gestión sobre la solicitud); una solicitud RECHAZADA no cuenta; si la OT de seguimiento
+  se cancela o anula, el plazo vuelve a correr desde el reporte; `repuesto_en` conserva la PRIMERA vez y una segunda solicitud suma a las anteriores. La misma
+  guía, plazo y recorrido salen en la tarjeta de gestión de la OT (`_gc_enriquecer_hallazgos` ← `_hall_trazabilidad`). Es SOLO LECTURA y con plata (consumo):
+  solo gestión, nunca un técnico (REGLAS #19 y #26). Todavía NO avisa por la campana cuando un plazo vence (el monitor lo muestra en «Plazo vencido»).
+  Pruebas: `tests/test_hallazgos_sla.py`.
 - Pruebas: `tests/test_ot_hallazgos.py` (módulo puro, base de mentira, SQL del panel ejecutado de verdad en SQLite, plantillas renderizadas y JS ejecutado con Node). Esto se prueba SIEMPRE con datos de mentira: hay clientes reales de por medio (REGLA #22: cero correos o cambios visibles para el cliente al probar).
 
 ---
