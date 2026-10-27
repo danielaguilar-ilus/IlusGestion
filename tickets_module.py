@@ -372,9 +372,12 @@ _TK_SORT_COLS = {
 # NO cambiar sin permiso): primero tickets con mensajes de cliente sin leer,
 # luego estado, prioridad, updated_at DESC.
 _TK_ORDER_DEFAULT = (
-    "  (SELECT COUNT(*) FROM tk_mensajes m2 "
+    # Tickets 2.0 (27-oct): EXISTS en vez de COUNT(*) > 0 -- mismo resultado,
+    # pero se detiene en el primer mensaje sin leer (usa idx_unread) en vez
+    # de contarlos todos para cada ticket antes de ordenar.
+    "  EXISTS (SELECT 1 FROM tk_mensajes m2 "
     "     WHERE m2.ticket_id=t.id AND m2.tipo='client_message' "
-    "       AND m2.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')) > 0 DESC, "
+    "       AND m2.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')) DESC, "
     "  FIELD(t.estado,'open','in_progress','pending','ot_pending_approval',"
     "'ot_generated','ot_in_progress','resolved','closed','cancelado'), "
     "FIELD(t.prioridad,'urgente','alta','media','baja'), t.updated_at DESC, t.id DESC"
@@ -399,6 +402,21 @@ def _tk_tz_offset():
     except Exception:
         pass
     return "-04:00"
+
+
+def _tk_dia_local_a_utc(fecha, tz_off, sumar_dias=0):
+    """Inicio (00:00) del dia local `fecha` (+ sumar_dias) expresado en UTC,
+    como texto 'YYYY-MM-DD HH:MM:SS' para comparar contra created_at (UTC
+    naive). `tz_off` es el offset de _tk_tz_offset() ('-04:00'). Devuelve
+    None si la fecha no es valida (el filtro simplemente no se aplica)."""
+    try:
+        d = datetime.strptime(fecha, "%Y-%m-%d") + timedelta(days=sumar_dias)
+        signo = -1 if tz_off.startswith("-") else 1
+        hh, mm = tz_off.lstrip("+-").split(":")
+        off = signo * timedelta(hours=int(hh), minutes=int(mm))
+        return (d - off).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
 
 
 def _tk_sort_order(args):
@@ -469,13 +487,18 @@ def _tk_list_where(args):
     fecha_hasta = (args.get("fecha_hasta") or "").strip()
     if (args.get("hoy") or "").strip() == "1":
         fecha_desde = fecha_hasta = _chile_hoy().isoformat()
+    # Tickets 2.0: rango SOBRE la columna (usa idx_created) en vez de
+    # DATE(CONVERT_TZ(created_at)) por fila. Mismo corte de dia en hora Chile:
+    # el dia local [00:00, 24:00) se traduce una vez a UTC con el mismo offset.
     tz_off = _tk_tz_offset()
     if fecha_desde and _TK_FECHA_RE.match(fecha_desde):
-        where.append("DATE(CONVERT_TZ(t.created_at, '+00:00', %s)) >= %s")
-        params.extend([tz_off, fecha_desde])
+        ini = _tk_dia_local_a_utc(fecha_desde, tz_off, 0)
+        if ini:
+            where.append("t.created_at >= %s"); params.append(ini)
     if fecha_hasta and _TK_FECHA_RE.match(fecha_hasta):
-        where.append("DATE(CONVERT_TZ(t.created_at, '+00:00', %s)) <= %s")
-        params.extend([tz_off, fecha_hasta])
+        fin = _tk_dia_local_a_utc(fecha_hasta, tz_off, 1)
+        if fin:
+            where.append("t.created_at < %s"); params.append(fin)
 
     wsql = (" WHERE " + " AND ".join(where)) if where else ""
     return wsql, params
@@ -1676,6 +1699,19 @@ def register_tickets_routes(app, ctx):
             mysql_execute("CREATE INDEX idx_tk_rut_norm ON tk_tickets (rut_norm)")
         except Exception:
             pass  # ya existe
+        # Tickets 2.0 (27-oct): indices COMPUESTOS para los filtros reales de
+        # la bandeja (estado+prioridad+actividad, responsable+estado,
+        # origen+fecha). Una sentencia = un indice (REGLA #18: barata si ya
+        # existe, no pide lock). No cambian ningun dato.
+        for _idx_sql in (
+            "CREATE INDEX idx_tk_estado_prio_upd ON tk_tickets (estado, prioridad, updated_at)",
+            "CREATE INDEX idx_tk_asig_estado ON tk_tickets (asignado_a, estado)",
+            "CREATE INDEX idx_tk_origen_created ON tk_tickets (origen, created_at)",
+        ):
+            try:
+                mysql_execute(_idx_sql)
+            except Exception:
+                pass  # ya existe (o no se pudo: la bandeja funciona igual)
         # 2026-07-15 (Daniel): 3 tipos nuevos 100% internos de bodega
         # (control_calidad/trabajo_bodega/capacitacion — ver TK_TIPOS_SIN_CLIENTE).
         # MODIFY COLUMN con el ENUM ampliado es idempotente y seguro de correr
@@ -6378,6 +6414,48 @@ def register_tickets_routes(app, ctx):
     # ─────────────────────────────────────────────────────────────────
     #  API — listado + KPIs
     # ─────────────────────────────────────────────────────────────────
+    # ── Tickets 2.0: cache corta de KPI/total y de "sin leer" ────────────────
+    # La bandeja se refresca sola cada 10 s en cada navegador abierto; sin
+    # esto, N personas = N barridos identicos por ciclo. TTL de unos segundos
+    # y se vacia en cuanto alguien escribe (PATCH/POST/DELETE bajo /tickets/),
+    # asi que quien cambia un estado ve su KPI al instante. Por proceso: entre
+    # instancias de Cloud Run puede quedar atrasado hasta _TK_CACHE_SEG.
+    _TK_CACHE_SEG = 5.0
+    _TK_KPI_CACHE = {}
+    _TK_UNREAD_CACHE = {}
+
+    @app.after_request
+    def _tk_vaciar_cache_tras_escritura(resp):
+        try:
+            if request.method != "GET" and request.path.startswith("/tickets/"):
+                _TK_KPI_CACHE.clear()
+                _TK_UNREAD_CACHE.clear()
+        except Exception:
+            pass
+        return resp
+
+    def _tk_kpi_cacheado(wsql, params):
+        """Total + KPI del filtro en UN solo barrido (con cache corta)."""
+        hoy = _chile_hoy()
+        clave = (wsql, tuple(params), hoy)
+        hit = _TK_KPI_CACHE.get(clave)
+        if hit and time.monotonic() - hit[0] < _TK_CACHE_SEG:
+            return hit[1]
+        kpi = mysql_fetchone(
+            "SELECT "
+            "  COUNT(*) AS total, "
+            "  SUM(estado IN ('open','in_progress')) AS activos, "
+            "  SUM(prioridad='urgente' AND estado NOT IN ('resolved','closed','cancelado')) AS urgentes, "
+            "  SUM(fecha_limite IS NOT NULL AND fecha_limite < %s "
+            "      AND estado NOT IN ('resolved','closed','cancelado')) AS vencidos "
+            f"FROM tk_tickets t{wsql}",
+            (hoy,) + tuple(params),
+        ) or {}
+        if len(_TK_KPI_CACHE) > 200:
+            _TK_KPI_CACHE.clear()
+        _TK_KPI_CACHE[clave] = (time.monotonic(), kpi)
+        return kpi
+
     @app.route("/tickets/api/tickets", methods=["GET"])
     @_tickets_required
     def tk_api_list():
@@ -6404,8 +6482,14 @@ def register_tickets_routes(app, ctx):
             limit = 50
         offset = (page - 1) * limit
 
-        total_row = mysql_fetchone(f"SELECT COUNT(*) AS n FROM tk_tickets t{wsql}", tuple(params))
-        total = int(total_row["n"]) if total_row else 0
+        _t0 = time.monotonic()
+        # Tickets 2.0: UN solo barrido da el total del filtro Y los KPI (antes
+        # eran dos COUNT sobre el mismo WHERE), y se comparte unos segundos
+        # entre quienes tienen la bandeja abierta (refresco automatico).
+        # KPIs deben respetar los MISMOS filtros (wsql/params) que el listado.
+        # "Hoy" se calcula en hora Chile (Regla #6), no con CURDATE() (UTC).
+        kpi = _tk_kpi_cacheado(wsql, params)
+        total = int(kpi.get("total") or 0)
         pages = (total + limit - 1) // limit  # ceil(total/limit); 0 si no hay filas
 
         # ORDER BY: si viene ?sort= valido (whitelist _TK_SORT_COLS) se ordena
@@ -6430,21 +6514,6 @@ def register_tickets_routes(app, ctx):
             tuple(params) + (limit, offset),
         )
 
-        # KPIs deben respetar los MISMOS filtros (wsql/params) que el listado
-        # de arriba -- si no, el conteo siempre escanea la tabla completa sin
-        # importar lo que el usuario esta filtrando. "Hoy" se calcula en hora
-        # Chile (Regla #6), no con CURDATE() de MySQL (UTC).
-        kpi = mysql_fetchone(
-            "SELECT "
-            "  COUNT(*) AS total, "
-            "  SUM(estado IN ('open','in_progress')) AS activos, "
-            "  SUM(prioridad='urgente' AND estado NOT IN ('resolved','closed','cancelado')) AS urgentes, "
-            "  SUM(fecha_limite IS NOT NULL AND fecha_limite < %s "
-            "      AND estado NOT IN ('resolved','closed','cancelado')) AS vencidos "
-            f"FROM tk_tickets t{wsql}",
-            (_chile_hoy(),) + tuple(params),
-        ) or {}
-
         # SLA calculado por fila (Daniel 2026-07-14). Se computa ANTES de
         # _fmt_row porque necesita el created_at crudo (datetime UTC), no
         # el string ya formateado a hora Chile.
@@ -6455,6 +6524,15 @@ def register_tickets_routes(app, ctx):
             d["sla_horas"], d["sla_vencido"] = _tk_sla_info(
                 r.get("estado"), r.get("created_at"), sla_umbral)
             tickets_out.append(d)
+
+        # Medicion en produccion (sin tocar la base): una bandeja lenta deja
+        # rastro en los logs con su filtro, para diagnosticar con datos reales.
+        _dt = time.monotonic() - _t0
+        if _dt > 1.5:
+            print(f"[tk_lento] bandeja {_dt:.1f}s total={total} page={page} "
+                  f"limit={limit} sort={request.args.get('sort') or '-'} "
+                  f"filtros={sorted(k for k in request.args if k not in ('page', 'limit', 'sort', 'dir'))}",
+                  flush=True)
 
         return jsonify({
             "ok": True,
@@ -8063,11 +8141,20 @@ def register_tickets_routes(app, ctx):
         # cambio de estado o por un camino sin reapertura -- cinturon y
         # tirantes: la campana roja cuenta TODO mensaje de cliente sin leer,
         # sin importar el estado actual del ticket.
+        # Tickets 2.0: semi-join (EXISTS) en vez de JOIN + COUNT(DISTINCT):
+        # mismo conteo, sin materializar tickets x mensajes de toda la
+        # historia. Se comparte unos segundos entre quienes lo consultan.
+        hit = _TK_UNREAD_CACHE.get("v")
+        if hit and time.monotonic() - hit[0] < _TK_CACHE_SEG:
+            return jsonify({"ok": True, "unread": hit[1]})
         row = mysql_fetchone(
-            "SELECT COUNT(DISTINCT t.id) AS n FROM tk_tickets t "
-            "JOIN tk_mensajes m ON m.ticket_id=t.id AND m.tipo='client_message' "
-            "WHERE m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')")
-        return jsonify({"ok": True, "unread": int(row["n"]) if row else 0})
+            "SELECT COUNT(*) AS n FROM tk_tickets t "
+            "WHERE EXISTS (SELECT 1 FROM tk_mensajes m "
+            "              WHERE m.ticket_id=t.id AND m.tipo='client_message' "
+            "                AND m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01'))")
+        n = int(row["n"]) if row else 0
+        _TK_UNREAD_CACHE["v"] = (time.monotonic(), n)
+        return jsonify({"ok": True, "unread": n})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — equipos
