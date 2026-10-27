@@ -100,3 +100,26 @@ El mismo motor es el que usan hoy los otros módulos para dejar mensajes (hay **
 6. Prueba de tráfico: 100.000 tickets / 1 millón de mensajes en base de mentira, con tiempos antes y después.
 
 **Cuidado (REGLAS #17, #18, #22):** nada se borra de la base ni se toca la instancia; los `ALTER` van de a una cláusula y baratos; las pruebas con correo y datos de mentira, nunca contra clientes reales. Retirar los lectores pasa por el "sí" ya dado por Daniel en este mensaje (REGLA #4.2).
+
+---
+
+## 5. Auditoría Impeccable (solo lectura, REGLA #27) — bandeja y ficha de Tickets
+
+Alcance: `templates/tickets/list.html`, `ficha.html`, `static/tickets_list.{css,js}`, `static/tickets_ficha.{css,js}`. No se modificó nada. Detector mecánico + conteos de código; **no** se revisó en navegador real (falta captura a 390 px).
+
+| # | Dimensión | Nota | Hallazgo principal |
+|---|---|---|---|
+| 1 | Accesibilidad | 2/4 | `tickets_list.js` no tiene un solo `aria-*` y arma 29 `innerHTML` + 9 `onclick=` inline; ~144 tamaños de fuente < 12 px; `:focus-visible` solo 2 veces en la bandeja |
+| 2 | Rendimiento | 2/4 | La bandeja se repinta entera (`innerHTML`) cada 10 s, pierde foco/selección y hace trabajo de DOM aunque no cambie nada; la ficha tiene 120 `innerHTML` y carga el hilo completo |
+| 3 | Tema / tokens | 2/4 | 792 colores `#hex` fijos contra 92 `var(--…)`; sin modo oscuro (`prefers-color-scheme` = 0) — aceptable hoy, la paleta es la de ILUS (REGLA #2) |
+| 4 | Responsive | 3/4 | Hay 27 breakpoints ≤ 768 px y 18 objetivos de 44 px; falta verificar en 390 px real |
+| 5 | Integridad | 3/4 | Coherente con el lenguaje de Retiros; detector: 5 `side-tab` (borde lateral de 3-4 px), 1 `border-accent-on-rounded`, 5 easings con rebote (`--ease-spring`) |
+
+Problemas en orden de prioridad (ninguno se corrige sin tu "sí", REGLA #4.2):
+1. **Repintado total cada 10 s** en la bandeja → se resuelve con las "novedades" (fase 4): repintar solo filas que cambiaron.
+2. **Sin semántica ni etiquetas accesibles** en la bandeja (botones de icono sin `aria-label`, orden de columnas sin `aria-sort`, burbujas sin rol).
+3. **Texto muy chico** (< 12 px, 144 usos): la REGLA #15 pide datos legibles.
+4. **`prefers-reduced-motion` ausente en la bandeja** (la ficha lo cubre en 3 lugares).
+5. **Colores fijos** repetidos: extraer tokens sin cambiar la paleta.
+6. **Detector (estético, bajo):** bordes laterales y easing de rebote en la ficha (`tickets_ficha.css` líneas 9, 63, 81, 138, 348, 481, 623, 637, 794, 841, 859).
+7. Nota: hay una versión nueva de Impeccable (4.8.0, hoy 4.5.1); no se actualizó.
