@@ -955,10 +955,8 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
         <i class="bi bi-clipboard2-pulse-fill me-1"></i>Hallazgos
         <span class="ot2-hz-bur" id="ot2HzBur" hidden></span>
       </a>
-      {#- 🗣️ 2026-10-26 (Daniel): Inquietudes de clientes — monitor de recepción con plazo de atención. Solo gestión (la ruta lleva @_no_tecnico). -#}
-      <a href="{{ url_for('ot_inquietudes_pagina') }}" class="btn btn-sm btn-outline-light" id="ot2InqBtn">
-        <i class="bi bi-chat-quote-fill me-1"></i>Inquietudes
-      </a>
+      {#- 🗣️ 2026-10-27 (Daniel: «las inquietudes elimínalas… déjala como hallazgo»): el botón «Inquietudes» se quitó; lo que comenta el cliente
+          entra a Hallazgos. El módulo queda apagado con su código (_INQ_MODULO_ACTIVO en app.py). -#}
       {# 🆕 2026-09-08 (Daniel, "Finanzas de la OT": "reportes... por
          períodos de tiempo"). El backend (`_ot2_filtros_export`) ya
          aceptaba `desde`/`hasta` desde el 27-08 -- solo el panel nunca

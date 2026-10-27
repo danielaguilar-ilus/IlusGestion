@@ -197,7 +197,7 @@
         S.enviando = false; b.disabled = false; b.innerHTML = '<i class="bi bi-send-fill"></i> Guardar inquietud';
         if (!j || !j.ok) { error((j && j.error) || 'No pudimos guardarla. Lo que escribiste sigue aquí: intenta de nuevo.'); return; }
         modal.hide();
-        toast('✓ ' + (j.numero || 'Inquietud') + ' guardada. ' + (j.mensaje || ''), 'success', 7000);
+        toast('✓ Guardado. ' + (j.mensaje || ''), 'success', 7000);
         reiniciar();
         pintarLista();
       })

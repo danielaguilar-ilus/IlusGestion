@@ -10,9 +10,9 @@
   <div class="iq-entrada-txt"><i class="bi bi-chat-quote-fill" aria-hidden="true"></i>
     <span>
       {% if inquietud_ctx.puede %}¿El cliente te comentó algo de sus equipos?
-        <small>Anota qué le preocupa y tu diagnóstico, de cualquier equipo de su ficha. La gestión lo toma y decide qué hacer. Al cliente no se le avisa nada.</small>
+        <small>Anota qué le preocupa y tu diagnóstico, de cualquier equipo de su ficha. Queda como hallazgo de esta OT: la gestión lo toma y decide qué hacer. Al cliente no se le avisa nada.</small>
       {% else %}Lo que comentó el cliente
-        <small>{{ inquietud_ctx.n }} inquietud{{ '' if inquietud_ctx.n == 1 else 'es' }} anotada{{ '' if inquietud_ctx.n == 1 else 's' }} desde esta orden.</small>
+        <small>{{ inquietud_ctx.n }} comentario{{ '' if inquietud_ctx.n == 1 else 's' }} del cliente anotado{{ '' if inquietud_ctx.n == 1 else 's' }} como hallazgo{{ '' if inquietud_ctx.n == 1 else 's' }} desde esta orden.</small>
       {% endif %}
       <span class="iq-lista" id="iqLista" aria-live="polite"></span>
     </span>

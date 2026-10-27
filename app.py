@@ -39612,7 +39612,7 @@ def tr_cron_simpliroute_poll():
         except Exception as _e_rr:
             print(f"[cron-simpliroute] repuestos respuesta: {_e_rr}", flush=True)
     # 🗣️ Inquietudes de clientes (2026-10-26): aviso por la campana, una vez por nivel, cuando una está por vencer o venció su plazo.
-    if time.time() - _t_peticion < 240:
+    if time.time() - _t_peticion < 240 and globals().get("_INQ_MODULO_ACTIVO"):   # 2026-10-27: el módulo Inquietudes quedó apagado
         try:
             res["inquietudes"] = _inq_barrido(max_s=min(15, max(3, 270 - (time.time() - _t_peticion))), dry=bool(dry))
         except Exception as _e_inq:
@@ -169038,18 +169038,45 @@ def ot_api_equipos_cliente(vid):
 @_mant_required
 @_ot_can_configurar
 def ot_api_inquietud_cliente(vid):
-    """«El cliente me comentó…»: guarda la inquietud (multipart: maquina_id? | producto_texto?, inquietud, diagnostico, fotos[] de 0 a 3)
-    y avisa a la gestión por la campana. No crea tickets ni OT (lo decide la gestión). Nada al cliente (REGLA #22)."""
-    if not _inq_ok():
+    """«El cliente me comentó…» (multipart: maquina_id? | producto_texto?, inquietud, diagnostico, fotos[] de 0 a 3).
+    2026-10-27 (Daniel: «las inquietudes elimínalas… déjala como hallazgo»): queda como un HALLAZGO de esta OT (origen «cliente», gravedad
+    alerta) y avisa a la gestión por la campana de hallazgos de siempre; se gestiona en Hallazgos con su plazo, su guía y su ficha. El módulo
+    «Inquietudes» queda apagado (_INQ_MODULO_ACTIVO). No crea tickets ni OT (lo decide la gestión). Nada al cliente (REGLA #22)."""
+    if not _hall_ok():
         return _ot2_err("Esta función no está disponible en este momento. Intenta de nuevo en un minuto.", "TABLA_NO_DISPONIBLE", http=503)
     v, err = _inq_ot_y_cliente(vid)
     if err:
         return err
-    iid, err = _inq_crear_core(v["cliente_id"], vid, request.form, request.files.getlist("fotos"), _iq.ORIG_OT)
+    form = request.form
+    inquietud, diagnostico = _iq.limpio(form.get("inquietud")), _iq.limpio(form.get("diagnostico"))
+    mid, prod = _iq.entero(form.get("maquina_id")), _iq.limpio(form.get("producto_texto"), _iq.MAX_PRODUCTO)
+    ok, msg = _iq.validar_crear(inquietud, diagnostico, mid, prod, _iq.ORIG_OT)
+    if not ok:
+        return _ot2_err(msg, "COMENTARIO_INCOMPLETO")
+    equipo = prod
+    if mid:
+        m = mysql_fetchone("SELECT id, nombre, sku, serie, cliente_id, estado FROM mant_maquinas WHERE id=%s", (mid,))
+        if not m or int(m.get("cliente_id") or 0) != int(v["cliente_id"]) or (m.get("estado") or "") == "baja":
+            return _ot2_err("Ese equipo no es de este cliente. Búscalo de nuevo.", "EQUIPO_AJENO")
+        equipo = _iq.nombre_con_ficha(m.get("nombre"), m.get("sku"), m.get("serie"))
+    urls, err = _inq_subir_fotos(request.files.getlist("fotos"), "hallazgo_cliente_%s" % vid)
     if err:
         return err
-    return jsonify({"ok": True, "id": iid, "numero": _iq.numero(iid),
-                    "mensaje": "Quedó registrada. La gestión la verá y decidirá qué hacer; al cliente no se le avisa nada."})
+    detalle = "Lo que comentó el cliente: " + inquietud + (("\nDiagnóstico del técnico: " + diagnostico) if diagnostico else "")
+    h = {"origen": _oh.ORIGEN_CLIENTE, "referencia": "c%d" % int(time.time() * 1000), "maquina_id": mid, "severidad": "alerta",
+         "titulo": "El cliente comentó: " + inquietud, "detalle": detalle, "equipo_nombre": equipo, "fotos": urls}
+    try:
+        hid = _hall_registrar(vid, h)
+    except Exception as e:
+        print(f"[hall] comentario del cliente vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return _ot2_err("No pudimos guardarlo. Intenta de nuevo.", "ERROR_INTERNO", http=500)
+    if hid:
+        try:
+            _hall_avisar(vid, [hid])
+        except Exception as e:
+            print(f"[hall] aviso comentario del cliente vid={vid}: {type(e).__name__}", flush=True)
+    return jsonify({"ok": True, "id": hid, "numero": "Hallazgo",
+                    "mensaje": "Quedó como hallazgo de esta OT. La gestión lo verá en Hallazgos y decidirá qué hacer; al cliente no se le avisa nada."})
 
 
 @app.route("/ot/api/<int:vid>/inquietudes", methods=["GET"])
@@ -169057,12 +169084,14 @@ def ot_api_inquietud_cliente(vid):
 @_ot_can_configurar
 def ot_api_inquietudes_de_ot(vid):
     """Las inquietudes anotadas desde ESTA OT, para la franja de la ficha. Sin responsable, sin SLA ni plata: solo número, equipo y estado."""
-    if not _inq_ok():
+    # 2026-10-27: lo que comentó el cliente ahora es un HALLAZGO de la OT (origen «cliente»).
+    if not _hall_ok():
         return jsonify({"ok": True, "items": []})
-    rows = mysql_fetchall("SELECT id, producto_texto, estado, creada_en, creada_por FROM cli_inquietudes WHERE visita_id=%s AND borrada=0 "
-                          " ORDER BY id DESC LIMIT 30", (int(vid),)) or []
-    return jsonify({"ok": True, "items": [{"numero": _iq.numero(r["id"]), "equipo": r.get("producto_texto") or "", "creada_por": r.get("creada_por") or "",
-                                           "estado": (_iq.ESTADOS.get(r.get("estado")) or {}).get("texto", ""), "creada": _inq_cuando(r.get("creada_en"))}
+    rows = mysql_fetchall("SELECT id, equipo_nombre, estado, detectado_en, detectado_por FROM mant_ot_hallazgos "
+                          " WHERE visita_id=%s AND origen=%s AND retirado_en IS NULL ORDER BY id DESC LIMIT 30",
+                          (int(vid), _oh.ORIGEN_CLIENTE)) or []
+    return jsonify({"ok": True, "items": [{"numero": "Hallazgo", "equipo": _oh.partir_serie(r.get("equipo_nombre"))[0] or "", "creada_por": r.get("detectado_por") or "",
+                                           "estado": _oh.estado_visual(r.get("estado"), False)["texto"], "creada": _hall_cuando(r.get("detectado_en"))}
                                           for r in rows]})
 
 
@@ -169072,8 +169101,9 @@ def _inq_ctx_ficha_ot(vid, v, puede_configurar, ot_solo_lectura):
         if not v.get("cliente_id"):
             return None
         n = 0
-        if _inq_ok():
-            n = int((mysql_fetchone("SELECT COUNT(*) AS n FROM cli_inquietudes WHERE visita_id=%s AND borrada=0", (int(vid),)) or {}).get("n") or 0)
+        if _hall_ok():   # 2026-10-27: lo que comentó el cliente es un hallazgo de la OT (origen «cliente»)
+            n = int((mysql_fetchone("SELECT COUNT(*) AS n FROM mant_ot_hallazgos WHERE visita_id=%s AND origen=%s AND retirado_en IS NULL",
+                                    (int(vid), _oh.ORIGEN_CLIENTE)) or {}).get("n") or 0)
         puede = bool(puede_configurar and not ot_solo_lectura)
         return {"vid": int(vid), "puede": puede, "n": n} if (puede or n) else None
     except Exception as e:
@@ -169083,6 +169113,10 @@ def _inq_ctx_ficha_ot(vid, v, puede_configurar, ot_solo_lectura):
 
 # ── La GESTIÓN: monitor, ficha y acciones (siempre @_no_tecnico) ──────────────────────────────────────────────────────
 _INQ_COLS_FILTRO = {"sin": "i.responsable_user_id IS NULL"}
+# 2026-10-27 (Daniel: «las inquietudes elimínalas, no sé de dónde salió eso… déjala como hallazgo»; y «igual su interfaz me gustó bastante»):
+# el módulo queda APAGADO sin borrar su código ni sus datos. Monitor y ficha llevan a Hallazgos, no hay botón en el panel ni barrido de la
+# campana. Encenderlo de nuevo = INQUIETUDES_MODULO=1 (solo con el «sí» de Daniel).
+_INQ_MODULO_ACTIVO = (os.environ.get("INQUIETUDES_MODULO") or "").strip().lower() in ("1", "true", "si", "sí", "on")
 
 
 @app.route("/ot/inquietudes", methods=["GET"])
@@ -169091,6 +169125,8 @@ _INQ_COLS_FILTRO = {"sin": "i.responsable_user_id IS NULL"}
 def ot_inquietudes_pagina():
     """Monitor de recepción de inquietudes (como la recepción de Retiros): tarjetas por estado con semáforo del SLA, filtros y paginación
     (REGLA #4.3). Se pagina en Python porque el semáforo y las «vencidas» dependen del reloj en horas hábiles."""
+    if not _INQ_MODULO_ACTIVO:
+        return redirect("/ot/hallazgos")
     vista = request.args.get("vista") if request.args.get("vista") in _iq.VISTAS else "abiertas"
     por_pag = _iq.pagina_valida(request.args.get("pp"))
     pag = max(1, _iq.entero(request.args.get("p")) or 1)
@@ -169197,6 +169233,8 @@ def _inq_inteligencia(f):
 def ot_inquietud_ficha(iid):
     """La ficha de UNA inquietud: qué dijo el cliente, el diagnóstico, el recorrido paso a paso con semáforo, la inteligencia del equipo y
     el registro de actividad. Las acciones piden confirmación antes (REGLA #32)."""
+    if not _INQ_MODULO_ACTIVO:   # 2026-10-27: módulo apagado (lo que comenta el cliente vive en Hallazgos)
+        return redirect("/ot/hallazgos")
     if not _inq_ok():
         flash("El módulo de inquietudes no está disponible en este momento. Intenta de nuevo en un minuto.", "warning")
         return redirect(url_for("ot2_panel"))

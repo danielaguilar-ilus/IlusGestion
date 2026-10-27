@@ -265,6 +265,7 @@ class TestCodigoEnApp(unittest.TestCase):
         i = APP.index("INQUIETUDES DE CLIENTES (módulo propio")
         j = APP.index("HALLAZGOS DE LA OT (F1")
         cls.bloque = APP[i:j]
+        cls.app = APP
 
     def test_una_sentencia_por_tabla_y_barata(self):
         self.assertIn("CREATE TABLE IF NOT EXISTS cli_inquietudes (", self.bloque)
@@ -305,10 +306,21 @@ class TestCodigoEnApp(unittest.TestCase):
             j = self.bloque.find("\n@app.route", i)
             self.assertTrue("_inq_log(" in self.bloque[i:j] or "_inq_poner_responsable(" in self.bloque[i:j], nombre)
 
-    def test_el_enlace_del_panel_es_solo_gestion(self):
+    def test_el_modulo_quedo_apagado_y_lo_que_comenta_el_cliente_es_un_hallazgo(self):
+        # Daniel 27-oct: «las inquietudes elimínalas… déjala como hallazgo» (y «su interfaz me gustó»: el código se conserva, apagado).
         panel = leer("templates", "ot2", "panel.html")
-        i = panel.index("url_for('ot_inquietudes_pagina')")
-        self.assertIn("{% if not es_tecnico %}", panel[max(0, i - 4000):i])
+        self.assertNotIn("url_for('ot_inquietudes_pagina')", panel, "sin botón «Inquietudes» en el panel")
+        self.assertIn('_INQ_MODULO_ACTIVO = (os.environ.get("INQUIETUDES_MODULO")', self.app)
+        for fn in ("def ot_inquietudes_pagina(", "def ot_inquietud_ficha("):
+            i = self.app.index(fn)
+            self.assertIn('if not _INQ_MODULO_ACTIVO:', self.app[i:i + 900], fn + " lleva a Hallazgos con el módulo apagado")
+        i = self.app.index("def ot_api_inquietud_cliente(")
+        cuerpo = self.app[i:self.app.index("\n@app.route", i)]
+        self.assertIn("_hall_registrar(vid, h)", cuerpo, "«El cliente me comentó…» crea un hallazgo de la OT")
+        self.assertIn('"origen": _oh.ORIGEN_CLIENTE', cuerpo)
+        self.assertNotIn("_inq_crear_core(", cuerpo)
+        self.assertNotIn("INSERT INTO cli_inquietudes", cuerpo)
+        self.assertIn('globals().get("_INQ_MODULO_ACTIVO")', self.app, "sin barrido de la campana de inquietudes")
 
 
 if __name__ == "__main__":

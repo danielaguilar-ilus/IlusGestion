@@ -37,7 +37,9 @@ TIPO_AVISO_TOMA = "ot_hallazgo_toma"  # tipo del aviso suave «alguien tomó un 
 TIPO_OT_SEGUIMIENTO = "correctiva"  # el tipo que el asistente sugiere (la persona lo puede cambiar)
 
 ORIGEN_TAREA, ORIGEN_PRODUCTO, ORIGEN_EQUIPO = "tarea", "producto", "equipo"
-ORIGENES = (ORIGEN_TAREA, ORIGEN_PRODUCTO, ORIGEN_EQUIPO)
+# 2026-10-27 (Daniel: «las inquietudes elimínalas… déjala como hallazgo»): lo que el técnico anota con «El cliente me comentó…» es un hallazgo más.
+ORIGEN_CLIENTE = "cliente"
+ORIGENES = (ORIGEN_TAREA, ORIGEN_PRODUCTO, ORIGEN_EQUIPO, ORIGEN_CLIENTE)
 
 SEV_FALLA, SEV_FUERA_SERVICIO, SEV_BAJA = "falla", "fuera_servicio", "baja"
 SEV_ALERTA, SEV_REPUESTO, SEV_INCIDENCIA = "alerta", "repuesto", "incidencia"
