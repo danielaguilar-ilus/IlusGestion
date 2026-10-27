@@ -476,6 +476,15 @@
               </div>
               <div class="cot-wiz-hint" id="cotWizDescHint">Se aplica sobre el subtotal (ítems + ruta).</div>
             </div>
+            {# 2026-10-27 (Daniel: «agregar 40% de margen»): margen sobre el costo de ESTA cotización. Parte en el global del cotizador (40%); solo el superadmin lo cambia. #}
+            <div class="cot-wiz-campo"><label for="cotWizMargen">Margen % sobre el costo
+              <small style="font-weight:400;color:#6b7280">(solo superadmin lo cambia)</small></label>
+              <div class="input-group input-group-sm">
+                <input id="cotWizMargen" type="number" min="0" max="300" step="0.5" class="form-control" value="40"
+                       {% if not permissions.superadmin %}disabled{% endif %} oninput="cotWizMargenCambio()" aria-label="Margen en porcentaje">
+                <span class="input-group-text">%</span>
+              </div>
+              <div class="cot-wiz-hint" id="cotWizMargenHint">Precio del ítem = costo × (1 + margen). Hoy el margen general es 40%.</div></div>
             <div class="cot-wiz-campo full"><label>Observaciones (se visualizará en el PDF)</label>
               <textarea id="cotWizNotas" class="form-control" rows="1"
                         placeholder="Ej: Precios sujetos a disponibilidad"></textarea></div>

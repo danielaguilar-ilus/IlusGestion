@@ -61,6 +61,8 @@ function cotWizAbrir(editCid){
   document.getElementById('cotWizDescModo').value = 'pct';
   document.getElementById('cotWizDescValor').value = '0';
   cotWizDescModoCambio();
+  _WIZ.margenPropio = false; _WIZ.margenGlobal = 40;     // 2026-10-27: «Margen %» de la cotización (40 = el global hasta que se lea)
+  { const _mg = document.getElementById('cotWizMargen'); if (_mg) _mg.value = '40'; }
   _WIZ.garantiaHeaderPreexistente = false;
   _cotWizAplicarCandadoGarantia();
   document.getElementById('cotWizCostoRuta').value = '0';
@@ -154,6 +156,9 @@ async function _cotWizCargarEdicion(cid){
     document.getElementById('cotWizDescModo').value = c.descuento_tipo || 'pct';
     document.getElementById('cotWizDescValor').value = (c.descuento_tipo === 'monto') ? (c.descuento_monto || 0) : (c.descuento_pct || 0);
     cotWizDescModoCambio();
+    // 2026-10-27: el margen propio de la cotización (vacío/null = el global, que se muestra cuando llegan los precios).
+    _WIZ.margenPropio = (c.margen_pct !== null && c.margen_pct !== undefined && c.margen_pct !== '');
+    { const _mg = document.getElementById('cotWizMargen'); if (_mg && _WIZ.margenPropio) _mg.value = String(parseFloat(c.margen_pct)); }
     // 🔒 2026-09-26 (Daniel: "en las cotizaciones solo yo puedo aplicar
     // descuentos de garantías"): si esta cotización YA traía un descuento
     // de cabecera del 100% (o un MONTO fijo que ya cubría el subtotal
@@ -1525,6 +1530,29 @@ async function cotWizQuitar(i){
   await cotWizPrecios();
 }
 
+// 2026-10-27 (Daniel: «agregar 40% de margen»): «Margen %» de la cotización. Solo el superadmin lo cambia (el campo viene deshabilitado para los
+// demás y el servidor lo ignora). Sin tocarlo, la cotización usa el margen global del cotizador y no guarda nada propio.
+function _cotWizMargenPayload(){
+  const el = document.getElementById('cotWizMargen');
+  if (!el || el.disabled || !_WIZ || !_WIZ.margenPropio) return {};
+  const v = parseFloat(el.value);
+  return isFinite(v) ? {margen_pct: v} : {};
+}
+function _cotWizMargenGlobal(g){
+  if (!_WIZ || g === undefined || g === null) return;
+  _WIZ.margenGlobal = parseFloat(g);
+  const el = document.getElementById('cotWizMargen');
+  if (el && !_WIZ.margenPropio) el.value = String(_WIZ.margenGlobal);
+  const h = document.getElementById('cotWizMargenHint');
+  if (h) h.textContent = 'Precio del ítem = costo × (1 + margen). El margen general es ' + String(_WIZ.margenGlobal).replace('.', ',') + '%.';
+}
+function cotWizMargenCambio(){
+  if (!_WIZ) return;
+  const el = document.getElementById('cotWizMargen');
+  _WIZ.margenPropio = !!(el && String(el.value).trim() !== '' && parseFloat(el.value) !== _WIZ.margenGlobal);
+  cotWizPrecios();
+}
+
 let _wizPrecioSeq = 0;
 async function cotWizPrecios(){
   if (!_WIZ) return;
@@ -1535,13 +1563,14 @@ async function cotWizPrecios(){
   try{
     const r = await fetch('/tickets/api/cotizaciones/preview-precio', {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
+      body: JSON.stringify(Object.assign({
         tipo_servicio: _WIZ.tipo,
         items: _WIZ.items.map(it => ({clase_producto: it.clase_producto, cantidad: it.qty}))
-      })
+      }, _cotWizMargenPayload()))
     });
     const d = await r.json();
     if (miSeq !== _wizPrecioSeq || !_WIZ) return;
+    _cotWizMargenGlobal(d.margen_global);
     const precios = (d.ok && Array.isArray(d.precios)) ? d.precios : [];
     // Guarda el precio AUTOMÁTICO (calculado) de cada ítem; el render local
     // decide si mostrar ese o el precio_manual que el usuario haya escrito.
@@ -1915,6 +1944,7 @@ function cotWizResumen(){
         descuento_tipo: _desc.modo,
         descuento_pct: (_desc.modo === 'pct' ? _desc.valor : 0),
         descuento_monto: (_desc.modo === 'monto' ? Math.round(_desc.valor) : 0),
+        margen_pct: (function(){ const p = _cotWizMargenPayload(); return ('margen_pct' in p) ? p.margen_pct : (_WIZ.editCid ? '' : undefined); })(),
         costo_ruta: Math.max(parseInt(document.getElementById('cotWizCostoRuta').value, 10) || 0, 0),
         // 2026-07-24 (Daniel: checkbox "excluir costo de ruta... en caso
         // de que me soliciten comercial no incluirlo"): el monto de arriba

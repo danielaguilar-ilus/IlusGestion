@@ -2071,6 +2071,10 @@ def register_tickets_routes(app, ctx):
         # subtotal). Las cotizaciones viejas quedan 'pct' -> sin cambios.
         if "descuento_tipo" not in existentes:
             alters.append("ADD COLUMN descuento_tipo ENUM('pct','monto') NOT NULL DEFAULT 'pct'")
+        # 2026-10-27 (Daniel: «agregar 40% de margen» en el editor de cotización): margen propio de ESTA cotización. NULL (las viejas y
+        # las que no lo tocan) = el margen global del cotizador (tk_settings.cotiz_margen_pct, hoy 40): sus precios no cambian.
+        if "margen_pct" not in existentes:
+            alters.append("ADD COLUMN margen_pct DECIMAL(6,2) NULL")
         # 2026-07-22 (Cotizaciones v3, Daniel): tabla inteligente con
         # aprobación + edición auditada + borrado. editada_post_aprobacion
         # marca (sin JOIN al log) que una cotización YA aprobada fue editada
@@ -2921,6 +2925,49 @@ def register_tickets_routes(app, ctx):
     # de precio que usa el Cotizador, sin duplicar la fórmula.
     ctx["_tk_cotiz_pricing_config"] = _tk_cotiz_pricing_config
 
+    def _tk_cfg_margen(cfg, margen):
+        """La configuración de precios con el «Margen %» propio de la cotización (2026-10-27). margen None = el global, tal cual."""
+        if margen is None:
+            return cfg
+        try:
+            return dict(cfg, margen_pct=float(margen))
+        except (TypeError, ValueError):
+            return cfg
+
+    def _tk_margen_de(cid):
+        """El margen propio guardado en la cotización (None = usa el global). Nunca levanta: si la columna aún no existe, es el global."""
+        try:
+            r = mysql_fetchone("SELECT margen_pct FROM tk_cotizaciones WHERE id=%s", (cid,)) or {}
+            return None if r.get("margen_pct") is None else float(r["margen_pct"])
+        except Exception:
+            return None
+
+    def _tk_margen_in(d):
+        """(presente, valor): el «Margen %» de ESTA cotización que mandó el editor. Solo el superadministrador lo cambia: de cualquier otro
+        usuario se ignora (presente=False: la cotización conserva el suyo o el global). Vacío = None (vuelve al global). Rango 0–300; fuera de
+        rango o no numérico se ignora."""
+        if not isinstance(d, dict) or "margen_pct" not in d or not _tk_solo_superadmin():
+            return False, None
+        raw = d.get("margen_pct")
+        if raw in (None, ""):
+            return True, None
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            return False, None
+        if v != v or v < 0 or v > 300:
+            return False, None
+        return True, round(v, 2)
+
+    def _tk_margen_guardar(cid, presente, valor):
+        """Guarda el margen propio (best-effort: si falla, la cotización queda con el global y se avisa en el log)."""
+        if not presente:
+            return
+        try:
+            mysql_execute("UPDATE tk_cotizaciones SET margen_pct=%s WHERE id=%s", (valor, cid))
+        except Exception as e:
+            print(f"[tk-cotiz] margen_pct cid={cid}: {type(e).__name__}", flush=True)
+
     # ─────────────────────────────────────────────────────────────────
     #  Equivalente en UF del Total (2026-07-21, Daniel: "ese valor lo
     #  vamos a expresar en UF, a la UF actual... dividirlo para que eso
@@ -3175,7 +3222,7 @@ def register_tickets_routes(app, ctx):
 
         # Mano de obra por ítem (SIN transporte -- modelo Triple A, ver
         # cabecera de sección: la ruta es una línea separada de cabecera).
-        cfg = _tk_cotiz_pricing_config()
+        cfg = _tk_cfg_margen(_tk_cotiz_pricing_config(), _tk_margen_de(cid))   # 2026-10-27: margen propio de la cotización (None = global)
         # Escalabilidad (2026-07-22): cargar TODAS las tarifas de las clases
         # presentes en UNA query (batch) en vez de 1 query por ítem (N+1).
         # Una cotización de 200 ítems pasaba de 200 queries a 1.
@@ -3420,6 +3467,10 @@ def register_tickets_routes(app, ctx):
         if not isinstance(filas, list):
             return jsonify({"ok": False, "error": "items debe ser una lista"}), 400
         cfg = _tk_cotiz_pricing_config()
+        _margen_global = cfg.get("margen_pct")
+        _mg_ok, _mg_val = _tk_margen_in(d)   # 2026-10-27: solo el superadmin ve precios con otro margen (los demás, el global)
+        if _mg_ok and _mg_val is not None:
+            cfg = _tk_cfg_margen(cfg, _mg_val)
         out = []
         for f in filas:
             if not isinstance(f, dict):
@@ -3429,7 +3480,7 @@ def register_tickets_routes(app, ctx):
                 f.get("clase_producto"), tipo_servicio, f.get("cantidad"),
                 f.get("descuento_pct"), cfg)
             out.append(calc)
-        return jsonify({"ok": True, "precios": out})
+        return jsonify({"ok": True, "precios": out, "margen_global": _margen_global})
 
     @app.route("/tickets/api/cotizaciones/valido-hasta-sugerido", methods=["GET"])
     @_tickets_required
@@ -4251,7 +4302,7 @@ def register_tickets_routes(app, ctx):
             "       precio_unitario, subtotal, total "
             "FROM tk_cotizacion_items WHERE cotizacion_id=%s ORDER BY id", (cid,)) or []
 
-        cfg = _tk_cotiz_pricing_config()
+        cfg = _tk_cfg_margen(_tk_cotiz_pricing_config(), cot.get("margen_pct"))   # 2026-10-27: el margen propio de la cotización
         _clases_map_fn = ctx.get("_cat_clases_map")
         clases_map = {}
         if _clases_map_fn:
@@ -5069,6 +5120,7 @@ def register_tickets_routes(app, ctx):
             return jsonify({"ok": False, "error": "No se pudo crear la cotización"}), 500
         finally:
             conn.close()
+        _tk_margen_guardar(cot_id, *_tk_margen_in(d))   # 2026-10-27: «Margen %» propio (solo superadmin); el editor recalcula enseguida
 
         # 2026-07-15 (bug real encontrado en pruebas de estres -- Daniel pidio
         # "pruebas exhaustivas de trafico"): NO releer numero_cotizacion con
@@ -6153,6 +6205,7 @@ def register_tickets_routes(app, ctx):
         finally:
             conn.close()
 
+        _tk_margen_guardar(cid, *_tk_margen_in(d))   # 2026-10-27: «Margen %» propio (solo superadmin) ANTES de recalcular
         # CRÍTICO (revisión Fable 2026-07-22, mismo patrón "pool REPEATABLE
         # READ vs conexión separada" confirmado 3 veces en este proyecto):
         # la edición se commiteó en una conexión DIRECTA, pero recalcular lee
