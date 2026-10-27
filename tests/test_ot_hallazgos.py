@@ -41,6 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import ot_eventos as EV  # noqa: E402
 import ot_hallazgos as H  # noqa: E402
 import gestion_circular as GC  # noqa: E402  (26-oct: gestión circular)
+import hallazgos_sla as HS  # noqa: E402  (26-oct: SLA y trazabilidad)
 import ot_producto_estado as PE  # noqa: E402
 from tests._fuente_app import RAIZ, decoradores, fuente_constante, texto  # noqa: E402
 from tests._fuente_app import fuente_funcion as _fuente_funcion  # noqa: E402
@@ -3027,7 +3028,8 @@ class TestHallazgosFueraDeLaOT(unittest.TestCase):
         self.assertLess(per.index('id="ot2RepPeriodo"'), per.index("getElementById('ot2RepPeriodo')"), "el script corre con los campos ya dibujados")
 
     def test_la_pagina_pagina_como_etiquetas(self):
-        for t in ("Mostrando {{ desde }}–{{ hasta }} de {{ total }}", "Por página", "Anterior", "Página {{ pag }} de {{ paginas }}", "Siguiente"):
+        # 26-oct: el monitor tiene el MISMO pie que Retiros/Etiquetas (REGLA #4.3): Mostrando A–B de N · por página · Anterior / Página X de Y / Siguiente.
+        for t in ("Mostrando <strong>{{ desde }}–{{ hasta }}</strong> de <strong>{{ total }}</strong>", "por página", "Anterior", "Página {{ pag }} de {{ paginas }}", "Siguiente"):
             self.assertIn(t, self.PAGINA, t)
         self.assertIn("{% include 'ot2/_hallazgos.html' %}", self.PAGINA)
 
@@ -3380,86 +3382,155 @@ class TestFase1Resumen(unittest.TestCase):
 
 
 class TestFase1Bandeja(unittest.TestCase):
-    """`ot_hallazgos_pagina` y la página «Hallazgos» renderizada (H-15, H-18, H-26, H-28)."""
+    """`ot_hallazgos_pagina` y la página «Hallazgos» renderizada: el MONITOR con el lenguaje de Retiros (Daniel 26-oct: «algo parecido a la
+    página de Retiros, insisto» y «tablas amigables con filas informativas y una buena sensación de guía»). Conserva lo de la auditoría
+    Impeccable: serie vigente una sola vez (H-15), controles de 44 px y foco (H-18), selección en negro y no en rojo (H-26), error sin jerga (H-28)."""
 
-    def _llamar(self, equipos, args=None):
-        ots = [{"visita_id": 340, "numero_ot": "OT-2026-00340", "ot_estado": "programada", "cliente": "Juan Daniel Aguilar Tejera",
-                "n_abiertos": 3, "n_tomados": 0, "n_activos": 3, "ultimo": dt.datetime(2026, 10, 21, 19, 51)}]
+    ROW = {"id": 1, "visita_id": 340, "origen": "tarea", "referencia": "t1", "severidad": "falla", "titulo": "Banco: Falla", "detalle": "", "equipo_nombre": _BANCO,
+           "maquina_id": 9, "item_manual_id": None, "riesgo": 0, "n_fotos": 0, "fotos_json": None, "estado": "abierto", "detectado_por": "Lenin Urbina",
+           "detectado_en": dt.datetime(2026, 10, 21, 19, 51), "tomado_por": None, "tomado_en": None, "ot_seguimiento_id": None, "seguimiento_en": None,
+           "descartado_por": None, "descartado_en": None, "retirado_en": None, "min_desde": 180, "numero_ot": "OT-2026-00340", "ot_estado": "programada",
+           "cliente_id": 26, "cliente": "Juan Daniel Aguilar Tejera", "cliente_rut": "76123456-7", "seg_numero": None, "seg_estado": None,
+           "serie": "255470655-0696-1", "sku": "1129100696"}
+
+    def _trazabilidad(self, filas):
+        out = {}
+        for f in filas:
+            ctx = {"estado_ef": f["estado"], "tomado_por": f.get("tomado_por") or "", "valor": "", "seg": None, "ticket": None, "sols": [], "stock": {}}
+            out[f["id"]] = {"estado_ef": f["estado"], "reloj": HS.reloj({"estado_ef": f["estado"], "severidad": f["severidad"], "riesgo": f.get("riesgo"),
+                                                                       "detectado_en": dt.datetime(2026, 10, 21, 16, 51)}, dt.datetime(2026, 10, 22, 15, 0)),
+                            "recorrido": HS.recorrido(ctx), "siguiente": HS.siguiente(ctx), "valor": None, "ticket": None, "seg": None,
+                            "consumo_ot": {"n": 3.0, "valor": 44970, "con_costo": True}, "consumo_seg": None}
+        return out
+
+    def _llamar(self, filas, args=None, vencidos=()):
+        consultas = []
+
+        def _ver(sql, params):
+            s = " ".join(sql.split())
+            self.assertEqual(s.count("%s"), len(tuple(params or ())), "cada %s lleva su valor: " + s[:120])
+            consultas.append(s)
+            return s
+
+        def fetchone(sql, params=()):
+            s = _ver(sql, params)
+            if s.startswith("SELECT COUNT(*) AS n"):
+                return {"n": len(filas)}
+            if s.startswith("SELECT * FROM mant_visitas WHERE id=%s"):
+                return {"id": 340, "numero_ot": "OT-2026-00340", "cliente_id": 26, "estado": "programada"}
+            if s.startswith("SELECT razon_social FROM mant_clientes"):
+                return {"razon_social": "Juan Daniel Aguilar Tejera"}
+            raise AssertionError("consulta (uno) no prevista: " + s[:140])
 
         def fetchall(sql, params=()):
-            s = " ".join(sql.split())
-            if s.startswith("SELECT h.visita_id, v.numero_ot"):
-                return [dict(r) for r in ots]
-            if s.startswith("SELECT h.visita_id, h.maquina_id, h.item_manual_id, h.equipo_nombre, m.serie"):
-                return [dict(r) for r in equipos]
-            raise AssertionError("consulta no prevista: " + s[:140])
+            s = _ver(sql, params)
+            if s.startswith("SELECT h.id, h.visita_id, h.origen, h.referencia"):
+                return [dict(r) for r in filas]
+            if s.startswith("SELECT id, responsable_nombre FROM mant_visitas"):
+                return [{"id": 340, "responsable_nombre": "Aarón Rojas"}]
+            raise AssertionError("consulta (todos) no prevista: " + s[:140])
         visto = {}
 
         def render(plantilla, **kw):
             visto["plantilla"], visto["ctx"] = plantilla, kw
             return "html"
-        amb = cargar(["ot_hallazgos_pagina", "_hall_cuando"], constantes=("_HALL_PAG_FILTROS",), extra={
-            "_oh": H, "request": types.SimpleNamespace(args=dict(args or {})), "_hall_ok": lambda: True, "mysql_fetchall": fetchall,
-            "mysql_fetchone": lambda sql, params=(): {"id": 340, "numero_ot": "OT-2026-00340"}, "_puede_ot_accion": lambda *a, **k: True,
-            "g": types.SimpleNamespace(user={}), "_hall_contexto_ficha": lambda vid, v: None, "_hall_n_sin_gestionar": lambda: 3,
+        amb = cargar(["ot_hallazgos_pagina", "_hall_cuando", "_hall_in"], constantes=("_HALL_PAG_FILTROS", "_HALL_F_A_VISTA"), extra={
+            "_oh": H, "_hs": HS, "_gc": GC, "request": types.SimpleNamespace(args=dict(args or {})), "_hall_ok": lambda: True,
+            "mysql_fetchall": fetchall, "mysql_fetchone": fetchone, "_puede_ot_accion": lambda *a, **k: True, "g": types.SimpleNamespace(user={}),
+            "_hall_contexto_ficha": lambda vid, v: None, "_hall_n_sin_gestionar": lambda: 3, "_ot_resp_ok": lambda: True,
+            "_hall_monitor_kpis": lambda: {"sin_gestionar": 3, "graves": 1, "tomados": 0, "con_ot": 0, "descartados": 0, "sin_foto": 0, "todos": 3},
+            "_hall_vencidos_ids": lambda: set(vencidos), "_hall_trazabilidad": self._trazabilidad,
             "render_template": render, "chile_fmt_filter": lambda v, f="%d/%m/%Y %H:%M": v.strftime(f), "print": lambda *a, **k: None})
         amb["ot_hallazgos_pagina"]()
         self.assertEqual(visto["plantilla"], "ot2/hallazgos.html")
+        visto["ctx"]["consultas"] = consultas
         return visto["ctx"]
 
-    def test_h15_la_serie_sale_una_sola_vez_y_es_la_vigente_en_cada_ot_de_la_bandeja(self):
-        ctx = self._llamar([
-            {"visita_id": 340, "maquina_id": 10, "item_manual_id": None, "equipo_nombre": _DYNAMIS, "serie": "255470655-A023-1"},
-            {"visita_id": 340, "maquina_id": 10, "item_manual_id": None, "equipo_nombre": _DYNAMIS, "serie": "255470655-A023-1"},
-            {"visita_id": 340, "maquina_id": 9, "item_manual_id": None, "equipo_nombre": _BANCO, "serie": "255470655-0696-1"},
-            {"visita_id": 340, "maquina_id": 12, "item_manual_id": None, "equipo_nombre": _KAIROS, "serie": "255470655-055555555tt518-1"},
-            {"visita_id": 340, "maquina_id": None, "item_manual_id": 4, "equipo_nombre": "Stair Climber DSC6, LED Console (SKU DSC6)", "serie": None}])
-        equipos = ctx["filas"][0]["equipos"]
-        self.assertEqual(equipos, [
-            _DYNAMIS, _BANCO,
-            "ILUS Kairos Row Machine (SKU 1121100518) · S/N 255470655-055555555tt518-1 (al reportar: S/N 255470655-0518-1)",
-            "Stair Climber DSC6, LED Console (SKU DSC6)"])
-        self.assertEqual(" ".join(equipos).count("S/N 255470655-A023-1"), 1, "antes: «· S/N 255470655-A023-1 · S/N 255470655-A023-1»")
-        self.assertEqual(ctx["filas"][0]["ultimo_txt"], "21/10/2026 19:51", "H-24: con año")
+    def test_h15_la_serie_sale_una_sola_vez_y_es_la_vigente(self):
+        # El nombre guardado trae la serie de CUANDO se reportó; la fila muestra la vigente de la ficha, una sola vez.
+        fila = dict(self.ROW, equipo_nombre="ILUS Kairos Row Machine (SKU 1121100518) · S/N 255470655-0518-1", serie="255470655-055555555tt518-1")
+        ctx = self._llamar([fila])
+        x = ctx["items"][0]
+        self.assertEqual(x["equipo"], "ILUS Kairos Row Machine (SKU 1121100518)")
+        self.assertEqual(x["serie"], "255470655-055555555tt518-1", "la vigente de la ficha, no la de cuando se reportó")
+        self.assertNotIn("S/N", x["equipo"])
+        self.assertEqual(x["reportado"], "21/10/2026 19:51", "H-24: con año")
 
-    def _pagina(self, error=False, sel=340, ots=None):
+    def test_cada_fila_trae_quien_que_ot_cliente_plazo_guia_y_consumo(self):
+        ctx = self._llamar([self.ROW])
+        x = ctx["items"][0]
+        self.assertEqual((x["reporto"], x["numero_ot"], x["cliente"], x["cliente_rut"], x["responsable_ot"]),
+                         ("Lenin Urbina", "OT-2026-00340", "Juan Daniel Aguilar Tejera", "76123456-7", "Aarón Rojas"))
+        self.assertEqual(x["sev_texto"], "Falla")
+        self.assertIn("Sin tomar", x["reloj"]["pill"])
+        self.assertEqual(x["semaforo"], "rojo")
+        self.assertEqual(x["siguiente"]["accion"], "tomar")
+        self.assertEqual([p["clave"] for p in x["recorrido"]], ["atencion", "valor", "ot", "ticket", "abastecimiento", "bodega", "consumo"])
+        self.assertEqual((x["consumo_ot_n"], x["consumo_ot_valor"]), ("3", "$44.970"), "el consumo de la OT (plata: solo gestión)")
+        self.assertIn("Plazo vencido", ctx["vistas"].values())
+        self.assertEqual(ctx["kpis"]["vencidos"], 0)
+
+    def test_la_vista_vencidos_filtra_por_los_ids_calculados_con_el_reloj_de_horas_habiles(self):
+        ctx = self._llamar([self.ROW], args={"vista": "vencidos"}, vencidos=(1, 7))
+        self.assertEqual(ctx["kpis"]["vencidos"], 2)
+        self.assertTrue(any("h.id IN (%s,%s)" in c for c in ctx["consultas"]))
+        vacio = self._llamar([], args={"vista": "vencidos"}, vencidos=())
+        self.assertTrue(any("1=0" in c for c in vacio["consultas"]), "sin vencidos no se trae nada (y no se rompe)")
+        # En las demás vistas los vencidos suben primero (y los marcadores cuadran con sus valores: lo vigila _ver)
+        ctx = self._llamar([self.ROW], vencidos=(1,))
+        self.assertTrue(any("(h.id IN (%s)) DESC" in c for c in ctx["consultas"]))
+
+    def test_filtros_de_busqueda_gravedad_y_tecnico_van_parametrizados(self):
+        ctx = self._llamar([self.ROW], args={"q": "Aurum'; DROP TABLE x;--", "sev": "falla", "tec": "Lenin", "pp": "10", "p": "3", "vista": "todos"})
+        c = [x for x in ctx["consultas"] if x.startswith("SELECT h.id")][0]
+        self.assertNotIn("DROP", c, "lo que escribe la persona nunca entra al SQL: va como parámetro")
+        self.assertIn("LIKE %s", c)
+        self.assertEqual(ctx["por_pag"], 10)
+        self.assertEqual(self._llamar([self.ROW], args={"sev": "inventada"})["sev"], "", "una gravedad que no existe se ignora")
+        self.assertEqual(self._llamar([self.ROW], args={"vista": "hackeada"})["vista"], "sin_gestionar")
+        self.assertEqual(self._llamar([self.ROW], args={"f": "todos"})["vista"], "todos", "los enlaces viejos (?f=) siguen funcionando")
+
+    def _pagina(self, error=False, sel=340, items=None):
         e = escena_bancos()
-        filas = ots if ots is not None else [
-            {"visita_id": 340, "numero_ot": "OT-2026-00340", "cliente": "Juan Daniel Aguilar Tejera", "n_abiertos": 3, "n_tomados": 0, "n_activos": 5,
-             "ultimo_txt": "21/10/2026 19:51", "equipos": [_BANCO, _DYNAMIS]},
-            {"visita_id": 339, "numero_ot": "OT-2026-00339", "cliente": None, "n_abiertos": 0, "n_tomados": 1, "n_activos": 1, "ultimo_txt": "21/10/2026 16:47",
-             "equipos": []}]
         env = _entorno_pagina()
+        fila = dict(self.ROW)
+        its = items
+        if its is None:
+            ctx0 = self._llamar([fila, dict(fila, id=2, titulo="Otro: Alerta", severidad="alerta", visita_id=339, numero_ot="OT-2026-00339", cliente=None)])
+            its = ctx0["items"]
         return env.get_template("ot2/hallazgos.html").render(
-            filas=filas, total=len(filas), pag=1, paginas=1, por_pag=20, desde=1, hasta=len(filas), filtro="sin_gestionar",
-            filtros={"sin_gestionar": "Sin gestionar", "en_curso": "Sin gestionar o con el caso tomado", "todos": "Todos"}, sel=sel,
-            ot_sel={"id": 340, "numero_ot": "OT-2026-00340", "url": "/ot/340"} if sel else None, hallazgos=e.ctx() if sel else None, hz_pagina=True,
-            error=error, n_sin_gestionar=3)
+            items=its, total=len(its), pag=1, paginas=1, por_pag=20, desde=1, hasta=len(its), vista="sin_gestionar", vistas=H.VISTAS_MONITOR, q="", sev="", tec="",
+            severidades=H.SEVERIDADES, kpis={"sin_gestionar": 2, "vencidos": 1, "graves": 1, "tomados": 0, "con_ot": 0, "descartados": 0}, sla=HS.config(),
+            sel=sel, ot_sel={"id": 340, "numero_ot": "OT-2026-00340", "url": "/ot/340", "cliente": "Juan Daniel Aguilar Tejera", "estado": "programada"} if sel else None,
+            hallazgos=e.ctx() if sel else None, hz_pagina=True, error=error, n_sin_gestionar=2)
 
-    def test_h18_la_bandeja_es_una_lista_real_con_el_enlace_adentro(self):
+    def test_h18_el_monitor_es_una_tabla_con_una_fila_por_hallazgo_y_su_guia(self):
         html = self._pagina()
-        self.assertIn('<ul class="hzp-lista">', html)
-        self.assertEqual(len(re.findall(r'<li>\s*<a class="hzp-ot', html)), 2, "cada OT es un <li> con su <a> adentro")
-        self.assertNotIn('role="listitem"', html, "un role=listitem sobre un <a> le quita al lector de pantalla que es un enlace")
-        self.assertEqual(html.count('aria-current="true"'), 2, "el filtro activo y la OT elegida, y ninguna otra")
-        elegida = re.search(r'<a class="hzp-ot[^"]*"[^>]*aria-current="true"', html)
-        self.assertTrue(elegida and "on" in elegida.group(0).split('class="')[1].split('"')[0].split())
+        self.assertIn('id="hzTabla"', html)
+        self.assertEqual(len(re.findall(r'<tr class="rm-row [^"]*hzm-row', html)), 2, "una fila por hallazgo")
+        self.assertEqual(len(re.findall(r'<tr class="hzm-guia-row"', html)), 2, "y debajo, SIEMPRE a la vista, su guía de pasos (nada plegado)")
+        self.assertEqual(html.count('<ol class="hzm-guia"'), 2)
+        self.assertEqual(len(re.findall(r'<li class="hz-rec-p ', html.split('<ol class="hzm-guia"')[1].split("</ol>")[0])), 7, "los 7 pasos del recorrido")
+        txt = _texto_visible(html)
+        for t in ("Ahora toca", "Sin tomar", "Recorrido de falla", "Abastecimiento", "Bodega", "Consumo de la OT", "Lenin Urbina", "OT-2026-00340",
+                  "Juan Daniel Aguilar Tejera", "Responsable de la OT: Aarón Rojas", "Plazo vencido"):
+            self.assertIn(t, txt, t)
+        self.assertNotIn("<details", html.split('<div id="hzpTarjeta">')[0], "Daniel 26-oct: tarjetas siempre abiertas")
+        self.assertEqual(html.count('aria-current="true"'), 1, "solo el chip de la vista activa")
 
-    def test_h15_cada_equipo_de_una_ot_es_una_etiqueta_propia(self):
+    def test_h15_la_fila_dice_el_equipo_y_su_serie_sin_cortarlos(self):
         html = self._pagina()
-        etiquetas = re.findall(r'<span class="hzp-eq">([^<]+)</span>', html)
-        self.assertEqual(etiquetas, [_BANCO, _DYNAMIS])
-        self.assertNotIn(" · S/N 255470655-A023-1 · S/N", html)
+        self.assertIn("S/N 255470655-0696-1", _texto_visible(html))
+        self.assertNotIn("text-overflow", html, "REGLA #15: nada de nombres cortados")
+        self.assertNotIn("line-clamp", html)
 
-    def test_h26_la_ot_elegida_se_marca_en_negro_no_en_rojo(self):
+    def test_h26_la_fila_elegida_se_marca_en_negro_no_en_rojo(self):
         html = self._pagina()
         css = html[html.index("<style>"):html.index("</style>")]
-        elegida = _regla_css(css, ".hzp-ot.on")
+        elegida = _regla_css(css, ".hzm-row.is-sel")
         self.assertIn("#0a0a0a", elegida)
         self.assertNotRegex(elegida, r"#dc2626|#fca5a5|#ef4444|red", "el rojo es riesgo y error: ya no marca una selección")
-        self.assertIn("border-left-color:#f59e0b", _regla_css(css, ".hzp-ot.abiertos"), "la franja de la izquierda conserva el color del estado")
-        self.assertNotIn("border-color:#dc2626", css)
-        self.assertNotIn("border-left-color", elegida, "elegir una OT no le cambia la franja de estado")
+        self.assertIn('hzm-row is-sel', html)
 
     def test_h28_el_error_dice_que_hacer_sin_jerga(self):
         html = self._pagina(error=True)
@@ -3469,15 +3540,24 @@ class TestFase1Bandeja(unittest.TestCase):
         self.assertIn('role="alert"', html)
         self.assertNotIn("No pudimos cargar", self._pagina(error=False))
 
-    def test_h18_los_controles_de_la_bandeja_miden_44_px_y_tienen_foco_visible(self):
+    def test_h18_los_controles_miden_44_px_y_el_celular_no_se_desborda(self):
         html = self._pagina()
         css = html[html.index("<style>"):html.index("</style>")]
-        for sel in (".hzp-f", ".hzp-pp select", ".hzp-nav .btn", ".hzp-btn"):
-            self.assertRegex(_regla_css(css, sel), r"min-height:44px", sel)
         self.assertRegex(_regla_css(css, ".hzp-sel-cab > span > a"), r"min-height:44px", "el enlace «OT-…» medía 20 px")
-        self.assertEqual(html.count('class="btn btn-sm btn-outline-secondary hzp-btn"'), 2, "«Volver a las OT» y «Abrir la OT»")
-        self.assertRegex(css, r"\.hzp-ot:focus-visible[^{]*\{outline:3px solid #1d4ed8")
-        self.assertRegex(_regla_css(css, ".hzp-pp select"), r"font-size:16px", "«Por página»: además de 44 px, 16 px para que iOS no haga zoom")
+        base = _leer("static/retiros_monitor.css")
+        for sel in (".rm-btn", ".rm-select", ".rm-chip"):
+            self.assertRegex(_regla_css(base, sel), r"min-height:44px", sel + " (los controles de Retiros)")
+        self.assertIn("table-mobile-cards", html, "en el celular cada fila se ve como tarjeta")
+        self.assertRegex(css, r"@media \(max-width:768px\)\{\.hzm-guia\{grid-template-columns:1fr 1fr\}")
+        self.assertRegex(_regla_css(_leer("static/inquietudes.css"), ".rm-toolbar .rm-tools input.rm-select"), r"min-width")
+
+    def test_solo_gestion_y_sin_plata_para_un_tecnico(self):
+        self.assertIn("@_no_tecnico", decoradores("ot_hallazgos_pagina"))
+        self.assertIn("@_mant_required", decoradores("ot_hallazgos_pagina"))
+        for f in ("_hall_trazabilidad", "_hall_vencidos_ids"):
+            self.assertNotIn("_send_ilus_email", _fuente_funcion(f), "calcular no escribe ni avisa a nadie")
+            for malo in ("INSERT", "UPDATE", "DELETE"):
+                self.assertNotIn(malo, _fuente_funcion(f), f + " es SOLO LECTURA")
 
 
 def _entorno_pagina():

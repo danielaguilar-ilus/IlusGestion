@@ -79,6 +79,7 @@ import plantillas_serie_gps as _psg  # 2026-10-21 (REGLA #39): N° de serie + GP
 import ot_hallazgos as _oh    # 2026-10-21 (REGLA #38): hallazgos de la OT (alerta, «tomar el caso» y OT de seguimiento): reglas puras con pruebas
 import maquina_historia as _mh    # 2026-10-21: Historia del equipo (hoja de vida unificada: línea de tiempo sin duplicados, por rol): reglas puras con pruebas
 import repuestos_respuesta as _rresp    # 2026-10-21: solicitud de repuesto — dueño al nacer, reloj de primera respuesta, avisos y tiempos (módulo puro con pruebas)
+import hallazgos_sla as _hs    # 2026-10-26: SLA y trazabilidad de los hallazgos (plazos, recorrido de 7 pasos, abastecimiento, bodega, consumo de la OT)
 import gestion_circular as _gc    # 2026-10-26: gestión circular de hallazgos e inquietudes (editar, borrar, valorizar, ticket, repuesto)
 import inquietudes as _iq    # 2026-10-26: Inquietudes de clientes — SLA en horas hábiles, semáforo y recorrido paso a paso (módulo puro con pruebas)
 import fedex_labels as _fxlabels    # parser puro de etiquetas FedEx (testeable)
@@ -170503,7 +170504,8 @@ def _hall_contexto_ficha(vid, v):
     try:
         if _es_rol_tecnico() or not _hall_ok():
             return None
-        items = _gc_enriquecer_hallazgos(vid, v, _hall_items(vid, _hall_listar(vid)))   # 26-oct: gestión circular
+        filas_h = _hall_listar(vid)
+        items = _gc_enriquecer_hallazgos(vid, v, _hall_items(vid, filas_h), filas_h)   # 26-oct: gestión circular + SLA y trazabilidad
         activos = sorted([i for i in items if not i["retirado"]], key=lambda i: (i["sev_orden"], i["id"]))
         retirados = [i for i in items if i["retirado"]]
         origen = None
@@ -170624,19 +170626,214 @@ def ot_api_hallazgos_contador():
 
 
 _HALL_PAG_FILTROS = {"sin_gestionar": "Sin gestionar", "en_curso": "Sin gestionar o con el caso tomado", "todos": "Todos"}
+# Los enlaces viejos (?f=…) siguen funcionando: cada filtro de antes cae en su vista del monitor nuevo.
+_HALL_F_A_VISTA = {"sin_gestionar": "sin_gestionar", "en_curso": "sin_gestionar", "todos": "todos"}
+_HALL_REF_SOL = re.compile(r":rep:s(\d+)$")
+_HALL_REF_LOTE = re.compile(r":rep:([0-9a-f]{8})$")
+
+
+def _hall_in(ids):
+    return ",".join(["%s"] * len(ids))
+
+
+def _hall_trazabilidad(filas):
+    """SLA y TRAZABILIDAD (Daniel 26-oct: «implementar los SLA y poder tener trazabilidad y considerar varios puntos de salida: OT, Tickets,
+    Abastecimiento y almacenamiento de repuestos. Y el consumo de las OT»). Para una lista de hallazgos (filas de mant_ot_hallazgos con
+    seg_numero y seg_estado) arma, con UNAS POCAS consultas por lote, lo que muestran el monitor y la tarjeta de gestión:
+        {hallazgo_id: {reloj, recorrido[7 pasos], siguiente, estado_ef, consumo_ot, valor, sols}}.
+    Lee: la gestión circular (ticket, valorización, solicitud), las solicitudes de repuesto ligadas (por la gestión, por la solicitud del propio
+    técnico o por su lote), la existencia física en bodega, los tickets y lo que consumió cada OT. SOLO LECTURA. Es plata: solo gestión (REGLAS
+    #19/#26: las dos páginas que la usan son @_no_tecnico y el contexto no se arma para un técnico). Nunca levanta: ante un fallo, lo que falte se
+    dibuja como «sin dato» y el resto sigue."""
+    filas = [dict(f) for f in (filas or []) if f.get("id")]
+    if not filas:
+        return {}
+    ids = [int(f["id"]) for f in filas]
+    ahora = _inq_ahora()
+    # 1) La gestión circular: ticket, valorización, solicitud de repuesto y cuándo se levantó el ticket.
+    extra = _gc_extra_de(_gc.ENTIDAD_HALLAZGO, ids)
+    tk_en = {}
+    if any(e.get("ticket_id") for e in extra.values()):
+        try:
+            tk_en = {int(r["entidad_id"]): r["t"] for r in (mysql_fetchall(
+                "SELECT entidad_id, MIN(creado_en) AS t FROM mant_gestion_actividad WHERE entidad='hallazgo' AND accion='ticket' "
+                " AND entidad_id IN (" + _hall_in(ids) + ") GROUP BY entidad_id", tuple(ids)) or [])}
+        except Exception as e:
+            print(f"[hall] traz ticket_en: {type(e).__name__}", flush=True)
+    # 2) Las solicitudes de repuesto de cada hallazgo (por la gestión, por la solicitud del técnico «s123» o por su lote «ab12cd34»).
+    sol_ids = {}
+    lotes = []
+    for f in filas:
+        hid = int(f["id"])
+        acum = sol_ids.setdefault(hid, set())
+        for x in str((extra.get(hid) or {}).get("repuesto_sol_ids") or "").split(","):
+            if x.strip().isdigit():
+                acum.add(int(x))
+        ref = str(f.get("referencia") or "")
+        m = _HALL_REF_SOL.search(ref)
+        if m:
+            acum.add(int(m.group(1)))
+        else:
+            m = _HALL_REF_LOTE.search(ref)
+            if m and f.get("visita_id"):
+                lotes.append((hid, int(f["visita_id"]), m.group(1)))
+    if lotes:
+        try:
+            cond = " OR ".join(["(visita_id=%s AND lote_id LIKE %s)"] * len(lotes))
+            par = []
+            for _h, v_, pref in lotes:
+                par += [v_, pref + "%"]
+            for r in (mysql_fetchall("SELECT id, visita_id, lote_id FROM mant_ot_repuesto_solicitudes WHERE " + cond, tuple(par)) or []):
+                for h_, v_, pref in lotes:
+                    if v_ == int(r["visita_id"]) and str(r.get("lote_id") or "").startswith(pref):
+                        sol_ids[h_].add(int(r["id"]))
+        except Exception as e:
+            print(f"[hall] traz lotes: {type(e).__name__}", flush=True)
+    todas = sorted({i_ for acum in sol_ids.values() for i_ in acum})
+    sols = {}
+    if todas:
+        base = ("SELECT id, visita_id, estado, cantidad, repuesto_nombre, repuesto_stock_id, ticket_id, created_at, validado_at, pedido_at, "
+                "recibido_at, instalado_at{c} FROM mant_ot_repuesto_solicitudes WHERE id IN (" + _hall_in(todas) + ")")
+        try:
+            rows = mysql_fetchall(base.format(c=", costo_unitario"), tuple(todas)) or []
+        except Exception:
+            try:
+                rows = mysql_fetchall(base.format(c=""), tuple(todas)) or []
+            except Exception as e:
+                print(f"[hall] traz solicitudes: {type(e).__name__}", flush=True)
+                rows = []
+        sols = {int(r["id"]): dict(r) for r in rows}
+    # 3) Almacenamiento: existencia física y ubicación de cada repuesto de la bodega que se pidió.
+    stock = {}
+    sids = sorted({int(x["repuesto_stock_id"]) for x in sols.values() if x.get("repuesto_stock_id")})
+    if sids:
+        try:
+            stock = {int(r["id"]): {"cantidad": r.get("cantidad"), "ubicacion": r.get("codigo")} for r in (mysql_fetchall(
+                "SELECT s.id, s.cantidad, u.codigo FROM mant_repuestos_stock s LEFT JOIN mant_repuestos_ubicaciones u ON u.id = s.ubicacion_id "
+                " WHERE s.id IN (" + _hall_in(sids) + ")", tuple(sids)) or [])}
+        except Exception as e:
+            print(f"[hall] traz stock: {type(e).__name__}", flush=True)
+    # 4) Tickets (el de la gestión circular o el que la solicitud de repuesto ya tiene).
+    tids = sorted({int(e["ticket_id"]) for e in extra.values() if e.get("ticket_id")} | {int(x["ticket_id"]) for x in sols.values() if x.get("ticket_id")})
+    tickets = {}
+    if tids:
+        try:
+            tickets = {int(r["id"]): dict(r) for r in (mysql_fetchall(
+                "SELECT id, numero_ticket, estado FROM tk_tickets WHERE id IN (" + _hall_in(tids) + ")", tuple(tids)) or [])}
+        except Exception as e:
+            print(f"[hall] traz tickets: {type(e).__name__}", flush=True)
+    # 5) El consumo de cada OT (la del hallazgo y su OT de seguimiento): lo que se instaló.
+    vids = sorted({int(f["visita_id"]) for f in filas if f.get("visita_id")} | {int(f["ot_seguimiento_id"]) for f in filas if f.get("ot_seguimiento_id")})
+    cons_por_ot = {}
+    if vids:
+        base = "SELECT visita_id, cantidad{c} FROM mant_ot_repuesto_solicitudes WHERE estado='instalado' AND visita_id IN (" + _hall_in(vids) + ")"
+        try:
+            rows = mysql_fetchall(base.format(c=", costo_unitario"), tuple(vids)) or []
+        except Exception:
+            try:
+                rows = mysql_fetchall(base.format(c=""), tuple(vids)) or []
+            except Exception as e:
+                print(f"[hall] traz consumo: {type(e).__name__}", flush=True)
+                rows = []
+        agrup = {}
+        for r in rows:
+            agrup.setdefault(int(r["visita_id"]), []).append(r)
+        cons_por_ot = {v_: _hs.consumo_ot(rs) for v_, rs in agrup.items()}
+    sin_consumo = _hs.consumo_ot([])
+    # 6) Armado por hallazgo.
+    out = {}
+    for f in filas:
+        hid = int(f["id"])
+        e = extra.get(hid) or {}
+        ss = [sols[i_] for i_ in sorted(sol_ids.get(hid, ())) if i_ in sols]
+        estado_ef, caido = _oh.estado_efectivo(f, f.get("seg_numero"), f.get("seg_estado"))
+        seg = None
+        if f.get("ot_seguimiento_id") and not caido:
+            seg = {"id": int(f["ot_seguimiento_id"]), "numero": f.get("seg_numero") or "", "cerrada": _oh.seguimiento_cerrado(f.get("seg_estado"))}
+        tid = e.get("ticket_id") or next((x["ticket_id"] for x in ss if x.get("ticket_id")), None)
+        tk = None
+        if tid:
+            t = tickets.get(int(tid)) or {}
+            est_t = str(t.get("estado") or "")
+            tk = {"id": int(tid), "numero": t.get("numero_ticket") or f"Ticket #{int(tid)}", "cerrado": est_t in ("resolved", "closed", "cancelado"),
+                  "estado_txt": est_t.replace("_", " ")}
+        val = _gc.valor_vista(e) if e else None
+        # «Repuesto en marcha» = la primera vez que la gestión actuó sobre lo pedido (no cuando el técnico lo pidió).
+        accion_rep = e.get("repuesto_en") or _hs._min_fecha(*[x.get(k) for x in ss for k in ("validado_at", "pedido_at", "recibido_at", "instalado_at")])
+        fila_reloj = {
+            "estado_ef": estado_ef, "severidad": f.get("severidad"), "riesgo": f.get("riesgo"),
+            "detectado_en": _otrep_a_chile(f.get("detectado_en")), "tomado_en": _otrep_a_chile(f.get("tomado_en")),
+            "descartado_en": _otrep_a_chile(f.get("descartado_en")), "seguimiento_en": _otrep_a_chile(f.get("seguimiento_en")),
+            "ticket_en": _otrep_a_chile(tk_en.get(hid)), "repuesto_en": _otrep_a_chile(accion_rep),
+            "seg_cerrada": bool(seg and seg["cerrada"])}
+        ctx = {"estado_ef": estado_ef, "tomado_por": f.get("tomado_por") if estado_ef == _oh.EST_TOMADO else "", "valor": val["total"] if val else "",
+               "seg": seg, "ticket": tk, "sols": ss, "stock": stock}
+        out[hid] = {
+            "estado_ef": estado_ef, "caido": bool(caido), "reloj": _hs.reloj(fila_reloj, ahora, _otrep_feriados),
+            "recorrido": _hs.recorrido(ctx), "siguiente": _hs.siguiente(ctx), "valor": val, "ticket": tk, "seg": seg,
+            "sols": ss, "consumo": _hs.consumo(ss),
+            "consumo_ot": cons_por_ot.get(int(f["visita_id"]), sin_consumo) if f.get("visita_id") else sin_consumo,
+            "consumo_seg": (cons_por_ot.get(seg["id"], sin_consumo) if seg else None)}
+    return out
+
+
+def _hall_vencidos_ids(limite=1500):
+    """Ids de los hallazgos con el PLAZO VENCIDO (para tomarlo o para darle salida). Se calcula con el reloj de hora hábil (Python), no en SQL:
+    solo mira los que todavía están en marcha (sin gestionar o con el caso tomado). set() si algo falla."""
+    if not _hall_ok():
+        return set()
+    try:
+        ab = _oh.sql_abierto("h", "s")
+        filas = [dict(r) for r in (mysql_fetchall(
+            "SELECT h.id, h.visita_id, h.referencia, h.severidad, h.riesgo, h.estado, h.detectado_en, h.tomado_por, h.tomado_en, h.descartado_en, "
+            "       h.seguimiento_en, h.ot_seguimiento_id, s.numero_ot AS seg_numero, s.estado AS seg_estado "
+            "  FROM mant_ot_hallazgos h LEFT JOIN mant_visitas s ON s.id = h.ot_seguimiento_id "
+            " WHERE h.retirado_en IS NULL AND (" + ab + " OR h.estado='tomado') ORDER BY h.detectado_en LIMIT %s", (int(limite),)) or [])]
+        traz = _hall_trazabilidad(filas)
+        return {hid for hid, t in traz.items() if t["reloj"]["vencida"]}
+    except Exception as e:
+        print(f"[hall] vencidos: {type(e).__name__}", flush=True)
+        return set()
+
+
+def _hall_monitor_kpis():
+    """Las tarjetas de arriba (como Retiros): cuántos hay en cada vista, en UNA consulta. {} si falla."""
+    try:
+        ab = _oh.sql_abierto("h", "s")
+        r = mysql_fetchone(
+            "SELECT SUM(CASE WHEN " + ab + " THEN 1 ELSE 0 END) AS sin_gestionar, "
+            "       SUM(CASE WHEN " + _oh.sql_vista("tomados") + " THEN 1 ELSE 0 END) AS tomados, "
+            "       SUM(CASE WHEN " + _oh.sql_vista("con_ot") + " THEN 1 ELSE 0 END) AS con_ot, "
+            "       SUM(CASE WHEN h.estado='descartado' THEN 1 ELSE 0 END) AS descartados, "
+            "       SUM(CASE WHEN " + ab + " AND (h.riesgo=1 OR h.severidad IN ('falla','fuera_servicio','baja')) THEN 1 ELSE 0 END) AS graves, "
+            "       SUM(CASE WHEN " + ab + " AND h.n_fotos=0 AND h.origen<>'tarea' THEN 1 ELSE 0 END) AS sin_foto, "
+            "       COUNT(*) AS todos "
+            "  FROM mant_ot_hallazgos h LEFT JOIN mant_visitas s ON s.id = h.ot_seguimiento_id WHERE h.retirado_en IS NULL") or {}
+        return {k: int(r.get(k) or 0) for k in ("sin_gestionar", "tomados", "con_ot", "descartados", "graves", "sin_foto", "todos")}
+    except Exception as e:
+        print(f"[hall] monitor kpis: {type(e).__name__}", flush=True)
+        return {}
 
 
 @app.route("/ot/hallazgos", methods=["GET"])
 @_mant_required
 @_no_tecnico
 def ot_hallazgos_pagina():
-    """2026-10-21 (Daniel: «saca la tarjeta grande de los hallazgos… colocar una parte de hallazgos para que lo veamos todos»): la bandeja
-    de hallazgos de TODAS las OT. Arriba, las OT con hallazgos (paginadas, REGLA #4.3); abajo, la tarjeta de la OT elegida, agrupada por
-    equipo + N° de serie, con «Tomar el caso», «Levantar OT de seguimiento», «Descartar» y «Reabrir» (las mismas rutas de siempre).
-    Solo gestión: nunca un técnico (REGLAS #19/#26)."""
-    filtro = request.args.get("f") or "sin_gestionar"
-    if filtro not in _HALL_PAG_FILTROS:
-        filtro = "sin_gestionar"
+    """MONITOR de hallazgos con el lenguaje de Retiros (Daniel 26-oct: «quisiera verla como el módulo de retiros: identificar quién
+    solicita, de qué OT, de qué cliente, todo bien trazable» y «tablas amigables con filas informativas y una buena sensación de guía»).
+    Tarjetas KPI, buscador, chips por estado y una tabla con UNA FILA POR HALLAZGO: semáforo del PLAZO (SLA en horas hábiles), gravedad,
+    qué pasó, quién lo reportó y cuándo, OT y cliente (con el responsable y el consumo de la OT), equipo con N° de serie, quién lo tomó,
+    «lo que toca ahora» (la guía) y el recorrido de salidas: OT de seguimiento · ticket · abastecimiento · bodega · consumo.
+    Abajo, la tarjeta de gestión de la OT elegida (la misma de siempre). Paginado (REGLA #4.3). Solo gestión: nunca un técnico
+    (REGLAS #19/#26: tiene plata, la valorización y el consumo)."""
+    vista = request.args.get("vista") or _HALL_F_A_VISTA.get(request.args.get("f") or "", "sin_gestionar")
+    if vista not in _oh.VISTAS_MONITOR:
+        vista = "sin_gestionar"
+    q = _oh.limpio(request.args.get("q"), 80)
+    sev = request.args.get("sev") or ""
+    if sev not in _oh.SEVERIDADES:
+        sev = ""
+    tec = _oh.limpio(request.args.get("tec"), 60)
     try:
         por_pag = int(request.args.get("pp") or 20)
     except ValueError:
@@ -170646,72 +170843,119 @@ def ot_hallazgos_pagina():
         pag = max(1, int(request.args.get("p") or 1))
     except ValueError:
         pag = 1
-    filas, error = [], False
+    filas, total, error = [], 0, False
+    kpis = _hall_monitor_kpis() if _hall_ok() else {}
+    vencidos = _hall_vencidos_ids() if _hall_ok() else set()
+    kpis["vencidos"] = len(vencidos)
     if _hall_ok():
         try:
-            abierto = _oh.sql_abierto("h", "s")
-            having = {"sin_gestionar": "HAVING n_abiertos > 0", "en_curso": "HAVING n_abiertos > 0 OR n_tomados > 0",
-                      "todos": ""}[filtro]
+            if vista == "vencidos":
+                where = ["h.retirado_en IS NULL", ("h.id IN (" + _hall_in(sorted(vencidos)) + ")") if vencidos else "1=0"]
+                params = list(sorted(vencidos))
+            else:
+                where = ["h.retirado_en IS NULL", _oh.sql_vista(vista)]
+                params = []
+            if q:
+                like = "%" + q + "%"
+                where.append("(c.razon_social LIKE %s OR v.numero_ot LIKE %s OR h.titulo LIKE %s OR h.equipo_nombre LIKE %s "
+                             " OR m.serie LIKE %s OR h.detectado_por LIKE %s OR h.tomado_por LIKE %s)")
+                params += [like] * 7
+            if sev:
+                where.append("h.severidad=%s")
+                params.append(sev)
+            if tec:
+                where.append("h.detectado_por LIKE %s")
+                params.append("%" + tec + "%")
+            base = ("  FROM mant_ot_hallazgos h JOIN mant_visitas v ON v.id = h.visita_id "
+                    "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+                    "  LEFT JOIN mant_visitas s ON s.id = h.ot_seguimiento_id "
+                    "  LEFT JOIN mant_maquinas m ON m.id = h.maquina_id "
+                    " WHERE " + " AND ".join(where))
+            total = int((mysql_fetchone("SELECT COUNT(*) AS n " + base, tuple(params)) or {}).get("n") or 0)
+            paginas_ = max(1, (total + por_pag - 1) // por_pag)
+            pag = min(pag, paginas_)
+            ab = _oh.sql_abierto("h", "s")
+            orden_venc = ("(h.id IN (" + _hall_in(sorted(vencidos)) + ")) DESC, ") if (vencidos and vista != "vencidos") else ""
+            par_orden = list(sorted(vencidos)) if (vencidos and vista != "vencidos") else []
             filas = [dict(r) for r in (mysql_fetchall(
-                "SELECT h.visita_id, v.numero_ot, v.estado AS ot_estado, c.razon_social AS cliente, "
-                f"       SUM(CASE WHEN {abierto} THEN 1 ELSE 0 END) AS n_abiertos, "
-                f"       SUM(CASE WHEN NOT {abierto} AND h.estado='tomado' THEN 1 ELSE 0 END) AS n_tomados, "
-                "       COUNT(*) AS n_activos, MAX(h.detectado_en) AS ultimo "
-                "  FROM mant_ot_hallazgos h JOIN mant_visitas v ON v.id = h.visita_id "
-                "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
-                "  LEFT JOIN mant_visitas s ON s.id = h.ot_seguimiento_id "
-                " WHERE h.retirado_en IS NULL "
-                " GROUP BY h.visita_id, v.numero_ot, v.estado, c.razon_social " + having +
-                " ORDER BY (n_abiertos > 0) DESC, ultimo DESC") or [])]
+                "SELECT h.id, h.visita_id, h.origen, h.referencia, h.severidad, h.titulo, h.detalle, h.equipo_nombre, h.maquina_id, h.item_manual_id, "
+                "       h.riesgo, h.n_fotos, h.fotos_json, h.estado, h.detectado_por, h.detectado_en, h.tomado_por, h.tomado_en, "
+                "       h.ot_seguimiento_id, h.seguimiento_en, h.descartado_por, h.descartado_en, h.retirado_en, "
+                "       TIMESTAMPDIFF(MINUTE, h.detectado_en, UTC_TIMESTAMP()) AS min_desde, "
+                "       v.numero_ot, v.estado AS ot_estado, v.cliente_id, c.razon_social AS cliente, c.rut AS cliente_rut, "
+                "       s.numero_ot AS seg_numero, s.estado AS seg_estado, m.serie, m.sku "
+                + base + " ORDER BY " + orden_venc + "(" + ab + ") DESC, (h.riesgo=1 OR h.severidad IN ('falla','fuera_servicio','baja')) DESC, "
+                "          h.detectado_en DESC, h.id DESC LIMIT %s OFFSET %s",
+                (*params, *par_orden, por_pag, (pag - 1) * por_pag)) or [])]
         except Exception as e:
-            print(f"[hall] bandeja: {type(e).__name__}: {e}", flush=True)
+            print(f"[hall] monitor: {type(e).__name__}: {e}", flush=True)
             error = True
-    total = len(filas)
-    paginas = max(1, (total + por_pag - 1) // por_pag)
-    pag = min(pag, paginas)
-    pagina = filas[(pag - 1) * por_pag: pag * por_pag]
-    # Los equipos (con su N° de serie) de cada OT de la página: una sola consulta.
-    if pagina:
+    traz = _hall_trazabilidad(filas) if filas else {}
+    # Responsable de cada OT (REGLA #36).
+    resp = {}
+    if filas and _ot_resp_ok():
         try:
-            vids = [int(r["visita_id"]) for r in pagina]
-            eq = {}
-            for r in (mysql_fetchall(
-                    "SELECT h.visita_id, h.maquina_id, h.item_manual_id, h.equipo_nombre, m.serie "
-                    "  FROM mant_ot_hallazgos h LEFT JOIN mant_maquinas m ON m.id = h.maquina_id "
-                    " WHERE h.retirado_en IS NULL AND h.visita_id IN (" + ",".join(["%s"] * len(vids)) + ")", tuple(vids)) or []):
-                k = (r.get("maquina_id"), r.get("item_manual_id"))
-                if k == (None, None):
-                    continue
-                d = eq.setdefault(int(r["visita_id"]), {})
-                if k not in d:
-                    # H-15: el nombre guardado ya trae «· S/N …» (la de cuando se reportó): la serie sale UNA vez, la vigente de la ficha.
-                    d[k] = _oh.equipo_con_serie(r.get("equipo_nombre"), r.get("serie"))
-            for r in pagina:
-                r["equipos"] = list(eq.get(int(r["visita_id"]), {}).values())
+            vids = sorted({int(f["visita_id"]) for f in filas})
+            resp = {int(r["id"]): r.get("responsable_nombre") or "" for r in (mysql_fetchall(
+                "SELECT id, responsable_nombre FROM mant_visitas WHERE id IN (" + _hall_in(vids) + ")", tuple(vids)) or [])}
         except Exception as e:
-            print(f"[hall] bandeja equipos: {type(e).__name__}", flush=True)
-    for r in pagina:
-        r["ultimo_txt"] = _hall_cuando(r.get("ultimo"))
-        r["n_abiertos"] = int(r.get("n_abiertos") or 0)
-        r["n_tomados"] = int(r.get("n_tomados") or 0)
-        r["numero_ot"] = r.get("numero_ot") or f"V-{int(r['visita_id']):05d}"
-    # La OT elegida (o la primera de la página) con su tarjeta.
+            print(f"[hall] monitor responsables: {type(e).__name__}", flush=True)
+    items = []
+    for f in filas:
+        t = traz.get(int(f["id"])) or {}
+        estado_ef = t.get("estado_ef") or f.get("estado")
+        sv = _oh.sev_info(f.get("severidad"))
+        horas = (float(f.get("min_desde") or 0)) / 60.0
+        seg = t.get("seg")
+        vis = _oh.estado_visual(estado_ef, bool(seg and seg["cerrada"]))
+        rj = t.get("reloj") or {}
+        fotos = _oh.lista_urls(f.get("fotos_json"))
+        nombre, serie_guardada = _oh.partir_serie(f.get("equipo_nombre"))
+        co_ot, co_seg = t.get("consumo_ot") or {}, t.get("consumo_seg")
+        items.append({
+            "id": int(f["id"]), "visita_id": int(f["visita_id"]), "numero_ot": f.get("numero_ot") or f"V-{int(f['visita_id']):05d}",
+            "ot_estado": (f.get("ot_estado") or "").replace("_", " "), "cliente": f.get("cliente") or "Sin cliente (trabajo interno)",
+            "cliente_rut": f.get("cliente_rut") or "", "cliente_id": f.get("cliente_id"),
+            "responsable_ot": resp.get(int(f["visita_id"])) or "",
+            "sev_texto": sv["texto"], "sev_color": sv["color"], "sev_icono": sv["icono"], "riesgo": bool(f.get("riesgo")),
+            "titulo": _oh.titulo_corto(f.get("titulo"), f.get("equipo_nombre")) or (f.get("titulo") or ""),
+            "equipo": nombre or "", "serie": (f.get("serie") or serie_guardada or "").strip(), "sku": f.get("sku") or "",
+            "maquina_id": f.get("maquina_id"),
+            "foto": fotos[0] if fotos else "", "n_fotos": len(fotos) or int(f.get("n_fotos") or 0),
+            "reporto": f.get("detectado_por") or "el técnico", "reportado": _hall_cuando(f.get("detectado_en")), "hace": _oh.hace_txt(horas),
+            "tomado_por": f.get("tomado_por") or "", "tomado": _hall_cuando(f.get("tomado_en")),
+            "descartado_por": f.get("descartado_por") or "",
+            "estado_ef": estado_ef, "estado_txt": vis["texto"], "estado_color": vis["color"],
+            "semaforo": rj.get("semaforo") or "gris", "reloj": rj, "siguiente": t.get("siguiente") or {},
+            "recorrido": t.get("recorrido") or [],
+            "seg_numero": (seg or {}).get("numero") or "", "seg_id": (seg or {}).get("id"),
+            "ticket": (t.get("ticket") or {}).get("numero") or "", "ticket_id": (t.get("ticket") or {}).get("id"),
+            "valor": (t.get("valor") or {}).get("total") or "",
+            "consumo_ot_n": _hs.num_txt(co_ot.get("n")) if co_ot.get("n") else "", "consumo_ot_valor": _gc.pesos(co_ot.get("valor")) if co_ot.get("valor") else "",
+            "consumo_seg_n": _hs.num_txt((co_seg or {}).get("n")) if (co_seg or {}).get("n") else "",
+            "consumo_seg_valor": _gc.pesos((co_seg or {}).get("valor")) if (co_seg or {}).get("valor") else "",
+        })
+    paginas = max(1, (total + por_pag - 1) // por_pag)
+    # La OT elegida (o la del primer hallazgo de la página) con su tarjeta de gestión.
     try:
         sel = int(request.args.get("ot") or 0)
     except ValueError:
         sel = 0
-    if not sel and pagina:
-        sel = int(pagina[0]["visita_id"])
+    if not sel and items:
+        sel = items[0]["visita_id"]
     hallazgos, ot_sel = None, None
     if sel:
         v = mysql_fetchone("SELECT * FROM mant_visitas WHERE id=%s", (sel,)) if _puede_ot_accion(sel, "ver", getattr(g, "user", None) or {}) else None
         if v:
-            ot_sel = {"id": sel, "numero_ot": v.get("numero_ot") or f"V-{sel:05d}", "url": f"/ot/{sel}"}
+            c = mysql_fetchone("SELECT razon_social FROM mant_clientes WHERE id=%s", (v.get("cliente_id"),)) if v.get("cliente_id") else None
+            ot_sel = {"id": sel, "numero_ot": v.get("numero_ot") or f"V-{sel:05d}", "url": f"/ot/{sel}",
+                      "cliente": (c or {}).get("razon_social") or "", "estado": (v.get("estado") or "").replace("_", " ")}
             hallazgos = _hall_contexto_ficha(sel, dict(v))
-    return render_template("ot2/hallazgos.html", filas=pagina, total=total, pag=pag, paginas=paginas, por_pag=por_pag,
+    return render_template("ot2/hallazgos.html", items=items, total=total, pag=pag, paginas=paginas, por_pag=por_pag,
                            desde=((pag - 1) * por_pag + 1) if total else 0, hasta=min(pag * por_pag, total),
-                           filtro=filtro, filtros=_HALL_PAG_FILTROS, sel=sel, ot_sel=ot_sel, hallazgos=hallazgos,
-                           hz_pagina=True, error=error, n_sin_gestionar=_hall_n_sin_gestionar())
+                           vista=vista, vistas=_oh.VISTAS_MONITOR, q=q, sev=sev, tec=tec, severidades=_oh.SEVERIDADES, kpis=kpis,
+                           sla=_hs.config(), sel=sel, ot_sel=ot_sel, hallazgos=hallazgos, hz_pagina=True, error=error,
+                           n_sin_gestionar=kpis.get("sin_gestionar", 0) if kpis else _hall_n_sin_gestionar())
 
 
 # ── Las rutas de la gestión: tomar el caso, descartar, reabrir y el prellenado de la OT de seguimiento ────────────────
@@ -171012,11 +171256,19 @@ def _gc_tickets_de(ids):
         return {}
 
 
-def _gc_enriquecer_hallazgos(vid, v, items):
+def _gc_enriquecer_hallazgos(vid, v, items, filas=None):
     """Suma a cada hallazgo de la tarjeta lo de la gestión circular: valorización, ticket, solicitud de repuesto, recorrido con semáforo,
-    registro de actividad y los permisos de editar/borrar. Solo gestión (el contexto ya no viaja a un técnico). Best-effort."""
+    registro de actividad y los permisos de editar/borrar. Solo gestión (el contexto ya no viaja a un técnico). Best-effort.
+    Con `filas` (las filas de mant_ot_hallazgos de la OT) suma además el PLAZO (SLA), «lo que toca ahora» y el recorrido de 7 pasos
+    (atención, valorización, OT, ticket, abastecimiento, bodega y consumo): el MISMO que muestra el monitor (`_hall_trazabilidad`)."""
     if not items or not _gc_ok():
         return items
+    traz = {}
+    if filas:
+        try:
+            traz = _hall_trazabilidad(filas)
+        except Exception as e:
+            print(f"[hall] trazabilidad de la tarjeta vid={vid}: {type(e).__name__}", flush=True)
     ids = [i["id"] for i in items]
     extra = _gc_extra_de(_gc.ENTIDAD_HALLAZGO, ids)
     act = _gc_actividad_de(_gc.ENTIDAD_HALLAZGO, ids)
@@ -171040,6 +171292,11 @@ def _gc_enriquecer_hallazgos(vid, v, items):
         i["editado_cuando"] = _hall_cuando(e.get("editado_en"))
         i["recorrido"] = _gc.recorrido(i["estado_ef"], tk, rp, {"numero": seg["numero_ot"]} if seg else None, val,
                                        i.get("tomado_por") if i["estado_ef"] == _oh.EST_TOMADO else "")
+        t_ = traz.get(i["id"])
+        if t_:                     # 26-oct: el recorrido completo, el plazo y la guía; lo de arriba queda como respaldo si algo falló
+            i["recorrido"] = t_["recorrido"]
+            i["reloj"] = t_["reloj"]
+            i["siguiente"] = t_["siguiente"]
         vivo = not i.get("retirado")
         i["puede_editar"] = vivo
         i["puede_valorizar"] = vivo

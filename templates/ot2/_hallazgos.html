@@ -68,11 +68,14 @@
     {% endif %}
     {#- 🔁 2026-10-26 (gestión circular, Daniel: «gestionando de manera circular… además de su valorización»): el recorrido de cada hallazgo
         con su semáforo (atención → valorización → ticket → repuesto → OT de seguimiento), siempre a la vista (REGLA #15: nada plegado). -#}
+    {#- 26-oct (SLA y guía): el plazo en horas hábiles y «lo que toca ahora», igual que en el monitor. -#}
+    {% if i.reloj %}<div class="hz-plazo {{ i.reloj.semaforo }}"><i class="bi bi-stopwatch" aria-hidden="true"></i><b>{{ i.reloj.pill }}</b><small>{{ i.reloj.sub }}</small></div>{% endif %}
+    {% if i.siguiente and i.siguiente.txt %}<div class="hzm-sig a-{{ i.siguiente.accion }}"><i class="bi {{ 'bi-check2-circle' if i.siguiente.accion in ('listo', 'nada') else 'bi-arrow-right-circle-fill' }}" aria-hidden="true"></i><span><small>Ahora toca</small>{{ i.siguiente.txt }}</span></div>{% endif %}
     {% if i.recorrido %}
     <ol class="hz-rec" aria-label="Recorrido de la gestión">
       {% for p in i.recorrido %}
       <li class="hz-rec-p {{ p.color }}"><span class="hz-rec-dot" aria-hidden="true">{% if p.ok %}<i class="bi bi-check-lg"></i>{% else %}{{ loop.index }}{% endif %}</span>
-        <span class="hz-rec-tx"><b>{{ p.titulo }}</b><small>{{ p.txt }}</small></span></li>
+        <span class="hz-rec-tx"><b>{{ p.titulo }}</b><small>{{ p.txt }}</small>{% if p.sub %}<small class="hz-rec-sub">{{ p.sub }}</small>{% endif %}</span></li>
       {% endfor %}
     </ol>
     {% endif %}

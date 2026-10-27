@@ -678,3 +678,44 @@ def sql_abierto(alias="h", seg="s"):
     return ("({a}.retirado_en IS NULL AND ({a}.estado='abierto' OR ({a}.estado IN ('tomado','resuelto') "
             "AND {a}.ot_seguimiento_id IS NOT NULL AND ({s}.id IS NULL OR {s}.estado IN ('cancelada','anulada')))))"
             ).format(a=alias, s=seg)
+
+
+# ── 2026-10-26: el MONITOR de hallazgos con el lenguaje de Retiros (Daniel: «no veo similitud con la parte de retiros, no están las
+#    tarjetas… quisiera verla como el módulo de retiros: identificar quién solicita, de qué OT, de qué cliente, todo bien trazable») ──
+VISTAS_MONITOR = {
+    "sin_gestionar": "Sin gestionar",
+    "vencidos": "Plazo vencido",
+    "tomados": "Caso tomado",
+    "con_ot": "Con OT de seguimiento",
+    "descartados": "Descartados",
+    "todos": "Todos",
+}
+
+
+def sql_vista(vista, alias="h", seg="s"):
+    """El WHERE de cada vista del monitor, con la MISMA definición de «sin gestionar» (`sql_abierto`). Solo hallazgos activos."""
+    ab = sql_abierto(alias, seg)
+    a = alias
+    if vista == "sin_gestionar":
+        return ab
+    if vista == "tomados":
+        return "(NOT {ab} AND {a}.estado='tomado')".format(ab=ab, a=a)
+    if vista == "con_ot":
+        return "(NOT {ab} AND {a}.estado='resuelto')".format(ab=ab, a=a)
+    if vista == "descartados":
+        return "({a}.estado='descartado')".format(a=a)
+    return "1=1"
+
+
+def hace_txt(horas):
+    """«hace 3 h» · «hace 2 días» (desde que el técnico lo reportó). Sin plata, sin fechas en inglés (REGLA #6)."""
+    try:
+        h = max(0.0, float(horas or 0))
+    except (TypeError, ValueError):
+        return ""
+    if h < 1:
+        return "hace menos de 1 h"
+    if h < 24:
+        return "hace %d h" % int(h)
+    d = int(h // 24)
+    return "hace 1 día" if d == 1 else "hace %d días" % d

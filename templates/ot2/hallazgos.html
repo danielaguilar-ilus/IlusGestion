@@ -2,91 +2,177 @@
 {% block title %}Hallazgos · ILUS Fitness{% endblock %}
 
 {#
-  🩺 2026-10-21 (Daniel: «saca la tarjeta grande de los hallazgos… colocar una parte de hallazgos para que lo veamos todos… con una
-  burbujita roja… esa notificación va a desaparecer cuando alguien se haga cargo» y «los hallazgos exactos se agrupan por equipo, número
-  de serie»). La bandeja de hallazgos de TODAS las OT (REGLA #38): arriba las OT con hallazgos, paginadas como Etiquetas (REGLA #4.3);
-  abajo la tarjeta de la OT elegida (templates/ot2/_hallazgos.html, agrupada por equipo + N° de serie) con sus acciones de siempre.
-  Solo gestión (la ruta lleva @_no_tecnico). Datos: ot_hallazgos_pagina (app.py).
-  🩺 2026-10-22 (auditoría Impeccable, fase 1): lista real (<ul><li><a>) y no enlaces con role="listitem" (H-18); controles de 44 px y foco
-  visible; la OT elegida se marca en negro y no en rojo (rojo = error, H-26); cada equipo de una OT es una etiqueta propia y su N° de serie sale
-  una sola vez, la vigente (H-15); el error dice qué hacer, sin jerga (H-28).
+  🩺 MONITOR DE HALLAZGOS (REGLA #38). 2026-10-26 (Daniel: «no veo similitud con la parte de retiros, no están las tarjetas y no siento
+  amigable esta parte; quisiera verla como el módulo de retiros: identificar quién solicita, de qué OT, de qué cliente, todo bien
+  trazable»). EL MISMO lenguaje del Monitor de Retiros (y de Inquietudes): tarjetas KPI (.rm-kpi), buscador con etiqueta negra (.rm-search),
+  chips por estado (.rm-chip), tabla negra con UNA FILA POR HALLAZGO y su semáforo (.rm-table / .rm-row[data-alerta]) y pie paginado
+  (.rm-foot, REGLA #4.3). Cada fila dice: qué pasó y su gravedad, quién lo reportó y cuándo, de qué OT y de qué cliente (con el responsable
+  de la OT), el equipo con su N° de serie, quién tomó el caso, el estado y la gestión (ticket, repuesto, valorización). «Gestionar» lleva a
+  la tarjeta de esa OT, abajo, con todas sus acciones (la misma de siempre: templates/ot2/_hallazgos.html). Nada plegado, nombres completos
+  (REGLA #15). Solo gestión (@_no_tecnico: REGLAS #19/#26). Datos: ot_hallazgos_pagina (app.py).
 #}
 
-{% block head_extra %}<link rel="stylesheet" href="{{ url_for('static', filename='ot_hallazgos.css') }}">{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="{{ url_for('static', filename='retiros_monitor.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='inquietudes.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='ot_hallazgos.css') }}">{% endblock %}
+
+{% macro enlace(vista_, p=1, ot=None) -%}?vista={{ vista_ }}&pp={{ por_pag }}&p={{ p }}&q={{ q|urlencode }}&sev={{ sev }}&tec={{ tec|urlencode }}{% if ot %}&ot={{ ot }}{% endif %}{%- endmacro %}
 
 {% block content %}
 <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
   <div>
     <h4><i class="bi bi-clipboard2-pulse-fill me-2"></i>Hallazgos</h4>
-    <div class="sub">Lo que los técnicos reportaron en terreno, por OT y por equipo. Toma el caso o levanta una OT de seguimiento: la burbuja
-      roja del panel cuenta los que nadie ha tomado.</div>
+    <div class="sub">Lo que los técnicos reportaron en terreno: quién lo reportó, en qué OT, de qué cliente y qué equipo. Cada fila te dice
+      <b>qué toca ahora</b> y por dónde va: OT de seguimiento, ticket, abastecimiento, bodega y consumo de la OT. Plazos en horas hábiles
+      (lun–vie, 08:00–17:00, sin feriados): tomarlo en {{ (sla.primera_grave_h)|round(0)|int }} h si es grave o {{ (sla.primera_h)|round(0)|int }} h si no, y darle
+      salida en {{ (sla.salida_grave_h / 9)|round(0)|int }} días hábiles si es grave o {{ (sla.salida_h / 9)|round(0)|int }} si no.</div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
-    <a href="{{ url_for('ot2_panel') }}" class="btn btn-sm btn-outline-secondary hzp-btn"><i class="bi bi-arrow-left me-1"></i>Volver a las OT</a>
+    <a href="{{ url_for('ot2_panel') }}" class="rm-btn"><i class="bi bi-arrow-left"></i>Volver a las OT</a>
   </div>
 </div>
 
-<nav class="hzp-filtros" aria-label="Qué hallazgos ver">
-  {% for k, t in filtros.items() %}
-  <a href="?f={{ k }}&pp={{ por_pag }}" class="hzp-f{% if filtro == k %} on{% endif %}"{% if filtro == k %} aria-current="true"{% endif %}>
-    {{ t }}{% if k == 'sin_gestionar' and n_sin_gestionar %} <span class="hzp-bur">{{ n_sin_gestionar }}</span>{% endif %}</a>
-  {% endfor %}
-</nav>
-
 {% if error %}
-{#- H-28: qué hacer, sin «el registro del servidor». El correo de soporte es el de la REGLA #11. -#}
+{#- H-28: qué hacer, sin jerga. El correo de soporte es el de la REGLA #11. -#}
 <div class="alert alert-warning py-2" role="alert"><i class="bi bi-exclamation-triangle-fill me-1"></i> No pudimos cargar la lista completa de hallazgos.
   Recarga la página; si el aviso sigue, escribe a soporte (soportetec@sphs.cl).</div>
 {% endif %}
 
-{% if not filas %}
-<div class="hzp-vacio"><i class="bi bi-check2-circle"></i>
-  {% if filtro == 'sin_gestionar' %}No hay hallazgos esperando que alguien tome el caso.{% else %}No hay hallazgos para mostrar.{% endif %}
-</div>
-{% else %}
-<ul class="hzp-lista">
-  {% for r in filas %}
-  <li>
-    <a class="hzp-ot{% if r.visita_id == sel %} on{% endif %}{% if r.n_abiertos %} abiertos{% endif %}"{% if r.visita_id == sel %} aria-current="true"{% endif %}
-       href="?f={{ filtro }}&pp={{ por_pag }}&p={{ pag }}&ot={{ r.visita_id }}#hzpTarjeta">
-      <div class="hzp-ot-cab">
-        <b>{{ r.numero_ot }}</b>
-        {% if r.n_abiertos %}<span class="hz-n ambar"><b>{{ r.n_abiertos }}</b> sin gestionar</span>{% endif %}
-        {% if r.n_tomados %}<span class="hz-n azul"><b>{{ r.n_tomados }}</b> con el caso tomado</span>{% endif %}
-        {% if not r.n_abiertos and not r.n_tomados %}<span class="hz-n gris"><b>{{ r.n_activos }}</b> gestionado{{ 's' if r.n_activos != 1 }}</span>{% endif %}
-      </div>
-      <div class="hzp-ot-cli">{{ r.cliente or 'Sin cliente' }}</div>
-      {#- H-15: un equipo por etiqueta (antes iban unidos con « · » y se confundían con el « · S/N …» de cada uno). -#}
-      {% if r.equipos %}<div class="hzp-ot-eq"><i class="bi bi-cpu" aria-hidden="true"></i> {% for q in r.equipos %}<span class="hzp-eq">{{ q }}</span> {% endfor %}</div>{% endif %}
-      <div class="hzp-ot-cu">Último reporte: {{ r.ultimo_txt or '—' }}</div>
-    </a>
-  </li>
-  {% endfor %}
-</ul>
+{#- Tarjetas KPI (las mismas del Monitor de Retiros): cada una lleva a su vista. -#}
+<section class="rm-kpis iq-kpis" aria-label="Resumen de los hallazgos">
+  <a class="rm-kpi{{ ' is-active' if vista == 'sin_gestionar' and not sev }}" style="--acc:#dc2626" href="{{ enlace('sin_gestionar') }}">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Sin gestionar</span><i class="bi bi-bell-fill"></i></div>
+    <div class="rm-kpi-num">{{ kpis.sin_gestionar or 0 }}</div><div class="rm-kpi-foot"><span>Nadie ha tomado el caso todavía</span></div></a>
+  <a class="rm-kpi{{ ' is-active' if vista == 'vencidos' }}" style="--acc:#991b1b" href="{{ enlace('vencidos') }}">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Plazo vencido</span><i class="bi bi-alarm-fill"></i></div>
+    <div class="rm-kpi-num">{{ kpis.vencidos or 0 }}</div><div class="rm-kpi-foot"><span>Pasaron su plazo para tomarlo o darle salida</span></div></a>
+  <a class="rm-kpi" style="--acc:#b91c1c" href="{{ enlace('sin_gestionar') }}">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Graves sin gestionar</span><i class="bi bi-exclamation-octagon-fill"></i></div>
+    <div class="rm-kpi-num">{{ kpis.graves or 0 }}</div><div class="rm-kpi-foot"><span>Falla, fuera de servicio, baja o riesgo</span></div></a>
+  <a class="rm-kpi{{ ' is-active' if vista == 'tomados' }}" style="--acc:#f59e0b" href="{{ enlace('tomados') }}">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Caso tomado</span><i class="bi bi-person-check-fill"></i></div>
+    <div class="rm-kpi-num">{{ kpis.tomados or 0 }}</div><div class="rm-kpi-foot"><span>Alguien lo está gestionando</span></div></a>
+  <a class="rm-kpi{{ ' is-active' if vista == 'con_ot' }}" style="--acc:#16a34a" href="{{ enlace('con_ot') }}">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Con OT de seguimiento</span><i class="bi bi-diagram-3-fill"></i></div>
+    <div class="rm-kpi-num">{{ kpis.con_ot or 0 }}</div><div class="rm-kpi-foot"><span>Ya tienen su orden de trabajo</span></div></a>
+  <a class="rm-kpi{{ ' is-active' if vista == 'descartados' }}" style="--acc:#6b7280" href="{{ enlace('descartados') }}">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Descartados</span><i class="bi bi-slash-circle"></i></div>
+    <div class="rm-kpi-num">{{ kpis.descartados or 0 }}</div><div class="rm-kpi-foot"><span>Con su motivo escrito</span></div></a>
+</section>
 
-{#- Paginador como Etiquetas (REGLA #4.3): Mostrando A–B de N · N por página · Anterior / Página X de Y / Siguiente -#}
-<div class="hzp-pie">
-  <span>Mostrando {{ desde }}–{{ hasta }} de {{ total }} OT</span>
-  <form method="get" class="hzp-pp">
-    <input type="hidden" name="f" value="{{ filtro }}">
-    <label for="hzpPp">Por página</label>
-    <select id="hzpPp" name="pp" class="form-select form-select-sm" onchange="this.form.submit()">
-      {% for n in (10, 20, 50) %}<option value="{{ n }}"{% if n == por_pag %} selected{% endif %}>{{ n }}</option>{% endfor %}
-    </select>
+<section class="rm-monitor" aria-label="Monitor de hallazgos">
+  <form method="get" class="rm-toolbar" aria-label="Buscar y filtrar">
+    <input type="hidden" name="vista" value="{{ vista }}"><input type="hidden" name="pp" value="{{ por_pag }}">
+    <div class="rm-search" role="search">
+      <label class="rm-search-tag" for="hzSearch"><i class="bi bi-search"></i><span>Buscar</span></label>
+      <input id="hzSearch" type="search" name="q" value="{{ q }}" autocomplete="off" spellcheck="false" placeholder="Cliente, N° de OT, equipo, N° de serie, técnico o lo que pasó…" aria-label="Buscar hallazgos">
+      <span class="rm-search-count" aria-live="polite">{{ total }} hallazgo{{ '' if total == 1 else 's' }}</span>
+    </div>
+    <div class="rm-tools-row">
+      <div class="rm-chips" role="group" aria-label="Qué hallazgos ver">
+        {% for k, t in vistas.items() %}<a href="{{ enlace(k) }}" class="rm-chip{{ ' is-active' if vista == k }}"{% if vista == k %} aria-current="true"{% endif %}>{{ t }}{% if k == 'sin_gestionar' and n_sin_gestionar %} <span class="hzp-bur">{{ n_sin_gestionar }}</span>{% endif %}</a>{% endfor %}
+      </div>
+    </div>
+    <div class="rm-tools-row">
+      <div class="rm-tools">
+        <select name="sev" class="rm-select" aria-label="Filtrar por gravedad"><option value="">Todas las gravedades</option>
+          {% for k, s_ in severidades.items() %}<option value="{{ k }}"{{ ' selected' if sev == k }}>{{ s_.texto }}</option>{% endfor %}</select>
+        <input type="search" name="tec" value="{{ tec }}" class="rm-select" placeholder="Reportado por (técnico)" aria-label="Filtrar por quien lo reportó">
+        <button class="rm-btn" type="submit"><i class="bi bi-funnel-fill"></i>Filtrar</button>
+        {% if q or sev or tec %}<a class="rm-btn rm-btn-rojo" href="?vista={{ vista }}&pp={{ por_pag }}"><i class="bi bi-x-circle"></i>Limpiar filtros</a>{% endif %}
+      </div>
+    </div>
   </form>
-  <span class="hzp-nav">
-    {% if pag > 1 %}<a class="btn btn-sm btn-outline-secondary" href="?f={{ filtro }}&pp={{ por_pag }}&p={{ pag - 1 }}">Anterior</a>{% else %}<span class="btn btn-sm btn-outline-secondary disabled">Anterior</span>{% endif %}
-    <span>Página {{ pag }} de {{ paginas }}</span>
-    {% if pag < paginas %}<a class="btn btn-sm btn-outline-secondary" href="?f={{ filtro }}&pp={{ por_pag }}&p={{ pag + 1 }}">Siguiente</a>{% else %}<span class="btn btn-sm btn-outline-secondary disabled">Siguiente</span>{% endif %}
-  </span>
-</div>
-{% endif %}
+
+  <div class="rm-wrap">
+    <div class="table-responsive">
+      <table class="ilus-table table-mobile-cards rm-table align-middle" id="hzTabla">
+        <thead><tr>
+          <th class="hzm-w-h">Hallazgo</th><th class="hzm-w-o">OT y cliente</th><th class="hzm-w-e">Equipo</th><th class="desktop-only hzm-w-a">Atención</th>
+          <th class="hzm-w-s">Estado · lo que toca</th><th class="hzm-w-p" title="Plazo en horas hábiles: tomarlo y darle salida">Plazo</th><th class="text-end">Acción</th>
+        </tr></thead>
+        <tbody>
+          {% if not items %}
+          <tr class="rm-empty"><td colspan="7"><i class="bi bi-check2-circle"></i><span>{% if vista == 'sin_gestionar' and not (q or sev or tec) %}No hay hallazgos esperando que alguien tome el caso.{% else %}Ningún hallazgo coincide con este filtro.{% endif %}</span></td></tr>
+          {% endif %}
+          {% for x in items %}
+          {% set _url = enlace(vista, pag, x.visita_id) ~ '#hz' ~ x.id %}
+          <tr class="rm-row row-clickable hzm-row{{ ' is-sel' if x.visita_id == sel }}" data-alerta="{{ x.semaforo }}" data-href="{{ _url }}" style="cursor:pointer">
+            <td data-label="Hallazgo"><div class="rm-cell">
+              <div class="rm-l1"><span class="hz-chip {{ x.sev_color }}"><i class="bi {{ x.sev_icono }}" aria-hidden="true"></i> {{ x.sev_texto }}</span>
+                {% if x.riesgo %}<span class="hz-chip rojo"><i class="bi bi-person-exclamation" aria-hidden="true"></i> Puede lastimar a alguien</span>{% endif %}</div>
+              <div class="hzm-tit rm-hl">{{ x.titulo }}</div>
+              <div class="rm-sub"><i class="bi bi-person-badge" aria-hidden="true"></i> Reportó <b>{{ x.reporto }}</b> · {{ x.reportado }}{% if x.hace %} · {{ x.hace }}{% endif %}</div>
+            </div></td>
+            <td data-label="OT y cliente"><div class="rm-cell">
+              <div class="rm-l1"><a class="rm-code hzm-ot" href="/ot/{{ x.visita_id }}">{{ x.numero_ot }}</a>{% if x.ot_estado %} <span class="rm-origen">{{ x.ot_estado }}</span>{% endif %}</div>
+              <div class="rm-cli-name rm-hl">{{ x.cliente }}</div>
+              {% if x.cliente_rut %}<div class="rm-sub">RUT {{ x.cliente_rut }}</div>{% endif %}
+              {% if x.responsable_ot %}<div class="rm-sub"><i class="bi bi-person-gear" aria-hidden="true"></i> Responsable de la OT: <b>{{ x.responsable_ot }}</b></div>{% endif %}
+              {#- El consumo de la OT (lo que ya se instaló) y el de su OT de seguimiento: plata, solo gestión (REGLAS #19/#26). -#}
+              {% if x.consumo_ot_n %}<div class="rm-sub hzm-cons"><i class="bi bi-box-seam" aria-hidden="true"></i> Consumo de esta OT: <b>{{ x.consumo_ot_n }}</b> repuesto{{ '' if x.consumo_ot_n == '1' else 's' }}{% if x.consumo_ot_valor %} · <b>{{ x.consumo_ot_valor }}</b>{% endif %}</div>{% endif %}
+              {% if x.consumo_seg_n %}<div class="rm-sub hzm-cons"><i class="bi bi-box-seam" aria-hidden="true"></i> Consumo de {{ x.seg_numero }}: <b>{{ x.consumo_seg_n }}</b> repuesto{{ '' if x.consumo_seg_n == '1' else 's' }}{% if x.consumo_seg_valor %} · <b>{{ x.consumo_seg_valor }}</b>{% endif %}</div>{% endif %}
+            </div></td>
+            <td data-label="Equipo"><div class="rm-cell iq-eqcell">
+              <span class="iqm-foto">{% if x.foto %}<img src="{{ x.foto }}" alt="Foto del hallazgo" loading="lazy">{% else %}<i class="bi bi-camera" aria-hidden="true"></i>{% endif %}</span>
+              <span><b class="rm-doc">{{ x.equipo or 'De la OT (sin equipo)' }}</b>
+                {% if x.serie %}<span class="rm-sub d-block">S/N {{ x.serie }}</span>{% elif x.sku %}<span class="rm-sub d-block">SKU {{ x.sku }}</span>{% endif %}
+                <span class="rm-sub d-block">{% if x.n_fotos %}<i class="bi bi-images" aria-hidden="true"></i> {{ x.n_fotos }} foto{{ 's' if x.n_fotos != 1 }}{% else %}<span class="hzm-sinfoto"><i class="bi bi-camera" aria-hidden="true"></i> Sin foto</span>{% endif %}</span></span>
+            </div></td>
+            <td class="desktop-only" data-label="Atención"><div class="rm-cell">
+              {% if x.tomado_por %}<div class="rm-resp"><span class="rm-avatar" aria-hidden="true">{{ x.tomado_por[:1] }}</span><span class="rm-hl">{{ x.tomado_por }}</span></div>
+                {% if x.tomado %}<div class="rm-sub">Lo tomó el {{ x.tomado }}</div>{% endif %}
+              {% elif x.estado_ef == 'descartado' %}<span class="rm-pill gris" style="margin-top:0"><i class="bi bi-slash-circle"></i>Descartado por {{ x.descartado_por or '—' }}</span>
+              {% else %}<span class="rm-pill {{ 'rojo' if x.semaforo == 'rojo' else 'ambar' }}" style="margin-top:0"><i class="bi bi-person-dash"></i>Nadie lo ha tomado</span>{% endif %}
+            </div></td>
+            <td data-label="Estado"><div class="rm-cell"><span class="badge rm-estado e-{{ x.estado_color }}">{{ x.estado_txt }}</span>
+              {% if x.seg_numero %}<div class="rm-sub"><i class="bi bi-diagram-3-fill" aria-hidden="true"></i> <a href="/ot/{{ x.seg_id }}">{{ x.seg_numero }}</a></div>{% endif %}
+              {#- La guía (como el «siguiente paso» del Monitor de Retiros): lo que toca ahora, en una frase. -#}
+              {% if x.siguiente and x.siguiente.txt %}<div class="hzm-sig a-{{ x.siguiente.accion }}"><i class="bi {{ 'bi-check2-circle' if x.siguiente.accion in ('listo', 'nada') else 'bi-arrow-right-circle-fill' }}" aria-hidden="true"></i><span><small>Ahora toca</small>{{ x.siguiente.txt }}</span></div>{% endif %}
+            </div></td>
+            <td data-label="Plazo"><div class="rm-cell">{% set _rj = x.reloj %}{% if _rj %}<div class="rm-reloj {{ x.semaforo }}{{ ' rm-reloj-alerta' if x.semaforo == 'rojo' }}">
+              <span class="rm-pill {{ x.semaforo }}"><i class="bi bi-stopwatch"></i><span class="rm-reloj-t">{{ _rj.pill }}</span></span>
+              <div class="rm-reloj-fila"><div class="rm-reloj-barra"><i style="width:{{ _rj.pct }}%"></i></div></div>
+              <div class="rm-sub rm-reloj-plazo">{{ _rj.sub }}</div></div>{% else %}<span class="rm-sub">—</span>{% endif %}</div></td>
+            <td class="text-end" data-label="Acción"><a class="rm-btn" href="{{ _url }}"><i class="bi bi-sliders"></i>Gestionar</a></td>
+          </tr>
+          {#- La GUÍA de cada hallazgo (como el detalle del Monitor de Retiros, pero SIEMPRE a la vista: nada plegado): los 7 pasos de su recorrido con
+              semáforo — atención → valorización → OT de seguimiento → ticket → abastecimiento → bodega → consumo de la OT. -#}
+          <tr class="hzm-guia-row" data-alerta="{{ x.semaforo }}" data-href="{{ _url }}" style="cursor:pointer"><td colspan="7">
+            <div class="hzm-guia-tit"><i class="bi bi-signpost-split" aria-hidden="true"></i> Recorrido de {{ x.sev_texto|lower }} · {{ x.numero_ot }}
+              <small>salidas: OT de seguimiento, ticket, abastecimiento, bodega y consumo de la OT</small></div>
+            <ol class="hzm-guia" aria-label="Recorrido de la gestión de este hallazgo">
+              {% for p in x.recorrido %}
+              <li class="hz-rec-p {{ p.color }}"><span class="hz-rec-dot" aria-hidden="true">{% if p.ok %}<i class="bi bi-check-lg"></i>{% else %}{{ loop.index }}{% endif %}</span>
+                <span class="hz-rec-tx"><b>{{ p.titulo }}</b><small>{{ p.txt }}</small>{% if p.sub %}<small class="hz-rec-sub">{{ p.sub }}</small>{% endif %}</span></li>
+              {% endfor %}
+            </ol>
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {#- Pie de tabla como Etiquetas / Retiros (REGLA #4.3): Mostrando A–B de N · por página · Anterior / Página X de Y / Siguiente -#}
+    <div class="rm-foot">
+      <div class="rm-foot-count"><i class="bi bi-collection"></i><span>Mostrando <strong>{{ desde }}–{{ hasta }}</strong> de <strong>{{ total }}</strong></span></div>
+      <div class="rm-foot-ctrl">
+        <form method="get" class="d-inline-flex align-items-center gap-2 m-0">
+          <input type="hidden" name="vista" value="{{ vista }}"><input type="hidden" name="q" value="{{ q }}"><input type="hidden" name="sev" value="{{ sev }}"><input type="hidden" name="tec" value="{{ tec }}">
+          <select name="pp" class="rm-select" aria-label="Filas por página" onchange="this.form.submit()">
+            {% for n in (10, 20, 50) %}<option value="{{ n }}"{% if n == por_pag %} selected{% endif %}>{{ n }} por página</option>{% endfor %}
+          </select>
+        </form>
+        {% if pag > 1 %}<a class="rm-btn" href="{{ enlace(vista, pag - 1) }}"><i class="bi bi-chevron-left"></i>Anterior</a>{% else %}<span class="rm-btn" style="opacity:.45"><i class="bi bi-chevron-left"></i>Anterior</span>{% endif %}
+        <span>Página {{ pag }} de {{ paginas }}</span>
+        {% if pag < paginas %}<a class="rm-btn" href="{{ enlace(vista, pag + 1) }}">Siguiente<i class="bi bi-chevron-right"></i></a>{% else %}<span class="rm-btn" style="opacity:.45">Siguiente<i class="bi bi-chevron-right"></i></span>{% endif %}
+      </div>
+    </div>
+  </div>
+</section>
 
 <div id="hzpTarjeta">
   {% if ot_sel %}
   <div class="hzp-sel-cab">
-    <span>Hallazgos de <a href="{{ ot_sel.url }}"><b>{{ ot_sel.numero_ot }}</b></a></span>
-    <a href="{{ ot_sel.url }}" class="btn btn-sm btn-outline-secondary hzp-btn"><i class="bi bi-box-arrow-up-right me-1"></i>Abrir la OT</a>
+    <span><i class="bi bi-sliders" aria-hidden="true"></i> Gestionar los hallazgos de <a href="{{ ot_sel.url }}"><b>{{ ot_sel.numero_ot }}</b></a>{% if ot_sel.cliente %} · <b>{{ ot_sel.cliente }}</b>{% endif %}{% if ot_sel.estado %} <span class="rm-origen">{{ ot_sel.estado }}</span>{% endif %}</span>
+    <a href="{{ ot_sel.url }}" class="rm-btn"><i class="bi bi-box-arrow-up-right"></i>Abrir la OT</a>
   </div>
   {% include 'ot2/_hallazgos.html' %}
   {% if not hallazgos or not hallazgos.n_total %}
@@ -96,37 +182,45 @@
 </div>
 
 <style>
-  .hzp-filtros{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
-  .hzp-f{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 16px;border-radius:999px;border:1px solid #d1d5db;background:#fff;
-    color:#374151;font-weight:700;font-size:.88rem;text-decoration:none}
-  .hzp-f.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
-  .hzp-bur{background:#dc2626;color:#fff;border-radius:999px;font-size:.72rem;font-weight:900;padding:2px 8px;min-width:22px;text-align:center}
-  .hzp-btn{min-height:44px;display:inline-flex;align-items:center}
-  .hzp-lista{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
-  .hzp-lista > li{display:flex}
-  .hzp-ot{display:block;flex:1 1 auto;min-width:0;background:#fff;border:1px solid #e5e7eb;border-left:6px solid #9ca3af;border-radius:12px;padding:12px 14px;color:#111827;text-decoration:none}
-  .hzp-ot.abiertos{border-left-color:#f59e0b}
-  /* H-26: la OT elegida se marca en NEGRO (como el filtro activo). El rojo queda para riesgo y errores, y la franja de la izquierda conserva su color de estado. */
-  .hzp-ot.on{box-shadow:0 0 0 2px #0a0a0a;border-top-color:#0a0a0a;border-right-color:#0a0a0a;border-bottom-color:#0a0a0a}
-  .hzp-ot:hover{background:#fafafa}
-  .hzp-ot-cab{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-  .hzp-ot-cab > b{font-size:1rem;margin-right:4px}
-  .hzp-ot-cli{font-weight:700;margin-top:4px;overflow-wrap:anywhere}
-  .hzp-ot-eq{color:#374151;font-size:.82rem;margin-top:6px;overflow-wrap:anywhere}
-  .hzp-eq{display:inline-block;background:#f3f4f6;border-radius:6px;padding:1px 7px;margin:0 4px 4px 0;line-height:1.35}
-  .hzp-ot-cu{color:#6b7280;font-size:.78rem;margin-top:4px}
-  .hzp-pie{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin:12px 0 4px;color:#374151;font-size:.88rem}
-  .hzp-pp{display:flex;align-items:center;gap:6px;margin:0}
-  .hzp-pp select{width:auto;min-height:44px;font-size:16px}
-  .hzp-nav{display:flex;align-items:center;gap:8px}
-  .hzp-nav .btn{min-height:44px;display:inline-flex;align-items:center}
+  .hzp-bur{background:#dc2626;color:#fff;border-radius:999px;font-size:.72rem;font-weight:900;padding:2px 8px;min-width:22px;text-align:center;margin-left:4px}
+  .rm-chip.is-active .hzp-bur{background:#fff;color:#991b1b}
+  .hzm-tit{font-weight:800;color:#111827;margin-top:4px;overflow-wrap:anywhere}
+  .hzm-ot{text-decoration:none;color:inherit}
+  .hzm-ot:hover{text-decoration:underline}
+  .hzm-row.is-sel{outline:2px solid #0a0a0a;outline-offset:-2px}
+  .hzm-gest{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
+  .hzm-gest .hz-vinc-a{min-height:36px;font-size:.8rem}
+  .hzm-valor{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 12px;background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d;font-weight:800;font-size:.8rem}
+  .hzm-sinfoto{color:#92400e;font-weight:700}
+  .hzm-cons{color:#14532d}
+  .hzm-w-h{min-width:230px}.hzm-w-o{min-width:190px}.hzm-w-e{min-width:190px}.hzm-w-a{min-width:130px}.hzm-w-s{min-width:210px}.hzm-w-p{min-width:170px}
+  .rm-table tbody tr.hzm-guia-row > td{padding:10px 16px 16px;background:#f3f4f6;border-bottom:2px solid #d1d5db;box-shadow:inset 5px 0 0 var(--rm-sem,transparent)}
+  .hzm-guia-row[data-alerta=rojo]{--rm-sem:#dc2626}.hzm-guia-row[data-alerta=ambar]{--rm-sem:#f59e0b}.hzm-guia-row[data-alerta=verde]{--rm-sem:#16a34a}.hzm-guia-row[data-alerta=gris]{--rm-sem:#9ca3af}
+  .rm-table tbody tr.hzm-row > td{border-bottom:0}
+  .hzm-guia-tit{font-size:.78rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#374151;margin:0 0 8px}
+  .hzm-guia-tit small{font-weight:600;text-transform:none;letter-spacing:0;color:#6b7280;margin-left:6px}
+  .hzm-guia{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+  .hzm-guia .hz-rec-sub{display:block}
+  @media (max-width:768px){.hzm-guia{grid-template-columns:1fr 1fr}.hzm-guia-tit small{display:block;margin:2px 0 0}}
   .hzp-vacio{background:#f9fafb;border:1px dashed #d1d5db;border-radius:12px;padding:18px;text-align:center;color:#6b7280;font-weight:600;margin:10px 0}
-  .hzp-vacio i{color:#16a34a;margin-right:6px}
-  .hzp-sel-cab{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin:18px 0 0;font-size:.95rem}
+  .hzp-sel-cab{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin:22px 0 10px;font-size:1rem;background:#fff;
+    border:1px solid #e5e7eb;border-left:6px solid #0a0a0a;border-radius:14px;padding:10px 14px}
   .hzp-sel-cab > span > a{display:inline-flex;align-items:center;min-height:44px}
   #hzpTarjeta{scroll-margin-top:80px}
-  /* H-18: foco visible de 3 px y buen contraste (azul #1d4ed8 sobre blanco ≈ 6,7:1; el rosa de antes daba 1,9:1). */
-  .hzp-f:focus-visible,.hzp-ot:focus-visible,.hzp-sel-cab a:focus-visible,.hzp-nav a:focus-visible,.hzp-pp select:focus-visible,.hzp-btn:focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}
-  @media (max-width:640px){.hzp-lista{grid-template-columns:1fr}.hzp-pie{justify-content:center}}
+  .hz-item:target{box-shadow:0 0 0 3px #3b82f6}
+  .hzp-sel-cab a:focus-visible,.hzm-ot:focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}
 </style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* La fila entera lleva a «Gestionar» (como el Monitor de Retiros), salvo que se toque un enlace de la propia fila (OT, ticket). */
+(function () {
+  document.addEventListener('click', function (ev) {
+    if (ev.target.closest('a, button, input, select')) return;
+    var tr = ev.target.closest('tr[data-href]');
+    if (tr) location.href = tr.getAttribute('data-href');
+  });
+})();
+</script>
 {% endblock %}

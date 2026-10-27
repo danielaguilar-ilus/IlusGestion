@@ -188,6 +188,8 @@ a.hz-btn{text-decoration:none}
 .hz-rec-p{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border-radius:10px;border:1px solid #e5e7eb;background:#f9fafb}
 .hz-rec-p.verde{background:#f0fdf4;border-color:#bbf7d0}
 .hz-rec-p.ambar{background:#fff8e1;border-color:#fde68a}
+.hz-rec-p.azul{background:#eff6ff;border-color:#bfdbfe}
+.hz-rec-p.azul .hz-rec-dot{background:#3b82f6;color:#fff}
 .hz-rec-dot{flex:0 0 22px;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:800;background:#e5e7eb;color:#374151}
 .hz-rec-p.verde .hz-rec-dot{background:#16a34a;color:#fff}
 .hz-rec-p.ambar .hz-rec-dot{background:#f59e0b;color:#111827}
@@ -222,3 +224,17 @@ a.hz-btn{text-decoration:none}
 .hzg-err{color:#991b1b;font-weight:700;font-size:.86rem;min-height:1.2em}
 .hzg-pie{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid #e5e7eb;flex-wrap:wrap}
 @media (max-width:640px){.hz-rec{grid-template-columns:1fr 1fr}.hzg-velo{padding:0}.hzg-caja{width:100%;height:100dvh;max-height:100dvh;border-radius:0}.hzg-fila{grid-template-columns:1fr}.hzg-pie .hz-btn{flex:1 1 100%}}
+
+/* 🧭 2026-10-26 — SLA y guía (Daniel: «implementar los SLA y poder tener trazabilidad… tablas amigables con filas informativas y una buena
+   sensación de guía, ya sabes, como Retiros»). «Ahora toca» = la frase de lo que sigue; el plazo en horas hábiles con su semáforo. */
+.hzm-sig{display:flex;gap:8px;align-items:flex-start;margin-top:8px;padding:8px 10px;border-radius:10px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;font-weight:700;font-size:.84rem;line-height:1.3}
+.hzm-sig small{display:block;font-size:.68rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#1d4ed8}
+.hzm-sig i{font-size:1.05rem;margin-top:2px;flex:0 0 auto}
+.hzm-sig.a-tomar,.hzm-sig.a-validar{background:#fff8e1;border-color:#fde68a;color:#78350f}.hzm-sig.a-tomar small,.hzm-sig.a-validar small{color:#92400e}
+.hzm-sig.a-listo,.hzm-sig.a-nada{background:#f0fdf4;border-color:#bbf7d0;color:#14532d}.hzm-sig.a-listo small,.hzm-sig.a-nada small{color:#166534}
+.hz-plazo{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:8px;padding:6px 12px;border-radius:10px;border:1px solid #e5e7eb;background:#f9fafb;color:#111827;font-size:.84rem}
+.hz-plazo small{color:#4b5563;font-size:.78rem}
+.hz-plazo.verde{background:#f0fdf4;border-color:#bbf7d0;color:#14532d}.hz-plazo.verde small{color:#166534}
+.hz-plazo.ambar{background:#fff8e1;border-color:#fde68a;color:#78350f}.hz-plazo.ambar small{color:#92400e}
+.hz-plazo.rojo{background:#fee2e2;border-color:#fecaca;color:#991b1b}.hz-plazo.rojo small{color:#991b1b}
+.hz-rec-sub{display:block}
