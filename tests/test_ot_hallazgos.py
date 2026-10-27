@@ -3434,7 +3434,9 @@ class TestFase1Bandeja(unittest.TestCase):
         def render(plantilla, **kw):
             visto["plantilla"], visto["ctx"] = plantilla, kw
             return "html"
-        amb = cargar(["ot_hallazgos_pagina", "_hall_cuando", "_hall_in"], constantes=("_HALL_PAG_FILTROS", "_HALL_F_A_VISTA"), extra={
+        amb = cargar(["ot_hallazgos_pagina", "_hall_monitor_items", "_hall_cuando", "_hall_in"],
+                     constantes=("_HALL_PAG_FILTROS", "_HALL_F_A_VISTA", "_HALL_ORDEN", "_HALL_MONITOR_COLS"), extra={
+            "_hall_monitor_opciones": lambda: {"resp": ["Aarón Rojas"], "tom": [], "rep": ["Lenin Urbina"]},
             "_oh": H, "_hs": HS, "_gc": GC, "request": types.SimpleNamespace(args=dict(args or {})), "_hall_ok": lambda: True,
             "mysql_fetchall": fetchall, "mysql_fetchone": fetchone, "_puede_ot_accion": lambda *a, **k: True, "g": types.SimpleNamespace(user={}),
             "_hall_contexto_ficha": lambda vid, v: None, "_hall_n_sin_gestionar": lambda: 3, "_ot_resp_ok": lambda: True,
@@ -3503,6 +3505,38 @@ class TestFase1Bandeja(unittest.TestCase):
         self.assertEqual(self._llamar([self.ROW], args={"vista": "hackeada"})["vista"], "sin_gestionar")
         self.assertEqual(self._llamar([self.ROW], args={"f": "todos"})["vista"], "todos", "los enlaces viejos (?f=) siguen funcionando")
 
+    def test_filtros_de_responsable_y_quien_lo_tomo_van_parametrizados_y_el_orden_se_valida(self):
+        ctx = self._llamar([self.ROW], args={"resp": "Aarón'; DROP TABLE x;--", "tom": "Víctor Betancur", "orden": "equipo", "dir": "asc", "vista": "todos"})
+        c = [x for x in ctx["consultas"] if x.startswith("SELECT h.id")][0]
+        self.assertNotIn("DROP", c)
+        self.assertIn("v.responsable_nombre=%s", c)
+        self.assertIn("h.tomado_por=%s", c)
+        self.assertIn("ORDER BY h.equipo_nombre ASC", c)
+        self.assertEqual((ctx["orden"], ctx["dir"]), ("equipo", "asc"))
+        nadie = self._llamar([self.ROW], args={"tom": "__nadie__", "resp": "__sin__", "vista": "todos"})
+        c2 = [x for x in nadie["consultas"] if x.startswith("SELECT h.id")][0]
+        self.assertIn("COALESCE(h.tomado_por,'')=''", c2)
+        self.assertIn("COALESCE(v.responsable_nombre,'')=''", c2)
+        malo = self._llamar([self.ROW], args={"orden": "h.id; DROP", "dir": "sideways"})
+        self.assertEqual((malo["orden"], malo["dir"]), ("", ""), "un orden inventado se ignora (va el de urgencia)")
+        self.assertEqual(self._llamar([self.ROW], args={"pp": "100"})["por_pag"], 100)
+        self.assertEqual(ctx["items"][0]["url"], "/ot/hallazgos/1", "cada fila entra a la ficha del hallazgo")
+
+    def test_la_ficha_de_un_hallazgo_es_solo_de_gestion_y_reusa_la_tarjeta_de_siempre(self):
+        self.assertIn('@app.route("/ot/hallazgos/<int:hid>", methods=["GET"])', APP)
+        for dec in ("@_mant_required", "@_no_tecnico"):
+            self.assertIn(dec, decoradores("ot_hallazgo_ficha"))
+        f = _fuente_funcion("ot_hallazgo_ficha")
+        self.assertIn('_puede_ot_accion(vid, "ver"', f)
+        self.assertIn("_hall_monitor_items([dict(fila)])", f, "la misma fila que el monitor: una sola verdad")
+        self.assertIn("_hall_contexto_ficha(vid", f, "la tarjeta de gestión de siempre")
+        for malo in ("INSERT", "UPDATE", "DELETE"):
+            self.assertNotIn(malo, f, "la ficha solo lee: las acciones son las rutas de siempre")
+        t = _leer("templates/ot2/hallazgo_ficha.html")
+        self.assertIn("{% include 'ot2/_hallazgos.html' %}", t)
+        self.assertIn("Ahora toca", t)
+        self.assertNotIn("<details", t, "nada plegado en la ficha")
+
     def _pagina(self, error=False, sel=340, items=None):
         e = escena_bancos()
         env = _entorno_pagina()
@@ -3517,19 +3551,33 @@ class TestFase1Bandeja(unittest.TestCase):
             sel=sel, ot_sel={"id": 340, "numero_ot": "OT-2026-00340", "url": "/ot/340", "cliente": "Juan Daniel Aguilar Tejera", "estado": "programada"} if sel else None,
             hallazgos=e.ctx() if sel else None, hz_pagina=True, error=error, n_sin_gestionar=2)
 
-    def test_h18_el_monitor_es_una_tabla_con_una_fila_por_hallazgo_y_su_guia(self):
+    def test_h18_el_monitor_es_una_tabla_con_una_fila_corta_por_hallazgo_y_su_guia_en_la_flecha(self):
+        # Daniel 27-oct: «las filas terminan siendo interminables… tarjetas achicadas… que se parezca a Retiros».
         html = self._pagina()
         self.assertIn('id="hzTabla"', html)
         self.assertEqual(len(re.findall(r'<tr class="rm-row [^"]*hzm-row', html)), 2, "una fila por hallazgo")
-        self.assertEqual(len(re.findall(r'<tr class="hzm-guia-row"', html)), 2, "y debajo, SIEMPRE a la vista, su guía de pasos (nada plegado)")
-        self.assertEqual(html.count('<ol class="hzm-guia"'), 2)
+        fila = html[html.index('<tr class="rm-row'):html.index('<tr class="hzm-det"')]
+        self.assertEqual(len(re.findall(r'<span class="hzm-paso ', fila)), 7, "el recorrido de 7 pasos va en la fila como 7 puntos")
+        self.assertIn('class="rm-ic-btn rm-exp hzm-exp"', fila, "la flecha abre la guía completa, como el detalle de Retiros")
+        self.assertIn('/ot/hallazgos/', fila, "tocar la fila entra a la ficha del hallazgo")
+        self.assertIn('class="hzm-gestionar"', fila, "«Gestionar» es un botón chico")
+        self.assertEqual(len(re.findall(r'<tr class="hzm-det" id="hzDet\d+" data-alerta="[a-z]+" hidden>', html)), 2, "la guía completa nace cerrada")
         self.assertEqual(len(re.findall(r'<li class="hz-rec-p ', html.split('<ol class="hzm-guia"')[1].split("</ol>")[0])), 7, "los 7 pasos del recorrido")
         txt = _texto_visible(html)
         for t in ("Ahora toca", "Sin tomar", "Recorrido de falla", "Abastecimiento", "Bodega", "Consumo de la OT", "Lenin Urbina", "OT-2026-00340",
-                  "Juan Daniel Aguilar Tejera", "Responsable de la OT: Aarón Rojas", "Plazo vencido"):
+                  "Juan Daniel Aguilar Tejera", "Aarón Rojas", "Plazo vencido", "Tomar el caso"):
             self.assertIn(t, txt, t)
-        self.assertNotIn("<details", html.split('<div id="hzpTarjeta">')[0], "Daniel 26-oct: tarjetas siempre abiertas")
         self.assertEqual(html.count('aria-current="true"'), 1, "solo el chip de la vista activa")
+
+    def test_filtros_arriba_y_orden_por_columna_como_retiros(self):
+        html = self._pagina()
+        for nombre in ('name="sev"', 'name="resp"', 'name="tom"', 'name="tec"'):
+            self.assertIn(nombre, html, nombre)
+        self.assertIn("Todos los responsables", html)
+        self.assertIn("Nadie lo ha tomado", html)
+        for clave in ("gravedad", "ot", "equipo", "resp", "tomado", "reciente", "urgencia"):
+            self.assertIn("&orden=" + clave + "&", html, "el encabezado ordena por " + clave)
+        self.assertIn("data-hz-auto", html, "cambiar un filtro recarga la tabla al instante")
 
     def test_h15_la_fila_dice_el_equipo_y_su_serie_sin_cortarlos(self):
         html = self._pagina()
@@ -3561,7 +3609,9 @@ class TestFase1Bandeja(unittest.TestCase):
         for sel in (".rm-btn", ".rm-select", ".rm-chip"):
             self.assertRegex(_regla_css(base, sel), r"min-height:44px", sel + " (los controles de Retiros)")
         self.assertIn("table-mobile-cards", html, "en el celular cada fila se ve como tarjeta")
-        self.assertRegex(css, r"@media \(max-width:768px\)\{\.rm-table tbody tr\.hzm-guia-row > td\{display:block\}\.hzm-guia\{grid-template-columns:1fr 1fr\}")
+        self.assertRegex(css, r"@media \(max-width:768px\)\{\.rm-table tbody tr\.hzm-det > td\{display:block\}\.hzm-guia\{grid-template-columns:1fr 1fr\}")
+        self.assertRegex(_regla_css(css, ".hzm-gestionar"), r"white-space:nowrap")
+        self.assertIn("min-height:44px", css.split("@media (max-width:768px){.hzm-gestionar{")[1][:60], "«Gestionar» de 44 px en el celular")
         # Revisión 27-oct: sin mínimos de ancho por columna (la tabla cabía a 1280 px solo con scroll horizontal).
         self.assertNotRegex(css, r"\.hzm-w-[a-z]\{min-width")
         self.assertRegex(_regla_css(_leer("static/inquietudes.css"), ".rm-toolbar .rm-tools input.rm-select"), r"min-width")

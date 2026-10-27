@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}{% if x %}Hallazgo {{ x.numero_ot }}{% else %}Hallazgo{% endif %} · ILUS Fitness{% endblock %}
+
+{#
+  🩺 FICHA DE UN HALLAZGO (REGLA #38). 2026-10-27 (Daniel: «poder entrar a la solicitud a gestionarla… que se parezca a Retiros, ve copiando
+  todo lo que puedas de esa página»): como la ficha de un retiro. Cabecera con lo que pasó y su semáforo; dos columnas: «Qué pasó» (equipo,
+  serie, detalle y fotos) y «Plazo y atención» (reloj SLA, lo que toca ahora, responsable, quién lo tomó); el recorrido de 7 pasos a ancho
+  completo; y abajo la tarjeta de gestión de SIEMPRE con solo este hallazgo (templates/ot2/_hallazgos.html: tomar, valorizar, repuesto,
+  ticket, OT de seguimiento, descartar, editar, borrar). Nada plegado, nombres completos (REGLA #15), 44 px en celular (REGLA #3).
+  Solo gestión (REGLAS #19/#26). Datos: ot_hallazgo_ficha (app.py).
+#}
+
+{% block head_extra %}<link rel="stylesheet" href="{{ url_for('static', filename='retiros_monitor.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='ot_hallazgos.css') }}">{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <div class="hzf-miga"><a href="/ot/hallazgos"><i class="bi bi-clipboard2-pulse-fill" aria-hidden="true"></i> Hallazgos</a>{% if x %} <span aria-hidden="true">›</span> {{ x.numero_ot }}{% endif %}</div>
+    <h4>{% if x %}{{ x.titulo }}{% else %}Hallazgo no disponible{% endif %}</h4>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="/ot/hallazgos" class="rm-btn"><i class="bi bi-arrow-left"></i>Volver a Hallazgos</a>
+    {% if ot %}<a href="{{ ot.url }}" class="rm-btn"><i class="bi bi-box-arrow-up-right"></i>Abrir la OT</a>{% endif %}
+  </div>
+</div>
+
+{% if not x %}
+<div class="hzf-vacio" role="alert">
+  {% if sin_permiso %}No tienes permiso para ver la OT de este hallazgo.{% else %}Este hallazgo ya no existe (se borró o se retiró).{% endif %}
+  <a class="rm-btn" href="/ot/hallazgos"><i class="bi bi-arrow-left"></i>Volver a Hallazgos</a>
+</div>
+{% else %}
+
+{#- Cabecera: como la de la ficha de un retiro (código, estado y el reloj a la vista). -#}
+<section class="hzf-cab" data-alerta="{{ x.semaforo }}" aria-label="Resumen del hallazgo">
+  <div class="hzf-cab-l">
+    <div class="hzf-chips">
+      <span class="hz-chip {{ x.sev_color }}"><i class="bi {{ x.sev_icono }}" aria-hidden="true"></i> {{ x.sev_texto }}</span>
+      {% if x.riesgo %}<span class="hz-chip rojo"><i class="bi bi-person-exclamation" aria-hidden="true"></i> Puede lastimar a alguien</span>{% endif %}
+      <span class="badge rm-estado e-{{ x.estado_color }}">{{ x.estado_txt }}</span>
+    </div>
+    <div class="hzf-ot"><a class="rm-code" href="{{ ot.url }}">{{ x.numero_ot }}</a>{% if x.ot_estado %} <span class="rm-origen">{{ x.ot_estado }}</span>{% endif %}
+      · <b>{{ x.cliente }}</b>{% if x.cliente_rut %} <span class="hzf-sub">RUT {{ x.cliente_rut }}</span>{% endif %}</div>
+    <div class="hzf-sub"><i class="bi bi-person-badge" aria-hidden="true"></i> Reportó <b>{{ x.reporto }}</b> · {{ x.reportado }}{% if x.hace %} · {{ x.hace }}{% endif %}</div>
+  </div>
+  <div class="hzf-cab-r">
+    {% set _rj = x.reloj %}{% if _rj %}
+    <div class="rm-reloj {{ x.semaforo }}{{ ' rm-reloj-alerta' if x.semaforo == 'rojo' }}">
+      <span class="rm-pill {{ x.semaforo }}"><i class="bi bi-stopwatch"></i><span class="rm-reloj-t">{{ _rj.pill }}</span></span>
+      <div class="rm-reloj-fila"><div class="rm-reloj-barra"><i style="width:{{ _rj.pct }}%"></i></div></div>
+      <div class="rm-sub rm-reloj-plazo">{{ _rj.sub }}</div>
+    </div>{% endif %}
+  </div>
+</section>
+
+{#- Lo que toca ahora (el «siguiente paso» de la ficha de Retiros). -#}
+{% if x.siguiente and x.siguiente.txt %}
+<div class="hzm-sig a-{{ x.siguiente.accion }} hzf-sig"><i class="bi {{ 'bi-check2-circle' if x.siguiente.accion in ('listo', 'nada') else 'bi-arrow-right-circle-fill' }}" aria-hidden="true"></i>
+  <span><small>Ahora toca</small>{{ x.siguiente.txt }}{% if x.siguiente.accion not in ('listo', 'nada') %} — <a href="#hzpTarjeta">hazlo aquí abajo</a>{% endif %}</span></div>
+{% endif %}
+
+<div class="hzf-grid">
+  <section class="hzf-card" aria-label="Qué pasó">
+    <h5><i class="bi bi-wrench-adjustable" aria-hidden="true"></i> Qué pasó</h5>
+    <dl class="hzf-dl">
+      <dt>Equipo</dt><dd>{{ x.equipo or 'De la OT (sin equipo)' }}</dd>
+      {% if x.serie %}<dt>N° de serie</dt><dd>{{ x.serie }}</dd>{% endif %}
+      {% if x.sku %}<dt>SKU</dt><dd>{{ x.sku }}</dd>{% endif %}
+      {% if x.detalle %}<dt>Detalle</dt><dd class="hzf-det">{{ x.detalle }}</dd>{% endif %}
+    </dl>
+    {% if x.fotos %}
+    <div class="hzf-fotos" aria-label="Fotos del hallazgo">
+      {% for u in x.fotos[:8] %}<a href="{{ u }}" target="_blank" rel="noopener"><img src="{{ u }}" alt="Foto {{ loop.index }} del hallazgo" loading="lazy"></a>{% endfor %}
+    </div>
+    {% else %}<div class="hzf-sinfoto"><i class="bi bi-camera" aria-hidden="true"></i> Sin foto: la evidencia ayuda a decidir.</div>{% endif %}
+  </section>
+  <section class="hzf-card" aria-label="Plazo y atención">
+    <h5><i class="bi bi-person-gear" aria-hidden="true"></i> Plazo y atención</h5>
+    <dl class="hzf-dl">
+      <dt>Responsable de la OT</dt><dd>{% if x.responsable_ot %}<span class="rm-resp"><span class="rm-avatar" aria-hidden="true">{{ x.responsable_ot[:1] }}</span>{{ x.responsable_ot }}</span>{% else %}<span class="rm-pill gris"><i class="bi bi-person-dash"></i>Sin responsable</span>{% endif %}</dd>
+      <dt>Lo tomó</dt><dd>{% if x.tomado_por %}{{ x.tomado_por }}{% if x.tomado %} · {{ x.tomado }}{% endif %}{% elif x.estado_ef == 'descartado' %}Descartado por {{ x.descartado_por or '—' }}{% else %}<span class="rm-pill ambar"><i class="bi bi-person-dash"></i>Nadie lo ha tomado</span>{% endif %}</dd>
+      {% if x.seg_numero %}<dt>OT de seguimiento</dt><dd><a href="/ot/{{ x.seg_id }}">{{ x.seg_numero }}</a></dd>{% endif %}
+      {% if x.ticket %}<dt>Ticket</dt><dd>{{ x.ticket }}</dd>{% endif %}
+      {% if x.valor %}<dt>Valorizado</dt><dd>{{ x.valor }}</dd>{% endif %}
+      {#- El consumo de la OT: plata, solo gestión (REGLAS #19/#26). -#}
+      {% if x.consumo_ot_n %}<dt>Consumo de la OT</dt><dd>{{ x.consumo_ot_n }} repuesto{{ '' if x.consumo_ot_n == '1' else 's' }}{% if x.consumo_ot_valor %} · {{ x.consumo_ot_valor }}{% endif %}</dd>{% endif %}
+      {% if x.consumo_seg_n %}<dt>Consumo de {{ x.seg_numero }}</dt><dd>{{ x.consumo_seg_n }} repuesto{{ '' if x.consumo_seg_n == '1' else 's' }}{% if x.consumo_seg_valor %} · {{ x.consumo_seg_valor }}{% endif %}</dd>{% endif %}
+    </dl>
+  </section>
+</div>
+
+<section class="hzf-card hzf-rec" aria-label="Recorrido del hallazgo">
+  <div class="hzm-guia-tit"><i class="bi bi-signpost-split" aria-hidden="true"></i> Recorrido de {{ x.sev_texto|lower }} · {{ x.numero_ot }}
+    <small>salidas: OT de seguimiento, ticket, abastecimiento, bodega y consumo de la OT</small></div>
+  <ol class="hzm-guia" aria-label="Recorrido de la gestión de este hallazgo">
+    {% for p in x.recorrido %}
+    <li class="hz-rec-p {{ p.color }}"><span class="hz-rec-dot" aria-hidden="true">{% if p.ok %}<i class="bi bi-check-lg"></i>{% else %}{{ loop.index }}{% endif %}</span>
+      <span class="hz-rec-tx"><b>{{ p.titulo }}</b><small>{{ p.txt }}</small>{% if p.sub %}<small class="hz-rec-sub">{{ p.sub }}</small>{% endif %}</span></li>
+    {% endfor %}
+  </ol>
+</section>
+
+{#- La gestión de siempre, con solo este hallazgo. -#}
+<div id="hzpTarjeta">
+  <div class="hzp-sel-cab">
+    <span><i class="bi bi-sliders" aria-hidden="true"></i> Gestionar este hallazgo</span>
+    {% if ot.n_hallazgos and ot.n_hallazgos > 1 %}<a href="{{ ot.todos_url }}" class="rm-btn"><i class="bi bi-list-check"></i>Ver los {{ ot.n_hallazgos }} hallazgos de {{ ot.numero_ot }}</a>{% endif %}
+  </div>
+  {% include 'ot2/_hallazgos.html' %}
+  {% if not hallazgos or not hallazgos.n_total %}<div class="hzp-vacio">Este hallazgo ya no se puede gestionar desde aquí.</div>{% endif %}
+</div>
+{% endif %}
+
+<style>
+  .hzf-miga{font-size:.82rem;color:#6b7280;margin-bottom:2px}
+  .hzf-miga a{color:#374151;font-weight:700;text-decoration:none}
+  .hzf-miga a:hover{text-decoration:underline}
+  .hzf-vacio{background:#fff8e1;border:1px solid #fde68a;border-radius:14px;padding:18px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;color:#92400e;font-weight:700}
+  .hzf-cab{display:flex;flex-wrap:wrap;gap:12px 24px;justify-content:space-between;align-items:flex-start;background:#fff;border:1px solid #e5e7eb;
+    border-radius:16px;padding:14px 18px;box-shadow:inset 6px 0 0 var(--rm-sem,#9ca3af)}
+  .hzf-cab[data-alerta=rojo]{--rm-sem:#dc2626}.hzf-cab[data-alerta=ambar]{--rm-sem:#f59e0b}.hzf-cab[data-alerta=verde]{--rm-sem:#16a34a}.hzf-cab[data-alerta=gris]{--rm-sem:#9ca3af}
+  .hzf-cab-l{flex:1 1 420px;min-width:0}
+  .hzf-cab-r{flex:0 1 300px;min-width:220px}
+  .hzf-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px}
+  .hzf-ot{font-size:.95rem;color:#111827;overflow-wrap:anywhere}
+  .hzf-sub{font-size:.82rem;color:#6b7280;margin-top:4px}
+  .hzf-sig{margin:12px 0 0}
+  .hzf-sig a{color:inherit;font-weight:800}
+  .hzf-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+  @media (max-width:768px){.hzf-grid{grid-template-columns:1fr}}
+  .hzf-card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:14px 18px}
+  .hzf-card h5{font-size:.86rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#374151;margin:0 0 10px}
+  .hzf-dl{display:grid;grid-template-columns:minmax(120px,auto) 1fr;gap:6px 14px;margin:0;font-size:.9rem}
+  .hzf-dl dt{color:#6b7280;font-weight:700}
+  .hzf-dl dd{margin:0;color:#111827;overflow-wrap:anywhere}
+  .hzf-det{white-space:pre-line}
+  .hzf-fotos{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .hzf-fotos img{width:92px;height:92px;object-fit:cover;border-radius:10px;border:1px solid #e5e7eb}
+  .hzf-sinfoto{margin-top:12px;color:#92400e;font-weight:700;font-size:.85rem}
+  .hzf-rec{margin-top:14px}
+  .hzm-guia-tit{font-size:.78rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#374151;margin:0 0 8px}
+  .hzm-guia-tit small{font-weight:600;text-transform:none;letter-spacing:0;color:#6b7280;margin-left:6px}
+  .hzm-guia{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+  .hzm-guia .hz-rec-sub{display:block}
+  @media (max-width:768px){.hzm-guia{grid-template-columns:1fr 1fr}.hzm-guia-tit small{display:block;margin:2px 0 0}.hzf-dl{grid-template-columns:1fr}}
+  .hzp-vacio{background:#f9fafb;border:1px dashed #d1d5db;border-radius:12px;padding:18px;text-align:center;color:#6b7280;font-weight:600;margin:10px 0}
+  .hzp-sel-cab{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin:22px 0 10px;font-size:1rem;background:#fff;
+    border:1px solid #e5e7eb;border-left:6px solid #0a0a0a;border-radius:14px;padding:10px 14px;font-weight:700}
+  #hzpTarjeta{scroll-margin-top:80px}
+</style>
+{% endblock %}

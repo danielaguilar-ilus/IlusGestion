@@ -170861,81 +170861,46 @@ def _hall_monitor_kpis():
         return {}
 
 
-@app.route("/ot/hallazgos", methods=["GET"])
-@_mant_required
-@_no_tecnico
-def ot_hallazgos_pagina():
-    """MONITOR de hallazgos con el lenguaje de Retiros (Daniel 26-oct: «quisiera verla como el módulo de retiros: identificar quién
-    solicita, de qué OT, de qué cliente, todo bien trazable» y «tablas amigables con filas informativas y una buena sensación de guía»).
-    Tarjetas KPI, buscador, chips por estado y una tabla con UNA FILA POR HALLAZGO: semáforo del PLAZO (SLA en horas hábiles), gravedad,
-    qué pasó, quién lo reportó y cuándo, OT y cliente (con el responsable y el consumo de la OT), equipo con N° de serie, quién lo tomó,
-    «lo que toca ahora» (la guía) y el recorrido de salidas: OT de seguimiento · ticket · abastecimiento · bodega · consumo.
-    Abajo, la tarjeta de gestión de la OT elegida (la misma de siempre). Paginado (REGLA #4.3). Solo gestión: nunca un técnico
-    (REGLAS #19/#26: tiene plata, la valorización y el consumo)."""
-    vista = request.args.get("vista") or _HALL_F_A_VISTA.get(request.args.get("f") or "", "sin_gestionar")
-    if vista not in _oh.VISTAS_MONITOR:
-        vista = "sin_gestionar"
-    q = _oh.limpio(request.args.get("q"), 80)
-    sev = request.args.get("sev") or ""
-    if sev not in _oh.SEVERIDADES:
-        sev = ""
-    tec = _oh.limpio(request.args.get("tec"), 60)
+# Columnas que se pueden ordenar desde el encabezado del monitor (como Retiros). clave → (expresión SQL, sentido por defecto).
+_HALL_ORDEN = {
+    "gravedad": ("(h.riesgo=1) DESC, FIELD(h.severidad,'fuera_servicio','falla','baja','alerta','repuesto','incidencia')", "asc"),
+    "ot": ("v.numero_ot", "desc"),
+    "equipo": ("h.equipo_nombre", "asc"),
+    "resp": ("v.responsable_nombre", "asc"),
+    "tomado": ("h.tomado_por", "asc"),
+    "reciente": ("h.detectado_en", "desc"),
+}
+# La consulta de UNA fila del monitor (la usan la lista y la ficha de un hallazgo).
+_HALL_MONITOR_COLS = (
+    "SELECT h.id, h.visita_id, h.origen, h.referencia, h.tarea_id, h.severidad, h.titulo, h.detalle, h.equipo_nombre, h.maquina_id, h.item_manual_id, "
+    "       h.riesgo, h.n_fotos, h.fotos_json, h.estado, h.detectado_por, h.detectado_en, h.tomado_por, h.tomado_en, "
+    "       h.ot_seguimiento_id, h.seguimiento_en, h.descartado_por, h.descartado_en, h.retirado_en, "
+    "       TIMESTAMPDIFF(MINUTE, h.detectado_en, UTC_TIMESTAMP()) AS min_desde, "
+    "       v.numero_ot, v.estado AS ot_estado, v.cliente_id, c.razon_social AS cliente, c.rut AS cliente_rut, "
+    "       s.numero_ot AS seg_numero, s.estado AS seg_estado, m.serie, m.sku ")
+
+
+def _hall_monitor_opciones():
+    """Los valores de los filtros de arriba (Daniel 27-oct: «filtros en las tablas… filtros de responsables arriba», como Retiros): los
+    responsables de las OT, quién tomó y quién reportó, sacados de los hallazgos que existen. Nunca levanta."""
+    out = {"resp": [], "tom": [], "rep": []}
     try:
-        por_pag = int(request.args.get("pp") or 20)
-    except ValueError:
-        por_pag = 20
-    por_pag = por_pag if por_pag in (10, 20, 50) else 20
-    try:
-        pag = max(1, int(request.args.get("p") or 1))
-    except ValueError:
-        pag = 1
-    filas, total, error = [], 0, False
-    kpis = _hall_monitor_kpis() if _hall_ok() else {}
-    vencidos = _hall_vencidos_ids() if _hall_ok() else set()
-    kpis["vencidos"] = len(vencidos)
-    if _hall_ok():
-        try:
-            if vista == "vencidos":
-                where = ["h.retirado_en IS NULL", ("h.id IN (" + _hall_in(sorted(vencidos)) + ")") if vencidos else "1=0"]
-                params = list(sorted(vencidos))
-            else:
-                where = ["h.retirado_en IS NULL", _oh.sql_vista(vista)]
-                params = []
-            if q:
-                like = "%" + q + "%"
-                where.append("(c.razon_social LIKE %s OR v.numero_ot LIKE %s OR h.titulo LIKE %s OR h.equipo_nombre LIKE %s "
-                             " OR m.serie LIKE %s OR h.detectado_por LIKE %s OR h.tomado_por LIKE %s)")
-                params += [like] * 7
-            if sev:
-                where.append("h.severidad=%s")
-                params.append(sev)
-            if tec:
-                where.append("h.detectado_por LIKE %s")
-                params.append("%" + tec + "%")
-            base = ("  FROM mant_ot_hallazgos h JOIN mant_visitas v ON v.id = h.visita_id "
-                    "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
-                    "  LEFT JOIN mant_visitas s ON s.id = h.ot_seguimiento_id "
-                    "  LEFT JOIN mant_maquinas m ON m.id = h.maquina_id "
-                    " WHERE " + " AND ".join(where))
-            total = int((mysql_fetchone("SELECT COUNT(*) AS n " + base, tuple(params)) or {}).get("n") or 0)
-            paginas_ = max(1, (total + por_pag - 1) // por_pag)
-            pag = min(pag, paginas_)
-            ab = _oh.sql_abierto("h", "s")
-            orden_venc = ("(h.id IN (" + _hall_in(sorted(vencidos)) + ")) DESC, ") if (vencidos and vista != "vencidos") else ""
-            par_orden = list(sorted(vencidos)) if (vencidos and vista != "vencidos") else []
-            filas = [dict(r) for r in (mysql_fetchall(
-                "SELECT h.id, h.visita_id, h.origen, h.referencia, h.tarea_id, h.severidad, h.titulo, h.detalle, h.equipo_nombre, h.maquina_id, h.item_manual_id, "
-                "       h.riesgo, h.n_fotos, h.fotos_json, h.estado, h.detectado_por, h.detectado_en, h.tomado_por, h.tomado_en, "
-                "       h.ot_seguimiento_id, h.seguimiento_en, h.descartado_por, h.descartado_en, h.retirado_en, "
-                "       TIMESTAMPDIFF(MINUTE, h.detectado_en, UTC_TIMESTAMP()) AS min_desde, "
-                "       v.numero_ot, v.estado AS ot_estado, v.cliente_id, c.razon_social AS cliente, c.rut AS cliente_rut, "
-                "       s.numero_ot AS seg_numero, s.estado AS seg_estado, m.serie, m.sku "
-                + base + " ORDER BY " + orden_venc + "(" + ab + ") DESC, (h.riesgo=1 OR h.severidad IN ('falla','fuera_servicio','baja')) DESC, "
-                "          h.detectado_en DESC, h.id DESC LIMIT %s OFFSET %s",
-                (*params, *par_orden, por_pag, (pag - 1) * por_pag)) or [])]
-        except Exception as e:
-            print(f"[hall] monitor: {type(e).__name__}: {e}", flush=True)
-            error = True
+        out["tom"] = [r["n"] for r in (mysql_fetchall(
+            "SELECT DISTINCT tomado_por AS n FROM mant_ot_hallazgos WHERE retirado_en IS NULL AND COALESCE(tomado_por,'')<>'' ORDER BY n LIMIT 200") or [])]
+        out["rep"] = [r["n"] for r in (mysql_fetchall(
+            "SELECT DISTINCT detectado_por AS n FROM mant_ot_hallazgos WHERE retirado_en IS NULL AND COALESCE(detectado_por,'')<>'' ORDER BY n LIMIT 200") or [])]
+        if _ot_resp_ok():
+            out["resp"] = [r["n"] for r in (mysql_fetchall(
+                "SELECT DISTINCT v.responsable_nombre AS n FROM mant_ot_hallazgos h JOIN mant_visitas v ON v.id = h.visita_id "
+                " WHERE h.retirado_en IS NULL AND COALESCE(v.responsable_nombre,'')<>'' ORDER BY n LIMIT 200") or [])]
+    except Exception as e:
+        print(f"[hall] monitor opciones: {type(e).__name__}", flush=True)
+    return out
+
+
+def _hall_monitor_items(filas):
+    """Las filas del monitor ya listas para la plantilla (las usan la lista y la ficha de un hallazgo): gravedad, OT y cliente, equipo y
+    serie, responsable de la OT, quién lo tomó, plazo (SLA), lo que toca ahora, el recorrido de 7 pasos y el consumo. Solo lectura."""
     traz = _hall_trazabilidad(filas) if filas else {}
     # Las fotos de una TAREA las sube el técnico DESPUÉS de responder: se releen vivas (como en la tarjeta de gestión) y no solo de lo guardado.
     vivas_t = _hall_fotos_tareas_lote([f.get("tarea_id") for f in filas if f.get("origen") == _oh.ORIGEN_TAREA and f.get("tarea_id")])
@@ -170970,9 +170935,10 @@ def ot_hallazgos_pagina():
             "responsable_ot": resp.get(int(f["visita_id"])) or "",
             "sev_texto": sv["texto"], "sev_color": sv["color"], "sev_icono": sv["icono"], "riesgo": bool(f.get("riesgo")),
             "titulo": _oh.titulo_corto(f.get("titulo"), f.get("equipo_nombre")) or (f.get("titulo") or ""),
+            "detalle": f.get("detalle") or "",
             "equipo": nombre or "", "serie": (f.get("serie") or serie_guardada or "").strip(), "sku": f.get("sku") or "",
             "maquina_id": f.get("maquina_id"),
-            "foto": fotos[0] if fotos else "", "n_fotos": len(fotos) or int(f.get("n_fotos") or 0),
+            "foto": fotos[0] if fotos else "", "fotos": fotos, "n_fotos": len(fotos) or int(f.get("n_fotos") or 0),
             "reporto": f.get("detectado_por") or "el técnico", "reportado": _hall_cuando(f.get("detectado_en")), "hace": _oh.hace_txt(horas),
             "tomado_por": f.get("tomado_por") or "", "tomado": _hall_cuando(f.get("tomado_en")),
             "descartado_por": f.get("descartado_por") or "",
@@ -170985,15 +170951,114 @@ def ot_hallazgos_pagina():
             "consumo_ot_n": _hs.num_txt(co_ot.get("n")) if co_ot.get("n") else "", "consumo_ot_valor": _gc.pesos(co_ot.get("valor")) if co_ot.get("valor") else "",
             "consumo_seg_n": _hs.num_txt((co_seg or {}).get("n")) if (co_seg or {}).get("n") else "",
             "consumo_seg_valor": _gc.pesos((co_seg or {}).get("valor")) if (co_seg or {}).get("valor") else "",
+            "url": f"/ot/hallazgos/{int(f['id'])}",
         })
+    return items
+
+
+@app.route("/ot/hallazgos", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_hallazgos_pagina():
+    """MONITOR de hallazgos con el MISMO formato del Monitor de Retiros. 2026-10-27 (Daniel: «las filas terminan siendo interminables…
+    tarjetas achicadas; un botón chiquitito… filtros en las tablas, que podamos filtrar por las columnas… filtros de responsables arriba»):
+    tarjetas KPI, buscador, chips por estado, filtros arriba (gravedad, responsable de la OT, quién lo tomó, quién lo reportó), orden por
+    columna (?orden=&dir=) y una fila CORTA por hallazgo con el recorrido en 7 puntos; la guía completa se abre con la flecha de la fila.
+    Tocar la fila (o «Gestionar») entra a la ficha del hallazgo (/ot/hallazgos/<id>), como la ficha de un retiro. Paginado (REGLA #4.3).
+    Solo gestión: nunca un técnico (REGLAS #19/#26: tiene plata, la valorización y el consumo)."""
+    vista = request.args.get("vista") or _HALL_F_A_VISTA.get(request.args.get("f") or "", "sin_gestionar")
+    if vista not in _oh.VISTAS_MONITOR:
+        vista = "sin_gestionar"
+    q = _oh.limpio(request.args.get("q"), 80)
+    sev = request.args.get("sev") or ""
+    if sev not in _oh.SEVERIDADES:
+        sev = ""
+    tec = _oh.limpio(request.args.get("tec"), 60)
+    resp_f = _oh.limpio(request.args.get("resp"), 120)
+    tom_f = _oh.limpio(request.args.get("tom"), 120)
+    orden = request.args.get("orden") or ""
+    if orden not in _HALL_ORDEN and orden != "urgencia":
+        orden = ""
+    if orden == "resp" and not _ot_resp_ok():
+        orden = ""
+    dir_ = (request.args.get("dir") or "").lower()
+    if dir_ not in ("asc", "desc"):
+        dir_ = _HALL_ORDEN[orden][1] if orden in _HALL_ORDEN else ""
+    try:
+        por_pag = int(request.args.get("pp") or 20)
+    except ValueError:
+        por_pag = 20
+    por_pag = por_pag if por_pag in (10, 20, 50, 100) else 20
+    try:
+        pag = max(1, int(request.args.get("p") or 1))
+    except ValueError:
+        pag = 1
+    filas, total, error = [], 0, False
+    kpis = _hall_monitor_kpis() if _hall_ok() else {}
+    vencidos = _hall_vencidos_ids() if _hall_ok() else set()
+    kpis["vencidos"] = len(vencidos)
+    if _hall_ok():
+        try:
+            if vista == "vencidos":
+                where = ["h.retirado_en IS NULL", ("h.id IN (" + _hall_in(sorted(vencidos)) + ")") if vencidos else "1=0"]
+                params = list(sorted(vencidos))
+            else:
+                where = ["h.retirado_en IS NULL", _oh.sql_vista(vista)]
+                params = []
+            if q:
+                like = "%" + q + "%"
+                where.append("(c.razon_social LIKE %s OR v.numero_ot LIKE %s OR h.titulo LIKE %s OR h.equipo_nombre LIKE %s "
+                             " OR m.serie LIKE %s OR h.detectado_por LIKE %s OR h.tomado_por LIKE %s)")
+                params += [like] * 7
+            if sev:
+                where.append("h.severidad=%s")
+                params.append(sev)
+            if tec:
+                where.append("h.detectado_por LIKE %s")
+                params.append("%" + tec + "%")
+            if tom_f == "__nadie__":
+                where.append("COALESCE(h.tomado_por,'')=''")
+            elif tom_f:
+                where.append("h.tomado_por=%s")
+                params.append(tom_f)
+            if resp_f and _ot_resp_ok():
+                if resp_f == "__sin__":
+                    where.append("COALESCE(v.responsable_nombre,'')=''")
+                else:
+                    where.append("v.responsable_nombre=%s")
+                    params.append(resp_f)
+            base = ("  FROM mant_ot_hallazgos h JOIN mant_visitas v ON v.id = h.visita_id "
+                    "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+                    "  LEFT JOIN mant_visitas s ON s.id = h.ot_seguimiento_id "
+                    "  LEFT JOIN mant_maquinas m ON m.id = h.maquina_id "
+                    " WHERE " + " AND ".join(where))
+            total = int((mysql_fetchone("SELECT COUNT(*) AS n " + base, tuple(params)) or {}).get("n") or 0)
+            paginas_ = max(1, (total + por_pag - 1) // por_pag)
+            pag = min(pag, paginas_)
+            ab = _oh.sql_abierto("h", "s")
+            if orden in _HALL_ORDEN:
+                # Orden elegido en el encabezado; empate: lo más reciente primero.
+                orden_sql = _HALL_ORDEN[orden][0] + " " + dir_.upper() + ", h.detectado_en DESC, h.id DESC"
+                par_orden = []
+            else:
+                # Por urgencia (el de siempre): vencidos primero, abiertos, graves, lo más reciente.
+                orden_venc = ("(h.id IN (" + _hall_in(sorted(vencidos)) + ")) DESC, ") if (vencidos and vista != "vencidos") else ""
+                par_orden = list(sorted(vencidos)) if (vencidos and vista != "vencidos") else []
+                orden_sql = (orden_venc + "(" + ab + ") DESC, (h.riesgo=1 OR h.severidad IN ('falla','fuera_servicio','baja')) DESC, "
+                             "          h.detectado_en DESC, h.id DESC")
+            filas = [dict(r) for r in (mysql_fetchall(
+                _HALL_MONITOR_COLS + base + " ORDER BY " + orden_sql + " LIMIT %s OFFSET %s",
+                (*params, *par_orden, por_pag, (pag - 1) * por_pag)) or [])]
+        except Exception as e:
+            print(f"[hall] monitor: {type(e).__name__}: {e}", flush=True)
+            error = True
+    items = _hall_monitor_items(filas)
     paginas = max(1, (total + por_pag - 1) // por_pag)
-    # La OT elegida (o la del primer hallazgo de la página) con su tarjeta de gestión.
+    # La OT elegida (?ot=) con su tarjeta de gestión de todos sus hallazgos, abajo (los enlaces viejos siguen llegando acá).
     try:
         sel = int(request.args.get("ot") or 0)
     except ValueError:
         sel = 0
-    if not sel and items:
-        sel = items[0]["visita_id"]
     hallazgos, ot_sel = None, None
     if sel:
         v = mysql_fetchone("SELECT * FROM mant_visitas WHERE id=%s", (sel,)) if _puede_ot_accion(sel, "ver", getattr(g, "user", None) or {}) else None
@@ -171004,9 +171069,51 @@ def ot_hallazgos_pagina():
             hallazgos = _hall_contexto_ficha(sel, dict(v))
     return render_template("ot2/hallazgos.html", items=items, total=total, pag=pag, paginas=paginas, por_pag=por_pag,
                            desde=((pag - 1) * por_pag + 1) if total else 0, hasta=min(pag * por_pag, total),
-                           vista=vista, vistas=_oh.VISTAS_MONITOR, q=q, sev=sev, tec=tec, severidades=_oh.SEVERIDADES, kpis=kpis,
+                           vista=vista, vistas=_oh.VISTAS_MONITOR, q=q, sev=sev, tec=tec, resp_f=resp_f, tom_f=tom_f, orden=orden, dir=dir_,
+                           opciones=_hall_monitor_opciones() if _hall_ok() else {"resp": [], "tom": [], "rep": []},
+                           severidades=_oh.SEVERIDADES, kpis=kpis,
                            sla=_hs.config(), sel=sel, ot_sel=ot_sel, hallazgos=hallazgos, hz_pagina=True, error=error, es_sa=_es_superadmin_actual(),
                            n_sin_gestionar=kpis.get("sin_gestionar", 0) if kpis else _hall_n_sin_gestionar())
+
+
+@app.route("/ot/hallazgos/<int:hid>", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot_hallazgo_ficha(hid):
+    """La FICHA de un hallazgo (Daniel 27-oct: «poder entrar a la solicitud a gestionarla… copiando todo lo que se pueda de Retiros»): como la
+    ficha de un retiro. Arriba lo que pasó (gravedad, OT y cliente, equipo y serie, quién lo reportó, responsable, quién lo tomó, plazo y lo que
+    toca ahora), su recorrido de 7 pasos y las fotos; abajo, la tarjeta de gestión de SIEMPRE con solo este hallazgo (tomar, valorizar,
+    repuesto, ticket, OT de seguimiento, descartar, editar, borrar). Solo gestión (REGLAS #19/#26). Solo lectura: las acciones son las rutas
+    de siempre."""
+    if not _hall_ok():
+        return redirect("/ot/hallazgos")
+    try:
+        fila = mysql_fetchone(
+            _HALL_MONITOR_COLS + "  FROM mant_ot_hallazgos h JOIN mant_visitas v ON v.id = h.visita_id "
+            "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id LEFT JOIN mant_visitas s ON s.id = h.ot_seguimiento_id "
+            "  LEFT JOIN mant_maquinas m ON m.id = h.maquina_id WHERE h.id=%s", (int(hid),))
+    except Exception as e:
+        print(f"[hall] ficha {hid}: {type(e).__name__}: {e}", flush=True)
+        fila = None
+    if not fila:
+        return render_template("ot2/hallazgo_ficha.html", x=None, hallazgos=None, ot=None, hz_pagina=True, es_sa=_es_superadmin_actual()), 404
+    vid = int(fila["visita_id"])
+    if not _puede_ot_accion(vid, "ver", getattr(g, "user", None) or {}):
+        return render_template("ot2/hallazgo_ficha.html", x=None, hallazgos=None, ot=None, hz_pagina=True, es_sa=False, sin_permiso=True), 403
+    x = _hall_monitor_items([dict(fila)])[0]
+    v = mysql_fetchone("SELECT * FROM mant_visitas WHERE id=%s", (vid,)) or {}
+    hallazgos = _hall_contexto_ficha(vid, dict(v)) if v else None
+    n_ot = 0
+    if hallazgos:
+        n_ot = len(hallazgos.get("activos") or [])
+        # La tarjeta de gestión de siempre, con SOLO este hallazgo (los demás de la OT, a un clic).
+        solo = [i for i in (hallazgos.get("activos") or []) if int(i.get("id") or 0) == int(hid)]
+        ret = [i for i in (hallazgos.get("retirados") or []) if int(i.get("id") or 0) == int(hid)]
+        hallazgos = dict(hallazgos, activos=solo, retirados=ret, grupos=_hall_agrupar(solo))
+    ot = {"id": vid, "numero_ot": x["numero_ot"], "url": f"/ot/{vid}", "estado": x["ot_estado"], "cliente": x["cliente"],
+          "n_hallazgos": n_ot, "todos_url": f"/ot/hallazgos?vista=todos&ot={vid}#hzpTarjeta"}
+    return render_template("ot2/hallazgo_ficha.html", x=x, hallazgos=hallazgos, ot=ot, hz_pagina=True, es_sa=_es_superadmin_actual(),
+                           sla=_hs.config())
 
 
 # ── Las rutas de la gestión: tomar el caso, descartar, reabrir y el prellenado de la OT de seguimiento ────────────────

@@ -1159,6 +1159,12 @@ Incidente real: el asistente sumaba por detrás «Revisión — Registro por equ
   se cancela o anula, el plazo vuelve a correr desde el reporte; `repuesto_en` conserva la PRIMERA vez y una segunda solicitud suma a las anteriores. La misma
   guía, plazo y recorrido salen en la tarjeta de gestión de la OT (`_gc_enriquecer_hallazgos` ← `_hall_trazabilidad`). Es SOLO LECTURA y con plata (consumo):
   solo gestión, nunca un técnico (REGLAS #19 y #26). Todavía NO avisa por la campana cuando un plazo vence (el monitor lo muestra en «Plazo vencido»).
+  **27-oct, formato Retiros (Daniel: «las filas terminan siendo interminables… tarjetas achicadas… filtros por columnas y de responsables arriba…
+  poder entrar a la solicitud a gestionarla»):** UNA fila corta por hallazgo con el recorrido como 7 puntos de color dentro de la fila; la guía
+  completa detrás de la flecha (como el detalle de Retiros). Filtros arriba (gravedad, responsable de la OT, quién lo tomó, quién lo reportó) y
+  orden tocando el encabezado (`_HALL_ORDEN`, lista blanca). Tocar la fila o el botón chico «Gestionar» entra a la FICHA del hallazgo
+  (`/ot/hallazgos/<id>`, `ot_hallazgo_ficha`, misma fila `_hall_monitor_items`) con la tarjeta de gestión de siempre solo para ese hallazgo.
+  Borrado masivo (superadmin): la barra fija abajo aparece al marcar. Pruebas en `tests/test_ot_hallazgos.py` (TestFase1Bandeja).
   Pruebas: `tests/test_hallazgos_sla.py`.
 - Pruebas: `tests/test_ot_hallazgos.py` (módulo puro, base de mentira, SQL del panel ejecutado de verdad en SQLite, plantillas renderizadas y JS ejecutado con Node). Esto se prueba SIEMPRE con datos de mentira: hay clientes reales de por medio (REGLA #22: cero correos o cambios visibles para el cliente al probar).
 
