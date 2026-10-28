@@ -6874,9 +6874,12 @@ def _perf_static_cache_and_gzip(resp):
         #   nuestro propio origin (no en iframes de terceros), que es lo
         #   que necesita la app de mantenciones (ot_ejecutar.html).
         #   También habilitamos camera para la captura de fotos de tareas.
+        #   FIX 2026-10-28: `microphone=()` le prohibía el micrófono a TODA la app
+        #   (el dictado de Respuestas en Tickets mostraba «Activa tu micrófono»
+        #   aunque el usuario diera el permiso). Ahora `microphone=(self)`.
         if "Permissions-Policy" not in resp.headers:
             resp.headers["Permissions-Policy"] = (
-                "geolocation=(self), camera=(self), microphone=()"
+                "geolocation=(self), camera=(self), microphone=(self)"
             )
 
         # ── 0.05) Anti-cache para HTML — NUEVO 2026-06-06 ─────────────────
