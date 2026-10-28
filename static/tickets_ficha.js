@@ -1078,6 +1078,66 @@ function tkEstadoBaseParaStepper(t, mensajes){
   }
   return 'open'; // sin bitácora previa: asumimos que recién se abrió
 }
+// ── Tracking con tiempos (Daniel 2026-10-28: «el tracking… como el de retiros,
+//    indicando tiempos y hora al marcar»). Todo sale de lo que el ticket ya
+//    guarda: la fecha de ingreso y los eventos «cambio_estado» del hilo (con su
+//    hora, quién lo hizo y de qué estado a cuál). Nada se inventa: un paso sin
+//    registro muestra solo «completado». Las horas del servidor ya vienen en
+//    hora Chile (REGLA #6). ──
+function tkParseCl(s){
+  const m = String(s||'').match(/^(\d{2})\/(\d{2})\/(\d{4})[ T](\d{2}):(\d{2})/);
+  return m ? Date.UTC(+m[3], +m[2]-1, +m[1], +m[4], +m[5]) : null;
+}
+function tkAhoraCl(){
+  try{
+    const m = new Date().toLocaleString('sv-SE', {timeZone:'America/Santiago'})
+      .match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/);
+    return m ? Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5]) : null;
+  }catch(e){ return null; }
+}
+function tkDurTxt(ms){
+  if(ms == null || ms < 0) return '';
+  const min = Math.round(ms / 60000);
+  if(min < 1) return 'menos de 1 min';
+  if(min < 60) return min + ' min';
+  const h = Math.floor(min / 60), mm = min % 60;
+  if(h < 24) return h + ' h' + (mm ? ' ' + mm + ' min' : '');
+  const d = Math.floor(h / 24), hh = h % 24;
+  return d + (d === 1 ? ' día' : ' días') + (hh ? ' ' + hh + ' h' : '');
+}
+function tkNombreCorto(u){
+  const s = String(u||'').trim();
+  if(!s || s.toLowerCase() === 'sistema') return 'Automático';
+  return s.replace(/@.*/,'').replace(/[._-]+/g,' ').split(/\s+/).filter(Boolean)
+    .map(function(p){ return p.charAt(0).toUpperCase() + p.slice(1).toLowerCase(); }).join(' ');
+}
+function tkFechaCorta(s){
+  const m = String(s||'').match(/^(\d{2})\/(\d{2})\/\d{4}[ T](\d{2}:\d{2})/);
+  return m ? (m[1] + '/' + m[2] + ' ' + m[3]) : String(s||'');
+}
+// Un punto por paso (0 Abierto · 1 En Curso · 2 Resuelto · 3 Cerrado): cuándo
+// se marcó por última vez y quién. Si el ticket se reabrió, los pasos de más
+// adelante se borran (ya no valen).
+function tkTrackingPuntos(t, mensajes, curIdx){
+  const pts = [null, null, null, null];
+  if(t.created_at) pts[0] = {txt: t.created_at, ts: tkParseCl(t.created_at), quien: t.created_by || ''};
+  const cambios = (mensajes||[]).filter(function(m){ return m.tipo === 'cambio_estado'; })
+    .map(function(m, i){ return {m: m, i: i, ts: tkParseCl(m.created_at)}; })
+    .sort(function(a, b){ return (a.ts||0) - (b.ts||0) || a.i - b.i; });
+  cambios.forEach(function(c){
+    const nuevo = actMeta(c.m.metadata).nuevo;
+    if(!nuevo || nuevo === 'pending' || nuevo === 'cancelado') return;
+    const idx = tkStepIndexParaEstado(nuevo);
+    for(let k = idx + 1; k < 4; k++) pts[k] = null;
+    const punto = {txt: c.m.created_at, ts: c.ts, quien: c.m.usuario || ''};
+    if(idx === 0){ pts.reab = punto; }   // reapertura: «Abierto» conserva la fecha de ingreso
+    else pts[idx] = punto;
+  });
+  for(let k = curIdx + 1; k < 4; k++) pts[k] = null;
+  if(curIdx === 0) pts.reab = pts.reab || null;
+  return pts;
+}
+
 function renderStepper(t, mensajes){
   const wrap = document.getElementById('tkStepperWrap');
   if(t.estado === 'cancelado'){
@@ -1087,6 +1147,8 @@ function renderStepper(t, mensajes){
   const base = tkEstadoBaseParaStepper(t, mensajes);
   const curIdx = tkStepIndexParaEstado(base);
   const targetPorIdx = ['open','in_progress','resolved','closed'];
+  const pts = tkTrackingPuntos(t, mensajes, curIdx);
+  const ahora = tkAhoraCl();
   const stepsHtml = TK_STEP_DEFS.map(function(s, i){
     let cls = 'tk-step';
     if(i < curIdx) cls += ' done'; else if(i === curIdx) cls += ' current';
@@ -1094,13 +1156,49 @@ function renderStepper(t, mensajes){
     if(i===1 && curIdx===1 && TK_EN_CURSO_SET.includes(t.estado) && t.estado!=='in_progress'){
       badge = '<span class="tk-step-badge">'+esc(ESTADO_LABEL[t.estado]||t.estado)+'</span>';
     }
+    // Cuándo se marcó, quién, y cuánto pasó desde el paso anterior.
+    const p = pts[i];
+    let tiempos = '';
+    if(p && p.txt){
+      tiempos += '<div class="tk-step-ts" title="'+esc(p.txt)+'"><i class="bi bi-clock"></i>'+esc(tkFechaCorta(p.txt))+'</div>';
+      if(p.quien) tiempos += '<div class="tk-step-quien">'+esc(tkNombreCorto(p.quien))+'</div>';
+      // Tras una reapertura, el primer paso se mide desde ella, no desde el ingreso.
+      const ant = i > 0 ? ((i === 1 && pts.reab) ? pts.reab : pts[i-1]) : null;
+      if(ant && ant.ts != null && p.ts != null && p.ts >= ant.ts){
+        tiempos += '<div class="tk-step-dur"><i class="bi bi-arrow-return-right"></i>'+esc(tkDurTxt(p.ts - ant.ts))+' después</div>';
+      }
+    } else if(i < curIdx){
+      tiempos += '<div class="tk-step-ts sin"><i class="bi bi-check2"></i>Completado</div>';
+    } else if(i > curIdx){
+      tiempos += '<div class="tk-step-ts sin">Pendiente</div>';
+    }
     return '<div class="'+cls+'" data-idx="'+i+'">'+badge
       + '<div class="tk-step-circle"><i class="bi '+s.icon+'"></i></div>'
-      + '<div class="tk-step-label">'+s.label+'</div></div>';
+      + '<div class="tk-step-info"><div class="tk-step-label">'+s.label+'</div>'+tiempos+'</div></div>';
   }).join('');
+  // Resumen de tiempos (como la franja de tiempos de Retiros).
+  let resumen = '';
+  const p0 = pts[0], pc = pts[curIdx];
+  const terminal = curIdx >= 2;
+  if(p0 && p0.ts != null){
+    const fin = terminal && pc && pc.ts != null ? pc.ts : ahora;
+    if(fin != null && fin >= p0.ts){
+      resumen += '<span class="tk-trk-chip"><i class="bi bi-hourglass-split"></i>'
+        + (terminal ? 'Se resolvió en ' : 'Abierto hace ') + '<b>'+esc(tkDurTxt(fin - p0.ts))+'</b></span>';
+    }
+  }
+  if(pts.reab && pts.reab.txt){
+    resumen += '<span class="tk-trk-chip"><i class="bi bi-arrow-counterclockwise"></i>Reabierto <b>'+esc(tkFechaCorta(pts.reab.txt))
+      + '</b> · '+esc(tkNombreCorto(pts.reab.quien))+'</span>';
+  }
+  if(!terminal && pc && pc.ts != null && ahora != null && ahora >= pc.ts && curIdx > 0){
+    resumen += '<span class="tk-trk-chip"><i class="bi bi-gear"></i>Lleva <b>'+esc(tkDurTxt(ahora - pc.ts))
+      + '</b> en «'+esc(TK_STEP_DEFS[curIdx].label)+'»</span>';
+  }
   const pendingPill = t.estado === 'pending'
     ? '<div class="tk-pending-pill"><i class="bi bi-hourglass-split"></i>En espera</div>' : '';
-  wrap.innerHTML = '<div class="tk-stepper">'+stepsHtml+'</div>' + pendingPill;
+  wrap.innerHTML = '<div class="tk-stepper">'+stepsHtml+'</div>'
+    + (resumen ? '<div class="tk-trk-resumen">'+resumen+'</div>' : '') + pendingPill;
   wrap.querySelectorAll('.tk-step').forEach(function(el){
     el.addEventListener('click', async function(){
       const idx = +el.dataset.idx;

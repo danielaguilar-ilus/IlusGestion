@@ -348,3 +348,28 @@ body:has(#pane-conv.active) .tk-hero-tiles{display:none;}
   .tk-ea{grid-template-columns:1fr;}
   .tk-ea-col + .tk-ea-col{border-left:0;border-top:1px solid #eef0f3;}
 }
+
+/* ── Tracking con tiempos (28-oct): hora de cada paso, quién y cuánto tardó ── */
+.tk-step-info{display:flex;flex-direction:column;align-items:center;min-width:0;}
+.tk-step-info .tk-step-label{margin-top:7px;}
+.tk-step-ts{display:inline-flex;align-items:center;gap:5px;margin-top:4px;font-size:.78rem;font-weight:800;color:#0f172a;
+  font-variant-numeric:tabular-nums;}
+.tk-step-ts i{color:#dc2626;font-size:.72rem;}
+.tk-step-ts.sin{color:#94a3b8;font-weight:700;}
+.tk-step-ts.sin i{color:#16a34a;}
+.tk-step-quien{font-size:.72rem;color:#64748b;font-weight:700;margin-top:1px;overflow-wrap:anywhere;}
+.tk-step-dur{display:inline-flex;align-items:center;gap:4px;margin-top:5px;padding:2px 9px;border-radius:99px;
+  background:#f1f5f9;color:#334155;font-size:.7rem;font-weight:800;white-space:nowrap;}
+.tk-step-dur i{color:#64748b;font-size:.72rem;}
+.tk-step.done .tk-step-dur{background:#dcfce7;color:#166534;}
+.tk-step.done .tk-step-dur i{color:#16a34a;}
+.tk-trk-resumen{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:14px;padding-top:12px;border-top:1px dashed #e5e7eb;}
+.tk-trk-chip{display:inline-flex;align-items:center;gap:7px;padding:6px 13px;border-radius:99px;background:#0a0a0a;color:#fff;
+  font-size:.82rem;font-weight:600;}
+.tk-trk-chip i{color:#f87171;}
+.tk-trk-chip b{color:#fff;font-weight:800;}
+@media (max-width:520px){
+  .tk-step-info{align-items:flex-start;flex:1;}
+  .tk-step-info .tk-step-label{margin-top:0;}
+  .tk-trk-resumen{justify-content:flex-start;}
+}
