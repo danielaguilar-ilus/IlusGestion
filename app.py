@@ -89769,6 +89769,18 @@ def mant_visita_update(vid):
     _estado_nuevo_dm = (str(d.get("estado") or "")).strip().lower()
     _cascada_hija = None
     _tec_antes_hija = None
+    # 📜 2026-10-28 (REGLA #52): CANCELAR o ANULAR una OT (esta es la ÚNICA puerta que escribe esos estados; la cascada de la desinstalación va
+    # dentro de la misma transacción) deja inválidos sus anexos vivos —firmado, enviado o visto— igual que eliminarla. El aviso previo se EXIGE en el
+    # servidor (409 ANEXO_REQUIERE_CONFIRMACION hasta que llegue `confirmar_anexo`): ninguna pantalla puede saltárselo. Falla CERRADO si no puede revisar.
+    _accion_ax = _axa.accion_de_estado(_estado_nuevo_dm)
+    _ax_plan_c = _ax_plan_h = _ax_lote_c = None
+    _ax_hechos_c = {"anuladas": {}, "parciales": {}}
+    _ax_hechos_h = {"anuladas": {}, "parciales": {}}
+    _ax_aviso_c = _ax_aviso_h = None
+    if _accion_ax:
+        _ax_plan_c, _ax_lote_c, _ax_resp_c = _anexo_anul_puerta_previa(vid, d, _accion_ax)
+        if _ax_resp_c is not None:
+            return _ax_resp_c
     conn = get_mysql()
     try:
         with conn.cursor() as cur:
@@ -89795,13 +89807,19 @@ def mant_visita_update(vid):
                         _tec_antes_hija = _ot_tec_antes(int(_cascada_hija["id"]))
             cur.execute(f"UPDATE mant_visitas SET {','.join(sets)} WHERE id=%s",
                         vals + [vid])
+            if _ax_plan_c is not None:      # 📜 REGLA #52: los anexos vivos de esta OT quedan anulados en la MISMA transacción
+                _ax_hechos_c = _anexo_anul_marcar(cur, _ax_plan_c, _ax_plan_c["numero_ot"], current_username() or "?", vid, _accion_ax)
             if _cascada_hija:
                 # 2026-10-20: 'pendiente_info' también se usa DESPUÉS de la firma del técnico; una desinstalación ya
                 # trabajada o firmada NO se cancela en cascada (la OT es evidencia).
-                cur.execute("UPDATE mant_visitas SET estado=%s WHERE id=%s AND estado IN "
+                _n_hija_ax = cur.execute("UPDATE mant_visitas SET estado=%s WHERE id=%s AND estado IN "
                             "('programada','creada','asignada','reagendada','pendiente_info') "
                             " AND firma_tecnico_at IS NULL AND hora_real_inicio IS NULL AND fecha_realizada IS NULL",
                             (_estado_nuevo_dm, int(_cascada_hija["id"])))
+                if _n_hija_ax and _accion_ax:      # 📜 REGLA #52: la desinstalación que se cancela en cascada también anula SUS anexos propios
+                    _ax_plan_h = _anexo_anul_plan(int(_cascada_hija["id"]), solo_propios=True)
+                    _ax_hechos_h = _anexo_anul_marcar(cur, _ax_plan_h, _ax_plan_h["numero_ot"], current_username() or "?",
+                                                      int(_cascada_hija["id"]), _accion_ax)
         conn.commit()
         if _estado_nuevo_dm in ("cancelada", "anulada") and not _cascada_hija:
             try:
@@ -89827,6 +89845,15 @@ def mant_visita_update(vid):
                                    motivo="Se canceló junto con su instalación.")
                 except Exception as _e_tch:
                     print(f"[upd-ot] correo al técnico de la desinstalación vid={vid}: {type(_e_tch).__name__}", flush=True)
+        # 📜 REGLA #52: constancia + correo a las dos partes de cada anexo anulado (best-effort: jamás deshace la cancelación).
+        if _ax_plan_c is not None and (_ax_plan_c["anexos"] or _ax_hechos_c["anuladas"]):
+            _ax_aviso_c = _anexo_anul_avisar(vid, _ax_plan_c, _ax_hechos_c, _ax_plan_c["numero_ot"], current_username() or "?",
+                                             _ax_lote_c, _accion_ax)
+        if _ax_plan_h is not None and (_ax_plan_h["anexos"] or _ax_hechos_h["anuladas"]):
+            _ax_aviso_h = _anexo_anul_avisar(int(_cascada_hija["id"]), _ax_plan_h, _ax_hechos_h, _ax_plan_h["numero_ot"],
+                                             current_username() or "?", None, _accion_ax)
+        # 📜 REGLA #52: REACTIVAR una OT cancelada o anulada NO revive su anexo anulado en silencio: se dice y queda en la bitácora.
+        _ax_react = _anexo_anul_reactivada(vid, _estado_prev_audit, _estado_nuevo_dm)
         if _sal_put_reanota:   # 2026-10-08: lo que esta OT aporta desde cada documento, para que las demás lo vean
             try:
                 _ot_saldo_reanotar_aportes(vid)
@@ -89894,6 +89921,15 @@ def mant_visita_update(vid):
         resp = {"ok": True}
         if warn_mod_upd:
             resp["warning"] = warn_mod_upd
+        _ax_lineas = []
+        for _av_ax in (_ax_aviso_c, _ax_aviso_h):
+            if _av_ax:
+                _ax_lineas += _av_ax.get("lineas") or []
+        if _ax_lineas:
+            resp["anexo_anulado"] = {"lineas": _ax_lineas, "anexos": (_ax_aviso_c or {}).get("anexos", []) + (_ax_aviso_h or {}).get("anexos", [])}
+        if _ax_react:
+            resp["anexo_reactivada"] = _ax_react
+            resp["warning"] = ((resp.get("warning") + " ") if resp.get("warning") else "") + _ax_react
         return jsonify(resp)
     except Exception as _e_upd:
         # REGLA #4: nunca propagar un 500 crudo al cliente. Logueamos el
@@ -90000,36 +90036,44 @@ def _anexo_anul_interno(vid, fila):
     return out[:_axa.MAX_CORREOS_INTERNOS]
 
 
-def _anexo_anul_item(r, parcial):
-    """Un anexo firmado tal como lo necesitan el aviso previo, el borrado y los correos (sin montos)."""
-    return {"id": int(r["id"]), "numero": r.get("numero"), "proveedor": r.get("proveedor_nombre") or "",
+_ANEXO_ANUL_SEL = ("SELECT id, numero, estado, proveedor_nombre, proveedor_rut, tecnico_externo_id, enviado_email, enviado_at, firmado_at, "
+                   "firmante_nombre, precio_items_json FROM mant_anexos WHERE ")
+
+
+def _anexo_anul_item(r, parcial, estado=None):
+    """Un anexo afectado tal como lo necesitan el aviso previo, la anulación y los correos (sin montos). `estado` = el que tenía (si se
+    sabe mejor que la fila): 'firmado', o 'enviado'/'visto' = el proveedor lo tiene para firmar y no lo firmó (sin_firma)."""
+    est = (estado or r.get("estado") or "").strip().lower()
+    return {"id": int(r["id"]), "numero": r.get("numero"), "estado": est, "proveedor": r.get("proveedor_nombre") or "",
             "firmante": r.get("firmante_nombre") or "",
             "firmado_el": chile_fmt_filter(r.get("firmado_at"), "%d/%m/%Y") if r.get("firmado_at") else "",
+            "enviado_el": chile_fmt_filter(r.get("enviado_at"), "%d/%m/%Y") if r.get("enviado_at") else "",
+            "sin_firma": est in _axa.ESTADOS_FIRMA_PENDIENTE,
+            "sin_aviso": bool(parcial) and est not in _axa.ESTADOS_VIVOS,      # un borrador nunca enviado no se avisa
             "parcial": bool(parcial), "partidas": _axa.partidas_salida(r.get("precio_items_json")) if parcial else [],
             "destinos": _anexo_anul_destinos_proveedor(r)}
 
 
-def _anexo_anul_plan(vid):
-    """SOLO LECTURA: qué anexos FIRMADOS afecta eliminar la OT `vid`.
+def _anexo_anul_plan(vid, solo_propios=False):
+    """SOLO LECTURA: qué anexos VIVOS (firmado, enviado o visto) afecta que la OT `vid` se elimine, cancele o anule.
     {numero_ot, titulo, anexos:[…], interno:[…]} — `anexos` vacío = no hay nada que anular ni avisar. Un anexo es «completo» (se anula) cuando es de
-    ESTA OT; «parcial» (REGLA #46) cuando la OT es la desinstalación que comparte el anexo firmado de su instalación (no se anula). LANZA si la base
-    no responde: el borrado falla CERRADO, como con la factura (nunca se borra sin saber si dejaba un anexo firmado huérfano)."""
+    ESTA OT; «parcial» (REGLA #46) cuando la OT es la desinstalación que comparte el anexo de su instalación (no se anula: si está firmado queda
+    firmado; si no, se le retiran las partidas de la desinstalación). `solo_propios` omite los parciales (la hija que se cancela en cascada con su
+    instalación). LANZA si la base no responde: la acción falla CERRADA (nunca se deja un anexo vivo huérfano sin avisar)."""
     fila = mysql_fetchone("SELECT * FROM mant_visitas WHERE id=%s", (int(vid),))
     if not fila:
         return {"numero_ot": "", "titulo": "", "anexos": [], "interno": []}
     fila = dict(fila)
-    sel = ("SELECT id, numero, proveedor_nombre, proveedor_rut, tecnico_externo_id, enviado_email, firmado_at, firmante_nombre, "
-           "precio_items_json FROM mant_anexos WHERE ")
     anexos = [_anexo_anul_item(dict(r), False)
-              for r in (mysql_fetchall(sel + "ot_id=%s AND estado='firmado' ORDER BY id", (int(vid),)) or [])]
-    if fila.get("ot_madre_id") and (fila.get("ot_relacion") or "").strip().lower() == _oac.REL_DESINSTALACION:
-        madre = _ot_anexo_de_la_madre(int(vid), solo_firmado=True)
+              for r in (mysql_fetchall(_ANEXO_ANUL_SEL + "ot_id=%s AND estado IN ('firmado','enviado','visto') ORDER BY id", (int(vid),)) or [])]
+    if not solo_propios and fila.get("ot_madre_id") and (fila.get("ot_relacion") or "").strip().lower() == _oac.REL_DESINSTALACION:
+        madre = _ot_anexo_de_la_madre(int(vid))        # el anexo VIVO de la instalación, si trae partidas de la desinstalación
         if madre:
-            r = mysql_fetchone(sel + "id=%s", (int(madre["id"]),))
-            if r:
+            r = mysql_fetchone(_ANEXO_ANUL_SEL + "id=%s", (int(madre["id"]),))
+            if r and (r.get("estado") or "").strip().lower() in _axa.ESTADOS_VIVOS + _axa.ESTADOS_EDITABLES:
                 anexos.append(_anexo_anul_item(dict(r), True))
     return {"numero_ot": fila.get("numero_ot") or f"V-{int(vid)}", "titulo": fila.get("titulo") or "", "anexos": anexos,
-            "interno": _anexo_anul_interno(int(vid), fila) if anexos else []}
+            "interno": _anexo_anul_interno(int(vid), fila) if [a for a in anexos if not a.get("sin_aviso")] else []}
 
 
 def _anexo_anul_canal_apagado(clave, modulo):
@@ -90041,41 +90085,104 @@ def _anexo_anul_canal_apagado(clave, modulo):
         return ""
 
 
-def _anexo_anul_marcar(cur, plan, numero_ot, quien):
-    """DENTRO de la transacción del borrado y ANTES del DELETE de la OT: pasa a 'anulado' cada anexo firmado de la OT (con quién, cuándo, por qué y de
-    qué OT). El WHERE lleva `estado='firmado'` para no pisar a nadie. → ids que de verdad se anularon. Si las columnas nuevas aún no existen
-    (ILUS_SKIP_MIGRATIONS) se anula igual y el motivo queda en la bitácora; cualquier otro error se propaga (el borrado se aborta entero)."""
-    hechos = []
-    for ax in (plan or {}).get("anexos") or []:
-        if ax.get("parcial"):
-            continue        # el anexo es de la instalación y la instalación sigue viva: no se invalida (REGLA #46)
+def _anexo_anul_marcar(cur, plan, numero_ot, quien, vid, accion="eliminar"):
+    """DENTRO de la transacción de la acción (borrado, cancelación o anulación de la OT) y ANTES del DELETE / junto al UPDATE de la OT: pasa a
+    'anulado' cada anexo VIVO (firmado, enviado o visto) de la OT, con quién, cuándo, por qué y de qué OT. Primero RE-LEE y bloquea esas filas
+    (SELECT … FOR UPDATE): si el proveedor firma justo ahora, su UPDATE espera y después ve 'anulado'; y el UPDATE lleva el estado en el WHERE,
+    así que el que decide es la base. → {anuladas: {id: estado_que_tenía}, parciales: {id: estado}}. Los parciales (REGLA #46) no se anulan: el
+    firmado queda tal cual; el no firmado pierde las partidas de la desinstalación. Si las columnas nuevas aún no existen (ILUS_SKIP_MIGRATIONS)
+    se anula igual y el motivo queda en la bitácora; cualquier otro error se propaga (la acción se aborta entera)."""
+    res = {"anuladas": {}, "parciales": {}}
+    mot = _axa.motivo(accion)
+    vivos = "('firmado','enviado','visto')"
+    cur.execute("SELECT id, estado FROM mant_anexos WHERE ot_id=%s AND estado IN " + vivos + " FOR UPDATE", (int(vid),))
+    for r in (cur.fetchall() or []):
+        aid, est = int(r["id"]), (r.get("estado") or "").strip().lower()
         try:
             n = cur.execute(
                 "UPDATE mant_anexos SET estado='anulado', anulado_at=NOW(), anulado_por=%s, anulado_motivo=%s, anulado_ot_numero=%s "
-                " WHERE id=%s AND estado='firmado'", (quien, _axa.MOTIVO, numero_ot, ax["id"]))
+                " WHERE id=%s AND estado IN " + vivos, (quien, mot, numero_ot, aid))
         except Exception as e:
             print(f"[anexo-anul] columnas de la anulación no disponibles: {type(e).__name__}", flush=True)
-            n = cur.execute("UPDATE mant_anexos SET estado='anulado' WHERE id=%s AND estado='firmado'", (ax["id"],))
+            n = cur.execute("UPDATE mant_anexos SET estado='anulado' WHERE id=%s AND estado IN " + vivos, (aid,))
         if n:
-            hechos.append(ax["id"])
-    return hechos
+            res["anuladas"][aid] = est
+    for ax in (plan or {}).get("anexos") or []:
+        if not ax.get("parcial"):
+            continue
+        cur.execute("SELECT estado, precio_items_json FROM mant_anexos WHERE id=%s FOR UPDATE", (int(ax["id"]),))
+        r = cur.fetchone() or {}
+        est = (r.get("estado") or "").strip().lower()
+        if est == "firmado":
+            res["parciales"][int(ax["id"])] = est           # evidencia: no se toca
+        elif est in _axa.ESTADOS_EDITABLES:
+            nuevos = _axa.sin_partidas_salida(r.get("precio_items_json"))
+            if len(nuevos) != len(_oac.items_de(r.get("precio_items_json"))):
+                cur.execute("UPDATE mant_anexos SET precio_items_json=%s WHERE id=%s AND estado IN ('borrador','enviado','visto','vencido')",
+                            (json.dumps(nuevos), int(ax["id"])))
+            res["parciales"][int(ax["id"])] = est
+    return res
 
 
-def _anexo_anul_html(c):
-    """El correo (diseño maestro de ILUS) a partir del contenido puro de anexo_anulacion.correo_*; todo texto se escapa."""
+def _anexo_anul_puerta_previa(vid, d, accion):
+    """La revisión PREVIA de cancelar o anular una OT (la puerta única es el PUT de la OT). → (plan, lote, respuesta): `respuesta` es None si se puede
+    seguir; si no, la respuesta 409 ya armada: ANEXO_NO_VERIFICABLE (falla CERRADO si no se pudo revisar) o ANEXO_REQUIERE_CONFIRMACION (el aviso
+    previo se EXIGE en el servidor: hasta que llegue `confirmar_anexo` no se cambia nada; las pantallas lo muestran con ilusConfirm). Solo lectura."""
+    try:
+        plan = _anexo_anul_plan(vid)
+    except Exception as e:
+        print(f"[anexo-anul] vid={vid} no se pudo revisar el anexo: {type(e).__name__}: {e}", flush=True)
+        return None, None, (jsonify({"ok": False, "error_codigo": "ANEXO_NO_VERIFICABLE",
+                                     "error": "No se pudo verificar si esta OT tiene un anexo vivo. Inténtalo de nuevo; no se cambió nada."}), 409)
+    if not [a for a in plan["anexos"] if not a.get("sin_aviso")]:
+        return plan, None, None
+    if str(d.get("confirmar_anexo") or "").strip().lower() not in ("1", "true", "si", "sí"):
+        pant = _axa.para_pantalla(plan, _anexo_anul_canal_apagado(_axa.CLAVE_PROVEEDOR, "general"),
+                                  _anexo_anul_canal_apagado(_axa.CLAVE_INTERNO, "comunicacion_interna"), accion)
+        return plan, None, (jsonify({
+            "ok": False, "error_codigo": "ANEXO_REQUIERE_CONFIRMACION", "puede_confirmar_anexo": True, "anexo_aviso": pant,
+            "error": pant["titulo"] + ". " + " ".join(l for l in pant["lineas"] if l.startswith("Anexo N°"))
+                     + " Para continuar, hazlo desde la ficha de la OT o el calendario, donde se te pide confirmar."}), 409)
+    lote = _mant_visita_factura_proveedor(vid)
+    return plan, (None if lote is _FACTURA_CHECK_ERROR else lote), None
+
+
+def _anexo_anul_reactivada(vid, estado_prev, estado_nuevo):
+    """REACTIVAR una OT cancelada o anulada NO revive su anexo anulado en silencio: devuelve el texto que se le dice a la persona (y lo deja en la
+    bitácora de la OT) si la OT tiene anexos que ESTE flujo anuló; None si no corresponde. Nunca lanza."""
+    try:
+        if (estado_nuevo or "") in ("", "cancelada", "anulada") or (estado_prev or "") not in ("cancelada", "anulada"):
+            return None
+        nums = [str(r.get("numero")) for r in (mysql_fetchall(
+            "SELECT numero FROM mant_anexos WHERE ot_id=%s AND estado='anulado' AND anulado_at IS NOT NULL ORDER BY numero", (int(vid),)) or [])]
+        if not nums:
+            return None
+        txt = _axa.aviso_reactivada(nums)
+        _mant_log("visita", vid, "anexo_sigue_anulado", txt)
+        return txt
+    except Exception as e:
+        print(f"[anexo-anul] reactivación vid={vid}: {type(e).__name__}", flush=True)
+        return None
+
+
+def _anexo_anul_html(c, cta_url="", cta_label=""):
+    """El correo (diseño maestro de ILUS) a partir del contenido puro de anexo_anulacion.correo_*; todo texto se escapa. Solo texto: sin adjuntos."""
     from markupsafe import escape as _esc
     return _ilus_email_master({
         "subject": c["asunto"], "preheader": c.get("preheader") or "", "status_label": c.get("etiqueta") or "", "title": c["titulo"],
         "subtitle": c.get("subtitulo") or "", "message": str(_esc(c["mensaje"])),
         "detail_rows_html": _ilus_email_rows(c.get("filas") or []), "closing_message": str(_esc(c.get("cierre") or "")),
+        "primary_cta_url": cta_url, "primary_cta_label": cta_label,
     })
 
 
 def _anexo_anul_enviar(destinos, contenido, clave, modulo, ref):
     """Un correo por la PUERTA ÚNICA (SMTP, REGLA #13): el primero va en «Para» y los demás con copia. → (salió, motivo). Nunca lanza."""
     try:
-        ok = bool(_send_ilus_email(destinos[0], _brand_subject(contenido["asunto"]), _anexo_anul_html(contenido), evento=clave, modulo=modulo,
-                                   ref=ref, cc=(destinos[1:] or None), correo=clave))
+        # Al equipo ILUS el correo le abre «Anexos anulados» (donde se ven también los huérfanos de una OT eliminada); al proveedor, nada que abrir.
+        cta = (f"{_public_base_url()}/ot/anexos-anulados", "Ver anexos anulados") if clave == _axa.CLAVE_INTERNO else ("", "")
+        ok = bool(_send_ilus_email(destinos[0], _brand_subject(contenido["asunto"]), _anexo_anul_html(contenido, *cta), evento=clave, modulo=modulo,
+                                   ref=ref, cc=(destinos[1:] or None), correo=clave))      # SIN attachments: el aviso nunca lleva el anexo (Daniel)
     except Exception as e:
         print(f"[anexo-anul] envío {clave}: {type(e).__name__}", flush=True)
         return False, "error al enviar"
@@ -90084,38 +90191,67 @@ def _anexo_anul_enviar(destinos, contenido, clave, modulo, ref):
     return False, (_email_resultado(False).get("motivo") or "").strip()
 
 
-def _anexo_anul_avisar(vid, plan, hechos, numero_ot, quien, lote=None):
-    """DESPUÉS del commit del borrado: la constancia en la bitácora y los dos correos de cada anexo afectado (proveedor e ILUS). Best-effort: nunca
-    lanza ni deshace nada. → {anexos:[{id, numero, parcial, proveedor:{destinos, salio, texto}, interno:{…}}], lineas:[…]} para decírselo a la persona
-    con la verdad (salió / no salió y por qué / sin correo). `lote` = el lote de proveedor del que salió la OT (se avisa, no se rompe)."""
+def _anexo_anul_avisar(vid, plan, hechos, numero_ot, quien, lote=None, accion="eliminar"):
+    """DESPUÉS del commit: la constancia en la bitácora y los dos correos de cada anexo afectado (proveedor e ILUS). Solo TEXTO: nunca lleva el
+    anexo adjunto (Daniel). Best-effort: nunca lanza ni deshace nada. → {anexos:[{id, numero, parcial, sin_firma, proveedor:{destinos, salio,
+    texto}, interno:{…}}], lineas:[…]} para decírselo a la persona con la verdad (salió / no salió y por qué / sin correo). `lote` = el lote de
+    proveedor de la OT (se avisa, no se rompe). `hechos` = lo que devolvió _anexo_anul_marcar (el estado que MANDA es el visto dentro de la
+    transacción)."""
     res = {"anexos": [], "lineas": []}
     try:
+        accion = _axa.accion_valida(accion)
+        ver, mot = _axa.verbo(accion), _axa.motivo(accion)
+        hechos = hechos or {}
         cuando = _now_chile().strftime("%d/%m/%Y %H:%M")
-        lote_txt = (f"estaba en el lote #{lote['id']} ({lote.get('estado_pago')}) y salió de él" if lote else "")
+        lote_txt = ""
+        if lote:
+            lote_txt = (f"estaba en el lote #{lote['id']} ({lote.get('estado_pago')}) y salió de él" if accion == "eliminar"
+                        else f"sigue en el lote #{lote['id']} ({lote.get('estado_pago')}): revisa si hay que quitarla")
         soporte = (_get_brand_cfg() or {}).get("support_email") or ILUS_SOPORTE_EMAIL
         ref = {"tipo": "OT", "codigo": numero_ot}
-        for ax in plan.get("anexos") or []:
-            if not ax.get("parcial") and ax["id"] not in (hechos or []):
-                continue        # ya no estaba firmado cuando se borró (otra persona lo cambió): no hay nada que avisar
-            n = ax.get("numero")
-            if ax.get("parcial"):
-                txt = (f"Las partidas de la desinstalación del Anexo N° {n} ({ax.get('proveedor')}) quedaron sin efecto: se eliminó la {numero_ot} "
-                       f"por {quien} el {cuando}. El anexo sigue vigente para la instalación.")
-                acc_ax, acc_ot = "anexo_partidas_sin_efecto", "anexo_partidas_sin_efecto"
+        por_id = {int(ax["id"]): ax for ax in plan.get("anexos") or []}
+        lista = []
+        for aid, est in (hechos.get("anuladas") or {}).items():
+            ax = por_id.get(int(aid))
+            if ax is None:          # lo firmaron (o se lo enviaron) justo entre la lectura y la anulación: se arma desde la base
+                try:
+                    r = mysql_fetchone(_ANEXO_ANUL_SEL + "id=%s", (int(aid),))
+                except Exception:
+                    r = None
+                ax = _anexo_anul_item(dict(r), False, estado=est) if r else None
             else:
-                txt = (f"El Anexo N° {n} ({ax.get('proveedor')}) quedó inválido por la {_axa.MOTIVO}: {numero_ot} eliminada por {quien} el {cuando}"
-                       + (f" · {lote_txt}" if lote_txt else ""))
-                acc_ax, acc_ot = "anulado_ot_eliminada", "anexo_anulado"
+                ax = dict(ax, estado=est, sin_firma=est in _axa.ESTADOS_FIRMA_PENDIENTE, parcial=False)
+            if ax:
+                lista.append(ax)
+        for aid, est in (hechos.get("parciales") or {}).items():
+            ax = por_id.get(int(aid))
+            if ax and est in _axa.ESTADOS_VIVOS:                # un borrador nunca enviado no se avisa
+                lista.append(dict(ax, estado=est, sin_firma=est in _axa.ESTADOS_FIRMA_PENDIENTE, parcial=True))
+        for ax in lista:
+            n = ax.get("numero")
+            donde = f"{numero_ot} {ver} por {quien} el {cuando}" + (f" · {lote_txt}" if lote_txt else "")
+            if ax.get("parcial"):
+                txt = (f"Las partidas de la desinstalación del Anexo N° {n} ({ax.get('proveedor')}) "
+                       f"{'se retiraron del anexo (aún sin firmar)' if ax.get('sin_firma') else 'quedaron sin efecto'}: {donde}. "
+                       "El anexo sigue vigente para la instalación.")
+                acc_ax = acc_ot = "anexo_partidas_sin_efecto"
+            elif ax.get("sin_firma"):
+                txt = f"El Anexo N° {n} ({ax.get('proveedor')}), enviado y sin firmar, quedó sin efecto por la {mot}: {donde}"
+                acc_ax, acc_ot = f"anulado_ot_{ver}", "anexo_anulado"
+            else:
+                txt = f"El Anexo N° {n} ({ax.get('proveedor')}) quedó inválido por la {mot}: {donde}"
+                acc_ax, acc_ot = f"anulado_ot_{ver}", "anexo_anulado"
             destinos = ax.get("destinos") or []
             salio_p, motivo_p = False, ""
             if destinos:
-                salio_p, motivo_p = _anexo_anul_enviar(destinos, _axa.correo_proveedor(ax, numero_ot, soporte), _axa.CLAVE_PROVEEDOR, "general", ref)
+                salio_p, motivo_p = _anexo_anul_enviar(destinos, _axa.correo_proveedor(ax, numero_ot, soporte, accion), _axa.CLAVE_PROVEEDOR,
+                                                       "general", ref)
             t_prov = _axa.texto_aviso(destinos, salio_p, motivo_p)
             internos = [p["correo"] for p in plan.get("interno") or []]
             salio_i, motivo_i = False, ""
             if internos:
                 salio_i, motivo_i = _anexo_anul_enviar(
-                    internos, _axa.correo_interno(ax, numero_ot, plan.get("titulo") or "", quien, cuando, lote_txt, t_prov),
+                    internos, _axa.correo_interno(ax, numero_ot, plan.get("titulo") or "", quien, cuando, lote_txt, t_prov, accion),
                     _axa.CLAVE_INTERNO, "comunicacion_interna", ref)
             t_int = _axa.texto_aviso(internos, salio_i, motivo_i) if internos else "sin correo interno registrado (solo queda la bitácora)"
             _mant_log("anexo", ax["id"], acc_ax, txt)
@@ -90123,14 +90259,169 @@ def _anexo_anul_avisar(vid, plan, hechos, numero_ot, quien, lote=None):
             _mant_log("anexo", ax["id"], "anulado_aviso_proveedor", t_prov)
             _mant_log("anexo", ax["id"], "anulado_aviso_interno", t_int)
             if lote:
-                _mant_log("factura_proveedor", lote["id"], "anexo_anulado_ot_eliminada", txt)
-            res["anexos"].append({"id": ax["id"], "numero": n, "parcial": bool(ax.get("parcial")),
+                _mant_log("factura_proveedor", lote["id"], f"anexo_anulado_ot_{ver}", txt)
+            res["anexos"].append({"id": ax["id"], "numero": n, "parcial": bool(ax.get("parcial")), "sin_firma": bool(ax.get("sin_firma")),
                                   "proveedor": {"destinos": destinos, "salio": salio_p, "texto": t_prov},
                                   "interno": {"destinos": internos, "salio": salio_i, "texto": t_int}})
         res["lineas"] = _axa.lineas_resultado(res["anexos"])
     except Exception as e:
         print(f"[anexo-anul] avisos vid={vid}: {type(e).__name__}: {e}", flush=True)
     return res
+
+
+def _anexo_anul_reenvio_ctx(aid):
+    """Todo lo necesario para REENVIAR el aviso de un anexo ya anulado (con su OT viva o huérfana). None si no existe. Solo lectura."""
+    a = mysql_fetchone("SELECT * FROM mant_anexos WHERE id=%s", (int(aid),))
+    if not a:
+        return None
+    a = dict(a)
+    ot_id = a.get("ot_id")
+    fila = None
+    if ot_id:
+        try:
+            fila = mysql_fetchone("SELECT * FROM mant_visitas WHERE id=%s", (int(ot_id),))
+        except Exception as e:
+            print(f"[anexo-anul] OT del anexo {aid}: {type(e).__name__}", flush=True)
+    fila = dict(fila) if fila else None
+    item = _anexo_anul_item(a, False, estado=("firmado" if a.get("firmado_at") else "enviado"))
+    return {"anexo": a, "item": item, "accion": _axa.accion_de_motivo(a.get("anulado_motivo")), "ot_id": int(ot_id) if ot_id else None,
+            "ot_existe": bool(fila), "numero_ot": a.get("anulado_ot_numero") or (fila or {}).get("numero_ot") or "—",
+            "titulo": (fila or {}).get("titulo") or "", "quien": a.get("anulado_por") or "—",
+            "cuando": chile_fmt_filter(a.get("anulado_at"), "%d/%m/%Y %H:%M") if a.get("anulado_at") else "—",
+            # con la OT eliminada no hay responsable: _ot_gestion_destinatarios cae al respaldo de la gestión
+            "interno": _anexo_anul_interno(int(ot_id or 0), fila or {})}
+
+
+@app.route("/ot/api/anexos/<int:aid>/aviso-anulado", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot2_api_anexo_aviso_anulado(aid):
+    """📜 REGLA #52 — ANTES de reenviar el aviso de un anexo anulado: a quién llegaría (proveedor / ILUS, con el motivo si no hay correo o está
+    apagado). Solo lectura, sin montos; nunca un técnico (REGLAS #19 y #26)."""
+    try:
+        ctx = _anexo_anul_reenvio_ctx(aid)
+    except Exception as e:
+        print(f"[anexo-anul] aviso previo anexo={aid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo revisar el anexo. Inténtalo de nuevo."}), 500
+    if not ctx:
+        return jsonify({"ok": False, "error": "Anexo no encontrado."}), 404
+    if (ctx["anexo"].get("estado") or "") != "anulado":
+        return jsonify({"ok": False, "error_codigo": "ANEXO_NO_ANULADO", "error": "Solo se reenvía el aviso de un anexo anulado."}), 409
+    it = ctx["item"]
+    return jsonify({
+        "ok": True, "anexo_id": int(aid), "numero": it["numero"], "proveedor_nombre": it["proveedor"], "sin_firma": it["sin_firma"],
+        "ot": {"existe": ctx["ot_existe"], "id": ctx["ot_id"], "numero": ctx["numero_ot"]},
+        "motivo": ctx["anexo"].get("anulado_motivo") or _axa.motivo(ctx["accion"]), "anulado_por": ctx["quien"], "anulado_el": ctx["cuando"],
+        "proveedor": {"destinos": it["destinos"], "apagado": _anexo_anul_canal_apagado(_axa.CLAVE_PROVEEDOR, "general")},
+        "interno": {"personas": [{"nombre": p["nombre"], "correo": p["correo"]} for p in ctx["interno"]],
+                    "apagado": _anexo_anul_canal_apagado(_axa.CLAVE_INTERNO, "comunicacion_interna")},
+        "nota": "El aviso es solo un texto: no lleva el anexo adjunto."})
+
+
+@app.route("/ot/api/anexos/<int:aid>/reenviar-aviso", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def ot2_api_anexo_reenviar_aviso(aid):
+    """📜 REGLA #52 — «Reenviar aviso del anexo anulado». Body: {proveedor: bool, interno: bool, extra: "correo"}. Reenvía el MISMO aviso de texto
+    (jamás con el anexo adjunto) por la puerta única, con las claves del registro (REGLA #33). `extra` recibe la versión del PROVEEDOR (sin
+    datos internos). Dice la verdad por destinatario y deja constancia (quién, cuándo, a quién) en la bitácora del anexo y de la OT."""
+    d = request.get_json(silent=True) or {}
+    quiere_prov, quiere_int = bool(d.get("proveedor")), bool(d.get("interno"))
+    extra_txt = str(d.get("extra") or "")[:300]
+    malos = _axa.correos_invalidos(extra_txt)
+    if malos:
+        return jsonify({"ok": False, "error_codigo": "CORREO_INVALIDO",
+                        "error": "Ese correo no es válido: " + ", ".join(malos[:3]) + "."}), 400
+    extra = _axa.correos_de(extra_txt, maximo=3)
+    try:
+        ctx = _anexo_anul_reenvio_ctx(aid)
+    except Exception as e:
+        print(f"[anexo-anul] reenvío anexo={aid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No se pudo revisar el anexo. Inténtalo de nuevo."}), 500
+    if not ctx:
+        return jsonify({"ok": False, "error": "Anexo no encontrado."}), 404
+    if (ctx["anexo"].get("estado") or "") != "anulado":
+        return jsonify({"ok": False, "error_codigo": "ANEXO_NO_ANULADO", "error": "Solo se reenvía el aviso de un anexo anulado."}), 409
+    it = ctx["item"]
+    dest_prov = list(it["destinos"]) if quiere_prov else []
+    for c in extra:
+        if c not in dest_prov:
+            dest_prov.append(c)
+    dest_int = [p["correo"] for p in ctx["interno"]] if quiere_int else []
+    if not dest_prov and not dest_int:
+        return jsonify({"ok": False, "error_codigo": "SIN_DESTINATARIOS",
+                        "error": "No hay a quién enviarle el aviso: elige al proveedor o a ILUS, o agrega un correo."}), 400
+    quien = current_username() or "?"
+    cuando = _now_chile().strftime("%d/%m/%Y %H:%M")
+    soporte = (_get_brand_cfg() or {}).get("support_email") or ILUS_SOPORTE_EMAIL
+    ref = {"tipo": "OT", "codigo": ctx["numero_ot"]}
+    accion = ctx["accion"]
+    salio_p, motivo_p = False, ""
+    if dest_prov:
+        salio_p, motivo_p = _anexo_anul_enviar(dest_prov, _axa.correo_proveedor(it, ctx["numero_ot"], soporte, accion, reenvio_por=quien),
+                                               _axa.CLAVE_PROVEEDOR, "general", ref)
+    t_prov = _axa.texto_aviso(dest_prov, salio_p, motivo_p) if dest_prov else "no se reenvió al proveedor"
+    salio_i, motivo_i = False, ""
+    if dest_int:
+        salio_i, motivo_i = _anexo_anul_enviar(
+            dest_int, _axa.correo_interno(it, ctx["numero_ot"], ctx["titulo"], ctx["quien"], ctx["cuando"], "", t_prov, accion, reenvio_por=quien),
+            _axa.CLAVE_INTERNO, "comunicacion_interna", ref)
+    t_int = _axa.texto_aviso(dest_int, salio_i, motivo_i) if dest_int else "no se reenvió a ILUS"
+    txt = f"{quien} reenvió el aviso del Anexo N° {it['numero']} el {cuando} · proveedor: {t_prov} · ILUS: {t_int}"
+    try:
+        _mant_log("anexo", int(aid), "aviso_anulado_reenviado", txt)
+        if ctx["ot_id"] and ctx["ot_existe"]:
+            _mant_log("visita", ctx["ot_id"], "anexo_aviso_reenviado", txt)
+    except Exception:
+        pass
+    lineas = [f"Proveedor: {t_prov}.", f"Equipo ILUS: {t_int}."]
+    ok = bool((dest_prov and salio_p) or (dest_int and salio_i))
+    return jsonify({"ok": ok, "lineas": lineas, "proveedor": {"destinos": dest_prov, "salio": salio_p, "texto": t_prov},
+                    "interno": {"destinos": dest_int, "salio": salio_i, "texto": t_int},
+                    **({} if ok else {"error": "No salió ningún correo. " + " ".join(lineas)})}), (200 if ok else 502)
+
+
+@app.route("/ot/anexos-anulados", methods=["GET"])
+@_mant_required
+@_no_tecnico
+def ot2_anexos_anulados_pagina():
+    """📜 REGLA #52 — los anexos ANULADOS (la OT eliminada, cancelada o anulada), también los huérfanos de una OT eliminada, que no se ven en
+    ninguna ficha. Paginado (REGLA #4.3). Cada fila ofrece «Reenviar aviso». Nunca un técnico: el anexo trae datos del proveedor."""
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = int(request.args.get("per_page") or 25)
+    except (TypeError, ValueError):
+        per_page = 25
+    if per_page not in (10, 25, 50, 100):
+        per_page = 25
+    q = (request.args.get("q") or "").strip()[:60]
+    where, par = ["a.estado='anulado'"], []
+    if q:
+        where.append("(a.proveedor_nombre LIKE %s OR CAST(a.numero AS CHAR) LIKE %s OR a.anulado_ot_numero LIKE %s)")
+        par += [f"%{q}%", f"%{q}%", f"%{q}%"]
+    w = " WHERE " + " AND ".join(where)
+    filas, total = [], 0
+    try:
+        total = int((mysql_fetchone("SELECT COUNT(*) AS n FROM mant_anexos a" + w, tuple(par)) or {}).get("n") or 0)
+        paginas = max(1, -(-total // per_page))
+        page = min(page, paginas)
+        filas = [dict(r) for r in (mysql_fetchall(
+            "SELECT a.id, a.numero, a.proveedor_nombre, a.ot_id, a.firmado_at, a.enviado_at, a.updated_at, a.anulado_at, a.anulado_por, "
+            "       a.anulado_motivo, a.anulado_ot_numero, v.numero_ot AS ot_numero_actual, v.estado AS ot_estado "
+            "  FROM mant_anexos a LEFT JOIN mant_visitas v ON v.id = a.ot_id" + w +
+            " ORDER BY COALESCE(a.anulado_at, a.updated_at) DESC, a.id DESC LIMIT %s OFFSET %s",
+            tuple(par) + (per_page, (page - 1) * per_page)) or [])]
+    except Exception as e:
+        print(f"[anexo-anul] listado: {type(e).__name__}: {e}", flush=True)
+        paginas = 1
+    for f in filas:
+        f["ot_numero"] = f.get("anulado_ot_numero") or f.get("ot_numero_actual") or "—"
+        f["ot_existe"] = bool(f.get("ot_numero_actual"))
+        f["tenia_firma"] = bool(f.get("firmado_at"))
+    return render_template("ot2/anexos_anulados.html", filas=filas, total=total, page=page, paginas=paginas, per_page=per_page, q=q)
 
 
 def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=False):
@@ -90292,7 +90583,7 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=
                     (f"{chr(10)}[{numero_ot} eliminada y quitada de esta factura por {current_username() or '?'} "
                      f"(la factura estaba {_fac.get('estado_pago')})]", _fac["id"]))
             # 📜 REGLA #52: el anexo FIRMADO de esta OT queda inválido en la MISMA transacción (si el DELETE falla, el anexo no se toca).
-            _ax_hechos = _anexo_anul_marcar(cur, _ax_plan, numero_ot, current_username() or "?")
+            _ax_hechos = _anexo_anul_marcar(cur, _ax_plan, numero_ot, current_username() or "?", vid, "eliminar")
             cur.execute("DELETE FROM mant_visitas WHERE id=%s", (vid,))
         conn.commit()
         _fac_libro_marcar(vid)   # 📒 2026-10-11: libera en el libro lo que la OT tomaba (el barrido cubre los lotes grandes)
@@ -90307,9 +90598,9 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=
         _mant_log("cliente", v_info.get("cliente_id"), "visita_eliminada", f"{numero_ot}")
         # 📜 REGLA #52: constancia + correo a las dos partes del anexo firmado (proveedor e ILUS). Best-effort: nunca lanza ni deshace el borrado.
         _ax_aviso = None
-        if _ax_plan.get("anexos"):
+        if _ax_plan.get("anexos") or _ax_hechos.get("anuladas"):
             _ax_aviso = _anexo_anul_avisar(vid, _ax_plan, _ax_hechos, numero_ot, current_username() or "?",
-                                           _fac if (_fac and quitar_de_factura) else None)
+                                           _fac if (_fac and quitar_de_factura) else None, "eliminar")
         if _tec_snap:      # ya con la OT borrada y los logs escritos; llave propia 'ot_tecnicos'; nunca lanza
             _ot_tec_correo_borrada(vid, _tec_snap)
         return {
@@ -92198,7 +92489,7 @@ def ot2_api_eliminar_lote_preview():
             "               WHERE fpi.visita_id = v.id) AS en_factura_proveedor, "
             # 📜 REGLA #52: anexos FIRMADOS que esta eliminación deja inválidos (los de la OT) o con partidas sin efecto (la desinstalación que
             # comparte el anexo de su instalación). Solo se cuentan: el detalle sale de _anexo_anul_plan al borrar.
-            "       (SELECT COUNT(*) FROM mant_anexos axf WHERE axf.estado = 'firmado' AND (axf.ot_id = v.id OR "
+            "       (SELECT COUNT(*) FROM mant_anexos axf WHERE axf.estado IN ('firmado','enviado','visto') AND (axf.ot_id = v.id OR "
             "         (v.ot_relacion = 'desinstalacion' AND axf.ot_id = v.ot_madre_id "
             "          AND INSTR(axf.precio_items_json, '\"salida\"') > 0))) AS n_anexos_firmados "
             "  FROM mant_visitas v "
@@ -94564,6 +94855,12 @@ def ot2_detalle(vid):
     # proveedor manda, y el reenvío sigue respetando a dónde se mandó antes.
     if anexo:
         anexo = dict(anexo)
+        if (anexo.get("estado") or "") == "anulado":      # 📜 REGLA #52: quién, cuándo y por qué quedó anulado (la tarjeta lo dice)
+            try:
+                anexo.update(dict(mysql_fetchone(
+                    "SELECT anulado_at, anulado_por, anulado_motivo, anulado_ot_numero FROM mant_anexos WHERE id=%s", (anexo["id"],)) or {}))
+            except Exception as _e_anx_anul:
+                print(f"[ot2_detalle] datos de la anulación del anexo: {type(_e_anx_anul).__name__}", flush=True)
         try:
             if not (anexo.get("enviado_email") or anexo.get("enviado_tel")):
                 _anx_tec = mysql_fetchone(
@@ -145863,7 +146160,9 @@ _MFP_ACCION_TXT = {
     "ot_quitada": "OT quitada",
     "ot_quitada_de_pagada": "OT quitada (lote ya pagado)",
     "ot_quitada_por_eliminacion": "OT eliminada y quitada del lote",
-    "anexo_anulado_ot_eliminada": "Anexo firmado anulado (OT eliminada)",
+    "anexo_anulado_ot_eliminada": "Anexo anulado (OT eliminada)",
+    "anexo_anulado_ot_cancelada": "Anexo anulado (OT cancelada)",
+    "anexo_anulado_ot_anulada": "Anexo anulado (OT anulada)",
     "monto_actualizado_auto": "Monto actualizado solo (sin factura aún)",
     "monto_ajustado": "Monto ajustado a la suma de las OT",
     "pagada": "Marcada como pagada",

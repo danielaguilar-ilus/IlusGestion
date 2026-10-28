@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Anexos anulados · ILUS Fitness{% endblock %}
+
+{#
+  📜 REGLA #52 (Daniel, 2026-10-28): un anexo cuya OT se eliminó, se canceló o se anuló queda ANULADO «por la anulación del servicio». Esta pantalla
+  lista esos anexos —también los huérfanos de una OT eliminada, que no se ven en ninguna ficha— y deja REENVIAR el aviso (solo texto, nunca con el
+  anexo adjunto). Paginada (REGLA #4.3). Nunca un técnico (REGLAS #19 y #26): la ruta lleva @_no_tecnico.
+#}
+
+{% block head_extra %}
+<style>
+  .axa-lista{display:grid;gap:12px;margin:0 0 14px}
+  .axa-card{background:#fff;border:1px solid #e5e7eb;border-left:6px solid #f59e0b;border-radius:12px;padding:14px 16px;
+    display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px 16px;align-items:center}
+  .axa-t{font-weight:900;font-size:1.02rem;color:#0a0a0a;overflow-wrap:anywhere}
+  .axa-sub{font-size:.86rem;color:#4b5563;margin-top:2px;overflow-wrap:anywhere}
+  .axa-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .axa-chip{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:3px 10px;font-size:.76rem;font-weight:800;
+    background:#fff8e1;color:#78350f;border:1px solid #fde68a}
+  .axa-chip.gris{background:#f3f4f6;color:#374151;border-color:#e5e7eb}
+  .axa-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;padding:0 16px;border-radius:10px;
+    background:#fff;border:1px solid #d1d5db;color:#111827;font-weight:800;font-size:.88rem;cursor:pointer}
+  .axa-btn:hover{border-color:#dc2626;color:#dc2626}
+  .axa-vacio{background:#f9fafb;border:1px dashed #d1d5db;border-radius:12px;padding:28px 16px;text-align:center;color:#4b5563}
+  .axa-pie{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;background:#0a0a0a;color:#fff;border-radius:12px;padding:10px 14px}
+  .axa-pie a,.axa-pie select{min-height:44px;display:inline-flex;align-items:center}
+  .axa-pie a{padding:0 14px;border-radius:8px;border:1px solid #333;color:#fff;text-decoration:none;font-weight:800}
+  .axa-pie a.dis{opacity:.35;pointer-events:none}
+  @media (max-width:640px){.axa-card{grid-template-columns:1fr}.axa-btn{width:100%}}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div>
+    <h4><i class="bi bi-file-earmark-x me-2"></i>Anexos anulados</h4>
+    <div class="sub">Anexos que quedaron sin efecto por la anulación del servicio (la OT se eliminó, se canceló o se anuló). El aviso al proveedor y a ILUS es solo un texto: nunca lleva el anexo adjunto.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('ot2_panel') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Volver a las OT</a>
+  </div>
+</div>
+
+<form method="get" class="d-flex gap-2 flex-wrap mb-3" role="search">
+  <input type="hidden" name="per_page" value="{{ per_page }}">
+  <input type="search" name="q" value="{{ q }}" class="form-control" style="max-width:360px;min-height:44px;font-size:16px"
+         placeholder="Proveedor, N° de anexo o N° de OT" aria-label="Buscar anexos anulados">
+  <button class="btn btn-dark" style="min-height:44px"><i class="bi bi-search me-1"></i>Buscar</button>
+  {% if q %}<a class="btn btn-outline-secondary d-inline-flex align-items-center" style="min-height:44px" href="{{ url_for('ot2_anexos_anulados_pagina') }}">Quitar filtro</a>{% endif %}
+</form>
+
+{% if not filas %}
+<div class="axa-vacio"><i class="bi bi-check2-circle" style="font-size:1.6rem"></i>
+  <div class="mt-1"><b>{{ 'Ningún anexo anulado coincide con la búsqueda.' if q else 'Todavía no hay anexos anulados.' }}</b></div></div>
+{% else %}
+<div class="axa-lista" id="axaLista">
+  {% for f in filas %}
+  <article class="axa-card" data-aid="{{ f.id }}">
+    <div>
+      <div class="axa-t">Anexo N° {{ f.numero }} · {{ f.proveedor_nombre }}</div>
+      <div class="axa-sub">
+        {% if f.ot_existe %}OT <a href="{{ url_for('ot2_detalle', vid=f.ot_id) }}">{{ f.ot_numero }}</a>{% else %}OT {{ f.ot_numero }} (eliminada){% endif %}
+        · Anulado {% if f.anulado_at %}el {{ f.anulado_at | chile_fmt('%d/%m/%Y %H:%M') }}{% endif %}{% if f.anulado_por %} por {{ f.anulado_por }}{% endif %}
+      </div>
+      <div class="axa-chips">
+        <span class="axa-chip"><i class="bi bi-slash-circle"></i>{{ f.anulado_motivo or 'Anulación del servicio' }}</span>
+        <span class="axa-chip gris"><i class="bi {{ 'bi-patch-check' if f.tenia_firma else 'bi-send' }}"></i>{{ 'Estaba firmado' if f.tenia_firma else 'Enviado, sin firmar' }}</span>
+      </div>
+    </div>
+    <button type="button" class="axa-btn" onclick="otAnexoAviso.abrir({{ f.id }})">
+      <i class="bi bi-envelope-arrow-up"></i> Reenviar aviso del anexo anulado</button>
+  </article>
+  {% endfor %}
+</div>
+{# Pie negro, mismo patrón que el resto (REGLA #4.3): Mostrando A–B de N, N por página, Anterior / Página X de Y / Siguiente #}
+<div class="axa-pie">
+  <span>Mostrando <b>{{ (page - 1) * per_page + 1 }}–{{ [page * per_page, total] | min }}</b> de <b>{{ total }}</b></span>
+  <form method="get" class="d-inline-flex gap-2 align-items-center">
+    <input type="hidden" name="q" value="{{ q }}">
+    <select name="per_page" onchange="this.form.submit()" class="form-select" style="width:auto;font-size:16px" aria-label="Anexos por página">
+      {% for n in (10, 25, 50, 100) %}<option value="{{ n }}" {{ 'selected' if n == per_page }}>{{ n }} por página</option>{% endfor %}
+    </select>
+  </form>
+  <span class="d-inline-flex gap-2 align-items-center">
+    <a class="{{ 'dis' if page <= 1 }}" href="{{ url_for('ot2_anexos_anulados_pagina', q=q or None, per_page=per_page, page=page - 1) if page > 1 else '#' }}">Anterior</a>
+    <span>Página {{ page }} de {{ paginas }}</span>
+    <a class="{{ 'dis' if page >= paginas }}" href="{{ url_for('ot2_anexos_anulados_pagina', q=q or None, per_page=per_page, page=page + 1) if page < paginas else '#' }}">Siguiente</a>
+  </span>
+</div>
+{% endif %}
+{# otAnexoAviso (static/ot_anexo_aviso.js) viene cargado desde base.html #}
+{% endblock %}

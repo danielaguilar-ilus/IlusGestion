@@ -1074,6 +1074,10 @@ tr.o2t-s-gris .o2t-rec-txt{color:#6b7280}
     <a href="{{ url_for('ot_gerencial_pagina') }}" class="ot2-sa-btn">
       <i class="bi bi-bullseye"></i><span>Costeo de OT</span>
     </a>
+    {# 📜 REGLA #52: anexos anulados (también los huérfanos de una OT eliminada) y «Reenviar aviso» #}
+    <a href="{{ url_for('ot2_anexos_anulados_pagina') }}" class="ot2-sa-btn">
+      <i class="bi bi-file-earmark-x"></i><span>Anexos anulados</span>
+    </a>
   </nav>
   <style>
     .ot2-sa-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:-4px 0 14px;padding:10px 12px;background:#0a0a0a;
@@ -2531,7 +2535,7 @@ window.OT2D = (function(){
     if (r.anexos_firmados) {
       // 📜 REGLA #52: un anexo FIRMADO cuya OT se elimina queda inválido por la anulación del servicio y se avisa por correo a las dos partes.
       avisos += '<div class="ot2-lote-aviso ambar"><i class="bi bi-file-earmark-text"></i><div><b>'
-        + r.anexos_firmados + ' ' + plural(r.anexos_firmados, 'anexo firmado', 'anexos firmados') + '</b> en esta selección: al eliminar, '
+        + r.anexos_firmados + ' ' + plural(r.anexos_firmados, 'anexo firmado o enviado', 'anexos firmados o enviados') + '</b> en esta selección: al eliminar, '
         + plural(r.anexos_firmados, 'queda inválido', 'quedan inválidos') + ' por la anulación del servicio y se avisa por correo al proveedor y al equipo ILUS. '
         + '(Si es la desinstalación de una instalación con anexo en común, solo sus partidas quedan sin efecto.)</div></div>';
     }
