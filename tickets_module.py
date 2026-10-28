@@ -45,6 +45,7 @@ from flask import request, jsonify, render_template, redirect, url_for, g, flash
 # Tickets 2.0: SLA de respuesta (4 h habiles por mensaje, horario de Retiros).
 import tickets_sla as _tksla
 import tickets_nuevo_motivos as _tkmotivos
+import tickets_guia as _tkguia
 from retiros_monitor import hace as rm_hace
 
 # Validacion server-side del "correo que da la cara" (Reply-To de tickets).
@@ -2961,10 +2962,19 @@ def register_tickets_routes(app, ctx):
     _SPEECH_CLIENT = [None]
     _SPEECH_INIT_DONE = [False]
 
+    _SPEECH_RETRY_TS = [0.0]
+
     def _speech_client():
-        if _SPEECH_INIT_DONE[0]:
+        # 28-oct (Daniel: «arregla el micrófono»): antes un fallo en la PRIMERA
+        # creación del cliente (red, credenciales recién montadas, metadata
+        # server lento al arrancar la instancia) dejaba el dictado muerto para
+        # siempre en esa instancia («no está disponible todavía»). Ahora se
+        # reintenta como máximo cada 60 s.
+        if _SPEECH_INIT_DONE[0] and (_SPEECH_CLIENT[0] is not None
+                                     or time.monotonic() - _SPEECH_RETRY_TS[0] < 60):
             return _SPEECH_CLIENT[0]
         _SPEECH_INIT_DONE[0] = True
+        _SPEECH_RETRY_TS[0] = time.monotonic()
         try:
             from google.cloud import speech as _speech_lib
             _SPEECH_CLIENT[0] = _speech_lib.SpeechClient()
@@ -2973,6 +2983,39 @@ def register_tickets_routes(app, ctx):
             print(f"[tickets] Google Speech-to-Text no disponible: {e}", flush=True)
             _SPEECH_CLIENT[0] = None
         return _SPEECH_CLIENT[0]
+
+    def _speech_configs(_speech_lib):
+        """Configuraciones a intentar, en orden. La primera versión (jul-2026)
+        mandaba WEBM_OPUS SIN `sample_rate_hertz` y con `model="latest_long"`:
+        Google exige la tasa de muestreo para todo formato que no sea FLAC/WAV
+        (InvalidArgument: «sample_rate_hertz must be specified»), y el modelo
+        latest_long no existe para todos los idiomas. Resultado: 500 «No se
+        pudo transcribir» en cada dictado. El MediaRecorder de Chrome/Edge graba
+        Opus a 48 kHz. Si el modelo nuevo falla, se cae al modelo por defecto."""
+        base = dict(encoding=_speech_lib.RecognitionConfig.AudioEncoding.WEBM_OPUS,
+                    sample_rate_hertz=48000, language_code="es-CL",
+                    enable_automatic_punctuation=True)
+        return [
+            _speech_lib.RecognitionConfig(model="latest_long", alternative_language_codes=["es-419", "en-US"], **base),
+            _speech_lib.RecognitionConfig(alternative_language_codes=["es-419", "en-US"], **base),
+            _speech_lib.RecognitionConfig(**base),
+        ]
+
+    def _speech_reconocer(cli, _speech_lib, audio_bytes):
+        """Devuelve (texto, error). Prueba cada configuración; el error que se
+        devuelve es el de la última. Nunca lanza."""
+        rec_audio = _speech_lib.RecognitionAudio(content=audio_bytes)
+        ultimo = None
+        for cfg in _speech_configs(_speech_lib):
+            try:
+                res = cli.recognize(config=cfg, audio=rec_audio)
+                texto = " ".join(r.alternatives[0].transcript.strip()
+                                 for r in res.results if r.alternatives).strip()
+                return texto, None
+            except Exception as e:  # InvalidArgument / modelo no soportado / red
+                ultimo = e
+                print(f"[tk_api_transcribir] intento fallido ({type(e).__name__}): {str(e)[:200]}", flush=True)
+        return None, ultimo
 
     @app.route("/tickets/api/transcribir", methods=["POST"])
     @_tickets_required
@@ -2995,25 +3038,21 @@ def register_tickets_routes(app, ctx):
             }), 503
         try:
             from google.cloud import speech as _speech_lib
-            rec_audio = _speech_lib.RecognitionAudio(content=audio_bytes)
-            config = _speech_lib.RecognitionConfig(
-                encoding=_speech_lib.RecognitionConfig.AudioEncoding.WEBM_OPUS,
-                language_code="es-CL",
-                alternative_language_codes=["es-419", "en-US"],
-                enable_automatic_punctuation=True,
-                model="latest_long",
-            )
-            res = cli.recognize(config=config, audio=rec_audio)
-            texto = " ".join(
-                r.alternatives[0].transcript.strip()
-                for r in res.results if r.alternatives
-            ).strip()
-            if not texto:
-                return jsonify({"ok": False, "error": "No se detectó voz en el audio."}), 200
-            return jsonify({"ok": True, "texto": texto})
         except Exception as e:
-            print(f"[tk_api_transcribir] error: {e}", flush=True)
-            return jsonify({"ok": False, "error": "No se pudo transcribir el audio."}), 500
+            print(f"[tk_api_transcribir] librería no disponible: {e}", flush=True)
+            return jsonify({"ok": False, "error": "El dictado por voz no está disponible en este servidor."}), 503
+        texto, err = _speech_reconocer(cli, _speech_lib, audio_bytes)
+        if err is not None:
+            msg = str(err)
+            print(f"[tk_api_transcribir] error final: {type(err).__name__}: {msg[:300]}", flush=True)
+            # Pista útil sin detalles internos (REGLA #4): permisos/API apagada vs. audio.
+            if "PermissionDenied" in type(err).__name__ or "has not been used" in msg or "disabled" in msg:
+                return jsonify({"ok": False, "error": "El dictado por voz está apagado en Google Cloud "
+                                                      "(API Speech-to-Text sin habilitar o sin permiso). Avísale al administrador."}), 503
+            return jsonify({"ok": False, "error": "No se pudo transcribir el audio. Intenta de nuevo; si sigue, avísale al administrador."}), 500
+        if not texto:
+            return jsonify({"ok": False, "error": "No se detectó voz en el audio."}), 200
+        return jsonify({"ok": True, "texto": texto})
 
     # ─────────────────────────────────────────────────────────────────
     #  PAGINAS (HTML)
@@ -3062,9 +3101,16 @@ def register_tickets_routes(app, ctx):
         t = _row("SELECT id FROM tk_tickets WHERE id=%s", (tid,))
         if not t:
             return redirect(url_for("tk_list"))
+        # Tickets 2.0 (27-oct): «Hazte cargo» de la guía asigna el ticket a la
+        # persona conectada por el MISMO PATCH de siempre (asignado_a).
+        try:
+            _yo_nombre = (_tk_yo()[0] or _tk_yo()[1] or "")
+        except Exception:
+            _yo_nombre = ""
         return render_template(
             "tickets/ficha.html",
             ticket_id=tid,
+            tk_yo_nombre=_yo_nombre,
             estado_label=ESTADO_LABEL, tipo_label=TIPO_LABEL,
             # El <select> de estado solo ofrece los estados MANUALES -- los
             # 3 automaticos (ot_generated/ot_in_progress/ot_pending_approval)
@@ -4951,7 +4997,11 @@ def register_tickets_routes(app, ctx):
                                 cotizaciones=filas, uf_info=uf_info_chip,
                                 kpis=_kpis, periodos=COTIZ_PERIODOS,
                                 dpto="Servicio Técnico",
-                                base_url=url_for("tk_cotizaciones_list"))
+                                base_url=url_for("tk_cotizaciones_list"),
+                                # 27-oct: la ficha del ticket abre este MISMO asistente
+                                # dentro de un modal (iframe ?desde_ticket=…&embed=1),
+                                # sin barra lateral: no se duplica ningún formulario.
+                                embed_mode=(request.args.get("embed") == "1"))
 
     # ─────────────────────────────────────────────────────────────────
     #  API — crear cotizacion en borrador desde el modal ERP compartido
@@ -6750,16 +6800,20 @@ def register_tickets_routes(app, ctx):
     # algo?" (consultas por llave primaria / indice, milisegundos) y recarga
     # unicamente cuando la firma cambia.
     def _tk_firma_ticket(tid):
+        # 27-oct: también la OT vinculada y las cotizaciones del ticket (la
+        # cotización se genera en un modal dentro de la ficha: al cerrarlo, el
+        # latido ve el cambio y recarga solo). Índices: PK y idx_ticket.
         r = mysql_fetchone(
-            "SELECT t.updated_at, t.estado, "
+            "SELECT t.updated_at, t.estado, t.visita_id AS vi, "
             " (SELECT COALESCE(MAX(id),0) FROM tk_mensajes WHERE ticket_id=t.id) AS mm, "
             " (SELECT COALESCE(MAX(id),0) FROM tk_adjuntos WHERE ticket_id=t.id) AS ma, "
             " (SELECT COUNT(*) FROM tk_ticket_equipos WHERE ticket_id=t.id) AS ne, "
-            " (SELECT COUNT(*) FROM tk_ticket_documentos WHERE ticket_id=t.id) AS nd "
+            " (SELECT COUNT(*) FROM tk_ticket_documentos WHERE ticket_id=t.id) AS nd, "
+            " (SELECT COUNT(*) FROM tk_cotizaciones WHERE ticket_id=t.id) AS nc "
             "FROM tk_tickets t WHERE t.id=%s", (tid,))
         if not r:
             return None
-        return "|".join(str(r.get(k) or "") for k in ("updated_at", "estado", "mm", "ma", "ne", "nd"))
+        return "|".join(str(r.get(k) or "") for k in ("updated_at", "estado", "vi", "mm", "ma", "ne", "nd", "nc"))
 
     @app.route("/tickets/api/tickets/<int:tid>/latido", methods=["GET"])
     @_tickets_required
@@ -7830,8 +7884,12 @@ def register_tickets_routes(app, ctx):
         # una visita -- antes la ficha solo tenía visita_id (un entero
         # interno) y mostraba "OT #<id>" en vez del correlativo real. Sin
         # colisión de nombres: tk_tickets no tiene columna numero_ot propia.
+        # Tickets 2.0 (27-oct, ficha fiel a Retiros): además del número, la
+        # ficha muestra en qué va la OT (estado, fecha, técnico) para sugerir
+        # «seguir la OT». Columnas del CREATE TABLE original de mant_visitas.
         t = mysql_fetchone(
-            "SELECT t.*, v.numero_ot AS visita_numero_ot "
+            "SELECT t.*, v.numero_ot AS visita_numero_ot, v.estado AS visita_estado, "
+            "       v.fecha_programada AS visita_fecha, v.tecnico AS visita_tecnico "
             "  FROM tk_tickets t LEFT JOIN mant_visitas v ON v.id = t.visita_id "
             " WHERE t.id=%s", (tid,))
         if not t:
@@ -7929,6 +7987,11 @@ def register_tickets_routes(app, ctx):
         ticket_out = _fmt_row(t)
         ticket_out["sla_horas"], ticket_out["sla_vencido"] = _tk_sla_info(
             t.get("estado"), t.get("created_at"), sla_umbral)
+        ticket_out["visita_fecha"] = _fmt_dt(t.get("visita_fecha"), only_date=True) if t.get("visita_fecha") else None
+        ticket_out["visita_estado_label"] = _tk_ot_estado_label(t.get("visita_estado"))
+        # SLA de RESPUESTA (4 h hábiles por mensaje del cliente): el MISMO
+        # bloque que da la bandeja, con la misma función (tickets_sla.evaluar).
+        ticket_out["sla_resp"] = _tk_sla_resp_de(t, mensajes)
 
         # ── Trazabilidad documento ↔ dinero (2026-09-05, Daniel: "necesito
         #    que todo esté relacionado a documento para asociarlo a una
@@ -7961,10 +8024,32 @@ def register_tickets_routes(app, ctx):
                 _d["monto"] = None
             docs_out.append(_d)
 
+        # Tickets 2.0 · Guía del ticket (tickets_guia.py, puro): qué está hecho,
+        # qué toca ahora y con qué botones. Solo sugiere (REGLA #32).
+        contactos_ficha = _tk_contactos_ticket(t)
+        try:
+            n_rep = (mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM mant_ot_repuesto_solicitudes WHERE ticket_id=%s", (tid,)) or {}).get("n")
+        except Exception:
+            n_rep = 0
+        guia = _tkguia.evaluar({
+            "estado": t.get("estado"), "asignado_a": t.get("asignado_a"),
+            "titulo": t.get("titulo"), "descripcion": t.get("descripcion"),
+            "rut": t.get("rut"), "empresa": t.get("empresa"), "nombre_contacto": t.get("nombre_contacto"),
+            "motivo_principal": t.get("motivo_principal"), "diagnostico_solucion": t.get("diagnostico_solucion"),
+            "visita_id": t.get("visita_id"), "visita_numero_ot": t.get("visita_numero_ot"),
+            "visita_estado": t.get("visita_estado"), "visita_estado_label": ticket_out["visita_estado_label"],
+            "n_equipos": len(equipos or []), "n_adjuntos": len(adjuntos or []),
+            "n_cotizaciones": len(cotizaciones or []), "n_repuestos": n_rep,
+            "contactos_con_via": sum(1 for c in contactos_ficha["contactos"] if c.get("tel") or c.get("email")),
+            "unread_count": unread_count, "sla": ticket_out["sla_resp"], "es_tecnico": _finanzas_ocultas,
+        })
+
         return jsonify({
             "ok": True,
             "ticket": ticket_out,
             "sla_umbral_horas": sla_umbral,
+            "guia": guia,
             "equipos": [dict(r) for r in equipos],
             "documentos": docs_out,
             "cotizaciones": cot_out,
@@ -7980,8 +8065,302 @@ def register_tickets_routes(app, ctx):
             # Tickets 2.0: firma para el latido (la ficha solo se recarga si cambia)
             # y la tarjeta «Contactos» (contacto del ticket + los de la ficha del cliente).
             "ver": _tk_firma_ticket(tid),
-            **_tk_contactos_ticket(t),
+            **contactos_ficha,
         })
+
+    _TK_OT_ESTADO_LABEL = {
+        "creada": "Creada", "programada": "Programada", "asignada": "Asignada", "en_curso": "En curso",
+        "en_ejecucion": "En ejecución", "firmada_tecnico": "Firmada por el técnico",
+        "pendiente_info": "Pendiente de info", "pendiente_repuesto": "Pendiente de repuesto",
+        "pendiente_aprobacion": "Pendiente de aprobación", "completada": "Completada", "cerrada": "Cerrada",
+        "cancelada": "Cancelada", "anulada": "Anulada", "reagendada": "Reagendada",
+    }
+
+    def _tk_ot_estado_label(e):
+        e = (e or "").strip().lower()
+        return _TK_OT_ESTADO_LABEL.get(e, e.replace("_", " ").capitalize()) if e else ""
+
+    def _tk_sla_resp_de(t, mensajes):
+        """El bloque `sla_resp` de UN ticket, igual al de la bandeja. Se calcula
+        con los mensajes ya cargados (exacto, sin esperar los 30 s de la
+        conciliación que mantiene la columna `espera_desde` de la bandeja) con
+        la MISMA regla: el primer mensaje del cliente posterior a la última
+        respuesta enviada; un ticket del formulario sin respuesta espera desde
+        que se creó. Nunca rompe la ficha."""
+        try:
+            ult_resp = None
+            for m in (mensajes or []):
+                if m.get("tipo") == "mensaje" and not m.get("es_interno") \
+                        and (m.get("estado_envio") or "") != "fallido":
+                    c = m.get("created_at")
+                    if c and (ult_resp is None or c > ult_resp):
+                        ult_resp = c
+            espera = None
+            for m in (mensajes or []):
+                c = m.get("created_at")
+                if m.get("tipo") == "client_message" and c and (ult_resp is None or c > ult_resp):
+                    if espera is None or c < espera:
+                        espera = c
+            if espera is None and (t.get("origen") == "form") and ult_resp is None:
+                espera = t.get("created_at")
+            ahora_cl = _tksla.utc_a_chile(datetime.utcnow())
+            ev = _tksla.evaluar(_tksla.utc_a_chile(espera) if espera else None, ahora_cl, t.get("estado"))
+            out = {k: ev[k] for k in ("nivel", "semaforo", "etiqueta", "pill", "sub", "pausa", "espera_h", "resta_h")}
+            out["vence"] = ev["vence"].strftime("%d/%m/%Y %H:%M") if ev["vence"] else ""
+            out["espera_desde"] = _fmt_dt(espera) if espera else ""
+            return out
+        except Exception as _e:
+            print(f"[tk_sla_resp_de] {str(_e)[:160]}", flush=True)
+            return None
+
+    # ─────────────────────────────────────────────────────────────────
+    #  Tickets 2.0 · OT existente ↔ ticket (Daniel 2026-10-27: «desde la
+    #  tiquetera se gestiona OT, cotizaciones y repuestos sin viajar a
+    #  otros módulos»). Generar una OT NUEVA sigue siendo el asistente
+    #  único OT2C (REGLA #49); esto es para ASOCIAR una que ya existe.
+    #  Decidir a qué OT se imputa un ticket es gestión, no terreno: un
+    #  técnico (de cualquier tipo) recibe 403 (REGLAS #19/#26).
+    # ─────────────────────────────────────────────────────────────────
+    @app.route("/tickets/api/tickets/<int:tid>/ot-buscar", methods=["GET"])
+    @_tickets_required
+    @_tk_sin_tickets_de_compra
+    def tk_api_ficha_ot_buscar(tid):
+        if _tk_es_tecnico():
+            return jsonify({"ok": False, "error": "Asociar una OT a un ticket lo hace gestión.",
+                            "error_codigo": "OT_VINCULO_SIN_ACCESO"}), 403
+        t = mysql_fetchone("SELECT id, rut, empresa FROM tk_tickets WHERE id=%s", (tid,))
+        if not t:
+            return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
+        q = (request.args.get("q") or "").strip()[:80]
+        rut_n = None
+        try:
+            rut_n = normalizar_rut(t.get("rut")) if (normalizar_rut and t.get("rut")) else (t.get("rut") or None)
+        except Exception:
+            rut_n = t.get("rut") or None
+        where, params = [], []
+        if q:
+            like = f"%{q}%"
+            where.append("(v.numero_ot LIKE %s OR c.razon_social LIKE %s OR c.rut LIKE %s OR v.titulo LIKE %s)")
+            params += [like, like, like, like]
+        elif rut_n:
+            where.append("c.rut=%s")
+            params.append(rut_n)
+        else:
+            return jsonify({"ok": True, "ots": [], "sin_rut": True,
+                            "hint": "Este ticket no tiene RUT: escribe el número de la OT o el nombre del cliente."})
+        sql = ("SELECT v.id, v.numero_ot, v.estado, v.fecha_programada, v.tecnico, v.titulo, "
+               "       c.razon_social, c.rut AS cliente_rut, "
+               "       (SELECT tk.numero_ticket FROM tk_tickets tk WHERE tk.visita_id=v.id AND tk.id<>%s LIMIT 1) AS otro_ticket "
+               "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id "
+               " WHERE " + " AND ".join(where) +
+               " ORDER BY v.id DESC LIMIT 20")
+        try:
+            filas = mysql_fetchall(sql, tuple([tid] + params)) or []
+        except Exception as _e:
+            print(f"[tk_ot_buscar] {str(_e)[:160]}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudo buscar las OT."}), 500
+        ots = []
+        for v in filas:
+            ots.append({
+                "id": v["id"], "numero_ot": v.get("numero_ot") or f"OT #{v['id']}",
+                "estado": v.get("estado") or "", "estado_label": _tk_ot_estado_label(v.get("estado")),
+                "fecha": _fmt_dt(v.get("fecha_programada"), only_date=True) if v.get("fecha_programada") else "",
+                "tecnico": v.get("tecnico") or "", "titulo": v.get("titulo") or "",
+                "cliente": v.get("razon_social") or "", "cliente_rut": v.get("cliente_rut") or "",
+                "mismo_cliente": bool(rut_n and v.get("cliente_rut") and
+                                      (normalizar_rut(v["cliente_rut"]) if normalizar_rut else v["cliente_rut"]) == rut_n),
+                "otro_ticket": v.get("otro_ticket") or "",
+                "terminada": (v.get("estado") or "") in _tkguia.OT_TERMINADA,
+                "url": f"/ot/{v['id']}",
+            })
+        return jsonify({"ok": True, "ots": ots, "sin_rut": not rut_n, "q": q})
+
+    @app.route("/tickets/api/tickets/<int:tid>/asociar-ot", methods=["POST"])
+    @_tickets_required
+    @_tk_sin_tickets_de_compra
+    def tk_api_asociar_ot(tid):
+        if _tk_es_tecnico():
+            return jsonify({"ok": False, "error": "Asociar una OT a un ticket lo hace gestión.",
+                            "error_codigo": "OT_VINCULO_SIN_ACCESO"}), 403
+        d = request.get_json(silent=True) or {}
+        try:
+            vid = int(d.get("visita_id") or 0)
+        except (TypeError, ValueError):
+            vid = 0
+        if not vid:
+            return jsonify({"ok": False, "error": "Falta la OT (visita_id)."}), 400
+        t = mysql_fetchone("SELECT id, numero_ticket, rut, visita_id, estado FROM tk_tickets WHERE id=%s", (tid,))
+        if not t:
+            return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
+        if t.get("visita_id"):
+            _ex = mysql_fetchone("SELECT numero_ot FROM mant_visitas WHERE id=%s", (t["visita_id"],)) or {}
+            return jsonify({"ok": False, "error": "Este ticket ya tiene una OT vinculada.",
+                            "error_codigo": "YA_TIENE_OT", "visita_id_existente": t["visita_id"],
+                            "numero_ot_existente": _ex.get("numero_ot")}), 409
+        v = mysql_fetchone(
+            "SELECT v.id, v.numero_ot, v.estado, c.rut AS cliente_rut, c.razon_social "
+            "  FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id=v.cliente_id WHERE v.id=%s", (vid,))
+        if not v:
+            return jsonify({"ok": False, "error": "Esa OT no existe."}), 404
+        if (v.get("estado") or "") in ("cancelada", "anulada"):
+            return jsonify({"ok": False, "error": f"La OT {v.get('numero_ot') or vid} está {v['estado']}: no se puede asociar.",
+                            "error_codigo": "OT_ANULADA"}), 409
+        otro = mysql_fetchone("SELECT id, numero_ticket FROM tk_tickets WHERE visita_id=%s AND id<>%s LIMIT 1", (vid, tid))
+        if otro:
+            return jsonify({"ok": False, "error": f"La OT {v.get('numero_ot') or vid} ya está vinculada al ticket "
+                                                  f"{otro.get('numero_ticket') or ('#' + str(otro['id']))}. Un ticket tiene una OT y una OT un ticket.",
+                            "error_codigo": "OT_DE_OTRO_TICKET", "ticket_id": otro["id"],
+                            "numero_ticket": otro.get("numero_ticket")}), 409
+        # Cliente distinto: se avisa y se exige confirmación explícita con motivo (la persona decide, REGLA #32).
+        rut_t = (normalizar_rut(t.get("rut")) if (normalizar_rut and t.get("rut")) else (t.get("rut") or ""))
+        rut_v = (normalizar_rut(v.get("cliente_rut")) if (normalizar_rut and v.get("cliente_rut")) else (v.get("cliente_rut") or ""))
+        motivo = (d.get("motivo") or "").strip()[:300]
+        if rut_t and rut_v and rut_t != rut_v and not (d.get("forzar") and len(motivo) >= 10):
+            return jsonify({"ok": False, "error_codigo": "CLIENTE_DISTINTO",
+                            "error": f"La OT {v.get('numero_ot') or vid} es de {v.get('razon_social') or 'otro cliente'} "
+                                     f"(RUT {v.get('cliente_rut')}), no del cliente de este ticket. Si igual corresponde, "
+                                     f"confírmalo con un motivo (mínimo 10 caracteres).",
+                            "ot": {"numero_ot": v.get("numero_ot"), "cliente": v.get("razon_social"), "rut": v.get("cliente_rut")}}), 409
+        user = current_username() or "sistema"
+        n = mysql_execute("UPDATE tk_tickets SET visita_id=%s WHERE id=%s AND visita_id IS NULL", (vid, tid))
+        if not n:
+            return jsonify({"ok": False, "error": "Otra persona acaba de vincular una OT a este ticket. Recarga la ficha.",
+                            "error_codigo": "YA_TIENE_OT"}), 409
+        num = v.get("numero_ot") or f"OT #{vid}"
+        _tk_log(tid, "otro", f"OT {num} asociada a mano al ticket" + (f" — motivo: {motivo}" if motivo else ""),
+                usuario=user, metadata={"campo": "visita_id", "nuevo": vid, "origen": "asociar_ot",
+                                        "cliente_distinto": bool(rut_t and rut_v and rut_t != rut_v), "motivo": motivo})
+        try:
+            _mant_log("visita", vid, "asociada_a_ticket",
+                      f"Ticket {t.get('numero_ticket') or ('#' + str(tid))} asociado a mano por {user}")
+        except Exception:
+            pass
+        # El estado del ticket NO se toca solo (REGLA #32: la persona decide). La guía sugiere «seguir la OT».
+        return jsonify({"ok": True, "visita_id": vid, "numero_ot": num,
+                        "estado_ot": v.get("estado") or "", "estado_ot_label": _tk_ot_estado_label(v.get("estado"))})
+
+    @app.route("/tickets/api/tickets/<int:tid>/asociar-ot", methods=["DELETE"])
+    @_tickets_required
+    @_tk_sin_tickets_de_compra
+    def tk_api_desasociar_ot(tid):
+        # Quitar el vínculo deshace una decisión: solo admin/superadmin, con motivo, y queda en la bitácora.
+        perms = g.get("permissions") or {}
+        if _tk_es_tecnico() or not (perms.get("superadmin") or perms.get("admin")):
+            return jsonify({"ok": False, "error": "Quitar el vínculo con la OT es de administración.",
+                            "error_codigo": "OT_VINCULO_SIN_ACCESO"}), 403
+        d = request.get_json(silent=True) or {}
+        motivo = (d.get("motivo") or "").strip()[:300]
+        if len(motivo) < 10:
+            return jsonify({"ok": False, "error": "Cuenta por qué se quita el vínculo (mínimo 10 caracteres)."}), 400
+        t = mysql_fetchone("SELECT id, numero_ticket, visita_id FROM tk_tickets WHERE id=%s", (tid,))
+        if not t:
+            return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
+        if not t.get("visita_id"):
+            return jsonify({"ok": False, "error": "Este ticket no tiene OT vinculada."}), 409
+        vid = t["visita_id"]
+        v = mysql_fetchone("SELECT numero_ot FROM mant_visitas WHERE id=%s", (vid,)) or {}
+        user = current_username() or "sistema"
+        mysql_execute("UPDATE tk_tickets SET visita_id=NULL WHERE id=%s AND visita_id=%s", (tid, vid))
+        num = v.get("numero_ot") or f"OT #{vid}"
+        _tk_log(tid, "otro", f"Vínculo con la OT {num} quitado — motivo: {motivo}", usuario=user,
+                metadata={"campo": "visita_id", "antes": vid, "nuevo": None, "origen": "desasociar_ot", "motivo": motivo})
+        try:
+            _mant_log("visita", vid, "desasociada_de_ticket",
+                      f"Ticket {t.get('numero_ticket') or ('#' + str(tid))} desvinculado por {user}: {motivo}")
+        except Exception:
+            pass
+        return jsonify({"ok": True, "visita_id_anterior": vid, "numero_ot": num})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  Tickets 2.0 · «Tickets del cliente» en la ficha del cliente
+    #  (/clientes/<cid>, templates/mantenciones/ficha.html). Solo lectura,
+    #  paginado (REGLA #4.3), cruzado por RUT con las MISMAS variantes que
+    #  la bandeja de prospectos (con/sin cero y con/sin dígito verificador)
+    #  y con la MISMA visibilidad de Tickets 2.0 («míos + sin asignar» para
+    #  quien no ve todo). Mismo candado que el resumen de la ficha: acceso
+    #  a Servicio Técnico o superadmin.
+    # ─────────────────────────────────────────────────────────────────
+    def _tk_rut_variantes(rut):
+        plano = re.sub(r"[^0-9K]", "", str(rut or "").upper())
+        if not plano:
+            return []
+        vs = {plano, plano.lstrip("0")}
+        if len(plano) > 1:
+            cuerpo = plano[:-1]
+            vs.update({cuerpo, cuerpo.lstrip("0"), "0" + cuerpo, "0" + plano})
+        return sorted(v for v in vs if v)
+
+    @app.route("/tickets/api/clientes-ficha/<int:cid>/tickets", methods=["GET"])
+    @_tickets_required
+    def tk_api_cliente_ficha_tickets(cid):
+        perms = g.get("permissions") or {}
+        if not (perms.get("mantenciones") or perms.get("superadmin")):
+            return jsonify({"ok": False, "error": "Se requiere acceso a Servicio Técnico para ver la ficha del cliente.",
+                            "error_codigo": "SIN_PERMISO_MANTENCIONES"}), 403
+        cli = mysql_fetchone("SELECT id, rut, razon_social FROM mant_clientes WHERE id=%s", (cid,))
+        if not cli:
+            return jsonify({"ok": False, "error": "Cliente no encontrado"}), 404
+        try:
+            page = max(1, int(request.args.get("page") or 1))
+        except ValueError:
+            page = 1
+        try:
+            per_page = min(100, max(5, int(request.args.get("per_page") or 10)))
+        except ValueError:
+            per_page = 10
+        vs = _tk_rut_variantes(cli.get("rut"))
+        if not vs:
+            return jsonify({"ok": True, "tickets": [], "total": 0, "page": 1, "per_page": per_page,
+                            "total_pages": 1, "sin_rut": True, "abiertos": 0})
+        ph = ",".join(["%s"] * len(vs))
+        cond = f"t.rut_norm IN ({ph})"
+        params = list(vs)
+        if _tk_es_tecnico():
+            cond += " AND NOT EXISTS (SELECT 1 FROM mant_repuestos_compras _c WHERE _c.ticket_id=t.id)"
+        cond_v, p_v = _tk_scope_sql()
+        if cond_v:
+            cond += " AND " + cond_v
+            params += p_v
+        try:
+            tot = mysql_fetchone(
+                f"SELECT COUNT(*) AS n, SUM(t.estado NOT IN {_TK_TERMINALES_SQL}) AS abiertos "
+                f"FROM tk_tickets t WHERE {cond}", tuple(params)) or {}
+            total = int(tot.get("n") or 0)
+            abiertos = int(tot.get("abiertos") or 0)
+            total_pages = max(1, (total + per_page - 1) // per_page)
+            page = min(page, total_pages)
+            rows = mysql_fetchall(
+                "SELECT t.id, t.numero_ticket, t.titulo, t.tipo, t.estado, t.prioridad, t.created_at, t.asignado_a, "
+                "       t.motivo_principal, t.visita_id, t.espera_desde, v.numero_ot, "
+                "       (SELECT COUNT(*) FROM tk_mensajes m WHERE m.ticket_id=t.id AND m.tipo='client_message' "
+                "           AND m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')) AS no_leidos "
+                f"  FROM tk_tickets t LEFT JOIN mant_visitas v ON v.id=t.visita_id WHERE {cond} "
+                "ORDER BY t.id DESC LIMIT %s OFFSET %s",
+                tuple(params) + (per_page, (page - 1) * per_page)) or []
+        except Exception as _e:
+            print(f"[tk_cliente_ficha_tickets] cid={cid}: {str(_e)[:200]}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudieron leer los tickets del cliente."}), 500
+        ahora_cl = _tksla.utc_a_chile(datetime.utcnow())
+        out = []
+        for r in rows:
+            try:
+                ev = _tksla.evaluar(_tksla.utc_a_chile(r.get("espera_desde")), ahora_cl, r.get("estado"))
+                sla = {"nivel": ev["nivel"], "semaforo": ev["semaforo"], "pill": ev["pill"]}
+            except Exception:
+                sla = None
+            out.append({
+                "id": r["id"], "numero": r.get("numero_ticket") or f"#{r['id']}", "titulo": r.get("titulo") or "",
+                "tipo": r.get("tipo") or "", "tipo_label": TIPO_LABEL.get(r.get("tipo"), r.get("tipo") or ""),
+                "estado": r.get("estado") or "", "estado_label": ESTADO_LABEL.get(r.get("estado"), r.get("estado") or ""),
+                "abierto": (r.get("estado") or "") not in _tkguia.TERMINALES,
+                "prioridad": r.get("prioridad") or "", "fecha": _fmt_dt(r.get("created_at")) if r.get("created_at") else "",
+                "asignado": r.get("asignado_a") or "", "motivo_principal": r.get("motivo_principal") or "",
+                "numero_ot": r.get("numero_ot") or "", "visita_id": r.get("visita_id"),
+                "no_leidos": int(r.get("no_leidos") or 0), "sla_resp": sla, "url": f"/tickets/{r['id']}",
+            })
+        return jsonify({"ok": True, "tickets": out, "total": total, "abiertos": abiertos, "page": page,
+                        "per_page": per_page, "total_pages": total_pages, "sin_rut": False,
+                        "cliente": {"id": cli["id"], "razon_social": cli.get("razon_social") or "", "rut": cli.get("rut") or ""}})
 
     def _tk_contactos_ticket(t):
         """Contactos para la tarjeta «Contactos» de la ficha: primero quien

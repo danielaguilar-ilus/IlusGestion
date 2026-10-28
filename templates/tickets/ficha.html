@@ -30,8 +30,27 @@
      todo eso" -- direccion/comuna y ejecutivo asignado visibles de una en
      el header, sin tener que entrar a la tarjeta "Problema" mas abajo. #}
   <div class="tk-hero-datos" id="hDatosRow">
+    {# 27-oct (ficha fiel a Retiros): la identificación completa a la vista en la
+       cabecera, como .rh-sub del retiro: RUT · dirección · teléfono · contacto/correo. #}
+    <span id="hRutRow" style="display:none;"><i class="bi bi-person-vcard"></i><span id="hRut"></span></span>
     <span id="hDireccionRow" style="display:none;"><i class="bi bi-geo-alt-fill"></i><span id="hDireccion"></span></span>
+    <span id="hTelRow" style="display:none;"><i class="bi bi-telephone-fill"></i><span id="hTel"></span></span>
+    <span id="hContactoRow" style="display:none;" title="Contacto: a quién le llegan los correos"><i class="bi bi-person-lines-fill"></i><span id="hContacto"></span></span>
     <span id="hResponsableRow" style="display:none;"><i class="bi bi-person-badge"></i><span id="hResponsable"></span></span>
+  </div>
+  {# Fichas de datos del hero (mismo lenguaje que .rh-datos de Retiros): SLA de
+     respuesta, responsable, OT vinculada y motivo principal, de un vistazo. #}
+  <div class="tk-hero-tiles" id="hTiles">
+    <button type="button" class="tk-tile t-sla" id="tileSla" data-ir="respuesta" title="Ir a Respuestas">
+      <i class="bi bi-stopwatch"></i><span class="in"><span class="v" id="tileSlaV">—</span><span class="k" id="tileSlaK">SLA de respuesta</span></span></button>
+    <button type="button" class="tk-tile" id="tileResp" data-ir="responsable" title="Ir a Estado y gestión">
+      <i class="bi bi-person-badge"></i><span class="in"><span class="v" id="tileRespV">Sin asignar</span><span class="k">Responsable</span></span></button>
+    <button type="button" class="tk-tile" id="tileOT" data-ir="gestion" title="Ir a Orden de trabajo">
+      <i class="bi bi-clipboard2-check"></i><span class="in"><span class="v" id="tileOTV">Sin OT</span><span class="k" id="tileOTK">Orden de trabajo</span></span></button>
+    <button type="button" class="tk-tile" id="tileMotivo" data-ir="motivo" title="Ir a Motivo principal">
+      <i class="bi bi-bullseye"></i><span class="in"><span class="v" id="tileMotivoV">Sin definir</span><span class="k">Motivo principal</span></span></button>
+    <button type="button" class="tk-tile" id="tileCliente" data-ir="cliente" title="Ir a Identificación del cliente">
+      <i class="bi bi-building"></i><span class="in"><span class="v" id="tileClienteV">—</span><span class="k" id="tileClienteK">Cliente</span></span></button>
   </div>
   <div class="tk-hero-meta" id="hMetaRow">
     <span class="tk-badge" id="hPrio" style="display:none;"></span>
@@ -50,6 +69,15 @@
 
 <!-- INFORMACIÓN -->
 <div class="tk-pane active" id="pane-info">
+  {# ══ Guía del ticket (27-oct, Daniel: «cuando entras a la solicitud de
+     retiro quiero algo parecido… con la actividad y todo»). Misma barra negra
+     que la guía de Retiros (static/retiros_guia.css → .gp): título + progreso,
+     los pasos como fichas (clic = ir a la tarjeta) y «Siguiente: …» con sus
+     botones. La calcula el servidor (tickets_guia.py, en d.guia) y la dibuja
+     static/tickets_ficha_v2.js. Solo sugiere: la persona decide (REGLA #32). #}
+  <section class="tk-guia" id="tkGuia" aria-label="Guía del ticket: pasos y qué toca ahora">
+    <div class="tk-guia-cargando"><span class="spinner-border spinner-border-sm me-2"></span>Preparando la guía del ticket…</div>
+  </section>
   <!-- Tracking de avance del ticket (stepper visual) — a todo el ancho,
        arriba de la grilla de 2 columnas: es el "¿dónde va este ticket?"
        de un vistazo, no le sirve estar comprimido en la columna angosta. -->
@@ -179,6 +207,28 @@
         <h6 class="tk-paso-h"><span class="tk-paso-c" aria-hidden="true"><span class="tk-paso-n">5</span><i class="bi bi-check-lg tk-paso-ok"></i></span><span class="tk-paso-t">Fotos y documentos<small class="tk-paso-sub" data-paso-sub></small></span></h6>
         <div id="listaAdjuntosInfo"></div>
       </div>
+      {# Paso 6 · Motivo principal (tk_tickets.motivo_principal, 27-oct): una
+         línea con la causa real del ticket. Se guarda por el PATCH de siempre. #}
+      <div class="tk-card tk-paso" id="pasoMotivo">
+        <h6 class="tk-paso-h"><span class="tk-paso-c" aria-hidden="true"><span class="tk-paso-n">6</span><i class="bi bi-check-lg tk-paso-ok"></i></span><span class="tk-paso-t">Motivo principal<small class="tk-paso-sub" data-paso-sub></small></span></h6>
+        <p class="tk-paso-help">¿Cuál es la causa real del ticket? Una línea, como la pondrías en un informe (ej.: «Banda de trotadora desgastada»).</p>
+        <div class="tk-edit-row">
+          <input type="text" id="motivoInput" class="form-control" maxlength="160" placeholder="Escribe el motivo principal…" autocomplete="off">
+          <button type="button" class="btn btn-ilus tk-btn-44" id="btnGuardarMotivo"><i class="bi bi-save me-1"></i>Guardar</button>
+        </div>
+        <div class="tk-edit-meta" id="motivoMeta"></div>
+      </div>
+      {# Paso 7 · Diagnóstico de solución (tk_tickets.diagnostico_solucion): qué se
+         hizo y cómo quedó. La guía lo pide antes de cerrar; nunca lo impone. #}
+      <div class="tk-card tk-paso" id="pasoDiagnostico">
+        <h6 class="tk-paso-h"><span class="tk-paso-c" aria-hidden="true"><span class="tk-paso-n">7</span><i class="bi bi-check-lg tk-paso-ok"></i></span><span class="tk-paso-t">Diagnóstico de solución<small class="tk-paso-sub" data-paso-sub></small></span></h6>
+        <p class="tk-paso-help">Qué se encontró, qué se hizo y cómo quedó el equipo. Es lo que se lee en el cierre y en los reportes del cliente.</p>
+        <textarea id="diagTextarea" class="form-control" rows="4" maxlength="20000" placeholder="Ej.: Se revisó la trotadora: banda desgastada por falta de lubricación. Se reemplazó la banda, se lubricó y se calibró la velocidad. Queda operativa."></textarea>
+        <div class="tk-edit-row" style="margin-top:10px;justify-content:flex-end;">
+          <button type="button" class="btn btn-ilus tk-btn-44" id="btnGuardarDiag"><i class="bi bi-save me-1"></i>Guardar diagnóstico</button>
+        </div>
+        <div class="tk-edit-meta" id="diagMeta"></div>
+      </div>
       {# 🧾 Fase 5 (2026-09-26): si ESTE ticket es el ticket de compra de una
          Compra a proveedor (tipo spare_parts_import/store, creado desde
          Repuestos → Solicitudes → Compras), muestra proveedor/estado/ETA/
@@ -188,7 +238,7 @@
          por API y solo aparece si hay una Compra asociada a este ticket. #}
       <div class="tk-card" id="cardCompraRepuesto" style="display:none">
         <h6 style="display:flex;align-items:center;gap:8px"><i class="bi bi-cart-check"></i>Compra de repuestos
-          <span class="badge" id="rccEst" style="font-size:.66rem"></span>
+          <span class="badge" id="rccEst" style="font-size:.74rem"></span>
           <a href="/repuestos#solicitudes" target="_blank" rel="noopener" class="ms-auto small"
              style="font-weight:700;color:#dc2626;text-decoration:none">Gestionar en Bodega <i class="bi bi-box-arrow-up-right"></i></a></h6>
         <div id="rccInfo" style="font-size:.82rem;color:#374151;line-height:1.6;margin-bottom:8px"></div>
@@ -199,7 +249,7 @@
          · proveedor · evidencia). Se llena por API y solo aparece si hay. #}
       <div class="tk-card" id="cardRepuestosOT" style="display:none">
         <h6 style="display:flex;align-items:center;gap:8px"><i class="bi bi-tools"></i>Repuestos solicitados desde la OT
-          <span class="badge" id="repOtN" style="background:#dc2626;font-size:.66rem"></span>
+          <span class="badge" id="repOtN" style="background:#dc2626;font-size:.74rem"></span>
           <a href="/repuestos#solicitudes" target="_blank" rel="noopener" class="ms-auto small" style="font-weight:700;color:#dc2626;text-decoration:none">Gestionar en Bodega <i class="bi bi-box-arrow-up-right"></i></a></h6>
         <div id="repOtLista" style="display:flex;flex-direction:column;gap:8px"></div>
       </div>
@@ -211,38 +261,15 @@
           equipo formal de por medio. -#}
       {#- 🔒 2026-10-14: un técnico veía el botón pero el servidor siempre le respondía 403 (pedir
           desde un ticket es de gestión; el técnico pide desde su OT). Se dibuja solo para quien puede. -#}
-      {% if not es_tecnico %}
-      <div class="tk-card">
-        <h6><i class="bi bi-tools"></i>Repuesto directo del ticket</h6>
-        <p class="text-muted small mb-2">Sin pasar por una OT: queda enganchado a este mismo ticket.</p>
-        <button type="button" class="btn btn-sm fw-bold w-100" style="border:1.5px solid #0a0a0a;color:#0a0a0a" onclick="TKREP.abrir()">
-          <i class="bi bi-tools me-1"></i>Solicitar repuesto</button>
-      </div>
-      {% endif %}
+      {# 28-oct: la tarjeta «Repuesto directo del ticket» se MOVIÓ a la columna
+         lateral, junto a «Orden de trabajo» y «Cotización» (las tres son la
+         gestión del caso), y «Actividad del ticket» pasó a todo el ancho bajo
+         la grilla, como en Retiros. Nada se quitó (REGLA #4.2); así las dos
+         columnas quedan parejas (REGLA #16: medido a 1280 px). #}
       <div class="tk-card" id="cardNotas" style="display:none;">
         <h6><i class="bi bi-lock"></i>Notas internas</h6>
         <div id="txtNotas" style="font-size:.87rem;color:#374151;white-space:pre-wrap;line-height:1.5;"></div>
       </div>
-
-      <!-- Actividad del ticket — línea de tiempo de supervisión (quién hizo qué y cuándo).
-           Se alimenta de d.mensajes + d.vistas que YA llegan con el ticket: cero backend nuevo.
-           Visible SOLO para superadmin/admin (pedido Daniel 2026-07-12): es una vista de
-           supervisión, no algo que el resto del staff de Tickets necesite ver. -->
-      {% if permissions.superadmin or permissions.admin %}
-      <div class="tk-card" id="cardActividad">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
-          <h6 style="margin:0;"><i class="bi bi-activity"></i>Actividad del ticket</h6>
-          <div class="tk-act-filtros" id="actFiltros">
-            <span class="tk-act-chip active" data-filtro="todo">Todo</span>
-            <span class="tk-act-chip" data-filtro="cambios">Cambios</span>
-            <span class="tk-act-chip" data-filtro="mensajes">Mensajes</span>
-            <span class="tk-act-chip" data-filtro="archivos">Archivos</span>
-          </div>
-        </div>
-        <div class="tk-act-timeline" id="actTimeline"></div>
-        <button type="button" class="btn btn-sm btn-outline-secondary w-100 mt-2" id="actVerTodo" style="display:none;"></button>
-      </div>
-      {% endif %}
     </div>
 
     <aside class="tk-info-side">
@@ -258,7 +285,7 @@
            IDs propios (otSide*) para no duplicar los del original. Ambos
            accesos los pinta el MISMO renderAccionesOT(t): una sola
            decisión (¿t.visita_id?), dos lugares pintados. -->
-      <div class="tk-card tk-ot-card">
+      <div class="tk-card tk-ot-card" id="cardOT">
         <h6><i class="bi bi-clipboard2-plus"></i>Orden de trabajo</h6>
         <div id="otSideSinOT">
           <div class="tk-ot-side-hint">
@@ -269,6 +296,12 @@
           <button type="button" class="btn fw-bold w-100 tk-ot-side-btn" id="btnGenerarOTSide"
                   onclick="tkAbrirGenerarOT2()">
             <i class="bi bi-clipboard2-plus me-1"></i>Generar OT</button>
+          {# 27-oct: asociar una OT que YA existe (buscador). Generar una nueva
+             sigue siendo el asistente único OT2C (REGLA #49). Solo gestión. #}
+          {% if not es_tecnico %}
+          <button type="button" class="btn btn-sm btn-ilus-outline w-100" id="btnAsociarOT" style="margin-top:6px;">
+            <i class="bi bi-link-45deg me-1"></i>Asociar OT existente</button>
+          {% endif %}
         </div>
         <!-- Ya hay OT: un ticket tiene UNA sola OT (el backend responde 409
              si se intenta una segunda), así que acá no va un botón de
@@ -281,8 +314,14 @@
               <div class="tk-ot-side-sub">Ya generada</div>
             </div>
           </div>
+          {# 27-oct: en qué va la OT (estado · fecha · técnico), para «seguir la OT» sin salir del ticket. #}
+          <div class="tk-ot-side-estado" id="otSideEstado"></div>
           <a class="btn btn-sm btn-ilus-outline w-100" id="otSideVerOtLink" href="#" target="_blank" rel="noopener">
             <i class="bi bi-box-arrow-up-right me-1"></i>Ver la OT</a>
+          {% if permissions.superadmin or permissions.admin %}
+          <button type="button" class="tk-link-quitar" id="btnQuitarOT" title="Quitar el vínculo con esta OT (queda en la actividad)">
+            <i class="bi bi-x-circle"></i>Quitar vínculo</button>
+          {% endif %}
         </div>
       </div>
 
@@ -295,10 +334,10 @@
            arriba de él. Abre el MISMO modal ERP compartido
            (tkaOpen({mode:'seleccionar', ...}), igual que /tickets/cotizaciones)
            mandando ticket_id=TID para que quede asociada desde que nace. -->
-      <div class="tk-card tk-ot-card">
+      <div class="tk-card tk-ot-card" id="cardCotizacion">
         <h6><i class="bi bi-file-earmark-text"></i>Cotización</h6>
         <div id="cotSideVacio" class="tk-ot-side-hint">
-          Este ticket todavía no tiene cotizaciones. Genera una llamando a un documento del ERP.
+          Este ticket todavía no tiene cotizaciones. Genérala aquí mismo: el asistente llega con el cliente y los equipos del ticket.
         </div>
         <div id="cotSideLista"></div>
         <button class="btn fw-bold w-100 tk-ot-side-btn" id="btnGenerarCotizacionSide" type="button" style="margin-top:4px;">
@@ -317,20 +356,42 @@
         {% endif %}
       </div>
 
+      {#- 🔧 2026-09-21 (Fase 2 -- Daniel: "la otra parte donde se podrán
+          pedir repuestos sería por los tickets... sería bueno cubrirlo").
+          Tarjeta SIEMPRE visible (a diferencia de cardRepuestosOT, que solo
+          aparece si YA hay solicitudes) -- este es el punto de entrada para
+          crear la primera. El ticket mismo es el agrupador, sin OT ni
+          equipo formal de por medio. 28-oct: vive en la columna lateral,
+          junto a OT y Cotización (misma tarjeta, mismo botón, mismo TKREP). -#}
+      {#- 🔒 2026-10-14: un técnico veía el botón pero el servidor siempre le respondía 403 (pedir
+          desde un ticket es de gestión; el técnico pide desde su OT). Se dibuja solo para quien puede. -#}
+      {% if not es_tecnico %}
+      <div class="tk-card tk-ot-card" id="cardRepuesto">
+        <h6><i class="bi bi-tools"></i>Repuesto directo del ticket</h6>
+        <div class="tk-ot-side-hint">Sin pasar por una OT: queda enganchado a este mismo ticket.</div>
+        <button type="button" class="btn fw-bold w-100 tk-btn-44" style="border:1.5px solid #0a0a0a;color:#0a0a0a" onclick="TKREP.abrir()">
+          <i class="bi bi-tools me-1"></i>Solicitar repuesto</button>
+      </div>
+      {% endif %}
+
       <!-- Estado y gestión — 2026-07-15: dejó de vivir arriba de todo,
            ahora es lo primero y más visible de la columna lateral, con un
            badge grande de color real (mismas clases bs-* del hero). -->
-      <div class="tk-card tk-estado-card">
+      <div class="tk-card tk-estado-card" id="cardEstado">
         <h6><i class="bi bi-sliders"></i>Estado y gestión</h6>
         <span class="tk-badge-grande" id="estGestionBadge">…</span>
+        {# 27-oct · «Hazte cargo»: asigna el ticket a quien está conectado por el
+           PATCH de siempre (asignado_a). Solo aparece mientras no haya responsable. #}
+        <button type="button" class="btn fw-bold w-100 tk-btn-44 tk-btn-tomar" id="btnTomarTicket" style="display:none;">
+          <i class="bi bi-hand-index-thumb me-1"></i>Me hago cargo</button>
         <div class="tk-fields-col">
           <div>
-            <label style="font-size:.68rem;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.03em;">
+            <label style="font-size:.76rem;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.03em;">
               Estado detallado / casos especiales</label>
             <select id="selEstado" class="form-select form-select-sm">
               {% for e in tk_estados %}<option value="{{ e }}">{{ estado_label[e] }}</option>{% endfor %}
             </select>
-            <div id="notaEstadoAuto" style="display:none;font-size:.68rem;color:#9ca3af;margin-top:4px;">
+            <div id="notaEstadoAuto" style="display:none;font-size:.8rem;color:#6b7280;margin-top:4px;">
               Este estado lo controla automáticamente la OT vinculada.
             </div>
           </div>
@@ -371,7 +432,7 @@
            vistazo, sin contar chips a ojo. #}
         <h6 style="display:flex;align-items:center;gap:8px;">
           <i class="bi bi-file-earmark-text"></i><span>Documentos ERP</span>
-          <span id="docsCount" style="display:none;margin-left:auto;background:#f3f4f6;color:#374151;border-radius:50px;padding:2px 9px;font-size:.66rem;font-weight:800;"></span>
+          <span id="docsCount" style="display:none;margin-left:auto;background:#f3f4f6;color:#374151;border-radius:50px;padding:3px 10px;font-size:.74rem;font-weight:800;"></span>
         </h6>
         <div id="listaDocs" class="tk-docs-en-equipo tk-docs-side"></div>
       </div>
@@ -384,6 +445,27 @@
       </div>
     </aside>
   </div>
+
+  <!-- Actividad del ticket — línea de tiempo de supervisión (quién hizo qué y cuándo).
+       Se alimenta de d.mensajes + d.vistas que YA llegan con el ticket: cero backend nuevo.
+       Visible SOLO para superadmin/admin (pedido Daniel 2026-07-12): es una vista de
+       supervisión, no algo que el resto del staff de Tickets necesite ver.
+       28-oct: a todo el ancho bajo la grilla, como «Actividad del retiro» en Retiros. -->
+  {% if permissions.superadmin or permissions.admin %}
+  <div class="tk-card tk-act-card" id="cardActividad">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+      <h6 style="margin:0;"><i class="bi bi-activity"></i>Actividad del ticket</h6>
+      <div class="tk-act-filtros" id="actFiltros">
+        <span class="tk-act-chip active" data-filtro="todo">Todo</span>
+        <span class="tk-act-chip" data-filtro="cambios">Cambios</span>
+        <span class="tk-act-chip" data-filtro="mensajes">Mensajes</span>
+        <span class="tk-act-chip" data-filtro="archivos">Archivos</span>
+      </div>
+    </div>
+    <div class="tk-act-timeline" id="actTimeline"></div>
+    <button type="button" class="btn btn-sm btn-outline-secondary w-100 mt-2" id="actVerTodo" style="display:none;"></button>
+  </div>
+  {% endif %}
 
   <!-- Modal: garantía del equipo (Ley del Consumidor: 6 meses por defecto, editable) -->
   <div class="modal fade" id="modalGarantiaEquipo" tabindex="-1" aria-hidden="true">
@@ -605,6 +687,68 @@
   </div>
 </div>
 
+{# ══════════════ Modal "Asociar OT existente" (27-oct) ══════════════
+   Mismo lenguaje que «Asociar cotización existente» (REGLA #15): paso 1
+   buscar, paso 2 elegir, con semáforo por OT y datos COMPLETOS. Generar una
+   OT nueva sigue siendo el asistente único OT2C (REGLA #49). Solo gestión:
+   el botón no existe para técnicos y el servidor valida de nuevo. #}
+<div class="modal fade" id="tkAsocOtModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius:16px;border:none;">
+      <div class="modal-header" style="background:#0a0a0a;color:#fff;border-radius:16px 16px 0 0;">
+        <h6 class="modal-title fw-bold"><i class="bi bi-link-45deg me-2"></i>Asociar una OT existente</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body" style="background:#f9fafb;">
+        <div style="background:#fff;border:1px solid #eef0f3;border-radius:14px;padding:14px 16px;margin-bottom:14px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+            <span style="width:26px;height:26px;border-radius:50%;background:#dc2626;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:.78rem;flex:0 0 auto;">1</span>
+            <span style="font-weight:800;font-size:.9rem;color:#0a0a0a;">Busca la OT</span>
+          </div>
+          <div class="input-group input-group-sm">
+            <span class="input-group-text" style="background:#fff;"><i class="bi bi-search"></i></span>
+            <input type="text" id="tkAsocOtQ" class="form-control" placeholder="Número (OT-2026-00123), empresa o RUT" autocomplete="off">
+          </div>
+          <div style="font-size:.78rem;color:#4b5563;margin-top:6px;" id="tkAsocOtHint">
+            Al abrir se listan las OT del cliente de este ticket. Escribe para buscar en todas.
+          </div>
+        </div>
+        <div style="background:#fff;border:1px solid #eef0f3;border-radius:14px;padding:14px 16px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+            <span style="width:26px;height:26px;border-radius:50%;background:#dc2626;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:.78rem;flex:0 0 auto;">2</span>
+            <span style="font-weight:800;font-size:.9rem;color:#0a0a0a;">Elige cuál asociar a este ticket</span>
+          </div>
+          <div id="tkAsocOtResultados"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm" style="background:#f3f4f6;color:#374151;font-weight:700;" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ══════════════ Modal "Generar cotización" (27-oct) ══════════════
+   Daniel: «generar una COTIZACIÓN en un MODAL sin salir del ticket». Es EL
+   asistente de /tickets/cotizaciones (sin duplicar formularios), cargado en
+   un iframe con ?desde_ticket=<TID>&embed=1 (sin barra lateral): llega con el
+   cliente, el contacto y los equipos del ticket. Al cerrar, la ficha se
+   recarga y la tarjeta «Cotización» muestra la nueva. #}
+<div class="modal fade" id="tkCotModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+  <div class="modal-dialog modal-xl modal-dialog-centered tk-cot-dialog">
+    <div class="modal-content" style="border-radius:16px;border:none;overflow:hidden;">
+      <div class="modal-header py-2" style="background:#0a0a0a;color:#fff;">
+        <h6 class="modal-title fw-bold"><i class="bi bi-file-earmark-plus me-2" style="color:#f87171"></i>Generar cotización desde este ticket</h6>
+        <a class="btn btn-sm btn-outline-light ms-auto me-2" id="tkCotAbrirAparte" href="#" target="_blank" rel="noopener" title="Abrir el cotizador en una pestaña aparte"><i class="bi bi-box-arrow-up-right me-1"></i>Pestaña aparte</a>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body p-0" style="background:#f9fafb;">
+        <iframe id="tkCotFrame" title="Cotizador" src="about:blank" style="width:100%;height:100%;border:0;display:block;"></iframe>
+      </div>
+    </div>
+  </div>
+</div>
+
 {#- 🔧 2026-09-21 (Fase 2): modal propio "Solicitar repuesto directo del
     ticket" -- mismo motor que OT/Incidencias, REGLA #8 (>3 campos reales
     → modal Bootstrap). CSS .otrep-opc-it duplicado acá (no hay hoja
@@ -618,8 +762,8 @@
 .otrep-opc-it.on{border-color:#dc2626;background:#fff5f5;box-shadow:0 0 0 3px rgba(220,38,38,.12)}
 .otrep-opc-it .inf{flex:1;min-width:0}
 .otrep-opc-it .inf b{display:block;font-size:.82rem;color:#0a0a0a;overflow-wrap:anywhere;line-height:1.25}
-.otrep-opc-it .inf small{display:block;font-size:.68rem;color:#6b7280;overflow-wrap:anywhere}
-.otrep-opc-it .stk{flex:none;font-size:.62rem;font-weight:900;border-radius:999px;padding:3px 8px;
+.otrep-opc-it .inf small{display:block;font-size:.76rem;color:#6b7280;overflow-wrap:anywhere}
+.otrep-opc-it .stk{flex:none;font-size:.72rem;font-weight:900;border-radius:999px;padding:3px 8px;
   background:#dcfce7;color:#15803d;white-space:nowrap}
 .otrep-opc-it .stk.sin{background:#fee2e2;color:#b91c1c}
 .otrep-opc-vacio{font-size:.76rem;color:#6b7280;padding:6px 2px}
@@ -671,6 +815,10 @@
 const TID = {{ ticket_id }};
 const ESTADO_LABEL = {{ estado_label|tojson }};
 const TIPO_LABEL = {{ tipo_label|tojson }};
+// 27-oct · «Me hago cargo» de la guía: el nombre de quien está conectado
+// (mismo PATCH asignado_a de siempre). Vacío si no se pudo resolver.
+window._TK_YO_NOMBRE = {{ (tk_yo_nombre or '')|tojson }};
+window._TK_ES_TECNICO = {{ 'true' if es_tecnico else 'false' }};
 
 // Tarjeta "Actividad del ticket" es solo superadmin/admin (pedido Daniel
 // 2026-07-12) — el nodo #cardActividad puede no existir en el DOM para el
@@ -742,7 +890,7 @@ async function tkRepuestosOT(){
         '<div style="color:#1f2937;margin-top:4px;white-space:pre-wrap"><i class="bi bi-stethoscope me-1" style="color:#dc2626"></i>' + esc(s.motivo || '') + '</div>' +
         // 📏 2026-10-20: las medidas de la pieza (quien compra necesita medidas y todo) y el camino del diagnóstico del técnico
         ((s.datos_filas || []).length ? '<div style="margin-top:5px;border:1px solid ' + (s.datos && s.datos.medido_con === 'no_pude' ? '#fcd34d;background:#fff8e1' : '#bfdbfe;background:#f7faff') + ';border-radius:8px;padding:6px 9px">' +
-          '<div style="font-size:.62rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:#1e40af"><i class="bi bi-rulers"></i> Medidas' + (s.datos_pieza ? ' · ' + esc(s.datos_pieza) : '') + '</div>' +
+          '<div style="font-size:.72rem;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:#1e40af"><i class="bi bi-rulers"></i> Medidas' + (s.datos_pieza ? ' · ' + esc(s.datos_pieza) : '') + '</div>' +
           '<div style="display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin-top:4px">' + s.datos_filas.map(function(f){ return '<span style="color:#475569">' + esc(f[0]) + '</span><b>' + esc(f[1]) + '</b>'; }).join('') + '</div>' +
           ((s.datos && (s.datos.avisos || []).length) ? '<div style="margin-top:4px;color:#92400e;font-weight:700"><i class="bi bi-exclamation-triangle-fill"></i> ' + esc(s.datos.avisos.join(' · ')) + '</div>' : '') + '</div>' : '') +
         (s.diagnostico_txt ? '<div style="color:#1e3a8a;margin-top:4px"><i class="bi bi-clipboard2-pulse"></i> <b>Diagnóstico guiado:</b> ' + esc(s.diagnostico_txt) + '</div>' : '') +
