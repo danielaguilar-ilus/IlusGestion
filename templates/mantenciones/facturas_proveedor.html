@@ -546,6 +546,9 @@
         </select>
         <button type="button" class="rm-btn fpv-solo-movil" id="fpvOrdDir" aria-label="Orden descendente"><i class="bi bi-sort-down"></i></button>
         <button type="button" class="rm-btn rm-btn-rojo" id="fpvLimpiar" disabled><i class="bi bi-x-circle"></i>Limpiar filtros</button>
+        {# 📧 2026-10-28 (REGLA #14): un solo control marca o desmarca los lotes de esta página para enviarlos por correo #}
+        <button type="button" class="rm-btn" id="fpvEnvTodo" title="Marca o desmarca los lotes que ves en esta página para enviarlos por correo">
+          <i class="bi bi-check-all"></i>Seleccionar/deseleccionar todo</button>
       </div>
       <div class="fpv-leyenda" aria-label="Significado de los colores de cada fila">
         <span><i class="rm-dot verde"></i>Pagada y completa</span>
@@ -639,7 +642,12 @@
               {% if f.created_by %}<div class="rm-sub"><i class="bi bi-person"></i>{{ f.created_by }}</div>{% endif %}
               {# 📊 2026-10-08: detalle de este lote en Excel (resumen, OT e historial), sin salir de la lista. #}
               <a class="fpv-xl" href="/servicio-tecnico/facturas-proveedor/{{ f.id }}/excel" title="Descargar el detalle del lote #{{ f.id }} en Excel"
-                 aria-label="Descargar el detalle del lote {{ f.id }} en Excel"><i class="bi bi-file-earmark-excel"></i><span>Excel</span></a></div></td>
+                 aria-label="Descargar el detalle del lote {{ f.id }} en Excel"><i class="bi bi-file-earmark-excel"></i><span>Excel</span></a>
+              {# 📧 2026-10-28: marcar el lote para enviarlo por correo (con su Excel y su monto). Un lote anulado no se envía. #}
+              {% if f.estado_pago != 'anulada' %}
+              <label class="fpv-env" title="Marcar el lote #{{ f.id }} para enviarlo por correo">
+                <input type="checkbox" class="fpv-env-chk" data-fid="{{ f.id }}" aria-label="Marcar el lote {{ f.id }} para enviarlo por correo"><span>Enviar</span></label>
+              {% endif %}</div></td>
             {# 🏢 2026-09-20: la EMPRESA resuelta (ficha guardada o la del técnico
                de sus OT); si se escribió a mano con otro nombre ("Milling",
                "Daniel Pulgar"), ese queda como alias debajo -- ya no parecen
@@ -728,7 +736,80 @@
     {% endif %}
   </div>
 </section>
+{# 📧 2026-10-28: barra de lo marcado para enviar por correo (solo existe con algo marcado; ver static/facprov_envio.js) #}
+<div class="fpv-envbar" id="fpvEnvBar" role="region" aria-label="Lotes marcados para enviar por correo">
+  <div class="fpv-envbar-info"><b id="fpvEnvN">0</b> <span id="fpvEnvNlbl">lotes</span> marcados · <b id="fpvEnvMonto">$0</b></div>
+  <div class="fpv-envbar-btns">
+    <button type="button" class="btn btn-outline-light" id="fpvEnvLimpiar"><i class="bi bi-x-lg me-1"></i>Quitar selección</button>
+    <button type="button" class="btn btn-danger" id="fpvEnvAbrir"><i class="bi bi-envelope-paper me-1"></i>Enviar por correo</button>
+  </div>
+</div>
 {% endif %}
+
+{# ── Modal: enviar los lotes marcados por correo (más de 5 campos → Bootstrap modal, REGLA #8) ───────
+   Daniel (2026-10-28): «un envío de lotes seleccionados, con un mensaje y los Excel y los montos en el mail, y un cuerpo bien
+   automático». El servidor arma el cuerpo (facprov_envio.py); acá solo se edita lo que se quiera cambiar y se ve la vista previa. #}
+<div class="modal fade" id="fpeModal" tabindex="-1" aria-labelledby="fpeTitulo" aria-hidden="true"
+     data-url-previa="{{ url_for('mant_facprov_envio_previa') }}"
+     data-url-enviar="{{ url_for('mant_facprov_envio_enviar') }}"
+     data-url-borrador="{{ url_for('mant_facprov_envio_borrador') }}">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
+    <div class="modal-content">
+      <div class="modal-header" style="border-bottom:1px solid #f1f5f9">
+        <h5 class="modal-title" id="fpeTitulo"><i class="bi bi-envelope-paper me-2" style="color:#dc2626"></i>Enviar lotes por correo</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <div id="fpeAvisos"></div>
+
+        <section class="fpe-sec">
+          <h6 class="fpe-sec-t"><span class="n">1</span>Qué lotes van</h6>
+          <div id="fpeLotes"></div>
+          <div class="fpe-total" id="fpeTotalFila"><span>Total</span><span id="fpeTotal">$0</span></div>
+          <label class="fpe-chk"><input type="checkbox" id="fpeConTotal" checked>Poner el total en el correo (cuando son varios lotes)</label>
+        </section>
+
+        <section class="fpe-sec">
+          <h6 class="fpe-sec-t"><span class="n">2</span>A quién se lo envías</h6>
+          <label class="fpe-lbl" for="fpePara">Para</label>
+          <input type="text" class="form-control" id="fpePara" placeholder="nombre.apellido@sphs.cl" autocomplete="off" inputmode="email" spellcheck="false">
+          <select class="form-select mt-2" id="fpeParaAdd" aria-label="Agregar una persona a Para"></select>
+          <label class="fpe-lbl mt-3" for="fpeCc">Con copia (opcional)</label>
+          <input type="text" class="form-control" id="fpeCc" placeholder="Separa varios con coma" autocomplete="off" inputmode="email" spellcheck="false">
+          <select class="form-select mt-2" id="fpeCcAdd" aria-label="Agregar una persona con copia"></select>
+          <div class="fpe-help">Solo correos @sphs.cl o @ilusfitness.com: el correo lleva lo que se le paga a cada proveedor. Nunca a un técnico ni a un proveedor.</div>
+          <div class="fpe-quien mt-3" id="fpeQuien"></div>
+        </section>
+
+        <section class="fpe-sec">
+          <h6 class="fpe-sec-t"><span class="n">3</span>El mensaje</h6>
+          <label class="fpe-lbl" for="fpeAsunto">Asunto</label>
+          <input type="text" class="form-control" id="fpeAsunto" maxlength="200" autocomplete="off">
+          <label class="fpe-lbl mt-3" for="fpeSaludo">Saludo</label>
+          <input type="text" class="form-control" id="fpeSaludo" maxlength="80" autocomplete="off">
+          <label class="fpe-lbl mt-3" for="fpeIntro">Mensaje antes de los montos</label>
+          <textarea class="form-control" id="fpeIntro" rows="3" maxlength="1200"></textarea>
+          <label class="fpe-lbl mt-3" for="fpeCierre">Mensaje después de los montos</label>
+          <textarea class="form-control" id="fpeCierre" rows="2" maxlength="600"></textarea>
+          <div class="fpe-help">La firma sale sola, con tu nombre y tu correo. Lo que cambies aquí se ve al tiro en la vista previa.</div>
+        </section>
+
+        <section class="fpe-sec">
+          <h6 class="fpe-sec-t"><span class="n">4</span>Así llega el correo</h6>
+          <div class="fpe-prev" id="fpePrev" aria-live="polite"></div>
+          <div class="fpe-adj" id="fpeAdj" aria-label="Archivos que se adjuntan"></div>
+        </section>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #f1f5f9">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-outline-dark" id="fpeBorrador"
+                title="Descarga el correo como borrador para abrirlo en Outlook, revisarlo y enviarlo con tu firma">
+          <i class="bi bi-download me-1"></i>Borrador para Outlook</button>
+        <button type="button" class="btn btn-danger" id="fpeEnviar"><i class="bi bi-send me-1"></i>Enviar ahora</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 {# ── Modal: nueva factura (6 campos → Bootstrap modal, REGLA #8) ─────── #}
 <div class="modal fade" id="fpvModalNueva" tabindex="-1" aria-labelledby="fpvModalNuevaTitulo" aria-hidden="true">
@@ -816,8 +897,10 @@
   </div>
 </div>
 
+<link rel="stylesheet" href="{{ url_for('static', filename='facprov_envio.css') }}">
 <script src="{{ url_for('static', filename='facprov_inteligente.js') }}"></script>
 <script src="{{ url_for('static', filename='facprov_tabla.js') }}"></script>
+<script src="{{ url_for('static', filename='facprov_envio.js') }}"></script>
 <script>
 {# Nombre real de la empresa filtrada; el chip sintético "Sin ficha" (id 0)
    no es un proveedor y no debe prellenar ningún buscador. #}

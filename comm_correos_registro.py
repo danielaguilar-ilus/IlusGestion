@@ -290,6 +290,12 @@ REGISTRO = (
     _c("ot_acta_recepcion", "Acta de recepción a logística (PDF y Excel)", "ot", "mantenciones", "interno",
        "Botón «Enviar a logística» del acta de recepción de una OT interna de revisión de equipos.",
        adjunta="Acta en PDF y Excel", avisa_a="Solo a correos internos (@sphs.cl o @ilusfitness.com)"),
+    # 2026-10-28 (Daniel: «un envío de lotes seleccionados, con un mensaje, los Excel y los montos en el mail»): el cierre de los lotes
+    # de Facturación de proveedor. Lleva lo que ILUS le paga a cada proveedor: solo equipo interno, nunca un técnico ni un proveedor.
+    _c("facprov_cierre_lotes", "Cierre de lotes de proveedores: Excel y montos al equipo", "ot", "comunicacion_interna", "interno",
+       "Botón «Enviar lotes por correo» de Facturación de proveedor, con los lotes que la persona marcó.",
+       adjunta="Un Excel por lote", avisa_a="A los correos internos que se elijan en el modal (@sphs.cl o @ilusfitness.com)",
+       nota="Interno: lleva montos. Nunca a un técnico ni a un proveedor; el servidor lo rechaza."),
     # 2026-10-20 («¿Qué pasó?» de la OT, rama aparte que se mezcla después): se registra ANTES de que llegue su envío para que,
     # al mezclar las ramas, el interruptor ya exista. Lo envía `_send_ilus_email(..., evento="ot_que_paso_bodega",
     # modulo="comunicacion_interna")`; la puerta resuelve la clave sola por el evento (`_EVENTO_A_CLAVE`) aunque ese envío

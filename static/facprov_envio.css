@@ -1,0 +1,73 @@
+/* 📧 2026-10-28 · Enviar lotes seleccionados por correo (Facturación de proveedor). Paleta ILUS: rojo #dc2626, negro #0a0a0a, blanco. */
+
+/* Casilla de cada lote (dentro de la celda «Lote») */
+.fpv-env{display:inline-flex;align-items:center;gap:6px;margin-top:6px;padding:2px 9px 2px 6px;border:1px solid #d1d5db;border-radius:999px;
+  background:#fff;font-size:.72rem;font-weight:800;color:#374151;cursor:pointer;white-space:nowrap;user-select:none}
+.fpv-env input{width:18px;height:18px;margin:0;accent-color:#dc2626;cursor:pointer}
+.fpv-env:hover{border-color:#9ca3af}
+.fpv-env.on{background:#fef2f2;border-color:#fca5a5;color:#991b1b}
+tr.rm-row.fpv-env-sel{box-shadow:inset 4px 0 0 #dc2626;background:#fffafa}
+
+/* Barra pegajosa con lo marcado */
+.fpv-envbar{position:sticky;bottom:0;z-index:5;display:none;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  background:#0a0a0a;color:#fff;border-radius:12px;padding:11px 14px;margin-top:10px;box-shadow:0 -4px 14px rgba(0,0,0,.15)}
+.fpv-envbar.on{display:flex}
+.fpv-envbar-info{font-size:.86rem;font-weight:700}
+.fpv-envbar-info b{font-weight:900}
+.fpv-envbar-btns{display:flex;gap:8px;flex-wrap:wrap}
+.fpv-envbar .btn{min-height:44px;font-weight:800}
+
+/* Modal */
+#fpeModal .modal-body{background:#f8fafc}
+#fpeModal .form-control,#fpeModal .form-select{font-size:16px;min-height:44px}
+#fpeModal textarea.form-control{min-height:84px}
+.fpe-sec{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px;margin-bottom:12px}
+.fpe-sec-t{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:.78rem;font-weight:900;letter-spacing:.05em;text-transform:uppercase;color:#111827}
+.fpe-sec-t .n{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#16a34a;color:#fff;font-size:.72rem}
+.fpe-lbl{display:block;margin:0 0 3px;font-size:.68rem;font-weight:900;letter-spacing:.05em;text-transform:uppercase;color:#64748b}
+.fpe-help{margin-top:3px;font-size:.78rem;color:#64748b}
+
+/* Una tarjeta por lote: nombre completo, sin cortar (REGLA #15) */
+.fpe-lote{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) 112px;gap:8px 12px;align-items:end;padding:10px 0;border-top:1px solid #f1f5f9}
+.fpe-lote:first-of-type{border-top:0;padding-top:0}
+.fpe-lote-nom{font-weight:800;color:#111827;line-height:1.25;overflow-wrap:anywhere}
+.fpe-lote-sub{font-size:.76rem;color:#64748b;font-weight:600}
+.fpe-lote-monto{font-weight:900;font-size:1.05rem;color:#111827;white-space:nowrap;text-align:right}
+.fpe-total{display:flex;justify-content:space-between;gap:10px;padding:10px 0 0;margin-top:4px;border-top:2px solid #111827;font-weight:900}
+.fpe-chk{display:flex;align-items:center;gap:8px;margin-top:8px;min-height:44px;font-size:.88rem;font-weight:600;cursor:pointer}
+.fpe-chk input{width:20px;height:20px;accent-color:#dc2626}
+
+/* Avisos (ámbar, nunca rojo: alertar sin gritar) */
+.fpe-aviso{display:flex;gap:8px;align-items:flex-start;margin:0 0 8px;padding:9px 12px;border-radius:10px;background:#fff8e1;border:1px solid #fde68a;color:#92400e;font-size:.84rem;font-weight:600}
+.fpe-aviso i{margin-top:2px}
+.fpe-aviso.info{background:#eff6ff;border-color:#bfdbfe;color:#1e40af}
+.fpe-aviso.ok{background:#f0fdf4;border-color:#bbf7d0;color:#166534}
+
+/* Vista previa del correo */
+.fpe-prev{background:#fff;border:1px solid #d1d5db;border-radius:10px;padding:16px 18px;max-height:340px;overflow:auto}
+.fpe-prev.cargando{opacity:.55}
+.fpe-adj{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.fpe-adj span{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;background:#dcfce7;border:1px solid #bbf7d0;color:#166534;font-size:.76rem;font-weight:800;overflow-wrap:anywhere}
+.fpe-quien{font-size:.86rem;font-weight:600;color:#111827;line-height:1.5}
+.fpe-quien b{font-weight:900}
+
+#fpeModal .modal-footer{gap:8px;flex-wrap:wrap}
+#fpeModal .modal-footer .btn{min-height:44px;font-weight:800}
+
+@media (max-width:768px){
+  .fpv-env{min-height:44px;padding:0 14px 0 10px;font-size:.84rem}
+  .fpv-env input{width:22px;height:22px}
+  .fpv-envbar{padding:8px 10px}
+  .fpv-envbar-btns{width:100%}
+  .fpv-envbar-btns .btn{flex:1 1 calc(50% - 4px)}
+  .fpv-envbar-btns .btn.btn-danger{flex:1 1 100%;order:-1}
+  #fpeModal .modal-dialog{margin:0;max-width:none;height:100dvh}
+  #fpeModal .modal-content{height:100dvh;border-radius:0}
+  .fpe-lote{grid-template-columns:minmax(0,1fr) auto}
+  .fpe-lote > .fpe-lote-et{grid-column:1/-1;order:3}
+  #fpeModal .modal-footer{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom))}
+  #fpeModal .modal-footer .btn{width:100%;margin:0}
+  #fpeModal .modal-footer .btn-danger{order:-1}
+  #fpeModal .modal-footer .btn-light{order:2}
+}
+@media (prefers-reduced-motion:reduce){ .fpe-prev{transition:none} }

@@ -32,7 +32,7 @@ from tests.test_ot_finanzas_lectores import V, _amb
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FUNCS = ("_mfp_clp_txt", "_mfp_tiene_factura_real", "_mfp_totales_lote", "_mfp_monto_lote_al_dia", "_mfp_evento_fila",
-         "_mfp_eventos_total", "_mfp_eventos_lote", "_mfp_proveedor_canon", "_mfp_excel_lote", "_mfp_excel_nombre",
+         "_mfp_eventos_total", "_mfp_eventos_lote", "_mfp_proveedor_canon", "_mfp_excel_lote", "_mfp_excel_nombre", "_mfp_excel_de_lote",
          "_mfp_items", "mant_factura_proveedor_asignar", "mant_factura_proveedor_desasignar",
          "mant_factura_proveedor_ajustar_monto", "mant_factura_proveedor_historial", "mant_factura_proveedor_excel",
          "_no_tecnico", "_mfp_cobro_respaldado", "_mfp_eq_texto")

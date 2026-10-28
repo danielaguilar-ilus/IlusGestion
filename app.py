@@ -145620,6 +145620,7 @@ _MFP_ACCION_TXT = {
     "solicitud_oc_creada": "Solicitud de OC creada",
     "creada_pagada_sin_factura": "Lote creado como pagado (sin factura)",
     "editada": "Lote editado",
+    "enviado_por_correo": "Enviado por correo",
     "ot_asignada": "OT asignada",
     "ot_quitada": "OT quitada",
     "ot_quitada_de_pagada": "OT quitada (lote ya pagado)",
@@ -146361,18 +146362,12 @@ def mant_factura_proveedor_historial(fid):
                     "por_pagina": por_pagina, "eventos": eventos})
 
 
-@app.route("/mantenciones/facturas-proveedor/<int:fid>/excel")
-@app.route("/servicio-tecnico/facturas-proveedor/<int:fid>/excel")
-@_mant_required
-@_no_tecnico
-def mant_factura_proveedor_excel(fid):
-    """2026-10-08 (Daniel: "perdí el detalle, no veo un Excel para sacar un detalle de esto"): el detalle de UN lote
-    en Excel. Hojas: Resumen, OT del lote e Historial. Mismo permiso que la pantalla de detalle."""
-    if not _facprov_puede():
-        return _mfp_403()
+def _mfp_excel_de_lote(fid):
+    """El Excel de UN lote ya armado, para la descarga y para adjuntarlo al correo de cierre (2026-10-28): {"buf", "nombre",
+    "prov_nombre", "prov_rut", "factura"} o None si el lote no existe. Una sola cuenta para los dos caminos."""
     f = _mfp_cargar(fid)
     if not f:
-        return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
+        return None
     f = dict(f)
     f["monto_total"] = float(f.get("monto_total") or 0)
     items = _mfp_items(fid)
@@ -146394,8 +146389,357 @@ def mant_factura_proveedor_excel(fid):
         "generado_txt": f"{ahora.strftime('%d/%m/%Y %H:%M')} · {current_username() or ''}",
     }
     buf = _mfp_excel_lote(f, items, eventos, prov_nombre, prov_rut, meta)
-    return send_file(buf, as_attachment=True, download_name=_mfp_excel_nombre(fid, prov_nombre, ahora),
+    return {"buf": buf, "nombre": _mfp_excel_nombre(fid, prov_nombre, ahora), "prov_nombre": prov_nombre,
+            "prov_rut": prov_rut, "factura": f}
+
+
+@app.route("/mantenciones/facturas-proveedor/<int:fid>/excel")
+@app.route("/servicio-tecnico/facturas-proveedor/<int:fid>/excel")
+@_mant_required
+@_no_tecnico
+def mant_factura_proveedor_excel(fid):
+    """2026-10-08 (Daniel: "perdí el detalle, no veo un Excel para sacar un detalle de esto"): el detalle de UN lote
+    en Excel. Hojas: Resumen, OT del lote e Historial. Mismo permiso que la pantalla de detalle."""
+    if not _facprov_puede():
+        return _mfp_403()
+    x = _mfp_excel_de_lote(fid)
+    if not x:
+        return jsonify({"ok": False, "error": "Factura no encontrada."}), 404
+    return send_file(x["buf"], as_attachment=True, download_name=x["nombre"],
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+# ───────────────────────── 📧 Enviar lotes seleccionados por correo (REGLA #50) ─────────────────────────
+# Daniel, 2026-10-28, mostrando el correo que armaba a mano en Outlook (tres Excel de lotes y el monto de cada proveedor):
+# «necesito crear un envío de lotes seleccionados, con un mensaje y los Excel y los montos en el mail, y un cuerpo de correo bien
+# automático, que soy flojo». La lógica pura (nombres cortos, cuerpo, borrador .eml, validación de correos) vive en
+# facprov_envio.py con sus pruebas; acá solo está la plomería: leer los lotes, adjuntar el Excel de cada uno y enviar por la
+# puerta única. SOLO equipo interno (lleva lo que ILUS le paga a sus proveedores: REGLAS #19 y #26).
+_FPE_R_PARA = "facprov_envio_para"
+_FPE_R_CC = "facprov_envio_cc"
+_FPE_R_SALUDOS = "facprov_envio_saludos"
+_FPE_R_ETIQ = "facprov_envio_etiquetas"
+_FPE_CORREO = "facprov_cierre_lotes"
+_FPE_TOPE_ADJUNTOS = 15 * 1024 * 1024          # el SMTP corta cerca de los 25 MB con la codificación; esto deja margen
+import facprov_envio as _fpe
+
+
+def _ensure_facprov_envio_reglas():
+    """Las cuatro «memorias» del envío de lotes en mant_reglas_negocio (vacías al nacer): a quién se lo mandó la última vez,
+    con copia a quién, cómo saludó a cada persona y cómo llamó a cada proveedor. INSERT IGNORE: barato y nunca pisa lo guardado."""
+    try:
+        for clave, label, desc, orden in (
+                (_FPE_R_PARA, "Envío de lotes: último destinatario",
+                 "Solo correos internos (@sphs.cl o @ilusfitness.com). Lo recuerda solo el envío de lotes de Facturación de proveedor.", 10),
+                (_FPE_R_CC, "Envío de lotes: último con copia",
+                 "Solo correos internos. Lo recuerda solo el envío de lotes de Facturación de proveedor.", 20),
+                (_FPE_R_SALUDOS, "Envío de lotes: saludo por persona",
+                 "Lo escribe solo el sistema (cómo saludaste a cada destinatario). No hace falta editarlo.", 30),
+                (_FPE_R_ETIQ, "Envío de lotes: nombre corto de cada proveedor",
+                 "Lo escribe solo el sistema (cómo llamaste a cada proveedor en el correo). No hace falta editarlo.", 40)):
+            mysql_execute(
+                "INSERT IGNORE INTO mant_reglas_negocio "
+                "(clave, valor, tipo_dato, categoria, label, descripcion, unidad, orden) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                (clave, "", "string", "facprov", label, desc, "", orden))
+        return True
+    except Exception as e:
+        print(f"[ensure_facprov_envio_reglas] {e}", flush=True)
+        return False
+
+
+def _fpe_regla(clave):
+    try:
+        return str((_reglas_cargar() or {}).get(clave) or "")
+    except Exception:
+        return ""
+
+
+def _fpe_regla_json(clave):
+    try:
+        d = json.loads(_fpe_regla(clave) or "{}")
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _fpe_regla_guardar(clave, valor):
+    """Recuerda lo último que se usó. Nunca rompe el envío: si no se puede guardar, solo queda en el registro del servidor."""
+    try:
+        mysql_execute("UPDATE mant_reglas_negocio SET valor=%s, updated_by=%s WHERE clave=%s",
+                      (str(valor or "")[:500], current_username() or "sistema", clave))
+        _reglas_invalidar()
+    except Exception as e:
+        print(f"[facprov_envio] no se pudo recordar {clave}: {type(e).__name__}", flush=True)
+
+
+def _fpe_correos_validos(entrada):
+    """→ (válidos, rechazados). Solo internos (@sphs.cl o @ilusfitness.com) y NUNCA un usuario de la familia técnico (REGLAS #19 y
+    #26: el correo lleva lo que ILUS le paga a sus proveedores), aunque su correo sea interno."""
+    validos, mal = _fpe.correos_internos(entrada)
+    if validos:
+        try:
+            filas = mysql_fetchall(
+                "SELECT username, role FROM app_users WHERE active=1 AND LOWER(username) IN ("
+                + ",".join(["%s"] * len(validos)) + ")", tuple(validos)) or []
+            tecnicos = {(r.get("username") or "").strip().lower() for r in filas if _es_rol_tecnico({"role": r.get("role")})}
+        except Exception as e:
+            print(f"[facprov_envio] revisar técnicos: {type(e).__name__}", flush=True)
+            tecnicos = set()
+        if tecnicos:
+            mal = list(mal) + [c + " (es técnico: no recibe montos de proveedores)" for c in validos if c in tecnicos]
+            validos = [c for c in validos if c not in tecnicos]
+    return validos, mal
+
+
+def _fpe_sugeridos():
+    """Personas internas a las que se puede ofrecer el envío: usuarios ACTIVOS con correo interno, sin la familia técnico."""
+    try:
+        filas = mysql_fetchall(
+            "SELECT username, nombre, role FROM app_users WHERE active=1 AND (username LIKE %s OR username LIKE %s) ORDER BY nombre",
+            ("%@sphs.cl", "%@ilusfitness.com")) or []
+    except Exception as e:
+        print(f"[facprov_envio] sugeridos: {type(e).__name__}", flush=True)
+        return []
+    out = []
+    for r in filas:
+        if _es_rol_tecnico({"role": r.get("role")}):
+            continue
+        correo = (r.get("username") or "").strip().lower()
+        if correo:
+            out.append({"correo": correo, "nombre": (r.get("nombre") or "").strip()})
+    return out
+
+
+def _fpe_nombre_de_correo(correo):
+    try:
+        r = mysql_fetchone("SELECT nombre FROM app_users WHERE active=1 AND LOWER(username)=%s", (str(correo or "").strip().lower(),))
+        return ((r or {}).get("nombre") or "").strip()
+    except Exception:
+        return ""
+
+
+def _fpe_lote(fid):
+    """→ (lote, None) o (None, mensaje). Un lote anulado no se envía."""
+    f = _mfp_cargar(fid)
+    if not f:
+        return None, f"El lote #{fid} no existe."
+    f = dict(f)
+    if f.get("estado_pago") == "anulada":
+        return None, f"El lote #{fid} está anulado: no se envía."
+    items = _mfp_items(fid)
+    canon, _rut, _id = _mfp_proveedor_canon(f, items, fid)
+    return {"id": int(fid), "proveedor": canon or (f.get("proveedor_nombre") or "").strip() or f"Lote {fid}",
+            "monto": float(f.get("monto_total") or 0), "estado": f.get("estado_pago"), "n_ot": len(items),
+            "tiene_factura": _mfp_tiene_factura_real(f)}, None
+
+
+def _fpe_estado_envio():
+    """¿Hoy el correo puede salir? Se dice ANTES de enviar (alertar, no sorprender): interruptor general, llave del módulo e
+    interruptor de este correo en Comunicaciones → Control de correos."""
+    try:
+        if not comm_is_enabled("email"):
+            return {"puede": False, "motivo": "el envío de correos está apagado (interruptor general de Comunicaciones)"}
+        if _modulo_canal_bloqueado("comunicacion_interna", "email"):
+            return {"puede": False, "motivo": "el envío de correos internos está apagado (llave de Comunicación interna)"}
+        if not _correo_permitido(_FPE_CORREO):
+            return {"puede": False, "motivo": "este correo está apagado en Comunicaciones → Control de correos"}
+    except Exception as e:
+        print(f"[facprov_envio] estado: {type(e).__name__}", flush=True)
+    return {"puede": True, "motivo": ""}
+
+
+def _fpe_armar(d):
+    """Todo lo que necesitan la vista previa, el envío y el borrador, calculado UNA vez a partir de lo que mandó el navegador (que
+    solo manda ids y los textos que la persona editó: el HTML del cuerpo siempre lo arma el servidor).
+    → (datos, None) o (None, (mensaje, código, http))."""
+    d = d if isinstance(d, dict) else {}
+    ids, excedido = _fpe.ids_validos(d.get("ids"))
+    if not ids:
+        return None, ("Marca al menos un lote para enviar.", "SIN_LOTES", 400)
+    if excedido:
+        return None, (f"Como máximo {_fpe.MAX_LOTES} lotes por correo.", "DEMASIADOS_LOTES", 400)
+    lotes = []
+    for fid in ids:
+        lt, err = _fpe_lote(fid)
+        if err:
+            return None, (err, "LOTE_NO_VALIDO", 404)
+        lotes.append(lt)
+    ahora = _now_chile()
+    lineas = _fpe.armar_lineas(lotes, _fpe_regla_json(_FPE_R_ETIQ))
+    pedidas = {}
+    for x in d.get("lineas") or []:
+        if isinstance(x, dict):
+            try:
+                pedidas[int(x.get("id"))] = re.sub(r"\s+", " ", str(x.get("etiqueta") or "")).strip()[:40]
+            except (TypeError, ValueError):
+                continue
+    for ln in lineas:
+        if pedidas.get(ln["id"]):
+            ln["etiqueta"] = pedidas[ln["id"]]
+        ln["archivo"] = _mfp_excel_nombre(ln["id"], ln["proveedor"], ahora)
+    para, mal_para = _fpe_correos_validos(d["para"] if "para" in d else _fpe_regla(_FPE_R_PARA))
+    cc, mal_cc = _fpe_correos_validos(d["cc"] if "cc" in d else _fpe_regla(_FPE_R_CC))
+    cc = [c for c in cc if c not in para]
+    guardados = _fpe_regla_json(_FPE_R_SALUDOS)
+
+    def _txt(clave, defecto, tope):
+        v = d.get(clave)
+        return str(v).replace("\r\n", "\n").strip()[:tope] if isinstance(v, str) else defecto
+
+    saludo = _txt("saludo", _fpe.saludo_defecto(_fpe_nombre_de_correo(para[0]) if para else "",
+                                                 guardados.get(para[0]) if para else ""), 80)
+    intro = _txt("intro", _fpe.INTRO_DEFECTO, 1200)
+    cierre = _txt("cierre", _fpe.CIERRE_DEFECTO, 600)
+    asunto = re.sub(r"\s+", " ", _txt("asunto", "", 200)).strip() or _fpe.asunto_defecto(lineas, ahora)
+    con_total = bool(d.get("con_total", True))
+    u = getattr(g, "user", None) or {}
+    correo_u = (u.get("username") or "").strip().lower()
+    remitente = {"nombre": (u.get("nombre") or "").strip(), "correo": correo_u if _fpe.correos_internos(correo_u)[0] else "",
+                 "cargo": (u.get("cargo") or "").strip(), "telefono": (u.get("phone") or "").strip()}
+    firma = _fpe.firma_de(remitente["nombre"], remitente["cargo"], remitente["telefono"], remitente["correo"])
+    avisos = []
+    vistos = {}
+    for lt in lotes:
+        if not lt["tiene_factura"]:
+            avisos.append(f"El lote #{lt['id']} ({lt['proveedor']}) todavía no tiene la factura del proveedor: el monto es la suma de sus OT.")
+        if not lt["n_ot"]:
+            avisos.append(f"El lote #{lt['id']} ({lt['proveedor']}) no tiene OT asignadas.")
+        vistos.setdefault(_fpe.clave_proveedor(lt["proveedor"]), []).append(lt["id"])
+    for ids_dup in vistos.values():
+        if len(ids_dup) > 1:
+            avisos.append("Los lotes " + ", ".join(f"#{i}" for i in ids_dup) + " son del mismo proveedor: van en líneas separadas.")
+    return {"lineas": lineas, "para": para, "cc": cc, "rechazados": list(mal_para) + list(mal_cc), "saludo": saludo, "intro": intro,
+            "cierre": cierre, "asunto": asunto, "con_total": con_total, "remitente": remitente, "firma": firma, "avisos": avisos,
+            "cuerpo": _fpe.armar_cuerpo(saludo, intro, lineas, cierre, firma, con_total),
+            "total_txt": _fpe.clp(_fpe.total_de(lineas)), "envio": _fpe_estado_envio(), "ahora": ahora}, None
+
+
+def _fpe_recordar(datos):
+    """Después de un envío: a quién, con copia a quién, cómo saludó y cómo llamó a cada proveedor, para que la próxima vez salga solo."""
+    _fpe_regla_guardar(_FPE_R_PARA, ", ".join(datos["para"]))
+    _fpe_regla_guardar(_FPE_R_CC, ", ".join(datos["cc"]))
+    if datos["para"] and datos["saludo"]:
+        sal = _fpe_regla_json(_FPE_R_SALUDOS)
+        sal.pop(datos["para"][0], None)
+        sal[datos["para"][0]] = datos["saludo"]
+        _fpe_regla_guardar(_FPE_R_SALUDOS, _fpe.json_acotado(sal))
+    nuevas = _fpe.etiquetas_a_guardar(datos["lineas"], {}, _fpe_regla_json(_FPE_R_ETIQ))
+    _fpe_regla_guardar(_FPE_R_ETIQ, _fpe.json_acotado(nuevas))
+
+
+def _fpe_adjuntos(datos):
+    """Un Excel por lote, el mismo que se baja del detalle. → (adjuntos [(nombre, bytes, mime)], None) o (None, (mensaje, código, http))."""
+    adjuntos, total = [], 0
+    for ln in datos["lineas"]:
+        x = _mfp_excel_de_lote(ln["id"])
+        if not x:
+            return None, (f"El lote #{ln['id']} ya no existe.", "LOTE_NO_VALIDO", 404)
+        contenido = x["buf"].getvalue()
+        total += len(contenido)
+        adjuntos.append((x["nombre"], contenido, _fpe.MIME_XLSX))
+    if total > _FPE_TOPE_ADJUNTOS:
+        return None, ("Los Excel pesan demasiado para un solo correo. Envía menos lotes por vez.", "ADJUNTOS_MUY_GRANDES", 400)
+    return adjuntos, None
+
+
+def _fpe_respuesta_error(err):
+    return jsonify({"ok": False, "error": err[0], "error_codigo": err[1]}), err[2]
+
+
+@app.route("/mantenciones/api/facturas-proveedor/envio/previa", methods=["POST"])
+@app.route("/servicio-tecnico/api/facturas-proveedor/envio/previa", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_facprov_envio_previa():
+    """Vista previa del correo de cierre de los lotes marcados: asunto, saludo, mensaje, una línea por proveedor con su monto, total,
+    firma y el cuerpo ya armado. El navegador la vuelve a pedir cada vez que la persona edita algo (el cuerpo lo arma SIEMPRE el
+    servidor). No envía nada."""
+    if not _facprov_puede():
+        return _mfp_403()
+    datos, err = _fpe_armar(request.get_json(silent=True))
+    if err:
+        return _fpe_respuesta_error(err)
+    return jsonify({
+        "ok": True, "lineas": datos["lineas"], "para": datos["para"], "cc": datos["cc"], "rechazados": datos["rechazados"],
+        "saludo": datos["saludo"], "intro": datos["intro"], "cierre": datos["cierre"], "asunto": datos["asunto"],
+        "con_total": datos["con_total"], "remitente": datos["remitente"], "firma": datos["firma"], "avisos": datos["avisos"],
+        "cuerpo_html": datos["cuerpo"]["html"], "cuerpo_texto": datos["cuerpo"]["texto"], "total_txt": datos["total_txt"],
+        "envio": datos["envio"], "sugeridos": _fpe_sugeridos(), "max_destinatarios": _fpe.MAX_DESTINATARIOS})
+
+
+@app.route("/mantenciones/api/facturas-proveedor/envio/enviar", methods=["POST"])
+@app.route("/servicio-tecnico/api/facturas-proveedor/envio/enviar", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_facprov_envio_enviar():
+    """Envía el correo de cierre: UN correo con el Excel de cada lote adjunto y los montos en el cuerpo, solo a correos internos. Sale
+    por la puerta única (SMTP, REGLA #13) y respeta el interruptor general, la llave de Comunicación interna y el interruptor de este
+    correo. Dice la verdad si no salió, deja constancia en la bitácora de cada lote y recuerda los datos para la próxima vez."""
+    if not _facprov_puede():
+        return _mfp_403()
+    datos, err = _fpe_armar(request.get_json(silent=True))
+    if err:
+        return _fpe_respuesta_error(err)
+    if datos["rechazados"]:
+        return jsonify({"ok": False, "error_codigo": "CORREO_NO_VALIDO",
+                        "error": "No se puede enviar a: " + ", ".join(datos["rechazados"][:4])
+                                 + ". Solo correos internos (@sphs.cl o @ilusfitness.com) y de personas que no son técnicos."}), 400
+    if not datos["para"]:
+        return jsonify({"ok": False, "error_codigo": "SIN_DESTINATARIO",
+                        "error": "Escribe a quién se lo envías (un correo @sphs.cl o @ilusfitness.com)."}), 400
+    todos = datos["para"] + datos["cc"]
+    if len(todos) > _fpe.MAX_DESTINATARIOS:
+        return jsonify({"ok": False, "error_codigo": "DEMASIADOS_DESTINATARIOS",
+                        "error": f"Como máximo {_fpe.MAX_DESTINATARIOS} destinatarios por correo."}), 400
+    if not datos["envio"]["puede"]:
+        return jsonify({"ok": False, "error_codigo": "CORREO_APAGADO",
+                        "error": "El correo no salió: " + datos["envio"]["motivo"]
+                                 + ". Puedes descargar el borrador para Outlook y enviarlo desde ahí."}), 409
+    adjuntos, err = _fpe_adjuntos(datos)
+    if err:
+        return _fpe_respuesta_error(err)
+    ok = _send_ilus_email(datos["para"][0], datos["asunto"], datos["cuerpo"]["html"],
+                          evento="facprov_cierre_lotes", modulo="comunicacion_interna", correo="facprov_cierre_lotes",
+                          attachments=adjuntos, cc=(datos["para"][1:] + datos["cc"]) or None,
+                          reply_to=datos["remitente"]["correo"] or None)
+    res = _email_resultado(ok)
+    if not res["salio"]:
+        return jsonify({"ok": False, "error_codigo": "NO_SALIO", "error": res["mensaje"] + ". Puedes descargar el borrador para Outlook."}), 502
+    usuario = current_username() or "sistema"
+    cuando = datos["ahora"].strftime("%d/%m/%Y %H:%M")
+    for ln in datos["lineas"]:
+        _mant_log("factura_proveedor", ln["id"], "enviado_por_correo",
+                  f"Cierre enviado por {usuario} el {cuando} a {', '.join(todos)} · {ln['etiqueta']} {ln['monto_txt']} · "
+                  f"{len(datos['lineas'])} lote(s) en el mismo correo · adjunto: {ln['archivo']}")
+    _fpe_recordar(datos)
+    return jsonify({"ok": True, "enviados": todos, "n_lotes": len(datos["lineas"]), "total_txt": datos["total_txt"],
+                    "adjuntos": [a[0] for a in adjuntos]})
+
+
+@app.route("/mantenciones/api/facturas-proveedor/envio/borrador", methods=["POST"])
+@app.route("/servicio-tecnico/api/facturas-proveedor/envio/borrador", methods=["POST"])
+@_mant_required
+@_no_tecnico
+def mant_facprov_envio_borrador():
+    """El mismo correo como borrador `.eml` SIN ENVIAR: Outlook lo abre como un correo nuevo, con los destinatarios, el asunto, el cuerpo
+    y los Excel ya puestos, para revisarlo y mandarlo con la firma de cada quien. No envía nada ni gasta el interruptor del correo."""
+    if not _facprov_puede():
+        return _mfp_403()
+    datos, err = _fpe_armar(request.get_json(silent=True))
+    if err:
+        return _fpe_respuesta_error(err)
+    if datos["rechazados"]:
+        return jsonify({"ok": False, "error_codigo": "CORREO_NO_VALIDO",
+                        "error": "No se puede incluir: " + ", ".join(datos["rechazados"][:4])
+                                 + ". Solo correos internos (@sphs.cl o @ilusfitness.com) y de personas que no son técnicos."}), 400
+    adjuntos, err = _fpe_adjuntos(datos)
+    if err:
+        return _fpe_respuesta_error(err)
+    import io as _io
+    eml = _fpe.armar_eml(datos["para"], datos["cc"], datos["asunto"], datos["cuerpo"]["texto"], datos["cuerpo"]["html"],
+                         [(a[0], a[1]) for a in adjuntos])
+    return send_file(_io.BytesIO(eml), as_attachment=True, download_name=_fpe.nombre_borrador(datos["ahora"]),
+                     mimetype="message/rfc822")
 
 
 @app.route("/mantenciones/api/facturas-proveedor/<int:fid>/pagar", methods=["POST"])
@@ -179764,6 +180108,7 @@ try:
         _ensure_repuestos_sugeridos_col()
         _ensure_otrep_item_manual_col()
         _ensure_acta_recepcion_regla()
+        _ensure_facprov_envio_reglas()   # 📧 2026-10-28: memorias del envío de lotes por correo (INSERT IGNORE, barato)
         _ensure_ot_producto_estado()
         _ensure_otrep_medidas()           # 📏 2026-10-20: columnas de medidas por línea y catálogo de medidas en terreno (barato si ya están)
         _ensure_ot_que_paso()            # 🧭 2026-10-20: tabla de «¿Qué pasó?» de la OT (barata si ya está)
