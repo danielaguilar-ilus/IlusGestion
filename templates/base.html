@@ -1183,6 +1183,8 @@
 <script defer src="{{ url_for('static', filename='ilus_ui.js') }}"></script>
 {# 2026-10-20: salida para cancelar/reagendar una OT unida a otra (instalación ↔ desinstalación): «¿cancelar las dos?» #}
 <script defer src="{{ url_for('static', filename='ot_cancelar.js') }}"></script>
+{# 2026-10-28 (REGLA #52): aviso «este anexo firmado quedará inválido» ANTES de eliminar una OT (ficha de la OT, calendario, ficha del cliente) #}
+<script defer src="{{ url_for('static', filename='ot_anexo_anulacion.js') }}"></script>
 <script defer src="{{ url_for('static', filename='pdf_modal.js') }}"></script>
 {# Visor de imágenes global (zoom / girar / arrastrar / navegar). Se usa con
    ilusLightbox(url) o ilusLightbox([{url,caption}], idx). Extraído de

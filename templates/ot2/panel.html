@@ -659,6 +659,7 @@ tr:hover .ot2-abrir{background:var(--ilus-red,#dc2626)}
   padding:10px 13px;font-size:.84rem;font-weight:600;margin-bottom:12px;line-height:1.45}
 .ot2-lote-aviso.rojo{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
 .ot2-lote-aviso.gris{background:#f3f4f6;color:#374151;border:1px solid #e5e7eb}
+.ot2-lote-aviso.ambar{background:#fff8e1;color:#78350f;border:1px solid #fde68a}
 .ot2-lote-aviso i{font-size:1.1rem;flex:none;margin-top:1px}
 .ot2-lote-lista{max-height:38vh;overflow-y:auto;border:1px solid #eaecf0;border-radius:11px}
 .ot2-lote-it{--c:#6b7280;display:grid;grid-template-columns:auto minmax(0,1fr) auto;
@@ -2527,6 +2528,13 @@ window.OT2D = (function(){
         + plural(r.en_factura, 'borrará', 'borrarán') + ' igual y ' + plural(r.en_factura, 'saldrá', 'saldrán') + ' de esa factura, que queda con una nota '
         + 'que lo dice. El monto total de la factura no cambia, así que su «Diferencia» dejará de cuadrar (si estaba pagada, también).</div></div>';
     }
+    if (r.anexos_firmados) {
+      // 📜 REGLA #52: un anexo FIRMADO cuya OT se elimina queda inválido por la anulación del servicio y se avisa por correo a las dos partes.
+      avisos += '<div class="ot2-lote-aviso ambar"><i class="bi bi-file-earmark-text"></i><div><b>'
+        + r.anexos_firmados + ' ' + plural(r.anexos_firmados, 'anexo firmado', 'anexos firmados') + '</b> en esta selección: al eliminar, '
+        + plural(r.anexos_firmados, 'queda inválido', 'quedan inválidos') + ' por la anulación del servicio y se avisa por correo al proveedor y al equipo ILUS. '
+        + '(Si es la desinstalación de una instalación con anexo en común, solo sus partidas quedan sin efecto.)</div></div>';
+    }
     if (r.no_encontradas) {
       avisos += '<div class="ot2-lote-aviso gris"><i class="bi bi-info-circle"></i><div>'
         + r.no_encontradas + ' de las OT marcadas ya no ' + plural(r.no_encontradas, 'existe', 'existen') + ' (alguien las borró hace un momento). Se ignoran.</div></div>';
@@ -2621,8 +2629,15 @@ window.OT2D = (function(){
       var el = data.eliminadas || [], om = data.omitidas || [];
       try { bootstrap.Modal.getOrCreateInstance(modalEl).hide(); } catch(_){}
       var sub = '';
+      // 📜 REGLA #52: qué pasó con cada anexo firmado y con cada correo (la verdad: salió / no salió / sin correo).
+      var conAnexo = el.filter(function(x){ return x.anexo_anulado && x.anexo_anulado.length; });
+      if (conAnexo.length) {
+        sub += '<div style="text-align:left;margin-top:6px"><b>Anexos firmados:</b><ul style="margin:6px 0 0;padding-left:18px">'
+          + conAnexo.map(function(x){ return '<li><b>' + esc(x.numero_ot) + '</b> — ' + x.anexo_anulado.map(esc).join(' ') + '</li>'; }).join('')
+          + '</ul></div>';
+      }
       if (om.length) {
-        sub = '<div style="text-align:left;margin-top:6px"><b>' + om.length + ' ' + plural(om.length, 'omitida', 'omitidas') + ':</b><ul style="margin:6px 0 0;padding-left:18px">'
+        sub += '<div style="text-align:left;margin-top:6px"><b>' + om.length + ' ' + plural(om.length, 'omitida', 'omitidas') + ':</b><ul style="margin:6px 0 0;padding-left:18px">'
           + om.map(function(o){ return '<li><b>' + esc(o.numero_ot) + '</b> — ' + esc(o.motivo) + '</li>'; }).join('')
           + '</ul></div>';
       }
