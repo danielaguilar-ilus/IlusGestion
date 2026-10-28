@@ -54,20 +54,46 @@ class _Cur:
     def __exit__(self, *a):
         return False
 
+    def fetchall(self):
+        return list(getattr(self, "_res", []))
+
+    def fetchone(self):
+        return (getattr(self, "_res", None) or [None])[0]
+
     def execute(self, sql, params=None):
         b = self.b
         b.sqls.append((sql, params))
+        if sql.startswith("SELECT id, estado FROM mant_anexos WHERE ot_id=%s AND estado IN"):
+            assert "FOR UPDATE" in sql, "el candado de las filas: el proveedor que firma ahora espera"
+            if b.carrera_firma:                         # el proveedor firma justo antes de que se tome el candado
+                for ax in b.anexos.values():
+                    if ax["estado"] in ("enviado", "visto"):
+                        ax["estado"] = "firmado"
+            self._res = [{"id": a["id"], "estado": a["estado"]} for a in b.anexos.values()
+                         if a.get("ot_id") == params[0] and a["estado"] in ("firmado", "enviado", "visto")]
+            return len(self._res)
+        if sql.startswith("SELECT estado, precio_items_json FROM mant_anexos WHERE id=%s FOR UPDATE"):
+            ax = b.anexos.get(params[0]) or {}
+            self._res = [{"estado": ax.get("estado"), "precio_items_json": ax.get("precio_items_json")}] if ax else []
+            return len(self._res)
+        if sql.startswith("UPDATE mant_anexos SET precio_items_json=%s"):
+            ax = b.anexos.get(params[1])
+            if ax and ax["estado"] in ("borrador", "enviado", "visto", "vencido"):
+                ax["precio_items_json"] = params[0]
+                return 1
+            return 0
         if sql.startswith("UPDATE mant_anexos SET estado='anulado', anulado_at"):
             if b.sin_columnas:
                 raise Exception("(1054, \"Unknown column 'anulado_at' in 'field list'\")")
             ax = b.anexos.get(params[3])
-            if ax and ax["estado"] == "firmado":
+            assert "estado IN" in sql, "el UPDATE atómico lleva el estado en el WHERE"
+            if ax and ax["estado"] in ("firmado", "enviado", "visto"):
                 ax.update(estado="anulado", anulado_por=params[0], anulado_motivo=params[1], anulado_ot_numero=params[2])
                 return 1
             return 0
         if sql.startswith("UPDATE mant_anexos SET estado='anulado' WHERE id=%s"):
             ax = b.anexos.get(params[0])
-            if ax and ax["estado"] == "firmado":
+            if ax and ax["estado"] in ("firmado", "enviado", "visto"):
                 ax["estado"] = "anulado"
                 return 1
             return 0
@@ -110,6 +136,7 @@ class Base:
         self.send_raises = False
         self.sin_columnas = False
         self.plan_falla = False
+        self.carrera_firma = False
 
     # ── datos ────────────────────────────────────────────────────────────────
     def visita(self, vid=300, numero="OT-2026-00300", **kw):
@@ -122,7 +149,7 @@ class Base:
     def anexo(self, aid=221, ot_id=300, estado="firmado", numero=221, **kw):
         fila = {"id": aid, "numero": numero, "ot_id": ot_id, "estado": estado, "proveedor_nombre": "Milling Logística SpA",
                 "proveedor_rut": "77.000.000-1", "tecnico_externo_id": 7, "enviado_email": "contacto@milling.cl",
-                "firmado_at": FIRMADO, "firmante_nombre": "Isabel Milling",
+                "firmado_at": FIRMADO, "firmante_nombre": "Isabel Milling", "enviado_at": datetime.datetime(2026, 10, 19, 9, 0),
                 "precio_items_json": _items(("Instalación", 370000))}
         fila.update(kw)
         self.anexos[aid] = fila
@@ -145,10 +172,10 @@ class Base:
 
     def fetchall(self, sql, params=None):
         p = params or ()
-        if "FROM mant_anexos WHERE ot_id=%s AND estado='firmado'" in sql:
+        if "FROM mant_anexos WHERE ot_id=%s AND estado IN ('firmado','enviado','visto')" in sql:
             if self.plan_falla:
                 raise Exception("MySQL server has gone away")
-            return [dict(a) for a in self.anexos.values() if a.get("ot_id") == p[0] and a["estado"] == "firmado"]
+            return [dict(a) for a in self.anexos.values() if a.get("ot_id") == p[0] and a["estado"] in ("firmado", "enviado", "visto")]
         if "FROM app_users WHERE id IN" in sql:
             return [{"id": i, "role": self.roles.get(i)} for i in p]
         return []
@@ -157,7 +184,7 @@ class Base:
         """_ot_anexo_de_la_madre de mentira: el anexo FIRMADO de la instalación si trae partidas de la desinstalación."""
         v = self.visitas[vid]
         for a in self.anexos.values():
-            if a.get("ot_id") == v.get("ot_madre_id") and a["estado"] == "firmado" and OAC.tiene_salida(a["precio_items_json"]):
+            if a.get("ot_id") == v.get("ot_madre_id") and a["estado"] not in ("rechazado", "anulado") and OAC.tiene_salida(a["precio_items_json"]):
                 return dict(a)
         return None
 
@@ -188,11 +215,11 @@ class Base:
             "_ilus_email_master": lambda ctx: "|".join([ctx["title"], ctx["message"], ctx["detail_rows_html"], ctx["closing_message"]]),
             "_correo_bloqueo_previo": lambda modulo, clave=None: None,
             "_email_motivo_bloqueo_txt": lambda tipo, modulo, correo=None: f"bloqueo {tipo}",
-            "jsonify": lambda d: d, "_no_tecnico": lambda f: f,
+            "jsonify": lambda d: d, "_no_tecnico": lambda f: f, "_public_base_url": lambda: "https://ilus.test", "json": json,
         }
 
     def nucleo(self):
-        amb = F.cargar(funciones=FUNCIONES, extra=self.entorno())
+        amb = F.cargar(funciones=FUNCIONES, constantes=("_ANEXO_ANUL_SEL",), extra=self.entorno())
         return amb
 
 
@@ -305,13 +332,13 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(ax["destinos"], ["contacto@milling.cl", "facturacion@milling.cl"])     # donde se mandó el enlace + la ficha
         self.assertEqual([p["correo"] for p in plan["interno"]], ["aaron.rojas@sphs.cl", "daniel.aguilar@sphs.cl"])
 
-    def test_un_anexo_sin_firmar_no_entra(self):
-        for estado in ("borrador", "enviado", "visto", "vencido", "rechazado"):
+    def test_un_anexo_que_no_esta_vivo_no_entra(self):
+        for estado in ("borrador", "vencido", "rechazado"):
             b = _escenario_basico(estado=estado)
             self.assertEqual(b.nucleo()["_anexo_anul_plan"](300)["anexos"], [], estado)
 
     def test_el_plan_no_arma_la_lista_interna_si_no_hay_anexo(self):
-        b = _escenario_basico(estado="enviado")
+        b = _escenario_basico(estado="borrador")
         self.assertEqual(b.nucleo()["_anexo_anul_plan"](300)["interno"], [])
 
     def test_la_desinstalacion_que_comparte_el_anexo_firmado_es_parcial(self):
@@ -323,10 +350,12 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(ax["partidas"], ["Desinstalación", "Despacho (desinstalación)"])
         self.assertEqual(ax["numero"], 221)
 
-    def test_una_desinstalacion_cuyo_anexo_comun_no_esta_firmado_no_cambia_nada(self):
-        b = _escenario_basico(estado="enviado", precio_items_json=_items(("Instalación", 1, "entrada"), ("Desinstalación", 1, "salida")))
+    def test_una_desinstalacion_cuyo_anexo_comun_es_un_borrador_no_se_avisa(self):
+        b = _escenario_basico(estado="borrador", precio_items_json=_items(("Instalación", 1, "entrada"), ("Desinstalación", 1, "salida")))
         b.visita(301, "OT-2026-00301", ot_madre_id=300, ot_relacion="desinstalacion")
-        self.assertEqual(b.nucleo()["_anexo_anul_plan"](301)["anexos"], [])
+        plan = b.nucleo()["_anexo_anul_plan"](301)
+        self.assertEqual([(a["parcial"], a["sin_aviso"]) for a in plan["anexos"]], [(True, True)])
+        self.assertEqual(plan["interno"], [], "un borrador nunca enviado no se avisa a nadie")
 
     def test_la_lista_interna_excluye_tecnicos_y_repetidos(self):
         b = _escenario_basico()
@@ -449,11 +478,11 @@ class TestEliminacion(unittest.TestCase):
         self.assertEqual(b.anexos[221]["estado"], "anulado")
         self.assertFalse(res["anexo_anulado"]["anexos"][0]["proveedor"]["salio"])
 
-    def test_un_anexo_sin_firmar_se_maneja_como_hoy(self):
-        b = _escenario_basico(estado="enviado")
+    def test_un_borrador_o_un_anexo_vencido_se_maneja_como_hoy(self):
+        b = _escenario_basico(estado="borrador")
         res = self._eliminar(b)
         self.assertTrue(res["ok"])
-        self.assertEqual(b.anexos[221]["estado"], "enviado", "no se toca")
+        self.assertEqual(b.anexos[221]["estado"], "borrador", "no se toca")
         self.assertEqual(b.mails, [])
         self.assertIsNone(res["anexo_anulado"])
         self.assertFalse(any(s.startswith("UPDATE mant_anexos") for s, _ in b.sqls))
@@ -548,8 +577,8 @@ class TestAvisoPrevio(unittest.TestCase):
         d = amb["ot2_api_anexo_anulacion_previa"](300)
         self.assertIn("Hoy ese correo no saldrá: bloqueo correo", " ".join(d["lineas"]))
 
-    def test_sin_anexo_firmado_el_aviso_previo_no_aplica(self):
-        b = _escenario_basico(estado="enviado")
+    def test_sin_anexo_vivo_el_aviso_previo_no_aplica(self):
+        b = _escenario_basico(estado="borrador")
         self.assertFalse(b.nucleo()["ot2_api_anexo_anulacion_previa"](300)["aplica"])
 
     def test_si_no_se_puede_revisar_el_aviso_previo_lo_dice(self):
@@ -596,7 +625,7 @@ class TestCableado(unittest.TestCase):
 
     def test_las_claves_estan_en_el_registro_y_salen_por_su_llave(self):
         prov, interno = R.por_clave(AX.CLAVE_PROVEEDOR), R.por_clave(AX.CLAVE_INTERNO)
-        self.assertEqual((prov["llave"], prov["destinatario"], prov["modo"]), ("general", "proveedor_courier", "automatico"))
+        self.assertEqual((prov["llave"], prov["destinatario"], prov["modo"]), ("general", "proveedor_courier", "mixto"))
         self.assertEqual((interno["llave"], interno["destinatario"]), ("comunicacion_interna", "responsable_ot"))
         for c in (prov, interno):
             self.assertEqual(c["modulo_ui"], "ot")
@@ -630,7 +659,7 @@ class TestCableado(unittest.TestCase):
         self.assertNotIn("ADD COLUMN anulado_at DATETIME NULL, ADD COLUMN", s)      # REGLA #18: una cláusula por sentencia
 
     def test_el_historial_del_lote_entiende_la_nueva_accion(self):
-        self.assertIn('"anexo_anulado_ot_eliminada": "Anexo firmado anulado (OT eliminada)"', F.fuente_constante("_MFP_ACCION_TXT"))
+        self.assertIn('"anexo_anulado_ot_eliminada": "Anexo anulado (OT eliminada)"', F.fuente_constante("_MFP_ACCION_TXT"))
 
     def test_las_cuatro_puertas_de_eliminar_avisan_antes_y_dicen_despues(self):
         for ruta in ("templates/ot2/detalle.html", "templates/mantenciones/calendario.html", "static/mant_ficha.js"):

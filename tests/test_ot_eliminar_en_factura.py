@@ -70,7 +70,7 @@ def _nucleo(fac=FACTURA):
         # 2026-10-28 (REGLA #50): el anexo FIRMADO de la OT se anula dentro del borrado y se avisa a las dos partes. Esta OT no tiene ninguno
         # (lo suyo está en tests/test_anexo_anulacion_ot_eliminada.py).
         "_anexo_anul_plan": lambda vid: {"numero_ot": "OT-2026-00147", "titulo": "", "anexos": [], "interno": []},
-        "_anexo_anul_marcar": lambda cur, plan, numero_ot, quien: [],
+        "_anexo_anul_marcar": lambda *a, **k: {"anuladas": {}, "parciales": {}},
         "_anexo_anul_avisar": lambda *a, **k: None,
         "get_mysql": lambda: conn, "current_username": lambda: "aaron",
         "_mant_log": lambda *a, **k: logs.append(a),

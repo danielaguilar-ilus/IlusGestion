@@ -4629,6 +4629,45 @@ body.has-outbox .otd:not(.has-bottombar){padding-bottom:90px}
           <button type="button" class="otd-btn pri" style="width:100%;justify-content:center"
                   onclick="OT2ANX.abrir({{ v.id }})">
             <i class="bi bi-file-earmark-plus-fill"></i> Crear anexo de servicios</button>
+          {% elif anexo.estado == 'anulado' %}
+          {#- 📜 REGLA #52 (Daniel, 28-oct): el anexo quedó ANULADO por la anulación del servicio (la OT se canceló o se anuló; si se eliminara no se vería
+              acá, sino en «Anexos anulados»). La ficha lo dice con quién, cuándo y por qué, y NO lo revive en silencio si la OT se reactiva: hay que
+              emitir un anexo nuevo. «Reenviar aviso» manda el mismo aviso de texto (nunca con el anexo adjunto). -#}
+          {% set _anx_ot_viva = v.estado not in ('cancelada', 'anulada') %}
+          <div class="otd-anx-est warn" id="otdAnexoAnulado">
+            <i class="bi bi-slash-circle-fill"></i>
+            <div>
+              <b>Anulado — por la anulación del servicio</b>
+              <small>
+                {{ anexo.proveedor_nombre or 'Proveedor' }}
+                {%- if anexo.firmado_at %} · estaba firmado el {{ anexo.firmado_at | chile_fmt('%d/%m/%Y') }}
+                {%- elif anexo.enviado_at %} · se había enviado y no estaba firmado{% endif %}
+                {%- if anexo.get('anulado_at') %} · anulado el {{ anexo.anulado_at | chile_fmt('%d/%m/%Y %H:%M') }}{% endif %}
+                {%- if anexo.get('anulado_por') %} por {{ anexo.anulado_por }}{% endif %}
+                {%- if anexo.get('anulado_motivo') %} · {{ anexo.anulado_motivo }}{% endif %}
+              </small>
+            </div>
+          </div>
+          {% if _anx_ot_viva %}
+          <div class="otd-anx-lock" style="margin-top:10px">
+            <i class="bi bi-lock-fill"></i>
+            <span><b>Esta OT está activa, pero su anexo quedó anulado y no se reactiva solo.</b>
+              Emite un anexo nuevo y mándalo a firmar al proveedor.</span>
+          </div>
+          {% else %}
+          <div class="otf-hint" style="margin-top:10px">
+            Si reactivas esta OT, el anexo seguirá anulado: habrá que emitir uno nuevo.
+          </div>
+          {% endif %}
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+            <button type="button" class="otd-btn" style="flex:1;justify-content:center;min-height:44px"
+                    onclick="otAnexoAviso.abrir({{ anexo.id }})">
+              <i class="bi bi-envelope-arrow-up"></i> Reenviar aviso del anexo anulado</button>
+            {% if _anx_ot_viva %}
+            <button type="button" class="otd-btn pri" style="flex:1;justify-content:center;min-height:44px" onclick="OT2ANX.abrir({{ v.id }})">
+              <i class="bi bi-file-earmark-plus-fill"></i> Crear anexo de servicios</button>
+            {% endif %}
+          </div>
           {% else %}
           {% set _anx_firmado = anexo.firmado_at is not none %}
           {% if anexo_vinculo and anexo_vinculo.compartido and not anexo_vinculo.es_hija %}
