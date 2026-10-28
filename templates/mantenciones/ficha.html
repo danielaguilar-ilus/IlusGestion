@@ -236,6 +236,13 @@
       <i class="bi bi-receipt"></i>Cotizaciones
       <span id="cotFichaCountBadge" class="badge ms-1" style="font-size:.6rem;background:#fee2e2;color:#991b1b;display:none">0</span>
     </button>
+    {# 27-oct (Tickets 2.0, Daniel: «los tickets deben verse en la ficha del
+       cliente»): tickets de este RUT, solo lectura y paginados (REGLA #4.3).
+       Los trae /tickets/api/clientes-ficha/<cid>/tickets (tickets_module). #}
+    <button class="ftab-btn" data-tab="tickets" onclick="switchTab('tickets');cargarTicketsFicha()">
+      <i class="bi bi-life-preserver"></i>Tickets
+      <span id="tkFichaCountBadge" class="badge ms-1" style="font-size:.6rem;background:#fee2e2;color:#991b1b;display:none">0</span>
+    </button>
     <button class="ftab-btn" data-tab="documentos" onclick="switchTab('documentos');cargarDocumentos()">
       <i class="bi bi-folder-fill"></i>Documentos
     </button>
@@ -3595,6 +3602,151 @@
 
 </div>
 {# /tab-cotizaciones #}
+
+{# ══════════════════════════════════════════════════════════════════
+   TAB: TICKETS DEL CLIENTE (27-oct, Tickets 2.0). Solo lectura, cruzado por
+   RUT con la misma visibilidad de la bandeja («míos + sin asignar» para quien
+   no ve todo). Tabla paginada como Etiquetas (REGLA #4.3), semáforo del SLA y
+   nombres completos (REGLA #15). Un clic abre el ticket en su ficha.
+══════════════════════════════════════════════════════════════════ #}
+<div class="ftab-pane" id="tab-tickets">
+
+<div class="d-flex align-items-center justify-content-between gap-2 mb-3 flex-wrap">
+  <div>
+    <span class="fw-bold" style="font-size:.95rem"><i class="bi bi-life-preserver me-2" style="color:var(--ilus-red)"></i>Tickets del cliente</span>
+    <span class="text-muted ms-2" style="font-size:.78rem" id="tkFichaSub">Solicitudes y reclamos de este RUT en la ticketera</span>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-secondary" onclick="cargarTicketsFicha(1)">
+      <i class="bi bi-arrow-clockwise me-1"></i>Actualizar
+    </button>
+    <a class="btn btn-sm btn-ilus fw-bold" href="/tickets?q={{ (cliente.rut or '')|urlencode }}" target="_blank" rel="noopener">
+      <i class="bi bi-inbox me-1"></i>Abrir la bandeja
+    </a>
+  </div>
+</div>
+
+<div class="f-card">
+  <div class="f-card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0" style="font-size:.86rem">
+        <thead style="background:#fafbfc;border-bottom:2px solid var(--border)">
+          <tr>
+            <th class="ps-3 py-2" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Ticket</th>
+            <th class="py-2" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Asunto / motivo</th>
+            <th class="py-2" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Estado</th>
+            <th class="py-2" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">SLA</th>
+            <th class="py-2" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Responsable</th>
+            <th class="py-2" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">OT</th>
+            <th class="py-2" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;font-weight:800;color:#6b7280">Creado</th>
+            <th class="py-2 pe-3"></th>
+          </tr>
+        </thead>
+        <tbody id="tkFichaTbody">
+          <tr><td colspan="8" class="text-center py-4 text-muted">
+            <div class="spinner-border spinner-border-sm me-2"></div>Cargando tickets…
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 px-3 py-2" style="border-top:1px solid var(--border)">
+    <div style="font-size:.8rem;color:#6b7280" id="tkFichaPagInfo">—</div>
+    <div class="d-flex align-items-center gap-2">
+      <select id="tkFichaPerPage" class="form-select form-select-sm" style="width:auto;font-size:.8rem" onchange="cargarTicketsFicha(1)">
+        <option value="10" selected>10 por página</option>
+        <option value="20">20 por página</option>
+        <option value="50">50 por página</option>
+      </select>
+      <button class="btn btn-sm btn-outline-secondary" id="tkFichaPagPrev" onclick="tkFichaCambiarPagina(-1)" disabled>
+        <i class="bi bi-chevron-left"></i> Anterior
+      </button>
+      <span class="badge" style="background:var(--ilus-red);color:#fff;font-size:.8rem;padding:6px 10px;border-radius:6px;font-weight:700" id="tkFichaPagLabel">Página 1 de 1</span>
+      <button class="btn btn-sm btn-ilus" id="tkFichaPagNext" onclick="tkFichaCambiarPagina(1)" disabled>
+        Siguiente <i class="bi bi-chevron-right"></i>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* Tickets del cliente: mismo contrato que cargarCotizacionesFicha (paginación
+   REGLA #4.3, fetch sin recargar). Autocontenido: si falla, el resto de la
+   ficha sigue igual. */
+window._tkFichaPage = 1; window._tkFichaTotalPages = 1;
+function _tkFichaEsc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+async function cargarTicketsFicha(page){
+  if (page) window._tkFichaPage = page;
+  var perEl = document.getElementById('tkFichaPerPage');
+  var per = perEl ? (parseInt(perEl.value, 10) || 10) : 10;
+  var tbody = document.getElementById('tkFichaTbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="8" class="text-center py-4 text-muted"><div class="spinner-border spinner-border-sm me-2"></div>Cargando tickets…</td></tr>';
+  try {
+    var r = await fetch('/tickets/api/clientes-ficha/' + {{ cliente.id }} + '/tickets?page=' + window._tkFichaPage + '&per_page=' + per, {credentials: 'same-origin'});
+    var d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    window._tkFichaTotalPages = d.total_pages || 1;
+    window._tkFichaPage = d.page || 1;
+    var badge = document.getElementById('tkFichaCountBadge');
+    if (badge) { if (d.abiertos > 0) { badge.style.display = 'inline-block'; badge.textContent = d.abiertos; } else badge.style.display = 'none'; }
+    var sub = document.getElementById('tkFichaSub');
+    if (sub && d.total) sub.textContent = d.total + ' ticket' + (d.total === 1 ? '' : 's') + ' · ' + d.abiertos + ' abierto' + (d.abiertos === 1 ? '' : 's');
+    var EST = {open:'#dbeafe|#1e40af', in_progress:'#fef3c7|#92400e', pending:'#e0e7ff|#3730a3', resolved:'#dcfce7|#166534',
+               closed:'#f3f4f6|#374151', cancelado:'#fee2e2|#991b1b', ot_pending_approval:'#ede9fe|#5b21b6', ot_generated:'#ede9fe|#5b21b6', ot_in_progress:'#ede9fe|#5b21b6'};
+    var SEM = {rojo:'#fee2e2|#991b1b', ambar:'#fef3c7|#92400e', verde:'#dcfce7|#166534', gris:'#f3f4f6|#374151'};
+    if (!d.tickets.length) {
+      tbody.innerHTML = '<tr><td colspan="8"><div class="ilus-empty" style="padding:2rem 1rem"><div class="e-icon"><i class="bi bi-life-preserver"></i></div>'
+        + '<div class="e-title">' + (d.sin_rut ? 'Cliente sin RUT registrado' : 'Sin tickets') + '</div>'
+        + '<div class="e-sub">' + (d.sin_rut ? 'Completa el RUT en el resumen del cliente para cruzar la ticketera.' : 'Este cliente no tiene tickets en la ticketera (o están a cargo de otra persona).') + '</div></div></td></tr>';
+    } else {
+      tbody.innerHTML = d.tickets.map(function(t){
+        var e = (EST[t.estado] || EST.closed).split('|');
+        var s = t.sla_resp ? (SEM[t.sla_resp.semaforo] || SEM.gris).split('|') : null;
+        return '<tr' + (t.abierto ? '' : ' style="opacity:.75"') + '>'
+          + '<td class="ps-3 font-monospace fw-bold"><a href="' + _tkFichaEsc(t.url) + '" target="_blank" rel="noopener" style="color:#0a0a0a;text-decoration:none">' + _tkFichaEsc(t.numero) + '</a>'
+          + (t.no_leidos ? ' <span class="badge" style="background:#dc2626;font-size:.66rem" title="Mensajes del cliente sin leer">' + t.no_leidos + '</span>' : '') + '</td>'
+          + '<td style="min-width:220px"><div class="fw-bold" style="overflow-wrap:anywhere">' + _tkFichaEsc(t.titulo || '—') + '</div>'
+          + (t.motivo_principal ? '<div style="font-size:.8rem;color:#4b5563;overflow-wrap:anywhere"><i class="bi bi-bullseye me-1" style="color:#dc2626"></i>' + _tkFichaEsc(t.motivo_principal) + '</div>' : '')
+          + (t.tipo_label ? '<div style="font-size:.76rem;color:#6b7280">' + _tkFichaEsc(t.tipo_label) + '</div>' : '') + '</td>'
+          + '<td><span class="badge" style="background:' + e[0] + ';color:' + e[1] + ';font-size:.72rem;font-weight:800">' + _tkFichaEsc(t.estado_label) + '</span></td>'
+          + '<td>' + (s ? '<span class="badge" style="background:' + s[0] + ';color:' + s[1] + ';font-size:.72rem;font-weight:800;white-space:normal">' + _tkFichaEsc(t.sla_resp.pill) + '</span>' : '<span class="text-muted">—</span>') + '</td>'
+          + '<td style="overflow-wrap:anywhere">' + (t.asignado ? _tkFichaEsc(t.asignado) : '<span style="color:#b45309;font-weight:700">Sin asignar</span>') + '</td>'
+          + '<td>' + (t.numero_ot ? '<a href="/ot/' + t.visita_id + '" target="_blank" rel="noopener" style="color:#dc2626;font-weight:800;text-decoration:none">' + _tkFichaEsc(t.numero_ot) + '</a>' : '<span class="text-muted">—</span>') + '</td>'
+          + '<td class="text-nowrap">' + _tkFichaEsc(t.fecha) + '</td>'
+          + '<td class="pe-3 text-end"><a href="' + _tkFichaEsc(t.url) + '" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary" title="Abrir el ticket"><i class="bi bi-box-arrow-up-right"></i></a></td>'
+          + '</tr>';
+      }).join('');
+    }
+    var info = document.getElementById('tkFichaPagInfo');
+    if (info) {
+      if (d.total > 0) {
+        var first = ((d.page - 1) * d.per_page) + 1, last = Math.min(d.page * d.per_page, d.total);
+        info.innerHTML = 'Mostrando <strong>' + first + '–' + last + '</strong> de <strong>' + d.total + '</strong>';
+      } else info.textContent = 'Sin resultados';
+    }
+    var lbl = document.getElementById('tkFichaPagLabel'); if (lbl) lbl.textContent = 'Página ' + d.page + ' de ' + d.total_pages;
+    var prev = document.getElementById('tkFichaPagPrev'); if (prev) prev.disabled = d.page <= 1;
+    var next = document.getElementById('tkFichaPagNext'); if (next) next.disabled = d.page >= d.total_pages;
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="8"><div class="alert alert-danger mb-0" style="font-size:.84rem"><i class="bi bi-x-circle me-1"></i>No se pudieron cargar los tickets: ' + _tkFichaEsc(e.message) + '</div></td></tr>';
+  }
+}
+function tkFichaCambiarPagina(delta){
+  var n = window._tkFichaPage + delta;
+  if (n < 1 || n > window._tkFichaTotalPages) return;
+  cargarTicketsFicha(n);
+}
+// El contador del botón de la pestaña se llena al abrir la ficha (una consulta liviana, paginada a 5).
+(function(){
+  fetch('/tickets/api/clientes-ficha/' + {{ cliente.id }} + '/tickets?page=1&per_page=5', {credentials: 'same-origin'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){ var b = document.getElementById('tkFichaCountBadge'); if (b && d && d.ok && d.abiertos > 0) { b.style.display = 'inline-block'; b.textContent = d.abiertos; } })
+    .catch(function(){});
+})();
+</script>
+</div>
+{# /tab-tickets #}
 
 
 {# ══════════════════════════════════════════════════════════════════

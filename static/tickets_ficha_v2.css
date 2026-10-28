@@ -102,3 +102,208 @@
   .tk-paso.is-ok.tk-paso-recien .tk-paso-c::after{animation:none;}
   .tk-paso-c,#pane-info .tk-card.tk-paso{transition:none;}
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   27/28-oct · Ficha fiel a Retiros (Daniel: «cuando entras a la solicitud
+   de retiro quiero algo parecido… con la actividad y todo»).
+   Cabecera con fichas de datos (.rh-datos), guía del ticket (.gp de
+   retiros_guia.css), motivo/diagnóstico, OT existente y cotización en modal.
+   Texto funcional ≥ 12 px, relleno ≥ 8 px, botones ≥ 44 px (REGLA #3).
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Cabecera: identificación completa + fichas ── */
+.tk-hero-datos{font-size:.92rem;gap:6px 18px;margin-top:10px;color:rgba(255,255,255,.88);}
+.tk-hero-datos i{color:#f87171;}
+.tk-hero-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(176px,1fr));gap:10px;margin-top:16px;}
+.tk-tile{display:flex;align-items:center;gap:10px;min-height:60px;padding:10px 13px;border-radius:12px;text-align:left;
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#fff;cursor:pointer;font:inherit;
+  transition:transform .15s,border-color .15s,background .15s;}
+.tk-tile:hover{transform:translateY(-2px);border-color:rgba(255,255,255,.35);background:rgba(255,255,255,.1);}
+.tk-tile:focus-visible{outline:2px solid #fff;outline-offset:2px;}
+.tk-tile > i{font-size:1.35rem;color:#f87171;flex:0 0 auto;}
+.tk-tile .in{display:flex;flex-direction:column;min-width:0;gap:2px;}
+.tk-tile .v{font-size:1rem;font-weight:800;line-height:1.25;overflow-wrap:anywhere;}
+.tk-tile .k{font-size:.78rem;font-weight:600;color:rgba(255,255,255,.72);line-height:1.3;overflow-wrap:anywhere;}
+.tk-tile.is-rojo{border-color:#f87171;background:rgba(220,38,38,.22);}
+.tk-tile.is-rojo > i{color:#fecaca;}
+.tk-tile.is-ambar{border-color:#fbbf24;background:rgba(245,158,11,.18);}
+.tk-tile.is-ambar > i{color:#fde68a;}
+.tk-tile.is-verde{border-color:#4ade80;background:rgba(22,163,74,.18);}
+.tk-tile.is-verde > i{color:#bbf7d0;}
+.tk-tile.is-gris{opacity:.85;}
+.tk-tile.is-falta{border-style:dashed;border-color:#fbbf24;}
+.tk-tile.is-falta .v{color:#fde68a;}
+/* En Respuestas la cabecera se queda compacta: las fichas son de la pestaña Información. */
+body:has(#pane-conv.active) .tk-hero-tiles{display:none;}
+
+/* ── Guía del ticket (misma barra negra que la guía de Retiros) ── */
+.tk-guia{margin:0 0 16px;background:#0a0a0a;border:2px solid #0a0a0a;border-radius:16px;color:#fff;overflow:hidden;}
+.tk-guia-cargando{padding:16px 20px;font-size:1rem;color:#e5e7eb;}
+.tk-gbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 22px;padding:12px 18px 6px;}
+.tk-gbar-t{display:flex;align-items:center;gap:10px;font-size:1.15rem;}
+.tk-gbar-t .bi{font-size:1.5rem;color:#f87171;}
+.tk-gbar-prog{display:flex;flex:1 1 280px;align-items:center;gap:12px;font-size:.95rem;color:#e5e7eb;}
+.tk-gprog{flex:1 1 140px;max-width:340px;height:10px;border-radius:99px;background:rgba(255,255,255,.2);overflow:hidden;}
+.tk-gprog i{display:block;height:100%;border-radius:99px;background:#22c55e;transition:width .5s;}
+.tk-gbar-prog b{color:#fbbf24;}
+.tk-gchips{list-style:none;margin:0;padding:6px 14px 8px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}
+@media (min-width:992px){.tk-gchips{grid-template-columns:repeat(4,minmax(0,1fr));}}
+@media (min-width:1200px){.tk-gchips{grid-template-columns:repeat(6,minmax(0,1fr));}}
+.tk-gchip{display:flex;align-items:center;gap:8px;width:100%;min-height:52px;padding:6px 10px;border-radius:12px;border:2px solid #374151;
+  background:#111827;color:#e5e7eb;text-align:left;cursor:pointer;font:inherit;transition:border-color .15s,background .15s;}
+.tk-gchip:hover{border-color:#9ca3af;}
+.tk-gchip:focus-visible{outline:2px solid #fff;outline-offset:2px;}
+.tk-gchip-n{display:flex;align-items:center;justify-content:center;flex:0 0 auto;width:32px;height:32px;border-radius:50%;
+  font-weight:800;font-size:1rem;border:2.5px solid #9ca3af;color:#e5e7eb;background:#0a0a0a;}
+.tk-gchip-t{display:flex;flex-direction:column;min-width:0;font-size:.92rem;font-weight:700;line-height:1.2;overflow-wrap:anywhere;}
+.tk-gchip-t small{display:flex;align-items:center;gap:4px;font-size:.78rem;font-weight:600;color:#d1d5db;line-height:1.3;}
+.tk-gchip-t small .bi{flex:0 0 auto;}
+.tk-gchip.is-hecho{border-color:#16a34a;}
+.tk-gchip.is-hecho .tk-gchip-n{background:#16a34a;border-color:#16a34a;color:#fff;}
+.tk-gchip.is-hecho .tk-gchip-t small{color:#86efac;}
+.tk-gchip.is-actual{border-color:#f59e0b;background:#1f1a0b;}
+.tk-gchip.is-actual .tk-gchip-n{background:#f59e0b;border-color:#f59e0b;color:#1f2937;animation:tkGPulso 1.8s ease-in-out infinite;}
+.tk-gchip.is-actual .tk-gchip-t small{color:#fde68a;}
+.tk-gchip.is-espera{border-color:#60a5fa;}
+.tk-gchip.is-espera .tk-gchip-n{background:#3b82f6;border-color:#3b82f6;color:#fff;}
+.tk-gchip.is-espera .tk-gchip-t small{color:#bfdbfe;}
+.tk-gchip.is-opcional{opacity:.85;border-style:dashed;}
+@keyframes tkGPulso{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,.55);}50%{box-shadow:0 0 0 9px rgba(245,158,11,0);}}
+.tk-gsig{margin:4px 14px 14px;padding:14px 18px;border:3px solid #f59e0b;border-radius:14px;background:#fffbeb;color:#111827;}
+.tk-gsig.is-vencido{border-color:#dc2626;background:#fef2f2;}
+.tk-gsig.is-espera{border-color:#60a5fa;background:#eff6ff;}
+.tk-gsig.is-sugerencia{border-color:#9ca3af;background:#f9fafb;}
+.tk-gsig.is-fin{border-color:#16a34a;background:#f0fdf4;}
+.tk-gsig-k{display:flex;align-items:center;gap:8px;font-size:.84rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#b45309;}
+.tk-gsig.is-vencido .tk-gsig-k{color:#b91c1c;}
+.tk-gsig.is-espera .tk-gsig-k{color:#1d4ed8;}
+.tk-gsig.is-sugerencia .tk-gsig-k{color:#4b5563;}
+.tk-gsig.is-fin .tk-gsig-k{color:#166534;}
+.tk-gsig h4{margin:6px 0 2px;font-size:1.3rem;font-weight:800;line-height:1.25;}
+.tk-gsig p{margin:0 0 6px;font-size:1rem;color:#374151;line-height:1.45;}
+.tk-gacc{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;}
+.tk-gbtn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 18px;border-radius:12px;
+  border:2px solid #dc2626;background:#dc2626;color:#fff;font-size:.98rem;font-weight:800;cursor:pointer;text-decoration:none;
+  font-family:inherit;transition:filter .15s,transform .1s;}
+.tk-gbtn:hover{filter:brightness(.93);color:#fff;}
+.tk-gbtn:active{transform:scale(.98);}
+.tk-gbtn.sec{background:#fff;color:#0a0a0a;border-color:#0a0a0a;}
+.tk-gbtn.sec:hover{color:#0a0a0a;background:#f3f4f6;}
+.tk-gbtn.verde{background:#15803d;border-color:#15803d;}
+.tk-gbtn.chico{min-height:40px;padding:0 12px;font-size:.88rem;}
+.tk-gbtn:focus-visible{outline:3px solid #0a0a0a;outline-offset:2px;}
+.tk-gbtn:disabled{opacity:.6;cursor:not-allowed;}
+@media (min-width:992px){.tk-guia{position:sticky;top:0;z-index:40;}}
+.tk-guia-sentinel{height:1px;margin-top:-1px;}
+.tk-gbar-sig{display:none;align-items:center;gap:8px;min-height:40px;padding:4px 12px;border-radius:10px;border:2px solid #f59e0b;
+  background:#1f1a0b;color:#fde68a;font:inherit;font-size:.92rem;cursor:pointer;text-align:left;min-width:0;}
+.tk-gbar-sig span{overflow-wrap:anywhere;}
+.tk-gbar-sig b{color:#fff;}
+.tk-guia.is-fija .tk-gchips,.tk-guia.is-fija .tk-gsig{display:none;}
+.tk-guia.is-fija .tk-gbar{padding-bottom:12px;}
+.tk-guia.is-fija .tk-gbar-sig{display:inline-flex;}
+.tk-resalta{animation:tkResalta 1.6s ease-out 1;}
+@keyframes tkResalta{0%{box-shadow:0 0 0 0 rgba(220,38,38,.7);}100%{box-shadow:0 0 0 24px rgba(220,38,38,0);}}
+
+/* ── Paso «te toca» (ámbar suave: alertar, no gritar) ── */
+.tk-paso.is-actual{border-color:#fcd34d;background:linear-gradient(180deg,#fffbeb 0%,#fff 46%);}
+.tk-paso.is-actual .tk-paso-c{background:linear-gradient(150deg,#fbbf24 0%,#d97706 100%);}
+.tk-paso-help{margin:0 0 12px;font-size:.95rem;color:#475569;line-height:1.45;}
+.tk-edit-row{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap;}
+.tk-edit-row .form-control{flex:1 1 240px;min-height:44px;font-size:1rem;}
+#pane-info #diagTextarea{font-size:1rem;line-height:1.5;}
+.tk-btn-44{min-height:44px;display:inline-flex;align-items:center;justify-content:center;gap:6px;}
+.tk-edit-meta{margin-top:8px;font-size:.85rem;color:#64748b;min-height:0;}
+.tk-edit-meta:empty{display:none;}
+.tk-btn-tomar{margin:4px 0 12px;background:#dc2626;color:#fff;border:2px solid #dc2626;border-radius:12px;font-size:1rem;}
+.tk-btn-tomar:hover{color:#fff;filter:brightness(.93);}
+
+/* ── Actividad a todo el ancho (como «Actividad del retiro»): chips y texto legibles ── */
+.tk-act-card{margin-top:4px;}
+#pane-info .tk-act-chip{font-size:.82rem;padding:8px 14px;min-height:36px;display:inline-flex;align-items:center;}
+#pane-info .tk-act-texto{font-size:.95rem;}
+#pane-info .tk-act-fecha{font-size:.8rem;color:#6b7280;}
+#pane-info .tk-act-extracto{font-size:.88rem;}
+#pane-info .tk-act-tag{font-size:.72rem;padding:3px 9px;}
+
+/* ── OT vinculada: estado · fecha · técnico ── */
+.tk-ot-side-estado{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px;}
+.tk-ot-side-estado:empty{display:none;}
+.tk-ot-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:50px;background:#f3f4f6;color:#374151;
+  font-size:.82rem;font-weight:700;overflow-wrap:anywhere;}
+.tk-ot-chip i{color:#dc2626;}
+.tk-link-quitar{display:inline-flex;align-items:center;gap:6px;margin-top:8px;min-height:44px;padding:0 10px;border:0;background:none;
+  color:#6b7280;font-size:.85rem;font-weight:700;cursor:pointer;border-radius:8px;}
+.tk-link-quitar:hover{color:#b91c1c;background:#fef2f2;}
+
+/* ── Modal «Asociar OT existente» ── */
+.tk-asoc-vacio{padding:14px 12px;font-size:.95rem;color:#4b5563;line-height:1.45;}
+.tk-asoc-item{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border:2px solid #e5e7eb;border-left-width:6px;border-radius:12px;
+  background:#fff;margin-bottom:10px;}
+.tk-asoc-item.t-verde{border-left-color:#16a34a;}
+.tk-asoc-item.t-ambar{border-left-color:#f59e0b;background:#fffdf5;}
+.tk-asoc-item.t-rojo{border-left-color:#dc2626;background:#fff8f8;}
+.tk-asoc-item.t-gris{border-left-color:#9ca3af;background:#fafafa;}
+.tk-asoc-main{flex:1 1 auto;min-width:0;}
+.tk-asoc-num{font-size:1.05rem;font-weight:900;color:#0a0a0a;display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.tk-asoc-est{font-size:.76rem;font-weight:800;padding:3px 9px;border-radius:50px;background:#f3f4f6;color:#374151;}
+.tk-asoc-cli{font-size:.95rem;font-weight:700;color:#1f2937;margin-top:2px;overflow-wrap:anywhere;}
+.tk-asoc-tit{font-size:.9rem;color:#374151;margin-top:2px;overflow-wrap:anywhere;}
+.tk-asoc-meta{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px;font-size:.84rem;color:#4b5563;}
+.tk-asoc-meta span{display:inline-flex;align-items:center;gap:5px;}
+.tk-asoc-aviso{font-weight:700;color:#374151;}
+.tk-asoc-acc{display:flex;flex-direction:column;gap:6px;flex:0 0 auto;}
+
+/* ── Modal «Generar cotización» (el asistente en iframe) ── */
+.tk-cot-dialog{max-width:min(1280px,96vw);height:calc(100vh - 2rem);margin:1rem auto;}
+.tk-cot-dialog .modal-content{height:100%;}
+.tk-cot-dialog .modal-body{min-height:0;height:100%;}
+@media (max-width:576px){.tk-cot-dialog{height:100dvh;margin:0;max-width:100vw;}.tk-cot-dialog .modal-content{border-radius:0 !important;}}
+
+/* ── Pestaña Respuestas (28-oct, Daniel): sin tocar la lógica ni las burbujas.
+   (1) el visor de mensajes es lo grande; (2) el composer más chico;
+   (3) De / Para / CC compactos en UNA fila en escritorio, sin perder nada. ── */
+.rp-thread{padding:16px 18px;}
+.rp-bubble{font-size:1rem;line-height:1.5;}
+.rp-headers.show{display:grid;grid-template-columns:auto minmax(0,1.3fr) minmax(0,1fr);gap:4px 14px;align-items:center;padding:6px 14px;}
+.rp-headers .row-h{border-bottom:none;padding:2px 0;margin:0;}
+.rp-headers .row-h label{width:auto;min-width:32px;font-size:.74rem;}
+.rp-headers .row-h:focus-within{margin:0;padding-left:0;background:transparent;}
+.email-chipbox{min-height:36px;padding:3px 6px;}
+.rp-mode-tabs{padding:7px 10px;}
+.rp-mode-tab{padding:7px 12px;}
+.rp-editor-wrap .ql-editor{padding:10px 14px;}
+.rp-toolbar-extra{padding:7px 10px;}
+@media (max-width:768px){
+  /* Celular (medido a 390×844: el «chrome» del composer pesaba 313 px y al hilo
+     le quedaba el piso de 200). Mismos controles, en una fila que se desliza. */
+  .rp-headers.show{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 10px;align-items:center;padding:6px 12px;}
+  .rp-headers .row-h{display:contents;}
+  .rp-headers .row-h label{min-width:0;font-size:.74rem;}
+  .email-chipbox{min-height:38px;}
+  .rp-mode-tabs{padding:6px 8px;gap:6px;}
+  .rp-mode-tab{padding:8px 10px;font-size:.8rem;}
+  .rp-editor-wrap .ql-toolbar{white-space:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .rp-editor-wrap .ql-toolbar .ql-formats{display:inline-flex;vertical-align:middle;}
+  .rp-toolbar-extra{gap:8px;}
+  .rp-toolbar-extra > div{flex:1 1 auto;flex-wrap:nowrap !important;overflow-x:auto;-webkit-overflow-scrolling:touch;min-width:0;padding-bottom:2px;}
+  .rp-toolbar-extra > div > *{flex:0 0 auto;}
+}
+
+/* ── Celular (REGLA #3) ── */
+@media (max-width:576px){
+  /* Celular: fichas y pasos en UNA fila que se desliza (medido a 390 px: en
+     2 columnas el hero medía 587 px y la guía 848 px antes del contenido). */
+  .tk-hero-tiles{display:flex;overflow-x:auto;gap:8px;margin-top:12px;padding-bottom:4px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;}
+  .tk-tile{flex:0 0 200px;min-height:56px;padding:9px 11px;scroll-snap-align:start;}
+  .tk-tile .v{font-size:.95rem;}
+  .tk-gchips{display:flex;overflow-x:auto;gap:8px;padding:6px 10px 10px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;}
+  .tk-gchips li{flex:0 0 170px;scroll-snap-align:start;}
+  .tk-gchip{min-height:48px;padding:6px 8px;}
+  .tk-gsig{margin:4px 10px 12px;padding:12px 14px;}
+  .tk-gsig h4{font-size:1.15rem;}
+  .tk-gacc .tk-gbtn{flex:1 1 100%;}
+  .tk-asoc-item{flex-direction:column;}
+  .tk-asoc-acc{flex-direction:row;}
+  .tk-asoc-acc .tk-gbtn{flex:1;}
+}

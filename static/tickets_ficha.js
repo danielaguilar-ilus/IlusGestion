@@ -66,7 +66,10 @@ function ajustarAltoHilo(){
   // Alto comodo del editor. Escritorio: 180 (Daniel 2026-07-14: "mas altura
   // minima"). Mobile: 110 -- suficiente para ~4 lineas y para ver lo que
   // escribes; si necesitas mas, el editor ya tiene su propio scroll interno.
-  const EDITOR_DEFAULT = esMovil ? 110 : 180;
+  // 28-oct (Daniel): «achica la caja donde se escribe la respuesta y agranda
+  // el visor de mensajes». El editor baja de 180 a 120 px en escritorio y de
+  // 110 a 96 en el celular; todo lo que suelta se lo lleva el hilo (abajo).
+  const EDITOR_DEFAULT = esMovil ? 96 : 120;
   // Piso absoluto del editor si el espacio es muy chico (ej. telefono en
   // horizontal): en mobile baja a 70px -- el hilo manda.
   const EDITOR_MIN = esMovil ? 70 : 90;
