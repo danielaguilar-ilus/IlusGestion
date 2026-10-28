@@ -411,8 +411,10 @@ class TestEndpointDesglosar(unittest.TestCase):
         # desglose de una incidencia: los clones se insertan SIN `recomendacion`
         ins_clon = s.split("INSERT INTO mant_incidencias")[1].split("VALUES")[0]
         self.assertNotIn("recomendacion", ins_clon)
-        # desglose de un pendiente: solo el primer grupo lleva la UA
-        self.assertIn("ua if k == 0 else None", s)
+        # desglose de un pendiente: solo el primer grupo lleva la UA del pendiente, salvo que Check tenga UA libres (2026-10-28: cada fila toma la suya).
+        # La regla vive en _inc_asignar_uas_grupos (probada en tests/test_incidencias_diferencias_28oct.py).
+        self.assertIn("asignadas[k][0]", s)
+        self.assertIn("_inc_asignar_uas_grupos(h, len(limpios), _checkwms_norm_ua)", s)
 
     def test_un_desglose_es_una_sola_transaccion(self):
         for trozo in self.src.split('if origen == "hallazgo":'):
@@ -429,7 +431,9 @@ class TestEndpointDesglosar(unittest.TestCase):
         self.assertNotIn("eliminada=1", self.src)
 
     def test_solo_desglosa_pendientes_sin_incidencia(self):
-        self.assertIn('if not h.get("baja_hallazgo"):', self.src)
+        # 2026-10-28 (Daniel): además de los pendientes SIN incidencia, se separa en filas un SKU que ya tiene incidencia pero al que le FALTAN
+        # unidades por declarar (`puede_registrar`: la Air Ski Erg con ERP 2 y 1 incidencia). Uno con todo declarado sigue rechazado.
+        self.assertIn('if not h.get("baja_hallazgo") and not h.get("puede_registrar"):', self.src)
 
 
 class TestSqlDeBajas(unittest.TestCase):

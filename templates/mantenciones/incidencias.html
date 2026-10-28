@@ -100,6 +100,16 @@
     </div>
   </div>
   <div class="inc-conc-kpis" id="incConcKpis"></div>
+  {#- 🔎 2026-10-28 (Daniel: «esa tabla no tiene buscador, buscar una UA, un SKU o un producto no es fácil»): busca en UA, SKU, descripción,
+      ubicación y la frase de «qué significa»; convive con las tarjetas-filtro de arriba. Vive FUERA de #incConcLista para no perder el foco
+      al volver a pintar la tabla. -#}
+  <div class="rm-search inc-conc-buscar" id="incConcBuscar" role="search">
+    <label class="rm-search-tag" for="incConcQ"><i class="bi bi-search"></i><span>Buscar</span></label>
+    <input id="incConcQ" type="search" autocomplete="off" spellcheck="false"
+           placeholder="UA, SKU, producto, ubicación…" aria-label="Buscar en las diferencias">
+    <button type="button" class="rm-x" id="incConcQx" hidden aria-label="Borrar la búsqueda"><i class="bi bi-x-lg"></i></button>
+    <span class="rm-search-count" id="incConcCount" aria-live="polite"></span>
+  </div>
   <div id="incConcLista"></div>
 </div>
 
@@ -147,6 +157,41 @@
   <div id="incLista"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div>
 </section>
 
+{# ── Modal «Gestionar diferencia» (2026-10-28, Daniel): al abrir una diferencia se ve UNIDAD POR UNIDAD qué tiene motivo y qué falta agregar.
+   «90 pisos van en una línea, pero 2 máquinas van separadas porque tienen un motivo distinto.» El contenido lo arma incAbrirDiferencia(). ── #}
+<div class="modal fade" id="incDifModal" tabindex="-1" aria-labelledby="incDifTitulo" aria-hidden="true">
+  <div class="modal-dialog modal-xl inc-modal-ancho modal-dialog-scrollable">
+    <div class="modal-content" style="border:2px solid var(--ilus-red,#dc2626);box-shadow:0 0 40px rgba(0,0,0,.25)">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red,#dc2626)">
+        <h5 class="modal-title fw-bold" id="incDifTitulo"><i class="bi bi-diagram-3 me-2" style="color:var(--ilus-red,#dc2626)"></i>Gestionar diferencia</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body" id="incDifCuerpo"></div>
+      <div class="modal-footer" style="border-top:1px solid #f1f5f9">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal" style="min-height:44px">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Modal «¿Cómo registras estas N unidades?» (2026-10-28, Daniel): «se puede mantener en una línea a menos que el usuario decida separarla; si no, lo más
+   recomendable es pedir crear varias filas si el ingreso es mayor a uno». Lo abre incPreguntarAgrupar(); recomienda según el producto. ── #}
+<div class="modal fade" id="incAgruparModal" tabindex="-1" aria-labelledby="incAgruparTitulo" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border:2px solid var(--ilus-red,#dc2626);box-shadow:0 0 40px rgba(0,0,0,.25)">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red,#dc2626)">
+        <h5 class="modal-title fw-bold" id="incAgruparTitulo"><i class="bi bi-signpost-split me-2" style="color:var(--ilus-red,#dc2626)"></i>¿Cómo las registras?</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body" style="background:#f8fafc">
+        <div class="inc-opc-prod" id="incAgruparProd"></div>
+        <button type="button" class="inc-opc" id="incAgruparSep"></button>
+        <button type="button" class="inc-opc" id="incAgruparUna"></button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {# ── Modal alta/edición (>5 campos → Bootstrap modal, REGLA #8) ── #}
 {#- 🎨 2026-09-27 (Daniel: "quiero el modal de registrar una nueva
     incidencia justo como el modal de Nuevo retiro interno... establece
@@ -156,7 +201,7 @@
     degradado y borde inferior rojo, progreso "N de M pasos listos" +
     barra -- ver REGLA en feedback_diseno_estandar_modales (memoria). -#}
 <div class="modal fade" id="incModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+  <div class="modal-dialog modal-xl inc-modal-ancho modal-dialog-scrollable">
     <div class="modal-content" style="border:2px solid var(--ilus-red,#dc2626);box-shadow:0 0 40px rgba(0,0,0,.25)">
       <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red,#dc2626)">
         <h5 class="modal-title fw-bold" id="incModalTitulo"><i class="bi bi-exclamation-triangle me-2" style="color:var(--ilus-red,#dc2626)"></i>Nueva incidencia</h5>
@@ -232,6 +277,8 @@
               <input type="text" class="form-control" id="incUbicacionCheck" placeholder="—" readonly>
             </div>
             <div id="incUaResultado" class="inc-resultado col-12"></div>
+            {#- 2026-10-28: cuando el SKU tiene varias UA libres en Check (ej. dos Air Ski Erg), se elige cuál se registra. -#}
+            <div id="incUaAlternas" class="col-12 inc-ua-alternas" hidden></div>
             {#- 🎨 2026-09-27 (Daniel: "ERP Random: N · Nosotros: M · Check: P,
                 que se vea como chips claros, no solo en un tooltip" -- mismo
                 lenguaje visual que los chips de factura verificada en Retiros,
@@ -934,6 +981,59 @@
    la tarjeta base `.nri-step-card` de Retiros, que también nace con un
    borde gris sutil #e5e7eb en vez de transparente): toda `.inc-pane` es
    SIEMPRE una tarjeta real, en cualquier estado. */
+/* 🪟 2026-10-28 (Daniel: «me gustan los modales grandes… las tarjetas más grandes para no darle tanto scroll y tener todo mapeado»): en pantalla ancha
+   el modal usa casi todo el ancho y las tarjetas 1-4 van de a dos columnas; Gestión de repuestos (5) y Evidencia (6) quedan a ancho completo. */
+@media (min-width:1100px){
+  #incModal .modal-dialog.inc-modal-ancho{max-width:min(1360px,96vw)}
+  #incModal .modal-body{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px;align-items:start}
+  #incModal .modal-body > *{grid-column:1/-1}
+  #incModal .modal-body > .inc-pane[data-pane="1"],
+  #incModal .modal-body > .inc-pane[data-pane="2"],
+  #incModal .modal-body > .inc-pane[data-pane="3"],
+  #incModal .modal-body > .inc-pane[data-pane="4"]{grid-column:auto}
+}
+.inc-ua-alternas .inc-ua-alt{display:inline-flex;flex-direction:column;align-items:flex-start;gap:1px;padding:7px 12px;border:1.5px solid #d1d5db;border-radius:10px;
+  background:#fff;font-weight:800;font-size:.84rem;color:#111827;cursor:pointer;min-height:44px}
+.inc-ua-alternas .inc-ua-alt small{font-weight:600;color:#64748b;font-size:.72rem}
+.inc-ua-alternas .inc-ua-alt.on{border-color:#dc2626;background:#fef2f2;color:#991b1b}
+.inc-conc-buscar{margin:6px 0 10px}
+.inc-opc-prod{font-weight:900;font-size:1rem;color:#0f172a;line-height:1.3;margin-bottom:12px;overflow-wrap:anywhere}
+.inc-opc{display:flex;flex-direction:column;align-items:flex-start;gap:3px;width:100%;text-align:left;margin-bottom:10px;padding:13px 16px;min-height:44px;
+  border:2px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;transition:border-color .15s ease,background .15s ease}
+.inc-opc:hover{border-color:#9ca3af}
+.inc-opc b{font-size:.98rem;color:#111827}
+.inc-opc small{font-size:.82rem;color:#475569;font-weight:600;line-height:1.35}
+.inc-opc .rec{display:inline-block;margin-left:8px;padding:1px 9px;border-radius:99px;background:#dcfce7;color:#166534;border:1px solid #bbf7d0;font-size:.7rem;font-weight:900}
+.inc-opc.rec-on{border-color:#16a34a;background:#f0fdf4}
+/* «Gestionar diferencia»: una tarjeta pequeña por unidad, con su estado a la vista (nombres y motivos completos, sin cortar: REGLA #15) */
+#incDifModal .modal-body{background:#f8fafc;display:block}
+.inc-dif-cab{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;margin-bottom:10px}
+.inc-dif-nom{font-weight:900;font-size:1.1rem;color:#0f172a;line-height:1.25;overflow-wrap:anywhere}
+.inc-dif-sub{font-size:.8rem;color:#64748b;font-weight:600}
+.inc-dif-prog{margin:8px 0 12px}
+.inc-dif-prog .tx{font-weight:800;font-size:.88rem;color:#111827}
+.inc-dif-prog .bar{display:block;height:8px;border-radius:99px;background:#e5e7eb;overflow:hidden;margin-top:5px}
+.inc-dif-prog .bar > span{display:block;height:100%;background:#16a34a;transition:width .3s ease}
+.inc-dif-nota{display:flex;gap:8px;align-items:flex-start;padding:9px 12px;border-radius:10px;font-size:.84rem;font-weight:600;margin-bottom:12px;
+  background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af}
+.inc-dif-nota.eq{background:#fff8e1;border-color:#fde68a;color:#92400e}
+.inc-dif-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.inc-dif-card{display:flex;flex-direction:column;gap:6px;background:#fff;border:1.5px solid #e5e7eb;border-left:6px solid #9ca3af;border-radius:12px;padding:12px 14px}
+.inc-dif-card.ok{border-left-color:#16a34a}
+.inc-dif-card.warn{border-left-color:#f59e0b;background:#fffdf5}
+.inc-dif-card.falta{border-left-color:#dc2626;background:#fffafa}
+.inc-dif-card .pill{align-self:flex-start;display:inline-flex;gap:5px;align-items:center;padding:2px 10px;border-radius:99px;font-size:.74rem;font-weight:900;
+  letter-spacing:.02em;border:1px solid transparent}
+.inc-dif-card.ok .pill{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.inc-dif-card.warn .pill{background:#fef3c7;color:#92400e;border-color:#fde68a}
+.inc-dif-card.falta .pill{background:#fee2e2;color:#991b1b;border-color:#fecaca}
+.inc-dif-card.gris .pill{background:#f1f5f9;color:#475569;border-color:#e2e8f0}
+.inc-dif-card .ua{font-weight:900;font-size:1rem;color:#0f172a}
+.inc-dif-card .meta{font-size:.78rem;color:#64748b;font-weight:600}
+.inc-dif-card .motivo{font-size:.88rem;color:#111827;line-height:1.35;overflow-wrap:anywhere}
+.inc-dif-card .acc{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto;padding-top:4px}
+.inc-dif-card .acc .btn{min-height:44px;font-weight:800}
+@media (max-width:768px){ #incDifModal .modal-dialog{margin:0;max-width:none;height:100dvh} #incDifModal .modal-content{height:100dvh;border-radius:0} .inc-dif-grid{grid-template-columns:1fr} }
 .inc-pane{animation:incFade .28s ease;padding:12px;border-radius:14px;
   border:1.5px solid #e5e7eb;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.03);
   transition:border-color .25s ease,background .25s ease,box-shadow .25s ease;margin-bottom:4px}
@@ -2325,7 +2425,17 @@
   // errores y gestionar lo que deba; el stock solo se arregla haciendo la
   // gestión". Por eso cada hallazgo con incidencia asociada es clicable y
   // abre esa incidencia para corregirla en el acto.
-  var incConcData = null, incConcFiltro = '', incConcPage = 1, incConcSize = 10;
+  var incConcData = null, incConcFiltro = '', incConcPage = 1, incConcSize = 10, incConcQ = '';
+
+  // 🔎 2026-10-28: búsqueda sin tildes ni mayúsculas en UA, SKU, producto, ubicación y la frase de «qué significa».
+  function incConcNorm(s){
+    return String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  }
+  function incConcCoincide(h, q){
+    if(!q) return true;
+    var pajar = incConcNorm([h.ua, h.sku, h.descripcion, h.ubicacion, h.detalle].join(' '));
+    return q.split(/\s+/).filter(Boolean).every(function(p){ return pajar.indexOf(p) !== -1; });
+  }
 
   var INC_TIPOS = {
     dif_erp:        {ico:'bi-exclamation-octagon-fill', t:'Diferencia con el ERP'},
@@ -2387,18 +2497,25 @@
     });
 
     // 🗄️ "Dadas de baja" no lista pendientes: es el historial (se pide al servidor).
+    $('incConcBuscar').hidden = (incConcFiltro === 'bajas');
     if(incConcFiltro === 'bajas'){ incBajasCargar(); return; }
 
     // "Pendiente Random" agrupa las dos formas de faltar en el ERP.
-    var lista = (d.hallazgos || []).filter(function(h){
+    var delTipo = (d.hallazgos || []).filter(function(h){
       if(!incConcFiltro) return true;
       if(incConcFiltro === 'dif_erp') return h.tipo === 'dif_erp' || h.tipo === 'no_en_erp';
       return h.tipo === incConcFiltro;
     });
+    var qn = incConcNorm(incConcQ).trim();
+    var lista = delTipo.filter(function(h){ return incConcCoincide(h, qn); });
+    $('incConcCount').textContent = qn ? (lista.length + ' de ' + delTipo.length) : '';
+    $('incConcQx').hidden = !incConcQ;
     if(!lista.length){
       $('incConcLista').innerHTML = '<div class="empty-state" style="padding:26px">'
-        + '<i class="bi bi-check-circle" style="color:#16a34a"></i>'
-        + (incConcFiltro ? 'Sin pendientes de este tipo.' : 'Todo cuadra entre los tres sistemas.')
+        + (qn
+            ? '<i class="bi bi-search"></i>Ningún pendiente coincide con «' + incEsc(incConcQ) + '».'
+            : '<i class="bi bi-check-circle" style="color:#16a34a"></i>'
+              + (incConcFiltro ? 'Sin pendientes de este tipo.' : 'Todo cuadra entre los tres sistemas.'))
         + '</div>';
       return;
     }
@@ -2433,8 +2550,26 @@
       if(h.accion === 'registrar'){
         principal = '<button type="button" class="btn btn-sm btn-ilus inc-h-accion" data-idx="'+idx+'" data-accion="registrar">'
                   + '<i class="bi bi-plus-lg me-1"></i>Registrar</button>';
+      } else if(h.accion === 'ver' && h.unidades){
+        // 2026-10-28 (Daniel: «cuando yo vea una diferencia, que me abra la diferencia y me diga: esta tiene motivo, esta tiene motivo, falta agregar
+        // uno»): la acción principal abre el panel por unidad. «Ver / corregir» sigue disponible en el menú ⋮ y dentro de cada tarjeta.
+        var falt = h.unidades.faltan || 0, sinMot = h.unidades.tarjetas.filter(function(c){ return c.clase === 'incidencia' && !c.con_motivo; }).length;
+        principal = '<button type="button" class="btn btn-sm btn-ilus inc-h-accion" data-idx="'+idx+'" data-accion="gestionar" '
+                  + 'title="Ver unidad por unidad qué tiene motivo y qué falta agregar">'
+                  + '<i class="bi bi-diagram-3 me-1"></i>Gestionar'
+                  + (falt ? ' <span class="badge text-bg-light ms-1">falta'+(falt > 1 ? 'n '+falt : ' 1')+'</span>' : (sinMot ? ' <span class="badge text-bg-light ms-1">sin motivo</span>' : ''))
+                  + '</button>';
+        items += '<li><button type="button" class="dropdown-item inc-h-accion" data-idx="'+idx+'" data-accion="ver"><i class="bi bi-search me-2"></i>Ver / corregir la incidencia</button></li>';
+        items += '<li><button type="button" class="dropdown-item inc-h-accion" data-idx="'+idx+'" data-accion="repuesto"><i class="bi bi-tools me-2"></i>Solicitar repuesto</button></li>';
       } else if(h.accion === 'ver'){
-        principal = '<button type="button" class="btn btn-sm btn-outline-dark inc-h-accion" data-idx="'+idx+'" data-accion="ver">'
+        // 2026-10-28 (Daniel: «¿por qué solo dice Ver y corregir y no Registrar?»): si faltan unidades por declarar (ej. el ERP dice 2 y
+        // tenemos 1) se ofrece Registrar la que falta, además de corregir la que ya existe.
+        if(h.puede_registrar){
+          principal = '<button type="button" class="btn btn-sm btn-ilus inc-h-accion" data-idx="'+idx+'" data-accion="registrar" '
+                    + 'title="Registrar '+h.faltan+' unidad(es) que falta(n) declarar">'
+                    + '<i class="bi bi-plus-lg me-1"></i>Registrar'+(h.faltan > 1 ? ' '+h.faltan : '')+'</button> ';
+        }
+        principal += '<button type="button" class="btn btn-sm btn-outline-dark inc-h-accion" data-idx="'+idx+'" data-accion="ver">'
                   + '<i class="bi bi-search me-1"></i>Ver / corregir</button>';
         items += '<li><button type="button" class="dropdown-item inc-h-accion" data-idx="'+idx+'" data-accion="repuesto"><i class="bi bi-tools me-2"></i>Solicitar repuesto</button></li>';
       }
@@ -2530,8 +2665,10 @@
       if(!h) return;
       if(subaccion === 'baja'){ incBajaDesdeHallazgo(h); return; }
       if(subaccion === 'desglosar'){ incDesgloseDesdeHallazgo(h); return; }
+      if(subaccion === 'registrar' && h.puede_registrar){ incRegistrarFaltante(h); return; }
+      if(subaccion === 'gestionar' || (!subaccion && h.unidades && h.accion === 'ver')){ incAbrirDiferencia(h); return; }
       if(!h.accion) return;
-      if(h.accion === 'registrar'){ incAbrirAltaPrellenada(h); return; }
+      if(h.accion === 'registrar'){ incRegistrarConPregunta(h); return; }
       if(h.accion !== 'ver' || !h.ids || !h.ids.length) return;
       var id = h.ids[0];
       if(subaccion === 'eliminar') incEliminarDesdeConciliacion(id);
@@ -2940,8 +3077,21 @@
         ? 'El <b>grupo 1</b> conserva la UA <b>'+incEsc(ctx.ua)+'</b>. Los demás quedan <b>sin UA</b> hasta que el WMS distribuya las unidades; después se la pones con Ver / editar.'
         : 'Ninguna parte tiene UA todavía: cuando el WMS distribuya las unidades, se la pones a cada una con Ver / editar.')
       + ' Cada grupo queda como una incidencia aparte, con su propia bitácora.';
-    var a = Math.ceil(_incDes.total / 2);
-    incDesPintarGrupos([{cantidad: a, motivo: ''}, {cantidad: _incDes.total - a, motivo: ''}]);
+    var a = Math.ceil(_incDes.total / 2), gs0;
+    if(ctx.porUnidad){
+      // «Separar en N filas»: una fila por unidad (tope 20; lo que sobre se suma a la última)
+      var nf = Math.min(_incDes.total, 20);
+      gs0 = [];
+      for(var q = 0; q < nf; q++) gs0.push({cantidad: 1, motivo: ''});
+      if(_incDes.total > nf) gs0[nf - 1].cantidad += _incDes.total - nf;
+      if(ctx.uasLibres > 1){
+        document.getElementById('incDesNota').innerHTML = 'Cada fila toma una <b>UA libre de Check</b> (las que sobren quedan sin UA hasta que el WMS las distribuya) '
+          + 'y queda como una incidencia aparte, con su propia bitácora.';
+      }
+    } else {
+      gs0 = [{cantidad: a, motivo: ''}, {cantidad: _incDes.total - a, motivo: ''}];
+    }
+    incDesPintarGrupos(gs0);
     document.getElementById('incDesErr').textContent = '';
     incDesPintar();
     incDesModal().show();
@@ -3087,6 +3237,7 @@
     // la tabla de conciliación) -- se muestran de inmediato, sin esperar
     // a que la incidencia se guarde para recién ahí pedir el cuadre.
     incPintarChipsErpWms(h.nuestra_bd, h.erp, h.wms);
+    incPintarUasAlternas(h);
     refrescarVerdeTodos();
     incCargarEvidencia();
     irAPaso(2);
@@ -3132,6 +3283,152 @@
           + 'No se pudo conectar con el servidor. <button type="button" class="btn btn-sm btn-ilus-outline mt-2" '
           + 'onclick="incConcData=null;incConcCargar()">Reintentar</button></div>';
       });
+  }
+
+  // 🔎 2026-10-28: el buscador de las diferencias. Al vaciarlo la tabla se vuelve a calcular (REGLA #4.3).
+  (function(){
+    var q = $('incConcQ'), t = null;
+    function aplicar(){ incConcQ = q.value; incConcPage = 1; if(incConcData) incConcPintar(); }
+    q.addEventListener('input', function(){ $('incConcQx').hidden = !q.value; clearTimeout(t); t = setTimeout(aplicar, 120); });
+    $('incConcQx').addEventListener('click', function(){ q.value = ''; q.focus(); aplicar(); });
+  })();
+
+  // ➕ 2026-10-28: registrar la unidad que falta de un SKU que YA tiene incidencia. La UA se elige entre las libres de Check (las que no
+  // tienen incidencia abierta): una UA solo puede estar en una incidencia activa.
+  function incRegistrarFaltante(h){
+    if(!h.uas_libres || !h.uas_libres.length){
+      ilusAlert({title: 'No hay otra UA libre en Check',
+        message: 'Check no tiene otra UA de este SKU sin incidencia: las unidades que faltan están en una UA que ya tiene incidencia. '
+               + 'Pide en Check que las separen en una UA por unidad y vuelve a revisar, o corrige la cantidad de la incidencia existente.',
+        type: 'warning'});
+      return;
+    }
+    incRegistrarConPregunta(h);
+  }
+
+  // 🔀 2026-10-28 (Daniel: «lo más recomendable es solicitar al usuario crear varias filas si el ingreso es mayor a uno… se puede mantener en una
+  // línea a menos que decida separarla»): con 2 o más unidades se pregunta. Recomendado separar en un equipo (cada máquina con su UA y su motivo) y
+  // dejar en una línea un producto repetible (pisos, accesorios). Separar usa el desglose por motivo que ya existía.
+  function incRegistrarConPregunta(h){
+    var n = parseInt(h.cantidad, 10) || 1;
+    if(n < 2 || !h.clave){ incAbrirAltaPrellenada(h); return; }
+    incPreguntarAgrupar(h, n);
+  }
+
+  function incPreguntarAgrupar(h, n){
+    var agrupable = (h.repetible === true) || (h.tipo === 'falta_registrar' && h.sugerir_distribuir === false);
+    var libres = (h.uas_libres || []).length;
+    var sep = $('incAgruparSep'), una = $('incAgruparUna');
+    $('incAgruparTitulo').innerHTML = '<i class="bi bi-signpost-split me-2" style="color:var(--ilus-red,#dc2626)"></i>¿Cómo registras estas ' + n + ' unidades?';
+    $('incAgruparProd').textContent = (h.descripcion || h.sku || '') + (h.sku ? ' · ' + h.sku : '');
+    sep.innerHTML = '<b>Separar en ' + n + ' filas' + (agrupable ? '' : '<span class="rec">Recomendado</span>') + '</b>'
+      + '<small>Una fila por unidad, cada una con su propio motivo' + (libres > 1 ? ' y su propia UA libre de Check' : '') + '. Es lo que corresponde a los equipos.</small>';
+    una.innerHTML = '<b>Dejar en una sola línea (' + n + ' unidades)' + (agrupable ? '<span class="rec">Recomendado</span>' : '') + '</b>'
+      + '<small>Un solo motivo para todas. Para accesorios o productos que se pueden agrupar (por ejemplo, 90 pisos).</small>';
+    sep.classList.toggle('rec-on', !agrupable);
+    una.classList.toggle('rec-on', agrupable);
+    var modal = bootstrap.Modal.getOrCreateInstance($('incAgruparModal'));
+    sep.onclick = function(){
+      modal.hide();
+      incAbrirDesglose({origen:'hallazgo', clave:h.clave, sku:h.sku, descripcion:h.descripcion,
+                        ua:(libres ? h.uas_libres[0].ua : h.ua), cantidad:n, sub:'Pendiente · ' + (INC_TIPOS[h.tipo] || {t: h.tipo}).t,
+                        porUnidad:true, uasLibres:libres});
+    };
+    una.onclick = function(){ modal.hide(); incAbrirAltaPrellenada(h); };
+    modal.show();
+  }
+
+  // 🧩 2026-10-28: «Gestionar diferencia». Una tarjeta por unidad (equipo = una línea por UA con su propio motivo; producto repetible = una sola línea con
+  // la cantidad). Las acciones de cada tarjeta reutilizan lo que ya existe: abrir la incidencia, dar de baja, o el alta prellenada con esa UA.
+  var INC_DIF_CLASES = {
+    incidencia_ok:   {cls:'ok',    ico:'bi-check-circle-fill',        t:'Con motivo'},
+    incidencia_warn: {cls:'warn',  ico:'bi-exclamation-triangle-fill', t:'Falta el motivo'},
+    libre:           {cls:'falta', ico:'bi-plus-circle-fill',          t:'Falta agregar'},
+    faltan_repetible:{cls:'falta', ico:'bi-plus-circle-fill',          t:'Falta registrar'},
+    sin_ua:          {cls:'gris',  ico:'bi-question-circle-fill',      t:'Sin UA en Check'}
+  };
+  function incDifModal(){ return bootstrap.Modal.getOrCreateInstance(document.getElementById('incDifModal')); }
+
+  function incAbrirDiferencia(h){
+    var u = h.unidades || {tarjetas: [], unidades: 0, con_motivo: 0};
+    var m = INC_TIPOS[h.tipo] || {t: h.tipo};
+    var pct = u.unidades ? Math.round(100 * u.con_motivo / u.unidades) : 0;
+    var html = '<div class="inc-dif-cab"><div><div class="inc-dif-nom">' + incEsc(h.descripcion || h.sku || '—') + '</div>'
+      + '<div class="inc-dif-sub">SKU ' + incEsc(h.sku || '—') + ' · ' + incEsc(m.t) + '</div></div>'
+      + '<div class="inc-chip-row" style="display:flex">'
+      + ['Nosotros|' + h.nuestra_bd, 'ERP Random|' + h.erp, 'Check (WMS)|' + h.wms].map(function(x){
+          var p = x.split('|'); return '<span class="inc-chip"><span class="lbl">' + p[0] + '</span><span class="val">' + (p[1] === 'null' || p[1] === 'undefined' ? '—' : incNum(Number(p[1]))) + '</span></span>';
+        }).join('') + '</div></div>'
+      + '<div class="inc-dif-prog"><span class="tx">' + u.con_motivo + ' de ' + u.unidades + ' unidad' + (u.unidades === 1 ? '' : 'es') + ' con motivo'
+      + (u.faltan ? ' · falta' + (u.faltan > 1 ? 'n ' + u.faltan : ' 1') + ' por agregar' : '')
+      + (u.sobran ? ' · declaramos ' + u.sobran + ' de más' : '') + '</span>'
+      + '<span class="bar"><span style="width:' + pct + '%"></span></span></div>'
+      + (h.repetible
+          ? '<div class="inc-dif-nota"><i class="bi bi-stack"></i><span>Este producto se puede <b>agrupar</b>: va en una sola línea con su cantidad (por ejemplo, 90 pisos).</span></div>'
+          : '<div class="inc-dif-nota eq"><i class="bi bi-diagram-3"></i><span>Es un <b>equipo</b>: cada máquina va en su propia línea, con su propia UA y su propio motivo.</span></div>')
+      + '<div class="inc-dif-grid">';
+    u.tarjetas.forEach(function(c, i){
+      var k = c.clase === 'incidencia' ? (c.con_motivo ? 'incidencia_ok' : 'incidencia_warn') : c.clase;
+      var d = INC_DIF_CLASES[k] || INC_DIF_CLASES.sin_ua;
+      var cuerpo = '', acc = '';
+      if(c.clase === 'incidencia'){
+        cuerpo = '<div class="motivo">' + (c.motivo ? incEsc(c.motivo) : '<span class="meta">Sin motivo declarado.</span>') + '</div>';
+        acc = '<button type="button" class="btn btn-sm btn-outline-dark" data-dif="ver" data-i="' + i + '"><i class="bi bi-search me-1"></i>'
+            + (c.con_motivo ? 'Ver / corregir' : 'Agregar el motivo') + '</button>'
+            + '<button type="button" class="btn btn-sm btn-outline-secondary" data-dif="baja" data-i="' + i + '"><i class="bi bi-archive me-1"></i>Dar de baja</button>';
+      } else if(c.clase === 'libre'){
+        cuerpo = '<div class="motivo">Check tiene esta UA en la Bodega 13 y <b>no tiene incidencia</b>. Falta agregar su motivo.</div>';
+        acc = '<button type="button" class="btn btn-sm btn-ilus" data-dif="registrar" data-i="' + i + '"><i class="bi bi-plus-lg me-1"></i>Registrar esta UA</button>';
+      } else if(c.clase === 'faltan_repetible'){
+        cuerpo = '<div class="motivo">Faltan <b>' + c.cantidad + '</b> unidad' + (c.cantidad === 1 ? '' : 'es') + ' por declarar. Se registran juntas en una sola línea.</div>';
+        acc = '<button type="button" class="btn btn-sm btn-ilus" data-dif="registrar" data-i="' + i + '"><i class="bi bi-plus-lg me-1"></i>Registrar ' + c.cantidad + '</button>';
+      } else {
+        cuerpo = '<div class="motivo">Faltan <b>' + c.cantidad + '</b> unidad' + (c.cantidad === 1 ? '' : 'es') + ' pero Check no tiene otra UA libre de este SKU. '
+               + 'Pide en Check que las separen en una UA por unidad y vuelve a revisar.</div>';
+      }
+      html += '<div class="inc-dif-card ' + d.cls + '"><span class="pill"><i class="bi ' + d.ico + '"></i>' + d.t + '</span>'
+        + (c.ua ? '<div class="ua">' + incEsc(c.ua) + '</div>' : (c.clase === 'incidencia' ? '<div class="ua">Incidencia #' + c.id + ' · sin UA</div>' : ''))
+        + '<div class="meta">' + (c.clase === 'incidencia' ? 'Incidencia #' + c.id + ' · ' : '') + c.cantidad + ' unidad' + (c.cantidad === 1 ? '' : 'es')
+        + (c.ubicacion ? ' · ' + incEsc(c.ubicacion) : '') + '</div>'
+        + cuerpo + (acc ? '<div class="acc">' + acc + '</div>' : '') + '</div>';
+    });
+    if(!u.tarjetas.length) html += '<div class="inc-dif-card gris"><span class="pill">Sin detalle</span><div class="motivo">No hay unidades que mostrar para esta diferencia.</div></div>';
+    html += '</div>';
+    var cuerpoEl = $('incDifCuerpo');
+    cuerpoEl.innerHTML = html;
+    cuerpoEl.querySelectorAll('[data-dif]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var c = u.tarjetas[parseInt(b.dataset.i, 10)], quehacer = b.dataset.dif;
+        incDifModal().hide();
+        if(quehacer === 'ver') incAbrirPorId(c.id);
+        else if(quehacer === 'baja') incAbrirBaja({origen:'incidencia', id:c.id, sku:h.sku, descripcion:h.descripcion, ua:c.ua, cantidad:c.cantidad, sub:'Incidencia #'+c.id});
+        else incRegistrarConPregunta(Object.assign({}, h, {ua: c.ua, ubicacion: c.ubicacion, cantidad: c.cantidad, uas_libres: c.clase === 'faltan_repetible' ? (h.uas_libres || []) : (c.ua ? [{ua: c.ua, ubicacion: c.ubicacion}] : [])}));
+      });
+    });
+    incDifModal().show();
+  }
+
+  function incPintarUasAlternas(h){
+    var box = $('incUaAlternas');
+    if(!box) return;
+    var l = (h && h.uas_libres) || [];
+    if(l.length < 2){ box.hidden = true; box.innerHTML = ''; return; }
+    box.hidden = false;
+    box.innerHTML = '<label class="form-label">UA libres de este SKU en Check (' + l.length + '): elige cuál registras</label>'
+      + '<div class="d-flex flex-wrap gap-2">' + l.map(function(x){
+          return '<button type="button" class="inc-ua-alt' + (x.ua === h.ua ? ' on' : '') + '" data-ua="' + incEsc(x.ua) + '" data-ubi="' + incEsc(x.ubicacion || '') + '">'
+               + incEsc(x.ua) + '<small>' + incEsc(x.ubicacion || 'sin ubicación') + '</small></button>';
+        }).join('') + '</div>';
+    box.querySelectorAll('.inc-ua-alt').forEach(function(b){
+      b.addEventListener('click', function(){
+        box.querySelectorAll('.inc-ua-alt').forEach(function(o){ o.classList.toggle('on', o === b); });
+        $('incRecomendacion').value = b.dataset.ua;
+        incPintarUbicacionCheck('coincide', b.dataset.ubi || '');
+        document.getElementById('incUaResultado').innerHTML = '<span class="text-muted"><i class="bi bi-geo-alt me-1"></i>Ubicación (Check): <b>'
+          + incEsc(b.dataset.ubi || '—') + '</b> (de la UA que elegiste).</span>';
+        refrescarVerdeTodos();
+      });
+    });
   }
 
   $('incBtnConciliar').addEventListener('click', incConcCargar);
@@ -3251,6 +3548,7 @@
     document.getElementById('incReqRepuesto').value = '';
     document.getElementById('incStockRepuesto').value = '';
     document.getElementById('incUaResultado').innerHTML = '';
+    incPintarUasAlternas(null);
     // 🎨 2026-09-27: limpia chips ERP/Nosotros/Check + aviso de UA -- si no
     // se limpiaran, una incidencia SIN hallazgo (alta 100% manual) podía
     // quedarse mostrando los chips/aviso de la incidencia anterior abierta.

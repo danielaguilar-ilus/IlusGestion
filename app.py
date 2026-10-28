@@ -68958,6 +68958,76 @@ INC_HALLAZGO_INFO = {
 }
 
 
+def _inc_uas_libres(uas, declaradas, wms_por_ua):
+    """PURA. Las UA de un SKU que Check tiene en la Bodega 13 y que todavía NO tienen una incidencia abierta: [{ua, ubicacion}].
+    Daniel (28-oct): «la Air Ski Erg dice que hay 2 en Random y en el WMS, pero no puedo agregar la otra»: la que falta registrar es una de
+    estas UA. `declaradas` es cualquier contenedor con las UA que ya tienen incidencia (por ejemplo el dict inc_por_ua)."""
+    out, vistas = [], set()
+    for ua in uas or []:
+        if not ua or ua in declaradas or ua in vistas:
+            continue
+        vistas.add(ua)
+        out.append({"ua": ua, "ubicacion": (wms_por_ua.get(ua) or {}).get("ubicacion")})
+    return out
+
+
+def _inc_hallazgo_faltan(h):
+    """PURA. Cuántas unidades faltan por declarar en un hallazgo de diferencia que YA tiene incidencia (0 si no corresponde). La fuente de
+    referencia es la que manda en ese hallazgo: el ERP en «dif_erp», Check en «dif_wms». Si nosotros declaramos de más, no hay nada que
+    registrar (eso se corrige en la incidencia)."""
+    tipo = h.get("tipo")
+    if tipo not in ("dif_erp", "dif_wms") or not h.get("ids"):
+        return 0
+    ref = h.get("erp") if tipo == "dif_erp" else h.get("wms")
+    try:
+        falta = float(ref or 0) - float(h.get("nuestra_bd") or 0)
+    except (TypeError, ValueError):
+        return 0
+    return int(round(falta)) if falta > 0.001 else 0
+
+
+def _inc_unidades_hallazgo(h, incs, repetible):
+    """PURA. El detalle POR UNIDAD de una diferencia de cantidad («dif_erp» / «dif_wms»), para el panel «Gestionar diferencia».
+
+    Daniel (28-oct): «la idea de esta bodega es separar: 90 pisos van en una línea, pero 2 máquinas van separadas porque cada una tiene un motivo
+    distinto. Necesito que al abrir la diferencia me diga: esta tiene motivo, esta tiene motivo, falta agregar uno».
+    `incs` = las incidencias abiertas de ese SKU [{id, ua, motivo, cantidad, ubicacion}]. `repetible` = el producto se puede agrupar (pisos,
+    accesorios). Devuelve {"tarjetas": [...], "faltan": n, "sobran": n, "unidades": n, "con_motivo": n}; cada tarjeta lleva su `clase`:
+      · «incidencia»        una incidencia ya registrada (con `con_motivo` True/False: el motivo debe tener al menos 10 caracteres);
+      · «libre»             una UA que Check tiene en la Bodega 13 y que no tiene incidencia: falta agregarla (un equipo = una línea por UA);
+      · «faltan_repetible»  un producto repetible al que le faltan N unidades: se registra en UNA línea con la cantidad;
+      · «sin_ua»            faltan unidades pero Check no tiene otra UA libre que proponer (hay que separarlas en Check)."""
+    tarjetas, con_motivo, declaradas = [], 0, 0
+    for i in incs or []:
+        try:
+            cant = max(1, int(i.get("cantidad") or 1))
+        except (TypeError, ValueError):
+            cant = 1
+        ok = len((i.get("motivo") or "").strip()) >= 10
+        declaradas += cant
+        con_motivo += cant if ok else 0
+        tarjetas.append({"clase": "incidencia", "id": i.get("id"), "ua": i.get("ua"), "ubicacion": i.get("ubicacion"),
+                         "cantidad": cant, "motivo": (i.get("motivo") or "").strip(), "con_motivo": ok})
+    ref = h.get("erp") if h.get("tipo") == "dif_erp" else h.get("wms")
+    try:
+        dif = float(ref or 0) - float(h.get("nuestra_bd") or 0)
+    except (TypeError, ValueError):
+        dif = 0
+    faltan = int(round(dif)) if dif > 0.001 else 0
+    sobran = int(round(-dif)) if dif < -0.001 else 0
+    libres = list(h.get("uas_libres") or [])
+    if faltan and repetible:
+        primera = libres[0] if libres else {}
+        tarjetas.append({"clase": "faltan_repetible", "cantidad": faltan, "ua": primera.get("ua"), "ubicacion": primera.get("ubicacion")})
+    elif faltan:
+        for u in libres[:faltan]:
+            tarjetas.append({"clase": "libre", "ua": u.get("ua"), "ubicacion": u.get("ubicacion"), "cantidad": 1})
+        resto = faltan - min(len(libres), faltan)
+        if resto:
+            tarjetas.append({"clase": "sin_ua", "cantidad": resto})
+    return {"tarjetas": tarjetas, "faltan": faltan, "sobran": sobran, "unidades": declaradas + faltan, "con_motivo": con_motivo}
+
+
 def _inc_hallazgo_accion(h):
     """Qué botón mostrar para UN hallazgo de la conciliación (función pura,
     testeable sin BD). Daniel (26-sep): "cada tipo de hallazgo con una
@@ -69138,6 +69208,22 @@ def _ensure_incidencia_bajas_table():
 # SIN UA hasta que el WMS las distribuya (se la ponen después con Ver / editar).
 INC_DESGLOSE_MAX_GRUPOS = 20
 INC_MOTIVO_MAX = 200     # largo de la columna mant_incidencias.motivo
+
+
+def _inc_asignar_uas_grupos(h, n, norm=lambda s: (s or "").strip().upper()):
+    """PURA. Qué UA (y ubicación) recibe cada uno de los `n` grupos al separar un pendiente en filas: [(ua | None, ubicacion | None)] × n.
+
+    Daniel (28-oct): «dos máquinas van separadas porque tienen que tener el motivo distinto». Si Check tiene UA libres de ese SKU (`uas_libres`), cada
+    fila toma la suya, en orden. Si no hay (un pendiente de una sola UA con varias unidades, como antes), la primera fila conserva la UA del pendiente
+    y las demás quedan sin UA hasta que el WMS distribuya. Una UA nunca se repite entre filas."""
+    libres = [(norm(u.get("ua")), u.get("ubicacion")) for u in (h.get("uas_libres") or []) if norm(u.get("ua"))]
+    if libres:
+        lista = libres[:n]
+    elif h.get("baja_hallazgo") and norm(h.get("ua")):
+        lista = [(norm(h.get("ua")), h.get("ubicacion"))]
+    else:
+        lista = []
+    return lista + [(None, None)] * (n - len(lista))
 
 
 def _inc_desglose_validar(total, grupos):
@@ -69358,7 +69444,7 @@ def _inc_calcular_hallazgos():
     # ── Fuente 2: incidencias registradas ──
     try:
         incs = mysql_fetchall(
-            "SELECT id, sku, descripcion, cantidad, motivo, estado, recomendacion "
+            "SELECT id, sku, descripcion, cantidad, motivo, estado, recomendacion, ubicacion "
             "  FROM mant_incidencias WHERE estado='abierta' AND COALESCE(eliminada,0)=0") or []
     except Exception as _e:
         print(f"[conciliacion] error MySQL: {_e}", flush=True)
@@ -69371,9 +69457,11 @@ def _inc_calcular_hallazgos():
             inc_por_ua.setdefault(ua, []).append(i)
         sku = (i.get("sku") or "").strip()
         if sku:
-            e = inc_por_sku.setdefault(sku, {"cant": 0, "ids": []})
+            e = inc_por_sku.setdefault(sku, {"cant": 0, "ids": [], "incs": []})
             e["cant"] += int(i.get("cantidad") or 0)
             e["ids"].append(i["id"])
+            e["incs"].append({"id": i["id"], "ua": ua, "motivo": i.get("motivo"), "cantidad": int(i.get("cantidad") or 0),
+                              "ubicacion": i.get("ubicacion")})
 
     # ── Fuente 3: ERP Random, MAEST bodega 13 (solo lectura, Regla #4.1) ──
     # 🔧 2026-09-26 (Daniel: "cachea, no dispares una consulta nueva por
@@ -69439,6 +69527,9 @@ def _inc_calcular_hallazgos():
                     })
                 continue
             if abs(erp - reg) > 0.001:
+                # 2026-10-28: la UA que se propone para registrar es una de las LIBRES (sin incidencia abierta); si el SKU ya tiene una
+                # incidencia, proponer su misma UA hacía imposible agregar la unidad que falta (la UA es única por incidencia).
+                _libres = _inc_uas_libres(wsku.get("uas"), inc_por_ua, wms_por_ua)
                 hallazgos.append({
                     "tipo": "dif_erp", "gravedad": "error", "orden": 0,
                     "sku": sku,
@@ -69449,7 +69540,9 @@ def _inc_calcular_hallazgos():
                     # Sugerencia de cantidad/UA/ubicación para prellenar el alta
                     # cuando este hallazgo no tiene incidencia asociada todavía.
                     "cantidad": max(1, int(round(abs(erp - reg)))),
-                    "ua": (wsku.get("uas") or [None])[0], "ubicacion": wsku.get("ubicacion"),
+                    "uas_libres": _libres,
+                    "ua": (_libres[0]["ua"] if _libres else (wsku.get("uas") or [None])[0]),
+                    "ubicacion": (_libres[0]["ubicacion"] if _libres else wsku.get("ubicacion")),
                     "detalle": (f"ERP Random dice {erp:g} y nosotros tenemos {reg:g} "
                                 f"declarada(s). Diferencia de {abs(reg - erp):g}."),
                 })
@@ -69462,6 +69555,7 @@ def _inc_calcular_hallazgos():
             if w is None:
                 continue
             if abs(w["cant"] - reg) > 0.001:
+                _libres_w = _inc_uas_libres(w.get("uas"), inc_por_ua, wms_por_ua)
                 hallazgos.append({
                     "tipo": "dif_wms", "gravedad": "warn", "orden": 2,
                     "sku": sku, "descripcion": w["desc"],
@@ -69469,6 +69563,11 @@ def _inc_calcular_hallazgos():
                     "erp": erp_por_sku.get(sku) if erp_ok else None,
                     "delta": reg - w["cant"],
                     "ids": inc_por_sku.get(sku, {}).get("ids", []),
+                    # 2026-10-28: lo mismo que en «dif_erp»: con qué UA y cuántas unidades se registra lo que falta.
+                    "cantidad": max(1, int(round(abs(w["cant"] - reg)))),
+                    "uas_libres": _libres_w,
+                    "ua": (_libres_w[0]["ua"] if _libres_w else (w.get("uas") or [None])[0]),
+                    "ubicacion": (_libres_w[0]["ubicacion"] if _libres_w else w.get("ubicacion")),
                     "detalle": (f"CheckWMS (Bodega {INC_BODEGA_WMS.split()[-1]}) dice {w['cant']:g} "
                                 f"y nosotros tenemos {reg:g} declarada(s)."),
                 })
@@ -69524,12 +69623,24 @@ def _inc_calcular_hallazgos():
                                 "No aparece en el stock actual del WMS en ninguna bodega."),
                 })
 
+    # 2026-10-28 (Daniel): cada diferencia de cantidad trae su detalle POR UNIDAD (tarjetas «con motivo / falta el motivo / falta agregar») y si el
+    # producto se puede agrupar o va una línea por equipo. Una sola consulta batch a la clasificación; nada nuevo contra el ERP ni Check.
+    _skus_dif = sorted({h.get("sku") for h in hallazgos if h.get("tipo") in ("dif_erp", "dif_wms") and h.get("sku")})
+    _clasif_dif = _inc_clasificacion_skus_batch(_skus_dif) if _skus_dif else {}
+    for h in hallazgos:
+        if h.get("tipo") in ("dif_erp", "dif_wms"):
+            h["repetible"] = (_clasif_dif.get((h.get("sku") or "").strip()) or {}).get("repetible") is True
+            h["unidades"] = _inc_unidades_hallazgo(h, inc_por_sku.get(h.get("sku"), {}).get("incs", []), h["repetible"])
+
     hallazgos.sort(key=lambda h: (h.get("orden", 9), -abs(h.get("delta") or 0), h.get("sku") or ""))
     # 🔧 2026-09-26: cada hallazgo trae su acción ya resuelta -- el frontend
     # ya no adivina mirando si `ids` viene o no (ese fue exactamente el bug
     # que Daniel reportó: "no selecciona nada, no sé qué hace").
     for h in hallazgos:
         h["accion"] = _inc_hallazgo_accion(h)
+        # 2026-10-28 (Daniel): una diferencia con incidencia ya existente TAMBIÉN se puede «Registrar» (la unidad que falta), además de «Ver / corregir».
+        h["faltan"] = _inc_hallazgo_faltan(h)
+        h["puede_registrar"] = h["faltan"] > 0
         h["clave"] = _inc_baja_clave(h)
         # Un pendiente SIN incidencia asociada se da de baja como "hallazgo"; si
         # tiene incidencia, la baja se le hace a la incidencia.
@@ -70891,10 +71002,12 @@ def mant_api_incidencias_desglosar():
         if not h:
             return jsonify({"ok": False, "error":
                             "Ese pendiente ya no aparece (quizá ya se registró). Actualiza la lista."}), 404
-        if not h.get("baja_hallazgo"):
+        # 2026-10-28: un SKU que YA tiene incidencia pero al que le faltan unidades por declarar (`puede_registrar`) también se separa en filas: se
+        # reparten solo las que faltan (las ya declaradas no se tocan).
+        if not h.get("baja_hallazgo") and not h.get("puede_registrar"):
             return jsonify({"ok": False, "error":
-                            "Este pendiente ya tiene una incidencia: desglósala desde la incidencia."}), 400
-        total = int(_inc_baja_num(h.get("cantidad")) or 0)
+                            "Este pendiente ya tiene una incidencia y no le faltan unidades por declarar: desglósala desde la incidencia."}), 400
+        total = int(h.get("faltan") or 0) if h.get("puede_registrar") else int(_inc_baja_num(h.get("cantidad")) or 0)
         limpios, err = _inc_desglose_validar(total, grupos)
         if err:
             return jsonify({"ok": False, "error": err}), 400
@@ -70902,10 +71015,11 @@ def mant_api_incidencias_desglosar():
         descripcion = (h.get("descripcion") or sku).strip()
         if not descripcion:
             return jsonify({"ok": False, "error": "El pendiente no trae nombre de producto."}), 400
-        ua = _checkwms_norm_ua(h.get("ua") or "") or None
-        if ua and _inc_ua_duplicada(ua):
-            return jsonify({"ok": False, "error":
-                            f"La UA {ua} ya está en uso por otra incidencia activa."}), 409
+        asignadas = _inc_asignar_uas_grupos(h, len(limpios), _checkwms_norm_ua)
+        for ua_k, _ub in asignadas:
+            if ua_k and _inc_ua_duplicada(ua_k):
+                return jsonify({"ok": False, "error":
+                                f"La UA {ua_k} ya está en uso por otra incidencia activa."}), 409
         ubicacion = (h.get("ubicacion") or "").strip() or None
         db = get_db()
         ids = []
@@ -70915,7 +71029,7 @@ def mant_api_incidencias_desglosar():
                     "INSERT INTO mant_incidencias (sku, descripcion, cantidad, motivo, recomendacion, "
                     "ubicacion, created_by) VALUES (%s,%s,%s,%s,%s,%s,%s)",
                     (sku or None, descripcion, g["cantidad"], g["motivo"],
-                     ua if k == 0 else None, ubicacion, usuario))
+                     asignadas[k][0], (asignadas[k][1] or ubicacion), usuario))
                 ids.append(cur.lastrowid)
             db.commit()
         for k, nid in enumerate(ids, 1):
