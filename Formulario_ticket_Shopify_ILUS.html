@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Solicita soporte · ILUS Fitness</title>
+<!--
+  ════════════════════════════════════════════════════════════════════
+  ILUS Fitness · Formulario de soporte técnico (HTML para Shopify)
+  Versión 27-10-2026 · mismo diseño que el formulario «Agenda tu retiro»
+  ════════════════════════════════════════════════════════════════════
+  CÓMO PUBLICARLO
+  1. Shopify › Tienda online › Personalizar › página «Soporte técnico»
+     (ilusfitness.com/pages/soporte-tecnico).
+  2. Agregar (o reemplazar) una sección "Liquid personalizado" (Custom
+     Liquid) y pegar TODO este archivo. También se puede abrir directo en
+     el navegador para verlo funcionando.
+  3. Guardar.
+
+  QUÉ HACE
+  - Crea el ticket directo en el sistema de tickets de ILUS Fitness
+    (misma API que el formulario /soporte): el cliente ve su N° de ticket
+    al terminar y recibe el correo de confirmación con el seguimiento.
+  - Busca el equipo en el catálogo de ILUS mientras se escribe (y deja
+    agregarlo a mano si no aparece). Hasta 15 adjuntos de 25 MB c/u, que
+    se suben después de crear el ticket sin bloquear la confirmación.
+  - La dirección se escribe como texto (en la tienda no hay Google Maps);
+    ILUS la anota como «por confirmar» en la bitácora del ticket.
+  - No usa claves ni contraseñas. Solo funciona desde ilusfitness.com,
+    www.ilusfitness.com, ilus-fitness.myshopify.com o abierto suelto.
+  ════════════════════════════════════════════════════════════════════
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script>if (!window.Shopify) document.documentElement.className += ' itk-solo';</script>
+<style>
+#ilus-tk{--r:#6d6d6d;--r-dk:#4a4a4a;--k:#1C1C1C;--g:#16a34a;--g-bg:#dcfce7;--a:#f59e0b;--a-bg:#fff8e1;--gr:#6d6d6d;--gr-bg:#f3f4f6;--line:#e5e7eb;--rojo:#dc2626;max-width:980px;margin:0 auto;font-family:Inter,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#111827;font-size:15px;line-height:1.5;text-align:left}
+#ilus-tk *,#ilus-tk *:before,#ilus-tk *:after{box-sizing:border-box}
+#ilus-tk [hidden]{display:none!important}
+#ilus-tk label,#ilus-tk h2,#ilus-tk h3,#ilus-tk p,#ilus-tk small,#ilus-tk strong{text-transform:none;letter-spacing:normal;font-family:Inter,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+#ilus-tk label{display:block;font-size:inherit;font-weight:inherit;line-height:inherit;color:inherit;margin:0}
+#ilus-tk .itk-head{background:var(--k);color:#fff;border-radius:18px 18px 0 0;padding:26px 28px 22px;border-bottom:4px solid var(--r)}
+#ilus-tk .itk-kicker{font-size:12px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:#d1d5db;margin:0 0 4px}
+#ilus-tk .itk-title{font-family:Inter,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;font-weight:600;font-size:36px;line-height:1.1;letter-spacing:-.01em;margin:0;color:#fff;text-transform:uppercase}
+#ilus-tk .itk-lead{margin:8px 0 0;color:#ffffffc7;font-size:14px;font-weight:400}
+#ilus-tk .itk-prog{display:flex;align-items:center;gap:10px;margin-top:16px;font-size:12.5px;font-weight:500;color:#ffffffd9}
+#ilus-tk .itk-prog-bar{flex:1;max-width:260px;height:6px;border-radius:9px;background:#ffffff26;overflow:hidden}
+#ilus-tk .itk-prog-bar span{display:block;height:100%;width:0;background:var(--r);border-radius:9px;transition:width .35s ease}
+#ilus-tk .itk-prog.is-ok .itk-prog-bar span{background:var(--g)}
+#ilus-tk .itk-body{background:#fff;border:1px solid var(--line);border-top:0;border-radius:0 0 18px 18px;padding:22px}
+#ilus-tk .itk-step{position:relative;border:1.5px solid var(--line);border-left:5px solid var(--r);border-radius:14px;padding:18px 18px 20px;margin:0 0 16px;background:#fff;transition:border-color .25s,background .25s}
+#ilus-tk .itk-step.is-ok{border-color:#86efac;border-left-color:var(--g);background:linear-gradient(180deg,#f0fdf4 0,#fff 70px)}
+#ilus-tk .itk-step.is-opt{border-left-color:var(--gr);border-style:dashed;border-left-style:solid}
+#ilus-tk .itk-step.is-bad{border-color:#fca5a5;border-left-color:#b91c1c}
+#ilus-tk .itk-step-h{display:flex;gap:14px;align-items:flex-start;margin:0 0 14px}
+#ilus-tk .itk-circle{flex:0 0 44px;width:44px;height:44px;border-radius:45px;display:flex;align-items:center;justify-content:center;background:var(--r);color:#fff;font-size:18px;font-weight:600}
+#ilus-tk .itk-step.is-ok .itk-circle{background:var(--g)}
+#ilus-tk .itk-step.is-opt .itk-circle{background:var(--gr)}
+#ilus-tk .itk-circle svg{width:22px;height:22px;display:none}
+#ilus-tk .itk-step.is-ok .itk-circle svg{display:block}
+#ilus-tk .itk-step.is-ok .itk-circle b{display:none}
+#ilus-tk .itk-circle b{font-weight:500}
+#ilus-tk .itk-step-t{margin:0;font-size:18px;font-weight:700;color:#111827;line-height:1.25}
+#ilus-tk .itk-tag{display:inline-block;vertical-align:middle;margin-left:6px;font-size:11px;font-weight:500;padding:2px 8px;border-radius:45px;background:var(--gr-bg);color:#4b5563}
+#ilus-tk .itk-step-s{margin:4px 0 0;color:#4b5563;font-size:13.5px;font-weight:400}
+#ilus-tk .itk-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px}
+#ilus-tk .itk-c4{grid-column:span 4}#ilus-tk .itk-c6{grid-column:span 6}#ilus-tk .itk-c8{grid-column:span 8}#ilus-tk .itk-c12{grid-column:span 12}
+#ilus-tk .itk-f{position:relative;min-width:0}
+#ilus-tk label.itk-lbl{display:block;font-size:13px;font-weight:600;color:#111827;margin:0 0 6px;text-transform:none;letter-spacing:0}
+#ilus-tk .itk-req{color:var(--rojo)}
+#ilus-tk .itk-in{display:block;width:100%;min-height:46px;margin:0;padding:11px 14px;border:1.5px solid #d1d5db;border-radius:10px;background:#fff;color:#111827;font:inherit;font-size:15px;font-weight:400;line-height:1.3;outline:0;-webkit-appearance:none;appearance:none;transition:border-color .15s}
+#ilus-tk .itk-in::placeholder{color:#6b7280}
+#ilus-tk textarea.itk-in{min-height:88px;resize:vertical}
+#ilus-tk .itk-in:focus{border-color:var(--r);outline:none;box-shadow:0 0 0 3px rgba(28,28,28,.18)}
+#ilus-tk .itk-in.is-bad{border-color:#b91c1c;background:#fff5f5}
+#ilus-tk .itk-in.is-good{border-color:#86efac}
+#ilus-tk .itk-help{margin:6px 0 0;font-size:12.5px;color:var(--gr);font-weight:400}
+#ilus-tk .itk-err{margin:6px 0 0;font-size:12.5px;font-weight:500;color:#b91c1c}
+#ilus-tk .itk-sug{margin-top:6px;display:inline-block;background:var(--a-bg);border:1px solid var(--a);color:#78350f;border-radius:45px;padding:6px 14px;font-size:13px;font-weight:500;cursor:pointer}
+#ilus-tk .itk-counter{font-size:12.5px;color:var(--gr);text-align:right;margin-top:4px}
+/* Paso 1: tipos compactos (4 columnas; 2 en celular) */
+#ilus-tk .itk-tipos{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+#ilus-tk .itk-tipo{display:flex;align-items:center;gap:10px;min-height:54px;padding:8px 12px;border:1.5px solid var(--line);border-radius:12px;background:#fff;cursor:pointer;font:inherit;font-size:13.5px;font-weight:600;line-height:1.2;color:#374151;text-align:left;transition:border-color .12s,background .12s,color .12s}
+#ilus-tk .itk-tipo svg{flex:0 0 24px;width:24px;height:24px;color:var(--tc,#94a3b8)}
+#ilus-tk .itk-tipo:hover{border-color:var(--tc,var(--k));color:#111827}
+#ilus-tk .itk-tipo.is-sel{border-color:var(--tc,var(--k));background:var(--tbg,#f3f4f6);color:#111827;box-shadow:inset 0 0 0 1px var(--tc,var(--k));font-weight:700}
+/* Toggles y tarjetas opcionales */
+#ilus-tk .itk-toggle{display:flex;align-items:center;gap:12px;width:100%;min-height:56px;padding:12px 14px;border:1.5px dashed #d1d5db;border-radius:12px;background:#f9fafb;cursor:pointer;text-align:left;font:inherit;color:#111827}
+#ilus-tk .itk-toggle input{width:20px;height:20px;margin:0;accent-color:var(--g);flex:0 0 auto}
+#ilus-tk .itk-toggle small{display:block;color:var(--gr);font-size:12.5px;font-weight:400}
+#ilus-tk .itk-toggle strong{font-weight:600}
+#ilus-tk .itk-auth{margin-top:12px;padding:14px;border:1px solid #e5e7eb;border-radius:12px;background:#fff}
+/* Buscador de productos + chips */
+#ilus-tk .itk-ac{position:absolute;z-index:50;left:0;right:0;top:100%;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:240px;overflow:auto;margin-top:3px;display:none}
+#ilus-tk .itk-ac.is-open{display:block}
+#ilus-tk .itk-ac-item{padding:11px 13px;min-height:44px;cursor:pointer;border-bottom:1px solid #f3f4f6;font-size:14px}
+#ilus-tk .itk-ac-item:hover{background:var(--gr-bg)}
+#ilus-tk .itk-ac-manual{color:var(--k);font-weight:600}
+#ilus-tk .itk-ac-empty{padding:16px 10px;color:#6b7280;font-size:13px;text-align:center}
+#ilus-tk .itk-chips{margin-top:8px}
+#ilus-tk .itk-chip{display:inline-flex;align-items:center;gap:8px;background:var(--k);color:#fff;border-radius:45px;padding:8px 14px;font-size:13.5px;font-weight:500;margin:0 6px 6px 0;max-width:100%}
+#ilus-tk .itk-chip button{border:0;background:transparent;color:#ffffffb3;font:inherit;font-size:18px;line-height:1;cursor:pointer;padding:0 2px;min-width:24px;min-height:24px}
+#ilus-tk .itk-chip button:hover{color:#fff}
+#ilus-tk .itk-motivos{display:grid;gap:10px}
+#ilus-tk .itk-motivos:not(:empty){margin-top:12px}
+/* Adjuntos */
+#ilus-tk .itk-drop{border:1.5px dashed #d1d5db;border-radius:12px;padding:24px 16px;text-align:center;cursor:pointer;background:#f9fafb;width:100%;font:inherit;color:#374151;min-height:44px}
+#ilus-tk .itk-drop:hover,#ilus-tk .itk-drop.is-drag{border-color:var(--k);background:var(--gr-bg)}
+#ilus-tk .itk-drop svg{width:26px;height:26px;color:#6b7280;display:block;margin:0 auto 6px}
+#ilus-tk .itk-drop .t1{font-weight:600;font-size:14px}
+#ilus-tk .itk-drop .t2{font-size:12.5px;color:var(--gr);margin-top:3px}
+#ilus-tk .itk-files{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+#ilus-tk .itk-file{display:flex;align-items:center;gap:6px;background:var(--gr-bg);border-radius:45px;padding:8px 12px;font-size:13px;max-width:100%}
+#ilus-tk .itk-file .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
+#ilus-tk .itk-file i{display:inline-block;width:10px;height:10px;border-radius:50%;background:#9ca3af;flex:0 0 auto}
+#ilus-tk .itk-file.is-ok i{background:var(--g)}#ilus-tk .itk-file.is-err i{background:var(--rojo)}#ilus-tk .itk-file.is-up i{background:var(--a)}
+#ilus-tk .itk-file button{border:0;background:transparent;color:#6b7280;font:inherit;font-size:16px;line-height:1;cursor:pointer;padding:0 2px;min-width:24px;min-height:24px}
+/* Envío */
+#ilus-tk .itk-alert{margin:0 0 14px;padding:12px 14px;border-radius:12px;border:1.5px solid #d1d5db;background:#f3f4f6;color:#1c1c1c;font-size:14px;font-weight:500}
+#ilus-tk .itk-alert ul{margin:4px 0 0;padding-left:18px;font-weight:400}
+#ilus-tk .itk-send{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;min-height:56px;margin:0;padding:0 20px;border:0;border-radius:45px;background:var(--k);color:#fff;font:inherit;font-size:15px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;cursor:pointer}
+#ilus-tk .itk-send:disabled{opacity:.5;cursor:wait}
+#ilus-tk .itk-send svg{width:18px;height:18px}
+#ilus-tk .itk-priv{margin:12px 0 0;text-align:center;font-size:12.5px;color:var(--gr);font-weight:400}
+#ilus-tk .itk-hp{position:absolute!important;left:-10000px!important;width:1px;height:1px;overflow:hidden}
+/* Éxito */
+#ilus-tk .itk-ok{text-align:center;padding:30px 20px}
+#ilus-tk .itk-ok-ic{width:64px;height:64px;margin:0 auto 12px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--g-bg);color:var(--g)}
+#ilus-tk .itk-ok-ic svg{width:34px;height:34px}
+#ilus-tk .itk-ok h3{margin:0 0 6px;font-size:22px;font-weight:700;color:#111827}
+#ilus-tk .itk-code{display:inline-block;margin:10px 0 6px;padding:10px 22px;border-radius:12px;background:var(--k);color:#fff;font-family:Inter,-apple-system,sans-serif;font-size:32px;font-weight:700;letter-spacing:.06em;line-height:1;border-bottom:4px solid var(--r)}
+#ilus-tk .itk-ok p{margin:8px auto 0;max-width:520px;color:#4b5563;font-weight:400}
+#ilus-tk .itk-ok-adj{margin:12px auto 0;max-width:520px;padding:10px 14px;border-radius:12px;background:var(--gr-bg);font-size:13.5px;color:#374151}
+#ilus-tk .itk-ok-btns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px}
+#ilus-tk .itk-btn{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 24px;border-radius:45px;font:inherit;font-weight:500;font-size:13px;text-decoration:none;cursor:pointer;border:1.5px solid var(--k);background:#fff;color:var(--k);text-transform:uppercase}
+#ilus-tk .itk-btn.is-dark{background:var(--k);border-color:var(--k);color:#fff}
+#ilus-tk button:focus-visible,#ilus-tk a:focus-visible,#ilus-tk input[type=checkbox]:focus-visible{outline:2px solid #1C1C1C;outline-offset:2px}
+@media (prefers-reduced-motion:reduce){#ilus-tk *,#ilus-tk *::before,#ilus-tk *::after{transition-duration:.01s!important;animation-duration:.01s!important;scroll-behavior:auto!important}}
+@media(max-width:720px){#ilus-tk .itk-head{padding:22px 18px 18px}#ilus-tk .itk-title{font-size:28px}#ilus-tk .itk-body{padding:14px}#ilus-tk .itk-step{padding:14px 14px 16px}#ilus-tk .itk-c4,#ilus-tk .itk-c6,#ilus-tk .itk-c8{grid-column:span 12}#ilus-tk .itk-tipos{grid-template-columns:repeat(2,minmax(0,1fr))}#ilus-tk .itk-tipo{font-size:13px}#ilus-tk .itk-in{font-size:16px}#ilus-tk .itk-code{font-size:24px}}
+/* Solo cuando el archivo se abre suelto, fuera de Shopify: mismo fondo gris y ancho que la sección de la tienda. */
+html.itk-solo body{margin:0;background:#efefef;padding:15px 16px}
+html.itk-solo #ilus-tk{max-width:947px}
+</style>
+</head>
+<body>
+
+<div id="ilus-tk">
+  <div class="itk-head">
+    <p class="itk-kicker">ILUS Fitness · Servicio técnico</p>
+    <h2 class="itk-title">Solicita soporte</h2>
+    <p class="itk-lead">Cuéntanos qué pasó y nuestro equipo técnico te contactará. Te toma 2 minutos.</p>
+    <div class="itk-prog" id="itkProg"><div class="itk-prog-bar"><span id="itkProgBar"></span></div><span id="itkProgTxt">0 de 4 pasos listos</span></div>
+  </div>
+  <div class="itk-body">
+    <form id="itkForm" novalidate>
+      <div class="itk-hp" aria-hidden="true">
+        <label for="itk_hp">No completes este campo</label>
+        <input type="text" id="itk_hp" name="hp_ilus_extra" tabindex="-1" autocomplete="off" value="">
+      </div>
+
+      <!-- PASO 1 -->
+      <section class="itk-step" data-paso="1" id="itk_paso1">
+        <div class="itk-step-h">
+          <div class="itk-circle"><b>1</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+          <div><h3 class="itk-step-t">¿Qué necesitas?</h3>
+          <p class="itk-step-s">Elige el tipo de solicitud que mejor describe tu caso.</p></div>
+        </div>
+        <div class="itk-tipos" id="itk_tipos" role="group" aria-label="Tipo de solicitud"></div>
+        <p class="itk-err" id="itk_tipo_err" hidden>Selecciona un tipo de solicitud.</p>
+      </section>
+
+      <!-- PASO 2 -->
+      <section class="itk-step" data-paso="2" id="itk_paso2">
+        <div class="itk-step-h">
+          <div class="itk-circle"><b>2</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+          <div><h3 class="itk-step-t">Tus datos</h3>
+          <p class="itk-step-s">Con quién nos contactamos y a nombre de quién está la compra.</p></div>
+        </div>
+        <div class="itk-grid">
+          <div class="itk-f itk-c6">
+            <label class="itk-lbl" for="itk_rut">RUT de compra <span class="itk-req">*</span></label>
+            <input class="itk-in" id="itk_rut" name="rut" maxlength="12" placeholder="Ej: 76.123.456-7" autocomplete="off">
+            <p class="itk-help">El RUT con el que se hizo la compra. Lo formateamos por ti.</p>
+            <p class="itk-err" id="itk_rut_err" hidden>RUT inválido: revisa el dígito verificador.</p>
+          </div>
+          <div class="itk-f itk-c6">
+            <label class="itk-lbl" for="itk_empresa">Empresa o persona</label>
+            <input class="itk-in" id="itk_empresa" name="empresa" maxlength="150" placeholder="Ej: Gimnasio Vital SpA" autocomplete="organization">
+            <p class="itk-help">Tal como aparece en la boleta o factura.</p>
+          </div>
+          <div class="itk-f itk-c6">
+            <label class="itk-lbl" for="itk_contacto">Nombre de contacto <span class="itk-req">*</span></label>
+            <input class="itk-in" id="itk_contacto" name="nombre_contacto" maxlength="150" placeholder="Ej: Juan Pérez" autocomplete="name">
+          </div>
+          <div class="itk-f itk-c6">
+            <label class="itk-lbl" for="itk_tel">Teléfono <span class="itk-req">*</span></label>
+            <input class="itk-in" id="itk_tel" name="phone" type="tel" maxlength="16" placeholder="9 1234 5678" autocomplete="tel">
+            <p class="itk-help">9 dígitos. El +56 se agrega solo.</p>
+            <p class="itk-err" id="itk_tel_err" hidden>Teléfono inválido: debe ser 9 XXXX XXXX.</p>
+          </div>
+          <div class="itk-f itk-c12">
+            <label class="itk-lbl" for="itk_email">Correo <span class="itk-req">*</span></label>
+            <input class="itk-in" id="itk_email" name="email" type="email" maxlength="150" placeholder="tucorreo@empresa.cl" autocomplete="email">
+            <p class="itk-help">Aquí te avisaremos del avance de tu solicitud.</p>
+            <p class="itk-err" id="itk_email_err" hidden>Correo inválido (ej: tu@correo.cl).</p>
+            <button type="button" class="itk-sug" id="itk_email_sug" hidden></button>
+          </div>
+        </div>
+      </section>
+
+      <!-- PASO 3 -->
+      <section class="itk-step" data-paso="3" id="itk_paso3">
+        <div class="itk-step-h">
+          <div class="itk-circle"><b>3</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+          <div><h3 class="itk-step-t">¿Dónde está el equipo?</h3>
+          <p class="itk-step-s">La dirección donde se encuentra la máquina: calle y número, comuna y ciudad.</p></div>
+        </div>
+        <div class="itk-grid">
+          <div class="itk-f itk-c8">
+            <label class="itk-lbl" for="itk_dir">Dirección <span class="itk-req">*</span></label>
+            <input class="itk-in" id="itk_dir" name="direccion" maxlength="255" placeholder="Ej: Av. Colón 1265, Las Condes, Santiago" autocomplete="street-address">
+            <p class="itk-help">Calle, número y comuna. La confirmaremos contigo antes de agendar.</p>
+          </div>
+          <div class="itk-f itk-c4">
+            <label class="itk-lbl" for="itk_comuna">Comuna</label>
+            <input class="itk-in" id="itk_comuna" name="comuna_nombre" maxlength="120" placeholder="Ej: Las Condes" autocomplete="address-level2">
+          </div>
+          <div class="itk-f itk-c12">
+            <label class="itk-lbl" for="itk_sucursal">Sucursal <span class="itk-tag">Opcional</span></label>
+            <input class="itk-in" id="itk_sucursal" name="sucursal" maxlength="100" placeholder="Ej: Sede Providencia">
+          </div>
+        </div>
+      </section>
+
+      <!-- PASO 4 (opcional) -->
+      <section class="itk-step is-opt" data-paso="4" id="itk_paso4">
+        <div class="itk-step-h">
+          <div class="itk-circle"><b>4</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+          <div><h3 class="itk-step-t">El equipo <span class="itk-tag">Opcional</span></h3>
+          <p class="itk-step-s">Si no conoces el nombre exacto del equipo, no hay problema: puedes avanzar igual.</p></div>
+        </div>
+        <label class="itk-toggle" for="itk_prod_on">
+          <input type="checkbox" id="itk_prod_on">
+          <span><strong>Sí, sé qué equipo es</strong><small>Búscalo en nuestro catálogo o agrégalo a mano.</small></span>
+        </label>
+        <div class="itk-auth" id="itk_prod_box" hidden>
+          <div class="itk-f">
+            <label class="itk-lbl" for="itk_prod_q">Productos</label>
+            <input class="itk-in" id="itk_prod_q" maxlength="80" placeholder="Escribe el nombre del equipo…" autocomplete="off">
+            <div class="itk-ac" id="itk_prod_ac"></div>
+            <p class="itk-help">Si no aparece en el catálogo, puedes agregarlo escribiendo su nombre.</p>
+          </div>
+          <div class="itk-chips" id="itk_prod_chips"></div>
+        </div>
+        <div class="itk-grid" style="margin-top:14px">
+          <div class="itk-f itk-c12">
+            <label class="itk-lbl" for="itk_doc">N° de boleta o factura <span class="itk-tag">Opcional</span></label>
+            <input class="itk-in" id="itk_doc" name="numero_documento" maxlength="60" inputmode="numeric" placeholder="Ej: 10683" autocomplete="off">
+            <p class="itk-help">Aparece en la parte superior de tu documento. Nos ayuda a ubicar tu compra.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- PASO 5 -->
+      <section class="itk-step" data-paso="5" id="itk_paso5">
+        <div class="itk-step-h">
+          <div class="itk-circle"><b>5</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+          <div><h3 class="itk-step-t">Cuéntanos el problema</h3>
+          <p class="itk-step-s">Mientras más detalle, más rápido lo resolvemos. Puedes adjuntar fotos, videos o documentos.</p></div>
+        </div>
+        <div class="itk-grid">
+          <div class="itk-f itk-c12">
+            <label class="itk-lbl" for="itk_desc">¿Qué está pasando? <span class="itk-req">*</span></label>
+            <textarea class="itk-in" id="itk_desc" name="descripcion" rows="3" maxlength="260" placeholder="Ej: La consola de la trotadora se apaga sola después de unos minutos de uso…"></textarea>
+            <div class="itk-counter"><span id="itk_desc_n">260</span> caracteres restantes</div>
+          </div>
+          <div class="itk-f itk-c12">
+            <label class="itk-toggle" for="itk_garantia">
+              <input type="checkbox" id="itk_garantia">
+              <span><strong>¿Crees que esto podría estar cubierto por garantía?</strong><small>Márcalo y tu caso será evaluado por nuestro equipo técnico para confirmar si aplica.</small></span>
+            </label>
+          </div>
+          <div class="itk-f itk-c12" id="itk_multi_wrap" hidden>
+            <label class="itk-toggle" for="itk_multi">
+              <input type="checkbox" id="itk_multi">
+              <span><strong>¿El problema es distinto en cada máquina?</strong><small>Si lo activas, puedes contarnos el detalle específico de cada equipo por separado.</small></span>
+            </label>
+            <div class="itk-motivos" id="itk_motivos"></div>
+          </div>
+          <div class="itk-f itk-c12">
+            <label class="itk-lbl" for="itk_file">Fotos, videos o documentos <span class="itk-tag">Opcional</span></label>
+            <button type="button" class="itk-drop" id="itk_drop">
+              <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.5 3a2.5 2.5 0 0 1 5 0v9a1.5 1.5 0 0 1-3 0V5a.5.5 0 0 1 1 0v7a.5.5 0 0 0 1 0V3a1.5 1.5 0 1 0-3 0v9a2.5 2.5 0 0 0 5 0V5a.5.5 0 0 1 1 0v7a3.5 3.5 0 1 1-7 0V3z"/></svg>
+              <span class="t1">Arrastra tus archivos aquí o haz clic para elegir</span>
+              <span class="t2" style="display:block">Fotos, videos, PDF o documentos · hasta <span id="itk_max_adj">15</span> archivos (<span id="itk_max_mb">25</span> MB c/u)</span>
+            </button>
+            <input type="file" id="itk_file" multiple hidden accept=".jpg,.jpeg,.png,.webp,.gif,.heic,.mp4,.mov,.webm,.avi,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv">
+            <div class="itk-files" id="itk_files"></div>
+          </div>
+        </div>
+      </section>
+
+      <div class="itk-alert" id="itk_alert" role="alert" hidden></div>
+      <button type="submit" class="itk-send" id="itk_send">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M15.6.4a.6.6 0 0 0-.6-.1L.8 5.9a.6.6 0 0 0 0 1.1l5.6 2.5 2.5 5.6a.6.6 0 0 0 1.1 0L15.7 1a.6.6 0 0 0-.1-.6zM6.7 8.4 3 6.8l9.4-3.8zm.9.9 5.4-5.4-3.8 9.4z"/></svg>
+        <span id="itk_send_txt">Enviar solicitud</span>
+      </button>
+      <p class="itk-priv">Tus datos solo se usan para gestionar tu solicitud y no se comparten con terceros. Por seguridad registramos la dirección IP desde la que se envía la solicitud.</p>
+    </form>
+    <div class="itk-ok" id="itk_ok" hidden tabindex="-1">
+      <div class="itk-ok-ic"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
+      <h3>¡Solicitud recibida!</h3>
+      <div>Tu N° de ticket</div>
+      <div class="itk-code" id="itk_code">TK-XXXX-XXXXX</div>
+      <p id="itk_ok_txt">Te enviamos un correo con la confirmación. Ese será el canal por el que te contactaremos con el seguimiento de tu caso.</p>
+      <p><strong>Si respondes ese correo, no cambies el asunto:</strong> ahí va tu número de ticket y así lo asociamos automáticamente a tu caso.</p>
+      <div class="itk-ok-adj" id="itk_ok_adj" hidden></div>
+      <div class="itk-ok-btns">
+        <button type="button" class="itk-btn is-dark" id="itk_copy">Copiar N° de ticket</button>
+        <button type="button" class="itk-btn" id="itk_otra">Enviar otra solicitud</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ILUS Fitness · Formulario «Solicita soporte» (tienda) · versión 2026-10-27
+   Habla con la MISMA API que el formulario /soporte de ILUS: /soporte/api/crear, /soporte/api/adjuntos/<id>
+   y /soporte/api/erp/productos. Sin claves. */
+(function () {
+  var API = 'https://ilus-app-469212710544.southamerica-west1.run.app';
+  var root = document.getElementById('ilus-tk');
+  if (!root) return;
+  var $ = function (id) { return document.getElementById(id); };
+  var form = $('itkForm');
+  var MAX_ADJ = 15, MAX_MB = 25;                      // mismos topes que el servidor (MAX_ADJUNTOS / MAX_ADJUNTO_MB)
+  var T0 = Math.floor(Date.now() / 1000);             // hora en que se abrió el formulario (filtro anti-bots: nadie lo llena en 3 s)
+  var tipoSel = '', productos = [], archivos = [], ticketId = null, uploadToken = null, enviando = false;
+
+  /* Tipos de solicitud (mismos 13 del formulario /soporte, con sus colores) */
+  var ICONS = {
+    install: 'M8.707 1.5a1 1 0 0 0-1.414 0L.646 8.146a.5.5 0 0 0 .708.708L2 8.207V13.5A1.5 1.5 0 0 0 3.5 15h9a1.5 1.5 0 0 0 1.5-1.5V8.207l.646.647a.5.5 0 0 0 .708-.708L13 5.793V2.5a.5.5 0 0 0-.5-.5h-1a.5.5 0 0 0-.5.5v1.293L8.707 1.5ZM13 7.207V13.5a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V7.207l5-5 5 5Z M8 6.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Zm0 1a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z',
+    tech_support: 'M8 1a5 5 0 0 0-5 5v1h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a6 6 0 1 1 12 0v6a2.5 2.5 0 0 1-2.5 2.5H9.366a1 1 0 0 1-.866.5h-1a1 1 0 1 1 0-2h1a1 1 0 0 1 .866.5H11.5A1.5 1.5 0 0 0 13 12h-1a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h1V6a5 5 0 0 0-5-5z',
+    shipping: 'M0 3.5A1.5 1.5 0 0 1 1.5 2h9A1.5 1.5 0 0 1 12 3.5V5h1.02a1.5 1.5 0 0 1 1.17.563l1.481 1.85a1.5 1.5 0 0 1 .329.938V10.5a1.5 1.5 0 0 1-1.5 1.5H14a2 2 0 1 1-4 0H5a2 2 0 1 1-3.998-.085A1.5 1.5 0 0 1 0 10.5v-7zm1.294 7.456A1.999 1.999 0 0 1 4.732 11h5.536a2.01 2.01 0 0 1 .732-.732V3.5a.5.5 0 0 0-.5-.5h-9a.5.5 0 0 0-.5.5v7a.5.5 0 0 0 .294.456zM12 10a2 2 0 0 1 1.732 1h.768a.5.5 0 0 0 .5-.5V8.35a.5.5 0 0 0-.11-.312l-1.48-1.85A.5.5 0 0 0 13.02 6H12v4zm-9 1a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm9 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z',
+    quotation: 'M8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4z M0 4a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V4zm3 0a2 2 0 0 1-2 2v4a2 2 0 0 1 2 2h10a2 2 0 0 1 2-2V6a2 2 0 0 1-2-2H3z',
+    'return': 'M14.5 1.5a.5.5 0 0 1 .5.5v4.8a2.5 2.5 0 0 1-2.5 2.5H2.707l3.347 3.346a.5.5 0 0 1-.708.708l-4.2-4.2a.5.5 0 0 1 0-.708l4-4a.5.5 0 1 1 .708.708L2.707 8.3H12.5a1.5 1.5 0 0 0 1.5-1.5V2a.5.5 0 0 1 .5-.5z',
+    tech_evaluation: 'M10.854 7.146a.5.5 0 0 1 0 .708l-3 3a.5.5 0 0 1-.708 0l-1.5-1.5a.5.5 0 1 1 .708-.708L7.5 9.793l2.646-2.647a.5.5 0 0 1 .708 0z M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1h1a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1h1v-1z M9.5 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5h3zm-3-1A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3z',
+    maintenance: 'M1 0 0 1l2.2 3.081a1 1 0 0 0 .815.419h.07a1 1 0 0 1 .708.293l2.675 2.675-2.617 2.654A3.003 3.003 0 0 0 0 13a3 3 0 1 0 5.878-.851l2.654-2.617.968.968-.305.914a1 1 0 0 0 .242 1.023l3.27 3.27a.997.997 0 0 0 1.414 0l1.586-1.586a.997.997 0 0 0 0-1.414l-3.27-3.27a1 1 0 0 0-1.023-.242L10.5 9.5l-.96-.96 2.68-2.643A3.005 3.005 0 0 0 16 3c0-.269-.035-.53-.102-.777l-2.14 2.141L12 4l-.364-1.757L13.777.102a3 3 0 0 0-3.675 3.68L7.462 6.46 4.793 3.793a1 1 0 0 1-.293-.707v-.071a1 1 0 0 0-.419-.814L1 0zm9.646 10.646a.5.5 0 0 1 .708 0l2.914 2.915a.5.5 0 0 1-.707.707l-2.915-2.914a.5.5 0 0 1 0-.708zM3 11l.471.242.529.026.287.445.445.287.026.529L5 13l-.242.471-.026.529-.445.287-.287.445-.529.026L3 15l-.471-.242L2 14.732l-.287-.445L1.268 14l-.026-.529L1 13l.242-.471.026-.529.445-.287.287-.445.529-.026L3 11z',
+    spare_parts: 'M8.186 1.113a.5.5 0 0 0-.372 0L1.846 3.5 8 5.961 14.154 3.5 8.186 1.113zM15 4.239l-6.5 2.6v7.922l6.5-2.6V4.24zM7.5 14.762V6.838L1 4.239v7.923l6.5 2.6zM7.443.184a1.5 1.5 0 0 1 1.114 0l7.129 2.852A.5.5 0 0 1 16 3.5v8.662a1 1 0 0 1-.629.928l-7.185 2.874a.5.5 0 0 1-.372 0L.63 13.09a1 1 0 0 1-.63-.928V3.5a.5.5 0 0 1 .314-.464L7.443.184z',
+    equipment_transfer: 'M7.646.146a.5.5 0 0 1 .708 0l2 2a.5.5 0 0 1-.708.708L8.5 1.707V5.5a.5.5 0 0 1-1 0V1.707L6.354 2.854a.5.5 0 1 1-.708-.708l2-2zM8 10a.5.5 0 0 1 .5.5v3.793l1.146-1.147a.5.5 0 0 1 .708.708l-2 2a.5.5 0 0 1-.708 0l-2-2a.5.5 0 0 1 .708-.708L7.5 14.293V10.5A.5.5 0 0 1 8 10zM.146 8.354a.5.5 0 0 1 0-.708l2-2a.5.5 0 1 1 .708.708L1.707 7.5H5.5a.5.5 0 0 1 0 1H1.707l1.147 1.146a.5.5 0 0 1-.708.708l-2-2zM10 8a.5.5 0 0 1 .5-.5h3.793l-1.147-1.146a.5.5 0 0 1 .708-.708l2 2a.5.5 0 0 1 0 .708l-2 2a.5.5 0 0 1-.708-.708L14.293 8.5H10.5A.5.5 0 0 1 10 8z',
+    warranty: 'M5.338 1.59a61.44 61.44 0 0 0-2.837.856.481.481 0 0 0-.328.39c-.554 4.157.726 7.19 2.253 9.188a10.725 10.725 0 0 0 2.287 2.233c.346.244.652.42.893.533.12.057.218.095.293.118a.55.55 0 0 0 .101.025.615.615 0 0 0 .1-.025c.076-.023.174-.061.294-.118.24-.113.547-.29.893-.533a10.726 10.726 0 0 0 2.287-2.233c1.527-1.997 2.807-5.031 2.253-9.188a.48.48 0 0 0-.328-.39c-.651-.213-1.75-.56-2.837-.855C9.552 1.29 8.531 1.067 8 1.067c-.53 0-1.552.223-2.662.524zM5.072.56C6.157.265 7.31 0 8 0s1.843.265 2.928.56c1.11.3 2.229.655 2.887.87a1.54 1.54 0 0 1 1.044 1.262c.596 4.477-.787 7.795-2.465 9.99a11.775 11.775 0 0 1-2.517 2.453 7.159 7.159 0 0 1-1.048.625c-.28.132-.581.24-.829.24s-.548-.108-.829-.24a7.158 7.158 0 0 1-1.048-.625 11.777 11.777 0 0 1-2.517-2.453C1.928 10.487.545 7.169 1.141 2.692A1.54 1.54 0 0 1 2.185 1.43 62.456 62.456 0 0 1 5.072.56z M10.854 5.146a.5.5 0 0 1 0 .708l-3 3a.5.5 0 0 1-.708 0l-1.5-1.5a.5.5 0 1 1 .708-.708L7.5 7.793l2.646-2.647a.5.5 0 0 1 .708 0z',
+    repair: 'M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0zm0 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1z M10.5 4a2.5 2.5 0 0 0-2.4 3.2L4.2 11.1a.7.7 0 0 0 1 1l3.9-3.9A2.5 2.5 0 0 0 12.3 5l-1.3 1.3-1.2-.3-.3-1.2L10.8 3.5A2.5 2.5 0 0 0 10.5 4z',
+    spare_parts_store: 'M4 2.5h1v1H4v-1zm3 0h1v1H7v-1zm3 0h1v1h-1v-1zM4 5h1v1H4V5zm3 0h1v1H7V5zm3 0h1v1h-1V5zM4 7.5h1v1H4v-1zm3 0h1v1H7v-1zm3 0h1v1h-1v-1zM4 10h1v1H4v-1zm6 0h1v1h-1v-1z M2 1a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V1zm1 0v14h3v-2.5h2V15h4V1H3z',
+    spare_parts_import: 'M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zM7.5 1.03v2.44c-.9.06-1.73.2-2.46.4A6.98 6.98 0 0 1 7.5 1.03zM4.08 4.33c.9-.3 2-.5 3.42-.56v3.73H3.52c.06-1.2.26-2.3.56-3.17zM1.02 7.5A6.96 6.96 0 0 1 2.9 3.3c.4.2.8.37 1.25.5-.35 1.03-.57 2.3-.63 3.7H1.02zm0 1h2.5c.06 1.4.28 2.67.63 3.7-.45.13-.85.3-1.25.5A6.96 6.96 0 0 1 1.02 8.5zm4.02 3.17c-.3-.87-.5-1.97-.56-3.17H7.5v3.73c-1.42-.06-2.52-.26-3.42-.56zm2.46 3.3a6.98 6.98 0 0 1-2.46-2.84c.73.2 1.56.34 2.46.4v2.44zm1 0v-2.44c.9-.06 1.73-.2 2.46-.4a6.98 6.98 0 0 1-2.46 2.84zm3.42-3.3c-.9.3-2 .5-3.42.56V8.5h3.98c-.06 1.2-.26 2.3-.56 3.17zm3.06-3.17a6.96 6.96 0 0 1-1.88 4.2c-.4-.2-.8-.37-1.25-.5.35-1.03.57-2.3.63-3.7h2.5zm-2.5-1c-.06-1.4-.28-2.67-.63-3.7.45-.13.85-.3 1.25-.5a6.96 6.96 0 0 1 1.88 4.2h-2.5zM8.5 7.5V3.77c1.42.06 2.52.26 3.42.56.3.87.5 1.97.56 3.17H8.5zm0-4.03V1.03a6.98 6.98 0 0 1 2.46 2.84c-.73-.2-1.56-.34-2.46-.4z'
+  };
+  var TIPOS = [
+    ['install', 'Instalación', '#3b82f6', '#eff6ff'],
+    ['tech_support', 'Soporte técnico', '#dc2626', '#fef2f2'],
+    ['shipping', 'Despacho', '#1d4ed8', '#eff6ff'],
+    ['quotation', 'Cotización', '#16a34a', '#f0fdf4'],
+    ['return', 'Devolución', '#6b7280', '#f9fafb'],
+    ['tech_evaluation', 'Evaluación técnica', '#64748b', '#f8fafc'],
+    ['maintenance', 'Mantenimiento', '#f59e0b', '#fffbeb'],
+    ['spare_parts', 'Repuesto y piezas', '#3b82f6', '#eff6ff'],
+    ['equipment_transfer', 'Movimiento de equipos', '#1d4ed8', '#eff6ff'],
+    ['warranty', 'Garantía', '#16a34a', '#f0fdf4'],
+    ['repair', 'Reparación', '#991b1b', '#fef2f2'],
+    ['spare_parts_store', 'Repuestos bodega', '#6b7280', '#f9fafb'],
+    ['spare_parts_import', 'Repuestos importación', '#3b82f6', '#eff6ff']
+  ];
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+    });
+  }
+
+  /* ── Paso 1: tipos ──────────────────────────────────────── */
+  $('itk_tipos').innerHTML = TIPOS.map(function (t) {
+    return '<button type="button" class="itk-tipo" data-tipo="' + t[0] + '" style="--tc:' + t[2] + ';--tbg:' + t[3] + '" aria-pressed="false">' +
+      '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="' + (ICONS[t[0]] || '') + '"/></svg><span>' + esc(t[1]) + '</span></button>';
+  }).join('');
+  $('itk_tipos').addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('.itk-tipo') : null;
+    if (!b) return;
+    [].forEach.call($('itk_tipos').querySelectorAll('.itk-tipo'), function (x) { x.classList.remove('is-sel'); x.setAttribute('aria-pressed', 'false'); });
+    b.classList.add('is-sel'); b.setAttribute('aria-pressed', 'true');
+    tipoSel = b.getAttribute('data-tipo');
+    $('itk_tipo_err').hidden = true;
+    actualizar();
+  });
+
+  /* ── RUT, correo y teléfono ─────────────────────────────── */
+  function rutLimpio(v) { return String(v || '').replace(/[^0-9kK]/g, '').toUpperCase(); }
+  function rutValido(v) {
+    var r = rutLimpio(v); if (r.length < 2) return false;
+    var cuerpo = r.slice(0, -1), dv = r.slice(-1), suma = 0, mul = 2;
+    if (!/^\d+$/.test(cuerpo)) return false;
+    for (var i = cuerpo.length - 1; i >= 0; i--) { suma += (+cuerpo[i]) * mul; mul = mul === 7 ? 2 : mul + 1; }
+    var res = 11 - (suma % 11), esp = res === 11 ? '0' : res === 10 ? 'K' : String(res);
+    return esp === dv;
+  }
+  function rutFormato(v) {
+    var r = rutLimpio(v); if (r.length < 2) return v;
+    return r.slice(0, -1).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + '-' + r.slice(-1);
+  }
+  function emailValido(v) { return /^[^\s@]+@[^\s@]+\.[a-zA-Z]{2,}$/.test(String(v || '').trim()); }
+  var TYPOS = { 'gmial.com': 'gmail.com', 'gmai.com': 'gmail.com', 'gmail.co': 'gmail.com', 'gmail.cl': 'gmail.com', 'gamil.com': 'gmail.com', 'hotmial.com': 'hotmail.com', 'hotmail.co': 'hotmail.com', 'hotmal.com': 'hotmail.com', 'outlok.com': 'outlook.com', 'yaho.com': 'yahoo.com' };
+  function telDigitos(v) {
+    var d = String(v || '').replace(/\D/g, '');
+    if (d.indexOf('56') === 0 && d.length > 9) d = d.slice(2);
+    return d.slice(0, 9);
+  }
+  function telValido(v) { return /^(9\d{8}|[2-9]\d{7,8})$/.test(telDigitos(v)); }
+  function telFormato(v) { var d = telDigitos(v); return telValido(d) ? '+56 ' + d[0] + ' ' + d.slice(1, 5) + ' ' + d.slice(5) : v; }
+
+  function marcar(inp, ok, errId) {
+    inp.classList.toggle('is-bad', ok === false);
+    inp.classList.toggle('is-good', ok === true);
+    if (errId) $(errId).hidden = ok !== false;
+  }
+  function validarCampo(id) {
+    var inp = $(id), v = inp.value.trim();
+    if (id === 'itk_rut') {
+      if (!v) { marcar(inp, null, 'itk_rut_err'); return false; }
+      var okR = rutValido(v); if (okR) inp.value = rutFormato(v);
+      marcar(inp, okR, 'itk_rut_err'); return okR;
+    }
+    if (id === 'itk_email') {
+      if (!v) { marcar(inp, null, 'itk_email_err'); return false; }
+      var okE = emailValido(v); marcar(inp, okE, 'itk_email_err');
+      var dom = (v.split('@')[1] || '').toLowerCase(), sug = $('itk_email_sug');
+      if (TYPOS[dom]) { sug.textContent = '¿Quisiste decir ' + v.split('@')[0] + '@' + TYPOS[dom] + '?'; sug.hidden = false; }
+      else sug.hidden = true;
+      return okE;
+    }
+    if (id === 'itk_tel') {
+      if (!v) { marcar(inp, null, 'itk_tel_err'); return false; }
+      var okT = telValido(v); if (okT) inp.value = telFormato(v);
+      marcar(inp, okT, 'itk_tel_err'); return okT;
+    }
+    return !!v;
+  }
+  ['itk_rut', 'itk_email', 'itk_tel'].forEach(function (id) {
+    $(id).addEventListener('blur', function () { validarCampo(id); actualizar(); });
+  });
+  $('itk_email_sug').addEventListener('click', function () {
+    var v = $('itk_email').value.trim(), dom = (v.split('@')[1] || '').toLowerCase();
+    if (TYPOS[dom]) { $('itk_email').value = v.split('@')[0] + '@' + TYPOS[dom]; validarCampo('itk_email'); actualizar(); }
+  });
+
+  /* ── Paso 4: equipo (buscador en el catálogo de ILUS + manual) ── */
+  $('itk_prod_on').addEventListener('change', function () {
+    $('itk_prod_box').hidden = !this.checked;
+    if (this.checked) { try { $('itk_prod_q').focus(); } catch (x) { } }
+    actualizar();
+  });
+  var ac = $('itk_prod_ac'), tBusca = null, ultimaBusqueda = 0;
+  $('itk_prod_q').addEventListener('input', function () {
+    clearTimeout(tBusca);
+    var q = this.value.trim();
+    if (q.length < 2) { ac.classList.remove('is-open'); return; }
+    tBusca = setTimeout(function () { buscarProd(q); }, 320);
+  });
+  function buscarProd(q) {
+    var mio = ++ultimaBusqueda;
+    ac.innerHTML = '<div class="itk-ac-empty">Buscando…</div>'; ac.classList.add('is-open');
+    fetch(API + '/soporte/api/erp/productos?q=' + encodeURIComponent(q), { credentials: 'omit', headers: { 'Accept': 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (mio !== ultimaBusqueda) return;
+        var rows = (d && d.resultados) || [];
+        ac.innerHTML = (rows.length
+          ? rows.map(function (p, i) { return '<div class="itk-ac-item" data-i="' + i + '">' + esc(p.nombre) + '</div>'; }).join('')
+          : '<div class="itk-ac-empty">Sin resultados</div>') +
+          '<div class="itk-ac-item itk-ac-manual" data-manual="1">No lo encuentro — agregar «' + esc(q) + '» manualmente</div>';
+        [].forEach.call(ac.querySelectorAll('.itk-ac-item[data-i]'), function (it) {
+          it.addEventListener('click', function () { agregarProd(rows[+it.getAttribute('data-i')]); });
+        });
+        ac.querySelector('.itk-ac-manual').addEventListener('click', function () { agregarProd({ sku: '', nombre: q }); });
+      })
+      .catch(function () { if (mio === ultimaBusqueda) ac.innerHTML = '<div class="itk-ac-empty">Catálogo no disponible. Puedes escribir el nombre y agregarlo a mano.</div>'; });
+  }
+  function agregarProd(p) {
+    if (!p || !p.nombre) return;
+    if (!productos.some(function (x) { return x.nombre === p.nombre; })) productos.push({ sku: p.sku || '', nombre: p.nombre, motivo: '' });
+    ac.classList.remove('is-open'); $('itk_prod_q').value = '';
+    pintarChips(); actualizar();
+  }
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest || (!e.target.closest('#itk_prod_q') && !e.target.closest('#itk_prod_ac'))) ac.classList.remove('is-open');
+  });
+  function pintarChips() {
+    $('itk_prod_chips').innerHTML = productos.map(function (p, i) {
+      return '<span class="itk-chip">' + esc(p.nombre) + '<button type="button" data-quitar="' + i + '" aria-label="Quitar ' + esc(p.nombre) + '">×</button></span>';
+    }).join('');
+    $('itk_multi_wrap').hidden = productos.length < 2;
+    if (productos.length < 2) $('itk_multi').checked = false;
+    pintarMotivos();
+  }
+  $('itk_prod_chips').addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('[data-quitar]') : null;
+    if (!b) return;
+    productos.splice(+b.getAttribute('data-quitar'), 1);
+    pintarChips(); actualizar();
+  });
+  function pintarMotivos() {
+    var box = $('itk_motivos');
+    if (!$('itk_multi').checked || productos.length < 2) { box.innerHTML = ''; return; }
+    box.innerHTML = productos.map(function (p, i) {
+      return '<div class="itk-f"><label class="itk-lbl" for="itk_mot_' + i + '">' + esc(p.nombre) + ' <span class="itk-tag">Opcional</span></label>' +
+        '<textarea class="itk-in" id="itk_mot_' + i + '" data-mot="' + i + '" rows="2" maxlength="260" placeholder="Detalle específico de este equipo (si aplica)…">' + esc(p.motivo || '') + '</textarea></div>';
+    }).join('');
+  }
+  $('itk_multi').addEventListener('change', pintarMotivos);
+  $('itk_motivos').addEventListener('input', function (e) {
+    var t = e.target; if (t && t.getAttribute && t.getAttribute('data-mot') != null) productos[+t.getAttribute('data-mot')].motivo = t.value;
+  });
+
+  /* ── Paso 5: contador + adjuntos ───────────────────────── */
+  $('itk_desc').addEventListener('input', function () { $('itk_desc_n').textContent = String(260 - this.value.length); });
+  $('itk_max_adj').textContent = String(MAX_ADJ); $('itk_max_mb').textContent = String(MAX_MB);
+  var drop = $('itk_drop');
+  drop.addEventListener('click', function () { $('itk_file').click(); });
+  ['dragover', 'dragleave', 'drop'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) {
+      e.preventDefault();
+      drop.classList.toggle('is-drag', ev === 'dragover');
+      if (ev === 'drop') agregarArchivos(e.dataTransfer.files);
+    });
+  });
+  $('itk_file').addEventListener('change', function () { agregarArchivos(this.files); this.value = ''; });
+  function agregarArchivos(lista) {
+    var restantes = MAX_ADJ - archivos.length;
+    if (restantes <= 0) { mostrarErrores(['Máximo ' + MAX_ADJ + ' archivos por solicitud.']); return; }
+    var grandes = [];
+    [].slice.call(lista, 0, restantes).forEach(function (f) {
+      if (f.size > MAX_MB * 1024 * 1024) { grandes.push(f.name + ' supera ' + MAX_MB + ' MB'); return; }
+      archivos.push({ file: f, estado: 'pendiente', nombre: f.name });
+    });
+    if (grandes.length) mostrarErrores(grandes);
+    pintarArchivos();
+    if (ticketId) subirPendientes();
+  }
+  function pintarArchivos() {
+    $('itk_files').innerHTML = archivos.map(function (a, i) {
+      var cls = a.estado === 'ok' ? ' is-ok' : a.estado === 'error' ? ' is-err' : a.estado === 'subiendo' ? ' is-up' : '';
+      return '<span class="itk-file' + cls + '"><i aria-hidden="true"></i><span class="nm" title="' + esc(a.nombre) + '">' + esc(a.nombre) + '</span>' +
+        (a.estado === 'pendiente' ? '<button type="button" data-qarch="' + i + '" aria-label="Quitar ' + esc(a.nombre) + '">×</button>' : '') + '</span>';
+    }).join('');
+  }
+  $('itk_files').addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('[data-qarch]') : null;
+    if (!b) return;
+    archivos.splice(+b.getAttribute('data-qarch'), 1);
+    pintarArchivos();
+  });
+  function subirPendientes() {
+    var pend = archivos.filter(function (a) { return a.estado === 'pendiente'; });
+    if (!pend.length) { estadoAdjuntos(); return; }
+    var a = pend[0];
+    a.estado = 'subiendo'; pintarArchivos(); estadoAdjuntos();
+    var fd = new FormData(); fd.append('file', a.file); fd.append('token', uploadToken);
+    fetch(API + '/soporte/api/adjuntos/' + ticketId, { method: 'POST', body: fd, credentials: 'omit', headers: { 'Accept': 'application/json' } })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { a.estado = d && d.ok ? 'ok' : 'error'; })
+      .catch(function () { a.estado = 'error'; })
+      .then(function () { pintarArchivos(); subirPendientes(); });
+  }
+  function estadoAdjuntos() {
+    var box = $('itk_ok_adj');
+    if (!archivos.length) { box.hidden = true; return; }
+    var ok = archivos.filter(function (a) { return a.estado === 'ok'; }).length;
+    var err = archivos.filter(function (a) { return a.estado === 'error'; }).length;
+    var falta = archivos.length - ok - err;
+    box.textContent = falta
+      ? 'Subiendo tus archivos… ' + ok + ' de ' + archivos.length + ' listos. No cierres esta página.'
+      : (err ? ok + ' archivo(s) adjuntado(s); ' + err + ' no se pudo(ieron) subir. Puedes responder el correo de confirmación adjuntándolos.' : 'Tus ' + ok + ' archivo(s) quedaron adjuntos al ticket.');
+    box.hidden = false;
+  }
+
+  /* ── Semáforo de pasos ─────────────────────────────────── */
+  function pasoOk(n) {
+    if (n === 1) return !!tipoSel;
+    if (n === 2) return rutValido($('itk_rut').value) && !!$('itk_contacto').value.trim() && telValido($('itk_tel').value) && emailValido($('itk_email').value);
+    if (n === 3) return $('itk_dir').value.trim().length >= 5;
+    if (n === 4) return productos.length > 0 || !!$('itk_doc').value.trim();
+    if (n === 5) return !!$('itk_desc').value.trim();
+    return false;
+  }
+  function actualizar() {
+    var listos = 0;
+    [1, 2, 3, 4, 5].forEach(function (n) {
+      var sec = $('itk_paso' + n), ok = pasoOk(n);
+      sec.classList.toggle('is-ok', ok);
+      if (ok) sec.classList.remove('is-bad');
+      if (n !== 4 && ok) listos++;
+    });
+    $('itkProgBar').style.width = (listos / 4 * 100) + '%';
+    $('itkProg').classList.toggle('is-ok', listos === 4);
+    $('itkProgTxt').textContent = listos + ' de 4 pasos listos';
+  }
+  function alEditar(e) {
+    var t = e.target;
+    if (t && t.classList && t.classList.contains('itk-in') && String(t.value || '').trim()) t.classList.remove('is-bad');
+    $('itk_alert').hidden = true;
+    actualizar();
+  }
+  form.addEventListener('input', alEditar);
+  form.addEventListener('change', alEditar);
+
+  /* ── Datos que vienen en el link de la página ─────────── */
+  try {
+    var qs = new URLSearchParams(window.location.search);
+    var pon = function (id, v) { if (v && !$(id).value) $(id).value = String(v).trim().slice(0, 150); };
+    pon('itk_contacto', qs.get('nombre')); pon('itk_email', qs.get('email'));
+    pon('itk_tel', qs.get('telefono')); pon('itk_rut', qs.get('rut')); pon('itk_empresa', qs.get('empresa'));
+    pon('itk_doc', (qs.get('documento') || qs.get('numero') || '').replace(/^#/, ''));
+    var tipoQs = (qs.get('tipo') || '').toLowerCase();
+    var btnTipo = tipoQs ? $('itk_tipos').querySelector('.itk-tipo[data-tipo="' + tipoQs.replace(/[^a-z_]/g, '') + '"]') : null;
+    if (btnTipo) btnTipo.click();
+    ['itk_rut', 'itk_email', 'itk_tel'].forEach(function (id) { if ($(id).value) validarCampo(id); });
+  } catch (e) { }
+
+  /* ── Envío ─────────────────────────────────────────────── */
+  function mostrarErrores(lista) {
+    var a = $('itk_alert');
+    a.innerHTML = 'Revisa esto antes de enviar:<ul>' + lista.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>';
+    a.hidden = false;
+  }
+  function validarTodo() {
+    var errores = [], primero = null;
+    function falta(msg, el, paso) { errores.push(msg); if (!primero) primero = el; if (paso) $('itk_paso' + paso).classList.add('is-bad'); }
+    [1, 2, 3, 5].forEach(function (n) { $('itk_paso' + n).classList.remove('is-bad'); });
+    if (!tipoSel) { $('itk_tipo_err').hidden = false; falta('Elige el tipo de solicitud.', $('itk_paso1'), 1); }
+    if (!validarCampo('itk_rut')) { falta('Revisa el RUT de compra.', $('itk_rut'), 2); marcar($('itk_rut'), false, 'itk_rut_err'); }
+    if (!$('itk_contacto').value.trim()) { falta('Escribe el nombre de contacto.', $('itk_contacto'), 2); marcar($('itk_contacto'), false); }
+    if (!validarCampo('itk_tel')) { falta('Revisa el teléfono (9 XXXX XXXX).', $('itk_tel'), 2); marcar($('itk_tel'), false, 'itk_tel_err'); }
+    if (!validarCampo('itk_email')) { falta('Revisa el correo.', $('itk_email'), 2); marcar($('itk_email'), false, 'itk_email_err'); }
+    if ($('itk_dir').value.trim().length < 5) { falta('Escribe la dirección donde está el equipo.', $('itk_dir'), 3); marcar($('itk_dir'), false); }
+    if (!$('itk_desc').value.trim()) { falta('Cuéntanos qué está pasando.', $('itk_desc'), 5); marcar($('itk_desc'), false); }
+    return { errores: errores, primero: primero };
+  }
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (enviando) return;
+    $('itk_alert').hidden = true;
+    var v = validarTodo();
+    if (v.errores.length) {
+      mostrarErrores(v.errores);
+      if (v.primero) { v.primero.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (v.primero.focus) try { v.primero.focus({ preventScroll: true }); } catch (x) { } }
+      return;
+    }
+    var payload = {
+      tipo: tipoSel,
+      rut: rutFormato($('itk_rut').value),
+      empresa: $('itk_empresa').value.trim(),
+      nombre_contacto: $('itk_contacto').value.trim(),
+      phone: telFormato($('itk_tel').value),
+      email: $('itk_email').value.trim().toLowerCase(),
+      direccion: $('itk_dir').value.trim(),
+      direccion_manual: 1,                              // sin Google Maps en la tienda: ILUS la anota como «por confirmar»
+      direccion_lat: null, direccion_lng: null, direccion_place_id: null,
+      comuna_nombre: $('itk_comuna').value.trim() || null,
+      region_nombre: null, codigo_postal: null,
+      es_garantia: $('itk_garantia').checked ? 1 : 0,
+      sucursal: $('itk_sucursal').value.trim(),
+      productos: productos.map(function (p) { return { sku: p.sku || '', nombre: p.nombre, motivo: ($('itk_multi').checked ? (p.motivo || '') : '') }; }),
+      numero_documento: $('itk_doc').value.trim(),
+      descripcion: $('itk_desc').value.trim(),
+      hp_ilus_extra: $('itk_hp').value,
+      ilus_t0: T0
+    };
+    enviando = true; $('itk_send').disabled = true; $('itk_send_txt').textContent = 'Enviando…';
+    var ctl = window.AbortController ? new AbortController() : null;
+    var reloj = ctl ? setTimeout(function () { ctl.abort(); }, 45000) : null;
+    fetch(API + '/soporte/api/crear', {
+      method: 'POST', body: JSON.stringify(payload), credentials: 'omit',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, signal: ctl ? ctl.signal : undefined
+    })
+      .then(function (r) { return r.json().catch(function () { return null; }).then(function (d) { return { st: r.status, d: d }; }); })
+      .then(function (res) {
+        var d = res.d;
+        if (d && d.ok && d.id) { exito(d); return; }
+        if (res.st === 429) { mostrarErrores(['Hiciste muchos intentos seguidos. Espera unos minutos y vuelve a enviar.']); }
+        else mostrarErrores([(d && d.error) || 'No pudimos registrar tu solicitud. Inténtalo de nuevo.']);
+        $('itk_alert').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      })
+      .catch(function (err) {
+        mostrarErrores([err && err.name === 'AbortError'
+          ? 'La conexión está muy lenta. Vuelve a enviar: si tu solicitud ya había quedado registrada, revisa tu correo antes de repetirla.'
+          : 'Sin conexión con ILUS. Revisa tu internet y vuelve a enviar.']);
+        $('itk_alert').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      })
+      .then(function () {
+        if (reloj) clearTimeout(reloj);
+        enviando = false; $('itk_send').disabled = false; $('itk_send_txt').textContent = 'Enviar solicitud';
+      });
+  });
+
+  function exito(d) {
+    ticketId = d.id; uploadToken = d.upload_token || '';
+    form.hidden = true;
+    var code = String(d.numero_ticket || ('#' + d.id)).replace(/[^A-Za-z0-9#-]/g, '');
+    $('itk_code').textContent = code;
+    $('itk_ok_txt').textContent = 'Te enviamos un correo a ' + $('itk_email').value.trim().toLowerCase() + ' con la confirmación. Ese será el canal por el que te contactaremos con el seguimiento de tu caso.';
+    $('itk_ok').hidden = false;
+    $('itkProgBar').style.width = '100%'; $('itkProg').classList.add('is-ok'); $('itkProgTxt').textContent = 'Solicitud enviada';
+    estadoAdjuntos();
+    if (archivos.length) subirPendientes();
+    $('itk_ok').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    try { $('itk_ok').focus({ preventScroll: true }); } catch (x) { }
+  }
+  $('itk_copy').addEventListener('click', function () {
+    var code = $('itk_code').textContent, btn = this;
+    var listo = function () { btn.textContent = 'N° copiado'; };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(listo, function () { btn.textContent = code; });
+    else btn.textContent = code;
+  });
+  $('itk_otra').addEventListener('click', function () {
+    // Formulario en blanco para otra solicitud, sin recargar la página de la tienda.
+    tipoSel = ''; productos = []; archivos = []; ticketId = null; uploadToken = null;
+    T0 = Math.floor(Date.now() / 1000);
+    form.reset();
+    [].forEach.call(form.querySelectorAll('.itk-in'), function (i) { i.classList.remove('is-bad', 'is-good'); });
+    [].forEach.call(form.querySelectorAll('.itk-err'), function (p) { p.hidden = true; });
+    [].forEach.call($('itk_tipos').querySelectorAll('.itk-tipo'), function (x) { x.classList.remove('is-sel'); x.setAttribute('aria-pressed', 'false'); });
+    [1, 2, 3, 4, 5].forEach(function (n) { $('itk_paso' + n).classList.remove('is-bad'); });
+    $('itk_prod_box').hidden = true; $('itk_email_sug').hidden = true; $('itk_desc_n').textContent = '260';
+    pintarChips(); pintarArchivos();
+    $('itk_ok').hidden = true; form.hidden = false; $('itk_copy').textContent = 'Copiar N° de ticket';
+    actualizar();
+    root.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  actualizar();
+})();
+</script>
+</body>
+</html>
