@@ -307,3 +307,44 @@ body:has(#pane-conv.active) .tk-hero-tiles{display:none;}
   .tk-asoc-acc{flex-direction:row;}
   .tk-asoc-acc .tk-gbtn{flex:1;}
 }
+
+/* ══════════ Identificación del cliente: cada dato es UNA ficha (28-oct) ══════════
+   Etiqueta con su ícono arriba, valor completo abajo, lápiz a la derecha. */
+.tk-dl .tk-id-item{display:flex;flex-direction:column;gap:5px;padding:12px 14px 10px;border-radius:12px;}
+.tk-dl .tk-id-item-top{display:flex;align-items:center;gap:7px;margin:0;color:#64748b;}
+.tk-dl .tk-id-item-top i{font-size:.9rem;color:#dc2626;opacity:1;}
+.tk-dl .tk-id-item-top span{font-size:.72rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;}
+.tk-dl .tk-id-item dd{padding:0;min-height:30px;}
+.tk-dl .tk-id-item.vacio{background:#fff;border-style:dashed;}
+.tk-dl .tk-id-item.vacio .tk-id-item-top i{color:#cbd5e1;}
+
+/* ══════════ Estado y avance (28-oct): el lenguaje de la ficha de Retiros ══════════ */
+.tk-ea{display:grid;grid-template-columns:1.1fr 1.2fr 1.4fr;gap:0;margin:0 0 14px;background:#fff;border:1px solid #e5e7eb;
+  border-radius:14px;box-shadow:0 2px 10px rgba(10,10,10,.05);overflow:hidden;}
+.tk-ea[hidden]{display:none;}
+.tk-ea-col{display:flex;flex-direction:column;gap:8px;padding:16px 20px;min-width:0;}
+.tk-ea-col + .tk-ea-col{border-left:1px solid #eef0f3;}
+.tk-ea-k{display:flex;align-items:center;gap:7px;font-size:.72rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:#64748b;}
+.tk-ea-k i{color:#dc2626;font-size:.95rem;}
+.tk-ea-pill{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;padding:8px 16px;border-radius:999px;
+  font-size:1rem;font-weight:800;letter-spacing:.01em;max-width:100%;font-variant-numeric:tabular-nums;}
+.tk-ea-pill i{font-size:1.05rem;}
+.tk-ea-sub{font-size:.85rem;color:#475569;line-height:1.35;overflow-wrap:anywhere;}
+.tk-ea-num{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;}
+.tk-ea-num b{font-size:2rem;line-height:1;color:#0a0a0a;font-variant-numeric:tabular-nums;}
+.tk-ea-num span{font-size:.88rem;font-weight:700;color:#475569;}
+.tk-ea-barra{height:10px;border-radius:99px;background:#e5e7eb;overflow:hidden;}
+.tk-ea-barra i{display:block;height:100%;border-radius:99px;background:#0a0a0a;transition:width .8s ease;}
+.tk-ea-barra.verde i{background:#16a34a;}
+.tk-ea-barra.ambar i{background:#f59e0b;}
+.tk-ea-barra.rojo i{background:#dc2626;}
+.tk-ea-barra.gris i{background:#9ca3af;}
+.tk-ea-reloj.verde{background:#dcfce7;color:#166534;border:1px solid #86efac;}
+.tk-ea-reloj.ambar{background:#fef3c7;color:#92400e;border:1px solid #fcd34d;}
+.tk-ea-reloj.rojo{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;}
+.tk-ea-reloj.gris{background:#f3f4f6;color:#374151;border:1px solid #d1d5db;}
+.tk-ea-tiempo.is-alerta .tk-ea-sub{color:#991b1b;font-weight:700;}
+@media (max-width:991px){
+  .tk-ea{grid-template-columns:1fr;}
+  .tk-ea-col + .tk-ea-col{border-left:0;border-top:1px solid #eef0f3;}
+}

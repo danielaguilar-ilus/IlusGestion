@@ -75,6 +75,30 @@
      los pasos como fichas (clic = ir a la tarjeta) y «Siguiente: …» con sus
      botones. La calcula el servidor (tickets_guia.py, en d.guia) y la dibuja
      static/tickets_ficha_v2.js. Solo sugiere: la persona decide (REGLA #32). #}
+  {# Estado y avance (Daniel 2026-10-28: «las órdenes de trabajo tienen un estado
+     y avance, se ve bien profesional… y una barra de avance del tiempo, justo
+     como en Retiros»): el estado en grande, el avance de la guía en % y el
+     reloj del SLA de respuesta con su barra verde→ámbar→roja. Solo muestra lo
+     que el servidor ya calculó (d.guia y t.sla_resp); no decide nada. #}
+  <section class="tk-ea" id="tkEstadoAvance" aria-label="Estado, avance y plazo del ticket" hidden>
+    <div class="tk-ea-col tk-ea-estado">
+      <span class="tk-ea-k"><i class="bi bi-flag-fill"></i>Estado</span>
+      <span class="tk-ea-pill" id="eaEstado">—</span>
+      <span class="tk-ea-sub" id="eaEstadoSub"></span>
+    </div>
+    <div class="tk-ea-col tk-ea-avance">
+      <span class="tk-ea-k"><i class="bi bi-graph-up-arrow"></i>Avance</span>
+      <div class="tk-ea-num"><b id="eaPct">0%</b><span id="eaPasos"></span></div>
+      <div class="tk-ea-barra" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="eaBarraAv"><i style="width:0%"></i></div>
+      <span class="tk-ea-sub" id="eaSig"></span>
+    </div>
+    <div class="tk-ea-col tk-ea-tiempo" id="eaTiempo">
+      <span class="tk-ea-k"><i class="bi bi-stopwatch-fill"></i>Plazo de respuesta</span>
+      <span class="tk-ea-pill tk-ea-reloj" id="eaSla">—</span>
+      <div class="tk-ea-barra tk-ea-barra-t" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="eaBarraT"><i style="width:0%"></i></div>
+      <span class="tk-ea-sub" id="eaSlaSub"></span>
+    </div>
+  </section>
   <section class="tk-guia" id="tkGuia" aria-label="Guía del ticket: pasos y qué toca ahora">
     <div class="tk-guia-cargando"><span class="spinner-border spinner-border-sm me-2"></span>Preparando la guía del ticket…</div>
   </section>

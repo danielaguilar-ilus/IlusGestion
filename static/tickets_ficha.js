@@ -1173,12 +1173,22 @@ function tkIdValorMostrado(campo, t){
 // vacios (N)". El estado expandido persiste entre re-renders (guardar/
 // cancelar una edicion re-pinta la tarjeta y no debe colapsar de vuelta).
 let tkIdVaciosAbierto = false;
+function tkIdTieneValor(campo, t){
+  const v = t[campo.key];
+  return !(v === null || v === undefined || String(v).trim() === '');
+}
 function tkIdFilaHtml(campo, t){
-  return '<i class="bi bi-'+campo.icon+'"></i><dt>'+esc(campo.label)+'</dt>'
+  // Daniel 2026-10-28 («sigue sin agradarme los datos del cliente»): antes el
+  // ícono, la etiqueta y el valor eran TRES hijos sueltos de una grilla de 2
+  // columnas, así que cada etiqueta caía corrida un lugar (el RUT quedaba bajo
+  // «EMPRESA»). Ahora cada dato es UNA ficha: etiqueta con su ícono arriba y el
+  // valor completo abajo, con su lápiz.
+  return '<div class="tk-id-item' + (tkIdTieneValor(campo, t) ? '' : ' vacio') + '">'
+    + '<dt class="tk-id-item-top"><i class="bi bi-'+campo.icon+'"></i><span>'+esc(campo.label)+'</span></dt>'
     + '<dd data-field="'+campo.key+'">'
     + '<span class="tk-dd-val">'+tkIdValorMostrado(campo, t)+'</span>'
     + '<i class="bi bi-pencil-fill tk-edit-pencil" data-field="'+campo.key+'" title="Editar '+esc(campo.label)+'"></i>'
-    + '</dd>';
+    + '</dd></div>';
 }
 // Iniciales para el avatar de la cabecera: 2 letras si hay nombre/empresa
 // (primera + última palabra), "?" si el ticket todavía no tiene ningún

@@ -493,6 +493,73 @@
     });
   }
 
+  // ── Estado y avance + barra de tiempo (como el reloj de Retiros) ─────────
+  var EA_ICONO = {
+    open: 'bi-inbox-fill', in_progress: 'bi-gear-fill', pending: 'bi-hourglass-split',
+    ot_pending_approval: 'bi-clipboard-check-fill', ot_generated: 'bi-wrench-adjustable',
+    ot_in_progress: 'bi-tools', resolved: 'bi-check-circle-fill', closed: 'bi-lock-fill',
+    cancelado: 'bi-x-circle-fill'
+  };
+  function barra(idBarra, pct, clase){
+    var b = $(idBarra); if (!b) return;
+    var p = Math.max(0, Math.min(100, Math.round(pct)));
+    b.setAttribute('aria-valuenow', String(p));
+    var i = b.querySelector('i'); if (i) i.style.width = p + '%';
+    b.classList.remove('verde', 'ambar', 'rojo', 'gris');
+    if (clase) b.classList.add(clase);
+  }
+  function pintarEstadoAvance(t, d){
+    var wrap = $('tkEstadoAvance'); if (!wrap) return;
+    wrap.hidden = false;
+    var etq = (typeof ESTADO_LABEL !== 'undefined' && ESTADO_LABEL) || {};
+    var pill = $('eaEstado');
+    pill.className = 'tk-ea-pill bs-' + t.estado;
+    pill.innerHTML = '<i class="bi ' + (EA_ICONO[t.estado] || 'bi-circle-fill') + '"></i>' + e(etq[t.estado] || t.estado || '—');
+    var sub = [];
+    if (lleno(t.created_at)) sub.push('Ingresó ' + t.created_at);
+    if (lleno(t.updated_at) && t.updated_at !== t.created_at) sub.push('Actualizado ' + t.updated_at);
+    $('eaEstadoSub').textContent = sub.join(' · ');
+
+    // Avance = pasos hechos de la guía (la calcula el servidor: tickets_guia.py).
+    var g = d.guia || null, pr = g && g.progreso;
+    var pct = pr ? (pr.pct || 0) : 0;
+    $('eaPct').textContent = pct + '%';
+    $('eaPasos').textContent = pr ? (pr.hechos + ' de ' + pr.total + ' pasos') : '';
+    barra('eaBarraAv', pct, pct >= 100 ? 'verde' : '');
+    var sig = g && g.siguiente;
+    $('eaSig').textContent = sig && sig.titulo ? 'Siguiente: ' + sig.titulo : '';
+
+    // Tiempo = SLA de respuesta (4 h hábiles por mensaje del cliente), mismos
+    // textos y colores del reloj de Retiros.
+    var sla = t.sla_resp || null;
+    var cont = $('eaTiempo'), rel = $('eaSla');
+    if (!sla) {
+      rel.className = 'tk-ea-pill tk-ea-reloj gris'; rel.textContent = '—';
+      barra('eaBarraT', 0, 'gris'); $('eaSlaSub').textContent = ''; return;
+    }
+    var cl = {rojo: 'rojo', ambar: 'ambar', verde: 'verde', gris: 'gris'}[sla.semaforo] || 'gris';
+    var ic = 'bi-check-circle-fill';
+    if (sla.nivel === 'vencido') ic = 'bi-exclamation-octagon-fill';
+    else if (sla.nivel === 'atencion') ic = 'bi-hourglass-split';
+    else if (sla.nivel === 'ok') ic = sla.pausa ? 'bi-pause-circle-fill' : 'bi-stopwatch-fill';
+    else if (sla.nivel === 'cerrado') ic = 'bi-lock-fill';
+    rel.className = 'tk-ea-pill tk-ea-reloj ' + cl;
+    rel.innerHTML = '<i class="bi ' + ic + '"></i>' + e(sla.pill || sla.etiqueta || '—');
+    var pctT = 0;
+    if (sla.nivel === 'vencido') pctT = 100;
+    else if (sla.nivel === 'ok' || sla.nivel === 'atencion') {
+      var total = (Number(sla.espera_h) || 0) + (Number(sla.resta_h) || 0);
+      pctT = total > 0 ? (Number(sla.espera_h) || 0) / total * 100 : 0;
+    }
+    barra('eaBarraT', pctT, cl);
+    var st = sla.sub || '';
+    if ((sla.nivel === 'ok' || sla.nivel === 'atencion' || sla.nivel === 'vencido') && lleno(sla.vence)) {
+      st += (st ? ' · ' : '') + 'vence ' + sla.vence;
+    }
+    $('eaSlaSub').textContent = st;
+    cont.classList.toggle('is-alerta', sla.nivel === 'vencido');
+  }
+
   window.tkV2AlCargar = function(t, d){
     t = t || {}; d = d || {};
     T = t; D = d;
@@ -541,5 +608,6 @@
     pintarOT(t);
     pintarTomar(t);
     pintarGuia(d.guia, t);
+    try { pintarEstadoAvance(t, d); } catch (err) { /* la ficha nunca se cae por este bloque */ }
   };
 })();

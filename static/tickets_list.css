@@ -454,3 +454,9 @@ table.tk-table tbody tr.sla-rojo{background:#fffafa;}
   .tkf-fila .rm-btn:not(.tkf-btn){flex:1 1 auto;justify-content:center;}
   .tkf-esp{display:none;}
 }
+
+/* Barra de tiempo del SLA en la bandeja (28-oct): igual que el reloj de Retiros. */
+.tkc-sla .barra{height:5px;margin-top:6px;max-width:230px;border-radius:99px;background:#e5e7eb;overflow:hidden;}
+.tkc-sla .barra i{display:block;height:100%;border-radius:99px;background:#16a34a;transition:width .8s linear;}
+.tkc-sla.ambar .barra i{background:#f59e0b;}
+.tkc-sla.rojo .barra i{background:#dc2626;}

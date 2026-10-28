@@ -384,8 +384,17 @@ function tkSlaCelda(tk){
   else if(s.nivel === 'cerrado') ic = 'bi-lock-fill';
   let sub = s.sub || '';
   if(s.nivel === 'respondido' && tk.ultima_resp_hace) sub = 'Respondido ' + tk.ultima_resp_hace;
+  // Barra de tiempo (como el reloj de Retiros): cuánto del plazo de 4 h hábiles ya se gastó.
+  let pct = 0;
+  if(s.nivel === 'vencido') pct = 100;
+  else if(s.nivel === 'ok' || s.nivel === 'atencion'){
+    const tot = (Number(s.espera_h) || 0) + (Number(s.resta_h) || 0);
+    pct = tot > 0 ? Math.round((Number(s.espera_h) || 0) / tot * 100) : 0;
+  }
+  const barra = (s.nivel === 'ok' || s.nivel === 'atencion' || s.nivel === 'vencido')
+    ? '<div class="barra" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+pct+'"><i style="width:'+pct+'%"></i></div>' : '';
   return '<div class="tkc-sla '+esc(s.semaforo)+'"><span class="pill"><i class="bi '+ic+'"></i>'+esc(s.pill)+'</span>'
-    + (sub ? '<div class="sub">'+esc(sub)+'</div>' : '') + '</div>';
+    + barra + (sub ? '<div class="sub">'+esc(sub)+'</div>' : '') + '</div>';
 }
 
 // ── Última actividad: quién escribió, hace cuánto y un extracto. ──
