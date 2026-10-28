@@ -72,6 +72,7 @@ import ot_que_paso as _qp  # «¿Qué pasó?» de una OT y la OT hija pendiente 
 import ot_piezas_medidas as _pm    # 2026-10-20: fichas de medidas por pieza, validación, aprendizaje del modelo y árbol «¿Qué le pasa?» (módulo puro con pruebas)
 import ot_producto_estado as _pe    # acciones por producto de una OT interna (No se puede usar / No tiene arreglo / No llegó) y repuestos sugeridos por defecto (módulo puro con pruebas)
 import ot_anexo_costo as _oac    # 2026-10-20: el costo de la OT y el anexo del proveedor son UN solo valor (módulo puro con pruebas)
+import anexo_anulacion as _axa   # 2026-10-28 (REGLA #52): anexo FIRMADO + OT eliminada → anexo inválido y aviso a las dos partes (módulo puro con pruebas)
 import ot_intenciones as _oint   # 2026-10-25 (REGLA #47): intenciones del costeo (por qué, quién lo asume) y su validación: módulo puro con pruebas
 import ot_responsable as _oresp  # 2026-10-21: responsable de la OT (quién puede serlo, defecto al crear, cambio y avisos suaves): reglas puras con pruebas
 import ot_comunicacion as _ocom    # 2026-10-21 (REGLA #37): «OT terminada» automática, «Enviar OT por correo» y destinatarios a la vista (módulo puro con pruebas)
@@ -89952,6 +89953,186 @@ def _mant_visita_factura_proveedor(vid):
         return _FACTURA_CHECK_ERROR
 
 
+# ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
+# 📜 ANEXO FIRMADO + OT ELIMINADA (REGLA #52, Daniel 2026-10-28, «es OT, no UTS»: «cuando eliminemos una OT y el anexo está firmado, que se le
+# envíe al correo que el anexo queda inválido por la anulación del servicio. Por ambas partes»). Reglas puras y probadas en anexo_anulacion.py.
+#   · Antes la eliminación NO decía nada: mant_anexos.ot_id es ON DELETE SET NULL, así que el anexo firmado quedaba huérfano, «firmado» y sin
+#     aviso a nadie (el estado 'anulado' existía en la tabla y ningún código lo escribía).
+#   · Ahora el anexo FIRMADO de la OT pasa a 'anulado' EN LA MISMA TRANSACCIÓN del DELETE (con quién, cuándo y por qué) y, ya con todo
+#     confirmado, se avisa por correo a las dos partes: el proveedor (`anexo_anulado_proveedor`) e ILUS (`anexo_anulado_interno`). Un anexo
+#     sin firmar no cambia (se maneja como siempre).
+#   · ANEXO ÚNICO (REGLA #46): si la OT eliminada es la desinstalación que COMPARTE el anexo firmado de su instalación, el anexo NO se invalida
+#     (la instalación lo sigue usando): se avisa que las partidas de la desinstalación quedan sin efecto y queda la constancia.
+#   · No toca el libro de saldo (REGLA #28) ni los lotes (REGLA #29): el núcleo ya los libera / quita como siempre. El correo es best-effort:
+#     jamás impide ni deshace el borrado, y a la persona se le dice la verdad por destinatario.
+# ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
+def _anexo_anul_destinos_proveedor(ax):
+    """Los correos del proveedor de ESTE anexo: a donde se mandó el enlace de firma y, si tiene ficha, el contacto de la ficha (válidos, sin repetir)."""
+    ficha = ""
+    if ax.get("tecnico_externo_id"):
+        try:
+            f = mysql_fetchone("SELECT contacto_email FROM mant_tecnicos_externos WHERE id=%s", (int(ax["tecnico_externo_id"]),)) or {}
+            ficha = f.get("contacto_email") or ""
+        except Exception as e:
+            print(f"[anexo-anul] ficha del proveedor anexo={ax.get('id')}: {type(e).__name__}", flush=True)
+    return _axa.correos_de(ax.get("enviado_email"), ficha)
+
+
+def _anexo_anul_interno(vid, fila):
+    """Las personas de ILUS a las que avisa «la gestión» de la OT (UNA sola función decide: _ot_gestion_destinatarios, REGLA #36): solo con
+    correo, sin repetir y nunca un técnico (REGLAS #19 y #26). → [{id, nombre, correo, por}]. Nunca lanza."""
+    out, vistos = [], set()
+    try:
+        gente = _ot_gestion_destinatarios(vid, fila)
+        ids = [int(p["id"]) for p in gente]
+        roles = {}
+        if ids:
+            roles = {int(u["id"]): u.get("role") for u in (mysql_fetchall(
+                "SELECT id, role FROM app_users WHERE id IN (" + ",".join(["%s"] * len(ids)) + ")", tuple(ids)) or [])}
+        for p in gente:
+            correo = (p.get("correo") or "").strip().lower()
+            if not correo or correo in vistos or _rol_familia(roles.get(int(p["id"]))) == "tecnico":
+                continue
+            vistos.add(correo)
+            out.append({"id": int(p["id"]), "nombre": p.get("nombre") or "", "correo": correo, "por": p.get("por") or ""})
+    except Exception as e:
+        print(f"[anexo-anul] destinatarios internos vid={vid}: {type(e).__name__}", flush=True)
+    return out[:_axa.MAX_CORREOS_INTERNOS]
+
+
+def _anexo_anul_item(r, parcial):
+    """Un anexo firmado tal como lo necesitan el aviso previo, el borrado y los correos (sin montos)."""
+    return {"id": int(r["id"]), "numero": r.get("numero"), "proveedor": r.get("proveedor_nombre") or "",
+            "firmante": r.get("firmante_nombre") or "",
+            "firmado_el": chile_fmt_filter(r.get("firmado_at"), "%d/%m/%Y") if r.get("firmado_at") else "",
+            "parcial": bool(parcial), "partidas": _axa.partidas_salida(r.get("precio_items_json")) if parcial else [],
+            "destinos": _anexo_anul_destinos_proveedor(r)}
+
+
+def _anexo_anul_plan(vid):
+    """SOLO LECTURA: qué anexos FIRMADOS afecta eliminar la OT `vid`.
+    {numero_ot, titulo, anexos:[…], interno:[…]} — `anexos` vacío = no hay nada que anular ni avisar. Un anexo es «completo» (se anula) cuando es de
+    ESTA OT; «parcial» (REGLA #46) cuando la OT es la desinstalación que comparte el anexo firmado de su instalación (no se anula). LANZA si la base
+    no responde: el borrado falla CERRADO, como con la factura (nunca se borra sin saber si dejaba un anexo firmado huérfano)."""
+    fila = mysql_fetchone("SELECT * FROM mant_visitas WHERE id=%s", (int(vid),))
+    if not fila:
+        return {"numero_ot": "", "titulo": "", "anexos": [], "interno": []}
+    fila = dict(fila)
+    sel = ("SELECT id, numero, proveedor_nombre, proveedor_rut, tecnico_externo_id, enviado_email, firmado_at, firmante_nombre, "
+           "precio_items_json FROM mant_anexos WHERE ")
+    anexos = [_anexo_anul_item(dict(r), False)
+              for r in (mysql_fetchall(sel + "ot_id=%s AND estado='firmado' ORDER BY id", (int(vid),)) or [])]
+    if fila.get("ot_madre_id") and (fila.get("ot_relacion") or "").strip().lower() == _oac.REL_DESINSTALACION:
+        madre = _ot_anexo_de_la_madre(int(vid), solo_firmado=True)
+        if madre:
+            r = mysql_fetchone(sel + "id=%s", (int(madre["id"]),))
+            if r:
+                anexos.append(_anexo_anul_item(dict(r), True))
+    return {"numero_ot": fila.get("numero_ot") or f"V-{int(vid)}", "titulo": fila.get("titulo") or "", "anexos": anexos,
+            "interno": _anexo_anul_interno(int(vid), fila) if anexos else []}
+
+
+def _anexo_anul_canal_apagado(clave, modulo):
+    """Por qué el correo `clave` NO saldría hoy ('' si saldría): interruptor general, llave del módulo o interruptor de ese correo."""
+    try:
+        t = _correo_bloqueo_previo(modulo, clave)
+        return _email_motivo_bloqueo_txt(t, modulo, clave) if t else ""
+    except Exception:
+        return ""
+
+
+def _anexo_anul_marcar(cur, plan, numero_ot, quien):
+    """DENTRO de la transacción del borrado y ANTES del DELETE de la OT: pasa a 'anulado' cada anexo firmado de la OT (con quién, cuándo, por qué y de
+    qué OT). El WHERE lleva `estado='firmado'` para no pisar a nadie. → ids que de verdad se anularon. Si las columnas nuevas aún no existen
+    (ILUS_SKIP_MIGRATIONS) se anula igual y el motivo queda en la bitácora; cualquier otro error se propaga (el borrado se aborta entero)."""
+    hechos = []
+    for ax in (plan or {}).get("anexos") or []:
+        if ax.get("parcial"):
+            continue        # el anexo es de la instalación y la instalación sigue viva: no se invalida (REGLA #46)
+        try:
+            n = cur.execute(
+                "UPDATE mant_anexos SET estado='anulado', anulado_at=NOW(), anulado_por=%s, anulado_motivo=%s, anulado_ot_numero=%s "
+                " WHERE id=%s AND estado='firmado'", (quien, _axa.MOTIVO, numero_ot, ax["id"]))
+        except Exception as e:
+            print(f"[anexo-anul] columnas de la anulación no disponibles: {type(e).__name__}", flush=True)
+            n = cur.execute("UPDATE mant_anexos SET estado='anulado' WHERE id=%s AND estado='firmado'", (ax["id"],))
+        if n:
+            hechos.append(ax["id"])
+    return hechos
+
+
+def _anexo_anul_html(c):
+    """El correo (diseño maestro de ILUS) a partir del contenido puro de anexo_anulacion.correo_*; todo texto se escapa."""
+    from markupsafe import escape as _esc
+    return _ilus_email_master({
+        "subject": c["asunto"], "preheader": c.get("preheader") or "", "status_label": c.get("etiqueta") or "", "title": c["titulo"],
+        "subtitle": c.get("subtitulo") or "", "message": str(_esc(c["mensaje"])),
+        "detail_rows_html": _ilus_email_rows(c.get("filas") or []), "closing_message": str(_esc(c.get("cierre") or "")),
+    })
+
+
+def _anexo_anul_enviar(destinos, contenido, clave, modulo, ref):
+    """Un correo por la PUERTA ÚNICA (SMTP, REGLA #13): el primero va en «Para» y los demás con copia. → (salió, motivo). Nunca lanza."""
+    try:
+        ok = bool(_send_ilus_email(destinos[0], _brand_subject(contenido["asunto"]), _anexo_anul_html(contenido), evento=clave, modulo=modulo,
+                                   ref=ref, cc=(destinos[1:] or None), correo=clave))
+    except Exception as e:
+        print(f"[anexo-anul] envío {clave}: {type(e).__name__}", flush=True)
+        return False, "error al enviar"
+    if ok:
+        return True, ""
+    return False, (_email_resultado(False).get("motivo") or "").strip()
+
+
+def _anexo_anul_avisar(vid, plan, hechos, numero_ot, quien, lote=None):
+    """DESPUÉS del commit del borrado: la constancia en la bitácora y los dos correos de cada anexo afectado (proveedor e ILUS). Best-effort: nunca
+    lanza ni deshace nada. → {anexos:[{id, numero, parcial, proveedor:{destinos, salio, texto}, interno:{…}}], lineas:[…]} para decírselo a la persona
+    con la verdad (salió / no salió y por qué / sin correo). `lote` = el lote de proveedor del que salió la OT (se avisa, no se rompe)."""
+    res = {"anexos": [], "lineas": []}
+    try:
+        cuando = _now_chile().strftime("%d/%m/%Y %H:%M")
+        lote_txt = (f"estaba en el lote #{lote['id']} ({lote.get('estado_pago')}) y salió de él" if lote else "")
+        soporte = (_get_brand_cfg() or {}).get("support_email") or ILUS_SOPORTE_EMAIL
+        ref = {"tipo": "OT", "codigo": numero_ot}
+        for ax in plan.get("anexos") or []:
+            if not ax.get("parcial") and ax["id"] not in (hechos or []):
+                continue        # ya no estaba firmado cuando se borró (otra persona lo cambió): no hay nada que avisar
+            n = ax.get("numero")
+            if ax.get("parcial"):
+                txt = (f"Las partidas de la desinstalación del Anexo N° {n} ({ax.get('proveedor')}) quedaron sin efecto: se eliminó la {numero_ot} "
+                       f"por {quien} el {cuando}. El anexo sigue vigente para la instalación.")
+                acc_ax, acc_ot = "anexo_partidas_sin_efecto", "anexo_partidas_sin_efecto"
+            else:
+                txt = (f"El Anexo N° {n} ({ax.get('proveedor')}) quedó inválido por la {_axa.MOTIVO}: {numero_ot} eliminada por {quien} el {cuando}"
+                       + (f" · {lote_txt}" if lote_txt else ""))
+                acc_ax, acc_ot = "anulado_ot_eliminada", "anexo_anulado"
+            destinos = ax.get("destinos") or []
+            salio_p, motivo_p = False, ""
+            if destinos:
+                salio_p, motivo_p = _anexo_anul_enviar(destinos, _axa.correo_proveedor(ax, numero_ot, soporte), _axa.CLAVE_PROVEEDOR, "general", ref)
+            t_prov = _axa.texto_aviso(destinos, salio_p, motivo_p)
+            internos = [p["correo"] for p in plan.get("interno") or []]
+            salio_i, motivo_i = False, ""
+            if internos:
+                salio_i, motivo_i = _anexo_anul_enviar(
+                    internos, _axa.correo_interno(ax, numero_ot, plan.get("titulo") or "", quien, cuando, lote_txt, t_prov),
+                    _axa.CLAVE_INTERNO, "comunicacion_interna", ref)
+            t_int = _axa.texto_aviso(internos, salio_i, motivo_i) if internos else "sin correo interno registrado (solo queda la bitácora)"
+            _mant_log("anexo", ax["id"], acc_ax, txt)
+            _mant_log("visita", vid, acc_ot, txt)
+            _mant_log("anexo", ax["id"], "anulado_aviso_proveedor", t_prov)
+            _mant_log("anexo", ax["id"], "anulado_aviso_interno", t_int)
+            if lote:
+                _mant_log("factura_proveedor", lote["id"], "anexo_anulado_ot_eliminada", txt)
+            res["anexos"].append({"id": ax["id"], "numero": n, "parcial": bool(ax.get("parcial")),
+                                  "proveedor": {"destinos": destinos, "salio": salio_p, "texto": t_prov},
+                                  "interno": {"destinos": internos, "salio": salio_i, "texto": t_int}})
+        res["lineas"] = _axa.lineas_resultado(res["anexos"])
+    except Exception as e:
+        print(f"[anexo-anul] avisos vid={vid}: {type(e).__name__}: {e}", flush=True)
+    return res
+
+
 def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=False):
     """Núcleo del hard-delete de una OT (fila de mant_visitas).
 
@@ -90045,6 +90226,14 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=
         _tec_snap = _ot_tec_snapshot_borrado(vid, v_info)
     except Exception:       # el aviso es un extra: nada de esto puede impedir el borrado
         _tec_snap = None
+    # 📜 2026-10-28 (REGLA #52): qué anexos FIRMADOS afecta esta eliminación. Se lee ANTES de borrar (el FK deja el ot_id del anexo en NULL).
+    # Fail-CLOSED, igual que la factura: si no se puede saber, no se borra (nunca se deja un anexo firmado huérfano sin avisar).
+    try:
+        _ax_plan = _anexo_anul_plan(vid)
+    except Exception as _e_axp:
+        print(f"[anexo-anul] vid={vid} no se pudo revisar el anexo: {type(_e_axp).__name__}: {_e_axp}", flush=True)
+        return {"ok": False, "error_codigo": "ANEXO_NO_VERIFICABLE", "numero_ot": numero_ot,
+                "error": f"No se pudo verificar si la {numero_ot} tiene un anexo firmado. Inténtalo de nuevo; no se eliminó."}
     _conn_propia = conn is None
     if _conn_propia:
         conn = get_mysql()
@@ -90102,6 +90291,8 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=
                     "UPDATE mant_facturas_proveedor SET notas=CONCAT(COALESCE(notas,''), %s) WHERE id=%s",
                     (f"{chr(10)}[{numero_ot} eliminada y quitada de esta factura por {current_username() or '?'} "
                      f"(la factura estaba {_fac.get('estado_pago')})]", _fac["id"]))
+            # 📜 REGLA #52: el anexo FIRMADO de esta OT queda inválido en la MISMA transacción (si el DELETE falla, el anexo no se toca).
+            _ax_hechos = _anexo_anul_marcar(cur, _ax_plan, numero_ot, current_username() or "?")
             cur.execute("DELETE FROM mant_visitas WHERE id=%s", (vid,))
         conn.commit()
         _fac_libro_marcar(vid)   # 📒 2026-10-11: libera en el libro lo que la OT tomaba (el barrido cubre los lotes grandes)
@@ -90114,6 +90305,11 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=
                       f"{numero_ot} eliminada por {current_username() or '?'}")
         _mant_log("visita", vid, "eliminada", _detalle)
         _mant_log("cliente", v_info.get("cliente_id"), "visita_eliminada", f"{numero_ot}")
+        # 📜 REGLA #52: constancia + correo a las dos partes del anexo firmado (proveedor e ILUS). Best-effort: nunca lanza ni deshace el borrado.
+        _ax_aviso = None
+        if _ax_plan.get("anexos"):
+            _ax_aviso = _anexo_anul_avisar(vid, _ax_plan, _ax_hechos, numero_ot, current_username() or "?",
+                                           _fac if (_fac and quitar_de_factura) else None)
         if _tec_snap:      # ya con la OT borrada y los logs escritos; llave propia 'ot_tecnicos'; nunca lanza
             _ot_tec_correo_borrada(vid, _tec_snap)
         return {
@@ -90123,6 +90319,7 @@ def _mant_visita_eliminar_core(vid, actor_desc="", conn=None, quitar_de_factura=
             "cliente_id": v_info.get("cliente_id"),
             "factura_quitada": ({"id": _fac["id"], "estado_pago": _fac.get("estado_pago")}
                                 if (_fac and quitar_de_factura) else None),
+            "anexo_anulado": _ax_aviso,
         }
     finally:
         if _conn_propia:
@@ -90221,7 +90418,27 @@ def mant_visita_del(vid):
         # salvo numero_ot, que acá no viajaba).
         _http = 404 if res.get("error_codigo") == "OT_NO_ENCONTRADA" else 409
         return jsonify({k: v for k, v in res.items() if k != "numero_ot"}), _http
-    return jsonify({"ok": True, "factura_quitada": res.get("factura_quitada")})
+    return jsonify({"ok": True, "factura_quitada": res.get("factura_quitada"), "anexo_anulado": res.get("anexo_anulado")})
+
+
+@app.route("/ot/api/<int:vid>/anexo-anulacion", methods=["GET"])
+@_mant_required
+@_no_tecnico
+@_ot_can_eliminar
+def ot2_api_anexo_anulacion_previa(vid):
+    """📜 REGLA #52 — el aviso ANTES de eliminar la OT: ¿tiene un anexo firmado? Qué le pasará y a quiénes se les avisará por correo (el MISMO plan
+    que usa el borrado: lo que se promete es lo que se hace; alertar, no sorprender: REGLA #37). Solo lectura, sin montos. Solo quien puede
+    eliminar la OT (y nunca un técnico: REGLAS #19 y #26)."""
+    try:
+        plan = _anexo_anul_plan(vid)
+    except Exception as e:
+        print(f"[anexo-anul] previa vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error_codigo": "ANEXO_NO_VERIFICABLE",
+                        "error": "No se pudo revisar el anexo de esta OT. Inténtalo de nuevo."}), 500
+    out = _axa.para_pantalla(plan, _anexo_anul_canal_apagado(_axa.CLAVE_PROVEEDOR, "general"),
+                             _anexo_anul_canal_apagado(_axa.CLAVE_INTERNO, "comunicacion_interna"))
+    out["ok"] = True
+    return jsonify(out)
 
 
 # Sistema viejo de tickets (mant_tickets / mant_ticket_equipos /
@@ -91978,7 +92195,12 @@ def ot2_api_eliminar_lote_preview():
             "       (v.firma_tecnico_url IS NOT NULL AND v.firma_tecnico_url <> '') AS tiene_firma_tecnico, "
             "       (v.firma_supervisor_url IS NOT NULL AND v.firma_supervisor_url <> '') AS tiene_firma_supervisor, "
             "       EXISTS (SELECT 1 FROM mant_factura_proveedor_items fpi "
-            "               WHERE fpi.visita_id = v.id) AS en_factura_proveedor "
+            "               WHERE fpi.visita_id = v.id) AS en_factura_proveedor, "
+            # 📜 REGLA #52: anexos FIRMADOS que esta eliminación deja inválidos (los de la OT) o con partidas sin efecto (la desinstalación que
+            # comparte el anexo de su instalación). Solo se cuentan: el detalle sale de _anexo_anul_plan al borrar.
+            "       (SELECT COUNT(*) FROM mant_anexos axf WHERE axf.estado = 'firmado' AND (axf.ot_id = v.id OR "
+            "         (v.ot_relacion = 'desinstalacion' AND axf.ot_id = v.ot_madre_id "
+            "          AND INSTR(axf.precio_items_json, '\"salida\"') > 0))) AS n_anexos_firmados "
             "  FROM mant_visitas v "
             "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
             f" WHERE v.id IN ({_ph})",
@@ -91993,7 +92215,7 @@ def ot2_api_eliminar_lote_preview():
     por_id = {int(f["id"]): dict(f) for f in filas}
     items = []
     resumen = {"programada": 0, "en_curso": 0, "firmadas": 0, "cerradas": 0,
-               "canceladas": 0, "otras": 0, "en_factura": 0,
+               "canceladas": 0, "otras": 0, "en_factura": 0, "anexos_firmados": 0,
                "con_firma_cliente": 0, "con_firma": 0, "no_encontradas": 0, "total": 0}
     # Se recorre en el orden pedido por el front (el de la tabla), no en
     # el que devolvió MySQL.
@@ -92026,8 +92248,10 @@ def ot2_api_eliminar_lote_preview():
             "tiene_firma_cliente": tiene_firma,
             "cerrada": cerrada,
             "en_factura_proveedor": en_factura,
+            "anexos_firmados": int(f.get("n_anexos_firmados") or 0),
         })
         resumen["total"] += 1
+        resumen["anexos_firmados"] += int(f.get("n_anexos_firmados") or 0)
         if en_factura:
             resumen["en_factura"] += 1
         if tiene_firma:
@@ -92153,7 +92377,8 @@ def ot2_api_eliminar_lote():
                 })
                 continue
             if res.get("ok"):
-                eliminadas.append({"id": vid, "numero_ot": etiqueta})
+                eliminadas.append({"id": vid, "numero_ot": etiqueta,
+                                   "anexo_anulado": (res.get("anexo_anulado") or {}).get("lineas") or None})
             else:
                 omitidas.append({
                     "id": vid,
@@ -118604,6 +118829,16 @@ def _ensure_mant_anexos():
                 ("proveedor_direccion_place_id", "ALTER TABLE mant_anexos ADD COLUMN "
                                                  "proveedor_direccion_place_id VARCHAR(200) NULL "
                                                  "COMMENT 'Google Places place_id (verificado, opcional)'"),
+                # 📜 2026-10-28 (REGLA #52): un anexo FIRMADO cuya OT se elimina pasa a 'anulado' y deja AQUÍ quién, cuándo, por qué y de qué OT.
+                # `ot_id` queda en NULL al borrarse la OT (FK ON DELETE SET NULL), por eso el número de la OT se guarda en el propio anexo.
+                ("anulado_at", "ALTER TABLE mant_anexos ADD COLUMN anulado_at DATETIME NULL "
+                               "COMMENT 'cuando el anexo firmado quedo invalido (OT eliminada)'"),
+                ("anulado_por", "ALTER TABLE mant_anexos ADD COLUMN anulado_por VARCHAR(190) NULL "
+                                "COMMENT 'quien elimino la OT y dejo invalido el anexo'"),
+                ("anulado_motivo", "ALTER TABLE mant_anexos ADD COLUMN anulado_motivo VARCHAR(300) NULL "
+                                   "COMMENT 'por que quedo invalido'"),
+                ("anulado_ot_numero", "ALTER TABLE mant_anexos ADD COLUMN anulado_ot_numero VARCHAR(40) NULL "
+                                      "COMMENT 'numero de la OT eliminada (ot_id queda en NULL)'"),
             ):
                 try:
                     cur.execute(
@@ -120413,6 +120648,9 @@ def ot2_anexo_firma_publica(token):
     if not a:
         return render_template("ot2/anexo_firma.html", valido=False, ya_firmado=False)
     a = _anexo_dict(a)
+    if a["estado"] == "anulado":
+        # 📜 REGLA #52: el anexo quedó inválido por la anulación del servicio. Sin datos del anexo ni formulario de firma.
+        return render_template("ot2/anexo_firma.html", valido=False, ya_firmado=False, anulado=True)
     vencido = a.get("token_expira_at") and datetime.utcnow() > a["token_expira_at"]
     if vencido and a["estado"] not in ("firmado",):
         return render_template("ot2/anexo_firma.html", valido=False, ya_firmado=False)
@@ -145625,6 +145863,7 @@ _MFP_ACCION_TXT = {
     "ot_quitada": "OT quitada",
     "ot_quitada_de_pagada": "OT quitada (lote ya pagado)",
     "ot_quitada_por_eliminacion": "OT eliminada y quitada del lote",
+    "anexo_anulado_ot_eliminada": "Anexo firmado anulado (OT eliminada)",
     "monto_actualizado_auto": "Monto actualizado solo (sin factura aún)",
     "monto_ajustado": "Monto ajustado a la suma de las OT",
     "pagada": "Marcada como pagada",

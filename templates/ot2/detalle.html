@@ -8925,10 +8925,12 @@ document.addEventListener('DOMContentLoaded', () => {
    confirm()/prompt() nativos). */
 async function otdEliminarOT(){
   const numeroOt = {{ (v.numero_ot or ('V-' ~ v.id)) | tojson }};
+  // 📜 REGLA #52: si la OT tiene un anexo firmado, el aviso va ANTES de pedir el número (qué anexo queda inválido y a quién se le avisa por correo).
+  const _axAviso = window.otAnexoAnulacion ? await window.otAnexoAnulacion.avisoHtml({{ v.id }}) : '';
   const texto = await ilusPrompt({
     title: 'Eliminar OT definitivamente',
     message: 'Esta acción no se puede deshacer. Para confirmar, escribe el número de la OT:',
-    sub: 'Escribe exactamente: <strong>' + numeroOt.replace(/</g, '&lt;') + '</strong>',
+    sub: _axAviso + 'Escribe exactamente: <strong>' + numeroOt.replace(/</g, '&lt;') + '</strong>',
     subHtml: true,
     placeholder: numeroOt,
     required: true,
@@ -8950,7 +8952,8 @@ async function otdEliminarOT(){
       await ilusAlert({
         title: 'OT eliminada',
         message: 'La OT ' + numeroOt + ' fue eliminada definitivamente.' + (d.factura_quitada
-          ? ' Estaba en la factura de proveedor #' + d.factura_quitada.id + ' (' + d.factura_quitada.estado_pago + '): salió de ella y quedó anotado en sus notas.' : ''),
+          ? ' Estaba en la factura de proveedor #' + d.factura_quitada.id + ' (' + d.factura_quitada.estado_pago + '): salió de ella y quedó anotado en sus notas.' : '')
+          + (window.otAnexoAnulacion ? window.otAnexoAnulacion.resultadoTxt(d) : ''),
         type: 'success',
       });
       window.location.href = '{{ url_for("ot2_panel") }}';

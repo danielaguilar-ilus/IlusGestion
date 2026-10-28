@@ -1945,10 +1945,12 @@ async function eliminarVisita(){
   // por ilusPrompt, mismo patrón que static/mant_ficha.js y el botón
   // "Eliminar OT" de OT 2.0.
   const numero = viEl.dataset.numeroOt || ('V-' + vid);
+  // 📜 REGLA #52: si la OT tiene un anexo firmado, el aviso va ANTES de pedir el número (qué anexo queda inválido y a quién se le avisa).
+  const _axAviso = window.otAnexoAnulacion ? await window.otAnexoAnulacion.avisoHtml(vid) : '';
   const texto = await ilusPrompt({
     title: 'Eliminar visita',
     message: 'Esta acción no se puede deshacer. Para confirmar, escribe el número de la OT:',
-    sub: 'Escribe exactamente: <strong>' + numero.replace(/</g, '&lt;') + '</strong>',
+    sub: _axAviso + 'Escribe exactamente: <strong>' + numero.replace(/</g, '&lt;') + '</strong>',
     subHtml: true,
     placeholder: numero,
     required: true,
@@ -1972,6 +1974,10 @@ async function eliminarVisita(){
       ilusToast('Error: '+(d.error||'no se pudo eliminar'), { type:'error' }); return;
     }
     ilusToast('✓ Visita eliminada', { type:'success' });
+    if (window.otAnexoAnulacion && d.anexo_anulado && d.anexo_anulado.lineas && d.anexo_anulado.lineas.length) {
+      // 📜 REGLA #52: se dice con la verdad qué pasó con el anexo firmado y con cada correo (alerta con OK, no un toast que se pierde).
+      await ilusAlert({ title: 'Anexo firmado anulado', message: d.anexo_anulado.lineas.join(' '), type: 'info' });
+    }
     bootstrap.Modal.getInstance(document.getElementById('modalVisita')).hide();
     cargarEventos();
   } catch(e){ ilusToast('Error de red: '+e.message, { type:'error' }); }

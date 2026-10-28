@@ -287,6 +287,17 @@ REGISTRO = (
     _c("ot_anexo_firmado_aviso", "Aviso: el proveedor firmó el anexo", "ot", "general", "interno",
        "Cuando el proveedor firma el anexo desde su enlace.", modo="automatico",
        avisa_a="A quien envió el anexo (o al buzón de soporte)", nota="Sale por la llave «General»."),
+    # 2026-10-28 (REGLA #52, Daniel: «cuando eliminemos una OT y el anexo está firmado, que se le envíe al correo que el anexo queda inválido por la
+    # anulación del servicio. Por ambas partes»). Los dos los envía `_anexo_anul_avisar` (app.py) por la puerta única, ya con la OT eliminada.
+    _c("anexo_anulado_proveedor", "Anexo anulado: aviso al proveedor", "ot", "general", "proveedor_courier",
+       "Cuando se ELIMINA una OT que tiene un Anexo de Servicios firmado: el anexo queda inválido por la anulación del servicio.",
+       modo="automatico", avisa_a="Al correo del proveedor (donde se envió el enlace de firma y el de su ficha)",
+       nota="Sale por la llave «General», igual que el envío del anexo. Sin montos ni datos internos. Si el proveedor no tiene un correo "
+            "registrado no sale y queda dicho en la bitácora del anexo. Al cliente nunca."),
+    _c("anexo_anulado_interno", "Anexo anulado: aviso al equipo ILUS", "ot", "comunicacion_interna", "responsable_ot",
+       "Cuando se ELIMINA una OT que tiene un Anexo de Servicios firmado: avisa que el anexo quedó inválido y si el aviso al proveedor salió.",
+       modo="automatico", avisa_a="Al responsable de la OT, a quien la creó y al ejecutivo del cliente (o a la gestión si no hay nadie)",
+       nota="Sin montos. Un técnico nunca lo recibe. Dice si la OT estaba en un lote de proveedor y si el correo al proveedor salió."),
     _c("ot_acta_recepcion", "Acta de recepción a logística (PDF y Excel)", "ot", "mantenciones", "interno",
        "Botón «Enviar a logística» del acta de recepción de una OT interna de revisión de equipos.",
        adjunta="Acta en PDF y Excel", avisa_a="Solo a correos internos (@sphs.cl o @ilusfitness.com)"),
