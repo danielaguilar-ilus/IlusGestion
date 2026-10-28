@@ -49,7 +49,8 @@ function tkParamsFiltros(conOrden){
   const tk = document.getElementById('fTicket').value.trim(); if(tk) p.set('ticket', tk);
   const q = document.getElementById('fQ').value.trim(); if(q) p.set('q', q);
   const rut = document.getElementById('fRut').value.trim(); if(rut) p.set('rut', rut);
-  const e = document.getElementById('fEstado').value; if(e) p.set('estado', e);
+  // Tickets 2.0: el chip de estado (Activos/Todos/…) manda sobre el select.
+  const e = (typeof tkEstadoChip !== 'undefined' && tkEstadoChip) || document.getElementById('fEstado').value; if(e) p.set('estado', e);
   const t = document.getElementById('fTipo').value; if(t) p.set('tipo', t);
   const pr = document.getElementById('fPrio').value; if(pr) p.set('prioridad', pr);
   const resp = document.getElementById('fResp').value; if(resp) p.set('asignado_a', resp);
@@ -58,16 +59,23 @@ function tkParamsFiltros(conOrden){
     const fd = document.getElementById('fDesde').value; if(fd) p.set('fecha_desde', fd);
     const fh = document.getElementById('fHasta').value; if(fh) p.set('fecha_hasta', fh);
   }
+  if(typeof tkSla !== 'undefined' && tkSla) p.set('sla', tkSla);
   if(conOrden && tkSort){ p.set('sort', tkSort); p.set('dir', tkDir); }
   return p;
 }
 
 // ── Encabezados: [label, columna sort del backend o '' = no ordenable] ──
+// Tickets 2.0 (27-oct, Daniel: "duplica el formato, la tabla, los SLA" del
+// Monitor de Retiros): el avance va bajo el estado, origen y fecha de creación
+// dentro de la celda del ticket, y «Actualizado» dentro de «Última actividad».
+// Columnas nuevas: «Tiempo» (SLA de respuesta, 4 h hábiles) y «Última actividad».
 const TK_COLS = [
-  ['Ticket','numero_ticket'], ['Cliente','empresa'], ['Tipo','tipo'], ['Estado','estado'],
-  ['Avance',''], ['Asignado','asignado_a'], ['Origen','origen'],
-  ['Creado','created_at'], ['Actualizado','updated_at'], ['Acciones',''],
+  ['Ticket','created_at'], ['Cliente','empresa'], ['Tipo','tipo'], ['Estado','estado'],
+  ['Responsable','asignado_a'], ['Tiempo · SLA','espera_desde'], ['Última actividad','updated_at'],
+  ['Acciones',''],
 ];
+let tkSla = '';           // filtro por semáforo del SLA: '' | 'rojo' | 'ambar' | 'verde'
+let tkEstadoChip = '__activos__'; // chips de estado: la bandeja abre en «Activos» (como el Monitor de Retiros)
 function tkTheadHtml(){
   return '<tr>' + TK_COLS.map(function(c){
     if(!c[1]) return '<th>'+c[0]+'</th>';
@@ -89,7 +97,8 @@ window.tkSortClick = function(col){
     tkDir = (tkSort === 'updated_at' && tkDir === 'desc') ? 'asc' : 'desc';
     tkSort = 'updated_at';
   }
-  else if(tkSort !== col){ tkSort = col; tkDir = 'desc'; }
+  // «Tiempo»: primero lo que lleva MÁS rato esperando (asc = espera más antigua arriba).
+  else if(tkSort !== col){ tkSort = col; tkDir = (col === 'espera_desde' ? 'asc' : 'desc'); }
   else if(tkDir === 'desc'){ tkDir = 'asc'; }
   else { tkSort = 'updated_at'; tkDir = 'desc'; }
   tkPage = 1; cargarTickets();
@@ -138,7 +147,26 @@ async function cargarTickets(){
   document.getElementById('kpiTotal').textContent = data.kpis.total;
   document.getElementById('kpiActivos').textContent = data.kpis.activos;
   document.getElementById('kpiUrgentes').textContent = data.kpis.urgentes;
-  document.getElementById('kpiVencidos').textContent = data.kpis.vencidos;
+  // Tickets 2.0: «Vencidos (SLA)» = sin respuesta al cliente en 4 h hábiles.
+  // La fecha límite vencida (lo que contaba antes) queda en la línea de abajo.
+  const kv = document.getElementById('kpiVencidos');
+  const kvSub = document.getElementById('kpiVencidosSub');
+  const _set = function(id, v){ const el = document.getElementById(id); if(el) el.textContent = (v == null ? '—' : v); };
+  if(data.kpis.sla_rojo != null){
+    kv.textContent = data.kpis.sla_rojo;
+    if(kvSub) kvSub.textContent = (data.kpis.vencidos||0) + ' con fecha límite vencida';
+  } else {
+    kv.textContent = data.kpis.vencidos;
+    if(kvSub) kvSub.textContent = 'Por fecha límite';
+  }
+  _set('kpiPorVencer', data.kpis.sla_ambar);
+  _set('kpiEsperando', data.kpis.sla_esperando);
+  _set('kpiSinAsignar', data.kpis.sin_asignar);
+  tkMarcarKpiActivo();
+  const estEl = document.getElementById('tkEstados');
+  if(estEl){ estEl.innerHTML = tkEstadosHtml(data.estados || {}); }
+  const semEl = document.getElementById('tkSemaforo');
+  if(semEl){ const h = tkSemaforoHtml(data.kpis); semEl.innerHTML = h; semEl.style.display = h ? '' : 'none'; }
 
   _tkCache = {};
   data.tickets.forEach(function(t){ _tkCache[t.id] = t; });
@@ -307,24 +335,135 @@ function tkFilaHtml(tk){
     : '<span class="tkc-asignado none">Sin asignar</span>';
   const fpCreado = fmtFechaPartes(fmtFecha(tk.created_at));
   const fpActualizado = fmtFechaPartes(fmtFecha(tk.updated_at));
-  return '<tr class="prio-'+(tk.prioridad||'media')+'" onclick="location.href=\'/tickets/'+tk.id+'\'">'
-    + '<td><div class="tkc-num"><span class="tk-num">'+esc(tk.numero_ticket||('#'+tk.id))+'</span>'+garBadge+unread+'</div></td>'
-    + '<td><div class="tkc-cliente">'+esc(cliente)+'</div>'+(titulo?'<div class="tkc-titulo">'+esc(titulo)+'</div>':'')+'</td>'
+  const sla = tk.sla_resp || null;
+  const sem = sla ? sla.semaforo : '';
+  const urg = tk.prioridad === 'urgente' ? '<span class="tkc-urg"><i class="bi bi-lightning-charge-fill"></i>Urgente</span>' : '';
+  const contacto = (tk.nombre_contacto && tk.nombre_contacto !== cliente)
+    ? '<div class="tkc-sub"><i class="bi bi-person"></i>'+esc(tk.nombre_contacto)+'</div>' : '';
+  const fono = tk.phone ? '<div class="tkc-sub"><i class="bi bi-telephone"></i>'+esc(tk.phone)+'</div>' : '';
+  const rut = (tk.rut && tk.rut !== cliente) ? '<div class="tkc-sub">RUT '+esc(tk.rut)+'</div>' : '';
+  return '<tr class="prio-'+(tk.prioridad||'media')+(sem?' sla-'+sem:'')+'" onclick="location.href=\'/tickets/'+tk.id+'\'">'
+    + '<td><div class="tkc-num"><span class="tk-num">'+esc(tk.numero_ticket||('#'+tk.id))+'</span>'+garBadge+unread+urg+'</div>'
+    +   '<div class="tkc-orig">'+tkOrigenCelda(tk.origen)+'<span class="tkc-hace">'+esc(fpCreado.f)+(fpCreado.h?' '+esc(fpCreado.h):'')+'</span></div></td>'
+    + '<td><div class="tkc-cliente">'+esc(cliente)+'</div>'+rut+contacto+fono
+    +   (titulo?'<div class="tkc-titulo">'+esc(titulo)+'</div>':'')+'</td>'
     + '<td>'+tkTipoCelda(tk)+'</td>'
-    + '<td><span class="tk-badge bs-'+tk.estado+'">'+esc(ESTADO_LABEL[tk.estado]||tk.estado)+'</span></td>'
-    + '<td>'+tkMiniStepper(tk)+'</td>'
-    + '<td>'+asignado+'</td>'
-    + '<td>'+tkOrigenCelda(tk.origen)+'</td>'
-    + '<td><div class="tkc-fecha">'+esc(fpCreado.f)+(fpCreado.h?'<span class="hora">'+esc(fpCreado.h)+'</span>':'')+'</div></td>'
-    + '<td><div class="tkc-fecha">'+esc(fpActualizado.f)+(fpActualizado.h?'<span class="hora">'+esc(fpActualizado.h)+'</span>':'')+'</div></td>'
+    + '<td><span class="tk-badge bs-'+tk.estado+'">'+esc(ESTADO_LABEL[tk.estado]||tk.estado)+'</span>'
+    +   '<div class="tkc-avance">'+tkMiniStepper(tk)+'</div></td>'
+    + '<td>'+tkRespCelda(tk)+'</td>'
+    + '<td>'+tkSlaCelda(tk)+'</td>'
+    + '<td>'+tkActividadCelda(tk, fpActualizado)+'</td>'
     + '<td>'+tkAccionesCelda(tk)+'</td>'
     + '</tr>';
 }
+
+// ── Responsable: avatar con iniciales + nombre completo (REGLA #15) ──
+function tkIniciales(s){
+  const p = String(s||'').replace(/@.*/,'').replace(/[._-]+/g,' ').trim().split(/\s+/).filter(Boolean);
+  if(!p.length) return '?';
+  return (p[0][0] + (p.length>1 ? p[p.length-1][0] : '')).toUpperCase();
+}
+function tkRespCelda(tk){
+  const a = (tk.asignado_a && String(tk.asignado_a).trim()) ? String(tk.asignado_a).trim() : '';
+  if(!a) return '<span class="tkc-resp none"><i class="bi bi-person-dash"></i>Sin asignar</span>';
+  return '<span class="tkc-resp"><span class="av" aria-hidden="true">'+esc(tkIniciales(a))+'</span>'+esc(a)+'</span>';
+}
+
+// ── Tiempo · SLA de respuesta (4 h hábiles por mensaje del cliente), mismos
+//    textos del reloj de Retiros: «Sin responder · 1 h 22 min hábiles». ──
+function tkSlaCelda(tk){
+  const s = tk.sla_resp;
+  if(!s) return '<span class="text-muted" style="font-size:.78rem;">—</span>';
+  let ic = 'bi-check-circle-fill';
+  if(s.nivel === 'vencido') ic = 'bi-exclamation-octagon-fill';
+  else if(s.nivel === 'atencion') ic = 'bi-hourglass-split';
+  else if(s.nivel === 'ok') ic = (s.pausa ? 'bi-pause-circle-fill' : 'bi-stopwatch-fill');
+  else if(s.nivel === 'cerrado') ic = 'bi-lock-fill';
+  let sub = s.sub || '';
+  if(s.nivel === 'respondido' && tk.ultima_resp_hace) sub = 'Respondido ' + tk.ultima_resp_hace;
+  return '<div class="tkc-sla '+esc(s.semaforo)+'"><span class="pill"><i class="bi '+ic+'"></i>'+esc(s.pill)+'</span>'
+    + (sub ? '<div class="sub">'+esc(sub)+'</div>' : '') + '</div>';
+}
+
+// ── Última actividad: quién escribió, hace cuánto y un extracto. ──
+function tkActividadCelda(tk, fpAct){
+  const m = tk.ult_msg;
+  const fecha = '<div class="tkc-fecha">'+esc(fpAct.f)+(fpAct.h?'<span class="hora">'+esc(fpAct.h)+'</span>':'')+'</div>';
+  if(!m) return fecha;
+  const cls = m.tipo === 'client_message' ? 'cli' : (m.tipo === 'comentario' ? 'int' : 'eq');
+  return '<div class="tkc-act '+cls+'"><div class="who"><i class="bi '
+    + (cls==='cli' ? 'bi-person-fill' : (cls==='int' ? 'bi-lock-fill' : 'bi-reply-fill')) + '"></i>'
+    + esc(m.quien)+(m.hace ? ' · '+esc(m.hace) : '')+'</div>'
+    + (m.texto ? '<div class="txt">'+esc(m.texto)+'</div>' : '') + '</div>';
+}
+
+// ── Chips del semáforo (como «Todos los semáforos / Urgente / Atención / En orden» de Retiros) ──
+function tkSemaforoHtml(k){
+  if(k == null || k.sla_rojo == null){ return ''; }
+  const verde = Math.max((k.total||0) - (k.sla_rojo||0) - (k.sla_ambar||0), 0);
+  const chip = function(v, lbl, n, cls, tip){
+    return '<button type="button" class="tk-sem-chip '+cls+(tkSla===v?' on':'')+'" onclick="tkSemaforo(\''+v+'\')" title="'+esc(tip)+'">'
+      + (cls ? '<span class="dot"></span>' : '') + lbl + (n!=null ? ' <b>'+n+'</b>' : '') + '</button>';
+  };
+  return chip('', 'Todos los semáforos', null, '', 'Ver todos')
+    + chip('rojo', 'Vencido', k.sla_rojo, 'rojo', 'Más de 4 h hábiles sin responderle al cliente')
+    + chip('ambar', 'Por vencer', k.sla_ambar, 'ambar', 'Queda 1 h hábil o menos para responder')
+    + chip('verde', 'En orden', verde, 'verde', 'Respondidos o dentro del plazo')
+    + '<span class="tk-sem-nota"><i class="bi bi-stopwatch"></i>SLA: 4 h hábiles por mensaje del cliente · '
+    + (k.sla_esperando||0) + ' esperando respuesta</span>';
+}
+window.tkSemaforo = function(v){ tkSla = (tkSla === v ? '' : v); tkPage = 1; cargarTickets(); };
+
+// ── Chips de estado con su conteo (filtros rápidos con un clic) ──
+const TK_EST_ORDEN = ['open','in_progress','pending','ot_pending_approval','ot_generated','ot_in_progress','resolved','closed','cancelado'];
+function tkEstadosHtml(cnt){
+  const chip = function(v, lbl, n, ic){
+    return '<button type="button" class="tk-est-chip'+(tkEstadoChip===v?' on':'')+'" onclick="tkEstado(\''+v+'\')">'
+      + (ic?'<i class="bi '+ic+'"></i>':'') + esc(lbl) + ' <b>'+(n||0)+'</b></button>';
+  };
+  let h = chip('__activos__', 'Activos', cnt.__activos__, 'bi-lightning-charge-fill') + chip('', 'Todos', cnt.__todos__, 'bi-list-ul');
+  TK_EST_ORDEN.forEach(function(e){ if(cnt[e]) h += chip(e, ESTADO_LABEL[e] || e, cnt[e], ''); });
+  return h;
+}
+window.tkEstado = function(v){
+  tkEstadoChip = v;
+  const sel = document.getElementById('fEstado');
+  if(sel) sel.value = (v && v.indexOf('__') !== 0) ? v : '';
+  tkPage = 1; cargarTickets();
+};
+
+// ── Tarjetas KPI (mismo patrón del Monitor de Retiros): clic = filtrar la
+//    tabla; otro clic en la misma tarjeta quita el filtro. ──
+function tkMarcarKpiActivo(){
+  const resp = (document.getElementById('fResp')||{}).value || '';
+  document.querySelectorAll('#tkKpis [data-tk-filtro]').forEach(function(el){
+    const f = el.getAttribute('data-tk-filtro').split(':');
+    const on = (f[0] === 'sla' && tkSla === f[1]) || (f[0] === 'resp' && resp === f[1]);
+    el.classList.toggle('is-active', !!on);
+    el.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+function tkKpiFiltrar(el){
+  const f = el.getAttribute('data-tk-filtro').split(':');
+  if(f[0] === 'sla'){ tkSemaforo(f[1]); return; }
+  if(f[0] === 'resp'){
+    const sel = document.getElementById('fResp');
+    sel.value = (sel.value === f[1] ? '' : f[1]);
+    tkFiltroCambio();
+  }
+}
+document.querySelectorAll('#tkKpis [data-tk-filtro]').forEach(function(el){
+  el.addEventListener('click', function(){ tkKpiFiltrar(el); });
+  el.addEventListener('keydown', function(ev){
+    if(ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); tkKpiFiltrar(el); }
+  });
+});
 
 // Cualquier cambio de filtro resetea a la pagina 1 (el resultado cambia).
 function tkFiltroCambio(){ tkPage = 1; cargarTickets(); }
 function debounced(){ clearTimeout(_tkTimer); _tkTimer = setTimeout(tkFiltroCambio, 350); }
 ['fTicket','fQ','fRut'].forEach(function(id){ document.getElementById(id).addEventListener('input', debounced); });
+document.getElementById('fEstado').addEventListener('change', function(){ tkEstadoChip = this.value; });
 ['fEstado','fTipo','fPrio','fResp','fDesde','fHasta'].forEach(function(id){
   document.getElementById(id).addEventListener('change', tkFiltroCambio);
 });
@@ -348,6 +487,8 @@ document.getElementById('btnLimpiar').addEventListener('click', function(){
   ['fTicket','fQ','fRut','fDesde','fHasta','fEstado','fTipo','fPrio','fResp']
     .forEach(function(id){ document.getElementById(id).value=''; });
   tkHoy = false; btnHoy.classList.remove('on');
+  tkSla = '';
+  tkEstadoChip = '__activos__';
   tkSort = 'updated_at'; tkDir = 'desc'; tkPage = 1; // limpiar vuelve al default, no al orden inteligente
   cargarTickets();
 });
@@ -355,19 +496,36 @@ document.getElementById('btnLimpiar').addEventListener('click', function(){
 // ── Select Responsable: usuarios activos (mismo endpoint que la ficha) ──
 async function tkCargarResponsables(){
   try{
-    const r = await fetch('/mantenciones/api/ejecutivos');
-    const rows = await r.json();
-    if(!Array.isArray(rows) || !rows.length) return;
+    // Tickets 2.0: antes /mantenciones/api/ejecutivos = TODOS los usuarios
+    // activos (salía gente que no lleva tickets). Ahora la misma lista que la
+    // ficha: el permiso «Responsable de tickets» (o, si nadie lo tiene, los
+    // roles de Tickets).
+    const r = await fetch('/tickets/api/responsables');
+    const j = await r.json();
+    const rows = (j && Array.isArray(j.responsables)) ? j.responsables : [];
     const sel = document.getElementById('fResp');
     const actual = sel.value;
-    sel.innerHTML = '<option value="">Todos</option>'
+    // Quien no ve todo recibe igual solo los suyos y los sin asignar: «Todos»
+    // se rotula así para que se entienda qué está mirando.
+    const lblTodos = (j && j.ve_todo === false) ? 'Míos y sin asignar' : 'Todos';
+    sel.innerHTML = '<option value="">'+lblTodos+'</option>'
       + '<option value="__sin_asignar__">Sin asignar</option>'
-      + rows.map(function(e){ return '<option value="'+esc(e.nombre)+'">'+esc(e.nombre)+'</option>'; }).join('');
+      + rows.map(function(e){ return '<option value="'+esc(e.nombre)+'">'+esc(e.nombre)
+          + (j && j.yo && e.nombre === j.yo ? ' (yo)' : '')+'</option>'; }).join('');
     sel.value = actual; // conserva la seleccion si ya habia una
+    // Tickets 2.0 (Daniel 2026-10-27: «abrir con los nombres filtrados… se
+    // podrá sacar»): la primera vez, la bandeja abre con MIS tickets; el
+    // filtro se quita como cualquier otro (o con «Limpiar filtros»).
+    if(!_tkRespInicial && j && j.soy_responsable && j.yo && !actual){
+      sel.value = j.yo;
+    }
+    _tkRespInicial = true;
   }catch(e){ /* sin red: quedan Todos / Sin asignar */ }
 }
-tkCargarResponsables();
-cargarTickets();
+let _tkRespInicial = false;
+// Primero la lista de responsables (decide el filtro inicial «mis tickets»),
+// después la bandeja: una sola carga, ya filtrada.
+tkCargarResponsables().finally(function(){ cargarTickets(); });
 
 // ══════════════ Auto-refresco silencioso de la bandeja (Daniel 2026-07-12:
 // "necesito que sea inmediata la velocidad, menos de diez segundos") -- cada

@@ -309,3 +309,85 @@ table.tk-table tbody tr.prio-baja td:first-child{border-left-color:#94a3b8;}
      bajo el mínimo de 12px recomendado para texto legible. */
   .tk-badge,.tk-origen-pill,.tk-unread{font-size:.7rem;}
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Tickets 2.0 (27-oct) · bandeja tipo Monitor de Retiros
+   Semáforo del SLA de respuesta (4 h hábiles por mensaje del cliente),
+   columnas «Responsable», «Tiempo · SLA» y «Última actividad», nombres
+   completos sin cortar (REGLA #15). Paleta ILUS (REGLA #2).
+   ═══════════════════════════════════════════════════════════════════════ */
+.tkc-cliente,.tkc-titulo{white-space:normal;overflow:visible;text-overflow:clip;max-width:280px;overflow-wrap:anywhere;}
+.tkc-cliente{font-size:.9rem;line-height:1.3;}
+.tkc-titulo{color:#6b7280;font-size:.78rem;line-height:1.35;}
+.tkc-sub{font-size:.76rem;color:#475569;margin-top:2px;display:flex;align-items:center;gap:5px;overflow-wrap:anywhere;}
+.tkc-sub i{color:#94a3b8;font-size:.72rem;}
+.tkc-orig{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px;}
+.tkc-hace{font-size:.72rem;color:#64748b;white-space:nowrap;}
+.tkc-urg{display:inline-flex;align-items:center;gap:3px;background:#fee2e2;color:#991b1b;border-radius:50px;
+  padding:2px 8px;font-size:.68rem;font-weight:800;}
+.tkc-avance{margin-top:7px;}
+
+/* Responsable */
+.tkc-resp{display:inline-flex;align-items:center;gap:8px;font-size:.84rem;font-weight:700;color:#0f172a;overflow-wrap:anywhere;}
+.tkc-resp .av{width:30px;height:30px;border-radius:50%;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;
+  background:#0a0a0a;color:#fff;font-size:.7rem;font-weight:900;letter-spacing:.02em;}
+.tkc-resp.none{color:#92400e;background:#fff8e1;border:1px solid #fde68a;border-radius:50px;padding:3px 10px;font-size:.76rem;}
+.tkc-resp.none i{font-size:.8rem;}
+
+/* Tiempo · SLA */
+.tkc-sla{min-width:170px;max-width:240px;}
+.tkc-sla .pill{display:inline-flex;align-items:center;gap:6px;border-radius:9px;padding:5px 9px;font-size:.78rem;font-weight:800;
+  line-height:1.25;border:1px solid transparent;}
+.tkc-sla .sub{font-size:.72rem;color:#64748b;margin-top:4px;line-height:1.35;}
+.tkc-sla.verde .pill{background:#dcfce7;color:#166534;border-color:#bbf7d0;}
+.tkc-sla.ambar .pill{background:#fff8e1;color:#92400e;border-color:#fde68a;}
+.tkc-sla.rojo .pill{background:#fee2e2;color:#991b1b;border-color:#fecaca;}
+.tkc-sla.rojo .sub{color:#991b1b;font-weight:700;}
+.tkc-sla.gris .pill{background:#f3f4f6;color:#6b7280;}
+
+/* Última actividad */
+.tkc-act{max-width:260px;}
+.tkc-act .who{font-size:.76rem;font-weight:800;color:#0f172a;display:flex;align-items:center;gap:5px;}
+.tkc-act.cli .who i{color:#dc2626;} .tkc-act.eq .who i{color:#16a34a;} .tkc-act.int .who i{color:#6b7280;}
+.tkc-act .txt{font-size:.75rem;color:#475569;margin-top:3px;line-height:1.4;overflow-wrap:anywhere;}
+
+/* Borde izquierdo por semáforo (igual que el Monitor de Retiros); gana al de prioridad */
+table.tk-table tbody tr.sla-rojo td:first-child{border-left:4px solid #dc2626;}
+table.tk-table tbody tr.sla-ambar td:first-child{border-left:4px solid #f59e0b;}
+table.tk-table tbody tr.sla-verde td:first-child{border-left:4px solid #16a34a;}
+table.tk-table tbody tr.sla-rojo{background:#fffafa;}
+
+/* Chips del semáforo */
+.tk-semaforo{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px;}
+.tk-sem-chip{display:inline-flex;align-items:center;gap:7px;min-height:40px;padding:0 14px;border-radius:12px;
+  border:1.5px solid #e5e7eb;background:#fff;color:#0f172a;font-size:.84rem;font-weight:800;cursor:pointer;
+  transition:border-color .15s,background-color .15s;}
+.tk-sem-chip b{font-weight:900;}
+.tk-sem-chip .dot{width:10px;height:10px;border-radius:50%;}
+.tk-sem-chip.rojo .dot{background:#dc2626;} .tk-sem-chip.ambar .dot{background:#f59e0b;} .tk-sem-chip.verde .dot{background:#16a34a;}
+.tk-sem-chip:hover{border-color:#0f172a;}
+.tk-sem-chip.on{background:#0a0a0a;color:#fff;border-color:#0a0a0a;}
+.tk-sem-chip.rojo.on{background:#dc2626;border-color:#dc2626;}
+.tk-sem-chip.ambar.on{background:#f59e0b;border-color:#f59e0b;color:#0a0a0a;}
+.tk-sem-chip.verde.on{background:#16a34a;border-color:#16a34a;}
+.tk-sem-chip.on .dot{background:#fff;}
+.tk-sem-chip:focus-visible{outline:none;box-shadow:0 0 0 4px rgba(220,38,38,.16);}
+.tk-sem-nota{margin-left:auto;font-size:.78rem;color:#64748b;display:inline-flex;align-items:center;gap:6px;}
+.tk-kpi-sub{font-size:.72rem;color:#991b1b;font-weight:700;margin-top:2px;}
+.tk-kpi-sub:empty{display:none;}
+@media (max-width:576px){
+  .tk-sem-chip{min-height:44px;flex:1 1 calc(50% - 8px);justify-content:center;}
+  .tk-sem-nota{margin-left:0;width:100%;}
+  .tkc-cliente,.tkc-titulo,.tkc-act,.tkc-sla{max-width:none;}
+}
+/* Chips de estado (filtros rápidos con un clic, como el Monitor de Retiros) */
+.tk-estados{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px;}
+.tk-est-chip{display:inline-flex;align-items:center;gap:7px;min-height:42px;padding:0 15px;border-radius:999px;
+  border:1.5px solid #e5e7eb;background:#fff;color:#0f172a;font-size:.86rem;font-weight:800;cursor:pointer;
+  transition:border-color .15s,background-color .15s;}
+.tk-est-chip b{background:#f3f4f6;color:#0f172a;border-radius:999px;padding:1px 8px;font-size:.78rem;}
+.tk-est-chip:hover{border-color:#0f172a;}
+.tk-est-chip.on{background:#0a0a0a;border-color:#0a0a0a;color:#fff;}
+.tk-est-chip.on b{background:#dc2626;color:#fff;}
+.tk-est-chip:focus-visible{outline:none;box-shadow:0 0 0 4px rgba(220,38,38,.16);}
+@media (max-width:576px){.tk-est-chip{min-height:44px;}}

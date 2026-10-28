@@ -1233,7 +1233,8 @@ class TestCableado:
         assert len(enums) == 2
         for e in enums:
             valores = re.findall(r"'([a-z_]+)'", e)
-            assert valores[-2:] == ["repuesto_nuevo", "repuesto_tecnico"], "al FINAL: nada se reordena (REGLA #18)"
+            # 2026-10-27 (Tickets 2.0): detrás vino «tk_sla»; lo anterior no se reordena.
+            assert valores[-3:] == ["repuesto_nuevo", "repuesto_tecnico", "tk_sla"], "al FINAL: nada se reordena (REGLA #18)"
             assert valores.count("repuesto_tecnico") == 1 and "repuesto_plazo" in valores
 
     def test_todo_tipo_de_campana_que_usa_el_bloque_cabe_en_el_enum(self):

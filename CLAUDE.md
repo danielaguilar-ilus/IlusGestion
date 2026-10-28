@@ -1341,5 +1341,21 @@ Incidente real: el asistente sumaba por detrás «Revisión — Registro por equ
 
 ---
 
-_Última actualización: 2026-10-26_
+## 🎫 REGLA #50 — Tickets es LA ticketera de la empresa: escala a 100.000 tickets, SLA de 4 h hábiles por mensaje, cada quien ve lo suyo (no negociable)
+
+**Pedido explícito de Daniel (2026-10-27):** «este modelo de módulo es el que va a vender en todos los departamentos… necesito que tenga SLA de respuesta, que me marque en rojo… que sea una tiquetera profesional… estandarizado de 4 horas por respuesta en horas hábiles» y «los usuarios solo podrán ver los tickets suyos y los sin asignar».
+
+- **Escala (medido en MySQL 8 con 100.000 tickets / 1.000.000 de mensajes, `tests/bench_tickets_rutas_mysql.py`):** la bandeja ordena por columnas con índice (`sin_leer`, `ord_estado`, `ord_prio` son generadas **VIRTUAL**: se agregan sin reconstruir la tabla) e `idx_tk_bandeja`. Nunca una subconsulta por ticket en el `ORDER BY`. Total y KPI en UN barrido con caché de 5 s. Filtros de fecha como rango sobre `created_at`, nunca `DATE(CONVERT_TZ(...))` por fila.
+- **Latido, no recarga:** la ficha pregunta cada 3 s y la bandeja cada 4 s «¿cambió algo?» (`/tickets/api/tickets/<id>/latido`, `/tickets/api/bandeja/latido`, consultas por llave) y recargan solo si cambió la firma. Nada de volver a pedir el ticket entero en un temporizador.
+- **SLA de respuesta = `tickets_sla.py` (puro, con pruebas):** 4 h hábiles (`TICKETS_SLA_HORAS`) por CADA mensaje del cliente sin responder; el reloj parte con el primer mensaje del cliente sin respuesta (o al crearse desde el formulario público) y se detiene cuando el equipo le contesta (`mensaje` no interno que no falló). Horario = el de Retiros (`retiros_monitor`: L-V 08-17, colación 13-14, feriados de `cl_feriados`): no hay otra definición. Semáforo: rojo vencido, ámbar queda ≤ 1 h, verde en plazo. Para filtrar y contar se calcula el **corte** una vez por minuto y la condición es `espera_desde <= corte` (indexada): nunca evaluar 100.000 tickets uno por uno.
+- **Una sola puerta de escritura para el estado del ticket:** `_tk_log` mantiene `ultimo_cliente_at`, `espera_desde` y `ultima_resp_at` (y NUNCA mueve `updated_at`: `updated_at=updated_at`); `_tk_bandeja_conciliar` (incremental por id de mensaje) corrige lo que escriben otros caminos (`app.py`). Todo camino NUEVO que escriba en `tk_mensajes` debería pasar por `_tk_log`.
+- **Responsables = permiso por persona** `tk_responsable` («Responsable de tickets», Roles → Tickets o Permisos individuales), apagado para todos; mientras nadie lo tenga, la lista sale de los roles de Tickets (nunca TODOS los usuarios). Una sola fuente: `/tickets/api/responsables` (filtro de la bandeja y selector de la ficha).
+- **Visibilidad:** quien no es superadmin/admin ni tiene `tk_ver_todos` («Ver todos los tickets») ve SOLO sus tickets y los sin asignar. Se aplica en el SERVIDOR: `_tk_list_where_scoped` (bandeja, KPI, CSV), el contador de no leídos y un `before_request` sobre TODA ruta con id de ticket (403 / vuelta a la bandeja). La bandeja abre filtrada por el propio nombre (se puede quitar).
+- **Recordatorios del SLA** (`_tk_sla_barrido`): campana (tipo `tk_sla`, al FINAL de los dos ENUM) + correo interno (`tk_sla_por_vencer`, `tk_sla_vencido`, módulo `comunicacion_interna`, REGLA #33) al responsable (si no tiene, a los responsables de tickets; si nadie tiene el permiso, a superadmin/admin). Una vez por mensaje y nivel (`tk_sla_avisos`), solo en horario hábil, tope 10 por pasada; el correo nace apagado (se enciende en Control de correos); la PRIMERA pasada siembra en silencio lo que ya estaba pendiente (sin avalancha). Corre colgado del latido de la bandeja y de `simpliroute-poll`. Nunca al cliente (REGLA #22).
+- **Vista:** tarjetas KPI y semáforo con el MISMO estilo del Monitor de Retiros (`.rm-kpi*` de `retiros_monitor.css`), columnas «Responsable», «Tiempo · SLA» y «Última actividad», nombres completos sin cortar (REGLA #15). Ficha con pasos 1-5 en semáforo y tarjeta «Contactos» (`static/tickets_ficha_v2.*`).
+- Pruebas: `tests/test_tickets_sla.py`, `tests/test_tickets_escala.py` y la de carga `tests/bench_tickets_rutas_mysql.py` (solo contra un MySQL de PRUEBA).
+
+---
+
+_Última actualización: 2026-10-27_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_

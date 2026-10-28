@@ -3,6 +3,8 @@
 {% block head_extra %}
 <link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
 <link href="{{ url_for('static', filename='tickets_list.css') }}" rel="stylesheet">
+{# Tickets 2.0: tarjetas KPI con el MISMO estilo del Monitor de Retiros (.rm-kpi*). #}
+<link href="{{ url_for('static', filename='retiros_monitor.css') }}" rel="stylesheet">
 <style>
 /* ── Latido de recepción (franja permanente sobre los filtros) ────────── */
 .tkms{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
@@ -158,12 +160,48 @@
   </div>
 </div>
 
-<div class="tk-kpi-row trx-kpis">
-  <div class="tk-kpi t trx-kpi"><span class="num" id="kpiTotal">—</span><span class="lbl">Total</span></div>
-  <div class="tk-kpi a trx-kpi trx-kpi-red"><span class="num" id="kpiActivos">—</span><span class="lbl">Activos</span></div>
-  <div class="tk-kpi u trx-kpi trx-kpi-warn"><span class="num" id="kpiUrgentes">—</span><span class="lbl">Urgentes</span></div>
-  <div class="tk-kpi v trx-kpi trx-kpi-dang"><span class="num" id="kpiVencidos">—</span><span class="lbl">Vencidos (SLA)</span></div>
-</div>
+{# Tickets 2.0 (Daniel 2026-10-27: «una vista impecable, con tarjetas tipo KPI
+   como en Retiros»): mismas tarjetas del Monitor de Retiros. Un clic filtra la
+   tabla (otro clic quita el filtro). Siguen los 4 números de siempre (Total,
+   Activos, Urgentes, Vencidos) con sus mismos IDs; «Vencidos» ahora es el SLA
+   de respuesta (4 h hábiles) y la fecha límite vencida va en su pie. #}
+<section class="rm-kpis tk-kpis" id="tkKpis" aria-label="Indicadores de tickets">
+  <div class="rm-kpi" style="--acc:#dc2626" data-tk-filtro="sla:rojo" role="button" tabindex="0" aria-pressed="false"
+       title="Clic: ver solo los que pasaron las 4 h hábiles sin respuesta">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Sin responder a tiempo</span><i class="bi bi-alarm-fill"></i></div>
+    <div class="rm-kpi-num" id="kpiVencidos">—</div>
+    <div class="rm-kpi-foot"><span>Más de 4 h hábiles esperando</span></div>
+    <div class="rm-kpi-foot"><span id="kpiVencidosSub"></span></div>
+  </div>
+  <div class="rm-kpi" style="--acc:#f59e0b" data-tk-filtro="sla:ambar" role="button" tabindex="0" aria-pressed="false"
+       title="Clic: ver solo los que vencen en 1 h hábil o menos">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Por vencer</span><i class="bi bi-hourglass-split"></i></div>
+    <div class="rm-kpi-num" id="kpiPorVencer">—</div>
+    <div class="rm-kpi-foot"><span>Queda 1 h hábil o menos para responder</span></div>
+  </div>
+  <div class="rm-kpi" style="--acc:#3b82f6" data-tk-filtro="sla:esperando" role="button" tabindex="0" aria-pressed="false"
+       title="Clic: ver solo los clientes que esperan respuesta">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Esperando respuesta</span><i class="bi bi-chat-dots-fill"></i></div>
+    <div class="rm-kpi-num" id="kpiEsperando">—</div>
+    <div class="rm-kpi-foot"><span>Clientes que esperan que les contestemos</span></div>
+  </div>
+  <div class="rm-kpi" style="--acc:#0a0a0a" data-tk-filtro="resp:__sin_asignar__" role="button" tabindex="0" aria-pressed="false"
+       title="Clic: ver solo los tickets sin responsable">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Sin asignar</span><i class="bi bi-person-dash-fill"></i></div>
+    <div class="rm-kpi-num" id="kpiSinAsignar">—</div>
+    <div class="rm-kpi-foot"><span>Abiertos sin nadie a cargo</span></div>
+  </div>
+  <div class="rm-kpi" style="--acc:#16a34a">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Activos</span><i class="bi bi-ticket-detailed-fill"></i></div>
+    <div class="rm-kpi-num" id="kpiActivos">—</div>
+    <div class="rm-kpi-foot"><span>Abiertos o en curso</span></div>
+  </div>
+  <div class="rm-kpi" style="--acc:#6b7280">
+    <div class="rm-kpi-head"><span class="rm-kpi-lbl">Total</span><i class="bi bi-collection-fill"></i></div>
+    <div class="rm-kpi-num" id="kpiTotal">—</div>
+    <div class="rm-kpi-foot"><span><b id="kpiUrgentes">—</b> urgentes</span></div>
+  </div>
+</section>
 
 {# ══════════════════════════════════════════════════════════════════════
    LATIDO DE LA RECEPCIÓN DE CORREOS
@@ -241,6 +279,10 @@
 </div>
 
 <div id="tkUnreadBanner" class="tk-unread-banner" style="display:none"></div>
+{# Tickets 2.0: semáforo del SLA de respuesta (4 h hábiles), mismo esquema
+   de chips que el Monitor de Retiros. Lo pinta tickets_list.js. #}
+<div id="tkEstados" class="tk-estados" role="group" aria-label="Filtrar por estado"></div>
+<div id="tkSemaforo" class="tk-semaforo" role="group" aria-label="Filtrar por semáforo del SLA" style="display:none"></div>
 <div id="tkLista"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div>
 
 <!-- ══════════════ MODAL: Nuevo Ticket ══════════════ -->

@@ -390,6 +390,19 @@ REGISTRO = (
     _c("tk_cancelado", "Ticket cancelado", "tickets", "tickets", "cliente",
        "Cuando una persona cancela el ticket.", plantilla=("tickets", "cancelado"), condiciones=(_TK_TEST,),
        avisa_a="Al correo de contacto del ticket", nota=_TK_PAUSA),
+    # Tickets 2.0 (Daniel 2026-10-27: «SLA de respuesta… recordatorio… campana y correo interno»).
+    _c("tk_sla_por_vencer", "SLA de respuesta por vencer: aviso al responsable", "tickets", "comunicacion_interna",
+       "interno", "Cuando a un mensaje del cliente le queda 1 h hábil o menos de las 4 h para responderlo "
+       "(una vez por mensaje, solo en horario hábil).", modo="automatico",
+       avisa_a="Al responsable del ticket; si no tiene, a los responsables de tickets",
+       nota="Nunca le escribe al cliente. También llega por la campana. Nace apagado: Daniel 2026-10-27 «evita enviar mensajes masivos»; se enciende desde esta pantalla.",
+       nace_apagado=True),
+    _c("tk_sla_vencido", "SLA de respuesta vencido: aviso al responsable", "tickets", "comunicacion_interna",
+       "interno", "Cuando un mensaje del cliente pasa las 4 h hábiles sin respuesta (una vez por mensaje, "
+       "solo en horario hábil).", modo="automatico",
+       avisa_a="Al responsable del ticket; si no tiene, a los responsables de tickets",
+       nota="Nunca le escribe al cliente. También llega por la campana. Nace apagado: Daniel 2026-10-27 «evita enviar mensajes masivos»; se enciende desde esta pantalla.",
+       nace_apagado=True),
     _c("tk_respuesta", "Respuesta al cliente desde el ticket", "tickets", "tickets", "cliente",
        "Botón «Responder al cliente» de la ficha del ticket.", plantilla=("tickets", "respuesta"),
        condiciones=(_TK_TEST,), avisa_a="Al cliente y, si se pide, a una copia"),

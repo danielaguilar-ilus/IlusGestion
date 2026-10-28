@@ -1951,9 +1951,11 @@ document.addEventListener('keydown', function(e){
 let listaEjecutivos = [];
 async function cargarEjecutivos(){
   try{
-    const r = await fetch('/tickets/api/asignables');
-    listaEjecutivos = await r.json();
-    if(!Array.isArray(listaEjecutivos)) listaEjecutivos = [];
+    // Tickets 2.0: la lista sale del permiso «Responsable de tickets» (por
+    // persona, desde Roles); mientras nadie lo tenga, de los roles de Tickets.
+    const r = await fetch('/tickets/api/responsables');
+    const j = await r.json();
+    listaEjecutivos = (j && Array.isArray(j.responsables)) ? j.responsables : [];
   }catch(e){ listaEjecutivos = []; }
   poblarSelectEjecutivo();
 }

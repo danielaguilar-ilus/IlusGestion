@@ -4807,6 +4807,13 @@ PERMS_KEYS = (
     # _tickets_required sigue aceptando "mantenciones" también, así que
     # estos flags solo pueden SUMAR acceso, nunca quitarlo.
     "tk_ver", "tk_es_tecnico", "tk_es_ejecutivo",
+    # tk_responsable — «Responsable de tickets» (Tickets 2.0, Daniel 2026-10-27: en la lista de
+    # responsables salían todos los usuarios, «hay personas allí que no corresponde… que se
+    # habilite por el front»). Apagado para todos; se enciende por persona o por rol.
+    "tk_responsable",
+    # tk_ver_todos — «Ver todos los tickets» (Daniel 2026-10-27: «los usuarios solo podrán ver los
+    # tickets suyos y los sin asignar»). superadmin/admin ven todo siempre; este permiso lo da a otros.
+    "tk_ver_todos",
     # cat_eliminar — flag del módulo Catálogo de Productos (aditivo
     # 2026-07-21, Daniel: "eliminarlo solamente para el superadministrador
     # con opciones a agregarlo en los roles"). El gate real en
@@ -5246,6 +5253,8 @@ def _build_perms_from_matrix(role):
     base["tk_ver"]         = bool(tk.get("ver"))
     base["tk_es_tecnico"]  = bool(tk.get("es_tecnico"))
     base["tk_es_ejecutivo"] = bool(tk.get("es_ejecutivo"))
+    base["tk_responsable"] = bool(tk.get("responsable"))
+    base["tk_ver_todos"] = bool(tk.get("ver_todos"))
 
     # Catálogo de Productos (aditivo 2026-07-21) — mismo criterio: flag
     # puramente aditivo, el gate real (_catalogo_eliminar_required en
@@ -14367,7 +14376,7 @@ PERMISSIONS_MATRIX = {
     # El gate _tickets_required (tickets_module.py) sigue aceptando también
     # "mantenciones" vía OR, así que nadie pierde acceso que ya tenía.
     "tickets":        {"label":"Tickets",        "icon":"bi-ticket-perforated",
-                       "acciones":["ver","es_tecnico","es_ejecutivo"]},
+                       "acciones":["ver","es_tecnico","es_ejecutivo","responsable","ver_todos"]},
     # Catálogo de Productos: aditivo 2026-07-21 (Daniel, "único punto de
     # entrada... eliminarlo solamente para el superadministrador con
     # opciones a agregarlo en los roles"). El acceso al módulo en sí sigue
@@ -14505,6 +14514,10 @@ PERMISSIONS_META = {
         "ver":           {"label": "Acceso al módulo",                                   "tipo": "submodulo", "icon": "bi-ticket-perforated"},
         "es_tecnico":     {"label": "Es técnico",                                        "tipo": "submodulo", "icon": "bi-person-gear"},
         "es_ejecutivo":   {"label": "Es ejecutivo (ve Tickets + puede cambiar estado)",  "tipo": "submodulo", "icon": "bi-person-badge"},
+        "responsable":    {"label": "Responsable de tickets (aparece en la lista de responsables y recibe los avisos del SLA)",
+                           "tipo": "submodulo", "icon": "bi-person-check"},
+        "ver_todos":      {"label": "Ver todos los tickets (sin esto, cada persona ve solo los suyos y los sin asignar)",
+                           "tipo": "submodulo", "icon": "bi-eye"},
     },
     "catalogo": {
         "eliminar": {"label": "Eliminar producto (archivar)", "tipo": "bloqueo", "icon": "bi-trash"},
@@ -39617,6 +39630,15 @@ def tr_cron_simpliroute_poll():
             res["inquietudes"] = _inq_barrido(max_s=min(15, max(3, 270 - (time.time() - _t_peticion))), dry=bool(dry))
         except Exception as _e_inq:
             print(f"[cron-simpliroute] inquietudes: {_e_inq}", flush=True)
+    # 🎫 Tickets 2.0 (2026-10-27): recordatorios del SLA de respuesta (4 h hábiles por mensaje del cliente) por campana y
+    # correo interno, una vez por mensaje y nivel, solo en horario hábil. Nunca al cliente. Si falla no afecta al polling.
+    if not dry and time.time() - _t_peticion < 250:
+        try:
+            _fn_tksla = globals().get("_tk_sla_barrido")
+            if _fn_tksla:
+                res["tickets_sla"] = _fn_tksla(forzar=True)
+        except Exception as _e_tks:
+            print(f"[cron-simpliroute] tickets sla: {_e_tks}", flush=True)
     return jsonify(res), (200 if res.get("ok") else 502)
 
 
@@ -61242,7 +61264,7 @@ def init_mantenciones_tables():
                 "       'retiro_listo','retiro_cerrado',"
                 "       'retiro_propuesta','retiro_expedido','retiro_desfase','retiro_cierre',"
                 "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida',"
-                "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma','repuesto_nuevo','repuesto_tecnico') DEFAULT 'otro'",
+                "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma','repuesto_nuevo','repuesto_tecnico','tk_sla') DEFAULT 'otro'",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_destino_no_leida "
                 "  (destino_user_id, leida_at, archivada_at)",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_visita (visita_id)",
@@ -129985,7 +130007,7 @@ def _ensure_mant_notif_tipo_ot_firmada_cliente():
             "       'retiro_listo','retiro_cerrado',"
             "       'retiro_propuesta','retiro_expedido','retiro_desfase','retiro_cierre',"
             "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida',"
-            "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma','repuesto_nuevo','repuesto_tecnico') DEFAULT 'otro'"
+            "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma','repuesto_nuevo','repuesto_tecnico','tk_sla') DEFAULT 'otro'"
         )
     except Exception as e:
         print(f"[ensure] mant_notificaciones.tipo (+ot_firmada_cliente): {e}", flush=True)

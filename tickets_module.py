@@ -42,6 +42,10 @@ except Exception:  # pragma: no cover
 
 from flask import request, jsonify, render_template, redirect, url_for, g, flash
 
+# Tickets 2.0: SLA de respuesta (4 h habiles por mensaje, horario de Retiros).
+import tickets_sla as _tksla
+from retiros_monitor import hace as rm_hace
+
 # Validacion server-side del "correo que da la cara" (Reply-To de tickets).
 # Mismo patron que app._EMAIL_RE, para no confiar solo en el front (Regla #4).
 _TK_REPLY_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
@@ -366,6 +370,9 @@ _TK_SORT_COLS = {
                "'ot_generated','ot_in_progress','resolved','closed','cancelado')"),
     "tipo": "t.tipo",
     "prioridad": "FIELD(t.prioridad,'urgente','alta','media','baja')",
+    # Tickets 2.0 · «Tiempo» (SLA de respuesta): asc = el que espera desde
+    # hace mas tiempo arriba; los que no esperan nada, al final.
+    "espera_desde": "COALESCE(t.espera_desde,'9999-12-31')",
 }
 
 # ORDER BY "inteligente" por defecto de la bandeja (comportamiento historico,
@@ -443,6 +450,9 @@ def _tk_list_where(args):
     estado = (args.get("estado") or "").strip().lower()
     if estado in TK_ESTADOS:
         where.append("t.estado=%s"); params.append(estado)
+    elif estado == "__activos__":
+        # Tickets 2.0: chip «Activos» de la bandeja = todo lo que no terminó.
+        where.append("t.estado NOT IN ('resolved','closed','cancelado')")
     tipo = (args.get("tipo") or "").strip().lower()
     if tipo in TK_TIPOS:
         where.append("t.tipo=%s"); params.append(tipo)
@@ -2477,6 +2487,21 @@ def register_tickets_routes(app, ctx):
             "(FIELD(prioridad,'urgente','alta','media','baja')) VIRTUAL",
             "CREATE INDEX idx_tk_bandeja ON tk_tickets "
             "(sin_leer DESC, ord_estado, ord_prio, updated_at DESC, id DESC)",
+            # SLA de respuesta (Tickets 2.0, tickets_sla.py): desde cuando el
+            # cliente espera respuesta (NULL = nada pendiente) y la ultima vez
+            # que el equipo le respondio. Columnas simples: se agregan sin
+            # reconstruir la tabla.
+            "ALTER TABLE tk_tickets ADD COLUMN espera_desde DATETIME NULL",
+            "ALTER TABLE tk_tickets ADD COLUMN ultima_resp_at DATETIME NULL",
+            "CREATE INDEX idx_tk_espera ON tk_tickets (espera_desde)",
+            # Recordatorios del SLA: UNA fila por (ticket, espera, nivel) = un
+            # solo aviso por mensaje sin responder y por nivel, aunque corran
+            # varias instancias de Cloud Run a la vez.
+            "CREATE TABLE IF NOT EXISTS tk_sla_avisos ("
+            "  ticket_id INT NOT NULL, espera_desde DATETIME NOT NULL, "
+            "  nivel VARCHAR(12) NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+            "  PRIMARY KEY (ticket_id, espera_desde, nivel)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
         ):
             try:
                 mysql_execute(_sql)
@@ -2603,15 +2628,89 @@ def register_tickets_routes(app, ctx):
             return view(*a, **k)
         return wrapped
 
+    # ─────────────────────────────────────────────────────────────────
+    #  Tickets 2.0 · VISIBILIDAD (Daniel 2026-10-27: «los usuarios solo
+    #  podrán ver los tickets suyos y los sin asignar»). Ven TODO: superadmin,
+    #  admin y quien tenga «Ver todos los tickets» (tk_ver_todos, Roles →
+    #  Tickets, por rol o por persona). El resto ve los tickets donde es el
+    #  responsable (asignado_a = su nombre o su usuario) y los sin asignar.
+    #  Se aplica en el SERVIDOR: listado, KPI, reportes CSV, contador de no
+    #  leídos y TODA ruta con id de ticket (before_request de abajo).
+    # ─────────────────────────────────────────────────────────────────
+    def _tk_ve_todo():
+        perms = g.get("permissions") or {}
+        return bool(perms.get("superadmin") or perms.get("admin") or perms.get("tk_ver_todos"))
+
+    def _tk_yo():
+        """(nombre, usuario) del usuario conectado, una consulta por petición."""
+        memo = g.get("_tk_yo")
+        if memo is not None:
+            return memo
+        usuario = (current_username() or "").strip()
+        nombre = ""
+        if usuario:
+            try:
+                f = mysql_fetchone("SELECT COALESCE(nombre, username) AS n FROM app_users "
+                                   "WHERE username=%s LIMIT 1", (usuario,))
+                nombre = ((f or {}).get("n") or "").strip()
+            except Exception:
+                nombre = ""
+        memo = (nombre, usuario)
+        g._tk_yo = memo
+        return memo
+
+    def _tk_scope_sql():
+        """(condición, params) que limita a «míos + sin asignar», o (None, [])
+        si el usuario ve todo."""
+        if _tk_ve_todo():
+            return None, []
+        nombre, usuario = _tk_yo()
+        return ("(t.asignado_a IS NULL OR t.asignado_a='' OR t.asignado_a IN (%s,%s))",
+                [nombre or "\x00", usuario or "\x00"])
+
+    def _tk_puede_ver_ticket(tid):
+        if _tk_ve_todo():
+            return True
+        f = mysql_fetchone("SELECT asignado_a FROM tk_tickets WHERE id=%s", (tid,))
+        if not f:
+            return True  # que la ruta responda su propio 404
+        a = (f.get("asignado_a") or "").strip().lower()
+        nombre, usuario = _tk_yo()
+        return (not a) or a in {(nombre or "").lower(), (usuario or "").lower()}
+
+    _TK_RUTA_TICKET_RE = re.compile(r"^/tickets/(?:api/tickets/)?(\d+)(?:/|$)")
+
+    @app.before_request
+    def _tk_visibilidad_por_ticket():
+        try:
+            m = _TK_RUTA_TICKET_RE.match(request.path or "")
+            if not m or g.get("permissions") is None:
+                return None
+            if _tk_puede_ver_ticket(int(m.group(1))):
+                return None
+        except Exception as _e:
+            print(f"[tk_visibilidad] {type(_e).__name__}", flush=True)
+            return None
+        msg = "Este ticket está a cargo de otra persona. Solo ves los tuyos y los sin asignar."
+        if request.path.startswith("/tickets/api/"):
+            return jsonify({"ok": False, "error": msg, "error_codigo": "TICKET_DE_OTRO"}), 403
+        flash(msg, "warning")
+        return redirect(url_for("tk_list"))
+
     def _tk_list_where_scoped(args):
         """_tk_list_where + (solo para un técnico) excluir los tickets de
-        compra a proveedor. Una sola fuente para el listado, los KPIs y los
-        reportes CSV, así ninguno los cuela por una puerta lateral."""
+        compra a proveedor + (Tickets 2.0) «míos y sin asignar» para quien no
+        ve todo. Una sola fuente para el listado, los KPIs y los reportes CSV,
+        así ninguno los cuela por una puerta lateral."""
         wsql, params = _tk_list_where(args)
         if _tk_es_tecnico():
             cond = ("NOT EXISTS (SELECT 1 FROM mant_repuestos_compras _c "
                     "WHERE _c.ticket_id=t.id)")
             wsql = (wsql + " AND " + cond) if wsql else (" WHERE " + cond)
+        cond_v, p_v = _tk_scope_sql()
+        if cond_v:
+            wsql = (wsql + " AND " + cond_v) if wsql else (" WHERE " + cond_v)
+            params = list(params) + p_v
         return wsql, params
 
     def _tk_log(ticket_id, tipo, contenido, usuario=None, metadata=None, es_interno=True,
@@ -2656,15 +2755,25 @@ def register_tickets_routes(app, ctx):
             _id_msg = None
         if tipo == "client_message":
             # Tickets 2.0: el ticket con mensaje nuevo del cliente sube de
-            # inmediato. updated_at=updated_at: el UPDATE NO debe mover la
-            # fecha de actividad (la columna se actualiza sola en cada UPDATE).
+            # inmediato y, si no esperaba ya, arranca el reloj del SLA (4 h
+            # habiles por mensaje). updated_at=updated_at: el UPDATE NO debe
+            # mover la fecha de actividad (la columna se actualiza sola).
             try:
                 mysql_execute(
                     "UPDATE tk_tickets SET ultimo_cliente_at="
                     "GREATEST(COALESCE(ultimo_cliente_at,'1970-01-01'), NOW()), "
+                    "espera_desde=COALESCE(espera_desde, NOW()), "
                     "updated_at=updated_at WHERE id=%s", (ticket_id,))
             except Exception:
                 pass  # columna aun no migrada: la conciliacion lo cubre
+        elif tipo == "mensaje" and not es_interno and (estado_envio or "") != "fallido":
+            # Respuesta del equipo AL CLIENTE: se detiene el reloj del SLA.
+            try:
+                mysql_execute(
+                    "UPDATE tk_tickets SET ultima_resp_at=NOW(), espera_desde=NULL, "
+                    "updated_at=updated_at WHERE id=%s", (ticket_id,))
+            except Exception:
+                pass
         return _id_msg
 
     def _tk_reabrir_si_cerrado(tid, estado_actual, usuario=None):
@@ -6556,20 +6665,28 @@ def register_tickets_routes(app, ctx):
         return resp
 
     def _tk_unread_n():
-        """Tickets con mensajes de cliente sin leer (cache corta compartida)."""
-        hit = _TK_UNREAD_CACHE.get("v")
+        """Tickets con mensajes de cliente sin leer (cache corta compartida).
+        Quien no ve todo cuenta solo los suyos y los sin asignar."""
+        cond_v, p_v = _tk_scope_sql()
+        clave = "v" if not cond_v else ("u", tuple(p_v))
+        hit = _TK_UNREAD_CACHE.get(clave)
         if hit and time.monotonic() - hit[0] < _TK_CACHE_SEG:
             return hit[1]
+        extra = (" AND " + cond_v) if cond_v else ""
         if _tk_bandeja_rapida_ok():
-            row = mysql_fetchone("SELECT COUNT(*) AS n FROM tk_tickets WHERE sin_leer=1")
+            row = mysql_fetchone("SELECT COUNT(*) AS n FROM tk_tickets t WHERE t.sin_leer=1" + extra,
+                                 tuple(p_v))
         else:
             row = mysql_fetchone(
                 "SELECT COUNT(*) AS n FROM tk_tickets t "
                 "WHERE EXISTS (SELECT 1 FROM tk_mensajes m "
                 "              WHERE m.ticket_id=t.id AND m.tipo='client_message' "
-                "                AND m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01'))")
+                "                AND m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01'))" + extra,
+                tuple(p_v))
         n = int(row["n"]) if row else 0
-        _TK_UNREAD_CACHE["v"] = (time.monotonic(), n)
+        if len(_TK_UNREAD_CACHE) > 300:
+            _TK_UNREAD_CACHE.clear()
+        _TK_UNREAD_CACHE[clave] = (time.monotonic(), n)
         return n
 
     # ── Tickets 2.0: LATIDOS (el "vaiven" casi en tiempo real sin pesar) ─────
@@ -6605,6 +6722,144 @@ def register_tickets_routes(app, ctx):
             return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
         return jsonify({"ok": True, "ver": ver})
 
+    # ── Tickets 2.0 · RECORDATORIOS del SLA (Daniel 2026-10-27: «campana y
+    #    correo interno»). Cuando a un mensaje del cliente le queda 1 h hábil o
+    #    menos («por vencer») y cuando pasa las 4 h («vencido»), avisa UNA vez
+    #    por mensaje y por nivel al responsable del ticket (si no tiene, a los
+    #    responsables de tickets; si nadie tiene ese permiso, a superadmin/
+    #    admin). Solo en horario hábil (el reloj está en pausa fuera de él).
+    #    Nunca le escribe al cliente (REGLA #22). Corre colgado del latido de
+    #    la bandeja (cada 2 min como máximo por instancia) y del trabajo
+    #    programado de cada 10 min (simpliroute-poll), así no depende de que
+    #    alguien tenga la pantalla abierta.
+    _TK_SLA_BARRIDO = {"ts": 0.0, "lock": threading.Lock()}
+
+    def _tk_sla_destinatarios(asignado_a):
+        """[{id, email, nombre}] a quienes avisar por un ticket."""
+        a = (asignado_a or "").strip()
+        if a:
+            f = mysql_fetchall(
+                "SELECT id, username AS email, COALESCE(nombre, username) AS nombre FROM app_users "
+                "WHERE active=1 AND (nombre=%s OR username=%s) LIMIT 2", (a, a)) or []
+            if f:
+                return [dict(x) for x in f]
+        lista, modo = _tk_responsables()
+        if modo == "permiso" and lista:
+            return lista[:10]
+        f = mysql_fetchall(
+            "SELECT id, username AS email, COALESCE(nombre, username) AS nombre FROM app_users "
+            "WHERE active=1 AND role IN ('superadmin','admin') LIMIT 10") or []
+        return [dict(x) for x in f]
+
+    def _tk_sla_barrido(forzar=False):
+        """Devuelve un resumen {avisos, revisados} (o el motivo de no correr)."""
+        if not forzar and time.monotonic() - _TK_SLA_BARRIDO["ts"] < 120:
+            return {"omitido": "reciente"}
+        if not _TK_SLA_BARRIDO["lock"].acquire(blocking=False):
+            return {"omitido": "en curso"}
+        try:
+            _TK_SLA_BARRIDO["ts"] = time.monotonic()
+            if not _tk_bandeja_rapida_ok():
+                return {"omitido": "sin columnas"}
+            ahora_cl = _tksla.utc_a_chile(datetime.utcnow())
+            if _tksla.rm.proxima_apertura(ahora_cl, _tksla.feriados(ahora_cl.year)) is not None:
+                return {"omitido": "fuera de horario"}
+            c_venc, c_aten = _tk_sla_cortes()
+            # Primera pasada tras encender esto: TODO lo que ya estaba por vencer
+            # o vencido se marca como avisado en silencio (una sola sentencia,
+            # sin tope). Sin esto, cientos de tickets históricos saldrían
+            # «vencidos» a la vez: una avalancha de correos.
+            if not mysql_fetchone("SELECT 1 AS x FROM tk_settings WHERE clave='tk_sla_avisos_inicio'"):
+                n = mysql_execute(
+                    "INSERT IGNORE INTO tk_sla_avisos (ticket_id, espera_desde, nivel) "
+                    "SELECT t.id, t.espera_desde, n.nivel FROM tk_tickets t "
+                    "JOIN (SELECT 'por_vencer' AS nivel UNION ALL SELECT 'vencido') n "
+                    f"WHERE t.espera_desde IS NOT NULL AND t.estado NOT IN {_TK_TERMINALES_SQL} "
+                    "AND t.espera_desde <= %s", (c_aten,))
+                mysql_execute("INSERT INTO tk_settings (clave, valor, updated_by) "
+                              "VALUES ('tk_sla_avisos_inicio', NOW(), 'sistema') "
+                              "ON DUPLICATE KEY UPDATE valor=valor")
+                return {"sembrado": n}
+            # Solo lo que AÚN no se avisó en su nivel actual; lo más reciente
+            # primero (es lo accionable), con tope por pasada.
+            filas = mysql_fetchall(
+                "SELECT t.id, t.numero_ticket, t.empresa, t.nombre_contacto, t.asignado_a, "
+                "       t.espera_desde, t.titulo, "
+                "       CASE WHEN t.espera_desde <= %s THEN 'vencido' ELSE 'por_vencer' END AS nivel "
+                "FROM tk_tickets t "
+                "LEFT JOIN tk_sla_avisos a ON a.ticket_id=t.id AND a.espera_desde=t.espera_desde "
+                "     AND a.nivel = (CASE WHEN t.espera_desde <= %s THEN 'vencido' ELSE 'por_vencer' END) "
+                "WHERE t.espera_desde IS NOT NULL AND t.espera_desde <= %s "
+                f"  AND t.estado NOT IN {_TK_TERMINALES_SQL} AND a.ticket_id IS NULL "
+                "ORDER BY t.espera_desde DESC LIMIT 20",
+                (c_venc, c_venc, c_aten)) or []
+            base = (os.environ.get("ILUS_APP_BASE_URL")
+                    or "https://ilus-app-469212710544.southamerica-west1.run.app").rstrip("/")
+            _notif = ctx.get("_mant_notificar")
+            avisos = 0
+            for f in filas:
+                if avisos >= 10:
+                    break  # tope por pasada (Daniel: «evita mensajes masivos»): el resto sale en la próxima
+                nivel = f.get("nivel") or ("vencido" if f["espera_desde"] <= c_venc else "por_vencer")
+                conn = get_mysql()
+                try:
+                    with conn.cursor() as cur:
+                        nuevo = cur.execute(
+                            "INSERT IGNORE INTO tk_sla_avisos (ticket_id, espera_desde, nivel) "
+                            "VALUES (%s,%s,%s)", (f["id"], f["espera_desde"], nivel))
+                    conn.commit()
+                finally:
+                    conn.close()
+                if not nuevo:
+                    continue  # ya se avisó este mensaje en este nivel
+                ev = _tksla.evaluar(_tksla.utc_a_chile(f["espera_desde"]), ahora_cl, "open")
+                num = f.get("numero_ticket") or f"#{f['id']}"
+                cliente = f.get("empresa") or f.get("nombre_contacto") or "el cliente"
+                if nivel == "vencido":
+                    titulo = f"{num}: {cliente} lleva más de 4 h hábiles sin respuesta"
+                    clave, prio = "tk_sla_vencido", "urgente"
+                else:
+                    titulo = f"{num}: queda poco para responderle a {cliente}"
+                    clave, prio = "tk_sla_por_vencer", "alta"
+                cuerpo = f"{ev['pill']}. {ev['sub']}".strip()
+                url = f"/tickets/{f['id']}"
+                for d in _tk_sla_destinatarios(f.get("asignado_a")):
+                    try:
+                        if _notif and d.get("id"):
+                            _notif(d["id"], "tk_sla", titulo, cuerpo=cuerpo, url_accion=url, prioridad=prio)
+                    except Exception as _e:
+                        print(f"[tk_sla] campana tid={f['id']}: {type(_e).__name__}", flush=True)
+                    try:
+                        if _send_ilus_email and d.get("email") and "@" in d["email"]:
+                            html = _html_mod.escape(cuerpo)
+                            if _ilus_email_master:
+                                html = _ilus_email_master({
+                                    "subject": _brand_subject(titulo), "title": titulo,
+                                    "subtitle": _html_mod.escape(f.get("titulo") or ""),
+                                    "message": (f"<p>{_html_mod.escape(cuerpo)}</p><p>El plazo de respuesta "
+                                                f"es de 4 horas hábiles por cada mensaje del cliente.</p>"),
+                                    "primary_cta_url": base + url, "primary_cta_label": "Abrir el ticket",
+                                })
+                            if clave == "tk_sla_vencido":
+                                _send_ilus_email(d["email"], _brand_subject(titulo), html,
+                                                 modulo="comunicacion_interna", correo="tk_sla_vencido",
+                                                 evento="tk_sla_vencido")
+                            else:
+                                _send_ilus_email(d["email"], _brand_subject(titulo), html,
+                                                 modulo="comunicacion_interna", correo="tk_sla_por_vencer",
+                                                 evento="tk_sla_por_vencer")
+                    except Exception as _e:
+                        print(f"[tk_sla] correo tid={f['id']}: {type(_e).__name__}", flush=True)
+                avisos += 1
+            return {"avisos": avisos, "revisados": len(filas)}
+        except Exception as _e:
+            print(f"[tk_sla] barrido: {str(_e)[:160]}", flush=True)
+            return {"error": "barrido"}
+        finally:
+            _TK_SLA_BARRIDO["lock"].release()
+
+    ctx["_tk_sla_barrido"] = _tk_sla_barrido   # lo llama el trabajo programado de app.py
+
     @app.route("/tickets/api/bandeja/latido", methods=["GET"])
     @_tickets_required
     def tk_api_bandeja_latido():
@@ -6612,21 +6867,43 @@ def register_tickets_routes(app, ctx):
             _tk_autopoll_correo()
         except Exception:
             pass
+        # Recordatorios del SLA en segundo plano (no demoran el latido).
+        try:
+            if time.monotonic() - _TK_SLA_BARRIDO["ts"] >= 120:
+                def _bg():
+                    with app.app_context():
+                        _tk_sla_barrido()
+                threading.Thread(target=_bg, daemon=True).start()
+        except Exception:
+            pass
         r = mysql_fetchone(
             "SELECT (SELECT COALESCE(MAX(id),0) FROM tk_tickets) AS mt, "
             "       (SELECT MAX(updated_at) FROM tk_tickets) AS mu, "
             "       (SELECT COALESCE(MAX(id),0) FROM tk_mensajes) AS mm") or {}
         ver = "|".join(str(r.get(k) or "") for k in ("mt", "mu", "mm")) + f"|{_tk_unread_n()}"
+        # Un ticket pasa a ámbar o rojo con el paso del tiempo, sin que nada
+        # cambie en la base: el minuto del corte del SLA entra en la firma.
+        try:
+            if _tk_bandeja_rapida_ok():
+                ver += f"|{_tk_sla_cortes()[0]}"
+        except Exception:
+            pass
         return jsonify({"ok": True, "ver": ver})
 
     # ── Tickets 2.0 fase 2: bandeja con columnas indexadas ───────────────────
     _TK_BANDEJA = {"ok": False, "chk": 0.0, "conc": 0.0, "lock": threading.Lock()}
 
+    # Clave de la marca de conciliacion. Cambia cuando la conciliacion calcula
+    # columnas nuevas: asi la primera pasada rellena TODO el historico con ellas.
+    _TK_CONC_CLAVE = "tk_conc_msg_id_v2"
+
     def _tk_bandeja_conciliar():
-        """Red de seguridad: sube ultimo_cliente_at con los mensajes de
-        cliente escritos por OTROS caminos (p.ej. app.py) sin pasar por
-        _tk_log. Incremental por id de mensaje (clave primaria, barato); la
-        primera vez rellena todo el historico. NO toca updated_at."""
+        """Red de seguridad para los mensajes escritos por OTROS caminos (p.ej.
+        app.py) sin pasar por _tk_log: recalcula, SOLO para los tickets con
+        mensajes nuevos (incremental por id de mensaje, barato), la fecha del
+        ultimo mensaje del cliente, la ultima respuesta del equipo y desde
+        cuando espera el cliente (SLA). La primera vez rellena todo el
+        historico. NO toca updated_at."""
         if time.monotonic() - _TK_BANDEJA["conc"] < 30:
             return
         if not _TK_BANDEJA["lock"].acquire(blocking=False):
@@ -6634,23 +6911,56 @@ def register_tickets_routes(app, ctx):
         try:
             _TK_BANDEJA["conc"] = time.monotonic()
             fila = mysql_fetchone(
-                "SELECT valor FROM tk_settings WHERE clave='bandeja_ultimo_msg_id'")
+                "SELECT valor FROM tk_settings WHERE clave=%s", (_TK_CONC_CLAVE,))
             ultimo = int(fila["valor"]) if fila and fila.get("valor") else 0
             mx = mysql_fetchone("SELECT COALESCE(MAX(id),0) AS m FROM tk_mensajes")
             mx = int(mx["m"]) if mx else 0
             if mx > ultimo or not fila:
-                mysql_execute(
+                # 1) Los tickets tocados se sacan por RANGO DE LLAVE PRIMARIA
+                #    (barato). Medido con 1.000.000 de mensajes: pasarlos como
+                #    «IN (SELECT …)» hacía que MySQL recorriera la tabla entera
+                #    (8 s con solo 2 mensajes nuevos). La primera vez (ultimo=0)
+                #    son todos: se recalcula el histórico completo una sola vez.
+                if ultimo:
+                    tocados = [r["ticket_id"] for r in (mysql_fetchall(
+                        "SELECT DISTINCT ticket_id FROM tk_mensajes WHERE id > %s AND id <= %s",
+                        (ultimo, mx)) or [])]
+                else:
+                    tocados = None
+                # Respuesta = mensaje al cliente (no interno) que no fallo.
+                sql_calc = (
                     "UPDATE tk_tickets t JOIN ("
-                    "  SELECT ticket_id, MAX(created_at) AS mx FROM tk_mensajes "
-                    "  WHERE tipo='client_message' AND id > %s AND id <= %s "
-                    "  GROUP BY ticket_id) m ON m.ticket_id=t.id "
-                    "SET t.ultimo_cliente_at=m.mx, t.updated_at=t.updated_at "
-                    "WHERE t.ultimo_cliente_at IS NULL OR t.ultimo_cliente_at < m.mx",
-                    (ultimo, mx))
+                    "  SELECT m.ticket_id, "
+                    "    MAX(CASE WHEN m.tipo='client_message' THEN m.created_at END) AS ult_cli, "
+                    "    MAX(CASE WHEN m.tipo='mensaje' AND m.es_interno=0 "
+                    "             AND COALESCE(m.estado_envio,'')<>'fallido' THEN m.created_at END) AS ult_resp "
+                    "  FROM tk_mensajes m {filtro} "
+                    "  GROUP BY m.ticket_id) r ON r.ticket_id=t.id "
+                    "SET t.ultimo_cliente_at=r.ult_cli, t.ultima_resp_at=r.ult_resp, "
+                    "    t.espera_desde=(SELECT MIN(m2.created_at) FROM tk_mensajes m2 "
+                    "                    WHERE m2.ticket_id=t.id AND m2.tipo='client_message' "
+                    "                      AND m2.created_at > COALESCE(r.ult_resp,'1970-01-01')), "
+                    "    t.updated_at=t.updated_at")
+                # Un ticket que entro por el FORMULARIO publico y nadie le ha
+                # respondido espera desde que se creo (el formulario ES su
+                # primer mensaje).
+                sql_form = (
+                    "UPDATE tk_tickets SET espera_desde=created_at, updated_at=updated_at "
+                    "WHERE origen='form' AND ultima_resp_at IS NULL "
+                    "  AND (espera_desde IS NULL OR espera_desde > created_at) {filtro}")
+                if tocados is None:
+                    mysql_execute(sql_calc.format(filtro=""))
+                    mysql_execute(sql_form.format(filtro=""))
+                else:
+                    for i in range(0, len(tocados), 500):
+                        lote = tocados[i:i + 500]
+                        marcas = ",".join(["%s"] * len(lote))
+                        mysql_execute(sql_calc.format(filtro=f"WHERE m.ticket_id IN ({marcas})"), tuple(lote))
+                        mysql_execute(sql_form.format(filtro=f"AND id IN ({marcas})"), tuple(lote))
                 mysql_execute(
                     "INSERT INTO tk_settings (clave, valor, updated_by) "
-                    "VALUES ('bandeja_ultimo_msg_id', %s, 'sistema') "
-                    "ON DUPLICATE KEY UPDATE valor=VALUES(valor)", (str(mx),))
+                    "VALUES (%s, %s, 'sistema') "
+                    "ON DUPLICATE KEY UPDATE valor=VALUES(valor)", (_TK_CONC_CLAVE, str(mx)))
         except Exception as _e:
             print(f"[tk_bandeja] conciliar: {str(_e)[:160]}", flush=True)
         finally:
@@ -6669,33 +6979,110 @@ def register_tickets_routes(app, ctx):
             r = mysql_fetchone(
                 "SELECT COUNT(*) AS n FROM information_schema.COLUMNS "
                 "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tk_tickets' "
-                "AND COLUMN_NAME IN ('ultimo_cliente_at','sin_leer','ord_estado','ord_prio')")
-            if not r or int(r["n"]) != 4:
+                "AND COLUMN_NAME IN ('ultimo_cliente_at','sin_leer','ord_estado','ord_prio',"
+                "'espera_desde','ultima_resp_at')")
+            if not r or int(r["n"]) != 6:
                 return False
             _tk_bandeja_conciliar()
             s = mysql_fetchone(
-                "SELECT 1 AS x FROM tk_settings WHERE clave='bandeja_ultimo_msg_id'")
+                "SELECT 1 AS x FROM tk_settings WHERE clave=%s", (_TK_CONC_CLAVE,))
             _TK_BANDEJA["ok"] = bool(s)
         except Exception:
             _TK_BANDEJA["ok"] = False
         return _TK_BANDEJA["ok"]
 
+    # ── SLA de respuesta (tickets_sla.py) ────────────────────────────────────
+    # Los dos «cortes» (vencido / por vencer) se calculan una vez por minuto:
+    # con ellos, filtrar y contar por semaforo es una condicion indexada sobre
+    # espera_desde, sin evaluar ticket por ticket (escala a 100.000).
+    _TK_SLA_CORTES = {}
+
+    def _tk_sla_cortes():
+        ahora = datetime.utcnow().replace(second=0, microsecond=0)
+        hit = _TK_SLA_CORTES.get("v")
+        if hit and hit[0] == ahora:
+            return hit[1]
+        c = _tksla.cortes_utc(ahora)
+        _TK_SLA_CORTES["v"] = (ahora, c)
+        return c
+
+    _TK_TERMINALES_SQL = "('resolved','closed','cancelado')"
+
+    def _tk_hace(dt_utc):
+        """«hace 5 min», «hace 3 h», «hace 2 d» desde un datetime UTC naive."""
+        if not dt_utc:
+            return ""
+        try:
+            return rm_hace(datetime.utcnow() - dt_utc)
+        except Exception:
+            return ""
+
+    def _tk_ult_msg_fmt(crudo):
+        """'tipo|usuario|AAAA-MM-DD HH:MM:SS|contenido' -> dict para la tabla.
+        El extracto se limpia de HTML y se acorta: es una vista previa."""
+        if not crudo:
+            return None
+        try:
+            tipo, usuario, fecha, contenido = (str(crudo).split("|", 3) + ["", "", "", ""])[:4]
+            txt = _html_mod.unescape(re.sub(r"<[^>]+>", " ", contenido or ""))
+            txt = re.sub(r"\s+", " ", txt).strip()
+            if len(txt) > 140:
+                txt = txt[:139].rstrip() + "…"
+            when = None
+            try:
+                when = datetime.strptime(fecha, "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                pass
+            quien = ("Cliente" if tipo == "client_message"
+                     else ("Nota interna" if tipo == "comentario" else (usuario or "Equipo")))
+            return {"tipo": tipo, "quien": quien, "texto": txt, "hace": _tk_hace(when),
+                    "cuando": _fmt_dt(when) if when else ""}
+        except Exception:
+            return None
+
+    def _tk_sla_where(nivel):
+        """Condicion SQL (y params) del filtro por semaforo del SLA."""
+        c_venc, c_aten = _tk_sla_cortes()
+        vivo = f"t.espera_desde IS NOT NULL AND t.estado NOT IN {_TK_TERMINALES_SQL}"
+        if nivel == "rojo":
+            return f"({vivo} AND t.espera_desde <= %s)", [c_venc]
+        if nivel == "ambar":
+            return f"({vivo} AND t.espera_desde > %s AND t.espera_desde <= %s)", [c_venc, c_aten]
+        if nivel == "verde":
+            return f"NOT ({vivo} AND t.espera_desde <= %s)", [c_aten]
+        if nivel == "esperando":
+            return f"({vivo})", []
+        return None, []
+
     def _tk_kpi_cacheado(wsql, params):
-        """Total + KPI del filtro en UN solo barrido (con cache corta)."""
+        """Total + KPI del filtro en UN solo barrido (con cache corta).
+        Con las columnas del SLA trae tambien el semaforo de respuesta."""
         hoy = _chile_hoy()
-        clave = (wsql, tuple(params), hoy)
+        sla = _tk_bandeja_rapida_ok()
+        c_venc, c_aten = _tk_sla_cortes() if sla else (None, None)
+        clave = (wsql, tuple(params), hoy, c_venc)
         hit = _TK_KPI_CACHE.get(clave)
         if hit and time.monotonic() - hit[0] < _TK_CACHE_SEG:
             return hit[1]
+        sla_cols, sla_params = "", ()
+        if sla:
+            vivo = f"espera_desde IS NOT NULL AND estado NOT IN {_TK_TERMINALES_SQL}"
+            sla_cols = (f", SUM({vivo} AND espera_desde <= %s) AS sla_rojo, "
+                        f"SUM({vivo} AND espera_desde > %s AND espera_desde <= %s) AS sla_ambar, "
+                        f"SUM({vivo}) AS sla_esperando")
+            sla_params = (c_venc, c_venc, c_aten)
         kpi = mysql_fetchone(
             "SELECT "
             "  COUNT(*) AS total, "
             "  SUM(estado IN ('open','in_progress')) AS activos, "
             "  SUM(prioridad='urgente' AND estado NOT IN ('resolved','closed','cancelado')) AS urgentes, "
             "  SUM(fecha_limite IS NOT NULL AND fecha_limite < %s "
-            "      AND estado NOT IN ('resolved','closed','cancelado')) AS vencidos "
+            "      AND estado NOT IN ('resolved','closed','cancelado')) AS vencidos, "
+            "  SUM((asignado_a IS NULL OR asignado_a='') "
+            "      AND estado NOT IN ('resolved','closed','cancelado')) AS sin_asignar "
+            f"{sla_cols} "
             f"FROM tk_tickets t{wsql}",
-            (hoy,) + tuple(params),
+            (hoy,) + sla_params + tuple(params),
         ) or {}
         if len(_TK_KPI_CACHE) > 200:
             _TK_KPI_CACHE.clear()
@@ -6734,8 +7121,18 @@ def register_tickets_routes(app, ctx):
         # entre quienes tienen la bandeja abierta (refresco automatico).
         # KPIs deben respetar los MISMOS filtros (wsql/params) que el listado.
         # "Hoy" se calcula en hora Chile (Regla #6), no con CURDATE() (UTC).
+        # Los chips del semaforo cuentan SIN el propio filtro de semaforo (asi
+        # se ve cuantos hay en cada color mientras se mira uno).
         kpi = _tk_kpi_cacheado(wsql, params)
-        total = int(kpi.get("total") or 0)
+        sla_ok = _tk_bandeja_rapida_ok()
+        sla_nivel = (request.args.get("sla") or "").strip().lower()
+        cond_sla, p_sla = _tk_sla_where(sla_nivel) if sla_ok else (None, [])
+        if cond_sla:
+            wsql = (wsql + " AND " + cond_sla) if wsql else (" WHERE " + cond_sla)
+            params = list(params) + p_sla
+            total = int((_tk_kpi_cacheado(wsql, params) or {}).get("total") or 0)
+        else:
+            total = int(kpi.get("total") or 0)
         pages = (total + limit - 1) // limit  # ceil(total/limit); 0 si no hay filas
 
         # ORDER BY: si viene ?sort= valido (whitelist _TK_SORT_COLS) se ordena
@@ -6746,30 +7143,64 @@ def register_tickets_routes(app, ctx):
         # leer sube al tope de la bandeja, ANTES que el orden por estado/
         # prioridad). order_sql sale SOLO del dict whitelist o de la
         # constante: jamas del request crudo.
-        order_sql = _tk_sort_order(request.args) or (
-            _TK_ORDER_RAPIDO if _tk_bandeja_rapida_ok() else _TK_ORDER_DEFAULT)
-        rows = mysql_fetchall(
-            "SELECT t.id, t.numero_ticket, t.origen, t.estado, t.tipo, t.prioridad, "
-            "       t.titulo, t.empresa, t.rut, t.nombre_contacto, t.asignado_a, "
-            "       t.created_at, t.updated_at, t.fecha_limite, t.es_garantia, "
-            "       (SELECT COUNT(*) FROM tk_mensajes m "
-            "          WHERE m.ticket_id=t.id AND m.tipo='client_message' "
-            "            AND m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')) AS unread_count "
-            f"FROM tk_tickets t{wsql} "
-            f"ORDER BY {order_sql} "
-            "LIMIT %s OFFSET %s",
-            tuple(params) + (limit, offset),
-        )
+        order_sql = _tk_sort_order(request.args)
+        if order_sql and "espera_desde" in order_sql and not sla_ok:
+            order_sql = None  # columna aun no migrada
+        order_sql = order_sql or (_TK_ORDER_RAPIDO if sla_ok else _TK_ORDER_DEFAULT)
+        # Tickets 2.0: columnas extra para la tabla tipo Monitor de Retiros
+        # (contacto, telefono, espera del SLA, ultima respuesta y el ULTIMO
+        # mensaje de la conversacion: quien, cuando y un extracto). Todo por
+        # indice y solo para la pagina visible (50-200 filas).
+        extra = ""
+        if sla_ok:
+            extra = (
+                ", t.phone, t.espera_desde, t.ultima_resp_at, t.ultimo_cliente_at, "
+                "  (SELECT CONCAT(m3.tipo, '|', COALESCE(m3.usuario,''), '|', "
+                "          DATE_FORMAT(m3.created_at,'%%Y-%%m-%%d %%H:%%i:%%s'), '|', LEFT(m3.contenido, 400)) "
+                "     FROM tk_mensajes m3 WHERE m3.ticket_id=t.id "
+                "      AND m3.tipo IN ('client_message','mensaje','comentario') "
+                "    ORDER BY m3.id DESC LIMIT 1) AS ult_msg ")
+        # Tickets 2.0 · «join diferido»: primero SOLO los ids de la página (el
+        # ORDER BY usa índice y no calcula nada por fila) y después el detalle
+        # de esos 50. Sin esto MySQL calculaba las subconsultas de cada fila
+        # también para todas las filas que se SALTA (página 200 = 10.000 filas):
+        # medido con 100.000 tickets, 2,2 s por página profunda.
+        ids_pag = [r["id"] for r in (mysql_fetchall(
+            f"SELECT t.id FROM tk_tickets t{wsql} ORDER BY {order_sql} LIMIT %s OFFSET %s",
+            tuple(params) + (limit, offset)) or [])]
+        rows = []
+        if ids_pag:
+            marcas = ",".join(["%s"] * len(ids_pag))
+            por_id = {r["id"]: r for r in (mysql_fetchall(
+                "SELECT t.id, t.numero_ticket, t.origen, t.estado, t.tipo, t.prioridad, "
+                "       t.titulo, t.empresa, t.rut, t.nombre_contacto, t.asignado_a, "
+                "       t.created_at, t.updated_at, t.fecha_limite, t.es_garantia, "
+                "       (SELECT COUNT(*) FROM tk_mensajes m "
+                "          WHERE m.ticket_id=t.id AND m.tipo='client_message' "
+                "            AND m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01')) AS unread_count "
+                f"{extra}"
+                f"FROM tk_tickets t WHERE t.id IN ({marcas})",
+                tuple(ids_pag)) or [])}
+            rows = [por_id[i] for i in ids_pag if i in por_id]
 
         # SLA calculado por fila (Daniel 2026-07-14). Se computa ANTES de
         # _fmt_row porque necesita el created_at crudo (datetime UTC), no
         # el string ya formateado a hora Chile.
         sla_umbral = _tk_sla_horas_umbral()
+        ahora_cl = _tksla.utc_a_chile(datetime.utcnow())
         tickets_out = []
         for r in rows:
             d = _fmt_row(r)
             d["sla_horas"], d["sla_vencido"] = _tk_sla_info(
                 r.get("estado"), r.get("created_at"), sla_umbral)
+            if sla_ok:
+                # SLA de RESPUESTA (4 h habiles por mensaje del cliente).
+                ev = _tksla.evaluar(_tksla.utc_a_chile(r.get("espera_desde")), ahora_cl, r.get("estado"))
+                d["sla_resp"] = {k: ev[k] for k in ("nivel", "semaforo", "etiqueta", "pill", "sub", "pausa",
+                                                     "espera_h", "resta_h")}
+                d["sla_resp"]["vence"] = ev["vence"].strftime("%d/%m/%Y %H:%M") if ev["vence"] else ""
+                d["ult_msg"] = _tk_ult_msg_fmt(r.get("ult_msg"))
+                d["ultima_resp_hace"] = _tk_hace(r.get("ultima_resp_at"))
             tickets_out.append(d)
 
         # Medicion en produccion (sin tocar la base): una bandeja lenta deja
@@ -6791,8 +7222,43 @@ def register_tickets_routes(app, ctx):
                 "activos": int(kpi.get("activos") or 0),
                 "urgentes": int(kpi.get("urgentes") or 0),
                 "vencidos": int(kpi.get("vencidos") or 0),
+                # SLA de respuesta: semaforo de la bandeja (sin el propio
+                # filtro de semaforo). None = columnas aun no migradas.
+                "sla_rojo": int(kpi.get("sla_rojo") or 0) if sla_ok else None,
+                "sla_ambar": int(kpi.get("sla_ambar") or 0) if sla_ok else None,
+                "sla_esperando": int(kpi.get("sla_esperando") or 0) if sla_ok else None,
+                "sin_asignar": int(kpi.get("sin_asignar") or 0),
             },
+            "sla_horas_respuesta": _tksla.SLA_HORAS,
+            "sla_filtro": sla_nivel if cond_sla else "",
+            "estados": _tk_conteo_estados(request.args),
         })
+
+    def _tk_conteo_estados(args):
+        """Conteo por estado para los chips de la bandeja, con los MISMOS
+        filtros salvo el propio estado (así cada chip dice cuántos hay).
+        Un GROUP BY por índice, con la misma caché corta de los KPI."""
+        try:
+            a = {k: v for k, v in args.items() if k not in ("estado", "page", "limit", "sort", "dir")}
+            wsql2, p2 = _tk_list_where_scoped(a)
+            cond_sla, p_sla = _tk_sla_where((a.get("sla") or "").strip().lower()) if _tk_bandeja_rapida_ok() else (None, [])
+            if cond_sla:
+                wsql2 = (wsql2 + " AND " + cond_sla) if wsql2 else (" WHERE " + cond_sla)
+                p2 = list(p2) + p_sla
+            clave = ("estados", wsql2, tuple(p2))
+            hit = _TK_KPI_CACHE.get(clave)
+            if hit and time.monotonic() - hit[0] < _TK_CACHE_SEG:
+                return hit[1]
+            filas = mysql_fetchall(f"SELECT t.estado, COUNT(*) AS n FROM tk_tickets t{wsql2} GROUP BY t.estado",
+                                   tuple(p2)) or []
+            out = {r["estado"]: int(r["n"]) for r in filas}
+            out["__activos__"] = sum(n for e, n in out.items() if e not in ("resolved", "closed", "cancelado"))
+            out["__todos__"] = sum(n for e, n in out.items() if not e.startswith("__"))
+            _TK_KPI_CACHE[clave] = (time.monotonic(), out)
+            return out
+        except Exception as _e:
+            print(f"[tk_estados] {type(_e).__name__}", flush=True)
+            return {}
 
     # ─────────────────────────────────────────────────────────────────
     #  API — Reportes CSV (Excel es-CL: delimitador ';' + BOM UTF-8 para
@@ -8067,6 +8533,57 @@ def register_tickets_routes(app, ctx):
     #  _legacy_permission_set) O tickets.es_tecnico (para asignar también
     #  a un técnico como responsable si aplica).
     # ─────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────
+    #  Tickets 2.0 (Daniel 2026-10-27): «Responsable de tickets» se enciende
+    #  POR PERSONA desde el front (Roles → Tickets → «Responsable de tickets»,
+    #  o «Permisos individuales»), igual que «Responsable de OT» (REGLA #36).
+    #  · Si al menos una persona tiene el permiso EXPLÍCITO (su fila manda
+    #    sobre la de su rol; el atajo del superadmin NO cuenta), la lista son
+    #    solo esas personas.
+    #  · Mientras nadie lo tenga, la lista es la de antes por ROL (ejecutivo o
+    #    técnico de Tickets): nunca TODOS los usuarios activos, que es lo que
+    #    mostraba el filtro de la bandeja (/mantenciones/api/ejecutivos).
+    #  Lo usan el filtro «Responsable» de la bandeja y el selector de la ficha.
+    # ─────────────────────────────────────────────────────────────────
+    def _tk_responsables():
+        try:
+            filas = mysql_fetchall(
+                "SELECT u.id, COALESCE(u.nombre, u.username) AS nombre, u.username AS email, u.role, "
+                "  (SELECT up.permitido FROM usuario_permisos up "
+                "    WHERE up.user_id=u.id AND up.permiso='tk_responsable' LIMIT 1) AS ov, "
+                "  (SELECT rp.permitido FROM rol_permisos rp WHERE rp.rol_slug=u.role "
+                "    AND rp.modulo='tickets' AND rp.accion='responsable' LIMIT 1) AS rolp "
+                "FROM app_users u WHERE u.active=1") or []
+        except Exception as _e:
+            print(f"[tk_responsables] permisos: {type(_e).__name__}", flush=True)
+            filas = []
+        con_permiso = []
+        for f in filas:
+            ov, rolp = f.get("ov"), f.get("rolp")
+            if (int(ov) == 1) if ov is not None else (rolp is not None and int(rolp) == 1):
+                con_permiso.append({"id": f["id"], "nombre": f["nombre"], "email": f["email"]})
+        if con_permiso:
+            return sorted(con_permiso, key=lambda r: (r["nombre"] or "").lower()), "permiso"
+        rows = mysql_fetchall(
+            "SELECT u.id, COALESCE(u.nombre, u.username) AS nombre, u.username AS email "
+            "  FROM app_users u WHERE u.active=1 AND ( u.role IN ('superadmin','admin') "
+            "   OR EXISTS (SELECT 1 FROM rol_permisos rp WHERE rp.rol_slug=u.role "
+            "              AND rp.modulo='tickets' AND rp.accion IN ('es_ejecutivo','es_tecnico') "
+            "              AND rp.permitido=1) ) ORDER BY nombre") or []
+        return [dict(r) for r in rows], "rol"
+
+    @app.route("/tickets/api/responsables", methods=["GET"])
+    @_tickets_required
+    def tk_api_responsables():
+        lista, modo = _tk_responsables()
+        nombre, usuario = _tk_yo()
+        soy = any((r.get("nombre") or "").strip().lower() == (nombre or "").lower()
+                  or (r.get("email") or "").strip().lower() == (usuario or "").lower() for r in lista)
+        # La bandeja abre filtrada por el propio nombre (filtro que se puede
+        # quitar); quien no ve todo igual solo recibe los suyos y los sin asignar.
+        return jsonify({"ok": True, "responsables": lista, "modo": modo,
+                        "yo": nombre, "soy_responsable": soy, "ve_todo": _tk_ve_todo()})
+
     @app.route("/tickets/api/asignables", methods=["GET"])
     @_tickets_required
     def tk_api_asignables():

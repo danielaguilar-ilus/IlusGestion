@@ -582,7 +582,9 @@ class TestPorDefecto(unittest.TestCase):
         # Daniel 26-oct: «agrégalos apagados para encenderlos desde el front».
         nuevos = [c for c in R.listar() if c.get("nace_apagado")]
         self.assertEqual({c["clave"] for c in nuevos}, {"inq_nueva_gestion", "inq_asignada_responsable", "inq_sla_vencido",
-                                                       "hall_nuevos_gestion", "hall_tomado_responsable"})
+                                                       "hall_nuevos_gestion", "hall_tomado_responsable",
+                                                       # 27-oct (Tickets 2.0): recordatorios del SLA de respuesta.
+                                                       "tk_sla_por_vencer", "tk_sla_vencido"})
         for c in nuevos:
             self.assertNotEqual(c["destinatario"], "cliente", "un correo a clientes jamás se enciende desde la pantalla (REGLA #22)")
             self.assertEqual(c["llave"], "comunicacion_interna", c["clave"])
@@ -1104,7 +1106,7 @@ class TestPantallaListar(_PantallaBase):
         self.assertEqual({c["clave"] for c in d["correos"] if c["estado"]["efectivo"] in ("config", "codigo")}, APAGADOS_HOY)
         self.assertEqual(r["apagados_config"], len(APAGADOS_HOY))
         # 26-oct: los avisos internos nuevos nacen apagados («por encender»); no cuentan como apagados por una persona.
-        self.assertEqual(r["por_encender"], 5)
+        self.assertEqual(r["por_encender"], 7)   # 27-oct: + los 2 recordatorios del SLA de Tickets
         self.assertEqual(r["salen"] + r["apagados_config"] + r["por_encender"], r["total"])
         self.assertEqual(r["frenados_llave"], 0)
         self.assertEqual(self.item("acceso_alerta_login", d)["estado"]["efectivo"], "codigo")
