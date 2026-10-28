@@ -583,18 +583,39 @@ _tkProgramarAutoRefrescoLista();
 // tambien, pero el registro sigue DENTRO de DOMContentLoaded a proposito:
 // mismo orden relativo, cero riesgo de regresion.
 document.addEventListener('DOMContentLoaded', function(){
+// Tickets 2.0 (Daniel 2026-10-27): el modal hereda el FORMATO del «Nuevo
+// retiro interno» de Retiros (static/retiros_nuevo_interno.js): 5 pasos con
+// semáforo rojo→ámbar→verde, «N de 5 pasos listos» en la cabecera, «Falta: …»
+// bajo cada título, OT/documento del ERP que traen cliente y productos, chips
+// «Detectado en ERP → usar», «Editar manualmente» y el botón principal
+// deshabilitado hasta que todo esté en verde. Prefijo ntw* (nuevo ticket
+// wizard). Todo lo de antes (ids, validadores, Google Places, adjuntos,
+// catálogo) sigue acá tal cual (REGLA #4.2).
 let ntTipoSel = '';
 let ntEsGarantia = 0;      // garantia SEPARADA del tipo (aplica a cualquiera)
 let ntCliente = null;      // {empresa, rut}
-const ntEquipos = [];      // [{sku, nombre}]
+// [{sku, nombre, notas, sel, origen:'ot'|'doc'|'manual', origenLabel, tido, nudo, cantidad, serie}]
+const ntEquipos = [];
 let ntArchivos = [];       // [{file, estado:'pendiente'|'subiendo'|'ok'|'error', nombre}] -- adjuntos del nuevo ticket
 const NT_MAX_ADJ = 15;     // mismo tope que el formulario publico /soporte
 const NT_MAX_MB = 25;      // idem MAX_ADJUNTO_MB en tickets_module.py
 const ntModalEl = document.getElementById('ntModal');
 const ntModal = new bootstrap.Modal(ntModalEl);
+const $nt = function(id){ return document.getElementById(id); };
+
+// ── Estado del asistente (Tickets 2.0) ──
+let ntwOt = null;            // OT asociada: {id, numero_ot, titulo, tipo_label, estado_label, fecha, cliente, equipos, documentos}
+const ntwDocs = new Map();   // 'TIDO|NUDO' → {tido, nudo, cliente, rut, fecha, lineas, origen:'erp'|'ot'}
+let ntwClienteManual = false;
+let ntwRespCargados = false;
+const ntwChips = new Map();  // 'campo|valor' → {campo, valor, origen}
+const NTW_MOTIVOS = (window.TK_LIST_DATA && window.TK_LIST_DATA.MOTIVOS) || {};
+const NTW_MOTIVOS_GENERICOS = ['Consulta general', 'Reclamo', 'Seguimiento de una solicitud anterior'];
+const NTW_ICONO_ESTADO = { rojo: 'bi-x-circle-fill', ambar: 'bi-exclamation-triangle-fill', verde: 'bi-check-circle-fill' };
+let ntwUltimaEval = [];
 
 // ── Validación visual (obligatorios) ──
-const NT_REQ_WRAPS = ['fTipoWrap','fRutWrap','fEmpresaWrap','fContactoWrap','fPhoneWrap','fEmailWrap','fDirWrap','fDescWrap'];
+const NT_REQ_WRAPS = ['fTipoWrap','fRutWrap','fEmpresaWrap','fContactoWrap','fPhoneWrap','fEmailWrap','fDirWrap','fMotivoWrap','fDescWrap'];
 function marcarNtOk(id){
   const el = document.getElementById(id); if(!el) return;
   el.classList.remove('err'); el.classList.add('ok');
@@ -610,6 +631,27 @@ function limpiarNtErr(id){
   el.classList.remove('err','ok');
   const em = el.querySelector('.nt-err-msg'); if(em) em.classList.remove('show');
 }
+
+// ── RUT chileno: limpiar, validar dígito verificador y formatear ──
+function ntwRutLimpio(v){ return String(v||'').replace(/[^0-9kK]/g,'').toUpperCase(); }
+function ntwRutValido(v){
+  const c = ntwRutLimpio(v);
+  if(c.length < 8) return false;
+  const cuerpo = c.slice(0,-1), dv = c.slice(-1);
+  if(!/^\d+$/.test(cuerpo)) return false;
+  let suma = 0, mul = 2;
+  for(let i = cuerpo.length-1; i >= 0; i--){ suma += parseInt(cuerpo[i],10)*mul; mul = mul===7 ? 2 : mul+1; }
+  const r = 11 - (suma % 11);
+  const dvOk = r===11 ? '0' : (r===10 ? 'K' : String(r));
+  return dv === dvOk;
+}
+function ntwRutFormato(v){
+  const c = ntwRutLimpio(v);
+  if(c.length < 2) return c;
+  const cuerpo = c.slice(0,-1), dv = c.slice(-1);
+  return cuerpo.replace(/\B(?=(\d{3})+(?!\d))/g,'.') + '-' + dv;
+}
+function ntwRutClave(v){ return ntwRutLimpio(v).replace(/^0+/,''); }
 
 function ntReset(){
   ntTipoSel = ''; ntCliente = null; ntEquipos.length = 0;
@@ -630,12 +672,27 @@ function ntReset(){
   document.getElementById('ntDesc').value=''; document.getElementById('ntDescCount').textContent='0';
   document.getElementById('ntDoc').value=''; document.getElementById('ntPrio').value='media';
   document.getElementById('ntVPhone').className='nt-vfeed'; document.getElementById('ntVEmail').className='nt-vfeed';
+  const vr = $nt('ntwVRut'); if(vr){ vr.className='nt-vfeed'; vr.textContent=''; }
   NT_REQ_WRAPS.forEach(limpiarNtErr);
+  // Tickets 2.0: origen, chips, edición manual, motivo, responsable
+  ntwOt = null; ntwDocs.clear(); ntwChips.clear();
+  if($nt('ntMotivo')) $nt('ntMotivo').value = '';
+  if($nt('ntwOtQ')) $nt('ntwOtQ').value = '';
+  if($nt('ntwOtSearch')) $nt('ntwOtSearch').style.display = 'none';
+  if($nt('ntwOtAc')) $nt('ntwOtAc').classList.remove('open');
+  if($nt('ntwBtnOt')) $nt('ntwBtnOt').classList.remove('is-on');
+  ntwSetClienteManual(false);
+  ntwRenderChips();
+  ntwRenderOrigenes();
+  ntwRenderMotivos();
+  ntwRespDefault();
   ntActualizarObligatoriedadCliente();
   renderNtEquipos();
   ntArchivos = []; document.getElementById('ntFile').value=''; ntRenderArchivos();
+  ntwRefresh();
 }
 ntModalEl.addEventListener('hidden.bs.modal', ntReset);
+ntModalEl.addEventListener('shown.bs.modal', function(){ ntwCargarResponsables(); ntwRefresh(); });
 
 // ── Adjuntos: elegir/soltar/listar/quitar (subida real ocurre tras crear el ticket) ──
 function ntIconArchivo(nombreOMime){
@@ -670,6 +727,7 @@ function ntAgregarArchivos(fileList){
   });
   if (fileList.length > restantes) ilusToast('Solo se agregaron '+restantes+' archivo(s), máximo '+NT_MAX_ADJ,'warning');
   ntRenderArchivos();
+  ntwRefresh();
 }
 function ntRenderArchivos(){
   document.getElementById('ntFiles').innerHTML = ntArchivos.map(function(a,i){
@@ -682,7 +740,7 @@ function ntRenderArchivos(){
       + '<span class="sz">'+ntFmtSize(a.file.size)+'</span>' + quitar + '</span>';
   }).join('');
 }
-window.ntQuitarArchivo = function(i){ ntArchivos.splice(i,1); ntRenderArchivos(); };
+window.ntQuitarArchivo = function(i){ ntArchivos.splice(i,1); ntRenderArchivos(); ntwRefresh(); };
 
 async function ntSubirArchivos(ticketId){
   const pendientes = ntArchivos.filter(a=>a.estado==='pendiente' || a.estado==='error');
@@ -715,8 +773,9 @@ async function ntSubirArchivos(ticketId){
 // wraps de NT_REQ_WRAPS que dependen de si hay cliente asociado (tipo y
 // descripción quedan SIEMPRE obligatorios, fuera de esta lista). ──
 const NT_CLIENTE_WRAPS = ['fRutWrap','fEmpresaWrap','fContactoWrap','fPhoneWrap','fEmailWrap','fDirWrap'];
+function ntwEsInterno(){ return TK_TIPOS_SIN_CLIENTE.includes(ntTipoSel); }
 function ntActualizarObligatoriedadCliente(){
-  const esInterno = TK_TIPOS_SIN_CLIENTE.includes(ntTipoSel);
+  const esInterno = ntwEsInterno();
   NT_CLIENTE_WRAPS.forEach(function(id){
     const el = document.getElementById(id);
     if(!el) return;
@@ -739,6 +798,8 @@ function ntSeleccionarTipo(el){
   el.classList.add('sel'); ntTipoSel = el.dataset.tipo;
   marcarNtOk('fTipoWrap');
   ntActualizarObligatoriedadCliente();
+  ntwRenderMotivos();
+  ntwRefresh();
 }
 document.querySelectorAll('.nt-tipo-pill').forEach(el=>{
   el.addEventListener('click', ()=>ntSeleccionarTipo(el));
@@ -751,6 +812,7 @@ document.querySelectorAll('.nt-tipo-pill').forEach(el=>{
 function ntSeleccionarGar(el){
   document.querySelectorAll('.nt-gar-pill').forEach(x=>x.classList.remove('sel'));
   el.classList.add('sel'); ntEsGarantia = el.dataset.gar === '1' ? 1 : 0;
+  ntwRefresh();
 }
 document.querySelectorAll('.nt-gar-pill').forEach(el=>{
   el.addEventListener('click', ()=>ntSeleccionarGar(el));
@@ -758,6 +820,144 @@ document.querySelectorAll('.nt-gar-pill').forEach(el=>{
     if(e.key==='Enter' || e.key===' '){ e.preventDefault(); ntSeleccionarGar(el); }
   });
 });
+
+// ── Motivo principal: el sistema SUGIERE según el tipo, la persona elige o
+// escribe (REGLA #32). Listas en tickets_nuevo_motivos.py → TK_LIST_DATA.MOTIVOS. ──
+function ntwRenderMotivos(){
+  const cont = $nt('ntwMotivos'), origen = $nt('ntwMotivoOrigen'), inp = $nt('ntMotivo');
+  if(!cont) return;
+  if(!ntTipoSel){
+    cont.innerHTML = '';
+    if(origen) origen.innerHTML = '<i class="bi bi-lightbulb-fill"></i><span>Elige el tipo de solicitud y te sugerimos motivos; también puedes escribir el tuyo.</span>';
+    return;
+  }
+  const lista = (NTW_MOTIVOS[ntTipoSel] && NTW_MOTIVOS[ntTipoSel].length) ? NTW_MOTIVOS[ntTipoSel] : NTW_MOTIVOS_GENERICOS;
+  const actual = (inp && inp.value || '').trim().toLowerCase();
+  cont.innerHTML = lista.map(function(m){
+    return '<button type="button" class="ntw-motivo-chip'+(actual===m.toLowerCase()?' sel':'')+'" data-motivo="'+esc(m)+'">'+esc(m)+'</button>';
+  }).join('');
+  if(origen) origen.innerHTML = '<i class="bi bi-lightbulb-fill"></i><span>Sugeridos para «'+esc(TIPO_LABEL[ntTipoSel]||ntTipoSel)+'» — elige uno o escribe el tuyo.</span>';
+}
+$nt('ntwMotivos') && $nt('ntwMotivos').addEventListener('click', function(ev){
+  const b = ev.target.closest('[data-motivo]'); if(!b) return;
+  const inp = $nt('ntMotivo'); if(!inp) return;
+  inp.value = b.getAttribute('data-motivo');
+  ntwRenderMotivos();
+  marcarNtOk('fMotivoWrap');
+  ntwRefresh();
+});
+$nt('ntMotivo') && $nt('ntMotivo').addEventListener('input', function(){
+  const v = this.value.trim().toLowerCase();
+  document.querySelectorAll('.ntw-motivo-chip').forEach(function(c){ c.classList.toggle('sel', c.getAttribute('data-motivo').toLowerCase() === v); });
+  if(v) marcarNtOk('fMotivoWrap'); else limpiarNtErr('fMotivoWrap');
+});
+
+// ── Paso 2 · «Editar manualmente» (Retiros 2026-09-22: Empresa y RUT nacen
+// como vitrina de la OT/documento/ERP; el botón es la única forma de
+// destrabarlos; el resto de campos siempre se edita) ──
+function ntwSetClienteManual(on){
+  ntwClienteManual = !!on;
+  ['ntEmpresa','ntRut'].forEach(function(id){
+    const el = $nt(id); if(!el) return;
+    if(ntwClienteManual){ el.removeAttribute('readonly'); el.classList.remove('ntw-locked'); }
+    else { el.setAttribute('readonly',''); el.classList.add('ntw-locked'); }
+  });
+  const btn = $nt('ntwClienteManualBtn'), badge = $nt('ntwClienteManualBadge');
+  if(btn){
+    btn.classList.toggle('is-on', ntwClienteManual); btn.disabled = ntwClienteManual;
+    btn.innerHTML = ntwClienteManual ? '<i class="bi bi-pencil-fill"></i>Edición manual activada' : '<i class="bi bi-pencil"></i>Editar manualmente';
+  }
+  if(badge) badge.style.display = ntwClienteManual ? '' : 'none';
+}
+$nt('ntwClienteManualBtn') && $nt('ntwClienteManualBtn').addEventListener('click', function(){
+  ntwSetClienteManual(true);
+  try{ $nt('ntEmpresa').focus(); }catch(_){}
+  ntwRefresh();
+});
+
+// ── Chips «Detectado en ERP → usar» (Retiros): el correo NUNCA se precarga
+// solo (feedback de Daniel: email del ERP = sugerencia); el resto se precarga
+// si el campo está vacío y, si ya tenía otro valor, queda como chip. ──
+const NTW_CHIP_LABEL = { ntEmpresa:'Razón social', ntRut:'RUT', ntContacto:'Contacto', ntPhone:'Teléfono', ntEmail:'Correo' };
+function ntwProponerChip(campo, valor, origen){
+  valor = String(valor||'').trim(); if(!valor) return;
+  const inp = $nt(campo); if(!inp) return;
+  const actual = String(inp.value||'').trim();
+  if(campo === 'ntRut'){ if(ntwRutClave(actual) === ntwRutClave(valor)) return; }
+  else if(actual.toLowerCase() === valor.toLowerCase()) return;
+  ntwChips.set(campo+'|'+valor.toLowerCase(), { campo:campo, valor:valor, origen:origen||'ERP' });
+  ntwRenderChips();
+}
+function ntwFlash(inp){ if(!inp) return; inp.classList.add('ntw-precargado'); setTimeout(function(){ inp.classList.remove('ntw-precargado'); }, 1800); }
+function ntwPrecargarOChip(campo, valor, origen){
+  valor = String(valor||'').trim(); if(!valor) return false;
+  const inp = $nt(campo); if(!inp) return false;
+  if(campo === 'ntEmail'){ ntwProponerChip(campo, valor, origen); return false; }
+  if(!String(inp.value||'').trim()){
+    inp.value = campo === 'ntRut' ? (ntwRutFormato(valor) || valor) : valor;
+    ntwFlash(inp);
+    if(campo === 'ntPhone') inp.dispatchEvent(new Event('blur'));
+    if(campo === 'ntRut') ntwPintarRut();
+    const wrap = { ntEmpresa:'fEmpresaWrap', ntRut:'fRutWrap', ntContacto:'fContactoWrap' }[campo];
+    if(wrap){ limpiarNtErr(wrap); marcarNtOk(wrap); }
+    return true;
+  }
+  ntwProponerChip(campo, valor, origen);
+  return false;
+}
+function ntwRenderChips(){
+  const cont = $nt('ntwCliChips'); if(!cont) return;
+  Array.from(ntwChips.entries()).forEach(function(kv){
+    const c = kv[1], inp = $nt(c.campo); if(!inp) return;
+    const actual = String(inp.value||'').trim();
+    const igual = c.campo === 'ntRut' ? ntwRutClave(actual) === ntwRutClave(c.valor) : actual.toLowerCase() === c.valor.toLowerCase();
+    if(igual) ntwChips.delete(kv[0]);
+  });
+  cont.innerHTML = Array.from(ntwChips.entries()).map(function(kv){
+    const c = kv[1];
+    const val = c.campo === 'ntRut' ? (ntwRutFormato(c.valor) || c.valor) : c.valor;
+    return '<button type="button" class="ntw-chip" data-chip="'+esc(kv[0])+'" title="Reemplaza el campo '+esc(NTW_CHIP_LABEL[c.campo]||c.campo)+'">'
+      + '<i class="bi bi-cpu"></i><span class="lbl">'+esc(NTW_CHIP_LABEL[c.campo]||c.campo)+' detectado en ERP'+(c.origen ? ' <em>('+esc(c.origen)+')</em>' : '')+'</span>'
+      + '<span class="val">'+esc(val)+'</span><span class="usar">→ usar</span></button>';
+  }).join('');
+}
+$nt('ntwCliChips') && $nt('ntwCliChips').addEventListener('click', function(ev){
+  const b = ev.target.closest('[data-chip]'); if(!b) return;
+  const c = ntwChips.get(b.getAttribute('data-chip')); if(!c) return;
+  const inp = $nt(c.campo); if(!inp) return;
+  inp.value = c.campo === 'ntRut' ? (ntwRutFormato(c.valor) || c.valor) : c.valor;
+  ntwChips.delete(b.getAttribute('data-chip'));
+  ntwFlash(inp);
+  if(c.campo === 'ntPhone' || c.campo === 'ntEmail') inp.dispatchEvent(new Event('blur'));
+  if(c.campo === 'ntRut') ntwPintarRut();
+  const wrap = { ntEmpresa:'fEmpresaWrap', ntRut:'fRutWrap', ntContacto:'fContactoWrap' }[c.campo];
+  if(wrap){ limpiarNtErr(wrap); marcarNtOk(wrap); }
+  ntwRenderChips();
+  ntwRefresh();
+});
+
+// Datos de cliente que llegan de una OT, un documento o el ERP → se proponen
+// al Paso 2 (precarga o chip, nunca pisan lo escrito). src = {empresa, rut,
+// contacto, telefono, email, direccion, comuna, region}.
+function ntwProponerCliente(src, origen){
+  if(!src) return;
+  ntwPrecargarOChip('ntEmpresa', src.empresa, origen);
+  ntwPrecargarOChip('ntRut', src.rut, origen);
+  ntwPrecargarOChip('ntContacto', src.contacto, origen);
+  ntwPrecargarOChip('ntPhone', src.telefono, origen);
+  ntwPrecargarOChip('ntEmail', src.email, origen);
+  // Dirección: punto de partida, sigue editable/verificable con Google Places
+  const dir = $nt('ntDireccion');
+  if(dir && !dir.value.trim() && src.direccion){
+    dir.value = src.direccion;
+    if(src.comuna) $nt('ntComuna').value = src.comuna;
+    if(src.region) $nt('ntRegion').value = src.region;
+    $nt('ntDirHint').innerHTML = '<i class="bi bi-info-circle me-1"></i>Precargada desde '+esc(origen||'el ERP')+': elige la sugerencia de Google para validarla.';
+    ntwFlash(dir);
+  }
+  if((src.empresa||'').trim()) document.querySelector('#ntBuscarCliWrap .nt-search').classList.add('has-tag');
+  ntwRefresh();
+}
 
 // ── Autocomplete cliente (ERP) ──
 const ntAcCli = document.getElementById('ntAcCli');
@@ -793,8 +993,11 @@ function ntSelCliente(c){
   ntCliente = c;
   ntAcCli.classList.remove('open');
   document.getElementById('ntBuscarCli').value = c.empresa || c.rut || '';
-  document.getElementById('ntRut').value = c.rut || '';
+  // Lo elegido en el buscador del ERP ES el cliente: pisa Empresa/RUT (son
+  // la vitrina del ERP), igual que antes de Tickets 2.0.
+  document.getElementById('ntRut').value = c.rut ? (ntwRutFormato(c.rut) || c.rut) : '';
   document.getElementById('ntEmpresa').value = c.empresa || '';
+  ntwPintarRut();
   // Precarga direccion/comuna del ERP como punto de partida -- sigue siendo
   // editable/verificable con Google Places (perfil logistico de Daniel).
   if(c.direccion) document.getElementById('ntDireccion').value = c.direccion;
@@ -805,25 +1008,16 @@ function ntSelCliente(c){
   document.querySelector('#ntBuscarCliWrap .nt-search').classList.add('has-tag');
   // 2026-07-19 (Daniel): si el RUT ya tiene ficha en Clientes, precarga el
   // contacto conocido -- SOLO en campos vacios (si el usuario ya tipeo algo
-  // en Contacto/Telefono/Correo, no se pisa).
+  // en Contacto/Telefono/Correo, no se pisa). Tickets 2.0: el correo va como
+  // chip «Detectado → usar», nunca se escribe solo.
   if(c.ya_es_cliente){
-    const ntContactoEl = document.getElementById('ntContacto');
-    const ntPhoneEl = document.getElementById('ntPhone');
-    const ntEmailEl = document.getElementById('ntEmail');
-    if(c.contacto_nombre && !ntContactoEl.value.trim()){
-      ntContactoEl.value = c.contacto_nombre;
-      limpiarNtErr('fContactoWrap'); marcarNtOk('fContactoWrap');
-    }
-    if(c.contacto_tel && !ntPhoneEl.value.trim()){
-      ntPhoneEl.value = c.contacto_tel;
-      ntPhoneEl.dispatchEvent(new Event('blur'));
-    }
-    if(c.contacto_email && !ntEmailEl.value.trim()){
-      ntEmailEl.value = c.contacto_email;
-      ntEmailEl.dispatchEvent(new Event('blur'));
-    }
+    ntwPrecargarOChip('ntContacto', c.contacto_nombre, 'ficha Clientes');
+    ntwPrecargarOChip('ntPhone', c.contacto_tel, 'ficha Clientes');
+    ntwPrecargarOChip('ntEmail', c.contacto_email, 'ficha Clientes');
     ilusToast('Este RUT ya tiene ficha en el módulo Clientes' + (c.cliente_id ? ' (#'+c.cliente_id+')' : '') + '.', {type:'info'});
   }
+  ntwRenderChips();
+  ntwRefresh();
 }
 // El RUT/Empresa quedan editables tras seleccionar — si el usuario los borra
 // a mano, vuelven a marcarse como pendientes al validar (validarNtTodo).
@@ -831,8 +1025,26 @@ function ntSelCliente(c){
   document.querySelector('#ntBuscarCliWrap .nt-search').classList.remove('has-tag');
 }));
 
+// ── Validación RUT (dígito verificador) — avisa, no traba ──
+function ntwPintarRut(){
+  const inp = $nt('ntRut'), f = $nt('ntwVRut'); if(!inp || !f) return;
+  const c = ntwRutLimpio(inp.value);
+  inp.classList.remove('is-valid','is-invalid');
+  if(!c){ f.className = 'nt-vfeed'; f.textContent = ''; return; }
+  if(ntwRutValido(c)){ inp.classList.add('is-valid'); f.className = 'nt-vfeed ok'; f.innerHTML = '<i class="bi bi-check-circle-fill"></i> RUT válido'; }
+  else if(c.length >= 8){ inp.classList.add('is-invalid'); f.className = 'nt-vfeed err'; f.innerHTML = '<i class="bi bi-exclamation-circle"></i> El dígito verificador no cuadra — revisa el RUT'; }
+  else { f.className = 'nt-vfeed'; f.textContent = ''; }
+}
+$nt('ntRut').addEventListener('input', ntwPintarRut);
+$nt('ntRut').addEventListener('blur', function(){
+  if(ntwRutLimpio(this.value).length >= 2) this.value = ntwRutFormato(this.value);
+  ntwPintarRut(); ntwRefresh();
+});
+
 // ── Validación teléfono chileno ──
 function ntNormTel(v){ return String(v||'').replace(/[^\d]/g,'').replace(/^56/,''); }
+function ntwTelOk(v){ const n = ntNormTel(v); return /^9\d{8}$/.test(n) || /^\d{8,9}$/.test(n); }
+function ntwEmailOk(v){ return /^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(String(v||'').trim()); }
 document.getElementById('ntPhone').addEventListener('blur', function(){
   const v = this.value.trim(); const f = document.getElementById('ntVPhone');
   if(!v){ f.className='nt-vfeed'; f.textContent=''; marcarNtErr('fPhoneWrap'); return; }
@@ -847,7 +1059,7 @@ document.getElementById('ntPhone').addEventListener('blur', function(){
 document.getElementById('ntEmail').addEventListener('blur', function(){
   const v = this.value.trim(); const f = document.getElementById('ntVEmail');
   if(!v){ f.className='nt-vfeed'; f.textContent=''; marcarNtErr('fEmailWrap'); return; }
-  if(/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(v)){ f.className='nt-vfeed ok'; f.innerHTML='<i class="bi bi-check-circle-fill"></i> Correo válido'; marcarNtOk('fEmailWrap'); }
+  if(ntwEmailOk(v)){ f.className='nt-vfeed ok'; f.innerHTML='<i class="bi bi-check-circle-fill"></i> Correo válido'; marcarNtOk('fEmailWrap'); }
   else { f.className='nt-vfeed err'; f.innerHTML='<i class="bi bi-exclamation-circle"></i> Correo inválido'; marcarNtErr('fEmailWrap'); }
 });
 
@@ -875,9 +1087,192 @@ function ntInitDir(){
       const h = document.getElementById('ntDirHint');
       h.innerHTML = '<i class="bi bi-check-circle-fill text-success me-1"></i>Dirección verificada · <small>'
         + place.lat.toFixed(4)+', '+place.lng.toFixed(4)+'</small>';
+      ntwRefresh();
     } });
 }
 ntInitDir();
+// Si se edita la dirección a mano después de verificarla, la verificación cae
+document.getElementById('ntDireccion').addEventListener('input', function(){
+  if(document.getElementById('ntDirLat').value){
+    document.getElementById('ntDirLat').value=''; document.getElementById('ntDirLng').value=''; document.getElementById('ntDirPlace').value='';
+    document.getElementById('ntDirHint').innerHTML = '<i class="bi bi-info-circle me-1"></i>Selecciona una sugerencia para validar la dirección.';
+  }
+});
+
+// ══════════════ PASO 1 · ¿De dónde viene? (OT existente o documento del ERP) ══════════════
+// ── OT existente: buscador propio (GET /tickets/api/ot/buscar, solo lectura) ──
+const ntwOtAc = $nt('ntwOtAc');
+$nt('ntwBtnOt') && $nt('ntwBtnOt').addEventListener('click', function(){
+  const box = $nt('ntwOtSearch'); if(!box) return;
+  const abrir = box.style.display === 'none';
+  box.style.display = abrir ? '' : 'none';
+  this.classList.toggle('is-on', abrir);
+  if(abrir){ try{ $nt('ntwOtQ').focus(); }catch(_){} }
+});
+const ntwBuscarOt = debounce(async function(){
+  const q = ($nt('ntwOtQ').value||'').trim();
+  if(q.length < 2){ ntwOtAc.classList.remove('open'); return; }
+  ntwOtAc.innerHTML = '<div class="nt-ac-empty"><i class="bi bi-hourglass-split"></i>Buscando órdenes de trabajo…</div>'; ntwOtAc.classList.add('open');
+  try{
+    const r = await fetch('/tickets/api/ot/buscar?q='+encodeURIComponent(q));
+    const d = await r.json();
+    const rows = d.resultados || [];
+    if(!d.ok){ ntwOtAc.innerHTML = '<div class="nt-ac-empty err"><i class="bi bi-exclamation-triangle"></i>'+esc(d.error||'No se pudo buscar')+'</div>'; return; }
+    if(!rows.length){ ntwOtAc.innerHTML = '<div class="nt-ac-empty"><i class="bi bi-search"></i>Ninguna OT coincide con «'+esc(q)+'»</div>'; return; }
+    ntwOtAc.innerHTML = rows.map(function(o,i){
+      const cli = o.cliente || {};
+      const meta = [o.tipo_label, o.estado_label, o.fecha ? 'Agendada '+o.fecha : '', o.equipos_n ? o.equipos_n+' equipo'+(o.equipos_n===1?'':'s') : ''].filter(Boolean).join(' · ');
+      const lock = o.ticket_existente ? '<span class="lock"><i class="bi bi-lock-fill"></i> Ya tiene ticket '+esc(o.ticket_existente.numero_ticket||('#'+o.ticket_existente.id))+'</span>' : '';
+      return '<div class="nt-ac-item" data-i="'+i+'"><div class="ntw-ot-item">'
+        + '<span class="num">'+esc(o.numero_ot||('OT #'+o.id))+(o.titulo ? ' <span style="color:#374151;font-weight:600">· '+esc(o.titulo)+'</span>' : '')+'</span>'
+        + '<span class="cli">'+esc(cli.razon_social||'Sin cliente (trabajo interno)')+(cli.rut ? ' <span style="color:#6b7280;font-weight:500">· '+esc(cli.rut)+'</span>' : '')+'</span>'
+        + '<span class="meta">'+esc(meta)+(lock ? ' · '+lock : '')+'</span></div></div>';
+    }).join('');
+    ntwOtAc.querySelectorAll('.nt-ac-item').forEach(function(it){ it.addEventListener('click', function(){ ntwElegirOt(rows[+it.dataset.i]); }); });
+  }catch(e){ ntwOtAc.innerHTML = '<div class="nt-ac-empty err"><i class="bi bi-wifi-off"></i>No se pudo consultar las OT</div>'; }
+}, 320);
+$nt('ntwOtQ') && $nt('ntwOtQ').addEventListener('input', ntwBuscarOt);
+
+async function ntwElegirOt(o){
+  ntwOtAc.classList.remove('open');
+  if(o.ticket_existente){
+    const num = o.ticket_existente.numero_ticket || ('#'+o.ticket_existente.id);
+    const abrir = await ilusConfirm({
+      title: 'Esta OT ya tiene ticket',
+      message: (o.numero_ot||'La OT')+' ya está ligada al ticket '+num+'. Una OT solo puede tener un ticket.',
+      sub: '¿Abrir ese ticket en otra pestaña? Si lo que necesitas es otro ticket para este cliente, créalo sin asociar la OT.',
+      okLabel: 'Abrir '+num, cancelLabel: 'Volver', type: 'question',
+    });
+    if(abrir) window.open('/tickets/'+o.ticket_existente.id, '_blank', 'noopener');
+    return;
+  }
+  try{
+    const r = await fetch('/tickets/api/ot/'+encodeURIComponent(o.id));
+    const d = await r.json();
+    if(!d.ok || !d.ot){ ilusToast(d.error||'No se pudo leer la OT', {type:'error'}); return; }
+    ntwAsociarOt(d.ot);
+  }catch(e){ ilusToast('No se pudo leer la OT', {type:'error'}); }
+}
+function ntwAsociarOt(ot){
+  if(ntwOt) ntwQuitarOt(true);
+  ntwOt = ot;
+  const origen = ot.numero_ot || ('OT #'+ot.id);
+  (ot.equipos||[]).forEach(function(e){
+    if(ntEquipos.some(function(x){ return x.origen==='ot' && x.maquina_id && x.maquina_id===e.maquina_id; })) return;
+    ntEquipos.push({ sku:e.sku||'', nombre:e.nombre||'', serie:e.serie||'', maquina_id:e.maquina_id||null, notas:'', sel:true,
+      origen:'ot', origenLabel:origen, tido:'', nudo:'', cantidad:1 });
+  });
+  (ot.documentos||[]).forEach(function(dc){
+    if(!dc.tido || !dc.nudo) return;
+    const k = String(dc.tido).toUpperCase()+'|'+String(dc.nudo);
+    if(!ntwDocs.has(k)) ntwDocs.set(k, { tido:String(dc.tido).toUpperCase(), nudo:String(dc.nudo), cliente:(ot.cliente||{}).razon_social||'', rut:(ot.cliente||{}).rut||'', fecha:'', lineas:0, origen:'ot', origenLabel:origen });
+  });
+  const c = ot.cliente || {};
+  ntwProponerCliente({ empresa:c.razon_social, rut:c.rut, contacto:c.contacto_nombre, telefono:c.contacto_tel, email:c.contacto_email,
+    direccion:c.direccion, comuna:c.comuna, region:c.region }, origen);
+  const box = $nt('ntwOtSearch'); if(box) box.style.display = 'none';
+  $nt('ntwBtnOt').classList.remove('is-on'); $nt('ntwOtQ').value = '';
+  ntwRenderOrigenes(); renderNtEquipos(); ntwRefresh();
+  ilusToast('✓ '+origen+' asociada: '+(ot.equipos||[]).length+' equipo(s) y cliente cargados', {type:'success'});
+  try{ $nt('ntwStep2').scrollIntoView({behavior:'smooth', block:'start'}); }catch(_){}
+}
+function ntwQuitarOt(silencioso){
+  if(!ntwOt) return;
+  for(let i = ntEquipos.length-1; i >= 0; i--){ if(ntEquipos[i].origen==='ot') ntEquipos.splice(i,1); }
+  Array.from(ntwDocs.entries()).forEach(function(kv){ if(kv[1].origen==='ot') ntwDocs.delete(kv[0]); });
+  const num = ntwOt.numero_ot; ntwOt = null;
+  ntwRenderOrigenes(); renderNtEquipos(); ntwRefresh();
+  if(!silencioso) ilusToast(num+' quitada del ticket (el cliente escrito se conserva)', {type:'info'});
+}
+
+// ── Documento del ERP: el buscador estándar (templates/tickets/_tka_modal.html)
+// en modo 'seleccionar' → devuelve líneas con su documento + el encabezado ──
+$nt('ntwBtnDoc') && $nt('ntwBtnDoc').addEventListener('click', function(){
+  if(typeof window.tkaOpen !== 'function'){ ilusToast('El buscador de documentos del ERP no está disponible en esta pantalla.', {type:'error'}); return; }
+  // tkaClose() libera document.body.style.overflow sin saber que este modal
+  // Bootstrap sigue abierto detrás: se observa su cierre y se devuelve el
+  // scroll-lock (mismo patrón que Retiros / templates/ot2/_modal_crear.html).
+  const tkaEl = $nt('tkaModal');
+  if(tkaEl && window.MutationObserver){
+    const mo = new MutationObserver(function(){
+      if(!tkaEl.classList.contains('is-open')){
+        mo.disconnect();
+        if(ntModalEl.classList.contains('show')) document.body.style.overflow = 'hidden';
+      }
+    });
+    mo.observe(tkaEl, { attributes:true, attributeFilter:['class'] });
+  }
+  const rut = $nt('ntRut').value.trim();
+  window.tkaOpen({
+    mode: 'seleccionar',
+    tabs: ['doc', 'cli'],
+    rutPrefill: ntwRutValido(rut) ? rut : '',
+    docsYaAgregados: Array.from(ntwDocs.values()).map(function(d){ return { tido:d.tido, nudo:d.nudo }; }),
+    docsYaAgregadosLabel: 'Ya en este ticket',
+    onSeleccionar: ntwOnSeleccionTka,
+  });
+});
+async function ntwOnSeleccionTka(items, header){
+  if(!items || !items.length) return;
+  let nuevosDocs = 0, nuevosEq = 0;
+  items.forEach(function(it){
+    if(!it.tido || !it.nudo) return;
+    const tido = String(it.tido).toUpperCase(), nudo = String(it.nudo).replace(/^0+/,'') || String(it.nudo);
+    const k = tido+'|'+nudo;
+    if(!ntwDocs.has(k)){
+      const h = (header && String(header.nudo||'').replace(/^0+/,'') === nudo) ? header : {};
+      ntwDocs.set(k, { tido:tido, nudo:nudo, cliente:h.cliente||'', rut:h.rut||'', fecha:h.fecha||'', lineas:0, origen:'erp', origenLabel:'ERP' });
+      nuevosDocs++;
+    }
+    const doc = ntwDocs.get(k);
+    const qty = Math.max(1, parseInt(it.qty||1, 10) || 1);
+    if(it.sku && !ntEquipos.some(function(e){ return e.origen==='doc' && e.sku===it.sku && e.tido===tido && e.nudo===nudo; })){
+      ntEquipos.push({ sku:it.sku||'', nombre:it.nombre||'', serie:'', notas:'', sel:true, origen:'doc', origenLabel:tido+' '+nudo, tido:tido, nudo:nudo, cantidad:qty });
+      doc.lineas++; nuevosEq++;
+    }
+  });
+  if(header && (header.cliente || header.rut)){
+    ntwProponerCliente({ empresa:header.cliente, rut:header.rut, telefono:header.telefono, email:header.email,
+      direccion:header.direccion, comuna:header.comuna }, (header.tido||'')+' '+(header.nudo||''));
+  }
+  ntwRenderOrigenes(); renderNtEquipos(); ntwRefresh();
+  ilusToast('✓ '+nuevosDocs+' documento(s) y '+nuevosEq+' producto(s) agregados al ticket', {type:'success'});
+}
+function ntwQuitarDoc(key){
+  const d = ntwDocs.get(key); if(!d) return;
+  for(let i = ntEquipos.length-1; i >= 0; i--){ const e = ntEquipos[i]; if(e.origen==='doc' && e.tido===d.tido && e.nudo===d.nudo) ntEquipos.splice(i,1); }
+  ntwDocs.delete(key);
+  ntwRenderOrigenes(); renderNtEquipos(); ntwRefresh();
+}
+function ntwRenderOrigenes(){
+  const wrap = $nt('ntwOrigenesWrap'), cont = $nt('ntwOrigenes'), cnt = $nt('ntwOrigenesCount'); if(!cont) return;
+  const cards = [];
+  if(ntwOt){
+    const c = ntwOt.cliente || {};
+    const meta = [ntwOt.tipo_label, ntwOt.estado_label, ntwOt.fecha ? 'Agendada '+ntwOt.fecha : ''].filter(Boolean).join(' · ');
+    cards.push('<div class="ntw-doc-card"><div class="ntw-doc-num"><small>Orden de trabajo</small>'+esc(ntwOt.numero_ot||('OT #'+ntwOt.id))+'</div>'
+      + '<div class="ntw-doc-meta"><span class="ddate">'+esc(meta)+'</span><span class="dcli">'+esc(c.razon_social||'Sin cliente (trabajo interno)')+'</span>'
+      + '<span class="dlin">'+(ntwOt.titulo ? esc(ntwOt.titulo)+' · ' : '')+(ntwOt.equipos||[]).length+' equipo(s) · '+(ntwOt.documentos||[]).length+' documento(s)</span></div>'
+      + '<span class="ntw-pill ot"><i class="bi bi-clipboard2-pulse"></i>OT</span>'
+      + '<button type="button" class="ntw-doc-quitar" data-quitar-ot="1"><i class="bi bi-x-lg"></i>Quitar</button></div>');
+  }
+  ntwDocs.forEach(function(d, k){
+    cards.push('<div class="ntw-doc-card"><div class="ntw-doc-num"><small>'+esc(d.tido)+'</small>'+esc(d.nudo)+'</div>'
+      + '<div class="ntw-doc-meta">'+(d.fecha ? '<span class="ddate">'+esc(d.fecha)+'</span>' : '')+'<span class="dcli">'+esc(d.cliente||'—')+(d.rut ? ' · '+esc(d.rut) : '')+'</span>'
+      + '<span class="dlin">'+(d.lineas ? d.lineas+' producto(s) elegido(s)' : (d.origen==='ot' ? 'Documento de la '+esc(d.origenLabel) : 'Sin productos elegidos'))+'</span></div>'
+      + '<span class="ntw-pill '+(d.origen==='ot' ? 'ok' : 'ok')+'"><i class="bi bi-receipt"></i>'+(d.origen==='ot' ? 'Desde la OT' : 'ERP')+'</span>'
+      + '<button type="button" class="ntw-doc-quitar" data-quitar-doc="'+esc(k)+'"><i class="bi bi-x-lg"></i>Quitar</button></div>');
+  });
+  cont.innerHTML = cards.join('');
+  if(wrap) wrap.style.display = cards.length ? '' : 'none';
+  if(cnt) cnt.textContent = String(cards.length);
+  const bo = $nt('ntwBtnOtTxt'); if(bo) bo.textContent = ntwOt ? 'Cambiar la OT asociada' : 'Asociar una OT existente';
+  const bd = $nt('ntwBtnDocTxt'); if(bd) bd.textContent = ntwDocs.size ? 'Agregar otro documento del ERP' : 'Agregar factura, boleta o nota de venta';
+}
+$nt('ntwOrigenes') && $nt('ntwOrigenes').addEventListener('click', function(ev){
+  const bo = ev.target.closest('[data-quitar-ot]'); if(bo){ ntwQuitarOt(false); return; }
+  const bd = ev.target.closest('[data-quitar-doc]'); if(bd){ ntwQuitarDoc(bd.getAttribute('data-quitar-doc')); }
+});
 
 // ── Autocomplete equipo (ERP: del cliente si ya se identifico, si no catalogo general) ──
 const ntAcEq = document.getElementById('ntAcEq');
@@ -901,42 +1296,239 @@ document.getElementById('ntBuscarEq').addEventListener('input', ntBuscarEquipo);
 
 function ntAddEquipo(p){
   if(ntEquipos.some(e=>(e.sku && e.sku===p.sku) || e.nombre===p.nombre)){ ilusToast('Ese equipo ya está agregado','info'); }
-  else ntEquipos.push({sku:p.sku||'', nombre:p.nombre||'', notas:''});
+  else ntEquipos.push({sku:p.sku||'', nombre:p.nombre||'', serie:'', notas:'', sel:true, origen:'manual', origenLabel:'Catálogo', tido:'', nudo:'', cantidad:1});
   ntAcEq.classList.remove('open'); document.getElementById('ntBuscarEq').value='';
-  renderNtEquipos();
+  renderNtEquipos(); ntwRefresh();
 }
 function renderNtEquipos(){
   const l = document.getElementById('ntListaEq');
   // Contador visible (Daniel: "puede ser un equipo, veinte, cincuenta... tiene
   // que tener ese dinamismo") -- se actualiza en vivo con cada add/quitar.
   const counter = document.getElementById('ntEqCount');
-  const n = ntEquipos.length;
+  const n = ntEquipos.length, sel = ntEquipos.filter(e=>e.sel).length;
   counter.classList.toggle('show', n > 0);
-  document.getElementById('ntEqCountTxt').textContent = n===1 ? '1 equipo agregado' : n+' equipos agregados';
+  document.getElementById('ntEqCountTxt').textContent = n===0 ? '0 equipos agregados' : (sel+' de '+n+' producto'+(n===1?'':'s')+' marcado'+(sel===1?'':'s'));
+  const tg = $nt('ntwEqToggleAll'); if(tg) tg.disabled = n === 0;
+  if(!n){
+    l.innerHTML = '<div class="ntw-empty"><i class="bi bi-box-seam"></i>Todavía no hay productos. Llegan solos desde la OT o el documento del Paso 1, o agrégalos abajo desde el catálogo.</div>';
+    return;
+  }
   // Cada equipo agregado lleva su propia observación (Daniel 2026-07-11: con
   // varias maquinas con problemas distintos, la descripcion general del
-  // ticket no alcanza -- se necesita una nota por maquina).
-  l.innerHTML = ntEquipos.map((e,i)=>'<div class="nt-eq-item">'
-    + '<div class="nt-eqrow"><span>'+esc(e.nombre)
-    + (e.sku? ' <span class="sku">· '+esc(e.sku)+'</span>':'')
-    + '</span><button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="ntDelEquipo('+i+')"><i class="bi bi-x-lg"></i></button></div>'
+  // ticket no alcanza -- se necesita una nota por maquina). Nombres
+  // COMPLETOS, nunca truncados (REGLA #15).
+  l.innerHTML = ntEquipos.map((e,i)=>'<label class="ntw-eq-row'+(e.sel?' is-on':'')+'" data-i="'+i+'">'
+    + '<input type="checkbox" class="chk" data-eq-chk="'+i+'"'+(e.sel?' checked':'')+' aria-label="Incluir '+esc(e.nombre)+'">'
+    + '<div class="ntw-eq-body"><div class="ntw-eq-name">'+esc(e.nombre||e.sku||'Producto')+'</div>'
+    + '<div class="ntw-eq-meta">'+(e.sku ? '<span class="sku">'+esc(e.sku)+'</span>' : '')
+    + (e.serie ? '<span>Serie '+esc(e.serie)+'</span>' : '')
+    + (e.cantidad > 1 ? '<span>× '+e.cantidad+'</span>' : '')
+    + '<span class="ntw-pill '+(e.origen==='manual' ? '' : 'ok')+'">'+esc(e.origenLabel||'')+'</span></div>'
     + '<input type="text" class="form-control form-control-sm nt-eq-notas" data-i="'+i+'" placeholder="Observación de este equipo (opcional)" value="'+esc(e.notas||'')+'">'
-    + '</div>').join('');
+    + '</div>'
+    + '<button type="button" class="ntw-eq-quitar" data-eq-del="'+i+'" title="Quitar de la lista" aria-label="Quitar '+esc(e.nombre)+'"><i class="bi bi-x-lg"></i></button>'
+    + '</label>').join('');
   l.querySelectorAll('.nt-eq-notas').forEach(function(inp){
+    inp.addEventListener('click', function(ev){ ev.preventDefault(); ev.stopPropagation(); });
     inp.addEventListener('input', function(){
       const idx = +this.dataset.i;
       if(ntEquipos[idx]) ntEquipos[idx].notas = this.value;
     });
   });
 }
-window.ntDelEquipo = function(i){ ntEquipos.splice(i,1); renderNtEquipos(); };
+window.ntDelEquipo = function(i){ ntEquipos.splice(i,1); renderNtEquipos(); ntwRefresh(); };
+function ntwToggleEq(i, val){ if(!ntEquipos[i]) return; ntEquipos[i].sel = (typeof val === 'boolean') ? val : !ntEquipos[i].sel; }
+$nt('ntListaEq').addEventListener('change', function(ev){
+  const c = ev.target.closest('[data-eq-chk]'); if(!c) return;
+  ntwToggleEq(+c.getAttribute('data-eq-chk'), c.checked);
+  renderNtEquipos(); ntwRefresh();
+});
+$nt('ntListaEq').addEventListener('click', function(ev){
+  const b = ev.target.closest('[data-eq-del]'); if(!b) return;
+  ev.preventDefault(); window.ntDelEquipo(+b.getAttribute('data-eq-del'));
+});
+// REGLA #14: un solo toggle — si alguno está sin marcar, marca todos; si ya
+// están todos, los desmarca. Pasa por el toggle individual de cada fila.
+$nt('ntwEqToggleAll') && $nt('ntwEqToggleAll').addEventListener('click', function(){
+  if(!ntEquipos.length) return;
+  const marcarTodos = ntEquipos.some(e=>!e.sel);
+  ntEquipos.forEach(function(_, i){ ntwToggleEq(i, marcarTodos); });
+  renderNtEquipos(); ntwRefresh();
+});
 
 document.getElementById('ntDesc').addEventListener('input', function(){ document.getElementById('ntDescCount').textContent = this.value.length; });
 
 document.addEventListener('click', function(e){
   if(!e.target.closest('#ntBuscarCli') && !e.target.closest('#ntAcCli')) ntAcCli.classList.remove('open');
   if(!e.target.closest('#ntBuscarEq') && !e.target.closest('#ntAcEq')) ntAcEq.classList.remove('open');
+  if(ntwOtAc && !e.target.closest('#ntwOtQ') && !e.target.closest('#ntwOtAc')) ntwOtAc.classList.remove('open');
 });
+
+// ── Responsable en ILUS (Paso 5): /tickets/api/responsables; por defecto quien
+// crea, si es responsable ──
+async function ntwCargarResponsables(){
+  if(ntwRespCargados) return;
+  const sel = $nt('ntResp'); if(!sel) return;
+  try{
+    const r = await fetch('/tickets/api/responsables');
+    const d = await r.json();
+    const lista = (d && d.responsables) || [];
+    sel.innerHTML = '<option value="">Sin asignar por ahora</option>' + lista.map(function(p){
+      return '<option value="'+esc(p.nombre||'')+'">'+esc(p.nombre||'')+'</option>';
+    }).join('');
+    sel.dataset.yo = (d && d.soy_responsable && d.yo) ? d.yo : '';
+    ntwRespCargados = true;
+  }catch(e){
+    sel.innerHTML = '<option value="">Sin asignar por ahora</option>';
+  }
+  ntwRespDefault();
+  ntwRefresh();
+}
+function ntwRespDefault(){
+  const sel = $nt('ntResp'); if(!sel) return;
+  const yo = sel.dataset.yo || '';
+  sel.value = yo;
+  if(sel.value !== yo) sel.value = '';
+  const f = $nt('ntwRespYo'); if(f) f.classList.toggle('show', !!(yo && sel.value === yo));
+}
+$nt('ntResp') && $nt('ntResp').addEventListener('change', function(){
+  const f = $nt('ntwRespYo'); if(f) f.classList.toggle('show', !!(this.dataset.yo && this.value === this.dataset.yo));
+});
+
+// ══════════════ Semáforo de los 5 pasos (mismo evaluador que Retiros) ══════════════
+function ntwVal(id){ const el = $nt(id); return el ? String(el.value||'').trim() : ''; }
+function evalPaso1(){
+  const r = { faltan:[], avisos:[], ok:'' };
+  const partes = [];
+  if(ntwOt) partes.push(ntwOt.numero_ot || ('OT #'+ntwOt.id));
+  ntwDocs.forEach(function(d){ partes.push(d.tido+' '+d.nudo); });
+  const aMano = ntwVal('ntDoc');
+  if(partes.length) r.ok = 'Asociado: '+partes.join(' · ')+(aMano ? ' · a mano: '+aMano : '');
+  else if(aMano) r.ok = 'Documento escrito a mano: '+aMano+' (sin cruce con el ERP)';
+  else if(ntwEsInterno()) r.ok = 'Trabajo interno: no necesita OT ni documento';
+  else r.avisos.push({ txt:'Sin OT ni documento: el cliente y los productos se escriben a mano (recomendado asociar uno)' });
+  return r;
+}
+function evalPaso2(){
+  const r = { faltan:[], avisos:[], ok:'' };
+  const empresa = ntwVal('ntEmpresa'), rut = ntwVal('ntRut'), contacto = ntwVal('ntContacto');
+  const tel = ntwVal('ntPhone'), mail = ntwVal('ntEmail'), dir = ntwVal('ntDireccion'), lat = ntwVal('ntDirLat');
+  if(ntwEsInterno()){
+    r.ok = empresa ? 'Cliente opcional (trabajo interno): '+empresa : 'Cliente opcional para un trabajo interno';
+    if(rut && !ntwRutValido(rut)) r.avisos.push({ txt:'El RUT no cuadra (dígito verificador)' });
+    return r;
+  }
+  if(!empresa) r.faltan.push('empresa');
+  if(!rut) r.faltan.push('RUT');
+  else if(!ntwRutValido(rut)) r.avisos.push({ txt:'El RUT no cuadra (dígito verificador): revísalo' });
+  if(!contacto) r.faltan.push('nombre de contacto');
+  if(!tel) r.faltan.push('teléfono'); else if(!ntwTelOk(tel)) r.faltan.push('teléfono válido (9 dígitos)');
+  if(!mail) r.faltan.push('correo'); else if(!ntwEmailOk(mail)) r.faltan.push('correo válido');
+  if(!dir) r.faltan.push('dirección del equipo'); else if(!lat) r.faltan.push('dirección verificada con Google (elige una sugerencia)');
+  if(ntwChips.size) r.avisos.push({ txt: ntwChips.size+' dato'+(ntwChips.size===1?'':'s')+' detectado'+(ntwChips.size===1?'':'s')+' en el ERP sin usar (toca el chip para usarlo)' });
+  if(!r.faltan.length) r.ok = empresa+' · '+ntwRutFormato(rut)+' · '+contacto;
+  return r;
+}
+function evalPaso3(){
+  const r = { faltan:[], avisos:[], ok:'' };
+  const n = ntEquipos.length, sel = ntEquipos.filter(e=>e.sel).length;
+  if(!n){ r.ok = 'Sin productos (opcional)'; return r; }
+  if(!sel){ r.avisos.push({ txt: n+' producto'+(n===1?'':'s')+' en la lista y ninguno marcado: marca los que corresponden o quítalos' }); return r; }
+  r.ok = sel+' de '+n+' producto'+(n===1?'':'s')+' marcado'+(sel===1?'':'s')+' para el ticket';
+  return r;
+}
+function evalPaso4(){
+  const r = { faltan:[], avisos:[], ok:'' };
+  const motivo = ntwVal('ntMotivo'), desc = ntwVal('ntDesc');
+  if(!ntTipoSel) r.faltan.push('tipo de solicitud');
+  if(!motivo) r.faltan.push('motivo principal');
+  if(!desc) r.faltan.push('descripción de qué está pasando');
+  else if(desc.length < 15) r.avisos.push({ txt:'La descripción es muy corta: agrega el detalle que te dio el cliente' });
+  if(!r.faltan.length) r.ok = (TIPO_LABEL[ntTipoSel]||ntTipoSel)+' · '+motivo+(ntEsGarantia ? ' · garantía' : '');
+  return r;
+}
+function evalPaso5(){
+  const r = { faltan:[], avisos:[], ok:'' };
+  const prio = ntwVal('ntPrio'), resp = ntwVal('ntResp');
+  if(!resp) r.avisos.push({ txt:'Sin responsable: el ticket quedará en «Sin asignar» de la bandeja' });
+  r.ok = 'Prioridad '+prio+(resp ? ' · Responsable: '+resp : '')+(ntArchivos.length ? ' · '+ntArchivos.length+' adjunto'+(ntArchivos.length===1?'':'s') : '');
+  return r;
+}
+function ntwPintarPaso(idx, r){
+  const card = $nt('ntwStep'+idx), linea = $nt('ntwEstado'+idx);
+  const estado = r.faltan.length ? 'rojo' : (r.avisos.length ? 'ambar' : 'verde');
+  r.idx = idx; r.estado = estado;
+  if(card){ card.classList.toggle('is-complete', estado==='verde'); card.classList.toggle('is-warn', estado==='ambar'); }
+  if(linea){
+    let txt;
+    if(estado==='rojo') txt = 'Falta: '+r.faltan.join(' · ')+(r.avisos.length ? ' · '+r.avisos.map(a=>a.txt).join(' · ') : '');
+    else if(estado==='ambar') txt = r.avisos.map(a=>a.txt).join(' · ');
+    else txt = r.ok;
+    linea.innerHTML = txt ? '<i class="bi '+NTW_ICONO_ESTADO[estado]+'"></i><span>'+esc(txt)+'</span>' : '';
+  }
+  const contAvisos = idx===1 ? $nt('ntwOrigenAvisos') : (idx===2 ? $nt('ntwCliAvisos') : null);
+  if(contAvisos){
+    const html = r.avisos.filter(a=>a.html).map(a=>a.html).join('');
+    if(contAvisos.innerHTML !== html) contAvisos.innerHTML = html;
+  }
+}
+function ntwPintarProgreso(res){
+  let verdes = 0, rojos = 0, avisos = 0;
+  res.forEach(function(r){ if(r.estado==='verde') verdes++; if(r.estado==='rojo') rojos++; avisos += r.avisos.length; });
+  const txt = $nt('ntwProgresoTxt'), bar = $nt('ntwProgresoBar'), av = $nt('ntwProgresoAvisos'), btn = $nt('ntBtnCrear');
+  if(txt) txt.textContent = verdes+' de '+res.length+' pasos listos';
+  if(bar) bar.style.width = Math.round(verdes/Math.max(1,res.length)*100)+'%';
+  if(av) av.textContent = avisos ? '· '+avisos+' aviso'+(avisos===1?'':'s') : '';
+  // Daniel: el botón principal queda deshabilitado hasta que esté completo
+  if(btn && !btn.dataset.enviando){
+    btn.disabled = rojos > 0;
+    btn.title = rojos > 0 ? 'Completa los pasos en rojo para crear el ticket' : 'Crear el ticket';
+  }
+}
+function ntwRefresh(){
+  const evals = [evalPaso1, evalPaso2, evalPaso3, evalPaso4, evalPaso5];
+  const res = evals.map(function(fn, i){
+    let r;
+    try{ r = fn(); }catch(e){ console.warn('[ntw] evalPaso'+(i+1), e); r = { faltan:[], avisos:[], ok:'' }; }
+    ntwPintarPaso(i+1, r);
+    return r;
+  });
+  ntwPintarProgreso(res);
+  ntwUltimaEval = res;
+  return res;
+}
+window.ntwRefresh = ntwRefresh;
+// Cualquier tecleo o cambio dentro del modal re-evalúa el semáforo
+const ntwRefreshDeb = debounce(ntwRefresh, 80);
+ntModalEl.addEventListener('input', ntwRefreshDeb);
+ntModalEl.addEventListener('change', ntwRefreshDeb);
+
+// Pre-chequeo de «Crear Ticket»: rojo → al primer paso que falta; ámbar → confirmar
+async function ntwPreCrear(){
+  const res = ntwRefresh();
+  const rojos = res.filter(r=>r.estado==='rojo');
+  if(rojos.length){
+    const card = $nt('ntwStep'+rojos[0].idx);
+    if(card){
+      try{ card.scrollIntoView({behavior:'smooth', block:'center'}); }catch(_){ card.scrollIntoView(); }
+      card.classList.remove('ntw-flash'); void card.offsetWidth; card.classList.add('ntw-flash');
+      setTimeout(function(){ card.classList.remove('ntw-flash'); }, 1300);
+    }
+    ilusToast('Falta: '+rojos.map(r=>'Paso '+r.idx+' → '+r.faltan.join(', ')).join(' · '), {type:'warning'});
+    return false;
+  }
+  const avisos = [];
+  res.forEach(function(r){ r.avisos.forEach(function(a){ avisos.push('Paso '+r.idx+': '+a.txt); }); });
+  if(!avisos.length) return true;
+  return !!(await ilusConfirm({
+    title: 'Hay '+avisos.length+' advertencia'+(avisos.length===1?'':'s'),
+    message: '¿Crear el ticket igual?',
+    sub: avisos.map(a=>'<div>• '+esc(a)+'</div>').join(''),
+    subHtml: true,
+    okLabel: 'Crear igual', cancelLabel: 'Revisar',
+    type: 'warning',
+  }));
+}
 
 function validarNtTodo(){
   let ok = true;
@@ -969,21 +1561,20 @@ function validarNtTodo(){
     if(!dirVal || !dirLat){ marcarNtErr('fDirWrap'); ok=false; } else marcarNtOk('fDirWrap');
   }
 
+  const motivoVal = ntwVal('ntMotivo');
+  if(!motivoVal){ marcarNtErr('fMotivoWrap'); ok=false; } else marcarNtOk('fMotivoWrap');
+
   const descVal = document.getElementById('ntDesc').value.trim();
   if(!descVal){ marcarNtErr('fDescWrap'); ok=false; } else marcarNtOk('fDescWrap');
 
   return ok;
 }
 
-document.getElementById('ntBtnCrear').addEventListener('click', async function(){
-  if(!validarNtTodo()){
-    ilusToast('Revisa los campos marcados en rojo','warning');
-    const firstErr = document.querySelector('#ntModal .nt-card .err, #ntModal .nt-field.err');
-    if(firstErr) firstErr.scrollIntoView({behavior:'smooth', block:'center'});
-    return;
-  }
-  const btn = this; btn.disabled = true;
-  const payload = {
+function ntwArmarPayload(conOt){
+  const seleccionados = ntEquipos.filter(e=>e.sel);
+  const docsTxt = Array.from(ntwDocs.values()).map(d=>d.tido+'-'+d.nudo).join(', ');
+  const resp = ntwVal('ntResp');
+  return {
     tipo: ntTipoSel,
     es_garantia: ntEsGarantia,
     prioridad: document.getElementById('ntPrio').value,
@@ -999,24 +1590,59 @@ document.getElementById('ntBtnCrear').addEventListener('click', async function()
     direccion_place_id: document.getElementById('ntDirPlace').value || null,
     comuna_nombre: document.getElementById('ntComuna').value || null,
     region_nombre: document.getElementById('ntRegion').value || null,
-    numero_documento: document.getElementById('ntDoc').value.trim(),
-    producto: ntEquipos.map(e=>e.nombre).join(' · '),
-    sku: ntEquipos.map(e=>e.sku).filter(Boolean).join(', '),
+    numero_documento: document.getElementById('ntDoc').value.trim() || docsTxt,
+    producto: seleccionados.map(e=>e.nombre).join(' · '),
+    sku: seleccionados.map(e=>e.sku).filter(Boolean).join(', '),
     descripcion: document.getElementById('ntDesc').value.trim(),
-    equipos: ntEquipos.map(e=>({kopr:e.sku, nombre:e.nombre, sku:e.sku, notas:e.notas||''})),
+    // Tickets 2.0
+    motivo_principal: ntwVal('ntMotivo'),
+    visita_id: (conOt && ntwOt) ? ntwOt.id : null,
+    asignado_a: resp,
+    sin_asignar: resp ? 0 : 1,
+    documentos: Array.from(ntwDocs.values()).map(d=>({ tido:d.tido, nudo:d.nudo })),
+    equipos: seleccionados.map(e=>({ kopr:e.sku, nombre:e.nombre, sku:e.sku, notas:e.notas||'', cantidad:e.cantidad||1,
+      tido:e.tido||'', nudo:e.nudo||'', serie:e.serie||'' })),
   };
+}
+
+document.getElementById('ntBtnCrear').addEventListener('click', async function(){
+  if(!(await ntwPreCrear())) return;
+  if(!validarNtTodo()){
+    ilusToast('Revisa los campos marcados en rojo','warning');
+    const firstErr = document.querySelector('#ntModal .nt-field.err, #ntModal #fTipoWrap.err');
+    if(firstErr) firstErr.scrollIntoView({behavior:'smooth', block:'center'});
+    return;
+  }
+  const btn = this; btn.disabled = true; btn.dataset.enviando = '1';
+  let conOt = true;
   try{
-    const r = await fetch('/tickets/api/tickets', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-    const d = await r.json();
-    if(!d.ok){ ilusToast(d.error||'Error al crear','error'); btn.disabled=false; return; }
+    let d;
+    for(let intento = 0; intento < 2; intento++){
+      const r = await fetch('/tickets/api/tickets', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(ntwArmarPayload(conOt))});
+      d = await r.json();
+      if(!d.ok && d.error_codigo === 'OT_YA_TIENE_TICKET' && conOt){
+        const seguir = await ilusConfirm({
+          title: 'La OT ya tiene ticket',
+          message: d.error || 'Esa OT ya está ligada a otro ticket.',
+          sub: '¿Crear este ticket SIN asociar la OT? El cliente y los productos ya cargados se conservan.',
+          okLabel: 'Crear sin la OT', cancelLabel: 'Revisar', type: 'warning',
+        });
+        if(!seguir){ btn.disabled=false; delete btn.dataset.enviando; return; }
+        conOt = false; continue;
+      }
+      break;
+    }
+    if(!d.ok){ ilusToast(d.error||'Error al crear','error'); btn.disabled=false; delete btn.dataset.enviando; return; }
     ilusToast('✓ '+(d.numero_ticket||'Ticket')+' creado','success');
     ntModal.hide();
     if (ntArchivos.length){
       await ntSubirArchivos(d.id);
     }
     setTimeout(()=>location.href='/tickets/'+d.id, 400);
-  }catch(e){ ilusToast('Error de red','error'); btn.disabled=false; }
+  }catch(e){ ilusToast('Error de red','error'); btn.disabled=false; delete btn.dataset.enviando; }
 });
+// Primer semáforo (el modal puede abrirse antes del primer input)
+ntwRenderOrigenes(); ntwRenderMotivos(); renderNtEquipos(); ntwSetClienteManual(false); ntwRefresh();
 
 // ══════════════ Crear ticket desde documento ERP (búsqueda avanzada) ══════════════
 // Daniel 2026-07-12: reemplaza el flujo viejo de 2 ilusPrompt() (tipo+numero

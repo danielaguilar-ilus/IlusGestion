@@ -44,6 +44,7 @@ from flask import request, jsonify, render_template, redirect, url_for, g, flash
 
 # Tickets 2.0: SLA de respuesta (4 h habiles por mensaje, horario de Retiros).
 import tickets_sla as _tksla
+import tickets_nuevo_motivos as _tkmotivos
 from retiros_monitor import hace as rm_hace
 
 # Validacion server-side del "correo que da la cara" (Reply-To de tickets).
@@ -2995,6 +2996,9 @@ def register_tickets_routes(app, ctx):
             estado_label=ESTADO_LABEL, tipo_label=TIPO_LABEL,
             tk_tipos=TK_TIPOS, tk_estados=TK_ESTADOS, tk_prioridades=TK_PRIORIDADES,
             tk_tipos_publicos=TK_TIPOS_MODAL,
+            # Tickets 2.0 (2026-10-27): motivos principales sugeridos por tipo
+            # para el modal «Nuevo Ticket» (el sistema sugiere, la persona decide).
+            tk_motivos_sugeridos=_tkmotivos.motivos_todos(),
         )
 
     @app.route("/tickets/nuevo")
@@ -7423,19 +7427,65 @@ def register_tickets_routes(app, ctx):
             if ok_rut:
                 rut = rut_norm
 
+        # ── Tickets 2.0 (Daniel 2026-10-27) ──
+        # Motivo principal: lo que la persona eligió o escribió en el modal
+        # (las sugerencias viven en tickets_nuevo_motivos.py, REGLA #32).
+        motivo_principal = _tkmotivos.normalizar_motivo(d.get("motivo_principal"))
+        # OT asociada (opcional, recomendada): trae productos e identifica al
+        # cliente. Se valida que exista y que no esté ya ligada a otro ticket
+        # (tk_tickets.visita_id es UNIQUE: una OT, un ticket). Nunca se crea
+        # el ticket con una OT inventada.
+        visita_id = None
+        _raw_vid = d.get("visita_id")
+        if _raw_vid not in (None, "", 0, "0", False):
+            try:
+                visita_id = int(_raw_vid)
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "La OT asociada no es válida.",
+                                "error_codigo": "OT_INVALIDA"}), 400
+            try:
+                _v = mysql_fetchone("SELECT id, numero_ot FROM mant_visitas WHERE id=%s", (visita_id,))
+            except Exception as _e:
+                print(f"[tk_api_create] no se pudo leer la OT {visita_id}: {type(_e).__name__}", flush=True)
+                _v = None
+            if not _v:
+                return jsonify({"ok": False, "error": "La OT asociada no existe.",
+                                "error_codigo": "OT_NO_EXISTE"}), 400
+            _ya = mysql_fetchone(
+                "SELECT id, numero_ticket FROM tk_tickets WHERE visita_id=%s LIMIT 1", (visita_id,))
+            if _ya:
+                _num_ot = _v.get("numero_ot") or f"OT #{visita_id}"
+                return jsonify({
+                    "ok": False,
+                    "error": f"La {_num_ot} ya está ligada al ticket "
+                             f"{_ya.get('numero_ticket') or '#' + str(_ya['id'])}. "
+                             "Una OT solo puede tener un ticket: ábrelo o crea este sin asociarla.",
+                    "error_codigo": "OT_YA_TIENE_TICKET",
+                    "ticket_id": _ya["id"], "numero_ticket": _ya.get("numero_ticket"),
+                }), 409
+        # Responsable: lo que eligió el modal (nombre, como lo compara la
+        # bandeja). Sin `sin_asignar` el comportamiento es el de siempre:
+        # vacío = quien crea.
+        asignado_a = (d.get("asignado_a") or "").strip()[:190]
+        if not asignado_a and not d.get("sin_asignar"):
+            asignado_a = user
+        asignado_a = asignado_a or None
+
         conn = get_mysql()
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO tk_tickets "
-                    "(origen, estado, tipo, prioridad, titulo, descripcion, rut, empresa, "
-                    " sucursal, nombre_contacto, email, phone, direccion, direccion_lat, "
-                    " direccion_lng, direccion_place_id, region_nombre, comuna_nombre, "
-                    " producto, marca, sku, numero_documento, erp_idmaeen, erp_koen, "
-                    " asignado_a, fecha_limite, notas_internas, created_by, es_garantia) "
-                    "VALUES (%s,'open',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-                    "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                    (
+                try:
+                    cur.execute(
+                        "INSERT INTO tk_tickets "
+                        "(origen, estado, tipo, prioridad, titulo, descripcion, rut, empresa, "
+                        " sucursal, nombre_contacto, email, phone, direccion, direccion_lat, "
+                        " direccion_lng, direccion_place_id, region_nombre, comuna_nombre, "
+                        " producto, marca, sku, numero_documento, erp_idmaeen, erp_koen, "
+                        " asignado_a, fecha_limite, notas_internas, created_by, es_garantia, "
+                        " motivo_principal, visita_id) "
+                        "VALUES (%s,'open',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+                        "        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (
                         _norm_enum(d.get("origen"), TK_ORIGENES, "backoffice"),
                         tipo, prio,
                         (d.get("titulo") or "").strip()[:300] or None,
@@ -7457,13 +7507,23 @@ def register_tickets_routes(app, ctx):
                         (d.get("numero_documento") or "").strip() or None,
                         int(d["erp_idmaeen"]) if str(d.get("erp_idmaeen") or "").strip().isdigit() else None,
                         (d.get("erp_koen") or "").strip()[:50] or None,
-                        (d.get("asignado_a") or "").strip()[:190] or user,
+                        asignado_a,
                         d.get("fecha_limite") or None,
                         (d.get("notas_internas") or "").strip()[:5000] or None,
                         user,
                         1 if d.get("es_garantia") else 0,
+                        motivo_principal, visita_id,
                     ),
-                )
+                    )
+                except Exception as _e_ins:
+                    # Carrera: otro ticket tomó la misma OT entre el chequeo de
+                    # arriba y este INSERT (índice único uq_tk_tickets_visita).
+                    if visita_id and "uq_tk_tickets_visita" in str(_e_ins):
+                        return jsonify({"ok": False,
+                                        "error": "Esa OT acaba de quedar ligada a otro ticket. "
+                                                 "Crea este sin asociarla o abre el otro.",
+                                        "error_codigo": "OT_YA_TIENE_TICKET"}), 409
+                    raise
                 tid = cur.lastrowid
                 # Numeracion race-free: derivar del id autoincrement (atomico).
                 # El anio se calcula en hora Chile (no UTC) para no numerar
@@ -7495,6 +7555,16 @@ def register_tickets_routes(app, ctx):
                 _d_par = _tk_doc_partes(doc_ticket_fallback)
                 if _d_par:
                     _docs_ticket[_d_par] = True
+                # Tickets 2.0: documentos del ERP asociados en el modal aunque
+                # no se haya marcado ninguno de sus productos ([{tido, nudo}]).
+                for _dc in (d.get("documentos") or []):
+                    try:
+                        _dc_t = (str((_dc or {}).get("tido") or "")).strip().upper()
+                        _dc_n = (str((_dc or {}).get("nudo") or "")).strip()
+                        if _dc_t and _dc_n:
+                            _docs_ticket[(_dc_t[:10], _dc_n[:40])] = True
+                    except Exception:
+                        pass
                 for eq in (d.get("equipos") or []):
                     try:
                         eq_tido = (eq.get("tido") or "").strip().upper()
@@ -7505,12 +7575,13 @@ def register_tickets_routes(app, ctx):
                             else doc_ticket_fallback
                         cur.execute(
                             "INSERT IGNORE INTO tk_ticket_equipos "
-                            "(ticket_id, erp_kopr, nombre, tipo, sku, cantidad, notas, documento_garantia) "
-                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                            "(ticket_id, erp_kopr, nombre, tipo, sku, serie, cantidad, notas, documento_garantia) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                             (tid, (eq.get("kopr") or "").strip()[:100] or None,
                              (eq.get("nombre") or "").strip()[:300] or None,
                              (eq.get("tipo") or "").strip()[:100] or None,
                              (eq.get("sku") or "").strip()[:100] or None,
+                             (str(eq.get("serie") or "")).strip()[:100] or None,
                              int(eq.get("cantidad") or 1),
                              (eq.get("notas") or "").strip()[:500] or None,
                              doc_garantia),
@@ -7544,10 +7615,13 @@ def register_tickets_routes(app, ctx):
         _tk_log(tid, "creacion",
                 f"Ticket {numero} creado por {user}"
                 + (f" — tipo: {TIPO_LABEL.get(tipo, tipo)}" if tipo else "")
-                + f" · prioridad: {prio}")
+                + (f" · motivo: {motivo_principal}" if motivo_principal else "")
+                + f" · prioridad: {prio}"
+                + (f" · OT asociada: {_v.get('numero_ot') or '#' + str(visita_id)}" if visita_id else ""))
         try:
             _audit("tk_ticket_create", target_type="tk_ticket", target_id=tid,
-                   details={"numero": numero, "tipo": tipo})
+                   details={"numero": numero, "tipo": tipo, "visita_id": visita_id,
+                            "motivo_principal": motivo_principal})
         except Exception:
             pass
         try:
@@ -7555,6 +7629,149 @@ def register_tickets_routes(app, ctx):
         except Exception as _e:
             print(f"[tk_api_create] notificacion creacion no enviada tid={tid}: {_e}", flush=True)
         return jsonify({"ok": True, "id": tid, "numero_ticket": numero})
+
+    # ─────────────────────────────────────────────────────────────────
+    #  API — OT existente para el modal «Nuevo Ticket» (Tickets 2.0,
+    #  Daniel 2026-10-27: «asociar una OT existente para TRAER los
+    #  productos e identificar al cliente»). SOLO LECTURA sobre
+    #  mant_visitas / mant_clientes / mant_visita_equipos / mant_maquinas /
+    #  mant_visita_documentos. Sin un solo dato de plata (REGLA #26): ni
+    #  costo, ni monto de documentos, ni proveedores. La OT elegida viaja
+    #  al POST /tickets/api/tickets como `visita_id`.
+    # ─────────────────────────────────────────────────────────────────
+    _TK_OT_TIPO_LABEL = {
+        "levantamiento": "Levantamiento", "instalacion": "Instalación",
+        "preventiva": "Mantención preventiva", "correctiva": "Mantención correctiva",
+        "visita_tecnica": "Visita técnica", "visita_correctiva": "Visita correctiva",
+        "cambio_equipo": "Cambio de equipo", "desinstalacion": "Desinstalación",
+        "capacitacion": "Capacitación", "repuesto": "Repuesto",
+        "revision_interna": "Trabajo de bodega", "inspeccion": "Inspección",
+        "garantia": "Garantía", "control_calidad": "Control de calidad",
+    }
+    _TK_OT_ESTADO_LABEL = {
+        "creada": "Creada", "programada": "Programada", "asignada": "Asignada",
+        "en_curso": "En curso", "en_ejecucion": "En ejecución",
+        "firmada_tecnico": "Firmada por el técnico", "pendiente_info": "Pendiente de información",
+        "pendiente_repuesto": "Pendiente de repuesto", "pendiente_aprobacion": "Pendiente de aprobación",
+        "completada": "Completada", "cerrada": "Cerrada", "cancelada": "Cancelada",
+        "anulada": "Anulada", "reagendada": "Reagendada",
+    }
+
+    def _tk_ot_fecha(valor):
+        """DATE de la OT → dd/mm/aaaa; la centinela 2099-12-31 = sin fecha (REGLA #35)."""
+        if not valor:
+            return ""
+        try:
+            if isinstance(valor, str):
+                valor = datetime.strptime(valor[:10], "%Y-%m-%d").date()
+            if hasattr(valor, "year") and valor.year >= 2099:
+                return ""
+            return valor.strftime("%d/%m/%Y")
+        except Exception:
+            return ""
+
+    def _tk_ot_fila(r):
+        cli = None
+        if r.get("cliente_id"):
+            cli = {
+                "id": r.get("cliente_id"), "razon_social": r.get("razon_social") or "",
+                "rut": r.get("rut") or "", "contacto_nombre": r.get("contacto_nombre") or "",
+                "contacto_tel": r.get("contacto_tel") or "", "contacto_email": r.get("contacto_email") or "",
+                "direccion": r.get("direccion") or "", "comuna": r.get("comuna") or "",
+                "region": r.get("region") or "",
+            }
+        tipo = r.get("tipo") or ""
+        estado = r.get("estado") or ""
+        out = {
+            "id": r["id"], "numero_ot": r.get("numero_ot") or f"OT #{r['id']}",
+            "titulo": r.get("titulo") or "", "tipo": tipo,
+            "tipo_label": _TK_OT_TIPO_LABEL.get(tipo, tipo.replace("_", " ").capitalize()),
+            "estado": estado,
+            "estado_label": _TK_OT_ESTADO_LABEL.get(estado, estado.replace("_", " ").capitalize()),
+            "fecha": _tk_ot_fecha(r.get("fecha_programada")),
+            "cliente": cli,
+            "equipos_n": int(r.get("equipos_n") or 0),
+            "ticket_existente": ({"id": r["ticket_id"], "numero_ticket": r.get("numero_ticket")}
+                                 if r.get("ticket_id") else None),
+        }
+        return out
+
+    _TK_OT_SELECT = (
+        "SELECT v.id, v.numero_ot, v.titulo, v.tipo, v.estado, v.fecha_programada, "
+        "       c.id AS cliente_id, c.razon_social, c.rut, c.contacto_nombre, c.contacto_tel, "
+        "       c.contacto_email, c.direccion, c.comuna, c.region, "
+        "       t.id AS ticket_id, t.numero_ticket, "
+        "       (SELECT COUNT(*) FROM mant_visita_equipos ve WHERE ve.visita_id=v.id) AS equipos_n "
+        "  FROM mant_visitas v "
+        "  LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+        "  LEFT JOIN tk_tickets t ON t.visita_id = v.id "
+    )
+
+    @app.route("/tickets/api/ot/buscar", methods=["GET"])
+    @_tickets_required
+    def tk_api_ot_buscar():
+        q = (request.args.get("q") or "").strip()
+        if len(q) < 2:
+            return jsonify({"ok": True, "resultados": []})
+        q = q[:80]
+        like = f"%{q}%"
+        rut_like = "%" + re.sub(r"[^0-9kK]", "", q).upper() + "%" if re.sub(r"[^0-9kK]", "", q) else None
+        cond = ["v.numero_ot LIKE %s", "c.razon_social LIKE %s", "v.titulo LIKE %s"]
+        params = [like, like, like]
+        if rut_like and len(rut_like) > 4:
+            cond.append("UPPER(REPLACE(REPLACE(c.rut,'.',''),'-','')) LIKE %s")
+            params.append(rut_like)
+        if q.isdigit():
+            cond.append("v.id = %s")
+            params.append(int(q))
+        try:
+            rows = mysql_fetchall(
+                _TK_OT_SELECT + " WHERE (" + " OR ".join(cond) + ") "
+                " ORDER BY v.id DESC LIMIT 15", tuple(params)) or []
+        except Exception as _e:
+            print(f"[tk_api_ot_buscar] {type(_e).__name__}: {_e}", flush=True)
+            return jsonify({"ok": False, "error": "No se pudieron buscar las órdenes de trabajo."}), 500
+        return jsonify({"ok": True, "resultados": [_tk_ot_fila(r) for r in rows]})
+
+    @app.route("/tickets/api/ot/<int:vid>", methods=["GET"])
+    @_tickets_required
+    def tk_api_ot_detalle(vid):
+        try:
+            r = mysql_fetchone(_TK_OT_SELECT + " WHERE v.id=%s", (vid,))
+        except Exception as _e:
+            print(f"[tk_api_ot_detalle] {type(_e).__name__}: {_e}", flush=True)
+            r = None
+        if not r:
+            return jsonify({"ok": False, "error": "La OT no existe."}), 404
+        ot = _tk_ot_fila(r)
+        # Equipos de la OT (nombre completo, SKU y serie: nada de plata)
+        try:
+            eq_rows = mysql_fetchall(
+                "SELECT m.id AS maquina_id, m.sku, m.nombre, m.serie "
+                "  FROM mant_visita_equipos ve JOIN mant_maquinas m ON m.id = ve.maquina_id "
+                " WHERE ve.visita_id=%s ORDER BY ve.id", (vid,)) or []
+        except Exception as _e:
+            print(f"[tk_api_ot_detalle] equipos: {type(_e).__name__}", flush=True)
+            eq_rows = []
+        ot["equipos"] = [{"maquina_id": e.get("maquina_id"), "sku": e.get("sku") or "",
+                          "nombre": e.get("nombre") or "", "serie": e.get("serie") or ""} for e in eq_rows]
+        # Documentos del ERP ligados a la OT (solo tido/nudo; el monto NUNCA viaja)
+        try:
+            doc_rows = mysql_fetchall(
+                "SELECT erp_tido, erp_nudo, es_principal FROM mant_visita_documentos "
+                " WHERE visita_id=%s AND erp_tido IS NOT NULL AND erp_nudo IS NOT NULL "
+                " ORDER BY es_principal DESC, id", (vid,)) or []
+        except Exception:
+            doc_rows = []
+        vistos, docs = set(), []
+        for dr in doc_rows:
+            k = (str(dr.get("erp_tido") or "").upper(), str(dr.get("erp_nudo") or ""))
+            if not k[0] or not k[1] or k in vistos:
+                continue
+            vistos.add(k)
+            docs.append({"tido": k[0], "nudo": k[1], "principal": bool(dr.get("es_principal"))})
+        ot["documentos"] = docs
+        return jsonify({"ok": True, "ot": ot})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — detalle

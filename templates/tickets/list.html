@@ -3,6 +3,8 @@
 {% block head_extra %}
 <link href="{{ url_for('static', filename='ilus_transporte.css') }}" rel="stylesheet">
 <link href="{{ url_for('static', filename='tickets_list.css') }}" rel="stylesheet">
+{# Tickets 2.0: modal «Nuevo Ticket» con el formato de Retiros (.ntw-*). #}
+<link href="{{ url_for('static', filename='tickets_nuevo.css') }}" rel="stylesheet">
 {# Tickets 2.0: tarjetas KPI con el MISMO estilo del Monitor de Retiros (.rm-kpi*). #}
 <link href="{{ url_for('static', filename='retiros_monitor.css') }}" rel="stylesheet">
 <style>
@@ -286,17 +288,214 @@
 <div id="tkLista"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div>
 
 <!-- ══════════════ MODAL: Nuevo Ticket ══════════════ -->
+{# Tickets 2.0 (Daniel 2026-10-27): el mismo FORMATO del modal «Nuevo retiro
+   interno» de Retiros (templates/retiros/internal_dashboard.html): cabecera
+   negra con «N de 5 pasos listos» y barra, aviso informativo arriba, tarjetas
+   «PASO N» con círculo rojo que pasa a verde, «Falta: …» bajo cada título,
+   acción grande «+ Agregar…», cliente con «Editar manualmente», pie fijo con
+   el botón principal deshabilitado hasta que esté completo.
+   Estilos: static/tickets_nuevo.css (.ntw-*) + los .nt-* de siempre.
+   Lógica: static/tickets_list.js (bloque «MODAL Nuevo Ticket»).
+   REGLA #4.2: se conservan TODOS los ids y validaciones del modal anterior
+   (tipo, garantía, cliente ERP, RUT/empresa/contacto/teléfono/correo/sucursal,
+   dirección con Google Places, equipos del catálogo, descripción, prioridad,
+   N° de documento a mano, adjuntos). Lo que se MOVIÓ de lugar: el tipo de
+   solicitud pasó del paso 1 al paso 4 (junto al motivo y la descripción); la
+   dirección vive dentro del paso Cliente; el N° de documento a mano queda
+   como atajo secundario del paso 1. #}
 <div class="modal fade" id="ntModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
     <div class="modal-content">
-      <div class="modal-header" style="background:linear-gradient(135deg,#0a0a0a 0%,#1a1a1a 55%,#2a0d0d 100%);color:#fff;">
-        <h5 class="modal-title"><i class="bi bi-ticket-perforated me-2"></i>Nuevo Ticket</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold"><i class="bi bi-ticket-perforated me-2" style="color:var(--ilus-red)"></i>Nuevo Ticket</h5>
+        <div class="ntw-progreso" id="ntwProgreso" aria-live="polite">
+          <span id="ntwProgresoTxt">0 de 5 pasos listos</span>
+          <span class="bar"><span id="ntwProgresoBar"></span></span>
+          <span class="avisos" id="ntwProgresoAvisos"></span>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
       </div>
       <div class="modal-body">
-        <div class="nt-card">
-          <h6><span class="n">1</span>Tipo de solicitud <span style="color:#dc2626">*</span></h6>
+        <div class="ntw-info">
+          <i class="bi bi-info-circle-fill"></i>
+          <div>El ticket nace <strong>abierto</strong> y con su número <strong>TK-…</strong>. Si el cliente tiene correo, recibe el aviso de apertura
+          (según el Control de correos); el responsable lo ve en la bandeja y el reloj del SLA de respuesta parte de inmediato.
+          <strong>Asociar una OT o un documento del ERP</strong> trae los productos y el cliente solos: es lo recomendado.</div>
+        </div>
+
+        {# ── PASO 1 · ¿De dónde viene? (opcional, recomendado) ── #}
+        <div class="ntw-step" id="ntwStep1">
+          <div class="ntw-step-header">
+            <div class="ntw-step-circle-wrap">
+              <span class="ntw-step-circle-label">Paso 1</span>
+              <div class="ntw-step-circle"><span class="ntw-step-num">1</span><i class="bi bi-check-lg ntw-step-check"></i></div>
+            </div>
+            <div class="ntw-step-titles">
+              <div class="ntw-step-title">¿De dónde viene? <span class="ntw-step-opt">(recomendado)</span></div>
+              <div class="ntw-step-sub">Asocia una <strong>OT existente</strong> o un <strong>documento del ERP</strong> (factura, boleta o nota de venta): identifica al cliente y trae sus productos. Sin esto el ticket igual se puede crear.</div>
+              <div class="ntw-step-estado" id="ntwEstado1"></div>
+            </div>
+          </div>
+          <div id="ntwOrigenesWrap" style="display:none">
+            <div class="ntw-list-title">
+              <span><i class="bi bi-link-45deg"></i>Asociado a este ticket<span class="ntw-count" id="ntwOrigenesCount">0</span></span>
+            </div>
+            <div id="ntwOrigenes" class="ntw-docs-list"></div>
+          </div>
+          <button type="button" class="ntw-add" id="ntwBtnOt" title="Buscar una orden de trabajo existente por su número o por el cliente">
+            <span class="ntw-add-ico"><i class="bi bi-clipboard2-pulse"></i></span>
+            <span class="ntw-add-txt">
+              <strong id="ntwBtnOtTxt">Asociar una OT existente</strong>
+              <small>Toca aquí y búscala por su número (OT-2026-…) o por el nombre o RUT del cliente</small>
+            </span>
+            <i class="bi bi-chevron-right ntw-add-go"></i>
+          </button>
+          <div class="ntw-ot-search" id="ntwOtSearch" style="display:none">
+            <div class="nt-field full">
+              <div class="nt-search">
+                <i class="bi bi-search"></i>
+                <input type="text" id="ntwOtQ" class="form-control" placeholder="N° de OT, nombre o RUT del cliente…" autocomplete="off" aria-label="Buscar orden de trabajo">
+              </div>
+              <div class="nt-ac" id="ntwOtAc"></div>
+            </div>
+          </div>
+          <button type="button" class="ntw-add is-otra" id="ntwBtnDoc" title="Abrir el buscador de documentos del ERP Random">
+            <span class="ntw-add-ico"><i class="bi bi-plus-lg"></i></span>
+            <span class="ntw-add-txt">
+              <strong id="ntwBtnDocTxt">Agregar factura, boleta o nota de venta</strong>
+              <small>Toca aquí y búscala por su número o por el RUT en el ERP</small>
+            </span>
+            <i class="bi bi-chevron-right ntw-add-go"></i>
+          </button>
+          <div id="ntwOrigenAvisos" class="ntw-avisos"></div>
+          <div class="ntw-regla"><i class="bi bi-info-circle-fill"></i>Con una OT o un documento, el cliente y los productos llegan solos a los pasos 2 y 3.</div>
+          <div class="nt-field" style="margin-top:12px;max-width:420px">
+            <label for="ntDoc">¿No está en el ERP? N° de boleta o factura a mano <span style="color:#6b7280;font-weight:600">(opcional)</span></label>
+            <input type="text" id="ntDoc" class="form-control" placeholder="Ej: FCV-11439">
+          </div>
+        </div>
+
+        {# ── PASO 2 · Cliente ── #}
+        <div class="ntw-step" id="ntwStep2">
+          <div class="ntw-step-header">
+            <div class="ntw-step-circle-wrap">
+              <span class="ntw-step-circle-label">Paso 2</span>
+              <div class="ntw-step-circle"><span class="ntw-step-num">2</span><i class="bi bi-check-lg ntw-step-check"></i></div>
+            </div>
+            <div class="ntw-step-titles">
+              <div class="ntw-step-title">Cliente
+                <button type="button" class="ntw-edit-manual-btn" id="ntwClienteManualBtn" title="Escribir el nombre y el RUT a mano, sin depender del ERP">
+                  <i class="bi bi-pencil"></i>Editar manualmente
+                </button>
+                <span class="ntw-manual-badge" id="ntwClienteManualBadge" style="display:none"><i class="bi bi-pencil-fill"></i>Editando a mano, fuera del ERP</span>
+              </div>
+              <div class="ntw-step-sub">Se llena solo con la OT o el documento. También puedes buscarlo en el ERP por RUT o nombre. El teléfono y el correo sirven para avisarle.</div>
+              <div class="ntw-step-estado" id="ntwEstado2"></div>
+            </div>
+          </div>
+          <div id="ntCardCliente">
+            <div class="nt-vfeed ok" id="ntClienteOpcionalHint" style="display:none;margin-bottom:8px">
+              <i class="bi bi-info-circle-fill"></i> Cliente opcional para este tipo de ticket (interno) —
+              puedes igual asociar uno si corresponde.
+            </div>
+            <div class="nt-field full" id="ntBuscarCliWrap">
+              <label for="ntBuscarCli">Buscar en el ERP</label>
+              <div class="nt-search">
+                <i class="bi bi-search"></i>
+                <input type="text" id="ntBuscarCli" class="form-control" placeholder="RUT o nombre de la empresa…" autocomplete="off">
+                <span class="nt-search-tag" id="ntSearchTag"><i class="bi bi-check-circle-fill"></i>ERP</span>
+              </div>
+              <div class="nt-ac" id="ntAcCli"></div>
+            </div>
+            <div class="nt-grid" style="margin-top:10px;">
+              <div class="nt-field req" id="fEmpresaWrap"><label for="ntEmpresa">Empresa / razón social</label>
+                <input type="text" id="ntEmpresa" class="form-control ntw-locked" placeholder="Se llena desde la OT, el documento o el ERP" readonly>
+                <div class="nt-err-msg" id="ntErrEmpresa">El nombre de la empresa es obligatorio.</div></div>
+              <div class="nt-field req" id="fRutWrap"><label for="ntRut">RUT</label>
+                <input type="text" id="ntRut" class="form-control ntw-locked" placeholder="Ej: 76.123.456-7" readonly>
+                <div class="nt-vfeed" id="ntwVRut"></div>
+                <div class="nt-err-msg" id="ntErrRut">El RUT es obligatorio.</div></div>
+              <div class="nt-field req" id="fContactoWrap"><label for="ntContacto">Nombre de contacto</label>
+                <input type="text" id="ntContacto" class="form-control" placeholder="Quién pide el servicio">
+                <div class="nt-err-msg" id="ntErrContacto">El nombre de contacto es obligatorio.</div></div>
+              <div class="nt-field req" id="fPhoneWrap"><label for="ntPhone">Teléfono</label>
+                <input type="tel" id="ntPhone" class="form-control" placeholder="+56 9 1234 5678">
+                <div class="nt-vfeed" id="ntVPhone"></div>
+                <div class="nt-err-msg" id="ntErrPhone">Teléfono obligatorio.</div></div>
+              <div class="nt-field req" id="fEmailWrap"><label for="ntEmail">Correo</label>
+                <input type="email" id="ntEmail" class="form-control" placeholder="cliente@correo.cl">
+                <div class="nt-vfeed" id="ntVEmail"></div>
+                <div class="nt-err-msg" id="ntErrEmail">Correo obligatorio.</div></div>
+              <div class="nt-field"><label for="ntSucursal">Sucursal <span style="color:#6b7280;font-weight:600">(opcional)</span></label>
+                <input type="text" id="ntSucursal" class="form-control"></div>
+            </div>
+            {# Chips «Detectado en ERP → usar» (el correo del ERP nunca se autocompleta: siempre va como chip) #}
+            <div id="ntwCliChips" class="ntw-chips"></div>
+            <div id="ntwCliAvisos" class="ntw-avisos"></div>
+          </div>
+
+          <div class="ntw-sub" id="ntCardDireccion">
+            <div class="ntw-sub-title"><i class="bi bi-geo-alt-fill"></i>Dirección del equipo <span id="ntDirAsterisco" style="color:#dc2626">*</span></div>
+            <div class="ntw-hint">Empieza a escribir y elige una sugerencia de Google para validarla.</div>
+            <div class="nt-vfeed ok" id="ntDireccionOpcionalHint" style="display:none;margin-bottom:8px">
+              <i class="bi bi-info-circle-fill"></i> Dirección opcional para este tipo de ticket (interno).
+            </div>
+            <div class="nt-field full" id="fDirWrap">
+              <input type="text" id="ntDireccion" class="form-control" placeholder="Empieza a escribir y elige del dropdown…" autocomplete="off" aria-label="Dirección del equipo">
+              <input type="hidden" id="ntDirLat"><input type="hidden" id="ntDirLng"><input type="hidden" id="ntDirPlace"><input type="hidden" id="ntComuna"><input type="hidden" id="ntRegion">
+              <small id="ntDirHint" class="text-muted d-block mt-1" style="font-size:.78rem">
+                <i class="bi bi-info-circle me-1"></i>Selecciona una sugerencia para validar la dirección.</small>
+              <div class="nt-err-msg" id="ntErrDir">Selecciona una dirección sugerida por Google para validarla.</div>
+            </div>
+          </div>
+        </div>
+
+        {# ── PASO 3 · Productos / equipos ── #}
+        <div class="ntw-step" id="ntwStep3">
+          <div class="ntw-step-header">
+            <div class="ntw-step-circle-wrap">
+              <span class="ntw-step-circle-label">Paso 3</span>
+              <div class="ntw-step-circle"><span class="ntw-step-num">3</span><i class="bi bi-check-lg ntw-step-check"></i></div>
+            </div>
+            <div class="ntw-step-titles">
+              <div class="ntw-step-title">Productos, equipos o repuestos <span class="ntw-step-opt">(opcional)</span></div>
+              <div class="ntw-step-sub">Los que trajo la OT o el documento se marcan aquí. También puedes agregar a mano desde el catálogo.</div>
+              <div class="ntw-step-estado" id="ntwEstado3"></div>
+            </div>
+          </div>
+          <div class="ntw-eq-tools">
+            <div class="nt-eq-count" id="ntEqCount"><i class="bi bi-box-seam-fill"></i><span id="ntEqCountTxt">0 equipos agregados</span></div>
+            {# REGLA #14: toda lista con checkboxes lleva marcar/desmarcar todo (toggle) #}
+            <button type="button" class="ntw-btn-outline" id="ntwEqToggleAll" disabled title="Marca o desmarca todos los productos de la lista">
+              <i class="bi bi-check-all"></i>Seleccionar/deseleccionar todo
+            </button>
+          </div>
+          <div id="ntListaEq" class="nt-lista-eq"></div>
+          <div class="nt-field full" style="margin-top:10px">
+            <label for="ntBuscarEq">Agregar a mano desde el catálogo</label>
+            <div class="nt-search">
+              <i class="bi bi-search"></i>
+              <input type="text" id="ntBuscarEq" class="form-control" placeholder="Buscar por SKU o nombre…" autocomplete="off">
+            </div>
+            <div class="nt-ac" id="ntAcEq"></div>
+          </div>
+        </div>
+
+        {# ── PASO 4 · Solicitud: tipo + motivo principal + descripción ── #}
+        <div class="ntw-step" id="ntwStep4">
+          <div class="ntw-step-header">
+            <div class="ntw-step-circle-wrap">
+              <span class="ntw-step-circle-label">Paso 4</span>
+              <div class="ntw-step-circle"><span class="ntw-step-num">4</span><i class="bi bi-check-lg ntw-step-check"></i></div>
+            </div>
+            <div class="ntw-step-titles">
+              <div class="ntw-step-title">¿Qué necesita?</div>
+              <div class="ntw-step-sub">Elige el tipo de solicitud, el motivo principal (el sistema sugiere, tú decides) y describe qué está pasando.</div>
+              <div class="ntw-step-estado" id="ntwEstado4"></div>
+            </div>
+          </div>
           <div id="fTipoWrap">
+            <label class="nt-field" style="font-size:.9rem;font-weight:700;color:#111827;margin-bottom:6px">Tipo de solicitud <span style="color:#dc2626">*</span></label>
             {# Color + icono distintivo por tipo (paleta ILUS: rojo/variaciones +
                verde/ambar/azul/gris de apoyo -- feedback Daniel 2026-07-11:
                "me gustaria que fuera mas colorida"). Mismo mapeo en soporte_publico.html. #}
@@ -317,6 +516,8 @@
               'control_calidad': ('bi-clipboard-check', '#16a34a', '#f0fdf4'),
               'trabajo_bodega': ('bi-box-seam', '#a16207', '#fef3c7'),
               'capacitacion': ('bi-mortarboard', '#7c3aed', '#f3e8ff'),
+              'facturacion': ('bi-receipt', '#0a0a0a', '#f3f4f6'),
+              'consulta': ('bi-chat-left-text', '#6b7280', '#f9fafb'),
             } %}
             {# tk_tipos_modal (si el backend lo expone -- tipos internos incluidos,
                ej. control_calidad/trabajo_bodega/capacitacion, excluye 'warranty')
@@ -351,92 +552,49 @@
               <div class="nt-gar-pill" data-gar="1" tabindex="0" role="button">Sí, es garantía</div>
             </div>
           </div>
-        </div>
-
-        <div class="nt-card" id="ntCardCliente">
-          <h6><span class="n">2</span>Cliente</h6>
-          <div class="hint">Busca en el ERP por RUT o nombre; los campos de abajo se completan y quedan editables.</div>
-          <div class="nt-vfeed ok" id="ntClienteOpcionalHint" style="display:none;margin-bottom:8px">
-            <i class="bi bi-info-circle-fill"></i> Cliente opcional para este tipo de ticket (interno) —
-            puedes igual asociar uno si corresponde.
-          </div>
-          <div class="nt-field full" id="ntBuscarCliWrap">
-            <div class="nt-search">
-              <i class="bi bi-search"></i>
-              <input type="text" id="ntBuscarCli" class="form-control" placeholder="Buscar en el ERP: RUT o nombre de empresa…" autocomplete="off">
-              <span class="nt-search-tag" id="ntSearchTag"><i class="bi bi-check-circle-fill"></i>ERP</span>
+          <div class="nt-grid" style="margin-top:14px">
+            <div class="nt-field full req" id="fMotivoWrap">
+              <label for="ntMotivo">Motivo principal</label>
+              <div class="ntw-motivo-origen" id="ntwMotivoOrigen"><i class="bi bi-lightbulb-fill"></i><span>Elige el tipo de solicitud y te sugerimos motivos; también puedes escribir el tuyo.</span></div>
+              <div class="ntw-motivos" id="ntwMotivos"></div>
+              <input type="text" id="ntMotivo" class="form-control" maxlength="160" placeholder="Ej: Equipo no enciende" autocomplete="off">
+              <div class="nt-err-msg" id="ntErrMotivo">Indica el motivo principal del ticket.</div>
             </div>
-            <div class="nt-ac" id="ntAcCli"></div>
-          </div>
-          <div class="nt-grid" style="margin-top:10px;">
-            <div class="nt-field req" id="fRutWrap"><label for="ntRut">RUT</label>
-              <input type="text" id="ntRut" class="form-control" placeholder="Ej: 76.123.456-7">
-              <div class="nt-err-msg" id="ntErrRut">El RUT es obligatorio.</div></div>
-            <div class="nt-field req" id="fEmpresaWrap"><label for="ntEmpresa">Empresa</label>
-              <input type="text" id="ntEmpresa" class="form-control" placeholder="Nombre de la empresa">
-              <div class="nt-err-msg" id="ntErrEmpresa">El nombre de la empresa es obligatorio.</div></div>
-            <div class="nt-field req" id="fContactoWrap"><label for="ntContacto">Nombre de contacto</label>
-              <input type="text" id="ntContacto" class="form-control">
-              <div class="nt-err-msg" id="ntErrContacto">El nombre de contacto es obligatorio.</div></div>
-            <div class="nt-field req" id="fPhoneWrap"><label for="ntPhone">Teléfono</label>
-              <input type="tel" id="ntPhone" class="form-control" placeholder="+56 9 1234 5678">
-              <div class="nt-vfeed" id="ntVPhone"></div>
-              <div class="nt-err-msg" id="ntErrPhone">Teléfono obligatorio.</div></div>
-            <div class="nt-field req" id="fEmailWrap"><label for="ntEmail">Correo</label>
-              <input type="email" id="ntEmail" class="form-control" placeholder="cliente@correo.cl">
-              <div class="nt-vfeed" id="ntVEmail"></div>
-              <div class="nt-err-msg" id="ntErrEmail">Correo obligatorio.</div></div>
-            <div class="nt-field"><label for="ntSucursal">Sucursal <span style="color:#cbd5e1">(opcional)</span></label>
-              <input type="text" id="ntSucursal" class="form-control"></div>
-          </div>
-        </div>
-
-        <div class="nt-card" id="ntCardDireccion">
-          <h6><span class="n">3</span>Dirección del equipo <span id="ntDirAsterisco" style="color:#dc2626">*</span></h6>
-          <div class="hint">Empieza a escribir y elige una sugerencia de Google para validarla.</div>
-          <div class="nt-vfeed ok" id="ntDireccionOpcionalHint" style="display:none;margin-bottom:8px">
-            <i class="bi bi-info-circle-fill"></i> Dirección opcional para este tipo de ticket (interno).
-          </div>
-          <div class="nt-field full" id="fDirWrap">
-            <input type="text" id="ntDireccion" class="form-control" placeholder="Empieza a escribir y elige del dropdown…" autocomplete="off">
-            <input type="hidden" id="ntDirLat"><input type="hidden" id="ntDirLng"><input type="hidden" id="ntDirPlace"><input type="hidden" id="ntComuna"><input type="hidden" id="ntRegion">
-            <small id="ntDirHint" class="text-muted d-block mt-1" style="font-size:.72rem">
-              <i class="bi bi-info-circle me-1"></i>Selecciona una sugerencia para validar la dirección.</small>
-            <div class="nt-err-msg" id="ntErrDir">Selecciona una dirección sugerida por Google para validarla.</div>
-          </div>
-        </div>
-
-        <div class="nt-card">
-          <h6><span class="n">4</span>Equipo <span style="color:#94a3b8;font-weight:600;font-size:.7rem;">(opcional)</span></h6>
-          <div class="hint">Busca por SKU o nombre en el catálogo completo de equipos (bodega de soporte).</div>
-          <div class="nt-field full">
-            <div class="nt-search">
-              <i class="bi bi-search"></i>
-              <input type="text" id="ntBuscarEq" class="form-control" placeholder="Buscar equipo por SKU o nombre…" autocomplete="off">
-            </div>
-            <div class="nt-ac" id="ntAcEq"></div>
-          </div>
-          <div class="nt-eq-count" id="ntEqCount"><i class="bi bi-box-seam-fill"></i><span id="ntEqCountTxt">0 equipos agregados</span></div>
-          <div id="ntListaEq" class="nt-lista-eq" style="margin-top:8px;"></div>
-        </div>
-
-        <div class="nt-card mb-0">
-          <h6><span class="n">5</span>Problema</h6>
-          <div class="nt-grid">
             <div class="nt-field full req" id="fDescWrap">
               <label for="ntDesc">¿Qué está pasando?</label>
-              <textarea id="ntDesc" class="form-control" rows="3" maxlength="2000" placeholder="Describe el problema o la solicitud…"></textarea>
+              <textarea id="ntDesc" class="form-control" rows="3" maxlength="2000" placeholder="Describe el problema o la solicitud con el detalle que te dio el cliente…"></textarea>
               <div class="nt-counter"><span id="ntDescCount">0</span>/2000</div>
               <div class="nt-err-msg" id="ntErrDesc">Describe el problema o la solicitud.</div>
             </div>
+          </div>
+        </div>
+
+        {# ── PASO 5 · Gestión: prioridad, responsable y adjuntos ── #}
+        <div class="ntw-step" id="ntwStep5">
+          <div class="ntw-step-header">
+            <div class="ntw-step-circle-wrap">
+              <span class="ntw-step-circle-label">Paso 5</span>
+              <div class="ntw-step-circle"><span class="ntw-step-num">5</span><i class="bi bi-check-lg ntw-step-check"></i></div>
+            </div>
+            <div class="ntw-step-titles">
+              <div class="ntw-step-title">Gestión</div>
+              <div class="ntw-step-sub">Prioridad, quién se hace cargo en ILUS y los adjuntos (fotos, videos, informes).</div>
+              <div class="ntw-step-estado" id="ntwEstado5"></div>
+            </div>
+          </div>
+          <div class="nt-grid">
             <div class="nt-field"><label for="ntPrio">Prioridad</label>
               <select id="ntPrio" class="form-select">
                 {% for p in tk_prioridades %}<option value="{{ p }}"{% if p=='media' %} selected{% endif %}>{{ p|capitalize }}</option>{% endfor %}
               </select></div>
-            <div class="nt-field"><label for="ntDoc">N° boleta / factura <span style="color:#cbd5e1">(opcional)</span></label>
-              <input type="text" id="ntDoc" class="form-control"></div>
+            <div class="nt-field"><label for="ntResp"><i class="bi bi-person-badge me-1" style="color:var(--ilus-red,#dc2626)"></i>Responsable en ILUS</label>
+              <select id="ntResp" class="form-select">
+                <option value="">Cargando responsables…</option>
+              </select>
+              <div class="ntw-resp-yo" id="ntwRespYo"><i class="bi bi-check-circle-fill"></i> Quedas tú a cargo (puedes cambiarlo)</div>
+            </div>
             <div class="nt-field full" style="margin-top:2px;">
-              <label>Adjuntos <span style="color:#cbd5e1">(opcional)</span></label>
+              <label>Adjuntos <span style="color:#6b7280;font-weight:600">(opcional)</span></label>
               <div class="nt-drop" id="ntDrop">
                 <i class="bi bi-paperclip"></i>
                 <div class="t1">Arrastra archivos aquí o haz clic para elegir</div>
@@ -450,7 +608,7 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-        <button class="btn btn-ilus" id="ntBtnCrear"><i class="bi bi-check-lg me-1"></i>Crear Ticket</button>
+        <button type="button" class="btn btn-ilus fw-bold" id="ntBtnCrear" disabled title="Completa los pasos en rojo para crear el ticket"><i class="bi bi-check-lg me-1"></i>Crear Ticket</button>
       </div>
     </div>
   </div>
@@ -600,6 +758,9 @@ window.TK_LIST_DATA = {
   // Mismo mapeo tipo→(icono, color, fondo) que usan los tipo-pills del modal
   // "Nuevo Ticket" -- se reutiliza para la columna Tipo de la tabla.
   TIPO_VISUAL: {{ tipo_visual|tojson }},
+  // Tickets 2.0: motivos principales SUGERIDOS por tipo (tickets_nuevo_motivos.py).
+  // El sistema sugiere, la persona elige o escribe (REGLA #32).
+  MOTIVOS: {{ (tk_motivos_sugeridos if tk_motivos_sugeridos is defined else {})|tojson }},
   IS_SUPERADMIN: {{ 'true' if permissions.superadmin else 'false' }}
 };
 </script>
