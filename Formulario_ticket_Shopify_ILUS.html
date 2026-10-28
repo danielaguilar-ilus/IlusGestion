@@ -6,7 +6,7 @@
 <title>Solicita soporte · ILUS Fitness</title>
 <!--
   ════════════════════════════════════════════════════════════════════
-  ILUS Fitness · Formulario de soporte técnico (HTML para Shopify)
+  ILUS Fitness · Formulario de soporte y consultas (HTML para Shopify)
   Versión 27-10-2026 · mismo diseño que el formulario «Agenda tu retiro»
   ════════════════════════════════════════════════════════════════════
   CÓMO PUBLICARLO
@@ -16,18 +16,31 @@
      Liquid) y pegar TODO este archivo. También se puede abrir directo en
      el navegador para verlo funcionando.
   3. Guardar.
+  4. PENDIENTE (lo hace TI/Daniel en Google Cloud, no el código): la clave
+     de navegador de Google Maps que usa ILUS está restringida por referer.
+     Para que el buscador de direcciones funcione en la tienda hay que
+     agregar  https://ilusfitness.com/*  y  https://www.ilusfitness.com/*
+     a los «Referentes HTTP» permitidos de esa clave (Google Cloud ›
+     APIs y servicios › Credenciales › la clave de Maps). Sin ese paso, el
+     formulario avisa «No pudimos cargar el buscador de direcciones» y no
+     deja enviar una solicitud de equipo sin dirección validada.
 
   QUÉ HACE
+  - 9 opciones en lenguaje simple (equipo que falla, instalación,
+    mantención, repuesto, dónde está mi pedido, cambio o devolución,
+    factura o nota de crédito, cotización, otra consulta). Las que no son
+    de un equipo saltan los pasos de dirección y equipo.
   - Crea el ticket directo en el sistema de tickets de ILUS Fitness
     (misma API que el formulario /soporte): el cliente ve su N° de ticket
     al terminar y recibe el correo de confirmación con el seguimiento.
-  - Busca el equipo en el catálogo de ILUS mientras se escribe (y deja
-    agregarlo a mano si no aparece). Hasta 15 adjuntos de 25 MB c/u, que
-    se suben después de crear el ticket sin bloquear la confirmación.
-  - La dirección se escribe como texto (en la tienda no hay Google Maps);
-    ILUS la anota como «por confirmar» en la bitácora del ticket.
-  - No usa claves ni contraseñas. Solo funciona desde ilusfitness.com,
-    www.ilusfitness.com, ilus-fitness.myshopify.com o abierto suelto.
+  - Dirección SIEMPRE validada con Google (la comuna se completa sola).
+    La clave de navegador y los topes se piden al cargar a
+    /soporte/api/config: este archivo no lleva claves.
+  - Busca el equipo en el catálogo de ILUS (bodega 02; solo el nombre).
+  - Fotos, videos y documentos: hasta 15 archivos de 25 MB c/u, con
+    miniatura y estado por archivo; se suben después de crear el ticket.
+  - Solo funciona desde ilusfitness.com, www.ilusfitness.com,
+    ilus-fitness.myshopify.com o abierto suelto en el computador.
   ════════════════════════════════════════════════════════════════════
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -71,6 +84,7 @@
 #ilus-tk .itk-req{color:var(--rojo)}
 #ilus-tk .itk-in{display:block;width:100%;min-height:46px;margin:0;padding:11px 14px;border:1.5px solid #d1d5db;border-radius:10px;background:#fff;color:#111827;font:inherit;font-size:15px;font-weight:400;line-height:1.3;outline:0;-webkit-appearance:none;appearance:none;transition:border-color .15s}
 #ilus-tk .itk-in::placeholder{color:#6b7280}
+#ilus-tk .itk-in[readonly]{background:#f9fafb}
 #ilus-tk textarea.itk-in{min-height:88px;resize:vertical}
 #ilus-tk .itk-in:focus{border-color:var(--r);outline:none;box-shadow:0 0 0 3px rgba(28,28,28,.18)}
 #ilus-tk .itk-in.is-bad{border-color:#b91c1c;background:#fff5f5}
@@ -78,14 +92,17 @@
 #ilus-tk .itk-help{margin:6px 0 0;font-size:12.5px;color:var(--gr);font-weight:400}
 #ilus-tk .itk-err{margin:6px 0 0;font-size:12.5px;font-weight:500;color:#b91c1c}
 #ilus-tk .itk-sug{margin-top:6px;display:inline-block;background:var(--a-bg);border:1px solid var(--a);color:#78350f;border-radius:45px;padding:6px 14px;font-size:13px;font-weight:500;cursor:pointer}
+#ilus-tk .itk-aviso{margin-top:8px;padding:10px 12px;border:1.5px solid var(--a);border-radius:12px;background:var(--a-bg);color:#78350f;font-size:13px;font-weight:500}
 #ilus-tk .itk-counter{font-size:12.5px;color:var(--gr);text-align:right;margin-top:4px}
-/* Paso 1: tipos compactos (4 columnas; 2 en celular) */
-#ilus-tk .itk-tipos{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
-#ilus-tk .itk-tipo{display:flex;align-items:center;gap:10px;min-height:54px;padding:8px 12px;border:1.5px solid var(--line);border-radius:12px;background:#fff;cursor:pointer;font:inherit;font-size:13.5px;font-weight:600;line-height:1.2;color:#374151;text-align:left;transition:border-color .12s,background .12s,color .12s}
-#ilus-tk .itk-tipo svg{flex:0 0 24px;width:24px;height:24px;color:var(--tc,#94a3b8)}
-#ilus-tk .itk-tipo:hover{border-color:var(--tc,var(--k));color:#111827}
-#ilus-tk .itk-tipo.is-sel{border-color:var(--tc,var(--k));background:var(--tbg,#f3f4f6);color:#111827;box-shadow:inset 0 0 0 1px var(--tc,var(--k));font-weight:700}
-/* Toggles y tarjetas opcionales */
+/* Paso 1: 9 opciones (3×3; 2 columnas en celular), título + una línea */
+#ilus-tk .itk-tipos{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+#ilus-tk .itk-tipo{display:flex;align-items:center;gap:12px;min-height:60px;padding:10px 12px;border:1.5px solid var(--line);border-radius:12px;background:#fff;cursor:pointer;font:inherit;font-size:14px;font-weight:700;line-height:1.2;color:#111827;text-align:left;transition:border-color .12s,background .12s,color .12s}
+#ilus-tk .itk-tipo svg{flex:0 0 26px;width:26px;height:26px;color:var(--tc,#94a3b8)}
+#ilus-tk .itk-tipo .tt{display:block;font-weight:700;font-size:14px;line-height:1.2}
+#ilus-tk .itk-tipo .tl{display:block;font-weight:400;font-size:12px;line-height:1.25;color:#4b5563;margin-top:2px}
+#ilus-tk .itk-tipo:hover{border-color:var(--tc,var(--k))}
+#ilus-tk .itk-tipo.is-sel{border-color:var(--tc,var(--k));background:var(--tbg,#f3f4f6);box-shadow:inset 0 0 0 1px var(--tc,var(--k))}
+/* Toggles */
 #ilus-tk .itk-toggle{display:flex;align-items:center;gap:12px;width:100%;min-height:56px;padding:12px 14px;border:1.5px dashed #d1d5db;border-radius:12px;background:#f9fafb;cursor:pointer;text-align:left;font:inherit;color:#111827}
 #ilus-tk .itk-toggle input{width:20px;height:20px;margin:0;accent-color:var(--g);flex:0 0 auto}
 #ilus-tk .itk-toggle small{display:block;color:var(--gr);font-size:12.5px;font-weight:400}
@@ -104,18 +121,28 @@
 #ilus-tk .itk-chip button:hover{color:#fff}
 #ilus-tk .itk-motivos{display:grid;gap:10px}
 #ilus-tk .itk-motivos:not(:empty){margin-top:12px}
-/* Adjuntos */
+/* Adjuntos: miniatura, estado por archivo y resumen «n de m listos» */
 #ilus-tk .itk-drop{border:1.5px dashed #d1d5db;border-radius:12px;padding:24px 16px;text-align:center;cursor:pointer;background:#f9fafb;width:100%;font:inherit;color:#374151;min-height:44px}
 #ilus-tk .itk-drop:hover,#ilus-tk .itk-drop.is-drag{border-color:var(--k);background:var(--gr-bg)}
 #ilus-tk .itk-drop svg{width:26px;height:26px;color:#6b7280;display:block;margin:0 auto 6px}
 #ilus-tk .itk-drop .t1{font-weight:600;font-size:14px}
 #ilus-tk .itk-drop .t2{font-size:12.5px;color:var(--gr);margin-top:3px}
-#ilus-tk .itk-files{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
-#ilus-tk .itk-file{display:flex;align-items:center;gap:6px;background:var(--gr-bg);border-radius:45px;padding:8px 12px;font-size:13px;max-width:100%}
-#ilus-tk .itk-file .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
-#ilus-tk .itk-file i{display:inline-block;width:10px;height:10px;border-radius:50%;background:#9ca3af;flex:0 0 auto}
-#ilus-tk .itk-file.is-ok i{background:var(--g)}#ilus-tk .itk-file.is-err i{background:var(--rojo)}#ilus-tk .itk-file.is-up i{background:var(--a)}
-#ilus-tk .itk-file button{border:0;background:transparent;color:#6b7280;font:inherit;font-size:16px;line-height:1;cursor:pointer;padding:0 2px;min-width:24px;min-height:24px}
+#ilus-tk .itk-files{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px}
+#ilus-tk .itk-files:empty{display:none}
+#ilus-tk .itk-file{display:flex;align-items:center;gap:10px;background:#f9fafb;border:1.5px solid var(--line);border-radius:12px;padding:8px 10px;font-size:13px;min-width:0}
+#ilus-tk .itk-file .th{flex:0 0 44px;width:44px;height:44px;border-radius:8px;background:var(--gr-bg);display:flex;align-items:center;justify-content:center;overflow:hidden;color:#6b7280}
+#ilus-tk .itk-file .th img{width:100%;height:100%;object-fit:cover;display:block}
+#ilus-tk .itk-file .th svg{width:22px;height:22px}
+#ilus-tk .itk-file .bd{flex:1;min-width:0}
+#ilus-tk .itk-file .nm{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:#111827}
+#ilus-tk .itk-file .st{display:block;font-size:12px;color:#4b5563;margin-top:2px}
+#ilus-tk .itk-file button{border:0;background:transparent;color:#6b7280;font:inherit;font-size:18px;line-height:1;cursor:pointer;min-width:28px;min-height:28px;border-radius:45px}
+#ilus-tk .itk-file button:hover{background:var(--gr-bg);color:#111827}
+#ilus-tk .itk-file.is-ok{border-color:#86efac;background:#f0fdf4}#ilus-tk .itk-file.is-ok .st{color:#166534}
+#ilus-tk .itk-file.is-err{border-color:#fca5a5;background:#fff5f5}#ilus-tk .itk-file.is-err .st{color:#b91c1c}
+#ilus-tk .itk-file.is-up{border-color:var(--a);background:var(--a-bg)}#ilus-tk .itk-file.is-up .st{color:#78350f}
+#ilus-tk .itk-files-resumen{margin-top:8px;font-size:12.5px;font-weight:500;color:#374151}
+#ilus-tk .itk-files-resumen.is-ok{color:#166534}
 /* Envío */
 #ilus-tk .itk-alert{margin:0 0 14px;padding:12px 14px;border-radius:12px;border:1.5px solid #d1d5db;background:#f3f4f6;color:#1c1c1c;font-size:14px;font-weight:500}
 #ilus-tk .itk-alert ul{margin:4px 0 0;padding-left:18px;font-weight:400}
@@ -131,13 +158,15 @@
 #ilus-tk .itk-ok h3{margin:0 0 6px;font-size:22px;font-weight:700;color:#111827}
 #ilus-tk .itk-code{display:inline-block;margin:10px 0 6px;padding:10px 22px;border-radius:12px;background:var(--k);color:#fff;font-family:Inter,-apple-system,sans-serif;font-size:32px;font-weight:700;letter-spacing:.06em;line-height:1;border-bottom:4px solid var(--r)}
 #ilus-tk .itk-ok p{margin:8px auto 0;max-width:520px;color:#4b5563;font-weight:400}
-#ilus-tk .itk-ok-adj{margin:12px auto 0;max-width:520px;padding:10px 14px;border-radius:12px;background:var(--gr-bg);font-size:13.5px;color:#374151}
+#ilus-tk .itk-ok .itk-files{text-align:left;max-width:560px;margin:14px auto 0}
+#ilus-tk .itk-ok .itk-files-resumen{text-align:center}
 #ilus-tk .itk-ok-btns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px}
 #ilus-tk .itk-btn{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 24px;border-radius:45px;font:inherit;font-weight:500;font-size:13px;text-decoration:none;cursor:pointer;border:1.5px solid var(--k);background:#fff;color:var(--k);text-transform:uppercase}
 #ilus-tk .itk-btn.is-dark{background:var(--k);border-color:var(--k);color:#fff}
 #ilus-tk button:focus-visible,#ilus-tk a:focus-visible,#ilus-tk input[type=checkbox]:focus-visible{outline:2px solid #1C1C1C;outline-offset:2px}
-@media (prefers-reduced-motion:reduce){#ilus-tk *,#ilus-tk *::before,#ilus-tk *::after{transition-duration:.01s!important;animation-duration:.01s!important;scroll-behavior:auto!important}}
-@media(max-width:720px){#ilus-tk .itk-head{padding:22px 18px 18px}#ilus-tk .itk-title{font-size:28px}#ilus-tk .itk-body{padding:14px}#ilus-tk .itk-step{padding:14px 14px 16px}#ilus-tk .itk-c4,#ilus-tk .itk-c6,#ilus-tk .itk-c8{grid-column:span 12}#ilus-tk .itk-tipos{grid-template-columns:repeat(2,minmax(0,1fr))}#ilus-tk .itk-tipo{font-size:13px}#ilus-tk .itk-in{font-size:16px}#ilus-tk .itk-code{font-size:24px}}
+.pac-container{z-index:99999!important;font-family:Inter,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+@media (prefers-reduced-motion:reduce){ #ilus-tk *,#ilus-tk *::before,#ilus-tk *::after{transition-duration:.01s!important;animation-duration:.01s!important;scroll-behavior:auto!important}}
+@media(max-width:720px){#ilus-tk .itk-head{padding:22px 18px 18px}#ilus-tk .itk-title{font-size:28px}#ilus-tk .itk-body{padding:14px}#ilus-tk .itk-step{padding:14px 14px 16px}#ilus-tk .itk-c4,#ilus-tk .itk-c6,#ilus-tk .itk-c8{grid-column:span 12}#ilus-tk .itk-tipos{grid-template-columns:repeat(2,minmax(0,1fr))}#ilus-tk .itk-tipo{gap:8px;padding:8px 10px}#ilus-tk .itk-tipo .tt{font-size:13px}#ilus-tk .itk-tipo .tl{font-size:11.5px}#ilus-tk .itk-files{grid-template-columns:minmax(0,1fr)}#ilus-tk .itk-in{font-size:16px}#ilus-tk .itk-code{font-size:24px}}
 /* Solo cuando el archivo se abre suelto, fuera de Shopify: mismo fondo gris y ancho que la sección de la tienda. */
 html.itk-solo body{margin:0;background:#efefef;padding:15px 16px}
 html.itk-solo #ilus-tk{max-width:947px}
@@ -147,9 +176,9 @@ html.itk-solo #ilus-tk{max-width:947px}
 
 <div id="ilus-tk">
   <div class="itk-head">
-    <p class="itk-kicker">ILUS Fitness · Servicio técnico</p>
-    <h2 class="itk-title">Solicita soporte</h2>
-    <p class="itk-lead">Cuéntanos qué pasó y nuestro equipo técnico te contactará. Te toma 2 minutos.</p>
+    <p class="itk-kicker">ILUS Fitness · Soporte y consultas</p>
+    <h2 class="itk-title">¿En qué te ayudamos?</h2>
+    <p class="itk-lead">Cuéntanos qué necesitas y nuestro equipo te contactará. Te toma 2 minutos.</p>
     <div class="itk-prog" id="itkProg"><div class="itk-prog-bar"><span id="itkProgBar"></span></div><span id="itkProgTxt">0 de 4 pasos listos</span></div>
   </div>
   <div class="itk-body">
@@ -164,10 +193,10 @@ html.itk-solo #ilus-tk{max-width:947px}
         <div class="itk-step-h">
           <div class="itk-circle"><b>1</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
           <div><h3 class="itk-step-t">¿Qué necesitas?</h3>
-          <p class="itk-step-s">Elige el tipo de solicitud que mejor describe tu caso.</p></div>
+          <p class="itk-step-s">Elige la opción que mejor describe tu caso.</p></div>
         </div>
         <div class="itk-tipos" id="itk_tipos" role="group" aria-label="Tipo de solicitud"></div>
-        <p class="itk-err" id="itk_tipo_err" hidden>Selecciona un tipo de solicitud.</p>
+        <p class="itk-err" id="itk_tipo_err" hidden>Elige una opción.</p>
       </section>
 
       <!-- PASO 2 -->
@@ -209,32 +238,35 @@ html.itk-solo #ilus-tk{max-width:947px}
         </div>
       </section>
 
-      <!-- PASO 3 -->
-      <section class="itk-step" data-paso="3" id="itk_paso3">
+      <!-- PASO 3 (solo opciones de un equipo) -->
+      <section class="itk-step" data-paso="3" id="itk_paso3" data-equipo-only>
         <div class="itk-step-h">
           <div class="itk-circle"><b>3</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
           <div><h3 class="itk-step-t">¿Dónde está el equipo?</h3>
-          <p class="itk-step-s">La dirección donde se encuentra la máquina: calle y número, comuna y ciudad.</p></div>
+          <p class="itk-step-s">La dirección donde se encuentra la máquina. Empieza a escribir y elígela de la lista: la comuna se completa sola.</p></div>
         </div>
         <div class="itk-grid">
-          <div class="itk-f itk-c8">
-            <label class="itk-lbl" for="itk_dir">Dirección <span class="itk-req">*</span></label>
-            <input class="itk-in" id="itk_dir" name="direccion" maxlength="255" placeholder="Ej: Av. Colón 1265, Las Condes, Santiago" autocomplete="street-address">
-            <p class="itk-help">Calle, número y comuna. La confirmaremos contigo antes de agendar.</p>
-          </div>
-          <div class="itk-f itk-c4">
-            <label class="itk-lbl" for="itk_comuna">Comuna</label>
-            <input class="itk-in" id="itk_comuna" name="comuna_nombre" maxlength="120" placeholder="Ej: Las Condes" autocomplete="address-level2">
-          </div>
           <div class="itk-f itk-c12">
+            <label class="itk-lbl" for="itk_dir">Dirección <span class="itk-req">*</span></label>
+            <input class="itk-in" id="itk_dir" name="direccion" maxlength="255" placeholder="Ej: Av. Colón 1265, Las Condes" autocomplete="off">
+            <p class="itk-help" id="itk_dir_help">Direcciones sugeridas por Google.</p>
+            <p class="itk-err" id="itk_dir_err" hidden>Escribe la dirección y elígela de las sugeridas por Google.</p>
+            <div class="itk-aviso" id="itk_gmaps_aviso" hidden>No pudimos cargar el buscador de direcciones de Google. Revisa tu conexión y recarga la página: para agendar necesitamos la dirección validada.</div>
+          </div>
+          <div class="itk-f itk-c6">
+            <label class="itk-lbl" for="itk_comuna">Comuna</label>
+            <input class="itk-in" id="itk_comuna" name="comuna_nombre" maxlength="120" placeholder="Se completa al elegir la dirección" readonly>
+            <p class="itk-help">Se completa sola con la dirección elegida.</p>
+          </div>
+          <div class="itk-f itk-c6">
             <label class="itk-lbl" for="itk_sucursal">Sucursal <span class="itk-tag">Opcional</span></label>
             <input class="itk-in" id="itk_sucursal" name="sucursal" maxlength="100" placeholder="Ej: Sede Providencia">
           </div>
         </div>
       </section>
 
-      <!-- PASO 4 (opcional) -->
-      <section class="itk-step is-opt" data-paso="4" id="itk_paso4">
+      <!-- PASO 4 (opcional; solo opciones de un equipo) -->
+      <section class="itk-step is-opt" data-paso="4" id="itk_paso4" data-equipo-only>
         <div class="itk-step-h">
           <div class="itk-circle"><b>4</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
           <div><h3 class="itk-step-t">El equipo <span class="itk-tag">Opcional</span></h3>
@@ -253,25 +285,23 @@ html.itk-solo #ilus-tk{max-width:947px}
           </div>
           <div class="itk-chips" id="itk_prod_chips"></div>
         </div>
-        <div class="itk-grid" style="margin-top:14px">
-          <div class="itk-f itk-c12">
-            <label class="itk-lbl" for="itk_doc">N° de boleta o factura <span class="itk-tag">Opcional</span></label>
-            <input class="itk-in" id="itk_doc" name="numero_documento" maxlength="60" inputmode="numeric" placeholder="Ej: 10683" autocomplete="off">
-            <p class="itk-help">Aparece en la parte superior de tu documento. Nos ayuda a ubicar tu compra.</p>
-          </div>
-        </div>
       </section>
 
       <!-- PASO 5 -->
       <section class="itk-step" data-paso="5" id="itk_paso5">
         <div class="itk-step-h">
           <div class="itk-circle"><b>5</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
-          <div><h3 class="itk-step-t">Cuéntanos el problema</h3>
+          <div><h3 class="itk-step-t" id="itk_paso5_t">Cuéntanos</h3>
           <p class="itk-step-s">Mientras más detalle, más rápido lo resolvemos. Puedes adjuntar fotos, videos o documentos.</p></div>
         </div>
         <div class="itk-grid">
           <div class="itk-f itk-c12">
-            <label class="itk-lbl" for="itk_desc">¿Qué está pasando? <span class="itk-req">*</span></label>
+            <label class="itk-lbl" for="itk_doc">N° de boleta, factura o pedido <span class="itk-tag">Opcional</span></label>
+            <input class="itk-in" id="itk_doc" name="numero_documento" maxlength="60" inputmode="numeric" placeholder="Ej: 10683 o #1136" autocomplete="off">
+            <p class="itk-help">Aparece en la parte superior de tu documento o en el correo de tu pedido. Nos ayuda a ubicar tu compra.</p>
+          </div>
+          <div class="itk-f itk-c12">
+            <label class="itk-lbl" for="itk_desc" id="itk_desc_lbl">¿Qué está pasando? <span class="itk-req">*</span></label>
             <textarea class="itk-in" id="itk_desc" name="descripcion" rows="3" maxlength="260" placeholder="Ej: La consola de la trotadora se apaga sola después de unos minutos de uso…"></textarea>
             <div class="itk-counter"><span id="itk_desc_n">260</span> caracteres restantes</div>
           </div>
@@ -297,6 +327,7 @@ html.itk-solo #ilus-tk{max-width:947px}
             </button>
             <input type="file" id="itk_file" multiple hidden accept=".jpg,.jpeg,.png,.webp,.gif,.heic,.mp4,.mov,.webm,.avi,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv">
             <div class="itk-files" id="itk_files"></div>
+            <div class="itk-files-resumen" id="itk_files_resumen" hidden></div>
           </div>
         </div>
       </section>
@@ -315,7 +346,8 @@ html.itk-solo #ilus-tk{max-width:947px}
       <div class="itk-code" id="itk_code">TK-XXXX-XXXXX</div>
       <p id="itk_ok_txt">Te enviamos un correo con la confirmación. Ese será el canal por el que te contactaremos con el seguimiento de tu caso.</p>
       <p><strong>Si respondes ese correo, no cambies el asunto:</strong> ahí va tu número de ticket y así lo asociamos automáticamente a tu caso.</p>
-      <div class="itk-ok-adj" id="itk_ok_adj" hidden></div>
+      <div class="itk-files" id="itk_ok_files"></div>
+      <div class="itk-files-resumen" id="itk_ok_resumen" hidden></div>
       <div class="itk-ok-btns">
         <button type="button" class="itk-btn is-dark" id="itk_copy">Copiar N° de ticket</button>
         <button type="button" class="itk-btn" id="itk_otra">Enviar otra solicitud</button>
@@ -325,61 +357,58 @@ html.itk-solo #ilus-tk{max-width:947px}
 </div>
 
 <script>
-/* ILUS Fitness · Formulario «Solicita soporte» (tienda) · versión 2026-10-27
-   Habla con la MISMA API que el formulario /soporte de ILUS: /soporte/api/crear, /soporte/api/adjuntos/<id>
-   y /soporte/api/erp/productos. Sin claves. */
+/* ILUS Fitness · Formulario «¿En qué te ayudamos?» (tienda) · versión 2026-10-27
+   Habla con la MISMA API que el formulario /soporte de ILUS: /soporte/api/config (clave de navegador de Google + topes),
+   /soporte/api/crear, /soporte/api/adjuntos/<id> y /soporte/api/erp/productos. Sin claves en este archivo. */
 (function () {
   var API = 'https://ilus-app-469212710544.southamerica-west1.run.app';
   var root = document.getElementById('ilus-tk');
   if (!root) return;
   var $ = function (id) { return document.getElementById(id); };
   var form = $('itkForm');
-  var MAX_ADJ = 15, MAX_MB = 25;                      // mismos topes que el servidor (MAX_ADJUNTOS / MAX_ADJUNTO_MB)
+  var MAX_ADJ = 15, MAX_MB = 25;                      // mismos topes que el servidor; /soporte/api/config los confirma al cargar
+  var EXT_OK = ($('itk_file').getAttribute('accept') || '').split(',').map(function (s) { return s.trim().toLowerCase(); });
   var T0 = Math.floor(Date.now() / 1000);             // hora en que se abrió el formulario (filtro anti-bots: nadie lo llena en 3 s)
   var tipoSel = '', productos = [], archivos = [], ticketId = null, uploadToken = null, enviando = false;
+  var dir = { lat: '', lng: '', place_id: '', comuna: '', region: '', cp: '' }, gmapsListo = false, gmapsPedido = false;
 
-  /* Tipos de solicitud (mismos 13 del formulario /soporte, con sus colores) */
+  /* Las 9 opciones del paso 1 (mismo texto que TK_TIPOS_PUBLICOS_TEXTO en ILUS). equipo:false salta dirección y equipo. */
   var ICONS = {
-    install: 'M8.707 1.5a1 1 0 0 0-1.414 0L.646 8.146a.5.5 0 0 0 .708.708L2 8.207V13.5A1.5 1.5 0 0 0 3.5 15h9a1.5 1.5 0 0 0 1.5-1.5V8.207l.646.647a.5.5 0 0 0 .708-.708L13 5.793V2.5a.5.5 0 0 0-.5-.5h-1a.5.5 0 0 0-.5.5v1.293L8.707 1.5ZM13 7.207V13.5a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V7.207l5-5 5 5Z M8 6.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Zm0 1a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z',
     tech_support: 'M8 1a5 5 0 0 0-5 5v1h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a6 6 0 1 1 12 0v6a2.5 2.5 0 0 1-2.5 2.5H9.366a1 1 0 0 1-.866.5h-1a1 1 0 1 1 0-2h1a1 1 0 0 1 .866.5H11.5A1.5 1.5 0 0 0 13 12h-1a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h1V6a5 5 0 0 0-5-5z',
-    shipping: 'M0 3.5A1.5 1.5 0 0 1 1.5 2h9A1.5 1.5 0 0 1 12 3.5V5h1.02a1.5 1.5 0 0 1 1.17.563l1.481 1.85a1.5 1.5 0 0 1 .329.938V10.5a1.5 1.5 0 0 1-1.5 1.5H14a2 2 0 1 1-4 0H5a2 2 0 1 1-3.998-.085A1.5 1.5 0 0 1 0 10.5v-7zm1.294 7.456A1.999 1.999 0 0 1 4.732 11h5.536a2.01 2.01 0 0 1 .732-.732V3.5a.5.5 0 0 0-.5-.5h-9a.5.5 0 0 0-.5.5v7a.5.5 0 0 0 .294.456zM12 10a2 2 0 0 1 1.732 1h.768a.5.5 0 0 0 .5-.5V8.35a.5.5 0 0 0-.11-.312l-1.48-1.85A.5.5 0 0 0 13.02 6H12v4zm-9 1a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm9 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z',
-    quotation: 'M8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4z M0 4a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V4zm3 0a2 2 0 0 1-2 2v4a2 2 0 0 1 2 2h10a2 2 0 0 1 2-2V6a2 2 0 0 1-2-2H3z',
-    'return': 'M14.5 1.5a.5.5 0 0 1 .5.5v4.8a2.5 2.5 0 0 1-2.5 2.5H2.707l3.347 3.346a.5.5 0 0 1-.708.708l-4.2-4.2a.5.5 0 0 1 0-.708l4-4a.5.5 0 1 1 .708.708L2.707 8.3H12.5a1.5 1.5 0 0 0 1.5-1.5V2a.5.5 0 0 1 .5-.5z',
-    tech_evaluation: 'M10.854 7.146a.5.5 0 0 1 0 .708l-3 3a.5.5 0 0 1-.708 0l-1.5-1.5a.5.5 0 1 1 .708-.708L7.5 9.793l2.646-2.647a.5.5 0 0 1 .708 0z M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1h1a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1h1v-1z M9.5 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5h3zm-3-1A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3z',
+    install: 'M8.707 1.5a1 1 0 0 0-1.414 0L.646 8.146a.5.5 0 0 0 .708.708L2 8.207V13.5A1.5 1.5 0 0 0 3.5 15h9a1.5 1.5 0 0 0 1.5-1.5V8.207l.646.647a.5.5 0 0 0 .708-.708L13 5.793V2.5a.5.5 0 0 0-.5-.5h-1a.5.5 0 0 0-.5.5v1.293L8.707 1.5ZM13 7.207V13.5a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V7.207l5-5 5 5Z M8 6.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Zm0 1a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z',
     maintenance: 'M1 0 0 1l2.2 3.081a1 1 0 0 0 .815.419h.07a1 1 0 0 1 .708.293l2.675 2.675-2.617 2.654A3.003 3.003 0 0 0 0 13a3 3 0 1 0 5.878-.851l2.654-2.617.968.968-.305.914a1 1 0 0 0 .242 1.023l3.27 3.27a.997.997 0 0 0 1.414 0l1.586-1.586a.997.997 0 0 0 0-1.414l-3.27-3.27a1 1 0 0 0-1.023-.242L10.5 9.5l-.96-.96 2.68-2.643A3.005 3.005 0 0 0 16 3c0-.269-.035-.53-.102-.777l-2.14 2.141L12 4l-.364-1.757L13.777.102a3 3 0 0 0-3.675 3.68L7.462 6.46 4.793 3.793a1 1 0 0 1-.293-.707v-.071a1 1 0 0 0-.419-.814L1 0zm9.646 10.646a.5.5 0 0 1 .708 0l2.914 2.915a.5.5 0 0 1-.707.707l-2.915-2.914a.5.5 0 0 1 0-.708zM3 11l.471.242.529.026.287.445.445.287.026.529L5 13l-.242.471-.026.529-.445.287-.287.445-.529.026L3 15l-.471-.242L2 14.732l-.287-.445L1.268 14l-.026-.529L1 13l.242-.471.026-.529.445-.287.287-.445.529-.026L3 11z',
     spare_parts: 'M8.186 1.113a.5.5 0 0 0-.372 0L1.846 3.5 8 5.961 14.154 3.5 8.186 1.113zM15 4.239l-6.5 2.6v7.922l6.5-2.6V4.24zM7.5 14.762V6.838L1 4.239v7.923l6.5 2.6zM7.443.184a1.5 1.5 0 0 1 1.114 0l7.129 2.852A.5.5 0 0 1 16 3.5v8.662a1 1 0 0 1-.629.928l-7.185 2.874a.5.5 0 0 1-.372 0L.63 13.09a1 1 0 0 1-.63-.928V3.5a.5.5 0 0 1 .314-.464L7.443.184z',
-    equipment_transfer: 'M7.646.146a.5.5 0 0 1 .708 0l2 2a.5.5 0 0 1-.708.708L8.5 1.707V5.5a.5.5 0 0 1-1 0V1.707L6.354 2.854a.5.5 0 1 1-.708-.708l2-2zM8 10a.5.5 0 0 1 .5.5v3.793l1.146-1.147a.5.5 0 0 1 .708.708l-2 2a.5.5 0 0 1-.708 0l-2-2a.5.5 0 0 1 .708-.708L7.5 14.293V10.5A.5.5 0 0 1 8 10zM.146 8.354a.5.5 0 0 1 0-.708l2-2a.5.5 0 1 1 .708.708L1.707 7.5H5.5a.5.5 0 0 1 0 1H1.707l1.147 1.146a.5.5 0 0 1-.708.708l-2-2zM10 8a.5.5 0 0 1 .5-.5h3.793l-1.147-1.146a.5.5 0 0 1 .708-.708l2 2a.5.5 0 0 1 0 .708l-2 2a.5.5 0 0 1-.708-.708L14.293 8.5H10.5A.5.5 0 0 1 10 8z',
-    warranty: 'M5.338 1.59a61.44 61.44 0 0 0-2.837.856.481.481 0 0 0-.328.39c-.554 4.157.726 7.19 2.253 9.188a10.725 10.725 0 0 0 2.287 2.233c.346.244.652.42.893.533.12.057.218.095.293.118a.55.55 0 0 0 .101.025.615.615 0 0 0 .1-.025c.076-.023.174-.061.294-.118.24-.113.547-.29.893-.533a10.726 10.726 0 0 0 2.287-2.233c1.527-1.997 2.807-5.031 2.253-9.188a.48.48 0 0 0-.328-.39c-.651-.213-1.75-.56-2.837-.855C9.552 1.29 8.531 1.067 8 1.067c-.53 0-1.552.223-2.662.524zM5.072.56C6.157.265 7.31 0 8 0s1.843.265 2.928.56c1.11.3 2.229.655 2.887.87a1.54 1.54 0 0 1 1.044 1.262c.596 4.477-.787 7.795-2.465 9.99a11.775 11.775 0 0 1-2.517 2.453 7.159 7.159 0 0 1-1.048.625c-.28.132-.581.24-.829.24s-.548-.108-.829-.24a7.158 7.158 0 0 1-1.048-.625 11.777 11.777 0 0 1-2.517-2.453C1.928 10.487.545 7.169 1.141 2.692A1.54 1.54 0 0 1 2.185 1.43 62.456 62.456 0 0 1 5.072.56z M10.854 5.146a.5.5 0 0 1 0 .708l-3 3a.5.5 0 0 1-.708 0l-1.5-1.5a.5.5 0 1 1 .708-.708L7.5 7.793l2.646-2.647a.5.5 0 0 1 .708 0z',
-    repair: 'M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0zm0 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1z M10.5 4a2.5 2.5 0 0 0-2.4 3.2L4.2 11.1a.7.7 0 0 0 1 1l3.9-3.9A2.5 2.5 0 0 0 12.3 5l-1.3 1.3-1.2-.3-.3-1.2L10.8 3.5A2.5 2.5 0 0 0 10.5 4z',
-    spare_parts_store: 'M4 2.5h1v1H4v-1zm3 0h1v1H7v-1zm3 0h1v1h-1v-1zM4 5h1v1H4V5zm3 0h1v1H7V5zm3 0h1v1h-1V5zM4 7.5h1v1H4v-1zm3 0h1v1H7v-1zm3 0h1v1h-1v-1zM4 10h1v1H4v-1zm6 0h1v1h-1v-1z M2 1a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V1zm1 0v14h3v-2.5h2V15h4V1H3z',
-    spare_parts_import: 'M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zM7.5 1.03v2.44c-.9.06-1.73.2-2.46.4A6.98 6.98 0 0 1 7.5 1.03zM4.08 4.33c.9-.3 2-.5 3.42-.56v3.73H3.52c.06-1.2.26-2.3.56-3.17zM1.02 7.5A6.96 6.96 0 0 1 2.9 3.3c.4.2.8.37 1.25.5-.35 1.03-.57 2.3-.63 3.7H1.02zm0 1h2.5c.06 1.4.28 2.67.63 3.7-.45.13-.85.3-1.25.5A6.96 6.96 0 0 1 1.02 8.5zm4.02 3.17c-.3-.87-.5-1.97-.56-3.17H7.5v3.73c-1.42-.06-2.52-.26-3.42-.56zm2.46 3.3a6.98 6.98 0 0 1-2.46-2.84c.73.2 1.56.34 2.46.4v2.44zm1 0v-2.44c.9-.06 1.73-.2 2.46-.4a6.98 6.98 0 0 1-2.46 2.84zm3.42-3.3c-.9.3-2 .5-3.42.56V8.5h3.98c-.06 1.2-.26 2.3-.56 3.17zm3.06-3.17a6.96 6.96 0 0 1-1.88 4.2c-.4-.2-.8-.37-1.25-.5.35-1.03.57-2.3.63-3.7h2.5zm-2.5-1c-.06-1.4-.28-2.67-.63-3.7.45-.13.85-.3 1.25-.5a6.96 6.96 0 0 1 1.88 4.2h-2.5zM8.5 7.5V3.77c1.42.06 2.52.26 3.42.56.3.87.5 1.97.56 3.17H8.5zm0-4.03V1.03a6.98 6.98 0 0 1 2.46 2.84c-.73-.2-1.56-.34-2.46-.4z'
+    shipping: 'M0 3.5A1.5 1.5 0 0 1 1.5 2h9A1.5 1.5 0 0 1 12 3.5V5h1.02a1.5 1.5 0 0 1 1.17.563l1.481 1.85a1.5 1.5 0 0 1 .329.938V10.5a1.5 1.5 0 0 1-1.5 1.5H14a2 2 0 1 1-4 0H5a2 2 0 1 1-3.998-.085A1.5 1.5 0 0 1 0 10.5v-7zm1.294 7.456A1.999 1.999 0 0 1 4.732 11h5.536a2.01 2.01 0 0 1 .732-.732V3.5a.5.5 0 0 0-.5-.5h-9a.5.5 0 0 0-.5.5v7a.5.5 0 0 0 .294.456zM12 10a2 2 0 0 1 1.732 1h.768a.5.5 0 0 0 .5-.5V8.35a.5.5 0 0 0-.11-.312l-1.48-1.85A.5.5 0 0 0 13.02 6H12v4zm-9 1a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm9 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z',
+    'return': 'M14.5 1.5a.5.5 0 0 1 .5.5v4.8a2.5 2.5 0 0 1-2.5 2.5H2.707l3.347 3.346a.5.5 0 0 1-.708.708l-4.2-4.2a.5.5 0 0 1 0-.708l4-4a.5.5 0 1 1 .708.708L2.707 8.3H12.5a1.5 1.5 0 0 0 1.5-1.5V2a.5.5 0 0 1 .5-.5z',
+    facturacion: 'M1.92.506a.5.5 0 0 1 .434.14L3 1.293l.646-.647a.5.5 0 0 1 .708 0L5 1.293l.646-.647a.5.5 0 0 1 .708 0L7 1.293l.646-.647a.5.5 0 0 1 .708 0L9 1.293l.646-.647a.5.5 0 0 1 .708 0l.646.647.646-.647a.5.5 0 0 1 .708 0l.646.647.646-.647a.5.5 0 0 1 .801.13l.5 1A.5.5 0 0 1 15 2v12a.5.5 0 0 1-.053.224l-.5 1a.5.5 0 0 1-.8.13L13 14.707l-.646.647a.5.5 0 0 1-.708 0L11 14.707l-.646.647a.5.5 0 0 1-.708 0L9 14.707l-.646.647a.5.5 0 0 1-.708 0L7 14.707l-.646.647a.5.5 0 0 1-.708 0L5 14.707l-.646.647a.5.5 0 0 1-.708 0L3 14.707l-.646.647a.5.5 0 0 1-.801-.13l-.5-1A.5.5 0 0 1 1 14V2a.5.5 0 0 1 .053-.224l.5-1a.5.5 0 0 1 .367-.27zM3 4.5a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1h-6a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1h-6a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1h-6a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1h-6a.5.5 0 0 1-.5-.5zm8-6a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5z',
+    quotation: 'M8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4z M0 4a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V4zm3 0a2 2 0 0 1-2 2v4a2 2 0 0 1 2 2h10a2 2 0 0 1 2-2V6a2 2 0 0 1-2-2H3z',
+    consulta: 'M14 1a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4.414A2 2 0 0 0 3 11.586l-2 2V2a1 1 0 0 1 1-1h12zM2 0a2 2 0 0 0-2 2v12.793a.5.5 0 0 0 .854.353l2.853-2.853A1 1 0 0 1 4.414 12H14a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z M3 3.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5zM3 6a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9A.5.5 0 0 1 3 6zm0 2.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5z'
   };
   var TIPOS = [
-    ['install', 'Instalación', '#3b82f6', '#eff6ff'],
-    ['tech_support', 'Soporte técnico', '#dc2626', '#fef2f2'],
-    ['shipping', 'Despacho', '#1d4ed8', '#eff6ff'],
-    ['quotation', 'Cotización', '#16a34a', '#f0fdf4'],
-    ['return', 'Devolución', '#6b7280', '#f9fafb'],
-    ['tech_evaluation', 'Evaluación técnica', '#64748b', '#f8fafc'],
-    ['maintenance', 'Mantenimiento', '#f59e0b', '#fffbeb'],
-    ['spare_parts', 'Repuesto y piezas', '#3b82f6', '#eff6ff'],
-    ['equipment_transfer', 'Movimiento de equipos', '#1d4ed8', '#eff6ff'],
-    ['warranty', 'Garantía', '#16a34a', '#f0fdf4'],
-    ['repair', 'Reparación', '#991b1b', '#fef2f2'],
-    ['spare_parts_store', 'Repuestos bodega', '#6b7280', '#f9fafb'],
-    ['spare_parts_import', 'Repuestos importación', '#3b82f6', '#eff6ff']
+    { id: 'tech_support', titulo: 'Mi equipo falla', linea: 'No enciende, hace ruido o se detuvo', equipo: true, tc: '#dc2626', tbg: '#fef2f2' },
+    { id: 'install', titulo: 'Instalar mi equipo', linea: 'Agendar la instalación', equipo: true, tc: '#3b82f6', tbg: '#eff6ff' },
+    { id: 'maintenance', titulo: 'Mantención', linea: 'Revisión o mantención de mis equipos', equipo: true, tc: '#f59e0b', tbg: '#fffbeb' },
+    { id: 'spare_parts', titulo: 'Necesito un repuesto', linea: 'Una pieza o accesorio', equipo: true, tc: '#3b82f6', tbg: '#eff6ff' },
+    { id: 'shipping', titulo: '¿Dónde está mi pedido?', linea: 'Estado de mi compra o despacho', equipo: false, tc: '#1d4ed8', tbg: '#eff6ff' },
+    { id: 'return', titulo: 'Cambiar o devolver', linea: 'Cambio o devolución de un producto', equipo: false, tc: '#6b7280', tbg: '#f9fafb' },
+    { id: 'facturacion', titulo: 'Factura o nota de crédito', linea: 'Documentos, cobros y pagos', equipo: false, tc: '#f59e0b', tbg: '#fffbeb' },
+    { id: 'quotation', titulo: 'Quiero cotizar', linea: 'Precios de equipos o servicios', equipo: false, tc: '#16a34a', tbg: '#f0fdf4' },
+    { id: 'consulta', titulo: 'Otra consulta', linea: 'Cuéntanos qué necesitas', equipo: false, tc: '#6b7280', tbg: '#f9fafb' }
   ];
+  var SIN_EQUIPO = TIPOS.filter(function (t) { return !t.equipo; }).map(function (t) { return t.id; });
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
     });
   }
+  function conEquipo() { return !tipoSel || SIN_EQUIPO.indexOf(tipoSel) === -1; }
 
-  /* ── Paso 1: tipos ──────────────────────────────────────── */
+  /* ── Paso 1: opciones ───────────────────────────────────── */
   $('itk_tipos').innerHTML = TIPOS.map(function (t) {
-    return '<button type="button" class="itk-tipo" data-tipo="' + t[0] + '" style="--tc:' + t[2] + ';--tbg:' + t[3] + '" aria-pressed="false">' +
-      '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="' + (ICONS[t[0]] || '') + '"/></svg><span>' + esc(t[1]) + '</span></button>';
+    return '<button type="button" class="itk-tipo" data-tipo="' + t.id + '" style="--tc:' + t.tc + ';--tbg:' + t.tbg + '" aria-pressed="false">' +
+      '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="' + (ICONS[t.id] || '') + '"/></svg>' +
+      '<span><span class="tt">' + esc(t.titulo) + '</span><span class="tl">' + esc(t.linea) + '</span></span></button>';
   }).join('');
   $('itk_tipos').addEventListener('click', function (e) {
     var b = e.target && e.target.closest ? e.target.closest('.itk-tipo') : null;
@@ -388,8 +417,62 @@ html.itk-solo #ilus-tk{max-width:947px}
     b.classList.add('is-sel'); b.setAttribute('aria-pressed', 'true');
     tipoSel = b.getAttribute('data-tipo');
     $('itk_tipo_err').hidden = true;
+    $('itk_paso5_t').textContent = conEquipo() ? 'Cuéntanos el problema' : 'Cuéntanos';
+    $('itk_desc_lbl').innerHTML = (conEquipo() ? '¿Qué está pasando?' : '¿Qué necesitas?') + ' <span class="itk-req">*</span>';
     actualizar();
   });
+
+  /* ── Configuración desde ILUS: clave de navegador de Google + topes ─ */
+  function cargarConfig() {
+    return fetch(API + '/soporte/api/config', { credentials: 'omit', headers: { 'Accept': 'application/json' } })
+      .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
+      .then(function (c) {
+        if (!c || !c.ok) throw new Error('sin config');
+        if (c.max_adjuntos) { MAX_ADJ = +c.max_adjuntos; $('itk_max_adj').textContent = String(MAX_ADJ); }
+        if (c.max_adjunto_mb) { MAX_MB = +c.max_adjunto_mb; $('itk_max_mb').textContent = String(MAX_MB); }
+        if (c.ahora_ts) T0 = +c.ahora_ts;
+        if (c.google_maps_api_key) cargarGoogle(c.google_maps_api_key); else avisoGoogle(true);
+      })
+      .catch(function () { avisoGoogle(true); });
+  }
+
+  /* ── Google Places: dirección SIEMPRE validada, comuna y región solas ─ */
+  function cargarGoogle(key) {
+    if (gmapsPedido) return; gmapsPedido = true;
+    window.__ilusTkGmapsReady = function () { gmapsListo = true; avisoGoogle(false); initPlaces(); };
+    var s = document.createElement('script');
+    s.async = true; s.defer = true;
+    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(key) + '&libraries=places&language=es&region=CL&callback=__ilusTkGmapsReady&loading=async';
+    s.onerror = function () { avisoGoogle(true); };
+    document.head.appendChild(s);
+    setTimeout(function () { if (!gmapsListo) avisoGoogle(true); }, 10000);
+  }
+  function avisoGoogle(mostrar) { $('itk_gmaps_aviso').hidden = !mostrar || gmapsListo; }
+  function limpiarDir() { dir = { lat: '', lng: '', place_id: '', comuna: '', region: '', cp: '' }; $('itk_comuna').value = ''; $('itk_dir_help').textContent = 'Direcciones sugeridas por Google.'; }
+  function initPlaces() {
+    try {
+      var ac = new google.maps.places.Autocomplete($('itk_dir'), {
+        componentRestrictions: { country: ['cl'] }, types: ['address'],
+        fields: ['formatted_address', 'geometry', 'address_components', 'place_id']
+      });
+      ac.addListener('place_changed', function () {
+        var p = ac.getPlace();
+        if (!p || !p.geometry) { limpiarDir(); actualizar(); return; }
+        if (p.formatted_address) $('itk_dir').value = p.formatted_address;
+        dir.lat = String(p.geometry.location.lat()); dir.lng = String(p.geometry.location.lng()); dir.place_id = p.place_id || '';
+        var comp = p.address_components || [];
+        function busca(tipos) { for (var i = 0; i < comp.length; i++) { for (var j = 0; j < tipos.length; j++) { if (comp[i].types.indexOf(tipos[j]) !== -1) return comp[i].long_name; } } return ''; }
+        dir.comuna = busca(['locality', 'administrative_area_level_3']);
+        dir.region = busca(['administrative_area_level_1']);
+        dir.cp = busca(['postal_code']);
+        $('itk_comuna').value = dir.comuna;
+        $('itk_dir_help').textContent = 'Dirección verificada con Google' + (dir.region ? ' · ' + dir.region : '') + '.';
+        marcar($('itk_dir'), true, 'itk_dir_err');
+        actualizar();
+      });
+    } catch (e) { avisoGoogle(true); }
+  }
+  $('itk_dir').addEventListener('input', function () { if (dir.lat) { limpiarDir(); actualizar(); } });
 
   /* ── RUT, correo y teléfono ─────────────────────────────── */
   function rutLimpio(v) { return String(v || '').replace(/[^0-9kK]/g, '').toUpperCase(); }
@@ -450,7 +533,7 @@ html.itk-solo #ilus-tk{max-width:947px}
     if (TYPOS[dom]) { $('itk_email').value = v.split('@')[0] + '@' + TYPOS[dom]; validarCampo('itk_email'); actualizar(); }
   });
 
-  /* ── Paso 4: equipo (buscador en el catálogo de ILUS + manual) ── */
+  /* ── Paso 4: equipo (catálogo de ILUS, bodega 02, solo el nombre) ── */
   $('itk_prod_on').addEventListener('change', function () {
     $('itk_prod_box').hidden = !this.checked;
     if (this.checked) { try { $('itk_prod_q').focus(); } catch (x) { } }
@@ -518,9 +601,8 @@ html.itk-solo #ilus-tk{max-width:947px}
     var t = e.target; if (t && t.getAttribute && t.getAttribute('data-mot') != null) productos[+t.getAttribute('data-mot')].motivo = t.value;
   });
 
-  /* ── Paso 5: contador + adjuntos ───────────────────────── */
+  /* ── Paso 5: contador + adjuntos (miniatura, estado por archivo, «n de m listos») ── */
   $('itk_desc').addEventListener('input', function () { $('itk_desc_n').textContent = String(260 - this.value.length); });
-  $('itk_max_adj').textContent = String(MAX_ADJ); $('itk_max_mb').textContent = String(MAX_MB);
   var drop = $('itk_drop');
   drop.addEventListener('click', function () { $('itk_file').click(); });
   ['dragover', 'dragleave', 'drop'].forEach(function (ev) {
@@ -531,75 +613,109 @@ html.itk-solo #ilus-tk{max-width:947px}
     });
   });
   $('itk_file').addEventListener('change', function () { agregarArchivos(this.files); this.value = ''; });
+  function ext(nombre) { var n = String(nombre || '').toLowerCase(); return n.indexOf('.') >= 0 ? '.' + n.split('.').pop() : ''; }
+  function tamano(b) { return b >= 1024 * 1024 ? (b / 1024 / 1024).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB'; }
   function agregarArchivos(lista) {
-    var restantes = MAX_ADJ - archivos.length;
-    if (restantes <= 0) { mostrarErrores(['Máximo ' + MAX_ADJ + ' archivos por solicitud.']); return; }
-    var grandes = [];
-    [].slice.call(lista, 0, restantes).forEach(function (f) {
-      if (f.size > MAX_MB * 1024 * 1024) { grandes.push(f.name + ' supera ' + MAX_MB + ' MB'); return; }
-      archivos.push({ file: f, estado: 'pendiente', nombre: f.name });
+    var avisos = [];
+    [].forEach.call(lista, function (f) {
+      if (archivos.length >= MAX_ADJ) { avisos.push('Máximo ' + MAX_ADJ + ' archivos por solicitud: «' + f.name + '» no se agregó.'); return; }
+      if (EXT_OK.indexOf(ext(f.name)) === -1) { avisos.push('«' + f.name + '»: tipo de archivo no permitido (fotos, videos, PDF o documentos).'); return; }
+      if (f.size > MAX_MB * 1024 * 1024) { avisos.push('«' + f.name + '» pesa ' + tamano(f.size) + ': el máximo es ' + MAX_MB + ' MB por archivo.'); return; }
+      if (archivos.some(function (a) { return a.nombre === f.name && a.file.size === f.size; })) { avisos.push('«' + f.name + '» ya estaba en la lista.'); return; }
+      var a = { file: f, estado: 'pendiente', nombre: f.name, thumb: '', error: '' };
+      if (/^image\//.test(f.type) && window.URL && URL.createObjectURL) { try { a.thumb = URL.createObjectURL(f); } catch (x) { } }
+      archivos.push(a);
     });
-    if (grandes.length) mostrarErrores(grandes);
+    if (avisos.length) mostrarErrores(avisos);
     pintarArchivos();
     if (ticketId) subirPendientes();
   }
-  function pintarArchivos() {
-    $('itk_files').innerHTML = archivos.map(function (a, i) {
+  function estadoTxt(a) {
+    if (a.estado === 'ok') return 'Adjuntado';
+    if (a.estado === 'error') return a.error || 'No se pudo subir. Puedes responder el correo de confirmación adjuntándolo.';
+    if (a.estado === 'subiendo') return 'Subiendo…';
+    return tamano(a.file.size) + ' · se sube al enviar';
+  }
+  var SVG_FILE = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 0h5.293A1 1 0 0 1 10 .293L13.707 4a1 1 0 0 1 .293.707V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2zm5.5 1.5v2a1 1 0 0 0 1 1h2l-3-3z"/></svg>';
+  var SVG_VIDEO = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M0 5a2 2 0 0 1 2-2h7.5a2 2 0 0 1 1.983 1.738l3.11-1.382A1 1 0 0 1 16 4.269v7.462a1 1 0 0 1-1.406.913l-3.111-1.382A2 2 0 0 1 9.5 13H2a2 2 0 0 1-2-2V5z"/></svg>';
+  function htmlArchivos() {
+    return archivos.map(function (a, i) {
       var cls = a.estado === 'ok' ? ' is-ok' : a.estado === 'error' ? ' is-err' : a.estado === 'subiendo' ? ' is-up' : '';
-      return '<span class="itk-file' + cls + '"><i aria-hidden="true"></i><span class="nm" title="' + esc(a.nombre) + '">' + esc(a.nombre) + '</span>' +
-        (a.estado === 'pendiente' ? '<button type="button" data-qarch="' + i + '" aria-label="Quitar ' + esc(a.nombre) + '">×</button>' : '') + '</span>';
+      var th = a.thumb ? '<img src="' + a.thumb + '" alt="">' : (/^video\//.test(a.file.type) ? SVG_VIDEO : SVG_FILE);
+      var quitar = (a.estado === 'pendiente' || a.estado === 'error') ? '<button type="button" data-qarch="' + i + '" aria-label="Quitar ' + esc(a.nombre) + '">×</button>' : '';
+      return '<div class="itk-file' + cls + '"><span class="th">' + th + '</span><span class="bd"><span class="nm" title="' + esc(a.nombre) + '">' + esc(a.nombre) + '</span><span class="st">' + esc(estadoTxt(a)) + '</span></span>' + quitar + '</div>';
     }).join('');
   }
-  $('itk_files').addEventListener('click', function (e) {
+  function resumenTxt() {
+    if (!archivos.length) return '';
+    var ok = archivos.filter(function (a) { return a.estado === 'ok'; }).length;
+    var err = archivos.filter(function (a) { return a.estado === 'error'; }).length;
+    if (!ticketId) return archivos.length + ' de ' + MAX_ADJ + ' archivos listos para enviar';
+    if (ok + err < archivos.length) return 'Subiendo tus archivos… ' + ok + ' de ' + archivos.length + ' listos. No cierres esta página.';
+    return ok + ' de ' + archivos.length + ' archivos adjuntados' + (err ? ' · ' + err + ' con error' : '');
+  }
+  function pintarArchivos() {
+    var html = htmlArchivos(), txt = resumenTxt();
+    var ok = archivos.length && ticketId && archivos.every(function (a) { return a.estado === 'ok'; });
+    [['itk_files', 'itk_files_resumen'], ['itk_ok_files', 'itk_ok_resumen']].forEach(function (par) {
+      $(par[0]).innerHTML = html;
+      var r = $(par[1]); r.textContent = txt; r.hidden = !txt; r.classList.toggle('is-ok', !!ok);
+    });
+  }
+  root.addEventListener('click', function (e) {
     var b = e.target && e.target.closest ? e.target.closest('[data-qarch]') : null;
     if (!b) return;
+    var a = archivos[+b.getAttribute('data-qarch')];
+    if (a && a.thumb) { try { URL.revokeObjectURL(a.thumb); } catch (x) { } }
     archivos.splice(+b.getAttribute('data-qarch'), 1);
     pintarArchivos();
   });
   function subirPendientes() {
     var pend = archivos.filter(function (a) { return a.estado === 'pendiente'; });
-    if (!pend.length) { estadoAdjuntos(); return; }
+    if (!pend.length) { pintarArchivos(); return; }
     var a = pend[0];
-    a.estado = 'subiendo'; pintarArchivos(); estadoAdjuntos();
+    a.estado = 'subiendo'; pintarArchivos();
     var fd = new FormData(); fd.append('file', a.file); fd.append('token', uploadToken);
     fetch(API + '/soporte/api/adjuntos/' + ticketId, { method: 'POST', body: fd, credentials: 'omit', headers: { 'Accept': 'application/json' } })
-      .then(function (r) { return r.json(); })
-      .then(function (d) { a.estado = d && d.ok ? 'ok' : 'error'; })
-      .catch(function () { a.estado = 'error'; })
+      .then(function (r) { return r.json().catch(function () { return null; }).then(function (d) { return { st: r.status, d: d }; }); })
+      .then(function (res) {
+        if (res.d && res.d.ok) { a.estado = 'ok'; }
+        else { a.estado = 'error'; a.error = (res.d && res.d.error) || (res.st === 429 ? 'Muchas subidas seguidas: espera un momento y vuelve a intentarlo.' : 'No se pudo subir.'); }
+      })
+      .catch(function () { a.estado = 'error'; a.error = 'Sin conexión al subir. Revisa tu internet.'; })
       .then(function () { pintarArchivos(); subirPendientes(); });
   }
-  function estadoAdjuntos() {
-    var box = $('itk_ok_adj');
-    if (!archivos.length) { box.hidden = true; return; }
-    var ok = archivos.filter(function (a) { return a.estado === 'ok'; }).length;
-    var err = archivos.filter(function (a) { return a.estado === 'error'; }).length;
-    var falta = archivos.length - ok - err;
-    box.textContent = falta
-      ? 'Subiendo tus archivos… ' + ok + ' de ' + archivos.length + ' listos. No cierres esta página.'
-      : (err ? ok + ' archivo(s) adjuntado(s); ' + err + ' no se pudo(ieron) subir. Puedes responder el correo de confirmación adjuntándolos.' : 'Tus ' + ok + ' archivo(s) quedaron adjuntos al ticket.');
-    box.hidden = false;
-  }
 
-  /* ── Semáforo de pasos ─────────────────────────────────── */
+  /* ── Semáforo de pasos: cuenta solo los visibles ────────── */
   function pasoOk(n) {
     if (n === 1) return !!tipoSel;
     if (n === 2) return rutValido($('itk_rut').value) && !!$('itk_contacto').value.trim() && telValido($('itk_tel').value) && emailValido($('itk_email').value);
-    if (n === 3) return $('itk_dir').value.trim().length >= 5;
-    if (n === 4) return productos.length > 0 || !!$('itk_doc').value.trim();
+    if (n === 3) return !!$('itk_dir').value.trim() && !!dir.lat;
+    if (n === 4) return productos.length > 0;
     if (n === 5) return !!$('itk_desc').value.trim();
     return false;
   }
+  function aplicarPasos() {
+    var eq = conEquipo();
+    [].forEach.call(root.querySelectorAll('[data-equipo-only]'), function (sec) { sec.hidden = !eq; });
+    var n = 0;
+    [1, 2, 3, 4, 5].forEach(function (i) {
+      var sec = $('itk_paso' + i); if (sec.hidden) return;
+      n++; var b = sec.querySelector('.itk-circle b'); if (b) b.textContent = String(n);
+    });
+  }
   function actualizar() {
-    var listos = 0;
+    aplicarPasos();
+    var oblig = conEquipo() ? [1, 2, 3, 5] : [1, 2, 5], listos = 0;
     [1, 2, 3, 4, 5].forEach(function (n) {
       var sec = $('itk_paso' + n), ok = pasoOk(n);
       sec.classList.toggle('is-ok', ok);
       if (ok) sec.classList.remove('is-bad');
-      if (n !== 4 && ok) listos++;
+      if (oblig.indexOf(n) !== -1 && ok) listos++;
     });
-    $('itkProgBar').style.width = (listos / 4 * 100) + '%';
-    $('itkProg').classList.toggle('is-ok', listos === 4);
-    $('itkProgTxt').textContent = listos + ' de 4 pasos listos';
+    $('itkProgBar').style.width = (listos / oblig.length * 100) + '%';
+    $('itkProg').classList.toggle('is-ok', listos === oblig.length);
+    $('itkProgTxt').textContent = listos + ' de ' + oblig.length + ' pasos listos';
   }
   function alEditar(e) {
     var t = e.target;
@@ -616,9 +732,9 @@ html.itk-solo #ilus-tk{max-width:947px}
     var pon = function (id, v) { if (v && !$(id).value) $(id).value = String(v).trim().slice(0, 150); };
     pon('itk_contacto', qs.get('nombre')); pon('itk_email', qs.get('email'));
     pon('itk_tel', qs.get('telefono')); pon('itk_rut', qs.get('rut')); pon('itk_empresa', qs.get('empresa'));
-    pon('itk_doc', (qs.get('documento') || qs.get('numero') || '').replace(/^#/, ''));
-    var tipoQs = (qs.get('tipo') || '').toLowerCase();
-    var btnTipo = tipoQs ? $('itk_tipos').querySelector('.itk-tipo[data-tipo="' + tipoQs.replace(/[^a-z_]/g, '') + '"]') : null;
+    pon('itk_doc', (qs.get('documento') || qs.get('numero') || qs.get('pedido') || '').replace(/^#/, ''));
+    var tipoQs = (qs.get('tipo') || '').toLowerCase().replace(/[^a-z_]/g, '');
+    var btnTipo = tipoQs ? $('itk_tipos').querySelector('.itk-tipo[data-tipo="' + tipoQs + '"]') : null;
     if (btnTipo) btnTipo.click();
     ['itk_rut', 'itk_email', 'itk_tel'].forEach(function (id) { if ($(id).value) validarCampo(id); });
   } catch (e) { }
@@ -633,13 +749,17 @@ html.itk-solo #ilus-tk{max-width:947px}
     var errores = [], primero = null;
     function falta(msg, el, paso) { errores.push(msg); if (!primero) primero = el; if (paso) $('itk_paso' + paso).classList.add('is-bad'); }
     [1, 2, 3, 5].forEach(function (n) { $('itk_paso' + n).classList.remove('is-bad'); });
-    if (!tipoSel) { $('itk_tipo_err').hidden = false; falta('Elige el tipo de solicitud.', $('itk_paso1'), 1); }
+    if (!tipoSel) { $('itk_tipo_err').hidden = false; falta('Elige qué necesitas.', $('itk_paso1'), 1); }
     if (!validarCampo('itk_rut')) { falta('Revisa el RUT de compra.', $('itk_rut'), 2); marcar($('itk_rut'), false, 'itk_rut_err'); }
     if (!$('itk_contacto').value.trim()) { falta('Escribe el nombre de contacto.', $('itk_contacto'), 2); marcar($('itk_contacto'), false); }
     if (!validarCampo('itk_tel')) { falta('Revisa el teléfono (9 XXXX XXXX).', $('itk_tel'), 2); marcar($('itk_tel'), false, 'itk_tel_err'); }
     if (!validarCampo('itk_email')) { falta('Revisa el correo.', $('itk_email'), 2); marcar($('itk_email'), false, 'itk_email_err'); }
-    if ($('itk_dir').value.trim().length < 5) { falta('Escribe la dirección donde está el equipo.', $('itk_dir'), 3); marcar($('itk_dir'), false); }
-    if (!$('itk_desc').value.trim()) { falta('Cuéntanos qué está pasando.', $('itk_desc'), 5); marcar($('itk_desc'), false); }
+    if (conEquipo() && (!$('itk_dir').value.trim() || !dir.lat)) {
+      falta(gmapsListo ? 'Escribe la dirección y elígela de las sugeridas por Google.'
+        : 'No pudimos cargar el buscador de direcciones de Google: recarga la página para validar tu dirección.', $('itk_dir'), 3);
+      marcar($('itk_dir'), false, 'itk_dir_err');
+    }
+    if (!$('itk_desc').value.trim()) { falta(conEquipo() ? 'Cuéntanos qué está pasando.' : 'Cuéntanos qué necesitas.', $('itk_desc'), 5); marcar($('itk_desc'), false); }
     return { errores: errores, primero: primero };
   }
 
@@ -653,21 +773,21 @@ html.itk-solo #ilus-tk{max-width:947px}
       if (v.primero) { v.primero.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (v.primero.focus) try { v.primero.focus({ preventScroll: true }); } catch (x) { } }
       return;
     }
+    var eq = conEquipo();
     var payload = {
       tipo: tipoSel,
+      origen_form: 'tienda',
       rut: rutFormato($('itk_rut').value),
       empresa: $('itk_empresa').value.trim(),
       nombre_contacto: $('itk_contacto').value.trim(),
       phone: telFormato($('itk_tel').value),
       email: $('itk_email').value.trim().toLowerCase(),
-      direccion: $('itk_dir').value.trim(),
-      direccion_manual: 1,                              // sin Google Maps en la tienda: ILUS la anota como «por confirmar»
-      direccion_lat: null, direccion_lng: null, direccion_place_id: null,
-      comuna_nombre: $('itk_comuna').value.trim() || null,
-      region_nombre: null, codigo_postal: null,
+      direccion: eq ? $('itk_dir').value.trim() : '',
+      direccion_lat: eq ? (dir.lat || null) : null, direccion_lng: eq ? (dir.lng || null) : null, direccion_place_id: eq ? (dir.place_id || null) : null,
+      comuna_nombre: eq ? (dir.comuna || null) : null, region_nombre: eq ? (dir.region || null) : null, codigo_postal: eq ? (dir.cp || null) : null,
       es_garantia: $('itk_garantia').checked ? 1 : 0,
-      sucursal: $('itk_sucursal').value.trim(),
-      productos: productos.map(function (p) { return { sku: p.sku || '', nombre: p.nombre, motivo: ($('itk_multi').checked ? (p.motivo || '') : '') }; }),
+      sucursal: eq ? $('itk_sucursal').value.trim() : '',
+      productos: eq ? productos.map(function (p) { return { sku: p.sku || '', nombre: p.nombre, motivo: ($('itk_multi').checked ? (p.motivo || '') : '') }; }) : [],
       numero_documento: $('itk_doc').value.trim(),
       descripcion: $('itk_desc').value.trim(),
       hp_ilus_extra: $('itk_hp').value,
@@ -708,7 +828,7 @@ html.itk-solo #ilus-tk{max-width:947px}
     $('itk_ok_txt').textContent = 'Te enviamos un correo a ' + $('itk_email').value.trim().toLowerCase() + ' con la confirmación. Ese será el canal por el que te contactaremos con el seguimiento de tu caso.';
     $('itk_ok').hidden = false;
     $('itkProgBar').style.width = '100%'; $('itkProg').classList.add('is-ok'); $('itkProgTxt').textContent = 'Solicitud enviada';
-    estadoAdjuntos();
+    pintarArchivos();
     if (archivos.length) subirPendientes();
     $('itk_ok').scrollIntoView({ behavior: 'smooth', block: 'center' });
     try { $('itk_ok').focus({ preventScroll: true }); } catch (x) { }
@@ -721,20 +841,23 @@ html.itk-solo #ilus-tk{max-width:947px}
   });
   $('itk_otra').addEventListener('click', function () {
     // Formulario en blanco para otra solicitud, sin recargar la página de la tienda.
+    archivos.forEach(function (a) { if (a.thumb) { try { URL.revokeObjectURL(a.thumb); } catch (x) { } } });
     tipoSel = ''; productos = []; archivos = []; ticketId = null; uploadToken = null;
     T0 = Math.floor(Date.now() / 1000);
-    form.reset();
+    form.reset(); limpiarDir();
     [].forEach.call(form.querySelectorAll('.itk-in'), function (i) { i.classList.remove('is-bad', 'is-good'); });
     [].forEach.call(form.querySelectorAll('.itk-err'), function (p) { p.hidden = true; });
     [].forEach.call($('itk_tipos').querySelectorAll('.itk-tipo'), function (x) { x.classList.remove('is-sel'); x.setAttribute('aria-pressed', 'false'); });
     [1, 2, 3, 4, 5].forEach(function (n) { $('itk_paso' + n).classList.remove('is-bad'); });
     $('itk_prod_box').hidden = true; $('itk_email_sug').hidden = true; $('itk_desc_n').textContent = '260';
+    $('itk_paso5_t').textContent = 'Cuéntanos'; $('itk_desc_lbl').innerHTML = '¿Qué está pasando? <span class="itk-req">*</span>';
     pintarChips(); pintarArchivos();
     $('itk_ok').hidden = true; form.hidden = false; $('itk_copy').textContent = 'Copiar N° de ticket';
     actualizar();
     root.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
+  cargarConfig();
   actualizar();
 })();
 </script>
