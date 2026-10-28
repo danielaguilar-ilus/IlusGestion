@@ -593,14 +593,17 @@
                 : 'Aún no hay equipos asociados');
 
     // 5 · Fotos y documentos (opcional: gris si no hay)
-    var adj = d.adjuntos || [];
+    var adjTodos = d.adjuntos || [];
+    var rep = (window.tkAdjRepetidos ? window.tkAdjRepetidos(adjTodos) : {ocultos: {}, n: 0});
+    var adj = adjTodos.filter(function(a){ return !rep.ocultos[a.id]; });
     var fotos = adj.filter(function(a){ return /^image\//.test(a.mime_type || ''); }).length;
     var otros = adj.length - fotos;
     var partes = [];
     if (fotos) partes.push(plural(fotos, 'foto', 'fotos'));
     if (otros) partes.push(plural(otros, 'documento', 'documentos'));
-    pintarPaso('pasoAdjuntos', adj.length ? 'ok' : 'opt',
-      adj.length ? partes.join(' · ') : 'Opcional: fotos o documentos del caso');
+    if (rep.n) partes.push(rep.n + ' repetidas de firma plegadas');
+    pintarPaso('pasoAdjuntos', adjTodos.length ? 'ok' : 'opt',
+      adjTodos.length ? partes.join(' · ') : 'Opcional: fotos o documentos del caso');
 
     // 6 · 7 · Motivo y diagnóstico, cabecera, OT, guía
     pintarMotivoDiag(t);

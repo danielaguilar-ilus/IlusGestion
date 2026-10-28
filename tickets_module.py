@@ -46,6 +46,7 @@ from flask import request, jsonify, render_template, redirect, url_for, g, flash
 import tickets_sla as _tksla
 import tickets_nuevo_motivos as _tkmotivos
 import tickets_guia as _tkguia
+import tickets_firma_correo as _tkfirma
 from retiros_monitor import hace as rm_hace
 
 # Validacion server-side del "correo que da la cara" (Reply-To de tickets).
@@ -14252,6 +14253,29 @@ def register_tickets_routes(app, ctx):
                     # el mensaje del ticket, para que el operador pueda ir a
                     # buscarlo al correo.
                     adjuntos_ok, adjuntos_omitidos = [], []
+                    # Firmas de correo (Daniel 2026-10-28): cada respuesta trae
+                    # el logo y el banner de la firma incrustados; antes se
+                    # guardaban como «fotos» una y otra vez (136 en un ticket).
+                    # Una IMAGEN INCRUSTADA que es firma se omite; un adjunto
+                    # de verdad nunca. Ver tickets_firma_correo.py.
+                    _cids_html = set()
+                    for _p in msg.walk():
+                        if _p.get_content_type() == "text/html":
+                            try:
+                                _cids_html |= _tkfirma.cids_referenciados(
+                                    (_p.get_payload(decode=True) or b"").decode(
+                                        _p.get_content_charset() or "utf-8", "replace"))
+                            except Exception:
+                                pass
+                    _firmas_vistas = set()
+                    try:
+                        for _r in mysql_fetchall(
+                                "SELECT mime_type, file_size_kb FROM tk_adjuntos "
+                                "WHERE ticket_id=%s AND origen='cliente'", (ticket["id"],)):
+                            _firmas_vistas.add(((_r.get("mime_type") or "").lower(),
+                                                int(_r.get("file_size_kb") or 0)))
+                    except Exception:
+                        pass
                     for part in msg.walk():
                         fn = part.get_filename()
                         if not fn or part.get_content_maintype() == "multipart":
@@ -14280,6 +14304,14 @@ def register_tickets_routes(app, ctx):
                             adjuntos_omitidos.append(
                                 f"{fn_dec} (supera {MAX_ADJUNTO_MB} MB)")
                             continue
+                        _ct = (part.get_content_type() or "").lower()
+                        if _tkfirma.motivo_firma(
+                                _ct, fn_dec, len(contenido_adj),
+                                _tkfirma.es_incrustada(part.get("Content-Disposition"),
+                                                       part.get("Content-ID"), _cids_html),
+                                _firmas_vistas):
+                            continue   # firma del correo: no es evidencia del caso
+                        _firmas_vistas.add(_tkfirma.clave_tam(_ct, len(contenido_adj)))
                         adjuntos_ok.append((fn_dec, contenido_adj,
                                             part.get_content_type()
                                             or "application/octet-stream"))

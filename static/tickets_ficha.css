@@ -1429,3 +1429,12 @@
   .rp-toolbar-extra .btn-outline-secondary{min-height:44px;min-width:44px;}
   #rpBtnEnviar{min-height:44px;}
 }
+
+/* Firmas de correo repetidas (28-oct): se pliegan, el botón las vuelve a abrir. */
+.tk-adj-thumb{position:relative;}
+.tk-adj-x{position:absolute;top:4px;right:4px;background:#0a0a0a;color:#fff;font-size:.66rem;font-weight:800;
+  padding:1px 6px;border-radius:999px;line-height:1.4;}
+.tk-adj-rep-barra{margin-top:10px;}
+.tk-adj-rep-btn{min-height:44px;width:100%;border:1px dashed #d1d5db;background:#f9fafb;color:#374151;
+  border-radius:10px;font-size:.8rem;font-weight:700;padding:8px 12px;}
+.tk-adj-rep-btn:hover{background:#f3f4f6;}

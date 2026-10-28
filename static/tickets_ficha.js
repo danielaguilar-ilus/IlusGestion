@@ -1695,12 +1695,47 @@ function _rpLimpiarPlaceholders(texto, adjs){
     .replace(/\n{3,}/g,'\n\n').trim();
 }
 
-function renderAdjuntosInfo(adjuntos){
+// Firmas de correo repetidas (Daniel 2026-10-28: «siempre deja el pie de firma
+// como adjunto y lo repite intensamente»). Los correos del cliente traen el logo
+// y el banner de la firma incrustados; hasta ahora se guardaban como «fotos» una
+// y otra vez (136 en un ticket). Aquí se PLIEGAN las repetidas de lo ya guardado
+// (nada se borra: «Mostrar» las vuelve a abrir). La ingesta nueva ya no las
+// guarda (tickets_firma_correo.py). Una imagen se considera repetida si hay otra
+// IDÉNTICA en tipo y tamaño (≥3 iguales, o ≥2 si el nombre es de firma);
+// se conserva la primera de cada grupo.
+const TK_ADJ_NOMBRE_FIRMA = /^(insertpic[_\-]|image\d{2,4}\.|outlook[-_]|~?wrd\d+|sphs[-_ ]?ilus|ilus[-_ ]?(fitness|logo)|logo|firma|signature|banner|footer)/i;
+function tkAdjRepetidos(adjuntos){
+  const grupos = {};
+  (adjuntos||[]).forEach(function(a){
+    if(!esImagen(a.mime_type, a.archivo_nombre)) return;
+    const k = String(a.mime_type||'').toLowerCase()+'|'+(a.file_size_kb||0);
+    (grupos[k] = grupos[k] || []).push(a);
+  });
+  const ocultos = {}, veces = {};
+  Object.keys(grupos).forEach(function(k){
+    const g = grupos[k];
+    const firma = g.some(function(a){ return TK_ADJ_NOMBRE_FIRMA.test(String(a.archivo_nombre||'').trim()); });
+    if(g.length >= 3 || (g.length >= 2 && firma)){
+      veces[g[0].id] = g.length;
+      g.slice(1).forEach(function(a){ ocultos[a.id] = true; });
+    }
+  });
+  return {ocultos: ocultos, veces: veces, n: Object.keys(ocultos).length};
+}
+window.tkAdjRepetidos = tkAdjRepetidos;
+let _tkAdjVerRep = false, _tkAdjUlt = null;
+function tkAdjToggleRep(){ _tkAdjVerRep = !_tkAdjVerRep; if(_tkAdjUlt) renderAdjuntosInfo(_tkAdjUlt); }
+window.tkAdjToggleRep = tkAdjToggleRep;
+
+function renderAdjuntosInfo(adjuntosTodos){
   const c = document.getElementById('listaAdjuntosInfo');
-  if(!adjuntos || !adjuntos.length){
+  if(!adjuntosTodos || !adjuntosTodos.length){
     c.innerHTML = '<div class="tk-empty-mini"><i class="bi bi-paperclip"></i><span>Sin adjuntos en este ticket.</span></div>';
     return;
   }
+  _tkAdjUlt = adjuntosTodos;
+  const rep = tkAdjRepetidos(adjuntosTodos);
+  const adjuntos = _tkAdjVerRep ? adjuntosTodos : adjuntosTodos.filter(function(a){ return !rep.ocultos[a.id]; });
   // Agrupar por fecha — el backend ya entrega created_at formateado en hora
   // Chile como "dd/mm/aaaa HH:MM" (Regla #6); usamos solo la parte de fecha
   // como encabezado de grupo, preservando el orden de llegada.
@@ -1723,13 +1758,13 @@ function renderAdjuntosInfo(adjuntos){
       return '<a class="tk-adj-item" href="'+esc(url)+'" data-lightbox="1" data-url="'+esc(url)+'"'
         + ' data-mime="'+esc(a.mime_type||'')+'" data-nombre="'+esc(a.archivo_nombre||'archivo')+'"'
         + ' title="'+esc(a.archivo_nombre||'archivo')+'">'
-        + '<div class="tk-adj-thumb">'+thumb+'</div>'
+        + '<div class="tk-adj-thumb">'+thumb+(rep.veces[a.id] && !_tkAdjVerRep ? '<span class="tk-adj-x" title="Se repite en el ticket (firma de correo)">×'+rep.veces[a.id]+'</span>' : '')+'</div>'
         + '<div class="tk-adj-name">'+esc(a.archivo_nombre||'archivo')+'</div>'
         + (meta?'<div class="tk-adj-meta">'+esc(meta)+'</div>':'')
         + '</a>';
     }).join('');
     return '<div class="tk-adj-grupo-titulo">'+esc(fecha)+'</div><div class="tk-adj-grid">'+items+'</div>';
-  }).join('');
+  }).join('') + (rep.n ? '<div class="tk-adj-rep-barra"><button type="button" class="tk-adj-rep-btn" onclick="tkAdjToggleRep()"><i class="bi bi-'+(_tkAdjVerRep?'eye-slash':'eye')+'"></i> '+(_tkAdjVerRep ? 'Ocultar las '+rep.n+' repetidas' : 'Se ocultaron '+rep.n+' imágenes repetidas (firma de correo) · Mostrar')+'</button></div>' : '');
   // Galería navegable: TODAS las imágenes de "Información" (no solo la
   // clickeada) — pedido de Daniel ("poder pasarlas para verlas todas
   // juntas"). Si lo clickeado no es imagen (PDF/Word/etc.), se abre solo
