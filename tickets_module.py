@@ -11665,6 +11665,91 @@ def register_tickets_routes(app, ctx):
     def _email_valido(v):
         return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$", str(v or "").strip()))
 
+    # ── Formulario de la TIENDA (2026-10-27, Daniel: «que los tickets también
+    #    se puedan abrir desde la página de la tienda, igual que los retiros»).
+    #    Formulario_ticket_Shopify_ILUS.html (raíz del repo) vive en
+    #    ilusfitness.com y le habla a esta app: el navegador solo le deja leer
+    #    la respuesta si la app autoriza ese origen (CORS). Mismo patrón YA
+    #    probado del formulario público de Retiros (pickups_module,
+    #    _cors_formulario_tienda): solo la tienda real, solo las rutas públicas
+    #    /soporte/api/* y sin cookies (ninguna sesión interna queda expuesta).
+    #    «null» = el archivo .html abierto suelto desde el computador (el
+    #    equipo de e-commerce lo revisa antes de pegarlo).
+    #    REGLA #22: formulario público = superficie expuesta. Límites abajo.
+    _ORIGEN_TIENDA_SOPORTE_RE = re.compile(
+        r"^https://((www\.)?ilusfitness\.com|ilus-fitness\.myshopify\.com)$")
+    _SOPORTE_API_PREFIJO = "/soporte/api/"
+
+    def _soporte_origen_permitido(origen):
+        origen = (origen or "").strip()
+        return bool(origen) and (origen == "null" or bool(_ORIGEN_TIENDA_SOPORTE_RE.match(origen)))
+
+    @app.after_request
+    def _cors_soporte_tienda(resp):
+        try:
+            if not request.path.startswith(_SOPORTE_API_PREFIJO):
+                return resp
+            origen = request.headers.get("Origin") or ""
+            if _soporte_origen_permitido(origen):
+                resp.headers["Access-Control-Allow-Origin"] = origen
+                resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+                # Content-Type: el envío va en JSON (preflight obligatorio);
+                # X-Upload-Token: cabecera alternativa de /soporte/api/adjuntos.
+                resp.headers["Access-Control-Allow-Headers"] = "Accept, Content-Type, X-Upload-Token"
+                resp.headers["Access-Control-Max-Age"] = "600"
+                resp.headers.add("Vary", "Origin")
+        except Exception as _e_cors:
+            print(f"[tk-soporte-cors] {_e_cors}", flush=True)
+        return resp
+
+    # Límites del formulario público de tickets (mismo criterio que
+    # /retiros/solicitar, revisión de seguridad 2026-10-12): 10 envíos por
+    # hora y 30 por día por conexión, además del freno corto de 8 cada 5 min
+    # que ya existía (REGLA #4.2: no se quita). Un cliente real manda 1 ticket.
+    # Un envío de más de 64 KB no es de una persona (los adjuntos van aparte,
+    # 1 archivo por request a /soporte/api/adjuntos). Anti-bot sin terceros
+    # (Ley 21.719): campo trampa invisible + nadie llena el formulario en
+    # menos de 3 s. Daniel eligió esto en vez de un servicio externo.
+    SOPORTE_MAX_POR_HORA = 10
+    SOPORTE_MAX_POR_DIA = 30
+    SOPORTE_MAX_BYTES = 64 * 1024
+    SOPORTE_MIN_SEGUNDOS = 3
+    _MSG_BOT_SOPORTE = ("No pudimos procesar tu solicitud. Recarga la página e inténtalo "
+                        "nuevamente, o escríbenos a soportetec@sphs.cl.")
+
+    def _soporte_rechazo_previo():
+        """Devuelve (respuesta, código) si el envío debe rechazarse ANTES de
+        leer el formulario completo; None si puede seguir. Solo mira tamaño,
+        límites por conexión y el filtro anti-bots (no escribe nada)."""
+        if (request.content_length or 0) > SOPORTE_MAX_BYTES:
+            print(f"[tk_soporte_api_crear] envío descartado por tamaño ({request.content_length} bytes)", flush=True)
+            return jsonify({"ok": False, "error": "El envío es demasiado grande. Recarga la página e inténtalo nuevamente."}), 413
+        ip = _ip_cliente()
+        if not _rl_ok("crear:" + ip, 8, 300) \
+                or not _rl_ok("crear_hora:" + ip, SOPORTE_MAX_POR_HORA, 3600) \
+                or not _rl_ok("crear_dia:" + ip, SOPORTE_MAX_POR_DIA, 86400):
+            return jsonify({"ok": False, "error": "Demasiadas solicitudes desde tu conexión. Intenta en unos minutos."}), 429
+        return None
+
+    def _soporte_es_bot(d):
+        """Campo trampa lleno o formulario «completado» en menos de 3 s desde
+        que se abrió (ilus_t0 lo manda el propio formulario; si no viene, no
+        se usa). Igual que /retiros/solicitar."""
+        if str(d.get("hp_ilus_extra") or "").strip():
+            return True
+        try:
+            t0 = int(d.get("ilus_t0") or 0)
+        except (TypeError, ValueError):
+            t0 = 0
+        return bool(t0) and (time.time() - t0) < SOPORTE_MIN_SEGUNDOS
+
+    # Expuesto para las pruebas (tests/test_tickets_soporte_publico_tienda.py)
+    app.config["_tk_soporte_limites"] = {
+        "por_hora": SOPORTE_MAX_POR_HORA, "por_dia": SOPORTE_MAX_POR_DIA,
+        "max_bytes": SOPORTE_MAX_BYTES, "min_segundos": SOPORTE_MIN_SEGUNDOS,
+    }
+    app.config["_tk_soporte_origen_permitido"] = _soporte_origen_permitido
+
     # ── GET /soporte — pagina publica (standalone, sin sidebar) ──
     @app.route("/soporte")
     def tk_soporte_publico():
@@ -11680,10 +11765,14 @@ def register_tickets_routes(app, ctx):
         # esos 3 tipos 100% internos sin cliente). El formulario público
         # correcto es TK_TIPOS_PUBLICOS -- ya excluía justamente esos 3 tipos
         # (ver su comentario de definición), solo que nunca se conectó acá.
+        # ilus_t0 (2026-10-27): hora del servidor al abrir el formulario; el
+        # filtro anti-bots de /soporte/api/crear rechaza un envío hecho en
+        # menos de 3 s (mismo mecanismo que /retiros/solicitar).
         return render_template(
             "tickets/soporte_publico.html",
             tk_tipos_publicos=TK_TIPOS_PUBLICOS, tipo_label=TIPO_LABEL,
-            max_adjuntos=MAX_ADJUNTOS, max_adjunto_mb=MAX_ADJUNTO_MB)
+            max_adjuntos=MAX_ADJUNTOS, max_adjunto_mb=MAX_ADJUNTO_MB,
+            ilus_t0=int(time.time()))
 
     # ── GET /soporte/api/erp/productos — catalogo general (read-only) ──
     @app.route("/soporte/api/erp/productos", methods=["GET"])
@@ -11704,9 +11793,17 @@ def register_tickets_routes(app, ctx):
     # ── POST /soporte/api/crear — crea el ticket publico ──
     @app.route("/soporte/api/crear", methods=["POST"])
     def tk_soporte_api_crear():
-        if not _rl_ok("crear:" + _ip_cliente(), 8, 300):
-            return jsonify({"ok": False, "error": "Demasiadas solicitudes desde tu conexión. Intenta en unos minutos."}), 429
+        # Tamaño, límites por conexión (8/5 min + 10/hora + 30/día) — antes
+        # de leer el cuerpo (2026-10-27, mismo criterio que Retiros).
+        _rechazo = _soporte_rechazo_previo()
+        if _rechazo:
+            return _rechazo
         d = request.get_json(silent=True) or {}
+        if not isinstance(d, dict):
+            d = {}
+        if _soporte_es_bot(d):
+            print("[tk_soporte_api_crear] envío descartado por filtro anti-bots", flush=True)
+            return jsonify({"ok": False, "error": _MSG_BOT_SOPORTE}), 400
 
         tipo = (d.get("tipo") or "").strip().lower()
         if tipo not in TK_TIPOS_PUBLICOS:
@@ -11737,8 +11834,20 @@ def register_tickets_routes(app, ctx):
         direccion = (d.get("direccion") or "").strip()
         if not direccion:
             return jsonify({"ok": False, "error": "Ingresa una dirección."}), 400
-        if d.get("direccion_lat") in (None, "", "null") or d.get("direccion_lng") in (None, "", "null"):
+        # 2026-10-27: el formulario de la TIENDA (Formulario_ticket_Shopify_ILUS.html)
+        # no tiene Google Places (la clave de Google no sale del sistema), así que
+        # manda la dirección como texto con direccion_manual=1. Se acepta sin
+        # coordenadas y queda constancia en la bitácora del ticket para que
+        # quien lo tome la verifique. El formulario /soporte sigue exigiendo la
+        # dirección sugerida por Google (nada cambia si la marca no viene).
+        _dir_manual = str(d.get("direccion_manual") or "").strip().lower() in ("1", "true", "si", "sí", "yes", "on")
+        _sin_coords = d.get("direccion_lat") in (None, "", "null") or d.get("direccion_lng") in (None, "", "null")
+        if _sin_coords and not _dir_manual:
             return jsonify({"ok": False, "error": "Selecciona una dirección sugerida por Google para validarla."}), 400
+        if _dir_manual:
+            d["direccion_lat"] = None
+            d["direccion_lng"] = None
+            d["direccion_place_id"] = None
 
         # 2026-07-13 (Daniel, URGENTE): "quitale el obligatorio al producto...
         # es valido avanzar" -- el equipo ya no es requerido (antes bloqueaba
@@ -11803,10 +11912,17 @@ def register_tickets_routes(app, ctx):
 
         numero_row = mysql_fetchone("SELECT numero_ticket FROM tk_tickets WHERE id=%s", (tid,))
         numero = numero_row["numero_ticket"] if numero_row else None
-        _tk_log(tid, "creacion", f"Ticket {numero} creado desde el formulario público", usuario="cliente")
+        _origen_form = "la tienda (ilusfitness.com)" if _dir_manual else "el formulario público"
+        _tk_log(tid, "creacion", f"Ticket {numero} creado desde {_origen_form}", usuario="cliente")
+        if _dir_manual:
+            _tk_log(tid, "otro",
+                    "Dirección escrita a mano por el cliente (sin verificar en Google Maps): "
+                    f"«{direccion[:255]}». Confirmarla antes de agendar.",
+                    usuario="sistema")
         try:
             _audit("tk_ticket_create_publico", target_type="tk_ticket", target_id=tid,
-                   details={"numero": numero, "tipo": tipo, "ip": _ip_cliente()})
+                   details={"numero": numero, "tipo": tipo, "ip": _ip_cliente(),
+                            "direccion_manual": bool(_dir_manual)})
         except Exception:
             pass
         # 2026-07-13 (Daniel, URGENTE — gerente general probando el formulario
