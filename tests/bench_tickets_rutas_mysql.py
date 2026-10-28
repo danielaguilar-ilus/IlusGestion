@@ -64,7 +64,7 @@ for ddl in (
     " contacto2_cargo VARCHAR(100), contacto2_tel VARCHAR(40), contacto2_email VARCHAR(150), INDEX(rut))",
     "CREATE TABLE mant_sucursales (id INT PRIMARY KEY, cliente_id INT, nombre VARCHAR(100), encargado_nombre VARCHAR(100), "
     " encargado_cargo VARCHAR(100), encargado_tel VARCHAR(40), encargado_email VARCHAR(150), activo TINYINT DEFAULT 1)",
-    "CREATE TABLE mant_visitas (id INT PRIMARY KEY, numero_ot VARCHAR(30))",
+    "CREATE TABLE mant_visitas (id INT PRIMARY KEY, numero_ot VARCHAR(30), estado VARCHAR(30), fecha_programada DATE, tecnico VARCHAR(200))",
     "CREATE TABLE mant_repuestos_compras (id INT PRIMARY KEY, ticket_id INT)",
 ):
     mysql_execute(ddl)
@@ -112,7 +112,10 @@ class _SinHilo:
 _HiloReal = tm.threading.Thread
 t = time.time()
 tm.register_tickets_routes(app, ctx)
-tm.threading.Thread = _SinHilo
+# Solo dentro de tickets_module (no el threading de todo Python: subprocess y otros
+# usan hilos reales). Lock real; Thread apagado.
+import threading as _th_real, types as _types
+tm.threading = _types.SimpleNamespace(Thread=_SinHilo, Lock=_th_real.Lock)
 print(f"migraciones reales del módulo: {time.time() - t:.1f}s", flush=True)
 cols = {r["COLUMN_NAME"] for r in mysql_fetchall(
     "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=%s AND TABLE_NAME='tk_tickets'", (DB,))}

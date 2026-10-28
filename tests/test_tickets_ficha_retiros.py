@@ -126,7 +126,10 @@ class _SinHilo:
 
 
 tm.register_tickets_routes(app, ctx)
-tm.threading.Thread = _SinHilo
+# Solo dentro de tickets_module (no el threading de todo Python: subprocess y otros
+# usan hilos reales). Lock real; Thread apagado.
+import threading as _th_real, types as _types
+tm.threading = _types.SimpleNamespace(Thread=_SinHilo, Lock=_th_real.Lock)
 
 ahora = datetime.utcnow().replace(microsecond=0)
 f = lambda d: d.strftime("%Y-%m-%d %H:%M:%S")  # noqa: E731
