@@ -2494,6 +2494,12 @@ def register_tickets_routes(app, ctx):
             "ALTER TABLE tk_tickets ADD COLUMN espera_desde DATETIME NULL",
             "ALTER TABLE tk_tickets ADD COLUMN ultima_resp_at DATETIME NULL",
             "CREATE INDEX idx_tk_espera ON tk_tickets (espera_desde)",
+            # Tickets 2.0 (Daniel 2026-10-27: «el ticket deberá tener un motivo
+            # principal y un diagnóstico de solución»). Columnas simples: se
+            # agregan sin reconstruir la tabla. Las usan el «Nuevo ticket» y la
+            # ficha; se editan por el PATCH de siempre (tk_api_update).
+            "ALTER TABLE tk_tickets ADD COLUMN motivo_principal VARCHAR(160) NULL",
+            "ALTER TABLE tk_tickets ADD COLUMN diagnostico_solucion TEXT NULL",
             # Recordatorios del SLA: UNA fila por (ticket, espera, nivel) = un
             # solo aviso por mensaje sin responder y por nivel, aunque corran
             # varias instancias de Cloud Run a la vez.
@@ -7812,6 +7818,8 @@ def register_tickets_routes(app, ctx):
             # guardado debe poder llevar tambien las coordenadas/place_id
             # que antes solo se guardaban al CREAR el ticket, nunca al editar.
             "direccion_lat", "direccion_lng", "direccion_place_id",
+            # Tickets 2.0 (2026-10-27): motivo principal y diagnóstico de solución.
+            "motivo_principal", "diagnostico_solucion",
         )
         sets, params = [], []
         for key in allowed:
@@ -7826,6 +7834,12 @@ def register_tickets_routes(app, ctx):
                 val = _norm_enum(val, TK_TIPOS, prev["tipo"]) if val else None
             elif isinstance(val, str):
                 val = val.strip() or None
+                # Tickets 2.0: topes de largo de las columnas nuevas (sin esto,
+                # un texto largo daría «Data too long» y un 500).
+                if val and key == "motivo_principal":
+                    val = val[:160]
+                elif val and key == "diagnostico_solucion":
+                    val = val[:20000]
             sets.append(f"{key}=%s"); params.append(val)
 
         if not sets:
