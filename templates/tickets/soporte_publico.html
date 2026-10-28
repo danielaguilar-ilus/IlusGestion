@@ -91,10 +91,13 @@ body{background:#efefef;padding:15px 16px 40px;-webkit-font-smoothing:antialiase
 #ilus-tk .sp-field .fe,#ilus-tk .fe{margin:6px 0 0;font-size:12.5px;font-weight:500;color:#b91c1c;display:none}
 #ilus-tk .sp-field.err input,#ilus-tk .sp-field.err textarea{border-color:#b91c1c;background:#fff5f5}
 #ilus-tk .sp-field.err .fe{display:block}
-/* Paso 1: tipos COMPACTOS (Daniel 2026-10-27: «muy grande… en un celular sería una lista muy larga») */
-#ilus-tk .sp-tipos{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
-#ilus-tk .sp-tipo{display:flex;align-items:center;gap:10px;min-height:54px;padding:8px 12px;border:1.5px solid var(--line);border-radius:12px;background:#fff;cursor:pointer;font-size:13.5px;font-weight:600;line-height:1.2;color:#374151;transition:border-color .12s,background .12s,color .12s;user-select:none}
-#ilus-tk .sp-tipo .em{flex:0 0 28px;width:28px;text-align:center;font-size:1.3rem;line-height:1;color:var(--tc,#94a3b8);margin:0}
+/* Paso 1: 9 opciones en lenguaje simple (Daniel 2026-10-27: «si lo entiende un niño de 5 años, estamos»), 3×3 en escritorio y
+   2 columnas en celular; tarjetas bajas (título + una línea), tocables ≥ 44 px */
+#ilus-tk .sp-tipos{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+#ilus-tk .sp-tipo{display:flex;align-items:center;gap:12px;min-height:60px;padding:10px 12px;border:1.5px solid var(--line);border-radius:12px;background:#fff;cursor:pointer;font-size:14px;font-weight:700;line-height:1.2;color:#111827;transition:border-color .12s,background .12s,color .12s;user-select:none}
+#ilus-tk .sp-tipo .em{flex:0 0 30px;width:30px;text-align:center;font-size:1.4rem;line-height:1;color:var(--tc,#94a3b8);margin:0}
+#ilus-tk .sp-tipo .tt{display:block;font-weight:700;font-size:14px;line-height:1.2}
+#ilus-tk .sp-tipo .tl{display:block;font-weight:400;font-size:12px;line-height:1.25;color:#4b5563;margin-top:2px}
 #ilus-tk .sp-tipo:hover{border-color:var(--tc,var(--k));color:#111827}
 #ilus-tk .sp-tipo:focus-visible{outline:2px solid var(--k);outline-offset:2px}
 #ilus-tk .sp-tipo.sel{border-color:var(--tc,var(--k));background:var(--tbg,#f3f4f6);color:#111827;box-shadow:inset 0 0 0 1px var(--tc,var(--k));font-weight:700}
@@ -138,12 +141,27 @@ body{background:#efefef;padding:15px 16px 40px;-webkit-font-smoothing:antialiase
 #ilus-tk .sp-drop i{font-size:1.6rem;color:#6b7280;display:block;margin-bottom:6px}
 #ilus-tk .sp-drop .t1{font-weight:600;font-size:14px;color:#374151}
 #ilus-tk .sp-drop .t2{font-size:12.5px;color:var(--gr);margin-top:3px}
-#ilus-tk .sp-files{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
-#ilus-tk .sp-file-chip{display:flex;align-items:center;gap:6px;background:var(--gr-bg);border-radius:45px;padding:8px 12px;font-size:13px;max-width:100%}
-#ilus-tk .sp-file-chip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
-#ilus-tk .sp-file-chip .x{cursor:pointer;color:#6b7280;font-weight:700;flex-shrink:0;font-size:16px}
-#ilus-tk .sp-file-chip.up-ok i{color:var(--g)}
-#ilus-tk .sp-file-chip.up-err i{color:var(--rojo)}
+/* Adjuntos con miniatura, estado por archivo y resumen «n de m listos» (Daniel 2026-10-27: «es elemental que suba las fotos
+   y los videos», mismo lenguaje visual que el formulario de retiro) */
+#ilus-tk .sp-files{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px}
+#ilus-tk .sp-files:empty{display:none}
+#ilus-tk .sp-file-chip{display:flex;align-items:center;gap:10px;background:#f9fafb;border:1.5px solid var(--line);border-radius:12px;padding:8px 10px;font-size:13px;min-width:0}
+#ilus-tk .sp-file-chip .th{flex:0 0 44px;width:44px;height:44px;border-radius:8px;background:var(--gr-bg);display:flex;align-items:center;justify-content:center;overflow:hidden;color:#6b7280;font-size:1.2rem}
+#ilus-tk .sp-file-chip .th img{width:100%;height:100%;object-fit:cover;display:block}
+#ilus-tk .sp-file-chip .bd{flex:1;min-width:0}
+#ilus-tk .sp-file-chip .nm{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:#111827}
+#ilus-tk .sp-file-chip .st{display:block;font-size:12px;color:#4b5563;margin-top:2px}
+#ilus-tk .sp-file-chip .x{cursor:pointer;color:#6b7280;font-weight:700;flex-shrink:0;font-size:18px;line-height:1;min-width:28px;min-height:28px;display:inline-flex;align-items:center;justify-content:center;border-radius:45px}
+#ilus-tk .sp-file-chip .x:hover{background:var(--gr-bg);color:#111827}
+#ilus-tk .sp-file-chip.up-ok{border-color:#86efac;background:#f0fdf4}
+#ilus-tk .sp-file-chip.up-ok .st{color:#166534}
+#ilus-tk .sp-file-chip.up-err{border-color:#fca5a5;background:#fff5f5}
+#ilus-tk .sp-file-chip.up-err .st{color:#b91c1c}
+#ilus-tk .sp-file-chip.up-sub{border-color:var(--a);background:var(--a-bg)}
+#ilus-tk .sp-file-chip.up-sub .st{color:#78350f}
+#ilus-tk .sp-files-resumen{margin-top:8px;font-size:12.5px;font-weight:500;color:#374151}
+#ilus-tk .sp-files-resumen.is-ok{color:#166534}
+#ilus-tk .sp-aviso{margin-top:8px;padding:10px 12px;border:1.5px solid var(--a);border-radius:12px;background:var(--a-bg);color:#78350f;font-size:13px;font-weight:500}
 /* Envío */
 #ilus-tk .itk-alert{margin:0 0 14px;padding:12px 14px;border-radius:12px;border:1.5px solid #d1d5db;background:#f3f4f6;color:#1c1c1c;font-size:14px;font-weight:500}
 #ilus-tk .itk-alert ul{margin:4px 0 0;padding-left:18px;font-weight:400}
@@ -187,7 +205,10 @@ body{background:#efefef;padding:15px 16px 40px;-webkit-font-smoothing:antialiase
   #ilus-tk .itk-step{padding:14px 14px 16px}
   #ilus-tk .sp-field{grid-column:span 12}
   #ilus-tk .sp-tipos{grid-template-columns:repeat(2,minmax(0,1fr))}
-  #ilus-tk .sp-tipo{font-size:13px}
+  #ilus-tk .sp-tipo{font-size:13px;gap:8px;padding:8px 10px}
+  #ilus-tk .sp-tipo .tt{font-size:13px}
+  #ilus-tk .sp-tipo .tl{font-size:11.5px}
+  #ilus-tk .sp-files{grid-template-columns:minmax(0,1fr)}
   #ilus-tk .sp-field input,#ilus-tk .sp-field textarea,#ilus-tk .sp-in,#ilus-tk .sp-motivo-eq{font-size:16px}
   #ilus-tk .sp-ok .num{font-size:24px}
 }
@@ -198,9 +219,10 @@ body{background:#efefef;padding:15px 16px 40px;-webkit-font-smoothing:antialiase
 
 <div id="ilus-tk">
   <div class="itk-head">
-    <p class="itk-kicker">ILUS Fitness · Servicio técnico</p>
-    <h2 class="itk-title">Solicita soporte</h2>
-    <p class="itk-lead">Cuéntanos qué pasó y nuestro equipo técnico te contactará. Te toma 2 minutos.</p>
+    {# 2026-10-27 (Daniel): «no solamente servicio técnico» — también pedidos, cambios, facturas y consultas. #}
+    <p class="itk-kicker">ILUS Fitness · Soporte y consultas</p>
+    <h2 class="itk-title">¿En qué te ayudamos?</h2>
+    <p class="itk-lead">Cuéntanos qué necesitas y nuestro equipo te contactará. Te toma 2 minutos.</p>
     <div class="itk-prog" id="itkProg"><div class="itk-prog-bar"><span id="itkProgBar"></span></div><span id="itkProgTxt">0 de 4 pasos listos</span></div>
   </div>
   <div class="itk-body">
@@ -244,13 +266,18 @@ body{background:#efefef;padding:15px 16px 40px;-webkit-font-smoothing:antialiase
         'repair': ('bi-wrench-adjustable-circle-fill', '#991b1b', '#fef2f2'),
         'spare_parts_store': ('bi-building', '#6b7280', '#f9fafb'),
         'spare_parts_import': ('bi-globe-americas', '#3b82f6', '#eff6ff'),
+        'facturacion': ('bi-receipt', '#f59e0b', '#fffbeb'),
+        'consulta': ('bi-chat-left-text', '#6b7280', '#f9fafb'),
       } %}
+      {# 2026-10-27 (Daniel): 9 opciones con título + una línea (TK_TIPOS_PUBLICOS_TEXTO en tickets_module.py); las que NO son
+         de un equipo (data-equipo="0") saltan los pasos de dirección y equipo. TIPO_LABEL (interno) sigue como respaldo. #}
       <div class="sp-tipos" id="spTipos" role="group" aria-label="Tipo de solicitud">
         {% for t in tk_tipos_publicos %}
         {% set tv = tipo_visual.get(t, ('bi-question-circle', '#6b7280', '#f9fafb')) %}
-        <div class="sp-tipo" data-tipo="{{ t }}" style="--tc:{{ tv[1] }};--tbg:{{ tv[2] }};" tabindex="0" role="button" aria-pressed="false">
+        {% set tx = (tipo_publico_texto or {}).get(t, (tipo_label.get(t, t), '')) %}
+        <div class="sp-tipo" data-tipo="{{ t }}" data-equipo="{{ '0' if t in (tipos_sin_equipo or ()) else '1' }}" style="--tc:{{ tv[1] }};--tbg:{{ tv[2] }};" tabindex="0" role="button" aria-pressed="false">
           <i class="bi {{ tv[0] }} em" aria-hidden="true"></i>
-          <span>{{ tipo_label[t] }}</span>
+          <span><span class="tt">{{ tx[0] }}</span>{% if tx[1] %}<span class="tl">{{ tx[1] }}</span>{% endif %}</span>
         </div>
         {% endfor %}
       </div>
@@ -297,23 +324,32 @@ body{background:#efefef;padding:15px 16px 40px;-webkit-font-smoothing:antialiase
     </section>
 
     <!-- PASO 3 -->
-    <section class="itk-step" data-paso="3" id="spPaso3">
+    {# Pasos 3 y 4 solo para las opciones de un equipo (data-equipo-only): con «¿Dónde está mi pedido?», «Cambiar o devolver»,
+       «Factura o nota de crédito», «Quiero cotizar» y «Otra consulta» se ocultan (no bloquean) y la barra cuenta solo los visibles. #}
+    <section class="itk-step" data-paso="3" id="spPaso3" data-equipo-only>
       <div class="itk-step-h">
         <div class="itk-circle"><b>3</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
         <div><h3 class="itk-step-t">¿Dónde está el equipo?</h3>
-        <p class="itk-step-s">La dirección donde se encuentra la máquina. Empieza a escribir y elígela.</p></div>
+        <p class="itk-step-s">La dirección donde se encuentra la máquina. Empieza a escribir y elígela de la lista: la comuna se completa sola.</p></div>
       </div>
       <div class="sp-grid">
         <div class="sp-field full" id="fDirWrap">
           <label for="spDireccion">Dirección <span class="req">*</span></label>
           <input type="text" id="spDireccion" placeholder="Ej: Av. Colón 1265, Las Condes" autocomplete="off">
           <input type="hidden" id="spDirLat"><input type="hidden" id="spDirLng">
-          <input type="hidden" id="spDirPlace"><input type="hidden" id="spComuna"><input type="hidden" id="spRegion">
+          <input type="hidden" id="spDirPlace"><input type="hidden" id="spRegion">
           <input type="hidden" id="spCodigoPostal">
           <div class="fh" id="spDirHint">Direcciones sugeridas por Google</div>
           <div class="fe">Ingresa una dirección y elígela de las sugeridas.</div>
+          {# «La dirección SIEMPRE validada» (Daniel 2026-10-27): si Google no carga, se dice claro y no se deja enviar sin validar. #}
+          <div class="sp-aviso" id="spGmapsAviso" hidden>No pudimos cargar el buscador de direcciones de Google. Revisa tu conexión y recarga la página: para agendar necesitamos la dirección validada.</div>
         </div>
-        <div class="sp-field full">
+        <div class="sp-field" id="fComunaWrap">
+          <label for="spComuna">Comuna</label>
+          <input type="text" id="spComuna" placeholder="Se completa al elegir la dirección" maxlength="120" readonly>
+          <div class="fh">Se completa sola con la dirección elegida.</div>
+        </div>
+        <div class="sp-field">
           <label for="spSucursal">Sucursal <span class="op">Opcional</span></label>
           <input type="text" id="spSucursal" placeholder="Ej: Sede Providencia" maxlength="100">
         </div>
@@ -321,7 +357,7 @@ body{background:#efefef;padding:15px 16px 40px;-webkit-font-smoothing:antialiase
     </section>
 
     <!-- PASO 4 (opcional) -->
-    <section class="itk-step is-opt" data-paso="4" id="spPaso4">
+    <section class="itk-step is-opt" data-paso="4" id="spPaso4" data-equipo-only>
       <div class="itk-step-h">
         <div class="itk-circle"><b>4</b><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.5 3.8 6 11.3 2.5 7.8l-1.1 1.1L6 13.5l8.6-8.6z"/></svg></div>
         <div><h3 class="itk-step-t">El equipo <span class="itk-tag">Opcional</span></h3>
@@ -357,13 +393,6 @@ body{background:#efefef;padding:15px 16px 40px;-webkit-font-smoothing:antialiase
           </div>
         </div>
       </div>
-      <div class="sp-grid" style="margin-top:14px;">
-        <div class="sp-field full">
-          <label for="spDoc">N° de boleta o factura <span class="op">Opcional</span></label>
-          <input type="text" id="spDoc" placeholder="Ej: 10683" maxlength="500" inputmode="numeric">
-          <div class="fh">Aparece en la parte superior de tu documento. Nos ayuda a ubicar tu compra.</div>
-        </div>
-      </div>
     </section>
 
     <!-- PASO 5 -->
@@ -374,6 +403,13 @@ body{background:#efefef;padding:15px 16px 40px;-webkit-font-smoothing:antialiase
         <p class="itk-step-s">Mientras más detalle, más rápido lo resolvemos. Puedes adjuntar fotos, videos o documentos.</p></div>
       </div>
       <div class="sp-grid">
+        {# 2026-10-27: el N° de documento se MUEVE del paso 4 (que se oculta en «¿Dónde está mi pedido?» y «Cambiar o devolver») a este
+           paso, siempre visible: es la clave para ubicar la compra. Sigue opcional. #}
+        <div class="sp-field full">
+          <label for="spDoc">N° de boleta, factura o pedido <span class="op">Opcional</span></label>
+          <input type="text" id="spDoc" placeholder="Ej: 10683 o #1136" maxlength="500" inputmode="numeric">
+          <div class="fh">Aparece en la parte superior de tu documento o en el correo de tu pedido. Nos ayuda a ubicar tu compra.</div>
+        </div>
         <div class="sp-field full" id="fDescWrap">
           <label for="spDesc">¿Qué está pasando? <span class="req">*</span></label>
           <textarea id="spDesc" rows="3" maxlength="260" placeholder="Ej: La consola de la trotadora se apaga sola después de unos minutos de uso…"></textarea>
@@ -427,6 +463,7 @@ body{background:#efefef;padding:15px 16px 40px;-webkit-font-smoothing:antialiase
           </div>
           <input type="file" id="spFile" multiple hidden accept=".jpg,.jpeg,.png,.webp,.gif,.heic,.mp4,.mov,.webm,.avi,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv">
           <div class="sp-files" id="spFiles"></div>
+          <div class="sp-files-resumen" id="spFilesResumen" hidden></div>
         </div>
       </div>
     </section>
@@ -490,29 +527,45 @@ function marcarError(id, on){ document.getElementById(id).classList.toggle('err'
 const $id = function(id){ return document.getElementById(id); };
 
 // ── Semáforo de pasos (2026-10-27, mismo lenguaje que el formulario de retiros de la tienda) ──
-// Obligatorios: 1 tipo, 2 datos, 3 dirección, 5 problema → «N de 4 pasos listos». El 4 (equipo) es opcional:
-// se pinta en verde solo si el cliente identificó un equipo o escribió el N° de documento.
+// Obligatorios: 1 tipo, 2 datos, 3 dirección (solo si la opción es de un equipo), 5 problema → «N de X pasos listos»,
+// contando solo los pasos visibles. El 4 (equipo) es opcional: se pinta en verde solo si el cliente identificó un equipo.
+const TIPOS_SIN_EQUIPO = {{ (tipos_sin_equipo or [])|list|tojson }};
+function spEquipoAplica(){ return !tipoSel || TIPOS_SIN_EQUIPO.indexOf(tipoSel) === -1; }
 function spTelValido(v){ return /^(\+?56)?\s?9\s?\d{4}\s?\d{4}$|^(\+?56)?\s?[2-9]\d{7,8}$/.test(String(v||'').trim().replace(/[^\d+]/g,'')); }
 function spEmailValido(v){ return /^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(String(v||'').trim()); }
 function spPasoOk(n){
   if(n===1) return !!tipoSel;
   if(n===2) return !!$id('spRut').value.trim() && !!$id('spContacto').value.trim() && spTelValido($id('spPhone').value) && spEmailValido($id('spEmail').value);
   if(n===3) return !!$id('spDireccion').value.trim() && !!$id('spDirLat').value;
-  if(n===4) return productos.length > 0 || !!$id('spDoc').value.trim();
+  if(n===4) return productos.length > 0;
   if(n===5) return !!$id('spDesc').value.trim();
   return false;
 }
+// Muestra u oculta los pasos de dirección y equipo según la opción elegida y renumera los círculos visibles (1, 2, 3…).
+function spAplicarPasos(){
+  const conEquipo = spEquipoAplica();
+  document.querySelectorAll('[data-equipo-only]').forEach(function(sec){ sec.hidden = !conEquipo; });
+  let n = 0;
+  [1,2,3,4,5].forEach(function(i){
+    const sec = $id('spPaso'+i); if(sec.hidden) return;
+    n++; const b = sec.querySelector('.itk-circle b'); if(b) b.textContent = String(n);
+  });
+}
 function spActualizarPasos(){
+  spAplicarPasos();
+  const conEquipo = spEquipoAplica();
+  const obligatorios = conEquipo ? [1,2,3,5] : [1,2,5];
   let listos = 0;
   [1,2,3,4,5].forEach(function(n){
     const sec = $id('spPaso'+n), ok = spPasoOk(n);
     sec.classList.toggle('is-ok', ok);
     if(ok) sec.classList.remove('is-bad');
-    if(n !== 4 && ok) listos++;
+    if(obligatorios.indexOf(n) !== -1 && ok) listos++;
   });
-  $id('itkProgBar').style.width = (listos/4*100) + '%';
-  $id('itkProg').classList.toggle('is-ok', listos === 4);
-  $id('itkProgTxt').textContent = listos + ' de 4 pasos listos';
+  const total = obligatorios.length;
+  $id('itkProgBar').style.width = (listos/total*100) + '%';
+  $id('itkProg').classList.toggle('is-ok', listos === total);
+  $id('itkProgTxt').textContent = listos + ' de ' + total + ' pasos listos';
 }
 // Al corregir cualquier campo se recalcula el semáforo y se oculta la lista de avisos (vuelve a revisarse al enviar).
 (function(){
@@ -572,7 +625,14 @@ document.addEventListener('DOMContentLoaded', function(){
       document.getElementById('spDirHint').innerHTML = 'Direcciones sugeridas por Google';
     }
   });
+  // «La dirección SIEMPRE validada» (Daniel 2026-10-27): si en 8 s Google no cargó (sin clave, sin red, bloqueado), se avisa
+  // claro. El envío de una opción de equipo sigue exigiendo la dirección elegida de Google (validarTodo + servidor).
+  setTimeout(function(){
+    const ok = (typeof ilusGmapsDisponible === 'function') && ilusGmapsDisponible();
+    document.getElementById('spGmapsAviso').hidden = ok;
+  }, 8000);
 });
+function spGoogleListo(){ return (typeof ilusGmapsDisponible === 'function') && ilusGmapsDisponible(); }
 
 // ── Paso 4: buscador de productos (ERP, catalogo general) ──
 const spAcProd = document.getElementById('spAcProd');
@@ -672,27 +732,62 @@ spDrop.addEventListener('keydown', function(e){ if(e.key==='Enter' || e.key===' 
 }));
 document.getElementById('spFile').addEventListener('change', function(e){ agregarArchivos(e.target.files); this.value=''; });
 
+// Adjuntos (Daniel 2026-10-27: «es elemental que suba las fotos y los videos»): miniatura para fotos, estado y error claro por
+// archivo, tope de cantidad y tamaño, y resumen «n de m listos». La subida va 1 archivo por request después de crear el ticket.
+const EXT_OK = (document.getElementById('spFile').getAttribute('accept') || '').split(',').map(function(s){ return s.trim().toLowerCase(); });
+function spExt(nombre){ const n = String(nombre||'').toLowerCase(); return n.indexOf('.') >= 0 ? '.' + n.split('.').pop() : ''; }
+function spTamano(bytes){ return bytes >= 1024*1024 ? (bytes/1024/1024).toFixed(1)+' MB' : Math.max(1, Math.round(bytes/1024))+' KB'; }
 function agregarArchivos(fileList){
-  const restantes = MAX_ADJ - archivos.length;
-  if(restantes <= 0){ spToast('Máximo '+MAX_ADJ+' archivos', 'error'); return; }
-  Array.from(fileList).slice(0, restantes).forEach(function(file){
-    if(file.size > MAX_MB*1024*1024){ spToast(file.name+' supera '+MAX_MB+' MB', 'error'); return; }
-    archivos.push({file:file, estado:'pendiente', nombre:file.name});
+  const avisos = [];
+  Array.from(fileList).forEach(function(file){
+    if(archivos.length >= MAX_ADJ){ avisos.push('Máximo '+MAX_ADJ+' archivos por solicitud: «'+file.name+'» no se agregó.'); return; }
+    if(EXT_OK.indexOf(spExt(file.name)) === -1){ avisos.push('«'+file.name+'»: tipo de archivo no permitido (fotos, videos, PDF o documentos).'); return; }
+    if(file.size > MAX_MB*1024*1024){ avisos.push('«'+file.name+'» pesa '+spTamano(file.size)+': el máximo es '+MAX_MB+' MB por archivo.'); return; }
+    if(archivos.some(function(a){ return a.nombre === file.name && a.file.size === file.size; })){ avisos.push('«'+file.name+'» ya estaba en la lista.'); return; }
+    const a = {file:file, estado:'pendiente', nombre:file.name, thumb:''};
+    if(/^image\//.test(file.type) && window.URL && URL.createObjectURL){ try { a.thumb = URL.createObjectURL(file); } catch(e){} }
+    archivos.push(a);
   });
+  if(avisos.length){ spMostrarAvisos(avisos); spToast(avisos[0], 'error'); }
   renderArchivos();
   // Si ya existe el ticket (reintento tras error), subimos de inmediato.
   if(ticketId) subirPendientes();
 }
+function spEstadoArchivo(a){
+  if(a.estado==='ok') return 'Adjuntado';
+  if(a.estado==='error') return a.error || 'No se pudo subir. Puedes responder el correo de confirmación adjuntándolo.';
+  if(a.estado==='subiendo') return 'Subiendo…';
+  return spTamano(a.file.size) + ' · se sube al enviar';
+}
 function renderArchivos(){
   document.getElementById('spFiles').innerHTML = archivos.map(function(a,i){
-    const icon = a.estado==='ok' ? 'bi-check-circle-fill' : a.estado==='error' ? 'bi-exclamation-circle-fill'
-      : a.estado==='subiendo' ? 'bi-arrow-repeat' : 'bi-paperclip';
-    const cls = a.estado==='ok' ? 'up-ok' : a.estado==='error' ? 'up-err' : '';
-    return '<span class="sp-file-chip '+cls+'"><i class="bi '+icon+'"></i><span class="nm" title="'+esc(a.nombre)+'">'+esc(a.nombre)+'</span>'
-      + '<span class="x" role="button" aria-label="Quitar '+esc(a.nombre)+'" onclick="quitarArchivo('+i+')">&times;</span></span>';
+    const cls = a.estado==='ok' ? 'up-ok' : a.estado==='error' ? 'up-err' : a.estado==='subiendo' ? 'up-sub' : '';
+    const icon = /^video\//.test(a.file.type) ? 'bi-camera-video' : (spExt(a.nombre)==='.pdf' ? 'bi-file-earmark-pdf' : 'bi-file-earmark-text');
+    const th = a.thumb ? '<img src="'+a.thumb+'" alt="">' : '<i class="bi '+icon+'" aria-hidden="true"></i>';
+    const quitar = (a.estado==='pendiente' || a.estado==='error')
+      ? '<span class="x" role="button" tabindex="0" aria-label="Quitar '+esc(a.nombre)+'" onclick="quitarArchivo('+i+')">&times;</span>' : '';
+    return '<div class="sp-file-chip '+cls+'"><span class="th">'+th+'</span><span class="bd"><span class="nm" title="'+esc(a.nombre)+'">'+esc(a.nombre)+'</span>'
+      + '<span class="st">'+esc(spEstadoArchivo(a))+'</span></span>'+quitar+'</div>';
   }).join('');
+  spResumenArchivos();
 }
-window.quitarArchivo = function(i){ archivos.splice(i,1); renderArchivos(); };
+function spResumenArchivos(){
+  const el = document.getElementById('spFilesResumen');
+  if(!archivos.length){ el.hidden = true; el.classList.remove('is-ok'); return; }
+  const ok = archivos.filter(function(a){ return a.estado==='ok'; }).length;
+  const err = archivos.filter(function(a){ return a.estado==='error'; }).length;
+  const subiendo = archivos.some(function(a){ return a.estado==='subiendo'; });
+  let txt;
+  if(!ticketId) txt = archivos.length + ' de ' + MAX_ADJ + ' archivos listos para enviar';
+  else if(subiendo || ok + err < archivos.length) txt = 'Subiendo tus archivos… ' + ok + ' de ' + archivos.length + ' listos. No cierres esta página.';
+  else txt = ok + ' de ' + archivos.length + ' archivos adjuntados' + (err ? ' · ' + err + ' con error' : '');
+  el.textContent = txt; el.hidden = false;
+  el.classList.toggle('is-ok', !!ticketId && ok === archivos.length);
+}
+window.quitarArchivo = function(i){
+  const a = archivos[i]; if(a && a.thumb){ try { URL.revokeObjectURL(a.thumb); } catch(e){} }
+  archivos.splice(i,1); renderArchivos();
+};
 
 async function subirPendientes(){
   for(const a of archivos){
@@ -701,9 +796,9 @@ async function subirPendientes(){
     const fd = new FormData(); fd.append('file', a.file); fd.append('token', uploadToken);
     try{
       const r = await fetch('/soporte/api/adjuntos/'+ticketId, {method:'POST', body:fd});
-      const d = await r.json();
-      a.estado = d.ok ? 'ok' : 'error';
-    }catch(e){ a.estado = 'error'; }
+      const d = await r.json().catch(function(){ return null; });
+      if(d && d.ok){ a.estado = 'ok'; } else { a.estado = 'error'; a.error = (d && d.error) || (r.status === 429 ? 'Muchas subidas seguidas: espera un momento y vuelve a intentarlo.' : 'No se pudo subir.'); }
+    }catch(e){ a.estado = 'error'; a.error = 'Sin conexión al subir. Revisa tu internet.'; }
     renderArchivos();
   }
 }
@@ -785,7 +880,12 @@ function validarTodo(){
   if(!spEmailValido(document.getElementById('spEmail').value)){ marcarError('fEmailWrap', true); falta('Revisa el correo.', document.getElementById('spEmail'), 2); } else marcarError('fEmailWrap', false);
   const dirVal = document.getElementById('spDireccion').value.trim();
   const dirLat = document.getElementById('spDirLat').value;
-  if(!dirVal || !dirLat){ marcarError('fDirWrap', true); falta('Escribe la dirección y elígela de las sugeridas por Google.', document.getElementById('spDireccion'), 3); } else marcarError('fDirWrap', false);
+  if(!spEquipoAplica()){ marcarError('fDirWrap', false); }
+  else if(!dirVal || !dirLat){
+    marcarError('fDirWrap', true);
+    falta(spGoogleListo() ? 'Escribe la dirección y elígela de las sugeridas por Google.'
+      : 'No pudimos cargar el buscador de direcciones de Google: recarga la página para validar tu dirección.', document.getElementById('spDireccion'), 3);
+  } else marcarError('fDirWrap', false);
   // 2026-07-13 (Daniel, URGENTE): "quitale el obligatorio al producto...
   // es valido avanzar, como en el formulario de retiro" -- el equipo ya NO
   // bloquea el envio; si el cliente no sabe el nombre, el ticket avanza sin
@@ -802,6 +902,7 @@ function validarTodo(){
 document.getElementById('spBtnEnviar').addEventListener('click', async function(){
   if(!validarTodo()){ spToast('Revisa los campos marcados en rojo', 'error'); return; }
   const btn = this; btn.disabled = true; document.getElementById('spBtnTxt').textContent = 'Enviando…';
+  const conEquipo = spEquipoAplica();   // sin equipo: los pasos de dirección y equipo están ocultos y no viajan
   const payload = {
     tipo: tipoSel,
     rut: spFormatearRutFinal(document.getElementById('spRut').value),
@@ -809,16 +910,16 @@ document.getElementById('spBtnEnviar').addEventListener('click', async function(
     nombre_contacto: document.getElementById('spContacto').value.trim(),
     phone: spFormatearTelefono(document.getElementById('spPhone').value),
     email: document.getElementById('spEmail').value.trim(),
-    direccion: document.getElementById('spDireccion').value.trim(),
-    direccion_lat: document.getElementById('spDirLat').value || null,
-    direccion_lng: document.getElementById('spDirLng').value || null,
-    direccion_place_id: document.getElementById('spDirPlace').value || null,
-    comuna_nombre: document.getElementById('spComuna').value || null,
-    region_nombre: document.getElementById('spRegion').value || null,
-    codigo_postal: document.getElementById('spCodigoPostal').value || null,
+    direccion: conEquipo ? document.getElementById('spDireccion').value.trim() : '',
+    direccion_lat: conEquipo ? (document.getElementById('spDirLat').value || null) : null,
+    direccion_lng: conEquipo ? (document.getElementById('spDirLng').value || null) : null,
+    direccion_place_id: conEquipo ? (document.getElementById('spDirPlace').value || null) : null,
+    comuna_nombre: conEquipo ? (document.getElementById('spComuna').value || null) : null,
+    region_nombre: conEquipo ? (document.getElementById('spRegion').value || null) : null,
+    codigo_postal: conEquipo ? (document.getElementById('spCodigoPostal').value || null) : null,
     es_garantia: document.getElementById('spGarantia').checked ? 1 : 0,
-    sucursal: document.getElementById('spSucursal').value.trim(),
-    productos: productos,
+    sucursal: conEquipo ? document.getElementById('spSucursal').value.trim() : '',
+    productos: conEquipo ? productos : [],
     numero_documento: document.getElementById('spDoc').value.trim(),
     descripcion: document.getElementById('spDesc').value.trim(),
     // Anti-bots (2026-10-27): campo trampa + hora del servidor al abrir el formulario.
@@ -876,6 +977,7 @@ document.getElementById('spBtnEnviar').addEventListener('click', async function(
 // Limpia el formulario COMPLETO en el sitio (sin location.reload()) para
 // que quede listo para otra solicitud sin recargar la pagina embebida.
 function spResetFormulario(){
+  archivos.forEach(function(a){ if(a.thumb){ try { URL.revokeObjectURL(a.thumb); } catch(e){} } });
   tipoSel = ''; productos = []; archivos = [];
   ticketId = null; uploadToken = null;
   document.querySelectorAll('.sp-tipo').forEach(x=>{ x.classList.remove('sel'); x.setAttribute('aria-pressed','false'); });

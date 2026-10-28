@@ -177,6 +177,11 @@ TK_TIPOS = (
     # TK_TIPOS_SIN_CLIENTE mas abajo -- estos 3 NO entran a TK_TIPOS_PUBLICOS
     # (no se ofrecen en el formulario publico ni en /tickets/nuevo).
     "control_calidad", "trabajo_bodega", "capacitacion",
+    # 2026-10-27 (Daniel: formulario público «para que lo entienda un niño de
+    # 5 años», no solo servicio técnico): «Factura o nota de crédito» y «Otra
+    # consulta». Van AL FINAL del ENUM de tk_tickets.tipo (REGLA #18: nada se
+    # reordena). No piden dirección ni equipo (TK_TIPOS_SIN_EQUIPO).
+    "facturacion", "consulta",
 )
 # Tipos internos SIN cliente obligatorio (Daniel 2026-07-15: "internas de
 # bodega: control de calidad, trabajos de bodega, capacitacion"). Usado por
@@ -331,15 +336,42 @@ TIPO_LABEL = {
     # 2026-07-15: tipos internos de bodega (sin cliente) — ver TK_TIPOS_SIN_CLIENTE.
     "control_calidad": "Control de calidad", "trabajo_bodega": "Trabajo de bodega",
     "capacitacion": "Capacitación",
+    # 2026-10-27: tipos nuevos del formulario público (ver TK_TIPOS).
+    "facturacion": "Facturación / nota de crédito", "consulta": "Consulta general",
 }
 # Daniel 2026-07-13: "pienso que los 8 tipos del formulario se quedan
 # cortos" -- se amplia a los 12 tipos reales de TK_TIPOS (antes solo se
 # exponian 8 al publico, aunque el backoffice ya usaba los 12).
+# 2026-10-27 (Daniel): «para reducir la lista sacaría repuesto bodega, repuesto
+# importación y garantía… enfocarlo a algo más general, no solamente servicio
+# técnico: notas de crédito, dónde está su pedido, el estado de su compra,
+# cambiar un producto… si lo entiende un niño de 5 años, estamos». Quedan 9
+# opciones con lenguaje simple (TK_TIPOS_PUBLICOS_TEXTO). Los tipos que salen
+# de la lista pública (warranty, repair, tech_evaluation, equipment_transfer,
+# spare_parts_store, spare_parts_import) SIGUEN existiendo en el sistema y en
+# el modal interno (REGLA #4.2): el cliente los describe dentro de «Mi equipo
+# falla» u «Otra consulta». La garantía sigue como pregunta (es_garantia).
 TK_TIPOS_PUBLICOS = (
-    "install", "tech_support", "shipping", "quotation", "return",
-    "tech_evaluation", "maintenance", "spare_parts", "equipment_transfer",
-    "warranty", "repair", "spare_parts_store", "spare_parts_import",
+    "tech_support", "install", "maintenance", "spare_parts", "shipping",
+    "return", "facturacion", "quotation", "consulta",
 )
+# Texto público de cada opción: (título, una línea de explicación). Solo para
+# el formulario público y la tienda; TIPO_LABEL (interno) no cambia.
+TK_TIPOS_PUBLICOS_TEXTO = {
+    "tech_support": ("Mi equipo falla", "No enciende, hace ruido o se detuvo"),
+    "install": ("Instalar mi equipo", "Agendar la instalación"),
+    "maintenance": ("Mantención", "Revisión o mantención de mis equipos"),
+    "spare_parts": ("Necesito un repuesto", "Una pieza o accesorio"),
+    "shipping": ("¿Dónde está mi pedido?", "Estado de mi compra o despacho"),
+    "return": ("Cambiar o devolver", "Cambio o devolución de un producto"),
+    "facturacion": ("Factura o nota de crédito", "Documentos, cobros y pagos"),
+    "quotation": ("Quiero cotizar", "Precios de equipos o servicios"),
+    "consulta": ("Otra consulta", "Cuéntanos qué necesitas"),
+}
+# Opciones que NO son de un equipo: el formulario público salta los pasos
+# «¿Dónde está el equipo?» y «El equipo», y /soporte/api/crear no exige la
+# dirección (el N° de boleta/factura/pedido sigue visible para ubicar la compra).
+TK_TIPOS_SIN_EQUIPO = ("shipping", "return", "facturacion", "quotation", "consulta")
 # Tipos del MODAL interno (backoffice): TODOS menos 'warranty' — la garantia
 # es un toggle separado (es_garantia) porque puede aplicar a cualquier tipo
 # (pedido de Daniel 2026-07-11: "la garantia puede ser de todo").
@@ -1208,7 +1240,8 @@ def register_tickets_routes(app, ctx):
               tipo              ENUM('install','tech_support','shipping','quotation','return',
                                      'tech_evaluation','maintenance','spare_parts','equipment_transfer',
                                      'warranty','repair','spare_parts_store','spare_parts_import',
-                                     'control_calidad','trabajo_bodega','capacitacion') NULL,
+                                     'control_calidad','trabajo_bodega','capacitacion',
+                                     'facturacion','consulta') NULL,
               prioridad         ENUM('baja','media','alta','urgente') NOT NULL DEFAULT 'media',
               titulo            VARCHAR(300) NULL,
               descripcion       TEXT NULL,
@@ -1744,7 +1777,10 @@ def register_tickets_routes(app, ctx):
                 "  ENUM('install','tech_support','shipping','quotation','return',"
                 "       'tech_evaluation','maintenance','spare_parts','equipment_transfer',"
                 "       'warranty','repair','spare_parts_store','spare_parts_import',"
-                "       'control_calidad','trabajo_bodega','capacitacion') NULL"
+                "       'control_calidad','trabajo_bodega','capacitacion',"
+                # 2026-10-27: tipos del formulario público, AL FINAL (REGLA #18:
+                # ampliar un ENUM por el final es seguro; nada se reordena).
+                "       'facturacion','consulta') NULL"
             )
         except Exception as _e:
             print(f"[ILUS][WARN] ALTER tk_tickets MODIFY tipo (tipos internos bodega): {_e}", flush=True)
@@ -12310,8 +12346,43 @@ def register_tickets_routes(app, ctx):
         return render_template(
             "tickets/soporte_publico.html",
             tk_tipos_publicos=TK_TIPOS_PUBLICOS, tipo_label=TIPO_LABEL,
+            tipo_publico_texto=TK_TIPOS_PUBLICOS_TEXTO, tipos_sin_equipo=TK_TIPOS_SIN_EQUIPO,
             max_adjuntos=MAX_ADJUNTOS, max_adjunto_mb=MAX_ADJUNTO_MB,
             ilus_t0=int(time.time()))
+
+    def _google_browser_key():
+        """Clave de NAVEGADOR de Google Maps (la misma que ya se imprime en /soporte
+        vía google_maps_api_key). Está restringida por referer en Google Cloud: no
+        es un secreto de servidor, pero jamás se loguea."""
+        try:
+            from config import GOOGLE_MAPS_API_KEY as _k
+            return (_k or "").strip()
+        except Exception:
+            return (os.environ.get("GOOGLE_MAPS_API_KEY") or "").strip()
+
+    # ── GET /soporte/api/config — lo que el formulario de la TIENDA necesita al cargar ──
+    # 2026-10-27 (Daniel: «la dirección SIEMPRE validada», también en la tienda).
+    # Formulario_ticket_Shopify_ILUS.html no lleva la clave fija: la pide aquí
+    # (mismo CORS de la tienda) junto con los topes de adjuntos, las opciones del
+    # paso 1 y la hora del servidor (filtro anti-bots). Sin secretos de servidor.
+    # ⚠ Para que Google Places funcione en ilusfitness.com, la clave debe tener
+    # https://ilusfitness.com/* y https://www.ilusfitness.com/* entre sus referers
+    # permitidos en Google Cloud (lo hace Daniel/TI, no el código).
+    @app.route("/soporte/api/config", methods=["GET"])
+    def tk_soporte_api_config():
+        if not _rl_ok("cfg:" + _ip_cliente(), 60, 60):
+            return jsonify({"ok": False, "error": "Demasiadas solicitudes, espera un momento"}), 429
+        resp = jsonify({
+            "ok": True,
+            "google_maps_api_key": _google_browser_key(),
+            "max_adjuntos": MAX_ADJUNTOS, "max_adjunto_mb": MAX_ADJUNTO_MB,
+            "ext_permitidas": sorted(_EXT_PERMITIDAS),
+            "tipos": [{"id": t, "titulo": TK_TIPOS_PUBLICOS_TEXTO[t][0], "linea": TK_TIPOS_PUBLICOS_TEXTO[t][1],
+                       "equipo": t not in TK_TIPOS_SIN_EQUIPO} for t in TK_TIPOS_PUBLICOS],
+            "ahora_ts": int(time.time()),
+        })
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
 
     # ── GET /soporte/api/erp/productos — catalogo general (read-only) ──
     @app.route("/soporte/api/erp/productos", methods=["GET"])
@@ -12323,11 +12394,17 @@ def register_tickets_routes(app, ctx):
             return jsonify({"ok": True, "resultados": []})
         # Comparte la MISMA query que el buscador interno sin cliente
         # (_buscar_catalogo_bodega, definida arriba) -- una sola fuente de
-        # verdad para "catalogo general filtrado por bodega".
+        # verdad para "catalogo general filtrado por bodega" (BODEGA_SOPORTE,
+        # «02»; REGLA #4.1: solo SELECT).
         resultados, err = _buscar_catalogo_bodega(q)
         if err:
             return jsonify({"ok": False, "error": err, "resultados": []}), 200
-        return jsonify({"ok": True, "resultados": resultados})
+        # 2026-10-27 (Daniel): al público SOLO el nombre (y el SKU para ligar el
+        # equipo). Nunca stock, cantidades ni precios, aunque mañana la consulta
+        # compartida traiga más columnas: se filtra aquí, en el servidor.
+        publicos = [{"sku": (r.get("sku") or "")[:100], "nombre": (r.get("nombre") or "")[:300]}
+                    for r in (resultados or []) if r.get("nombre")]
+        return jsonify({"ok": True, "resultados": publicos})
 
     # ── POST /soporte/api/crear — crea el ticket publico ──
     @app.route("/soporte/api/crear", methods=["POST"])
@@ -12371,22 +12448,27 @@ def register_tickets_routes(app, ctx):
             return jsonify({"ok": False, "error": "Ingresa un correo válido."}), 400
 
         direccion = (d.get("direccion") or "").strip()
-        if not direccion:
+        # 2026-10-27 (Daniel): las opciones que NO son de un equipo («¿Dónde está
+        # mi pedido?», «Cambiar o devolver», «Factura o nota de crédito», «Quiero
+        # cotizar», «Otra consulta») no piden dirección: el formulario salta ese
+        # paso. Si igual viene una, se guarda.
+        _pide_direccion = tipo not in TK_TIPOS_SIN_EQUIPO
+        if _pide_direccion and not direccion:
             return jsonify({"ok": False, "error": "Ingresa una dirección."}), 400
-        # 2026-10-27: el formulario de la TIENDA (Formulario_ticket_Shopify_ILUS.html)
-        # no tiene Google Places (la clave de Google no sale del sistema), así que
-        # manda la dirección como texto con direccion_manual=1. Se acepta sin
-        # coordenadas y queda constancia en la bitácora del ticket para que
-        # quien lo tome la verifique. El formulario /soporte sigue exigiendo la
-        # dirección sugerida por Google (nada cambia si la marca no viene).
+        # «La dirección SIEMPRE validada» (Daniel 2026-10-27): el formulario de la
+        # tienda también usa Google Places (la clave de navegador la pide a
+        # /soporte/api/config). direccion_manual=1 queda SOLO como respaldo
+        # (REGLA #4.2: no se quita): se acepta sin coordenadas y queda constancia
+        # en la bitácora del ticket para que quien lo tome la verifique.
         _dir_manual = str(d.get("direccion_manual") or "").strip().lower() in ("1", "true", "si", "sí", "yes", "on")
         _sin_coords = d.get("direccion_lat") in (None, "", "null") or d.get("direccion_lng") in (None, "", "null")
-        if _sin_coords and not _dir_manual:
+        if _pide_direccion and _sin_coords and not _dir_manual:
             return jsonify({"ok": False, "error": "Selecciona una dirección sugerida por Google para validarla."}), 400
-        if _dir_manual:
+        if _dir_manual or (not _pide_direccion and _sin_coords):
             d["direccion_lat"] = None
             d["direccion_lng"] = None
             d["direccion_place_id"] = None
+        _dir_manual = _dir_manual and bool(direccion)
 
         # 2026-07-13 (Daniel, URGENTE): "quitale el obligatorio al producto...
         # es valido avanzar" -- el equipo ya no es requerido (antes bloqueaba
@@ -12410,7 +12492,7 @@ def register_tickets_routes(app, ctx):
                     (tipo, descripcion[:2000], rut[:12],
                      (d.get("empresa") or "").strip()[:150] or None,
                      nombre_contacto[:150], email[:150], phone[:20],
-                     direccion[:255],
+                     direccion[:255] or None,
                      d.get("direccion_lat") or None, d.get("direccion_lng") or None,
                      (d.get("direccion_place_id") or "").strip()[:200] or None,
                      (d.get("comuna_nombre") or "").strip()[:120] or None,
@@ -12451,7 +12533,10 @@ def register_tickets_routes(app, ctx):
 
         numero_row = mysql_fetchone("SELECT numero_ticket FROM tk_tickets WHERE id=%s", (tid,))
         numero = numero_row["numero_ticket"] if numero_row else None
-        _origen_form = "la tienda (ilusfitness.com)" if _dir_manual else "el formulario público"
+        # El formulario de la tienda se identifica con origen_form="tienda" (solo
+        # para la bitácora: no cambia ninguna validación).
+        _desde_tienda = str(d.get("origen_form") or "").strip().lower() == "tienda" or _dir_manual
+        _origen_form = "la tienda (ilusfitness.com)" if _desde_tienda else "el formulario público"
         _tk_log(tid, "creacion", f"Ticket {numero} creado desde {_origen_form}", usuario="cliente")
         if _dir_manual:
             _tk_log(tid, "otro",

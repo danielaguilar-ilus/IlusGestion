@@ -299,7 +299,8 @@
           <div id="fTipoWrap">
             {# Color + icono distintivo por tipo (paleta ILUS: rojo/variaciones +
                verde/ambar/azul/gris de apoyo -- feedback Daniel 2026-07-11:
-               "me gustaria que fuera mas colorida"). Mismo mapeo en soporte_publico.html. #}
+               "me gustaria que fuera mas colorida"). Mismo mapeo en soporte_publico.html.
+               2026-10-27: 'facturacion' y 'consulta' son los tipos nuevos del formulario público. #}
             {% set tipo_visual = {
               'install': ('bi-house-gear-fill', '#3b82f6', '#eff6ff'),
               'tech_support': ('bi-headset', '#dc2626', '#fef2f2'),
@@ -317,6 +318,8 @@
               'control_calidad': ('bi-clipboard-check', '#16a34a', '#f0fdf4'),
               'trabajo_bodega': ('bi-box-seam', '#a16207', '#fef3c7'),
               'capacitacion': ('bi-mortarboard', '#7c3aed', '#f3e8ff'),
+              'facturacion': ('bi-receipt', '#f59e0b', '#fffbeb'),
+              'consulta': ('bi-chat-left-text', '#6b7280', '#f9fafb'),
             } %}
             {# tk_tipos_modal (si el backend lo expone -- tipos internos incluidos,
                ej. control_calidad/trabajo_bodega/capacitacion, excluye 'warranty')
