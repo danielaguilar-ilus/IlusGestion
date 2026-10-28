@@ -2668,15 +2668,23 @@ def register_tickets_routes(app, ctx):
         return ("(t.asignado_a IS NULL OR t.asignado_a='' OR t.asignado_a IN (%s,%s))",
                 [nombre or "\x00", usuario or "\x00"])
 
+    def _tk_norm_nombre(s):
+        import unicodedata as _ud
+        s = _ud.normalize("NFKD", str(s or "")).encode("ascii", "ignore").decode("ascii")
+        return " ".join(s.lower().split())
+
     def _tk_puede_ver_ticket(tid):
         if _tk_ve_todo():
             return True
         f = mysql_fetchone("SELECT asignado_a FROM tk_tickets WHERE id=%s", (tid,))
         if not f:
             return True  # que la ruta responda su propio 404
-        a = (f.get("asignado_a") or "").strip().lower()
         nombre, usuario = _tk_yo()
-        return (not a) or a in {(nombre or "").lower(), (usuario or "").lower()}
+        a = _tk_norm_nombre(f.get("asignado_a"))
+        # Misma comparación que hace MySQL en la bandeja (utf8mb4 *_ai_ci: sin
+        # distinguir mayúsculas NI tildes): «Victor» = «Víctor». Si no, alguien
+        # vería su ticket en la lista y le daría 403 al abrirlo.
+        return (not a) or a in {_tk_norm_nombre(nombre), _tk_norm_nombre(usuario)}
 
     _TK_RUTA_TICKET_RE = re.compile(r"^/tickets/(?:api/tickets/)?(\d+)(?:/|$)")
 
