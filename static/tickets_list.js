@@ -379,13 +379,34 @@ function _tkListaAutoSeguro(){
   const escribiendo = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT');
   return !(escribiendo || document.querySelector('.modal.show'));
 }
+// Tickets 2.0 (27-oct): LATIDO. Antes se recargaba la página entera de la
+// bandeja (más el conteo de no leídos) cada 10 s por cada persona conectada.
+// Ahora cada 4 s se pregunta solo "¿cambió algo?" (/bandeja/latido: tickets,
+// mensajes y no leídos, consultas por índice) y se recarga solo si cambió.
+// Más rápido para ver un mensaje nuevo y mucho más liviano para la base.
+let _tkListaVer = null;
+async function _tkListaLatido(){
+  if (document.hidden) return;
+  try {
+    const r = await fetch('/tickets/api/bandeja/latido', {cache:'no-store'});
+    const j = await r.json();
+    if (!j || !j.ok || !j.ver) return;
+    if (_tkListaVer === null) { _tkListaVer = j.ver; return; }   // 1.er latido: ya se cargó arriba
+    if (j.ver !== _tkListaVer && _tkListaAutoSeguro()) {
+      await cargarTickets();
+      _tkListaVer = j.ver;
+    }
+  } catch(e) {}
+}
 function _tkProgramarAutoRefrescoLista(){
   clearTimeout(_tkListaAutoTimer);
   _tkListaAutoTimer = setTimeout(async function(){
-    if (!document.hidden && _tkListaAutoSeguro()) { try { await cargarTickets(); } catch(e) {} }
+    await _tkListaLatido();
     _tkProgramarAutoRefrescoLista();
-  }, 10000);
+  }, 4000);
 }
+document.addEventListener('visibilitychange', function(){ if (!document.hidden) _tkListaLatido(); });
+_tkListaLatido();   // toma la firma de inmediato: ningún cambio queda en el hueco
 _tkProgramarAutoRefrescoLista();
 
 // ══════════════ MODAL Nuevo Ticket — logica ══════════════

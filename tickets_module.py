@@ -1712,6 +1712,8 @@ def register_tickets_routes(app, ctx):
             "CREATE INDEX idx_tk_estado_prio_upd ON tk_tickets (estado, prioridad, updated_at)",
             "CREATE INDEX idx_tk_asig_estado ON tk_tickets (asignado_a, estado)",
             "CREATE INDEX idx_tk_origen_created ON tk_tickets (origen, created_at)",
+            # Latido de la bandeja: MAX(updated_at) en O(1) (ver tk_api_bandeja_latido).
+            "CREATE INDEX idx_tk_updated ON tk_tickets (updated_at)",
         ):
             try:
                 mysql_execute(_idx_sql)
@@ -6544,11 +6546,78 @@ def register_tickets_routes(app, ctx):
     def _tk_vaciar_cache_tras_escritura(resp):
         try:
             if request.method != "GET" and request.path.startswith("/tickets/"):
-                _TK_KPI_CACHE.clear()
                 _TK_UNREAD_CACHE.clear()
+                # "marcar leido" corre cada vez que se abre una ficha y no
+                # cambia ningun KPI: no debe vaciar la cache de la bandeja.
+                if not request.path.endswith("/marcar-leido"):
+                    _TK_KPI_CACHE.clear()
         except Exception:
             pass
         return resp
+
+    def _tk_unread_n():
+        """Tickets con mensajes de cliente sin leer (cache corta compartida)."""
+        hit = _TK_UNREAD_CACHE.get("v")
+        if hit and time.monotonic() - hit[0] < _TK_CACHE_SEG:
+            return hit[1]
+        if _tk_bandeja_rapida_ok():
+            row = mysql_fetchone("SELECT COUNT(*) AS n FROM tk_tickets WHERE sin_leer=1")
+        else:
+            row = mysql_fetchone(
+                "SELECT COUNT(*) AS n FROM tk_tickets t "
+                "WHERE EXISTS (SELECT 1 FROM tk_mensajes m "
+                "              WHERE m.ticket_id=t.id AND m.tipo='client_message' "
+                "                AND m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01'))")
+        n = int(row["n"]) if row else 0
+        _TK_UNREAD_CACHE["v"] = (time.monotonic(), n)
+        return n
+
+    # ── Tickets 2.0: LATIDOS (el "vaiven" casi en tiempo real sin pesar) ─────
+    # Antes la ficha pedia el ticket COMPLETO (con todo el hilo) cada 6 s y la
+    # bandeja la pagina entera cada 10 s, por cada persona conectada, cambiara
+    # o no algo. Ahora el navegador pregunta cada pocos segundos solo "¿cambio
+    # algo?" (consultas por llave primaria / indice, milisegundos) y recarga
+    # unicamente cuando la firma cambia.
+    def _tk_firma_ticket(tid):
+        r = mysql_fetchone(
+            "SELECT t.updated_at, t.estado, "
+            " (SELECT COALESCE(MAX(id),0) FROM tk_mensajes WHERE ticket_id=t.id) AS mm, "
+            " (SELECT COALESCE(MAX(id),0) FROM tk_adjuntos WHERE ticket_id=t.id) AS ma, "
+            " (SELECT COUNT(*) FROM tk_ticket_equipos WHERE ticket_id=t.id) AS ne, "
+            " (SELECT COUNT(*) FROM tk_ticket_documentos WHERE ticket_id=t.id) AS nd "
+            "FROM tk_tickets t WHERE t.id=%s", (tid,))
+        if not r:
+            return None
+        return "|".join(str(r.get(k) or "") for k in ("updated_at", "estado", "mm", "ma", "ne", "nd"))
+
+    @app.route("/tickets/api/tickets/<int:tid>/latido", methods=["GET"])
+    @_tickets_required
+    @_tk_sin_tickets_de_compra
+    def tk_api_ticket_latido(tid):
+        # Mientras exista el lector de correo (se retira en la fase 3), el
+        # latido tambien lo despierta, igual que hacia la recarga completa.
+        try:
+            _tk_autopoll_correo()
+        except Exception:
+            pass
+        ver = _tk_firma_ticket(tid)
+        if ver is None:
+            return jsonify({"ok": False, "error": "Ticket no encontrado"}), 404
+        return jsonify({"ok": True, "ver": ver})
+
+    @app.route("/tickets/api/bandeja/latido", methods=["GET"])
+    @_tickets_required
+    def tk_api_bandeja_latido():
+        try:
+            _tk_autopoll_correo()
+        except Exception:
+            pass
+        r = mysql_fetchone(
+            "SELECT (SELECT COALESCE(MAX(id),0) FROM tk_tickets) AS mt, "
+            "       (SELECT MAX(updated_at) FROM tk_tickets) AS mu, "
+            "       (SELECT COALESCE(MAX(id),0) FROM tk_mensajes) AS mm") or {}
+        ver = "|".join(str(r.get(k) or "") for k in ("mt", "mu", "mm")) + f"|{_tk_unread_n()}"
+        return jsonify({"ok": True, "ver": ver})
 
     # ── Tickets 2.0 fase 2: bandeja con columnas indexadas ───────────────────
     _TK_BANDEJA = {"ok": False, "chk": 0.0, "conc": 0.0, "lock": threading.Lock()}
@@ -7175,7 +7244,60 @@ def register_tickets_routes(app, ctx):
             "vistas": [_fmt_row(r) for r in vistas] if _puede_ver_actividad else [],
             "unread_count": unread_count,
             "estado_label": ESTADO_LABEL, "tipo_label": TIPO_LABEL,
+            # Tickets 2.0: firma para el latido (la ficha solo se recarga si cambia)
+            # y la tarjeta «Contactos» (contacto del ticket + los de la ficha del cliente).
+            "ver": _tk_firma_ticket(tid),
+            **_tk_contactos_ticket(t),
         })
+
+    def _tk_contactos_ticket(t):
+        """Contactos para la tarjeta «Contactos» de la ficha: primero quien
+        escribio el ticket y luego los de la ficha del cliente (principal,
+        secundario y encargados de sucursal), sin repetir. El cliente se
+        reconoce por RUT, igual que «Generar OT». Nunca rompe la ficha."""
+        out, vistos, cliente = [], set(), None
+
+        def _add(nombre, cargo, tel, email, label, origen):
+            nombre = (nombre or "").strip()
+            tel = (tel or "").strip()
+            email = (email or "").strip()
+            if not (nombre or tel or email):
+                return
+            clave = (email.lower() or tel.replace(" ", "") or nombre.lower())
+            if clave in vistos:
+                return
+            vistos.add(clave)
+            out.append({"nombre": nombre, "cargo": (cargo or "").strip(), "tel": tel,
+                        "email": email, "label": label, "origen": origen})
+
+        _add(t.get("nombre_contacto"), "", t.get("phone"),
+             t.get("email_cliente_real") or t.get("email"), "Escribió el ticket", "ticket")
+        try:
+            rut = (t.get("rut") or "").strip()
+            rut_n = (normalizar_rut(rut) if normalizar_rut else rut) if rut else None
+            cli = mysql_fetchone(
+                "SELECT id, razon_social, contacto_nombre, contacto_cargo, contacto_tel, "
+                "       contacto_email, contacto2_nombre, contacto2_cargo, contacto2_tel, "
+                "       contacto2_email FROM mant_clientes WHERE rut=%s LIMIT 1",
+                (rut_n,)) if rut_n else None
+            if cli:
+                cliente = {"id": cli["id"], "razon_social": cli.get("razon_social") or "",
+                           "url": f"/clientes/{cli['id']}"}
+                _add(cli.get("contacto_nombre"), cli.get("contacto_cargo"), cli.get("contacto_tel"),
+                     cli.get("contacto_email"), "Contacto principal", "principal")
+                _add(cli.get("contacto2_nombre"), cli.get("contacto2_cargo"), cli.get("contacto2_tel"),
+                     cli.get("contacto2_email"), "Contacto secundario", "secundario")
+                for s in (mysql_fetchall(
+                        "SELECT nombre, encargado_nombre, encargado_cargo, encargado_tel, "
+                        "       encargado_email FROM mant_sucursales "
+                        "WHERE cliente_id=%s AND activo=1 ORDER BY nombre LIMIT 30",
+                        (cli["id"],)) or []):
+                    _add(s.get("encargado_nombre"), s.get("encargado_cargo"), s.get("encargado_tel"),
+                         s.get("encargado_email"), f"Encargado · {s.get('nombre') or 'sucursal'}",
+                         "sucursal")
+        except Exception as _e:
+            print(f"[tk_contactos] {str(_e)[:160]}", flush=True)
+        return {"contactos": out, "cliente_ficha": cliente}
 
     # ─────────────────────────────────────────────────────────────────
     #  API — actualizar
@@ -8322,20 +8444,7 @@ def register_tickets_routes(app, ctx):
         # Tickets 2.0: semi-join (EXISTS) en vez de JOIN + COUNT(DISTINCT):
         # mismo conteo, sin materializar tickets x mensajes de toda la
         # historia. Se comparte unos segundos entre quienes lo consultan.
-        hit = _TK_UNREAD_CACHE.get("v")
-        if hit and time.monotonic() - hit[0] < _TK_CACHE_SEG:
-            return jsonify({"ok": True, "unread": hit[1]})
-        if _tk_bandeja_rapida_ok():
-            row = mysql_fetchone("SELECT COUNT(*) AS n FROM tk_tickets WHERE sin_leer=1")
-        else:
-            row = mysql_fetchone(
-                "SELECT COUNT(*) AS n FROM tk_tickets t "
-                "WHERE EXISTS (SELECT 1 FROM tk_mensajes m "
-                "              WHERE m.ticket_id=t.id AND m.tipo='client_message' "
-                "                AND m.created_at > COALESCE(t.staff_last_read_at,'1970-01-01'))")
-        n = int(row["n"]) if row else 0
-        _TK_UNREAD_CACHE["v"] = (time.monotonic(), n)
-        return jsonify({"ok": True, "unread": n})
+        return jsonify({"ok": True, "unread": _tk_unread_n()})
 
     # ─────────────────────────────────────────────────────────────────
     #  API — equipos

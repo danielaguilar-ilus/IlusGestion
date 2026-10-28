@@ -139,6 +139,18 @@
             title="Traer ahora los correos nuevos del buzón de soporte y revisar documentos nuevos de instalación">
       <i class="bi bi-arrow-repeat me-1"></i>Actualizar</button>
     {% endif %}
+    {# Tickets 2.0 (Daniel 2026-10-27: "colócame en el head de la ticketera el
+       formulario público"): la entrada formal de los tickets, a un clic —
+       abrirlo o copiar su enlace para mandárselo a un cliente. #}
+    <div class="btn-group btn-group-sm" role="group" aria-label="Formulario público de soporte">
+      <a class="btn btn-outline-light" href="/soporte" target="_blank" rel="noopener"
+         title="Abrir el formulario público donde los clientes crean sus tickets">
+        <i class="bi bi-ui-checks me-1"></i>Formulario público</a>
+      <button type="button" class="btn btn-outline-light" id="btnCopiarFormPublico"
+              title="Copiar el enlace del formulario público" aria-label="Copiar el enlace del formulario público"
+              onclick="(function(b){var u=location.origin+'/soporte';(navigator.clipboard?navigator.clipboard.writeText(u):Promise.reject()).then(function(){ilusToast('✓ Enlace del formulario copiado',{type:'success'});},function(){ilusPrompt({title:'Enlace del formulario público',message:'Cópialo y envíaselo al cliente:',defaultValue:u});});})(this)">
+        <i class="bi bi-link-45deg"></i></button>
+    </div>
     <button class="btn btn-sm btn-outline-light" id="btnDesdeDoc" title="Crear ticket buscando productos por documento ERP, RUT/nombre, Catálogo o una cotización interna">
       <i class="bi bi-search me-1"></i>Buscar productos</button>
     <button class="btn btn-ilus trx-btn-primary" data-bs-toggle="modal" data-bs-target="#ntModal">

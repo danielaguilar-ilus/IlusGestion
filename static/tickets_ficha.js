@@ -1031,6 +1031,11 @@ async function cargar(){
 
   // marcar leído
   fetch('/tickets/api/tickets/'+TID+'/marcar-leido',{method:'PATCH'}).catch(()=>{});
+
+  // Tickets 2.0: firma de lo que se acaba de pintar (el latido solo recarga
+  // si cambia) + pasos/contactos estilo Retiros (static/tickets_ficha_v2.js).
+  if (d.ver) _tkLatidoVer = d.ver;
+  if (window.tkV2AlCargar) { try { window.tkV2AlCargar(t, d); } catch(e){ console.warn('tkV2AlCargar:', e); } }
 }
 
 // ══════════════ Stepper de estado (tracking visual de avance) ══════════════
@@ -6198,12 +6203,35 @@ function _tkAutoRefreshSeguro(){
   const modalAbierto = document.querySelector('.modal.show');
   return !(editando || enEditorQuill || modalAbierto);
 }
+// Tickets 2.0 (27-oct): LATIDO. Antes se recargaba el ticket COMPLETO (con
+// todo el hilo) cada 6 s, cambiara o no algo. Ahora cada 3 s se pregunta solo
+// "¿cambió algo?" (/latido, milisegundos) y se recarga únicamente si la firma
+// cambió: un mensaje, un adjunto, un equipo, un documento o el estado. Si el
+// usuario está escribiendo o con un modal abierto, la recarga espera al
+// próximo latido (la firma vieja se conserva, no se pierde el cambio).
+var _tkLatidoVer = null;
+let _tkLatidoEnCurso = false;
+async function _tkLatidoTick(){
+  if (document.hidden || _tkLatidoEnCurso) return;
+  _tkLatidoEnCurso = true;
+  try {
+    const r = await fetch('/tickets/api/tickets/'+TID+'/latido', {cache:'no-store'});
+    const j = await r.json();
+    if (j && j.ok && j.ver && j.ver !== _tkLatidoVer && _tkAutoRefreshSeguro()) {
+      await cargar();
+    }
+  } catch(e) {} finally { _tkLatidoEnCurso = false; }
+}
 function _tkProgramarAutoRefresh(){
   clearTimeout(_tkAutoRefreshTimer);
   _tkAutoRefreshTimer = setTimeout(async function(){
-    if (!document.hidden && _tkAutoRefreshSeguro()) { try { await cargar(); } catch(e) {} }
+    await _tkLatidoTick();
     _tkProgramarAutoRefresh();
-  }, 6000);
+  }, 3000);
 }
+// Al volver a la pestaña no se espera el próximo ciclo.
+document.addEventListener('visibilitychange', function(){
+  if (!document.hidden && TID !== null) _tkLatidoTick();
+});
 // 2026-08-10: sin ticket que refrescar en modo cliente.
 if (TID !== null) _tkProgramarAutoRefresh();

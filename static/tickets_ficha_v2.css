@@ -1,0 +1,104 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   Tickets 2.0 · ficha en formato Retiros (Daniel 2026-10-27: "más amigable,
+   más grande, enfocado en el formato de Retiros, con tarjetas, con
+   contactos, bien ordenado").
+
+   Se carga DESPUÉS de tickets_ficha.css y solo ajusta la pestaña
+   Información: ningún ID ni función de antes cambia (REGLA #4.2).
+     · Pasos 1-5 con círculo-semáforo (REGLA #15): rojo = por revisar,
+       verde con check = completo, ámbar = falta algo, gris = opcional.
+     · Texto más grande y títulos en minúscula normal (antes .82rem en
+       mayúsculas espaciadas).
+     · Tarjeta «Contactos» con llamar / WhatsApp / correo a un toque (44 px,
+       REGLA #3) y nombres completos, sin cortar (REGLA #15).
+   Paleta ILUS (REGLA #2): rojo #dc2626, verde #16a34a/#dcfce7, ámbar
+   #f59e0b/#fff8e1, gris #6b7280/#f3f4f6.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Texto más grande en toda la pestaña Información ── */
+#pane-info{font-size:1rem;}
+#pane-info .tk-card{padding:22px 24px;}
+#pane-info .tk-card h6{font-size:1.02rem;text-transform:none;letter-spacing:-.005em;font-weight:800;margin-bottom:14px;}
+#pane-info .tk-dl dt{font-size:.72rem;color:#64748b;}
+#pane-info .tk-dl dd{font-size:1.06rem;}
+#pane-info #txtDesc{font-size:1.05rem;line-height:1.65;}
+
+/* ── Paso (cabecera con círculo-semáforo) ── */
+#pane-info .tk-card.tk-paso::before{display:none;}           /* el estado lo dice el círculo, no una franja */
+#pane-info .tk-card.tk-paso{transition:border-color .3s var(--ease-out),background-color .3s var(--ease-out),box-shadow .25s var(--ease-out);}
+#pane-info .tk-card.tk-paso:hover{transform:none;}
+.tk-paso-h{display:flex;align-items:flex-start;gap:14px;width:100%;}
+.tk-paso-c{position:relative;flex-shrink:0;width:42px;height:42px;border-radius:13px;
+  display:inline-flex;align-items:center;justify-content:center;color:#fff;
+  background:linear-gradient(150deg,#ef4444 0%,#b91c1c 100%);
+  box-shadow:0 8px 18px -8px rgba(185,28,28,.55);
+  font-size:1.2rem;font-weight:900;line-height:1;transition:background .3s var(--ease-out),transform .3s var(--ease-out);}
+/* El ícono de check vive DENTRO del h6: anula el «squircle» que
+   tickets_ficha.css le pone a todo <i> de un título. */
+#pane-info .tk-card h6 .tk-paso-c i.tk-paso-ok{display:none;width:auto;height:auto;background:none;color:#fff;font-size:1.35rem;border-radius:0;}
+.tk-paso-t{display:flex;flex-direction:column;gap:3px;min-width:0;padding-top:2px;font-size:1.1rem;color:#0f172a;}
+.tk-paso-sub{display:block;font-size:.86rem;font-weight:700;color:#64748b;letter-spacing:0;line-height:1.35;}
+.tk-paso-sub:empty{display:none;}
+
+.tk-paso.is-ok{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 46%);}
+.tk-paso.is-ok .tk-paso-c{background:linear-gradient(150deg,#22c55e 0%,#15803d 100%);box-shadow:0 10px 22px -8px rgba(22,163,74,.55);}
+.tk-paso.is-ok .tk-paso-n{display:none;}
+#pane-info .tk-paso.is-ok h6 .tk-paso-c i.tk-paso-ok{display:inline-block;}
+.tk-paso.is-ok .tk-paso-sub{color:#166534;}
+.tk-paso.is-ok .tk-paso-c::after{content:'';position:absolute;inset:-4px;border-radius:16px;border:2px solid #16a34a;opacity:0;}
+.tk-paso.is-ok.tk-paso-recien .tk-paso-c::after{animation:tkPasoPulso 1.4s var(--ease-out) 1;}
+@keyframes tkPasoPulso{0%{transform:scale(.86);opacity:.7}100%{transform:scale(1.22);opacity:0}}
+
+.tk-paso.is-warn{border-color:#fcd34d;background:linear-gradient(180deg,#fffbeb 0%,#fff 46%);}
+.tk-paso.is-warn .tk-paso-c{background:linear-gradient(150deg,#fbbf24 0%,#d97706 100%);box-shadow:0 8px 18px -8px rgba(217,119,6,.55);}
+.tk-paso.is-warn .tk-paso-sub{color:#92400e;}
+
+.tk-paso.is-opt .tk-paso-c{background:linear-gradient(150deg,#9ca3af 0%,#6b7280 100%);box-shadow:0 8px 18px -8px rgba(75,85,99,.45);}
+
+/* Enlace a la ficha del cliente, a la derecha del título */
+.tk-paso-link{margin-left:auto;align-self:center;display:inline-flex;align-items:center;gap:6px;
+  min-height:40px;padding:0 14px;border-radius:50px;border:1.5px solid #e5e7eb;background:#fff;
+  color:#0f172a;font-size:.84rem;font-weight:800;text-decoration:none;white-space:nowrap;
+  transition:border-color .2s,color .2s;}
+.tk-paso-link:hover{border-color:#dc2626;color:#dc2626;}
+#pane-info .tk-card h6 .tk-paso-link i{width:auto;height:auto;background:none;color:inherit;font-size:.95rem;}
+
+/* ── Tarjeta «Contactos» ── */
+.tk-contactos{display:flex;flex-direction:column;gap:10px;}
+.tk-ct{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:center;
+  padding:14px 16px;border:1px solid #eef0f3;border-radius:14px;background:#fff;}
+.tk-ct-av{width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#dc2626,#0a0a0a);color:#fff;font-weight:900;font-size:1rem;letter-spacing:.02em;}
+.tk-ct-av.ticket{background:linear-gradient(135deg,#0a0a0a,#374151);}
+.tk-ct-nom{font-size:1.06rem;font-weight:900;color:#0f172a;overflow-wrap:anywhere;line-height:1.25;}
+.tk-ct-meta{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:4px;font-size:.92rem;color:#334155;}
+.tk-ct-meta span{display:inline-flex;align-items:center;gap:5px;overflow-wrap:anywhere;}
+.tk-ct-meta i{color:#94a3b8;}
+.tk-ct-chip{display:inline-block;margin-top:6px;padding:3px 10px;border-radius:50px;background:#f3f4f6;
+  color:#374151;font-size:.74rem;font-weight:800;}
+.tk-ct-chip.ticket{background:#fee2e2;color:#991b1b;}
+.tk-ct-acc{display:flex;gap:8px;}
+.tk-ct-btn{width:44px;height:44px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;
+  border:1.5px solid #e5e7eb;background:#fff;color:#0f172a;font-size:1.15rem;text-decoration:none;
+  transition:border-color .2s,color .2s,background-color .2s;}
+.tk-ct-btn:hover{border-color:#0f172a;}
+.tk-ct-btn.wa:hover{border-color:#16a34a;color:#16a34a;background:#f0fdf4;}
+.tk-ct-btn.tel:hover{border-color:#3b82f6;color:#1d4ed8;background:#eff6ff;}
+.tk-ct-btn.mail:hover{border-color:#dc2626;color:#dc2626;background:#fef2f2;}
+.tk-ct-btn:focus-visible,.tk-paso-link:focus-visible{outline:none;box-shadow:var(--ring);}
+.tk-ct-vacio{padding:16px;border:1.5px dashed #e5e7eb;border-radius:14px;color:#6b7280;font-size:.95rem;line-height:1.5;}
+
+/* ── Celular (REGLA #3) ── */
+@media (max-width:576px){
+  #pane-info .tk-card{padding:18px 16px;}
+  .tk-paso-c{width:38px;height:38px;border-radius:12px;font-size:1.05rem;}
+  .tk-paso-h{flex-wrap:wrap;}
+  .tk-paso-link{margin-left:52px;}
+  .tk-ct{grid-template-columns:auto minmax(0,1fr);}
+  .tk-ct-acc{grid-column:1 / -1;}
+  .tk-ct-btn{flex:1;width:auto;}
+}
+@media (prefers-reduced-motion:reduce){
+  .tk-paso.is-ok.tk-paso-recien .tk-paso-c::after{animation:none;}
+  .tk-paso-c,#pane-info .tk-card.tk-paso{transition:none;}
+}

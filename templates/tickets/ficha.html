@@ -12,6 +12,12 @@
    modal se ve idéntico desde las dos pantallas. Ver el encabezado de
    static/modal_generar_ot.css. #}
 <link rel="stylesheet" href="{{ url_for('static', filename='modal_generar_ot.css') }}">
+{# Tickets 2.0 (27-oct, Daniel: "más amigable, más grande, enfocado en el
+   formato de Retiros, con tarjetas, con contactos, bien ordenado"): pasos
+   numerados con semáforo (rojo → verde, ámbar si falta algo), texto más
+   grande y la tarjeta «Contactos». Va después de tickets_ficha.css: solo
+   ajusta, no reemplaza (todos los IDs y funciones de antes siguen igual). #}
+<link rel="stylesheet" href="{{ url_for('static', filename='tickets_ficha_v2.css') }}">
 
 <div class="tk-hero" id="tkHero">
   <div class="top">
@@ -58,8 +64,8 @@
        taparlo (Daniel: "que se parezca mucho a la parte de retiros"). -->
   <div class="tk-info-grid">
     <div class="tk-info-main">
-      <div class="tk-card">
-        <h6><i class="bi bi-person-vcard"></i>Identificación del Cliente</h6>
+      <div class="tk-card tk-paso" id="pasoCliente">
+        <h6 class="tk-paso-h"><span class="tk-paso-c" aria-hidden="true"><span class="tk-paso-n">1</span><i class="bi bi-check-lg tk-paso-ok"></i></span><span class="tk-paso-t">Identificación del cliente<small class="tk-paso-sub" data-paso-sub></small></span></h6>
 
         <!-- Vista compacta con edición campo por campo: cada dato tiene su propio
              ícono de lápiz — clic convierte SOLO esa fila en un input inline
@@ -92,8 +98,16 @@
             style="display:none;background:#f3f4f6;color:#374151;margin-top:12px;"></span>
         </div>
       </div>
-      <div class="tk-card">
-        <h6><i class="bi bi-exclamation-circle"></i>Problema</h6>
+      {# Paso 2 · Contactos (Tickets 2.0): quien escribió el ticket y los
+         contactos de la ficha del cliente, con llamar / WhatsApp / correo a
+         un toque. Lo pinta static/tickets_ficha_v2.js con d.contactos. #}
+      <div class="tk-card tk-paso" id="pasoContactos">
+        <h6 class="tk-paso-h"><span class="tk-paso-c" aria-hidden="true"><span class="tk-paso-n">2</span><i class="bi bi-check-lg tk-paso-ok"></i></span><span class="tk-paso-t">Contactos<small class="tk-paso-sub" data-paso-sub></small></span>
+          <a class="tk-paso-link" id="contactosFichaCliente" href="#" target="_blank" rel="noopener" style="display:none;"><i class="bi bi-building"></i><span>Ficha del cliente</span></a></h6>
+        <div id="listaContactos" class="tk-contactos" aria-live="polite"></div>
+      </div>
+      <div class="tk-card tk-paso" id="pasoProblema">
+        <h6 class="tk-paso-h"><span class="tk-paso-c" aria-hidden="true"><span class="tk-paso-n">3</span><i class="bi bi-check-lg tk-paso-ok"></i></span><span class="tk-paso-t">Problema<small class="tk-paso-sub" data-paso-sub></small></span></h6>
         <div id="txtTitulo" style="font-size:1.1rem;font-weight:800;color:#0f172a;margin-bottom:8px;display:none;"></div>
         <div id="txtDesc" style="font-size:1rem;color:#374151;white-space:pre-wrap;line-height:1.6;">—</div>
         <div class="tk-chips" id="chipsProblema"></div>
@@ -113,9 +127,9 @@
         </div>
         <div id="garantiaCalculoBox" style="margin-top:10px;padding:10px 12px;border-radius:8px;font-size:.83rem;font-weight:700;"></div>
       </div>
-      <div class="tk-card">
+      <div class="tk-card tk-paso" id="pasoEquipos">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:2px;">
-          <h6 style="margin:0;"><i class="bi bi-tools"></i>Equipo(s)</h6>
+          <h6 class="tk-paso-h" style="margin:0;"><span class="tk-paso-c" aria-hidden="true"><span class="tk-paso-n">4</span><i class="bi bi-check-lg tk-paso-ok"></i></span><span class="tk-paso-t">Equipo(s)<small class="tk-paso-sub" data-paso-sub></small></span></h6>
         </div>
         <!-- Barra de herramientas de Equipo(s): "Generar OT" (movido desde la ex
              pestaña Acciones — Daniel 2026-07-12) primero, luego "Asignar desde
@@ -161,8 +175,8 @@
              integrado dentro de cada fila, sin cambios. -->
         <div id="listaEquipos"></div>
       </div>
-      <div class="tk-card">
-        <h6><i class="bi bi-paperclip"></i>Adjuntos</h6>
+      <div class="tk-card tk-paso" id="pasoAdjuntos">
+        <h6 class="tk-paso-h"><span class="tk-paso-c" aria-hidden="true"><span class="tk-paso-n">5</span><i class="bi bi-check-lg tk-paso-ok"></i></span><span class="tk-paso-t">Fotos y documentos<small class="tk-paso-sub" data-paso-sub></small></span></h6>
         <div id="listaAdjuntosInfo"></div>
       </div>
       {# 🧾 Fase 5 (2026-09-26): si ESTE ticket es el ticket de compra de una
@@ -882,6 +896,7 @@ var TKREP = (function(){
 })();
 </script>
 <script defer src="{{ url_for('static', filename='tickets_ficha.js') }}"></script>
+<script defer src="{{ url_for('static', filename='tickets_ficha_v2.js') }}"></script>
 
 {# 2026-09-04: el wizard completo de OT 2.0, incluido tal cual -- mismo
    markup y mismo JS que usa /ot/ (templates/ot2/panel.html). No se
