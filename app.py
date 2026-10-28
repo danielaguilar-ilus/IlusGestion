@@ -109091,6 +109091,50 @@ def _otrep_compra_eta_valida(eta_txt):
     return eta_txt
 
 
+def _otrep_docs_origen(sols):
+    """Documentos de Random (factura, boleta, nota de venta) de donde nace cada
+    solicitud de una compra: los de su OT (mant_visita_documentos) y los de su
+    ticket (tk_ticket_documentos). {solicitud_id: ["FCV-11439", ...]}.
+
+    Daniel 2026-10-28: «el número de facturas y datos se hereden a las órdenes
+    de compra, cotizaciones y todo». Solo SE LEE y solo va a la descripción
+    INTERNA del ticket de compra (el correo al proveedor jamás lleva cliente,
+    OT ni documentos, ni lo ve un técnico: REGLAS #19 y #26). No toca
+    tk_ticket_documentos ni numero_documento: esas columnas alimentan el
+    candado «documento ya asociado a un ticket»."""
+    try:
+        vids = sorted({int(s["visita_id"]) for s in sols if s.get("visita_id")})
+        tids = sorted({int(s["ticket_id"]) for s in sols if s.get("ticket_id")})
+        por_visita, por_ticket = {}, {}
+        if vids:
+            ph = ",".join(["%s"] * len(vids))
+            for r in mysql_fetchall(
+                    "SELECT visita_id, erp_tido, erp_nudo FROM mant_visita_documentos "
+                    f"WHERE visita_id IN ({ph}) AND origen='erp' AND erp_tido IS NOT NULL AND erp_nudo IS NOT NULL "
+                    "ORDER BY es_principal DESC, id", tuple(vids)) or []:
+                por_visita.setdefault(int(r["visita_id"]), []).append(f"{r['erp_tido']}-{r['erp_nudo']}")
+        if tids:
+            ph = ",".join(["%s"] * len(tids))
+            for r in mysql_fetchall(
+                    "SELECT ticket_id, erp_tido, erp_nudo FROM tk_ticket_documentos "
+                    f"WHERE ticket_id IN ({ph}) AND erp_tido IS NOT NULL AND erp_nudo IS NOT NULL ORDER BY id",
+                    tuple(tids)) or []:
+                por_ticket.setdefault(int(r["ticket_id"]), []).append(f"{r['erp_tido']}-{r['erp_nudo']}")
+        out = {}
+        for s in sols:
+            vistos = []
+            docs = (por_visita.get(int(s["visita_id"]), []) if s.get("visita_id") else []) \
+                + (por_ticket.get(int(s["ticket_id"]), []) if s.get("ticket_id") else [])
+            for d in docs:
+                if d not in vistos:
+                    vistos.append(d)
+            out[s["id"]] = vistos
+        return out
+    except Exception as e:
+        print(f"[otrep] docs de origen: {type(e).__name__}", flush=True)
+        return {}
+
+
 def _otrep_crear_compra():
     """Crea la Compra + su ticket agrupador por proveedor (Fase 5). Body:
       solicitud_ids  [ids] -- obligatorio
@@ -109175,15 +109219,23 @@ def _otrep_crear_compra():
     # 🔒 Descripción INTERNA del ticket (para gestión/trazabilidad): esta SÍ
     # trae cliente/OT -- el correo al proveedor (_otrep_compra_enviar_correo)
     # es el que jamás debe incluirlos.
+    docs_origen = _otrep_docs_origen(sols)
     detalle_interno = "\n".join(
         f"  · {s['repuesto_nombre']} × {s['cantidad']:g}"
         + (f" (SKU {s['repuesto_sku']})" if s.get("repuesto_sku") else "")
         + f" — {s.get('cliente_nombre') or ('Reposición de stock propio' if s.get('es_reposicion') else 'sin cliente')}"
         + f" / {s.get('numero_ot') or s.get('numero_ticket') or ('solicitud #' + str(s['id']))}"
+        + (f" · doc. {', '.join(docs_origen[s['id']])}" if docs_origen.get(s["id"]) else "")
         for s in sols)
+    _docs_todos = []
+    for _s in sols:
+        for _d in docs_origen.get(_s["id"], []):
+            if _d not in _docs_todos:
+                _docs_todos.append(_d)
     descripcion = (f"Compra agrupada a {proveedor['nombre']} ({n_items} solicitud"
                    f"{'es' if n_items != 1 else ''}).\n{detalle_interno}\n"
-                   f"Gestionar en Repuestos → Solicitudes → Compras.")
+                   + (f"Documentos de origen (heredados de las OT y tickets): {', '.join(_docs_todos)}.\n" if _docs_todos else "")
+                   + f"Gestionar en Repuestos → Solicitudes → Compras.")
     conn = None
     try:
         conn = get_mysql()
