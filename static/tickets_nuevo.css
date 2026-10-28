@@ -1,0 +1,217 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   Tickets 2.0 (27-oct-2026) · modal «Nuevo Ticket» con el MISMO formato del
+   modal «Nuevo retiro interno» de Retiros (templates/retiros/internal_dashboard.html,
+   prefijo .nri-*). Daniel: «los objetos, las formas, el mismo formato, eso
+   quiero que lo heredes».
+
+   Convención del proyecto: cada modal que adopta el patrón usa su propio
+   prefijo (.nri-* en Retiros, .lev-* en OT). Acá es .ntw-* (nuevo ticket
+   wizard). Los estilos .nt-* de siempre (static/tickets_list.css: pastillas
+   de tipo, buscador, adjuntos, validación) se siguen usando tal cual.
+   Paleta ILUS (REGLA #2) · mobile-first (REGLA #3) · nombres completos,
+   nunca truncados (REGLA #15).
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Marco del modal (igual que Retiros: borde rojo, cabecera negra) ── */
+#ntModal .modal-content{border:2px solid var(--ilus-red,#dc2626);box-shadow:0 0 40px rgba(0,0,0,.25);border-radius:14px;overflow:hidden}
+#ntModal .modal-header{background:linear-gradient(135deg,var(--ilus-black,#0a0a0a) 0%,#1a1a1a 100%);color:#fff;border-bottom:3px solid var(--ilus-red,#dc2626)}
+#ntModal .modal-body{font-size:1rem;background:#fff}
+#ntModal .modal-footer{background:#fafafa}
+#ntModal .modal-footer .btn{font-size:.95rem;min-height:46px;padding:.5rem 1.1rem}
+#ntModal .modal-footer .btn:disabled{opacity:.55;cursor:not-allowed}
+
+/* Progreso global en la cabecera: «N de M pasos listos» + barra + «· N avisos» */
+.ntw-progreso{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto;margin-right:12px;font-size:.74rem;font-weight:700;color:#e5e7eb}
+.ntw-progreso .bar{width:120px;height:7px;border-radius:50px;background:rgba(255,255,255,.18);overflow:hidden}
+.ntw-progreso .bar > span{display:block;height:100%;width:0;background:#16a34a;border-radius:50px;transition:width .3s ease}
+.ntw-progreso .avisos{color:#fbbf24}
+.ntw-progreso .avisos:empty{display:none}
+
+/* Aviso informativo arriba del formulario */
+.ntw-info{display:flex;align-items:flex-start;gap:10px;background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;padding:10px 14px;font-size:.84rem;color:#1e3a8a;margin-bottom:14px;line-height:1.4}
+.ntw-info > i{color:#2563eb;font-size:1.05rem;flex-shrink:0;margin-top:1px}
+.ntw-info strong{color:#0a0a0a}
+
+/* ── Tarjeta de paso con semáforo rojo → ámbar → verde ── */
+.ntw-step{margin:0 0 14px;padding:16px 18px;background:#fff;border:1.5px solid #e5e7eb;border-radius:14px;box-shadow:0 1px 2px rgba(0,0,0,.03);
+  transition:border-color .25s ease,background .25s ease,box-shadow .25s ease}
+.ntw-step.is-complete{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#ffffff 55%);box-shadow:0 1px 0 rgba(255,255,255,.7) inset,0 6px 18px -10px rgba(22,163,74,.35)}
+.ntw-step.is-warn{border-color:#f59e0b;background:linear-gradient(180deg,#fffbeb 0%,#ffffff 55%);box-shadow:0 1px 0 rgba(255,255,255,.7) inset,0 6px 18px -10px rgba(245,158,11,.4)}
+.ntw-step-header{display:flex;align-items:flex-start;gap:12px;margin-bottom:10px}
+.ntw-step-circle-wrap{display:flex;flex-direction:column;align-items:center;gap:3px;flex-shrink:0;min-width:46px}
+.ntw-step-circle-label{font-size:.62rem;font-weight:900;letter-spacing:.1em;text-transform:uppercase;color:var(--ilus-red,#dc2626);line-height:1}
+.ntw-step.is-complete .ntw-step-circle-label{color:#16a34a}
+.ntw-step.is-warn .ntw-step-circle-label{color:#b45309}
+.ntw-step-circle{width:42px;height:42px;border-radius:50%;background:var(--ilus-red,#dc2626);color:#fff;display:flex;align-items:center;justify-content:center;
+  font-weight:900;font-size:1.15rem;box-shadow:0 4px 10px rgba(220,38,38,.3);position:relative;border:2px solid #fff;transition:all .3s cubic-bezier(.4,0,.2,1)}
+.ntw-step.is-complete .ntw-step-circle{background:#16a34a;box-shadow:0 4px 10px rgba(22,163,74,.32);transform:scale(1.04)}
+.ntw-step.is-complete .ntw-step-circle::after{content:'';position:absolute;inset:-5px;border-radius:50%;border:2px solid #16a34a;opacity:.35;animation:ntwPulseGreen 1.4s ease-in-out 1}
+@keyframes ntwPulseGreen{0%{transform:scale(.85);opacity:.7}100%{transform:scale(1.25);opacity:0}}
+.ntw-step-circle .ntw-step-check{display:none;font-size:1.1rem;font-weight:900}
+.ntw-step.is-complete .ntw-step-circle .ntw-step-num{display:none}
+.ntw-step.is-complete .ntw-step-circle .ntw-step-check{display:block}
+.ntw-step.is-warn .ntw-step-circle{background:#f59e0b;box-shadow:0 4px 10px rgba(245,158,11,.35)}
+.ntw-step.is-warn .ntw-step-circle .ntw-step-num{display:none}
+.ntw-step.is-warn .ntw-step-circle::before{content:'!';font-size:1.25rem;font-weight:900;line-height:1}
+.ntw-step-titles{flex:1;min-width:0;padding-top:2px}
+.ntw-step-title{margin:0;font-size:1.12rem;font-weight:800;color:#0a0a0a;display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px}
+.ntw-step-sub{margin:2px 0 0;font-size:.88rem;color:#374151;line-height:1.4}
+.ntw-step-opt{font-weight:600;text-transform:none;color:#6b7280;font-size:.78rem}
+/* Línea de estado bajo el subtítulo: «Falta: …» en rojo mientras falte algo */
+.ntw-step-estado{display:flex;align-items:flex-start;flex-wrap:wrap;gap:4px 6px;margin-top:5px;font-size:.88rem;font-weight:700;line-height:1.35;color:#b91c1c;word-break:break-word}
+.ntw-step-estado i{flex-shrink:0;margin-top:1px}
+.ntw-step-estado:empty{display:none}
+.ntw-step.is-complete .ntw-step-estado{color:#15803d}
+.ntw-step.is-warn .ntw-step-estado{color:#b45309}
+.ntw-step.ntw-flash{animation:ntwFlashRed 1.1s ease-in-out 1}
+@keyframes ntwFlashRed{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}35%{box-shadow:0 0 0 5px rgba(220,38,38,.35);border-color:#dc2626}}
+@media(prefers-reduced-motion:reduce){.ntw-step{transition:none}.ntw-step.is-complete .ntw-step-circle::after{animation:none}.ntw-step.ntw-flash{animation:none}}
+
+/* Avisos con acción dentro de un paso (ámbar) */
+.ntw-avisos{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.ntw-avisos:empty{display:none}
+.ntw-aviso{display:flex;align-items:flex-start;flex-wrap:wrap;gap:6px 10px;background:#fffbeb;border:1.5px solid #fde68a;border-left:4px solid #f59e0b;border-radius:10px;padding:8px 12px;font-size:.84rem;color:#78350f;line-height:1.4}
+.ntw-aviso > i{color:#b45309;font-size:1rem;flex-shrink:0;margin-top:1px}
+.ntw-aviso .txt{flex:1;min-width:200px;word-break:break-word}
+.ntw-aviso .txt strong{color:#0a0a0a}
+.ntw-aviso .acts{display:flex;gap:6px;flex-wrap:wrap}
+.ntw-aviso-btn{background:#fff;color:#374151;border:1px solid #d1d5db;border-radius:8px;padding:5px 10px;min-height:36px;font-size:.78rem;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:4px;transition:all .15s}
+.ntw-aviso-btn:hover{background:#f9fafb;border-color:#9ca3af}
+.ntw-aviso-btn.is-primary{background:#16a34a;color:#fff;border-color:#16a34a}
+.ntw-aviso-btn.is-primary:hover{background:#15803d}
+
+/* ── Acción grande «+ Asociar una OT» / «+ Agregar factura o boleta» ── */
+.ntw-add{width:100%;display:flex;align-items:center;gap:14px;margin-top:4px;padding:16px 18px;min-height:76px;background:#fff;border:2px dashed #fca5a5;border-radius:14px;cursor:pointer;text-align:left;
+  transition:border-color .18s ease,background .18s ease,box-shadow .18s ease,transform .18s ease}
+.ntw-add:hover{border-color:var(--ilus-red,#dc2626);background:#fef2f2;transform:translateY(-1px);box-shadow:0 10px 22px -14px rgba(220,38,38,.6)}
+.ntw-add:focus-visible{outline:3px solid rgba(220,38,38,.35);outline-offset:2px}
+.ntw-add-ico{width:48px;height:48px;border-radius:50%;background:var(--ilus-red,#dc2626);color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.45rem;flex-shrink:0;
+  box-shadow:0 4px 12px rgba(220,38,38,.35);animation:ntwAddPulse 2.2s ease-in-out infinite}
+@keyframes ntwAddPulse{0%,100%{box-shadow:0 4px 12px rgba(220,38,38,.35),0 0 0 0 rgba(220,38,38,.28)}50%{box-shadow:0 4px 12px rgba(220,38,38,.35),0 0 0 9px rgba(220,38,38,0)}}
+.ntw-add-txt{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
+.ntw-add-txt strong{font-size:1.12rem;font-weight:900;color:#0a0a0a;line-height:1.2}
+.ntw-add-txt small{font-size:.86rem;color:#374151;line-height:1.35}
+.ntw-add-go{color:var(--ilus-red,#dc2626);font-size:1.25rem;flex-shrink:0}
+.ntw-add.is-otra{min-height:58px;padding:10px 16px;border-color:#e5e7eb;margin-top:10px}
+.ntw-add.is-otra .ntw-add-ico{width:38px;height:38px;font-size:1.15rem;animation:none}
+.ntw-add.is-otra .ntw-add-txt strong{font-size:1rem}
+.ntw-add.is-on{border-style:solid;border-color:#f59e0b;background:#fffbeb}
+.ntw-regla{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:.86rem;font-weight:700;color:#374151}
+.ntw-regla i{color:var(--ilus-red,#dc2626);flex-shrink:0}
+@media(prefers-reduced-motion:reduce){.ntw-add-ico{animation:none}}
+
+/* Buscador de OT desplegable bajo el botón (mismo dropdown .nt-ac del modal) */
+.ntw-ot-search{margin-top:10px;padding:12px 14px;background:#f9fafb;border:1px solid #f1f5f9;border-radius:12px}
+.ntw-ot-search .nt-ac{max-height:300px}
+.ntw-ot-item{display:flex;flex-direction:column;gap:2px}
+.ntw-ot-item .num{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:800;color:var(--ilus-red,#dc2626)}
+.ntw-ot-item .cli{font-weight:700;color:#0a0a0a}
+.ntw-ot-item .meta{font-size:.76rem;color:#4b5563}
+.ntw-ot-item .meta .lock{color:#92400e;font-weight:800}
+
+/* Tarjetas de lo ya asociado (OT / documentos) — mismo .nri-doc-card de Retiros */
+.ntw-list-title{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:14px 0 8px;font-size:.82rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#111827}
+.ntw-list-title i{color:var(--ilus-red,#dc2626);margin-right:5px}
+.ntw-count{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;margin-left:6px;border-radius:50px;background:#0a0a0a;color:#fff;font-size:.66rem;font-weight:800}
+.ntw-docs-list{display:flex;flex-direction:column;gap:8px}
+.ntw-docs-list:empty{display:none}
+.ntw-doc-card{background:linear-gradient(180deg,#f0fdf4 0%,#fff 70%);border:1.5px solid #86efac;border-radius:12px;padding:12px 14px;display:flex;flex-wrap:wrap;align-items:center;gap:10px;transition:border-color .15s,box-shadow .15s}
+.ntw-doc-card:hover{border-color:#16a34a;box-shadow:0 4px 10px rgba(0,0,0,.05)}
+.ntw-doc-num{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:800;color:var(--ilus-red,#dc2626);font-size:1.05rem;flex-shrink:0;min-width:120px;display:flex;flex-direction:column;line-height:1.15}
+.ntw-doc-num small{font-family:inherit;font-size:.74rem;color:#4b5563;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.ntw-doc-meta{flex:1;min-width:160px;display:flex;flex-direction:column;gap:2px;word-break:break-word}
+.ntw-doc-meta .ddate{font-size:.8rem;color:#4b5563;text-transform:uppercase;letter-spacing:.04em;font-weight:600}
+.ntw-doc-meta .dcli{font-size:.98rem;color:#0a0a0a;font-weight:700}
+.ntw-doc-meta .dlin{font-size:.84rem;color:#374151}
+.ntw-pill{background:#f3f4f6;color:#374151;border:1px solid #e5e7eb;border-radius:50px;padding:3px 9px;font-weight:700;font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.ntw-pill.ok{background:#dcfce7;color:#166534;border-color:#86efac}
+.ntw-pill.warn{background:#fef3c7;color:#92400e;border-color:#fde68a}
+.ntw-pill.ot{background:#0a0a0a;color:#fff;border-color:#0a0a0a}
+.ntw-doc-quitar{background:#fff;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:6px 10px;min-height:36px;font-size:.74rem;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:4px;flex-shrink:0;transition:all .15s}
+.ntw-doc-quitar:hover{background:#fee2e2;border-color:#dc2626}
+
+/* ── Paso 2 · Cliente: «Editar manualmente», campos vitrina y chips ERP ── */
+.ntw-edit-manual-btn{background:none;border:1px solid transparent;color:#6b7280;font-size:.72rem;font-weight:700;text-transform:none;letter-spacing:0;padding:3px 9px;border-radius:7px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:4px;vertical-align:middle;transition:all .15s;min-height:32px}
+.ntw-edit-manual-btn:hover{background:#f3f4f6;color:#374151;border-color:#e5e7eb}
+.ntw-edit-manual-btn:disabled{cursor:default;opacity:.85}
+.ntw-edit-manual-btn.is-on{background:#fff8e1;color:#92400e;border-color:#fde68a}
+.ntw-manual-badge{display:inline-flex;align-items:center;gap:5px;background:#fff8e1;color:#92400e;border:1px solid #fde68a;border-radius:50px;padding:2px 9px;font-size:.66rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;vertical-align:middle}
+.ntw-locked{background:#f3f4f6!important;color:#4b5563;cursor:not-allowed}
+.ntw-hint{font-size:.84rem;color:#4b5563;margin:0 0 10px;line-height:1.4}
+.ntw-sub{margin-top:14px;padding-top:12px;border-top:1px dashed #e5e7eb}
+.ntw-sub-title{font-size:.92rem;font-weight:800;color:#0a0a0a;margin:0 0 2px;display:flex;align-items:center;gap:6px}
+.ntw-sub-title i{color:var(--ilus-red,#dc2626)}
+.ntw-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.ntw-chips:empty{display:none}
+.ntw-chip{display:inline-flex;align-items:center;flex-wrap:wrap;gap:6px;background:#f0fdf4;border:1px solid #86efac;color:#166534;border-radius:10px;padding:7px 11px;min-height:38px;font-size:.78rem;font-weight:600;cursor:pointer;text-align:left;transition:all .15s;max-width:100%}
+.ntw-chip:hover{background:#dcfce7;border-color:#16a34a}
+.ntw-chip .lbl{color:#15803d;font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;font-weight:800}
+.ntw-chip .lbl em{font-style:normal;text-transform:none;letter-spacing:0;color:#4b7a5a;font-weight:600}
+.ntw-chip .val{color:#0a0a0a;font-weight:800;word-break:break-all}
+.ntw-chip .usar{color:#fff;background:#16a34a;border-radius:50px;padding:2px 9px;font-size:.68rem;font-weight:800}
+.ntw-precargado{box-shadow:0 0 0 3px rgba(22,163,74,.25)!important;border-color:#16a34a!important;transition:box-shadow .6s}
+
+/* ── Paso 3 · Productos: filas con checkbox, origen y nota por equipo ── */
+.ntw-eq-tools{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:4px 0 8px}
+.ntw-btn-outline{background:#fff;color:#374151;border:1px solid #d1d5db;border-radius:8px;padding:6px 12px;min-height:44px;font-size:.78rem;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .15s}
+.ntw-btn-outline:hover{background:#f9fafb;border-color:#9ca3af}
+.ntw-btn-outline:disabled{opacity:.5;cursor:not-allowed}
+.ntw-eq-row{display:flex;align-items:flex-start;gap:10px;border:1.5px solid #e5e7eb;border-radius:12px;padding:10px 12px;margin-bottom:8px;background:#fff;cursor:pointer;transition:border-color .15s,background .15s}
+.ntw-eq-row.is-on{border-color:#86efac;background:linear-gradient(180deg,#f0fdf4 0%,#fff 70%)}
+.ntw-eq-row .chk{width:22px;height:22px;margin:2px 0 0;flex-shrink:0;cursor:pointer;accent-color:#16a34a}
+.ntw-eq-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.ntw-eq-name{font-size:.95rem;font-weight:700;color:#0a0a0a;line-height:1.3;word-break:break-word}
+.ntw-eq-meta{display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:.76rem;color:#4b5563}
+.ntw-eq-meta .sku{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#374151;font-weight:700}
+.ntw-eq-row .nt-eq-notas{margin-top:4px}
+.ntw-eq-quitar{background:none;border:none;color:#b91c1c;font-size:1.05rem;padding:6px 8px;min-height:36px;cursor:pointer;flex-shrink:0;border-radius:8px}
+.ntw-eq-quitar:hover{background:#fee2e2}
+.ntw-empty{font-size:.86rem;color:#6b7280;padding:10px 2px;display:flex;align-items:center;gap:8px}
+.ntw-empty i{color:#9ca3af}
+
+/* ── Paso 4 · Motivo principal: chips sugeridos según el tipo (REGLA #32) ── */
+.ntw-motivos{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 8px}
+.ntw-motivos:empty{display:none}
+.ntw-motivo-chip{border:1.5px solid #e5e7eb;border-radius:50px;padding:7px 13px;min-height:38px;font-size:.8rem;font-weight:700;color:#374151;background:#fff;cursor:pointer;transition:all .12s;text-align:left}
+.ntw-motivo-chip:hover{border-color:var(--ilus-red,#dc2626);color:var(--ilus-red,#dc2626)}
+.ntw-motivo-chip.sel{border-color:var(--ilus-red,#dc2626);background:#fef2f2;color:var(--ilus-red,#dc2626);box-shadow:inset 0 0 0 1px var(--ilus-red,#dc2626)}
+.ntw-motivo-origen{font-size:.74rem;color:#6b7280;margin-bottom:4px;display:flex;align-items:center;gap:5px}
+.ntw-motivo-origen i{color:#f59e0b}
+
+/* ── Paso 5 · Gestión ── */
+.ntw-resp-yo{font-size:.76rem;color:#166534;font-weight:700;margin-top:4px;display:none}
+.ntw-resp-yo.show{display:block}
+
+/* Legibilidad (mismo criterio que Retiros): controles de 44px y letra grande */
+#ntModal .form-control,#ntModal .form-select{font-size:1rem;min-height:44px;color:#0a0a0a}
+#ntModal .form-control:not(.is-invalid):not(.is-valid),#ntModal .form-select{border-color:#9ca3af}
+#ntModal .form-control::placeholder{color:#6b7280}
+#ntModal textarea.form-control{min-height:84px}
+#ntModal .nt-field label{font-size:.9rem;color:#111827}
+#ntModal .nt-eq-notas{min-height:40px;font-size:.9rem}
+#ntModal .nt-ac-item{font-size:.92rem;padding:10px 12px}
+#ntModal .nt-tipo-pill{min-height:66px;font-size:.78rem}
+
+/* ── Celular (REGLA #3): pantalla completa, botones a todo el ancho ── */
+@media(max-width:768px){
+  #ntModal .modal-header{flex-wrap:wrap}
+  .ntw-progreso{margin:6px 0 0;width:100%}
+  .ntw-progreso .bar{flex:1;min-width:80px}
+  .ntw-step{padding:14px}
+  .ntw-step-title{font-size:1.02rem}
+  .ntw-add{padding:14px}
+  .ntw-add-txt strong{font-size:1rem}
+  .ntw-doc-card{padding:12px}
+  .ntw-doc-num{min-width:0;width:100%}
+  .ntw-doc-meta{min-width:0;flex-basis:100%}
+  .ntw-doc-quitar{width:100%;justify-content:center;min-height:44px}
+  .ntw-chip{width:100%}
+  .ntw-aviso .acts{width:100%}
+  .ntw-aviso-btn{flex:1;justify-content:center;min-height:44px}
+  .ntw-eq-tools{flex-direction:column;align-items:stretch}
+  .ntw-btn-outline{justify-content:center}
+  .ntw-motivo-chip{min-height:44px}
+  #ntModal .form-control,#ntModal .form-select{font-size:16px}
+  #ntModal .modal-footer .btn{flex:1 1 auto}
+}
