@@ -24,7 +24,10 @@ let tkSort = 'updated_at'; // columna activa (whitelist backend); default 'updat
 let tkDir = 'desc';       // 'desc' | 'asc'
 let tkPage = 1;
 let tkLimit = 50;         // default 50 (selector 10/25/50/100)
-let tkHoy = false;        // toggle boton "Hoy" (manda hoy=1)
+// Filtros con selección múltiple (Daniel 2026-10-28): estado se combina con los
+// chips (tkEstadoChip = «a,b,c» | '__activos__' | ''), el resto con menús.
+const tkF = { tipo: [], prioridad: [], resp: [] };
+let tkFecha = { preset: '', desde: '', hasta: '' }; // preset: '' hoy ayer 7d 30d mes mespasado rango
 let _tkCache = {};        // id → ticket de la ultima carga (acciones por fila)
 
 // El servidor ya envía las fechas formateadas en hora Chile (Regla #6, "%d/%m/%Y %H:%M").
@@ -46,19 +49,17 @@ function debounce(fn,ms){ let t; return function(){ clearTimeout(t); const a=arg
 // conOrden=false para el reporte SLA (no acepta sort/dir).
 function tkParamsFiltros(conOrden){
   const p = new URLSearchParams();
-  const tk = document.getElementById('fTicket').value.trim(); if(tk) p.set('ticket', tk);
+  // Buscador GENERAL (Daniel 2026-10-28): una sola caja; el backend la busca en
+  // N° de ticket / id, cliente, contacto, RUT, correo, teléfono, sucursal, motivo y texto.
   const q = document.getElementById('fQ').value.trim(); if(q) p.set('q', q);
-  const rut = document.getElementById('fRut').value.trim(); if(rut) p.set('rut', rut);
-  // Tickets 2.0: el chip de estado (Activos/Todos/…) manda sobre el select.
-  const e = (typeof tkEstadoChip !== 'undefined' && tkEstadoChip) || document.getElementById('fEstado').value; if(e) p.set('estado', e);
-  const t = document.getElementById('fTipo').value; if(t) p.set('tipo', t);
-  const pr = document.getElementById('fPrio').value; if(pr) p.set('prioridad', pr);
-  const resp = document.getElementById('fResp').value; if(resp) p.set('asignado_a', resp);
-  if(tkHoy){ p.set('hoy','1'); }
-  else{
-    const fd = document.getElementById('fDesde').value; if(fd) p.set('fecha_desde', fd);
-    const fh = document.getElementById('fHasta').value; if(fh) p.set('fecha_hasta', fh);
-  }
+  // Selección múltiple: UN parámetro con los valores juntos (responsables con «|»).
+  if(tkEstadoChip) p.set('estado', tkEstadoChip);
+  if(tkF.tipo.length) p.set('tipo', tkF.tipo.join(','));
+  if(tkF.prioridad.length) p.set('prioridad', tkF.prioridad.join(','));
+  if(tkF.resp.length) p.set('asignado_a', tkF.resp.join('|'));
+  const fr = tkFechaRango();
+  if(fr.desde) p.set('fecha_desde', fr.desde);
+  if(fr.hasta) p.set('fecha_hasta', fr.hasta);
   if(typeof tkSla !== 'undefined' && tkSla) p.set('sla', tkSla);
   if(conOrden && tkSort){ p.set('sort', tkSort); p.set('dir', tkDir); }
   return p;
@@ -163,6 +164,8 @@ async function cargarTickets(){
   _set('kpiEsperando', data.kpis.sla_esperando);
   _set('kpiSinAsignar', data.kpis.sin_asignar);
   tkMarcarKpiActivo();
+  const cu = document.getElementById('tkfCuenta');
+  if(cu){ const n = data.total || 0; cu.textContent = n + (n === 1 ? ' ticket' : ' tickets'); }
   const estEl = document.getElementById('tkEstados');
   if(estEl){ estEl.innerHTML = tkEstadosHtml(data.estados || {}); }
   const semEl = document.getElementById('tkSemaforo');
@@ -414,31 +417,53 @@ function tkSemaforoHtml(k){
 }
 window.tkSemaforo = function(v){ tkSla = (tkSla === v ? '' : v); tkPage = 1; cargarTickets(); };
 
-// ── Chips de estado con su conteo (filtros rápidos con un clic) ──
+// ── Chips de estado (mismo lenguaje del Monitor de Retiros: ícono + conteo,
+//    el activo en negro con el número en rojo). «Activos» y «Todos» son
+//    atajos exclusivos; los estados reales se COMBINAN (clic = sumar o quitar). ──
 const TK_EST_ORDEN = ['open','in_progress','pending','ot_pending_approval','ot_generated','ot_in_progress','resolved','closed','cancelado'];
+const TK_EST_ICONO = {
+  open:'bi-inbox', in_progress:'bi-gear', pending:'bi-hourglass-split',
+  ot_pending_approval:'bi-clipboard-check', ot_generated:'bi-wrench-adjustable',
+  ot_in_progress:'bi-tools', resolved:'bi-check-circle', closed:'bi-lock', cancelado:'bi-x-circle'
+};
+function tkEstadoSel(){
+  return (tkEstadoChip && tkEstadoChip.indexOf('__') !== 0) ? tkEstadoChip.split(',').filter(Boolean) : [];
+}
 function tkEstadosHtml(cnt){
-  const chip = function(v, lbl, n, ic){
-    return '<button type="button" class="tk-est-chip'+(tkEstadoChip===v?' on':'')+'" onclick="tkEstado(\''+v+'\')">'
-      + (ic?'<i class="bi '+ic+'"></i>':'') + esc(lbl) + ' <b>'+(n||0)+'</b></button>';
+  const sel = tkEstadoSel();
+  const chip = function(v, lbl, n, ic, on, tip){
+    return '<button type="button" class="rm-chip'+(on?' is-active':'')+(!n && !on ? ' is-zero':'')+'" data-tk-est="'+v+'"'
+      + ' aria-pressed="'+(on?'true':'false')+'"'+(tip?' title="'+esc(tip)+'"':'')+'>'
+      + '<i class="bi '+ic+'"></i>'+esc(lbl)+' <span class="n">'+(n||0)+'</span></button>';
   };
-  let h = chip('__activos__', 'Activos', cnt.__activos__, 'bi-lightning-charge-fill') + chip('', 'Todos', cnt.__todos__, 'bi-list-ul');
-  TK_EST_ORDEN.forEach(function(e){ if(cnt[e]) h += chip(e, ESTADO_LABEL[e] || e, cnt[e], ''); });
+  let h = chip('__activos__', 'Activos', cnt.__activos__, 'bi-lightning-charge', tkEstadoChip==='__activos__',
+      'Todo lo que sigue en marcha (no incluye resueltos, cerrados ni cancelados)')
+    + chip('', 'Todos', cnt.__todos__, 'bi-list-ul', tkEstadoChip==='', 'Todos los tickets, incluidos los cerrados');
+  TK_EST_ORDEN.forEach(function(e){
+    h += chip(e, ESTADO_LABEL[e] || e, cnt[e], TK_EST_ICONO[e] || 'bi-circle', sel.indexOf(e) >= 0, 'Clic para sumar o quitar este estado');
+  });
   return h;
 }
 window.tkEstado = function(v){
-  tkEstadoChip = v;
-  const sel = document.getElementById('fEstado');
-  if(sel) sel.value = (v && v.indexOf('__') !== 0) ? v : '';
-  tkPage = 1; cargarTickets();
+  if(v === '' || v.indexOf('__') === 0){ tkEstadoChip = v; }
+  else{
+    const sel = tkEstadoSel(), i = sel.indexOf(v);
+    if(i >= 0) sel.splice(i, 1); else sel.push(v);
+    tkEstadoChip = sel.length ? sel.join(',') : '__activos__';
+  }
+  tkPage = 1; tkRenderFiltros(); cargarTickets();
 };
+document.getElementById('tkEstados').addEventListener('click', function(ev){
+  const b = ev.target.closest('[data-tk-est]'); if(b) tkEstado(b.getAttribute('data-tk-est'));
+});
 
 // ── Tarjetas KPI (mismo patrón del Monitor de Retiros): clic = filtrar la
 //    tabla; otro clic en la misma tarjeta quita el filtro. ──
 function tkMarcarKpiActivo(){
-  const resp = (document.getElementById('fResp')||{}).value || '';
   document.querySelectorAll('#tkKpis [data-tk-filtro]').forEach(function(el){
     const f = el.getAttribute('data-tk-filtro').split(':');
-    const on = (f[0] === 'sla' && tkSla === f[1]) || (f[0] === 'resp' && resp === f[1]);
+    const on = (f[0] === 'sla' && tkSla === f[1])
+      || (f[0] === 'resp' && tkF.resp.length === 1 && tkF.resp[0] === f[1]);
     el.classList.toggle('is-active', !!on);
     el.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
@@ -447,8 +472,8 @@ function tkKpiFiltrar(el){
   const f = el.getAttribute('data-tk-filtro').split(':');
   if(f[0] === 'sla'){ tkSemaforo(f[1]); return; }
   if(f[0] === 'resp'){
-    const sel = document.getElementById('fResp');
-    sel.value = (sel.value === f[1] ? '' : f[1]);
+    const ya = (tkF.resp.length === 1 && tkF.resp[0] === f[1]);
+    tkF.resp = ya ? [] : [f[1]];
     tkFiltroCambio();
   }
 }
@@ -460,21 +485,170 @@ document.querySelectorAll('#tkKpis [data-tk-filtro]').forEach(function(el){
 });
 
 // Cualquier cambio de filtro resetea a la pagina 1 (el resultado cambia).
-function tkFiltroCambio(){ tkPage = 1; cargarTickets(); }
+function tkFiltroCambio(){ tkPage = 1; tkRenderFiltros(); cargarTickets(); }
 function debounced(){ clearTimeout(_tkTimer); _tkTimer = setTimeout(tkFiltroCambio, 350); }
-['fTicket','fQ','fRut'].forEach(function(id){ document.getElementById(id).addEventListener('input', debounced); });
-document.getElementById('fEstado').addEventListener('change', function(){ tkEstadoChip = this.value; });
-['fEstado','fTipo','fPrio','fResp','fDesde','fHasta'].forEach(function(id){
-  document.getElementById(id).addEventListener('change', tkFiltroCambio);
+document.getElementById('fQ').addEventListener('input', debounced);
+document.getElementById('fQLimpiar').addEventListener('click', function(){
+  const q = document.getElementById('fQ'); q.value = ''; q.focus(); tkFiltroCambio();
+});
+// Atajo «/» = ir a la búsqueda (igual que el Monitor de Retiros).
+document.addEventListener('keydown', function(ev){
+  if(ev.key !== '/' || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  const ae = document.activeElement, t = ae && ae.tagName;
+  if(t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || (ae && ae.isContentEditable) || document.querySelector('.modal.show')) return;
+  ev.preventDefault(); document.getElementById('fQ').focus();
+});
+
+// ── Fecha: atajos calculados en HORA CHILE (se recalculan en cada carga, así
+//    «Hoy» sigue siendo hoy aunque la pestaña quede abierta de un día para otro). ──
+function tkHoyChile(){
+  try{ return new Date().toLocaleDateString('en-CA', {timeZone:'America/Santiago'}); }
+  catch(e){ return new Date().toISOString().slice(0,10); }
+}
+function tkSumarDias(iso, n){
+  const d = new Date(iso+'T12:00:00Z'); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10);
+}
+function tkFechaRango(){
+  const h = tkHoyChile(), pr = tkFecha.preset;
+  if(pr === 'hoy') return {desde:h, hasta:h};
+  if(pr === 'ayer'){ const a = tkSumarDias(h,-1); return {desde:a, hasta:a}; }
+  if(pr === '7d') return {desde:tkSumarDias(h,-6), hasta:h};
+  if(pr === '30d') return {desde:tkSumarDias(h,-29), hasta:h};
+  if(pr === 'mes') return {desde:h.slice(0,8)+'01', hasta:h};
+  if(pr === 'mespasado'){
+    const ini = h.slice(0,8)+'01', fin = tkSumarDias(ini,-1);
+    return {desde:fin.slice(0,8)+'01', hasta:fin};
+  }
+  if(pr === 'rango') return {desde:tkFecha.desde, hasta:tkFecha.hasta};
+  return {desde:'', hasta:''};
+}
+const TK_FECHA_LBL = {hoy:'Hoy', ayer:'Ayer', '7d':'Últimos 7 días', '30d':'Últimos 30 días', mes:'Este mes', mespasado:'Mes pasado'};
+function tkFechaCorta(iso){ return iso ? iso.slice(8,10)+'/'+iso.slice(5,7)+'/'+iso.slice(0,4) : '…'; }
+function tkFechaTexto(){
+  if(!tkFecha.preset) return '';
+  if(tkFecha.preset !== 'rango') return TK_FECHA_LBL[tkFecha.preset] || '';
+  if(!tkFecha.desde && !tkFecha.hasta) return '';
+  return tkFechaCorta(tkFecha.desde)+' – '+tkFechaCorta(tkFecha.hasta);
+}
+
+// ── Menús desplegables (Fecha · Responsable · Tipo · Prioridad) ──
+const TK_DD_LISTA = {resp:'tkfListaResp', tipo:'tkfListaTipo', prioridad:'tkfListaPrio'};
+function tkCerrarMenus(salvo){
+  document.querySelectorAll('#tkFiltros .tkf-dd').forEach(function(dd){
+    if(dd === salvo) return;
+    dd.querySelector('.tkf-menu').hidden = true;
+    dd.querySelector('.tkf-btn').setAttribute('aria-expanded','false');
+    dd.classList.remove('abierto');
+  });
+}
+document.querySelectorAll('#tkFiltros .tkf-dd').forEach(function(dd){
+  const btn = dd.querySelector('.tkf-btn'), menu = dd.querySelector('.tkf-menu');
+  btn.addEventListener('click', function(ev){
+    ev.stopPropagation();
+    const abrir = menu.hidden;
+    tkCerrarMenus(dd);
+    menu.hidden = !abrir; dd.classList.toggle('abierto', abrir);
+    btn.setAttribute('aria-expanded', abrir ? 'true' : 'false');
+  });
+  menu.addEventListener('click', function(ev){ ev.stopPropagation(); });
+});
+document.addEventListener('click', function(){ tkCerrarMenus(null); });
+document.addEventListener('keydown', function(ev){ if(ev.key === 'Escape') tkCerrarMenus(null); });
+
+function tkLeerLista(clave){
+  return Array.prototype.map.call(
+    document.querySelectorAll('#'+TK_DD_LISTA[clave]+' input:checked'), function(i){ return i.value; });
+}
+Object.keys(TK_DD_LISTA).forEach(function(clave){
+  document.getElementById(TK_DD_LISTA[clave]).addEventListener('change', function(){
+    tkF[clave] = tkLeerLista(clave); tkFiltroCambio();
+  });
+});
+// «Marcar todo / Quitar todo» (REGLA #14): un solo botón que alterna.
+document.querySelectorAll('#tkFiltros [data-todo]').forEach(function(b){
+  b.addEventListener('click', function(){
+    const clave = b.getAttribute('data-todo');
+    const inputs = document.querySelectorAll('#'+TK_DD_LISTA[clave]+' input');
+    const marcar = Array.prototype.some.call(inputs, function(i){ return !i.checked; });
+    inputs.forEach(function(i){ i.checked = marcar; });
+    tkF[clave] = tkLeerLista(clave); tkFiltroCambio();
+  });
+});
+document.getElementById('tkfFechaLista').addEventListener('change', function(ev){
+  tkFecha.preset = ev.target.value;
+  if(tkFecha.preset === 'rango'){
+    tkFecha.desde = document.getElementById('fDesde').value;
+    tkFecha.hasta = document.getElementById('fHasta').value;
+  }
+  tkFiltroCambio();
+});
+['fDesde','fHasta'].forEach(function(id){
+  document.getElementById(id).addEventListener('change', function(){
+    tkFecha.preset = 'rango';
+    tkFecha.desde = document.getElementById('fDesde').value;
+    tkFecha.hasta = document.getElementById('fHasta').value;
+    tkFiltroCambio();
+  });
+});
+
+// ── Pinta el estado de los filtros: pastillas con su número, casillas, rango,
+//    la ✕ del buscador y la fila de «filtros aplicados» (cada uno se quita con un clic). ──
+function tkLabelOpcion(clave, v){
+  const inp = Array.prototype.find.call(
+    document.querySelectorAll('#'+TK_DD_LISTA[clave]+' input'), function(i){ return i.value === v; });
+  const sp = inp && inp.parentElement.querySelector('span');
+  return sp ? sp.textContent.trim() : v;
+}
+function tkRenderFiltros(){
+  const q = document.getElementById('fQ').value.trim();
+  document.getElementById('fQLimpiar').hidden = !q;
+  Object.keys(TK_DD_LISTA).forEach(function(clave){
+    document.querySelectorAll('#'+TK_DD_LISTA[clave]+' input').forEach(function(i){ i.checked = tkF[clave].indexOf(i.value) >= 0; });
+  });
+  document.querySelectorAll('#tkfFechaLista input').forEach(function(i){ i.checked = (i.value === tkFecha.preset); });
+  document.getElementById('tkfRango').hidden = (tkFecha.preset !== 'rango');
+  if(tkFecha.preset === 'rango'){
+    document.getElementById('fDesde').value = tkFecha.desde || '';
+    document.getElementById('fHasta').value = tkFecha.hasta || '';
+  }
+  const poner = function(dd, n, txt){
+    const root = document.querySelector('#tkFiltros [data-dd="'+dd+'"]');
+    const b = root.querySelector('.tkf-n'), l = root.querySelector('.tkf-lbl');
+    root.querySelector('.tkf-btn').classList.toggle('on', n > 0 || !!txt);
+    b.hidden = !(n > 0); b.textContent = n;
+    if(txt !== undefined){ l.textContent = txt || 'Fecha'; }
+  };
+  poner('resp', tkF.resp.length); poner('tipo', tkF.tipo.length); poner('prioridad', tkF.prioridad.length);
+  const ft = tkFechaTexto(); poner('fecha', 0, ft);
+  // Chips de «filtros aplicados».
+  const chips = [];
+  const NOMBRE = {estado:'Estado', resp:'Responsable', tipo:'Tipo', prioridad:'Prioridad', fecha:'Fecha'};
+  const add = function(grupo, rotulo, valor){
+    chips.push('<button type="button" class="tkf-chip" data-q-g="'+grupo+'" data-q-v="'+esc(valor)+'" title="Quitar este filtro">'
+      + '<span class="g">'+NOMBRE[grupo]+'</span>'+esc(rotulo)+'<i class="bi bi-x-lg"></i></button>');
+  };
+  tkEstadoSel().forEach(function(e){ add('estado', ESTADO_LABEL[e] || e, e); });
+  if(tkEstadoChip === ''){ add('estado', 'Todos', '__todos__'); }
+  tkF.resp.forEach(function(v){ add('resp', v === '__sin_asignar__' ? 'Sin asignar' : v, v); });
+  tkF.tipo.forEach(function(v){ add('tipo', tkLabelOpcion('tipo', v), v); });
+  tkF.prioridad.forEach(function(v){ add('prioridad', tkLabelOpcion('prioridad', v), v); });
+  if(ft) add('fecha', ft, '');
+  const cont = document.getElementById('tkfActivos');
+  cont.innerHTML = chips.join('');
+  cont.hidden = !chips.length;
+}
+document.getElementById('tkfActivos').addEventListener('click', function(ev){
+  const b = ev.target.closest('[data-q-g]'); if(!b) return;
+  const g = b.getAttribute('data-q-g'), v = b.getAttribute('data-q-v');
+  if(g === 'estado'){
+    if(v === '__todos__'){ tkEstadoChip = '__activos__'; }
+    else{ const sel = tkEstadoSel().filter(function(x){ return x !== v; }); tkEstadoChip = sel.length ? sel.join(',') : '__activos__'; }
+  }else if(g === 'fecha'){ tkFecha = {preset:'', desde:'', hasta:''}; }
+  else{ tkF[g] = tkF[g].filter(function(x){ return x !== v; }); }
+  tkFiltroCambio();
 });
 
 // ── Toolbar ──
-const btnHoy = document.getElementById('btnHoy');
-btnHoy.addEventListener('click', function(){
-  tkHoy = !tkHoy;
-  btnHoy.classList.toggle('on', tkHoy);
-  tkFiltroCambio();
-});
 document.getElementById('btnRefrescar').addEventListener('click', function(){ cargarTickets(); });
 // Los reportes CSV descargan con los MISMOS filtros del listado actual.
 document.getElementById('btnRepTickets').addEventListener('click', function(){
@@ -484,47 +658,46 @@ document.getElementById('btnRepSla').addEventListener('click', function(){
   window.location = '/tickets/api/reporte/sla.csv?'+tkParamsFiltros(false).toString();
 });
 document.getElementById('btnLimpiar').addEventListener('click', function(){
-  ['fTicket','fQ','fRut','fDesde','fHasta','fEstado','fTipo','fPrio','fResp']
-    .forEach(function(id){ document.getElementById(id).value=''; });
-  tkHoy = false; btnHoy.classList.remove('on');
+  document.getElementById('fQ').value = '';
+  tkF.tipo = []; tkF.prioridad = []; tkF.resp = [];
+  tkFecha = {preset:'', desde:'', hasta:''};
   tkSla = '';
   tkEstadoChip = '__activos__';
   tkSort = 'updated_at'; tkDir = 'desc'; tkPage = 1; // limpiar vuelve al default, no al orden inteligente
+  tkRenderFiltros();
   cargarTickets();
 });
 
-// ── Select Responsable: usuarios activos (mismo endpoint que la ficha) ──
+// ── Menú Responsable: usuarios activos (mismo endpoint que la ficha) ──
 async function tkCargarResponsables(){
   try{
-    // Tickets 2.0: antes /mantenciones/api/ejecutivos = TODOS los usuarios
-    // activos (salía gente que no lleva tickets). Ahora la misma lista que la
-    // ficha: el permiso «Responsable de tickets» (o, si nadie lo tiene, los
-    // roles de Tickets).
+    // Tickets 2.0: la misma lista que la ficha: el permiso «Responsable de
+    // tickets» (o, si nadie lo tiene, los roles de Tickets).
     const r = await fetch('/tickets/api/responsables');
     const j = await r.json();
     const rows = (j && Array.isArray(j.responsables)) ? j.responsables : [];
-    const sel = document.getElementById('fResp');
-    const actual = sel.value;
-    // Quien no ve todo recibe igual solo los suyos y los sin asignar: «Todos»
-    // se rotula así para que se entienda qué está mirando.
-    const lblTodos = (j && j.ve_todo === false) ? 'Míos y sin asignar' : 'Todos';
-    sel.innerHTML = '<option value="">'+lblTodos+'</option>'
-      + '<option value="__sin_asignar__">Sin asignar</option>'
-      + rows.map(function(e){ return '<option value="'+esc(e.nombre)+'">'+esc(e.nombre)
-          + (j && j.yo && e.nombre === j.yo ? ' (yo)' : '')+'</option>'; }).join('');
-    sel.value = actual; // conserva la seleccion si ya habia una
+    const lista = document.getElementById('tkfListaResp');
+    lista.innerHTML = '<label class="tkf-op"><input type="checkbox" value="__sin_asignar__"><span><i class="bi bi-person-dash me-1"></i>Sin asignar</span></label>'
+      + rows.map(function(e){
+          return '<label class="tkf-op"><input type="checkbox" value="'+esc(e.nombre)+'"><span>'+esc(e.nombre)
+            + (j && j.yo && e.nombre === j.yo ? ' <em>(yo)</em>' : '')+'</span></label>'; }).join('');
+    // Quien no ve todo recibe igual solo los suyos y los sin asignar: se le dice.
+    const nota = document.getElementById('tkfRespNota');
+    if(j && j.ve_todo === false){ nota.hidden = false; nota.textContent = 'Ves tus tickets y los que no tienen responsable.'; }
     // Tickets 2.0 (Daniel 2026-10-27: «abrir con los nombres filtrados… se
     // podrá sacar»): la primera vez, la bandeja abre con MIS tickets; el
     // filtro se quita como cualquier otro (o con «Limpiar filtros»).
-    if(!_tkRespInicial && j && j.soy_responsable && j.yo && !actual){
-      sel.value = j.yo;
+    if(!_tkRespInicial && j && j.soy_responsable && j.yo && !tkF.resp.length){
+      tkF.resp = [j.yo];
     }
     _tkRespInicial = true;
-  }catch(e){ /* sin red: quedan Todos / Sin asignar */ }
+    tkRenderFiltros();
+  }catch(e){ /* sin red: queda «Sin asignar» */ }
 }
 let _tkRespInicial = false;
 // Primero la lista de responsables (decide el filtro inicial «mis tickets»),
 // después la bandeja: una sola carga, ya filtrada.
+tkRenderFiltros();
 tkCargarResponsables().finally(function(){ cargarTickets(); });
 
 // ══════════════ Auto-refresco silencioso de la bandeja (Daniel 2026-07-12:

@@ -230,60 +230,89 @@
   <div class="tkms-cta" id="tkmsCta"></div>
 </div>
 
-<div class="tk-filtros">
-  {# ── Fila de filtros estilo help-desk (referencia Triple A, 2026-07-11) ──
-     fQ se conserva (param q del backend) reetiquetado como "Cliente". #}
-  <div class="tk-f-row">
-    <div class="tk-f"><label for="fTicket">Ticket</label>
-      <input type="text" id="fTicket" class="form-control form-control-sm" placeholder="N° o ID (ej: 355)"></div>
-    <div class="tk-f"><label for="fQ">Cliente</label>
-      <input type="text" id="fQ" class="form-control form-control-sm" placeholder="Empresa, contacto, texto…"></div>
-    <div class="tk-f"><label for="fRut">RUT</label>
-      <input type="text" id="fRut" class="form-control form-control-sm" placeholder="76.123.456-7"></div>
-    <div class="tk-f"><label for="fDesde">Desde</label>
-      <input type="date" id="fDesde" class="form-control form-control-sm"></div>
-    <div class="tk-f"><label for="fHasta">Hasta</label>
-      <input type="date" id="fHasta" class="form-control form-control-sm"></div>
-    <div class="tk-f"><label for="fResp">Responsable</label>
-      <select id="fResp" class="form-select form-select-sm">
-        <option value="">Todos</option>
-        <option value="__sin_asignar__">Sin asignar</option>
-      </select></div>
-    <div class="tk-f"><label for="fEstado">Estado</label>
-      <select id="fEstado" class="form-select form-select-sm">
-        <option value="">Todos los estados</option>
-        {% for e in tk_estados %}<option value="{{ e }}">{{ estado_label[e] }}</option>{% endfor %}
-      </select></div>
-    <div class="tk-f"><label for="fTipo">Tipo</label>
-      <select id="fTipo" class="form-select form-select-sm">
-        <option value="">Todos los tipos</option>
-        {% for t in tk_tipos %}<option value="{{ t }}">{{ tipo_label[t] }}</option>{% endfor %}
-      </select></div>
-    <div class="tk-f"><label for="fPrio">Prioridad</label>
-      <select id="fPrio" class="form-select form-select-sm">
-        <option value="">Todas</option>
-        {% for p in tk_prioridades %}<option value="{{ p }}">{{ p|capitalize }}</option>{% endfor %}
-      </select></div>
+{# ── Buscador y filtros (Daniel 2026-10-28): MISMO lenguaje del Monitor de Retiros ──
+   Una sola barra «Buscar» general (ticket, cliente, RUT, correo, teléfono, texto),
+   chips de ESTADO con ícono y conteo (se combinan varios) y filtros desplegables
+   de Fecha, Responsable, Tipo y Prioridad con selección múltiple. Lo pinta
+   static/tickets_list.js; el backend los lee en _tk_list_where. #}
+<div class="rm-toolbar tkf" id="tkFiltros">
+  <div class="rm-search" role="search">
+    <span class="rm-search-tag"><i class="bi bi-search"></i>Buscar</span>
+    <input type="search" id="fQ" autocomplete="off" aria-label="Buscar tickets"
+           placeholder="N° de ticket, cliente, RUT, correo, teléfono o texto del pedido…">
+    <span class="rm-search-count" id="tkfCuenta" aria-live="polite"></span>
+    <kbd title="Atajo: presiona / para buscar">/</kbd>
+    <button type="button" class="rm-x" id="fQLimpiar" hidden aria-label="Borrar la búsqueda"><i class="bi bi-x-lg"></i></button>
   </div>
-  {# ── Toolbar: Hoy (toggle) · refrescar · reportes CSV · limpiar ── #}
-  <div class="tk-toolbar">
-    <button type="button" class="btn btn-sm tk-btn-hoy" id="btnHoy" title="Solo tickets ingresados hoy (hora Chile)">
-      <i class="bi bi-calendar-day me-1"></i>Hoy</button>
-    <button type="button" class="btn btn-sm tk-btn-hoy" id="btnRefrescar" title="Refrescar la bandeja">
-      <i class="bi bi-arrow-clockwise"></i></button>
-    <button type="button" class="btn btn-sm tk-btn-rep" id="btnRepTickets" title="Descargar reporte de tickets (CSV) con los filtros actuales">
-      <i class="bi bi-file-earmark-spreadsheet me-1"></i>Reporte tickets</button>
-    <button type="button" class="btn btn-sm tk-btn-rep" id="btnRepSla" title="Descargar reporte SLA (CSV) con los filtros actuales">
-      <i class="bi bi-stopwatch me-1"></i>Reporte SLA</button>
-    <span class="spacer"></span>
-    <button class="btn btn-sm btn-ilus-outline" id="btnLimpiar"><i class="bi bi-x-circle me-1"></i>Limpiar filtros</button>
+
+  <div class="tkf-bloque">
+    <span class="tkf-etq"><i class="bi bi-diagram-3"></i>Estado <small>elige uno o varios</small></span>
+    <div id="tkEstados" class="rm-chips" role="group" aria-label="Filtrar por estado"></div>
   </div>
+
+  <div class="tkf-fila">
+    <div class="tkf-dd" data-dd="fecha">
+      <button type="button" class="rm-btn tkf-btn" aria-haspopup="true" aria-expanded="false">
+        <i class="bi bi-calendar3"></i><span class="tkf-lbl">Fecha</span><b class="tkf-n" hidden></b><i class="bi bi-chevron-down tkf-car"></i></button>
+      <div class="tkf-menu" role="dialog" aria-label="Filtrar por fecha de ingreso" hidden>
+        <div class="tkf-menu-head"><b>Fecha de ingreso</b><small>Hora Chile</small></div>
+        <div class="tkf-lista" id="tkfFechaLista">
+          {% for v, l in [('', 'Cualquier fecha'), ('hoy', 'Hoy'), ('ayer', 'Ayer'), ('7d', 'Últimos 7 días'), ('30d', 'Últimos 30 días'), ('mes', 'Este mes'), ('mespasado', 'Mes pasado'), ('rango', 'Rango personalizado…')] %}
+          <label class="tkf-op"><input type="radio" name="tkfFecha" value="{{ v }}"><span>{{ l }}</span></label>
+          {% endfor %}
+        </div>
+        <div class="tkf-rango" id="tkfRango" hidden>
+          <label for="fDesde">Desde</label><input type="date" id="fDesde" class="form-control form-control-sm">
+          <label for="fHasta">Hasta</label><input type="date" id="fHasta" class="form-control form-control-sm">
+        </div>
+      </div>
+    </div>
+
+    <div class="tkf-dd" data-dd="resp">
+      <button type="button" class="rm-btn tkf-btn" aria-haspopup="true" aria-expanded="false">
+        <i class="bi bi-person-check"></i><span class="tkf-lbl">Responsable</span><b class="tkf-n" hidden></b><i class="bi bi-chevron-down tkf-car"></i></button>
+      <div class="tkf-menu" role="dialog" aria-label="Filtrar por responsable" hidden>
+        <div class="tkf-menu-head"><b>Responsable</b><button type="button" class="tkf-todo" data-todo="resp">Marcar todo</button></div>
+        <div class="tkf-nota" id="tkfRespNota" hidden></div>
+        <div class="tkf-lista" id="tkfListaResp"><label class="tkf-op"><input type="checkbox" value="__sin_asignar__"><span>Sin asignar</span></label></div>
+      </div>
+    </div>
+
+    <div class="tkf-dd" data-dd="tipo">
+      <button type="button" class="rm-btn tkf-btn" aria-haspopup="true" aria-expanded="false">
+        <i class="bi bi-tags"></i><span class="tkf-lbl">Tipo</span><b class="tkf-n" hidden></b><i class="bi bi-chevron-down tkf-car"></i></button>
+      <div class="tkf-menu" role="dialog" aria-label="Filtrar por tipo" hidden>
+        <div class="tkf-menu-head"><b>Tipo de solicitud</b><button type="button" class="tkf-todo" data-todo="tipo">Marcar todo</button></div>
+        <div class="tkf-lista" id="tkfListaTipo">
+          {% for t in tk_tipos %}<label class="tkf-op"><input type="checkbox" value="{{ t }}"><span>{{ tipo_label[t] }}</span></label>{% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="tkf-dd" data-dd="prioridad">
+      <button type="button" class="rm-btn tkf-btn" aria-haspopup="true" aria-expanded="false">
+        <i class="bi bi-flag"></i><span class="tkf-lbl">Prioridad</span><b class="tkf-n" hidden></b><i class="bi bi-chevron-down tkf-car"></i></button>
+      <div class="tkf-menu" role="dialog" aria-label="Filtrar por prioridad" hidden>
+        <div class="tkf-menu-head"><b>Prioridad</b><button type="button" class="tkf-todo" data-todo="prioridad">Marcar todo</button></div>
+        <div class="tkf-lista" id="tkfListaPrio">
+          {% for p in tk_prioridades|reverse %}<label class="tkf-op"><input type="checkbox" value="{{ p }}"><span><i class="tkf-dot p-{{ p }}"></i>{{ p|capitalize }}</span></label>{% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <span class="tkf-esp"></span>
+    <button type="button" class="rm-btn" id="btnRefrescar" title="Refrescar la bandeja"><i class="bi bi-arrow-clockwise"></i></button>
+    <button type="button" class="rm-btn tkf-rep" id="btnRepTickets" title="Descargar reporte de tickets (CSV) con los filtros actuales"><i class="bi bi-file-earmark-spreadsheet"></i>Reporte tickets</button>
+    <button type="button" class="rm-btn tkf-rep" id="btnRepSla" title="Descargar reporte SLA (CSV) con los filtros actuales"><i class="bi bi-stopwatch"></i>Reporte SLA</button>
+    <button type="button" class="rm-btn rm-btn-rojo" id="btnLimpiar"><i class="bi bi-x-circle"></i>Limpiar filtros</button>
+  </div>
+
+  <div class="tkf-activos" id="tkfActivos" hidden aria-label="Filtros aplicados"></div>
 </div>
 
 <div id="tkUnreadBanner" class="tk-unread-banner" style="display:none"></div>
 {# Tickets 2.0: semáforo del SLA de respuesta (4 h hábiles), mismo esquema
    de chips que el Monitor de Retiros. Lo pinta tickets_list.js. #}
-<div id="tkEstados" class="tk-estados" role="group" aria-label="Filtrar por estado"></div>
 <div id="tkSemaforo" class="tk-semaforo" role="group" aria-label="Filtrar por semáforo del SLA" style="display:none"></div>
 <div id="tkLista"><div class="empty-state"><i class="bi bi-hourglass-split"></i>Cargando…</div></div>
 

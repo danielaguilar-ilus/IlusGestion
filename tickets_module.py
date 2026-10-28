@@ -481,40 +481,68 @@ def _tk_list_where(args):
     verdad, sin duplicar logica). Devuelve (wsql, params) con SQL SIEMPRE
     parametrizado %s (Regla #4)."""
     where, params = [], []
-    estado = (args.get("estado") or "").strip().lower()
-    if estado in TK_ESTADOS:
-        where.append("t.estado=%s"); params.append(estado)
-    elif estado == "__activos__":
+
+    def _multi(clave, sep=","):
+        """Valores de un filtro con selección múltiple: «a,b,c» (responsables
+        con «|», porque un nombre puede traer coma). Un solo parámetro, así
+        sobrevive al `args.items()` de los conteos. Sin repetidos."""
+        vistos, out = set(), []
+        for x in str(args.get(clave) or "").split(sep):
+            x = x.strip()
+            if x and x.lower() not in vistos:
+                vistos.add(x.lower()); out.append(x)
+        return out
+
+    def _en_lista(col, valores):
+        if len(valores) == 1:
+            where.append(f"{col}=%s"); params.append(valores[0])
+        elif valores:
+            where.append(f"{col} IN ({','.join(['%s'] * len(valores))})"); params.extend(valores)
+
+    estados = [e.lower() for e in _multi("estado")]
+    if "__activos__" in estados:
         # Tickets 2.0: chip «Activos» de la bandeja = todo lo que no terminó.
         where.append("t.estado NOT IN ('resolved','closed','cancelado')")
-    tipo = (args.get("tipo") or "").strip().lower()
-    if tipo in TK_TIPOS:
-        where.append("t.tipo=%s"); params.append(tipo)
-    prio = (args.get("prioridad") or "").strip().lower()
-    if prio in TK_PRIORIDADES:
-        where.append("t.prioridad=%s"); params.append(prio)
+    else:
+        _en_lista("t.estado", [e for e in estados if e in TK_ESTADOS])
+    _en_lista("t.tipo", [x.lower() for x in _multi("tipo") if x.lower() in TK_TIPOS])
+    _en_lista("t.prioridad", [x.lower() for x in _multi("prioridad") if x.lower() in TK_PRIORIDADES])
     origen = (args.get("origen") or "").strip().lower()
     if origen in TK_ORIGENES:
         where.append("t.origen=%s"); params.append(origen)
-    asign = (args.get("asignado_a") or "").strip()
-    if asign == "__sin_asignar__":
-        # Sentinel del select "Responsable" de la bandeja (frontend list.html):
-        # tickets SIN ejecutivo responsable (NULL o vacio). Aplica tambien a
-        # los reportes CSV porque comparten este WHERE.
-        where.append("(t.asignado_a IS NULL OR t.asignado_a='')")
-    elif asign:
-        where.append("t.asignado_a=%s"); params.append(asign)
+    asigns = _multi("asignado_a", "|")
+    sin = "__sin_asignar__" in asigns
+    nombres = [a for a in asigns if a != "__sin_asignar__"]
+    if sin or nombres:
+        # «__sin_asignar__» = tickets SIN responsable (NULL o vacío); se puede
+        # combinar con nombres (OR). Aplica también a los CSV: mismo WHERE.
+        partes = []
+        if nombres:
+            partes.append(f"t.asignado_a IN ({','.join(['%s'] * len(nombres))})"); params.extend(nombres)
+        if sin:
+            partes.append("(t.asignado_a IS NULL OR t.asignado_a='')")
+        where.append("(" + " OR ".join(partes) + ")" if len(partes) > 1 else partes[0])
     rut = (args.get("rut") or "").strip()
     if rut:
         where.append("t.rut LIKE %s"); params.append(f"%{rut}%")
     q = (args.get("q") or "").strip()
     if q:
+        # Buscador GENERAL (Daniel 2026-10-28): N° de ticket o id, cliente,
+        # contacto, RUT (con o sin puntos y guion), correo, teléfono, sucursal,
+        # motivo y texto del pedido, todo en una sola caja.
         like = f"%{q}%"
-        where.append(
-            "(t.numero_ticket LIKE %s OR t.empresa LIKE %s OR t.nombre_contacto LIKE %s "
-            "OR t.descripcion LIKE %s OR t.titulo LIKE %s OR t.rut LIKE %s)"
-        )
-        params.extend([like, like, like, like, like, like])
+        cond = ["t.numero_ticket LIKE %s", "t.empresa LIKE %s", "t.nombre_contacto LIKE %s",
+                "t.descripcion LIKE %s", "t.titulo LIKE %s", "t.rut LIKE %s",
+                "t.email LIKE %s", "t.phone LIKE %s", "t.sucursal LIKE %s",
+                "t.motivo_principal LIKE %s"]
+        ps = [like] * len(cond)
+        if q.isdigit():
+            cond.append("t.id=%s"); ps.append(int(q))
+        rut_limpio = re.sub(r"[.\-\s]", "", q).lower()
+        if len(rut_limpio) >= 6 and re.fullmatch(r"\d+k?", rut_limpio):
+            cond.append("REPLACE(REPLACE(t.rut,'.',''),'-','') LIKE %s"); ps.append(f"%{rut_limpio}%")
+        where.append("(" + " OR ".join(cond) + ")")
+        params.extend(ps)
 
     # ── Filtros nuevos (tabla help-desk) ──
     # ticket: id exacto (si es numerico) O numero_ticket parcial, para que

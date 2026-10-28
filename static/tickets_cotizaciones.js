@@ -2839,13 +2839,27 @@ async function _cotWizAplicarDeepLinkTicket(tid){
       return { sku: eq.sku || eq.erp_kopr || '', nombre: eq.nombre || 'Equipo',
                qty: eq.cantidad || 1, tido: null, koen: null, clase_producto: null };
     });
+    // Herencia del documento (Daniel 2026-10-28: «el número de facturas y datos
+    // se hereden a las cotizaciones»; REGLA #24: el documento de Random manda).
+    // Con UN documento en el ticket, todos los productos lo llevan; con varios no
+    // se adivina cuál es cuál: queda la referencia y se avisa para completarlo.
+    const docsTk = (d.documentos || []).filter(function(x){ return x.erp_tido && x.erp_nudo; });
+    if (docsTk.length === 1){
+      _WIZ.items.forEach(function(it){ it.tido = docsTk[0].erp_tido; it.nudo = docsTk[0].erp_nudo; });
+    }
+    if (docsTk.length){
+      _WIZ.docRef = docsTk.map(function(x){ return x.erp_tido + '-' + x.erp_nudo; }).join(', ');
+    }
     await cotWizClasificar();
     await cotWizRender();
     await cotWizPrecios();
     _cotWizAplicarOrigenPaso2();
     if (t.comuna_nombre) cotWizBuscarRuta();
     if (equipos.length){
-      ilusToast('Ticket cargado con ' + equipos.length + ' equipo(s) — revisa y clasifica antes de crear', {type:'info'});
+      ilusToast('Ticket cargado con ' + equipos.length + ' equipo(s)'
+        + (docsTk.length ? ' y su documento ' + _WIZ.docRef : '')
+        + (docsTk.length > 1 ? ' — son varios: indica de cuál viene cada producto' : '')
+        + ' — revisa y clasifica antes de crear', {type:'info'});
     }
   }catch(e){ ilusToast('Error de conexión al cargar el ticket', {type:'error'}); }
 }
