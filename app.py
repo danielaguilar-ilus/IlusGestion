@@ -65,6 +65,7 @@ import transporte_tarifas as _ttar  # motor de tarifas réplica EXACTA de la mac
 import usuarios_perfil as _uperf  # datos personales del usuario: fecha de nacimiento y dirección validada con Google
 import ot_saldo_servicio as _saldo  # saldo por línea de servicio de cada documento (módulo puro con pruebas)
 import ot_doc_cadena as _cadena  # 2026-10-25: trazabilidad en Random (nota de venta → factura/boleta → guía), sugerencias y alertas: lógica pura con pruebas
+import ot_guia_vs_ot as _gvo  # 2026-10-29: logística (WMS) de cada guía de despacho y «lo que salió» vs «lo que gestiona la OT»: lógica pura con pruebas
 import ot_correos_tecnicos as _otc  # correos a técnicos (asignada/reagendada/cancelada/quitada/agenda): lógica pura con pruebas
 import comm_correos_registro as _ccr  # registro único de los correos (clave, llave, plantilla, condiciones): Comunicaciones → Control de correos (REGLA #33)
 import ot_eventos as _evt  # eventos y OT de desinstalación (madre e hija): reglas puras con pruebas (2026-10-19)
@@ -61268,7 +61269,7 @@ def init_mantenciones_tables():
                 "       'retiro_listo','retiro_cerrado',"
                 "       'retiro_propuesta','retiro_expedido','retiro_desfase','retiro_cierre',"
                 "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida',"
-                "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma','repuesto_nuevo','repuesto_tecnico','tk_sla') DEFAULT 'otro'",
+                "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma','repuesto_nuevo','repuesto_tecnico','tk_sla','ot_guia_diferencia') DEFAULT 'otro'",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_destino_no_leida "
                 "  (destino_user_id, leida_at, archivada_at)",
                 "ALTER TABLE mant_notificaciones ADD INDEX idx_visita (visita_id)",
@@ -124980,6 +124981,468 @@ def _ot_saldo_resumen(tido, nudo, excluir_vid=None, cliente_rut=None):
                       "servicio": u["servicio"], "despacho": u["despacho"]} for u in s["usos"]]}
 
 
+# ══════════════════════════════════════════════════════════════════
+#  🚚 2026-10-29 — LOGÍSTICA (WMS) DE CADA GUÍA DE DESPACHO + «lo que salió» vs «lo que gestiona la OT» + alerta
+#  Daniel, sobre «Trazabilidad en Random»: «En la guía de despacho, presiono y no hicimos la conexión con el WMS, que es la
+#  parte logística. Me gustaría verlo, para saber QUÉ SE FUE. Y hacer una comparación de qué se fue en la guía con los
+#  productos que se gestionaron en la OT. Eso es inteligencia y percepción. Y levantar una alerta, obviamente.»
+#  · Random SOLO LECTURA (REGLA #4.1): las líneas de las guías salen de MAEDDO en UNA consulta (caché 5 min), por
+#    _random_sql_query, dentro de la petición (sin hilos: el pool tiene 5 conexiones por proceso).
+#  · Check SOLO LECTURA (REGLA #4.4): GetSeguimientoDespacho por documento, por la puerta única _checkwms_get (lista
+#    blanca, solo GET), con timeout corto, presupuesto por petición y caché; los movimientos (quién, cuándo, UA) salen del
+#    volcado YA cacheado (_CHECKWMS_TRAZA): si está frío se renueva atrás (_checkwms_swr) y la tarjeta dice «cargando».
+#    Ningún endpoint nuevo de Check: si hiciera falta otro, se le pregunta a Daniel. Si Check no responde, la ficha sigue.
+#  · Daniel (mismo día): «quiero a Check en este reporte… todo bien resumido, no tarjetas tan grandes»: cada guía muestra UNA
+#    línea con un semáforo chico (verde salió todo lo gestionado · ámbar falta o sobra algo · gris sin información de
+#    bodega) que junta la guía frente a la OT y lo que Check expidió (2.ª lectura, ?check=1); el detalle, solo al hacer clic.
+#  · La comparación es pura y probada (ot_guia_vs_ot.py). Sin montos. Nunca técnicos (REGLAS #19/#26), nunca el cliente (#22).
+#  · Lo que no cuadra queda en ot_guia_alerta (nunca se borra: vigente → resuelta, y vuelve a vigente si reaparece) y avisa
+#    UNA vez por la campana a la gestión de la OT (_hall_destinos → _ot_gestion_destinatarios: el responsable primero, sin
+#    técnicos ni quien lo está mirando). Sin correo. Se calcula al abrir la trazabilidad (best-effort: si falla, nada cambia).
+# ══════════════════════════════════════════════════════════════════
+_OT_LOGI_GUIAS_CACHE = {}
+_OT_LOGI_GUIAS_TTL = 300           # s: las líneas de una guía emitida no cambian
+_OT_LOGI_CHECK_CACHE = {}
+_OT_LOGI_CHECK_TTL = 120           # s: Check respondió
+_OT_LOGI_CHECK_TTL_ERR = 30        # s: Check no respondió (no insistir en cada clic)
+_OT_LOGI_CHECK_TIMEOUT = 10        # s por consulta (Check puede colgarse; cada consulta ocupa el hilo de la petición)
+_OT_LOGI_CHECK_PRESUPUESTO = 20    # s máximos por petición entre todos los documentos
+_OT_LOGI_CHECK_MAX_DOCS = 3        # la guía y hasta 2 documentos de cobro de la venta
+_OT_LOGI_MAX_OTRAS = 8             # otras OT de la misma venta que se miran
+_OT_LOGI_MAX_GUIAS_CHECK = 6       # guías a las que se les pide su semáforo de bodega en una sola petición
+_OT_LOGI_TABLA = {"ok": False}
+
+
+def _ot_logi_tabla():
+    """La tabla de hallazgos «guía vs OT». UNA sola sentencia CREATE TABLE IF NOT EXISTS, barata si ya existe (REGLA #18:
+    mysql_execute la salta sin pedir lock). Se crea al primer uso —dentro de una petición, con contexto de Flask— y se
+    recuerda por proceso. Nunca se borra una fila: vigente → resuelta (con fecha) y, si vuelve a pasar, vigente (veces + 1)."""
+    if _OT_LOGI_TABLA["ok"]:
+        return True
+    try:
+        mysql_execute(
+            "CREATE TABLE IF NOT EXISTS ot_guia_alerta ("
+            "  id BIGINT AUTO_INCREMENT PRIMARY KEY,"
+            "  visita_id INT NOT NULL,"
+            "  codigo VARCHAR(40) NOT NULL COMMENT 'salio_y_no_esta_en_la_OT | esta_en_la_OT_y_no_salio | cantidad_distinta',"
+            "  detalle VARCHAR(80) NOT NULL COMMENT 'SKU normalizado',"
+            "  texto VARCHAR(500) NULL,"
+            "  guias VARCHAR(200) NULL,"
+            "  estado ENUM('vigente','resuelta') NOT NULL DEFAULT 'vigente',"
+            "  veces INT NOT NULL DEFAULT 1,"
+            "  detectada_el DATETIME NOT NULL,"
+            "  detectada_por VARCHAR(190) NULL,"
+            "  notificada_el DATETIME NULL,"
+            "  resuelta_el DATETIME NULL,"
+            "  actualizado_el DATETIME NULL,"
+            "  UNIQUE KEY uq_ga_ot_cod_det (visita_id, codigo, detalle),"
+            "  KEY idx_ga_estado (estado, visita_id)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+        _OT_LOGI_TABLA["ok"] = True
+    except Exception as e:
+        print(f"[ot-logistica] tabla: {type(e).__name__}: {e}", flush=True)
+    return _OT_LOGI_TABLA["ok"]
+
+
+def _ot_logi_guias_lineas(claves):
+    """TODAS las líneas de las guías de despacho (GDV) que salieron de estos documentos de la venta, en UNA consulta a
+    Random (SOLO LECTURA, REGLA #4.1): [{numero, fecha, anulada, desde, lineas: [{sku, nombre, cantidad}]}]. Una guía
+    que junta varias ventas solo trae las líneas de ESTA venta (filtro por TIDOPA/NUDOPA, igual que _ot_cadena_guias).
+    None si Random no respondió (nunca se inventa una salida de stock). Sin montos."""
+    claves = sorted({tuple(k) for k in (claves or []) if k and len(k) == 2 and k[0] and k[1]})[:_OT_CADENA_MAX_DOCS]
+    if not claves:
+        return []
+    llave = tuple(claves)
+    hit = _OT_LOGI_GUIAS_CACHE.get(llave)
+    if hit and time.time() - hit[0] < _OT_LOGI_GUIAS_TTL:
+        return hit[1]
+    cond, par, titulo_de = [], ["GDV"], {}
+    for k in claves:
+        t_r, n_r = _ot_saldo_real(k)
+        cond.append("(d.TIDOPA = %s AND d.NUDOPA = %s)")
+        par += [t_r, n_r]
+        titulo_de[(t_r.strip().upper(), n_r.strip().upper())] = _cadena.titulo(k)
+    try:
+        filas = _random_sql_query(
+            "SELECT TOP 400 d.NUDO AS guia, d.NULIDO AS linea, d.KOPRCT AS sku, d.NOKOPR AS producto, d.CAPRCO1 AS cantidad, "
+            "       d.TIDOPA AS tidopa, d.NUDOPA AS nudopa, e.FEEMDO AS fecha, LTRIM(RTRIM(COALESCE(e.ESDO, ''))) AS esdo "
+            "  FROM MAEDDO d LEFT JOIN MAEEDO e ON e.TIDO = d.TIDO AND e.NUDO = d.NUDO AND e.ENDO = d.ENDO "
+            " WHERE d.TIDO = %s AND (" + " OR ".join(cond) + ") ORDER BY d.NUDO, d.NULIDO",
+            tuple(par), max_rows=400)
+    except Exception as e:
+        print(f"[ot-logistica] guias {llave}: {type(e).__name__}", flush=True)
+        return None
+    if filas is None:
+        return None
+    por_guia, vistas = {}, set()
+    for f in filas:
+        num = (str(f.get("guia") or "")).strip().lstrip("0")
+        if not num:
+            continue
+        lin = (num, str(f.get("linea") or ""))
+        if lin in vistas:
+            continue
+        vistas.add(lin)
+        g = por_guia.setdefault(num, {"numero": num, "fecha": _cadena.fecha_txt(f.get("fecha")),
+                                      "anulada": (str(f.get("esdo") or "").strip().upper() == "NULO"),
+                                      "desde": titulo_de.get((str(f.get("tidopa") or "").strip().upper(),
+                                                              str(f.get("nudopa") or "").strip().upper()), ""),
+                                      "lineas": []})
+        g["lineas"].append({"sku": (str(f.get("sku") or "")).strip(), "nombre": (str(f.get("producto") or "")).strip(),
+                            "cantidad": _gvo.cantidad(f.get("cantidad"))})
+    out = sorted(por_guia.values(), key=lambda g: (g["fecha"][6:10], g["fecha"][3:5], g["fecha"][0:2], g["numero"].zfill(12)))
+    _OT_LOGI_GUIAS_CACHE[llave] = (time.time(), out)
+    if len(_OT_LOGI_GUIAS_CACHE) > 300:
+        _OT_LOGI_GUIAS_CACHE.clear()
+    return out
+
+
+def _ot_logi_gestionados(vids):
+    """{vid: {"equipos": [...], "repuestos": [...]}}: lo que gestionan estas OT, en SOLO LECTURA y sin montos.
+    Equipos y accesorios = tareas ∪ equipos de la OT (la MISMA unión de costo-sugerido y la ficha), sin los dados de baja;
+    un equipo «saltado» solo cuenta si se saltó por FALTA DE STOCK (REGLA #35: sigue siendo de la OT, pendiente).
+    `declarado` = la OT ya dijo que no llegó (falta_stock / no_llego, mant_ot_producto_estado vigente). Repuestos =
+    mant_visita_repuestos (SKU, descripción y cantidad; nunca su costo)."""
+    ids = sorted({int(v) for v in (vids or []) if v})
+    out = {v: {"equipos": [], "repuestos": []} for v in ids}
+    if not ids:
+        return out
+    ph = ",".join(["%s"] * len(ids))
+    filas = mysql_fetchall(
+        "SELECT x.vid, m.id AS mid, m.sku, m.nombre, COALESCE(m.cantidad, 1) AS cant, ve.estado_revision, ve.razon_saltado "
+        "  FROM (SELECT t.visita_id AS vid, t.maquina_id AS mid FROM mant_visita_tareas t "
+        "         WHERE t.visita_id IN (" + ph + ") AND t.maquina_id IS NOT NULL "
+        "        UNION SELECT e.visita_id AS vid, e.maquina_id AS mid FROM mant_visita_equipos e "
+        "         WHERE e.visita_id IN (" + ph + ") AND e.maquina_id IS NOT NULL) x "
+        "  JOIN mant_maquinas m ON m.id = x.mid "
+        "  LEFT JOIN mant_visita_equipos ve ON ve.visita_id = x.vid AND ve.maquina_id = m.id "
+        " WHERE COALESCE(m.estado, 'activo') <> 'baja'", tuple(ids) + tuple(ids)) or []
+    declarados = {}
+    try:
+        for r in (mysql_fetchall(
+                "SELECT visita_id, maquina_id, estado FROM mant_ot_producto_estado "
+                " WHERE visita_id IN (" + ph + ") AND activo = 1 AND maquina_id IS NOT NULL "
+                "   AND estado IN ('falta_stock', 'no_llego')", tuple(ids)) or []):
+            declarados[(int(r["visita_id"]), int(r["maquina_id"]))] = r.get("estado")
+    except Exception as e:                  # tabla aún sin crear: sin declaración, nada se inventa
+        print(f"[ot-logistica] declarados: {type(e).__name__}", flush=True)
+    for f in filas:
+        vid, mid = int(f["vid"]), int(f["mid"])
+        dec = declarados.get((vid, mid))
+        if (f.get("estado_revision") or "") == "saltado":
+            if (f.get("razon_saltado") or "") != "falta_stock":
+                continue
+            dec = dec or "falta_stock"
+        out.setdefault(vid, {"equipos": [], "repuestos": []})["equipos"].append(
+            {"sku": (f.get("sku") or "").strip(), "nombre": (f.get("nombre") or "").strip(), "cantidad": f.get("cant"),
+             "declarado": dec})
+    try:
+        for r in (mysql_fetchall(
+                "SELECT visita_id, sku, descripcion, cantidad FROM mant_visita_repuestos WHERE visita_id IN (" + ph + ")",
+                tuple(ids)) or []):
+            out.setdefault(int(r["visita_id"]), {"equipos": [], "repuestos": []})["repuestos"].append(
+                {"sku": (r.get("sku") or "").strip(), "nombre": (r.get("descripcion") or "").strip(), "cantidad": r.get("cantidad")})
+    except Exception as e:
+        print(f"[ot-logistica] repuestos: {type(e).__name__}", flush=True)
+    return out
+
+
+def _ot_logi_otras_ot(vid, claves):
+    """Otras OT (no canceladas ni anuladas) con algún documento de ESTA venta: [{vid, numero_ot, tipo}] (una instalación
+    partida en dos OT, la OT hija pendiente por falta de stock…). Lo que ellas gestionan explica lo que «sobra» en la guía."""
+    conds, par = [], []
+    for k in claves or []:
+        for t, n in _saldo.variantes_sql(tuple(k)):
+            conds.append("(d.erp_tido = %s AND d.erp_nudo = %s)")
+            par += [t, n]
+    if not conds:
+        return []
+    try:
+        filas = mysql_fetchall(
+            "SELECT DISTINCT v.id, v.numero_ot, v.tipo FROM mant_visita_documentos d "
+            "  JOIN mant_visitas v ON v.id = d.visita_id "
+            " WHERE d.origen = 'erp' AND d.visita_id <> %s AND v.estado NOT IN ('cancelada', 'anulada') "
+            "   AND (" + " OR ".join(conds) + ") ORDER BY v.id LIMIT %s",
+            tuple([int(vid)] + par + [_OT_LOGI_MAX_OTRAS])) or []
+    except Exception as e:
+        print(f"[ot-logistica] otras OT vid={vid}: {type(e).__name__}", flush=True)
+        return []
+    return [{"vid": int(f["id"]), "numero_ot": f.get("numero_ot") or "", "tipo": f.get("tipo") or ""} for f in filas]
+
+
+def _ot_logi_check_doc(tipo, num):
+    """GetSeguimientoDespacho de UN documento → (respondio, lineas). Por la puerta única _checkwms_get (lista blanca,
+    solo GET, REGLA #4.4), con timeout corto y caché: Check guarda el número de dos formas (sin ceros y a 10 dígitos).
+    Se guardan las líneas ya leídas (SKU, descripción y cantidades), nunca el «valor» que trae Check."""
+    tipo = (tipo or "").strip().upper()[:5]
+    num = re.sub(r"\D", "", str(num or ""))[:12]
+    if not tipo or not num:
+        return True, []
+    key = (tipo, num)
+    hit = _OT_LOGI_CHECK_CACHE.get(key)
+    if hit and time.time() - hit[0] < (_OT_LOGI_CHECK_TTL if hit[1] else _OT_LOGI_CHECK_TTL_ERR):
+        return hit[1], hit[2]
+    respondio, lineas = False, []
+    try:
+        for variante in dict.fromkeys([num.lstrip("0") or num, num.zfill(10)]):
+            data = _checkwms_get("/api/ext/GetSeguimientoDespacho",
+                                 {"tipodoc": tipo, "numdoc": variante, "diasrevisa": "90"}, timeout=_OT_LOGI_CHECK_TIMEOUT)
+            if not isinstance(data, dict):
+                break                           # no respondió (o no es JSON): no se insiste con la otra forma
+            respondio = True
+            body = data.get("body")
+            filas = body.get("response") if isinstance(body, dict) else body
+            filas = filas if isinstance(filas, list) else ([] if filas is None else [filas])
+            lineas = _gvo.lineas_check(filas, tipo=tipo, num=num)
+            if lineas:
+                break
+    except Exception as e:
+        print(f"[ot-logistica] check {tipo} {num}: {type(e).__name__}", flush=True)
+        respondio, lineas = False, []
+    _OT_LOGI_CHECK_CACHE[key] = (time.time(), respondio, lineas)
+    if len(_OT_LOGI_CHECK_CACHE) > 400:
+        _OT_LOGI_CHECK_CACHE.clear()
+    return respondio, lineas
+
+
+def _ot_logi_movimientos(docs):
+    """Movimientos de bodega (OT de Check: quién, cuándo, UA) de estos documentos, SOLO desde el volcado ya cacheado de
+    GetStockTrazabilidad (~5 MB, 15-35 s): nunca se espera a Check en la petición. Frío o muy viejo → se pide atrás
+    (_checkwms_swr, la misma renovación de siempre) y se responde «cargando»."""
+    if not _checkwms_configurado():
+        return {"estado": "no_disponible", "ots": [], "texto": "La conexión con Check (bodega) no está configurada."}
+    filas = _CHECKWMS_TRAZA.get("rows")
+    edad = (time.time() - (_CHECKWMS_TRAZA.get("ts") or 0)) if filas is not None else None
+    if filas is None or edad >= _CHECKWMS_STALE_MAX:
+        _checkwms_swr("traza", _checkwms_trazabilidad_rows)
+        return {"estado": "cargando", "ots": [],
+                "texto": "Check está entregando su reporte de movimientos (tarda hasta un minuto). Vuelve a abrir «Ver logística» en un rato."}
+    if edad >= _CHECKWMS_TRAZA_TTL:
+        _checkwms_swr("traza", _checkwms_trazabilidad_rows)      # vencido: se muestra lo que hay y se renueva atrás
+    return _gvo.movimientos(filas, docs, edad_min=int(edad // 60))
+
+
+def _ot_logi_bodega(num, claves, meta, comp, guias, hasta=None, detalle=True):
+    """Lo que Check (bodega) informa de UNA guía: primero la guía misma y, si Check no la tiene, el documento de cobro de
+    donde salió (y otro de la venta), hasta el tiempo `hasta` (epoch; presupuesto compartido entre guías). Con `detalle`
+    (el clic en «Ver logística») se agregan los movimientos y las líneas de la guía cruzadas con lo que bodega expidió."""
+    lineas_guia = ((comp.get("por_guia") or {}).get(num) or {}).get("lineas")
+    if lineas_guia is None:
+        g = next((x for x in guias or [] if x.get("numero") == num), None) or {}
+        lineas_guia = [{"sku": l.get("sku"), "nombre": l.get("nombre"), "cantidad": l.get("cantidad")} for l in g.get("lineas") or []]
+    if not _checkwms_configurado():
+        bod = _gvo.bodega(None, configurado=False)
+        if detalle:
+            bod["movimientos"] = {"estado": "no_disponible", "ots": [], "texto": ""}
+            bod["guia_lineas"] = _gvo.cruzar_bodega(lineas_guia, None)
+        return bod
+    desde = (meta.get(num) or {}).get("desde") or ""
+    cobros = sorted((tuple(k) for k in claves or [] if k[0] in _saldo.DOCS_COBRO),
+                    key=lambda k: (0 if _cadena.titulo(k) == desde else 1, k))
+    cand = ([("GDV", num)] + cobros)[:_OT_LOGI_CHECK_MAX_DOCS]
+    hasta = hasta or (time.time() + _OT_LOGI_CHECK_PRESUPUESTO)
+    consultados, respondio, lineas, fuente = [], False, [], ""
+    for t, n in cand:
+        if time.time() > hasta:
+            break
+        ok, lin = _ot_logi_check_doc(t, n)
+        consultados.append(f"{t} {n}")
+        if not ok:
+            break                               # Check no responde: no seguir ocupando el hilo con los demás
+        respondio = True
+        if lin:
+            lineas, fuente = lin, f"{t} {n}"
+            break
+    bod = _gvo.bodega(lineas, fuente, consultados, respondio=respondio)
+    bod["fuente_es_guia"] = fuente.startswith("GDV ")
+    if detalle:
+        bod["movimientos"] = _ot_logi_movimientos(cand)
+        bod["guia_lineas"] = _gvo.cruzar_bodega(lineas_guia, bod)
+    return bod
+
+
+def _ot_logi_avisar(vid, v, lista):
+    """Campana a la gestión de la OT por las diferencias «guía vs OT»: a quienes decide _ot_gestion_destinatarios (vía
+    _hall_destinos: el responsable primero, sin la familia técnico y sin quien lo está mirando, que ya lo ve en pantalla).
+    Una sola campana por OT y persona mientras no la lea (se actualiza su texto). Tono amable, sin montos, sin correo y
+    JAMÁS al cliente (REGLAS #19/#22/#26/#33). → a cuántas personas, o None si no se pudo saber a quién."""
+    try:
+        destinos = _hall_destinos(vid, v, excluir_uid=_hall_uid())
+    except Exception as e:
+        print(f"[ot-logistica] destinatarios vid={vid}: {type(e).__name__}", flush=True)
+        return None
+    num = v.get("numero_ot") or f"V-{int(vid):05d}"
+    titulo, cuerpo = _gvo.texto_campana(num, v.get("razon_social") or "", lista)
+    n = 0
+    for p in destinos or []:
+        uid = int(p["id"])
+        try:
+            ex = mysql_fetchone(
+                "SELECT id FROM mant_notificaciones WHERE tipo=%s AND visita_id=%s AND destino_user_id=%s "
+                "   AND leida_at IS NULL AND archivada_at IS NULL ORDER BY id DESC LIMIT 1", (_gvo.TIPO_AVISO, int(vid), uid))
+            if ex:
+                mysql_execute("UPDATE mant_notificaciones SET titulo=%s, cuerpo=%s, mensaje=%s WHERE id=%s",
+                              (titulo, cuerpo, cuerpo, int(ex["id"])))
+            else:
+                _mant_notificar(uid, _gvo.TIPO_AVISO, titulo, cuerpo, url_accion=f"/ot/{int(vid)}", prioridad="media",
+                                visita_id=int(vid))
+            _mant_notif_cache_invalidar(uid)
+            n += 1
+        except Exception as e:
+            print(f"[ot-logistica] campana a {uid}: {type(e).__name__}", flush=True)
+    return n
+
+
+def _ot_logi_registrar(vid, v, comp):
+    """Deja PERSISTENTE lo que no cuadra (ot_guia_alerta) y avisa UNA vez por hallazgo. Nueva → vigente + bitácora +
+    campana; ya no pasa → resuelta (con fecha) + bitácora; vuelve → vigente otra vez (veces + 1). Nunca se borra una fila.
+    Si Random no respondió (comp «sin_lectura») no se toca nada: no se resuelve a ciegas. → resumen o None."""
+    if (comp or {}).get("estado") not in ("coincide", "diferencias", "sin_datos"):
+        return None
+    if not _ot_logi_tabla():
+        return None
+    actuales = {(h["codigo"], h["detalle"]): h for h in _gvo.hallazgos(comp)}
+    previas = [dict(r) for r in (mysql_fetchall(
+        "SELECT id, codigo, detalle, estado, texto, guias, notificada_el FROM ot_guia_alerta WHERE visita_id=%s",
+        (int(vid),)) or [])]
+    plan = _gvo.plan_hallazgos(actuales, previas)
+    ahora = datetime.utcnow()
+    quien = (current_username() or "Revisión al abrir la OT")[:190]
+    for h in plan["insertar"]:
+        mysql_execute(
+            "INSERT INTO ot_guia_alerta (visita_id, codigo, detalle, texto, guias, estado, veces, detectada_el, detectada_por, "
+            " actualizado_el) VALUES (%s,%s,%s,%s,%s,'vigente',1,%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE actualizado_el=VALUES(actualizado_el)",
+            (int(vid), h["codigo"], h["detalle"], h["texto"], h["guias"] or None, ahora, quien, ahora))
+        _mant_log("visita", vid, "guia_diferencia",
+                  f"Guía de despacho vs OT · {h['texto']} (detectado al revisar la logística: {quien})"[:1000])
+    for r, h in plan["reabrir"]:
+        mysql_execute("UPDATE ot_guia_alerta SET estado='vigente', veces=veces+1, resuelta_el=NULL, texto=%s, guias=%s, "
+                      "       actualizado_el=%s WHERE id=%s", (h["texto"], h["guias"] or None, ahora, int(r["id"])))
+        _mant_log("visita", vid, "guia_diferencia",
+                  f"Otra vez, guía de despacho vs OT · {h['texto']} (detectado: {quien})"[:1000])
+    for r, h in plan["actualizar"]:
+        mysql_execute("UPDATE ot_guia_alerta SET texto=%s, guias=%s, actualizado_el=%s WHERE id=%s",
+                      (h["texto"], h["guias"] or None, ahora, int(r["id"])))
+    for r in plan["resolver"]:
+        mysql_execute("UPDATE ot_guia_alerta SET estado='resuelta', resuelta_el=%s, actualizado_el=%s WHERE id=%s",
+                      (ahora, ahora, int(r["id"])))
+        _mant_log("visita", vid, "guia_diferencia_resuelta",
+                  f"Guía de despacho vs OT · ya cuadra: {r.get('texto') or r.get('detalle')}. Queda en el historial de la OT."[:1000])
+    avisadas = None
+    if plan["avisar"]:
+        avisadas = _ot_logi_avisar(vid, v, list(actuales.values()))
+        if avisadas is not None:
+            mysql_execute("UPDATE ot_guia_alerta SET notificada_el=%s WHERE visita_id=%s AND estado='vigente' "
+                          "   AND notificada_el IS NULL", (ahora, int(vid)))
+    return {"vigentes": len(actuales), "nuevas": len(plan["insertar"]) + len(plan["reabrir"]),
+            "resueltas": len(plan["resolver"]), "avisadas": avisadas or 0}
+
+
+def _ot_logistica(vid, guia=None, check=False):
+    """La logística de las guías de UNA OT: la comparación «lo que salió» vs «lo que gestiona la OT» y un SEMÁFORO por
+    guía (la línea resumen de la tarjeta). Con `check` se le pregunta a Check (bodega) por cada guía para cerrar su
+    semáforo (presupuesto de tiempo compartido; si Check no responde, el resto se da por «no respondió» sin esperar); con
+    `guia` (su número) se trae además el detalle de esa guía. None si la OT no existe. Sin montos."""
+    v = mysql_fetchone("SELECT v.*, c.razon_social FROM mant_visitas v LEFT JOIN mant_clientes c ON c.id = v.cliente_id "
+                       " WHERE v.id = %s", (int(vid),))
+    if not v:
+        return None
+    v = dict(v)
+    cad = _ot_doc_cadena(vid)
+    if cad is None:
+        return None
+    if cad.get("interna"):
+        return {"interna": True, "guias": [], "comparacion": {
+            "estado": "sin_datos", "motivo": "interna", "color": "gris", "productos": [], "por_guia": {}, "n_diferencias": 0,
+            "veredicto": "Trabajo interno: no hay guía de despacho de una venta que comparar."}}
+    claves, meta = [], {}
+    for c in cad.get("cadenas") or []:
+        for n in c.get("nodos") or []:
+            if n.get("tipo") == "GDV":
+                meta[str(n.get("numero") or "")] = {"desde": n.get("desde") or "", "fecha": n.get("fecha") or ""}
+            elif n.get("clave") and len(n["clave"]) == 2:
+                k = (str(n["clave"][0]), str(n["clave"][1]))
+                if k not in claves:
+                    claves.append(k)
+    guias = _ot_logi_guias_lineas(claves) if claves else []
+    if guias is None:
+        guias = []
+        comp = {"estado": "sin_lectura", "motivo": "random", "color": "gris", "productos": [], "por_guia": {}, "no_salio": [],
+                "n_diferencias": 0, "guias": [], "anuladas": [],
+                "veredicto": "Random no respondió ahora: no se pudo leer qué salió en las guías. Intenta de nuevo en un minuto."}
+    else:
+        otras = _ot_logi_otras_ot(vid, claves)
+        gl = _ot_logi_gestionados([int(vid)] + [o["vid"] for o in otras])
+        propios = gl.get(int(vid)) or {}
+        gest, fuera = _gvo.armar_gestionados(v.get("tipo"), propios.get("equipos"), propios.get("repuestos"),
+                                             es_servicio=_sku_es_servicio)
+        otras_ot = []
+        for o in otras:
+            go = gl.get(o["vid"]) or {}
+            g2, _f2 = _gvo.armar_gestionados(o.get("tipo"), go.get("equipos"), go.get("repuestos"), es_servicio=_sku_es_servicio)
+            if g2:
+                otras_ot.append({"vid": o["vid"], "numero_ot": o.get("numero_ot") or f"OT {o['vid']}", "productos": g2})
+        comp = _gvo.comparar(guias, gest, otras_ot=otras_ot, es_servicio=_sku_es_servicio, no_comparados=fuera)
+        try:
+            comp["alerta"] = _ot_logi_registrar(vid, v, comp)
+        except Exception as e:                 # best-effort: la tarjeta se muestra igual
+            print(f"[ot-logistica] registrar vid={vid}: {type(e).__name__}: {e}", flush=True)
+    configurado = _checkwms_configurado()
+    res = {"comparacion": comp, "check": configurado,
+           "guias": [{"numero": g["numero"], "fecha": g.get("fecha") or "", "desde": g.get("desde") or "",
+                      "anulada": bool(g.get("anulada")), "lineas": [dict(l, cantidad=_gvo.redondo(l.get("cantidad")))
+                                                                    for l in g.get("lineas") or []]} for g in guias]}
+    vivas = [g["numero"] for g in guias if not g.get("anulada")]
+    semaforos = {g["numero"]: {"color": "gris", "texto": "Guía anulada en Random: no cuenta", "pendiente": False}
+                 for g in guias if g.get("anulada")}
+    num = re.sub(r"\D", "", str(guia or ""))[:12].lstrip("0")
+    if num:
+        bod = _ot_logi_bodega(num, claves, meta, comp, guias)
+        res["bodega"] = {num: bod}
+        semaforos = {num: semaforos.get(num) or _gvo.semaforo_guia(comp, num, bod)}
+    elif check and configurado:
+        hasta, caido, res["bodega_resumen"] = time.time() + _OT_LOGI_CHECK_PRESUPUESTO, False, {}
+        for n in vivas[:_OT_LOGI_MAX_GUIAS_CHECK]:
+            bod = (_gvo.bodega(None, respondio=False) if caido
+                   else _ot_logi_bodega(n, claves, meta, comp, guias, hasta=hasta, detalle=False))
+            caido = caido or bod.get("estado") == "sin_conexion"
+            semaforos[n] = _gvo.semaforo_guia(comp, n, bod)
+            res["bodega_resumen"][n] = {k: bod.get(k) for k in ("estado", "color", "texto", "fuente", "pedidas", "despachadas")}
+        for n in vivas[_OT_LOGI_MAX_GUIAS_CHECK:]:      # más guías que el tope: su detalle se consulta al abrirlas
+            semaforos[n] = _gvo.semaforo_guia(comp, n, _gvo.bodega([], "", []))
+    else:
+        for n in vivas:
+            semaforos[n] = (_gvo.semaforo_guia(comp, n, None, pendiente=True) if configurado
+                            else _gvo.semaforo_guia(comp, n, _gvo.bodega(None, configurado=False)))
+    res["semaforos"] = semaforos
+    return res
+
+
+@app.route("/ot/api/<int:vid>/documentos/logistica", methods=["GET"])
+@_mant_required
+@_no_tecnico
+@_ot_can_view
+def ot_api_documentos_logistica(vid):
+    """La logística de las guías de despacho de la OT dentro de «Trazabilidad en Random»: «lo que salió» (Random) vs «lo
+    que gestiona la OT», con el veredicto, los hallazgos y un semáforo por guía. ?check=1 le pregunta a Check (bodega) para
+    cerrar el semáforo de cada guía; ?guia=<número> trae el detalle de esa guía (lo que Check informa que salió
+    físicamente: estado, unidades juntadas y expedidas, fechas, OT de bodega, operador y UA). SOLO LECTURA de Random y de
+    Check (REGLAS #4.1/#4.4). Sin montos. Solo gestión: un técnico recibe 403 antes de leer nada (REGLAS #19/#26)."""
+    if _es_rol_tecnico():
+        return jsonify({"ok": False, "error": "Sin permiso para ver la logística de las guías."}), 403
+    guia = re.sub(r"\D", "", request.args.get("guia") or "")[:12]
+    check = (request.args.get("check") or "").strip().lower() in ("1", "true", "si")
+    try:
+        res = _ot_logistica(vid, guia=guia or None, check=check)
+    except Exception as e:
+        print(f"[ot-logistica] vid={vid}: {type(e).__name__}: {e}", flush=True)
+        return jsonify({"ok": False, "error": "No pudimos leer la logística de las guías ahora."}), 500
+    if res is None:
+        return jsonify({"ok": False, "error": "No encontramos esa OT."}), 404
+    return jsonify({"ok": True, "visita_id": vid, **res})
+
+
 # ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
 #  📒 2026-10-11 — LIBRO DE SALDO DE FACTURAS (Daniel, antes de la auditoría del martes 13-oct)
 #  «Si ya utilicé una factura y se ocupó el saldo en otra orden de trabajo, es necesario que ese saldo quede
@@ -132077,7 +132540,10 @@ def _ensure_mant_notif_tipo_ot_firmada_cliente():
     estén en las dos listas.
 
     2026-10-21 (solicitud de repuesto, REGLA #41): + repuesto_tecnico (la campana al técnico que pidió: revisado, pedido, llegó, instalado, cerrado).
-    También al final ('repuesto_nuevo' y 'repuesto_plazo' ya estaban). tests/test_repuestos_respuesta.py lo vigila."""
+    También al final ('repuesto_nuevo' y 'repuesto_plazo' ya estaban). tests/test_repuestos_respuesta.py lo vigila.
+
+    2026-10-29 (logística de las guías de despacho): + ot_guia_diferencia (la campana «OT-…: N diferencias entre la guía de
+    despacho y la OT»). También al final, detrás de 'tk_sla'. tests/test_ot_guia_logistica.py vigila que esté en las dos listas."""
     try:
         mysql_execute(
             "ALTER TABLE mant_notificaciones MODIFY COLUMN tipo "
@@ -132094,7 +132560,7 @@ def _ensure_mant_notif_tipo_ot_firmada_cliente():
             "       'retiro_listo','retiro_cerrado',"
             "       'retiro_propuesta','retiro_expedido','retiro_desfase','retiro_cierre',"
             "       'retiro_anulado','retiro_desviacion','retiro_cita_vencida',"
-            "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma','repuesto_nuevo','repuesto_tecnico','tk_sla') DEFAULT 'otro'"
+            "       'repuesto_plazo','ia_alerta_proactiva','ot_pendiente_stock','ot_responsable','ot_hallazgo','ot_hallazgo_toma','repuesto_nuevo','repuesto_tecnico','tk_sla','ot_guia_diferencia') DEFAULT 'otro'"
         )
     except Exception as e:
         print(f"[ensure] mant_notificaciones.tipo (+ot_firmada_cliente): {e}", flush=True)

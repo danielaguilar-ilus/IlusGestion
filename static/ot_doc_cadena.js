@@ -105,6 +105,12 @@
           return '<li>' + esc(p.cantidad) + ' × ' + esc(p.nombre || p.sku) + (p.sku && p.nombre ? ' <small>' + esc(p.sku) + '</small>' : '') + '</li>';
         }).join('') + '</ul>';
       }
+      /* 🚚 2026-10-29 (Daniel: «en la guía de despacho, presiono y no hicimos la conexión con el WMS… para saber QUÉ SE FUE»):
+         «Ver logística» lo maneja static/ot_guia_logistica.js (bodega según Check y «lo que salió» vs «lo que gestiona la OT»). */
+      h += '<div class="gl" data-gl-guia="' + esc(n.numero) + '"><div class="gl-estado" data-gl-estado aria-live="polite"></div>' +
+        '<button type="button" class="gl-btn" data-gl-ver="' + esc(n.numero) + '" aria-expanded="false">' +
+        '<i class="bi bi-truck" aria-hidden="true"></i> Ver logística</button>' +
+        '<div class="gl-cuerpo" data-gl-cuerpo hidden></div></div>';
     } else {
       if (n.mismo_cliente === false && (n.rut || n.razon_social)) {
         h += '<p class="dc-sal dc-ambar">Emitida a ' + esc(n.razon_social || 'otra empresa') + (n.rut ? ' (RUT ' + esc(n.rut) + ')' : '') + '</p>';
@@ -127,7 +133,8 @@
 
   function html(d) {
     var h = '<div class="dc-h"><h3><i class="bi bi-diagram-3-fill" aria-hidden="true"></i> Trazabilidad en Random</h3>' +
-      '<small>Nota de venta → factura o boleta → guía de despacho · solo lectura</small></div>';
+      '<small>Nota de venta → factura o boleta → guía de despacho · solo lectura</small>' +
+      '<span class="gl-chip-slot" data-gl-chip></span></div>';
     (d.sugerencias || []).forEach(function (s, i) { h += htmlSugerencia(s, i); });
     (d.alertas || []).forEach(function (a) {
       h += '<div class="dc-al" role="note"><i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i><p>' + esc(a.texto) + '</p></div>';
@@ -157,6 +164,8 @@
     for (var j = 0; j < el.children.length; j++) { if (el.children[j].classList.contains('fm-top')) { top = el.children[j]; break; } }
     if (top && top.nextSibling) el.insertBefore(sec, top.nextSibling);
     else el.appendChild(sec);
+    // 🚚 2026-10-29: la logística de las guías (static/ot_guia_logistica.js) se monta sobre la sección recién pintada.
+    if (global.OTGuiaLogistica && typeof global.OTGuiaLogistica.montar === 'function') global.OTGuiaLogistica.montar(sec, vid);
   }
 
   function agregar(vid, s) {

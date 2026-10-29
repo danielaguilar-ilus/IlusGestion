@@ -1,0 +1,62 @@
+/* 🚚 Logística (WMS) de cada guía de despacho (static/ot_guia_logistica.js, 29-oct-2026). Vive dentro de «Trazabilidad en
+   Random» (.dc). Daniel: «todo bien resumido, no tarjetas tan grandes»: una línea por guía con un semáforo CHICO (verde =
+   salió todo lo gestionado · ámbar = falta o sobra algo · gris = sin información de bodega) y el detalle solo al hacer clic,
+   en secciones planas separadas por una línea fina. Colores con medida: semáforo y chips, nunca la tarjeta pintada
+   (REGLA #2). Nombres completos, sin cortar (REGLA #15). Celular primero (REGLA #3): botones de 44 px en el celular. */
+.gl{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:2px;min-width:0;border-top:1px solid var(--fm-borde,#e5e7eb);padding-top:6px}
+.gl-estado{flex:1 1 200px;min-width:0}
+.gl-estado:empty{display:none}
+.gl-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+/* El semáforo: un punto de 10 px y la frase. */
+.gl-dot{display:inline-block;width:10px;height:10px;border-radius:50%;flex:0 0 10px;margin-right:6px;vertical-align:-1px;
+  background:#9ca3af;box-shadow:0 0 0 2px #f3f4f6}
+.gl-dot.verde{background:#16a34a;box-shadow:0 0 0 2px #dcfce7}
+.gl-dot.ambar{background:#f59e0b;box-shadow:0 0 0 2px #fff8e1}
+.gl-dot.gris{background:#9ca3af;box-shadow:0 0 0 2px #f3f4f6}
+.gl-sem{display:flex;align-items:baseline;font-size:.78rem;font-weight:700;color:#111827;overflow-wrap:anywhere}
+.gl-sem.pend .gl-sem-t{color:#4b5563;font-weight:600}
+
+.gl-btn{min-height:32px;padding:0 10px;border-radius:8px;border:1px solid var(--fm-borde,#d1d5db);background:#fff;color:#1d4ed8;font-weight:800;
+  font-size:.76rem;display:inline-flex;align-items:center;justify-content:center;gap:5px;cursor:pointer;white-space:nowrap}
+.gl-btn:hover{background:#f8fafc;border-color:#93c5fd}
+.gl-btn:focus-visible,.gl-chip:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}
+
+/* Chip de la cabecera: «N diferencias con la OT» (ámbar) o «coincide» (verde). */
+.gl-chip-slot:empty{display:none}
+.gl-chip-slot{margin-left:auto}
+.gl-chip{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:2px 9px;font-size:.74rem;font-weight:800;border:1px solid transparent;min-height:26px}
+button.gl-chip{cursor:pointer;font-family:inherit}
+.gl-chip.ambar{background:var(--fm-ambar-f,#fff8e1);color:#78350f;border-color:#fde68a}
+.gl-chip.verde{background:var(--fm-verde-f,#dcfce7);color:#14532d;border-color:#bbf7d0}
+
+/* Detalle (al hacer clic): secciones planas, letra chica, sin cajas pintadas. */
+.gl-cuerpo{flex:1 1 100%;min-width:0}
+.gl-det{display:grid;grid-template-columns:minmax(0,1fr);gap:0}
+.gl-sec{padding:6px 0;border-top:1px dashed var(--fm-borde,#e5e7eb);display:flex;flex-direction:column;gap:3px;min-width:0}
+.gl-sec:first-child{border-top:0}
+.gl-sec h5{margin:0;font-size:.74rem;font-weight:900;color:#374151;text-transform:uppercase;letter-spacing:.03em;display:flex;align-items:center;gap:5px}
+.gl-fr{margin:0;font-size:.78rem;font-weight:600;color:#111827;overflow-wrap:anywhere}
+.gl-meta{font-size:.74rem;color:#4b5563;font-weight:500;overflow-wrap:anywhere}
+p.gl-meta,p.gl-sub{margin:0}
+.gl-sub{font-size:.74rem;font-weight:800;color:#374151}
+.gl-err{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:.78rem;color:#78350f;font-weight:700}
+
+.gl-lineas,.gl-mov{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+.gl-lineas li{display:flex;align-items:baseline;font-size:.78rem;min-width:0}
+.gl-l{min-width:0;overflow-wrap:anywhere}
+.gl-l small{color:#4b5563;font-size:.72rem}
+.gl-l-x{display:block}
+.gl-q{font-weight:900;font-variant-numeric:tabular-nums}
+.gl-mov li{font-size:.76rem;overflow-wrap:anywhere}
+.gl-mov small{color:#4b5563}
+
+@media (min-width:900px){
+  .dc-cad.largo .gl-det{grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:0 18px}
+  .dc-cad.largo .gl-sec{border-top:0}
+}
+@media (max-width:600px){
+  .gl-btn{min-height:44px;width:100%}
+  .gl-chip-slot{margin-left:0;width:100%}
+  .gl-chip{min-height:44px}
+}

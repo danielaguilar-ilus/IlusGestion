@@ -11,6 +11,10 @@
     sugerida) se monta sola dentro de este bloque. Lee /ot/api/<vid>/documentos/cadena (solo lectura, nunca técnicos). -#}
 <link rel="stylesheet" href="{{ url_for('static', filename='ot_doc_cadena.css') }}">
 <script src="{{ url_for('static', filename='ot_doc_cadena.js') }}" defer></script>
+{#- 2026-10-29: «Ver logística» de cada guía de despacho (bodega según Check y «lo que salió» vs «lo que gestiona la OT»).
+    Lee /ot/api/<vid>/documentos/logistica (solo lectura de Random y Check, nunca técnicos). -#}
+<link rel="stylesheet" href="{{ url_for('static', filename='ot_guia_logistica.css') }}">
+<script src="{{ url_for('static', filename='ot_guia_logistica.js') }}" defer></script>
 {% endif %}
 {#- 2026-10-08: «Costos y documentación de la OT». `data-declaro` = quién declaró la plata y cuándo (lo lee el resumen de la cuenta); lo
     mantiene al día otdFinSetEstadoDeclarado (detalle.html) al guardar. Solo en la ficha. -#}
