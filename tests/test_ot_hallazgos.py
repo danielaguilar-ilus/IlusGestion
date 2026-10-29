@@ -2158,7 +2158,9 @@ class TestCableado(unittest.TestCase):
             # 2026-10-21: lo que se agrega después va DETRÁS (nada se reordena, REGLA #18): «repuesto_nuevo» (aviso de solicitud de repuesto).
             # 2026-10-21 (REGLA #41): detrás de «repuesto_nuevo» vino «repuesto_tecnico» (la campana al técnico que pidió un repuesto).
             # 2026-10-27 (Tickets 2.0): detrás vino «tk_sla» (recordatorio del SLA de respuesta de un ticket).
-            self.assertEqual(valores[i + 2:], ["repuesto_nuevo", "repuesto_tecnico", "tk_sla"], "al FINAL: nada se reordena (REGLA #18)")
+            # 2026-10-29 (logística de las guías): detrás vino «ot_guia_diferencia» (guía de despacho vs OT).
+            self.assertEqual(valores[i + 2:], ["repuesto_nuevo", "repuesto_tecnico", "tk_sla", "ot_guia_diferencia"],
+                             "al FINAL: nada se reordena (REGLA #18)")
             self.assertEqual(valores.count(H.TIPO_AVISO), 1)
             self.assertEqual(valores[valores.index("ot_responsable") + 1], H.TIPO_AVISO)
             self.assertIn("ot_pendiente_stock", valores)
