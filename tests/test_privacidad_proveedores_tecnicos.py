@@ -953,7 +953,12 @@ class TestTicketsDeCompra(unittest.TestCase):
     def test_where_acotado_excluye_los_tipos_de_compra_solo_para_tecnicos(self):
         for es_tecnico, wsql_in, esperado_en in (
                 (True, "", True), (True, " WHERE t.estado=%s", True), (False, "", False), (False, " WHERE t.estado=%s", False)):
+            # _tk_scope_sql (Tickets 2.0, «míos y sin asignar») es una función hermana anidada
+            # en register_tickets_routes: no viaja con _ejecutar_nodo. Aquí se aísla la regla de
+            # las compras, así que el doble es «ve todo» (sin condición); la composición con el
+            # acotamiento por persona se prueba en el siguiente método.
             amb = {"_tk_es_tecnico": lambda es=es_tecnico: es,
+                   "_tk_scope_sql": lambda: (None, []),
                    "_tk_list_where": lambda a, w=wsql_in: (w, ["open"] if w else [])}
             _constantes_modulo(TICKETS, ["TK_TIPOS_COMPRA_PROVEEDOR"], amb)
             f = _ejecutar_nodo(TICKETS, "_tk_list_where_scoped", amb)
@@ -966,6 +971,27 @@ class TestTicketsDeCompra(unittest.TestCase):
                     self.assertIn(" AND NOT EXISTS (", wsql)
             elif es_tecnico:
                 self.assertTrue(wsql.startswith(" WHERE "))
+
+    def test_el_where_acotado_compone_compras_y_visibilidad_por_persona(self):
+        # Tickets 2.0: quien no ve todo queda además limitado a «míos + sin asignar». Para un
+        # técnico las DOS condiciones deben sumarse (ninguna pisa a la otra) y los parámetros
+        # seguir el orden de los %s, o la bandeja filtraría con valores cambiados.
+        cond_v = "(t.asignado_a IS NULL OR t.asignado_a='' OR t.asignado_a IN (%s,%s))"
+        compras = "NOT EXISTS (SELECT 1 FROM mant_repuestos_compras _c WHERE _c.ticket_id=t.id)"
+        for es_tecnico in (True, False):
+            for wsql_in in ("", " WHERE t.estado=%s"):
+                amb = {"_tk_es_tecnico": lambda es=es_tecnico: es,
+                       "_tk_scope_sql": lambda: (cond_v, ["Ana Perez", "aperez"]),
+                       "_tk_list_where": lambda a, w=wsql_in: (w, ["open"] if w else [])}
+                _constantes_modulo(TICKETS, ["TK_TIPOS_COMPRA_PROVEEDOR"], amb)
+                wsql, params = _ejecutar_nodo(TICKETS, "_tk_list_where_scoped", amb)({})
+                caso = (es_tecnico, wsql_in, wsql)
+                self.assertIn(cond_v, wsql, caso)
+                self.assertEqual(compras in wsql, es_tecnico, caso)
+                self.assertEqual(wsql.count("%s"), len(params), caso)
+                self.assertEqual(params, (["open"] if wsql_in else []) + ["Ana Perez", "aperez"], caso)
+                self.assertTrue(wsql.startswith(wsql_in or " WHERE "), caso)
+                self.assertTrue(wsql.endswith(cond_v), "la visibilidad por persona va al final")
 
 
 # ───────────────────────── 8. Catalogo: no hay canal hacia proveedores ─────────────────────────
