@@ -656,7 +656,7 @@
           Eliminar / Cancelar / Guardar -- "Atrás" y "Siguiente" ya no
           tienen sentido con las 6 tarjetas siempre visibles. -#}
       <div class="modal-footer inc-footer">
-        {% if permissions.admin or permissions.superadmin %}
+        {% if permissions.superadmin %}
         <button type="button" class="btn btn-outline-danger me-auto" id="incBtnEliminar" style="display:none">
           <i class="bi bi-trash me-1"></i>Eliminar</button>
         {% endif %}
@@ -788,6 +788,8 @@
               <small>Revisa que sea el producto correcto.</small></div>
           </div>
           <div class="inc-baja-item" id="incBajaItem"></div>
+          {#- 2026-10-28: dónde está HOY en Check (bodega + posición). Sale de la caché de Check; no consulta nada nuevo. -#}
+          <div class="inc-baja-pos" id="incBajaPos" hidden></div>
         </section>
         <section class="inc-pane" id="incBajaPane2">
           <div class="inc-pane-head inc-c3">
@@ -802,7 +804,7 @@
                     placeholder="Algo que ayude a entender la baja más adelante"></textarea>
         </section>
         <div class="inc-baja-nota"><i class="bi bi-shield-check"></i>
-          <span>No se borra nada: queda en <b>Dadas de baja</b> con su motivo y se puede reactivar.</span></div>
+          <span>No se borra nada: queda en <b>Dadas de baja</b> con su motivo, quién, cuándo y su posición en Check, y se puede reactivar.</span></div>
         <div class="text-danger small mt-2" id="incBajaErr"></div>
       </div>
       <div class="modal-footer">
@@ -997,6 +999,12 @@
 .inc-ua-alternas .inc-ua-alt small{font-weight:600;color:#64748b;font-size:.72rem}
 .inc-ua-alternas .inc-ua-alt.on{border-color:#dc2626;background:#fef2f2;color:#991b1b}
 .inc-conc-buscar{margin:6px 0 10px}
+.inc-baja-pos{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.inc-baja-pos .fila{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.inc-baja-pos .tag{display:inline-flex;gap:5px;align-items:center;padding:3px 10px;border-radius:99px;font-size:.76rem;font-weight:800;background:#f1f5f9;color:#334155;border:1px solid #e2e8f0}
+.inc-baja-pos .tag.b13{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.inc-baja-pos .sug{display:flex;gap:8px;align-items:flex-start;padding:8px 12px;border-radius:10px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;font-size:.84rem;font-weight:600}
+.inc-baja-mot .sugerido{margin-left:auto;padding:1px 9px;border-radius:99px;background:#dbeafe;color:#1e40af;font-size:.68rem;font-weight:900}
 .inc-opc-prod{font-weight:900;font-size:1rem;color:#0f172a;line-height:1.3;margin-bottom:12px;overflow-wrap:anywhere}
 .inc-opc{display:flex;flex-direction:column;align-items:flex-start;gap:3px;width:100%;text-align:left;margin-bottom:10px;padding:13px 16px;min-height:44px;
   border:2px solid #e5e7eb;border-radius:12px;background:#fff;cursor:pointer;transition:border-color .15s ease,background .15s ease}
@@ -1456,6 +1464,19 @@
 
 /* ══ 🗄️ 2026-09-30 · Dar de baja + tabla de Pendientes con el formato de Retiros ══ */
 .inc-kpi.k-baja .inc-kpi-n{color:#475569} .inc-kpi.k-baja.sel{border-color:#475569}
+.inc-kpi.k-div .inc-kpi-n{color:#b45309} .inc-kpi.k-div.sel{border-color:#b45309}
+/* 2026-10-28: las unidades de un SKU, diferenciadas por UA y por estado del motivo, dentro de la misma fila (una sola fila por SKU) */
+.inc-uchips{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+.inc-uchip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:99px;font-size:.72rem;font-weight:800;border:1px solid transparent;white-space:nowrap}
+.inc-uchip.ok{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+.inc-uchip.warn{background:#fef3c7;color:#92400e;border-color:#fde68a}
+.inc-uchip.falta{background:#fee2e2;color:#991b1b;border-color:#fecaca}
+.inc-uchip.gris{background:#f1f5f9;color:#475569;border-color:#e2e8f0}
+.inc-pill-dividir{display:inline-flex;align-items:center;gap:4px;margin-top:4px;padding:2px 9px;border-radius:99px;background:#fff8e1;color:#92400e;
+  border:1px solid #fde68a;font-size:.72rem;font-weight:900}
+.inc-por-ua{width:100%;border-collapse:collapse;font-size:.84rem}
+.inc-por-ua th{font-size:.68rem;letter-spacing:.05em;text-transform:uppercase;color:#64748b;text-align:left;padding:4px 8px 4px 0}
+.inc-por-ua td{padding:5px 8px 5px 0;vertical-align:top;border-top:1px solid #f1f5f9}
 /* Los .rm-* de Retiros leen sus colores de variables que solo define `.rm-monitor` (la
    tabla principal); el panel de Pendientes vive fuera de él, así que se las damos acá
    (sin esto la cabecera negra y los bordes salían transparentes). */
@@ -1529,7 +1550,8 @@
   // Se resuelve una sola vez en el render (no en cada fila) para no meter
   // una condición de Jinja adentro de un string de JS -- más frágil de
   // leer y de mantener que una bandera booleana simple.
-  var incCanDelete = {{ 'true' if (permissions.admin or permissions.superadmin) else 'false' }};
+  // 2026-10-28 (Daniel): ELIMINAR es solo del superadministrador (trazabilidad histórica de la bodega); los demás usan «Dar de baja».
+  var incCanDelete = {{ 'true' if permissions.superadmin else 'false' }};
   // 🗄️ 2026-09-30: motivos de baja [{codigo, texto}] -- UNA sola fuente (INC_BAJA_MOTIVOS
   // en app.py), no se repiten escritos a mano acá.
   var INC_BAJA_MOTIVOS = {{ (motivos_baja or [])|tojson }};
@@ -2448,6 +2470,23 @@
     fuera_de_bodega:{ico:'bi-box-arrow-up-right',       t:'Salió de la bodega'},
   };
 
+  // 2026-10-28: «UA UA1014361» salía repetido: el código de la UA ya empieza con «UA». Se muestra una sola vez.
+  function incUaTxt(ua){
+    var u = String(ua == null ? '' : ua).trim();
+    if(!u) return '';
+    return incEsc(/^UA/i.test(u) ? u : 'UA ' + u);
+  }
+  // Las unidades de un SKU como fichas chicas: una por UA/línea, con el estado de su motivo (verde con motivo · ámbar falta el motivo · rojo falta agregar).
+  function incUnidadesChips(tarjetas){
+    return '<div class="inc-uchips">' + tarjetas.map(function(c){
+      var cls = c.clase === 'incidencia' ? (c.con_motivo ? 'ok' : 'warn') : (c.clase === 'sin_ua' ? 'gris' : 'falta');
+      var ico = c.clase === 'incidencia' ? (c.con_motivo ? 'bi-check-circle-fill' : 'bi-exclamation-triangle-fill') : (c.clase === 'sin_ua' ? 'bi-question-circle-fill' : 'bi-plus-circle-fill');
+      var txt = c.clase === 'incidencia' ? (c.con_motivo ? 'con motivo' : 'falta el motivo')
+              : (c.clase === 'sin_ua' ? 'dividir en UA (Check)' : (c.clase === 'faltan_repetible' ? 'falta registrar ' + c.cantidad : 'falta agregar'));
+      return '<span class="inc-uchip ' + cls + '"><i class="bi ' + ico + '"></i>' + (c.ua ? incEsc(c.ua) : (c.clase === 'sin_ua' ? c.cantidad + ' u.' : 'sin UA')) + ' · ' + txt + '</span>';
+    }).join('') + '</div>';
+  }
+
   function incConcPintar(){
     var d = incConcData;
     if(!d) return;
@@ -2480,6 +2519,8 @@
       ['sin_motivo',      'k-mot', 'Pendiente motivo',  (r.sin_motivo || 0), ayudaDe('sin_motivo')],
       ['falta_registrar', 'k-reg', 'Falta en nuestra BD',(r.falta_registrar || 0), ayudaDe('falta_registrar')],
       ['fuera_de_bodega', 'k-fue', 'Salió de bodega',   (r.fuera_de_bodega || 0), ayudaDe('fuera_de_bodega')],
+      // 2026-10-28: unidades juntas en una misma UA de Check que hay que dividir en una UA por unidad: es una diferencia más.
+      ['dividir',         'k-div', 'Dividir UA en Check',(r.dividir_ua || 0), 'Hay unidades juntas en una misma UA (o faltan unidades y Check no tiene otra UA libre): pide en Check que las dividan en una UA por unidad para poder darle su propio motivo a cada una.'],
       // 🗄️ 2026-09-30: el historial de bajas (motivo, quién, cuándo) -- nada se borra.
       ['bajas',           'k-baja','Dadas de baja',     (r.dadas_de_baja || 0), 'Historial de lo que se dio de baja, con su motivo, quién y cuándo. Nada se borra y se puede reactivar.'],
     ];
@@ -2504,6 +2545,8 @@
     var delTipo = (d.hallazgos || []).filter(function(h){
       if(!incConcFiltro) return true;
       if(incConcFiltro === 'dif_erp') return h.tipo === 'dif_erp' || h.tipo === 'no_en_erp';
+      if(incConcFiltro === 'dividir') return !!h.pendiente_dividir;
+      if(incConcFiltro === 'dif_wms') return h.tipo === 'dif_wms' || !!h.tambien_wms;
       return h.tipo === incConcFiltro;
     });
     var qn = incConcNorm(incConcQ).trim();
@@ -2514,6 +2557,9 @@
       $('incConcLista').innerHTML = '<div class="empty-state" style="padding:26px">'
         + (qn
             ? '<i class="bi bi-search"></i>Ningún pendiente coincide con «' + incEsc(incConcQ) + '».'
+              + '<div class="mt-2"><button type="button" class="btn btn-sm btn-ilus-outline" id="incConcPorQue"><i class="bi bi-question-circle me-1"></i>¿Por qué no aparece? Buscarlo en vivo en el ERP y Check</button>'
+              + '<div class="rm-sub mt-1">Tip: también puedes escribir el documento, por ejemplo «GRI 2721».</div></div>'
+              + '<div id="incConcPorQueRes" class="inc-porque"></div>'
             : '<i class="bi bi-check-circle" style="color:#16a34a"></i>'
               + (incConcFiltro ? 'Sin pendientes de este tipo.' : 'Todo cuadra entre los tres sistemas.'))
         + '</div>';
@@ -2603,6 +2649,17 @@
       var paneles = panel('question-circle', 'Qué significa', p(h.detalle) + (ayuda ? '<p class="rm-sub">'+incEsc(ayuda)+'</p>' : ''), true)
         + panel('123', 'Números', '<p><b>Nuestra BD:</b> '+vn(h.nuestra_bd)+'</p><p><b>ERP Random:</b> '+vn(h.erp)+'</p><p><b>CheckWMS:</b> '+vn(h.wms)+'</p>')
         + panel('geo-alt', 'Dónde', '<p><b>UA:</b> '+incEsc(h.ua || '—')+'</p><p><b>Ubicación (Check):</b> '+incEsc(h.ubicacion || '—')+'</p>');
+      if(h.unidades && h.unidades.tarjetas && h.unidades.tarjetas.length){
+        // 2026-10-28: el stock de este SKU diferenciado por UA y por motivo (una fila por unidad)
+        paneles += panel('diagram-3', 'Por UA y motivo',
+          '<table class="inc-por-ua"><thead><tr><th>UA</th><th>Unidades</th><th>Estado</th><th>Motivo</th></tr></thead><tbody>'
+          + h.unidades.tarjetas.map(function(c){
+              var est = c.clase === 'incidencia' ? (c.con_motivo ? 'Con motivo' : 'Falta el motivo')
+                      : (c.clase === 'libre' ? 'Falta agregar' : (c.clase === 'faltan_repetible' ? 'Falta registrar' : 'Pendiente dividir en UA en Check'));
+              return '<tr><td>' + (c.ua ? incEsc(c.ua) : '<span class="rm-sub">sin UA</span>') + '</td><td>' + c.cantidad + '</td><td>' + est + '</td><td>'
+                + (c.motivo ? incEsc(c.motivo) : '<span class="rm-sub">—</span>') + '</td></tr>';
+            }).join('') + '</tbody></table>', true);
+      }
       if(h.baja_previa){
         var b = h.baja_previa;
         paneles += panel('archive', 'Antes dada de baja',
@@ -2628,11 +2685,14 @@
         + '<td class="rm-c-exp"><button type="button" class="rm-ic-btn rm-exp" aria-expanded="false" aria-label="Ver el detalle" title="Ver el detalle"><i class="bi bi-chevron-right"></i></button></td>'
         + '<td data-label="Pendiente"><div class="rm-cell"><span class="rm-pill '+nivel+'" style="margin-top:0"><i class="bi '+m.ico+'"></i>'+m.t+'</span>'
         +   (h.baja_previa ? '<div><span class="rm-pill gris inc-pill-baja" style="margin-top:4px" title="Alguien ya la dio de baja con otros números. Abre el detalle para ver quién, cuándo y por qué."><i class="bi bi-archive"></i>Antes dada de baja</span></div>' : '')
-        +   (h.sugerir_distribuir ? '<div><span class="inc-badge-distribuir"><i class="bi bi-signpost-split-fill"></i> Distribuir a UAs</span></div>' : '')
+        +   (h.pendiente_dividir ? '<div><span class="inc-pill-dividir" title="Hay unidades juntas en una misma UA de Check (o faltan y no hay otra UA libre): hay que dividirlas en una UA por unidad."><i class="bi bi-signpost-split-fill"></i>Pendiente dividir en UA en Check</span></div>' : '')
+        +   (h.tambien_wms ? '<div><span class="rm-pill gris" style="margin-top:4px" title="Check (WMS) también tiene esta diferencia: es la misma unidad, no otra."><i class="bi bi-box-arrow-in-down"></i>Check también difiere</span></div>' : '')
         + '</div></td>'
         + '<td data-label="SKU"><div class="rm-cell"><span class="rm-code">'+incEsc(h.sku || h.ua || '—')+'</span></div></td>'
         + '<td data-label="Producto"><div class="rm-cell"><div class="rm-cli-name">'+incEsc(h.descripcion || '—')+'</div>'
-        +   (h.ua && h.sku ? '<div class="rm-sub">UA '+incEsc(h.ua)+'</div>' : '')
+        +   (h.unidades && h.unidades.tarjetas && h.unidades.tarjetas.length
+              ? incUnidadesChips(h.unidades.tarjetas)
+              : (h.ua && h.sku ? '<div class="rm-sub">'+incUaTxt(h.ua)+'</div>' : ''))
         +   (h.descripcion_fuente === 'erp' ? '<div class="rm-sub" title="CheckWMS no tiene este SKU en su Bodega 13: el nombre viene del maestro de productos de Random.">Nombre según Random</div>' : '')
         + '</div></td>'
         + celdaNum('Nuestra BD', h.nuestra_bd, 'v-bd') + celdaNum('ERP', h.erp, 'v-erp') + celdaNum('WMS', h.wms, 'v-wms')
@@ -2801,8 +2861,43 @@
     }).join('');
     document.getElementById('incBajaTexto').value = '';
     document.getElementById('incBajaErr').textContent = '';
+    var pos = document.getElementById('incBajaPos');
+    pos.hidden = true; pos.innerHTML = '';
     incBajaPintar();
     incBajaModal().show();
+    incBajaContexto(ctx);
+  }
+
+  // 🧭 2026-10-28 (Daniel: «un proceso inteligente, corto, intuitivo, con las bodegas, ya que puedes identificar las posiciones en Check»): al abrir la baja se
+  // muestra dónde está hoy la UA (bodega + posición) y se deja SUGERIDO el motivo que corresponde (salió de la Bodega 13, ya cuadra…); la persona solo confirma.
+  function incBajaContexto(ctx){
+    var q = new URLSearchParams();
+    if(ctx.ua) q.set('ua', ctx.ua);
+    if(ctx.sku) q.set('sku', ctx.sku);
+    ['nuestra_bd', 'erp', 'wms'].forEach(function(k){ if(ctx[k] != null) q.set(k, ctx[k]); });
+    fetch('/mantenciones/api/incidencias/baja-contexto?' + q.toString(), {credentials: 'same-origin'})
+      .then(function(r){ return r.json(); }).then(function(d){
+        if(!d || !d.ok || _incBaja.ctx !== ctx) return;       // llegó tarde: ya se abrió otra baja
+        var box = document.getElementById('incBajaPos'), h = '';
+        if(d.posiciones && d.posiciones.length){
+          h += '<div class="fila"><b class="small">Dónde está hoy en Check:</b>' + d.posiciones.map(function(p){
+            var es13 = String(p.bodega || '').toUpperCase() === String(d.bodega_incidencias).toUpperCase();
+            return '<span class="tag' + (es13 ? ' b13' : '') + '"><i class="bi bi-geo-alt-fill"></i>' + incEsc(p.bodega || '—')
+              + (p.ubicacion ? ' · ' + incEsc(p.ubicacion) : '') + (p.ua ? ' · ' + incEsc(p.ua) : '') + '</span>';
+          }).join('') + '</div>';
+        } else if(ctx.ua || ctx.sku){
+          h += '<div class="fila"><span class="tag"><i class="bi bi-geo-alt"></i>No aparece en Check hoy</span></div>';
+        }
+        if(d.sugerencia){
+          h += '<div class="sug"><i class="bi bi-lightbulb-fill"></i><span><b>Sugerido:</b> ' + incEsc(d.sugerencia.razon) + ' Confírmalo abajo o elige otro motivo.</span></div>';
+          _incBaja.motivo = d.sugerencia.codigo;
+          document.querySelectorAll('#incBajaMotivos .inc-baja-mot').forEach(function(b){
+            if(b.dataset.cod === d.sugerencia.codigo && !b.querySelector('.sugerido')){ b.insertAdjacentHTML('beforeend', '<span class="sugerido">Sugerido</span>'); }
+          });
+          incBajaPintar();
+        }
+        if(h){ box.innerHTML = h; box.hidden = false; }
+      }).catch(function(){ /* la baja funciona igual sin la posición */ });
   }
 
   // Semáforo de las 2 tarjetas + progreso (mismo patrón que "Solicitar repuesto").
@@ -2941,7 +3036,9 @@
         + '<td data-label="Dada de baja"><div class="rm-cell"><div class="rm-fecha-main">'+incFmtChile(b.baja_at)+'</div><div class="rm-sub">'+incEsc(b.baja_by || '')+'</div></div></td>'
         + '<td data-label="Producto"><div class="rm-cell"><span class="rm-pill gris" style="margin-top:0"><i class="bi bi-'+(esInc ? 'exclamation-triangle' : 'shield-check')+'"></i>'+incEsc(tipoTxt)+'</span>'
         +   '<div class="rm-cli-name" style="margin-top:4px">'+incEsc(b.descripcion || '—')+'</div>'
-        +   '<div class="rm-sub"><span class="rm-code">'+incEsc(b.sku || '—')+'</span>'+(b.ua ? ' · UA '+incEsc(b.ua) : '')+'</div></div></td>'
+        +   '<div class="rm-sub"><span class="rm-code">'+incEsc(b.sku || '—')+'</span>'+(b.ua ? ' · '+incUaTxt(b.ua) : '')+'</div>'
+        +   (b.bodega_check ? '<div class="rm-sub"><i class="bi bi-geo-alt"></i> Check: '+incEsc(b.bodega_check)+(b.ubicacion_check ? ' · '+incEsc(b.ubicacion_check) : '')+'</div>' : '')
+        + '</div></td>'
         + '<td data-label="Motivo"><div class="rm-cell"><b>'+incEsc(b.motivo || '')+'</b>'+(b.motivo_texto ? '<div class="rm-sub">'+incEsc(b.motivo_texto)+'</div>' : '')+'</div></td>'
         + '<td data-label="Números de ese día"><div class="rm-cell">'+nums(b)+'</div></td>'
         + '<td data-label="Estado"><div class="rm-cell">'
@@ -3255,7 +3352,7 @@
   // pasados 12s (el ERP/WMS a veces demoran, pero igual sigue esperando)
   // para que no se vea "colgado" sin decir nada.
   var incConcToken = 0;
-  function incConcCargar(){
+  function incConcCargar(forzar){
     var miToken = ++incConcToken;
     $('incConciliacion').hidden = false;
     $('incConcLista').innerHTML = '<div class="empty-state" style="padding:26px">'
@@ -3266,7 +3363,8 @@
         + '<i class="bi bi-hourglass-split"></i>Sigue comparando -- el ERP o CheckWMS a veces demoran '
         + 'hasta un minuto. No cierres esta pantalla.</div>';
     }, 12000);
-    fetch('/mantenciones/api/incidencias/conciliacion')
+    // 2026-10-28: «Actualizar» salta las cachés (ERP 15 min · Check 1 h) para ver un traslado de hoy; abrir el panel sigue usando los datos guardados.
+    fetch('/mantenciones/api/incidencias/conciliacion' + (forzar === true ? '?forzar=1' : ''))
       .then(function(r){return r.json();}).then(function(d){
         clearTimeout(avisoLento);
         if(miToken !== incConcToken) return;   // llegó tarde, ya no importa
@@ -3291,7 +3389,37 @@
     function aplicar(){ incConcQ = q.value; incConcPage = 1; if(incConcData) incConcPintar(); }
     q.addEventListener('input', function(){ $('incConcQx').hidden = !q.value; clearTimeout(t); t = setTimeout(aplicar, 120); });
     $('incConcQx').addEventListener('click', function(){ q.value = ''; q.focus(); aplicar(); });
+    $('incConcLista').addEventListener('click', function(ev){ if(ev.target.closest('#incConcPorQue')) incPorQue(); });
   })();
+
+  // 🔎 2026-10-28 (Daniel: «se hizo un traslado hoy a la bodega 13 y no salen las diferencias… yo quiero saber»): cuando la búsqueda no encuentra nada, se
+  // puede mirar EN VIVO ese SKU/UA en el ERP (todas las bodegas), en Check y en nuestras incidencias, con la explicación en palabras simples.
+  function incPorQue(){
+    var cont = $('incConcPorQueRes');
+    if(!cont) return;
+    cont.innerHTML = '<div class="rm-sub mt-2"><i class="bi bi-hourglass-split me-1"></i>Consultando el ERP y Check en vivo…</div>';
+    fetch('/mantenciones/api/incidencias/diagnostico?q=' + encodeURIComponent(incConcQ))
+      .then(function(r){ return r.json(); }).then(function(d){
+        if(!d.ok){ cont.innerHTML = '<div class="text-danger mt-2">' + incEsc(d.error || 'No se pudo consultar.') + '</div>'; return; }
+        function tabla(cab, filas){
+          return filas.length ? '<table class="inc-por-ua mb-2"><thead><tr>' + cab.map(function(c){ return '<th>' + c + '</th>'; }).join('') + '</tr></thead><tbody>'
+            + filas.map(function(f){ return '<tr>' + f.map(function(c){ return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table>'
+            : '<div class="rm-sub mb-2">Sin registros.</div>';
+        }
+        var docsHtml = (d.documentos || []).map(function(doc){
+          return '<b>Documento ' + incEsc(doc.tido) + ' ' + incEsc(String(parseInt(doc.nudo, 10) || doc.nudo)) + '</b> · ' + incEsc(doc.fecha || '') + ' · ' + incEsc(doc.estado || '')
+            + tabla(['SKU', 'Cantidad', 'Despachada', 'Bodegas'], (doc.lineas || []).map(function(l){
+                return [incEsc(l.sku), incNum(l.cant), incNum(l.cant_despachada), incEsc(Object.keys(l.bodegas || {}).map(function(k){ return k + '=' + l.bodegas[k]; }).join(' · ') || '—')];
+              }));
+        }).join('');
+        cont.innerHTML = '<div class="inc-dif-nota mt-2"><i class="bi bi-info-circle-fill"></i><span>' + incEsc(d.explicacion) + '</span></div>' + (docsHtml ? '<div class="text-start">' + docsHtml + '</div>' : '')
+          + '<div class="text-start"><b>ERP Random</b> (todas las bodegas con stock)' + (d.erp_ok ? '' : ' <span class="text-danger">— no respondió</span>')
+          + tabla(['SKU', 'Producto', 'Bodega', 'Stock'], d.erp.map(function(e){ return [incEsc(e.sku), incEsc(e.nombre || '—'), incEsc(e.bodega) + (String(e.bodega) === String(d.bodega_incidencias.erp) ? ' <b>(incidencias)</b>' : ''), incNum(e.fisico)]; }))
+          + '<b>CheckWMS</b>' + tabla(['UA', 'SKU', 'Bodega', 'Ubicación', 'Unidades'], d.check.map(function(c){ return [incEsc(c.ua || '—'), incEsc(c.sku), incEsc(c.bodega || '—'), incEsc(c.ubicacion || '—'), incNum(c.cant)]; }))
+          + '<b>Nuestras incidencias abiertas</b>' + tabla(['N°', 'SKU', 'UA', 'Cant.', 'Motivo'], d.incidencias.map(function(i){ return ['#' + i.id, incEsc(i.sku || '—'), incEsc(i.ua || '—'), i.cantidad, incEsc(i.motivo || '—')]; }))
+          + '</div>';
+      }).catch(function(){ cont.innerHTML = '<div class="text-danger mt-2">No se pudo conectar con el servidor.</div>'; });
+  }
 
   // ➕ 2026-10-28: registrar la unidad que falta de un SKU que YA tiene incidencia. La UA se elige entre las libres de Check (las que no
   // tienen incidencia abierta): una UA solo puede estar en una incidencia activa.
@@ -3431,8 +3559,8 @@
     });
   }
 
-  $('incBtnConciliar').addEventListener('click', incConcCargar);
-  $('incConcRefrescar').addEventListener('click', function(){ incConcData=null; incConcCargar(); });
+  $('incBtnConciliar').addEventListener('click', function(){ incConcCargar(); });
+  $('incConcRefrescar').addEventListener('click', function(){ incConcData=null; incConcCargar(true); });
   $('incConcCerrar').addEventListener('click', function(){ $('incConciliacion').hidden = true; });
 
   // 🔒 2026-09-26 (Daniel, viendo el modal en producción: "SIEMPRE

@@ -69028,6 +69028,40 @@ def _inc_unidades_hallazgo(h, incs, repetible):
     return {"tarjetas": tarjetas, "faltan": faltan, "sobran": sobran, "unidades": declaradas + faltan, "con_motivo": con_motivo}
 
 
+def _inc_consolidar_por_sku(hallazgos):
+    """PURA. UNA fila por SKU: la misma máquina pendiente ya no sale tres veces.
+
+    Daniel (28-oct), viendo la Air Ski Erg: «dice que hay tres diferencias, es medio confuso». Eran la MISMA unidad contada por tres caminos: la diferencia con
+    el ERP, la diferencia con Check y «Falta registrar» de su UA. Reglas:
+      · si un SKU tiene «dif_erp» Y «dif_wms», queda «dif_erp» (el ERP manda) con `tambien_wms` = True (la diferencia con Check se sigue contando en su tarjeta);
+      · un «falta_registrar» cuya UA ya está entre las `uas_libres` de la diferencia de ese SKU se quita: esa UA ya sale como tarjeta «Falta agregar» dentro de ella.
+    Devuelve la lista nueva (no modifica el orden del resto)."""
+    por_sku = {}
+    for h in hallazgos:
+        if h.get("tipo") in ("dif_erp", "dif_wms") and h.get("sku"):
+            por_sku.setdefault(h["sku"], {})[h["tipo"]] = h
+    quitar = set()
+    for d in por_sku.values():
+        if "dif_erp" in d and "dif_wms" in d:
+            d["dif_erp"]["tambien_wms"] = True
+            quitar.add(id(d["dif_wms"]))
+    for h in hallazgos:
+        if h.get("tipo") == "falta_registrar" and h.get("sku") in por_sku:
+            p = por_sku[h["sku"]].get("dif_erp") or por_sku[h["sku"]].get("dif_wms")
+            if (h.get("ua") or "") in {u.get("ua") for u in (p.get("uas_libres") or [])}:
+                quitar.add(id(h))
+    return [h for h in hallazgos if id(h) not in quitar]
+
+
+def _inc_pendiente_dividir(h):
+    """PURA. ¿Quedan unidades juntas en UNA misma UA de Check que habría que dividir en una UA por unidad? Es una DIFERENCIA más (Daniel, 28-oct:
+    «ahí vas a decir que está pendiente de dividir en UA en Check, y lo vas a poner como una diferencia»): un pendiente de varias unidades en la misma
+    UA que no es repetible (`sugerir_distribuir`) o una diferencia a la que le faltan unidades y Check no tiene otra UA libre (tarjeta «sin_ua»)."""
+    if h.get("sugerir_distribuir"):
+        return True
+    return any(c.get("clase") == "sin_ua" for c in ((h.get("unidades") or {}).get("tarjetas") or []))
+
+
 def _inc_hallazgo_accion(h):
     """Qué botón mostrar para UN hallazgo de la conciliación (función pura,
     testeable sin BD). Daniel (26-sep): "cada tipo de hallazgo con una
@@ -69142,6 +69176,53 @@ def _inc_aplicar_bajas(hallazgos, bajas):
     return visibles
 
 
+def _inc_posiciones_check(stock_rows, ua, sku, maximo=8):
+    """PURA. Dónde está hoy en Check una UA (o, si no se conoce la UA, ese SKU): [{ua, bodega, ubicacion, cant}] con la Bodega 13 primero.
+    Daniel (28-oct): «la baja con las bodegas, ya que puedes identificar las posiciones en Check»."""
+    ua_n = (ua or "").strip().upper()
+    sku_n = (sku or "").strip()
+    filas = []
+    for r in stock_rows or []:
+        r_ua = (r.get("ua") or "").strip().upper()
+        if ua_n and r_ua == ua_n or (not ua_n and sku_n and (r.get("codigo") or "").strip() == sku_n):
+            try:
+                cant = float(r.get("stFisico") or 0)
+            except (TypeError, ValueError):
+                cant = 0
+            filas.append({"ua": r_ua or None, "bodega": (r.get("bodega") or "").strip() or None, "ubicacion": (r.get("ubicacion") or "").strip() or None, "cant": cant})
+    filas.sort(key=lambda f: (0 if (f["bodega"] or "").upper() == INC_BODEGA_WMS else 1, f["bodega"] or "", f["ua"] or ""))
+    return filas[:maximo]
+
+
+def _inc_baja_sugerencia(posiciones, ua, nuestra_bd=None, erp=None, wms=None):
+    """PURA. El motivo de baja que el sistema SUGIERE (la persona lo confirma o lo cambia): {"codigo", "razon"} o None.
+      · la UA ya no está en la Bodega 13 → «Salió de la bodega o ya se resolvió», diciendo dónde está ahora;
+      · nuestra BD, el ERP y Check dicen lo mismo → «Ya está regularizado» (en Random)."""
+    if (ua or "").strip():
+        en13 = [p for p in posiciones if (p.get("bodega") or "").upper() == INC_BODEGA_WMS]
+        if not en13:
+            otra = next((p for p in posiciones if p.get("bodega")), None)
+            if otra:
+                return {"codigo": "salio_resuelto", "razon": f"La UA ya no está en la Bodega 13: ahora está en {otra['bodega']}"
+                                                              + (f" · {otra['ubicacion']}" if otra.get("ubicacion") else "") + "."}
+            return {"codigo": "salio_resuelto", "razon": "La UA ya no aparece en Check."}
+    try:
+        if nuestra_bd is not None and erp is not None and wms is not None and abs(float(nuestra_bd) - float(erp)) < 0.001 and abs(float(erp) - float(wms)) < 0.001:
+            return {"codigo": "regularizado_random", "razon": "Nuestra BD, el ERP y Check ya dicen lo mismo."}
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _inc_baja_posicion_snapshot(ua, sku):
+    """(bodega, ubicación) de la UA en Check AHORA, desde la caché del stock (nunca lanza): lo que queda guardado en la baja para la trazabilidad."""
+    try:
+        pos = _inc_posiciones_check(_checkwms_stock_rows() or [], ua, sku, maximo=1)
+        return (pos[0]["bodega"], pos[0]["ubicacion"]) if pos else (None, None)
+    except Exception:
+        return (None, None)
+
+
 def _inc_baja_publica(b):
     """Fila de `mant_incidencia_bajas` lista para JSON (fechas como texto UTC;
     el navegador las muestra en hora de Chile, REGLA #6)."""
@@ -69189,6 +69270,8 @@ def _ensure_incidencia_bajas_table():
                     reactivada_at   DATETIME NULL,
                     reactivada_by   VARCHAR(190) NULL,
                     reactivada_motivo VARCHAR(500) NULL,
+                    bodega_check    VARCHAR(60)  NULL COMMENT 'bodega de Check al darla de baja (trazabilidad)',
+                    ubicacion_check VARCHAR(120) NULL COMMENT 'posicion en Check al darla de baja (trazabilidad)',
                     KEY idx_baja_clave (clave, reactivada_at),
                     KEY idx_baja_inc (incidencia_id, reactivada_at),
                     KEY idx_baja_fecha (baja_at)
@@ -69197,6 +69280,17 @@ def _ensure_incidencia_bajas_table():
         conn.commit()
     finally:
         conn.close()
+
+
+def _ensure_incidencia_bajas_posicion():
+    """2026-10-28: la baja guarda DÓNDE estaba en Check (bodega y ubicación) para la trazabilidad histórica. Dos columnas, una sentencia cada una; la guardia de
+    DDL las salta sin pedir lock si ya existen (REGLA #18). Si faltan (ILUS_SKIP_MIGRATIONS), las bajas siguen funcionando sin la posición."""
+    for col, ddl in (("bodega_check", "ALTER TABLE mant_incidencia_bajas ADD COLUMN bodega_check VARCHAR(60) NULL COMMENT 'bodega de Check al darla de baja'"),
+                     ("ubicacion_check", "ALTER TABLE mant_incidencia_bajas ADD COLUMN ubicacion_check VARCHAR(120) NULL COMMENT 'posición en Check al darla de baja'")):
+        try:
+            mysql_execute(ddl)
+        except Exception as e:
+            print(f"[ensure_incidencia_bajas_posicion] {col}: {type(e).__name__}", flush=True)
 
 
 # ══ Desglosar por motivo (Daniel, 2026-09-30) ═════════════════════════════════
@@ -69396,7 +69490,7 @@ class _IncConcMysqlError(Exception):
     """No se pudieron leer las incidencias (MySQL): la conciliación no sigue."""
 
 
-def _inc_calcular_hallazgos():
+def _inc_calcular_hallazgos(forzar=False):
     """Conciliación Bodega 13 ↔ Incidencias ↔ ERP Random.
 
     🔧 2026-09-30: el cálculo vive acá (antes era el cuerpo del endpoint) para que
@@ -69419,7 +69513,9 @@ def _inc_calcular_hallazgos():
     exactamente EN QUÉ sistema está y en cuál no. Nunca bloquea: si una
     fuente no responde, se informa y se concilia con las que sí."""
     # ── Fuente 1: stock actual del WMS, solo Bodega 13 ──
-    stock = _checkwms_stock_rows() or []
+    # 2026-10-28: `forzar` salta las cachés (ERP 15 min, Check 1 h). Daniel: «se hizo un traslado hoy a la bodega 13 en el ERP y no salen las diferencias»:
+    # el botón «Actualizar» no las saltaba, así que un traslado de hoy tardaba en verse.
+    stock = _checkwms_stock_rows(forzar=forzar) or []
     wms_b13 = [r for r in stock
                if (r.get("bodega") or "").strip().upper() == INC_BODEGA_WMS]
     wms_ok = bool(stock)
@@ -69469,7 +69565,7 @@ def _inc_calcular_hallazgos():
     # conciliación Y la ficha de cada incidencia comparten la MISMA caché
     # de 15 min (_erp_stock_b13_por_sku), en vez de que cada una golpee el
     # ERP por su lado.
-    erp_por_sku = _erp_stock_b13_por_sku()
+    erp_por_sku = _erp_stock_b13_por_sku(forzar=forzar)
     erp_ok = erp_por_sku is not None
     erp_por_sku = erp_por_sku or {}
 
@@ -69632,6 +69728,11 @@ def _inc_calcular_hallazgos():
             h["repetible"] = (_clasif_dif.get((h.get("sku") or "").strip()) or {}).get("repetible") is True
             h["unidades"] = _inc_unidades_hallazgo(h, inc_por_sku.get(h.get("sku"), {}).get("incs", []), h["repetible"])
 
+    # 2026-10-28: UNA fila por SKU y la marca «pendiente de dividir en UA en Check».
+    hallazgos = _inc_consolidar_por_sku(hallazgos)
+    for h in hallazgos:
+        h["pendiente_dividir"] = _inc_pendiente_dividir(h)
+
     hallazgos.sort(key=lambda h: (h.get("orden", 9), -abs(h.get("delta") or 0), h.get("sku") or ""))
     # 🔧 2026-09-26: cada hallazgo trae su acción ya resuelta -- el frontend
     # ya no adivina mirando si `ids` viene o no (ese fue exactamente el bug
@@ -69657,6 +69758,133 @@ def _inc_calcular_hallazgos():
     }
 
 
+def _inc_doc_ref(q):
+    """PURA. ¿`q` (sin espacios, en mayúsculas) es la referencia de un documento del ERP, como «GRI2721» o «GTI0000002721»? → (TIDO, número sin ceros) o None."""
+    import re as _re
+    m = _re.fullmatch(r"([A-Z]{3})0*(\d{1,10})", q or "")
+    return (m.group(1), m.group(2)) if m else None
+
+
+def _inc_doc_texto(docs, ref, sku_q=""):
+    """PURA. Qué dice el ERP del documento que Daniel mencionó (traslado de hoy, «GRI 2721»). `docs` = [{tido, nudo, fecha, estado, lineas:[{sku, cant,
+    cant_despachada, bodegas:{campo: valor}}]}]. Devuelve una o dos frases para el diagnóstico."""
+    tido, num = ref
+    if not docs:
+        return (f"No encontré el documento {tido} {num} en el ERP. Revisa el tipo y el número; si lo acaban de crear, puede que todavía no esté grabado.")
+    d = docs[0]
+    partes = [f"El ERP SÍ tiene el documento {d.get('tido')} {int(str(d.get('nudo') or '0') or 0)}"
+              + (f" del {d['fecha']}" if d.get("fecha") else "") + (f", en estado «{d['estado']}»" if d.get("estado") else "") + "."]
+    if str(d.get("estado") or "").strip().upper() in ("NULO", "N"):
+        partes.append("Está ANULADO: no mueve stock.")
+    lineas = d.get("lineas") or []
+    del_sku = [ln for ln in lineas if sku_q and str(ln.get("sku") or "").strip().upper().endswith(sku_q)]
+    if lineas and sku_q and not del_sku:
+        partes.append(f"Ninguna de sus {len(lineas)} línea(s) es un producto que termine en {sku_q}.")
+    for ln in (del_sku or lineas)[:3]:
+        bod = ", ".join(f"{k}={v}" for k, v in (ln.get("bodegas") or {}).items() if str(v or "").strip())
+        partes.append(f"Línea: {ln.get('sku')} × {ln.get('cant'):g}" + (f" (bodegas: {bod})" if bod else "") + ".")
+    return " ".join(partes)
+
+
+def _inc_diagnostico_texto(sku_erp, check_b13, incs, bajas=0, doc_txt=""):
+    """PURA. En palabras simples, POR QUÉ un SKU no sale (o sí) en «Revisar diferencias».
+    `sku_erp` = filas del ERP [{bodega, fisico}] (todas las bodegas con stock); `check_b13` = filas de Check en la Bodega 13 [{ua, cant}];
+    `incs` = incidencias abiertas [{id, cantidad}]. Daniel (28-oct): «se hizo un traslado hoy a la bodega 13 en el ERP y no salen las diferencias»."""
+    erp13 = sum(float(r.get("fisico") or 0) for r in sku_erp if str(r.get("bodega") or "").strip() == "13")
+    otras = sorted({str(r.get("bodega") or "").strip() for r in sku_erp
+                    if str(r.get("bodega") or "").strip() not in ("13", "") and float(r.get("fisico") or 0) != 0})
+    chk = sum(float(r.get("cant") or 0) for r in check_b13)
+    nuestra = sum(int(i.get("cantidad") or 0) for i in incs)
+    pre = (doc_txt + " ") if doc_txt else ""
+    if not sku_erp and not check_b13 and not incs:
+        return pre + "No aparece en ningún lado: ni en el ERP con stock, ni en Check, ni en nuestras incidencias. Revisa que el código esté bien escrito."
+    if erp13 <= 0 and chk <= 0 and not incs:
+        return (pre + "El ERP no tiene stock de este SKU en la bodega 13" + (f" (sí lo tiene en la bodega {', '.join(otras)})" if otras else "")
+                + " y Check tampoco lo tiene ahí: por eso no hay diferencia. Si ya hiciste el traslado, revisa que el documento esté recepcionado en Random: "
+                "el stock de la bodega 13 recién se mueve cuando se recepciona.")
+    if abs(erp13 - nuestra) < 0.001 and abs(chk - nuestra) < 0.001:
+        return pre + f"Cuadra: el ERP ({erp13:g}), Check ({chk:g}) y nosotros ({nuestra:g}) dicen lo mismo, por eso no sale como diferencia."
+    partes = [f"Hay diferencia: ERP {erp13:g}, Check {chk:g}, nosotros {nuestra:g}."]
+    if bajas:
+        partes.append("Ojo: alguien la dio de baja y se oculta mientras sus números no cambien.")
+    partes.append("Debería salir en «Revisar diferencias»; si no la ves, pulsa «Actualizar» (la lista usa datos guardados hasta 15 min del ERP y 1 hora de Check).")
+    return pre + " ".join(partes)
+
+
+@app.route("/mantenciones/api/incidencias/diagnostico", methods=["GET"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_diagnostico():
+    """«¿Por qué no aparece?»: mira EN VIVO (sin caché) un SKU o una UA en el ERP Random (todas las bodegas, SOLO LECTURA: REGLA #4.1), en Check (SOLO
+    LECTURA: REGLA #4.4) y en nuestras incidencias. `q` puede ser el SKU completo, el final del SKU («termina en 101054») o una UA. Nunca escribe nada."""
+    q = re.sub(r"[\s.\-]", "", (request.args.get("q") or "")).upper()[:30]
+    if len(q) < 4 or not re.fullmatch(r"[A-Z0-9]+", q):
+        return jsonify({"ok": False, "error": "Escribe al menos 4 letras o números del SKU, de la UA o de un documento (por ejemplo GRI 2721)."}), 400
+    # 2026-10-28 («se hizo un traslado hoy… está bajo la GRI 2721»): si lo escrito parece un DOCUMENTO («GRI 2721»), además se busca en el ERP ese documento,
+    # su estado y a qué bodega ingresó cada línea. `sku` (opcional) acota las líneas a ese producto, por ejemplo «termina en 101054».
+    ref = _inc_doc_ref(q)
+    sku_q = re.sub(r"[\s.\-]", "", (request.args.get("sku") or "")).upper()[:30] if ref else ""
+    docs, docs_ok = [], True
+    if ref:
+        try:
+            cab = _random_sql_query(
+                "SELECT TOP 3 IDMAEEDO, TIDO, NUDO, FEEMDO, ESDO FROM MAEEDO WHERE TIDO=%s AND NUDO LIKE %s ORDER BY IDMAEEDO DESC",
+                (ref[0], "%" + ref[1]), max_rows=3) or []
+            for c in cab:
+                if str(c.get("NUDO") or "").strip().lstrip("0") != ref[1].lstrip("0"):
+                    continue
+                lin = _random_sql_query("SELECT TOP 40 * FROM MAEDDO WHERE IDMAEEDO=%s", (c.get("IDMAEEDO"),), max_rows=40) or []
+                lineas = []
+                for r in lin:
+                    def _f(k):
+                        try:
+                            return float(r.get(k) or 0)
+                        except (TypeError, ValueError):
+                            return 0.0
+                    # el nombre exacto de la columna de bodega varía según el tipo de documento: se muestran las que empiezan con «BO» y traen valor
+                    bodegas = {k: str(v).strip() for k, v in r.items() if str(k).upper().startswith("BO") and str(v or "").strip()}
+                    lineas.append({"sku": str(r.get("KOPRCT") or "").strip(), "cant": _f("CAPRCO1"), "cant_despachada": _f("CAPRAD1"), "bodegas": bodegas})
+                fecha = c.get("FEEMDO")
+                docs.append({"tido": str(c.get("TIDO") or "").strip(), "nudo": str(c.get("NUDO") or "").strip(),
+                             "fecha": fecha.strftime("%d/%m/%Y") if hasattr(fecha, "strftime") else (str(fecha)[:10] if fecha else ""),
+                             "estado": str(c.get("ESDO") or "").strip(), "lineas": lineas})
+        except Exception as e:
+            docs_ok = False
+            print(f"[inc diagnostico] documento: {type(e).__name__}", flush=True)
+    erp, erp_ok, nombres = [], True, {}
+    try:
+        filas = _random_sql_query(
+            "SELECT LTRIM(RTRIM(KOPR)) AS sku, LTRIM(RTRIM(KOBO)) AS bodega, STFI1 AS fisico FROM MAEST "
+            " WHERE LTRIM(RTRIM(KOPR)) LIKE %s AND STFI1 <> 0 ORDER BY KOPR, KOBO", ("%" + q,), max_rows=60) or []
+        erp = [{"sku": r.get("sku"), "bodega": r.get("bodega"), "fisico": float(r.get("fisico") or 0)} for r in filas]
+        if erp:
+            try:
+                nom = _random_sql_query(
+                    "SELECT LTRIM(RTRIM(KOPR)) AS sku, LTRIM(RTRIM(NOKOPR)) AS nombre FROM MAEPR WHERE LTRIM(RTRIM(KOPR)) LIKE %s",
+                    ("%" + q,), max_rows=20) or []
+                nombres = {r.get("sku"): r.get("nombre") for r in nom}
+            except Exception as _e:
+                print(f"[inc diagnostico] nombres: {type(_e).__name__}", flush=True)
+    except Exception as e:
+        erp_ok = False
+        print(f"[inc diagnostico] ERP: {type(e).__name__}", flush=True)
+    stock = _checkwms_stock_rows(forzar=True) or []
+    check = [{"sku": (r.get("codigo") or "").strip(), "ua": (r.get("ua") or "").strip(), "bodega": r.get("bodega"), "ubicacion": r.get("ubicacion"),
+              "cant": float(r.get("stFisico") or 0), "descripcion": r.get("descripcion")}
+             for r in stock
+             if (r.get("codigo") or "").strip().upper().endswith(q) or q in (r.get("ua") or "").strip().upper()]
+    incs = mysql_fetchall(
+        "SELECT id, sku, descripcion, cantidad, motivo, recomendacion, ubicacion FROM mant_incidencias "
+        " WHERE estado='abierta' AND COALESCE(eliminada,0)=0 AND (sku LIKE %s OR recomendacion LIKE %s)", ("%" + q, "%" + q)) or []
+    check13 = [c for c in check if (c.get("bodega") or "").strip().upper() == INC_BODEGA_WMS]
+    doc_txt = _inc_doc_texto(docs, ref, sku_q) if (ref and docs_ok) else ""
+    texto = _inc_diagnostico_texto(erp, check13, [dict(i) for i in incs], doc_txt=doc_txt)
+    return jsonify({"ok": True, "q": q, "documentos": docs, "documento_ok": docs_ok, "erp_ok": erp_ok,
+                    "erp": [dict(e, nombre=nombres.get(e["sku"])) for e in erp], "check": check[:40],
+                    "incidencias": [{"id": i["id"], "sku": i.get("sku"), "ua": i.get("recomendacion"), "cantidad": i.get("cantidad"), "motivo": i.get("motivo")} for i in incs],
+                    "bodega_incidencias": {"erp": INC_BODEGA_ERP, "check": INC_BODEGA_WMS}, "explicacion": texto})
+
+
 @app.route("/mantenciones/api/incidencias/conciliacion", methods=["GET"])
 @_mant_required
 @_no_tecnico_salvo_taller
@@ -69667,7 +69895,7 @@ def mant_api_incidencias_conciliacion():
     vuelven a salir con `baja_previa` (quién, cuándo y por qué, y los números de
     entonces). `resumen.dadas_de_baja` cuenta todas las bajas vigentes."""
     try:
-        calc = _inc_calcular_hallazgos()
+        calc = _inc_calcular_hallazgos(forzar=(request.args.get("forzar") == "1"))
     except _IncConcMysqlError:
         return jsonify({"ok": False, "error": "No se pudo leer las incidencias."}), 500
     hallazgos = _inc_aplicar_bajas(calc["hallazgos"], _inc_bajas_hallazgo_vigentes())
@@ -69688,7 +69916,8 @@ def mant_api_incidencias_conciliacion():
         "resumen": {
             "dif_erp":        sum(1 for h in hallazgos if h["tipo"] == "dif_erp"),
             "no_en_erp":      sum(1 for h in hallazgos if h["tipo"] == "no_en_erp"),
-            "dif_wms":        sum(1 for h in hallazgos if h["tipo"] == "dif_wms"),
+            "dif_wms":        sum(1 for h in hallazgos if h["tipo"] == "dif_wms" or h.get("tambien_wms")),
+            "dividir_ua":     sum(1 for h in hallazgos if h.get("pendiente_dividir")),
             "sin_motivo":     sum(1 for h in hallazgos if h["tipo"] == "sin_motivo"),
             "falta_registrar": sum(1 for h in hallazgos if h["tipo"] == "falta_registrar"),
             "fuera_de_bodega": sum(1 for h in hallazgos if h["tipo"] == "fuera_de_bodega"),
@@ -70690,9 +70919,12 @@ def mant_api_incidencias_borrar(iid):
     borrar (nunca hard delete sin log). La fila queda marcada `eliminada=1`
     -- no se hace DROP de datos reales; el listado (GET) y la conciliación
     ya no la muestran."""
+    # 2026-10-28 (Daniel: «solamente yo puedo eliminar productos de la base de datos, para mantener la trazabilidad histórica de la bodega»): ELIMINAR es solo del
+    # superadministrador. Todos los demás usan «Dar de baja», que deja el motivo, quién, cuándo y la posición en Check, y se puede reactivar.
     perms = g.get("permissions") or {}
-    if not (perms.get("admin") or perms.get("superadmin")):
-        return jsonify({"ok": False, "error": "Solo un administrador puede eliminar incidencias."}), 403
+    if not perms.get("superadmin"):
+        return jsonify({"ok": False, "error_codigo": "SOLO_SUPERADMIN",
+                        "error": "Solo el superadministrador puede eliminar de la bodega. Para sacarla usa «Dar de baja»: queda con su motivo y trazabilidad."}), 403
     inc = mysql_fetchone("SELECT id, sku, descripcion, estado FROM mant_incidencias "
                           " WHERE id=%s AND COALESCE(eliminada,0)=0", (iid,))
     if not inc:
@@ -70733,6 +70965,26 @@ def _inc_baja_foto_numeros(sku):
     except Exception:
         pass
     return erp, wms
+
+
+@app.route("/mantenciones/api/incidencias/baja-contexto", methods=["GET"])
+@_mant_required
+@_no_tecnico_salvo_taller
+def mant_api_incidencias_baja_contexto():
+    """Para el modal «Dar de baja»: dónde está HOY en Check esa UA (bodega, ubicación) y el motivo que el sistema sugiere. Solo lectura y desde la caché del
+    stock de Check: no consulta nada nuevo al ERP ni a Check."""
+    ua = _checkwms_norm_ua(request.args.get("ua") or "")
+    sku = (request.args.get("sku") or "").strip()[:100]
+
+    def _num(k):
+        try:
+            v = request.args.get(k)
+            return None if v in (None, "", "null", "undefined") else float(v)
+        except (TypeError, ValueError):
+            return None
+    pos = _inc_posiciones_check(_checkwms_stock_rows() or [], ua, sku)
+    return jsonify({"ok": True, "posiciones": pos, "bodega_incidencias": INC_BODEGA_WMS,
+                    "sugerencia": _inc_baja_sugerencia(pos, ua, _num("nuestra_bd"), _num("erp"), _num("wms"))})
 
 
 @app.route("/mantenciones/api/incidencias/bajas", methods=["GET"])
@@ -70813,13 +71065,21 @@ def mant_api_incidencias_baja_hallazgo():
             "UPDATE mant_incidencia_bajas SET reactivada_at=NOW(), reactivada_by=%s, reactivada_motivo=%s "
             " WHERE origen='hallazgo' AND clave=%s AND reactivada_at IS NULL",
             (usuario, "Reemplazada por una baja nueva (los números cambiaron).", clave))
-        cur.execute(
-            "INSERT INTO mant_incidencia_bajas (origen, clave, tipo_hallazgo, sku, descripcion, ua, "
-            "nuestra_bd, erp, wms, motivo_codigo, motivo_texto, baja_by) "
-            "VALUES ('hallazgo',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            (clave, h.get("tipo"), (h.get("sku") or None), (h.get("descripcion") or "")[:400] or None,
-             (h.get("ua") or None), _inc_baja_num(h.get("nuestra_bd")), _inc_baja_num(h.get("erp")),
-             _inc_baja_num(h.get("wms")), codigo, texto, usuario))
+        _bod, _ubi = _inc_baja_posicion_snapshot(h.get("ua"), h.get("sku"))
+        _base = (clave, h.get("tipo"), (h.get("sku") or None), (h.get("descripcion") or "")[:400] or None,
+                 (h.get("ua") or None), _inc_baja_num(h.get("nuestra_bd")), _inc_baja_num(h.get("erp")),
+                 _inc_baja_num(h.get("wms")), codigo, texto, usuario)
+        try:
+            cur.execute(
+                "INSERT INTO mant_incidencia_bajas (origen, clave, tipo_hallazgo, sku, descripcion, ua, "
+                "nuestra_bd, erp, wms, motivo_codigo, motivo_texto, baja_by, bodega_check, ubicacion_check) "
+                "VALUES ('hallazgo',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", _base + (_bod, _ubi))
+        except Exception as _e_col:
+            print(f"[incidencias baja] sin columnas de posición: {type(_e_col).__name__}", flush=True)
+            cur.execute(
+                "INSERT INTO mant_incidencia_bajas (origen, clave, tipo_hallazgo, sku, descripcion, ua, "
+                "nuestra_bd, erp, wms, motivo_codigo, motivo_texto, baja_by) "
+                "VALUES ('hallazgo',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", _base)
         db.commit()
     return jsonify({"ok": True})
 
@@ -70858,13 +71118,21 @@ def mant_api_incidencia_baja(iid):
         if not cur.rowcount:
             db.rollback()
             return jsonify({"ok": False, "error": "Esa incidencia ya no está abierta."}), 409
-        cur.execute(
-            "INSERT INTO mant_incidencia_bajas (origen, clave, incidencia_id, sku, descripcion, ua, cantidad, "
-            "erp, wms, motivo_codigo, motivo_texto, estado_antes, fecha_res_antes, baja_by) "
-            "VALUES ('incidencia',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            (f"inc|{iid}", iid, sku or None, (inc.get("descripcion") or "")[:400] or None, ua,
-             _inc_baja_num(inc.get("cantidad")), _inc_baja_num(erp), _inc_baja_num(wms),
-             codigo, texto, inc.get("estado"), inc.get("fecha_resolucion"), usuario))
+        _bod, _ubi = _inc_baja_posicion_snapshot(ua, sku)
+        _base = (f"inc|{iid}", iid, sku or None, (inc.get("descripcion") or "")[:400] or None, ua,
+                 _inc_baja_num(inc.get("cantidad")), _inc_baja_num(erp), _inc_baja_num(wms),
+                 codigo, texto, inc.get("estado"), inc.get("fecha_resolucion"), usuario)
+        try:
+            cur.execute(
+                "INSERT INTO mant_incidencia_bajas (origen, clave, incidencia_id, sku, descripcion, ua, cantidad, "
+                "erp, wms, motivo_codigo, motivo_texto, estado_antes, fecha_res_antes, baja_by, bodega_check, ubicacion_check) "
+                "VALUES ('incidencia',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", _base + (_bod, _ubi))
+        except Exception as _e_col:
+            print(f"[incidencias baja] sin columnas de posición: {type(_e_col).__name__}", flush=True)
+            cur.execute(
+                "INSERT INTO mant_incidencia_bajas (origen, clave, incidencia_id, sku, descripcion, ua, cantidad, "
+                "erp, wms, motivo_codigo, motivo_texto, estado_antes, fecha_res_antes, baja_by) "
+                "VALUES ('incidencia',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", _base)
         db.commit()
     # Las solicitudes de repuesto ya hechas con esta incidencia NO se cancelan: se avisa.
     try:
@@ -180966,6 +181234,7 @@ except Exception as _ensure_ug_err:
 # eliminar, para tener trazabilidad") — tabla NUEVA: SIEMPRE, incluso skip-migrations.
 try:
     _ensure_incidencia_bajas_table()
+    _ensure_incidencia_bajas_posicion()    # 2026-10-28: posición en Check guardada en cada baja
 except Exception as _ensure_ib_err:
     print(f"[ILUS][WARN] tabla mant_incidencia_bajas: {_ensure_ib_err}", flush=True)
 

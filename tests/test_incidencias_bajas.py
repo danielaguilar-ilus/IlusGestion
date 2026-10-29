@@ -254,10 +254,14 @@ class TestNombresDesdeRandom(unittest.TestCase):
 class TestEndpointsDeBaja(unittest.TestCase):
     """Lo que Daniel decidió, verificado en el código de los endpoints."""
 
-    def test_eliminar_sigue_siendo_solo_de_administradores(self):
+    def test_eliminar_es_solo_del_superadministrador(self):
+        # 2026-10-28 (Daniel: «solamente yo puedo eliminar productos de la base de datos, para mantener la trazabilidad histórica de la bodega»):
+        # antes también podía un administrador. Los demás usan «Dar de baja».
         src = _fuente_de("mant_api_incidencias_borrar")
-        self.assertIn('perms.get("admin") or perms.get("superadmin")', src)
-        self.assertIn("Solo un administrador puede eliminar incidencias", src)
+        self.assertIn('if not perms.get("superadmin"):', src)
+        self.assertNotIn('perms.get("admin")', src)
+        self.assertIn("Solo el superadministrador puede eliminar de la bodega", src)
+        self.assertIn("«Dar de baja»", src)
 
     def test_dar_de_baja_es_de_todos_los_usuarios_del_modulo(self):
         for nombre in ("mant_api_incidencia_baja", "mant_api_incidencias_baja_hallazgo",

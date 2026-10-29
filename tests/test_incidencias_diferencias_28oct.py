@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import unittest
 
-from tests._fuente_app import cargar, texto
+from tests._fuente_app import cargar, decoradores, fuente_funcion, texto
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLANTILLA = os.path.join(RAIZ, "templates", "mantenciones", "incidencias.html")
@@ -28,11 +28,11 @@ def _wms(ua, ubicacion, sku="1050100999", desc="ILUS Air Ski Erg Machine", cant=
 
 def _hallazgos(wms, incs, erp):
     amb = cargar(
-        ("_inc_uas_libres", "_inc_hallazgo_faltan", "_inc_hallazgo_accion", "_inc_unidades_hallazgo", "_inc_calcular_hallazgos"),
+        ("_inc_uas_libres", "_inc_hallazgo_faltan", "_inc_hallazgo_accion", "_inc_unidades_hallazgo", "_inc_consolidar_por_sku", "_inc_pendiente_dividir", "_inc_calcular_hallazgos"),
         ("INC_BODEGA_WMS", "INC_BODEGA_ERP"),
         extra={
-            "_IncConcMysqlError": _IncConcMysqlError, "_checkwms_stock_rows": lambda: wms,
-            "mysql_fetchall": lambda sql, params=None: incs, "_erp_stock_b13_por_sku": lambda: erp,
+            "_IncConcMysqlError": _IncConcMysqlError, "_checkwms_stock_rows": lambda forzar=False: wms,
+            "mysql_fetchall": lambda sql, params=None: incs, "_erp_stock_b13_por_sku": lambda forzar=False: erp,
             "_checkwms_norm_ua": lambda s: (s or "").strip().upper(),
             "_inc_clasificacion_skus_batch": lambda skus: {}, "_inc_hallazgo_falta_registrar": lambda ua, r, e, c: {"tipo": "falta_registrar", "ua": ua, "sku": r.get("codigo")},
             "_inc_baja_clave": lambda h: "%s|%s" % (h.get("tipo"), h.get("sku")), "_inc_completar_nombres": lambda hs: None,
@@ -95,11 +95,11 @@ class TestGestionarLaDiferenciaUnidadPorUnidad(unittest.TestCase):
 
     def _dif(self, wms, incs, erp, repetible=False, tipo="dif_erp"):
         amb = cargar(
-            ("_inc_uas_libres", "_inc_hallazgo_faltan", "_inc_hallazgo_accion", "_inc_unidades_hallazgo", "_inc_calcular_hallazgos"),
+            ("_inc_uas_libres", "_inc_hallazgo_faltan", "_inc_hallazgo_accion", "_inc_unidades_hallazgo", "_inc_consolidar_por_sku", "_inc_pendiente_dividir", "_inc_calcular_hallazgos"),
             ("INC_BODEGA_WMS", "INC_BODEGA_ERP"),
             extra={
-                "_IncConcMysqlError": _IncConcMysqlError, "_checkwms_stock_rows": lambda: wms,
-                "mysql_fetchall": lambda sql, params=None: incs, "_erp_stock_b13_por_sku": lambda: erp,
+                "_IncConcMysqlError": _IncConcMysqlError, "_checkwms_stock_rows": lambda forzar=False: wms,
+                "mysql_fetchall": lambda sql, params=None: incs, "_erp_stock_b13_por_sku": lambda forzar=False: erp,
                 "_checkwms_norm_ua": lambda s: (s or "").strip().upper(),
                 "_inc_clasificacion_skus_batch": lambda skus: {s: {"repetible": repetible} for s in skus},
                 "_inc_hallazgo_falta_registrar": lambda ua, r, e, c: {"tipo": "falta_registrar", "ua": ua, "sku": r.get("codigo")},
@@ -163,6 +163,245 @@ class TestGestionarLaDiferenciaUnidadPorUnidad(unittest.TestCase):
         self.assertIsNone(re.search(r"(?<![A-Za-z.])(alert|confirm|prompt)\(", panel))
         # «Ver / corregir» no se pierde: queda en el menú de la fila (REGLA #4.2)
         self.assertIn("Ver / corregir la incidencia", t)
+
+
+class TestUnaFilaPorSku(unittest.TestCase):
+    """Daniel (28-oct), con la Air Ski Erg: «dice que hay tres diferencias, es confuso». Era la MISMA máquina contada por tres caminos (diferencia con el
+    ERP, diferencia con Check y «Falta registrar» de su UA) y la UA salía como «UA UA1014361». Ahora es UNA fila con las unidades por UA y motivo."""
+    WMS = [_wms("UA1013428", "ARMADO01"), _wms("UA1014361", "ARMADO01")]
+    INC = [{"id": 7, "sku": "1050100999", "descripcion": "ILUS Air Ski Erg Machine", "cantidad": 1,
+            "motivo": "Falla de consola que no enciende", "estado": "abierta", "recomendacion": "UA1013428"}]
+
+    def _todos(self, wms, incs, erp, falta_registrar=None):
+        amb = cargar(
+            ("_inc_uas_libres", "_inc_hallazgo_faltan", "_inc_hallazgo_accion", "_inc_unidades_hallazgo", "_inc_consolidar_por_sku",
+             "_inc_pendiente_dividir", "_inc_calcular_hallazgos"),
+            ("INC_BODEGA_WMS", "INC_BODEGA_ERP"),
+            extra={
+                "_IncConcMysqlError": _IncConcMysqlError, "_checkwms_stock_rows": lambda forzar=False: wms,
+                "mysql_fetchall": lambda sql, params=None: incs, "_erp_stock_b13_por_sku": lambda forzar=False: erp,
+                "_checkwms_norm_ua": lambda s: (s or "").strip().upper(),
+                "_inc_clasificacion_skus_batch": lambda skus: {s: {"repetible": False} for s in skus},
+                "_inc_hallazgo_falta_registrar": falta_registrar or (lambda ua, r, e, c: {
+                    "tipo": "falta_registrar", "ua": ua, "sku": r.get("codigo"), "wms": 1, "nuestra_bd": 0, "sugerir_distribuir": False}),
+                "_inc_baja_clave": lambda h: "k", "_inc_completar_nombres": lambda hs: None,
+            })
+        return amb["_inc_calcular_hallazgos"]()["hallazgos"]
+
+    def test_la_misma_maquina_ya_no_sale_tres_veces(self):
+        hs = [h for h in self._todos(self.WMS, self.INC, {"1050100999": 2}) if h.get("sku") == "1050100999"]
+        self.assertEqual([h["tipo"] for h in hs], ["dif_erp"])                      # antes: dif_erp + dif_wms + falta_registrar
+        h = hs[0]
+        self.assertTrue(h["tambien_wms"])                                          # la diferencia con Check se sigue contando
+        self.assertEqual([(c["clase"], c["ua"]) for c in h["unidades"]["tarjetas"]], [("incidencia", "UA1013428"), ("libre", "UA1014361")])
+
+    def test_si_solo_difiere_con_check_queda_esa_fila(self):
+        hs = self._todos(self.WMS, self.INC, {"1050100999": 1})
+        self.assertEqual([h["tipo"] for h in hs if h.get("sku") == "1050100999"], ["dif_wms"])
+
+    def test_cada_sku_conserva_su_propia_fila_y_su_ua_libre_sale_como_tarjeta(self):
+        wms = self.WMS + [_wms("UA9", "X-1", sku="2000", desc="Otro")]
+        hs = self._todos(wms, self.INC, {"1050100999": 2, "2000": 1})
+        otro = [h for h in hs if h.get("sku") == "2000"]
+        self.assertEqual([h["tipo"] for h in otro], ["dif_erp"])                              # una fila por SKU, también el otro
+        self.assertEqual([(c["clase"], c["ua"]) for c in otro[0]["unidades"]["tarjetas"]], [("libre", "UA9")])   # su «Falta registrar» quedó adentro
+
+    def test_pendiente_dividir_cuando_faltan_unidades_y_no_hay_otra_ua_libre(self):
+        hs = self._todos([_wms("UA1013428", "ARMADO01", cant=2)], self.INC, {"1050100999": 2})
+        h = next(x for x in hs if x.get("sku") == "1050100999")
+        self.assertTrue(h["pendiente_dividir"])
+
+    def test_no_es_pendiente_dividir_si_hay_una_ua_por_unidad(self):
+        h = next(x for x in self._todos(self.WMS, self.INC, {"1050100999": 2}) if x.get("sku") == "1050100999")
+        self.assertFalse(h["pendiente_dividir"])
+
+    def test_varias_unidades_en_una_ua_sin_incidencia_tambien_se_marcan(self):
+        fr = lambda ua, r, e, c: {"tipo": "falta_registrar", "ua": ua, "sku": r.get("codigo"), "wms": 3, "nuestra_bd": 0, "sugerir_distribuir": True}
+        wms = [_wms("UA5", "Z-1", sku="3000", desc="Remo", cant=3)]
+        hs = [x for x in self._todos(wms, [], {}, falta_registrar=fr) if x.get("sku") == "3000"]
+        self.assertNotIn("falta_registrar", [x["tipo"] for x in hs])                  # su UA quedó adentro de la diferencia con Check
+        dif = next(x for x in hs if x["tipo"] == "dif_wms")
+        self.assertTrue(dif["pendiente_dividir"])                                      # 3 unidades en una sola UA: pendiente de dividir en Check
+        self.assertEqual([c["clase"] for c in dif["unidades"]["tarjetas"]], ["libre", "sin_ua"])
+
+    def test_el_front_muestra_la_ua_una_sola_vez_y_las_unidades_por_ua_y_motivo(self):
+        with open(PLANTILLA, encoding="utf-8") as fh:
+            t = fh.read()
+        self.assertNotIn("'<div class=\"rm-sub\">UA '+incEsc(h.ua)+'</div>'", t)            # el origen del «UA UA1014361»
+        self.assertIn("function incUaTxt(ua)", t)
+        self.assertIn("/^UA/i.test(u)", t)
+        self.assertIn("incUnidadesChips(h.unidades.tarjetas)", t)
+        self.assertIn("Por UA y motivo", t)
+        self.assertIn("Pendiente dividir en UA en Check", t)
+        self.assertIn("['dividir',         'k-div', 'Dividir UA en Check'", t)
+        self.assertIn("if(incConcFiltro === 'dividir') return !!h.pendiente_dividir;", t)
+
+    def test_la_logica_de_la_etiqueta_ua(self):
+        exe = shutil.which("node")
+        if not exe:
+            self.skipTest("Node no está instalado")
+        with open(PLANTILLA, encoding="utf-8") as fh:
+            t = fh.read()
+        f = re.search(r"function incUaTxt\(ua\)\{.*?\n  \}", t, re.S).group(0)
+        prog = ("const incEsc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');" + f +
+                "process.stdout.write(JSON.stringify([incUaTxt('UA1014361'),incUaTxt('ua1014361'),incUaTxt('1014361'),incUaTxt(''),incUaTxt(null)]));")
+        r = subprocess.run([exe, "-e", prog], capture_output=True, text=True, timeout=60, encoding="utf-8")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout), ["UA1014361", "ua1014361", "UA 1014361", "", ""])
+
+
+class TestActualizarYPorQueNoAparece(unittest.TestCase):
+    """Daniel (28-oct): «se hizo un traslado hoy a la bodega 13 en el ERP y no salen las diferencias… yo quiero saber». El ERP se leía con caché de 15 min y
+    Check de 1 hora, y «Actualizar» no las saltaba."""
+
+    def test_actualizar_salta_las_caches_y_abrir_el_panel_no(self):
+        src = texto("app.py")
+        self.assertIn("def _inc_calcular_hallazgos(forzar=False):", src)
+        self.assertIn("_checkwms_stock_rows(forzar=forzar)", src)
+        self.assertIn("_erp_stock_b13_por_sku(forzar=forzar)", src)
+        self.assertIn('_inc_calcular_hallazgos(forzar=(request.args.get("forzar") == "1"))', src)
+        with open(PLANTILLA, encoding="utf-8") as fh:
+            t = fh.read()
+        self.assertIn("incConcCargar(true)", t)                                    # solo el botón «Actualizar»
+        self.assertIn("'?forzar=1'", t)
+        self.assertIn("$('incBtnConciliar').addEventListener('click', function(){ incConcCargar(); });", t)
+
+    def _diag(self, erp, check13, incs, bajas=0):
+        return cargar(("_inc_diagnostico_texto",))["_inc_diagnostico_texto"](erp, check13, incs, bajas)
+
+    def test_el_traslado_aun_no_recepcionado_se_explica(self):
+        txt = self._diag([{"bodega": "05", "fisico": 1}], [], [])
+        self.assertIn("no tiene stock de este SKU en la bodega 13", txt)
+        self.assertIn("bodega 05", txt)
+        self.assertIn("recepcionado", txt)
+
+    def test_si_hay_diferencia_dice_que_deberia_salir_y_que_use_actualizar(self):
+        txt = self._diag([{"bodega": "13", "fisico": 1}], [], [])
+        self.assertIn("Hay diferencia: ERP 1, Check 0, nosotros 0.", txt)
+        self.assertIn("Actualizar", txt)
+
+    def test_si_cuadra_lo_dice(self):
+        self.assertTrue(self._diag([{"bodega": "13", "fisico": 1}], [{"ua": "UA1", "cant": 1}], [{"cantidad": 1}]).startswith("Cuadra"))
+
+    def test_si_no_existe_en_ningun_lado(self):
+        self.assertIn("No aparece en ningún lado", self._diag([], [], []))
+
+    def test_la_consulta_en_vivo_es_solo_lectura_y_cerrada_a_tecnicos(self):
+        src = fuente_funcion("mant_api_incidencias_diagnostico")
+        self.assertNotIn("INSERT", src.upper().replace("INSERT_", ""))
+        self.assertNotIn("UPDATE", src.upper())
+        self.assertIn("_checkwms_stock_rows(forzar=True)", src)
+        self.assertIn("_random_sql_query(", src)
+        self.assertIn("FROM MAEST", src)
+        decs = decoradores("mant_api_incidencias_diagnostico")
+        self.assertTrue(any("_no_tecnico_salvo_taller" in d for d in decs))
+        self.assertIn("len(q) < 4", src)                                          # no se puede pedir «todo»
+
+
+class TestConsultaPorDocumento(unittest.TestCase):
+    """Daniel (28-oct): «se hizo un traslado hoy a la bodega 13 en el ERP… está bajo la GRI 2721, el SKU termina en 101054… yo quiero saber» →
+    «bien inteligente la consulta»: entiende un documento del ERP y lo cruza con el stock por bodega y con Check."""
+
+    def _f(self):
+        return cargar(("_inc_doc_ref", "_inc_doc_texto", "_inc_diagnostico_texto"))
+
+    def test_reconoce_la_referencia_de_un_documento(self):
+        f = self._f()["_inc_doc_ref"]
+        self.assertEqual(f("GRI2721"), ("GRI", "2721"))
+        self.assertEqual(f("GRI0000002721"), ("GRI", "2721"))
+        self.assertIsNone(f("1049101054"))                    # un SKU numérico no es un documento
+        self.assertIsNone(f("UA1014361"))                     # una UA tampoco (2 letras)
+        self.assertIsNone(f(""))
+
+    def test_documento_que_existe_con_la_linea_del_sku(self):
+        docs = [{"tido": "GRI", "nudo": "0000002721", "fecha": "28/10/2026", "estado": "", "lineas": [
+            {"sku": "1049101054", "cant": 1.0, "cant_despachada": 0.0, "bodegas": {"BOSULIDO": "05", "BOENLIDO": "13"}},
+            {"sku": "9999", "cant": 2.0, "cant_despachada": 0.0, "bodegas": {}}]}]
+        t = self._f()["_inc_doc_texto"](docs, ("GRI", "2721"), "101054")
+        self.assertIn("SÍ tiene el documento GRI 2721 del 28/10/2026", t)
+        self.assertIn("1049101054 × 1", t)
+        self.assertIn("BOENLIDO=13", t)
+        self.assertNotIn("9999", t)                            # solo la línea del producto que se pregunta
+
+    def test_documento_anulado_o_que_no_existe_o_sin_el_producto(self):
+        f = self._f()["_inc_doc_texto"]
+        self.assertIn("ANULADO", f([{"tido": "GRI", "nudo": "2721", "fecha": "", "estado": "NULO", "lineas": []}], ("GRI", "2721")))
+        self.assertIn("No encontré el documento GRI 2721", f([], ("GRI", "2721")))
+        t = f([{"tido": "GRI", "nudo": "2721", "fecha": "", "estado": "", "lineas": [{"sku": "ABC", "cant": 1.0, "bodegas": {}}]}], ("GRI", "2721"), "101054")
+        self.assertIn("Ninguna de sus 1 línea(s)", t)
+
+    def test_la_explicacion_junta_el_documento_con_el_stock(self):
+        g = self._f()["_inc_diagnostico_texto"]
+        t = g([{"bodega": "05", "fisico": 1}], [], [], 0, "El ERP SÍ tiene el documento GRI 2721.")
+        self.assertTrue(t.startswith("El ERP SÍ tiene el documento GRI 2721."))
+        self.assertIn("recepcionado", t)
+
+    def test_el_endpoint_busca_el_documento_solo_en_lectura(self):
+        src = fuente_funcion("mant_api_incidencias_diagnostico")
+        self.assertIn("_inc_doc_ref(q)", src)
+        self.assertIn("FROM MAEEDO WHERE TIDO=%s AND NUDO LIKE %s", src)
+        self.assertIn("SELECT TOP 40 * FROM MAEDDO WHERE IDMAEEDO=%s", src)
+        for prohibido in ("INSERT", "UPDATE", "DELETE", "EXEC"):
+            self.assertNotIn(prohibido, src.upper().replace("INSERT_", ""), prohibido)
+        with open(PLANTILLA, encoding="utf-8") as fh:
+            t = fh.read()
+        self.assertIn("GRI 2721", t)                                              # el tip visible en la pantalla
+
+
+class TestBajaInteligenteConPosiciones(unittest.TestCase):
+    """Daniel (28-oct): «es importante llevar una trazabilidad y poder dar de baja… un proceso inteligente, corto, intuitivo y con las bodegas, ya que puedes
+    identificar las posiciones en Check. Solo yo puedo eliminar productos de la base de datos»."""
+    STOCK = [{"ua": "UA1", "bodega": "BODEGA 13", "ubicacion": "ARMADO01", "stFisico": 1, "codigo": "S1"},
+             {"ua": "UA2", "bodega": "BODEGA 05", "ubicacion": "A-12", "stFisico": 1, "codigo": "S1"}]
+
+    def _f(self):
+        return cargar(("_inc_posiciones_check", "_inc_baja_sugerencia"), ("INC_BODEGA_WMS",))
+
+    def test_posiciones_de_una_ua(self):
+        p = self._f()["_inc_posiciones_check"](self.STOCK, "ua1", "S1")
+        self.assertEqual(p, [{"ua": "UA1", "bodega": "BODEGA 13", "ubicacion": "ARMADO01", "cant": 1.0}])
+
+    def test_sin_ua_se_busca_por_sku_con_la_bodega_13_primero(self):
+        p = self._f()["_inc_posiciones_check"](list(reversed(self.STOCK)), None, "S1")
+        self.assertEqual([x["bodega"] for x in p], ["BODEGA 13", "BODEGA 05"])
+
+    def test_si_salio_de_la_bodega_13_sugiere_salio_resuelto_y_dice_donde_esta(self):
+        f = self._f()
+        pos = f["_inc_posiciones_check"](self.STOCK, "UA2", "S1")
+        s = f["_inc_baja_sugerencia"](pos, "UA2")
+        self.assertEqual(s["codigo"], "salio_resuelto")
+        self.assertIn("BODEGA 05 · A-12", s["razon"])
+
+    def test_si_ya_no_aparece_en_check(self):
+        s = self._f()["_inc_baja_sugerencia"]([], "UA9")
+        self.assertEqual((s["codigo"], s["razon"]), ("salio_resuelto", "La UA ya no aparece en Check."))
+
+    def test_si_los_tres_sistemas_cuadran_sugiere_regularizado(self):
+        f = self._f()
+        pos = f["_inc_posiciones_check"](self.STOCK, "UA1", "S1")
+        self.assertEqual(f["_inc_baja_sugerencia"](pos, "UA1", 1, 1, 1)["codigo"], "regularizado_random")
+        self.assertIsNone(f["_inc_baja_sugerencia"](pos, "UA1", 1, 2, 2))             # hay diferencia: no se sugiere nada
+
+    def test_la_baja_guarda_la_posicion_con_respaldo_si_faltan_las_columnas(self):
+        src = texto("app.py")
+        for ancla in ("bodega_check, ubicacion_check", "sin columnas de posición", "_inc_baja_posicion_snapshot(", "def _ensure_incidencia_bajas_posicion"):
+            self.assertIn(ancla, src, ancla)
+        self.assertIn("_ensure_incidencia_bajas_posicion()", src.split("def _ensure_incidencia_bajas_table")[-1])
+        # la posición la calcula el SERVIDOR: el navegador no la manda
+        self.assertNotIn("bodega_check", json.dumps([]))
+
+    def test_el_modal_muestra_posiciones_sugiere_y_el_historial_las_guarda(self):
+        with open(PLANTILLA, encoding="utf-8") as fh:
+            t = fh.read()
+        for ancla in ('id="incBajaPos"', "incBajaContexto(ctx);", "Dónde está hoy en Check", "Sugerido", "b.bodega_check"):
+            self.assertIn(ancla, t, ancla)
+        self.assertIn("_incBaja.motivo = d.sugerencia.codigo", t)                       # queda preseleccionado: la persona solo confirma
+
+    def test_eliminar_solo_para_el_superadmin_tambien_en_la_pantalla(self):
+        with open(PLANTILLA, encoding="utf-8") as fh:
+            t = fh.read()
+        self.assertIn("var incCanDelete = {{ 'true' if permissions.superadmin else 'false' }};", t)
+        self.assertRegex(t, r"\{% if permissions\.superadmin %\}\s*<button type=\"button\" class=\"btn btn-outline-danger me-auto\" id=\"incBtnEliminar\"")
 
 
 class TestSepararEnFilasOUnaLinea(unittest.TestCase):
