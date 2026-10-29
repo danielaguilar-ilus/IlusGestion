@@ -1462,5 +1462,19 @@ Incidente real: el asistente sumaba por detrás «Revisión — Registro por equ
 
 ---
 
+## 📐 REGLA #57 — Política de margen y control de costos del servicio técnico (Daniel, 2026-10-29; no negociable)
+
+**Dicho por Daniel el 29-oct-2026, para poder «disertar» ante la gerencia: «el margen autorizado de todos los servicios fue aprobado en un 30 %, movible con una tolerancia hasta 20; de ahí hacia abajo, amarillo, y rojo los negativos».**
+
+- **Una sola política de margen** (`ot_margen_politica.py`, módulo puro; nadie escribe estos números en otro lado): **≥ 30 %** = objetivo cumplido (verde) · **20 % a < 30 %** = dentro de la tolerancia (verde claro, sin alarma) · **< 20 % y ≥ 0** = amarillo (bajo la tolerancia) · **< 0** = rojo (pérdida real). Solo MARCA (tablero, tarjetas, Excel): **no agrega ningún candado nuevo**; el cierre con pérdida sigue pidiendo la autorización de Daniel (REGLA #28) y ese umbral no cambia. Los textos viejos «Margen bajo (menos de 10 %)» se alinean a esta política cuando se toque cada pantalla.
+- **El documento que lleva el cobro manda** (REGLAS #24, #25, #28, #56), también en la calidad de datos. Un documento puede traer solo los productos y otro solo el servicio; **dos facturas con servicio se suman**; el saldo por línea se revisa contra el cobro que ya tomaron otras OT (motor de las REGLAS #25/#28: no se construye otro). La estructura de pantallas y reportes se adapta a eso (ergonomía), no al revés.
+- **Tablero «Explorar» (Costeo de OT):** multifiltro estilo Power BI (un clic filtra todo) para desglosar lo cobrado y los costos de un período por centro de costo, técnico, proveedor o empresa (Mili, Felca, Daniel Pulgar = DAP…), trabajo interno / externo, cobertura, documento y tiempo (día, semana, N° de semana, mes, año). Solo superadmin; jamás técnicos (REGLAS #19/#26).
+- **Excel de OT en español:** las fechas son fechas de verdad de Excel (formato dd/mm/aaaa, hora Chile) y vienen columnas de apoyo (año, mes con nombre, N° de semana, día) para filtrar y armar tablas dinámicas; nada de textos con formato «gringo».
+- **Tarjeta «Costos y documentación»:** sin botones de «agregar factura» repetidos (una sola vía, estructurada) y con el encabezado de **quién se adjudica el dinero**: cuánto nos cobró cada proveedor o técnico externo (servicio y despacho), cuánto cobramos nosotros al cliente (servicio y despacho) y, aparte, cuánto cobró ILUS o el interno. **«ILUS» es solo una línea de cobro interno en esa tarjeta: NO se crea un técnico, usuario ni agente «ILUS».**
+- **Futuro (pedido de Daniel):** ir revisando y escribiendo aquí las políticas del departamento de servicio técnico, una a una, con su «sí».
+- Plan por fases del módulo de costos: memoria `plan_costeo_inteligente_2026_10_29.md` (Explorar → Calidad de datos → Valorización sugerida → Alerta de nota de venta sola → Memoria de cierre → Costo de técnicos propios).
+
+---
+
 _Última actualización: 2026-10-29_
 _Mantenedor: Daniel Aguilar (daniel.aguilar@sphs.cl)_
